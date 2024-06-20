@@ -11,29 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package threadpool
+package dispatcher
 
-import "time"
-
-// enum
-
-type TaskStatus int
-
-const (
-	Success TaskStatus = iota
-	Failed
-	Running
-	Waiting
-	IO
-)
-
-type Task interface {
-	// 用于检查是否达到了继续推进的条件，返回检查后的状态
-	await() TaskStatus
-	// 执行任务，当切换状态后换出，或者超时以后换出
-	execute(timeout time.Duration) TaskStatus
-	// 释放资源,后面再看要怎么做吧
-	release()
-	// 获取 status 决定任务类型
-	getStatus() TaskStatus
+type TableEventDispatcher struct {
 }

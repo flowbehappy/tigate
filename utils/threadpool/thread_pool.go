@@ -20,18 +20,6 @@ import (
 	"github.com/pingcap/log"
 )
 
-// enum
-
-type TaskStatus int
-
-const (
-	success TaskStatus = iota
-	failed
-	running
-	blocked
-	io
-)
-
 // 本质是想写一个 thread pool 的基类，可以先按照特例来写，后面再转成 basic 的
 // 接受外层的 queue，和 schedule,
 // 提供最基础的 提交任务，拿出任务执行的能力
@@ -70,15 +58,15 @@ func (p *ThreadPool) handleTask(task *Task) {
 	// 调用 task，并且根据 task 结束状态决定应该放到哪里去
 	status := (*task).execute(p.timeout)
 	switch status {
-	case running:
+	case Running:
 		p.scheduler.submitTaskToCPUThreadPool(task) // 仍进去做 cpu 任务
-	case blocked:
+	case Waiting:
 		p.scheduler.submitTaskToWaitReactorThreadPool(task) //扔进去等 wait reactor
-	case io:
+	case IO:
 		p.scheduler.submitTaskToIOThreadPool(task) // 仍进去做 io 任务
-	case success:
+	case Success:
 		// do nothing?
-	case failed:
+	case Failed:
 		// 报错，但是不影响后面的 task
 	}
 }

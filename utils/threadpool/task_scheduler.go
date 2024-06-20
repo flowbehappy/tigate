@@ -52,11 +52,11 @@ type TaskScheduler struct {
 func (s *TaskScheduler) submit(task *Task) error {
 	task_status := (*task).getStatus()
 	switch task_status {
-	case io:
+	case IO:
 		s.submitTaskToIOThreadPool(task)
-	case running:
+	case Running:
 		s.submitTaskToCPUThreadPool(task)
-	case blocked:
+	case Waiting:
 		s.submitTaskToWaitReactorThreadPool(task)
 	default:
 		log.Error("TaskScheduler submit with Error Status: ", zap.Any("status", task_status))

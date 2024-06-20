@@ -89,3 +89,10 @@ func (l *WaitingTaskList) TryTake(taskList []*Task) bool {
 	l.queue = l.queue[:0]
 	return true
 }
+
+func (l *WaitingTaskList) finish() {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	l.isFinished = true
+	l.cond.Broadcast()
+}

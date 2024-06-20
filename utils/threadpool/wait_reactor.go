@@ -13,7 +13,11 @@
 
 package threadpool
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/pingcap/log"
+)
 
 type WaitReactor struct {
 	queue         WaitingTaskList
@@ -23,7 +27,7 @@ type WaitReactor struct {
 	taskScheduler *TaskScheduler
 }
 
-func newWaitReactor(threadCount int, taskScheduler *TaskScheduler) *waitReactor {
+func newWaitReactor(threadCount int, taskScheduler *TaskScheduler) *WaitReactor {
 	waitReactor := WaitReactor{
 		threadCount:   threadCount,
 		taskScheduler: taskScheduler,
@@ -32,6 +36,7 @@ func newWaitReactor(threadCount int, taskScheduler *TaskScheduler) *waitReactor 
 		waitReactor.wg.Add(1)
 		go waitReactor.loop(i)
 	}
+	return &waitReactor
 }
 
 func (r *WaitReactor) takeFromWaitingTaskList(waitingTaskList []*Task) bool {
@@ -47,15 +52,15 @@ func (r *WaitReactor) react(waitingTasks []*Task) {
 	for _, task := range waitingTasks {
 		status := (*task).await()
 		switch status {
-		case running:
+		case Running:
 			r.taskScheduler.submitTaskToIOThreadPool(task)
-		case io:
+		case IO:
 			r.taskScheduler.submitTaskToIOThreadPool(task)
-		case blocked:
+		case Waiting:
 			newWaitingTasks = append(newWaitingTasks, task)
-		case success:
+		case Success:
 			// 不应该吧，需要报错
-		case failed:
+		case Failed:
 			// 报错
 		default:
 			panic("unknown task status")
@@ -77,4 +82,15 @@ func (r *WaitReactor) loop(threadIndex int) {
 
 func (r *WaitReactor) submit(task *Task) {
 	r.queue.Submit(task)
+}
+
+func (r *WaitReactor) finish() {
+	r.queue.finish()
+}
+
+func (r *WaitReactor) waitForStop() error {
+	log.Info("Wait Reactor is waiting for stop")
+	r.wg.Wait()
+	log.Info("Wait Reactor is stopped")
+	return nil
 }
