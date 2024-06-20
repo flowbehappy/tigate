@@ -22,13 +22,42 @@ import (
 )
 
 // MysqlWorker is use to flush the event downstream
-type MysqlWorker struct {
+type MysqlWorker struct { // TODO:这个可以同时做两个 flush 么？先这么做，不行后面拆个 worker 出来
 	eventChan   <-chan *Event // 获取到能往下游写的 events
 	mysqlWriter MysqlWriter   // 实际负责做 flush 操作
 }
 
+// 这个  task 是单次出现的，执行完就结束，用于处理 ddl 和 sync point event
+type MysqlWorkerDDLEventTask struct {
+	worker   *MysqlWorker
+	event    *Event
+	callback func()
+}
+
+func NewMysqlWorkerDDLEventTask(worker *MysqlWorker, event *Event) *MysqlWorkerDDLEventTask {
+	return &MysqlWorkerDDLEventTask{
+		worker: worker,
+		event:  event,
+	}
+}
+
+func (t *MysqlWorkerDDLEventTask) execute(timeout time.Duration) threadpool.TaskStatus {
+	t.worker.mysqlWriter.FlushDDLEvent(t.event)
+	return threadpool.Success
+}
+
+func (t *MysqlWorkerDDLEventTask) await() threadpool.TaskStatus {
+	log.Error("MysqlWorkerDDLEventTask should not call await()")
+	return threadpool.Failed
+}
+
+func (t *MysqlWorkerDDLEventTask) release() {
+	//
+}
+
 // 这个 task 应该是 event dispatcher manager 创建以后，会直接生成好的 task，扔到一个单独的 threadpool 中
 // task 的 生命周期应该是跟 event dispatcher manager 一样
+// 这个 task 只处理 dml event
 type MysqlWorkerTask struct {
 	worker     *MysqlWorker
 	taskStatus threadpool.TaskStatus

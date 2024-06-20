@@ -14,8 +14,6 @@
 package conflictdetector
 
 import (
-	"new_arch/downstreamadapter/sink"
-
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/causality/internal"
 	"go.uber.org/atomic"
@@ -63,7 +61,7 @@ func NewConflictDetector[Txn txnEvent](
 //
 // NOTE: if multiple threads access this concurrently,
 // Txn.ConflictKeys must be sorted by the slot index.
-func (d *ConflictDetector[Txn]) Add(txn Txn, tableProgress *sink.TableProgress) {
+func (d *ConflictDetector[Txn]) Add(txn Txn, callback func()) {
 	hashes := txn.ConflictKeys()
 	node := d.slots.AllocNode(hashes)
 	txnWithNotifier := TxnWithNotifier[Txn]{
@@ -73,7 +71,7 @@ func (d *ConflictDetector[Txn]) Add(txn Txn, tableProgress *sink.TableProgress) 
 			// and resolve related dependencies for these transacitons which depend on this
 			// executed transaction.
 			d.slots.Remove(node)
-			tableProgress.Remove(txn)
+			callback()
 		},
 	}
 	node.TrySendToTxnCache = func(cacheID int64) bool {

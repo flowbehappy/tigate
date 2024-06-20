@@ -27,6 +27,9 @@ type MysqlWriter struct {
 	cfg *MysqlConfig
 }
 
+func (w *MysqlWriter) FlushDDLEvent(event *Event) error {
+}
+
 func (w *MysqlWriter) Flush(events []*Event) error {
 	sqls := w.prepareSQLs(events)
 
