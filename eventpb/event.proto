@@ -29,7 +29,7 @@ message Event {
 
 message EventResponse {
     repeated Event events = 1; // 包含多个 events，按照 txn 划分
-    ResolvedTs resolved_ts = 2; // 跟上述 event 同时出现 -- double check
+    uint64 resolved_ts = 2; // 跟上述 event 同时出现 -- 就是标记目前达成的 resolvedTs
     uint64 dispatcher_id = 3; // 表示这个 event 是 对应哪个 dispatcher 的
 }
 

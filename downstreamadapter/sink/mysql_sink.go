@@ -131,6 +131,19 @@ func (s *MysqlSink) IsEmpty(tableSpan *Span) bool {
 	return false
 }
 
+func (s *MysqlSink) GetSmallestCommitTs(tableSpan *Span) uint64 {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if tableProgress, ok := s.tableProgressMap[tableSpan]; ok {
+		return tableProgress.SmallestCommitTs()
+	}
+
+	log.Error("Invalid table span in MysqlSink::isEmpty", tableSpan)
+	//return error
+	return 0 //给个 error 最后
+}
+
 // 先写一个插入数据的 task，看看后面 reactor 的要不要写一个新的 task
 // 同个 table 的 add event 是需要满足前后顺序的，所以这里的 task 还是只应该有 dispatcher 个
 // 那也就是她的 task 是每一个新的 table 出现就创建，然后永远在轮训，直到 dispatcher 被移除了 -- 所以要有个 table 和 task 的 map

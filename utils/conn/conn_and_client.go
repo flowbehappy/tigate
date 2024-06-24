@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dispatchermanager
+package conn
 
 import (
 	"context"
@@ -58,7 +58,7 @@ func (c *ConnAndTableAddrClient) Release() {
 	c.conn.Close()
 }
 
-func (c *ConnAndClientPool) newConnAndTableAddrClient(addr string) (*ConnAndTableAddrClient, error) {
+func (c *ConnAndClientPool) NewConnAndTableAddrClient(addr string) (*ConnAndTableAddrClient, error) {
 	for {
 		clientConn, err := c.connect(addr)
 		if err != nil {
@@ -208,7 +208,7 @@ func (c *ConnAndClient) Release() {
 	}
 }
 
-func newConnAndClientPool(
+func NewConnAndClientPool(
 	credential *security.Credential,
 	maxStreamsPerConn int,
 ) *ConnAndClientPool {

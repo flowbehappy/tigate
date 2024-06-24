@@ -58,3 +58,9 @@ for pb in $(find eventpb -name '*.proto'); do
 	generate ./ $pb paths="source_relative"
 done
 
+
+for pb in $(find heartbeatpb -name '*.proto'); do
+	# Output generated go files next to protobuf files.
+	generate ./ $pb paths="source_relative"
+done
+

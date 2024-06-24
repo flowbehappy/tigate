@@ -1,0 +1,48 @@
+syntax = "proto3";
+package heartbeatpb;
+option go_package = "./heartbeatpb";
+
+message TableSpan {
+
+}
+
+message TableSpanProgress {
+    TableSpan span = 1;
+    bool IsBlocked      = 2;
+	uint64 BlockTs         = 3;
+	repeated TableSpan BlockTableSpan = 4;
+	uint64 CheckpointTs    = 5;
+    uint64 dispatcherID = 6;
+}
+
+message HeartBeatRequest {
+    repeated TableSpanProgress progress = 1;
+} 
+
+enum Action {
+    None = 0;
+    Write = 1;
+    Pass = 2;
+}
+
+message TableProgress {
+    TableSpan span = 1;
+    bool IsBlocked      = 2;
+    uint64 BlockTs         = 3;
+    uint64 CheckpointTs    = 4;
+    Action action = 5;
+}
+
+message TableProgressInfo {
+    uint64 dispatcherID = 1; // for which dispatcher
+    repeated TableProgress tableProgresses = 2; // 救命了这名字取得
+
+}
+message HeartBeatResponse {
+    repeated TableProgressInfo info = 1;
+    uint64 eventDispatcherManagerID = 2;
+}
+
+service HeartBeat {
+    rpc HeartBeat(stream HeartBeatRequest) returns (stream HeartBeatResponse);
+}

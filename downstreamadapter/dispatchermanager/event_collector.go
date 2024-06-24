@@ -15,6 +15,7 @@ package dispatchermanager
 
 import (
 	"new_arch/downstreamadapter/dispatcher"
+	"new_arch/utils/conn"
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tiflow/pkg/security"
@@ -22,19 +23,19 @@ import (
 
 // 负责从 logService 中拉取所有 event，解码分发给各个 dispatcher
 type EventCollector struct {
-	grpcPool                  *ConnAndClientPool      // 用于获取 client
-	masterClient              *ConnAndTableAddrClient // 专门用于跟 log master 通信
+	grpcPool                  *conn.ConnAndClientPool      // 用于获取 client
+	masterClient              *conn.ConnAndTableAddrClient // 专门用于跟 log master 通信
 	clientMaxDispatcherNumber int
-	clients                   map[*ConnAndClient][]uint64                // client --> dispatcherIDList
-	addrMap                   map[string][]*ConnAndClient                // addr --> client
+	clients                   map[*conn.ConnAndClient][]uint64           // client --> dispatcherIDList
+	addrMap                   map[string][]*conn.ConnAndClient           // addr --> client
 	dispatcherMap             map[uint64]dispatcher.TableEventDispatcher // dispatcher_id --> dispatcher
 }
 
 func newEventCollector(masterAddr string) *EventCollector {
 	eventCollector := EventCollector{
-		grpcPool: newConnAndClientPool(&security.Credential{}, 100), // todo:
+		grpcPool: conn.NewConnAndClientPool(&security.Credential{}, 100), // todo:
 	}
-	eventCollector.masterClient, _ = eventCollector.grpcPool.newConnAndTableAddrClient(masterAddr)
+	eventCollector.masterClient, _ = eventCollector.grpcPool.NewConnAndTableAddrClient(masterAddr)
 	return &eventCollector
 }
 
@@ -61,7 +62,7 @@ func (c *EventCollector) RegisterDispatcher(dispatcher *dispatcher.TableEventDis
 	}
 }
 
-func (c *EventCollector) run(cc *ConnAndClient) {
+func (c *EventCollector) run(cc *conn.ConnAndClient) {
 	client := cc.client
 	for {
 		eventResponse, err := client.Recv() // 这边收到 event 要分发掉 -- decode 的说的是这个自带的么
@@ -71,6 +72,7 @@ func (c *EventCollector) run(cc *ConnAndClient) {
 		dispatcherId := eventResponse.DispatcherId
 
 		if dispatcher, ok := c.dispatcherMap[dispatcherId]; ok {
+			dispatcher.ResolvedTs = eventResponse.ResolvedTs // todo:枷锁
 			for _, event := range eventResponse.Events {
 				// deal with event
 				dispatcher.Ch <- event // 换成一个函数
