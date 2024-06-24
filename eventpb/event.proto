@@ -1,0 +1,62 @@
+syntax = "proto3";
+package eventpb;
+option go_package = "./eventpb";
+
+// 这个 proto 主要描述的是 dispatcher 们跟 logService 交互需要用到的各类定义
+// 包括传输的 event 结构，通信的 rpc 
+
+message EventRequest {
+    /*
+    这里会包含几种 request
+    1. 注册当前 dispatcher 的 request
+    2. 调整某个 dispatcher event 发送速率
+    3. 接触某个 dispatcher 注册的 request
+    */
+
+}
+
+message ResolvedTs {
+
+}
+
+message Event {
+    // TODO:
+    /*
+    首先要标识当前 txn 是否完整
+    然后包含 txn 中的每个 row 信息
+    */
+}
+
+message EventResponse {
+    repeated Event events = 1; // 包含多个 events，按照 txn 划分
+    ResolvedTs resolved_ts = 2; // 跟上述 event 同时出现 -- double check
+    uint64 dispatcher_id = 3; // 表示这个 event 是 对应哪个 dispatcher 的
+}
+
+service Events {
+    rpc EventFeed(stream EventRequest) returns (stream EventResponse);
+}
+
+message TableSpan {
+
+}
+
+// message Addr {
+
+// } 
+
+message TableAddrRequest {
+    TableSpan tableSpan = 1;
+    uint64 dispatcher_id  = 2;
+}
+
+message TableAddrResponse {
+    string addr = 1;
+    uint64 dispatcher_id = 2;
+}
+
+
+// 这个专门用于向 log master 节点询问dispatcher 应该从哪个节点上拿 events
+service TableAddr {
+    rpc TableAddr(stream TableAddrRequest) returns (stream TableAddrResponse);
+}

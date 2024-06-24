@@ -40,7 +40,7 @@ func (s *State) clear() {
 }
 
 type TableEventDispatcher struct {
-	ch        <-chan *Event
+	Ch        <-chan *Event // 转换成一个函数
 	tableSpan *Span
 	sink      *sink.Sink
 	//waitingDDL bool // true 表示有 ddl event 或者 sync point event 下推到 sink 中了，所以需要等 ddl 彻底落盘，后面的 event 才能往下推
@@ -48,6 +48,10 @@ type TableEventDispatcher struct {
 
 	otherTableStates map[*tableSpan]*State
 	needFlush        bool // 这个后面要跟 otherTableStates 放到一个结构里面，这个用来标志当前 dispatcher 在达到状态后是否需要 flush 这条 ddl，还是直接丢弃就可以了
+}
+
+func newTableEventDispatcher() *TableEventDispatcher {
+	// 创建新的 event dispatcher，同时需要把这个去 logService 注册，并且把自己加到对应的某个处理 thread 里
 }
 
 // one dispatcher only corresponds to one event dispatcher task
