@@ -14,7 +14,6 @@
 package scheduler
 
 import (
-	"fmt"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -29,7 +28,7 @@ const (
 	// CaptureStateUninitialized means the capture status is unknown,
 	// no heartbeat response received yet.
 	CaptureStateUninitialized CaptureState = 1
-	// CaptureStateInitialized means supervisor has received heartbeat response.
+	// CaptureStateInitialized means scheduler has received heartbeat response.
 	CaptureStateInitialized CaptureState = 2
 )
 
@@ -144,7 +143,7 @@ func (s *Supervisor) UpdateCaptureStatus(from model.CaptureID, statuses []Inferi
 			zap.String("capture", c.capture.ID),
 			zap.String("captureAddr", c.capture.AdvertiseAddr))
 	}
-	// supervisor is not initialized, is still collecting the remote capture stauts
+	// scheduler is not initialized, is still collecting the remote capture stauts
 	// cache the last one
 	if !s.initialized {
 		s.initStatus[from] = statuses
@@ -154,8 +153,8 @@ func (s *Supervisor) UpdateCaptureStatus(from model.CaptureID, statuses []Inferi
 // HandleStatus handles inferior status reported by Inferior
 func (s *Supervisor) HandleStatus(
 	from model.CaptureID, statuses []InferiorStatus,
-) ([]*rpc.Message, error) {
-	sentMsgs := make([]*rpc.Message, 0)
+) ([]rpc.Message, error) {
+	sentMsgs := make([]rpc.Message, 0)
 	for _, status := range statuses {
 		stateMachine, ok := s.stateMachines.Get(status.GetInferiorID())
 		if !ok {
@@ -184,7 +183,7 @@ func (s *Supervisor) HandleStatus(
 // HandleCaptureChanges handles capture changes.
 func (s *Supervisor) HandleCaptureChanges(
 	removed []model.CaptureID,
-) ([]*rpc.Message, error) {
+) ([]rpc.Message, error) {
 	if s.initStatus != nil {
 		if s.stateMachines.Len() != 0 {
 			log.Panic("init again",
@@ -210,7 +209,7 @@ func (s *Supervisor) HandleCaptureChanges(
 		}
 		s.initStatus = nil
 	}
-	sentMsgs := make([]*rpc.Message, 0)
+	sentMsgs := make([]rpc.Message, 0)
 	if removed != nil {
 		var err error
 		s.stateMachines.Ascend(func(id InferiorID, stateMachine *StateMachine) bool {
@@ -238,7 +237,7 @@ func (s *Supervisor) HandleCaptureChanges(
 // HandleScheduleTasks handles schedule tasks.
 func (s *Supervisor) HandleScheduleTasks(
 	tasks []*ScheduleTask,
-) ([]*rpc.Message, error) {
+) ([]rpc.Message, error) {
 	// Check if a running task is finished.
 	var toBeDeleted []InferiorID
 	s.runningTasks.Ascend(func(id InferiorID, task *ScheduleTask) bool {
@@ -258,7 +257,7 @@ func (s *Supervisor) HandleScheduleTasks(
 		s.runningTasks.Delete(span)
 	}
 
-	sentMsgs := make([]*rpc.Message, 0)
+	sentMsgs := make([]rpc.Message, 0)
 	for _, task := range tasks {
 		// Burst balance does not affect by maxTaskConcurrency.
 		if task.BurstBalance != nil {
@@ -304,7 +303,7 @@ func (s *Supervisor) HandleScheduleTasks(
 			continue
 		}
 
-		var msgs []*rpc.Message
+		var msgs []rpc.Message
 		var err error
 		if task.AddInferior != nil {
 			msgs, err = s.handleAddInferiorTask(task.AddInferior)
@@ -324,7 +323,7 @@ func (s *Supervisor) HandleScheduleTasks(
 
 func (s *Supervisor) handleAddInferiorTask(
 	task *AddInferior,
-) ([]*rpc.Message, error) {
+) ([]rpc.Message, error) {
 	var err error
 	stateMachine, ok := s.stateMachines.Get(task.ID)
 	if !ok {
@@ -339,7 +338,7 @@ func (s *Supervisor) handleAddInferiorTask(
 
 func (s *Supervisor) handleRemoveInferiorTask(
 	task *RemoveInferior,
-) ([]*rpc.Message, error) {
+) ([]rpc.Message, error) {
 	stateMachine, ok := s.stateMachines.Get(task.ID)
 	if !ok {
 		log.Warn("statemachine not found",
@@ -359,7 +358,7 @@ func (s *Supervisor) handleRemoveInferiorTask(
 
 func (s *Supervisor) handleMoveInferiorTask(
 	task *MoveInferior,
-) ([]*rpc.Message, error) {
+) ([]rpc.Message, error) {
 	stateMachine, ok := s.stateMachines.Get(task.ID)
 	if !ok {
 		log.Warn("statemachine not found",
@@ -372,7 +371,7 @@ func (s *Supervisor) handleMoveInferiorTask(
 
 func (s *Supervisor) handleBurstBalanceTasks(
 	task *BurstBalance,
-) ([]*rpc.Message, error) {
+) ([]rpc.Message, error) {
 	perCapture := make(map[model.CaptureID]int)
 	for _, task := range task.AddInferiors {
 		perCapture[task.CaptureID]++
@@ -388,9 +387,9 @@ func (s *Supervisor) handleBurstBalanceTasks(
 	fields = append(fields, zap.Int("RemoveInferiors", len(task.RemoveInferiors)))
 	fields = append(fields, zap.Int("MoveInferiors", len(task.MoveInferiors)))
 	fields = append(fields, zap.String("ID", s.ID.String()))
-	log.Info("schedulerv3: handle burst balance task", fields...)
+	log.Info("handle burst balance task", fields...)
 
-	sentMsgs := make([]*rpc.Message, 0, len(task.AddInferiors))
+	sentMsgs := make([]rpc.Message, 0, len(task.AddInferiors))
 	for i := range task.AddInferiors {
 		addInferior := task.AddInferiors[i]
 		if _, ok := s.runningTasks.Get(addInferior.ID); ok {
@@ -451,96 +450,4 @@ func (s *Supervisor) checkAllCaptureInitialized() bool {
 		}
 	}
 	return len(s.captures) != 0
-}
-
-// BurstBalance for set up or unplanned TiCDC node failure.
-// Supervisor needs to balance interrupted inferior as soon as possible.
-type BurstBalance struct {
-	AddInferiors    []*AddInferior
-	RemoveInferiors []*RemoveInferior
-	MoveInferiors   []*MoveInferior
-}
-
-func (b BurstBalance) String() string {
-	if len(b.AddInferiors) != 0 {
-		return fmt.Sprintf("BurstBalance, add inferiors: %v", b.AddInferiors)
-	}
-	if len(b.RemoveInferiors) != 0 {
-		return fmt.Sprintf("BurstBalance, remove inferiors: %v", b.RemoveInferiors)
-	}
-	if len(b.MoveInferiors) != 0 {
-		return fmt.Sprintf("BurstBalance, move inferiors: %v", b.MoveInferiors)
-	}
-	return "BurstBalance, no tasks"
-}
-
-// MoveInferior is a schedule task for moving a inferior.
-type MoveInferior struct {
-	ID          InferiorID
-	DestCapture model.CaptureID
-}
-
-func (t MoveInferior) String() string {
-	return fmt.Sprintf("MoveInferior, span: %s, dest: %s",
-		t.ID.String(), t.DestCapture)
-}
-
-// AddInferior is a schedule task for adding an inferior.
-type AddInferior struct {
-	ID        InferiorID
-	CaptureID model.CaptureID
-}
-
-func (t AddInferior) String() string {
-	return fmt.Sprintf("AddInferior, span: %s, capture: %s",
-		t.ID.String(), t.CaptureID)
-}
-
-// RemoveInferior is a schedule task for removing an inferior.
-type RemoveInferior struct {
-	ID        InferiorID
-	CaptureID model.CaptureID
-}
-
-func (t RemoveInferior) String() string {
-	return fmt.Sprintf("RemoveInferior, ID: %s, capture: %s",
-		t.ID.String(), t.CaptureID)
-}
-
-// ScheduleTask is a schedule task that wraps add/move/remove inferior tasks.
-type ScheduleTask struct { //nolint:revive
-	MoveInferior   *MoveInferior
-	AddInferior    *AddInferior
-	RemoveInferior *RemoveInferior
-	BurstBalance   *BurstBalance
-}
-
-// Name returns the name of a schedule task.
-func (s *ScheduleTask) Name() string {
-	if s.MoveInferior != nil {
-		return "moveInferior"
-	} else if s.AddInferior != nil {
-		return "addInferior"
-	} else if s.RemoveInferior != nil {
-		return "removeInferior"
-	} else if s.BurstBalance != nil {
-		return "burstBalance"
-	}
-	return "unknown"
-}
-
-func (s *ScheduleTask) String() string {
-	if s.MoveInferior != nil {
-		return s.MoveInferior.String()
-	}
-	if s.AddInferior != nil {
-		return s.AddInferior.String()
-	}
-	if s.RemoveInferior != nil {
-		return s.RemoveInferior.String()
-	}
-	if s.BurstBalance != nil {
-		return s.BurstBalance.String()
-	}
-	return ""
 }

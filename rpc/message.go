@@ -15,5 +15,6 @@ package rpc
 
 // Message for rpc
 // todo: define it in proto file
-type Message struct {
+type Message interface {
+	GetType() string
 }
