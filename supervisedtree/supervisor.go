@@ -24,6 +24,8 @@ type SupervisorID struct {
 	ObjectID uuid.UUID
 }
 
+// A supervisor is a node in the supervised tree.
+// Each supervisor has a superior (the manager of this node) and some inferiors (the wokers of this node).
 type Supervisor interface {
 	GetID() SupervisorID
 	GetToken() *AliveToken
