@@ -387,7 +387,7 @@ func (s *Supervisor) handleBurstBalanceTasks(
 	fields = append(fields, zap.Int("RemoveInferiors", len(task.RemoveInferiors)))
 	fields = append(fields, zap.Int("MoveInferiors", len(task.MoveInferiors)))
 	fields = append(fields, zap.String("ID", s.ID.String()))
-	log.Info("schedulerv3: handle burst balance task", fields...)
+	log.Info("handle burst balance task", fields...)
 
 	sentMsgs := make([]rpc.Message, 0, len(task.AddInferiors))
 	for i := range task.AddInferiors {
