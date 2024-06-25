@@ -23,19 +23,19 @@ import (
 
 // 负责从 logService 中拉取所有 event，解码分发给各个 dispatcher
 type EventCollector struct {
-	grpcPool                  *conn.ConnAndClientPool      // 用于获取 client
-	masterClient              *conn.ConnAndTableAddrClient // 专门用于跟 log master 通信
+	grpcPool                  *conn.EventFeedConnAndClientPool // 用于获取 client
+	masterClient              *conn.TableAddrConnAndClient     // 专门用于跟 log master 通信
 	clientMaxDispatcherNumber int
-	clients                   map[*conn.ConnAndClient][]uint64           // client --> dispatcherIDList
-	addrMap                   map[string][]*conn.ConnAndClient           // addr --> client
+	clients                   map[*conn.EventFeedConnAndClient][]uint64  // client --> dispatcherIDList
+	addrMap                   map[string][]*conn.EventFeedConnAndClient  // addr --> client
 	dispatcherMap             map[uint64]dispatcher.TableEventDispatcher // dispatcher_id --> dispatcher
 }
 
 func newEventCollector(masterAddr string) *EventCollector {
 	eventCollector := EventCollector{
-		grpcPool: conn.NewConnAndClientPool(&security.Credential{}, 100), // todo:
+		grpcPool: conn.NewEventFeedConnAndClientPool(&security.Credential{}, 100), // todo:
 	}
-	eventCollector.masterClient, _ = eventCollector.grpcPool.NewConnAndTableAddrClient(masterAddr)
+	eventCollector.masterClient, _ = conn.NewConnAndTableAddrClient(masterAddr, &security.Credential{})
 	return &eventCollector
 }
 
@@ -62,8 +62,8 @@ func (c *EventCollector) RegisterDispatcher(dispatcher *dispatcher.TableEventDis
 	}
 }
 
-func (c *EventCollector) run(cc *conn.ConnAndClient) {
-	client := cc.client
+func (c *EventCollector) run(cc *conn.EventFeedConnAndClient) {
+	client := cc.Client
 	for {
 		eventResponse, err := client.Recv() // 这边收到 event 要分发掉 -- decode 的说的是这个自带的么
 		if err != nil {
@@ -84,7 +84,7 @@ func (c *EventCollector) run(cc *conn.ConnAndClient) {
 
 // 这个要想一下，做成单线程，还是收发拆开
 func (c *EventCollector) getAddr(dispatcher *dispatcher.TableEventDispatcher) string {
-	client := c.masterClient.client
+	client := c.masterClient.Client
 	// make the msg
 	err := client.Send(msg)
 	if err != nil {

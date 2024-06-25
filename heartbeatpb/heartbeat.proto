@@ -17,6 +17,7 @@ message TableSpanProgress {
 
 message HeartBeatRequest {
     repeated TableSpanProgress progress = 1;
+     uint64 eventDispatcherManagerID = 2;
 } 
 
 enum Action {
@@ -30,12 +31,14 @@ message TableProgress {
     bool IsBlocked      = 2;
     uint64 BlockTs         = 3;
     uint64 CheckpointTs    = 4;
-    Action action = 5;
+    
 }
 
+// 这名字重新取，我真的要吐了
 message TableProgressInfo {
     uint64 dispatcherID = 1; // for which dispatcher
     repeated TableProgress tableProgresses = 2; // 救命了这名字取得
+    Action action = 3;
 
 }
 message HeartBeatResponse {

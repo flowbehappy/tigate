@@ -48,15 +48,15 @@ func (s *State) clear() {
 }
 
 type TableSpanProgress struct {
-	span         *TableSpan
-	isBlocked    bool
-	blockTs      uint64
-	checkpointTs uint64
+	Span         *TableSpan
+	IsBlocked    bool
+	BlockTs      uint64
+	CheckpointTs uint64
 }
 
 type HeartBeatResponseMessage struct { // 最好需要一个对应，对应 blocked by 什么 event 的 信号，避免出现乱序的问题
-	action             Action
-	otherTableProgress []*TableSpanProgress
+	Action             Action
+	OtherTableProgress []*TableSpanProgress
 }
 
 type TableEventDispatcher struct {
@@ -69,7 +69,7 @@ type TableEventDispatcher struct {
 
 	// 搞个 channel 来接收 heartbeat 产生的 信息，然后下推数据这个就可以做成 await 了
 	// heartbeat 会更新依赖的 tableSpan 的 状态，然后满足了就删掉，下次发送就不用发了，但最终推动他变化的还是要收到 action
-	heartbeatChan <-chan *HeartBeatResponseMessage
+	HeartbeatChan chan *HeartBeatResponseMessage
 }
 
 func newTableEventDispatcher() *TableEventDispatcher {

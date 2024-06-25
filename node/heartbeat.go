@@ -14,24 +14,27 @@
 package node
 
 import (
+	"new_arch/downstreamadapter/dispatchermanager"
 	"new_arch/utils/conn"
 	"sync"
 )
 
 // 单独的 goroutine 用于收发 heartbeat 消息
 type HeartBeatCollector struct {
-	grpcPool                  *conn.ConnAndClientPool          // pool 要重写过
-	clients                   map[*conn.ConnAndClient][]uint64 // client --> eventdispatchermanagerIDList
-	clientMaxDispatcherNumber uint64
-	addr                      string
-	wg                        *sync.WaitGroup
+	grpcPool                         *conn.HeartbeatConnAndClientPool          // pool 要重写过
+	clients                          map[*conn.HeartbeatConnAndClient][]uint64 // client --> eventdispatchermanagerIDList
+	clientMaxDispatcherManagerNumber int
+	addr                             string // 可能要支持多个 addr
+	wg                               *sync.WaitGroup
+	reponseChanMap                   map[uint64]*dispatchermanager.HeartbeatResponseQueue
+	requestQueue                     *HeartbeatRequestQueue
 	// channel 的函数
 }
 
-func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherManager) error {
+func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *dispatchermanager.EventDispatcherManager) error {
 	flag := false
 	for client, managerIDLists := range c.clients { // 这边先用个遍历，后面看看有什么更合适的结构
-		if len(managerIDLists) < c.clientMaxDispatcherNumber {
+		if len(managerIDLists) < c.clientMaxDispatcherManagerNumber {
 			c.clients[client] = append(c.clients[client], m.ID)
 			flag = true
 			break
@@ -43,25 +46,29 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherMa
 		c.clients[newClient] = append(c.clients[newClient], m.ID)
 		c.wg.Add(1)
 		c.wg.Add(1)
-		go c.sendMessages(newClient)
+		go c.SendMessages(newClient)
 		go c.RecvMessages(newClient)
 	}
 }
 
-func (c *HeartBeatCollector) sendMessages(cc *conn.ConnAndClient) {
-	client := cc.client
+func (c *HeartBeatCollector) SendMessages(cc *conn.HeartbeatConnAndClient) {
+	client := cc.Client
 	for {
-		select {
-		case message := <-c.messageChan:
-			// 发出去
+		request := c.requestQueue.Dequeue()
+		// 发出去
+		client.Send(request)
 		}
 	}
 }
 
-func (c *HeartBeatCollector) sendMessages(cc *conn.ConnAndClient) {
-	client := cc.client
+func (c *HeartBeatCollector) RecvMessages(cc *conn.HeartbeatConnAndClient) {
+	client := cc.Client
 	for {
 		heartbeatResponse, err := client.Recv() // 分发 heartbeat response
+		managerId := heartbeatResponse.EventDispatcherManagerID
+		if queue, ok := c.reponseChanMap[managerId]; ok {
+			queue.Enqueue(heartbeatResponse)
+		}
 		// 分发 heartbeat response
 	}
 }

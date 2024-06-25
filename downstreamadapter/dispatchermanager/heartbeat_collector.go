@@ -14,6 +14,8 @@
 package dispatchermanager
 
 import (
+	"new_arch/downstreamadapter/dispatcher"
+	"new_arch/heartbeatpb"
 	"new_arch/utils/threadpool"
 	"time"
 )
@@ -58,15 +60,63 @@ func (t *HeartbeatSendTask) release() {
 	t.ticker.Stop()
 }
 
-// type HeartbeatRecvTask struct {
-// 	eventDispatcherManager *EventDispatcherManager
-// 	client                 *ConnAndHeartBeatClient
-// }
+// 将收到的信息分发给各个 dispatcher
+type HeartbeatRecvTask struct {
+	eventDispatcherManager *EventDispatcherManager
+	queue                  *HeartbeatResponseQueue
+	//chan
+}
 
-// func newHeartbeatRecvTask() *HeartbeatRecvTask {
-// 	// 初始化 client
-// }
+func newHeartbeatRecvTask() *HeartbeatRecvTask {
 
-// func (t *HeartbeatRecvTask) execute(timeout time.Duration) threadpool.TaskStatus {
-// 	//
-// }
+}
+
+func (t *HeartbeatRecvTask) execute(timeout time.Duration) threadpool.TaskStatus {
+	// 从 channel 里拿数据，然后分发给各个 dispatcher
+	for {
+		heartbeatResponse := t.queue.Dequeue()
+		tableProgressInfo := heartbeatResponse.Info
+		for _, info := range tableProgressInfo {
+			dispatcherId := info.DispatcherID
+			if dispatcherItem, ok := t.eventDispatcherManager.dispatcherMap[dispatcherId]; ok {
+				var message dispatcher.HeartBeatResponseMessage
+				for _, progress := range info.TableProgresses {
+					message.OtherTableProgress = append(message.OtherTableProgress, &dispatcher.TableSpanProgress{
+						Span:         progress.Span,
+						IsBlocked:    progress.IsBlocked,
+						BlockTs:      progress.BlockTs,
+						CheckpointTs: progress.CheckpointTs,
+					})
+				}
+				message.Action = dispatcher.Action(info.Action)
+				dispatcherItem.HeartbeatChan <- &message
+			}
+
+		}
+	}
+}
+
+type HeartbeatResponseQueue struct {
+	queue chan *heartbeatpb.HeartBeatResponse
+}
+
+func NewHeartbeatResponseQueue() *HeartbeatResponseQueue {
+	return &HeartbeatResponseQueue{
+		queue: make(chan *heartbeatpb.HeartBeatResponse, 1000), // 带缓冲的 channel
+	}
+}
+
+// Enqueue 向队列中添加消息
+func (q *HeartbeatResponseQueue) Enqueue(response *heartbeatpb.HeartBeatResponse) {
+	q.queue <- response
+}
+
+// Dequeue 从队列中移除并返回一条消息
+func (q *HeartbeatResponseQueue) Dequeue() *heartbeatpb.HeartBeatResponse {
+	return <-q.queue
+}
+
+// Close 关闭队列的 channel
+func (q *HeartbeatResponseQueue) Close() {
+	close(q.queue)
+}
