@@ -4,6 +4,7 @@ go 1.21.8
 
 require (
 	github.com/google/btree v1.1.2
+	github.com/google/uuid v1.6.0
 	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
 	github.com/pingcap/tiflow v0.0.0-20240621054018-c001638fcf8c
 	go.uber.org/zap v1.27.0
@@ -76,7 +77,6 @@ require (
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/s2a-go v0.1.7 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.2 // indirect
 	github.com/googleapis/gax-go/v2 v2.12.3 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 // indirect
