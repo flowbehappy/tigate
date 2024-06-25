@@ -49,7 +49,7 @@ func (r Role) String() string {
 	}
 }
 
-// SchedulerStatus is the state of Inferior in supervisor.
+// SchedulerStatus is the state of Inferior in scheduler.
 //
 //	 AddInferior
 //	┌────────┐   ┌─────────┐
@@ -58,8 +58,8 @@ func (r Role) String() string {
 //	     ┌──────────┘   ^
 //	     v              │ MoveInferior
 //	┌────────┐   ┌──────┴──────┐ RemoveInferior ┌──────────┐
-//	│ Commit ├──>│ Working │────────────>│ Removing │
-//	└────────┘   └─────────────┘             └──────────┘
+//	│ Commit ├──>│ Working     │───────────────>│ Removing │
+//	└────────┘   └─────────────┘                └──────────┘
 //
 // When a capture shutdown unexpectedly, we may need to transit the state to
 // Absent or Working immediately.
@@ -109,6 +109,7 @@ const (
 )
 
 type Inferior interface {
+	GetID() InferiorID
 	UpdateStatus(InferiorStatus)
 	NewInferiorStatus(ComponentStatus) InferiorStatus
 	NewAddInferiorMessage(model.CaptureID, bool) *rpc.Message
@@ -141,7 +142,7 @@ type StateMachine struct {
 }
 
 // NewStateMachine build a state machine from all capture reported status
-// it could be called after a supervisor is bootstrapped
+// it could be called after a scheduler is bootstrapped
 func NewStateMachine(
 	id InferiorID,
 	inferiorStatus map[model.CaptureID]InferiorStatus,
