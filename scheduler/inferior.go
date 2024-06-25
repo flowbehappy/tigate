@@ -112,8 +112,8 @@ type Inferior interface {
 	GetID() InferiorID
 	UpdateStatus(InferiorStatus)
 	NewInferiorStatus(ComponentStatus) InferiorStatus
-	NewAddInferiorMessage(model.CaptureID, bool) *rpc.Message
-	NewRemoveInferiorMessage(model.CaptureID) *rpc.Message
+	NewAddInferiorMessage(model.CaptureID, bool) rpc.Message
+	NewRemoveInferiorMessage(model.CaptureID) rpc.Message
 }
 
 type InferiorID interface {
@@ -375,12 +375,12 @@ func (s *StateMachine) checkInvariant(
 // poll transit state based on input and the current state.
 func (s *StateMachine) poll(
 	input InferiorStatus, captureID model.CaptureID,
-) ([]*rpc.Message, error) {
+) ([]rpc.Message, error) {
 	if _, ok := s.Captures[captureID]; !ok {
 		return nil, nil
 	}
 
-	msgBuf := make([]*rpc.Message, 0)
+	msgBuf := make([]rpc.Message, 0)
 	stateChanged := true
 	for stateChanged {
 		err := s.checkInvariant(input, captureID)
@@ -388,7 +388,7 @@ func (s *StateMachine) poll(
 			return nil, errors.Trace(err)
 		}
 		oldState := s.State
-		var msg *rpc.Message
+		var msg rpc.Message
 		switch s.State {
 		case SchedulerStatusAbsent:
 			stateChanged, err = s.pollOnAbsent(input, captureID)
@@ -449,7 +449,7 @@ func (s *StateMachine) pollOnAbsent(
 
 func (s *StateMachine) pollOnPrepare(
 	input InferiorStatus, captureID model.CaptureID,
-) (*rpc.Message, bool, error) {
+) (rpc.Message, bool, error) {
 	switch input.GetInferiorState() {
 	case ComponentStatusAbsent:
 		if s.isInRole(captureID, RoleSecondary) {
@@ -515,7 +515,7 @@ func (s *StateMachine) pollOnPrepare(
 
 func (s *StateMachine) pollOnCommit(
 	input InferiorStatus, captureID model.CaptureID,
-) (*rpc.Message, bool, error) {
+) (rpc.Message, bool, error) {
 	switch input.GetInferiorState() {
 	case ComponentStatusPrepared:
 		if s.isInRole(captureID, RoleSecondary) {
@@ -694,7 +694,7 @@ func (s *StateMachine) pollOnWorking(
 //nolint:unparam
 func (s *StateMachine) pollOnRemoving(
 	input InferiorStatus, captureID model.CaptureID,
-) (*rpc.Message, bool, error) {
+) (rpc.Message, bool, error) {
 	switch input.GetInferiorState() {
 	case ComponentStatusPrepared,
 		ComponentStatusPreparing,
@@ -730,13 +730,13 @@ func (s *StateMachine) pollOnRemoving(
 
 func (s *StateMachine) handleInferiorStatus(
 	input InferiorStatus, from model.CaptureID,
-) ([]*rpc.Message, error) {
+) ([]rpc.Message, error) {
 	return s.poll(input, from)
 }
 
 func (s *StateMachine) handleAddInferior(
 	captureID model.CaptureID,
-) ([]*rpc.Message, error) {
+) ([]rpc.Message, error) {
 	// Ignore add inferior if it's not in Absent state.
 	if s.State != SchedulerStatusAbsent {
 		log.Warn("add inferior is ignored",
@@ -766,7 +766,7 @@ func (s *StateMachine) handleAddInferior(
 
 func (s *StateMachine) handleMoveInferior(
 	dest model.CaptureID,
-) ([]*rpc.Message, error) {
+) ([]rpc.Message, error) {
 	// Ignore move inferior if it has been removed already.
 	if s.hasRemoved() {
 		log.Warn("move inferior is ignored",
@@ -791,7 +791,7 @@ func (s *StateMachine) handleMoveInferior(
 	return s.poll(status, dest)
 }
 
-func (s *StateMachine) handleRemoveInferior() ([]*rpc.Message, error) {
+func (s *StateMachine) handleRemoveInferior() ([]rpc.Message, error) {
 	// Ignore remove inferior if it has been removed already.
 	if s.hasRemoved() {
 		log.Warn("remove inferior is ignored",
@@ -819,7 +819,7 @@ func (s *StateMachine) handleRemoveInferior() ([]*rpc.Message, error) {
 // whether s is affected by the capture shutdown.
 func (s *StateMachine) handleCaptureShutdown(
 	captureID model.CaptureID,
-) ([]*rpc.Message, bool, error) {
+) ([]rpc.Message, bool, error) {
 	_, ok := s.Captures[captureID]
 	if !ok {
 		// r is not affected by the capture shutdown.
