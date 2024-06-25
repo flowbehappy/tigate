@@ -111,6 +111,7 @@ const (
 type Inferior interface {
 	GetID() InferiorID
 	UpdateStatus(InferiorStatus)
+	IsAlive() bool
 	NewInferiorStatus(ComponentStatus) InferiorStatus
 	NewAddInferiorMessage(model.CaptureID, bool) rpc.Message
 	NewRemoveInferiorMessage(model.CaptureID) rpc.Message

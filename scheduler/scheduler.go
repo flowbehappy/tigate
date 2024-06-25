@@ -23,7 +23,7 @@ type Scheduler interface {
 	Name() string
 	Schedule(
 		allInferiors []Inferior,
-		aliveCaptures map[model.CaptureID]CaptureStatus,
+		aliveCaptures map[model.CaptureID]*CaptureStatus,
 		stateMachines Map[InferiorID, *StateMachine],
 	) []*ScheduleTask
 }
@@ -46,7 +46,7 @@ func (b *basicScheduler) Name() string {
 
 func (b *basicScheduler) Schedule(
 	allInferiors []Inferior,
-	aliveCaptures map[model.CaptureID]CaptureStatus,
+	aliveCaptures map[model.CaptureID]*CaptureStatus,
 	stateMachines Map[InferiorID, *StateMachine],
 ) []*ScheduleTask {
 	tasks := make([]*ScheduleTask, 0)

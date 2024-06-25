@@ -48,7 +48,7 @@ type Supervisor struct {
 	// track all status reported by remote inferiors when bootstrap
 	initStatus map[model.CaptureID][]InferiorStatus
 
-	bootstrapMessageFunc func(model.CaptureID) *rpc.Message
+	bootstrapMessageFunc func(model.CaptureID) rpc.Message
 }
 
 type CaptureStatus struct {
@@ -69,7 +69,7 @@ func NewSupervisor(
 	stateMachines Map[InferiorID, *StateMachine],
 	runningTasks Map[InferiorID, *ScheduleTask],
 	newInferiorFunc func(InferiorID) Inferior,
-	bootstrapMessageFunc func(model.CaptureID) *rpc.Message) *Supervisor {
+	bootstrapMessageFunc func(model.CaptureID) rpc.Message) *Supervisor {
 	return &Supervisor{
 		ID:                   ID,
 		stateMachines:        stateMachines,
@@ -81,12 +81,16 @@ func NewSupervisor(
 	}
 }
 
+func (s *Supervisor) GetInferiors() Map[InferiorID, *StateMachine] {
+	return s.stateMachines
+}
+
 // HandleAliveCaptureUpdate update captures liveness.
 func (s *Supervisor) HandleAliveCaptureUpdate(
 	aliveCaptures map[model.CaptureID]*model.CaptureInfo,
-) ([]*rpc.Message, []model.CaptureID) {
+) ([]rpc.Message, []model.CaptureID) {
 	var removed []model.CaptureID
-	msgs := make([]*rpc.Message, 0)
+	msgs := make([]rpc.Message, 0)
 	for id, info := range aliveCaptures {
 		if _, ok := s.captures[id]; !ok {
 			// A new capture.
@@ -113,6 +117,7 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 			}
 			removed = append(removed, id)
 		}
+		// not removed, if not initialized, try to send bootstrap message again
 		if capture.state == CaptureStateUninitialized &&
 			time.Since(capture.lastBootstrapTime) > time.Second {
 			msgs = append(msgs, s.bootstrapMessageFunc(id))
@@ -125,6 +130,13 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 			zap.String("ID", s.ID.String()),
 			zap.Int("captureCount", len(s.captures)))
 		s.initialized = true
+	}
+	if len(removed) > 0 {
+		removedMsgs, err := s.HandleCaptureChanges(removed)
+		if err != nil {
+			log.Error("handle changes failed", zap.Error(err))
+		}
+		msgs = append(msgs, removedMsgs...)
 	}
 	return msgs, removed
 }

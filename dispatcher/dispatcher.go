@@ -11,15 +11,4 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package rpc
-
-// Message for rpc
-// todo: define it in proto file
-type Message interface {
-	GetType() string
-}
-
-type RpcClient interface {
-	// SendMsg send messages to remote server
-	SendMsg(nodeID string, msgs []Message) error
-}
+package dispatcher
