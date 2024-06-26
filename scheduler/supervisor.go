@@ -66,14 +66,12 @@ func NewCaptureStatus(capture *model.CaptureInfo) *CaptureStatus {
 
 func NewSupervisor(
 	ID InferiorID,
-	stateMachines Map[InferiorID, *StateMachine],
-	runningTasks Map[InferiorID, *ScheduleTask],
 	newInferiorFunc func(InferiorID) Inferior,
 	bootstrapMessageFunc func(model.CaptureID) rpc.Message) *Supervisor {
 	return &Supervisor{
 		ID:                   ID,
-		stateMachines:        stateMachines,
-		runningTasks:         runningTasks,
+		stateMachines:        NewBtreeMap[InferiorID, *StateMachine](),
+		runningTasks:         NewBtreeMap[InferiorID, *ScheduleTask](),
 		NewInferior:          newInferiorFunc,
 		initialized:          false,
 		captures:             make(map[model.CaptureID]*CaptureStatus),
@@ -85,8 +83,14 @@ func (s *Supervisor) GetAllCaptures() map[model.CaptureID]*CaptureStatus {
 	return s.captures
 }
 
+// GetInferiors return all state machines, caller should not modify it
 func (s *Supervisor) GetInferiors() Map[InferiorID, *StateMachine] {
 	return s.stateMachines
+}
+
+// GetInferior returns the state machine for that inferior id, caller should not modify it
+func (s *Supervisor) GetInferior(id InferiorID) (*StateMachine, bool) {
+	return s.stateMachines.Get(id)
 }
 
 // HandleAliveCaptureUpdate update captures liveness.
@@ -145,6 +149,8 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 	return msgs, removed
 }
 
+// UpdateCaptureStatus update the capture status after receive a bootstrap message from remote
+// supervisor will cache the status if the supervisor is not initialized
 func (s *Supervisor) UpdateCaptureStatus(from model.CaptureID, statuses []InferiorStatus) {
 	c, ok := s.captures[from]
 	if !ok {
@@ -452,6 +458,7 @@ func (s *Supervisor) handleBurstBalanceTasks(
 }
 
 // CheckAllCaptureInitialized check if all capture is initialized.
+// returns true when all capture reports the bootstrap response
 func (s *Supervisor) CheckAllCaptureInitialized() bool {
 	return s.initialized && s.checkAllCaptureInitialized()
 }

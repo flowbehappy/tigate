@@ -28,10 +28,17 @@ type Coordinator struct {
 	scheduler  scheduler.Scheduler
 }
 
-func NewCoordinator(rpcClient rpc.RpcClient) *Coordinator {
-	return &Coordinator{
+func NewCoordinator(rpcClient rpc.RpcClient,
+	capture *model.CaptureInfo) *Coordinator {
+	c := &Coordinator{
 		rpcClient: rpcClient,
 	}
+	c.supervisor = scheduler.NewSupervisor(
+		CoordinatorID(capture.ID),
+		NewChangefeed,
+		c.newBootstrapMessage,
+	)
+	return c
 }
 
 func (c *Coordinator) checkLiveness() ([]rpc.Message, error) {
@@ -47,6 +54,10 @@ func (c *Coordinator) checkLiveness() ([]rpc.Message, error) {
 			return true
 		})
 	return msgs, nil
+}
+
+func (c *Coordinator) newBootstrapMessage(model.CaptureID) rpc.Message {
+	return nil
 }
 
 func (c *Coordinator) scheduleMaintainer() ([]rpc.Message, error) {
@@ -99,6 +110,10 @@ type changefeed struct {
 	Status *model.ChangeFeedStatus
 
 	lastHeartBeat time.Time
+}
+
+func NewChangefeed(ID scheduler.InferiorID) scheduler.Inferior {
+	return &changefeed{}
 }
 
 func (c *changefeed) UpdateStatus(status scheduler.InferiorStatus) {
