@@ -25,13 +25,13 @@ import (
 // 提供最基础的 提交任务，拿出任务执行的能力
 type ThreadPool struct {
 	scheduler   *TaskScheduler // 这理论上是个接口，这玩意倒是真不一定
-	taskQueue   *TaskQueue     // 接口2
+	taskQueue   TaskQueue      // 接口2
 	threadCount int            // 开多少个线程
 	wg          sync.WaitGroup
 	timeout     time.Duration // 每个 task 最多能跑多少时间，就要被换出来
 }
 
-func newThreadPool(scheduler *TaskScheduler, taskQueue *TaskQueue, threadCount int) *ThreadPool {
+func NewThreadPool(scheduler *TaskScheduler, taskQueue TaskQueue, threadCount int) *ThreadPool {
 	threadPool := ThreadPool{
 		scheduler:   scheduler,
 		taskQueue:   taskQueue,

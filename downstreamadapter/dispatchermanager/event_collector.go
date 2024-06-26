@@ -49,7 +49,7 @@ func (c *EventCollector) RegisterDispatcher(dispatcher *dispatcher.TableEventDis
 	for _, client := range clients { // 这边先用个遍历，后面看看有什么更合适的结构
 		dispatcherIDLists := c.clients[client]
 		if len(dispatcherIDLists) < c.clientMaxDispatcherNumber {
-			c.clients[client] = append(c.clients[client], dispatcher.ID)
+			c.clients[client] = append(c.clients[client], dispatcher.Id)
 			flag = true
 			break
 		}
@@ -57,7 +57,7 @@ func (c *EventCollector) RegisterDispatcher(dispatcher *dispatcher.TableEventDis
 	if !flag {
 		newClient, _ := c.grpcPool.Connect(addr)
 		c.addrMap[addr] = append(c.addrMap[addr], newClient)
-		c.clients[newClient] = append(c.clients[newClient], dispatcher.ID)
+		c.clients[newClient] = append(c.clients[newClient], dispatcher.Id)
 		go c.run(newClient)
 	}
 }

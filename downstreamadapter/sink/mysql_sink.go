@@ -16,6 +16,7 @@ package sink
 import (
 	"new_arch/downstreamadapter/sink/conflictdetector"
 	"new_arch/downstreamadapter/worker"
+	"new_arch/downstreamadapter/writer"
 	"new_arch/utils/threadpool"
 	"sync"
 	"time"
@@ -35,21 +36,23 @@ const (
 // 一个 event dispatcher manager 对应一个 mysqlSink
 // 实现 Sink 的接口
 type MysqlSink struct {
+	changefeedID     uint64
 	conflictDetector *conflictdetector.ConflictDetector[*Event]
 	// TableProgress 里面维护了目前正在 sink 中的 event ts 信息
 	// TableProgress 对外提供查询当前 table checkpointTs 的能力
 	// TableProgress 对外提供当前 table 是否有 event 在 sink 中等待被 flush 的能力--用于判断 ddl 是否达到下推条件
 	tableProgressMap map[*Span]*TableProgress
 	// 主要是要保持一样的生命周期？不然 channel 会对应不上
-	workers  []*worker.MysqlWorker
-	eventChs map[*Span]chan *Event // 这个感觉最好也不要用 channel，用一个代表 channal 的 struct
-	tasks    map[*Span]*MysqlSinkTask
+	// workers  []*worker.MysqlWorker
+	ddlWorker *worker.MysqlDDLWorker
+	eventChs  map[*Span]chan *Event // 这个感觉最好也不要用 channel，用一个代表 channal 的 struct
+	tasks     map[*Span]*MysqlSinkTask
 
 	mutex sync.Mutex // 用于新插入 dispatcher 或者 remove dispatcher 时保护 tableProgressMap，eventChs，tasks 对象
 }
 
 // event dispatcher manager 初始化的时候创建 mysqlSink 对象
-func newMysqlSink(workerCount int) *MysqlSink {
+func NewMysqlSink(workerCount int, workerTaskScheduler *threadpool.TaskScheduler, config *Config) *MysqlSink {
 	mysqlSink := MysqlSink{
 		conflictDetector: conflictdetector.NewConflictDetector[*Event](DefaultConflictDetectorSlots, conflictdetector.TxnCacheOption{
 			Count:         workerCount,
@@ -60,10 +63,14 @@ func newMysqlSink(workerCount int) *MysqlSink {
 		eventChs:         make(map[*Span]chan *Event),
 		tasks:            make(map[*Span]*MysqlSinkTask),
 	}
+	// 初始化 ddl/syncpoint 用的 worker
+	mysqlSink.ddlWorker = &worker.MysqlDDLWorker{MysqlWriter: writer.NewMysqlWriter(config)}
+
+	// 初始化 dml worker 相关 task -- 这些是长时间 run 的 task
 	for i := 0; i < workerCount; i++ {
-		mysqlSink.workers = append(mysqlSink.workers, worker.NewMysqlWorker(mysqlSink.conflictDetector.GetOutChByCacheID(int64(i))))
+		//mysqlSink.workers = append(mysqlSink.workers, worker.NewMysqlWorker(mysqlSink.conflictDetector.GetOutChByCacheID(int64(i))))
+		workerTaskScheduler.Submit(worker.NewMysqlWorkerTask(&mysqlSink.conflictDetector.GetOutChByCacheID(int64(i)), config, 128))
 	}
-	// TODO: add worker task into thread pool
 	return &mysqlSink
 }
 
@@ -81,13 +88,13 @@ func (s *MysqlSink) AddDMLEvent(tableSpan *Span, event *Event) {
 	}
 }
 
-func (s *mysqlSink) AddDDLAndSyncPointEvent(tableSpan *Span, event *Event) { // 或许 ddl 也可以考虑有专用的 worker？
+func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *Span, event *Event) { // 或许 ddl 也可以考虑有专用的 worker？
 	s.mutex.Lock() // TODO:改成读写锁
 	defer s.mutex.Unlock()
 
 	if tableProgress, ok := s.tableProgressMap[tableSpan]; ok { // 这里就可以释放锁了吧？
 		tableProgress.Add(event)
-		task := worker.NewMysqlWorkerDDLEventTask(s.workers[0], event, func() { tableProgress.Remove(event) }) // 先固定用 0 号 worker
+		task := worker.NewMysqlWorkerDDLEventTask(s.ddlWorker, event, func() { tableProgress.Remove(event) }) // 先固定用 0 号 worker
 		// TODO:塞 task 进去
 	}
 }

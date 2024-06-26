@@ -31,7 +31,6 @@ message TableProgress {
     bool IsBlocked      = 2;
     uint64 BlockTs         = 3;
     uint64 CheckpointTs    = 4;
-    
 }
 
 // 这名字重新取，我真的要吐了
@@ -48,4 +47,29 @@ message HeartBeatResponse {
 
 service HeartBeat {
     rpc HeartBeat(stream HeartBeatRequest) returns (stream HeartBeatResponse);
+}
+
+
+
+message CreateEventDispatcherManagerRequest {
+    uint64 changefeedID = 1;
+}
+
+message CreateEventDispatcherManagerResponse { // 需要么，标记删除成功？
+    uint64 changefeedID = 1;
+}
+
+message RemoveEventDispatcherManagerRequest {
+    uint64 changefeedID = 1;
+}
+
+message RemoveEventDispatcherManagerResponse {
+    uint64 changefeedID = 1;
+}
+
+service DispatcherManager {
+    // 为 changefeed 创建 dispatcher manager（bootstrap）
+    rpc CreateEventDispatcherManager(stream CreateEventDispatcherManagerRequest) returns (stream CreateEventDispatcherManagerResponse)
+    // remove changefeed 的时候发送，删除 event dispatcher manager
+    rpc RemoveEventDispatcherManager(stream RemoveEventDispatcherManagerRequest) returns (stream RemoveEventDispatcherManagerResponse)
 }

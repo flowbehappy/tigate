@@ -27,7 +27,7 @@ type WaitReactor struct {
 	taskScheduler *TaskScheduler
 }
 
-func newWaitReactor(threadCount int, taskScheduler *TaskScheduler) *WaitReactor {
+func NewWaitReactor(taskScheduler *TaskScheduler, threadCount int) *WaitReactor {
 	waitReactor := WaitReactor{
 		threadCount:   threadCount,
 		taskScheduler: taskScheduler,

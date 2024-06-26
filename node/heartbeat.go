@@ -57,7 +57,6 @@ func (c *HeartBeatCollector) SendMessages(cc *conn.HeartbeatConnAndClient) {
 		request := c.requestQueue.Dequeue()
 		// 发出去
 		client.Send(request)
-		}
 	}
 }
 

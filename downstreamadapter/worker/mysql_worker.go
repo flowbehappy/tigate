@@ -27,9 +27,13 @@ type MysqlWorker struct { // TODO:这个可以同时做两个 flush 么？先这
 	mysqlWriter MysqlWriter   // 实际负责做 flush 操作
 }
 
+type MysqlDDLWorker struct {
+	MysqlWriter MysqlWriter // 实际负责做 flush 操作
+}
+
 // 这个  task 是单次出现的，执行完就结束，用于处理 ddl 和 sync point event
 type MysqlWorkerDDLEventTask struct {
-	worker   *MysqlWorker
+	worker   *MysqlDDLWorker
 	event    *Event
 	callback func()
 }
@@ -65,7 +69,7 @@ type MysqlWorkerTask struct {
 	events     []*Event
 }
 
-func newMysqlWorkerTask(eventChan <-chan *Event, config *MysqlConfig, maxRows int) *MysqlWorkerTask {
+func NewMysqlWorkerTask(eventChan <-chan *Event, config *MysqlConfig, maxRows int) *MysqlWorkerTask {
 	return &MysqlWorkerTask{
 		worker: &MysqlWorker{
 			eventChan:   eventChan,
@@ -76,7 +80,10 @@ func newMysqlWorkerTask(eventChan <-chan *Event, config *MysqlConfig, maxRows in
 	}
 }
 
-func (t *MysqlWorkerTask) execute() threadpool.TaskStatus {
+func (t *MysqlWorkerTask) GetStatus() threadpool.TaskStatus {
+	return t.taskStatus
+}
+func (t *MysqlWorkerTask) Execute(timeout time.Duration) threadpool.TaskStatus {
 	switch t.taskStatus {
 	case threadpool.Running:
 		return t.executeImpl()
@@ -144,13 +151,13 @@ func (t *MysqlWorkerTask) executeImpl() threadpool.TaskStatus {
 	}
 }
 
-func (t *MysqlWorkerTask) await() threadpool.TaskStatus {
+func (t *MysqlWorkerTask) Await() threadpool.TaskStatus {
 	log.Error("MysqlWorkerTask should not call await()")
 	return threadpool.Failed
 }
 
 // 只有重启或者出问题的时候才 release
-func (t *MysqlWorkerTask) release() {
+func (t *MysqlWorkerTask) Release() {
 	// 直接关闭应该就可以把？
 	// TODO:需要取出 events 么
 	// 不知道要干嘛，不干会咋样么

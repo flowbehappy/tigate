@@ -38,6 +38,17 @@ type State struct {
 	action         Action       //
 }
 
+func NewState() *State {
+	return &State{
+		isBlocked:      false,
+		pengdingEvent:  nil,
+		blockTableSpan: nil,
+		blockTs:        0,
+		sinkAvailable:  false,
+		action:         None,
+	}
+}
+
 func (s *State) clear() {
 	s.isBlocked = false
 	s.pengdingEvent = nil
@@ -60,20 +71,17 @@ type HeartBeatResponseMessage struct { // 最好需要一个对应，对应 bloc
 }
 
 type TableEventDispatcher struct {
+	Id        uint64
 	Ch        <-chan *Event // 转换成一个函数
-	tableSpan *Span
-	sink      *sink.Sink
+	TableSpan *Span
+	Sink      sink.Sink
 
-	state      *State
+	State      *State
 	ResolvedTs uint64
 
 	// 搞个 channel 来接收 heartbeat 产生的 信息，然后下推数据这个就可以做成 await 了
 	// heartbeat 会更新依赖的 tableSpan 的 状态，然后满足了就删掉，下次发送就不用发了，但最终推动他变化的还是要收到 action
 	HeartbeatChan chan *HeartBeatResponseMessage
-}
-
-func newTableEventDispatcher() *TableEventDispatcher {
-	// 创建新的 event dispatcher，同时需要把这个去 logService 注册，并且把自己加到对应的某个处理 thread 里
 }
 
 type HeartBeatInfo struct {

@@ -15,16 +15,63 @@ package dispatchermanager
 
 import (
 	"new_arch/downstreamadapter/dispatcher"
+	"new_arch/downstreamadapter/sink"
 	"new_arch/heartbeatpb"
+	"new_arch/utils/threadpool"
+	"sync/atomic"
 )
 
-type EventDispatcherManager struct {
-	dispatcherMap      map[*Span]*dispatcher.TableEventDispatcher
-	eventCollect       *EventCollector
-	heartbeatCollector *HeartbeatCollector
+var uniqueEventDispatcherID uint64 = 0
+
+const workerCount = 8
+
+func genUniqueEventDispatcherID() uint64 {
+	return atomic.AddUint64(&uniqueEventDispatcherID, 1)
 }
 
-func newEventDispatcherManager() *EventDispatcherManager {
+type EventDispatcherManager struct {
+	DispatcherMap       map[*Span]*dispatcher.TableEventDispatcher
+	EventCollector      *EventCollector
+	HeartbeatCollector  *HeartbeatCollector
+	Id                  uint64
+	ChangefeedID        uint64
+	SinkType            string
+	Sink                sink.Sink
+	WorkerTaskScheduler *threadpool.TaskScheduler
+	SinkConfig          *Config
+	LogServiceAddr      string // log service master addr
+}
+
+func (e *EventDispatcherManager) Init() {
+	// 初始化 sink
+	if e.SinkType == "Mysql" {
+		e.Sink = sink.NewMysqlSink(workerCount, e.SinkConfig)
+	}
+
+	e.EventCollector = newEventCollector(e.LogServiceAddr)
+	// 初始化 table trigger event dispatcher， 注册自己
+}
+
+// 收到 rpc 请求创建，需要通过 event dispatcher manager 来
+func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *Span, startTs uint64) *dispatcher.TableEventDispatcher {
+	// 创建新的 event dispatcher，同时需要把这个去 logService 注册，并且把自己加到对应的某个处理 thread 里
+	if len(e.DispatcherMap) == 0 {
+		e.Init()
+	}
+
+	dispatcher := dispatcher.TableEventDispatcher{
+		Id:            genUniqueEventDispatcherID(),
+		Ch:            make(chan *Event, 1000),
+		TableSpan:     tableSpan,
+		Sink:          e.Sink,
+		State:         dispatcher.NewState(),
+		ResolvedTs:    startTs,
+		HeartbeatChan: make(chan *dispatcher.HeartBeatResponseMessage, 100),
+	}
+
+	e.EventCollector.RegisterDispatcher(&dispatcher)
+
+	return &dispatcher
 }
 
 func (e *EventDispatcherManager) CollectHeartbeatInfo() *heartbeatpb.HeartBeatRequest {

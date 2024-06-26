@@ -35,7 +35,7 @@ type FIFOTaskQueue struct {
 	isFinished bool
 }
 
-func newFIFOTaskQueue() *FIFOTaskQueue {
+func NewFIFOTaskQueue() *FIFOTaskQueue {
 	q := &FIFOTaskQueue{isFinished: false}
 	q.cond = sync.NewCond(&q.mutex)
 	return q

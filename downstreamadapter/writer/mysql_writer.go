@@ -27,6 +27,10 @@ type MysqlWriter struct {
 	cfg *MysqlConfig
 }
 
+func NewMysqlWriter(cfg *MysqlConfig) *MysqlWriter {
+
+}
+
 func (w *MysqlWriter) FlushDDLEvent(event *Event) error {
 }
 

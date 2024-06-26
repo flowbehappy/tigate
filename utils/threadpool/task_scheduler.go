@@ -49,8 +49,16 @@ type TaskScheduler struct {
 	waitReactor       *WaitReactor
 }
 
-func (s *TaskScheduler) submit(task *Task) error {
-	task_status := (*task).getStatus()
+func NewTaskScheduler() *TaskScheduler {
+	taskScheduler := &TaskScheduler{}
+	taskScheduler.cpuTaskThreadPool = NewThreadPool(taskScheduler, NewFIFOTaskQueue(), 8)
+	taskScheduler.ioTaskThreadPool = NewThreadPool(taskScheduler, NewFIFOTaskQueue(), 8)
+	taskScheduler.waitReactor = NewWaitReactor(taskScheduler, 8)
+	return taskScheduler
+}
+
+func (s *TaskScheduler) Submit(task Task) error {
+	task_status := task.getStatus()
 	switch task_status {
 	case IO:
 		s.submitTaskToIOThreadPool(task)
