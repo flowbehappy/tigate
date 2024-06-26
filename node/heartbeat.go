@@ -29,7 +29,7 @@ type HeartBeatCollector struct {
 	addr                             string // 可能要支持多个 addr
 	wg                               *sync.WaitGroup
 	reponseChanMap                   map[uint64]*dispatchermanager.HeartbeatResponseQueue
-	requestQueue                     *HeartbeatRequestQueue
+	requestQueue                     *dispatchermanager.HeartbeatRequestQueue
 	// channel 的函数
 }
 
@@ -38,7 +38,7 @@ func newHeartBeatCollector(maintainerAddr string, clientMaxDispatcherManagerNumb
 		addr:                             maintainerAddr,
 		clientMaxDispatcherManagerNumber: clientMaxDispatcherManagerNumber,
 		grpcPool:                         conn.NewHeartbeatConnAndClientPool(&security.Credential{}, 1000),
-		requestQueue:                     NewHeartbeatRequestQueue(),
+		requestQueue:                     dispatchermanager.NewHeartbeatRequestQueue(),
 		reponseChanMap:                   make(map[uint64]*dispatchermanager.HeartbeatResponseQueue),
 	}
 }

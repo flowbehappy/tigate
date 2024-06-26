@@ -17,7 +17,6 @@ import (
 	"new_arch/downstreamadapter/dispatcher"
 	"new_arch/downstreamadapter/sink"
 	"new_arch/heartbeatpb"
-	"new_arch/node"
 	"new_arch/utils/threadpool"
 	"sync/atomic"
 	"time"
@@ -38,7 +37,7 @@ type EventDispatcherManager struct {
 	EventCollector *EventCollector
 	//HeartbeatCollector           *HeartbeatCollector
 	HeartbeatResponseQueue       *HeartbeatResponseQueue
-	HeartbeatRequestQueue        *node.HeartbeatRequestQueue
+	HeartbeatRequestQueue        *HeartbeatRequestQueue
 	Id                           uint64
 	ChangefeedID                 uint64
 	SinkType                     string

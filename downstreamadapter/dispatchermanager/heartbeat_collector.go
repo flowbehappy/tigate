@@ -15,7 +15,6 @@ package dispatchermanager
 
 import (
 	"new_arch/downstreamadapter/dispatcher"
-	"new_arch/heartbeatpb"
 	"new_arch/utils/threadpool"
 	"time"
 )
@@ -102,29 +101,4 @@ func (t *HeartbeatRecvTask) Execute(timeout time.Duration) threadpool.TaskStatus
 
 		}
 	}
-}
-
-type HeartbeatResponseQueue struct {
-	queue chan *heartbeatpb.HeartBeatResponse
-}
-
-func NewHeartbeatResponseQueue() *HeartbeatResponseQueue {
-	return &HeartbeatResponseQueue{
-		queue: make(chan *heartbeatpb.HeartBeatResponse, 1000), // 带缓冲的 channel
-	}
-}
-
-// Enqueue 向队列中添加消息
-func (q *HeartbeatResponseQueue) Enqueue(response *heartbeatpb.HeartBeatResponse) {
-	q.queue <- response
-}
-
-// Dequeue 从队列中移除并返回一条消息
-func (q *HeartbeatResponseQueue) Dequeue() *heartbeatpb.HeartBeatResponse {
-	return <-q.queue
-}
-
-// Close 关闭队列的 channel
-func (q *HeartbeatResponseQueue) Close() {
-	close(q.queue)
 }

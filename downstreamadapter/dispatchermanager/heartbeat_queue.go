@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package node
+package dispatchermanager
 
 import "new_arch/heartbeatpb"
 
@@ -37,5 +37,30 @@ func (q *HeartbeatRequestQueue) Dequeue() *heartbeatpb.HeartBeatRequest {
 
 // Close 关闭队列的 channel
 func (q *HeartbeatRequestQueue) Close() {
+	close(q.queue)
+}
+
+type HeartbeatResponseQueue struct {
+	queue chan *heartbeatpb.HeartBeatResponse
+}
+
+func NewHeartbeatResponseQueue() *HeartbeatResponseQueue {
+	return &HeartbeatResponseQueue{
+		queue: make(chan *heartbeatpb.HeartBeatResponse, 1000), // 带缓冲的 channel
+	}
+}
+
+// Enqueue 向队列中添加消息
+func (q *HeartbeatResponseQueue) Enqueue(response *heartbeatpb.HeartBeatResponse) {
+	q.queue <- response
+}
+
+// Dequeue 从队列中移除并返回一条消息
+func (q *HeartbeatResponseQueue) Dequeue() *heartbeatpb.HeartBeatResponse {
+	return <-q.queue
+}
+
+// Close 关闭队列的 channel
+func (q *HeartbeatResponseQueue) Close() {
 	close(q.queue)
 }
