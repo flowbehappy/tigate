@@ -33,29 +33,35 @@ type MysqlDDLWorker struct {
 
 // 这个  task 是单次出现的，执行完就结束，用于处理 ddl 和 sync point event
 type MysqlWorkerDDLEventTask struct {
-	worker   *MysqlDDLWorker
-	event    *Event
-	callback func()
+	worker     *MysqlDDLWorker
+	event      *Event
+	taskStatus threadpool.TaskStatus
+	callback   func()
 }
 
-func NewMysqlWorkerDDLEventTask(worker *MysqlWorker, event *Event) *MysqlWorkerDDLEventTask {
+func NewMysqlWorkerDDLEventTask(worker *MysqlDDLWorker, event *Event) *MysqlWorkerDDLEventTask {
 	return &MysqlWorkerDDLEventTask{
-		worker: worker,
-		event:  event,
+		worker:     worker,
+		event:      event,
+		taskStatus: threadpool.IO,
 	}
 }
 
-func (t *MysqlWorkerDDLEventTask) execute(timeout time.Duration) threadpool.TaskStatus {
-	t.worker.mysqlWriter.FlushDDLEvent(t.event)
+func (t *MysqlWorkerDDLEventTask) GetStatus() threadpool.TaskStatus {
+	return t.taskStatus
+}
+
+func (t *MysqlWorkerDDLEventTask) Execute(timeout time.Duration) threadpool.TaskStatus {
+	t.worker.MysqlWriter.FlushDDLEvent(t.event)
 	return threadpool.Success
 }
 
-func (t *MysqlWorkerDDLEventTask) await() threadpool.TaskStatus {
+func (t *MysqlWorkerDDLEventTask) Await() threadpool.TaskStatus {
 	log.Error("MysqlWorkerDDLEventTask should not call await()")
 	return threadpool.Failed
 }
 
-func (t *MysqlWorkerDDLEventTask) release() {
+func (t *MysqlWorkerDDLEventTask) Release() {
 	//
 }
 

@@ -19,6 +19,7 @@ import (
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tiflow/pkg/security"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // 负责从 logService 中拉取所有 event，解码分发给各个 dispatcher
@@ -74,6 +75,14 @@ func (c *EventCollector) run(cc *conn.EventFeedConnAndClient) {
 		if dispatcher, ok := c.dispatcherMap[dispatcherId]; ok {
 			dispatcher.ResolvedTs = eventResponse.ResolvedTs // todo:枷锁
 			for _, event := range eventResponse.Events {
+				// 在这里加 sync point？ 这个性能会有明显影响么,这个要测过
+				if dispatcher.SyncPointInfo.EnableSyncPoint && event.CommitTs > dispatcher.SyncPointInfo.NextSyncPointTs {
+					dispatcher.Ch <- Event{} //构造 Sync Point Event
+					dispatcher.SyncPointInfo.NextSyncPointTs = oracle.GoTimeToTS(
+						oracle.GetTimeFromTS(dispatcher.SyncPointInfo.NextSyncPointTs).
+							Add(dispatcher.SyncPointInfo.SyncPointInterval))
+				}
+
 				// deal with event
 				dispatcher.Ch <- event // 换成一个函数
 			}

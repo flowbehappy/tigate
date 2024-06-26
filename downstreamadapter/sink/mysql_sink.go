@@ -48,20 +48,24 @@ type MysqlSink struct {
 	eventChs  map[*Span]chan *Event // 这个感觉最好也不要用 channel，用一个代表 channal 的 struct
 	tasks     map[*Span]*MysqlSinkTask
 
-	mutex sync.Mutex // 用于新插入 dispatcher 或者 remove dispatcher 时保护 tableProgressMap，eventChs，tasks 对象
+	mutex               sync.Mutex // 用于新插入 dispatcher 或者 remove dispatcher 时保护 tableProgressMap，eventChs，tasks 对象
+	workerTaskScheduler *threadpool.TaskScheduler
+	sinkTaskScheduler   *threadpool.TaskScheduler
 }
 
 // event dispatcher manager 初始化的时候创建 mysqlSink 对象
-func NewMysqlSink(workerCount int, workerTaskScheduler *threadpool.TaskScheduler, config *Config) *MysqlSink {
+func NewMysqlSink(workerCount int, workerTaskScheduler *threadpool.TaskScheduler, sinkTaskScheduler *threadpool.TaskScheduler, config *Config) *MysqlSink {
 	mysqlSink := MysqlSink{
 		conflictDetector: conflictdetector.NewConflictDetector[*Event](DefaultConflictDetectorSlots, conflictdetector.TxnCacheOption{
 			Count:         workerCount,
 			Size:          1024,
 			BlockStrategy: causality.BlockStrategyWaitEmpty,
 		}),
-		tableProgressMap: make(map[*Span]*TableProgress),
-		eventChs:         make(map[*Span]chan *Event),
-		tasks:            make(map[*Span]*MysqlSinkTask),
+		tableProgressMap:    make(map[*Span]*TableProgress),
+		eventChs:            make(map[*Span]chan *Event),
+		tasks:               make(map[*Span]*MysqlSinkTask),
+		workerTaskScheduler: workerTaskScheduler,
+		sinkTaskScheduler:   sinkTaskScheduler,
 	}
 	// 初始化 ddl/syncpoint 用的 worker
 	mysqlSink.ddlWorker = &worker.MysqlDDLWorker{MysqlWriter: writer.NewMysqlWriter(config)}
@@ -95,7 +99,7 @@ func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *Span, event *Event) { // 
 	if tableProgress, ok := s.tableProgressMap[tableSpan]; ok { // 这里就可以释放锁了吧？
 		tableProgress.Add(event)
 		task := worker.NewMysqlWorkerDDLEventTask(s.ddlWorker, event, func() { tableProgress.Remove(event) }) // 先固定用 0 号 worker
-		// TODO:塞 task 进去
+		s.workerTaskScheduler.Submit(task)
 	}
 }
 
@@ -111,6 +115,7 @@ func (s *MysqlSink) AddTableSpan(tableSpan *Span) {
 	s.eventChs[tableSpan] = ch
 	s.tasks[tableSpan] = task
 
+	s.sinkTaskScheduler.Submit(task)
 	// 塞入 threadpool 中
 }
 
@@ -118,11 +123,16 @@ func (s *MysqlSink) RemoveTableSpan(tableSpan *Span) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	delete(s.tableProgressMap, tableSpan)
-	delete(s.eventChs, tableSpan)
-	delete(s.tasks, tableSpan)
+	if task, ok := s.tasks[tableSpan]; ok {
+		task.Cancel()
 
-	// 从 thread pool 中删除这个任务 -- TODO:这个后续看一下是从 scheduler 里面进去还是直接操作 thread pool 做删除
+		delete(s.tableProgressMap, tableSpan)
+		delete(s.eventChs, tableSpan)
+		delete(s.tasks, tableSpan)
+
+	} else {
+		// Error
+	}
 }
 
 func (s *MysqlSink) IsEmpty(tableSpan *Span) bool {
@@ -159,20 +169,29 @@ type MysqlSinkTask struct {
 	tableSpan        *Span
 	tableProgress    *TableProgress
 	eventCh          chan *Event
+	taskStatus       threadpool.TaskStatus
 }
 
 // 这个任务本身就是把
-func newMysqlSinkTask(tableSpan *TableSpan, tableProgress *TableProgress, eventCh chan *Event, conflictDetector *ConflictDetector) *MysqlSinkTask {
+func newMysqlSinkTask(tableSpan *TableSpan, tableProgress *TableProgress, eventCh chan *Event, conflictDetector *conflictdetector.ConflictDetector[*Event]) *MysqlSinkTask {
 	return &MysqlSinkTask{
 		conflictDetector: conflictDetector,
 		tableSpan:        tableSpan,
 		tableProgress:    tableProgress,
 		eventCh:          eventCh,
+		taskStatus:       threadpool.Running,
 	}
 }
 
-func (t *MysqlSinkTask) execute(timeout time.Duration) threadpool.TaskStatus {
+func (t *MysqlSinkTask) GetStatus() threadpool.TaskStatus {
+	return t.taskStatus
+}
+
+func (t *MysqlSinkTask) Execute(timeout time.Duration) threadpool.TaskStatus {
 	// 从 pending 的 task 里面拿出来塞下去，指导超时或者没有 event 了
+	if t.taskStatus == threadpool.Failed {
+		return t.taskStatus
+	}
 	timer := time.NewTimer(timeout)
 	for {
 		select {
@@ -190,11 +209,15 @@ func (t *MysqlSinkTask) execute(timeout time.Duration) threadpool.TaskStatus {
 	}
 }
 
-func (t *MysqlSinkTask) await() threadpool.TaskStatus {
+func (t *MysqlSinkTask) Cancel() {
+	t.taskStatus = threadpool.Failed
+}
+
+func (t *MysqlSinkTask) Await() threadpool.TaskStatus {
 	log.Error("MysqlSinkTask should not call await()")
 	return threadpool.Failed
 }
 
-func (t *MysqlSinkTask) release() {
+func (t *MysqlSinkTask) Release() {
 	//?给我整不会了感觉啥也不用干啊，是不是因为 go 自动回收所以啥也不用干？
 }

@@ -19,6 +19,9 @@ import (
 	"new_arch/heartbeatpb"
 	"new_arch/utils/threadpool"
 	"sync/atomic"
+	"time"
+
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 var uniqueEventDispatcherID uint64 = 0
@@ -39,18 +42,29 @@ type EventDispatcherManager struct {
 	Sink                         sink.Sink
 	WorkerTaskScheduler          *threadpool.TaskScheduler
 	EventDispatcherTaskScheduler *threadpool.TaskScheduler
+	SinkDispatcherTaskScheduler  *threadpool.TaskScheduler
 	SinkConfig                   *Config
 	LogServiceAddr               string // log service master addr
+	EnableSyncPoint              bool
+	SyncPointInterval            time.Duration
 }
 
 func (e *EventDispatcherManager) Init() {
 	// 初始化 sink
 	if e.SinkType == "Mysql" {
-		e.Sink = sink.NewMysqlSink(workerCount, e.SinkConfig)
+		e.Sink = sink.NewMysqlSink(workerCount, e.WorkerTaskScheduler, e.SinkDispatcherTaskScheduler, e.SinkConfig)
 	}
 
 	e.EventCollector = newEventCollector(e.LogServiceAddr)
 	// 初始化 table trigger event dispatcher， 注册自己
+}
+
+func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) uint64 {
+	k := oracle.GetTimeFromTS(startTs).Sub(time.Unix(0, 0)) / syncPointInterval
+	if oracle.GetTimeFromTS(startTs).Sub(time.Unix(0, 0))%syncPointInterval != 0 || oracle.ExtractLogical(startTs) != 0 {
+		k += 1
+	}
+	return oracle.GoTimeToTS(time.Unix(0, 0).Add(k * syncPointInterval))
 }
 
 // 收到 rpc 请求创建，需要通过 event dispatcher manager 来
@@ -58,6 +72,15 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *Span, startT
 	// 创建新的 event dispatcher，同时需要把这个去 logService 注册，并且把自己加到对应的某个处理 thread 里
 	if len(e.DispatcherMap) == 0 {
 		e.Init()
+	}
+
+	var syncPointInfo *dispatcher.SyncPointInfo
+	if e.EnableSyncPoint {
+		syncPointInfo.EnableSyncPoint = true
+		syncPointInfo.SyncPointInterval = e.SyncPointInterval
+		syncPointInfo.NextSyncPointTs = calculateStartSyncPointTs(startTs, e.SyncPointInterval)
+	} else {
+		syncPointInfo.EnableSyncPoint = false
 	}
 
 	tableEventDispatcher := dispatcher.TableEventDispatcher{
@@ -68,11 +91,15 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *Span, startT
 		State:         dispatcher.NewState(),
 		ResolvedTs:    startTs,
 		HeartbeatChan: make(chan *dispatcher.HeartBeatResponseMessage, 100),
+		SyncPointInfo: syncPointInfo,
 	}
 
 	e.EventCollector.RegisterDispatcher(&tableEventDispatcher)
 	// 注册自己负责接受 event 决定是否能下推的 task
 	e.EventDispatcherTaskScheduler.Submit(dispatcher.NewEventDispatcherTask(&tableEventDispatcher))
+
+	// 注意先后顺序，可以从后往前加
+	e.Sink.AddTableSpan(tableSpan)
 
 	// 加入 manager 的 dispatcherMap 中
 	e.DispatcherMap[tableEventDispatcher.Id] = &tableEventDispatcher
@@ -91,7 +118,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo() *heartbeatpb.HeartBeatRe
 	   后面我们要测一下这个 msg 的大小，以及 collect 的耗时
 	*/
 	var message heartbeatpb.HeartBeatRequest
-	for _, dispatcher := range e.dispatcherMap {
+	for _, dispatcher := range e.DispatcherMap {
 		heartbeatInfo := dispatcher.CollectHeartbeatInfo()
 		message.Progress = append(message.Progress, &heartbeatpb.TableSpanProgress{
 			CheckpointTs:   heartbeatInfo.CheckpointTs,

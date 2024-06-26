@@ -30,19 +30,21 @@ func genUniqueEventDispatcherManagerID() uint64 {
 type Node struct {
 	workerTaskScheduler          *threadpool.TaskScheduler
 	eventDispatcherTaskScheduler *threadpool.TaskScheduler
+	sinkDispatcherTaskScheduler  *threadpool.TaskScheduler
 }
 
 func NewNode() *Node {
 	node := Node{
 		workerTaskScheduler:          threadpool.NewTaskScheduler(),
 		eventDispatcherTaskScheduler: threadpool.NewTaskScheduler(),
+		sinkDispatcherTaskScheduler:  threadpool.NewTaskScheduler(),
 	}
 
 	return &node
 }
 
 // 收到 create event dispatcher manager 时候创建，会可能是一个空的 manager
-func (n *Node) NewEventDispatcherManager(changefeedID uint64, sinkType string, sinkConfig *Config, addr string) *dispatchermanager.EventDispatcherManager {
+func (n *Node) NewEventDispatcherManager(changefeedID uint64, sinkType string, addr string, config *ChangefeedConfig) *dispatchermanager.EventDispatcherManager {
 	return &dispatchermanager.EventDispatcherManager{
 		DispatcherMap:                make(map[*Span]*dispatcher.TableEventDispatcher),
 		ChangefeedID:                 changefeedID,
@@ -50,7 +52,10 @@ func (n *Node) NewEventDispatcherManager(changefeedID uint64, sinkType string, s
 		SinkType:                     sinkType,
 		WorkerTaskScheduler:          n.workerTaskScheduler,
 		EventDispatcherTaskScheduler: n.eventDispatcherTaskScheduler,
-		SinkConfig:                   sinkConfig,
+		SinkDispatcherTaskScheduler:  n.sinkDispatcherTaskScheduler,
+		SinkConfig:                   config.SinkConfig,
 		LogServiceAddr:               addr, // 这个需要其他机制来更新
+		EnableSyncPoint:              config.EnableSyncPoint,
+		SyncPointInterval:            config.SyncPointInterval,
 	}
 }
