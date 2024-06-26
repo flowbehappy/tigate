@@ -28,14 +28,14 @@ func genUniqueEventDispatcherManagerID() uint64 {
 
 // 代表每个节点
 type Node struct {
-	workerTaskScheduler *threadpool.TaskScheduler
+	workerTaskScheduler          *threadpool.TaskScheduler
+	eventDispatcherTaskScheduler *threadpool.TaskScheduler
 }
 
 func NewNode() *Node {
-	workerTaskScheduler := threadpool.NewTaskScheduler()
-
 	node := Node{
-		workerTaskScheduler: workerTaskScheduler,
+		workerTaskScheduler:          threadpool.NewTaskScheduler(),
+		eventDispatcherTaskScheduler: threadpool.NewTaskScheduler(),
 	}
 
 	return &node
@@ -44,12 +44,13 @@ func NewNode() *Node {
 // 收到 create event dispatcher manager 时候创建，会可能是一个空的 manager
 func (n *Node) NewEventDispatcherManager(changefeedID uint64, sinkType string, sinkConfig *Config, addr string) *dispatchermanager.EventDispatcherManager {
 	return &dispatchermanager.EventDispatcherManager{
-		DispatcherMap:       make(map[*Span]*dispatcher.TableEventDispatcher),
-		ChangefeedID:        changefeedID,
-		Id:                  genUniqueEventDispatcherManagerID(),
-		SinkType:            sinkType,
-		WorkerTaskScheduler: n.workerTaskScheduler,
-		SinkConfig:          sinkConfig,
-		LogServiceAddr:      addr, // 这个需要其他机制来更新
+		DispatcherMap:                make(map[*Span]*dispatcher.TableEventDispatcher),
+		ChangefeedID:                 changefeedID,
+		Id:                           genUniqueEventDispatcherManagerID(),
+		SinkType:                     sinkType,
+		WorkerTaskScheduler:          n.workerTaskScheduler,
+		EventDispatcherTaskScheduler: n.eventDispatcherTaskScheduler,
+		SinkConfig:                   sinkConfig,
+		LogServiceAddr:               addr, // 这个需要其他机制来更新
 	}
 }

@@ -126,6 +126,19 @@ func (e *TableEventDispatcher) CollectHeartbeatInfo() *HeartBeatInfo {
 type EventDispatcherTask struct {
 	dispatcher *TableEventDispatcher
 	infos      []*HeartBeatResponseMessage
+	taskStatus threadpool.TaskStatus
+}
+
+func NewEventDispatcherTask(dispatcher *TableEventDispatcher) *EventDispatcherTask {
+	return &EventDispatcherTask{
+		dispatcher: dispatcher,
+		infos:      make([]*HeartBeatResponseMessage, 0),
+		taskStatus: threadpool.Running,
+	}
+}
+
+func (t *EventDispatcherTask) GetStatus() threadpool.TaskStatus {
+	return t.taskStatus
 }
 
 func (t *EventDispatcherTask) updateState(state *State, heartBeatResponseMessages []*HeartBeatResponseMessage) {
@@ -166,7 +179,7 @@ func (t *EventDispatcherTask) updateState(state *State, heartBeatResponseMessage
 }
 
 // TODO:逻辑重新整一下，太乱了
-func (t *EventDispatcherTask) execute(timeout time.Duration) threadpool.TaskStatus {
+func (t *EventDispatcherTask) Execute(timeout time.Duration) threadpool.TaskStatus {
 	timer := time.NewTimer(timeout)
 
 	// 1. 先检查是否在 blocked 状态
@@ -174,7 +187,7 @@ func (t *EventDispatcherTask) execute(timeout time.Duration) threadpool.TaskStat
 	if state.isBlocked {
 		// 拿着 infos 更新
 		if len(t.infos) > 0 {
-			updateState(state, t.infos)
+			t.updateState(state, t.infos)
 		}
 		t.infos = t.infos[:0] //上锁
 
@@ -268,7 +281,7 @@ func (t *EventDispatcherTask) execute(timeout time.Duration) threadpool.TaskStat
 		}
 	}
 }
-func (t *EventDispatcherTask) await(timeout time.Duration) threadpool.TaskStatus {
+func (t *EventDispatcherTask) Await() threadpool.TaskStatus {
 	select {
 	case info := <-t.dispatcher.heartbeatChan:
 		// 把目前现有的全部拿出来
@@ -289,6 +302,6 @@ func (t *EventDispatcherTask) await(timeout time.Duration) threadpool.TaskStatus
 	}
 }
 
-func (t *EventDispatcherTask) release() {
+func (t *EventDispatcherTask) Release() {
 
 }

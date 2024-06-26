@@ -30,16 +30,17 @@ func genUniqueEventDispatcherID() uint64 {
 }
 
 type EventDispatcherManager struct {
-	DispatcherMap       map[*Span]*dispatcher.TableEventDispatcher
-	EventCollector      *EventCollector
-	HeartbeatCollector  *HeartbeatCollector
-	Id                  uint64
-	ChangefeedID        uint64
-	SinkType            string
-	Sink                sink.Sink
-	WorkerTaskScheduler *threadpool.TaskScheduler
-	SinkConfig          *Config
-	LogServiceAddr      string // log service master addr
+	DispatcherMap                map[*Span]*dispatcher.TableEventDispatcher
+	EventCollector               *EventCollector
+	HeartbeatCollector           *HeartbeatCollector
+	Id                           uint64
+	ChangefeedID                 uint64
+	SinkType                     string
+	Sink                         sink.Sink
+	WorkerTaskScheduler          *threadpool.TaskScheduler
+	EventDispatcherTaskScheduler *threadpool.TaskScheduler
+	SinkConfig                   *Config
+	LogServiceAddr               string // log service master addr
 }
 
 func (e *EventDispatcherManager) Init() {
@@ -59,7 +60,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *Span, startT
 		e.Init()
 	}
 
-	dispatcher := dispatcher.TableEventDispatcher{
+	tableEventDispatcher := dispatcher.TableEventDispatcher{
 		Id:            genUniqueEventDispatcherID(),
 		Ch:            make(chan *Event, 1000),
 		TableSpan:     tableSpan,
@@ -69,9 +70,14 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *Span, startT
 		HeartbeatChan: make(chan *dispatcher.HeartBeatResponseMessage, 100),
 	}
 
-	e.EventCollector.RegisterDispatcher(&dispatcher)
+	e.EventCollector.RegisterDispatcher(&tableEventDispatcher)
+	// 注册自己负责接受 event 决定是否能下推的 task
+	e.EventDispatcherTaskScheduler.Submit(dispatcher.NewEventDispatcherTask(&tableEventDispatcher))
 
-	return &dispatcher
+	// 加入 manager 的 dispatcherMap 中
+	e.DispatcherMap[tableEventDispatcher.Id] = &tableEventDispatcher
+
+	return &tableEventDispatcher
 }
 
 func (e *EventDispatcherManager) CollectHeartbeatInfo() *heartbeatpb.HeartBeatRequest {
