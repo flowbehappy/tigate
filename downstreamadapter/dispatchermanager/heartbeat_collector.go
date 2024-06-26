@@ -20,65 +20,73 @@ import (
 	"time"
 )
 
-// 这个 grpc 应该也要做成 共享 stream 的感觉，然后开 goroutine，专门作为收发东西。
-// send task 还是要存在的，定期收集
-// recv 就不需要了，goroutine 里面收到以后直接扔到 channel 里，后面有需要再拆开好了
-
-// 一个 dispatcher manager 需要一起通信么？要考虑打散么
-type HearbeatCollector struct {
-}
-
-// 负责持续发消息的 task
+// 一个 manager 对应一个 send task，主要用于把这个 manager 收集到的 heart beat 扔到 queue 里面去
 type HeartbeatSendTask struct {
 	ticker                 *time.Ticker
 	eventDispatcherManager *EventDispatcherManager
+	taskStatus             threadpool.TaskStatus
 }
 
-func newHeartBeatSendTask() *HeartbeatSendTask {
+func newHeartBeatSendTask(m *EventDispatcherManager) *HeartbeatSendTask {
 	return &HeartbeatSendTask{
-		ticker: time.NewTicker(50 * time.Millisecond),
+		ticker:                 time.NewTicker(50 * time.Millisecond),
+		eventDispatcherManager: m,
+		taskStatus:             threadpool.Running,
 	}
 }
 
-func (t *HeartbeatSendTask) execute(timeout time.Duration) threadpool.TaskStatus {
+func (t *HeartbeatSendTask) GetStatus() threadpool.TaskStatus {
+	return t.taskStatus
+}
+
+func (t *HeartbeatSendTask) Execute(timeout time.Duration) threadpool.TaskStatus {
 	select {
 	case <-t.ticker.C:
-		// gather info
 		message := t.eventDispatcherManager.CollectHeartbeatInfo()
-		// 然后把 message 可以扔到通道里去
+		t.eventDispatcherManager.HeartbeatRequestQueue.Enqueue(message)
 		return threadpool.Running
 	default:
 		return threadpool.Running
 	}
 }
 
-func (t *HeartbeatSendTask) await(timeout time.Duration) threadpool.TaskStatus {
+func (t *HeartbeatSendTask) Await() threadpool.TaskStatus {
 	//
 }
 
-func (t *HeartbeatSendTask) release() {
+func (t *HeartbeatSendTask) Release() {
 	t.ticker.Stop()
 }
 
-// 将收到的信息分发给各个 dispatcher
+// 将从 queue 里面收到的信息分发给各个 dispatcher，每个 dispatcherManager 有一个这个task
 type HeartbeatRecvTask struct {
 	eventDispatcherManager *EventDispatcherManager
-	queue                  *HeartbeatResponseQueue
-	//chan
+	taskStatus             threadpool.TaskStatus
 }
 
-func newHeartbeatRecvTask() *HeartbeatRecvTask {
-
+func newHeartbeatRecvTask(m *EventDispatcherManager) *HeartbeatRecvTask {
+	return &HeartbeatRecvTask{
+		eventDispatcherManager: m,
+	}
 }
 
-func (t *HeartbeatRecvTask) execute(timeout time.Duration) threadpool.TaskStatus {
+func (t *HeartbeatRecvTask) GetStatus() threadpool.TaskStatus {
+	return t.taskStatus
+}
+func (t *HeartbeatRecvTask) Await() threadpool.TaskStatus {
+}
+
+func (t *HeartbeatRecvTask) Release() {
+}
+
+func (t *HeartbeatRecvTask) Execute(timeout time.Duration) threadpool.TaskStatus {
 	// 从 channel 里拿数据，然后分发给各个 dispatcher
 	for {
-		heartbeatResponse := t.queue.Dequeue()
+		heartbeatResponse := t.eventDispatcherManager.HeartbeatResponseQueue.Dequeue()
 		tableProgressInfo := heartbeatResponse.Info
 		for _, info := range tableProgressInfo {
 			dispatcherId := info.DispatcherID
-			if dispatcherItem, ok := t.eventDispatcherManager.dispatcherMap[dispatcherId]; ok {
+			if dispatcherItem, ok := t.eventDispatcherManager.DispatcherMap[dispatcherId]; ok {
 				var message dispatcher.HeartBeatResponseMessage
 				for _, progress := range info.TableProgresses {
 					message.OtherTableProgress = append(message.OtherTableProgress, &dispatcher.TableSpanProgress{

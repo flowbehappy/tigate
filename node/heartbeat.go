@@ -17,6 +17,8 @@ import (
 	"new_arch/downstreamadapter/dispatchermanager"
 	"new_arch/utils/conn"
 	"sync"
+
+	"github.com/pingcap/tiflow/pkg/security"
 )
 
 // 单独的 goroutine 用于收发 heartbeat 消息
@@ -31,11 +33,24 @@ type HeartBeatCollector struct {
 	// channel 的函数
 }
 
+func newHeartBeatCollector(maintainerAddr string, clientMaxDispatcherManagerNumber int) *HeartBeatCollector {
+	return &HeartBeatCollector{
+		addr:                             maintainerAddr,
+		clientMaxDispatcherManagerNumber: clientMaxDispatcherManagerNumber,
+		grpcPool:                         conn.NewHeartbeatConnAndClientPool(&security.Credential{}, 1000),
+		requestQueue:                     NewHeartbeatRequestQueue(),
+		reponseChanMap:                   make(map[uint64]*dispatchermanager.HeartbeatResponseQueue),
+	}
+}
+
 func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *dispatchermanager.EventDispatcherManager) error {
+	m.HeartbeatRequestQueue = c.requestQueue
+	c.reponseChanMap[m.Id] = m.HeartbeatResponseQueue
+
 	flag := false
 	for client, managerIDLists := range c.clients { // 这边先用个遍历，后面看看有什么更合适的结构
 		if len(managerIDLists) < c.clientMaxDispatcherManagerNumber {
-			c.clients[client] = append(c.clients[client], m.ID)
+			c.clients[client] = append(c.clients[client], m.Id)
 			flag = true
 			break
 		}
@@ -43,12 +58,14 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *dispatchermanager
 
 	if !flag {
 		newClient, _ := c.grpcPool.Connect(c.addr)
-		c.clients[newClient] = append(c.clients[newClient], m.ID)
+		c.clients[newClient] = append(c.clients[newClient], m.Id)
 		c.wg.Add(1)
 		c.wg.Add(1)
 		go c.SendMessages(newClient)
 		go c.RecvMessages(newClient)
 	}
+
+	return nil
 }
 
 func (c *HeartBeatCollector) SendMessages(cc *conn.HeartbeatConnAndClient) {
@@ -68,6 +85,5 @@ func (c *HeartBeatCollector) RecvMessages(cc *conn.HeartbeatConnAndClient) {
 		if queue, ok := c.reponseChanMap[managerId]; ok {
 			queue.Enqueue(heartbeatResponse)
 		}
-		// 分发 heartbeat response
 	}
 }

@@ -30,14 +30,18 @@ func genUniqueEventDispatcherManagerID() uint64 {
 type Node struct {
 	workerTaskScheduler          *threadpool.TaskScheduler
 	eventDispatcherTaskScheduler *threadpool.TaskScheduler
-	sinkDispatcherTaskScheduler  *threadpool.TaskScheduler
+	sinkTaskScheduler            *threadpool.TaskScheduler
+	heartbeatTaskScheduler       *threadpool.TaskScheduler
+	heartBeatCollector           *HeartBeatCollector
 }
 
 func NewNode() *Node {
 	node := Node{
 		workerTaskScheduler:          threadpool.NewTaskScheduler(),
 		eventDispatcherTaskScheduler: threadpool.NewTaskScheduler(),
-		sinkDispatcherTaskScheduler:  threadpool.NewTaskScheduler(),
+		sinkTaskScheduler:            threadpool.NewTaskScheduler(),
+		heartbeatTaskScheduler:       threadpool.NewTaskScheduler(),
+		heartBeatCollector:           newHeartBeatCollector(addr, 1000),
 	}
 
 	return &node
@@ -45,17 +49,23 @@ func NewNode() *Node {
 
 // 收到 create event dispatcher manager 时候创建，会可能是一个空的 manager
 func (n *Node) NewEventDispatcherManager(changefeedID uint64, sinkType string, addr string, config *ChangefeedConfig) *dispatchermanager.EventDispatcherManager {
-	return &dispatchermanager.EventDispatcherManager{
+	eventDispatcherManager := dispatchermanager.EventDispatcherManager{
 		DispatcherMap:                make(map[*Span]*dispatcher.TableEventDispatcher),
 		ChangefeedID:                 changefeedID,
 		Id:                           genUniqueEventDispatcherManagerID(),
 		SinkType:                     sinkType,
+		HeartbeatResponseQueue:       dispatchermanager.NewHeartbeatResponseQueue(),
 		WorkerTaskScheduler:          n.workerTaskScheduler,
 		EventDispatcherTaskScheduler: n.eventDispatcherTaskScheduler,
-		SinkDispatcherTaskScheduler:  n.sinkDispatcherTaskScheduler,
+		SinkTaskScheduler:            n.sinkTaskScheduler,
+		HeartbeatTaskScheduler:       n.heartbeatTaskScheduler,
 		SinkConfig:                   config.SinkConfig,
 		LogServiceAddr:               addr, // 这个需要其他机制来更新
 		EnableSyncPoint:              config.EnableSyncPoint,
 		SyncPointInterval:            config.SyncPointInterval,
 	}
+	return &eventDispatcherManager
+	// n.heartbeatTaskScheduler.Submit(dispatchermanager.NewHeartbeatTask(&eventDispatcherManager))
+	// n.heartbeatTaskScheduler.Submit(dispatchermanager.NewHeartbeatTask(&eventDispatcherManager))
+
 }

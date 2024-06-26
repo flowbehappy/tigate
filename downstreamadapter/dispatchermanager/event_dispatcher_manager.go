@@ -17,6 +17,7 @@ import (
 	"new_arch/downstreamadapter/dispatcher"
 	"new_arch/downstreamadapter/sink"
 	"new_arch/heartbeatpb"
+	"new_arch/node"
 	"new_arch/utils/threadpool"
 	"sync/atomic"
 	"time"
@@ -33,16 +34,19 @@ func genUniqueEventDispatcherID() uint64 {
 }
 
 type EventDispatcherManager struct {
-	DispatcherMap                map[*Span]*dispatcher.TableEventDispatcher
-	EventCollector               *EventCollector
-	HeartbeatCollector           *HeartbeatCollector
+	DispatcherMap  map[*Span]*dispatcher.TableEventDispatcher
+	EventCollector *EventCollector
+	//HeartbeatCollector           *HeartbeatCollector
+	HeartbeatResponseQueue       *HeartbeatResponseQueue
+	HeartbeatRequestQueue        *node.HeartbeatRequestQueue
 	Id                           uint64
 	ChangefeedID                 uint64
 	SinkType                     string
 	Sink                         sink.Sink
 	WorkerTaskScheduler          *threadpool.TaskScheduler
 	EventDispatcherTaskScheduler *threadpool.TaskScheduler
-	SinkDispatcherTaskScheduler  *threadpool.TaskScheduler
+	SinkTaskScheduler            *threadpool.TaskScheduler
+	HeartbeatTaskScheduler       *threadpool.TaskScheduler
 	SinkConfig                   *Config
 	LogServiceAddr               string // log service master addr
 	EnableSyncPoint              bool
@@ -52,10 +56,14 @@ type EventDispatcherManager struct {
 func (e *EventDispatcherManager) Init() {
 	// 初始化 sink
 	if e.SinkType == "Mysql" {
-		e.Sink = sink.NewMysqlSink(workerCount, e.WorkerTaskScheduler, e.SinkDispatcherTaskScheduler, e.SinkConfig)
+		e.Sink = sink.NewMysqlSink(workerCount, e.WorkerTaskScheduler, e.SinkTaskScheduler, e.SinkConfig)
 	}
 
 	e.EventCollector = newEventCollector(e.LogServiceAddr)
+	// 注册处理收发 heartbeat 的 task
+	e.HeartbeatTaskScheduler.Submit(newHeartbeatRecvTask(e))
+	e.HeartbeatTaskScheduler.Submit(newHeartBeatSendTask(e))
+
 	// 初始化 table trigger event dispatcher， 注册自己
 }
 
