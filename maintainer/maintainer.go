@@ -14,10 +14,13 @@
 package maintainer
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"go.uber.org/zap"
 	"time"
 )
 
@@ -25,6 +28,11 @@ type Maintainer struct {
 	id           model.ChangeFeedID
 	checkpointTs uint64
 	status       scheduler.ComponentStatus
+
+	isStopping bool
+
+	supervisor *scheduler.Supervisor
+	scheduler  scheduler.Scheduler
 }
 
 func NewMaintainer() *Maintainer {
@@ -32,69 +40,130 @@ func NewMaintainer() *Maintainer {
 }
 
 func (m *Maintainer) Stop() {
-
+	if !m.isStopping {
+		m.isStopping = true
+		//todo async stop
+	}
 }
 
-type TRMaintainerID int
-
-func (c TRMaintainerID) String() string {
-	return fmt.Sprintf("%d", int(c))
+func (c *Maintainer) checkLiveness() ([]rpc.Message, error) {
+	var msgs []rpc.Message
+	c.supervisor.GetInferiors().Ascend(
+		func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
+			if !value.Inferior.IsAlive() {
+				log.Info("found inactive inferior", zap.Any("ID", key))
+				c.supervisor.GetInferiors().Delete(key)
+				// clean messages
+				// trigger schedule task
+			}
+			return true
+		})
+	return msgs, nil
 }
-func (c TRMaintainerID) Equal(id scheduler.InferiorID) bool {
-	return int(c) == int(id.(TRMaintainerID))
+
+func (m *Maintainer) scheduleDispatcher() ([]rpc.Message, error) {
+	if m.supervisor.CheckAllCaptureInitialized() {
+		return nil, nil
+	}
+
+	// get all captures
+	captures := m.supervisor.GetAllCaptures()
+	// get allTableSpans
+	var tables []uint64 = nil
+	for _, tbl := range tables {
+		println(tbl)
+	}
+
+	tasks := m.scheduler.Schedule(
+		nil,
+		captures,
+		m.supervisor.GetInferiors(),
+	)
+	return m.supervisor.HandleScheduleTasks(tasks)
 }
 
-func (c TRMaintainerID) Less(id scheduler.InferiorID) bool {
-	return int(c) < int(id.(TRMaintainerID))
+func (m *Maintainer) handleMessages() ([]rpc.Message, error) {
+	var status []scheduler.InferiorStatus
+	m.supervisor.UpdateCaptureStatus("", status)
+	m.supervisor.HandleCaptureChanges(nil)
+	if m.supervisor.CheckAllCaptureInitialized() {
+		m.supervisor.HandleStatus("", status)
+	}
+	return nil, nil
 }
 
-type trMaintainer struct {
-	ID    int
-	State *TrMaintainerStatus
+type TableSpan struct {
+	TableID  uint64
+	StartKey []byte
+	EndKey   []byte
+}
 
-	Info   *model.ChangeFeedInfo
-	Status *model.ChangeFeedStatus
+func (c *TableSpan) String() string {
+	return fmt.Sprintf("%d", c.TableID)
+}
+
+func (c *TableSpan) Less(b scheduler.InferiorID) bool {
+	other := b.(*TableSpan)
+	if c.TableID < other.TableID {
+		return true
+	}
+	if bytes.Compare(c.StartKey, other.StartKey) < 0 {
+		return true
+	}
+	return false
+}
+
+func (c *TableSpan) Equal(id scheduler.InferiorID) bool {
+	other := id.(*TableSpan)
+	return c.TableID == other.TableID &&
+		bytes.Equal(c.StartKey, other.StartKey) &&
+		bytes.Equal(c.EndKey, other.EndKey)
+}
+
+type dispatcher struct {
+	ID    *TableSpan
+	State *TableSpanStatus
 
 	lastHeartBeat time.Time
 }
 
-func (c *trMaintainer) UpdateStatus(status scheduler.InferiorStatus) {
-	c.State = status.(*TrMaintainerStatus)
+func (c *dispatcher) UpdateStatus(status scheduler.InferiorStatus) {
+	c.State = status.(*TableSpanStatus)
 	c.lastHeartBeat = time.Now()
 }
 
-func (c *trMaintainer) GetID() scheduler.InferiorID {
-	return TRMaintainerID(c.ID)
+func (c *dispatcher) GetID() scheduler.InferiorID {
+	return c.ID
 }
 
-func (c *trMaintainer) NewInferiorStatus(status scheduler.ComponentStatus) scheduler.InferiorStatus {
-	return &TrMaintainerStatus{
-		ID:     TRMaintainerID(c.ID),
+func (c *dispatcher) NewInferiorStatus(status scheduler.ComponentStatus) scheduler.InferiorStatus {
+	return &TableSpanStatus{
+		ID:     c.ID,
 		Status: status,
 	}
 }
 
-func (c *trMaintainer) IsAlive() bool {
+func (c *dispatcher) IsAlive() bool {
 	return time.Now().Sub(c.lastHeartBeat) < 10*time.Second
 }
 
-func (c *trMaintainer) NewAddInferiorMessage(capture model.CaptureID, secondary bool) rpc.Message {
+func (c *dispatcher) NewAddInferiorMessage(capture model.CaptureID, secondary bool) rpc.Message {
 	return nil
 }
 
-func (c *trMaintainer) NewRemoveInferiorMessage(capture model.CaptureID) rpc.Message {
+func (c *dispatcher) NewRemoveInferiorMessage(capture model.CaptureID) rpc.Message {
 	return nil
 }
 
-type TrMaintainerStatus struct {
-	ID     TRMaintainerID
+type TableSpanStatus struct {
+	ID     *TableSpan
 	Status scheduler.ComponentStatus
 }
 
-func (c *TrMaintainerStatus) GetInferiorID() scheduler.InferiorID {
+func (c *TableSpanStatus) GetInferiorID() scheduler.InferiorID {
 	return scheduler.InferiorID(c.ID)
 }
 
-func (c *TrMaintainerStatus) GetInferiorState() scheduler.ComponentStatus {
+func (c *TableSpanStatus) GetInferiorState() scheduler.ComponentStatus {
 	return c.Status
 }

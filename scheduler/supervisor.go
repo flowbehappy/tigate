@@ -81,6 +81,10 @@ func NewSupervisor(
 	}
 }
 
+func (s *Supervisor) GetAllCaptures() map[model.CaptureID]*CaptureStatus {
+	return s.captures
+}
+
 func (s *Supervisor) GetInferiors() Map[InferiorID, *StateMachine] {
 	return s.stateMachines
 }
