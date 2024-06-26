@@ -16,79 +16,22 @@ package maintainer
 import (
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
-	"go.uber.org/zap"
 )
 
+// Manager is the manager of all changefeed maintainer in a ticdc node, each ticdc node will
+// start a Manager when the node is startup. the Manager should:
+// 1. handle bootstrap command from coordinator and return all changefeed maintainer status
+// 2. handle dispatcher command from coordinator: add or remove changefeed maintainer
+// 3. check maintainer liveness
 type Manager struct {
-	rpcClient rpc.RpcClient
-
+	rpcClient  rpc.RpcClient
 	supervisor *scheduler.Supervisor
 	scheduler  scheduler.Scheduler
-
-	maintainers map[model.ChangeFeedID]*Maintainer
-
-	coordinatorID string
 }
 
-func NewCoordinator(rpcClient rpc.RpcClient) *Manager {
+// NewManager create a changefeed maintainer instance
+func NewManager(rpcClient rpc.RpcClient) *Manager {
 	return &Manager{
 		rpcClient: rpcClient,
 	}
-}
-
-type ChangefeedStatus struct {
-	ID           model.ChangeFeedID
-	Status       scheduler.ComponentStatus
-	CheckpointTs uint64
-}
-
-func (m *Manager) Heartbeat() {
-	var changefeeds []*ChangefeedStatus
-	for _, mt := range m.maintainers {
-		changefeeds = append(changefeeds, &ChangefeedStatus{
-			ID:           mt.id,
-			Status:       mt.status,
-			CheckpointTs: mt.checkpointTs,
-		})
-	}
-}
-
-func (m *Manager) onCoordinatorBootstrap(coordinatorCapture string) {
-	log.Info("coordinator bootstrap started",
-		zap.String("capture", coordinatorCapture))
-	m.coordinatorID = coordinatorCapture
-
-	var changefeeds []*ChangefeedStatus
-	for _, mt := range m.maintainers {
-		changefeeds = append(changefeeds, &ChangefeedStatus{
-			ID:           mt.id,
-			Status:       mt.status,
-			CheckpointTs: mt.checkpointTs,
-		})
-	}
-	//todo send to coordinator
-}
-
-func (m *Manager) onAddMaintainer(
-	id model.ChangeFeedID,
-	info *model.ChangeFeedInfo,
-	checkpointTs uint64) {
-	log.Info("add new maintainer",
-		zap.String("id", id.String()),
-		zap.Uint64("checkpointTs", checkpointTs))
-	mt := NewMaintainer()
-	m.maintainers[id] = mt
-}
-
-func (m *Manager) onRemoveMaintainer(id model.ChangeFeedID) {
-	log.Info("remove maintainer",
-		zap.String("id", id.String()))
-	mt, ok := m.maintainers[id]
-	if !ok {
-		log.Warn("maintainer not found",
-			zap.String("id", id.String()))
-	}
-	mt.Stop()
 }

@@ -22,6 +22,12 @@ import (
 	"time"
 )
 
+// Coordinator is the master of the ticdc cluster,
+// 1. schedules changefeed maintainer to ticdc node
+// 2. save changefeed checkpoint ts to etcd
+// 3. send checkpoint to downstream
+// 4. manager gc safe point
+// 5. response for open API call
 type Coordinator struct {
 	rpcClient  rpc.RpcClient
 	supervisor *scheduler.Supervisor
