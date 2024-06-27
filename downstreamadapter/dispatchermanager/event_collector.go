@@ -100,20 +100,29 @@ func (c *EventCollector) run(cc *conn.EventFeedConnAndClient) {
 		}
 		dispatcherId := eventResponse.DispatcherId
 
-		if dispatcher, ok := c.dispatcherMap[dispatcherId]; ok {
-			dispatcher.ResolvedTs = eventResponse.ResolvedTs // todo:枷锁
+		if dispatcherItem, ok := c.dispatcherMap[dispatcherId]; ok {
+			if dispatcherId == dispatcher.TableTriggerEventDispatcherId {
+				for _, event := range eventResponse.Events {
+					dispatcherItem.GetEventChan() <- event // 换成一个函数
+				}
+				dispatcherItem.UpdateResolvedTs(eventResponse.ResolvedTs) // todo:枷锁
+				continue
+			}
+
 			for _, event := range eventResponse.Events {
+				syncPointInfo := dispatcherItem.GetSyncPointInfo()
 				// 在这里加 sync point？ 这个性能会有明显影响么,这个要测过
-				if dispatcher.SyncPointInfo.EnableSyncPoint && event.CommitTs > dispatcher.SyncPointInfo.NextSyncPointTs {
-					dispatcher.Ch <- Event{} //构造 Sync Point Event
-					dispatcher.SyncPointInfo.NextSyncPointTs = oracle.GoTimeToTS(
-						oracle.GetTimeFromTS(dispatcher.SyncPointInfo.NextSyncPointTs).
-							Add(dispatcher.SyncPointInfo.SyncPointInterval))
+				if syncPointInfo.EnableSyncPoint && event.CommitTs() > syncPointInfo.NextSyncPointTs {
+					dispatcherItem.GetEventChan() <- Event{} //构造 Sync Point Event
+					syncPointInfo.NextSyncPointTs = oracle.GoTimeToTS(
+						oracle.GetTimeFromTS(syncPointInfo.NextSyncPointTs).
+							Add(syncPointInfo.SyncPointInterval))
 				}
 
 				// deal with event
-				dispatcher.Ch <- event // 换成一个函数
+				dispatcherItem.GetEventChan() <- event // 换成一个函数
 			}
+			dispatcherItem.UpdateResolvedTs(eventResponse.ResolvedTs) // todo:枷锁
 		}
 		//
 	}

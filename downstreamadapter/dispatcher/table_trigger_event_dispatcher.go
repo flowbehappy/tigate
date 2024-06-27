@@ -13,7 +13,11 @@
 
 package dispatcher
 
-import "new_arch/downstreamadapter/sink"
+import (
+	"new_arch/downstreamadapter/sink"
+
+	"github.com/ngaut/log"
+)
 
 /*
 ActionCreateSchema -- 这个要保证自己是晚于 drop database d1 即可，另外要比自己后面的 ddl 早（以防后面有 create table d1.t1)
@@ -80,4 +84,13 @@ func (d TableTriggerEventDispatcher) GetDispatcherType() string {
 
 func (d TableTriggerEventDispatcher) GetHeartBeatChan() chan *HeartBeatResponseMessage {
 	return d.HeartbeatChan
+}
+
+func (d TableTriggerEventDispatcher) UpdateResolvedTs(ts uint64) {
+	d.ResolvedTs = ts
+}
+
+func (d TableTriggerEventDispatcher) GetSyncPointInfo() *SyncPointInfo {
+	log.Error("TableEventDispatcher.GetSyncPointInfo is not implemented")
+	return nil
 }

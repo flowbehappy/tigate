@@ -21,9 +21,11 @@ type Dispatcher interface {
 	GetState() *State
 	GetEventChan() chan *Event
 	GetResolvedTs() uint64
+	UpdateResolvedTs(uint64)
 	GetId() uint64
 	GetDispatcherType() string
 	GetHeartBeatChan() chan *HeartBeatResponseMessage
+	GetSyncPointInfo() *SyncPointInfo
 }
 
 type Action uint64

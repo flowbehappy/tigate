@@ -83,3 +83,11 @@ func (d TableEventDispatcher) GetDispatcherType() string {
 func (d TableEventDispatcher) GetHeartBeatChan() chan *HeartBeatResponseMessage {
 	return d.HeartbeatChan
 }
+
+func (d TableEventDispatcher) UpdateResolvedTs(ts uint64) {
+	d.ResolvedTs = ts
+}
+
+func (d TableEventDispatcher) GetSyncPointInfo() *SyncPointInfo {
+	return d.SyncPointInfo
+}
