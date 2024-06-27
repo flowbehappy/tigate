@@ -97,7 +97,7 @@ func (t *EventDispatcherTask) Execute(timeout time.Duration) threadpool.TaskStat
 			return threadpool.Running
 		}
 
-		state.isBlocked = true
+		//state.isBlocked = true //??
 	}
 
 	// 先检查 pendingEvent 有没有，有的话就先执行这个，通过 action 来确定 ddl / syncPoint 的执行模式
@@ -192,8 +192,8 @@ func (t *EventDispatcherTask) Await() threadpool.TaskStatus {
 			}
 		}
 	default:
-		// 如果不是在等待其他 table 状态而是 sink 本身的话，就也切回去
-		if t.dispatcher.State.blockTableSpan == nil && t.dispatcher.State.sinkAvailable == false {
+		// 如果不是在等待其他 table / action 状态而是 sink 本身的话，就也切回去
+		if t.dispatcher.State.blockTableSpan == nil && t.dispatcher.State.action != None && t.dispatcher.State.sinkAvailable == false {
 			return threadpool.Running
 		}
 		return threadpool.Waiting

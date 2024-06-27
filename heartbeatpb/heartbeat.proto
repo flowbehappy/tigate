@@ -69,7 +69,7 @@ message RemoveEventDispatcherManagerResponse {
 
 service DispatcherManager {
     // 为 changefeed 创建 dispatcher manager（bootstrap）
-    rpc CreateEventDispatcherManager(stream CreateEventDispatcherManagerRequest) returns (stream CreateEventDispatcherManagerResponse)
+    rpc CreateEventDispatcherManager(stream CreateEventDispatcherManagerRequest) returns (stream CreateEventDispatcherManagerResponse);
     // remove changefeed 的时候发送，删除 event dispatcher manager
-    rpc RemoveEventDispatcherManager(stream RemoveEventDispatcherManagerRequest) returns (stream RemoveEventDispatcherManagerResponse)
+    rpc RemoveEventDispatcherManager(stream RemoveEventDispatcherManagerRequest) returns (stream RemoveEventDispatcherManagerResponse);
 }

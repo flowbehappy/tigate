@@ -85,6 +85,21 @@ func (t *HeartbeatRecvTask) Execute(timeout time.Duration) threadpool.TaskStatus
 		tableProgressInfo := heartbeatResponse.Info
 		for _, info := range tableProgressInfo {
 			dispatcherId := info.DispatcherID
+			if dispatcherId == dispatcher.TableTriggerEventDispatcherId {
+				dispatcherItem := t.eventDispatcherManager.TableTriggerEventDispatcher
+				var message dispatcher.HeartBeatResponseMessage
+				for _, progress := range info.TableProgresses {
+					message.OtherTableProgress = append(message.OtherTableProgress, &dispatcher.TableSpanProgress{
+						Span:         progress.Span,
+						IsBlocked:    progress.IsBlocked,
+						BlockTs:      progress.BlockTs,
+						CheckpointTs: progress.CheckpointTs,
+					})
+				}
+				message.Action = dispatcher.Action(info.Action)
+				dispatcherItem.HeartbeatChan <- &message
+				continue
+			}
 			if dispatcherItem, ok := t.eventDispatcherManager.DispatcherMap[dispatcherId]; ok {
 				var message dispatcher.HeartBeatResponseMessage
 				for _, progress := range info.TableProgresses {

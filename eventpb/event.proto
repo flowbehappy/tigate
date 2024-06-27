@@ -5,14 +5,23 @@ option go_package = "./eventpb";
 // 这个 proto 主要描述的是 dispatcher 们跟 logService 交互需要用到的各类定义
 // 包括传输的 event 结构，通信的 rpc 
 
+message Filter {
+}
+
+
 message EventRequest {
     /*
     这里会包含几种 request
     1. 注册当前 dispatcher 的 request
     2. 调整某个 dispatcher event 发送速率
-    3. 接触某个 dispatcher 注册的 request
+    3.移除某个 dispatcher 注册的 request
     */
-
+    uint64 dispatcher_id = 1;
+    uint64 start_ts = 2;
+    TableSpan tableSpan = 3;
+    Filter filter = 4;
+    float ratio = 5;
+    bool remove = 6; // 要移除的时候设为 true
 }
 
 message ResolvedTs {

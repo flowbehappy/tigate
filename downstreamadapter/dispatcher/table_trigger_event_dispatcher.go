@@ -1,0 +1,75 @@
+// Copyright 2024 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package dispatcher
+
+import "new_arch/downstreamadapter/sink"
+
+/*
+ActionCreateSchema -- 这个要保证自己是晚于 drop database d1 即可，另外要比自己后面的 ddl 早（以防后面有 create table d1.t1)
+ActionDropSchema -- 也要保证顺序，要早于 create database d1，但不能早于其他这个 db 中的表执行到这个 ddl.commitTs， 不然会丢失数据 -- 每个 db 内的表都会收一份
+ActionCreateTable -- 要晚于 drop table t1
+ActionDropTable -- 要早于 create table t1，以及不能早于这个表本身执行到 ddl.CommitTs -- shared with 对应 table
+ActionTruncateTable -- 这个也要卡在这个表本身执行到 ddl.CommitTs -- shared with 对应的 table
+ActionRenameTable -- 卡对应 table 本身 -- shared with 对应 table
+ActionAddTablePartition -- 卡在内部对应物理表的相同时间
+ActionDropTablePartition -- 卡在内部对应物理表的相同时间,主要是为了保证 add table partition 不会出问题
+ActionTruncateTablePartition
+ActionRecoverTable
+ActionRepairTable
+ActionExchangeTablePartition
+ActionRemovePartitioning
+ActionRenameTables
+ActionCreateTables
+ActionReorganizePartition
+ActionFlashbackCluster -- 只支持没有表结构和库结构变更时同步 -- 要做一下检查
+ActionMultiSchemaChange -- 这个只是一个 action，不改变 table 本身，但是要卡全局的 ts
+ActionCreateResourceGroup/ActionAlterResourceGroup/ActionDropResourceGroup 卡全局 ts，但是只对下游是 tidb 的时候可用，别的时候都别往下扔
+*/
+// 用于接收处理特定的 DDLs
+const TableTriggerEventDispatcherId uint64 = 0
+
+type TableTriggerEventDispatcher struct {
+	Id            uint64        //用个特殊的
+	Ch            <-chan *Event // 接受 event -- 先做个基础版本的，每次处理一条 ddl 的那种
+	Filter        *Filter       // 发送给 logService
+	Sink          sink.Sink
+	HeartbeatChan chan *HeartBeatResponseMessage
+	State         *State
+	TableSpan     *TableSpan // 给一个特殊的 tableSpan
+	ResolvedTs    uint64
+}
+
+func (d TableTriggerEventDispatcher) GetSink() sink.Sink {
+	return d.Sink
+}
+
+func (d TableTriggerEventDispatcher) GetTableSpan() *TableSpan {
+	return d.TableSpan
+}
+
+func (d TableTriggerEventDispatcher) GetState() *State {
+	return d.State
+}
+
+func (d TableTriggerEventDispatcher) GetEventChan() chan *Event {
+	return d.Ch
+}
+
+func (d TableTriggerEventDispatcher) GetResolvedTs() uint64 {
+	return d.ResolvedTs
+}
+
+func (d TableTriggerEventDispatcher) GetId() uint64 {
+	return d.Id
+}

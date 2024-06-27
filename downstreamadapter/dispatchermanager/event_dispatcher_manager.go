@@ -24,7 +24,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-var uniqueEventDispatcherID uint64 = 0
+var uniqueEventDispatcherID uint64 = 1
 
 const workerCount = 8
 
@@ -33,9 +33,9 @@ func genUniqueEventDispatcherID() uint64 {
 }
 
 type EventDispatcherManager struct {
-	DispatcherMap  map[*Span]*dispatcher.TableEventDispatcher
-	EventCollector *EventCollector
-	//HeartbeatCollector           *HeartbeatCollector
+	DispatcherMap                map[*Span]*dispatcher.TableEventDispatcher
+	TableTriggerEventDispatcher  *dispatcher.TableTriggerEventDispatcher
+	EventCollector               *EventCollector
 	HeartbeatResponseQueue       *HeartbeatResponseQueue
 	HeartbeatRequestQueue        *HeartbeatRequestQueue
 	Id                           uint64
@@ -50,20 +50,22 @@ type EventDispatcherManager struct {
 	LogServiceAddr               string // log service master addr
 	EnableSyncPoint              bool
 	SyncPointInterval            time.Duration
+	filter                       *Filter
 }
 
-func (e *EventDispatcherManager) Init() {
+func (e *EventDispatcherManager) Init(startTs uint64) {
 	// 初始化 sink
 	if e.SinkType == "Mysql" {
 		e.Sink = sink.NewMysqlSink(workerCount, e.WorkerTaskScheduler, e.SinkTaskScheduler, e.SinkConfig)
 	}
 
 	e.EventCollector = newEventCollector(e.LogServiceAddr)
+	// 初始化 table trigger event dispatcher， 注册自己
+	e.TableTriggerEventDispatcher = e.newTableTriggerEventDispatcher(startTs)
 	// 注册处理收发 heartbeat 的 task
 	e.HeartbeatTaskScheduler.Submit(newHeartbeatRecvTask(e))
 	e.HeartbeatTaskScheduler.Submit(newHeartBeatSendTask(e))
 
-	// 初始化 table trigger event dispatcher， 注册自己
 }
 
 func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) uint64 {
@@ -78,7 +80,7 @@ func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) 
 func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *Span, startTs uint64) *dispatcher.TableEventDispatcher {
 	// 创建新的 event dispatcher，同时需要把这个去 logService 注册，并且把自己加到对应的某个处理 thread 里
 	if len(e.DispatcherMap) == 0 {
-		e.Init()
+		e.Init(startTs)
 	}
 
 	var syncPointInfo *dispatcher.SyncPointInfo
@@ -101,7 +103,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *Span, startT
 		SyncPointInfo: syncPointInfo,
 	}
 
-	e.EventCollector.RegisterDispatcher(&tableEventDispatcher)
+	e.EventCollector.RegisterDispatcher(&tableEventDispatcher, startTs, nil)
 	// 注册自己负责接受 event 决定是否能下推的 task
 	e.EventDispatcherTaskScheduler.Submit(dispatcher.NewEventDispatcherTask(&tableEventDispatcher))
 
@@ -112,6 +114,23 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *Span, startT
 	e.DispatcherMap[tableEventDispatcher.Id] = &tableEventDispatcher
 
 	return &tableEventDispatcher
+}
+
+func (e *EventDispatcherManager) newTableTriggerEventDispatcher(startTs uint64) *dispatcher.TableTriggerEventDispatcher {
+	tableTriggerEventDispatcher := &dispatcher.TableTriggerEventDispatcher{
+		Id:            dispatcher.TableTriggerEventDispatcherId,
+		Filter:        e.filter,
+		Ch:            make(chan *Event, 1000),
+		ResolvedTs:    startTs,
+		HeartbeatChan: make(chan *dispatcher.HeartBeatResponseMessage, 100),
+		Sink:          e.Sink,
+		TableSpan:     ddlSpan,
+		State:         dispatcher.NewState(),
+	}
+	e.EventDispatcherTaskScheduler.Submit(dispatcher.NewTableTriggerEventDispatcherTask(tableTriggerEventDispatcher))
+	e.EventCollector.RegisterDispatcher(tableTriggerEventDispatcher, startTs, e.filter)
+	return tableTriggerEventDispatcher
+
 }
 
 func (e *EventDispatcherManager) CollectHeartbeatInfo() *heartbeatpb.HeartBeatRequest {
@@ -125,8 +144,9 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo() *heartbeatpb.HeartBeatRe
 	   后面我们要测一下这个 msg 的大小，以及 collect 的耗时
 	*/
 	var message heartbeatpb.HeartBeatRequest
-	for _, dispatcher := range e.DispatcherMap {
-		heartbeatInfo := dispatcher.CollectHeartbeatInfo()
+	for _, tableEventDispatcher := range e.DispatcherMap {
+		// heartbeatInfo := dispatcher.CollectHeartbeatInfo()
+		heartbeatInfo := dispatcher.CollectDispatcherHeartBeatInfo(*tableEventDispatcher)
 		message.Progress = append(message.Progress, &heartbeatpb.TableSpanProgress{
 			CheckpointTs:   heartbeatInfo.CheckpointTs,
 			BlockTs:        heartbeatInfo.BlockTs,
@@ -134,5 +154,12 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo() *heartbeatpb.HeartBeatRe
 			IsBlocked:      heartbeatInfo.IsBlocked,
 		})
 	}
+	heartbeatInfo := dispatcher.CollectDispatcherHeartBeatInfo(*e.TableTriggerEventDispatcher)
+	message.Progress = append(message.Progress, &heartbeatpb.TableSpanProgress{
+		CheckpointTs:   heartbeatInfo.CheckpointTs,
+		BlockTs:        heartbeatInfo.BlockTs,
+		BlockTableSpan: heartbeatInfo.BlockTableSpan,
+		IsBlocked:      heartbeatInfo.IsBlocked,
+	})
 	return &message
 }

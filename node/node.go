@@ -33,6 +33,7 @@ type Node struct {
 	sinkTaskScheduler            *threadpool.TaskScheduler
 	heartbeatTaskScheduler       *threadpool.TaskScheduler
 	heartBeatCollector           *HeartBeatCollector
+	eventDispatcherManagerMap    map[uint64]*dispatchermanager.EventDispatcherManager
 }
 
 func NewNode() *Node {
@@ -48,24 +49,23 @@ func NewNode() *Node {
 }
 
 // 收到 create event dispatcher manager 时候创建，会可能是一个空的 manager
-func (n *Node) NewEventDispatcherManager(changefeedID uint64, sinkType string, addr string, config *ChangefeedConfig) *dispatchermanager.EventDispatcherManager {
+func (n *Node) NewEventDispatcherManager(changefeedID uint64, addr string, config *ChangefeedConfig) *dispatchermanager.EventDispatcherManager {
 	eventDispatcherManager := dispatchermanager.EventDispatcherManager{
 		DispatcherMap:                make(map[*Span]*dispatcher.TableEventDispatcher),
 		ChangefeedID:                 changefeedID,
 		Id:                           genUniqueEventDispatcherManagerID(),
-		SinkType:                     sinkType,
 		HeartbeatResponseQueue:       dispatchermanager.NewHeartbeatResponseQueue(),
 		WorkerTaskScheduler:          n.workerTaskScheduler,
 		EventDispatcherTaskScheduler: n.eventDispatcherTaskScheduler,
 		SinkTaskScheduler:            n.sinkTaskScheduler,
 		HeartbeatTaskScheduler:       n.heartbeatTaskScheduler,
+		SinkType:                     config.sinkType,
 		SinkConfig:                   config.SinkConfig,
 		LogServiceAddr:               addr, // 这个需要其他机制来更新
 		EnableSyncPoint:              config.EnableSyncPoint,
 		SyncPointInterval:            config.SyncPointInterval,
+		Filter:                       config.Filter, // TODO
 	}
+	n.eventDispatcherManagerMap[eventDispatcherManager.ChangefeedID] = &eventDispatcherManager
 	return &eventDispatcherManager
-	// n.heartbeatTaskScheduler.Submit(dispatchermanager.NewHeartbeatTask(&eventDispatcherManager))
-	// n.heartbeatTaskScheduler.Submit(dispatchermanager.NewHeartbeatTask(&eventDispatcherManager))
-
 }

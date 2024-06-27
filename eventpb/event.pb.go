@@ -4,6 +4,7 @@
 package eventpb
 
 import (
+	encoding_binary "encoding/binary"
 	fmt "fmt"
 	proto "github.com/gogo/protobuf/proto"
 	io "io"
@@ -22,14 +23,60 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
+type Filter struct {
+}
+
+func (m *Filter) Reset()         { *m = Filter{} }
+func (m *Filter) String() string { return proto.CompactTextString(m) }
+func (*Filter) ProtoMessage()    {}
+func (*Filter) Descriptor() ([]byte, []int) {
+	return fileDescriptor_d7fb2554dfcf7f7d, []int{0}
+}
+func (m *Filter) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *Filter) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_Filter.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *Filter) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_Filter.Merge(m, src)
+}
+func (m *Filter) XXX_Size() int {
+	return m.Size()
+}
+func (m *Filter) XXX_DiscardUnknown() {
+	xxx_messageInfo_Filter.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_Filter proto.InternalMessageInfo
+
 type EventRequest struct {
+	// 这里会包含几种 request
+	// 1. 注册当前 dispatcher 的 request
+	// 2. 调整某个 dispatcher event 发送速率
+	// 3.移除某个 dispatcher 注册的 request
+	DispatcherId uint64     `protobuf:"varint,1,opt,name=dispatcher_id,json=dispatcherId,proto3" json:"dispatcher_id,omitempty"`
+	StartTs      uint64     `protobuf:"varint,2,opt,name=start_ts,json=startTs,proto3" json:"start_ts,omitempty"`
+	TableSpan    *TableSpan `protobuf:"bytes,3,opt,name=tableSpan,proto3" json:"tableSpan,omitempty"`
+	Filter       *Filter    `protobuf:"bytes,4,opt,name=filter,proto3" json:"filter,omitempty"`
+	Ratio        float32    `protobuf:"fixed32,5,opt,name=ratio,proto3" json:"ratio,omitempty"`
+	Remove       bool       `protobuf:"varint,6,opt,name=remove,proto3" json:"remove,omitempty"`
 }
 
 func (m *EventRequest) Reset()         { *m = EventRequest{} }
 func (m *EventRequest) String() string { return proto.CompactTextString(m) }
 func (*EventRequest) ProtoMessage()    {}
 func (*EventRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_d7fb2554dfcf7f7d, []int{0}
+	return fileDescriptor_d7fb2554dfcf7f7d, []int{1}
 }
 func (m *EventRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -58,6 +105,48 @@ func (m *EventRequest) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_EventRequest proto.InternalMessageInfo
 
+func (m *EventRequest) GetDispatcherId() uint64 {
+	if m != nil {
+		return m.DispatcherId
+	}
+	return 0
+}
+
+func (m *EventRequest) GetStartTs() uint64 {
+	if m != nil {
+		return m.StartTs
+	}
+	return 0
+}
+
+func (m *EventRequest) GetTableSpan() *TableSpan {
+	if m != nil {
+		return m.TableSpan
+	}
+	return nil
+}
+
+func (m *EventRequest) GetFilter() *Filter {
+	if m != nil {
+		return m.Filter
+	}
+	return nil
+}
+
+func (m *EventRequest) GetRatio() float32 {
+	if m != nil {
+		return m.Ratio
+	}
+	return 0
+}
+
+func (m *EventRequest) GetRemove() bool {
+	if m != nil {
+		return m.Remove
+	}
+	return false
+}
+
 type ResolvedTs struct {
 }
 
@@ -65,7 +154,7 @@ func (m *ResolvedTs) Reset()         { *m = ResolvedTs{} }
 func (m *ResolvedTs) String() string { return proto.CompactTextString(m) }
 func (*ResolvedTs) ProtoMessage()    {}
 func (*ResolvedTs) Descriptor() ([]byte, []int) {
-	return fileDescriptor_d7fb2554dfcf7f7d, []int{1}
+	return fileDescriptor_d7fb2554dfcf7f7d, []int{2}
 }
 func (m *ResolvedTs) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -101,7 +190,7 @@ func (m *Event) Reset()         { *m = Event{} }
 func (m *Event) String() string { return proto.CompactTextString(m) }
 func (*Event) ProtoMessage()    {}
 func (*Event) Descriptor() ([]byte, []int) {
-	return fileDescriptor_d7fb2554dfcf7f7d, []int{2}
+	return fileDescriptor_d7fb2554dfcf7f7d, []int{3}
 }
 func (m *Event) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -140,7 +229,7 @@ func (m *EventResponse) Reset()         { *m = EventResponse{} }
 func (m *EventResponse) String() string { return proto.CompactTextString(m) }
 func (*EventResponse) ProtoMessage()    {}
 func (*EventResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_d7fb2554dfcf7f7d, []int{3}
+	return fileDescriptor_d7fb2554dfcf7f7d, []int{4}
 }
 func (m *EventResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -197,7 +286,7 @@ func (m *TableSpan) Reset()         { *m = TableSpan{} }
 func (m *TableSpan) String() string { return proto.CompactTextString(m) }
 func (*TableSpan) ProtoMessage()    {}
 func (*TableSpan) Descriptor() ([]byte, []int) {
-	return fileDescriptor_d7fb2554dfcf7f7d, []int{4}
+	return fileDescriptor_d7fb2554dfcf7f7d, []int{5}
 }
 func (m *TableSpan) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -235,7 +324,7 @@ func (m *TableAddrRequest) Reset()         { *m = TableAddrRequest{} }
 func (m *TableAddrRequest) String() string { return proto.CompactTextString(m) }
 func (*TableAddrRequest) ProtoMessage()    {}
 func (*TableAddrRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_d7fb2554dfcf7f7d, []int{5}
+	return fileDescriptor_d7fb2554dfcf7f7d, []int{6}
 }
 func (m *TableAddrRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -287,7 +376,7 @@ func (m *TableAddrResponse) Reset()         { *m = TableAddrResponse{} }
 func (m *TableAddrResponse) String() string { return proto.CompactTextString(m) }
 func (*TableAddrResponse) ProtoMessage()    {}
 func (*TableAddrResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_d7fb2554dfcf7f7d, []int{6}
+	return fileDescriptor_d7fb2554dfcf7f7d, []int{7}
 }
 func (m *TableAddrResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -331,6 +420,7 @@ func (m *TableAddrResponse) GetDispatcherId() uint64 {
 }
 
 func init() {
+	proto.RegisterType((*Filter)(nil), "eventpb.Filter")
 	proto.RegisterType((*EventRequest)(nil), "eventpb.EventRequest")
 	proto.RegisterType((*ResolvedTs)(nil), "eventpb.ResolvedTs")
 	proto.RegisterType((*Event)(nil), "eventpb.Event")
@@ -343,28 +433,56 @@ func init() {
 func init() { proto.RegisterFile("eventpb/event.proto", fileDescriptor_d7fb2554dfcf7f7d) }
 
 var fileDescriptor_d7fb2554dfcf7f7d = []byte{
-	// 329 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x52, 0xcd, 0x4e, 0xf2, 0x40,
-	0x14, 0x65, 0x80, 0x0f, 0xd2, 0x5b, 0x20, 0x9f, 0x63, 0x34, 0x95, 0xc5, 0x48, 0x86, 0xc4, 0x74,
-	0x55, 0x48, 0xdd, 0x9b, 0x68, 0x02, 0xd1, 0xc4, 0x55, 0x61, 0xe5, 0x86, 0x14, 0x67, 0x12, 0x49,
-	0x48, 0x5b, 0x67, 0x46, 0x76, 0xbe, 0x83, 0x8f, 0xe5, 0x92, 0xa5, 0x4b, 0xd3, 0xbe, 0x88, 0x61,
-	0x3a, 0xb6, 0x15, 0x59, 0xb8, 0x9a, 0xfb, 0x73, 0xee, 0x39, 0xf7, 0x9e, 0x0c, 0x1c, 0xf3, 0x0d,
-	0x8f, 0x54, 0xb2, 0x1c, 0xe9, 0xd7, 0x4b, 0x44, 0xac, 0x62, 0xdc, 0x36, 0x45, 0xda, 0x83, 0xce,
-	0x64, 0x17, 0x06, 0xfc, 0xf9, 0x85, 0x4b, 0x45, 0x3b, 0x00, 0x01, 0x97, 0xf1, 0x7a, 0xc3, 0xd9,
-	0x5c, 0xd2, 0x36, 0xfc, 0xd3, 0x5d, 0xfa, 0x0a, 0x5d, 0x03, 0x93, 0x49, 0x1c, 0x49, 0x8e, 0x2f,
-	0xa0, 0xa5, 0x29, 0xa4, 0x83, 0x06, 0x0d, 0xd7, 0xf6, 0x7b, 0x9e, 0x61, 0xf4, 0x72, 0x9c, 0xe9,
-	0xe2, 0x73, 0xb0, 0x85, 0xe1, 0x5b, 0x28, 0xe9, 0xd4, 0x07, 0xc8, 0x6d, 0x06, 0x20, 0x0a, 0x09,
-	0x3c, 0x84, 0x2e, 0x5b, 0xc9, 0x24, 0x54, 0x8f, 0x4f, 0x5c, 0x2c, 0x56, 0xcc, 0x69, 0x68, 0x48,
-	0xa7, 0x2c, 0xde, 0x31, 0x6a, 0x83, 0x35, 0x0f, 0x97, 0x6b, 0x3e, 0x4b, 0xc2, 0x88, 0xae, 0xe0,
-	0xbf, 0x4e, 0xae, 0x19, 0x13, 0x66, 0x6d, 0x3c, 0x06, 0x4b, 0x7d, 0x03, 0x1c, 0x34, 0x40, 0xae,
-	0xed, 0xe3, 0x62, 0xa3, 0x62, 0x34, 0x28, 0x41, 0xbf, 0x75, 0xeb, 0x07, 0x74, 0xef, 0xe1, 0xa8,
-	0x22, 0x65, 0x4e, 0xc7, 0xd0, 0x0c, 0x19, 0x13, 0x5a, 0xc6, 0x0a, 0x74, 0xfc, 0x27, 0x36, 0xff,
-	0x16, 0x5a, 0x93, 0xdc, 0x95, 0x2b, 0xb0, 0x74, 0x34, 0xe5, 0x9c, 0xe1, 0x93, 0x3d, 0xeb, 0xf2,
-	0x93, 0xfa, 0xa7, 0xfb, 0xe5, 0x5c, 0xde, 0x45, 0x63, 0xe4, 0xcf, 0x8c, 0x1f, 0xbb, 0xbd, 0xf0,
-	0xb4, 0x9a, 0x9c, 0xfd, 0xbc, 0xba, 0xe2, 0x51, 0xbf, 0x7f, 0xa8, 0x55, 0x92, 0xde, 0x0c, 0xdf,
-	0x53, 0x82, 0xb6, 0x29, 0x41, 0x9f, 0x29, 0x41, 0x6f, 0x19, 0xa9, 0x6d, 0x33, 0x52, 0xfb, 0xc8,
-	0x48, 0xed, 0xc1, 0xf2, 0x46, 0x66, 0x74, 0xd9, 0xd2, 0xff, 0xe7, 0xf2, 0x2b, 0x00, 0x00, 0xff,
-	0xff, 0xe1, 0x01, 0xa4, 0x33, 0x56, 0x02, 0x00, 0x00,
+	// 409 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x93, 0x4d, 0x6f, 0xda, 0x40,
+	0x10, 0x86, 0x59, 0x3e, 0x0c, 0x1e, 0x43, 0x3f, 0xb6, 0x2d, 0x32, 0x1c, 0x5c, 0xcb, 0x48, 0xad,
+	0x4f, 0x06, 0xb9, 0xf7, 0x4a, 0xad, 0x04, 0x6a, 0xa5, 0x9e, 0x16, 0x4e, 0xbd, 0x20, 0x93, 0xdd,
+	0x28, 0x96, 0x08, 0x76, 0x76, 0x37, 0xdc, 0xf2, 0x1f, 0xf2, 0xb3, 0x72, 0xe4, 0x96, 0x1c, 0x23,
+	0xf8, 0x23, 0x11, 0xeb, 0xc5, 0xe6, 0xeb, 0xc0, 0x89, 0x9d, 0x79, 0x87, 0x79, 0xe7, 0x7d, 0x24,
+	0xc3, 0x27, 0xb6, 0x64, 0x0b, 0x99, 0xce, 0xfa, 0xea, 0x37, 0x48, 0x79, 0x22, 0x13, 0x5c, 0xd7,
+	0x4d, 0xaf, 0x01, 0xc6, 0x28, 0x9e, 0x4b, 0xc6, 0xbd, 0x67, 0x04, 0xcd, 0xe1, 0xb6, 0x4b, 0xd8,
+	0xdd, 0x3d, 0x13, 0x12, 0xf7, 0xa0, 0x45, 0x63, 0x91, 0x46, 0xf2, 0xea, 0x86, 0xf1, 0x69, 0x4c,
+	0x6d, 0xe4, 0x22, 0xbf, 0x4a, 0x9a, 0x45, 0xf3, 0x2f, 0xc5, 0x1d, 0x68, 0x08, 0x19, 0x71, 0x39,
+	0x95, 0xc2, 0x2e, 0x2b, 0xbd, 0xae, 0xea, 0x89, 0xc0, 0x03, 0x30, 0x65, 0x34, 0x9b, 0xb3, 0x71,
+	0x1a, 0x2d, 0xec, 0x8a, 0x8b, 0x7c, 0x2b, 0xc4, 0x81, 0xf6, 0x0d, 0x26, 0x3b, 0x85, 0x14, 0x43,
+	0xf8, 0x3b, 0x18, 0xd7, 0xea, 0x18, 0xbb, 0xaa, 0xc6, 0xdf, 0xe7, 0xe3, 0xd9, 0x8d, 0x44, 0xcb,
+	0xf8, 0x33, 0xd4, 0x78, 0x24, 0xe3, 0xc4, 0xae, 0xb9, 0xc8, 0x2f, 0x93, 0xac, 0xc0, 0x6d, 0x30,
+	0x38, 0xbb, 0x4d, 0x96, 0xcc, 0x36, 0x5c, 0xe4, 0x37, 0x88, 0xae, 0xbc, 0x26, 0x00, 0x61, 0x22,
+	0x99, 0x2f, 0x19, 0x9d, 0x08, 0xaf, 0x0e, 0x35, 0x15, 0xd3, 0x7b, 0x80, 0x96, 0xce, 0x2b, 0xd2,
+	0x64, 0x21, 0x18, 0xfe, 0x06, 0x86, 0xf2, 0x13, 0x36, 0x72, 0x2b, 0xbe, 0x15, 0xbe, 0xcb, 0xed,
+	0xb3, 0x39, 0xad, 0xe2, 0xaf, 0x60, 0x71, 0xbd, 0xaf, 0x88, 0x0d, 0x3c, 0xb7, 0x38, 0x25, 0x57,
+	0x39, 0x25, 0xe7, 0x59, 0x60, 0xe6, 0x10, 0xbc, 0x18, 0x3e, 0xa8, 0xe2, 0x17, 0xa5, 0x7c, 0xc7,
+	0xff, 0x80, 0x1f, 0xba, 0x84, 0xdf, 0x89, 0x6f, 0xf9, 0x8c, 0xef, 0x3f, 0xf8, 0xb8, 0x67, 0xa5,
+	0xa3, 0x63, 0xa8, 0x46, 0x94, 0x72, 0x65, 0x63, 0x12, 0xf5, 0xbe, 0x68, 0x5b, 0xf8, 0x07, 0x8c,
+	0x61, 0x46, 0xe5, 0x27, 0x98, 0xea, 0x35, 0x62, 0x8c, 0xe2, 0x2f, 0x47, 0xe8, 0xb2, 0x48, 0xdd,
+	0xf6, 0x71, 0x3b, 0xb3, 0xf7, 0xd1, 0x00, 0x85, 0x63, 0xcd, 0x63, 0x7b, 0x17, 0x1e, 0xed, 0x17,
+	0x9d, 0xc3, 0xd4, 0x7b, 0x8c, 0xba, 0xdd, 0x73, 0x52, 0xb1, 0xf4, 0x77, 0xef, 0x69, 0xed, 0xa0,
+	0xd5, 0xda, 0x41, 0xaf, 0x6b, 0x07, 0x3d, 0x6e, 0x9c, 0xd2, 0x6a, 0xe3, 0x94, 0x5e, 0x36, 0x4e,
+	0xe9, 0xbf, 0x19, 0xf4, 0xf5, 0x5f, 0x67, 0x86, 0xfa, 0x26, 0x7e, 0xbc, 0x05, 0x00, 0x00, 0xff,
+	0xff, 0xa3, 0xf3, 0xe9, 0x74, 0x2a, 0x03, 0x00, 0x00,
+}
+
+func (m *Filter) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *Filter) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *Filter) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	return len(dAtA) - i, nil
 }
 
 func (m *EventRequest) Marshal() (dAtA []byte, err error) {
@@ -387,6 +505,56 @@ func (m *EventRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.Remove {
+		i--
+		if m.Remove {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x30
+	}
+	if m.Ratio != 0 {
+		i -= 4
+		encoding_binary.LittleEndian.PutUint32(dAtA[i:], uint32(math.Float32bits(float32(m.Ratio))))
+		i--
+		dAtA[i] = 0x2d
+	}
+	if m.Filter != nil {
+		{
+			size, err := m.Filter.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintEvent(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x22
+	}
+	if m.TableSpan != nil {
+		{
+			size, err := m.TableSpan.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintEvent(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x1a
+	}
+	if m.StartTs != 0 {
+		i = encodeVarintEvent(dAtA, i, uint64(m.StartTs))
+		i--
+		dAtA[i] = 0x10
+	}
+	if m.DispatcherId != 0 {
+		i = encodeVarintEvent(dAtA, i, uint64(m.DispatcherId))
+		i--
+		dAtA[i] = 0x8
+	}
 	return len(dAtA) - i, nil
 }
 
@@ -592,12 +760,41 @@ func encodeVarintEvent(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	return base
 }
+func (m *Filter) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	return n
+}
+
 func (m *EventRequest) Size() (n int) {
 	if m == nil {
 		return 0
 	}
 	var l int
 	_ = l
+	if m.DispatcherId != 0 {
+		n += 1 + sovEvent(uint64(m.DispatcherId))
+	}
+	if m.StartTs != 0 {
+		n += 1 + sovEvent(uint64(m.StartTs))
+	}
+	if m.TableSpan != nil {
+		l = m.TableSpan.Size()
+		n += 1 + l + sovEvent(uint64(l))
+	}
+	if m.Filter != nil {
+		l = m.Filter.Size()
+		n += 1 + l + sovEvent(uint64(l))
+	}
+	if m.Ratio != 0 {
+		n += 5
+	}
+	if m.Remove {
+		n += 2
+	}
 	return n
 }
 
@@ -687,6 +884,56 @@ func sovEvent(x uint64) (n int) {
 func sozEvent(x uint64) (n int) {
 	return sovEvent(uint64((x << 1) ^ uint64((int64(x) >> 63))))
 }
+func (m *Filter) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowEvent
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: Filter: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: Filter: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipEvent(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthEvent
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
 func (m *EventRequest) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -716,6 +963,147 @@ func (m *EventRequest) Unmarshal(dAtA []byte) error {
 			return fmt.Errorf("proto: EventRequest: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field DispatcherId", wireType)
+			}
+			m.DispatcherId = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvent
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.DispatcherId |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field StartTs", wireType)
+			}
+			m.StartTs = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvent
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.StartTs |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field TableSpan", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvent
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthEvent
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthEvent
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.TableSpan == nil {
+				m.TableSpan = &TableSpan{}
+			}
+			if err := m.TableSpan.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Filter", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvent
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthEvent
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthEvent
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.Filter == nil {
+				m.Filter = &Filter{}
+			}
+			if err := m.Filter.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 5:
+			if wireType != 5 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Ratio", wireType)
+			}
+			var v uint32
+			if (iNdEx + 4) > l {
+				return io.ErrUnexpectedEOF
+			}
+			v = uint32(encoding_binary.LittleEndian.Uint32(dAtA[iNdEx:]))
+			iNdEx += 4
+			m.Ratio = float32(math.Float32frombits(v))
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Remove", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowEvent
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.Remove = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := skipEvent(dAtA[iNdEx:])

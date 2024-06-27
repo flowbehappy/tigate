@@ -15,7 +15,9 @@ package dispatchermanager
 
 import (
 	"new_arch/downstreamadapter/dispatcher"
+	"new_arch/eventpb"
 	"new_arch/utils/conn"
+	"sync"
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tiflow/pkg/security"
@@ -27,9 +29,11 @@ type EventCollector struct {
 	grpcPool                  *conn.EventFeedConnAndClientPool // 用于获取 client
 	masterClient              *conn.TableAddrConnAndClient     // 专门用于跟 log master 通信
 	clientMaxDispatcherNumber int
-	clients                   map[*conn.EventFeedConnAndClient][]uint64  // client --> dispatcherIDList
-	addrMap                   map[string][]*conn.EventFeedConnAndClient  // addr --> client
-	dispatcherMap             map[uint64]dispatcher.TableEventDispatcher // dispatcher_id --> dispatcher
+	clients                   map[*conn.EventFeedConnAndClient][]uint64 // client --> dispatcherIDList
+	addrMap                   map[string][]*conn.EventFeedConnAndClient // addr --> client
+	dispatcherMap             map[uint64]dispatcher.Dispatcher          // dispatcher_id --> dispatcher
+	dispatcherClientMap       map[uint64]*conn.EventFeedConnAndClient   // dispatcher_id --> client
+	wg                        *sync.WaitGroup
 }
 
 func newEventCollector(masterAddr string) *EventCollector {
@@ -40,8 +44,9 @@ func newEventCollector(masterAddr string) *EventCollector {
 	return &eventCollector
 }
 
-func (c *EventCollector) RegisterDispatcher(dispatcher *dispatcher.TableEventDispatcher) error {
-	addr := c.getAddr(dispatcher)
+func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uint64, filter *Filter) error {
+	id := d.GetId()
+	addr := c.getAddr(d)
 
 	clients := c.addrMap[addr] // 获得目前现有的所有跟这个 addr 相关的 clients
 
@@ -50,7 +55,8 @@ func (c *EventCollector) RegisterDispatcher(dispatcher *dispatcher.TableEventDis
 	for _, client := range clients { // 这边先用个遍历，后面看看有什么更合适的结构
 		dispatcherIDLists := c.clients[client]
 		if len(dispatcherIDLists) < c.clientMaxDispatcherNumber {
-			c.clients[client] = append(c.clients[client], dispatcher.Id)
+			c.clients[client] = append(c.clients[client], id)
+			c.dispatcherClientMap[id] = client
 			flag = true
 			break
 		}
@@ -58,9 +64,31 @@ func (c *EventCollector) RegisterDispatcher(dispatcher *dispatcher.TableEventDis
 	if !flag {
 		newClient, _ := c.grpcPool.Connect(addr)
 		c.addrMap[addr] = append(c.addrMap[addr], newClient)
-		c.clients[newClient] = append(c.clients[newClient], dispatcher.Id)
+		c.clients[newClient] = append(c.clients[newClient], id)
+		c.dispatcherClientMap[id] = newClient
+
+		c.wg.Add(1)
 		go c.run(newClient)
 	}
+
+	// 要加一个 发送对应注册信息的 request
+	request := eventpb.EventRequest{
+		DispatcherId: id,
+		StartTs:      startTs,
+		TableSpan:    d.GetTableSpan(),
+		Filter:       filter,
+		Ratio:        1,
+		Remove:       false,
+	}
+
+	err := c.dispatcherClientMap[id].Client.Send(&request)
+	if err != nil {
+		//
+	}
+
+	c.dispatcherMap[d.GetId()] = d
+
+	return nil
 }
 
 func (c *EventCollector) run(cc *conn.EventFeedConnAndClient) {
@@ -92,7 +120,7 @@ func (c *EventCollector) run(cc *conn.EventFeedConnAndClient) {
 }
 
 // 这个要想一下，做成单线程，还是收发拆开
-func (c *EventCollector) getAddr(dispatcher *dispatcher.TableEventDispatcher) string {
+func (c *EventCollector) getAddr(d dispatcher.Dispatcher) string {
 	client := c.masterClient.Client
 	// make the msg
 	err := client.Send(msg)
@@ -103,7 +131,7 @@ func (c *EventCollector) getAddr(dispatcher *dispatcher.TableEventDispatcher) st
 	for {
 		addrResponse, err := client.Recv() // 这个会直接阻塞么？
 		dispatcherId := addrResponse.DispatcherId
-		if dispatcherId != dispatcher.ID {
+		if dispatcherId != d.GetId() {
 			log.Error("wrong dispatcher")
 			continue
 		}
