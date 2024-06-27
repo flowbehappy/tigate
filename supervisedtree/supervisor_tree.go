@@ -1,6 +1,9 @@
 package supervisedtree
 
 import (
+	"encoding/json"
+	"fmt"
+
 	"github.com/flowbehappy/tigate/apperror"
 	"github.com/pingcap/log"
 
@@ -34,6 +37,12 @@ type ExtraNodeInfo interface {
 	Info() string
 }
 
+type StringInfo string
+
+func (s StringInfo) Info() string {
+	return string(s)
+}
+
 // The SupervisedNodeID is used to identify an in-memory supervised node object.
 // The Epoch comes from the root supervisor, the TaskID comes from the actual job of the supervised node,
 // and the ObjectID is created when the supervised node object is created via "uuid.New()".
@@ -58,35 +67,53 @@ type SupervisedNodeID struct {
 	ExtraInfo ExtraNodeInfo
 }
 
+func (sid *SupervisedNodeID) String() string {
+	data, err := json.Marshal(sid)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+type SupervisedType int
+
+const (
+	// A Supervisor is a node other than the bottom nodes in a supervised tree
+	Supervisor SupervisedType = 1
+	// A Worker is a node at the bottom of a supervised tree, which has no inferiors
+	Worker SupervisedType = 2
+)
+
+func (t SupervisedType) isSupervisor() bool { return t == Supervisor }
+func (t SupervisedType) isWorker() bool     { return t == Worker }
+
+// A node in a supervised tree.
 type SupervisedNode interface {
+	GetType() SupervisedType
 	GetID() SupervisedNodeID
 	GetToken() *AliveToken
+	GetInferiors() []SupervisedNode
+	GetSuperior() SupervisedNode
 	UpdateToken(sid *SupervisedNodeID, token *AliveToken) error
+	String() string
 }
 
-type Supervisor interface {
-	GetSuperior() *Supervisor
-	GetInferiors() map[SupervisedNodeID]SupervisedNode
+// A supervied node with common implementation.
+type SupervisedNodeImpl struct {
+	id        SupervisedNodeID
+	token     *AliveToken
+	inferiors []SupervisedNode
+	superior  SupervisedNode
 }
 
-type Worker interface {
-	GetSuperior() *Supervisor
-}
+// This is a place holder. It should be overriden by the child class. If not, it will cause a panic when calling this method.
+func (s *SupervisedNodeImpl) GetType() SupervisedType        { return 0 }
+func (s *SupervisedNodeImpl) GetID() SupervisedNodeID        { return s.id }
+func (s *SupervisedNodeImpl) GetToken() *AliveToken          { return s.token }
+func (s *SupervisedNodeImpl) GetInferiors() []SupervisedNode { return s.inferiors }
+func (s *SupervisedNodeImpl) GetSuperior() SupervisedNode    { return s.superior }
 
-type SupervisedNodeWithTTLImpl struct {
-	id    SupervisedNodeID
-	token *AliveToken
-}
-
-func (s *SupervisedNodeWithTTLImpl) GetID() SupervisedNodeID {
-	return s.id
-}
-
-func (s *SupervisedNodeWithTTLImpl) GetToken() *AliveToken {
-	return s.token
-}
-
-func (s *SupervisedNodeWithTTLImpl) UpdateToken(sid *SupervisedNodeID, token *AliveToken) error {
+func (s *SupervisedNodeImpl) UpdateToken(sid *SupervisedNodeID, token *AliveToken) error {
 	if s.id.Epoch > sid.Epoch {
 		return apperror.APPError{Type: apperror.ErrorTypeEpochSmaller, Reason: "The epoch of the new supervisor is smaller than the current supervisor ID."}
 	}
@@ -96,4 +123,21 @@ func (s *SupervisedNodeWithTTLImpl) UpdateToken(sid *SupervisedNodeID, token *Al
 	}
 	s.token = token
 	return nil
+}
+
+func (s *SupervisedNodeImpl) String() string {
+	if s.GetType().isSupervisor() {
+		var children = ""
+		inferiors := s.GetInferiors()
+		for i := 0; i < len(inferiors); i++ {
+			if i == len(inferiors)-1 {
+				children += inferiors[i].String()
+			} else {
+				children += inferiors[i].String() + ", "
+			}
+		}
+		return fmt.Sprintf("{\"id\": %s, \"children\": %s}", s.id.String(), children)
+	} else {
+		return fmt.Sprintf("{\"id\": %s}", s.id.String())
+	}
 }
