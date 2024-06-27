@@ -1,7 +1,6 @@
 package supervisedtree
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/flowbehappy/tigate/apperror"
@@ -68,52 +67,57 @@ type SupervisedNodeID struct {
 }
 
 func (sid *SupervisedNodeID) String() string {
-	data, err := json.Marshal(sid)
-	if err != nil {
-		return ""
-	}
-	return string(data)
+	return fmt.Sprintf("{\"object_id\": \"%s\", \"epoch\": %d, \"task_id\": \"%s\", \"host_info\": \"%s\", \"extra_info\": \"%s\"}",
+		sid.ObjectID.String(), sid.Epoch, sid.TaskID, sid.HostInfo, sid.ExtraInfo.Info())
 }
 
 type SupervisedType int
 
 const (
-	// A Supervisor is a node other than the bottom nodes in a supervised tree
-	Supervisor SupervisedType = 1
-	// A Worker is a node at the bottom of a supervised tree, which has no inferiors
-	Worker SupervisedType = 2
+	// A Supervisor is a supervised node other than the bottom nodes in a supervised tree
+	TypeSupervisor SupervisedType = 1
+	// A Worker is a supervised node at the bottom of a supervised tree, which has no inferiors
+	TypeWorker SupervisedType = 2
 )
 
-func (t SupervisedType) isSupervisor() bool { return t == Supervisor }
-func (t SupervisedType) isWorker() bool     { return t == Worker }
+func (t SupervisedType) String() string {
+	if t == TypeSupervisor {
+		return "Supervisor"
+	} else {
+		return "Worker"
+	}
+}
+
+func (t SupervisedType) isSupervisor() bool { return t == TypeSupervisor }
+func (t SupervisedType) isWorker() bool     { return t == TypeWorker }
 
 // A node in a supervised tree.
 type SupervisedNode interface {
 	GetType() SupervisedType
-	GetID() SupervisedNodeID
+	GetID() *SupervisedNodeID
 	GetToken() *AliveToken
-	GetInferiors() []SupervisedNode
-	GetSuperior() SupervisedNode
 	UpdateToken(sid *SupervisedNodeID, token *AliveToken) error
-	String() string
+
+	// Those two methods below are usually only use by logging the tree's information.
+	// We use a channel to return the inferiors in case the inferiors are too many to store in memory.
+	GetInferiors() <-chan SupervisedNode
+	GetSuperior() SupervisedNode
 }
 
 // A supervied node with common implementation.
-type SupervisedNodeImpl struct {
-	id        SupervisedNodeID
-	token     *AliveToken
-	inferiors []SupervisedNode
-	superior  SupervisedNode
+type SupervisedNodeWithTTLImpl struct {
+	id    *SupervisedNodeID
+	token *AliveToken
 }
 
-// This is a place holder. It should be overriden by the child class. If not, it will cause a panic when calling this method.
-func (s *SupervisedNodeImpl) GetType() SupervisedType        { return 0 }
-func (s *SupervisedNodeImpl) GetID() SupervisedNodeID        { return s.id }
-func (s *SupervisedNodeImpl) GetToken() *AliveToken          { return s.token }
-func (s *SupervisedNodeImpl) GetInferiors() []SupervisedNode { return s.inferiors }
-func (s *SupervisedNodeImpl) GetSuperior() SupervisedNode    { return s.superior }
+// This is a place holder. It should be overriden by the child struct. If not, it will cause a panic when calling this method.
+func (s *SupervisedNodeWithTTLImpl) GetType() SupervisedType {
+	panic("Please implement this method GetType!")
+}
+func (s *SupervisedNodeWithTTLImpl) GetID() *SupervisedNodeID { return s.id }
+func (s *SupervisedNodeWithTTLImpl) GetToken() *AliveToken    { return s.token }
 
-func (s *SupervisedNodeImpl) UpdateToken(sid *SupervisedNodeID, token *AliveToken) error {
+func (s *SupervisedNodeWithTTLImpl) UpdateToken(sid *SupervisedNodeID, token *AliveToken) error {
 	if s.id.Epoch > sid.Epoch {
 		return apperror.APPError{Type: apperror.ErrorTypeEpochSmaller, Reason: "The epoch of the new supervisor is smaller than the current supervisor ID."}
 	}
@@ -125,19 +129,28 @@ func (s *SupervisedNodeImpl) UpdateToken(sid *SupervisedNodeID, token *AliveToke
 	return nil
 }
 
-func (s *SupervisedNodeImpl) String() string {
+func PrintString(s SupervisedNode, print_token bool) string {
+	var token = ""
+	if print_token && s.GetToken() != nil {
+		token = fmt.Sprintf(", \"token\": \"%s\"", s.GetToken().String())
+	}
 	if s.GetType().isSupervisor() {
 		var children = ""
-		inferiors := s.GetInferiors()
-		for i := 0; i < len(inferiors); i++ {
-			if i == len(inferiors)-1 {
-				children += inferiors[i].String()
-			} else {
-				children += inferiors[i].String() + ", "
-			}
+		for inferior := range s.GetInferiors() {
+			children += PrintString(inferior, print_token) + ", "
 		}
-		return fmt.Sprintf("{\"id\": %s, \"children\": %s}", s.id.String(), children)
+		if len(children) != 0 {
+			children = children[:len(children)-2]
+		}
+
+		if len(children) == 0 {
+			return fmt.Sprintf("{\"id\": %s, \"type\": \"%s\"%s}", s.GetID().String(), s.GetType().String(), token)
+		} else {
+			return fmt.Sprintf("{\"id\": %s, \"type\": \"%s\",%s \"children\": [%s]}", s.GetID().String(), s.GetType().String(), token, children)
+		}
+	} else if s.GetType().isWorker() {
+		return fmt.Sprintf("{\"id\": %s, \"type\": \"%s\"%s}", s.GetID().String(), s.GetType().String(), token)
 	} else {
-		return fmt.Sprintf("{\"id\": %s}", s.id.String())
+		panic("The type of the supervised node is unknown.")
 	}
 }

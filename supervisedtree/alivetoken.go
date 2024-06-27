@@ -24,8 +24,5 @@ type AliveToken struct {
 	TTL time.Time
 }
 
-// TODO: some helper functions
-
-func (t *AliveToken) IsExpired() bool {
-	return time.Now().After(t.TTL)
-}
+func (t *AliveToken) String() string  { return t.TTL.Format("2006-01-02 15:04:05.999999999 -0700 MST") }
+func (t *AliveToken) IsExpired() bool { return time.Now().After(t.TTL) }
