@@ -127,7 +127,7 @@ func (e *EventDispatcherManager) newTableTriggerEventDispatcher(startTs uint64) 
 		TableSpan:     ddlSpan,
 		State:         dispatcher.NewState(),
 	}
-	e.EventDispatcherTaskScheduler.Submit(dispatcher.NewTableTriggerEventDispatcherTask(tableTriggerEventDispatcher))
+	e.EventDispatcherTaskScheduler.Submit(dispatcher.NewEventDispatcherTask(tableTriggerEventDispatcher))
 	e.EventCollector.RegisterDispatcher(tableTriggerEventDispatcher, startTs, e.filter)
 	return tableTriggerEventDispatcher
 

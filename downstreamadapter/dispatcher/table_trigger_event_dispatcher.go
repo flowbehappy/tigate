@@ -73,3 +73,11 @@ func (d TableTriggerEventDispatcher) GetResolvedTs() uint64 {
 func (d TableTriggerEventDispatcher) GetId() uint64 {
 	return d.Id
 }
+
+func (d TableTriggerEventDispatcher) GetDispatcherType() string {
+	return "table_trigger_event_dispatcher"
+}
+
+func (d TableTriggerEventDispatcher) GetHeartBeatChan() chan *HeartBeatResponseMessage {
+	return d.HeartbeatChan
+}

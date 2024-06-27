@@ -22,6 +22,8 @@ type Dispatcher interface {
 	GetEventChan() chan *Event
 	GetResolvedTs() uint64
 	GetId() uint64
+	GetDispatcherType() string
+	GetHeartBeatChan() chan *HeartBeatResponseMessage
 }
 
 type Action uint64
