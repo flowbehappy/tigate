@@ -15,6 +15,17 @@ package dispatcher
 
 import "new_arch/downstreamadapter/sink"
 
+/*
+Dispatcher is responsible for getting events from LogService and sending them to Sink in appropriate order.
+Each dispatcher only deal with the events of one tableSpan in one changefeed.
+All dispatchers in the changefeed of the same node will share the same Sink.
+
+Because Sink does not flush events to the downstream in strict order.
+the dispatcher can't send event to Sink continuously all the time,
+1. The ddl event/sync point event can be send to Sink only when the previous event has beed flushed to downstream successfully.
+2. Only when the ddl event/sync point event is flushed to downstream successfully, the dispatcher can send the following event to Sink.
+3. For the cross table ddl event/sync point event, dispatcher needs to negotiate with the maintainer to decide whether and when send it to Sink.
+*/
 type Dispatcher interface {
 	GetSink() sink.Sink
 	GetTableSpan() *Span
@@ -36,15 +47,33 @@ const (
 	Pass  Action = 2
 )
 
+/*
+State displays the status of advancing event and State is used to indicate whether the current pendingEvent can be advanced.
+Only the following events can be blocked:
+1. All the DDL Events
+2. All the Sync Point Events
+3. The Event after the DDL Event or the Sync Point Event
+*/
 type State struct {
-	// true 表示 event list 要推动需要有条件满足
-	// 具体的条件就是满足 sinkAvaible， blockTs 以及 blockTableSpan
-	isBlocked      bool
-	pengdingEvent  *Event       // 被block到的 event，也可以是空，说明是 ddl 下推 block 了后续的 event
-	blockTableSpan []*TableSpan // 需要等达到 ts 的 table span
-	blockTs        uint64       // 需要等到其他 table 的 ts
-	sinkAvailable  bool         // true 表示 sink 里已经没有没有 flush 下去的 event
-	action         Action       //
+	// False means the events are being pushed down continuously
+	// True means there is an event being blocked
+	isBlocked bool
+	// The blocked Event.
+	// pendingEvent could be nil when isBlocked is true.
+	// Such as one ddl event is sent to downstream,
+	// so the following events can be pushed down only when
+	// the ddl event is flushed to downstream successfully (that means sink is available).
+	pengdingEvent *Event
+	// The pendingEvent is waiting for the progress of these tableSpans to reach the blockTs.
+	blockTableSpan []*TableSpan
+	// the commitTs of the pendingEvent, also the ts the tableSpan in the blockTableSpan should reach.
+	blockTs uint64
+	// True means the sink flushes all the previous event successfully,
+	// there is no event of these tableSpan in the Sink now.
+	sinkAvailable bool
+	// The action for the pendingEvent,
+	// it is used to decide whether the pendingEvent should write or just pass.
+	action Action //
 }
 
 func NewState() *State {
@@ -67,21 +96,32 @@ func (s *State) clear() {
 	s.action = None
 }
 
+/*
+HeartBeatInfo is used to collect the message for HeartBeatRequest for each dispatcher.
+Mainly about the progress of each dispatcher:
+1. whether the dispatcher is blocked ? If blocked, the info about blocked should be collected.
+2. The checkpointTs of the dispatcher, shows that all the events whose ts <= checkpointTs are flushed to downstream successfully.
+*/
 type HeartBeatInfo struct {
 	IsBlocked      bool
 	BlockTs        uint64
 	BlockTableSpan []*TableSpan
-	CheckpointTs   uint64
 	TableSpan      *TableSpan
+	CheckpointTs   uint64
 	Id             uint64
 }
 
 func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
 	var checkpointTs uint64
+	// The event in dispatcher could be in
+	// 1. Sink
+	// 2. State.pengingEvent
+	// 3. dispatcher.Ch
+	// If there exists an event in the dispatcher, the checkpointTs should be the event with the smallest commitTs - 1
+	// If there is no event in the dispatcher now, the checkpointTs should be the resolvedTs of the dispatcher.
 	smallestCommitTsInSink := d.GetSink().GetSmallestCommitTs(d.GetTableSpan())
 	if smallestCommitTsInSink == 0 {
 		state := d.GetState()
-		// 说明 sink 里没有数据了
 		if state.pengdingEvent != nil {
 			checkpointTs = state.pengdingEvent.CommitTs - 1
 		} else {
@@ -99,10 +139,8 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
 						sinkAvailable:  false,
 					}
 				}
-
 				checkpointTs = event.CommitTs - 1
 			default:
-				// 毫无 event，用 resolvedTs
 				checkpointTs = d.GetResolvedTs()
 			}
 		}
@@ -116,6 +154,6 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
 		BlockTableSpan: state.blockTableSpan,
 		CheckpointTs:   checkpointTs,
 		TableSpan:      d.GetTableSpan(),
-		Id:             d.GetID(),
+		Id:             d.GetId(),
 	}
 }
