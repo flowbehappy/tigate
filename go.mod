@@ -1,15 +1,16 @@
-module new_arch
+module github.com/flowbehappy/tigate
 
-go 1.21.0
+go 1.21.8
 
 require (
 	github.com/gogo/protobuf v1.3.2
 	github.com/google/btree v1.1.2
-	github.com/ngaut/log v0.0.0-20221012222132-f3329cba28a5
+	github.com/google/uuid v1.6.0
+	github.com/ngaut/log v0.0.0-20210830112240-0124ec040aeb
 	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
 	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20240613051929-f124165c9be4
-	github.com/pingcap/tiflow v0.0.0-20240617040545-4860903abe96
+	github.com/pingcap/tiflow v0.0.0-20240621054018-c001638fcf8c
 	github.com/tikv/client-go/v2 v2.0.8-0.20240604045705-156cebc2defa
 	go.uber.org/atomic v1.11.0
 	go.uber.org/zap v1.27.0
@@ -119,7 +120,6 @@ require (
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/google/pprof v0.0.0-20240117000934-35fc243c5815 // indirect
 	github.com/google/s2a-go v0.1.7 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.2 // indirect
 	github.com/googleapis/gax-go/v2 v2.12.3 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect

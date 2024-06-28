@@ -14,7 +14,7 @@
 package dispatcher
 
 import (
-	"new_arch/downstreamadapter/sink"
+	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 
 	"github.com/ngaut/log"
 )

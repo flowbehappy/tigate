@@ -14,13 +14,14 @@
 package dispatchermanager
 
 import (
-	"new_arch/downstreamadapter/dispatcher"
-	"new_arch/downstreamadapter/sink"
-	"new_arch/heartbeatpb"
-	"new_arch/node"
-	"new_arch/utils/threadpool"
 	"sync/atomic"
 	"time"
+
+	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
+	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/node"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 
 	"github.com/tikv/client-go/v2/oracle"
 )

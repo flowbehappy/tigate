@@ -13,7 +13,7 @@
 
 package dispatcher
 
-import "new_arch/downstreamadapter/sink"
+import "github.com/flowbehappy/tigate/downstreamadapter/sink"
 
 /*
 Dispatcher is responsible for getting events from LogService and sending them to Sink in appropriate order.

@@ -608,8 +608,8 @@ github.com/mwitkow/go-conntrack v0.0.0-20190716064945-2f068394615f/go.mod h1:qRW
 github.com/ncw/directio v1.0.4/go.mod h1:CKGdcN7StAaqjT7Qack3lAXeX4pjnyc46YeqZH1yWVY=
 github.com/ncw/directio v1.0.5 h1:JSUBhdjEvVaJvOoyPAbcW0fnd0tvRXD76wEfZ1KcQz4=
 github.com/ncw/directio v1.0.5/go.mod h1:rX/pKEYkOXBGOggmcyJeJGloCkleSvphPx2eV3t6ROk=
-github.com/ngaut/log v0.0.0-20221012222132-f3329cba28a5 h1:xIBY4Eci2hOJJLZLbQ9g/Uuq+V6QLiOBi1mZzqZyqOY=
-github.com/ngaut/log v0.0.0-20221012222132-f3329cba28a5/go.mod h1:ueVCjKQllPmX7uEvCYnZD5b8qjidGf1TCH61arVe4SU=
+github.com/ngaut/log v0.0.0-20210830112240-0124ec040aeb h1:XL3Y/FWIBw1bONrCJwXH+JWCI+usIo9EoaHRQNeJoPo=
+github.com/ngaut/log v0.0.0-20210830112240-0124ec040aeb/go.mod h1:ueVCjKQllPmX7uEvCYnZD5b8qjidGf1TCH61arVe4SU=
 github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7 h1:7KAv7KMGTTqSmYZtNdcNTgsos+vFzULLwyElndwn+5c=
 github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7/go.mod h1:iWMfgwqYW+e8n5lC/jjNEhwcjbRDpl5NT7n2h+4UNcI=
 github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef h1:K0Fn+DoFqNqktdZtdV3bPQ/0cuYh2H4rkg0tytX/07k=
@@ -684,8 +684,8 @@ github.com/pingcap/tidb v1.1.0-beta.0.20240613051929-f124165c9be4 h1:UPky1eieKH3
 github.com/pingcap/tidb v1.1.0-beta.0.20240613051929-f124165c9be4/go.mod h1:sJWQqCxAPHofl3atsg8m2xSPcntF6JEpDh5ykQD503k=
 github.com/pingcap/tidb/pkg/parser v0.0.0-20240613051929-f124165c9be4 h1:VFWKudxEu3oxyLay9cgPrBJ1dDCSrX9D8xbWDkQoDno=
 github.com/pingcap/tidb/pkg/parser v0.0.0-20240613051929-f124165c9be4/go.mod h1:c/4la2yfv1vBYvtIG8WCDyDinLMDIUC5+zLRHiafY+Y=
-github.com/pingcap/tiflow v0.0.0-20240617040545-4860903abe96 h1:Zdsg46yqaliDztOVdgGZBCbPPskKOk7Csw6at1s8W4M=
-github.com/pingcap/tiflow v0.0.0-20240617040545-4860903abe96/go.mod h1:ugZ5MPKXOS4GkmCAf/iuEwHGALsZS0MMqIo/03OG8MI=
+github.com/pingcap/tiflow v0.0.0-20240621054018-c001638fcf8c h1:TqOEHGa2Mytn0Auj5/H/NCZl9aSniAH4gx7EXNJN4QQ=
+github.com/pingcap/tiflow v0.0.0-20240621054018-c001638fcf8c/go.mod h1:bVoKZN4/KJA0LMmtPJakaybBKkQyE66qTuuNb+O6vyY=
 github.com/pingcap/tipb v0.0.0-20240318032315-55a7867ddd50 h1:fVNBE06Rjec+EIHaYAKAHa/bIt5lnu3Zh9O6kV7ZAdg=
 github.com/pingcap/tipb v0.0.0-20240318032315-55a7867ddd50/go.mod h1:A7mrd7WHBl1o63LE2bIBGEJMTNWXqhgmYiOvMLxozfs=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=

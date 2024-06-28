@@ -14,8 +14,9 @@
 package worker
 
 import (
-	"new_arch/utils/threadpool"
 	"time"
+
+	"github.com/flowbehappy/tigate/utils/threadpool"
 
 	"github.com/ngaut/log"
 	"go.uber.org/zap"

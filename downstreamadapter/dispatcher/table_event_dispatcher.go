@@ -14,8 +14,9 @@
 package dispatcher
 
 import (
-	"new_arch/downstreamadapter/sink"
 	"time"
+
+	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 )
 
 type SyncPointInfo struct {

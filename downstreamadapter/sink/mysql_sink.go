@@ -14,12 +14,13 @@
 package sink
 
 import (
-	"new_arch/downstreamadapter/sink/conflictdetector"
-	"new_arch/downstreamadapter/worker"
-	"new_arch/downstreamadapter/writer"
-	"new_arch/utils/threadpool"
 	"sync"
 	"time"
+
+	"github.com/flowbehappy/tigate/downstreamadapter/sink/conflictdetector"
+	"github.com/flowbehappy/tigate/downstreamadapter/worker"
+	"github.com/flowbehappy/tigate/downstreamadapter/writer"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tiflow/pkg/causality"

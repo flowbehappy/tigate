@@ -13,7 +13,7 @@
 
 package dispatchermanager
 
-import "new_arch/heartbeatpb"
+import "github.com/flowbehappy/tigate/heartbeatpb"
 
 type HeartbeatRequestQueue struct {
 	queue chan *heartbeatpb.HeartBeatRequest

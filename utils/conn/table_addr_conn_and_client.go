@@ -15,8 +15,9 @@ package conn
 
 import (
 	"context"
-	"new_arch/eventpb"
 	"time"
+
+	"github.com/flowbehappy/tigate/eventpb"
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tiflow/pkg/security"

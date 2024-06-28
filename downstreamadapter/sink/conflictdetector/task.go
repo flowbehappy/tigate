@@ -14,7 +14,7 @@
 package conflictdetector
 
 import (
-	"new_arch/utils/threadpool"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 
 	"github.com/ngaut/log"
 )

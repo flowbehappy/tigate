@@ -14,10 +14,11 @@
 package node
 
 import (
-	"new_arch/downstreamadapter/dispatcher"
-	"new_arch/downstreamadapter/dispatchermanager"
-	"new_arch/utils/threadpool"
 	"sync/atomic"
+
+	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
+	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 )
 
 var uniqueEventDispatcherManagerID uint64 = 0

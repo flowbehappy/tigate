@@ -14,9 +14,10 @@
 package node
 
 import (
-	"new_arch/downstreamadapter/dispatchermanager"
-	"new_arch/utils/conn"
 	"sync"
+
+	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
+	"github.com/flowbehappy/tigate/utils/conn"
 
 	"github.com/pingcap/tiflow/pkg/security"
 )

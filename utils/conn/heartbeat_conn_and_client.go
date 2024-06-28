@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tiflow/pkg/util"
 	"google.golang.org/grpc"
 
-	"new_arch/heartbeatpb"
+	"github.com/flowbehappy/tigate/heartbeatpb"
 )
 
 type HeartbeatConnArray struct {

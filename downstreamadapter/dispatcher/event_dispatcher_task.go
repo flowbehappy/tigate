@@ -14,8 +14,9 @@
 package dispatcher
 
 import (
-	"new_arch/utils/threadpool"
 	"time"
+
+	"github.com/flowbehappy/tigate/utils/threadpool"
 )
 
 // one dispatcher only corresponds to one event dispatcher task
