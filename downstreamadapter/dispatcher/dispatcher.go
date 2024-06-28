@@ -18,6 +18,7 @@ import "github.com/flowbehappy/tigate/downstreamadapter/sink"
 /*
 Dispatcher is responsible for getting events from LogService and sending them to Sink in appropriate order.
 Each dispatcher only deal with the events of one tableSpan in one changefeed.
+Each dispatcher corresponds to an event dispatcher task, working for the core work of the dispatcher.
 All dispatchers in the changefeed of the same node will share the same Sink.
 All dispatchers will communicate with the Maintainer about self progress and whether can push down the blocked event.
 

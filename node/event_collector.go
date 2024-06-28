@@ -25,7 +25,11 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-// 负责从 logService 中拉取所有 event，解码分发给各个 dispatcher
+/*
+EventCollector is responsible for collecting the events from log service and dispatching them to different dispatchers.
+Multiple dispatchers can share one grpc client. Each grpc client corresponds to one goroutine for continuously receiving events.
+Besides, EventCollector also generate SyncPoint Event for dispatchers when necessary.
+*/
 type EventCollector struct {
 	grpcPool                  *conn.EventFeedConnAndClientPool // 用于获取 client
 	masterClient              *conn.TableAddrConnAndClient     // 专门用于跟 log master 通信

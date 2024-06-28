@@ -15,31 +15,34 @@ package dispatchermanager
 
 import "github.com/flowbehappy/tigate/heartbeatpb"
 
+/*
+HeartbeatRequestQueue is a channel for all event dispatcher managers to send heartbeat requests to HeartBeatCollector
+*/
 type HeartbeatRequestQueue struct {
 	queue chan *heartbeatpb.HeartBeatRequest
 }
 
 func NewHeartbeatRequestQueue() *HeartbeatRequestQueue {
 	return &HeartbeatRequestQueue{
-		queue: make(chan *heartbeatpb.HeartBeatRequest, 1000), // 带缓冲的 channel
+		queue: make(chan *heartbeatpb.HeartBeatRequest, 1000), // 大小后面再说
 	}
 }
 
-// Enqueue 向队列中添加消息
 func (q *HeartbeatRequestQueue) Enqueue(request *heartbeatpb.HeartBeatRequest) {
 	q.queue <- request
 }
 
-// Dequeue 从队列中移除并返回一条消息
 func (q *HeartbeatRequestQueue) Dequeue() *heartbeatpb.HeartBeatRequest {
 	return <-q.queue
 }
 
-// Close 关闭队列的 channel
 func (q *HeartbeatRequestQueue) Close() {
 	close(q.queue)
 }
 
+/*
+HeartbeatResponseQueue is a channel for HeartBeatCollector to send heartbeat response to all event dispatcher managers.
+*/
 type HeartbeatResponseQueue struct {
 	queue chan *heartbeatpb.HeartBeatResponse
 }
@@ -50,17 +53,14 @@ func NewHeartbeatResponseQueue() *HeartbeatResponseQueue {
 	}
 }
 
-// Enqueue 向队列中添加消息
 func (q *HeartbeatResponseQueue) Enqueue(response *heartbeatpb.HeartBeatResponse) {
 	q.queue <- response
 }
 
-// Dequeue 从队列中移除并返回一条消息
 func (q *HeartbeatResponseQueue) Dequeue() *heartbeatpb.HeartBeatResponse {
 	return <-q.queue
 }
 
-// Close 关闭队列的 channel
 func (q *HeartbeatResponseQueue) Close() {
 	close(q.queue)
 }

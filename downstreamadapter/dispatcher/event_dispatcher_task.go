@@ -19,9 +19,13 @@ import (
 	"github.com/flowbehappy/tigate/utils/threadpool"
 )
 
-// one dispatcher only corresponds to one event dispatcher task
-// the task will create when the dispatcher creates
-// and finish when the dispatcher is closed
+/*
+One dispatcher corresponds to an event dispatcher task.
+The task will create when the dispatcher creates and finish when the dispatcher is closed.
+
+EventDispatcherTask is responsible for determining whether the current event can be pushed down to the sink,
+and pushes the event down to the sink if it is eligible.
+*/
 type EventDispatcherTask struct {
 	dispatcher Dispatcher
 	infos      []*HeartBeatResponseMessage

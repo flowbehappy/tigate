@@ -20,7 +20,11 @@ import (
 	"github.com/flowbehappy/tigate/utils/threadpool"
 )
 
-// 一个 manager 对应一个 send task，主要用于把这个 manager 收集到的 heart beat 扔到 queue 里面去
+/*
+HeartbeatSendTask is responsible for collecting heartbeat info periodically from
+all dispatchers in the event dispatcher manager and sending them to the HeartbeatRequestQueue.
+Each event dispatcher manager corresponds a HeartbeatSendTask.
+*/
 type HeartbeatSendTask struct {
 	ticker                 *time.Ticker
 	eventDispatcherManager *EventDispatcherManager
@@ -59,6 +63,11 @@ func (t *HeartbeatSendTask) Release() {
 }
 
 // 将从 queue 里面收到的信息分发给各个 dispatcher，每个 dispatcherManager 有一个这个task
+/*
+HeartbeatRecvTask is responsible for dispatching heartbeat response to each dispatchers
+in the event dispatcher manager from HeartbeatResponseQueue.
+Each event dispatcher manager corresponds a HeartbeatRecvTask.
+*/
 type HeartbeatRecvTask struct {
 	eventDispatcherManager *EventDispatcherManager
 	taskStatus             threadpool.TaskStatus
@@ -80,7 +89,6 @@ func (t *HeartbeatRecvTask) Release() {
 }
 
 func (t *HeartbeatRecvTask) Execute(timeout time.Duration) threadpool.TaskStatus {
-	// 从 channel 里拿数据，然后分发给各个 dispatcher
 	for {
 		heartbeatResponse := t.eventDispatcherManager.HeartbeatResponseQueue.Dequeue()
 		tableProgressInfo := heartbeatResponse.Info

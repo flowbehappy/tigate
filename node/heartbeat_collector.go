@@ -22,10 +22,10 @@ import (
 	"github.com/pingcap/tiflow/pkg/security"
 )
 
-// 单独的 goroutine 用于收发 heartbeat 消息
-
 /*
-HeartBeatCollect
+HeartBeatCollect is responsible for sending heartbeat requests and receiving heartbeat responses through grpc.
+Multiple event dispatcher managers share the same grpc client to reuse connections.
+Each grpc client corresponses 2 goroutines, one for sending heartbeat requests and the other for receiving heartbeat responses.
 */
 type HeartBeatCollector struct {
 	grpcPool                         *conn.HeartbeatConnAndClientPool          // pool 要重写过
@@ -35,7 +35,6 @@ type HeartBeatCollector struct {
 	wg                               *sync.WaitGroup
 	reponseChanMap                   map[uint64]*dispatchermanager.HeartbeatResponseQueue
 	requestQueue                     *dispatchermanager.HeartbeatRequestQueue
-	// channel 的函数
 }
 
 func newHeartBeatCollector(maintainerAddr string, clientMaxDispatcherManagerNumber int) *HeartBeatCollector {
