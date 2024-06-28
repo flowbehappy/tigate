@@ -26,9 +26,20 @@ func genUniqueEventDispatcherManagerID() uint64 {
 	return atomic.AddUint64(&uniqueEventDispatcherManagerID, 1)
 }
 
-// 代表每个节点
-type Node struct {
-	// 这些要做成单例模式么？
+/*
+Instance represents a server instance.
+Instance has 4 task scheduler to manage various tasks in all dispatchers in this instance:
+1. Worker Task Scheduler: manage MysqlWorkerDDLEventTasks and MysqlWorkerDMLEventTasks in all Sink, which works for flush events to downstream
+2. Event Dispatcher Task Scheduler: manage the EventDispatcherTasks of all dispatchers, which works for dispatching events to Sink.
+3. Sink Task Scheduler: manage the SinkTasks of all Sinks, which works for dealing with events' conflictors, and push events to Workers.
+4. Heartbeat Task Scheduler: manage the HeartbeatTasks of all dispatchers, which works for collecting heartbeat message from dispatchers, and dispatching heartbeat response to disptachers.
+
+Instance also has:
+1. a HeartBeatCollector, which is responsible for the heartbeat communication with the maintainer.
+2. an EventCollector, which is responsible for collecting events from LogService, and dispatching them to dispatchers.
+*/
+type Instance struct {
+	// TODO:这些要做成单例模式么？
 	workerTaskScheduler          *threadpool.TaskScheduler
 	eventDispatcherTaskScheduler *threadpool.TaskScheduler
 	sinkTaskScheduler            *threadpool.TaskScheduler
@@ -38,8 +49,8 @@ type Node struct {
 	eventDispatcherManagerMap    map[uint64]*dispatchermanager.EventDispatcherManager
 }
 
-func NewNode() *Node {
-	node := Node{
+func NewInstance() *Instance {
+	instance := Instance{
 		workerTaskScheduler:          threadpool.NewTaskScheduler(),
 		eventDispatcherTaskScheduler: threadpool.NewTaskScheduler(),
 		sinkTaskScheduler:            threadpool.NewTaskScheduler(),
@@ -48,27 +59,27 @@ func NewNode() *Node {
 		eventCollector:               newEventCollector(logServiceAddr),
 	}
 
-	return &node
+	return &instance
 }
 
 // 收到 create event dispatcher manager 时候创建，会可能是一个空的 manager
-func (n *Node) NewEventDispatcherManager(changefeedID uint64, config *ChangefeedConfig) *dispatchermanager.EventDispatcherManager {
+func (i *Instance) NewEventDispatcherManager(changefeedID uint64, config *ChangefeedConfig) *dispatchermanager.EventDispatcherManager {
 	eventDispatcherManager := dispatchermanager.EventDispatcherManager{
 		DispatcherMap:                make(map[*Span]*dispatcher.TableEventDispatcher),
 		ChangefeedID:                 changefeedID,
 		Id:                           genUniqueEventDispatcherManagerID(),
 		HeartbeatResponseQueue:       dispatchermanager.NewHeartbeatResponseQueue(),
-		WorkerTaskScheduler:          n.workerTaskScheduler,
-		EventDispatcherTaskScheduler: n.eventDispatcherTaskScheduler,
-		SinkTaskScheduler:            n.sinkTaskScheduler,
-		HeartbeatTaskScheduler:       n.heartbeatTaskScheduler,
+		WorkerTaskScheduler:          i.workerTaskScheduler,
+		EventDispatcherTaskScheduler: i.eventDispatcherTaskScheduler,
+		SinkTaskScheduler:            i.sinkTaskScheduler,
+		HeartbeatTaskScheduler:       i.heartbeatTaskScheduler,
 		SinkType:                     config.sinkType,
 		SinkConfig:                   config.SinkConfig,
 		EnableSyncPoint:              config.EnableSyncPoint,
 		SyncPointInterval:            config.SyncPointInterval,
 		Filter:                       config.Filter, // TODO
-		EventCollector:               n.eventCollector,
+		EventCollector:               i.eventCollector,
 	}
-	n.eventDispatcherManagerMap[eventDispatcherManager.ChangefeedID] = &eventDispatcherManager
+	i.eventDispatcherManagerMap[eventDispatcherManager.ChangefeedID] = &eventDispatcherManager
 	return &eventDispatcherManager
 }

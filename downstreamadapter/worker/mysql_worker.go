@@ -68,15 +68,15 @@ func (t *MysqlWorkerDDLEventTask) Release() {
 // 这个 task 应该是 event dispatcher manager 创建以后，会直接生成好的 task，扔到一个单独的 threadpool 中
 // task 的 生命周期应该是跟 event dispatcher manager 一样
 // 这个 task 只处理 dml event
-type MysqlWorkerTask struct {
+type MysqlWorkerDMLEventTask struct {
 	worker     *MysqlWorker
 	taskStatus threadpool.TaskStatus
 	maxRows    int
 	events     []*Event
 }
 
-func NewMysqlWorkerTask(eventChan <-chan *Event, config *MysqlConfig, maxRows int) *MysqlWorkerTask {
-	return &MysqlWorkerTask{
+func NewMysqlWorkerDMLEventTask(eventChan <-chan *Event, config *MysqlConfig, maxRows int) *MysqlWorkerDMLEventTask {
+	return &MysqlWorkerDMLEventTask{
 		worker: &MysqlWorker{
 			eventChan:   eventChan,
 			mysqlWriter: newMysqlWriter(config),
@@ -86,10 +86,10 @@ func NewMysqlWorkerTask(eventChan <-chan *Event, config *MysqlConfig, maxRows in
 	}
 }
 
-func (t *MysqlWorkerTask) GetStatus() threadpool.TaskStatus {
+func (t *MysqlWorkerDMLEventTask) GetStatus() threadpool.TaskStatus {
 	return t.taskStatus
 }
-func (t *MysqlWorkerTask) Execute(timeout time.Duration) threadpool.TaskStatus {
+func (t *MysqlWorkerDMLEventTask) Execute(timeout time.Duration) threadpool.TaskStatus {
 	switch t.taskStatus {
 	case threadpool.Running:
 		return t.executeImpl()
@@ -101,7 +101,7 @@ func (t *MysqlWorkerTask) Execute(timeout time.Duration) threadpool.TaskStatus {
 	}
 }
 
-func (t *MysqlWorkerTask) executeIOImpl() threadpool.TaskStatus {
+func (t *MysqlWorkerDMLEventTask) executeIOImpl() threadpool.TaskStatus {
 	if len(t.events) == 0 {
 		log.Warning("here is no events to flush")
 		return threadpool.Running
@@ -116,7 +116,7 @@ func (t *MysqlWorkerTask) executeIOImpl() threadpool.TaskStatus {
 	return threadpool.Running
 }
 
-func (t *MysqlWorkerTask) executeImpl() threadpool.TaskStatus {
+func (t *MysqlWorkerDMLEventTask) executeImpl() threadpool.TaskStatus {
 	// check events is empty
 	if len(t.events) > 0 {
 		log.Error("events is not empty in MysqlWorkerTask")
@@ -157,13 +157,13 @@ func (t *MysqlWorkerTask) executeImpl() threadpool.TaskStatus {
 	}
 }
 
-func (t *MysqlWorkerTask) Await() threadpool.TaskStatus {
+func (t *MysqlWorkerDMLEventTask) Await() threadpool.TaskStatus {
 	log.Error("MysqlWorkerTask should not call await()")
 	return threadpool.Failed
 }
 
 // 只有重启或者出问题的时候才 release
-func (t *MysqlWorkerTask) Release() {
+func (t *MysqlWorkerDMLEventTask) Release() {
 	// 直接关闭应该就可以把？
 	// TODO:需要取出 events 么
 	// 不知道要干嘛，不干会咋样么

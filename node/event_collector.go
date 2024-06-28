@@ -36,7 +36,7 @@ type EventCollector struct {
 	wg                        *sync.WaitGroup
 }
 
-func NewEventCollector(masterAddr string) *EventCollector {
+func newEventCollector(masterAddr string) *EventCollector {
 	eventCollector := EventCollector{
 		grpcPool: conn.NewEventFeedConnAndClientPool(&security.Credential{}, 100), // todo:
 	}

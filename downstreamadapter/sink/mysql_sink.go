@@ -73,7 +73,7 @@ func NewMysqlSink(workerCount int, workerTaskScheduler *threadpool.TaskScheduler
 	// 初始化 dml worker 相关 task -- 这些是长时间 run 的 task
 	for i := 0; i < workerCount; i++ {
 		//mysqlSink.workers = append(mysqlSink.workers, worker.NewMysqlWorker(mysqlSink.conflictDetector.GetOutChByCacheID(int64(i))))
-		workerTaskScheduler.Submit(worker.NewMysqlWorkerTask(&mysqlSink.conflictDetector.GetOutChByCacheID(int64(i)), config, 128))
+		workerTaskScheduler.Submit(worker.NewMysqlWorkerDMLEventTask(&mysqlSink.conflictDetector.GetOutChByCacheID(int64(i)), config, 128))
 	}
 	return &mysqlSink
 }
