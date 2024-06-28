@@ -27,6 +27,8 @@ the dispatcher can't send event to Sink continuously all the time,
 2. Only when the ddl event/sync point event is flushed to downstream successfully, the dispatcher can send the following event to Sink.
 3. For the cross table ddl event/sync point event, dispatcher needs to negotiate with the maintainer to decide whether and when send it to Sink.
 
+The workflow related to the dispatcher is as follows:
+
 		+------------+       +----------------+       +------------+       +--------+       +--------+       +------------+
 		| LogService |  -->  | EventCollector |  -->  | Dispatcher |  -->  |  Sink  |  -->  | Worker |  -->  | Downstream |
 		+------------+       +----------------+       +------------+       +--------+       +--------+       +------------+
