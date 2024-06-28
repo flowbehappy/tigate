@@ -22,6 +22,10 @@ import (
 )
 
 // 单独的 goroutine 用于收发 heartbeat 消息
+
+/*
+HeartBeatCollect
+*/
 type HeartBeatCollector struct {
 	grpcPool                         *conn.HeartbeatConnAndClientPool          // pool 要重写过
 	clients                          map[*conn.HeartbeatConnAndClient][]uint64 // client --> eventdispatchermanagerIDList
