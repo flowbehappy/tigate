@@ -19,6 +19,7 @@ import "new_arch/downstreamadapter/sink"
 Dispatcher is responsible for getting events from LogService and sending them to Sink in appropriate order.
 Each dispatcher only deal with the events of one tableSpan in one changefeed.
 All dispatchers in the changefeed of the same node will share the same Sink.
+All dispatchers will communicate with the Maintainer about self progress and whether can push down the blocked event.
 
 Because Sink does not flush events to the downstream in strict order.
 the dispatcher can't send event to Sink continuously all the time,
@@ -156,4 +157,26 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
 		TableSpan:      d.GetTableSpan(),
 		Id:             d.GetId(),
 	}
+}
+
+/*
+TableSpanProgress shows the progress of the other tableSpan, including:
+1. Whether the tableSpan is blocked, and the ts of blocked event
+2. The checkpointTs of the tableSpan
+*/
+type TableSpanProgress struct {
+	Span         *TableSpan
+	IsBlocked    bool
+	BlockTs      uint64
+	CheckpointTs uint64
+}
+
+/*
+HeartBeatReponseMessage includes the message from the HeartBeatResponse, including:
+1. The action for the blocked event
+2. the progress of other tableSpan, which the dispatcher is waiting for.
+*/
+type HeartBeatResponseMessage struct { // 最好需要一个对应，对应 blocked by 什么 event 的 信号，避免出现乱序的问题
+	Action             Action
+	OtherTableProgress []*TableSpanProgress
 }

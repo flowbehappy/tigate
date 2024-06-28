@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dispatchermanager
+package node
 
 import (
 	"new_arch/downstreamadapter/dispatcher"
@@ -36,7 +36,7 @@ type EventCollector struct {
 	wg                        *sync.WaitGroup
 }
 
-func newEventCollector(masterAddr string) *EventCollector {
+func NewEventCollector(masterAddr string) *EventCollector {
 	eventCollector := EventCollector{
 		grpcPool: conn.NewEventFeedConnAndClientPool(&security.Credential{}, 100), // todo:
 	}

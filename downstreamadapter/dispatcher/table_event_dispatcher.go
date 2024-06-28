@@ -18,24 +18,23 @@ import (
 	"time"
 )
 
-type TableSpanProgress struct {
-	Span         *TableSpan
-	IsBlocked    bool
-	BlockTs      uint64
-	CheckpointTs uint64
-}
-
-type HeartBeatResponseMessage struct { // 最好需要一个对应，对应 blocked by 什么 event 的 信号，避免出现乱序的问题
-	Action             Action
-	OtherTableProgress []*TableSpanProgress
-}
-
 type SyncPointInfo struct {
 	EnableSyncPoint   bool
 	SyncPointInterval time.Duration
 	NextSyncPointTs   uint64
 }
 
+/*
+TableEventDispatcher implements the Dispatcher interface.
+
+TableEventDispatcher is dispatcher the event of a normal tableSpan in a changefeed.
+It is responsible for getting the events about the tableSpan from the Logservice and sending them to the Sink in an appropriate order.
+
+It communicates with the Maintainer periodically to report self progress,
+and get the other dispatcher's progress and action of the blocked event.
+
+Each EventDispatcherManager can have multiple TableEventDispatcher.
+*/
 type TableEventDispatcher struct {
 	Id        uint64
 	Ch        <-chan *Event // 转换成一个函数

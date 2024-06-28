@@ -17,6 +17,7 @@ import (
 	"new_arch/downstreamadapter/dispatcher"
 	"new_arch/downstreamadapter/sink"
 	"new_arch/heartbeatpb"
+	"new_arch/node"
 	"new_arch/utils/threadpool"
 	"sync/atomic"
 	"time"
@@ -32,10 +33,20 @@ func genUniqueEventDispatcherID() uint64 {
 	return atomic.AddUint64(&uniqueEventDispatcherID, 1)
 }
 
+/*
+EventDispatcherManager is responsible for managing the dispatchers of a changefeed in the instance.
+EventDispatcherManager is working on:
+1. Collecting all the heartbeat messages from all the dispatchers to make HeartBeatRequest.
+2. Sending the HeartBeatResponse to each dispatcher.
+3. Createing the new dispatchers.
+
+One changefeed in one instance can only have one EventDispatcherManager.
+One EventDispatcherManager can only have one Sink.
+*/
 type EventDispatcherManager struct {
 	DispatcherMap                map[*Span]*dispatcher.TableEventDispatcher
 	TableTriggerEventDispatcher  *dispatcher.TableTriggerEventDispatcher
-	EventCollector               *EventCollector
+	EventCollector               *node.EventCollector
 	HeartbeatResponseQueue       *HeartbeatResponseQueue
 	HeartbeatRequestQueue        *HeartbeatRequestQueue
 	Id                           uint64
@@ -47,7 +58,6 @@ type EventDispatcherManager struct {
 	SinkTaskScheduler            *threadpool.TaskScheduler
 	HeartbeatTaskScheduler       *threadpool.TaskScheduler
 	SinkConfig                   *Config
-	LogServiceAddr               string // log service master addr
 	EnableSyncPoint              bool
 	SyncPointInterval            time.Duration
 	filter                       *Filter
@@ -59,7 +69,6 @@ func (e *EventDispatcherManager) Init(startTs uint64) {
 		e.Sink = sink.NewMysqlSink(workerCount, e.WorkerTaskScheduler, e.SinkTaskScheduler, e.SinkConfig)
 	}
 
-	e.EventCollector = newEventCollector(e.LogServiceAddr)
 	// 初始化 table trigger event dispatcher， 注册自己
 	e.TableTriggerEventDispatcher = e.newTableTriggerEventDispatcher(startTs)
 	// 注册处理收发 heartbeat 的 task

@@ -28,11 +28,13 @@ func genUniqueEventDispatcherManagerID() uint64 {
 
 // 代表每个节点
 type Node struct {
+	// 这些要做成单例模式么？
 	workerTaskScheduler          *threadpool.TaskScheduler
 	eventDispatcherTaskScheduler *threadpool.TaskScheduler
 	sinkTaskScheduler            *threadpool.TaskScheduler
 	heartbeatTaskScheduler       *threadpool.TaskScheduler
 	heartBeatCollector           *HeartBeatCollector
+	eventCollector               *EventCollector
 	eventDispatcherManagerMap    map[uint64]*dispatchermanager.EventDispatcherManager
 }
 
@@ -43,13 +45,14 @@ func NewNode() *Node {
 		sinkTaskScheduler:            threadpool.NewTaskScheduler(),
 		heartbeatTaskScheduler:       threadpool.NewTaskScheduler(),
 		heartBeatCollector:           newHeartBeatCollector(addr, 1000),
+		eventCollector:               newEventCollector(logServiceAddr),
 	}
 
 	return &node
 }
 
 // 收到 create event dispatcher manager 时候创建，会可能是一个空的 manager
-func (n *Node) NewEventDispatcherManager(changefeedID uint64, addr string, config *ChangefeedConfig) *dispatchermanager.EventDispatcherManager {
+func (n *Node) NewEventDispatcherManager(changefeedID uint64, config *ChangefeedConfig) *dispatchermanager.EventDispatcherManager {
 	eventDispatcherManager := dispatchermanager.EventDispatcherManager{
 		DispatcherMap:                make(map[*Span]*dispatcher.TableEventDispatcher),
 		ChangefeedID:                 changefeedID,
@@ -61,10 +64,10 @@ func (n *Node) NewEventDispatcherManager(changefeedID uint64, addr string, confi
 		HeartbeatTaskScheduler:       n.heartbeatTaskScheduler,
 		SinkType:                     config.sinkType,
 		SinkConfig:                   config.SinkConfig,
-		LogServiceAddr:               addr, // 这个需要其他机制来更新
 		EnableSyncPoint:              config.EnableSyncPoint,
 		SyncPointInterval:            config.SyncPointInterval,
 		Filter:                       config.Filter, // TODO
+		EventCollector:               n.eventCollector,
 	}
 	n.eventDispatcherManagerMap[eventDispatcherManager.ChangefeedID] = &eventDispatcherManager
 	return &eventDispatcherManager

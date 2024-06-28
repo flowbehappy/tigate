@@ -43,6 +43,21 @@ ActionCreateResourceGroup/ActionAlterResourceGroup/ActionDropResourceGroup 卡�
 // 用于接收处理特定的 DDLs
 const TableTriggerEventDispatcherId uint64 = 0
 
+/*
+TableTriggerEventDispatcher implements the Dispatcher interface.
+
+TableTriggerEventDispatcher is a speical dispatcher.
+
+It is responsible for getting the ddl events from the Logservice and sending them to the Sink in an appropriate order.
+It only pay attention to the speical ddl events, which will leads to new table or remove table,
+such as Create Table, Drop Table, Rename Table, Exchange Table Partition, etc.
+
+In each EventDispatcherManager, there is only one TableTriggerEventDispatcher,
+and it also the first dispatcher in the EventDispatcherManager.
+
+It also communicates with the Maintainer periodically to report self progress,
+and get the other dispatcher's progress and action of the blocked event.
+*/
 type TableTriggerEventDispatcher struct {
 	Id            uint64        //用个特殊的
 	Ch            <-chan *Event // 接受 event -- 先做个基础版本的，每次处理一条 ddl 的那种
