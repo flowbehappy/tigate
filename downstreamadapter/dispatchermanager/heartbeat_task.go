@@ -14,9 +14,10 @@
 package dispatchermanager
 
 import (
-	"new_arch/downstreamadapter/dispatcher"
-	"new_arch/utils/threadpool"
 	"time"
+
+	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 )
 
 // 一个 manager 对应一个 send task，主要用于把这个 manager 收集到的 heart beat 扔到 queue 里面去
