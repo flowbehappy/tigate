@@ -58,14 +58,14 @@ func NewTaskScheduler() *TaskScheduler {
 }
 
 func (s *TaskScheduler) Submit(task Task) error {
-	task_status := task.getStatus()
+	task_status := task.GetStatus()
 	switch task_status {
 	case IO:
-		s.submitTaskToIOThreadPool(task)
+		s.submitTaskToIOThreadPool(&task)
 	case Running:
-		s.submitTaskToCPUThreadPool(task)
+		s.submitTaskToCPUThreadPool(&task)
 	case Waiting:
-		s.submitTaskToWaitReactorThreadPool(task)
+		s.submitTaskToWaitReactorThreadPool(&task)
 	default:
 		log.Error("TaskScheduler submit with Error Status: ", zap.Any("status", task_status))
 	}

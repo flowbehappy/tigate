@@ -106,8 +106,25 @@ func (c *EventCollector) run(cc *conn.EventFeedConnAndClient) {
 		dispatcherId := eventResponse.DispatcherId
 
 		if dispatcherItem, ok := c.dispatcherMap[dispatcherId]; ok {
+			// check whether need to update speed ratio
+			ok, ratio := dispatcherItem.GetMemoryUsage().UpdatedSpeedRatio(eventResponse.Ratio)
+			if ok {
+				request := eventpb.EventRequest{
+					DispatcherId: dispatcherId,
+					TableSpan:    dispatcherItem.GetTableSpan(),
+					Ratio:        ratio,
+					Remove:       false,
+				}
+				// 这个开销大么，在这里等合适么？看看要不要拆一下
+				err := client.Send(&request)
+				if err != nil {
+					//
+				}
+			}
+
 			if dispatcherId == dispatcher.TableTriggerEventDispatcherId {
 				for _, event := range eventResponse.Events {
+					dispatcherItem.GetMemoryUsage().Add(event.CommitTs(), event.MemoryCost())
 					dispatcherItem.GetEventChan() <- event // 换成一个函数
 				}
 				dispatcherItem.UpdateResolvedTs(eventResponse.ResolvedTs) // todo:枷锁
@@ -125,6 +142,7 @@ func (c *EventCollector) run(cc *conn.EventFeedConnAndClient) {
 				}
 
 				// deal with event
+				dispatcherItem.GetMemoryUsage().Add(event.CommitTs(), event.MemoryCost())
 				dispatcherItem.GetEventChan() <- event // 换成一个函数
 			}
 			dispatcherItem.UpdateResolvedTs(eventResponse.ResolvedTs) // todo:枷锁

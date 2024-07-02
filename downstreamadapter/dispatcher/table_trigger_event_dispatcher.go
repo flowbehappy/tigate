@@ -67,6 +67,8 @@ type TableTriggerEventDispatcher struct {
 	State         *State
 	TableSpan     *TableSpan // 给一个特殊的 tableSpan
 	ResolvedTs    uint64
+
+	MemoryUsage *MemoryUsage
 }
 
 func (d *TableTriggerEventDispatcher) GetSink() sink.Sink {
@@ -108,4 +110,8 @@ func (d *TableTriggerEventDispatcher) UpdateResolvedTs(ts uint64) {
 func (d *TableTriggerEventDispatcher) GetSyncPointInfo() *SyncPointInfo {
 	log.Error("TableEventDispatcher.GetSyncPointInfo is not implemented")
 	return nil
+}
+
+func (d *TableTriggerEventDispatcher) GetMemoryUsage() *MemoryUsage {
+	return d.MemoryUsage
 }

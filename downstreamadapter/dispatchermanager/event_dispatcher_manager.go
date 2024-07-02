@@ -107,6 +107,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *Span, startT
 		ResolvedTs:    startTs,
 		HeartbeatChan: make(chan *dispatcher.HeartBeatResponseMessage, 100),
 		SyncPointInfo: syncPointInfo,
+		MemoryUsage:   dispatcher.NewMemoryUsage(),
 	}
 
 	e.EventCollector.RegisterDispatcher(&tableEventDispatcher, startTs, nil)
@@ -132,6 +133,7 @@ func (e *EventDispatcherManager) newTableTriggerEventDispatcher(startTs uint64) 
 		Sink:          e.Sink,
 		TableSpan:     ddlSpan,
 		State:         dispatcher.NewState(),
+		MemoryUsage:   dispatcher.NewMemoryUsage(),
 	}
 	threadpool.GetTaskSchedulerInstance().EventDispatcherTaskScheduler.Submit(dispatcher.NewEventDispatcherTask(tableTriggerEventDispatcher))
 	e.EventCollector.RegisterDispatcher(tableTriggerEventDispatcher, startTs, e.filter)
@@ -151,8 +153,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo() *heartbeatpb.HeartBeatRe
 	*/
 	var message heartbeatpb.HeartBeatRequest
 	for _, tableEventDispatcher := range e.DispatcherMap {
-		// heartbeatInfo := dispatcher.CollectHeartbeatInfo()
-		heartbeatInfo := dispatcher.CollectDispatcherHeartBeatInfo(*tableEventDispatcher)
+		heartbeatInfo := dispatcher.CollectDispatcherHeartBeatInfo(tableEventDispatcher)
 		message.Progress = append(message.Progress, &heartbeatpb.TableSpanProgress{
 			CheckpointTs:   heartbeatInfo.CheckpointTs,
 			BlockTs:        heartbeatInfo.BlockTs,
@@ -160,7 +161,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo() *heartbeatpb.HeartBeatRe
 			IsBlocked:      heartbeatInfo.IsBlocked,
 		})
 	}
-	heartbeatInfo := dispatcher.CollectDispatcherHeartBeatInfo(*e.TableTriggerEventDispatcher)
+	heartbeatInfo := dispatcher.CollectDispatcherHeartBeatInfo(e.TableTriggerEventDispatcher)
 	message.Progress = append(message.Progress, &heartbeatpb.TableSpanProgress{
 		CheckpointTs:   heartbeatInfo.CheckpointTs,
 		BlockTs:        heartbeatInfo.BlockTs,

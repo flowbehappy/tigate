@@ -46,7 +46,7 @@ func (q *FIFOTaskQueue) Take(task *Task) bool {
 	defer q.mutex.Unlock()
 	for {
 		if q.isFinished {
-			(*task).release() // 释放资源
+			(*task).Release() // 释放资源
 			return false
 		}
 
@@ -63,7 +63,7 @@ func (q *FIFOTaskQueue) Submit(task *Task) {
 	defer q.mutex.Unlock()
 
 	if q.isFinished {
-		(*task).release() // 释放资源
+		(*task).Release() // 释放资源
 		return
 	}
 

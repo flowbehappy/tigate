@@ -14,7 +14,6 @@
 package dispatcher
 
 import (
-	"sync/atomic"
 	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
@@ -52,9 +51,7 @@ type TableEventDispatcher struct {
 
 	SyncPointInfo *SyncPointInfo
 
-	// memoryUsage is used to record the mainly memory usage in the dispatcher/sink/worker for this tableSpan.
-	// When event
-	memoryUsage atomic.Uint64
+	MemoryUsage *MemoryUsage
 }
 
 func (d *TableEventDispatcher) GetSink() sink.Sink {
@@ -95,4 +92,8 @@ func (d *TableEventDispatcher) UpdateResolvedTs(ts uint64) {
 
 func (d *TableEventDispatcher) GetSyncPointInfo() *SyncPointInfo {
 	return d.SyncPointInfo
+}
+
+func (d *TableEventDispatcher) GetMemoryUsage() *MemoryUsage {
+	return d.MemoryUsage
 }

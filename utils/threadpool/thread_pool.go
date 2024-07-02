@@ -49,14 +49,14 @@ func NewThreadPool(scheduler *TaskScheduler, taskQueue TaskQueue, threadCount in
 
 func (p *ThreadPool) loop(threadNumber int) {
 	var task *Task // Task 应该也是个接口
-	for (*p.taskQueue).Take(task) {
+	for p.taskQueue.Take(task) {
 		p.handleTask(task)
 	}
 }
 
 func (p *ThreadPool) handleTask(task *Task) {
 	// 调用 task，并且根据 task 结束状态决定应该放到哪里去
-	status := (*task).execute(p.timeout)
+	status := (*task).Execute(p.timeout)
 	switch status {
 	case Running:
 		p.scheduler.submitTaskToCPUThreadPool(task) // 仍进去做 cpu 任务
@@ -72,13 +72,13 @@ func (p *ThreadPool) handleTask(task *Task) {
 }
 
 func (p *ThreadPool) submit(task *Task) {
-	(*p.taskQueue).Submit(task)
+	p.taskQueue.Submit(task)
 }
 
 // thread pool 结束前清空所有的数据，不同 task 可以选择不一样的方式，可以直接暴力丢弃等，也可以要求全部执行完
 // 这个具体的含义到时候再确认一下，感觉怪怪的
 func (p *ThreadPool) finish() {
-	(*p.taskQueue).Finish()
+	p.taskQueue.Finish()
 }
 
 func (p *ThreadPool) waitForStop() error {

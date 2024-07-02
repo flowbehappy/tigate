@@ -56,6 +56,7 @@ type Dispatcher interface {
 	GetDispatcherType() DispatcherType
 	GetHeartBeatChan() chan *HeartBeatResponseMessage
 	GetSyncPointInfo() *SyncPointInfo
+	GetMemoryUsage() *MemoryUsage
 }
 
 type DispatcherType uint64
@@ -173,6 +174,10 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
 	} else {
 		checkpointTs = smallestCommitTsInSink - 1
 	}
+
+	// use checkpointTs to release memory usage
+	d.GetMemoryUsage().Release(checkpointTs)
+
 	state := d.GetState()
 	return &HeartBeatInfo{
 		IsBlocked:      state.isBlocked,

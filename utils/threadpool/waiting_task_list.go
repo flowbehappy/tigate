@@ -37,7 +37,7 @@ func (l *WaitingTaskList) Submit(task *Task) {
 	defer l.mutex.Unlock()
 
 	if l.isFinished {
-		(*task).release()
+		(*task).Release()
 		return
 	}
 

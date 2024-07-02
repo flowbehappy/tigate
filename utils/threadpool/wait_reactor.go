@@ -50,7 +50,7 @@ func (r *WaitReactor) takeFromWaitingTaskList(waitingTaskList []*Task) bool {
 func (r *WaitReactor) react(waitingTasks []*Task) {
 	var newWaitingTasks []*Task
 	for _, task := range waitingTasks {
-		status := (*task).await()
+		status := (*task).Await()
 		switch status {
 		case Running:
 			r.taskScheduler.submitTaskToIOThreadPool(task)
