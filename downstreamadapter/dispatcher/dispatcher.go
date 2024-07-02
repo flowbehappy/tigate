@@ -53,10 +53,17 @@ type Dispatcher interface {
 	GetResolvedTs() uint64
 	UpdateResolvedTs(uint64)
 	GetId() uint64
-	GetDispatcherType() string
+	GetDispatcherType() DispatcherType
 	GetHeartBeatChan() chan *HeartBeatResponseMessage
 	GetSyncPointInfo() *SyncPointInfo
 }
+
+type DispatcherType uint64
+
+const (
+	TableEventDispatcherType        DispatcherType = 0
+	TableTriggerEventDispatcherType DispatcherType = 1
+)
 
 type Action uint64
 

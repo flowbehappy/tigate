@@ -14,32 +14,53 @@
 package conflictdetector
 
 import (
+	"time"
+
 	"github.com/flowbehappy/tigate/utils/threadpool"
 
 	"github.com/ngaut/log"
 )
 
-// 这个 task 就是用来检测是否 resolve 了，resolve 了就推进，没 resolve 了就结束
-type ResolveCheckTask struct {
-	node *Node
+// 每个 conflict detector 对应一个 notifyTask
+// 从 notify 的 chan 拿函数，执行
+type NotifyTask struct {
+	notifiedChan *chan func()
+	taskStatus   threadpool.TaskStatus
 }
 
-func newResolveCheckTask(node *Node) *ResolveCheckTask {
-	return &ResolveCheckTask{
-		node: node,
+func newNotifyTask(notifiedChan *chan func()) *NotifyTask {
+	return &NotifyTask{
+		notifiedChan: notifiedChan,
+		taskStatus:   threadpool.Running,
 	}
 }
 
-func (t *ResolveCheckTask) execute() threadpool.TaskStatus {
-	t.node.maybeResolve()
-	return threadpool.Success
+func (t *NotifyTask) GetStatus() threadpool.TaskStatus {
+	return t.taskStatus
 }
 
-func (t *ResolveCheckTask) await() threadpool.TaskStatus {
-	log.Warn("ResolveCheckTask should not call await()")
+func (t *NotifyTask) Execute(timeout time.Duration) threadpool.TaskStatus {
+	timer := time.NewTimer(timeout)
+	for {
+		select {
+		case function := <-*t.notifiedChan:
+			if function != nil {
+				function()
+			}
+		case <-timer.C:
+			return threadpool.Running
+		default:
+			// 要不要等一段时间？
+			return threadpool.Running
+		}
+	}
+}
+
+func (t *NotifyTask) Await() threadpool.TaskStatus {
+	log.Warn("NotifyTask should not call await()")
 	return threadpool.Failed
 }
 
-func (t *ResolveCheckTask) release() {
+func (t *NotifyTask) Release() {
 	// TODO:
 }

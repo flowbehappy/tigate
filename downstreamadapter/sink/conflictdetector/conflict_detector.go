@@ -14,6 +14,7 @@
 package conflictdetector
 
 import (
+	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/causality/internal"
 	"go.uber.org/atomic"
@@ -38,6 +39,8 @@ type ConflictDetector[Txn txnEvent] struct {
 	nextCacheID atomic.Int64
 
 	closeCh chan struct{}
+
+	notifiedChan chan func()
 }
 
 // NewConflictDetector creates a new ConflictDetector.
@@ -53,6 +56,9 @@ func NewConflictDetector[Txn txnEvent](
 	for i := 0; i < opt.Count; i++ {
 		ret.resolvedTxnCaches[i] = newTxnCache[Txn](opt)
 	}
+
+	task := newNotifyTask(&ret.notifiedChan)
+	threadpool.GetTaskSchedulerInstance().SinkTaskScheduler.Submit(task)
 
 	return ret
 }
@@ -79,6 +85,7 @@ func (d *ConflictDetector[Txn]) Add(txn Txn, callback func()) {
 		return d.sendToCache(txnWithNotifier, cacheID)
 	}
 	node.RandCacheID = func() int64 { return d.nextCacheID.Add(1) % int64(len(d.resolvedTxnCaches)) }
+	node.OnNotified = func(callback func()) { d.notifiedChan <- callback }
 	d.slots.Add(node)
 }
 

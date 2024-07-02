@@ -14,6 +14,7 @@
 package dispatcher
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
@@ -50,44 +51,48 @@ type TableEventDispatcher struct {
 	HeartbeatChan chan *HeartBeatResponseMessage
 
 	SyncPointInfo *SyncPointInfo
+
+	// memoryUsage is used to record the mainly memory usage in the dispatcher/sink/worker for this tableSpan.
+	// When event
+	memoryUsage atomic.Uint64
 }
 
-func (d TableEventDispatcher) GetSink() sink.Sink {
+func (d *TableEventDispatcher) GetSink() sink.Sink {
 	return d.Sink
 }
 
-func (d TableEventDispatcher) GetTableSpan() *TableSpan {
+func (d *TableEventDispatcher) GetTableSpan() *TableSpan {
 	return d.TableSpan
 }
 
-func (d TableEventDispatcher) GetState() *State {
+func (d *TableEventDispatcher) GetState() *State {
 	return d.State
 }
 
-func (d TableEventDispatcher) GetEventChan() chan *Event {
+func (d *TableEventDispatcher) GetEventChan() chan *Event {
 	return d.Ch
 }
 
-func (d TableEventDispatcher) GetResolvedTs() uint64 {
+func (d *TableEventDispatcher) GetResolvedTs() uint64 {
 	return d.ResolvedTs
 }
 
-func (d TableEventDispatcher) GetId() uint64 {
+func (d *TableEventDispatcher) GetId() uint64 {
 	return d.Id
 }
 
-func (d TableEventDispatcher) GetDispatcherType() string {
-	return "table_event_dispatcher"
+func (d *TableEventDispatcher) GetDispatcherType() DispatcherType {
+	return TableEventDispatcherType
 }
 
-func (d TableEventDispatcher) GetHeartBeatChan() chan *HeartBeatResponseMessage {
+func (d *TableEventDispatcher) GetHeartBeatChan() chan *HeartBeatResponseMessage {
 	return d.HeartbeatChan
 }
 
-func (d TableEventDispatcher) UpdateResolvedTs(ts uint64) {
+func (d *TableEventDispatcher) UpdateResolvedTs(ts uint64) {
 	d.ResolvedTs = ts
 }
 
-func (d TableEventDispatcher) GetSyncPointInfo() *SyncPointInfo {
+func (d *TableEventDispatcher) GetSyncPointInfo() *SyncPointInfo {
 	return d.SyncPointInfo
 }

@@ -69,43 +69,43 @@ type TableTriggerEventDispatcher struct {
 	ResolvedTs    uint64
 }
 
-func (d TableTriggerEventDispatcher) GetSink() sink.Sink {
+func (d *TableTriggerEventDispatcher) GetSink() sink.Sink {
 	return d.Sink
 }
 
-func (d TableTriggerEventDispatcher) GetTableSpan() *TableSpan {
+func (d *TableTriggerEventDispatcher) GetTableSpan() *TableSpan {
 	return d.TableSpan
 }
 
-func (d TableTriggerEventDispatcher) GetState() *State {
+func (d *TableTriggerEventDispatcher) GetState() *State {
 	return d.State
 }
 
-func (d TableTriggerEventDispatcher) GetEventChan() chan *Event {
+func (d *TableTriggerEventDispatcher) GetEventChan() chan *Event {
 	return d.Ch
 }
 
-func (d TableTriggerEventDispatcher) GetResolvedTs() uint64 {
+func (d *TableTriggerEventDispatcher) GetResolvedTs() uint64 {
 	return d.ResolvedTs
 }
 
-func (d TableTriggerEventDispatcher) GetId() uint64 {
+func (d *TableTriggerEventDispatcher) GetId() uint64 {
 	return d.Id
 }
 
-func (d TableTriggerEventDispatcher) GetDispatcherType() string {
-	return "table_trigger_event_dispatcher"
+func (d *TableTriggerEventDispatcher) GetDispatcherType() DispatcherType {
+	return TableTriggerEventDispatcherType
 }
 
-func (d TableTriggerEventDispatcher) GetHeartBeatChan() chan *HeartBeatResponseMessage {
+func (d *TableTriggerEventDispatcher) GetHeartBeatChan() chan *HeartBeatResponseMessage {
 	return d.HeartbeatChan
 }
 
-func (d TableTriggerEventDispatcher) UpdateResolvedTs(ts uint64) {
+func (d *TableTriggerEventDispatcher) UpdateResolvedTs(ts uint64) {
 	d.ResolvedTs = ts
 }
 
-func (d TableTriggerEventDispatcher) GetSyncPointInfo() *SyncPointInfo {
+func (d *TableTriggerEventDispatcher) GetSyncPointInfo() *SyncPointInfo {
 	log.Error("TableEventDispatcher.GetSyncPointInfo is not implemented")
 	return nil
 }

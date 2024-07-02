@@ -18,7 +18,6 @@ import (
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
-	"github.com/flowbehappy/tigate/utils/threadpool"
 )
 
 var uniqueEventDispatcherManagerID uint64 = 0
@@ -39,25 +38,17 @@ Instance also has:
 1. a HeartBeatCollector, which is responsible for the heartbeat communication with the maintainer.
 2. an EventCollector, which is responsible for collecting events from LogService, and dispatching them to dispatchers.
 */
+
 type Instance struct {
-	// TODO:这些要做成单例模式么？
-	workerTaskScheduler          *threadpool.TaskScheduler
-	eventDispatcherTaskScheduler *threadpool.TaskScheduler
-	sinkTaskScheduler            *threadpool.TaskScheduler
-	heartbeatTaskScheduler       *threadpool.TaskScheduler
-	heartBeatCollector           *HeartBeatCollector
-	eventCollector               *EventCollector
-	eventDispatcherManagerMap    map[uint64]*dispatchermanager.EventDispatcherManager
+	heartBeatCollector        *HeartBeatCollector
+	eventCollector            *EventCollector
+	eventDispatcherManagerMap map[uint64]*dispatchermanager.EventDispatcherManager
 }
 
 func NewInstance() *Instance {
 	instance := Instance{
-		workerTaskScheduler:          threadpool.NewTaskScheduler(),
-		eventDispatcherTaskScheduler: threadpool.NewTaskScheduler(),
-		sinkTaskScheduler:            threadpool.NewTaskScheduler(),
-		heartbeatTaskScheduler:       threadpool.NewTaskScheduler(),
-		heartBeatCollector:           newHeartBeatCollector(addr, 1000),
-		eventCollector:               newEventCollector(logServiceAddr),
+		heartBeatCollector: newHeartBeatCollector(addr, 1000),
+		eventCollector:     newEventCollector(logServiceAddr),
 	}
 
 	return &instance
@@ -66,20 +57,16 @@ func NewInstance() *Instance {
 // 收到 create event dispatcher manager 时候创建，会可能是一个空的 manager
 func (i *Instance) NewEventDispatcherManager(changefeedID uint64, config *ChangefeedConfig) *dispatchermanager.EventDispatcherManager {
 	eventDispatcherManager := dispatchermanager.EventDispatcherManager{
-		DispatcherMap:                make(map[*Span]*dispatcher.TableEventDispatcher),
-		ChangefeedID:                 changefeedID,
-		Id:                           genUniqueEventDispatcherManagerID(),
-		HeartbeatResponseQueue:       dispatchermanager.NewHeartbeatResponseQueue(),
-		WorkerTaskScheduler:          i.workerTaskScheduler,
-		EventDispatcherTaskScheduler: i.eventDispatcherTaskScheduler,
-		SinkTaskScheduler:            i.sinkTaskScheduler,
-		HeartbeatTaskScheduler:       i.heartbeatTaskScheduler,
-		SinkType:                     config.sinkType,
-		SinkConfig:                   config.SinkConfig,
-		EnableSyncPoint:              config.EnableSyncPoint,
-		SyncPointInterval:            config.SyncPointInterval,
-		Filter:                       config.Filter, // TODO
-		EventCollector:               i.eventCollector,
+		DispatcherMap:          make(map[*Span]*dispatcher.TableEventDispatcher),
+		ChangefeedID:           changefeedID,
+		Id:                     genUniqueEventDispatcherManagerID(),
+		HeartbeatResponseQueue: dispatchermanager.NewHeartbeatResponseQueue(),
+		SinkType:               config.sinkType,
+		SinkConfig:             config.SinkConfig,
+		EnableSyncPoint:        config.EnableSyncPoint,
+		SyncPointInterval:      config.SyncPointInterval,
+		Filter:                 config.Filter, // TODO
+		EventCollector:         i.eventCollector,
 	}
 	i.eventDispatcherManagerMap[eventDispatcherManager.ChangefeedID] = &eventDispatcherManager
 	return &eventDispatcherManager

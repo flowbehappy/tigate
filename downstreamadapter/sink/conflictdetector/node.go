@@ -53,6 +53,8 @@ type Node struct {
 	TrySendToTxnCache func(id cacheID) bool
 	// Set the id generator to get a random ID.
 	RandCacheID func() cacheID
+	// Set the callback that the node is notified.
+	OnNotified func(callback func())
 
 	// Following fields are used for notifying a node's dependers lock-free.
 	totalDependencies    int32
@@ -138,9 +140,7 @@ func (n *Node) remove() {
 		// `mu` must be holded during accessing dependers.
 		n.dependers.Ascend(func(node *Node) bool {
 			atomic.AddInt32(&node.removedDependencies, 1)
-			task := newResolveCheckTask(node)
-			// TODO: add task in thread pool
-			//node.OnNotified(node.maybeResolve)
+			node.OnNotified(node.maybeResolve)
 			return true
 		})
 		n.dependers.Clear(true)
@@ -172,9 +172,7 @@ func (n *Node) tryAssignTo(cacheID int64) bool {
 		n.dependers.Ascend(func(node *Node) bool {
 			resolvedDependencies := atomic.AddInt32(&node.resolvedDependencies, 1)
 			atomic.StoreInt64(&node.resolvedList[resolvedDependencies-1], n.assignedTo)
-			//node.OnNotified(node.maybeResolve)
-			task := newResolveCheckTask(node)
-			// TODO: add task in thread pool
+			node.OnNotified(node.maybeResolve)
 			return true
 		})
 	}
@@ -196,9 +194,7 @@ func (n *Node) maybeResolve() {
 		cacheID := n.RandCacheID()
 		if !n.tryAssignTo(cacheID) {
 			// If the cache is full, we need to try to assign to another cache.
-			//n.OnNotified(n.maybeResolve)
-			task := newResolveCheckTask(n)
-			// TODO:扔到 thread 里面去
+			n.OnNotified(n.maybeResolve)
 		}
 	}
 }

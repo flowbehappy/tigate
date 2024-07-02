@@ -117,9 +117,9 @@ func (t *EventDispatcherTask) Execute(timeout time.Duration) threadpool.TaskStat
 				sink.AddDDLAndSyncPointEvent(tableSpan, state.pengdingEvent)
 				state.clear()
 
-				if dispatcherType == "table_trigger_event_dispatcher" {
+				if dispatcherType == TableTriggerEventDispatcherType {
 					// 如果是 table trigger, 那就 进入后续处理，尝试拿取下一条 event 开始处理
-				} else if dispatcherType == "table_event_dispatcher" {
+				} else if dispatcherType == TableEventDispatcherType {
 					// state 改为 block ，等到下一轮发现 sink available 以后重新开始拿数据往下同步
 					state = &State{
 						isBlocked: true,

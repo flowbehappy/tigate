@@ -45,37 +45,33 @@ One changefeed in one instance can only have one EventDispatcherManager.
 One EventDispatcherManager can only have one Sink.
 */
 type EventDispatcherManager struct {
-	DispatcherMap                map[*Span]*dispatcher.TableEventDispatcher
-	TableTriggerEventDispatcher  *dispatcher.TableTriggerEventDispatcher
-	EventCollector               *node.EventCollector
-	HeartbeatResponseQueue       *HeartbeatResponseQueue
-	HeartbeatRequestQueue        *HeartbeatRequestQueue
-	Id                           uint64
-	ChangefeedID                 uint64
-	SinkType                     string
-	Sink                         sink.Sink
-	WorkerTaskScheduler          *threadpool.TaskScheduler
-	EventDispatcherTaskScheduler *threadpool.TaskScheduler
-	SinkTaskScheduler            *threadpool.TaskScheduler
-	HeartbeatTaskScheduler       *threadpool.TaskScheduler
-	SinkConfig                   *Config
-	EnableSyncPoint              bool
-	SyncPointInterval            time.Duration
-	filter                       *Filter
+	DispatcherMap               map[*Span]*dispatcher.TableEventDispatcher
+	TableTriggerEventDispatcher *dispatcher.TableTriggerEventDispatcher
+	EventCollector              *node.EventCollector
+	HeartbeatResponseQueue      *HeartbeatResponseQueue
+	HeartbeatRequestQueue       *HeartbeatRequestQueue
+	Id                          uint64
+	ChangefeedID                uint64
+	SinkType                    string
+	Sink                        sink.Sink
+	SinkConfig                  *Config
+	EnableSyncPoint             bool
+	SyncPointInterval           time.Duration
+	filter                      *Filter
 }
 
 func (e *EventDispatcherManager) Init(startTs uint64) {
 	// 初始化 sink
 	if e.SinkType == "Mysql" {
-		e.Sink = sink.NewMysqlSink(workerCount, e.WorkerTaskScheduler, e.SinkTaskScheduler, e.SinkConfig)
+		e.Sink = sink.NewMysqlSink(workerCount, e.SinkConfig)
 	}
 
 	// 初始化 table trigger event dispatcher， 注册自己
 	e.TableTriggerEventDispatcher = e.newTableTriggerEventDispatcher(startTs)
 	// 注册处理收发 heartbeat 的 task
-	e.HeartbeatTaskScheduler.Submit(newHeartbeatRecvTask(e))
-	e.HeartbeatTaskScheduler.Submit(newHeartBeatSendTask(e))
 
+	threadpool.GetTaskSchedulerInstance().HeartbeatTaskScheduler.Submit(newHeartbeatRecvTask(e))
+	threadpool.GetTaskSchedulerInstance().HeartbeatTaskScheduler.Submit(newHeartBeatSendTask(e))
 }
 
 func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) uint64 {
@@ -115,7 +111,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *Span, startT
 
 	e.EventCollector.RegisterDispatcher(&tableEventDispatcher, startTs, nil)
 	// 注册自己负责接受 event 决定是否能下推的 task
-	e.EventDispatcherTaskScheduler.Submit(dispatcher.NewEventDispatcherTask(&tableEventDispatcher))
+	threadpool.GetTaskSchedulerInstance().EventDispatcherTaskScheduler.Submit(dispatcher.NewEventDispatcherTask(&tableEventDispatcher))
 
 	// 注意先后顺序，可以从后往前加
 	e.Sink.AddTableSpan(tableSpan)
@@ -137,7 +133,7 @@ func (e *EventDispatcherManager) newTableTriggerEventDispatcher(startTs uint64) 
 		TableSpan:     ddlSpan,
 		State:         dispatcher.NewState(),
 	}
-	e.EventDispatcherTaskScheduler.Submit(dispatcher.NewEventDispatcherTask(tableTriggerEventDispatcher))
+	threadpool.GetTaskSchedulerInstance().EventDispatcherTaskScheduler.Submit(dispatcher.NewEventDispatcherTask(tableTriggerEventDispatcher))
 	e.EventCollector.RegisterDispatcher(tableTriggerEventDispatcher, startTs, e.filter)
 	return tableTriggerEventDispatcher
 
