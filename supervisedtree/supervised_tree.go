@@ -5,6 +5,7 @@ import (
 
 	"github.com/flowbehappy/tigate/apperror"
 	"github.com/pingcap/log"
+	"go.uber.org/zap"
 
 	"github.com/google/uuid"
 )
@@ -119,10 +120,12 @@ func (s *SupervisedNodeWithTTLImpl) GetToken() *AliveToken    { return s.token }
 
 func (s *SupervisedNodeWithTTLImpl) UpdateToken(sid *SupervisedNodeID, token *AliveToken) error {
 	if s.id.Epoch > sid.Epoch {
-		return apperror.APPError{Type: apperror.ErrorTypeEpochSmaller, Reason: "The epoch of the new supervisor is smaller than the current supervisor ID."}
+		return apperror.AppError{Type: apperror.ErrorTypeEpochSmaller, Reason: "The epoch of the new supervisor is smaller than the current supervisor ID."}
 	}
 	if s.token.TTL.After(token.TTL) {
-		log.Warn("The new TTL is smaller than the current TTL.")
+		log.Warn("The new TTL is smaller than the current TTL.",
+			zap.String("new TTL", token.TTL.String()),
+			zap.String("current TTL", s.token.TTL.String()))
 		return nil
 	}
 	s.token = token
@@ -151,6 +154,6 @@ func PrintString(s SupervisedNode, print_token bool) string {
 	} else if s.GetType().isWorker() {
 		return fmt.Sprintf("{\"id\": %s, \"type\": \"%s\"%s}", s.GetID().String(), s.GetType().String(), token)
 	} else {
-		panic("The type of the supervised node is unknown.")
+		panic(fmt.Sprintf("The type(%d) of the supervised node is unknown.", s.GetType()))
 	}
 }

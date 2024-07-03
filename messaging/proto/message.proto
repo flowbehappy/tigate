@@ -1,0 +1,25 @@
+syntax = "proto3";
+package proto;
+option go_package = "./messaging/proto";
+
+message CallerInfo{
+    string address = 1;
+}
+
+message Message {
+    bytes from = 1;
+    bytes to = 2;
+    int32 type = 3;
+    // TODO, change to real types
+    repeated bytes payload = 4;
+}
+
+message MessageSummary {
+    int64 sent_bytes = 1;
+}
+
+service MessageCenter {
+    // The clients call this method to build a event channel from client to server.
+    rpc sendEvents(stream Message) returns (MessageSummary);
+    rpc sendCommands(stream Message) returns (MessageSummary);
+}
