@@ -3,6 +3,7 @@ package messaging
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"time"
 
@@ -20,14 +21,33 @@ type grpcServerImpl struct {
 	messageCenter *MessageCenter
 }
 
-func (s *grpcServerImpl) SendEvents(stream proto.MessageCenter_SendEventsServer) error {
+// gRPC generates two different interfaces, MessageCenter_SendEventsServer and MessageCenter_SendCommandsServer.
+// We use the interface to unite them, to simplify the code.
+type grpcReceiver interface {
+	Recv() (*proto.Message, error)
+	SendAndClose(*proto.MessageSummary) error
+}
+
+func (s *grpcServerImpl) handleClientConnect(stream grpcReceiver, isEvent bool) error {
 	// The first message is an empty message without pyload, to identify the client server id.
+	msg, err := stream.Recv()
+	if err == io.EOF {
+		return stream.SendAndClose(&proto.MessageSummary{SentBytes: 0 /*TODO*/})
+	}
+	if err != nil {
+		return err
+	}
+	sid := ServerId(msg.From)
+	s.messageCenter.addRemoteReceiveTarget(sid, stream, isEvent)
 	return nil
 }
 
+func (s *grpcServerImpl) SendEvents(stream proto.MessageCenter_SendEventsServer) error {
+	return s.handleClientConnect(stream, true)
+}
+
 func (s *grpcServerImpl) SendCommands(stream proto.MessageCenter_SendCommandsServer) error {
-	// The first message is an empty message without pyload, to identify the client server id.
-	return nil
+	return s.handleClientConnect(stream, false)
 }
 
 type ServiceType int
@@ -50,10 +70,6 @@ type ReceiveMessageChannel interface {
 	ReceiveCmd() (*TargetMessage, error)
 }
 
-type grpcReceiver interface {
-	Recv() (*proto.Message, error)
-}
-
 // TODO: handle the connection error during the messages sending
 type remoteMessageTarget struct {
 	localId    ServerId
@@ -66,8 +82,8 @@ type remoteMessageTarget struct {
 	commandSendStream proto.MessageCenter_SendCommandsClient
 
 	// For receiving events and commands
-	eventRecvStream   proto.MessageCenter_SendEventsServer
-	commandRecvStream proto.MessageCenter_SendCommandsServer
+	eventRecvStream   grpcReceiver
+	commandRecvStream grpcReceiver
 
 	// We pull the events and commands from remote receive streams,
 	// and push to the message center.
@@ -81,6 +97,9 @@ func newRemoteMessageTarget(id ServerId) *remoteMessageTarget {
 
 // TODO: handle the timeout during connection initialization
 func (s *remoteMessageTarget) initSendEventStreams(localId ServerId, addr string, timeout time.Duration) error {
+	if s.conn != nil {
+		return nil
+	}
 	conn, err := grpc.NewClient(addr)
 	if err != nil {
 		return AppError{
@@ -126,6 +145,8 @@ func (s *remoteMessageTarget) initSendEventStreams(localId ServerId, addr string
 }
 
 func runGatherMessages(stream grpcReceiver, gatherChan chan *TargetMessage) {
+	// Use a goroutine to pull the messages from the stream,
+	// and send them to the message center.
 	for {
 		message, err := stream.Recv()
 		if err != nil {
@@ -144,21 +165,19 @@ func runGatherMessages(stream grpcReceiver, gatherChan chan *TargetMessage) {
 	}
 }
 
-func (s *remoteMessageTarget) setEventRecvStream(eventStream proto.MessageCenter_SendEventsServer) {
+func (s *remoteMessageTarget) setEventRecvStream(eventStream grpcReceiver) {
 	s.eventRecvStream = eventStream
-	// Use a goroutine to pull the messages from the stream,
-	// assamble them into TargeMessage, and send them to the message center.
 	runGatherMessages(eventStream, s.gatherRecvEventChan)
 }
 
-func (s *remoteMessageTarget) setCommandRecvStream(commandStream proto.MessageCenter_SendCommandsServer) {
+func (s *remoteMessageTarget) setCommandRecvStream(commandStream grpcReceiver) {
 	s.commandRecvStream = commandStream
 	runGatherMessages(commandStream, s.gatherRecvCmdChan)
 }
 
 func (s *remoteMessageTarget) SendEvent(mtype IOType, eventBytes [][]byte) error {
 	if s.eventSendStream == nil {
-		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Event send stream is not set"}
+		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Stream has not been initialized"}
 	}
 	message := &proto.Message{From: s.localId.slice(), To: s.targetId.slice(), Type: int32(mtype), Payload: eventBytes}
 	return s.eventSendStream.Send(message)
@@ -166,7 +185,7 @@ func (s *remoteMessageTarget) SendEvent(mtype IOType, eventBytes [][]byte) error
 
 func (s *remoteMessageTarget) SendCommand(mtype IOType, commandBytes [][]byte) error {
 	if s.commandSendStream == nil {
-		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Command send stream is not set"}
+		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Stream has not been initialized"}
 	}
 	message := &proto.Message{From: s.localId.slice(), To: s.targetId.slice(), Type: int32(mtype), Payload: commandBytes}
 	return s.commandSendStream.Send(message)
@@ -278,16 +297,28 @@ func (mc *MessageCenter) IsGRPCServiceRunning() bool {
 }
 
 // If the message channel for the target server is not created, create it.
-func (mc *MessageCenter) TouchRemoteServer(id ServerId, addr string, timeout time.Duration) error {
-	if _, ok := mc.remoteTargets[id]; ok {
-		return nil
+func (mc *MessageCenter) touchRemoteTarget(id ServerId) *remoteMessageTarget {
+	if rt, ok := mc.remoteTargets[id]; ok {
+		return rt
 	}
 	rt := newRemoteMessageTarget(id)
-	if err := rt.initSendEventStreams(mc.localId, addr, timeout); err != nil {
-		return err
-	}
 	mc.remoteTargets[id] = rt
-	return nil
+	return rt
+}
+
+func (mc *MessageCenter) addRemoteReceiveTarget(id ServerId, stream grpcReceiver, isEvent bool) {
+	rt := mc.touchRemoteTarget(id)
+	if isEvent {
+		rt.setEventRecvStream(stream)
+	} else {
+		rt.setCommandRecvStream(stream)
+	}
+}
+
+// This method is called when a new remote target (process) is discovered.
+func (mc *MessageCenter) AddSendTarget(id ServerId, addr string) error {
+	rt := mc.touchRemoteTarget(id)
+	return rt.initSendEventStreams(mc.localId, addr, 5*time.Second)
 }
 
 func (mc *MessageCenter) ReceiveEvent() (*TargetMessage, error) { return <-mc.gatherRecvEventChan, nil }
