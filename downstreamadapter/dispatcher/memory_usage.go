@@ -15,6 +15,7 @@ package dispatcher
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,7 +26,7 @@ type EventFeedSpeedRatio struct {
 	lastCheckTime time.Time
 }
 
-const MemoryQuota = 10 * 1024 * 1024 // 10GB
+const MemoryQuota = 10 * 1024 * 1024 // 10MB
 
 /*
 MemoryUsage is a struct to record the mainly memory usage of the dispatcher(including sink and worker)
@@ -35,7 +36,7 @@ MemoryUsage is record the memory for each dispatcher.
 */
 type MemoryUsage struct {
 	mutex                 *sync.Mutex
-	usedBytes             uint64
+	UsedBytes             uint64
 	commitTsList          []uint64          // record the commitTs in order.
 	commitTsMemoryCostMap map[uint64]uint64 // commitTs -> memory cost(total for the commitTs)
 
@@ -44,7 +45,7 @@ type MemoryUsage struct {
 
 func NewMemoryUsage() *MemoryUsage {
 	return &MemoryUsage{
-		usedBytes:             0,
+		UsedBytes:             0,
 		commitTsList:          make([]uint64, 0),
 		commitTsMemoryCostMap: make(map[uint64]uint64),
 		speedRatio: &EventFeedSpeedRatio{
@@ -57,6 +58,8 @@ func NewMemoryUsage() *MemoryUsage {
 }
 
 func (m *MemoryUsage) Add(commitTs uint64, size uint64) {
+	atomic.AddInt64(&GetGlobalMemoryUsage().UsedBytes, int64(size))
+
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -67,7 +70,7 @@ func (m *MemoryUsage) Add(commitTs uint64, size uint64) {
 		m.commitTsMemoryCostMap[commitTs] += size
 	}
 
-	m.usedBytes += size
+	m.UsedBytes += size
 }
 
 // the event with commitTs <= checkpointTs is flushed to downstream successfully,
@@ -78,7 +81,8 @@ func (m *MemoryUsage) Release(checkpointTs uint64) {
 	index := 0
 	for i, ts := range m.commitTsList {
 		if ts <= checkpointTs {
-			m.usedBytes -= m.commitTsMemoryCostMap[ts]
+			m.UsedBytes -= m.commitTsMemoryCostMap[ts]
+			atomic.AddInt64(&GetGlobalMemoryUsage().UsedBytes, int64(m.commitTsMemoryCostMap[ts])*-1)
 			delete(m.commitTsMemoryCostMap, ts)
 		} else {
 			index = i
@@ -120,24 +124,44 @@ func (m *MemoryUsage) UpdatedSpeedRatio(ratio float32) (bool, float32) {
 		// new ratio
 		m.speedRatio.ratio = ratio
 		m.speedRatio.updatedTime = time.Now()
-		m.speedRatio.lastUsedBytes = m.usedBytes
+		m.speedRatio.lastUsedBytes = m.UsedBytes
 		return false, ratio
 	}
 
-	if m.usedBytes > MemoryQuota/2 && m.usedBytes > m.speedRatio.lastUsedBytes && time.Since(m.speedRatio.updatedTime) > 120*time.Second {
+	if m.UsedBytes > MemoryQuota/2 && m.UsedBytes > m.speedRatio.lastUsedBytes && time.Since(m.speedRatio.updatedTime) > 120*time.Second {
 		// decrease the speed ratio
-		newRatio := ratio * (0.5 + (1-float64(m.usedBytes)/MemoryQuota)*0.5)
-		m.speedRatio.lastUsedBytes = m.usedBytes
+		newRatio := ratio * (0.5 + (1-float32(m.UsedBytes)/MemoryQuota)*0.5)
+		m.speedRatio.lastUsedBytes = m.UsedBytes
 		return true, newRatio
 	}
 
-	if m.usedBytes < MemoryQuota/4 && m.usedBytes < m.speedRatio.lastUsedBytes && time.Since(m.speedRatio.updatedTime) > 120*time.Second {
+	if m.UsedBytes < MemoryQuota/4 && m.UsedBytes < m.speedRatio.lastUsedBytes && time.Since(m.speedRatio.updatedTime) > 120*time.Second {
 		// increase the speed ratio
-		newRatio := ratio * (1 - float64(m.usedBytes)/MemoryQuota) * 2
-		m.speedRatio.lastUsedBytes = m.usedBytes
+		newRatio := ratio * (1 - float32(m.UsedBytes)/MemoryQuota) * 2
+		m.speedRatio.lastUsedBytes = m.UsedBytes
 		return true, newRatio
 	}
 
-	m.speedRatio.lastUsedBytes = m.usedBytes
+	m.speedRatio.lastUsedBytes = m.UsedBytes
 	return false, ratio
+}
+
+/*
+GlobalMemoryUsage is a struct to record the memory usage of events for all dispatchers in the instances.
+GlobalMemoryUsage is a singleton.
+*/
+type GlobalMemoryUsage struct {
+	UsedBytes int64
+}
+
+var globalMemoryUsage *GlobalMemoryUsage
+var once sync.Once
+
+func GetGlobalMemoryUsage() *GlobalMemoryUsage {
+	if globalMemoryUsage == nil {
+		once.Do(func() {
+			globalMemoryUsage = &GlobalMemoryUsage{UsedBytes: 0}
+		})
+	}
+	return globalMemoryUsage
 }

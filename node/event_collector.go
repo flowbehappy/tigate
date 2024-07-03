@@ -15,6 +15,7 @@ package node
 
 import (
 	"sync"
+	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/eventpb"
@@ -39,11 +40,13 @@ type EventCollector struct {
 	dispatcherMap             map[uint64]dispatcher.Dispatcher          // dispatcher_id --> dispatcher
 	dispatcherClientMap       map[uint64]*conn.EventFeedConnAndClient   // dispatcher_id --> client
 	wg                        *sync.WaitGroup
+	globalMemoryQuota         int64
 }
 
-func newEventCollector(masterAddr string) *EventCollector {
+func newEventCollector(masterAddr string, globalMemoryQuota int64) *EventCollector {
 	eventCollector := EventCollector{
-		grpcPool: conn.NewEventFeedConnAndClientPool(&security.Credential{}, 100), // todo:
+		grpcPool:          conn.NewEventFeedConnAndClientPool(&security.Credential{}, 100), // todo:
+		globalMemoryQuota: globalMemoryQuota,
 	}
 	eventCollector.masterClient, _ = conn.NewConnAndTableAddrClient(masterAddr, &security.Credential{})
 	return &eventCollector
@@ -99,6 +102,13 @@ func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uin
 func (c *EventCollector) run(cc *conn.EventFeedConnAndClient) {
 	client := cc.Client
 	for {
+		if dispatcher.GetGlobalMemoryUsage().UsedBytes > c.globalMemoryQuota {
+			// 卡一段时间,怎么拍啊？
+			log.Info("downstream adapter is out of memory, waiting for 30 seconds")
+			time.Sleep(30 * time.Second)
+			continue
+		}
+
 		eventResponse, err := client.Recv() // 这边收到 event 要分发掉 -- decode 的说的是这个自带的么
 		if err != nil {
 			// 抛出错误？
