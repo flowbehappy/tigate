@@ -14,6 +14,8 @@
 package threadpool
 
 import (
+	"runtime"
+
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -49,11 +51,14 @@ type TaskScheduler struct {
 	waitReactor       *WaitReactor
 }
 
-func NewTaskScheduler() *TaskScheduler {
+func NewTaskScheduler(taskQueue TaskQueue) *TaskScheduler {
+	// 加参数
 	taskScheduler := &TaskScheduler{}
-	taskScheduler.cpuTaskThreadPool = NewThreadPool(taskScheduler, NewFIFOTaskQueue(), 8)
-	taskScheduler.ioTaskThreadPool = NewThreadPool(taskScheduler, NewFIFOTaskQueue(), 8)
-	taskScheduler.waitReactor = NewWaitReactor(taskScheduler, 8)
+	logicalCpu := runtime.NumCPU()
+	//log.Info("logicalCpu is", zap.Any("logicalCpu", logicalCpu))
+	taskScheduler.cpuTaskThreadPool = NewThreadPool(taskScheduler, taskQueue, logicalCpu)
+	taskScheduler.ioTaskThreadPool = NewThreadPool(taskScheduler, taskQueue, logicalCpu)
+	taskScheduler.waitReactor = NewWaitReactor(taskScheduler, logicalCpu)
 	return taskScheduler
 }
 
@@ -73,6 +78,9 @@ func (s *TaskScheduler) Submit(task Task) error {
 }
 
 func (s *TaskScheduler) submitTaskToCPUThreadPool(task *Task) {
+	if task == nil {
+		log.Info("TaskScheduler submitTaskToCPUThreadPool with nil task")
+	}
 	s.cpuTaskThreadPool.submit(task)
 }
 
@@ -82,4 +90,14 @@ func (s *TaskScheduler) submitTaskToIOThreadPool(task *Task) {
 
 func (s *TaskScheduler) submitTaskToWaitReactorThreadPool(task *Task) {
 	s.waitReactor.submit(task)
+}
+
+func (s *TaskScheduler) Finish() {
+	s.cpuTaskThreadPool.finish()
+	s.ioTaskThreadPool.finish()
+	s.waitReactor.finish()
+
+	s.cpuTaskThreadPool.waitForStop()
+	s.ioTaskThreadPool.waitForStop()
+	s.waitReactor.waitForStop()
 }

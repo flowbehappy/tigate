@@ -20,7 +20,7 @@ import (
 )
 
 type WaitReactor struct {
-	queue         WaitingTaskList
+	queue         *WaitingTaskList
 	mutex         sync.Mutex
 	wg            sync.WaitGroup
 	threadCount   int
@@ -31,6 +31,7 @@ func NewWaitReactor(taskScheduler *TaskScheduler, threadCount int) *WaitReactor 
 	waitReactor := WaitReactor{
 		threadCount:   threadCount,
 		taskScheduler: taskScheduler,
+		queue:         newWaitingTaskList(),
 	}
 	for i := 0; i < threadCount; i++ {
 		waitReactor.wg.Add(1)
@@ -72,12 +73,18 @@ func (r *WaitReactor) react(waitingTasks []*Task) {
 
 func (r *WaitReactor) loop(threadIndex int) {
 	var waitingTasks []*Task
-	for r.takeFromWaitingTaskList(waitingTasks) {
-		r.react(waitingTasks)
+	for {
+		ok := r.takeFromWaitingTaskList(waitingTasks)
+		if ok {
+			r.react(waitingTasks)
+		} else {
+			break
+		}
 	}
 	for len(waitingTasks) > 0 {
 		r.react(waitingTasks)
 	}
+	r.wg.Done()
 }
 
 func (r *WaitReactor) submit(task *Task) {

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 // 本质是想写一个 thread pool 的基类，可以先按照特例来写，后面再转成 basic 的
@@ -48,14 +49,24 @@ func NewThreadPool(scheduler *TaskScheduler, taskQueue TaskQueue, threadCount in
 }
 
 func (p *ThreadPool) loop(threadNumber int) {
-	var task *Task // Task 应该也是个接口
-	for p.taskQueue.Take(task) {
-		p.handleTask(task)
+	for {
+		ok, task := p.taskQueue.Take()
+		if ok {
+			p.handleTask(task)
+		} else {
+			p.wg.Done()
+			log.Info("return loop:", zap.Any("threadNumber", threadNumber))
+			return
+		}
 	}
 }
 
 func (p *ThreadPool) handleTask(task *Task) {
 	// 调用 task，并且根据 task 结束状态决定应该放到哪里去
+	if task == nil {
+		log.Error("task is nil")
+		return
+	}
 	status := (*task).Execute(p.timeout)
 	switch status {
 	case Running:

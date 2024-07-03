@@ -12,9 +12,11 @@ require (
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20240613051929-f124165c9be4
 	github.com/pingcap/tiflow v0.0.0-20240621054018-c001638fcf8c
 	github.com/tikv/client-go/v2 v2.0.8-0.20240604045705-156cebc2defa
+	github.com/zeebo/assert v1.3.0
 	go.uber.org/atomic v1.11.0
 	go.uber.org/zap v1.27.0
 	google.golang.org/grpc v1.64.0
+	google.golang.org/protobuf v1.34.1
 )
 
 require (
@@ -272,7 +274,6 @@ require (
 	google.golang.org/genproto v0.0.0-20240401170217-c3f982113cda // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240401170217-c3f982113cda // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240515191416-fc5f0ca64291 // indirect
-	google.golang.org/protobuf v1.34.1 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
