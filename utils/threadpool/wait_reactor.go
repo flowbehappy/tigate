@@ -17,21 +17,23 @@ import (
 	"sync"
 
 	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 type WaitReactor struct {
 	queue         *WaitingTaskList
-	mutex         sync.Mutex
 	wg            sync.WaitGroup
 	threadCount   int
 	taskScheduler *TaskScheduler
+	name          string
 }
 
-func NewWaitReactor(taskScheduler *TaskScheduler, threadCount int) *WaitReactor {
+func NewWaitReactor(taskScheduler *TaskScheduler, threadCount int, name string) *WaitReactor {
 	waitReactor := WaitReactor{
 		threadCount:   threadCount,
 		taskScheduler: taskScheduler,
 		queue:         newWaitingTaskList(),
+		name:          name,
 	}
 	for i := 0; i < threadCount; i++ {
 		waitReactor.wg.Add(1)
@@ -40,7 +42,7 @@ func NewWaitReactor(taskScheduler *TaskScheduler, threadCount int) *WaitReactor 
 	return &waitReactor
 }
 
-func (r *WaitReactor) takeFromWaitingTaskList(waitingTaskList []*Task) bool {
+func (r *WaitReactor) takeFromWaitingTaskList(waitingTaskList []*Task) (bool, []*Task) {
 	if len(waitingTaskList) == 0 {
 		return r.queue.Take(waitingTaskList)
 	} else {
@@ -48,7 +50,7 @@ func (r *WaitReactor) takeFromWaitingTaskList(waitingTaskList []*Task) bool {
 	}
 }
 
-func (r *WaitReactor) react(waitingTasks []*Task) {
+func (r *WaitReactor) react(waitingTasks []*Task) []*Task {
 	var newWaitingTasks []*Task
 	for _, task := range waitingTasks {
 		status := (*task).Await()
@@ -68,21 +70,21 @@ func (r *WaitReactor) react(waitingTasks []*Task) {
 		}
 	}
 
-	waitingTasks = newWaitingTasks
+	return newWaitingTasks
 }
 
 func (r *WaitReactor) loop(threadIndex int) {
-	var waitingTasks []*Task
+	var currentTasks []*Task
 	for {
-		ok := r.takeFromWaitingTaskList(waitingTasks)
+		ok, waitingTasks := r.takeFromWaitingTaskList(currentTasks)
 		if ok {
-			r.react(waitingTasks)
+			currentTasks = r.react(waitingTasks)
 		} else {
 			break
 		}
 	}
-	for len(waitingTasks) > 0 {
-		r.react(waitingTasks)
+	for len(currentTasks) > 0 {
+		currentTasks = r.react(currentTasks)
 	}
 	r.wg.Done()
 }
@@ -96,8 +98,8 @@ func (r *WaitReactor) finish() {
 }
 
 func (r *WaitReactor) waitForStop() error {
-	log.Info("Wait Reactor is waiting for stop")
+	log.Info("Wait Reactor is waiting for stop", zap.Any("wait reactor name", r.name))
 	r.wg.Wait()
-	log.Info("Wait Reactor is stopped")
+	log.Info("Wait Reactor is stopped", zap.Any("wait reactor name", r.name))
 	return nil
 }

@@ -31,10 +31,10 @@ func GetTaskSchedulerInstance() *TaskSchedulerInstance {
 	if TaskSchedulers == nil {
 		once.Do(func() {
 			TaskSchedulers = &TaskSchedulerInstance{
-				WorkerTaskScheduler:          NewTaskScheduler(NewFIFOTaskQueue()),
-				EventDispatcherTaskScheduler: NewTaskScheduler(NewFIFOTaskQueue()),
-				SinkTaskScheduler:            NewTaskScheduler(NewFIFOTaskQueue()),
-				HeartbeatTaskScheduler:       NewTaskScheduler(NewFIFOTaskQueue()),
+				WorkerTaskScheduler:          NewTaskScheduler(NewFIFOTaskQueue(), &DefaultTaskSchedulerConfig, "WorkerTask"),
+				EventDispatcherTaskScheduler: NewTaskScheduler(NewFIFOTaskQueue(), &DefaultTaskSchedulerConfig, "EventDispatcherTask"),
+				SinkTaskScheduler:            NewTaskScheduler(NewFIFOTaskQueue(), &DefaultTaskSchedulerConfig, "SinkTask"),
+				HeartbeatTaskScheduler:       NewTaskScheduler(NewFIFOTaskQueue(), &DefaultTaskSchedulerConfig, "HeartbeatTask"),
 			}
 		})
 	}

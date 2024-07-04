@@ -30,14 +30,16 @@ type ThreadPool struct {
 	threadCount int            // 开多少个线程
 	wg          sync.WaitGroup
 	timeout     time.Duration // 每个 task 最多能跑多少时间，就要被换出来
+	name        string
 }
 
-func NewThreadPool(scheduler *TaskScheduler, taskQueue TaskQueue, threadCount int) *ThreadPool {
+func NewThreadPool(scheduler *TaskScheduler, taskQueue TaskQueue, threadCount int, name string) *ThreadPool {
 	threadPool := ThreadPool{
 		scheduler:   scheduler,
 		taskQueue:   taskQueue,
 		threadCount: threadCount,
 		timeout:     100 * time.Millisecond,
+		name:        name,
 	}
 
 	for i := 0; i < threadCount; i++ {
@@ -55,7 +57,7 @@ func (p *ThreadPool) loop(threadNumber int) {
 			p.handleTask(task)
 		} else {
 			p.wg.Done()
-			log.Info("return loop:", zap.Any("threadNumber", threadNumber))
+			log.Info("return loop:", zap.Any("threadNumber", threadNumber), zap.Any("threadpool name", p.name))
 			return
 		}
 	}
@@ -93,8 +95,8 @@ func (p *ThreadPool) finish() {
 }
 
 func (p *ThreadPool) waitForStop() error {
-	log.Info("Thread pool is waiting for stop")
+	log.Info("Thread pool is waiting for stop", zap.Any("threadpool name", p.name))
 	p.wg.Wait()
-	log.Info("Thread pool is stopped")
+	log.Info("Thread pool is stopped", zap.Any("threadpool name", p.name))
 	return nil
 }

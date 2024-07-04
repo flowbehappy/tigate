@@ -14,60 +14,48 @@
 package threadpool
 
 import (
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/pingcap/log"
 	"github.com/zeebo/assert"
-	"go.uber.org/zap"
 )
 
-// 这个文件用来测试 threadpool / task_scheduler / task_queue 的功能和性能
-var count int64
-
-type BasicTask struct {
-	taskStatus TaskStatus
-}
-
-func newBasicTask() *BasicTask {
-	return &BasicTask{
-		taskStatus: Running,
-	}
-}
-
-func (t *BasicTask) GetStatus() TaskStatus {
-	return t.taskStatus
-}
-
-func (t *BasicTask) Execute(timeout time.Duration) TaskStatus {
-	//now := time.Now()
-	for i := 0; i < 50; i++ {
-		atomic.AddInt64(&count, 1)
-	}
-	// duration := time.Since(now)
-	// log.Info("BasicTask executed", zap.Duration("duration", duration))
-	return Success
-}
-
-func (t *BasicTask) Await() TaskStatus {
-	log.Error("BasicTask should not called Await()")
-	return Failed
-}
-
-func (t *BasicTask) Release() {
-}
-
+// BasicThreadPool test the basic functionality of threadpool
+// Including the functionality of CPU Threadpoool, IO Threadpool, and WaitReactor
 func TestBasicThreadPool(t *testing.T) {
-	// 验证线程池的功能，创建一个 threadpool，然后插入一系列 task，检查是否正常执行
-	count = 0
-	taskScheduler := NewTaskScheduler(NewFIFOTaskQueue())
-	for i := 0; i < 1000000000; i++ {
-		taskScheduler.Submit(newBasicTask())
+	// Test CPU Task
+	{
+		testCount = 0
+		taskScheduler := NewTaskScheduler(NewFIFOTaskQueue(), &DefaultTaskSchedulerConfig, "BasicCPUTask")
+		for i := 0; i < 10000; i++ {
+			taskScheduler.Submit(newBasicCPUTask())
+		}
+		time.Sleep(5 * time.Second)
+		taskScheduler.Finish()
+		assert.Equal(t, testCount, int64(10000*100))
 	}
-	time.Sleep(20 * time.Second)
-	taskScheduler.Finish()
-	log.Info("final", zap.Any("count", count))
-	assert.Equal(t, count, 10000)
 
+	// Test IO Task
+	{
+		testCount = 0
+		taskScheduler := NewTaskScheduler(NewFIFOTaskQueue(), &DefaultTaskSchedulerConfig, "BasicIOTask")
+		for i := 0; i < 1000; i++ {
+			taskScheduler.Submit(newBasicIOTask())
+		}
+		time.Sleep(5 * time.Second)
+		taskScheduler.Finish()
+		assert.Equal(t, testCount, int64(1000))
+	}
+
+	// Test Wait+CPU Task
+	{
+		testCount = 0
+		taskScheduler := NewTaskScheduler(NewFIFOTaskQueue(), &DefaultTaskSchedulerConfig, "BasicWaitAndCPUTask")
+		for i := 0; i < 1000; i++ {
+			taskScheduler.Submit(newBasicWaitTask())
+		}
+		time.Sleep(10 * time.Second)
+		taskScheduler.Finish()
+		assert.Equal(t, testCount, int64(1000))
+	}
 }
