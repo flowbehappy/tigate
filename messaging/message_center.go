@@ -324,7 +324,7 @@ func (mc *MessageCenter) AddSendTarget(id ServerId, addr string) error {
 func (mc *MessageCenter) ReceiveEvent() (*TargetMessage, error) { return <-mc.gatherRecvEventChan, nil }
 func (mc *MessageCenter) ReceiveCmd() (*TargetMessage, error)   { return <-mc.gatherRecvCmdChan, nil }
 
-func (mc *MessageCenter) GetReceiveTarget(id ServerId) ReceiveMessageChannel { return mc }
+func (mc *MessageCenter) GetReceiveTarget() ReceiveMessageChannel { return mc }
 func (mc *MessageCenter) GetSendTarget(id ServerId) SendMessageChannel {
 	if id == mc.localId {
 		return mc.localTarget
