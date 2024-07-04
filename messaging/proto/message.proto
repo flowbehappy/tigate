@@ -8,10 +8,12 @@ message CallerInfo{
 
 message Message {
     bytes from = 1;
-    bytes to = 2;
-    int32 type = 3;
+    uint64 epoch = 2;
+    uint64 seqnum = 3;
+    bytes to = 4;
+    int32 type = 5;
     // TODO, change to real types
-    repeated bytes payload = 4;
+    repeated bytes payload = 6;
 }
 
 message MessageSummary {
