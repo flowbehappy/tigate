@@ -11,14 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package coordinator
+package maintainer
 
 import "context"
 
-// Task is the execution unit of the Coordinator, Coordinator is a long-running task that submitted to
+// Task is the execution unit of the Maintainer, Maintainer is a long-running task that submitted to
 // the thread pool,
-// when there is task needed to be executed by the Coordinator, it go to the Coordinator's taskCh first
-// then the thread pool call the Execute method of Coordinator, Coordinator take a task from the  chanel,
+// when there is task needed to be executed by the Maintainer, it goes to the Maintainer's taskCh first
+// then the thread pool call the Execute method of Maintainer, Maintainer take a task from the  chanel,
 type Task interface {
 	// Execute the tasks, return error if execute failed
 	Execute(ctx context.Context) error

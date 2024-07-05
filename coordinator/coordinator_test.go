@@ -21,7 +21,6 @@ import (
 
 func TestCoordinatorRun(t *testing.T) {
 	c := NewCoordinator(nil, &model.CaptureInfo{})
-	sc := threadpool.NewTaskScheduler(threadpool.NewFIFOTaskQueue(),
-		&threadpool.DefaultTaskSchedulerConfig, "coordinator")
+	sc := threadpool.NewTaskScheduler(&threadpool.DefaultTaskSchedulerConfig, "coordinator")
 	sc.Submit(c)
 }

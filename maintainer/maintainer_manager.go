@@ -16,6 +16,10 @@ package maintainer
 import (
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/cdc/model"
+	"go.uber.org/zap"
 )
 
 // Manager is the manager of all changefeed maintainer in a ticdc node, each ticdc node will
@@ -27,6 +31,8 @@ type Manager struct {
 	rpcClient  rpc.RpcClient
 	supervisor *scheduler.Supervisor
 	scheduler  scheduler.Scheduler
+
+	maintainers map[model.ChangeFeedID]*Maintainer
 }
 
 // NewManager create a changefeed maintainer instance
@@ -34,4 +40,69 @@ func NewManager(rpcClient rpc.RpcClient) *Manager {
 	return &Manager{
 		rpcClient: rpcClient,
 	}
+}
+
+func (m *Manager) handleDispatchMaintainerRequest(
+	request *DispatchMaintainerRequest,
+) error {
+	for _, req := range request.AddMaintainerRequests {
+		task := &dispatchMaintainerTask{
+			ID:        req.ID,
+			IsRemove:  false,
+			IsPrepare: req.IsSecondary,
+			status:    dispatchTaskReceived,
+		}
+		cf, ok := m.maintainers[req.ID]
+		if !ok {
+			cf = NewMaintainer()
+			m.maintainers[req.ID] = cf
+		}
+		cf.injectDispatchTableTask(task)
+		if err := cf.handleRemoveMaintainerTask(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	for _, req := range request.AddMaintainerRequests {
+		span := req.ID
+		cf, ok := m.maintainers[span]
+		if !ok {
+			log.Warn("ignore remove maintainer request, "+
+				"since the table not found",
+				zap.String("changefeed", cf.id.String()),
+				zap.Any("request", req))
+			return nil
+		}
+		task := &dispatchMaintainerTask{
+			ID:       req.ID,
+			IsRemove: true,
+			status:   dispatchTaskReceived,
+		}
+		cf.injectDispatchTableTask(task)
+		if err := cf.handleRemoveMaintainerTask(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+type DispatchMaintainerRequest struct {
+	AddMaintainerRequests    []*AddMaintainerRequest
+	RemoveMaintainerRequests []*RemoveMaintainerRequest
+}
+
+type BatchRemoveMaintainerRequest struct {
+	Requests []*RemoveMaintainerRequest
+}
+
+type AddMaintainerRequest struct {
+	ID          model.ChangeFeedID
+	Config      *model.ChangeFeedInfo
+	Status      *model.ChangeFeedStatus
+	IsSecondary bool
+}
+
+type RemoveMaintainerRequest struct {
+	ID      string
+	Cascade bool
 }

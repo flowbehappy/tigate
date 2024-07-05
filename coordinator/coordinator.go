@@ -14,6 +14,7 @@
 package coordinator
 
 import (
+	"context"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils/threadpool"
@@ -57,7 +58,7 @@ func (c *Coordinator) Execute(timeout time.Duration) threadpool.TaskStatus {
 	for {
 		select {
 		case task := <-c.taskCh:
-			if err := task.Execute(); err != nil {
+			if err := task.Execute(context.Background()); err != nil {
 				log.Error("Execute task failed", zap.Error(err))
 				return threadpool.Failed
 			}
@@ -130,89 +131,4 @@ func (c CoordinatorID) Equal(id scheduler.InferiorID) bool {
 }
 func (c CoordinatorID) Less(id scheduler.InferiorID) bool {
 	return c.String() < id.String()
-}
-
-type MaintainerID model.ChangeFeedID
-
-func (m MaintainerID) String() string {
-	return model.ChangeFeedID(m).String()
-}
-func (m MaintainerID) Equal(id scheduler.InferiorID) bool {
-	return model.ChangeFeedID(m).String() == id.String()
-}
-func (m MaintainerID) Less(id scheduler.InferiorID) bool {
-	return model.ChangeFeedID(m).String() < id.String()
-}
-
-type changefeed struct {
-	ID    model.ChangeFeedID
-	State *ChangefeedStatus
-
-	Info   *model.ChangeFeedInfo
-	Status *model.ChangeFeedStatus
-
-	lastHeartBeat time.Time
-}
-
-func NewChangefeed(ID scheduler.InferiorID) scheduler.Inferior {
-	return &changefeed{}
-}
-
-func (c *changefeed) UpdateStatus(status scheduler.InferiorStatus) {
-	c.State = status.(*ChangefeedStatus)
-	c.lastHeartBeat = time.Now()
-}
-
-func (c *changefeed) GetID() scheduler.InferiorID {
-	return MaintainerID(c.ID)
-}
-
-func (c *changefeed) NewInferiorStatus(status scheduler.ComponentStatus) scheduler.InferiorStatus {
-	return &ChangefeedStatus{
-		ID:     MaintainerID(c.ID),
-		Status: status,
-	}
-}
-
-func (c *changefeed) IsAlive() bool {
-	return time.Now().Sub(c.lastHeartBeat) < 10*time.Second
-}
-
-func (c *changefeed) NewAddInferiorMessage(capture model.CaptureID, secondary bool) rpc.Message {
-	//return &Message{
-	//	To: capture,
-	//	DispatchMaintainerRequest: &DispatchMaintainerRequest{
-	//		AddMaintainerRequest: &AddMaintainerRequest{
-	//			ID:          c.ID,
-	//			Config:      c.Info,
-	//			Status:      c.Status,
-	//			IsSecondary: secondary,
-	//		}},
-	//}
-	return nil
-}
-
-func (c *changefeed) NewRemoveInferiorMessage(capture model.CaptureID) rpc.Message {
-	//return &Message{
-	//	To: capture,
-	//	DispatchMaintainerRequest: &DispatchMaintainerRequest{
-	//		RemoveMaintainerRequest: &RemoveMaintainerRequest{
-	//			ID: c.Info.ID,
-	//		},
-	//	},
-	//}
-	return nil
-}
-
-type ChangefeedStatus struct {
-	ID     MaintainerID
-	Status scheduler.ComponentStatus
-}
-
-func (c *ChangefeedStatus) GetInferiorID() scheduler.InferiorID {
-	return scheduler.InferiorID(c.ID)
-}
-
-func (c *ChangefeedStatus) GetInferiorState() scheduler.ComponentStatus {
-	return c.Status
 }
