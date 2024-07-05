@@ -16,6 +16,7 @@ package coordinator
 import (
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -32,12 +33,16 @@ type Coordinator struct {
 	rpcClient  rpc.RpcClient
 	supervisor *scheduler.Supervisor
 	scheduler  scheduler.Scheduler
+	tick       *time.Ticker
+	taskCh     chan Task
 }
 
 func NewCoordinator(rpcClient rpc.RpcClient,
 	capture *model.CaptureInfo) *Coordinator {
 	c := &Coordinator{
 		rpcClient: rpcClient,
+		tick:      time.NewTicker(time.Second),
+		scheduler: scheduler.NewCombineScheduler(scheduler.NewBasicScheduler(1000)),
 	}
 	c.supervisor = scheduler.NewSupervisor(
 		CoordinatorID(capture.ID),
@@ -45,6 +50,37 @@ func NewCoordinator(rpcClient rpc.RpcClient,
 		c.newBootstrapMessage,
 	)
 	return c
+}
+
+func (c *Coordinator) Execute(timeout time.Duration) threadpool.TaskStatus {
+	timer := time.NewTimer(timeout)
+	for {
+		select {
+		case task := <-c.taskCh:
+			if err := task.Execute(); err != nil {
+				log.Error("Execute task failed", zap.Error(err))
+				return threadpool.Failed
+			}
+		case <-timer.C:
+			return threadpool.Running
+		default:
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return threadpool.Running
+		}
+	}
+}
+
+func (c *Coordinator) Release() {
+}
+
+func (c *Coordinator) Await() threadpool.TaskStatus {
+	return threadpool.Running
+}
+
+func (c *Coordinator) GetStatus() threadpool.TaskStatus {
+	return threadpool.Running
 }
 
 func (c *Coordinator) checkLiveness() ([]rpc.Message, error) {
