@@ -26,7 +26,7 @@ func TestBasicThreadPool(t *testing.T) {
 	// Test CPU Task
 	{
 		testCount = 0
-		taskScheduler := NewTaskScheduler(NewFIFOTaskQueue(), &DefaultTaskSchedulerConfig, "BasicCPUTask")
+		taskScheduler := NewTaskScheduler(&DefaultTaskSchedulerConfig, "BasicCPUTask")
 		for i := 0; i < 10000; i++ {
 			taskScheduler.Submit(newBasicCPUTask())
 		}
@@ -38,7 +38,7 @@ func TestBasicThreadPool(t *testing.T) {
 	// Test IO Task
 	{
 		testCount = 0
-		taskScheduler := NewTaskScheduler(NewFIFOTaskQueue(), &DefaultTaskSchedulerConfig, "BasicIOTask")
+		taskScheduler := NewTaskScheduler(&DefaultTaskSchedulerConfig, "BasicIOTask")
 		for i := 0; i < 1000; i++ {
 			taskScheduler.Submit(newBasicIOTask())
 		}
@@ -50,7 +50,7 @@ func TestBasicThreadPool(t *testing.T) {
 	// Test Wait+CPU Task
 	{
 		testCount = 0
-		taskScheduler := NewTaskScheduler(NewFIFOTaskQueue(), &DefaultTaskSchedulerConfig, "BasicWaitAndCPUTask")
+		taskScheduler := NewTaskScheduler(&DefaultTaskSchedulerConfig, "BasicWaitAndCPUTask")
 		for i := 0; i < 1000; i++ {
 			taskScheduler.Submit(newBasicWaitTask())
 		}

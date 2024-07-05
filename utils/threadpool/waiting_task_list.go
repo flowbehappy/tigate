@@ -15,9 +15,6 @@ package threadpool
 
 import (
 	"sync"
-
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
 )
 
 type WaitingTaskList struct {
@@ -72,7 +69,6 @@ func (l *WaitingTaskList) Take(taskList []*Task) (bool, []*Task) {
 		l.cond.Wait()
 	}
 	taskList = append(taskList, l.queue...)
-	log.Info("take tasks from waiting task list", zap.Any("tasks len", len(taskList)))
 	l.queue = l.queue[:0]
 	return true, taskList
 }
@@ -86,7 +82,7 @@ func (l *WaitingTaskList) TryTake(taskList []*Task) (bool, []*Task) {
 	}
 
 	if len(l.queue) == 0 {
-		return false, taskList
+		return true, taskList
 	}
 
 	taskList = append(taskList, l.queue...)

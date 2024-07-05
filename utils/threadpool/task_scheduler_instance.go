@@ -17,6 +17,9 @@ import (
 	"sync"
 )
 
+/*
+TaskSchedulerInstance is a singleton instance. It contains the necessary task schedulers for one instance.
+*/
 type TaskSchedulerInstance struct {
 	WorkerTaskScheduler          *TaskScheduler
 	EventDispatcherTaskScheduler *TaskScheduler
@@ -31,10 +34,10 @@ func GetTaskSchedulerInstance() *TaskSchedulerInstance {
 	if TaskSchedulers == nil {
 		once.Do(func() {
 			TaskSchedulers = &TaskSchedulerInstance{
-				WorkerTaskScheduler:          NewTaskScheduler(NewFIFOTaskQueue(), &DefaultTaskSchedulerConfig, "WorkerTask"),
-				EventDispatcherTaskScheduler: NewTaskScheduler(NewFIFOTaskQueue(), &DefaultTaskSchedulerConfig, "EventDispatcherTask"),
-				SinkTaskScheduler:            NewTaskScheduler(NewFIFOTaskQueue(), &DefaultTaskSchedulerConfig, "SinkTask"),
-				HeartbeatTaskScheduler:       NewTaskScheduler(NewFIFOTaskQueue(), &DefaultTaskSchedulerConfig, "HeartbeatTask"),
+				WorkerTaskScheduler:          NewTaskScheduler(&DefaultTaskSchedulerConfig, "WorkerTask"),
+				EventDispatcherTaskScheduler: NewTaskScheduler(&DefaultTaskSchedulerConfig, "EventDispatcherTask"),
+				SinkTaskScheduler:            NewTaskScheduler(&DefaultTaskSchedulerConfig, "SinkTask"),
+				HeartbeatTaskScheduler:       NewTaskScheduler(&DefaultTaskSchedulerConfig, "HeartbeatTask"),
 			}
 		})
 	}

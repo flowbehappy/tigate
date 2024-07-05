@@ -1,5 +1,7 @@
 package apperror
 
+import "fmt"
+
 type ErrorType int
 
 const (
@@ -11,12 +13,43 @@ const (
 	ErrorTypeTaskIDMismatch ErrorType = 3
 
 	ErrorTypeInvalid    ErrorType = 101
-	ErrorTypeImcomplete ErrorType = 102
+	ErrorTypeIncomplete ErrorType = 102
 
-	ErrorTypeConnectionFailed   ErrorType = 201
-	ErrorTypeConnectionNotFound ErrorType = 202
-	ErrorTypeSendMessageFailed  ErrorType = 203
+	ErrorTypeConnectionFailed     ErrorType = 201
+	ErrorTypeConnectionNotFound   ErrorType = 202
+	ErrorTypeMessageCongested     ErrorType = 204
+	ErrorTypeMessageReceiveFailed ErrorType = 205
+	ErrorTypeMessageSendFailed    ErrorType = 206
 )
+
+func (t ErrorType) String() string {
+	switch t {
+	case ErrorTypeUnknown:
+		return "Unknown"
+	case ErrorTypeEpochMismatch:
+		return "EpochMismatch"
+	case ErrorTypeEpochSmaller:
+		return "EpochSmaller"
+	case ErrorTypeTaskIDMismatch:
+		return "TaskIDMismatch"
+	case ErrorTypeInvalid:
+		return "Invalid"
+	case ErrorTypeIncomplete:
+		return "Incomplete"
+	case ErrorTypeConnectionFailed:
+		return "ConnectionFailed"
+	case ErrorTypeConnectionNotFound:
+		return "ConnectionNotFound"
+	case ErrorTypeMessageCongested:
+		return "MessageCongested"
+	case ErrorTypeMessageReceiveFailed:
+		return "MessageReceiveFailed"
+	case ErrorTypeMessageSendFailed:
+		return "MessageSendFailed"
+	default:
+		return "Unknown"
+	}
+}
 
 type AppError struct {
 	Type   ErrorType
@@ -24,9 +57,13 @@ type AppError struct {
 }
 
 func (e AppError) Error() string {
-	return e.Reason
+	return fmt.Sprintf("ErrorType: %s, Reason: %s", e.Type, e.Reason)
 }
 
 func (e AppError) GetType() ErrorType {
 	return e.Type
+}
+
+func (e AppError) Equal(err AppError) bool {
+	return e.Type == err.Type
 }

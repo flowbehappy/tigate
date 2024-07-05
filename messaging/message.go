@@ -60,6 +60,8 @@ func CastTo[T IOTypeT](m interface{}) T {
 	return m.(T)
 }
 
+// TargetMessage is a wrapper of message to be sent to a target server.
+// It contains the source server id, the target server id, the message type and the message.
 type TargetMessage struct {
 	From    ServerId
 	To      ServerId
@@ -78,7 +80,7 @@ func decodeIOType(mtype IOType, data []byte) (interface{}, error) {
 	case TypeServerId:
 		if len(data) != 16 {
 			return nil,
-				AppError{Type: ErrorTypeImcomplete, Reason: fmt.Sprintf("data len is expected = %d, but got %d", 16, len(data))}
+				AppError{Type: ErrorTypeIncomplete, Reason: fmt.Sprintf("data len is expected = %d, but got %d", 16, len(data))}
 		}
 		uid, err := uuid.ParseBytes(data)
 		if err != nil {
