@@ -54,7 +54,7 @@ func (m *Manager) handleDispatchMaintainerRequest(
 		}
 		cf, ok := m.maintainers[req.ID]
 		if !ok {
-			cf = NewMaintainer()
+			cf = NewMaintainer(req.ID)
 			m.maintainers[req.ID] = cf
 		}
 		cf.injectDispatchTableTask(task)

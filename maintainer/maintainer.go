@@ -55,10 +55,6 @@ func NewMaintainer(cfID model.ChangeFeedID) *Maintainer {
 	return m
 }
 
-func NewReplicaSet(id scheduler.InferiorID) scheduler.Inferior {
-	return nil
-}
-
 func (m *Maintainer) newBootstrapMessage(id model.CaptureID) rpc.Message {
 	return nil
 }

@@ -12,3 +12,62 @@
 // limitations under the License.
 
 package maintainer
+
+import (
+	"github.com/flowbehappy/tigate/rpc"
+	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/pingcap/tiflow/cdc/model"
+)
+
+type ReplicaSet struct {
+	ID *TableSpan
+
+	status *ReplicaSetStatus
+}
+
+func NewReplicaSet(id scheduler.InferiorID) scheduler.Inferior {
+	r := &ReplicaSet{
+		ID: id.(*TableSpan),
+	}
+	return r
+}
+
+func (r *ReplicaSet) GetID() scheduler.InferiorID {
+	return r.ID
+}
+
+func (r *ReplicaSet) UpdateStatus(status scheduler.InferiorStatus) {
+	r.status = status.(*ReplicaSetStatus)
+}
+
+func (r *ReplicaSet) IsAlive() bool {
+	return true
+}
+
+func (r *ReplicaSet) NewInferiorStatus(status scheduler.ComponentStatus) scheduler.InferiorStatus {
+	return &ReplicaSetStatus{
+		ID:     r.ID,
+		Status: status,
+	}
+}
+
+func (r *ReplicaSet) NewAddInferiorMessage(model.CaptureID, bool) rpc.Message {
+	return nil
+}
+
+func (r *ReplicaSet) NewRemoveInferiorMessage(model.CaptureID) rpc.Message {
+	return nil
+}
+
+type ReplicaSetStatus struct {
+	ID     *TableSpan
+	Status scheduler.ComponentStatus
+}
+
+func (c *ReplicaSetStatus) GetInferiorID() scheduler.InferiorID {
+	return scheduler.InferiorID(c.ID)
+}
+
+func (c *ReplicaSetStatus) GetInferiorState() scheduler.ComponentStatus {
+	return c.Status
+}
