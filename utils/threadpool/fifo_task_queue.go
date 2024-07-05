@@ -17,7 +17,8 @@ import (
 	"sync"
 )
 
-// 倒霉玩意，先用切片试一下
+// FIFOTaskQueue is a FIFO task queue.
+// TODO(hongyunyan):check whether there is a better way to implement a FIFO task queue.
 type FIFOTaskQueue struct {
 	queue      []*Task
 	mutex      sync.Mutex
@@ -53,7 +54,7 @@ func (q *FIFOTaskQueue) Submit(task *Task) {
 	defer q.mutex.Unlock()
 
 	if q.isFinished {
-		(*task).Release() // 释放资源
+		(*task).Release()
 		return
 	}
 

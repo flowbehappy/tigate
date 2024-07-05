@@ -18,51 +18,53 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"go.uber.org/zap"
 )
 
-// 本质是想写一个 thread pool 的基类，可以先按照特例来写，后面再转成 basic 的
-// 接受外层的 queue，和 schedule,
-// 提供最基础的 提交任务，拿出任务执行的能力
+/*
+ThreadPool is used to continuously get tasks and execute them in a fixed number of threads.
+We can use timeout to control the maximum execution time of each task.
+*/
 type ThreadPool struct {
-	scheduler   *TaskScheduler // 这理论上是个接口，这玩意倒是真不一定
-	taskQueue   TaskQueue      // 接口2
-	threadCount int            // 开多少个线程
+	scheduler   *TaskScheduler
+	taskQueue   TaskQueue
+	threadCount int
 	wg          sync.WaitGroup
-	timeout     time.Duration // 每个 task 最多能跑多少时间，就要被换出来
+	timeout     time.Duration
+	name        string
 }
 
-func NewThreadPool(scheduler *TaskScheduler, taskQueue TaskQueue, threadCount int) *ThreadPool {
+func NewThreadPool(scheduler *TaskScheduler, taskQueue TaskQueue, threadCount int, timeout int64, name string) *ThreadPool {
 	threadPool := ThreadPool{
 		scheduler:   scheduler,
 		taskQueue:   taskQueue,
 		threadCount: threadCount,
-		timeout:     100 * time.Millisecond,
+		timeout:     time.Duration(timeout) * time.Millisecond,
+		name:        name,
 	}
 
 	for i := 0; i < threadCount; i++ {
 		threadPool.wg.Add(1)
-		go threadPool.loop(i)
+		go threadPool.loop()
 
 	}
 	return &threadPool
 }
 
-func (p *ThreadPool) loop(threadNumber int) {
+func (p *ThreadPool) loop() {
 	for {
 		ok, task := p.taskQueue.Take()
 		if ok {
 			p.handleTask(task)
 		} else {
 			p.wg.Done()
-			log.Info("return loop:", zap.Any("threadNumber", threadNumber))
 			return
 		}
 	}
 }
 
+// Execute the task, and submit it to different place after execution.
 func (p *ThreadPool) handleTask(task *Task) {
-	// 调用 task，并且根据 task 结束状态决定应该放到哪里去
+	// TODO(hongyunyan): check whether we need to check task == nil
 	if task == nil {
 		log.Error("task is nil")
 		return
@@ -70,15 +72,16 @@ func (p *ThreadPool) handleTask(task *Task) {
 	status := (*task).Execute(p.timeout)
 	switch status {
 	case Running:
-		p.scheduler.submitTaskToCPUThreadPool(task) // 仍进去做 cpu 任务
+		p.scheduler.submitTaskToCPUThreadPool(task)
 	case Waiting:
-		p.scheduler.submitTaskToWaitReactorThreadPool(task) //扔进去等 wait reactor
+		p.scheduler.submitTaskToWaitReactorThreadPool(task)
 	case IO:
-		p.scheduler.submitTaskToIOThreadPool(task) // 仍进去做 io 任务
+		p.scheduler.submitTaskToIOThreadPool(task)
 	case Success:
 		// do nothing?
 	case Failed:
-		// 报错，但是不影响后面的 task
+		// TODO(hongyunyan): error information? or get error from Execute
+		log.Error("task failed")
 	}
 }
 
@@ -86,15 +89,13 @@ func (p *ThreadPool) submit(task *Task) {
 	p.taskQueue.Submit(task)
 }
 
-// thread pool 结束前清空所有的数据，不同 task 可以选择不一样的方式，可以直接暴力丢弃等，也可以要求全部执行完
+// TODO(hongyunyan):thread pool 结束前清空所有的数据，不同 task 可以选择不一样的方式，可以直接暴力丢弃等，也可以要求全部执行完
 // 这个具体的含义到时候再确认一下，感觉怪怪的
 func (p *ThreadPool) finish() {
 	p.taskQueue.Finish()
 }
 
 func (p *ThreadPool) waitForStop() error {
-	log.Info("Thread pool is waiting for stop")
 	p.wg.Wait()
-	log.Info("Thread pool is stopped")
 	return nil
 }

@@ -53,7 +53,7 @@ func (l *WaitingTaskList) Finish() {
 	l.cond.Broadcast() // 不确定是否需要，理论上不应该，但是可能会有异常？
 }
 
-func (l *WaitingTaskList) Take(taskList []*Task) bool {
+func (l *WaitingTaskList) Take(taskList []*Task) (bool, []*Task) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 
@@ -63,31 +63,31 @@ func (l *WaitingTaskList) Take(taskList []*Task) bool {
 		}
 
 		if l.isFinished {
-			return false
+			return false, taskList
 		}
 
 		l.cond.Wait()
 	}
 	taskList = append(taskList, l.queue...)
 	l.queue = l.queue[:0]
-	return true
+	return true, taskList
 }
 
-func (l *WaitingTaskList) TryTake(taskList []*Task) bool {
+func (l *WaitingTaskList) TryTake(taskList []*Task) (bool, []*Task) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 
 	if l.isFinished {
-		return false
+		return false, taskList
 	}
 
 	if len(l.queue) == 0 {
-		return false
+		return true, taskList
 	}
 
 	taskList = append(taskList, l.queue...)
 	l.queue = l.queue[:0]
-	return true
+	return true, taskList
 }
 
 func (l *WaitingTaskList) finish() {

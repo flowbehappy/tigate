@@ -20,45 +20,82 @@ import (
 	"go.uber.org/zap"
 )
 
-/**
- * ┌────────────────────────────┐
- * │      task scheduler        │
- * │                            │
- * │    ┌───────────────────┐   │
- * │ ┌──┤io task thread pool◄─┐ │
- * │ │  └──────▲──┬─────────┘ │ │
- * │ │         │  │           │ │
- * │ │ ┌───────┴──▼─────────┐ │ │
- * │ │ │cpu task thread pool│ │ │
- * │ │ └───────▲──┬─────────┘ │ │
- * │ │         │  │           │ │
- * │ │    ┌────┴──▼────┐      │ │
- * │ └────►wait reactor├──────┘ │
- * │      └────────────┘        │
- * │                            │
- * └────────────────────────────┘
- *
- * A globally shared execution scheduler, used by pipeline executor.
- * - cpu task thread pool: for operator cpu intensive compute.
- * - io task thread pool: for operator io intensive block.
- * - wait reactor: for polling asynchronous io status, etc.
- */
+/*
+┌────────────────────────────┐
+│      task scheduler        │
+│                            │
+│    ┌───────────────────┐   │
+│ ┌──┤io task thread pool◄─┐ │
+│ │  └──────▲──┬─────────┘ │ │
+│ │         │  │           │ │
+│ │ ┌───────┴──▼─────────┐ │ │
+│ │ │cpu task thread pool│ │ │
+│ │ └───────▲──┬─────────┘ │ │
+│ │         │  │           │ │
+│ │    ┌────┴──▼────┐      │ │
+│ └────►wait reactor├──────┘ │
+│      └────────────┘        │
+│                            │
+└────────────────────────────┘
 
-// 这个有没有必要做成 interface，要想一下
+A Task scheduler is responsible for managing the cpu / io thread pools and wait reactor.
+- cpu task thread pool: for operator cpu intensive compute.
+- io task thread pool: for operator io intensive block.
+- wait reactor: for polling asynchronous io status, etc.
+
+Task scheduler is the entry to use thread pool. It provides a unified interface to submit task to different thread pools.
+TaskSchedulerConfig is used to configure the threads number and task queue of the thread pool and wait reactor.
+*/
 type TaskScheduler struct {
 	cpuTaskThreadPool *ThreadPool
 	ioTaskThreadPool  *ThreadPool
 	waitReactor       *WaitReactor
 }
 
-func NewTaskScheduler(taskQueue TaskQueue) *TaskScheduler {
-	// 加参数
+type TaskSchedulerConfig struct {
+	// <0 means use 2 * logical cpu
+	// >=0 means use this thread pool with specified threads
+	cpuThreads         int
+	ioThreads          int
+	waitReactorThreads int
+
+	taskQueueType TaskQueueType
+
+	cpuTimeoutMs int64
+	ioTimeoutMs  int64
+}
+
+var DefaultTaskSchedulerConfig = TaskSchedulerConfig{
+	cpuThreads:         -1,
+	ioThreads:          -1,
+	waitReactorThreads: 1,
+	taskQueueType:      FIFOTaskQueueType,
+	cpuTimeoutMs:       100,
+	ioTimeoutMs:        100,
+}
+
+func NewTaskScheduler(threadpoolConfig *TaskSchedulerConfig, name string) *TaskScheduler {
 	taskScheduler := &TaskScheduler{}
 	logicalCpu := runtime.NumCPU()
-	//log.Info("logicalCpu is", zap.Any("logicalCpu", logicalCpu))
-	taskScheduler.cpuTaskThreadPool = NewThreadPool(taskScheduler, taskQueue, logicalCpu)
-	taskScheduler.ioTaskThreadPool = NewThreadPool(taskScheduler, taskQueue, logicalCpu)
-	taskScheduler.waitReactor = NewWaitReactor(taskScheduler, logicalCpu)
+
+	if threadpoolConfig.cpuThreads >= 0 {
+		taskScheduler.cpuTaskThreadPool = NewThreadPool(taskScheduler, NewTaskQueue(threadpoolConfig.taskQueueType), threadpoolConfig.cpuThreads, threadpoolConfig.cpuTimeoutMs, name+"-CPU")
+	} else {
+		taskScheduler.cpuTaskThreadPool = NewThreadPool(taskScheduler, NewTaskQueue(threadpoolConfig.taskQueueType), 2*logicalCpu, threadpoolConfig.cpuTimeoutMs, name+"-CPU")
+	}
+
+	if threadpoolConfig.ioThreads >= 0 {
+		taskScheduler.ioTaskThreadPool = NewThreadPool(taskScheduler, NewTaskQueue(threadpoolConfig.taskQueueType), threadpoolConfig.ioThreads, threadpoolConfig.ioTimeoutMs, name+"-IO")
+	} else {
+		taskScheduler.ioTaskThreadPool = NewThreadPool(taskScheduler, NewTaskQueue(threadpoolConfig.taskQueueType), 2*logicalCpu, threadpoolConfig.ioTimeoutMs, name+"-IO")
+	}
+
+	if threadpoolConfig.waitReactorThreads >= 0 {
+		taskScheduler.waitReactor = NewWaitReactor(taskScheduler, threadpoolConfig.waitReactorThreads, name)
+	} else {
+		taskScheduler.waitReactor = NewWaitReactor(taskScheduler, 2*logicalCpu, name)
+	}
+
 	return taskScheduler
 }
 
@@ -78,6 +115,7 @@ func (s *TaskScheduler) Submit(task Task) error {
 }
 
 func (s *TaskScheduler) submitTaskToCPUThreadPool(task *Task) {
+	// TODO(hongyunyan): 我需要做这个 task nil 的检查么？还是应该让外部自己来保证呢？这个加了肯定会有一点点性能的影响，但是不大
 	if task == nil {
 		log.Info("TaskScheduler submitTaskToCPUThreadPool with nil task")
 	}

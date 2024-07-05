@@ -15,32 +15,34 @@ package threadpool
 
 import (
 	"sync"
-
-	"github.com/pingcap/log"
 )
 
+/*
+WaitReactor is a reactor that waits for tasks to reach the status before submitting them to the corresponding thread pool.
+*/
 type WaitReactor struct {
 	queue         *WaitingTaskList
-	mutex         sync.Mutex
 	wg            sync.WaitGroup
 	threadCount   int
 	taskScheduler *TaskScheduler
+	name          string
 }
 
-func NewWaitReactor(taskScheduler *TaskScheduler, threadCount int) *WaitReactor {
+func NewWaitReactor(taskScheduler *TaskScheduler, threadCount int, name string) *WaitReactor {
 	waitReactor := WaitReactor{
 		threadCount:   threadCount,
 		taskScheduler: taskScheduler,
 		queue:         newWaitingTaskList(),
+		name:          name,
 	}
 	for i := 0; i < threadCount; i++ {
 		waitReactor.wg.Add(1)
-		go waitReactor.loop(i)
+		go waitReactor.loop()
 	}
 	return &waitReactor
 }
 
-func (r *WaitReactor) takeFromWaitingTaskList(waitingTaskList []*Task) bool {
+func (r *WaitReactor) takeFromWaitingTaskList(waitingTaskList []*Task) (bool, []*Task) {
 	if len(waitingTaskList) == 0 {
 		return r.queue.Take(waitingTaskList)
 	} else {
@@ -48,7 +50,7 @@ func (r *WaitReactor) takeFromWaitingTaskList(waitingTaskList []*Task) bool {
 	}
 }
 
-func (r *WaitReactor) react(waitingTasks []*Task) {
+func (r *WaitReactor) react(waitingTasks []*Task) []*Task {
 	var newWaitingTasks []*Task
 	for _, task := range waitingTasks {
 		status := (*task).Await()
@@ -60,29 +62,28 @@ func (r *WaitReactor) react(waitingTasks []*Task) {
 		case Waiting:
 			newWaitingTasks = append(newWaitingTasks, task)
 		case Success:
-			// 不应该吧，需要报错
+			// TODO:不应该吧，需要报错
 		case Failed:
-			// 报错
+			// TODO:报错
 		default:
 			panic("unknown task status")
 		}
 	}
-
-	waitingTasks = newWaitingTasks
+	return newWaitingTasks
 }
 
-func (r *WaitReactor) loop(threadIndex int) {
-	var waitingTasks []*Task
+func (r *WaitReactor) loop() {
+	var currentTasks []*Task
 	for {
-		ok := r.takeFromWaitingTaskList(waitingTasks)
+		ok, waitingTasks := r.takeFromWaitingTaskList(currentTasks)
 		if ok {
-			r.react(waitingTasks)
+			currentTasks = r.react(waitingTasks)
 		} else {
 			break
 		}
 	}
-	for len(waitingTasks) > 0 {
-		r.react(waitingTasks)
+	for len(currentTasks) > 0 {
+		currentTasks = r.react(currentTasks)
 	}
 	r.wg.Done()
 }
@@ -96,8 +97,6 @@ func (r *WaitReactor) finish() {
 }
 
 func (r *WaitReactor) waitForStop() error {
-	log.Info("Wait Reactor is waiting for stop")
 	r.wg.Wait()
-	log.Info("Wait Reactor is stopped")
 	return nil
 }
