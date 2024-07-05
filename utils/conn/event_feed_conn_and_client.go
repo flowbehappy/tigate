@@ -76,7 +76,7 @@ func (c *EventFeedConnArray) connect() (conn *Conn, err error) {
 	if c.inConnecting.CompareAndSwap(false, true) {
 		defer c.inConnecting.Store(false) // why?
 		var clientConn *grpc.ClientConn
-		if clientConn, err = connect(c.addr, c.pool.credential); err != nil {
+		if clientConn, err = Connect(c.addr, c.pool.credential); err != nil {
 			return
 		}
 
