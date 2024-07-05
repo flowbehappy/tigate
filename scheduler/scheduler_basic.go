@@ -74,7 +74,7 @@ func (b *BasicScheduler) Schedule(
 			return tasks
 		}
 		tasks = append(
-			tasks, newBurstAddInferiors(newInferiors, captureIDs))
+			tasks, newBurstAddInferiors(newInferiors, captureIDs)...)
 	}
 
 	// Build remove inferior tasks.
@@ -100,7 +100,7 @@ func (b *BasicScheduler) Schedule(
 		})
 		removeInferiorTasks := newBurstRemoveInferiors(rmInferiorIDs, stateMachines)
 		if removeInferiorTasks != nil {
-			tasks = append(tasks, removeInferiorTasks)
+			tasks = append(tasks, removeInferiorTasks...)
 		}
 	}
 	return tasks
@@ -108,15 +108,17 @@ func (b *BasicScheduler) Schedule(
 
 // newBurstAddInferiors add each new inferior to captures in a round-robin way.
 func newBurstAddInferiors(newInferiors []InferiorID, captureIDs []model.CaptureID,
-) *ScheduleTask {
+) []*ScheduleTask {
 	idx := 0
-	addInferiorTasks := make([]*AddInferior, 0, len(newInferiors))
+	addInferiorTasks := make([]*ScheduleTask, 0, len(newInferiors))
 	for _, infID := range newInferiors {
 		targetCapture := captureIDs[idx]
-		addInferiorTasks = append(addInferiorTasks, &AddInferior{
-			ID:        infID,
-			CaptureID: targetCapture,
-		})
+		addInferiorTasks = append(addInferiorTasks,
+			&ScheduleTask{
+				AddInferior: &AddInferior{
+					ID:        infID,
+					CaptureID: targetCapture,
+				}})
 		log.Info("burst add inferior",
 			zap.String("inferior", infID.String()),
 			zap.String("captureID", targetCapture))
@@ -126,18 +128,14 @@ func newBurstAddInferiors(newInferiors []InferiorID, captureIDs []model.CaptureI
 			idx = 0
 		}
 	}
-	return &ScheduleTask{
-		BurstBalance: &BurstBalance{
-			AddInferiors: addInferiorTasks,
-		},
-	}
+	return addInferiorTasks
 }
 
 func newBurstRemoveInferiors(
 	rmInferiors []InferiorID,
 	stateMachines Map[InferiorID, *StateMachine],
-) *ScheduleTask {
-	removeTasks := make([]*RemoveInferior, 0, len(rmInferiors))
+) []*ScheduleTask {
+	removeTasks := make([]*ScheduleTask, 0, len(rmInferiors))
 	for _, id := range rmInferiors {
 		ccf, _ := stateMachines.Get(id)
 		var captureID model.CaptureID = ccf.Primary
@@ -148,9 +146,11 @@ func newBurstRemoveInferiors(
 				zap.Any("ID", id.String()))
 			continue
 		}
-		removeTasks = append(removeTasks, &RemoveInferior{
-			ID:        id,
-			CaptureID: captureID,
+		removeTasks = append(removeTasks, &ScheduleTask{
+			RemoveInferior: &RemoveInferior{
+				ID:        id,
+				CaptureID: captureID,
+			},
 		})
 		log.Info("burst remove inferior",
 			zap.String("captureID", captureID),
@@ -161,9 +161,5 @@ func newBurstRemoveInferiors(
 		return nil
 	}
 
-	return &ScheduleTask{
-		BurstBalance: &BurstBalance{
-			RemoveInferiors: removeTasks,
-		},
-	}
+	return removeTasks
 }

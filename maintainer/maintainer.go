@@ -15,6 +15,7 @@ package maintainer
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
@@ -44,8 +45,22 @@ type Maintainer struct {
 }
 
 // NewMaintainer create the maintainer for the changefeed
-func NewMaintainer() *Maintainer {
-	return &Maintainer{}
+func NewMaintainer(cfID model.ChangeFeedID) *Maintainer {
+	m := &Maintainer{}
+	m.supervisor = scheduler.NewSupervisor(
+		MaintainerID(cfID),
+		NewReplicaSet,
+		m.newBootstrapMessage,
+	)
+	return m
+}
+
+func NewReplicaSet(id scheduler.InferiorID) scheduler.Inferior {
+	return nil
+}
+
+func (m *Maintainer) newBootstrapMessage(id model.CaptureID) rpc.Message {
+	return nil
 }
 
 func (m *Maintainer) Execute(timeout time.Duration) threadpool.TaskStatus {

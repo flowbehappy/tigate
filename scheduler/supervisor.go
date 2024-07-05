@@ -281,16 +281,6 @@ func (s *Supervisor) HandleScheduleTasks(
 
 	sentMsgs := make([]rpc.Message, 0)
 	for _, task := range tasks {
-		// Burst balance does not affect by maxTaskConcurrency.
-		if task.BurstBalance != nil {
-			msgs, err := s.handleBurstBalanceTasks(task.BurstBalance)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			sentMsgs = append(sentMsgs, msgs...)
-			continue
-		}
-
 		// Check if accepting one more task exceeds maxTaskConcurrency.
 		if s.runningTasks.Len() == s.maxTaskConcurrency {
 			log.Debug("too many running task",
@@ -389,72 +379,6 @@ func (s *Supervisor) handleMoveInferiorTask(
 		return nil, nil
 	}
 	return stateMachine.handleMoveInferior(task.DestCapture)
-}
-
-func (s *Supervisor) handleBurstBalanceTasks(
-	task *BurstBalance,
-) ([]rpc.Message, error) {
-	perCapture := make(map[model.CaptureID]int)
-	for _, task := range task.AddInferiors {
-		perCapture[task.CaptureID]++
-	}
-	for _, task := range task.RemoveInferiors {
-		perCapture[task.CaptureID]++
-	}
-	fields := make([]zap.Field, 0)
-	for captureID, count := range perCapture {
-		fields = append(fields, zap.Int(captureID, count))
-	}
-	fields = append(fields, zap.Int("AddInferiors", len(task.AddInferiors)))
-	fields = append(fields, zap.Int("RemoveInferiors", len(task.RemoveInferiors)))
-	fields = append(fields, zap.Int("MoveInferiors", len(task.MoveInferiors)))
-	fields = append(fields, zap.String("ID", s.ID.String()))
-	log.Info("handle burst balance task", fields...)
-
-	sentMsgs := make([]rpc.Message, 0, len(task.AddInferiors))
-	for i := range task.AddInferiors {
-		addInferior := task.AddInferiors[i]
-		if _, ok := s.runningTasks.Get(addInferior.ID); ok {
-			// Skip add inferior if the inferior is already running a task.
-			continue
-		}
-		msgs, err := s.handleAddInferiorTask(addInferior)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		sentMsgs = append(sentMsgs, msgs...)
-		// Just for place holding.
-		s.runningTasks.ReplaceOrInsert(addInferior.ID, &ScheduleTask{})
-	}
-	for i := range task.RemoveInferiors {
-		removeInferior := task.RemoveInferiors[i]
-		if _, ok := s.runningTasks.Get(removeInferior.ID); ok {
-			// Skip add inferior if the inferior is already running a task.
-			continue
-		}
-		msgs, err := s.handleRemoveInferiorTask(removeInferior)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		sentMsgs = append(sentMsgs, msgs...)
-		// Just for place holding.
-		s.runningTasks.ReplaceOrInsert(removeInferior.ID, &ScheduleTask{})
-	}
-	for i := range task.MoveInferiors {
-		moveInferior := task.MoveInferiors[i]
-		if _, ok := s.runningTasks.Get(moveInferior.ID); ok {
-			// Skip add inferior if the inferior is already running a task.
-			continue
-		}
-		msgs, err := s.handleMoveInferiorTask(moveInferior)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		sentMsgs = append(sentMsgs, msgs...)
-		// Just for place holding.
-		s.runningTasks.ReplaceOrInsert(moveInferior.ID, &ScheduleTask{})
-	}
-	return sentMsgs, nil
 }
 
 // CheckAllCaptureInitialized check if all capture is initialized.
