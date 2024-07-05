@@ -36,7 +36,7 @@ func (c *TableAddrConnAndClient) Release() {
 
 func NewConnAndTableAddrClient(addr string, credential *security.Credential) (*TableAddrConnAndClient, error) {
 	for {
-		clientConn, err := connect(addr, credential)
+		clientConn, err := Connect(addr, credential)
 		if err != nil {
 			log.Error("create new grpc connect failed with addr ", addr, ", err: ", err)
 			// for backoff

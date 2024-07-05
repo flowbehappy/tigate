@@ -34,8 +34,8 @@ const (
 	grpcMaxCallRecvMsgSize    = 1 << 28
 )
 
-// 开一个新的 grpc conn 出来
-func connect(target string, credential *security.Credential) (*grpc.ClientConn, error) {
+// Connect returns a new grpc client connection to the target.
+func Connect(target string, credential *security.Credential) (*grpc.ClientConn, error) {
 	grpcTLSOption, err := credential.ToGRPCDialOption()
 	if err != nil {
 		return nil, err
