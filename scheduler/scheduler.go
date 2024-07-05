@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tiflow/cdc/model"
 )
 
+// Scheduler schedules check all untracked inferiors and generate ScheduleTask
 type Scheduler interface {
 	Name() string
 	Schedule(

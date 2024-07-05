@@ -2,6 +2,7 @@ package supervisedtree
 
 import (
 	"fmt"
+	"github.com/flowbehappy/tigate/scheduler"
 
 	"github.com/flowbehappy/tigate/apperror"
 	"github.com/pingcap/log"
@@ -70,6 +71,14 @@ type SupervisedNodeID struct {
 func (sid *SupervisedNodeID) String() string {
 	return fmt.Sprintf("{\"object_id\": \"%s\", \"epoch\": %d, \"task_id\": \"%s\", \"host_info\": \"%s\", \"extra_info\": \"%s\"}",
 		sid.ObjectID.String(), sid.Epoch, sid.TaskID, sid.HostInfo, sid.ExtraInfo.Info())
+}
+
+func (sid *SupervisedNodeID) Equal(id scheduler.InferiorID) bool {
+	return sid.ObjectID == id.(*SupervisedNodeID).ObjectID
+}
+
+func (sid *SupervisedNodeID) Less(id scheduler.InferiorID) bool {
+	return sid.TaskID < id.(*SupervisedNodeID).TaskID
 }
 
 type SupervisedType int
