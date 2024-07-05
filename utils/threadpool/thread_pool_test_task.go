@@ -110,3 +110,123 @@ func (t *BasicWaitTask) Await() TaskStatus {
 
 func (t *BasicWaitTask) Release() {
 }
+
+type PureCPUTask struct {
+	taskStatus TaskStatus
+	finalChan  *chan int
+	ch         *chan int
+	target     int64
+	addCount   int
+}
+
+func newPureCPUTask(finalChan *chan int, ch *chan int, target int64, addCount int) *PureCPUTask {
+	return &PureCPUTask{
+		taskStatus: Running,
+		finalChan:  finalChan,
+		ch:         ch,
+		target:     target,
+		addCount:   addCount,
+	}
+}
+
+func (t *PureCPUTask) GetStatus() TaskStatus {
+	return t.taskStatus
+}
+
+func (t *PureCPUTask) Execute(timeout time.Duration) TaskStatus {
+	select {
+	case <-*t.ch:
+		for i := 0; i < t.addCount; i++ {
+			atomic.AddInt64(&testCount, 1)
+		}
+		if atomic.LoadInt64(&testCount) == int64(t.addCount)*t.target {
+			*t.finalChan <- 1
+		}
+		return Success
+	default:
+		return Running
+	}
+}
+
+func (t *PureCPUTask) Await() TaskStatus { return Failed }
+
+func (t *PureCPUTask) Release() {}
+
+type CPUWithWaitTask struct {
+	taskStatus TaskStatus
+	finalChan  *chan int
+	ch         *chan int
+	target     int64
+	addCount   int
+}
+
+func newCPUWithWaitTask(finalChan *chan int, ch *chan int, target int64, addCount int) *CPUWithWaitTask {
+	return &CPUWithWaitTask{
+		taskStatus: Waiting,
+		finalChan:  finalChan,
+		ch:         ch,
+		target:     target,
+		addCount:   addCount,
+	}
+}
+
+func (t *CPUWithWaitTask) GetStatus() TaskStatus {
+	return t.taskStatus
+}
+
+func (t *CPUWithWaitTask) Execute(timeout time.Duration) TaskStatus {
+	for i := 0; i < t.addCount; i++ {
+		atomic.AddInt64(&testCount, 1)
+	}
+	if atomic.LoadInt64(&testCount) == int64(t.addCount)*t.target {
+		*t.finalChan <- 1
+	}
+
+	return Success
+}
+
+func (t *CPUWithWaitTask) Await() TaskStatus {
+	select {
+	case <-*t.ch:
+		return Running
+	default:
+		return Waiting
+	}
+}
+
+func (t *CPUWithWaitTask) Release() {}
+
+type CPUTimeTask struct {
+	taskStatus TaskStatus
+	finalChan  *chan int
+	addCount   int
+	taskCount  int
+}
+
+func newCPUTimeTask(finalChan *chan int, addCount int, taskCount int) *CPUTimeTask {
+	return &CPUTimeTask{
+		taskStatus: Running,
+		finalChan:  finalChan,
+		addCount:   addCount,
+		taskCount:  taskCount,
+	}
+}
+
+func (t *CPUTimeTask) GetStatus() TaskStatus {
+	return t.taskStatus
+}
+
+func (t *CPUTimeTask) Execute(timeout time.Duration) TaskStatus {
+	for i := 0; i < t.addCount; i++ {
+		atomic.AddInt64(&testCount, 1)
+	}
+	if atomic.LoadInt64(&testCount) == int64(t.addCount*t.taskCount) {
+		*t.finalChan <- 1
+	}
+
+	return Success
+}
+
+func (t *CPUTimeTask) Await() TaskStatus { return Failed }
+
+func (t *CPUTimeTask) Release() {}

@@ -13,14 +13,30 @@
 
 package threadpool
 
+type TaskQueueType int
+
+const (
+	FIFOTaskQueueType TaskQueueType = iota
+)
+
 /*
-做一个基础的 接口，必须要满足的功能包括了：
- 1. 拿出一个 task
- 2. 塞进去一个 task
- 3. 达到 finish 状态释放没有跑的 task 资源
+TaskQueue is used to manage task lists in thread pool.
+It provides following methods:
+1. take a task from the queue
+2. submit a task to the queue
+3. release resources when the queue is finished.
 */
 type TaskQueue interface {
 	Take() (bool, *Task)
 	Submit(task *Task)
 	Finish()
+}
+
+func NewTaskQueue(t TaskQueueType) TaskQueue {
+	switch t {
+	case FIFOTaskQueueType:
+		return NewFIFOTaskQueue()
+	default:
+		return nil
+	}
 }

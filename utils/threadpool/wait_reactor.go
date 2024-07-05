@@ -15,11 +15,11 @@ package threadpool
 
 import (
 	"sync"
-
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
 )
 
+/*
+WaitReactor is a reactor that waits for tasks to reach the status before submitting them to the corresponding thread pool.
+*/
 type WaitReactor struct {
 	queue         *WaitingTaskList
 	wg            sync.WaitGroup
@@ -37,7 +37,7 @@ func NewWaitReactor(taskScheduler *TaskScheduler, threadCount int, name string) 
 	}
 	for i := 0; i < threadCount; i++ {
 		waitReactor.wg.Add(1)
-		go waitReactor.loop(i)
+		go waitReactor.loop()
 	}
 	return &waitReactor
 }
@@ -62,18 +62,17 @@ func (r *WaitReactor) react(waitingTasks []*Task) []*Task {
 		case Waiting:
 			newWaitingTasks = append(newWaitingTasks, task)
 		case Success:
-			// 不应该吧，需要报错
+			// TODO:不应该吧，需要报错
 		case Failed:
-			// 报错
+			// TODO:报错
 		default:
 			panic("unknown task status")
 		}
 	}
-
 	return newWaitingTasks
 }
 
-func (r *WaitReactor) loop(threadIndex int) {
+func (r *WaitReactor) loop() {
 	var currentTasks []*Task
 	for {
 		ok, waitingTasks := r.takeFromWaitingTaskList(currentTasks)
@@ -98,8 +97,6 @@ func (r *WaitReactor) finish() {
 }
 
 func (r *WaitReactor) waitForStop() error {
-	log.Info("Wait Reactor is waiting for stop", zap.Any("wait reactor name", r.name))
 	r.wg.Wait()
-	log.Info("Wait Reactor is stopped", zap.Any("wait reactor name", r.name))
 	return nil
 }
