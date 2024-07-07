@@ -2,6 +2,7 @@ package supervisedtree
 
 import (
 	"fmt"
+
 	"github.com/flowbehappy/tigate/scheduler"
 
 	"github.com/flowbehappy/tigate/apperror"
