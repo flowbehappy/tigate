@@ -1,10 +1,10 @@
 package messaging
 
 import (
-	"encoding/binary"
 	"fmt"
 
 	. "github.com/flowbehappy/tigate/apperror"
+
 	"github.com/google/uuid"
 )
 
@@ -19,8 +19,6 @@ const (
 	TypeDMLEvent IOType = 3
 	TypeDDLEvent IOType = 4
 )
-
-var DefaultEndian = binary.LittleEndian
 
 type Bytes []byte
 type ServerId uuid.UUID
