@@ -17,10 +17,11 @@ type DDLEvent struct {
 // It could be a DDL event, or multiple DML events, but can't be both.
 // TODO: field 改成小写？
 type TxnEvent struct {
-	DDLEvent *DDLEvent
-	Rows     []*RowChangedEvent
-	StartTs  uint64
-	CommitTs uint64
+	DDLEvent       *DDLEvent
+	Rows           []*RowChangedEvent
+	StartTs        uint64
+	CommitTs       uint64
+	PostTxnFlushed func() // 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
 }
 
 func (e *TxnEvent) GetDDLQuery() string {
@@ -80,6 +81,11 @@ type RowChangedEvent struct {
 
 	// ReplicatingTs is ts when a table starts replicating events to downstream.
 	ReplicatingTs uint64
+}
+
+// GetTableID returns the table ID of the event.
+func (r *RowChangedEvent) GetTableID() int64 {
+	return r.PhysicalTableID
 }
 
 // Column represents a column value and its schema info

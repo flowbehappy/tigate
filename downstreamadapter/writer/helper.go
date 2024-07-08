@@ -30,19 +30,16 @@ import (
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/cdc/sink/dmlsink"
 	dmutils "github.com/pingcap/tiflow/dm/pkg/conn"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"go.uber.org/zap"
 )
 
 type preparedDMLs struct {
-	startTs         []model.Ts
-	sqls            []string
-	values          [][]interface{}
-	callbacks       []dmlsink.CallbackFunc
-	rowCount        int
-	approximateSize int64
+	startTs  []model.Ts
+	sqls     []string
+	values   [][]interface{}
+	rowCount int
 }
 
 // CheckIfBDRModeIsSupported checks if the downstream supports BDR mode.
