@@ -293,7 +293,7 @@ func (s *server) run(ctx context.Context) (err error) {
 	eg.Go(func() error {
 		return s.tcpServer.Run(egCtx)
 	})
-	grpcServer := grpc.NewServer(nil)
+	grpcServer := grpc.NewServer()
 
 	eg.Go(func() error {
 		return grpcServer.Serve(s.tcpServer.GrpcListener())
