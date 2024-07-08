@@ -3,12 +3,15 @@ module github.com/flowbehappy/tigate
 go 1.21.8
 
 require (
+	github.com/cockroachdb/pebble v1.1.0
 	github.com/gogo/protobuf v1.3.2
 	github.com/google/btree v1.1.2
 	github.com/google/uuid v1.6.0
 	github.com/ngaut/log v0.0.0-20210830112240-0124ec040aeb
 	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
 	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
+	github.com/pingcap/tidb v1.1.0-beta.0.20240613051929-f124165c9be4
+	github.com/pingcap/tidb/parser v0.0.0-20231013125129-93a834a6bf8d
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20240613051929-f124165c9be4
 	github.com/pingcap/tiflow v0.0.0-20240621054018-c001638fcf8c
 	github.com/tikv/client-go/v2 v2.0.8-0.20240604045705-156cebc2defa
@@ -64,7 +67,6 @@ require (
 	github.com/cloudfoundry/gosigar v1.3.6 // indirect
 	github.com/cockroachdb/errors v1.11.1 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20230118201751-21c54148d20b // indirect
-	github.com/cockroachdb/pebble v1.1.0 // indirect
 	github.com/cockroachdb/redact v1.1.5 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06 // indirect
 	github.com/containerd/cgroups v1.0.4 // indirect
@@ -193,7 +195,6 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989 // indirect
 	github.com/pingcap/kvproto v0.0.0-20240513094934-d9297553c900 // indirect
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5 // indirect
-	github.com/pingcap/tidb v1.1.0-beta.0.20240613051929-f124165c9be4 // indirect
 	github.com/pingcap/tipb v0.0.0-20240318032315-55a7867ddd50 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
