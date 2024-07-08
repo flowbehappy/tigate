@@ -18,6 +18,8 @@ type TableID int64
 
 type DatabaseID int64
 
+type SchemaID int64
+
 type Filter interface{}
 
 type DDLEvent struct {

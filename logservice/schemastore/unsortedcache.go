@@ -11,7 +11,7 @@ import (
 
 type unSortedDDLCache struct {
 	mutex sync.Mutex
-	// orderd by commitTS
+	// ordered by commitTS
 	// TODO: whether need a startTS?
 	ddlEvents *btree.BTreeG[DDLEvent]
 }

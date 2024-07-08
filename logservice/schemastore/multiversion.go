@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"sync"
 
 	"github.com/pingcap/log"
@@ -55,7 +56,7 @@ func newVersionedTableInfoStore(startTS Timestamp, info *TableInfo) *versionedTa
 func (v *versionedTableInfoStore) getStartTS() Timestamp {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	// this is not very accurate, it's large than the actual startTS
+	// this is not very accurate, it's larger than the actual startTS
 	return v.startTS
 }
 
@@ -75,13 +76,14 @@ func (v *versionedTableInfoStore) registerDispatcher(dispatcherID DispatcherID, 
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if _, ok := v.dispatchers[dispatcherID]; ok {
-		log.Info("dispatcher already registered", zap.String("dispatcherID", string(dispatcherID)))
+		log.Info("dispatcher already registered", zap.Any("dispatcherID", dispatcherID))
 	}
 	v.dispatchers[dispatcherID] = ts
 	v.tryGC()
 }
 
 // may trigger gc, or totally removed?
+// return true if the dispatcher is not in the store.
 func (v *versionedTableInfoStore) unregisterDispatcher(dispatcherID DispatcherID) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -98,6 +100,9 @@ func (v *versionedTableInfoStore) updateDispatcherCheckpointTS(dispatcherID Disp
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if _, ok := v.dispatchers[dispatcherID]; !ok {
+		// todo: shall we panic here ?
+		log.Error("dispatcher cannot be found when update checkpoint",
+			zap.Any("dispatcherID", dispatcherID), zap.Any("ts", ts))
 		return errors.New("dispatcher not found")
 	}
 	v.dispatchers[dispatcherID] = ts
@@ -108,30 +113,24 @@ func (v *versionedTableInfoStore) updateDispatcherCheckpointTS(dispatcherID Disp
 // TODO: find a better function name and param name
 // 找到第一个大于 ts 的 index
 func findTableInfoIndex(infos []tableInfoItem, ts Timestamp) int {
-	left, right := 0, len(infos)
-	for left < right {
-		mid := left + (right-left)/2
-		if infos[mid].ts <= ts {
-			left = mid + 1
-		} else {
-			right = mid
-		}
-	}
-	return left
+	return sort.Search(len(infos), func(i int) bool {
+		return infos[i].ts > ts
+	})
 }
 
 // lock is held by caller
 func (v *versionedTableInfoStore) tryGC() {
+	// only keep one item in infos which have a ts smaller than minTS
+	if len(v.infos) == 0 {
+		log.Fatal("no table info found")
+	}
+
 	var minTS Timestamp
 	minTS = math.MaxUint64
 	for _, ts := range v.dispatchers {
 		if ts < minTS {
 			minTS = ts
 		}
-	}
-	// only keep one item in infos which have a ts smaller than minTS
-	if len(v.infos) == 0 {
-		log.Fatal("no table info found")
 	}
 
 	// TODO: 检查边界条件
@@ -159,7 +158,9 @@ func (v *versionedTableInfoStore) applyDDL(job *model.Job) {
 	if len(v.infos) == 0 {
 		log.Fatal("no table info found")
 	}
-	lastTableInfo := v.infos[len(v.infos)-1].info.Clone()
+
+	// TODO
+	_ = v.infos[len(v.infos)-1].info.Clone()
 
 	switch job.Type {
 	case model.ActionRenameTable:
@@ -174,35 +175,27 @@ func (v *versionedTableInfoStore) applyDDL(job *model.Job) {
 
 func (v *versionedTableInfoStore) checkAndCopyTailFrom(src *versionedTableInfoStore) {
 	v.mu.Lock()
-	defer v.mu.Unlock()
 	src.mu.Lock()
-	defer src.mu.Unlock()
+	defer func() {
+		v.mu.Unlock()
+		src.mu.Unlock()
+	}()
+
 	if len(src.infos) == 0 {
 		return
 	}
 	if len(v.infos) == 0 {
 		v.infos = append(v.infos, src.infos[len(src.infos)-1])
 	}
+
 	firstSrcTS := src.infos[0].ts
-	foundFirstSrcTS := false
-	startCheckIndex := 0
-	// TODO: use binary search
-	for i, item := range v.infos {
-		if item.ts < firstSrcTS {
-			continue
-		} else if item.ts == firstSrcTS {
-			foundFirstSrcTS = true
-			startCheckIndex = i
-			break
-		} else {
-			if !foundFirstSrcTS {
-				log.Panic("not found")
-			}
-			if item.ts != src.infos[i-startCheckIndex].ts {
-				log.Panic("not match")
-			}
-		}
+	startCheckIndex := sort.Search(len(v.infos), func(i int) bool {
+		return v.infos[i].ts == firstSrcTS
+	})
+	if startCheckIndex == len(v.infos) {
+		log.Panic("not found")
 	}
+
 	copyStartIndex := len(src.infos) - (len(v.infos) - startCheckIndex)
 	v.infos = append(v.infos, src.infos[copyStartIndex:]...)
 }
