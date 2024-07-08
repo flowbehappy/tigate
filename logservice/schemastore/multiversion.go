@@ -3,7 +3,6 @@ package schemastore
 import (
 	"errors"
 	"math"
-	"sort"
 	"sync"
 
 	"github.com/flowbehappy/tigate/common"
@@ -13,50 +12,50 @@ import (
 	"go.uber.org/zap"
 )
 
-// dbInfo interface should be much simpler?
-// dbInfo 会变吗？db id 不会被复用吧？所以不存在多版本？
-
 type tableInfoItem struct {
-	ts   common.Timestamp
-	info *common.TableInfo
+	version Timestamp
+	info    *common.TableInfo
 }
 
 type versionedTableInfoStore struct {
 	mu sync.Mutex
 
-	startTS common.Timestamp
-
-	dispatchers map[common.DispatcherID]common.Timestamp
+	// dispatcherID -> max ts successfully send to dispatcher
+	// gcTS = min(dispatchers[dispatcherID])
+	// When gc, just need retain one version <= gcTS
+	dispatchers map[DispatcherID]Timestamp
 
 	// ordered by ts
-	infos []tableInfoItem
+	infos []*tableInfoItem
 
-	deleteVersion common.Timestamp
+	deleteVersion Timestamp
 }
 
 func newEmptyVersionedTableInfoStore() *versionedTableInfoStore {
 	return &versionedTableInfoStore{
-		dispatchers:   make(map[common.DispatcherID]common.Timestamp),
-		infos:         make([]tableInfoItem, 0),
+		dispatchers:   make(map[DispatcherID]Timestamp),
+		infos:         make([]*tableInfoItem, 0),
 		deleteVersion: math.MaxUint64,
 	}
 }
 
 // TableInfo can from upstream snapshot or create table ddl
-func newVersionedTableInfoStore(startTS common.Timestamp, info *common.TableInfo) *versionedTableInfoStore {
+func newVersionedTableInfoStore(version Timestamp, info *common.TableInfo) *versionedTableInfoStore {
 	store := newEmptyVersionedTableInfoStore()
-	store.infos = append(store.infos, tableInfoItem{ts: startTS, info: info})
+	store.infos = append(store.infos, &tableInfoItem{version: version, info: info})
 	return store
 }
 
-func (v *versionedTableInfoStore) getStartTS() common.Timestamp {
+func (v *versionedTableInfoStore) getFirstVersion() Timestamp {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	// this is not very accurate, it's larger than the actual startTS
-	return v.startTS
+	if len(v.infos) == 0 {
+		return math.MaxUint64
+	}
+	return v.infos[0].version
 }
 
-func (v *versionedTableInfoStore) getTableInfo(ts common.Timestamp) (*common.TableInfo, error) {
+func (v *versionedTableInfoStore) getTableInfo(ts Timestamp) (*common.TableInfo, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -68,7 +67,7 @@ func (v *versionedTableInfoStore) getTableInfo(ts common.Timestamp) (*common.Tab
 	return v.infos[left-1].info, nil
 }
 
-func (v *versionedTableInfoStore) registerDispatcher(dispatcherID common.DispatcherID, ts common.Timestamp) {
+func (v *versionedTableInfoStore) registerDispatcher(dispatcherID DispatcherID, ts Timestamp) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if _, ok := v.dispatchers[dispatcherID]; ok {
@@ -80,7 +79,7 @@ func (v *versionedTableInfoStore) registerDispatcher(dispatcherID common.Dispatc
 
 // may trigger gc, or totally removed?
 // return true if the dispatcher is not in the store.
-func (v *versionedTableInfoStore) unregisterDispatcher(dispatcherID common.DispatcherID) bool {
+func (v *versionedTableInfoStore) unregisterDispatcher(dispatcherID DispatcherID) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	delete(v.dispatchers, dispatcherID)
@@ -92,7 +91,7 @@ func (v *versionedTableInfoStore) unregisterDispatcher(dispatcherID common.Dispa
 }
 
 // will trigger gc
-func (v *versionedTableInfoStore) updateDispatcherCheckpointTS(dispatcherID common.DispatcherID, ts common.Timestamp) error {
+func (v *versionedTableInfoStore) updateDispatcherSendTS(dispatcherID DispatcherID, ts Timestamp) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if _, ok := v.dispatchers[dispatcherID]; !ok {
@@ -107,10 +106,17 @@ func (v *versionedTableInfoStore) updateDispatcherCheckpointTS(dispatcherID comm
 
 // TODO: find a better function name and param name
 // 找到第一个大于 ts 的 index
-func findTableInfoIndex(infos []tableInfoItem, ts common.Timestamp) int {
-	return sort.Search(len(infos), func(i int) bool {
-		return infos[i].ts > ts
-	})
+func findTableInfoIndex(infos []*tableInfoItem, ts Timestamp) int {
+	left, right := 0, len(infos)
+	for left < right {
+		mid := left + (right-left)/2
+		if infos[mid].version <= ts {
+			left = mid + 1
+		} else {
+			right = mid
+		}
+	}
+	return left
 }
 
 // lock is held by caller
@@ -120,7 +126,7 @@ func (v *versionedTableInfoStore) tryGC() {
 		log.Fatal("no table info found")
 	}
 
-	var minTS common.Timestamp
+	var minTS Timestamp
 	minTS = math.MaxUint64
 	for _, ts := range v.dispatchers {
 		if ts < minTS {
@@ -134,37 +140,57 @@ func (v *versionedTableInfoStore) tryGC() {
 		return
 	}
 	v.infos = v.infos[left-1:]
-	v.startTS = minTS
 }
 
-func (v *versionedTableInfoStore) getAllRegisteredDispatchers() map[common.DispatcherID]common.Timestamp {
+func (v *versionedTableInfoStore) getAllRegisteredDispatchers() map[DispatcherID]Timestamp {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	result := make(map[common.DispatcherID]common.Timestamp, len(v.dispatchers))
+	result := make(map[DispatcherID]Timestamp, len(v.dispatchers))
 	for k, v := range v.dispatchers {
 		result[k] = v
 	}
 	return result
 }
 
+func assertEmpty(infos []*tableInfoItem) {
+	if len(infos) != 0 {
+		log.Panic("shouldn't happen")
+	}
+}
+
+func assertNonEmpty(infos []*tableInfoItem) {
+	if len(infos) == 0 {
+		log.Panic("shouldn't happen")
+	}
+}
+
+func assertNonDeleted(v *versionedTableInfoStore) {
+	if v.isDeleted() {
+		log.Panic("shouldn't happen")
+	}
+}
+
+func (v *versionedTableInfoStore) isDeleted() bool {
+	return v.deleteVersion != Timestamp(math.MaxUint64)
+}
+
 func (v *versionedTableInfoStore) applyDDL(job *model.Job) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if len(v.infos) == 0 {
-		log.Fatal("no table info found")
-	}
-
-	// TODO
-	_ = v.infos[len(v.infos)-1].info.Clone()
-
 	switch job.Type {
+	case model.ActionCreateTable:
+		assertEmpty(v.infos)
+		info := common.WrapTableInfo(job.SchemaID, job.SchemaName, job.BinlogInfo.FinishedTS, job.BinlogInfo.TableInfo)
+		v.infos = append(v.infos, &tableInfoItem{version: Timestamp(job.BinlogInfo.FinishedTS), info: info})
 	case model.ActionRenameTable:
-		// TODO
-	case model.ActionDropTable, model.ActionDropView:
-		// TODO
-	case model.ActionTruncateTable:
-		// just delete this table?
+		assertNonEmpty(v.infos)
+		info := common.WrapTableInfo(job.SchemaID, job.SchemaName, job.BinlogInfo.FinishedTS, job.BinlogInfo.TableInfo)
+		v.infos = append(v.infos, &tableInfoItem{version: Timestamp(job.BinlogInfo.FinishedTS), info: info})
+	case model.ActionDropTable, model.ActionTruncateTable:
+		assertNonDeleted(v)
+		v.deleteVersion = Timestamp(job.BinlogInfo.FinishedTS)
 	default:
+		// TODO: idenitify unexpected ddl or specify all expected ddl
 	}
 }
 
@@ -181,12 +207,25 @@ func (v *versionedTableInfoStore) checkAndCopyTailFrom(src *versionedTableInfoSt
 	if len(v.infos) == 0 {
 		v.infos = append(v.infos, src.infos[len(src.infos)-1])
 	}
-	firstSrcTS := src.infos[0].ts
-	startCheckIndex := sort.Search(len(v.infos), func(i int) bool {
-		return v.infos[i].ts == firstSrcTS
-	})
-	if startCheckIndex == len(v.infos) {
-		log.Panic("not found")
+	firstSrcTS := src.infos[0].version
+	foundFirstSrcTS := false
+	startCheckIndex := 0
+	// TODO: use binary search
+	for i, item := range v.infos {
+		if item.version < firstSrcTS {
+			continue
+		} else if item.version == firstSrcTS {
+			foundFirstSrcTS = true
+			startCheckIndex = i
+			break
+		} else {
+			if !foundFirstSrcTS {
+				log.Panic("not found")
+			}
+			if item.version != src.infos[i-startCheckIndex].version {
+				log.Panic("not match")
+			}
+		}
 	}
 	copyStartIndex := len(src.infos) - (len(v.infos) - startCheckIndex)
 	v.infos = append(v.infos, src.infos[copyStartIndex:]...)
