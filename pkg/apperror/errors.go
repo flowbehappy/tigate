@@ -20,6 +20,7 @@ const (
 	ErrorTypeMessageCongested     ErrorType = 204
 	ErrorTypeMessageReceiveFailed ErrorType = 205
 	ErrorTypeMessageSendFailed    ErrorType = 206
+	ErrorTypeTargetNotFound       ErrorType = 207
 )
 
 func (t ErrorType) String() string {
