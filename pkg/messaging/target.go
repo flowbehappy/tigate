@@ -371,7 +371,6 @@ func (s *localMessageTarget) sendMsgToChan(mtype IOType, eventBytes [][]byte, ch
 		if err != nil {
 			log.Panic("Deserialize message failed", zap.Error(err))
 		}
-
 		message := &TargetMessage{
 			From:     s.localId,
 			To:       s.localId,

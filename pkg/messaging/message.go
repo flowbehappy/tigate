@@ -21,7 +21,12 @@ const (
 )
 
 type Bytes []byte
+
 type ServerId uuid.UUID
+
+func NewServerId() ServerId {
+	return ServerId(uuid.New())
+}
 
 func (b *Bytes) encode(buf []byte) []byte    { return append(buf, (*b)...) }
 func (s *ServerId) encode(buf []byte) []byte { return append(buf, (*s)[:]...) }
