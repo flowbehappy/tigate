@@ -11,10 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package rpc
+package server
 
-// Message for rpc
-// todo: define it in proto file
-type Message interface {
-	GetType() string
+import (
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+var registry = prometheus.NewRegistry()
+
+func init() {
 }
