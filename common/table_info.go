@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
+	datumTypes "github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
@@ -678,4 +679,14 @@ func WrapTableInfo(schemaID int64, schemaName string, version uint64, info *mode
 	ti.findHandleIndex()
 	ti.initColumnsFlag()
 	return ti
+}
+
+// GetColumnDefaultValue returns the default definition of a column.
+func GetColumnDefaultValue(col *model.ColumnInfo) interface{} {
+	defaultValue := col.GetDefaultValue()
+	if defaultValue == nil {
+		defaultValue = col.GetOriginDefaultValue()
+	}
+	defaultDatum := datumTypes.NewDatum(defaultValue)
+	return defaultDatum.GetValue()
 }

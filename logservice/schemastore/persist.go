@@ -145,7 +145,7 @@ func (p *persistentStorage) buildVersionedTableInfoStore(tableID TableID, startT
 	defer iter.Close()
 
 	// TODO: read from snapshot
-	store := newEmptyVersionedTableInfoStore()
+	store := newEmptyVersionedTableInfoStore(100)
 
 	for iter.First(); iter.Valid(); iter.Next() {
 		// TODO: check whether the key is valid
