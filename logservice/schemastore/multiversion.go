@@ -3,12 +3,12 @@ package schemastore
 import (
 	"errors"
 	"math"
+	"sort"
 	"sync"
 
 	"github.com/flowbehappy/tigate/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	datumTypes "github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap"
 )
 
@@ -20,9 +20,11 @@ type tableInfoItem struct {
 type versionedTableInfoStore struct {
 	mu sync.Mutex
 
+	tableID TableID
+
 	// dispatcherID -> max ts successfully send to dispatcher
 	// gcTS = min(dispatchers[dispatcherID])
-	// When gc, just need retain one version <= gcTS
+	// when gc, just need retain one version <= gcTS
 	dispatchers map[DispatcherID]Timestamp
 
 	// ordered by ts
@@ -31,8 +33,9 @@ type versionedTableInfoStore struct {
 	deleteVersion Timestamp
 }
 
-func newEmptyVersionedTableInfoStore() *versionedTableInfoStore {
+func newEmptyVersionedTableInfoStore(tableID TableID) *versionedTableInfoStore {
 	return &versionedTableInfoStore{
+		tableID:       tableID,
 		dispatchers:   make(map[DispatcherID]Timestamp),
 		infos:         make([]*tableInfoItem, 0),
 		deleteVersion: math.MaxUint64,
@@ -40,8 +43,8 @@ func newEmptyVersionedTableInfoStore() *versionedTableInfoStore {
 }
 
 // TableInfo can from upstream snapshot or create table ddl
-func newVersionedTableInfoStore(version Timestamp, info *common.TableInfo) *versionedTableInfoStore {
-	store := newEmptyVersionedTableInfoStore()
+func newVersionedTableInfoStore(tableID TableID, version Timestamp, info *common.TableInfo) *versionedTableInfoStore {
+	store := newEmptyVersionedTableInfoStore(tableID)
 	store.infos = append(store.infos, &tableInfoItem{version: version, info: info})
 	return store
 }
@@ -55,16 +58,46 @@ func (v *versionedTableInfoStore) getFirstVersion() Timestamp {
 	return v.infos[0].version
 }
 
+// return the table info with the largest version <= ts
 func (v *versionedTableInfoStore) getTableInfo(ts Timestamp) (*common.TableInfo, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	// TODO: 检查边界条件
-	left := findTableInfoIndex(v.infos, ts)
-	if left == 0 {
+	if ts >= v.deleteVersion {
+		return nil, errors.New("table info deleted")
+	}
+
+	target := sort.Search(len(v.infos), func(i int) bool {
+		return v.infos[i].version > ts
+	})
+	if target == 0 {
 		return nil, errors.New("no table info found")
 	}
-	return v.infos[left-1].info, nil
+	return v.infos[target-1].info, nil
+}
+
+// only keep one item with the largest version <= gcTS
+func removeUnusedInfos(infos []*tableInfoItem, dispatchers map[DispatcherID]Timestamp) []*tableInfoItem {
+	if len(infos) == 0 {
+		log.Fatal("no table info found")
+	}
+
+	gcTS := Timestamp(math.MaxUint64)
+	for _, ts := range dispatchers {
+		if ts < gcTS {
+			gcTS = ts
+		}
+	}
+
+	target := sort.Search(len(infos), func(i int) bool {
+		return infos[i].version > gcTS
+	})
+	// TODO: all info version is larger than gcTS seems impossible?
+	if target == 0 {
+		return infos
+	}
+
+	return infos[target-1:]
 }
 
 func (v *versionedTableInfoStore) registerDispatcher(dispatcherID DispatcherID, ts Timestamp) {
@@ -74,11 +107,9 @@ func (v *versionedTableInfoStore) registerDispatcher(dispatcherID DispatcherID, 
 		log.Info("dispatcher already registered", zap.Any("dispatcherID", dispatcherID))
 	}
 	v.dispatchers[dispatcherID] = ts
-	v.tryGC()
 }
 
-// may trigger gc, or totally removed?
-// return true if the dispatcher is not in the store.
+// return true when there are no dispatchers depend on this store
 func (v *versionedTableInfoStore) unregisterDispatcher(dispatcherID DispatcherID) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -86,70 +117,27 @@ func (v *versionedTableInfoStore) unregisterDispatcher(dispatcherID DispatcherID
 	if len(v.dispatchers) == 0 {
 		return true
 	}
-	v.tryGC()
+	v.infos = removeUnusedInfos(v.infos, v.dispatchers)
 	return false
 }
 
-// will trigger gc
 func (v *versionedTableInfoStore) updateDispatcherSendTS(dispatcherID DispatcherID, ts Timestamp) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if _, ok := v.dispatchers[dispatcherID]; !ok {
-		log.Error("dispatcher cannot be found when update checkpoint",
+	if oldTS, ok := v.dispatchers[dispatcherID]; !ok {
+		log.Error("dispatcher cannot be found when update send ts",
 			zap.Any("dispatcherID", dispatcherID), zap.Any("ts", ts))
 		return errors.New("dispatcher not found")
+	} else {
+		if ts < oldTS {
+			log.Error("send ts should be monotonically increasing",
+				zap.Any("oldTS", oldTS), zap.Any("newTS", ts))
+			return errors.New("send ts should be monotonically increasing")
+		}
 	}
 	v.dispatchers[dispatcherID] = ts
-	v.tryGC()
+	v.infos = removeUnusedInfos(v.infos, v.dispatchers)
 	return nil
-}
-
-// TODO: find a better function name and param name
-// 找到第一个大于 ts 的 index
-func findTableInfoIndex(infos []*tableInfoItem, ts Timestamp) int {
-	left, right := 0, len(infos)
-	for left < right {
-		mid := left + (right-left)/2
-		if infos[mid].version <= ts {
-			left = mid + 1
-		} else {
-			right = mid
-		}
-	}
-	return left
-}
-
-// lock is held by caller
-func (v *versionedTableInfoStore) tryGC() {
-	// only keep one item in infos which have a ts smaller than minTS
-	if len(v.infos) == 0 {
-		log.Fatal("no table info found")
-	}
-
-	var minTS Timestamp
-	minTS = math.MaxUint64
-	for _, ts := range v.dispatchers {
-		if ts < minTS {
-			minTS = ts
-		}
-	}
-
-	// TODO: 检查边界条件
-	left := findTableInfoIndex(v.infos, minTS)
-	if left == 0 {
-		return
-	}
-	v.infos = v.infos[left-1:]
-}
-
-func (v *versionedTableInfoStore) getAllRegisteredDispatchers() map[DispatcherID]Timestamp {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	result := make(map[DispatcherID]Timestamp, len(v.dispatchers))
-	for k, v := range v.dispatchers {
-		result[k] = v
-	}
-	return result
 }
 
 func assertEmpty(infos []*tableInfoItem) {
@@ -194,6 +182,24 @@ func (v *versionedTableInfoStore) applyDDL(job *model.Job) {
 	}
 }
 
+func (v *versionedTableInfoStore) copyRegisteredDispatchers(src *versionedTableInfoStore) {
+	v.mu.Lock()
+	src.mu.Lock()
+	defer func() {
+		v.mu.Unlock()
+		src.mu.Unlock()
+	}()
+	if src.tableID != v.tableID {
+		log.Panic("tableID not match")
+	}
+	for dispatcherID, ts := range src.dispatchers {
+		if _, ok := v.dispatchers[dispatcherID]; ok {
+			log.Panic("dispatcher already registered")
+		}
+		v.dispatchers[dispatcherID] = ts
+	}
+}
+
 func (v *versionedTableInfoStore) checkAndCopyTailFrom(src *versionedTableInfoStore) {
 	v.mu.Lock()
 	src.mu.Lock()
@@ -201,42 +207,27 @@ func (v *versionedTableInfoStore) checkAndCopyTailFrom(src *versionedTableInfoSt
 		v.mu.Unlock()
 		src.mu.Unlock()
 	}()
+	if src.tableID != v.tableID {
+		log.Panic("tableID not match")
+	}
 	if len(src.infos) == 0 {
 		return
 	}
 	if len(v.infos) == 0 {
 		v.infos = append(v.infos, src.infos[len(src.infos)-1])
 	}
-	firstSrcTS := src.infos[0].version
-	foundFirstSrcTS := false
-	startCheckIndex := 0
-	// TODO: use binary search
-	for i, item := range v.infos {
-		if item.version < firstSrcTS {
-			continue
-		} else if item.version == firstSrcTS {
-			foundFirstSrcTS = true
-			startCheckIndex = i
-			break
-		} else {
-			if !foundFirstSrcTS {
-				log.Panic("not found")
-			}
-			if item.version != src.infos[i-startCheckIndex].version {
-				log.Panic("not match")
-			}
+	// Check if the overlapping parts have the same timestamp
+	startCheckIndexInDest := sort.Search(len(v.infos), func(i int) bool {
+		return v.infos[i].version >= src.infos[0].version
+	})
+	for i := startCheckIndexInDest; i < len(v.infos); i++ {
+		if v.infos[i].version != src.infos[i-startCheckIndexInDest].version {
+			log.Panic("version not match")
 		}
 	}
-	copyStartIndex := len(src.infos) - (len(v.infos) - startCheckIndex)
-	v.infos = append(v.infos, src.infos[copyStartIndex:]...)
-}
 
-// GetColumnDefaultValue returns the default definition of a column.
-func GetColumnDefaultValue(col *model.ColumnInfo) interface{} {
-	defaultValue := col.GetDefaultValue()
-	if defaultValue == nil {
-		defaultValue = col.GetOriginDefaultValue()
-	}
-	defaultDatum := datumTypes.NewDatum(defaultValue)
-	return defaultDatum.GetValue()
+	startCopyIndexInSrc := len(v.infos) - startCheckIndexInDest
+	v.infos = append(v.infos, src.infos[startCopyIndexInSrc:]...)
+
+	v.deleteVersion = src.deleteVersion
 }

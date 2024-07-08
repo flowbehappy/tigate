@@ -127,6 +127,7 @@ func (s *schemaStore) RegisterDispatcher(
 	if startTS < s.gcTS {
 		return errors.New("start ts is old than gc ts")
 	}
+	// TODO: stop gc on oldStore
 	endTS := s.resolvedTS
 	s.mu.Unlock()
 
@@ -159,10 +160,7 @@ func (s *schemaStore) RegisterDispatcher(
 			return nil
 		} else {
 			newTableInfoStore.checkAndCopyTailFrom(oldStore)
-			dispatchers := oldStore.getAllRegisteredDispatchers()
-			for dispatcher, ts := range dispatchers {
-				newTableInfoStore.registerDispatcher(dispatcher, ts)
-			}
+			newTableInfoStore.copyRegisteredDispatchers(oldStore)
 		}
 	}
 	s.tableInfoStoreMap[tableID] = newTableInfoStore
