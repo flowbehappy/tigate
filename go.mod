@@ -11,9 +11,9 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
 	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
 	github.com/pingcap/tidb v1.1.0-beta.0.20240613051929-f124165c9be4
-	github.com/pingcap/tidb/parser v0.0.0-20231013125129-93a834a6bf8d
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20240613051929-f124165c9be4
 	github.com/pingcap/tiflow v0.0.0-20240621054018-c001638fcf8c
+	github.com/stretchr/testify v1.9.0
 	github.com/tikv/client-go/v2 v2.0.8-0.20240604045705-156cebc2defa
 	github.com/zeebo/assert v1.3.0
 	go.uber.org/atomic v1.11.0
@@ -227,7 +227,6 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/spkg/bom v1.0.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
-	github.com/stretchr/testify v1.9.0 // indirect
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 // indirect
 	github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a // indirect
 	github.com/tidwall/btree v1.7.0 // indirect
