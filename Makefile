@@ -21,6 +21,39 @@ ifeq (${CDC_ENABLE_VENDOR}, 1)
 GOVENDORFLAG := -mod=vendor
 endif
 
+# Since TiDB add a new dependency on github.com/cloudfoundry/gosigar,
+# We need to add CGO_ENABLED=1 to make it work when build TiCDC in Darwin OS.
+# These logic is to check if the OS is Darwin, if so, add CGO_ENABLED=1.
+# ref: https://github.com/cloudfoundry/gosigar/issues/58#issuecomment-1150925711
+# ref: https://github.com/pingcap/tidb/pull/39526#issuecomment-1407952955
+OS := "$(shell go env GOOS)"
+SED_IN_PLACE ?= $(shell which sed)
+IS_ALPINE := $(shell grep -qi Alpine /etc/os-release && echo 1)
+ifeq (${OS}, "linux")
+	CGO := 0
+	SED_IN_PLACE += -i
+else ifeq (${OS}, "darwin")
+	CGO := 1
+	SED_IN_PLACE += -i ''
+endif
+
+BUILD_FLAG =
+GOEXPERIMENT=
+ifeq ("${ENABLE_FIPS}", "1")
+	BUILD_FLAG = -tags boringcrypto
+	GOEXPERIMENT = GOEXPERIMENT=boringcrypto
+	CGO = 1
+endif
+
+CONSUMER_BUILD_FLAG=
+ifeq ("${IS_ALPINE}", "1")
+	CONSUMER_BUILD_FLAG = -tags musl
+endif
+GOBUILD  := $(GOEXPERIMENT) CGO_ENABLED=$(CGO) $(GO) build $(BUILD_FLAG) -trimpath $(GOVENDORFLAG)
+
 generate-protobuf: 
 	@echo "generate-protobuf"
 	./scripts/generate-protobuf.sh
+
+cdc:
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/cdc ./cmd
