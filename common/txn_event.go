@@ -2,9 +2,16 @@ package common
 
 import (
 	"github.com/pingcap/log"
-	timodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
+
+// TODO: 想一想这个到底要哪些
+type DDLEvent struct {
+	Job *model.Job `json:"ddl_job"`
+	// commitTS of the rawKV
+	CommitTS Timestamp `json:"commit_ts"`
+}
 
 // TxnEvent represents all events in the current txn
 // It could be a DDL event, or multiple DML events, but can't be both.
@@ -30,7 +37,7 @@ func (e *TxnEvent) GetDDLSchemaName() string {
 	return e.DDLEvent.Job.SchemaName
 }
 
-func (e *TxnEvent) GetDDLType() timodel.ActionType {
+func (e *TxnEvent) GetDDLType() model.ActionType {
 	return e.DDLEvent.Job.Type
 }
 

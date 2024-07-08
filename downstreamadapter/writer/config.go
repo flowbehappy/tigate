@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
+	"go.uber.org/zap"
 )
 
 const (
@@ -127,25 +128,25 @@ func NewMysqlConfigAndDB(sinkURI *url.URL) (*MysqlConfig, *sql.DB, error) {
 	cfg.Apply(sinkURI)
 	dsnStr, err := GenerateDSN(cfg)
 	if err != nil {
-		log.Error("GenerateDSN failed", err)
+		log.Error("GenerateDSN failed", zap.Error(err))
 		return nil, nil, err
 	}
 
 	db, err := CreateMysqlDBConn(dsnStr)
 	if err != nil {
-		log.Error("CreateMysqlDBConn failed", err)
+		log.Error("CreateMysqlDBConn failed", zap.Error(err))
 		return nil, nil, err
 	}
 
 	cfg.IsTiDB, err = CheckIsTiDB(db)
 	if err != nil {
-		log.Error("CheckIsTiDB failed", err)
+		log.Error("CheckIsTiDB failed", zap.Error(err))
 		return nil, nil, err
 	}
 
 	cfg.IsWriteSourceExisted, err = CheckIfBDRModeIsSupported(db)
 	if err != nil {
-		log.Error("CheckIfBDRModeIsSupported failed", err)
+		log.Error("CheckIfBDRModeIsSupported failed", zap.Error(err))
 		return nil, nil, err
 	}
 	return cfg, db, nil

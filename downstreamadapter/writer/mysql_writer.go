@@ -62,18 +62,18 @@ func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *common.TxnEvent) erro
 	tick := time.NewTimer(2 * time.Second)
 	defer tick.Stop()
 	log.Info("async exec add index ddl start",
-		zap.Uint64("commitTs", event.CommitTs()),
+		zap.Uint64("commitTs", event.CommitTs),
 		zap.String("ddl", event.GetDDLQuery()))
 	go func() {
 		if err := w.execDDLWithMaxRetries(event); err != nil {
 			log.Error("async exec add index ddl failed",
-				zap.Uint64("commitTs", event.CommitTs()),
+				zap.Uint64("commitTs", event.CommitTs),
 				zap.String("ddl", event.GetDDLQuery()))
 			done <- err
 			return
 		}
 		log.Info("async exec add index ddl done",
-			zap.Uint64("commitTs", event.CommitTs()),
+			zap.Uint64("commitTs", event.CommitTs),
 			zap.String("ddl", event.GetDDLQuery()))
 		done <- nil
 	}()
@@ -87,7 +87,7 @@ func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *common.TxnEvent) erro
 		// then if the ddl is failed, the downstream ddl is lost.
 		// because the checkpoint ts is forwarded.
 		log.Info("async add index ddl is still running",
-			zap.Uint64("commitTs", event.CommitTs()),
+			zap.Uint64("commitTs", event.CommitTs),
 			zap.String("ddl", event.GetDDLQuery()))
 		return nil
 	}
@@ -151,6 +151,10 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *common.TxnEvent) error {
 func (w *MysqlWriter) Flush(events []*common.TxnEvent) error {
 	dmls := w.prepareDMLs(events)
 
+	if dmls.rowCount == 0 {
+		return nil
+	}
+
 	if err := w.execDMLWithMaxRetries(dmls); err != nil {
 		log.Error("execute DMLs failed", zap.Error(err))
 		return errors.Trace(err)
@@ -177,6 +181,15 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent) *preparedDMLs {
 		if len(startTs) == 0 || startTs[len(startTs)-1] != event.StartTs {
 			startTs = append(startTs, event.StartTs)
 		}
+
+		// translateToInsert control the update and insert behavior.
+		translateToInsert := !w.cfg.SafeMode
+		translateToInsert = translateToInsert && event.CommitTs > firstRow.ReplicatingTs
+		log.Debug("translate to insert",
+			zap.Bool("translateToInsert", translateToInsert),
+			zap.Uint64("firstRowCommitTs", event.CommitTs),
+			zap.Uint64("firstRowReplicatingTs", firstRow.ReplicatingTs),
+			zap.Bool("safeMode", w.cfg.SafeMode))
 
 		quoteTable := firstRow.TableInfo.TableName.QuoteString()
 		for _, row := range rows {
@@ -212,7 +225,8 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent) *preparedDMLs {
 				query, args = prepareReplace(
 					quoteTable,
 					row.GetColumns(),
-					true)
+					true,
+					translateToInsert)
 				if query != "" {
 					sqls = append(sqls, query)
 					values = append(values, args)

@@ -13,22 +13,14 @@ import (
 
 func newTestMockDB(t *testing.T) (db *sql.DB, mock sqlmock.Sqlmock) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
-	// mock.ExpectQuery("select tidb_version()").WillReturnError(&dmysql.MySQLError{
-	// 	Number:  1305,
-	// 	Message: "FUNCTION test.tidb_version does not exist",
-	// })
-	// // mock a different possible error for the second query
-	// mock.ExpectQuery("select tidb_version()").WillReturnError(&dmysql.MySQLError{
-	// 	Number:  1044,
-	// 	Message: "Access denied for user 'cdc'@'%' to database 'information_schema'",
-	// })
 	require.Nil(t, err)
 	return
 }
 
 func TestPrepareDMLs(t *testing.T) {
-	// Mock data
+	// Mock db
 	db, _ := newTestMockDB(t)
+	defer db.Close()
 
 	cfg := &MysqlConfig{}
 	writer := NewMysqlWriter(db, cfg)
@@ -61,7 +53,7 @@ func TestPrepareDMLs(t *testing.T) {
 			},
 			expected: &preparedDMLs{
 				startTs:  []uint64{1},
-				sqls:     []string{"REPLACE INTO `test`.`users` (`id`, `name`) VALUES (?, ?)"},
+				sqls:     []string{"REPLACE INTO `test`.`users` (`id`,`name`) VALUES (?,?)"},
 				values:   [][]interface{}{{1, "Alice"}},
 				rowCount: 1,
 			},
@@ -97,7 +89,7 @@ func TestPrepareDMLs(t *testing.T) {
 								},
 							},
 							PreColumns: []*common.Column{
-								{Name: "id", Value: 1},
+								{Name: "id", Value: 1, Flag: common.HandleKeyFlag | common.PrimaryKeyFlag},
 								{Name: "name", Value: "Alice"},
 							},
 							Columns: []*common.Column{
@@ -111,12 +103,12 @@ func TestPrepareDMLs(t *testing.T) {
 			expected: &preparedDMLs{
 				startTs: []uint64{1, 2},
 				sqls: []string{
-					"REPLACE INTO `test`.`users` (`id`, `name`) VALUES (?, ?)",
-					"UPDATE `test`.`users` SET `name` = ? WHERE `id` = ?",
+					"REPLACE INTO `test`.`users` (`id`,`name`) VALUES (?,?)",
+					"UPDATE `test`.`users` SET `id` = ?, `name` = ? WHERE `id` = ? LIMIT 1",
 				},
 				values: [][]interface{}{
 					{1, "Alice"},
-					{"Bob", 1},
+					{1, "Bob", 1},
 				},
 				rowCount: 2,
 			},
@@ -130,7 +122,7 @@ func TestPrepareDMLs(t *testing.T) {
 				},
 			},
 			expected: &preparedDMLs{
-				startTs:  []uint64{1},
+				startTs:  []uint64{},
 				sqls:     []string{},
 				values:   [][]interface{}{},
 				rowCount: 0,
@@ -144,4 +136,67 @@ func TestPrepareDMLs(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestMysqlWriter_Flush(t *testing.T) {
+	db, mock := newTestMockDB(t)
+	defer db.Close()
+
+	cfg := &MysqlConfig{
+		SafeMode: false,
+	}
+
+	writer := NewMysqlWriter(db, cfg)
+
+	events := []*common.TxnEvent{
+		{
+			StartTs:  1,
+			CommitTs: 2,
+			Rows: []*common.RowChangedEvent{
+				{
+					TableInfo: &common.TableInfo{
+						TableName: common.TableName{
+							Schema: "test_schema",
+							Table:  "test_table",
+						},
+					},
+					Columns: []*common.Column{
+						{Name: "id", Value: 1, Flag: common.HandleKeyFlag | common.PrimaryKeyFlag},
+						{Name: "name", Value: "test"},
+					},
+				},
+			},
+		},
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO `test_schema`.`test_table` (`id`,`name`) VALUES (?,?)").
+		WithArgs(1, "test").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	err := writer.Flush(events)
+	require.NoError(t, err)
+
+	err = mock.ExpectationsWereMet()
+	require.NoError(t, err)
+}
+
+func TestMysqlWriter_Flush_EmptyEvents(t *testing.T) {
+	db, mock := newTestMockDB(t)
+	defer db.Close()
+
+	cfg := &MysqlConfig{
+		SafeMode: false,
+	}
+
+	writer := NewMysqlWriter(db, cfg)
+
+	events := []*common.TxnEvent{}
+
+	err := writer.Flush(events)
+	require.NoError(t, err)
+
+	err = mock.ExpectationsWereMet()
+	require.NoError(t, err)
 }

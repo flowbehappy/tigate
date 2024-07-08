@@ -17,8 +17,10 @@ import (
 	"strings"
 
 	"github.com/flowbehappy/tigate/common"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tiflow/pkg/quotes"
+	"go.uber.org/zap"
 )
 
 // prepareUpdate builds a parametrics UPDATE statement as following
@@ -66,6 +68,7 @@ func prepareUpdate(quoteTable string, preCols, cols []*common.Column) (string, [
 	}
 	builder.WriteString(" LIMIT 1")
 	sql := builder.String()
+	log.Info("sql: ", zap.String("sql", sql))
 	return sql, args
 }
 
@@ -75,6 +78,7 @@ func prepareReplace(
 	quoteTable string,
 	cols []*common.Column,
 	appendPlaceHolder bool,
+	translateToInsert bool,
 ) (string, []interface{}) {
 	var builder strings.Builder
 	columnNames := make([]string, 0, len(cols))
@@ -91,11 +95,11 @@ func prepareReplace(
 	}
 
 	colList := "(" + buildColumnList(columnNames) + ")"
-	// if translateToInsert {
-	builder.WriteString("INSERT INTO " + quoteTable + " " + colList + " VALUES ")
-	// } else {
-	// 	builder.WriteString("REPLACE INTO " + quoteTable + " " + colList + " VALUES ")
-	// }
+	if translateToInsert {
+		builder.WriteString("INSERT INTO " + quoteTable + " " + colList + " VALUES ")
+	} else {
+		builder.WriteString("REPLACE INTO " + quoteTable + " " + colList + " VALUES ")
+	}
 	if appendPlaceHolder {
 		builder.WriteString("(" + placeHolder(len(columnNames)) + ")")
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/worker"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/utils/threadpool"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/causality"
@@ -73,7 +74,7 @@ func NewMysqlSink(workerCount int, sinkURI *url.URL) *MysqlSink {
 func (s *MysqlSink) initWorker(workerCount int, sinkURI *url.URL) {
 	cfg, db, err := writer.NewMysqlConfigAndDB(sinkURI)
 	if err != nil {
-		log.Error("newMysqlConfigAndDB failed", err)
+		log.Error("newMysqlConfigAndDB failed", zap.Error(err))
 		return
 	}
 	// 初始化 ddl/syncpoint 用的 worker
