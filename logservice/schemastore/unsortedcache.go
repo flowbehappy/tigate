@@ -3,6 +3,7 @@ package schemastore
 import (
 	"sync"
 
+	"github.com/flowbehappy/tigate/common"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 
@@ -13,21 +14,21 @@ type unSortedDDLCache struct {
 	mutex sync.Mutex
 	// orderd by commitTS
 	// TODO: whether need a startTS?
-	ddlEvents *btree.BTreeG[DDLEvent]
+	ddlEvents *btree.BTreeG[common.DDLEvent]
 }
 
-func ddlEventLess(a, b DDLEvent) bool {
+func ddlEventLess(a, b common.DDLEvent) bool {
 	// TODO: do we need finished ts?
 	return a.CommitTS < b.CommitTS
 }
 
 func newUnSortedDDLCache() *unSortedDDLCache {
 	return &unSortedDDLCache{
-		ddlEvents: btree.NewG[DDLEvent](16, ddlEventLess),
+		ddlEvents: btree.NewG[common.DDLEvent](16, ddlEventLess),
 	}
 }
 
-func (c *unSortedDDLCache) addDDL(ddlEvent DDLEvent) {
+func (c *unSortedDDLCache) addDDL(ddlEvent common.DDLEvent) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	// TODO: is commitTS unique?
@@ -37,11 +38,11 @@ func (c *unSortedDDLCache) addDDL(ddlEvent DDLEvent) {
 	}
 }
 
-func (c *unSortedDDLCache) getSortedDDLEventBeforeTS(ts Timestamp) []DDLEvent {
+func (c *unSortedDDLCache) getSortedDDLEventBeforeTS(ts common.Timestamp) []common.DDLEvent {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	events := make([]DDLEvent, 0)
-	c.ddlEvents.Ascend(func(event DDLEvent) bool {
+	events := make([]common.DDLEvent, 0)
+	c.ddlEvents.Ascend(func(event common.DDLEvent) bool {
 		if event.CommitTS <= ts {
 			events = append(events, event)
 			return true
