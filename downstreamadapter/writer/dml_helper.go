@@ -16,15 +16,15 @@ package writer
 import (
 	"strings"
 
+	"github.com/flowbehappy/tigate/common"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/quotes"
 )
 
 // prepareUpdate builds a parametrics UPDATE statement as following
 // sql: `UPDATE `test`.`t` SET {} = ?, {} = ? WHERE {} = ?, {} = {} LIMIT 1`
 // `WHERE` conditions come from `preCols` and SET clause targets come from `cols`.
-func prepareUpdate(quoteTable string, preCols, cols []*model.Column) (string, []interface{}) {
+func prepareUpdate(quoteTable string, preCols, cols []*common.Column) (string, []interface{}) {
 	var builder strings.Builder
 	builder.WriteString("UPDATE " + quoteTable + " SET ")
 
@@ -73,7 +73,7 @@ func prepareUpdate(quoteTable string, preCols, cols []*model.Column) (string, []
 // sql: `REPLACE INTO `test`.`t` VALUES (?,?,?)`
 func prepareReplace(
 	quoteTable string,
-	cols []*model.Column,
+	cols []*common.Column,
 	appendPlaceHolder bool,
 ) (string, []interface{}) {
 	var builder strings.Builder
@@ -107,7 +107,7 @@ func prepareReplace(
 // representation. Because if we use the byte array respresentation, the go-sql-driver
 // will automatically set `_binary` charset for that column, which is not expected.
 // See https://github.com/go-sql-driver/mysql/blob/ce134bfc/connection.go#L267
-func appendQueryArgs(args []interface{}, col *model.Column) []interface{} {
+func appendQueryArgs(args []interface{}, col *common.Column) []interface{} {
 	if col.Charset != "" && col.Charset != charset.CharsetBin {
 		colValBytes, ok := col.Value.([]byte)
 		if ok {
@@ -124,7 +124,7 @@ func appendQueryArgs(args []interface{}, col *model.Column) []interface{} {
 
 // prepareDelete builds a parametric DELETE statement as following
 // sql: `DELETE FROM `test`.`t` WHERE x = ? AND y >= ? LIMIT 1`
-func prepareDelete(quoteTable string, cols []*model.Column) (string, []interface{}) {
+func prepareDelete(quoteTable string, cols []*common.Column) (string, []interface{}) {
 	var builder strings.Builder
 	builder.WriteString("DELETE FROM " + quoteTable + " WHERE ")
 
@@ -151,7 +151,7 @@ func prepareDelete(quoteTable string, cols []*model.Column) (string, []interface
 
 // whereSlice builds a parametric WHERE clause as following
 // sql: `WHERE {} = ? AND {} > ?`
-func whereSlice(cols []*model.Column) (colNames []string, args []interface{}) {
+func whereSlice(cols []*common.Column) (colNames []string, args []interface{}) {
 	// Try to use unique key values when available
 	for _, col := range cols {
 		if col == nil || !col.Flag.IsHandleKey() {

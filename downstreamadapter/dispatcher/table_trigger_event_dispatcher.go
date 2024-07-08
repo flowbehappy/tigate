@@ -16,7 +16,7 @@ package dispatcher
 import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 
-	"github.com/ngaut/log"
+	"github.com/pingcap/log"
 )
 
 /*

@@ -8,7 +8,6 @@ import (
 	"github.com/flowbehappy/tigate/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	datumTypes "github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap"
 )
 
@@ -201,14 +200,4 @@ func (v *versionedTableInfoStore) checkAndCopyTailFrom(src *versionedTableInfoSt
 	}
 	copyStartIndex := len(src.infos) - (len(v.infos) - startCheckIndex)
 	v.infos = append(v.infos, src.infos[copyStartIndex:]...)
-}
-
-// GetColumnDefaultValue returns the default definition of a column.
-func GetColumnDefaultValue(col *model.ColumnInfo) interface{} {
-	defaultValue := col.GetDefaultValue()
-	if defaultValue == nil {
-		defaultValue = col.GetOriginDefaultValue()
-	}
-	defaultDatum := datumTypes.NewDatum(defaultValue)
-	return defaultDatum.GetValue()
 }

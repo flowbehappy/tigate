@@ -18,7 +18,7 @@ import (
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/conflictdetector"
 	"github.com/flowbehappy/tigate/utils/threadpool"
-	"github.com/ngaut/log"
+	"github.com/pingcap/log"
 )
 
 // 先写一个插入数据的 task，看看后面 reactor 的要不要写一个新的 task
