@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
-	"github.com/pingcap/tiflow/cdc/processor/sourcemanager/sorter/factory"
 	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/etcd"
@@ -66,8 +65,6 @@ type Server interface {
 }
 
 // server implement the TiCDC Server interface
-// TODO: we need to make server more unit testable and add more test cases.
-// Especially we need to decouple the HTTPServer out of server.
 type server struct {
 	capture      capture.Capture
 	tcpServer    tcpserver.TCPServer
@@ -75,14 +72,13 @@ type server struct {
 	etcdClient   etcd.CDCEtcdClient
 	// pdClient is the default upstream PD client.
 	// The PD acts as a metadata management service for TiCDC.
-	pdClient          pd.Client
-	pdAPIClient       pdutil.PDAPIClient
-	pdEndpoints       []string
-	sortEngineFactory *factory.SortEngineFactory
+	pdClient    pd.Client
+	pdAPIClient pdutil.PDAPIClient
+	pdEndpoints []string
 }
 
 // New creates a server instance.
-func New(pdEndpoints []string) (*server, error) {
+func New(pdEndpoints []string) (Server, error) {
 	conf := config.GetGlobalServerConfig()
 
 	// This is to make communication between nodes possible.
@@ -110,7 +106,6 @@ func New(pdEndpoints []string) (*server, error) {
 
 	log.Info("CDC server created",
 		zap.Strings("pd", pdEndpoints), zap.Stringer("config", conf))
-
 	return s, nil
 }
 
@@ -148,7 +143,7 @@ func (s *server) prepare(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	log.Info("create etcdCli", zap.Strings("endpoints", s.pdEndpoints))
-	// we do not pass a `context` to create a the etcd client,
+	// we do not pass a `context` to create an etcd client,
 	// to prevent it's cancelled when the server is closing.
 	// For example, when the non-owner node goes offline,
 	// it would resign the campaign key which was put by call `campaign`,
@@ -180,12 +175,8 @@ func (s *server) prepare(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	s.createSortEngineFactory()
 	s.setMemoryLimit()
-
 	s.capture = capture.NewCapture(s.pdEndpoints, s.etcdClient, s.pdClient)
-
 	return nil
 }
 
@@ -210,26 +201,6 @@ func (s *server) setMemoryLimit() {
 	}
 }
 
-func (s *server) createSortEngineFactory() {
-	conf := config.GetGlobalServerConfig()
-	if s.sortEngineFactory != nil {
-		if err := s.sortEngineFactory.Close(); err != nil {
-			log.Error("fails to close sort engine manager", zap.Error(err))
-		}
-		s.sortEngineFactory = nil
-	}
-
-	// Sorter dir has been set and checked when server starts.
-	// See https://github.com/pingcap/tiflow/blob/9dad09/cdc/server.go#L275
-	sortDir := config.GetGlobalServerConfig().Sorter.SortDir
-	memInBytes := conf.Sorter.CacheSizeInMB * uint64(1<<20)
-	s.sortEngineFactory = factory.NewForPebble(sortDir, memInBytes, conf.Debug.DB)
-	log.Info("sorter engine memory limit",
-		zap.Uint64("bytes", memInBytes),
-		zap.String("memory", humanize.IBytes(memInBytes)),
-	)
-}
-
 // Run runs the server.
 func (s *server) Run(serverCtx context.Context) error {
 	if err := s.prepare(serverCtx); err != nil {
@@ -246,7 +217,6 @@ func (s *server) Run(serverCtx context.Context) error {
 
 // startStatusHTTP starts the HTTP server.
 // `lis` is a listener that gives us plain-text HTTP requests.
-// TODO: can we decouple the HTTP server from the capture server?
 func (s *server) startStatusHTTP(lis net.Listener) error {
 	// LimitListener returns a Listener that accepts at most n simultaneous
 	// connections from the provided Listener. Connections that exceed the
@@ -316,9 +286,6 @@ func (s *server) Close() {
 	if s.capture != nil {
 		s.capture.Close()
 	}
-	// Close the sort engine factory after capture closed to avoid
-	// puller send data to closed sort engine.
-	s.closeSortEngineFactory()
 
 	if s.statusServer != nil {
 		err := s.statusServer.Close()
@@ -337,16 +304,6 @@ func (s *server) Close() {
 
 	if s.pdClient != nil {
 		s.pdClient.Close()
-	}
-}
-
-func (s *server) closeSortEngineFactory() {
-	start := time.Now()
-	if s.sortEngineFactory != nil {
-		if err := s.sortEngineFactory.Close(); err != nil {
-			log.Error("fails to close sort engine manager", zap.Error(err))
-		}
-		log.Info("sort engine manager closed", zap.Duration("duration", time.Since(start)))
 	}
 }
 
@@ -377,7 +334,6 @@ func (s *server) setUpDir(ctx context.Context) error {
 	if conf.DataDir != "" {
 		conf.Sorter.SortDir = filepath.Join(conf.DataDir, config.DefaultSortDir)
 		config.StoreGlobalServerConfig(conf)
-
 		return nil
 	}
 

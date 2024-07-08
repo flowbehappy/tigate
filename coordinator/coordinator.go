@@ -40,12 +40,16 @@ type coordinator struct {
 	scheduler  scheduler.Scheduler
 	tick       *time.Ticker
 	taskCh     chan Task
+
+	version int64
 }
 
-func NewCoordinator(capture *model.CaptureInfo) Coordinator {
+func NewCoordinator(capture *model.CaptureInfo,
+	version int64) Coordinator {
 	c := &coordinator{
 		tick:      time.NewTicker(time.Second),
 		scheduler: scheduler.NewCombineScheduler(scheduler.NewBasicScheduler(1000)),
+		version:   version,
 	}
 	c.supervisor = scheduler.NewSupervisor(
 		CoordinatorID(capture.ID),

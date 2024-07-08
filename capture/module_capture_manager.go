@@ -11,16 +11,4 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package coordinator
-
-import (
-	"github.com/flowbehappy/tigate/utils/threadpool"
-	"github.com/pingcap/tiflow/cdc/model"
-	"testing"
-)
-
-func TestCoordinatorRun(t *testing.T) {
-	c := NewCoordinator(&model.CaptureInfo{}, 1)
-	sc := threadpool.NewTaskScheduler(&threadpool.DefaultTaskSchedulerConfig, "coordinator")
-	sc.Submit(c.(threadpool.Task))
-}
+package capture

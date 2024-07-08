@@ -11,16 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package coordinator
+package capture
 
-import (
-	"github.com/flowbehappy/tigate/utils/threadpool"
-	"github.com/pingcap/tiflow/cdc/model"
-	"testing"
-)
+import "context"
 
-func TestCoordinatorRun(t *testing.T) {
-	c := NewCoordinator(&model.CaptureInfo{}, 1)
-	sc := threadpool.NewTaskScheduler(&threadpool.DefaultTaskSchedulerConfig, "coordinator")
-	sc.Submit(c.(threadpool.Task))
+// SubModule identify the modules will be started when capture starting
+type SubModule interface {
+	// Name returns the SubModule's Name
+	Name() string
+	// Run runs the module, it's a block caller, only return when finished or error occurs
+	Run(ctx context.Context) error
 }
