@@ -52,7 +52,14 @@ func (w *MysqlWriter) FlushDDLEvent(event *common.TxnEvent) error {
 	if event.GetDDLType() == timodel.ActionAddIndex && w.cfg.IsTiDB {
 		return w.asyncExecAddIndexDDLIfTimeout(event)
 	}
-	return w.execDDLWithMaxRetries(event)
+	err := w.execDDLWithMaxRetries(event)
+	if err != nil {
+		log.Error("exec ddl failed", zap.Error(err))
+		return err
+	}
+
+	event.PostTxnFlushed()
+	return nil
 
 }
 
@@ -159,11 +166,14 @@ func (w *MysqlWriter) Flush(events []*common.TxnEvent) error {
 		log.Error("execute DMLs failed", zap.Error(err))
 		return errors.Trace(err)
 	}
+
+	for _, event := range events {
+		event.PostTxnFlushed()
+	}
 	return nil
 }
 
 func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent) *preparedDMLs {
-	// callback 还没处理过
 	// TODO: use a sync.Pool to reduce allocations.
 	startTs := make([]uint64, 0)
 	sqls := make([]string, 0)
@@ -235,15 +245,10 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent) *preparedDMLs {
 		}
 	}
 
-	// if len(callbacks) == 0 {
-	// 	callbacks = nil
-	// }
-
 	return &preparedDMLs{
-		startTs: startTs,
-		sqls:    sqls,
-		values:  values,
-		//callbacks:       callbacks,
+		startTs:  startTs,
+		sqls:     sqls,
+		values:   values,
 		rowCount: rowCount,
 	}
 }

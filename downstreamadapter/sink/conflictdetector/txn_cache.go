@@ -16,6 +16,7 @@ package conflictdetector
 import (
 	"sync/atomic"
 
+	"github.com/flowbehappy/tigate/common"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -31,24 +32,6 @@ const (
 // BlockStrategy is the strategy to handle the situation when the cache is full.
 type BlockStrategy string
 
-type txnEvent interface {
-	// OnConflictResolved is called when the event leaves ConflictDetector.
-	OnConflictResolved()
-	// ConflictKeys returns the keys that the event conflicts with.
-	ConflictKeys() []uint64
-}
-
-// TxnWithNotifier is a wrapper of txnEvent with a PostTxnExecuted.
-type TxnWithNotifier[Txn txnEvent] struct {
-	TxnEvent Txn
-	// The PostTxnExecuted will remove the txn related Node in the conflict detector's
-	// dependency graph and resolve related dependencies for these transacitons
-	// which depend on this executed txn.
-	//
-	// NOTE: the PostTxnExecuted() must be called after the txn executed.
-	PostTxnExecuted func()
-}
-
 // TxnCacheOption is the option for creating a cache for resolved txns.
 type TxnCacheOption struct {
 	// Count controls the number of caches, txns in different caches could be executed concurrently.
@@ -60,14 +43,14 @@ type TxnCacheOption struct {
 }
 
 // In current implementation, the conflict detector will push txn to the txnCache.
-type txnCache[Txn txnEvent] interface {
+type txnCache interface {
 	// add adds a event to the Cache.
-	add(txn TxnWithNotifier[Txn]) bool
+	add(txn *common.TxnEvent) bool
 	// out returns a channel to receive events which are ready to be executed.
-	out() <-chan TxnWithNotifier[Txn]
+	out() <-chan *common.TxnEvent
 }
 
-func newTxnCache[Txn txnEvent](opt TxnCacheOption) txnCache[Txn] {
+func newTxnCache(opt TxnCacheOption) txnCache {
 	log.Info("create new worker cache in conflict detector",
 		zap.Int("cacheCount", opt.Count),
 		zap.Int("cacheSize", opt.Size), zap.String("BlockStrategy", string(opt.BlockStrategy)))
@@ -77,9 +60,9 @@ func newTxnCache[Txn txnEvent](opt TxnCacheOption) txnCache[Txn] {
 
 	switch opt.BlockStrategy {
 	case BlockStrategyWaitAvailable:
-		return &boundedTxnCache[Txn]{ch: make(chan TxnWithNotifier[Txn], opt.Size)}
+		return &boundedTxnCache{ch: make(chan *common.TxnEvent, opt.Size)}
 	case BlockStrategyWaitEmpty:
-		return &boundedTxnCacheWithBlock[Txn]{ch: make(chan TxnWithNotifier[Txn], opt.Size)}
+		return &boundedTxnCacheWithBlock{ch: make(chan *common.TxnEvent, opt.Size)}
 	default:
 		return nil
 	}
@@ -88,12 +71,12 @@ func newTxnCache[Txn txnEvent](opt TxnCacheOption) txnCache[Txn] {
 // boundedTxnCache is a cache which has a limit on the number of txns it can hold.
 //
 //nolint:unused
-type boundedTxnCache[Txn txnEvent] struct {
-	ch chan TxnWithNotifier[Txn]
+type boundedTxnCache struct {
+	ch chan *common.TxnEvent
 }
 
 //nolint:unused
-func (w *boundedTxnCache[Txn]) add(txn TxnWithNotifier[Txn]) bool {
+func (w *boundedTxnCache) add(txn *common.TxnEvent) bool {
 	select {
 	case w.ch <- txn:
 		return true
@@ -103,20 +86,20 @@ func (w *boundedTxnCache[Txn]) add(txn TxnWithNotifier[Txn]) bool {
 }
 
 //nolint:unused
-func (w *boundedTxnCache[Txn]) out() <-chan TxnWithNotifier[Txn] {
+func (w *boundedTxnCache) out() <-chan *common.TxnEvent {
 	return w.ch
 }
 
 // boundedTxnCacheWithBlock is a special boundedWorker. Once the cache
 // is full, it will block until all cached txns are consumed.
-type boundedTxnCacheWithBlock[Txn txnEvent] struct {
-	ch chan TxnWithNotifier[Txn]
+type boundedTxnCacheWithBlock struct {
+	ch chan *common.TxnEvent
 	//nolint:unused
 	isBlocked atomic.Bool
 }
 
 //nolint:unused
-func (w *boundedTxnCacheWithBlock[Txn]) add(txn TxnWithNotifier[Txn]) bool {
+func (w *boundedTxnCacheWithBlock) add(txn *common.TxnEvent) bool {
 	if w.isBlocked.Load() && len(w.ch) <= 0 {
 		w.isBlocked.Store(false)
 	}
@@ -133,6 +116,6 @@ func (w *boundedTxnCacheWithBlock[Txn]) add(txn TxnWithNotifier[Txn]) bool {
 }
 
 //nolint:unused
-func (w *boundedTxnCacheWithBlock[Txn]) out() <-chan TxnWithNotifier[Txn] {
+func (w *boundedTxnCacheWithBlock) out() <-chan *common.TxnEvent {
 	return w.ch
 }
