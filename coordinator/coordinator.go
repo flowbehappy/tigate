@@ -20,9 +20,14 @@ import (
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/tiflow/pkg/orchestrator"
 	"go.uber.org/zap"
 	"time"
 )
+
+type Coordinator interface {
+	AsyncStop()
+}
 
 // Coordinator is the master of the ticdc cluster,
 // 1. schedules changefeed maintainer to ticdc node
@@ -30,18 +35,15 @@ import (
 // 3. send checkpoint to downstream
 // 4. manager gc safe point
 // 5. response for open API call
-type Coordinator struct {
-	rpcClient  rpc.RpcClient
+type coordinator struct {
 	supervisor *scheduler.Supervisor
 	scheduler  scheduler.Scheduler
 	tick       *time.Ticker
 	taskCh     chan Task
 }
 
-func NewCoordinator(rpcClient rpc.RpcClient,
-	capture *model.CaptureInfo) *Coordinator {
-	c := &Coordinator{
-		rpcClient: rpcClient,
+func NewCoordinator(capture *model.CaptureInfo) Coordinator {
+	c := &coordinator{
 		tick:      time.NewTicker(time.Second),
 		scheduler: scheduler.NewCombineScheduler(scheduler.NewBasicScheduler(1000)),
 	}
@@ -53,7 +55,12 @@ func NewCoordinator(rpcClient rpc.RpcClient,
 	return c
 }
 
-func (c *Coordinator) Execute(timeout time.Duration) threadpool.TaskStatus {
+func (c *coordinator) Tick(ctx context.Context,
+	state orchestrator.ReactorState) (orchestrator.ReactorState, error) {
+	return state, nil
+}
+
+func (c *coordinator) Execute(timeout time.Duration) threadpool.TaskStatus {
 	timer := time.NewTimer(timeout)
 	for {
 		select {
@@ -73,18 +80,21 @@ func (c *Coordinator) Execute(timeout time.Duration) threadpool.TaskStatus {
 	}
 }
 
-func (c *Coordinator) Release() {
+func (c *coordinator) Release() {
 }
 
-func (c *Coordinator) Await() threadpool.TaskStatus {
+func (c *coordinator) Await() threadpool.TaskStatus {
 	return threadpool.Running
 }
 
-func (c *Coordinator) GetStatus() threadpool.TaskStatus {
+func (c *coordinator) GetStatus() threadpool.TaskStatus {
 	return threadpool.Running
 }
 
-func (c *Coordinator) checkLiveness() ([]rpc.Message, error) {
+func (c *coordinator) AsyncStop() {
+}
+
+func (c *coordinator) checkLiveness() ([]rpc.Message, error) {
 	var msgs []rpc.Message
 	c.supervisor.GetInferiors().Ascend(
 		func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
@@ -99,11 +109,11 @@ func (c *Coordinator) checkLiveness() ([]rpc.Message, error) {
 	return msgs, nil
 }
 
-func (c *Coordinator) newBootstrapMessage(model.CaptureID) rpc.Message {
+func (c *coordinator) newBootstrapMessage(model.CaptureID) rpc.Message {
 	return nil
 }
 
-func (c *Coordinator) scheduleMaintainer() ([]rpc.Message, error) {
+func (c *coordinator) scheduleMaintainer() ([]rpc.Message, error) {
 	if c.supervisor.CheckAllCaptureInitialized() {
 		return nil, nil
 	}
@@ -115,7 +125,7 @@ func (c *Coordinator) scheduleMaintainer() ([]rpc.Message, error) {
 	return c.supervisor.HandleScheduleTasks(tasks)
 }
 
-func (c *Coordinator) handleMessages() ([]rpc.Message, error) {
+func (c *coordinator) handleMessages() ([]rpc.Message, error) {
 	var status []scheduler.InferiorStatus
 	c.supervisor.UpdateCaptureStatus("", status)
 	return c.supervisor.HandleCaptureChanges(nil)

@@ -120,6 +120,7 @@ func newRemoteMessageTarget(
 		recvEventCh: make(chan *TargetMessage, cfg.CacheChannelSize),
 		recvCmdCh:   make(chan *TargetMessage, cfg.CacheChannelSize),
 		errCh:       make(chan AppError, 1),
+		wg:          &sync.WaitGroup{},
 	}
 	rt.runHandleErr(ctx)
 	return rt
@@ -371,7 +372,6 @@ func (s *localMessageTarget) sendMsgToChan(mtype IOType, eventBytes [][]byte, ch
 		if err != nil {
 			log.Panic("Deserialize message failed", zap.Error(err))
 		}
-
 		message := &TargetMessage{
 			From:     s.localId,
 			To:       s.localId,

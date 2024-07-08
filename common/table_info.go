@@ -2,7 +2,6 @@ package common
 
 import (
 	"fmt"
-	"math"
 	"strings"
 
 	"github.com/pingcap/log"
@@ -15,19 +14,6 @@ import (
 	"github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
 )
-
-type Filter interface{}
-
-type DDLEvent struct {
-	Job *model.Job `json:"ddl_job"`
-	// commitTS of the rawKV
-	CommitTS Timestamp `json:"commit_ts"`
-}
-
-type DispatchInfo struct {
-	tableID TableID
-	filter  Filter
-}
 
 // ColumnFlagType is for encapsulating the flag operations for different flags.
 type ColumnFlagType util.Flag
@@ -292,22 +278,6 @@ type TableInfo struct {
 	// rowColInfosWithoutVirtualCols is the same as rowColInfos, but without virtual columns
 	rowColInfosWithoutVirtualCols *[]rowcodec.ColInfo
 }
-
-type DatabaseInfo struct {
-	ID            int64
-	Name          string
-	Tables        []TableID
-	CreateVersion Timestamp
-	DeleteVersion Timestamp
-}
-
-func (d *DatabaseInfo) isDeleted() bool { return d.DeleteVersion != math.MaxUint64 }
-
-type DatabaseInfoMap map[DatabaseID]*DatabaseInfo
-
-type TableInfoStoreMap map[TableID]*versionedTableInfoStore
-
-type DispatchInfoMap map[DispatcherID]DispatchInfo
 
 func (ti *TableInfo) initRowColInfosWithoutVirtualCols() {
 	if ti.virtualColumnCount == 0 {
