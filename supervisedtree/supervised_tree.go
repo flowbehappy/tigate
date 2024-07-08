@@ -5,7 +5,7 @@ import (
 
 	"github.com/flowbehappy/tigate/scheduler"
 
-	"github.com/flowbehappy/tigate/apperror"
+	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 

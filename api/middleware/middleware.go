@@ -25,8 +25,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
-	"github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/upstream"
 	"go.uber.org/zap"
 )
 
@@ -87,14 +85,6 @@ func ForwardToCoordinatorMiddleware(p capture.Capture) gin.HandlerFunc {
 		}
 		ctx.Next()
 	}
-}
-
-func getUpstream(capture capture.Capture) (*upstream.Upstream, error) {
-	m, err := capture.GetUpstreamManager()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return m.GetDefaultUpstream()
 }
 
 // ForwardToOwner forwards a request to the controller

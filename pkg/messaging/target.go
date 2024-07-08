@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	. "github.com/flowbehappy/tigate/apperror"
-	"github.com/flowbehappy/tigate/messaging/proto"
+	. "github.com/flowbehappy/tigate/pkg/apperror"
+	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/messaging/proto"
 	"github.com/flowbehappy/tigate/utils/conn"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/security"
@@ -35,7 +37,13 @@ type MessageSender interface {
 // Currently it spawns 2 goroutines for each remote target, and 2 goroutines for each local target,
 // and 1 goroutine to handle grpc stream error.
 type remoteMessageTarget struct {
-	localId    ServerId
+	// The server id of the message center.
+	localId ServerId
+	// The current epoch of the message center.
+	epoch uint64
+	// The next message sequence number.
+	sequence atomic.Uint64
+
 	targetId   ServerId
 	targetAddr string
 
@@ -74,7 +82,7 @@ func (s *remoteMessageTarget) SendEvent(mtype IOType, eventBytes [][]byte) error
 	if s.eventSendStream == nil {
 		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Stream has not been initialized"}
 	}
-	message := &proto.Message{From: s.localId.slice(), To: s.targetId.slice(), Type: int32(mtype), Payload: eventBytes}
+	message := s.newMessage(mtype, eventBytes)
 	select {
 	case s.sendEventCh <- message:
 		return nil
@@ -87,7 +95,7 @@ func (s *remoteMessageTarget) SendCommand(mtype IOType, commandBytes [][]byte) e
 	if s.commandSendStream == nil {
 		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Stream has not been initialized"}
 	}
-	message := &proto.Message{From: s.localId.slice(), To: s.targetId.slice(), Type: int32(mtype), Payload: commandBytes}
+	message := s.newMessage(mtype, commandBytes)
 	select {
 	case s.sendCmdCh <- message:
 		return nil
@@ -96,16 +104,21 @@ func (s *remoteMessageTarget) SendCommand(mtype IOType, commandBytes [][]byte) e
 	}
 }
 
-func newRemoteMessageTarget(id ServerId) *remoteMessageTarget {
+func newRemoteMessageTarget(
+	localID, targetId ServerId,
+	epoch uint64,
+	cfg *config.MessageServerConfig) *remoteMessageTarget {
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &remoteMessageTarget{
-		targetId:    id,
+		localId:     localID,
+		epoch:       epoch,
+		targetId:    targetId,
 		ctx:         ctx,
 		cancel:      cancel,
-		sendEventCh: make(chan *proto.Message, defaultCacheSize),
-		sendCmdCh:   make(chan *proto.Message, defaultCacheSize),
-		recvEventCh: make(chan *TargetMessage, defaultCacheSize),
-		recvCmdCh:   make(chan *TargetMessage, defaultCacheSize),
+		sendEventCh: make(chan *proto.Message, cfg.CacheChannelSize),
+		sendCmdCh:   make(chan *proto.Message, cfg.CacheChannelSize),
+		recvEventCh: make(chan *TargetMessage, cfg.CacheChannelSize),
+		recvCmdCh:   make(chan *TargetMessage, cfg.CacheChannelSize),
 		errCh:       make(chan AppError, 1),
 	}
 	rt.runHandleErr(ctx)
@@ -118,7 +131,6 @@ func (s *remoteMessageTarget) close() {
 		s.conn.Close()
 		s.conn = nil
 	}
-
 	s.cancel()
 	s.wg.Wait()
 }
@@ -218,6 +230,7 @@ func (s *remoteMessageTarget) resetSendStreams() {
 
 	s.eventSendStream = nil
 	s.commandSendStream = nil
+	// Cancel the goroutine spawned by runSendMessages
 	s.sendMsgCancel()
 
 	for range s.errCh {
@@ -298,18 +311,35 @@ func runReceiveMessages(ctx context.Context, stream grpcReceiver, receiveCh chan
 					log.Panic("Error when deserializing message from remote", zap.Error(err))
 				}
 
-				tm := &TargetMessage{From: ServerId(message.From), To: ServerId(message.To), Type: IOType(message.Type), Message: m}
-				receiveCh <- tm
+				receiveCh <- &TargetMessage{
+					From:     ServerId(message.From),
+					To:       ServerId(message.To),
+					Epoch:    message.Epoch,
+					Sequence: message.Seqnum,
+					Type:     IOType(message.Type),
+					Message:  m}
 			}
 		}
 	}()
+}
+
+func (s *remoteMessageTarget) newMessage(mtype IOType, eventBytes [][]byte) *proto.Message {
+	return &proto.Message{
+		From:    s.localId.slice(),
+		To:      s.targetId.slice(),
+		Epoch:   s.epoch,
+		Seqnum:  s.sequence.Add(1),
+		Type:    int32(mtype),
+		Payload: eventBytes}
 }
 
 // localMessageTarget implements the SendMessageChannel interface.
 // It is used to send messages to the local server.
 // It simply pushes the messages to the messageCenter's channel directly.
 type localMessageTarget struct {
-	localId ServerId
+	localId  ServerId
+	epoch    uint64
+	sequence atomic.Uint64
 
 	// The gather channel from the message center.
 	// We only need to push and pull the messages from those channel.
@@ -318,11 +348,11 @@ type localMessageTarget struct {
 }
 
 func (s *localMessageTarget) SendEvent(mtype IOType, eventBytes [][]byte) error {
-	return sendMsgToChan(s.localId, mtype, eventBytes, s.recvEventCh)
+	return s.sendMsgToChan(mtype, eventBytes, s.recvEventCh)
 }
 
 func (s *localMessageTarget) SendCommand(mtype IOType, commandBytes [][]byte) error {
-	return sendMsgToChan(s.localId, mtype, commandBytes, s.recvCmdCh)
+	return s.sendMsgToChan(mtype, commandBytes, s.recvCmdCh)
 }
 
 func newLocalMessageTarget(id ServerId,
@@ -335,14 +365,20 @@ func newLocalMessageTarget(id ServerId,
 	}
 }
 
-func sendMsgToChan(sid ServerId, mtype IOType, eventBytes [][]byte, ch chan *TargetMessage) error {
+func (s *localMessageTarget) sendMsgToChan(mtype IOType, eventBytes [][]byte, ch chan *TargetMessage) error {
 	for _, eventBytes := range eventBytes {
 		m, err := decodeIOType(mtype, eventBytes)
 		if err != nil {
 			log.Panic("Deserialize message failed", zap.Error(err))
 		}
+		message := &TargetMessage{
+			From:     s.localId,
+			To:       s.localId,
+			Epoch:    s.epoch,
+			Sequence: s.sequence.Add(1),
+			Type:     mtype,
+			Message:  m}
 
-		message := &TargetMessage{From: sid, To: sid, Type: mtype, Message: m}
 		select {
 		case ch <- message:
 		default:

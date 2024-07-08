@@ -3,7 +3,7 @@ package messaging
 import (
 	"fmt"
 
-	. "github.com/flowbehappy/tigate/apperror"
+	. "github.com/flowbehappy/tigate/pkg/apperror"
 
 	"github.com/google/uuid"
 )
@@ -21,7 +21,12 @@ const (
 )
 
 type Bytes []byte
+
 type ServerId uuid.UUID
+
+func NewServerId() ServerId {
+	return ServerId(uuid.New())
+}
 
 func (b *Bytes) encode(buf []byte) []byte    { return append(buf, (*b)...) }
 func (s *ServerId) encode(buf []byte) []byte { return append(buf, (*s)[:]...) }
@@ -61,10 +66,12 @@ func CastTo[T IOTypeT](m interface{}) T {
 // TargetMessage is a wrapper of message to be sent to a target server.
 // It contains the source server id, the target server id, the message type and the message.
 type TargetMessage struct {
-	From    ServerId
-	To      ServerId
-	Type    IOType
-	Message interface{}
+	From     ServerId
+	To       ServerId
+	Epoch    uint64
+	Sequence uint64
+	Type     IOType
+	Message  interface{}
 }
 
 func encodeIOType[T IOTypeT](data *T, buf []byte) []byte {

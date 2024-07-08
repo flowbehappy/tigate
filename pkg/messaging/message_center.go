@@ -3,21 +3,21 @@ package messaging
 import (
 	"io"
 	"net"
-	"time"
 
-	"github.com/flowbehappy/tigate/messaging/proto"
+	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/messaging/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
 
-const (
-	// size of channel to cache the messages to be sent and received
-	defaultCacheSize = 1024
-	// These are the default configuration for the gRPC server.
-	defaultMaxRecvMsgSize   = 256 * 1024 * 1024 // 256MB
-	defaultKeepaliveTime    = 30 * time.Second
-	defaultKeepaliveTimeout = 10 * time.Second
-)
+type MessageCenter interface {
+	MessageReceiver
+	AddTarget(id ServerId, addr string)
+	RemoveTarget(id ServerId)
+	GetTarget(id ServerId) MessageSender
+	Run(addr string) error
+	Close()
+}
 
 // MessageReceiver is the interface to receive messages from other targets.
 type MessageReceiver interface {
@@ -38,15 +38,6 @@ type grpcSender interface {
 	CloseAndRecv() (*proto.MessageSummary, error)
 }
 
-type MessageCenter interface {
-	MessageReceiver
-	AddTarget(id ServerId, addr string)
-	RemoveTarget(id ServerId)
-	GetTarget(id ServerId) MessageSender
-	Run(addr string) error
-	Close()
-}
-
 // messageCenterImpl is the core of the messaging system.
 // It hosts a local grpc server to receive messages (events and commands) from other targets (server).
 // It hosts streaming channels to each other targets to send messages.
@@ -58,24 +49,31 @@ type MessageCenter interface {
 // TODO: Currently, for each target, we only use one channel to send events.
 // We might use multiple channels later.
 type messageCenterImpl struct {
-	// The local service id
-	localId ServerId
-	// The local target
+	// The server id of the message center
+	id ServerId
+	// The current epoch of the message center,
+	// when every time the message center is restarted, the epoch will be increased by 1.
+	epoch uint64
+	cfg   *config.MessageServerConfig
+	// The local target, which is the message center itself.
 	localTarget *localMessageTarget
+	// The remote targets, which are the other message centers in remote servers.
+	remoteTargets map[ServerId]*remoteMessageTarget
 
 	grpcServer *grpc.Server
-	// The remote targets
-	remoteTargets map[ServerId]*remoteMessageTarget
 
 	// Messages from all targets are put into these channels.
 	receiveEventCh chan *TargetMessage
 	receiveCmdCh   chan *TargetMessage
 }
 
-func NewMessageCenter(id ServerId) *messageCenterImpl {
-	receiveEventCh := make(chan *TargetMessage, defaultCacheSize)
-	receiveCmdCh := make(chan *TargetMessage, defaultCacheSize)
-	return &messageCenterImpl{localId: id,
+func NewMessageCenter(id ServerId, epoch uint64, cfg *config.MessageServerConfig) *messageCenterImpl {
+	receiveEventCh := make(chan *TargetMessage, cfg.CacheChannelSize)
+	receiveCmdCh := make(chan *TargetMessage, cfg.CacheChannelSize)
+	return &messageCenterImpl{
+		id:             id,
+		epoch:          epoch,
+		cfg:            cfg,
 		localTarget:    newLocalMessageTarget(id, receiveEventCh, receiveCmdCh),
 		remoteTargets:  make(map[ServerId]*remoteMessageTarget),
 		receiveEventCh: receiveEventCh,
@@ -95,11 +93,12 @@ func (mc *messageCenterImpl) Run(addr string) error {
 	}
 
 	keepaliveParams := keepalive.ServerParameters{
-		Time:    defaultKeepaliveTime,
-		Timeout: defaultKeepaliveTimeout,
+		Time:    mc.cfg.KeepAliveTime,
+		Timeout: mc.cfg.KeepAliveTimeout,
 	}
+
 	options := []grpc.ServerOption{
-		grpc.MaxRecvMsgSize(defaultMaxRecvMsgSize),
+		grpc.MaxRecvMsgSize(mc.cfg.CacheChannelSize),
 		grpc.KeepaliveParams(keepaliveParams),
 	}
 
@@ -111,7 +110,8 @@ func (mc *messageCenterImpl) Run(addr string) error {
 // AddTarget is called when a new remote target is discovered,
 // to add the target to the message center.
 func (mc *messageCenterImpl) AddTarget(id ServerId, addr string) {
-	if id == mc.localId {
+	// If the target is the message center itself, we don't need to add it.
+	if id == mc.id {
 		return
 	}
 	rt := mc.touchRemoteTarget(id)
@@ -128,7 +128,7 @@ func (mc *messageCenterImpl) RemoveTarget(id ServerId) {
 
 // GetSendChannel returns the SendMessageChannel for the target server.
 func (mc *messageCenterImpl) GetTarget(id ServerId) MessageSender {
-	if id == mc.localId {
+	if id == mc.id {
 		return mc.localTarget
 	}
 	if rt, ok := mc.remoteTargets[id]; ok {
@@ -162,9 +162,7 @@ func (mc *messageCenterImpl) touchRemoteTarget(id ServerId) *remoteMessageTarget
 	if rt, ok := mc.remoteTargets[id]; ok {
 		return rt
 	}
-	rt := newRemoteMessageTarget(id)
-	rt.localId = mc.localId
-
+	rt := newRemoteMessageTarget(mc.id, id, mc.epoch, mc.cfg)
 	mc.remoteTargets[id] = rt
 	return rt
 }
