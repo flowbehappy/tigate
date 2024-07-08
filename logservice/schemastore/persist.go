@@ -12,7 +12,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/flowbehappy/tigate/common"
 	"github.com/pingcap/log"
-	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
@@ -27,7 +27,9 @@ type persistentStorage struct {
 	db *pebble.DB
 }
 
-func newPersistentStorage(root string, storage tidbkv.Storage, minRequiredTS common.Timestamp) (*persistentStorage, common.Timestamp, common.Timestamp) {
+func newPersistentStorage(
+	root string, storage kv.Storage, minRequiredTS common.Timestamp,
+) (*persistentStorage, common.Timestamp, common.Timestamp) {
 	dbPath := fmt.Sprintf("%s/%s", root, dataDir)
 	// TODO: update pebble options
 	db, err := pebble.Open(dbPath, &pebble.Options{})
@@ -191,8 +193,8 @@ func (p *persistentStorage) gc(gcTS common.Timestamp) {
 	// read schema, for every table, read its incremental data, apply it, and get the final table info and write it.
 }
 
-func getSnapshotMeta(tiStore tidbkv.Storage, ts uint64) *meta.Meta {
-	snapshot := tiStore.GetSnapshot(tidbkv.NewVersion(ts))
+func getSnapshotMeta(tiStore kv.Storage, ts uint64) *meta.Meta {
+	snapshot := tiStore.GetSnapshot(kv.NewVersion(ts))
 	return meta.NewSnapshotMeta(snapshot)
 }
 
@@ -361,7 +363,7 @@ func parseIndexKey(key []byte) (common.TableID, common.Timestamp, error) {
 	return tableID, commitTS, nil
 }
 
-func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore tidbkv.Storage, ts common.Timestamp) error {
+func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Timestamp) error {
 	meta := getSnapshotMeta(tiStore, uint64(ts))
 	start := time.Now()
 	dbinfos, err := meta.ListDatabases()
@@ -393,7 +395,7 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore tidbkv.Storage, ts common.
 				continue
 			}
 			// TODO: may be we need the whole table info and initialize some struct?
-			// or we need more info for patition tables?
+			// or we need more info for partition tables?
 			tbName := &model.TableNameInfo{}
 			err := json.Unmarshal(rawTable.Value, tbName)
 			if err != nil {

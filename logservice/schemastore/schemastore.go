@@ -8,12 +8,13 @@ import (
 
 	"github.com/flowbehappy/tigate/common"
 	"github.com/pingcap/log"
-	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
 type SchemaStore interface {
+	// WriteDDLEvent
 	// Note that ddlEvent won't come in order
 	WriteDDLEvent(ddlEvent common.DDLEvent) error
 
@@ -21,9 +22,10 @@ type SchemaStore interface {
 
 	DoGC(resolvedTs common.Timestamp) error
 
-	GetAllPhyscialTables(dispatcherID common.DispatcherID, filter common.Filter, ts common.Timestamp) ([]common.TableID, error)
+	GetAllPhysicalTables(dispatcherID common.DispatcherID, filter common.Filter, ts common.Timestamp) ([]common.TableID, error)
 
-	// how to deal with TableEventDispatcher, use a different interface?
+	// RegisterDispatcher register the dispatcher into the schema store.
+	// todo: how to deal with TableEventDispatcher, use a different interface?
 	RegisterDispatcher(dispatcherID common.DispatcherID, tableID common.TableID, filter common.Filter, ts common.Timestamp) error
 
 	UpdateDispatcherCheckpointTS(dispatcherID common.DispatcherID, ts common.Timestamp) error
@@ -63,10 +65,11 @@ type schemaStore struct {
 	// how to deal with table event dispatchers？
 }
 
-func NewSchemaStore(root string, storage tidbkv.Storage, minRequiredTS common.Timestamp) (SchemaStore, common.Timestamp, error) {
+func NewSchemaStore(root string, storage kv.Storage, minRequiredTS common.Timestamp) (SchemaStore, common.Timestamp, error) {
 	ctx := context.Background()
 
 	dataStorage, gcTS, resolvedTS := newPersistentStorage(root, storage, minRequiredTS)
+	// todo: it looks this goroutine is not controlled by the ctx, shall we cancel it?
 	go dataStorage.run(ctx)
 
 	return &schemaStore{
@@ -91,8 +94,10 @@ func (s *schemaStore) AdvanceResolvedTs(resolvedTS common.Timestamp) error {
 		log.Fatal("resolved ts should not go back", zap.Uint64("resolved ts", uint64(resolvedTS)), zap.Uint64("current resolved ts", uint64(s.resolvedTS)))
 	}
 	for _, event := range resolvedEvents {
-		handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap)
-		// check?
+		if err := handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap); err != nil {
+			return err
+		}
+		// todo: check?
 		s.schemaVersion = event.Job.Version
 	}
 	s.resolvedTS = resolvedTS
@@ -106,11 +111,13 @@ func (s *schemaStore) DoGC(gcTS common.Timestamp) error {
 	return nil
 }
 
-func (s *schemaStore) GetAllPhyscialTables(dispatcherID common.DispatcherID, filter common.Filter, ts common.Timestamp) ([]common.TableID, error) {
+func (s *schemaStore) GetAllPhysicalTables(dispatcherID common.DispatcherID, filter common.Filter, ts common.Timestamp) ([]common.TableID, error) {
 	return nil, nil
 }
 
-func (s *schemaStore) RegisterDispatcher(dispatcherID DispatcherID, tableID TableID, filter Filter, startTS Timestamp) error {
+func (s *schemaStore) RegisterDispatcher(
+	dispatcherID common.DispatcherID, tableID common.TableID, filter common.Filter, startTS common.Timestamp,
+) error {
 	s.mu.Lock()
 	// check whether there is already a versionedTableInfoStore satisfy the needs
 	if oldStore, ok := s.tableInfoStoreMap[tableID]; ok && oldStore.getStartTS() <= startTS {
@@ -126,7 +133,9 @@ func (s *schemaStore) RegisterDispatcher(dispatcherID DispatcherID, tableID Tabl
 	fillSchemaNameWrapper := func(job *model.Job) error {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		fillSchemaName(job, s.databaseMap)
+		if err := fillSchemaName(job, s.databaseMap); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -172,8 +181,7 @@ func (s *schemaStore) UpdateDispatcherCheckpointTS(dispatcherID common.Dispatche
 		return errors.New("dispatcher not found")
 	}
 	store := s.tableInfoStoreMap[info.tableID]
-	store.updateDispatcherCheckpointTS(dispatcherID, ts)
-	return nil
+	return store.updateDispatcherCheckpointTS(dispatcherID, ts)
 }
 
 func (s *schemaStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
