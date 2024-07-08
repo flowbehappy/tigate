@@ -18,8 +18,3 @@ package rpc
 type Message interface {
 	GetType() string
 }
-
-type RpcClient interface {
-	// SendMsg send messages to remote server
-	SendMsg(nodeID string, msgs []Message) error
-}

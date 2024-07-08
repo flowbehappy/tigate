@@ -35,6 +35,8 @@ func RegisterOpenAPIV2Routes(router *gin.Engine, api OpenAPIV2) {
 
 	v2.Use(middleware.LogMiddleware())
 
+	v2.GET("status", api.serverStatus)
+
 	coordinatorMiddleware := middleware.ForwardToCoordinatorMiddleware(api.capture)
 
 	// changefeed apis

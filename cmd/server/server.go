@@ -17,13 +17,13 @@ import (
 	"context"
 	"github.com/fatih/color"
 	"github.com/flowbehappy/tigate/server"
+	"github.com/flowbehappy/tigate/version"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/cmd/util"
 	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/security"
-	"github.com/pingcap/tiflow/pkg/version"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -44,7 +44,9 @@ type options struct {
 
 // newOptions creates new options for the `server` command.
 func newOptions() *options {
-	return &options{}
+	return &options{
+		serverConfig: config.GetDefaultServerConfig(),
+	}
 }
 
 // addFlags receives a *cobra.Command reference and binds
