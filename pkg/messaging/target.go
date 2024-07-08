@@ -22,16 +22,6 @@ const (
 	reconnectInterval = 2 * time.Second
 )
 
-// MessageSender is the interface for sending messages to the target.
-// Note the slices passed in are referenced forward directly, so don't reuse the slice.
-// The method in the interface should be thread-safe and non-blocking.
-// If the message cannot be sent, the method will return an `ErrorTypeMessageCongested` error.
-type MessageSender interface {
-	// TODO(dongmen): Make these methods support timeout later.
-	SendEvent(mtype IOType, eventBytes [][]byte) error
-	SendCommand(mtype IOType, commandBytes [][]byte) error
-}
-
 // remoteMessageTarget implements the SendMessageChannel interface.
 // TODO(dongmen): Reduce the goroutine number it spawns.
 // Currently it spawns 2 goroutines for each remote target, and 2 goroutines for each local target,
@@ -78,26 +68,24 @@ type remoteMessageTarget struct {
 	sendMsgCancel context.CancelFunc
 }
 
-func (s *remoteMessageTarget) SendEvent(mtype IOType, eventBytes [][]byte) error {
+func (s *remoteMessageTarget) sendEvent(msg ...*TargetMessage) error {
 	if s.eventSendStream == nil {
 		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Stream has not been initialized"}
 	}
-	message := s.newMessage(mtype, eventBytes)
 	select {
-	case s.sendEventCh <- message:
+	case s.sendEventCh <- s.newMessage(msg...):
 		return nil
 	default:
 		return AppError{Type: ErrorTypeMessageCongested, Reason: "Send event message is congested"}
 	}
 }
 
-func (s *remoteMessageTarget) SendCommand(mtype IOType, commandBytes [][]byte) error {
+func (s *remoteMessageTarget) sendCommand(msg ...*TargetMessage) error {
 	if s.commandSendStream == nil {
 		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Stream has not been initialized"}
 	}
-	message := s.newMessage(mtype, commandBytes)
 	select {
-	case s.sendCmdCh <- message:
+	case s.sendCmdCh <- s.newMessage(msg...):
 		return nil
 	default:
 		return AppError{Type: ErrorTypeMessageCongested, Reason: "Send command message is congested"}
@@ -107,7 +95,7 @@ func (s *remoteMessageTarget) SendCommand(mtype IOType, commandBytes [][]byte) e
 func newRemoteMessageTarget(
 	localID, targetId ServerId,
 	epoch uint64,
-	cfg *config.MessageServerConfig) *remoteMessageTarget {
+	cfg *config.MessageCenterConfig) *remoteMessageTarget {
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &remoteMessageTarget{
 		localId:     localID,
@@ -324,14 +312,21 @@ func runReceiveMessages(ctx context.Context, stream grpcReceiver, receiveCh chan
 	}()
 }
 
-func (s *remoteMessageTarget) newMessage(mtype IOType, eventBytes [][]byte) *proto.Message {
+func (s *remoteMessageTarget) newMessage(msg ...*TargetMessage) *proto.Message {
+	msgBytes := make([][]byte, 0, len(msg))
+	for _, m := range msg {
+		// TODO: use a buffer pool to reduce the memory allocation.
+		buf := make([]byte, 0)
+		msgBytes = append(msgBytes, m.encode(buf))
+	}
 	return &proto.Message{
 		From:    s.localId.slice(),
 		To:      s.targetId.slice(),
 		Epoch:   s.epoch,
 		Seqnum:  s.sequence.Add(1),
-		Type:    int32(mtype),
-		Payload: eventBytes}
+		Type:    int32(msg[0].Type),
+		Payload: msgBytes,
+	}
 }
 
 // localMessageTarget implements the SendMessageChannel interface.
@@ -348,12 +343,12 @@ type localMessageTarget struct {
 	recvCmdCh   chan *TargetMessage
 }
 
-func (s *localMessageTarget) SendEvent(mtype IOType, eventBytes [][]byte) error {
-	return s.sendMsgToChan(mtype, eventBytes, s.recvEventCh)
+func (s *localMessageTarget) sendEvent(msg ...*TargetMessage) error {
+	return s.sendMsgToChan(s.recvEventCh, msg...)
 }
 
-func (s *localMessageTarget) SendCommand(mtype IOType, commandBytes [][]byte) error {
-	return s.sendMsgToChan(mtype, commandBytes, s.recvCmdCh)
+func (s *localMessageTarget) sendCommand(msg ...*TargetMessage) error {
+	return s.sendMsgToChan(s.recvCmdCh, msg...)
 }
 
 func newLocalMessageTarget(id ServerId,
@@ -366,22 +361,13 @@ func newLocalMessageTarget(id ServerId,
 	}
 }
 
-func (s *localMessageTarget) sendMsgToChan(mtype IOType, eventBytes [][]byte, ch chan *TargetMessage) error {
-	for _, eventBytes := range eventBytes {
-		m, err := decodeIOType(mtype, eventBytes)
-		if err != nil {
-			log.Panic("Deserialize message failed", zap.Error(err))
-		}
-		message := &TargetMessage{
-			From:     s.localId,
-			To:       s.localId,
-			Epoch:    s.epoch,
-			Sequence: s.sequence.Add(1),
-			Type:     mtype,
-			Message:  m}
-
+func (s *localMessageTarget) sendMsgToChan(ch chan *TargetMessage, msg ...*TargetMessage) error {
+	for _, m := range msg {
+		m.To = s.localId
+		m.Epoch = s.epoch
+		m.Sequence = s.sequence.Add(1)
 		select {
-		case ch <- message:
+		case ch <- m:
 		default:
 			return AppError{Type: ErrorTypeMessageCongested, Reason: "Send message is congested"}
 		}

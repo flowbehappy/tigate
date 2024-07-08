@@ -15,16 +15,17 @@ package capture
 
 import (
 	"context"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/flowbehappy/tigate/coordinator"
 	"github.com/flowbehappy/tigate/version"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/pkg/migrate"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/tikv/client-go/v2/tikv"
-	"os"
-	"strings"
-	"sync"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
