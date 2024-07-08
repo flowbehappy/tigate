@@ -120,6 +120,7 @@ func newRemoteMessageTarget(
 		recvEventCh: make(chan *TargetMessage, cfg.CacheChannelSize),
 		recvCmdCh:   make(chan *TargetMessage, cfg.CacheChannelSize),
 		errCh:       make(chan AppError, 1),
+		wg:          &sync.WaitGroup{},
 	}
 	rt.runHandleErr(ctx)
 	return rt

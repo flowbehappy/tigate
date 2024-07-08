@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/pingcap/log"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func newRemoteMessageTargetForTest(t *testing.T) *remoteMessageTarget {
@@ -21,15 +23,16 @@ func TestRemoteTargetNewMessage(t *testing.T) {
 	b := []byte{1, 2, 3, 4}
 	bs := [][]byte{b}
 	msg1 := rt.newMessage(TypeBytes, bs)
-	require.Equal(t, TypeBytes, msg1.Type)
-	require.Equal(t, rt.epoch, msg1.Seqnum)
-	require.Equal(t, 1, rt.sequence.Load())
+	require.Equal(t, TypeBytes, IOType(msg1.Type))
+	require.Equal(t, rt.epoch, msg1.Epoch)
+	require.Equal(t, uint64(1), rt.sequence.Load())
 	require.Equal(t, rt.sequence.Load(), msg1.Seqnum)
 
+	// Test the second message's sequence number is increased by 1.
 	msg2 := rt.newMessage(TypeDDLEvent, bs)
-	require.Equal(t, TypeBytes, msg2.Type)
-	require.Equal(t, rt.epoch, msg2.Seqnum)
-	require.Equal(t, 2, rt.sequence.Load())
+	log.Info("msg2", zap.Any("msg2", msg2))
+	require.Equal(t, TypeDDLEvent, IOType(msg2.Type))
+	require.Equal(t, rt.epoch, msg2.Epoch)
+	require.Equal(t, uint64(2), rt.sequence.Load())
 	require.Equal(t, rt.sequence.Load(), msg2.Seqnum)
-
 }
