@@ -16,13 +16,17 @@ package server
 import (
 	"context"
 	"fmt"
-	"github.com/flowbehappy/tigate/api"
-	"github.com/flowbehappy/tigate/capture"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/flowbehappy/tigate/api"
+	"github.com/flowbehappy/tigate/capture"
+	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/messaging"
+	messagingProto "github.com/flowbehappy/tigate/pkg/messaging/proto"
 
 	"github.com/dustin/go-humanize"
 	"github.com/gin-gonic/gin"
@@ -30,7 +34,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tiflow/cdc/processor/sourcemanager/sorter/factory"
-	"github.com/pingcap/tiflow/pkg/config"
+	cdcconfig "github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/fsutil"
@@ -43,6 +47,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/keepalive"
 )
 
 const (
@@ -79,11 +84,12 @@ type server struct {
 	pdAPIClient       pdutil.PDAPIClient
 	pdEndpoints       []string
 	sortEngineFactory *factory.SortEngineFactory
+	messageCenter     messaging.MessageCenter
 }
 
 // New creates a server instance.
 func New(pdEndpoints []string) (*server, error) {
-	conf := config.GetGlobalServerConfig()
+	conf := cdcconfig.GetGlobalServerConfig()
 
 	// This is to make communication between nodes possible.
 	// In other words, the nodes have to trust each other.
@@ -115,7 +121,7 @@ func New(pdEndpoints []string) (*server, error) {
 }
 
 func (s *server) prepare(ctx context.Context) error {
-	conf := config.GetGlobalServerConfig()
+	conf := cdcconfig.GetGlobalServerConfig()
 	grpcTLSOption, err := conf.Security.ToGRPCDialOption()
 	if err != nil {
 		return errors.Trace(err)
@@ -139,7 +145,7 @@ func (s *server) prepare(ctx context.Context) error {
 				MinConnectTimeout: 3 * time.Second,
 			}),
 		),
-		pd.WithForwardingOption(config.EnablePDForwarding))
+		pd.WithForwardingOption(cdcconfig.EnablePDForwarding))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -190,7 +196,7 @@ func (s *server) prepare(ctx context.Context) error {
 }
 
 func (s *server) setMemoryLimit() {
-	conf := config.GetGlobalServerConfig()
+	conf := cdcconfig.GetGlobalServerConfig()
 	if conf.GcTunerMemoryThreshold > maxGcTunerMemory {
 		// If total memory is larger than 512GB, we will not set memory limit.
 		// Because the memory limit is not accurate, and it is not necessary to set memory limit.
@@ -211,7 +217,7 @@ func (s *server) setMemoryLimit() {
 }
 
 func (s *server) createSortEngineFactory() {
-	conf := config.GetGlobalServerConfig()
+	conf := cdcconfig.GetGlobalServerConfig()
 	if s.sortEngineFactory != nil {
 		if err := s.sortEngineFactory.Close(); err != nil {
 			log.Error("fails to close sort engine manager", zap.Error(err))
@@ -221,7 +227,7 @@ func (s *server) createSortEngineFactory() {
 
 	// Sorter dir has been set and checked when server starts.
 	// See https://github.com/pingcap/tiflow/blob/9dad09/cdc/server.go#L275
-	sortDir := config.GetGlobalServerConfig().Sorter.SortDir
+	sortDir := cdcconfig.GetGlobalServerConfig().Sorter.SortDir
 	memInBytes := conf.Sorter.CacheSizeInMB * uint64(1<<20)
 	s.sortEngineFactory = factory.NewForPebble(sortDir, memInBytes, conf.Debug.DB)
 	log.Info("sorter engine memory limit",
@@ -254,7 +260,7 @@ func (s *server) startStatusHTTP(lis net.Listener) error {
 	// a connection is processed.
 	// We use it here to limit the max concurrent connections of statusServer.
 	lis = netutil.LimitListener(lis, maxHTTPConnection)
-	conf := config.GetGlobalServerConfig()
+	conf := cdcconfig.GetGlobalServerConfig()
 
 	logWritter := clogutil.InitGinLogWritter()
 	router := gin.New()
@@ -295,6 +301,8 @@ func (s *server) run(ctx context.Context) (err error) {
 	})
 	grpcServer := grpc.NewServer()
 
+	grpcServer := newGrpcServer()
+	messagingProto.RegisterMessageCenterServer(grpcServer, messaging.NewMessageCenterServer(s.messageCenter))
 	eg.Go(func() error {
 		return grpcServer.Serve(s.tcpServer.GrpcListener())
 	})
@@ -354,7 +362,7 @@ func (s *server) initDir(ctx context.Context) error {
 	if err := s.setUpDir(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	conf := config.GetGlobalServerConfig()
+	conf := cdcconfig.GetGlobalServerConfig()
 	// Ensure data dir exists and read-writable.
 	diskInfo, err := checkDir(conf.DataDir)
 	if err != nil {
@@ -373,10 +381,10 @@ func (s *server) initDir(ctx context.Context) error {
 }
 
 func (s *server) setUpDir(ctx context.Context) error {
-	conf := config.GetGlobalServerConfig()
+	conf := cdcconfig.GetGlobalServerConfig()
 	if conf.DataDir != "" {
-		conf.Sorter.SortDir = filepath.Join(conf.DataDir, config.DefaultSortDir)
-		config.StoreGlobalServerConfig(conf)
+		conf.Sorter.SortDir = filepath.Join(conf.DataDir, cdcconfig.DefaultSortDir)
+		cdcconfig.StoreGlobalServerConfig(conf)
 
 		return nil
 	}
@@ -400,8 +408,8 @@ func (s *server) setUpDir(ctx context.Context) error {
 		conf.DataDir = best
 	}
 
-	conf.Sorter.SortDir = filepath.Join(conf.DataDir, config.DefaultSortDir)
-	config.StoreGlobalServerConfig(conf)
+	conf.Sorter.SortDir = filepath.Join(conf.DataDir, cdcconfig.DefaultSortDir)
+	cdcconfig.StoreGlobalServerConfig(conf)
 	return nil
 }
 
@@ -439,4 +447,17 @@ func findBestDataDir(candidates []string) (result string, ok bool) {
 	}
 
 	return result, ok
+}
+
+func newGrpcServer() *grpc.Server {
+	cfg := config.NewDefaultGrpcServerConfig()
+	keepaliveParams := keepalive.ServerParameters{
+		Time:    cfg.KeepAliveTime,
+		Timeout: cfg.KeepAliveTimeout,
+	}
+	options := []grpc.ServerOption{
+		grpc.MaxRecvMsgSize(cfg.MaxRecvMsgSize),
+		grpc.KeepaliveParams(keepaliveParams),
+	}
+	return grpc.NewServer(options...)
 }

@@ -1,22 +1,32 @@
 package messaging
 
 import (
+	"fmt"
 	"io"
-	"net"
 
+	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/keepalive"
 )
 
 type MessageCenter interface {
+	MessageSender
 	MessageReceiver
 	AddTarget(id ServerId, addr string)
 	RemoveTarget(id ServerId)
-	GetTarget(id ServerId) MessageSender
-	Run(addr string) error
+	//GetTarget(id ServerId) MessageSender
 	Close()
+}
+
+// MessageSender is the interface for sending messages to the target.
+// Note the slices passed in are referenced forward directly, so don't reuse the slice.
+// The method in the interface should be thread-safe and non-blocking.
+// If the message cannot be sent, the method will return an `ErrorTypeMessageCongested` error.
+type MessageSender interface {
+	// TODO(dongmen): Make these methods support timeout later.
+	SendEvent(msg ...*TargetMessage) error
+	SendCommand(cmd ...*TargetMessage) error
 }
 
 // MessageReceiver is the interface to receive messages from other targets.
@@ -54,7 +64,7 @@ type messageCenterImpl struct {
 	// The current epoch of the message center,
 	// when every time the message center is restarted, the epoch will be increased by 1.
 	epoch uint64
-	cfg   *config.MessageServerConfig
+	cfg   *config.MessageCenterConfig
 	// The local target, which is the message center itself.
 	localTarget *localMessageTarget
 	// The remote targets, which are the other message centers in remote servers.
@@ -67,7 +77,7 @@ type messageCenterImpl struct {
 	receiveCmdCh   chan *TargetMessage
 }
 
-func NewMessageCenter(id ServerId, epoch uint64, cfg *config.MessageServerConfig) *messageCenterImpl {
+func NewMessageCenter(id ServerId, epoch uint64, cfg *config.MessageCenterConfig) *messageCenterImpl {
 	receiveEventCh := make(chan *TargetMessage, cfg.CacheChannelSize)
 	receiveCmdCh := make(chan *TargetMessage, cfg.CacheChannelSize)
 	return &messageCenterImpl{
@@ -79,32 +89,6 @@ func NewMessageCenter(id ServerId, epoch uint64, cfg *config.MessageServerConfig
 		receiveEventCh: receiveEventCh,
 		receiveCmdCh:   receiveCmdCh,
 	}
-}
-
-// Run starts the grpc server to receive messages from other targets.
-// It listens on the given address, it will block until the server is stopped.
-func (mc *messageCenterImpl) Run(addr string) error {
-	if mc.grpcServer != nil {
-		return nil
-	}
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		return err
-	}
-
-	keepaliveParams := keepalive.ServerParameters{
-		Time:    mc.cfg.KeepAliveTime,
-		Timeout: mc.cfg.KeepAliveTimeout,
-	}
-
-	options := []grpc.ServerOption{
-		grpc.MaxRecvMsgSize(mc.cfg.CacheChannelSize),
-		grpc.KeepaliveParams(keepaliveParams),
-	}
-
-	mc.grpcServer = grpc.NewServer(options...)
-	proto.RegisterMessageCenterServer(mc.grpcServer, &grpcServerImpl{messageCenter: mc})
-	return mc.grpcServer.Serve(lis)
 }
 
 // AddTarget is called when a new remote target is discovered,
@@ -126,15 +110,40 @@ func (mc *messageCenterImpl) RemoveTarget(id ServerId) {
 	}
 }
 
-// GetSendChannel returns the SendMessageChannel for the target server.
-func (mc *messageCenterImpl) GetTarget(id ServerId) MessageSender {
-	if id == mc.id {
-		return mc.localTarget
+func (mc *messageCenterImpl) SendEvent(msg ...*TargetMessage) error {
+	if len(msg) == 0 {
+		return nil
 	}
-	if rt, ok := mc.remoteTargets[id]; ok {
-		return rt
+
+	to := msg[0].To
+
+	if to == mc.id {
+		return mc.localTarget.sendEvent(msg...)
 	}
-	return nil
+
+	target, ok := mc.remoteTargets[to]
+	if !ok {
+		return apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %d not found", to)}
+	}
+	return target.sendEvent(msg...)
+}
+
+func (mc *messageCenterImpl) SendCommand(cmd ...*TargetMessage) error {
+	if len(cmd) == 0 {
+		return nil
+	}
+
+	to := cmd[0].To
+
+	if to == mc.id {
+		return mc.localTarget.sendCommand(cmd...)
+	}
+
+	target, ok := mc.remoteTargets[to]
+	if !ok {
+		return apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %d not found", to)}
+	}
+	return target.sendCommand(cmd...)
 }
 
 func (mc *messageCenterImpl) ReceiveEvent() (*TargetMessage, error) {
@@ -182,6 +191,11 @@ func (mc *messageCenterImpl) addRemoteReceiveTarget(id ServerId, stream grpcRece
 type grpcServerImpl struct {
 	proto.UnimplementedMessageCenterServer
 	messageCenter *messageCenterImpl
+}
+
+func NewMessageCenterServer(messageCenter MessageCenter) proto.MessageCenterServer {
+	mc := messageCenter.(*messageCenterImpl)
+	return &grpcServerImpl{messageCenter: mc}
 }
 
 func (s *grpcServerImpl) SendEvents(stream proto.MessageCenter_SendEventsServer) error {

@@ -4,21 +4,36 @@ import (
 	"fmt"
 
 	. "github.com/flowbehappy/tigate/pkg/apperror"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 
 	"github.com/google/uuid"
 )
 
 type IOType int32
 
-const IOTypeSize int = 4
 const (
-	TypeInvalid IOType = 0
-
-	TypeBytes    IOType = 1
-	TypeServerId IOType = 2
-	TypeDMLEvent IOType = 3
-	TypeDDLEvent IOType = 4
+	TypeInvalid IOType = iota
+	TypeBytes
+	TypeServerId
+	TypeDMLEvent
+	TypeDDLEvent
 )
+
+func (t IOType) String() string {
+	switch t {
+	case TypeBytes:
+		return "Bytes"
+	case TypeServerId:
+		return "ServerId"
+	case TypeDMLEvent:
+		return "DMLEvent"
+	case TypeDDLEvent:
+		return "DDLEvent"
+	default:
+	}
+	return "Unknown"
+}
 
 type Bytes []byte
 
@@ -74,6 +89,29 @@ type TargetMessage struct {
 	Message  interface{}
 }
 
+// NewTargetMessage creates a new TargetMessage to be sent to a target server.
+func NewTargetMessage(To ServerId, Type IOType, Message interface{}) *TargetMessage {
+	return &TargetMessage{
+		To:      To,
+		Type:    Type,
+		Message: Message,
+	}
+}
+
+func (m *TargetMessage) encode(buf []byte) []byte {
+	switch m.Type {
+	case TypeBytes:
+		m := m.Message.(*Bytes)
+		return encodeIOType(&m, buf)
+	case TypeServerId:
+	case TypeDMLEvent:
+	case TypeDDLEvent:
+	default:
+	}
+	log.Panic("Unimplemented IOType", zap.Stringer("Type", m.Type))
+	return nil
+}
+
 func encodeIOType[T IOTypeT](data *T, buf []byte) []byte {
 	return (*data).encode(buf)
 }
@@ -94,12 +132,11 @@ func decodeIOType(mtype IOType, data []byte) (interface{}, error) {
 		sid := ServerId(uid)
 		return &sid, nil
 	case TypeDMLEvent:
-		// TODO
 	case TypeDDLEvent:
-		// TODO
 	default:
 
 	}
+	log.Panic("Unimplemented IOType", zap.Stringer("Type", mtype))
 	return nil,
 		AppError{Type: ErrorTypeInvalid, Reason: fmt.Sprintf("Invalid IOType: %d", mtype)}
 }
