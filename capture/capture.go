@@ -16,6 +16,7 @@ package capture
 import (
 	"context"
 	"github.com/flowbehappy/tigate/coordinator"
+	"github.com/flowbehappy/tigate/version"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/pkg/migrate"
 	"github.com/pingcap/tiflow/pkg/pdutil"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
 	"github.com/pingcap/tiflow/pkg/util"
-	"github.com/pingcap/tiflow/pkg/version"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.etcd.io/etcd/server/v3/mvcc"
@@ -320,7 +320,7 @@ func (c *captureImpl) campaignOwner(ctx context.Context) error {
 			zap.String("captureID", c.info.ID),
 			zap.Int64("Rev", ownerRev))
 
-		co := coordinator.NewCoordinator(nil, nil)
+		co := coordinator.NewCoordinator(c.info)
 		c.setOwner(co)
 		err = c.runEtcdWorker(ctx, co.(orchestrator.Reactor),
 			orchestrator.NewGlobalState(c.EtcdClient.GetClusterID(), c.config.CaptureSessionTTL),

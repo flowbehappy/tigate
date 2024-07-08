@@ -6,6 +6,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/flowbehappy/tigate/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -15,27 +16,27 @@ import (
 type SchemaStore interface {
 	// WriteDDLEvent
 	// Note that ddlEvent won't come in order
-	WriteDDLEvent(ddlEvent DDLEvent) error
+	WriteDDLEvent(ddlEvent common.DDLEvent) error
 
-	AdvanceResolvedTs(resolvedTs Timestamp) error
+	AdvanceResolvedTs(resolvedTs common.Timestamp) error
 
-	DoGC(resolvedTs Timestamp) error
+	DoGC(resolvedTs common.Timestamp) error
 
-	GetAllPhysicalTables(dispatcherID DispatcherID, filter Filter, ts Timestamp) ([]TableID, error)
+	GetAllPhysicalTables(dispatcherID common.DispatcherID, filter common.Filter, ts common.Timestamp) ([]common.TableID, error)
 
 	// RegisterDispatcher register the dispatcher into the schema store.
 	// todo: how to deal with TableEventDispatcher, use a different interface?
-	RegisterDispatcher(dispatcherID DispatcherID, tableID TableID, filter Filter, ts Timestamp) error
+	RegisterDispatcher(dispatcherID common.DispatcherID, tableID common.TableID, filter common.Filter, ts common.Timestamp) error
 
-	UpdateDispatcherCheckpointTS(dispatcherID DispatcherID, ts Timestamp) error
+	UpdateDispatcherCheckpointTS(dispatcherID common.DispatcherID, ts common.Timestamp) error
 
-	UnregisterDispatcher(dispatcherID DispatcherID) error
+	UnregisterDispatcher(dispatcherID common.DispatcherID) error
 
-	ResolvedTS() Timestamp
+	ResolvedTS() common.Timestamp
 
-	GetTableInfo(tableID TableID, ts Timestamp) (*TableInfo, error)
+	GetTableInfo(tableID common.TableID, ts common.Timestamp) (*common.TableInfo, error)
 
-	GetNextDDLEvent(dispatcherID DispatcherID) (*DDLEvent, Timestamp, error)
+	GetNextDDLEvent(dispatcherID common.DispatcherID) (*common.DDLEvent, common.Timestamp, error)
 }
 
 type schemaStore struct {
@@ -47,24 +48,24 @@ type schemaStore struct {
 
 	mu sync.Mutex
 
-	gcTS       Timestamp
-	resolvedTS Timestamp
+	gcTS       common.Timestamp
+	resolvedTS common.Timestamp
 
 	schemaVersion int64
 
-	databaseMap DatabaseInfoMap
+	databaseMap common.DatabaseInfoMap
 
 	// table_id -> versioned store
-	tableInfoStoreMap TableInfoStoreMap
+	tableInfoStoreMap common.TableInfoStoreMap
 
-	dispatchersMap DispatchInfoMap
+	dispatchersMap common.DispatchInfoMap
 
 	// truncated tables?
 
 	// how to deal with table event dispatchers？
 }
 
-func NewSchemaStore(root string, storage kv.Storage, minRequiredTS Timestamp) (SchemaStore, Timestamp, error) {
+func NewSchemaStore(root string, storage kv.Storage, minRequiredTS common.Timestamp) (SchemaStore, common.Timestamp, error) {
 	ctx := context.Background()
 
 	dataStorage, gcTS, resolvedTS := newPersistentStorage(root, storage, minRequiredTS)
@@ -80,13 +81,13 @@ func NewSchemaStore(root string, storage kv.Storage, minRequiredTS Timestamp) (S
 	}, resolvedTS, nil
 }
 
-func (s *schemaStore) WriteDDLEvent(ddlEvent DDLEvent) error {
+func (s *schemaStore) WriteDDLEvent(ddlEvent common.DDLEvent) error {
 	s.dataStorage.writeDDLEvent(ddlEvent)
 	s.unsortedCache.addDDL(ddlEvent)
 	return nil
 }
 
-func (s *schemaStore) AdvanceResolvedTs(resolvedTS Timestamp) error {
+func (s *schemaStore) AdvanceResolvedTs(resolvedTS common.Timestamp) error {
 	resolvedEvents := s.unsortedCache.getSortedDDLEventBeforeTS(resolvedTS)
 	s.mu.Lock()
 	if resolvedTS < s.resolvedTS {
@@ -105,16 +106,18 @@ func (s *schemaStore) AdvanceResolvedTs(resolvedTS Timestamp) error {
 	return nil
 }
 
-func (s *schemaStore) DoGC(gcTS Timestamp) error {
+func (s *schemaStore) DoGC(gcTS common.Timestamp) error {
 	// gc databaseMap
 	return nil
 }
 
-func (s *schemaStore) GetAllPhysicalTables(dispatcherID DispatcherID, filter Filter, ts Timestamp) ([]TableID, error) {
+func (s *schemaStore) GetAllPhysicalTables(dispatcherID common.DispatcherID, filter common.Filter, ts common.Timestamp) ([]common.TableID, error) {
 	return nil, nil
 }
 
-func (s *schemaStore) RegisterDispatcher(dispatcherID DispatcherID, tableID TableID, filter Filter, startTS Timestamp) error {
+func (s *schemaStore) RegisterDispatcher(
+	dispatcherID common.DispatcherID, tableID common.TableID, filter common.Filter, startTS common.Timestamp,
+) error {
 	s.mu.Lock()
 	// check whether there is already a versionedTableInfoStore satisfy the needs
 	if oldStore, ok := s.tableInfoStoreMap[tableID]; ok && oldStore.getStartTS() <= startTS {
@@ -163,14 +166,14 @@ func (s *schemaStore) RegisterDispatcher(dispatcherID DispatcherID, tableID Tabl
 		}
 	}
 	s.tableInfoStoreMap[tableID] = newTableInfoStore
-	s.dispatchersMap[dispatcherID] = DispatchInfo{
+	s.dispatchersMap[dispatcherID] = common.DispatchInfo{
 		tableID: tableID,
 		filter:  filter,
 	}
 	return nil
 }
 
-func (s *schemaStore) UpdateDispatcherCheckpointTS(dispatcherID DispatcherID, ts Timestamp) error {
+func (s *schemaStore) UpdateDispatcherCheckpointTS(dispatcherID common.DispatcherID, ts common.Timestamp) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	info, ok := s.dispatchersMap[dispatcherID]
@@ -181,7 +184,7 @@ func (s *schemaStore) UpdateDispatcherCheckpointTS(dispatcherID DispatcherID, ts
 	return store.updateDispatcherCheckpointTS(dispatcherID, ts)
 }
 
-func (s *schemaStore) UnregisterDispatcher(dispatcherID DispatcherID) error {
+func (s *schemaStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	info, ok := s.dispatchersMap[dispatcherID]
@@ -198,13 +201,13 @@ func (s *schemaStore) UnregisterDispatcher(dispatcherID DispatcherID) error {
 	return nil
 }
 
-func (s *schemaStore) ResolvedTS() Timestamp {
+func (s *schemaStore) ResolvedTS() common.Timestamp {
 	s.mu.Lock()
 	defer s.mu.Lock()
 	return s.resolvedTS
 }
 
-func (s *schemaStore) GetTableInfo(tableID TableID, ts Timestamp) (*TableInfo, error) {
+func (s *schemaStore) GetTableInfo(tableID common.TableID, ts common.Timestamp) (*common.TableInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if store, ok := s.tableInfoStoreMap[tableID]; ok {
@@ -213,11 +216,11 @@ func (s *schemaStore) GetTableInfo(tableID TableID, ts Timestamp) (*TableInfo, e
 	return nil, errors.New("table not found")
 }
 
-func (s *schemaStore) GetNextDDLEvent(dispatcherID DispatcherID) (*DDLEvent, Timestamp, error) {
+func (s *schemaStore) GetNextDDLEvent(dispatcherID common.DispatcherID) (*common.DDLEvent, common.Timestamp, error) {
 	return nil, 0, nil
 }
 
-func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfoStoreMap TableInfoStoreMap) error {
+func handleResolvedDDLJob(job *model.Job, databaseMap common.DatabaseInfoMap, tableInfoStoreMap common.TableInfoStoreMap) error {
 	if err := fillSchemaName(job, databaseMap); err != nil {
 		return err
 	}
@@ -242,12 +245,12 @@ func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfo
 		model.ActionCreateView,
 		model.ActionRecoverTable:
 		// no dispatcher should register on these kinds of tables?
-		if _, ok := tableInfoStoreMap[TableID(job.TableID)]; ok {
+		if _, ok := tableInfoStoreMap[common.TableID(job.TableID)]; ok {
 			log.Panic("should not happened")
 		}
 		return nil
 	default:
-		tableID := TableID(job.TableID)
+		tableID := common.TableID(job.TableID)
 		store, ok := tableInfoStoreMap[tableID]
 		if !ok {
 			return errors.New("table not found")
@@ -258,45 +261,45 @@ func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfo
 	return nil
 }
 
-func fillSchemaName(job *model.Job, databaseMap DatabaseInfoMap) error {
-	databaseID := DatabaseID(job.SchemaID)
+func fillSchemaName(job *model.Job, databaseMap common.DatabaseInfoMap) error {
+	databaseID := common.DatabaseID(job.SchemaID)
 	databaseInfo, ok := databaseMap[databaseID]
 	if !ok {
 		return errors.New("database not found")
 	}
-	if databaseInfo.CreateVersion > Timestamp(job.BinlogInfo.FinishedTS) {
+	if databaseInfo.CreateVersion > common.Timestamp(job.BinlogInfo.FinishedTS) {
 		return errors.New("database is not created")
 	}
-	if databaseInfo.DeleteVersion < Timestamp(job.BinlogInfo.FinishedTS) {
+	if databaseInfo.DeleteVersion < common.Timestamp(job.BinlogInfo.FinishedTS) {
 		return errors.New("database is deleted")
 	}
 	job.SchemaName = databaseInfo.Name
 	return nil
 }
 
-func createSchema(job *model.Job, databaseMap DatabaseInfoMap) error {
-	if _, ok := databaseMap[DatabaseID(job.SchemaID)]; ok {
+func createSchema(job *model.Job, databaseMap common.DatabaseInfoMap) error {
+	if _, ok := databaseMap[common.DatabaseID(job.SchemaID)]; ok {
 		return errors.New("database already exists")
 	}
-	databaseInfo := &DatabaseInfo{
+	databaseInfo := &common.DatabaseInfo{
 		ID:            job.SchemaID,
 		Name:          job.SchemaName,
-		Tables:        make([]TableID, 0),
-		CreateVersion: Timestamp(job.BinlogInfo.FinishedTS),
+		Tables:        make([]common.TableID, 0),
+		CreateVersion: common.Timestamp(job.BinlogInfo.FinishedTS),
 		DeleteVersion: math.MaxUint64,
 	}
-	databaseMap[DatabaseID(job.SchemaID)] = databaseInfo
+	databaseMap[common.DatabaseID(job.SchemaID)] = databaseInfo
 	return nil
 }
 
-func dropSchema(job *model.Job, databaseMap DatabaseInfoMap) error {
-	databaseInfo, ok := databaseMap[DatabaseID(job.SchemaID)]
+func dropSchema(job *model.Job, databaseMap common.DatabaseInfoMap) error {
+	databaseInfo, ok := databaseMap[common.DatabaseID(job.SchemaID)]
 	if !ok {
 		return errors.New("database not found")
 	}
 	if databaseInfo.isDeleted() {
 		return errors.New("database is already deleted")
 	}
-	databaseInfo.DeleteVersion = Timestamp(job.BinlogInfo.FinishedTS)
+	databaseInfo.DeleteVersion = common.Timestamp(job.BinlogInfo.FinishedTS)
 	return nil
 }

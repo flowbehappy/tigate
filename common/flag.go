@@ -1,4 +1,4 @@
-package schemastore
+package common
 
 // Flag is a uint64 flag to show a 64 bit mask
 type Flag uint64

@@ -36,17 +36,14 @@ type Coordinator interface {
 // 4. manager gc safe point
 // 5. response for open API call
 type coordinator struct {
-	rpcClient  rpc.RpcClient
 	supervisor *scheduler.Supervisor
 	scheduler  scheduler.Scheduler
 	tick       *time.Ticker
 	taskCh     chan Task
 }
 
-func NewCoordinator(rpcClient rpc.RpcClient,
-	capture *model.CaptureInfo) Coordinator {
+func NewCoordinator(capture *model.CaptureInfo) Coordinator {
 	c := &coordinator{
-		rpcClient: rpcClient,
 		tick:      time.NewTicker(time.Second),
 		scheduler: scheduler.NewCombineScheduler(scheduler.NewBasicScheduler(1000)),
 	}

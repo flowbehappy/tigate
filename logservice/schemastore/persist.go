@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/flowbehappy/tigate/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -26,7 +27,9 @@ type persistentStorage struct {
 	db *pebble.DB
 }
 
-func newPersistentStorage(root string, storage kv.Storage, minRequiredTS Timestamp) (*persistentStorage, Timestamp, Timestamp) {
+func newPersistentStorage(
+	root string, storage kv.Storage, minRequiredTS common.Timestamp,
+) (*persistentStorage, common.Timestamp, common.Timestamp) {
 	dbPath := fmt.Sprintf("%s/%s", root, dataDir)
 	// TODO: update pebble options
 	db, err := pebble.Open(dbPath, &pebble.Options{})
@@ -84,14 +87,14 @@ func (p *persistentStorage) run(ctx context.Context) error {
 			return nil
 		case data := <-p.ch:
 			switch v := data.(type) {
-			case DDLEvent:
+			case common.DDLEvent:
 				// TODO: batch ddl event
 				// TODO: write index
 				err := writeDDLEventToDisk(p.db, v.CommitTS, v)
 				if err != nil {
 					log.Fatal("write ddl event failed", zap.Error(err))
 				}
-			case Timestamp:
+			case common.Timestamp:
 				err := writeTimestampToDisk(p.db, resolvedTSKey(), v)
 				if err != nil {
 					log.Fatal("write resolved ts failed", zap.Error(err))
@@ -103,11 +106,11 @@ func (p *persistentStorage) run(ctx context.Context) error {
 	}
 }
 
-func (p *persistentStorage) writeDDLEvent(ddlEvent DDLEvent) {
+func (p *persistentStorage) writeDDLEvent(ddlEvent common.DDLEvent) {
 	p.ch <- ddlEvent
 }
 
-func (p *persistentStorage) updateResolvedTS(resolvedTS Timestamp) {
+func (p *persistentStorage) updateResolvedTS(resolvedTS common.Timestamp) {
 	p.ch <- resolvedTS
 }
 
@@ -124,7 +127,7 @@ func nextPrefix(prefix []byte) []byte {
 }
 
 // TODO: not sure the range is [startTS, endTS] or [startTS, endTS)
-func (p *persistentStorage) buildVersionedTableInfoStore(tableID TableID, startTS Timestamp, endTS Timestamp, fillSchemaName func(job *model.Job) error) *versionedTableInfoStore {
+func (p *persistentStorage) buildVersionedTableInfoStore(tableID common.TableID, startTS common.Timestamp, endTS common.Timestamp, fillSchemaName func(job *model.Job) error) *versionedTableInfoStore {
 	lowerBound, err := indexKey(tableID, startTS)
 	if err != nil {
 		log.Fatal("generate lower bound failed", zap.Error(err))
@@ -166,7 +169,7 @@ func (p *persistentStorage) buildVersionedTableInfoStore(tableID TableID, startT
 		}
 		defer closer.Close()
 
-		var ddlEvent DDLEvent
+		var ddlEvent common.DDLEvent
 		err = json.Unmarshal(value, &ddlEvent)
 		if err != nil {
 			log.Fatal("unmarshal ddl job failed", zap.Error(err))
@@ -183,7 +186,7 @@ func (p *persistentStorage) buildVersionedTableInfoStore(tableID TableID, startT
 	return store
 }
 
-func (p *persistentStorage) gc(gcTS Timestamp) {
+func (p *persistentStorage) gc(gcTS common.Timestamp) {
 	// TODO
 	// add a variable to make sure there is just one gc task
 	// create a snapshot of db
@@ -214,7 +217,7 @@ func resolvedTSKey() []byte {
 	return []byte("re")
 }
 
-func writeTimestampToDisk(db *pebble.DB, key []byte, ts Timestamp) error {
+func writeTimestampToDisk(db *pebble.DB, key []byte, ts common.Timestamp) error {
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.BigEndian, ts)
 	if err != nil {
@@ -223,7 +226,7 @@ func writeTimestampToDisk(db *pebble.DB, key []byte, ts Timestamp) error {
 	return db.Set(key, buf.Bytes(), pebble.NoSync)
 }
 
-func readTimestampFromDisk(db *pebble.DB, key []byte) (Timestamp, error) {
+func readTimestampFromDisk(db *pebble.DB, key []byte) (common.Timestamp, error) {
 	value, closer, err := db.Get(key)
 	if err != nil {
 		return 0, err
@@ -231,7 +234,7 @@ func readTimestampFromDisk(db *pebble.DB, key []byte) (Timestamp, error) {
 	defer closer.Close()
 
 	buf := bytes.NewBuffer(value)
-	var ts Timestamp
+	var ts common.Timestamp
 	err = binary.Read(buf, binary.BigEndian, &ts)
 	if err != nil {
 		return 0, err
@@ -243,7 +246,7 @@ func readTimestampFromDisk(db *pebble.DB, key []byte) (Timestamp, error) {
 // valid data includes
 // 1. a schema snapshot at gcTS
 // 2. incremental ddl change in the range [gcTS, resolvedTS]
-func loadDataTimeRange(db *pebble.DB) (gcTS Timestamp, resolvedTS Timestamp, err error) {
+func loadDataTimeRange(db *pebble.DB) (gcTS common.Timestamp, resolvedTS common.Timestamp, err error) {
 	gcTS, err = readTimestampFromDisk(db, gcTSKey())
 	if err != nil {
 		return 0, 0, err
@@ -258,7 +261,7 @@ func loadDataTimeRange(db *pebble.DB) (gcTS Timestamp, resolvedTS Timestamp, err
 }
 
 // key format: ss_<ts><schemaID>
-func snapshotSchemaKey(ts Timestamp, schemaID SchemaID) ([]byte, error) {
+func snapshotSchemaKey(ts common.Timestamp, schemaID common.SchemaID) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	_, err := buf.WriteString(snapshotSchemaKeyPrefix)
 	if err != nil {
@@ -279,7 +282,7 @@ func snapshotSchemaKey(ts Timestamp, schemaID SchemaID) ([]byte, error) {
 }
 
 // key format: st_<ts><tableID>
-func snapshotTableKey(ts Timestamp, tableID TableID) ([]byte, error) {
+func snapshotTableKey(ts common.Timestamp, tableID common.TableID) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	_, err := buf.WriteString(snapshotTableKeyPrefix)
 	if err != nil {
@@ -301,7 +304,7 @@ func snapshotTableKey(ts Timestamp, tableID TableID) ([]byte, error) {
 
 // key format: d_<ts><tableID>
 // TODO: is commitTS + tableID a unique identifier?
-func ddlJobKey(ts Timestamp, tableID TableID) ([]byte, error) {
+func ddlJobKey(ts common.Timestamp, tableID common.TableID) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	_, err := buf.WriteString(ddlJobKeyPrefix)
 	if err != nil {
@@ -323,7 +326,7 @@ func ddlJobKey(ts Timestamp, tableID TableID) ([]byte, error) {
 
 // key format: i_<tableID><commitTS>
 // TODO: is commitTS + tableID a unique identifier?
-func indexKey(tableID TableID, commitTS Timestamp) ([]byte, error) {
+func indexKey(tableID common.TableID, commitTS common.Timestamp) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	_, err := buf.WriteString(ddlJobKeyPrefix)
 	if err != nil {
@@ -343,15 +346,15 @@ func indexKey(tableID TableID, commitTS Timestamp) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func parseIndexKey(key []byte) (TableID, Timestamp, error) {
+func parseIndexKey(key []byte) (common.TableID, common.Timestamp, error) {
 	buf := bytes.NewBuffer(key)
-	var tableID TableID
+	var tableID common.TableID
 	err := binary.Read(buf, binary.BigEndian, &tableID)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	var commitTS Timestamp
+	var commitTS common.Timestamp
 	err = binary.Read(buf, binary.BigEndian, &commitTS)
 	if err != nil {
 		return 0, 0, err
@@ -360,7 +363,7 @@ func parseIndexKey(key []byte) (TableID, Timestamp, error) {
 	return tableID, commitTS, nil
 }
 
-func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts Timestamp) error {
+func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Timestamp) error {
 	meta := getSnapshotMeta(tiStore, uint64(ts))
 	start := time.Now()
 	dbinfos, err := meta.ListDatabases()
@@ -374,7 +377,7 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts Timestamp) 
 
 	for _, dbinfo := range dbinfos {
 		// TODO: schema name to id in memory
-		schemaKey, err := snapshotSchemaKey(ts, SchemaID(dbinfo.ID))
+		schemaKey, err := snapshotSchemaKey(ts, common.SchemaID(dbinfo.ID))
 		if err != nil {
 			log.Fatal("generate schema key failed", zap.Error(err))
 		}
@@ -398,7 +401,7 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts Timestamp) 
 			if err != nil {
 				log.Fatal("get table info failed", zap.Error(err))
 			}
-			tableKey, err := snapshotTableKey(ts, TableID(tbName.ID))
+			tableKey, err := snapshotTableKey(ts, common.TableID(tbName.ID))
 			if err != nil {
 				log.Fatal("generate table key failed", zap.Error(err))
 			}
@@ -415,8 +418,8 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts Timestamp) 
 	return nil
 }
 
-func writeDDLEventToDisk(db *pebble.DB, ts Timestamp, ddlEvent DDLEvent) error {
-	ddlKey, err := ddlJobKey(ts, TableID(ddlEvent.Job.TableID))
+func writeDDLEventToDisk(db *pebble.DB, ts common.Timestamp, ddlEvent common.DDLEvent) error {
+	ddlKey, err := ddlJobKey(ts, common.TableID(ddlEvent.Job.TableID))
 	if err != nil {
 		return err
 	}
