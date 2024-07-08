@@ -15,6 +15,7 @@ package capture
 
 import (
 	"context"
+	appctx "github.com/flowbehappy/tigate/common/context"
 	"github.com/flowbehappy/tigate/coordinator"
 	"github.com/flowbehappy/tigate/version"
 	"github.com/pingcap/errors"
@@ -127,7 +128,12 @@ func (c *captureImpl) initialize(ctx context.Context) error {
 	}
 	c.session = session
 	c.subModules = []SubModule{
+		NewCaptureManager(c.session, c.EtcdClient),
 		NewElector(c),
+	}
+	// register it into global var
+	for _, subModule := range c.subModules {
+		appctx.SetService(subModule.Name(), subModule)
 	}
 
 	log.Info("capture initialized", zap.Any("capture", c.info))
@@ -161,10 +167,12 @@ func (c *captureImpl) Run(stdCtx context.Context) error {
 	}()
 
 	g, stdCtx := errgroup.WithContext(stdCtx)
-	for _, m := range c.subModules {
-		g.Go(func() error {
-			return m.Run(stdCtx)
-		})
+	for _, sub := range c.subModules {
+		func(m SubModule) {
+			g.Go(func() error {
+				return m.Run(stdCtx)
+			})
+		}(sub)
 	}
 	return errors.Trace(g.Wait())
 }
