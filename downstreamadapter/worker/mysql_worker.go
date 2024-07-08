@@ -14,11 +14,13 @@
 package worker
 
 import (
+	"database/sql"
 	"time"
 
+	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 
-	"github.com/ngaut/log"
+	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
 
@@ -77,11 +79,11 @@ type MysqlWorkerDMLEventTask struct {
 	ticker     *time.Ticker
 }
 
-func NewMysqlWorkerDMLEventTask(eventChan <-chan *Event, config *MysqlConfig, maxRows int) *MysqlWorkerDMLEventTask {
+func NewMysqlWorkerDMLEventTask(eventChan <-chan *Event, db *sql.DB, config *writer.MysqlConfig, maxRows int) *MysqlWorkerDMLEventTask {
 	return &MysqlWorkerDMLEventTask{
 		worker: &MysqlWorker{
 			eventChan:   eventChan,
-			mysqlWriter: newMysqlWriter(config),
+			mysqlWriter: writer.NewMysqlWriter(db, config),
 		},
 		taskStatus: threadpool.Running,
 		maxRows:    maxRows,

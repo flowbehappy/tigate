@@ -18,7 +18,7 @@ import (
 
 	"github.com/flowbehappy/tigate/utils/threadpool"
 
-	"github.com/ngaut/log"
+	"github.com/pingcap/log"
 )
 
 // 每个 conflict detector 对应一个 notifyTask

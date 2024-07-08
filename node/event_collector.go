@@ -21,7 +21,7 @@ import (
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/utils/conn"
 
-	"github.com/ngaut/log"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/tikv/client-go/v2/oracle"
 )

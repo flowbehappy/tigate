@@ -14,14 +14,16 @@
 package sink
 
 import (
+	"net/url"
 	"sync"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/conflictdetector"
 	"github.com/flowbehappy/tigate/downstreamadapter/worker"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/utils/threadpool"
+	"go.uber.org/zap"
 
-	"github.com/ngaut/log"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/causality"
 )
 
@@ -52,7 +54,7 @@ type MysqlSink struct {
 }
 
 // event dispatcher manager 初始化的时候创建 mysqlSink 对象
-func NewMysqlSink(workerCount int, config *Config) *MysqlSink {
+func NewMysqlSink(workerCount int, sinkURI *url.URL) *MysqlSink {
 	mysqlSink := MysqlSink{
 		conflictDetector: conflictdetector.NewConflictDetector[*Event](DefaultConflictDetectorSlots, conflictdetector.TxnCacheOption{
 			Count:         workerCount,
@@ -63,15 +65,25 @@ func NewMysqlSink(workerCount int, config *Config) *MysqlSink {
 		eventChs:         make(map[*Span]chan *Event),
 		tasks:            make(map[*Span]*MysqlSinkTask),
 	}
+
+	mysqlSink.initWorker(workerCount, sinkURI)
+
+	return &mysqlSink
+}
+
+func (s *MysqlSink) initWorker(workerCount int, sinkURI *url.URL) {
+	cfg, db, err := writer.NewMysqlConfigAndDB(sinkURI)
+	if err != nil {
+		log.Error("newMysqlConfigAndDB failed", zap.Error(err))
+		return
+	}
 	// 初始化 ddl/syncpoint 用的 worker
-	mysqlSink.ddlWorker = &worker.MysqlDDLWorker{MysqlWriter: writer.NewMysqlWriter(config)}
+	s.ddlWorker = &worker.MysqlDDLWorker{MysqlWriter: writer.NewMysqlWriter(db, cfg)}
 
 	// 初始化 dml worker 相关 task -- 这些是长时间 run 的 task
 	for i := 0; i < workerCount; i++ {
-		//mysqlSink.workers = append(mysqlSink.workers, worker.NewMysqlWorker(mysqlSink.conflictDetector.GetOutChByCacheID(int64(i))))
-		threadpool.GetTaskSchedulerInstance().WorkerTaskScheduler.Submit(worker.NewMysqlWorkerDMLEventTask(&mysqlSink.conflictDetector.GetOutChByCacheID(int64(i)), config, 128))
+		threadpool.GetTaskSchedulerInstance().WorkerTaskScheduler.Submit(worker.NewMysqlWorkerDMLEventTask(&s.conflictDetector.GetOutChByCacheID(int64(i)), db, cfg, 128))
 	}
-	return &mysqlSink
 }
 
 func (s *MysqlSink) AddDMLEvent(tableSpan *Span, event *Event) {
