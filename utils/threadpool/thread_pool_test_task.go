@@ -37,6 +37,10 @@ func (t *BasicCPUTask) GetStatus() TaskStatus {
 	return t.taskStatus
 }
 
+func (t *BasicCPUTask) SetStatus(status TaskStatus) {
+	t.taskStatus = status
+}
+
 func (t *BasicCPUTask) Execute(timeout time.Duration) TaskStatus {
 	for i := 0; i < 100; i++ {
 		atomic.AddInt64(&testCount, 1)
@@ -66,6 +70,10 @@ func (t *BasicIOTask) GetStatus() TaskStatus {
 	return t.taskStatus
 }
 
+func (t *BasicIOTask) SetStatus(status TaskStatus) {
+	t.taskStatus = status
+}
+
 func (t *BasicIOTask) Execute(timeout time.Duration) TaskStatus {
 	time.Sleep(50 * time.Millisecond)
 	atomic.AddInt64(&testCount, 1)
@@ -92,6 +100,10 @@ func newBasicWaitTask() *BasicWaitTask {
 
 func (t *BasicWaitTask) GetStatus() TaskStatus {
 	return t.taskStatus
+}
+
+func (t *BasicWaitTask) SetStatus(status TaskStatus) {
+	t.taskStatus = status
 }
 
 func (t *BasicWaitTask) Execute(timeout time.Duration) TaskStatus {
@@ -131,6 +143,10 @@ func newPureCPUTask(finalChan *chan int, ch *chan int, target int64, addCount in
 
 func (t *PureCPUTask) GetStatus() TaskStatus {
 	return t.taskStatus
+}
+
+func (t *PureCPUTask) SetStatus(status TaskStatus) {
+	t.taskStatus = status
 }
 
 func (t *PureCPUTask) Execute(timeout time.Duration) TaskStatus {
@@ -174,6 +190,10 @@ func (t *CPUWithWaitTask) GetStatus() TaskStatus {
 	return t.taskStatus
 }
 
+func (t *CPUWithWaitTask) SetStatus(status TaskStatus) {
+	t.taskStatus = status
+}
+
 func (t *CPUWithWaitTask) Execute(timeout time.Duration) TaskStatus {
 	for i := 0; i < t.addCount; i++ {
 		atomic.AddInt64(&testCount, 1)
@@ -214,6 +234,10 @@ func newCPUTimeTask(finalChan *chan int, addCount int, taskCount int) *CPUTimeTa
 
 func (t *CPUTimeTask) GetStatus() TaskStatus {
 	return t.taskStatus
+}
+
+func (t *CPUTimeTask) SetStatus(status TaskStatus) {
+	t.taskStatus = status
 }
 
 func (t *CPUTimeTask) Execute(timeout time.Duration) TaskStatus {

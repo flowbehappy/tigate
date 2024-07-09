@@ -69,7 +69,10 @@ func (p *ThreadPool) handleTask(task *Task) {
 		log.Error("task is nil")
 		return
 	}
+
 	status := (*task).Execute(p.timeout)
+	(*task).SetStatus(status)
+
 	switch status {
 	case Running:
 		p.scheduler.submitTaskToCPUThreadPool(task)
@@ -80,7 +83,7 @@ func (p *ThreadPool) handleTask(task *Task) {
 	case Success:
 		// do nothing?
 	case Failed:
-		// TODO(hongyunyan): error information? or get error from Execute
+		// TODO: error information? or get error from Execute
 		log.Error("task failed")
 	}
 }

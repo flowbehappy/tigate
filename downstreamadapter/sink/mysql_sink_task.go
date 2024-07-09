@@ -18,6 +18,7 @@ import (
 
 	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/conflictdetector"
+	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 )
@@ -28,13 +29,13 @@ import (
 type MysqlSinkTask struct {
 	conflictDetector *conflictdetector.ConflictDetector // 这个会被多个任务共用，所以需要做到内部 thread safe
 	tableSpan        *common.TableSpan
-	tableProgress    *TableProgress
+	tableProgress    *types.TableProgress
 	eventCh          chan *common.TxnEvent
 	taskStatus       threadpool.TaskStatus
 }
 
 // 这个任务本身就是把
-func newMysqlSinkTask(tableSpan *common.TableSpan, tableProgress *TableProgress, eventCh chan *common.TxnEvent, conflictDetector *conflictdetector.ConflictDetector) *MysqlSinkTask {
+func newMysqlSinkTask(tableSpan *common.TableSpan, tableProgress *types.TableProgress, eventCh chan *common.TxnEvent, conflictDetector *conflictdetector.ConflictDetector) *MysqlSinkTask {
 	return &MysqlSinkTask{
 		conflictDetector: conflictDetector,
 		tableSpan:        tableSpan,
@@ -48,6 +49,10 @@ func (t *MysqlSinkTask) GetStatus() threadpool.TaskStatus {
 	return t.taskStatus
 }
 
+func (t *MysqlSinkTask) SetStatus(taskStatus threadpool.TaskStatus) {
+	t.taskStatus = taskStatus
+}
+
 func (t *MysqlSinkTask) Execute(timeout time.Duration) threadpool.TaskStatus {
 	// 从 pending 的 task 里面拿出来塞下去，指导超时或者没有 event 了
 	if t.taskStatus == threadpool.Failed {
@@ -57,7 +62,7 @@ func (t *MysqlSinkTask) Execute(timeout time.Duration) threadpool.TaskStatus {
 	for {
 		select {
 		case event := <-t.eventCh:
-			t.conflictDetector.Add(event, func() { t.tableProgress.Remove(event) }) // 这个要测过一次要多少，有可能直接超时了;以及这个写法要测过不知道对不对
+			t.conflictDetector.Add(event, t.tableProgress) // 这个要测过一次要多少，有可能直接超时了;以及这个写法要测过不知道对不对
 		case <-timer.C:
 			return threadpool.Running
 		default:

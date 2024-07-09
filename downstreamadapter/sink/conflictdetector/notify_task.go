@@ -39,6 +39,10 @@ func (t *NotifyTask) GetStatus() threadpool.TaskStatus {
 	return t.taskStatus
 }
 
+func (t *NotifyTask) SetStatus(taskStatus threadpool.TaskStatus) {
+	t.taskStatus = taskStatus
+}
+
 func (t *NotifyTask) Execute(timeout time.Duration) threadpool.TaskStatus {
 	timer := time.NewTimer(timeout)
 	for {

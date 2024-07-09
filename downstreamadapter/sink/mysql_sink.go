@@ -14,11 +14,12 @@
 package sink
 
 import (
-	"net/url"
+	"database/sql"
 	"sync"
 
 	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/conflictdetector"
+	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/downstreamadapter/worker"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/utils/threadpool"
@@ -44,7 +45,7 @@ type MysqlSink struct {
 	// TableProgress 里面维护了目前正在 sink 中的 event ts 信息
 	// TableProgress 对外提供查询当前 table checkpointTs 的能力
 	// TableProgress 对外提供当前 table 是否有 event 在 sink 中等待被 flush 的能力--用于判断 ddl 是否达到下推条件
-	tableProgressMap map[*common.TableSpan]*TableProgress
+	tableProgressMap map[*common.TableSpan]*types.TableProgress
 	// 主要是要保持一样的生命周期？不然 channel 会对应不上
 	// workers  []*worker.MysqlWorker
 	ddlWorker *worker.MysqlDDLWorker
@@ -55,29 +56,24 @@ type MysqlSink struct {
 }
 
 // event dispatcher manager 初始化的时候创建 mysqlSink 对象
-func NewMysqlSink(workerCount int, sinkURI *url.URL) *MysqlSink {
+func NewMysqlSink(workerCount int, cfg *writer.MysqlConfig, db *sql.DB) *MysqlSink {
 	mysqlSink := MysqlSink{
-		conflictDetector: conflictdetector.NewConflictDetector[*common.TxnEvent](DefaultConflictDetectorSlots, conflictdetector.TxnCacheOption{
+		conflictDetector: conflictdetector.NewConflictDetector(DefaultConflictDetectorSlots, conflictdetector.TxnCacheOption{
 			Count:         workerCount,
 			Size:          1024,
 			BlockStrategy: causality.BlockStrategyWaitEmpty,
 		}),
-		tableProgressMap: make(map[*common.TableSpan]*TableProgress),
+		tableProgressMap: make(map[*common.TableSpan]*types.TableProgress),
 		eventChs:         make(map[*common.TableSpan]chan *common.TxnEvent),
 		tasks:            make(map[*common.TableSpan]*MysqlSinkTask),
 	}
 
-	mysqlSink.initWorker(workerCount, sinkURI)
+	mysqlSink.initWorker(workerCount, cfg, db)
 
 	return &mysqlSink
 }
 
-func (s *MysqlSink) initWorker(workerCount int, sinkURI *url.URL) {
-	cfg, db, err := writer.NewMysqlConfigAndDB(sinkURI)
-	if err != nil {
-		log.Error("newMysqlConfigAndDB failed", zap.Error(err))
-		return
-	}
+func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql.DB) {
 	// 初始化 ddl/syncpoint 用的 worker
 	s.ddlWorker = &worker.MysqlDDLWorker{MysqlWriter: writer.NewMysqlWriter(db, cfg)}
 
@@ -114,7 +110,7 @@ func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *
 }
 
 func (s *MysqlSink) AddTableSpan(tableSpan *common.TableSpan) {
-	tableProgress := NewTableProgress()
+	tableProgress := types.NewTableProgress()
 	ch := make(chan *common.TxnEvent, 100) // 先瞎拍
 	task := newMysqlSinkTask(tableSpan, tableProgress, ch, s.conflictDetector)
 
