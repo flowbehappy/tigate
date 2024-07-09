@@ -3,7 +3,9 @@ package heartbeatpb;
 option go_package = "./heartbeatpb";
 
 message TableSpan {
-
+    uint64 TableID   = 1;
+	bytes StartKey  = 2;
+	bytes EndKey    = 3;
 }
 
 message TableSpanProgress {

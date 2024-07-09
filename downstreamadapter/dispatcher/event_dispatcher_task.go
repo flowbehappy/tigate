@@ -16,6 +16,7 @@ package dispatcher
 import (
 	"time"
 
+	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 )
 
@@ -44,10 +45,14 @@ func (t *EventDispatcherTask) GetStatus() threadpool.TaskStatus {
 	return t.taskStatus
 }
 
+func (t *EventDispatcherTask) SetStatus(taskStatus threadpool.TaskStatus) {
+	t.taskStatus = taskStatus
+}
+
 func (t *EventDispatcherTask) updateState(state *State, heartBeatResponseMessages []*HeartBeatResponseMessage) {
 	for _, heartBeatResponseMessage := range heartBeatResponseMessages {
 		otherTableProgress := heartBeatResponseMessage.OtherTableProgress
-		spanToProgressMap := make(map[*TableSpan]*TableSpanProgress)
+		spanToProgressMap := make(map[*common.TableSpan]*TableSpanProgress)
 		for _, progress := range otherTableProgress {
 			span := progress.Span
 			spanToProgressMap[span] = progress
@@ -173,10 +178,10 @@ func (t *EventDispatcherTask) Execute(timeout time.Duration) threadpool.TaskStat
 			} else {
 				// syncpoint event, TODO:要处理一下只有一张表的情况
 				state = &State{
-					isBlocked:      true,
-					pengdingEvent:  event,
-					blockTableSpan: AllTables, // special span
-					blockTs:        event.CommitTs(),
+					isBlocked:     true,
+					pengdingEvent: event,
+					// blockTableSpan: AllTables, // special span : TODO syncpointTs
+					blockTs: event.CommitTs(),
 				}
 				return threadpool.Waiting
 			}
