@@ -3,19 +3,23 @@ package messaging
 import (
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
 // MessageCenter is the interface to send and receive messages to/from other targets.
-// Note(dongmen): All the methods in the interface should be thread-safe.
+// Note: Methods of MessageCenter and MessageSender are thread-safe.
+// AddTarget and RemoveTarget are not thread-safe, and should be called in the main thread of a server.
 type MessageCenter interface {
 	MessageSender
 	MessageReceiver
-	AddTarget(id ServerId, addr string)
+	AddTarget(id ServerId, epoch uint64, addr string)
 	RemoveTarget(id ServerId)
 	//GetTarget(id ServerId) MessageSender
 	Close()
@@ -25,7 +29,7 @@ type MessageCenter interface {
 // The method in the interface should be thread-safe and non-blocking.
 // If the message cannot be sent, the method will return an `ErrorTypeMessageCongested` error.
 type MessageSender interface {
-	// TODO(dongmen): Make these methods support timeout later.
+	// TODO: Make these methods support timeout later.
 	SendEvent(msg ...*TargetMessage) error
 	SendCommand(cmd ...*TargetMessage) error
 }
@@ -69,7 +73,7 @@ type messageCenterImpl struct {
 	// The local target, which is the message center itself.
 	localTarget *localMessageTarget
 	// The remote targets, which are the other message centers in remote servers.
-	remoteTargets map[ServerId]*remoteMessageTarget
+	remoteTargets sync.Map
 
 	grpcServer *grpc.Server
 
@@ -86,7 +90,7 @@ func NewMessageCenter(id ServerId, epoch uint64, cfg *config.MessageCenterConfig
 		epoch:          epoch,
 		cfg:            cfg,
 		localTarget:    newLocalMessageTarget(id, receiveEventCh, receiveCmdCh),
-		remoteTargets:  make(map[ServerId]*remoteMessageTarget),
+		remoteTargets:  sync.Map{},
 		receiveEventCh: receiveEventCh,
 		receiveCmdCh:   receiveCmdCh,
 	}
@@ -94,20 +98,19 @@ func NewMessageCenter(id ServerId, epoch uint64, cfg *config.MessageCenterConfig
 
 // AddTarget is called when a new remote target is discovered,
 // to add the target to the message center.
-func (mc *messageCenterImpl) AddTarget(id ServerId, addr string) {
+func (mc *messageCenterImpl) AddTarget(id ServerId, epoch uint64, addr string) {
 	// If the target is the message center itself, we don't need to add it.
 	if id == mc.id {
 		return
 	}
-	rt := mc.touchRemoteTarget(id)
-	rt.targetAddr = addr
+	log.Info("Add remote target", zap.Stringer("id", id), zap.Uint64("epoch", epoch), zap.String("addr", addr))
+	rt := mc.touchRemoteTarget(id, epoch, addr)
 	rt.initSendStreams()
 }
 
 func (mc *messageCenterImpl) RemoveTarget(id ServerId) {
-	if rt, ok := mc.remoteTargets[id]; ok {
-		rt.close()
-		delete(mc.remoteTargets, id)
+	if target, ok := mc.remoteTargets.LoadAndDelete(id); ok {
+		target.(*remoteMessageTarget).close()
 	}
 }
 
@@ -122,11 +125,11 @@ func (mc *messageCenterImpl) SendEvent(msg ...*TargetMessage) error {
 		return mc.localTarget.sendEvent(msg...)
 	}
 
-	target, ok := mc.remoteTargets[to]
+	target, ok := mc.remoteTargets.Load(to)
 	if !ok {
 		return apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %d not found", to)}
 	}
-	return target.sendEvent(msg...)
+	return target.(*remoteMessageTarget).sendEvent(msg...)
 }
 
 func (mc *messageCenterImpl) SendCommand(cmd ...*TargetMessage) error {
@@ -140,11 +143,11 @@ func (mc *messageCenterImpl) SendCommand(cmd ...*TargetMessage) error {
 		return mc.localTarget.sendCommand(cmd...)
 	}
 
-	target, ok := mc.remoteTargets[to]
+	target, ok := mc.remoteTargets.Load(to)
 	if !ok {
 		return apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %d not found", to)}
 	}
-	return target.sendCommand(cmd...)
+	return target.(*remoteMessageTarget).sendCommand(cmd...)
 }
 
 func (mc *messageCenterImpl) ReceiveEvent() (*TargetMessage, error) {
@@ -157,9 +160,10 @@ func (mc *messageCenterImpl) ReceiveCmd() (*TargetMessage, error) {
 
 // Close stops the grpc server and stops all the connections to the remote targets.
 func (mc *messageCenterImpl) Close() {
-	for _, rt := range mc.remoteTargets {
-		rt.close()
-	}
+	mc.remoteTargets.Range(func(key, value interface{}) bool {
+		value.(*remoteMessageTarget).close()
+		return true
+	})
 	if mc.grpcServer != nil {
 		mc.grpcServer.Stop()
 	}
@@ -168,22 +172,33 @@ func (mc *messageCenterImpl) Close() {
 
 // touchRemoteTarget returns the remote target by the id,
 // if the target is not found, it will create a new one.
-func (mc *messageCenterImpl) touchRemoteTarget(id ServerId) *remoteMessageTarget {
-	if rt, ok := mc.remoteTargets[id]; ok {
-		return rt
-	}
-	rt := newRemoteMessageTarget(mc.id, id, mc.epoch, mc.cfg)
-	mc.remoteTargets[id] = rt
-	return rt
-}
+func (mc *messageCenterImpl) touchRemoteTarget(id ServerId, epoch uint64, addr string) *remoteMessageTarget {
+	if v, ok := mc.remoteTargets.Load(id); ok {
+		target := v.(*remoteMessageTarget)
+		if target.targetEpoch.Load() >= epoch {
+			log.Info("Remote target already exists", zap.Stringer("id", id))
+			return target
+		}
 
-func (mc *messageCenterImpl) addRemoteReceiveTarget(id ServerId, stream grpcReceiver, isEvent bool) {
-	rt := mc.touchRemoteTarget(id)
-	if isEvent {
-		rt.setEventRecvStream(stream)
-	} else {
-		rt.setCommandRecvStream(stream)
+		if target.targetAddr == addr {
+			log.Info("Remote target already exists, but the epoch is old, update the epoch", zap.Stringer("id", id))
+			target.targetEpoch.Store(epoch)
+			return target
+		}
+
+		log.Info("Remote target epoch and addr changed, close it and create a new one",
+			zap.Stringer("id", id),
+			zap.Uint64("oldEpoch", target.targetEpoch.Load()),
+			zap.Uint64("newEpoch", epoch),
+			zap.String("oldAddr", target.targetAddr),
+			zap.String("newAddr", addr))
+		target.close()
+		mc.remoteTargets.Delete(id)
 	}
+
+	rt := newRemoteMessageTarget(mc.id, id, mc.epoch, epoch, addr, mc.receiveEventCh, mc.receiveCmdCh, mc.cfg)
+	mc.remoteTargets.Store(id, rt)
+	return rt
 }
 
 // grpcServerImpl implements the gRPC `service MessageCenter` defined in the proto file
@@ -200,25 +215,103 @@ func NewMessageCenterServer(messageCenter MessageCenter) proto.MessageCenterServ
 }
 
 func (s *grpcServerImpl) SendEvents(stream proto.MessageCenter_SendEventsServer) error {
+	//return s.handleClientConnectInTarget(stream, true)
 	return s.handleClientConnect(stream, true)
 }
 
 func (s *grpcServerImpl) SendCommands(stream proto.MessageCenter_SendCommandsServer) error {
+	//return s.handleClientConnectInTarget(stream, false)
 	return s.handleClientConnect(stream, false)
 }
 
 // handleClientConnect registers the client as a target in the message center.
-// So the message center can stream messages to the client.
+// So the message center can received messages from the client.
 func (s *grpcServerImpl) handleClientConnect(stream grpcReceiver, isEvent bool) error {
 	// The first message is an empty message without payload, to identify the client server id.
 	msg, err := stream.Recv()
-	if err == io.EOF {
-		return stream.SendAndClose(&proto.MessageSummary{SentBytes: 0 /*TODO*/})
-	}
 	if err != nil {
+		if err == io.EOF {
+			return stream.SendAndClose(&proto.MessageSummary{SentBytes: 0 /*TODO*/})
+		}
 		return err
 	}
-	sid := ServerId(msg.From)
-	s.messageCenter.addRemoteReceiveTarget(sid, stream, isEvent)
-	return nil
+	to := ServerId(msg.To)
+	if to != s.messageCenter.id {
+		return apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %d not found", to)}
+	}
+
+	log.Info("Start to received message from remote target",
+		zap.Stringer("local", s.messageCenter.id),
+		zap.Stringer("remote", to),
+		zap.Bool("isEvent", isEvent))
+
+	var receiveCh chan *TargetMessage
+	if isEvent {
+		receiveCh = s.messageCenter.receiveEventCh
+	} else {
+		receiveCh = s.messageCenter.receiveCmdCh
+	}
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			if err == io.EOF {
+				return stream.SendAndClose(&proto.MessageSummary{SentBytes: 0 /*TODO*/})
+			}
+			// The client is responsible for reconnecting if it needs to.
+			return err
+		}
+
+		mt := IOType(msg.Type)
+		for _, b := range msg.Payload {
+			targetMsg := &TargetMessage{
+				From:     ServerId(msg.From),
+				To:       ServerId(msg.To),
+				Epoch:    msg.Epoch,
+				Sequence: msg.Seqnum,
+				Type:     mt,
+				Message:  decodeIOType(mt, b),
+			}
+			receiveCh <- targetMsg
+		}
+	}
+}
+
+// handleClientConnect registers the client as a target in the message center.
+// So the message center can received messages from the client.
+func (s *grpcServerImpl) handleClientConnectInTarget(stream grpcReceiver, isEvent bool) error {
+	// The first message is an empty message without payload, to identify the client server id.
+	msg, err := stream.Recv()
+	if err != nil {
+		if err == io.EOF {
+			return stream.SendAndClose(&proto.MessageSummary{SentBytes: 0 /*TODO*/})
+		}
+		return err
+	}
+	to := ServerId(msg.To)
+	if to != s.messageCenter.id {
+		return apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %d not found", to)}
+	}
+
+	log.Info("Start to received message from remote target",
+		zap.Stringer("local", s.messageCenter.id),
+		zap.Stringer("remote", to),
+		zap.Bool("isEvent", isEvent))
+
+	from := ServerId(msg.From)
+	if v, ok := s.messageCenter.remoteTargets.Load(from); ok {
+		log.Info("Remote target found", zap.Stringer("from", from))
+		target := v.(*remoteMessageTarget)
+		// The handshake message's epoch should be the same as the target's epoch.
+		if msg.Epoch != target.targetEpoch.Load() {
+			return apperror.AppError{Type: apperror.ErrorTypeEpochMismatch, Reason: fmt.Sprintf("Target %d epoch mismatch, expect %d, got %d", from, target.targetEpoch, msg.Epoch)}
+		}
+		if isEvent {
+			return target.runEventRecvStream(stream)
+		} else {
+			return target.runCommandRecvStream(stream)
+		}
+	} else {
+		log.Info("Remote target not found", zap.Stringer("from", from))
+		return apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %d not found", from)}
+	}
 }
