@@ -14,20 +14,21 @@
 package maintainer
 
 import (
+	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/tiflow/cdc/model"
 )
 
 type ReplicaSet struct {
-	ID *TableSpan
+	ID *common.TableSpan
 
 	status *ReplicaSetStatus
 }
 
 func NewReplicaSet(id scheduler.InferiorID) scheduler.Inferior {
 	r := &ReplicaSet{
-		ID: id.(*TableSpan),
+		ID: id.(*common.TableSpan),
 	}
 	return r
 }
@@ -60,7 +61,7 @@ func (r *ReplicaSet) NewRemoveInferiorMessage(model.CaptureID) rpc.Message {
 }
 
 type ReplicaSetStatus struct {
-	ID     *TableSpan
+	ID     *common.TableSpan
 	Status scheduler.ComponentStatus
 }
 
