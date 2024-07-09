@@ -2,7 +2,6 @@ package schemastore
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -17,7 +16,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// The parent folder to store schema store data
+// The parent folder to store schema data
 const dataDir = "schema_store"
 
 type persistentStorage struct {
@@ -79,38 +78,18 @@ func newPersistentStorage(
 	}, gcTS, resolvedTS
 }
 
-func (p *persistentStorage) run(ctx context.Context) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case data := <-p.ch:
-			switch v := data.(type) {
-			case DDLEvent:
-				// TODO: batch ddl event
-				// TODO: write index
-				err := writeDDLEventToDisk(p.db, v.CommitTS, v)
-				if err != nil {
-					log.Fatal("write ddl event failed", zap.Error(err))
-				}
-			case Timestamp:
-				err := writeTimestampToDisk(p.db, resolvedTSKey(), v)
-				if err != nil {
-					log.Fatal("write resolved ts failed", zap.Error(err))
-				}
-			default:
-				log.Fatal("unknown data type")
-			}
-		}
-	}
-}
+func (p *persistentStorage) writeDDLEvent(ddlEvent DDLEvent) error {
+	// write data
+	// write index
+	// TODO: for cross table ddl, need write two events?
 
-func (p *persistentStorage) writeDDLEvent(ddlEvent DDLEvent) {
 	p.ch <- ddlEvent
+	return nil
 }
 
-func (p *persistentStorage) updateResolvedTS(resolvedTS Timestamp) {
+func (p *persistentStorage) updateResolvedTS(resolvedTS Timestamp) error {
 	p.ch <- resolvedTS
+	return nil
 }
 
 func nextPrefix(prefix []byte) []byte {
@@ -125,8 +104,9 @@ func nextPrefix(prefix []byte) []byte {
 	return upperBound
 }
 
-// TODO: not sure the range is [startTS, endTS] or [startTS, endTS)
-func (p *persistentStorage) buildVersionedTableInfoStore(tableID TableID, startTS Timestamp, endTS Timestamp, fillSchemaName func(job *model.Job) error) *versionedTableInfoStore {
+// build a versionedTableInfoStore within the time range [startTS, endTS] (or (startTS, endTS]?)
+func (p *persistentStorage) buildVersionedTableInfoStore(store *versionedTableInfoStore, startTS Timestamp, endTS Timestamp, fillSchemaName func(job *model.Job) error) error {
+	tableID := store.getTableID()
 	lowerBound, err := indexKey(tableID, startTS)
 	if err != nil {
 		log.Fatal("generate lower bound failed", zap.Error(err))
@@ -145,7 +125,6 @@ func (p *persistentStorage) buildVersionedTableInfoStore(tableID TableID, startT
 	defer iter.Close()
 
 	// TODO: read from snapshot
-	store := newEmptyVersionedTableInfoStore(100)
 
 	for iter.First(); iter.Valid(); iter.Next() {
 		// TODO: check whether the key is valid
@@ -182,7 +161,7 @@ func (p *persistentStorage) buildVersionedTableInfoStore(tableID TableID, startT
 	if err := iter.Error(); err != nil {
 		log.Fatal("iterator error", zap.Error(err))
 	}
-	return store
+	return nil
 }
 
 func (p *persistentStorage) gc(gcTS Timestamp) {
@@ -244,7 +223,7 @@ func readTimestampFromDisk(db *pebble.DB, key []byte) (Timestamp, error) {
 // load the time range for valid data in db.
 // valid data includes
 // 1. a schema snapshot at gcTS
-// 2. incremental ddl change in the range [gcTS, resolvedTS]
+// 2. incremental ddl change in the range (gcTS, resolvedTS]
 func loadDataTimeRange(db *pebble.DB) (gcTS Timestamp, resolvedTS Timestamp, err error) {
 	gcTS, err = readTimestampFromDisk(db, gcTSKey())
 	if err != nil {
@@ -327,7 +306,7 @@ func ddlJobKey(ts Timestamp, tableID TableID) ([]byte, error) {
 // TODO: is commitTS + tableID a unique identifier?
 func indexKey(tableID TableID, commitTS Timestamp) ([]byte, error) {
 	buf := new(bytes.Buffer)
-	_, err := buf.WriteString(ddlJobKeyPrefix)
+	_, err := buf.WriteString(indexKeyPrefix)
 	if err != nil {
 		return nil, err
 	}
