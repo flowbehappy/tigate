@@ -15,6 +15,8 @@ package server
 
 import (
 	"context"
+	"strings"
+
 	"github.com/fatih/color"
 	"github.com/flowbehappy/tigate/server"
 	"github.com/flowbehappy/tigate/version"
@@ -27,7 +29,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
-	"strings"
 )
 
 // options defines flags for the `server` command.
@@ -80,20 +81,21 @@ func (o *options) run(cmd *cobra.Command) error {
 	version.LogVersionInfo("Change Data Capture (CDC)")
 
 	util.LogHTTPProxies()
-	server, err := server.New(strings.Split(o.serverPdAddr, ","))
+	server, err := server.NewServer(strings.Split(o.serverPdAddr, ","))
 	if err != nil {
 		log.Error("create cdc server failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 
 	// Run TiCDC server.
-	err = server.Run(context.Background())
+	ctx := context.Background()
+	err = server.Run(ctx)
 	if err != nil && errors.Cause(err) != context.Canceled {
 		log.Warn("cdc server exits with error", zap.Error(err))
 	} else {
 		log.Info("cdc server exits normally")
 	}
-	server.Close()
+	server.Close(ctx)
 	return nil
 }
 
@@ -193,7 +195,7 @@ func NewCmdServer() *cobra.Command {
 
 	command := &cobra.Command{
 		Use:   "server",
-		Short: "Start a TiCDC capture server",
+		Short: "Start a TiCDC server server",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			err := o.complete(cmd)

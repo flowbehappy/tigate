@@ -15,75 +15,63 @@ package server
 
 import (
 	"context"
-	"fmt"
-	"net"
-	"net/http"
-	"os"
-	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
-	"github.com/dustin/go-humanize"
-	"github.com/flowbehappy/tigate/api"
-	"github.com/flowbehappy/tigate/capture"
-	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/gin-gonic/gin"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/util/gctuner"
-	"github.com/pingcap/tiflow/cdc/processor/sourcemanager/sorter/factory"
-	cdcconfig "github.com/pingcap/tiflow/pkg/config"
-	cerror "github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/etcd"
-	"github.com/pingcap/tiflow/pkg/fsutil"
-	clogutil "github.com/pingcap/tiflow/pkg/logutil"
-	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/tcpserver"
+
+	appctx "github.com/flowbehappy/tigate/common/context"
+	"github.com/flowbehappy/tigate/coordinator"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/kv"
+	cerror "github.com/pingcap/tiflow/pkg/errors"
+	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/tikv/client-go/v2/tikv"
+
+	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/tiflow/pkg/config"
+	"github.com/pingcap/tiflow/pkg/etcd"
 	pd "github.com/tikv/pd/client"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
-	"golang.org/x/net/netutil"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/backoff"
 )
 
 const (
-	defaultDataDir = "/tmp/cdc_data"
-	// dataDirThreshold is used to warn if the free space of the specified data-dir is lower than it, unit is GB
-	dataDirThreshold = 500
-	// maxHTTPConnection is used to limit the max concurrent connections of http server.
-	maxHTTPConnection = 1000
-	// httpConnectionTimeout is used to limit a connection max alive time of http server.
-	httpConnectionTimeout = 10 * time.Minute
-	// maxGcTunerMemory is used to limit the max memory usage of cdc server. if the memory is larger than it, gc tuner will be disabled
-	maxGcTunerMemory = 512 * 1024 * 1024 * 1024
+	cleanMetaDuration = 10 * time.Second
 )
 
-// Server is the interface for the TiCDC server
-type Server interface {
-	// Run runs the server.
-	Run(ctx context.Context) error
-	// Close closes the server.
-	Close()
+type serverImpl struct {
+	captureMu sync.Mutex
+	info      *model.CaptureInfo
+
+	liveness model.Liveness
+
+	pdClient      pd.Client
+	pdEndpoints   []string
+	coordinatorMu sync.Mutex
+	coordinator   coordinator.Coordinator
+
+	// session keeps alive between the server and etcd
+	session *concurrency.Session
+
+	EtcdClient etcd.CDCEtcdClient
+
+	KVStorage   kv.Storage
+	RegionCache *tikv.RegionCache
+	PDClock     pdutil.Clock
+
+	cancel context.CancelFunc
+
+	tcpServer  tcpserver.TCPServer
+	subModules []SubModule
 }
 
-// server implement the TiCDC Server interface
-type server struct {
-	capture      capture.Capture
-	tcpServer    tcpserver.TCPServer
-	statusServer *http.Server
-	etcdClient   etcd.CDCEtcdClient
-	// pdClient is the default upstream PD client.
-	// The PD acts as a metadata management service for TiCDC.
-	pdClient          pd.Client
-	pdAPIClient       pdutil.PDAPIClient
-	pdEndpoints       []string
-	sortEngineFactory *factory.SortEngineFactory
-	messageCenter     messaging.MessageCenter
-}
-
-// New creates a server instance.
-func New(pdEndpoints []string) (Server, error) {
-	conf := cdcconfig.GetGlobalServerConfig()
+// NewServer returns a new Server instance
+func NewServer(pdEndpoints []string) (appctx.Server, error) {
+	conf := config.GetGlobalServerConfig()
 
 	// This is to make communication between nodes possible.
 	// In other words, the nodes have to trust each other.
@@ -103,7 +91,7 @@ func New(pdEndpoints []string) (Server, error) {
 		return nil, errors.Trace(err)
 	}
 
-	s := &server{
+	s := &serverImpl{
 		pdEndpoints: pdEndpoints,
 		tcpServer:   tcpServer,
 	}
@@ -113,290 +101,149 @@ func New(pdEndpoints []string) (Server, error) {
 	return s, nil
 }
 
-func (s *server) prepare(ctx context.Context) error {
-	conf := cdcconfig.GetGlobalServerConfig()
-	grpcTLSOption, err := conf.Security.ToGRPCDialOption()
-	if err != nil {
+// initialize the server before run it.
+func (c *serverImpl) initialize(ctx context.Context) error {
+	if err := c.prepare(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	log.Info("create pd client", zap.Strings("endpoints", s.pdEndpoints))
-	s.pdClient, err = pd.NewClientWithContext(
-		ctx, s.pdEndpoints, conf.Security.PDSecurityOption(),
-		// the default `timeout` is 3s, maybe too small if the pd is busy,
-		// set to 10s to avoid frequent timeout.
-		pd.WithCustomTimeoutOption(10*time.Second),
-		pd.WithGRPCDialOptions(
-			grpcTLSOption,
-			grpc.WithBlock(),
-			grpc.WithConnectParams(grpc.ConnectParams{
-				Backoff: backoff.Config{
-					BaseDelay:  time.Second,
-					Multiplier: 1.1,
-					Jitter:     0.1,
-					MaxDelay:   3 * time.Second,
-				},
-				MinConnectTimeout: 3 * time.Second,
-			}),
-		),
-		pd.WithForwardingOption(cdcconfig.EnablePDForwarding))
-	if err != nil {
-		return errors.Trace(err)
+	c.subModules = []SubModule{
+		NewCaptureManager(c.session, c.EtcdClient),
+		NewElector(c),
+		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
+		NewGrpcServer(c.tcpServer.GrpcListener()),
 	}
-	s.pdAPIClient, err = pdutil.NewPDAPIClient(s.pdClient, conf.Security)
-	if err != nil {
-		return errors.Trace(err)
+	// register it into global var
+	for _, subModule := range c.subModules {
+		appctx.SetService(subModule.Name(), subModule)
 	}
-	log.Info("create etcdCli", zap.Strings("endpoints", s.pdEndpoints))
-	// we do not pass a `context` to create an etcd client,
-	// to prevent it's cancelled when the server is closing.
-	// For example, when the non-owner node goes offline,
-	// it would resign the campaign key which was put by call `campaign`,
-	// if this is not done due to the passed context cancelled,
-	// the key will be kept for the lease TTL, which is 10 seconds,
-	// then cause the new owner cannot be elected immediately after the old owner offline.
-	// see https://github.com/etcd-io/etcd/blob/525d53bd41/client/v3/concurrency/election.go#L98
-	etcdCli, err := etcd.CreateRawEtcdClient(conf.Security, grpcTLSOption, s.pdEndpoints...)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	cdcEtcdClient, err := etcd.NewCDCEtcdClient(ctx, etcdCli, conf.ClusterID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	s.etcdClient = cdcEtcdClient
-
-	// Collect all endpoints from pd here to make the server more robust.
-	// Because in some scenarios, the deployer may only provide one pd endpoint,
-	// this will cause the TiCDC server to fail to restart when some pd node is down.
-	allPDEndpoints, err := s.pdAPIClient.CollectMemberEndpoints(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	s.pdEndpoints = append(s.pdEndpoints, allPDEndpoints...)
-
-	err = s.initDir(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	s.setMemoryLimit()
-	s.capture = capture.NewCapture(s.pdEndpoints, s.etcdClient, s.pdClient)
+	log.Info("server initialized", zap.Any("server", c.info))
 	return nil
 }
 
-func (s *server) setMemoryLimit() {
-	conf := cdcconfig.GetGlobalServerConfig()
-	if conf.GcTunerMemoryThreshold > maxGcTunerMemory {
-		// If total memory is larger than 512GB, we will not set memory limit.
-		// Because the memory limit is not accurate, and it is not necessary to set memory limit.
-		log.Info("total memory is larger than 512GB, skip setting memory limit",
-			zap.Uint64("bytes", conf.GcTunerMemoryThreshold),
-			zap.String("memory", humanize.IBytes(conf.GcTunerMemoryThreshold)),
-		)
-		return
-	}
-	if conf.GcTunerMemoryThreshold > 0 {
-		gctuner.EnableGOGCTuner.Store(true)
-		gctuner.Tuning(conf.GcTunerMemoryThreshold)
-		log.Info("enable gctuner, set memory limit",
-			zap.Uint64("bytes", conf.GcTunerMemoryThreshold),
-			zap.String("memory", humanize.IBytes(conf.GcTunerMemoryThreshold)),
-		)
-	}
-}
-
-// Run runs the server.
-func (s *server) Run(serverCtx context.Context) error {
-	if err := s.prepare(serverCtx); err != nil {
-		return err
-	}
-
-	err := s.startStatusHTTP(s.tcpServer.HTTP1Listener())
+// Run runs the server
+func (c *serverImpl) Run(stdCtx context.Context) error {
+	err := c.initialize(stdCtx)
 	if err != nil {
-		return err
+		log.Error("init server failed", zap.Error(err))
+		return errors.Trace(err)
 	}
-
-	return s.run(serverCtx)
-}
-
-// startStatusHTTP starts the HTTP server.
-// `lis` is a listener that gives us plain-text HTTP requests.
-func (s *server) startStatusHTTP(lis net.Listener) error {
-	// LimitListener returns a Listener that accepts at most n simultaneous
-	// connections from the provided Listener. Connections that exceed the
-	// limit will wait in a queue and no new goroutines will be created until
-	// a connection is processed.
-	// We use it here to limit the max concurrent connections of statusServer.
-	lis = netutil.LimitListener(lis, maxHTTPConnection)
-	conf := cdcconfig.GetGlobalServerConfig()
-
-	logWritter := clogutil.InitGinLogWritter()
-	router := gin.New()
-	// add gin.RecoveryWithWriter() to handle unexpected panic (logging and
-	// returning status code 500)
-	router.Use(gin.RecoveryWithWriter(logWritter))
-	// router.
-	// Register APIs.
-	api.RegisterRoutes(router, s.capture, registry)
-
-	// No need to configure TLS because it is already handled by `s.tcpServer`.
-	// Add ReadTimeout and WriteTimeout to avoid some abnormal connections never close.
-	s.statusServer = &http.Server{
-		Handler:      router,
-		ReadTimeout:  httpConnectionTimeout,
-		WriteTimeout: httpConnectionTimeout,
-	}
-
-	go func() {
-		log.Info("http server is running", zap.String("addr", conf.Addr))
-		err := s.statusServer.Serve(lis)
-		if err != nil && err != http.ErrServerClosed {
-			log.Error("http server error", zap.Error(cerror.WrapError(cerror.ErrServeHTTP, err)))
-		}
+	defer func() {
+		c.Close(stdCtx)
 	}()
-	return nil
-}
 
-func (s *server) run(ctx context.Context) (err error) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	defer s.pdAPIClient.Close()
-
-	eg, egCtx := errgroup.WithContext(ctx)
-
-	eg.Go(func() error {
-		return s.tcpServer.Run(egCtx)
+	g, stdCtx := errgroup.WithContext(stdCtx)
+	// start tcp server
+	g.Go(func() error {
+		return c.tcpServer.Run(stdCtx)
 	})
-	grpcServer := grpc.NewServer()
-	//messagingProto.RegisterMessageCenterServer(grpcServer, messaging.NewMessageCenterServer(s.messageCenter))
-	eg.Go(func() error {
-		return grpcServer.Serve(s.tcpServer.GrpcListener())
-	})
-	eg.Go(func() error {
-		<-egCtx.Done()
-		grpcServer.Stop()
-		return nil
-	})
-
-	eg.Go(func() error {
-		return s.capture.Run(egCtx)
-	})
-
-	return eg.Wait()
+	// start all submodules
+	for _, sub := range c.subModules {
+		func(m SubModule) {
+			g.Go(func() error {
+				log.Info("starting sub module", zap.String("module", m.Name()))
+				return m.Run(stdCtx)
+			})
+		}(sub)
+	}
+	return errors.Trace(g.Wait())
 }
 
-// Close closes the server.
-func (s *server) Close() {
-	if s.capture != nil {
-		s.capture.Close()
+// SelfCaptureInfo gets the server info
+func (c *serverImpl) SelfInfo() (*model.CaptureInfo, error) {
+	// when c.reset has not been called yet, c.info is nil.
+	if c.info != nil {
+		return c.info, nil
 	}
-
-	if s.statusServer != nil {
-		err := s.statusServer.Close()
-		if err != nil {
-			log.Error("close status server", zap.Error(err))
-		}
-		s.statusServer = nil
-	}
-	if s.tcpServer != nil {
-		err := s.tcpServer.Close()
-		if err != nil {
-			log.Error("close tcp server", zap.Error(err))
-		}
-		s.tcpServer = nil
-	}
-
-	if s.pdClient != nil {
-		s.pdClient.Close()
-	}
+	return nil, cerror.ErrCaptureNotInitialized.GenWithStackByArgs()
 }
 
-func (s *server) initDir(ctx context.Context) error {
-	if err := s.setUpDir(ctx); err != nil {
-		return errors.Trace(err)
+func (c *serverImpl) setCoordinator(co coordinator.Coordinator) {
+	c.coordinatorMu.Lock()
+	defer c.coordinatorMu.Unlock()
+	c.coordinator = co
+}
+
+// GetCoordinator returns coordinator if it is the coordinator.
+func (c *serverImpl) GetCoordinator() (coordinator.Coordinator, error) {
+	c.coordinatorMu.Lock()
+	defer c.coordinatorMu.Unlock()
+	if c.coordinator == nil {
+		return nil, cerror.ErrNotOwner.GenWithStackByArgs()
 	}
-	conf := cdcconfig.GetGlobalServerConfig()
-	// Ensure data dir exists and read-writable.
-	diskInfo, err := checkDir(conf.DataDir)
+	return c.coordinator, nil
+}
+
+// Close closes the server by deregister it from etcd,
+// it also closes the coordinator and processorManager
+// Note: this function should be reentrant
+func (c *serverImpl) Close(ctx context.Context) {
+	defer c.cancel()
+	// Safety: Here we mainly want to stop the coordinator
+	// and ignore it if the coordinator does not exist or is not set.
+	o, _ := c.GetCoordinator()
+	if o != nil {
+		o.AsyncStop()
+		log.Info("coordinator closed", zap.String("captureID", c.info.ID))
+	}
+
+	for _, subModule := range c.subModules {
+		if err := subModule.Close(ctx); err != nil {
+			log.Warn("failed to close sub module",
+				zap.String("module", subModule.Name()),
+				zap.Error(err))
+		}
+	}
+
+	// delete server info from etcd
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), cleanMetaDuration)
+	if err := c.EtcdClient.DeleteCaptureInfo(timeoutCtx, c.info.ID); err != nil {
+		log.Warn("failed to delete server info when server exited",
+			zap.String("captureID", c.info.ID),
+			zap.Error(err))
+	}
+	cancel()
+}
+
+// Liveness returns liveness of the server.
+func (c *serverImpl) Liveness() model.Liveness {
+	return c.liveness.Load()
+}
+
+// IsCoordinator returns whether the server is an coordinator
+func (c *serverImpl) IsCoordinator() bool {
+	c.coordinatorMu.Lock()
+	defer c.coordinatorMu.Unlock()
+	return c.coordinator != nil
+}
+
+func (c *serverImpl) GetPdClient() pd.Client {
+	return c.pdClient
+}
+
+// GetCoordinatorInfo return the controller server info of current TiCDC cluster
+func (c *serverImpl) GetCoordinatorInfo(ctx context.Context) (*model.CaptureInfo, error) {
+	_, captureInfos, err := c.EtcdClient.GetCaptures(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, err
 	}
-	log.Info(fmt.Sprintf("%s is set as data-dir (%dGB available), sort-dir=%s. "+
-		"It is recommended that the disk for data-dir at least have %dGB available space",
-		conf.DataDir, diskInfo.Avail, conf.Sorter.SortDir, dataDirThreshold))
 
-	// Ensure sorter dir exists and read-writable.
-	_, err = checkDir(conf.Sorter.SortDir)
+	ownerID, err := c.EtcdClient.GetOwnerID(ctx)
 	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (s *server) setUpDir(ctx context.Context) error {
-	conf := cdcconfig.GetGlobalServerConfig()
-	if conf.DataDir != "" {
-		conf.Sorter.SortDir = filepath.Join(conf.DataDir, cdcconfig.DefaultSortDir)
-		cdcconfig.StoreGlobalServerConfig(conf)
-		return nil
+		return nil, err
 	}
 
-	// data-dir will be decided by exist changefeed for backward compatibility
-	allInfo, err := s.etcdClient.GetAllChangeFeedInfo(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	candidates := make([]string, 0, len(allInfo))
-	for _, info := range allInfo {
-		if info.SortDir != "" {
-			candidates = append(candidates, info.SortDir)
+	for _, captureInfo := range captureInfos {
+		if captureInfo.ID == ownerID {
+			return captureInfo, nil
 		}
 	}
-
-	conf.DataDir = defaultDataDir
-	best, ok := findBestDataDir(candidates)
-	if ok {
-		conf.DataDir = best
-	}
-
-	conf.Sorter.SortDir = filepath.Join(conf.DataDir, cdcconfig.DefaultSortDir)
-	cdcconfig.StoreGlobalServerConfig(conf)
-	return nil
+	return nil, cerror.ErrOwnerNotFound.FastGenByArgs()
 }
 
-func checkDir(dir string) (*fsutil.DiskInfo, error) {
-	err := os.MkdirAll(dir, 0o700)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err := fsutil.IsDirReadWritable(dir); err != nil {
-		return nil, errors.Trace(err)
-	}
-	return fsutil.GetDiskInfo(dir)
+func isErrCompacted(err error) bool {
+	return strings.Contains(err.Error(), "required revision has been compacted")
 }
 
-// try to find the best data dir by rules
-// at the moment, only consider available disk space
-func findBestDataDir(candidates []string) (result string, ok bool) {
-	var low uint64 = 0
-
-	for _, dir := range candidates {
-		info, err := checkDir(dir)
-		if err != nil {
-			log.Warn("check the availability of dir", zap.String("dir", dir), zap.Error(err))
-			continue
-		}
-		if info.Avail > low {
-			result = dir
-			low = info.Avail
-			ok = true
-		}
-	}
-
-	if !ok && len(candidates) != 0 {
-		log.Warn("try to find directory for data-dir failed, use `/tmp/cdc_data` as data-dir", zap.Strings("candidates", candidates))
-	}
-
-	return result, ok
+func (c *serverImpl) GetEtcdClient() etcd.CDCEtcdClient {
+	return c.EtcdClient
 }

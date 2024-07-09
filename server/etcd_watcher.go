@@ -11,10 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package capture
+package server
 
 import (
 	"context"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
@@ -23,7 +25,6 @@ import (
 	"github.com/pingcap/tiflow/pkg/orchestrator"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
-	"time"
 )
 
 type EtcdWatcher struct {

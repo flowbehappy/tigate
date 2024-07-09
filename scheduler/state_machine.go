@@ -16,6 +16,7 @@ package scheduler
 import (
 	"encoding/json"
 	"fmt"
+
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -23,7 +24,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Role is the role of a capture.
+// Role is the role of a server.
 type Role int
 
 const (
@@ -61,7 +62,7 @@ func (r Role) String() string {
 //	│ Commit ├──>│ Working     │───────────────>│ Removing │
 //	└────────┘   └─────────────┘                └──────────┘
 //
-// When a capture shutdown unexpectedly, we may need to transit the state to
+// When a server shutdown unexpectedly, we may need to transit the state to
 // Absent or Working immediately.
 //
 //nolint:revive
@@ -131,18 +132,18 @@ type InferiorStatus interface {
 type StateMachine struct {
 	ID    InferiorID
 	State SchedulerStatus
-	// Primary is the capture ID that is currently running the inferior.
+	// Primary is the server ID that is currently running the inferior.
 	Primary model.CaptureID
-	// Captures is a map of captures that has the inferior.
-	// NB: Invariant, 1) at most one primary, 2) primary capture must be in
+	// Servers is a map of captures that has the inferior.
+	// NB: Invariant, 1) at most one primary, 2) primary server must be in
 	//     CaptureRolePrimary.
-	Captures map[model.CaptureID]Role
+	Servers map[model.CaptureID]Role
 
 	// Inferior handles the real logic
 	Inferior Inferior
 }
 
-// NewStateMachine build a state machine from all capture reported status
+// NewStateMachine build a state machine from all server reported status
 // it could be called after a scheduler is bootstrapped
 func NewStateMachine(
 	id InferiorID,
@@ -151,7 +152,7 @@ func NewStateMachine(
 ) (*StateMachine, error) {
 	sm := &StateMachine{
 		ID:       id,
-		Captures: make(map[string]Role),
+		Servers:  make(map[string]Role),
 		Inferior: inferior,
 	}
 	// Count of captures that is in Stopping states.
@@ -195,11 +196,11 @@ func NewStateMachine(
 				return nil, errors.Trace(err)
 			}
 		case ComponentStatusStopping:
-			// The capture is stopping the inferior. It is possible that the
-			// capture is primary, and is still working.
+			// The server is stopping the inferior. It is possible that the
+			// server is primary, and is still working.
 			// We need to wait its state becomes Stopped or Absent before
 			// proceeding further scheduling.
-			log.Warn("found a stopping capture during initializing",
+			log.Warn("found a stopping server during initializing",
 				zap.Any("ID", sm.ID),
 				zap.Any("statemachine", sm),
 				zap.Any("status", status))
@@ -231,12 +232,12 @@ func NewStateMachine(
 	if committed {
 		sm.State = SchedulerStatusCommit
 	}
-	// no capture is bind, set to absent status, will trigger an add command
-	if len(sm.Captures) == 0 {
+	// no server is bind, set to absent status, will trigger an add command
+	if len(sm.Servers) == 0 {
 		sm.State = SchedulerStatusAbsent
 	}
 	// all captures are in stopping status
-	if sm.State == SchedulerStatusUnknown && len(sm.Captures) == stoppingCount {
+	if sm.State == SchedulerStatusUnknown && len(sm.Servers) == stoppingCount {
 		sm.State = SchedulerStatusRemoving
 	}
 	log.Info("initialize state machine",
@@ -251,7 +252,7 @@ func (s *StateMachine) hasRole(role Role) bool {
 }
 
 func (s *StateMachine) isInRole(captureID model.CaptureID, role Role) bool {
-	rc, ok := s.Captures[captureID]
+	rc, ok := s.Servers[captureID]
 	if !ok {
 		return false
 	}
@@ -259,7 +260,7 @@ func (s *StateMachine) isInRole(captureID model.CaptureID, role Role) bool {
 }
 
 func (s *StateMachine) getRole(role Role) (model.CaptureID, bool) {
-	for captureID, cr := range s.Captures {
+	for captureID, cr := range s.Servers {
 		if cr == role {
 			return captureID, true
 		}
@@ -268,47 +269,47 @@ func (s *StateMachine) getRole(role Role) (model.CaptureID, bool) {
 }
 
 func (s *StateMachine) setCapture(captureID model.CaptureID, role Role) error {
-	cr, ok := s.Captures[captureID]
+	cr, ok := s.Servers[captureID]
 	if ok && cr != role {
 		jsonR, _ := json.Marshal(s)
-		return errors.New("marshal capture failure: " + string(jsonR))
+		return errors.New("marshal server failure: " + string(jsonR))
 	}
-	s.Captures[captureID] = role
+	s.Servers[captureID] = role
 	return nil
 }
 
 func (s *StateMachine) clearCapture(captureID model.CaptureID, role Role) error {
-	cr, ok := s.Captures[captureID]
+	cr, ok := s.Servers[captureID]
 	if ok && cr != role {
 		jsonR, _ := json.Marshal(s)
-		return errors.New("marshal capture failure: " + string(jsonR))
+		return errors.New("marshal server failure: " + string(jsonR))
 	}
-	delete(s.Captures, captureID)
+	delete(s.Servers, captureID)
 	return nil
 }
 
 func (s *StateMachine) promoteSecondary(captureID model.CaptureID) error {
 	if s.Primary == captureID {
-		log.Warn("capture is already promoted as the primary",
+		log.Warn("server is already promoted as the primary",
 			zap.String("captureID", captureID),
 			zap.Any("statemachine", s))
 		return nil
 	}
-	role, ok := s.Captures[captureID]
+	role, ok := s.Servers[captureID]
 	if ok && role != RoleSecondary {
 		jsonR, _ := json.Marshal(s)
-		return errors.New("marshal capture failure: " + string(jsonR))
+		return errors.New("marshal server failure: " + string(jsonR))
 	}
 	if s.Primary != "" {
-		delete(s.Captures, s.Primary)
+		delete(s.Servers, s.Primary)
 	}
 	s.Primary = captureID
-	s.Captures[s.Primary] = RolePrimary
+	s.Servers[s.Primary] = RolePrimary
 	return nil
 }
 
 func (s *StateMachine) clearPrimary() {
-	delete(s.Captures, s.Primary)
+	delete(s.Servers, s.Primary)
 	s.Primary = ""
 }
 
@@ -346,7 +347,7 @@ func (s *StateMachine) checkInvariant(
 		return s.inconsistentError(input, captureID,
 			"ID must be the same")
 	}
-	if len(s.Captures) == 0 {
+	if len(s.Servers) == 0 {
 		if s.State == SchedulerStatusPrepare ||
 			s.State == SchedulerStatusCommit ||
 			s.State == SchedulerStatusWorking {
@@ -356,18 +357,18 @@ func (s *StateMachine) checkInvariant(
 				"empty primary/secondary in state prepare/commit/working")
 		}
 	}
-	roleP, okP := s.Captures[s.Primary]
-	if (!okP && s.Primary != "") || // Primary is not in Captures.
+	roleP, okP := s.Servers[s.Primary]
+	if (!okP && s.Primary != "") || // Primary is not in Servers.
 		(okP && roleP != RolePrimary) { // Primary is not in primary role.
 		return s.inconsistentError(input, captureID,
-			"capture inconsistent")
+			"server inconsistent")
 	}
 
 	// check if the primary role is correct
-	for captureID, role := range s.Captures {
+	for captureID, role := range s.Servers {
 		if role == RolePrimary && captureID != s.Primary {
 			return s.multiplePrimaryError(input, captureID,
-				"capture inconsistent")
+				"server inconsistent")
 		}
 	}
 	return nil
@@ -377,7 +378,7 @@ func (s *StateMachine) checkInvariant(
 func (s *StateMachine) poll(
 	input InferiorStatus, captureID model.CaptureID,
 ) ([]rpc.Message, error) {
-	if _, ok := s.Captures[captureID]; !ok {
+	if _, ok := s.Servers[captureID]; !ok {
 		return nil, nil
 	}
 
@@ -434,7 +435,7 @@ func (s *StateMachine) pollOnAbsent(
 		return true, errors.Trace(err)
 
 	case ComponentStatusStopped:
-		// Ignore stopped state as a capture may be shutdown unexpectedly.
+		// Ignore stopped state as a server may be shutdown unexpectedly.
 		return false, nil
 	case ComponentStatusPreparing,
 		ComponentStatusPrepared,
@@ -486,7 +487,7 @@ func (s *StateMachine) pollOnPrepare(
 			return nil, false, nil
 		}
 		if s.isInRole(captureID, RoleSecondary) {
-			log.Info("capture is stopped during Prepare",
+			log.Info("server is stopped during Prepare",
 				zap.Any("status", input),
 				zap.String("captureID", captureID),
 				zap.Any("statemachine", s))
@@ -521,12 +522,12 @@ func (s *StateMachine) pollOnCommit(
 	case ComponentStatusPrepared:
 		if s.isInRole(captureID, RoleSecondary) {
 			if s.Primary != "" {
-				// Secondary capture is prepared and waiting for stopping primary.
+				// Secondary server is prepared and waiting for stopping primary.
 				// Send message to primary, ask for stopping.
 				return s.Inferior.NewRemoveInferiorMessage(s.Primary), false, nil
 			}
 			if s.hasRole(RoleUndetermined) {
-				// we will has the RoleUndetermined only when capture reported stopping status, do not needed to send stop message
+				// we will has the RoleUndetermined only when server reported stopping status, do not needed to send stop message
 				// There are other captures that have the inferior.
 				// Must waiting for other captures become stopped or absent
 				// before promoting the secondary, otherwise there may be two
@@ -538,7 +539,7 @@ func (s *StateMachine) pollOnCommit(
 				return nil, false, nil
 			}
 			// No primary, promote secondary to primary.
-			// add directly or move inferior after all primary capture is reported stopped status
+			// add directly or move inferior after all primary server is reported stopped status
 			err := s.promoteSecondary(captureID)
 			if err != nil {
 				return nil, false, errors.Trace(err)
@@ -598,7 +599,7 @@ func (s *StateMachine) pollOnCommit(
 			}
 			return nil, true, nil
 		} else if s.isInRole(captureID, RoleUndetermined) {
-			log.Info("capture is stopped during Commit",
+			log.Info("server is stopped during Commit",
 				zap.Any("status", input),
 				zap.String("captureID", captureID),
 				zap.Any("statemachine", s))
@@ -637,7 +638,7 @@ func (s *StateMachine) pollOnCommit(
 			s.Inferior.UpdateStatus(input)
 			return nil, false, nil
 		} else if s.isInRole(captureID, RoleUndetermined) {
-			log.Info("capture is stopping during Commit",
+			log.Info("server is stopping during Commit",
 				zap.Any("status", input),
 				zap.String("captureID", captureID),
 				zap.Any("statemachine", s))
@@ -711,7 +712,7 @@ func (s *StateMachine) pollOnRemoving(
 			err = s.clearCapture(captureID, RoleUndetermined)
 		}
 		if err != nil {
-			log.Warn("remove capture with error",
+			log.Warn("remove server with error",
 				zap.Any("status", input),
 				zap.String("captureID", captureID),
 				zap.Any("statemachine", s),
@@ -776,7 +777,7 @@ func (s *StateMachine) handleMoveInferior(
 	}
 	// Ignore move inferior if
 	// 1) it's not in Working state or
-	// 2) the dest capture is the primary.
+	// 2) the dest server is the primary.
 	if s.State != SchedulerStatusWorking || s.Primary == dest {
 		log.Warn("move inferior is ignored",
 			zap.Any("statemachine", s))
@@ -815,22 +816,22 @@ func (s *StateMachine) handleRemoveInferior() ([]rpc.Message, error) {
 	return s.poll(status, s.Primary)
 }
 
-// handleCaptureShutdown handle capture shutdown event.
+// handleCaptureShutdown handle server shutdown event.
 // Besides returning messages and errors, it also returns a bool to indicate
-// whether s is affected by the capture shutdown.
+// whether s is affected by the server shutdown.
 func (s *StateMachine) handleCaptureShutdown(
 	captureID model.CaptureID,
 ) ([]rpc.Message, bool, error) {
-	_, ok := s.Captures[captureID]
+	_, ok := s.Servers[captureID]
 	if !ok {
-		// r is not affected by the capture shutdown.
+		// r is not affected by the server shutdown.
 		return nil, false, nil
 	}
-	// The capture has shutdown, the inferior has stopped.
+	// The server has shutdown, the inferior has stopped.
 	status := s.Inferior.NewInferiorStatus(ComponentStatusStopped)
 	oldState := s.State
 	msgs, err := s.poll(status, captureID)
-	log.Info("state transition, capture shutdown",
+	log.Info("state transition, server shutdown",
 		zap.Any("statemachine", s),
 		zap.Stringer("old", oldState),
 		zap.Stringer("new", s.State))
@@ -839,6 +840,6 @@ func (s *StateMachine) handleCaptureShutdown(
 
 func (s *StateMachine) hasRemoved() bool {
 	// It has been removed successfully if it's state is Removing,
-	// and there is no capture has it.
-	return s.State == SchedulerStatusRemoving && len(s.Captures) == 0
+	// and there is no server has it.
+	return s.State == SchedulerStatusRemoving && len(s.Servers) == 0
 }

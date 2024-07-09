@@ -1073,7 +1073,7 @@ type ChangeFeedInfo struct {
 	StartTs uint64 `json:"start_ts,omitempty"`
 	// The ChangeFeed will exits until sync to timestamp TargetTs
 	TargetTs uint64 `json:"target_ts,omitempty"`
-	// used for admin job notification, trigger watch event in capture
+	// used for admin job notification, trigger watch event in server
 	AdminJobType   model.AdminJobType `json:"admin_job_type,omitempty"`
 	Config         *ReplicaConfig     `json:"config,omitempty"`
 	State          model.FeedState    `json:"state,omitempty"`
@@ -1156,7 +1156,7 @@ type ProcessorDetail struct {
 	Tables []int64 `json:"table_ids"`
 }
 
-// Liveness is the liveness status of a capture.
+// Liveness is the liveness status of a server.
 // Liveness can only be changed from alive to stopping, and no way back.
 type Liveness int32
 
@@ -1171,7 +1171,7 @@ type ServerStatus struct {
 	Liveness  Liveness `json:"liveness"`
 }
 
-// Capture holds common information of a capture in cdc
+// Capture holds common information of a server in cdc
 type Capture struct {
 	ID            string `json:"id"`
 	IsOwner       bool   `json:"is_owner"`

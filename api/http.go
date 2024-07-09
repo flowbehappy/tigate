@@ -14,23 +14,24 @@
 package api
 
 import (
+	"net/http/pprof"
+
 	v2 "github.com/flowbehappy/tigate/api/v2"
-	"github.com/flowbehappy/tigate/capture"
+	appctx "github.com/flowbehappy/tigate/common/context"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"net/http/pprof"
 )
 
 // RegisterRoutes create a router for OpenAPI
 func RegisterRoutes(
 	router *gin.Engine,
-	capture capture.Capture,
+	server appctx.Server,
 	registry prometheus.Gatherer,
 ) {
 
 	// Open API V2
-	v2.RegisterOpenAPIV2Routes(router, v2.NewOpenAPIV2(capture))
+	v2.RegisterOpenAPIV2Routes(router, v2.NewOpenAPIV2(server))
 
 	// pprof debug API
 	pprofGroup := router.Group("/debug/pprof/")

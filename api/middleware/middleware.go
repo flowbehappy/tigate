@@ -15,22 +15,22 @@ package middleware
 
 import (
 	"bufio"
-	"github.com/pingcap/tiflow/pkg/httputil"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/flowbehappy/tigate/capture"
+	appctx "github.com/flowbehappy/tigate/common/context"
 	"github.com/gin-gonic/gin"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
+	"github.com/pingcap/tiflow/pkg/httputil"
 	"go.uber.org/zap"
 )
 
 const (
-	// forwardFromCapture is a header to be set when forwarding requests to owner
-	forwardFromCapture = "TiCDC-ForwardFromCapture"
+	// forwardFrom is a header to be set when forwarding requests to owner
+	forwardFrom = "TiCDC-ForwardFrom"
 	// forwardTimes is a header to identify how many times the request has been forwarded
 	forwardTimes = "TiCDC-ForwardTimes"
 	// maxForwardTimes is the max time a request can be forwarded,  non-controller->controller->changefeed owner
@@ -72,10 +72,10 @@ func LogMiddleware() gin.HandlerFunc {
 }
 
 // ForwardToCoordinatorMiddleware forward a request to controller
-func ForwardToCoordinatorMiddleware(p capture.Capture) gin.HandlerFunc {
+func ForwardToCoordinatorMiddleware(server appctx.Server) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		if !p.IsCoordinator() {
-			ForwardToOwner(ctx, p)
+		if !server.IsCoordinator() {
+			ForwardToOwner(ctx, server)
 
 			// Without calling Abort(), Gin will continue to process the next handler,
 			// execute code which should only be run by the owner, and cause a panic.
@@ -88,9 +88,9 @@ func ForwardToCoordinatorMiddleware(p capture.Capture) gin.HandlerFunc {
 }
 
 // ForwardToOwner forwards a request to the controller
-func ForwardToOwner(c *gin.Context, p capture.Capture) {
+func ForwardToOwner(c *gin.Context, server appctx.Server) {
 	ctx := c.Request.Context()
-	info, err := p.SelfCaptureInfo()
+	info, err := server.SelfInfo()
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -98,17 +98,17 @@ func ForwardToOwner(c *gin.Context, p capture.Capture) {
 
 	var owner *model.CaptureInfo
 	// get coordinator info
-	owner, err = p.GetCoordinatorInfo(ctx)
+	owner, err = server.GetCoordinatorInfo(ctx)
 	if err != nil {
 		log.Info("get owner failed", zap.Error(err))
 		_ = c.Error(err)
 		return
 	}
-	ForwardToCapture(c, info.ID, owner.AdvertiseAddr)
+	ForwardToServer(c, info.ID, owner.AdvertiseAddr)
 }
 
-// ForwardToCapture forward request to another
-func ForwardToCapture(c *gin.Context, fromID, toAddr string) {
+// ForwardToServer forward request to another
+func ForwardToServer(c *gin.Context, fromID, toAddr string) {
 	ctx := c.Request.Context()
 
 	timeStr := c.GetHeader(forwardTimes)
@@ -151,14 +151,14 @@ func ForwardToCapture(c *gin.Context, fromID, toAddr string) {
 			req.Header.Add(k, vv)
 		}
 	}
-	log.Info("forwarding request to capture",
+	log.Info("forwarding request to server",
 		zap.String("url", c.Request.RequestURI),
 		zap.String("method", c.Request.Method),
 		zap.String("fromID", fromID),
 		zap.String("toAddr", toAddr),
 		zap.String("forwardTimes", timeStr))
 
-	req.Header.Add(forwardFromCapture, fromID)
+	req.Header.Add(forwardFrom, fromID)
 	lastForwardTimes++
 	req.Header.Add(forwardTimes, strconv.Itoa(int(lastForwardTimes)))
 	// forward toAddr owner
