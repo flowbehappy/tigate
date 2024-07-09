@@ -24,6 +24,7 @@ import (
 	"github.com/flowbehappy/tigate/common"
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -34,6 +35,8 @@ import (
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"go.uber.org/zap"
 )
+
+var MockDB *sql.DB
 
 type preparedDMLs struct {
 	startTs  []model.Ts
@@ -297,6 +300,11 @@ func CreateMysqlDBConn(dsnStr string) (*sql.DB, error) {
 	if err != nil {
 		return nil, cerror.ErrMySQLConnectionError.Wrap(err).GenWithStack("fail to open MySQL connection")
 	}
+
+	failpoint.Inject("mockDB", func() {
+		log.Info("inject mockDB")
+		db = MockDB
+	})
 
 	err = db.PingContext(context.Background())
 	if err != nil {

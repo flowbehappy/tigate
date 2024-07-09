@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/flowbehappy/tigate/common"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/stretchr/testify/require"
 )
 
