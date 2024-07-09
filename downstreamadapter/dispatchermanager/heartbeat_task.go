@@ -16,6 +16,7 @@ package dispatchermanager
 import (
 	"time"
 
+	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 )
@@ -41,6 +42,10 @@ func newHeartBeatSendTask(m *EventDispatcherManager) *HeartbeatSendTask {
 
 func (t *HeartbeatSendTask) GetStatus() threadpool.TaskStatus {
 	return t.taskStatus
+}
+
+func (t *HeartbeatSendTask) SetStatus(taskStatus threadpool.TaskStatus) {
+	t.taskStatus = taskStatus
 }
 
 func (t *HeartbeatSendTask) Execute(timeout time.Duration) threadpool.TaskStatus {
@@ -82,6 +87,11 @@ func newHeartbeatRecvTask(m *EventDispatcherManager) *HeartbeatRecvTask {
 func (t *HeartbeatRecvTask) GetStatus() threadpool.TaskStatus {
 	return t.taskStatus
 }
+
+func (t *HeartbeatRecvTask) SetStatus(taskStatus threadpool.TaskStatus) {
+	t.taskStatus = taskStatus
+}
+
 func (t *HeartbeatRecvTask) Await() threadpool.TaskStatus {
 }
 
@@ -99,7 +109,11 @@ func (t *HeartbeatRecvTask) Execute(timeout time.Duration) threadpool.TaskStatus
 				var message dispatcher.HeartBeatResponseMessage
 				for _, progress := range info.TableProgresses {
 					message.OtherTableProgress = append(message.OtherTableProgress, &dispatcher.TableSpanProgress{
-						Span:         progress.Span,
+						Span: &common.TableSpan{
+							TableID:  progress.Span.TableID,
+							StartKey: progress.Span.StartKey,
+							EndKey:   progress.Span.EndKey,
+						},
 						IsBlocked:    progress.IsBlocked,
 						BlockTs:      progress.BlockTs,
 						CheckpointTs: progress.CheckpointTs,
@@ -113,7 +127,11 @@ func (t *HeartbeatRecvTask) Execute(timeout time.Duration) threadpool.TaskStatus
 				var message dispatcher.HeartBeatResponseMessage
 				for _, progress := range info.TableProgresses {
 					message.OtherTableProgress = append(message.OtherTableProgress, &dispatcher.TableSpanProgress{
-						Span:         progress.Span,
+						Span: &common.TableSpan{
+							TableID:  progress.Span.TableID,
+							StartKey: progress.Span.StartKey,
+							EndKey:   progress.Span.EndKey,
+						},
 						IsBlocked:    progress.IsBlocked,
 						BlockTs:      progress.BlockTs,
 						CheckpointTs: progress.CheckpointTs,

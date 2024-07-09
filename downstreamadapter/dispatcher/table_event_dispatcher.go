@@ -16,6 +16,7 @@ package dispatcher
 import (
 	"time"
 
+	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 )
 
@@ -38,8 +39,8 @@ Each EventDispatcherManager can have multiple TableEventDispatcher.
 */
 type TableEventDispatcher struct {
 	Id        uint64
-	Ch        <-chan *Event // 转换成一个函数
-	TableSpan *Span
+	Ch        chan *common.TxnEvent // 转换成一个函数
+	TableSpan *common.TableSpan
 	Sink      sink.Sink
 
 	State      *State
@@ -58,7 +59,7 @@ func (d *TableEventDispatcher) GetSink() sink.Sink {
 	return d.Sink
 }
 
-func (d *TableEventDispatcher) GetTableSpan() *TableSpan {
+func (d *TableEventDispatcher) GetTableSpan() *common.TableSpan {
 	return d.TableSpan
 }
 
@@ -66,7 +67,7 @@ func (d *TableEventDispatcher) GetState() *State {
 	return d.State
 }
 
-func (d *TableEventDispatcher) GetEventChan() chan *Event {
+func (d *TableEventDispatcher) GetEventChan() chan *common.TxnEvent {
 	return d.Ch
 }
 
