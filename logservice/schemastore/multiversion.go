@@ -53,11 +53,11 @@ func newEmptyVersionedTableInfoStore(tableID TableID) *versionedTableInfoStore {
 	}
 }
 
-// TableInfo can from upstream snapshot or create table ddl
-func newVersionedTableInfoStore(tableID TableID, version Timestamp, info *common.TableInfo) *versionedTableInfoStore {
-	store := newEmptyVersionedTableInfoStore(tableID)
-	store.infos = append(store.infos, &tableInfoItem{version: version, info: info})
-	return store
+func (v *versionedTableInfoStore) addInitialTableInfo(info *common.TableInfo) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	assertEmpty(v.infos)
+	v.infos = append(v.infos, &tableInfoItem{version: Timestamp(info.Version), info: info})
 }
 
 func (v *versionedTableInfoStore) getTableID() TableID {
@@ -93,6 +93,10 @@ func (v *versionedTableInfoStore) getFirstVersion() Timestamp {
 func (v *versionedTableInfoStore) getTableInfo(ts Timestamp) (*common.TableInfo, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+
+	if !v.initialized {
+		log.Panic("should wait for table info initialized")
+	}
 
 	if ts >= v.deleteVersion {
 		return nil, errors.New("table info deleted")

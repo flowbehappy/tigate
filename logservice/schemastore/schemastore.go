@@ -51,9 +51,6 @@ type schemaStore struct {
 	// all following fields are guarded by this mutex
 	mu sync.Mutex
 
-	// schemaStore only store ddl event which finished ts is larger than gcTS
-	// TODO: > gcTS or >= gcTS
-	gcTS Timestamp
 	// max finishedTS of all applied ddl events
 	finishedDDLTS Timestamp
 	// max schemaVersion of all applied ddl events
@@ -73,16 +70,15 @@ type schemaStore struct {
 }
 
 func NewSchemaStore(root string, storage kv.Storage, minRequiredTS Timestamp) (SchemaStore, Timestamp, error) {
-	dataStorage, gcTS, resolvedTS := newPersistentStorage(root, storage, minRequiredTS)
+	dataStorage, finishedDDLTS, schemaVersion, databaseMap, resolvedTS := newPersistentStorage(root, storage, minRequiredTS)
 
 	s := &schemaStore{
 		unsortedCache:     newUnSortedDDLCache(),
 		dataStorage:       dataStorage,
 		eventCh:           make(chan interface{}, 1024),
-		gcTS:              gcTS,
-		finishedDDLTS:     0,                     // TODO: fetch from storage
-		schemaVersion:     0,                     // TODO: fetch from storage
-		databaseMap:       make(DatabaseInfoMap), // TODO: fetch from storage
+		finishedDDLTS:     finishedDDLTS,
+		schemaVersion:     int64(schemaVersion),
+		databaseMap:       databaseMap,
 		tableInfoStoreMap: make(TableInfoStoreMap),
 		dispatchersMap:    make(DispatcherInfoMap),
 	}
@@ -108,11 +104,17 @@ func (s *schemaStore) run(ctx context.Context) error {
 					log.Fatal("write ddl event failed", zap.Error(err))
 				}
 			case Timestamp:
-				err := s.dataStorage.updateResolvedTS(v)
-				if err != nil {
-					log.Fatal("update resolved ts failed", zap.Error(err))
-				}
 				resolvedEvents := s.unsortedCache.fetchSortedDDLEventBeforeTS(v)
+				if len(resolvedEvents) == 0 {
+					continue
+				}
+				// TODO: whether the events is ordered by finishedDDLTS and schemaVersion
+				newFinishedDDLTS := resolvedEvents[len(resolvedEvents)-1].Job.BinlogInfo.FinishedTS
+				newSchemaVersion := resolvedEvents[len(resolvedEvents)-1].Job.Version
+				err := s.dataStorage.updateStoreMeta(v, Timestamp(newFinishedDDLTS), Timestamp(newSchemaVersion))
+				if err != nil {
+					log.Fatal("update ts failed", zap.Error(err))
+				}
 				s.mu.Lock()
 				defer s.mu.Unlock()
 				for _, event := range resolvedEvents {
@@ -147,8 +149,8 @@ func (s *schemaStore) AdvanceResolvedTS(resolvedTS Timestamp) error {
 }
 
 func (s *schemaStore) DoGC(gcTS Timestamp) error {
-	// gc databaseMap and dataStorage
-	return nil
+	// TODO: gc databaseMap
+	return s.dataStorage.gc(gcTS)
 }
 
 func (s *schemaStore) GetAllPhysicalTables(dispatcherID DispatcherID, filter Filter, ts Timestamp) ([]TableID, error) {
@@ -159,20 +161,21 @@ func (s *schemaStore) RegisterDispatcher(
 	dispatcherID DispatcherID, tableID TableID, filter Filter, startTS Timestamp,
 ) error {
 	s.mu.Lock()
-	if startTS < s.gcTS {
+	if startTS < s.dataStorage.getGCTS() {
 		return errors.New("start ts is old than gc ts")
 	}
 	s.dispatchersMap[dispatcherID] = DispatcherInfo{
 		tableID: tableID,
 		filter:  filter,
 	}
-	fillSchemaNameWrapper := func(job *model.Job) error {
+	getSchemaName := func(schemaID SchemaID) (string, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		if err := fillSchemaName(job, s.databaseMap); err != nil {
-			return err
+		databaseInfo, ok := s.databaseMap[DatabaseID(schemaID)]
+		if !ok {
+			return "", errors.New("database not found")
 		}
-		return nil
+		return databaseInfo.Name, nil
 	}
 	// check whether there is already a versionedTableInfoStore satisfy the needs
 	store, ok := s.tableInfoStoreMap[tableID]
@@ -182,7 +185,7 @@ func (s *schemaStore) RegisterDispatcher(
 		store.registerDispatcher(dispatcherID, startTS)
 		endTS := s.finishedDDLTS
 		s.mu.Unlock()
-		err := s.dataStorage.buildVersionedTableInfoStore(store, startTS, endTS, fillSchemaNameWrapper)
+		err := s.dataStorage.buildVersionedTableInfoStore(store, startTS, endTS, getSchemaName)
 		if err != nil {
 			// TODO: unregister dispatcher, make sure other wait go routines exit successfully
 			return err
@@ -202,7 +205,7 @@ func (s *schemaStore) RegisterDispatcher(
 
 	// TODO: there may be multiple dispatchers build the same versionedTableInfoStore, optimize it later
 	newStore := newEmptyVersionedTableInfoStore(tableID)
-	err := s.dataStorage.buildVersionedTableInfoStore(newStore, startTS, endTS, fillSchemaNameWrapper)
+	err := s.dataStorage.buildVersionedTableInfoStore(newStore, startTS, endTS, getSchemaName)
 	if err != nil {
 		return err
 	}
@@ -211,7 +214,7 @@ func (s *schemaStore) RegisterDispatcher(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// check whether the data is gced again
-	if startTS < s.gcTS {
+	if startTS < s.dataStorage.getGCTS() {
 		// TODO: unregister dispatcher, make sure other wait go routines exit successfully
 		return errors.New("start ts is old than gc ts")
 	}
@@ -271,10 +274,12 @@ func (s *schemaStore) GetMaxFinishedDDLTS() Timestamp {
 func (s *schemaStore) GetTableInfo(tableID TableID, ts Timestamp) (*common.TableInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if store, ok := s.tableInfoStoreMap[tableID]; ok {
-		return store.getTableInfo(ts)
+	store, ok := s.tableInfoStoreMap[tableID]
+	if !ok {
+		return nil, errors.New("table not found")
 	}
-	return nil, errors.New("table not found")
+	store.waitTableInfoInitialized()
+	return store.getTableInfo(ts)
 }
 
 func (s *schemaStore) GetNextDDLEvent(dispatcherID DispatcherID) (*DDLEvent, Timestamp, error) {
