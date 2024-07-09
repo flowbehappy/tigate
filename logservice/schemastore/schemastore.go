@@ -6,32 +6,35 @@ import (
 	"math"
 	"sync"
 
+	"github.com/flowbehappy/tigate/common"
 	"github.com/pingcap/log"
-	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
 type SchemaStore interface {
+	// WriteDDLEvent
 	// Note that ddlEvent won't come in order
 	WriteDDLEvent(ddlEvent DDLEvent) error
 
-	AdvanceResolvedTs(resolvedTs Timestamp) error
+	AdvanceResolvedTS(resolvedTS Timestamp) error
 
-	DoGC(resolvedTs Timestamp) error
+	DoGC(gcTS Timestamp) error
 
-	GetAllPhyscialTables(dispatcherID DispatcherID, filter Filter, ts Timestamp) ([]TableID, error)
+	GetAllPhysicalTables(dispatcherID DispatcherID, filter Filter, ts Timestamp) ([]TableID, error)
 
-	// how to deal with TableEventDispatcher, use a different interface?
+	// RegisterDispatcher register the dispatcher into the schema store.
+	// todo: how to deal with TableEventDispatcher, use a different interface?
 	RegisterDispatcher(dispatcherID DispatcherID, tableID TableID, filter Filter, ts Timestamp) error
 
-	UpdateDispatcherCheckpointTS(dispatcherID DispatcherID, ts Timestamp) error
+	UpdateDispatcherSendTS(dispatcherID DispatcherID, ts Timestamp) error
 
 	UnregisterDispatcher(dispatcherID DispatcherID) error
 
 	ResolvedTS() Timestamp
 
-	GetTableInfo(tableID TableID, ts Timestamp) (*TableInfo, error)
+	GetTableInfo(tableID TableID, ts Timestamp) (*common.TableInfo, error)
 
 	GetNextDDLEvent(dispatcherID DispatcherID) (*DDLEvent, Timestamp, error)
 }
@@ -62,10 +65,11 @@ type schemaStore struct {
 	// how to deal with table event dispatchers？
 }
 
-func NewSchemaStore(root string, storage tidbkv.Storage, minRequiredTS Timestamp) (SchemaStore, Timestamp, error) {
+func NewSchemaStore(root string, storage kv.Storage, minRequiredTS Timestamp) (SchemaStore, Timestamp, error) {
 	ctx := context.Background()
 
 	dataStorage, gcTS, resolvedTS := newPersistentStorage(root, storage, minRequiredTS)
+	// todo: it looks this goroutine is not controlled by the ctx, shall we cancel it?
 	go dataStorage.run(ctx)
 
 	return &schemaStore{
@@ -83,15 +87,17 @@ func (s *schemaStore) WriteDDLEvent(ddlEvent DDLEvent) error {
 	return nil
 }
 
-func (s *schemaStore) AdvanceResolvedTs(resolvedTS Timestamp) error {
+func (s *schemaStore) AdvanceResolvedTS(resolvedTS Timestamp) error {
 	resolvedEvents := s.unsortedCache.getSortedDDLEventBeforeTS(resolvedTS)
 	s.mu.Lock()
 	if resolvedTS < s.resolvedTS {
 		log.Fatal("resolved ts should not go back", zap.Uint64("resolved ts", uint64(resolvedTS)), zap.Uint64("current resolved ts", uint64(s.resolvedTS)))
 	}
 	for _, event := range resolvedEvents {
-		handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap)
-		// check?
+		if err := handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap); err != nil {
+			return err
+		}
+		// todo: check?
 		s.schemaVersion = event.Job.Version
 	}
 	s.resolvedTS = resolvedTS
@@ -105,27 +111,32 @@ func (s *schemaStore) DoGC(gcTS Timestamp) error {
 	return nil
 }
 
-func (s *schemaStore) GetAllPhyscialTables(dispatcherID DispatcherID, filter Filter, ts Timestamp) ([]TableID, error) {
+func (s *schemaStore) GetAllPhysicalTables(dispatcherID DispatcherID, filter Filter, ts Timestamp) ([]TableID, error) {
 	return nil, nil
 }
 
-func (s *schemaStore) RegisterDispatcher(dispatcherID DispatcherID, tableID TableID, filter Filter, startTS Timestamp) error {
+func (s *schemaStore) RegisterDispatcher(
+	dispatcherID DispatcherID, tableID TableID, filter Filter, startTS Timestamp,
+) error {
 	s.mu.Lock()
 	// check whether there is already a versionedTableInfoStore satisfy the needs
-	if oldStore, ok := s.tableInfoStoreMap[tableID]; ok && oldStore.getStartTS() <= startTS {
+	if oldStore, ok := s.tableInfoStoreMap[tableID]; ok && oldStore.getFirstVersion() <= startTS {
 		oldStore.registerDispatcher(dispatcherID, startTS)
 		return nil
 	}
 	if startTS < s.gcTS {
 		return errors.New("start ts is old than gc ts")
 	}
+	// TODO: stop gc on oldStore
 	endTS := s.resolvedTS
 	s.mu.Unlock()
 
 	fillSchemaNameWrapper := func(job *model.Job) error {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		fillSchemaName(job, s.databaseMap)
+		if err := fillSchemaName(job, s.databaseMap); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -144,15 +155,12 @@ func (s *schemaStore) RegisterDispatcher(dispatcherID DispatcherID, tableID Tabl
 	oldStore, ok := s.tableInfoStoreMap[tableID]
 	if ok {
 		// check again whether the oldStore has a more old start ts
-		if oldStore.getStartTS() <= startTS {
+		if oldStore.getFirstVersion() <= startTS {
 			oldStore.registerDispatcher(dispatcherID, startTS)
 			return nil
 		} else {
 			newTableInfoStore.checkAndCopyTailFrom(oldStore)
-			dispatchers := oldStore.getAllRegisteredDispatchers()
-			for dispatcher, ts := range dispatchers {
-				newTableInfoStore.registerDispatcher(dispatcher, ts)
-			}
+			newTableInfoStore.copyRegisteredDispatchers(oldStore)
 		}
 	}
 	s.tableInfoStoreMap[tableID] = newTableInfoStore
@@ -163,15 +171,15 @@ func (s *schemaStore) RegisterDispatcher(dispatcherID DispatcherID, tableID Tabl
 	return nil
 }
 
-func (s *schemaStore) UpdateDispatcherCheckpointTS(dispatcherID DispatcherID, ts Timestamp) error {
+func (s *schemaStore) UpdateDispatcherSendTS(dispatcherID DispatcherID, ts Timestamp) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	info, ok := s.dispatchersMap[dispatcherID]
 	if !ok {
 		return errors.New("dispatcher not found")
 	}
-	store := s.tableInfoStoreMap[info.tableID]
-	store.updateDispatcherCheckpointTS(dispatcherID, ts)
+	store := s.tableInfoStoreMap[TableID(info.tableID)]
+	store.updateDispatcherSendTS(dispatcherID, ts)
 	return nil
 }
 
@@ -198,7 +206,7 @@ func (s *schemaStore) ResolvedTS() Timestamp {
 	return s.resolvedTS
 }
 
-func (s *schemaStore) GetTableInfo(tableID TableID, ts Timestamp) (*TableInfo, error) {
+func (s *schemaStore) GetTableInfo(tableID TableID, ts Timestamp) (*common.TableInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if store, ok := s.tableInfoStoreMap[tableID]; ok {

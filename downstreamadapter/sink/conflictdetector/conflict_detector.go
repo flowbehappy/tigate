@@ -14,6 +14,7 @@
 package conflictdetector
 
 import (
+	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/causality/internal"
@@ -26,9 +27,9 @@ import (
 // modifying the same keys are never executed concurrently and
 // have their original orders preserved. Transactions in different
 // channels can be executed concurrently.
-type ConflictDetector[Txn txnEvent] struct {
+type ConflictDetector struct {
 	// resolvedTxnCaches are used to cache resolved transactions.
-	resolvedTxnCaches []txnCache[Txn]
+	resolvedTxnCaches []txnCache
 
 	// slots are used to find all unfinished transactions
 	// conflicting with an incoming transactions.
@@ -46,15 +47,15 @@ type ConflictDetector[Txn txnEvent] struct {
 // NewConflictDetector creates a new ConflictDetector.
 func NewConflictDetector[Txn txnEvent](
 	numSlots uint64, opt TxnCacheOption,
-) *ConflictDetector[Txn] {
-	ret := &ConflictDetector[Txn]{
-		resolvedTxnCaches: make([]txnCache[Txn], opt.Count),
+) *ConflictDetector {
+	ret := &ConflictDetector{
+		resolvedTxnCaches: make([]txnCache, opt.Count),
 		slots:             internal.NewSlots(numSlots),
 		numSlots:          numSlots,
 		closeCh:           make(chan struct{}),
 	}
 	for i := 0; i < opt.Count; i++ {
-		ret.resolvedTxnCaches[i] = newTxnCache[Txn](opt)
+		ret.resolvedTxnCaches[i] = newTxnCache(opt)
 	}
 
 	task := newNotifyTask(&ret.notifiedChan)
@@ -66,23 +67,20 @@ func NewConflictDetector[Txn txnEvent](
 // Add pushes a transaction to the ConflictDetector.
 //
 // NOTE: if multiple threads access this concurrently,
-// Txn.ConflictKeys must be sorted by the slot index.
-func (d *ConflictDetector[Txn]) Add(txn Txn, callback func()) {
-	hashes := txn.ConflictKeys()
+// ConflictKeys must be sorted by the slot index.
+func (d *ConflictDetector) Add(txn *common.TxnEvent, callback func()) {
+	hashes := ConflictKeys(txn)
 	node := d.slots.AllocNode(hashes)
-	txnWithNotifier := TxnWithNotifier[Txn]{
-		TxnEvent: txn,
-		PostTxnExecuted: func() { // flush 的时候被调用
-			// After this transaction is executed, we can remove the node from the graph,
-			// and resolve related dependencies for these transacitons which depend on this
-			// executed transaction.
-			d.slots.Remove(node)
-			callback()
-		},
+	txn.PostTxnFlushed = func() { // flush 的时候被调用
+		// After this transaction is executed, we can remove the node from the graph,
+		// and resolve related dependencies for these transacitons which depend on this
+		// executed transaction.
+		d.slots.Remove(node)
+		callback()
 	}
 	node.TrySendToTxnCache = func(cacheID int64) bool {
 		// Try sending this txn to related cache as soon as all dependencies are resolved.
-		return d.sendToCache(txnWithNotifier, cacheID)
+		return d.sendToCache(txn, cacheID)
 	}
 	node.RandCacheID = func() int64 { return d.nextCacheID.Add(1) % int64(len(d.resolvedTxnCaches)) }
 	node.OnNotified = func(callback func()) { d.notifiedChan <- callback }
@@ -90,19 +88,16 @@ func (d *ConflictDetector[Txn]) Add(txn Txn, callback func()) {
 }
 
 // Close closes the ConflictDetector.
-func (d *ConflictDetector[Txn]) Close() {
+func (d *ConflictDetector) Close() {
 	close(d.closeCh)
 }
 
 // sendToCache should not call txn.Callback if it returns an error.
-func (d *ConflictDetector[Txn]) sendToCache(txn TxnWithNotifier[Txn], id int64) bool {
+func (d *ConflictDetector) sendToCache(txn *common.TxnEvent, id int64) bool {
 	if id < 0 {
 		log.Panic("must assign with a valid cacheID", zap.Int64("cacheID", id))
 	}
 
-	// Note OnConflictResolved must be called before add to cache. Otherwise, there will
-	// be a data race since the txn may be read before the OnConflictResolved is called.
-	txn.TxnEvent.OnConflictResolved()
 	cache := d.resolvedTxnCaches[id]
 	ok := cache.add(txn)
 	return ok
@@ -110,7 +105,7 @@ func (d *ConflictDetector[Txn]) sendToCache(txn TxnWithNotifier[Txn], id int64) 
 
 // GetOutChByCacheID returns the output channel by cacheID.
 // Note txns in single cache should be executed sequentially.
-func (d *ConflictDetector[Txn]) GetOutChByCacheID(id int64) <-chan TxnWithNotifier[Txn] {
+func (d *ConflictDetector) GetOutChByCacheID(id int64) <-chan *common.TxnEvent {
 	if id < 0 {
 		log.Panic("must assign with a valid cacheID", zap.Int64("cacheID", id))
 	}

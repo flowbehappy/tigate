@@ -19,8 +19,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ngaut/log"
+	"github.com/flowbehappy/tigate/common"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/errorutil"
@@ -36,45 +37,50 @@ const (
 
 // 用于给 mysql 类型的下游做 flush, 主打一个粗糙，先能跑起来再说
 type MysqlWriter struct {
-	db *sql.DB
-	//cfg *MysqlConfig
-	cfg *pmysql.Config
+	db  *sql.DB
+	cfg *MysqlConfig
 }
 
-func NewMysqlWriter(cfg *MysqlConfig) *MysqlWriter {
-	db, _ := createMysqlDBConn(cfg)
+func NewMysqlWriter(db *sql.DB, cfg *MysqlConfig) *MysqlWriter {
 	return &MysqlWriter{
 		db:  db,
 		cfg: cfg,
 	}
 }
 
-func (w *MysqlWriter) FlushDDLEvent(event *Event) error {
+func (w *MysqlWriter) FlushDDLEvent(event *common.TxnEvent) error {
 	if event.GetDDLType() == timodel.ActionAddIndex && w.cfg.IsTiDB {
 		return w.asyncExecAddIndexDDLIfTimeout(event)
 	}
-	return w.execDDLWithMaxRetries(event)
+	err := w.execDDLWithMaxRetries(event)
+	if err != nil {
+		log.Error("exec ddl failed", zap.Error(err))
+		return err
+	}
+
+	event.PostTxnFlushed()
+	return nil
 
 }
 
-func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *Event) error {
+func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *common.TxnEvent) error {
 	done := make(chan error, 1)
 	// wait for 2 seconds at most
 	tick := time.NewTimer(2 * time.Second)
 	defer tick.Stop()
 	log.Info("async exec add index ddl start",
-		zap.Uint64("commitTs", event.CommitTs()),
+		zap.Uint64("commitTs", event.CommitTs),
 		zap.String("ddl", event.GetDDLQuery()))
 	go func() {
 		if err := w.execDDLWithMaxRetries(event); err != nil {
 			log.Error("async exec add index ddl failed",
-				zap.Uint64("commitTs", event.CommitTs()),
+				zap.Uint64("commitTs", event.CommitTs),
 				zap.String("ddl", event.GetDDLQuery()))
 			done <- err
 			return
 		}
 		log.Info("async exec add index ddl done",
-			zap.Uint64("commitTs", event.CommitTs()),
+			zap.Uint64("commitTs", event.CommitTs),
 			zap.String("ddl", event.GetDDLQuery()))
 		done <- nil
 	}()
@@ -88,15 +94,14 @@ func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *Event) error {
 		// then if the ddl is failed, the downstream ddl is lost.
 		// because the checkpoint ts is forwarded.
 		log.Info("async add index ddl is still running",
-			zap.Uint64("commitTs", event.CommitTs()),
+			zap.Uint64("commitTs", event.CommitTs),
 			zap.String("ddl", event.GetDDLQuery()))
 		return nil
 	}
 }
 
-func (w *MysqlWriter) execDDL(event *Event) error {
-
-	shouldSwitchDB := needSwitchDB(ddl)
+func (w *MysqlWriter) execDDL(event *common.TxnEvent) error {
+	shouldSwitchDB := needSwitchDB(event)
 
 	ctx := context.Background()
 
@@ -106,7 +111,7 @@ func (w *MysqlWriter) execDDL(event *Event) error {
 	}
 
 	if shouldSwitchDB {
-		_, err = tx.ExecContext(ctx, "USE "+quotes.QuoteName(event.TableInfo.TableName.Schema)+";")
+		_, err = tx.ExecContext(ctx, "USE "+quotes.QuoteName(event.GetDDLSchemaName())+";")
 		if err != nil {
 			if rbErr := tx.Rollback(); rbErr != nil {
 				log.Error("Failed to rollback", zap.Error(err))
@@ -116,7 +121,7 @@ func (w *MysqlWriter) execDDL(event *Event) error {
 	}
 
 	// we try to set cdc write source for the ddl
-	if err = pmysql.SetWriteSource(ctx, w.cfg, tx); err != nil {
+	if err = SetWriteSource(w.cfg, tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			if errors.Cause(rbErr) != context.Canceled {
 				log.Error("Failed to rollback", zap.Error(err))
@@ -125,23 +130,23 @@ func (w *MysqlWriter) execDDL(event *Event) error {
 		return err
 	}
 
-	if _, err = tx.ExecContext(ctx, event.GetDDLQuey()); err != nil {
+	if _, err = tx.ExecContext(ctx, event.GetDDLQuery()); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
-			log.Error("Failed to rollback", zap.String("sql", event.GetDDLQuey()), zap.Error(err))
+			log.Error("Failed to rollback", zap.String("sql", event.GetDDLQuery()), zap.Error(err))
 		}
 		return err
 	}
 
 	if err = tx.Commit(); err != nil {
-		log.Error("Failed to exec DDL", zap.String("sql", event.GetDDLQuey(), zap.Error(err)))
-		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("Query info: %s; ", event.GetDDLQuey())))
+		log.Error("Failed to exec DDL", zap.String("sql", event.GetDDLQuery()), zap.Error(err))
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("Query info: %s; ", event.GetDDLQuery())))
 	}
 
-	log.Info("Exec DDL succeeded", zap.String("sql", event.GetDDLQuey()))
+	log.Info("Exec DDL succeeded", zap.String("sql", event.GetDDLQuery()))
 	return nil
 }
 
-func (w *MysqlWriter) execDDLWithMaxRetries(event *Event) error {
+func (w *MysqlWriter) execDDLWithMaxRetries(event *common.TxnEvent) error {
 	return retry.Do(context.Background(), func() error {
 		return w.execDDL(event)
 	}, retry.WithBackoffBaseDelay(pmysql.BackoffBaseDelay.Milliseconds()),
@@ -150,38 +155,54 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *Event) error {
 		retry.WithIsRetryableErr(errorutil.IsRetryableDDLError))
 }
 
-func (w *MysqlWriter) Flush(events []*Event) error {
+func (w *MysqlWriter) Flush(events []*common.TxnEvent) error {
 	dmls := w.prepareDMLs(events)
+
+	if dmls.rowCount == 0 {
+		return nil
+	}
 
 	if err := w.execDMLWithMaxRetries(dmls); err != nil {
 		log.Error("execute DMLs failed", zap.Error(err))
 		return errors.Trace(err)
 	}
+
+	for _, event := range events {
+		event.PostTxnFlushed()
+	}
 	return nil
 }
 
-func (w *MysqlWriter) prepareDMLs(events []*Event) *preparedDMLs {
-	// callback 还没处理过
+func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent) *preparedDMLs {
 	// TODO: use a sync.Pool to reduce allocations.
 	startTs := make([]uint64, 0)
 	sqls := make([]string, 0)
 	values := make([][]interface{}, 0)
 
 	rowCount := 0
-	approximateSize := int64(0)
 	for _, event := range events {
-		if len(event.Rows) == 0 {
+		rows := event.GetRows()
+		if len(rows) == 0 {
 			continue
 		}
-		rowCount += len(event.Rows)
+		rowCount += len(rows)
 
-		firstRow := event.Rows[0]
-		if len(startTs) == 0 || startTs[len(startTs)-1] != firstRow.StartTs {
-			startTs = append(startTs, firstRow.StartTs)
+		firstRow := rows[0]
+		if len(startTs) == 0 || startTs[len(startTs)-1] != event.StartTs {
+			startTs = append(startTs, event.StartTs)
 		}
 
+		// translateToInsert control the update and insert behavior.
+		translateToInsert := !w.cfg.SafeMode
+		translateToInsert = translateToInsert && event.CommitTs > firstRow.ReplicatingTs
+		log.Debug("translate to insert",
+			zap.Bool("translateToInsert", translateToInsert),
+			zap.Uint64("firstRowCommitTs", event.CommitTs),
+			zap.Uint64("firstRowReplicatingTs", firstRow.ReplicatingTs),
+			zap.Bool("safeMode", w.cfg.SafeMode))
+
 		quoteTable := firstRow.TableInfo.TableName.QuoteString()
-		for _, row := range event.Rows {
+		for _, row := range rows {
 			var query string
 			var args []interface{}
 			// Update Event
@@ -194,7 +215,6 @@ func (w *MysqlWriter) prepareDMLs(events []*Event) *preparedDMLs {
 					sqls = append(sqls, query)
 					values = append(values, args)
 				}
-				approximateSize += int64(len(query)) + row.ApproximateDataSize
 				continue
 			}
 
@@ -215,28 +235,21 @@ func (w *MysqlWriter) prepareDMLs(events []*Event) *preparedDMLs {
 				query, args = prepareReplace(
 					quoteTable,
 					row.GetColumns(),
-					true)
+					true,
+					translateToInsert)
 				if query != "" {
 					sqls = append(sqls, query)
 					values = append(values, args)
 				}
 			}
-
-			approximateSize += int64(len(query)) + row.ApproximateDataSize
 		}
 	}
 
-	// if len(callbacks) == 0 {
-	// 	callbacks = nil
-	// }
-
 	return &preparedDMLs{
-		startTs: startTs,
-		sqls:    sqls,
-		values:  values,
-		//callbacks:       callbacks,
-		rowCount:        rowCount,
-		approximateSize: approximateSize,
+		startTs:  startTs,
+		sqls:     sqls,
+		values:   values,
+		rowCount: rowCount,
 	}
 }
 
@@ -254,17 +267,17 @@ func (w *MysqlWriter) execDMLWithMaxRetries(dmls *preparedDMLs) error {
 	return retry.Do(ctx, func() error {
 		tx, err := w.db.BeginTx(ctx, nil)
 		if err != nil {
-			log.Error("err", err)
+			log.Error("BeginTx", zap.Error(err))
 		}
 
 		// Set session variables first and then execute the transaction.
 		// we try to set write source for each txn,
 		// so we can use it to trace the data source
-		if err = pmysql.SetWriteSource(ctx, w.cfg, tx); err != nil {
-			log.Error("err", err)
+		if err = SetWriteSource(w.cfg, tx); err != nil {
+			log.Error("SetWriteSource", zap.Error(err))
 			if rbErr := tx.Rollback(); rbErr != nil {
 				if errors.Cause(rbErr) != context.Canceled {
-					log.Warn("failed to rollback txn", zap.String("changefeed", s.changefeed), zap.Error(rbErr))
+					log.Warn("failed to rollback txn", zap.Error(rbErr))
 				}
 			}
 			return err
@@ -308,7 +321,7 @@ func (w *MysqlWriter) sequenceExecute(
 		_, err := tx.ExecContext(ctx, query, args...)
 
 		if err != nil {
-			log.Error("err", err)
+			log.Error("ExecContext", zap.Error(err))
 			if rbErr := tx.Rollback(); rbErr != nil {
 				if errors.Cause(rbErr) != context.Canceled {
 					log.Warn("failed to rollback txn", zap.Error(rbErr))

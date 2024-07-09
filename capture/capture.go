@@ -15,6 +15,11 @@ package capture
 
 import (
 	"context"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
 	appctx "github.com/flowbehappy/tigate/common/context"
 	"github.com/flowbehappy/tigate/coordinator"
 	"github.com/flowbehappy/tigate/version"
@@ -23,10 +28,6 @@ import (
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/tikv/client-go/v2/tikv"
-	"os"
-	"strings"
-	"sync"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/log"

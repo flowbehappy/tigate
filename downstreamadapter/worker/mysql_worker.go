@@ -14,33 +14,35 @@
 package worker
 
 import (
+	"database/sql"
 	"time"
 
+	"github.com/flowbehappy/tigate/common"
+	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 
-	"github.com/ngaut/log"
+	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
 
 // MysqlWorker is use to flush the event downstream
-type MysqlWorker struct { // TODO:这个可以同时做两个 flush 么？先这么做，不行后面拆个 worker 出来
-	eventChan   <-chan *Event // 获取到能往下游写的 events
-	mysqlWriter MysqlWriter   // 实际负责做 flush 操作
+type MysqlWorker struct {
+	eventChan   <-chan *common.TxnEvent // 获取到能往下游写的 events
+	mysqlWriter *writer.MysqlWriter     // 实际负责做 flush 操作
 }
 
 type MysqlDDLWorker struct {
-	MysqlWriter MysqlWriter // 实际负责做 flush 操作
+	MysqlWriter *writer.MysqlWriter // 实际负责做 flush 操作
 }
 
 // 这个  task 是单次出现的，执行完就结束，用于处理 ddl 和 sync point event
 type MysqlWorkerDDLEventTask struct {
 	worker     *MysqlDDLWorker
-	event      *Event
+	event      *common.TxnEvent
 	taskStatus threadpool.TaskStatus
-	callback   func()
 }
 
-func NewMysqlWorkerDDLEventTask(worker *MysqlDDLWorker, event *Event) *MysqlWorkerDDLEventTask {
+func NewMysqlWorkerDDLEventTask(worker *MysqlDDLWorker, event *common.TxnEvent) *MysqlWorkerDDLEventTask {
 	return &MysqlWorkerDDLEventTask{
 		worker:     worker,
 		event:      event,
@@ -73,15 +75,14 @@ type MysqlWorkerDMLEventTask struct {
 	worker     *MysqlWorker
 	taskStatus threadpool.TaskStatus
 	maxRows    int
-	events     []*Event
-	ticker     *time.Ticker
+	events     []*common.TxnEvent
 }
 
-func NewMysqlWorkerDMLEventTask(eventChan <-chan *Event, config *MysqlConfig, maxRows int) *MysqlWorkerDMLEventTask {
+func NewMysqlWorkerDMLEventTask(eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig, maxRows int) *MysqlWorkerDMLEventTask {
 	return &MysqlWorkerDMLEventTask{
 		worker: &MysqlWorker{
 			eventChan:   eventChan,
-			mysqlWriter: newMysqlWriter(config),
+			mysqlWriter: writer.NewMysqlWriter(db, config),
 		},
 		taskStatus: threadpool.Running,
 		maxRows:    maxRows,
@@ -105,13 +106,13 @@ func (t *MysqlWorkerDMLEventTask) Execute(timeout time.Duration) threadpool.Task
 
 func (t *MysqlWorkerDMLEventTask) executeIOImpl() threadpool.TaskStatus {
 	if len(t.events) == 0 {
-		log.Warning("here is no events to flush")
+		log.Warn("here is no events to flush")
 		return threadpool.Running
 	}
 	// flush events
-	err := t.worker.mysqlWriter.flush(t.events)
+	err := t.worker.mysqlWriter.Flush(t.events)
 	if err != nil {
-		log.Error("Failed to flush events", err)
+		log.Error("Failed to flush events", zap.Error(err))
 		return threadpool.Failed
 	}
 	t.events = nil
@@ -130,7 +131,7 @@ func (t *MysqlWorkerDMLEventTask) executeImpl() threadpool.TaskStatus {
 	select {
 	case txnEvent := <-t.worker.eventChan:
 		t.events = append(t.events, txnEvent)
-		rows += txnEvent.rows
+		rows += len(txnEvent.Rows)
 		if rows >= t.maxRows {
 			return threadpool.IO
 		}
@@ -145,7 +146,7 @@ func (t *MysqlWorkerDMLEventTask) executeImpl() threadpool.TaskStatus {
 		select {
 		case txnEvent := <-t.worker.eventChan:
 			t.events = append(t.events, txnEvent)
-			rows += txnEvent.rows
+			rows += len(txnEvent.Rows)
 			if rows >= t.maxRows {
 				if !timer.Stop() {
 					<-timer.C

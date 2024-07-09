@@ -5,6 +5,9 @@ import (
 )
 
 type Timestamp uint64
-type TableId int64
+type TableID int64
+type DispatcherID string
+type DatabaseID int64
+type SchemaID int64
 
 var DefaultEndian = binary.LittleEndian

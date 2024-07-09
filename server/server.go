@@ -16,20 +16,24 @@ package server
 import (
 	"context"
 	"fmt"
-	"github.com/flowbehappy/tigate/api"
-	"github.com/flowbehappy/tigate/capture"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/flowbehappy/tigate/api"
+	"github.com/flowbehappy/tigate/capture"
+	"github.com/flowbehappy/tigate/pkg/messaging"
+	messagingProto "github.com/flowbehappy/tigate/pkg/messaging/proto"
+
 	"github.com/dustin/go-humanize"
 	"github.com/gin-gonic/gin"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
-	"github.com/pingcap/tiflow/pkg/config"
+	"github.com/pingcap/tiflow/cdc/processor/sourcemanager/sorter/factory"
+	cdcconfig "github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/fsutil"
@@ -72,14 +76,16 @@ type server struct {
 	etcdClient   etcd.CDCEtcdClient
 	// pdClient is the default upstream PD client.
 	// The PD acts as a metadata management service for TiCDC.
-	pdClient    pd.Client
-	pdAPIClient pdutil.PDAPIClient
-	pdEndpoints []string
+	pdClient          pd.Client
+	pdAPIClient       pdutil.PDAPIClient
+	pdEndpoints       []string
+	sortEngineFactory *factory.SortEngineFactory
+	messageCenter     messaging.MessageCenter
 }
 
 // New creates a server instance.
 func New(pdEndpoints []string) (Server, error) {
-	conf := config.GetGlobalServerConfig()
+	conf := cdcconfig.GetGlobalServerConfig()
 
 	// This is to make communication between nodes possible.
 	// In other words, the nodes have to trust each other.
@@ -110,7 +116,7 @@ func New(pdEndpoints []string) (Server, error) {
 }
 
 func (s *server) prepare(ctx context.Context) error {
-	conf := config.GetGlobalServerConfig()
+	conf := cdcconfig.GetGlobalServerConfig()
 	grpcTLSOption, err := conf.Security.ToGRPCDialOption()
 	if err != nil {
 		return errors.Trace(err)
@@ -134,7 +140,7 @@ func (s *server) prepare(ctx context.Context) error {
 				MinConnectTimeout: 3 * time.Second,
 			}),
 		),
-		pd.WithForwardingOption(config.EnablePDForwarding))
+		pd.WithForwardingOption(cdcconfig.EnablePDForwarding))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -181,7 +187,7 @@ func (s *server) prepare(ctx context.Context) error {
 }
 
 func (s *server) setMemoryLimit() {
-	conf := config.GetGlobalServerConfig()
+	conf := cdcconfig.GetGlobalServerConfig()
 	if conf.GcTunerMemoryThreshold > maxGcTunerMemory {
 		// If total memory is larger than 512GB, we will not set memory limit.
 		// Because the memory limit is not accurate, and it is not necessary to set memory limit.
@@ -224,7 +230,7 @@ func (s *server) startStatusHTTP(lis net.Listener) error {
 	// a connection is processed.
 	// We use it here to limit the max concurrent connections of statusServer.
 	lis = netutil.LimitListener(lis, maxHTTPConnection)
-	conf := config.GetGlobalServerConfig()
+	conf := cdcconfig.GetGlobalServerConfig()
 
 	logWritter := clogutil.InitGinLogWritter()
 	router := gin.New()
@@ -264,7 +270,7 @@ func (s *server) run(ctx context.Context) (err error) {
 		return s.tcpServer.Run(egCtx)
 	})
 	grpcServer := grpc.NewServer()
-
+	messagingProto.RegisterMessageCenterServer(grpcServer, messaging.NewMessageCenterServer(s.messageCenter))
 	eg.Go(func() error {
 		return grpcServer.Serve(s.tcpServer.GrpcListener())
 	})
@@ -311,7 +317,7 @@ func (s *server) initDir(ctx context.Context) error {
 	if err := s.setUpDir(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	conf := config.GetGlobalServerConfig()
+	conf := cdcconfig.GetGlobalServerConfig()
 	// Ensure data dir exists and read-writable.
 	diskInfo, err := checkDir(conf.DataDir)
 	if err != nil {
@@ -330,10 +336,10 @@ func (s *server) initDir(ctx context.Context) error {
 }
 
 func (s *server) setUpDir(ctx context.Context) error {
-	conf := config.GetGlobalServerConfig()
+	conf := cdcconfig.GetGlobalServerConfig()
 	if conf.DataDir != "" {
-		conf.Sorter.SortDir = filepath.Join(conf.DataDir, config.DefaultSortDir)
-		config.StoreGlobalServerConfig(conf)
+		conf.Sorter.SortDir = filepath.Join(conf.DataDir, cdcconfig.DefaultSortDir)
+		cdcconfig.StoreGlobalServerConfig(conf)
 		return nil
 	}
 
@@ -356,8 +362,8 @@ func (s *server) setUpDir(ctx context.Context) error {
 		conf.DataDir = best
 	}
 
-	conf.Sorter.SortDir = filepath.Join(conf.DataDir, config.DefaultSortDir)
-	config.StoreGlobalServerConfig(conf)
+	conf.Sorter.SortDir = filepath.Join(conf.DataDir, cdcconfig.DefaultSortDir)
+	cdcconfig.StoreGlobalServerConfig(conf)
 	return nil
 }
 
