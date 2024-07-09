@@ -63,7 +63,7 @@ func (c *changefeed) NewAddInferiorMessage(capture model.CaptureID, secondary bo
 	//	DispatchMaintainerRequest: &DispatchMaintainerRequest{
 	//		AddMaintainerRequest: &AddMaintainerRequest{
 	//			ID:          c.ID,
-	//			Config:      c.Info,
+	//			Config:      c.SelfCaptureInfo,
 	//			Status:      c.Status,
 	//			IsSecondary: secondary,
 	//		}},
@@ -76,7 +76,7 @@ func (c *changefeed) NewRemoveInferiorMessage(capture model.CaptureID) rpc.Messa
 	//	To: capture,
 	//	DispatchMaintainerRequest: &DispatchMaintainerRequest{
 	//		RemoveMaintainerRequest: &RemoveMaintainerRequest{
-	//			ID: c.Info.ID,
+	//			ID: c.SelfCaptureInfo.ID,
 	//		},
 	//	},
 	//}

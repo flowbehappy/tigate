@@ -34,7 +34,7 @@ import (
 // @Failure 500,400 {object} model.HTTPError
 // @Router	/api/v2/status [get]
 func (h *OpenAPIV2) serverStatus(c *gin.Context) {
-	info, err := h.capture.Info()
+	info, err := h.capture.SelfCaptureInfo()
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -46,7 +46,7 @@ func (h *OpenAPIV2) serverStatus(c *gin.Context) {
 		Pid:       os.Getpid(),
 		ID:        info.ID,
 		ClusterID: etcdClient.GetClusterID(),
-		IsOwner:   h.capture.IsOwner(),
+		IsOwner:   h.capture.IsCoordinator(),
 		Liveness:  h.capture.Liveness(),
 	}
 	c.IndentedJSON(http.StatusOK, status)

@@ -6,6 +6,7 @@ import (
 )
 
 type GlobalId uuid.UUID
+type TableId uint64
 
 type EventAcceptor interface {
 	GetId() GlobalId

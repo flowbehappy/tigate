@@ -74,7 +74,7 @@ func LogMiddleware() gin.HandlerFunc {
 // ForwardToCoordinatorMiddleware forward a request to controller
 func ForwardToCoordinatorMiddleware(p capture.Capture) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		if !p.IsOwner() {
+		if !p.IsCoordinator() {
 			ForwardToOwner(ctx, p)
 
 			// Without calling Abort(), Gin will continue to process the next handler,
@@ -90,15 +90,15 @@ func ForwardToCoordinatorMiddleware(p capture.Capture) gin.HandlerFunc {
 // ForwardToOwner forwards a request to the controller
 func ForwardToOwner(c *gin.Context, p capture.Capture) {
 	ctx := c.Request.Context()
-	info, err := p.Info()
+	info, err := p.SelfCaptureInfo()
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
 
 	var owner *model.CaptureInfo
-	// get owner info
-	owner, err = p.GetOwnerCaptureInfo(ctx)
+	// get coordinator info
+	owner, err = p.GetCoordinatorInfo(ctx)
 	if err != nil {
 		log.Info("get owner failed", zap.Error(err))
 		_ = c.Error(err)

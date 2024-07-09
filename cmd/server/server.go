@@ -211,6 +211,5 @@ func NewCmdServer() *cobra.Command {
 	}
 
 	o.addFlags(command)
-
 	return command
 }
