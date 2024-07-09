@@ -15,21 +15,23 @@ package v2
 
 import (
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
+	"github.com/flowbehappy/tigate/version"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/api"
+	cdcapi "github.com/pingcap/tiflow/cdc/api/v2"
 	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/tiflow/cdc/owner"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
+	"github.com/pingcap/tiflow/pkg/txnutil/gc"
 	"github.com/pingcap/tiflow/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
-)
-
-const (
-	// timeout for pd client
-	timeout = 30 * time.Second
 )
 
 // createChangefeed handles create changefeed request,
@@ -45,17 +47,137 @@ const (
 // @Failure 500,400 {object} model.HTTPError
 // @Router	/api/v2/changefeeds [post]
 func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
-	cfg := &ChangefeedConfig{ReplicaConfig: GetDefaultReplicaConfig()}
+	ctx := c.Request.Context()
+	cfg := &cdcapi.ChangefeedConfig{ReplicaConfig: cdcapi.GetDefaultReplicaConfig()}
 
 	if err := c.BindJSON(&cfg); err != nil {
 		_ = c.Error(cerror.WrapError(cerror.ErrAPIInvalidParam, err))
 		return
 	}
 
+	// verify sinkURI
+	if cfg.SinkURI == "" {
+		_ = c.Error(cerror.ErrSinkURIInvalid.GenWithStackByArgs(
+			"sink_uri is empty, cannot create a changefeed without sink_uri"))
+		return
+	}
+
+	// verify changefeedID
+	if cfg.ID == "" {
+		cfg.ID = uuid.New().String()
+	}
+	if err := model.ValidateChangefeedID(cfg.ID); err != nil {
+		_ = c.Error(cerror.ErrAPIInvalidParam.GenWithStack(
+			"invalid changefeed_id: %s", cfg.ID))
+		return
+	}
+	if cfg.Namespace == "" {
+		cfg.Namespace = model.DefaultNamespace
+	}
+
+	ts, logical, err := h.server.GetPdClient().GetTS(ctx)
+	if err != nil {
+		_ = c.Error(cerror.ErrPDEtcdAPIError.GenWithStackByArgs("fail to get ts from pd client"))
+		return
+	}
+	currentTSO := oracle.ComposeTS(ts, logical)
+	// verify start ts
+	if cfg.StartTs == 0 {
+		cfg.StartTs = currentTSO
+	} else if cfg.StartTs > currentTSO {
+		_ = c.Error(cerror.ErrAPIInvalidParam.GenWithStack(
+			"invalid start-ts %v, larger than current tso %v", cfg.StartTs, currentTSO))
+		return
+	}
+	// Ensure the start ts is valid in the next 3600 seconds, aka 1 hour
+	const ensureTTL = 60 * 60
+	if err = gc.EnsureChangefeedStartTsSafety(
+		ctx,
+		h.server.GetPdClient(),
+		h.server.GetEtcdClient().GetEnsureGCServiceID(gc.EnsureGCServiceCreating),
+		model.ChangeFeedID{Namespace: cfg.Namespace, ID: cfg.ID},
+		ensureTTL, cfg.StartTs); err != nil {
+		if !cerror.ErrStartTsBeforeGC.Equal(err) {
+			_ = c.Error(cerror.ErrPDEtcdAPIError.Wrap(err))
+			return
+		}
+		_ = c.Error(err)
+		return
+	}
+
+	// verify target ts
+	if cfg.TargetTs > 0 && cfg.TargetTs <= cfg.StartTs {
+		_ = c.Error(cerror.ErrTargetTsBeforeStartTs.GenWithStackByArgs(
+			cfg.TargetTs, cfg.StartTs))
+		return
+	}
+
+	// fill replicaConfig
+	replicaCfg := cfg.ReplicaConfig.ToInternalReplicaConfig()
+	// verify replicaConfig
+	sinkURIParsed, err := url.Parse(cfg.SinkURI)
+	if err != nil {
+		_ = c.Error(cerror.WrapError(cerror.ErrSinkURIInvalid, err))
+		return
+	}
+	err = replicaCfg.ValidateAndAdjust(sinkURIParsed)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	pdClient := h.server.GetPdClient()
+	info := &model.ChangeFeedInfo{
+		UpstreamID:     pdClient.GetClusterID(ctx),
+		Namespace:      cfg.Namespace,
+		ID:             cfg.ID,
+		SinkURI:        cfg.SinkURI,
+		CreateTime:     time.Now(),
+		StartTs:        cfg.StartTs,
+		TargetTs:       cfg.TargetTs,
+		Config:         replicaCfg,
+		State:          model.StateNormal,
+		CreatorVersion: version.ReleaseVersion,
+		Epoch:          owner.GenerateChangefeedEpoch(ctx, pdClient),
+	}
+
+	needRemoveGCSafePoint := false
+	defer func() {
+		if !needRemoveGCSafePoint {
+			return
+		}
+		err := gc.UndoEnsureChangefeedStartTsSafety(
+			ctx,
+			pdClient,
+			h.server.GetEtcdClient().GetEnsureGCServiceID(gc.EnsureGCServiceCreating),
+			model.ChangeFeedID{Namespace: cfg.Namespace, ID: cfg.ID},
+		)
+		if err != nil {
+			_ = c.Error(err)
+			return
+		}
+	}()
+	upstreamInfo := &model.UpstreamInfo{
+		ID:            info.UpstreamID,
+		PDEndpoints:   strings.Join(cfg.PDAddrs, ","),
+		KeyPath:       cfg.KeyPath,
+		CertPath:      cfg.CertPath,
+		CAPath:        cfg.CAPath,
+		CertAllowedCN: cfg.CertAllowedCN,
+	}
+
+	err = h.server.GetEtcdClient().CreateChangefeedInfo(ctx, upstreamInfo, info)
+	if err != nil {
+		needRemoveGCSafePoint = true
+		_ = c.Error(err)
+		return
+	}
 	log.Info("Create changefeed successfully!",
-		zap.String("id", cfg.ID),
-		zap.Any("changefeed", cfg))
-	c.JSON(http.StatusOK, cfg)
+		zap.String("id", info.ID),
+		zap.String("changefeed", info.String()))
+	c.JSON(http.StatusOK, toAPIModel(info,
+		info.StartTs, info.StartTs,
+		nil))
 }
 
 // listChangeFeeds lists all changgefeeds in cdc cluster
@@ -70,26 +192,43 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 // @Failure 500 {object} model.HTTPError
 // @Router /api/v2/changefeeds [get]
 func (h *OpenAPIV2) listChangeFeeds(c *gin.Context) {
-	commonInfos := make([]ChangefeedCommonInfo, 0)
-
-	resp := &ListResponse[ChangefeedCommonInfo]{
+	changefeeds, err := h.server.GetEtcdClient().GetAllChangeFeedInfo(c)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	commonInfos := make([]cdcapi.ChangefeedCommonInfo, len(changefeeds))
+	for id, changefeed := range changefeeds {
+		status, _, err := h.server.GetEtcdClient().GetChangeFeedStatus(c, id)
+		if err != nil {
+			log.Warn("failed to load status", zap.String("id", id.String()), zap.Error(err))
+		}
+		var runningErr *model.RunningError
+		if changefeed.Error != nil {
+			runningErr = changefeed.Error
+		} else {
+			runningErr = changefeed.Warning
+		}
+		commonInfos = append(commonInfos, cdcapi.ChangefeedCommonInfo{
+			UpstreamID:     changefeed.UpstreamID,
+			Namespace:      changefeed.Namespace,
+			ID:             changefeed.ID,
+			FeedState:      changefeed.State,
+			CheckpointTSO:  status.CheckpointTs,
+			CheckpointTime: model.JSONTime(oracle.GetTimeFromTS(status.CheckpointTs)),
+			RunningError:   runningErr,
+		})
+	}
+	resp := &cdcapi.ListResponse[cdcapi.ChangefeedCommonInfo]{
 		Total: len(commonInfos),
 		Items: commonInfos,
 	}
 	c.JSON(http.StatusOK, resp)
 }
 
-func getNamespaceValueWithDefault(c *gin.Context) string {
-	namespace := c.Query(api.APIOpVarNamespace)
-	if namespace == "" {
-		namespace = model.DefaultNamespace
-	}
-	return namespace
-}
-
 // verifyTable verify table, return ineligibleTables and EligibleTables.
 func (h *OpenAPIV2) verifyTable(c *gin.Context) {
-	tables := &Tables{}
+	tables := &cdcapi.Tables{}
 	c.JSON(http.StatusOK, tables)
 }
 
@@ -105,6 +244,24 @@ func (h *OpenAPIV2) verifyTable(c *gin.Context) {
 // @Failure 500,400 {object} model.HTTPError
 // @Router /api/v2/changefeeds/{changefeed_id} [get]
 func (h *OpenAPIV2) getChangeFeed(c *gin.Context) {
+	ctx := c.Request.Context()
+	changefeedID := model.ChangeFeedID{Namespace: model.DefaultNamespace, ID: c.Param(api.APIOpVarChangefeedID)}
+	cfInfo, err := h.server.GetEtcdClient().GetChangeFeedInfo(ctx, changefeedID)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	status, _, err := h.server.GetEtcdClient().GetChangeFeedStatus(ctx, changefeedID)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	taskStatus := make([]model.CaptureTaskStatus, 0)
+	detail := toAPIModel(cfInfo, status.CheckpointTs,
+		status.CheckpointTs, taskStatus)
+	c.JSON(http.StatusOK, detail)
 }
 
 func toAPIModel(
@@ -112,30 +269,25 @@ func toAPIModel(
 	resolvedTs uint64,
 	checkpointTs uint64,
 	taskStatus []model.CaptureTaskStatus,
-	maskSinkURI bool,
-) *ChangeFeedInfo {
-	var runningError *RunningError
+) *cdcapi.ChangeFeedInfo {
+	var runningError *cdcapi.RunningError
 
 	// if the state is normal, we shall not return the error info
 	// because changefeed will is retrying. errors will confuse the users
 	if info.State != model.StateNormal && info.Error != nil {
-		runningError = &RunningError{
+		runningError = &cdcapi.RunningError{
 			Addr:    info.Error.Addr,
 			Code:    info.Error.Code,
 			Message: info.Error.Message,
 		}
 	}
 
-	sinkURI := info.SinkURI
-	var err error
-	if maskSinkURI {
-		sinkURI, err = util.MaskSinkURI(sinkURI)
-		if err != nil {
-			log.Error("failed to mask sink URI", zap.Error(err))
-		}
+	sinkURI, err := util.MaskSinkURI(info.SinkURI)
+	if err != nil {
+		log.Error("failed to mask sink URI", zap.Error(err))
 	}
 
-	apiInfoModel := &ChangeFeedInfo{
+	apiInfoModel := &cdcapi.ChangeFeedInfo{
 		UpstreamID:     info.UpstreamID,
 		Namespace:      info.Namespace,
 		ID:             info.ID,
@@ -144,7 +296,7 @@ func toAPIModel(
 		StartTs:        info.StartTs,
 		TargetTs:       info.TargetTs,
 		AdminJobType:   info.AdminJobType,
-		Config:         ToAPIReplicaConfig(info.Config),
+		Config:         cdcapi.ToAPIReplicaConfig(info.Config),
 		State:          info.State,
 		Error:          runningError,
 		CreatorVersion: info.CreatorVersion,
