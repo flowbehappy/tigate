@@ -14,14 +14,18 @@
 package dispatchermanager
 
 import (
+	"net/url"
 	"sync/atomic"
 	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/node"
 	"github.com/flowbehappy/tigate/utils/threadpool"
+	"github.com/ngaut/log"
+	"go.uber.org/zap"
 
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -60,10 +64,14 @@ type EventDispatcherManager struct {
 	filter                      *Filter
 }
 
-func (e *EventDispatcherManager) Init(startTs uint64) {
+func (e *EventDispatcherManager) Init(startTs uint64, sinkURI *url.URL) {
 	// 初始化 sink
 	if e.SinkType == "Mysql" {
-		e.Sink = sink.NewMysqlSink(workerCount, e.SinkConfig)
+		cfg, db, err := writer.NewMysqlConfigAndDB(sinkURI)
+		if err != nil {
+			log.Error("create mysql sink failed", zap.Error(err))
+		}
+		e.Sink = sink.NewMysqlSink(workerCount, cfg, db)
 	}
 
 	// 初始化 table trigger event dispatcher， 注册自己
@@ -83,10 +91,10 @@ func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) 
 }
 
 // 收到 rpc 请求创建，需要通过 event dispatcher manager 来
-func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *Span, startTs uint64) *dispatcher.TableEventDispatcher {
+func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *Span, startTs uint64, sinkURI *url.URL) *dispatcher.TableEventDispatcher {
 	// 创建新的 event dispatcher，同时需要把这个去 logService 注册，并且把自己加到对应的某个处理 thread 里
 	if len(e.DispatcherMap) == 0 {
-		e.Init(startTs)
+		e.Init(startTs, sinkURI)
 	}
 
 	var syncPointInfo *dispatcher.SyncPointInfo

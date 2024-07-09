@@ -17,10 +17,8 @@ import (
 	"strings"
 
 	"github.com/flowbehappy/tigate/common"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tiflow/pkg/quotes"
-	"go.uber.org/zap"
 )
 
 // prepareUpdate builds a parametrics UPDATE statement as following
@@ -68,7 +66,6 @@ func prepareUpdate(quoteTable string, preCols, cols []*common.Column) (string, [
 	}
 	builder.WriteString(" LIMIT 1")
 	sql := builder.String()
-	log.Info("sql: ", zap.String("sql", sql))
 	return sql, args
 }
 

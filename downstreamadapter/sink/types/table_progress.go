@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sink
+package types
 
 import (
 	"container/list"
@@ -29,7 +29,7 @@ import (
 type TableProgress struct {
 	mutex   sync.Mutex
 	list    *list.List
-	elemMap map[*Ts]*list.Element
+	elemMap map[Ts]*list.Element
 }
 
 // 按 commitTs 为主，startTs 为辅排序
@@ -41,7 +41,7 @@ type Ts struct {
 func NewTableProgress() *TableProgress {
 	tableProgress := &TableProgress{
 		list:    list.New(),
-		elemMap: make(map[*Ts]*list.Element),
+		elemMap: make(map[Ts]*list.Element),
 	}
 	return tableProgress
 }
@@ -51,7 +51,7 @@ func (p *TableProgress) Add(event *common.TxnEvent) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	elem := p.list.PushBack(ts)
-	p.elemMap[&ts] = elem
+	p.elemMap[ts] = elem
 }
 
 // 而且删除可以认为是批量的？但要不要做成批量可以后面再看
@@ -59,9 +59,9 @@ func (p *TableProgress) Remove(event *common.TxnEvent) {
 	ts := Ts{startTs: event.StartTs, commitTs: event.CommitTs}
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	if elem, ok := p.elemMap[&ts]; ok {
+	if elem, ok := p.elemMap[ts]; ok {
 		p.list.Remove(elem)
-		delete(p.elemMap, &ts)
+		delete(p.elemMap, ts)
 	}
 }
 

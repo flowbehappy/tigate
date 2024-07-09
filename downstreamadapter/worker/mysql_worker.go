@@ -54,6 +54,10 @@ func (t *MysqlWorkerDDLEventTask) GetStatus() threadpool.TaskStatus {
 	return t.taskStatus
 }
 
+func (t *MysqlWorkerDDLEventTask) SetStatus(taskStatus threadpool.TaskStatus) {
+	t.taskStatus = taskStatus
+}
+
 func (t *MysqlWorkerDDLEventTask) Execute(timeout time.Duration) threadpool.TaskStatus {
 	t.worker.MysqlWriter.FlushDDLEvent(t.event)
 	return threadpool.Success
@@ -92,6 +96,11 @@ func NewMysqlWorkerDMLEventTask(eventChan <-chan *common.TxnEvent, db *sql.DB, c
 func (t *MysqlWorkerDMLEventTask) GetStatus() threadpool.TaskStatus {
 	return t.taskStatus
 }
+
+func (t *MysqlWorkerDMLEventTask) SetStatus(taskStatus threadpool.TaskStatus) {
+	t.taskStatus = taskStatus
+}
+
 func (t *MysqlWorkerDMLEventTask) Execute(timeout time.Duration) threadpool.TaskStatus {
 	switch t.taskStatus {
 	case threadpool.Running:
@@ -157,6 +166,7 @@ func (t *MysqlWorkerDMLEventTask) executeImpl() threadpool.TaskStatus {
 			if rows == 0 {
 				return threadpool.Running
 			}
+			return threadpool.IO
 		}
 	}
 }

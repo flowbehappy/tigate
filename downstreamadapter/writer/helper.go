@@ -24,7 +24,6 @@ import (
 	"github.com/flowbehappy/tigate/common"
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -300,11 +299,6 @@ func CreateMysqlDBConn(dsnStr string) (*sql.DB, error) {
 	if err != nil {
 		return nil, cerror.ErrMySQLConnectionError.Wrap(err).GenWithStack("fail to open MySQL connection")
 	}
-
-	failpoint.Inject("mockDB", func() {
-		log.Info("inject mockDB")
-		db = MockDB
-	})
 
 	err = db.PingContext(context.Background())
 	if err != nil {
