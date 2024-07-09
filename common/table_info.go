@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	datumTypes "github.com/pingcap/tidb/pkg/types"

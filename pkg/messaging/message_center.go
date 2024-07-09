@@ -10,6 +10,8 @@ import (
 	"google.golang.org/grpc"
 )
 
+// MessageCenter is the interface to send and receive messages to/from other targets.
+// Note(dongmen): All the methods in the interface should be thread-safe.
 type MessageCenter interface {
 	MessageSender
 	MessageReceiver
@@ -20,7 +22,6 @@ type MessageCenter interface {
 }
 
 // MessageSender is the interface for sending messages to the target.
-// Note the slices passed in are referenced forward directly, so don't reuse the slice.
 // The method in the interface should be thread-safe and non-blocking.
 // If the message cannot be sent, the method will return an `ErrorTypeMessageCongested` error.
 type MessageSender interface {
