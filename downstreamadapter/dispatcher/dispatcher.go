@@ -13,7 +13,10 @@
 
 package dispatcher
 
-import "github.com/flowbehappy/tigate/downstreamadapter/sink"
+import (
+	"github.com/flowbehappy/tigate/common"
+	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+)
 
 /*
 Dispatcher is responsible for getting events from LogService and sending them to Sink in appropriate order.
@@ -90,9 +93,9 @@ type State struct {
 	// Such as one ddl event is sent to downstream,
 	// so the following events can be pushed down only when
 	// the ddl event is flushed to downstream successfully (that means sink is available).
-	pengdingEvent *Event
+	pengdingEvent *common.TxnEvent
 	// The pendingEvent is waiting for the progress of these tableSpans to reach the blockTs.
-	blockTableSpan []*TableSpan
+	blockTableSpan []*common.TableSpan
 	// the commitTs of the pendingEvent, also the ts the tableSpan in the blockTableSpan should reach.
 	blockTs uint64
 	// True means the sink flushes all the previous event successfully,
@@ -132,8 +135,8 @@ Mainly about the progress of each dispatcher:
 type HeartBeatInfo struct {
 	IsBlocked      bool
 	BlockTs        uint64
-	BlockTableSpan []*TableSpan
-	TableSpan      *TableSpan
+	BlockTableSpan []*common.TableSpan
+	TableSpan      *common.TableSpan
 	CheckpointTs   uint64
 	Id             uint64
 }
@@ -195,7 +198,7 @@ TableSpanProgress shows the progress of the other tableSpan, including:
 2. The checkpointTs of the tableSpan
 */
 type TableSpanProgress struct {
-	Span         *TableSpan
+	Span         *common.TableSpan
 	IsBlocked    bool
 	BlockTs      uint64
 	CheckpointTs uint64

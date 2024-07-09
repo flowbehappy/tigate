@@ -25,7 +25,7 @@ import (
 type CaptureState int
 
 const (
-	// CaptureStateUninitialized means the capture status is unknown,
+	// CaptureStateUninitialized means the server status is unknown,
 	// no heartbeat response received yet.
 	CaptureStateUninitialized CaptureState = 1
 	// CaptureStateInitialized means scheduler has received heartbeat response.
@@ -101,22 +101,22 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 	msgs := make([]rpc.Message, 0)
 	for id, info := range aliveCaptures {
 		if _, ok := s.captures[id]; !ok {
-			// A new capture.
+			// A new server.
 			s.captures[id] = NewCaptureStatus(info)
-			log.Info("find a new capture",
+			log.Info("find a new server",
 				zap.String("ID", s.ID.String()),
 				zap.String("captureAddr", info.AdvertiseAddr),
-				zap.String("capture", id))
+				zap.String("server", id))
 		}
 	}
 
 	// Find removed captures.
 	for id, capture := range s.captures {
 		if _, ok := aliveCaptures[id]; !ok {
-			log.Info("removed a capture",
+			log.Info("removed a server",
 				zap.String("ID", s.ID.String()),
 				zap.String("captureAddr", capture.capture.AdvertiseAddr),
-				zap.String("capture", id))
+				zap.String("server", id))
 			delete(s.captures, id)
 
 			// Only update changes after initialization.
@@ -134,7 +134,7 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 
 	// Check if this is the first time all captures are initialized.
 	if !s.initialized && s.checkAllCaptureInitialized() {
-		log.Info("all capture initialized",
+		log.Info("all server initialized",
 			zap.String("ID", s.ID.String()),
 			zap.Int("captureCount", len(s.captures)))
 		s.initialized = true
@@ -149,23 +149,23 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 	return msgs, removed
 }
 
-// UpdateCaptureStatus update the capture status after receive a bootstrap message from remote
+// UpdateCaptureStatus update the server status after receive a bootstrap message from remote
 // supervisor will cache the status if the supervisor is not initialized
 func (s *Supervisor) UpdateCaptureStatus(from model.CaptureID, statuses []InferiorStatus) {
 	c, ok := s.captures[from]
 	if !ok {
-		log.Warn("capture is not found",
+		log.Warn("server is not found",
 			zap.String("ID", s.ID.String()),
-			zap.String("capture", from))
+			zap.String("server", from))
 	}
 	if c.state == CaptureStateUninitialized {
 		c.state = CaptureStateInitialized
-		log.Info("capture initialized",
+		log.Info("server initialized",
 			zap.String("ID", s.ID.String()),
-			zap.String("capture", c.capture.ID),
+			zap.String("server", c.capture.ID),
 			zap.String("captureAddr", c.capture.AdvertiseAddr))
 	}
-	// scheduler is not initialized, is still collecting the remote capture stauts
+	// scheduler is not initialized, is still collecting the remote server stauts
 	// cache the last one
 	if !s.initialized {
 		s.initStatus[from] = statuses
@@ -202,7 +202,7 @@ func (s *Supervisor) HandleStatus(
 	return sentMsgs, nil
 }
 
-// HandleCaptureChanges handles capture changes.
+// HandleCaptureChanges handles server changes.
 func (s *Supervisor) HandleCaptureChanges(
 	removed []model.CaptureID,
 ) ([]rpc.Message, error) {
@@ -381,8 +381,8 @@ func (s *Supervisor) handleMoveInferiorTask(
 	return stateMachine.handleMoveInferior(task.DestCapture)
 }
 
-// CheckAllCaptureInitialized check if all capture is initialized.
-// returns true when all capture reports the bootstrap response
+// CheckAllCaptureInitialized check if all server is initialized.
+// returns true when all server reports the bootstrap response
 func (s *Supervisor) CheckAllCaptureInitialized() bool {
 	return s.initialized && s.checkAllCaptureInitialized()
 }
@@ -390,7 +390,7 @@ func (s *Supervisor) CheckAllCaptureInitialized() bool {
 func (s *Supervisor) checkAllCaptureInitialized() bool {
 	for _, captureStatus := range s.captures {
 		// CaptureStateStopping is also considered initialized, because when
-		// a capture shutdown, it becomes stopping, we need to move its tables
+		// a server shutdown, it becomes stopping, we need to move its tables
 		// to other captures.
 		if captureStatus.state == CaptureStateUninitialized {
 			return false

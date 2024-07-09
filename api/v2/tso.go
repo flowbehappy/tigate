@@ -17,20 +17,14 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	cerror "github.com/pingcap/tiflow/pkg/errors"
+	cdcapi "github.com/pingcap/tiflow/cdc/api/v2"
 )
 
 // QueryTso request and returns a TSO from PD
 func (h *OpenAPIV2) QueryTso(c *gin.Context) {
 	ctx := c.Request.Context()
-
-	upstreamConfig := &UpstreamConfig{}
-	if err := c.BindJSON(upstreamConfig); err != nil {
-		_ = c.Error(cerror.WrapError(cerror.ErrAPIInvalidParam, err))
-		return
-	}
-	resp := &Tso{}
-	client := h.capture.GetPdClient()
+	resp := &cdcapi.Tso{}
+	client := h.server.GetPdClient()
 	timestamp, logicalTime, err := client.GetTS(ctx)
 	if err != nil {
 		_ = c.Error(err)
@@ -38,6 +32,5 @@ func (h *OpenAPIV2) QueryTso(c *gin.Context) {
 	}
 	resp.LogicTime = logicalTime
 	resp.Timestamp = timestamp
-
 	c.IndentedJSON(http.StatusOK, resp)
 }

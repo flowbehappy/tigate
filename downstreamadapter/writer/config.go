@@ -48,11 +48,10 @@ const (
 	// The upper limit of max multi update row size(8KB).
 	maxMaxMultiUpdateRowSize = 8192
 
-	defaultTiDBTxnMode  = txnModeOptimistic
-	defaultReadTimeout  = "2m"
-	defaultWriteTimeout = "2m"
-	defaultDialTimeout  = "2m"
-	// Note: defaultSafeMode is set to false since v6.4.0.
+	defaultTiDBTxnMode    = txnModeOptimistic
+	defaultReadTimeout    = "2m"
+	defaultWriteTimeout   = "2m"
+	defaultDialTimeout    = "2m"
 	defaultSafeMode       = false
 	defaultTxnIsolationRC = "READ-COMMITTED"
 	defaultCharacterSet   = "utf8mb4"
@@ -116,6 +115,7 @@ func NewMysqlConfig() *MysqlConfig {
 
 func (c *MysqlConfig) Apply(sinkURI *url.URL) error {
 	if sinkURI == nil {
+		log.Error("empty SinkURI")
 		return cerror.ErrMySQLInvalidConfig.GenWithStack("fail to open MySQL sink, empty SinkURI")
 	}
 	c.sinkURI = sinkURI
@@ -125,7 +125,11 @@ func (c *MysqlConfig) Apply(sinkURI *url.URL) error {
 func NewMysqlConfigAndDB(sinkURI *url.URL) (*MysqlConfig, *sql.DB, error) {
 	// create db connection
 	cfg := NewMysqlConfig()
-	cfg.Apply(sinkURI)
+	err := cfg.Apply(sinkURI)
+	if err != nil {
+		log.Error("Apply sinkURI failed", zap.Error(err))
+		return nil, nil, err
+	}
 	dsnStr, err := GenerateDSN(cfg)
 	if err != nil {
 		log.Error("GenerateDSN failed", zap.Error(err))

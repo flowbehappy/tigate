@@ -66,10 +66,10 @@ func (b *BasicScheduler) Schedule(
 		}
 
 		if len(captureIDs) == 0 {
-			// this should never happen, if no capture can be found
+			// this should never happen, if no server can be found
 			// for a cluster with n captures, n should be at least 2
 			// only n - 1 captures can be in the `stopping` at the same time.
-			log.Warn("cannot found capture when add new inferior",
+			log.Warn("cannot found server when add new inferior",
 				zap.Any("allCaptureStatus", aliveCaptures))
 			return tasks
 		}
@@ -142,7 +142,7 @@ func newBurstRemoveInferiors(
 
 		if ccf.Primary == "" {
 			log.Warn("primary or secondary not found for removed inferior,"+
-				"this may happen if the capture shutdown",
+				"this may happen if the server shutdown",
 				zap.Any("ID", id.String()))
 			continue
 		}

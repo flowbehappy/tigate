@@ -14,10 +14,10 @@
 package v2
 
 import (
-	"github.com/flowbehappy/tigate/version"
 	"net/http"
 	"os"
 
+	"github.com/flowbehappy/tigate/version"
 	"github.com/gin-gonic/gin"
 	"github.com/pingcap/tiflow/cdc/model"
 )
@@ -34,20 +34,20 @@ import (
 // @Failure 500,400 {object} model.HTTPError
 // @Router	/api/v2/status [get]
 func (h *OpenAPIV2) serverStatus(c *gin.Context) {
-	info, err := h.capture.SelfCaptureInfo()
+	info, err := h.server.SelfInfo()
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
-	etcdClient := h.capture.GetEtcdClient()
+	etcdClient := h.server.GetEtcdClient()
 	status := model.ServerStatus{
 		Version:   version.ReleaseVersion,
 		GitHash:   version.GitHash,
 		Pid:       os.Getpid(),
 		ID:        info.ID,
 		ClusterID: etcdClient.GetClusterID(),
-		IsOwner:   h.capture.IsCoordinator(),
-		Liveness:  h.capture.Liveness(),
+		IsOwner:   h.server.IsCoordinator(),
+		Liveness:  h.server.Liveness(),
 	}
 	c.IndentedJSON(http.StatusOK, status)
 }

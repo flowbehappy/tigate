@@ -37,4 +37,6 @@ type Task interface {
 	Release()
 	// Get status of the task
 	GetStatus() TaskStatus
+	// Set status of the task
+	SetStatus(status TaskStatus)
 }

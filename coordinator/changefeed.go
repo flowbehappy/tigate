@@ -14,10 +14,11 @@
 package coordinator
 
 import (
+	"time"
+
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/tiflow/cdc/model"
-	"time"
 )
 
 // changefeed tracks the scheduled maintainer on coordinator side
@@ -57,13 +58,13 @@ func (c *changefeed) IsAlive() bool {
 	return time.Now().Sub(c.lastHeartBeat) < 10*time.Second
 }
 
-func (c *changefeed) NewAddInferiorMessage(capture model.CaptureID, secondary bool) rpc.Message {
+func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary bool) rpc.Message {
 	//return &Message{
-	//	To: capture,
+	//	To: server,
 	//	DispatchMaintainerRequest: &DispatchMaintainerRequest{
 	//		AddMaintainerRequest: &AddMaintainerRequest{
 	//			ID:          c.ID,
-	//			Config:      c.SelfCaptureInfo,
+	//			Config:      c.SelfInfo,
 	//			Status:      c.Status,
 	//			IsSecondary: secondary,
 	//		}},
@@ -71,12 +72,12 @@ func (c *changefeed) NewAddInferiorMessage(capture model.CaptureID, secondary bo
 	return nil
 }
 
-func (c *changefeed) NewRemoveInferiorMessage(capture model.CaptureID) rpc.Message {
+func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) rpc.Message {
 	//return &Message{
-	//	To: capture,
+	//	To: server,
 	//	DispatchMaintainerRequest: &DispatchMaintainerRequest{
 	//		RemoveMaintainerRequest: &RemoveMaintainerRequest{
-	//			ID: c.SelfCaptureInfo.ID,
+	//			ID: c.SelfInfo.ID,
 	//		},
 	//	},
 	//}

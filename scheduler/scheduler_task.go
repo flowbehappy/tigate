@@ -68,7 +68,7 @@ type AddInferior struct {
 }
 
 func (t AddInferior) String() string {
-	return fmt.Sprintf("AddInferior, span: %s, capture: %s",
+	return fmt.Sprintf("AddInferior, span: %s, server: %s",
 		t.ID.String(), t.CaptureID)
 }
 
@@ -79,6 +79,6 @@ type RemoveInferior struct {
 }
 
 func (t RemoveInferior) String() string {
-	return fmt.Sprintf("RemoveInferior, ID: %s, capture: %s",
+	return fmt.Sprintf("RemoveInferior, ID: %s, server: %s",
 		t.ID.String(), t.CaptureID)
 }
