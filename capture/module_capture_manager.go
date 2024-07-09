@@ -111,3 +111,7 @@ func (c *CaptureManager) RegisterCaptureChangeHandler(name string, f func()) {
 	c.handles[name] = f
 	c.handleRWLock.Unlock()
 }
+
+func (c *CaptureManager) Close(ctx context.Context) error {
+	return nil
+}
