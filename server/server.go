@@ -22,12 +22,10 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	"github.com/flowbehappy/tigate/api"
 	"github.com/flowbehappy/tigate/capture"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	messagingProto "github.com/flowbehappy/tigate/pkg/messaging/proto"
-
-	"github.com/dustin/go-humanize"
 	"github.com/gin-gonic/gin"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -270,7 +268,7 @@ func (s *server) run(ctx context.Context) (err error) {
 		return s.tcpServer.Run(egCtx)
 	})
 	grpcServer := grpc.NewServer()
-	messagingProto.RegisterMessageCenterServer(grpcServer, messaging.NewMessageCenterServer(s.messageCenter))
+	//messagingProto.RegisterMessageCenterServer(grpcServer, messaging.NewMessageCenterServer(s.messageCenter))
 	eg.Go(func() error {
 		return grpcServer.Serve(s.tcpServer.GrpcListener())
 	})
