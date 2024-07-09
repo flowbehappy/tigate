@@ -30,7 +30,7 @@ func (h *OpenAPIV2) QueryTso(c *gin.Context) {
 		return
 	}
 	resp := &Tso{}
-	client := h.capture.GetPdClient()
+	client := h.server.GetPdClient()
 	timestamp, logicalTime, err := client.GetTS(ctx)
 	if err != nil {
 		_ = c.Error(err)

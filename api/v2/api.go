@@ -15,17 +15,17 @@ package v2
 
 import (
 	"github.com/flowbehappy/tigate/api/middleware"
-	"github.com/flowbehappy/tigate/capture"
+	appctx "github.com/flowbehappy/tigate/common/context"
 	"github.com/gin-gonic/gin"
 )
 
 // OpenAPIV2 provides CDC v2 APIs
 type OpenAPIV2 struct {
-	capture capture.Capture
+	server appctx.Server
 }
 
 // NewOpenAPIV2 creates a new OpenAPIV2.
-func NewOpenAPIV2(c capture.Capture) OpenAPIV2 {
+func NewOpenAPIV2(c appctx.Server) OpenAPIV2 {
 	return OpenAPIV2{c}
 }
 
@@ -37,7 +37,7 @@ func RegisterOpenAPIV2Routes(router *gin.Engine, api OpenAPIV2) {
 
 	v2.GET("status", api.serverStatus)
 
-	coordinatorMiddleware := middleware.ForwardToCoordinatorMiddleware(api.capture)
+	coordinatorMiddleware := middleware.ForwardToCoordinatorMiddleware(api.server)
 
 	// changefeed apis
 	changefeedGroup := v2.Group("/changefeeds")

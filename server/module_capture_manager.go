@@ -11,10 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package capture
+package server
 
 import (
 	"context"
+	"sync"
+	"time"
+
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -23,14 +26,12 @@ import (
 	"github.com/pingcap/tiflow/pkg/util"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
-	"sync"
-	"time"
 )
 
-const CaptureManagerName = "capture-manager"
+const CaptureManagerName = "server-manager"
 
 // CaptureManager manager the read view of all captures, other modules can get the captures information from it
-// and register capture update event handler
+// and register server update event handler
 type CaptureManager struct {
 	session    *concurrency.Session
 	etcdClient etcd.CDCEtcdClient
@@ -54,7 +55,7 @@ func (c *CaptureManager) Name() string {
 	return CaptureManagerName
 }
 
-// Tick is triggered by the capture update events
+// Tick is triggered by the server update events
 func (c *CaptureManager) Tick(ctx context.Context,
 	raw orchestrator.ReactorState) (orchestrator.ReactorState, error) {
 	state := raw.(*orchestrator.GlobalReactorState)
@@ -74,7 +75,7 @@ func (c *CaptureManager) Tick(ctx context.Context,
 			}
 			allCaptures[capture.ID] = capture
 		}
-		log.Info("capture change detected", zap.Any("removed", removed),
+		log.Info("server change detected", zap.Any("removed", removed),
 			zap.Any("new", newCaptures))
 		c.captures = allCaptures
 
@@ -98,7 +99,7 @@ func (c *CaptureManager) Run(ctx context.Context) error {
 	watcher := NewEtcdWatcher(c.etcdClient,
 		c.session,
 		// captures info key prefix
-		etcd.BaseKey(c.etcdClient.GetClusterID())+"/__cdc_meta__/capture",
+		etcd.BaseKey(c.etcdClient.GetClusterID())+"/__cdc_meta__/server",
 		util.RoleOwner.String())
 
 	return watcher.runEtcdWorker(ctx, c,

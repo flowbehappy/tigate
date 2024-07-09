@@ -18,13 +18,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/api"
-	"github.com/pingcap/tiflow/cdc/capture"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/upstream"
 	"github.com/pingcap/tiflow/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -157,25 +154,4 @@ func toAPIModel(
 		TaskStatus:     taskStatus,
 	}
 	return apiInfoModel
-}
-
-func getCaptureDefaultUpstream(cp capture.Capture) (*upstream.Upstream, error) {
-	upManager, err := cp.GetUpstreamManager()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	up, err := upManager.GetDefaultUpstream()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return up, nil
-}
-
-func getUpstreamPDConfig(up *upstream.Upstream) PDConfig {
-	return PDConfig{
-		PDAddrs:  up.PdEndpoints,
-		KeyPath:  up.SecurityConfig.KeyPath,
-		CAPath:   up.SecurityConfig.CAPath,
-		CertPath: up.SecurityConfig.CertPath,
-	}
 }

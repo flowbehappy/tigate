@@ -11,10 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package capture
+package server
 
 import (
 	"context"
+	"time"
+
 	"github.com/flowbehappy/tigate/coordinator"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -25,7 +27,6 @@ import (
 	"github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -35,10 +36,10 @@ import (
 
 type elector struct {
 	election    *concurrency.Election
-	captureImpl *captureImpl
+	captureImpl *serverImpl
 }
 
-func NewElector(captureImpl *captureImpl) SubModule {
+func NewElector(captureImpl *serverImpl) SubModule {
 	election := concurrency.NewElection(captureImpl.session,
 		etcd.CaptureOwnerKey(captureImpl.EtcdClient.GetClusterID()))
 	return &elector{
@@ -101,7 +102,7 @@ func (e *elector) campaignCoordinator(ctx context.Context) error {
 		// After campaign check liveness again.
 		// It is possible it becomes the coordinator right after receiving SIGTERM.
 		if e.captureImpl.liveness.Load() == model.LivenessCaptureStopping {
-			// If the capture is stopping, resign actively.
+			// If the server is stopping, resign actively.
 			log.Info("resign coordinator actively, liveness is stopping")
 			if resignErr := e.resign(ctx); resignErr != nil {
 				log.Warn("resign coordinator actively failed",
@@ -164,7 +165,7 @@ func (e *elector) campaignCoordinator(ctx context.Context) error {
 				zap.String("captureID", e.captureImpl.info.ID),
 				zap.Int64("coordinatorVersion", coordinatorVersion),
 				zap.Error(err))
-			// for errors, return error and let capture exits or restart
+			// for errors, return error and let server exits or restart
 			return errors.Trace(err)
 		}
 		// if coordinator exits normally, continue the campaign loop and try to election coordinator again
