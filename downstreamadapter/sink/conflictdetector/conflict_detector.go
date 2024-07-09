@@ -45,7 +45,7 @@ type ConflictDetector struct {
 }
 
 // NewConflictDetector creates a new ConflictDetector.
-func NewConflictDetector[Txn txnEvent](
+func NewConflictDetector(
 	numSlots uint64, opt TxnCacheOption,
 ) *ConflictDetector {
 	ret := &ConflictDetector{

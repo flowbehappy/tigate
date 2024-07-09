@@ -16,6 +16,7 @@ package sink
 import (
 	"time"
 
+	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/conflictdetector"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
@@ -25,15 +26,15 @@ import (
 // 同个 table 的 add event 是需要满足前后顺序的，所以这里的 task 还是只应该有 dispatcher 个
 // 那也就是她的 task 是每一个新的 table 出现就创建，然后永远在轮训，直到 dispatcher 被移除了 -- 所以要有个 table 和 task 的 map
 type MysqlSinkTask struct {
-	conflictDetector *conflictdetector.ConflictDetector[*Event] // 这个会被多个任务共用，所以需要做到内部 thread safe
-	tableSpan        *Span
+	conflictDetector *conflictdetector.ConflictDetector // 这个会被多个任务共用，所以需要做到内部 thread safe
+	tableSpan        *common.TableSpan
 	tableProgress    *TableProgress
-	eventCh          chan *Event
+	eventCh          chan *common.TxnEvent
 	taskStatus       threadpool.TaskStatus
 }
 
 // 这个任务本身就是把
-func newMysqlSinkTask(tableSpan *TableSpan, tableProgress *TableProgress, eventCh chan *Event, conflictDetector *conflictdetector.ConflictDetector[*Event]) *MysqlSinkTask {
+func newMysqlSinkTask(tableSpan *common.TableSpan, tableProgress *TableProgress, eventCh chan *common.TxnEvent, conflictDetector *conflictdetector.ConflictDetector) *MysqlSinkTask {
 	return &MysqlSinkTask{
 		conflictDetector: conflictDetector,
 		tableSpan:        tableSpan,

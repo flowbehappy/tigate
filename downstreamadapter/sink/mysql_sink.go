@@ -44,12 +44,12 @@ type MysqlSink struct {
 	// TableProgress 里面维护了目前正在 sink 中的 event ts 信息
 	// TableProgress 对外提供查询当前 table checkpointTs 的能力
 	// TableProgress 对外提供当前 table 是否有 event 在 sink 中等待被 flush 的能力--用于判断 ddl 是否达到下推条件
-	tableProgressMap map[*Span]*TableProgress
+	tableProgressMap map[*common.TableSpan]*TableProgress
 	// 主要是要保持一样的生命周期？不然 channel 会对应不上
 	// workers  []*worker.MysqlWorker
 	ddlWorker *worker.MysqlDDLWorker
-	eventChs  map[*Span]chan *common.TxnEvent // 这个感觉最好也不要用 channel，用一个代表 channal 的 struct
-	tasks     map[*Span]*MysqlSinkTask
+	eventChs  map[*common.TableSpan]chan *common.TxnEvent // 这个感觉最好也不要用 channel，用一个代表 channal 的 struct
+	tasks     map[*common.TableSpan]*MysqlSinkTask
 
 	mutex sync.Mutex // 用于新插入 dispatcher 或者 remove dispatcher 时保护 tableProgressMap，eventChs，tasks 对象
 }
@@ -62,9 +62,9 @@ func NewMysqlSink(workerCount int, sinkURI *url.URL) *MysqlSink {
 			Size:          1024,
 			BlockStrategy: causality.BlockStrategyWaitEmpty,
 		}),
-		tableProgressMap: make(map[*Span]*TableProgress),
-		eventChs:         make(map[*Span]chan *common.TxnEvent),
-		tasks:            make(map[*Span]*MysqlSinkTask),
+		tableProgressMap: make(map[*common.TableSpan]*TableProgress),
+		eventChs:         make(map[*common.TableSpan]chan *common.TxnEvent),
+		tasks:            make(map[*common.TableSpan]*MysqlSinkTask),
 	}
 
 	mysqlSink.initWorker(workerCount, sinkURI)
@@ -87,7 +87,7 @@ func (s *MysqlSink) initWorker(workerCount int, sinkURI *url.URL) {
 	}
 }
 
-func (s *MysqlSink) AddDMLEvent(tableSpan *Span, event *common.TxnEvent) {
+func (s *MysqlSink) AddDMLEvent(tableSpan *common.TableSpan, event *common.TxnEvent) {
 	s.mutex.Lock() // TODO:改成读写锁
 	defer s.mutex.Unlock()
 	if ch, ok := s.eventChs[tableSpan]; ok {
@@ -96,12 +96,12 @@ func (s *MysqlSink) AddDMLEvent(tableSpan *Span, event *common.TxnEvent) {
 		}
 		ch <- event
 	} else {
-		log.Error("unknown Span for Mysql Sink: ", tableSpan)
+		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
 		// TODO: return error here
 	}
 }
 
-func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *Span, event *common.TxnEvent) { // 或许 ddl 也可以考虑有专用的 worker？
+func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *common.TxnEvent) { // 或许 ddl 也可以考虑有专用的 worker？
 	s.mutex.Lock() // TODO:改成读写锁
 	defer s.mutex.Unlock()
 
@@ -113,8 +113,8 @@ func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *Span, event *common.TxnEv
 	}
 }
 
-func (s *MysqlSink) AddTableSpan(tableSpan *Span) {
-	tableProgress := NewTableProgress(tableSpan)
+func (s *MysqlSink) AddTableSpan(tableSpan *common.TableSpan) {
+	tableProgress := NewTableProgress()
 	ch := make(chan *common.TxnEvent, 100) // 先瞎拍
 	task := newMysqlSinkTask(tableSpan, tableProgress, ch, s.conflictDetector)
 
@@ -128,7 +128,7 @@ func (s *MysqlSink) AddTableSpan(tableSpan *Span) {
 	threadpool.GetTaskSchedulerInstance().SinkTaskScheduler.Submit(task)
 }
 
-func (s *MysqlSink) RemoveTableSpan(tableSpan *Span) {
+func (s *MysqlSink) RemoveTableSpan(tableSpan *common.TableSpan) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -144,7 +144,7 @@ func (s *MysqlSink) RemoveTableSpan(tableSpan *Span) {
 	}
 }
 
-func (s *MysqlSink) IsEmpty(tableSpan *Span) bool {
+func (s *MysqlSink) IsEmpty(tableSpan *common.TableSpan) bool {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -152,12 +152,12 @@ func (s *MysqlSink) IsEmpty(tableSpan *Span) bool {
 		return tableProgress.Empty()
 	}
 
-	log.Error("Invalid table span in MysqlSink::isEmpty", tableSpan)
+	log.Error("Invalid table span in MysqlSink::isEmpty", zap.Any("tableSpan", tableSpan))
 	//return error
 	return false
 }
 
-func (s *MysqlSink) GetSmallestCommitTs(tableSpan *Span) uint64 {
+func (s *MysqlSink) GetSmallestCommitTs(tableSpan *common.TableSpan) uint64 {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -165,7 +165,7 @@ func (s *MysqlSink) GetSmallestCommitTs(tableSpan *Span) uint64 {
 		return tableProgress.SmallestCommitTs()
 	}
 
-	log.Error("Invalid table span in MysqlSink::isEmpty", tableSpan)
+	log.Error("Invalid table span in MysqlSink::isEmpty", zap.Any("tableSpan", tableSpan))
 	//return error
 	return 0 //给个 error 最后
 }

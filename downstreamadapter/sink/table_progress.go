@@ -16,6 +16,8 @@ package sink
 import (
 	"container/list"
 	"sync"
+
+	"github.com/flowbehappy/tigate/common"
 )
 
 // TableProgress 里面维护了目前正在 sink 中的 event ts 信息
@@ -44,8 +46,8 @@ func NewTableProgress() *TableProgress {
 	return tableProgress
 }
 
-func (p *TableProgress) Add(event *Event) {
-	ts := Ts{startTs: event.StartTs, commitTs: event.CommitT}
+func (p *TableProgress) Add(event *common.TxnEvent) {
+	ts := Ts{startTs: event.StartTs, commitTs: event.CommitTs}
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	elem := p.list.PushBack(ts)
@@ -53,8 +55,8 @@ func (p *TableProgress) Add(event *Event) {
 }
 
 // 而且删除可以认为是批量的？但要不要做成批量可以后面再看
-func (p *TableProgress) Remove(event *Event) {
-	ts := Ts{startTs: event.StartTs, commitTs: event.CommitT}
+func (p *TableProgress) Remove(event *common.TxnEvent) {
+	ts := Ts{startTs: event.StartTs, commitTs: event.CommitTs}
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	if elem, ok := p.elemMap[&ts]; ok {
