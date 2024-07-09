@@ -129,7 +129,7 @@ func (e *elector) campaignCoordinator(ctx context.Context) error {
 		watcher := NewEtcdWatcher(e.captureImpl.EtcdClient,
 			e.captureImpl.session,
 			// changefeed info key prefix
-			etcd.BaseKey(e.captureImpl.EtcdClient.GetClusterID())+etcd.ChangefeedInfoKey,
+			etcd.BaseKey(e.captureImpl.EtcdClient.GetClusterID()),
 			util.RoleOwner.String())
 
 		err = watcher.runEtcdWorker(ctx, co.(orchestrator.Reactor),

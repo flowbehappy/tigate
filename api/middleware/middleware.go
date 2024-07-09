@@ -96,15 +96,15 @@ func ForwardToOwner(c *gin.Context, server appctx.Server) {
 		return
 	}
 
-	var owner *model.CaptureInfo
+	var node *model.CaptureInfo
 	// get coordinator info
-	owner, err = server.GetCoordinatorInfo(ctx)
+	node, err = server.GetCoordinatorInfo(ctx)
 	if err != nil {
 		log.Info("get owner failed", zap.Error(err))
 		_ = c.Error(err)
 		return
 	}
-	ForwardToServer(c, info.ID, owner.AdvertiseAddr)
+	ForwardToServer(c, info.ID, node.AdvertiseAddr)
 }
 
 // ForwardToServer forward request to another

@@ -14,7 +14,6 @@
 package maintainer
 
 import (
-	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -28,7 +27,6 @@ import (
 // 2. handle dispatcher command from coordinator: add or remove changefeed maintainer
 // 3. check maintainer liveness
 type Manager struct {
-	rpcClient  rpc.RpcClient
 	supervisor *scheduler.Supervisor
 	scheduler  scheduler.Scheduler
 
@@ -36,10 +34,8 @@ type Manager struct {
 }
 
 // NewManager create a changefeed maintainer instance
-func NewManager(rpcClient rpc.RpcClient) *Manager {
-	return &Manager{
-		rpcClient: rpcClient,
-	}
+func NewManager() *Manager {
+	return &Manager{}
 }
 
 func (m *Manager) handleDispatchMaintainerRequest(

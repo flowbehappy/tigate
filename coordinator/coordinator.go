@@ -15,6 +15,8 @@ package coordinator
 
 import (
 	"context"
+	"time"
+
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils/threadpool"
@@ -22,12 +24,7 @@ import (
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
 	"go.uber.org/zap"
-	"time"
 )
-
-type Coordinator interface {
-	AsyncStop()
-}
 
 // Coordinator is the master of the ticdc cluster,
 // 1. schedules changefeed maintainer to ticdc node
@@ -35,9 +32,15 @@ type Coordinator interface {
 // 3. send checkpoint to downstream
 // 4. manager gc safe point
 // 5. response for open API call
+type Coordinator interface {
+	AsyncStop()
+	GetNodeInfo() *model.CaptureInfo
+}
+
 type coordinator struct {
 	supervisor *scheduler.Supervisor
 	scheduler  scheduler.Scheduler
+	nodeInfo   *model.CaptureInfo
 	tick       *time.Ticker
 	taskCh     chan Task
 
@@ -50,6 +53,7 @@ func NewCoordinator(capture *model.CaptureInfo,
 		tick:      time.NewTicker(time.Second),
 		scheduler: scheduler.NewCombineScheduler(scheduler.NewBasicScheduler(1000)),
 		version:   version,
+		nodeInfo:  capture,
 	}
 	c.supervisor = scheduler.NewSupervisor(
 		CoordinatorID(capture.ID),
@@ -62,6 +66,10 @@ func NewCoordinator(capture *model.CaptureInfo,
 func (c *coordinator) Tick(ctx context.Context,
 	state orchestrator.ReactorState) (orchestrator.ReactorState, error) {
 	return state, nil
+}
+
+func (c *coordinator) GetNodeInfo() *model.CaptureInfo {
+	return c.nodeInfo
 }
 
 func (c *coordinator) Execute(timeout time.Duration) threadpool.TaskStatus {

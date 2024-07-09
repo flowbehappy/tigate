@@ -39,7 +39,7 @@ type CaptureManager struct {
 	captures map[string]*model.CaptureInfo
 
 	handleRWLock sync.RWMutex
-	handles      map[string]func()
+	handles      map[string]func([]*model.CaptureInfo, []*model.CaptureInfo)
 }
 
 func NewCaptureManager(session *concurrency.Session,
@@ -82,7 +82,7 @@ func (c *CaptureManager) Tick(ctx context.Context,
 		// notify handler
 		c.handleRWLock.RLock()
 		for _, handle := range c.handles {
-			handle()
+			handle(newCaptures, removed)
 		}
 		c.handleRWLock.RUnlock()
 	}
@@ -107,7 +107,8 @@ func (c *CaptureManager) Run(ctx context.Context) error {
 			cfg.CaptureSessionTTL), time.Millisecond*50)
 }
 
-func (c *CaptureManager) RegisterCaptureChangeHandler(name string, f func()) {
+func (c *CaptureManager) RegisterCaptureChangeHandler(name string,
+	f func([]*model.CaptureInfo, []*model.CaptureInfo)) {
 	c.handleRWLock.Lock()
 	c.handles[name] = f
 	c.handleRWLock.Unlock()

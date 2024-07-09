@@ -227,13 +227,13 @@ func (c *serverImpl) GetCoordinatorInfo(ctx context.Context) (*model.CaptureInfo
 		return nil, err
 	}
 
-	ownerID, err := c.EtcdClient.GetOwnerID(ctx)
+	coordinatorID, err := c.EtcdClient.GetOwnerID(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, captureInfo := range captureInfos {
-		if captureInfo.ID == ownerID {
+		if captureInfo.ID == coordinatorID {
 			return captureInfo, nil
 		}
 	}
