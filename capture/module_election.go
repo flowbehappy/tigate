@@ -174,6 +174,10 @@ func (e *elector) campaignCoordinator(ctx context.Context) error {
 	}
 }
 
+func (e *elector) Close(ctx context.Context) error {
+	return nil
+}
+
 // resign lets the coordinator start a new election.
 func (e *elector) resign(ctx context.Context) error {
 	if e.election == nil {

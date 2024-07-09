@@ -15,10 +15,12 @@ package capture
 
 import "context"
 
-// SubModule identify the modules will be started when capture starting
+// SubModule identify the modules will be started when the server is starting
 type SubModule interface {
 	// Name returns the SubModule's Name
 	Name() string
-	// Run runs the module, it's a block caller, only return when finished or error occurs
+	// Run runs the module, it's a block call, only return when finished or error occurs
 	Run(ctx context.Context) error
+	// Close closes the module, it's a block call
+	Close(ctx context.Context) error
 }
