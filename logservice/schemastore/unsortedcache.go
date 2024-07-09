@@ -9,35 +9,33 @@ import (
 	"github.com/google/btree"
 )
 
-type unSortedDDLCache struct {
+type unsortedDDLCache struct {
 	mutex sync.Mutex
 	// ordered by commitTS
-	// TODO: whether need a startTS?
+	// TODO: is commitTS unique?
 	ddlEvents *btree.BTreeG[DDLEvent]
 }
 
 func ddlEventLess(a, b DDLEvent) bool {
-	// TODO: do we need finished ts?
 	return a.CommitTS < b.CommitTS
 }
 
-func newUnSortedDDLCache() *unSortedDDLCache {
-	return &unSortedDDLCache{
+func newUnSortedDDLCache() *unsortedDDLCache {
+	return &unsortedDDLCache{
 		ddlEvents: btree.NewG[DDLEvent](16, ddlEventLess),
 	}
 }
 
-func (c *unSortedDDLCache) addDDL(ddlEvent DDLEvent) {
+func (c *unsortedDDLCache) addDDLEvent(ddlEvent DDLEvent) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	// TODO: is commitTS unique?
 	oldEvent, duplicated := c.ddlEvents.ReplaceOrInsert(ddlEvent)
 	if duplicated {
 		log.Fatal("commitTS conflict", zap.Any("oldEvent", oldEvent), zap.Any("newEvent", ddlEvent))
 	}
 }
 
-func (c *unSortedDDLCache) getSortedDDLEventBeforeTS(ts Timestamp) []DDLEvent {
+func (c *unsortedDDLCache) fetchSortedDDLEventBeforeTS(ts Timestamp) []DDLEvent {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	events := make([]DDLEvent, 0)
