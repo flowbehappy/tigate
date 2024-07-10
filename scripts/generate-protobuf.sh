@@ -14,7 +14,7 @@
 
 set -eu
 
-TOOLS_BIN_DIR="/usr/local/bin"
+TOOLS_BIN_DIR="tools/bin"
 TOOLS_INCLUDE_DIR="tools/include"
 PROTO_DIR="proto"
 TiCDC_SOURCE_DIR="./"

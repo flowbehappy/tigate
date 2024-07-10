@@ -19,6 +19,7 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
 	github.com/pingcap/tidb v1.1.0-beta.0.20240613051929-f124165c9be4
+	github.com/pingcap/tidb/parser v0.0.0-20231013125129-93a834a6bf8d
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20240613051929-f124165c9be4
 	github.com/pingcap/tiflow v0.0.0-20240621054018-c001638fcf8c
 	github.com/prometheus/client_golang v1.19.0

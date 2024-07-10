@@ -50,16 +50,17 @@ The workflow related to the dispatcher is as follows:
 */
 type Dispatcher interface {
 	GetSink() sink.Sink
-	GetTableSpan() *Span
+	GetTableSpan() *common.TableSpan
 	GetState() *State
-	GetEventChan() chan *Event
+	GetEventChan() chan *common.TxnEvent
 	GetResolvedTs() uint64
 	UpdateResolvedTs(uint64)
-	GetId() uint64
+	GetId() common.DispatcherID
 	GetDispatcherType() DispatcherType
 	GetHeartBeatChan() chan *HeartBeatResponseMessage
 	GetSyncPointInfo() *SyncPointInfo
 	GetMemoryUsage() *MemoryUsage
+	PushEvent(event *common.TxnEvent)
 }
 
 type DispatcherType uint64
@@ -133,15 +134,16 @@ Mainly about the progress of each dispatcher:
 2. The checkpointTs of the dispatcher, shows that all the events whose ts <= checkpointTs are flushed to downstream successfully.
 */
 type HeartBeatInfo struct {
-	IsBlocked      bool
-	BlockTs        uint64
-	BlockTableSpan []*common.TableSpan
-	TableSpan      *common.TableSpan
-	CheckpointTs   uint64
-	Id             uint64
+	// IsBlocked      bool
+	// BlockTs        uint64
+	// BlockTableSpan []*common.TableSpan
+	// TableSpan      *common.TableSpan
+	CheckpointTs uint64
+	Id           common.DispatcherID
 }
 
-func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
+// func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
+func CollectDispatcherCheckpointTs(d Dispatcher) uint64 {
 	var checkpointTs uint64
 	// The event in dispatcher could be in
 	// 1. Sink
@@ -160,13 +162,14 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
 				if event.IsDMLEvent() {
 					state.pengdingEvent = event
 				} else {
+					// TODO:先 hack 了 blockTableSpan 的值获取
 					state = &State{
-						isBlocked:      true,
-						pengdingEvent:  event,
-						blockTableSpan: event.GetTableSpans(),
-						blockTs:        event.CommitTs(),
-						action:         None,
-						sinkAvailable:  false,
+						isBlocked:     true,
+						pengdingEvent: event,
+						// blockTableSpan: event.GetTableSpans(),
+						blockTs:       event.CommitTs,
+						action:        None,
+						sinkAvailable: false,
 					}
 				}
 				checkpointTs = event.CommitTs - 1
@@ -181,15 +184,16 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
 	// use checkpointTs to release memory usage
 	d.GetMemoryUsage().Release(checkpointTs)
 
-	state := d.GetState()
-	return &HeartBeatInfo{
-		IsBlocked:      state.isBlocked,
-		BlockTs:        state.blockTs,
-		BlockTableSpan: state.blockTableSpan,
-		CheckpointTs:   checkpointTs,
-		TableSpan:      d.GetTableSpan(),
-		Id:             d.GetId(),
-	}
+	//state := d.GetState()
+	// return &HeartBeatInfo{
+	// 	// IsBlocked:      state.isBlocked,
+	// 	// BlockTs:        state.blockTs,
+	// 	// BlockTableSpan: state.blockTableSpan,
+	// 	CheckpointTs: checkpointTs,
+	// 	//TableSpan:    d.GetTableSpan(),
+	// 	Id: d.GetId(),
+	// }
+	return checkpointTs
 }
 
 /*

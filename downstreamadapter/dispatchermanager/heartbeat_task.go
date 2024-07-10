@@ -19,6 +19,9 @@ import (
 	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/utils/threadpool"
+	"github.com/google/uuid"
+	"github.com/ngaut/log"
+	"go.uber.org/zap"
 )
 
 /*
@@ -49,18 +52,19 @@ func (t *HeartbeatSendTask) SetStatus(taskStatus threadpool.TaskStatus) {
 }
 
 func (t *HeartbeatSendTask) Execute(timeout time.Duration) threadpool.TaskStatus {
-	select {
-	case <-t.ticker.C:
-		message := t.eventDispatcherManager.CollectHeartbeatInfo()
-		t.eventDispatcherManager.HeartbeatRequestQueue.Enqueue(message)
-		return threadpool.Running
-	default:
-		return threadpool.Running
-	}
+	message := t.eventDispatcherManager.CollectHeartbeatInfo()
+	t.eventDispatcherManager.HeartbeatRequestQueue.Enqueue(message)
+	return threadpool.Waiting
+
 }
 
 func (t *HeartbeatSendTask) Await() threadpool.TaskStatus {
-	//
+	select {
+	case <-t.ticker.C:
+		return threadpool.Running
+	default:
+		return threadpool.Waiting
+	}
 }
 
 func (t *HeartbeatSendTask) Release() {
@@ -103,27 +107,31 @@ func (t *HeartbeatRecvTask) Execute(timeout time.Duration) threadpool.TaskStatus
 		heartbeatResponse := t.eventDispatcherManager.HeartbeatResponseQueue.Dequeue()
 		tableProgressInfo := heartbeatResponse.Info
 		for _, info := range tableProgressInfo {
-			dispatcherId := info.DispatcherID
-			if dispatcherId == dispatcher.TableTriggerEventDispatcherId {
-				dispatcherItem := t.eventDispatcherManager.TableTriggerEventDispatcher
-				var message dispatcher.HeartBeatResponseMessage
-				for _, progress := range info.TableProgresses {
-					message.OtherTableProgress = append(message.OtherTableProgress, &dispatcher.TableSpanProgress{
-						Span: &common.TableSpan{
-							TableID:  progress.Span.TableID,
-							StartKey: progress.Span.StartKey,
-							EndKey:   progress.Span.EndKey,
-						},
-						IsBlocked:    progress.IsBlocked,
-						BlockTs:      progress.BlockTs,
-						CheckpointTs: progress.CheckpointTs,
-					})
-				}
-				message.Action = dispatcher.Action(info.Action)
-				dispatcherItem.HeartbeatChan <- &message
+			dispatcherId, err := uuid.Parse(info.DispatcherID)
+			if err != nil {
+				log.Error("invalid dispatcher id", zap.Any("info.DispatcherID", info.DispatcherID), zap.Error(err))
 				continue
 			}
-			if dispatcherItem, ok := t.eventDispatcherManager.DispatcherMap[dispatcherId]; ok {
+			// if dispatcherId == dispatcher.TableTriggerEventDispatcherId {
+			// 	dispatcherItem := t.eventDispatcherManager.TableTriggerEventDispatcher
+			// 	var message dispatcher.HeartBeatResponseMessage
+			// 	for _, progress := range info.TableProgresses {
+			// 		message.OtherTableProgress = append(message.OtherTableProgress, &dispatcher.TableSpanProgress{
+			// 			Span: &common.TableSpan{
+			// 				TableID:  progress.Span.TableID,
+			// 				StartKey: progress.Span.StartKey,
+			// 				EndKey:   progress.Span.EndKey,
+			// 			},
+			// 			IsBlocked:    progress.IsBlocked,
+			// 			BlockTs:      progress.BlockTs,
+			// 			CheckpointTs: progress.CheckpointTs,
+			// 		})
+			// 	}
+			// 	message.Action = dispatcher.Action(info.Action)
+			// 	dispatcherItem.HeartbeatChan <- &message
+			// 	continue
+			// }
+			if dispatcherItem, ok := t.eventDispatcherManager.DispatcherMap[common.DispatcherID(dispatcherId)]; ok {
 				var message dispatcher.HeartBeatResponseMessage
 				for _, progress := range info.TableProgresses {
 					message.OtherTableProgress = append(message.OtherTableProgress, &dispatcher.TableSpanProgress{

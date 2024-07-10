@@ -29,14 +29,14 @@ and pushes the event down to the sink if it is eligible.
 */
 type EventDispatcherTask struct {
 	dispatcher Dispatcher
-	infos      []*HeartBeatResponseMessage
+	//infos      []*HeartBeatResponseMessage
 	taskStatus threadpool.TaskStatus
 }
 
 func NewEventDispatcherTask(dispatcher Dispatcher) *EventDispatcherTask {
 	return &EventDispatcherTask{
 		dispatcher: dispatcher,
-		infos:      make([]*HeartBeatResponseMessage, 0),
+		//infos:      make([]*HeartBeatResponseMessage, 0),
 		taskStatus: threadpool.Running,
 	}
 }
@@ -58,19 +58,26 @@ func (t *EventDispatcherTask) updateState(state *State, heartBeatResponseMessage
 			spanToProgressMap[span] = progress
 		}
 
+		newBlockTableSpan := make([]*common.TableSpan, 0)
 		for _, span := range state.blockTableSpan {
+			remove := false
 			if progress, ok := spanToProgressMap[span]; ok {
 				if progress.IsBlocked {
 					if progress.BlockTs >= state.blockTs {
-						delete(state.blockTableSpan, span)
+						remove = true
 					}
 				} else {
 					if progress.CheckpointTs >= state.blockTs {
-						delete(state.blockTableSpan, span)
+						remove = true
 					}
 				}
 			}
+			if !remove {
+				newBlockTableSpan = append(newBlockTableSpan, span)
+			}
 		}
+		state.blockTableSpan = newBlockTableSpan
+
 		action := heartBeatResponseMessage.Action
 		// 这边理论上要保证 action 复写没有问题
 		if state.action != action {
@@ -87,57 +94,63 @@ func (t *EventDispatcherTask) Execute(timeout time.Duration) threadpool.TaskStat
 	// 1. 先检查是否在 blocked 状态
 	state := t.dispatcher.GetState()
 	tableSpan := t.dispatcher.GetTableSpan()
-	dispatcherType := t.dispatcher.GetDispatcherType()
+	//dispatcherType := t.dispatcher.GetDispatcherType()
 	sink := t.dispatcher.GetSink()
-	if state.isBlocked {
-		// 拿着 infos 更新
-		if len(t.infos) > 0 {
-			t.updateState(state, t.infos)
-		}
-		t.infos = t.infos[:0] //上锁
 
-		if !state.sinkAvailable { // 没达到 ture 的时候都要做检查
-			if sink.IsEmpty(tableSpan) {
-				state.sinkAvailable = true
+	/*
+		if state.isBlocked {
+			// 拿着 infos 更新
+			if len(t.infos) > 0 {
+				t.updateState(state, t.infos)
+			}
+			t.infos = t.infos[:0] //上锁
+
+			if !state.sinkAvailable { // 没达到 ture 的时候都要做检查
+				if sink.IsEmpty(tableSpan) {
+					state.sinkAvailable = true
+				}
+			}
+
+			if state.blockTableSpan != nil || (state.pengdingEvent != nil && state.action == None) {
+				return threadpool.Waiting
+			}
+
+			if state.sinkAvailable == false { // 只有这个不满足的话就在这轮不用去 wait
+				return threadpool.Running
 			}
 		}
-
-		if state.blockTableSpan != nil || (state.pengdingEvent != nil && state.action == None) {
-			return threadpool.Waiting
-		}
-
-		if state.sinkAvailable == false { // 只有这个不满足的话就在这轮不用去 wait
-			return threadpool.Running
-		}
-	}
+	*/
 
 	// 先检查 pendingEvent 有没有，有的话就先执行这个，通过 action 来确定 ddl / syncPoint 的执行模式
 
 	if state.pengdingEvent != nil {
-		if state.pengdingEvent.isDDLEvent() || state.pengdingEvent.isSyncPointEvent() {
-			if state.action == Pass {
-				// 扔掉这条，开始写后续的 event
-			} else if state.action == Write {
-				// 下推
-				sink.AddDDLAndSyncPointEvent(tableSpan, state.pengdingEvent)
-				state.clear()
+		/*
+			if state.pengdingEvent.IsDDLEvent() || state.pengdingEvent.IsSyncPointEvent() {
+				if state.action == Pass {
+					// 扔掉这条，开始写后续的 event
+				} else if state.action == Write {
+					// 下推
+					sink.AddDDLAndSyncPointEvent(tableSpan, state.pengdingEvent)
+					state.clear()
 
-				if dispatcherType == TableTriggerEventDispatcherType {
-					// 如果是 table trigger, 那就 进入后续处理，尝试拿取下一条 event 开始处理
-				} else if dispatcherType == TableEventDispatcherType {
-					// state 改为 block ，等到下一轮发现 sink available 以后重新开始拿数据往下同步
-					state = &State{
-						isBlocked: true,
+					if dispatcherType == TableTriggerEventDispatcherType {
+						// 如果是 table trigger, 那就 进入后续处理，尝试拿取下一条 event 开始处理
+					} else if dispatcherType == TableEventDispatcherType {
+						// state 改为 block ，等到下一轮发现 sink available 以后重新开始拿数据往下同步
+						state = &State{
+							isBlocked: true,
+						}
+						return threadpool.Running
 					}
-					return threadpool.Running
 				}
-			}
-		} else {
-			// DML
-			// 直接下推
-			sink.AddDMLEvent(tableSpan, state.pengdingEvent)
-			state.clear()
-		}
+			} else {
+				// DML
+				// 直接下推
+				sink.AddDMLEvent(tableSpan, state.pengdingEvent)
+				state.clear()
+			}*/
+		sink.AddDMLEvent(tableSpan, state.pengdingEvent)
+		state.clear()
 	}
 
 	/* 还能继续写
@@ -148,43 +161,47 @@ func (t *EventDispatcherTask) Execute(timeout time.Duration) threadpool.TaskStat
 	for {
 		select {
 		case event := <-t.dispatcher.GetEventChan():
-			if event.isDMLEvent() {
+			if event.IsDMLEvent() {
 				sink.AddDMLEvent(tableSpan, event)
-			} else if event.isDDLEvent() {
-				// DDL
-				if event.isCrossTableDDL() { // cross 这个到时候还要加入 table trigger 会涉及到的，也算 cross. 也就是 table trigger 只能走到这个里面
-					tableSpans := event.GetTableSpans() // 获得这个 ddl 中涉及到的其他 table 的 span，这边后面写的时候也要考虑一下 table trigger 这个特殊的啊
+			}
+			/*
+				else if event.IsDDLEvent() {
+					// DDL
+					if event.IsCrossTableDDL() { // cross 这个到时候还要加入 table trigger 会涉及到的，也算 cross. 也就是 table trigger 只能走到这个里面
+						// TODO: 先不跑除了 create table 以外的 DDL，所以不会有 crossTable 出现
+						// tableSpans := event.GetTableSpans() // 获得这个 ddl 中涉及到的其他 table 的 span，这边后面写的时候也要考虑一下 table trigger 这个特殊的啊
+						// state = &State{
+						// 	isBlocked:      true,
+						// 	pengdingEvent:  event,
+						// 	blockTableSpan: tableSpans,
+						// 	blockTs:        event.CommitTs,
+						// }
+						return threadpool.Waiting
+					} else {
+						if sink.IsEmpty(tableSpan) {
+							sink.AddDDLAndSyncPointEvent(tableSpan, event)
+							state = &State{
+								isBlocked: true,
+							}
+						} else {
+							state = &State{
+								isBlocked:     true,
+								pengdingEvent: event,
+							}
+						}
+						return threadpool.Running
+					}
+				} else {
+					// syncpoint event, TODO:要处理一下只有一张表的情况
 					state = &State{
-						isBlocked:      true,
-						pengdingEvent:  event,
-						blockTableSpan: tableSpans,
-						blockTs:        event.CommitTs(),
+						isBlocked:     true,
+						pengdingEvent: event,
+						// blockTableSpan: AllTables, // special span : TODO syncpointTs
+						blockTs: event.CommitTs,
 					}
 					return threadpool.Waiting
-				} else {
-					if sink.IsEmpty(tableSpan) {
-						sink.AddDDLAndSyncPointEvent(tableSpan, event)
-						state = &State{
-							isBlocked: true,
-						}
-					} else {
-						state = &State{
-							isBlocked:     true,
-							pengdingEvent: event,
-						}
-					}
-					return threadpool.Running
 				}
-			} else {
-				// syncpoint event, TODO:要处理一下只有一张表的情况
-				state = &State{
-					isBlocked:     true,
-					pengdingEvent: event,
-					// blockTableSpan: AllTables, // special span : TODO syncpointTs
-					blockTs: event.CommitTs(),
-				}
-				return threadpool.Waiting
-			}
+			*/
 		case <-timer.C:
 			return threadpool.Running
 		default:
@@ -196,26 +213,29 @@ func (t *EventDispatcherTask) Execute(timeout time.Duration) threadpool.TaskStat
 	}
 }
 func (t *EventDispatcherTask) Await() threadpool.TaskStatus {
-	select {
-	case info := <-t.dispatcher.GetHeartBeatChan():
-		// 把目前现有的全部拿出来
-		t.infos = append(t.infos, info)
-		for {
-			select {
-			case info := <-t.dispatcher.GetHeartBeatChan():
-				t.infos = append(t.infos, info)
-			default:
+	/*
+		select {
+		case info := <-t.dispatcher.GetHeartBeatChan():
+			// 把目前现有的全部拿出来
+			t.infos = append(t.infos, info)
+			for {
+				select {
+				case info := <-t.dispatcher.GetHeartBeatChan():
+					t.infos = append(t.infos, info)
+				default:
+					return threadpool.Running
+				}
+			}
+		default:
+			// 如果不是在等待其他 table / action 状态而是 sink 本身的话，就也切回去
+			state := t.dispatcher.GetState()
+			if state.blockTableSpan == nil && (state.pengdingEvent == nil || state.action != None) && state.sinkAvailable == false {
 				return threadpool.Running
 			}
+			return threadpool.Waiting
 		}
-	default:
-		// 如果不是在等待其他 table / action 状态而是 sink 本身的话，就也切回去
-		state := t.dispatcher.GetState()
-		if state.blockTableSpan == nil && (state.pengdingEvent == nil || state.action != None) && state.sinkAvailable == false {
-			return threadpool.Running
-		}
-		return threadpool.Waiting
-	}
+	*/
+	return threadpool.Failed
 }
 
 func (t *EventDispatcherTask) Release() {
