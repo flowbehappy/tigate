@@ -30,7 +30,6 @@ type DispatcherInfo struct {
 }
 
 type DatabaseInfo struct {
-	ID            int64
 	Name          string
 	Tables        []TableID
 	CreateVersion Timestamp

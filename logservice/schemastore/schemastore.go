@@ -70,14 +70,14 @@ type schemaStore struct {
 }
 
 func NewSchemaStore(root string, storage kv.Storage, minRequiredTS Timestamp) (SchemaStore, Timestamp, error) {
-	dataStorage, finishedDDLTS, schemaVersion, databaseMap, resolvedTS := newPersistentStorage(root, storage, minRequiredTS)
+	dataStorage, metaTS, databaseMap := newPersistentStorage(root, storage, minRequiredTS)
 
 	s := &schemaStore{
 		unsortedCache:     newUnSortedDDLCache(),
 		dataStorage:       dataStorage,
 		eventCh:           make(chan interface{}, 1024),
-		finishedDDLTS:     finishedDDLTS,
-		schemaVersion:     int64(schemaVersion),
+		finishedDDLTS:     metaTS.finishedDDLTS,
+		schemaVersion:     int64(metaTS.schemaVersion),
 		databaseMap:       databaseMap,
 		tableInfoStoreMap: make(TableInfoStoreMap),
 		dispatchersMap:    make(DispatcherInfoMap),
@@ -86,7 +86,7 @@ func NewSchemaStore(root string, storage kv.Storage, minRequiredTS Timestamp) (S
 	// TODO: cancel this goroutine at exit
 	go s.run(ctx)
 
-	return s, resolvedTS, nil
+	return s, metaTS.resolvedTS, nil
 }
 
 func (s *schemaStore) run(ctx context.Context) error {
@@ -349,7 +349,6 @@ func createSchema(job *model.Job, databaseMap DatabaseInfoMap) error {
 		return errors.New("database already exists")
 	}
 	databaseInfo := &DatabaseInfo{
-		ID:            job.SchemaID,
 		Name:          job.SchemaName,
 		Tables:        make([]TableID, 0),
 		CreateVersion: Timestamp(job.BinlogInfo.FinishedTS),
