@@ -260,5 +260,3 @@ func TestBuildVersionedTableInfoAndApplyDDL(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, "t2", tableInfo2.Name.O)
 }
-
-// test load valid persistent storage, and build table info, apply ddl before call initialized
