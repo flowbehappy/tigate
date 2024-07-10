@@ -15,6 +15,7 @@ package scheduler
 
 import (
 	"fmt"
+
 	"github.com/pingcap/tiflow/cdc/model"
 )
 

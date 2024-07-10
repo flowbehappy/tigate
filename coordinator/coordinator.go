@@ -15,6 +15,8 @@ package coordinator
 
 import (
 	"context"
+	"time"
+
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils/threadpool"
@@ -22,7 +24,6 @@ import (
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
 	"go.uber.org/zap"
-	"time"
 )
 
 type Coordinator interface {

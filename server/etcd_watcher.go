@@ -50,6 +50,7 @@ func (w *EtcdWatcher) runEtcdWorker(
 	reactorState *orchestrator.GlobalReactorState,
 	timerInterval time.Duration,
 ) error {
+	log.Info("start to run etcd worker", zap.String("role", w.role))
 	reactorState.Role = w.role
 	etcdWorker, err := orchestrator.NewEtcdWorker(w.etcdClient,
 		w.baseKey, reactor, reactorState, &migrate.NoOpMigrator{})

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -29,15 +30,17 @@ import (
 	"go.uber.org/zap"
 )
 
-const CaptureManagerName = "server-manager"
+const NodeManagerName = "node-manager"
 
-// CaptureManager manager the read view of all captures, other modules can get the captures information from it
+var TempEpoch = uint64(1)
+
+// NodeManager manager the read view of all captures, other modules can get the captures information from it
 // and register server update event handler
-type CaptureManager struct {
+type NodeManager struct {
 	session       *concurrency.Session
 	etcdClient    etcd.CDCEtcdClient
 	messageCenter messaging.MessageCenter
-	captures      map[string]*model.CaptureInfo
+	nodes         map[string]*model.CaptureInfo
 
 	handleRWLock sync.RWMutex
 	handles      map[string]func()
@@ -47,46 +50,49 @@ func NewCaptureManager(
 	session *concurrency.Session,
 	etcdClient etcd.CDCEtcdClient,
 	mc messaging.MessageCenter,
-) *CaptureManager {
-	return &CaptureManager{
+) *NodeManager {
+	return &NodeManager{
 		session:       session,
 		etcdClient:    etcdClient,
 		messageCenter: mc,
-		captures:      make(map[string]*model.CaptureInfo),
+		nodes:         make(map[string]*model.CaptureInfo),
 	}
 }
 
-func (c *CaptureManager) Name() string {
-	return CaptureManagerName
+func (c *NodeManager) Name() string {
+	return NodeManagerName
 }
 
 // Tick is triggered by the server update events
-func (c *CaptureManager) Tick(ctx context.Context,
+func (c *NodeManager) Tick(ctx context.Context,
 	raw orchestrator.ReactorState) (orchestrator.ReactorState, error) {
 	state := raw.(*orchestrator.GlobalReactorState)
-	if len(c.captures) != len(state.Captures) {
+	log.Info("node manager tick", zap.Any("captures", state.Captures), zap.Any("owner", state.Owner))
+	if len(c.nodes) != len(state.Captures) {
 		// find changes
 		removed := make([]*model.CaptureInfo, 0)
 		newCaptures := make([]*model.CaptureInfo, 0)
 		allCaptures := make(map[string]*model.CaptureInfo, len(state.Captures))
-		for _, capture := range c.captures {
+		for _, capture := range c.nodes {
 			if _, exist := state.Captures[capture.ID]; !exist {
-				sid := messaging.ServerId(model.CaptureIDToUUID(capture.ID))
+				sid := messaging.ServerId(uuid.MustParse(capture.ID))
 				c.messageCenter.RemoveTarget(sid)
 				removed = append(removed, capture)
 			}
 		}
+
 		for _, capture := range state.Captures {
-			if _, exist := c.captures[capture.ID]; !exist {
-				sid := messaging.ServerId(model.CaptureIDToUUID(capture.ID))
-				c.messageCenter.AddTarget(sid, capture.Epoch, capture.AdvertiseAddr)
+			if _, exist := c.nodes[capture.ID]; !exist {
+
+				sid := messaging.ServerId(uuid.MustParse(capture.ID))
+				c.messageCenter.AddTarget(sid, TempEpoch, capture.AdvertiseAddr)
 				newCaptures = append(newCaptures, capture)
 			}
 			allCaptures[capture.ID] = capture
 		}
 		log.Info("server change detected", zap.Any("removed", removed),
 			zap.Any("new", newCaptures))
-		c.captures = allCaptures
+		c.nodes = allCaptures
 
 		// notify handler
 		c.handleRWLock.RLock()
@@ -99,16 +105,16 @@ func (c *CaptureManager) Tick(ctx context.Context,
 }
 
 // GetAliveCaptures get all alive captures, the caller mustn't modify the returned map
-func (c *CaptureManager) GetAliveCaptures() map[string]*model.CaptureInfo {
-	return c.captures
+func (c *NodeManager) GetAliveCaptures() map[string]*model.CaptureInfo {
+	return c.nodes
 }
 
-func (c *CaptureManager) Run(ctx context.Context) error {
+func (c *NodeManager) Run(ctx context.Context) error {
 	cfg := config.GetGlobalServerConfig()
 	watcher := NewEtcdWatcher(c.etcdClient,
 		c.session,
 		// captures info key prefix
-		etcd.BaseKey(c.etcdClient.GetClusterID())+"/__cdc_meta__/server",
+		etcd.BaseKey(c.etcdClient.GetClusterID())+"/__cdc_meta__/capture",
 		util.RoleOwner.String())
 
 	return watcher.runEtcdWorker(ctx, c,
@@ -116,12 +122,12 @@ func (c *CaptureManager) Run(ctx context.Context) error {
 			cfg.CaptureSessionTTL), time.Millisecond*50)
 }
 
-func (c *CaptureManager) RegisterCaptureChangeHandler(name string, f func()) {
+func (c *NodeManager) RegisterCaptureChangeHandler(name string, f func()) {
 	c.handleRWLock.Lock()
 	c.handles[name] = f
 	c.handleRWLock.Unlock()
 }
 
-func (c *CaptureManager) Close(ctx context.Context) error {
+func (c *NodeManager) Close(ctx context.Context) error {
 	return nil
 }
