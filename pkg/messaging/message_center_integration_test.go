@@ -55,17 +55,33 @@ func TestMessageCenterBasic(t *testing.T) {
 	mc2, mc2Addr, mc2Stop := newMessageCenterForTest(t, time.Second*5)
 	defer mc1Stop()
 	defer mc2Stop()
+	topic1 := "test1"
+	topic2 := "test2"
 
 	mc1.AddTarget(mc2.id, mc2.epoch, mc2Addr)
+	ch1 := make(chan *TargetMessage, 1)
+	h1 := func(msg *TargetMessage) error {
+		ch1 <- msg
+		log.Info("mc1 received message", zap.Any("msg", msg))
+		return nil
+	}
+	mc1.RegisterHandler(topic1, h1)
+
 	mc2.AddTarget(mc1.id, mc1.epoch, mc1Addr)
+	ch2 := make(chan *TargetMessage, 1)
+	h2 := func(msg *TargetMessage) error {
+		ch2 <- msg
+		log.Info("mc2 received message", zap.Any("msg", msg))
+		return nil
+	}
+	mc2.RegisterHandler(topic2, h2)
 
 	//Case1: Send a message from mc1 to mc1, local message.
 	msgBytes := []byte{1, 2, 3, 4}
 	msg := Bytes(msgBytes)
-	targetMsg := NewTargetMessage(mc1.id, TypeBytes, msg)
+	targetMsg := NewTargetMessage(mc1.id, topic1, TypeBytes, msg)
 	mc1.SendEvent(targetMsg)
-	receivedMsg, err := mc1.ReceiveEvent()
-	require.NoError(t, err)
+	receivedMsg := <-ch1
 	require.Equal(t, targetMsg.To, receivedMsg.To)
 	require.Equal(t, targetMsg.From, receivedMsg.From)
 	require.Equal(t, targetMsg.Type, receivedMsg.Type)
@@ -75,10 +91,9 @@ func TestMessageCenterBasic(t *testing.T) {
 	//Case2: Send a message from mc1 to mc2, remote message.
 	msgBytes = []byte{5, 6, 7, 8}
 	msg = Bytes(msgBytes)
-	targetMsg = NewTargetMessage(mc2.id, TypeBytes, msg)
+	targetMsg = NewTargetMessage(mc2.id, topic2, TypeBytes, msg)
 	mc1.SendEvent(targetMsg)
-	receivedMsg, err = mc2.ReceiveEvent()
-	require.NoError(t, err)
+	receivedMsg = <-ch2
 	require.Equal(t, targetMsg.To, receivedMsg.To)
 	require.Equal(t, mc1.id, receivedMsg.From)
 	require.Equal(t, targetMsg.Type, receivedMsg.Type)
