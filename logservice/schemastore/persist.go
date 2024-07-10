@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -31,9 +32,15 @@ type persistentStorage struct {
 	db *pebble.DB
 }
 
+type schemaMetaTS struct {
+	finishedDDLTS Timestamp
+	schemaVersion Timestamp
+	resolvedTS    Timestamp
+}
+
 func newPersistentStorage(
-	root string, storage kv.Storage, minRequiredTS Timestamp,
-) (dataStorage *persistentStorage, finishedDDLTS Timestamp, schemaVersion Timestamp, databaseMap DatabaseInfoMap, resolvedTS Timestamp) {
+	root string, storage kv.Storage, currentGCTS Timestamp,
+) (*persistentStorage, schemaMetaTS, DatabaseInfoMap) {
 	dbPath := fmt.Sprintf("%s/%s", root, dataDir)
 	// TODO: update pebble options
 	// TODO: close pebble db at exit
@@ -44,60 +51,133 @@ func newPersistentStorage(
 
 	// TODO: cleanObseleteData?
 
-	// check whether meta info exists
-	snap := db.NewSnapshot()
-	defer snap.Close()
-	gcTS := Timestamp(0)
-	values, err := readTSFromSnapshot(snap, gcTSKey())
-	if err == nil && values != nil && len(values) == 1 {
-		gcTS = values[0]
+	dataStorage, metaTS, databaseMap := loadPersistentStorage(db, currentGCTS)
+
+	if dataStorage != nil {
+		return dataStorage, metaTS, databaseMap
 	}
 
-	resolvedTS = Timestamp(0)
-	finishedDDLTS = Timestamp(0)
-	schemaVersion = Timestamp(0)
-	values, err = readTSFromSnapshot(snap, metaTSKey())
-	if err == nil && values != nil && len(values) == 3 {
-		resolvedTS = values[0]
-		finishedDDLTS = values[1]
-		schemaVersion = values[2]
+	// TODO: create a fresh db instance
+	databaseMap, err = writeSchemaSnapshotToDisk(db, storage, currentGCTS)
+	if err != nil {
+		log.Fatal("write schema snapshot failed", zap.Error(err))
 	}
-
-	if minRequiredTS < gcTS {
-		log.Panic("shouldn't happend")
-	}
-
-	// TODO: read database map in these cases
-
-	// Not enough data in schema store, rebuild it
-	// FIXME: > or >=?
-	if minRequiredTS > resolvedTS {
-		// write a new snapshot at minRequiredTS
-		err = writeSchemaSnapshotToDisk(db, storage, minRequiredTS)
-		// TODO: write index
-		if err != nil {
-			log.Fatal("write schema snapshot failed", zap.Error(err))
-		}
-
-		// update meta in memory and disk
-		gcTS = minRequiredTS
-		// FIXME: minRequiredTS or minRequiredTS - 1
-		resolvedTS = minRequiredTS
-		finishedDDLTS = Timestamp(0)
-		schemaVersion = Timestamp(0)
-		batch := db.NewBatch()
-		writeTSToBatch(batch, gcTSKey(), gcTS)
-		writeTSToBatch(batch, metaTSKey(), resolvedTS, finishedDDLTS, schemaVersion)
-		batch.Commit(pebble.NoSync)
-	}
-
 	dataStorage = &persistentStorage{
 		gcRunning: atomic.Bool{},
 		gcTS:      atomic.Uint64{},
 		db:        db,
 	}
 	dataStorage.gcRunning.Store(false)
-	return dataStorage, finishedDDLTS, schemaVersion, databaseMap, resolvedTS
+	dataStorage.gcTS.Store(uint64(currentGCTS))
+	// TODO: check whether the following values are correct
+	metaTS = schemaMetaTS{
+		finishedDDLTS: currentGCTS,
+		schemaVersion: currentGCTS,
+		resolvedTS:    currentGCTS,
+	}
+
+	batch := db.NewBatch()
+	writeTSToBatch(batch, gcTSKey(), currentGCTS)
+	writeTSToBatch(batch, metaTSKey(), metaTS.resolvedTS, metaTS.finishedDDLTS, metaTS.schemaVersion)
+	batch.Commit(pebble.NoSync)
+
+	return dataStorage, metaTS, databaseMap
+}
+
+func loadPersistentStorage(db *pebble.DB, minRequiredTS Timestamp) (*persistentStorage, schemaMetaTS, DatabaseInfoMap) {
+	snap := db.NewSnapshot()
+	defer snap.Close()
+
+	dataStorage := &persistentStorage{
+		gcRunning: atomic.Bool{},
+		gcTS:      atomic.Uint64{},
+		db:        db,
+	}
+	dataStorage.gcRunning.Store(false)
+	values, err := readTSFromSnapshot(snap, gcTSKey())
+	// TODO: distiguish between non exist key error and other error
+	if err != nil || len(values) != 1 {
+		return nil, schemaMetaTS{}, nil
+	}
+	dataStorage.gcTS.Store(uint64(values[0]))
+
+	var metaTS schemaMetaTS
+	values, err = readTSFromSnapshot(snap, metaTSKey())
+	if err != nil || len(values) != 3 {
+		return nil, schemaMetaTS{}, nil
+	}
+	metaTS.resolvedTS = values[0]
+	metaTS.finishedDDLTS = values[1]
+	metaTS.schemaVersion = values[2]
+
+	// gcTS cannot go back
+	if minRequiredTS < Timestamp(dataStorage.gcTS.Load()) {
+		log.Panic("shouldn't happend")
+	}
+	// FIXME: > or >=?
+	if minRequiredTS > metaTS.resolvedTS {
+		return nil, schemaMetaTS{}, nil
+	}
+
+	databaseMap := make(DatabaseInfoMap)
+
+	// TODO: read database map from disk
+	snapshotLowerBound, err := snapshotSchemaKey(dataStorage.getGCTS(), 0)
+	if err != nil {
+		log.Fatal("generate lower bound failed", zap.Error(err))
+	}
+	snapshotUpperBound, err := snapshotSchemaKey(dataStorage.getGCTS(), SchemaID(math.MaxInt64))
+	if err != nil {
+		log.Fatal("generate upper bound failed", zap.Error(err))
+	}
+	snapIter, err := snap.NewIter(&pebble.IterOptions{
+		LowerBound: snapshotLowerBound,
+		UpperBound: snapshotUpperBound,
+	})
+	if err != nil {
+		log.Fatal("new iterator failed", zap.Error(err))
+	}
+	defer snapIter.Close()
+	for snapIter.First(); snapIter.Valid(); snapIter.Next() {
+		dbInfo := &model.DBInfo{}
+		err := json.Unmarshal(snapIter.Value(), dbInfo)
+		if err != nil {
+			log.Fatal("get db info failed", zap.Error(err))
+		}
+		databaseMap[DatabaseID(dbInfo.ID)] = &DatabaseInfo{
+			Name:          dbInfo.Name.O,
+			Tables:        make([]TableID, 0),
+			CreateVersion: Timestamp(dataStorage.getGCTS()),
+			DeleteVersion: Timestamp(math.MaxUint64),
+		}
+	}
+
+	ddlJobLowerBound, err := ddlJobSchemaKey(dataStorage.getGCTS(), 0)
+	if err != nil {
+		log.Fatal("generate lower bound failed", zap.Error(err))
+	}
+	ddlJobUpperBound, err := ddlJobSchemaKey(Timestamp(math.MaxUint64), SchemaID(math.MaxInt64))
+	if err != nil {
+		log.Fatal("generate upper bound failed", zap.Error(err))
+	}
+	ddlJobIter, err := snap.NewIter(&pebble.IterOptions{
+		LowerBound: ddlJobLowerBound,
+		UpperBound: ddlJobUpperBound,
+	})
+	if err != nil {
+		log.Fatal("new iterator failed", zap.Error(err))
+	}
+	defer ddlJobIter.Close()
+	for ddlJobIter.First(); ddlJobIter.Valid(); ddlJobIter.Next() {
+		ddlJob := &model.Job{}
+		err := json.Unmarshal(ddlJobIter.Value(), ddlJob)
+		if err != nil {
+			log.Fatal("get db info failed", zap.Error(err))
+		}
+		handleResolvedDDLJob(ddlJob, databaseMap, nil)
+	}
+
+	return dataStorage, metaTS, databaseMap
 }
 
 func (p *persistentStorage) writeDDLEvent(ddlEvent DDLEvent) error {
@@ -165,7 +245,7 @@ func tryReadTableInfoFromSnapshot(
 	for iter.Last(); iter.Valid(); iter.Prev() {
 		_, version, schemaID, err := parseIndexSnapshotKey(iter.Key())
 		if err != nil {
-			log.Fatal("parse index key failed", zap.Error(err))
+			log.Fatal("parse index key failed", zap.Any("key", iter.Key()), zap.Error(err))
 		}
 		if version > startTS {
 			continue
@@ -194,12 +274,12 @@ func tryReadTableInfoFromSnapshot(
 	return nil, nil
 }
 
-func readDDLJobTimestampForTable(snap *pebble.Snapshot, tableID TableID) []Timestamp {
+func readDDLJobTimestampForTable(snap *pebble.Snapshot, tableID TableID, endTS Timestamp) []Timestamp {
 	lowerBound, err := generateKey(indexDDLJobKeyPrefix, uint64(tableID))
 	if err != nil {
 		log.Fatal("generate lower bound failed", zap.Error(err))
 	}
-	upperBound, err := generateKey(indexDDLJobKeyPrefix, uint64(tableID+1))
+	upperBound, err := generateKey(indexDDLJobKeyPrefix, uint64(tableID), uint64(endTS+1))
 	if err != nil {
 		log.Fatal("generate upper bound failed", zap.Error(err))
 	}
@@ -239,7 +319,7 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 	if tableInfoFromSnap != nil {
 		store.addInitialTableInfo(tableInfoFromSnap)
 	}
-	allDDLJobTS := readDDLJobTimestampForTable(snap, tableID)
+	allDDLJobTS := readDDLJobTimestampForTable(snap, tableID, endTS)
 	for _, ts := range allDDLJobTS {
 		if tableInfoFromSnap != nil && ts <= Timestamp(tableInfoFromSnap.Version) {
 			continue
@@ -346,6 +426,7 @@ func checkAndParseKey(key []byte, prefix string) ([]uint64, error) {
 		return nil, fmt.Errorf("invalid key prefix: %s", string(key))
 	}
 	buf := bytes.NewBuffer(key)
+	buf.Next(len(prefix))
 	var values []uint64
 	for {
 		var v uint64
@@ -387,7 +468,11 @@ func indexDDLJobKey(tableID TableID, commitTS Timestamp) ([]byte, error) {
 func parseIndexSnapshotKey(key []byte) (TableID, Timestamp, SchemaID, error) {
 	values, err := checkAndParseKey(key, indexSnapshotKeyPrefix)
 	if err != nil || len(values) != 3 {
-		log.Fatal("parse index key failed", zap.Error(err))
+		log.Fatal("parse index key failed",
+			zap.Any("key", key),
+			zap.Any("keyLength", len(key)),
+			zap.Any("values", values),
+			zap.Error(err))
 	}
 	return TableID(values[0]), Timestamp(values[1]), SchemaID(values[2]), nil
 }
@@ -434,7 +519,7 @@ func readTSFromSnapshot(snap *pebble.Snapshot, key []byte) ([]Timestamp, error) 
 	}
 }
 
-func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts Timestamp) error {
+func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts Timestamp) (DatabaseInfoMap, error) {
 	meta := getSnapshotMeta(tiStore, uint64(ts))
 	start := time.Now()
 	dbinfos, err := meta.ListDatabases()
@@ -446,8 +531,15 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts Timestamp) 
 	batch := db.NewBatch()
 	defer batch.Close()
 
+	databaseMap := make(DatabaseInfoMap, len(dbinfos))
 	for _, dbinfo := range dbinfos {
-		// TODO: schema name to id in memory
+		databaseInfo := &DatabaseInfo{
+			Name:          dbinfo.Name.O,
+			Tables:        make([]TableID, 0),
+			CreateVersion: ts,
+			DeleteVersion: Timestamp(math.MaxUint64),
+		}
+		databaseMap[DatabaseID(dbinfo.ID)] = databaseInfo
 		schemaKey, err := snapshotSchemaKey(ts, SchemaID(dbinfo.ID))
 		if err != nil {
 			log.Fatal("generate schema key failed", zap.Error(err))
@@ -465,26 +557,30 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts Timestamp) 
 			if !isTableRawKey(rawTable.Field) {
 				continue
 			}
-			// TODO: may be we need the whole table info and initialize some struct?
-			// or we need more info for partition tables?
 			tbName := &model.TableNameInfo{}
 			err := json.Unmarshal(rawTable.Value, tbName)
 			if err != nil {
 				log.Fatal("get table info failed", zap.Error(err))
 			}
+			databaseInfo.Tables = append(databaseInfo.Tables, TableID(tbName.ID))
 			tableKey, err := snapshotTableKey(ts, TableID(tbName.ID))
 			if err != nil {
 				log.Fatal("generate table key failed", zap.Error(err))
 			}
 			batch.Set(tableKey, rawTable.Value, pebble.NoSync)
+			indexKey, err := indexSnapshotKey(TableID(tbName.ID), ts, SchemaID(dbinfo.ID))
+			if err != nil {
+				log.Fatal("generate index key failed", zap.Error(err))
+			}
+			batch.Set(indexKey, nil, pebble.NoSync)
 		}
 	}
 
 	if err := batch.Commit(pebble.NoSync); err != nil {
-		return err
+		return nil, err
 	}
 
 	log.Info("finish write schema snapshot",
 		zap.Any("duration", time.Since(start).Seconds()))
-	return nil
+	return databaseMap, nil
 }
