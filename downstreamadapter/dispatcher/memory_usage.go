@@ -22,7 +22,7 @@ import (
 type EventFeedSpeedRatio struct {
 	ratio         float32
 	updatedTime   time.Time
-	lastUsedBytes uint64
+	lastUsedBytes int
 	lastCheckTime time.Time
 }
 
@@ -35,10 +35,10 @@ When the event is flushed to downstream successfully, the memory usage will be r
 MemoryUsage is record the memory for each dispatcher.
 */
 type MemoryUsage struct {
-	mutex                 *sync.Mutex
-	UsedBytes             uint64
-	commitTsList          []uint64          // record the commitTs in order.
-	commitTsMemoryCostMap map[uint64]uint64 // commitTs -> memory cost(total for the commitTs)
+	mutex                 sync.Mutex
+	UsedBytes             int
+	commitTsList          []uint64       // record the commitTs in order.
+	commitTsMemoryCostMap map[uint64]int // commitTs -> memory cost(total for the commitTs)
 
 	speedRatio *EventFeedSpeedRatio
 }
@@ -47,7 +47,7 @@ func NewMemoryUsage() *MemoryUsage {
 	return &MemoryUsage{
 		UsedBytes:             0,
 		commitTsList:          make([]uint64, 0),
-		commitTsMemoryCostMap: make(map[uint64]uint64),
+		commitTsMemoryCostMap: make(map[uint64]int),
 		speedRatio: &EventFeedSpeedRatio{
 			ratio:         float32(1),
 			updatedTime:   time.Now(),
@@ -57,13 +57,17 @@ func NewMemoryUsage() *MemoryUsage {
 	}
 }
 
-func (m *MemoryUsage) Add(commitTs uint64, size uint64) {
+func (m *MemoryUsage) GetUsedBytes() int {
+	return m.UsedBytes
+}
+
+func (m *MemoryUsage) Add(commitTs uint64, size int) {
 	atomic.AddInt64(&GetGlobalMemoryUsage().UsedBytes, int64(size))
 
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	if m.commitTsList == nil || m.commitTsList[len(m.commitTsList)-1] < commitTs {
+	if len(m.commitTsList) == 0 || m.commitTsList[len(m.commitTsList)-1] < commitTs {
 		m.commitTsList = append(m.commitTsList, commitTs)
 		m.commitTsMemoryCostMap[commitTs] = size
 	} else {
@@ -86,12 +90,11 @@ func (m *MemoryUsage) Release(checkpointTs uint64) {
 			delete(m.commitTsMemoryCostMap, ts)
 		} else {
 			index = i
+			break
 		}
 	}
 	if index > 0 {
 		m.commitTsList = m.commitTsList[index:]
-	} else {
-		m.commitTsList = m.commitTsList[:0]
 	}
 }
 

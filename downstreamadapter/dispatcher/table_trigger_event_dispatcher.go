@@ -60,9 +60,9 @@ It also communicates with the Maintainer periodically to report self progress,
 and get the other dispatcher's progress and action of the blocked event.
 */
 type TableTriggerEventDispatcher struct {
-	Id            uint64                //用个特殊的
-	Ch            chan *common.TxnEvent // 接受 event -- 先做个基础版本的，每次处理一条 ddl 的那种
-	Filter        *Filter               // 发送给 logService
+	Id common.DispatcherID
+	Ch chan *common.TxnEvent // 接受 event -- 先做个基础版本的，每次处理一条 ddl 的那种
+	//Filter        *Filter               // 发送给 logService
 	Sink          sink.Sink
 	HeartbeatChan chan *HeartBeatResponseMessage
 	State         *State
@@ -92,7 +92,7 @@ func (d *TableTriggerEventDispatcher) GetResolvedTs() uint64 {
 	return d.ResolvedTs
 }
 
-func (d *TableTriggerEventDispatcher) GetId() uint64 {
+func (d *TableTriggerEventDispatcher) GetId() common.DispatcherID {
 	return d.Id
 }
 
@@ -115,4 +115,9 @@ func (d *TableTriggerEventDispatcher) GetSyncPointInfo() *SyncPointInfo {
 
 func (d *TableTriggerEventDispatcher) GetMemoryUsage() *MemoryUsage {
 	return d.MemoryUsage
+}
+
+func (d *TableTriggerEventDispatcher) PushEvent(event *common.TxnEvent) {
+	d.GetMemoryUsage().Add(event.CommitTs, event.MemoryCost())
+	d.Ch <- event // 换成一个函数
 }

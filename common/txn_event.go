@@ -1,9 +1,9 @@
 package common
 
 import (
-	"github.com/pingcap/log"
+	"unsafe"
+
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"go.uber.org/zap"
 )
 
 // TODO: 想一想这个到底要哪些
@@ -22,6 +22,42 @@ type TxnEvent struct {
 	StartTs        uint64
 	CommitTs       uint64
 	PostTxnFlushed func() // 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
+}
+
+func (e *TxnEvent) MemoryCost() int {
+	// TODO: 目前只考虑 dml 情况
+	size := int(unsafe.Sizeof(e.PostTxnFlushed))
+	size += int(unsafe.Sizeof(e.StartTs)) + int(unsafe.Sizeof(e.CommitTs))
+	for _, row := range e.Rows {
+		size += row.ApproximateBytes()
+	}
+	return size
+}
+
+func (e *TxnEvent) IsDMLEvent() bool {
+	return len(e.Rows) > 0
+}
+
+func (e *TxnEvent) IsDDLEvent() bool {
+	return e.DDLEvent != nil
+}
+
+func (e *TxnEvent) IsCrossTableDDL() bool {
+	ddlType := e.GetDDLType()
+	return ddlType == model.ActionCreateSchema || ddlType == model.ActionDropSchema ||
+		ddlType == model.ActionDropTable ||
+		ddlType == model.ActionTruncateTable || ddlType == model.ActionRenameTable ||
+		ddlType == model.ActionAddTablePartition || ddlType == model.ActionDropTablePartition ||
+		ddlType == model.ActionTruncateTablePartition || ddlType == model.ActionRecoverTable ||
+		ddlType == model.ActionRepairTable || ddlType == model.ActionExchangeTablePartition ||
+		ddlType == model.ActionRemovePartitioning || ddlType == model.ActionRenameTables ||
+		ddlType == model.ActionCreateTables || ddlType == model.ActionReorganizePartition ||
+		ddlType == model.ActionFlashbackCluster || ddlType == model.ActionMultiSchemaChange
+}
+
+func (e *TxnEvent) IsSyncPointEvent() bool {
+	// TODO
+	return false
 }
 
 func (e *TxnEvent) GetDDLQuery() string {
@@ -73,9 +109,6 @@ type RowChangedEvent struct {
 	// So be careful when using the TableInfo.
 	TableInfo *TableInfo
 
-	// Columns    []*ColumnData
-	// PreColumns []*ColumnData
-
 	Columns    []*Column
 	PreColumns []*Column
 
@@ -102,70 +135,31 @@ type Column struct {
 	ApproximateBytes int `msg:"-"`
 }
 
-func columnData2Column(col *ColumnData, tableInfo *TableInfo) *Column {
-	colID := col.ColumnID
-	offset, ok := tableInfo.columnsOffset[colID]
-	if !ok {
-		log.Panic("invalid column id",
-			zap.Int64("columnID", colID),
-			zap.Any("tableInfo", tableInfo))
-	}
-	colInfo := tableInfo.Columns[offset]
-	return &Column{
-		Name:      colInfo.Name.O,
-		Type:      colInfo.GetType(),
-		Charset:   colInfo.GetCharset(),
-		Collation: colInfo.GetCollate(),
-		Flag:      *tableInfo.ColumnsFlag[colID],
-		Value:     col.Value,
-		Default:   GetColumnDefaultValue(colInfo),
-	}
-}
-
-// func columnDatas2Columns(cols []*ColumnData, tableInfo *TableInfo) []*Column {
-// 	if cols == nil {
-// 		return nil
-// 	}
-// 	columns := make([]*Column, len(cols))
-// 	for i, colData := range cols {
-// 		if colData == nil {
-// 			log.Warn("meet nil column data, should not happened in production env",
-// 				zap.Any("cols", cols),
-// 				zap.Any("tableInfo", tableInfo))
-// 			continue
-// 		}
-// 		columns[i] = columnData2Column(colData, tableInfo)
-// 	}
-// 	return columns
-// }
-
 // GetColumns returns the columns of the event
 func (r *RowChangedEvent) GetColumns() []*Column {
-	// return columnDatas2Columns(r.Columns, r.TableInfo)
 	return r.Columns
 }
 
 // GetPreColumns returns the pre columns of the event
 func (r *RowChangedEvent) GetPreColumns() []*Column {
 	return r.PreColumns
-	//return columnDatas2Columns(r.PreColumns, r.TableInfo)
 }
 
-// // Columns2ColumnDatas convert `Column`s to `ColumnData`s
-// func Columns2ColumnDatas(cols []*Column, tableInfo *TableInfo) []*ColumnData {
-// 	if cols == nil {
-// 		return nil
-// 	}
-// 	columns := make([]*ColumnData, len(cols))
-// 	for i, col := range cols {
-// 		if col == nil {
-// 			continue
-// 		}
-// 		colID := tableInfo.ForceGetColumnIDByName(col.Name)
-// 		columns[i] = &ColumnData{
-// 			ColumnID: colID,
-// 			Value:    col.Value,
-// 		}
-// 	}
-// 	return columns
-// }
+func (r *RowChangedEvent) ApproximateBytes() int {
+	const sizeOfRowEvent = int(unsafe.Sizeof(*r))
+	const sizeOfTable = int(unsafe.Sizeof(*r.TableInfo))
+	const sizeOfInt = int(unsafe.Sizeof(int(0)))
+	size := sizeOfRowEvent + sizeOfTable + 2*sizeOfInt
+
+	// Size of cols
+	for i := range r.Columns {
+		size += r.Columns[i].ApproximateBytes
+	}
+	// Size of pre cols
+	for i := range r.PreColumns {
+		if r.PreColumns[i] != nil {
+			size += r.PreColumns[i].ApproximateBytes
+		}
+	}
+	return size
+}
