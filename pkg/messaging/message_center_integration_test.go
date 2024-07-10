@@ -55,6 +55,8 @@ func TestMessageCenterBasic(t *testing.T) {
 	mc2, mc2Addr, mc2Stop := newMessageCenterForTest(t, time.Second*5)
 	defer mc1Stop()
 	defer mc2Stop()
+	topic1 := "test1"
+	topic2 := "test2"
 
 	mc1.AddTarget(mc2.id, mc2.epoch, mc2Addr)
 	ch1 := make(chan *TargetMessage, 1)
@@ -63,7 +65,7 @@ func TestMessageCenterBasic(t *testing.T) {
 		log.Info("mc1 received message", zap.Any("msg", msg))
 		return nil
 	}
-	mc1.RegisterHandler("test1", h1)
+	mc1.RegisterHandler(topic1, h1)
 
 	mc2.AddTarget(mc1.id, mc1.epoch, mc1Addr)
 	ch2 := make(chan *TargetMessage, 1)
@@ -72,12 +74,12 @@ func TestMessageCenterBasic(t *testing.T) {
 		log.Info("mc2 received message", zap.Any("msg", msg))
 		return nil
 	}
-	mc2.RegisterHandler("test2", h2)
+	mc2.RegisterHandler(topic2, h2)
 
 	//Case1: Send a message from mc1 to mc1, local message.
 	msgBytes := []byte{1, 2, 3, 4}
 	msg := Bytes(msgBytes)
-	targetMsg := NewTargetMessage(mc1.id, "test1", TypeBytes, msg)
+	targetMsg := NewTargetMessage(mc1.id, topic1, TypeBytes, msg)
 	mc1.SendEvent(targetMsg)
 	receivedMsg := <-ch1
 	require.Equal(t, targetMsg.To, receivedMsg.To)
@@ -89,7 +91,7 @@ func TestMessageCenterBasic(t *testing.T) {
 	//Case2: Send a message from mc1 to mc2, remote message.
 	msgBytes = []byte{5, 6, 7, 8}
 	msg = Bytes(msgBytes)
-	targetMsg = NewTargetMessage(mc2.id, "test2", TypeBytes, msg)
+	targetMsg = NewTargetMessage(mc2.id, topic2, TypeBytes, msg)
 	mc1.SendEvent(targetMsg)
 	receivedMsg = <-ch2
 	require.Equal(t, targetMsg.To, receivedMsg.To)
