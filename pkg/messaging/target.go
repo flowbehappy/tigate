@@ -106,7 +106,7 @@ func newRemoteMessageTarget(
 	addr string,
 	recvEventCh, recvCmdCh chan *TargetMessage,
 	cfg *config.MessageCenterConfig) *remoteMessageTarget {
-
+	log.Info("Create remote target", zap.Stringer("local", localID), zap.Stringer("target", targetId), zap.String("addr", addr), zap.Uint64("localEpoch", localEpoch), zap.Uint64("targetEpoch", targetEpoch))
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &remoteMessageTarget{
 		localId:     localID,
@@ -123,7 +123,6 @@ func newRemoteMessageTarget(
 		wg:          &sync.WaitGroup{},
 	}
 	rt.targetEpoch.Store(targetEpoch)
-
 	rt.runHandleErr(ctx)
 	return rt
 }
@@ -191,7 +190,7 @@ func (s *remoteMessageTarget) initSendStreams() {
 		return
 	}
 
-	handshake := &proto.Message{From: s.localId.slice(), To: s.targetId.slice()}
+	handshake := &proto.Message{From: s.localId.slice(), To: s.targetId.slice(), Epoch: s.localEpoch}
 	if err := eventStream.Send(handshake); err != nil {
 		s.collectErr(AppError{
 			Type:   ErrorTypeMessageSendFailed,
@@ -303,7 +302,6 @@ func (s *remoteMessageTarget) runReceiveMessages(stream grpcReceiver, receiveCh 
 		default:
 		}
 		message, err := stream.Recv()
-		log.Info("Received message from remote", zap.Stringer("local", s.localId), zap.Stringer("remote", s.targetId), zap.Any("message", message), zap.Error(err))
 		if err != nil {
 			err := AppError{Type: ErrorTypeMessageReceiveFailed, Reason: errors.Trace(err).Error()}
 			// return the error to close the stream, the client side is responsible to reconnect.
@@ -329,7 +327,7 @@ func (s *remoteMessageTarget) newMessage(msg ...*TargetMessage) *proto.Message {
 		buf := make([]byte, 0)
 		msgBytes = append(msgBytes, m.encode(buf))
 	}
-	return &proto.Message{
+	protoMsg := &proto.Message{
 		From:    s.localId.slice(),
 		To:      s.targetId.slice(),
 		Epoch:   s.localEpoch,
@@ -337,6 +335,7 @@ func (s *remoteMessageTarget) newMessage(msg ...*TargetMessage) *proto.Message {
 		Type:    int32(msg[0].Type),
 		Payload: msgBytes,
 	}
+	return protoMsg
 }
 
 // localMessageTarget implements the SendMessageChannel interface.
