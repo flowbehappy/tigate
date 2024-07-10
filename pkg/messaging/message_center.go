@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"sync"
@@ -18,7 +19,8 @@ import (
 // AddTarget and RemoveTarget are not thread-safe, and should be called in the main thread of a server.
 type MessageCenter interface {
 	MessageSender
-	MessageReceiver
+	//MessageReceiver
+	RegisterHandler(topic string, handler MessageHandler)
 	AddTarget(id ServerId, epoch uint64, addr string)
 	RemoveTarget(id ServerId)
 	//GetTarget(id ServerId) MessageSender
@@ -35,6 +37,7 @@ type MessageSender interface {
 }
 
 // MessageReceiver is the interface to receive messages from other targets.
+// TODO: Seems this interface is unnecessary, we can remove it later?
 type MessageReceiver interface {
 	ReceiveEvent() (*TargetMessage, error)
 	ReceiveCmd() (*TargetMessage, error)
@@ -79,15 +82,20 @@ type messageCenterImpl struct {
 	}
 
 	grpcServer *grpc.Server
+	router     *router
 
 	// Messages from all targets are put into these channels.
 	receiveEventCh chan *TargetMessage
 	receiveCmdCh   chan *TargetMessage
+	wg             *sync.WaitGroup
+	ctx            context.Context
+	cancel         context.CancelFunc
 }
 
 func NewMessageCenter(id ServerId, epoch uint64, cfg *config.MessageCenterConfig) *messageCenterImpl {
 	receiveEventCh := make(chan *TargetMessage, cfg.CacheChannelSize)
 	receiveCmdCh := make(chan *TargetMessage, cfg.CacheChannelSize)
+	ctx, cancel := context.WithCancel(context.Background())
 	mc := &messageCenterImpl{
 		id:             id,
 		epoch:          epoch,
@@ -95,9 +103,19 @@ func NewMessageCenter(id ServerId, epoch uint64, cfg *config.MessageCenterConfig
 		localTarget:    newLocalMessageTarget(id, receiveEventCh, receiveCmdCh),
 		receiveEventCh: receiveEventCh,
 		receiveCmdCh:   receiveCmdCh,
+		ctx:            ctx,
+		cancel:         cancel,
+		wg:             &sync.WaitGroup{},
+		router:         newRouter(),
 	}
 	mc.remoteTargets.m = make(map[ServerId]*remoteMessageTarget)
+	mc.router.runDispatch(mc.ctx, mc.wg, mc.receiveEventCh)
+	mc.router.runDispatch(mc.ctx, mc.wg, mc.receiveCmdCh)
 	return mc
+}
+
+func (mc *messageCenterImpl) RegisterHandler(topic string, handler MessageHandler) {
+	mc.router.registerHandler(topic, handler)
 }
 
 // AddTarget is called when a new remote target is discovered,
@@ -177,10 +195,12 @@ func (mc *messageCenterImpl) Close() {
 		target.close()
 	}
 
+	mc.cancel()
 	if mc.grpcServer != nil {
 		mc.grpcServer.Stop()
 	}
 	mc.grpcServer = nil
+	mc.wg.Wait()
 }
 
 // touchRemoteTarget returns the remote target by the id,

@@ -86,15 +86,17 @@ type TargetMessage struct {
 	To       ServerId
 	Epoch    uint64
 	Sequence uint64
+	Topic    string
 	Type     IOType
 	Message  interface{}
 }
 
 // NewTargetMessage creates a new TargetMessage to be sent to a target server.
-func NewTargetMessage(To ServerId, Type IOType, Message interface{}) *TargetMessage {
+func NewTargetMessage(To ServerId, Topic string, Type IOType, Message interface{}) *TargetMessage {
 	return &TargetMessage{
 		To:      To,
 		Type:    Type,
+		Topic:   Topic,
 		Message: Message,
 	}
 }

@@ -312,6 +312,7 @@ func (s *remoteMessageTarget) runReceiveMessages(stream grpcReceiver, receiveCh 
 			receiveCh <- &TargetMessage{
 				From:     ServerId(message.From),
 				To:       ServerId(message.To),
+				Topic:    message.Topic,
 				Epoch:    message.Epoch,
 				Sequence: message.Seqnum,
 				Type:     mt,
@@ -331,6 +332,7 @@ func (s *remoteMessageTarget) newMessage(msg ...*TargetMessage) *proto.Message {
 		From:    s.localId.slice(),
 		To:      s.targetId.slice(),
 		Epoch:   s.localEpoch,
+		Topic:   msg[0].Topic,
 		Seqnum:  s.sendSequence.Add(1),
 		Type:    int32(msg[0].Type),
 		Payload: msgBytes,
