@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -33,21 +34,25 @@ const CaptureManagerName = "server-manager"
 // CaptureManager manager the read view of all captures, other modules can get the captures information from it
 // and register server update event handler
 type CaptureManager struct {
-	session    *concurrency.Session
-	etcdClient etcd.CDCEtcdClient
-
-	captures map[string]*model.CaptureInfo
+	session       *concurrency.Session
+	etcdClient    etcd.CDCEtcdClient
+	messageCenter messaging.MessageCenter
+	captures      map[string]*model.CaptureInfo
 
 	handleRWLock sync.RWMutex
 	handles      map[string]func()
 }
 
-func NewCaptureManager(session *concurrency.Session,
-	etcdClient etcd.CDCEtcdClient) *CaptureManager {
+func NewCaptureManager(
+	session *concurrency.Session,
+	etcdClient etcd.CDCEtcdClient,
+	mc messaging.MessageCenter,
+) *CaptureManager {
 	return &CaptureManager{
-		session:    session,
-		etcdClient: etcdClient,
-		captures:   make(map[string]*model.CaptureInfo),
+		session:       session,
+		etcdClient:    etcdClient,
+		messageCenter: mc,
+		captures:      make(map[string]*model.CaptureInfo),
 	}
 }
 
@@ -66,11 +71,15 @@ func (c *CaptureManager) Tick(ctx context.Context,
 		allCaptures := make(map[string]*model.CaptureInfo, len(state.Captures))
 		for _, capture := range c.captures {
 			if _, exist := state.Captures[capture.ID]; !exist {
+				sid := messaging.ServerId(model.CaptureIDToUUID(capture.ID))
+				c.messageCenter.RemoveTarget(sid)
 				removed = append(removed, capture)
 			}
 		}
 		for _, capture := range state.Captures {
 			if _, exist := c.captures[capture.ID]; !exist {
+				sid := messaging.ServerId(model.CaptureIDToUUID(capture.ID))
+				c.messageCenter.AddTarget(sid, capture.Epoch, capture.AdvertiseAddr)
 				newCaptures = append(newCaptures, capture)
 			}
 			allCaptures[capture.ID] = capture

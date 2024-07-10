@@ -111,6 +111,7 @@ func NewMessageCenter(id ServerId, epoch uint64, cfg *config.MessageCenterConfig
 	mc.remoteTargets.m = make(map[ServerId]*remoteMessageTarget)
 	mc.router.runDispatch(mc.ctx, mc.wg, mc.receiveEventCh)
 	mc.router.runDispatch(mc.ctx, mc.wg, mc.receiveCmdCh)
+	log.Info("Create message center success, message router is running.", zap.Stringer("id", id), zap.Uint64("epoch", epoch))
 	return mc
 }
 
@@ -123,6 +124,7 @@ func (mc *messageCenterImpl) RegisterHandler(topic string, handler MessageHandle
 func (mc *messageCenterImpl) AddTarget(id ServerId, epoch uint64, addr string) {
 	// If the target is the message center itself, we don't need to add it.
 	if id == mc.id {
+		log.Info("Add local target", zap.Stringer("id", id), zap.Uint64("epoch", epoch), zap.String("addr", addr))
 		return
 	}
 	log.Info("Add remote target", zap.Stringer("id", id), zap.Uint64("epoch", epoch), zap.String("addr", addr))

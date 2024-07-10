@@ -109,7 +109,7 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	c.subModules = []SubModule{
-		NewCaptureManager(c.session, c.EtcdClient),
+		NewCaptureManager(c.session, c.EtcdClient, c.messageCenter),
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener(), c.messageCenter),
