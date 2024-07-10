@@ -22,8 +22,9 @@ import (
 	"time"
 
 	"github.com/dustin/go-humanize"
+	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/version"
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
@@ -138,9 +139,11 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	if err != nil {
 		deployPath = ""
 	}
-
+	// TODO: Get id from disk after restart.
+	id := messaging.NewServerId()
 	c.info = &model.CaptureInfo{
-		ID:             uuid.New().String(),
+		ID:             id.String(),
+		Epoch:          1,
 		AdvertiseAddr:  conf.AdvertiseAddr,
 		Version:        version.ReleaseVersion,
 		GitHash:        version.GitHash,
@@ -152,6 +155,8 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	mcCfg := config.NewDefaultMessageCenterConfig()
+	c.messageCenter = messaging.NewMessageCenter(id, c.info.Epoch, mcCfg)
 	return nil
 }
 
