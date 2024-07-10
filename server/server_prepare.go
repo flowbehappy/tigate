@@ -143,7 +143,6 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	id := messaging.NewServerId()
 	c.info = &model.CaptureInfo{
 		ID:             id.String(),
-		Epoch:          1,
 		AdvertiseAddr:  conf.AdvertiseAddr,
 		Version:        version.ReleaseVersion,
 		GitHash:        version.GitHash,
@@ -156,7 +155,7 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	mcCfg := config.NewDefaultMessageCenterConfig()
-	c.messageCenter = messaging.NewMessageCenter(id, c.info.Epoch, mcCfg)
+	c.messageCenter = messaging.NewMessageCenter(id, TempEpoch, mcCfg)
 	return nil
 }
 

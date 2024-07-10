@@ -14,12 +14,13 @@
 package scheduler
 
 import (
+	"time"
+
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"go.uber.org/zap"
-	"time"
 )
 
 type CaptureState int
