@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/flowbehappy/tigate/common"
+	"github.com/flowbehappy/tigate/pkg/common"
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/ngaut/log"
 	"github.com/pingcap/errors"

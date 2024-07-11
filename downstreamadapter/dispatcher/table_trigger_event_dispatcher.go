@@ -14,8 +14,8 @@
 package dispatcher
 
 import (
-	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+	"github.com/flowbehappy/tigate/pkg/common"
 
 	"github.com/pingcap/log"
 )

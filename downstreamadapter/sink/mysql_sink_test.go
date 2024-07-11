@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 	"github.com/zeebo/assert"
