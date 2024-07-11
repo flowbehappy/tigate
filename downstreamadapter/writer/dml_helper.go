@@ -16,7 +16,7 @@ package writer
 import (
 	"strings"
 
-	"github.com/flowbehappy/tigate/common"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tiflow/pkg/quotes"
 )

@@ -17,7 +17,7 @@ import (
 	"container/list"
 	"sync"
 
-	"github.com/flowbehappy/tigate/common"
+	"github.com/flowbehappy/tigate/pkg/common"
 )
 
 // TableProgress 里面维护了目前正在 sink 中的 event ts 信息
