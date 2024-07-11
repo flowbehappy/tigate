@@ -15,7 +15,7 @@ package v2
 
 import (
 	"github.com/flowbehappy/tigate/api/middleware"
-	appctx "github.com/flowbehappy/tigate/common/context"
+	appctx "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/gin-gonic/gin"
 )
 
