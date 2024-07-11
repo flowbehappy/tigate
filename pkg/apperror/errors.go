@@ -14,6 +14,7 @@ const (
 
 	ErrorTypeInvalid    ErrorType = 101
 	ErrorTypeIncomplete ErrorType = 102
+	ErrorTypeDecodeData ErrorType = 103
 
 	ErrorTypeConnectionFailed     ErrorType = 201
 	ErrorTypeConnectionNotFound   ErrorType = 202
@@ -21,6 +22,7 @@ const (
 	ErrorTypeMessageReceiveFailed ErrorType = 205
 	ErrorTypeMessageSendFailed    ErrorType = 206
 	ErrorTypeTargetNotFound       ErrorType = 207
+	ErrorTypeInvalidMessage       ErrorType = 208
 )
 
 func (t ErrorType) String() string {
