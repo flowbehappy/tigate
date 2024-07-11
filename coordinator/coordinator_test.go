@@ -14,9 +14,10 @@
 package coordinator
 
 import (
+	"testing"
+
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/tiflow/cdc/model"
-	"testing"
 )
 
 func TestCoordinatorRun(t *testing.T) {

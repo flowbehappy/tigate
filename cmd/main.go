@@ -14,9 +14,10 @@
 package main
 
 import (
+	"os"
+
 	"github.com/flowbehappy/tigate/cmd/server"
 	"github.com/spf13/cobra"
-	"os"
 )
 
 // NewCmd creates the root command.

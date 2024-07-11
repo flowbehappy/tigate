@@ -3,7 +3,9 @@ package heartbeatpb;
 option go_package = "./heartbeatpb";
 
 message TableSpan {
-
+    uint64 TableID   = 1;
+	bytes StartKey  = 2;
+	bytes EndKey    = 3;
 }
 
 message TableSpanProgress {
@@ -12,12 +14,13 @@ message TableSpanProgress {
 	uint64 BlockTs         = 3;
 	repeated TableSpan BlockTableSpan = 4;
 	uint64 CheckpointTs    = 5;
-    uint64 dispatcherID = 6;
+    string dispatcherID = 6;
 }
 
 message HeartBeatRequest {
-    repeated TableSpanProgress progress = 1;
-     uint64 eventDispatcherManagerID = 2;
+    //repeated TableSpanProgress progress = 1;
+    uint64 eventDispatcherManagerID = 1;
+    uint64 checkpointTs = 2; // eventDispatcherManager 当前全局最小的 checkpointTs
 } 
 
 enum Action {
@@ -35,7 +38,7 @@ message TableProgress {
 
 // 这名字重新取，我真的要吐了
 message TableProgressInfo {
-    uint64 dispatcherID = 1; // for which dispatcher
+    string dispatcherID = 1; // for which dispatcher
     repeated TableProgress tableProgresses = 2; // 救命了这名字取得
     Action action = 3;
 

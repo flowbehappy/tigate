@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
+
 	"github.com/flowbehappy/tigate/scheduler"
 )
 
@@ -27,6 +28,9 @@ type TableSpan struct {
 	StartKey []byte
 	EndKey   []byte
 }
+
+// DDLSpan is the special span for Table Trigger Event Dispatcher
+var DDLSpan TableSpan = TableSpan{TableID: 0, StartKey: nil, EndKey: nil}
 
 // Less compares two Spans, defines the order between spans.
 func (s *TableSpan) Less(inferior scheduler.InferiorID) bool {

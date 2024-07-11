@@ -13,7 +13,10 @@
 
 package dispatcher
 
-import "github.com/flowbehappy/tigate/downstreamadapter/sink"
+import (
+	"github.com/flowbehappy/tigate/common"
+	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+)
 
 /*
 Dispatcher is responsible for getting events from LogService and sending them to Sink in appropriate order.
@@ -47,16 +50,17 @@ The workflow related to the dispatcher is as follows:
 */
 type Dispatcher interface {
 	GetSink() sink.Sink
-	GetTableSpan() *Span
+	GetTableSpan() *common.TableSpan
 	GetState() *State
-	GetEventChan() chan *Event
+	GetEventChan() chan *common.TxnEvent
 	GetResolvedTs() uint64
 	UpdateResolvedTs(uint64)
-	GetId() uint64
+	GetId() common.DispatcherID
 	GetDispatcherType() DispatcherType
 	GetHeartBeatChan() chan *HeartBeatResponseMessage
 	GetSyncPointInfo() *SyncPointInfo
 	GetMemoryUsage() *MemoryUsage
+	PushEvent(event *common.TxnEvent)
 }
 
 type DispatcherType uint64
@@ -90,9 +94,9 @@ type State struct {
 	// Such as one ddl event is sent to downstream,
 	// so the following events can be pushed down only when
 	// the ddl event is flushed to downstream successfully (that means sink is available).
-	pengdingEvent *Event
+	pengdingEvent *common.TxnEvent
 	// The pendingEvent is waiting for the progress of these tableSpans to reach the blockTs.
-	blockTableSpan []*TableSpan
+	blockTableSpan []*common.TableSpan
 	// the commitTs of the pendingEvent, also the ts the tableSpan in the blockTableSpan should reach.
 	blockTs uint64
 	// True means the sink flushes all the previous event successfully,
@@ -130,15 +134,16 @@ Mainly about the progress of each dispatcher:
 2. The checkpointTs of the dispatcher, shows that all the events whose ts <= checkpointTs are flushed to downstream successfully.
 */
 type HeartBeatInfo struct {
-	IsBlocked      bool
-	BlockTs        uint64
-	BlockTableSpan []*TableSpan
-	TableSpan      *TableSpan
-	CheckpointTs   uint64
-	Id             uint64
+	// IsBlocked      bool
+	// BlockTs        uint64
+	// BlockTableSpan []*common.TableSpan
+	// TableSpan      *common.TableSpan
+	CheckpointTs uint64
+	Id           common.DispatcherID
 }
 
-func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
+// func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
+func CollectDispatcherCheckpointTs(d Dispatcher) uint64 {
 	var checkpointTs uint64
 	// The event in dispatcher could be in
 	// 1. Sink
@@ -157,13 +162,14 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
 				if event.IsDMLEvent() {
 					state.pengdingEvent = event
 				} else {
+					// TODO:先 hack 了 blockTableSpan 的值获取
 					state = &State{
-						isBlocked:      true,
-						pengdingEvent:  event,
-						blockTableSpan: event.GetTableSpans(),
-						blockTs:        event.CommitTs(),
-						action:         None,
-						sinkAvailable:  false,
+						isBlocked:     true,
+						pengdingEvent: event,
+						// blockTableSpan: event.GetTableSpans(),
+						blockTs:       event.CommitTs,
+						action:        None,
+						sinkAvailable: false,
 					}
 				}
 				checkpointTs = event.CommitTs - 1
@@ -178,15 +184,16 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
 	// use checkpointTs to release memory usage
 	d.GetMemoryUsage().Release(checkpointTs)
 
-	state := d.GetState()
-	return &HeartBeatInfo{
-		IsBlocked:      state.isBlocked,
-		BlockTs:        state.blockTs,
-		BlockTableSpan: state.blockTableSpan,
-		CheckpointTs:   checkpointTs,
-		TableSpan:      d.GetTableSpan(),
-		Id:             d.GetId(),
-	}
+	//state := d.GetState()
+	// return &HeartBeatInfo{
+	// 	// IsBlocked:      state.isBlocked,
+	// 	// BlockTs:        state.blockTs,
+	// 	// BlockTableSpan: state.blockTableSpan,
+	// 	CheckpointTs: checkpointTs,
+	// 	//TableSpan:    d.GetTableSpan(),
+	// 	Id: d.GetId(),
+	// }
+	return checkpointTs
 }
 
 /*
@@ -195,7 +202,7 @@ TableSpanProgress shows the progress of the other tableSpan, including:
 2. The checkpointTs of the tableSpan
 */
 type TableSpanProgress struct {
-	Span         *TableSpan
+	Span         *common.TableSpan
 	IsBlocked    bool
 	BlockTs      uint64
 	CheckpointTs uint64

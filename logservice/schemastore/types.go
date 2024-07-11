@@ -24,13 +24,12 @@ type DDLEvent struct {
 	CommitTS Timestamp `json:"commit_ts"`
 }
 
-type DispatchInfo struct {
+type DispatcherInfo struct {
 	tableID TableID
 	filter  Filter
 }
 
 type DatabaseInfo struct {
-	ID            int64
 	Name          string
 	Tables        []TableID
 	CreateVersion Timestamp
@@ -43,4 +42,4 @@ type DatabaseInfoMap map[DatabaseID]*DatabaseInfo
 
 type TableInfoStoreMap map[TableID]*versionedTableInfoStore
 
-type DispatchInfoMap map[DispatcherID]DispatchInfo
+type DispatcherInfoMap map[DispatcherID]DispatcherInfo

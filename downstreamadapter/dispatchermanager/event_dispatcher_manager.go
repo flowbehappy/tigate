@@ -14,25 +14,25 @@
 package dispatchermanager
 
 import (
-	"sync/atomic"
+	"math"
+	"net/url"
 	"time"
 
+	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/node"
 	"github.com/flowbehappy/tigate/utils/threadpool"
+	"github.com/google/uuid"
+	"github.com/ngaut/log"
+	"go.uber.org/zap"
 
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-var uniqueEventDispatcherID uint64 = 1
-
 const workerCount = 8
-
-func genUniqueEventDispatcherID() uint64 {
-	return atomic.AddUint64(&uniqueEventDispatcherID, 1)
-}
 
 /*
 EventDispatcherManager is responsible for managing the dispatchers of a changefeed in the instance.
@@ -45,7 +45,7 @@ One changefeed in one instance can only have one EventDispatcherManager.
 One EventDispatcherManager can only have one Sink.
 */
 type EventDispatcherManager struct {
-	DispatcherMap               map[*Span]*dispatcher.TableEventDispatcher
+	DispatcherMap               map[common.DispatcherID]*dispatcher.TableEventDispatcher
 	TableTriggerEventDispatcher *dispatcher.TableTriggerEventDispatcher
 	EventCollector              *node.EventCollector
 	HeartbeatResponseQueue      *HeartbeatResponseQueue
@@ -54,23 +54,27 @@ type EventDispatcherManager struct {
 	ChangefeedID                uint64
 	SinkType                    string
 	Sink                        sink.Sink
-	SinkConfig                  *Config
 	EnableSyncPoint             bool
 	SyncPointInterval           time.Duration
-	filter                      *Filter
+	//filter                      *Filter
 }
 
-func (e *EventDispatcherManager) Init(startTs uint64) {
-	// 初始化 sink
+func (e *EventDispatcherManager) Init(startTs uint64, sinkURI *url.URL) {
+	// Init Sink
 	if e.SinkType == "Mysql" {
-		e.Sink = sink.NewMysqlSink(workerCount, e.SinkConfig)
+		cfg, db, err := writer.NewMysqlConfigAndDB(sinkURI)
+		if err != nil {
+			log.Error("create mysql sink failed", zap.Error(err))
+		}
+		e.Sink = sink.NewMysqlSink(workerCount, cfg, db)
 	}
 
-	// 初始化 table trigger event dispatcher， 注册自己
-	e.TableTriggerEventDispatcher = e.newTableTriggerEventDispatcher(startTs)
-	// 注册处理收发 heartbeat 的 task
+	// Init Table Trigger Event Dispatcher, TODO: in demo we don't need deal with ddl
+	//e.TableTriggerEventDispatcher = e.newTableTriggerEventDispatcher(startTs)
 
-	threadpool.GetTaskSchedulerInstance().HeartbeatTaskScheduler.Submit(newHeartbeatRecvTask(e))
+	// init heartbeat recv and send task
+	// No need to run recv task when there is no ddl event
+	//threadpool.GetTaskSchedulerInstance().HeartbeatTaskScheduler.Submit(newHeartbeatRecvTask(e))
 	threadpool.GetTaskSchedulerInstance().HeartbeatTaskScheduler.Submit(newHeartBeatSendTask(e))
 }
 
@@ -83,10 +87,10 @@ func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) 
 }
 
 // 收到 rpc 请求创建，需要通过 event dispatcher manager 来
-func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *Span, startTs uint64) *dispatcher.TableEventDispatcher {
+func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.TableSpan, startTs uint64, sinkURI *url.URL) *dispatcher.TableEventDispatcher {
 	// 创建新的 event dispatcher，同时需要把这个去 logService 注册，并且把自己加到对应的某个处理 thread 里
 	if len(e.DispatcherMap) == 0 {
-		e.Init(startTs)
+		e.Init(startTs, sinkURI)
 	}
 
 	var syncPointInfo *dispatcher.SyncPointInfo
@@ -97,48 +101,46 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *Span, startT
 	} else {
 		syncPointInfo.EnableSyncPoint = false
 	}
+	tableEventDispatcher := dispatcher.NewTableEventDispatcher(tableSpan, e.Sink, startTs, syncPointInfo)
 
-	tableEventDispatcher := dispatcher.TableEventDispatcher{
-		Id:            genUniqueEventDispatcherID(),
-		Ch:            make(chan *Event, 1000),
-		TableSpan:     tableSpan,
-		Sink:          e.Sink,
-		State:         dispatcher.NewState(),
-		ResolvedTs:    startTs,
-		HeartbeatChan: make(chan *dispatcher.HeartBeatResponseMessage, 100),
-		SyncPointInfo: syncPointInfo,
-		MemoryUsage:   dispatcher.NewMemoryUsage(),
-	}
-
-	e.EventCollector.RegisterDispatcher(&tableEventDispatcher, startTs, nil)
-	// 注册自己负责接受 event 决定是否能下推的 task
-	threadpool.GetTaskSchedulerInstance().EventDispatcherTaskScheduler.Submit(dispatcher.NewEventDispatcherTask(&tableEventDispatcher))
+	e.EventCollector.RegisterDispatcher(tableEventDispatcher, startTs, nil)
 
 	// 注意先后顺序，可以从后往前加
-	e.Sink.AddTableSpan(tableSpan)
 
 	// 加入 manager 的 dispatcherMap 中
-	e.DispatcherMap[tableEventDispatcher.Id] = &tableEventDispatcher
+	e.DispatcherMap[tableEventDispatcher.Id] = tableEventDispatcher
 
-	return &tableEventDispatcher
+	return tableEventDispatcher
 }
 
 func (e *EventDispatcherManager) newTableTriggerEventDispatcher(startTs uint64) *dispatcher.TableTriggerEventDispatcher {
 	tableTriggerEventDispatcher := &dispatcher.TableTriggerEventDispatcher{
-		Id:            dispatcher.TableTriggerEventDispatcherId,
-		Filter:        e.filter,
-		Ch:            make(chan *Event, 1000),
+		Id: common.DispatcherID(uuid.New()),
+		//Filter:        e.filter,
+		Ch:            make(chan *common.TxnEvent, 1000),
 		ResolvedTs:    startTs,
 		HeartbeatChan: make(chan *dispatcher.HeartBeatResponseMessage, 100),
 		Sink:          e.Sink,
-		TableSpan:     ddlSpan,
+		TableSpan:     &common.DDLSpan,
 		State:         dispatcher.NewState(),
 		MemoryUsage:   dispatcher.NewMemoryUsage(),
 	}
 	threadpool.GetTaskSchedulerInstance().EventDispatcherTaskScheduler.Submit(dispatcher.NewEventDispatcherTask(tableTriggerEventDispatcher))
-	e.EventCollector.RegisterDispatcher(tableTriggerEventDispatcher, startTs, e.filter)
+	//e.EventCollector.RegisterDispatcher(tableTriggerEventDispatcher, startTs, e.filter)
 	return tableTriggerEventDispatcher
 
+}
+
+func convertToHeartBeatPBTableSpans(tableSpans []*common.TableSpan) []*heartbeatpb.TableSpan {
+	pbTableSpans := make([]*heartbeatpb.TableSpan, 0)
+	for _, tableSpan := range tableSpans {
+		pbTableSpans = append(pbTableSpans, &heartbeatpb.TableSpan{
+			TableID:  tableSpan.TableID,
+			StartKey: tableSpan.StartKey,
+			EndKey:   tableSpan.EndKey,
+		})
+	}
+	return pbTableSpans
 }
 
 func (e *EventDispatcherManager) CollectHeartbeatInfo() *heartbeatpb.HeartBeatRequest {
@@ -151,22 +153,24 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo() *heartbeatpb.HeartBeatRe
 	   另外我们对于 目前处于 blocked 状态的 dispatcher，我们也会记录他 blocked 住的 ts，以及 blocked 住的 tableSpan
 	   后面我们要测一下这个 msg 的大小，以及 collect 的耗时
 	*/
-	var message heartbeatpb.HeartBeatRequest
+
+	var minCheckpointTs uint64 = math.MaxUint64
 	for _, tableEventDispatcher := range e.DispatcherMap {
-		heartbeatInfo := dispatcher.CollectDispatcherHeartBeatInfo(tableEventDispatcher)
-		message.Progress = append(message.Progress, &heartbeatpb.TableSpanProgress{
-			CheckpointTs:   heartbeatInfo.CheckpointTs,
-			BlockTs:        heartbeatInfo.BlockTs,
-			BlockTableSpan: heartbeatInfo.BlockTableSpan,
-			IsBlocked:      heartbeatInfo.IsBlocked,
-		})
+		checkpointTs := dispatcher.CollectDispatcherCheckpointTs(tableEventDispatcher)
+		if minCheckpointTs > checkpointTs {
+			minCheckpointTs = checkpointTs
+		}
 	}
-	heartbeatInfo := dispatcher.CollectDispatcherHeartBeatInfo(e.TableTriggerEventDispatcher)
-	message.Progress = append(message.Progress, &heartbeatpb.TableSpanProgress{
-		CheckpointTs:   heartbeatInfo.CheckpointTs,
-		BlockTs:        heartbeatInfo.BlockTs,
-		BlockTableSpan: heartbeatInfo.BlockTableSpan,
-		IsBlocked:      heartbeatInfo.IsBlocked,
-	})
+	var message heartbeatpb.HeartBeatRequest = heartbeatpb.HeartBeatRequest{
+		EventDispatcherManagerID: e.Id,
+		CheckpointTs:             minCheckpointTs,
+	}
+	// heartbeatInfo := dispatcher.CollectDispatcherHeartBeatInfo(e.TableTriggerEventDispatcher)
+	// message.Progress = append(message.Progress, &heartbeatpb.TableSpanProgress{
+	// 	CheckpointTs:   heartbeatInfo.CheckpointTs,
+	// 	BlockTs:        heartbeatInfo.BlockTs,
+	// 	BlockTableSpan: convertToHeartBeatPBTableSpans(heartbeatInfo.BlockTableSpan),
+	// 	IsBlocked:      heartbeatInfo.IsBlocked,
+	// })
 	return &message
 }

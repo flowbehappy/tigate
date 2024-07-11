@@ -31,6 +31,14 @@ type versionedTableInfoStore struct {
 	infos []*tableInfoItem
 
 	deleteVersion Timestamp
+
+	initialized bool
+
+	pendingDDLs []*model.Job
+
+	// used to indicate whether the table info build is ready
+	// must wait on it before reading table info from store
+	readyToRead chan struct{}
 }
 
 func newEmptyVersionedTableInfoStore(tableID TableID) *versionedTableInfoStore {
@@ -39,14 +47,37 @@ func newEmptyVersionedTableInfoStore(tableID TableID) *versionedTableInfoStore {
 		dispatchers:   make(map[DispatcherID]Timestamp),
 		infos:         make([]*tableInfoItem, 0),
 		deleteVersion: math.MaxUint64,
+		initialized:   false,
+		pendingDDLs:   make([]*model.Job, 0),
+		readyToRead:   make(chan struct{}),
 	}
 }
 
-// TableInfo can from upstream snapshot or create table ddl
-func newVersionedTableInfoStore(tableID TableID, version Timestamp, info *common.TableInfo) *versionedTableInfoStore {
-	store := newEmptyVersionedTableInfoStore(tableID)
-	store.infos = append(store.infos, &tableInfoItem{version: version, info: info})
-	return store
+func (v *versionedTableInfoStore) addInitialTableInfo(info *common.TableInfo) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	assertEmpty(v.infos)
+	v.infos = append(v.infos, &tableInfoItem{version: Timestamp(info.Version), info: info})
+}
+
+func (v *versionedTableInfoStore) getTableID() TableID {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.tableID
+}
+
+func (v *versionedTableInfoStore) setTableInfoInitialized() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, job := range v.pendingDDLs {
+		v.doApplyDDL(job)
+	}
+	v.initialized = true
+	close(v.readyToRead)
+}
+
+func (v *versionedTableInfoStore) waitTableInfoInitialized() {
+	<-v.readyToRead
 }
 
 func (v *versionedTableInfoStore) getFirstVersion() Timestamp {
@@ -63,6 +94,10 @@ func (v *versionedTableInfoStore) getTableInfo(ts Timestamp) (*common.TableInfo,
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
+	if !v.initialized {
+		log.Panic("should wait for table info initialized")
+	}
+
 	if ts >= v.deleteVersion {
 		return nil, errors.New("table info deleted")
 	}
@@ -71,7 +106,7 @@ func (v *versionedTableInfoStore) getTableInfo(ts Timestamp) (*common.TableInfo,
 		return v.infos[i].version > ts
 	})
 	if target == 0 {
-		return nil, errors.New("no table info found")
+		return nil, errors.New("no version found")
 	}
 	return v.infos[target-1].info, nil
 }
@@ -109,7 +144,7 @@ func (v *versionedTableInfoStore) registerDispatcher(dispatcherID DispatcherID, 
 	v.dispatchers[dispatcherID] = ts
 }
 
-// return true when there are no dispatchers depend on this store
+// return true when the store can be removed(no registered dispatchers)
 func (v *versionedTableInfoStore) unregisterDispatcher(dispatcherID DispatcherID) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -153,18 +188,30 @@ func assertNonEmpty(infos []*tableInfoItem) {
 }
 
 func assertNonDeleted(v *versionedTableInfoStore) {
-	if v.isDeleted() {
+	if v.deleteVersion != Timestamp(math.MaxUint64) {
 		log.Panic("shouldn't happen")
 	}
-}
-
-func (v *versionedTableInfoStore) isDeleted() bool {
-	return v.deleteVersion != Timestamp(math.MaxUint64)
 }
 
 func (v *versionedTableInfoStore) applyDDL(job *model.Job) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	// delete table should not receive more ddl
+	assertNonDeleted(v)
+
+	if !v.initialized {
+		v.pendingDDLs = append(v.pendingDDLs, job)
+		return
+	}
+	v.doApplyDDL(job)
+}
+
+// lock must be hold by the caller
+func (v *versionedTableInfoStore) doApplyDDL(job *model.Job) {
+	if len(v.infos) != 0 && Timestamp(job.BinlogInfo.FinishedTS) <= v.infos[len(v.infos)-1].version {
+		log.Panic("ddl job finished ts should be monotonically increasing")
+	}
+
 	switch job.Type {
 	case model.ActionCreateTable:
 		assertEmpty(v.infos)
@@ -175,7 +222,6 @@ func (v *versionedTableInfoStore) applyDDL(job *model.Job) {
 		info := common.WrapTableInfo(job.SchemaID, job.SchemaName, job.BinlogInfo.FinishedTS, job.BinlogInfo.TableInfo)
 		v.infos = append(v.infos, &tableInfoItem{version: Timestamp(job.BinlogInfo.FinishedTS), info: info})
 	case model.ActionDropTable, model.ActionTruncateTable:
-		assertNonDeleted(v)
 		v.deleteVersion = Timestamp(job.BinlogInfo.FinishedTS)
 	default:
 		// TODO: idenitify unexpected ddl or specify all expected ddl

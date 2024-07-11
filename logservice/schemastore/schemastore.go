@@ -32,7 +32,7 @@ type SchemaStore interface {
 
 	UnregisterDispatcher(dispatcherID DispatcherID) error
 
-	ResolvedTS() Timestamp
+	GetMaxFinishedDDLTS() Timestamp
 
 	GetTableInfo(tableID TableID, ts Timestamp) (*common.TableInfo, error)
 
@@ -40,75 +40,117 @@ type SchemaStore interface {
 }
 
 type schemaStore struct {
-	// thread safe
-	unsortedCache *unSortedDDLCache
+	// store unresolved ddl event in memory, it is thread safe
+	unsortedCache *unsortedDDLCache
 
-	// thread safe
+	// store ddl event and other metadata on disk, it is thread safe
 	dataStorage *persistentStorage
 
+	eventCh chan interface{}
+
+	// all following fields are guarded by this mutex
 	mu sync.Mutex
 
-	gcTS       Timestamp
-	resolvedTS Timestamp
-
+	// max finishedTS of all applied ddl events
+	finishedDDLTS Timestamp
+	// max schemaVersion of all applied ddl events
 	schemaVersion int64
 
+	// databaseID -> database info
+	// it contains all databases
 	databaseMap DatabaseInfoMap
 
-	// table_id -> versioned store
+	// tableID -> versioned store
+	// it just contains tables which have registered dispatchers
 	tableInfoStoreMap TableInfoStoreMap
 
-	dispatchersMap DispatchInfoMap
-
-	// truncated tables?
-
-	// how to deal with table event dispatchers？
+	// dispatcherID -> dispatch info
+	// TODO: how to deal with table event dispatchers？
+	dispatchersMap DispatcherInfoMap
 }
 
 func NewSchemaStore(root string, storage kv.Storage, minRequiredTS Timestamp) (SchemaStore, Timestamp, error) {
+	dataStorage, metaTS, databaseMap := newPersistentStorage(root, storage, minRequiredTS)
+
+	s := &schemaStore{
+		unsortedCache:     newUnSortedDDLCache(),
+		dataStorage:       dataStorage,
+		eventCh:           make(chan interface{}, 1024),
+		finishedDDLTS:     metaTS.finishedDDLTS,
+		schemaVersion:     int64(metaTS.schemaVersion),
+		databaseMap:       databaseMap,
+		tableInfoStoreMap: make(TableInfoStoreMap),
+		dispatchersMap:    make(DispatcherInfoMap),
+	}
 	ctx := context.Background()
+	// TODO: cancel this goroutine at exit
+	go s.run(ctx)
 
-	dataStorage, gcTS, resolvedTS := newPersistentStorage(root, storage, minRequiredTS)
-	// todo: it looks this goroutine is not controlled by the ctx, shall we cancel it?
-	go dataStorage.run(ctx)
+	return s, metaTS.resolvedTS, nil
+}
 
-	return &schemaStore{
-		gcTS:          gcTS,
-		resolvedTS:    resolvedTS,
-		schemaVersion: 0,
-		unsortedCache: newUnSortedDDLCache(),
-		dataStorage:   dataStorage,
-	}, resolvedTS, nil
+func (s *schemaStore) run(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case data := <-s.eventCh:
+			switch v := data.(type) {
+			case DDLEvent:
+				s.unsortedCache.addDDLEvent(v)
+				// TODO: batch ddl event
+				err := s.dataStorage.writeDDLEvent(v)
+				if err != nil {
+					log.Fatal("write ddl event failed", zap.Error(err))
+				}
+			case Timestamp:
+				resolvedEvents := s.unsortedCache.fetchSortedDDLEventBeforeTS(v)
+				if len(resolvedEvents) == 0 {
+					continue
+				}
+				// TODO: whether the events is ordered by finishedDDLTS and schemaVersion
+				newFinishedDDLTS := resolvedEvents[len(resolvedEvents)-1].Job.BinlogInfo.FinishedTS
+				newSchemaVersion := resolvedEvents[len(resolvedEvents)-1].Job.Version
+				err := s.dataStorage.updateStoreMeta(v, Timestamp(newFinishedDDLTS), Timestamp(newSchemaVersion))
+				if err != nil {
+					log.Fatal("update ts failed", zap.Error(err))
+				}
+				s.mu.Lock()
+				defer s.mu.Unlock()
+				for _, event := range resolvedEvents {
+					if event.Job.Version <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= uint64(s.finishedDDLTS) {
+						log.Warn("skip already applied ddl job",
+							zap.Any("job", event.Job),
+							zap.Any("schemaVersion", s.schemaVersion),
+							zap.Any("finishedDDLTS", s.finishedDDLTS))
+						continue
+					}
+					if err := handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap); err != nil {
+						return err
+					}
+					s.schemaVersion = event.Job.Version
+					s.finishedDDLTS = Timestamp(event.Job.BinlogInfo.FinishedTS)
+				}
+			default:
+				log.Fatal("unknown event type")
+			}
+		}
+	}
 }
 
 func (s *schemaStore) WriteDDLEvent(ddlEvent DDLEvent) error {
-	s.dataStorage.writeDDLEvent(ddlEvent)
-	s.unsortedCache.addDDL(ddlEvent)
+	s.eventCh <- ddlEvent
 	return nil
 }
 
 func (s *schemaStore) AdvanceResolvedTS(resolvedTS Timestamp) error {
-	resolvedEvents := s.unsortedCache.getSortedDDLEventBeforeTS(resolvedTS)
-	s.mu.Lock()
-	if resolvedTS < s.resolvedTS {
-		log.Fatal("resolved ts should not go back", zap.Uint64("resolved ts", uint64(resolvedTS)), zap.Uint64("current resolved ts", uint64(s.resolvedTS)))
-	}
-	for _, event := range resolvedEvents {
-		if err := handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap); err != nil {
-			return err
-		}
-		// todo: check?
-		s.schemaVersion = event.Job.Version
-	}
-	s.resolvedTS = resolvedTS
-	s.mu.Unlock()
-	s.dataStorage.updateResolvedTS(resolvedTS)
+	s.eventCh <- resolvedTS
 	return nil
 }
 
 func (s *schemaStore) DoGC(gcTS Timestamp) error {
-	// gc databaseMap
-	return nil
+	// TODO: gc databaseMap
+	return s.dataStorage.gc(gcTS)
 }
 
 func (s *schemaStore) GetAllPhysicalTables(dispatcherID DispatcherID, filter Filter, ts Timestamp) ([]TableID, error) {
@@ -119,55 +161,78 @@ func (s *schemaStore) RegisterDispatcher(
 	dispatcherID DispatcherID, tableID TableID, filter Filter, startTS Timestamp,
 ) error {
 	s.mu.Lock()
-	// check whether there is already a versionedTableInfoStore satisfy the needs
-	if oldStore, ok := s.tableInfoStoreMap[tableID]; ok && oldStore.getFirstVersion() <= startTS {
-		oldStore.registerDispatcher(dispatcherID, startTS)
-		return nil
-	}
-	if startTS < s.gcTS {
+	if startTS < s.dataStorage.getGCTS() {
 		return errors.New("start ts is old than gc ts")
 	}
-	// TODO: stop gc on oldStore
-	endTS := s.resolvedTS
-	s.mu.Unlock()
-
-	fillSchemaNameWrapper := func(job *model.Job) error {
+	s.dispatchersMap[dispatcherID] = DispatcherInfo{
+		tableID: tableID,
+		filter:  filter,
+	}
+	getSchemaName := func(schemaID SchemaID) (string, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		if err := fillSchemaName(job, s.databaseMap); err != nil {
+		databaseInfo, ok := s.databaseMap[DatabaseID(schemaID)]
+		if !ok {
+			return "", errors.New("database not found")
+		}
+		return databaseInfo.Name, nil
+	}
+	// check whether there is already a versionedTableInfoStore satisfy the needs
+	store, ok := s.tableInfoStoreMap[tableID]
+	if !ok {
+		store = newEmptyVersionedTableInfoStore(tableID)
+		s.tableInfoStoreMap[tableID] = store
+		store.registerDispatcher(dispatcherID, startTS)
+		endTS := s.finishedDDLTS
+		s.mu.Unlock()
+		err := s.dataStorage.buildVersionedTableInfoStore(store, startTS, endTS, getSchemaName)
+		if err != nil {
+			// TODO: unregister dispatcher, make sure other wait go routines exit successfully
 			return err
 		}
+		store.setTableInfoInitialized()
+		return nil
+	} else {
+		// prevent old store from gc
+		store.registerDispatcher(dispatcherID, startTS)
+		s.mu.Unlock()
+		store.waitTableInfoInitialized()
+	}
+	if store.getFirstVersion() <= startTS {
 		return nil
 	}
+	endTS := store.getFirstVersion()
 
-	// build a new versionedTableInfoStore from disk
 	// TODO: there may be multiple dispatchers build the same versionedTableInfoStore, optimize it later
-	// empty storage?
-	newTableInfoStore := s.dataStorage.buildVersionedTableInfoStore(tableID, startTS, endTS, fillSchemaNameWrapper)
-	newTableInfoStore.registerDispatcher(dispatcherID, startTS)
+	newStore := newEmptyVersionedTableInfoStore(tableID)
+	err := s.dataStorage.buildVersionedTableInfoStore(newStore, startTS, endTS, getSchemaName)
+	if err != nil {
+		return err
+	}
+	newStore.setTableInfoInitialized()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// check whether the data is gced again
-	if startTS < s.gcTS {
+	if startTS < s.dataStorage.getGCTS() {
+		// TODO: unregister dispatcher, make sure other wait go routines exit successfully
 		return errors.New("start ts is old than gc ts")
 	}
 	oldStore, ok := s.tableInfoStoreMap[tableID]
 	if ok {
-		// check again whether the oldStore has a more old start ts
-		if oldStore.getFirstVersion() <= startTS {
-			oldStore.registerDispatcher(dispatcherID, startTS)
+		// Note: oldStore must be initialized, no need to check again.
+		// keep the store with smaller version
+		if oldStore.getFirstVersion() <= newStore.getFirstVersion() {
 			return nil
 		} else {
-			newTableInfoStore.checkAndCopyTailFrom(oldStore)
-			newTableInfoStore.copyRegisteredDispatchers(oldStore)
+			newStore.checkAndCopyTailFrom(oldStore)
+			newStore.copyRegisteredDispatchers(oldStore)
+			s.tableInfoStoreMap[tableID] = newStore
 		}
+	} else {
+		log.Panic("should not happened")
 	}
-	s.tableInfoStoreMap[tableID] = newTableInfoStore
-	s.dispatchersMap[dispatcherID] = DispatchInfo{
-		tableID: tableID,
-		filter:  filter,
-	}
+
 	return nil
 }
 
@@ -200,19 +265,21 @@ func (s *schemaStore) UnregisterDispatcher(dispatcherID DispatcherID) error {
 	return nil
 }
 
-func (s *schemaStore) ResolvedTS() Timestamp {
+func (s *schemaStore) GetMaxFinishedDDLTS() Timestamp {
 	s.mu.Lock()
 	defer s.mu.Lock()
-	return s.resolvedTS
+	return s.finishedDDLTS
 }
 
 func (s *schemaStore) GetTableInfo(tableID TableID, ts Timestamp) (*common.TableInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if store, ok := s.tableInfoStoreMap[tableID]; ok {
-		return store.getTableInfo(ts)
+	store, ok := s.tableInfoStoreMap[tableID]
+	if !ok {
+		return nil, errors.New("table not found")
 	}
-	return nil, errors.New("table not found")
+	store.waitTableInfoInitialized()
+	return store.getTableInfo(ts)
 }
 
 func (s *schemaStore) GetNextDDLEvent(dispatcherID DispatcherID) (*DDLEvent, Timestamp, error) {
@@ -244,6 +311,7 @@ func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfo
 		model.ActionCreateView,
 		model.ActionRecoverTable:
 		// no dispatcher should register on these kinds of tables?
+		// TODO: add a cache for these kinds of newly created tables because they may soon be registered?
 		if _, ok := tableInfoStoreMap[TableID(job.TableID)]; ok {
 			log.Panic("should not happened")
 		}
@@ -281,7 +349,6 @@ func createSchema(job *model.Job, databaseMap DatabaseInfoMap) error {
 		return errors.New("database already exists")
 	}
 	databaseInfo := &DatabaseInfo{
-		ID:            job.SchemaID,
 		Name:          job.SchemaName,
 		Tables:        make([]TableID, 0),
 		CreateVersion: Timestamp(job.BinlogInfo.FinishedTS),

@@ -15,9 +15,9 @@ package conflictdetector
 
 import (
 	"github.com/flowbehappy/tigate/common"
+	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/pkg/causality/internal"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -33,7 +33,7 @@ type ConflictDetector struct {
 
 	// slots are used to find all unfinished transactions
 	// conflicting with an incoming transactions.
-	slots    *internal.Slots
+	slots    *Slots
 	numSlots uint64
 
 	// nextCacheID is used to dispatch transactions round-robin.
@@ -50,9 +50,10 @@ func NewConflictDetector(
 ) *ConflictDetector {
 	ret := &ConflictDetector{
 		resolvedTxnCaches: make([]txnCache, opt.Count),
-		slots:             internal.NewSlots(numSlots),
+		slots:             NewSlots(numSlots),
 		numSlots:          numSlots,
 		closeCh:           make(chan struct{}),
+		notifiedChan:      make(chan func()),
 	}
 	for i := 0; i < opt.Count; i++ {
 		ret.resolvedTxnCaches[i] = newTxnCache(opt)
@@ -68,15 +69,15 @@ func NewConflictDetector(
 //
 // NOTE: if multiple threads access this concurrently,
 // ConflictKeys must be sorted by the slot index.
-func (d *ConflictDetector) Add(txn *common.TxnEvent, callback func()) {
+func (d *ConflictDetector) Add(txn *common.TxnEvent, tableProgress *types.TableProgress) {
 	hashes := ConflictKeys(txn)
 	node := d.slots.AllocNode(hashes)
-	txn.PostTxnFlushed = func() { // flush 的时候被调用
+	txn.PostTxnFlushed = func() { // flush 的时候被调用 这个写法后面要想一下，感觉不是特别好
 		// After this transaction is executed, we can remove the node from the graph,
 		// and resolve related dependencies for these transacitons which depend on this
 		// executed transaction.
 		d.slots.Remove(node)
-		callback()
+		tableProgress.Remove(txn)
 	}
 	node.TrySendToTxnCache = func(cacheID int64) bool {
 		// Try sending this txn to related cache as soon as all dependencies are resolved.

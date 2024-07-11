@@ -23,6 +23,7 @@ import (
 
 	appctx "github.com/flowbehappy/tigate/common/context"
 	"github.com/flowbehappy/tigate/coordinator"
+	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
@@ -53,6 +54,7 @@ type serverImpl struct {
 	pdEndpoints   []string
 	coordinatorMu sync.Mutex
 	coordinator   coordinator.Coordinator
+	messageCenter messaging.MessageCenter
 
 	// session keeps alive between the server and etcd
 	session *concurrency.Session
@@ -107,10 +109,10 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	c.subModules = []SubModule{
-		NewCaptureManager(c.session, c.EtcdClient),
+		NewCaptureManager(c.session, c.EtcdClient, c.messageCenter),
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
-		NewGrpcServer(c.tcpServer.GrpcListener()),
+		NewGrpcServer(c.tcpServer.GrpcListener(), c.messageCenter),
 	}
 	// register it into global var
 	for _, subModule := range c.subModules {

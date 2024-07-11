@@ -12,7 +12,9 @@ import (
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
 	"github.com/flowbehappy/tigate/utils/conn"
+	"github.com/google/uuid"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/security"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -23,19 +25,20 @@ const (
 )
 
 // remoteMessageTarget implements the SendMessageChannel interface.
-// TODO(dongmen): Reduce the goroutine number it spawns.
+// TODO: Reduce the goroutine number it spawns.
 // Currently it spawns 2 goroutines for each remote target, and 2 goroutines for each local target,
 // and 1 goroutine to handle grpc stream error.
 type remoteMessageTarget struct {
 	// The server id of the message center.
 	localId ServerId
-	// The current epoch of the message center.
-	epoch uint64
-	// The next message sequence number.
-	sequence atomic.Uint64
+	// The current localEpoch of the message center.
+	localEpoch uint64
+	// The next message sendSequence number.
+	sendSequence atomic.Uint64
 
-	targetId   ServerId
-	targetAddr string
+	targetEpoch atomic.Uint64
+	targetId    ServerId
+	targetAddr  string
 
 	// For sending events and commands
 	conn              *grpc.ClientConn
@@ -43,6 +46,7 @@ type remoteMessageTarget struct {
 	commandSendStream grpcSender
 
 	// For receiving events and commands
+	receivedSequence  atomic.Uint64
 	eventRecvStream   grpcReceiver
 	commandRecvStream grpcReceiver
 
@@ -73,6 +77,8 @@ func (s *remoteMessageTarget) sendEvent(msg ...*TargetMessage) error {
 		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Stream has not been initialized"}
 	}
 	select {
+	case <-s.ctx.Done():
+		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Stream has been closed"}
 	case s.sendEventCh <- s.newMessage(msg...):
 		return nil
 	default:
@@ -85,6 +91,8 @@ func (s *remoteMessageTarget) sendCommand(msg ...*TargetMessage) error {
 		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Stream has not been initialized"}
 	}
 	select {
+	case <-s.ctx.Done():
+		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Stream has been closed"}
 	case s.sendCmdCh <- s.newMessage(msg...):
 		return nil
 	default:
@@ -94,28 +102,34 @@ func (s *remoteMessageTarget) sendCommand(msg ...*TargetMessage) error {
 
 func newRemoteMessageTarget(
 	localID, targetId ServerId,
-	epoch uint64,
+	localEpoch, targetEpoch uint64,
+	addr string,
+	recvEventCh, recvCmdCh chan *TargetMessage,
 	cfg *config.MessageCenterConfig) *remoteMessageTarget {
+	log.Info("Create remote target", zap.Stringer("local", localID), zap.Stringer("target", targetId), zap.String("addr", addr), zap.Uint64("localEpoch", localEpoch), zap.Uint64("targetEpoch", targetEpoch))
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &remoteMessageTarget{
 		localId:     localID,
-		epoch:       epoch,
+		localEpoch:  localEpoch,
+		targetAddr:  addr,
 		targetId:    targetId,
 		ctx:         ctx,
 		cancel:      cancel,
 		sendEventCh: make(chan *proto.Message, cfg.CacheChannelSize),
 		sendCmdCh:   make(chan *proto.Message, cfg.CacheChannelSize),
-		recvEventCh: make(chan *TargetMessage, cfg.CacheChannelSize),
-		recvCmdCh:   make(chan *TargetMessage, cfg.CacheChannelSize),
+		recvEventCh: recvEventCh,
+		recvCmdCh:   recvCmdCh,
 		errCh:       make(chan AppError, 1),
 		wg:          &sync.WaitGroup{},
 	}
+	rt.targetEpoch.Store(targetEpoch)
 	rt.runHandleErr(ctx)
 	return rt
 }
 
 // close stops the grpc stream and the goroutine spawned by remoteMessageTarget.
 func (s *remoteMessageTarget) close() {
+	log.Info("Close remote target", zap.Stringer("local", s.localId), zap.Stringer("target", s.targetId), zap.String("addr", s.targetAddr))
 	if s.conn != nil {
 		s.conn.Close()
 		s.conn = nil
@@ -176,7 +190,7 @@ func (s *remoteMessageTarget) initSendStreams() {
 		return
 	}
 
-	handshake := &proto.Message{From: s.localId.slice(), To: s.targetId.slice()}
+	handshake := &proto.Message{From: s.localId.slice(), To: s.targetId.slice(), Epoch: s.localEpoch}
 	if err := eventStream.Send(handshake); err != nil {
 		s.collectErr(AppError{
 			Type:   ErrorTypeMessageSendFailed,
@@ -205,12 +219,18 @@ func (s *remoteMessageTarget) initSendStreams() {
 
 	sendCtx, sendCancel := context.WithCancel(s.ctx)
 	s.sendMsgCancel = sendCancel
-	runSendMessages(sendCtx, eventStream, s.sendEventCh, s.errCh, s.wg)
-	runSendMessages(sendCtx, commandStream, s.sendCmdCh, s.errCh, s.wg)
-	log.Info("Remote target is connected", zap.Any("targetID", s.targetId), zap.String("targetAddr", s.targetAddr))
+	s.runSendMessages(sendCtx, eventStream, s.sendEventCh)
+	s.runSendMessages(sendCtx, commandStream, s.sendCmdCh)
+	log.Info("Connected to remote target",
+		zap.Stringer("localID", s.localId),
+		zap.Stringer("targetID", uuid.UUID(s.targetId)),
+		zap.String("targetAddr", s.targetAddr))
 }
 
 func (s *remoteMessageTarget) resetSendStreams() {
+	log.Info("Reset send streams",
+		zap.Stringer("localID", s.localId),
+		zap.Stringer("targetID", s.targetId))
 	// Close the old streams
 	if s.conn != nil {
 		s.conn.Close()
@@ -230,39 +250,43 @@ func (s *remoteMessageTarget) resetSendStreams() {
 	s.initSendStreams()
 }
 
-func (s *remoteMessageTarget) setEventRecvStream(eventStream grpcReceiver) {
+func (s *remoteMessageTarget) runEventRecvStream(eventStream grpcReceiver) error {
 	s.eventRecvStream = eventStream
-	runReceiveMessages(s.ctx, eventStream, s.recvEventCh, s.errCh, s.wg)
+	return s.runReceiveMessages(eventStream, s.recvEventCh)
 }
 
-func (s *remoteMessageTarget) setCommandRecvStream(commandStream grpcReceiver) {
+func (s *remoteMessageTarget) runCommandRecvStream(commandStream grpcReceiver) error {
 	s.commandRecvStream = commandStream
-	runReceiveMessages(s.ctx, commandStream, s.recvCmdCh, s.errCh, s.wg)
+	return s.runReceiveMessages(commandStream, s.recvCmdCh)
 }
 
-func runSendMessages(ctx context.Context, stream grpcSender, sendChan chan *proto.Message, errCh chan AppError, wg *sync.WaitGroup) {
+func (s *remoteMessageTarget) runSendMessages(sendCtx context.Context, stream grpcSender, sendChan chan *proto.Message) {
 	// Use a goroutine to pull the messages from the sendChan,
 	// and send them to the remote target.
-	wg.Add(1)
+	s.wg.Add(1)
 	go func() {
-		defer wg.Done()
+		defer s.wg.Done()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-sendCtx.Done():
 				return
 			case message := <-sendChan:
+				log.Info("Send message to remote",
+					zap.Stringer("localID", s.localId),
+					zap.Stringer("targetID", s.targetId),
+					zap.Stringer("message", message))
 				if err := stream.Send(message); err != nil {
+					log.Error("Error when sending message to remote",
+						zap.Error(err),
+						zap.Stringer("localID", s.localId),
+						zap.Stringer("targetID", s.targetId))
 					if err == io.EOF {
 						// The stream is closed by the remote target.
 						stream.CloseAndRecv()
 						return
 					}
-					log.Error("Error when sending message to remote", zap.Error(err))
 					err := AppError{Type: ErrorTypeMessageSendFailed, Reason: err.Error()}
-					select {
-					case errCh <- err:
-					default:
-					}
+					s.collectErr(err)
 					return
 				}
 			}
@@ -270,46 +294,31 @@ func runSendMessages(ctx context.Context, stream grpcSender, sendChan chan *prot
 	}()
 }
 
-func runReceiveMessages(ctx context.Context, stream grpcReceiver, receiveCh chan *TargetMessage, errCh chan AppError, wg *sync.WaitGroup) {
-	// Use a goroutine to pull the messages from the stream,
-	// and send them to the message center.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			message, err := stream.Recv()
-			if err != nil {
-				log.Error("Error when receiving message from remote", zap.Error(err))
-				err := AppError{Type: ErrorTypeMessageReceiveFailed, Reason: err.Error()}
-				// Close the stream, and the client will reconnect.
-				stream.SendAndClose(&proto.MessageSummary{SentBytes: 0})
-				select {
-				case errCh <- err:
-				default:
-				}
-				return
-			}
-			for _, payload := range message.Payload {
-				m, err := decodeIOType(IOType(message.Type), payload)
-				if err != nil {
-					log.Panic("Error when deserializing message from remote", zap.Error(err))
-				}
-
-				receiveCh <- &TargetMessage{
-					From:     ServerId(message.From),
-					To:       ServerId(message.To),
-					Epoch:    message.Epoch,
-					Sequence: message.Seqnum,
-					Type:     IOType(message.Type),
-					Message:  m}
-			}
+func (s *remoteMessageTarget) runReceiveMessages(stream grpcReceiver, receiveCh chan *TargetMessage) error {
+	for {
+		select {
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		default:
 		}
-	}()
+		message, err := stream.Recv()
+		if err != nil {
+			err := AppError{Type: ErrorTypeMessageReceiveFailed, Reason: errors.Trace(err).Error()}
+			// return the error to close the stream, the client side is responsible to reconnect.
+			return err
+		}
+		mt := IOType(message.Type)
+		for _, payload := range message.Payload {
+			receiveCh <- &TargetMessage{
+				From:     ServerId(message.From),
+				To:       ServerId(message.To),
+				Topic:    message.Topic,
+				Epoch:    message.Epoch,
+				Sequence: message.Seqnum,
+				Type:     mt,
+				Message:  decodeIOType(mt, payload)}
+		}
+	}
 }
 
 func (s *remoteMessageTarget) newMessage(msg ...*TargetMessage) *proto.Message {
@@ -319,14 +328,16 @@ func (s *remoteMessageTarget) newMessage(msg ...*TargetMessage) *proto.Message {
 		buf := make([]byte, 0)
 		msgBytes = append(msgBytes, m.encode(buf))
 	}
-	return &proto.Message{
+	protoMsg := &proto.Message{
 		From:    s.localId.slice(),
 		To:      s.targetId.slice(),
-		Epoch:   s.epoch,
-		Seqnum:  s.sequence.Add(1),
+		Epoch:   s.localEpoch,
+		Topic:   msg[0].Topic,
+		Seqnum:  s.sendSequence.Add(1),
 		Type:    int32(msg[0].Type),
 		Payload: msgBytes,
 	}
+	return protoMsg
 }
 
 // localMessageTarget implements the SendMessageChannel interface.

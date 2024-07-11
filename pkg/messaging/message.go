@@ -3,7 +3,6 @@ package messaging
 import (
 	"fmt"
 
-	. "github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 
@@ -38,6 +37,8 @@ func (t IOType) String() string {
 type Bytes []byte
 
 type ServerId uuid.UUID
+
+func (s ServerId) String() string { return uuid.UUID(s).String() }
 
 func NewServerId() ServerId {
 	return ServerId(uuid.New())
@@ -85,15 +86,17 @@ type TargetMessage struct {
 	To       ServerId
 	Epoch    uint64
 	Sequence uint64
+	Topic    string
 	Type     IOType
 	Message  interface{}
 }
 
 // NewTargetMessage creates a new TargetMessage to be sent to a target server.
-func NewTargetMessage(To ServerId, Type IOType, Message interface{}) *TargetMessage {
+func NewTargetMessage(To ServerId, Topic string, Type IOType, Message interface{}) *TargetMessage {
 	return &TargetMessage{
 		To:      To,
 		Type:    Type,
+		Topic:   Topic,
 		Message: Message,
 	}
 }
@@ -101,7 +104,7 @@ func NewTargetMessage(To ServerId, Type IOType, Message interface{}) *TargetMess
 func (m *TargetMessage) encode(buf []byte) []byte {
 	switch m.Type {
 	case TypeBytes:
-		m := m.Message.(*Bytes)
+		m := m.Message.(Bytes)
 		return encodeIOType(&m, buf)
 	case TypeServerId:
 	case TypeDMLEvent:
@@ -112,31 +115,35 @@ func (m *TargetMessage) encode(buf []byte) []byte {
 	return nil
 }
 
-func encodeIOType[T IOTypeT](data *T, buf []byte) []byte {
-	return (*data).encode(buf)
+func (m *TargetMessage) decode(data []byte) {
+	m.Message = decodeIOType(m.Type, data)
 }
 
-func decodeIOType(mtype IOType, data []byte) (interface{}, error) {
+func (m *TargetMessage) String() string {
+	return fmt.Sprintf("From: %s, To: %s, Type: %s, Message: %v", m.From.String(), m.To.String(), m.Type, m.Message)
+}
+
+func encodeIOType[T IOTypeT](data T, buf []byte) []byte {
+	return (data).encode(buf)
+}
+
+func decodeIOType(mtype IOType, data []byte) interface{} {
 	switch mtype {
 	case TypeBytes:
-		return &data, nil
+		return Bytes(data)
 	case TypeServerId:
 		if len(data) != 16 {
-			return nil,
-				AppError{Type: ErrorTypeIncomplete, Reason: fmt.Sprintf("data len is expected = %d, but got %d", 16, len(data))}
+			log.Panic("Invalid data len, data len is expected 16", zap.Int("len", len(data)), zap.String("data", fmt.Sprintf("%v", data)))
 		}
-		uid, err := uuid.ParseBytes(data)
+		uid, err := uuid.FromBytes(data)
 		if err != nil {
-			return nil, err
+			return nil
 		}
-		sid := ServerId(uid)
-		return &sid, nil
+		return ServerId(uid)
 	case TypeDMLEvent:
 	case TypeDDLEvent:
 	default:
-
 	}
 	log.Panic("Unimplemented IOType", zap.Stringer("Type", mtype))
-	return nil,
-		AppError{Type: ErrorTypeInvalid, Reason: fmt.Sprintf("Invalid IOType: %d", mtype)}
+	return nil
 }

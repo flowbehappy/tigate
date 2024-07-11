@@ -16,6 +16,8 @@ import (
 	"context"
 	"net"
 
+	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/messaging/proto"
 	"google.golang.org/grpc"
 )
 
@@ -24,8 +26,9 @@ type GrpcModule struct {
 	lis        net.Listener
 }
 
-func NewGrpcServer(lis net.Listener) *GrpcModule {
+func NewGrpcServer(lis net.Listener, mc messaging.MessageCenter) *GrpcModule {
 	grpcServer := grpc.NewServer()
+	proto.RegisterMessageCenterServer(grpcServer, messaging.NewMessageCenterServer(mc))
 	return &GrpcModule{
 		grpcServer: grpcServer,
 		lis:        lis,
@@ -33,6 +36,7 @@ func NewGrpcServer(lis net.Listener) *GrpcModule {
 }
 
 func (g *GrpcModule) Run(ctx context.Context) error {
+
 	return g.grpcServer.Serve(g.lis)
 }
 

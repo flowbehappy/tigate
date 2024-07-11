@@ -19,18 +19,16 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net"
-	"strconv"
 
 	"github.com/flowbehappy/tigate/common"
 	dmysql "github.com/go-sql-driver/mysql"
+	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	tmysql "github.com/pingcap/tidb/parser/mysql"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tiflow/cdc/model"
-	dmutils "github.com/pingcap/tiflow/dm/pkg/conn"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -263,14 +261,14 @@ func GenerateDSN(cfg *MysqlConfig) (string, error) {
 	}
 	defer testDB.Close()
 
-	// we use default sql mode for downstream because all dmls generated and ddls in ticdc
-	// are based on default sql mode.
-	dsn.Params["sql_mode"], err = dmutils.AdjustSQLModeCompatible(mysql.DefaultSQLMode)
-	if err != nil {
-		return "", err
-	}
-	// NOTE: quote the string is necessary to avoid ambiguities.
-	dsn.Params["sql_mode"] = strconv.Quote(dsn.Params["sql_mode"])
+	// // we use default sql mode for downstream because all dmls generated and ddls in ticdc
+	// // are based on default sql mode.
+	// dsn.Params["sql_mode"], err = dmutils.AdjustSQLModeCompatible(mysql.DefaultSQLMode)
+	// if err != nil {
+	// 	return "", err
+	// }
+	// // NOTE: quote the string is necessary to avoid ambiguities.
+	// dsn.Params["sql_mode"] = strconv.Quote(dsn.Params["sql_mode"])
 
 	dsnStr, err := generateDSNByConfig(dsn, cfg, testDB)
 	if err != nil {

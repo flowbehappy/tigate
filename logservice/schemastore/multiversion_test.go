@@ -12,6 +12,7 @@ import (
 func TestCreateTable(t *testing.T) {
 	version := uint64(100)
 	store := newEmptyVersionedTableInfoStore(100)
+	store.setTableInfoInitialized()
 	createDDLJob := &model.Job{
 		Type:       model.ActionCreateTable,
 		SchemaID:   10,
@@ -33,6 +34,7 @@ func TestCreateTable(t *testing.T) {
 func TestRenameTable(t *testing.T) {
 	version := uint64(100)
 	store := newEmptyVersionedTableInfoStore(100)
+	store.setTableInfoInitialized()
 	createDDLJob := &model.Job{
 		Type:       model.ActionCreateTable,
 		SchemaID:   10,
@@ -94,6 +96,7 @@ func TestRenameTable(t *testing.T) {
 func TestDropTable(t *testing.T) {
 	version := uint64(100)
 	store := newEmptyVersionedTableInfoStore(100)
+	store.setTableInfoInitialized()
 	createDDLJob := &model.Job{
 		Type:       model.ActionCreateTable,
 		SchemaID:   10,
@@ -127,9 +130,9 @@ func TestDropTable(t *testing.T) {
 	tableInfo, err := store.getTableInfo(Timestamp(version))
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.Name.O, "t")
-	require.True(t, store.isDeleted())
 }
 
+// TODO: test the case that nothing need to be copied
 func TestCopyTail(t *testing.T) {
 	version := uint64(100)
 	createDDLJob := &model.Job{
@@ -164,6 +167,7 @@ func TestCopyTail(t *testing.T) {
 	}
 
 	oldStore := newEmptyVersionedTableInfoStore(100)
+	oldStore.setTableInfoInitialized()
 	oldStore.applyDDL(createDDLJob)
 	for _, job := range renameDDLJobs {
 		oldStore.applyDDL(job)

@@ -16,7 +16,10 @@ package dispatcher
 import (
 	"time"
 
+	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+	"github.com/flowbehappy/tigate/utils/threadpool"
+	"github.com/google/uuid"
 )
 
 type SyncPointInfo struct {
@@ -37,9 +40,9 @@ and get the other dispatcher's progress and action of the blocked event.
 Each EventDispatcherManager can have multiple TableEventDispatcher.
 */
 type TableEventDispatcher struct {
-	Id        uint64
-	Ch        <-chan *Event // 转换成一个函数
-	TableSpan *Span
+	Id        common.DispatcherID
+	Ch        chan *common.TxnEvent // 转换成一个函数
+	TableSpan *common.TableSpan
 	Sink      sink.Sink
 
 	State      *State
@@ -54,11 +57,28 @@ type TableEventDispatcher struct {
 	MemoryUsage *MemoryUsage
 }
 
+func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, syncPointInfo *SyncPointInfo) *TableEventDispatcher {
+	tableEventDispatcher := &TableEventDispatcher{
+		Id:            common.DispatcherID(uuid.New()),
+		Ch:            make(chan *common.TxnEvent, 1000),
+		TableSpan:     tableSpan,
+		Sink:          sink,
+		State:         NewState(),
+		ResolvedTs:    startTs,
+		HeartbeatChan: make(chan *HeartBeatResponseMessage, 100),
+		SyncPointInfo: syncPointInfo,
+		MemoryUsage:   NewMemoryUsage(),
+	}
+	tableEventDispatcher.Sink.AddTableSpan(tableSpan)
+	threadpool.GetTaskSchedulerInstance().EventDispatcherTaskScheduler.Submit(NewEventDispatcherTask(tableEventDispatcher))
+	return tableEventDispatcher
+}
+
 func (d *TableEventDispatcher) GetSink() sink.Sink {
 	return d.Sink
 }
 
-func (d *TableEventDispatcher) GetTableSpan() *TableSpan {
+func (d *TableEventDispatcher) GetTableSpan() *common.TableSpan {
 	return d.TableSpan
 }
 
@@ -66,7 +86,7 @@ func (d *TableEventDispatcher) GetState() *State {
 	return d.State
 }
 
-func (d *TableEventDispatcher) GetEventChan() chan *Event {
+func (d *TableEventDispatcher) GetEventChan() chan *common.TxnEvent {
 	return d.Ch
 }
 
@@ -74,7 +94,7 @@ func (d *TableEventDispatcher) GetResolvedTs() uint64 {
 	return d.ResolvedTs
 }
 
-func (d *TableEventDispatcher) GetId() uint64 {
+func (d *TableEventDispatcher) GetId() common.DispatcherID {
 	return d.Id
 }
 
@@ -96,4 +116,9 @@ func (d *TableEventDispatcher) GetSyncPointInfo() *SyncPointInfo {
 
 func (d *TableEventDispatcher) GetMemoryUsage() *MemoryUsage {
 	return d.MemoryUsage
+}
+
+func (d *TableEventDispatcher) PushEvent(event *common.TxnEvent) {
+	d.GetMemoryUsage().Add(event.CommitTs, event.MemoryCost())
+	d.Ch <- event // 换成一个函数
 }
