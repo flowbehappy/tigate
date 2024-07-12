@@ -16,6 +16,7 @@ package node
 import (
 	"sync/atomic"
 
+	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 )
@@ -57,7 +58,7 @@ func NewInstance() *Instance {
 // 收到 create event dispatcher manager 时候创建，会可能是一个空的 manager
 func (i *Instance) NewEventDispatcherManager(changefeedID uint64, config *ChangefeedConfig) *dispatchermanager.EventDispatcherManager {
 	eventDispatcherManager := dispatchermanager.EventDispatcherManager{
-		DispatcherMap:          make(map[*Span]*dispatcher.TableEventDispatcher),
+		DispatcherMap:          make(map[*common.TableSpan]*dispatcher.TableEventDispatcher),
 		ChangefeedID:           changefeedID,
 		Id:                     genUniqueEventDispatcherManagerID(),
 		HeartbeatResponseQueue: dispatchermanager.NewHeartbeatResponseQueue(),
@@ -65,8 +66,8 @@ func (i *Instance) NewEventDispatcherManager(changefeedID uint64, config *Change
 		SinkConfig:             config.SinkConfig,
 		EnableSyncPoint:        config.EnableSyncPoint,
 		SyncPointInterval:      config.SyncPointInterval,
-		Filter:                 config.Filter, // TODO
-		EventCollector:         i.eventCollector,
+		//Filter:                 config.Filter, // TODO
+		EventCollector: i.eventCollector,
 	}
 	i.eventDispatcherManagerMap[eventDispatcherManager.ChangefeedID] = &eventDispatcherManager
 	return &eventDispatcherManager

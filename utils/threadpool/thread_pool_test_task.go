@@ -88,6 +88,10 @@ func (t *BasicIOTask) Await() TaskStatus {
 func (t *BasicIOTask) Release() {
 }
 
+// TODO: add test case
+func (t *BasicIOTask) Cancel() {
+}
+
 type BasicWaitTask struct {
 	taskStatus TaskStatus
 }
@@ -121,6 +125,9 @@ func (t *BasicWaitTask) Await() TaskStatus {
 }
 
 func (t *BasicWaitTask) Release() {
+}
+
+func (t *BasicWaitTask) Cancel() {
 }
 
 type PureCPUTask struct {
@@ -167,6 +174,9 @@ func (t *PureCPUTask) Execute(timeout time.Duration) TaskStatus {
 func (t *PureCPUTask) Await() TaskStatus { return Failed }
 
 func (t *PureCPUTask) Release() {}
+
+func (t *PureCPUTask) Cancel() {
+}
 
 type CPUWithWaitTask struct {
 	taskStatus TaskStatus
@@ -216,6 +226,9 @@ func (t *CPUWithWaitTask) Await() TaskStatus {
 
 func (t *CPUWithWaitTask) Release() {}
 
+func (t *CPUWithWaitTask) Cancel() {
+}
+
 type CPUTimeTask struct {
 	taskStatus TaskStatus
 	finalChan  *chan int
@@ -254,3 +267,6 @@ func (t *CPUTimeTask) Execute(timeout time.Duration) TaskStatus {
 func (t *CPUTimeTask) Await() TaskStatus { return Failed }
 
 func (t *CPUTimeTask) Release() {}
+
+func (t *CPUTimeTask) Cancel() {
+}

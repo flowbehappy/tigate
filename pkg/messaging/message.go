@@ -21,6 +21,7 @@ const (
 	TypeDDLEvent
 	TypeHeartBeatRequest
 	TypeHeartBeatResponse
+	TypeScheduleDispatcherRequest
 )
 
 func (t IOType) String() string {
@@ -37,6 +38,8 @@ func (t IOType) String() string {
 		return "HeartBeatRequest"
 	case TypeHeartBeatResponse:
 		return "HeartBeatResponse"
+	case TypeScheduleDispatcherRequest:
+		return "ScheduleDispatcherRequest"
 	default:
 	}
 	return "Unknown"
@@ -86,6 +89,7 @@ func (d *DMLEvent) encode(buf []byte) []byte {
 }
 
 func (d *DMLEvent) decode(data []byte) error {
+	return nil
 }
 
 type DDLEvent struct {
@@ -98,6 +102,7 @@ func (d *DDLEvent) encode(buf []byte) []byte {
 }
 
 func (d *DDLEvent) decode(data []byte) error {
+	return nil
 }
 
 type HeartBeatRequest struct {
@@ -136,6 +141,24 @@ func (h *HeartBeatResponse) decode(data []byte) error {
 	return h.Unmarshal(data)
 }
 
+type ScheduleDispatcherRequest struct {
+	*heartbeatpb.ScheduleDispatcherRequest
+}
+
+func (s *ScheduleDispatcherRequest) encode(buf []byte) []byte {
+	data, err := s.Marshal()
+	if err != nil {
+		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (s *ScheduleDispatcherRequest) decode(data []byte) error {
+	return s.Unmarshal(data)
+}
+
 type IOTypeT interface {
 	encode(buf []byte) []byte
 	decode(data []byte) error
@@ -164,6 +187,8 @@ func CastTo(m interface{}, ioType IOType) IOTypeT {
 		return m.(*HeartBeatRequest)
 	case TypeHeartBeatResponse:
 		return m.(*HeartBeatResponse)
+	case TypeScheduleDispatcherRequest:
+		return m.(*ScheduleDispatcherRequest)
 	default:
 		log.Panic("Unimplemented IOType", zap.Stringer("Type", ioType))
 		return nil

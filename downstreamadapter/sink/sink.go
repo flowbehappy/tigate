@@ -21,5 +21,6 @@ type Sink interface {
 	IsEmpty(tableSpan *common.TableSpan) bool
 	AddTableSpan(tableSpan *common.TableSpan)
 	RemoveTableSpan(tableSpan *common.TableSpan)
+	StopTableSpan(tableSpan *common.TableSpan)
 	GetSmallestCommitTs(tableSpan *common.TableSpan) uint64
 }

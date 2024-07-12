@@ -150,22 +150,15 @@ func (t *MysqlWorkerDMLEventTask) executeImpl() threadpool.TaskStatus {
 
 	// get enough events or wait for 10 millseconds to make task go to IO Status. -- 这边可以考虑到底是拿不到 event 就 换出去 flush 好还是要等好，具体等多久好
 	// 这边甚至可以想一下是不是不用等 10ms，没数据就直接刷下去，flush 时间远超过这个攒批时间的
-	timer := time.NewTimer(10 * time.Microsecond)
 	for {
 		select {
 		case txnEvent := <-t.worker.eventChan:
 			t.events = append(t.events, txnEvent)
 			rows += len(txnEvent.Rows)
 			if rows >= t.maxRows {
-				if !timer.Stop() {
-					<-timer.C
-				}
 				return threadpool.IO
 			}
-		case <-timer.C:
-			if rows == 0 {
-				return threadpool.Running
-			}
+		default:
 			return threadpool.IO
 		}
 	}
@@ -181,4 +174,7 @@ func (t *MysqlWorkerDMLEventTask) Release() {
 	// 直接关闭应该就可以把？
 	// TODO:需要取出 events 么
 	// 不知道要干嘛，不干会咋样么
+}
+
+func (t *MysqlWorkerDMLEventTask) Cancel() {
 }

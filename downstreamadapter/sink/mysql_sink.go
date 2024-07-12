@@ -155,7 +155,11 @@ func (s *MysqlSink) AddTableSpan(tableSpan *common.TableSpan) {
 	threadpool.GetTaskSchedulerInstance().SinkTaskScheduler.Submit(task)
 }
 
-func (s *MysqlSink) RemoveTableSpan(tableSpan *common.TableSpan) {
+// Called when the dispatcher should be moved.
+// We will cancel the sink task, and not move the tableStatus now.
+// We need to wait the MysqlSink.Empty(tableSpan) to be true, which means all the events in the sink have been flushed.
+// 应该是心跳收集的时候，check 了这个表的 sink.IsEmpty 空的时候，改成 removed 状态，然后把这些剩下的删光
+func (s *MysqlSink) StopTableSpan(tableSpan *common.TableSpan) {
 	s.mutex.Lock()
 	tableStatus, ok := s.tableStatuses[tableSpan]
 	if !ok {
@@ -166,6 +170,13 @@ func (s *MysqlSink) RemoveTableSpan(tableSpan *common.TableSpan) {
 	tableStatus.getTask().Cancel()
 	delete(s.tableStatuses, tableSpan)
 	s.mutex.Unlock()
+}
+
+// Called when the MysqlSink.Empty(tableSpan) to be true, and remove the tableSpan from Sink now.
+func (s *MysqlSink) RemoveTableSpan(tableSpan *common.TableSpan) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	delete(s.tableStatuses, tableSpan)
 }
 
 func (s *MysqlSink) IsEmpty(tableSpan *common.TableSpan) bool {
