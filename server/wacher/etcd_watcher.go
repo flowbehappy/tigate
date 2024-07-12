@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package watcher
 
 import (
 	"context"
@@ -44,7 +44,7 @@ func NewEtcdWatcher(etcdClient etcd.CDCEtcdClient, session *concurrency.Session,
 	}
 }
 
-func (w *EtcdWatcher) runEtcdWorker(
+func (w *EtcdWatcher) RunEtcdWorker(
 	ctx context.Context,
 	reactor orchestrator.Reactor,
 	reactorState *orchestrator.GlobalReactorState,

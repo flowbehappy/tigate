@@ -17,10 +17,10 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/apperror"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/ngaut/log"
 	"go.uber.org/zap"

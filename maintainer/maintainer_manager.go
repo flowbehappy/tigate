@@ -14,36 +14,152 @@
 package maintainer
 
 import (
+	"context"
+	"sync"
+	"time"
+
+	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
-	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
-// Manager is the manager of all changefeed maintainer in a ticdc node, each ticdc node will
-// start a Manager when the node is startup. the Manager should:
+// Manager is the manager of all changefeed maintainer in a ticdc wacher, each ticdc wacher will
+// start a Manager when the wacher is startup. the Manager should:
 // 1. handle bootstrap command from coordinator and return all changefeed maintainer status
 // 2. handle dispatcher command from coordinator: add or remove changefeed maintainer
 // 3. check maintainer liveness
 type Manager struct {
-	rpcClient  rpc.RpcClient
-	supervisor *scheduler.Supervisor
-	scheduler  scheduler.Scheduler
+	messageCenter messaging.MessageCenter
 
 	maintainers map[model.ChangeFeedID]*Maintainer
+
+	msgLock sync.RWMutex
+	msgBuf  []*messaging.TargetMessage
+
+	coordinatorID      messaging.ServerId
+	coordinatorVersion int64
+
+	selfServerID messaging.ServerId
 }
 
-// NewManager create a changefeed maintainer instance
-func NewManager(rpcClient rpc.RpcClient) *Manager {
-	return &Manager{
-		rpcClient: rpcClient,
+// NewMaintainerManager create a changefeed maintainer manager instance,
+// 1. manager receives bootstrap command from coordinator
+// 2. manager manages maintainer lifetime
+// 3. manager report maintainer status to coordinator
+func NewMaintainerManager(messageCenter messaging.MessageCenter,
+	selfServerID messaging.ServerId) *Manager {
+	m := &Manager{
+		messageCenter: messageCenter,
+		maintainers:   make(map[model.ChangeFeedID]*Maintainer),
+		selfServerID:  selfServerID,
+	}
+	messageCenter.RegisterHandler(m.Name(), func(msg *messaging.TargetMessage) error {
+		m.msgLock.Lock()
+		m.msgBuf = append(m.msgBuf, msg)
+		m.msgLock.Unlock()
+		return nil
+	})
+	return m
+}
+
+func (m *Manager) Name() string {
+	return "maintainer-manager"
+}
+
+func (m *Manager) Run(ctx context.Context) error {
+	tick := time.NewTicker(time.Millisecond * 100)
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+			m.msgLock.Lock()
+			buf := m.msgBuf
+			m.msgBuf = nil
+			m.msgLock.Unlock()
+
+			hasBootstrapMsg := false
+			for _, msg := range buf {
+				request, err := rpc.DecodeCoordinatorRequest(msg.Message.([]byte))
+				if err != nil {
+					log.Error("decode request failed", zap.Error(err))
+				}
+
+				if request.BootstrapRequest != nil {
+					if m.coordinatorVersion > request.BootstrapRequest.Version {
+						log.Warn("ignore invalid coordinator version",
+							zap.Int64("version", request.BootstrapRequest.Version))
+						continue
+					}
+					m.coordinatorID = msg.From
+					m.coordinatorVersion = request.BootstrapRequest.Version
+					hasBootstrapMsg = true
+				}
+				if request.DispatchMaintainerRequest != nil {
+					if m.coordinatorID != msg.From {
+						log.Warn("ignore invalid coordinator id",
+							zap.Any("request", request),
+							zap.Any("coordinator", msg.From))
+						continue
+					}
+					err := m.handleDispatchMaintainerRequest(request.DispatchMaintainerRequest)
+					if err != nil {
+						log.Error("handle dispatch maintainer request failed", zap.Error(err))
+						return err
+					}
+				}
+			}
+			if m.coordinatorVersion > 0 {
+				response := &rpc.MaintainerManagerRequest{}
+				for _, m := range m.maintainers {
+					response.MaintainerStatus = append(response.MaintainerStatus, m.GetMaintainerStatus())
+				}
+				if hasBootstrapMsg || response.MaintainerStatus != nil {
+					m.sendMessages(response)
+				}
+			}
+
+			// cleanup removed maintainer
+			for _, cf := range m.maintainers {
+				if cf.removed.Load() {
+					cf.Cancel()
+					delete(m.maintainers, cf.id)
+				}
+			}
+		}
 	}
 }
 
+func (m *Manager) sendMessages(msg *rpc.MaintainerManagerRequest) {
+	buf, err := msg.Encode()
+	if err != nil {
+		log.Error("failed to encode coordinator request", zap.Any("msg", msg), zap.Error(err))
+		return
+	}
+	target := messaging.NewTargetMessage(
+		m.coordinatorID,
+		"coordinator",
+		messaging.TypeBytes,
+		buf,
+	)
+	err = m.messageCenter.SendCommand(target)
+
+	if err != nil {
+		log.Warn("send command failed", zap.Error(err))
+	}
+}
+
+// Close closes the wacher, it's a block call
+func (m *Manager) Close(ctx context.Context) error {
+	return nil
+}
+
 func (m *Manager) handleDispatchMaintainerRequest(
-	request *DispatchMaintainerRequest,
+	request *rpc.DispatchMaintainerRequest,
 ) error {
 	for _, req := range request.AddMaintainerRequests {
 		task := &dispatchMaintainerTask{
@@ -54,16 +170,17 @@ func (m *Manager) handleDispatchMaintainerRequest(
 		}
 		cf, ok := m.maintainers[req.ID]
 		if !ok {
-			cf = NewMaintainer(req.ID)
+			cf = NewMaintainer(req.ID, m.messageCenter)
 			m.maintainers[req.ID] = cf
+			if err := threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf); err != nil {
+				return errors.Trace(err)
+			}
 		}
-		cf.injectDispatchTableTask(task)
-		if err := cf.handleRemoveMaintainerTask(); err != nil {
-			return errors.Trace(err)
-		}
+		task.Maintainer = cf
+		cf.taskCh <- task
 	}
 
-	for _, req := range request.AddMaintainerRequests {
+	for _, req := range request.RemoveMaintainerRequests {
 		span := req.ID
 		cf, ok := m.maintainers[span]
 		if !ok {
@@ -74,35 +191,12 @@ func (m *Manager) handleDispatchMaintainerRequest(
 			return nil
 		}
 		task := &dispatchMaintainerTask{
-			ID:       req.ID,
-			IsRemove: true,
-			status:   dispatchTaskReceived,
+			Maintainer: cf,
+			ID:         req.ID,
+			IsRemove:   true,
+			status:     dispatchTaskReceived,
 		}
-		cf.injectDispatchTableTask(task)
-		if err := cf.handleRemoveMaintainerTask(); err != nil {
-			return errors.Trace(err)
-		}
+		cf.taskCh <- task
 	}
 	return nil
-}
-
-type DispatchMaintainerRequest struct {
-	AddMaintainerRequests    []*AddMaintainerRequest
-	RemoveMaintainerRequests []*RemoveMaintainerRequest
-}
-
-type BatchRemoveMaintainerRequest struct {
-	Requests []*RemoveMaintainerRequest
-}
-
-type AddMaintainerRequest struct {
-	ID          model.ChangeFeedID
-	Config      *model.ChangeFeedInfo
-	Status      *model.ChangeFeedStatus
-	IsSecondary bool
-}
-
-type RemoveMaintainerRequest struct {
-	ID      string
-	Cascade bool
 }

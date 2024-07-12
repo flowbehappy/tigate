@@ -77,6 +77,8 @@ func NewSupervisor(
 		initialized:          false,
 		captures:             make(map[model.CaptureID]*CaptureStatus),
 		bootstrapMessageFunc: bootstrapMessageFunc,
+		initStatus:           make(map[model.CaptureID][]InferiorStatus),
+		maxTaskConcurrency:   10000,
 	}
 }
 
