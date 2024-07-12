@@ -68,3 +68,6 @@ func (t *NotifyTask) Await() threadpool.TaskStatus {
 func (t *NotifyTask) Release() {
 	// TODO:
 }
+
+func (t *NotifyTask) Cancel() {
+}

@@ -55,6 +55,8 @@ type TableEventDispatcher struct {
 	SyncPointInfo *SyncPointInfo
 
 	MemoryUsage *MemoryUsage
+
+	task *EventDispatcherTask
 }
 
 func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, syncPointInfo *SyncPointInfo) *TableEventDispatcher {
@@ -70,7 +72,8 @@ func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startT
 		MemoryUsage:   NewMemoryUsage(),
 	}
 	tableEventDispatcher.Sink.AddTableSpan(tableSpan)
-	threadpool.GetTaskSchedulerInstance().EventDispatcherTaskScheduler.Submit(NewEventDispatcherTask(tableEventDispatcher))
+	tableEventDispatcher.task = NewEventDispatcherTask(tableEventDispatcher)
+	threadpool.GetTaskSchedulerInstance().EventDispatcherTaskScheduler.Submit(tableEventDispatcher.task)
 	return tableEventDispatcher
 }
 
@@ -121,4 +124,30 @@ func (d *TableEventDispatcher) GetMemoryUsage() *MemoryUsage {
 func (d *TableEventDispatcher) PushEvent(event *common.TxnEvent) {
 	d.GetMemoryUsage().Add(event.CommitTs, event.MemoryCost())
 	d.Ch <- event // 换成一个函数
+}
+
+func (d *TableEventDispatcher) Remove() {
+	// TODO: 修改这个 dispatcher 的 status 为 removing
+	d.task.Cancel()
+	d.Sink.StopTableSpan(d.TableSpan)
+}
+
+func (d *TableEventDispatcher) TryClose() (uint64, bool) {
+	// removing 后每次收集心跳的时候，call TryClose, 来判断是否能关掉 dispatcher 了（sink.isEmpty)
+	// 如果不能关掉，返回 0， false; 可以关掉的话，就返回 checkpointTs, true -- 这个要对齐过（startTs 和 checkpointTs 的关系）
+	if d.Sink.IsEmpty(d.TableSpan) {
+		// calculate the checkpointTs, and clean the resource
+		d.Sink.RemoveTableSpan(d.TableSpan)
+		var checkpointTs uint64
+		state := d.GetState()
+		if state.pengdingEvent == nil {
+			checkpointTs = state.pengdingEvent.CommitTs - 1
+		} else {
+			checkpointTs = d.GetResolvedTs()
+		}
+
+		d.MemoryUsage.Clear()
+		return checkpointTs, true
+	}
+	return 0, false
 }

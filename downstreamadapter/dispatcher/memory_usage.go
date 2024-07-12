@@ -98,6 +98,11 @@ func (m *MemoryUsage) Release(checkpointTs uint64) {
 	}
 }
 
+// Called when the dispatcher is closed, release all the memory cost in the global memory usage.
+func (m *MemoryUsage) Clear() {
+	atomic.AddInt64(&GetGlobalMemoryUsage().UsedBytes, int64(m.UsedBytes)*-1)
+}
+
 // UpdatedSpeedRatio is used to decide whether we need to adjust the speed ratio for the dispatcher.
 // We input the ratio of the current speed, and return whether we need to adjust the speed ratio,
 // and the new speed ratio.

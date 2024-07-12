@@ -25,6 +25,7 @@ const (
 	Running
 	Waiting
 	IO
+	Canceled
 )
 
 type Task interface {
@@ -39,4 +40,29 @@ type Task interface {
 	GetStatus() TaskStatus
 	// Set status of the task
 	SetStatus(status TaskStatus)
+	// Cancel the task
+	// When the user calls cancel, the current task may still call execute once
+	Cancel()
 }
+
+// BasicTask is the base struct of Task, it implements the basic functions of Task interface
+//type BasicTask struct {
+// 	status TaskStatus
+// }
+
+// func (t *BasicTask) Await() TaskStatus {
+// 	return Failed
+// }
+// func (t *BasicTask) Execute(timeout time.Duration) TaskStatus {
+// 	return Failed
+// }
+// func (t *BasicTask) Release() {}
+// func (t *BasicTask) GetStatus() TaskStatus {
+// 	return t.status
+// }
+// func (t *BasicTask) SetStatus(status TaskStatus) {
+// 	t.status = status
+// }
+// func (t *BasicTask) Cancel() {
+// 	t.status = Canceled
+// }

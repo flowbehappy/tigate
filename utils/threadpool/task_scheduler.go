@@ -108,6 +108,10 @@ func (s *TaskScheduler) Submit(task Task) error {
 		s.submitTaskToCPUThreadPool(&task)
 	case Waiting:
 		s.submitTaskToWaitReactorThreadPool(&task)
+	case Canceled:
+	case Failed:
+	case Success:
+		return nil
 	default:
 		log.Error("TaskScheduler submit with Error Status: ", zap.Any("status", task_status))
 	}

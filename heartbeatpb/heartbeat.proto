@@ -8,18 +8,17 @@ message TableSpan {
 	bytes EndKey    = 3;
 }
 
-message TableSpanProgress {
-    TableSpan span = 1;
-    bool IsBlocked      = 2;
-	uint64 BlockTs         = 3;
-	repeated TableSpan BlockTableSpan = 4;
-	uint64 CheckpointTs    = 5;
-    string dispatcherID = 6;
-}
+// message TableSpanProgress {
+//     TableSpan span = 1;
+//     bool IsBlocked      = 2;
+// 	uint64 BlockTs         = 3;
+// 	repeated TableSpan BlockTableSpan = 4;
+// 	uint64 CheckpointTs    = 5;
+//     string dispatcherID = 6;
+// }
 
 message HeartBeatRequest {
-    //repeated TableSpanProgress progress = 1;
-    uint64 eventDispatcherManagerID = 1;
+    uint64 changefeedID = 1;
     uint64 checkpointTs = 2; // eventDispatcherManager 当前全局最小的 checkpointTs
 } 
 
@@ -38,41 +37,28 @@ message TableProgress {
 
 // 这名字重新取，我真的要吐了
 message TableProgressInfo {
-    string dispatcherID = 1; // for which dispatcher
+    TableSpan span = 1; // for which dispatcher
     repeated TableProgress tableProgresses = 2; // 救命了这名字取得
     Action action = 3;
 
 }
 message HeartBeatResponse {
     repeated TableProgressInfo info = 1;
-    uint64 eventDispatcherManagerID = 2;
+    uint64 changefeedID = 2;
 }
 
-service HeartBeat {
-    rpc HeartBeat(stream HeartBeatRequest) returns (stream HeartBeatResponse);
+enum ScheduleAction {
+    Create = 0;
+    Remove = 1;
 }
 
+message DispatcherConfig {
+    TableSpan span = 1;
+    uint64 startTs = 2;
+}
 
-
-message CreateEventDispatcherManagerRequest {
+message ScheduleDispatcherRequest {
     uint64 changefeedID = 1;
-}
-
-message CreateEventDispatcherManagerResponse { // 需要么，标记删除成功？
-    uint64 changefeedID = 1;
-}
-
-message RemoveEventDispatcherManagerRequest {
-    uint64 changefeedID = 1;
-}
-
-message RemoveEventDispatcherManagerResponse {
-    uint64 changefeedID = 1;
-}
-
-service DispatcherManager {
-    // 为 changefeed 创建 dispatcher manager（bootstrap）
-    rpc CreateEventDispatcherManager(stream CreateEventDispatcherManagerRequest) returns (stream CreateEventDispatcherManagerResponse);
-    // remove changefeed 的时候发送，删除 event dispatcher manager
-    rpc RemoveEventDispatcherManager(stream RemoveEventDispatcherManagerRequest) returns (stream RemoveEventDispatcherManagerResponse);
+    DispatcherConfig config = 2;
+    ScheduleAction scheduleAction = 3;
 }

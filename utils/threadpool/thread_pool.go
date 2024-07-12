@@ -64,7 +64,6 @@ func (p *ThreadPool) loop() {
 
 // Execute the task, and submit it to different place after execution.
 func (p *ThreadPool) handleTask(task *Task) {
-	// TODO(hongyunyan): check whether we need to check task == nil
 	if task == nil {
 		log.Error("task is nil")
 		return
@@ -80,8 +79,9 @@ func (p *ThreadPool) handleTask(task *Task) {
 		p.scheduler.submitTaskToWaitReactorThreadPool(task)
 	case IO:
 		p.scheduler.submitTaskToIOThreadPool(task)
+	case Canceled:
 	case Success:
-		// do nothing?
+		return
 	case Failed:
 		// TODO: error information? or get error from Execute
 		log.Error("task failed")

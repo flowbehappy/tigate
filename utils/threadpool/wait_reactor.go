@@ -56,7 +56,7 @@ func (r *WaitReactor) react(waitingTasks []*Task) []*Task {
 		status := (*task).Await()
 		switch status {
 		case Running:
-			r.taskScheduler.submitTaskToIOThreadPool(task)
+			r.taskScheduler.submitTaskToCPUThreadPool(task)
 		case IO:
 			r.taskScheduler.submitTaskToIOThreadPool(task)
 		case Waiting:
