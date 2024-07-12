@@ -16,8 +16,10 @@ package coordinator
 import (
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/google/uuid"
 	"github.com/pingcap/tiflow/cdc/model"
 )
 
@@ -59,34 +61,36 @@ func (c *changefeed) IsAlive() bool {
 }
 
 func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary bool) rpc.Message {
-	//return &Message{
-	//	To: server,
-	//	DispatchMaintainerRequest: &DispatchMaintainerRequest{
-	//		AddMaintainerRequest: &AddMaintainerRequest{
-	//			ID:          c.ID,
-	//			Config:      c.SelfInfo,
-	//			Status:      c.Status,
-	//			IsSecondary: secondary,
-	//		}},
-	//}
-	return nil
+	return &rpc.CoordinatorRequest{
+		To: messaging.ServerId(uuid.MustParse(server)),
+		DispatchMaintainerRequest: &rpc.DispatchMaintainerRequest{
+			AddMaintainerRequests: []*rpc.AddMaintainerRequest{
+				{
+					ID:          c.ID,
+					Config:      c.Info,
+					Status:      c.Status,
+					IsSecondary: secondary,
+				}}},
+	}
 }
 
 func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) rpc.Message {
-	//return &Message{
-	//	To: server,
-	//	DispatchMaintainerRequest: &DispatchMaintainerRequest{
-	//		RemoveMaintainerRequest: &RemoveMaintainerRequest{
-	//			ID: c.SelfInfo.ID,
-	//		},
-	//	},
-	//}
-	return nil
+	return &rpc.CoordinatorRequest{
+		To: messaging.ServerId(uuid.MustParse(server)),
+		DispatchMaintainerRequest: &rpc.DispatchMaintainerRequest{
+			RemoveMaintainerRequests: []*rpc.RemoveMaintainerRequest{
+				{
+					ID:      c.ID,
+					Cascade: false,
+				}}},
+	}
 }
 
 type ChangefeedStatus struct {
-	ID     ChangefeedID
-	Status scheduler.ComponentStatus
+	ID              ChangefeedID
+	Status          scheduler.ComponentStatus
+	ChangefeedState model.FeedState
+	CheckpointTs    uint64
 }
 
 func (c *ChangefeedStatus) GetInferiorID() scheduler.InferiorID {

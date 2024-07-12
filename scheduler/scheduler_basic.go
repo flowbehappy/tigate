@@ -32,7 +32,7 @@ func (b *BasicScheduler) Name() string {
 }
 
 func (b *BasicScheduler) Schedule(
-	allInferiors []Inferior,
+	allInferiors []InferiorID,
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
 	stateMachines Map[InferiorID, *StateMachine],
 ) []*ScheduleTask {
@@ -44,9 +44,9 @@ func (b *BasicScheduler) Schedule(
 		if len(newInferiors) >= b.batchSize {
 			break
 		}
-		st, ok := stateMachines.Get(inf.GetID())
+		st, ok := stateMachines.Get(inf)
 		if !ok {
-			newInferiors = append(newInferiors, inf.GetID())
+			newInferiors = append(newInferiors, inf)
 			// The inferior ID is not in the state machine means the two sets are
 			// not identical.
 			allFind = false
@@ -54,7 +54,7 @@ func (b *BasicScheduler) Schedule(
 		}
 		// absent status means we should schedule it again
 		if st.State == SchedulerStatusAbsent {
-			newInferiors = append(newInferiors, inf.GetID())
+			newInferiors = append(newInferiors, inf)
 		}
 	}
 
@@ -85,9 +85,9 @@ func (b *BasicScheduler) Schedule(
 		// The two sets are not identical. We need to build a map to find removed inferiors.
 		intersectionIDS := NewBtreeMap[InferiorID, struct{}]()
 		for _, inf := range allInferiors {
-			ok := stateMachines.Has(inf.GetID())
+			ok := stateMachines.Has(inf)
 			if ok {
-				intersectionIDS.ReplaceOrInsert(inf.GetID(), struct{}{})
+				intersectionIDS.ReplaceOrInsert(inf, struct{}{})
 			}
 		}
 		rmInferiorIDs := make([]InferiorID, 0)

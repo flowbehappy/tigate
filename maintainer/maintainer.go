@@ -42,12 +42,17 @@ type Maintainer struct {
 	supervisor *scheduler.Supervisor
 	scheduler  scheduler.Scheduler
 
+	changefeedSate model.FeedState
+
 	taskCh chan Task
 }
 
 // NewMaintainer create the maintainer for the changefeed
 func NewMaintainer(cfID model.ChangeFeedID) *Maintainer {
-	m := &Maintainer{}
+	m := &Maintainer{
+		id:    cfID,
+		state: scheduler.ComponentStatusAbsent,
+	}
 	m.supervisor = scheduler.NewSupervisor(
 		MaintainerID(cfID),
 		NewReplicaSet,
@@ -213,6 +218,15 @@ func (m *Maintainer) injectDispatchTableTask(task *dispatchMaintainerTask) {
 
 func (m *Maintainer) getAndUpdateMaintainerState(old scheduler.ComponentStatus) (scheduler.ComponentStatus, bool) {
 	return m.state, m.state != old
+}
+
+func (m *Maintainer) GetMaintainerStatus() *rpc.MaintainerStatus {
+	return &rpc.MaintainerStatus{
+		ID:              m.id,
+		ChangefeedState: m.changefeedSate,
+		SchedulerState:  int(m.state),
+		CheckpointTs:    0,
+	}
 }
 
 // MaintainerID implement the InferiorID interface

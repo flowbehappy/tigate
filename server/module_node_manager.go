@@ -67,7 +67,6 @@ func (c *NodeManager) Name() string {
 func (c *NodeManager) Tick(ctx context.Context,
 	raw orchestrator.ReactorState) (orchestrator.ReactorState, error) {
 	state := raw.(*orchestrator.GlobalReactorState)
-	log.Info("node manager tick", zap.Any("captures", state.Captures), zap.Any("owner", state.Owner))
 	if len(c.nodes) != len(state.Captures) {
 		// find changes
 		removed := make([]*model.CaptureInfo, 0)

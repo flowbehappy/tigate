@@ -149,6 +149,7 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 		DeployPath:     deployPath,
 		StartTimestamp: time.Now().Unix(),
 	}
+	c.serverID = id
 	c.session = session
 	err = c.registerCaptureToEtcd(ctx)
 	if err != nil {

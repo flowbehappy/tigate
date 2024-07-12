@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/maintainer"
 	"github.com/pingcap/tiflow/pkg/tcpserver"
 
 	appctx "github.com/flowbehappy/tigate/common/context"
@@ -47,6 +48,7 @@ const (
 type serverImpl struct {
 	captureMu sync.Mutex
 	info      *model.CaptureInfo
+	serverID  messaging.ServerId
 
 	liveness model.Liveness
 
@@ -113,6 +115,7 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener(), c.messageCenter),
+		maintainer.NewMaintainerManager(c.messageCenter, c.serverID),
 	}
 	// register it into global var
 	for _, subModule := range c.subModules {
