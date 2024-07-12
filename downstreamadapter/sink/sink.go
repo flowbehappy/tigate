@@ -13,7 +13,7 @@
 
 package sink
 
-import "github.com/flowbehappy/tigate/common"
+import "github.com/flowbehappy/tigate/pkg/common"
 
 type Sink interface {
 	AddDMLEvent(tableSpan *common.TableSpan, event *common.TxnEvent)
@@ -21,5 +21,6 @@ type Sink interface {
 	IsEmpty(tableSpan *common.TableSpan) bool
 	AddTableSpan(tableSpan *common.TableSpan)
 	RemoveTableSpan(tableSpan *common.TableSpan)
+	StopTableSpan(tableSpan *common.TableSpan)
 	GetSmallestCommitTs(tableSpan *common.TableSpan) uint64
 }

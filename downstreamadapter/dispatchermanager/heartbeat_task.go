@@ -16,12 +16,9 @@ package dispatchermanager
 import (
 	"time"
 
-	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils/threadpool"
-	"github.com/google/uuid"
-	"github.com/ngaut/log"
-	"go.uber.org/zap"
 )
 
 /*
@@ -71,6 +68,9 @@ func (t *HeartbeatSendTask) Release() {
 	t.ticker.Stop()
 }
 
+func (t *HeartbeatSendTask) Cancel() {
+}
+
 // 将从 queue 里面收到的信息分发给各个 dispatcher，每个 dispatcherManager 有一个这个task
 /*
 HeartbeatRecvTask is responsible for dispatching heartbeat response to each dispatchers
@@ -107,11 +107,6 @@ func (t *HeartbeatRecvTask) Execute(timeout time.Duration) threadpool.TaskStatus
 		heartbeatResponse := t.eventDispatcherManager.HeartbeatResponseQueue.Dequeue()
 		tableProgressInfo := heartbeatResponse.Info
 		for _, info := range tableProgressInfo {
-			dispatcherId, err := uuid.Parse(info.DispatcherID)
-			if err != nil {
-				log.Error("invalid dispatcher id", zap.Any("info.DispatcherID", info.DispatcherID), zap.Error(err))
-				continue
-			}
 			// if dispatcherId == dispatcher.TableTriggerEventDispatcherId {
 			// 	dispatcherItem := t.eventDispatcherManager.TableTriggerEventDispatcher
 			// 	var message dispatcher.HeartBeatResponseMessage
@@ -131,7 +126,8 @@ func (t *HeartbeatRecvTask) Execute(timeout time.Duration) threadpool.TaskStatus
 			// 	dispatcherItem.HeartbeatChan <- &message
 			// 	continue
 			// }
-			if dispatcherItem, ok := t.eventDispatcherManager.DispatcherMap[common.DispatcherID(dispatcherId)]; ok {
+			tableSpan := common.TableSpan(*info.Span)
+			if dispatcherItem, ok := t.eventDispatcherManager.DispatcherMap[&tableSpan]; ok {
 				var message dispatcher.HeartBeatResponseMessage
 				for _, progress := range info.TableProgresses {
 					message.OtherTableProgress = append(message.OtherTableProgress, &dispatcher.TableSpanProgress{
@@ -151,4 +147,7 @@ func (t *HeartbeatRecvTask) Execute(timeout time.Duration) threadpool.TaskStatus
 
 		}
 	}
+}
+
+func (t *HeartbeatRecvTask) Cancel() {
 }

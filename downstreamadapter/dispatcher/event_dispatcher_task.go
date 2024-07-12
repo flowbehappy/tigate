@@ -14,9 +14,10 @@
 package dispatcher
 
 import (
+	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/common"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 )
 
@@ -30,6 +31,7 @@ and pushes the event down to the sink if it is eligible.
 type EventDispatcherTask struct {
 	dispatcher Dispatcher
 	//infos      []*HeartBeatResponseMessage
+	mutex      sync.Mutex
 	taskStatus threadpool.TaskStatus
 }
 
@@ -42,11 +44,17 @@ func NewEventDispatcherTask(dispatcher Dispatcher) *EventDispatcherTask {
 }
 
 func (t *EventDispatcherTask) GetStatus() threadpool.TaskStatus {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
 	return t.taskStatus
 }
 
 func (t *EventDispatcherTask) SetStatus(taskStatus threadpool.TaskStatus) {
-	t.taskStatus = taskStatus
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	if t.taskStatus != threadpool.Canceled {
+		t.taskStatus = taskStatus
+	}
 }
 
 func (t *EventDispatcherTask) updateState(state *State, heartBeatResponseMessages []*HeartBeatResponseMessage) {
@@ -240,4 +248,11 @@ func (t *EventDispatcherTask) Await() threadpool.TaskStatus {
 
 func (t *EventDispatcherTask) Release() {
 
+}
+
+// cancel 以后最多会再执行一次（也就是 cancel 的时候恰好在执行 Execute ）
+func (t *EventDispatcherTask) Cancel() {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	t.taskStatus = threadpool.Canceled
 }

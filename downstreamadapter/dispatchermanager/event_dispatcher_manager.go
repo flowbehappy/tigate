@@ -18,12 +18,12 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/node"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/google/uuid"
 	"github.com/ngaut/log"
@@ -45,7 +45,7 @@ One changefeed in one instance can only have one EventDispatcherManager.
 One EventDispatcherManager can only have one Sink.
 */
 type EventDispatcherManager struct {
-	DispatcherMap               map[common.DispatcherID]*dispatcher.TableEventDispatcher
+	DispatcherMap               map[*common.TableSpan]*dispatcher.TableEventDispatcher
 	TableTriggerEventDispatcher *dispatcher.TableTriggerEventDispatcher
 	EventCollector              *node.EventCollector
 	HeartbeatResponseQueue      *HeartbeatResponseQueue
@@ -53,16 +53,17 @@ type EventDispatcherManager struct {
 	Id                          uint64
 	ChangefeedID                uint64
 	SinkType                    string
+	SinkURI                     *url.URL
 	Sink                        sink.Sink
 	EnableSyncPoint             bool
 	SyncPointInterval           time.Duration
 	//filter                      *Filter
 }
 
-func (e *EventDispatcherManager) Init(startTs uint64, sinkURI *url.URL) {
+func (e *EventDispatcherManager) Init(startTs uint64) {
 	// Init Sink
 	if e.SinkType == "Mysql" {
-		cfg, db, err := writer.NewMysqlConfigAndDB(sinkURI)
+		cfg, db, err := writer.NewMysqlConfigAndDB(e.SinkURI)
 		if err != nil {
 			log.Error("create mysql sink failed", zap.Error(err))
 		}
@@ -87,10 +88,15 @@ func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) 
 }
 
 // 收到 rpc 请求创建，需要通过 event dispatcher manager 来
-func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.TableSpan, startTs uint64, sinkURI *url.URL) *dispatcher.TableEventDispatcher {
+func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.TableSpan, startTs uint64) *dispatcher.TableEventDispatcher {
 	// 创建新的 event dispatcher，同时需要把这个去 logService 注册，并且把自己加到对应的某个处理 thread 里
 	if len(e.DispatcherMap) == 0 {
-		e.Init(startTs, sinkURI)
+		e.Init(startTs)
+	}
+
+	if _, ok := e.DispatcherMap[tableSpan]; ok {
+		log.Warn("table span already exists", zap.Any("tableSpan", tableSpan))
+		return nil
 	}
 
 	var syncPointInfo *dispatcher.SyncPointInfo
@@ -105,12 +111,21 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 
 	e.EventCollector.RegisterDispatcher(tableEventDispatcher, startTs, nil)
 
-	// 注意先后顺序，可以从后往前加
-
-	// 加入 manager 的 dispatcherMap 中
-	e.DispatcherMap[tableEventDispatcher.Id] = tableEventDispatcher
+	e.DispatcherMap[tableSpan] = tableEventDispatcher
 
 	return tableEventDispatcher
+}
+
+func (e *EventDispatcherManager) RemoveTableEventDispatcher(tableSpan *common.TableSpan) {
+	if dispatcher, ok := e.DispatcherMap[tableSpan]; ok {
+		// 判断一下状态，如果 removing 的话就不用管，
+		dispatcher.Remove()
+	}
+	// 如果已经 removed ，就要在 返回的心跳里加一下这个checkpointTs 信息
+}
+
+func (e *EventDispatcherManager) CleanTableEventDispatcher(tableSpan *common.TableSpan) {
+	delete(e.DispatcherMap, tableSpan)
 }
 
 func (e *EventDispatcherManager) newTableTriggerEventDispatcher(startTs uint64) *dispatcher.TableTriggerEventDispatcher {
@@ -156,14 +171,15 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo() *heartbeatpb.HeartBeatRe
 
 	var minCheckpointTs uint64 = math.MaxUint64
 	for _, tableEventDispatcher := range e.DispatcherMap {
+		// 判断状态，如果 removing 的话，加入 tryClose 检查，如果成功了就 清理其他的 （clean)，这边要加个 cache 存一下 tryClose 成功后的值，以防数据丢失
 		checkpointTs := dispatcher.CollectDispatcherCheckpointTs(tableEventDispatcher)
 		if minCheckpointTs > checkpointTs {
 			minCheckpointTs = checkpointTs
 		}
 	}
 	var message heartbeatpb.HeartBeatRequest = heartbeatpb.HeartBeatRequest{
-		EventDispatcherManagerID: e.Id,
-		CheckpointTs:             minCheckpointTs,
+		ChangefeedID: e.ChangefeedID,
+		CheckpointTs: minCheckpointTs,
 	}
 	// heartbeatInfo := dispatcher.CollectDispatcherHeartBeatInfo(e.TableTriggerEventDispatcher)
 	// message.Progress = append(message.Progress, &heartbeatpb.TableSpanProgress{

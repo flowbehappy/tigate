@@ -14,11 +14,12 @@
 package sink
 
 import (
+	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/conflictdetector"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 )
@@ -28,6 +29,7 @@ import (
 // 那也就是她的 task 是每一个新的 table 出现就创建，然后永远在轮训，直到 dispatcher 被移除了 -- 所以要有个 table 和 task 的 map
 type MysqlSinkTask struct {
 	conflictDetector *conflictdetector.ConflictDetector // 这个会被多个任务共用，所以需要做到内部 thread safe
+	mutex            sync.Mutex
 	tableSpan        *common.TableSpan
 	tableProgress    *types.TableProgress
 	eventCh          chan *common.TxnEvent
@@ -46,18 +48,21 @@ func newMysqlSinkTask(tableSpan *common.TableSpan, tableProgress *types.TablePro
 }
 
 func (t *MysqlSinkTask) GetStatus() threadpool.TaskStatus {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
 	return t.taskStatus
 }
 
 func (t *MysqlSinkTask) SetStatus(taskStatus threadpool.TaskStatus) {
-	t.taskStatus = taskStatus
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	if t.taskStatus != threadpool.Canceled {
+		t.taskStatus = taskStatus
+	}
 }
 
 func (t *MysqlSinkTask) Execute(timeout time.Duration) threadpool.TaskStatus {
 	// 从 pending 的 task 里面拿出来塞下去，指导超时或者没有 event 了
-	if t.taskStatus == threadpool.Failed {
-		return t.taskStatus
-	}
 	timer := time.NewTimer(timeout)
 	for {
 		select {
@@ -76,7 +81,9 @@ func (t *MysqlSinkTask) Execute(timeout time.Duration) threadpool.TaskStatus {
 }
 
 func (t *MysqlSinkTask) Cancel() {
-	t.taskStatus = threadpool.Failed
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	t.taskStatus = threadpool.Canceled
 }
 
 func (t *MysqlSinkTask) Await() threadpool.TaskStatus {

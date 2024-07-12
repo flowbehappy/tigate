@@ -22,8 +22,8 @@ import (
 	"github.com/flowbehappy/tigate/maintainer"
 	"github.com/pingcap/tiflow/pkg/tcpserver"
 
-	appctx "github.com/flowbehappy/tigate/common/context"
 	"github.com/flowbehappy/tigate/coordinator"
+	appctx "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"

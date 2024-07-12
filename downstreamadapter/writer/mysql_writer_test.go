@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zeebo/assert"
 
-	"github.com/flowbehappy/tigate/common"
+	"github.com/flowbehappy/tigate/pkg/common"
 )
 
 func newTestMockDB(t *testing.T) (db *sql.DB, mock sqlmock.Sqlmock) {

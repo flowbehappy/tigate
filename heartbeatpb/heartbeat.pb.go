@@ -50,6 +50,31 @@ func (Action) EnumDescriptor() ([]byte, []int) {
 	return fileDescriptor_6d584080fdadb670, []int{0}
 }
 
+type ScheduleAction int32
+
+const (
+	ScheduleAction_Create ScheduleAction = 0
+	ScheduleAction_Remove ScheduleAction = 1
+)
+
+var ScheduleAction_name = map[int32]string{
+	0: "Create",
+	1: "Remove",
+}
+
+var ScheduleAction_value = map[string]int32{
+	"Create": 0,
+	"Remove": 1,
+}
+
+func (x ScheduleAction) String() string {
+	return proto.EnumName(ScheduleAction_name, int32(x))
+}
+
+func (ScheduleAction) EnumDescriptor() ([]byte, []int) {
+	return fileDescriptor_6d584080fdadb670, []int{1}
+}
+
 type TableSpan struct {
 	TableID  uint64 `protobuf:"varint,1,opt,name=TableID,proto3" json:"TableID,omitempty"`
 	StartKey []byte `protobuf:"bytes,2,opt,name=StartKey,proto3" json:"StartKey,omitempty"`
@@ -110,101 +135,16 @@ func (m *TableSpan) GetEndKey() []byte {
 	return nil
 }
 
-type TableSpanProgress struct {
-	Span           *TableSpan   `protobuf:"bytes,1,opt,name=span,proto3" json:"span,omitempty"`
-	IsBlocked      bool         `protobuf:"varint,2,opt,name=IsBlocked,proto3" json:"IsBlocked,omitempty"`
-	BlockTs        uint64       `protobuf:"varint,3,opt,name=BlockTs,proto3" json:"BlockTs,omitempty"`
-	BlockTableSpan []*TableSpan `protobuf:"bytes,4,rep,name=BlockTableSpan,proto3" json:"BlockTableSpan,omitempty"`
-	CheckpointTs   uint64       `protobuf:"varint,5,opt,name=CheckpointTs,proto3" json:"CheckpointTs,omitempty"`
-	DispatcherID   string       `protobuf:"bytes,6,opt,name=dispatcherID,proto3" json:"dispatcherID,omitempty"`
-}
-
-func (m *TableSpanProgress) Reset()         { *m = TableSpanProgress{} }
-func (m *TableSpanProgress) String() string { return proto.CompactTextString(m) }
-func (*TableSpanProgress) ProtoMessage()    {}
-func (*TableSpanProgress) Descriptor() ([]byte, []int) {
-	return fileDescriptor_6d584080fdadb670, []int{1}
-}
-func (m *TableSpanProgress) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *TableSpanProgress) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_TableSpanProgress.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *TableSpanProgress) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_TableSpanProgress.Merge(m, src)
-}
-func (m *TableSpanProgress) XXX_Size() int {
-	return m.Size()
-}
-func (m *TableSpanProgress) XXX_DiscardUnknown() {
-	xxx_messageInfo_TableSpanProgress.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_TableSpanProgress proto.InternalMessageInfo
-
-func (m *TableSpanProgress) GetSpan() *TableSpan {
-	if m != nil {
-		return m.Span
-	}
-	return nil
-}
-
-func (m *TableSpanProgress) GetIsBlocked() bool {
-	if m != nil {
-		return m.IsBlocked
-	}
-	return false
-}
-
-func (m *TableSpanProgress) GetBlockTs() uint64 {
-	if m != nil {
-		return m.BlockTs
-	}
-	return 0
-}
-
-func (m *TableSpanProgress) GetBlockTableSpan() []*TableSpan {
-	if m != nil {
-		return m.BlockTableSpan
-	}
-	return nil
-}
-
-func (m *TableSpanProgress) GetCheckpointTs() uint64 {
-	if m != nil {
-		return m.CheckpointTs
-	}
-	return 0
-}
-
-func (m *TableSpanProgress) GetDispatcherID() string {
-	if m != nil {
-		return m.DispatcherID
-	}
-	return ""
-}
-
 type HeartBeatRequest struct {
-	// repeated TableSpanProgress progress = 1;
-	EventDispatcherManagerID uint64 `protobuf:"varint,1,opt,name=eventDispatcherManagerID,proto3" json:"eventDispatcherManagerID,omitempty"`
-	CheckpointTs             uint64 `protobuf:"varint,2,opt,name=checkpointTs,proto3" json:"checkpointTs,omitempty"`
+	ChangefeedID uint64 `protobuf:"varint,1,opt,name=changefeedID,proto3" json:"changefeedID,omitempty"`
+	CheckpointTs uint64 `protobuf:"varint,2,opt,name=checkpointTs,proto3" json:"checkpointTs,omitempty"`
 }
 
 func (m *HeartBeatRequest) Reset()         { *m = HeartBeatRequest{} }
 func (m *HeartBeatRequest) String() string { return proto.CompactTextString(m) }
 func (*HeartBeatRequest) ProtoMessage()    {}
 func (*HeartBeatRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_6d584080fdadb670, []int{2}
+	return fileDescriptor_6d584080fdadb670, []int{1}
 }
 func (m *HeartBeatRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -233,9 +173,9 @@ func (m *HeartBeatRequest) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_HeartBeatRequest proto.InternalMessageInfo
 
-func (m *HeartBeatRequest) GetEventDispatcherManagerID() uint64 {
+func (m *HeartBeatRequest) GetChangefeedID() uint64 {
 	if m != nil {
-		return m.EventDispatcherManagerID
+		return m.ChangefeedID
 	}
 	return 0
 }
@@ -258,7 +198,7 @@ func (m *TableProgress) Reset()         { *m = TableProgress{} }
 func (m *TableProgress) String() string { return proto.CompactTextString(m) }
 func (*TableProgress) ProtoMessage()    {}
 func (*TableProgress) Descriptor() ([]byte, []int) {
-	return fileDescriptor_6d584080fdadb670, []int{3}
+	return fileDescriptor_6d584080fdadb670, []int{2}
 }
 func (m *TableProgress) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -317,7 +257,7 @@ func (m *TableProgress) GetCheckpointTs() uint64 {
 
 // 这名字重新取，我真的要吐了
 type TableProgressInfo struct {
-	DispatcherID    string           `protobuf:"bytes,1,opt,name=dispatcherID,proto3" json:"dispatcherID,omitempty"`
+	Span            *TableSpan       `protobuf:"bytes,1,opt,name=span,proto3" json:"span,omitempty"`
 	TableProgresses []*TableProgress `protobuf:"bytes,2,rep,name=tableProgresses,proto3" json:"tableProgresses,omitempty"`
 	Action          Action           `protobuf:"varint,3,opt,name=action,proto3,enum=heartbeatpb.Action" json:"action,omitempty"`
 }
@@ -326,7 +266,7 @@ func (m *TableProgressInfo) Reset()         { *m = TableProgressInfo{} }
 func (m *TableProgressInfo) String() string { return proto.CompactTextString(m) }
 func (*TableProgressInfo) ProtoMessage()    {}
 func (*TableProgressInfo) Descriptor() ([]byte, []int) {
-	return fileDescriptor_6d584080fdadb670, []int{4}
+	return fileDescriptor_6d584080fdadb670, []int{3}
 }
 func (m *TableProgressInfo) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -355,11 +295,11 @@ func (m *TableProgressInfo) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_TableProgressInfo proto.InternalMessageInfo
 
-func (m *TableProgressInfo) GetDispatcherID() string {
+func (m *TableProgressInfo) GetSpan() *TableSpan {
 	if m != nil {
-		return m.DispatcherID
+		return m.Span
 	}
-	return ""
+	return nil
 }
 
 func (m *TableProgressInfo) GetTableProgresses() []*TableProgress {
@@ -377,15 +317,15 @@ func (m *TableProgressInfo) GetAction() Action {
 }
 
 type HeartBeatResponse struct {
-	Info                     []*TableProgressInfo `protobuf:"bytes,1,rep,name=info,proto3" json:"info,omitempty"`
-	EventDispatcherManagerID uint64               `protobuf:"varint,2,opt,name=eventDispatcherManagerID,proto3" json:"eventDispatcherManagerID,omitempty"`
+	Info         []*TableProgressInfo `protobuf:"bytes,1,rep,name=info,proto3" json:"info,omitempty"`
+	ChangefeedID uint64               `protobuf:"varint,2,opt,name=changefeedID,proto3" json:"changefeedID,omitempty"`
 }
 
 func (m *HeartBeatResponse) Reset()         { *m = HeartBeatResponse{} }
 func (m *HeartBeatResponse) String() string { return proto.CompactTextString(m) }
 func (*HeartBeatResponse) ProtoMessage()    {}
 func (*HeartBeatResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_6d584080fdadb670, []int{5}
+	return fileDescriptor_6d584080fdadb670, []int{4}
 }
 func (m *HeartBeatResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -421,29 +361,83 @@ func (m *HeartBeatResponse) GetInfo() []*TableProgressInfo {
 	return nil
 }
 
-func (m *HeartBeatResponse) GetEventDispatcherManagerID() uint64 {
+func (m *HeartBeatResponse) GetChangefeedID() uint64 {
 	if m != nil {
-		return m.EventDispatcherManagerID
+		return m.ChangefeedID
 	}
 	return 0
 }
 
-type CreateEventDispatcherManagerRequest struct {
-	ChangefeedID uint64 `protobuf:"varint,1,opt,name=changefeedID,proto3" json:"changefeedID,omitempty"`
+type DispatcherConfig struct {
+	Span    *TableSpan `protobuf:"bytes,1,opt,name=span,proto3" json:"span,omitempty"`
+	StartTs uint64     `protobuf:"varint,2,opt,name=startTs,proto3" json:"startTs,omitempty"`
 }
 
-func (m *CreateEventDispatcherManagerRequest) Reset()         { *m = CreateEventDispatcherManagerRequest{} }
-func (m *CreateEventDispatcherManagerRequest) String() string { return proto.CompactTextString(m) }
-func (*CreateEventDispatcherManagerRequest) ProtoMessage()    {}
-func (*CreateEventDispatcherManagerRequest) Descriptor() ([]byte, []int) {
+func (m *DispatcherConfig) Reset()         { *m = DispatcherConfig{} }
+func (m *DispatcherConfig) String() string { return proto.CompactTextString(m) }
+func (*DispatcherConfig) ProtoMessage()    {}
+func (*DispatcherConfig) Descriptor() ([]byte, []int) {
+	return fileDescriptor_6d584080fdadb670, []int{5}
+}
+func (m *DispatcherConfig) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *DispatcherConfig) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_DispatcherConfig.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *DispatcherConfig) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_DispatcherConfig.Merge(m, src)
+}
+func (m *DispatcherConfig) XXX_Size() int {
+	return m.Size()
+}
+func (m *DispatcherConfig) XXX_DiscardUnknown() {
+	xxx_messageInfo_DispatcherConfig.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_DispatcherConfig proto.InternalMessageInfo
+
+func (m *DispatcherConfig) GetSpan() *TableSpan {
+	if m != nil {
+		return m.Span
+	}
+	return nil
+}
+
+func (m *DispatcherConfig) GetStartTs() uint64 {
+	if m != nil {
+		return m.StartTs
+	}
+	return 0
+}
+
+type ScheduleDispatcherRequest struct {
+	ChangefeedID   uint64            `protobuf:"varint,1,opt,name=changefeedID,proto3" json:"changefeedID,omitempty"`
+	Config         *DispatcherConfig `protobuf:"bytes,2,opt,name=config,proto3" json:"config,omitempty"`
+	ScheduleAction ScheduleAction    `protobuf:"varint,3,opt,name=scheduleAction,proto3,enum=heartbeatpb.ScheduleAction" json:"scheduleAction,omitempty"`
+}
+
+func (m *ScheduleDispatcherRequest) Reset()         { *m = ScheduleDispatcherRequest{} }
+func (m *ScheduleDispatcherRequest) String() string { return proto.CompactTextString(m) }
+func (*ScheduleDispatcherRequest) ProtoMessage()    {}
+func (*ScheduleDispatcherRequest) Descriptor() ([]byte, []int) {
 	return fileDescriptor_6d584080fdadb670, []int{6}
 }
-func (m *CreateEventDispatcherManagerRequest) XXX_Unmarshal(b []byte) error {
+func (m *ScheduleDispatcherRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-func (m *CreateEventDispatcherManagerRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+func (m *ScheduleDispatcherRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
-		return xxx_messageInfo_CreateEventDispatcherManagerRequest.Marshal(b, m, deterministic)
+		return xxx_messageInfo_ScheduleDispatcherRequest.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
 		n, err := m.MarshalToSizedBuffer(b)
@@ -453,212 +447,87 @@ func (m *CreateEventDispatcherManagerRequest) XXX_Marshal(b []byte, deterministi
 		return b[:n], nil
 	}
 }
-func (m *CreateEventDispatcherManagerRequest) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_CreateEventDispatcherManagerRequest.Merge(m, src)
+func (m *ScheduleDispatcherRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ScheduleDispatcherRequest.Merge(m, src)
 }
-func (m *CreateEventDispatcherManagerRequest) XXX_Size() int {
+func (m *ScheduleDispatcherRequest) XXX_Size() int {
 	return m.Size()
 }
-func (m *CreateEventDispatcherManagerRequest) XXX_DiscardUnknown() {
-	xxx_messageInfo_CreateEventDispatcherManagerRequest.DiscardUnknown(m)
+func (m *ScheduleDispatcherRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_ScheduleDispatcherRequest.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_CreateEventDispatcherManagerRequest proto.InternalMessageInfo
+var xxx_messageInfo_ScheduleDispatcherRequest proto.InternalMessageInfo
 
-func (m *CreateEventDispatcherManagerRequest) GetChangefeedID() uint64 {
+func (m *ScheduleDispatcherRequest) GetChangefeedID() uint64 {
 	if m != nil {
 		return m.ChangefeedID
 	}
 	return 0
 }
 
-type CreateEventDispatcherManagerResponse struct {
-	ChangefeedID uint64 `protobuf:"varint,1,opt,name=changefeedID,proto3" json:"changefeedID,omitempty"`
-}
-
-func (m *CreateEventDispatcherManagerResponse) Reset()         { *m = CreateEventDispatcherManagerResponse{} }
-func (m *CreateEventDispatcherManagerResponse) String() string { return proto.CompactTextString(m) }
-func (*CreateEventDispatcherManagerResponse) ProtoMessage()    {}
-func (*CreateEventDispatcherManagerResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_6d584080fdadb670, []int{7}
-}
-func (m *CreateEventDispatcherManagerResponse) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *CreateEventDispatcherManagerResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_CreateEventDispatcherManagerResponse.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *CreateEventDispatcherManagerResponse) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_CreateEventDispatcherManagerResponse.Merge(m, src)
-}
-func (m *CreateEventDispatcherManagerResponse) XXX_Size() int {
-	return m.Size()
-}
-func (m *CreateEventDispatcherManagerResponse) XXX_DiscardUnknown() {
-	xxx_messageInfo_CreateEventDispatcherManagerResponse.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_CreateEventDispatcherManagerResponse proto.InternalMessageInfo
-
-func (m *CreateEventDispatcherManagerResponse) GetChangefeedID() uint64 {
+func (m *ScheduleDispatcherRequest) GetConfig() *DispatcherConfig {
 	if m != nil {
-		return m.ChangefeedID
+		return m.Config
 	}
-	return 0
+	return nil
 }
 
-type RemoveEventDispatcherManagerRequest struct {
-	ChangefeedID uint64 `protobuf:"varint,1,opt,name=changefeedID,proto3" json:"changefeedID,omitempty"`
-}
-
-func (m *RemoveEventDispatcherManagerRequest) Reset()         { *m = RemoveEventDispatcherManagerRequest{} }
-func (m *RemoveEventDispatcherManagerRequest) String() string { return proto.CompactTextString(m) }
-func (*RemoveEventDispatcherManagerRequest) ProtoMessage()    {}
-func (*RemoveEventDispatcherManagerRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_6d584080fdadb670, []int{8}
-}
-func (m *RemoveEventDispatcherManagerRequest) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *RemoveEventDispatcherManagerRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_RemoveEventDispatcherManagerRequest.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *RemoveEventDispatcherManagerRequest) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_RemoveEventDispatcherManagerRequest.Merge(m, src)
-}
-func (m *RemoveEventDispatcherManagerRequest) XXX_Size() int {
-	return m.Size()
-}
-func (m *RemoveEventDispatcherManagerRequest) XXX_DiscardUnknown() {
-	xxx_messageInfo_RemoveEventDispatcherManagerRequest.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_RemoveEventDispatcherManagerRequest proto.InternalMessageInfo
-
-func (m *RemoveEventDispatcherManagerRequest) GetChangefeedID() uint64 {
+func (m *ScheduleDispatcherRequest) GetScheduleAction() ScheduleAction {
 	if m != nil {
-		return m.ChangefeedID
+		return m.ScheduleAction
 	}
-	return 0
-}
-
-type RemoveEventDispatcherManagerResponse struct {
-	ChangefeedID uint64 `protobuf:"varint,1,opt,name=changefeedID,proto3" json:"changefeedID,omitempty"`
-}
-
-func (m *RemoveEventDispatcherManagerResponse) Reset()         { *m = RemoveEventDispatcherManagerResponse{} }
-func (m *RemoveEventDispatcherManagerResponse) String() string { return proto.CompactTextString(m) }
-func (*RemoveEventDispatcherManagerResponse) ProtoMessage()    {}
-func (*RemoveEventDispatcherManagerResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_6d584080fdadb670, []int{9}
-}
-func (m *RemoveEventDispatcherManagerResponse) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *RemoveEventDispatcherManagerResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_RemoveEventDispatcherManagerResponse.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *RemoveEventDispatcherManagerResponse) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_RemoveEventDispatcherManagerResponse.Merge(m, src)
-}
-func (m *RemoveEventDispatcherManagerResponse) XXX_Size() int {
-	return m.Size()
-}
-func (m *RemoveEventDispatcherManagerResponse) XXX_DiscardUnknown() {
-	xxx_messageInfo_RemoveEventDispatcherManagerResponse.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_RemoveEventDispatcherManagerResponse proto.InternalMessageInfo
-
-func (m *RemoveEventDispatcherManagerResponse) GetChangefeedID() uint64 {
-	if m != nil {
-		return m.ChangefeedID
-	}
-	return 0
+	return ScheduleAction_Create
 }
 
 func init() {
 	proto.RegisterEnum("heartbeatpb.Action", Action_name, Action_value)
+	proto.RegisterEnum("heartbeatpb.ScheduleAction", ScheduleAction_name, ScheduleAction_value)
 	proto.RegisterType((*TableSpan)(nil), "heartbeatpb.TableSpan")
-	proto.RegisterType((*TableSpanProgress)(nil), "heartbeatpb.TableSpanProgress")
 	proto.RegisterType((*HeartBeatRequest)(nil), "heartbeatpb.HeartBeatRequest")
 	proto.RegisterType((*TableProgress)(nil), "heartbeatpb.TableProgress")
 	proto.RegisterType((*TableProgressInfo)(nil), "heartbeatpb.TableProgressInfo")
 	proto.RegisterType((*HeartBeatResponse)(nil), "heartbeatpb.HeartBeatResponse")
-	proto.RegisterType((*CreateEventDispatcherManagerRequest)(nil), "heartbeatpb.CreateEventDispatcherManagerRequest")
-	proto.RegisterType((*CreateEventDispatcherManagerResponse)(nil), "heartbeatpb.CreateEventDispatcherManagerResponse")
-	proto.RegisterType((*RemoveEventDispatcherManagerRequest)(nil), "heartbeatpb.RemoveEventDispatcherManagerRequest")
-	proto.RegisterType((*RemoveEventDispatcherManagerResponse)(nil), "heartbeatpb.RemoveEventDispatcherManagerResponse")
+	proto.RegisterType((*DispatcherConfig)(nil), "heartbeatpb.DispatcherConfig")
+	proto.RegisterType((*ScheduleDispatcherRequest)(nil), "heartbeatpb.ScheduleDispatcherRequest")
 }
 
 func init() { proto.RegisterFile("heartbeatpb/heartbeat.proto", fileDescriptor_6d584080fdadb670) }
 
 var fileDescriptor_6d584080fdadb670 = []byte{
-	// 592 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xbc, 0x55, 0x4f, 0x6f, 0xd3, 0x4e,
-	0x10, 0xcd, 0xa6, 0x6e, 0x7e, 0xc9, 0xf4, 0xcf, 0x2f, 0x59, 0xa4, 0xca, 0x0a, 0xc5, 0x8a, 0x5c,
-	0xa4, 0x46, 0x45, 0x4a, 0x4b, 0xb8, 0x71, 0x40, 0x22, 0x4d, 0x25, 0x0c, 0xa2, 0xaa, 0xdc, 0x48,
-	0x08, 0x38, 0x6d, 0x92, 0xc9, 0x1f, 0xb5, 0xec, 0x1a, 0xef, 0x52, 0x89, 0x33, 0x07, 0xae, 0xdc,
-	0xf8, 0x08, 0x48, 0x7c, 0x12, 0x8e, 0x3d, 0x72, 0x44, 0xc9, 0x07, 0x01, 0x79, 0x13, 0xbb, 0xb6,
-	0x43, 0xac, 0x20, 0x21, 0x6e, 0x3b, 0x33, 0x6f, 0xdf, 0xbc, 0x99, 0xb7, 0x96, 0xe1, 0xf6, 0x08,
-	0x99, 0xaf, 0xba, 0xc8, 0x94, 0xd7, 0x3d, 0x8c, 0xce, 0x0d, 0xcf, 0x17, 0x4a, 0xd0, 0x8d, 0x58,
-	0xd1, 0x7e, 0x09, 0xa5, 0x0e, 0xeb, 0x5e, 0xe2, 0xb9, 0xc7, 0x38, 0x35, 0xe1, 0x3f, 0x1d, 0x38,
-	0x6d, 0x93, 0xd4, 0x48, 0xdd, 0x70, 0xc3, 0x90, 0x56, 0xa1, 0x78, 0xae, 0x98, 0xaf, 0x9e, 0xe1,
-	0x7b, 0x33, 0x5f, 0x23, 0xf5, 0x4d, 0x37, 0x8a, 0xe9, 0x0e, 0x14, 0x4e, 0x78, 0x3f, 0xa8, 0xac,
-	0xe9, 0xca, 0x3c, 0xb2, 0x7f, 0x12, 0xa8, 0x44, 0xdc, 0x67, 0xbe, 0x18, 0xfa, 0x28, 0x25, 0x3d,
-	0x00, 0x43, 0x7a, 0x8c, 0xeb, 0x06, 0x1b, 0xcd, 0x9d, 0x46, 0x4c, 0x4c, 0x23, 0x42, 0xbb, 0x1a,
-	0x43, 0x77, 0xa1, 0xe4, 0xc8, 0xd6, 0xa5, 0xe8, 0x5d, 0x60, 0x5f, 0xb7, 0x2d, 0xba, 0x37, 0x89,
-	0x40, 0xad, 0x3e, 0x76, 0xa4, 0x6e, 0x6c, 0xb8, 0x61, 0x48, 0x1f, 0xc1, 0xf6, 0xec, 0x18, 0xf2,
-	0x99, 0x46, 0x6d, 0x2d, 0xa3, 0x5b, 0x0a, 0x4d, 0x6d, 0xd8, 0x3c, 0x1e, 0x61, 0xef, 0xc2, 0x13,
-	0x63, 0xae, 0x3a, 0xd2, 0x5c, 0xd7, 0xf4, 0x89, 0x5c, 0x80, 0xe9, 0x8f, 0xa5, 0xc7, 0x54, 0x6f,
-	0x84, 0xbe, 0xd3, 0x36, 0x0b, 0x35, 0x52, 0x2f, 0xb9, 0x89, 0x9c, 0xed, 0x43, 0xf9, 0x49, 0xd0,
-	0xb0, 0x85, 0x4c, 0xb9, 0xf8, 0xf6, 0x1d, 0x4a, 0x45, 0x1f, 0x82, 0x89, 0x57, 0xc8, 0x55, 0x3b,
-	0x02, 0x3e, 0x67, 0x9c, 0x0d, 0x35, 0xc7, 0x6c, 0xe9, 0x4b, 0xeb, 0x41, 0xcf, 0x5e, 0x5c, 0x57,
-	0x7e, 0xa6, 0x2b, 0x9e, 0xb3, 0x3f, 0x13, 0xd8, 0xd2, 0x93, 0xfc, 0xd3, 0x8d, 0xa7, 0x37, 0x66,
-	0x2c, 0x6e, 0xcc, 0xfe, 0x1a, 0xbe, 0x87, 0x50, 0x99, 0xc3, 0x07, 0x62, 0x61, 0x8f, 0x64, 0x71,
-	0x8f, 0xb4, 0x0d, 0xff, 0xab, 0xf8, 0x45, 0x0c, 0x46, 0x0f, 0x0c, 0xad, 0x2e, 0x0e, 0x13, 0x62,
-	0xdc, 0xf4, 0x15, 0x7a, 0x0f, 0x0a, 0xac, 0xa7, 0xc6, 0x82, 0x6b, 0xf1, 0xdb, 0xcd, 0x5b, 0x89,
-	0xcb, 0x8f, 0x75, 0xc9, 0x9d, 0x43, 0xec, 0x0f, 0x04, 0x2a, 0x31, 0xef, 0xa4, 0x27, 0xb8, 0x44,
-	0xda, 0x04, 0x63, 0xcc, 0x07, 0xc2, 0x24, 0xba, 0xbb, 0xb5, 0xbc, 0x7b, 0x30, 0x9a, 0xab, 0xb1,
-	0x99, 0x86, 0xe7, 0xb3, 0x0d, 0xb7, 0x1d, 0xd8, 0x3b, 0xf6, 0x91, 0x29, 0x3c, 0xf9, 0x2d, 0x22,
-	0x7c, 0x53, 0xfa, 0x5d, 0x30, 0x3e, 0xc4, 0x01, 0x62, 0x3f, 0x7a, 0x47, 0x89, 0x9c, 0xfd, 0x14,
-	0xee, 0x66, 0x53, 0xcd, 0x47, 0x5c, 0x85, 0xcb, 0x81, 0x3d, 0x17, 0xdf, 0x88, 0xab, 0xbf, 0x23,
-	0x2b, 0x9b, 0x6a, 0x75, 0x59, 0x07, 0xfb, 0x50, 0x98, 0xb9, 0x48, 0x8b, 0x60, 0x9c, 0x0a, 0x8e,
-	0xe5, 0x1c, 0x2d, 0xc1, 0xfa, 0x0b, 0x7f, 0xac, 0xb0, 0x4c, 0x82, 0xe4, 0x19, 0x93, 0xb2, 0x9c,
-	0x6f, 0xbe, 0x86, 0x52, 0xe4, 0x2d, 0x3d, 0x8d, 0x07, 0x77, 0x12, 0x96, 0xa6, 0x3f, 0xde, 0xaa,
-	0xb5, 0xac, 0x3c, 0x53, 0x59, 0x27, 0x47, 0xa4, 0xf9, 0x25, 0x0f, 0x95, 0x85, 0x39, 0xe8, 0x47,
-	0x02, 0xbb, 0x59, 0xfb, 0xa7, 0x47, 0x09, 0xea, 0x15, 0x5c, 0xaf, 0xde, 0xff, 0x83, 0x1b, 0x37,
-	0xfa, 0xb4, 0x92, 0xac, 0x95, 0xa7, 0x94, 0xac, 0x60, 0x74, 0x4a, 0xc9, 0x2a, 0x7e, 0x06, 0x4a,
-	0x5a, 0xfb, 0xdf, 0x26, 0x16, 0xb9, 0x9e, 0x58, 0xe4, 0xc7, 0xc4, 0x22, 0x9f, 0xa6, 0x56, 0xee,
-	0x7a, 0x6a, 0xe5, 0xbe, 0x4f, 0xad, 0xdc, 0xab, 0xad, 0xc6, 0x61, 0x8c, 0xb1, 0x5b, 0xd0, 0x3f,
-	0xae, 0x07, 0xbf, 0x02, 0x00, 0x00, 0xff, 0xff, 0xff, 0x76, 0x5c, 0xb2, 0xd7, 0x06, 0x00, 0x00,
+	// 509 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x54, 0xc1, 0x6e, 0xda, 0x4c,
+	0x10, 0x66, 0x89, 0x7f, 0x07, 0x86, 0x84, 0xdf, 0xd9, 0x4a, 0x91, 0x9b, 0xb4, 0x56, 0xe4, 0x4b,
+	0x10, 0x95, 0x88, 0xe4, 0xaa, 0x0f, 0x10, 0xa0, 0x52, 0x51, 0xa5, 0x2a, 0x5a, 0x90, 0xda, 0xe6,
+	0xb6, 0x98, 0x01, 0x2c, 0xe8, 0xae, 0xeb, 0xdd, 0x54, 0xea, 0x5b, 0xf4, 0xd6, 0xf7, 0xe8, 0xb5,
+	0x2f, 0xd0, 0x63, 0x8e, 0x3d, 0x56, 0xf0, 0x22, 0x95, 0x17, 0x30, 0x36, 0xa8, 0x07, 0x6e, 0x3b,
+	0x33, 0xdf, 0x37, 0xdf, 0x37, 0xb3, 0xab, 0x85, 0xcb, 0x29, 0xf2, 0x44, 0x0f, 0x91, 0xeb, 0x78,
+	0x78, 0x93, 0x9d, 0x5b, 0x71, 0x22, 0xb5, 0xa4, 0xb5, 0x5c, 0xd1, 0xff, 0x08, 0xd5, 0x01, 0x1f,
+	0xce, 0xb1, 0x1f, 0x73, 0x41, 0x5d, 0x38, 0x36, 0x41, 0xaf, 0xeb, 0x92, 0x2b, 0xd2, 0xb0, 0xd8,
+	0x26, 0xa4, 0x17, 0x50, 0xe9, 0x6b, 0x9e, 0xe8, 0xb7, 0xf8, 0xd5, 0x2d, 0x5f, 0x91, 0xc6, 0x09,
+	0xcb, 0x62, 0x7a, 0x0e, 0xf6, 0x6b, 0x31, 0x4a, 0x2b, 0x47, 0xa6, 0xb2, 0x8e, 0xfc, 0x7b, 0x70,
+	0xde, 0xa4, 0x4a, 0x6d, 0xe4, 0x9a, 0xe1, 0xe7, 0x07, 0x54, 0x9a, 0xfa, 0x70, 0x12, 0x4e, 0xb9,
+	0x98, 0xe0, 0x18, 0x71, 0x94, 0xc9, 0x14, 0x72, 0x2b, 0x0c, 0x86, 0xb3, 0x58, 0x46, 0x42, 0x0f,
+	0x94, 0xd1, 0x33, 0x98, 0x6d, 0xce, 0xff, 0x4e, 0xe0, 0xd4, 0x78, 0xbb, 0x4b, 0xe4, 0x24, 0x41,
+	0xa5, 0x68, 0x13, 0x2c, 0x15, 0x73, 0x61, 0x3a, 0xd6, 0x82, 0xf3, 0x56, 0x6e, 0xc8, 0x56, 0x36,
+	0x21, 0x33, 0x18, 0xfa, 0x0c, 0xaa, 0x3d, 0xd5, 0x9e, 0xcb, 0x70, 0x86, 0x23, 0xd3, 0xbe, 0xc2,
+	0xb6, 0x89, 0x74, 0x0b, 0xe6, 0x38, 0x50, 0x66, 0x20, 0x8b, 0x6d, 0xc2, 0xd4, 0x59, 0x27, 0xef,
+	0xcc, 0x5a, 0x39, 0xcb, 0xe7, 0xfc, 0x1f, 0x04, 0xce, 0x0a, 0xce, 0x7a, 0x62, 0x2c, 0x0f, 0x72,
+	0xd7, 0x85, 0xff, 0x75, 0xbe, 0x01, 0xa6, 0x2b, 0x38, 0x6a, 0xd4, 0x82, 0x8b, 0x7d, 0xda, 0x06,
+	0xc3, 0x76, 0x29, 0xf4, 0x05, 0xd8, 0x3c, 0xd4, 0x91, 0x14, 0x66, 0x88, 0x7a, 0xf0, 0xa4, 0x40,
+	0xbe, 0x35, 0x25, 0xb6, 0x86, 0xf8, 0x33, 0x38, 0xcb, 0x5d, 0x95, 0x8a, 0xa5, 0x50, 0x48, 0x03,
+	0xb0, 0x22, 0x31, 0x96, 0x2e, 0x31, 0xe2, 0xde, 0xbf, 0xc5, 0xd3, 0x09, 0x99, 0xc1, 0xee, 0xdd,
+	0x6f, 0x79, 0xff, 0x7e, 0xfd, 0x0f, 0xe0, 0x74, 0x23, 0x15, 0x73, 0x1d, 0x4e, 0x31, 0xe9, 0x48,
+	0x31, 0x8e, 0x26, 0x07, 0xed, 0xc7, 0x85, 0x63, 0x95, 0xbe, 0xbd, 0xec, 0x69, 0x6c, 0x42, 0xff,
+	0x27, 0x81, 0xa7, 0xfd, 0x70, 0x8a, 0xa3, 0x87, 0x39, 0x6e, 0x25, 0x0e, 0x79, 0x7b, 0xaf, 0xc0,
+	0x0e, 0x8d, 0x23, 0xd3, 0xba, 0x16, 0x3c, 0x2f, 0x38, 0xd9, 0xb5, 0xcd, 0xd6, 0x60, 0xda, 0x81,
+	0xba, 0x5a, 0xeb, 0xde, 0xe6, 0x97, 0x7e, 0x59, 0xa0, 0xf7, 0x0b, 0x10, 0xb6, 0x43, 0x69, 0x5e,
+	0x83, 0xbd, 0x3a, 0xd1, 0x0a, 0x58, 0xef, 0xa4, 0x40, 0xa7, 0x44, 0xab, 0xf0, 0xdf, 0xfb, 0x24,
+	0xd2, 0xe8, 0x90, 0x34, 0x79, 0xc7, 0x95, 0x72, 0xca, 0xcd, 0x06, 0xd4, 0x8b, 0xad, 0x28, 0x80,
+	0xdd, 0x49, 0x90, 0xeb, 0x94, 0x02, 0x60, 0x33, 0xfc, 0x24, 0xbf, 0xa0, 0x43, 0xda, 0xd7, 0xbf,
+	0x16, 0x1e, 0x79, 0x5c, 0x78, 0xe4, 0xcf, 0xc2, 0x23, 0xdf, 0x96, 0x5e, 0xe9, 0x71, 0xe9, 0x95,
+	0x7e, 0x2f, 0xbd, 0xd2, 0xfd, 0x69, 0xeb, 0x26, 0x67, 0x6d, 0x68, 0x9b, 0xaf, 0xe1, 0xe5, 0xdf,
+	0x00, 0x00, 0x00, 0xff, 0xff, 0xe0, 0xc8, 0x23, 0x8e, 0x39, 0x04, 0x00, 0x00,
 }
 
 func (m *TableSpan) Marshal() (dAtA []byte, err error) {
@@ -703,82 +572,6 @@ func (m *TableSpan) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *TableSpanProgress) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *TableSpanProgress) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *TableSpanProgress) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if len(m.DispatcherID) > 0 {
-		i -= len(m.DispatcherID)
-		copy(dAtA[i:], m.DispatcherID)
-		i = encodeVarintHeartbeat(dAtA, i, uint64(len(m.DispatcherID)))
-		i--
-		dAtA[i] = 0x32
-	}
-	if m.CheckpointTs != 0 {
-		i = encodeVarintHeartbeat(dAtA, i, uint64(m.CheckpointTs))
-		i--
-		dAtA[i] = 0x28
-	}
-	if len(m.BlockTableSpan) > 0 {
-		for iNdEx := len(m.BlockTableSpan) - 1; iNdEx >= 0; iNdEx-- {
-			{
-				size, err := m.BlockTableSpan[iNdEx].MarshalToSizedBuffer(dAtA[:i])
-				if err != nil {
-					return 0, err
-				}
-				i -= size
-				i = encodeVarintHeartbeat(dAtA, i, uint64(size))
-			}
-			i--
-			dAtA[i] = 0x22
-		}
-	}
-	if m.BlockTs != 0 {
-		i = encodeVarintHeartbeat(dAtA, i, uint64(m.BlockTs))
-		i--
-		dAtA[i] = 0x18
-	}
-	if m.IsBlocked {
-		i--
-		if m.IsBlocked {
-			dAtA[i] = 1
-		} else {
-			dAtA[i] = 0
-		}
-		i--
-		dAtA[i] = 0x10
-	}
-	if m.Span != nil {
-		{
-			size, err := m.Span.MarshalToSizedBuffer(dAtA[:i])
-			if err != nil {
-				return 0, err
-			}
-			i -= size
-			i = encodeVarintHeartbeat(dAtA, i, uint64(size))
-		}
-		i--
-		dAtA[i] = 0xa
-	}
-	return len(dAtA) - i, nil
-}
-
 func (m *HeartBeatRequest) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
@@ -804,8 +597,8 @@ func (m *HeartBeatRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x10
 	}
-	if m.EventDispatcherManagerID != 0 {
-		i = encodeVarintHeartbeat(dAtA, i, uint64(m.EventDispatcherManagerID))
+	if m.ChangefeedID != 0 {
+		i = encodeVarintHeartbeat(dAtA, i, uint64(m.ChangefeedID))
 		i--
 		dAtA[i] = 0x8
 	}
@@ -906,10 +699,15 @@ func (m *TableProgressInfo) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 			dAtA[i] = 0x12
 		}
 	}
-	if len(m.DispatcherID) > 0 {
-		i -= len(m.DispatcherID)
-		copy(dAtA[i:], m.DispatcherID)
-		i = encodeVarintHeartbeat(dAtA, i, uint64(len(m.DispatcherID)))
+	if m.Span != nil {
+		{
+			size, err := m.Span.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintHeartbeat(dAtA, i, uint64(size))
+		}
 		i--
 		dAtA[i] = 0xa
 	}
@@ -936,8 +734,8 @@ func (m *HeartBeatResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
-	if m.EventDispatcherManagerID != 0 {
-		i = encodeVarintHeartbeat(dAtA, i, uint64(m.EventDispatcherManagerID))
+	if m.ChangefeedID != 0 {
+		i = encodeVarintHeartbeat(dAtA, i, uint64(m.ChangefeedID))
 		i--
 		dAtA[i] = 0x10
 	}
@@ -958,7 +756,7 @@ func (m *HeartBeatResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *CreateEventDispatcherManagerRequest) Marshal() (dAtA []byte, err error) {
+func (m *DispatcherConfig) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -968,25 +766,37 @@ func (m *CreateEventDispatcherManagerRequest) Marshal() (dAtA []byte, err error)
 	return dAtA[:n], nil
 }
 
-func (m *CreateEventDispatcherManagerRequest) MarshalTo(dAtA []byte) (int, error) {
+func (m *DispatcherConfig) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *CreateEventDispatcherManagerRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *DispatcherConfig) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
 	_ = l
-	if m.ChangefeedID != 0 {
-		i = encodeVarintHeartbeat(dAtA, i, uint64(m.ChangefeedID))
+	if m.StartTs != 0 {
+		i = encodeVarintHeartbeat(dAtA, i, uint64(m.StartTs))
 		i--
-		dAtA[i] = 0x8
+		dAtA[i] = 0x10
+	}
+	if m.Span != nil {
+		{
+			size, err := m.Span.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintHeartbeat(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0xa
 	}
 	return len(dAtA) - i, nil
 }
 
-func (m *CreateEventDispatcherManagerResponse) Marshal() (dAtA []byte, err error) {
+func (m *ScheduleDispatcherRequest) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -996,72 +806,33 @@ func (m *CreateEventDispatcherManagerResponse) Marshal() (dAtA []byte, err error
 	return dAtA[:n], nil
 }
 
-func (m *CreateEventDispatcherManagerResponse) MarshalTo(dAtA []byte) (int, error) {
+func (m *ScheduleDispatcherRequest) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *CreateEventDispatcherManagerResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *ScheduleDispatcherRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
 	_ = l
-	if m.ChangefeedID != 0 {
-		i = encodeVarintHeartbeat(dAtA, i, uint64(m.ChangefeedID))
+	if m.ScheduleAction != 0 {
+		i = encodeVarintHeartbeat(dAtA, i, uint64(m.ScheduleAction))
 		i--
-		dAtA[i] = 0x8
+		dAtA[i] = 0x18
 	}
-	return len(dAtA) - i, nil
-}
-
-func (m *RemoveEventDispatcherManagerRequest) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *RemoveEventDispatcherManagerRequest) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *RemoveEventDispatcherManagerRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if m.ChangefeedID != 0 {
-		i = encodeVarintHeartbeat(dAtA, i, uint64(m.ChangefeedID))
+	if m.Config != nil {
+		{
+			size, err := m.Config.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintHeartbeat(dAtA, i, uint64(size))
+		}
 		i--
-		dAtA[i] = 0x8
+		dAtA[i] = 0x12
 	}
-	return len(dAtA) - i, nil
-}
-
-func (m *RemoveEventDispatcherManagerResponse) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *RemoveEventDispatcherManagerResponse) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *RemoveEventDispatcherManagerResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
 	if m.ChangefeedID != 0 {
 		i = encodeVarintHeartbeat(dAtA, i, uint64(m.ChangefeedID))
 		i--
@@ -1101,46 +872,14 @@ func (m *TableSpan) Size() (n int) {
 	return n
 }
 
-func (m *TableSpanProgress) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.Span != nil {
-		l = m.Span.Size()
-		n += 1 + l + sovHeartbeat(uint64(l))
-	}
-	if m.IsBlocked {
-		n += 2
-	}
-	if m.BlockTs != 0 {
-		n += 1 + sovHeartbeat(uint64(m.BlockTs))
-	}
-	if len(m.BlockTableSpan) > 0 {
-		for _, e := range m.BlockTableSpan {
-			l = e.Size()
-			n += 1 + l + sovHeartbeat(uint64(l))
-		}
-	}
-	if m.CheckpointTs != 0 {
-		n += 1 + sovHeartbeat(uint64(m.CheckpointTs))
-	}
-	l = len(m.DispatcherID)
-	if l > 0 {
-		n += 1 + l + sovHeartbeat(uint64(l))
-	}
-	return n
-}
-
 func (m *HeartBeatRequest) Size() (n int) {
 	if m == nil {
 		return 0
 	}
 	var l int
 	_ = l
-	if m.EventDispatcherManagerID != 0 {
-		n += 1 + sovHeartbeat(uint64(m.EventDispatcherManagerID))
+	if m.ChangefeedID != 0 {
+		n += 1 + sovHeartbeat(uint64(m.ChangefeedID))
 	}
 	if m.CheckpointTs != 0 {
 		n += 1 + sovHeartbeat(uint64(m.CheckpointTs))
@@ -1176,8 +915,8 @@ func (m *TableProgressInfo) Size() (n int) {
 	}
 	var l int
 	_ = l
-	l = len(m.DispatcherID)
-	if l > 0 {
+	if m.Span != nil {
+		l = m.Span.Size()
 		n += 1 + l + sovHeartbeat(uint64(l))
 	}
 	if len(m.TableProgresses) > 0 {
@@ -1204,13 +943,29 @@ func (m *HeartBeatResponse) Size() (n int) {
 			n += 1 + l + sovHeartbeat(uint64(l))
 		}
 	}
-	if m.EventDispatcherManagerID != 0 {
-		n += 1 + sovHeartbeat(uint64(m.EventDispatcherManagerID))
+	if m.ChangefeedID != 0 {
+		n += 1 + sovHeartbeat(uint64(m.ChangefeedID))
 	}
 	return n
 }
 
-func (m *CreateEventDispatcherManagerRequest) Size() (n int) {
+func (m *DispatcherConfig) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.Span != nil {
+		l = m.Span.Size()
+		n += 1 + l + sovHeartbeat(uint64(l))
+	}
+	if m.StartTs != 0 {
+		n += 1 + sovHeartbeat(uint64(m.StartTs))
+	}
+	return n
+}
+
+func (m *ScheduleDispatcherRequest) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -1219,41 +974,12 @@ func (m *CreateEventDispatcherManagerRequest) Size() (n int) {
 	if m.ChangefeedID != 0 {
 		n += 1 + sovHeartbeat(uint64(m.ChangefeedID))
 	}
-	return n
-}
-
-func (m *CreateEventDispatcherManagerResponse) Size() (n int) {
-	if m == nil {
-		return 0
+	if m.Config != nil {
+		l = m.Config.Size()
+		n += 1 + l + sovHeartbeat(uint64(l))
 	}
-	var l int
-	_ = l
-	if m.ChangefeedID != 0 {
-		n += 1 + sovHeartbeat(uint64(m.ChangefeedID))
-	}
-	return n
-}
-
-func (m *RemoveEventDispatcherManagerRequest) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.ChangefeedID != 0 {
-		n += 1 + sovHeartbeat(uint64(m.ChangefeedID))
-	}
-	return n
-}
-
-func (m *RemoveEventDispatcherManagerResponse) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.ChangefeedID != 0 {
-		n += 1 + sovHeartbeat(uint64(m.ChangefeedID))
+	if m.ScheduleAction != 0 {
+		n += 1 + sovHeartbeat(uint64(m.ScheduleAction))
 	}
 	return n
 }
@@ -1401,216 +1127,6 @@ func (m *TableSpan) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *TableSpanProgress) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowHeartbeat
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: TableSpanProgress: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: TableSpanProgress: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Span", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowHeartbeat
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthHeartbeat
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthHeartbeat
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			if m.Span == nil {
-				m.Span = &TableSpan{}
-			}
-			if err := m.Span.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		case 2:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field IsBlocked", wireType)
-			}
-			var v int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowHeartbeat
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				v |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			m.IsBlocked = bool(v != 0)
-		case 3:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field BlockTs", wireType)
-			}
-			m.BlockTs = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowHeartbeat
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.BlockTs |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 4:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field BlockTableSpan", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowHeartbeat
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthHeartbeat
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthHeartbeat
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.BlockTableSpan = append(m.BlockTableSpan, &TableSpan{})
-			if err := m.BlockTableSpan[len(m.BlockTableSpan)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		case 5:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field CheckpointTs", wireType)
-			}
-			m.CheckpointTs = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowHeartbeat
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.CheckpointTs |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 6:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field DispatcherID", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowHeartbeat
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthHeartbeat
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthHeartbeat
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.DispatcherID = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := skipHeartbeat(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthHeartbeat
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
 func (m *HeartBeatRequest) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -1642,9 +1158,9 @@ func (m *HeartBeatRequest) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field EventDispatcherManagerID", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field ChangefeedID", wireType)
 			}
-			m.EventDispatcherManagerID = 0
+			m.ChangefeedID = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowHeartbeat
@@ -1654,7 +1170,7 @@ func (m *HeartBeatRequest) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.EventDispatcherManagerID |= uint64(b&0x7F) << shift
+				m.ChangefeedID |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -1874,9 +1390,9 @@ func (m *TableProgressInfo) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field DispatcherID", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Span", wireType)
 			}
-			var stringLen uint64
+			var msglen int
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowHeartbeat
@@ -1886,23 +1402,27 @@ func (m *TableProgressInfo) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
+				msglen |= int(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
+			if msglen < 0 {
 				return ErrInvalidLengthHeartbeat
 			}
-			postIndex := iNdEx + intStringLen
+			postIndex := iNdEx + msglen
 			if postIndex < 0 {
 				return ErrInvalidLengthHeartbeat
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.DispatcherID = string(dAtA[iNdEx:postIndex])
+			if m.Span == nil {
+				m.Span = &TableSpan{}
+			}
+			if err := m.Span.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
@@ -2043,75 +1563,6 @@ func (m *HeartBeatResponse) Unmarshal(dAtA []byte) error {
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field EventDispatcherManagerID", wireType)
-			}
-			m.EventDispatcherManagerID = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowHeartbeat
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.EventDispatcherManagerID |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		default:
-			iNdEx = preIndex
-			skippy, err := skipHeartbeat(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthHeartbeat
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *CreateEventDispatcherManagerRequest) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowHeartbeat
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: CreateEventDispatcherManagerRequest: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: CreateEventDispatcherManagerRequest: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field ChangefeedID", wireType)
 			}
 			m.ChangefeedID = 0
@@ -2150,7 +1601,7 @@ func (m *CreateEventDispatcherManagerRequest) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *CreateEventDispatcherManagerResponse) Unmarshal(dAtA []byte) error {
+func (m *DispatcherConfig) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -2173,17 +1624,17 @@ func (m *CreateEventDispatcherManagerResponse) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: CreateEventDispatcherManagerResponse: wiretype end group for non-group")
+			return fmt.Errorf("proto: DispatcherConfig: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: CreateEventDispatcherManagerResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: DispatcherConfig: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ChangefeedID", wireType)
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Span", wireType)
 			}
-			m.ChangefeedID = 0
+			var msglen int
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowHeartbeat
@@ -2193,7 +1644,43 @@ func (m *CreateEventDispatcherManagerResponse) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.ChangefeedID |= uint64(b&0x7F) << shift
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.Span == nil {
+				m.Span = &TableSpan{}
+			}
+			if err := m.Span.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field StartTs", wireType)
+			}
+			m.StartTs = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.StartTs |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -2219,7 +1706,7 @@ func (m *CreateEventDispatcherManagerResponse) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *RemoveEventDispatcherManagerRequest) Unmarshal(dAtA []byte) error {
+func (m *ScheduleDispatcherRequest) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -2242,10 +1729,10 @@ func (m *RemoveEventDispatcherManagerRequest) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: RemoveEventDispatcherManagerRequest: wiretype end group for non-group")
+			return fmt.Errorf("proto: ScheduleDispatcherRequest: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: RemoveEventDispatcherManagerRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: ScheduleDispatcherRequest: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
@@ -2267,61 +1754,11 @@ func (m *RemoveEventDispatcherManagerRequest) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		default:
-			iNdEx = preIndex
-			skippy, err := skipHeartbeat(dAtA[iNdEx:])
-			if err != nil {
-				return err
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Config", wireType)
 			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthHeartbeat
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *RemoveEventDispatcherManagerResponse) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowHeartbeat
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: RemoveEventDispatcherManagerResponse: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: RemoveEventDispatcherManagerResponse: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ChangefeedID", wireType)
-			}
-			m.ChangefeedID = 0
+			var msglen int
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowHeartbeat
@@ -2331,7 +1768,43 @@ func (m *RemoveEventDispatcherManagerResponse) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.ChangefeedID |= uint64(b&0x7F) << shift
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.Config == nil {
+				m.Config = &DispatcherConfig{}
+			}
+			if err := m.Config.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ScheduleAction", wireType)
+			}
+			m.ScheduleAction = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ScheduleAction |= ScheduleAction(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}

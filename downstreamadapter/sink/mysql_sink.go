@@ -15,13 +15,14 @@ package sink
 
 import (
 	"database/sql"
+	"math"
 	"sync"
 
-	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/conflictdetector"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/downstreamadapter/worker"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"go.uber.org/zap"
 
@@ -34,6 +35,27 @@ const (
 	DefaultConflictDetectorSlots uint64 = 16 * 1024
 )
 
+type TableStatus struct {
+	ch   chan *common.TxnEvent
+	task *MysqlSinkTask
+	//TableProgress 里面维护了目前正在 sink 中的 event ts 信息
+	// // TableProgress 对外提供查询当前 table checkpointTs 的能力
+	// // TableProgress 对外提供当前 table 是否有 event 在 sink 中等待被 flush 的能力--用于判断 ddl 是否达到下推条件
+	progress *types.TableProgress
+}
+
+func (s *TableStatus) getCh() chan *common.TxnEvent {
+	return s.ch
+}
+
+func (s *TableStatus) getTask() *MysqlSinkTask {
+	return s.task
+}
+
+func (s *TableStatus) getProgress() *types.TableProgress {
+	return s.progress
+}
+
 // mysql sink 负责 mysql 类型下游的 sink 模块
 // sink 接收已经达到下推资格（该资格指的是不需要等其他 ddl 或者 sync point 语句下推，
 // 可以进入 conflict detector 开始计算冲突，没有冲突就可以下推了
@@ -42,17 +64,21 @@ const (
 type MysqlSink struct {
 	changefeedID     uint64
 	conflictDetector *conflictdetector.ConflictDetector
-	// TableProgress 里面维护了目前正在 sink 中的 event ts 信息
-	// TableProgress 对外提供查询当前 table checkpointTs 的能力
-	// TableProgress 对外提供当前 table 是否有 event 在 sink 中等待被 flush 的能力--用于判断 ddl 是否达到下推条件
-	tableProgressMap map[*common.TableSpan]*types.TableProgress
+
 	// 主要是要保持一样的生命周期？不然 channel 会对应不上
 	// workers  []*worker.MysqlWorker
 	ddlWorker *worker.MysqlDDLWorker
-	eventChs  map[*common.TableSpan]chan *common.TxnEvent // 这个感觉最好也不要用 channel，用一个代表 channal 的 struct
-	tasks     map[*common.TableSpan]*MysqlSinkTask
 
-	mutex sync.Mutex // 用于新插入 dispatcher 或者 remove dispatcher 时保护 tableProgressMap，eventChs，tasks 对象
+	// Protect tableStatus
+	mutex         sync.RWMutex
+	tableStatuses map[*common.TableSpan]TableStatus
+
+	// eventChs map[*common.TableSpan]chan *common.TxnEvent // 这个感觉最好也不要用 channel，用一个代表 channal 的 struct
+	// tasks    map[*common.TableSpan]*MysqlSinkTask
+	// // TableProgress 里面维护了目前正在 sink 中的 event ts 信息
+	// // TableProgress 对外提供查询当前 table checkpointTs 的能力
+	// // TableProgress 对外提供当前 table 是否有 event 在 sink 中等待被 flush 的能力--用于判断 ddl 是否达到下推条件
+	// tableProgressMap map[*common.TableSpan]*types.TableProgress
 }
 
 // event dispatcher manager 初始化的时候创建 mysqlSink 对象
@@ -63,9 +89,10 @@ func NewMysqlSink(workerCount int, cfg *writer.MysqlConfig, db *sql.DB) *MysqlSi
 			Size:          1024,
 			BlockStrategy: causality.BlockStrategyWaitEmpty,
 		}),
-		tableProgressMap: make(map[*common.TableSpan]*types.TableProgress),
-		eventChs:         make(map[*common.TableSpan]chan *common.TxnEvent),
-		tasks:            make(map[*common.TableSpan]*MysqlSinkTask),
+		tableStatuses: make(map[*common.TableSpan]TableStatus),
+		// tableProgressMap: make(map[*common.TableSpan]*types.TableProgress),
+		// eventChs:         make(map[*common.TableSpan]chan *common.TxnEvent),
+		// tasks:            make(map[*common.TableSpan]*MysqlSinkTask),
 	}
 
 	mysqlSink.initWorker(workerCount, cfg, db)
@@ -74,39 +101,41 @@ func NewMysqlSink(workerCount int, cfg *writer.MysqlConfig, db *sql.DB) *MysqlSi
 }
 
 func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql.DB) {
-	// 初始化 ddl/syncpoint 用的 worker
+	// init ddl worker, which is for ddl event and sync point event
 	s.ddlWorker = &worker.MysqlDDLWorker{MysqlWriter: writer.NewMysqlWriter(db, cfg)}
 
-	// 初始化 dml worker 相关 task -- 这些是长时间 run 的 task
+	// dml worker task will deal with all the dml events
 	for i := 0; i < workerCount; i++ {
 		threadpool.GetTaskSchedulerInstance().WorkerTaskScheduler.Submit(worker.NewMysqlWorkerDMLEventTask(s.conflictDetector.GetOutChByCacheID(int64(i)), db, cfg, 128))
 	}
 }
 
 func (s *MysqlSink) AddDMLEvent(tableSpan *common.TableSpan, event *common.TxnEvent) {
-	s.mutex.Lock() // TODO:改成读写锁
-	defer s.mutex.Unlock()
-	if ch, ok := s.eventChs[tableSpan]; ok {
-		if tableProgress, ok := s.tableProgressMap[tableSpan]; ok {
-			tableProgress.Add(event)
-		}
-		ch <- event
-	} else {
+	s.mutex.RLock()
+	tableStatus, ok := s.tableStatuses[tableSpan]
+	s.mutex.Unlock()
+	if !ok {
 		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
-		// TODO: return error here
+		return
 	}
+	tableStatus.getProgress().Add(event)
+	tableStatus.getCh() <- event
 }
 
 func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *common.TxnEvent) { // 或许 ddl 也可以考虑有专用的 worker？
-	s.mutex.Lock() // TODO:改成读写锁
-	defer s.mutex.Unlock()
-
-	if tableProgress, ok := s.tableProgressMap[tableSpan]; ok { // 这里就可以释放锁了吧？
-		tableProgress.Add(event)
-		event.PostTxnFlushed = func() { tableProgress.Remove(event) }
-		task := worker.NewMysqlWorkerDDLEventTask(s.ddlWorker, event) // 先固定用 0 号 worker
-		threadpool.GetTaskSchedulerInstance().WorkerTaskScheduler.Submit(task)
+	s.mutex.RLock() // TODO:改成读写锁
+	tableStatus, ok := s.tableStatuses[tableSpan]
+	s.mutex.Unlock()
+	if !ok {
+		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
+		return
 	}
+
+	tableStatus.getProgress().Add(event)
+	event.PostTxnFlushed = func() { tableStatus.getProgress().Remove(event) }
+	task := worker.NewMysqlWorkerDDLEventTask(s.ddlWorker, event) // 先固定用 0 号 worker
+	threadpool.GetTaskSchedulerInstance().WorkerTaskScheduler.Submit(task)
+
 }
 
 func (s *MysqlSink) AddTableSpan(tableSpan *common.TableSpan) {
@@ -117,51 +146,59 @@ func (s *MysqlSink) AddTableSpan(tableSpan *common.TableSpan) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	s.tableProgressMap[tableSpan] = tableProgress
-	s.eventChs[tableSpan] = ch
-	s.tasks[tableSpan] = task
+	s.tableStatuses[tableSpan] = TableStatus{
+		ch:       ch,
+		task:     task,
+		progress: tableProgress,
+	}
 
 	threadpool.GetTaskSchedulerInstance().SinkTaskScheduler.Submit(task)
 }
 
+// Called when the dispatcher should be moved.
+// We will cancel the sink task, and not move the tableStatus now.
+// We need to wait the MysqlSink.Empty(tableSpan) to be true, which means all the events in the sink have been flushed.
+// 应该是心跳收集的时候，check 了这个表的 sink.IsEmpty 空的时候，改成 removed 状态，然后把这些剩下的删光
+func (s *MysqlSink) StopTableSpan(tableSpan *common.TableSpan) {
+	s.mutex.Lock()
+	tableStatus, ok := s.tableStatuses[tableSpan]
+	if !ok {
+		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
+		s.mutex.Unlock()
+		return
+	}
+	tableStatus.getTask().Cancel()
+	delete(s.tableStatuses, tableSpan)
+	s.mutex.Unlock()
+}
+
+// Called when the MysqlSink.Empty(tableSpan) to be true, and remove the tableSpan from Sink now.
 func (s *MysqlSink) RemoveTableSpan(tableSpan *common.TableSpan) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-
-	if task, ok := s.tasks[tableSpan]; ok {
-		task.Cancel()
-
-		delete(s.tableProgressMap, tableSpan)
-		delete(s.eventChs, tableSpan)
-		delete(s.tasks, tableSpan)
-
-	} else {
-		// Error
-	}
+	delete(s.tableStatuses, tableSpan)
 }
 
 func (s *MysqlSink) IsEmpty(tableSpan *common.TableSpan) bool {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	if tableProgress, ok := s.tableProgressMap[tableSpan]; ok {
-		return tableProgress.Empty()
+	s.mutex.RLock()
+	tableStatus, ok := s.tableStatuses[tableSpan]
+	s.mutex.RUnlock()
+	if !ok {
+		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
+		return false
 	}
-
-	log.Error("Invalid table span in MysqlSink::isEmpty", zap.Any("tableSpan", tableSpan))
-	//return error
-	return false
+	return tableStatus.getProgress().Empty()
 }
 
 func (s *MysqlSink) GetSmallestCommitTs(tableSpan *common.TableSpan) uint64 {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.mutex.RLock()
+	tableStatus, ok := s.tableStatuses[tableSpan]
+	s.mutex.RUnlock()
 
-	if tableProgress, ok := s.tableProgressMap[tableSpan]; ok {
-		return tableProgress.SmallestCommitTs()
+	if !ok {
+		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
+		return math.MaxUint64
 	}
 
-	log.Error("Invalid table span in MysqlSink::isEmpty", zap.Any("tableSpan", tableSpan))
-	//return error
-	return 0 //给个 error 最后
+	return tableStatus.getProgress().SmallestCommitTs()
 }

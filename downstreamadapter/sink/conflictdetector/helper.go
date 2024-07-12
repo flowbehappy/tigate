@@ -18,7 +18,7 @@ import (
 	"hash/fnv"
 	"strings"
 
-	"github.com/flowbehappy/tigate/common"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tiflow/cdc/model"
