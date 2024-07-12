@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/rpc"
@@ -24,6 +25,8 @@ const (
 	TypeHeartBeatRequest
 	TypeHeartBeatResponse
 	TypeScheduleDispatcherRequest
+	TypeEventFeed
+	TypeRegisterDispatcherRequest
 	TypeBootstrapMaintainerRequest
 )
 
@@ -43,6 +46,10 @@ func (t IOType) String() string {
 		return "HeartBeatResponse"
 	case TypeScheduleDispatcherRequest:
 		return "ScheduleDispatcherRequest"
+	case TypeEventFeed:
+		return "EventFeed"
+	case TypeRegisterDispatcherRequest:
+		return "RegisterDispatcherRequest"
 	case TypeBootstrapMaintainerRequest:
 		return "BootstrapMaintainerRequest"
 	default:
@@ -164,6 +171,42 @@ func (s *ScheduleDispatcherRequest) decode(data []byte) error {
 	return s.Unmarshal(data)
 }
 
+type EventFeed struct {
+	*eventpb.EventFeed
+}
+
+func (f *EventFeed) encode(buf []byte) []byte {
+	data, err := f.Marshal()
+	if err != nil {
+		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (f *EventFeed) decode(data []byte) error {
+	return f.Unmarshal(data)
+}
+
+type RegisterDispatcherRequest struct {
+	*eventpb.RegisterDispatcherRequest
+}
+
+func (r *RegisterDispatcherRequest) encode(buf []byte) []byte {
+	data, err := f.Marshal()
+	if err != nil {
+		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (r *RegisterDispatcherRequest) decode(data []byte) error {
+	return f.Unmarshal(data)
+}
+
 type IOTypeT interface {
 	encode(buf []byte) []byte
 	decode(data []byte) error
@@ -194,6 +237,10 @@ func CastTo(m interface{}, ioType IOType) IOTypeT {
 		return m.(*HeartBeatResponse)
 	case TypeScheduleDispatcherRequest:
 		return m.(*ScheduleDispatcherRequest)
+	case TypeEventFeed:
+		return m.(*EventFeed)
+	case TypeRegisterDispatcherRequest:
+		return m.(*RegisterDispatcherRequest)
 	case TypeBootstrapMaintainerRequest:
 		return m.(*MaintainerBootstrapRequest)
 	default:
