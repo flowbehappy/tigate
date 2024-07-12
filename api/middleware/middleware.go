@@ -19,7 +19,7 @@ import (
 	"strconv"
 	"time"
 
-	appctx "github.com/flowbehappy/tigate/common/context"
+	appctx "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/gin-gonic/gin"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"

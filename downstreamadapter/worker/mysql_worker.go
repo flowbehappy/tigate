@@ -17,8 +17,8 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 
 	"github.com/pingcap/log"

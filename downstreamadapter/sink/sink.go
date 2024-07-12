@@ -13,7 +13,7 @@
 
 package sink
 
-import "github.com/flowbehappy/tigate/common"
+import "github.com/flowbehappy/tigate/pkg/common"
 
 type Sink interface {
 	AddDMLEvent(tableSpan *common.TableSpan, event *common.TxnEvent)

@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/common"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 )
 

@@ -1,7 +1,7 @@
 package eventservice
 
 import (
-	. "github.com/flowbehappy/tigate/common"
+	. "github.com/flowbehappy/tigate/pkg/common"
 	"github.com/google/uuid"
 )
 
