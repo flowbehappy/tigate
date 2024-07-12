@@ -16,7 +16,6 @@ package coordinator
 import (
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/google/uuid"
@@ -62,7 +61,7 @@ func (c *changefeed) IsAlive() bool {
 
 func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary bool) rpc.Message {
 	return &rpc.CoordinatorRequest{
-		To: messaging.ServerId(uuid.MustParse(server)),
+		To: uuid.MustParse(server),
 		DispatchMaintainerRequest: &rpc.DispatchMaintainerRequest{
 			AddMaintainerRequests: []*rpc.AddMaintainerRequest{
 				{
@@ -76,7 +75,7 @@ func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary boo
 
 func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) rpc.Message {
 	return &rpc.CoordinatorRequest{
-		To: messaging.ServerId(uuid.MustParse(server)),
+		To: uuid.MustParse(server),
 		DispatchMaintainerRequest: &rpc.DispatchMaintainerRequest{
 			RemoveMaintainerRequests: []*rpc.RemoveMaintainerRequest{
 				{

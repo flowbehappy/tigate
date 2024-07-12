@@ -20,14 +20,15 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
-// Manager is the manager of all changefeed maintainer in a ticdc node, each ticdc node will
-// start a Manager when the node is startup. the Manager should:
+// Manager is the manager of all changefeed maintainer in a ticdc wacher, each ticdc wacher will
+// start a Manager when the wacher is startup. the Manager should:
 // 1. handle bootstrap command from coordinator and return all changefeed maintainer status
 // 2. handle dispatcher command from coordinator: add or remove changefeed maintainer
 // 3. check maintainer liveness
@@ -121,6 +122,14 @@ func (m *Manager) Run(ctx context.Context) error {
 					m.sendMessages(response)
 				}
 			}
+
+			// cleanup removed maintainer
+			for _, cf := range m.maintainers {
+				if cf.removed.Load() {
+					cf.Cancel()
+					delete(m.maintainers, cf.id)
+				}
+			}
 		}
 	}
 }
@@ -137,7 +146,6 @@ func (m *Manager) sendMessages(msg *rpc.MaintainerManagerRequest) {
 		messaging.TypeBytes,
 		buf,
 	)
-	target.From = m.selfServerID
 	err = m.messageCenter.SendCommand(target)
 
 	if err != nil {
@@ -145,7 +153,7 @@ func (m *Manager) sendMessages(msg *rpc.MaintainerManagerRequest) {
 	}
 }
 
-// Close closes the module, it's a block call
+// Close closes the wacher, it's a block call
 func (m *Manager) Close(ctx context.Context) error {
 	return nil
 }
@@ -162,13 +170,14 @@ func (m *Manager) handleDispatchMaintainerRequest(
 		}
 		cf, ok := m.maintainers[req.ID]
 		if !ok {
-			cf = NewMaintainer(req.ID)
+			cf = NewMaintainer(req.ID, m.messageCenter)
 			m.maintainers[req.ID] = cf
+			if err := threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf); err != nil {
+				return errors.Trace(err)
+			}
 		}
-		cf.injectDispatchTableTask(task)
-		if err := cf.handleAddMaintainerTask(); err != nil {
-			return errors.Trace(err)
-		}
+		task.Maintainer = cf
+		cf.taskCh <- task
 	}
 
 	for _, req := range request.RemoveMaintainerRequests {
@@ -182,14 +191,12 @@ func (m *Manager) handleDispatchMaintainerRequest(
 			return nil
 		}
 		task := &dispatchMaintainerTask{
-			ID:       req.ID,
-			IsRemove: true,
-			status:   dispatchTaskReceived,
+			Maintainer: cf,
+			ID:         req.ID,
+			IsRemove:   true,
+			status:     dispatchTaskReceived,
 		}
-		cf.injectDispatchTableTask(task)
-		if err := cf.handleRemoveMaintainerTask(); err != nil {
-			return errors.Trace(err)
-		}
+		cf.taskCh <- task
 	}
 	return nil
 }

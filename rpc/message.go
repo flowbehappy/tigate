@@ -16,7 +16,7 @@ package rpc
 import (
 	"encoding/json"
 
-	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/google/uuid"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
 )
@@ -27,7 +27,7 @@ type Message interface {
 }
 
 type CoordinatorRequest struct {
-	To                        messaging.ServerId           `json:"-"`
+	To                        uuid.UUID                    `json:"-"`
 	BootstrapRequest          *CoordinatorBootstrapRequest `json:"bootstrap_request"`
 	DispatchMaintainerRequest *DispatchMaintainerRequest   `json:"dispatch_maintainer_request"`
 }
@@ -92,4 +92,14 @@ type MaintainerStatus struct {
 	ChangefeedState model.FeedState    `json:"changefeed_state"`
 	SchedulerState  int                `json:"scheduler_state"`
 	CheckpointTs    uint64             `json:"checkpoint_ts"`
+}
+
+type MaintainerBootstrapRequest struct {
+	To     uuid.UUID             `json:"-"`
+	ID     model.ChangeFeedID    `json:"id"`
+	Config *model.ChangeFeedInfo `json:"config"`
+}
+
+func (m *MaintainerBootstrapRequest) Encode() ([]byte, error) {
+	return json.Marshal(m)
 }

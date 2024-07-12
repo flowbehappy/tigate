@@ -30,7 +30,7 @@ import (
 )
 
 // Coordinator is the master of the ticdc cluster,
-// 1. schedules changefeed maintainer to ticdc node
+// 1. schedules changefeed maintainer to ticdc wacher
 // 2. save changefeed checkpoint ts to etcd
 // 3. send checkpoint to downstream
 // 4. manager gc safe point
@@ -45,7 +45,6 @@ type coordinator struct {
 	scheduler     scheduler.Scheduler
 	messageCenter messaging.MessageCenter
 	nodeInfo      *model.CaptureInfo
-	tick          *time.Ticker
 
 	changefeeds map[model.ChangeFeedID]changefeed
 
@@ -63,7 +62,6 @@ func NewCoordinator(capture *model.CaptureInfo,
 	messageCenter messaging.MessageCenter,
 	version int64) Coordinator {
 	c := &coordinator{
-		tick:          time.NewTicker(time.Second),
 		scheduler:     scheduler.NewCombineScheduler(scheduler.NewBasicScheduler(1000)),
 		messageCenter: messageCenter,
 		version:       version,
@@ -236,7 +234,7 @@ func (c *coordinator) checkLiveness() ([]rpc.Message, error) {
 
 func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message {
 	return &rpc.CoordinatorRequest{
-		To: messaging.ServerId(uuid.MustParse(captureID)),
+		To: uuid.MustParse(captureID),
 		BootstrapRequest: &rpc.CoordinatorBootstrapRequest{
 			Version: c.version,
 		},
@@ -251,10 +249,9 @@ func (c *coordinator) sendMessages(msgs []rpc.Message) {
 			log.Error("failed to encode coordinator request", zap.Any("msg", msg), zap.Error(err))
 			continue
 		}
-		targetMsg := messaging.NewTargetMessage(creq.To,
+		targetMsg := messaging.NewTargetMessage(messaging.ServerId(creq.To),
 			"maintainer-manager",
 			messaging.TypeBytes, buf)
-		targetMsg.From = messaging.ServerId(uuid.MustParse(c.nodeInfo.ID))
 		err = c.messageCenter.SendCommand(targetMsg)
 		if err != nil {
 			log.Error("failed to send coordinator request", zap.Any("msg", msg), zap.Error(err))

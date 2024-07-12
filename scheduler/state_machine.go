@@ -94,7 +94,7 @@ func (r SchedulerStatus) String() string {
 	}
 }
 
-// ComponentStatus is the state in inferior node side
+// ComponentStatus is the state in inferior wacher side
 // Absent -> Preparing -> Prepared -> Working -> Stopping -> Stopped
 // todo: define it in pb file
 type ComponentStatus int
@@ -469,7 +469,7 @@ func (s *StateMachine) pollOnPrepare(
 			return nil, true, nil
 		}
 	case ComponentStatusWorking:
-		// moving state, and the primary node still report status
+		// moving state, and the primary wacher still report status
 		if s.Primary == captureID {
 			s.Inferior.UpdateStatus(input)
 			return nil, false, nil

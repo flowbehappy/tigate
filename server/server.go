@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/maintainer"
+	"github.com/flowbehappy/tigate/server/wacher"
 	"github.com/pingcap/tiflow/pkg/tcpserver"
 
 	"github.com/flowbehappy/tigate/coordinator"
@@ -111,7 +112,7 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	c.subModules = []SubModule{
-		NewCaptureManager(c.session, c.EtcdClient, c.messageCenter),
+		watcher.NewCaptureManager(c.session, c.EtcdClient, c.messageCenter),
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener(), c.messageCenter),
@@ -145,7 +146,7 @@ func (c *serverImpl) Run(stdCtx context.Context) error {
 	for _, sub := range c.subModules {
 		func(m SubModule) {
 			g.Go(func() error {
-				log.Info("starting sub module", zap.String("module", m.Name()))
+				log.Info("starting sub wacher", zap.String("wacher", m.Name()))
 				return m.Run(stdCtx)
 			})
 		}(sub)
@@ -193,8 +194,8 @@ func (c *serverImpl) Close(ctx context.Context) {
 
 	for _, subModule := range c.subModules {
 		if err := subModule.Close(ctx); err != nil {
-			log.Warn("failed to close sub module",
-				zap.String("module", subModule.Name()),
+			log.Warn("failed to close sub wacher",
+				zap.String("wacher", subModule.Name()),
 				zap.Error(err))
 		}
 	}

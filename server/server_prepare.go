@@ -24,6 +24,7 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/server/wacher"
 	"github.com/flowbehappy/tigate/version"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -88,7 +89,7 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	log.Info("create etcdCli", zap.Strings("endpoints", c.pdEndpoints))
 	// we do not pass a `context` to create an etcd client,
 	// to prevent it's cancelled when the server is closing.
-	// For example, when the non-owner node goes offline,
+	// For example, when the non-owner wacher goes offline,
 	// it would resign the campaign key which was put by call `campaign`,
 	// if this is not done due to the passed context cancelled,
 	// the key will be kept for the lease TTL, which is 10 seconds,
@@ -107,7 +108,7 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 
 	// Collect all endpoints from pd here to make the server more robust.
 	// Because in some scenarios, the deployer may only provide one pd endpoint,
-	// this will cause the TiCDC server to fail to restart when some pd node is down.
+	// this will cause the TiCDC server to fail to restart when some pd wacher is down.
 	allPDEndpoints, err := pdAPIClient.CollectMemberEndpoints(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -156,7 +157,7 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	mcCfg := config.NewDefaultMessageCenterConfig()
-	c.messageCenter = messaging.NewMessageCenter(id, TempEpoch, mcCfg)
+	c.messageCenter = messaging.NewMessageCenter(id, watcher.TempEpoch, mcCfg)
 	return nil
 }
 

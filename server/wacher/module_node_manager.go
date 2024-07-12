@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package watcher
 
 import (
 	"context"
@@ -116,7 +116,7 @@ func (c *NodeManager) Run(ctx context.Context) error {
 		etcd.BaseKey(c.etcdClient.GetClusterID())+"/__cdc_meta__/capture",
 		util.RoleOwner.String())
 
-	return watcher.runEtcdWorker(ctx, c,
+	return watcher.RunEtcdWorker(ctx, c,
 		orchestrator.NewGlobalState(c.etcdClient.GetClusterID(),
 			cfg.CaptureSessionTTL), time.Millisecond*50)
 }
