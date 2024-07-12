@@ -194,7 +194,7 @@ type RegisterDispatcherRequest struct {
 }
 
 func (r *RegisterDispatcherRequest) encode(buf []byte) []byte {
-	data, err := f.Marshal()
+	data, err := r.Marshal()
 	if err != nil {
 		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
 		return buf
@@ -204,7 +204,7 @@ func (r *RegisterDispatcherRequest) encode(buf []byte) []byte {
 }
 
 func (r *RegisterDispatcherRequest) decode(data []byte) error {
-	return f.Unmarshal(data)
+	return r.Unmarshal(data)
 }
 
 type IOTypeT interface {

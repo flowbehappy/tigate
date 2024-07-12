@@ -188,7 +188,7 @@ func columnData2Column(col *timodel.ColumnData, tableInfo *TableInfo) *Column {
 	colID := col.ColumnID
 	offset, ok := tableInfo.columnsOffset[colID]
 	if !ok {
-		log.Panic("invalid column id",
+		log.Warn("invalid column id",
 			zap.Int64("columnID", colID),
 			zap.Any("tableInfo", tableInfo))
 	}
