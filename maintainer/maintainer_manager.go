@@ -20,8 +20,6 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
-	"github.com/flowbehappy/tigate/utils/threadpool"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -71,7 +69,7 @@ func (m *Manager) Name() string {
 }
 
 func (m *Manager) Run(ctx context.Context) error {
-	tick := time.NewTicker(time.Millisecond * 100)
+	tick := time.NewTicker(time.Millisecond * 1000)
 	for {
 		select {
 		case <-ctx.Done():
@@ -172,9 +170,10 @@ func (m *Manager) handleDispatchMaintainerRequest(
 		if !ok {
 			cf = NewMaintainer(req.ID, m.messageCenter)
 			m.maintainers[req.ID] = cf
-			if err := threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf); err != nil {
-				return errors.Trace(err)
-			}
+			//if err := threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf); err != nil {
+			//	return errors.Trace(err)
+			//}
+			go cf.Run()
 		}
 		task.Maintainer = cf
 		cf.taskCh <- task

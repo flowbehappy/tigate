@@ -31,11 +31,17 @@ type changefeed struct {
 	Status *model.ChangeFeedStatus
 
 	lastHeartBeat time.Time
+
+	c *coordinator
 }
 
-func NewChangefeed(ID scheduler.InferiorID) scheduler.Inferior {
+func (c *coordinator) NewChangefeed(ID scheduler.InferiorID) scheduler.Inferior {
+	cfID := model.ChangeFeedID(ID.(ChangefeedID))
 	return &changefeed{
-		ID: model.ChangeFeedID(ID.(ChangefeedID)),
+		ID: cfID,
+		c:  c,
+		//Info:   allChangefeeds[cfID],
+		//Status: &model.ChangeFeedStatus{},
 	}
 }
 
@@ -60,8 +66,7 @@ func (c *changefeed) IsAlive() bool {
 }
 
 func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary bool) rpc.Message {
-	return &rpc.CoordinatorRequest{
-		To: uuid.MustParse(server),
+	return &rpc.CoordinatorRequest{To: uuid.MustParse(server),
 		DispatchMaintainerRequest: &rpc.DispatchMaintainerRequest{
 			AddMaintainerRequests: []*rpc.AddMaintainerRequest{
 				{
@@ -69,20 +74,55 @@ func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary boo
 					Config:      c.Info,
 					Status:      c.Status,
 					IsSecondary: secondary,
-				}}},
+				},
+			},
+		},
 	}
+	//msg, ok := c.c.dispatchMsgs[server]
+	//if !ok {
+	//	msg = &rpc.CoordinatorRequest{To: uuid.MustParse(server),
+	//		DispatchMaintainerRequest: &rpc.DispatchMaintainerRequest{
+	//			AddMaintainerRequests: make([]*rpc.AddMaintainerRequest, 0),
+	//		},
+	//	}
+	//	c.c.dispatchMsgs[server] = msg
+	//}
+	//msg.DispatchMaintainerRequest.AddMaintainerRequests = append(msg.DispatchMaintainerRequest.AddMaintainerRequests,
+	//	&rpc.AddMaintainerRequest{
+	//		ID:          c.ID,
+	//		Config:      c.Info,
+	//		Status:      c.Status,
+	//		IsSecondary: secondary,
+	//	})
+	//return msg
 }
 
 func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) rpc.Message {
-	return &rpc.CoordinatorRequest{
-		To: uuid.MustParse(server),
+	return &rpc.CoordinatorRequest{To: uuid.MustParse(server),
 		DispatchMaintainerRequest: &rpc.DispatchMaintainerRequest{
 			RemoveMaintainerRequests: []*rpc.RemoveMaintainerRequest{
-				{
+				&rpc.RemoveMaintainerRequest{
 					ID:      c.ID,
 					Cascade: false,
-				}}},
+				},
+			},
+		},
 	}
+	//msg, ok := c.c.dispatchMsgs[server]
+	//if !ok {
+	//	msg = &rpc.CoordinatorRequest{To: uuid.MustParse(server),
+	//		DispatchMaintainerRequest: &rpc.DispatchMaintainerRequest{
+	//			RemoveMaintainerRequests: make([]*rpc.RemoveMaintainerRequest, 0),
+	//		},
+	//	}
+	//	c.c.dispatchMsgs[server] = msg
+	//}
+	//msg.DispatchMaintainerRequest.RemoveMaintainerRequests = append(msg.DispatchMaintainerRequest.RemoveMaintainerRequests,
+	//	&rpc.RemoveMaintainerRequest{
+	//		ID:      c.ID,
+	//		Cascade: false,
+	//	})
+	//return msg
 }
 
 type ChangefeedStatus struct {
@@ -103,11 +143,12 @@ func (c *ChangefeedStatus) GetInferiorState() scheduler.ComponentStatus {
 type ChangefeedID model.ChangeFeedID
 
 func (m ChangefeedID) String() string {
-	return model.ChangeFeedID(m).String()
+	return model.ChangeFeedID(m).ID
 }
+
 func (m ChangefeedID) Equal(id scheduler.InferiorID) bool {
-	return model.ChangeFeedID(m).String() == id.String()
+	return model.ChangeFeedID(m).ID == id.(ChangefeedID).ID
 }
 func (m ChangefeedID) Less(id scheduler.InferiorID) bool {
-	return model.ChangeFeedID(m).String() < id.String()
+	return model.ChangeFeedID(m).ID < id.(ChangefeedID).ID
 }

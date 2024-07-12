@@ -15,13 +15,31 @@ package coordinator
 
 import (
 	"testing"
+	"time"
 
-	"github.com/flowbehappy/tigate/utils/threadpool"
+	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"go.uber.org/zap"
 )
 
 func TestCoordinatorRun(t *testing.T) {
-	c := NewCoordinator(&model.CaptureInfo{}, 1)
-	sc := threadpool.NewTaskScheduler(&threadpool.DefaultTaskSchedulerConfig, "coordinator")
-	sc.Submit(c.(threadpool.Task))
+	allM := scheduler.NewBtreeMap[scheduler.InferiorID, *scheduler.StateMachine]()
+	allGoM := make(map[model.ChangeFeedID]*scheduler.StateMachine)
+	for id, _ := range allChangefeeds {
+		allM.ReplaceOrInsert(ChangefeedID(id), &scheduler.StateMachine{})
+		allGoM[id] = &scheduler.StateMachine{}
+	}
+
+	now := time.Now()
+	for id, _ := range allChangefeeds {
+		_, _ = allM.Get(ChangefeedID(id))
+	}
+	log.Info("TestCoordinatorRun", zap.Duration("time", time.Since(now)))
+
+	now = time.Now()
+	for id, _ := range allChangefeeds {
+		_, _ = allGoM[id]
+	}
+	log.Info("TestCoordinatorRun", zap.Duration("time", time.Since(now)))
 }

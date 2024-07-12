@@ -15,6 +15,7 @@ package coordinator
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -41,8 +42,8 @@ type Coordinator interface {
 }
 
 type coordinator struct {
-	supervisor    *scheduler.Supervisor
-	scheduler     scheduler.Scheduler
+	supervisor    *Supervisor
+	scheduler     Scheduler
 	messageCenter messaging.MessageCenter
 	nodeInfo      *model.CaptureInfo
 
@@ -56,20 +57,23 @@ type coordinator struct {
 	msgBuf  []*messaging.TargetMessage
 
 	lastCheckTime time.Time
+
+	dispatchMsgs map[model.CaptureID]*rpc.CoordinatorRequest
 }
 
 func NewCoordinator(capture *model.CaptureInfo,
 	messageCenter messaging.MessageCenter,
 	version int64) Coordinator {
 	c := &coordinator{
-		scheduler:     scheduler.NewCombineScheduler(scheduler.NewBasicScheduler(1000)),
+		scheduler:     NewCombineScheduler(NewBasicScheduler(1000)),
 		messageCenter: messageCenter,
 		version:       version,
 		nodeInfo:      capture,
+		dispatchMsgs:  make(map[model.CaptureID]*rpc.CoordinatorRequest),
 	}
-	c.supervisor = scheduler.NewSupervisor(
+	c.supervisor = NewSupervisor(
 		CoordinatorID(capture.ID),
-		NewChangefeed,
+		c.NewChangefeed,
 		c.newBootstrapMessage,
 	)
 	// receive messages
@@ -82,6 +86,19 @@ func NewCoordinator(capture *model.CaptureInfo,
 	return c
 }
 
+var allChangefeeds = make(map[model.ChangeFeedID]*model.ChangeFeedInfo)
+
+func init() {
+	for i := 0; i < 200000; i++ {
+		id := fmt.Sprintf("%d", i)
+		allChangefeeds[model.DefaultChangeFeedID(id)] = &model.ChangeFeedInfo{
+			ID: id,
+			//Config:  config.GetDefaultReplicaConfig(),
+			SinkURI: "blackhole://",
+		}
+	}
+}
+
 func (c *coordinator) Tick(ctx context.Context,
 	rawState orchestrator.ReactorState) (orchestrator.ReactorState, error) {
 	state := rawState.(*orchestrator.GlobalReactorState)
@@ -92,7 +109,7 @@ func (c *coordinator) Tick(ctx context.Context,
 		absentTask := 0
 		commitTask := 0
 		removingTask := 0
-		c.supervisor.GetInferiors().Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
+		for _, value := range c.supervisor.GetInferiors() {
 			switch value.State {
 			case scheduler.SchedulerStatusAbsent:
 				absentTask++
@@ -105,8 +122,7 @@ func (c *coordinator) Tick(ctx context.Context,
 			case scheduler.SchedulerStatusRemoving:
 				removingTask++
 			}
-			return true
-		})
+		}
 
 		log.Info("changefeed status",
 			zap.Int("absent", absentTask),
@@ -139,22 +155,23 @@ func (c *coordinator) Tick(ctx context.Context,
 	}
 
 	changed := false
-	allChangefeedID := make([]scheduler.InferiorID, 0)
+	allChangefeedID := make([]model.ChangeFeedID, 0)
 	// check all changefeeds.
-	for changefeedID, reactor := range state.Changefeeds {
+	for _, reactor := range allChangefeeds {
+		changefeedID := model.DefaultChangeFeedID(reactor.ID)
 		_, exist := c.supervisor.GetInferior(ChangefeedID(changefeedID))
 		if !exist {
 			// check if changefeed should be running
-			if !shouldRunChangefeed(reactor.Info.State) {
+			if !shouldRunChangefeed(reactor.State) {
 				continue
 			}
 			changed = true
-			allChangefeedID = append(allChangefeedID, ChangefeedID(changefeedID))
+			allChangefeedID = append(allChangefeedID, changefeedID)
 		} else {
-			if !shouldRunChangefeed(reactor.Info.State) {
+			if !shouldRunChangefeed(reactor.State) {
 				changed = true
 			} else {
-				allChangefeedID = append(allChangefeedID, ChangefeedID(changefeedID))
+				allChangefeedID = append(allChangefeedID, changefeedID)
 			}
 		}
 	}
@@ -219,16 +236,14 @@ func (c *coordinator) AsyncStop() {
 
 func (c *coordinator) checkLiveness() ([]rpc.Message, error) {
 	var msgs []rpc.Message
-	c.supervisor.GetInferiors().Ascend(
-		func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
-			if !value.Inferior.IsAlive() {
-				log.Info("found inactive inferior", zap.Any("ID", key))
-				c.supervisor.GetInferiors().Delete(key)
-				// clean messages
-				// trigger schedule task
-			}
-			return true
-		})
+	for key, value := range c.supervisor.GetInferiors() {
+		if !value.Inferior.IsAlive() {
+			log.Info("found inactive inferior", zap.Any("ID", key))
+			//c.supervisor.GetInferiors().Delete(key)
+			// clean messages
+			// trigger schedule task
+		}
+	}
 	return msgs, nil
 }
 
@@ -260,7 +275,7 @@ func (c *coordinator) sendMessages(msgs []rpc.Message) {
 	}
 }
 
-func (c *coordinator) scheduleMaintainer(allInferiors []scheduler.InferiorID) ([]rpc.Message, error) {
+func (c *coordinator) scheduleMaintainer(allInferiors []model.ChangeFeedID) ([]rpc.Message, error) {
 	if !c.supervisor.CheckAllCaptureInitialized() {
 		return nil, nil
 	}
@@ -270,6 +285,16 @@ func (c *coordinator) scheduleMaintainer(allInferiors []scheduler.InferiorID) ([
 		c.supervisor.GetInferiors(),
 	)
 	return c.supervisor.HandleScheduleTasks(tasks)
+	//rpc, err := c.supervisor.HandleScheduleTasks(tasks)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//var msgs []rpc.Message
+	//for _, task := range c.dispatchMsgs {
+	//	msgs = append(msgs, task)
+	//}
+	//c.dispatchMsgs = make(map[model.CaptureID]*rpc.CoordinatorRequest)
+	//return msgs, nil
 }
 
 func (c *coordinator) handleMessages() ([]rpc.Message, error) {

@@ -11,12 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package coordinator
 
 import (
 	"time"
 
 	"github.com/flowbehappy/tigate/rpc"
+	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
@@ -34,20 +35,20 @@ const (
 )
 
 type Supervisor struct {
-	stateMachines Map[InferiorID, *StateMachine]
-	runningTasks  Map[InferiorID, *ScheduleTask]
+	stateMachines map[model.ChangeFeedID]*scheduler.StateMachine
+	runningTasks  map[model.ChangeFeedID]*scheduler.ScheduleTask
 
 	maxTaskConcurrency int
-	NewInferior        func(InferiorID) Inferior
+	NewInferior        func(scheduler.InferiorID) scheduler.Inferior
 
 	// self ID
-	ID          InferiorID
+	ID          scheduler.InferiorID
 	initialized bool
 
 	captures map[model.CaptureID]*CaptureStatus
 
 	// track all status reported by remote inferiors when bootstrap
-	initStatus map[model.CaptureID][]InferiorStatus
+	initStatus map[model.CaptureID][]scheduler.InferiorStatus
 
 	bootstrapMessageFunc func(model.CaptureID) rpc.Message
 }
@@ -66,18 +67,18 @@ func NewCaptureStatus(capture *model.CaptureInfo) *CaptureStatus {
 }
 
 func NewSupervisor(
-	ID InferiorID,
-	newInferiorFunc func(InferiorID) Inferior,
+	ID scheduler.InferiorID,
+	newInferiorFunc func(scheduler.InferiorID) scheduler.Inferior,
 	bootstrapMessageFunc func(model.CaptureID) rpc.Message) *Supervisor {
 	return &Supervisor{
 		ID:                   ID,
-		stateMachines:        NewBtreeMap[InferiorID, *StateMachine](),
-		runningTasks:         NewBtreeMap[InferiorID, *ScheduleTask](),
+		stateMachines:        make(map[model.ChangeFeedID]*scheduler.StateMachine),
+		runningTasks:         map[model.ChangeFeedID]*scheduler.ScheduleTask{},
 		NewInferior:          newInferiorFunc,
 		initialized:          false,
 		captures:             make(map[model.CaptureID]*CaptureStatus),
 		bootstrapMessageFunc: bootstrapMessageFunc,
-		initStatus:           make(map[model.CaptureID][]InferiorStatus),
+		initStatus:           make(map[model.CaptureID][]scheduler.InferiorStatus),
 		maxTaskConcurrency:   10000,
 	}
 }
@@ -87,13 +88,14 @@ func (s *Supervisor) GetAllCaptures() map[model.CaptureID]*CaptureStatus {
 }
 
 // GetInferiors return all state machines, caller should not modify it
-func (s *Supervisor) GetInferiors() Map[InferiorID, *StateMachine] {
+func (s *Supervisor) GetInferiors() map[model.ChangeFeedID]*scheduler.StateMachine {
 	return s.stateMachines
 }
 
 // GetInferior returns the state machine for that inferior id, caller should not modify it
-func (s *Supervisor) GetInferior(id InferiorID) (*StateMachine, bool) {
-	return s.stateMachines.Get(id)
+func (s *Supervisor) GetInferior(id scheduler.InferiorID) (*scheduler.StateMachine, bool) {
+	m, ok := s.stateMachines[model.ChangeFeedID(id.(ChangefeedID))]
+	return m, ok
 }
 
 // HandleAliveCaptureUpdate update captures liveness.
@@ -154,7 +156,7 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 
 // UpdateCaptureStatus update the server status after receive a bootstrap message from remote
 // supervisor will cache the status if the supervisor is not initialized
-func (s *Supervisor) UpdateCaptureStatus(from model.CaptureID, statuses []InferiorStatus) {
+func (s *Supervisor) UpdateCaptureStatus(from model.CaptureID, statuses []scheduler.InferiorStatus) {
 	c, ok := s.captures[from]
 	if !ok {
 		log.Warn("server is not found",
@@ -177,11 +179,12 @@ func (s *Supervisor) UpdateCaptureStatus(from model.CaptureID, statuses []Inferi
 
 // HandleStatus handles inferior status reported by Inferior
 func (s *Supervisor) HandleStatus(
-	from model.CaptureID, statuses []InferiorStatus,
+	from model.CaptureID, statuses []scheduler.InferiorStatus,
 ) ([]rpc.Message, error) {
 	sentMsgs := make([]rpc.Message, 0)
 	for _, status := range statuses {
-		stateMachine, ok := s.stateMachines.Get(status.GetInferiorID())
+		cfStatus := status.(*ChangefeedStatus)
+		stateMachine, ok := s.stateMachines[model.ChangeFeedID(cfStatus.ID)]
 		if !ok {
 			log.Info("ignore status no inferior found",
 				zap.String("ID", s.ID.String()),
@@ -198,7 +201,7 @@ func (s *Supervisor) HandleStatus(
 				zap.String("ID", s.ID.String()),
 				zap.Any("from", from),
 				zap.String("inferiorID", status.GetInferiorID().String()))
-			s.stateMachines.Delete(status.GetInferiorID())
+			delete(s.stateMachines, model.ChangeFeedID(cfStatus.ID))
 		}
 		sentMsgs = append(sentMsgs, msgs...)
 	}
@@ -210,50 +213,44 @@ func (s *Supervisor) HandleCaptureChanges(
 	removed []model.CaptureID,
 ) ([]rpc.Message, error) {
 	if s.initStatus != nil {
-		if s.stateMachines.Len() != 0 {
+		if len(s.stateMachines) != 0 {
 			log.Panic("init again",
 				zap.Any("init", s.initStatus),
-				zap.Any("statemachines", s.stateMachines.Len()))
+				zap.Any("statemachines", s.stateMachines))
 		}
-		statusMap := make(map[InferiorID]map[model.CaptureID]InferiorStatus)
+		statusMap := make(map[scheduler.InferiorID]map[model.CaptureID]scheduler.InferiorStatus)
 		for captureID, statuses := range s.initStatus {
 			for _, status := range statuses {
 				if _, ok := statusMap[status.GetInferiorID()]; !ok {
-					statusMap[status.GetInferiorID()] = map[model.CaptureID]InferiorStatus{}
+					statusMap[status.GetInferiorID()] = map[model.CaptureID]scheduler.InferiorStatus{}
 				}
 				statusMap[status.GetInferiorID()][captureID] = status
 			}
 		}
 		for id, status := range statusMap {
 			//todo: how to new inferior
-			statemachine, err := NewStateMachine(id, status, s.NewInferior(id))
+			statemachine, err := scheduler.NewStateMachine(id, status, s.NewInferior(id))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			s.stateMachines.ReplaceOrInsert(id, statemachine)
+			s.stateMachines[model.ChangeFeedID(id.(ChangefeedID))] = statemachine
 		}
 		s.initStatus = nil
 	}
 	sentMsgs := make([]rpc.Message, 0)
 	if removed != nil {
-		var err error
-		s.stateMachines.Ascend(func(id InferiorID, stateMachine *StateMachine) bool {
+		for id, stateMachine := range s.stateMachines {
 			for _, captureID := range removed {
-				msgs, affected, err1 := stateMachine.HandleCaptureShutdown(captureID)
+				msgs, affected, err := stateMachine.HandleCaptureShutdown(captureID)
 				if err != nil {
-					err = errors.Trace(err1)
-					return false
+					return nil, errors.Trace(err)
 				}
 				sentMsgs = append(sentMsgs, msgs...)
 				if affected {
 					// Cleanup its running task.
-					s.runningTasks.Delete(id)
+					delete(s.runningTasks, id)
 				}
 			}
-			return true
-		})
-		if err != nil {
-			return nil, errors.Trace(err)
 		}
 	}
 	return sentMsgs, nil
@@ -261,31 +258,30 @@ func (s *Supervisor) HandleCaptureChanges(
 
 // HandleScheduleTasks handles schedule tasks.
 func (s *Supervisor) HandleScheduleTasks(
-	tasks []*ScheduleTask,
+	tasks []*scheduler.ScheduleTask,
 ) ([]rpc.Message, error) {
 	// Check if a running task is finished.
-	var toBeDeleted []InferiorID
-	s.runningTasks.Ascend(func(id InferiorID, task *ScheduleTask) bool {
-		if stateMachine, ok := s.stateMachines.Get(id); ok {
+	var toBeDeleted []model.ChangeFeedID
+	for id, _ := range s.runningTasks {
+		if stateMachine, ok := s.stateMachines[id]; ok {
 			// If inferior is back to Replicating or Removed,
 			// the running task is finished.
-			if stateMachine.State == SchedulerStatusWorking || stateMachine.HasRemoved() {
+			if stateMachine.State == scheduler.SchedulerStatusWorking || stateMachine.HasRemoved() {
 				toBeDeleted = append(toBeDeleted, id)
 			}
 		} else {
 			// No inferior found, remove the task
 			toBeDeleted = append(toBeDeleted, id)
 		}
-		return true
-	})
-	for _, span := range toBeDeleted {
-		s.runningTasks.Delete(span)
+	}
+	for _, id := range toBeDeleted {
+		delete(s.runningTasks, id)
 	}
 
 	sentMsgs := make([]rpc.Message, 0)
 	for _, task := range tasks {
 		// Check if accepting one more task exceeds maxTaskConcurrency.
-		if s.runningTasks.Len() == s.maxTaskConcurrency {
+		if len(s.runningTasks) == s.maxTaskConcurrency {
 			log.Debug("too many running task",
 				zap.String("id", s.ID.String()))
 			// Does not use break, in case there is burst balance task
@@ -293,7 +289,7 @@ func (s *Supervisor) HandleScheduleTasks(
 			continue
 		}
 
-		var id InferiorID
+		var id scheduler.InferiorID
 		if task.AddInferior != nil {
 			id = task.AddInferior.ID
 		} else if task.RemoveInferior != nil {
@@ -304,14 +300,15 @@ func (s *Supervisor) HandleScheduleTasks(
 
 		// Skip task if the inferior is already running a task,
 		// or the inferior has removed.
-		if _, ok := s.runningTasks.Get(id); ok {
+		cfID := model.ChangeFeedID(id.(ChangefeedID))
+		if _, ok := s.runningTasks[cfID]; ok {
 			log.Info("ignore task, already exists",
 				zap.String("id", s.ID.String()),
 				zap.Any("task", task))
 			continue
 		}
 		// it's remove or move inferior task, but we can not find the state machine
-		if _, ok := s.stateMachines.Get(id); !ok && task.AddInferior == nil {
+		if _, ok := s.stateMachines[cfID]; !ok && task.AddInferior == nil {
 			log.Info("ignore task, inferior not found",
 				zap.String("id", s.ID.String()),
 				zap.Any("task", task))
@@ -331,30 +328,32 @@ func (s *Supervisor) HandleScheduleTasks(
 			return nil, errors.Trace(err)
 		}
 		sentMsgs = append(sentMsgs, msgs...)
-		s.runningTasks.ReplaceOrInsert(id, task)
+		s.runningTasks[cfID] = task
 	}
 	return sentMsgs, nil
 }
 
 func (s *Supervisor) handleAddInferiorTask(
-	task *AddInferior,
+	task *scheduler.AddInferior,
 ) ([]rpc.Message, error) {
 	var err error
-	stateMachine, ok := s.stateMachines.Get(task.ID)
+	cfID := model.ChangeFeedID(task.ID.(ChangefeedID))
+	stateMachine, ok := s.stateMachines[cfID]
 	if !ok {
-		stateMachine, err = NewStateMachine(task.ID, nil, s.NewInferior(task.ID))
+		stateMachine, err = scheduler.NewStateMachine(task.ID, nil, s.NewInferior(task.ID))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		s.stateMachines.ReplaceOrInsert(task.ID, stateMachine)
+		s.stateMachines[cfID] = stateMachine
 	}
 	return stateMachine.HandleAddInferior(task.CaptureID)
 }
 
 func (s *Supervisor) handleRemoveInferiorTask(
-	task *RemoveInferior,
+	task *scheduler.RemoveInferior,
 ) ([]rpc.Message, error) {
-	stateMachine, ok := s.stateMachines.Get(task.ID)
+	cfID := model.ChangeFeedID(task.ID.(ChangefeedID))
+	stateMachine, ok := s.stateMachines[cfID]
 	if !ok {
 		log.Warn("statemachine not found",
 			zap.Stringer("ID", s.ID),
@@ -365,16 +364,17 @@ func (s *Supervisor) handleRemoveInferiorTask(
 		log.Info("inferior has removed",
 			zap.Stringer("ID", s.ID),
 			zap.Stringer("inferior", task.ID))
-		s.stateMachines.Delete(task.ID)
+		delete(s.stateMachines, cfID)
 		return nil, nil
 	}
 	return stateMachine.HandleRemoveInferior()
 }
 
 func (s *Supervisor) handleMoveInferiorTask(
-	task *MoveInferior,
+	task *scheduler.MoveInferior,
 ) ([]rpc.Message, error) {
-	stateMachine, ok := s.stateMachines.Get(task.ID)
+	cfID := model.ChangeFeedID(task.ID.(ChangefeedID))
+	stateMachine, ok := s.stateMachines[cfID]
 	if !ok {
 		log.Warn("statemachine not found",
 			zap.Stringer("ID", s.ID),

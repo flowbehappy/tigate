@@ -96,6 +96,32 @@ func (m *Maintainer) newBootstrapMessage(id model.CaptureID) rpc.Message {
 	}
 }
 
+func (m *Maintainer) Run() error {
+	for {
+		select {
+		case task := <-m.taskCh:
+			if err := task.Execute(context.Background()); err != nil {
+				log.Error("Execute task failed", zap.Error(err))
+			}
+		case <-m.tick.C:
+			// tick
+			// check changes
+			//msgs, removed := m.supervisor.HandleAliveCaptureUpdate(m.nodeManager.GetAliveCaptures())
+			//if len(msgs) > 0 {
+			//	m.sendMessages(msgs)
+			//}
+			//if len(removed) > 0 {
+			//msgs, err := m.supervisor.HandleCaptureChanges(removed)
+			//if err != nil {
+			//	log.Warn("handle changes failed", zap.Error(err))
+			//	break
+			//}
+			//m.sendMessages(msgs)
+			//}
+		}
+	}
+}
+
 func (m *Maintainer) Execute(timeout time.Duration) threadpool.TaskStatus {
 	timer := time.NewTimer(timeout)
 	for {
@@ -288,7 +314,7 @@ func (m *Maintainer) handleAddMaintainerTask() error {
 			}
 			state, changed = m.getAndUpdateMaintainerState(m.state)
 		case scheduler.ComponentStatusWorking:
-			log.Info("maintainer is working")
+			log.Info("maintainer is working", zap.String("id", m.id.ID))
 			m.task = nil
 			return nil
 		case scheduler.ComponentStatusPrepared:

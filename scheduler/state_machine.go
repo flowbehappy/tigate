@@ -730,13 +730,13 @@ func (s *StateMachine) pollOnRemoving(
 	return nil, false, nil
 }
 
-func (s *StateMachine) handleInferiorStatus(
+func (s *StateMachine) HandleInferiorStatus(
 	input InferiorStatus, from model.CaptureID,
 ) ([]rpc.Message, error) {
 	return s.poll(input, from)
 }
 
-func (s *StateMachine) handleAddInferior(
+func (s *StateMachine) HandleAddInferior(
 	captureID model.CaptureID,
 ) ([]rpc.Message, error) {
 	// Ignore add inferior if it's not in Absent state.
@@ -766,11 +766,11 @@ func (s *StateMachine) handleAddInferior(
 	return msgs, nil
 }
 
-func (s *StateMachine) handleMoveInferior(
+func (s *StateMachine) HandleMoveInferior(
 	dest model.CaptureID,
 ) ([]rpc.Message, error) {
 	// Ignore move inferior if it has been removed already.
-	if s.hasRemoved() {
+	if s.HasRemoved() {
 		log.Warn("move inferior is ignored",
 			zap.Any("statemachine", s))
 		return nil, nil
@@ -793,9 +793,9 @@ func (s *StateMachine) handleMoveInferior(
 	return s.poll(status, dest)
 }
 
-func (s *StateMachine) handleRemoveInferior() ([]rpc.Message, error) {
+func (s *StateMachine) HandleRemoveInferior() ([]rpc.Message, error) {
 	// Ignore remove inferior if it has been removed already.
-	if s.hasRemoved() {
+	if s.HasRemoved() {
 		log.Warn("remove inferior is ignored",
 			zap.Any("statemachine", s))
 		return nil, nil
@@ -816,10 +816,10 @@ func (s *StateMachine) handleRemoveInferior() ([]rpc.Message, error) {
 	return s.poll(status, s.Primary)
 }
 
-// handleCaptureShutdown handle server shutdown event.
+// HandleCaptureShutdown handle server shutdown event.
 // Besides returning messages and errors, it also returns a bool to indicate
 // whether s is affected by the server shutdown.
-func (s *StateMachine) handleCaptureShutdown(
+func (s *StateMachine) HandleCaptureShutdown(
 	captureID model.CaptureID,
 ) ([]rpc.Message, bool, error) {
 	_, ok := s.Servers[captureID]
@@ -838,7 +838,7 @@ func (s *StateMachine) handleCaptureShutdown(
 	return msgs, true, errors.Trace(err)
 }
 
-func (s *StateMachine) hasRemoved() bool {
+func (s *StateMachine) HasRemoved() bool {
 	// It has been removed successfully if it's state is Removing,
 	// and there is no server has it.
 	return s.State == SchedulerStatusRemoving && len(s.Servers) == 0
