@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/coordinator"
+	"github.com/flowbehappy/tigate/server/wacher"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -122,17 +123,18 @@ func (e *elector) campaignCoordinator(ctx context.Context) error {
 			zap.String("captureID", e.captureImpl.info.ID),
 			zap.Int64("coordinatorVersion", coordinatorVersion))
 
-		co := coordinator.NewCoordinator(e.captureImpl.info, coordinatorVersion)
+		co := coordinator.NewCoordinator(e.captureImpl.info,
+			e.captureImpl.messageCenter, coordinatorVersion)
 		e.captureImpl.setCoordinator(co)
 
 		// watcher changefeed changes
-		watcher := NewEtcdWatcher(e.captureImpl.EtcdClient,
+		watcher := watcher.NewEtcdWatcher(e.captureImpl.EtcdClient,
 			e.captureImpl.session,
 			// changefeed info key prefix
-			etcd.BaseKey(e.captureImpl.EtcdClient.GetClusterID())+etcd.ChangefeedInfoKey,
+			etcd.BaseKey(e.captureImpl.EtcdClient.GetClusterID()),
 			util.RoleOwner.String())
 
-		err = watcher.runEtcdWorker(ctx, co.(orchestrator.Reactor),
+		err = watcher.RunEtcdWorker(ctx, co.(orchestrator.Reactor),
 			orchestrator.NewGlobalState(e.captureImpl.EtcdClient.GetClusterID(),
 				cfg.CaptureSessionTTL),
 			ownerFlushInterval)

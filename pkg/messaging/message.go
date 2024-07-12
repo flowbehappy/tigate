@@ -1,11 +1,13 @@
 package messaging
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/apperror"
+	"github.com/flowbehappy/tigate/rpc"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 
@@ -25,6 +27,7 @@ const (
 	TypeScheduleDispatcherRequest
 	TypeEventFeed
 	TypeRegisterDispatcherRequest
+	TypeBootstrapMaintainerRequest
 )
 
 func (t IOType) String() string {
@@ -47,6 +50,8 @@ func (t IOType) String() string {
 		return "EventFeed"
 	case TypeRegisterDispatcherRequest:
 		return "RegisterDispatcherRequest"
+	case TypeBootstrapMaintainerRequest:
+		return "BootstrapMaintainerRequest"
 	default:
 	}
 	return "Unknown"
@@ -236,6 +241,8 @@ func CastTo(m interface{}, ioType IOType) IOTypeT {
 		return m.(*EventFeed)
 	case TypeRegisterDispatcherRequest:
 		return m.(*RegisterDispatcherRequest)
+	case TypeBootstrapMaintainerRequest:
+		return m.(*MaintainerBootstrapRequest)
 	default:
 		log.Panic("Unimplemented IOType", zap.Stringer("Type", ioType))
 		return nil
@@ -274,4 +281,22 @@ func (m *TargetMessage) decode(value []byte) {
 
 func (m *TargetMessage) String() string {
 	return fmt.Sprintf("From: %s, To: %s, Type: %s, Message: %v", m.From.String(), m.To.String(), m.Type, m.Message)
+}
+
+type MaintainerBootstrapRequest struct {
+	*rpc.MaintainerBootstrapRequest
+}
+
+func (m *MaintainerBootstrapRequest) encode(buf []byte) []byte {
+	data, err := json.Marshal(m)
+	if err != nil {
+		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (m *MaintainerBootstrapRequest) decode(data []byte) error {
+	return json.Unmarshal(data, &m)
 }

@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/maintainer"
+	"github.com/flowbehappy/tigate/server/wacher"
 	"github.com/pingcap/tiflow/pkg/tcpserver"
 
 	"github.com/flowbehappy/tigate/coordinator"
@@ -47,6 +49,7 @@ const (
 type serverImpl struct {
 	captureMu sync.Mutex
 	info      *model.CaptureInfo
+	serverID  messaging.ServerId
 
 	liveness model.Liveness
 
@@ -109,10 +112,11 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	c.subModules = []SubModule{
-		NewCaptureManager(c.session, c.EtcdClient, c.messageCenter),
+		watcher.NewCaptureManager(c.session, c.EtcdClient, c.messageCenter),
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener(), c.messageCenter),
+		maintainer.NewMaintainerManager(c.messageCenter, c.serverID),
 	}
 	// register it into global var
 	for _, subModule := range c.subModules {
@@ -142,7 +146,7 @@ func (c *serverImpl) Run(stdCtx context.Context) error {
 	for _, sub := range c.subModules {
 		func(m SubModule) {
 			g.Go(func() error {
-				log.Info("starting sub module", zap.String("module", m.Name()))
+				log.Info("starting sub wacher", zap.String("wacher", m.Name()))
 				return m.Run(stdCtx)
 			})
 		}(sub)
@@ -190,8 +194,8 @@ func (c *serverImpl) Close(ctx context.Context) {
 
 	for _, subModule := range c.subModules {
 		if err := subModule.Close(ctx); err != nil {
-			log.Warn("failed to close sub module",
-				zap.String("module", subModule.Name()),
+			log.Warn("failed to close sub wacher",
+				zap.String("wacher", subModule.Name()),
 				zap.Error(err))
 		}
 	}
@@ -229,13 +233,13 @@ func (c *serverImpl) GetCoordinatorInfo(ctx context.Context) (*model.CaptureInfo
 		return nil, err
 	}
 
-	ownerID, err := c.EtcdClient.GetOwnerID(ctx)
+	coordinatorID, err := c.EtcdClient.GetOwnerID(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, captureInfo := range captureInfos {
-		if captureInfo.ID == ownerID {
+		if captureInfo.ID == coordinatorID {
 			return captureInfo, nil
 		}
 	}

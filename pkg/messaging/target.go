@@ -375,6 +375,7 @@ func newLocalMessageTarget(id ServerId,
 func (s *localMessageTarget) sendMsgToChan(ch chan *TargetMessage, msg ...*TargetMessage) error {
 	for _, m := range msg {
 		m.To = s.localId
+		m.From = s.localId
 		m.Epoch = s.epoch
 		m.Sequence = s.sequence.Add(1)
 		select {

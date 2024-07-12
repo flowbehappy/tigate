@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package watcher
 
 import (
 	"context"
@@ -43,7 +43,7 @@ type NodeManager struct {
 	nodes         map[string]*model.CaptureInfo
 
 	handleRWLock sync.RWMutex
-	handles      map[string]func()
+	handles      map[string]func([]*model.CaptureInfo, []*model.CaptureInfo)
 }
 
 func NewCaptureManager(
@@ -67,7 +67,6 @@ func (c *NodeManager) Name() string {
 func (c *NodeManager) Tick(ctx context.Context,
 	raw orchestrator.ReactorState) (orchestrator.ReactorState, error) {
 	state := raw.(*orchestrator.GlobalReactorState)
-	log.Info("node manager tick", zap.Any("captures", state.Captures), zap.Any("owner", state.Owner))
 	if len(c.nodes) != len(state.Captures) {
 		// find changes
 		removed := make([]*model.CaptureInfo, 0)
@@ -97,7 +96,7 @@ func (c *NodeManager) Tick(ctx context.Context,
 		// notify handler
 		c.handleRWLock.RLock()
 		for _, handle := range c.handles {
-			handle()
+			handle(newCaptures, removed)
 		}
 		c.handleRWLock.RUnlock()
 	}
@@ -117,12 +116,13 @@ func (c *NodeManager) Run(ctx context.Context) error {
 		etcd.BaseKey(c.etcdClient.GetClusterID())+"/__cdc_meta__/capture",
 		util.RoleOwner.String())
 
-	return watcher.runEtcdWorker(ctx, c,
+	return watcher.RunEtcdWorker(ctx, c,
 		orchestrator.NewGlobalState(c.etcdClient.GetClusterID(),
 			cfg.CaptureSessionTTL), time.Millisecond*50)
 }
 
-func (c *NodeManager) RegisterCaptureChangeHandler(name string, f func()) {
+func (c *NodeManager) RegisterCaptureChangeHandler(name string,
+	f func([]*model.CaptureInfo, []*model.CaptureInfo)) {
 	c.handleRWLock.Lock()
 	c.handles[name] = f
 	c.handleRWLock.Unlock()

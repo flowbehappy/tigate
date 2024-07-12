@@ -25,6 +25,7 @@ type TaskSchedulerInstance struct {
 	EventDispatcherTaskScheduler *TaskScheduler
 	SinkTaskScheduler            *TaskScheduler
 	HeartbeatTaskScheduler       *TaskScheduler
+	MaintainerTaskScheduler      *TaskScheduler
 }
 
 var TaskSchedulers *TaskSchedulerInstance
@@ -38,6 +39,7 @@ func GetTaskSchedulerInstance() *TaskSchedulerInstance {
 				EventDispatcherTaskScheduler: NewTaskScheduler(&DefaultTaskSchedulerConfig, "EventDispatcherTask"),
 				SinkTaskScheduler:            NewTaskScheduler(&DefaultTaskSchedulerConfig, "SinkTask"),
 				HeartbeatTaskScheduler:       NewTaskScheduler(&DefaultTaskSchedulerConfig, "HeartbeatTask"),
+				MaintainerTaskScheduler:      NewTaskScheduler(&DefaultTaskSchedulerConfig, "MaintainerTask"),
 			}
 		})
 	}
