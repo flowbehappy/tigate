@@ -17,52 +17,42 @@ import (
 	"time"
 )
 
+type TaskId uint64
 type TaskStatus int
 
 const (
-	Success TaskStatus = iota
-	Failed
-	Running
-	Waiting
-	IO
-	Canceled
+	CPUTask TaskStatus = iota
+	IOTask
+	Done
 )
 
+const (
+	MaxDuration time.Duration = time.Duration(1<<63 - 1)
+)
+
+// Task is the interface for the task to be executed by the thread pool.
+// A task should implement two methods: Probe and Execute.
+//
+// The return value of the methods are TaskStatus and time.Duration.
+// There are three possible values for TaskStatus:
+//   - CPUTask: The task is a CPU-bound task, which should be executed by the CPU thread pool.
+//   - IOTask: The task is an IO-bound task, which should be executed by the IO thread pool.
+//   - Done: The task is done, and should not be executed again.
+//
+// The value of time.Duration means the expected duration between now and the next expected execution time.
 type Task interface {
-	// Await is used by wait reactor, to check whether the task reach the Running / IO status
-	Await() TaskStatus
-	// Eexcute the task, return the status of the task after execution,
-	// you can use timeout to control the maximum time to wait for the task to complete
-	Execute(timeout time.Duration) TaskStatus
-	// release the resources used by the task
-	Release()
-	// Get status of the task
-	GetStatus() TaskStatus
-	// Set status of the task
-	SetStatus(status TaskStatus)
-	// Cancel the task
-	// When the user calls cancel, the current task may still call execute once
-	Cancel()
+	// Probe the task.
+	// This method could be called to check the status of the task by any time.
+	Probe() (TaskStatus, time.Duration)
+	// Execute the task.
+	Execute() (TaskStatus, time.Duration)
+	// // release the resources used by the task
+	// Release()
+	// // Get status of the task
+	// GetStatus() TaskStatus
+	// // Set status of the task
+	// SetStatus(status TaskStatus)
+	// // Cancel the task
+	// // When the user calls cancel, the current task may still call execute once
+	// Cancel()
 }
-
-// BasicTask is the base struct of Task, it implements the basic functions of Task interface
-//type BasicTask struct {
-// 	status TaskStatus
-// }
-
-// func (t *BasicTask) Await() TaskStatus {
-// 	return Failed
-// }
-// func (t *BasicTask) Execute(timeout time.Duration) TaskStatus {
-// 	return Failed
-// }
-// func (t *BasicTask) Release() {}
-// func (t *BasicTask) GetStatus() TaskStatus {
-// 	return t.status
-// }
-// func (t *BasicTask) SetStatus(status TaskStatus) {
-// 	t.status = status
-// }
-// func (t *BasicTask) Cancel() {
-// 	t.status = Canceled
-// }

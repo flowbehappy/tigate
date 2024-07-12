@@ -99,7 +99,7 @@ func NewTaskScheduler(threadpoolConfig *TaskSchedulerConfig, name string) *TaskS
 	return taskScheduler
 }
 
-func (s *TaskScheduler) Submit(task Task) error {
+func (s *TaskScheduler) Submit2(task Task) error {
 	task_status := task.GetStatus()
 	switch task_status {
 	case IO:
@@ -116,6 +116,21 @@ func (s *TaskScheduler) Submit(task Task) error {
 		log.Error("TaskScheduler submit with Error Status: ", zap.Any("status", task_status))
 	}
 	return nil
+}
+
+// Prepare the task for execution.
+// The task won't be executed until Submit is called.
+func (s *TaskScheduler) Prepare(task Task) TaskId {
+
+}
+
+func (s *TaskScheduler) Submit(taskId TaskId) {
+
+}
+
+// Notify to call Probe on this task
+func (s *TaskScheduler) Notify(task Task) {
+
 }
 
 func (s *TaskScheduler) submitTaskToCPUThreadPool(task *Task) {

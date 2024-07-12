@@ -17,28 +17,29 @@ import (
 	"sync"
 )
 
+type priorityQueue struct {
+	heap     []Task
+	idToTask map[uint64]Task
+}
+
 /*
 WaitReactor is a reactor that waits for tasks to reach the status before submitting them to the corresponding thread pool.
 */
 type WaitReactor struct {
 	queue         *WaitingTaskList
 	wg            sync.WaitGroup
-	threadCount   int
 	taskScheduler *TaskScheduler
 	name          string
 }
 
-func NewWaitReactor(taskScheduler *TaskScheduler, threadCount int, name string) *WaitReactor {
+func NewWaitReactor(taskScheduler *TaskScheduler, name string) *WaitReactor {
 	waitReactor := WaitReactor{
-		threadCount:   threadCount,
 		taskScheduler: taskScheduler,
 		queue:         newWaitingTaskList(),
 		name:          name,
 	}
-	for i := 0; i < threadCount; i++ {
-		waitReactor.wg.Add(1)
-		go waitReactor.loop()
-	}
+	waitReactor.wg.Add(1)
+	go waitReactor.loop()
 	return &waitReactor
 }
 
