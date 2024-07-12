@@ -18,11 +18,11 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/flowbehappy/tigate/downstreamadapter"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/node"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/google/uuid"
@@ -47,7 +47,7 @@ One EventDispatcherManager can only have one Sink.
 type EventDispatcherManager struct {
 	DispatcherMap               map[*common.TableSpan]*dispatcher.TableEventDispatcher
 	TableTriggerEventDispatcher *dispatcher.TableTriggerEventDispatcher
-	EventCollector              *node.EventCollector
+	EventCollector              *downstreamadapter.EventCollector
 	HeartbeatResponseQueue      *HeartbeatResponseQueue
 	HeartbeatRequestQueue       *HeartbeatRequestQueue
 	Id                          uint64
@@ -109,7 +109,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 	}
 	tableEventDispatcher := dispatcher.NewTableEventDispatcher(tableSpan, e.Sink, startTs, syncPointInfo)
 
-	e.EventCollector.RegisterDispatcher(tableEventDispatcher, startTs, nil)
+	e.EventCollector.RegisterDispatcher(tableEventDispatcher, startTs)
 
 	e.DispatcherMap[tableSpan] = tableEventDispatcher
 
@@ -119,6 +119,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 func (e *EventDispatcherManager) RemoveTableEventDispatcher(tableSpan *common.TableSpan) {
 	if dispatcher, ok := e.DispatcherMap[tableSpan]; ok {
 		// 判断一下状态，如果 removing 的话就不用管，
+		e.EventCollector.RemoveDispatcher(dispatcher)
 		dispatcher.Remove()
 	}
 	// 如果已经 removed ，就要在 返回的心跳里加一下这个checkpointTs 信息

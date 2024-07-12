@@ -14,12 +14,18 @@
 package dispatcher
 
 import (
+	"bytes"
 	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/google/uuid"
+	"github.com/ngaut/log"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tiflow/cdc/model"
+	"go.uber.org/zap"
 )
 
 type SyncPointInfo struct {
@@ -57,6 +63,8 @@ type TableEventDispatcher struct {
 	MemoryUsage *MemoryUsage
 
 	task *EventDispatcherTask
+
+	tableInfo *common.TableInfo // TODO:后续做成一整个 tableInfo Struct
 }
 
 func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, syncPointInfo *SyncPointInfo) *TableEventDispatcher {
@@ -121,9 +129,65 @@ func (d *TableEventDispatcher) GetMemoryUsage() *MemoryUsage {
 	return d.MemoryUsage
 }
 
-func (d *TableEventDispatcher) PushEvent(event *common.TxnEvent) {
+func (d *TableEventDispatcher) decodeEvent(rawTxnEvent *eventpb.TxnEvent) (*common.TxnEvent, error) {
+	var txnEvent *common.TxnEvent
+
+	for _, rawEvent := range rawTxnEvent.Events {
+		key, physicalTableID, err := decodeTableID(rawEvent.Key)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(rawEvent.OldValue) == 0 && len(rawEvent.Value) == 0 {
+			log.Warn("empty value and old value",
+				zap.Any("raw event", rawEvent))
+		}
+
+		baseInfo := baseKVEntry{
+			StartTs:         rawTxnEvent.StartTs,
+			CRTs:            rawTxnEvent.CommitTs,
+			PhysicalTableID: physicalTableID,
+			Delete:          rawEvent.OpType == eventpb.OpType_OpTypeDelete,
+		}
+
+		row, err := func() (*model.RowChangedEvent, error) {
+			if bytes.HasPrefix(key, recordPrefix) {
+				rowKV, err := unmarshalRowKVEntry(d.tableInfo, rawEvent.Key, rawEvent.Value, rawEvent.OldValue, baseInfo)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				if rowKV == nil {
+					return nil, nil
+				}
+				row, _, err := mountRowKVEntry(d.tableInfo, rowKV)
+				if err != nil {
+					return nil, err
+				}
+				return row, nil
+			}
+			return nil, nil
+		}()
+
+		txnEvent.Rows = append(txnEvent.Rows, &common.RowChangedEvent{
+			PhysicalTableID: row.PhysicalTableID,
+			TableInfo:       d.tableInfo,
+			ReplicatingTs:   row.ReplicatingTs,
+			Columns:         common.ColumnDatas2Columns(row.Columns, d.tableInfo),
+			PreColumns:      common.ColumnDatas2Columns(row.PreColumns, d.tableInfo),
+		})
+	}
+
+}
+
+func (d *TableEventDispatcher) PushEvent(rawTxnEvent *eventpb.TxnEvent) {
+	// decode the raw event to common.TxnEvent
+	event, _ := d.decodeEvent(rawTxnEvent)
 	d.GetMemoryUsage().Add(event.CommitTs, event.MemoryCost())
 	d.Ch <- event // 换成一个函数
+}
+
+func (d *TableEventDispatcher) InitTableInfo(tableInfo *eventpb.TableInfo) {
+	//d.tableInfo = decodeTableInfo(tableInfo) // TODO
 }
 
 func (d *TableEventDispatcher) Remove() {

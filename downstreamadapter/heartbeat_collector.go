@@ -36,6 +36,7 @@ HeartBeatCollect is responsible for sending heartbeat requests and receiving hea
 type HeartBeatCollector struct {
 	messageCenter messaging.MessageCenter
 	wg            sync.WaitGroup
+	from          messaging.ServerId
 	target        messaging.ServerId
 
 	eventDispatcherManagerMutex sync.RWMutex
