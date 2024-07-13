@@ -65,7 +65,9 @@ func NewCoordinator(capture *model.CaptureInfo,
 	messageCenter messaging.MessageCenter,
 	version int64) Coordinator {
 	c := &coordinator{
-		scheduler:     NewCombineScheduler(NewBasicScheduler(1000)),
+		scheduler: NewCombineScheduler(
+			NewBasicScheduler(1000),
+			NewBalanceScheduler(time.Minute, 1000)),
 		messageCenter: messageCenter,
 		version:       version,
 		nodeInfo:      capture,
@@ -89,7 +91,7 @@ func NewCoordinator(capture *model.CaptureInfo,
 var allChangefeeds = make(map[model.ChangeFeedID]*model.ChangeFeedInfo)
 
 func init() {
-	for i := 0; i < 200000; i++ {
+	for i := 0; i < 500000; i++ {
 		id := fmt.Sprintf("%d", i)
 		allChangefeeds[model.DefaultChangeFeedID(id)] = &model.ChangeFeedInfo{
 			ID: id,

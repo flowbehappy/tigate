@@ -65,6 +65,9 @@ type Maintainer struct {
 
 	pdEndpoints []string
 	nodeManager *watcher.NodeManager
+
+	statusChanged  *atomic.Bool
+	lastReportTime time.Time
 }
 
 // NewMaintainer create the maintainer for the changefeed
@@ -79,6 +82,7 @@ func NewMaintainer(cfID model.ChangeFeedID, center messaging.MessageCenter) *Mai
 		tick:          time.NewTicker(time.Millisecond * 50),
 		taskCh:        make(chan Task, 1024),
 		nodeManager:   appctx.GetService[*watcher.NodeManager](watcher.NodeManagerName),
+		statusChanged: &atomic.Bool{},
 	}
 	m.supervisor = scheduler.NewSupervisor(
 		MaintainerID(cfID),
@@ -240,6 +244,7 @@ func (d *dispatchMaintainerTask) Execute(ctx context.Context) error {
 
 func (m *Maintainer) initChangefeed() error {
 	m.state = scheduler.ComponentStatusPrepared
+	m.statusChanged.Store(true)
 	//tableIds, err := m.GetTableIDs()
 	//if err != nil {
 	//	return err
@@ -284,16 +289,19 @@ func (m *Maintainer) GetTableIDs() (map[int64]struct{}, error) {
 
 func (m *Maintainer) finishAddChangefeed() {
 	m.state = scheduler.ComponentStatusWorking
+	m.statusChanged.Store(true)
 }
 
 func (m *Maintainer) closeChangefeed() {
 	if m.state != scheduler.ComponentStatusStopping &&
 		m.state != scheduler.ComponentStatusStopped {
 		m.state = scheduler.ComponentStatusStopping
+		m.statusChanged.Store(true)
 		//todo: real async close
 		go func() {
 			// send message to dispatcher manager
 			m.state = scheduler.ComponentStatusStopped
+			m.statusChanged.Store(true)
 			m.removed.Store(true)
 		}()
 	}

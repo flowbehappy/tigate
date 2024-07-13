@@ -114,7 +114,12 @@ func (m *Manager) Run(ctx context.Context) error {
 			if m.coordinatorVersion > 0 {
 				response := &rpc.MaintainerManagerRequest{}
 				for _, m := range m.maintainers {
-					response.MaintainerStatus = append(response.MaintainerStatus, m.GetMaintainerStatus())
+					if hasBootstrapMsg || m.statusChanged.Load() ||
+						time.Since(m.lastReportTime) > time.Second {
+						response.MaintainerStatus = append(response.MaintainerStatus, m.GetMaintainerStatus())
+						m.statusChanged.Store(false)
+						m.lastReportTime = time.Now()
+					}
 				}
 				if hasBootstrapMsg || response.MaintainerStatus != nil {
 					m.sendMessages(response)
@@ -178,6 +183,7 @@ func (m *Manager) handleDispatchMaintainerRequest(
 		task.Maintainer = cf
 		cf.injectDispatchTableTask(task)
 		cf.handleAddMaintainerTask()
+		cf.statusChanged.Store(true)
 		//cf.taskCh <- task
 	}
 
@@ -200,6 +206,7 @@ func (m *Manager) handleDispatchMaintainerRequest(
 		//cf.taskCh <- task
 		cf.injectDispatchTableTask(task)
 		cf.handleRemoveMaintainerTask()
+		cf.statusChanged.Store(true)
 	}
 	return nil
 }
