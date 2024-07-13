@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
-	"github.com/pingcap/tiflow/pkg/util"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
@@ -114,7 +113,7 @@ func (c *NodeManager) Run(ctx context.Context) error {
 		c.session,
 		// captures info key prefix
 		etcd.BaseKey(c.etcdClient.GetClusterID())+"/__cdc_meta__/capture",
-		util.RoleOwner.String())
+		"capture-manager")
 
 	return watcher.RunEtcdWorker(ctx, c,
 		orchestrator.NewGlobalState(c.etcdClient.GetClusterID(),

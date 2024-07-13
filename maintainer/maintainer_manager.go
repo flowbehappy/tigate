@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/rpc"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -82,29 +82,28 @@ func (m *Manager) Run(ctx context.Context) error {
 
 			hasBootstrapMsg := false
 			for _, msg := range buf {
-				request, err := rpc.DecodeCoordinatorRequest(msg.Message.([]byte))
-				if err != nil {
-					log.Error("decode request failed", zap.Error(err))
-				}
-
-				if request.BootstrapRequest != nil {
-					if m.coordinatorVersion > request.BootstrapRequest.Version {
+				switch msg.Type {
+				case messaging.TypeCoordinatorBootstrapRequest:
+					req := msg.Message.(*heartbeatpb.CoordinatorBootstrapRequest)
+					if m.coordinatorVersion > req.Version {
 						log.Warn("ignore invalid coordinator version",
-							zap.Int64("version", request.BootstrapRequest.Version))
+							zap.Int64("version", req.Version))
 						continue
 					}
 					m.coordinatorID = msg.From
-					m.coordinatorVersion = request.BootstrapRequest.Version
+					m.coordinatorVersion = req.Version
 					hasBootstrapMsg = true
-				}
-				if request.DispatchMaintainerRequest != nil {
+					log.Info("bootstrap coordinator",
+						zap.Int64("version", m.coordinatorVersion))
+				case messaging.TypeDispatchMaintainerRequest:
+					req := msg.Message.(*heartbeatpb.DispatchMaintainerRequest)
 					if m.coordinatorID != msg.From {
 						log.Warn("ignore invalid coordinator id",
-							zap.Any("request", request),
+							zap.Any("request", req),
 							zap.Any("coordinator", msg.From))
 						continue
 					}
-					err := m.handleDispatchMaintainerRequest(request.DispatchMaintainerRequest)
+					err := m.handleDispatchMaintainerRequest(req)
 					if err != nil {
 						log.Error("handle dispatch maintainer request failed", zap.Error(err))
 						return err
@@ -112,16 +111,18 @@ func (m *Manager) Run(ctx context.Context) error {
 				}
 			}
 			if m.coordinatorVersion > 0 {
-				response := &rpc.MaintainerManagerRequest{}
+				response := &heartbeatpb.MaintainerHeartbeat{
+					Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
+				}
 				for _, m := range m.maintainers {
 					if hasBootstrapMsg || m.statusChanged.Load() ||
 						time.Since(m.lastReportTime) > time.Second {
-						response.MaintainerStatus = append(response.MaintainerStatus, m.GetMaintainerStatus())
+						response.Statuses = append(response.Statuses, m.GetMaintainerStatus())
 						m.statusChanged.Store(false)
 						m.lastReportTime = time.Now()
 					}
 				}
-				if hasBootstrapMsg || response.MaintainerStatus != nil {
+				if hasBootstrapMsg || len(response.Statuses) != 0 {
 					m.sendMessages(response)
 				}
 			}
@@ -137,20 +138,14 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 }
 
-func (m *Manager) sendMessages(msg *rpc.MaintainerManagerRequest) {
-	buf, err := msg.Encode()
-	if err != nil {
-		log.Error("failed to encode coordinator request", zap.Any("msg", msg), zap.Error(err))
-		return
-	}
+func (m *Manager) sendMessages(msg *heartbeatpb.MaintainerHeartbeat) {
 	target := messaging.NewTargetMessage(
 		m.coordinatorID,
 		"coordinator",
-		messaging.TypeBytes,
-		buf,
+		messaging.TypeMaintainerHeartbeatRequest,
+		msg,
 	)
-	err = m.messageCenter.SendCommand(target)
-
+	err := m.messageCenter.SendCommand(target)
 	if err != nil {
 		log.Warn("send command failed", zap.Error(err))
 	}
@@ -162,51 +157,56 @@ func (m *Manager) Close(ctx context.Context) error {
 }
 
 func (m *Manager) handleDispatchMaintainerRequest(
-	request *rpc.DispatchMaintainerRequest,
+	request *heartbeatpb.DispatchMaintainerRequest,
 ) error {
-	for _, req := range request.AddMaintainerRequests {
-		task := &dispatchMaintainerTask{
-			ID:        req.ID,
-			IsRemove:  false,
-			IsPrepare: req.IsSecondary,
-			status:    dispatchTaskReceived,
+	if request.GetAddMaintainers() != nil {
+		for _, req := range request.GetAddMaintainers() {
+			cfID := model.DefaultChangeFeedID(req.GetId())
+			task := &dispatchMaintainerTask{
+				ID:        model.DefaultChangeFeedID(req.GetId()),
+				IsRemove:  false,
+				IsPrepare: req.IsSecondary,
+				status:    dispatchTaskReceived,
+			}
+			cf, ok := m.maintainers[cfID]
+			if !ok {
+				cf = NewMaintainer(cfID, m.messageCenter)
+				m.maintainers[cfID] = cf
+				//if err := threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf); err != nil {
+				//	return errors.Trace(err)
+				//}
+				//go cf.Run()
+			}
+			task.Maintainer = cf
+			cf.injectDispatchTableTask(task)
+			cf.handleAddMaintainerTask()
+			cf.statusChanged.Store(true)
+			//cf.taskCh <- task
 		}
-		cf, ok := m.maintainers[req.ID]
-		if !ok {
-			cf = NewMaintainer(req.ID, m.messageCenter)
-			m.maintainers[req.ID] = cf
-			//if err := threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf); err != nil {
-			//	return errors.Trace(err)
-			//}
-			//go cf.Run()
-		}
-		task.Maintainer = cf
-		cf.injectDispatchTableTask(task)
-		cf.handleAddMaintainerTask()
-		cf.statusChanged.Store(true)
-		//cf.taskCh <- task
 	}
 
-	for _, req := range request.RemoveMaintainerRequests {
-		span := req.ID
-		cf, ok := m.maintainers[span]
-		if !ok {
-			log.Warn("ignore remove maintainer request, "+
-				"since the table not found",
-				zap.String("changefeed", cf.id.String()),
-				zap.Any("request", req))
-			return nil
+	if request.GetRemoveMaintainers() != nil {
+		for _, req := range request.GetRemoveMaintainers() {
+			cfID := model.DefaultChangeFeedID(req.GetId())
+			cf, ok := m.maintainers[cfID]
+			if !ok {
+				log.Warn("ignore remove maintainer request, "+
+					"since the maintainer not found",
+					zap.String("changefeed", cf.id.String()),
+					zap.Any("request", req))
+				return nil
+			}
+			task := &dispatchMaintainerTask{
+				Maintainer: cf,
+				ID:         cfID,
+				IsRemove:   true,
+				status:     dispatchTaskReceived,
+			}
+			//cf.taskCh <- task
+			cf.injectDispatchTableTask(task)
+			cf.handleRemoveMaintainerTask()
+			cf.statusChanged.Store(true)
 		}
-		task := &dispatchMaintainerTask{
-			Maintainer: cf,
-			ID:         req.ID,
-			IsRemove:   true,
-			status:     dispatchTaskReceived,
-		}
-		//cf.taskCh <- task
-		cf.injectDispatchTableTask(task)
-		cf.handleRemoveMaintainerTask()
-		cf.statusChanged.Store(true)
 	}
 	return nil
 }

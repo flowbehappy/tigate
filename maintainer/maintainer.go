@@ -19,13 +19,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	appctx "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	watcher "github.com/flowbehappy/tigate/server/wacher"
 	"github.com/flowbehappy/tigate/utils/threadpool"
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/entry/schema"
 	"github.com/pingcap/tiflow/cdc/kv"
@@ -93,10 +93,8 @@ func NewMaintainer(cfID model.ChangeFeedID, center messaging.MessageCenter) *Mai
 }
 
 func (m *Maintainer) newBootstrapMessage(id model.CaptureID) rpc.Message {
-	return &rpc.MaintainerBootstrapRequest{
-		To:     uuid.MustParse(id),
-		ID:     m.id,
-		Config: m.config,
+	return &heartbeatpb.MaintainerBootstrapRequest{
+		Id: id,
 	}
 }
 
@@ -165,27 +163,7 @@ func (m *Maintainer) Execute(timeout time.Duration) threadpool.TaskStatus {
 }
 
 func (m *Maintainer) sendMessages(msgs []rpc.Message) {
-	for _, msg := range msgs {
-		//if dispatchMsg, ok := msg.(*heartbeatpb.ScheduleDispatcherRequest); ok {
-		//	log.Info("dispatchMsg", zap.Any("dispatchMsg", dispatchMsg))
-		//}
 
-		creq := msg.(*rpc.MaintainerBootstrapRequest)
-		buf, err := creq.Encode()
-		if err != nil {
-			log.Error("failed to encode coordinator request", zap.Any("msg", msg), zap.Error(err))
-			continue
-		}
-		targetMsg := messaging.NewTargetMessage(messaging.ServerId(creq.To),
-			"HeartBeatResponse",
-			messaging.TypeBytes, buf)
-		targetMsg.Topic = "xxxx"
-		err = m.messageCenter.SendCommand()
-		if err != nil {
-			log.Error("failed to send coordinator request", zap.Any("msg", msg), zap.Error(err))
-			continue
-		}
-	}
 }
 
 func (m *Maintainer) scheduleMaintainer(allInferiors []scheduler.InferiorID) ([]rpc.Message, error) {
@@ -397,12 +375,12 @@ func (m *Maintainer) getAndUpdateMaintainerState(old scheduler.ComponentStatus) 
 	return m.state, m.state != old
 }
 
-func (m *Maintainer) GetMaintainerStatus() *rpc.MaintainerStatus {
+func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 	// todo: fix data race here
-	return &rpc.MaintainerStatus{
-		ID:              m.id,
-		ChangefeedState: m.changefeedSate,
-		SchedulerState:  int(m.state),
+	return &heartbeatpb.MaintainerStatus{
+		ChangefeedID:    m.id.ID,
+		FeedState:       string(m.changefeedSate),
+		SchedulerStatus: int32(m.state),
 		CheckpointTs:    0,
 	}
 }

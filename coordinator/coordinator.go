@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
@@ -29,6 +30,8 @@ import (
 	"github.com/pingcap/tiflow/pkg/orchestrator"
 	"go.uber.org/zap"
 )
+
+const maintainerMangerTopic = "maintainer-manager"
 
 // Coordinator is the master of the ticdc cluster,
 // 1. schedules changefeed maintainer to ticdc wacher
@@ -58,7 +61,7 @@ type coordinator struct {
 
 	lastCheckTime time.Time
 
-	dispatchMsgs map[model.CaptureID]*rpc.CoordinatorRequest
+	dispatchMsgs map[model.CaptureID]*messaging.TargetMessage
 }
 
 func NewCoordinator(capture *model.CaptureInfo,
@@ -71,7 +74,7 @@ func NewCoordinator(capture *model.CaptureInfo,
 		messageCenter: messageCenter,
 		version:       version,
 		nodeInfo:      capture,
-		dispatchMsgs:  make(map[model.CaptureID]*rpc.CoordinatorRequest),
+		dispatchMsgs:  make(map[model.CaptureID]*messaging.TargetMessage),
 	}
 	c.supervisor = NewSupervisor(
 		CoordinatorID(capture.ID),
@@ -191,18 +194,14 @@ func (c *coordinator) Tick(ctx context.Context,
 func (c *coordinator) HandleMessage(msgs []*messaging.TargetMessage) ([]rpc.Message, error) {
 	var rsp []rpc.Message
 	for _, msg := range msgs {
-		maintainerMsgs, err := rpc.DecodeMaintainerManagerRequest(msg.Message.([]byte))
-		if err != nil {
-			log.Error("decode maitainer message failed", zap.Error(err))
-			continue
-		}
+		req := msg.Message.(*heartbeatpb.MaintainerHeartbeat)
 		serverID := msg.From
 		statuses := make([]scheduler.InferiorStatus, 0)
-		for _, status := range maintainerMsgs.MaintainerStatus {
+		for _, status := range req.Statuses {
 			statuses = append(statuses, &ChangefeedStatus{
-				ID:              ChangefeedID(status.ID),
-				Status:          scheduler.ComponentStatus(status.SchedulerState),
-				ChangefeedState: status.ChangefeedState,
+				ID:              ChangefeedID(model.DefaultChangeFeedID(status.ChangefeedID)),
+				Status:          scheduler.ComponentStatus(status.SchedulerStatus),
+				ChangefeedState: model.FeedState(status.FeedState),
 				CheckpointTs:    status.CheckpointTs,
 			})
 		}
@@ -250,26 +249,16 @@ func (c *coordinator) checkLiveness() ([]rpc.Message, error) {
 }
 
 func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message {
-	return &rpc.CoordinatorRequest{
-		To: uuid.MustParse(captureID),
-		BootstrapRequest: &rpc.CoordinatorBootstrapRequest{
-			Version: c.version,
-		},
-	}
+	return messaging.NewTargetMessage(
+		messaging.ServerId(uuid.MustParse(captureID)),
+		maintainerMangerTopic,
+		messaging.TypeCoordinatorBootstrapRequest,
+		&heartbeatpb.CoordinatorBootstrapRequest{Version: c.version})
 }
 
 func (c *coordinator) sendMessages(msgs []rpc.Message) {
 	for _, msg := range msgs {
-		creq := msg.(*rpc.CoordinatorRequest)
-		buf, err := creq.Encode()
-		if err != nil {
-			log.Error("failed to encode coordinator request", zap.Any("msg", msg), zap.Error(err))
-			continue
-		}
-		targetMsg := messaging.NewTargetMessage(messaging.ServerId(creq.To),
-			"maintainer-manager",
-			messaging.TypeBytes, buf)
-		err = c.messageCenter.SendCommand(targetMsg)
+		err := c.messageCenter.SendCommand(msg.(*messaging.TargetMessage))
 		if err != nil {
 			log.Error("failed to send coordinator request", zap.Any("msg", msg), zap.Error(err))
 			continue

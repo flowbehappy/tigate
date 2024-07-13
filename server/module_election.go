@@ -25,7 +25,6 @@ import (
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
-	"github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 
@@ -132,7 +131,7 @@ func (e *elector) campaignCoordinator(ctx context.Context) error {
 			e.captureImpl.session,
 			// changefeed info key prefix
 			etcd.BaseKey(e.captureImpl.EtcdClient.GetClusterID()),
-			util.RoleOwner.String())
+			"coordinator")
 
 		err = watcher.RunEtcdWorker(ctx, co.(orchestrator.Reactor),
 			orchestrator.NewGlobalState(e.captureImpl.EtcdClient.GetClusterID(),

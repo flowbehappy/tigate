@@ -16,6 +16,8 @@ package coordinator
 import (
 	"time"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/google/uuid"
@@ -66,18 +68,17 @@ func (c *changefeed) IsAlive() bool {
 }
 
 func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary bool) rpc.Message {
-	return &rpc.CoordinatorRequest{To: uuid.MustParse(server),
-		DispatchMaintainerRequest: &rpc.DispatchMaintainerRequest{
-			AddMaintainerRequests: []*rpc.AddMaintainerRequest{
+	return messaging.NewTargetMessage(messaging.ServerId(uuid.MustParse(server)),
+		maintainerMangerTopic,
+		messaging.TypeDispatchMaintainerRequest,
+		&heartbeatpb.DispatchMaintainerRequest{
+			AddMaintainers: []*heartbeatpb.AddMaintainerRequest{
 				{
-					ID:          c.ID,
-					Config:      c.Info,
-					Status:      c.Status,
+					Id:          c.ID.ID,
 					IsSecondary: secondary,
 				},
 			},
-		},
-	}
+		})
 	//msg, ok := c.c.dispatchMsgs[server]
 	//if !ok {
 	//	msg = &rpc.CoordinatorRequest{To: uuid.MustParse(server),
@@ -98,16 +99,17 @@ func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary boo
 }
 
 func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) rpc.Message {
-	return &rpc.CoordinatorRequest{To: uuid.MustParse(server),
-		DispatchMaintainerRequest: &rpc.DispatchMaintainerRequest{
-			RemoveMaintainerRequests: []*rpc.RemoveMaintainerRequest{
-				&rpc.RemoveMaintainerRequest{
-					ID:      c.ID,
+	return messaging.NewTargetMessage(messaging.ServerId(uuid.MustParse(server)),
+		maintainerMangerTopic,
+		messaging.TypeDispatchMaintainerRequest,
+		&heartbeatpb.DispatchMaintainerRequest{
+			RemoveMaintainers: []*heartbeatpb.RemoveMaintainerRequest{
+				{
+					Id:      c.ID.ID,
 					Cascade: false,
 				},
 			},
-		},
-	}
+		})
 	//msg, ok := c.c.dispatchMsgs[server]
 	//if !ok {
 	//	msg = &rpc.CoordinatorRequest{To: uuid.MustParse(server),

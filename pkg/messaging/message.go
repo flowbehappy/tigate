@@ -6,7 +6,6 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/apperror"
-	"github.com/flowbehappy/tigate/rpc"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 
@@ -25,6 +24,9 @@ const (
 	TypeHeartBeatResponse
 	TypeScheduleDispatcherRequest
 	TypeBootstrapMaintainerRequest
+	TypeCoordinatorBootstrapRequest
+	TypeDispatchMaintainerRequest
+	TypeMaintainerHeartbeatRequest
 )
 
 func (t IOType) String() string {
@@ -45,6 +47,12 @@ func (t IOType) String() string {
 		return "ScheduleDispatcherRequest"
 	case TypeBootstrapMaintainerRequest:
 		return "BootstrapMaintainerRequest"
+	case TypeCoordinatorBootstrapRequest:
+		return "CoordinatorBootstrapRequest"
+	case TypeDispatchMaintainerRequest:
+		return "DispatchMaintainerRequest"
+	case TypeMaintainerHeartbeatRequest:
+		return "MaintainerHeartbeatRequest"
 	default:
 	}
 	return "Unknown"
@@ -196,6 +204,12 @@ func CastTo(m interface{}, ioType IOType) IOTypeT {
 		return m.(*ScheduleDispatcherRequest)
 	case TypeBootstrapMaintainerRequest:
 		return m.(*MaintainerBootstrapRequest)
+	case TypeCoordinatorBootstrapRequest:
+		return m.(*CoordinatorBootstrapRequest)
+	case TypeDispatchMaintainerRequest:
+		return m.(*MaintainerBootstrapRequest)
+	case TypeMaintainerHeartbeatRequest:
+		return m.(*MaintainerHeartbeat)
 	default:
 		log.Panic("Unimplemented IOType", zap.Stringer("Type", ioType))
 		return nil
@@ -237,7 +251,7 @@ func (m *TargetMessage) String() string {
 }
 
 type MaintainerBootstrapRequest struct {
-	*rpc.MaintainerBootstrapRequest
+	*heartbeatpb.MaintainerBootstrapRequest
 }
 
 func (m *MaintainerBootstrapRequest) encode(buf []byte) []byte {
@@ -252,4 +266,58 @@ func (m *MaintainerBootstrapRequest) encode(buf []byte) []byte {
 
 func (m *MaintainerBootstrapRequest) decode(data []byte) error {
 	return json.Unmarshal(data, &m)
+}
+
+type MaintainerHeartbeat struct {
+	*heartbeatpb.MaintainerHeartbeat
+}
+
+func (m *MaintainerHeartbeat) encode(buf []byte) []byte {
+	data, err := m.Marshal()
+	if err != nil {
+		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (m *MaintainerHeartbeat) decode(data []byte) error {
+	return m.Unmarshal(data)
+}
+
+type CoordinatorBootstrapRequest struct {
+	*heartbeatpb.CoordinatorBootstrapRequest
+}
+
+func (m *CoordinatorBootstrapRequest) encode(buf []byte) []byte {
+	data, err := m.Marshal()
+	if err != nil {
+		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (m *CoordinatorBootstrapRequest) decode(data []byte) error {
+	return m.Unmarshal(data)
+}
+
+type DispatchMaintainerRequest struct {
+	*heartbeatpb.CoordinatorBootstrapRequest
+}
+
+func (m *DispatchMaintainerRequest) encode(buf []byte) []byte {
+	data, err := m.Marshal()
+	if err != nil {
+		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (m *DispatchMaintainerRequest) decode(data []byte) error {
+	return m.Unmarshal(data)
 }
