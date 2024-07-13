@@ -19,7 +19,6 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
-	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/google/uuid"
 	"github.com/pingcap/tiflow/cdc/model"
 )
@@ -37,7 +36,7 @@ type changefeed struct {
 	c *coordinator
 }
 
-func (c *coordinator) NewChangefeed(ID scheduler.InferiorID) scheduler.Inferior {
+func (c *coordinator) NewChangefeed(ID InferiorID) Inferior {
 	cfID := model.ChangeFeedID(ID.(ChangefeedID))
 	return &changefeed{
 		ID: cfID,
@@ -47,16 +46,16 @@ func (c *coordinator) NewChangefeed(ID scheduler.InferiorID) scheduler.Inferior 
 	}
 }
 
-func (c *changefeed) UpdateStatus(status scheduler.InferiorStatus) {
+func (c *changefeed) UpdateStatus(status InferiorStatus) {
 	c.State = status.(*ChangefeedStatus)
 	c.lastHeartBeat = time.Now()
 }
 
-func (c *changefeed) GetID() scheduler.InferiorID {
+func (c *changefeed) GetID() InferiorID {
 	return ChangefeedID(c.ID)
 }
 
-func (c *changefeed) NewInferiorStatus(status scheduler.ComponentStatus) scheduler.InferiorStatus {
+func (c *changefeed) NewInferiorStatus(status ComponentStatus) InferiorStatus {
 	return &ChangefeedStatus{
 		ID:     ChangefeedID(c.ID),
 		Status: status,
@@ -129,16 +128,16 @@ func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) rpc.Messag
 
 type ChangefeedStatus struct {
 	ID              ChangefeedID
-	Status          scheduler.ComponentStatus
+	Status          ComponentStatus
 	ChangefeedState model.FeedState
 	CheckpointTs    uint64
 }
 
-func (c *ChangefeedStatus) GetInferiorID() scheduler.InferiorID {
-	return scheduler.InferiorID(c.ID)
+func (c *ChangefeedStatus) GetInferiorID() InferiorID {
+	return InferiorID(c.ID)
 }
 
-func (c *ChangefeedStatus) GetInferiorState() scheduler.ComponentStatus {
+func (c *ChangefeedStatus) GetInferiorState() ComponentStatus {
 	return c.Status
 }
 
@@ -148,9 +147,9 @@ func (m ChangefeedID) String() string {
 	return model.ChangeFeedID(m).ID
 }
 
-func (m ChangefeedID) Equal(id scheduler.InferiorID) bool {
+func (m ChangefeedID) Equal(id InferiorID) bool {
 	return model.ChangeFeedID(m).ID == id.(ChangefeedID).ID
 }
-func (m ChangefeedID) Less(id scheduler.InferiorID) bool {
+func (m ChangefeedID) Less(id InferiorID) bool {
 	return model.ChangeFeedID(m).ID < id.(ChangefeedID).ID
 }

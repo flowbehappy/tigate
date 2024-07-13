@@ -14,7 +14,6 @@
 package coordinator
 
 import (
-	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -35,9 +34,9 @@ func (b *BasicScheduler) Name() string {
 func (b *BasicScheduler) Schedule(
 	allInferiors []model.ChangeFeedID,
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
-	stateMachines map[model.ChangeFeedID]*scheduler.StateMachine,
-) []*scheduler.ScheduleTask {
-	tasks := make([]*scheduler.ScheduleTask, 0)
+	stateMachines map[model.ChangeFeedID]*StateMachine,
+) []*ScheduleTask {
+	tasks := make([]*ScheduleTask, 0)
 	lenEqual := len(allInferiors) == len(stateMachines)
 	allFind := true
 	newInferiors := make([]model.ChangeFeedID, 0)
@@ -54,7 +53,7 @@ func (b *BasicScheduler) Schedule(
 			continue
 		}
 		// absent status means we should schedule it again
-		if st.State == scheduler.SchedulerStatusAbsent {
+		if st.State == SchedulerStatusAbsent {
 			newInferiors = append(newInferiors, inf)
 		}
 	}
@@ -108,14 +107,14 @@ func (b *BasicScheduler) Schedule(
 
 // newBurstAddInferiors add each new inferior to captures in a round-robin way.
 func newBurstAddInferiors(newInferiors []model.ChangeFeedID, captureIDs []model.CaptureID,
-) []*scheduler.ScheduleTask {
+) []*ScheduleTask {
 	idx := 0
-	addInferiorTasks := make([]*scheduler.ScheduleTask, 0, len(newInferiors))
+	addInferiorTasks := make([]*ScheduleTask, 0, len(newInferiors))
 	for _, infID := range newInferiors {
 		targetCapture := captureIDs[idx]
 		addInferiorTasks = append(addInferiorTasks,
-			&scheduler.ScheduleTask{
-				AddInferior: &scheduler.AddInferior{
+			&ScheduleTask{
+				AddInferior: &AddInferior{
 					ID:        ChangefeedID(infID),
 					CaptureID: targetCapture,
 				}})
@@ -133,9 +132,9 @@ func newBurstAddInferiors(newInferiors []model.ChangeFeedID, captureIDs []model.
 
 func newBurstRemoveInferiors(
 	rmInferiors []model.ChangeFeedID,
-	stateMachines map[model.ChangeFeedID]*scheduler.StateMachine,
-) []*scheduler.ScheduleTask {
-	removeTasks := make([]*scheduler.ScheduleTask, 0, len(rmInferiors))
+	stateMachines map[model.ChangeFeedID]*StateMachine,
+) []*ScheduleTask {
+	removeTasks := make([]*ScheduleTask, 0, len(rmInferiors))
 	for _, id := range rmInferiors {
 		ccf := stateMachines[id]
 		var captureID model.CaptureID = ccf.Primary
@@ -146,8 +145,8 @@ func newBurstRemoveInferiors(
 				zap.Any("ID", id.String()))
 			continue
 		}
-		removeTasks = append(removeTasks, &scheduler.ScheduleTask{
-			RemoveInferior: &scheduler.RemoveInferior{
+		removeTasks = append(removeTasks, &ScheduleTask{
+			RemoveInferior: &RemoveInferior{
 				ID:        ChangefeedID(id),
 				CaptureID: captureID,
 			},

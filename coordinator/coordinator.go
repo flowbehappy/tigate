@@ -22,7 +22,6 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
-	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -94,7 +93,7 @@ func NewCoordinator(capture *model.CaptureInfo,
 var allChangefeeds = make(map[model.ChangeFeedID]*model.ChangeFeedInfo)
 
 func init() {
-	for i := 0; i < 500000; i++ {
+	for i := 0; i < 5000; i++ {
 		id := fmt.Sprintf("%d", i)
 		allChangefeeds[model.DefaultChangeFeedID(id)] = &model.ChangeFeedInfo{
 			ID: id,
@@ -116,15 +115,15 @@ func (c *coordinator) Tick(ctx context.Context,
 		removingTask := 0
 		for _, value := range c.supervisor.GetInferiors() {
 			switch value.State {
-			case scheduler.SchedulerStatusAbsent:
+			case SchedulerStatusAbsent:
 				absentTask++
-			case scheduler.SchedulerStatusPrepare:
+			case SchedulerStatusPrepare:
 				prepareTask++
-			case scheduler.SchedulerStatusCommit:
+			case SchedulerStatusCommit:
 				commitTask++
-			case scheduler.SchedulerStatusWorking:
+			case SchedulerStatusWorking:
 				workingTask++
-			case scheduler.SchedulerStatusRemoving:
+			case SchedulerStatusRemoving:
 				removingTask++
 			}
 		}
@@ -196,11 +195,11 @@ func (c *coordinator) HandleMessage(msgs []*messaging.TargetMessage) ([]rpc.Mess
 	for _, msg := range msgs {
 		req := msg.Message.(*heartbeatpb.MaintainerHeartbeat)
 		serverID := msg.From
-		statuses := make([]scheduler.InferiorStatus, 0)
+		statuses := make([]InferiorStatus, 0)
 		for _, status := range req.Statuses {
 			statuses = append(statuses, &ChangefeedStatus{
 				ID:              ChangefeedID(model.DefaultChangeFeedID(status.ChangefeedID)),
-				Status:          scheduler.ComponentStatus(status.SchedulerStatus),
+				Status:          ComponentStatus(status.SchedulerStatus),
 				ChangefeedState: model.FeedState(status.FeedState),
 				CheckpointTs:    status.CheckpointTs,
 			})
@@ -289,7 +288,7 @@ func (c *coordinator) scheduleMaintainer(allInferiors []model.ChangeFeedID) ([]r
 }
 
 func (c *coordinator) handleMessages() ([]rpc.Message, error) {
-	var status []scheduler.InferiorStatus
+	var status []InferiorStatus
 	c.supervisor.UpdateCaptureStatus("", status)
 	return c.supervisor.HandleCaptureChanges(nil)
 }
@@ -299,9 +298,9 @@ type CoordinatorID string
 func (c CoordinatorID) String() string {
 	return string(c)
 }
-func (c CoordinatorID) Equal(id scheduler.InferiorID) bool {
+func (c CoordinatorID) Equal(id InferiorID) bool {
 	return c.String() == id.String()
 }
-func (c CoordinatorID) Less(id scheduler.InferiorID) bool {
+func (c CoordinatorID) Less(id InferiorID) bool {
 	return c.String() < id.String()
 }

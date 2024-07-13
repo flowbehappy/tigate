@@ -19,7 +19,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 )
@@ -58,8 +57,8 @@ func (b *balanceScheduler) Name() string {
 func (b *balanceScheduler) Schedule(
 	allInferiors []model.ChangeFeedID,
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
-	stateMachines map[model.ChangeFeedID]*scheduler.StateMachine,
-) []*scheduler.ScheduleTask {
+	stateMachines map[model.ChangeFeedID]*StateMachine,
+) []*ScheduleTask {
 	if !b.forceBalance {
 		now := time.Now()
 		if now.Sub(b.lastRebalanceTime) < b.checkBalanceInterval {
@@ -78,14 +77,14 @@ func (b *balanceScheduler) Schedule(
 func buildBalanceMoveTables(
 	random *rand.Rand,
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
-	stateMachines map[model.ChangeFeedID]*scheduler.StateMachine,
+	stateMachines map[model.ChangeFeedID]*StateMachine,
 	maxTaskConcurrency int,
-) []*scheduler.ScheduleTask {
+) []*ScheduleTask {
 	moves := newBalanceMoveTables(
 		random, aliveCaptures, stateMachines, maxTaskConcurrency)
-	tasks := make([]*scheduler.ScheduleTask, 0, len(moves))
+	tasks := make([]*ScheduleTask, 0, len(moves))
 	for i := 0; i < len(moves); i++ {
-		tasks = append(tasks, &scheduler.ScheduleTask{
+		tasks = append(tasks, &ScheduleTask{
 			MoveInferior: moves[i],
 		})
 	}
@@ -95,16 +94,16 @@ func buildBalanceMoveTables(
 func newBalanceMoveTables(
 	random *rand.Rand,
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
-	stateMachines map[model.ChangeFeedID]*scheduler.StateMachine,
+	stateMachines map[model.ChangeFeedID]*StateMachine,
 	maxTaskLimit int,
-) []*scheduler.MoveInferior {
-	tablesPerCapture := make(map[model.CaptureID]map[model.ChangeFeedID]*scheduler.StateMachine)
+) []*MoveInferior {
+	tablesPerCapture := make(map[model.CaptureID]map[model.ChangeFeedID]*StateMachine)
 	for captureID := range aliveCaptures {
-		tablesPerCapture[captureID] = make(map[model.ChangeFeedID]*scheduler.StateMachine)
+		tablesPerCapture[captureID] = make(map[model.ChangeFeedID]*StateMachine)
 	}
 
 	for cfID, st := range stateMachines {
-		if st.State == scheduler.SchedulerStatusWorking {
+		if st.State == SchedulerStatusWorking {
 			tablesPerCapture[st.Primary][cfID] = st
 		}
 	}
@@ -112,9 +111,9 @@ func newBalanceMoveTables(
 	// findVictim return tables which need to be moved
 	upperLimitPerCapture := int(math.Ceil(float64(len(stateMachines)) / float64(len(aliveCaptures))))
 
-	victims := make([]*scheduler.StateMachine, 0)
+	victims := make([]*StateMachine, 0)
 	for _, ts := range tablesPerCapture {
-		var changefeeds []*scheduler.StateMachine
+		var changefeeds []*StateMachine
 		for _, t := range ts {
 			changefeeds = append(changefeeds, t)
 		}
@@ -159,7 +158,7 @@ func newBalanceMoveTables(
 		captureWorkload[captureID] = randomizeWorkload(random, len(ts))
 	}
 	// for each victim table, find the target for it
-	moveTables := make([]*scheduler.MoveInferior, 0, len(victims))
+	moveTables := make([]*MoveInferior, 0, len(victims))
 	for idx, cf := range victims {
 		target := ""
 		minWorkload := math.MaxInt64
@@ -180,7 +179,7 @@ func newBalanceMoveTables(
 			break
 		}
 
-		moveTables = append(moveTables, &scheduler.MoveInferior{
+		moveTables = append(moveTables, &MoveInferior{
 			ID:          cf.ID,
 			DestCapture: target,
 		})

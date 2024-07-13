@@ -14,7 +14,6 @@
 package coordinator
 
 import (
-	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/tiflow/cdc/model"
 )
 
@@ -24,6 +23,6 @@ type Scheduler interface {
 	Schedule(
 		allInferiors []model.ChangeFeedID,
 		aliveCaptures map[model.CaptureID]*CaptureStatus,
-		stateMachines map[model.ChangeFeedID]*scheduler.StateMachine,
-	) []*scheduler.ScheduleTask
+		stateMachines map[model.ChangeFeedID]*StateMachine,
+	) []*ScheduleTask
 }
