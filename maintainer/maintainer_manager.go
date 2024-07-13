@@ -173,10 +173,12 @@ func (m *Manager) handleDispatchMaintainerRequest(
 			//if err := threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf); err != nil {
 			//	return errors.Trace(err)
 			//}
-			go cf.Run()
+			//go cf.Run()
 		}
 		task.Maintainer = cf
-		cf.taskCh <- task
+		cf.injectDispatchTableTask(task)
+		cf.handleAddMaintainerTask()
+		//cf.taskCh <- task
 	}
 
 	for _, req := range request.RemoveMaintainerRequests {
@@ -195,7 +197,9 @@ func (m *Manager) handleDispatchMaintainerRequest(
 			IsRemove:   true,
 			status:     dispatchTaskReceived,
 		}
-		cf.taskCh <- task
+		//cf.taskCh <- task
+		cf.injectDispatchTableTask(task)
+		cf.handleRemoveMaintainerTask()
 	}
 	return nil
 }
