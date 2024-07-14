@@ -55,9 +55,9 @@ func panicOnTaskStatus(status TaskStatus) {
 // so the Execute method should be thread-safe. If you don't want a task to be executed concurrently,
 // you should add a mark to avoid the situation.
 //
-// If you want to remove a task from the task scheduler, make sure
-//   - The future call of Execute method returns Done and time.Time{}
-//   - Call the Update method in the TaskScheduler with Done and time.Time{}.
+// If you want to remove a task from the task scheduler, you should:
+//   - (Neccessary) The future call of Execute method returns Done and time.Time{}
+//   - (Optional) Call the Remove method in the TaskScheduler
 //
 // The typical implmentation of the Task interface is as follows:
 //   - Use a taskId field to store the unique TaskId. Please don't modify it after the task is created.

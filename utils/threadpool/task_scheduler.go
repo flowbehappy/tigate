@@ -90,6 +90,10 @@ func (s *TaskScheduler) Update(task Task, status TaskStatus, next time.Time) {
 	s.Submit(task, status, next)
 }
 
+func (s *TaskScheduler) Remove(task Task) {
+	s.Submit(task, Done, time.Time{})
+}
+
 // It is mainly used by test cases to stop the scheduler working.
 func (s *TaskScheduler) blockForTest(until int, taskType TaskStatus) {
 	switch taskType {
