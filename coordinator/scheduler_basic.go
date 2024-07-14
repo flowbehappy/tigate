@@ -32,22 +32,22 @@ func (b *BasicScheduler) Name() string {
 }
 
 func (b *BasicScheduler) Schedule(
-	allInferiors []model.ChangeFeedID,
-	aliveCaptures map[model.CaptureID]*CaptureStatus,
+	allChangefeeds []model.ChangeFeedID,
+	aliveServers map[model.CaptureID]*ServerStatus,
 	stateMachines map[model.ChangeFeedID]*StateMachine,
 ) []*ScheduleTask {
 	tasks := make([]*ScheduleTask, 0)
-	lenEqual := len(allInferiors) == len(stateMachines)
+	lenEqual := len(allChangefeeds) == len(stateMachines)
 	allFind := true
 	newInferiors := make([]model.ChangeFeedID, 0)
-	for _, inf := range allInferiors {
+	for _, inf := range allChangefeeds {
 		if len(newInferiors) >= b.batchSize {
 			break
 		}
 		st, ok := stateMachines[inf]
 		if !ok {
 			newInferiors = append(newInferiors, inf)
-			// The inferior ID is not in the state machine means the two sets are
+			// The changefeed ID is not in the state machine means the two sets are
 			// not identical.
 			allFind = false
 			continue
@@ -60,8 +60,8 @@ func (b *BasicScheduler) Schedule(
 
 	// Build add inferior tasks.
 	if len(newInferiors) > 0 {
-		captureIDs := make([]model.CaptureID, 0, len(aliveCaptures))
-		for captureID, _ := range aliveCaptures {
+		captureIDs := make([]model.CaptureID, 0, len(aliveServers))
+		for captureID, _ := range aliveServers {
 			captureIDs = append(captureIDs, captureID)
 		}
 
@@ -70,7 +70,7 @@ func (b *BasicScheduler) Schedule(
 			// for a cluster with n captures, n should be at least 2
 			// only n - 1 captures can be in the `stopping` at the same time.
 			log.Warn("cannot found server when add new inferior",
-				zap.Any("allCaptureStatus", aliveCaptures))
+				zap.Any("allCaptureStatus", aliveServers))
 			return tasks
 		}
 		tasks = append(
@@ -84,7 +84,7 @@ func (b *BasicScheduler) Schedule(
 	if !lenEqual || !allFind {
 		// The two sets are not identical. We need to build a map to find removed inferiors.
 		intersectionIDS := make(map[model.ChangeFeedID]struct{})
-		for _, inf := range allInferiors {
+		for _, inf := range allChangefeeds {
 			_, ok := stateMachines[inf]
 			if ok {
 				intersectionIDS[inf] = struct{}{}

@@ -22,7 +22,7 @@ type Scheduler interface {
 	Name() string
 	Schedule(
 		allInferiors []model.ChangeFeedID,
-		aliveCaptures map[model.CaptureID]*CaptureStatus,
+		aliveCaptures map[model.CaptureID]*ServerStatus,
 		stateMachines map[model.ChangeFeedID]*StateMachine,
 	) []*ScheduleTask
 }

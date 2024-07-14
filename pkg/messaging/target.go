@@ -308,6 +308,11 @@ func (s *remoteMessageTarget) runReceiveMessages(stream grpcReceiver, receiveCh 
 		}
 		mt := IOType(message.Type)
 		for _, payload := range message.Payload {
+			msg, err := decodeIOType(mt, payload)
+			if err != nil {
+				err := AppError{Type: ErrorTypeInvalidMessage, Reason: errors.Trace(err).Error()}
+				return err
+			}
 			receiveCh <- &TargetMessage{
 				From:     ServerId(message.From),
 				To:       ServerId(message.To),
@@ -315,7 +320,8 @@ func (s *remoteMessageTarget) runReceiveMessages(stream grpcReceiver, receiveCh 
 				Epoch:    message.Epoch,
 				Sequence: message.Seqnum,
 				Type:     mt,
-				Message:  decodeIOType(mt, payload)}
+				Message:  msg,
+			}
 		}
 	}
 }

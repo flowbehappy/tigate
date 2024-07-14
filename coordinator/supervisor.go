@@ -35,14 +35,14 @@ const (
 	CaptureStateInitialized CaptureState = 2
 )
 
-type CaptureStatus struct {
+type ServerStatus struct {
 	state             CaptureState
 	capture           *model.CaptureInfo
 	lastBootstrapTime time.Time
 }
 
-func NewCaptureStatus(capture *model.CaptureInfo) *CaptureStatus {
-	return &CaptureStatus{
+func NewCaptureStatus(capture *model.CaptureInfo) *ServerStatus {
+	return &ServerStatus{
 		state:   CaptureStateUninitialized,
 		capture: capture,
 	}

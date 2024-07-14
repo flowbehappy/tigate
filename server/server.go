@@ -68,8 +68,6 @@ type serverImpl struct {
 	RegionCache *tikv.RegionCache
 	PDClock     pdutil.Clock
 
-	cancel context.CancelFunc
-
 	tcpServer  tcpserver.TCPServer
 	subModules []SubModule
 }
@@ -188,7 +186,6 @@ func (c *serverImpl) GetCoordinator() (coordinator.Coordinator, error) {
 // it also closes the coordinator and processorManager
 // Note: this function should be reentrant
 func (c *serverImpl) Close(ctx context.Context) {
-	defer c.cancel()
 	// Safety: Here we mainly want to stop the coordinator
 	// and ignore it if the coordinator does not exist or is not set.
 	o, _ := c.GetCoordinator()

@@ -1,7 +1,6 @@
 package messaging
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/flowbehappy/tigate/eventpb"
@@ -86,14 +85,14 @@ func (b *Bytes) decode(data []byte) error {
 	return nil
 }
 
-func (s *ServerId) encode(buf []byte) []byte { return append(buf, (*s)[:]...) }
-func (s *ServerId) decode(data []byte) error {
+func (s ServerId) encode(buf []byte) []byte { return append(buf, []byte(s)...) }
+func (s ServerId) decode(data []byte) error {
 	if len(data) != 16 {
 		log.Panic("Invalid data len, data len is expected 16", zap.Int("len", len(data)), zap.String("data", fmt.Sprintf("%v", data)))
 		return apperror.AppError{Type: apperror.ErrorTypeDecodeData, Reason: fmt.Sprintf("Invalid data len, data len is expected 16")}
 	}
 	uid := string(data)
-	*s = ServerId(uid)
+	s = ServerId(uid)
 	return nil
 }
 
@@ -222,43 +221,40 @@ func encodeIOType[T IOTypeT](data T, buf []byte) []byte {
 	return (data).encode(buf)
 }
 
-func decodeIOType(ioType IOType, value []byte) interface{} {
-	var m interface{}
-	CastTo(m, ioType).decode(value)
-	return m
-}
-func CastTo(m interface{}, ioType IOType) IOTypeT {
+func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
+	var m IOTypeT
 	switch ioType {
 	case TypeBytes:
-		return m.(*Bytes)
+		m = &Bytes{}
 	case TypeServerId:
-		return m.(*ServerId)
+		return ServerId(value), nil
 	case TypeDMLEvent:
-		return m.(*DMLEvent)
+		m = &DMLEvent{}
 	case TypeDDLEvent:
-		return m.(*DDLEvent)
+		m = &DDLEvent{}
 	case TypeHeartBeatRequest:
-		return m.(*HeartBeatRequest)
+		m = &HeartBeatRequest{}
 	case TypeHeartBeatResponse:
-		return m.(*HeartBeatResponse)
+		m = &HeartBeatResponse{}
 	case TypeScheduleDispatcherRequest:
-		return m.(*ScheduleDispatcherRequest)
+		m = &ScheduleDispatcherRequest{}
 	case TypeCoordinatorBootstrapRequest:
-		return m.(*CoordinatorBootstrapRequest)
+		m = &CoordinatorBootstrapRequest{}
 	case TypeDispatchMaintainerRequest:
-		return m.(*DispatchMaintainerRequest)
+		m = &DispatchMaintainerRequest{}
 	case TypeMaintainerHeartbeatRequest:
-		return m.(*MaintainerHeartbeat)
+		m = &MaintainerHeartbeat{}
 	case TypeCoordinatorBootstrapResponse:
-		return m.(*CoordinatorBootstrapResponse)
+		m = &CoordinatorBootstrapResponse{}
 	case TypeEventFeed:
-		return m.(*EventFeed)
+		m = &EventFeed{}
 	case TypeRegisterDispatcherRequest:
-		return m.(*RegisterDispatcherRequest)
+		m = &RegisterDispatcherRequest{}
 	default:
 		log.Panic("Unimplemented IOType", zap.Stringer("Type", ioType))
-		return nil
 	}
+	err := m.decode(value)
+	return m, err
 }
 
 // TargetMessage is a wrapper of message to be sent to a target server.
@@ -270,11 +266,11 @@ type TargetMessage struct {
 	Sequence uint64
 	Topic    string
 	Type     IOType
-	Message  interface{}
+	Message  IOTypeT
 }
 
 // NewTargetMessage creates a new TargetMessage to be sent to a target server.
-func NewTargetMessage(To ServerId, Topic string, Type IOType, Message interface{}) *TargetMessage {
+func NewTargetMessage(To ServerId, Topic string, Type IOType, Message IOTypeT) *TargetMessage {
 	return &TargetMessage{
 		To:      To,
 		Type:    Type,
@@ -284,11 +280,7 @@ func NewTargetMessage(To ServerId, Topic string, Type IOType, Message interface{
 }
 
 func (m *TargetMessage) encode(buf []byte) []byte {
-	return encodeIOType(CastTo(m.Message, m.Type), buf)
-}
-
-func (m *TargetMessage) decode(value []byte) {
-	m.Message = decodeIOType(m.Type, value)
+	return encodeIOType(m.Message, buf)
 }
 
 func (m *TargetMessage) String() string {
@@ -310,6 +302,7 @@ func (m *MaintainerHeartbeat) encode(buf []byte) []byte {
 }
 
 func (m *MaintainerHeartbeat) decode(data []byte) error {
+	m.MaintainerHeartbeat = &heartbeatpb.MaintainerHeartbeat{}
 	return m.Unmarshal(data)
 }
 
@@ -328,6 +321,7 @@ func (m *CoordinatorBootstrapRequest) encode(buf []byte) []byte {
 }
 
 func (m *CoordinatorBootstrapRequest) decode(data []byte) error {
+	m.CoordinatorBootstrapRequest = &heartbeatpb.CoordinatorBootstrapRequest{}
 	return m.Unmarshal(data)
 }
 
@@ -346,6 +340,7 @@ func (m *DispatchMaintainerRequest) encode(buf []byte) []byte {
 }
 
 func (m *DispatchMaintainerRequest) decode(data []byte) error {
+	m.DispatchMaintainerRequest = &heartbeatpb.DispatchMaintainerRequest{}
 	return m.Unmarshal(data)
 }
 
@@ -364,6 +359,7 @@ func (m *CoordinatorBootstrapResponse) encode(buf []byte) []byte {
 }
 
 func (m *CoordinatorBootstrapResponse) decode(data []byte) error {
+	m.CoordinatorBootstrapResponse = &heartbeatpb.CoordinatorBootstrapResponse{}
 	return m.Unmarshal(data)
 }
 
@@ -372,7 +368,7 @@ type MaintainerBootstrapRequest struct {
 }
 
 func (m *MaintainerBootstrapRequest) encode(buf []byte) []byte {
-	data, err := json.Marshal(m)
+	data, err := m.Marshal()
 	if err != nil {
 		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
 		return buf
@@ -382,5 +378,6 @@ func (m *MaintainerBootstrapRequest) encode(buf []byte) []byte {
 }
 
 func (m *MaintainerBootstrapRequest) decode(data []byte) error {
-	return json.Unmarshal(data, &m)
+	m.MaintainerBootstrapRequest = &heartbeatpb.MaintainerBootstrapRequest{}
+	return m.Unmarshal(data)
 }

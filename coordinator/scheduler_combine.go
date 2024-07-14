@@ -28,7 +28,7 @@ func NewCombineScheduler(schedulers ...Scheduler) Scheduler {
 // Schedule generates schedule tasks based on the inputs.
 func (c *CombineScheduler) Schedule(
 	allInferiors []model.ChangeFeedID,
-	aliveCaptures map[model.CaptureID]*CaptureStatus,
+	aliveCaptures map[model.CaptureID]*ServerStatus,
 	stateMachines map[model.ChangeFeedID]*StateMachine,
 ) []*ScheduleTask {
 	for _, sched := range c.schedulers {
