@@ -55,3 +55,50 @@ func (s *TableSpan) Equal(inferior scheduler.InferiorID) bool {
 		bytes.Equal(s.StartKey, tbl.StartKey) &&
 		bytes.Equal(s.EndKey, tbl.EndKey)
 }
+
+type DataRange struct {
+	Span    *TableSpan
+	startTs uint64
+	endTs   uint64
+}
+
+func NewDataRange(span *TableSpan, startTs, endTs uint64) *DataRange {
+	return &DataRange{
+		Span:    span,
+		startTs: startTs,
+		endTs:   endTs,
+	}
+}
+
+func (d *DataRange) StartTs() uint64 {
+	return d.startTs
+}
+
+func (d *DataRange) EndTs() uint64 {
+	return d.endTs
+}
+
+func (d *DataRange) String() string {
+	return fmt.Sprintf("span: %s, startTs: %d, endTs: %d", d.Span.String(), d.startTs, d.endTs)
+}
+
+func (d *DataRange) Equal(other *DataRange) bool {
+	return d.Span.Equal(other.Span) && d.startTs == other.startTs && d.endTs == other.endTs
+}
+
+// Merge merges two DataRange, if the two DataRange have different Span, return nil.
+// Otherwise, return the merged DataRange.
+// The merged DataRange has the same Span, and the startTs is the minimum of the two DataRange,
+// and the endTs is the maximum of the two DataRange.
+func (d *DataRange) Merge(other *DataRange) *DataRange {
+	if !d.Span.Equal(other.Span) {
+		return nil
+	}
+	if d.startTs > other.startTs {
+		d.startTs = other.startTs
+	}
+	if d.endTs < other.endTs {
+		d.endTs = other.endTs
+	}
+	return d
+}

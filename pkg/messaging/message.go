@@ -20,6 +20,7 @@ const (
 	TypeServerId
 	TypeDMLEvent
 	TypeDDLEvent
+	TypeWatermark
 	TypeHeartBeatRequest
 	TypeHeartBeatResponse
 	TypeScheduleDispatcherRequest
@@ -112,7 +113,7 @@ func (d *DMLEvent) Marshal() ([]byte, error) {
 	return nil, nil
 }
 
-func (d *DMLEvent) Unmarshal(data []byte) error {
+func (d *DMLEvent) decode(data []byte) error {
 	return nil
 }
 
@@ -127,6 +128,46 @@ func (d *DDLEvent) Marshal() ([]byte, error) {
 
 func (d *DDLEvent) Unmarshal(data []byte) error {
 	return nil
+}
+
+func (d *DDLEvent) decode(data []byte) error {
+	return nil
+}
+
+type HeartBeatRequest struct {
+	*heartbeatpb.HeartBeatRequest
+}
+
+func (h *HeartBeatRequest) encode(buf []byte) []byte {
+	data, err := h.Marshal()
+	if err != nil {
+		log.Panic("Failed to encode HeartBeatRequest", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (h *HeartBeatRequest) decode(data []byte) error {
+	return h.Unmarshal(data)
+}
+
+type HeartBeatResponse struct {
+	*heartbeatpb.HeartBeatResponse
+}
+
+func (h *HeartBeatResponse) encode(buf []byte) []byte {
+	data, err := h.Marshal()
+	if err != nil {
+		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (h *HeartBeatResponse) decode(data []byte) error {
+	return h.Unmarshal(data)
 }
 
 type IOTypeT interface {
