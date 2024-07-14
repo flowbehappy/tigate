@@ -7,7 +7,6 @@ import (
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/apperror"
-	"github.com/flowbehappy/tigate/rpc"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 
@@ -28,6 +27,10 @@ const (
 	TypeEventFeed
 	TypeRegisterDispatcherRequest
 	TypeBootstrapMaintainerRequest
+	TypeCoordinatorBootstrapRequest
+	TypeCoordinatorBootstrapResponse
+	TypeDispatchMaintainerRequest
+	TypeMaintainerHeartbeatRequest
 )
 
 func (t IOType) String() string {
@@ -46,6 +49,14 @@ func (t IOType) String() string {
 		return "HeartBeatResponse"
 	case TypeScheduleDispatcherRequest:
 		return "ScheduleDispatcherRequest"
+	case TypeCoordinatorBootstrapRequest:
+		return "CoordinatorBootstrapRequest"
+	case TypeDispatchMaintainerRequest:
+		return "DispatchMaintainerRequest"
+	case TypeMaintainerHeartbeatRequest:
+		return "MaintainerHeartbeatRequest"
+	case TypeCoordinatorBootstrapResponse:
+		return "CoordinatorBootstrapResponse"
 	case TypeEventFeed:
 		return "EventFeed"
 	case TypeRegisterDispatcherRequest:
@@ -59,12 +70,14 @@ func (t IOType) String() string {
 
 type Bytes []byte
 
-type ServerId uuid.UUID
+type ServerId string
 
-func (s ServerId) String() string { return uuid.UUID(s).String() }
+func (s ServerId) String() string {
+	return string(s)
+}
 
 func NewServerId() ServerId {
-	return ServerId(uuid.New())
+	return ServerId(uuid.New().String())
 }
 
 func (b *Bytes) encode(buf []byte) []byte { return append(buf, (*b)...) }
@@ -79,17 +92,10 @@ func (s *ServerId) decode(data []byte) error {
 		log.Panic("Invalid data len, data len is expected 16", zap.Int("len", len(data)), zap.String("data", fmt.Sprintf("%v", data)))
 		return apperror.AppError{Type: apperror.ErrorTypeDecodeData, Reason: fmt.Sprintf("Invalid data len, data len is expected 16")}
 	}
-	uid, err := uuid.FromBytes(data)
-	if err != nil {
-		return err
-	}
+	uid := string(data)
 	*s = ServerId(uid)
 	return nil
 }
-
-// Note that please never change the return slice directly,
-// because the slice is a reference to the original data.
-func (s *ServerId) slice() []byte { return (*s)[:] }
 
 type DMLEvent struct {
 	// TODO
@@ -237,12 +243,18 @@ func CastTo(m interface{}, ioType IOType) IOTypeT {
 		return m.(*HeartBeatResponse)
 	case TypeScheduleDispatcherRequest:
 		return m.(*ScheduleDispatcherRequest)
+	case TypeCoordinatorBootstrapRequest:
+		return m.(*CoordinatorBootstrapRequest)
+	case TypeDispatchMaintainerRequest:
+		return m.(*DispatchMaintainerRequest)
+	case TypeMaintainerHeartbeatRequest:
+		return m.(*MaintainerHeartbeat)
+	case TypeCoordinatorBootstrapResponse:
+		return m.(*CoordinatorBootstrapResponse)
 	case TypeEventFeed:
 		return m.(*EventFeed)
 	case TypeRegisterDispatcherRequest:
 		return m.(*RegisterDispatcherRequest)
-	case TypeBootstrapMaintainerRequest:
-		return m.(*MaintainerBootstrapRequest)
 	default:
 		log.Panic("Unimplemented IOType", zap.Stringer("Type", ioType))
 		return nil
@@ -280,11 +292,83 @@ func (m *TargetMessage) decode(value []byte) {
 }
 
 func (m *TargetMessage) String() string {
-	return fmt.Sprintf("From: %s, To: %s, Type: %s, Message: %v", m.From.String(), m.To.String(), m.Type, m.Message)
+	return fmt.Sprintf("From: %s, To: %s, Type: %s, Message: %v", m.From, m.To, m.Type, m.Message)
+}
+
+type MaintainerHeartbeat struct {
+	*heartbeatpb.MaintainerHeartbeat
+}
+
+func (m *MaintainerHeartbeat) encode(buf []byte) []byte {
+	data, err := m.Marshal()
+	if err != nil {
+		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (m *MaintainerHeartbeat) decode(data []byte) error {
+	return m.Unmarshal(data)
+}
+
+type CoordinatorBootstrapRequest struct {
+	*heartbeatpb.CoordinatorBootstrapRequest
+}
+
+func (m *CoordinatorBootstrapRequest) encode(buf []byte) []byte {
+	data, err := m.Marshal()
+	if err != nil {
+		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (m *CoordinatorBootstrapRequest) decode(data []byte) error {
+	return m.Unmarshal(data)
+}
+
+type DispatchMaintainerRequest struct {
+	*heartbeatpb.DispatchMaintainerRequest
+}
+
+func (m *DispatchMaintainerRequest) encode(buf []byte) []byte {
+	data, err := m.Marshal()
+	if err != nil {
+		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (m *DispatchMaintainerRequest) decode(data []byte) error {
+	return m.Unmarshal(data)
+}
+
+type CoordinatorBootstrapResponse struct {
+	*heartbeatpb.CoordinatorBootstrapResponse
+}
+
+func (m *CoordinatorBootstrapResponse) encode(buf []byte) []byte {
+	data, err := m.Marshal()
+	if err != nil {
+		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (m *CoordinatorBootstrapResponse) decode(data []byte) error {
+	return m.Unmarshal(data)
 }
 
 type MaintainerBootstrapRequest struct {
-	*rpc.MaintainerBootstrapRequest
+	*heartbeatpb.MaintainerBootstrapRequest
 }
 
 func (m *MaintainerBootstrapRequest) encode(buf []byte) []byte {

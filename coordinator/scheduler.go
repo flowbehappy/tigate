@@ -11,9 +11,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package rpc
+package coordinator
 
-// Message for rpc
-// todo: define it in proto file
-type Message interface {
+import (
+	"github.com/pingcap/tiflow/cdc/model"
+)
+
+// Scheduler schedules check all untracked inferiors and generate ScheduleTask
+type Scheduler interface {
+	Name() string
+	Schedule(
+		allInferiors []model.ChangeFeedID,
+		aliveCaptures map[model.CaptureID]*CaptureStatus,
+		stateMachines map[model.ChangeFeedID]*StateMachine,
+	) []*ScheduleTask
 }

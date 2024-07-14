@@ -480,6 +480,406 @@ func (m *ScheduleDispatcherRequest) GetScheduleAction() ScheduleAction {
 	return ScheduleAction_Create
 }
 
+type MaintainerHeartbeat struct {
+	Statuses []*MaintainerStatus `protobuf:"bytes,1,rep,name=statuses,proto3" json:"statuses,omitempty"`
+}
+
+func (m *MaintainerHeartbeat) Reset()         { *m = MaintainerHeartbeat{} }
+func (m *MaintainerHeartbeat) String() string { return proto.CompactTextString(m) }
+func (*MaintainerHeartbeat) ProtoMessage()    {}
+func (*MaintainerHeartbeat) Descriptor() ([]byte, []int) {
+	return fileDescriptor_6d584080fdadb670, []int{7}
+}
+func (m *MaintainerHeartbeat) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MaintainerHeartbeat) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MaintainerHeartbeat.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MaintainerHeartbeat) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MaintainerHeartbeat.Merge(m, src)
+}
+func (m *MaintainerHeartbeat) XXX_Size() int {
+	return m.Size()
+}
+func (m *MaintainerHeartbeat) XXX_DiscardUnknown() {
+	xxx_messageInfo_MaintainerHeartbeat.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MaintainerHeartbeat proto.InternalMessageInfo
+
+func (m *MaintainerHeartbeat) GetStatuses() []*MaintainerStatus {
+	if m != nil {
+		return m.Statuses
+	}
+	return nil
+}
+
+type MaintainerStatus struct {
+	ChangefeedID    string `protobuf:"bytes,1,opt,name=changefeedID,proto3" json:"changefeedID,omitempty"`
+	FeedState       string `protobuf:"bytes,2,opt,name=feed_state,json=feedState,proto3" json:"feed_state,omitempty"`
+	SchedulerStatus int32  `protobuf:"varint,3,opt,name=scheduler_status,json=schedulerStatus,proto3" json:"scheduler_status,omitempty"`
+	CheckpointTs    uint64 `protobuf:"varint,4,opt,name=checkpoint_ts,json=checkpointTs,proto3" json:"checkpoint_ts,omitempty"`
+}
+
+func (m *MaintainerStatus) Reset()         { *m = MaintainerStatus{} }
+func (m *MaintainerStatus) String() string { return proto.CompactTextString(m) }
+func (*MaintainerStatus) ProtoMessage()    {}
+func (*MaintainerStatus) Descriptor() ([]byte, []int) {
+	return fileDescriptor_6d584080fdadb670, []int{8}
+}
+func (m *MaintainerStatus) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MaintainerStatus) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MaintainerStatus.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MaintainerStatus) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MaintainerStatus.Merge(m, src)
+}
+func (m *MaintainerStatus) XXX_Size() int {
+	return m.Size()
+}
+func (m *MaintainerStatus) XXX_DiscardUnknown() {
+	xxx_messageInfo_MaintainerStatus.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MaintainerStatus proto.InternalMessageInfo
+
+func (m *MaintainerStatus) GetChangefeedID() string {
+	if m != nil {
+		return m.ChangefeedID
+	}
+	return ""
+}
+
+func (m *MaintainerStatus) GetFeedState() string {
+	if m != nil {
+		return m.FeedState
+	}
+	return ""
+}
+
+func (m *MaintainerStatus) GetSchedulerStatus() int32 {
+	if m != nil {
+		return m.SchedulerStatus
+	}
+	return 0
+}
+
+func (m *MaintainerStatus) GetCheckpointTs() uint64 {
+	if m != nil {
+		return m.CheckpointTs
+	}
+	return 0
+}
+
+type CoordinatorBootstrapRequest struct {
+	Version int64 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+}
+
+func (m *CoordinatorBootstrapRequest) Reset()         { *m = CoordinatorBootstrapRequest{} }
+func (m *CoordinatorBootstrapRequest) String() string { return proto.CompactTextString(m) }
+func (*CoordinatorBootstrapRequest) ProtoMessage()    {}
+func (*CoordinatorBootstrapRequest) Descriptor() ([]byte, []int) {
+	return fileDescriptor_6d584080fdadb670, []int{9}
+}
+func (m *CoordinatorBootstrapRequest) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *CoordinatorBootstrapRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_CoordinatorBootstrapRequest.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *CoordinatorBootstrapRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_CoordinatorBootstrapRequest.Merge(m, src)
+}
+func (m *CoordinatorBootstrapRequest) XXX_Size() int {
+	return m.Size()
+}
+func (m *CoordinatorBootstrapRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_CoordinatorBootstrapRequest.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_CoordinatorBootstrapRequest proto.InternalMessageInfo
+
+func (m *CoordinatorBootstrapRequest) GetVersion() int64 {
+	if m != nil {
+		return m.Version
+	}
+	return 0
+}
+
+type CoordinatorBootstrapResponse struct {
+	Statuses []*MaintainerStatus `protobuf:"bytes,1,rep,name=statuses,proto3" json:"statuses,omitempty"`
+}
+
+func (m *CoordinatorBootstrapResponse) Reset()         { *m = CoordinatorBootstrapResponse{} }
+func (m *CoordinatorBootstrapResponse) String() string { return proto.CompactTextString(m) }
+func (*CoordinatorBootstrapResponse) ProtoMessage()    {}
+func (*CoordinatorBootstrapResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_6d584080fdadb670, []int{10}
+}
+func (m *CoordinatorBootstrapResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *CoordinatorBootstrapResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_CoordinatorBootstrapResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *CoordinatorBootstrapResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_CoordinatorBootstrapResponse.Merge(m, src)
+}
+func (m *CoordinatorBootstrapResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *CoordinatorBootstrapResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_CoordinatorBootstrapResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_CoordinatorBootstrapResponse proto.InternalMessageInfo
+
+func (m *CoordinatorBootstrapResponse) GetStatuses() []*MaintainerStatus {
+	if m != nil {
+		return m.Statuses
+	}
+	return nil
+}
+
+type DispatchMaintainerRequest struct {
+	AddMaintainers    []*AddMaintainerRequest    `protobuf:"bytes,1,rep,name=add_maintainers,json=addMaintainers,proto3" json:"add_maintainers,omitempty"`
+	RemoveMaintainers []*RemoveMaintainerRequest `protobuf:"bytes,2,rep,name=remove_maintainers,json=removeMaintainers,proto3" json:"remove_maintainers,omitempty"`
+}
+
+func (m *DispatchMaintainerRequest) Reset()         { *m = DispatchMaintainerRequest{} }
+func (m *DispatchMaintainerRequest) String() string { return proto.CompactTextString(m) }
+func (*DispatchMaintainerRequest) ProtoMessage()    {}
+func (*DispatchMaintainerRequest) Descriptor() ([]byte, []int) {
+	return fileDescriptor_6d584080fdadb670, []int{11}
+}
+func (m *DispatchMaintainerRequest) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *DispatchMaintainerRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_DispatchMaintainerRequest.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *DispatchMaintainerRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_DispatchMaintainerRequest.Merge(m, src)
+}
+func (m *DispatchMaintainerRequest) XXX_Size() int {
+	return m.Size()
+}
+func (m *DispatchMaintainerRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_DispatchMaintainerRequest.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_DispatchMaintainerRequest proto.InternalMessageInfo
+
+func (m *DispatchMaintainerRequest) GetAddMaintainers() []*AddMaintainerRequest {
+	if m != nil {
+		return m.AddMaintainers
+	}
+	return nil
+}
+
+func (m *DispatchMaintainerRequest) GetRemoveMaintainers() []*RemoveMaintainerRequest {
+	if m != nil {
+		return m.RemoveMaintainers
+	}
+	return nil
+}
+
+type AddMaintainerRequest struct {
+	Id          string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	IsSecondary bool   `protobuf:"varint,2,opt,name=is_secondary,json=isSecondary,proto3" json:"is_secondary,omitempty"`
+}
+
+func (m *AddMaintainerRequest) Reset()         { *m = AddMaintainerRequest{} }
+func (m *AddMaintainerRequest) String() string { return proto.CompactTextString(m) }
+func (*AddMaintainerRequest) ProtoMessage()    {}
+func (*AddMaintainerRequest) Descriptor() ([]byte, []int) {
+	return fileDescriptor_6d584080fdadb670, []int{12}
+}
+func (m *AddMaintainerRequest) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *AddMaintainerRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_AddMaintainerRequest.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *AddMaintainerRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_AddMaintainerRequest.Merge(m, src)
+}
+func (m *AddMaintainerRequest) XXX_Size() int {
+	return m.Size()
+}
+func (m *AddMaintainerRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_AddMaintainerRequest.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_AddMaintainerRequest proto.InternalMessageInfo
+
+func (m *AddMaintainerRequest) GetId() string {
+	if m != nil {
+		return m.Id
+	}
+	return ""
+}
+
+func (m *AddMaintainerRequest) GetIsSecondary() bool {
+	if m != nil {
+		return m.IsSecondary
+	}
+	return false
+}
+
+type RemoveMaintainerRequest struct {
+	Id      string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Cascade bool   `protobuf:"varint,2,opt,name=cascade,proto3" json:"cascade,omitempty"`
+}
+
+func (m *RemoveMaintainerRequest) Reset()         { *m = RemoveMaintainerRequest{} }
+func (m *RemoveMaintainerRequest) String() string { return proto.CompactTextString(m) }
+func (*RemoveMaintainerRequest) ProtoMessage()    {}
+func (*RemoveMaintainerRequest) Descriptor() ([]byte, []int) {
+	return fileDescriptor_6d584080fdadb670, []int{13}
+}
+func (m *RemoveMaintainerRequest) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *RemoveMaintainerRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_RemoveMaintainerRequest.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *RemoveMaintainerRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_RemoveMaintainerRequest.Merge(m, src)
+}
+func (m *RemoveMaintainerRequest) XXX_Size() int {
+	return m.Size()
+}
+func (m *RemoveMaintainerRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_RemoveMaintainerRequest.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_RemoveMaintainerRequest proto.InternalMessageInfo
+
+func (m *RemoveMaintainerRequest) GetId() string {
+	if m != nil {
+		return m.Id
+	}
+	return ""
+}
+
+func (m *RemoveMaintainerRequest) GetCascade() bool {
+	if m != nil {
+		return m.Cascade
+	}
+	return false
+}
+
+type MaintainerBootstrapRequest struct {
+	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+}
+
+func (m *MaintainerBootstrapRequest) Reset()         { *m = MaintainerBootstrapRequest{} }
+func (m *MaintainerBootstrapRequest) String() string { return proto.CompactTextString(m) }
+func (*MaintainerBootstrapRequest) ProtoMessage()    {}
+func (*MaintainerBootstrapRequest) Descriptor() ([]byte, []int) {
+	return fileDescriptor_6d584080fdadb670, []int{14}
+}
+func (m *MaintainerBootstrapRequest) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *MaintainerBootstrapRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_MaintainerBootstrapRequest.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *MaintainerBootstrapRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_MaintainerBootstrapRequest.Merge(m, src)
+}
+func (m *MaintainerBootstrapRequest) XXX_Size() int {
+	return m.Size()
+}
+func (m *MaintainerBootstrapRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_MaintainerBootstrapRequest.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_MaintainerBootstrapRequest proto.InternalMessageInfo
+
+func (m *MaintainerBootstrapRequest) GetId() string {
+	if m != nil {
+		return m.Id
+	}
+	return ""
+}
+
 func init() {
 	proto.RegisterEnum("heartbeatpb.Action", Action_name, Action_value)
 	proto.RegisterEnum("heartbeatpb.ScheduleAction", ScheduleAction_name, ScheduleAction_value)
@@ -490,44 +890,68 @@ func init() {
 	proto.RegisterType((*HeartBeatResponse)(nil), "heartbeatpb.HeartBeatResponse")
 	proto.RegisterType((*DispatcherConfig)(nil), "heartbeatpb.DispatcherConfig")
 	proto.RegisterType((*ScheduleDispatcherRequest)(nil), "heartbeatpb.ScheduleDispatcherRequest")
+	proto.RegisterType((*MaintainerHeartbeat)(nil), "heartbeatpb.MaintainerHeartbeat")
+	proto.RegisterType((*MaintainerStatus)(nil), "heartbeatpb.MaintainerStatus")
+	proto.RegisterType((*CoordinatorBootstrapRequest)(nil), "heartbeatpb.CoordinatorBootstrapRequest")
+	proto.RegisterType((*CoordinatorBootstrapResponse)(nil), "heartbeatpb.CoordinatorBootstrapResponse")
+	proto.RegisterType((*DispatchMaintainerRequest)(nil), "heartbeatpb.DispatchMaintainerRequest")
+	proto.RegisterType((*AddMaintainerRequest)(nil), "heartbeatpb.AddMaintainerRequest")
+	proto.RegisterType((*RemoveMaintainerRequest)(nil), "heartbeatpb.RemoveMaintainerRequest")
+	proto.RegisterType((*MaintainerBootstrapRequest)(nil), "heartbeatpb.MaintainerBootstrapRequest")
 }
 
 func init() { proto.RegisterFile("heartbeatpb/heartbeat.proto", fileDescriptor_6d584080fdadb670) }
 
 var fileDescriptor_6d584080fdadb670 = []byte{
-	// 509 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x54, 0xc1, 0x6e, 0xda, 0x4c,
-	0x10, 0x66, 0x89, 0x7f, 0x07, 0x86, 0x84, 0xdf, 0xd9, 0x4a, 0x91, 0x9b, 0xb4, 0x56, 0xe4, 0x4b,
-	0x10, 0x95, 0x88, 0xe4, 0xaa, 0x0f, 0x10, 0xa0, 0x52, 0x51, 0xa5, 0x2a, 0x5a, 0x90, 0xda, 0xe6,
-	0xb6, 0x98, 0x01, 0x2c, 0xe8, 0xae, 0xeb, 0xdd, 0x54, 0xea, 0x5b, 0xf4, 0xd6, 0xf7, 0xe8, 0xb5,
-	0x2f, 0xd0, 0x63, 0x8e, 0x3d, 0x56, 0xf0, 0x22, 0x95, 0x17, 0x30, 0x36, 0xa8, 0x07, 0x6e, 0x3b,
-	0x33, 0xdf, 0x37, 0xdf, 0x37, 0xb3, 0xab, 0x85, 0xcb, 0x29, 0xf2, 0x44, 0x0f, 0x91, 0xeb, 0x78,
-	0x78, 0x93, 0x9d, 0x5b, 0x71, 0x22, 0xb5, 0xa4, 0xb5, 0x5c, 0xd1, 0xff, 0x08, 0xd5, 0x01, 0x1f,
-	0xce, 0xb1, 0x1f, 0x73, 0x41, 0x5d, 0x38, 0x36, 0x41, 0xaf, 0xeb, 0x92, 0x2b, 0xd2, 0xb0, 0xd8,
-	0x26, 0xa4, 0x17, 0x50, 0xe9, 0x6b, 0x9e, 0xe8, 0xb7, 0xf8, 0xd5, 0x2d, 0x5f, 0x91, 0xc6, 0x09,
-	0xcb, 0x62, 0x7a, 0x0e, 0xf6, 0x6b, 0x31, 0x4a, 0x2b, 0x47, 0xa6, 0xb2, 0x8e, 0xfc, 0x7b, 0x70,
-	0xde, 0xa4, 0x4a, 0x6d, 0xe4, 0x9a, 0xe1, 0xe7, 0x07, 0x54, 0x9a, 0xfa, 0x70, 0x12, 0x4e, 0xb9,
-	0x98, 0xe0, 0x18, 0x71, 0x94, 0xc9, 0x14, 0x72, 0x2b, 0x0c, 0x86, 0xb3, 0x58, 0x46, 0x42, 0x0f,
-	0x94, 0xd1, 0x33, 0x98, 0x6d, 0xce, 0xff, 0x4e, 0xe0, 0xd4, 0x78, 0xbb, 0x4b, 0xe4, 0x24, 0x41,
-	0xa5, 0x68, 0x13, 0x2c, 0x15, 0x73, 0x61, 0x3a, 0xd6, 0x82, 0xf3, 0x56, 0x6e, 0xc8, 0x56, 0x36,
-	0x21, 0x33, 0x18, 0xfa, 0x0c, 0xaa, 0x3d, 0xd5, 0x9e, 0xcb, 0x70, 0x86, 0x23, 0xd3, 0xbe, 0xc2,
-	0xb6, 0x89, 0x74, 0x0b, 0xe6, 0x38, 0x50, 0x66, 0x20, 0x8b, 0x6d, 0xc2, 0xd4, 0x59, 0x27, 0xef,
-	0xcc, 0x5a, 0x39, 0xcb, 0xe7, 0xfc, 0x1f, 0x04, 0xce, 0x0a, 0xce, 0x7a, 0x62, 0x2c, 0x0f, 0x72,
-	0xd7, 0x85, 0xff, 0x75, 0xbe, 0x01, 0xa6, 0x2b, 0x38, 0x6a, 0xd4, 0x82, 0x8b, 0x7d, 0xda, 0x06,
-	0xc3, 0x76, 0x29, 0xf4, 0x05, 0xd8, 0x3c, 0xd4, 0x91, 0x14, 0x66, 0x88, 0x7a, 0xf0, 0xa4, 0x40,
-	0xbe, 0x35, 0x25, 0xb6, 0x86, 0xf8, 0x33, 0x38, 0xcb, 0x5d, 0x95, 0x8a, 0xa5, 0x50, 0x48, 0x03,
-	0xb0, 0x22, 0x31, 0x96, 0x2e, 0x31, 0xe2, 0xde, 0xbf, 0xc5, 0xd3, 0x09, 0x99, 0xc1, 0xee, 0xdd,
-	0x6f, 0x79, 0xff, 0x7e, 0xfd, 0x0f, 0xe0, 0x74, 0x23, 0x15, 0x73, 0x1d, 0x4e, 0x31, 0xe9, 0x48,
-	0x31, 0x8e, 0x26, 0x07, 0xed, 0xc7, 0x85, 0x63, 0x95, 0xbe, 0xbd, 0xec, 0x69, 0x6c, 0x42, 0xff,
-	0x27, 0x81, 0xa7, 0xfd, 0x70, 0x8a, 0xa3, 0x87, 0x39, 0x6e, 0x25, 0x0e, 0x79, 0x7b, 0xaf, 0xc0,
-	0x0e, 0x8d, 0x23, 0xd3, 0xba, 0x16, 0x3c, 0x2f, 0x38, 0xd9, 0xb5, 0xcd, 0xd6, 0x60, 0xda, 0x81,
-	0xba, 0x5a, 0xeb, 0xde, 0xe6, 0x97, 0x7e, 0x59, 0xa0, 0xf7, 0x0b, 0x10, 0xb6, 0x43, 0x69, 0x5e,
-	0x83, 0xbd, 0x3a, 0xd1, 0x0a, 0x58, 0xef, 0xa4, 0x40, 0xa7, 0x44, 0xab, 0xf0, 0xdf, 0xfb, 0x24,
-	0xd2, 0xe8, 0x90, 0x34, 0x79, 0xc7, 0x95, 0x72, 0xca, 0xcd, 0x06, 0xd4, 0x8b, 0xad, 0x28, 0x80,
-	0xdd, 0x49, 0x90, 0xeb, 0x94, 0x02, 0x60, 0x33, 0xfc, 0x24, 0xbf, 0xa0, 0x43, 0xda, 0xd7, 0xbf,
-	0x16, 0x1e, 0x79, 0x5c, 0x78, 0xe4, 0xcf, 0xc2, 0x23, 0xdf, 0x96, 0x5e, 0xe9, 0x71, 0xe9, 0x95,
-	0x7e, 0x2f, 0xbd, 0xd2, 0xfd, 0x69, 0xeb, 0x26, 0x67, 0x6d, 0x68, 0x9b, 0xaf, 0xe1, 0xe5, 0xdf,
-	0x00, 0x00, 0x00, 0xff, 0xff, 0xe0, 0xc8, 0x23, 0x8e, 0x39, 0x04, 0x00, 0x00,
+	// 762 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xa4, 0x55, 0x4d, 0x4e, 0x1b, 0x4b,
+	0x10, 0xf6, 0x18, 0xe3, 0x9f, 0x32, 0x98, 0xa1, 0x79, 0xe2, 0x99, 0x3f, 0x0b, 0xe6, 0x3d, 0x09,
+	0x87, 0x44, 0x46, 0x72, 0x14, 0x45, 0x59, 0x62, 0x13, 0x09, 0x27, 0x4a, 0x84, 0xda, 0x48, 0x09,
+	0x6c, 0xac, 0xf6, 0x4c, 0x1b, 0x8f, 0x80, 0xee, 0x49, 0x77, 0x83, 0xc4, 0x2d, 0xb2, 0xcb, 0x09,
+	0x72, 0x81, 0x6c, 0x93, 0x03, 0x64, 0xc9, 0x32, 0xcb, 0x08, 0x2e, 0x12, 0x75, 0x7b, 0x66, 0x3c,
+	0x63, 0xc3, 0x02, 0x65, 0x37, 0x55, 0xf5, 0xd5, 0x57, 0x5f, 0x55, 0x75, 0xd9, 0xb0, 0x36, 0xa4,
+	0x44, 0xa8, 0x3e, 0x25, 0x2a, 0xe8, 0xef, 0xc6, 0xdf, 0x8d, 0x40, 0x70, 0xc5, 0x51, 0x39, 0x11,
+	0x74, 0x8e, 0xa1, 0x74, 0x44, 0xfa, 0xe7, 0xb4, 0x1b, 0x10, 0x86, 0xaa, 0x50, 0x30, 0x46, 0x67,
+	0xbf, 0x6a, 0x6d, 0x5a, 0xf5, 0x1c, 0x8e, 0x4c, 0xb4, 0x0a, 0xc5, 0xae, 0x22, 0x42, 0xbd, 0xa5,
+	0xd7, 0xd5, 0xec, 0xa6, 0x55, 0x9f, 0xc3, 0xb1, 0x8d, 0x96, 0x21, 0xff, 0x9a, 0x79, 0x3a, 0x32,
+	0x63, 0x22, 0xa1, 0xe5, 0x9c, 0x80, 0x7d, 0xa0, 0x2b, 0xb5, 0x28, 0x51, 0x98, 0x7e, 0xba, 0xa4,
+	0x52, 0x21, 0x07, 0xe6, 0xdc, 0x21, 0x61, 0xa7, 0x74, 0x40, 0xa9, 0x17, 0x97, 0x49, 0xf9, 0x46,
+	0x18, 0xea, 0x9e, 0x05, 0xdc, 0x67, 0xea, 0x48, 0x9a, 0x7a, 0x06, 0x33, 0xf6, 0x39, 0x5f, 0x2c,
+	0x98, 0x37, 0xda, 0x0e, 0x05, 0x3f, 0x15, 0x54, 0x4a, 0xb4, 0x03, 0x39, 0x19, 0x10, 0x66, 0x18,
+	0xcb, 0xcd, 0xe5, 0x46, 0xa2, 0xc9, 0x46, 0xdc, 0x21, 0x36, 0x18, 0xb4, 0x0e, 0xa5, 0x8e, 0x6c,
+	0x9d, 0x73, 0xf7, 0x8c, 0x7a, 0x86, 0xbe, 0x88, 0xc7, 0x0e, 0x3d, 0x05, 0xf3, 0x79, 0x24, 0x4d,
+	0x43, 0x39, 0x1c, 0x99, 0x5a, 0x59, 0x3b, 0xa9, 0x2c, 0x37, 0x52, 0x96, 0xf4, 0x39, 0xdf, 0x2c,
+	0x58, 0x4c, 0x29, 0xeb, 0xb0, 0x01, 0x7f, 0x94, 0xba, 0x7d, 0x58, 0x50, 0x49, 0x02, 0xaa, 0x47,
+	0x30, 0x53, 0x2f, 0x37, 0x57, 0xa7, 0xd3, 0x22, 0x0c, 0x9e, 0x4c, 0x41, 0x4f, 0x21, 0x4f, 0x5c,
+	0xe5, 0x73, 0x66, 0x9a, 0xa8, 0x34, 0x97, 0x52, 0xc9, 0x7b, 0x26, 0x84, 0x43, 0x88, 0x73, 0x06,
+	0x8b, 0x89, 0x55, 0xc9, 0x80, 0x33, 0x49, 0x51, 0x13, 0x72, 0x3e, 0x1b, 0xf0, 0xaa, 0x65, 0x8a,
+	0xd7, 0x1e, 0x2e, 0xae, 0x3b, 0xc4, 0x06, 0x3b, 0xb5, 0xdf, 0xec, 0xf4, 0x7e, 0x9d, 0x8f, 0x60,
+	0xef, 0xfb, 0x32, 0x20, 0xca, 0x1d, 0x52, 0xd1, 0xe6, 0x6c, 0xe0, 0x9f, 0x3e, 0x6a, 0x3e, 0x55,
+	0x28, 0x48, 0xfd, 0xf6, 0xe2, 0xa7, 0x11, 0x99, 0xce, 0x77, 0x0b, 0x56, 0xba, 0xee, 0x90, 0x7a,
+	0x97, 0xe7, 0x74, 0x5c, 0xe2, 0x31, 0x6f, 0xef, 0x05, 0xe4, 0x5d, 0xa3, 0xc8, 0x50, 0x97, 0x9b,
+	0x1b, 0x29, 0x25, 0x93, 0xb2, 0x71, 0x08, 0x46, 0x6d, 0xa8, 0xc8, 0xb0, 0xee, 0x5e, 0x72, 0xe8,
+	0x6b, 0xa9, 0xf4, 0x6e, 0x0a, 0x82, 0x27, 0x52, 0x9c, 0x43, 0x58, 0x7a, 0x47, 0x7c, 0xa6, 0x88,
+	0xcf, 0xa8, 0x38, 0x88, 0xf2, 0xd0, 0x2b, 0x28, 0x4a, 0x45, 0xd4, 0xa5, 0x7e, 0x07, 0xa3, 0x55,
+	0xa4, 0x45, 0x8d, 0x73, 0xba, 0x06, 0x86, 0x63, 0xb8, 0xf3, 0xd5, 0x02, 0x7b, 0x32, 0x7c, 0xef,
+	0x18, 0x4a, 0x13, 0x63, 0xd8, 0x00, 0xd0, 0x5f, 0x3d, 0xcd, 0x44, 0xcd, 0x28, 0x4a, 0xb8, 0xa4,
+	0x3d, 0x9a, 0x83, 0xa2, 0x27, 0x60, 0x47, 0xda, 0x45, 0x6f, 0x54, 0xcd, 0x34, 0x3c, 0x8b, 0x17,
+	0x62, 0x7f, 0x58, 0xed, 0x3f, 0x98, 0x1f, 0x1f, 0x6e, 0x4f, 0xc5, 0x37, 0x93, 0xba, 0xe6, 0x97,
+	0xb0, 0xd6, 0xe6, 0x5c, 0x78, 0x3e, 0x23, 0x8a, 0x8b, 0x16, 0xe7, 0x4a, 0x2a, 0x41, 0x82, 0x68,
+	0x71, 0x55, 0x28, 0x5c, 0x51, 0x21, 0xf5, 0x58, 0xb5, 0xd8, 0x19, 0x1c, 0x99, 0xce, 0x31, 0xac,
+	0xdf, 0x9f, 0x18, 0x3e, 0xe1, 0xbf, 0x98, 0xdd, 0x0f, 0x0b, 0x56, 0xa2, 0x7d, 0x8f, 0x61, 0x91,
+	0xa4, 0x37, 0xb0, 0x40, 0x3c, 0xaf, 0x77, 0x11, 0x07, 0x22, 0xfe, 0xad, 0xf4, 0x99, 0x79, 0xde,
+	0x54, 0x2e, 0xae, 0x90, 0xa4, 0x57, 0xa2, 0x2e, 0x20, 0x41, 0x2f, 0xf8, 0x15, 0x4d, 0xd1, 0x8d,
+	0x4e, 0xfe, 0xff, 0x14, 0x1d, 0x36, 0xb0, 0x69, 0xc6, 0x45, 0x31, 0x11, 0x90, 0x4e, 0x07, 0xfe,
+	0xb9, 0xaf, 0x38, 0xaa, 0x40, 0xd6, 0xf7, 0xc2, 0x9d, 0x67, 0x7d, 0x0f, 0x6d, 0xc1, 0x9c, 0x2f,
+	0x7b, 0x92, 0xba, 0x9c, 0x79, 0x44, 0x5c, 0x87, 0xbf, 0x86, 0x65, 0x5f, 0x76, 0x23, 0x97, 0xd3,
+	0x86, 0x7f, 0x1f, 0x28, 0x3c, 0xc5, 0x56, 0x85, 0x82, 0x4b, 0xa4, 0x4b, 0x3c, 0x1a, 0x12, 0x45,
+	0xa6, 0xf3, 0x0c, 0x56, 0xc7, 0xe9, 0x53, 0x1b, 0x9e, 0xe0, 0xd9, 0xd9, 0x86, 0xfc, 0xe8, 0x28,
+	0x50, 0x11, 0x72, 0xef, 0x39, 0xa3, 0x76, 0x06, 0x95, 0x60, 0xf6, 0x83, 0xf0, 0x15, 0xb5, 0x2d,
+	0xed, 0x3c, 0x24, 0x52, 0xda, 0xd9, 0x9d, 0x3a, 0x54, 0xd2, 0x57, 0x85, 0x00, 0xf2, 0x6d, 0x41,
+	0x89, 0xd2, 0x29, 0x00, 0xf9, 0x91, 0x72, 0xdb, 0x6a, 0x6d, 0xff, 0xbc, 0xad, 0x59, 0x37, 0xb7,
+	0x35, 0xeb, 0xf7, 0x6d, 0xcd, 0xfa, 0x7c, 0x57, 0xcb, 0xdc, 0xdc, 0xd5, 0x32, 0xbf, 0xee, 0x6a,
+	0x99, 0x93, 0xf9, 0xc6, 0x6e, 0x62, 0xc8, 0xfd, 0xbc, 0xf9, 0x97, 0x7c, 0xfe, 0x27, 0x00, 0x00,
+	0xff, 0xff, 0x03, 0x7f, 0x1d, 0xbf, 0x44, 0x07, 0x00, 0x00,
 }
 
 func (m *TableSpan) Marshal() (dAtA []byte, err error) {
@@ -841,6 +1265,316 @@ func (m *ScheduleDispatcherRequest) MarshalToSizedBuffer(dAtA []byte) (int, erro
 	return len(dAtA) - i, nil
 }
 
+func (m *MaintainerHeartbeat) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MaintainerHeartbeat) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MaintainerHeartbeat) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Statuses) > 0 {
+		for iNdEx := len(m.Statuses) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Statuses[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintHeartbeat(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0xa
+		}
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MaintainerStatus) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MaintainerStatus) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MaintainerStatus) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.CheckpointTs != 0 {
+		i = encodeVarintHeartbeat(dAtA, i, uint64(m.CheckpointTs))
+		i--
+		dAtA[i] = 0x20
+	}
+	if m.SchedulerStatus != 0 {
+		i = encodeVarintHeartbeat(dAtA, i, uint64(m.SchedulerStatus))
+		i--
+		dAtA[i] = 0x18
+	}
+	if len(m.FeedState) > 0 {
+		i -= len(m.FeedState)
+		copy(dAtA[i:], m.FeedState)
+		i = encodeVarintHeartbeat(dAtA, i, uint64(len(m.FeedState)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.ChangefeedID) > 0 {
+		i -= len(m.ChangefeedID)
+		copy(dAtA[i:], m.ChangefeedID)
+		i = encodeVarintHeartbeat(dAtA, i, uint64(len(m.ChangefeedID)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *CoordinatorBootstrapRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *CoordinatorBootstrapRequest) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *CoordinatorBootstrapRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.Version != 0 {
+		i = encodeVarintHeartbeat(dAtA, i, uint64(m.Version))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *CoordinatorBootstrapResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *CoordinatorBootstrapResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *CoordinatorBootstrapResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Statuses) > 0 {
+		for iNdEx := len(m.Statuses) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Statuses[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintHeartbeat(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0xa
+		}
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *DispatchMaintainerRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *DispatchMaintainerRequest) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *DispatchMaintainerRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.RemoveMaintainers) > 0 {
+		for iNdEx := len(m.RemoveMaintainers) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.RemoveMaintainers[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintHeartbeat(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x12
+		}
+	}
+	if len(m.AddMaintainers) > 0 {
+		for iNdEx := len(m.AddMaintainers) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.AddMaintainers[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintHeartbeat(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0xa
+		}
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *AddMaintainerRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *AddMaintainerRequest) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *AddMaintainerRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.IsSecondary {
+		i--
+		if m.IsSecondary {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.Id) > 0 {
+		i -= len(m.Id)
+		copy(dAtA[i:], m.Id)
+		i = encodeVarintHeartbeat(dAtA, i, uint64(len(m.Id)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *RemoveMaintainerRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *RemoveMaintainerRequest) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *RemoveMaintainerRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.Cascade {
+		i--
+		if m.Cascade {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.Id) > 0 {
+		i -= len(m.Id)
+		copy(dAtA[i:], m.Id)
+		i = encodeVarintHeartbeat(dAtA, i, uint64(len(m.Id)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *MaintainerBootstrapRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *MaintainerBootstrapRequest) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *MaintainerBootstrapRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Id) > 0 {
+		i -= len(m.Id)
+		copy(dAtA[i:], m.Id)
+		i = encodeVarintHeartbeat(dAtA, i, uint64(len(m.Id)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
 func encodeVarintHeartbeat(dAtA []byte, offset int, v uint64) int {
 	offset -= sovHeartbeat(v)
 	base := offset
@@ -980,6 +1714,137 @@ func (m *ScheduleDispatcherRequest) Size() (n int) {
 	}
 	if m.ScheduleAction != 0 {
 		n += 1 + sovHeartbeat(uint64(m.ScheduleAction))
+	}
+	return n
+}
+
+func (m *MaintainerHeartbeat) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if len(m.Statuses) > 0 {
+		for _, e := range m.Statuses {
+			l = e.Size()
+			n += 1 + l + sovHeartbeat(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *MaintainerStatus) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.ChangefeedID)
+	if l > 0 {
+		n += 1 + l + sovHeartbeat(uint64(l))
+	}
+	l = len(m.FeedState)
+	if l > 0 {
+		n += 1 + l + sovHeartbeat(uint64(l))
+	}
+	if m.SchedulerStatus != 0 {
+		n += 1 + sovHeartbeat(uint64(m.SchedulerStatus))
+	}
+	if m.CheckpointTs != 0 {
+		n += 1 + sovHeartbeat(uint64(m.CheckpointTs))
+	}
+	return n
+}
+
+func (m *CoordinatorBootstrapRequest) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.Version != 0 {
+		n += 1 + sovHeartbeat(uint64(m.Version))
+	}
+	return n
+}
+
+func (m *CoordinatorBootstrapResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if len(m.Statuses) > 0 {
+		for _, e := range m.Statuses {
+			l = e.Size()
+			n += 1 + l + sovHeartbeat(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *DispatchMaintainerRequest) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if len(m.AddMaintainers) > 0 {
+		for _, e := range m.AddMaintainers {
+			l = e.Size()
+			n += 1 + l + sovHeartbeat(uint64(l))
+		}
+	}
+	if len(m.RemoveMaintainers) > 0 {
+		for _, e := range m.RemoveMaintainers {
+			l = e.Size()
+			n += 1 + l + sovHeartbeat(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *AddMaintainerRequest) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Id)
+	if l > 0 {
+		n += 1 + l + sovHeartbeat(uint64(l))
+	}
+	if m.IsSecondary {
+		n += 2
+	}
+	return n
+}
+
+func (m *RemoveMaintainerRequest) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Id)
+	if l > 0 {
+		n += 1 + l + sovHeartbeat(uint64(l))
+	}
+	if m.Cascade {
+		n += 2
+	}
+	return n
+}
+
+func (m *MaintainerBootstrapRequest) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Id)
+	if l > 0 {
+		n += 1 + l + sovHeartbeat(uint64(l))
 	}
 	return n
 }
@@ -1809,6 +2674,799 @@ func (m *ScheduleDispatcherRequest) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipHeartbeat(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MaintainerHeartbeat) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowHeartbeat
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MaintainerHeartbeat: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MaintainerHeartbeat: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Statuses", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Statuses = append(m.Statuses, &MaintainerStatus{})
+			if err := m.Statuses[len(m.Statuses)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipHeartbeat(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MaintainerStatus) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowHeartbeat
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MaintainerStatus: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MaintainerStatus: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ChangefeedID", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ChangefeedID = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field FeedState", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.FeedState = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SchedulerStatus", wireType)
+			}
+			m.SchedulerStatus = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.SchedulerStatus |= int32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CheckpointTs", wireType)
+			}
+			m.CheckpointTs = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.CheckpointTs |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipHeartbeat(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *CoordinatorBootstrapRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowHeartbeat
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: CoordinatorBootstrapRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: CoordinatorBootstrapRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Version", wireType)
+			}
+			m.Version = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Version |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipHeartbeat(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *CoordinatorBootstrapResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowHeartbeat
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: CoordinatorBootstrapResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: CoordinatorBootstrapResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Statuses", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Statuses = append(m.Statuses, &MaintainerStatus{})
+			if err := m.Statuses[len(m.Statuses)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipHeartbeat(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *DispatchMaintainerRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowHeartbeat
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: DispatchMaintainerRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: DispatchMaintainerRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field AddMaintainers", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.AddMaintainers = append(m.AddMaintainers, &AddMaintainerRequest{})
+			if err := m.AddMaintainers[len(m.AddMaintainers)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RemoveMaintainers", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.RemoveMaintainers = append(m.RemoveMaintainers, &RemoveMaintainerRequest{})
+			if err := m.RemoveMaintainers[len(m.RemoveMaintainers)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipHeartbeat(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *AddMaintainerRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowHeartbeat
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: AddMaintainerRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: AddMaintainerRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Id", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Id = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field IsSecondary", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.IsSecondary = bool(v != 0)
+		default:
+			iNdEx = preIndex
+			skippy, err := skipHeartbeat(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *RemoveMaintainerRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowHeartbeat
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: RemoveMaintainerRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: RemoveMaintainerRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Id", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Id = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Cascade", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.Cascade = bool(v != 0)
+		default:
+			iNdEx = preIndex
+			skippy, err := skipHeartbeat(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *MaintainerBootstrapRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowHeartbeat
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: MaintainerBootstrapRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: MaintainerBootstrapRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Id", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Id = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipHeartbeat(dAtA[iNdEx:])

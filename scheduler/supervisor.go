@@ -189,11 +189,11 @@ func (s *Supervisor) HandleStatus(
 				zap.Any("message", status))
 			continue
 		}
-		msgs, err := stateMachine.handleInferiorStatus(status, from)
+		msgs, err := stateMachine.HandleInferiorStatus(status, from)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if stateMachine.hasRemoved() {
+		if stateMachine.HasRemoved() {
 			log.Info("inferior has removed",
 				zap.String("ID", s.ID.String()),
 				zap.Any("from", from),
@@ -239,7 +239,7 @@ func (s *Supervisor) HandleCaptureChanges(
 		var err error
 		s.stateMachines.Ascend(func(id InferiorID, stateMachine *StateMachine) bool {
 			for _, captureID := range removed {
-				msgs, affected, err1 := stateMachine.handleCaptureShutdown(captureID)
+				msgs, affected, err1 := stateMachine.HandleCaptureShutdown(captureID)
 				if err != nil {
 					err = errors.Trace(err1)
 					return false
@@ -269,7 +269,7 @@ func (s *Supervisor) HandleScheduleTasks(
 		if stateMachine, ok := s.stateMachines.Get(id); ok {
 			// If inferior is back to Replicating or Removed,
 			// the running task is finished.
-			if stateMachine.State == SchedulerStatusWorking || stateMachine.hasRemoved() {
+			if stateMachine.State == SchedulerStatusWorking || stateMachine.HasRemoved() {
 				toBeDeleted = append(toBeDeleted, id)
 			}
 		} else {
@@ -348,7 +348,7 @@ func (s *Supervisor) handleAddInferiorTask(
 		}
 		s.stateMachines.ReplaceOrInsert(task.ID, stateMachine)
 	}
-	return stateMachine.handleAddInferior(task.CaptureID)
+	return stateMachine.HandleAddInferior(task.CaptureID)
 }
 
 func (s *Supervisor) handleRemoveInferiorTask(
@@ -361,14 +361,14 @@ func (s *Supervisor) handleRemoveInferiorTask(
 			zap.Stringer("inferior", task.ID))
 		return nil, nil
 	}
-	if stateMachine.hasRemoved() {
+	if stateMachine.HasRemoved() {
 		log.Info("inferior has removed",
 			zap.Stringer("ID", s.ID),
 			zap.Stringer("inferior", task.ID))
 		s.stateMachines.Delete(task.ID)
 		return nil, nil
 	}
-	return stateMachine.handleRemoveInferior()
+	return stateMachine.HandleRemoveInferior()
 }
 
 func (s *Supervisor) handleMoveInferiorTask(
@@ -381,7 +381,7 @@ func (s *Supervisor) handleMoveInferiorTask(
 			zap.Stringer("inferior", task.ID))
 		return nil, nil
 	}
-	return stateMachine.handleMoveInferior(task.DestCapture)
+	return stateMachine.HandleMoveInferior(task.DestCapture)
 }
 
 // CheckAllCaptureInitialized check if all server is initialized.

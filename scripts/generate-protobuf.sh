@@ -14,7 +14,7 @@
 
 set -eu
 
-TOOLS_BIN_DIR="/usr/local/bin"
+TOOLS_BIN_DIR="tools/bin"
 TOOLS_INCLUDE_DIR="tools/include"
 PROTO_DIR="proto"
 TiCDC_SOURCE_DIR="./"
@@ -62,5 +62,10 @@ done
 for pb in $(find heartbeatpb -name '*.proto'); do
 	# Output generated go files next to protobuf files.
 	generate ./ $pb paths="source_relative"
+done
+
+for pb in $(find pkg/messaging/proto -name '*.proto'); do
+	# Output generated go files next to protobuf files.
+	generate ./pkg/messaging/proto $pb paths="source_relative"
 done
 
