@@ -20,6 +20,8 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -80,6 +82,7 @@ func (m *Manager) Run(ctx context.Context) error {
 			m.msgBuf = nil
 			m.msgLock.Unlock()
 
+			var absent []string
 			for _, msg := range buf {
 				switch msg.Type {
 				case messaging.TypeCoordinatorBootstrapRequest:
@@ -121,13 +124,10 @@ func (m *Manager) Run(ctx context.Context) error {
 							zap.Any("coordinator", msg.From))
 						continue
 					}
-					err := m.handleDispatchMaintainerRequest(req)
-					if err != nil {
-						log.Error("handle dispatch maintainer request failed", zap.Error(err))
-						return err
-					}
+					absent = append(absent, m.handleDispatchMaintainerRequest(req)...)
 				}
 			}
+			// send heartbeats
 			if m.coordinatorVersion > 0 {
 				response := &messaging.MaintainerHeartbeat{
 					MaintainerHeartbeat: &heartbeatpb.MaintainerHeartbeat{
@@ -142,11 +142,16 @@ func (m *Manager) Run(ctx context.Context) error {
 						m.lastReportTime = time.Now()
 					}
 				}
+				for _, id := range absent {
+					response.Statuses = append(response.Statuses, &heartbeatpb.MaintainerStatus{
+						ChangefeedID:    id,
+						SchedulerStatus: int32(scheduler.ComponentStatusAbsent),
+					})
+				}
 				if len(response.Statuses) != 0 {
 					m.sendMessages(response)
 				}
 			}
-
 			// cleanup removed maintainer
 			for _, cf := range m.maintainers {
 				if cf.removed.Load() {
@@ -171,35 +176,24 @@ func (m *Manager) sendMessages(msg *messaging.MaintainerHeartbeat) {
 	}
 }
 
-// Close closes the wacher, it's a block call
+// Close closes, it's a block call
 func (m *Manager) Close(ctx context.Context) error {
 	return nil
 }
 
 func (m *Manager) handleDispatchMaintainerRequest(
 	request *messaging.DispatchMaintainerRequest,
-) error {
+) []string {
+	absent := make([]string, 0)
 	for _, req := range request.AddMaintainers {
 		cfID := model.DefaultChangeFeedID(req.GetId())
-		task := &dispatchMaintainerTask{
-			ID:        model.DefaultChangeFeedID(req.GetId()),
-			IsRemove:  false,
-			IsPrepare: req.IsSecondary,
-			status:    dispatchTaskReceived,
-		}
 		cf, ok := m.maintainers[cfID]
 		if !ok {
-			cf = NewMaintainer(cfID, m.messageCenter)
+			cf = NewMaintainer(cfID, m.messageCenter, req.IsSecondary)
 			m.maintainers[cfID] = cf
-			//if err := threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf); err != nil {
-			//	return errors.Trace(err)
-			//}
-			//go cf.Run()
+			threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf, threadpool.CPUTask, time.Now())
 		}
-		task.Maintainer = cf
-		cf.injectDispatchTableTask(task)
-		cf.handleAddMaintainerTask()
-		//cf.taskCh <- task
+		cf.isSecondary.Store(req.IsSecondary)
 	}
 
 	for _, req := range request.RemoveMaintainers {
@@ -210,17 +204,9 @@ func (m *Manager) handleDispatchMaintainerRequest(
 				"since the maintainer not found",
 				zap.String("changefeed", cf.id.String()),
 				zap.Any("request", req))
-			return nil
+			absent = append(absent, req.GetId())
 		}
-		task := &dispatchMaintainerTask{
-			Maintainer: cf,
-			ID:         cfID,
-			IsRemove:   true,
-			status:     dispatchTaskReceived,
-		}
-		//cf.taskCh <- task
-		cf.injectDispatchTableTask(task)
-		cf.handleRemoveMaintainerTask()
+		cf.removing.Store(true)
 	}
-	return nil
+	return absent
 }

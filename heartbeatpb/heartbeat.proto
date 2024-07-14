@@ -20,7 +20,7 @@ message TableSpan {
 message HeartBeatRequest {
     uint64 changefeedID = 1;
     uint64 checkpointTs = 2; // eventDispatcherManager 当前全局最小的 checkpointTs
-} 
+}
 
 enum Action {
     None = 0;
@@ -40,11 +40,12 @@ message TableProgressInfo {
     TableSpan span = 1; // for which dispatcher
     repeated TableProgress tableProgresses = 2; // 救命了这名字取得
     Action action = 3;
+    int32 scheduler_status = 4;
 
 }
 message HeartBeatResponse {
     repeated TableProgressInfo info = 1;
-    uint64 changefeedID = 2;
+    string changefeedID = 2;
 }
 
 enum ScheduleAction {
@@ -58,9 +59,10 @@ message DispatcherConfig {
 }
 
 message ScheduleDispatcherRequest {
-    uint64 changefeedID = 1;
+    string changefeedID = 1;
     DispatcherConfig config = 2;
     ScheduleAction scheduleAction = 3;
+    bool is_secondary = 4;
 }
 
 message MaintainerHeartbeat {
@@ -99,4 +101,15 @@ message RemoveMaintainerRequest  {
 
 message MaintainerBootstrapRequest {
     string id = 1;
+}
+
+message MaintainerBootstrapResponse {
+    string id = 1;
+    repeated TableSpanStatus statuses = 2;
+}
+
+message TableSpanStatus {
+    TableSpan span = 1; // for which dispatcher
+    int32 scheduler_status = 3;
+    uint64 checkpoint_ts = 4;
 }

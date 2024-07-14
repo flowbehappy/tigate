@@ -741,7 +741,7 @@ func (s *StateMachine) HandleAddInferior(
 		return nil, errors.Trace(err)
 	}
 
-	log.Info("state transition, add ingferior",
+	log.Info("state transition, add changefeed",
 		zap.Any("status", status),
 		zap.String("captureID", captureID),
 		zap.Any("statemachine", s),
