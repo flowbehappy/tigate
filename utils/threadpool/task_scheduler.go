@@ -22,8 +22,8 @@ import (
 // TaskScheduler is the entry to use thread pool. It provides a unified interface to submit task to different thread pools.
 // For detailed usage, please refer to task.go
 type TaskScheduler struct {
-	cpuTaskThreadPool *ThreadPool
-	ioTaskThreadPool  *ThreadPool
+	cpuTaskThreadPool *threadPool
+	ioTaskThreadPool  *threadPool
 
 	nextTaskId atomic.Uint64
 }
@@ -36,7 +36,7 @@ func NewTaskScheduler(name string, cpuThreads int, ioThreads int) *TaskScheduler
 	ts := &TaskScheduler{}
 	defaultThreadCount := runtime.NumCPU() * 2
 
-	createTP := func(taskType TaskStatus, name string, threadCount int) *ThreadPool {
+	createTP := func(taskType TaskStatus, name string, threadCount int) *threadPool {
 		c := 0
 		if threadCount < 0 {
 			return nil
@@ -45,7 +45,7 @@ func NewTaskScheduler(name string, cpuThreads int, ioThreads int) *TaskScheduler
 		} else {
 			c = threadCount
 		}
-		return NewThreadPool(taskType, name, ts, c)
+		return newthreadPool(taskType, name, ts, c)
 	}
 
 	ts.cpuTaskThreadPool = createTP(CPUTask, name+"-CPU", cpuThreads)

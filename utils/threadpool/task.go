@@ -56,7 +56,7 @@ func panicOnTaskStatus(status TaskStatus) {
 // you should add a mark to avoid the situation.
 //
 // If you want to remove a task from the task scheduler, make sure
-//   - The future call of Execute moethod returns Done and time.Time{}
+//   - The future call of Execute method returns Done and time.Time{}
 //   - Call the Update method in the TaskScheduler with Done and time.Time{}.
 //
 // The typical implmentation of the Task interface is as follows:

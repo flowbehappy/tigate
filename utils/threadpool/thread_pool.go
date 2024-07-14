@@ -17,11 +17,8 @@ import (
 	"sync"
 )
 
-/*
-ThreadPool is used to continuously get tasks and execute them in a fixed number of threads.
-We can use timeout to control the maximum execution time of each task.
-*/
-type ThreadPool struct {
+// threadPool is used to continuously get tasks and execute them in a fixed number of threads.
+type threadPool struct {
 	taskType    TaskStatus
 	name        string
 	threadCount int
@@ -35,8 +32,8 @@ type ThreadPool struct {
 	wg         sync.WaitGroup
 }
 
-func NewThreadPool(taskType TaskStatus, name string, schedule toBeScheduled, threadCount int) *ThreadPool {
-	tp := &ThreadPool{
+func newthreadPool(taskType TaskStatus, name string, schedule toBeScheduled, threadCount int) *threadPool {
+	tp := &threadPool{
 		taskType:    taskType,
 		name:        name,
 		threadCount: threadCount,
@@ -56,10 +53,10 @@ func NewThreadPool(taskType TaskStatus, name string, schedule toBeScheduled, thr
 	return tp
 }
 
-func (p *ThreadPool) toBeExecuted() chan Task            { return p.taskChan }
-func (r *ThreadPool) tobeScheduled() chan *scheduledTask { return r.waitReactor.tobeScheduled() }
+func (p *threadPool) toBeExecuted() chan Task            { return p.taskChan }
+func (r *threadPool) tobeScheduled() chan *scheduledTask { return r.waitReactor.tobeScheduled() }
 
-func (p *ThreadPool) loop(int) {
+func (p *threadPool) loop(int) {
 	defer p.wg.Done()
 
 	for {
@@ -74,17 +71,17 @@ func (p *ThreadPool) loop(int) {
 }
 
 // Execute the task, and push the task back to the correct thread pool if the task is not done.
-func (p *ThreadPool) handleTask(task Task) {
+func (p *threadPool) handleTask(task Task) {
 	nextStatus, nextTime := task.Execute(p.taskType)
 	scheduleTask(task, nextStatus, nextTime, p.schedule)
 }
 
-func (p *ThreadPool) finish() {
+func (p *threadPool) finish() {
 	p.waitReactor.finish()
 	close(p.stopSignal)
 }
 
-func (p *ThreadPool) waitForStop() {
+func (p *threadPool) waitForStop() {
 	p.waitReactor.waitForStop()
 	p.wg.Wait()
 }
