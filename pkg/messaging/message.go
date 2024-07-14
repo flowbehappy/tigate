@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/pingcap/log"
@@ -23,6 +24,8 @@ const (
 	TypeHeartBeatRequest
 	TypeHeartBeatResponse
 	TypeScheduleDispatcherRequest
+	TypeEventFeed
+	TypeRegisterDispatcherRequest
 	TypeBootstrapMaintainerRequest
 	TypeCoordinatorBootstrapRequest
 	TypeCoordinatorBootstrapResponse
@@ -46,8 +49,6 @@ func (t IOType) String() string {
 		return "HeartBeatResponse"
 	case TypeScheduleDispatcherRequest:
 		return "ScheduleDispatcherRequest"
-	case TypeBootstrapMaintainerRequest:
-		return "BootstrapMaintainerRequest"
 	case TypeCoordinatorBootstrapRequest:
 		return "CoordinatorBootstrapRequest"
 	case TypeDispatchMaintainerRequest:
@@ -56,6 +57,12 @@ func (t IOType) String() string {
 		return "MaintainerHeartbeatRequest"
 	case TypeCoordinatorBootstrapResponse:
 		return "CoordinatorBootstrapResponse"
+	case TypeEventFeed:
+		return "EventFeed"
+	case TypeRegisterDispatcherRequest:
+		return "RegisterDispatcherRequest"
+	case TypeBootstrapMaintainerRequest:
+		return "BootstrapMaintainerRequest"
 	default:
 	}
 	return "Unknown"
@@ -170,6 +177,42 @@ func (s *ScheduleDispatcherRequest) decode(data []byte) error {
 	return s.Unmarshal(data)
 }
 
+type EventFeed struct {
+	*eventpb.EventFeed
+}
+
+func (f *EventFeed) encode(buf []byte) []byte {
+	data, err := f.Marshal()
+	if err != nil {
+		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (f *EventFeed) decode(data []byte) error {
+	return f.Unmarshal(data)
+}
+
+type RegisterDispatcherRequest struct {
+	*eventpb.RegisterDispatcherRequest
+}
+
+func (r *RegisterDispatcherRequest) encode(buf []byte) []byte {
+	data, err := r.Marshal()
+	if err != nil {
+		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (r *RegisterDispatcherRequest) decode(data []byte) error {
+	return r.Unmarshal(data)
+}
+
 type IOTypeT interface {
 	encode(buf []byte) []byte
 	decode(data []byte) error
@@ -200,8 +243,6 @@ func CastTo(m interface{}, ioType IOType) IOTypeT {
 		return m.(*HeartBeatResponse)
 	case TypeScheduleDispatcherRequest:
 		return m.(*ScheduleDispatcherRequest)
-	case TypeBootstrapMaintainerRequest:
-		return m.(*MaintainerBootstrapRequest)
 	case TypeCoordinatorBootstrapRequest:
 		return m.(*CoordinatorBootstrapRequest)
 	case TypeDispatchMaintainerRequest:
@@ -210,6 +251,10 @@ func CastTo(m interface{}, ioType IOType) IOTypeT {
 		return m.(*MaintainerHeartbeat)
 	case TypeCoordinatorBootstrapResponse:
 		return m.(*CoordinatorBootstrapResponse)
+	case TypeEventFeed:
+		return m.(*EventFeed)
+	case TypeRegisterDispatcherRequest:
+		return m.(*RegisterDispatcherRequest)
 	default:
 		log.Panic("Unimplemented IOType", zap.Stringer("Type", ioType))
 		return nil
@@ -248,24 +293,6 @@ func (m *TargetMessage) decode(value []byte) {
 
 func (m *TargetMessage) String() string {
 	return fmt.Sprintf("From: %s, To: %s, Type: %s, Message: %v", m.From, m.To, m.Type, m.Message)
-}
-
-type MaintainerBootstrapRequest struct {
-	*heartbeatpb.MaintainerBootstrapRequest
-}
-
-func (m *MaintainerBootstrapRequest) encode(buf []byte) []byte {
-	data, err := json.Marshal(m)
-	if err != nil {
-		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
-		return buf
-	}
-	buf = append(buf, data...)
-	return buf
-}
-
-func (m *MaintainerBootstrapRequest) decode(data []byte) error {
-	return json.Unmarshal(data, &m)
 }
 
 type MaintainerHeartbeat struct {
@@ -338,4 +365,22 @@ func (m *CoordinatorBootstrapResponse) encode(buf []byte) []byte {
 
 func (m *CoordinatorBootstrapResponse) decode(data []byte) error {
 	return m.Unmarshal(data)
+}
+
+type MaintainerBootstrapRequest struct {
+	*heartbeatpb.MaintainerBootstrapRequest
+}
+
+func (m *MaintainerBootstrapRequest) encode(buf []byte) []byte {
+	data, err := json.Marshal(m)
+	if err != nil {
+		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (m *MaintainerBootstrapRequest) decode(data []byte) error {
+	return json.Unmarshal(data, &m)
 }

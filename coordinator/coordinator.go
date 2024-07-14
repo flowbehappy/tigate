@@ -99,6 +99,13 @@ func NewCoordinator(capture *model.CaptureInfo,
 		c.msgLock.Unlock()
 		return nil
 	})
+	// receive messages
+	messageCenter.RegisterHandler("coordinator", func(msg *messaging.TargetMessage) error {
+		c.msgLock.Lock()
+		c.msgBuf = append(c.msgBuf, msg)
+		c.msgLock.Unlock()
+		return nil
+	})
 	return c
 }
 
