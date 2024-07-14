@@ -183,7 +183,7 @@ func newWaitReactor(toBeExecuted toBeExecuted) *waitReactor {
 }
 
 const (
-	maxCheckInterval time.Duration = 1 * time.Second
+	maxCheckInterval time.Duration = 50 * time.Millisecond
 )
 
 // Don't execute any task before the tasks in the waitingQueue is larger than the given number.
@@ -226,7 +226,8 @@ func (r *waitReactor) executeTaskLoop() {
 	}()
 
 	for {
-		// Drain the signal channel, because we already go to check the waitingQueue.
+		// Drain the update signal channel. Because we already going to check the waitingQueue,
+		// and no need to get the update signal.
 		select {
 		case <-r.queueUpdateSignal:
 		case <-r.stopSignal:
@@ -252,7 +253,8 @@ func (r *waitReactor) executeTaskLoop() {
 
 		// We first peek the top task to see if it is ready.
 		// If yes, we pop it and push it to the toBeExecuted.
-		// We don't pop the task before we believe it is ready. Because pop is more expensive than peek.
+		// We don't pop the task before we believe it is ready.
+		// Because pop is more expensive than peek.
 		task := r.waitingQueue.peekTopTask()
 
 		if task != nil {
