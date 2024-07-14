@@ -62,3 +62,41 @@ message ScheduleDispatcherRequest {
     DispatcherConfig config = 2;
     ScheduleAction scheduleAction = 3;
 }
+
+message MaintainerHeartbeat {
+    repeated MaintainerStatus statuses = 1;
+}
+
+message MaintainerStatus {
+    string changefeedID = 1;
+    string feed_state = 2;
+    int32 scheduler_status = 3;
+    uint64 checkpoint_ts = 4;
+}
+
+message CoordinatorBootstrapRequest {
+    int64 version = 1;
+}
+
+message CoordinatorBootstrapResponse {
+    repeated MaintainerStatus statuses = 1;
+}
+
+message DispatchMaintainerRequest {
+    repeated AddMaintainerRequest add_maintainers = 1;
+    repeated RemoveMaintainerRequest remove_maintainers = 2;
+}
+
+message AddMaintainerRequest  {
+    string id = 1;
+    bool is_secondary = 2;
+}
+
+message RemoveMaintainerRequest  {
+    string id = 1;
+    bool cascade = 2;
+}
+
+message MaintainerBootstrapRequest {
+    string id = 1;
+}

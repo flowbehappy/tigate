@@ -11,32 +11,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package threadpool
+package coordinator
 
-type TaskQueueType int
-
-const (
-	FIFOTaskQueueType TaskQueueType = iota
+import (
+	"github.com/pingcap/tiflow/cdc/model"
 )
 
-/*
-TaskQueue is used to manage task lists in thread pool.
-It provides following methods:
-1. take a task from the queue
-2. submit a task to the queue
-3. release resources when the queue is finished.
-*/
-type TaskQueue interface {
-	Take() (bool, *Task)
-	Submit(task *Task)
-	Finish()
-}
-
-func NewTaskQueue(t TaskQueueType) TaskQueue {
-	switch t {
-	case FIFOTaskQueueType:
-		return NewFIFOTaskQueue()
-	default:
-		return nil
-	}
+// Scheduler schedules check all untracked inferiors and generate ScheduleTask
+type Scheduler interface {
+	Name() string
+	Schedule(
+		allInferiors []model.ChangeFeedID,
+		aliveCaptures map[model.CaptureID]*ServerStatus,
+		stateMachines map[model.ChangeFeedID]*StateMachine,
+	) []*ScheduleTask
 }

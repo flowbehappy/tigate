@@ -152,10 +152,6 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	}
 	c.serverID = id
 	c.session = session
-	err = c.registerCaptureToEtcd(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	mcCfg := config.NewDefaultMessageCenterConfig()
 	c.messageCenter = messaging.NewMessageCenter(id, watcher.TempEpoch, mcCfg)
 	return nil
@@ -215,8 +211,8 @@ func (c *serverImpl) setUpDir() {
 	cdcconfig.StoreGlobalServerConfig(conf)
 }
 
-// registerCaptureToEtcd the server by put the server's information in etcd
-func (c *serverImpl) registerCaptureToEtcd(ctx context.Context) error {
+// registerNodeToEtcd the server by put the server's information in etcd
+func (c *serverImpl) registerNodeToEtcd(ctx context.Context) error {
 	err := c.EtcdClient.PutCaptureInfo(ctx, c.info, c.session.Lease())
 	if err != nil {
 		return cerror.WrapError(cerror.ErrCaptureRegister, err)

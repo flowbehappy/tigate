@@ -15,90 +15,73 @@ package threadpool
 
 import (
 	"sync"
-	"time"
-
-	"github.com/pingcap/log"
 )
 
-/*
-ThreadPool is used to continuously get tasks and execute them in a fixed number of threads.
-We can use timeout to control the maximum execution time of each task.
-*/
-type ThreadPool struct {
-	scheduler   *TaskScheduler
-	taskQueue   TaskQueue
-	threadCount int
-	wg          sync.WaitGroup
-	timeout     time.Duration
+// threadPool is used to continuously get tasks and execute them in a fixed number of threads.
+type threadPool struct {
+	taskType    TaskStatus
 	name        string
+	threadCount int
+
+	schedule toBeScheduled
+	taskChan chan Task
+
+	waitReactor *waitReactor
+
+	stopSignal chan struct{}
+	wg         sync.WaitGroup
 }
 
-func NewThreadPool(scheduler *TaskScheduler, taskQueue TaskQueue, threadCount int, timeout int64, name string) *ThreadPool {
-	threadPool := ThreadPool{
-		scheduler:   scheduler,
-		taskQueue:   taskQueue,
-		threadCount: threadCount,
-		timeout:     time.Duration(timeout) * time.Millisecond,
+func newthreadPool(taskType TaskStatus, name string, schedule toBeScheduled, threadCount int) *threadPool {
+	tp := &threadPool{
+		taskType:    taskType,
 		name:        name,
+		threadCount: threadCount,
+
+		schedule:   schedule,
+		taskChan:   make(chan Task, threadCount),
+		stopSignal: make(chan struct{}),
 	}
+
+	tp.waitReactor = newWaitReactor(tp)
 
 	for i := 0; i < threadCount; i++ {
-		threadPool.wg.Add(1)
-		go threadPool.loop()
+		tp.wg.Add(1)
+		go tp.loop(i)
 
 	}
-	return &threadPool
+	return tp
 }
 
-func (p *ThreadPool) loop() {
+func (p *threadPool) toBeExecuted() chan Task            { return p.taskChan }
+func (r *threadPool) tobeScheduled() chan *scheduledTask { return r.waitReactor.tobeScheduled() }
+
+func (p *threadPool) loop(int) {
+	defer p.wg.Done()
+
 	for {
-		ok, task := p.taskQueue.Take()
-		if ok {
-			p.handleTask(task)
-		} else {
-			p.wg.Done()
+		select {
+		case <-p.stopSignal:
 			return
+		case task := <-p.taskChan:
+			p.handleTask(task)
+			continue
 		}
 	}
 }
 
-// Execute the task, and submit it to different place after execution.
-func (p *ThreadPool) handleTask(task *Task) {
-	if task == nil {
-		log.Error("task is nil")
-		return
-	}
-
-	status := (*task).Execute(p.timeout)
-	(*task).SetStatus(status)
-
-	switch status {
-	case Running:
-		p.scheduler.submitTaskToCPUThreadPool(task)
-	case Waiting:
-		p.scheduler.submitTaskToWaitReactorThreadPool(task)
-	case IO:
-		p.scheduler.submitTaskToIOThreadPool(task)
-	case Canceled:
-	case Success:
-		return
-	case Failed:
-		// TODO: error information? or get error from Execute
-		log.Error("task failed")
-	}
+// Execute the task, and push the task back to the correct thread pool if the task is not done.
+func (p *threadPool) handleTask(task Task) {
+	nextStatus, nextTime := task.Execute(p.taskType)
+	scheduleTask(task, nextStatus, nextTime, p.schedule)
 }
 
-func (p *ThreadPool) submit(task *Task) {
-	p.taskQueue.Submit(task)
+func (p *threadPool) finish() {
+	p.waitReactor.finish()
+	close(p.stopSignal)
 }
 
-// TODO(hongyunyan):thread pool 结束前清空所有的数据，不同 task 可以选择不一样的方式，可以直接暴力丢弃等，也可以要求全部执行完
-// 这个具体的含义到时候再确认一下，感觉怪怪的
-func (p *ThreadPool) finish() {
-	p.taskQueue.Finish()
-}
-
-func (p *ThreadPool) waitForStop() error {
+func (p *threadPool) waitForStop() {
+	p.waitReactor.waitForStop()
 	p.wg.Wait()
-	return nil
 }

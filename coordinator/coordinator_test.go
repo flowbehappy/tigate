@@ -15,13 +15,41 @@ package coordinator
 
 import (
 	"testing"
+	"time"
 
-	"github.com/flowbehappy/tigate/utils/threadpool"
+	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/google/uuid"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"go.uber.org/zap"
 )
 
 func TestCoordinatorRun(t *testing.T) {
-	c := NewCoordinator(&model.CaptureInfo{}, 1)
-	sc := threadpool.NewTaskScheduler(&threadpool.DefaultTaskSchedulerConfig, "coordinator")
-	sc.Submit(c.(threadpool.Task))
+	allGoM := make(map[model.ChangeFeedID]*StateMachine)
+	captureID := uuid.New().String()
+	for id, _ := range allChangefeeds {
+		st := &StateMachine{
+			ID:         id,
+			State:      SchedulerStatusWorking,
+			Primary:    captureID,
+			Servers:    make(map[string]Role),
+			changefeed: &changefeed{},
+		}
+		st.setCapture(captureID, RolePrimary)
+		allGoM[id] = st
+	}
+
+	now := time.Now()
+	sp := &coordinator{
+		stateMachines: allGoM,
+	}
+	status := make([]*heartbeatpb.MaintainerStatus, 0, len(allGoM))
+	for id, _ := range allChangefeeds {
+		status = append(status, &heartbeatpb.MaintainerStatus{
+			ChangefeedID:    id.ID,
+			SchedulerStatus: int32(ComponentStatusWorking),
+		})
+	}
+	sp.HandleStatus(captureID, status)
+	log.Info("TestCoordinatorRun", zap.Duration("time", time.Since(now)))
 }

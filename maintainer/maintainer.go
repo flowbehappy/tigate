@@ -19,13 +19,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	appctx "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	watcher "github.com/flowbehappy/tigate/server/wacher"
 	"github.com/flowbehappy/tigate/utils/threadpool"
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/entry/schema"
 	"github.com/pingcap/tiflow/cdc/kv"
@@ -65,6 +65,9 @@ type Maintainer struct {
 
 	pdEndpoints []string
 	nodeManager *watcher.NodeManager
+
+	statusChanged  *atomic.Bool
+	lastReportTime time.Time
 }
 
 // NewMaintainer create the maintainer for the changefeed
@@ -79,6 +82,7 @@ func NewMaintainer(cfID model.ChangeFeedID, center messaging.MessageCenter) *Mai
 		tick:          time.NewTicker(time.Millisecond * 50),
 		taskCh:        make(chan Task, 1024),
 		nodeManager:   appctx.GetService[*watcher.NodeManager](watcher.NodeManagerName),
+		statusChanged: &atomic.Bool{},
 	}
 	m.supervisor = scheduler.NewSupervisor(
 		MaintainerID(cfID),
@@ -89,10 +93,34 @@ func NewMaintainer(cfID model.ChangeFeedID, center messaging.MessageCenter) *Mai
 }
 
 func (m *Maintainer) newBootstrapMessage(id model.CaptureID) rpc.Message {
-	return &rpc.MaintainerBootstrapRequest{
-		To:     uuid.MustParse(id),
-		ID:     m.id,
-		Config: m.config,
+	return &heartbeatpb.MaintainerBootstrapRequest{
+		Id: id,
+	}
+}
+
+func (m *Maintainer) Run() error {
+	for {
+		select {
+		case task := <-m.taskCh:
+			if err := task.Execute(context.Background()); err != nil {
+				log.Error("Execute task failed", zap.Error(err))
+			}
+		case <-m.tick.C:
+			// tick
+			// check changes
+			//msgs, removed := m.supervisor.HandleAliveCaptureUpdate(m.nodeManager.GetAliveCaptures())
+			//if len(msgs) > 0 {
+			//	m.sendMessages(msgs)
+			//}
+			//if len(removed) > 0 {
+			//msgs, err := m.supervisor.handleRemovedNodes(removed)
+			//if err != nil {
+			//	log.Warn("handle changes failed", zap.Error(err))
+			//	break
+			//}
+			//m.sendMessages(msgs)
+			//}
+		}
 	}
 }
 
@@ -135,27 +163,7 @@ func (m *Maintainer) Execute(timeout time.Duration) threadpool.TaskStatus {
 }
 
 func (m *Maintainer) sendMessages(msgs []rpc.Message) {
-	for _, msg := range msgs {
-		//if dispatchMsg, ok := msg.(*heartbeatpb.ScheduleDispatcherRequest); ok {
-		//	log.Info("dispatchMsg", zap.Any("dispatchMsg", dispatchMsg))
-		//}
 
-		creq := msg.(*rpc.MaintainerBootstrapRequest)
-		buf, err := creq.Encode()
-		if err != nil {
-			log.Error("failed to encode coordinator request", zap.Any("msg", msg), zap.Error(err))
-			continue
-		}
-		targetMsg := messaging.NewTargetMessage(messaging.ServerId(creq.To),
-			"HeartBeatResponse",
-			messaging.TypeBytes, buf)
-		targetMsg.Topic = "xxxx"
-		err = m.messageCenter.SendCommand()
-		if err != nil {
-			log.Error("failed to send coordinator request", zap.Any("msg", msg), zap.Error(err))
-			continue
-		}
-	}
 }
 
 func (m *Maintainer) scheduleMaintainer(allInferiors []scheduler.InferiorID) ([]rpc.Message, error) {
@@ -214,6 +222,7 @@ func (d *dispatchMaintainerTask) Execute(ctx context.Context) error {
 
 func (m *Maintainer) initChangefeed() error {
 	m.state = scheduler.ComponentStatusPrepared
+	m.statusChanged.Store(true)
 	//tableIds, err := m.GetTableIDs()
 	//if err != nil {
 	//	return err
@@ -258,16 +267,19 @@ func (m *Maintainer) GetTableIDs() (map[int64]struct{}, error) {
 
 func (m *Maintainer) finishAddChangefeed() {
 	m.state = scheduler.ComponentStatusWorking
+	m.statusChanged.Store(true)
 }
 
 func (m *Maintainer) closeChangefeed() {
 	if m.state != scheduler.ComponentStatusStopping &&
 		m.state != scheduler.ComponentStatusStopped {
 		m.state = scheduler.ComponentStatusStopping
+		m.statusChanged.Store(true)
 		//todo: real async close
 		go func() {
 			// send message to dispatcher manager
 			m.state = scheduler.ComponentStatusStopped
+			m.statusChanged.Store(true)
 			m.removed.Store(true)
 		}()
 	}
@@ -288,7 +300,7 @@ func (m *Maintainer) handleAddMaintainerTask() error {
 			}
 			state, changed = m.getAndUpdateMaintainerState(m.state)
 		case scheduler.ComponentStatusWorking:
-			log.Info("maintainer is working")
+			log.Info("maintainer is working", zap.String("id", m.id.ID))
 			m.task = nil
 			return nil
 		case scheduler.ComponentStatusPrepared:
@@ -350,6 +362,7 @@ func (m *Maintainer) injectDispatchTableTask(task *dispatchMaintainerTask) {
 	if m.task == nil {
 		log.Info("add new task",
 			zap.Any("task", task))
+		m.statusChanged.Store(true)
 		m.task = task
 		return
 	}
@@ -363,12 +376,12 @@ func (m *Maintainer) getAndUpdateMaintainerState(old scheduler.ComponentStatus) 
 	return m.state, m.state != old
 }
 
-func (m *Maintainer) GetMaintainerStatus() *rpc.MaintainerStatus {
+func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 	// todo: fix data race here
-	return &rpc.MaintainerStatus{
-		ID:              m.id,
-		ChangefeedState: m.changefeedSate,
-		SchedulerState:  int(m.state),
+	return &heartbeatpb.MaintainerStatus{
+		ChangefeedID:    m.id.ID,
+		FeedState:       string(m.changefeedSate),
+		SchedulerStatus: int32(m.state),
 		CheckpointTs:    0,
 	}
 }

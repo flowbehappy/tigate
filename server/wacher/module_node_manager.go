@@ -19,13 +19,11 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
-	"github.com/pingcap/tiflow/pkg/util"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
@@ -74,7 +72,7 @@ func (c *NodeManager) Tick(ctx context.Context,
 		allCaptures := make(map[string]*model.CaptureInfo, len(state.Captures))
 		for _, capture := range c.nodes {
 			if _, exist := state.Captures[capture.ID]; !exist {
-				sid := messaging.ServerId(uuid.MustParse(capture.ID))
+				sid := messaging.ServerId(capture.ID)
 				c.messageCenter.RemoveTarget(sid)
 				removed = append(removed, capture)
 			}
@@ -83,7 +81,7 @@ func (c *NodeManager) Tick(ctx context.Context,
 		for _, capture := range state.Captures {
 			if _, exist := c.nodes[capture.ID]; !exist {
 
-				sid := messaging.ServerId(uuid.MustParse(capture.ID))
+				sid := messaging.ServerId(capture.ID)
 				c.messageCenter.AddTarget(sid, TempEpoch, capture.AdvertiseAddr)
 				newCaptures = append(newCaptures, capture)
 			}
@@ -114,7 +112,7 @@ func (c *NodeManager) Run(ctx context.Context) error {
 		c.session,
 		// captures info key prefix
 		etcd.BaseKey(c.etcdClient.GetClusterID())+"/__cdc_meta__/capture",
-		util.RoleOwner.String())
+		"capture-manager")
 
 	return watcher.RunEtcdWorker(ctx, c,
 		orchestrator.NewGlobalState(c.etcdClient.GetClusterID(),
