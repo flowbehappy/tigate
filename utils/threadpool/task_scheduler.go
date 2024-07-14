@@ -19,10 +19,8 @@ import (
 	"time"
 )
 
-/*
-Task scheduler is the entry to use thread pool. It provides a unified interface to submit task to different thread pools.
-TaskSchedulerConfig is used to configure the threads number and task queue of the thread pool and wait reactor.
-*/
+// TaskScheduler is the entry to use thread pool. It provides a unified interface to submit task to different thread pools.
+// For detailed usage, please refer to task.go
 type TaskScheduler struct {
 	cpuTaskThreadPool *ThreadPool
 	ioTaskThreadPool  *ThreadPool

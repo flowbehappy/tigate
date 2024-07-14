@@ -71,7 +71,7 @@ func panicOnTaskStatus(status TaskStatus) {
 //     E.g. if newExecTime >= nextExecTime, it means the task is already executing or at least at the front of the waiting list,
 //     and there is no need to call Update again.
 type Task interface {
-	// The Unique Id of the task. The thread pool uses this id as the map key.
+	// The unique Id of the task. The thread pool uses this id as the map key.
 	TaskId() TaskId
 	// Execute the task.
 	// The status indicates what kind of thread pool is executing the task.
