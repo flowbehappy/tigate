@@ -180,7 +180,6 @@ func (m *Manager) handleDispatchMaintainerRequest(
 			task.Maintainer = cf
 			cf.injectDispatchTableTask(task)
 			cf.handleAddMaintainerTask()
-			cf.statusChanged.Store(true)
 			//cf.taskCh <- task
 		}
 	}
@@ -205,7 +204,6 @@ func (m *Manager) handleDispatchMaintainerRequest(
 			//cf.taskCh <- task
 			cf.injectDispatchTableTask(task)
 			cf.handleRemoveMaintainerTask()
-			cf.statusChanged.Store(true)
 		}
 	}
 	return nil

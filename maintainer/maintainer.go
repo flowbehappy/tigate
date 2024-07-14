@@ -362,6 +362,7 @@ func (m *Maintainer) injectDispatchTableTask(task *dispatchMaintainerTask) {
 	if m.task == nil {
 		log.Info("add new task",
 			zap.Any("task", task))
+		m.statusChanged.Store(true)
 		m.task = task
 		return
 	}
