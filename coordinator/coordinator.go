@@ -93,7 +93,7 @@ func NewCoordinator(capture *model.CaptureInfo,
 var allChangefeeds = make(map[model.ChangeFeedID]*model.ChangeFeedInfo)
 
 func init() {
-	for i := 0; i < 5000; i++ {
+	for i := 0; i < 1000000; i++ {
 		id := fmt.Sprintf("%d", i)
 		allChangefeeds[model.DefaultChangeFeedID(id)] = &model.ChangeFeedInfo{
 			ID: id,
@@ -195,7 +195,7 @@ func (c *coordinator) HandleMessage(msgs []*messaging.TargetMessage) ([]rpc.Mess
 	for _, msg := range msgs {
 		req := msg.Message.(*heartbeatpb.MaintainerHeartbeat)
 		serverID := msg.From
-		statuses := make([]InferiorStatus, 0)
+		statuses := make([]InferiorStatus, 0, len(req.Statuses))
 		for _, status := range req.Statuses {
 			statuses = append(statuses, &ChangefeedStatus{
 				ID:              ChangefeedID(model.DefaultChangeFeedID(status.ChangefeedID)),

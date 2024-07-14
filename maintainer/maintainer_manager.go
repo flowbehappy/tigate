@@ -116,7 +116,7 @@ func (m *Manager) Run(ctx context.Context) error {
 				}
 				for _, m := range m.maintainers {
 					if hasBootstrapMsg || m.statusChanged.Load() ||
-						time.Since(m.lastReportTime) > time.Second {
+						time.Since(m.lastReportTime) > time.Second*2 {
 						response.Statuses = append(response.Statuses, m.GetMaintainerStatus())
 						m.statusChanged.Store(false)
 						m.lastReportTime = time.Now()

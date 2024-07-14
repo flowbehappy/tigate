@@ -17,29 +17,38 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
 func TestCoordinatorRun(t *testing.T) {
-	allM := scheduler.NewBtreeMap[scheduler.InferiorID, *scheduler.StateMachine]()
-	allGoM := make(map[model.ChangeFeedID]*scheduler.StateMachine)
+	allGoM := make(map[model.ChangeFeedID]*StateMachine)
+	captureID := uuid.New().String()
 	for id, _ := range allChangefeeds {
-		allM.ReplaceOrInsert(ChangefeedID(id), &scheduler.StateMachine{})
-		allGoM[id] = &scheduler.StateMachine{}
+		st := &StateMachine{
+			ID:       ChangefeedID(id),
+			State:    SchedulerStatusWorking,
+			Primary:  captureID,
+			Servers:  make(map[string]Role),
+			Inferior: &changefeed{},
+		}
+		st.setCapture(captureID, RolePrimary)
+		allGoM[id] = st
 	}
 
 	now := time.Now()
-	for id, _ := range allChangefeeds {
-		_, _ = allM.Get(ChangefeedID(id))
+	sp := Supervisor{
+		stateMachines: allGoM,
 	}
-	log.Info("TestCoordinatorRun", zap.Duration("time", time.Since(now)))
-
-	now = time.Now()
+	status := make([]InferiorStatus, 0, len(allGoM))
 	for id, _ := range allChangefeeds {
-		_, _ = allGoM[id]
+		status = append(status, &ChangefeedStatus{
+			ID:     ChangefeedID(id),
+			Status: ComponentStatusWorking,
+		})
 	}
+	sp.HandleStatus(captureID, status)
 	log.Info("TestCoordinatorRun", zap.Duration("time", time.Since(now)))
 }
