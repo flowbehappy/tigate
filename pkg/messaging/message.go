@@ -207,7 +207,7 @@ func CastTo(m interface{}, ioType IOType) IOTypeT {
 	case TypeCoordinatorBootstrapRequest:
 		return m.(*CoordinatorBootstrapRequest)
 	case TypeDispatchMaintainerRequest:
-		return m.(*MaintainerBootstrapRequest)
+		return m.(*DispatchMaintainerRequest)
 	case TypeMaintainerHeartbeatRequest:
 		return m.(*MaintainerHeartbeat)
 	default:
@@ -305,7 +305,7 @@ func (m *CoordinatorBootstrapRequest) decode(data []byte) error {
 }
 
 type DispatchMaintainerRequest struct {
-	*heartbeatpb.CoordinatorBootstrapRequest
+	*heartbeatpb.DispatchMaintainerRequest
 }
 
 func (m *DispatchMaintainerRequest) encode(buf []byte) []byte {

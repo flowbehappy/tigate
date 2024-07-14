@@ -69,7 +69,7 @@ func (m *Manager) Name() string {
 }
 
 func (m *Manager) Run(ctx context.Context) error {
-	tick := time.NewTicker(time.Millisecond * 1000)
+	tick := time.NewTicker(time.Millisecond * 50)
 	for {
 		select {
 		case <-ctx.Done():
@@ -84,7 +84,7 @@ func (m *Manager) Run(ctx context.Context) error {
 			for _, msg := range buf {
 				switch msg.Type {
 				case messaging.TypeCoordinatorBootstrapRequest:
-					req := msg.Message.(*heartbeatpb.CoordinatorBootstrapRequest)
+					req := msg.Message.(*messaging.CoordinatorBootstrapRequest)
 					if m.coordinatorVersion > req.Version {
 						log.Warn("ignore invalid coordinator version",
 							zap.Int64("version", req.Version))
@@ -96,7 +96,7 @@ func (m *Manager) Run(ctx context.Context) error {
 					log.Info("bootstrap coordinator",
 						zap.Int64("version", m.coordinatorVersion))
 				case messaging.TypeDispatchMaintainerRequest:
-					req := msg.Message.(*heartbeatpb.DispatchMaintainerRequest)
+					req := msg.Message.(*messaging.DispatchMaintainerRequest)
 					if m.coordinatorID != msg.From {
 						log.Warn("ignore invalid coordinator id",
 							zap.Any("request", req),
@@ -157,54 +157,50 @@ func (m *Manager) Close(ctx context.Context) error {
 }
 
 func (m *Manager) handleDispatchMaintainerRequest(
-	request *heartbeatpb.DispatchMaintainerRequest,
+	request *messaging.DispatchMaintainerRequest,
 ) error {
-	if request.GetAddMaintainers() != nil {
-		for _, req := range request.GetAddMaintainers() {
-			cfID := model.DefaultChangeFeedID(req.GetId())
-			task := &dispatchMaintainerTask{
-				ID:        model.DefaultChangeFeedID(req.GetId()),
-				IsRemove:  false,
-				IsPrepare: req.IsSecondary,
-				status:    dispatchTaskReceived,
-			}
-			cf, ok := m.maintainers[cfID]
-			if !ok {
-				cf = NewMaintainer(cfID, m.messageCenter)
-				m.maintainers[cfID] = cf
-				//if err := threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf); err != nil {
-				//	return errors.Trace(err)
-				//}
-				//go cf.Run()
-			}
-			task.Maintainer = cf
-			cf.injectDispatchTableTask(task)
-			cf.handleAddMaintainerTask()
-			//cf.taskCh <- task
+	for _, req := range request.AddMaintainers {
+		cfID := model.DefaultChangeFeedID(req.GetId())
+		task := &dispatchMaintainerTask{
+			ID:        model.DefaultChangeFeedID(req.GetId()),
+			IsRemove:  false,
+			IsPrepare: req.IsSecondary,
+			status:    dispatchTaskReceived,
 		}
+		cf, ok := m.maintainers[cfID]
+		if !ok {
+			cf = NewMaintainer(cfID, m.messageCenter)
+			m.maintainers[cfID] = cf
+			//if err := threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf); err != nil {
+			//	return errors.Trace(err)
+			//}
+			//go cf.Run()
+		}
+		task.Maintainer = cf
+		cf.injectDispatchTableTask(task)
+		cf.handleAddMaintainerTask()
+		//cf.taskCh <- task
 	}
 
-	if request.GetRemoveMaintainers() != nil {
-		for _, req := range request.GetRemoveMaintainers() {
-			cfID := model.DefaultChangeFeedID(req.GetId())
-			cf, ok := m.maintainers[cfID]
-			if !ok {
-				log.Warn("ignore remove maintainer request, "+
-					"since the maintainer not found",
-					zap.String("changefeed", cf.id.String()),
-					zap.Any("request", req))
-				return nil
-			}
-			task := &dispatchMaintainerTask{
-				Maintainer: cf,
-				ID:         cfID,
-				IsRemove:   true,
-				status:     dispatchTaskReceived,
-			}
-			//cf.taskCh <- task
-			cf.injectDispatchTableTask(task)
-			cf.handleRemoveMaintainerTask()
+	for _, req := range request.RemoveMaintainers {
+		cfID := model.DefaultChangeFeedID(req.GetId())
+		cf, ok := m.maintainers[cfID]
+		if !ok {
+			log.Warn("ignore remove maintainer request, "+
+				"since the maintainer not found",
+				zap.String("changefeed", cf.id.String()),
+				zap.Any("request", req))
+			return nil
 		}
+		task := &dispatchMaintainerTask{
+			Maintainer: cf,
+			ID:         cfID,
+			IsRemove:   true,
+			status:     dispatchTaskReceived,
+		}
+		//cf.taskCh <- task
+		cf.injectDispatchTableTask(task)
+		cf.handleRemoveMaintainerTask()
 	}
 	return nil
 }

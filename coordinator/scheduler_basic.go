@@ -115,7 +115,7 @@ func newBurstAddInferiors(newInferiors []model.ChangeFeedID, captureIDs []model.
 		addInferiorTasks = append(addInferiorTasks,
 			&ScheduleTask{
 				AddInferior: &AddInferior{
-					ID:        ChangefeedID(infID),
+					ID:        infID,
 					CaptureID: targetCapture,
 				}})
 		log.Info("burst add inferior",
@@ -147,7 +147,7 @@ func newBurstRemoveInferiors(
 		}
 		removeTasks = append(removeTasks, &ScheduleTask{
 			RemoveInferior: &RemoveInferior{
-				ID:        ChangefeedID(id),
+				ID:        id,
 				CaptureID: captureID,
 			},
 		})

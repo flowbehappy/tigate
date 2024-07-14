@@ -16,6 +16,7 @@ package coordinator
 import (
 	"time"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -38,16 +39,16 @@ type Supervisor struct {
 	runningTasks  map[model.ChangeFeedID]*ScheduleTask
 
 	maxTaskConcurrency int
-	NewInferior        func(InferiorID) Inferior
+	NewInferior        func(id model.ChangeFeedID) *changefeed
 
 	// self ID
-	ID          InferiorID
+	ID          model.CaptureID
 	initialized bool
 
 	captures map[model.CaptureID]*CaptureStatus
 
 	// track all status reported by remote inferiors when bootstrap
-	initStatus map[model.CaptureID][]InferiorStatus
+	initStatus map[model.CaptureID][]*heartbeatpb.MaintainerStatus
 
 	bootstrapMessageFunc func(model.CaptureID) rpc.Message
 }
@@ -66,8 +67,8 @@ func NewCaptureStatus(capture *model.CaptureInfo) *CaptureStatus {
 }
 
 func NewSupervisor(
-	ID InferiorID,
-	newInferiorFunc func(InferiorID) Inferior,
+	ID model.CaptureID,
+	newInferiorFunc func(id model.ChangeFeedID) *changefeed,
 	bootstrapMessageFunc func(model.CaptureID) rpc.Message) *Supervisor {
 	return &Supervisor{
 		ID:                   ID,
@@ -77,7 +78,7 @@ func NewSupervisor(
 		initialized:          false,
 		captures:             make(map[model.CaptureID]*CaptureStatus),
 		bootstrapMessageFunc: bootstrapMessageFunc,
-		initStatus:           make(map[model.CaptureID][]InferiorStatus),
+		initStatus:           make(map[model.CaptureID][]*heartbeatpb.MaintainerStatus),
 		maxTaskConcurrency:   10000,
 	}
 }
@@ -86,14 +87,14 @@ func (s *Supervisor) GetAllCaptures() map[model.CaptureID]*CaptureStatus {
 	return s.captures
 }
 
-// GetInferiors return all state machines, caller should not modify it
-func (s *Supervisor) GetInferiors() map[model.ChangeFeedID]*StateMachine {
+// GetAllStateMachines return all state machines, caller should not modify it
+func (s *Supervisor) GetAllStateMachines() map[model.ChangeFeedID]*StateMachine {
 	return s.stateMachines
 }
 
-// GetInferior returns the state machine for that inferior id, caller should not modify it
-func (s *Supervisor) GetInferior(id InferiorID) (*StateMachine, bool) {
-	m, ok := s.stateMachines[model.ChangeFeedID(id.(ChangefeedID))]
+// GetChangefeedStateMachine returns the state machine for that changefeed id
+func (s *Supervisor) GetChangefeedStateMachine(id model.ChangeFeedID) (*StateMachine, bool) {
+	m, ok := s.stateMachines[id]
 	return m, ok
 }
 
@@ -108,7 +109,7 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 			// A new server.
 			s.captures[id] = NewCaptureStatus(info)
 			log.Info("find a new server",
-				zap.String("ID", s.ID.String()),
+				zap.String("ID", s.ID),
 				zap.String("captureAddr", info.AdvertiseAddr),
 				zap.String("server", id))
 		}
@@ -118,7 +119,7 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 	for id, capture := range s.captures {
 		if _, ok := aliveCaptures[id]; !ok {
 			log.Info("removed a server",
-				zap.String("ID", s.ID.String()),
+				zap.String("ID", s.ID),
 				zap.String("captureAddr", capture.capture.AdvertiseAddr),
 				zap.String("server", id))
 			delete(s.captures, id)
@@ -139,7 +140,7 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 	// Check if this is the first time all captures are initialized.
 	if !s.initialized && s.checkAllCaptureInitialized() {
 		log.Info("all server initialized",
-			zap.String("ID", s.ID.String()),
+			zap.String("ID", s.ID),
 			zap.Int("captureCount", len(s.captures)))
 		s.initialized = true
 	}
@@ -155,17 +156,17 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 
 // UpdateCaptureStatus update the server status after receive a bootstrap message from remote
 // supervisor will cache the status if the supervisor is not initialized
-func (s *Supervisor) UpdateCaptureStatus(from model.CaptureID, statuses []InferiorStatus) {
+func (s *Supervisor) UpdateCaptureStatus(from model.CaptureID, statuses []*heartbeatpb.MaintainerStatus) {
 	c, ok := s.captures[from]
 	if !ok {
 		log.Warn("server is not found",
-			zap.String("ID", s.ID.String()),
+			zap.String("ID", s.ID),
 			zap.String("server", from))
 	}
 	if c.state == CaptureStateUninitialized {
 		c.state = CaptureStateInitialized
 		log.Info("server initialized",
-			zap.String("ID", s.ID.String()),
+			zap.String("ID", s.ID),
 			zap.String("server", c.capture.ID),
 			zap.String("captureAddr", c.capture.AdvertiseAddr))
 	}
@@ -178,15 +179,14 @@ func (s *Supervisor) UpdateCaptureStatus(from model.CaptureID, statuses []Inferi
 
 // HandleStatus handles inferior status reported by Inferior
 func (s *Supervisor) HandleStatus(
-	from model.CaptureID, statuses []InferiorStatus,
+	from model.CaptureID, statuses []*heartbeatpb.MaintainerStatus,
 ) ([]rpc.Message, error) {
 	sentMsgs := make([]rpc.Message, 0)
 	for _, status := range statuses {
-		cfStatus := status.(*ChangefeedStatus)
-		stateMachine, ok := s.stateMachines[model.ChangeFeedID(cfStatus.ID)]
+		stateMachine, ok := s.stateMachines[model.DefaultChangeFeedID(status.ChangefeedID)]
 		if !ok {
 			log.Info("ignore status no inferior found",
-				zap.String("ID", s.ID.String()),
+				zap.String("ID", s.ID),
 				zap.Any("from", from),
 				zap.Any("message", status))
 			continue
@@ -197,10 +197,10 @@ func (s *Supervisor) HandleStatus(
 		}
 		if stateMachine.HasRemoved() {
 			log.Info("inferior has removed",
-				zap.String("ID", s.ID.String()),
+				zap.String("ID", s.ID),
 				zap.Any("from", from),
-				zap.String("inferiorID", status.GetInferiorID().String()))
-			delete(s.stateMachines, model.ChangeFeedID(cfStatus.ID))
+				zap.String("cfID", status.ChangefeedID))
+			delete(s.stateMachines, model.DefaultChangeFeedID(status.ChangefeedID))
 		}
 		sentMsgs = append(sentMsgs, msgs...)
 	}
@@ -217,22 +217,22 @@ func (s *Supervisor) HandleCaptureChanges(
 				zap.Any("init", s.initStatus),
 				zap.Any("statemachines", s.stateMachines))
 		}
-		statusMap := make(map[InferiorID]map[model.CaptureID]InferiorStatus)
+		statusMap := make(map[model.ChangeFeedID]map[model.CaptureID]*heartbeatpb.MaintainerStatus)
 		for captureID, statuses := range s.initStatus {
 			for _, status := range statuses {
-				if _, ok := statusMap[status.GetInferiorID()]; !ok {
-					statusMap[status.GetInferiorID()] = map[model.CaptureID]InferiorStatus{}
+				cfID := model.DefaultChangeFeedID(status.ChangefeedID)
+				if _, ok := statusMap[cfID]; !ok {
+					statusMap[cfID] = map[model.CaptureID]*heartbeatpb.MaintainerStatus{}
 				}
-				statusMap[status.GetInferiorID()][captureID] = status
+				statusMap[cfID][captureID] = status
 			}
 		}
 		for id, status := range statusMap {
-			//todo: how to new inferior
 			statemachine, err := NewStateMachine(id, status, s.NewInferior(id))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			s.stateMachines[model.ChangeFeedID(id.(ChangefeedID))] = statemachine
+			s.stateMachines[id] = statemachine
 		}
 		s.initStatus = nil
 	}
@@ -282,32 +282,31 @@ func (s *Supervisor) HandleScheduleTasks(
 		// Check if accepting one more task exceeds maxTaskConcurrency.
 		if len(s.runningTasks) == s.maxTaskConcurrency {
 			log.Debug("too many running task",
-				zap.String("id", s.ID.String()))
+				zap.String("id", s.ID))
 			break
 		}
 
-		var id InferiorID
+		var cfID model.ChangeFeedID
 		if task.AddInferior != nil {
-			id = task.AddInferior.ID
+			cfID = task.AddInferior.ID
 		} else if task.RemoveInferior != nil {
-			id = task.RemoveInferior.ID
+			cfID = task.RemoveInferior.ID
 		} else if task.MoveInferior != nil {
-			id = task.MoveInferior.ID
+			cfID = task.MoveInferior.ID
 		}
 
 		// Skip task if the inferior is already running a task,
 		// or the inferior has removed.
-		cfID := model.ChangeFeedID(id.(ChangefeedID))
 		if _, ok := s.runningTasks[cfID]; ok {
 			log.Info("ignore task, already exists",
-				zap.String("id", s.ID.String()),
+				zap.String("id", s.ID),
 				zap.Any("task", task))
 			continue
 		}
 		// it's remove or move inferior task, but we can not find the state machine
 		if _, ok := s.stateMachines[cfID]; !ok && task.AddInferior == nil {
 			log.Info("ignore task, inferior not found",
-				zap.String("id", s.ID.String()),
+				zap.String("id", s.ID),
 				zap.Any("task", task))
 			continue
 		}
@@ -334,7 +333,7 @@ func (s *Supervisor) handleAddInferiorTask(
 	task *AddInferior,
 ) ([]rpc.Message, error) {
 	var err error
-	cfID := model.ChangeFeedID(task.ID.(ChangefeedID))
+	cfID := task.ID
 	stateMachine, ok := s.stateMachines[cfID]
 	if !ok {
 		stateMachine, err = NewStateMachine(task.ID, nil, s.NewInferior(task.ID))
@@ -349,17 +348,17 @@ func (s *Supervisor) handleAddInferiorTask(
 func (s *Supervisor) handleRemoveInferiorTask(
 	task *RemoveInferior,
 ) ([]rpc.Message, error) {
-	cfID := model.ChangeFeedID(task.ID.(ChangefeedID))
+	cfID := task.ID
 	stateMachine, ok := s.stateMachines[cfID]
 	if !ok {
 		log.Warn("statemachine not found",
-			zap.Stringer("ID", s.ID),
+			zap.String("ID", s.ID),
 			zap.Stringer("inferior", task.ID))
 		return nil, nil
 	}
 	if stateMachine.HasRemoved() {
 		log.Info("inferior has removed",
-			zap.Stringer("ID", s.ID),
+			zap.String("ID", s.ID),
 			zap.Stringer("inferior", task.ID))
 		delete(s.stateMachines, cfID)
 		return nil, nil
@@ -370,11 +369,11 @@ func (s *Supervisor) handleRemoveInferiorTask(
 func (s *Supervisor) handleMoveInferiorTask(
 	task *MoveInferior,
 ) ([]rpc.Message, error) {
-	cfID := model.ChangeFeedID(task.ID.(ChangefeedID))
+	cfID := task.ID
 	stateMachine, ok := s.stateMachines[cfID]
 	if !ok {
 		log.Warn("statemachine not found",
-			zap.Stringer("ID", s.ID),
+			zap.String("ID", s.ID),
 			zap.Stringer("inferior", task.ID))
 		return nil, nil
 	}

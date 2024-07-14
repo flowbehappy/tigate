@@ -151,6 +151,11 @@ func (c *serverImpl) Run(stdCtx context.Context) error {
 			})
 		}(sub)
 	}
+	// register server to etcd after we started all modules
+	err = c.registerNodeToEtcd(stdCtx)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return errors.Trace(g.Wait())
 }
 

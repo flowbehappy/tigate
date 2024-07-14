@@ -76,7 +76,7 @@ func NewCoordinator(capture *model.CaptureInfo,
 		dispatchMsgs:  make(map[model.CaptureID]*messaging.TargetMessage),
 	}
 	c.supervisor = NewSupervisor(
-		CoordinatorID(capture.ID),
+		capture.ID,
 		c.NewChangefeed,
 		c.newBootstrapMessage,
 	)
@@ -93,7 +93,7 @@ func NewCoordinator(capture *model.CaptureInfo,
 var allChangefeeds = make(map[model.ChangeFeedID]*model.ChangeFeedInfo)
 
 func init() {
-	for i := 0; i < 1000000; i++ {
+	for i := 0; i < 1000; i++ {
 		id := fmt.Sprintf("%d", i)
 		allChangefeeds[model.DefaultChangeFeedID(id)] = &model.ChangeFeedInfo{
 			ID: id,
@@ -113,7 +113,7 @@ func (c *coordinator) Tick(ctx context.Context,
 		absentTask := 0
 		commitTask := 0
 		removingTask := 0
-		for _, value := range c.supervisor.GetInferiors() {
+		for _, value := range c.supervisor.GetAllStateMachines() {
 			switch value.State {
 			case SchedulerStatusAbsent:
 				absentTask++
@@ -163,7 +163,7 @@ func (c *coordinator) Tick(ctx context.Context,
 	// check all changefeeds.
 	for _, reactor := range allChangefeeds {
 		changefeedID := model.DefaultChangeFeedID(reactor.ID)
-		_, exist := c.supervisor.GetInferior(ChangefeedID(changefeedID))
+		_, exist := c.supervisor.GetChangefeedStateMachine(changefeedID)
 		if !exist {
 			// check if changefeed should be running
 			if !shouldRunChangefeed(reactor.State) {
@@ -195,18 +195,9 @@ func (c *coordinator) HandleMessage(msgs []*messaging.TargetMessage) ([]rpc.Mess
 	for _, msg := range msgs {
 		req := msg.Message.(*heartbeatpb.MaintainerHeartbeat)
 		serverID := msg.From
-		statuses := make([]InferiorStatus, 0, len(req.Statuses))
-		for _, status := range req.Statuses {
-			statuses = append(statuses, &ChangefeedStatus{
-				ID:              ChangefeedID(model.DefaultChangeFeedID(status.ChangefeedID)),
-				Status:          ComponentStatus(status.SchedulerStatus),
-				ChangefeedState: model.FeedState(status.FeedState),
-				CheckpointTs:    status.CheckpointTs,
-			})
-		}
-		c.supervisor.UpdateCaptureStatus(serverID.String(), statuses)
+		c.supervisor.UpdateCaptureStatus(serverID.String(), req.Statuses)
 		if c.supervisor.CheckAllCaptureInitialized() {
-			msgs, err := c.supervisor.HandleStatus(serverID.String(), statuses)
+			msgs, err := c.supervisor.HandleStatus(serverID.String(), req.Statuses)
 			if err != nil {
 				log.Error("handle status failed", zap.Error(err))
 				return nil, errors.Trace(err)
@@ -234,25 +225,14 @@ func (c *coordinator) GetNodeInfo() *model.CaptureInfo {
 func (c *coordinator) AsyncStop() {
 }
 
-func (c *coordinator) checkLiveness() ([]rpc.Message, error) {
-	var msgs []rpc.Message
-	for key, value := range c.supervisor.GetInferiors() {
-		if !value.Inferior.IsAlive() {
-			log.Info("found inactive inferior", zap.Any("ID", key))
-			//c.supervisor.GetInferiors().Delete(key)
-			// clean messages
-			// trigger schedule task
-		}
-	}
-	return msgs, nil
-}
-
 func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message {
 	return messaging.NewTargetMessage(
 		messaging.ServerId(uuid.MustParse(captureID)),
 		maintainerMangerTopic,
 		messaging.TypeCoordinatorBootstrapRequest,
-		&heartbeatpb.CoordinatorBootstrapRequest{Version: c.version})
+		&messaging.CoordinatorBootstrapRequest{
+			CoordinatorBootstrapRequest: &heartbeatpb.CoordinatorBootstrapRequest{Version: c.version},
+		})
 }
 
 func (c *coordinator) sendMessages(msgs []rpc.Message) {
@@ -272,35 +252,7 @@ func (c *coordinator) scheduleMaintainer(allInferiors []model.ChangeFeedID) ([]r
 	tasks := c.scheduler.Schedule(
 		allInferiors,
 		c.supervisor.GetAllCaptures(),
-		c.supervisor.GetInferiors(),
+		c.supervisor.GetAllStateMachines(),
 	)
 	return c.supervisor.HandleScheduleTasks(tasks)
-	//rpc, err := c.supervisor.HandleScheduleTasks(tasks)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//var msgs []rpc.Message
-	//for _, task := range c.dispatchMsgs {
-	//	msgs = append(msgs, task)
-	//}
-	//c.dispatchMsgs = make(map[model.CaptureID]*rpc.CoordinatorRequest)
-	//return msgs, nil
-}
-
-func (c *coordinator) handleMessages() ([]rpc.Message, error) {
-	var status []InferiorStatus
-	c.supervisor.UpdateCaptureStatus("", status)
-	return c.supervisor.HandleCaptureChanges(nil)
-}
-
-type CoordinatorID string
-
-func (c CoordinatorID) String() string {
-	return string(c)
-}
-func (c CoordinatorID) Equal(id InferiorID) bool {
-	return c.String() == id.String()
-}
-func (c CoordinatorID) Less(id InferiorID) bool {
-	return c.String() < id.String()
 }

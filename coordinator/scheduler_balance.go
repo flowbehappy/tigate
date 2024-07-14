@@ -131,7 +131,7 @@ func newBalanceMoveTables(
 			// sort the spans here so that the result is deterministic,
 			// which would aid testing and debugging.
 			sort.Slice(changefeeds, func(i, j int) bool {
-				return changefeeds[i].ID.Less(changefeeds[j].ID)
+				return changefeeds[i].ID.ID < (changefeeds[j].ID.ID)
 			})
 		}
 
@@ -145,7 +145,7 @@ func newBalanceMoveTables(
 				break
 			}
 			victims = append(victims, cf)
-			delete(ts, model.ChangeFeedID(cf.ID.(ChangefeedID)))
+			delete(ts, cf.ID)
 			tableNum2Remove--
 		}
 	}
@@ -183,7 +183,7 @@ func newBalanceMoveTables(
 			ID:          cf.ID,
 			DestCapture: target,
 		})
-		tablesPerCapture[target][model.ChangeFeedID(cf.ID.(ChangefeedID))] = cf
+		tablesPerCapture[target][cf.ID] = cf
 		captureWorkload[target] = randomizeWorkload(random, len(tablesPerCapture[target]))
 	}
 
