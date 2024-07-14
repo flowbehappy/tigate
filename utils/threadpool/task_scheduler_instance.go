@@ -35,11 +35,11 @@ func GetTaskSchedulerInstance() *TaskSchedulerInstance {
 	if TaskSchedulers == nil {
 		once.Do(func() {
 			TaskSchedulers = &TaskSchedulerInstance{
-				WorkerTaskScheduler:          NewTaskScheduler(&DefaultTaskSchedulerConfig, "WorkerTask"),
-				EventDispatcherTaskScheduler: NewTaskScheduler(&DefaultTaskSchedulerConfig, "EventDispatcherTask"),
-				SinkTaskScheduler:            NewTaskScheduler(&DefaultTaskSchedulerConfig, "SinkTask"),
-				HeartbeatTaskScheduler:       NewTaskScheduler(&DefaultTaskSchedulerConfig, "HeartbeatTask"),
-				MaintainerTaskScheduler:      NewTaskScheduler(&DefaultTaskSchedulerConfig, "MaintainerTask"),
+				WorkerTaskScheduler:          NewTaskSchedulerDefault("WorkerTask"),
+				EventDispatcherTaskScheduler: NewTaskSchedulerDefault("EventDispatcherTask"),
+				SinkTaskScheduler:            NewTaskSchedulerDefault("SinkTask"),
+				HeartbeatTaskScheduler:       NewTaskSchedulerDefault("HeartbeatTask"),
+				MaintainerTaskScheduler:      NewTaskSchedulerDefault("MaintainerTask"),
 			}
 		})
 	}

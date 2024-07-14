@@ -15,131 +15,102 @@ package threadpool
 
 import (
 	"runtime"
-
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
+	"sync/atomic"
+	"time"
 )
 
 /*
-┌────────────────────────────┐
-│      task scheduler        │
-│                            │
-│    ┌───────────────────┐   │
-│ ┌──┤io task thread pool◄─┐ │
-│ │  └──────▲──┬─────────┘ │ │
-│ │         │  │           │ │
-│ │ ┌───────┴──▼─────────┐ │ │
-│ │ │cpu task thread pool│ │ │
-│ │ └───────▲──┬─────────┘ │ │
-│ │         │  │           │ │
-│ │    ┌────┴──▼────┐      │ │
-│ └────►wait reactor├──────┘ │
-│      └────────────┘        │
-│                            │
-└────────────────────────────┘
-
-A Task scheduler is responsible for managing the cpu / io thread pools and wait reactor.
-- cpu task thread pool: for operator cpu intensive compute.
-- io task thread pool: for operator io intensive block.
-- wait reactor: for polling asynchronous io status, etc.
-
 Task scheduler is the entry to use thread pool. It provides a unified interface to submit task to different thread pools.
 TaskSchedulerConfig is used to configure the threads number and task queue of the thread pool and wait reactor.
 */
 type TaskScheduler struct {
 	cpuTaskThreadPool *ThreadPool
 	ioTaskThreadPool  *ThreadPool
-	waitReactor       *WaitReactor
+
+	nextTaskId atomic.Uint64
 }
 
-type TaskSchedulerConfig struct {
-	// <0 means use 2 * logical cpu
-	// >=0 means use this thread pool with specified threads
-	cpuThreads         int
-	ioThreads          int
-	waitReactorThreads int
+// Thread number:
+//   - <0 disable the thread pool
+//   - 0 (by defualt) means use 2 * logical cpu
+//   - >0 to choose another value
+func NewTaskScheduler(name string, cpuThreads int, ioThreads int) *TaskScheduler {
+	ts := &TaskScheduler{}
+	defaultThreadCount := runtime.NumCPU() * 2
 
-	taskQueueType TaskQueueType
-
-	cpuTimeoutMs int64
-	ioTimeoutMs  int64
-}
-
-var DefaultTaskSchedulerConfig = TaskSchedulerConfig{
-	cpuThreads:         -1,
-	ioThreads:          -1,
-	waitReactorThreads: 1,
-	taskQueueType:      FIFOTaskQueueType,
-	cpuTimeoutMs:       100,
-	ioTimeoutMs:        100,
-}
-
-func NewTaskScheduler(threadpoolConfig *TaskSchedulerConfig, name string) *TaskScheduler {
-	taskScheduler := &TaskScheduler{}
-	logicalCpu := runtime.NumCPU()
-
-	if threadpoolConfig.cpuThreads >= 0 {
-		taskScheduler.cpuTaskThreadPool = NewThreadPool(taskScheduler, NewTaskQueue(threadpoolConfig.taskQueueType), threadpoolConfig.cpuThreads, threadpoolConfig.cpuTimeoutMs, name+"-CPU")
-	} else {
-		taskScheduler.cpuTaskThreadPool = NewThreadPool(taskScheduler, NewTaskQueue(threadpoolConfig.taskQueueType), 2*logicalCpu, threadpoolConfig.cpuTimeoutMs, name+"-CPU")
+	createTP := func(taskType TaskStatus, name string, threadCount int) *ThreadPool {
+		c := 0
+		if threadCount < 0 {
+			return nil
+		} else if threadCount == 0 {
+			c = defaultThreadCount
+		} else {
+			c = threadCount
+		}
+		return NewThreadPool(taskType, name, ts, c)
 	}
 
-	if threadpoolConfig.ioThreads >= 0 {
-		taskScheduler.ioTaskThreadPool = NewThreadPool(taskScheduler, NewTaskQueue(threadpoolConfig.taskQueueType), threadpoolConfig.ioThreads, threadpoolConfig.ioTimeoutMs, name+"-IO")
-	} else {
-		taskScheduler.ioTaskThreadPool = NewThreadPool(taskScheduler, NewTaskQueue(threadpoolConfig.taskQueueType), 2*logicalCpu, threadpoolConfig.ioTimeoutMs, name+"-IO")
-	}
+	ts.cpuTaskThreadPool = createTP(CPUTask, name+"-CPU", cpuThreads)
+	ts.ioTaskThreadPool = createTP(IOTask, name+"-IO", ioThreads)
 
-	if threadpoolConfig.waitReactorThreads >= 0 {
-		taskScheduler.waitReactor = NewWaitReactor(taskScheduler, threadpoolConfig.waitReactorThreads, name)
-	} else {
-		taskScheduler.waitReactor = NewWaitReactor(taskScheduler, 2*logicalCpu, name)
-	}
-
-	return taskScheduler
+	return ts
 }
 
-func (s *TaskScheduler) Submit(task Task) error {
-	task_status := task.GetStatus()
-	switch task_status {
-	case IO:
-		s.submitTaskToIOThreadPool(&task)
-	case Running:
-		s.submitTaskToCPUThreadPool(&task)
-	case Waiting:
-		s.submitTaskToWaitReactorThreadPool(&task)
-	case Canceled:
-	case Failed:
-	case Success:
-		return nil
+func NewTaskSchedulerDefault(name string) *TaskScheduler {
+	return NewTaskScheduler(name, 0, 0)
+}
+
+func (s *TaskScheduler) toBeScheduled(status TaskStatus) chan *scheduledTask {
+	switch status {
+	case CPUTask:
+		return s.cpuTaskThreadPool.tobeScheduled()
+	case IOTask:
+		return s.ioTaskThreadPool.tobeScheduled()
 	default:
-		log.Error("TaskScheduler submit with Error Status: ", zap.Any("status", task_status))
+		panicOnTaskStatus(status)
 	}
 	return nil
 }
 
-func (s *TaskScheduler) submitTaskToCPUThreadPool(task *Task) {
-	// TODO(hongyunyan): 我需要做这个 task nil 的检查么？还是应该让外部自己来保证呢？这个加了肯定会有一点点性能的影响，但是不大
-	if task == nil {
-		log.Info("TaskScheduler submitTaskToCPUThreadPool with nil task")
+// Generate a new unique task id
+func (s *TaskScheduler) NewTaskId() TaskId {
+	return TaskId(s.nextTaskId.Add(1))
+}
+
+func (s *TaskScheduler) Submit(task Task, initalStatus TaskStatus, next time.Time) {
+	switch initalStatus {
+	case CPUTask:
+		scheduleTask(task, initalStatus, next, s.cpuTaskThreadPool.schedule)
+	case IOTask:
+		scheduleTask(task, initalStatus, next, s.ioTaskThreadPool.schedule)
+	default:
+		panicOnTaskStatus(initalStatus)
 	}
-	s.cpuTaskThreadPool.submit(task)
 }
 
-func (s *TaskScheduler) submitTaskToIOThreadPool(task *Task) {
-	s.ioTaskThreadPool.submit(task)
+func (s *TaskScheduler) Update(task Task, status TaskStatus, next time.Time) {
+	s.Submit(task, status, next)
 }
 
-func (s *TaskScheduler) submitTaskToWaitReactorThreadPool(task *Task) {
-	s.waitReactor.submit(task)
+// It is mainly used by test cases to stop the scheduler working.
+func (s *TaskScheduler) blockForTest(until int, taskType TaskStatus) {
+	switch taskType {
+	case CPUTask:
+		s.cpuTaskThreadPool.waitReactor.blockForTest(until)
+	case IOTask:
+		s.ioTaskThreadPool.waitReactor.blockForTest(until)
+	default:
+		panicOnTaskStatus(taskType)
+	}
 }
 
 func (s *TaskScheduler) Finish() {
-	s.cpuTaskThreadPool.finish()
-	s.ioTaskThreadPool.finish()
-	s.waitReactor.finish()
-
-	s.cpuTaskThreadPool.waitForStop()
-	s.ioTaskThreadPool.waitForStop()
-	s.waitReactor.waitForStop()
+	if s.cpuTaskThreadPool != nil {
+		s.cpuTaskThreadPool.finish()
+		s.cpuTaskThreadPool.waitForStop()
+	}
+	if s.ioTaskThreadPool != nil {
+		s.ioTaskThreadPool.finish()
+		s.ioTaskThreadPool.waitForStop()
+	}
 }

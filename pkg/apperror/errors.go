@@ -15,6 +15,7 @@ const (
 	ErrorTypeInvalid    ErrorType = 101
 	ErrorTypeIncomplete ErrorType = 102
 	ErrorTypeDecodeData ErrorType = 103
+	ErrorTypeBufferFull ErrorType = 104
 
 	ErrorTypeConnectionFailed     ErrorType = 201
 	ErrorTypeConnectionNotFound   ErrorType = 202

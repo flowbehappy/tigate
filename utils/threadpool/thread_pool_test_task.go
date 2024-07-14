@@ -14,149 +14,88 @@
 package threadpool
 
 import (
-	"math/rand"
 	"sync/atomic"
 	"time"
-
-	"github.com/pingcap/log"
 )
 
 var testCount int64 = 0
 
 type BasicCPUTask struct {
-	taskStatus TaskStatus
+	id TaskId
 }
 
 func newBasicCPUTask() *BasicCPUTask {
 	return &BasicCPUTask{
-		taskStatus: Running,
+		id: NewGlobalTaskId(),
 	}
 }
 
-func (t *BasicCPUTask) GetStatus() TaskStatus {
-	return t.taskStatus
-}
+func (t *BasicCPUTask) TaskId() TaskId { return t.id }
 
-func (t *BasicCPUTask) SetStatus(status TaskStatus) {
-	t.taskStatus = status
-}
-
-func (t *BasicCPUTask) Execute(timeout time.Duration) TaskStatus {
+func (t *BasicCPUTask) Execute(TaskStatus) (TaskStatus, time.Time) {
 	for i := 0; i < 100; i++ {
 		atomic.AddInt64(&testCount, 1)
 	}
-	return Success
-}
-
-func (t *BasicCPUTask) Await() TaskStatus {
-	log.Error("BasicCPUTask should not called Await()")
-	return Failed
-}
-
-func (t *BasicCPUTask) Release() {
+	return Done, time.Time{}
 }
 
 type BasicIOTask struct {
-	taskStatus TaskStatus
+	id TaskId
 }
 
 func newBasicIOTask() *BasicIOTask {
 	return &BasicIOTask{
-		taskStatus: IO,
+		id: NewGlobalTaskId(),
 	}
 }
 
-func (t *BasicIOTask) GetStatus() TaskStatus {
-	return t.taskStatus
-}
+func (t *BasicIOTask) TaskId() TaskId { return t.id }
 
-func (t *BasicIOTask) SetStatus(status TaskStatus) {
-	t.taskStatus = status
-}
-
-func (t *BasicIOTask) Execute(timeout time.Duration) TaskStatus {
+func (t *BasicIOTask) Execute(TaskStatus) (TaskStatus, time.Time) {
 	time.Sleep(50 * time.Millisecond)
 	atomic.AddInt64(&testCount, 1)
-	return Success
-}
-
-func (t *BasicIOTask) Await() TaskStatus {
-	log.Error("BasicIOTask should not called Await()")
-	return Failed
-}
-
-func (t *BasicIOTask) Release() {
-}
-
-// TODO: add test case
-func (t *BasicIOTask) Cancel() {
+	return Done, time.Time{}
 }
 
 type BasicWaitTask struct {
-	taskStatus TaskStatus
+	id TaskId
 }
 
 func newBasicWaitTask() *BasicWaitTask {
 	return &BasicWaitTask{
-		taskStatus: Waiting,
+		id: NewGlobalTaskId(),
 	}
 }
 
-func (t *BasicWaitTask) GetStatus() TaskStatus {
-	return t.taskStatus
-}
+func (t *BasicWaitTask) TaskId() TaskId { return t.id }
 
-func (t *BasicWaitTask) SetStatus(status TaskStatus) {
-	t.taskStatus = status
-}
-
-func (t *BasicWaitTask) Execute(timeout time.Duration) TaskStatus {
+func (t *BasicWaitTask) Execute(TaskStatus) (TaskStatus, time.Time) {
 	time.Sleep(50 * time.Millisecond)
 	atomic.AddInt64(&testCount, 1)
-	return Success
-}
-
-func (t *BasicWaitTask) Await() TaskStatus {
-	randomValue := rand.Intn(10)
-	if randomValue < 5 {
-		return Running
-	}
-	return Waiting
-}
-
-func (t *BasicWaitTask) Release() {
-}
-
-func (t *BasicWaitTask) Cancel() {
+	return Done, time.Time{}
 }
 
 type PureCPUTask struct {
-	taskStatus TaskStatus
-	finalChan  *chan int
-	ch         *chan int
-	target     int64
-	addCount   int
+	id TaskId
+
+	finalChan *chan int
+	ch        *chan int
+	target    int64
+	addCount  int
 }
 
 func newPureCPUTask(finalChan *chan int, ch *chan int, target int64, addCount int) *PureCPUTask {
 	return &PureCPUTask{
-		taskStatus: Running,
-		finalChan:  finalChan,
-		ch:         ch,
-		target:     target,
-		addCount:   addCount,
+		id:        NewGlobalTaskId(),
+		finalChan: finalChan,
+		ch:        ch,
+		target:    target,
+		addCount:  addCount,
 	}
 }
+func (t *PureCPUTask) TaskId() TaskId { return t.id }
 
-func (t *PureCPUTask) GetStatus() TaskStatus {
-	return t.taskStatus
-}
-
-func (t *PureCPUTask) SetStatus(status TaskStatus) {
-	t.taskStatus = status
-}
-
-func (t *PureCPUTask) Execute(timeout time.Duration) TaskStatus {
+func (t *PureCPUTask) Execute(TaskStatus) (TaskStatus, time.Time) {
 	select {
 	case <-*t.ch:
 		for i := 0; i < t.addCount; i++ {
@@ -165,95 +104,70 @@ func (t *PureCPUTask) Execute(timeout time.Duration) TaskStatus {
 		if atomic.LoadInt64(&testCount) == int64(t.addCount)*t.target {
 			*t.finalChan <- 1
 		}
-		return Success
+		return Done, time.Time{}
 	default:
-		return Running
+		return CPUTask, time.Now()
 	}
-}
-
-func (t *PureCPUTask) Await() TaskStatus { return Failed }
-
-func (t *PureCPUTask) Release() {}
-
-func (t *PureCPUTask) Cancel() {
 }
 
 type CPUWithWaitTask struct {
-	taskStatus TaskStatus
-	finalChan  *chan int
-	ch         *chan int
-	target     int64
-	addCount   int
+	id           TaskId
+	nextExecTime time.Time
+
+	finalChan *chan int
+	taskCount int
+	addCount  int
 }
 
-func newCPUWithWaitTask(finalChan *chan int, ch *chan int, target int64, addCount int) *CPUWithWaitTask {
+func (t *CPUWithWaitTask) TaskId() TaskId { return t.id }
+
+func newCPUWithWaitTask(finalChan *chan int, taskCount int, addCount int, wait time.Duration) *CPUWithWaitTask {
 	return &CPUWithWaitTask{
-		taskStatus: Waiting,
-		finalChan:  finalChan,
-		ch:         ch,
-		target:     target,
-		addCount:   addCount,
+		id:           NewGlobalTaskId(),
+		nextExecTime: time.Now().Add(wait),
+
+		finalChan: finalChan,
+		taskCount: taskCount,
+		addCount:  addCount,
 	}
 }
 
-func (t *CPUWithWaitTask) GetStatus() TaskStatus {
-	return t.taskStatus
-}
+func (t *CPUWithWaitTask) Execute(TaskStatus) (TaskStatus, time.Time) {
+	if time.Now().Before(t.nextExecTime) {
+		return CPUTask, t.nextExecTime
+	}
 
-func (t *CPUWithWaitTask) SetStatus(status TaskStatus) {
-	t.taskStatus = status
-}
-
-func (t *CPUWithWaitTask) Execute(timeout time.Duration) TaskStatus {
 	for i := 0; i < t.addCount; i++ {
 		atomic.AddInt64(&testCount, 1)
 	}
-	if atomic.LoadInt64(&testCount) == int64(t.addCount)*t.target {
+
+	if atomic.LoadInt64(&testCount) == int64(t.addCount*t.taskCount) {
 		*t.finalChan <- 1
 	}
 
-	return Success
-}
-
-func (t *CPUWithWaitTask) Await() TaskStatus {
-	select {
-	case <-*t.ch:
-		return Running
-	default:
-		return Waiting
-	}
-}
-
-func (t *CPUWithWaitTask) Release() {}
-
-func (t *CPUWithWaitTask) Cancel() {
+	return Done, time.Time{}
 }
 
 type CPUTimeTask struct {
-	taskStatus TaskStatus
-	finalChan  *chan int
-	addCount   int
-	taskCount  int
+	id TaskId
+
+	finalChan *chan int
+	addCount  int
+	taskCount int
 }
 
 func newCPUTimeTask(finalChan *chan int, addCount int, taskCount int) *CPUTimeTask {
 	return &CPUTimeTask{
-		taskStatus: Running,
-		finalChan:  finalChan,
-		addCount:   addCount,
-		taskCount:  taskCount,
+		id:        NewGlobalTaskId(),
+		finalChan: finalChan,
+		addCount:  addCount,
+		taskCount: taskCount,
 	}
 }
 
-func (t *CPUTimeTask) GetStatus() TaskStatus {
-	return t.taskStatus
-}
+func (t *CPUTimeTask) TaskId() TaskId { return t.id }
 
-func (t *CPUTimeTask) SetStatus(status TaskStatus) {
-	t.taskStatus = status
-}
-
-func (t *CPUTimeTask) Execute(timeout time.Duration) TaskStatus {
+func (t *CPUTimeTask) Execute(TaskStatus) (TaskStatus, time.Time) {
 	for i := 0; i < t.addCount; i++ {
 		atomic.AddInt64(&testCount, 1)
 	}
@@ -261,12 +175,5 @@ func (t *CPUTimeTask) Execute(timeout time.Duration) TaskStatus {
 		*t.finalChan <- 1
 	}
 
-	return Success
-}
-
-func (t *CPUTimeTask) Await() TaskStatus { return Failed }
-
-func (t *CPUTimeTask) Release() {}
-
-func (t *CPUTimeTask) Cancel() {
+	return Done, time.Time{}
 }
