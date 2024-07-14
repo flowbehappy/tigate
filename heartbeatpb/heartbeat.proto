@@ -18,7 +18,7 @@ message TableSpan {
 // }
 
 message HeartBeatRequest {
-    uint64 changefeedID = 1;
+    string changefeedID = 1;
     uint64 checkpointTs = 2; // eventDispatcherManager 当前全局最小的 checkpointTs
 } 
 
@@ -44,7 +44,7 @@ message TableProgressInfo {
 }
 message HeartBeatResponse {
     repeated TableProgressInfo info = 1;
-    uint64 changefeedID = 2;
+    string changefeedID = 2;
 }
 
 enum ScheduleAction {
@@ -58,7 +58,7 @@ message DispatcherConfig {
 }
 
 message ScheduleDispatcherRequest {
-    uint64 changefeedID = 1;
+    string changefeedID = 1;
     DispatcherConfig config = 2;
     ScheduleAction scheduleAction = 3;
 }
