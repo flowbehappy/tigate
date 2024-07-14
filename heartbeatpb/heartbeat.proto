@@ -78,6 +78,10 @@ message CoordinatorBootstrapRequest {
     int64 version = 1;
 }
 
+message CoordinatorBootstrapResponse {
+    repeated MaintainerStatus statuses = 1;
+}
+
 message DispatchMaintainerRequest {
     repeated AddMaintainerRequest add_maintainers = 1;
     repeated RemoveMaintainerRequest remove_maintainers = 2;

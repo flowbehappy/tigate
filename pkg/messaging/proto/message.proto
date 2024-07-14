@@ -7,8 +7,8 @@ message CallerInfo{
 }
 
 message Message {
-    bytes from = 1;
-    bytes to = 2;
+    string from = 1;
+    string to = 2;
     uint64 epoch = 3;
     uint64 seqnum = 4;
     int32 type = 5;

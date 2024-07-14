@@ -19,7 +19,6 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
@@ -58,7 +57,7 @@ func (c *coordinator) GetChangefeedStateMachine(id model.ChangeFeedID) (*StateMa
 // HandleAliveCaptureUpdate update captures liveness.
 func (c *coordinator) HandleAliveCaptureUpdate(
 	aliveCaptures map[model.CaptureID]*model.CaptureInfo,
-) ([]rpc.Message, []model.CaptureID) {
+) ([]rpc.Message, error) {
 	var removed []model.CaptureID
 	msgs := make([]rpc.Message, 0)
 	for id, info := range aliveCaptures {
@@ -100,20 +99,41 @@ func (c *coordinator) HandleAliveCaptureUpdate(
 			zap.String("ID", c.ID),
 			zap.Int("captureCount", len(c.captures)))
 		c.initialized = true
-	}
-	if len(removed) > 0 {
-		removedMsgs, err := c.HandleCaptureChanges(removed)
-		if err != nil {
-			log.Error("handle changes failed", zap.Error(err))
+
+		// changefeed maintainer may run on multiple nodes at the same time, but only one can work
+		statusMap := make(map[model.ChangeFeedID]map[model.CaptureID]*heartbeatpb.MaintainerStatus)
+		for captureID, statuses := range c.initStatus {
+			for _, status := range statuses {
+				cfID := model.DefaultChangeFeedID(status.ChangefeedID)
+				if _, ok := statusMap[cfID]; !ok {
+					statusMap[cfID] = map[model.CaptureID]*heartbeatpb.MaintainerStatus{}
+				}
+				statusMap[cfID][captureID] = status
+			}
 		}
-		msgs = append(msgs, removedMsgs...)
+
+		for id, status := range statusMap {
+			statemachine, err := NewStateMachine(id, status, newChangefeed(id))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			c.stateMachines[id] = statemachine
+		}
+		c.initStatus = nil
 	}
-	return msgs, removed
+
+	removedMsgs, err := c.handleRemovedNodes(removed)
+	if err != nil {
+		log.Error("handle changes failed", zap.Error(err))
+		return nil, errors.Trace(err)
+	}
+	msgs = append(msgs, removedMsgs...)
+	return msgs, nil
 }
 
 func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message {
 	return messaging.NewTargetMessage(
-		messaging.ServerId(uuid.MustParse(captureID)),
+		messaging.ServerId(captureID),
 		maintainerMangerTopic,
 		messaging.TypeCoordinatorBootstrapRequest,
 		&messaging.CoordinatorBootstrapRequest{
@@ -121,9 +141,9 @@ func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message
 		})
 }
 
-// UpdateCaptureStatus update the server status after receive a bootstrap message from remote
+// cacheBootstrapResponse caches the server status after receive a bootstrap message from remote
 // supervisor will cache the status if the supervisor is not initialized
-func (c *coordinator) UpdateCaptureStatus(from model.CaptureID, statuses []*heartbeatpb.MaintainerStatus) {
+func (c *coordinator) cacheBootstrapResponse(from model.CaptureID, statuses []*heartbeatpb.MaintainerStatus) {
 	capture, ok := c.captures[from]
 	if !ok {
 		log.Warn("server is not found",
@@ -174,48 +194,21 @@ func (c *coordinator) HandleStatus(
 	return sentMsgs, nil
 }
 
-// HandleCaptureChanges handles server changes.
-func (c *coordinator) HandleCaptureChanges(
+// handleRemovedNodes handles server changes.
+func (c *coordinator) handleRemovedNodes(
 	removed []model.CaptureID,
 ) ([]rpc.Message, error) {
-	if c.initStatus != nil {
-		if len(c.stateMachines) != 0 {
-			log.Panic("init again",
-				zap.Any("init", c.initStatus),
-				zap.Any("statemachines", c.stateMachines))
-		}
-		statusMap := make(map[model.ChangeFeedID]map[model.CaptureID]*heartbeatpb.MaintainerStatus)
-		for captureID, statuses := range c.initStatus {
-			for _, status := range statuses {
-				cfID := model.DefaultChangeFeedID(status.ChangefeedID)
-				if _, ok := statusMap[cfID]; !ok {
-					statusMap[cfID] = map[model.CaptureID]*heartbeatpb.MaintainerStatus{}
-				}
-				statusMap[cfID][captureID] = status
-			}
-		}
-		for id, status := range statusMap {
-			statemachine, err := NewStateMachine(id, status, newChangefeed(id))
+	sentMsgs := make([]rpc.Message, 0, len(removed))
+	for id, stateMachine := range c.stateMachines {
+		for _, captureID := range removed {
+			msgs, affected, err := stateMachine.HandleCaptureShutdown(captureID)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			c.stateMachines[id] = statemachine
-		}
-		c.initStatus = nil
-	}
-	sentMsgs := make([]rpc.Message, 0)
-	if removed != nil {
-		for id, stateMachine := range c.stateMachines {
-			for _, captureID := range removed {
-				msgs, affected, err := stateMachine.HandleCaptureShutdown(captureID)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				sentMsgs = append(sentMsgs, msgs...)
-				if affected {
-					// Cleanup its running task.
-					delete(c.runningTasks, id)
-				}
+			sentMsgs = append(sentMsgs, msgs...)
+			if affected {
+				// Cleanup its running task.
+				delete(c.runningTasks, id)
 			}
 		}
 	}

@@ -12,7 +12,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
 	"github.com/flowbehappy/tigate/utils/conn"
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/security"
@@ -190,7 +189,7 @@ func (s *remoteMessageTarget) initSendStreams() {
 		return
 	}
 
-	handshake := &proto.Message{From: s.localId.slice(), To: s.targetId.slice(), Epoch: s.localEpoch}
+	handshake := &proto.Message{From: string(s.localId), To: string(s.targetId), Epoch: s.localEpoch}
 	if err := eventStream.Send(handshake); err != nil {
 		s.collectErr(AppError{
 			Type:   ErrorTypeMessageSendFailed,
@@ -223,7 +222,7 @@ func (s *remoteMessageTarget) initSendStreams() {
 	s.runSendMessages(sendCtx, commandStream, s.sendCmdCh)
 	log.Info("Connected to remote target",
 		zap.Stringer("localID", s.localId),
-		zap.Stringer("targetID", uuid.UUID(s.targetId)),
+		zap.Stringer("targetID", s.targetId),
 		zap.String("targetAddr", s.targetAddr))
 }
 
@@ -329,8 +328,8 @@ func (s *remoteMessageTarget) newMessage(msg ...*TargetMessage) *proto.Message {
 		msgBytes = append(msgBytes, m.encode(buf))
 	}
 	protoMsg := &proto.Message{
-		From:    s.localId.slice(),
-		To:      s.targetId.slice(),
+		From:    string(s.localId),
+		To:      string(s.targetId),
 		Epoch:   s.localEpoch,
 		Topic:   msg[0].Topic,
 		Seqnum:  s.sendSequence.Add(1),

@@ -19,7 +19,6 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
-	"github.com/google/uuid"
 	"github.com/pingcap/tiflow/cdc/model"
 )
 
@@ -55,7 +54,7 @@ func (c *changefeed) NewInferiorStatus(status ComponentStatus) *heartbeatpb.Main
 }
 
 func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary bool) rpc.Message {
-	return messaging.NewTargetMessage(messaging.ServerId(uuid.MustParse(server)),
+	return messaging.NewTargetMessage(messaging.ServerId(server),
 		maintainerMangerTopic,
 		messaging.TypeDispatchMaintainerRequest,
 		&messaging.DispatchMaintainerRequest{
@@ -70,7 +69,7 @@ func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary boo
 }
 
 func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) rpc.Message {
-	return messaging.NewTargetMessage(messaging.ServerId(uuid.MustParse(server)),
+	return messaging.NewTargetMessage(messaging.ServerId(server),
 		maintainerMangerTopic,
 		messaging.TypeDispatchMaintainerRequest,
 		&messaging.DispatchMaintainerRequest{

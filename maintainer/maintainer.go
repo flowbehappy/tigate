@@ -113,7 +113,7 @@ func (m *Maintainer) Run() error {
 			//	m.sendMessages(msgs)
 			//}
 			//if len(removed) > 0 {
-			//msgs, err := m.supervisor.HandleCaptureChanges(removed)
+			//msgs, err := m.supervisor.handleRemovedNodes(removed)
 			//if err != nil {
 			//	log.Warn("handle changes failed", zap.Error(err))
 			//	break

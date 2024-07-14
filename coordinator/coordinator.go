@@ -70,7 +70,7 @@ type coordinator struct {
 
 	captures map[model.CaptureID]*CaptureStatus
 
-	// track all status reported by remote inferiors when bootstrap
+	// track all status reported by remote when bootstrap
 	initStatus map[model.CaptureID][]*heartbeatpb.MaintainerStatus
 }
 
@@ -81,11 +81,10 @@ func NewCoordinator(capture *model.CaptureInfo,
 		scheduler: NewCombineScheduler(
 			NewBasicScheduler(1000),
 			NewBalanceScheduler(time.Minute, 1000)),
-		messageCenter: messageCenter,
-		version:       version,
-		nodeInfo:      capture,
-		dispatchMsgs:  make(map[model.CaptureID]*messaging.TargetMessage),
-
+		messageCenter:      messageCenter,
+		version:            version,
+		nodeInfo:           capture,
+		dispatchMsgs:       make(map[model.CaptureID]*messaging.TargetMessage),
 		stateMachines:      make(map[model.ChangeFeedID]*StateMachine),
 		runningTasks:       map[model.ChangeFeedID]*ScheduleTask{},
 		initialized:        false,
@@ -153,20 +152,17 @@ func (c *coordinator) Tick(ctx context.Context,
 	buf := c.msgBuf
 	c.msgBuf = nil
 	c.msgLock.Unlock()
-	msgs, err := c.HandleMessage(buf)
+
+	err := c.HandleMessage(buf)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	msgs, removed := c.HandleAliveCaptureUpdate(state.Captures)
-	if len(msgs) > 0 {
-		c.sendMessages(msgs)
+	msgs, err := c.HandleAliveCaptureUpdate(state.Captures)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	if len(removed) > 0 {
-		msgs, err := c.HandleCaptureChanges(removed)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	if len(msgs) > 0 {
 		c.sendMessages(msgs)
 	}
 
@@ -197,22 +193,28 @@ func (c *coordinator) Tick(ctx context.Context,
 	return state, nil
 }
 
-func (c *coordinator) HandleMessage(msgs []*messaging.TargetMessage) ([]rpc.Message, error) {
-	var rsp []rpc.Message
+func (c *coordinator) HandleMessage(msgs []*messaging.TargetMessage) error {
 	for _, msg := range msgs {
-		req := msg.Message.(*heartbeatpb.MaintainerHeartbeat)
-		serverID := msg.From
-		c.UpdateCaptureStatus(serverID.String(), req.Statuses)
-		if c.CheckAllCaptureInitialized() {
-			msgs, err := c.HandleStatus(serverID.String(), req.Statuses)
-			if err != nil {
-				log.Error("handle status failed", zap.Error(err))
-				return nil, errors.Trace(err)
+		switch msg.Type {
+		case messaging.TypeCoordinatorBootstrapResponse:
+			req := msg.Message.(*heartbeatpb.CoordinatorBootstrapResponse)
+			c.cacheBootstrapResponse(msg.From.String(), req.Statuses)
+		case messaging.TypeMaintainerHeartbeatRequest:
+			if c.CheckAllCaptureInitialized() {
+				req := msg.Message.(*heartbeatpb.MaintainerHeartbeat)
+				serverID := msg.From
+				msgs, err := c.HandleStatus(serverID.String(), req.Statuses)
+				if err != nil {
+					log.Error("handle status failed", zap.Error(err))
+					return errors.Trace(err)
+				}
+				c.sendMessages(msgs)
 			}
-			c.sendMessages(msgs)
+		default:
+			log.Panic("unexpected message", zap.Any("message", msg))
 		}
 	}
-	return rsp, nil
+	return nil
 }
 
 func shouldRunChangefeed(state model.FeedState) bool {

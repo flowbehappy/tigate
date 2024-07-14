@@ -80,7 +80,6 @@ func (m *Manager) Run(ctx context.Context) error {
 			m.msgBuf = nil
 			m.msgLock.Unlock()
 
-			hasBootstrapMsg := false
 			for _, msg := range buf {
 				switch msg.Type {
 				case messaging.TypeCoordinatorBootstrapRequest:
@@ -92,7 +91,24 @@ func (m *Manager) Run(ctx context.Context) error {
 					}
 					m.coordinatorID = msg.From
 					m.coordinatorVersion = req.Version
-					hasBootstrapMsg = true
+
+					response := &heartbeatpb.CoordinatorBootstrapResponse{
+						Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
+					}
+					for _, m := range m.maintainers {
+						response.Statuses = append(response.Statuses, m.GetMaintainerStatus())
+						m.statusChanged.Store(false)
+						m.lastReportTime = time.Now()
+					}
+					err := m.messageCenter.SendCommand(messaging.NewTargetMessage(
+						m.coordinatorID,
+						"coordinator",
+						messaging.TypeCoordinatorBootstrapResponse,
+						response,
+					))
+					if err != nil {
+						log.Warn("send command failed", zap.Error(err))
+					}
 					log.Info("bootstrap coordinator",
 						zap.Int64("version", m.coordinatorVersion))
 				case messaging.TypeDispatchMaintainerRequest:
@@ -115,14 +131,14 @@ func (m *Manager) Run(ctx context.Context) error {
 					Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
 				}
 				for _, m := range m.maintainers {
-					if hasBootstrapMsg || m.statusChanged.Load() ||
+					if m.statusChanged.Load() ||
 						time.Since(m.lastReportTime) > time.Second*2 {
 						response.Statuses = append(response.Statuses, m.GetMaintainerStatus())
 						m.statusChanged.Store(false)
 						m.lastReportTime = time.Now()
 					}
 				}
-				if hasBootstrapMsg || len(response.Statuses) != 0 {
+				if len(response.Statuses) != 0 {
 					m.sendMessages(response)
 				}
 			}
