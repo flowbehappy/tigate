@@ -44,32 +44,26 @@ type Coordinator interface {
 }
 
 type coordinator struct {
-	scheduler     Scheduler
 	messageCenter messaging.MessageCenter
-	nodeInfo      *model.CaptureInfo
 
-	changefeeds map[model.ChangeFeedID]changefeed
+	nodeInfo    *model.CaptureInfo
+	ID          model.CaptureID
+	initialized bool
+	version     int64
 
-	version int64
-
+	// message buf from remote
 	msgLock sync.RWMutex
 	msgBuf  []*messaging.TargetMessage
 
 	lastCheckTime time.Time
 
-	dispatchMsgs map[model.CaptureID]*messaging.TargetMessage
-
-	stateMachines map[model.ChangeFeedID]*StateMachine
-	runningTasks  map[model.ChangeFeedID]*ScheduleTask
-
+	// scheduling fields
+	scheduler          Scheduler
+	stateMachines      map[model.ChangeFeedID]*StateMachine
+	runningTasks       map[model.ChangeFeedID]*ScheduleTask
 	maxTaskConcurrency int
 
-	// self ID
-	ID          model.CaptureID
-	initialized bool
-
 	captures map[model.CaptureID]*ServerStatus
-
 	// track all status reported by remote when bootstrap
 	initStatus map[model.CaptureID][]*heartbeatpb.MaintainerStatus
 }
@@ -84,7 +78,6 @@ func NewCoordinator(capture *model.CaptureInfo,
 		messageCenter:      messageCenter,
 		version:            version,
 		nodeInfo:           capture,
-		dispatchMsgs:       make(map[model.CaptureID]*messaging.TargetMessage),
 		stateMachines:      make(map[model.ChangeFeedID]*StateMachine),
 		runningTasks:       map[model.ChangeFeedID]*ScheduleTask{},
 		initialized:        false,
@@ -92,13 +85,6 @@ func NewCoordinator(capture *model.CaptureInfo,
 		initStatus:         make(map[model.CaptureID][]*heartbeatpb.MaintainerStatus),
 		maxTaskConcurrency: 10000,
 	}
-	// receive messages
-	messageCenter.RegisterHandler("coordinator", func(msg *messaging.TargetMessage) error {
-		c.msgLock.Lock()
-		c.msgBuf = append(c.msgBuf, msg)
-		c.msgLock.Unlock()
-		return nil
-	})
 	// receive messages
 	messageCenter.RegisterHandler("coordinator", func(msg *messaging.TargetMessage) error {
 		c.msgLock.Lock()

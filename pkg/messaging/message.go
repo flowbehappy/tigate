@@ -25,11 +25,12 @@ const (
 	TypeScheduleDispatcherRequest
 	TypeEventFeed
 	TypeRegisterDispatcherRequest
-	TypeBootstrapMaintainerRequest
 	TypeCoordinatorBootstrapRequest
 	TypeCoordinatorBootstrapResponse
 	TypeDispatchMaintainerRequest
 	TypeMaintainerHeartbeatRequest
+	TypeMaintainerBootstrapResponse
+	TypeMaintainerBootstrapRequest
 )
 
 func (t IOType) String() string {
@@ -60,8 +61,10 @@ func (t IOType) String() string {
 		return "EventFeed"
 	case TypeRegisterDispatcherRequest:
 		return "RegisterDispatcherRequest"
-	case TypeBootstrapMaintainerRequest:
+	case TypeMaintainerBootstrapRequest:
 		return "BootstrapMaintainerRequest"
+	case TypeMaintainerBootstrapResponse:
+		return "MaintainerBootstrapResponse"
 	default:
 	}
 	return "Unknown"
@@ -250,6 +253,8 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 		m = &EventFeed{}
 	case TypeRegisterDispatcherRequest:
 		m = &RegisterDispatcherRequest{}
+	case TypeMaintainerBootstrapResponse:
+		m = &MaintainerBootstrapResponse{}
 	default:
 		log.Panic("Unimplemented IOType", zap.Stringer("Type", ioType))
 	}
@@ -379,5 +384,24 @@ func (m *MaintainerBootstrapRequest) encode(buf []byte) []byte {
 
 func (m *MaintainerBootstrapRequest) decode(data []byte) error {
 	m.MaintainerBootstrapRequest = &heartbeatpb.MaintainerBootstrapRequest{}
+	return m.Unmarshal(data)
+}
+
+type MaintainerBootstrapResponse struct {
+	*heartbeatpb.MaintainerBootstrapResponse
+}
+
+func (m *MaintainerBootstrapResponse) encode(buf []byte) []byte {
+	data, err := m.Marshal()
+	if err != nil {
+		log.Panic("Failed to encode MaintainerBootstrapResponse", zap.Error(err))
+		return buf
+	}
+	buf = append(buf, data...)
+	return buf
+}
+
+func (m *MaintainerBootstrapResponse) decode(data []byte) error {
+	m.MaintainerBootstrapResponse = &heartbeatpb.MaintainerBootstrapResponse{}
 	return m.Unmarshal(data)
 }

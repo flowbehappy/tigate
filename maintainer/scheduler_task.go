@@ -11,11 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package maintainer
 
 import (
 	"fmt"
 
+	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/tiflow/cdc/model"
 )
 
@@ -53,7 +54,7 @@ func (s *ScheduleTask) String() string {
 
 // MoveInferior is a schedule task for moving a inferior.
 type MoveInferior struct {
-	ID          InferiorID
+	ID          scheduler.InferiorID
 	DestCapture model.CaptureID
 }
 
@@ -64,7 +65,7 @@ func (t MoveInferior) String() string {
 
 // AddInferior is a schedule task for adding an inferior.
 type AddInferior struct {
-	ID        InferiorID
+	ID        scheduler.InferiorID
 	CaptureID model.CaptureID
 }
 
@@ -75,7 +76,7 @@ func (t AddInferior) String() string {
 
 // RemoveInferior is a schedule task for removing an inferior.
 type RemoveInferior struct {
-	ID        InferiorID
+	ID        scheduler.InferiorID
 	CaptureID model.CaptureID
 }
 

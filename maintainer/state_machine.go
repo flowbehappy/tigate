@@ -11,13 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package maintainer
 
 import (
 	"encoding/json"
 	"fmt"
 
 	"github.com/flowbehappy/tigate/rpc"
+	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
@@ -50,88 +51,9 @@ func (r Role) String() string {
 	}
 }
 
-// SchedulerStatus is the state of Inferior in scheduler.
-//
-//	 AddInferior
-//	┌────────┐   ┌─────────┐
-//	│ Absent ├─> │ Prepare │
-//	└────────┘   └──┬──────┘
-//	     ┌──────────┘   ^
-//	     v              │ MoveInferior
-//	┌────────┐   ┌──────┴──────┐ RemoveInferior ┌──────────┐
-//	│ Commit ├──>│ Working     │───────────────>│ Removing │
-//	└────────┘   └─────────────┘                └──────────┘
-//
-// When a server shutdown unexpectedly, we may need to transit the state to
-// Absent or Working immediately.
-//
-//nolint:revive
-type SchedulerStatus int
-
-const (
-	SchedulerStatusUnknown SchedulerStatus = iota
-	SchedulerStatusAbsent
-	SchedulerStatusPrepare
-	SchedulerStatusCommit
-	SchedulerStatusWorking
-	SchedulerStatusRemoving
-)
-
-func (r SchedulerStatus) String() string {
-	switch r {
-	case SchedulerStatusAbsent:
-		return "Absent"
-	case SchedulerStatusPrepare:
-		return "Prepare"
-	case SchedulerStatusCommit:
-		return "Commit"
-	case SchedulerStatusWorking:
-		return "Working"
-	case SchedulerStatusRemoving:
-		return "Removing"
-	default:
-		return fmt.Sprintf("Unknown %d", r)
-	}
-}
-
-// ComponentStatus is the state in inferior wacher side
-// Absent -> Preparing -> Prepared -> Working -> Stopping -> Stopped
-// todo: define it in pb file
-type ComponentStatus int
-
-const (
-	ComponentStatusUnknown ComponentStatus = iota
-	ComponentStatusAbsent
-	ComponentStatusPreparing
-	ComponentStatusPrepared
-	ComponentStatusWorking
-	ComponentStatusStopping
-	ComponentStatusStopped
-)
-
-type Inferior interface {
-	GetID() InferiorID
-	UpdateStatus(InferiorStatus)
-	IsAlive() bool
-	NewInferiorStatus(ComponentStatus) InferiorStatus
-	NewAddInferiorMessage(model.CaptureID, bool) rpc.Message
-	NewRemoveInferiorMessage(model.CaptureID) rpc.Message
-}
-
-type InferiorID interface {
-	Equal(InferiorID) bool
-	String() string
-	Less(InferiorID) bool
-}
-
-type InferiorStatus interface {
-	GetInferiorID() InferiorID
-	GetInferiorState() ComponentStatus
-}
-
 type StateMachine struct {
-	ID    InferiorID
-	State SchedulerStatus
+	ID    scheduler.InferiorID
+	State scheduler.SchedulerStatus
 	// Primary is the server ID that is currently running the inferior.
 	Primary model.CaptureID
 	// Servers is a map of captures that has the inferior.
@@ -140,15 +62,15 @@ type StateMachine struct {
 	Servers map[model.CaptureID]Role
 
 	// Inferior handles the real logic
-	Inferior Inferior
+	Inferior scheduler.Inferior
 }
 
 // NewStateMachine build a state machine from all server reported status
 // it could be called after a scheduler is bootstrapped
 func NewStateMachine(
-	id InferiorID,
-	inferiorStatus map[model.CaptureID]InferiorStatus,
-	inferior Inferior,
+	id scheduler.InferiorID,
+	inferiorStatus map[model.CaptureID]scheduler.InferiorStatus,
+	inferior scheduler.Inferior,
 ) (*StateMachine, error) {
 	sm := &StateMachine{
 		ID:       id,
@@ -166,7 +88,7 @@ func NewStateMachine(
 		sm.Inferior.UpdateStatus(status)
 
 		switch status.GetInferiorState() {
-		case ComponentStatusWorking:
+		case scheduler.ComponentStatusWorking:
 			if len(sm.Primary) != 0 {
 				return nil, sm.multiplePrimaryError(
 					status, captureID, "multiple primary",
@@ -182,20 +104,20 @@ func NewStateMachine(
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-		case ComponentStatusPreparing:
+		case scheduler.ComponentStatusPreparing:
 			// Recognize secondary if it's inferior is in preparing state.
 			err := sm.setCapture(captureID, RoleSecondary)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-		case ComponentStatusPrepared:
+		case scheduler.ComponentStatusPrepared:
 			// Recognize secondary and Commit state if it's inferior is in prepared state.
 			committed = true
 			err := sm.setCapture(captureID, RoleSecondary)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-		case ComponentStatusStopping:
+		case scheduler.ComponentStatusStopping:
 			// The server is stopping the inferior. It is possible that the
 			// server is primary, and is still working.
 			// We need to wait its state becomes Stopped or Absent before
@@ -209,8 +131,8 @@ func NewStateMachine(
 				return nil, errors.Trace(err)
 			}
 			stoppingCount++
-		case ComponentStatusAbsent,
-			ComponentStatusStopped:
+		case scheduler.ComponentStatusAbsent,
+			scheduler.ComponentStatusStopped:
 			// Ignore stop state.
 		default:
 			log.Warn("unknown inferior state",
@@ -222,23 +144,23 @@ func NewStateMachine(
 
 	// Build state from primary, secondary and captures.
 	if len(sm.Primary) != 0 {
-		sm.State = SchedulerStatusWorking
+		sm.State = scheduler.SchedulerStatusWorking
 	}
 	// Move inferior or add inferior is in-progress.
 	if sm.hasRole(RoleSecondary) {
-		sm.State = SchedulerStatusPrepare
+		sm.State = scheduler.SchedulerStatusPrepare
 	}
 	// Move inferior or add inferior is committed.
 	if committed {
-		sm.State = SchedulerStatusCommit
+		sm.State = scheduler.SchedulerStatusCommit
 	}
 	// no server is bind, set to absent status, will trigger an add command
 	if len(sm.Servers) == 0 {
-		sm.State = SchedulerStatusAbsent
+		sm.State = scheduler.SchedulerStatusAbsent
 	}
 	// all captures are in stopping status
-	if sm.State == SchedulerStatusUnknown && len(sm.Servers) == stoppingCount {
-		sm.State = SchedulerStatusRemoving
+	if sm.State == scheduler.SchedulerStatusUnknown && len(sm.Servers) == stoppingCount {
+		sm.State = scheduler.SchedulerStatusRemoving
 	}
 	log.Info("initialize state machine",
 		zap.Any("statemachine", sm))
@@ -315,7 +237,7 @@ func (s *StateMachine) clearPrimary() {
 
 //nolint:unparam
 func (s *StateMachine) inconsistentError(
-	input InferiorStatus, captureID model.CaptureID,
+	input scheduler.InferiorStatus, captureID model.CaptureID,
 	msg string, fields ...zap.Field,
 ) error {
 	fields = append(fields, []zap.Field{
@@ -328,7 +250,7 @@ func (s *StateMachine) inconsistentError(
 }
 
 func (s *StateMachine) multiplePrimaryError(
-	input InferiorStatus, captureID model.CaptureID, msg string, fields ...zap.Field,
+	input scheduler.InferiorStatus, captureID model.CaptureID, msg string, fields ...zap.Field,
 ) error {
 	fields = append(fields, []zap.Field{
 		zap.String("captureID", captureID),
@@ -341,16 +263,16 @@ func (s *StateMachine) multiplePrimaryError(
 
 // checkInvariant ensures StateMachine invariant is hold.
 func (s *StateMachine) checkInvariant(
-	input InferiorStatus, captureID model.CaptureID,
+	input scheduler.InferiorStatus, captureID model.CaptureID,
 ) error {
 	if !s.ID.Equal(input.GetInferiorID()) {
 		return s.inconsistentError(input, captureID,
 			"ID must be the same")
 	}
 	if len(s.Servers) == 0 {
-		if s.State == SchedulerStatusPrepare ||
-			s.State == SchedulerStatusCommit ||
-			s.State == SchedulerStatusWorking {
+		if s.State == scheduler.SchedulerStatusPrepare ||
+			s.State == scheduler.SchedulerStatusCommit ||
+			s.State == scheduler.SchedulerStatusWorking {
 			// When the state is in prepare, commit or working, there must
 			// be at least one of primary and secondary.
 			return s.inconsistentError(input, captureID,
@@ -376,7 +298,7 @@ func (s *StateMachine) checkInvariant(
 
 // poll transit state based on input and the current state.
 func (s *StateMachine) poll(
-	input InferiorStatus, captureID model.CaptureID,
+	input scheduler.InferiorStatus, captureID model.CaptureID,
 ) ([]rpc.Message, error) {
 	if _, ok := s.Servers[captureID]; !ok {
 		return nil, nil
@@ -392,15 +314,15 @@ func (s *StateMachine) poll(
 		oldState := s.State
 		var msg rpc.Message
 		switch s.State {
-		case SchedulerStatusAbsent:
+		case scheduler.SchedulerStatusAbsent:
 			stateChanged, err = s.pollOnAbsent(input, captureID)
-		case SchedulerStatusPrepare:
+		case scheduler.SchedulerStatusPrepare:
 			msg, stateChanged, err = s.pollOnPrepare(input, captureID)
-		case SchedulerStatusCommit:
+		case scheduler.SchedulerStatusCommit:
 			msg, stateChanged, err = s.pollOnCommit(input, captureID)
-		case SchedulerStatusWorking:
+		case scheduler.SchedulerStatusWorking:
 			stateChanged, err = s.pollOnWorking(input, captureID)
-		case SchedulerStatusRemoving:
+		case scheduler.SchedulerStatusRemoving:
 			msg, stateChanged, err = s.pollOnRemoving(input, captureID)
 		default:
 			return nil, s.inconsistentError(
@@ -426,21 +348,21 @@ func (s *StateMachine) poll(
 
 //nolint:unparam
 func (s *StateMachine) pollOnAbsent(
-	input InferiorStatus, captureID model.CaptureID,
+	input scheduler.InferiorStatus, captureID model.CaptureID,
 ) (bool, error) {
 	switch input.GetInferiorState() {
-	case ComponentStatusAbsent:
-		s.State = SchedulerStatusPrepare
+	case scheduler.ComponentStatusAbsent:
+		s.State = scheduler.SchedulerStatusPrepare
 		err := s.setCapture(captureID, RoleSecondary)
 		return true, errors.Trace(err)
 
-	case ComponentStatusStopped:
+	case scheduler.ComponentStatusStopped:
 		// Ignore stopped state as a server may be shutdown unexpectedly.
 		return false, nil
-	case ComponentStatusPreparing,
-		ComponentStatusPrepared,
-		ComponentStatusWorking,
-		ComponentStatusStopping:
+	case scheduler.ComponentStatusPreparing,
+		scheduler.ComponentStatusPrepared,
+		scheduler.ComponentStatusWorking,
+		scheduler.ComponentStatusStopping:
 	}
 	log.Warn("ignore input, unexpected state",
 		zap.Any("status", input),
@@ -450,31 +372,31 @@ func (s *StateMachine) pollOnAbsent(
 }
 
 func (s *StateMachine) pollOnPrepare(
-	input InferiorStatus, captureID model.CaptureID,
+	input scheduler.InferiorStatus, captureID model.CaptureID,
 ) (rpc.Message, bool, error) {
 	switch input.GetInferiorState() {
-	case ComponentStatusAbsent:
+	case scheduler.ComponentStatusAbsent:
 		if s.isInRole(captureID, RoleSecondary) {
 			return s.Inferior.NewAddInferiorMessage(captureID, true), false, nil
 		}
-	case ComponentStatusPreparing:
+	case scheduler.ComponentStatusPreparing:
 		if s.isInRole(captureID, RoleSecondary) {
 			// Ignore secondary Preparing, it may take a long time.
 			return nil, false, nil
 		}
-	case ComponentStatusPrepared:
+	case scheduler.ComponentStatusPrepared:
 		if s.isInRole(captureID, RoleSecondary) {
 			// Secondary is prepared, transit to Commit state.
-			s.State = SchedulerStatusCommit
+			s.State = scheduler.SchedulerStatusCommit
 			return nil, true, nil
 		}
-	case ComponentStatusWorking:
+	case scheduler.ComponentStatusWorking:
 		// moving state, and the primary wacher still report status
 		if s.Primary == captureID {
 			s.Inferior.UpdateStatus(input)
 			return nil, false, nil
 		}
-	case ComponentStatusStopping, ComponentStatusStopped:
+	case scheduler.ComponentStatusStopping, scheduler.ComponentStatusStopped:
 		// moving state, primary report status
 		if s.Primary == captureID {
 			// Primary is stopped, but we may still has secondary.
@@ -499,11 +421,11 @@ func (s *StateMachine) pollOnPrepare(
 				// moving state
 				// Secondary is stopped, and we still has primary.
 				// Transit to working.
-				s.State = SchedulerStatusWorking
+				s.State = scheduler.SchedulerStatusWorking
 			} else {
 				// Secondary is stopped, and we do not have primary.
 				// Transit to Absent.
-				s.State = SchedulerStatusAbsent
+				s.State = scheduler.SchedulerStatusAbsent
 			}
 			return nil, true, nil
 		}
@@ -516,10 +438,10 @@ func (s *StateMachine) pollOnPrepare(
 }
 
 func (s *StateMachine) pollOnCommit(
-	input InferiorStatus, captureID model.CaptureID,
+	input scheduler.InferiorStatus, captureID model.CaptureID,
 ) (rpc.Message, bool, error) {
 	switch input.GetInferiorState() {
-	case ComponentStatusPrepared:
+	case scheduler.ComponentStatusPrepared:
 		if s.isInRole(captureID, RoleSecondary) {
 			if s.Primary != "" {
 				// Secondary server is prepared and waiting for stopping primary.
@@ -555,7 +477,7 @@ func (s *StateMachine) pollOnCommit(
 			return s.Inferior.NewAddInferiorMessage(captureID, false), false, nil
 		}
 
-	case ComponentStatusStopped, ComponentStatusAbsent:
+	case scheduler.ComponentStatusStopped, scheduler.ComponentStatusAbsent:
 		if s.Primary == captureID {
 			s.Inferior.UpdateStatus(input)
 			original := s.Primary
@@ -566,7 +488,7 @@ func (s *StateMachine) pollOnCommit(
 					zap.Any("status", input),
 					zap.String("captureID", captureID),
 					zap.Any("statemachine", s))
-				s.State = SchedulerStatusWorking
+				s.State = scheduler.SchedulerStatusWorking
 				return nil, true, nil
 			}
 			// Primary is stopped, promote secondary to primary.
@@ -595,7 +517,7 @@ func (s *StateMachine) pollOnCommit(
 			}
 			if s.Primary == "" {
 				// If there is no primary and secondary is stopped, transit to Absent.
-				s.State = SchedulerStatusAbsent
+				s.State = scheduler.SchedulerStatusAbsent
 			}
 			return nil, true, nil
 		} else if s.isInRole(captureID, RoleUndetermined) {
@@ -607,7 +529,7 @@ func (s *StateMachine) pollOnCommit(
 			return nil, false, errors.Trace(err)
 		}
 
-	case ComponentStatusWorking:
+	case scheduler.ComponentStatusWorking:
 		// primary is still working
 		if s.Primary == captureID {
 			s.Inferior.UpdateStatus(input)
@@ -627,13 +549,13 @@ func (s *StateMachine) pollOnCommit(
 			//    before the original primary receives Remove request.
 			//    Transit to Working, and wait for the next state of
 			//    the primary, Stopping or Stopped.
-			s.State = SchedulerStatusWorking
+			s.State = scheduler.SchedulerStatusWorking
 			return nil, true, nil
 		}
 		return nil, false, s.multiplePrimaryError(
 			input, captureID, "multiple primary")
 
-	case ComponentStatusStopping:
+	case scheduler.ComponentStatusStopping:
 		if s.Primary == captureID && s.hasRole(RoleSecondary) {
 			s.Inferior.UpdateStatus(input)
 			return nil, false, nil
@@ -645,7 +567,7 @@ func (s *StateMachine) pollOnCommit(
 			return nil, false, nil
 		}
 
-	case ComponentStatusPreparing:
+	case scheduler.ComponentStatusPreparing:
 	}
 	log.Warn("ignore input, unexpected state",
 		zap.Any("status", input),
@@ -656,10 +578,10 @@ func (s *StateMachine) pollOnCommit(
 
 //nolint:unparam
 func (s *StateMachine) pollOnWorking(
-	input InferiorStatus, captureID model.CaptureID,
+	input scheduler.InferiorStatus, captureID model.CaptureID,
 ) (bool, error) {
 	switch input.GetInferiorState() {
-	case ComponentStatusWorking:
+	case scheduler.ComponentStatusWorking:
 		if s.Primary == captureID {
 			s.Inferior.UpdateStatus(input)
 			return false, nil
@@ -667,12 +589,12 @@ func (s *StateMachine) pollOnWorking(
 		return false, s.multiplePrimaryError(
 			input, captureID, "multiple primary")
 
-	case ComponentStatusAbsent:
-	case ComponentStatusPreparing:
-	case ComponentStatusPrepared:
-	case ComponentStatusStopping:
+	case scheduler.ComponentStatusAbsent:
+	case scheduler.ComponentStatusPreparing:
+	case scheduler.ComponentStatusPrepared:
+	case scheduler.ComponentStatusStopping:
 		// wait stop
-	case ComponentStatusStopped:
+	case scheduler.ComponentStatusStopped:
 		if s.Primary == captureID {
 			s.Inferior.UpdateStatus(input)
 			// Primary is stopped, but we still has secondary.
@@ -682,7 +604,7 @@ func (s *StateMachine) pollOnWorking(
 				zap.String("captureID", captureID),
 				zap.Any("statemachine", s))
 			s.clearPrimary()
-			s.State = SchedulerStatusAbsent
+			s.State = scheduler.SchedulerStatusAbsent
 			return true, nil
 		}
 	}
@@ -695,14 +617,14 @@ func (s *StateMachine) pollOnWorking(
 
 //nolint:unparam
 func (s *StateMachine) pollOnRemoving(
-	input InferiorStatus, captureID model.CaptureID,
+	input scheduler.InferiorStatus, captureID model.CaptureID,
 ) (rpc.Message, bool, error) {
 	switch input.GetInferiorState() {
-	case ComponentStatusPrepared,
-		ComponentStatusPreparing,
-		ComponentStatusWorking:
+	case scheduler.ComponentStatusPrepared,
+		scheduler.ComponentStatusPreparing,
+		scheduler.ComponentStatusWorking:
 		return s.Inferior.NewRemoveInferiorMessage(captureID), false, nil
-	case ComponentStatusAbsent, ComponentStatusStopped:
+	case scheduler.ComponentStatusAbsent, scheduler.ComponentStatusStopped:
 		var err error
 		if s.Primary == captureID {
 			s.clearPrimary()
@@ -719,7 +641,7 @@ func (s *StateMachine) pollOnRemoving(
 				zap.Error(err))
 		}
 		return nil, false, nil
-	case ComponentStatusStopping:
+	case scheduler.ComponentStatusStopping:
 		//wait for stopping
 		return nil, false, nil
 	}
@@ -731,7 +653,7 @@ func (s *StateMachine) pollOnRemoving(
 }
 
 func (s *StateMachine) HandleInferiorStatus(
-	input InferiorStatus, from model.CaptureID,
+	input scheduler.InferiorStatus, from model.CaptureID,
 ) ([]rpc.Message, error) {
 	return s.poll(input, from)
 }
@@ -740,7 +662,7 @@ func (s *StateMachine) HandleAddInferior(
 	captureID model.CaptureID,
 ) ([]rpc.Message, error) {
 	// Ignore add inferior if it's not in Absent state.
-	if s.State != SchedulerStatusAbsent {
+	if s.State != scheduler.SchedulerStatusAbsent {
 		log.Warn("add inferior is ignored",
 			zap.String("captureID", captureID),
 			zap.Any("statemachine", s))
@@ -751,7 +673,7 @@ func (s *StateMachine) HandleAddInferior(
 		return nil, errors.Trace(err)
 	}
 	oldState := s.State
-	status := s.Inferior.NewInferiorStatus(ComponentStatusAbsent)
+	status := s.Inferior.NewInferiorStatus(scheduler.ComponentStatusAbsent)
 	msgs, err := s.poll(status, captureID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -778,18 +700,27 @@ func (s *StateMachine) HandleMoveInferior(
 	// Ignore move inferior if
 	// 1) it's not in Working state or
 	// 2) the dest server is the primary.
-	if s.State != SchedulerStatusWorking || s.Primary == dest {
+	if s.State != scheduler.SchedulerStatusWorking || s.Primary == dest {
 		log.Warn("move inferior is ignored",
 			zap.Any("statemachine", s))
 		return nil, nil
 	}
 	oldState := s.State
-	s.State = SchedulerStatusAbsent
+	s.State = scheduler.SchedulerStatusPrepare
+	err := s.setCapture(dest, RoleSecondary)
+	if err != nil {
+		log.Info("move inferior is failed",
+			zap.Stringer("new", s.State),
+			zap.Any("statemachine", s),
+			zap.Stringer("old", oldState),
+			zap.Error(err))
+		return nil, errors.Trace(err)
+	}
 	log.Info("state transition, move inferior",
 		zap.Stringer("new", s.State),
 		zap.Any("statemachine", s),
 		zap.Stringer("old", oldState))
-	status := s.Inferior.NewInferiorStatus(ComponentStatusAbsent)
+	status := s.Inferior.NewInferiorStatus(scheduler.ComponentStatusAbsent)
 	return s.poll(status, dest)
 }
 
@@ -801,18 +732,18 @@ func (s *StateMachine) HandleRemoveInferior() ([]rpc.Message, error) {
 		return nil, nil
 	}
 	// Ignore remove inferior if it's not in Working state.
-	if s.State != SchedulerStatusWorking {
+	if s.State != scheduler.SchedulerStatusWorking {
 		log.Warn("remove inferior is ignored",
 			zap.Any("statemachine", s))
 		return nil, nil
 	}
 	oldState := s.State
-	s.State = SchedulerStatusRemoving
+	s.State = scheduler.SchedulerStatusRemoving
 	log.Info("state transition, remove inferiror",
 		zap.Any("statemachine", s),
 		zap.Stringer("old", oldState))
 	// fake status to trigger a stop message
-	status := s.Inferior.NewInferiorStatus(ComponentStatusWorking)
+	status := s.Inferior.NewInferiorStatus(scheduler.ComponentStatusWorking)
 	return s.poll(status, s.Primary)
 }
 
@@ -828,7 +759,7 @@ func (s *StateMachine) HandleCaptureShutdown(
 		return nil, false, nil
 	}
 	// The server has shutdown, the inferior has stopped.
-	status := s.Inferior.NewInferiorStatus(ComponentStatusStopped)
+	status := s.Inferior.NewInferiorStatus(scheduler.ComponentStatusStopped)
 	oldState := s.State
 	msgs, err := s.poll(status, captureID)
 	log.Info("state transition, server shutdown",
@@ -841,5 +772,5 @@ func (s *StateMachine) HandleCaptureShutdown(
 func (s *StateMachine) HasRemoved() bool {
 	// It has been removed successfully if it's state is Removing,
 	// and there is no server has it.
-	return s.State == SchedulerStatusRemoving && len(s.Servers) == 0
+	return s.State == scheduler.SchedulerStatusRemoving && len(s.Servers) == 0
 }
