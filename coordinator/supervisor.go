@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
+	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
@@ -34,25 +36,6 @@ const (
 	CaptureStateInitialized CaptureState = 2
 )
 
-type Supervisor struct {
-	stateMachines map[model.ChangeFeedID]*StateMachine
-	runningTasks  map[model.ChangeFeedID]*ScheduleTask
-
-	maxTaskConcurrency int
-	NewInferior        func(id model.ChangeFeedID) *changefeed
-
-	// self ID
-	ID          model.CaptureID
-	initialized bool
-
-	captures map[model.CaptureID]*CaptureStatus
-
-	// track all status reported by remote inferiors when bootstrap
-	initStatus map[model.CaptureID][]*heartbeatpb.MaintainerStatus
-
-	bootstrapMessageFunc func(model.CaptureID) rpc.Message
-}
-
 type CaptureStatus struct {
 	state             CaptureState
 	capture           *model.CaptureInfo
@@ -66,66 +49,40 @@ func NewCaptureStatus(capture *model.CaptureInfo) *CaptureStatus {
 	}
 }
 
-func NewSupervisor(
-	ID model.CaptureID,
-	newInferiorFunc func(id model.ChangeFeedID) *changefeed,
-	bootstrapMessageFunc func(model.CaptureID) rpc.Message) *Supervisor {
-	return &Supervisor{
-		ID:                   ID,
-		stateMachines:        make(map[model.ChangeFeedID]*StateMachine),
-		runningTasks:         map[model.ChangeFeedID]*ScheduleTask{},
-		NewInferior:          newInferiorFunc,
-		initialized:          false,
-		captures:             make(map[model.CaptureID]*CaptureStatus),
-		bootstrapMessageFunc: bootstrapMessageFunc,
-		initStatus:           make(map[model.CaptureID][]*heartbeatpb.MaintainerStatus),
-		maxTaskConcurrency:   10000,
-	}
-}
-
-func (s *Supervisor) GetAllCaptures() map[model.CaptureID]*CaptureStatus {
-	return s.captures
-}
-
-// GetAllStateMachines return all state machines, caller should not modify it
-func (s *Supervisor) GetAllStateMachines() map[model.ChangeFeedID]*StateMachine {
-	return s.stateMachines
-}
-
 // GetChangefeedStateMachine returns the state machine for that changefeed id
-func (s *Supervisor) GetChangefeedStateMachine(id model.ChangeFeedID) (*StateMachine, bool) {
-	m, ok := s.stateMachines[id]
+func (c *coordinator) GetChangefeedStateMachine(id model.ChangeFeedID) (*StateMachine, bool) {
+	m, ok := c.stateMachines[id]
 	return m, ok
 }
 
 // HandleAliveCaptureUpdate update captures liveness.
-func (s *Supervisor) HandleAliveCaptureUpdate(
+func (c *coordinator) HandleAliveCaptureUpdate(
 	aliveCaptures map[model.CaptureID]*model.CaptureInfo,
 ) ([]rpc.Message, []model.CaptureID) {
 	var removed []model.CaptureID
 	msgs := make([]rpc.Message, 0)
 	for id, info := range aliveCaptures {
-		if _, ok := s.captures[id]; !ok {
+		if _, ok := c.captures[id]; !ok {
 			// A new server.
-			s.captures[id] = NewCaptureStatus(info)
+			c.captures[id] = NewCaptureStatus(info)
 			log.Info("find a new server",
-				zap.String("ID", s.ID),
+				zap.String("ID", c.ID),
 				zap.String("captureAddr", info.AdvertiseAddr),
 				zap.String("server", id))
 		}
 	}
 
 	// Find removed captures.
-	for id, capture := range s.captures {
+	for id, capture := range c.captures {
 		if _, ok := aliveCaptures[id]; !ok {
 			log.Info("removed a server",
-				zap.String("ID", s.ID),
+				zap.String("ID", c.ID),
 				zap.String("captureAddr", capture.capture.AdvertiseAddr),
 				zap.String("server", id))
-			delete(s.captures, id)
+			delete(c.captures, id)
 
 			// Only update changes after initialization.
-			if !s.initialized {
+			if !c.initialized {
 				continue
 			}
 			removed = append(removed, id)
@@ -133,19 +90,19 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 		// not removed, if not initialized, try to send bootstrap message again
 		if capture.state == CaptureStateUninitialized &&
 			time.Since(capture.lastBootstrapTime) > time.Second {
-			msgs = append(msgs, s.bootstrapMessageFunc(id))
+			msgs = append(msgs, c.newBootstrapMessage(id))
 		}
 	}
 
 	// Check if this is the first time all captures are initialized.
-	if !s.initialized && s.checkAllCaptureInitialized() {
+	if !c.initialized && c.checkAllCaptureInitialized() {
 		log.Info("all server initialized",
-			zap.String("ID", s.ID),
-			zap.Int("captureCount", len(s.captures)))
-		s.initialized = true
+			zap.String("ID", c.ID),
+			zap.Int("captureCount", len(c.captures)))
+		c.initialized = true
 	}
 	if len(removed) > 0 {
-		removedMsgs, err := s.HandleCaptureChanges(removed)
+		removedMsgs, err := c.HandleCaptureChanges(removed)
 		if err != nil {
 			log.Error("handle changes failed", zap.Error(err))
 		}
@@ -154,39 +111,49 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 	return msgs, removed
 }
 
+func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message {
+	return messaging.NewTargetMessage(
+		messaging.ServerId(uuid.MustParse(captureID)),
+		maintainerMangerTopic,
+		messaging.TypeCoordinatorBootstrapRequest,
+		&messaging.CoordinatorBootstrapRequest{
+			CoordinatorBootstrapRequest: &heartbeatpb.CoordinatorBootstrapRequest{Version: c.version},
+		})
+}
+
 // UpdateCaptureStatus update the server status after receive a bootstrap message from remote
 // supervisor will cache the status if the supervisor is not initialized
-func (s *Supervisor) UpdateCaptureStatus(from model.CaptureID, statuses []*heartbeatpb.MaintainerStatus) {
-	c, ok := s.captures[from]
+func (c *coordinator) UpdateCaptureStatus(from model.CaptureID, statuses []*heartbeatpb.MaintainerStatus) {
+	capture, ok := c.captures[from]
 	if !ok {
 		log.Warn("server is not found",
-			zap.String("ID", s.ID),
+			zap.String("ID", c.ID),
 			zap.String("server", from))
 	}
-	if c.state == CaptureStateUninitialized {
-		c.state = CaptureStateInitialized
+	if capture.state == CaptureStateUninitialized {
+		capture.state = CaptureStateInitialized
 		log.Info("server initialized",
-			zap.String("ID", s.ID),
-			zap.String("server", c.capture.ID),
-			zap.String("captureAddr", c.capture.AdvertiseAddr))
+			zap.String("ID", c.ID),
+			zap.String("server", from),
+			zap.String("captureAddr", capture.capture.AdvertiseAddr))
 	}
 	// scheduler is not initialized, is still collecting the remote server stauts
 	// cache the last one
-	if !s.initialized {
-		s.initStatus[from] = statuses
+	if !c.initialized {
+		c.initStatus[from] = statuses
 	}
 }
 
 // HandleStatus handles inferior status reported by Inferior
-func (s *Supervisor) HandleStatus(
+func (c *coordinator) HandleStatus(
 	from model.CaptureID, statuses []*heartbeatpb.MaintainerStatus,
 ) ([]rpc.Message, error) {
 	sentMsgs := make([]rpc.Message, 0)
 	for _, status := range statuses {
-		stateMachine, ok := s.stateMachines[model.DefaultChangeFeedID(status.ChangefeedID)]
+		stateMachine, ok := c.stateMachines[model.DefaultChangeFeedID(status.ChangefeedID)]
 		if !ok {
 			log.Info("ignore status no inferior found",
-				zap.String("ID", s.ID),
+				zap.String("ID", c.ID),
 				zap.Any("from", from),
 				zap.Any("message", status))
 			continue
@@ -197,10 +164,10 @@ func (s *Supervisor) HandleStatus(
 		}
 		if stateMachine.HasRemoved() {
 			log.Info("inferior has removed",
-				zap.String("ID", s.ID),
+				zap.String("ID", c.ID),
 				zap.Any("from", from),
 				zap.String("cfID", status.ChangefeedID))
-			delete(s.stateMachines, model.DefaultChangeFeedID(status.ChangefeedID))
+			delete(c.stateMachines, model.DefaultChangeFeedID(status.ChangefeedID))
 		}
 		sentMsgs = append(sentMsgs, msgs...)
 	}
@@ -208,17 +175,17 @@ func (s *Supervisor) HandleStatus(
 }
 
 // HandleCaptureChanges handles server changes.
-func (s *Supervisor) HandleCaptureChanges(
+func (c *coordinator) HandleCaptureChanges(
 	removed []model.CaptureID,
 ) ([]rpc.Message, error) {
-	if s.initStatus != nil {
-		if len(s.stateMachines) != 0 {
+	if c.initStatus != nil {
+		if len(c.stateMachines) != 0 {
 			log.Panic("init again",
-				zap.Any("init", s.initStatus),
-				zap.Any("statemachines", s.stateMachines))
+				zap.Any("init", c.initStatus),
+				zap.Any("statemachines", c.stateMachines))
 		}
 		statusMap := make(map[model.ChangeFeedID]map[model.CaptureID]*heartbeatpb.MaintainerStatus)
-		for captureID, statuses := range s.initStatus {
+		for captureID, statuses := range c.initStatus {
 			for _, status := range statuses {
 				cfID := model.DefaultChangeFeedID(status.ChangefeedID)
 				if _, ok := statusMap[cfID]; !ok {
@@ -228,17 +195,17 @@ func (s *Supervisor) HandleCaptureChanges(
 			}
 		}
 		for id, status := range statusMap {
-			statemachine, err := NewStateMachine(id, status, s.NewInferior(id))
+			statemachine, err := NewStateMachine(id, status, newChangefeed(id))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			s.stateMachines[id] = statemachine
+			c.stateMachines[id] = statemachine
 		}
-		s.initStatus = nil
+		c.initStatus = nil
 	}
 	sentMsgs := make([]rpc.Message, 0)
 	if removed != nil {
-		for id, stateMachine := range s.stateMachines {
+		for id, stateMachine := range c.stateMachines {
 			for _, captureID := range removed {
 				msgs, affected, err := stateMachine.HandleCaptureShutdown(captureID)
 				if err != nil {
@@ -247,7 +214,7 @@ func (s *Supervisor) HandleCaptureChanges(
 				sentMsgs = append(sentMsgs, msgs...)
 				if affected {
 					// Cleanup its running task.
-					delete(s.runningTasks, id)
+					delete(c.runningTasks, id)
 				}
 			}
 		}
@@ -256,13 +223,13 @@ func (s *Supervisor) HandleCaptureChanges(
 }
 
 // HandleScheduleTasks handles schedule tasks.
-func (s *Supervisor) HandleScheduleTasks(
+func (c *coordinator) HandleScheduleTasks(
 	tasks []*ScheduleTask,
 ) ([]rpc.Message, error) {
 	// Check if a running task is finished.
 	var toBeDeleted []model.ChangeFeedID
-	for id, _ := range s.runningTasks {
-		if stateMachine, ok := s.stateMachines[id]; ok {
+	for id, _ := range c.runningTasks {
+		if stateMachine, ok := c.stateMachines[id]; ok {
 			// If inferior is back to Replicating or Removed,
 			// the running task is finished.
 			if stateMachine.State == SchedulerStatusWorking || stateMachine.HasRemoved() {
@@ -274,15 +241,15 @@ func (s *Supervisor) HandleScheduleTasks(
 		}
 	}
 	for _, id := range toBeDeleted {
-		delete(s.runningTasks, id)
+		delete(c.runningTasks, id)
 	}
 
 	sentMsgs := make([]rpc.Message, 0)
 	for _, task := range tasks {
 		// Check if accepting one more task exceeds maxTaskConcurrency.
-		if len(s.runningTasks) == s.maxTaskConcurrency {
+		if len(c.runningTasks) == c.maxTaskConcurrency {
 			log.Debug("too many running task",
-				zap.String("id", s.ID))
+				zap.String("id", c.ID))
 			break
 		}
 
@@ -297,16 +264,16 @@ func (s *Supervisor) HandleScheduleTasks(
 
 		// Skip task if the inferior is already running a task,
 		// or the inferior has removed.
-		if _, ok := s.runningTasks[cfID]; ok {
+		if _, ok := c.runningTasks[cfID]; ok {
 			log.Info("ignore task, already exists",
-				zap.String("id", s.ID),
+				zap.String("id", c.ID),
 				zap.Any("task", task))
 			continue
 		}
 		// it's remove or move inferior task, but we can not find the state machine
-		if _, ok := s.stateMachines[cfID]; !ok && task.AddInferior == nil {
+		if _, ok := c.stateMachines[cfID]; !ok && task.AddInferior == nil {
 			log.Info("ignore task, inferior not found",
-				zap.String("id", s.ID),
+				zap.String("id", c.ID),
 				zap.Any("task", task))
 			continue
 		}
@@ -314,66 +281,66 @@ func (s *Supervisor) HandleScheduleTasks(
 		var msgs []rpc.Message
 		var err error
 		if task.AddInferior != nil {
-			msgs, err = s.handleAddInferiorTask(task.AddInferior)
+			msgs, err = c.handleAddInferiorTask(task.AddInferior)
 		} else if task.RemoveInferior != nil {
-			msgs, err = s.handleRemoveInferiorTask(task.RemoveInferior)
+			msgs, err = c.handleRemoveInferiorTask(task.RemoveInferior)
 		} else if task.MoveInferior != nil {
-			msgs, err = s.handleMoveInferiorTask(task.MoveInferior)
+			msgs, err = c.handleMoveInferiorTask(task.MoveInferior)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		sentMsgs = append(sentMsgs, msgs...)
-		s.runningTasks[cfID] = task
+		c.runningTasks[cfID] = task
 	}
 	return sentMsgs, nil
 }
 
-func (s *Supervisor) handleAddInferiorTask(
+func (c *coordinator) handleAddInferiorTask(
 	task *AddInferior,
 ) ([]rpc.Message, error) {
 	var err error
 	cfID := task.ID
-	stateMachine, ok := s.stateMachines[cfID]
+	stateMachine, ok := c.stateMachines[cfID]
 	if !ok {
-		stateMachine, err = NewStateMachine(task.ID, nil, s.NewInferior(task.ID))
+		stateMachine, err = NewStateMachine(task.ID, nil, newChangefeed(task.ID))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		s.stateMachines[cfID] = stateMachine
+		c.stateMachines[cfID] = stateMachine
 	}
 	return stateMachine.HandleAddInferior(task.CaptureID)
 }
 
-func (s *Supervisor) handleRemoveInferiorTask(
+func (c *coordinator) handleRemoveInferiorTask(
 	task *RemoveInferior,
 ) ([]rpc.Message, error) {
 	cfID := task.ID
-	stateMachine, ok := s.stateMachines[cfID]
+	stateMachine, ok := c.stateMachines[cfID]
 	if !ok {
 		log.Warn("statemachine not found",
-			zap.String("ID", s.ID),
+			zap.String("ID", c.ID),
 			zap.Stringer("inferior", task.ID))
 		return nil, nil
 	}
 	if stateMachine.HasRemoved() {
 		log.Info("inferior has removed",
-			zap.String("ID", s.ID),
+			zap.String("ID", c.ID),
 			zap.Stringer("inferior", task.ID))
-		delete(s.stateMachines, cfID)
+		delete(c.stateMachines, cfID)
 		return nil, nil
 	}
 	return stateMachine.HandleRemoveInferior()
 }
 
-func (s *Supervisor) handleMoveInferiorTask(
+func (c *coordinator) handleMoveInferiorTask(
 	task *MoveInferior,
 ) ([]rpc.Message, error) {
 	cfID := task.ID
-	stateMachine, ok := s.stateMachines[cfID]
+	stateMachine, ok := c.stateMachines[cfID]
 	if !ok {
 		log.Warn("statemachine not found",
-			zap.String("ID", s.ID),
+			zap.String("ID", c.ID),
 			zap.Stringer("inferior", task.ID))
 		return nil, nil
 	}
@@ -382,12 +349,12 @@ func (s *Supervisor) handleMoveInferiorTask(
 
 // CheckAllCaptureInitialized check if all server is initialized.
 // returns true when all server reports the bootstrap response
-func (s *Supervisor) CheckAllCaptureInitialized() bool {
-	return s.initialized && s.checkAllCaptureInitialized()
+func (c *coordinator) CheckAllCaptureInitialized() bool {
+	return c.initialized && c.checkAllCaptureInitialized()
 }
 
-func (s *Supervisor) checkAllCaptureInitialized() bool {
-	for _, captureStatus := range s.captures {
+func (c *coordinator) checkAllCaptureInitialized() bool {
+	for _, captureStatus := range c.captures {
 		// CaptureStateStopping is also considered initialized, because when
 		// a server shutdown, it becomes stopping, we need to move its tables
 		// to other captures.
@@ -395,5 +362,5 @@ func (s *Supervisor) checkAllCaptureInitialized() bool {
 			return false
 		}
 	}
-	return len(s.captures) != 0
+	return len(c.captures) != 0
 }

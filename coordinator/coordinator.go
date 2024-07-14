@@ -22,9 +22,9 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
 	"go.uber.org/zap"
@@ -44,14 +44,11 @@ type Coordinator interface {
 }
 
 type coordinator struct {
-	supervisor    *Supervisor
 	scheduler     Scheduler
 	messageCenter messaging.MessageCenter
 	nodeInfo      *model.CaptureInfo
 
 	changefeeds map[model.ChangeFeedID]changefeed
-
-	captures map[model.CaptureID]struct{}
 
 	version int64
 
@@ -61,6 +58,20 @@ type coordinator struct {
 	lastCheckTime time.Time
 
 	dispatchMsgs map[model.CaptureID]*messaging.TargetMessage
+
+	stateMachines map[model.ChangeFeedID]*StateMachine
+	runningTasks  map[model.ChangeFeedID]*ScheduleTask
+
+	maxTaskConcurrency int
+
+	// self ID
+	ID          model.CaptureID
+	initialized bool
+
+	captures map[model.CaptureID]*CaptureStatus
+
+	// track all status reported by remote inferiors when bootstrap
+	initStatus map[model.CaptureID][]*heartbeatpb.MaintainerStatus
 }
 
 func NewCoordinator(capture *model.CaptureInfo,
@@ -74,12 +85,14 @@ func NewCoordinator(capture *model.CaptureInfo,
 		version:       version,
 		nodeInfo:      capture,
 		dispatchMsgs:  make(map[model.CaptureID]*messaging.TargetMessage),
+
+		stateMachines:      make(map[model.ChangeFeedID]*StateMachine),
+		runningTasks:       map[model.ChangeFeedID]*ScheduleTask{},
+		initialized:        false,
+		captures:           make(map[model.CaptureID]*CaptureStatus),
+		initStatus:         make(map[model.CaptureID][]*heartbeatpb.MaintainerStatus),
+		maxTaskConcurrency: 10000,
 	}
-	c.supervisor = NewSupervisor(
-		capture.ID,
-		c.NewChangefeed,
-		c.newBootstrapMessage,
-	)
 	// receive messages
 	messageCenter.RegisterHandler("coordinator", func(msg *messaging.TargetMessage) error {
 		c.msgLock.Lock()
@@ -93,11 +106,11 @@ func NewCoordinator(capture *model.CaptureInfo,
 var allChangefeeds = make(map[model.ChangeFeedID]*model.ChangeFeedInfo)
 
 func init() {
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 10; i++ {
 		id := fmt.Sprintf("%d", i)
 		allChangefeeds[model.DefaultChangeFeedID(id)] = &model.ChangeFeedInfo{
-			ID: id,
-			//Config:  config.GetDefaultReplicaConfig(),
+			ID:      id,
+			Config:  config.GetDefaultReplicaConfig(),
 			SinkURI: "blackhole://",
 		}
 	}
@@ -106,14 +119,13 @@ func init() {
 func (c *coordinator) Tick(ctx context.Context,
 	rawState orchestrator.ReactorState) (orchestrator.ReactorState, error) {
 	state := rawState.(*orchestrator.GlobalReactorState)
-
 	if time.Since(c.lastCheckTime) > time.Second*20 {
 		workingTask := 0
 		prepareTask := 0
 		absentTask := 0
 		commitTask := 0
 		removingTask := 0
-		for _, value := range c.supervisor.GetAllStateMachines() {
+		for _, value := range c.stateMachines {
 			switch value.State {
 			case SchedulerStatusAbsent:
 				absentTask++
@@ -146,47 +158,42 @@ func (c *coordinator) Tick(ctx context.Context,
 		return nil, errors.Trace(err)
 	}
 
-	msgs, removed := c.supervisor.HandleAliveCaptureUpdate(state.Captures)
+	msgs, removed := c.HandleAliveCaptureUpdate(state.Captures)
 	if len(msgs) > 0 {
 		c.sendMessages(msgs)
 	}
 	if len(removed) > 0 {
-		msgs, err := c.supervisor.HandleCaptureChanges(removed)
+		msgs, err := c.HandleCaptureChanges(removed)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		c.sendMessages(msgs)
 	}
 
-	changed := false
 	allChangefeedID := make([]model.ChangeFeedID, 0)
 	// check all changefeeds.
 	for _, reactor := range allChangefeeds {
 		changefeedID := model.DefaultChangeFeedID(reactor.ID)
-		_, exist := c.supervisor.GetChangefeedStateMachine(changefeedID)
+		_, exist := c.GetChangefeedStateMachine(changefeedID)
 		if !exist {
 			// check if changefeed should be running
 			if !shouldRunChangefeed(reactor.State) {
 				continue
 			}
-			changed = true
 			allChangefeedID = append(allChangefeedID, changefeedID)
 		} else {
 			if !shouldRunChangefeed(reactor.State) {
-				changed = true
 			} else {
 				allChangefeedID = append(allChangefeedID, changefeedID)
 			}
 		}
 	}
 
-	if changed {
-		msgs, err := c.scheduleMaintainer(allChangefeedID)
-		if err != nil {
-			return state, err
-		}
-		c.sendMessages(msgs)
+	msgs, err = c.scheduleMaintainer(allChangefeedID)
+	if err != nil {
+		return state, err
 	}
+	c.sendMessages(msgs)
 	return state, nil
 }
 
@@ -195,9 +202,9 @@ func (c *coordinator) HandleMessage(msgs []*messaging.TargetMessage) ([]rpc.Mess
 	for _, msg := range msgs {
 		req := msg.Message.(*heartbeatpb.MaintainerHeartbeat)
 		serverID := msg.From
-		c.supervisor.UpdateCaptureStatus(serverID.String(), req.Statuses)
-		if c.supervisor.CheckAllCaptureInitialized() {
-			msgs, err := c.supervisor.HandleStatus(serverID.String(), req.Statuses)
+		c.UpdateCaptureStatus(serverID.String(), req.Statuses)
+		if c.CheckAllCaptureInitialized() {
+			msgs, err := c.HandleStatus(serverID.String(), req.Statuses)
 			if err != nil {
 				log.Error("handle status failed", zap.Error(err))
 				return nil, errors.Trace(err)
@@ -225,16 +232,6 @@ func (c *coordinator) GetNodeInfo() *model.CaptureInfo {
 func (c *coordinator) AsyncStop() {
 }
 
-func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message {
-	return messaging.NewTargetMessage(
-		messaging.ServerId(uuid.MustParse(captureID)),
-		maintainerMangerTopic,
-		messaging.TypeCoordinatorBootstrapRequest,
-		&messaging.CoordinatorBootstrapRequest{
-			CoordinatorBootstrapRequest: &heartbeatpb.CoordinatorBootstrapRequest{Version: c.version},
-		})
-}
-
 func (c *coordinator) sendMessages(msgs []rpc.Message) {
 	for _, msg := range msgs {
 		err := c.messageCenter.SendCommand(msg.(*messaging.TargetMessage))
@@ -246,13 +243,13 @@ func (c *coordinator) sendMessages(msgs []rpc.Message) {
 }
 
 func (c *coordinator) scheduleMaintainer(allInferiors []model.ChangeFeedID) ([]rpc.Message, error) {
-	if !c.supervisor.CheckAllCaptureInitialized() {
+	if !c.CheckAllCaptureInitialized() {
 		return nil, nil
 	}
 	tasks := c.scheduler.Schedule(
 		allInferiors,
-		c.supervisor.GetAllCaptures(),
-		c.supervisor.GetAllStateMachines(),
+		c.captures,
+		c.stateMachines,
 	)
-	return c.supervisor.HandleScheduleTasks(tasks)
+	return c.HandleScheduleTasks(tasks)
 }

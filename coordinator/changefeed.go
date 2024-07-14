@@ -32,14 +32,11 @@ type changefeed struct {
 	Status *model.ChangeFeedStatus
 
 	lastHeartBeat time.Time
-
-	c *coordinator
 }
 
-func (c *coordinator) NewChangefeed(ID model.ChangeFeedID) *changefeed {
+func newChangefeed(ID model.ChangeFeedID) *changefeed {
 	return &changefeed{
 		ID: ID,
-		c:  c,
 		//Info:   allChangefeeds[cfID],
 		//Status: &model.ChangeFeedStatus{},
 	}
