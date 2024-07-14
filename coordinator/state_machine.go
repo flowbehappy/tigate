@@ -768,7 +768,16 @@ func (s *StateMachine) HandleMoveInferior(
 		return nil, nil
 	}
 	oldState := s.State
-	s.State = SchedulerStatusAbsent
+	s.State = SchedulerStatusPrepare
+	err := s.setCapture(dest, RoleSecondary)
+	if err != nil {
+		log.Info("move changefeed is failed",
+			zap.Stringer("new", s.State),
+			zap.Any("statemachine", s),
+			zap.Stringer("old", oldState),
+			zap.Error(err))
+		return nil, errors.Trace(err)
+	}
 	log.Info("state transition, move inferior",
 		zap.Stringer("new", s.State),
 		zap.Any("statemachine", s),

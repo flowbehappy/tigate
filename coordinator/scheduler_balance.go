@@ -56,7 +56,7 @@ func (b *balanceScheduler) Name() string {
 
 func (b *balanceScheduler) Schedule(
 	allInferiors []model.ChangeFeedID,
-	aliveCaptures map[model.CaptureID]*CaptureStatus,
+	aliveCaptures map[model.CaptureID]*ServerStatus,
 	stateMachines map[model.ChangeFeedID]*StateMachine,
 ) []*ScheduleTask {
 	if !b.forceBalance {
@@ -76,7 +76,7 @@ func (b *balanceScheduler) Schedule(
 
 func buildBalanceMoveTables(
 	random *rand.Rand,
-	aliveCaptures map[model.CaptureID]*CaptureStatus,
+	aliveCaptures map[model.CaptureID]*ServerStatus,
 	stateMachines map[model.ChangeFeedID]*StateMachine,
 	maxTaskConcurrency int,
 ) []*ScheduleTask {
@@ -93,7 +93,7 @@ func buildBalanceMoveTables(
 
 func newBalanceMoveTables(
 	random *rand.Rand,
-	aliveCaptures map[model.CaptureID]*CaptureStatus,
+	aliveCaptures map[model.CaptureID]*ServerStatus,
 	stateMachines map[model.ChangeFeedID]*StateMachine,
 	maxTaskLimit int,
 ) []*MoveInferior {

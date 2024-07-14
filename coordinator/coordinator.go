@@ -68,7 +68,7 @@ type coordinator struct {
 	ID          model.CaptureID
 	initialized bool
 
-	captures map[model.CaptureID]*CaptureStatus
+	captures map[model.CaptureID]*ServerStatus
 
 	// track all status reported by remote when bootstrap
 	initStatus map[model.CaptureID][]*heartbeatpb.MaintainerStatus
@@ -88,7 +88,7 @@ func NewCoordinator(capture *model.CaptureInfo,
 		stateMachines:      make(map[model.ChangeFeedID]*StateMachine),
 		runningTasks:       map[model.ChangeFeedID]*ScheduleTask{},
 		initialized:        false,
-		captures:           make(map[model.CaptureID]*CaptureStatus),
+		captures:           make(map[model.CaptureID]*ServerStatus),
 		initStatus:         make(map[model.CaptureID][]*heartbeatpb.MaintainerStatus),
 		maxTaskConcurrency: 10000,
 	}
@@ -185,8 +185,7 @@ func (c *coordinator) Tick(ctx context.Context,
 			}
 			allChangefeedID = append(allChangefeedID, changefeedID)
 		} else {
-			if !shouldRunChangefeed(reactor.State) {
-			} else {
+			if shouldRunChangefeed(reactor.State) {
 				allChangefeedID = append(allChangefeedID, changefeedID)
 			}
 		}
@@ -204,11 +203,11 @@ func (c *coordinator) HandleMessage(msgs []*messaging.TargetMessage) error {
 	for _, msg := range msgs {
 		switch msg.Type {
 		case messaging.TypeCoordinatorBootstrapResponse:
-			req := msg.Message.(*heartbeatpb.CoordinatorBootstrapResponse)
+			req := msg.Message.(*messaging.CoordinatorBootstrapResponse)
 			c.cacheBootstrapResponse(msg.From.String(), req.Statuses)
 		case messaging.TypeMaintainerHeartbeatRequest:
 			if c.CheckAllCaptureInitialized() {
-				req := msg.Message.(*heartbeatpb.MaintainerHeartbeat)
+				req := msg.Message.(*messaging.MaintainerHeartbeat)
 				serverID := msg.From
 				msgs, err := c.HandleStatus(serverID.String(), req.Statuses)
 				if err != nil {

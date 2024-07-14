@@ -92,8 +92,10 @@ func (m *Manager) Run(ctx context.Context) error {
 					m.coordinatorID = msg.From
 					m.coordinatorVersion = req.Version
 
-					response := &heartbeatpb.CoordinatorBootstrapResponse{
-						Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
+					response := &messaging.CoordinatorBootstrapResponse{
+						CoordinatorBootstrapResponse: &heartbeatpb.CoordinatorBootstrapResponse{
+							Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
+						},
 					}
 					for _, m := range m.maintainers {
 						response.Statuses = append(response.Statuses, m.GetMaintainerStatus())
@@ -127,8 +129,10 @@ func (m *Manager) Run(ctx context.Context) error {
 				}
 			}
 			if m.coordinatorVersion > 0 {
-				response := &heartbeatpb.MaintainerHeartbeat{
-					Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
+				response := &messaging.MaintainerHeartbeat{
+					MaintainerHeartbeat: &heartbeatpb.MaintainerHeartbeat{
+						Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
+					},
 				}
 				for _, m := range m.maintainers {
 					if m.statusChanged.Load() ||
@@ -154,7 +158,7 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 }
 
-func (m *Manager) sendMessages(msg *heartbeatpb.MaintainerHeartbeat) {
+func (m *Manager) sendMessages(msg *messaging.MaintainerHeartbeat) {
 	target := messaging.NewTargetMessage(
 		m.coordinatorID,
 		"coordinator",
