@@ -136,10 +136,7 @@ func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message
 	return messaging.NewTargetMessage(
 		messaging.ServerId(captureID),
 		maintainerMangerTopic,
-		messaging.TypeCoordinatorBootstrapRequest,
-		&messaging.CoordinatorBootstrapRequest{
-			CoordinatorBootstrapRequest: &heartbeatpb.CoordinatorBootstrapRequest{Version: c.version},
-		})
+		&heartbeatpb.CoordinatorBootstrapRequest{Version: c.version})
 }
 
 // cacheBootstrapResponse caches the server status after receive a bootstrap message from remote

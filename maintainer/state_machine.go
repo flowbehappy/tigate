@@ -16,6 +16,7 @@ package maintainer
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
@@ -63,6 +64,8 @@ type StateMachine struct {
 
 	// Inferior handles the real logic
 	Inferior scheduler.Inferior
+
+	lastMsgTime time.Time
 }
 
 // NewStateMachine build a state machine from all server reported status
