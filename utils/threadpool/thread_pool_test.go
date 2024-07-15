@@ -32,7 +32,7 @@ func TestBasicThreadPool(t *testing.T) {
 			taskScheduler.Submit(newBasicCPUTask(), CPUTask, time.Now())
 		}
 		time.Sleep(5 * time.Second)
-		taskScheduler.Finish()
+		taskScheduler.Stop()
 		assert.Equal(t, testCount, int64(10000*100))
 	}
 
@@ -44,7 +44,7 @@ func TestBasicThreadPool(t *testing.T) {
 			taskScheduler.Submit(newBasicIOTask(), IOTask, time.Now())
 		}
 		time.Sleep(5 * time.Second)
-		taskScheduler.Finish()
+		taskScheduler.Stop()
 		assert.Equal(t, testCount, int64(1000))
 	}
 
@@ -56,7 +56,7 @@ func TestBasicThreadPool(t *testing.T) {
 			taskScheduler.Submit(newBasicWaitTask(), CPUTask, time.Now())
 		}
 		time.Sleep(10 * time.Second)
-		taskScheduler.Finish()
+		taskScheduler.Stop()
 		assert.Equal(t, testCount, int64(1000))
 	}
 }
@@ -73,7 +73,7 @@ type onceTask struct {
 
 func (t *onceTask) TaskId() TaskId { return t.id }
 
-func (t *onceTask) Execute(status TaskStatus) (TaskStatus, time.Time) {
+func (t *onceTask) Execute() (TaskStatus, time.Time) {
 
 	t.msgChan <- t.id
 
@@ -105,7 +105,7 @@ type longRunTask struct {
 
 func (t *longRunTask) TaskId() TaskId { return t.id }
 
-func (t *longRunTask) Execute(status TaskStatus) (TaskStatus, time.Time) {
+func (t *longRunTask) Execute() (TaskStatus, time.Time) {
 	t.msgChan <- t.id
 	t.runs++
 
@@ -179,5 +179,5 @@ func TestThreadPoolTiming(t *testing.T) {
 	}
 	assert.DeepEqual(t, result, expected)
 
-	ts.Finish()
+	ts.Stop()
 }

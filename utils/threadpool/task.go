@@ -15,6 +15,7 @@ package threadpool
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -40,31 +41,38 @@ func panicOnTaskStatus(status TaskStatus) {
 // The return value of the methods are TaskStatus and time.Time.
 //
 // There are three possible values for TaskStatus:
-//   - CPUTask: The task is a CPU-bound task, which should be executed by the CPU thread pool.
-//   - IOTask: The task is an IO-bound task, which should be executed by the IO thread pool.
-//   - Done: The task is done, and should not be executed again.
+//   - CPUTask: The task is a CPU-bound task, which will be executed by the CPU thread pool next time.
+//   - IOTask: The task is an IO-bound task, which will be executed by the IO thread pool next time.
+//   - Done: The task is done, and will not be executed again.
 //
 // The value of time.Time means the next disired execution time. It can be smaller than the current time.
-//   - If a task is not going to be executed again, the return value of Execute should be Done and time.Time{}.
-//   - If a task wants to be executed as soon as possible, the return value of Execute should be CPUTask or IOTask and time.Now().
+//   - If a task is not going to be executed again, the return value of Task.Execute should be Done and time.Time{}.
+//   - If a task wants to be executed as soon as possible, the return value of Task.Execute should be CPUTask or IOTask and time.Now().
 //
-// We provide two ways to tell the task scheduler about the next disired execution time: the result of Execute method and
-// the Update method in the TaskScheduler.
+// We provide two ways to tell the task scheduler about the next disired execution time: the result of Task.Execute method and
+// the TaskScheduler.Update method. Some notes:
+//   - The TaskScheduler.Update is not guaranteed to be executed immediately. It is passed through a channel and handled by a goroutine.
+//   - If the task is being executed when the TaskScheduler.Update command arrives, the new disired execution time will be overwritten by the result of Task.Execute.
+//   - If the Done status is returned by Task.Execute, the task is guaranteed to be removed from the task scheduler and won't be executed again.
 //
-// Note that if you call Update method after a task is Submit, the task could be executed by multiple threads concurrently,
-// so the Execute method should be thread-safe. If you don't want a task to be executed concurrently,
-// you should add a mark to avoid the situation.
+// Note that:
+//   - It is not guaranteed that a task will be executed at the exact disired time. The task scheduler will try to execute the task as soon as possible.
+//   - It is not guaranteed that a task will be executed by the same goroutine.
+//   - It is guaranteed that a task can only be executed by one goroutine at a time. I.e. a task will not be executed concurrently.
+//   - The thread pool guarantees the call of Task.Execute is thread-safe. I.e. you don't need to add any locks in the Execute method to guarantee the thread safety,
+//     including the visibility of the fields in the Task or any other memory. But you still need to guarantee the thread safety between
+//     different tasks' Execute methods, if they share some resources.
 //
-// If you want to remove a task from the task scheduler, you should:
-//   - (Neccessary) The future call of Execute method returns Done and time.Time{}
-//   - (Optional) Call the Remove method in the TaskScheduler
+// If you want to remove a task from the task scheduler, use one of the approaches below(using both is also fine):
+//   - The future call of Task.Execute method returns Done and time.Time{}
+//   - Call the TaskScheduler.Cancel method. Note that the task will not be removed immediately, but will be removed before the next execution.
+//     If the task is already running, the execution will not be stopped immediately.
 //
 // The typical implmentation of the Task interface is as follows:
 //   - Use a taskId field to store the unique TaskId. Please don't modify it after the task is created.
-//   - Use a isRunning field to avoid the task being executed concurrently in the Execute method.
 //   - Use a nextExecTime field to store the next disired execution time.
 //   - Before returning the result of Execute, update the nextExecTime field with the return value.
-//   - If you want to execute the task earlier or later, first update nextExecTime field, and then call the Update in the TaskScheduler.
+//   - If you want to change the next execute time of a task, first update nextExecTime field, and then call the Update in the TaskScheduler.
 //     It is particularly useful when the task is blocked by some resources, and you want to execute it as soon as the resources are available.
 //     For instance, you want to execute a dispatcher task immediately after some events are ready.
 //   - To avoid calling Update too frequently, you should check whether the new disiered execution time is earlier than nextExecTime or not.
@@ -75,7 +83,7 @@ type Task interface {
 	TaskId() TaskId
 	// Execute the task.
 	// The status indicates what kind of thread pool is executing the task.
-	Execute(status TaskStatus) (TaskStatus, time.Time)
+	Execute() (TaskStatus, time.Time)
 }
 
 var globalTaskId atomic.Uint64
@@ -90,25 +98,24 @@ type scheduledTask struct {
 	time   time.Time // Next disired execution time.
 
 	index int // The index of the task in the heap.
+
+	// To prevent the task from being executed concurrently.
+	runMutex sync.Mutex
 }
 
+// Implemented by TaskScheduler
 type toBeScheduled interface {
 	toBeScheduled(status TaskStatus) chan *scheduledTask
 }
 
+// Implemented by TaskScheduler
 type toBeExecuted interface {
-	toBeExecuted() chan Task
+	toBeExecuted(status TaskStatus) chan *scheduledTask
 }
 
-func scheduleTask(task Task, status TaskStatus, next time.Time, toBeScheduled toBeScheduled) {
-	switch status {
-	case CPUTask, IOTask:
-		tw := scheduledTask{task: task, status: status, time: next}
-		toBeScheduled.toBeScheduled(status) <- &tw
-	case Done:
-		// Don't put the task into any thread pool.
-		return
-	default:
-		panicOnTaskStatus(status)
-	}
+type taskMap struct {
+	idToTask map[TaskId]*scheduledTask
+	mutex    sync.Mutex
 }
+
+func newTaskMap() taskMap { return taskMap{idToTask: make(map[TaskId]*scheduledTask)} }

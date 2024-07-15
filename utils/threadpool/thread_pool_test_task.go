@@ -32,7 +32,7 @@ func newBasicCPUTask() *BasicCPUTask {
 
 func (t *BasicCPUTask) TaskId() TaskId { return t.id }
 
-func (t *BasicCPUTask) Execute(TaskStatus) (TaskStatus, time.Time) {
+func (t *BasicCPUTask) Execute() (TaskStatus, time.Time) {
 	for i := 0; i < 100; i++ {
 		atomic.AddInt64(&testCount, 1)
 	}
@@ -51,7 +51,7 @@ func newBasicIOTask() *BasicIOTask {
 
 func (t *BasicIOTask) TaskId() TaskId { return t.id }
 
-func (t *BasicIOTask) Execute(TaskStatus) (TaskStatus, time.Time) {
+func (t *BasicIOTask) Execute() (TaskStatus, time.Time) {
 	time.Sleep(50 * time.Millisecond)
 	atomic.AddInt64(&testCount, 1)
 	return Done, time.Time{}
@@ -69,7 +69,7 @@ func newBasicWaitTask() *BasicWaitTask {
 
 func (t *BasicWaitTask) TaskId() TaskId { return t.id }
 
-func (t *BasicWaitTask) Execute(TaskStatus) (TaskStatus, time.Time) {
+func (t *BasicWaitTask) Execute() (TaskStatus, time.Time) {
 	time.Sleep(50 * time.Millisecond)
 	atomic.AddInt64(&testCount, 1)
 	return Done, time.Time{}
@@ -95,7 +95,7 @@ func newPureCPUTask(finalChan *chan int, ch *chan int, target int64, addCount in
 }
 func (t *PureCPUTask) TaskId() TaskId { return t.id }
 
-func (t *PureCPUTask) Execute(TaskStatus) (TaskStatus, time.Time) {
+func (t *PureCPUTask) Execute() (TaskStatus, time.Time) {
 	select {
 	case <-*t.ch:
 		for i := 0; i < t.addCount; i++ {
@@ -132,7 +132,7 @@ func newCPUWithWaitTask(finalChan *chan int, taskCount int, addCount int, wait t
 	}
 }
 
-func (t *CPUWithWaitTask) Execute(TaskStatus) (TaskStatus, time.Time) {
+func (t *CPUWithWaitTask) Execute() (TaskStatus, time.Time) {
 	if time.Now().Before(t.nextExecTime) {
 		return CPUTask, t.nextExecTime
 	}
@@ -167,7 +167,7 @@ func newCPUTimeTask(finalChan *chan int, addCount int, taskCount int) *CPUTimeTa
 
 func (t *CPUTimeTask) TaskId() TaskId { return t.id }
 
-func (t *CPUTimeTask) Execute(TaskStatus) (TaskStatus, time.Time) {
+func (t *CPUTimeTask) Execute() (TaskStatus, time.Time) {
 	for i := 0; i < t.addCount; i++ {
 		atomic.AddInt64(&testCount, 1)
 	}

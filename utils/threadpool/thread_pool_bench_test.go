@@ -42,7 +42,7 @@ func benchmarkCPUThreadPoolWithWaitReactor(addCount int, sleepTime int, b *testi
 		}
 
 		<-channel
-		taskScheduler.Finish()
+		taskScheduler.Stop()
 	}
 }
 
@@ -70,7 +70,7 @@ func benchmarkCostThreadPool(taskCount int, addCount int, b *testing.B) {
 		}
 		<-channel
 	}
-	taskScheduler.Finish()
+	taskScheduler.Stop()
 }
 
 func benchmarkCostGoRoutine(taskCount int, addCount int, b *testing.B) {

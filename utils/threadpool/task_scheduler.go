@@ -14,6 +14,7 @@
 package threadpool
 
 import (
+	"fmt"
 	"runtime"
 	"sync/atomic"
 	"time"
@@ -25,6 +26,14 @@ type TaskScheduler struct {
 	cpuTaskThreadPool *threadPool
 	ioTaskThreadPool  *threadPool
 
+	// The reactors will make the execution plan of the tasks.
+	// And send the ready tasks to corresponding thread pools.
+	// Note the for the Done tasks, they will not be sent to any thread pool, but remove from the taskMap.
+	cpuReactor  *waitReactor
+	ioReactor   *waitReactor
+	doneReactor *waitReactor
+
+	taskMap    taskMap
 	nextTaskId atomic.Uint64
 }
 
@@ -33,7 +42,9 @@ type TaskScheduler struct {
 //   - 0 (by defualt) means use 2 * logical cpu
 //   - >0 to choose another value
 func NewTaskScheduler(name string, cpuThreads int, ioThreads int) *TaskScheduler {
-	ts := &TaskScheduler{}
+	ts := &TaskScheduler{
+		taskMap: newTaskMap(),
+	}
 	defaultThreadCount := runtime.NumCPU() * 2
 
 	createTP := func(taskType TaskStatus, name string, threadCount int) *threadPool {
@@ -51,6 +62,10 @@ func NewTaskScheduler(name string, cpuThreads int, ioThreads int) *TaskScheduler
 	ts.cpuTaskThreadPool = createTP(CPUTask, name+"-CPU", cpuThreads)
 	ts.ioTaskThreadPool = createTP(IOTask, name+"-IO", ioThreads)
 
+	ts.cpuReactor = newWaitReactor(ts, &ts.taskMap)
+	ts.ioReactor = newWaitReactor(ts, &ts.taskMap)
+	ts.doneReactor = newWaitReactor(ts, &ts.taskMap)
+
 	return ts
 }
 
@@ -61,9 +76,29 @@ func NewTaskSchedulerDefault(name string) *TaskScheduler {
 func (s *TaskScheduler) toBeScheduled(status TaskStatus) chan *scheduledTask {
 	switch status {
 	case CPUTask:
-		return s.cpuTaskThreadPool.tobeScheduled()
+		if s.cpuTaskThreadPool == nil {
+			panic(fmt.Sprintf("CPU thread pool does not exist"))
+		}
+		return s.cpuReactor.tobeScheduled()
 	case IOTask:
-		return s.ioTaskThreadPool.tobeScheduled()
+		if s.ioTaskThreadPool == nil {
+			panic(fmt.Sprintf("IO thread pool does not exist"))
+		}
+		return s.ioReactor.tobeScheduled()
+	case Done:
+		return s.doneReactor.tobeScheduled()
+	default:
+		panicOnTaskStatus(status)
+	}
+	return nil
+}
+
+func (s *TaskScheduler) toBeExecuted(status TaskStatus) chan *scheduledTask {
+	switch status {
+	case CPUTask:
+		return s.cpuTaskThreadPool.toBeExecuted()
+	case IOTask:
+		return s.ioTaskThreadPool.toBeExecuted()
 	default:
 		panicOnTaskStatus(status)
 	}
@@ -71,26 +106,19 @@ func (s *TaskScheduler) toBeScheduled(status TaskStatus) chan *scheduledTask {
 }
 
 // Generate a new unique task id
-func (s *TaskScheduler) NewTaskId() TaskId {
-	return TaskId(s.nextTaskId.Add(1))
-}
+func (s *TaskScheduler) NewTaskId() TaskId { return TaskId(s.nextTaskId.Add(1)) }
 
-func (s *TaskScheduler) Submit(task Task, initalStatus TaskStatus, next time.Time) {
-	switch initalStatus {
-	case CPUTask:
-		scheduleTask(task, initalStatus, next, s.cpuTaskThreadPool.schedule)
-	case IOTask:
-		scheduleTask(task, initalStatus, next, s.ioTaskThreadPool.schedule)
-	default:
-		panicOnTaskStatus(initalStatus)
-	}
+func (s *TaskScheduler) Submit(task Task, status TaskStatus, next time.Time) {
+	st := &scheduledTask{task: task, status: status, time: next}
+	// The task will be handled by one of the waitReactor.
+	s.toBeScheduled(status) <- st
 }
 
 func (s *TaskScheduler) Update(task Task, status TaskStatus, next time.Time) {
 	s.Submit(task, status, next)
 }
 
-func (s *TaskScheduler) Remove(task Task) {
+func (s *TaskScheduler) Cancel(task Task) {
 	s.Submit(task, Done, time.Time{})
 }
 
@@ -98,21 +126,29 @@ func (s *TaskScheduler) Remove(task Task) {
 func (s *TaskScheduler) blockForTest(until int, taskType TaskStatus) {
 	switch taskType {
 	case CPUTask:
-		s.cpuTaskThreadPool.waitReactor.blockForTest(until)
+		s.cpuReactor.blockForTest(until)
 	case IOTask:
-		s.ioTaskThreadPool.waitReactor.blockForTest(until)
+		s.ioReactor.blockForTest(until)
 	default:
 		panicOnTaskStatus(taskType)
 	}
 }
 
-func (s *TaskScheduler) Finish() {
+func (s *TaskScheduler) Stop() {
+	s.cpuReactor.stop()
+	s.ioReactor.stop()
+	s.doneReactor.stop()
+
+	s.cpuReactor.waitForStop()
+	s.ioReactor.waitForStop()
+	s.doneReactor.waitForStop()
+
 	if s.cpuTaskThreadPool != nil {
-		s.cpuTaskThreadPool.finish()
+		s.cpuTaskThreadPool.stop()
 		s.cpuTaskThreadPool.waitForStop()
 	}
 	if s.ioTaskThreadPool != nil {
-		s.ioTaskThreadPool.finish()
+		s.ioTaskThreadPool.stop()
 		s.ioTaskThreadPool.waitForStop()
 	}
 }
