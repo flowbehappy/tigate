@@ -245,7 +245,7 @@ func (s *remoteMessageTarget) runSendMessages(sendCtx context.Context, stream gr
 		case <-sendCtx.Done():
 			return sendCtx.Err()
 		case message := <-sendChan:
-			log.Info("Send message to remote",
+			log.Debug("Send message to remote",
 				zap.Stringer("local", s.localId),
 				zap.Stringer("remote", s.targetId),
 				zap.Stringer("message", message))
@@ -309,8 +309,13 @@ func (s *remoteMessageTarget) newMessage(msg ...*TargetMessage) *proto.Message {
 	msgBytes := make([][]byte, 0, len(msg))
 	for _, m := range msg {
 		// TODO: use a buffer pool to reduce the memory allocation.
-		buf := make([]byte, 0)
-		msgBytes = append(msgBytes, m.encode(buf))
+		buf, err := m.Message.Marshal()
+		if err != nil {
+			log.Panic("marshal message failed ",
+				zap.Any("msg", m),
+				zap.Error(err))
+		}
+		msgBytes = append(msgBytes, buf)
 	}
 	protoMsg := &proto.Message{
 		From:    string(s.localId),

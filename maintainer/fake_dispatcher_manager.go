@@ -71,7 +71,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 			for _, msg := range buf {
 				switch msg.Type {
 				case messaging.TypeMaintainerBootstrapRequest:
-					req := msg.Message.(*messaging.MaintainerBootstrapRequest)
+					req := msg.Message.(*heartbeatpb.MaintainerBootstrapRequest)
 					cfID := model.DefaultChangeFeedID(req.Id)
 					manager, ok := m.dispatcherManagers[cfID]
 					if !ok {
@@ -79,10 +79,8 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 						m.dispatcherManagers[cfID] = manager
 					}
 					manager.maintainerID = msg.From
-					response := &messaging.MaintainerBootstrapResponse{
-						MaintainerBootstrapResponse: &heartbeatpb.MaintainerBootstrapResponse{
-							Statuses: make([]*heartbeatpb.TableSpanStatus, 0, manager.dispatchers.Len()),
-						},
+					response := &heartbeatpb.MaintainerBootstrapResponse{
+						Statuses: make([]*heartbeatpb.TableSpanStatus, 0, manager.dispatchers.Len()),
 					}
 					manager.dispatchers.Ascend(func(key *common.TableSpan, value *Dispatcher) bool {
 						response.Statuses = append(response.Statuses, &heartbeatpb.TableSpanStatus{
@@ -99,7 +97,6 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 					err := m.messageCenter.SendCommand(messaging.NewTargetMessage(
 						manager.maintainerID,
 						"maintainer/"+manager.id.ID,
-						messaging.TypeMaintainerBootstrapResponse,
 						response,
 					))
 					if err != nil {
@@ -108,8 +105,8 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 					log.Info("bootstrap maintainer",
 						zap.String("changefeed", manager.id.ID),
 						zap.String("maintainer node", msg.From.String()))
-				case messaging.TypeDispatchMaintainerRequest:
-					req := msg.Message.(*messaging.ScheduleDispatcherRequest)
+				case messaging.TypeScheduleDispatcherRequest:
+					req := msg.Message.(*heartbeatpb.ScheduleDispatcherRequest)
 					cfID := model.DefaultChangeFeedID(req.ChangefeedID)
 					manager, ok := m.dispatcherManagers[cfID]
 					if !ok {
@@ -130,11 +127,9 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 			for _, manager := range m.dispatcherManagers {
 				// send heartbeats
 				if manager.maintainerID != "" {
-					response := &messaging.HeartBeatResponse{
-						HeartBeatResponse: &heartbeatpb.HeartBeatResponse{
-							ChangefeedID: manager.id.ID,
-							Info:         make([]*heartbeatpb.TableProgressInfo, 0, manager.dispatchers.Len()),
-						},
+					response := &heartbeatpb.HeartBeatResponse{
+						ChangefeedID: manager.id.ID,
+						Info:         make([]*heartbeatpb.TableProgressInfo, 0, manager.dispatchers.Len()),
 					}
 					manager.dispatchers.Ascend(func(key *common.TableSpan, value *Dispatcher) bool {
 						if time.Since(value.lastReportTime) > time.Second {
@@ -154,7 +149,6 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 						err := m.messageCenter.SendCommand(messaging.NewTargetMessage(
 							manager.maintainerID,
 							"maintainer/"+manager.id.ID,
-							messaging.TypeHeartBeatResponse,
 							response,
 						))
 						if err != nil {
@@ -189,7 +183,7 @@ func NewDispatcherManager(id model.ChangeFeedID,
 }
 
 func (m *DispatcherManager) handleDispatchTableSpanRequest(
-	request *messaging.ScheduleDispatcherRequest,
+	request *heartbeatpb.ScheduleDispatcherRequest,
 ) {
 	tableSpan := &common.TableSpan{
 		TableSpan: request.GetConfig().Span,

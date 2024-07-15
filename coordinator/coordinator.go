@@ -188,11 +188,11 @@ func (c *coordinator) handleMessages() error {
 	for _, msg := range buf {
 		switch msg.Type {
 		case messaging.TypeCoordinatorBootstrapResponse:
-			req := msg.Message.(*messaging.CoordinatorBootstrapResponse)
+			req := msg.Message.(*heartbeatpb.CoordinatorBootstrapResponse)
 			c.cacheBootstrapResponse(msg.From.String(), req.Statuses)
 		case messaging.TypeMaintainerHeartbeatRequest:
 			if c.CheckAllCaptureInitialized() {
-				req := msg.Message.(*messaging.MaintainerHeartbeat)
+				req := msg.Message.(*heartbeatpb.MaintainerHeartbeat)
 				serverID := msg.From
 				msgs, err := c.HandleStatus(serverID.String(), req.Statuses)
 				if err != nil {

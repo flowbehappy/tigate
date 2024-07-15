@@ -167,11 +167,8 @@ func (s *Supervisor) bootstrapMessage(captureID model.CaptureID) rpc.Message {
 	return messaging.NewTargetMessage(
 		messaging.ServerId(captureID),
 		"dispatcher-manager",
-		messaging.TypeMaintainerBootstrapRequest,
-		&messaging.MaintainerBootstrapRequest{
-			MaintainerBootstrapRequest: &heartbeatpb.MaintainerBootstrapRequest{
-				Id: s.ID.ID,
-			},
+		&heartbeatpb.MaintainerBootstrapRequest{
+			Id: s.ID.ID,
 		})
 }
 
