@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/downstreamadapter"
 	"github.com/flowbehappy/tigate/maintainer"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/tiflow/pkg/tcpserver"
@@ -58,6 +59,8 @@ type serverImpl struct {
 	coordinatorMu sync.Mutex
 	coordinator   coordinator.Coordinator
 	messageCenter messaging.MessageCenter
+
+	dispatcherManagerManager *downstreamadapter.DispatcherManagerManager
 
 	// session keeps alive between the server and etcd
 	session *concurrency.Session

@@ -33,6 +33,7 @@ const EventFeedTopic = "EventFeed"
 /*
 EventCollector is responsible for collecting the events from event service and dispatching them to different dispatchers.
 Besides, EventCollector also generate SyncPoint Event for dispatchers when necessary.
+EventCollector is an instance-level component.
 */
 type EventCollector struct {
 	messageCenter     messaging.MessageCenter
@@ -43,7 +44,7 @@ type EventCollector struct {
 	globalMemoryQuota int64
 }
 
-func newEventCollector(messageCenter messaging.MessageCenter, globalMemoryQuota int64, clusterID messaging.ServerId, targetID messaging.ServerId) *EventCollector {
+func NewEventCollector(messageCenter messaging.MessageCenter, globalMemoryQuota int64, clusterID messaging.ServerId, targetID messaging.ServerId) *EventCollector {
 	eventCollector := EventCollector{
 		messageCenter:     messageCenter,
 		clusterID:         clusterID,

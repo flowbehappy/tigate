@@ -18,8 +18,9 @@ message TableSpan {
 // }
 
 message HeartBeatRequest {
-    uint64 changefeedID = 1;
+    string changefeedID = 1;
     uint64 checkpointTs = 2; // eventDispatcherManager 当前全局最小的 checkpointTs
+    repeated TableSpanStatus statuses = 3;
 }
 
 enum Action {
@@ -100,16 +101,16 @@ message RemoveMaintainerRequest  {
 }
 
 message MaintainerBootstrapRequest {
-    string id = 1;
+    string changefeedID = 1;
 }
 
 message MaintainerBootstrapResponse {
-    string id = 1;
+    string changefeedID = 1;
     repeated TableSpanStatus statuses = 2;
 }
 
 message TableSpanStatus {
     TableSpan span = 1; // for which dispatcher
-    int32 scheduler_status = 3;
+    int32 component_status = 2;
     uint64 checkpoint_ts = 4;
 }

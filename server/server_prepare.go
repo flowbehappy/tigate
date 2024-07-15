@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/dustin/go-humanize"
+	"github.com/flowbehappy/tigate/downstreamadapter"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/server/watcher"
@@ -154,6 +155,7 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	c.session = session
 	mcCfg := config.NewDefaultMessageCenterConfig()
 	c.messageCenter = messaging.NewMessageCenter(id, watcher.TempEpoch, mcCfg)
+	c.dispatcherManagerManager = downstreamadapter.NewDispatcherManagerManager()
 	return nil
 }
 

@@ -62,7 +62,7 @@ func (s *TableStatus) getProgress() *types.TableProgress {
 // 一个 event dispatcher manager 对应一个 mysqlSink
 // 实现 Sink 的接口
 type MysqlSink struct {
-	changefeedID     uint64
+	changefeedID     string
 	conflictDetector *conflictdetector.ConflictDetector
 
 	// 主要是要保持一样的生命周期？不然 channel 会对应不上
@@ -72,13 +72,6 @@ type MysqlSink struct {
 	// Protect tableStatus
 	mutex         sync.RWMutex
 	tableStatuses map[*common.TableSpan]TableStatus
-
-	// eventChs map[*common.TableSpan]chan *common.TxnEvent // 这个感觉最好也不要用 channel，用一个代表 channal 的 struct
-	// tasks    map[*common.TableSpan]*MysqlSinkTask
-	// // TableProgress 里面维护了目前正在 sink 中的 event ts 信息
-	// // TableProgress 对外提供查询当前 table checkpointTs 的能力
-	// // TableProgress 对外提供当前 table 是否有 event 在 sink 中等待被 flush 的能力--用于判断 ddl 是否达到下推条件
-	// tableProgressMap map[*common.TableSpan]*types.TableProgress
 }
 
 // event dispatcher manager 初始化的时候创建 mysqlSink 对象
@@ -90,9 +83,6 @@ func NewMysqlSink(workerCount int, cfg *writer.MysqlConfig, db *sql.DB) *MysqlSi
 			BlockStrategy: causality.BlockStrategyWaitEmpty,
 		}),
 		tableStatuses: make(map[*common.TableSpan]TableStatus),
-		// tableProgressMap: make(map[*common.TableSpan]*types.TableProgress),
-		// eventChs:         make(map[*common.TableSpan]chan *common.TxnEvent),
-		// tasks:            make(map[*common.TableSpan]*MysqlSinkTask),
 	}
 
 	mysqlSink.initWorker(workerCount, cfg, db)
