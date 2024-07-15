@@ -24,9 +24,7 @@ type threadPool struct {
 	threadCount int
 
 	schedule toBeScheduled
-	taskChan chan Task
-
-	waitReactor *waitReactor
+	taskChan chan *scheduledTask
 
 	stopSignal chan struct{}
 	wg         sync.WaitGroup
@@ -39,11 +37,9 @@ func newthreadPool(taskType TaskStatus, name string, schedule toBeScheduled, thr
 		threadCount: threadCount,
 
 		schedule:   schedule,
-		taskChan:   make(chan Task, threadCount),
+		taskChan:   make(chan *scheduledTask, threadCount),
 		stopSignal: make(chan struct{}),
 	}
-
-	tp.waitReactor = newWaitReactor(tp)
 
 	for i := 0; i < threadCount; i++ {
 		tp.wg.Add(1)
@@ -53,8 +49,7 @@ func newthreadPool(taskType TaskStatus, name string, schedule toBeScheduled, thr
 	return tp
 }
 
-func (p *threadPool) toBeExecuted() chan Task            { return p.taskChan }
-func (r *threadPool) tobeScheduled() chan *scheduledTask { return r.waitReactor.tobeScheduled() }
+func (p *threadPool) toBeExecuted() chan *scheduledTask { return p.taskChan }
 
 func (p *threadPool) loop(int) {
 	defer p.wg.Done()
@@ -63,25 +58,37 @@ func (p *threadPool) loop(int) {
 		select {
 		case <-p.stopSignal:
 			return
-		case task := <-p.taskChan:
-			p.handleTask(task)
+		case st := <-p.taskChan:
+			p.handleTask(st)
 			continue
 		}
 	}
 }
 
 // Execute the task, and push the task back to the correct thread pool if the task is not done.
-func (p *threadPool) handleTask(task Task) {
-	nextStatus, nextTime := task.Execute(p.taskType)
-	scheduleTask(task, nextStatus, nextTime, p.schedule)
+func (p *threadPool) handleTask(st *scheduledTask) {
+	{
+		if !st.runMutex.TryLock() {
+			// The task is running in another thread.
+			// And the task will be pushed back to the waitingQueue by the thread that is executing the task.
+			return
+		}
+		defer st.runMutex.Unlock()
+
+		// Only execute the task when it is not done.
+		// And for the done task, we push it back to waitReactor to remove it from the taskMap later.
+		if st.status != Done {
+			st.status, st.time = st.task.Execute()
+		}
+	}
+
+	p.schedule.toBeScheduled(st.status) <- st
 }
 
-func (p *threadPool) finish() {
-	p.waitReactor.finish()
+func (p *threadPool) stop() {
 	close(p.stopSignal)
 }
 
 func (p *threadPool) waitForStop() {
-	p.waitReactor.waitForStop()
 	p.wg.Wait()
 }

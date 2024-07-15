@@ -21,6 +21,12 @@ import (
 	"github.com/zeebo/assert"
 )
 
+func waitForDone(h *TaskHandle) {
+	for !h.IsDone() {
+		time.Sleep(1 * time.Millisecond)
+	}
+}
+
 // BasicThreadPool test the basic functionality of threadpool
 // Including the functionality of CPU Threadpoool, IO Threadpool, and WaitReactor
 func TestBasicThreadPool(t *testing.T) {
@@ -28,11 +34,15 @@ func TestBasicThreadPool(t *testing.T) {
 	{
 		testCount = 0
 		taskScheduler := NewTaskSchedulerDefault("BasicCPUTask")
-		for i := 0; i < 10000; i++ {
-			taskScheduler.Submit(newBasicCPUTask(), CPUTask, time.Now())
+		n := 10000
+		ths := make([]*TaskHandle, 0, n)
+		for i := 0; i < n; i++ {
+			ths = append(ths, taskScheduler.Submit(newBasicCPUTask(), CPUTask, time.Now()))
 		}
-		time.Sleep(5 * time.Second)
-		taskScheduler.Finish()
+		for i := 0; i < n; i++ {
+			waitForDone(ths[i])
+		}
+		taskScheduler.Stop()
 		assert.Equal(t, testCount, int64(10000*100))
 	}
 
@@ -40,11 +50,15 @@ func TestBasicThreadPool(t *testing.T) {
 	{
 		testCount = 0
 		taskScheduler := NewTaskSchedulerDefault("BasicIOTask")
-		for i := 0; i < 1000; i++ {
-			taskScheduler.Submit(newBasicIOTask(), IOTask, time.Now())
+		n := 1000
+		ths := make([]*TaskHandle, 0, n)
+		for i := 0; i < n; i++ {
+			ths = append(ths, taskScheduler.Submit(newBasicIOTask(), IOTask, time.Now()))
 		}
-		time.Sleep(5 * time.Second)
-		taskScheduler.Finish()
+		for i := 0; i < n; i++ {
+			waitForDone(ths[i])
+		}
+		taskScheduler.Stop()
 		assert.Equal(t, testCount, int64(1000))
 	}
 
@@ -52,11 +66,15 @@ func TestBasicThreadPool(t *testing.T) {
 	{
 		testCount = 0
 		taskScheduler := NewTaskSchedulerDefault("BasicWaitAndCPUTask")
-		for i := 0; i < 1000; i++ {
-			taskScheduler.Submit(newBasicWaitTask(), CPUTask, time.Now())
+		n := 1000
+		ths := make([]*TaskHandle, 0, n)
+		for i := 0; i < n; i++ {
+			ths = append(ths, taskScheduler.Submit(newBasicWaitTask(), CPUTask, time.Now()))
 		}
-		time.Sleep(10 * time.Second)
-		taskScheduler.Finish()
+		for i := 0; i < n; i++ {
+			waitForDone(ths[i])
+		}
+		taskScheduler.Stop()
 		assert.Equal(t, testCount, int64(1000))
 	}
 }
@@ -73,7 +91,7 @@ type onceTask struct {
 
 func (t *onceTask) TaskId() TaskId { return t.id }
 
-func (t *onceTask) Execute(status TaskStatus) (TaskStatus, time.Time) {
+func (t *onceTask) Execute() (TaskStatus, time.Time) {
 
 	t.msgChan <- t.id
 
@@ -105,7 +123,7 @@ type longRunTask struct {
 
 func (t *longRunTask) TaskId() TaskId { return t.id }
 
-func (t *longRunTask) Execute(status TaskStatus) (TaskStatus, time.Time) {
+func (t *longRunTask) Execute() (TaskStatus, time.Time) {
 	t.msgChan <- t.id
 	t.runs++
 
@@ -179,5 +197,5 @@ func TestThreadPoolTiming(t *testing.T) {
 	}
 	assert.DeepEqual(t, result, expected)
 
-	ts.Finish()
+	ts.Stop()
 }

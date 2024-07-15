@@ -48,7 +48,8 @@ type Maintainer struct {
 	id     model.ChangeFeedID
 	config *model.ChangeFeedInfo
 	status *model.ChangeFeedStatus
-	taskID threadpool.TaskId
+
+	messageCenter messaging.MessageCenter
 
 	state      scheduler.ComponentStatus
 	supervisor *Supervisor
@@ -86,7 +87,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		scheduler: NewCombineScheduler(
 			NewBasicScheduler(1000),
 			NewBalanceScheduler(time.Minute, 1000)),
-		taskID:        threadpool.NewGlobalTaskId(),
+		messageCenter: center,
 		state:         scheduler.ComponentStatusPrepared,
 		removed:       atomic.NewBool(false),
 		taskCh:        make(chan Task, 1024),
@@ -119,7 +120,7 @@ func (m *Maintainer) newBootstrapMessage(id model.CaptureID) rpc.Message {
 	}
 }
 
-func (m *Maintainer) Execute(status threadpool.TaskStatus) (threadpool.TaskStatus, time.Time) {
+func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
 	// removing, cancel the task
 	if m.removing.Load() {
 		m.closeChangefeed()
@@ -127,13 +128,13 @@ func (m *Maintainer) Execute(status threadpool.TaskStatus) (threadpool.TaskStatu
 	}
 	// not on the primary status, skip running
 	if m.isSecondary.Load() {
-		return status, time.Now().Add(50 * time.Millisecond)
+		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 	}
 	m.state = scheduler.ComponentStatusWorking
 
 	// handle messages
 	if err := m.handleMessages(); err != nil {
-		return status, time.Now().Add(50 * time.Millisecond)
+		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 	}
 
 	nodes := m.nodeManager.GetAliveCaptures()
@@ -141,7 +142,7 @@ func (m *Maintainer) Execute(status threadpool.TaskStatus) (threadpool.TaskStatu
 	msgs, err := m.supervisor.HandleAliveCaptureUpdate(nodes)
 	if err != nil {
 		log.Warn("handle capture failed", zap.Error(err))
-		return status, time.Now().Add(50 * time.Millisecond)
+		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 	}
 
 	// resend dispatcher message
@@ -164,15 +165,11 @@ func (m *Maintainer) Execute(status threadpool.TaskStatus) (threadpool.TaskStatu
 	msgs, err = m.scheduleTableSpan()
 	if err != nil {
 		log.Warn("handle capture failed", zap.Error(err))
-		return status, time.Now().Add(50 * time.Millisecond)
+		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 	}
 	m.sendMessages(msgs)
 	m.printStatus()
-	return status, time.Now().Add(50 * time.Millisecond)
-}
-
-func (m *Maintainer) TaskId() threadpool.TaskId {
-	return m.taskID
+	return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 }
 
 func (m *Maintainer) handleMessages() error {
