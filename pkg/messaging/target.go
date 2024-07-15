@@ -38,10 +38,9 @@ type remoteMessageTarget struct {
 	targetId    ServerId
 	targetAddr  string
 
-	mu sync.RWMutex
 	// For sending events and commands
-	eventSendStream   grpcSender
-	commandSendStream grpcSender
+	eventSender   *sendStreamWrapper
+	commandSender *sendStreamWrapper
 
 	// For receiving events and commands
 	conn              *grpc.ClientConn
@@ -70,7 +69,7 @@ type remoteMessageTarget struct {
 }
 
 func (s *remoteMessageTarget) sendEvent(msg ...*TargetMessage) error {
-	if s.eventSendStream == nil {
+	if !s.eventSender.ready.Load() {
 		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Stream has not been initialized"}
 	}
 	select {
@@ -84,7 +83,7 @@ func (s *remoteMessageTarget) sendEvent(msg ...*TargetMessage) error {
 }
 
 func (s *remoteMessageTarget) sendCommand(msg ...*TargetMessage) error {
-	if s.commandSendStream == nil {
+	if !s.commandSender.ready.Load() {
 		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Stream has not been initialized"}
 	}
 	select {
@@ -106,18 +105,20 @@ func newRemoteMessageTarget(
 	log.Info("Create remote target", zap.Stringer("local", localID), zap.Stringer("remote", targetId), zap.String("addr", addr), zap.Uint64("localEpoch", localEpoch), zap.Uint64("targetEpoch", targetEpoch))
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &remoteMessageTarget{
-		localId:     localID,
-		localEpoch:  localEpoch,
-		targetAddr:  addr,
-		targetId:    targetId,
-		ctx:         ctx,
-		cancel:      cancel,
-		sendEventCh: make(chan *proto.Message, cfg.CacheChannelSize),
-		sendCmdCh:   make(chan *proto.Message, cfg.CacheChannelSize),
-		recvEventCh: recvEventCh,
-		recvCmdCh:   recvCmdCh,
-		errCh:       make(chan AppError, 1),
-		wg:          &sync.WaitGroup{},
+		localId:       localID,
+		localEpoch:    localEpoch,
+		targetAddr:    addr,
+		targetId:      targetId,
+		eventSender:   &sendStreamWrapper{ready: atomic.Bool{}},
+		commandSender: &sendStreamWrapper{ready: atomic.Bool{}},
+		ctx:           ctx,
+		cancel:        cancel,
+		sendEventCh:   make(chan *proto.Message, cfg.CacheChannelSize),
+		sendCmdCh:     make(chan *proto.Message, cfg.CacheChannelSize),
+		recvEventCh:   recvEventCh,
+		recvCmdCh:     recvCmdCh,
+		errCh:         make(chan AppError, 8),
+		wg:            &sync.WaitGroup{},
 	}
 	rt.targetEpoch.Store(targetEpoch)
 	rt.runHandleErr(ctx)
@@ -222,21 +223,35 @@ func (s *remoteMessageTarget) resetConnect() {
 
 	s.eventRecvStream = nil
 	s.commandRecvStream = nil
-	for range s.errCh {
-		// Drain the error channel
+	// Clear the error channel
+LOOP:
+	for {
+		select {
+		case <-s.errCh:
+		default:
+			break LOOP
+		}
 	}
 	// Reconnect
 	s.connect()
 }
 
 func (s *remoteMessageTarget) runEventSendStream(eventStream grpcSender) error {
-	s.eventSendStream = eventStream
-	return s.runSendMessages(s.ctx, eventStream, s.sendEventCh)
+	s.eventSender.stream = eventStream
+	s.eventSender.ready.Store(true)
+	err := s.runSendMessages(s.ctx, s.eventSender.stream, s.sendEventCh)
+	log.Info("Event send stream closed", zap.Stringer("local", s.localId), zap.Stringer("remote", s.targetId), zap.Error(err))
+	s.eventSender.ready.Store(false)
+	return err
 }
 
 func (s *remoteMessageTarget) runCommandSendStream(commandStream grpcSender) error {
-	s.commandSendStream = commandStream
-	return s.runSendMessages(s.ctx, commandStream, s.sendCmdCh)
+	s.commandSender.stream = commandStream
+	s.commandSender.ready.Store(true)
+	err := s.runSendMessages(s.ctx, s.commandSender.stream, s.sendCmdCh)
+	log.Info("Command send stream closed", zap.Stringer("local", s.localId), zap.Stringer("remote", s.targetId), zap.Error(err))
+	s.commandSender.ready.Store(false)
+	return err
 }
 
 func (s *remoteMessageTarget) runSendMessages(sendCtx context.Context, stream grpcSender, sendChan chan *proto.Message) error {
@@ -374,4 +389,9 @@ func (s *localMessageTarget) sendMsgToChan(ch chan *TargetMessage, msg ...*Targe
 		}
 	}
 	return nil
+}
+
+type sendStreamWrapper struct {
+	stream grpcSender
+	ready  atomic.Bool
 }
