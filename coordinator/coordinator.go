@@ -40,9 +40,15 @@ const maintainerMangerTopic = "maintainer-manager"
 // 5. response for open API call
 type Coordinator interface {
 	AsyncStop()
-	GetNodeInfo() *model.CaptureInfo
+	// Tick is the entrance of the coordinator, it will be called by the etcd watcher every 50ms.
+	// 1. Handle message reported by other modules
+	// 2. check if the node is changed, if a new node is added, send bootstrap message to that node ,
+	//    or if a node is removed, clean related state machine that binded to that node
+	// 3. schedule unscheduled changefeeds is all node is bootstrapped
+	Tick(ctx context.Context, metadata orchestrator.ReactorState) (orchestrator.ReactorState, error)
 }
 
+// coordinator implements the Coordinator interface
 type coordinator struct {
 	messageCenter messaging.MessageCenter
 
@@ -55,6 +61,7 @@ type coordinator struct {
 	msgLock sync.RWMutex
 	msgBuf  []*messaging.TargetMessage
 
+	// for log print
 	lastCheckTime time.Time
 
 	// scheduling fields
@@ -95,88 +102,31 @@ func NewCoordinator(capture *model.CaptureInfo,
 	return c
 }
 
-var allChangefeeds = make(map[model.ChangeFeedID]*model.ChangeFeedInfo)
-
-func init() {
-	for i := 0; i < 3; i++ {
-		id := fmt.Sprintf("%d", i)
-		allChangefeeds[model.DefaultChangeFeedID(id)] = &model.ChangeFeedInfo{
-			ID:      id,
-			Config:  config.GetDefaultReplicaConfig(),
-			SinkURI: "blackhole://",
-		}
-	}
-}
-
 func (c *coordinator) Tick(ctx context.Context,
 	rawState orchestrator.ReactorState) (orchestrator.ReactorState, error) {
 	state := rawState.(*orchestrator.GlobalReactorState)
-	if time.Since(c.lastCheckTime) > time.Second*10 {
-		workingTask := 0
-		prepareTask := 0
-		absentTask := 0
-		commitTask := 0
-		removingTask := 0
-		for _, value := range c.stateMachines {
-			switch value.State {
-			case SchedulerStatusAbsent:
-				absentTask++
-			case SchedulerStatusPrepare:
-				prepareTask++
-			case SchedulerStatusCommit:
-				commitTask++
-			case SchedulerStatusWorking:
-				workingTask++
-			case SchedulerStatusRemoving:
-				removingTask++
-			}
-		}
 
-		log.Info("changefeed status",
-			zap.Int("absent", absentTask),
-			zap.Int("prepare", prepareTask),
-			zap.Int("commit", commitTask),
-			zap.Int("working", workingTask),
-			zap.Int("removing", removingTask))
-		c.lastCheckTime = time.Now()
-	}
-
+	// 1. handle grpc  messages
 	err := c.handleMessages()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
+	// 2. check if nodes is changed
 	msgs, err := c.HandleAliveCaptureUpdate(state.Captures)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if len(msgs) > 0 {
-		c.sendMessages(msgs)
-	}
+	c.sendMessages(msgs)
 
-	allChangefeedID := make([]model.ChangeFeedID, 0)
-	// check all changefeeds.
-	for _, reactor := range allChangefeeds {
-		changefeedID := model.DefaultChangeFeedID(reactor.ID)
-		_, exist := c.GetChangefeedStateMachine(changefeedID)
-		if !exist {
-			// check if changefeed should be running
-			if !shouldRunChangefeed(reactor.State) {
-				continue
-			}
-			allChangefeedID = append(allChangefeedID, changefeedID)
-		} else {
-			if shouldRunChangefeed(reactor.State) {
-				allChangefeedID = append(allChangefeedID, changefeedID)
-			}
-		}
-	}
-
-	msgs, err = c.scheduleMaintainer(allChangefeedID)
+	// 3. schedule changefeed maintainer
+	msgs, err = c.scheduleMaintainer()
 	if err != nil {
 		return state, err
 	}
 	c.sendMessages(msgs)
+
+	c.printStatus()
 	return state, nil
 }
 
@@ -218,10 +168,6 @@ func shouldRunChangefeed(state model.FeedState) bool {
 	return true
 }
 
-func (c *coordinator) GetNodeInfo() *model.CaptureInfo {
-	return c.nodeInfo
-}
-
 func (c *coordinator) AsyncStop() {
 }
 
@@ -235,14 +181,76 @@ func (c *coordinator) sendMessages(msgs []rpc.Message) {
 	}
 }
 
-func (c *coordinator) scheduleMaintainer(allInferiors []model.ChangeFeedID) ([]rpc.Message, error) {
+func (c *coordinator) scheduleMaintainer() ([]rpc.Message, error) {
 	if !c.CheckAllCaptureInitialized() {
 		return nil, nil
 	}
+	allChangefeedID := make([]model.ChangeFeedID, 0)
+	// check all changefeeds.
+	for _, reactor := range allChangefeeds {
+		changefeedID := model.DefaultChangeFeedID(reactor.ID)
+		_, exist := c.GetChangefeedStateMachine(changefeedID)
+		if !exist {
+			// check if changefeed should be running
+			if !shouldRunChangefeed(reactor.State) {
+				continue
+			}
+			allChangefeedID = append(allChangefeedID, changefeedID)
+		} else {
+			if shouldRunChangefeed(reactor.State) {
+				allChangefeedID = append(allChangefeedID, changefeedID)
+			}
+		}
+	}
 	tasks := c.scheduler.Schedule(
-		allInferiors,
+		allChangefeedID,
 		c.captures,
 		c.stateMachines,
 	)
 	return c.HandleScheduleTasks(tasks)
+}
+
+func (c *coordinator) printStatus() {
+	if time.Since(c.lastCheckTime) > time.Second*10 {
+		workingTask := 0
+		prepareTask := 0
+		absentTask := 0
+		commitTask := 0
+		removingTask := 0
+		for _, value := range c.stateMachines {
+			switch value.State {
+			case SchedulerStatusAbsent:
+				absentTask++
+			case SchedulerStatusPrepare:
+				prepareTask++
+			case SchedulerStatusCommit:
+				commitTask++
+			case SchedulerStatusWorking:
+				workingTask++
+			case SchedulerStatusRemoving:
+				removingTask++
+			}
+		}
+
+		log.Info("changefeed status",
+			zap.Int("absent", absentTask),
+			zap.Int("prepare", prepareTask),
+			zap.Int("commit", commitTask),
+			zap.Int("working", workingTask),
+			zap.Int("removing", removingTask))
+		c.lastCheckTime = time.Now()
+	}
+}
+
+var allChangefeeds = make(map[model.ChangeFeedID]*model.ChangeFeedInfo)
+
+func init() {
+	for i := 0; i < 3; i++ {
+		id := fmt.Sprintf("%d", i)
+		allChangefeeds[model.DefaultChangeFeedID(id)] = &model.ChangeFeedInfo{
+			ID:      id,
+			Config:  config.GetDefaultReplicaConfig(),
+			SinkURI: "blackhole://",
+		}
+	}
 }
