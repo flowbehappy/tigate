@@ -88,6 +88,7 @@ func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startT
 	tableEventDispatcher.Sink.AddTableSpan(tableSpan)
 	tableEventDispatcher.task = NewEventDispatcherTask(tableEventDispatcher)
 	threadpool.GetTaskSchedulerInstance().EventDispatcherTaskScheduler.Submit(tableEventDispatcher.task)
+	// 马上触发 心跳
 	return tableEventDispatcher
 }
 
