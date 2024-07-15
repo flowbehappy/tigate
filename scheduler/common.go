@@ -147,7 +147,7 @@ func (r SchedulerStatus) String() string {
 	}
 }
 
-// ComponentStatus is the state in inferior wacher side
+// ComponentStatus is the state in inferior watcher side
 // Absent -> Preparing -> Prepared -> Working -> Stopping -> Stopped
 // todo: define it in pb file
 type ComponentStatus int

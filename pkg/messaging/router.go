@@ -27,6 +27,12 @@ func (r *router) registerHandler(msgType string, handler MessageHandler) {
 	r.handlers[msgType] = handler
 }
 
+func (r *router) deRegisterHandler(topic string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.handlers, topic)
+}
+
 func (r *router) runDispatch(ctx context.Context, wg *sync.WaitGroup, out <-chan *TargetMessage) {
 	wg.Add(1)
 	go func() {

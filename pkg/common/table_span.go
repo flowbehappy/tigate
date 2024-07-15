@@ -18,19 +18,18 @@ import (
 	"encoding/hex"
 	"fmt"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/scheduler"
 )
 
 // TableSpan implement the InferiorID interface, it is the replicate unit,
 // it can be a partial table region is the split table feature is enable for kafka sink
 type TableSpan struct {
-	TableID  uint64
-	StartKey []byte
-	EndKey   []byte
+	*heartbeatpb.TableSpan
 }
 
 // DDLSpan is the special span for Table Trigger Event Dispatcher
-var DDLSpan TableSpan = TableSpan{TableID: 0, StartKey: nil, EndKey: nil}
+var DDLSpan = TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 0, StartKey: nil, EndKey: nil}}
 
 // Less compares two Spans, defines the order between spans.
 func (s *TableSpan) Less(inferior scheduler.InferiorID) bool {

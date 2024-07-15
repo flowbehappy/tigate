@@ -24,7 +24,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
-	watcher "github.com/flowbehappy/tigate/server/wacher"
+	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/entry/schema"
@@ -39,7 +39,7 @@ import (
 )
 
 // Maintainer is response for handle changefeed replication tasks, Maintainer should:
-// 1. schedules tables to ticdc wacher
+// 1. schedules tables to ticdc watcher
 // 2. calculate changefeed checkpoint ts
 // 3. send changefeed status to coordinator
 // 4. handle heartbeat reported by dispatcher
@@ -71,8 +71,9 @@ type Maintainer struct {
 	removing    *atomic.Bool
 	isSecondary *atomic.Bool
 
-	msgLock sync.RWMutex
-	msgBuf  []*messaging.TargetMessage
+	msgLock  sync.RWMutex
+	msgBuf   []*messaging.TargetMessage
+	msgTopic string
 
 	lastCheckTime time.Time
 }
@@ -97,12 +98,13 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		isSecondary:   atomic.NewBool(isSecondary),
 		removing:      atomic.NewBool(false),
 		supervisor:    NewSupervisor(cfID),
+		msgTopic:      "maintainer/" + cfID.ID,
 	}
 	if !isSecondary {
 		m.state = scheduler.ComponentStatusWorking
 	}
 	// receive messages
-	center.RegisterHandler("maintainer/"+m.id.ID, func(msg *messaging.TargetMessage) error {
+	center.RegisterHandler(m.msgTopic, func(msg *messaging.TargetMessage) error {
 		if m.isSecondary.Load() {
 			return nil
 		}
@@ -133,7 +135,9 @@ func (m *Maintainer) Execute(status threadpool.TaskStatus) (threadpool.TaskStatu
 	m.state = scheduler.ComponentStatusWorking
 
 	// handle messages
-	m.handleMessages()
+	if err := m.handleMessages(); err != nil {
+		return status, time.Now().Add(50 * time.Millisecond)
+	}
 
 	nodes := m.nodeManager.GetAliveCaptures()
 	//check capture changes
@@ -174,9 +178,7 @@ func (m *Maintainer) handleMessages() error {
 			for _, info := range req.Info {
 				status = append(status, &ReplicaSetStatus{
 					ID: &common.TableSpan{
-						TableID:  info.Span.TableID,
-						StartKey: info.Span.StartKey,
-						EndKey:   info.Span.EndKey,
+						TableSpan: info.Span,
 					},
 					Status: scheduler.ComponentStatus(info.SchedulerStatus),
 				})
@@ -193,9 +195,7 @@ func (m *Maintainer) handleMessages() error {
 			for _, info := range req.Statuses {
 				status = append(status, &ReplicaSetStatus{
 					ID: &common.TableSpan{
-						TableID:  info.Span.TableID,
-						StartKey: info.Span.StartKey,
-						EndKey:   info.Span.EndKey,
+						TableSpan: info.Span,
 					},
 					Status: scheduler.ComponentStatus(info.SchedulerStatus),
 				})
@@ -221,14 +221,15 @@ func (m *Maintainer) sendMessages(msgs []rpc.Message) {
 var allInferiors []scheduler.InferiorID
 
 func init() {
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 1000000; i++ {
 		tblID := int64(100 + i)
 		start, end := spanz.GetTableRange(tblID)
 		allInferiors = append(allInferiors, &common.TableSpan{
-			TableID:  uint64(tblID),
-			StartKey: start,
-			EndKey:   end,
-		})
+			TableSpan: &heartbeatpb.TableSpan{
+				TableID:  uint64(tblID),
+				StartKey: start,
+				EndKey:   end,
+			}})
 	}
 }
 
@@ -244,8 +245,9 @@ func (m *Maintainer) scheduleTableSpan() ([]rpc.Message, error) {
 	return m.supervisor.HandleScheduleTasks(tasks)
 }
 
-func (m *Maintainer) Cancel() {
-
+// Close cleanup resources
+func (m *Maintainer) Close() {
+	m.messageCenter.DeRegisterHandler(m.msgTopic)
 }
 
 func (m *Maintainer) initChangefeed() error {

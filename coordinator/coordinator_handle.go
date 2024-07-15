@@ -90,6 +90,7 @@ func (c *coordinator) HandleAliveCaptureUpdate(
 		if capture.state == CaptureStateUninitialized &&
 			time.Since(capture.lastBootstrapTime) > time.Second {
 			msgs = append(msgs, c.newBootstrapMessage(id))
+			capture.lastBootstrapTime = time.Now()
 		}
 	}
 

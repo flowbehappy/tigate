@@ -192,9 +192,7 @@ func (m *DispatcherManager) handleDispatchTableSpanRequest(
 	request *messaging.ScheduleDispatcherRequest,
 ) {
 	tableSpan := &common.TableSpan{
-		TableID:  request.GetConfig().Span.TableID,
-		StartKey: request.GetConfig().Span.StartKey,
-		EndKey:   request.GetConfig().Span.EndKey,
+		TableSpan: request.GetConfig().Span,
 	}
 	if request.GetScheduleAction() == heartbeatpb.ScheduleAction_Create {
 		span, ok := m.dispatchers.Get(tableSpan)
