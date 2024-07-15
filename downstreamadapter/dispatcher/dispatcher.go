@@ -14,6 +14,7 @@
 package dispatcher
 
 import (
+	"github.com/flowbehappy/tigate/coordinator"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -62,6 +63,7 @@ type Dispatcher interface {
 	GetSyncPointInfo() *SyncPointInfo
 	GetMemoryUsage() *MemoryUsage
 	PushEvent(event *eventpb.TxnEvent)
+	GetComponentStatus() coordinator.ComponentStatus
 }
 
 type DispatcherType uint64
@@ -139,12 +141,13 @@ type HeartBeatInfo struct {
 	// BlockTs        uint64
 	// BlockTableSpan []*common.TableSpan
 	// TableSpan      *common.TableSpan
-	CheckpointTs uint64
-	Id           common.DispatcherID
+	CheckpointTs    uint64
+	Id              common.DispatcherID
+	TableSpan       *common.TableSpan
+	ComponentStatus coordinator.ComponentStatus
 }
 
-// func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
-func CollectDispatcherCheckpointTs(d Dispatcher) uint64 {
+func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
 	var checkpointTs uint64
 	// The event in dispatcher could be in
 	// 1. Sink
@@ -194,7 +197,12 @@ func CollectDispatcherCheckpointTs(d Dispatcher) uint64 {
 	// 	//TableSpan:    d.GetTableSpan(),
 	// 	Id: d.GetId(),
 	// }
-	return checkpointTs
+	return &HeartBeatInfo{
+		ComponentStatus: d.GetComponentStatus(),
+		CheckpointTs:    checkpointTs,
+		TableSpan:       d.GetTableSpan(),
+		Id:              d.GetId(),
+	}
 }
 
 /*

@@ -72,6 +72,10 @@ func (t *MysqlWorkerDDLEventTask) Release() {
 	//
 }
 
+func (t *MysqlWorkerDDLEventTask) Cancel() {
+	//
+}
+
 // 这个 task 应该是 event dispatcher manager 创建以后，会直接生成好的 task，扔到一个单独的 threadpool 中
 // task 的 生命周期应该是跟 event dispatcher manager 一样
 // 这个 task 只处理 dml event

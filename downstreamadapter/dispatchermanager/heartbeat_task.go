@@ -18,6 +18,7 @@ import (
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 )
 
@@ -30,6 +31,7 @@ type HeartbeatSendTask struct {
 	ticker                 *time.Ticker
 	eventDispatcherManager *EventDispatcherManager
 	taskStatus             threadpool.TaskStatus
+	maintainerID           messaging.ServerId
 }
 
 func newHeartBeatSendTask(m *EventDispatcherManager) *HeartbeatSendTask {
@@ -37,6 +39,7 @@ func newHeartBeatSendTask(m *EventDispatcherManager) *HeartbeatSendTask {
 		ticker:                 time.NewTicker(50 * time.Millisecond),
 		eventDispatcherManager: m,
 		taskStatus:             threadpool.Running,
+		maintainerID:           m.MaintainerID,
 	}
 }
 
@@ -50,7 +53,7 @@ func (t *HeartbeatSendTask) SetStatus(taskStatus threadpool.TaskStatus) {
 
 func (t *HeartbeatSendTask) Execute(timeout time.Duration) threadpool.TaskStatus {
 	message := t.eventDispatcherManager.CollectHeartbeatInfo()
-	t.eventDispatcherManager.HeartbeatRequestQueue.Enqueue(message)
+	t.eventDispatcherManager.HeartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: t.maintainerID, Request: message})
 	return threadpool.Waiting
 
 }

@@ -15,8 +15,10 @@ package dispatcher
 
 import (
 	"bytes"
+	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/coordinator"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -65,19 +67,23 @@ type TableEventDispatcher struct {
 	task *EventDispatcherTask
 
 	tableInfo *common.TableInfo // TODO:后续做成一整个 tableInfo Struct
+
+	statusMutex     sync.Mutex
+	componentStatus coordinator.ComponentStatus
 }
 
 func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, syncPointInfo *SyncPointInfo) *TableEventDispatcher {
 	tableEventDispatcher := &TableEventDispatcher{
-		Id:            common.DispatcherID(uuid.New()),
-		Ch:            make(chan *common.TxnEvent, 1000),
-		TableSpan:     tableSpan,
-		Sink:          sink,
-		State:         NewState(),
-		ResolvedTs:    startTs,
-		HeartbeatChan: make(chan *HeartBeatResponseMessage, 100),
-		SyncPointInfo: syncPointInfo,
-		MemoryUsage:   NewMemoryUsage(),
+		Id:              common.DispatcherID(uuid.New()),
+		Ch:              make(chan *common.TxnEvent, 1000),
+		TableSpan:       tableSpan,
+		Sink:            sink,
+		State:           NewState(),
+		ResolvedTs:      startTs,
+		HeartbeatChan:   make(chan *HeartBeatResponseMessage, 100),
+		SyncPointInfo:   syncPointInfo,
+		MemoryUsage:     NewMemoryUsage(),
+		componentStatus: coordinator.ComponentStatusWorking,
 	}
 	tableEventDispatcher.Sink.AddTableSpan(tableSpan)
 	tableEventDispatcher.task = NewEventDispatcherTask(tableEventDispatcher)
@@ -194,6 +200,10 @@ func (d *TableEventDispatcher) Remove() {
 	// TODO: 修改这个 dispatcher 的 status 为 removing
 	d.task.Cancel()
 	d.Sink.StopTableSpan(d.TableSpan)
+
+	d.statusMutex.Lock()
+	defer d.statusMutex.Unlock()
+	d.componentStatus = coordinator.ComponentStatusStopping
 }
 
 func (d *TableEventDispatcher) TryClose() (uint64, bool) {
@@ -211,7 +221,14 @@ func (d *TableEventDispatcher) TryClose() (uint64, bool) {
 		}
 
 		d.MemoryUsage.Clear()
+		d.componentStatus = coordinator.ComponentStatusStopped
 		return checkpointTs, true
 	}
 	return 0, false
+}
+
+func (d *TableEventDispatcher) GetComponentStatus() coordinator.ComponentStatus {
+	d.statusMutex.Lock()
+	defer d.statusMutex.Unlock()
+	return d.componentStatus
 }
