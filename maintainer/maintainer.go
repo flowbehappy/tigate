@@ -20,6 +20,7 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	appctx "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
@@ -48,8 +49,6 @@ type Maintainer struct {
 	config *model.ChangeFeedInfo
 	status *model.ChangeFeedStatus
 	taskID threadpool.TaskId
-
-	messageCenter messaging.MessageCenter
 
 	state      scheduler.ComponentStatus
 	supervisor *Supervisor
@@ -80,7 +79,6 @@ type Maintainer struct {
 
 // NewMaintainer create the maintainer for the changefeed
 func NewMaintainer(cfID model.ChangeFeedID,
-	center messaging.MessageCenter,
 	isSecondary bool,
 ) *Maintainer {
 	m := &Maintainer{
@@ -89,7 +87,6 @@ func NewMaintainer(cfID model.ChangeFeedID,
 			NewBasicScheduler(1000),
 			NewBalanceScheduler(time.Minute, 1000)),
 		taskID:        threadpool.NewGlobalTaskId(),
-		messageCenter: center,
 		state:         scheduler.ComponentStatusPrepared,
 		removed:       atomic.NewBool(false),
 		taskCh:        make(chan Task, 1024),
@@ -104,7 +101,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		m.state = scheduler.ComponentStatusWorking
 	}
 	// receive messages
-	center.RegisterHandler(m.msgTopic, func(msg *messaging.TargetMessage) error {
+	appcontext.GetService[messaging.MessageCenter]("messageCenter").RegisterHandler(m.msgTopic, func(msg *messaging.TargetMessage) error {
 		if m.isSecondary.Load() {
 			return nil
 		}
@@ -118,7 +115,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 
 func (m *Maintainer) newBootstrapMessage(id model.CaptureID) rpc.Message {
 	return &heartbeatpb.MaintainerBootstrapRequest{
-		Id: id,
+		ChangefeedID: id,
 	}
 }
 
@@ -210,7 +207,7 @@ func (m *Maintainer) handleMessages() error {
 					ID: &common.TableSpan{
 						TableSpan: info.Span,
 					},
-					Status: scheduler.ComponentStatus(info.SchedulerStatus),
+					Status: scheduler.ComponentStatus(info.ComponentStatus),
 				})
 			}
 			m.supervisor.UpdateCaptureStatus(msg.From.String(), status)
@@ -223,7 +220,7 @@ func (m *Maintainer) handleMessages() error {
 
 func (m *Maintainer) sendMessages(msgs []rpc.Message) {
 	for _, msg := range msgs {
-		err := m.messageCenter.SendCommand(msg.(*messaging.TargetMessage))
+		err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(msg.(*messaging.TargetMessage))
 		if err != nil {
 			log.Error("failed to send coordinator request", zap.Any("msg", msg), zap.Error(err))
 			continue
@@ -260,7 +257,7 @@ func (m *Maintainer) scheduleTableSpan() ([]rpc.Message, error) {
 
 // Close cleanup resources
 func (m *Maintainer) Close() {
-	m.messageCenter.DeRegisterHandler(m.msgTopic)
+	appcontext.GetService[messaging.MessageCenter]("messageCenter").DeRegisterHandler(m.msgTopic)
 }
 
 func (m *Maintainer) initChangefeed() error {
