@@ -24,6 +24,6 @@ message MessageSummary {
 
 service MessageCenter {
     // The clients call this method to build a event channel from client to server.
-    rpc sendEvents(stream Message) returns (MessageSummary);
-    rpc sendCommands(stream Message) returns (MessageSummary);
+    rpc sendEvents(Message) returns (stream Message);
+    rpc sendCommands(Message) returns (stream Message);
 }
