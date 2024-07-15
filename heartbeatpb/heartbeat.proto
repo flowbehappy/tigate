@@ -92,7 +92,8 @@ message DispatchMaintainerRequest {
 
 message AddMaintainerRequest  {
     string id = 1;
-    bool is_secondary = 2;
+    bytes config = 2;
+    bool is_secondary = 3;
 }
 
 message RemoveMaintainerRequest  {
@@ -102,6 +103,7 @@ message RemoveMaintainerRequest  {
 
 message MaintainerBootstrapRequest {
     string changefeedID = 1;
+    bytes config = 2;
 }
 
 message MaintainerBootstrapResponse {

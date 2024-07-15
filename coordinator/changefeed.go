@@ -35,9 +35,9 @@ type changefeed struct {
 
 func newChangefeed(ID model.ChangeFeedID) *changefeed {
 	return &changefeed{
-		ID: ID,
-		//Info:   allChangefeeds[cfID],
-		//Status: &model.ChangeFeedStatus{},
+		ID:     ID,
+		Info:   allChangefeeds[ID],
+		Status: &model.ChangeFeedStatus{},
 	}
 }
 

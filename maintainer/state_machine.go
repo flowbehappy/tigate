@@ -355,7 +355,11 @@ func (s *StateMachine) pollOnAbsent(
 ) (bool, error) {
 	switch input.GetInferiorState() {
 	case scheduler.ComponentStatusAbsent:
-		s.State = scheduler.SchedulerStatusPrepare
+		if s.Primary == "" && len(s.Servers) == 0 {
+			s.State = scheduler.SchedulerStatusCommit
+		} else {
+			s.State = scheduler.SchedulerStatusPrepare
+		}
 		err := s.setCapture(captureID, RoleSecondary)
 		return true, errors.Trace(err)
 
