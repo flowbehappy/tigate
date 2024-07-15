@@ -283,9 +283,7 @@ func (s *Supervisor) HandleScheduleTasks(
 		if s.runningTasks.Len() == s.maxTaskConcurrency {
 			log.Debug("too many running task",
 				zap.String("id", s.ID.String()))
-			// Does not use break, in case there is burst balance task
-			// in the remaining tasks.
-			continue
+			break
 		}
 
 		var id scheduler.InferiorID
