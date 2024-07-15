@@ -31,6 +31,8 @@ const (
 	TypeMaintainerHeartbeatRequest
 	TypeMaintainerBootstrapResponse
 	TypeMaintainerBootstrapRequest
+	TypeMessageError
+	TypeMessageHandShake
 )
 
 func (t IOType) String() string {
@@ -65,6 +67,8 @@ func (t IOType) String() string {
 		return "BootstrapMaintainerRequest"
 	case TypeMaintainerBootstrapResponse:
 		return "MaintainerBootstrapResponse"
+	case TypeMessageError:
+		return "MessageError"
 	default:
 	}
 	return "Unknown"
@@ -257,6 +261,8 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 		m = &MaintainerBootstrapResponse{}
 	case TypeMaintainerBootstrapRequest:
 		m = &MaintainerBootstrapRequest{}
+	case TypeMessageError:
+		m = &MessageError{AppError: &apperror.AppError{}}
 	default:
 		log.Panic("Unimplemented IOType", zap.Stringer("Type", ioType))
 	}
@@ -406,4 +412,24 @@ func (m *MaintainerBootstrapResponse) encode(buf []byte) []byte {
 func (m *MaintainerBootstrapResponse) decode(data []byte) error {
 	m.MaintainerBootstrapResponse = &heartbeatpb.MaintainerBootstrapResponse{}
 	return m.Unmarshal(data)
+}
+
+type MessageError struct {
+	*apperror.AppError
+}
+
+func NewMessageError(err *apperror.AppError) *MessageError {
+	return &MessageError{AppError: err}
+}
+
+func (m *MessageError) encode(buf []byte) []byte {
+	buf = append(buf, byte(m.Type))
+	buf = append(buf, []byte(m.Reason)...)
+	return buf
+}
+
+func (m *MessageError) decode(data []byte) error {
+	m.Type = apperror.ErrorType(data[0])
+	m.Reason = string(data[1:])
+	return nil
 }
