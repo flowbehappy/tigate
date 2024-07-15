@@ -221,7 +221,7 @@ func (m *Maintainer) sendMessages(msgs []rpc.Message) {
 var allInferiors []scheduler.InferiorID
 
 func init() {
-	for i := 0; i < 1000000; i++ {
+	for i := 0; i < 3; i++ {
 		tblID := int64(100 + i)
 		start, end := spanz.GetTableRange(tblID)
 		allInferiors = append(allInferiors, &common.TableSpan{

@@ -98,7 +98,7 @@ func NewCoordinator(capture *model.CaptureInfo,
 var allChangefeeds = make(map[model.ChangeFeedID]*model.ChangeFeedInfo)
 
 func init() {
-	for i := 0; i < 1; i++ {
+	for i := 0; i < 3; i++ {
 		id := fmt.Sprintf("%d", i)
 		allChangefeeds[model.DefaultChangeFeedID(id)] = &model.ChangeFeedInfo{
 			ID:      id,

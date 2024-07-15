@@ -144,6 +144,7 @@ func (h *HeartBeatRequest) encode(buf []byte) []byte {
 }
 
 func (h *HeartBeatRequest) decode(data []byte) error {
+	h.HeartBeatRequest = &heartbeatpb.HeartBeatRequest{}
 	return h.Unmarshal(data)
 }
 
@@ -162,6 +163,7 @@ func (h *HeartBeatResponse) encode(buf []byte) []byte {
 }
 
 func (h *HeartBeatResponse) decode(data []byte) error {
+	h.HeartBeatResponse = &heartbeatpb.HeartBeatResponse{}
 	return h.Unmarshal(data)
 }
 
@@ -180,6 +182,7 @@ func (s *ScheduleDispatcherRequest) encode(buf []byte) []byte {
 }
 
 func (s *ScheduleDispatcherRequest) decode(data []byte) error {
+	s.ScheduleDispatcherRequest = &heartbeatpb.ScheduleDispatcherRequest{}
 	return s.Unmarshal(data)
 }
 
@@ -198,6 +201,7 @@ func (f *EventFeed) encode(buf []byte) []byte {
 }
 
 func (f *EventFeed) decode(data []byte) error {
+	f.EventFeed = &eventpb.EventFeed{}
 	return f.Unmarshal(data)
 }
 
@@ -216,6 +220,7 @@ func (r *RegisterDispatcherRequest) encode(buf []byte) []byte {
 }
 
 func (r *RegisterDispatcherRequest) decode(data []byte) error {
+	r.RegisterDispatcherRequest = &eventpb.RegisterDispatcherRequest{}
 	return r.Unmarshal(data)
 }
 
