@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -35,10 +36,9 @@ var TempEpoch = uint64(1)
 // NodeManager manager the read view of all captures, other modules can get the captures information from it
 // and register server update event handler
 type NodeManager struct {
-	session       *concurrency.Session
-	etcdClient    etcd.CDCEtcdClient
-	messageCenter messaging.MessageCenter
-	nodes         map[string]*model.CaptureInfo
+	session    *concurrency.Session
+	etcdClient etcd.CDCEtcdClient
+	nodes      map[string]*model.CaptureInfo
 
 	handleRWLock sync.RWMutex
 	handles      map[string]func([]*model.CaptureInfo, []*model.CaptureInfo)
@@ -47,13 +47,11 @@ type NodeManager struct {
 func NewCaptureManager(
 	session *concurrency.Session,
 	etcdClient etcd.CDCEtcdClient,
-	mc messaging.MessageCenter,
 ) *NodeManager {
 	return &NodeManager{
-		session:       session,
-		etcdClient:    etcdClient,
-		messageCenter: mc,
-		nodes:         make(map[string]*model.CaptureInfo),
+		session:    session,
+		etcdClient: etcdClient,
+		nodes:      make(map[string]*model.CaptureInfo),
 	}
 }
 
@@ -73,7 +71,7 @@ func (c *NodeManager) Tick(ctx context.Context,
 		for _, capture := range c.nodes {
 			if _, exist := state.Captures[capture.ID]; !exist {
 				sid := messaging.ServerId(capture.ID)
-				c.messageCenter.RemoveTarget(sid)
+				appcontext.GetService[messaging.MessageCenter]("messageCenter").RemoveTarget(sid)
 				removed = append(removed, capture)
 			}
 		}
@@ -82,7 +80,7 @@ func (c *NodeManager) Tick(ctx context.Context,
 			if _, exist := c.nodes[capture.ID]; !exist {
 
 				sid := messaging.ServerId(capture.ID)
-				c.messageCenter.AddTarget(sid, TempEpoch, capture.AdvertiseAddr)
+				appcontext.GetService[messaging.MessageCenter]("messageCenter").AddTarget(sid, TempEpoch, capture.AdvertiseAddr)
 				newCaptures = append(newCaptures, capture)
 			}
 			allCaptures[capture.ID] = capture

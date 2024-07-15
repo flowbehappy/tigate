@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils/threadpool"
@@ -33,8 +34,6 @@ import (
 // 2. handle dispatcher command from coordinator: add or remove changefeed maintainer
 // 3. check maintainer liveness
 type Manager struct {
-	messageCenter messaging.MessageCenter
-
 	maintainers map[model.ChangeFeedID]*Maintainer
 
 	msgLock sync.RWMutex
@@ -50,14 +49,12 @@ type Manager struct {
 // 1. manager receives bootstrap command from coordinator
 // 2. manager manages maintainer lifetime
 // 3. manager report maintainer status to coordinator
-func NewMaintainerManager(messageCenter messaging.MessageCenter,
-	selfServerID messaging.ServerId) *Manager {
+func NewMaintainerManager(selfServerID messaging.ServerId) *Manager {
 	m := &Manager{
-		messageCenter: messageCenter,
-		maintainers:   make(map[model.ChangeFeedID]*Maintainer),
-		selfServerID:  selfServerID,
+		maintainers:  make(map[model.ChangeFeedID]*Maintainer),
+		selfServerID: selfServerID,
 	}
-	messageCenter.RegisterHandler(m.Name(), func(msg *messaging.TargetMessage) error {
+	appcontext.GetService[messaging.MessageCenter]("messageCenter").RegisterHandler(m.Name(), func(msg *messaging.TargetMessage) error {
 		m.msgLock.Lock()
 		m.msgBuf = append(m.msgBuf, msg)
 		m.msgLock.Unlock()
@@ -103,7 +100,7 @@ func (m *Manager) Run(ctx context.Context) error {
 						m.statusChanged.Store(false)
 						m.lastReportTime = time.Now()
 					}
-					err := m.messageCenter.SendCommand(messaging.NewTargetMessage(
+					err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(messaging.NewTargetMessage(
 						m.coordinatorID,
 						"coordinator",
 						response,
@@ -164,7 +161,7 @@ func (m *Manager) sendMessages(msg *heartbeatpb.MaintainerHeartbeat) {
 		"coordinator",
 		msg,
 	)
-	err := m.messageCenter.SendCommand(target)
+	err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(target)
 	if err != nil {
 		log.Warn("send command failed", zap.Error(err))
 	}
@@ -183,7 +180,7 @@ func (m *Manager) handleDispatchMaintainerRequest(
 		cfID := model.DefaultChangeFeedID(req.GetId())
 		cf, ok := m.maintainers[cfID]
 		if !ok {
-			cf = NewMaintainer(cfID, m.messageCenter, req.IsSecondary)
+			cf = NewMaintainer(cfID, req.IsSecondary)
 			m.maintainers[cfID] = cf
 			threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf, threadpool.CPUTask, time.Now())
 		}

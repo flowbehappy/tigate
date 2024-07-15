@@ -21,6 +21,7 @@ import (
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/google/uuid"
 	"github.com/ngaut/log"
@@ -36,32 +37,28 @@ Besides, EventCollector also generate SyncPoint Event for dispatchers when neces
 EventCollector is an instance-level component.
 */
 type EventCollector struct {
-	messageCenter     messaging.MessageCenter
 	clusterID         messaging.ServerId
-	targetID          messaging.ServerId
 	dispatcherMap     map[common.DispatcherID]dispatcher.Dispatcher // dispatcher_id --> dispatcher
 	wg                sync.WaitGroup
 	globalMemoryQuota int64
 }
 
-func NewEventCollector(messageCenter messaging.MessageCenter, globalMemoryQuota int64, clusterID messaging.ServerId, targetID messaging.ServerId) *EventCollector {
+func NewEventCollector(globalMemoryQuota int64, clusterID messaging.ServerId) *EventCollector {
 	eventCollector := EventCollector{
-		messageCenter:     messageCenter,
 		clusterID:         clusterID,
-		targetID:          targetID,
 		globalMemoryQuota: globalMemoryQuota,
 		dispatcherMap:     make(map[common.DispatcherID]dispatcher.Dispatcher),
 	}
-	eventCollector.messageCenter.RegisterHandler(EventFeedTopic, eventCollector.RecvEventsMessage)
+	context.GetService[messaging.MessageCenter]("messageCenter").RegisterHandler(EventFeedTopic, eventCollector.RecvEventsMessage)
 	return &eventCollector
 }
 
 func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uint64) error {
-	err := c.messageCenter.SendEvent(&messaging.TargetMessage{
-		To:    c.targetID,
+	err := context.GetService[messaging.MessageCenter]("messageCenter").SendEvent(&messaging.TargetMessage{
+		To:    c.clusterID, // demo 中 每个节点都有自己的 eventService
 		Topic: RegisterDispatcherTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
-		Message: eventpb.RegisterDispatcherRequest{
+		Message: &eventpb.RegisterDispatcherRequest{
 			DispatcherId: uuid.UUID(d.GetId()).String(),
 			TableSpan: &eventpb.TableSpan{
 				TableID:  d.GetTableSpan().TableID,
@@ -80,11 +77,11 @@ func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uin
 }
 
 func (c *EventCollector) RemoveDispatcher(d dispatcher.Dispatcher) error {
-	err := c.messageCenter.SendEvent(&messaging.TargetMessage{
-		To:    c.targetID,
+	err := context.GetService[messaging.MessageCenter]("messageCenter").SendEvent(&messaging.TargetMessage{
+		To:    c.clusterID,
 		Topic: RegisterDispatcherTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
-		Message: eventpb.RegisterDispatcherRequest{
+		Message: &eventpb.RegisterDispatcherRequest{
 			DispatcherId: uuid.UUID(d.GetId()).String(),
 			Remove:       true,
 		},
@@ -106,7 +103,7 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 		}
 	*/
 
-	eventFeeds, ok := msg.Message.(*messaging.EventFeed)
+	eventFeeds, ok := msg.Message.(*eventpb.EventFeed)
 	if !ok {
 		log.Error("invalid event feed message", zap.Any("msg", msg))
 		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: fmt.Sprintf("invalid heartbeat response message")}

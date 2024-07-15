@@ -22,6 +22,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -37,10 +38,9 @@ HeartBeatCollect is responsible for sending heartbeat requests and receiving hea
 HeartBeatCollector is an instance-level component. It will deal with all the heartbeat messages from all dispatchers in all dispatcher managers.
 */
 type HeartBeatCollector struct {
-	messageCenter messaging.MessageCenter
-	wg            sync.WaitGroup
-	from          messaging.ServerId
-	target        messaging.ServerId
+	wg     sync.WaitGroup
+	from   messaging.ServerId
+	target messaging.ServerId
 
 	eventDispatcherManagerMutex sync.RWMutex
 	eventDispatcherManagerMap   map[model.ChangeFeedID]*dispatchermanager.EventDispatcherManager // changefeedID -> EventDispatcherManager
@@ -50,15 +50,14 @@ type HeartBeatCollector struct {
 	requestQueue         *dispatchermanager.HeartbeatRequestQueue
 }
 
-func NewHeartBeatCollector(messageCenter messaging.MessageCenter, serverId messaging.ServerId) *HeartBeatCollector {
+func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 	heartBeatCollector := HeartBeatCollector{
-		messageCenter:  messageCenter,
 		from:           serverId,
 		requestQueue:   dispatchermanager.NewHeartbeatRequestQueue(),
 		reponseChanMap: make(map[model.ChangeFeedID]*dispatchermanager.HeartbeatResponseQueue),
 	}
-	heartBeatCollector.messageCenter.RegisterHandler(heartbeatResponseTopic, heartBeatCollector.RecvHeartBeatResponseMessages)
-	heartBeatCollector.messageCenter.RegisterHandler(schedulerDispatcherTopic, heartBeatCollector.RecvSchedulerDispatcherRequestMessages)
+	context.GetService[messaging.MessageCenter]("messageCenter").RegisterHandler(heartbeatResponseTopic, heartBeatCollector.RecvHeartBeatResponseMessages)
+	context.GetService[messaging.MessageCenter]("messageCenter").RegisterHandler(schedulerDispatcherTopic, heartBeatCollector.RecvSchedulerDispatcherRequestMessages)
 	heartBeatCollector.wg.Add(1)
 	go heartBeatCollector.SendHeartBeatMessages()
 
@@ -84,7 +83,7 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *dispatchermanager
 func (c *HeartBeatCollector) SendHeartBeatMessages() {
 	for {
 		heartBeatRequestWithTargetID := c.requestQueue.Dequeue()
-		err := c.messageCenter.SendEvent(&messaging.TargetMessage{
+		err := context.GetService[messaging.MessageCenter]("messageCenter").SendEvent(&messaging.TargetMessage{
 			To:      heartBeatRequestWithTargetID.TargetID,
 			Topic:   heartbeatRequestTopic,
 			Type:    messaging.TypeHeartBeatRequest,
