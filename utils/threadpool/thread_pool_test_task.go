@@ -21,16 +21,11 @@ import (
 var testCount int64 = 0
 
 type BasicCPUTask struct {
-	id TaskId
 }
 
 func newBasicCPUTask() *BasicCPUTask {
-	return &BasicCPUTask{
-		id: NewGlobalTaskId(),
-	}
+	return &BasicCPUTask{}
 }
-
-func (t *BasicCPUTask) TaskId() TaskId { return t.id }
 
 func (t *BasicCPUTask) Execute() (TaskStatus, time.Time) {
 	for i := 0; i < 100; i++ {
@@ -44,9 +39,7 @@ type BasicIOTask struct {
 }
 
 func newBasicIOTask() *BasicIOTask {
-	return &BasicIOTask{
-		id: NewGlobalTaskId(),
-	}
+	return &BasicIOTask{}
 }
 
 func (t *BasicIOTask) TaskId() TaskId { return t.id }
@@ -62,9 +55,7 @@ type BasicWaitTask struct {
 }
 
 func newBasicWaitTask() *BasicWaitTask {
-	return &BasicWaitTask{
-		id: NewGlobalTaskId(),
-	}
+	return &BasicWaitTask{}
 }
 
 func (t *BasicWaitTask) TaskId() TaskId { return t.id }
@@ -76,8 +67,6 @@ func (t *BasicWaitTask) Execute() (TaskStatus, time.Time) {
 }
 
 type PureCPUTask struct {
-	id TaskId
-
 	finalChan *chan int
 	ch        *chan int
 	target    int64
@@ -86,14 +75,12 @@ type PureCPUTask struct {
 
 func newPureCPUTask(finalChan *chan int, ch *chan int, target int64, addCount int) *PureCPUTask {
 	return &PureCPUTask{
-		id:        NewGlobalTaskId(),
 		finalChan: finalChan,
 		ch:        ch,
 		target:    target,
 		addCount:  addCount,
 	}
 }
-func (t *PureCPUTask) TaskId() TaskId { return t.id }
 
 func (t *PureCPUTask) Execute() (TaskStatus, time.Time) {
 	select {
@@ -111,7 +98,6 @@ func (t *PureCPUTask) Execute() (TaskStatus, time.Time) {
 }
 
 type CPUWithWaitTask struct {
-	id           TaskId
 	nextExecTime time.Time
 
 	finalChan *chan int
@@ -119,11 +105,8 @@ type CPUWithWaitTask struct {
 	addCount  int
 }
 
-func (t *CPUWithWaitTask) TaskId() TaskId { return t.id }
-
 func newCPUWithWaitTask(finalChan *chan int, taskCount int, addCount int, wait time.Duration) *CPUWithWaitTask {
 	return &CPUWithWaitTask{
-		id:           NewGlobalTaskId(),
 		nextExecTime: time.Now().Add(wait),
 
 		finalChan: finalChan,
@@ -149,8 +132,6 @@ func (t *CPUWithWaitTask) Execute() (TaskStatus, time.Time) {
 }
 
 type CPUTimeTask struct {
-	id TaskId
-
 	finalChan *chan int
 	addCount  int
 	taskCount int
@@ -158,14 +139,11 @@ type CPUTimeTask struct {
 
 func newCPUTimeTask(finalChan *chan int, addCount int, taskCount int) *CPUTimeTask {
 	return &CPUTimeTask{
-		id:        NewGlobalTaskId(),
 		finalChan: finalChan,
 		addCount:  addCount,
 		taskCount: taskCount,
 	}
 }
-
-func (t *CPUTimeTask) TaskId() TaskId { return t.id }
 
 func (t *CPUTimeTask) Execute() (TaskStatus, time.Time) {
 	for i := 0; i < t.addCount; i++ {

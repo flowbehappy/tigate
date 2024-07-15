@@ -35,9 +35,6 @@ func panicOnTaskStatus(status TaskStatus) {
 
 // Task is the interface for the task to be executed by the thread pool.
 //
-// A task should have a unique TaskId. It is recommended to use the NewTaskId from a TaskScheduler
-// or NewGlobalTaskId to generate the TaskId.
-//
 // The return value of the methods are TaskStatus and time.Time.
 //
 // There are three possible values for TaskStatus:
@@ -49,50 +46,53 @@ func panicOnTaskStatus(status TaskStatus) {
 //   - If a task is not going to be executed again, the return value of Task.Execute should be Done and time.Time{}.
 //   - If a task wants to be executed as soon as possible, the return value of Task.Execute should be CPUTask or IOTask and time.Now().
 //
-// We provide two ways to tell the task scheduler about the next disired execution time: the result of Task.Execute method and
-// the TaskScheduler.Update method. Some notes:
-//   - The TaskScheduler.Update is not guaranteed to be executed immediately. It is passed through a channel and handled by a goroutine.
-//   - If the task is being executed when the TaskScheduler.Update command arrives, the new disired execution time will be overwritten by the result of Task.Execute.
-//   - If the Done status is returned by Task.Execute, the task is guaranteed to be removed from the task scheduler and won't be executed again.
-//
 // Note that:
 //   - It is not guaranteed that a task will be executed at the exact disired time. The task scheduler will try to execute the task as soon as possible.
 //   - It is not guaranteed that a task will be executed by the same goroutine.
 //   - It is guaranteed that a task can only be executed by one goroutine at a time. I.e. a task will not be executed concurrently.
 //   - The thread pool guarantees the call of Task.Execute is thread-safe. I.e. you don't need to add any locks in the Execute method to guarantee the thread safety,
 //     including the visibility of the fields in the Task or any other memory. But you still need to guarantee the thread safety between
-//     different tasks' Execute methods, if they share some resources.
+//     the Task.Execute and other methods of the Task.
 //
 // If you want to remove a task from the task scheduler, use one of the approaches below(using both is also fine):
 //   - The future call of Task.Execute method returns Done and time.Time{}
-//   - Call the TaskScheduler.Cancel method. Note that the task will not be removed immediately, but will be removed before the next execution.
+//   - Call the TaskHandle.Cancel method. Note that the task will not be removed immediately, but will be removed before the next execution.
 //     If the task is already running, the execution will not be stopped immediately.
 //
-// The typical implmentation of the Task interface is as follows:
-//   - Use a taskId field to store the unique TaskId. Please don't modify it after the task is created.
-//   - Use a nextExecTime field to store the next disired execution time.
-//   - Before returning the result of Execute, update the nextExecTime field with the return value.
-//   - If you want to change the next execute time of a task, first update nextExecTime field, and then call the Update in the TaskScheduler.
-//     It is particularly useful when the task is blocked by some resources, and you want to execute it as soon as the resources are available.
-//     For instance, you want to execute a dispatcher task immediately after some events are ready.
-//   - To avoid calling Update too frequently, you should check whether the new disiered execution time is earlier than nextExecTime or not.
-//     E.g. if newExecTime >= nextExecTime, it means the task is already executing or at least at the front of the waiting list,
-//     and there is no need to call Update again.
+// Refer to the task_example for a typical implementation of the Task interface.
 type Task interface {
-	// The unique Id of the task. The thread pool uses this id as the map key.
-	TaskId() TaskId
 	// Execute the task.
-	// The status indicates what kind of thread pool is executing the task.
 	Execute() (TaskStatus, time.Time)
 }
 
-var globalTaskId atomic.Uint64
-
-func NewGlobalTaskId() TaskId {
-	return TaskId(globalTaskId.Add(1))
+type TaskHandle struct {
+	taskId    TaskId
+	ts        *TaskScheduler
+	cancelled atomic.Bool
 }
 
+func (h *TaskHandle) Cancel() {
+	if h.cancelled.CompareAndSwap(false, true) {
+		h.ts.cancel(h.taskId)
+	}
+}
+
+func (h *TaskHandle) IsDone() bool { return h.ts.isDone(h.taskId) }
+
+// func (h *TaskHandle) Update(status TaskStatus, next time.Time) {
+// 	h.ts.update(h.taskId, status, next)
+// }
+
+type emptyTask struct{}
+
+func (emptyTask) Execute() (TaskStatus, time.Time) { panic("emptyTask.Execute should not be called") }
+
+type updateTask struct{}
+
+func (updateTask) Execute() (TaskStatus, time.Time) { panic("updateTask.Execute should not be called") }
+
 type scheduledTask struct {
+	taskId TaskId
 	task   Task
 	status TaskStatus
 	time   time.Time // Next disired execution time.
@@ -101,6 +101,17 @@ type scheduledTask struct {
 
 	// To prevent the task from being executed concurrently.
 	runMutex sync.Mutex
+}
+
+func newScheduledTask(taskId TaskId, task Task, status TaskStatus, time time.Time) *scheduledTask {
+	return &scheduledTask{
+		taskId: taskId,
+		task:   task,
+		status: status,
+		time:   time,
+
+		index: -1, // <0 means the task is not in the heap.
+	}
 }
 
 // Implemented by TaskScheduler

@@ -14,7 +14,6 @@
 package threadpool
 
 import (
-	"fmt"
 	"runtime"
 	"sync/atomic"
 	"time"
@@ -77,12 +76,12 @@ func (s *TaskScheduler) toBeScheduled(status TaskStatus) chan *scheduledTask {
 	switch status {
 	case CPUTask:
 		if s.cpuTaskThreadPool == nil {
-			panic(fmt.Sprintf("CPU thread pool does not exist"))
+			panic("CPU thread pool does not exist")
 		}
 		return s.cpuReactor.tobeScheduled()
 	case IOTask:
 		if s.ioTaskThreadPool == nil {
-			panic(fmt.Sprintf("IO thread pool does not exist"))
+			panic("IO thread pool does not exist")
 		}
 		return s.ioReactor.tobeScheduled()
 	case Done:
@@ -105,21 +104,33 @@ func (s *TaskScheduler) toBeExecuted(status TaskStatus) chan *scheduledTask {
 	return nil
 }
 
-// Generate a new unique task id
-func (s *TaskScheduler) NewTaskId() TaskId { return TaskId(s.nextTaskId.Add(1)) }
+func (s *TaskScheduler) newTaskId() TaskId { return TaskId(s.nextTaskId.Add(1)) }
 
-func (s *TaskScheduler) Submit(task Task, status TaskStatus, next time.Time) {
-	st := &scheduledTask{task: task, status: status, time: next}
+func (s *TaskScheduler) Submit(task Task, status TaskStatus, next time.Time) *TaskHandle {
 	// The task will be handled by one of the waitReactor.
-	s.toBeScheduled(status) <- st
+	id := s.newTaskId()
+	s.toBeScheduled(status) <- newScheduledTask(id, task, status, next)
+	return &TaskHandle{taskId: id, ts: s}
 }
 
-func (s *TaskScheduler) Update(task Task, status TaskStatus, next time.Time) {
-	s.Submit(task, status, next)
+// func (s *TaskScheduler) update(taskId TaskId, status TaskStatus, next time.Time) {
+// 	s.toBeScheduled(status) <- newScheduledTask(taskId, emptyTask{}, status, next)
+// }
+
+func (s *TaskScheduler) cancel(taskId TaskId) {
+	s.toBeScheduled(Done) <- newScheduledTask(taskId, updateTask{}, Done, time.Now())
 }
 
-func (s *TaskScheduler) Cancel(task Task) {
-	s.Submit(task, Done, time.Time{})
+// Return true if this task is in Done status or not exist.
+func (s *TaskScheduler) isDone(taskId TaskId) bool {
+	s.taskMap.mutex.Lock()
+	defer s.taskMap.mutex.Unlock()
+
+	if st, ok := s.taskMap.idToTask[taskId]; ok {
+		return st.status == Done
+	} else {
+		return true
+	}
 }
 
 // It is mainly used by test cases to stop the scheduler working.

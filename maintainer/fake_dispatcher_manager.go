@@ -209,10 +209,9 @@ func (m *DispatcherManager) handleDispatchTableSpanRequest(
 }
 
 type Dispatcher struct {
-	taskID threadpool.TaskId
-	ID     *common.TableSpan
-	cfID   model.ChangeFeedID
-	state  scheduler.ComponentStatus
+	ID    *common.TableSpan
+	cfID  model.ChangeFeedID
+	state scheduler.ComponentStatus
 
 	removing       *atomic.Bool
 	isSecondary    *atomic.Bool
@@ -223,7 +222,6 @@ func NewDispatcher(cfID model.ChangeFeedID, ID *common.TableSpan, isSecondary bo
 	d := &Dispatcher{
 		cfID:        cfID,
 		ID:          ID,
-		taskID:      threadpool.NewGlobalTaskId(),
 		removing:    atomic.NewBool(false),
 		state:       scheduler.ComponentStatusPrepared,
 		isSecondary: atomic.NewBool(isSecondary),
@@ -234,7 +232,7 @@ func NewDispatcher(cfID model.ChangeFeedID, ID *common.TableSpan, isSecondary bo
 	return d
 }
 
-func (d *Dispatcher) Execute(status threadpool.TaskStatus) (threadpool.TaskStatus, time.Time) {
+func (d *Dispatcher) Execute() (threadpool.TaskStatus, time.Time) {
 	// removing, cancel the task
 	if d.removing.Load() {
 		d.state = scheduler.ComponentStatusStopped
@@ -242,13 +240,9 @@ func (d *Dispatcher) Execute(status threadpool.TaskStatus) (threadpool.TaskStatu
 	}
 	// not on the primary status, skip running
 	if d.isSecondary.Load() {
-		return status, time.Now().Add(500 * time.Millisecond)
+		return threadpool.CPUTask, time.Now().Add(500 * time.Millisecond)
 	}
 	d.state = scheduler.ComponentStatusWorking
 	//todo: handle messages
-	return status, time.Now().Add(500 * time.Millisecond)
-}
-
-func (d *Dispatcher) TaskId() threadpool.TaskId {
-	return d.taskID
+	return threadpool.CPUTask, time.Now().Add(500 * time.Millisecond)
 }

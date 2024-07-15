@@ -37,6 +37,8 @@ func (h *taskHeap) Push(x interface{}) {
 	*h = append(*h, x.(*scheduledTask))
 	(*h)[index].index = index
 }
+
+// Pop the last element of the slice.
 func (h *taskHeap) Pop() interface{} {
 	old := *h
 	n := len(old)
@@ -48,13 +50,21 @@ func (h *taskHeap) Pop() interface{} {
 
 // ====================================
 
-func (h *taskHeap) addTask(task *scheduledTask) { heap.Push(h, task) }
+func (h *taskHeap) addOrUpdateTask(st *scheduledTask) {
+	if st.index >= 0 {
+		heap.Fix(h, st.index)
+	} else {
+		heap.Push(h, st)
+	}
+}
 
 func (h *taskHeap) popTopTask() *scheduledTask {
 	if h.Len() == 0 {
 		return nil
 	}
-	return heap.Pop(h).(*scheduledTask)
+	st := heap.Pop(h).(*scheduledTask)
+	st.index = -1 // Mark the task is not in the heap
+	return st
 }
 func (h *taskHeap) peekTopTask() *scheduledTask {
 	if h.Len() == 0 {
@@ -63,17 +73,11 @@ func (h *taskHeap) peekTopTask() *scheduledTask {
 	return (*h)[0]
 }
 
-func (h *taskHeap) removeTask(task *scheduledTask) {
-	i := task.index
-	h.Swap(i, h.Len()-1)
-	(*h)[i] = nil // avoid memory leak
-	*h = (*h)[:h.Len()-1]
-	heap.Fix(h, i) // Restore the heap property
-}
-
-// Call this method after a task's time is updated.
-func (h *taskHeap) updateTask(task *scheduledTask) {
-	heap.Fix(h, task.index)
+func (h *taskHeap) removeTask(st *scheduledTask) {
+	if st.index >= 0 {
+		heap.Remove(h, st.index)
+		st.index = -1 // Mark the task is not in the heap
+	}
 }
 
 type priorityQueue struct {
@@ -94,31 +98,41 @@ func (q *priorityQueue) len() int {
 	return q.taskHeap.Len()
 }
 
-func (q *priorityQueue) pushTask(task *scheduledTask) {
+func (q *priorityQueue) pushTask(newTask *scheduledTask) {
+	if newTask.index != -1 {
+		panic("the task is already in the heap")
+	}
+
 	q.taskMap.mutex.Lock()
 	defer q.taskMap.mutex.Unlock()
 
-	taskId := task.task.TaskId()
-	if w, ok := q.taskMap.idToTask[taskId]; ok {
-		w.time = task.time
-		w.status = task.status
-		q.taskHeap.updateTask(w)
+	taskId := newTask.taskId
+	if st, ok := q.taskMap.idToTask[taskId]; ok {
+		st.time = newTask.time
+		st.status = newTask.status
 
+		q.taskHeap.addOrUpdateTask(st)
 		// fmt.Printf("updateTask task(duplicate): %d, status: %v\n", taskId, task.status)
 		return
+	} else {
+		_, isEmptyTask := newTask.task.(emptyTask)
+		_, isUpdateTask := newTask.task.(updateTask)
+		if isEmptyTask || isUpdateTask {
+			panic("emptyTask or updateTask should not be submitted to execute")
+		}
+		q.taskHeap.addOrUpdateTask(newTask)
+		q.taskMap.idToTask[taskId] = newTask
 	}
-	q.taskHeap.addTask(task)
-	q.taskMap.idToTask[taskId] = task
 }
 
 func (q *priorityQueue) removeTask(taskId TaskId) *scheduledTask {
 	q.taskMap.mutex.Lock()
 	defer q.taskMap.mutex.Unlock()
 
-	if w, ok := q.taskMap.idToTask[taskId]; ok {
-		q.taskHeap.removeTask(w)
+	if st, ok := q.taskMap.idToTask[taskId]; ok {
+		q.taskHeap.removeTask(st)
 		delete(q.taskMap.idToTask, taskId)
-		return w
+		return st
 	}
 	return nil
 }
@@ -134,9 +148,7 @@ func (q *priorityQueue) popTopTask() *scheduledTask {
 	q.taskMap.mutex.Lock()
 	defer q.taskMap.mutex.Unlock()
 
-	w := q.taskHeap.popTopTask()
-	delete(q.taskMap.idToTask, w.task.TaskId())
-	return w
+	return q.taskHeap.popTopTask()
 }
 
 // waitReactor waits for tasks to be ready for execution.
@@ -191,7 +203,7 @@ func (r *waitReactor) blockForTest(until int) {
 
 func (r *waitReactor) removeTaskIfDone(st *scheduledTask) bool {
 	if st.status == Done {
-		r.waitingQueue.removeTask(st.task.TaskId())
+		r.waitingQueue.removeTask(st.taskId)
 		return true
 	}
 	return false
