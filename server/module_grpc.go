@@ -15,12 +15,10 @@ package server
 import (
 	"context"
 	"net"
-	"time"
 
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/keepalive"
 )
 
 type GrpcModule struct {
@@ -29,13 +27,8 @@ type GrpcModule struct {
 }
 
 func NewGrpcServer(lis net.Listener, mc messaging.MessageCenter) *GrpcModule {
-	keepaliveParams := keepalive.ServerParameters{
-		Time:    time.Second * 30,
-		Timeout: time.Second * 10,
-	}
 	option := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(256 * 1024 * 1024), // 256MB
-		grpc.KeepaliveParams(keepaliveParams),
 	}
 	grpcServer := grpc.NewServer(option...)
 	proto.RegisterMessageCenterServer(grpcServer, messaging.NewMessageCenterServer(mc))
