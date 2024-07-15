@@ -28,7 +28,7 @@ func TestRemoteTargetNewMessage(t *testing.T) {
 		Type:     TypeBytes,
 		Epoch:    rt.localEpoch,
 		Sequence: rt.sendSequence.Load(),
-		Message:  bs,
+		Message:  &bs,
 	}
 	msg1 := rt.newMessage(msg)
 	require.Equal(t, TypeBytes, IOType(msg1.Type))

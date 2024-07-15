@@ -23,8 +23,8 @@ const _ = grpc.SupportPackageIsVersion7
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type MessageCenterClient interface {
 	// The clients call this method to build a event channel from client to server.
-	SendEvents(ctx context.Context, opts ...grpc.CallOption) (MessageCenter_SendEventsClient, error)
-	SendCommands(ctx context.Context, opts ...grpc.CallOption) (MessageCenter_SendCommandsClient, error)
+	SendEvents(ctx context.Context, in *Message, opts ...grpc.CallOption) (MessageCenter_SendEventsClient, error)
+	SendCommands(ctx context.Context, in *Message, opts ...grpc.CallOption) (MessageCenter_SendCommandsClient, error)
 }
 
 type messageCenterClient struct {
@@ -35,18 +35,23 @@ func NewMessageCenterClient(cc grpc.ClientConnInterface) MessageCenterClient {
 	return &messageCenterClient{cc}
 }
 
-func (c *messageCenterClient) SendEvents(ctx context.Context, opts ...grpc.CallOption) (MessageCenter_SendEventsClient, error) {
+func (c *messageCenterClient) SendEvents(ctx context.Context, in *Message, opts ...grpc.CallOption) (MessageCenter_SendEventsClient, error) {
 	stream, err := c.cc.NewStream(ctx, &MessageCenter_ServiceDesc.Streams[0], "/proto.MessageCenter/sendEvents", opts...)
 	if err != nil {
 		return nil, err
 	}
 	x := &messageCenterSendEventsClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
 	return x, nil
 }
 
 type MessageCenter_SendEventsClient interface {
-	Send(*Message) error
-	CloseAndRecv() (*MessageSummary, error)
+	Recv() (*Message, error)
 	grpc.ClientStream
 }
 
@@ -54,33 +59,31 @@ type messageCenterSendEventsClient struct {
 	grpc.ClientStream
 }
 
-func (x *messageCenterSendEventsClient) Send(m *Message) error {
-	return x.ClientStream.SendMsg(m)
-}
-
-func (x *messageCenterSendEventsClient) CloseAndRecv() (*MessageSummary, error) {
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	m := new(MessageSummary)
+func (x *messageCenterSendEventsClient) Recv() (*Message, error) {
+	m := new(Message)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-func (c *messageCenterClient) SendCommands(ctx context.Context, opts ...grpc.CallOption) (MessageCenter_SendCommandsClient, error) {
+func (c *messageCenterClient) SendCommands(ctx context.Context, in *Message, opts ...grpc.CallOption) (MessageCenter_SendCommandsClient, error) {
 	stream, err := c.cc.NewStream(ctx, &MessageCenter_ServiceDesc.Streams[1], "/proto.MessageCenter/sendCommands", opts...)
 	if err != nil {
 		return nil, err
 	}
 	x := &messageCenterSendCommandsClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
 	return x, nil
 }
 
 type MessageCenter_SendCommandsClient interface {
-	Send(*Message) error
-	CloseAndRecv() (*MessageSummary, error)
+	Recv() (*Message, error)
 	grpc.ClientStream
 }
 
@@ -88,15 +91,8 @@ type messageCenterSendCommandsClient struct {
 	grpc.ClientStream
 }
 
-func (x *messageCenterSendCommandsClient) Send(m *Message) error {
-	return x.ClientStream.SendMsg(m)
-}
-
-func (x *messageCenterSendCommandsClient) CloseAndRecv() (*MessageSummary, error) {
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	m := new(MessageSummary)
+func (x *messageCenterSendCommandsClient) Recv() (*Message, error) {
+	m := new(Message)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -108,8 +104,8 @@ func (x *messageCenterSendCommandsClient) CloseAndRecv() (*MessageSummary, error
 // for forward compatibility
 type MessageCenterServer interface {
 	// The clients call this method to build a event channel from client to server.
-	SendEvents(MessageCenter_SendEventsServer) error
-	SendCommands(MessageCenter_SendCommandsServer) error
+	SendEvents(*Message, MessageCenter_SendEventsServer) error
+	SendCommands(*Message, MessageCenter_SendCommandsServer) error
 	mustEmbedUnimplementedMessageCenterServer()
 }
 
@@ -117,10 +113,10 @@ type MessageCenterServer interface {
 type UnimplementedMessageCenterServer struct {
 }
 
-func (UnimplementedMessageCenterServer) SendEvents(MessageCenter_SendEventsServer) error {
+func (UnimplementedMessageCenterServer) SendEvents(*Message, MessageCenter_SendEventsServer) error {
 	return status.Errorf(codes.Unimplemented, "method SendEvents not implemented")
 }
-func (UnimplementedMessageCenterServer) SendCommands(MessageCenter_SendCommandsServer) error {
+func (UnimplementedMessageCenterServer) SendCommands(*Message, MessageCenter_SendCommandsServer) error {
 	return status.Errorf(codes.Unimplemented, "method SendCommands not implemented")
 }
 func (UnimplementedMessageCenterServer) mustEmbedUnimplementedMessageCenterServer() {}
@@ -137,12 +133,15 @@ func RegisterMessageCenterServer(s grpc.ServiceRegistrar, srv MessageCenterServe
 }
 
 func _MessageCenter_SendEvents_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(MessageCenterServer).SendEvents(&messageCenterSendEventsServer{stream})
+	m := new(Message)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(MessageCenterServer).SendEvents(m, &messageCenterSendEventsServer{stream})
 }
 
 type MessageCenter_SendEventsServer interface {
-	SendAndClose(*MessageSummary) error
-	Recv() (*Message, error)
+	Send(*Message) error
 	grpc.ServerStream
 }
 
@@ -150,25 +149,20 @@ type messageCenterSendEventsServer struct {
 	grpc.ServerStream
 }
 
-func (x *messageCenterSendEventsServer) SendAndClose(m *MessageSummary) error {
+func (x *messageCenterSendEventsServer) Send(m *Message) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func (x *messageCenterSendEventsServer) Recv() (*Message, error) {
-	m := new(Message)
-	if err := x.ServerStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
 func _MessageCenter_SendCommands_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(MessageCenterServer).SendCommands(&messageCenterSendCommandsServer{stream})
+	m := new(Message)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(MessageCenterServer).SendCommands(m, &messageCenterSendCommandsServer{stream})
 }
 
 type MessageCenter_SendCommandsServer interface {
-	SendAndClose(*MessageSummary) error
-	Recv() (*Message, error)
+	Send(*Message) error
 	grpc.ServerStream
 }
 
@@ -176,16 +170,8 @@ type messageCenterSendCommandsServer struct {
 	grpc.ServerStream
 }
 
-func (x *messageCenterSendCommandsServer) SendAndClose(m *MessageSummary) error {
+func (x *messageCenterSendCommandsServer) Send(m *Message) error {
 	return x.ServerStream.SendMsg(m)
-}
-
-func (x *messageCenterSendCommandsServer) Recv() (*Message, error) {
-	m := new(Message)
-	if err := x.ServerStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
 }
 
 // MessageCenter_ServiceDesc is the grpc.ServiceDesc for MessageCenter service.
@@ -199,12 +185,12 @@ var MessageCenter_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "sendEvents",
 			Handler:       _MessageCenter_SendEvents_Handler,
-			ClientStreams: true,
+			ServerStreams: true,
 		},
 		{
 			StreamName:    "sendCommands",
 			Handler:       _MessageCenter_SendCommands_Handler,
-			ClientStreams: true,
+			ServerStreams: true,
 		},
 	},
 	Metadata: "pkg/messaging/proto/message.proto",
