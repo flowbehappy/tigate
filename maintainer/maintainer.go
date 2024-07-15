@@ -185,7 +185,7 @@ func (m *Maintainer) handleMessages() error {
 			}
 			msgs, err := m.supervisor.HandleStatus(msg.From.String(), status)
 			if err != nil {
-				log.Error("handle status failed", zap.Error(err))
+				log.Error("handle status failed, ignore", zap.Error(err))
 				return errors.Trace(err)
 			}
 			m.sendMessages(msgs)
