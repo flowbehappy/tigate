@@ -255,6 +255,8 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 		m = &RegisterDispatcherRequest{}
 	case TypeMaintainerBootstrapResponse:
 		m = &MaintainerBootstrapResponse{}
+	case TypeMaintainerBootstrapRequest:
+		m = &MaintainerBootstrapRequest{}
 	default:
 		log.Panic("Unimplemented IOType", zap.Stringer("Type", ioType))
 	}

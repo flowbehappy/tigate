@@ -105,8 +105,9 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 					if err != nil {
 						log.Warn("send command failed", zap.Error(err))
 					}
-					log.Info("bootstrap coordinator",
-						zap.String("id", msg.From.String()))
+					log.Info("bootstrap maintainer",
+						zap.String("changefeed", manager.id.ID),
+						zap.String("maintainer node", msg.From.String()))
 				case messaging.TypeDispatchMaintainerRequest:
 					req := msg.Message.(*messaging.ScheduleDispatcherRequest)
 					cfID := model.DefaultChangeFeedID(req.ChangefeedID)
@@ -150,26 +151,19 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 						return true
 					})
 					if len(response.Info) != 0 {
-						m.sendMessages(manager.maintainerID, manager.id.ID, response)
+						err := m.messageCenter.SendCommand(messaging.NewTargetMessage(
+							manager.maintainerID,
+							"maintainer/"+manager.id.ID,
+							messaging.TypeHeartBeatResponse,
+							response,
+						))
+						if err != nil {
+							log.Warn("send command failed", zap.Error(err))
+						}
 					}
 				}
 			}
 		}
-	}
-}
-
-func (m *FakeDispatcherManagerManager) sendMessages(target messaging.ServerId,
-	id string,
-	msg *messaging.HeartBeatResponse) {
-	targetMsg := messaging.NewTargetMessage(
-		target,
-		"maintainer/"+id,
-		messaging.TypeHeartBeatResponse,
-		msg,
-	)
-	err := m.messageCenter.SendCommand(targetMsg)
-	if err != nil {
-		log.Warn("send command failed", zap.Error(err))
 	}
 }
 
@@ -205,7 +199,7 @@ func (m *DispatcherManager) handleDispatchTableSpanRequest(
 	if request.GetScheduleAction() == heartbeatpb.ScheduleAction_Create {
 		span, ok := m.dispatchers.Get(tableSpan)
 		if !ok {
-			span = NewDispatcher(request.GetIsSecondary())
+			span = NewDispatcher(m.id, tableSpan, request.GetIsSecondary())
 			m.dispatchers.ReplaceOrInsert(tableSpan, span)
 			threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(span, threadpool.CPUTask, time.Now())
 		}
@@ -226,6 +220,7 @@ func (m *DispatcherManager) handleDispatchTableSpanRequest(
 type Dispatcher struct {
 	taskID threadpool.TaskId
 	ID     *common.TableSpan
+	cfID   model.ChangeFeedID
 	state  scheduler.ComponentStatus
 
 	removing       *atomic.Bool
@@ -233,8 +228,10 @@ type Dispatcher struct {
 	lastReportTime time.Time
 }
 
-func NewDispatcher(isSecondary bool) *Dispatcher {
+func NewDispatcher(cfID model.ChangeFeedID, ID *common.TableSpan, isSecondary bool) *Dispatcher {
 	d := &Dispatcher{
+		cfID:        cfID,
+		ID:          ID,
 		taskID:      threadpool.NewGlobalTaskId(),
 		removing:    atomic.NewBool(false),
 		state:       scheduler.ComponentStatusPrepared,

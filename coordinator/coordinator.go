@@ -111,7 +111,7 @@ func init() {
 func (c *coordinator) Tick(ctx context.Context,
 	rawState orchestrator.ReactorState) (orchestrator.ReactorState, error) {
 	state := rawState.(*orchestrator.GlobalReactorState)
-	if time.Since(c.lastCheckTime) > time.Second*20 {
+	if time.Since(c.lastCheckTime) > time.Second*10 {
 		workingTask := 0
 		prepareTask := 0
 		absentTask := 0
@@ -141,12 +141,7 @@ func (c *coordinator) Tick(ctx context.Context,
 		c.lastCheckTime = time.Now()
 	}
 
-	c.msgLock.Lock()
-	buf := c.msgBuf
-	c.msgBuf = nil
-	c.msgLock.Unlock()
-
-	err := c.HandleMessage(buf)
+	err := c.handleMessages()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -185,8 +180,12 @@ func (c *coordinator) Tick(ctx context.Context,
 	return state, nil
 }
 
-func (c *coordinator) HandleMessage(msgs []*messaging.TargetMessage) error {
-	for _, msg := range msgs {
+func (c *coordinator) handleMessages() error {
+	c.msgLock.Lock()
+	buf := c.msgBuf
+	c.msgBuf = nil
+	c.msgLock.Unlock()
+	for _, msg := range buf {
 		switch msg.Type {
 		case messaging.TypeCoordinatorBootstrapResponse:
 			req := msg.Message.(*messaging.CoordinatorBootstrapResponse)

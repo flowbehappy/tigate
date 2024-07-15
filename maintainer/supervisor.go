@@ -93,7 +93,7 @@ func (s *Supervisor) GetInferior(id scheduler.InferiorID) (*StateMachine, bool) 
 // HandleAliveCaptureUpdate update captures liveness.
 func (s *Supervisor) HandleAliveCaptureUpdate(
 	aliveCaptures map[model.CaptureID]*model.CaptureInfo,
-) ([]rpc.Message, []model.CaptureID) {
+) ([]rpc.Message, error) {
 	var removed []model.CaptureID
 	msgs := make([]rpc.Message, 0)
 	for id, info := range aliveCaptures {
@@ -134,22 +134,38 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 		log.Info("all server initialized",
 			zap.String("ID", s.ID.String()),
 			zap.Int("captureCount", len(s.captures)))
+		statusMap := make(map[scheduler.InferiorID]map[model.CaptureID]scheduler.InferiorStatus)
+		for captureID, statuses := range s.initStatus {
+			for _, status := range statuses {
+				if _, ok := statusMap[status.GetInferiorID()]; !ok {
+					statusMap[status.GetInferiorID()] = map[model.CaptureID]scheduler.InferiorStatus{}
+				}
+				statusMap[status.GetInferiorID()][captureID] = status
+			}
+		}
+		for id, status := range statusMap {
+			statemachine, err := NewStateMachine(id, status, NewReplicaSet(s.ID, id))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			s.stateMachines.ReplaceOrInsert(id, statemachine)
+		}
 		s.initialized = true
 	}
-	if len(removed) > 0 {
-		removedMsgs, err := s.HandleCaptureChanges(removed)
-		if err != nil {
-			log.Error("handle changes failed", zap.Error(err))
-		}
-		msgs = append(msgs, removedMsgs...)
+
+	removedMsgs, err := s.handleRemovedNodes(removed)
+	if err != nil {
+		log.Error("handle changes failed", zap.Error(err))
+		return nil, errors.Trace(err)
 	}
-	return msgs, removed
+	msgs = append(msgs, removedMsgs...)
+	return msgs, nil
 }
 
 func (s *Supervisor) bootstrapMessage(captureID model.CaptureID) rpc.Message {
 	return messaging.NewTargetMessage(
 		messaging.ServerId(captureID),
-		"maintainerMangerTopic",
+		"dispatcher-manager",
 		messaging.TypeMaintainerBootstrapRequest,
 		&messaging.MaintainerBootstrapRequest{
 			MaintainerBootstrapRequest: &heartbeatpb.MaintainerBootstrapRequest{
@@ -211,37 +227,12 @@ func (s *Supervisor) HandleStatus(
 	return sentMsgs, nil
 }
 
-// HandleCaptureChanges handles server changes.
-func (s *Supervisor) HandleCaptureChanges(
+// handleRemovedNodes handles server changes.
+func (s *Supervisor) handleRemovedNodes(
 	removed []model.CaptureID,
 ) ([]rpc.Message, error) {
-	if s.initStatus != nil {
-		if s.stateMachines.Len() != 0 {
-			log.Panic("init again",
-				zap.Any("init", s.initStatus),
-				zap.Any("statemachines", s.stateMachines.Len()))
-		}
-		statusMap := make(map[scheduler.InferiorID]map[model.CaptureID]scheduler.InferiorStatus)
-		for captureID, statuses := range s.initStatus {
-			for _, status := range statuses {
-				if _, ok := statusMap[status.GetInferiorID()]; !ok {
-					statusMap[status.GetInferiorID()] = map[model.CaptureID]scheduler.InferiorStatus{}
-				}
-				statusMap[status.GetInferiorID()][captureID] = status
-			}
-		}
-		for id, status := range statusMap {
-			//todo: how to new inferior
-			statemachine, err := NewStateMachine(id, status, NewReplicaSet(id))
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			s.stateMachines.ReplaceOrInsert(id, statemachine)
-		}
-		s.initStatus = nil
-	}
 	sentMsgs := make([]rpc.Message, 0)
-	if removed != nil {
+	if len(removed) > 0 {
 		var err error
 		s.stateMachines.Ascend(func(id scheduler.InferiorID, stateMachine *StateMachine) bool {
 			for _, captureID := range removed {
@@ -348,7 +339,7 @@ func (s *Supervisor) handleAddInferiorTask(
 	var err error
 	stateMachine, ok := s.stateMachines.Get(task.ID)
 	if !ok {
-		stateMachine, err = NewStateMachine(task.ID, nil, NewReplicaSet(task.ID))
+		stateMachine, err = NewStateMachine(task.ID, nil, NewReplicaSet(s.ID, task.ID))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
