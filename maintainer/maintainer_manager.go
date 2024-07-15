@@ -86,7 +86,7 @@ func (m *Manager) Run(ctx context.Context) error {
 			for _, msg := range buf {
 				switch msg.Type {
 				case messaging.TypeCoordinatorBootstrapRequest:
-					req := msg.Message.(*messaging.CoordinatorBootstrapRequest)
+					req := msg.Message.(*heartbeatpb.CoordinatorBootstrapRequest)
 					if m.coordinatorVersion > req.Version {
 						log.Warn("ignore invalid coordinator version",
 							zap.Int64("version", req.Version))
@@ -95,10 +95,8 @@ func (m *Manager) Run(ctx context.Context) error {
 					m.coordinatorID = msg.From
 					m.coordinatorVersion = req.Version
 
-					response := &messaging.CoordinatorBootstrapResponse{
-						CoordinatorBootstrapResponse: &heartbeatpb.CoordinatorBootstrapResponse{
-							Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
-						},
+					response := &heartbeatpb.CoordinatorBootstrapResponse{
+						Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
 					}
 					for _, m := range m.maintainers {
 						response.Statuses = append(response.Statuses, m.GetMaintainerStatus())
@@ -108,7 +106,6 @@ func (m *Manager) Run(ctx context.Context) error {
 					err := m.messageCenter.SendCommand(messaging.NewTargetMessage(
 						m.coordinatorID,
 						"coordinator",
-						messaging.TypeCoordinatorBootstrapResponse,
 						response,
 					))
 					if err != nil {
@@ -117,7 +114,7 @@ func (m *Manager) Run(ctx context.Context) error {
 					log.Info("bootstrap coordinator",
 						zap.Int64("version", m.coordinatorVersion))
 				case messaging.TypeDispatchMaintainerRequest:
-					req := msg.Message.(*messaging.DispatchMaintainerRequest)
+					req := msg.Message.(*heartbeatpb.DispatchMaintainerRequest)
 					if m.coordinatorID != msg.From {
 						log.Warn("ignore invalid coordinator id",
 							zap.Any("request", req),
@@ -129,10 +126,8 @@ func (m *Manager) Run(ctx context.Context) error {
 			}
 			// send heartbeats
 			if m.coordinatorVersion > 0 {
-				response := &messaging.MaintainerHeartbeat{
-					MaintainerHeartbeat: &heartbeatpb.MaintainerHeartbeat{
-						Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
-					},
+				response := &heartbeatpb.MaintainerHeartbeat{
+					Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
 				}
 				for _, m := range m.maintainers {
 					if m.statusChanged.Load() ||
@@ -163,11 +158,10 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 }
 
-func (m *Manager) sendMessages(msg *messaging.MaintainerHeartbeat) {
+func (m *Manager) sendMessages(msg *heartbeatpb.MaintainerHeartbeat) {
 	target := messaging.NewTargetMessage(
 		m.coordinatorID,
 		"coordinator",
-		messaging.TypeMaintainerHeartbeatRequest,
 		msg,
 	)
 	err := m.messageCenter.SendCommand(target)
@@ -182,7 +176,7 @@ func (m *Manager) Close(ctx context.Context) error {
 }
 
 func (m *Manager) handleDispatchMaintainerRequest(
-	request *messaging.DispatchMaintainerRequest,
+	request *heartbeatpb.DispatchMaintainerRequest,
 ) []string {
 	absent := make([]string, 0)
 	for _, req := range request.AddMaintainers {

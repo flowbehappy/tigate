@@ -146,9 +146,22 @@ func (m *Maintainer) Execute(status threadpool.TaskStatus) (threadpool.TaskStatu
 		log.Warn("handle capture failed", zap.Error(err))
 		return status, time.Now().Add(50 * time.Millisecond)
 	}
-	if len(msgs) > 0 {
-		m.sendMessages(msgs)
-	}
+
+	// resend dispatcher message
+	m.supervisor.stateMachines.Ascend(func(key scheduler.InferiorID, value *StateMachine) bool {
+		if value.State == scheduler.SchedulerStatusPrepare &&
+			time.Since(value.lastMsgTime) > time.Millisecond*200 {
+			server, _ := value.getRole(RoleSecondary)
+			msg, _, err := value.pollOnPrepare(&ReplicaSetStatus{Status: scheduler.ComponentStatusAbsent}, server)
+			if err != nil {
+				log.Error("poll failed", zap.Error(err))
+			}
+			msgs = append(msgs, msg)
+			value.lastMsgTime = time.Now()
+		}
+		return true
+	})
+	m.sendMessages(msgs)
 
 	// try to schedule table spans
 	msgs, err = m.scheduleTableSpan()
@@ -173,7 +186,7 @@ func (m *Maintainer) handleMessages() error {
 	for _, msg := range buf {
 		switch msg.Type {
 		case messaging.TypeHeartBeatResponse:
-			req := msg.Message.(*messaging.HeartBeatResponse)
+			req := msg.Message.(*heartbeatpb.HeartBeatResponse)
 			var status []scheduler.InferiorStatus
 			for _, info := range req.Info {
 				status = append(status, &ReplicaSetStatus{
@@ -185,12 +198,12 @@ func (m *Maintainer) handleMessages() error {
 			}
 			msgs, err := m.supervisor.HandleStatus(msg.From.String(), status)
 			if err != nil {
-				log.Error("handle status failed", zap.Error(err))
+				log.Error("handle status failed, ignore", zap.Error(err))
 				return errors.Trace(err)
 			}
 			m.sendMessages(msgs)
 		case messaging.TypeMaintainerBootstrapResponse:
-			req := msg.Message.(*messaging.MaintainerBootstrapResponse)
+			req := msg.Message.(*heartbeatpb.MaintainerBootstrapResponse)
 			var status []scheduler.InferiorStatus
 			for _, info := range req.Statuses {
 				status = append(status, &ReplicaSetStatus{
@@ -221,7 +234,7 @@ func (m *Maintainer) sendMessages(msgs []rpc.Message) {
 var allInferiors []scheduler.InferiorID
 
 func init() {
-	for i := 0; i < 1000000; i++ {
+	for i := 0; i < 3; i++ {
 		tblID := int64(100 + i)
 		start, end := spanz.GetTableRange(tblID)
 		allInferiors = append(allInferiors, &common.TableSpan{
