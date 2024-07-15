@@ -11,9 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package maintainer
 
 import (
+	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/tiflow/cdc/model"
 )
 
@@ -21,8 +22,8 @@ import (
 type Scheduler interface {
 	Name() string
 	Schedule(
-		allInferiors []InferiorID,
+		allInferiors []scheduler.InferiorID,
 		aliveCaptures map[model.CaptureID]*CaptureStatus,
-		stateMachines Map[InferiorID, *StateMachine],
+		stateMachines scheduler.Map[scheduler.InferiorID, *StateMachine],
 	) []*ScheduleTask
 }

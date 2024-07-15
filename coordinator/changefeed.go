@@ -56,29 +56,24 @@ func (c *changefeed) NewInferiorStatus(status ComponentStatus) *heartbeatpb.Main
 func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary bool) rpc.Message {
 	return messaging.NewTargetMessage(messaging.ServerId(server),
 		maintainerMangerTopic,
-		messaging.TypeDispatchMaintainerRequest,
-		&messaging.DispatchMaintainerRequest{
-			DispatchMaintainerRequest: &heartbeatpb.DispatchMaintainerRequest{
-				AddMaintainers: []*heartbeatpb.AddMaintainerRequest{
-					{
-						Id:          c.ID.ID,
-						IsSecondary: secondary,
-					},
+		&heartbeatpb.DispatchMaintainerRequest{
+			AddMaintainers: []*heartbeatpb.AddMaintainerRequest{
+				{
+					Id:          c.ID.ID,
+					IsSecondary: secondary,
 				},
-			}})
+			},
+		})
 }
 
 func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) rpc.Message {
-	return messaging.NewTargetMessage(messaging.ServerId(server),
-		maintainerMangerTopic,
-		messaging.TypeDispatchMaintainerRequest,
-		&messaging.DispatchMaintainerRequest{
-			DispatchMaintainerRequest: &heartbeatpb.DispatchMaintainerRequest{
-				RemoveMaintainers: []*heartbeatpb.RemoveMaintainerRequest{
-					{
-						Id:      c.ID.ID,
-						Cascade: false,
-					},
+	return messaging.NewTargetMessage(messaging.ServerId(server), maintainerMangerTopic,
+		&heartbeatpb.DispatchMaintainerRequest{
+			RemoveMaintainers: []*heartbeatpb.RemoveMaintainerRequest{
+				{
+					Id:      c.ID.ID,
+					Cascade: false,
 				},
-			}})
+			},
+		})
 }

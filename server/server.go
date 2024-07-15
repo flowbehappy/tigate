@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/maintainer"
-	"github.com/flowbehappy/tigate/server/wacher"
+	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/tiflow/pkg/tcpserver"
 
 	"github.com/flowbehappy/tigate/coordinator"
@@ -115,6 +115,7 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener(), c.messageCenter),
 		maintainer.NewMaintainerManager(c.messageCenter, c.serverID),
+		maintainer.NewFakeMaintainerManager(c.messageCenter),
 	}
 	// register it into global var
 	for _, subModule := range c.subModules {
@@ -144,7 +145,7 @@ func (c *serverImpl) Run(stdCtx context.Context) error {
 	for _, sub := range c.subModules {
 		func(m SubModule) {
 			g.Go(func() error {
-				log.Info("starting sub wacher", zap.String("wacher", m.Name()))
+				log.Info("starting sub watcher", zap.String("watcher", m.Name()))
 				return m.Run(stdCtx)
 			})
 		}(sub)
@@ -196,8 +197,8 @@ func (c *serverImpl) Close(ctx context.Context) {
 
 	for _, subModule := range c.subModules {
 		if err := subModule.Close(ctx); err != nil {
-			log.Warn("failed to close sub wacher",
-				zap.String("wacher", subModule.Name()),
+			log.Warn("failed to close sub watcher",
+				zap.String("watcher", subModule.Name()),
 				zap.Error(err))
 		}
 	}

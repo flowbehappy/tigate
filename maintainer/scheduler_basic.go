@@ -11,9 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package maintainer
 
 import (
+	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -32,14 +33,14 @@ func (b *BasicScheduler) Name() string {
 }
 
 func (b *BasicScheduler) Schedule(
-	allInferiors []InferiorID,
+	allInferiors []scheduler.InferiorID,
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
-	stateMachines Map[InferiorID, *StateMachine],
+	stateMachines scheduler.Map[scheduler.InferiorID, *StateMachine],
 ) []*ScheduleTask {
 	tasks := make([]*ScheduleTask, 0)
 	lenEqual := len(allInferiors) == stateMachines.Len()
 	allFind := true
-	newInferiors := make([]InferiorID, 0)
+	newInferiors := make([]scheduler.InferiorID, 0)
 	for _, inf := range allInferiors {
 		if len(newInferiors) >= b.batchSize {
 			break
@@ -53,7 +54,7 @@ func (b *BasicScheduler) Schedule(
 			continue
 		}
 		// absent status means we should schedule it again
-		if st.State == SchedulerStatusAbsent {
+		if st.State == scheduler.SchedulerStatusAbsent {
 			newInferiors = append(newInferiors, inf)
 		}
 	}
@@ -83,15 +84,15 @@ func (b *BasicScheduler) Schedule(
 	// Fast path for check whether two sets are identical
 	if !lenEqual || !allFind {
 		// The two sets are not identical. We need to build a map to find removed inferiors.
-		intersectionIDS := NewBtreeMap[InferiorID, struct{}]()
+		intersectionIDS := scheduler.NewBtreeMap[scheduler.InferiorID, struct{}]()
 		for _, inf := range allInferiors {
 			ok := stateMachines.Has(inf)
 			if ok {
 				intersectionIDS.ReplaceOrInsert(inf, struct{}{})
 			}
 		}
-		rmInferiorIDs := make([]InferiorID, 0)
-		stateMachines.Ascend(func(key InferiorID, value *StateMachine) bool {
+		rmInferiorIDs := make([]scheduler.InferiorID, 0)
+		stateMachines.Ascend(func(key scheduler.InferiorID, value *StateMachine) bool {
 			ok := intersectionIDS.Has(key)
 			if !ok {
 				rmInferiorIDs = append(rmInferiorIDs, key)
@@ -107,7 +108,7 @@ func (b *BasicScheduler) Schedule(
 }
 
 // newBurstAddInferiors add each new inferior to captures in a round-robin way.
-func newBurstAddInferiors(newInferiors []InferiorID, captureIDs []model.CaptureID,
+func newBurstAddInferiors(newInferiors []scheduler.InferiorID, captureIDs []model.CaptureID,
 ) []*ScheduleTask {
 	idx := 0
 	addInferiorTasks := make([]*ScheduleTask, 0, len(newInferiors))
@@ -132,8 +133,8 @@ func newBurstAddInferiors(newInferiors []InferiorID, captureIDs []model.CaptureI
 }
 
 func newBurstRemoveInferiors(
-	rmInferiors []InferiorID,
-	stateMachines Map[InferiorID, *StateMachine],
+	rmInferiors []scheduler.InferiorID,
+	stateMachines scheduler.Map[scheduler.InferiorID, *StateMachine],
 ) []*ScheduleTask {
 	removeTasks := make([]*ScheduleTask, 0, len(rmInferiors))
 	for _, id := range rmInferiors {

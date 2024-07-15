@@ -14,17 +14,17 @@
 package maintainer
 
 import (
-	"context"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/common"
 	appctx "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
-	watcher "github.com/flowbehappy/tigate/server/wacher"
+	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/entry/schema"
@@ -33,11 +33,13 @@ import (
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/filter"
+	"github.com/pingcap/tiflow/pkg/spanz"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
 // Maintainer is response for handle changefeed replication tasks, Maintainer should:
-// 1. schedules tables to ticdc wacher
+// 1. schedules tables to ticdc watcher
 // 2. calculate changefeed checkpoint ts
 // 3. send changefeed status to coordinator
 // 4. handle heartbeat reported by dispatcher
@@ -45,21 +47,18 @@ type Maintainer struct {
 	id     model.ChangeFeedID
 	config *model.ChangeFeedInfo
 	status *model.ChangeFeedStatus
+	taskID threadpool.TaskId
 
 	messageCenter messaging.MessageCenter
 
-	task *dispatchMaintainerTask
-
 	state      scheduler.ComponentStatus
-	supervisor *scheduler.Supervisor
-	scheduler  scheduler.Scheduler
+	supervisor *Supervisor
+	scheduler  Scheduler
 
 	changefeedSate model.FeedState
 
 	taskCh  chan Task
 	removed *atomic.Bool
-
-	tick *time.Ticker
 
 	tableIDs map[int64]struct{}
 
@@ -68,27 +67,52 @@ type Maintainer struct {
 
 	statusChanged  *atomic.Bool
 	lastReportTime time.Time
+
+	removing    *atomic.Bool
+	isSecondary *atomic.Bool
+
+	msgLock  sync.RWMutex
+	msgBuf   []*messaging.TargetMessage
+	msgTopic string
+
+	lastCheckTime time.Time
 }
 
 // NewMaintainer create the maintainer for the changefeed
-func NewMaintainer(cfID model.ChangeFeedID, center messaging.MessageCenter) *Maintainer {
-	var remove = &atomic.Bool{}
-	remove.Store(false)
+func NewMaintainer(cfID model.ChangeFeedID,
+	center messaging.MessageCenter,
+	isSecondary bool,
+) *Maintainer {
 	m := &Maintainer{
-		id:            cfID,
+		id: cfID,
+		scheduler: NewCombineScheduler(
+			NewBasicScheduler(1000),
+			NewBalanceScheduler(time.Minute, 1000)),
+		taskID:        threadpool.NewGlobalTaskId(),
 		messageCenter: center,
-		state:         scheduler.ComponentStatusAbsent,
-		removed:       remove,
-		tick:          time.NewTicker(time.Millisecond * 50),
+		state:         scheduler.ComponentStatusPrepared,
+		removed:       atomic.NewBool(false),
 		taskCh:        make(chan Task, 1024),
 		nodeManager:   appctx.GetService[*watcher.NodeManager](watcher.NodeManagerName),
-		statusChanged: &atomic.Bool{},
+		statusChanged: atomic.NewBool(true),
+		isSecondary:   atomic.NewBool(isSecondary),
+		removing:      atomic.NewBool(false),
+		supervisor:    NewSupervisor(cfID),
+		msgTopic:      "maintainer/" + cfID.ID,
 	}
-	m.supervisor = scheduler.NewSupervisor(
-		MaintainerID(cfID),
-		NewReplicaSet,
-		m.newBootstrapMessage,
-	)
+	if !isSecondary {
+		m.state = scheduler.ComponentStatusWorking
+	}
+	// receive messages
+	center.RegisterHandler(m.msgTopic, func(msg *messaging.TargetMessage) error {
+		if m.isSecondary.Load() {
+			return nil
+		}
+		m.msgLock.Lock()
+		m.msgBuf = append(m.msgBuf, msg)
+		m.msgLock.Unlock()
+		return nil
+	})
 	return m
 }
 
@@ -98,75 +122,131 @@ func (m *Maintainer) newBootstrapMessage(id model.CaptureID) rpc.Message {
 	}
 }
 
-func (m *Maintainer) Run() error {
-	for {
-		select {
-		case task := <-m.taskCh:
-			if err := task.Execute(context.Background()); err != nil {
-				log.Error("Execute task failed", zap.Error(err))
-			}
-		case <-m.tick.C:
-			// tick
-			// check changes
-			//msgs, removed := m.supervisor.HandleAliveCaptureUpdate(m.nodeManager.GetAliveCaptures())
-			//if len(msgs) > 0 {
-			//	m.sendMessages(msgs)
-			//}
-			//if len(removed) > 0 {
-			//msgs, err := m.supervisor.handleRemovedNodes(removed)
-			//if err != nil {
-			//	log.Warn("handle changes failed", zap.Error(err))
-			//	break
-			//}
-			//m.sendMessages(msgs)
-			//}
-		}
+func (m *Maintainer) Execute(status threadpool.TaskStatus) (threadpool.TaskStatus, time.Time) {
+	// removing, cancel the task
+	if m.removing.Load() {
+		m.closeChangefeed()
+		return threadpool.Done, time.Time{}
 	}
+	// not on the primary status, skip running
+	if m.isSecondary.Load() {
+		return status, time.Now().Add(50 * time.Millisecond)
+	}
+	m.state = scheduler.ComponentStatusWorking
+
+	// handle messages
+	if err := m.handleMessages(); err != nil {
+		return status, time.Now().Add(50 * time.Millisecond)
+	}
+
+	nodes := m.nodeManager.GetAliveCaptures()
+	//check capture changes
+	msgs, err := m.supervisor.HandleAliveCaptureUpdate(nodes)
+	if err != nil {
+		log.Warn("handle capture failed", zap.Error(err))
+		return status, time.Now().Add(50 * time.Millisecond)
+	}
+
+	// resend dispatcher message
+	m.supervisor.stateMachines.Ascend(func(key scheduler.InferiorID, value *StateMachine) bool {
+		if value.State == scheduler.SchedulerStatusPrepare &&
+			time.Since(value.lastMsgTime) > time.Millisecond*200 {
+			server, _ := value.getRole(RoleSecondary)
+			msg, _, err := value.pollOnPrepare(&ReplicaSetStatus{Status: scheduler.ComponentStatusAbsent}, server)
+			if err != nil {
+				log.Error("poll failed", zap.Error(err))
+			}
+			msgs = append(msgs, msg)
+			value.lastMsgTime = time.Now()
+		}
+		return true
+	})
+	m.sendMessages(msgs)
+
+	// try to schedule table spans
+	msgs, err = m.scheduleTableSpan()
+	if err != nil {
+		log.Warn("handle capture failed", zap.Error(err))
+		return status, time.Now().Add(50 * time.Millisecond)
+	}
+	m.sendMessages(msgs)
+	m.printStatus()
+	return status, time.Now().Add(50 * time.Millisecond)
 }
 
-func (m *Maintainer) Execute(timeout time.Duration) threadpool.TaskStatus {
-	timer := time.NewTimer(timeout)
-	for {
-		select {
-		case task := <-m.taskCh:
-			if err := task.Execute(context.Background()); err != nil {
-				log.Error("Execute task failed", zap.Error(err))
-				return threadpool.Failed
+func (m *Maintainer) TaskId() threadpool.TaskId {
+	return m.taskID
+}
+
+func (m *Maintainer) handleMessages() error {
+	m.msgLock.Lock()
+	buf := m.msgBuf
+	m.msgBuf = nil
+	m.msgLock.Unlock()
+	for _, msg := range buf {
+		switch msg.Type {
+		case messaging.TypeHeartBeatResponse:
+			req := msg.Message.(*heartbeatpb.HeartBeatResponse)
+			var status []scheduler.InferiorStatus
+			for _, info := range req.Info {
+				status = append(status, &ReplicaSetStatus{
+					ID: &common.TableSpan{
+						TableSpan: info.Span,
+					},
+					Status: scheduler.ComponentStatus(info.SchedulerStatus),
+				})
 			}
-		case <-timer.C:
-			return threadpool.Running
+			msgs, err := m.supervisor.HandleStatus(msg.From.String(), status)
+			if err != nil {
+				log.Error("handle status failed, ignore", zap.Error(err))
+				return errors.Trace(err)
+			}
+			m.sendMessages(msgs)
+		case messaging.TypeMaintainerBootstrapResponse:
+			req := msg.Message.(*heartbeatpb.MaintainerBootstrapResponse)
+			var status []scheduler.InferiorStatus
+			for _, info := range req.Statuses {
+				status = append(status, &ReplicaSetStatus{
+					ID: &common.TableSpan{
+						TableSpan: info.Span,
+					},
+					Status: scheduler.ComponentStatus(info.SchedulerStatus),
+				})
+			}
+			m.supervisor.UpdateCaptureStatus(msg.From.String(), status)
 		default:
-			select {
-			case <-m.tick.C:
-				// tick
-				// check changes
-				msgs, removed := m.supervisor.HandleAliveCaptureUpdate(m.nodeManager.GetAliveCaptures())
-				if len(msgs) > 0 {
-					m.sendMessages(msgs)
-				}
-				if len(removed) > 0 {
-					msgs, err := m.supervisor.HandleCaptureChanges(removed)
-					if err != nil {
-						log.Warn("handle changes failed", zap.Error(err))
-						break
-					}
-					m.sendMessages(msgs)
-				}
-			default:
-				if !timer.Stop() {
-					<-timer.C
-				}
-			}
-			return threadpool.Running
+			log.Panic("unexpected message type", zap.String("type", msg.Type.String()))
 		}
 	}
+	return nil
 }
 
 func (m *Maintainer) sendMessages(msgs []rpc.Message) {
-
+	for _, msg := range msgs {
+		err := m.messageCenter.SendCommand(msg.(*messaging.TargetMessage))
+		if err != nil {
+			log.Error("failed to send coordinator request", zap.Any("msg", msg), zap.Error(err))
+			continue
+		}
+	}
 }
 
-func (m *Maintainer) scheduleMaintainer(allInferiors []scheduler.InferiorID) ([]rpc.Message, error) {
+var allInferiors []scheduler.InferiorID
+
+func init() {
+	for i := 0; i < 3; i++ {
+		tblID := int64(100 + i)
+		start, end := spanz.GetTableRange(tblID)
+		allInferiors = append(allInferiors, &common.TableSpan{
+			TableSpan: &heartbeatpb.TableSpan{
+				TableID:  uint64(tblID),
+				StartKey: start,
+				EndKey:   end,
+			}})
+	}
+}
+
+func (m *Maintainer) scheduleTableSpan() ([]rpc.Message, error) {
 	if !m.supervisor.CheckAllCaptureInitialized() {
 		return nil, nil
 	}
@@ -178,56 +258,14 @@ func (m *Maintainer) scheduleMaintainer(allInferiors []scheduler.InferiorID) ([]
 	return m.supervisor.HandleScheduleTasks(tasks)
 }
 
-func (m *Maintainer) Release() {
-}
-
-func (m *Maintainer) Await() threadpool.TaskStatus {
-	return threadpool.Running
-}
-
-func (m *Maintainer) GetStatus() threadpool.TaskStatus {
-	return threadpool.Running
-}
-
-func (m *Maintainer) SetStatus(status threadpool.TaskStatus) {
-
-}
-
-func (m *Maintainer) Cancel() {
-
-}
-
-type dispatchTaskStatus int32
-
-const (
-	dispatchTaskReceived = dispatchTaskStatus(iota + 1)
-	dispatchTaskProcessed
-)
-
-type dispatchMaintainerTask struct {
-	Maintainer *Maintainer
-	ID         model.ChangeFeedID
-	IsRemove   bool
-	IsPrepare  bool
-	status     dispatchTaskStatus
-}
-
-func (d *dispatchMaintainerTask) Execute(ctx context.Context) error {
-	d.Maintainer.injectDispatchTableTask(d)
-	if d.IsRemove {
-		return d.Maintainer.handleRemoveMaintainerTask()
-	}
-	return d.Maintainer.handleAddMaintainerTask()
+// Close cleanup resources
+func (m *Maintainer) Close() {
+	m.messageCenter.DeRegisterHandler(m.msgTopic)
 }
 
 func (m *Maintainer) initChangefeed() error {
 	m.state = scheduler.ComponentStatusPrepared
 	m.statusChanged.Store(true)
-	//tableIds, err := m.GetTableIDs()
-	//if err != nil {
-	//	return err
-	//}
-	//m.tableIDs = tableIds
 	return nil
 }
 
@@ -285,97 +323,6 @@ func (m *Maintainer) closeChangefeed() {
 	}
 }
 
-func (m *Maintainer) handleAddMaintainerTask() error {
-	state, _ := m.getAndUpdateMaintainerState(m.state)
-	changed := true
-	for changed {
-		switch state {
-		case scheduler.ComponentStatusAbsent:
-			err := m.initChangefeed()
-			if err != nil {
-				log.Warn("add maintainer failed",
-					zap.Any("changefeed", m.id),
-					zap.Error(err))
-				return errors.Trace(err)
-			}
-			state, changed = m.getAndUpdateMaintainerState(m.state)
-		case scheduler.ComponentStatusWorking:
-			log.Info("maintainer is working", zap.String("id", m.id.ID))
-			m.task = nil
-			return nil
-		case scheduler.ComponentStatusPrepared:
-			if m.task.IsPrepare {
-				// `prepared` is a stable state, if the task was to prepare the table.
-				log.Info("maintainer is prepared",
-					zap.String("changefeed", m.id.String()))
-				m.task = nil
-				return nil
-			}
-
-			if m.task.status == dispatchTaskReceived {
-				m.task.status = dispatchTaskProcessed
-			}
-			// coordinator send start changefeed command
-			m.finishAddChangefeed()
-			return nil
-		case scheduler.ComponentStatusPreparing:
-			return nil
-		case scheduler.ComponentStatusStopping,
-			scheduler.ComponentStatusStopped:
-			log.Warn("ignore add maintainer")
-			m.task = nil
-			return nil
-		default:
-			log.Panic("unknown maintainer state")
-		}
-	}
-	return nil
-}
-
-func (m *Maintainer) handleRemoveMaintainerTask() error {
-	state, _ := m.getAndUpdateMaintainerState(m.state)
-	changed := true
-	for changed {
-		switch state {
-		case scheduler.ComponentStatusAbsent:
-			log.Warn("remove maintainer, but maintainer is absent, ignore")
-			m.task = nil
-			return nil
-		case scheduler.ComponentStatusStopping,
-			scheduler.ComponentStatusStopped:
-			log.Warn("remove maintainer, but maintainer is stopping")
-			m.task = nil
-			return nil
-		case scheduler.ComponentStatusPreparing,
-			scheduler.ComponentStatusPrepared,
-			scheduler.ComponentStatusWorking:
-			m.closeChangefeed()
-			state, changed = m.getAndUpdateMaintainerState(m.state)
-		default:
-			log.Panic("unknown maintainer state")
-		}
-	}
-	return nil
-}
-
-func (m *Maintainer) injectDispatchTableTask(task *dispatchMaintainerTask) {
-	if m.task == nil {
-		log.Info("add new task",
-			zap.Any("task", task))
-		m.statusChanged.Store(true)
-		m.task = task
-		return
-	}
-	log.Warn("maintainer inject dispatch task ignored,"+
-		"since there is one not finished yet",
-		zap.Any("nowTask", m.task),
-		zap.Any("ignoredTask", task))
-}
-
-func (m *Maintainer) getAndUpdateMaintainerState(old scheduler.ComponentStatus) (scheduler.ComponentStatus, bool) {
-	return m.state, m.state != old
-}
-
 func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 	// todo: fix data race here
 	return &heartbeatpb.MaintainerStatus{
@@ -386,17 +333,36 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 	}
 }
 
-// MaintainerID implement the InferiorID interface
-type MaintainerID model.ChangeFeedID
+func (m *Maintainer) printStatus() {
+	if time.Since(m.lastCheckTime) > time.Second*10 {
+		workingTask := 0
+		prepareTask := 0
+		absentTask := 0
+		commitTask := 0
+		removingTask := 0
+		m.supervisor.stateMachines.Ascend(func(key scheduler.InferiorID, value *StateMachine) bool {
+			switch value.State {
+			case scheduler.SchedulerStatusAbsent:
+				absentTask++
+			case scheduler.SchedulerStatusPrepare:
+				prepareTask++
+			case scheduler.SchedulerStatusCommit:
+				commitTask++
+			case scheduler.SchedulerStatusWorking:
+				workingTask++
+			case scheduler.SchedulerStatusRemoving:
+				removingTask++
+			}
+			return true
+		})
 
-func (m MaintainerID) String() string {
-	return model.ChangeFeedID(m).String()
-}
-
-func (m MaintainerID) Equal(id scheduler.InferiorID) bool {
-	return model.ChangeFeedID(m).String() == id.String()
-}
-
-func (m MaintainerID) Less(id scheduler.InferiorID) bool {
-	return model.ChangeFeedID(m).String() < id.String()
+		log.Info("table span status",
+			zap.String("changefeed", m.id.ID),
+			zap.Int("absent", absentTask),
+			zap.Int("prepare", prepareTask),
+			zap.Int("commit", commitTask),
+			zap.Int("working", workingTask),
+			zap.Int("removing", removingTask))
+		m.lastCheckTime = time.Now()
+	}
 }

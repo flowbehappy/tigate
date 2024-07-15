@@ -33,7 +33,7 @@ import (
 const maintainerMangerTopic = "maintainer-manager"
 
 // Coordinator is the master of the ticdc cluster,
-// 1. schedules changefeed maintainer to ticdc wacher
+// 1. schedules changefeed maintainer to ticdc watcher
 // 2. save changefeed checkpoint ts to etcd
 // 3. send checkpoint to downstream
 // 4. manager gc safe point
@@ -44,32 +44,26 @@ type Coordinator interface {
 }
 
 type coordinator struct {
-	scheduler     Scheduler
 	messageCenter messaging.MessageCenter
-	nodeInfo      *model.CaptureInfo
 
-	changefeeds map[model.ChangeFeedID]changefeed
+	nodeInfo    *model.CaptureInfo
+	ID          model.CaptureID
+	initialized bool
+	version     int64
 
-	version int64
-
+	// message buf from remote
 	msgLock sync.RWMutex
 	msgBuf  []*messaging.TargetMessage
 
 	lastCheckTime time.Time
 
-	dispatchMsgs map[model.CaptureID]*messaging.TargetMessage
-
-	stateMachines map[model.ChangeFeedID]*StateMachine
-	runningTasks  map[model.ChangeFeedID]*ScheduleTask
-
+	// scheduling fields
+	scheduler          Scheduler
+	stateMachines      map[model.ChangeFeedID]*StateMachine
+	runningTasks       map[model.ChangeFeedID]*ScheduleTask
 	maxTaskConcurrency int
 
-	// self ID
-	ID          model.CaptureID
-	initialized bool
-
 	captures map[model.CaptureID]*ServerStatus
-
 	// track all status reported by remote when bootstrap
 	initStatus map[model.CaptureID][]*heartbeatpb.MaintainerStatus
 }
@@ -84,7 +78,6 @@ func NewCoordinator(capture *model.CaptureInfo,
 		messageCenter:      messageCenter,
 		version:            version,
 		nodeInfo:           capture,
-		dispatchMsgs:       make(map[model.CaptureID]*messaging.TargetMessage),
 		stateMachines:      make(map[model.ChangeFeedID]*StateMachine),
 		runningTasks:       map[model.ChangeFeedID]*ScheduleTask{},
 		initialized:        false,
@@ -99,20 +92,13 @@ func NewCoordinator(capture *model.CaptureInfo,
 		c.msgLock.Unlock()
 		return nil
 	})
-	// receive messages
-	messageCenter.RegisterHandler("coordinator", func(msg *messaging.TargetMessage) error {
-		c.msgLock.Lock()
-		c.msgBuf = append(c.msgBuf, msg)
-		c.msgLock.Unlock()
-		return nil
-	})
 	return c
 }
 
 var allChangefeeds = make(map[model.ChangeFeedID]*model.ChangeFeedInfo)
 
 func init() {
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 3; i++ {
 		id := fmt.Sprintf("%d", i)
 		allChangefeeds[model.DefaultChangeFeedID(id)] = &model.ChangeFeedInfo{
 			ID:      id,
@@ -125,7 +111,7 @@ func init() {
 func (c *coordinator) Tick(ctx context.Context,
 	rawState orchestrator.ReactorState) (orchestrator.ReactorState, error) {
 	state := rawState.(*orchestrator.GlobalReactorState)
-	if time.Since(c.lastCheckTime) > time.Second*20 {
+	if time.Since(c.lastCheckTime) > time.Second*10 {
 		workingTask := 0
 		prepareTask := 0
 		absentTask := 0
@@ -155,12 +141,7 @@ func (c *coordinator) Tick(ctx context.Context,
 		c.lastCheckTime = time.Now()
 	}
 
-	c.msgLock.Lock()
-	buf := c.msgBuf
-	c.msgBuf = nil
-	c.msgLock.Unlock()
-
-	err := c.HandleMessage(buf)
+	err := c.handleMessages()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -199,15 +180,19 @@ func (c *coordinator) Tick(ctx context.Context,
 	return state, nil
 }
 
-func (c *coordinator) HandleMessage(msgs []*messaging.TargetMessage) error {
-	for _, msg := range msgs {
+func (c *coordinator) handleMessages() error {
+	c.msgLock.Lock()
+	buf := c.msgBuf
+	c.msgBuf = nil
+	c.msgLock.Unlock()
+	for _, msg := range buf {
 		switch msg.Type {
 		case messaging.TypeCoordinatorBootstrapResponse:
-			req := msg.Message.(*messaging.CoordinatorBootstrapResponse)
+			req := msg.Message.(*heartbeatpb.CoordinatorBootstrapResponse)
 			c.cacheBootstrapResponse(msg.From.String(), req.Statuses)
 		case messaging.TypeMaintainerHeartbeatRequest:
 			if c.CheckAllCaptureInitialized() {
-				req := msg.Message.(*messaging.MaintainerHeartbeat)
+				req := msg.Message.(*heartbeatpb.MaintainerHeartbeat)
 				serverID := msg.From
 				msgs, err := c.HandleStatus(serverID.String(), req.Statuses)
 				if err != nil {

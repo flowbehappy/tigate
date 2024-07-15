@@ -95,7 +95,7 @@ func (r SchedulerStatus) String() string {
 	}
 }
 
-// ComponentStatus is the state in inferior wacher side
+// ComponentStatus is the state in inferior watcher side
 // Absent -> Preparing -> Prepared -> Working -> Stopping -> Stopped
 type ComponentStatus int
 
@@ -453,7 +453,7 @@ func (s *StateMachine) pollOnPrepare(
 			return nil, true, nil
 		}
 	case ComponentStatusWorking:
-		// moving state, and the primary wacher still report status
+		// moving state, and the primary watcher still report status
 		if s.Primary == captureID {
 			s.changefeed.UpdateStatus(input)
 			return nil, false, nil
@@ -741,7 +741,7 @@ func (s *StateMachine) HandleAddInferior(
 		return nil, errors.Trace(err)
 	}
 
-	log.Info("state transition, add ingferior",
+	log.Info("state transition, add changefeed",
 		zap.Any("status", status),
 		zap.String("captureID", captureID),
 		zap.Any("statemachine", s),

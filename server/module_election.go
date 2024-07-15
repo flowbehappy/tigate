@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/coordinator"
-	"github.com/flowbehappy/tigate/server/wacher"
+	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"

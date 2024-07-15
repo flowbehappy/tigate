@@ -19,7 +19,7 @@ import "context"
 type SubModule interface {
 	// Name returns the SubModule's Name
 	Name() string
-	// Run runs the wacher, it's a block call, only return when finished or error occurs
+	// Run runs the watcher, it's a block call, only return when finished or error occurs
 	Run(ctx context.Context) error
 	// Close closes the module, it's a block call
 	Close(ctx context.Context) error
