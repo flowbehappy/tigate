@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tiflow/pkg/security"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
-	"google.golang.org/grpc/keepalive"
 )
 
 // 这个是最基础的 connection
@@ -54,11 +53,6 @@ func Connect(target string, credential *security.Credential) (*grpc.ClientConn, 
 				MaxDelay:   3 * time.Second,
 			},
 			MinConnectTimeout: 3 * time.Second,
-		}),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                10 * time.Second,
-			Timeout:             3 * time.Second,
-			PermitWithoutStream: true,
 		}),
 	}
 

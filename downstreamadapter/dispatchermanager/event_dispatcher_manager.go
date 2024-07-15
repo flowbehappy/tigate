@@ -18,15 +18,18 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/flowbehappy/tigate/downstreamadapter"
+	"github.com/flowbehappy/tigate/coordinator"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/google/uuid"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 
 	"github.com/tikv/client-go/v2/oracle"
@@ -46,18 +49,39 @@ One EventDispatcherManager can only have one Sink.
 */
 type EventDispatcherManager struct {
 	DispatcherMap               map[*common.TableSpan]*dispatcher.TableEventDispatcher
+	messageCenter               messaging.MessageCenter
 	TableTriggerEventDispatcher *dispatcher.TableTriggerEventDispatcher
-	EventCollector              *downstreamadapter.EventCollector
 	HeartbeatResponseQueue      *HeartbeatResponseQueue
 	HeartbeatRequestQueue       *HeartbeatRequestQueue
-	Id                          uint64
-	ChangefeedID                uint64
+	ChangefeedID                model.ChangeFeedID
 	SinkType                    string
 	SinkURI                     *url.URL
 	Sink                        sink.Sink
 	EnableSyncPoint             bool
 	SyncPointInterval           time.Duration
+	ClusterID                   messaging.ServerId
+	MaintainerID                messaging.ServerId
+
+	// 接收一些特定状态下要发出去的 heartbeat info 的 tableSpan status 信息
+	TableSpanStatusesChan chan *heartbeatpb.TableSpanStatus
 	//filter                      *Filter
+}
+
+func NewEventDispatcherManager(changefeedID model.ChangeFeedID, messageCenter messaging.MessageCenter, config *ChangefeedConfig, clusterID messaging.ServerId, maintainerID messaging.ServerId) *EventDispatcherManager {
+	eventDispatcherManager := EventDispatcherManager{
+		DispatcherMap:          make(map[*common.TableSpan]*dispatcher.TableEventDispatcher),
+		ChangefeedID:           changefeedID,
+		HeartbeatResponseQueue: NewHeartbeatResponseQueue(),
+		SinkType:               config.sinkType,
+		SinkURI:                config.SinkURI,
+		//SinkConfig:             config.SinkConfig,
+		EnableSyncPoint:       false,
+		messageCenter:         messageCenter,
+		ClusterID:             clusterID,
+		MaintainerID:          maintainerID,
+		TableSpanStatusesChan: make(chan *heartbeatpb.TableSpanStatus, 100),
+	}
+	return &eventDispatcherManager
 }
 
 func (e *EventDispatcherManager) Init(startTs uint64) {
@@ -72,7 +96,7 @@ func (e *EventDispatcherManager) Init(startTs uint64) {
 
 	// Init Table Trigger Event Dispatcher, TODO: in demo we don't need deal with ddl
 	//e.TableTriggerEventDispatcher = e.newTableTriggerEventDispatcher(startTs)
-
+	// e.EventCollector = downstreamadapter.NewEventCollector(e.messageCenter, 100*1024*1024*1024, e.ClusterID, e.ClusterID)
 	// init heartbeat recv and send task
 	// No need to run recv task when there is no ddl event
 	//threadpool.GetTaskSchedulerInstance().HeartbeatTaskScheduler.Submit(newHeartbeatRecvTask(e))
@@ -109,7 +133,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 	}
 	tableEventDispatcher := dispatcher.NewTableEventDispatcher(tableSpan, e.Sink, startTs, syncPointInfo)
 
-	e.EventCollector.RegisterDispatcher(tableEventDispatcher, startTs)
+	context.GetEventCollector().RegisterDispatcher(tableEventDispatcher, startTs)
 
 	e.DispatcherMap[tableSpan] = tableEventDispatcher
 
@@ -119,10 +143,15 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 func (e *EventDispatcherManager) RemoveTableEventDispatcher(tableSpan *common.TableSpan) {
 	if dispatcher, ok := e.DispatcherMap[tableSpan]; ok {
 		// 判断一下状态，如果 removing 的话就不用管，
-		e.EventCollector.RemoveDispatcher(dispatcher)
+		context.GetEventCollector().RemoveDispatcher(dispatcher)
 		dispatcher.Remove()
+	} else {
+		// 如果已经 removed ，就要在 返回的心跳里加一下这个checkpointTs 信息
+		e.TableSpanStatusesChan <- &heartbeatpb.TableSpanStatus{
+			Span:            tableSpan.TableSpan,
+			ComponentStatus: int32(coordinator.ComponentStatusStopped),
+		}
 	}
-	// 如果已经 removed ，就要在 返回的心跳里加一下这个checkpointTs 信息
 }
 
 func (e *EventDispatcherManager) CleanTableEventDispatcher(tableSpan *common.TableSpan) {
@@ -141,7 +170,7 @@ func (e *EventDispatcherManager) newTableTriggerEventDispatcher(startTs uint64) 
 		State:         dispatcher.NewState(),
 		MemoryUsage:   dispatcher.NewMemoryUsage(),
 	}
-	threadpool.GetTaskSchedulerInstance().EventDispatcherTaskScheduler.Submit(dispatcher.NewEventDispatcherTask(tableTriggerEventDispatcher))
+	//threadpool.GetTaskSchedulerInstance().EventDispatcherTaskScheduler.Submit(dispatcher.NewEventDispatcherTask(tableTriggerEventDispatcher))
 	//e.EventCollector.RegisterDispatcher(tableTriggerEventDispatcher, startTs, e.filter)
 	return tableTriggerEventDispatcher
 
@@ -170,24 +199,43 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo() *heartbeatpb.HeartBeatRe
 	   后面我们要测一下这个 msg 的大小，以及 collect 的耗时
 	*/
 
+	var message heartbeatpb.HeartBeatRequest = heartbeatpb.HeartBeatRequest{
+		ChangefeedID: e.ChangefeedID.String(),
+	}
+
 	var minCheckpointTs uint64 = math.MaxUint64
 	for _, tableEventDispatcher := range e.DispatcherMap {
 		// 判断状态，如果 removing 的话，加入 tryClose 检查，如果成功了就 清理其他的 （clean)，这边要加个 cache 存一下 tryClose 成功后的值，以防数据丢失
-		checkpointTs := dispatcher.CollectDispatcherCheckpointTs(tableEventDispatcher)
-		if minCheckpointTs > checkpointTs {
-			minCheckpointTs = checkpointTs
+		dispatcherHeartBeatInfo := dispatcher.CollectDispatcherHeartBeatInfo(tableEventDispatcher)
+
+		componentStatus := dispatcherHeartBeatInfo.ComponentStatus
+		if componentStatus == coordinator.ComponentStatusStopping {
+			checkpointTs, ok := tableEventDispatcher.TryClose()
+			if ok {
+				// remove successfully
+				if minCheckpointTs > checkpointTs {
+					minCheckpointTs = checkpointTs
+				}
+				message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
+					Span:            dispatcherHeartBeatInfo.TableSpan.TableSpan,
+					ComponentStatus: int32(coordinator.ComponentStatusStopped),
+				})
+				e.CleanTableEventDispatcher(dispatcherHeartBeatInfo.TableSpan)
+				continue
+			}
 		}
+
+		if minCheckpointTs > dispatcherHeartBeatInfo.CheckpointTs {
+			minCheckpointTs = dispatcherHeartBeatInfo.CheckpointTs
+		}
+
+		message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
+			Span:            dispatcherHeartBeatInfo.TableSpan.TableSpan,
+			ComponentStatus: int32(dispatcherHeartBeatInfo.ComponentStatus),
+		})
+
 	}
-	var message heartbeatpb.HeartBeatRequest = heartbeatpb.HeartBeatRequest{
-		ChangefeedID: e.ChangefeedID,
-		CheckpointTs: minCheckpointTs,
-	}
-	// heartbeatInfo := dispatcher.CollectDispatcherHeartBeatInfo(e.TableTriggerEventDispatcher)
-	// message.Progress = append(message.Progress, &heartbeatpb.TableSpanProgress{
-	// 	CheckpointTs:   heartbeatInfo.CheckpointTs,
-	// 	BlockTs:        heartbeatInfo.BlockTs,
-	// 	BlockTableSpan: convertToHeartBeatPBTableSpans(heartbeatInfo.BlockTableSpan),
-	// 	IsBlocked:      heartbeatInfo.IsBlocked,
-	// })
+
+	message.CheckpointTs = minCheckpointTs
 	return &message
 }
