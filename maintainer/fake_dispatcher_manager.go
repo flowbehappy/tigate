@@ -20,6 +20,7 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils/threadpool"
@@ -30,9 +31,8 @@ import (
 )
 
 type FakeDispatcherManagerManager struct {
-	messageCenter messaging.MessageCenter
-	msgLock       sync.RWMutex
-	msgBuf        []*messaging.TargetMessage
+	msgLock sync.RWMutex
+	msgBuf  []*messaging.TargetMessage
 
 	dispatcherManagers map[model.ChangeFeedID]*DispatcherManager
 }
@@ -40,10 +40,9 @@ type FakeDispatcherManagerManager struct {
 // test only
 func NewFakeMaintainerManager(messageCenter messaging.MessageCenter) *FakeDispatcherManagerManager {
 	m := &FakeDispatcherManagerManager{
-		messageCenter:      messageCenter,
 		dispatcherManagers: make(map[model.ChangeFeedID]*DispatcherManager),
 	}
-	messageCenter.RegisterHandler(m.Name(), func(msg *messaging.TargetMessage) error {
+	appcontext.GetService[messaging.MessageCenter]("messageCenter").RegisterHandler(m.Name(), func(msg *messaging.TargetMessage) error {
 		m.msgLock.Lock()
 		m.msgBuf = append(m.msgBuf, msg)
 		m.msgLock.Unlock()
@@ -72,7 +71,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 				switch msg.Type {
 				case messaging.TypeMaintainerBootstrapRequest:
 					req := msg.Message.(*heartbeatpb.MaintainerBootstrapRequest)
-					cfID := model.DefaultChangeFeedID(req.Id)
+					cfID := model.DefaultChangeFeedID(req.ChangefeedID)
 					manager, ok := m.dispatcherManagers[cfID]
 					if !ok {
 						manager = NewDispatcherManager(cfID, msg.From)
@@ -89,12 +88,12 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 								StartKey: value.ID.StartKey,
 								EndKey:   value.ID.EndKey,
 							},
-							SchedulerStatus: int32(value.state),
+							ComponentStatus: int32(value.state),
 							CheckpointTs:    0,
 						})
 						return true
 					})
-					err := m.messageCenter.SendCommand(messaging.NewTargetMessage(
+					err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(messaging.NewTargetMessage(
 						manager.maintainerID,
 						"maintainer/"+manager.id.ID,
 						response,
@@ -146,7 +145,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 						return true
 					})
 					if len(response.Info) != 0 {
-						err := m.messageCenter.SendCommand(messaging.NewTargetMessage(
+						err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(messaging.NewTargetMessage(
 							manager.maintainerID,
 							"maintainer/"+manager.id.ID,
 							response,

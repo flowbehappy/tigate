@@ -13,26 +13,35 @@
 
 package dispatchermanager
 
-import "github.com/flowbehappy/tigate/heartbeatpb"
+import (
+	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/messaging"
+)
 
 /*
 HeartbeatRequestQueue is a channel for all event dispatcher managers to send heartbeat requests to HeartBeatCollector
 */
+
+type HeartBeatRequestWithTargetID struct {
+	TargetID messaging.ServerId
+	Request  *heartbeatpb.HeartBeatRequest
+}
+
 type HeartbeatRequestQueue struct {
-	queue chan *heartbeatpb.HeartBeatRequest
+	queue chan *HeartBeatRequestWithTargetID
 }
 
 func NewHeartbeatRequestQueue() *HeartbeatRequestQueue {
 	return &HeartbeatRequestQueue{
-		queue: make(chan *heartbeatpb.HeartBeatRequest, 1000), // 大小后面再说
+		queue: make(chan *HeartBeatRequestWithTargetID, 1000), // 大小后面再说
 	}
 }
 
-func (q *HeartbeatRequestQueue) Enqueue(request *heartbeatpb.HeartBeatRequest) {
+func (q *HeartbeatRequestQueue) Enqueue(request *HeartBeatRequestWithTargetID) {
 	q.queue <- request
 }
 
-func (q *HeartbeatRequestQueue) Dequeue() *heartbeatpb.HeartBeatRequest {
+func (q *HeartbeatRequestQueue) Dequeue() *HeartBeatRequestWithTargetID {
 	return <-q.queue
 }
 

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/downstreamadapter"
 	"github.com/flowbehappy/tigate/maintainer"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/tiflow/pkg/tcpserver"
@@ -57,7 +58,8 @@ type serverImpl struct {
 	pdEndpoints   []string
 	coordinatorMu sync.Mutex
 	coordinator   coordinator.Coordinator
-	messageCenter messaging.MessageCenter
+
+	dispatcherManagerManager *downstreamadapter.DispatcherManagerManager
 
 	// session keeps alive between the server and etcd
 	session *concurrency.Session
@@ -110,11 +112,11 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	c.subModules = []SubModule{
-		watcher.NewCaptureManager(c.session, c.EtcdClient, c.messageCenter),
+		watcher.NewCaptureManager(c.session, c.EtcdClient),
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
-		NewGrpcServer(c.tcpServer.GrpcListener(), c.messageCenter),
-		maintainer.NewMaintainerManager(c.messageCenter, c.serverID),
+		NewGrpcServer(c.tcpServer.GrpcListener()),
+		maintainer.NewMaintainerManager(c.serverID),
 		maintainer.NewFakeMaintainerManager(c.messageCenter),
 	}
 	// register it into global var

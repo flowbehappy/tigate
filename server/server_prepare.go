@@ -21,7 +21,10 @@ import (
 	"strings"
 	"time"
 
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+
 	"github.com/dustin/go-humanize"
+	"github.com/flowbehappy/tigate/downstreamadapter"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/server/watcher"
@@ -152,8 +155,13 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	}
 	c.serverID = id
 	c.session = session
-	mcCfg := config.NewDefaultMessageCenterConfig()
-	c.messageCenter = messaging.NewMessageCenter(id, watcher.TempEpoch, mcCfg)
+
+	appcontext.SetService("messageCenter", messaging.NewMessageCenter(id, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
+	appcontext.SetService("eventCollector", downstreamadapter.NewEventCollector(100*1024*1024*1024, id)) // 100GB for demo
+	appcontext.SetService("heartbeatCollector", downstreamadapter.NewHeartBeatCollector(id))
+	//appcontext.SetService("eventService")
+
+	c.dispatcherManagerManager = downstreamadapter.NewDispatcherManagerManager()
 	return nil
 }
 
