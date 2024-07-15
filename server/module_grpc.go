@@ -16,6 +16,7 @@ import (
 	"context"
 	"net"
 
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
 	"google.golang.org/grpc"
@@ -26,12 +27,12 @@ type GrpcModule struct {
 	lis        net.Listener
 }
 
-func NewGrpcServer(lis net.Listener, mc messaging.MessageCenter) *GrpcModule {
+func NewGrpcServer(lis net.Listener) *GrpcModule {
 	option := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(256 * 1024 * 1024), // 256MB
 	}
 	grpcServer := grpc.NewServer(option...)
-	proto.RegisterMessageCenterServer(grpcServer, messaging.NewMessageCenterServer(mc))
+	proto.RegisterMessageCenterServer(grpcServer, messaging.NewMessageCenterServer(appcontext.GetService[messaging.MessageCenter]("messageCenter")))
 	return &GrpcModule{
 		grpcServer: grpcServer,
 		lis:        lis,

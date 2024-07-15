@@ -49,7 +49,6 @@ One EventDispatcherManager can only have one Sink.
 */
 type EventDispatcherManager struct {
 	DispatcherMap               map[*common.TableSpan]*dispatcher.TableEventDispatcher
-	messageCenter               messaging.MessageCenter
 	TableTriggerEventDispatcher *dispatcher.TableTriggerEventDispatcher
 	HeartbeatResponseQueue      *HeartbeatResponseQueue
 	HeartbeatRequestQueue       *HeartbeatRequestQueue
@@ -67,7 +66,7 @@ type EventDispatcherManager struct {
 	//filter                      *Filter
 }
 
-func NewEventDispatcherManager(changefeedID model.ChangeFeedID, messageCenter messaging.MessageCenter, config *ChangefeedConfig, clusterID messaging.ServerId, maintainerID messaging.ServerId) *EventDispatcherManager {
+func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *ChangefeedConfig, clusterID messaging.ServerId, maintainerID messaging.ServerId) *EventDispatcherManager {
 	eventDispatcherManager := EventDispatcherManager{
 		DispatcherMap:          make(map[*common.TableSpan]*dispatcher.TableEventDispatcher),
 		ChangefeedID:           changefeedID,
@@ -76,7 +75,6 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, messageCenter me
 		SinkURI:                config.SinkURI,
 		//SinkConfig:             config.SinkConfig,
 		EnableSyncPoint:       false,
-		messageCenter:         messageCenter,
 		ClusterID:             clusterID,
 		MaintainerID:          maintainerID,
 		TableSpanStatusesChan: make(chan *heartbeatpb.TableSpanStatus, 100),
