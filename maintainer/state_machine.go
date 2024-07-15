@@ -391,7 +391,7 @@ func (s *StateMachine) pollOnPrepare(
 			return nil, true, nil
 		}
 	case scheduler.ComponentStatusWorking:
-		// moving state, and the primary wacher still report status
+		// moving state, and the primary watcher still report status
 		if s.Primary == captureID {
 			s.Inferior.UpdateStatus(input)
 			return nil, false, nil

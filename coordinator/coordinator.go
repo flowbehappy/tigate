@@ -33,7 +33,7 @@ import (
 const maintainerMangerTopic = "maintainer-manager"
 
 // Coordinator is the master of the ticdc cluster,
-// 1. schedules changefeed maintainer to ticdc wacher
+// 1. schedules changefeed maintainer to ticdc watcher
 // 2. save changefeed checkpoint ts to etcd
 // 3. send checkpoint to downstream
 // 4. manager gc safe point
@@ -98,7 +98,7 @@ func NewCoordinator(capture *model.CaptureInfo,
 var allChangefeeds = make(map[model.ChangeFeedID]*model.ChangeFeedInfo)
 
 func init() {
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 1; i++ {
 		id := fmt.Sprintf("%d", i)
 		allChangefeeds[model.DefaultChangeFeedID(id)] = &model.ChangeFeedInfo{
 			ID:      id,

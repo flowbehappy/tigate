@@ -124,8 +124,9 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 		}
 		// not removed, if not initialized, try to send bootstrap message again
 		if capture.state == CaptureStateUninitialized &&
-			time.Since(capture.lastBootstrapTime) > time.Second {
+			time.Since(capture.lastBootstrapTime) > time.Millisecond*500 {
 			msgs = append(msgs, s.bootstrapMessage(id))
+			capture.lastBootstrapTime = time.Now()
 		}
 	}
 

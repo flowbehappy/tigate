@@ -27,8 +27,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// Manager is the manager of all changefeed maintainer in a ticdc wacher, each ticdc wacher will
-// start a Manager when the wacher is startup. the Manager should:
+// Manager is the manager of all changefeed maintainer in a ticdc watcher, each ticdc watcher will
+// start a Manager when the watcher is startup. the Manager should:
 // 1. handle bootstrap command from coordinator and return all changefeed maintainer status
 // 2. handle dispatcher command from coordinator: add or remove changefeed maintainer
 // 3. check maintainer liveness
@@ -155,7 +155,7 @@ func (m *Manager) Run(ctx context.Context) error {
 			// cleanup removed maintainer
 			for _, cf := range m.maintainers {
 				if cf.removed.Load() {
-					cf.Cancel()
+					cf.Close()
 					delete(m.maintainers, cf.id)
 				}
 			}

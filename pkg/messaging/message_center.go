@@ -20,6 +20,7 @@ type MessageCenter interface {
 	MessageSender
 	//MessageReceiver
 	RegisterHandler(topic string, handler MessageHandler)
+	DeRegisterHandler(topic string)
 	AddTarget(id ServerId, epoch uint64, addr string)
 	RemoveTarget(id ServerId)
 	//GetTarget(id ServerId) MessageSender
@@ -114,6 +115,10 @@ func NewMessageCenter(id ServerId, epoch uint64, cfg *config.MessageCenterConfig
 
 func (mc *messageCenterImpl) RegisterHandler(topic string, handler MessageHandler) {
 	mc.router.registerHandler(topic, handler)
+}
+
+func (mc *messageCenterImpl) DeRegisterHandler(topic string) {
+	mc.router.deRegisterHandler(topic)
 }
 
 // AddTarget is called when a new remote target is discovered,
