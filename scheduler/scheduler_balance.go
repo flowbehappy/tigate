@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package maintainer
+package scheduler
 
 import (
 	"math"
@@ -19,7 +19,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 )
@@ -56,9 +56,9 @@ func (b *balanceScheduler) Name() string {
 }
 
 func (b *balanceScheduler) Schedule(
-	allInferiors []scheduler.InferiorID,
+	allInferiors []InferiorID,
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
-	stateMachines scheduler.Map[scheduler.InferiorID, *StateMachine],
+	stateMachines utils.Map[InferiorID, *StateMachine],
 ) []*ScheduleTask {
 	if !b.forceBalance {
 		now := time.Now()
@@ -78,7 +78,7 @@ func (b *balanceScheduler) Schedule(
 func buildBalanceMoveTables(
 	random *rand.Rand,
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
-	stateMachines scheduler.Map[scheduler.InferiorID, *StateMachine],
+	stateMachines utils.Map[InferiorID, *StateMachine],
 	maxTaskConcurrency int,
 ) []*ScheduleTask {
 	moves := newBalanceMoveTables(
@@ -95,15 +95,15 @@ func buildBalanceMoveTables(
 func newBalanceMoveTables(
 	random *rand.Rand,
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
-	stateMachines scheduler.Map[scheduler.InferiorID, *StateMachine],
+	stateMachines utils.Map[InferiorID, *StateMachine],
 	maxTaskLimit int,
 ) []*MoveInferior {
-	tablesPerCapture := make(map[model.CaptureID]scheduler.Map[scheduler.InferiorID, *StateMachine])
+	tablesPerCapture := make(map[model.CaptureID]utils.Map[InferiorID, *StateMachine])
 	for captureID := range aliveCaptures {
-		tablesPerCapture[captureID] = scheduler.NewBtreeMap[scheduler.InferiorID, *StateMachine]()
+		tablesPerCapture[captureID] = utils.NewBtreeMap[InferiorID, *StateMachine]()
 	}
 
-	stateMachines.Ascend(func(key scheduler.InferiorID, value *StateMachine) bool {
+	stateMachines.Ascend(func(key InferiorID, value *StateMachine) bool {
 		if value.State == SchedulerStatusWorking {
 			tablesPerCapture[value.Primary].ReplaceOrInsert(key, value)
 		}
@@ -116,7 +116,7 @@ func newBalanceMoveTables(
 	victims := make([]*StateMachine, 0)
 	for _, ts := range tablesPerCapture {
 		var changefeeds []*StateMachine
-		ts.Ascend(func(key scheduler.InferiorID, value *StateMachine) bool {
+		ts.Ascend(func(key InferiorID, value *StateMachine) bool {
 			changefeeds = append(changefeeds, value)
 			return true
 		})
