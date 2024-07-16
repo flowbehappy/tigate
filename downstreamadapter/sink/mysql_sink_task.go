@@ -43,7 +43,7 @@ func newMysqlSinkTask(tableSpan *common.TableSpan, tableProgress *types.TablePro
 		tableSpan:        tableSpan,
 		tableProgress:    tableProgress,
 		eventCh:          eventCh,
-		taskStatus:       threadpool.Running,
+		taskStatus:       threadpool.CPUTask,
 	}
 }
 
@@ -56,26 +56,26 @@ func (t *MysqlSinkTask) GetStatus() threadpool.TaskStatus {
 func (t *MysqlSinkTask) SetStatus(taskStatus threadpool.TaskStatus) {
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
-	if t.taskStatus != threadpool.Canceled {
+	if t.taskStatus != threadpool.Done {
 		t.taskStatus = taskStatus
 	}
 }
 
-func (t *MysqlSinkTask) Execute(timeout time.Duration) threadpool.TaskStatus {
+func (t *MysqlSinkTask) Execute() (threadpool.TaskStatus, time.Time) {
 	// 从 pending 的 task 里面拿出来塞下去，指导超时或者没有 event 了
-	timer := time.NewTimer(timeout)
+	// timer := time.NewTimer(timeout)
 	for {
 		select {
 		case event := <-t.eventCh:
 			t.conflictDetector.Add(event, t.tableProgress) // 这个要测过一次要多少，有可能直接超时了;以及这个写法要测过不知道对不对
-		case <-timer.C:
-			return threadpool.Running
+		// case <-timer.C:
+		// 	return threadpool.CPUTask
 		default:
 			// 也就是还没超时，但是 event 也没有，那就直接把任务扔回去
-			if !timer.Stop() {
-				<-timer.C
-			}
-			return threadpool.Running
+			// if !timer.Stop() {
+			// 	<-timer.C
+			// }
+			return threadpool.CPUTask, time.Time{}
 		}
 	}
 }
@@ -83,12 +83,12 @@ func (t *MysqlSinkTask) Execute(timeout time.Duration) threadpool.TaskStatus {
 func (t *MysqlSinkTask) Cancel() {
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
-	t.taskStatus = threadpool.Canceled
+	t.taskStatus = threadpool.Done
 }
 
 func (t *MysqlSinkTask) Await() threadpool.TaskStatus {
 	log.Error("MysqlSinkTask should not call await()")
-	return threadpool.Failed
+	return threadpool.Done
 }
 
 func (t *MysqlSinkTask) Release() {

@@ -39,23 +39,23 @@ func NewEventDispatcherTask(dispatcher Dispatcher) *EventDispatcherTask {
 	return &EventDispatcherTask{
 		dispatcher: dispatcher,
 		//infos:      make([]*HeartBeatResponseMessage, 0),
-		taskStatus: threadpool.Running,
+		taskStatus: threadpool.CPUTask,
 	}
 }
 
-func (t *EventDispatcherTask) GetStatus() threadpool.TaskStatus {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-	return t.taskStatus
-}
+// func (t *EventDispatcherTask) GetStatus() threadpool.TaskStatus {
+// 	t.mutex.Lock()
+// 	defer t.mutex.Unlock()
+// 	return t.taskStatus
+// }
 
-func (t *EventDispatcherTask) SetStatus(taskStatus threadpool.TaskStatus) {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-	if t.taskStatus != threadpool.Canceled {
-		t.taskStatus = taskStatus
-	}
-}
+// func (t *EventDispatcherTask) SetStatus(taskStatus threadpool.TaskStatus) {
+// 	t.mutex.Lock()
+// 	defer t.mutex.Unlock()
+// 	// if t.taskStatus != threadpool.Canceled {
+// 	// 	t.taskStatus = taskStatus
+// 	// }
+// }
 
 func (t *EventDispatcherTask) updateState(state *State, heartBeatResponseMessages []*HeartBeatResponseMessage) {
 	for _, heartBeatResponseMessage := range heartBeatResponseMessages {
@@ -96,8 +96,8 @@ func (t *EventDispatcherTask) updateState(state *State, heartBeatResponseMessage
 }
 
 // TODO:这边后面需要列一下每一种情况
-func (t *EventDispatcherTask) Execute(timeout time.Duration) threadpool.TaskStatus {
-	timer := time.NewTimer(timeout)
+func (t *EventDispatcherTask) Execute() (threadpool.TaskStatus, time.Time) {
+	// timer := time.NewTimer(timeout)
 
 	// 1. 先检查是否在 blocked 状态
 	state := t.dispatcher.GetState()
@@ -210,13 +210,13 @@ func (t *EventDispatcherTask) Execute(timeout time.Duration) threadpool.TaskStat
 					return threadpool.Waiting
 				}
 			*/
-		case <-timer.C:
-			return threadpool.Running
+		// case <-timer.C:
+		// 	return threadpool.CPUTask
 		default:
-			if !timer.Stop() {
-				<-timer.C
-			}
-			return threadpool.Running
+			// if !timer.Stop() {
+			// 	<-timer.C
+			// }
+			return threadpool.CPUTask, time.Time{}
 		}
 	}
 }
@@ -243,7 +243,7 @@ func (t *EventDispatcherTask) Await() threadpool.TaskStatus {
 			return threadpool.Waiting
 		}
 	*/
-	return threadpool.Failed
+	return threadpool.Done
 }
 
 func (t *EventDispatcherTask) Release() {
@@ -254,5 +254,5 @@ func (t *EventDispatcherTask) Release() {
 func (t *EventDispatcherTask) Cancel() {
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
-	t.taskStatus = threadpool.Canceled
+	t.taskStatus = threadpool.Done
 }

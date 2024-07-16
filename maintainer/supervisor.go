@@ -168,7 +168,7 @@ func (s *Supervisor) bootstrapMessage(captureID model.CaptureID) rpc.Message {
 		messaging.ServerId(captureID),
 		"dispatcher-manager",
 		&heartbeatpb.MaintainerBootstrapRequest{
-			Id: s.ID.ID,
+			ChangefeedID: s.ID.ID,
 		})
 }
 

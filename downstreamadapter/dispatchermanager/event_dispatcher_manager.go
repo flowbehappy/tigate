@@ -20,6 +20,7 @@ import (
 
 	"github.com/flowbehappy/tigate/coordinator"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
+	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -66,6 +67,12 @@ type EventDispatcherManager struct {
 	//filter                      *Filter
 }
 
+// for compiler
+type ChangefeedConfig struct {
+	sinkType string
+	SinkURI  *url.URL
+}
+
 func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *ChangefeedConfig, clusterID messaging.ServerId, maintainerID messaging.ServerId) *EventDispatcherManager {
 	eventDispatcherManager := EventDispatcherManager{
 		DispatcherMap:          make(map[*common.TableSpan]*dispatcher.TableEventDispatcher),
@@ -98,7 +105,7 @@ func (e *EventDispatcherManager) Init(startTs uint64) {
 	// init heartbeat recv and send task
 	// No need to run recv task when there is no ddl event
 	//threadpool.GetTaskSchedulerInstance().HeartbeatTaskScheduler.Submit(newHeartbeatRecvTask(e))
-	threadpool.GetTaskSchedulerInstance().HeartbeatTaskScheduler.Submit(newHeartBeatSendTask(e))
+	threadpool.GetTaskSchedulerInstance().HeartbeatTaskScheduler.Submit(newHeartBeatSendTask(e), threadpool.CPUTask, time.Time{})
 }
 
 func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) uint64 {
@@ -131,7 +138,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 	}
 	tableEventDispatcher := dispatcher.NewTableEventDispatcher(tableSpan, e.Sink, startTs, syncPointInfo)
 
-	context.GetEventCollector().RegisterDispatcher(tableEventDispatcher, startTs)
+	context.GetService[*eventcollector.EventCollector]("eventCollector").RegisterDispatcher(tableEventDispatcher, startTs)
 
 	e.DispatcherMap[tableSpan] = tableEventDispatcher
 
@@ -141,7 +148,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 func (e *EventDispatcherManager) RemoveTableEventDispatcher(tableSpan *common.TableSpan) {
 	if dispatcher, ok := e.DispatcherMap[tableSpan]; ok {
 		// 判断一下状态，如果 removing 的话就不用管，
-		context.GetEventCollector().RemoveDispatcher(dispatcher)
+		context.GetService[*eventcollector.EventCollector]("eventCollector").RemoveDispatcher(dispatcher)
 		dispatcher.Remove()
 	} else {
 		// 如果已经 removed ，就要在 返回的心跳里加一下这个checkpointTs 信息

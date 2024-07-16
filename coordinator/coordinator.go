@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/pingcap/log"
@@ -50,8 +51,6 @@ type Coordinator interface {
 
 // coordinator implements the Coordinator interface
 type coordinator struct {
-	messageCenter messaging.MessageCenter
-
 	nodeInfo    *model.CaptureInfo
 	ID          model.CaptureID
 	initialized bool
@@ -76,13 +75,11 @@ type coordinator struct {
 }
 
 func NewCoordinator(capture *model.CaptureInfo,
-	messageCenter messaging.MessageCenter,
 	version int64) Coordinator {
 	c := &coordinator{
 		scheduler: NewCombineScheduler(
 			NewBasicScheduler(1000),
 			NewBalanceScheduler(time.Minute, 1000)),
-		messageCenter:      messageCenter,
 		version:            version,
 		nodeInfo:           capture,
 		stateMachines:      make(map[model.ChangeFeedID]*StateMachine),
@@ -93,7 +90,7 @@ func NewCoordinator(capture *model.CaptureInfo,
 		maxTaskConcurrency: 10000,
 	}
 	// receive messages
-	messageCenter.RegisterHandler("coordinator", func(msg *messaging.TargetMessage) error {
+	appcontext.GetService[messaging.MessageCenter]("MessageCenter").RegisterHandler("coordinator", func(msg *messaging.TargetMessage) error {
 		c.msgLock.Lock()
 		c.msgBuf = append(c.msgBuf, msg)
 		c.msgLock.Unlock()
@@ -173,7 +170,7 @@ func (c *coordinator) AsyncStop() {
 
 func (c *coordinator) sendMessages(msgs []rpc.Message) {
 	for _, msg := range msgs {
-		err := c.messageCenter.SendCommand(msg.(*messaging.TargetMessage))
+		err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(msg.(*messaging.TargetMessage))
 		if err != nil {
 			log.Error("failed to send coordinator request", zap.Any("msg", msg), zap.Error(err))
 			continue

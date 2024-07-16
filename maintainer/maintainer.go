@@ -49,8 +49,6 @@ type Maintainer struct {
 	config *model.ChangeFeedInfo
 	status *model.ChangeFeedStatus
 
-	messageCenter messaging.MessageCenter
-
 	state      scheduler.ComponentStatus
 	supervisor *Supervisor
 	scheduler  Scheduler
@@ -87,7 +85,6 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		scheduler: NewCombineScheduler(
 			NewBasicScheduler(1000),
 			NewBalanceScheduler(time.Minute, 1000)),
-		messageCenter: center,
 		state:         scheduler.ComponentStatusPrepared,
 		removed:       atomic.NewBool(false),
 		taskCh:        make(chan Task, 1024),
