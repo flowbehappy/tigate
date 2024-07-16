@@ -24,8 +24,8 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/google/uuid"
-	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
@@ -137,8 +137,7 @@ func (d *TableEventDispatcher) GetMemoryUsage() *MemoryUsage {
 }
 
 func (d *TableEventDispatcher) decodeEvent(rawTxnEvent *eventpb.TxnEvent) (*common.TxnEvent, error) {
-	var txnEvent *common.TxnEvent
-
+	txnEvent := &common.TxnEvent{}
 	for _, rawEvent := range rawTxnEvent.Events {
 		key, physicalTableID, err := decodeTableID(rawEvent.Key)
 		if err != nil {
@@ -175,6 +174,9 @@ func (d *TableEventDispatcher) decodeEvent(rawTxnEvent *eventpb.TxnEvent) (*comm
 			return nil, nil
 		}()
 
+		if err != nil {
+			return nil, err
+		}
 		txnEvent.Rows = append(txnEvent.Rows, &common.RowChangedEvent{
 			PhysicalTableID: row.PhysicalTableID,
 			TableInfo:       d.tableInfo,

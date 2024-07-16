@@ -14,6 +14,7 @@
 package dispatchermanager
 
 import (
+	"github.com/pingcap/log"
 	"math"
 	"net/url"
 	"time"
@@ -28,7 +29,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/google/uuid"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 
