@@ -46,8 +46,8 @@ func TestCoordinatorRun(t *testing.T) {
 	status := make([]*heartbeatpb.MaintainerStatus, 0, len(allGoM))
 	for id, _ := range allChangefeeds {
 		status = append(status, &heartbeatpb.MaintainerStatus{
-			ChangefeedID:    id.ID,
-			SchedulerStatus: int32(ComponentStatusWorking),
+			ChangefeedID: id.ID,
+			State:        heartbeatpb.ComponentState_Working,
 		})
 	}
 	sp.HandleStatus(captureID, status)

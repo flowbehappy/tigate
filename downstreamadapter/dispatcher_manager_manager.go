@@ -74,7 +74,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 				StartKey: dispatcher.GetTableSpan().GetStartKey(),
 				EndKey:   dispatcher.GetTableSpan().GetEndKey(),
 			},
-			ComponentStatus: int32(dispatcher.GetComponentStatus()),
+			ComponentStatus: dispatcher.GetComponentStatus(),
 			CheckpointTs:    0,
 		})
 	}

@@ -54,7 +54,7 @@ func (b *BasicScheduler) Schedule(
 			continue
 		}
 		// absent status means we should schedule it again
-		if st.State == scheduler.SchedulerStatusAbsent {
+		if st.State == SchedulerStatusAbsent {
 			newInferiors = append(newInferiors, inf)
 		}
 	}

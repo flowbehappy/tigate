@@ -50,7 +50,7 @@ type Maintainer struct {
 	config *model.ChangeFeedInfo
 	status *model.ChangeFeedStatus
 
-	state      scheduler.ComponentStatus
+	state      heartbeatpb.ComponentState
 	supervisor *Supervisor
 	scheduler  Scheduler
 
@@ -86,7 +86,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		scheduler: NewCombineScheduler(
 			NewBasicScheduler(1000),
 			NewBalanceScheduler(time.Minute, 1000)),
-		state:         scheduler.ComponentStatusPrepared,
+		state:         heartbeatpb.ComponentState_Prepared,
 		removed:       atomic.NewBool(false),
 		taskCh:        make(chan Task, 1024),
 		nodeManager:   appctx.GetService[*watcher.NodeManager](watcher.NodeManagerName),
@@ -97,7 +97,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		msgTopic:      "maintainer/" + cfID.ID,
 	}
 	if !isSecondary {
-		m.state = scheduler.ComponentStatusWorking
+		m.state = heartbeatpb.ComponentState_Working
 	}
 	// receive messages
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(m.msgTopic, func(msg *messaging.TargetMessage) error {
@@ -128,7 +128,7 @@ func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
 	if m.isSecondary.Load() {
 		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 	}
-	m.state = scheduler.ComponentStatusWorking
+	m.state = heartbeatpb.ComponentState_Working
 
 	// handle messages
 	if err := m.handleMessages(); err != nil {
@@ -145,10 +145,10 @@ func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
 
 	// resend dispatcher message
 	m.supervisor.stateMachines.Ascend(func(key scheduler.InferiorID, value *StateMachine) bool {
-		if value.State == scheduler.SchedulerStatusPrepare &&
+		if value.State == SchedulerStatusPrepare &&
 			time.Since(value.lastMsgTime) > time.Millisecond*200 {
 			server, _ := value.getRole(RoleSecondary)
-			msg, _, err := value.pollOnPrepare(&ReplicaSetStatus{Status: scheduler.ComponentStatusAbsent}, server)
+			msg, _, err := value.pollOnPrepare(&ReplicaSetStatus{State: heartbeatpb.ComponentState_Absent}, server)
 			if err != nil {
 				log.Error("poll failed", zap.Error(err))
 			}
@@ -185,7 +185,7 @@ func (m *Maintainer) handleMessages() error {
 					ID: &common.TableSpan{
 						TableSpan: info.Span,
 					},
-					Status: scheduler.ComponentStatus(info.SchedulerStatus),
+					State: heartbeatpb.ComponentState(info.SchedulerStatus),
 				})
 			}
 			msgs, err := m.supervisor.HandleStatus(msg.From.String(), status)
@@ -202,7 +202,7 @@ func (m *Maintainer) handleMessages() error {
 					ID: &common.TableSpan{
 						TableSpan: info.Span,
 					},
-					Status: scheduler.ComponentStatus(info.ComponentStatus),
+					State: heartbeatpb.ComponentState(info.ComponentStatus),
 				})
 			}
 			m.supervisor.UpdateCaptureStatus(msg.From.String(), status)
@@ -256,7 +256,7 @@ func (m *Maintainer) Close() {
 }
 
 func (m *Maintainer) initChangefeed() error {
-	m.state = scheduler.ComponentStatusPrepared
+	m.state = heartbeatpb.ComponentState_Prepared
 	m.statusChanged.Store(true)
 	return nil
 }
@@ -296,19 +296,19 @@ func (m *Maintainer) GetTableIDs() (map[int64]struct{}, error) {
 }
 
 func (m *Maintainer) finishAddChangefeed() {
-	m.state = scheduler.ComponentStatusWorking
+	m.state = heartbeatpb.ComponentState_Working
 	m.statusChanged.Store(true)
 }
 
 func (m *Maintainer) closeChangefeed() {
-	if m.state != scheduler.ComponentStatusStopping &&
-		m.state != scheduler.ComponentStatusStopped {
-		m.state = scheduler.ComponentStatusStopping
+	if m.state != heartbeatpb.ComponentState_Stopping &&
+		m.state != heartbeatpb.ComponentState_Stopped {
+		m.state = heartbeatpb.ComponentState_Stopping
 		m.statusChanged.Store(true)
 		//todo: real async close
 		go func() {
 			// send message to dispatcher manager
-			m.state = scheduler.ComponentStatusStopped
+			m.state = heartbeatpb.ComponentState_Stopped
 			m.statusChanged.Store(true)
 			m.removed.Store(true)
 		}()
@@ -318,10 +318,10 @@ func (m *Maintainer) closeChangefeed() {
 func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 	// todo: fix data race here
 	return &heartbeatpb.MaintainerStatus{
-		ChangefeedID:    m.id.ID,
-		FeedState:       string(m.changefeedSate),
-		SchedulerStatus: int32(m.state),
-		CheckpointTs:    0,
+		ChangefeedID: m.id.ID,
+		FeedState:    string(m.changefeedSate),
+		State:        m.state,
+		CheckpointTs: 0,
 	}
 }
 
@@ -335,15 +335,15 @@ func (m *Maintainer) printStatus() {
 		var taskDistribution string
 		m.supervisor.stateMachines.Ascend(func(key scheduler.InferiorID, value *StateMachine) bool {
 			switch value.State {
-			case scheduler.SchedulerStatusAbsent:
+			case SchedulerStatusAbsent:
 				absentTask++
-			case scheduler.SchedulerStatusPrepare:
+			case SchedulerStatusPrepare:
 				prepareTask++
-			case scheduler.SchedulerStatusCommit:
+			case SchedulerStatusCommit:
 				commitTask++
-			case scheduler.SchedulerStatusWorking:
+			case SchedulerStatusWorking:
 				workingTask++
-			case scheduler.SchedulerStatusRemoving:
+			case SchedulerStatusRemoving:
 				removingTask++
 			}
 			span := key.(*common.TableSpan)

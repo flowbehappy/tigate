@@ -265,7 +265,7 @@ func (s *Supervisor) HandleScheduleTasks(
 		if stateMachine, ok := s.stateMachines.Get(id); ok {
 			// If inferior is back to Replicating or Removed,
 			// the running task is finished.
-			if stateMachine.State == scheduler.SchedulerStatusWorking || stateMachine.HasRemoved() {
+			if stateMachine.State == SchedulerStatusWorking || stateMachine.HasRemoved() {
 				toBeDeleted = append(toBeDeleted, id)
 			}
 		} else {

@@ -21,7 +21,6 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -136,8 +135,8 @@ func (m *Manager) Run(ctx context.Context) error {
 				}
 				for _, id := range absent {
 					response.Statuses = append(response.Statuses, &heartbeatpb.MaintainerStatus{
-						ChangefeedID:    id,
-						SchedulerStatus: int32(scheduler.ComponentStatusAbsent),
+						ChangefeedID: id,
+						State:        heartbeatpb.ComponentState_Absent,
 					})
 				}
 				if len(response.Statuses) != 0 {

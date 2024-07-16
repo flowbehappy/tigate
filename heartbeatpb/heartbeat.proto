@@ -41,8 +41,7 @@ message TableProgressInfo {
     TableSpan span = 1; // for which dispatcher
     repeated TableProgress tableProgresses = 2; // 救命了这名字取得
     Action action = 3;
-    int32 scheduler_status = 4;
-
+    ComponentState scheduler_status = 4;
 }
 message HeartBeatResponse {
     repeated TableProgressInfo info = 1;
@@ -73,7 +72,7 @@ message MaintainerHeartbeat {
 message MaintainerStatus {
     string changefeedID = 1;
     string feed_state = 2;
-    int32 scheduler_status = 3;
+    ComponentState state = 3;
     uint64 checkpoint_ts = 4;
 }
 
@@ -113,6 +112,16 @@ message MaintainerBootstrapResponse {
 
 message TableSpanStatus {
     TableSpan span = 1; // for which dispatcher
-    int32 component_status = 2;
+    ComponentState component_status = 2;
     uint64 checkpoint_ts = 4;
+}
+
+enum ComponentState {
+    Unknown = 0;
+    Absent = 1;
+    Preparing = 2;
+    Prepared = 3;
+    Working = 4;
+    Stopping = 5;
+    Stopped = 6;
 }

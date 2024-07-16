@@ -14,9 +14,9 @@
 package dispatcher
 
 import (
-	"github.com/flowbehappy/tigate/coordinator"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/eventpb"
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 )
 
@@ -63,7 +63,7 @@ type Dispatcher interface {
 	GetSyncPointInfo() *SyncPointInfo
 	GetMemoryUsage() *MemoryUsage
 	PushEvent(event *eventpb.TxnEvent)
-	GetComponentStatus() coordinator.ComponentStatus
+	GetComponentStatus() heartbeatpb.ComponentState
 }
 
 type DispatcherType uint64
@@ -144,7 +144,7 @@ type HeartBeatInfo struct {
 	CheckpointTs    uint64
 	Id              common.DispatcherID
 	TableSpan       *common.TableSpan
-	ComponentStatus coordinator.ComponentStatus
+	ComponentStatus heartbeatpb.ComponentState
 }
 
 func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {

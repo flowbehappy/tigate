@@ -14,6 +14,7 @@
 package threadpool
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -21,48 +22,49 @@ import (
 var testCount int64 = 0
 
 type BasicCPUTask struct {
+	wg *sync.WaitGroup
 }
 
-func newBasicCPUTask() *BasicCPUTask {
-	return &BasicCPUTask{}
+func newBasicCPUTask(wg *sync.WaitGroup) *BasicCPUTask {
+	return &BasicCPUTask{wg}
 }
 
 func (t *BasicCPUTask) Execute() (TaskStatus, time.Time) {
 	for i := 0; i < 100; i++ {
 		atomic.AddInt64(&testCount, 1)
 	}
+	t.wg.Done()
 	return Done, time.Time{}
 }
 
 type BasicIOTask struct {
-	id TaskId
+	wg *sync.WaitGroup
 }
 
-func newBasicIOTask() *BasicIOTask {
-	return &BasicIOTask{}
+func newBasicIOTask(wg *sync.WaitGroup) *BasicIOTask {
+	return &BasicIOTask{wg}
 }
-
-func (t *BasicIOTask) TaskId() TaskId { return t.id }
 
 func (t *BasicIOTask) Execute() (TaskStatus, time.Time) {
 	time.Sleep(50 * time.Millisecond)
 	atomic.AddInt64(&testCount, 1)
+	t.wg.Done()
 	return Done, time.Time{}
 }
 
 type BasicWaitTask struct {
-	id TaskId
+	wg *sync.WaitGroup
 }
 
-func newBasicWaitTask() *BasicWaitTask {
-	return &BasicWaitTask{}
+func newBasicWaitTask(wg *sync.WaitGroup) *BasicWaitTask {
+	return &BasicWaitTask{wg}
 }
-
-func (t *BasicWaitTask) TaskId() TaskId { return t.id }
 
 func (t *BasicWaitTask) Execute() (TaskStatus, time.Time) {
 	time.Sleep(50 * time.Millisecond)
 	atomic.AddInt64(&testCount, 1)
+	t.wg.Done()
+
 	return Done, time.Time{}
 }
 
