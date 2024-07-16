@@ -152,6 +152,7 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 			s.stateMachines.ReplaceOrInsert(id, statemachine)
 		}
 		s.initialized = true
+		s.initStatus = nil
 	}
 
 	removedMsgs, err := s.handleRemovedNodes(removed)
@@ -168,7 +169,7 @@ func (s *Supervisor) bootstrapMessage(captureID model.CaptureID) rpc.Message {
 		messaging.ServerId(captureID),
 		"dispatcher-manager",
 		&heartbeatpb.MaintainerBootstrapRequest{
-			Id: s.ID.ID,
+			ChangefeedID: s.ID.ID,
 		})
 }
 
