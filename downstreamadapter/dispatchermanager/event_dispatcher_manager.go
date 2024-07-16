@@ -138,7 +138,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 	}
 	tableEventDispatcher := dispatcher.NewTableEventDispatcher(tableSpan, e.Sink, startTs, syncPointInfo)
 
-	context.GetService[*eventcollector.EventCollector]("eventCollector").RegisterDispatcher(tableEventDispatcher, startTs)
+	context.GetService[*eventcollector.EventCollector](context.EventCollector).RegisterDispatcher(tableEventDispatcher, startTs)
 
 	e.DispatcherMap[tableSpan] = tableEventDispatcher
 
@@ -148,7 +148,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 func (e *EventDispatcherManager) RemoveTableEventDispatcher(tableSpan *common.TableSpan) {
 	if dispatcher, ok := e.DispatcherMap[tableSpan]; ok {
 		// 判断一下状态，如果 removing 的话就不用管，
-		context.GetService[*eventcollector.EventCollector]("eventCollector").RemoveDispatcher(dispatcher)
+		context.GetService[*eventcollector.EventCollector](context.EventCollector).RemoveDispatcher(dispatcher)
 		dispatcher.Remove()
 	} else {
 		// 如果已经 removed ，就要在 返回的心跳里加一下这个checkpointTs 信息

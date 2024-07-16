@@ -21,10 +21,10 @@ import (
 
 	"github.com/flowbehappy/tigate/downstreamadapter"
 	"github.com/flowbehappy/tigate/maintainer"
+	"github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/tiflow/pkg/tcpserver"
 
-	"github.com/flowbehappy/tigate/coordinator"
 	appctx "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/errors"
@@ -57,7 +57,7 @@ type serverImpl struct {
 	pdClient      pd.Client
 	pdEndpoints   []string
 	coordinatorMu sync.Mutex
-	coordinator   coordinator.Coordinator
+	coordinator   server.Coordinator
 
 	dispatcherManagerManager *downstreamadapter.DispatcherManagerManager
 
@@ -75,7 +75,7 @@ type serverImpl struct {
 }
 
 // NewServer returns a new Server instance
-func NewServer(pdEndpoints []string) (appctx.Server, error) {
+func NewServer(pdEndpoints []string) (server.Server, error) {
 	conf := config.GetGlobalServerConfig()
 
 	// This is to make communication between nodes possible.
@@ -117,7 +117,7 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener()),
 		maintainer.NewMaintainerManager(c.serverID),
-		maintainer.NewFakeMaintainerManager(c.messageCenter),
+		maintainer.NewFakeMaintainerManager(),
 	}
 	// register it into global var
 	for _, subModule := range c.subModules {
@@ -169,14 +169,14 @@ func (c *serverImpl) SelfInfo() (*model.CaptureInfo, error) {
 	return nil, cerror.ErrCaptureNotInitialized.GenWithStackByArgs()
 }
 
-func (c *serverImpl) setCoordinator(co coordinator.Coordinator) {
+func (c *serverImpl) setCoordinator(co server.Coordinator) {
 	c.coordinatorMu.Lock()
 	defer c.coordinatorMu.Unlock()
 	c.coordinator = co
 }
 
 // GetCoordinator returns coordinator if it is the coordinator.
-func (c *serverImpl) GetCoordinator() (coordinator.Coordinator, error) {
+func (c *serverImpl) GetCoordinator() (server.Coordinator, error) {
 	c.coordinatorMu.Lock()
 	defer c.coordinatorMu.Unlock()
 	if c.coordinator == nil {

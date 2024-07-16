@@ -17,7 +17,7 @@ import (
 	"net/http/pprof"
 
 	v2 "github.com/flowbehappy/tigate/api/v2"
-	appctx "github.com/flowbehappy/tigate/pkg/common/context"
+	appctx "github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
