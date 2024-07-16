@@ -37,7 +37,7 @@ type EventAcceptor interface {
 	// GetClusterID returns the ID of the TiDB cluster the acceptor wants to accept events from.
 	GetClusterID() uint64
 	GetTopic() string
-	GetServerID() GlobalID
+	GetServerID() string
 	GetTableSpan() *common.TableSpan
 	GetStartTs() common.Ts
 }
@@ -229,20 +229,27 @@ func (c *cluster) runScanWorker(ctx context.Context, wg *sync.WaitGroup) {
 						remoteID := messaging.ServerId(ac.acceptor.GetServerID())
 						topic := ac.acceptor.GetTopic()
 						for _, e := range event {
+							// Skip the events that have been sent to the acceptor.
 							if e.CommitTs <= ac.watermark.Load() {
 								continue
 							}
-							var evenType messaging.IOType
 							if e.IsDDLEvent() {
-								evenType = messaging.TypeDDLEvent
+								msg := &messaging.DDLEvent{E: e}
+								// Send the event to the acceptor.
+								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, msg)
 							} else {
-								evenType = messaging.TypeDMLEvent
+								msg := &messaging.DMLEvent{E: e}
+								// Send the event to the acceptor.
+								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, msg)
 							}
-							// Send the event to the acceptor.
-							c.messageCh <- messaging.NewTargetMessage(remoteID, topic, evenType, e)
+
+						}
+						waterMarkMsg := &messaging.Watermark{
+							Span: task.Span,
+							Ts:   task.EndTs,
 						}
 						// After all the events are sent, we send the watermark to the acceptor.
-						c.messageCh <- messaging.NewTargetMessage(remoteID, topic, messaging.TypeWaterMark, spanStats.watermark.Load())
+						c.messageCh <- messaging.NewTargetMessage(remoteID, topic, waterMarkMsg)
 					}
 				}
 			}
@@ -252,6 +259,7 @@ func (c *cluster) runScanWorker(ctx context.Context, wg *sync.WaitGroup) {
 
 func (c *cluster) runPushMessageWorker(ctx context.Context, wg *sync.WaitGroup) {
 	wg.Add(1)
+	// Use a single goroutine to send the messages in order.
 	go func() {
 		defer wg.Done()
 		for {

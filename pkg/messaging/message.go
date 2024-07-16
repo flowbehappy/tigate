@@ -1,11 +1,13 @@
 package messaging
 
 import (
+	"encoding/binary"
 	"fmt"
 
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/apperror"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 
@@ -105,6 +107,7 @@ func (s ServerId) Unmarshal(data []byte) error {
 }
 
 type DMLEvent struct {
+	E *common.TxnEvent
 	// TODO
 }
 
@@ -113,11 +116,12 @@ func (d *DMLEvent) Marshal() ([]byte, error) {
 	return nil, nil
 }
 
-func (d *DMLEvent) decode(data []byte) error {
+func (d *DMLEvent) Unmarshal(data []byte) error {
 	return nil
 }
 
 type DDLEvent struct {
+	E *common.TxnEvent
 	// TODO
 }
 
@@ -130,44 +134,26 @@ func (d *DDLEvent) Unmarshal(data []byte) error {
 	return nil
 }
 
-func (d *DDLEvent) decode(data []byte) error {
-	return nil
+type Watermark struct {
+	Span *common.TableSpan
+	Ts   uint64
 }
 
-type HeartBeatRequest struct {
-	*heartbeatpb.HeartBeatRequest
-}
-
-func (h *HeartBeatRequest) encode(buf []byte) []byte {
-	data, err := h.Marshal()
+func (w *Watermark) Marshal() ([]byte, error) {
+	res := make([]byte, 8)
+	binary.LittleEndian.PutUint64(res, w.Ts)
+	spanBytes, err := w.Span.Marshal()
 	if err != nil {
-		log.Panic("Failed to encode HeartBeatRequest", zap.Error(err))
-		return buf
+		return nil, err
 	}
-	buf = append(buf, data...)
-	return buf
+	res = append(res, spanBytes...)
+	return res, nil
 }
 
-func (h *HeartBeatRequest) decode(data []byte) error {
-	return h.Unmarshal(data)
-}
-
-type HeartBeatResponse struct {
-	*heartbeatpb.HeartBeatResponse
-}
-
-func (h *HeartBeatResponse) encode(buf []byte) []byte {
-	data, err := h.Marshal()
-	if err != nil {
-		log.Panic("Failed to encode HeartBeatResponse", zap.Error(err))
-		return buf
-	}
-	buf = append(buf, data...)
-	return buf
-}
-
-func (h *HeartBeatResponse) decode(data []byte) error {
-	return h.Unmarshal(data)
+func (w *Watermark) Unmarshal(data []byte) error {
+	w.Ts = binary.LittleEndian.Uint64(data[:8])
+	w.Span = &common.TableSpan{}
+	return w.Span.Unmarshal(data[8:])
 }
 
 type IOTypeT interface {
