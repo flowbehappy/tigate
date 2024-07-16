@@ -365,6 +365,8 @@ func (s *StateMachine) pollOnAbsent(
 
 	case scheduler.ComponentStatusStopped:
 		// Ignore stopped state as a server may be shutdown unexpectedly.
+		// todo: fix ignore task, already exists error, when add a task and prepare, then receive a stop
+		// the running task still has the scheduler task
 		return false, nil
 	case scheduler.ComponentStatusPreparing,
 		scheduler.ComponentStatusPrepared,

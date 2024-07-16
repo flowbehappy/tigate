@@ -14,6 +14,7 @@
 package maintainer
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -48,8 +49,6 @@ type Maintainer struct {
 	id     model.ChangeFeedID
 	config *model.ChangeFeedInfo
 	status *model.ChangeFeedStatus
-
-	messageCenter messaging.MessageCenter
 
 	state      scheduler.ComponentStatus
 	supervisor *Supervisor
@@ -87,7 +86,6 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		scheduler: NewCombineScheduler(
 			NewBasicScheduler(1000),
 			NewBalanceScheduler(time.Minute, 1000)),
-		messageCenter: center,
 		state:         scheduler.ComponentStatusPrepared,
 		removed:       atomic.NewBool(false),
 		taskCh:        make(chan Task, 1024),
@@ -334,6 +332,7 @@ func (m *Maintainer) printStatus() {
 		absentTask := 0
 		commitTask := 0
 		removingTask := 0
+		var distributeTask string
 		m.supervisor.stateMachines.Ascend(func(key scheduler.InferiorID, value *StateMachine) bool {
 			switch value.State {
 			case scheduler.SchedulerStatusAbsent:
@@ -347,10 +346,13 @@ func (m *Maintainer) printStatus() {
 			case scheduler.SchedulerStatusRemoving:
 				removingTask++
 			}
+			span := key.(*common.TableSpan)
+			distributeTask = fmt.Sprintf("%s, %d==>%s", distributeTask, span.TableID, value.Primary)
 			return true
 		})
 
 		log.Info("table span status",
+			zap.String("distribute", distributeTask),
 			zap.String("changefeed", m.id.ID),
 			zap.Int("absent", absentTask),
 			zap.Int("prepare", prepareTask),
