@@ -15,7 +15,6 @@ package threadpool
 
 import (
 	"runtime"
-	"sync/atomic"
 	"time"
 )
 
@@ -31,9 +30,6 @@ type TaskScheduler struct {
 	cpuReactor  *waitReactor
 	ioReactor   *waitReactor
 	doneReactor *waitReactor
-
-	taskMap    taskMap
-	nextTaskId atomic.Uint64
 }
 
 // Thread number:
@@ -41,9 +37,8 @@ type TaskScheduler struct {
 //   - 0 (by defualt) means use 2 * logical cpu
 //   - >0 to choose another value
 func NewTaskScheduler(name string, cpuThreads int, ioThreads int) *TaskScheduler {
-	ts := &TaskScheduler{
-		taskMap: newTaskMap(),
-	}
+	ts := &TaskScheduler{}
+
 	defaultThreadCount := runtime.NumCPU() * 2
 
 	createTP := func(taskType TaskStatus, name string, threadCount int) *threadPool {
@@ -61,9 +56,9 @@ func NewTaskScheduler(name string, cpuThreads int, ioThreads int) *TaskScheduler
 	ts.cpuTaskThreadPool = createTP(CPUTask, name+"-CPU", cpuThreads)
 	ts.ioTaskThreadPool = createTP(IOTask, name+"-IO", ioThreads)
 
-	ts.cpuReactor = newWaitReactor(ts, &ts.taskMap)
-	ts.ioReactor = newWaitReactor(ts, &ts.taskMap)
-	ts.doneReactor = newWaitReactor(ts, &ts.taskMap)
+	ts.cpuReactor = newWaitReactor(ts)
+	ts.ioReactor = newWaitReactor(ts)
+	ts.doneReactor = newWaitReactor(ts)
 
 	return ts
 }
@@ -104,32 +99,28 @@ func (s *TaskScheduler) toBeExecuted(status TaskStatus) chan *scheduledTask {
 	return nil
 }
 
-func (s *TaskScheduler) newTaskId() TaskId { return TaskId(s.nextTaskId.Add(1)) }
-
 func (s *TaskScheduler) Submit(task Task, status TaskStatus, next time.Time) *TaskHandle {
 	// The task will be handled by one of the waitReactor.
-	id := s.newTaskId()
-	s.toBeScheduled(status) <- newScheduledTask(id, task, status, next)
-	return &TaskHandle{taskId: id, ts: s}
+	st := newScheduledTask(task, status, next)
+	s.toBeScheduled(status) <- st
+	return &TaskHandle{st, s}
 }
 
-// func (s *TaskScheduler) update(taskId TaskId, status TaskStatus, next time.Time) {
-// 	s.toBeScheduled(status) <- newScheduledTask(taskId, emptyTask{}, status, next)
-// }
+func (s *TaskScheduler) cancel(st *scheduledTask) {
+	for {
+		prev := st.status.Load()
+		if prev == int32(Done) {
+			return
+		}
+		if st.status.CompareAndSwap(prev, int32(Done)) {
+			st.time = time.Time{}
 
-func (s *TaskScheduler) cancel(taskId TaskId) {
-	s.toBeScheduled(Done) <- newScheduledTask(taskId, updateTask{}, Done, time.Now())
-}
+			// We need to send the msg to both CPU and IO reactor, to make sure the task is canceled.
+			s.toBeScheduled(CPUTask) <- st
+			s.toBeScheduled(IOTask) <- st
 
-// Return true if this task is in Done status or not exist.
-func (s *TaskScheduler) isDone(taskId TaskId) bool {
-	s.taskMap.mutex.Lock()
-	defer s.taskMap.mutex.Unlock()
-
-	if st, ok := s.taskMap.idToTask[taskId]; ok {
-		return st.status == Done
-	} else {
-		return true
+			break
+		}
 	}
 }
 

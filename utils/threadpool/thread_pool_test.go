@@ -21,12 +21,6 @@ import (
 	"github.com/zeebo/assert"
 )
 
-func waitForDone(h *TaskHandle) {
-	for !h.IsDone() {
-		time.Sleep(1 * time.Millisecond)
-	}
-}
-
 // BasicThreadPool test the basic functionality of threadpool
 // Including the functionality of CPU Threadpoool, IO Threadpool, and WaitReactor
 func TestBasicThreadPool(t *testing.T) {
@@ -35,13 +29,12 @@ func TestBasicThreadPool(t *testing.T) {
 		testCount = 0
 		taskScheduler := NewTaskSchedulerDefault("BasicCPUTask")
 		n := 10000
-		ths := make([]*TaskHandle, 0, n)
+		wg := &sync.WaitGroup{}
+		wg.Add(n)
 		for i := 0; i < n; i++ {
-			ths = append(ths, taskScheduler.Submit(newBasicCPUTask(), CPUTask, time.Now()))
+			taskScheduler.Submit(newBasicCPUTask(wg), CPUTask, time.Now())
 		}
-		for i := 0; i < n; i++ {
-			waitForDone(ths[i])
-		}
+		wg.Wait()
 		taskScheduler.Stop()
 		assert.Equal(t, testCount, int64(10000*100))
 	}
@@ -51,13 +44,12 @@ func TestBasicThreadPool(t *testing.T) {
 		testCount = 0
 		taskScheduler := NewTaskSchedulerDefault("BasicIOTask")
 		n := 1000
-		ths := make([]*TaskHandle, 0, n)
+		wg := &sync.WaitGroup{}
+		wg.Add(n)
 		for i := 0; i < n; i++ {
-			ths = append(ths, taskScheduler.Submit(newBasicIOTask(), IOTask, time.Now()))
+			taskScheduler.Submit(newBasicIOTask(wg), IOTask, time.Now())
 		}
-		for i := 0; i < n; i++ {
-			waitForDone(ths[i])
-		}
+		wg.Wait()
 		taskScheduler.Stop()
 		assert.Equal(t, testCount, int64(1000))
 	}
@@ -67,13 +59,12 @@ func TestBasicThreadPool(t *testing.T) {
 		testCount = 0
 		taskScheduler := NewTaskSchedulerDefault("BasicWaitAndCPUTask")
 		n := 1000
-		ths := make([]*TaskHandle, 0, n)
+		wg := &sync.WaitGroup{}
+		wg.Add(n)
 		for i := 0; i < n; i++ {
-			ths = append(ths, taskScheduler.Submit(newBasicWaitTask(), CPUTask, time.Now()))
+			taskScheduler.Submit(newBasicWaitTask(wg), CPUTask, time.Now())
 		}
-		for i := 0; i < n; i++ {
-			waitForDone(ths[i])
-		}
+		wg.Wait()
 		taskScheduler.Stop()
 		assert.Equal(t, testCount, int64(1000))
 	}

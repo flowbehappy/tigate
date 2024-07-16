@@ -73,80 +73,55 @@ func (h *taskHeap) peekTopTask() *scheduledTask {
 	return (*h)[0]
 }
 
-func (h *taskHeap) removeTask(st *scheduledTask) {
+func (h *taskHeap) removeTask(st *scheduledTask) bool {
 	if st.index >= 0 {
 		heap.Remove(h, st.index)
 		st.index = -1 // Mark the task is not in the heap
+		return true
 	}
+	return false
 }
 
 type priorityQueue struct {
 	taskHeap taskHeap
-	taskMap  *taskMap
-
-	// We reuse the mutex in the taskMap. To save some CPU cycles.
+	mutex    sync.Mutex
 }
 
-func newPriorityQueue(taskMap *taskMap) *priorityQueue {
-	return &priorityQueue{taskHeap: make(taskHeap, 0, 4096), taskMap: taskMap}
+func newPriorityQueue() *priorityQueue {
+	return &priorityQueue{taskHeap: make(taskHeap, 0, 4096)}
 }
 
 func (q *priorityQueue) len() int {
-	q.taskMap.mutex.Lock()
-	defer q.taskMap.mutex.Unlock()
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
 
 	return q.taskHeap.Len()
 }
 
-func (q *priorityQueue) pushTask(newTask *scheduledTask) {
-	if newTask.index != -1 {
-		panic("the task is already in the heap")
-	}
+func (q *priorityQueue) pushTask(st *scheduledTask) {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
 
-	q.taskMap.mutex.Lock()
-	defer q.taskMap.mutex.Unlock()
-
-	taskId := newTask.taskId
-	if st, ok := q.taskMap.idToTask[taskId]; ok {
-		st.time = newTask.time
-		st.status = newTask.status
-
-		q.taskHeap.addOrUpdateTask(st)
-		// fmt.Printf("updateTask task(duplicate): %d, status: %v\n", taskId, task.status)
-		return
-	} else {
-		_, isEmptyTask := newTask.task.(emptyTask)
-		_, isUpdateTask := newTask.task.(updateTask)
-		if isEmptyTask || isUpdateTask {
-			panic("emptyTask or updateTask should not be submitted to execute")
-		}
-		q.taskHeap.addOrUpdateTask(newTask)
-		q.taskMap.idToTask[taskId] = newTask
-	}
+	q.taskHeap.addOrUpdateTask(st)
 }
 
-func (q *priorityQueue) removeTask(taskId TaskId) *scheduledTask {
-	q.taskMap.mutex.Lock()
-	defer q.taskMap.mutex.Unlock()
+func (q *priorityQueue) removeTask(st *scheduledTask) bool {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
 
-	if st, ok := q.taskMap.idToTask[taskId]; ok {
-		q.taskHeap.removeTask(st)
-		delete(q.taskMap.idToTask, taskId)
-		return st
-	}
-	return nil
+	return q.taskHeap.removeTask(st)
 }
 
 func (q *priorityQueue) peekTopTask() *scheduledTask {
-	q.taskMap.mutex.Lock()
-	defer q.taskMap.mutex.Unlock()
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
 
 	return q.taskHeap.peekTopTask()
 }
 
 func (q *priorityQueue) popTopTask() *scheduledTask {
-	q.taskMap.mutex.Lock()
-	defer q.taskMap.mutex.Unlock()
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
 
 	return q.taskHeap.popTopTask()
 }
@@ -173,10 +148,10 @@ type waitReactor struct {
 	freeToRun  bool
 }
 
-func newWaitReactor(toBeExecuted toBeExecuted, taskMap *taskMap) *waitReactor {
+func newWaitReactor(toBeExecuted toBeExecuted) *waitReactor {
 	waitReactor := waitReactor{
 		newTaskChan:       make(chan *scheduledTask, 4096),
-		waitingQueue:      newPriorityQueue(taskMap),
+		waitingQueue:      newPriorityQueue(),
 		queueUpdateSignal: make(chan struct{}, 1), // We don't need more than one signal in the channel.
 		toBeExecuted:      toBeExecuted,
 		stopSignal:        make(chan struct{}),
@@ -202,9 +177,8 @@ func (r *waitReactor) blockForTest(until int) {
 }
 
 func (r *waitReactor) removeTaskIfDone(st *scheduledTask) bool {
-	if st.status == Done {
-		r.waitingQueue.removeTask(st.taskId)
-		return true
+	if TaskStatus(st.status.Load()) == Done {
+		return r.waitingQueue.removeTask(st)
 	}
 	return false
 }
@@ -303,9 +277,13 @@ func (r *waitReactor) executeTaskLoop() {
 		// fmt.Println("nearestTime:", nearestTime, "ready:", ready)
 
 		if ready {
+			status := TaskStatus(task.status.Load())
+			if status == Done {
+				panic("task status should not be Done")
+			}
 			select {
 			// Wait until the runner to execute the task.
-			case r.toBeExecuted.toBeExecuted(task.status) <- task:
+			case r.toBeExecuted.toBeExecuted(status) <- task:
 				// fmt.Printf("push to toBeExecuted task: %d, status: %d\n", task.task.TaskId(), task.status)
 				break
 			case <-r.stopSignal:
