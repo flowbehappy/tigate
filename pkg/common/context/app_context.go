@@ -9,6 +9,12 @@ var (
 	once     sync.Once
 )
 
+const (
+	MessageCenter      = "message_center"
+	EventCollector     = "eventCollector"
+	HeartbeatCollector = "heartbeatCollector"
+)
+
 // Put all the global instances here.
 type AppContext struct {
 	// TODO

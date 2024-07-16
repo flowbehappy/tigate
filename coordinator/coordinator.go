@@ -21,6 +21,7 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/pingcap/log"
@@ -32,22 +33,6 @@ import (
 )
 
 const maintainerMangerTopic = "maintainer-manager"
-
-// Coordinator is the master of the ticdc cluster,
-// 1. schedules changefeed maintainer to ticdc watcher
-// 2. save changefeed checkpoint ts to etcd
-// 3. send checkpoint to downstream
-// 4. manager gc safe point
-// 5. response for open API call
-type Coordinator interface {
-	AsyncStop()
-	// Tick is the entrance of the coordinator, it will be called by the etcd watcher every 50ms.
-	// 1. Handle message reported by other modules
-	// 2. check if the node is changed, if a new node is added, send bootstrap message to that node ,
-	//    or if a node is removed, clean related state machine that binded to that node
-	// 3. schedule unscheduled changefeeds is all node is bootstrapped
-	Tick(ctx context.Context, metadata orchestrator.ReactorState) (orchestrator.ReactorState, error)
-}
 
 // coordinator implements the Coordinator interface
 type coordinator struct {
@@ -75,7 +60,7 @@ type coordinator struct {
 }
 
 func NewCoordinator(capture *model.CaptureInfo,
-	version int64) Coordinator {
+	version int64) server.Coordinator {
 	c := &coordinator{
 		scheduler: NewCombineScheduler(
 			NewBasicScheduler(1000),
@@ -90,7 +75,7 @@ func NewCoordinator(capture *model.CaptureInfo,
 		maxTaskConcurrency: 10000,
 	}
 	// receive messages
-	appcontext.GetService[messaging.MessageCenter]("MessageCenter").RegisterHandler("coordinator", func(msg *messaging.TargetMessage) error {
+	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler("coordinator", func(msg *messaging.TargetMessage) error {
 		c.msgLock.Lock()
 		c.msgBuf = append(c.msgBuf, msg)
 		c.msgLock.Unlock()
@@ -170,7 +155,7 @@ func (c *coordinator) AsyncStop() {
 
 func (c *coordinator) sendMessages(msgs []rpc.Message) {
 	for _, msg := range msgs {
-		err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(msg.(*messaging.TargetMessage))
+		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(msg.(*messaging.TargetMessage))
 		if err != nil {
 			log.Error("failed to send coordinator request", zap.Any("msg", msg), zap.Error(err))
 			continue
@@ -214,6 +199,7 @@ func (c *coordinator) printStatus() {
 		absentTask := 0
 		commitTask := 0
 		removingTask := 0
+		var taskDistribution string
 		for _, value := range c.stateMachines {
 			switch value.State {
 			case SchedulerStatusAbsent:
@@ -227,9 +213,12 @@ func (c *coordinator) printStatus() {
 			case SchedulerStatusRemoving:
 				removingTask++
 			}
+
+			taskDistribution = fmt.Sprintf("%s, %d==>%s", taskDistribution, value.ID.ID, value.Primary)
 		}
 
 		log.Info("changefeed status",
+			zap.String("distribution", taskDistribution),
 			zap.Int("absent", absentTask),
 			zap.Int("prepare", prepareTask),
 			zap.Int("commit", commitTask),

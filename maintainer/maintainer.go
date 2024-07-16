@@ -100,7 +100,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		m.state = scheduler.ComponentStatusWorking
 	}
 	// receive messages
-	appcontext.GetService[messaging.MessageCenter]("messageCenter").RegisterHandler(m.msgTopic, func(msg *messaging.TargetMessage) error {
+	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(m.msgTopic, func(msg *messaging.TargetMessage) error {
 		if m.isSecondary.Load() {
 			return nil
 		}
@@ -215,7 +215,7 @@ func (m *Maintainer) handleMessages() error {
 
 func (m *Maintainer) sendMessages(msgs []rpc.Message) {
 	for _, msg := range msgs {
-		err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(msg.(*messaging.TargetMessage))
+		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(msg.(*messaging.TargetMessage))
 		if err != nil {
 			log.Error("failed to send coordinator request", zap.Any("msg", msg), zap.Error(err))
 			continue
@@ -252,7 +252,7 @@ func (m *Maintainer) scheduleTableSpan() ([]rpc.Message, error) {
 
 // Close cleanup resources
 func (m *Maintainer) Close() {
-	appcontext.GetService[messaging.MessageCenter]("messageCenter").DeRegisterHandler(m.msgTopic)
+	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).DeRegisterHandler(m.msgTopic)
 }
 
 func (m *Maintainer) initChangefeed() error {
@@ -332,7 +332,7 @@ func (m *Maintainer) printStatus() {
 		absentTask := 0
 		commitTask := 0
 		removingTask := 0
-		var distributeTask string
+		var taskDistribution string
 		m.supervisor.stateMachines.Ascend(func(key scheduler.InferiorID, value *StateMachine) bool {
 			switch value.State {
 			case scheduler.SchedulerStatusAbsent:
@@ -347,12 +347,12 @@ func (m *Maintainer) printStatus() {
 				removingTask++
 			}
 			span := key.(*common.TableSpan)
-			distributeTask = fmt.Sprintf("%s, %d==>%s", distributeTask, span.TableID, value.Primary)
+			taskDistribution = fmt.Sprintf("%s, %d==>%s", taskDistribution, span.TableID, value.Primary)
 			return true
 		})
 
 		log.Info("table span status",
-			zap.String("distribute", distributeTask),
+			zap.String("distribution", taskDistribution),
 			zap.String("changefeed", m.id.ID),
 			zap.Int("absent", absentTask),
 			zap.Int("prepare", prepareTask),

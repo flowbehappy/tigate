@@ -38,11 +38,11 @@ type FakeDispatcherManagerManager struct {
 }
 
 // test only
-func NewFakeMaintainerManager(messageCenter messaging.MessageCenter) *FakeDispatcherManagerManager {
+func NewFakeMaintainerManager() *FakeDispatcherManagerManager {
 	m := &FakeDispatcherManagerManager{
 		dispatcherManagers: make(map[model.ChangeFeedID]*DispatcherManager),
 	}
-	appcontext.GetService[messaging.MessageCenter]("messageCenter").RegisterHandler(m.Name(), func(msg *messaging.TargetMessage) error {
+	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(m.Name(), func(msg *messaging.TargetMessage) error {
 		m.msgLock.Lock()
 		m.msgBuf = append(m.msgBuf, msg)
 		m.msgLock.Unlock()
@@ -93,7 +93,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 						})
 						return true
 					})
-					err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(messaging.NewTargetMessage(
+					err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 						manager.maintainerID,
 						"maintainer/"+manager.id.ID,
 						response,
@@ -163,7 +163,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 						return true
 					})
 					if len(response.Info) != 0 {
-						err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(messaging.NewTargetMessage(
+						err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 							manager.maintainerID,
 							"maintainer/"+manager.id.ID,
 							response,

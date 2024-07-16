@@ -122,8 +122,7 @@ func (e *elector) campaignCoordinator(ctx context.Context) error {
 			zap.String("captureID", e.captureImpl.info.ID),
 			zap.Int64("coordinatorVersion", coordinatorVersion))
 
-		co := coordinator.NewCoordinator(e.captureImpl.info,
-			e.captureImpl.messageCenter, coordinatorVersion)
+		co := coordinator.NewCoordinator(e.captureImpl.info, coordinatorVersion)
 		e.captureImpl.setCoordinator(co)
 
 		// watcher changefeed changes

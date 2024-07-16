@@ -11,12 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package context
+package server
 
 import (
 	"context"
 
-	"github.com/flowbehappy/tigate/coordinator"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/etcd"
 	pd "github.com/tikv/pd/client"
@@ -31,7 +30,7 @@ type Server interface {
 	SelfInfo() (*model.CaptureInfo, error)
 	Liveness() model.Liveness
 
-	GetCoordinator() (coordinator.Coordinator, error)
+	GetCoordinator() (Coordinator, error)
 	IsCoordinator() bool
 
 	// GetCoordinatorInfo returns the coordinator server， it will be used when forward api request
