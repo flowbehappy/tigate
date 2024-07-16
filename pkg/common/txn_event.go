@@ -13,13 +13,18 @@ import (
 type DDLEvent struct {
 	Job *model.Job `json:"ddl_job"`
 	// commitTS of the rawKV
-	CommitTS Timestamp `json:"commit_ts"`
+	CommitTS Ts `json:"commit_ts"`
 }
 
 // TxnEvent represents all events in the current txn
 // It could be a DDL event, or multiple DML events, but can't be both.
 // TODO: field 改成小写？
 type TxnEvent struct {
+	// ClusterID is the ID of the tidb cluster this event belongs to.
+	ClusterID uint64
+	// Span of this event belongs to.
+	Span *TableSpan
+
 	DDLEvent       *DDLEvent
 	Rows           []*RowChangedEvent
 	StartTs        uint64
