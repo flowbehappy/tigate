@@ -24,6 +24,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
+	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -49,31 +50,24 @@ type coordinator struct {
 	lastCheckTime time.Time
 
 	// scheduling fields
-	scheduler          Scheduler
-	stateMachines      map[model.ChangeFeedID]*StateMachine
-	runningTasks       map[model.ChangeFeedID]*ScheduleTask
-	maxTaskConcurrency int
-
-	captures map[model.CaptureID]*ServerStatus
-	// track all status reported by remote when bootstrap
-	initStatus map[model.CaptureID][]*heartbeatpb.MaintainerStatus
+	scheduler  scheduler.Scheduler
+	supervisor *scheduler.Supervisor
 }
 
 func NewCoordinator(capture *model.CaptureInfo,
 	version int64) server.Coordinator {
 	c := &coordinator{
-		scheduler: NewCombineScheduler(
-			NewBasicScheduler(1000),
-			NewBalanceScheduler(time.Minute, 1000)),
-		version:            version,
-		nodeInfo:           capture,
-		stateMachines:      make(map[model.ChangeFeedID]*StateMachine),
-		runningTasks:       map[model.ChangeFeedID]*ScheduleTask{},
-		initialized:        false,
-		captures:           make(map[model.CaptureID]*ServerStatus),
-		initStatus:         make(map[model.CaptureID][]*heartbeatpb.MaintainerStatus),
-		maxTaskConcurrency: 10000,
+		scheduler: scheduler.NewCombineScheduler(
+			scheduler.NewBasicScheduler(1000),
+			scheduler.NewBalanceScheduler(time.Minute, 1000)),
+		version:  version,
+		nodeInfo: capture,
 	}
+
+	c.supervisor = scheduler.NewSupervisor(
+		scheduler.ChangefeedID(model.DefaultChangeFeedID("coordinator")),
+		newChangefeed, c.newBootstrapMessage,
+	)
 	// receive messages
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler("coordinator", func(msg *messaging.TargetMessage) error {
 		c.msgLock.Lock()
@@ -100,7 +94,7 @@ func (c *coordinator) Tick(ctx context.Context,
 	}
 
 	// 2. check if nodes is changed
-	msgs, err := c.HandleAliveCaptureUpdate(state.Captures)
+	msgs, err := c.supervisor.HandleAliveCaptureUpdate(state.Captures)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -126,12 +120,20 @@ func (c *coordinator) handleMessages() error {
 		switch msg.Type {
 		case messaging.TypeCoordinatorBootstrapResponse:
 			req := msg.Message.(*heartbeatpb.CoordinatorBootstrapResponse)
-			c.cacheBootstrapResponse(msg.From.String(), req.Statuses)
+			var statues = make([]scheduler.InferiorStatus, 0, len(req.Statuses))
+			for _, status := range req.Statuses {
+				statues = append(statues, &MaintainerStatus{status})
+			}
+			c.supervisor.UpdateCaptureStatus(msg.From.String(), statues)
 		case messaging.TypeMaintainerHeartbeatRequest:
-			if c.CheckAllCaptureInitialized() {
+			if c.supervisor.CheckAllCaptureInitialized() {
 				req := msg.Message.(*heartbeatpb.MaintainerHeartbeat)
+				var statues = make([]scheduler.InferiorStatus, 0, len(req.Statuses))
+				for _, status := range req.Statuses {
+					statues = append(statues, &MaintainerStatus{status})
+				}
 				serverID := msg.From
-				msgs, err := c.HandleStatus(serverID.String(), req.Statuses)
+				msgs, err := c.supervisor.HandleStatus(serverID.String(), statues)
 				if err != nil {
 					log.Error("handle status failed", zap.Error(err))
 					return errors.Trace(err)
@@ -169,32 +171,29 @@ func (c *coordinator) sendMessages(msgs []rpc.Message) {
 }
 
 func (c *coordinator) scheduleMaintainer() ([]rpc.Message, error) {
-	if !c.CheckAllCaptureInitialized() {
+	if !c.supervisor.CheckAllCaptureInitialized() {
 		return nil, nil
 	}
-	allChangefeedID := make([]model.ChangeFeedID, 0)
+	allChangefeedID := make([]scheduler.InferiorID, 0)
 	// check all changefeeds.
-	for _, reactor := range allChangefeeds {
-		changefeedID := model.DefaultChangeFeedID(reactor.ID)
-		_, exist := c.GetChangefeedStateMachine(changefeedID)
-		if !exist {
-			// check if changefeed should be running
-			if !shouldRunChangefeed(reactor.State) {
-				continue
-			}
-			allChangefeedID = append(allChangefeedID, changefeedID)
-		} else {
-			if shouldRunChangefeed(reactor.State) {
-				allChangefeedID = append(allChangefeedID, changefeedID)
-			}
+	for id, reactor := range allChangefeeds {
+		if shouldRunChangefeed(reactor.State) {
+			allChangefeedID = append(allChangefeedID, scheduler.ChangefeedID(id))
 		}
 	}
 	tasks := c.scheduler.Schedule(
 		allChangefeedID,
-		c.captures,
-		c.stateMachines,
+		c.supervisor.GetAllCaptures(),
+		c.supervisor.StateMachines,
 	)
-	return c.HandleScheduleTasks(tasks)
+	return c.supervisor.HandleScheduleTasks(tasks)
+}
+
+func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message {
+	return messaging.NewTargetMessage(
+		messaging.ServerId(captureID),
+		maintainerMangerTopic,
+		&heartbeatpb.CoordinatorBootstrapRequest{Version: c.version})
 }
 
 func (c *coordinator) printStatus() {
@@ -205,23 +204,22 @@ func (c *coordinator) printStatus() {
 		commitTask := 0
 		removingTask := 0
 		var taskDistribution string
-		for _, value := range c.stateMachines {
+		c.supervisor.StateMachines.Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
 			switch value.State {
-			case SchedulerStatusAbsent:
+			case scheduler.SchedulerStatusAbsent:
 				absentTask++
-			case SchedulerStatusPrepare:
+			case scheduler.SchedulerStatusPrepare:
 				prepareTask++
-			case SchedulerStatusCommit:
+			case scheduler.SchedulerStatusCommit:
 				commitTask++
-			case SchedulerStatusWorking:
+			case scheduler.SchedulerStatusWorking:
 				workingTask++
-			case SchedulerStatusRemoving:
+			case scheduler.SchedulerStatusRemoving:
 				removingTask++
 			}
-
-			taskDistribution = fmt.Sprintf("%s, %s==>%s", taskDistribution, value.ID.ID, value.Primary)
-		}
-
+			taskDistribution = fmt.Sprintf("%s, %s==>%s", taskDistribution, value.ID.String(), value.Primary)
+			return true
+		})
 		log.Info("changefeed status",
 			zap.String("distribution", taskDistribution),
 			zap.Int("absent", absentTask),

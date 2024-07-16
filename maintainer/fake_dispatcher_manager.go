@@ -122,7 +122,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 					}
 					absentSpan := manager.handleDispatchTableSpanRequest(req)
 					if absentSpan != nil {
-						err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(messaging.NewTargetMessage(
+						err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 							manager.maintainerID,
 							"maintainer/"+manager.id.ID,
 							&heartbeatpb.HeartBeatResponse{
@@ -218,10 +218,13 @@ func (m *DispatcherManager) handleDispatchTableSpanRequest(
 		if !ok {
 			span = NewDispatcher(m.id, tableSpan, request.GetIsSecondary())
 			m.dispatchers.ReplaceOrInsert(tableSpan, span)
-			//threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(span, threadpool.CPUTask, time.Now())
+			threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(span, threadpool.CPUTask, time.Now())
 		}
 		span.removing.Store(false)
 		span.isSecondary.Store(request.IsSecondary)
+		if !request.IsSecondary {
+			span.state = heartbeatpb.ComponentState_Working
+		}
 	} else {
 		span, ok := m.dispatchers.Get(tableSpan)
 		if !ok {

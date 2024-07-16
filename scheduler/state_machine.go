@@ -128,7 +128,7 @@ func NewStateMachine(
 	stoppingCount := 0
 	committed := false
 	for captureID, status := range inferiorStatus {
-		if status.GetInferiorID() != sm.ID {
+		if status.GetInferiorID().Less(sm.ID) {
 			return nil, sm.inconsistentError(status, captureID,
 				"inferior id inconsistent")
 		}

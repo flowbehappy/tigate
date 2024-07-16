@@ -98,7 +98,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	if !isSecondary {
 		m.state = heartbeatpb.ComponentState_Working
 	}
-	m.supervisor = scheduler.NewSupervisor(cfID,
+	m.supervisor = scheduler.NewSupervisor(scheduler.ChangefeedID(cfID),
 		func(id scheduler.InferiorID) scheduler.Inferior {
 			return NewReplicaSet(m.id, id)
 		}, m.bootstrapMessage)
