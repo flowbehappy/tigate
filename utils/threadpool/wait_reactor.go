@@ -37,6 +37,8 @@ func (h *taskHeap) Push(x interface{}) {
 	*h = append(*h, x.(*scheduledTask))
 	(*h)[index].index = index
 }
+
+// Pop the last element of the slice.
 func (h *taskHeap) Pop() interface{} {
 	old := *h
 	n := len(old)
@@ -48,13 +50,21 @@ func (h *taskHeap) Pop() interface{} {
 
 // ====================================
 
-func (h *taskHeap) addTask(task *scheduledTask) { heap.Push(h, task) }
+func (h *taskHeap) addOrUpdateTask(st *scheduledTask) {
+	if st.index >= 0 {
+		heap.Fix(h, st.index)
+	} else {
+		heap.Push(h, st)
+	}
+}
 
 func (h *taskHeap) popTopTask() *scheduledTask {
 	if h.Len() == 0 {
 		return nil
 	}
-	return heap.Pop(h).(*scheduledTask)
+	st := heap.Pop(h).(*scheduledTask)
+	st.index = -1 // Mark the task is not in the heap
+	return st
 }
 func (h *taskHeap) peekTopTask() *scheduledTask {
 	if h.Len() == 0 {
@@ -63,83 +73,82 @@ func (h *taskHeap) peekTopTask() *scheduledTask {
 	return (*h)[0]
 }
 
-func (h *taskHeap) removeTask(task *scheduledTask) {
-	i := task.index
-	h.Swap(i, h.Len()-1)
-	(*h)[i] = nil // avoid memory leak
-	*h = (*h)[:h.Len()-1]
-	heap.Fix(h, i) // Restore the heap property
-}
-
-// Call this method after a task's time is updated.
-func (h *taskHeap) updateTask(task *scheduledTask) {
-	heap.Fix(h, task.index)
-}
-
-type priorityQueue struct {
-	idToTask map[TaskId]*scheduledTask
-	taskHeap taskHeap
-
-	mutex sync.Mutex
-}
-
-func newPriorityQueue() *priorityQueue {
-	return &priorityQueue{
-		taskHeap: make(taskHeap, 0, 4096),
-		idToTask: make(map[TaskId]*scheduledTask),
+func (h *taskHeap) removeTask(st *scheduledTask) {
+	if st.index >= 0 {
+		heap.Remove(h, st.index)
+		st.index = -1 // Mark the task is not in the heap
 	}
 }
 
+type priorityQueue struct {
+	taskHeap taskHeap
+	taskMap  *taskMap
+
+	// We reuse the mutex in the taskMap. To save some CPU cycles.
+}
+
+func newPriorityQueue(taskMap *taskMap) *priorityQueue {
+	return &priorityQueue{taskHeap: make(taskHeap, 0, 4096), taskMap: taskMap}
+}
+
 func (q *priorityQueue) len() int {
-	q.mutex.Lock()
-	defer q.mutex.Unlock()
+	q.taskMap.mutex.Lock()
+	defer q.taskMap.mutex.Unlock()
 
 	return q.taskHeap.Len()
 }
 
-func (q *priorityQueue) pushTask(task *scheduledTask) {
-	q.mutex.Lock()
-	defer q.mutex.Unlock()
+func (q *priorityQueue) pushTask(newTask *scheduledTask) {
+	if newTask.index != -1 {
+		panic("the task is already in the heap")
+	}
 
-	taskId := task.task.TaskId()
-	if w, ok := q.idToTask[taskId]; ok {
-		w.time = task.time
-		w.status = task.status
-		q.taskHeap.updateTask(w)
+	q.taskMap.mutex.Lock()
+	defer q.taskMap.mutex.Unlock()
 
+	taskId := newTask.taskId
+	if st, ok := q.taskMap.idToTask[taskId]; ok {
+		st.time = newTask.time
+		st.status = newTask.status
+
+		q.taskHeap.addOrUpdateTask(st)
 		// fmt.Printf("updateTask task(duplicate): %d, status: %v\n", taskId, task.status)
 		return
+	} else {
+		_, isEmptyTask := newTask.task.(emptyTask)
+		_, isUpdateTask := newTask.task.(updateTask)
+		if isEmptyTask || isUpdateTask {
+			panic("emptyTask or updateTask should not be submitted to execute")
+		}
+		q.taskHeap.addOrUpdateTask(newTask)
+		q.taskMap.idToTask[taskId] = newTask
 	}
-	q.taskHeap.addTask(task)
-	q.idToTask[taskId] = task
 }
 
 func (q *priorityQueue) removeTask(taskId TaskId) *scheduledTask {
-	q.mutex.Lock()
-	defer q.mutex.Unlock()
+	q.taskMap.mutex.Lock()
+	defer q.taskMap.mutex.Unlock()
 
-	if w, ok := q.idToTask[taskId]; ok {
-		q.taskHeap.removeTask(w)
-		delete(q.idToTask, taskId)
-		return w
+	if st, ok := q.taskMap.idToTask[taskId]; ok {
+		q.taskHeap.removeTask(st)
+		delete(q.taskMap.idToTask, taskId)
+		return st
 	}
 	return nil
 }
 
 func (q *priorityQueue) peekTopTask() *scheduledTask {
-	q.mutex.Lock()
-	defer q.mutex.Unlock()
+	q.taskMap.mutex.Lock()
+	defer q.taskMap.mutex.Unlock()
 
 	return q.taskHeap.peekTopTask()
 }
 
 func (q *priorityQueue) popTopTask() *scheduledTask {
-	q.mutex.Lock()
-	defer q.mutex.Unlock()
+	q.taskMap.mutex.Lock()
+	defer q.taskMap.mutex.Unlock()
 
-	w := q.taskHeap.popTopTask()
-	delete(q.idToTask, w.task.TaskId())
-	return w
+	return q.taskHeap.popTopTask()
 }
 
 // waitReactor waits for tasks to be ready for execution.
@@ -164,10 +173,10 @@ type waitReactor struct {
 	freeToRun  bool
 }
 
-func newWaitReactor(toBeExecuted toBeExecuted) *waitReactor {
+func newWaitReactor(toBeExecuted toBeExecuted, taskMap *taskMap) *waitReactor {
 	waitReactor := waitReactor{
 		newTaskChan:       make(chan *scheduledTask, 4096),
-		waitingQueue:      newPriorityQueue(),
+		waitingQueue:      newPriorityQueue(taskMap),
 		queueUpdateSignal: make(chan struct{}, 1), // We don't need more than one signal in the channel.
 		toBeExecuted:      toBeExecuted,
 		stopSignal:        make(chan struct{}),
@@ -192,6 +201,14 @@ func (r *waitReactor) blockForTest(until int) {
 	r.freeToRun = false
 }
 
+func (r *waitReactor) removeTaskIfDone(st *scheduledTask) bool {
+	if st.status == Done {
+		r.waitingQueue.removeTask(st.taskId)
+		return true
+	}
+	return false
+}
+
 // Push the new task to the waitingQueue.
 func (r *waitReactor) scheduleTaskLoop() {
 	defer func() {
@@ -203,6 +220,9 @@ func (r *waitReactor) scheduleTaskLoop() {
 		select {
 		case task := <-r.newTaskChan:
 			// fmt.Printf("schedule task: %d, status: %v, waitingQueue:%d\n", task.task.TaskId(), task.status, r.waitingQueue.len())
+			if r.removeTaskIfDone(task) {
+				continue
+			}
 			r.waitingQueue.pushTask(task)
 			select {
 			case r.queueUpdateSignal <- struct{}{}:
@@ -257,32 +277,35 @@ func (r *waitReactor) executeTaskLoop() {
 		// Because pop is more expensive than peek.
 		task := r.waitingQueue.peekTopTask()
 
-		if task != nil {
+		if task != nil && (!r.removeTaskIfDone(task)) {
 			nearestTime = task.time
 			ready = !task.time.After(now)
 			if ready {
 				task = r.waitingQueue.popTopTask()
 				// Here we do the check again because the task may be updated by other goroutines.
-				if task != nil {
+				if task != nil && (!r.removeTaskIfDone(task)) {
 					// fmt.Printf("popTask task: %d, status: %d\n", task.task.TaskId(), task.status)
 
 					nearestTime = task.time
 					ready = !task.time.After(now)
 					if !ready {
 						r.waitingQueue.pushTask(task)
+						task = nil
 
 						// fmt.Printf("push back task: %d, status: %d\n", task.task.TaskId(), task.status)
 					}
 				}
+			} else {
+				task = nil
 			}
 		}
 
 		// fmt.Println("nearestTime:", nearestTime, "ready:", ready)
 
 		if ready {
-			// Wait until the runner to execute the task.
 			select {
-			case r.toBeExecuted.toBeExecuted() <- task.task:
+			// Wait until the runner to execute the task.
+			case r.toBeExecuted.toBeExecuted(task.status) <- task:
 				// fmt.Printf("push to toBeExecuted task: %d, status: %d\n", task.task.TaskId(), task.status)
 				break
 			case <-r.stopSignal:
@@ -316,10 +339,6 @@ func (r *waitReactor) executeTaskLoop() {
 
 func (r *waitReactor) tobeScheduled() chan *scheduledTask { return r.newTaskChan }
 
-func (r *waitReactor) finish() {
-	close(r.stopSignal)
-}
+func (r *waitReactor) stop() { close(r.stopSignal) }
 
-func (r *waitReactor) waitForStop() {
-	r.wg.Wait()
-}
+func (r *waitReactor) waitForStop() { r.wg.Wait() }

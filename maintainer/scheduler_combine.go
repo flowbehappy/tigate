@@ -32,8 +32,8 @@ func (c *CombineScheduler) Schedule(
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
 	stateMachines scheduler.Map[scheduler.InferiorID, *StateMachine],
 ) []*ScheduleTask {
-	for _, scheduler := range c.schedulers {
-		tasks := scheduler.Schedule(allInferiors, aliveCaptures, stateMachines)
+	for _, sched := range c.schedulers {
+		tasks := sched.Schedule(allInferiors, aliveCaptures, stateMachines)
 		if len(tasks) != 0 {
 			return tasks
 		}

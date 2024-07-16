@@ -298,8 +298,8 @@ func (s *grpcServerImpl) handleConnect(msg *proto.Message, stream grpcSender, is
 		// 	Epoch: s.messageCenter.epoch,
 		// 	Type:  int32(TypeMessageError),
 		// }
-		// buf := make([]byte, 0)
-		// pMsg.Payload = append(pMsg.Payload, merr.encode(buf))
+		// buf, _ := merr.Marshal()
+		// pMsg.Payload = append(pMsg.Payload, buf)
 		// if err := stream.Send(pMsg); err != nil {
 		// 	log.Error("Failed to send message error", zap.Error(err))
 		// }
