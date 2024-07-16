@@ -45,15 +45,15 @@ type HeartBeatCollector struct {
 	eventDispatcherManagerMap   map[model.ChangeFeedID]*dispatchermanager.EventDispatcherManager // changefeedID -> EventDispatcherManager
 
 	responseChanMapMutex sync.RWMutex
-	reponseChanMap       map[model.ChangeFeedID]*dispatchermanager.HeartbeatResponseQueue //changefeedID -> HeartbeatResponseQueue
+	responseChanMap      map[model.ChangeFeedID]*dispatchermanager.HeartbeatResponseQueue //changefeedID -> HeartbeatResponseQueue
 	requestQueue         *dispatchermanager.HeartbeatRequestQueue
 }
 
 func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 	heartBeatCollector := HeartBeatCollector{
-		from:           serverId,
-		requestQueue:   dispatchermanager.NewHeartbeatRequestQueue(),
-		reponseChanMap: make(map[model.ChangeFeedID]*dispatchermanager.HeartbeatResponseQueue),
+		from:            serverId,
+		requestQueue:    dispatchermanager.NewHeartbeatRequestQueue(),
+		responseChanMap: make(map[model.ChangeFeedID]*dispatchermanager.HeartbeatResponseQueue),
 	}
 	context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(heartbeatResponseTopic, heartBeatCollector.RecvHeartBeatResponseMessages)
 	context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(schedulerDispatcherTopic, heartBeatCollector.RecvSchedulerDispatcherRequestMessages)
@@ -73,7 +73,7 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *dispatchermanager
 	defer c.eventDispatcherManagerMutex.Unlock()
 	defer c.responseChanMapMutex.Unlock()
 
-	c.reponseChanMap[m.ChangefeedID] = m.HeartbeatResponseQueue
+	c.responseChanMap[m.ChangefeedID] = m.HeartbeatResponseQueue
 	c.eventDispatcherManagerMap[m.ChangefeedID] = m
 
 	return nil
@@ -104,7 +104,7 @@ func (c *HeartBeatCollector) RecvHeartBeatResponseMessages(msg *messaging.Target
 
 	c.responseChanMapMutex.RLock()
 	defer c.responseChanMapMutex.RUnlock()
-	if queue, ok := c.reponseChanMap[changefeedID]; ok {
+	if queue, ok := c.responseChanMap[changefeedID]; ok {
 		queue.Enqueue(heartbeatResponse)
 	}
 	return nil
