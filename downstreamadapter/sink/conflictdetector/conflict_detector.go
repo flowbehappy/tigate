@@ -14,12 +14,12 @@
 package conflictdetector
 
 import (
-	"time"
+	"sync"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/pkg/chann"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -43,7 +43,8 @@ type ConflictDetector struct {
 
 	closeCh chan struct{}
 
-	notifiedChan chan func()
+	notifiedNodes *chann.DrainableChann[func()]
+	wg            sync.WaitGroup
 }
 
 // NewConflictDetector creates a new ConflictDetector.
@@ -55,16 +56,37 @@ func NewConflictDetector(
 		slots:             NewSlots(numSlots),
 		numSlots:          numSlots,
 		closeCh:           make(chan struct{}),
-		notifiedChan:      make(chan func()),
+		notifiedNodes:     chann.NewAutoDrainChann[func()](),
 	}
 	for i := 0; i < opt.Count; i++ {
 		ret.resolvedTxnCaches[i] = newTxnCache(opt)
 	}
 
-	task := newNotifyTask(&ret.notifiedChan)
-	threadpool.GetTaskSchedulerInstance().SinkTaskScheduler.Submit(task, threadpool.CPUTask, time.Time{})
+	// task := newNotifyTask(&ret.notifiedChan)
+	// threadpool.GetTaskSchedulerInstance().SinkTaskScheduler.Submit(task, threadpool.CPUTask, time.Time{})
+	ret.wg.Add(1)
+	go func() {
+		defer ret.wg.Done()
+		ret.runBackgroundTasks()
+	}()
 
 	return ret
+}
+
+func (d *ConflictDetector) runBackgroundTasks() {
+	defer func() {
+		d.notifiedNodes.CloseAndDrain()
+	}()
+	for {
+		select {
+		case <-d.closeCh:
+			return
+		case notifyCallback := <-d.notifiedNodes.Out():
+			if notifyCallback != nil {
+				notifyCallback()
+			}
+		}
+	}
 }
 
 // Add pushes a transaction to the ConflictDetector.
@@ -86,7 +108,7 @@ func (d *ConflictDetector) Add(txn *common.TxnEvent, tableProgress *types.TableP
 		return d.sendToCache(txn, cacheID)
 	}
 	node.RandCacheID = func() int64 { return d.nextCacheID.Add(1) % int64(len(d.resolvedTxnCaches)) }
-	node.OnNotified = func(callback func()) { d.notifiedChan <- callback }
+	node.OnNotified = func(callback func()) { d.notifiedNodes.In() <- callback }
 	d.slots.Add(node)
 }
 
