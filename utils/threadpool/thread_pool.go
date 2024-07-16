@@ -15,6 +15,7 @@ package threadpool
 
 import (
 	"sync"
+	"time"
 )
 
 // threadPool is used to continuously get tasks and execute them in a fixed number of threads.
@@ -77,12 +78,30 @@ func (p *threadPool) handleTask(st *scheduledTask) {
 
 		// Only execute the task when it is not done.
 		// And for the done task, we push it back to waitReactor to remove it from the taskMap later.
-		if st.status != Done {
-			st.status, st.time = st.task.Execute()
+		if TaskStatus(st.status.Load()) != Done {
+			nextStatus, nextTime := st.task.Execute()
+			if nextStatus == Done {
+				st.time = time.Time{}
+				// Here we just return and drop the task.
+				// Because we know that the task is not in any priorityQueue, and don't need to do any clean up.
+				return
+			}
+			for {
+				s := st.status.Load()
+				if s == int32(Done) {
+					// The task is done, and we will not push it back to the waitingQueue.
+					st.time = time.Time{}
+					return
+				}
+				if st.status.CompareAndSwap(s, int32(nextStatus)) {
+					break
+				}
+			}
+			st.time = nextTime
 		}
 	}
 
-	p.schedule.toBeScheduled(st.status) <- st
+	p.schedule.toBeScheduled(TaskStatus(st.status.Load())) <- st
 }
 
 func (p *threadPool) stop() {

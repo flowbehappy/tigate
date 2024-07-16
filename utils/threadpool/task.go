@@ -24,6 +24,7 @@ type TaskId uint64
 type TaskStatus int
 
 const (
+	// A task with Done status can not be changed to other status.
 	Done    TaskStatus = 0
 	CPUTask TaskStatus = 1
 	IOTask  TaskStatus = 2
@@ -66,36 +67,16 @@ type Task interface {
 }
 
 type TaskHandle struct {
-	taskId    TaskId
-	ts        *TaskScheduler
-	cancelled atomic.Bool
+	st *scheduledTask
+	ts *TaskScheduler
 }
 
-func (h *TaskHandle) Cancel() {
-	if h.cancelled.CompareAndSwap(false, true) {
-		h.ts.cancel(h.taskId)
-	}
-}
-
-func (h *TaskHandle) IsDone() bool { return h.ts.isDone(h.taskId) }
-
-// func (h *TaskHandle) Update(status TaskStatus, next time.Time) {
-// 	h.ts.update(h.taskId, status, next)
-// }
-
-type emptyTask struct{}
-
-func (emptyTask) Execute() (TaskStatus, time.Time) { panic("emptyTask.Execute should not be called") }
-
-type updateTask struct{}
-
-func (updateTask) Execute() (TaskStatus, time.Time) { panic("updateTask.Execute should not be called") }
+func (h *TaskHandle) Cancel() { h.ts.cancel(h.st) }
 
 type scheduledTask struct {
-	taskId TaskId
 	task   Task
-	status TaskStatus
-	time   time.Time // Next disired execution time.
+	status atomic.Int32 // TaskStatus
+	time   time.Time    // Next disired execution time.
 
 	index int // The index of the task in the heap.
 
@@ -103,15 +84,15 @@ type scheduledTask struct {
 	runMutex sync.Mutex
 }
 
-func newScheduledTask(taskId TaskId, task Task, status TaskStatus, time time.Time) *scheduledTask {
-	return &scheduledTask{
-		taskId: taskId,
-		task:   task,
-		status: status,
-		time:   time,
+func newScheduledTask(task Task, status TaskStatus, time time.Time) *scheduledTask {
+	st := &scheduledTask{
+		task: task,
+		time: time,
 
 		index: -1, // <0 means the task is not in the heap.
 	}
+	st.status.Store(int32(status))
+	return st
 }
 
 // Implemented by TaskScheduler
@@ -123,10 +104,3 @@ type toBeScheduled interface {
 type toBeExecuted interface {
 	toBeExecuted(status TaskStatus) chan *scheduledTask
 }
-
-type taskMap struct {
-	idToTask map[TaskId]*scheduledTask
-	mutex    sync.Mutex
-}
-
-func newTaskMap() taskMap { return taskMap{idToTask: make(map[TaskId]*scheduledTask)} }
