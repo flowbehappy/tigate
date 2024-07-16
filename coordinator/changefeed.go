@@ -19,13 +19,14 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
+	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/tiflow/cdc/model"
 )
 
 // changefeed tracks the scheduled maintainer on coordinator side
 type changefeed struct {
 	ID    model.ChangeFeedID
-	State *heartbeatpb.MaintainerStatus
+	State *MaintainerStatus
 
 	Info   *model.ChangeFeedInfo
 	Status *model.ChangeFeedStatus
@@ -33,24 +34,44 @@ type changefeed struct {
 	lastHeartBeat time.Time
 }
 
-func newChangefeed(ID model.ChangeFeedID) *changefeed {
+func newChangefeed(ID scheduler.InferiorID) scheduler.Inferior {
+	cfID := model.ChangeFeedID(ID.(scheduler.ChangefeedID))
 	return &changefeed{
-		ID:     ID,
-		Info:   allChangefeeds[ID],
+		ID:     model.ChangeFeedID(ID.(scheduler.ChangefeedID)),
+		Info:   allChangefeeds[cfID],
 		Status: &model.ChangeFeedStatus{},
 	}
 }
 
-func (c *changefeed) UpdateStatus(status *heartbeatpb.MaintainerStatus) {
-	c.State = status
+func (c *changefeed) GetID() scheduler.InferiorID {
+	return scheduler.ChangefeedID(c.ID)
+}
+
+func (c *changefeed) UpdateStatus(status scheduler.InferiorStatus) {
+	c.State = status.(*MaintainerStatus)
 	c.lastHeartBeat = time.Now()
 }
 
-func (c *changefeed) NewInferiorStatus(status heartbeatpb.ComponentState) *heartbeatpb.MaintainerStatus {
-	return &heartbeatpb.MaintainerStatus{
+type MaintainerStatus struct {
+	*heartbeatpb.MaintainerStatus
+}
+
+func (s *MaintainerStatus) GetInferiorID() scheduler.InferiorID {
+	return scheduler.ChangefeedID(model.DefaultChangeFeedID(s.ChangefeedID))
+}
+func (s *MaintainerStatus) GetInferiorState() heartbeatpb.ComponentState {
+	return s.State
+}
+
+func (c *changefeed) NewInferiorStatus(status heartbeatpb.ComponentState) scheduler.InferiorStatus {
+	return &MaintainerStatus{MaintainerStatus: &heartbeatpb.MaintainerStatus{
 		ChangefeedID: c.ID.ID,
 		State:        status,
-	}
+	}}
+}
+
+func (c *changefeed) IsAlive() bool {
+	return true
 }
 
 func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary bool) rpc.Message {

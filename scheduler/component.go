@@ -39,3 +39,17 @@ type InferiorStatus interface {
 	GetInferiorID() InferiorID
 	GetInferiorState() heartbeatpb.ComponentState
 }
+
+type ChangefeedID model.ChangeFeedID
+
+func (c ChangefeedID) Less(t any) bool {
+	cf := t.(ChangefeedID)
+	return c.ID < cf.ID
+}
+func (c ChangefeedID) Equal(t any) bool {
+	cf := t.(ChangefeedID)
+	return c.ID == cf.ID
+}
+func (c ChangefeedID) String() string {
+	return c.ID
+}

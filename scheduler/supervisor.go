@@ -40,7 +40,7 @@ type Supervisor struct {
 
 	maxTaskConcurrency int
 
-	ID          model.ChangeFeedID
+	ID          InferiorID
 	initialized bool
 
 	captures map[model.CaptureID]*CaptureStatus
@@ -65,7 +65,7 @@ func NewCaptureStatus(capture *model.CaptureInfo) *CaptureStatus {
 	}
 }
 
-func NewSupervisor(ID model.ChangeFeedID,
+func NewSupervisor(ID InferiorID,
 	f func(id InferiorID) Inferior,
 	newBootstrap func(id model.CaptureID) rpc.Message) *Supervisor {
 	return &Supervisor{
