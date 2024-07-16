@@ -24,10 +24,9 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/mysql"
-	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"go.uber.org/zap"
@@ -54,7 +53,7 @@ func CheckIfBDRModeIsSupported(db *sql.DB) (bool, error) {
 	_, err = db.ExecContext(context.Background(), query)
 	if err != nil {
 		if mysqlErr, ok := errors.Cause(err).(*dmysql.MySQLError); ok &&
-			mysqlErr.Number == tmysql.ErrUnknownSystemVariable {
+			mysqlErr.Number == mysql.ErrUnknownSystemVariable {
 			return false, nil
 		}
 		return false, err
@@ -121,7 +120,7 @@ func GetTestDB(dbConfig *dmysql.Config) (*sql.DB, error) {
 	testDB, err := CreateMysqlDBConn(dbConfig.FormatDSN())
 	if err != nil {
 		// If access is denied and password is encoded by base64, try to decoded password.
-		if mysqlErr, ok := errors.Cause(err).(*dmysql.MySQLError); ok && mysqlErr.Number == tmysql.ErrAccessDenied {
+		if mysqlErr, ok := errors.Cause(err).(*dmysql.MySQLError); ok && mysqlErr.Number == mysql.ErrAccessDenied {
 			if dePassword, decodeErr := base64.StdEncoding.DecodeString(password); decodeErr == nil && string(dePassword) != password {
 				dbConfig.Passwd = string(dePassword)
 				testDB, err = CreateMysqlDBConn(dbConfig.FormatDSN())

@@ -94,7 +94,7 @@ func TestMessageCenterBasic(t *testing.T) {
 	mc1.SendEvent(targetMsg)
 	receivedMsg := <-ch1
 	require.Equal(t, targetMsg.To, receivedMsg.To)
-	require.Equal(t, targetMsg.From, receivedMsg.From)
+	require.Equal(t, mc1.id, receivedMsg.From)
 	require.Equal(t, targetMsg.Type, receivedMsg.Type)
 	require.Equal(t, targetMsg.Message, receivedMsg.Message)
 	log.Info("Pass test 1: send and receive local message", zap.Any("receivedMsg", receivedMsg))

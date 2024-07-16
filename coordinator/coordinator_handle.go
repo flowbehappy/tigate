@@ -197,16 +197,18 @@ func (c *coordinator) handleRemovedNodes(
 	removed []model.CaptureID,
 ) ([]rpc.Message, error) {
 	sentMsgs := make([]rpc.Message, 0, len(removed))
-	for id, stateMachine := range c.stateMachines {
-		for _, captureID := range removed {
-			msgs, affected, err := stateMachine.HandleCaptureShutdown(captureID)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			sentMsgs = append(sentMsgs, msgs...)
-			if affected {
-				// Cleanup its running task.
-				delete(c.runningTasks, id)
+	if len(removed) > 0 {
+		for id, stateMachine := range c.stateMachines {
+			for _, captureID := range removed {
+				msgs, affected, err := stateMachine.HandleCaptureShutdown(captureID)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				sentMsgs = append(sentMsgs, msgs...)
+				if affected {
+					// Cleanup its running task.
+					delete(c.runningTasks, id)
+				}
 			}
 		}
 	}

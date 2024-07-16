@@ -34,7 +34,7 @@ func NewDispatcherManagerManager() *DispatcherManagerManager {
 	m := &DispatcherManagerManager{
 		dispatcherManagers: make(map[model.ChangeFeedID]*dispatchermanager.EventDispatcherManager),
 	}
-	context.GetService[messaging.MessageCenter]("messageCenter").RegisterHandler(MaintainerBoostrapRequestTopic, m.RecvMaintainerBootstrapRequest)
+	context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(MaintainerBoostrapRequestTopic, m.RecvMaintainerBootstrapRequest)
 	return m
 }
 
@@ -44,7 +44,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 
 	eventDispatcherManager, ok := m.dispatcherManagers[changefeedID]
 	if !ok {
-		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, xxx, config, msg.To, msg.From)
+		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, nil, msg.To, msg.From)
 		m.dispatcherManagers[changefeedID] = eventDispatcherManager
 
 		response := &heartbeatpb.MaintainerBootstrapResponse{
@@ -52,7 +52,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 			Statuses:     make([]*heartbeatpb.TableSpanStatus, 0),
 		}
 
-		err := context.GetMessageCenter().SendCommand(messaging.NewTargetMessage(
+		err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendCommand(messaging.NewTargetMessage(
 			msg.From,
 			MaintainerBoostrapResponseTopic,
 			response,
@@ -78,7 +78,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 			CheckpointTs:    0,
 		})
 	}
-	err := context.GetService[messaging.MessageCenter]("messageCenter").SendCommand(messaging.NewTargetMessage(
+	err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendCommand(messaging.NewTargetMessage(
 		msg.From,
 		MaintainerBoostrapResponseTopic,
 		response,

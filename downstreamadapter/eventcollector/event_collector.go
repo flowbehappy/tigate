@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package downstreamadapter
+package eventcollector
 
 import (
 	"fmt"
@@ -49,12 +49,12 @@ func NewEventCollector(globalMemoryQuota int64, clusterID messaging.ServerId) *E
 		globalMemoryQuota: globalMemoryQuota,
 		dispatcherMap:     make(map[common.DispatcherID]dispatcher.Dispatcher),
 	}
-	context.GetService[messaging.MessageCenter]("messageCenter").RegisterHandler(EventFeedTopic, eventCollector.RecvEventsMessage)
+	context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(EventFeedTopic, eventCollector.RecvEventsMessage)
 	return &eventCollector
 }
 
 func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uint64) error {
-	err := context.GetService[messaging.MessageCenter]("messageCenter").SendEvent(&messaging.TargetMessage{
+	err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendEvent(&messaging.TargetMessage{
 		To:    c.clusterID, // demo 中 每个节点都有自己的 eventService
 		Topic: RegisterDispatcherTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
@@ -77,7 +77,7 @@ func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uin
 }
 
 func (c *EventCollector) RemoveDispatcher(d dispatcher.Dispatcher) error {
-	err := context.GetService[messaging.MessageCenter]("messageCenter").SendEvent(&messaging.TargetMessage{
+	err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendEvent(&messaging.TargetMessage{
 		To:    c.clusterID,
 		Topic: RegisterDispatcherTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
@@ -162,4 +162,5 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 		}
 		dispatcherItem.UpdateResolvedTs(eventFeeds.ResolvedTs)
 	}
+	return nil
 }

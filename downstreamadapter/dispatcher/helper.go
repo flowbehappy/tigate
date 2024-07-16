@@ -23,14 +23,14 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/pkg/kv"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/integrity"
@@ -165,9 +165,9 @@ func unmarshalRowKVEntry(
 
 func mountRowKVEntry(tableInfo *common.TableInfo, row *rowKVEntry) (*model.RowChangedEvent, model.RowChangedDatums, error) {
 	var (
-		rawRow      model.RowChangedDatums
-		columnInfos []*timodel.ColumnInfo
-		err         error
+		rawRow model.RowChangedDatums
+		//columnInfos []*timodel.ColumnInfo
+		err error
 
 		checksum *integrity.Checksum
 
@@ -184,7 +184,7 @@ func mountRowKVEntry(tableInfo *common.TableInfo, row *rowKVEntry) (*model.RowCh
 	if row.PreRowExist {
 		// FIXME(leoppro): using pre table info to mounter pre column datum
 		// the pre column and current column in one event may using different table info
-		preCols, preRawCols, columnInfos, err = datum2Column(tableInfo, row.PreRow, time.Local)
+		preCols, preRawCols, _, err = datum2Column(tableInfo, row.PreRow, time.Local)
 		if err != nil {
 			return nil, rawRow, errors.Trace(err)
 		}
@@ -196,7 +196,7 @@ func mountRowKVEntry(tableInfo *common.TableInfo, row *rowKVEntry) (*model.RowCh
 		currentChecksum uint32
 	)
 	if row.RowExist {
-		cols, rawCols, columnInfos, err = datum2Column(tableInfo, row.Row, time.Local)
+		cols, rawCols, _, err = datum2Column(tableInfo, row.Row, time.Local)
 		if err != nil {
 			return nil, rawRow, errors.Trace(err)
 		}
@@ -449,7 +449,7 @@ func GetDDLDefaultDefinition(col *timodel.ColumnInfo) interface{} {
 
 // decodeRowV1 decodes value data using old encoding format.
 // Row layout: colID1, value1, colID2, value2, .....
-func decodeRowV1(b []byte, tableInfo *model.TableInfo, tz *time.Location) (map[int64]types.Datum, error) {
+func decodeRowV1(b []byte, tableInfo *common.TableInfo, tz *time.Location) (map[int64]types.Datum, error) {
 	row := make(map[int64]types.Datum)
 	if len(b) == 1 && b[0] == codec.NilFlag {
 		b = b[1:]

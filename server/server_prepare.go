@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
+	"github.com/flowbehappy/tigate/downstreamadapter/heartbeatcollector"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 
 	"github.com/dustin/go-humanize"
@@ -156,9 +158,9 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	c.serverID = id
 	c.session = session
 
-	appcontext.SetService("messageCenter", messaging.NewMessageCenter(id, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
-	appcontext.SetService("eventCollector", downstreamadapter.NewEventCollector(100*1024*1024*1024, id)) // 100GB for demo
-	appcontext.SetService("heartbeatCollector", downstreamadapter.NewHeartBeatCollector(id))
+	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(id, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
+	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, id)) // 100GB for demo
+	appcontext.SetService(appcontext.HeartbeatCollector, heartbeatcollector.NewHeartBeatCollector(id))
 	//appcontext.SetService("eventService")
 
 	c.dispatcherManagerManager = downstreamadapter.NewDispatcherManagerManager()

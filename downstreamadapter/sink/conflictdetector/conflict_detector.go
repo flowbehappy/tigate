@@ -14,6 +14,8 @@
 package conflictdetector
 
 import (
+	"time"
+
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils/threadpool"
@@ -60,7 +62,7 @@ func NewConflictDetector(
 	}
 
 	task := newNotifyTask(&ret.notifiedChan)
-	threadpool.GetTaskSchedulerInstance().SinkTaskScheduler.Submit(task)
+	threadpool.GetTaskSchedulerInstance().SinkTaskScheduler.Submit(task, threadpool.CPUTask, time.Time{})
 
 	return ret
 }

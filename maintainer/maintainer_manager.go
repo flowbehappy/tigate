@@ -54,7 +54,7 @@ func NewMaintainerManager(selfServerID messaging.ServerId) *Manager {
 		maintainers:  make(map[model.ChangeFeedID]*Maintainer),
 		selfServerID: selfServerID,
 	}
-	appcontext.GetService[messaging.MessageCenter]("messageCenter").RegisterHandler(m.Name(), func(msg *messaging.TargetMessage) error {
+	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(m.Name(), func(msg *messaging.TargetMessage) error {
 		m.msgLock.Lock()
 		m.msgBuf = append(m.msgBuf, msg)
 		m.msgLock.Unlock()
@@ -100,7 +100,7 @@ func (m *Manager) Run(ctx context.Context) error {
 						m.statusChanged.Store(false)
 						m.lastReportTime = time.Now()
 					}
-					err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(messaging.NewTargetMessage(
+					err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 						m.coordinatorID,
 						"coordinator",
 						response,
@@ -161,7 +161,7 @@ func (m *Manager) sendMessages(msg *heartbeatpb.MaintainerHeartbeat) {
 		"coordinator",
 		msg,
 	)
-	err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(target)
+	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(target)
 	if err != nil {
 		log.Warn("send command failed", zap.Error(err))
 	}

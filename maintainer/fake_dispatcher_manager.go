@@ -38,11 +38,11 @@ type FakeDispatcherManagerManager struct {
 }
 
 // test only
-func NewFakeMaintainerManager(messageCenter messaging.MessageCenter) *FakeDispatcherManagerManager {
+func NewFakeMaintainerManager() *FakeDispatcherManagerManager {
 	m := &FakeDispatcherManagerManager{
 		dispatcherManagers: make(map[model.ChangeFeedID]*DispatcherManager),
 	}
-	appcontext.GetService[messaging.MessageCenter]("messageCenter").RegisterHandler(m.Name(), func(msg *messaging.TargetMessage) error {
+	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(m.Name(), func(msg *messaging.TargetMessage) error {
 		m.msgLock.Lock()
 		m.msgBuf = append(m.msgBuf, msg)
 		m.msgLock.Unlock()
@@ -93,7 +93,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 						})
 						return true
 					})
-					err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(messaging.NewTargetMessage(
+					err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 						manager.maintainerID,
 						"maintainer/"+manager.id.ID,
 						response,
@@ -120,7 +120,25 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 							zap.Any("maintainer", msg.From))
 						continue
 					}
-					manager.handleDispatchTableSpanRequest(req)
+					absentSpan := manager.handleDispatchTableSpanRequest(req)
+					if absentSpan != nil {
+						err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(messaging.NewTargetMessage(
+							manager.maintainerID,
+							"maintainer/"+manager.id.ID,
+							&heartbeatpb.HeartBeatResponse{
+								ChangefeedID: manager.id.ID,
+								Info: []*heartbeatpb.TableProgressInfo{
+									{
+										Span:            absentSpan.TableSpan,
+										SchedulerStatus: int32(scheduler.SchedulerStatusAbsent),
+									},
+								},
+							},
+						))
+						if err != nil {
+							log.Warn("send command failed", zap.Error(err))
+						}
+					}
 				}
 			}
 			for _, manager := range m.dispatcherManagers {
@@ -145,7 +163,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 						return true
 					})
 					if len(response.Info) != 0 {
-						err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(messaging.NewTargetMessage(
+						err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 							manager.maintainerID,
 							"maintainer/"+manager.id.ID,
 							response,
@@ -155,6 +173,14 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 						}
 					}
 				}
+
+				// must clean closed dispatchers
+				manager.dispatchers.Ascend(func(key *common.TableSpan, value *Dispatcher) bool {
+					if value.removing.Load() && value.state == scheduler.ComponentStatusStopped {
+						manager.dispatchers.Delete(key)
+					}
+					return true
+				})
 			}
 		}
 	}
@@ -183,7 +209,7 @@ func NewDispatcherManager(id model.ChangeFeedID,
 
 func (m *DispatcherManager) handleDispatchTableSpanRequest(
 	request *heartbeatpb.ScheduleDispatcherRequest,
-) {
+) *common.TableSpan {
 	tableSpan := &common.TableSpan{
 		TableSpan: request.GetConfig().Span,
 	}
@@ -194,6 +220,7 @@ func (m *DispatcherManager) handleDispatchTableSpanRequest(
 			m.dispatchers.ReplaceOrInsert(tableSpan, span)
 			threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(span, threadpool.CPUTask, time.Now())
 		}
+		span.removing.Store(false)
 		span.isSecondary.Store(request.IsSecondary)
 	} else {
 		span, ok := m.dispatchers.Get(tableSpan)
@@ -202,10 +229,11 @@ func (m *DispatcherManager) handleDispatchTableSpanRequest(
 				"since the span not found",
 				zap.Any("span", span),
 				zap.Any("request", request))
-			return
+			return tableSpan
 		}
 		span.removing.Store(true)
 	}
+	return nil
 }
 
 type Dispatcher struct {

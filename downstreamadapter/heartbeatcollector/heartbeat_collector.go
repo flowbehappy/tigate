@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package downstreamadapter
+package heartbeatcollector
 
 import (
 	"fmt"
@@ -56,8 +56,8 @@ func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 		requestQueue:   dispatchermanager.NewHeartbeatRequestQueue(),
 		reponseChanMap: make(map[model.ChangeFeedID]*dispatchermanager.HeartbeatResponseQueue),
 	}
-	context.GetService[messaging.MessageCenter]("messageCenter").RegisterHandler(heartbeatResponseTopic, heartBeatCollector.RecvHeartBeatResponseMessages)
-	context.GetService[messaging.MessageCenter]("messageCenter").RegisterHandler(schedulerDispatcherTopic, heartBeatCollector.RecvSchedulerDispatcherRequestMessages)
+	context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(heartbeatResponseTopic, heartBeatCollector.RecvHeartBeatResponseMessages)
+	context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(schedulerDispatcherTopic, heartBeatCollector.RecvSchedulerDispatcherRequestMessages)
 	heartBeatCollector.wg.Add(1)
 	go heartBeatCollector.SendHeartBeatMessages()
 
@@ -83,7 +83,7 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *dispatchermanager
 func (c *HeartBeatCollector) SendHeartBeatMessages() {
 	for {
 		heartBeatRequestWithTargetID := c.requestQueue.Dequeue()
-		err := context.GetService[messaging.MessageCenter]("messageCenter").SendEvent(&messaging.TargetMessage{
+		err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendEvent(&messaging.TargetMessage{
 			To:      heartBeatRequestWithTargetID.TargetID,
 			Topic:   heartbeatRequestTopic,
 			Type:    messaging.TypeHeartBeatRequest,

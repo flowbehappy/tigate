@@ -31,7 +31,7 @@ type NotifyTask struct {
 func newNotifyTask(notifiedChan *chan func()) *NotifyTask {
 	return &NotifyTask{
 		notifiedChan: notifiedChan,
-		taskStatus:   threadpool.Running,
+		taskStatus:   threadpool.CPUTask,
 	}
 }
 
@@ -43,26 +43,26 @@ func (t *NotifyTask) SetStatus(taskStatus threadpool.TaskStatus) {
 	t.taskStatus = taskStatus
 }
 
-func (t *NotifyTask) Execute(timeout time.Duration) threadpool.TaskStatus {
-	timer := time.NewTimer(timeout)
+func (t *NotifyTask) Execute() (threadpool.TaskStatus, time.Time) {
+	// timer := time.NewTimer(timeout)
 	for {
 		select {
 		case function := <-*t.notifiedChan:
 			if function != nil {
 				function()
 			}
-		case <-timer.C:
-			return threadpool.Running
+		// case <-timer.C:
+		// 	return threadpool.CPUTask
 		default:
 			// 要不要等一段时间？
-			return threadpool.Running
+			return threadpool.CPUTask, time.Time{}
 		}
 	}
 }
 
 func (t *NotifyTask) Await() threadpool.TaskStatus {
 	log.Warn("NotifyTask should not call await()")
-	return threadpool.Failed
+	return threadpool.Done
 }
 
 func (t *NotifyTask) Release() {

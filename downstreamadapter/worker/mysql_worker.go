@@ -46,7 +46,7 @@ func NewMysqlWorkerDDLEventTask(worker *MysqlDDLWorker, event *common.TxnEvent) 
 	return &MysqlWorkerDDLEventTask{
 		worker:     worker,
 		event:      event,
-		taskStatus: threadpool.IO,
+		taskStatus: threadpool.IOTask,
 	}
 }
 
@@ -58,14 +58,14 @@ func (t *MysqlWorkerDDLEventTask) SetStatus(taskStatus threadpool.TaskStatus) {
 	t.taskStatus = taskStatus
 }
 
-func (t *MysqlWorkerDDLEventTask) Execute(timeout time.Duration) threadpool.TaskStatus {
+func (t *MysqlWorkerDDLEventTask) Execute() (threadpool.TaskStatus, time.Time) {
 	t.worker.MysqlWriter.FlushDDLEvent(t.event)
-	return threadpool.Success
+	return threadpool.Done, time.Time{}
 }
 
 func (t *MysqlWorkerDDLEventTask) Await() threadpool.TaskStatus {
 	log.Error("MysqlWorkerDDLEventTask should not call await()")
-	return threadpool.Failed
+	return threadpool.Done
 }
 
 func (t *MysqlWorkerDDLEventTask) Release() {
@@ -92,7 +92,7 @@ func NewMysqlWorkerDMLEventTask(eventChan <-chan *common.TxnEvent, db *sql.DB, c
 			eventChan:   eventChan,
 			mysqlWriter: writer.NewMysqlWriter(db, config),
 		},
-		taskStatus: threadpool.Running,
+		taskStatus: threadpool.CPUTask,
 		maxRows:    maxRows,
 	}
 }
@@ -105,38 +105,38 @@ func (t *MysqlWorkerDMLEventTask) SetStatus(taskStatus threadpool.TaskStatus) {
 	t.taskStatus = taskStatus
 }
 
-func (t *MysqlWorkerDMLEventTask) Execute(timeout time.Duration) threadpool.TaskStatus {
+func (t *MysqlWorkerDMLEventTask) Execute() (threadpool.TaskStatus, time.Time) {
 	switch t.taskStatus {
-	case threadpool.Running:
+	case threadpool.CPUTask:
 		return t.executeImpl()
-	case threadpool.IO:
+	case threadpool.IOTask:
 		return t.executeIOImpl()
 	default:
 		log.Error("Unexpected task status: ", zap.Any("status", t.taskStatus))
-		return threadpool.Failed
+		return threadpool.Done, time.Time{}
 	}
 }
 
-func (t *MysqlWorkerDMLEventTask) executeIOImpl() threadpool.TaskStatus {
+func (t *MysqlWorkerDMLEventTask) executeIOImpl() (threadpool.TaskStatus, time.Time) {
 	if len(t.events) == 0 {
 		log.Warn("here is no events to flush")
-		return threadpool.Running
+		return threadpool.CPUTask, time.Time{}
 	}
 	// flush events
 	err := t.worker.mysqlWriter.Flush(t.events)
 	if err != nil {
 		log.Error("Failed to flush events", zap.Error(err))
-		return threadpool.Failed
+		return threadpool.Done, time.Time{}
 	}
 	t.events = nil
-	return threadpool.Running
+	return threadpool.CPUTask, time.Time{}
 }
 
-func (t *MysqlWorkerDMLEventTask) executeImpl() threadpool.TaskStatus {
+func (t *MysqlWorkerDMLEventTask) executeImpl() (threadpool.TaskStatus, time.Time) {
 	// check events is empty
 	if len(t.events) > 0 {
 		log.Error("events is not empty in MysqlWorkerTask")
-		return threadpool.Failed
+		return threadpool.Done, time.Time{}
 	}
 	rows := 0
 
@@ -146,10 +146,10 @@ func (t *MysqlWorkerDMLEventTask) executeImpl() threadpool.TaskStatus {
 		t.events = append(t.events, txnEvent)
 		rows += len(txnEvent.Rows)
 		if rows >= t.maxRows {
-			return threadpool.IO
+			return threadpool.IOTask, time.Time{}
 		}
 	default:
-		return threadpool.Running
+		return threadpool.CPUTask, time.Time{}
 	}
 
 	// get enough events or wait for 10 millseconds to make task go to IO Status. -- 这边可以考虑到底是拿不到 event 就 换出去 flush 好还是要等好，具体等多久好
@@ -160,17 +160,17 @@ func (t *MysqlWorkerDMLEventTask) executeImpl() threadpool.TaskStatus {
 			t.events = append(t.events, txnEvent)
 			rows += len(txnEvent.Rows)
 			if rows >= t.maxRows {
-				return threadpool.IO
+				return threadpool.IOTask, time.Time{}
 			}
 		default:
-			return threadpool.IO
+			return threadpool.IOTask, time.Time{}
 		}
 	}
 }
 
 func (t *MysqlWorkerDMLEventTask) Await() threadpool.TaskStatus {
 	log.Error("MysqlWorkerTask should not call await()")
-	return threadpool.Failed
+	return threadpool.Done
 }
 
 // 只有重启或者出问题的时候才 release
