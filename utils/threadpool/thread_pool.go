@@ -77,19 +77,18 @@ func (p *threadPool) handleTask(st *scheduledTask) {
 		defer st.runMutex.Unlock()
 
 		// Only execute the task when it is not done.
-		// And for the done task, we push it back to waitReactor to remove it from the taskMap later.
+		// If the task is done, simply drop it. Because we know that the task is not in any priorityQueue,
+		// and don't need to do any clean up.
 		if TaskStatus(st.status.Load()) != Done {
 			nextStatus, nextTime := st.task.Execute()
 			if nextStatus == Done {
 				st.time = time.Time{}
 				// Here we just return and drop the task.
-				// Because we know that the task is not in any priorityQueue, and don't need to do any clean up.
 				return
 			}
 			for {
 				s := st.status.Load()
 				if s == int32(Done) {
-					// The task is done, and we will not push it back to the waitingQueue.
 					st.time = time.Time{}
 					return
 				}
@@ -98,6 +97,9 @@ func (p *threadPool) handleTask(st *scheduledTask) {
 				}
 			}
 			st.time = nextTime
+		} else {
+			st.time = time.Time{}
+			return
 		}
 	}
 

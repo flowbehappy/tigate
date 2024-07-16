@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package maintainer
+package scheduler
 
 import (
 	"encoding/json"
@@ -20,7 +20,6 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/rpc"
-	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
@@ -98,7 +97,7 @@ func (r Role) String() string {
 }
 
 type StateMachine struct {
-	ID    scheduler.InferiorID
+	ID    InferiorID
 	State SchedulerStatus
 	// Primary is the server ID that is currently running the inferior.
 	Primary model.CaptureID
@@ -108,17 +107,17 @@ type StateMachine struct {
 	Servers map[model.CaptureID]Role
 
 	// Inferior handles the real logic
-	Inferior scheduler.Inferior
+	Inferior Inferior
 
-	lastMsgTime time.Time
+	LastMsgTime time.Time
 }
 
 // NewStateMachine build a state machine from all server reported status
 // it could be called after a scheduler is bootstrapped
 func NewStateMachine(
-	id scheduler.InferiorID,
-	inferiorStatus map[model.CaptureID]scheduler.InferiorStatus,
-	inferior scheduler.Inferior,
+	id InferiorID,
+	inferiorStatus map[model.CaptureID]InferiorStatus,
+	inferior Inferior,
 ) (*StateMachine, error) {
 	sm := &StateMachine{
 		ID:       id,
@@ -217,7 +216,7 @@ func NewStateMachine(
 }
 
 func (s *StateMachine) hasRole(role Role) bool {
-	_, has := s.getRole(role)
+	_, has := s.GetRole(role)
 	return has
 }
 
@@ -229,7 +228,7 @@ func (s *StateMachine) isInRole(captureID model.CaptureID, role Role) bool {
 	return rc == role
 }
 
-func (s *StateMachine) getRole(role Role) (model.CaptureID, bool) {
+func (s *StateMachine) GetRole(role Role) (model.CaptureID, bool) {
 	for captureID, cr := range s.Servers {
 		if cr == role {
 			return captureID, true
@@ -285,7 +284,7 @@ func (s *StateMachine) clearPrimary() {
 
 //nolint:unparam
 func (s *StateMachine) inconsistentError(
-	input scheduler.InferiorStatus, captureID model.CaptureID,
+	input InferiorStatus, captureID model.CaptureID,
 	msg string, fields ...zap.Field,
 ) error {
 	fields = append(fields, []zap.Field{
@@ -298,7 +297,7 @@ func (s *StateMachine) inconsistentError(
 }
 
 func (s *StateMachine) multiplePrimaryError(
-	input scheduler.InferiorStatus, captureID model.CaptureID, msg string, fields ...zap.Field,
+	input InferiorStatus, captureID model.CaptureID, msg string, fields ...zap.Field,
 ) error {
 	fields = append(fields, []zap.Field{
 		zap.String("captureID", captureID),
@@ -311,7 +310,7 @@ func (s *StateMachine) multiplePrimaryError(
 
 // checkInvariant ensures StateMachine invariant is hold.
 func (s *StateMachine) checkInvariant(
-	input scheduler.InferiorStatus, captureID model.CaptureID,
+	input InferiorStatus, captureID model.CaptureID,
 ) error {
 	if !s.ID.Equal(input.GetInferiorID()) {
 		return s.inconsistentError(input, captureID,
@@ -346,7 +345,7 @@ func (s *StateMachine) checkInvariant(
 
 // poll transit state based on input and the current state.
 func (s *StateMachine) poll(
-	input scheduler.InferiorStatus, captureID model.CaptureID,
+	input InferiorStatus, captureID model.CaptureID,
 ) ([]rpc.Message, error) {
 	if _, ok := s.Servers[captureID]; !ok {
 		return nil, nil
@@ -363,7 +362,7 @@ func (s *StateMachine) poll(
 		var msg rpc.Message
 		switch s.State {
 		case SchedulerStatusAbsent:
-			stateChanged, err = s.pollOnAbsent(input, captureID)
+			msg, stateChanged, err = s.pollOnAbsent(input, captureID)
 		case SchedulerStatusPrepare:
 			msg, stateChanged, err = s.pollOnPrepare(input, captureID)
 		case SchedulerStatusCommit:
@@ -396,23 +395,41 @@ func (s *StateMachine) poll(
 
 //nolint:unparam
 func (s *StateMachine) pollOnAbsent(
-	input scheduler.InferiorStatus, captureID model.CaptureID,
-) (bool, error) {
+	input InferiorStatus, captureID model.CaptureID,
+) (rpc.Message, bool, error) {
 	switch input.GetInferiorState() {
 	case heartbeatpb.ComponentState_Absent:
-		if s.Primary == "" && len(s.Servers) == 0 {
+		secondary, ok := s.GetRole(RoleSecondary)
+		if s.Primary == "" && len(s.Servers) == 1 &&
+			ok && secondary == captureID {
 			s.State = SchedulerStatusCommit
-		} else {
-			s.State = SchedulerStatusPrepare
+			log.Info("state transition, poll, only has secondary capture, schedule directly",
+				zap.Any("status", input),
+				zap.String("captureID", captureID),
+				zap.String("old", "absent"),
+				zap.Stringer("new", s.State))
+			// No primary, promote secondary to primary.
+			// add directly or move inferior after all primary server is reported stopped status
+			err := s.promoteSecondary(captureID)
+			if err != nil {
+				return nil, false, errors.Trace(err)
+			}
+
+			log.Info("promote secondary, no primary",
+				zap.Any("status", input),
+				zap.String("captureID", captureID),
+				zap.Any("statemachine", s))
+			return s.Inferior.NewAddInferiorMessage(captureID, false), false, nil
 		}
+		s.State = SchedulerStatusPrepare
 		err := s.setCapture(captureID, RoleSecondary)
-		return true, errors.Trace(err)
+		return nil, true, errors.Trace(err)
 
 	case heartbeatpb.ComponentState_Stopped:
 		// Ignore stopped state as a server may be shutdown unexpectedly.
 		// todo: fix ignore task, already exists error, when add a task and prepare, then receive a stop
 		// the running task still has the scheduler task
-		return false, nil
+		return nil, false, nil
 	case heartbeatpb.ComponentState_Preparing,
 		heartbeatpb.ComponentState_Prepared,
 		heartbeatpb.ComponentState_Working,
@@ -422,11 +439,11 @@ func (s *StateMachine) pollOnAbsent(
 		zap.Any("status", input),
 		zap.String("captureID", captureID),
 		zap.Any("statemachine", s))
-	return false, nil
+	return nil, false, nil
 }
 
 func (s *StateMachine) pollOnPrepare(
-	input scheduler.InferiorStatus, captureID model.CaptureID,
+	input InferiorStatus, captureID model.CaptureID,
 ) (rpc.Message, bool, error) {
 	switch input.GetInferiorState() {
 	case heartbeatpb.ComponentState_Absent:
@@ -492,7 +509,7 @@ func (s *StateMachine) pollOnPrepare(
 }
 
 func (s *StateMachine) pollOnCommit(
-	input scheduler.InferiorStatus, captureID model.CaptureID,
+	input InferiorStatus, captureID model.CaptureID,
 ) (rpc.Message, bool, error) {
 	switch input.GetInferiorState() {
 	case heartbeatpb.ComponentState_Prepared:
@@ -546,7 +563,7 @@ func (s *StateMachine) pollOnCommit(
 				return nil, true, nil
 			}
 			// Primary is stopped, promote secondary to primary.
-			secondary, _ := s.getRole(RoleSecondary)
+			secondary, _ := s.GetRole(RoleSecondary)
 			err := s.promoteSecondary(secondary)
 			if err != nil {
 				return nil, false, errors.Trace(err)
@@ -632,7 +649,7 @@ func (s *StateMachine) pollOnCommit(
 
 //nolint:unparam
 func (s *StateMachine) pollOnWorking(
-	input scheduler.InferiorStatus, captureID model.CaptureID,
+	input InferiorStatus, captureID model.CaptureID,
 ) (bool, error) {
 	switch input.GetInferiorState() {
 	case heartbeatpb.ComponentState_Working:
@@ -671,7 +688,7 @@ func (s *StateMachine) pollOnWorking(
 
 //nolint:unparam
 func (s *StateMachine) pollOnRemoving(
-	input scheduler.InferiorStatus, captureID model.CaptureID,
+	input InferiorStatus, captureID model.CaptureID,
 ) (rpc.Message, bool, error) {
 	switch input.GetInferiorState() {
 	case heartbeatpb.ComponentState_Prepared,
@@ -707,7 +724,7 @@ func (s *StateMachine) pollOnRemoving(
 }
 
 func (s *StateMachine) HandleInferiorStatus(
-	input scheduler.InferiorStatus, from model.CaptureID,
+	input InferiorStatus, from model.CaptureID,
 ) ([]rpc.Message, error) {
 	return s.poll(input, from)
 }

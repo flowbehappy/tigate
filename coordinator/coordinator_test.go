@@ -18,14 +18,23 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/utils"
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
+type CFID model.ChangeFeedID
+
+func (c CFID) Less(t any) bool {
+	cf := t.(CFID)
+	return c.ID < cf.ID
+}
+
 func TestCoordinatorRun(t *testing.T) {
 	allGoM := make(map[model.ChangeFeedID]*StateMachine)
+	utilM := utils.NewBtreeMap[CFID, *StateMachine]()
 	captureID := uuid.New().String()
 	for id, _ := range allChangefeeds {
 		st := &StateMachine{
@@ -37,19 +46,31 @@ func TestCoordinatorRun(t *testing.T) {
 		}
 		st.setCapture(captureID, RolePrimary)
 		allGoM[id] = st
+		utilM.ReplaceOrInsert(CFID(id), st)
 	}
 
-	now := time.Now()
-	sp := &coordinator{
-		stateMachines: allGoM,
-	}
-	status := make([]*heartbeatpb.MaintainerStatus, 0, len(allGoM))
-	for id, _ := range allChangefeeds {
-		status = append(status, &heartbeatpb.MaintainerStatus{
-			ChangefeedID: id.ID,
-			State:        heartbeatpb.ComponentState_Working,
+	for k := 0; k < 1000; k++ {
+		now := time.Now()
+		j := 0
+		for _, value := range allGoM {
+			value.HandleInferiorStatus(&heartbeatpb.MaintainerStatus{
+				ChangefeedID: value.ID.ID,
+				State:        heartbeatpb.ComponentState_Working,
+			}, captureID)
+			j++
+		}
+		log.Info("TestCoordinatorRun", zap.Int("j", j), zap.Duration("time", time.Since(now)))
+
+		now = time.Now()
+		i := 0
+		utilM.Ascend(func(key CFID, value *StateMachine) bool {
+			value.HandleInferiorStatus(&heartbeatpb.MaintainerStatus{
+				ChangefeedID: value.ID.ID,
+				State:        heartbeatpb.ComponentState_Working,
+			}, captureID)
+			i++
+			return true
 		})
+		log.Info("TestCoordinatorRun", zap.Int("i", i), zap.Duration("time", time.Since(now)))
 	}
-	sp.HandleStatus(captureID, status)
-	log.Info("TestCoordinatorRun", zap.Duration("time", time.Since(now)))
 }

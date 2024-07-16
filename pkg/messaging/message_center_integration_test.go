@@ -90,7 +90,7 @@ func TestMessageCenterBasic(t *testing.T) {
 	//Case1: Send a message from mc1 to mc1, local message.
 	msgBytes := []byte{1, 2, 3, 4}
 	msg := Bytes(msgBytes)
-	targetMsg := NewTargetMessage(mc1.id, topic1, TypeBytes, &msg)
+	targetMsg := NewTargetMessage(mc1.id, topic1, &msg)
 	mc1.SendEvent(targetMsg)
 	receivedMsg := <-ch1
 	require.Equal(t, targetMsg.To, receivedMsg.To)
@@ -102,7 +102,7 @@ func TestMessageCenterBasic(t *testing.T) {
 	//Case2: Send a message from mc1 to mc2, remote message.
 	msgBytes = []byte{5, 6, 7, 8}
 	msg = Bytes(msgBytes)
-	targetMsg = NewTargetMessage(mc2.id, topic2, TypeBytes, &msg)
+	targetMsg = NewTargetMessage(mc2.id, topic2, &msg)
 	mc1.SendEvent(targetMsg)
 	receivedMsg = <-ch2
 	require.Equal(t, targetMsg.To, receivedMsg.To)
@@ -122,7 +122,7 @@ func TestMessageCenterBasic(t *testing.T) {
 
 	msgBytes = []byte{9, 10, 11, 12}
 	msg = Bytes(msgBytes)
-	targetMsg = NewTargetMessage(mc3.id, topic3, TypeBytes, &msg)
+	targetMsg = NewTargetMessage(mc3.id, topic3, &msg)
 	mc2.SendEvent(targetMsg)
 	receivedMsg = <-ch3
 	require.Equal(t, targetMsg.To, receivedMsg.To)

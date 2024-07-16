@@ -21,6 +21,7 @@ message HeartBeatRequest {
     string changefeedID = 1;
     uint64 checkpointTs = 2; // eventDispatcherManager 当前全局最小的 checkpointTs
     repeated TableSpanStatus statuses = 3;
+    bool compeleteStatus = 4; // 是否包含了所有的 table status
 }
 
 enum Action {

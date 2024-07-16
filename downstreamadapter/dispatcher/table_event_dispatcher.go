@@ -15,6 +15,7 @@ package dispatcher
 
 import (
 	"bytes"
+	"context"
 	"sync"
 	"time"
 
@@ -22,10 +23,9 @@ import (
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/google/uuid"
-	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
@@ -34,6 +34,52 @@ type SyncPointInfo struct {
 	EnableSyncPoint   bool
 	SyncPointInterval time.Duration
 	NextSyncPointTs   uint64
+}
+
+type ComponentStateWithMutex struct {
+	mutex           sync.Mutex
+	componentStatus heartbeatpb.ComponentState
+}
+
+func newComponentStateWithMutex(status heartbeatpb.ComponentState) *ComponentStateWithMutex {
+	return &ComponentStateWithMutex{
+		componentStatus: status,
+	}
+}
+
+func (s *ComponentStateWithMutex) Set(status heartbeatpb.ComponentState) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.componentStatus = status
+}
+
+func (s *ComponentStateWithMutex) Get() heartbeatpb.ComponentState {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return s.componentStatus
+}
+
+type TsWithMutex struct {
+	mutex sync.Mutex
+	ts    uint64
+}
+
+func newTsWithMutex(ts uint64) *TsWithMutex {
+	return &TsWithMutex{
+		ts: ts,
+	}
+}
+
+func (r *TsWithMutex) Set(ts uint64) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	r.ts = ts
+}
+
+func (r *TsWithMutex) Get() uint64 {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	return r.ts
 }
 
 /*
@@ -48,72 +94,102 @@ and get the other dispatcher's progress and action of the blocked event.
 Each EventDispatcherManager can have multiple TableEventDispatcher.
 */
 type TableEventDispatcher struct {
-	Id        common.DispatcherID
-	Ch        chan *common.TxnEvent // 转换成一个函数
-	TableSpan *common.TableSpan
-	Sink      sink.Sink
+	id        common.DispatcherID
+	eventCh   chan *common.TxnEvent // 转换成一个函数
+	tableSpan *common.TableSpan
+	sink      sink.Sink
 
-	State      *State
-	ResolvedTs uint64
+	state      *State
+	resolvedTs *TsWithMutex
 
 	// 搞个 channel 来接收 heartbeat 产生的 信息，然后下推数据这个就可以做成 await 了
 	// heartbeat 会更新依赖的 tableSpan 的 状态，然后满足了就删掉，下次发送就不用发了，但最终推动他变化的还是要收到 action
-	HeartbeatChan chan *HeartBeatResponseMessage
+	heartbeatChan chan *HeartBeatResponseMessage
 
-	SyncPointInfo *SyncPointInfo
+	//SyncPointInfo *SyncPointInfo
 
-	MemoryUsage *MemoryUsage
-
-	task *EventDispatcherTask
+	//MemoryUsage *MemoryUsage
 
 	tableInfo *common.TableInfo // TODO:后续做成一整个 tableInfo Struct
 
-	statusMutex     sync.Mutex
-	componentStatus heartbeatpb.ComponentState
+	componentStatus *ComponentStateWithMutex
+
+	checkpointTs *TsWithMutex // 用来记 eventChan 中目前收到的 event 中收到的最大的 commitTs - 1
+
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, syncPointInfo *SyncPointInfo) *TableEventDispatcher {
+	ctx, cancel := context.WithCancel(context.Background())
 	tableEventDispatcher := &TableEventDispatcher{
-		Id:              common.DispatcherID(uuid.New()),
-		Ch:              make(chan *common.TxnEvent, 1000),
-		TableSpan:       tableSpan,
-		Sink:            sink,
-		State:           NewState(),
-		ResolvedTs:      startTs,
-		HeartbeatChan:   make(chan *HeartBeatResponseMessage, 100),
-		SyncPointInfo:   syncPointInfo,
-		MemoryUsage:     NewMemoryUsage(),
-		componentStatus: heartbeatpb.ComponentState_Working,
+		id:            common.DispatcherID(uuid.New()),
+		eventCh:       make(chan *common.TxnEvent, 1000),
+		tableSpan:     tableSpan,
+		sink:          sink,
+		state:         NewState(),
+		resolvedTs:    newTsWithMutex(startTs),
+		heartbeatChan: make(chan *HeartBeatResponseMessage, 100),
+		//SyncPointInfo:   syncPointInfo,
+		//MemoryUsage:     NewMemoryUsage(),
+		componentStatus: newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
+		checkpointTs:    newTsWithMutex(startTs),
+		cancel:          cancel,
 	}
-	tableEventDispatcher.Sink.AddTableSpan(tableSpan)
-	tableEventDispatcher.task = NewEventDispatcherTask(tableEventDispatcher)
-	threadpool.GetTaskSchedulerInstance().EventDispatcherTaskScheduler.Submit(tableEventDispatcher.task, threadpool.CPUTask, time.Time{})
-	// 马上触发 心跳
+	tableEventDispatcher.sink.AddTableSpan(tableSpan)
+	tableEventDispatcher.wg.Add(1)
+	go tableEventDispatcher.DispatcherEvents(ctx)
+
 	return tableEventDispatcher
 }
 
+func (d *TableEventDispatcher) DispatcherEvents(ctx context.Context) {
+	defer d.wg.Done()
+	tableSpan := d.GetTableSpan()
+	sink := d.GetSink()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event := <-d.GetEventChan():
+			if event.IsDMLEvent() {
+				d.checkpointTs.Set(event.CommitTs - 1)
+				sink.AddDMLEvent(tableSpan, event)
+			}
+		}
+	}
+}
+
 func (d *TableEventDispatcher) GetSink() sink.Sink {
-	return d.Sink
+	return d.sink
 }
 
 func (d *TableEventDispatcher) GetTableSpan() *common.TableSpan {
-	return d.TableSpan
+	return d.tableSpan
 }
 
 func (d *TableEventDispatcher) GetState() *State {
-	return d.State
+	return d.state
 }
 
 func (d *TableEventDispatcher) GetEventChan() chan *common.TxnEvent {
-	return d.Ch
+	return d.eventCh
 }
 
 func (d *TableEventDispatcher) GetResolvedTs() uint64 {
-	return d.ResolvedTs
+	return d.resolvedTs.Get()
+}
+
+func (d *TableEventDispatcher) GetCheckpointTs() uint64 {
+	return d.checkpointTs.Get()
+}
+
+func (d *TableEventDispatcher) UpdateResolvedTs(ts uint64) {
+	d.resolvedTs.Set(ts)
 }
 
 func (d *TableEventDispatcher) GetId() common.DispatcherID {
-	return d.Id
+	return d.id
 }
 
 func (d *TableEventDispatcher) GetDispatcherType() DispatcherType {
@@ -121,24 +197,19 @@ func (d *TableEventDispatcher) GetDispatcherType() DispatcherType {
 }
 
 func (d *TableEventDispatcher) GetHeartBeatChan() chan *HeartBeatResponseMessage {
-	return d.HeartbeatChan
+	return d.heartbeatChan
 }
 
-func (d *TableEventDispatcher) UpdateResolvedTs(ts uint64) {
-	d.ResolvedTs = ts
-}
+//func (d *TableEventDispatcher) GetSyncPointInfo() *SyncPointInfo {
+// 	return d.syncPointInfo
+// }
 
-func (d *TableEventDispatcher) GetSyncPointInfo() *SyncPointInfo {
-	return d.SyncPointInfo
-}
-
-func (d *TableEventDispatcher) GetMemoryUsage() *MemoryUsage {
-	return d.MemoryUsage
-}
+// func (d *TableEventDispatcher) GetMemoryUsage() *MemoryUsage {
+// 	return d.MemoryUsage
+// }
 
 func (d *TableEventDispatcher) decodeEvent(rawTxnEvent *eventpb.TxnEvent) (*common.TxnEvent, error) {
-	var txnEvent *common.TxnEvent
-
+	txnEvent := &common.TxnEvent{}
 	for _, rawEvent := range rawTxnEvent.Events {
 		key, physicalTableID, err := decodeTableID(rawEvent.Key)
 		if err != nil {
@@ -157,7 +228,7 @@ func (d *TableEventDispatcher) decodeEvent(rawTxnEvent *eventpb.TxnEvent) (*comm
 			Delete:          rawEvent.OpType == eventpb.OpType_OpTypeDelete,
 		}
 
-		row, err := func() (*model.RowChangedEvent, error) {
+		row, _ := func() (*model.RowChangedEvent, error) {
 			if bytes.HasPrefix(key, recordPrefix) {
 				rowKV, err := unmarshalRowKVEntry(d.tableInfo, rawEvent.Key, rawEvent.Value, rawEvent.OldValue, baseInfo)
 				if err != nil {
@@ -175,6 +246,9 @@ func (d *TableEventDispatcher) decodeEvent(rawTxnEvent *eventpb.TxnEvent) (*comm
 			return nil, nil
 		}()
 
+		if err != nil {
+			return nil, err
+		}
 		txnEvent.Rows = append(txnEvent.Rows, &common.RowChangedEvent{
 			PhysicalTableID: row.PhysicalTableID,
 			TableInfo:       d.tableInfo,
@@ -189,8 +263,8 @@ func (d *TableEventDispatcher) decodeEvent(rawTxnEvent *eventpb.TxnEvent) (*comm
 func (d *TableEventDispatcher) PushEvent(rawTxnEvent *eventpb.TxnEvent) {
 	// decode the raw event to common.TxnEvent
 	event, _ := d.decodeEvent(rawTxnEvent)
-	d.GetMemoryUsage().Add(event.CommitTs, event.MemoryCost())
-	d.Ch <- event // 换成一个函数
+	//d.GetMemoryUsage().Add(event.CommitTs, event.MemoryCost())
+	d.GetEventChan() <- event // 换成一个函数
 }
 
 func (d *TableEventDispatcher) InitTableInfo(tableInfo *eventpb.TableInfo) {
@@ -199,20 +273,18 @@ func (d *TableEventDispatcher) InitTableInfo(tableInfo *eventpb.TableInfo) {
 
 func (d *TableEventDispatcher) Remove() {
 	// TODO: 修改这个 dispatcher 的 status 为 removing
-	d.task.Cancel()
-	d.Sink.StopTableSpan(d.TableSpan)
+	d.cancel()
+	d.sink.StopTableSpan(d.tableSpan)
 
-	d.statusMutex.Lock()
-	defer d.statusMutex.Unlock()
-	d.componentStatus = heartbeatpb.ComponentState_Stopping
+	d.componentStatus.Set(heartbeatpb.ComponentState_Stopping)
 }
 
 func (d *TableEventDispatcher) TryClose() (uint64, bool) {
 	// removing 后每次收集心跳的时候，call TryClose, 来判断是否能关掉 dispatcher 了（sink.isEmpty)
 	// 如果不能关掉，返回 0， false; 可以关掉的话，就返回 checkpointTs, true -- 这个要对齐过（startTs 和 checkpointTs 的关系）
-	if d.Sink.IsEmpty(d.TableSpan) {
+	if d.sink.IsEmpty(d.tableSpan) {
 		// calculate the checkpointTs, and clean the resource
-		d.Sink.RemoveTableSpan(d.TableSpan)
+		d.sink.RemoveTableSpan(d.tableSpan)
 		var checkpointTs uint64
 		state := d.GetState()
 		if state.pengdingEvent == nil {
@@ -221,15 +293,13 @@ func (d *TableEventDispatcher) TryClose() (uint64, bool) {
 			checkpointTs = d.GetResolvedTs()
 		}
 
-		d.MemoryUsage.Clear()
-		d.componentStatus = heartbeatpb.ComponentState_Stopped
+		//d.MemoryUsage.Clear()
+		d.componentStatus.Set(heartbeatpb.ComponentState_Stopped)
 		return checkpointTs, true
 	}
 	return 0, false
 }
 
 func (d *TableEventDispatcher) GetComponentStatus() heartbeatpb.ComponentState {
-	d.statusMutex.Lock()
-	defer d.statusMutex.Unlock()
-	return d.componentStatus
+	return d.componentStatus.Get()
 }

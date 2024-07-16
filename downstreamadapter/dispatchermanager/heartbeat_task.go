@@ -14,11 +14,6 @@
 package dispatchermanager
 
 import (
-	"time"
-
-	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
-	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 )
 
@@ -27,53 +22,34 @@ HeartbeatSendTask is responsible for collecting heartbeat info periodically from
 all dispatchers in the event dispatcher manager and sending them to the HeartbeatRequestQueue.
 Each event dispatcher manager corresponds a HeartbeatSendTask.
 */
-type HeartbeatSendTask struct {
-	ticker                 *time.Ticker
+type HeartBeatSendTask struct {
 	eventDispatcherManager *EventDispatcherManager
-	taskStatus             threadpool.TaskStatus
-	maintainerID           messaging.ServerId
+	counter                int // use to decide whether we need to collect complete table progress info
+	taskHandle             *threadpool.TaskHandle
 }
 
-func newHeartBeatSendTask(m *EventDispatcherManager) *HeartbeatSendTask {
-	return &HeartbeatSendTask{
-		ticker:                 time.NewTicker(50 * time.Millisecond),
+/*
+func newHeartBeatSendTask(m *EventDispatcherManager) *HeartBeatSendTask {
+	task := &HeartBeatSendTask{
 		eventDispatcherManager: m,
-		taskStatus:             threadpool.CPUTask,
-		maintainerID:           m.MaintainerID,
+		counter:                0,
 	}
+	task.taskHandle = threadpool.GetTaskSchedulerInstance().HeartbeatTaskScheduler.Submit(task, threadpool.CPUTask, time.Now().Add(1*time.Second))
+	return task
 }
 
-func (t *HeartbeatSendTask) GetStatus() threadpool.TaskStatus {
-	return t.taskStatus
-}
-
-func (t *HeartbeatSendTask) SetStatus(taskStatus threadpool.TaskStatus) {
-	t.taskStatus = taskStatus
-}
-
-func (t *HeartbeatSendTask) Execute() (threadpool.TaskStatus, time.Time) {
-	message := t.eventDispatcherManager.CollectHeartbeatInfo()
-	t.eventDispatcherManager.HeartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: t.maintainerID, Request: message})
-	// return threadpool.Waiting
-	return threadpool.CPUTask, time.Time{}
+func (t *HeartBeatSendTask) Execute() (threadpool.TaskStatus, time.Time) {
+	t.counter = (t.counter + 1) % 10
+	needCompleteStatus := t.counter == 0
+	message := t.eventDispatcherManager.CollectHeartbeatInfo(needCompleteStatus)
+	t.eventDispatcherManager.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: t.eventDispatcherManager.GetMaintainerID(), Request: message})
+	return threadpool.CPUTask, time.Now().Add(time.Second * 1)
 
 }
 
-func (t *HeartbeatSendTask) Await() threadpool.TaskStatus {
-	select {
-	case <-t.ticker.C:
-		return threadpool.CPUTask
-	default:
-		return threadpool.CPUTask
-	}
-}
-
-func (t *HeartbeatSendTask) Release() {
-	t.ticker.Stop()
-}
-
-func (t *HeartbeatSendTask) Cancel() {
-}
+func (t *HeartBeatSendTask) Cancel() {
+	t.taskHandle.Cancel()
+}*/
 
 // 将从 queue 里面收到的信息分发给各个 dispatcher，每个 dispatcherManager 有一个这个task
 /*
@@ -81,6 +57,8 @@ HeartbeatRecvTask is responsible for dispatching heartbeat response to each disp
 in the event dispatcher manager from HeartbeatResponseQueue.
 Each event dispatcher manager corresponds a HeartbeatRecvTask.
 */
+
+/*
 type HeartbeatRecvTask struct {
 	eventDispatcherManager *EventDispatcherManager
 	taskStatus             threadpool.TaskStatus
@@ -131,7 +109,8 @@ func (t *HeartbeatRecvTask) Execute() (threadpool.TaskStatus, time.Time) {
 			// 	continue
 			// }
 			tableSpan := common.TableSpan{TableSpan: info.Span}
-			if dispatcherItem, ok := t.eventDispatcherManager.DispatcherMap[&tableSpan]; ok {
+			dispatcherItem := t.eventDispatcherManager.GetDispatcherMap().Get(&tableSpan)
+			if dispatcherItem != nil {
 				var message dispatcher.HeartBeatResponseMessage
 				for _, progress := range info.TableProgresses {
 					message.OtherTableProgress = append(message.OtherTableProgress, &dispatcher.TableSpanProgress{
@@ -153,3 +132,4 @@ func (t *HeartbeatRecvTask) Execute() (threadpool.TaskStatus, time.Time) {
 
 func (t *HeartbeatRecvTask) Cancel() {
 }
+*/

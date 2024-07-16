@@ -17,7 +17,7 @@ import "github.com/flowbehappy/tigate/pkg/common"
 
 type Sink interface {
 	AddDMLEvent(tableSpan *common.TableSpan, event *common.TxnEvent)
-	AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *common.TxnEvent)
+	//AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *common.TxnEvent)
 	IsEmpty(tableSpan *common.TableSpan) bool
 	AddTableSpan(tableSpan *common.TableSpan)
 	RemoveTableSpan(tableSpan *common.TableSpan)

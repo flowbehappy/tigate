@@ -11,18 +11,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package utils
 
 import (
-	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/rpc"
 	"github.com/google/btree"
-	"github.com/pingcap/tiflow/cdc/model"
 )
 
-type ItemIterator[Key interface{}, Value any] func(key Key, value Value) bool
+// MapKey is the comparable key of the map
+type MapKey interface {
+	Less(any any) bool
+}
 
-type Map[Key interface{}, Value any] interface {
+// ItemIterator iterates the map, return false to stop the iteration
+type ItemIterator[Key MapKey, Value any] func(key Key, value Value) bool
+
+// Map is the general interface of a map
+type Map[Key MapKey, Value any] interface {
 	Len() int
 	Has(Key) bool
 	Get(Key) (Value, bool)
@@ -32,29 +36,29 @@ type Map[Key interface{}, Value any] interface {
 }
 
 // Item is a btree item that wraps a  (key) and an item (value).
-type Item[Key InferiorID, T any] struct {
+type Item[Key MapKey, T any] struct {
 	Key   Key
 	Value T
 }
 
 // lessItem compares two Spans, defines the order between spans.
-func lessItem[Key InferiorID, T any](a, b Item[Key, T]) bool {
+func lessItem[Key MapKey, T any](a, b Item[Key, T]) bool {
 	return a.Key.Less(b.Key)
 }
 
 // BtreeMap is a specialized btree map that map a Span to a value.
-type BtreeMap[Key InferiorID, T any] struct {
+type BtreeMap[Key MapKey, T any] struct {
 	tree *btree.BTreeG[Item[Key, T]]
 }
 
 // NewBtreeMap returns a new BtreeMap.
-func NewBtreeMap[Key InferiorID, T any]() *BtreeMap[Key, T] {
+func NewBtreeMap[Key MapKey, T any]() *BtreeMap[Key, T] {
 	const defaultDegree = 16
 	return NewBtreeMapWithDegree[Key, T](defaultDegree)
 }
 
 // NewBtreeMapWithDegree returns a new BtreeMap with the given degree.
-func NewBtreeMapWithDegree[Key InferiorID, T any](degree int) *BtreeMap[Key, T] {
+func NewBtreeMapWithDegree[Key MapKey, T any](degree int) *BtreeMap[Key, T] {
 	return &BtreeMap[Key, T]{
 		tree: btree.NewG(degree, lessItem[Key, T]),
 	}
@@ -100,24 +104,4 @@ func (m *BtreeMap[Key, T]) Ascend(iterator ItemIterator[Key, T]) {
 	m.tree.Ascend(func(item Item[Key, T]) bool {
 		return iterator(item.Key, item.Value)
 	})
-}
-
-type Inferior interface {
-	GetID() InferiorID
-	UpdateStatus(InferiorStatus)
-	IsAlive() bool
-	NewInferiorStatus(heartbeatpb.ComponentState) InferiorStatus
-	NewAddInferiorMessage(model.CaptureID, bool) rpc.Message
-	NewRemoveInferiorMessage(model.CaptureID) rpc.Message
-}
-
-type InferiorID interface {
-	Equal(InferiorID) bool
-	String() string
-	Less(InferiorID) bool
-}
-
-type InferiorStatus interface {
-	GetInferiorID() InferiorID
-	GetInferiorState() heartbeatpb.ComponentState
 }
