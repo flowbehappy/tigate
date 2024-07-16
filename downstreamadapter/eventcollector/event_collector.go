@@ -24,7 +24,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/google/uuid"
-	"github.com/ngaut/log"
+	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
 

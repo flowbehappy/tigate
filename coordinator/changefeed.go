@@ -76,7 +76,7 @@ func (c *changefeed) IsAlive() bool {
 
 func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary bool) rpc.Message {
 	return messaging.NewTargetMessage(messaging.ServerId(server),
-		maintainerMangerTopic,
+		maintainerManagerTopic,
 		&heartbeatpb.DispatchMaintainerRequest{
 			AddMaintainers: []*heartbeatpb.AddMaintainerRequest{
 				{
@@ -88,7 +88,7 @@ func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary boo
 }
 
 func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) rpc.Message {
-	return messaging.NewTargetMessage(messaging.ServerId(server), maintainerMangerTopic,
+	return messaging.NewTargetMessage(messaging.ServerId(server), maintainerManagerTopic,
 		&heartbeatpb.DispatchMaintainerRequest{
 			RemoveMaintainers: []*heartbeatpb.RemoveMaintainerRequest{
 				{

@@ -218,7 +218,7 @@ func (m *DispatcherManager) handleDispatchTableSpanRequest(
 		if !ok {
 			span = NewDispatcher(m.id, tableSpan, request.GetIsSecondary())
 			m.dispatchers.ReplaceOrInsert(tableSpan, span)
-			threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(span, threadpool.CPUTask, time.Now())
+			//threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(span, threadpool.CPUTask, time.Now())
 		}
 		span.removing.Store(false)
 		span.isSecondary.Store(request.IsSecondary)
