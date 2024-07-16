@@ -26,6 +26,7 @@ type TaskSchedulerInstance struct {
 	SinkTaskScheduler            *TaskScheduler
 	HeartbeatTaskScheduler       *TaskScheduler
 	EventServiceTaskScheduler    *TaskScheduler
+	MaintainerTaskScheduler      *TaskScheduler
 }
 
 var TaskSchedulers *TaskSchedulerInstance
@@ -35,11 +36,12 @@ func GetTaskSchedulerInstance() *TaskSchedulerInstance {
 	if TaskSchedulers == nil {
 		once.Do(func() {
 			TaskSchedulers = &TaskSchedulerInstance{
-				WorkerTaskScheduler:          NewTaskScheduler(&DefaultTaskSchedulerConfig, "WorkerTask"),
-				EventDispatcherTaskScheduler: NewTaskScheduler(&DefaultTaskSchedulerConfig, "EventDispatcherTask"),
-				SinkTaskScheduler:            NewTaskScheduler(&DefaultTaskSchedulerConfig, "SinkTask"),
-				HeartbeatTaskScheduler:       NewTaskScheduler(&DefaultTaskSchedulerConfig, "HeartbeatTask"),
-				EventServiceTaskScheduler:    NewTaskScheduler(&DefaultTaskSchedulerConfig, "EventServiceTask"),
+				WorkerTaskScheduler:          NewTaskSchedulerDefault("WorkerTask"),
+				EventDispatcherTaskScheduler: NewTaskSchedulerDefault("EventDispatcherTask"),
+				SinkTaskScheduler:            NewTaskSchedulerDefault("SinkTask"),
+				HeartbeatTaskScheduler:       NewTaskSchedulerDefault("HeartbeatTask"),
+				EventServiceTaskScheduler:    NewTaskSchedulerDefault("EventServiceTask"),
+				MaintainerTaskScheduler:      NewTaskSchedulerDefault("MaintainerTask"),
 			}
 		})
 	}
