@@ -14,8 +14,7 @@
 package scheduler
 
 import (
-	"fmt"
-
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/google/btree"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -103,70 +102,11 @@ func (m *BtreeMap[Key, T]) Ascend(iterator ItemIterator[Key, T]) {
 	})
 }
 
-// SchedulerStatus is the state of Inferior in scheduler.
-//
-//	 AddInferior
-//	┌────────┐   ┌─────────┐
-//	│ Absent ├─> │ Prepare │
-//	└────────┘   └──┬──────┘
-//	     ┌──────────┘   ^
-//	     v              │ MoveInferior
-//	┌────────┐   ┌──────┴──────┐ RemoveInferior ┌──────────┐
-//	│ Commit ├──>│ Working     │───────────────>│ Removing │
-//	└────────┘   └─────────────┘                └──────────┘
-//
-// When a server shutdown unexpectedly, we may need to transit the state to
-// Absent or Working immediately.
-//
-//nolint:revive
-type SchedulerStatus int
-
-const (
-	SchedulerStatusUnknown SchedulerStatus = iota
-	SchedulerStatusAbsent
-	SchedulerStatusPrepare
-	SchedulerStatusCommit
-	SchedulerStatusWorking
-	SchedulerStatusRemoving
-)
-
-func (r SchedulerStatus) String() string {
-	switch r {
-	case SchedulerStatusAbsent:
-		return "Absent"
-	case SchedulerStatusPrepare:
-		return "Prepare"
-	case SchedulerStatusCommit:
-		return "Commit"
-	case SchedulerStatusWorking:
-		return "Working"
-	case SchedulerStatusRemoving:
-		return "Removing"
-	default:
-		return fmt.Sprintf("Unknown %d", r)
-	}
-}
-
-// ComponentStatus is the state in inferior watcher side
-// Absent -> Preparing -> Prepared -> Working -> Stopping -> Stopped
-// todo: define it in pb file
-type ComponentStatus int
-
-const (
-	ComponentStatusUnknown ComponentStatus = iota
-	ComponentStatusAbsent
-	ComponentStatusPreparing
-	ComponentStatusPrepared
-	ComponentStatusWorking
-	ComponentStatusStopping
-	ComponentStatusStopped
-)
-
 type Inferior interface {
 	GetID() InferiorID
 	UpdateStatus(InferiorStatus)
 	IsAlive() bool
-	NewInferiorStatus(ComponentStatus) InferiorStatus
+	NewInferiorStatus(heartbeatpb.ComponentState) InferiorStatus
 	NewAddInferiorMessage(model.CaptureID, bool) rpc.Message
 	NewRemoveInferiorMessage(model.CaptureID) rpc.Message
 }
@@ -179,5 +119,5 @@ type InferiorID interface {
 
 type InferiorStatus interface {
 	GetInferiorID() InferiorID
-	GetInferiorState() ComponentStatus
+	GetInferiorState() heartbeatpb.ComponentState
 }

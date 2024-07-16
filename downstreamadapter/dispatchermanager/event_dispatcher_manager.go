@@ -18,7 +18,6 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/flowbehappy/tigate/coordinator"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
@@ -154,7 +153,7 @@ func (e *EventDispatcherManager) RemoveTableEventDispatcher(tableSpan *common.Ta
 		// 如果已经 removed ，就要在 返回的心跳里加一下这个checkpointTs 信息
 		e.TableSpanStatusesChan <- &heartbeatpb.TableSpanStatus{
 			Span:            tableSpan.TableSpan,
-			ComponentStatus: int32(coordinator.ComponentStatusStopped),
+			ComponentStatus: heartbeatpb.ComponentState_Stopped,
 		}
 	}
 }
@@ -214,7 +213,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo() *heartbeatpb.HeartBeatRe
 		dispatcherHeartBeatInfo := dispatcher.CollectDispatcherHeartBeatInfo(tableEventDispatcher)
 
 		componentStatus := dispatcherHeartBeatInfo.ComponentStatus
-		if componentStatus == coordinator.ComponentStatusStopping {
+		if componentStatus == heartbeatpb.ComponentState_Stopping {
 			checkpointTs, ok := tableEventDispatcher.TryClose()
 			if ok {
 				// remove successfully
@@ -223,7 +222,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo() *heartbeatpb.HeartBeatRe
 				}
 				message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
 					Span:            dispatcherHeartBeatInfo.TableSpan.TableSpan,
-					ComponentStatus: int32(coordinator.ComponentStatusStopped),
+					ComponentStatus: heartbeatpb.ComponentState_Stopped,
 				})
 				e.CleanTableEventDispatcher(dispatcherHeartBeatInfo.TableSpan)
 				continue
@@ -236,7 +235,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo() *heartbeatpb.HeartBeatRe
 
 		message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
 			Span:            dispatcherHeartBeatInfo.TableSpan.TableSpan,
-			ComponentStatus: int32(dispatcherHeartBeatInfo.ComponentStatus),
+			ComponentStatus: dispatcherHeartBeatInfo.ComponentStatus,
 		})
 
 	}

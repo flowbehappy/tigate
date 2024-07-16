@@ -88,7 +88,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 								StartKey: value.ID.StartKey,
 								EndKey:   value.ID.EndKey,
 							},
-							ComponentStatus: int32(value.state),
+							ComponentStatus: value.state,
 							CheckpointTs:    0,
 						})
 						return true
@@ -130,7 +130,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 								Info: []*heartbeatpb.TableProgressInfo{
 									{
 										Span:            absentSpan.TableSpan,
-										SchedulerStatus: int32(scheduler.SchedulerStatusAbsent),
+										SchedulerStatus: heartbeatpb.ComponentState_Absent,
 									},
 								},
 							},
@@ -156,7 +156,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 									StartKey: value.ID.StartKey,
 									EndKey:   value.ID.EndKey,
 								},
-								SchedulerStatus: int32(value.state),
+								SchedulerStatus: value.state,
 							})
 							value.lastReportTime = time.Now()
 						}
@@ -176,7 +176,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 
 				// must clean closed dispatchers
 				manager.dispatchers.Ascend(func(key *common.TableSpan, value *Dispatcher) bool {
-					if value.removing.Load() && value.state == scheduler.ComponentStatusStopped {
+					if value.removing.Load() && value.state == heartbeatpb.ComponentState_Stopped {
 						manager.dispatchers.Delete(key)
 					}
 					return true
@@ -239,7 +239,7 @@ func (m *DispatcherManager) handleDispatchTableSpanRequest(
 type Dispatcher struct {
 	ID    *common.TableSpan
 	cfID  model.ChangeFeedID
-	state scheduler.ComponentStatus
+	state heartbeatpb.ComponentState
 
 	removing       *atomic.Bool
 	isSecondary    *atomic.Bool
@@ -251,11 +251,11 @@ func NewDispatcher(cfID model.ChangeFeedID, ID *common.TableSpan, isSecondary bo
 		cfID:        cfID,
 		ID:          ID,
 		removing:    atomic.NewBool(false),
-		state:       scheduler.ComponentStatusPrepared,
+		state:       heartbeatpb.ComponentState_Prepared,
 		isSecondary: atomic.NewBool(isSecondary),
 	}
 	if !isSecondary {
-		d.state = scheduler.ComponentStatusWorking
+		d.state = heartbeatpb.ComponentState_Working
 	}
 	return d
 }
@@ -263,14 +263,14 @@ func NewDispatcher(cfID model.ChangeFeedID, ID *common.TableSpan, isSecondary bo
 func (d *Dispatcher) Execute() (threadpool.TaskStatus, time.Time) {
 	// removing, cancel the task
 	if d.removing.Load() {
-		d.state = scheduler.ComponentStatusStopped
+		d.state = heartbeatpb.ComponentState_Stopped
 		return threadpool.Done, time.Time{}
 	}
 	// not on the primary status, skip running
 	if d.isSecondary.Load() {
 		return threadpool.CPUTask, time.Now().Add(500 * time.Millisecond)
 	}
-	d.state = scheduler.ComponentStatusWorking
+	d.state = heartbeatpb.ComponentState_Working
 	//todo: handle messages
 	return threadpool.CPUTask, time.Now().Add(500 * time.Millisecond)
 }

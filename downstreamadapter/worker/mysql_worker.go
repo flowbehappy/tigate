@@ -152,7 +152,7 @@ func (t *MysqlWorkerDMLEventTask) executeImpl() (threadpool.TaskStatus, time.Tim
 		return threadpool.CPUTask, time.Time{}
 	}
 
-	// get enough events or wait for 10 millseconds to make task go to IO Status. -- 这边可以考虑到底是拿不到 event 就 换出去 flush 好还是要等好，具体等多久好
+	// get enough events or wait for 10 millseconds to make task go to IO State. -- 这边可以考虑到底是拿不到 event 就 换出去 flush 好还是要等好，具体等多久好
 	// 这边甚至可以想一下是不是不用等 10ms，没数据就直接刷下去，flush 时间远超过这个攒批时间的
 	for {
 		select {
