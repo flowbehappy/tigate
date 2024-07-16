@@ -104,7 +104,7 @@ func newBalanceMoveTables(
 	}
 
 	stateMachines.Ascend(func(key scheduler.InferiorID, value *StateMachine) bool {
-		if value.State == scheduler.SchedulerStatusWorking {
+		if value.State == SchedulerStatusWorking {
 			tablesPerCapture[value.Primary].ReplaceOrInsert(key, value)
 		}
 		return true

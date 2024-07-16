@@ -46,10 +46,10 @@ func (c *changefeed) UpdateStatus(status *heartbeatpb.MaintainerStatus) {
 	c.lastHeartBeat = time.Now()
 }
 
-func (c *changefeed) NewInferiorStatus(status ComponentStatus) *heartbeatpb.MaintainerStatus {
+func (c *changefeed) NewInferiorStatus(status heartbeatpb.ComponentState) *heartbeatpb.MaintainerStatus {
 	return &heartbeatpb.MaintainerStatus{
-		ChangefeedID:    c.ID.ID,
-		SchedulerStatus: int32(status),
+		ChangefeedID: c.ID.ID,
+		State:        status,
 	}
 }
 

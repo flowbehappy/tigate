@@ -18,9 +18,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/coordinator"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/eventpb"
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/google/uuid"
@@ -69,7 +69,7 @@ type TableEventDispatcher struct {
 	tableInfo *common.TableInfo // TODO:后续做成一整个 tableInfo Struct
 
 	statusMutex     sync.Mutex
-	componentStatus coordinator.ComponentStatus
+	componentStatus heartbeatpb.ComponentState
 }
 
 func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, syncPointInfo *SyncPointInfo) *TableEventDispatcher {
@@ -83,7 +83,7 @@ func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startT
 		HeartbeatChan:   make(chan *HeartBeatResponseMessage, 100),
 		SyncPointInfo:   syncPointInfo,
 		MemoryUsage:     NewMemoryUsage(),
-		componentStatus: coordinator.ComponentStatusWorking,
+		componentStatus: heartbeatpb.ComponentState_Working,
 	}
 	tableEventDispatcher.Sink.AddTableSpan(tableSpan)
 	tableEventDispatcher.task = NewEventDispatcherTask(tableEventDispatcher)
@@ -204,7 +204,7 @@ func (d *TableEventDispatcher) Remove() {
 
 	d.statusMutex.Lock()
 	defer d.statusMutex.Unlock()
-	d.componentStatus = coordinator.ComponentStatusStopping
+	d.componentStatus = heartbeatpb.ComponentState_Stopping
 }
 
 func (d *TableEventDispatcher) TryClose() (uint64, bool) {
@@ -222,13 +222,13 @@ func (d *TableEventDispatcher) TryClose() (uint64, bool) {
 		}
 
 		d.MemoryUsage.Clear()
-		d.componentStatus = coordinator.ComponentStatusStopped
+		d.componentStatus = heartbeatpb.ComponentState_Stopped
 		return checkpointTs, true
 	}
 	return 0, false
 }
 
-func (d *TableEventDispatcher) GetComponentStatus() coordinator.ComponentStatus {
+func (d *TableEventDispatcher) GetComponentStatus() heartbeatpb.ComponentState {
 	d.statusMutex.Lock()
 	defer d.statusMutex.Unlock()
 	return d.componentStatus

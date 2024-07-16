@@ -95,20 +95,6 @@ func (r SchedulerStatus) String() string {
 	}
 }
 
-// ComponentStatus is the state in inferior watcher side
-// Absent -> Preparing -> Prepared -> Working -> Stopping -> Stopped
-type ComponentStatus int
-
-const (
-	ComponentStatusUnknown ComponentStatus = iota
-	ComponentStatusAbsent
-	ComponentStatusPreparing
-	ComponentStatusPrepared
-	ComponentStatusWorking
-	ComponentStatusStopping
-	ComponentStatusStopped
-)
-
 type StateMachine struct {
 	ID    model.ChangeFeedID
 	State SchedulerStatus
@@ -145,8 +131,8 @@ func NewStateMachine(
 		}
 		sm.changefeed.UpdateStatus(status)
 
-		switch ComponentStatus(status.SchedulerStatus) {
-		case ComponentStatusWorking:
+		switch status.State {
+		case heartbeatpb.ComponentState_Working:
 			if len(sm.Primary) != 0 {
 				return nil, sm.multiplePrimaryError(
 					status, captureID, "multiple primary",
@@ -162,20 +148,20 @@ func NewStateMachine(
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-		case ComponentStatusPreparing:
+		case heartbeatpb.ComponentState_Preparing:
 			// Recognize secondary if it's inferior is in preparing state.
 			err := sm.setCapture(captureID, RoleSecondary)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-		case ComponentStatusPrepared:
+		case heartbeatpb.ComponentState_Prepared:
 			// Recognize secondary and Commit state if it's inferior is in prepared state.
 			committed = true
 			err := sm.setCapture(captureID, RoleSecondary)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-		case ComponentStatusStopping:
+		case heartbeatpb.ComponentState_Stopping:
 			// The server is stopping the inferior. It is possible that the
 			// server is primary, and is still working.
 			// We need to wait its state becomes Stopped or Absent before
@@ -189,8 +175,8 @@ func NewStateMachine(
 				return nil, errors.Trace(err)
 			}
 			stoppingCount++
-		case ComponentStatusAbsent,
-			ComponentStatusStopped:
+		case heartbeatpb.ComponentState_Absent,
+			heartbeatpb.ComponentState_Stopped:
 			// Ignore stop state.
 		default:
 			log.Warn("unknown inferior state",
@@ -408,8 +394,8 @@ func (s *StateMachine) poll(
 func (s *StateMachine) pollOnAbsent(
 	input *heartbeatpb.MaintainerStatus, captureID model.CaptureID,
 ) (bool, error) {
-	switch ComponentStatus(input.SchedulerStatus) {
-	case ComponentStatusAbsent:
+	switch input.State {
+	case heartbeatpb.ComponentState_Absent:
 		if s.Primary == "" && len(s.Servers) == 0 {
 			s.State = SchedulerStatusCommit
 		} else {
@@ -418,13 +404,13 @@ func (s *StateMachine) pollOnAbsent(
 		err := s.setCapture(captureID, RoleSecondary)
 		return true, errors.Trace(err)
 
-	case ComponentStatusStopped:
+	case heartbeatpb.ComponentState_Stopped:
 		// Ignore stopped state as a server may be shutdown unexpectedly.
 		return false, nil
-	case ComponentStatusPreparing,
-		ComponentStatusPrepared,
-		ComponentStatusWorking,
-		ComponentStatusStopping:
+	case heartbeatpb.ComponentState_Preparing,
+		heartbeatpb.ComponentState_Prepared,
+		heartbeatpb.ComponentState_Working,
+		heartbeatpb.ComponentState_Stopping:
 	}
 	log.Warn("ignore input, unexpected state",
 		zap.Any("status", input),
@@ -436,29 +422,29 @@ func (s *StateMachine) pollOnAbsent(
 func (s *StateMachine) pollOnPrepare(
 	input *heartbeatpb.MaintainerStatus, captureID model.CaptureID,
 ) (rpc.Message, bool, error) {
-	switch ComponentStatus(input.SchedulerStatus) {
-	case ComponentStatusAbsent:
+	switch input.State {
+	case heartbeatpb.ComponentState_Absent:
 		if s.isInRole(captureID, RoleSecondary) {
 			return s.changefeed.NewAddInferiorMessage(captureID, true), false, nil
 		}
-	case ComponentStatusPreparing:
+	case heartbeatpb.ComponentState_Preparing:
 		if s.isInRole(captureID, RoleSecondary) {
 			// Ignore secondary Preparing, it may take a long time.
 			return nil, false, nil
 		}
-	case ComponentStatusPrepared:
+	case heartbeatpb.ComponentState_Prepared:
 		if s.isInRole(captureID, RoleSecondary) {
 			// Secondary is prepared, transit to Commit state.
 			s.State = SchedulerStatusCommit
 			return nil, true, nil
 		}
-	case ComponentStatusWorking:
+	case heartbeatpb.ComponentState_Working:
 		// moving state, and the primary watcher still report status
 		if s.Primary == captureID {
 			s.changefeed.UpdateStatus(input)
 			return nil, false, nil
 		}
-	case ComponentStatusStopping, ComponentStatusStopped:
+	case heartbeatpb.ComponentState_Stopping, heartbeatpb.ComponentState_Stopped:
 		// moving state, primary report status
 		if s.Primary == captureID {
 			// Primary is stopped, but we may still has secondary.
@@ -502,8 +488,8 @@ func (s *StateMachine) pollOnPrepare(
 func (s *StateMachine) pollOnCommit(
 	input *heartbeatpb.MaintainerStatus, captureID model.CaptureID,
 ) (rpc.Message, bool, error) {
-	switch ComponentStatus(input.SchedulerStatus) {
-	case ComponentStatusPrepared:
+	switch input.State {
+	case heartbeatpb.ComponentState_Prepared:
 		if s.isInRole(captureID, RoleSecondary) {
 			if s.Primary != "" {
 				// Secondary server is prepared and waiting for stopping primary.
@@ -539,7 +525,7 @@ func (s *StateMachine) pollOnCommit(
 			return s.changefeed.NewAddInferiorMessage(captureID, false), false, nil
 		}
 
-	case ComponentStatusStopped, ComponentStatusAbsent:
+	case heartbeatpb.ComponentState_Stopped, heartbeatpb.ComponentState_Absent:
 		if s.Primary == captureID {
 			s.changefeed.UpdateStatus(input)
 			original := s.Primary
@@ -591,7 +577,7 @@ func (s *StateMachine) pollOnCommit(
 			return nil, false, errors.Trace(err)
 		}
 
-	case ComponentStatusWorking:
+	case heartbeatpb.ComponentState_Working:
 		// primary is still working
 		if s.Primary == captureID {
 			s.changefeed.UpdateStatus(input)
@@ -617,7 +603,7 @@ func (s *StateMachine) pollOnCommit(
 		return nil, false, s.multiplePrimaryError(
 			input, captureID, "multiple primary")
 
-	case ComponentStatusStopping:
+	case heartbeatpb.ComponentState_Stopping:
 		if s.Primary == captureID && s.hasRole(RoleSecondary) {
 			s.changefeed.UpdateStatus(input)
 			return nil, false, nil
@@ -629,7 +615,7 @@ func (s *StateMachine) pollOnCommit(
 			return nil, false, nil
 		}
 
-	case ComponentStatusPreparing:
+	case heartbeatpb.ComponentState_Preparing:
 	}
 	log.Warn("ignore input, unexpected state",
 		zap.Any("status", input),
@@ -642,8 +628,8 @@ func (s *StateMachine) pollOnCommit(
 func (s *StateMachine) pollOnWorking(
 	input *heartbeatpb.MaintainerStatus, captureID model.CaptureID,
 ) (bool, error) {
-	switch ComponentStatus(input.SchedulerStatus) {
-	case ComponentStatusWorking:
+	switch input.State {
+	case heartbeatpb.ComponentState_Working:
 		if s.Primary == captureID {
 			s.changefeed.UpdateStatus(input)
 			return false, nil
@@ -651,12 +637,12 @@ func (s *StateMachine) pollOnWorking(
 		return false, s.multiplePrimaryError(
 			input, captureID, "multiple primary")
 
-	case ComponentStatusAbsent:
-	case ComponentStatusPreparing:
-	case ComponentStatusPrepared:
-	case ComponentStatusStopping:
+	case heartbeatpb.ComponentState_Absent:
+	case heartbeatpb.ComponentState_Preparing:
+	case heartbeatpb.ComponentState_Prepared:
+	case heartbeatpb.ComponentState_Stopping:
 		// wait stop
-	case ComponentStatusStopped:
+	case heartbeatpb.ComponentState_Stopped:
 		if s.Primary == captureID {
 			s.changefeed.UpdateStatus(input)
 			// Primary is stopped, but we still has secondary.
@@ -681,12 +667,12 @@ func (s *StateMachine) pollOnWorking(
 func (s *StateMachine) pollOnRemoving(
 	input *heartbeatpb.MaintainerStatus, captureID model.CaptureID,
 ) (rpc.Message, bool, error) {
-	switch ComponentStatus(input.SchedulerStatus) {
-	case ComponentStatusPrepared,
-		ComponentStatusPreparing,
-		ComponentStatusWorking:
+	switch input.State {
+	case heartbeatpb.ComponentState_Prepared,
+		heartbeatpb.ComponentState_Preparing,
+		heartbeatpb.ComponentState_Working:
 		return s.changefeed.NewRemoveInferiorMessage(captureID), false, nil
-	case ComponentStatusAbsent, ComponentStatusStopped:
+	case heartbeatpb.ComponentState_Absent, heartbeatpb.ComponentState_Stopped:
 		var err error
 		if s.Primary == captureID {
 			s.clearPrimary()
@@ -703,7 +689,7 @@ func (s *StateMachine) pollOnRemoving(
 				zap.Error(err))
 		}
 		return nil, false, nil
-	case ComponentStatusStopping:
+	case heartbeatpb.ComponentState_Stopping:
 		//wait for stopping
 		return nil, false, nil
 	}
@@ -735,7 +721,7 @@ func (s *StateMachine) HandleAddInferior(
 		return nil, errors.Trace(err)
 	}
 	oldState := s.State
-	status := s.changefeed.NewInferiorStatus(ComponentStatusAbsent)
+	status := s.changefeed.NewInferiorStatus(heartbeatpb.ComponentState_Absent)
 	msgs, err := s.poll(status, captureID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -782,7 +768,7 @@ func (s *StateMachine) HandleMoveInferior(
 		zap.Stringer("new", s.State),
 		zap.Any("statemachine", s),
 		zap.Stringer("old", oldState))
-	status := s.changefeed.NewInferiorStatus(ComponentStatusAbsent)
+	status := s.changefeed.NewInferiorStatus(heartbeatpb.ComponentState_Absent)
 	return s.poll(status, dest)
 }
 
@@ -805,7 +791,7 @@ func (s *StateMachine) HandleRemoveInferior() ([]rpc.Message, error) {
 		zap.Any("statemachine", s),
 		zap.Stringer("old", oldState))
 	// fake status to trigger a stop message
-	status := s.changefeed.NewInferiorStatus(ComponentStatusWorking)
+	status := s.changefeed.NewInferiorStatus(heartbeatpb.ComponentState_Working)
 	return s.poll(status, s.Primary)
 }
 
@@ -821,7 +807,7 @@ func (s *StateMachine) HandleCaptureShutdown(
 		return nil, false, nil
 	}
 	// The server has shutdown, the inferior has stopped.
-	status := s.changefeed.NewInferiorStatus(ComponentStatusStopped)
+	status := s.changefeed.NewInferiorStatus(heartbeatpb.ComponentState_Stopped)
 	oldState := s.State
 	msgs, err := s.poll(status, captureID)
 	log.Info("state transition, server shutdown",

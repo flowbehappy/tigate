@@ -84,6 +84,11 @@ func NewCoordinator(capture *model.CaptureInfo,
 	return c
 }
 
+// Tick is the entrance of the coordinator, it will be called by the etcd watcher every 50ms.
+//  1. Handle message reported by other modules
+//  2. check if the node is changed, if a new node is added, send bootstrap message to that node ,
+//     or if a node is removed, clean related state machine that binded to that node
+//  3. schedule unscheduled changefeeds is all node is bootstrapped
 func (c *coordinator) Tick(ctx context.Context,
 	rawState orchestrator.ReactorState) (orchestrator.ReactorState, error) {
 	state := rawState.(*orchestrator.GlobalReactorState)

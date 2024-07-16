@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/flowbehappy/tigate/coordinator"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/apperror"
@@ -132,7 +131,7 @@ func (c *HeartBeatCollector) RecvSchedulerDispatcherRequestMessages(msg *messagi
 		} else {
 			eventDispatcherManager.TableSpanStatusesChan <- &heartbeatpb.TableSpanStatus{
 				Span:            config.Span,
-				ComponentStatus: int32(coordinator.ComponentStatusPrepared),
+				ComponentStatus: heartbeatpb.ComponentState_Prepared,
 			}
 			// 提前触发任务
 		}
