@@ -219,7 +219,7 @@ func (c *coordinator) printStatus() {
 				removingTask++
 			}
 
-			taskDistribution = fmt.Sprintf("%s, %d==>%s", taskDistribution, value.ID.ID, value.Primary)
+			taskDistribution = fmt.Sprintf("%s, %s==>%s", taskDistribution, value.ID.ID, value.Primary)
 		}
 
 		log.Info("changefeed status",

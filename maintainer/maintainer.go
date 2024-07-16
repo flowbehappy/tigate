@@ -51,8 +51,8 @@ type Maintainer struct {
 	status *model.ChangeFeedStatus
 
 	state      heartbeatpb.ComponentState
-	supervisor *Supervisor
-	scheduler  Scheduler
+	supervisor *scheduler.Supervisor
+	scheduler  scheduler.Scheduler
 
 	changefeedSate model.FeedState
 
@@ -83,9 +83,9 @@ func NewMaintainer(cfID model.ChangeFeedID,
 ) *Maintainer {
 	m := &Maintainer{
 		id: cfID,
-		scheduler: NewCombineScheduler(
-			NewBasicScheduler(1000),
-			NewBalanceScheduler(time.Minute, 1000)),
+		scheduler: scheduler.NewCombineScheduler(
+			scheduler.NewBasicScheduler(1000),
+			scheduler.NewBalanceScheduler(time.Minute, 1000)),
 		state:         heartbeatpb.ComponentState_Prepared,
 		removed:       atomic.NewBool(false),
 		taskCh:        make(chan Task, 1024),
@@ -93,12 +93,15 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		statusChanged: atomic.NewBool(true),
 		isSecondary:   atomic.NewBool(isSecondary),
 		removing:      atomic.NewBool(false),
-		supervisor:    NewSupervisor(cfID),
 		msgTopic:      "maintainer/" + cfID.ID,
 	}
 	if !isSecondary {
 		m.state = heartbeatpb.ComponentState_Working
 	}
+	m.supervisor = scheduler.NewSupervisor(cfID,
+		func(id scheduler.InferiorID) scheduler.Inferior {
+			return NewReplicaSet(m.id, id)
+		}, m.bootstrapMessage)
 	// receive messages
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(m.msgTopic, func(msg *messaging.TargetMessage) error {
 		if m.isSecondary.Load() {
@@ -110,12 +113,6 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		return nil
 	})
 	return m
-}
-
-func (m *Maintainer) newBootstrapMessage(id model.CaptureID) rpc.Message {
-	return &heartbeatpb.MaintainerBootstrapRequest{
-		ChangefeedID: id,
-	}
 }
 
 func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
@@ -144,16 +141,16 @@ func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
 	}
 
 	// resend dispatcher message
-	m.supervisor.stateMachines.Ascend(func(key scheduler.InferiorID, value *StateMachine) bool {
-		if value.State == SchedulerStatusPrepare &&
-			time.Since(value.lastMsgTime) > time.Millisecond*200 {
-			server, _ := value.getRole(RoleSecondary)
-			msg, _, err := value.pollOnPrepare(&ReplicaSetStatus{State: heartbeatpb.ComponentState_Absent}, server)
+	m.supervisor.StateMachines.Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
+		if value.State == scheduler.SchedulerStatusPrepare &&
+			time.Since(value.LastMsgTime) > time.Millisecond*200 {
+			server, _ := value.GetRole(scheduler.RoleSecondary)
+			msg, err := value.HandleInferiorStatus(&ReplicaSetStatus{State: heartbeatpb.ComponentState_Absent}, server)
 			if err != nil {
 				log.Error("poll failed", zap.Error(err))
 			}
 			msgs = append(msgs, msg)
-			value.lastMsgTime = time.Now()
+			value.LastMsgTime = time.Now()
 		}
 		return true
 	})
@@ -185,7 +182,7 @@ func (m *Maintainer) handleMessages() error {
 					ID: &common.TableSpan{
 						TableSpan: info.Span,
 					},
-					State: heartbeatpb.ComponentState(info.SchedulerStatus),
+					State: info.SchedulerStatus,
 				})
 			}
 			msgs, err := m.supervisor.HandleStatus(msg.From.String(), status)
@@ -202,7 +199,7 @@ func (m *Maintainer) handleMessages() error {
 					ID: &common.TableSpan{
 						TableSpan: info.Span,
 					},
-					State: heartbeatpb.ComponentState(info.ComponentStatus),
+					State: info.ComponentStatus,
 				})
 			}
 			m.supervisor.UpdateCaptureStatus(msg.From.String(), status)
@@ -325,6 +322,15 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 	}
 }
 
+func (m *Maintainer) bootstrapMessage(captureID model.CaptureID) rpc.Message {
+	return messaging.NewTargetMessage(
+		messaging.ServerId(captureID),
+		"dispatcher-manager",
+		&heartbeatpb.MaintainerBootstrapRequest{
+			ChangefeedID: m.id.ID,
+		})
+}
+
 func (m *Maintainer) printStatus() {
 	if time.Since(m.lastCheckTime) > time.Second*10 {
 		workingTask := 0
@@ -333,17 +339,17 @@ func (m *Maintainer) printStatus() {
 		commitTask := 0
 		removingTask := 0
 		var taskDistribution string
-		m.supervisor.stateMachines.Ascend(func(key scheduler.InferiorID, value *StateMachine) bool {
+		m.supervisor.StateMachines.Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
 			switch value.State {
-			case SchedulerStatusAbsent:
+			case scheduler.SchedulerStatusAbsent:
 				absentTask++
-			case SchedulerStatusPrepare:
+			case scheduler.SchedulerStatusPrepare:
 				prepareTask++
-			case SchedulerStatusCommit:
+			case scheduler.SchedulerStatusCommit:
 				commitTask++
-			case SchedulerStatusWorking:
+			case scheduler.SchedulerStatusWorking:
 				workingTask++
-			case SchedulerStatusRemoving:
+			case scheduler.SchedulerStatusRemoving:
 				removingTask++
 			}
 			span := key.(*common.TableSpan)
