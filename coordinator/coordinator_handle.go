@@ -65,7 +65,7 @@ func (c *coordinator) HandleAliveCaptureUpdate(
 			// A new server.
 			c.captures[id] = NewCaptureStatus(info)
 			log.Info("find a new server",
-				zap.String("ID", c.ID),
+				zap.String("ID", c.nodeInfo.ID),
 				zap.String("captureAddr", info.AdvertiseAddr),
 				zap.String("server", id))
 		}
@@ -75,7 +75,7 @@ func (c *coordinator) HandleAliveCaptureUpdate(
 	for id, capture := range c.captures {
 		if _, ok := aliveCaptures[id]; !ok {
 			log.Info("removed a server",
-				zap.String("ID", c.ID),
+				zap.String("ID", c.nodeInfo.ID),
 				zap.String("captureAddr", capture.capture.AdvertiseAddr),
 				zap.String("server", id))
 			delete(c.captures, id)
@@ -97,7 +97,7 @@ func (c *coordinator) HandleAliveCaptureUpdate(
 	// Check if this is the first time all captures are initialized.
 	if !c.initialized && c.checkAllCaptureInitialized() {
 		log.Info("all server initialized",
-			zap.String("ID", c.ID),
+			zap.String("ID", c.nodeInfo.ID),
 			zap.Int("captureCount", len(c.captures)))
 		c.initialized = true
 
@@ -135,7 +135,7 @@ func (c *coordinator) HandleAliveCaptureUpdate(
 func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message {
 	return messaging.NewTargetMessage(
 		messaging.ServerId(captureID),
-		maintainerMangerTopic,
+		maintainerManagerTopic,
 		&heartbeatpb.CoordinatorBootstrapRequest{Version: c.version})
 }
 
@@ -145,13 +145,13 @@ func (c *coordinator) cacheBootstrapResponse(from model.CaptureID, statuses []*h
 	capture, ok := c.captures[from]
 	if !ok {
 		log.Warn("server is not found",
-			zap.String("ID", c.ID),
+			zap.String("ID", c.nodeInfo.ID),
 			zap.String("server", from))
 	}
 	if capture.state == CaptureStateUninitialized {
 		capture.state = CaptureStateInitialized
 		log.Info("server initialized",
-			zap.String("ID", c.ID),
+			zap.String("ID", c.nodeInfo.ID),
 			zap.String("server", from),
 			zap.String("captureAddr", capture.capture.AdvertiseAddr))
 	}
@@ -171,7 +171,7 @@ func (c *coordinator) HandleStatus(
 		stateMachine, ok := c.stateMachines[model.DefaultChangeFeedID(status.ChangefeedID)]
 		if !ok {
 			log.Info("ignore status no inferior found",
-				zap.String("ID", c.ID),
+				zap.String("ID", c.nodeInfo.ID),
 				zap.Any("from", from),
 				zap.Any("message", status))
 			continue
@@ -182,7 +182,7 @@ func (c *coordinator) HandleStatus(
 		}
 		if stateMachine.HasRemoved() {
 			log.Info("inferior has removed",
-				zap.String("ID", c.ID),
+				zap.String("ID", c.nodeInfo.ID),
 				zap.Any("from", from),
 				zap.String("cfID", status.ChangefeedID))
 			delete(c.stateMachines, model.DefaultChangeFeedID(status.ChangefeedID))
@@ -242,7 +242,7 @@ func (c *coordinator) HandleScheduleTasks(
 		// Check if accepting one more task exceeds maxTaskConcurrency.
 		if len(c.runningTasks) == c.maxTaskConcurrency {
 			log.Debug("too many running task",
-				zap.String("id", c.ID))
+				zap.String("id", c.nodeInfo.ID))
 			break
 		}
 
@@ -259,14 +259,14 @@ func (c *coordinator) HandleScheduleTasks(
 		// or the inferior has removed.
 		if _, ok := c.runningTasks[cfID]; ok {
 			log.Info("ignore task, already exists",
-				zap.String("id", c.ID),
+				zap.String("id", c.nodeInfo.ID),
 				zap.Any("task", task))
 			continue
 		}
 		// it's remove or move inferior task, but we can not find the state machine
 		if _, ok := c.stateMachines[cfID]; !ok && task.AddInferior == nil {
 			log.Info("ignore task, inferior not found",
-				zap.String("id", c.ID),
+				zap.String("id", c.nodeInfo.ID),
 				zap.Any("task", task))
 			continue
 		}
@@ -312,13 +312,13 @@ func (c *coordinator) handleRemoveInferiorTask(
 	stateMachine, ok := c.stateMachines[cfID]
 	if !ok {
 		log.Warn("statemachine not found",
-			zap.String("ID", c.ID),
+			zap.String("ID", c.nodeInfo.ID),
 			zap.Stringer("inferior", task.ID))
 		return nil, nil
 	}
 	if stateMachine.HasRemoved() {
 		log.Info("inferior has removed",
-			zap.String("ID", c.ID),
+			zap.String("ID", c.nodeInfo.ID),
 			zap.Stringer("inferior", task.ID))
 		delete(c.stateMachines, cfID)
 		return nil, nil
@@ -333,7 +333,7 @@ func (c *coordinator) handleMoveInferiorTask(
 	stateMachine, ok := c.stateMachines[cfID]
 	if !ok {
 		log.Warn("statemachine not found",
-			zap.String("ID", c.ID),
+			zap.String("ID", c.nodeInfo.ID),
 			zap.Stringer("inferior", task.ID))
 		return nil, nil
 	}

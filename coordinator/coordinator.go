@@ -32,12 +32,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const maintainerMangerTopic = "maintainer-manager"
+const maintainerManagerTopic = "maintainer-manager"
 
 // coordinator implements the Coordinator interface
 type coordinator struct {
 	nodeInfo    *model.CaptureInfo
-	ID          model.CaptureID
 	initialized bool
 	version     int64
 
@@ -146,10 +145,8 @@ func (c *coordinator) handleMessages() error {
 }
 
 func shouldRunChangefeed(state model.FeedState) bool {
-	// check if changefeed should be running
-	if state == model.StateStopped ||
-		state == model.StateFailed ||
-		state == model.StateFinished {
+	switch state {
+	case model.StateStopped, model.StateFailed, model.StateFinished:
 		return false
 	}
 	return true
@@ -219,7 +216,7 @@ func (c *coordinator) printStatus() {
 				removingTask++
 			}
 
-			taskDistribution = fmt.Sprintf("%s, %d==>%s", taskDistribution, value.ID.ID, value.Primary)
+			taskDistribution = fmt.Sprintf("%s, %s==>%s", taskDistribution, value.ID.ID, value.Primary)
 		}
 
 		log.Info("changefeed status",
