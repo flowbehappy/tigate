@@ -38,7 +38,7 @@ func newHeartBeatSendTask(m *EventDispatcherManager) *HeartbeatSendTask {
 	return &HeartbeatSendTask{
 		ticker:                 time.NewTicker(50 * time.Millisecond),
 		eventDispatcherManager: m,
-		taskStatus:             threadpool.Running,
+		taskStatus:             threadpool.CPUTask,
 		maintainerID:           m.MaintainerID,
 	}
 }
@@ -51,19 +51,20 @@ func (t *HeartbeatSendTask) SetStatus(taskStatus threadpool.TaskStatus) {
 	t.taskStatus = taskStatus
 }
 
-func (t *HeartbeatSendTask) Execute(timeout time.Duration) threadpool.TaskStatus {
+func (t *HeartbeatSendTask) Execute() (threadpool.TaskStatus, time.Time) {
 	message := t.eventDispatcherManager.CollectHeartbeatInfo()
 	t.eventDispatcherManager.HeartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: t.maintainerID, Request: message})
-	return threadpool.Waiting
+	// return threadpool.Waiting
+	return threadpool.CPUTask, time.Time{}
 
 }
 
 func (t *HeartbeatSendTask) Await() threadpool.TaskStatus {
 	select {
 	case <-t.ticker.C:
-		return threadpool.Running
+		return threadpool.CPUTask
 	default:
-		return threadpool.Waiting
+		return threadpool.CPUTask
 	}
 }
 
@@ -99,13 +100,13 @@ func (t *HeartbeatRecvTask) SetStatus(taskStatus threadpool.TaskStatus) {
 	t.taskStatus = taskStatus
 }
 
-func (t *HeartbeatRecvTask) Await() threadpool.TaskStatus {
-}
+// func (t *HeartbeatRecvTask) Await() threadpool.TaskStatus {
+// }
 
 func (t *HeartbeatRecvTask) Release() {
 }
 
-func (t *HeartbeatRecvTask) Execute(timeout time.Duration) threadpool.TaskStatus {
+func (t *HeartbeatRecvTask) Execute() (threadpool.TaskStatus, time.Time) {
 	for {
 		heartbeatResponse := t.eventDispatcherManager.HeartbeatResponseQueue.Dequeue()
 		tableProgressInfo := heartbeatResponse.Info
@@ -129,15 +130,13 @@ func (t *HeartbeatRecvTask) Execute(timeout time.Duration) threadpool.TaskStatus
 			// 	dispatcherItem.HeartbeatChan <- &message
 			// 	continue
 			// }
-			tableSpan := common.TableSpan(*info.Span)
+			tableSpan := common.TableSpan{TableSpan: info.Span}
 			if dispatcherItem, ok := t.eventDispatcherManager.DispatcherMap[&tableSpan]; ok {
 				var message dispatcher.HeartBeatResponseMessage
 				for _, progress := range info.TableProgresses {
 					message.OtherTableProgress = append(message.OtherTableProgress, &dispatcher.TableSpanProgress{
 						Span: &common.TableSpan{
-							TableID:  progress.Span.TableID,
-							StartKey: progress.Span.StartKey,
-							EndKey:   progress.Span.EndKey,
+							TableSpan: progress.Span,
 						},
 						IsBlocked:    progress.IsBlocked,
 						BlockTs:      progress.BlockTs,

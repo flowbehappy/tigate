@@ -17,6 +17,7 @@ import (
 	"database/sql"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/conflictdetector"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
@@ -96,7 +97,7 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 
 	// dml worker task will deal with all the dml events
 	for i := 0; i < workerCount; i++ {
-		threadpool.GetTaskSchedulerInstance().WorkerTaskScheduler.Submit(worker.NewMysqlWorkerDMLEventTask(s.conflictDetector.GetOutChByCacheID(int64(i)), db, cfg, 128))
+		threadpool.GetTaskSchedulerInstance().WorkerTaskScheduler.Submit(worker.NewMysqlWorkerDMLEventTask(s.conflictDetector.GetOutChByCacheID(int64(i)), db, cfg, 128), threadpool.CPUTask, time.Time{})
 	}
 }
 
@@ -124,7 +125,7 @@ func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *
 	tableStatus.getProgress().Add(event)
 	event.PostTxnFlushed = func() { tableStatus.getProgress().Remove(event) }
 	task := worker.NewMysqlWorkerDDLEventTask(s.ddlWorker, event) // 先固定用 0 号 worker
-	threadpool.GetTaskSchedulerInstance().WorkerTaskScheduler.Submit(task)
+	threadpool.GetTaskSchedulerInstance().WorkerTaskScheduler.Submit(task, threadpool.IOTask, time.Time{})
 
 }
 
@@ -142,7 +143,7 @@ func (s *MysqlSink) AddTableSpan(tableSpan *common.TableSpan) {
 		progress: tableProgress,
 	}
 
-	threadpool.GetTaskSchedulerInstance().SinkTaskScheduler.Submit(task)
+	threadpool.GetTaskSchedulerInstance().SinkTaskScheduler.Submit(task, threadpool.CPUTask, time.Time{})
 }
 
 // Called when the dispatcher should be moved.

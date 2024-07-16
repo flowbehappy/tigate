@@ -87,7 +87,7 @@ func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startT
 	}
 	tableEventDispatcher.Sink.AddTableSpan(tableSpan)
 	tableEventDispatcher.task = NewEventDispatcherTask(tableEventDispatcher)
-	threadpool.GetTaskSchedulerInstance().EventDispatcherTaskScheduler.Submit(tableEventDispatcher.task)
+	threadpool.GetTaskSchedulerInstance().EventDispatcherTaskScheduler.Submit(tableEventDispatcher.task, threadpool.CPUTask, time.Time{})
 	// 马上触发 心跳
 	return tableEventDispatcher
 }
@@ -183,7 +183,7 @@ func (d *TableEventDispatcher) decodeEvent(rawTxnEvent *eventpb.TxnEvent) (*comm
 			PreColumns:      common.ColumnDatas2Columns(row.PreColumns, d.tableInfo),
 		})
 	}
-
+	return txnEvent, nil
 }
 
 func (d *TableEventDispatcher) PushEvent(rawTxnEvent *eventpb.TxnEvent) {

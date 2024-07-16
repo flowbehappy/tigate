@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package downstreamadapter
+package eventcollector
 
 import (
 	"fmt"
@@ -162,4 +162,5 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 		}
 		dispatcherItem.UpdateResolvedTs(eventFeeds.ResolvedTs)
 	}
+	return nil
 }
