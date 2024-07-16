@@ -1,11 +1,13 @@
 package messaging
 
 import (
+	"encoding/binary"
 	"fmt"
 
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/apperror"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 
@@ -20,6 +22,7 @@ const (
 	TypeServerId
 	TypeDMLEvent
 	TypeDDLEvent
+	TypeWatermark
 	TypeHeartBeatRequest
 	TypeHeartBeatResponse
 	TypeScheduleDispatcherRequest
@@ -104,6 +107,7 @@ func (s ServerId) Unmarshal(data []byte) error {
 }
 
 type DMLEvent struct {
+	E *common.TxnEvent
 	// TODO
 }
 
@@ -117,6 +121,7 @@ func (d *DMLEvent) Unmarshal(data []byte) error {
 }
 
 type DDLEvent struct {
+	E *common.TxnEvent
 	// TODO
 }
 
@@ -127,6 +132,28 @@ func (d *DDLEvent) Marshal() ([]byte, error) {
 
 func (d *DDLEvent) Unmarshal(data []byte) error {
 	return nil
+}
+
+type Watermark struct {
+	Span *common.TableSpan
+	Ts   uint64
+}
+
+func (w *Watermark) Marshal() ([]byte, error) {
+	res := make([]byte, 8)
+	binary.LittleEndian.PutUint64(res, w.Ts)
+	spanBytes, err := w.Span.Marshal()
+	if err != nil {
+		return nil, err
+	}
+	res = append(res, spanBytes...)
+	return res, nil
+}
+
+func (w *Watermark) Unmarshal(data []byte) error {
+	w.Ts = binary.LittleEndian.Uint64(data[:8])
+	w.Span = &common.TableSpan{}
+	return w.Span.Unmarshal(data[8:])
 }
 
 type IOTypeT interface {
