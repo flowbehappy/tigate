@@ -15,14 +15,9 @@ package worker
 
 import (
 	"database/sql"
-	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/utils/threadpool"
-
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
 )
 
 // MysqlWorker is use to flush the event downstream
@@ -31,6 +26,22 @@ type MysqlWorker struct {
 	mysqlWriter *writer.MysqlWriter     // 实际负责做 flush 操作
 }
 
+func NewMysqlWorker(eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig) *MysqlWorker {
+	return &MysqlWorker{
+		eventChan:   eventChan,
+		mysqlWriter: writer.NewMysqlWriter(db, config),
+	}
+}
+
+func (t *MysqlWorker) GetEventChan() <-chan *common.TxnEvent {
+	return t.eventChan
+}
+
+func (t *MysqlWorker) GetMysqlWriter() *writer.MysqlWriter {
+	return t.mysqlWriter
+}
+
+/*
 type MysqlDDLWorker struct {
 	MysqlWriter *writer.MysqlWriter // 实际负责做 flush 操作
 }
@@ -81,28 +92,21 @@ func (t *MysqlWorkerDDLEventTask) Cancel() {
 // 这个 task 只处理 dml event
 type MysqlWorkerDMLEventTask struct {
 	worker     *MysqlWorker
-	taskStatus threadpool.TaskStatus
 	maxRows    int
 	events     []*common.TxnEvent
+	taskHandle *threadpool.TaskHandle
 }
 
 func NewMysqlWorkerDMLEventTask(eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig, maxRows int) *MysqlWorkerDMLEventTask {
-	return &MysqlWorkerDMLEventTask{
+	task := &MysqlWorkerDMLEventTask{
 		worker: &MysqlWorker{
 			eventChan:   eventChan,
 			mysqlWriter: writer.NewMysqlWriter(db, config),
 		},
-		taskStatus: threadpool.CPUTask,
-		maxRows:    maxRows,
+		maxRows: maxRows,
 	}
-}
-
-func (t *MysqlWorkerDMLEventTask) GetStatus() threadpool.TaskStatus {
-	return t.taskStatus
-}
-
-func (t *MysqlWorkerDMLEventTask) SetStatus(taskStatus threadpool.TaskStatus) {
-	t.taskStatus = taskStatus
+	task.taskHandle = threadpool.GetTaskSchedulerInstance().WorkerTaskScheduler.Submit(task, threadpool.CPUTask, time.Time{})
+	return task
 }
 
 func (t *MysqlWorkerDMLEventTask) Execute() (threadpool.TaskStatus, time.Time) {
@@ -182,3 +186,4 @@ func (t *MysqlWorkerDMLEventTask) Release() {
 
 func (t *MysqlWorkerDMLEventTask) Cancel() {
 }
+*/

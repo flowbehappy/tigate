@@ -118,6 +118,6 @@ func (d *TableTriggerEventDispatcher) GetMemoryUsage() *MemoryUsage {
 }
 
 func (d *TableTriggerEventDispatcher) PushEvent(event *common.TxnEvent) {
-	d.GetMemoryUsage().Add(event.CommitTs, event.MemoryCost())
+	//d.GetMemoryUsage().Add(event.CommitTs, event.MemoryCost())
 	d.Ch <- event // 换成一个函数
 }

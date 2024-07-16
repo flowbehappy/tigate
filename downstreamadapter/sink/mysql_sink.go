@@ -14,17 +14,16 @@
 package sink
 
 import (
+	"context"
 	"database/sql"
 	"math"
 	"sync"
-	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/conflictdetector"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/downstreamadapter/worker"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/utils/threadpool"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/log"
@@ -36,9 +35,39 @@ const (
 	DefaultConflictDetectorSlots uint64 = 16 * 1024
 )
 
+type TableStatusMap struct {
+	mutex         sync.RWMutex
+	tableStatuses map[*common.TableSpan]TableStatus
+}
+
+func NewTableStatusMap() *TableStatusMap {
+	return &TableStatusMap{
+		tableStatuses: make(map[*common.TableSpan]TableStatus),
+	}
+}
+
+func (m *TableStatusMap) Get(tableSpan *common.TableSpan) (TableStatus, bool) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	tableStatus, ok := m.tableStatuses[tableSpan]
+	return tableStatus, ok
+}
+
+func (m *TableStatusMap) Set(tableSpan *common.TableSpan, tableStatus TableStatus) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.tableStatuses[tableSpan] = tableStatus
+}
+
+func (m *TableStatusMap) Delete(tableSpan *common.TableSpan) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	delete(m.tableStatuses, tableSpan)
+}
+
 type TableStatus struct {
-	ch   chan *common.TxnEvent
-	task *MysqlSinkTask
+	cancel context.CancelFunc
+	ch     chan *common.TxnEvent
 	//TableProgress 里面维护了目前正在 sink 中的 event ts 信息
 	// // TableProgress 对外提供查询当前 table checkpointTs 的能力
 	// // TableProgress 对外提供当前 table 是否有 event 在 sink 中等待被 flush 的能力--用于判断 ddl 是否达到下推条件
@@ -47,10 +76,6 @@ type TableStatus struct {
 
 func (s *TableStatus) getCh() chan *common.TxnEvent {
 	return s.ch
-}
-
-func (s *TableStatus) getTask() *MysqlSinkTask {
-	return s.task
 }
 
 func (s *TableStatus) getProgress() *types.TableProgress {
@@ -63,16 +88,16 @@ func (s *TableStatus) getProgress() *types.TableProgress {
 // 一个 event dispatcher manager 对应一个 mysqlSink
 // 实现 Sink 的接口
 type MysqlSink struct {
-	changefeedID     string
+	//changefeedID     string
 	conflictDetector *conflictdetector.ConflictDetector
 
 	// 主要是要保持一样的生命周期？不然 channel 会对应不上
-	// workers  []*worker.MysqlWorker
-	ddlWorker *worker.MysqlDDLWorker
+	//ddlWorker      *worker.MysqlDDLWorker
+	//dmlWorkerTasks []*worker.MysqlWorkerDMLEventTask
 
-	// Protect tableStatus
-	mutex         sync.RWMutex
-	tableStatuses map[*common.TableSpan]TableStatus
+	tableStatuses *TableStatusMap
+	wg            sync.WaitGroup
+	cancel        context.CancelFunc
 }
 
 // event dispatcher manager 初始化的时候创建 mysqlSink 对象
@@ -83,7 +108,8 @@ func NewMysqlSink(workerCount int, cfg *writer.MysqlConfig, db *sql.DB) *MysqlSi
 			Size:          1024,
 			BlockStrategy: causality.BlockStrategyWaitEmpty,
 		}),
-		tableStatuses: make(map[*common.TableSpan]TableStatus),
+		tableStatuses: NewTableStatusMap(),
+		//dmlWorkerTasks: make([]*worker.MysqlWorkerDMLEventTask, workerCount),
 	}
 
 	mysqlSink.initWorker(workerCount, cfg, db)
@@ -93,18 +119,52 @@ func NewMysqlSink(workerCount int, cfg *writer.MysqlConfig, db *sql.DB) *MysqlSi
 
 func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql.DB) {
 	// init ddl worker, which is for ddl event and sync point event
-	s.ddlWorker = &worker.MysqlDDLWorker{MysqlWriter: writer.NewMysqlWriter(db, cfg)}
+	//s.ddlWorker = &worker.MysqlDDLWorker{MysqlWriter: writer.NewMysqlWriter(db, cfg)}
 
 	// dml worker task will deal with all the dml events
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
 	for i := 0; i < workerCount; i++ {
-		threadpool.GetTaskSchedulerInstance().WorkerTaskScheduler.Submit(worker.NewMysqlWorkerDMLEventTask(s.conflictDetector.GetOutChByCacheID(int64(i)), db, cfg, 128), threadpool.CPUTask, time.Time{})
+		s.wg.Add(1)
+		// s.dmlWorkerTasks = append(s.dmlWorkerTasks, worker.NewMysqlWorkerDMLEventTask(s.conflictDetector.GetOutChByCacheID(int64(i)), db, cfg, 128))
+		go func(ctx context.Context, eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig, maxRows int) {
+			defer s.wg.Done()
+			worker := worker.NewMysqlWorker(eventChan, db, config)
+			events := make([]*common.TxnEvent, 0)
+			rows := 0
+			for {
+			loop:
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case txnEvent := <-worker.GetEventChan():
+						events = append(events, txnEvent)
+						rows += len(txnEvent.Rows)
+						if rows >= maxRows {
+							break loop
+						}
+					default:
+						break loop
+					}
+				}
+
+				err := worker.GetMysqlWriter().Flush(events)
+				if err != nil {
+					log.Error("Failed to flush events", zap.Error(err))
+					return
+				}
+
+				events = events[:0]
+				rows = 0
+			}
+
+		}(ctx, s.conflictDetector.GetOutChByCacheID(int64(i)), db, cfg, 128)
 	}
 }
 
 func (s *MysqlSink) AddDMLEvent(tableSpan *common.TableSpan, event *common.TxnEvent) {
-	s.mutex.RLock()
-	tableStatus, ok := s.tableStatuses[tableSpan]
-	s.mutex.Unlock()
+	tableStatus, ok := s.tableStatuses.Get(tableSpan)
 	if !ok {
 		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
 		return
@@ -113,10 +173,9 @@ func (s *MysqlSink) AddDMLEvent(tableSpan *common.TableSpan, event *common.TxnEv
 	tableStatus.getCh() <- event
 }
 
+/*
 func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *common.TxnEvent) { // 或许 ddl 也可以考虑有专用的 worker？
-	s.mutex.RLock() // TODO:改成读写锁
-	tableStatus, ok := s.tableStatuses[tableSpan]
-	s.mutex.Unlock()
+	tableStatus, ok := s.tableStatuses.Get(tableSpan)
 	if !ok {
 		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
 		return
@@ -127,23 +186,31 @@ func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *
 	task := worker.NewMysqlWorkerDDLEventTask(s.ddlWorker, event) // 先固定用 0 号 worker
 	threadpool.GetTaskSchedulerInstance().WorkerTaskScheduler.Submit(task, threadpool.IOTask, time.Time{})
 
-}
+}*/
 
 func (s *MysqlSink) AddTableSpan(tableSpan *common.TableSpan) {
 	tableProgress := types.NewTableProgress()
 	ch := make(chan *common.TxnEvent, 100) // 先瞎拍
-	task := newMysqlSinkTask(tableSpan, tableProgress, ch, s.conflictDetector)
+	ctx, cancel := context.WithCancel(context.Background())
 
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.wg.Add(1)
+	go func(ctx context.Context, tableProgress *types.TableProgress, eventCh chan *common.TxnEvent, conflictDetector *conflictdetector.ConflictDetector) {
+		defer s.wg.Done()
+		for {
+			select {
+			case event := <-eventCh:
+				conflictDetector.Add(event, tableProgress)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}(ctx, tableProgress, ch, s.conflictDetector)
 
-	s.tableStatuses[tableSpan] = TableStatus{
+	s.tableStatuses.Set(tableSpan, TableStatus{
+		cancel:   cancel,
 		ch:       ch,
-		task:     task,
 		progress: tableProgress,
-	}
-
-	threadpool.GetTaskSchedulerInstance().SinkTaskScheduler.Submit(task, threadpool.CPUTask, time.Time{})
+	})
 }
 
 // Called when the dispatcher should be moved.
@@ -151,29 +218,21 @@ func (s *MysqlSink) AddTableSpan(tableSpan *common.TableSpan) {
 // We need to wait the MysqlSink.Empty(tableSpan) to be true, which means all the events in the sink have been flushed.
 // 应该是心跳收集的时候，check 了这个表的 sink.IsEmpty 空的时候，改成 removed 状态，然后把这些剩下的删光
 func (s *MysqlSink) StopTableSpan(tableSpan *common.TableSpan) {
-	s.mutex.Lock()
-	tableStatus, ok := s.tableStatuses[tableSpan]
+	tableStatus, ok := s.tableStatuses.Get(tableSpan)
 	if !ok {
 		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
-		s.mutex.Unlock()
 		return
 	}
-	tableStatus.getTask().Cancel()
-	delete(s.tableStatuses, tableSpan)
-	s.mutex.Unlock()
+	tableStatus.cancel()
 }
 
 // Called when the MysqlSink.Empty(tableSpan) to be true, and remove the tableSpan from Sink now.
 func (s *MysqlSink) RemoveTableSpan(tableSpan *common.TableSpan) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	delete(s.tableStatuses, tableSpan)
+	s.tableStatuses.Delete(tableSpan)
 }
 
 func (s *MysqlSink) IsEmpty(tableSpan *common.TableSpan) bool {
-	s.mutex.RLock()
-	tableStatus, ok := s.tableStatuses[tableSpan]
-	s.mutex.RUnlock()
+	tableStatus, ok := s.tableStatuses.Get(tableSpan)
 	if !ok {
 		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
 		return false
@@ -182,9 +241,7 @@ func (s *MysqlSink) IsEmpty(tableSpan *common.TableSpan) bool {
 }
 
 func (s *MysqlSink) GetSmallestCommitTs(tableSpan *common.TableSpan) uint64 {
-	s.mutex.RLock()
-	tableStatus, ok := s.tableStatuses[tableSpan]
-	s.mutex.RUnlock()
+	tableStatus, ok := s.tableStatuses.Get(tableSpan)
 
 	if !ok {
 		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
