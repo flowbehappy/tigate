@@ -72,6 +72,8 @@ func (t IOType) String() string {
 		return "MaintainerBootstrapResponse"
 	case TypeMessageError:
 		return "MessageError"
+	case TypeMessageHandShake:
+		return "MessageHandShake"
 	default:
 	}
 	return "Unknown"
