@@ -22,7 +22,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/flowbehappy/tigate/utils"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -195,7 +195,7 @@ type DispatcherManager struct {
 	id model.ChangeFeedID
 
 	maintainerID messaging.ServerId
-	dispatchers  scheduler.Map[*common.TableSpan, *Dispatcher]
+	dispatchers  utils.Map[*common.TableSpan, *Dispatcher]
 }
 
 func NewDispatcherManager(id model.ChangeFeedID,
@@ -203,7 +203,7 @@ func NewDispatcherManager(id model.ChangeFeedID,
 	return &DispatcherManager{
 		id:           id,
 		maintainerID: maintainerID,
-		dispatchers:  scheduler.NewBtreeMap[*common.TableSpan, *Dispatcher](),
+		dispatchers:  utils.NewBtreeMap[*common.TableSpan, *Dispatcher](),
 	}
 }
 
@@ -218,7 +218,7 @@ func (m *DispatcherManager) handleDispatchTableSpanRequest(
 		if !ok {
 			span = NewDispatcher(m.id, tableSpan, request.GetIsSecondary())
 			m.dispatchers.ReplaceOrInsert(tableSpan, span)
-			threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(span, threadpool.CPUTask, time.Now())
+			//threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(span, threadpool.CPUTask, time.Now())
 		}
 		span.removing.Store(false)
 		span.isSecondary.Store(request.IsSecondary)
