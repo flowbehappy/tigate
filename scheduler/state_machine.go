@@ -418,7 +418,7 @@ func (s *StateMachine) pollOnAbsent(
 			log.Info("promote secondary, no primary",
 				zap.Any("status", input),
 				zap.String("captureID", captureID),
-				zap.Any("statemachine", s))
+				zap.Any("statemachine", s.ID.String()))
 			return s.Inferior.NewAddInferiorMessage(captureID, false), false, nil
 		}
 		s.State = SchedulerStatusPrepare
@@ -673,7 +673,7 @@ func (s *StateMachine) pollOnWorking(
 			log.Info("primary is stopped during Working",
 				zap.Any("status", input),
 				zap.String("captureID", captureID),
-				zap.Any("statemachine", s))
+				zap.Any("statemachine", s.ID.String()))
 			s.clearPrimary()
 			s.State = SchedulerStatusAbsent
 			return true, nil
@@ -753,7 +753,7 @@ func (s *StateMachine) HandleAddInferior(
 	log.Info("state transition, add ingferior",
 		zap.Any("status", status),
 		zap.String("captureID", captureID),
-		zap.Any("statemachine", s),
+		zap.Any("statemachine", s.ID.String()),
 		zap.Stringer("old", oldState),
 		zap.Stringer("new", s.State))
 	return msgs, nil

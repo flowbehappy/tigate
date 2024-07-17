@@ -15,6 +15,7 @@ package maintainer
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -73,77 +74,13 @@ func (m *Manager) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-tick.C:
-			m.msgLock.Lock()
-			buf := m.msgBuf
-			m.msgBuf = nil
-			m.msgLock.Unlock()
+			// 1. handle message from remote
+			absent := m.handleMessages()
 
-			var absent []string
-			for _, msg := range buf {
-				switch msg.Type {
-				case messaging.TypeCoordinatorBootstrapRequest:
-					req := msg.Message.(*heartbeatpb.CoordinatorBootstrapRequest)
-					if m.coordinatorVersion > req.Version {
-						log.Warn("ignore invalid coordinator version",
-							zap.Int64("version", req.Version))
-						continue
-					}
-					m.coordinatorID = msg.From
-					m.coordinatorVersion = req.Version
+			//2.  try to send heartbeat to coordinator
+			m.sendHeartbeat(absent)
 
-					response := &heartbeatpb.CoordinatorBootstrapResponse{
-						Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
-					}
-					for _, m := range m.maintainers {
-						response.Statuses = append(response.Statuses, m.GetMaintainerStatus())
-						m.statusChanged.Store(false)
-						m.lastReportTime = time.Now()
-					}
-					err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
-						m.coordinatorID,
-						"coordinator",
-						response,
-					))
-					if err != nil {
-						log.Warn("send command failed", zap.Error(err))
-					}
-					log.Info("bootstrap coordinator",
-						zap.Int64("version", m.coordinatorVersion))
-				case messaging.TypeDispatchMaintainerRequest:
-					req := msg.Message.(*heartbeatpb.DispatchMaintainerRequest)
-					if m.coordinatorID != msg.From {
-						log.Warn("ignore invalid coordinator id",
-							zap.Any("request", req),
-							zap.Any("coordinator", msg.From))
-						continue
-					}
-					absent = append(absent, m.handleDispatchMaintainerRequest(req)...)
-				}
-			}
-			// send heartbeats
-			if m.coordinatorVersion > 0 {
-				response := &heartbeatpb.MaintainerHeartbeat{
-					Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
-				}
-				for _, m := range m.maintainers {
-					if m.statusChanged.Load() ||
-						time.Since(m.lastReportTime) > time.Second*2 {
-						response.Statuses = append(response.Statuses, m.GetMaintainerStatus())
-						m.statusChanged.Store(false)
-						m.lastReportTime = time.Now()
-					}
-				}
-				for _, id := range absent {
-					response.Statuses = append(response.Statuses, &heartbeatpb.MaintainerStatus{
-						ChangefeedID: id,
-						State:        heartbeatpb.ComponentState_Absent,
-					})
-				}
-				if len(response.Statuses) != 0 {
-					m.sendMessages(response)
-				}
-			}
-			// cleanup removed maintainer
+			//3. cleanup removed maintainer
 			for _, cf := range m.maintainers {
 				if cf.removed.Load() {
 					cf.Close()
@@ -171,15 +108,58 @@ func (m *Manager) Close(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) handleDispatchMaintainerRequest(
-	request *heartbeatpb.DispatchMaintainerRequest,
+func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
+	req := msg.Message.(*heartbeatpb.CoordinatorBootstrapRequest)
+	if m.coordinatorVersion > req.Version {
+		log.Warn("ignore invalid coordinator version",
+			zap.Int64("version", req.Version))
+		return
+	}
+	m.coordinatorID = msg.From
+	m.coordinatorVersion = req.Version
+
+	response := &heartbeatpb.CoordinatorBootstrapResponse{
+		Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
+	}
+	for _, m := range m.maintainers {
+		response.Statuses = append(response.Statuses, m.GetMaintainerStatus())
+		m.statusChanged.Store(false)
+		m.lastReportTime = time.Now()
+	}
+	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
+		m.coordinatorID,
+		"coordinator",
+		response,
+	))
+	if err != nil {
+		log.Warn("send command failed", zap.Error(err))
+	}
+	log.Info("bootstrap coordinator",
+		zap.Int64("version", m.coordinatorVersion))
+}
+
+func (m *Manager) onDispatchMaintainerRequest(
+	msg *messaging.TargetMessage,
 ) []string {
+	request := msg.Message.(*heartbeatpb.DispatchMaintainerRequest)
+	if m.coordinatorID != msg.From {
+		log.Warn("ignore invalid coordinator id",
+			zap.Any("request", request),
+			zap.Any("coordinator", msg.From))
+		return nil
+	}
 	absent := make([]string, 0)
 	for _, req := range request.AddMaintainers {
 		cfID := model.DefaultChangeFeedID(req.GetId())
 		cf, ok := m.maintainers[cfID]
 		if !ok {
-			cf = NewMaintainer(cfID, req.IsSecondary)
+			cfConfig := &model.ChangeFeedInfo{}
+			err := json.Unmarshal(req.Config, cfConfig)
+			if err != nil {
+				log.Panic("decode changefeed fail", zap.Error(err))
+			}
+			cf = NewMaintainer(cfID, req.IsSecondary,
+				cfConfig, req.Config, req.CheckpointTs)
 			m.maintainers[cfID] = cf
 			threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf, threadpool.CPUTask, time.Now())
 		}
@@ -197,6 +177,49 @@ func (m *Manager) handleDispatchMaintainerRequest(
 			absent = append(absent, req.GetId())
 		}
 		cf.removing.Store(true)
+	}
+	return absent
+}
+
+func (m *Manager) sendHeartbeat(absent []string) {
+	if m.coordinatorVersion > 0 {
+		response := &heartbeatpb.MaintainerHeartbeat{
+			Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
+		}
+		for _, m := range m.maintainers {
+			if m.statusChanged.Load() ||
+				time.Since(m.lastReportTime) > time.Second*2 {
+				response.Statuses = append(response.Statuses, m.GetMaintainerStatus())
+				m.statusChanged.Store(false)
+				m.lastReportTime = time.Now()
+			}
+		}
+		for _, id := range absent {
+			response.Statuses = append(response.Statuses, &heartbeatpb.MaintainerStatus{
+				ChangefeedID: id,
+				State:        heartbeatpb.ComponentState_Absent,
+			})
+		}
+		if len(response.Statuses) != 0 {
+			m.sendMessages(response)
+		}
+	}
+}
+
+func (m *Manager) handleMessages() []string {
+	m.msgLock.Lock()
+	buf := m.msgBuf
+	m.msgBuf = nil
+	m.msgLock.Unlock()
+
+	var absent []string
+	for _, msg := range buf {
+		switch msg.Type {
+		case messaging.TypeCoordinatorBootstrapRequest:
+			m.onCoordinatorBootstrapRequest(msg)
+		case messaging.TypeDispatchMaintainerRequest:
+			absent = append(absent, m.onDispatchMaintainerRequest(msg)...)
+		}
 	}
 	return absent
 }

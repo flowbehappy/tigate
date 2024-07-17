@@ -14,6 +14,8 @@
 package downstreamadapter
 
 import (
+	"encoding/json"
+
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -48,6 +50,12 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 	eventDispatcherManager, ok := m.dispatcherManagers[changefeedID]
 	if !ok {
 		// TODO: decode config
+		cfConfig := &model.ChangefeedConfig{}
+		err := json.Unmarshal(maintainerBootstrapRequest.Config, cfConfig)
+		if err != nil {
+			log.Error("failed to unmarshal changefeed config", zap.Error(err))
+			return err
+		}
 		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, nil, msg.To, msg.From)
 		m.dispatcherManagers[changefeedID] = eventDispatcherManager
 
@@ -56,7 +64,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 			Statuses:     make([]*heartbeatpb.TableSpanStatus, 0),
 		}
 
-		err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendCommand(messaging.NewTargetMessage(
+		err = context.GetService[messaging.MessageCenter](context.MessageCenter).SendCommand(messaging.NewTargetMessage(
 			msg.From,
 			MaintainerBoostrapResponseTopic,
 			response,

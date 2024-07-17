@@ -46,9 +46,11 @@ import (
 // 3. send changefeed status to coordinator
 // 4. handle heartbeat reported by dispatcher
 type Maintainer struct {
-	id     model.ChangeFeedID
-	config *model.ChangeFeedInfo
-	status *model.ChangeFeedStatus
+	id       model.ChangeFeedID
+	config   *model.ChangeFeedInfo
+	cfgBytes []byte
+
+	checkpointTs uint64
 
 	state      heartbeatpb.ComponentState
 	supervisor *scheduler.Supervisor
@@ -59,7 +61,9 @@ type Maintainer struct {
 	taskCh  chan Task
 	removed *atomic.Bool
 
-	tableIDs map[int64]struct{}
+	initialized  bool
+	tableIDs     map[int64]struct{}
+	allInferiors []scheduler.InferiorID
 
 	pdEndpoints []string
 	nodeManager *watcher.NodeManager
@@ -80,6 +84,9 @@ type Maintainer struct {
 // NewMaintainer create the maintainer for the changefeed
 func NewMaintainer(cfID model.ChangeFeedID,
 	isSecondary bool,
+	cfg *model.ChangeFeedInfo,
+	cfgBytes []byte,
+	checkpointTs uint64,
 ) *Maintainer {
 	m := &Maintainer{
 		id: cfID,
@@ -94,6 +101,9 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		isSecondary:   atomic.NewBool(isSecondary),
 		removing:      atomic.NewBool(false),
 		msgTopic:      "maintainer/" + cfID.ID,
+		config:        cfg,
+		cfgBytes:      cfgBytes,
+		checkpointTs:  checkpointTs,
 	}
 	if !isSecondary {
 		m.state = heartbeatpb.ComponentState_Working
@@ -121,6 +131,18 @@ func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
 		m.closeChangefeed()
 		return threadpool.Done, time.Time{}
 	}
+	// init the maintainer, todo: return error and cancel the maintainer
+	if !m.initialized {
+		if err := m.initChangefeed(); err != nil {
+			log.Warn("init changefeed failed", zap.Error(err))
+			m.initialized = false
+			m.removed.Store(true)
+			m.state = heartbeatpb.ComponentState_Stopped
+			return threadpool.Done, time.Time{}
+		}
+		m.initialized = true
+	}
+
 	// not on the primary status, skip running
 	if m.isSecondary.Load() {
 		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
@@ -139,8 +161,131 @@ func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
 		log.Warn("handle capture failed", zap.Error(err))
 		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 	}
+	m.sendMessages(msgs)
 
 	// resend dispatcher message
+	m.resendSchedulerMessage()
+
+	// try to schedule table spans
+	err = m.scheduleTableSpan()
+	if err != nil {
+		log.Warn("handle capture failed", zap.Error(err))
+		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
+	}
+	m.printStatus()
+	return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
+}
+
+func (m *Maintainer) handleMessages() error {
+	m.msgLock.Lock()
+	buf := m.msgBuf
+	m.msgBuf = nil
+	m.msgLock.Unlock()
+	for _, msg := range buf {
+		switch msg.Type {
+		case messaging.TypeHeartBeatRequest:
+			if err := m.onHeartBeatRequest(msg); err != nil {
+				return errors.Trace(err)
+			}
+		case messaging.TypeMaintainerBootstrapResponse:
+			m.onMaintainerBootstrapResponse(msg)
+		default:
+			log.Panic("unexpected message type", zap.String("type", msg.Type.String()))
+		}
+	}
+	return nil
+}
+
+// send message to remote, todo: use a io thread pool
+func (m *Maintainer) sendMessages(msgs []rpc.Message) {
+	for _, msg := range msgs {
+		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(msg.(*messaging.TargetMessage))
+		if err != nil {
+			log.Error("failed to send coordinator request", zap.Any("msg", msg), zap.Error(err))
+			continue
+		}
+	}
+}
+
+func (m *Maintainer) scheduleTableSpan() error {
+	if !m.supervisor.CheckAllCaptureInitialized() {
+		return nil
+	}
+
+	tasks := m.scheduler.Schedule(
+		m.allInferiors,
+		m.supervisor.GetAllCaptures(),
+		m.supervisor.GetInferiors(),
+	)
+	msg, err := m.supervisor.HandleScheduleTasks(tasks)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	m.sendMessages(msg)
+	return nil
+}
+
+// Close cleanup resources
+func (m *Maintainer) Close() {
+	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).DeRegisterHandler(m.msgTopic)
+}
+
+func (m *Maintainer) initChangefeed() error {
+	m.state = heartbeatpb.ComponentState_Prepared
+	m.statusChanged.Store(true)
+	var err error
+	m.tableIDs = map[int64]struct{}{
+		int64(1): {},
+		int64(2): {},
+		int64(3): {},
+	}
+	for id, _ := range m.tableIDs {
+		start, end := spanz.GetTableRange(id)
+		m.allInferiors = append(m.allInferiors, &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+			TableID:  uint64(id),
+			StartKey: start,
+			EndKey:   end,
+		}})
+	}
+	return err
+}
+
+func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
+	req := msg.Message.(*heartbeatpb.HeartBeatRequest)
+	var status []scheduler.InferiorStatus
+	for _, info := range req.Statuses {
+		status = append(status, &ReplicaSetStatus{
+			ID: &common.TableSpan{
+				TableSpan: info.Span,
+			},
+			State: info.ComponentStatus,
+		})
+	}
+	msgs, err := m.supervisor.HandleStatus(msg.From.String(), status)
+	if err != nil {
+		log.Error("handle status failed, ignore", zap.Error(err))
+		return errors.Trace(err)
+	}
+	m.sendMessages(msgs)
+	return nil
+}
+
+func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage) {
+	req := msg.Message.(*heartbeatpb.MaintainerBootstrapResponse)
+	var status []scheduler.InferiorStatus
+	for _, info := range req.Statuses {
+		status = append(status, &ReplicaSetStatus{
+			ID: &common.TableSpan{
+				TableSpan: info.Span,
+			},
+			State: info.ComponentStatus,
+		})
+	}
+	m.supervisor.UpdateCaptureStatus(msg.From.String(), status)
+}
+
+func (m *Maintainer) resendSchedulerMessage() {
+	var msgs []rpc.Message
 	m.supervisor.StateMachines.Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
 		if value.State == scheduler.SchedulerStatusPrepare &&
 			time.Since(value.LastMsgTime) > time.Millisecond*200 {
@@ -155,112 +300,11 @@ func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
 		return true
 	})
 	m.sendMessages(msgs)
-
-	// try to schedule table spans
-	msgs, err = m.scheduleTableSpan()
-	if err != nil {
-		log.Warn("handle capture failed", zap.Error(err))
-		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
-	}
-	m.sendMessages(msgs)
-	m.printStatus()
-	return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
-}
-
-func (m *Maintainer) handleMessages() error {
-	m.msgLock.Lock()
-	buf := m.msgBuf
-	m.msgBuf = nil
-	m.msgLock.Unlock()
-	for _, msg := range buf {
-		switch msg.Type {
-		case messaging.TypeHeartBeatResponse:
-			req := msg.Message.(*heartbeatpb.HeartBeatResponse)
-			var status []scheduler.InferiorStatus
-			for _, info := range req.Info {
-				status = append(status, &ReplicaSetStatus{
-					ID: &common.TableSpan{
-						TableSpan: info.Span,
-					},
-					State: info.SchedulerStatus,
-				})
-			}
-			msgs, err := m.supervisor.HandleStatus(msg.From.String(), status)
-			if err != nil {
-				log.Error("handle status failed, ignore", zap.Error(err))
-				return errors.Trace(err)
-			}
-			m.sendMessages(msgs)
-		case messaging.TypeMaintainerBootstrapResponse:
-			req := msg.Message.(*heartbeatpb.MaintainerBootstrapResponse)
-			var status []scheduler.InferiorStatus
-			for _, info := range req.Statuses {
-				status = append(status, &ReplicaSetStatus{
-					ID: &common.TableSpan{
-						TableSpan: info.Span,
-					},
-					State: info.ComponentStatus,
-				})
-			}
-			m.supervisor.UpdateCaptureStatus(msg.From.String(), status)
-		default:
-			log.Panic("unexpected message type", zap.String("type", msg.Type.String()))
-		}
-	}
-	return nil
-}
-
-func (m *Maintainer) sendMessages(msgs []rpc.Message) {
-	for _, msg := range msgs {
-		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(msg.(*messaging.TargetMessage))
-		if err != nil {
-			log.Error("failed to send coordinator request", zap.Any("msg", msg), zap.Error(err))
-			continue
-		}
-	}
-}
-
-var allInferiors []scheduler.InferiorID
-
-func init() {
-	for i := 0; i < 3; i++ {
-		tblID := int64(100 + i)
-		start, end := spanz.GetTableRange(tblID)
-		allInferiors = append(allInferiors, &common.TableSpan{
-			TableSpan: &heartbeatpb.TableSpan{
-				TableID:  uint64(tblID),
-				StartKey: start,
-				EndKey:   end,
-			}})
-	}
-}
-
-func (m *Maintainer) scheduleTableSpan() ([]rpc.Message, error) {
-	if !m.supervisor.CheckAllCaptureInitialized() {
-		return nil, nil
-	}
-	tasks := m.scheduler.Schedule(
-		allInferiors,
-		m.supervisor.GetAllCaptures(),
-		m.supervisor.GetInferiors(),
-	)
-	return m.supervisor.HandleScheduleTasks(tasks)
-}
-
-// Close cleanup resources
-func (m *Maintainer) Close() {
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).DeRegisterHandler(m.msgTopic)
-}
-
-func (m *Maintainer) initChangefeed() error {
-	m.state = heartbeatpb.ComponentState_Prepared
-	m.statusChanged.Store(true)
-	return nil
 }
 
 // GetTableIDs get tables ids base on the filter and checkpoint ts
 func (m *Maintainer) GetTableIDs() (map[int64]struct{}, error) {
-	startTs := m.status.CheckpointTs
+	startTs := m.checkpointTs
 	f, err := filter.NewFilter(m.config.Config, "")
 	if err != nil {
 		return nil, errors.Cause(err)
@@ -318,7 +362,7 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 		ChangefeedID: m.id.ID,
 		FeedState:    string(m.changefeedSate),
 		State:        m.state,
-		CheckpointTs: 0,
+		CheckpointTs: m.checkpointTs,
 	}
 }
 
@@ -328,6 +372,7 @@ func (m *Maintainer) bootstrapMessage(captureID model.CaptureID) rpc.Message {
 		"dispatcher-manager",
 		&heartbeatpb.MaintainerBootstrapRequest{
 			ChangefeedID: m.id.ID,
+			Config:       m.cfgBytes,
 		})
 }
 
