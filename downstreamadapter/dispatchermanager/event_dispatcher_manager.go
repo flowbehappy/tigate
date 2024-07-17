@@ -154,7 +154,8 @@ func (e *EventDispatcherManager) Init(startTs uint64) {
 	if err != nil {
 		log.Error("create mysql sink failed", zap.Error(err))
 	}
-	e.sink = sink.NewMysqlSink(*e.config.SinkConfig.MySQLConfig.WorkerCount, cfg, db)
+	// e.sink = sink.NewMysqlSink(*e.config.SinkConfig.MySQLConfig.WorkerCount, cfg, db)
+	e.sink = sink.NewMysqlSink(8, cfg, db)
 	//}
 
 	// Init Table Trigger Event Dispatcher, TODO: in demo we don't need deal with ddl
