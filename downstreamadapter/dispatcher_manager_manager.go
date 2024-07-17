@@ -76,6 +76,10 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 		return nil
 	}
 
+	// set new maintainer id if it's changed
+	if eventDispatcherManager.GetMaintainerID() == msg.From {
+		eventDispatcherManager.SetMaintainerID(msg.From)
+	}
 	response := &heartbeatpb.MaintainerBootstrapResponse{
 		Statuses: make([]*heartbeatpb.TableSpanStatus, 0, eventDispatcherManager.GetDispatcherMap().Len()),
 	}

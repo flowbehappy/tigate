@@ -34,8 +34,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const workerCount = 8
-
 /*
 EventDispatcherManager is responsible for managing the dispatchers of a changefeed in the instance.
 EventDispatcherManager is working on:
@@ -57,9 +55,9 @@ type EventDispatcherManager struct {
 	wg     sync.WaitGroup
 
 	changefeedID model.ChangeFeedID
+	config       *model.ChangefeedConfig
 	//sinkType     string
-	sinkURI string
-	sink    sink.Sink
+	sink sink.Sink
 	// enableSyncPoint       bool
 	// syncPointInterval     time.Duration
 	maintainerID messaging.ServerId
@@ -119,12 +117,13 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 		changefeedID:  changefeedID,
 		//heartbeatResponseQueue: NewHeartbeatResponseQueue(),
 		//sinkType: config.sinkType,
-		sinkURI: config.SinkURI,
+		// sinkURI: config.SinkURI,
 		//sinkConfig:             config.SinkConfig,
 		//enableSyncPoint:       false,
 		maintainerID:          maintainerID,
 		tableSpanStatusesChan: make(chan *heartbeatpb.TableSpanStatus, 100),
 		cancel:                cancel,
+		config:                config,
 	}
 	eventDispatcherManager.wg.Add(1)
 	go func(ctx context.Context, e *EventDispatcherManager) {
@@ -149,11 +148,11 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 func (e *EventDispatcherManager) Init(startTs uint64) {
 	// Init Sink
 	//if e.sinkType == "Mysql" {
-	cfg, db, err := writer.NewMysqlConfigAndDB(e.sinkURI)
+	cfg, db, err := writer.NewMysqlConfigAndDB(e.config.SinkURI)
 	if err != nil {
 		log.Error("create mysql sink failed", zap.Error(err))
 	}
-	e.sink = sink.NewMysqlSink(workerCount, cfg, db)
+	e.sink = sink.NewMysqlSink(*e.config.SinkConfig.MySQLConfig.WorkerCount, cfg, db)
 	//}
 
 	// Init Table Trigger Event Dispatcher, TODO: in demo we don't need deal with ddl
@@ -340,4 +339,8 @@ func (e *EventDispatcherManager) SetHeartbeatRequestQueue(heartbeatRequestQueue 
 
 func (e *EventDispatcherManager) GetTableSpanStatusesChan() chan *heartbeatpb.TableSpanStatus {
 	return e.tableSpanStatusesChan
+}
+
+func (e *EventDispatcherManager) SetMaintainerID(maintainerID messaging.ServerId) {
+	e.maintainerID = maintainerID
 }
