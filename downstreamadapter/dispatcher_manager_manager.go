@@ -15,6 +15,7 @@ package downstreamadapter
 
 import (
 	"encoding/json"
+	"net/url"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
@@ -27,9 +28,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const MaintainerBoostrapRequestTopic = "maintainerBoostrapRequest"
-const MaintainerBoostrapResponseTopic = "maintainerBoostrapResponse"
-
 // DispatcherManagerManager deal with the maintainer bootstrap message, to create or delete the event dispatcher manager
 type DispatcherManagerManager struct {
 	dispatcherManagers map[model.ChangeFeedID]*dispatchermanager.EventDispatcherManager
@@ -39,7 +37,8 @@ func NewDispatcherManagerManager() *DispatcherManagerManager {
 	m := &DispatcherManagerManager{
 		dispatcherManagers: make(map[model.ChangeFeedID]*dispatchermanager.EventDispatcherManager),
 	}
-	context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(MaintainerBoostrapRequestTopic, m.RecvMaintainerBootstrapRequest)
+	context.GetService[messaging.MessageCenter](context.MessageCenter).
+		RegisterHandler(messaging.MaintainerBoostrapRequestTopic, m.RecvMaintainerBootstrapRequest)
 	return m
 }
 
@@ -56,7 +55,9 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 			log.Error("failed to unmarshal changefeed config", zap.Error(err))
 			return err
 		}
-		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, nil, msg.To, msg.From)
+		uri, _ := url.Parse(cfConfig.SinkURI)
+		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID,
+			&dispatchermanager.ChangefeedConfig{SinkURI: uri}, msg.To, msg.From)
 		m.dispatcherManagers[changefeedID] = eventDispatcherManager
 
 		response := &heartbeatpb.MaintainerBootstrapResponse{
@@ -66,7 +67,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 
 		err = context.GetService[messaging.MessageCenter](context.MessageCenter).SendCommand(messaging.NewTargetMessage(
 			msg.From,
-			MaintainerBoostrapResponseTopic,
+			messaging.MaintainerBootstrapResponseTopic,
 			response,
 		))
 		if err != nil {
@@ -88,7 +89,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 	})
 	err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendCommand(messaging.NewTargetMessage(
 		msg.From,
-		MaintainerBoostrapResponseTopic,
+		messaging.MaintainerBootstrapResponseTopic,
 		response,
 	))
 	if err != nil {

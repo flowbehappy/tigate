@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
@@ -70,45 +71,48 @@ type EventDispatcherManager struct {
 }
 type DispatcherMap struct {
 	mutex       sync.Mutex
-	dispatchers map[*common.TableSpan]*dispatcher.TableEventDispatcher
+	dispatchers utils.Map[*common.TableSpan, *dispatcher.TableEventDispatcher]
 }
 
 func newDispatcherMap() *DispatcherMap {
 	return &DispatcherMap{
-		dispatchers: make(map[*common.TableSpan]*dispatcher.TableEventDispatcher),
+		dispatchers: utils.NewBtreeMap[*common.TableSpan, *dispatcher.TableEventDispatcher](),
 	}
 }
 
 func (d *DispatcherMap) Len() int {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-	return len(d.dispatchers)
+	return d.dispatchers.Len()
 }
 
 func (d *DispatcherMap) Get(tableSpan *common.TableSpan) *dispatcher.TableEventDispatcher {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-	return d.dispatchers[tableSpan]
+	disp, _ := d.dispatchers.Get(tableSpan)
+	return disp
 }
 
 func (d *DispatcherMap) Delete(tableSpan *common.TableSpan) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-	delete(d.dispatchers, tableSpan)
+	d.dispatchers.Delete(tableSpan)
 }
 
 func (d *DispatcherMap) Set(tableSpan *common.TableSpan, dispatcher *dispatcher.TableEventDispatcher) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-	d.dispatchers[tableSpan] = dispatcher
+	d.dispatchers.ReplaceOrInsert(tableSpan, dispatcher)
 }
 
 func (d *DispatcherMap) ForEach(fn func(tableSpan *common.TableSpan, dispatcher *dispatcher.TableEventDispatcher)) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-	for tableSpan, dispatcher := range d.dispatchers {
-		fn(tableSpan, dispatcher)
-	}
+	d.dispatchers.Ascend(func(key *common.TableSpan, value *dispatcher.TableEventDispatcher) bool {
+		fn(key, value)
+		return true
+	})
+
 }
 
 // for compiler
