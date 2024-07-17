@@ -51,7 +51,9 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 		cfConfig := &model.ChangefeedConfig{}
 		err := json.Unmarshal(maintainerBootstrapRequest.Config, cfConfig)
 		if err != nil {
-			log.Error("failed to unmarshal changefeed config", zap.Error(err))
+			log.Error("failed to unmarshal changefeed config",
+				zap.String("changefeed id", maintainerBootstrapRequest.ChangefeedID),
+				zap.Error(err))
 			return err
 		}
 		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, cfConfig, msg.To, msg.From)
