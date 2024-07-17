@@ -25,6 +25,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
@@ -179,7 +180,7 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 	if !c.supervisor.CheckAllCaptureInitialized() {
 		return nil, nil
 	}
-	allChangefeedID := make([]scheduler.InferiorID, 0)
+	allChangefeedID := utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior]()
 	// check all changefeeds.
 	for id, reactor := range state.Changefeeds {
 		if reactor.Info == nil {
@@ -191,7 +192,8 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 			continue
 		}
 		if shouldRunChangefeed(reactor.Info.State) {
-			allChangefeedID = append(allChangefeedID, scheduler.ChangefeedID(id))
+			// todo use real changefeed instance here
+			allChangefeedID.ReplaceOrInsert(scheduler.ChangefeedID(id), &changefeed{})
 		}
 	}
 	tasks := c.scheduler.Schedule(
