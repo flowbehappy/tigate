@@ -21,8 +21,8 @@ import (
 	"unsafe"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
