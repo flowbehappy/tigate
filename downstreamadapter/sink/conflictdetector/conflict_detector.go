@@ -19,7 +19,6 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/pkg/chann"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -43,7 +42,7 @@ type ConflictDetector struct {
 
 	closeCh chan struct{}
 
-	notifiedNodes *chann.DrainableChann[func()]
+	notifiedNodes chan func()
 	wg            sync.WaitGroup
 }
 
@@ -56,7 +55,7 @@ func NewConflictDetector(
 		slots:             NewSlots(numSlots),
 		numSlots:          numSlots,
 		closeCh:           make(chan struct{}),
-		notifiedNodes:     chann.NewAutoDrainChann[func()](),
+		notifiedNodes:     make(chan func()),
 	}
 	for i := 0; i < opt.Count; i++ {
 		ret.resolvedTxnCaches[i] = newTxnCache(opt)
@@ -74,14 +73,11 @@ func NewConflictDetector(
 }
 
 func (d *ConflictDetector) runBackgroundTasks() {
-	defer func() {
-		d.notifiedNodes.CloseAndDrain()
-	}()
 	for {
 		select {
 		case <-d.closeCh:
 			return
-		case notifyCallback := <-d.notifiedNodes.Out():
+		case notifyCallback := <-d.notifiedNodes:
 			if notifyCallback != nil {
 				notifyCallback()
 			}
@@ -108,7 +104,7 @@ func (d *ConflictDetector) Add(txn *common.TxnEvent, tableProgress *types.TableP
 		return d.sendToCache(txn, cacheID)
 	}
 	node.RandCacheID = func() int64 { return d.nextCacheID.Add(1) % int64(len(d.resolvedTxnCaches)) }
-	node.OnNotified = func(callback func()) { d.notifiedNodes.In() <- callback }
+	node.OnNotified = func(callback func()) { d.notifiedNodes <- callback }
 	d.slots.Add(node)
 }
 

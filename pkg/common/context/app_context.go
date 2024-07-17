@@ -10,9 +10,9 @@ var (
 )
 
 const (
-	MessageCenter      = "message_center"
-	EventCollector     = "eventCollector"
-	HeartbeatCollector = "heartbeatCollector"
+	MessageCenter      = "MessageCenter"
+	EventCollector     = "EventCollector"
+	HeartbeatCollector = "HeartbeatCollector"
 )
 
 // Put all the global instances here.
