@@ -153,8 +153,10 @@ func (d *TableEventDispatcher) DispatcherEvents(ctx context.Context) {
 			return
 		case event := <-d.GetEventChan():
 			if event.IsDMLEvent() {
-				d.checkpointTs.Set(event.CommitTs - 1)
 				sink.AddDMLEvent(tableSpan, event)
+			} else {
+				// resolvedTs
+				d.checkpointTs.Set(event.ResolvedTs)
 			}
 		}
 	}
@@ -185,7 +187,7 @@ func (d *TableEventDispatcher) GetCheckpointTs() uint64 {
 }
 
 func (d *TableEventDispatcher) UpdateResolvedTs(ts uint64) {
-	d.resolvedTs.Set(ts)
+	d.GetEventChan() <- &common.TxnEvent{ResolvedTs: ts}
 }
 
 func (d *TableEventDispatcher) GetId() common.DispatcherID {
@@ -265,6 +267,10 @@ func (d *TableEventDispatcher) PushEvent(rawTxnEvent *eventpb.TxnEvent) {
 	event, _ := d.decodeEvent(rawTxnEvent)
 	//d.GetMemoryUsage().Add(event.CommitTs, event.MemoryCost())
 	d.GetEventChan() <- event // 换成一个函数
+}
+
+func (d *TableEventDispatcher) PushTxnEvent(event *common.TxnEvent) {
+	d.GetEventChan() <- event
 }
 
 func (d *TableEventDispatcher) InitTableInfo(tableInfo *eventpb.TableInfo) {

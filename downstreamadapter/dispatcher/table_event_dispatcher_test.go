@@ -16,8 +16,13 @@ package dispatcher
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+	"github.com/flowbehappy/tigate/downstreamadapter/writer"
+	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,18 +33,18 @@ func newTestMockDB(t *testing.T) (db *sql.DB, mock sqlmock.Sqlmock) {
 }
 
 // 测一下我直接给dispatcher 数据塞 chan 里，检查 db 是否正确收到了，以及 消费前后的心跳和memory usage 是否正常
-/*
+
 func TestTableEventDispatcher(t *testing.T) {
 	db, mock := newTestMockDB(t)
 	defer db.Close()
 
 	mysqlSink := sink.NewMysqlSink(8, writer.NewMysqlConfig(), db)
-	tableSpan := &common.TableSpan{TableID: 1}
+	tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1}}
 	startTs := uint64(100)
 
 	tableEventDispatcher := NewTableEventDispatcher(tableSpan, mysqlSink, startTs, nil)
 
-	tableEventDispatcher.PushEvent(&common.TxnEvent{
+	tableEventDispatcher.PushTxnEvent(&common.TxnEvent{
 		StartTs:  100,
 		CommitTs: 101,
 		Rows: []*common.RowChangedEvent{
@@ -58,7 +63,7 @@ func TestTableEventDispatcher(t *testing.T) {
 		},
 	})
 
-	tableEventDispatcher.PushEvent(&common.TxnEvent{
+	tableEventDispatcher.PushTxnEvent(&common.TxnEvent{
 		StartTs:  102,
 		CommitTs: 105,
 		Rows: []*common.RowChangedEvent{
@@ -82,9 +87,9 @@ func TestTableEventDispatcher(t *testing.T) {
 	})
 	tableEventDispatcher.UpdateResolvedTs(110)
 
-	checkpointTs := CollectDispatcherCheckpointTs(tableEventDispatcher)
-	require.Equal(t, uint64(100), checkpointTs)
-	require.NotEqual(t, 0, tableEventDispatcher.GetMemoryUsage().GetUsedBytes())
+	heartBeatInfo := CollectDispatcherHeartBeatInfo(tableEventDispatcher)
+	require.Equal(t, uint64(100), heartBeatInfo.CheckpointTs)
+	//require.NotEqual(t, 0, tableEventDispatcher.GetMemoryUsage().GetUsedBytes())
 
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO `test_schema`.`test_table` (`id`,`name`) VALUES (?,?)").
@@ -95,15 +100,12 @@ func TestTableEventDispatcher(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(1 * time.Second)
 
 	err := mock.ExpectationsWereMet()
 	require.NoError(t, err)
 
-	checkpointTs = CollectDispatcherCheckpointTs(tableEventDispatcher)
-	require.Equal(t, uint64(110), checkpointTs)
-	require.Equal(t, 0, tableEventDispatcher.GetMemoryUsage().GetUsedBytes())
-
+	heartBeatInfo = CollectDispatcherHeartBeatInfo(tableEventDispatcher)
+	require.Equal(t, uint64(110), heartBeatInfo.CheckpointTs)
+	//require.Equal(t, 0, tableEventDispatcher.GetMemoryUsage().GetUsedBytes())
 }
-
-*/

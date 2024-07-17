@@ -27,6 +27,7 @@ type TxnEvent struct {
 
 	DDLEvent       *DDLEvent
 	Rows           []*RowChangedEvent
+	ResolvedTs     uint64
 	StartTs        uint64
 	CommitTs       uint64
 	PostTxnFlushed func() // 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去

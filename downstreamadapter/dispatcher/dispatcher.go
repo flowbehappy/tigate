@@ -64,6 +64,7 @@ type Dispatcher interface {
 	//GetSyncPointInfo() *SyncPointInfo
 	//GetMemoryUsage() *MemoryUsage
 	PushEvent(event *eventpb.TxnEvent)
+	PushTxnEvent(event *common.TxnEvent)
 	GetComponentStatus() heartbeatpb.ComponentState
 }
 
