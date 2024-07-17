@@ -125,6 +125,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 		maintainerID:          maintainerID,
 		tableSpanStatusesChan: make(chan *heartbeatpb.TableSpanStatus, 100),
 		cancel:                cancel,
+		heartbeatRequestQueue: NewHeartbeatRequestQueue(),
 	}
 	eventDispatcherManager.wg.Add(1)
 	go func(ctx context.Context, e *EventDispatcherManager) {
@@ -272,7 +273,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	*/
 
 	var message heartbeatpb.HeartBeatRequest = heartbeatpb.HeartBeatRequest{
-		ChangefeedID:    e.changefeedID.String(),
+		ChangefeedID:    e.changefeedID.ID,
 		CompeleteStatus: needCompleteStatus,
 	}
 

@@ -44,9 +44,10 @@ type HeartBeatCollector struct {
 
 func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 	heartBeatCollector := HeartBeatCollector{
-		from:            serverId,
-		requestQueue:    dispatchermanager.NewHeartbeatRequestQueue(),
-		responseChanMap: make(map[model.ChangeFeedID]*dispatchermanager.HeartbeatResponseQueue),
+		from:                      serverId,
+		requestQueue:              dispatchermanager.NewHeartbeatRequestQueue(),
+		responseChanMap:           make(map[model.ChangeFeedID]*dispatchermanager.HeartbeatResponseQueue),
+		eventDispatcherManagerMap: make(map[model.ChangeFeedID]*dispatchermanager.EventDispatcherManager),
 	}
 	//context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(heartbeatResponseTopic, heartBeatCollector.RecvHeartBeatResponseMessages)
 	context.GetService[messaging.MessageCenter](context.MessageCenter).
@@ -121,7 +122,7 @@ func (c *HeartBeatCollector) RecvSchedulerDispatcherRequestMessages(msg *messagi
 	scheduleAction := scheduleDispatcherRequest.ScheduleAction
 	config := scheduleDispatcherRequest.Config
 	if scheduleAction == heartbeatpb.ScheduleAction_Create {
-		if scheduleDispatcherRequest.IsSecondary {
+		if !scheduleDispatcherRequest.IsSecondary {
 			eventDispatcherManager.NewTableEventDispatcher(&common.TableSpan{TableSpan: config.Span}, config.StartTs)
 		} else {
 			eventDispatcherManager.CollectHeartbeatInfoOnce(config.Span, heartbeatpb.ComponentState_Prepared)
