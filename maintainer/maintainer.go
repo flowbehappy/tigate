@@ -102,9 +102,6 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		config:        cfg,
 		cfgBytes:      cfgBytes,
 		checkpointTs:  checkpointTs,
-		config:        cfg,
-		cfgBytes:      cfgBytes,
-		checkpointTs:  checkpointTs,
 	}
 	if !isSecondary {
 		m.state = heartbeatpb.ComponentState_Working
