@@ -94,6 +94,10 @@ type RawKVEntry struct {
 	RegionID uint64 `msg:"region_id"`
 }
 
+func (v *RawKVEntry) IsResolved() bool {
+	return v.OpType == OpTypeResolved
+}
+
 // IsUpdate checks if the event is an update event.
 func (v *RawKVEntry) IsUpdate() bool {
 	return v.OpType == OpTypePut && v.OldValue != nil && v.Value != nil
