@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/downstreamadapter"
+	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
 	"github.com/flowbehappy/tigate/maintainer"
 	"github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/flowbehappy/tigate/server/watcher"
@@ -59,7 +59,7 @@ type serverImpl struct {
 	coordinatorMu sync.Mutex
 	coordinator   server.Coordinator
 
-	dispatcherManagerManager *downstreamadapter.DispatcherManagerManager
+	dispatcherManagerManager *dispatchermanagermanager.DispatcherManagerManager
 
 	// session keeps alive between the server and etcd
 	session *concurrency.Session
