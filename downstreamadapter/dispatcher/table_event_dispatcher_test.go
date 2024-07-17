@@ -16,8 +16,12 @@ package dispatcher
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+	"github.com/flowbehappy/tigate/downstreamadapter/writer"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,13 +32,13 @@ func newTestMockDB(t *testing.T) (db *sql.DB, mock sqlmock.Sqlmock) {
 }
 
 // 测一下我直接给dispatcher 数据塞 chan 里，检查 db 是否正确收到了，以及 消费前后的心跳和memory usage 是否正常
-/*
+
 func TestTableEventDispatcher(t *testing.T) {
 	db, mock := newTestMockDB(t)
 	defer db.Close()
 
 	mysqlSink := sink.NewMysqlSink(8, writer.NewMysqlConfig(), db)
-	tableSpan := &heartbeatpb.TableSpan{TableID: 1}
+	tableSpan := &common.TableSpan{TableID: 1}
 	startTs := uint64(100)
 
 	tableEventDispatcher := NewTableEventDispatcher(tableSpan, mysqlSink, startTs, nil)
@@ -105,4 +109,3 @@ func TestTableEventDispatcher(t *testing.T) {
 	require.Equal(t, 0, tableEventDispatcher.GetMemoryUsage().GetUsedBytes())
 
 }
-*/
