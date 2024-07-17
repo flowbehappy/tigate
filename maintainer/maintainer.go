@@ -46,20 +46,24 @@ import (
 // 3. send changefeed status to coordinator
 // 4. handle heartbeat reported by dispatcher
 type Maintainer struct {
-	id     model.ChangeFeedID
-	config *model.ChangeFeedInfo
-	status *model.ChangeFeedStatus
+	id       model.ChangeFeedID
+	config   *model.ChangeFeedInfo
+	cfgBytes []byte
 
-	state      scheduler.ComponentStatus
-	supervisor *Supervisor
-	scheduler  Scheduler
+	checkpointTs uint64
+
+	state      heartbeatpb.ComponentState
+	supervisor *scheduler.Supervisor
+	scheduler  scheduler.Scheduler
 
 	changefeedSate model.FeedState
 
 	taskCh  chan Task
 	removed *atomic.Bool
 
-	tableIDs map[int64]struct{}
+	initialized  bool
+	tableIDs     map[int64]struct{}
+	allInferiors []scheduler.InferiorID
 
 	pdEndpoints []string
 	nodeManager *watcher.NodeManager
@@ -70,9 +74,8 @@ type Maintainer struct {
 	removing    *atomic.Bool
 	isSecondary *atomic.Bool
 
-	msgLock  sync.RWMutex
-	msgBuf   []*messaging.TargetMessage
-	msgTopic string
+	msgLock sync.RWMutex
+	msgBuf  []*messaging.TargetMessage
 
 	lastCheckTime time.Time
 }
@@ -80,42 +83,34 @@ type Maintainer struct {
 // NewMaintainer create the maintainer for the changefeed
 func NewMaintainer(cfID model.ChangeFeedID,
 	isSecondary bool,
+	cfg *model.ChangeFeedInfo,
+	cfgBytes []byte,
+	checkpointTs uint64,
 ) *Maintainer {
 	m := &Maintainer{
 		id: cfID,
-		scheduler: NewCombineScheduler(
-			NewBasicScheduler(1000),
-			NewBalanceScheduler(time.Minute, 1000)),
-		state:         scheduler.ComponentStatusPrepared,
+		scheduler: scheduler.NewCombineScheduler(
+			scheduler.NewBasicScheduler(1000),
+			scheduler.NewBalanceScheduler(time.Minute, 1000)),
+		state:         heartbeatpb.ComponentState_Prepared,
 		removed:       atomic.NewBool(false),
 		taskCh:        make(chan Task, 1024),
 		nodeManager:   appctx.GetService[*watcher.NodeManager](watcher.NodeManagerName),
 		statusChanged: atomic.NewBool(true),
 		isSecondary:   atomic.NewBool(isSecondary),
 		removing:      atomic.NewBool(false),
-		supervisor:    NewSupervisor(cfID),
-		msgTopic:      "maintainer/" + cfID.ID,
+		config:        cfg,
+		cfgBytes:      cfgBytes,
+		checkpointTs:  checkpointTs,
 	}
 	if !isSecondary {
-		m.state = scheduler.ComponentStatusWorking
+		m.state = heartbeatpb.ComponentState_Working
 	}
-	// receive messages
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(m.msgTopic, func(msg *messaging.TargetMessage) error {
-		if m.isSecondary.Load() {
-			return nil
-		}
-		m.msgLock.Lock()
-		m.msgBuf = append(m.msgBuf, msg)
-		m.msgLock.Unlock()
-		return nil
-	})
+	m.supervisor = scheduler.NewSupervisor(scheduler.ChangefeedID(cfID),
+		func(id scheduler.InferiorID) scheduler.Inferior {
+			return NewReplicaSet(m.id, id)
+		}, m.bootstrapMessage)
 	return m
-}
-
-func (m *Maintainer) newBootstrapMessage(id model.CaptureID) rpc.Message {
-	return &heartbeatpb.MaintainerBootstrapRequest{
-		ChangefeedID: id,
-	}
 }
 
 func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
@@ -124,11 +119,23 @@ func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
 		m.closeChangefeed()
 		return threadpool.Done, time.Time{}
 	}
+	// init the maintainer, todo: return error and cancel the maintainer
+	if !m.initialized {
+		if err := m.initChangefeed(); err != nil {
+			log.Warn("init changefeed failed", zap.Error(err))
+			m.initialized = false
+			m.removed.Store(true)
+			m.state = heartbeatpb.ComponentState_Stopped
+			return threadpool.Done, time.Time{}
+		}
+		m.initialized = true
+	}
+
 	// not on the primary status, skip running
 	if m.isSecondary.Load() {
 		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 	}
-	m.state = scheduler.ComponentStatusWorking
+	m.state = heartbeatpb.ComponentState_Working
 
 	// handle messages
 	if err := m.handleMessages(); err != nil {
@@ -142,30 +149,17 @@ func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
 		log.Warn("handle capture failed", zap.Error(err))
 		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 	}
-
-	// resend dispatcher message
-	m.supervisor.stateMachines.Ascend(func(key scheduler.InferiorID, value *StateMachine) bool {
-		if value.State == scheduler.SchedulerStatusPrepare &&
-			time.Since(value.lastMsgTime) > time.Millisecond*200 {
-			server, _ := value.getRole(RoleSecondary)
-			msg, _, err := value.pollOnPrepare(&ReplicaSetStatus{Status: scheduler.ComponentStatusAbsent}, server)
-			if err != nil {
-				log.Error("poll failed", zap.Error(err))
-			}
-			msgs = append(msgs, msg)
-			value.lastMsgTime = time.Now()
-		}
-		return true
-	})
 	m.sendMessages(msgs)
 
+	// resend dispatcher message
+	m.resendSchedulerMessage()
+
 	// try to schedule table spans
-	msgs, err = m.scheduleTableSpan()
+	err = m.scheduleTableSpan()
 	if err != nil {
 		log.Warn("handle capture failed", zap.Error(err))
 		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 	}
-	m.sendMessages(msgs)
 	m.printStatus()
 	return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 }
@@ -177,35 +171,12 @@ func (m *Maintainer) handleMessages() error {
 	m.msgLock.Unlock()
 	for _, msg := range buf {
 		switch msg.Type {
-		case messaging.TypeHeartBeatResponse:
-			req := msg.Message.(*heartbeatpb.HeartBeatResponse)
-			var status []scheduler.InferiorStatus
-			for _, info := range req.Info {
-				status = append(status, &ReplicaSetStatus{
-					ID: &common.TableSpan{
-						TableSpan: info.Span,
-					},
-					Status: scheduler.ComponentStatus(info.SchedulerStatus),
-				})
-			}
-			msgs, err := m.supervisor.HandleStatus(msg.From.String(), status)
-			if err != nil {
-				log.Error("handle status failed, ignore", zap.Error(err))
+		case messaging.TypeHeartBeatRequest:
+			if err := m.onHeartBeatRequest(msg); err != nil {
 				return errors.Trace(err)
 			}
-			m.sendMessages(msgs)
 		case messaging.TypeMaintainerBootstrapResponse:
-			req := msg.Message.(*heartbeatpb.MaintainerBootstrapResponse)
-			var status []scheduler.InferiorStatus
-			for _, info := range req.Statuses {
-				status = append(status, &ReplicaSetStatus{
-					ID: &common.TableSpan{
-						TableSpan: info.Span,
-					},
-					Status: scheduler.ComponentStatus(info.ComponentStatus),
-				})
-			}
-			m.supervisor.UpdateCaptureStatus(msg.From.String(), status)
+			m.onMaintainerBootstrapResponse(msg)
 		default:
 			log.Panic("unexpected message type", zap.String("type", msg.Type.String()))
 		}
@@ -213,6 +184,7 @@ func (m *Maintainer) handleMessages() error {
 	return nil
 }
 
+// send message to remote, todo: use a io thread pool
 func (m *Maintainer) sendMessages(msgs []rpc.Message) {
 	for _, msg := range msgs {
 		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(msg.(*messaging.TargetMessage))
@@ -223,47 +195,103 @@ func (m *Maintainer) sendMessages(msgs []rpc.Message) {
 	}
 }
 
-var allInferiors []scheduler.InferiorID
-
-func init() {
-	for i := 0; i < 3; i++ {
-		tblID := int64(100 + i)
-		start, end := spanz.GetTableRange(tblID)
-		allInferiors = append(allInferiors, &common.TableSpan{
-			TableSpan: &heartbeatpb.TableSpan{
-				TableID:  uint64(tblID),
-				StartKey: start,
-				EndKey:   end,
-			}})
-	}
-}
-
-func (m *Maintainer) scheduleTableSpan() ([]rpc.Message, error) {
+func (m *Maintainer) scheduleTableSpan() error {
 	if !m.supervisor.CheckAllCaptureInitialized() {
-		return nil, nil
+		return nil
 	}
+
 	tasks := m.scheduler.Schedule(
-		allInferiors,
+		m.allInferiors,
 		m.supervisor.GetAllCaptures(),
 		m.supervisor.GetInferiors(),
 	)
-	return m.supervisor.HandleScheduleTasks(tasks)
+	msg, err := m.supervisor.HandleScheduleTasks(tasks)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	m.sendMessages(msg)
+	return nil
 }
 
 // Close cleanup resources
 func (m *Maintainer) Close() {
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).DeRegisterHandler(m.msgTopic)
 }
 
 func (m *Maintainer) initChangefeed() error {
-	m.state = scheduler.ComponentStatusPrepared
+	m.state = heartbeatpb.ComponentState_Prepared
 	m.statusChanged.Store(true)
+	var err error
+	m.tableIDs = map[int64]struct{}{
+		int64(1): {},
+		int64(2): {},
+		int64(3): {},
+	}
+	for id, _ := range m.tableIDs {
+		start, end := spanz.GetTableRange(id)
+		m.allInferiors = append(m.allInferiors, &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+			TableID:  uint64(id),
+			StartKey: start,
+			EndKey:   end,
+		}})
+	}
+	return err
+}
+
+func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
+	req := msg.Message.(*heartbeatpb.HeartBeatRequest)
+	var status []scheduler.InferiorStatus
+	for _, info := range req.Statuses {
+		status = append(status, &ReplicaSetStatus{
+			ID: &common.TableSpan{
+				TableSpan: info.Span,
+			},
+			State: info.ComponentStatus,
+		})
+	}
+	msgs, err := m.supervisor.HandleStatus(msg.From.String(), status)
+	if err != nil {
+		log.Error("handle status failed, ignore", zap.Error(err))
+		return errors.Trace(err)
+	}
+	m.sendMessages(msgs)
 	return nil
+}
+
+func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage) {
+	req := msg.Message.(*heartbeatpb.MaintainerBootstrapResponse)
+	var status []scheduler.InferiorStatus
+	for _, info := range req.Statuses {
+		status = append(status, &ReplicaSetStatus{
+			ID: &common.TableSpan{
+				TableSpan: info.Span,
+			},
+			State: info.ComponentStatus,
+		})
+	}
+	m.supervisor.UpdateCaptureStatus(msg.From.String(), status)
+}
+
+func (m *Maintainer) resendSchedulerMessage() {
+	var msgs []rpc.Message
+	m.supervisor.StateMachines.Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
+		if value.State == scheduler.SchedulerStatusPrepare &&
+			time.Since(value.LastMsgTime) > time.Millisecond*200 {
+			server, _ := value.GetRole(scheduler.RoleSecondary)
+			msg, err := value.HandleInferiorStatus(&ReplicaSetStatus{State: heartbeatpb.ComponentState_Absent}, server)
+			if err != nil {
+				log.Error("poll failed", zap.Error(err))
+			}
+			msgs = append(msgs, msg)
+			value.LastMsgTime = time.Now()
+		}
+		return true
+	})
+	m.sendMessages(msgs)
 }
 
 // GetTableIDs get tables ids base on the filter and checkpoint ts
 func (m *Maintainer) GetTableIDs() (map[int64]struct{}, error) {
-	startTs := m.status.CheckpointTs
+	startTs := m.checkpointTs
 	f, err := filter.NewFilter(m.config.Config, "")
 	if err != nil {
 		return nil, errors.Cause(err)
@@ -296,19 +324,19 @@ func (m *Maintainer) GetTableIDs() (map[int64]struct{}, error) {
 }
 
 func (m *Maintainer) finishAddChangefeed() {
-	m.state = scheduler.ComponentStatusWorking
+	m.state = heartbeatpb.ComponentState_Working
 	m.statusChanged.Store(true)
 }
 
 func (m *Maintainer) closeChangefeed() {
-	if m.state != scheduler.ComponentStatusStopping &&
-		m.state != scheduler.ComponentStatusStopped {
-		m.state = scheduler.ComponentStatusStopping
+	if m.state != heartbeatpb.ComponentState_Stopping &&
+		m.state != heartbeatpb.ComponentState_Stopped {
+		m.state = heartbeatpb.ComponentState_Stopping
 		m.statusChanged.Store(true)
 		//todo: real async close
 		go func() {
 			// send message to dispatcher manager
-			m.state = scheduler.ComponentStatusStopped
+			m.state = heartbeatpb.ComponentState_Stopped
 			m.statusChanged.Store(true)
 			m.removed.Store(true)
 		}()
@@ -318,11 +346,21 @@ func (m *Maintainer) closeChangefeed() {
 func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 	// todo: fix data race here
 	return &heartbeatpb.MaintainerStatus{
-		ChangefeedID:    m.id.ID,
-		FeedState:       string(m.changefeedSate),
-		SchedulerStatus: int32(m.state),
-		CheckpointTs:    0,
+		ChangefeedID: m.id.ID,
+		FeedState:    string(m.changefeedSate),
+		State:        m.state,
+		CheckpointTs: m.checkpointTs,
 	}
+}
+
+func (m *Maintainer) bootstrapMessage(captureID model.CaptureID) rpc.Message {
+	return messaging.NewTargetMessage(
+		messaging.ServerId(captureID),
+		messaging.MaintainerBoostrapRequestTopic,
+		&heartbeatpb.MaintainerBootstrapRequest{
+			ChangefeedID: m.id.ID,
+			Config:       m.cfgBytes,
+		})
 }
 
 func (m *Maintainer) printStatus() {
@@ -333,7 +371,7 @@ func (m *Maintainer) printStatus() {
 		commitTask := 0
 		removingTask := 0
 		var taskDistribution string
-		m.supervisor.stateMachines.Ascend(func(key scheduler.InferiorID, value *StateMachine) bool {
+		m.supervisor.StateMachines.Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
 			switch value.State {
 			case scheduler.SchedulerStatusAbsent:
 				absentTask++

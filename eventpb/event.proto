@@ -1,7 +1,8 @@
 syntax = "proto3";
 package eventpb;
-option go_package = "./eventpb";
+option go_package = "github.com/flowbehappy/tigate/eventpb";
 
+import "heartbeatpb/heartbeat.proto";
 // 这个 proto 主要描述的是 dispatcher 们跟 logService 交互需要用到的各类定义
 // 包括传输的 event 结构，通信的 rpc 
 
@@ -18,7 +19,7 @@ message EventRequest {
     */
     uint64 dispatcher_id = 1;
     uint64 start_ts = 2;
-    TableSpan tableSpan = 3;
+    heartbeatpb.TableSpan tableSpan = 3;
     Filter filter = 4;
     float ratio = 5;
     bool remove = 6; // 要移除的时候设为 true
@@ -49,13 +50,6 @@ message TxnEvent {
     uint64 start_ts = 3; // 事务开始时间戳
 }
 
-message TableSpan {
-    uint64 TableID   = 1;
-	bytes StartKey  = 2;
-	bytes EndKey    = 3;
-}
-
-
 message TableInfo {
 
 }
@@ -70,7 +64,8 @@ message EventFeed {
 
 message RegisterDispatcherRequest {
     string dispatcher_id = 1;
-    TableSpan table_span = 2;
+    heartbeatpb.TableSpan table_span = 2;
     uint64 start_ts = 3;
-    bool remove = 4; // 要移除的时候设为 true
+    string server_id = 4;
+    bool remove = 5; // 要移除的时候设为 true
 }

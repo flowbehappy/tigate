@@ -19,7 +19,6 @@ import (
 	"fmt"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/scheduler"
 )
 
 // TableSpan implement the InferiorID interface, it is the replicate unit,
@@ -32,7 +31,7 @@ type TableSpan struct {
 var DDLSpan = TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 0, StartKey: nil, EndKey: nil}}
 
 // Less compares two Spans, defines the order between spans.
-func (s *TableSpan) Less(inferior scheduler.InferiorID) bool {
+func (s *TableSpan) Less(inferior any) bool {
 	tbl := inferior.(*TableSpan)
 	if s.TableID < tbl.TableID {
 		return true
@@ -49,7 +48,7 @@ func (s *TableSpan) String() string {
 		hex.EncodeToString(s.EndKey))
 }
 
-func (s *TableSpan) Equal(inferior scheduler.InferiorID) bool {
+func (s *TableSpan) Equal(inferior any) bool {
 	tbl := inferior.(*TableSpan)
 	return s.TableID == tbl.TableID &&
 		bytes.Equal(s.StartKey, tbl.StartKey) &&

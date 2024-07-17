@@ -72,6 +72,8 @@ func (t IOType) String() string {
 		return "MaintainerBootstrapResponse"
 	case TypeMessageError:
 		return "MessageError"
+	case TypeMessageHandShake:
+		return "MessageHandShake"
 	default:
 	}
 	return "Unknown"
@@ -134,6 +136,46 @@ func (d *DDLEvent) Unmarshal(data []byte) error {
 	return nil
 }
 
+type RegisterDispatcherRequest struct {
+	*eventpb.RegisterDispatcherRequest
+}
+
+func (r RegisterDispatcherRequest) Marshal() ([]byte, error) {
+	return r.RegisterDispatcherRequest.Marshal()
+}
+
+func (r RegisterDispatcherRequest) Unmarshal(data []byte) error {
+	return r.RegisterDispatcherRequest.Unmarshal(data)
+}
+
+func (r RegisterDispatcherRequest) GetID() string {
+	return r.DispatcherId
+}
+
+func (r RegisterDispatcherRequest) GetClusterID() uint64 {
+	return 0
+}
+
+func (r RegisterDispatcherRequest) GetTopic() string {
+	return EventFeedTopic
+}
+
+func (r RegisterDispatcherRequest) GetServerID() string {
+	return r.ServerId
+}
+
+func (r RegisterDispatcherRequest) GetTableSpan() *common.TableSpan {
+	return &common.TableSpan{TableSpan: r.TableSpan}
+}
+
+func (r RegisterDispatcherRequest) GetStartTs() uint64 {
+	return r.StartTs
+}
+
+func (r RegisterDispatcherRequest) IsRegister() bool {
+	return !r.Remove
+}
+
 type Watermark struct {
 	Span *common.TableSpan
 	Ts   uint64
@@ -189,7 +231,7 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 	case TypeEventFeed:
 		m = &eventpb.EventFeed{}
 	case TypeRegisterDispatcherRequest:
-		m = &eventpb.RegisterDispatcherRequest{}
+		m = &RegisterDispatcherRequest{}
 	case TypeMaintainerBootstrapResponse:
 		m = &heartbeatpb.MaintainerBootstrapResponse{}
 	case TypeMaintainerBootstrapRequest:
@@ -247,7 +289,7 @@ func NewTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetMessage
 		ioType = TypeMaintainerHeartbeatRequest
 	case *heartbeatpb.CoordinatorBootstrapResponse:
 		ioType = TypeCoordinatorBootstrapResponse
-	case *eventpb.RegisterDispatcherRequest:
+	case *RegisterDispatcherRequest:
 		ioType = TypeRegisterDispatcherRequest
 	case *heartbeatpb.MaintainerBootstrapResponse:
 		ioType = TypeMaintainerBootstrapResponse

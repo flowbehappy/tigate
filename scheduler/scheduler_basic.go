@@ -11,9 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package coordinator
+package scheduler
 
 import (
+	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -32,22 +33,22 @@ func (b *BasicScheduler) Name() string {
 }
 
 func (b *BasicScheduler) Schedule(
-	allChangefeeds []model.ChangeFeedID,
-	aliveServers map[model.CaptureID]*ServerStatus,
-	stateMachines map[model.ChangeFeedID]*StateMachine,
+	allInferiors []InferiorID,
+	aliveCaptures map[model.CaptureID]*CaptureStatus,
+	stateMachines utils.Map[InferiorID, *StateMachine],
 ) []*ScheduleTask {
 	tasks := make([]*ScheduleTask, 0)
-	lenEqual := len(allChangefeeds) == len(stateMachines)
+	lenEqual := len(allInferiors) == stateMachines.Len()
 	allFind := true
-	newInferiors := make([]model.ChangeFeedID, 0)
-	for _, inf := range allChangefeeds {
+	newInferiors := make([]InferiorID, 0)
+	for _, inf := range allInferiors {
 		if len(newInferiors) >= b.batchSize {
 			break
 		}
-		st, ok := stateMachines[inf]
+		st, ok := stateMachines.Get(inf)
 		if !ok {
 			newInferiors = append(newInferiors, inf)
-			// The changefeed ID is not in the state machine means the two sets are
+			// The inferior ID is not in the state machine means the two sets are
 			// not identical.
 			allFind = false
 			continue
@@ -60,8 +61,8 @@ func (b *BasicScheduler) Schedule(
 
 	// Build add inferior tasks.
 	if len(newInferiors) > 0 {
-		captureIDs := make([]model.CaptureID, 0, len(aliveServers))
-		for captureID, _ := range aliveServers {
+		captureIDs := make([]model.CaptureID, 0, len(aliveCaptures))
+		for captureID, _ := range aliveCaptures {
 			captureIDs = append(captureIDs, captureID)
 		}
 
@@ -70,11 +71,13 @@ func (b *BasicScheduler) Schedule(
 			// for a cluster with n captures, n should be at least 2
 			// only n - 1 captures can be in the `stopping` at the same time.
 			log.Warn("cannot found server when add new inferior",
-				zap.Any("allCaptureStatus", aliveServers))
+				zap.Any("allCaptureStatus", aliveCaptures))
 			return tasks
 		}
-		tasks = append(
-			tasks, newBurstAddInferiors(newInferiors, captureIDs)...)
+		tasks = append(tasks, newBurstAddInferiors(newInferiors, captureIDs)...)
+		if len(newInferiors) >= b.batchSize {
+			return tasks
+		}
 	}
 
 	// Build remove inferior tasks.
@@ -83,20 +86,21 @@ func (b *BasicScheduler) Schedule(
 	// Fast path for check whether two sets are identical
 	if !lenEqual || !allFind {
 		// The two sets are not identical. We need to build a map to find removed inferiors.
-		intersectionIDS := make(map[model.ChangeFeedID]struct{})
-		for _, inf := range allChangefeeds {
-			_, ok := stateMachines[inf]
+		intersectionIDS := utils.NewBtreeMap[InferiorID, struct{}]()
+		for _, inf := range allInferiors {
+			ok := stateMachines.Has(inf)
 			if ok {
-				intersectionIDS[inf] = struct{}{}
+				intersectionIDS.ReplaceOrInsert(inf, struct{}{})
 			}
 		}
-		rmInferiorIDs := make([]model.ChangeFeedID, 0)
-		for key, _ := range stateMachines {
-			_, ok := intersectionIDS[key]
+		rmInferiorIDs := make([]InferiorID, 0)
+		stateMachines.Ascend(func(key InferiorID, value *StateMachine) bool {
+			ok := intersectionIDS.Has(key)
 			if !ok {
 				rmInferiorIDs = append(rmInferiorIDs, key)
 			}
-		}
+			return true
+		})
 		removeInferiorTasks := newBurstRemoveInferiors(rmInferiorIDs, stateMachines)
 		if removeInferiorTasks != nil {
 			tasks = append(tasks, removeInferiorTasks...)
@@ -106,7 +110,7 @@ func (b *BasicScheduler) Schedule(
 }
 
 // newBurstAddInferiors add each new inferior to captures in a round-robin way.
-func newBurstAddInferiors(newInferiors []model.ChangeFeedID, captureIDs []model.CaptureID,
+func newBurstAddInferiors(newInferiors []InferiorID, captureIDs []model.CaptureID,
 ) []*ScheduleTask {
 	idx := 0
 	addInferiorTasks := make([]*ScheduleTask, 0, len(newInferiors))
@@ -131,12 +135,12 @@ func newBurstAddInferiors(newInferiors []model.ChangeFeedID, captureIDs []model.
 }
 
 func newBurstRemoveInferiors(
-	rmInferiors []model.ChangeFeedID,
-	stateMachines map[model.ChangeFeedID]*StateMachine,
+	rmInferiors []InferiorID,
+	stateMachines utils.Map[InferiorID, *StateMachine],
 ) []*ScheduleTask {
 	removeTasks := make([]*ScheduleTask, 0, len(rmInferiors))
 	for _, id := range rmInferiors {
-		ccf := stateMachines[id]
+		ccf, _ := stateMachines.Get(id)
 		var captureID model.CaptureID = ccf.Primary
 
 		if ccf.Primary == "" {

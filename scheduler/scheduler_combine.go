@@ -11,9 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package coordinator
+package scheduler
 
 import (
+	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/tiflow/cdc/model"
 )
 
@@ -27,9 +28,9 @@ func NewCombineScheduler(schedulers ...Scheduler) Scheduler {
 
 // Schedule generates schedule tasks based on the inputs.
 func (c *CombineScheduler) Schedule(
-	allInferiors []model.ChangeFeedID,
-	aliveCaptures map[model.CaptureID]*ServerStatus,
-	stateMachines map[model.ChangeFeedID]*StateMachine,
+	allInferiors []InferiorID,
+	aliveCaptures map[model.CaptureID]*CaptureStatus,
+	stateMachines utils.Map[InferiorID, *StateMachine],
 ) []*ScheduleTask {
 	for _, sched := range c.schedulers {
 		tasks := sched.Schedule(allInferiors, aliveCaptures, stateMachines)

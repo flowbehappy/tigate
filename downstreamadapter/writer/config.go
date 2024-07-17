@@ -122,10 +122,16 @@ func (c *MysqlConfig) Apply(sinkURI *url.URL) error {
 	return nil
 }
 
-func NewMysqlConfigAndDB(sinkURI *url.URL) (*MysqlConfig, *sql.DB, error) {
+func NewMysqlConfigAndDB(sinkURI string) (*MysqlConfig, *sql.DB, error) {
 	// create db connection
+	sinkURIParsed, err := url.Parse(sinkURI)
+	if err != nil {
+		log.Error("parse sinkURI failed", zap.Error(err))
+		return nil, nil, err
+	}
+
 	cfg := NewMysqlConfig()
-	err := cfg.Apply(sinkURI)
+	err = cfg.Apply(sinkURIParsed)
 	if err != nil {
 		log.Error("Apply sinkURI failed", zap.Error(err))
 		return nil, nil, err

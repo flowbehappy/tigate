@@ -14,10 +14,6 @@
 package dispatcher
 
 import (
-	"sync"
-	"time"
-
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 )
 
@@ -31,16 +27,17 @@ and pushes the event down to the sink if it is eligible.
 type EventDispatcherTask struct {
 	dispatcher Dispatcher
 	//infos      []*HeartBeatResponseMessage
-	mutex      sync.Mutex
-	taskStatus threadpool.TaskStatus
+	taskHandle *threadpool.TaskHandle
 }
 
+/*
 func NewEventDispatcherTask(dispatcher Dispatcher) *EventDispatcherTask {
-	return &EventDispatcherTask{
+	task := &EventDispatcherTask{
 		dispatcher: dispatcher,
 		//infos:      make([]*HeartBeatResponseMessage, 0),
-		taskStatus: threadpool.CPUTask,
 	}
+	task.taskHandle = threadpool.GetTaskSchedulerInstance().EventDispatcherTaskScheduler.Submit(task, threadpool.CPUTask, time.Time{})
+	return task
 }
 
 // func (t *EventDispatcherTask) GetStatus() threadpool.TaskStatus {
@@ -57,10 +54,11 @@ func NewEventDispatcherTask(dispatcher Dispatcher) *EventDispatcherTask {
 // 	// }
 // }
 
+/*
 func (t *EventDispatcherTask) updateState(state *State, heartBeatResponseMessages []*HeartBeatResponseMessage) {
 	for _, heartBeatResponseMessage := range heartBeatResponseMessages {
 		otherTableProgress := heartBeatResponseMessage.OtherTableProgress
-		spanToProgressMap := make(map[*common.TableSpan]*TableSpanProgress)
+		spanToProgressMap := make(utils.NewBtreeMap[*common.TableSpan,*TableSpanProgress])
 		for _, progress := range otherTableProgress {
 			span := progress.Span
 			spanToProgressMap[span] = progress
@@ -95,9 +93,9 @@ func (t *EventDispatcherTask) updateState(state *State, heartBeatResponseMessage
 
 }
 
-// TODO:这边后面需要列一下每一种情况
+// Execution time is 10ms at most once
 func (t *EventDispatcherTask) Execute() (threadpool.TaskStatus, time.Time) {
-	// timer := time.NewTimer(timeout)
+	timer := time.NewTimer(10 * time.Millisecond)
 
 	// 1. 先检查是否在 blocked 状态
 	state := t.dispatcher.GetState()
@@ -105,7 +103,7 @@ func (t *EventDispatcherTask) Execute() (threadpool.TaskStatus, time.Time) {
 	//dispatcherType := t.dispatcher.GetDispatcherType()
 	sink := t.dispatcher.GetSink()
 
-	/*
+
 		if state.isBlocked {
 			// 拿着 infos 更新
 			if len(t.infos) > 0 {
@@ -127,12 +125,12 @@ func (t *EventDispatcherTask) Execute() (threadpool.TaskStatus, time.Time) {
 				return threadpool.Running
 			}
 		}
-	*/
+
 
 	// 先检查 pendingEvent 有没有，有的话就先执行这个，通过 action 来确定 ddl / syncPoint 的执行模式
 
 	if state.pengdingEvent != nil {
-		/*
+
 			if state.pengdingEvent.IsDDLEvent() || state.pengdingEvent.IsSyncPointEvent() {
 				if state.action == Pass {
 					// 扔掉这条，开始写后续的 event
@@ -156,23 +154,23 @@ func (t *EventDispatcherTask) Execute() (threadpool.TaskStatus, time.Time) {
 				// 直接下推
 				sink.AddDMLEvent(tableSpan, state.pengdingEvent)
 				state.clear()
-			}*/
+			}
 		sink.AddDMLEvent(tableSpan, state.pengdingEvent)
 		state.clear()
 	}
 
-	/* 还能继续写
+	还能继续写
 	   1. pending 的是 ddl /syncpoint,但是 pass）
 	   2. pending 的是 dml，继续写
 	   3. 没有 pending, 本身就在等前面 ddl / syncpoint 写完而已
-	*/
+
 	for {
 		select {
 		case event := <-t.dispatcher.GetEventChan():
 			if event.IsDMLEvent() {
 				sink.AddDMLEvent(tableSpan, event)
 			}
-			/*
+
 				else if event.IsDDLEvent() {
 					// DDL
 					if event.IsCrossTableDDL() { // cross 这个到时候还要加入 table trigger 会涉及到的，也算 cross. 也就是 table trigger 只能走到这个里面
@@ -209,19 +207,21 @@ func (t *EventDispatcherTask) Execute() (threadpool.TaskStatus, time.Time) {
 					}
 					return threadpool.Waiting
 				}
-			*/
-		// case <-timer.C:
-		// 	return threadpool.CPUTask
+
+		case <-timer.C:
+			return threadpool.CPUTask, time.Time{}
 		default:
-			// if !timer.Stop() {
-			// 	<-timer.C
-			// }
+			if !timer.Stop() {
+				<-timer.C
+			}
 			return threadpool.CPUTask, time.Time{}
 		}
 	}
 }
+
+
 func (t *EventDispatcherTask) Await() threadpool.TaskStatus {
-	/*
+
 		select {
 		case info := <-t.dispatcher.GetHeartBeatChan():
 			// 把目前现有的全部拿出来
@@ -242,17 +242,13 @@ func (t *EventDispatcherTask) Await() threadpool.TaskStatus {
 			}
 			return threadpool.Waiting
 		}
-	*/
+
 	return threadpool.Done
 }
 
-func (t *EventDispatcherTask) Release() {
-
-}
 
 // cancel 以后最多会再执行一次（也就是 cancel 的时候恰好在执行 Execute ）
 func (t *EventDispatcherTask) Cancel() {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-	t.taskStatus = threadpool.Done
+	t.taskHandle.Cancel()
 }
+*/
