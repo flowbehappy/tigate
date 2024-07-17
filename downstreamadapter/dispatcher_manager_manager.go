@@ -14,6 +14,8 @@
 package downstreamadapter
 
 import (
+	"encoding/json"
+
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	"github.com/flowbehappy/tigate/heartbeatpb"
