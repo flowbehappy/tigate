@@ -15,7 +15,6 @@ package eventcollector
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/eventpb"
@@ -24,12 +23,9 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/google/uuid"
-	"github.com/ngaut/log"
+	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
-
-const RegisterDispatcherTopic = "RegisterDispatcher"
-const EventFeedTopic = "EventFeed"
 
 /*
 EventCollector is responsible for collecting the events from event service and dispatching them to different dispatchers.
@@ -37,37 +33,33 @@ Besides, EventCollector also generate SyncPoint Event for dispatchers when neces
 EventCollector is an instance-level component.
 */
 type EventCollector struct {
-	clusterID         messaging.ServerId
+	serverId          messaging.ServerId
 	dispatcherMap     map[common.DispatcherID]dispatcher.Dispatcher // dispatcher_id --> dispatcher
-	wg                sync.WaitGroup
 	globalMemoryQuota int64
 }
 
-func NewEventCollector(globalMemoryQuota int64, clusterID messaging.ServerId) *EventCollector {
+func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *EventCollector {
 	eventCollector := EventCollector{
-		clusterID:         clusterID,
+		serverId:          serverId,
 		globalMemoryQuota: globalMemoryQuota,
 		dispatcherMap:     make(map[common.DispatcherID]dispatcher.Dispatcher),
 	}
-	context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(EventFeedTopic, eventCollector.RecvEventsMessage)
+	context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(messaging.EventFeedTopic, eventCollector.RecvEventsMessage)
 	return &eventCollector
 }
 
 func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uint64) error {
 	err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendEvent(&messaging.TargetMessage{
-		To:    c.clusterID, // demo 中 每个节点都有自己的 eventService
-		Topic: RegisterDispatcherTopic,
+		To:    c.serverId, // demo 中 每个节点都有自己的 eventService
+		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
-		Message: &eventpb.RegisterDispatcherRequest{
+		Message: messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
 			DispatcherId: uuid.UUID(d.GetId()).String(),
-			TableSpan: &eventpb.TableSpan{
-				TableID:  d.GetTableSpan().TableID,
-				StartKey: d.GetTableSpan().StartKey,
-				EndKey:   d.GetTableSpan().EndKey,
-			},
-			Remove:  false,
-			StartTs: startTs,
-		},
+			TableSpan:    d.GetTableSpan().TableSpan,
+			Remove:       false,
+			StartTs:      startTs,
+			ServerId:     c.serverId.String(),
+		}},
 	})
 	if err != nil {
 		log.Error("failed to send register dispatcher request message", zap.Error(err))
@@ -78,12 +70,15 @@ func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uin
 
 func (c *EventCollector) RemoveDispatcher(d dispatcher.Dispatcher) error {
 	err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendEvent(&messaging.TargetMessage{
-		To:    c.clusterID,
-		Topic: RegisterDispatcherTopic,
+		To:    c.serverId,
+		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
-		Message: &eventpb.RegisterDispatcherRequest{
+		Message: messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
 			DispatcherId: uuid.UUID(d.GetId()).String(),
 			Remove:       true,
+			ServerId:     c.serverId.String(),
+			TableSpan:    d.GetTableSpan().TableSpan,
+		},
 		},
 	})
 	if err != nil {
@@ -104,6 +99,7 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 	*/
 
 	eventFeeds, ok := msg.Message.(*eventpb.EventFeed)
+	log.Info("hello1")
 	if !ok {
 		log.Error("invalid event feed message", zap.Any("msg", msg))
 		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: fmt.Sprintf("invalid heartbeat response message")}
@@ -144,6 +140,7 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 			dispatcherItem.(*dispatcher.TableEventDispatcher).InitTableInfo(eventFeeds.TableInfo)
 		}
 		for _, txnEvent := range eventFeeds.TxnEvents {
+			log.Info("hello")
 			dispatcherItem.PushEvent(txnEvent)
 			/*
 				syncPointInfo := dispatcherItem.GetSyncPointInfo()

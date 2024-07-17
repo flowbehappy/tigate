@@ -22,7 +22,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/flowbehappy/tigate/utils"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -88,7 +88,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 								StartKey: value.ID.StartKey,
 								EndKey:   value.ID.EndKey,
 							},
-							ComponentStatus: int32(value.state),
+							ComponentStatus: value.state,
 							CheckpointTs:    0,
 						})
 						return true
@@ -122,7 +122,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 					}
 					absentSpan := manager.handleDispatchTableSpanRequest(req)
 					if absentSpan != nil {
-						err := appcontext.GetService[messaging.MessageCenter]("messageCenter").SendCommand(messaging.NewTargetMessage(
+						err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 							manager.maintainerID,
 							"maintainer/"+manager.id.ID,
 							&heartbeatpb.HeartBeatResponse{
@@ -130,7 +130,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 								Info: []*heartbeatpb.TableProgressInfo{
 									{
 										Span:            absentSpan.TableSpan,
-										SchedulerStatus: int32(scheduler.SchedulerStatusAbsent),
+										SchedulerStatus: heartbeatpb.ComponentState_Absent,
 									},
 								},
 							},
@@ -144,25 +144,27 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 			for _, manager := range m.dispatcherManagers {
 				// send heartbeats
 				if manager.maintainerID != "" {
-					response := &heartbeatpb.HeartBeatResponse{
-						ChangefeedID: manager.id.ID,
-						Info:         make([]*heartbeatpb.TableProgressInfo, 0, manager.dispatchers.Len()),
+					response := &heartbeatpb.HeartBeatRequest{
+						ChangefeedID:    manager.id.ID,
+						CheckpointTs:    0,
+						Statuses:        make([]*heartbeatpb.TableSpanStatus, 0, manager.dispatchers.Len()),
+						CompeleteStatus: false,
 					}
 					manager.dispatchers.Ascend(func(key *common.TableSpan, value *Dispatcher) bool {
 						if time.Since(value.lastReportTime) > time.Second {
-							response.Info = append(response.Info, &heartbeatpb.TableProgressInfo{
+							response.Statuses = append(response.Statuses, &heartbeatpb.TableSpanStatus{
 								Span: &heartbeatpb.TableSpan{
 									TableID:  value.ID.TableID,
 									StartKey: value.ID.StartKey,
 									EndKey:   value.ID.EndKey,
 								},
-								SchedulerStatus: int32(value.state),
+								ComponentStatus: value.state,
 							})
 							value.lastReportTime = time.Now()
 						}
 						return true
 					})
-					if len(response.Info) != 0 {
+					if len(response.Statuses) != 0 {
 						err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 							manager.maintainerID,
 							"maintainer/"+manager.id.ID,
@@ -176,7 +178,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 
 				// must clean closed dispatchers
 				manager.dispatchers.Ascend(func(key *common.TableSpan, value *Dispatcher) bool {
-					if value.removing.Load() && value.state == scheduler.ComponentStatusStopped {
+					if value.removing.Load() && value.state == heartbeatpb.ComponentState_Stopped {
 						manager.dispatchers.Delete(key)
 					}
 					return true
@@ -195,7 +197,7 @@ type DispatcherManager struct {
 	id model.ChangeFeedID
 
 	maintainerID messaging.ServerId
-	dispatchers  scheduler.Map[*common.TableSpan, *Dispatcher]
+	dispatchers  utils.Map[*common.TableSpan, *Dispatcher]
 }
 
 func NewDispatcherManager(id model.ChangeFeedID,
@@ -203,7 +205,7 @@ func NewDispatcherManager(id model.ChangeFeedID,
 	return &DispatcherManager{
 		id:           id,
 		maintainerID: maintainerID,
-		dispatchers:  scheduler.NewBtreeMap[*common.TableSpan, *Dispatcher](),
+		dispatchers:  utils.NewBtreeMap[*common.TableSpan, *Dispatcher](),
 	}
 }
 
@@ -218,10 +220,13 @@ func (m *DispatcherManager) handleDispatchTableSpanRequest(
 		if !ok {
 			span = NewDispatcher(m.id, tableSpan, request.GetIsSecondary())
 			m.dispatchers.ReplaceOrInsert(tableSpan, span)
-			threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(span, threadpool.CPUTask, time.Now())
+			//threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(span, threadpool.CPUTask, time.Now())
 		}
 		span.removing.Store(false)
 		span.isSecondary.Store(request.IsSecondary)
+		if !request.IsSecondary {
+			span.state = heartbeatpb.ComponentState_Working
+		}
 	} else {
 		span, ok := m.dispatchers.Get(tableSpan)
 		if !ok {
@@ -239,7 +244,7 @@ func (m *DispatcherManager) handleDispatchTableSpanRequest(
 type Dispatcher struct {
 	ID    *common.TableSpan
 	cfID  model.ChangeFeedID
-	state scheduler.ComponentStatus
+	state heartbeatpb.ComponentState
 
 	removing       *atomic.Bool
 	isSecondary    *atomic.Bool
@@ -251,11 +256,11 @@ func NewDispatcher(cfID model.ChangeFeedID, ID *common.TableSpan, isSecondary bo
 		cfID:        cfID,
 		ID:          ID,
 		removing:    atomic.NewBool(false),
-		state:       scheduler.ComponentStatusPrepared,
+		state:       heartbeatpb.ComponentState_Prepared,
 		isSecondary: atomic.NewBool(isSecondary),
 	}
 	if !isSecondary {
-		d.state = scheduler.ComponentStatusWorking
+		d.state = heartbeatpb.ComponentState_Working
 	}
 	return d
 }
@@ -263,14 +268,14 @@ func NewDispatcher(cfID model.ChangeFeedID, ID *common.TableSpan, isSecondary bo
 func (d *Dispatcher) Execute() (threadpool.TaskStatus, time.Time) {
 	// removing, cancel the task
 	if d.removing.Load() {
-		d.state = scheduler.ComponentStatusStopped
+		d.state = heartbeatpb.ComponentState_Stopped
 		return threadpool.Done, time.Time{}
 	}
 	// not on the primary status, skip running
 	if d.isSecondary.Load() {
 		return threadpool.CPUTask, time.Now().Add(500 * time.Millisecond)
 	}
-	d.state = scheduler.ComponentStatusWorking
+	d.state = heartbeatpb.ComponentState_Working
 	//todo: handle messages
 	return threadpool.CPUTask, time.Now().Add(500 * time.Millisecond)
 }

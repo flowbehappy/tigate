@@ -14,11 +14,7 @@
 package conflictdetector
 
 import (
-	"time"
-
 	"github.com/flowbehappy/tigate/utils/threadpool"
-
-	"github.com/pingcap/log"
 )
 
 // 每个 conflict detector 对应一个 notifyTask
@@ -28,6 +24,7 @@ type NotifyTask struct {
 	taskStatus   threadpool.TaskStatus
 }
 
+/*
 func newNotifyTask(notifiedChan *chan func()) *NotifyTask {
 	return &NotifyTask{
 		notifiedChan: notifiedChan,
@@ -71,3 +68,4 @@ func (t *NotifyTask) Release() {
 
 func (t *NotifyTask) Cancel() {
 }
+*/

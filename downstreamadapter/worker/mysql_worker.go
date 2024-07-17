@@ -15,14 +15,9 @@ package worker
 
 import (
 	"database/sql"
-	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/utils/threadpool"
-
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
 )
 
 // MysqlWorker is use to flush the event downstream
@@ -31,6 +26,22 @@ type MysqlWorker struct {
 	mysqlWriter *writer.MysqlWriter     // 实际负责做 flush 操作
 }
 
+func NewMysqlWorker(eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig) *MysqlWorker {
+	return &MysqlWorker{
+		eventChan:   eventChan,
+		mysqlWriter: writer.NewMysqlWriter(db, config),
+	}
+}
+
+func (t *MysqlWorker) GetEventChan() <-chan *common.TxnEvent {
+	return t.eventChan
+}
+
+func (t *MysqlWorker) GetMysqlWriter() *writer.MysqlWriter {
+	return t.mysqlWriter
+}
+
+/*
 type MysqlDDLWorker struct {
 	MysqlWriter *writer.MysqlWriter // 实际负责做 flush 操作
 }
@@ -81,28 +92,21 @@ func (t *MysqlWorkerDDLEventTask) Cancel() {
 // 这个 task 只处理 dml event
 type MysqlWorkerDMLEventTask struct {
 	worker     *MysqlWorker
-	taskStatus threadpool.TaskStatus
 	maxRows    int
 	events     []*common.TxnEvent
+	taskHandle *threadpool.TaskHandle
 }
 
 func NewMysqlWorkerDMLEventTask(eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig, maxRows int) *MysqlWorkerDMLEventTask {
-	return &MysqlWorkerDMLEventTask{
+	task := &MysqlWorkerDMLEventTask{
 		worker: &MysqlWorker{
 			eventChan:   eventChan,
 			mysqlWriter: writer.NewMysqlWriter(db, config),
 		},
-		taskStatus: threadpool.CPUTask,
-		maxRows:    maxRows,
+		maxRows: maxRows,
 	}
-}
-
-func (t *MysqlWorkerDMLEventTask) GetStatus() threadpool.TaskStatus {
-	return t.taskStatus
-}
-
-func (t *MysqlWorkerDMLEventTask) SetStatus(taskStatus threadpool.TaskStatus) {
-	t.taskStatus = taskStatus
+	task.taskHandle = threadpool.GetTaskSchedulerInstance().WorkerTaskScheduler.Submit(task, threadpool.CPUTask, time.Time{})
+	return task
 }
 
 func (t *MysqlWorkerDMLEventTask) Execute() (threadpool.TaskStatus, time.Time) {
@@ -152,7 +156,7 @@ func (t *MysqlWorkerDMLEventTask) executeImpl() (threadpool.TaskStatus, time.Tim
 		return threadpool.CPUTask, time.Time{}
 	}
 
-	// get enough events or wait for 10 millseconds to make task go to IO Status. -- 这边可以考虑到底是拿不到 event 就 换出去 flush 好还是要等好，具体等多久好
+	// get enough events or wait for 10 millseconds to make task go to IO State. -- 这边可以考虑到底是拿不到 event 就 换出去 flush 好还是要等好，具体等多久好
 	// 这边甚至可以想一下是不是不用等 10ms，没数据就直接刷下去，flush 时间远超过这个攒批时间的
 	for {
 		select {
@@ -182,3 +186,4 @@ func (t *MysqlWorkerDMLEventTask) Release() {
 
 func (t *MysqlWorkerDMLEventTask) Cancel() {
 }
+*/

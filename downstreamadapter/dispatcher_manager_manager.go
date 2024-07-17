@@ -14,8 +14,12 @@
 package downstreamadapter
 
 import (
+	"encoding/json"
+
+	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
@@ -26,6 +30,7 @@ import (
 const MaintainerBoostrapRequestTopic = "maintainerBoostrapRequest"
 const MaintainerBoostrapResponseTopic = "maintainerBoostrapResponse"
 
+// DispatcherManagerManager deal with the maintainer bootstrap message, to create or delete the event dispatcher manager
 type DispatcherManagerManager struct {
 	dispatcherManagers map[model.ChangeFeedID]*dispatchermanager.EventDispatcherManager
 }
@@ -44,6 +49,13 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 
 	eventDispatcherManager, ok := m.dispatcherManagers[changefeedID]
 	if !ok {
+		// TODO: decode config
+		cfConfig := &model.ChangefeedConfig{}
+		err := json.Unmarshal(maintainerBootstrapRequest.Config, cfConfig)
+		if err != nil {
+			log.Error("failed to unmarshal changefeed config", zap.Error(err))
+			return err
+		}
 		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, nil, msg.To, msg.From)
 		m.dispatcherManagers[changefeedID] = eventDispatcherManager
 
@@ -52,7 +64,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 			Statuses:     make([]*heartbeatpb.TableSpanStatus, 0),
 		}
 
-		err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendCommand(messaging.NewTargetMessage(
+		err = context.GetService[messaging.MessageCenter](context.MessageCenter).SendCommand(messaging.NewTargetMessage(
 			msg.From,
 			MaintainerBoostrapResponseTopic,
 			response,
@@ -65,19 +77,15 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 	}
 
 	response := &heartbeatpb.MaintainerBootstrapResponse{
-		Statuses: make([]*heartbeatpb.TableSpanStatus, 0, len(eventDispatcherManager.DispatcherMap)),
+		Statuses: make([]*heartbeatpb.TableSpanStatus, 0, eventDispatcherManager.GetDispatcherMap().Len()),
 	}
-	for _, dispatcher := range eventDispatcherManager.DispatcherMap {
+	eventDispatcherManager.GetDispatcherMap().ForEach(func(tableSpan *common.TableSpan, tableEventDispatcher *dispatcher.TableEventDispatcher) {
 		response.Statuses = append(response.Statuses, &heartbeatpb.TableSpanStatus{
-			Span: &heartbeatpb.TableSpan{
-				TableID:  dispatcher.GetTableSpan().GetTableID(),
-				StartKey: dispatcher.GetTableSpan().GetStartKey(),
-				EndKey:   dispatcher.GetTableSpan().GetEndKey(),
-			},
-			ComponentStatus: int32(dispatcher.GetComponentStatus()),
+			Span:            tableEventDispatcher.GetTableSpan().TableSpan,
+			ComponentStatus: tableEventDispatcher.GetComponentStatus(),
 			CheckpointTs:    0,
 		})
-	}
+	})
 	err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendCommand(messaging.NewTargetMessage(
 		msg.From,
 		MaintainerBoostrapResponseTopic,

@@ -2,12 +2,21 @@ package eventservice
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
+	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
+	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/log"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -64,13 +73,11 @@ func newMockAcceptorInfo() *mockAcceptorInfo {
 		serverID:  "server1",
 		id:        "id1",
 		topic:     "topic1",
-		span: &common.TableSpan{
-			&heartbeatpb.TableSpan{
-				TableID:  1,
-				StartKey: []byte("a"),
-				EndKey:   []byte("z"),
-			},
-		},
+		span: &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+			TableID:  1,
+			StartKey: []byte("a"),
+			EndKey:   []byte("z"),
+		}},
 		startTs:    1,
 		isRegister: true,
 	}
@@ -119,18 +126,18 @@ func (m *mockSpanStats) update(event []*common.TxnEvent, watermark uint64) {
 
 // mockEventSource is a mock implementation of the EventSource interface
 type mockEventSource struct {
-	spans map[*common.TableSpan]*mockSpanStats
+	spans map[common.TableSpan]*mockSpanStats
 }
 
 func newMockEventSource() *mockEventSource {
 	return &mockEventSource{
-		spans: make(map[*common.TableSpan]*mockSpanStats),
+		spans: make(map[common.TableSpan]*mockSpanStats),
 	}
 }
 
 func (m *mockEventSource) SubscribeTableSpan(span *common.TableSpan, startTs uint64, onSpanUpdate func(watermark uint64)) (uint64, error) {
 	log.Info("subscribe table span", zap.Any("span", span), zap.Uint64("startTs", startTs))
-	m.spans[span] = &mockSpanStats{
+	m.spans[*span] = &mockSpanStats{
 		startTs:       startTs,
 		watermark:     startTs,
 		onUpdate:      onSpanUpdate,
@@ -142,8 +149,8 @@ func (m *mockEventSource) SubscribeTableSpan(span *common.TableSpan, startTs uin
 func (m *mockEventSource) Read(dataRange ...*common.DataRange) ([][]*common.TxnEvent, error) {
 	events := make([][]*common.TxnEvent, 0)
 	for _, dr := range dataRange {
-		events = append(events, m.spans[dr.Span].pendingEvents)
-		m.spans[dr.Span].pendingEvents = make([]*common.TxnEvent, 0)
+		events = append(events, m.spans[*dr.Span].pendingEvents)
+		m.spans[*dr.Span].pendingEvents = make([]*common.TxnEvent, 0)
 	}
 	return events, nil
 }
@@ -189,7 +196,7 @@ func TestEventServiceBasic(t *testing.T) {
 		},
 	}
 
-	sourceSpanStat, ok := eventSource.spans[acceptorInfo.span]
+	sourceSpanStat, ok := eventSource.spans[*acceptorInfo.span]
 	require.True(t, ok)
 
 	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)
@@ -198,4 +205,62 @@ func TestEventServiceBasic(t *testing.T) {
 	msg := <-mc.messageCh
 	require.NotNil(t, msg)
 	require.Equal(t, acceptorInfo.GetTopic(), msg.Topic)
+}
+
+func newTestMockDB(t *testing.T) (db *sql.DB, mock sqlmock.Sqlmock) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
+	require.Nil(t, err)
+	return
+}
+
+// The test mainly focus on the communication between dispatcher and event service.
+// When dispatcher created and register in event service, event service need to send events to dispatcher.
+func TestDispatcherCommunicateWithEventService(t *testing.T) {
+	serverId := messaging.NewServerId()
+	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(serverId, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
+	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, serverId)) // 100GB for demo
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	eventSource := newMockEventSource()
+	eventService := NewEventService(ctx, appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter), eventSource)
+	//esImpl := eventService.(*eventService)
+	go func() {
+		err := eventService.Run()
+		if err != nil {
+			t.Errorf("EventService.Run() error = %v", err)
+		}
+	}()
+
+	db, _ := newTestMockDB(t)
+	defer db.Close()
+
+	mysqlSink := sink.NewMysqlSink(8, writer.NewMysqlConfig(), db)
+	tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: nil, EndKey: nil}}
+	startTs := uint64(100)
+
+	tableEventDispatcher := dispatcher.NewTableEventDispatcher(tableSpan, mysqlSink, startTs, nil)
+	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableEventDispatcher, startTs)
+
+	time.Sleep(1 * time.Second)
+	// add events to eventSource
+	txnEvent := &common.TxnEvent{
+		ClusterID: 1,
+		Span:      tableSpan,
+		StartTs:   1,
+		CommitTs:  5,
+		Rows: []*common.RowChangedEvent{
+			{
+				PhysicalTableID: 1,
+			},
+		},
+	}
+
+	sourceSpanStat, ok := eventSource.spans[*tableSpan]
+	require.True(t, ok)
+
+	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)
+
+	<-tableEventDispatcher.GetEventChan()
+
 }

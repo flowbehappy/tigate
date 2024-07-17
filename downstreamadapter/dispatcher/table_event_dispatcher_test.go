@@ -32,6 +32,7 @@ func newTestMockDB(t *testing.T) (db *sql.DB, mock sqlmock.Sqlmock) {
 }
 
 // 测一下我直接给dispatcher 数据塞 chan 里，检查 db 是否正确收到了，以及 消费前后的心跳和memory usage 是否正常
+
 func TestTableEventDispatcher(t *testing.T) {
 	db, mock := newTestMockDB(t)
 	defer db.Close()

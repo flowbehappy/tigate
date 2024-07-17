@@ -49,10 +49,10 @@ func (r *ReplicaSet) IsAlive() bool {
 	return true
 }
 
-func (r *ReplicaSet) NewInferiorStatus(status scheduler.ComponentStatus) scheduler.InferiorStatus {
+func (r *ReplicaSet) NewInferiorStatus(status heartbeatpb.ComponentState) scheduler.InferiorStatus {
 	return &ReplicaSetStatus{
-		ID:     r.ID,
-		Status: status,
+		ID:    r.ID,
+		State: status,
 	}
 }
 
@@ -92,14 +92,14 @@ func (r *ReplicaSet) NewRemoveInferiorMessage(server model.CaptureID) rpc.Messag
 }
 
 type ReplicaSetStatus struct {
-	ID     *common.TableSpan
-	Status scheduler.ComponentStatus
+	ID    *common.TableSpan
+	State heartbeatpb.ComponentState
 }
 
 func (c *ReplicaSetStatus) GetInferiorID() scheduler.InferiorID {
 	return scheduler.InferiorID(c.ID)
 }
 
-func (c *ReplicaSetStatus) GetInferiorState() scheduler.ComponentStatus {
-	return c.Status
+func (c *ReplicaSetStatus) GetInferiorState() heartbeatpb.ComponentState {
+	return c.State
 }

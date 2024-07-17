@@ -14,9 +14,9 @@
 package dispatcher
 
 import (
-	"github.com/flowbehappy/tigate/coordinator"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/eventpb"
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 )
 
@@ -57,13 +57,14 @@ type Dispatcher interface {
 	GetEventChan() chan *common.TxnEvent
 	GetResolvedTs() uint64
 	UpdateResolvedTs(uint64)
+	GetCheckpointTs() uint64
 	GetId() common.DispatcherID
 	GetDispatcherType() DispatcherType
 	GetHeartBeatChan() chan *HeartBeatResponseMessage
-	GetSyncPointInfo() *SyncPointInfo
-	GetMemoryUsage() *MemoryUsage
+	//GetSyncPointInfo() *SyncPointInfo
+	//GetMemoryUsage() *MemoryUsage
 	PushEvent(event *eventpb.TxnEvent)
-	GetComponentStatus() coordinator.ComponentStatus
+	GetComponentStatus() heartbeatpb.ComponentState
 }
 
 type DispatcherType uint64
@@ -144,7 +145,7 @@ type HeartBeatInfo struct {
 	CheckpointTs    uint64
 	Id              common.DispatcherID
 	TableSpan       *common.TableSpan
-	ComponentStatus coordinator.ComponentStatus
+	ComponentStatus heartbeatpb.ComponentState
 }
 
 func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
@@ -161,32 +162,14 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
 		if state.pengdingEvent != nil {
 			checkpointTs = state.pengdingEvent.CommitTs - 1
 		} else {
-			select {
-			case event := <-d.GetEventChan():
-				if event.IsDMLEvent() {
-					state.pengdingEvent = event
-				} else {
-					// TODO:先 hack 了 blockTableSpan 的值获取
-					state = &State{
-						isBlocked:     true,
-						pengdingEvent: event,
-						// blockTableSpan: event.GetTableSpans(),
-						blockTs:       event.CommitTs,
-						action:        None,
-						sinkAvailable: false,
-					}
-				}
-				checkpointTs = event.CommitTs - 1
-			default:
-				checkpointTs = d.GetResolvedTs()
-			}
+			checkpointTs = d.GetCheckpointTs()
 		}
 	} else {
 		checkpointTs = smallestCommitTsInSink - 1
 	}
 
 	// use checkpointTs to release memory usage
-	d.GetMemoryUsage().Release(checkpointTs)
+	//d.GetMemoryUsage().Release(checkpointTs)
 
 	//state := d.GetState()
 	// return &HeartBeatInfo{
@@ -197,12 +180,14 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
 	// 	//TableSpan:    d.GetTableSpan(),
 	// 	Id: d.GetId(),
 	// }
-	return &HeartBeatInfo{
-		ComponentStatus: d.GetComponentStatus(),
+	heartBeatInfo := &HeartBeatInfo{
 		CheckpointTs:    checkpointTs,
-		TableSpan:       d.GetTableSpan(),
 		Id:              d.GetId(),
+		ComponentStatus: d.GetComponentStatus(),
+		TableSpan:       d.GetTableSpan(),
 	}
+
+	return heartBeatInfo
 }
 
 /*
