@@ -125,6 +125,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 		cancel:                cancel,
 		config:                config,
 	}
+
 	eventDispatcherManager.wg.Add(1)
 	go func(ctx context.Context, e *EventDispatcherManager) {
 		defer e.wg.Done()
@@ -138,6 +139,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 				counter = (counter + 1) % 10
 				needCompleteStatus := counter == 0
 				message := e.CollectHeartbeatInfo(needCompleteStatus)
+				//TODO: 这里有个创建的先后问题，主要是应该在这前面创建 eventDispatcherManager，但是有 循环引用的问题，后面再看吧
 				e.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: eventDispatcherManager.GetMaintainerID(), Request: message})
 			}
 		}
@@ -271,7 +273,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	*/
 
 	var message heartbeatpb.HeartBeatRequest = heartbeatpb.HeartBeatRequest{
-		ChangefeedID:    e.changefeedID.String(),
+		ChangefeedID:    e.changefeedID.ID,
 		CompeleteStatus: needCompleteStatus,
 	}
 
