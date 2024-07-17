@@ -221,7 +221,7 @@ func (c *coordinator) saveChangefeedStatus() {
 	if time.Since(c.lastSaveTime) > time.Millisecond*500 {
 		for id, cf := range c.scheduledChangefeeds {
 			status := c.lastState.Changefeeds[id]
-			if shouldRunChangefeed(model.FeedState(cf.State.FeedState)) {
+			if !shouldRunChangefeed(model.FeedState(cf.State.FeedState)) {
 				status.PatchInfo(func(info *model.ChangeFeedInfo) (*model.ChangeFeedInfo, bool, error) {
 					info.State = model.FeedState(cf.State.FeedState)
 					return info, true, nil
