@@ -56,12 +56,15 @@ type CaptureStatus struct {
 	state             CaptureState
 	capture           *model.CaptureInfo
 	lastBootstrapTime time.Time
+
+	CheckpointTs uint64
 }
 
 func NewCaptureStatus(capture *model.CaptureInfo) *CaptureStatus {
 	return &CaptureStatus{
-		state:   CaptureStateUninitialized,
-		capture: capture,
+		state:        CaptureStateUninitialized,
+		capture:      capture,
+		CheckpointTs: 0,
 	}
 }
 
@@ -247,6 +250,9 @@ func (s *Supervisor) handleRemovedNodes(
 				if affected {
 					// Cleanup its running task.
 					s.RunningTasks.Delete(id)
+					log.Info("remove running task",
+						zap.String("stid", s.ID.String()),
+						zap.String("id", id.String()))
 				}
 			}
 			return true
@@ -279,6 +285,9 @@ func (s *Supervisor) HandleScheduleTasks(
 	})
 	for _, span := range toBeDeleted {
 		s.RunningTasks.Delete(span)
+		log.Info("remove running task",
+			zap.String("stid", s.ID.String()),
+			zap.String("id", span.String()))
 	}
 
 	sentMsgs := make([]rpc.Message, 0)
@@ -301,12 +310,13 @@ func (s *Supervisor) HandleScheduleTasks(
 
 		// Skip task if the inferior is already running a task,
 		// or the inferior has removed.
-		if _, ok := s.RunningTasks.Get(id); ok {
-			log.Info("ignore task, already exists",
-				zap.String("id", s.ID.String()),
-				zap.Any("task", task))
-			continue
-		}
+		//if _, ok := s.RunningTasks.Get(id); ok {
+		//	log.Info("ignore task, already exists",
+		//		zap.String("id", s.ID.String()),
+		//		zap.Any("task", task))
+		//	continue
+		//}
+
 		// it's remove or move inferior task, but we can not find the state machine
 		if _, ok := s.StateMachines.Get(id); !ok && task.AddInferior == nil {
 			log.Info("ignore task, inferior not found",
@@ -329,6 +339,10 @@ func (s *Supervisor) HandleScheduleTasks(
 		}
 		sentMsgs = append(sentMsgs, msgs...)
 		s.RunningTasks.ReplaceOrInsert(id, task)
+		log.Info("add running task",
+			zap.String("stid", s.ID.String()),
+			zap.String("id", s.ID.String()),
+			zap.Any("task", task))
 	}
 	return sentMsgs, nil
 }

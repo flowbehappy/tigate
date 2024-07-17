@@ -116,8 +116,7 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener()),
-		maintainer.NewMaintainerManager(c.serverID),
-		maintainer.NewFakeMaintainerManager(),
+		maintainer.NewMaintainerManager(c.serverID, c.pdEndpoints),
 	}
 	// register it into global var
 	for _, subModule := range c.subModules {
