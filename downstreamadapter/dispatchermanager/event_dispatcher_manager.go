@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
@@ -29,7 +30,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )

@@ -14,8 +14,6 @@
 package downstreamadapter
 
 import (
-	"encoding/json"
-
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -27,9 +25,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const MaintainerBoostrapRequestTopic = "maintainerBoostrapRequest"
-const MaintainerBoostrapResponseTopic = "maintainerBoostrapResponse"
-
 // DispatcherManagerManager deal with the maintainer bootstrap message, to create or delete the event dispatcher manager
 type DispatcherManagerManager struct {
 	dispatcherManagers map[model.ChangeFeedID]*dispatchermanager.EventDispatcherManager
@@ -39,7 +34,8 @@ func NewDispatcherManagerManager() *DispatcherManagerManager {
 	m := &DispatcherManagerManager{
 		dispatcherManagers: make(map[model.ChangeFeedID]*dispatchermanager.EventDispatcherManager),
 	}
-	context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(MaintainerBoostrapRequestTopic, m.RecvMaintainerBootstrapRequest)
+	context.GetService[messaging.MessageCenter](context.MessageCenter).
+		RegisterHandler(messaging.MaintainerBoostrapRequestTopic, m.RecvMaintainerBootstrapRequest)
 	return m
 }
 
@@ -66,7 +62,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 
 		err = context.GetService[messaging.MessageCenter](context.MessageCenter).SendCommand(messaging.NewTargetMessage(
 			msg.From,
-			MaintainerBoostrapResponseTopic,
+			messaging.MaintainerBootstrapResponseTopic,
 			response,
 		))
 		if err != nil {
@@ -88,7 +84,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 	})
 	err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendCommand(messaging.NewTargetMessage(
 		msg.From,
-		MaintainerBoostrapResponseTopic,
+		messaging.MaintainerBootstrapResponseTopic,
 		response,
 	))
 	if err != nil {

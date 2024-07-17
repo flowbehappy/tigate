@@ -32,8 +32,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const maintainerManagerTopic = "maintainer-manager"
-
 // coordinator implements the Coordinator interface
 type coordinator struct {
 	nodeInfo    *model.CaptureInfo
@@ -73,12 +71,13 @@ func NewCoordinator(capture *model.CaptureInfo,
 		c.newChangefeed, c.newBootstrapMessage,
 	)
 	// receive messages
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler("coordinator", func(msg *messaging.TargetMessage) error {
-		c.msgLock.Lock()
-		c.msgBuf = append(c.msgBuf, msg)
-		c.msgLock.Unlock()
-		return nil
-	})
+	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
+		RegisterHandler(messaging.CoordinatorTopic, func(msg *messaging.TargetMessage) error {
+			c.msgLock.Lock()
+			c.msgBuf = append(c.msgBuf, msg)
+			c.msgLock.Unlock()
+			return nil
+		})
 	return c
 }
 

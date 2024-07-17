@@ -74,9 +74,8 @@ type Maintainer struct {
 	removing    *atomic.Bool
 	isSecondary *atomic.Bool
 
-	msgLock  sync.RWMutex
-	msgBuf   []*messaging.TargetMessage
-	msgTopic string
+	msgLock sync.RWMutex
+	msgBuf  []*messaging.TargetMessage
 
 	lastCheckTime time.Time
 }
@@ -100,7 +99,9 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		statusChanged: atomic.NewBool(true),
 		isSecondary:   atomic.NewBool(isSecondary),
 		removing:      atomic.NewBool(false),
-		msgTopic:      "maintainer/" + cfID.ID,
+		config:        cfg,
+		cfgBytes:      cfgBytes,
+		checkpointTs:  checkpointTs,
 		config:        cfg,
 		cfgBytes:      cfgBytes,
 		checkpointTs:  checkpointTs,
@@ -112,16 +113,6 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		func(id scheduler.InferiorID) scheduler.Inferior {
 			return NewReplicaSet(m.id, id)
 		}, m.bootstrapMessage)
-	// receive messages
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(m.msgTopic, func(msg *messaging.TargetMessage) error {
-		if m.isSecondary.Load() {
-			return nil
-		}
-		m.msgLock.Lock()
-		m.msgBuf = append(m.msgBuf, msg)
-		m.msgLock.Unlock()
-		return nil
-	})
 	return m
 }
 
@@ -227,7 +218,6 @@ func (m *Maintainer) scheduleTableSpan() error {
 
 // Close cleanup resources
 func (m *Maintainer) Close() {
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).DeRegisterHandler(m.msgTopic)
 }
 
 func (m *Maintainer) initChangefeed() error {
@@ -369,7 +359,7 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 func (m *Maintainer) bootstrapMessage(captureID model.CaptureID) rpc.Message {
 	return messaging.NewTargetMessage(
 		messaging.ServerId(captureID),
-		"dispatcher-manager",
+		messaging.MaintainerBoostrapRequestTopic,
 		&heartbeatpb.MaintainerBootstrapRequest{
 			ChangefeedID: m.id.ID,
 			Config:       m.cfgBytes,
