@@ -14,32 +14,48 @@
 package coordinator
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"go.uber.org/zap"
 )
+
+type ChangeFeedDB interface {
+	GetChangefeedConfig(id model.ChangeFeedID) *model.ChangefeedConfig
+}
 
 // changefeed tracks the scheduled maintainer on coordinator side
 type changefeed struct {
 	ID    model.ChangeFeedID
 	State *MaintainerStatus
 
-	Info   *model.ChangeFeedInfo
-	Status *model.ChangeFeedStatus
+	Info *model.ChangeFeedInfo
 
 	lastHeartBeat time.Time
+
+	checkpointTs uint64
+	configBytes  []byte
 }
 
-func newChangefeed(ID scheduler.InferiorID) scheduler.Inferior {
-	cfID := model.ChangeFeedID(ID.(scheduler.ChangefeedID))
+func newChangefeed(cfID model.ChangeFeedID,
+	Info *model.ChangeFeedInfo, checkpointTs uint64) *changefeed {
+	bytes, err := json.Marshal(Info)
+	if err != nil {
+		log.Panic("unable to marshal changefeed config",
+			zap.Any("config", Info),
+			zap.Error(err))
+	}
 	return &changefeed{
-		ID:     model.ChangeFeedID(ID.(scheduler.ChangefeedID)),
-		Info:   allChangefeeds[cfID],
-		Status: &model.ChangeFeedStatus{},
+		ID:           cfID,
+		Info:         Info,
+		configBytes:  bytes,
+		checkpointTs: checkpointTs,
 	}
 }
 
@@ -49,6 +65,7 @@ func (c *changefeed) GetID() scheduler.InferiorID {
 
 func (c *changefeed) UpdateStatus(status scheduler.InferiorStatus) {
 	c.State = status.(*MaintainerStatus)
+	c.checkpointTs = c.State.CheckpointTs
 	c.lastHeartBeat = time.Now()
 }
 
@@ -80,8 +97,10 @@ func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary boo
 		&heartbeatpb.DispatchMaintainerRequest{
 			AddMaintainers: []*heartbeatpb.AddMaintainerRequest{
 				{
-					Id:          c.ID.ID,
-					IsSecondary: secondary,
+					Id:           c.ID.ID,
+					IsSecondary:  secondary,
+					CheckpointTs: c.checkpointTs,
+					Config:       c.configBytes,
 				},
 			},
 		})
