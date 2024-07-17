@@ -27,9 +27,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const MaintainerBoostrapRequestTopic = "maintainerBoostrapRequest"
-const MaintainerBoostrapResponseTopic = "maintainerBoostrapResponse"
-
 // DispatcherManagerManager deal with the maintainer bootstrap message, to create or delete the event dispatcher manager
 type DispatcherManagerManager struct {
 	dispatcherManagers map[model.ChangeFeedID]*dispatchermanager.EventDispatcherManager
@@ -39,7 +36,8 @@ func NewDispatcherManagerManager() *DispatcherManagerManager {
 	m := &DispatcherManagerManager{
 		dispatcherManagers: make(map[model.ChangeFeedID]*dispatchermanager.EventDispatcherManager),
 	}
-	context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(MaintainerBoostrapRequestTopic, m.RecvMaintainerBootstrapRequest)
+	context.GetService[messaging.MessageCenter](context.MessageCenter).
+		RegisterHandler(messaging.MaintainerBoostrapRequestTopic, m.RecvMaintainerBootstrapRequest)
 	return m
 }
 
@@ -53,7 +51,9 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 		cfConfig := &model.ChangefeedConfig{}
 		err := json.Unmarshal(maintainerBootstrapRequest.Config, cfConfig)
 		if err != nil {
-			log.Error("failed to unmarshal changefeed config", zap.Error(err))
+			log.Error("failed to unmarshal changefeed config",
+				zap.String("changefeed id", maintainerBootstrapRequest.ChangefeedID),
+				zap.Error(err))
 			return err
 		}
 		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, cfConfig, msg.To, msg.From)
@@ -66,7 +66,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 
 		err = context.GetService[messaging.MessageCenter](context.MessageCenter).SendCommand(messaging.NewTargetMessage(
 			msg.From,
-			MaintainerBoostrapResponseTopic,
+			messaging.MaintainerBootstrapResponseTopic,
 			response,
 		))
 		if err != nil {
@@ -88,7 +88,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 	})
 	err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendCommand(messaging.NewTargetMessage(
 		msg.From,
-		MaintainerBoostrapResponseTopic,
+		messaging.MaintainerBootstrapResponseTopic,
 		response,
 	))
 	if err != nil {

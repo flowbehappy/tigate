@@ -14,12 +14,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const (
-	// EventServiceTopic is the topic of the event service.
-	EventServiceTopic = "EventServiceTopic"
-	EventFeedTopic    = "EventFeed"
-)
-
 type IOType int32
 
 const (

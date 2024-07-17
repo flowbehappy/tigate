@@ -26,10 +26,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// const heartbeatResponseTopic = "HeartBeatResponse"
-const heartbeatRequestTopic = "HeartBeatRequest"
-const schedulerDispatcherTopic = "SchedulerDispatcherRequest"
-
 /*
 HeartBeatCollect is responsible for sending heartbeat requests and receiving heartbeat responses by messageCenter
 HeartBeatCollector is an instance-level component. It will deal with all the heartbeat messages from all dispatchers in all dispatcher managers.
@@ -53,7 +49,8 @@ func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 		responseChanMap: make(map[model.ChangeFeedID]*dispatchermanager.HeartbeatResponseQueue),
 	}
 	//context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(heartbeatResponseTopic, heartBeatCollector.RecvHeartBeatResponseMessages)
-	context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(schedulerDispatcherTopic, heartBeatCollector.RecvSchedulerDispatcherRequestMessages)
+	context.GetService[messaging.MessageCenter](context.MessageCenter).
+		RegisterHandler(messaging.SchedulerDispatcherTopic, heartBeatCollector.RecvSchedulerDispatcherRequestMessages)
 	heartBeatCollector.wg.Add(1)
 	go heartBeatCollector.SendHeartBeatMessages()
 
@@ -81,7 +78,7 @@ func (c *HeartBeatCollector) SendHeartBeatMessages() {
 		heartBeatRequestWithTargetID := c.requestQueue.Dequeue()
 		err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendEvent(&messaging.TargetMessage{
 			To:      heartBeatRequestWithTargetID.TargetID,
-			Topic:   heartbeatRequestTopic,
+			Topic:   messaging.DispatcherHeartBeatRequestTopic,
 			Type:    messaging.TypeHeartBeatRequest,
 			Message: heartBeatRequestWithTargetID.Request,
 		})
