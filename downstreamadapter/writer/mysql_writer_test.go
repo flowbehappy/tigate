@@ -200,3 +200,18 @@ func TestMysqlWriter_Flush_EmptyEvents(t *testing.T) {
 	err = mock.ExpectationsWereMet()
 	require.NoError(t, err)
 }
+
+/*
+TODO:
+func TestWithMysqlCluster(t *testing.T) {
+	_, db, err := NewMysqlConfigAndDB("tidb://root:@127.0.0.1:4000")
+	require.NoError(t, err)
+	rows, err := db.Query("SELECT * from d1.t1")
+	for rows.Next() {
+		var id int
+		var name string
+		err = rows.Scan(&id, &name)
+		require.NoError(t, err)
+		log.Info("id, name", zap.Any("id", id), zap.Any("name", name))
+	}
+}*/

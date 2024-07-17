@@ -149,14 +149,17 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 					}
 				}
 
-				err := worker.GetMysqlWriter().Flush(events)
-				if err != nil {
-					log.Error("Failed to flush events", zap.Error(err))
-					return
+				if rows > 0 {
+					err := worker.GetMysqlWriter().Flush(events)
+					if err != nil {
+						log.Error("Failed to flush events", zap.Error(err))
+						return
+					}
+
+					events = events[:0]
+					rows = 0
 				}
 
-				events = events[:0]
-				rows = 0
 			}
 
 		}(ctx, s.conflictDetector.GetOutChByCacheID(int64(i)), db, cfg, 128)
