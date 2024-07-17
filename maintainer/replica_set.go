@@ -25,14 +25,18 @@ import (
 type ReplicaSet struct {
 	ID           *common.TableSpan
 	ChangefeedID model.ChangeFeedID
+	status       *ReplicaSetStatus
 
-	status *ReplicaSetStatus
+	checkpointTs uint64
 }
 
-func NewReplicaSet(cfID model.ChangeFeedID, id scheduler.InferiorID) scheduler.Inferior {
+func NewReplicaSet(cfID model.ChangeFeedID,
+	id scheduler.InferiorID,
+	checkpointTs uint64) scheduler.Inferior {
 	r := &ReplicaSet{
 		ID:           id.(*common.TableSpan),
 		ChangefeedID: cfID,
+		checkpointTs: checkpointTs,
 	}
 	return r
 }
@@ -43,16 +47,20 @@ func (r *ReplicaSet) GetID() scheduler.InferiorID {
 
 func (r *ReplicaSet) UpdateStatus(status scheduler.InferiorStatus) {
 	r.status = status.(*ReplicaSetStatus)
+	if r.status != nil {
+		r.checkpointTs = r.status.CheckpointTs
+	}
 }
 
 func (r *ReplicaSet) IsAlive() bool {
 	return true
 }
 
-func (r *ReplicaSet) NewInferiorStatus(status heartbeatpb.ComponentState) scheduler.InferiorStatus {
+func (r *ReplicaSet) NewInferiorStatus(state heartbeatpb.ComponentState) scheduler.InferiorStatus {
 	return &ReplicaSetStatus{
-		ID:    r.ID,
-		State: status,
+		ID:           r.ID,
+		State:        state,
+		CheckpointTs: r.checkpointTs,
 	}
 }
 
@@ -67,7 +75,7 @@ func (r *ReplicaSet) NewAddInferiorMessage(server model.CaptureID, isSecondary b
 					StartKey: r.ID.StartKey,
 					EndKey:   r.ID.EndKey,
 				},
-				StartTs: 0,
+				StartTs: r.checkpointTs,
 			},
 			ScheduleAction: heartbeatpb.ScheduleAction_Create,
 			IsSecondary:    isSecondary,
@@ -85,15 +93,16 @@ func (r *ReplicaSet) NewRemoveInferiorMessage(server model.CaptureID) rpc.Messag
 					StartKey: r.ID.StartKey,
 					EndKey:   r.ID.EndKey,
 				},
-				StartTs: 0,
+				StartTs: r.checkpointTs,
 			},
 			ScheduleAction: heartbeatpb.ScheduleAction_Remove,
 		})
 }
 
 type ReplicaSetStatus struct {
-	ID    *common.TableSpan
-	State heartbeatpb.ComponentState
+	ID           *common.TableSpan
+	State        heartbeatpb.ComponentState
+	CheckpointTs uint64
 }
 
 func (c *ReplicaSetStatus) GetInferiorID() scheduler.InferiorID {

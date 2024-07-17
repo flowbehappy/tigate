@@ -27,6 +27,7 @@ import (
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
+	"github.com/flowbehappy/tigate/utils"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/entry/schema"
@@ -50,7 +51,7 @@ type Maintainer struct {
 	config   *model.ChangeFeedInfo
 	cfgBytes []byte
 
-	checkpointTs uint64
+	checkpointTs *atomic.Uint64
 
 	state      heartbeatpb.ComponentState
 	supervisor *scheduler.Supervisor
@@ -61,9 +62,10 @@ type Maintainer struct {
 	taskCh  chan Task
 	removed *atomic.Bool
 
-	initialized  bool
-	tableIDs     map[int64]struct{}
-	allInferiors []scheduler.InferiorID
+	initialized bool
+	// tableSpans track all table spans that need to be scheduled
+	// when dispatcher reported a new table or remove a table, this field should be updated
+	tableSpans utils.Map[scheduler.InferiorID, scheduler.Inferior]
 
 	pdEndpoints []string
 	nodeManager *watcher.NodeManager
@@ -80,7 +82,7 @@ type Maintainer struct {
 
 	lastCheckTime time.Time
 
-	lastCalCheckTime time.Time
+	lastCheckpointTsTime time.Time
 }
 
 // NewMaintainer create the maintainer for the changefeed
@@ -106,16 +108,15 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		cascadeRemoving: atomic.NewBool(false),
 		config:          cfg,
 		cfgBytes:        cfgBytes,
-		checkpointTs:    checkpointTs,
+		checkpointTs:    atomic.NewUint64(checkpointTs),
 		pdEndpoints:     pdEndpoints,
+		tableSpans:      utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior](),
 	}
 	if !isSecondary {
 		m.state = heartbeatpb.ComponentState_Working
 	}
 	m.supervisor = scheduler.NewSupervisor(scheduler.ChangefeedID(cfID),
-		func(id scheduler.InferiorID) scheduler.Inferior {
-			return NewReplicaSet(m.id, id)
-		}, m.bootstrapMessage)
+		m.getReplicaSet, m.bootstrapMessage)
 	return m
 }
 
@@ -176,6 +177,11 @@ func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
 	return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 }
 
+func (m *Maintainer) getReplicaSet(id scheduler.InferiorID) scheduler.Inferior {
+	tableSpan, _ := m.tableSpans.Get(id.(*common.TableSpan))
+	return tableSpan
+}
+
 func (m *Maintainer) handleMessages() error {
 	m.msgLock.Lock()
 	buf := m.msgBuf
@@ -196,6 +202,21 @@ func (m *Maintainer) handleMessages() error {
 	return nil
 }
 
+func (m *Maintainer) calCheckpointTs() {
+	if time.Since(m.lastCheckpointTsTime) > time.Second {
+		checkPointTs := m.checkpointTs.Load()
+		m.tableSpans.Ascend(func(key scheduler.InferiorID, value scheduler.Inferior) bool {
+			tblSpan := value.(*ReplicaSet)
+			if checkPointTs < value.(*ReplicaSet).checkpointTs {
+				checkPointTs = tblSpan.checkpointTs
+			}
+			return true
+		})
+		m.checkpointTs.Store(checkPointTs)
+		m.lastCheckpointTsTime = time.Now()
+	}
+}
+
 // send message to remote, todo: use a io thread pool
 func (m *Maintainer) sendMessages(msgs []rpc.Message) {
 	for _, msg := range msgs {
@@ -213,7 +234,7 @@ func (m *Maintainer) scheduleTableSpan() error {
 	}
 
 	tasks := m.scheduler.Schedule(
-		m.allInferiors,
+		m.tableSpans,
 		m.supervisor.GetAllCaptures(),
 		m.supervisor.GetInferiors(),
 	)
@@ -233,14 +254,16 @@ func (m *Maintainer) initChangefeed() error {
 	m.state = heartbeatpb.ComponentState_Prepared
 	m.statusChanged.Store(true)
 	var err error
-	m.tableIDs, err = m.GetTableIDs()
-	for id, _ := range m.tableIDs {
+	tableIDs, err := m.GetTableIDs()
+	for id, _ := range tableIDs {
 		start, end := spanz.GetTableRange(id)
-		m.allInferiors = append(m.allInferiors, &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
 			TableID:  uint64(id),
 			StartKey: start,
 			EndKey:   end,
-		}})
+		}}
+		replicaSet := NewReplicaSet(m.id, tableSpan, m.checkpointTs.Load()).(*ReplicaSet)
+		m.tableSpans.ReplaceOrInsert(tableSpan, replicaSet)
 	}
 	return err
 }
@@ -273,7 +296,8 @@ func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage)
 			ID: &common.TableSpan{
 				TableSpan: info.Span,
 			},
-			State: info.ComponentStatus,
+			State:        info.ComponentStatus,
+			CheckpointTs: info.CheckpointTs,
 		})
 	}
 	m.supervisor.UpdateCaptureStatus(msg.From.String(), status)
@@ -311,10 +335,10 @@ func (m *Maintainer) GetTableIDs() (map[int64]struct{}, error) {
 		return nil, errors.Trace(err)
 	}
 
-	meta := kv.GetSnapshotMeta(kvStore, startTs)
+	meta := kv.GetSnapshotMeta(kvStore, startTs.Load())
 	snap, err := schema.NewSnapshotFromMeta(
 		model.ChangeFeedID4Test("api", "verifyTable"),
-		meta, startTs, false /* explicitTables */, f)
+		meta, startTs.Load(), false /* explicitTables */, f)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -357,7 +381,7 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 		ChangefeedID: m.id.ID,
 		FeedState:    string(m.changefeedSate),
 		State:        m.state,
-		CheckpointTs: m.checkpointTs,
+		CheckpointTs: m.checkpointTs.Load(),
 	}
 }
 

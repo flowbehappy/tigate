@@ -22,7 +22,7 @@ import (
 type Scheduler interface {
 	Name() string
 	Schedule(
-		allInferiors []InferiorID,
+		allInferiors utils.Map[InferiorID, Inferior],
 		aliveCaptures map[model.CaptureID]*CaptureStatus,
 		stateMachines utils.Map[InferiorID, *StateMachine],
 	) []*ScheduleTask
