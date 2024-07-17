@@ -22,8 +22,8 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	dmysql "github.com/go-sql-driver/mysql"
-	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"

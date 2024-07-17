@@ -3,7 +3,7 @@ package common
 import (
 	"unsafe"
 
-	"github.com/ngaut/log"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	timodel "github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
