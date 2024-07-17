@@ -122,6 +122,7 @@ func (c *HeartBeatCollector) RecvSchedulerDispatcherRequestMessages(msg *messagi
 	scheduleAction := scheduleDispatcherRequest.ScheduleAction
 	config := scheduleDispatcherRequest.Config
 	if scheduleAction == heartbeatpb.ScheduleAction_Create {
+		// TODO: 后续需要优化这段逻辑，perpared 这种调度状态需要多发 message 回去
 		if !scheduleDispatcherRequest.IsSecondary {
 			eventDispatcherManager.NewTableEventDispatcher(&common.TableSpan{TableSpan: config.Span}, config.StartTs)
 		} else {

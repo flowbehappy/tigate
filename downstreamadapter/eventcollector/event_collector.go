@@ -101,7 +101,6 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 	*/
 
 	eventFeeds, ok := msg.Message.(*eventpb.EventFeed)
-	// log.Info("hello1")
 	if !ok {
 		log.Error("invalid event feed message", zap.Any("msg", msg))
 		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: fmt.Sprintf("invalid heartbeat response message")}
