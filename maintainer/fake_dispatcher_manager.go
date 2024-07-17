@@ -144,25 +144,27 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 			for _, manager := range m.dispatcherManagers {
 				// send heartbeats
 				if manager.maintainerID != "" {
-					response := &heartbeatpb.HeartBeatResponse{
-						ChangefeedID: manager.id.ID,
-						Info:         make([]*heartbeatpb.TableProgressInfo, 0, manager.dispatchers.Len()),
+					response := &heartbeatpb.HeartBeatRequest{
+						ChangefeedID:    manager.id.ID,
+						CheckpointTs:    0,
+						Statuses:        make([]*heartbeatpb.TableSpanStatus, 0, manager.dispatchers.Len()),
+						CompeleteStatus: false,
 					}
 					manager.dispatchers.Ascend(func(key *common.TableSpan, value *Dispatcher) bool {
 						if time.Since(value.lastReportTime) > time.Second {
-							response.Info = append(response.Info, &heartbeatpb.TableProgressInfo{
+							response.Statuses = append(response.Statuses, &heartbeatpb.TableSpanStatus{
 								Span: &heartbeatpb.TableSpan{
 									TableID:  value.ID.TableID,
 									StartKey: value.ID.StartKey,
 									EndKey:   value.ID.EndKey,
 								},
-								SchedulerStatus: value.state,
+								ComponentStatus: value.state,
 							})
 							value.lastReportTime = time.Now()
 						}
 						return true
 					})
-					if len(response.Info) != 0 {
+					if len(response.Statuses) != 0 {
 						err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 							manager.maintainerID,
 							"maintainer/"+manager.id.ID,
