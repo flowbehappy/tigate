@@ -18,7 +18,6 @@ import (
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
-	"github.com/flowbehappy/tigate/downstreamadapter/heartbeatcollector"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/common/context"
@@ -59,7 +58,6 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 		}
 		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, cfConfig, msg.To, msg.From)
 		m.dispatcherManagers[changefeedID] = eventDispatcherManager
-		context.GetService[*heartbeatcollector.HeartBeatCollector](context.HeartbeatCollector).RegisterEventDispatcherManager(eventDispatcherManager)
 
 		response := &heartbeatpb.MaintainerBootstrapResponse{
 			ChangefeedID: maintainerBootstrapRequest.ChangefeedID,
@@ -78,6 +76,10 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 		return nil
 	}
 
+	// set new maintainer id if it's changed
+	if eventDispatcherManager.GetMaintainerID() == msg.From {
+		eventDispatcherManager.SetMaintainerID(msg.From)
+	}
 	response := &heartbeatpb.MaintainerBootstrapResponse{
 		Statuses: make([]*heartbeatpb.TableSpanStatus, 0, eventDispatcherManager.GetDispatcherMap().Len()),
 	}

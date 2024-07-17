@@ -65,6 +65,7 @@ func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uin
 		log.Error("failed to send register dispatcher request message", zap.Error(err))
 		return err
 	}
+	c.dispatcherMap[common.DispatcherID(d.GetId())] = d
 	return nil
 }
 
@@ -85,6 +86,7 @@ func (c *EventCollector) RemoveDispatcher(d dispatcher.Dispatcher) error {
 		log.Error("failed to send register dispatcher request message", zap.Error(err))
 		return err
 	}
+	delete(c.dispatcherMap, common.DispatcherID(d.GetId()))
 	return nil
 }
 
@@ -99,7 +101,6 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 	*/
 
 	eventFeeds, ok := msg.Message.(*eventpb.EventFeed)
-	log.Info("hello1")
 	if !ok {
 		log.Error("invalid event feed message", zap.Any("msg", msg))
 		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: fmt.Sprintf("invalid heartbeat response message")}
@@ -140,7 +141,6 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 			dispatcherItem.(*dispatcher.TableEventDispatcher).InitTableInfo(eventFeeds.TableInfo)
 		}
 		for _, txnEvent := range eventFeeds.TxnEvents {
-			log.Info("hello")
 			dispatcherItem.PushEvent(txnEvent)
 			/*
 				syncPointInfo := dispatcherItem.GetSyncPointInfo()
