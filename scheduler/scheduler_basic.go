@@ -74,8 +74,10 @@ func (b *BasicScheduler) Schedule(
 				zap.Any("allCaptureStatus", aliveCaptures))
 			return tasks
 		}
-		tasks = append(
-			tasks, newBurstAddInferiors(newInferiors, captureIDs)...)
+		tasks = append(tasks, newBurstAddInferiors(newInferiors, captureIDs)...)
+		if len(newInferiors) >= b.batchSize {
+			return tasks
+		}
 	}
 
 	// Build remove inferior tasks.

@@ -12,8 +12,6 @@ import (
 const (
 	defaultChanelSize  = 2048
 	defaultWorkerCount = 32
-	// EventServiceTopic is the topic of the event service.
-	EventServiceTopic = "EventServiceTopic"
 )
 
 // EventService accepts the requests of pulling events.
@@ -61,7 +59,7 @@ func NewEventService(ctx context.Context, mc messaging.MessageCenter, eventSourc
 		stores:         make(map[uint64]*eventStore),
 		acceptorInfoCh: make(chan EventAcceptorInfo, defaultChanelSize*16),
 	}
-	es.mc.RegisterHandler(EventServiceTopic, es.handleMessage)
+	es.mc.RegisterHandler(messaging.EventServiceTopic, es.handleMessage)
 	return es
 }
 
@@ -146,6 +144,6 @@ func (s *eventService) deregisterAcceptor(clusterID uint64, accepterID string) {
 }
 
 // TODO: implement the following functions
-func msgToAcceptorInfo(_ *messaging.TargetMessage) EventAcceptorInfo {
-	return nil
+func msgToAcceptorInfo(msg *messaging.TargetMessage) EventAcceptorInfo {
+	return msg.Message.(messaging.RegisterDispatcherRequest)
 }
