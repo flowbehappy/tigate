@@ -203,7 +203,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 	*/
 	tableEventDispatcher := dispatcher.NewTableEventDispatcher(tableSpan, e.sink, startTs, nil)
 
-	appcontext.GetService[*eventcollector.EventCollector]("EventCollector").RegisterDispatcher(tableEventDispatcher, startTs)
+	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableEventDispatcher, startTs)
 
 	e.dispatcherMap.Set(tableSpan, tableEventDispatcher)
 	e.CollectHeartbeatInfoOnce(tableSpan.TableSpan, heartbeatpb.ComponentState_Working)
@@ -227,7 +227,7 @@ func (e *EventDispatcherManager) RemoveTableEventDispatcher(tableSpan *common.Ta
 			e.CollectHeartbeatInfoOnce(tableSpan.TableSpan, heartbeatpb.ComponentState_Stopping)
 			return
 		}
-		appcontext.GetService[*eventcollector.EventCollector]("EventCollector").RemoveDispatcher(dispatcher)
+		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RemoveDispatcher(dispatcher)
 		dispatcher.Remove()
 	} else {
 		e.CollectHeartbeatInfoOnce(tableSpan.TableSpan, heartbeatpb.ComponentState_Stopped)
