@@ -71,13 +71,16 @@ type Maintainer struct {
 	statusChanged  *atomic.Bool
 	lastReportTime time.Time
 
-	removing    *atomic.Bool
-	isSecondary *atomic.Bool
+	removing        *atomic.Bool
+	cascadeRemoving *atomic.Bool
+	isSecondary     *atomic.Bool
 
 	msgLock sync.RWMutex
 	msgBuf  []*messaging.TargetMessage
 
 	lastCheckTime time.Time
+
+	lastCalCheckTime time.Time
 }
 
 // NewMaintainer create the maintainer for the changefeed
@@ -86,22 +89,25 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	cfg *model.ChangeFeedInfo,
 	cfgBytes []byte,
 	checkpointTs uint64,
+	pdEndpoints []string,
 ) *Maintainer {
 	m := &Maintainer{
 		id: cfID,
 		scheduler: scheduler.NewCombineScheduler(
 			scheduler.NewBasicScheduler(1000),
 			scheduler.NewBalanceScheduler(time.Minute, 1000)),
-		state:         heartbeatpb.ComponentState_Prepared,
-		removed:       atomic.NewBool(false),
-		taskCh:        make(chan Task, 1024),
-		nodeManager:   appctx.GetService[*watcher.NodeManager](watcher.NodeManagerName),
-		statusChanged: atomic.NewBool(true),
-		isSecondary:   atomic.NewBool(isSecondary),
-		removing:      atomic.NewBool(false),
-		config:        cfg,
-		cfgBytes:      cfgBytes,
-		checkpointTs:  checkpointTs,
+		state:           heartbeatpb.ComponentState_Prepared,
+		removed:         atomic.NewBool(false),
+		taskCh:          make(chan Task, 1024),
+		nodeManager:     appctx.GetService[*watcher.NodeManager](watcher.NodeManagerName),
+		statusChanged:   atomic.NewBool(true),
+		isSecondary:     atomic.NewBool(isSecondary),
+		removing:        atomic.NewBool(false),
+		cascadeRemoving: atomic.NewBool(false),
+		config:          cfg,
+		cfgBytes:        cfgBytes,
+		checkpointTs:    checkpointTs,
+		pdEndpoints:     pdEndpoints,
 	}
 	if !isSecondary {
 		m.state = heartbeatpb.ComponentState_Working
@@ -116,13 +122,18 @@ func NewMaintainer(cfID model.ChangeFeedID,
 func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
 	// removing, cancel the task
 	if m.removing.Load() {
+		//todo: send message to dispatcher manager if changefeed is removed
 		m.closeChangefeed()
-		return threadpool.Done, time.Time{}
+		if m.removed.Load() {
+			return threadpool.Done, time.Time{}
+		}
 	}
 	// init the maintainer, todo: return error and cancel the maintainer
 	if !m.initialized {
 		if err := m.initChangefeed(); err != nil {
-			log.Warn("init changefeed failed", zap.Error(err))
+			log.Warn("init changefeed failed",
+				zap.String("id", m.id.String()),
+				zap.Error(err))
 			m.initialized = false
 			m.removed.Store(true)
 			m.state = heartbeatpb.ComponentState_Stopped
@@ -160,6 +171,7 @@ func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
 		log.Warn("handle capture failed", zap.Error(err))
 		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 	}
+	//todo: calculate checkpoint ts
 	m.printStatus()
 	return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 }
@@ -221,11 +233,7 @@ func (m *Maintainer) initChangefeed() error {
 	m.state = heartbeatpb.ComponentState_Prepared
 	m.statusChanged.Store(true)
 	var err error
-	m.tableIDs = map[int64]struct{}{
-		int64(1): {},
-		int64(2): {},
-		int64(3): {},
-	}
+	m.tableIDs, err = m.GetTableIDs()
 	for id, _ := range m.tableIDs {
 		start, end := spanz.GetTableRange(id)
 		m.allInferiors = append(m.allInferiors, &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{

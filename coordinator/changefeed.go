@@ -41,21 +41,33 @@ type changefeed struct {
 
 	checkpointTs uint64
 	configBytes  []byte
+
+	coordinator *coordinator
 }
 
-func newChangefeed(cfID model.ChangeFeedID,
-	Info *model.ChangeFeedInfo, checkpointTs uint64) *changefeed {
-	bytes, err := json.Marshal(Info)
+func newChangefeed(c *coordinator,
+	cfID model.ChangeFeedID,
+	info *model.ChangeFeedInfo,
+	checkpointTs uint64) *changefeed {
+	bytes, err := json.Marshal(info)
 	if err != nil {
 		log.Panic("unable to marshal changefeed config",
-			zap.Any("config", Info),
+			zap.Any("config", info),
 			zap.Error(err))
 	}
 	return &changefeed{
+		coordinator:  c,
 		ID:           cfID,
-		Info:         Info,
+		Info:         info,
 		configBytes:  bytes,
 		checkpointTs: checkpointTs,
+		// init the first status
+		State: &MaintainerStatus{
+			MaintainerStatus: &heartbeatpb.MaintainerStatus{
+				CheckpointTs: checkpointTs,
+				FeedState:    string(info.State),
+			},
+		},
 	}
 }
 
@@ -107,13 +119,14 @@ func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary boo
 }
 
 func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) rpc.Message {
+	_, ok := c.coordinator.lastState.Changefeeds[c.ID]
 	return messaging.NewTargetMessage(messaging.ServerId(server),
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.DispatchMaintainerRequest{
 			RemoveMaintainers: []*heartbeatpb.RemoveMaintainerRequest{
 				{
 					Id:      c.ID.ID,
-					Cascade: false,
+					Cascade: !ok,
 				},
 			},
 		})

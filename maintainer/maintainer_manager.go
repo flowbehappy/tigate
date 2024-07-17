@@ -34,8 +34,7 @@ import (
 // 2. handle dispatcher command from coordinator: add or remove changefeed maintainer
 // 3. check maintainer liveness
 type Manager struct {
-	maintainerLock sync.RWMutex
-	maintainers    map[model.ChangeFeedID]*Maintainer
+	maintainers sync.Map
 
 	msgLock sync.RWMutex
 	msgBuf  []*messaging.TargetMessage
@@ -44,16 +43,18 @@ type Manager struct {
 	coordinatorVersion int64
 
 	selfServerID messaging.ServerId
+	pdEndpoints  []string
 }
 
 // NewMaintainerManager create a changefeed maintainer manager instance,
 // 1. manager receives bootstrap command from coordinator
 // 2. manager manages maintainer lifetime
 // 3. manager report maintainer status to coordinator
-func NewMaintainerManager(selfServerID messaging.ServerId) *Manager {
+func NewMaintainerManager(selfServerID messaging.ServerId, pdEndpoints []string) *Manager {
 	m := &Manager{
-		maintainers:  make(map[model.ChangeFeedID]*Maintainer),
+		maintainers:  sync.Map{},
 		selfServerID: selfServerID,
+		pdEndpoints:  pdEndpoints,
 	}
 	// receive message coordinator
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
@@ -104,16 +105,14 @@ func (m *Manager) Run(ctx context.Context) error {
 			m.sendHeartbeat(absent)
 
 			//3. cleanup removed maintainer
-			m.maintainerLock.RLock()
-			for _, cf := range m.maintainers {
+			m.maintainers.Range(func(key, value interface{}) bool {
+				cf := value.(*Maintainer)
 				if cf.removed.Load() {
 					cf.Close()
-					m.maintainerLock.Lock()
-					delete(m.maintainers, cf.id)
-					m.maintainerLock.Unlock()
+					m.maintainers.Delete(key)
 				}
-			}
-			m.maintainerLock.RUnlock()
+				return true
+			})
 		}
 	}
 }
@@ -145,14 +144,15 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 	m.coordinatorID = msg.From
 	m.coordinatorVersion = req.Version
 
-	response := &heartbeatpb.CoordinatorBootstrapResponse{
-		Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
-	}
-	for _, m := range m.maintainers {
+	response := &heartbeatpb.CoordinatorBootstrapResponse{}
+	m.maintainers.Range(func(key, value interface{}) bool {
+		m := value.(*Maintainer)
 		response.Statuses = append(response.Statuses, m.GetMaintainerStatus())
 		m.statusChanged.Store(false)
 		m.lastReportTime = time.Now()
-	}
+		return true
+	})
+
 	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 		m.coordinatorID,
 		messaging.CoordinatorTopic,
@@ -178,7 +178,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 	absent := make([]string, 0)
 	for _, req := range request.AddMaintainers {
 		cfID := model.DefaultChangeFeedID(req.GetId())
-		cf, ok := m.maintainers[cfID]
+		cf, ok := m.maintainers.Load(cfID)
 		if !ok {
 			cfConfig := &model.ChangeFeedInfo{}
 			err := json.Unmarshal(req.Config, cfConfig)
@@ -186,49 +186,45 @@ func (m *Manager) onDispatchMaintainerRequest(
 				log.Panic("decode changefeed fail", zap.Error(err))
 			}
 			cf = NewMaintainer(cfID, req.IsSecondary,
-				cfConfig, req.Config, req.CheckpointTs)
-			m.maintainerLock.RLock()
-			m.maintainers[cfID] = cf
-			m.maintainerLock.RUnlock()
-			threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf, threadpool.CPUTask, time.Now())
+				cfConfig, req.Config, req.CheckpointTs, m.pdEndpoints)
+			m.maintainers.Store(cfID, cf)
+			threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf.(*Maintainer),
+				threadpool.CPUTask, time.Now())
 		}
-		cf.isSecondary.Store(req.IsSecondary)
+		cf.(*Maintainer).isSecondary.Store(req.IsSecondary)
 	}
 
 	for _, req := range request.RemoveMaintainers {
 		cfID := model.DefaultChangeFeedID(req.GetId())
 
-		m.maintainerLock.RLock()
-		cf, ok := m.maintainers[cfID]
-		m.maintainerLock.RUnlock()
+		cf, ok := m.maintainers.Load(cfID)
 
 		if !ok {
 			log.Warn("ignore remove maintainer request, "+
 				"since the maintainer not found",
-				zap.String("changefeed", cf.id.String()),
+				zap.String("changefeed", cfID.String()),
 				zap.Any("request", req))
 			absent = append(absent, req.GetId())
 		}
-		cf.removing.Store(true)
+		cf.(*Maintainer).removing.Store(true)
+		cf.(*Maintainer).cascadeRemoving.Store(req.Cascade)
 	}
 	return absent
 }
 
 func (m *Manager) sendHeartbeat(absent []string) {
 	if m.coordinatorVersion > 0 {
-		response := &heartbeatpb.MaintainerHeartbeat{
-			Statuses: make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers)),
-		}
-		m.maintainerLock.RLock()
-		for _, m := range m.maintainers {
+		response := &heartbeatpb.MaintainerHeartbeat{}
+		m.maintainers.Range(func(key, value interface{}) bool {
+			m := value.(*Maintainer)
 			if m.statusChanged.Load() ||
 				time.Since(m.lastReportTime) > time.Second*2 {
 				response.Statuses = append(response.Statuses, m.GetMaintainerStatus())
 				m.statusChanged.Store(false)
 				m.lastReportTime = time.Now()
 			}
-		}
-		m.maintainerLock.RUnlock()
+			return true
+		})
 
 		for _, id := range absent {
 			response.Statuses = append(response.Statuses, &heartbeatpb.MaintainerStatus{
@@ -262,7 +258,7 @@ func (m *Manager) handleMessages() []string {
 
 func (m *Manager) cacheMaintainerMessage(changefeed string, msg *messaging.TargetMessage) {
 	m.msgLock.RLock()
-	maintainer, ok := m.maintainers[model.DefaultChangeFeedID(changefeed)]
+	v, ok := m.maintainers.Load(model.DefaultChangeFeedID(changefeed))
 	m.msgLock.RUnlock()
 	if !ok {
 		log.Warn("maintainer is not found",
@@ -270,6 +266,7 @@ func (m *Manager) cacheMaintainerMessage(changefeed string, msg *messaging.Targe
 		return
 	}
 
+	maintainer := v.(*Maintainer)
 	if maintainer.isSecondary.Load() {
 		return
 	}

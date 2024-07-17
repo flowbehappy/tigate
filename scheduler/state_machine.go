@@ -483,7 +483,7 @@ func (s *StateMachine) pollOnPrepare(
 			log.Info("server is stopped during Prepare",
 				zap.Any("status", input),
 				zap.String("captureID", captureID),
-				zap.Any("statemachine", s))
+				zap.Any("statemachine", s.ID.String()))
 			err := s.clearCapture(captureID, RoleSecondary)
 			if err != nil {
 				return nil, false, errors.Trace(err)

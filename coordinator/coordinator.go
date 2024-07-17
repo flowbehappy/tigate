@@ -212,7 +212,7 @@ func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message
 func (c *coordinator) newChangefeed(id scheduler.InferiorID) scheduler.Inferior {
 	cfID := model.ChangeFeedID(id.(scheduler.ChangefeedID))
 	cfInfo := c.lastState.Changefeeds[cfID]
-	cf := newChangefeed(cfID, cfInfo.Info, cfInfo.Status.CheckpointTs)
+	cf := newChangefeed(c, cfID, cfInfo.Info, cfInfo.Status.CheckpointTs)
 	c.scheduledChangefeeds[cfInfo.ID] = cf
 	return cf
 }
