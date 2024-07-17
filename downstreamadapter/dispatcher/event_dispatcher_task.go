@@ -58,7 +58,7 @@ func NewEventDispatcherTask(dispatcher Dispatcher) *EventDispatcherTask {
 func (t *EventDispatcherTask) updateState(state *State, heartBeatResponseMessages []*HeartBeatResponseMessage) {
 	for _, heartBeatResponseMessage := range heartBeatResponseMessages {
 		otherTableProgress := heartBeatResponseMessage.OtherTableProgress
-		spanToProgressMap := make(map[*common.TableSpan]*TableSpanProgress)
+		spanToProgressMap := make(utils.NewBtreeMap[*common.TableSpan,*TableSpanProgress])
 		for _, progress := range otherTableProgress {
 			span := progress.Span
 			spanToProgressMap[span] = progress

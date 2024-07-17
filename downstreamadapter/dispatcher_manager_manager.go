@@ -14,9 +14,6 @@
 package downstreamadapter
 
 import (
-	"encoding/json"
-	"net/url"
-
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -55,9 +52,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 			log.Error("failed to unmarshal changefeed config", zap.Error(err))
 			return err
 		}
-		uri, _ := url.Parse(cfConfig.SinkURI)
-		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID,
-			&dispatchermanager.ChangefeedConfig{SinkURI: uri}, msg.To, msg.From)
+		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, cfConfig, msg.To, msg.From)
 		m.dispatcherManagers[changefeedID] = eventDispatcherManager
 
 		response := &heartbeatpb.MaintainerBootstrapResponse{
