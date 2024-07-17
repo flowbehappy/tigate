@@ -21,12 +21,12 @@ import (
 	"strings"
 	"time"
 
+	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
 	"github.com/flowbehappy/tigate/downstreamadapter/heartbeatcollector"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 
 	"github.com/dustin/go-humanize"
-	"github.com/flowbehappy/tigate/downstreamadapter"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/server/watcher"
@@ -163,7 +163,7 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	appcontext.SetService(appcontext.HeartbeatCollector, heartbeatcollector.NewHeartBeatCollector(id))
 	//appcontext.SetService("eventService")
 
-	c.dispatcherManagerManager = downstreamadapter.NewDispatcherManagerManager()
+	c.dispatcherManagerManager = dispatchermanagermanager.NewDispatcherManagerManager()
 	return nil
 }
 
