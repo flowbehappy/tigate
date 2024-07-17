@@ -45,7 +45,7 @@ type eventService struct {
 	ctx         context.Context
 	mc          messaging.MessageCenter
 	eventSource EventSource
-	stores      map[uint64]*eventStore
+	stores      map[uint64]*eventBroker
 
 	// TODO: use a better way to cache the acceptorInfos
 	acceptorInfoCh chan EventAcceptorInfo
@@ -56,7 +56,7 @@ func NewEventService(ctx context.Context, mc messaging.MessageCenter, eventSourc
 		mc:             mc,
 		eventSource:    eventSource,
 		ctx:            ctx,
-		stores:         make(map[uint64]*eventStore),
+		stores:         make(map[uint64]*eventBroker),
 		acceptorInfoCh: make(chan EventAcceptorInfo, defaultChanelSize*16),
 	}
 	es.mc.RegisterHandler(messaging.EventServiceTopic, es.handleMessage)
@@ -113,7 +113,7 @@ func (s *eventService) registerAcceptor(acceptor EventAcceptorInfo) {
 	c.acceptors[acceptor.GetID()] = ac
 
 	// add the acceptor to the table span it wants to listen.
-	stat, ok := c.spanStats[span]
+	stat, ok := c.spanStats[span.TableID]
 	if !ok {
 		stat = &spanSubscription{
 			span:      acceptor.GetTableSpan(),
@@ -121,7 +121,7 @@ func (s *eventService) registerAcceptor(acceptor EventAcceptorInfo) {
 			notify:    c.changedSpanCh,
 		}
 		stat.watermark.Store(uint64(startTs))
-		c.spanStats[span] = stat
+		c.spanStats[span.TableID] = stat
 	}
 	stat.addAcceptor(ac)
 	c.eventSource.SubscribeTableSpan(span, startTs, stat.UpdateWatermark)

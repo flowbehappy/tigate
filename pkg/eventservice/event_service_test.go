@@ -126,18 +126,18 @@ func (m *mockSpanStats) update(event []*common.TxnEvent, watermark uint64) {
 
 // mockEventSource is a mock implementation of the EventSource interface
 type mockEventSource struct {
-	spans map[common.TableSpan]*mockSpanStats
+	spans map[uint64]*mockSpanStats
 }
 
 func newMockEventSource() *mockEventSource {
 	return &mockEventSource{
-		spans: make(map[common.TableSpan]*mockSpanStats),
+		spans: make(map[uint64]*mockSpanStats),
 	}
 }
 
 func (m *mockEventSource) SubscribeTableSpan(span *common.TableSpan, startTs uint64, onSpanUpdate func(watermark uint64)) (uint64, error) {
 	log.Info("subscribe table span", zap.Any("span", span), zap.Uint64("startTs", startTs))
-	m.spans[*span] = &mockSpanStats{
+	m.spans[span.TableID] = &mockSpanStats{
 		startTs:       startTs,
 		watermark:     startTs,
 		onUpdate:      onSpanUpdate,
@@ -149,8 +149,8 @@ func (m *mockEventSource) SubscribeTableSpan(span *common.TableSpan, startTs uin
 func (m *mockEventSource) Read(dataRange ...*common.DataRange) ([][]*common.TxnEvent, error) {
 	events := make([][]*common.TxnEvent, 0)
 	for _, dr := range dataRange {
-		events = append(events, m.spans[*dr.Span].pendingEvents)
-		m.spans[*dr.Span].pendingEvents = make([]*common.TxnEvent, 0)
+		events = append(events, m.spans[dr.Span.TableID].pendingEvents)
+		m.spans[dr.Span.TableID].pendingEvents = make([]*common.TxnEvent, 0)
 	}
 	return events, nil
 }
@@ -196,7 +196,7 @@ func TestEventServiceBasic(t *testing.T) {
 		},
 	}
 
-	sourceSpanStat, ok := eventSource.spans[*acceptorInfo.span]
+	sourceSpanStat, ok := eventSource.spans[acceptorInfo.span.TableID]
 	require.True(t, ok)
 
 	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)
@@ -237,7 +237,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 
 	mysqlSink := sink.NewMysqlSink(8, writer.NewMysqlConfig(), db)
 	tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: nil, EndKey: nil}}
-	startTs := uint64(100)
+	startTs := uint64(1)
 
 	tableEventDispatcher := dispatcher.NewTableEventDispatcher(tableSpan, mysqlSink, startTs, nil)
 	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableEventDispatcher, startTs)
@@ -256,7 +256,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 		},
 	}
 
-	sourceSpanStat, ok := eventSource.spans[*tableSpan]
+	sourceSpanStat, ok := eventSource.spans[tableSpan.TableID]
 	require.True(t, ok)
 
 	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)
