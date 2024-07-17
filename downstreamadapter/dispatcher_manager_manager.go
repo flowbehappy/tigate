@@ -56,7 +56,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 			log.Error("failed to unmarshal changefeed config", zap.Error(err))
 			return err
 		}
-		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, nil, msg.To, msg.From)
+		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, cfConfig, msg.To, msg.From)
 		m.dispatcherManagers[changefeedID] = eventDispatcherManager
 
 		response := &heartbeatpb.MaintainerBootstrapResponse{

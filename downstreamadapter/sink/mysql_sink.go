@@ -24,6 +24,7 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/worker"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/utils"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/log"
@@ -37,32 +38,31 @@ const (
 
 type TableStatusMap struct {
 	mutex         sync.RWMutex
-	tableStatuses map[*common.TableSpan]TableStatus
+	tableStatuses *utils.BtreeMap[*common.TableSpan, TableStatus]
 }
 
 func NewTableStatusMap() *TableStatusMap {
 	return &TableStatusMap{
-		tableStatuses: make(map[*common.TableSpan]TableStatus),
+		tableStatuses: utils.NewBtreeMap[*common.TableSpan, TableStatus](),
 	}
 }
 
 func (m *TableStatusMap) Get(tableSpan *common.TableSpan) (TableStatus, bool) {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
-	tableStatus, ok := m.tableStatuses[tableSpan]
-	return tableStatus, ok
+	return m.tableStatuses.Get(tableSpan)
 }
 
 func (m *TableStatusMap) Set(tableSpan *common.TableSpan, tableStatus TableStatus) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	m.tableStatuses[tableSpan] = tableStatus
+	m.tableStatuses.ReplaceOrInsert(tableSpan, tableStatus)
 }
 
 func (m *TableStatusMap) Delete(tableSpan *common.TableSpan) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	delete(m.tableStatuses, tableSpan)
+	m.tableStatuses.Delete(tableSpan)
 }
 
 type TableStatus struct {
