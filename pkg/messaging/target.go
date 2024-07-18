@@ -30,13 +30,13 @@ type remoteMessageTarget struct {
 	// The server id of the message center.
 	localId ServerId
 	// The current localEpoch of the message center.
-	localEpoch uint64
+	localEpoch epochType
 	// The next message sendSequence number.
 	sendSequence atomic.Uint64
 
-	targetEpoch atomic.Uint64
+	targetEpoch atomic.Value
 	targetId    ServerId
-	targetAddr  string
+	targetAddr  addressType
 
 	// For sending events and commands
 	eventSender   *sendStreamWrapper
@@ -98,11 +98,11 @@ func (s *remoteMessageTarget) sendCommand(msg ...*TargetMessage) error {
 
 func newRemoteMessageTarget(
 	localID, targetId ServerId,
-	localEpoch, targetEpoch uint64,
-	addr string,
+	localEpoch, targetEpoch epochType,
+	addr addressType,
 	recvEventCh, recvCmdCh chan *TargetMessage,
 	cfg *config.MessageCenterConfig) *remoteMessageTarget {
-	log.Info("Create remote target", zap.Stringer("local", localID), zap.Stringer("remote", targetId), zap.String("addr", addr), zap.Uint64("localEpoch", localEpoch), zap.Uint64("targetEpoch", targetEpoch))
+	log.Info("Create remote target", zap.Stringer("local", localID), zap.Stringer("remote", targetId), zap.Any("addr", addr), zap.Any("localEpoch", localEpoch), zap.Any("targetEpoch", targetEpoch))
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &remoteMessageTarget{
 		localId:       localID,
@@ -127,7 +127,7 @@ func newRemoteMessageTarget(
 
 // close stops the grpc stream and the goroutine spawned by remoteMessageTarget.
 func (s *remoteMessageTarget) close() {
-	log.Info("Close remote target", zap.Stringer("local", s.localId), zap.Stringer("remote", s.targetId), zap.String("addr", s.targetAddr))
+	log.Info("Close remote target", zap.Stringer("local", s.localId), zap.Stringer("remote", s.targetId), zap.Any("addr", s.targetAddr))
 	if s.conn != nil {
 		s.conn.Close()
 		s.conn = nil
@@ -170,7 +170,7 @@ func (s *remoteMessageTarget) connect() {
 	if s.conn != nil {
 		return
 	}
-	conn, err := conn.Connect(s.targetAddr, &security.Credential{})
+	conn, err := conn.Connect(string(s.targetAddr), &security.Credential{})
 	if err != nil {
 		log.Info("Cannot create grpc client", zap.Stringer("local", s.localId), zap.Stringer("remote", s.targetId), zap.Error(err))
 		s.collectErr(AppError{
@@ -180,7 +180,7 @@ func (s *remoteMessageTarget) connect() {
 	}
 
 	client := proto.NewMessageCenterClient(conn)
-	handshake := &proto.Message{From: string(s.localId), To: string(s.targetId), Epoch: s.localEpoch, Type: int32(TypeMessageHandShake)}
+	handshake := &proto.Message{From: string(s.localId), To: string(s.targetId), Epoch: uint64(s.localEpoch), Type: int32(TypeMessageHandShake)}
 
 	eventStream, err := client.SendEvents(s.ctx, handshake)
 	if err != nil {
@@ -208,7 +208,7 @@ func (s *remoteMessageTarget) connect() {
 	log.Info("Connected to remote target",
 		zap.Stringer("local", s.localId),
 		zap.Stringer("remote", s.targetId),
-		zap.String("remoteAddr", s.targetAddr))
+		zap.Any("remoteAddr", s.targetAddr))
 }
 
 func (s *remoteMessageTarget) resetConnect() {
@@ -309,8 +309,8 @@ func (s *remoteMessageTarget) runReceiveMessages(stream grpcReceiver, receiveCh 
 				receiveCh <- &TargetMessage{
 					From:     ServerId(message.From),
 					To:       ServerId(message.To),
-					Topic:    message.Topic,
-					Epoch:    message.Epoch,
+					Topic:    topicType(message.Topic),
+					Epoch:    epochType(message.Epoch),
 					Sequence: message.Seqnum,
 					Type:     mt,
 					Message:  msg,
@@ -335,8 +335,8 @@ func (s *remoteMessageTarget) newMessage(msg ...*TargetMessage) *proto.Message {
 	protoMsg := &proto.Message{
 		From:    string(s.localId),
 		To:      string(s.targetId),
-		Epoch:   s.localEpoch,
-		Topic:   msg[0].Topic,
+		Epoch:   uint64(s.localEpoch),
+		Topic:   string(msg[0].Topic),
 		Seqnum:  s.sendSequence.Add(1),
 		Type:    int32(msg[0].Type),
 		Payload: msgBytes,
@@ -349,7 +349,7 @@ func (s *remoteMessageTarget) newMessage(msg ...*TargetMessage) *proto.Message {
 // It simply pushes the messages to the messageCenter's channel directly.
 type localMessageTarget struct {
 	localId  ServerId
-	epoch    uint64
+	epoch    epochType
 	sequence atomic.Uint64
 
 	// The gather channel from the message center.
