@@ -150,24 +150,6 @@ type HeartBeatInfo struct {
 }
 
 func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
-	var checkpointTs uint64
-	// The event in dispatcher could be in
-	// 1. Sink
-	// 2. State.pengingEvent
-	// 3. dispatcher.Ch
-	// If there exists an event in the dispatcher, the checkpointTs should be the event with the smallest commitTs - 1
-	// If there is no event in the dispatcher now, the checkpointTs should be the resolvedTs of the dispatcher.
-	smallestCommitTsInSink := d.GetSink().GetSmallestCommitTs(d.GetTableSpan())
-	if smallestCommitTsInSink == 0 {
-		state := d.GetState()
-		if state.pengdingEvent != nil {
-			checkpointTs = state.pengdingEvent.CommitTs - 1
-		} else {
-			checkpointTs = d.GetCheckpointTs()
-		}
-	} else {
-		checkpointTs = smallestCommitTsInSink - 1
-	}
 
 	// use checkpointTs to release memory usage
 	//d.GetMemoryUsage().Release(checkpointTs)
@@ -181,6 +163,7 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
 	// 	//TableSpan:    d.GetTableSpan(),
 	// 	Id: d.GetId(),
 	// }
+	checkpointTs := d.GetCheckpointTs()
 	heartBeatInfo := &HeartBeatInfo{
 		CheckpointTs:    checkpointTs,
 		Id:              d.GetId(),

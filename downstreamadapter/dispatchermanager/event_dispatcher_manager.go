@@ -147,15 +147,17 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 	return eventDispatcherManager
 }
 
-func (e *EventDispatcherManager) Init(startTs uint64) {
+func (e *EventDispatcherManager) Init(startTs uint64) error {
 	// Init Sink
 	//if e.sinkType == "Mysql" {
 	cfg, db, err := writer.NewMysqlConfigAndDB(e.config.SinkURI)
 	if err != nil {
 		log.Error("create mysql sink failed", zap.Error(err))
+		return err
 	}
 	// e.sink = sink.NewMysqlSink(*e.config.SinkConfig.MySQLConfig.WorkerCount, cfg, db)
 	e.sink = sink.NewMysqlSink(8, cfg, db)
+	return nil
 	//}
 
 	// Init Table Trigger Event Dispatcher, TODO: in demo we don't need deal with ddl
@@ -180,7 +182,11 @@ func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) 
 func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.TableSpan, startTs uint64) *dispatcher.TableEventDispatcher {
 	// 创建新的 event dispatcher，同时需要把这个去 logService 注册，并且把自己加到对应的某个处理 thread 里
 	if e.dispatcherMap.Len() == 0 {
-		e.Init(startTs)
+		err := e.Init(startTs)
+		if err != nil {
+			log.Error("init sink failed", zap.Error(err))
+			return nil
+		}
 	}
 
 	if _, ok := e.dispatcherMap.Get(tableSpan); ok {
