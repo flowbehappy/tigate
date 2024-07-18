@@ -3,6 +3,7 @@ package eventservice
 import (
 	"context"
 
+	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
@@ -21,14 +22,6 @@ type EventService interface {
 	Close()
 }
 
-type EventSource interface {
-	// SubscribeTableSpan subscribes the table span, and returns the latest progress of the table span.
-	// afterUpdate is called when the watermark of the table span is updated.
-	SubscribeTableSpan(span *common.TableSpan, startTs uint64, onSpanUpdate func(watermark uint64)) (uint64, error)
-	// Read return the event of the data range.
-	Read(dataRange ...*common.DataRange) ([][]*common.TxnEvent, error)
-}
-
 type EventAcceptorInfo interface {
 	// GetID returns the ID of the acceptor.
 	GetID() string
@@ -42,21 +35,21 @@ type EventAcceptorInfo interface {
 }
 
 type eventService struct {
-	ctx         context.Context
-	mc          messaging.MessageCenter
-	eventSource EventSource
-	stores      map[uint64]*eventBroker
+	ctx        context.Context
+	mc         messaging.MessageCenter
+	eventStore eventstore.EventStore
+	brokers    map[uint64]*eventBroker
 
 	// TODO: use a better way to cache the acceptorInfos
 	acceptorInfoCh chan EventAcceptorInfo
 }
 
-func NewEventService(ctx context.Context, mc messaging.MessageCenter, eventSource EventSource) EventService {
+func NewEventService(ctx context.Context, mc messaging.MessageCenter, eventStore eventstore.EventStore) EventService {
 	es := &eventService{
 		mc:             mc,
-		eventSource:    eventSource,
+		eventStore:     eventStore,
 		ctx:            ctx,
-		stores:         make(map[uint64]*eventBroker),
+		brokers:        make(map[uint64]*eventBroker),
 		acceptorInfoCh: make(chan EventAcceptorInfo, defaultChanelSize*16),
 	}
 	es.mc.RegisterHandler(messaging.EventServiceTopic, es.handleMessage)
@@ -82,7 +75,7 @@ func (s *eventService) Run() error {
 
 func (s *eventService) Close() {
 	log.Info("event service is closing")
-	for _, c := range s.stores {
+	for _, c := range s.brokers {
 		c.close()
 	}
 	log.Info("event service is closed")
@@ -99,38 +92,37 @@ func (s *eventService) registerAcceptor(acceptor EventAcceptorInfo) {
 	startTs := acceptor.GetStartTs()
 	span := acceptor.GetTableSpan()
 
-	c, ok := s.stores[clusterID]
+	c, ok := s.brokers[clusterID]
 	if !ok {
-		c = newCluster(s.ctx, clusterID, s.eventSource, s.mc)
-		s.stores[clusterID] = c
+		c = newEventBroker(s.ctx, clusterID, s.eventStore, s.mc)
+		s.brokers[clusterID] = c
 	}
+
+	spanSub := &spanSubscription{
+		span: span,
+	}
+	spanSub.watermark.Store(uint64(startTs))
+
 	// add the acceptor to the cluster.
 	ac := &acceptorStat{
-		acceptor: acceptor,
+		acceptor:         acceptor,
+		spanSubscription: spanSub,
+		notify:           c.changedAcceptor,
 	}
-
 	ac.watermark.Store(uint64(startTs))
 	c.acceptors[acceptor.GetID()] = ac
-
-	// add the acceptor to the table span it wants to listen.
-	stat, ok := c.spanStats[span.TableID]
-	if !ok {
-		stat = &spanSubscription{
-			span:      acceptor.GetTableSpan(),
-			acceptors: make(map[string]*acceptorStat),
-			notify:    c.changedSpanCh,
-		}
-		stat.watermark.Store(uint64(startTs))
-		c.spanStats[span.TableID] = stat
-	}
-	stat.addAcceptor(ac)
-	c.eventSource.SubscribeTableSpan(span, startTs, stat.UpdateWatermark)
-
+	c.eventStore.RegisterDispatcher(
+		acceptor.GetID(),
+		acceptor.GetTableSpan(),
+		common.Ts(acceptor.GetStartTs()),
+		ac.UpdateEventCount,
+		ac.UpdateWatermark,
+	)
 	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", acceptor.GetID()))
 }
 
 func (s *eventService) deregisterAcceptor(clusterID uint64, accepterID string) {
-	c, ok := s.stores[clusterID]
+	c, ok := s.brokers[clusterID]
 	if !ok {
 		return
 	}

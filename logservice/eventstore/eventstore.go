@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/flowbehappy/tigate/common"
 	"github.com/flowbehappy/tigate/logservice/eventsource"
 	"github.com/flowbehappy/tigate/logservice/puller"
 	"github.com/flowbehappy/tigate/logservice/txnutil"
 	"github.com/flowbehappy/tigate/logservice/upstream"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/pingcap/tiflow/pkg/spanz"
@@ -32,7 +32,7 @@ type EventStore interface {
 	RegisterDispatcher(
 		dispatcherID common.DispatcherID,
 		span tablepb.Span,
-		startTS common.Timestamp,
+		startTS common.Ts,
 		observer EventObserver,
 		notifier WatermarkNotifier,
 	) error
@@ -298,7 +298,7 @@ func (e *eventStore) deleteEvents(span tablepb.Span, startCommitTS uint64, endCo
 	return db.DeleteRange(start, end, pebble.NoSync)
 }
 
-func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span tablepb.Span, startTS common.Timestamp, observer EventObserver, notifier WatermarkNotifier) error {
+func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span tablepb.Span, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.tables.ReplaceOrInsert(span, dispatcherID)

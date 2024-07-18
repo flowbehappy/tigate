@@ -179,9 +179,9 @@ func TestEventServiceBasic(t *testing.T) {
 	// wait for eventService to process the acceptorInfo
 	time.Sleep(time.Second * 2)
 
-	require.Equal(t, 1, len(esImpl.stores))
-	require.NotNil(t, esImpl.stores[acceptorInfo.GetClusterID()])
-	require.Equal(t, 1, len(esImpl.stores[acceptorInfo.GetClusterID()].spanStats))
+	require.Equal(t, 1, len(esImpl.brokers))
+	require.NotNil(t, esImpl.brokers[acceptorInfo.GetClusterID()])
+	require.Equal(t, 1, len(esImpl.brokers[acceptorInfo.GetClusterID()].spanStats))
 
 	// add events to eventSource
 	txnEvent := &common.TxnEvent{

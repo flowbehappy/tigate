@@ -3,7 +3,7 @@ package eventstore
 import (
 	"encoding/binary"
 
-	"github.com/flowbehappy/tigate/common"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
