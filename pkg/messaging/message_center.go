@@ -21,12 +21,10 @@ type MessageCenter interface {
 	MessageSender
 	//MessageReceiver
 
-	ID() ServerId
 	RegisterHandler(topic common.TopicType, handler MessageHandler)
 	DeRegisterHandler(topic common.TopicType)
 	AddTarget(id ServerId, epoch common.EpochType, addr common.AddressType)
 	RemoveTarget(id ServerId)
-	GetRemoteTarget(id ServerId) (*remoteMessageTarget, bool)
 	Close()
 }
 
@@ -114,17 +112,6 @@ func NewMessageCenter(id ServerId, epoch common.EpochType, cfg *config.MessageCe
 	mc.router.runDispatch(mc.ctx, mc.wg, mc.receiveCmdCh)
 	log.Info("Create message center success, message router is running.", zap.Stringer("id", id), zap.Any("epoch", epoch))
 	return mc
-}
-
-func (mc *messageCenter) ID() ServerId {
-	return mc.id
-}
-
-func (mc *messageCenter) GetRemoteTarget(id ServerId) (*remoteMessageTarget, bool) {
-	mc.remoteTargets.RLock()
-	defer mc.remoteTargets.RUnlock()
-	target, ok := mc.remoteTargets.m[id]
-	return target, ok
 }
 
 func (mc *messageCenter) RegisterHandler(topic common.TopicType, handler MessageHandler) {
@@ -257,11 +244,11 @@ func (mc *messageCenter) touchRemoteTarget(id ServerId, epoch common.EpochType, 
 // and then calls the methods in MessageCenter struct to handle the requests.
 type grpcServer struct {
 	proto.UnimplementedMessageCenterServer
-	messageCenter MessageCenter
+	messageCenter *messageCenter
 }
 
 func NewMessageCenterServer(mc MessageCenter) proto.MessageCenterServer {
-	return &grpcServer{messageCenter: mc}
+	return &grpcServer{messageCenter: mc.(*messageCenter)}
 }
 
 func (s *grpcServer) SendEvents(msg *proto.Message, stream proto.MessageCenter_SendEventsServer) error {
@@ -275,7 +262,7 @@ func (s *grpcServer) SendCommands(msg *proto.Message, stream proto.MessageCenter
 }
 
 func (s *grpcServer) id() ServerId {
-	return s.messageCenter.ID()
+	return s.messageCenter.id
 }
 
 // handleConnect registers the client as a target in the message center.
@@ -290,10 +277,12 @@ func (s *grpcServer) handleConnect(msg *proto.Message, stream grpcSender, isEven
 	}
 	targetId := ServerId(msg.From)
 
-	remoteTarget, ok := s.messageCenter.GetRemoteTarget(targetId)
+	s.messageCenter.remoteTargets.RLock()
+	defer s.messageCenter.remoteTargets.RUnlock()
+	remoteTarget, ok := s.messageCenter.remoteTargets.m[targetId]
 	if ok {
 		log.Info("Start to sent message to remote target",
-			zap.Stringer("local", s.messageCenter.ID()),
+			zap.Any("messageCenterID", s.messageCenter.id),
 			zap.String("remote", msg.From),
 			zap.Bool("isEvent", isEvent))
 		// The handshake message's epoch should be the same as the target's epoch.
@@ -308,7 +297,7 @@ func (s *grpcServer) handleConnect(msg *proto.Message, stream grpcSender, isEven
 			return remoteTarget.runCommandSendStream(stream)
 		}
 	} else {
-		log.Info("Remote target not found", zap.Stringer("local", s.messageCenter.ID()), zap.Stringer("remote", targetId))
+		log.Info("Remote target not found", zap.Any("messageCenter", s.messageCenter.id), zap.Any("remote", targetId))
 		err := &apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %s not found", targetId)}
 		// merr := NewMessageError(err)
 		// pMsg := &proto.Message{
