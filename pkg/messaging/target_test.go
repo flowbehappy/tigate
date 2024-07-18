@@ -40,7 +40,7 @@ func TestRemoteTargetNewMessage(t *testing.T) {
 	msg2 := rt.newMessage(msg)
 	log.Info("msg2", zap.Any("msg2", msg2))
 	require.Equal(t, TypeBytes, IOType(msg2.Type))
-	require.Equal(t, rt.localEpoch, msg2.Epoch)
+	require.Equal(t, rt.localEpoch, epochType(msg2.Epoch))
 	require.Equal(t, uint64(2), rt.sendSequence.Load())
 	require.Equal(t, rt.sendSequence.Load(), msg2.Seqnum)
 }

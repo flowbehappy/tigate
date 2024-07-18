@@ -302,7 +302,7 @@ func (s *grpcServer) handleConnect(msg *proto.Message, stream grpcSender, isEven
 			zap.String("remote", msg.From),
 			zap.Bool("isEvent", isEvent))
 		// The handshake message's epoch should be the same as the target's epoch.
-		if msg.Epoch != remoteTarget.targetEpoch.Load() {
+		if epochType(msg.Epoch) != remoteTarget.targetEpoch.Load().(epochType) {
 			err := apperror.AppError{Type: apperror.ErrorTypeEpochMismatch, Reason: fmt.Sprintf("Target %s epoch mismatch, expect %d, got %d", targetId, remoteTarget.targetEpoch.Load(), msg.Epoch)}
 			log.Error("Epoch mismatch", zap.Error(err))
 			return err
