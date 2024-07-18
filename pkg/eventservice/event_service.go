@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	defaultChanelSize  = 2048
+	defaultChannelSize = 2048
 	defaultWorkerCount = 32
 )
 
@@ -66,7 +66,7 @@ func NewEventService(ctx context.Context) EventService {
 		eventStore:     eventStore,
 		ctx:            ctx,
 		brokers:        make(map[uint64]*eventBroker),
-		acceptorInfoCh: make(chan DispatcherInfo, defaultChanelSize*16),
+		acceptorInfoCh: make(chan DispatcherInfo, defaultChannelSize*16),
 	}
 	es.mc.RegisterHandler(messaging.EventServiceTopic, es.handleMessage)
 	return es

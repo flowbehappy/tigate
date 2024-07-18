@@ -62,7 +62,7 @@ func newEventBroker(
 		changedCh:       make(chan *subscriptionChange, defaultChanelSize),
 		taskPool:        newScanTaskPool(),
 		scanWorkerCount: defaultWorkerCount,
-		messageCh:       make(chan *messaging.TargetMessage, defaultChanelSize),
+		messageCh:       make(chan *messaging.TargetMessage, defaultChannelSize),
 		cancel:          cancel,
 		wg:              wg,
 	}
@@ -292,7 +292,7 @@ type scanTaskPool struct {
 func newScanTaskPool() *scanTaskPool {
 	return &scanTaskPool{
 		taskSet:   make(map[string]*scanTask),
-		fifoQueue: make(chan *scanTask, defaultChanelSize),
+		fifoQueue: make(chan *scanTask, defaultChannelSize),
 	}
 }
 
