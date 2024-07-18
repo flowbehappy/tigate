@@ -106,7 +106,7 @@ func (m *Manager) Run(ctx context.Context) error {
 			//2.  try to send heartbeat to coordinator
 			m.sendHeartbeat(absent)
 
-			//3. cleanup removed maintainer
+			//3. cleanup removed maintainers
 			m.maintainers.Range(func(key, value interface{}) bool {
 				cf := value.(*Maintainer)
 				if cf.removed.Load() {

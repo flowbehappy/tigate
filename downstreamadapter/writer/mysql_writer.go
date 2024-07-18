@@ -157,7 +157,6 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *common.TxnEvent) error {
 
 func (w *MysqlWriter) Flush(events []*common.TxnEvent) error {
 	dmls := w.prepareDMLs(events)
-
 	if dmls.rowCount == 0 {
 		return nil
 	}
@@ -168,7 +167,9 @@ func (w *MysqlWriter) Flush(events []*common.TxnEvent) error {
 	}
 
 	for _, event := range events {
-		event.PostTxnFlushed()
+		if event.PostTxnFlushed != nil {
+			event.PostTxnFlushed()
+		}
 	}
 	return nil
 }

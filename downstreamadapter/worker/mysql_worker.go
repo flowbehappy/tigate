@@ -24,12 +24,14 @@ import (
 type MysqlWorker struct {
 	eventChan   <-chan *common.TxnEvent // 获取到能往下游写的 events
 	mysqlWriter *writer.MysqlWriter     // 实际负责做 flush 操作
+	id          int
 }
 
-func NewMysqlWorker(eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig) *MysqlWorker {
+func NewMysqlWorker(eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig, id int) *MysqlWorker {
 	return &MysqlWorker{
 		eventChan:   eventChan,
 		mysqlWriter: writer.NewMysqlWriter(db, config),
+		id:          id,
 	}
 }
 
@@ -39,6 +41,10 @@ func (t *MysqlWorker) GetEventChan() <-chan *common.TxnEvent {
 
 func (t *MysqlWorker) GetMysqlWriter() *writer.MysqlWriter {
 	return t.mysqlWriter
+}
+
+func (t *MysqlWorker) GetID() int {
+	return t.id
 }
 
 /*

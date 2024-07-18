@@ -99,8 +99,7 @@ type TableEventDispatcher struct {
 	tableSpan *common.TableSpan
 	sink      sink.Sink
 
-	state      *State
-	resolvedTs *TsWithMutex
+	state *State
 
 	// 搞个 channel 来接收 heartbeat 产生的 信息，然后下推数据这个就可以做成 await 了
 	// heartbeat 会更新依赖的 tableSpan 的 状态，然后满足了就删掉，下次发送就不用发了，但最终推动他变化的还是要收到 action
@@ -114,7 +113,7 @@ type TableEventDispatcher struct {
 
 	componentStatus *ComponentStateWithMutex
 
-	checkpointTs *TsWithMutex // 用来记 eventChan 中目前收到的 event 中收到的最大的 commitTs - 1
+	resolvedTs *TsWithMutex // 用来记 eventChan 中目前收到的 event 中收到的最大的 commitTs - 1,不代表 dispatcher 的 checkpointTs
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -128,12 +127,11 @@ func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startT
 		tableSpan:     tableSpan,
 		sink:          sink,
 		state:         NewState(),
-		resolvedTs:    newTsWithMutex(startTs),
 		heartbeatChan: make(chan *HeartBeatResponseMessage, 100),
 		//SyncPointInfo:   syncPointInfo,
 		//MemoryUsage:     NewMemoryUsage(),
 		componentStatus: newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
-		checkpointTs:    newTsWithMutex(startTs),
+		resolvedTs:      newTsWithMutex(startTs),
 		cancel:          cancel,
 	}
 	tableEventDispatcher.sink.AddTableSpan(tableSpan)
@@ -156,7 +154,7 @@ func (d *TableEventDispatcher) DispatcherEvents(ctx context.Context) {
 				sink.AddDMLEvent(tableSpan, event)
 			} else {
 				// resolvedTs
-				d.checkpointTs.Set(event.ResolvedTs)
+				d.resolvedTs.Set(event.ResolvedTs)
 			}
 		}
 	}
@@ -183,7 +181,19 @@ func (d *TableEventDispatcher) GetResolvedTs() uint64 {
 }
 
 func (d *TableEventDispatcher) GetCheckpointTs() uint64 {
-	return d.checkpointTs.Get()
+	var checkpointTs uint64
+	smallestCommitTsInSink := d.GetSink().GetSmallestCommitTs(d.GetTableSpan())
+	if smallestCommitTsInSink == 0 {
+		// state := d.GetState()
+		// if state.pengdingEvent != nil {
+		// 	checkpointTs = state.pengdingEvent.CommitTs - 1
+		// } else {
+		checkpointTs = d.GetResolvedTs()
+		//}
+	} else {
+		checkpointTs = smallestCommitTsInSink - 1
+	}
+	return checkpointTs
 }
 
 func (d *TableEventDispatcher) UpdateResolvedTs(ts uint64) {
