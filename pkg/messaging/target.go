@@ -3,6 +3,7 @@ package messaging
 import (
 	"context"
 	"fmt"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,7 +20,7 @@ import (
 )
 
 type MessageTarget interface {
-	Epoch() epochType
+	Epoch() common.EpochType
 }
 
 const (
@@ -32,14 +33,14 @@ const (
 // and 1 goroutine to handle grpc stream error.
 type remoteMessageTarget struct {
 	messageCenterID    ServerId
-	messageCenterEpoch epochType
+	messageCenterEpoch common.EpochType
 
 	// The next message sendSequence number.
 	sendSequence atomic.Uint64
 
 	targetEpoch atomic.Value
 	targetId    ServerId
-	targetAddr  addressType
+	targetAddr  common.AddressType
 
 	// For sending events and commands
 	eventSender   *sendStreamWrapper
@@ -71,8 +72,8 @@ type remoteMessageTarget struct {
 	errCh chan AppError
 }
 
-func (s *remoteMessageTarget) Epoch() epochType {
-	return s.targetEpoch.Load().(epochType)
+func (s *remoteMessageTarget) Epoch() common.EpochType {
+	return s.targetEpoch.Load().(common.EpochType)
 }
 
 func (s *remoteMessageTarget) sendEvent(msg ...*TargetMessage) error {
@@ -105,8 +106,8 @@ func (s *remoteMessageTarget) sendCommand(msg ...*TargetMessage) error {
 
 func newRemoteMessageTarget(
 	localID, targetId ServerId,
-	localEpoch, targetEpoch epochType,
-	addr addressType,
+	localEpoch, targetEpoch common.EpochType,
+	addr common.AddressType,
 	recvEventCh, recvCmdCh chan *TargetMessage,
 	cfg *config.MessageCenterConfig) *remoteMessageTarget {
 	log.Info("Create remote target", zap.Stringer("local", localID), zap.Stringer("remote", targetId), zap.Any("addr", addr), zap.Any("localEpoch", localEpoch), zap.Any("targetEpoch", targetEpoch))
@@ -327,8 +328,8 @@ func (s *remoteMessageTarget) runReceiveMessages(stream grpcReceiver, receiveCh 
 				receiveCh <- &TargetMessage{
 					From:     ServerId(message.From),
 					To:       ServerId(message.To),
-					Topic:    topicType(message.Topic),
-					Epoch:    epochType(message.Epoch),
+					Topic:    common.TopicType(message.Topic),
+					Epoch:    common.EpochType(message.Epoch),
 					Sequence: message.Seqnum,
 					Type:     mt,
 					Message:  msg,
@@ -367,7 +368,7 @@ func (s *remoteMessageTarget) newMessage(msg ...*TargetMessage) *proto.Message {
 // It simply pushes the messages to the messageCenter's channel directly.
 type localMessageTarget struct {
 	localId  ServerId
-	epoch    epochType
+	epoch    common.EpochType
 	sequence atomic.Uint64
 
 	// The gather channel from the message center.
@@ -376,7 +377,7 @@ type localMessageTarget struct {
 	recvCmdCh   chan *TargetMessage
 }
 
-func (s *localMessageTarget) Epoch() epochType {
+func (s *localMessageTarget) Epoch() common.EpochType {
 	return s.epoch
 }
 

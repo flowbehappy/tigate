@@ -251,15 +251,15 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 type TargetMessage struct {
 	From     ServerId
 	To       ServerId
-	Epoch    epochType
+	Epoch    common.EpochType
 	Sequence uint64
-	Topic    topicType
+	Topic    common.TopicType
 	Type     IOType
 	Message  IOTypeT
 }
 
 // NewTargetMessage creates a new TargetMessage to be sent to a target server.
-func NewTargetMessage(To ServerId, Topic topicType, Message IOTypeT) *TargetMessage {
+func NewTargetMessage(To ServerId, Topic common.TopicType, Message IOTypeT) *TargetMessage {
 	var ioType IOType
 	switch Message.(type) {
 	case *Bytes:

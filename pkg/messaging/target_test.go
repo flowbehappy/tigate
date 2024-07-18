@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"github.com/flowbehappy/tigate/pkg/common"
 	"testing"
 
 	"github.com/flowbehappy/tigate/pkg/config"
@@ -32,7 +33,7 @@ func TestRemoteTargetNewMessage(t *testing.T) {
 	}
 	msg1 := rt.newMessage(msg)
 	require.Equal(t, TypeBytes, IOType(msg1.Type))
-	require.Equal(t, rt.messageCenterEpoch, epochType(msg1.Epoch))
+	require.Equal(t, rt.messageCenterEpoch, common.EpochType(msg1.Epoch))
 	require.Equal(t, uint64(1), rt.sendSequence.Load())
 	require.Equal(t, rt.sendSequence.Load(), msg1.Seqnum)
 
@@ -40,7 +41,7 @@ func TestRemoteTargetNewMessage(t *testing.T) {
 	msg2 := rt.newMessage(msg)
 	log.Info("msg2", zap.Any("msg2", msg2))
 	require.Equal(t, TypeBytes, IOType(msg2.Type))
-	require.Equal(t, rt.messageCenterEpoch, epochType(msg2.Epoch))
+	require.Equal(t, rt.messageCenterEpoch, common.EpochType(msg2.Epoch))
 	require.Equal(t, uint64(2), rt.sendSequence.Load())
 	require.Equal(t, rt.sendSequence.Load(), msg2.Seqnum)
 }

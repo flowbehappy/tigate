@@ -3,6 +3,7 @@ package messaging
 import (
 	"context"
 	"fmt"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"sync"
 
 	"github.com/flowbehappy/tigate/pkg/apperror"
@@ -13,12 +14,6 @@ import (
 	"google.golang.org/grpc"
 )
 
-type topicType string
-
-type epochType uint64
-
-type addressType string
-
 // MessageCenter is the interface to send and receive messages to/from other targets.
 // Note: Methods of MessageCenter and MessageSender are thread-safe.
 // AddTarget and RemoveTarget are not thread-safe, and should be called in the main thread of a server.
@@ -27,9 +22,9 @@ type MessageCenter interface {
 	//MessageReceiver
 
 	ID() ServerId
-	RegisterHandler(topic topicType, handler MessageHandler)
-	DeRegisterHandler(topic topicType)
-	AddTarget(id ServerId, epoch epochType, addr addressType)
+	RegisterHandler(topic common.TopicType, handler MessageHandler)
+	DeRegisterHandler(topic common.TopicType)
+	AddTarget(id ServerId, epoch common.EpochType, addr common.AddressType)
 	RemoveTarget(id ServerId)
 	GetRemoteTarget(id ServerId) (*remoteMessageTarget, bool)
 	Close()
@@ -77,7 +72,7 @@ type messageCenter struct {
 	id ServerId
 	// The current epoch of the message center,
 	// when every time the message center is restarted, the epoch will be increased by 1.
-	epoch epochType
+	epoch common.EpochType
 	cfg   *config.MessageCenterConfig
 	// The local target, which is the message center itself.
 	localTarget *localMessageTarget
@@ -98,7 +93,7 @@ type messageCenter struct {
 	cancel         context.CancelFunc
 }
 
-func NewMessageCenter(id ServerId, epoch epochType, cfg *config.MessageCenterConfig) *messageCenter {
+func NewMessageCenter(id ServerId, epoch common.EpochType, cfg *config.MessageCenterConfig) *messageCenter {
 	receiveEventCh := make(chan *TargetMessage, cfg.CacheChannelSize)
 	receiveCmdCh := make(chan *TargetMessage, cfg.CacheChannelSize)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -132,17 +127,17 @@ func (mc *messageCenter) GetRemoteTarget(id ServerId) (*remoteMessageTarget, boo
 	return target, ok
 }
 
-func (mc *messageCenter) RegisterHandler(topic topicType, handler MessageHandler) {
+func (mc *messageCenter) RegisterHandler(topic common.TopicType, handler MessageHandler) {
 	mc.router.registerHandler(topic, handler)
 }
 
-func (mc *messageCenter) DeRegisterHandler(topic topicType) {
+func (mc *messageCenter) DeRegisterHandler(topic common.TopicType) {
 	mc.router.deRegisterHandler(topic)
 }
 
 // AddTarget is called when a new remote target is discovered,
 // to add the target to the message center.
-func (mc *messageCenter) AddTarget(id ServerId, epoch epochType, addr addressType) {
+func (mc *messageCenter) AddTarget(id ServerId, epoch common.EpochType, addr common.AddressType) {
 	// If the target is the message center itself, we don't need to add it.
 	if id == mc.id {
 		log.Info("Add local target", zap.Stringer("id", id), zap.Any("epoch", epoch), zap.Any("addr", addr))
@@ -228,7 +223,7 @@ func (mc *messageCenter) Close() {
 
 // touchRemoteTarget returns the remote target by the id,
 // if the target is not found, it will create a new one.
-func (mc *messageCenter) touchRemoteTarget(id ServerId, epoch epochType, addr addressType) *remoteMessageTarget {
+func (mc *messageCenter) touchRemoteTarget(id ServerId, epoch common.EpochType, addr common.AddressType) *remoteMessageTarget {
 	mc.remoteTargets.Lock()
 	defer mc.remoteTargets.Unlock()
 	if target, ok := mc.remoteTargets.m[id]; ok {
@@ -302,7 +297,7 @@ func (s *grpcServer) handleConnect(msg *proto.Message, stream grpcSender, isEven
 			zap.String("remote", msg.From),
 			zap.Bool("isEvent", isEvent))
 		// The handshake message's epoch should be the same as the target's epoch.
-		if epochType(msg.Epoch) != remoteTarget.Epoch() {
+		if common.EpochType(msg.Epoch) != remoteTarget.Epoch() {
 			err := apperror.AppError{Type: apperror.ErrorTypeEpochMismatch, Reason: fmt.Sprintf("Target %s epoch mismatch, expect %d, got %d", targetId, remoteTarget.Epoch(), msg.Epoch)}
 			log.Error("Epoch mismatch", zap.Error(err))
 			return err
