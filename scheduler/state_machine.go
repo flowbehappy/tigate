@@ -682,7 +682,7 @@ func (s *StateMachine) pollOnWorking(
 	log.Warn("ignore input, unexpected state",
 		zap.Any("status", input),
 		zap.String("captureID", captureID),
-		zap.Any("statemachine", s))
+		zap.Any("statemachine", s.ID.String()))
 	return false, nil
 }
 

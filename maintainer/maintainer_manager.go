@@ -37,13 +37,15 @@ type Manager struct {
 	maintainers sync.Map
 
 	msgLock sync.RWMutex
-	msgBuf  []*messaging.TargetMessage
 
 	coordinatorID      messaging.ServerId
 	coordinatorVersion int64
 
 	selfServerID messaging.ServerId
 	pdEndpoints  []string
+
+	msgQueue *MessageQueue
+	msgBuf   []*messaging.TargetMessage
 }
 
 // NewMaintainerManager create a changefeed maintainer manager instance,
@@ -55,14 +57,14 @@ func NewMaintainerManager(selfServerID messaging.ServerId, pdEndpoints []string)
 		maintainers:  sync.Map{},
 		selfServerID: selfServerID,
 		pdEndpoints:  pdEndpoints,
+		msgQueue:     NewMessageQueue(1024),
+		msgBuf:       make([]*messaging.TargetMessage, 1024),
 	}
 	// receive message coordinator
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
 		RegisterHandler(messaging.MaintainerManagerTopic,
 			func(msg *messaging.TargetMessage) error {
-				m.msgLock.Lock()
-				m.msgBuf = append(m.msgBuf, msg)
-				m.msgLock.Unlock()
+				m.msgQueue.Push(msg)
 				return nil
 			})
 
@@ -104,7 +106,7 @@ func (m *Manager) Run(ctx context.Context) error {
 			//2.  try to send heartbeat to coordinator
 			m.sendHeartbeat(absent)
 
-			//3. cleanup removed maintainer
+			//3. cleanup removed maintainers
 			m.maintainers.Range(func(key, value interface{}) bool {
 				cf := value.(*Maintainer)
 				if cf.removed.Load() {
@@ -239,19 +241,18 @@ func (m *Manager) sendHeartbeat(absent []string) {
 }
 
 func (m *Manager) handleMessages() []string {
-	m.msgLock.Lock()
-	buf := m.msgBuf
-	m.msgBuf = nil
-	m.msgLock.Unlock()
+	size := m.msgQueue.PopMessages(m.msgBuf, len(m.msgBuf))
 
 	var absent []string
-	for _, msg := range buf {
+	for i := 0; i < size; i++ {
+		msg := m.msgBuf[i]
 		switch msg.Type {
 		case messaging.TypeCoordinatorBootstrapRequest:
 			m.onCoordinatorBootstrapRequest(msg)
 		case messaging.TypeDispatchMaintainerRequest:
 			absent = append(absent, m.onDispatchMaintainerRequest(msg)...)
 		}
+		m.msgBuf[i] = nil
 	}
 	return absent
 }
@@ -270,7 +271,5 @@ func (m *Manager) cacheMaintainerMessage(changefeed string, msg *messaging.Targe
 	if maintainer.isSecondary.Load() {
 		return
 	}
-	maintainer.msgLock.Lock()
-	maintainer.msgBuf = append(m.msgBuf, msg)
-	maintainer.msgLock.Unlock()
+	maintainer.getMessageQueue().Push(msg)
 }
