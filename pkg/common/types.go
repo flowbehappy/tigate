@@ -12,4 +12,10 @@ type DispatcherID uuid.UUID
 type DatabaseID int64
 type SchemaID int64
 
+type TopicType string
+
+type EpochType uint64
+
+type AddressType string
+
 var DefaultEndian = binary.LittleEndian
