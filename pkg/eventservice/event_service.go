@@ -75,7 +75,7 @@ func (s *eventService) Run() error {
 			if info.IsRegister() {
 				s.registerAcceptor(info)
 			} else {
-				s.deregisterAcceptor(info.GetClusterID(), info.GetID())
+				s.deregisterAcceptor(info)
 			}
 		}
 	}
@@ -117,7 +117,7 @@ func (s *eventService) registerAcceptor(acceptor EventAcceptorInfo) {
 	stat, ok := c.spanStats[span.TableID]
 	if !ok {
 		stat = &spanSubscription{
-			span:      acceptor.GetTableSpan(),
+			span:      span,
 			acceptors: make(map[string]*acceptorStat),
 			notify:    c.changedSpanCh,
 		}
@@ -130,18 +130,20 @@ func (s *eventService) registerAcceptor(acceptor EventAcceptorInfo) {
 	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", acceptor.GetID()))
 }
 
-func (s *eventService) deregisterAcceptor(clusterID uint64, accepterID string) {
+func (s *eventService) deregisterAcceptor(acceptor EventAcceptorInfo) {
+	clusterID := acceptor.GetClusterID()
 	c, ok := s.stores[clusterID]
 	if !ok {
 		return
 	}
-	_, ok = c.acceptors[accepterID]
+	acceptorID := acceptor.GetID()
+	_, ok = c.acceptors[acceptorID]
 	if !ok {
 		return
 	}
 	//TODO: release the resources of the acceptor.
-	delete(c.acceptors, accepterID)
-	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", accepterID))
+	delete(c.acceptors, acceptorID)
+	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", acceptorID))
 }
 
 // TODO: implement the following functions
