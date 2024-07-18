@@ -25,8 +25,11 @@ type SchemaStore interface {
 	GetAllPhysicalTables(dispatcherID DispatcherID, filter Filter, ts Timestamp) ([]TableID, error)
 
 	// RegisterDispatcher register the dispatcher into the schema store.
-	// todo: how to deal with TableEventDispatcher, use a different interface?
+	// TODO: return a table info
+	// TODO: the filter seems unnecessary
 	RegisterDispatcher(dispatcherID DispatcherID, tableID TableID, filter Filter, ts Timestamp) error
+
+	// TODO: add interface for TableEventDispatcher
 
 	UpdateDispatcherSendTS(dispatcherID DispatcherID, ts Timestamp) error
 
@@ -104,6 +107,7 @@ func (s *schemaStore) run(ctx context.Context) error {
 					log.Fatal("write ddl event failed", zap.Error(err))
 				}
 			case Timestamp:
+				// TODO: check resolved ts is monotonically increasing
 				resolvedEvents := s.unsortedCache.fetchSortedDDLEventBeforeTS(v)
 				if len(resolvedEvents) == 0 {
 					continue
@@ -139,11 +143,13 @@ func (s *schemaStore) run(ctx context.Context) error {
 }
 
 func (s *schemaStore) WriteDDLEvent(ddlEvent DDLEvent) error {
+	log.Info("write ddl event", zap.Any("ddlEvent", ddlEvent))
 	s.eventCh <- ddlEvent
 	return nil
 }
 
 func (s *schemaStore) AdvanceResolvedTS(resolvedTS Timestamp) error {
+	log.Info("advance resolved ts", zap.Any("resolvedTS", resolvedTS))
 	s.eventCh <- resolvedTS
 	return nil
 }
