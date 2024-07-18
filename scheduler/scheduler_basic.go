@@ -87,17 +87,9 @@ func (b *BasicScheduler) Schedule(
 	// Fast path for check whether two sets are identical
 	if !lenEqual || !allFind {
 		// The two sets are not identical. We need to build a map to find removed inferiors.
-		intersectionIDS := utils.NewBtreeMap[InferiorID, struct{}]()
-		allInferiors.Ascend(func(inf InferiorID, value Inferior) bool {
-			ok := stateMachines.Has(inf)
-			if ok {
-				intersectionIDS.ReplaceOrInsert(inf, struct{}{})
-			}
-			return true
-		})
 		rmInferiorIDs := make([]InferiorID, 0)
 		stateMachines.Ascend(func(key InferiorID, value *StateMachine) bool {
-			ok := intersectionIDS.Has(key)
+			ok := allInferiors.Has(key)
 			if !ok {
 				rmInferiorIDs = append(rmInferiorIDs, key)
 			}
@@ -143,8 +135,11 @@ func newBurstRemoveInferiors(
 	removeTasks := make([]*ScheduleTask, 0, len(rmInferiors))
 	for _, id := range rmInferiors {
 		ccf, _ := stateMachines.Get(id)
-		var captureID model.CaptureID = ccf.Primary
-
+		var captureID string
+		for server := range ccf.Servers {
+			captureID = server
+			break
+		}
 		if ccf.Primary == "" {
 			log.Warn("primary or secondary not found for removed inferior,"+
 				"this may happen if the server shutdown",
