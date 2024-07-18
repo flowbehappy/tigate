@@ -16,7 +16,6 @@ package maintainer
 import (
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -77,8 +76,8 @@ type Maintainer struct {
 	cascadeRemoving *atomic.Bool
 	isSecondary     *atomic.Bool
 
-	msgLock sync.RWMutex
-	msgBuf  []*messaging.TargetMessage
+	msgQueue *MessageQueue
+	msgBuf   []*messaging.TargetMessage
 
 	lastCheckTime time.Time
 
@@ -111,6 +110,8 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		checkpointTs:    atomic.NewUint64(checkpointTs),
 		pdEndpoints:     pdEndpoints,
 		tableSpans:      utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior](),
+		msgQueue:        NewMessageQueue(1024),
+		msgBuf:          make([]*messaging.TargetMessage, 1024),
 	}
 	if !isSecondary {
 		m.state = heartbeatpb.ComponentState_Working
@@ -183,21 +184,28 @@ func (m *Maintainer) getReplicaSet(id scheduler.InferiorID) scheduler.Inferior {
 }
 
 func (m *Maintainer) handleMessages() error {
-	m.msgLock.Lock()
-	buf := m.msgBuf
-	m.msgBuf = nil
-	m.msgLock.Unlock()
-	for _, msg := range buf {
-		switch msg.Type {
-		case messaging.TypeHeartBeatRequest:
-			if err := m.onHeartBeatRequest(msg); err != nil {
-				return errors.Trace(err)
-			}
-		case messaging.TypeMaintainerBootstrapResponse:
-			m.onMaintainerBootstrapResponse(msg)
-		default:
-			log.Panic("unexpected message type", zap.String("type", msg.Type.String()))
+	size := m.msgQueue.PopMessages(m.msgBuf, len(m.msgBuf))
+	for idx := 0; idx < size; idx++ {
+		msg := m.msgBuf[idx]
+		if err := m.onMessage(msg); err != nil {
+			return errors.Trace(err)
 		}
+
+		m.msgBuf[idx] = nil
+	}
+	return nil
+}
+
+func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
+	switch msg.Type {
+	case messaging.TypeHeartBeatRequest:
+		if err := m.onHeartBeatRequest(msg); err != nil {
+			return errors.Trace(err)
+		}
+	case messaging.TypeMaintainerBootstrapResponse:
+		m.onMaintainerBootstrapResponse(msg)
+	default:
+		log.Panic("unexpected message type", zap.String("type", msg.Type.String()))
 	}
 	return nil
 }
@@ -393,6 +401,10 @@ func (m *Maintainer) bootstrapMessage(captureID model.CaptureID) rpc.Message {
 			ChangefeedID: m.id.ID,
 			Config:       m.cfgBytes,
 		})
+}
+
+func (m *Maintainer) getMessageQueue() *MessageQueue {
+	return m.msgQueue
 }
 
 func (m *Maintainer) printStatus() {
