@@ -64,7 +64,7 @@ type remoteMessageTarget struct {
 	ctx context.Context
 	// cancel is used to stop the grpc stream, and the goroutine spawned by remoteMessageTarget.
 	cancel context.CancelFunc
-	// errCh is used to gether the error from the goroutine spawned by remoteMessageTarget.
+	// errCh is used to gather the error from the goroutine spawned by remoteMessageTarget.
 	errCh chan AppError
 }
 
