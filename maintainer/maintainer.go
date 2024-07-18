@@ -16,6 +16,7 @@ package maintainer
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -82,6 +83,10 @@ type Maintainer struct {
 	lastCheckTime time.Time
 
 	lastCheckpointTsTime time.Time
+
+	errLock         sync.Mutex
+	runningErrors   map[messaging.ServerId]*heartbeatpb.RunningError
+	runningWarnings map[messaging.ServerId]*heartbeatpb.RunningError
 }
 
 // NewMaintainer create the maintainer for the changefeed
@@ -112,6 +117,8 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		tableSpans:      utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior](),
 		msgQueue:        NewMessageQueue(1024),
 		msgBuf:          make([]*messaging.TargetMessage, 1024),
+		runningErrors:   map[messaging.ServerId]*heartbeatpb.RunningError{},
+		runningWarnings: map[messaging.ServerId]*heartbeatpb.RunningError{},
 	}
 	if !isSecondary {
 		m.state = heartbeatpb.ComponentState_Working
@@ -287,6 +294,16 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 			State: info.ComponentStatus,
 		})
 	}
+	// set error if not nil, todo: only save one
+	m.errLock.Lock()
+	if req.Warning != nil {
+		m.runningWarnings[msg.From] = req.Warning
+	}
+	if req.Err != nil {
+		m.runningErrors[msg.From] = req.Err
+	}
+	m.errLock.Unlock()
+
 	msgs, err := m.supervisor.HandleStatus(msg.From.String(), status)
 	if err != nil {
 		log.Error("handle status failed, ignore", zap.Error(err))
@@ -385,12 +402,34 @@ func (m *Maintainer) closeChangefeed() {
 
 func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 	// todo: fix data race here
-	return &heartbeatpb.MaintainerStatus{
+	m.errLock.Lock()
+	defer m.errLock.Unlock()
+	var runningErrors []*heartbeatpb.RunningError
+	if len(m.runningErrors) > 0 {
+		runningErrors = make([]*heartbeatpb.RunningError, 0, len(m.runningErrors))
+		for _, e := range m.runningErrors {
+			runningErrors = append(runningErrors, e)
+		}
+	}
+	var runningWarnings []*heartbeatpb.RunningError
+	if len(m.runningWarnings) > 0 {
+		runningWarnings = make([]*heartbeatpb.RunningError, 0, len(m.runningWarnings))
+		for _, e := range m.runningWarnings {
+			runningWarnings = append(runningWarnings, e)
+		}
+	}
+
+	status := &heartbeatpb.MaintainerStatus{
 		ChangefeedID: m.id.ID,
 		FeedState:    string(m.changefeedSate),
 		State:        m.state,
 		CheckpointTs: m.checkpointTs.Load(),
+		Warning:      runningWarnings,
+		Err:          runningErrors,
 	}
+	m.runningWarnings = make(map[messaging.ServerId]*heartbeatpb.RunningError)
+	m.runningErrors = make(map[messaging.ServerId]*heartbeatpb.RunningError)
+	return status
 }
 
 func (m *Maintainer) bootstrapMessage(captureID model.CaptureID) rpc.Message {
