@@ -156,7 +156,6 @@ type MultiplexingPuller struct {
 
 // NewMultiplexingPuller creates a MultiplexingPuller.
 // `workerCount` specifies how many workers will be spawned to handle events from kv client.
-// `frontierCount` specifies how many workers will be spawned to handle resolvedTs event.
 func NewMultiplexingPuller(
 	client *eventsource.SharedClient,
 	pdClock pdutil.Clock,

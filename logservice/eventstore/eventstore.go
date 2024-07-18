@@ -58,11 +58,6 @@ type eventWithTableID struct {
 	raw  *common.RawKVEntry
 }
 
-type Position struct {
-	StartTs  uint64
-	CommitTs uint64
-}
-
 type tableState struct {
 	span     tablepb.Span
 	observer EventObserver
@@ -73,44 +68,12 @@ type tableState struct {
 
 	ch chan eventWithTableID
 }
-
-type gcRangeItem struct {
-	span tablepb.Span
-	// TODO: startCommitTS may be not needed now(just use 0 for every delete range maybe ok),
-	// but after split table range, it may be essential?
-	startCommitTS uint64
-	endCommitTS   uint64
-}
-
-type dataRangeToGC struct {
-	mu     sync.Mutex
-	ranges []gcRangeItem
-}
-
-func (d *dataRangeToGC) addGCItem(span tablepb.Span, startCommitTS uint64, endCommitTS uint64) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.ranges = append(d.ranges, gcRangeItem{
-		span:          span,
-		startCommitTS: startCommitTS,
-		endCommitTS:   endCommitTS,
-	})
-}
-
-func (d *dataRangeToGC) fetchAllGCItems() []gcRangeItem {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	ranges := d.ranges
-	d.ranges = nil
-	return ranges
-}
-
 type eventStore struct {
 	dbs      []*pebble.DB
 	channels []chan eventWithTableID
 	puller   *puller.MultiplexingPuller
 
-	gcRanges *dataRangeToGC
+	gcManager *gcManager
 
 	// To manage background goroutines.
 	wg sync.WaitGroup
@@ -161,7 +124,7 @@ func NewEventStore(ctx context.Context, up *upstream.Upstream, root string) Even
 		dbs:      dbs,
 		channels: channels,
 
-		gcRanges: &dataRangeToGC{},
+		gcManager: newGCManager(),
 
 		tables: spanz.NewHashMap[common.DispatcherID](),
 		spans:  make(map[common.DispatcherID]*tableState),
@@ -191,7 +154,7 @@ func NewEventStore(ctx context.Context, up *upstream.Upstream, root string) Even
 		return mp.Run(ctx)
 	})
 
-	go store.gc(ctx)
+	go store.gcManager.run(ctx, &store.wg, store.deleteEvents)
 
 	store.puller = mp
 	return store
@@ -326,30 +289,13 @@ func (e *eventStore) writeEvent(span tablepb.Span, raw *common.RawKVEntry) {
 	tableState.ch <- eventWithTableID{span: span, raw: raw}
 }
 
-func (e *eventStore) gc(ctx context.Context) {
-	e.wg.Add(1)
-	defer e.wg.Done()
-	ticker := time.NewTicker(20 * time.Millisecond)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			ranges := e.gcRanges.fetchAllGCItems()
-			for _, r := range ranges {
-				dbIndex := spanz.HashTableSpan(r.span, len(e.dbs))
-				db := e.dbs[dbIndex]
-				start := EncodeTsKey(uint64(r.span.TableID), r.startCommitTS)
-				end := EncodeTsKey(uint64(r.span.TableID), r.endCommitTS)
+func (e *eventStore) deleteEvents(span tablepb.Span, startCommitTS uint64, endCommitTS uint64) error {
+	dbIndex := spanz.HashTableSpan(span, len(e.dbs))
+	db := e.dbs[dbIndex]
+	start := EncodeTsKey(uint64(span.TableID), startCommitTS)
+	end := EncodeTsKey(uint64(span.TableID), endCommitTS)
 
-				err := db.DeleteRange(start, end, pebble.NoSync)
-				if err != nil {
-					// TODO: add the data range back?
-					log.Fatal("delete fail", zap.Error(err))
-				}
-			}
-		}
-	}
+	return db.DeleteRange(start, end, pebble.NoSync)
 }
 
 func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span tablepb.Span, startTS common.Timestamp, observer EventObserver, notifier WatermarkNotifier) error {
@@ -380,7 +326,7 @@ func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, se
 				return nil
 			}
 			if tableStat.watermark.CompareAndSwap(currentWatermark, sendTS) {
-				e.gcRanges.addGCItem(tableStat.span, currentWatermark, sendTS)
+				e.gcManager.addGCItem(tableStat.span, currentWatermark, sendTS)
 				return nil
 			}
 		}
@@ -433,7 +379,6 @@ type eventStoreIter struct {
 	prevCommitTS uint64
 }
 
-// TODO: maybe change txnFinished to type bool?
 func (iter *eventStoreIter) Next() ([]byte, bool, error) {
 	if iter.innerIter == nil {
 		log.Panic("iter is nil")
