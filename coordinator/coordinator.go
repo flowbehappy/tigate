@@ -230,6 +230,36 @@ func (c *coordinator) saveChangefeedStatus() {
 				})
 			}
 			updateStatus(status, cf.checkpointTs)
+			saveErrorFn := func(err *heartbeatpb.RunningError) {
+				node, ok := c.lastState.Captures[err.Node]
+				addr := err.Node
+				if ok {
+					addr = node.AdvertiseAddr
+				}
+				status.PatchTaskPosition(err.Node,
+					func(position *model.TaskPosition) (*model.TaskPosition, bool, error) {
+						if position == nil {
+							position = &model.TaskPosition{}
+						}
+						position.Error = &model.RunningError{
+							//Time:    err.Time, //todo: save time
+							Addr:    addr,
+							Code:    err.Code,
+							Message: err.Message,
+						}
+						return position, true, nil
+					})
+			}
+			if len(cf.State.Err) > 0 {
+				for _, err := range cf.State.Err {
+					saveErrorFn(err)
+				}
+			}
+			if len(cf.State.Warning) > 0 {
+				for _, err := range cf.State.Warning {
+					saveErrorFn(err)
+				}
+			}
 		}
 		c.lastSaveTime = time.Now()
 	}
