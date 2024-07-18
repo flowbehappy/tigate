@@ -28,6 +28,7 @@ import (
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
 	"go.uber.org/zap"
@@ -50,7 +51,7 @@ type coordinator struct {
 	scheduler  scheduler.Scheduler
 	supervisor *scheduler.Supervisor
 
-	lastState *orchestrator.GlobalReactorState
+	//lastState *orchestrator.GlobalReactorState
 
 	lastSaveTime         time.Time
 	scheduledChangefeeds map[model.ChangeFeedID]*changefeed
@@ -90,7 +91,7 @@ func NewCoordinator(capture *model.CaptureInfo,
 func (c *coordinator) Tick(ctx context.Context,
 	rawState orchestrator.ReactorState) (orchestrator.ReactorState, error) {
 	state := rawState.(*orchestrator.GlobalReactorState)
-	c.lastState = state
+	//c.lastState = state
 
 	// 1. handle grpc  messages
 	err := c.handleMessages()
@@ -113,7 +114,7 @@ func (c *coordinator) Tick(ctx context.Context,
 	c.sendMessages(msgs)
 
 	//4. update checkpoint ts and changefeed states
-	c.saveChangefeedStatus()
+	//c.saveChangefeedStatus()
 
 	c.printStatus()
 	return state, nil
@@ -176,25 +177,38 @@ func (c *coordinator) sendMessages(msgs []rpc.Message) {
 	}
 }
 
+var allCfs = map[model.ChangeFeedID]*model.ChangeFeedInfo{}
+
+func init() {
+	for i := 0; i < 100; i++ {
+		cfID := model.DefaultChangeFeedID(fmt.Sprintf("cf-%d", i+1))
+		allCfs[cfID] = &model.ChangeFeedInfo{
+			ID:      cfID.ID,
+			Config:  config.GetDefaultReplicaConfig(),
+			SinkURI: "blackhole://",
+		}
+	}
+}
+
 func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState) ([]rpc.Message, error) {
 	if !c.supervisor.CheckAllCaptureInitialized() {
 		return nil, nil
 	}
 	allChangefeedID := utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior]()
 	// check all changefeeds.
-	for id, reactor := range state.Changefeeds {
-		if reactor.Info == nil {
-			continue
-		}
-		if !preflightCheck(reactor) {
-			log.Info("precheck failed ignored",
-				zap.String("id", id.String()))
-			continue
-		}
-		if shouldRunChangefeed(reactor.Info.State) {
-			// todo use real changefeed instance here
-			allChangefeedID.ReplaceOrInsert(scheduler.ChangefeedID(id), &changefeed{})
-		}
+	for id, _ := range allCfs {
+		//if reactor.Info == nil {
+		//	continue
+		//}
+		//if !preflightCheck(reactor) {
+		//	log.Info("precheck failed ignored",
+		//		zap.String("id", id.String()))
+		//	continue
+		//}
+		//if shouldRunChangefeed(reactor.Info.State) {
+		//	// todo use real changefeed instance here
+		allChangefeedID.ReplaceOrInsert(scheduler.ChangefeedID(id), &changefeed{})
+		//}
 	}
 	tasks := c.scheduler.Schedule(
 		allChangefeedID,
@@ -213,57 +227,57 @@ func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message
 
 func (c *coordinator) newChangefeed(id scheduler.InferiorID) scheduler.Inferior {
 	cfID := model.ChangeFeedID(id.(scheduler.ChangefeedID))
-	cfInfo := c.lastState.Changefeeds[cfID]
-	cf := newChangefeed(c, cfID, cfInfo.Info, cfInfo.Status.CheckpointTs)
-	c.scheduledChangefeeds[cfInfo.ID] = cf
+	cfInfo := allCfs[cfID]
+	cf := newChangefeed(c, cfID, cfInfo, 0)
+	c.scheduledChangefeeds[cfID] = cf
 	return cf
 }
 
-func (c *coordinator) saveChangefeedStatus() {
-	if time.Since(c.lastSaveTime) > time.Millisecond*500 {
-		for id, cf := range c.scheduledChangefeeds {
-			status := c.lastState.Changefeeds[id]
-			if !shouldRunChangefeed(model.FeedState(cf.State.FeedState)) {
-				status.PatchInfo(func(info *model.ChangeFeedInfo) (*model.ChangeFeedInfo, bool, error) {
-					info.State = model.FeedState(cf.State.FeedState)
-					return info, true, nil
-				})
-			}
-			updateStatus(status, cf.checkpointTs)
-			saveErrorFn := func(err *heartbeatpb.RunningError) {
-				node, ok := c.lastState.Captures[err.Node]
-				addr := err.Node
-				if ok {
-					addr = node.AdvertiseAddr
-				}
-				status.PatchTaskPosition(err.Node,
-					func(position *model.TaskPosition) (*model.TaskPosition, bool, error) {
-						if position == nil {
-							position = &model.TaskPosition{}
-						}
-						position.Error = &model.RunningError{
-							//Time:    err.Time, //todo: save time
-							Addr:    addr,
-							Code:    err.Code,
-							Message: err.Message,
-						}
-						return position, true, nil
-					})
-			}
-			if len(cf.State.Err) > 0 {
-				for _, err := range cf.State.Err {
-					saveErrorFn(err)
-				}
-			}
-			if len(cf.State.Warning) > 0 {
-				for _, err := range cf.State.Warning {
-					saveErrorFn(err)
-				}
-			}
-		}
-		c.lastSaveTime = time.Now()
-	}
-}
+//func (c *coordinator) saveChangefeedStatus() {
+//	if time.Since(c.lastSaveTime) > time.Millisecond*500 {
+//		for id, cf := range c.scheduledChangefeeds {
+//			status := c.lastState.Changefeeds[id]
+//			if !shouldRunChangefeed(model.FeedState(cf.State.FeedState)) {
+//				status.PatchInfo(func(info *model.ChangeFeedInfo) (*model.ChangeFeedInfo, bool, error) {
+//					info.State = model.FeedState(cf.State.FeedState)
+//					return info, true, nil
+//				})
+//			}
+//			updateStatus(status, cf.checkpointTs)
+//			saveErrorFn := func(err *heartbeatpb.RunningError) {
+//				node, ok := c.lastState.Captures[err.Node]
+//				addr := err.Node
+//				if ok {
+//					addr = node.AdvertiseAddr
+//				}
+//				status.PatchTaskPosition(err.Node,
+//					func(position *model.TaskPosition) (*model.TaskPosition, bool, error) {
+//						if position == nil {
+//							position = &model.TaskPosition{}
+//						}
+//						position.Error = &model.RunningError{
+//							//Time:    err.Time, //todo: save time
+//							Addr:    addr,
+//							Code:    err.Code,
+//							Message: err.Message,
+//						}
+//						return position, true, nil
+//					})
+//			}
+//			if len(cf.State.Err) > 0 {
+//				for _, err := range cf.State.Err {
+//					saveErrorFn(err)
+//				}
+//			}
+//			if len(cf.State.Warning) > 0 {
+//				for _, err := range cf.State.Warning {
+//					saveErrorFn(err)
+//				}
+//			}
+//		}
+//		c.lastSaveTime = time.Now()
+//	}
+//}
 
 // preflightCheck makes sure that the metadata in Etcd is complete enough to run the tick.
 // If the metadata is not complete, such as when the ChangeFeedStatus is nil,
@@ -340,7 +354,7 @@ func (c *coordinator) printStatus() {
 		absentTask := 0
 		commitTask := 0
 		removingTask := 0
-		var taskDistribution string
+		//var taskDistribution string
 		c.supervisor.StateMachines.Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
 			switch value.State {
 			case scheduler.SchedulerStatusAbsent:
@@ -354,11 +368,11 @@ func (c *coordinator) printStatus() {
 			case scheduler.SchedulerStatusRemoving:
 				removingTask++
 			}
-			taskDistribution = fmt.Sprintf("%s, %s==>%s", taskDistribution, value.ID.String(), value.Primary)
+			//taskDistribution = fmt.Sprintf("%s, %s==>%s", taskDistribution, value.ID.String(), value.Primary)
 			return true
 		})
 		log.Info("changefeed status",
-			zap.String("distribution", taskDistribution),
+			//zap.String("distribution", taskDistribution),
 			zap.Int("absent", absentTask),
 			zap.Int("prepare", prepareTask),
 			zap.Int("commit", commitTask),

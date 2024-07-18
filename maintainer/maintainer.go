@@ -15,7 +15,6 @@ package maintainer
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -30,12 +29,8 @@ import (
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/entry/schema"
-	"github.com/pingcap/tiflow/cdc/kv"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/filter"
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -181,7 +176,7 @@ func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
 		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 	}
 	//todo: calculate checkpoint ts
-	m.printStatus()
+	//m.printStatus()
 	return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 }
 
@@ -348,36 +343,39 @@ func (m *Maintainer) resendSchedulerMessage() {
 
 // GetTableIDs get tables ids base on the filter and checkpoint ts
 func (m *Maintainer) GetTableIDs() (map[int64]struct{}, error) {
-	startTs := m.checkpointTs
-	f, err := filter.NewFilter(m.config.Config, "")
-	if err != nil {
-		return nil, errors.Cause(err)
-	}
-
-	cfg := config.GetGlobalServerConfig()
-	kvStore, err := kv.CreateTiStore(strings.Join(m.pdEndpoints, ","), cfg.Security)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	meta := kv.GetSnapshotMeta(kvStore, startTs.Load())
-	snap, err := schema.NewSnapshotFromMeta(
-		model.ChangeFeedID4Test("api", "verifyTable"),
-		meta, startTs.Load(), false /* explicitTables */, f)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	tableIDs := make(map[int64]struct{})
-	snap.IterTables(true, func(tableInfo *model.TableInfo) {
-		if f.ShouldIgnoreTable(tableInfo.TableName.Schema, tableInfo.TableName.Table) {
-			return
-		}
-		if tableInfo.IsSequence() {
-			return
-		}
-		tableIDs[tableInfo.ID] = struct{}{}
-	})
-	return tableIDs, nil
+	return map[int64]struct{}{
+		1: {},
+	}, nil
+	///*startTs := m.checkpointTs
+	//f, err := filter.NewFilter(m.config.Config, "")
+	//if err != nil {
+	//	return nil, errors.Cause(err)
+	//}
+	//
+	//cfg := config.GetGlobalServerConfig()
+	//kvStore, err := kv.CreateTiStore(strings.Join(m.pdEndpoints, ","), cfg.Security)
+	//if err != nil {
+	//	return nil, errors.Trace(err)
+	//}
+	//
+	//meta := kv.GetSnapshotMeta(kvStore, startTs.Load())
+	//snap, err := schema.NewSnapshotFromMeta(
+	//	model.ChangeFeedID4Test("api", "verifyTable"),
+	//	meta, startTs.Load(), false /* explicitTables */, f)
+	//if err != nil {
+	//	return nil, errors.Trace(err)
+	//}
+	//tableIDs := make(map[int64]struct{})
+	//snap.IterTables(true, func(tableInfo *model.TableInfo) {
+	//	if f.ShouldIgnoreTable(tableInfo.TableName.Schema, tableInfo.TableName.Table) {
+	//		return
+	//	}
+	//	if tableInfo.IsSequence() {
+	//		return
+	//	}
+	//	tableIDs[tableInfo.ID] = struct{}{}
+	//})
+	//return tableIDs, nil
 }
 
 func (m *Maintainer) finishAddChangefeed() {
