@@ -42,7 +42,8 @@ type changefeed struct {
 	checkpointTs uint64
 	configBytes  []byte
 
-	coordinator *coordinator
+	coordinator  *coordinator
+	stateMachine *scheduler.StateMachine
 }
 
 func newChangefeed(c *coordinator,
@@ -79,6 +80,13 @@ func (c *changefeed) UpdateStatus(status scheduler.InferiorStatus) {
 	c.State = status.(*MaintainerStatus)
 	c.checkpointTs = c.State.CheckpointTs
 	c.lastHeartBeat = time.Now()
+}
+func (c *changefeed) SetStateMachine(state *scheduler.StateMachine) {
+	c.stateMachine = state
+}
+
+func (c *changefeed) GetStateMachine() *scheduler.StateMachine {
+	return c.stateMachine
 }
 
 type MaintainerStatus struct {
