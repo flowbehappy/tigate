@@ -34,7 +34,8 @@ type EventAcceptorInfo interface {
 	GetID() string
 	// GetClusterID returns the ID of the TiDB cluster the acceptor wants to accept events from.
 	GetClusterID() uint64
-	GetTopic() string
+
+	GetTopic() common.TopicType
 	GetServerID() string
 	GetTableSpan() *common.TableSpan
 	GetStartTs() uint64
@@ -109,7 +110,7 @@ func (s *eventService) registerAcceptor(acceptor EventAcceptorInfo) {
 		acceptor: acceptor,
 	}
 
-	ac.watermark.Store(uint64(startTs))
+	ac.watermark.Store(startTs)
 	c.acceptors[acceptor.GetID()] = ac
 
 	// add the acceptor to the table span it wants to listen.
@@ -120,7 +121,7 @@ func (s *eventService) registerAcceptor(acceptor EventAcceptorInfo) {
 			acceptors: make(map[string]*acceptorStat),
 			notify:    c.changedSpanCh,
 		}
-		stat.watermark.Store(uint64(startTs))
+		stat.watermark.Store(startTs)
 		c.spanStats[span.TableID] = stat
 	}
 	stat.addAcceptor(ac)
