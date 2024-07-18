@@ -41,13 +41,13 @@ func (m *mockMessageCenter) SendCommand(command ...*messaging.TargetMessage) err
 	return nil
 }
 
-func (m *mockMessageCenter) RegisterHandler(topic string, handler messaging.MessageHandler) {
+func (m *mockMessageCenter) RegisterHandler(topic common.TopicType, handler messaging.MessageHandler) {
 }
 
-func (m *mockMessageCenter) DeRegisterHandler(topic string) {
+func (m *mockMessageCenter) DeRegisterHandler(topic common.TopicType) {
 }
 
-func (m *mockMessageCenter) AddTarget(id messaging.ServerId, epoch uint64, addr string) {
+func (m *mockMessageCenter) AddTarget(id messaging.ServerId, epoch common.EpochType, addr common.AddressType) {
 }
 
 func (m *mockMessageCenter) RemoveTarget(id messaging.ServerId) {
@@ -61,7 +61,7 @@ type mockAcceptorInfo struct {
 	clusterID  uint64
 	serverID   string
 	id         string
-	topic      string
+	topic      common.TopicType
 	span       *common.TableSpan
 	startTs    uint64
 	isRegister bool
@@ -91,7 +91,7 @@ func (m *mockAcceptorInfo) GetClusterID() uint64 {
 	return m.clusterID
 }
 
-func (m *mockAcceptorInfo) GetTopic() string {
+func (m *mockAcceptorInfo) GetTopic() common.TopicType {
 	return m.topic
 }
 
