@@ -232,7 +232,7 @@ func (mc *messageCenter) touchRemoteTarget(id ServerId, epoch epochType, addr ad
 	mc.remoteTargets.Lock()
 	defer mc.remoteTargets.Unlock()
 	if target, ok := mc.remoteTargets.m[id]; ok {
-		if target.targetEpoch.Load().(epochType) >= epoch {
+		if target.Epoch() >= epoch {
 			log.Info("Remote target already exists", zap.Stringer("id", id))
 			return target
 		}
@@ -245,7 +245,7 @@ func (mc *messageCenter) touchRemoteTarget(id ServerId, epoch epochType, addr ad
 
 		log.Info("Remote target epoch and addr changed, close it and create a new one",
 			zap.Stringer("id", id),
-			zap.Any("oldEpoch", target.targetEpoch.Load()),
+			zap.Any("oldEpoch", target.Epoch()),
 			zap.Any("newEpoch", epoch),
 			zap.Any("oldAddr", target.targetAddr),
 			zap.Any("newAddr", addr))
@@ -302,8 +302,8 @@ func (s *grpcServer) handleConnect(msg *proto.Message, stream grpcSender, isEven
 			zap.String("remote", msg.From),
 			zap.Bool("isEvent", isEvent))
 		// The handshake message's epoch should be the same as the target's epoch.
-		if epochType(msg.Epoch) != remoteTarget.targetEpoch.Load().(epochType) {
-			err := apperror.AppError{Type: apperror.ErrorTypeEpochMismatch, Reason: fmt.Sprintf("Target %s epoch mismatch, expect %d, got %d", targetId, remoteTarget.targetEpoch.Load(), msg.Epoch)}
+		if epochType(msg.Epoch) != remoteTarget.Epoch() {
+			err := apperror.AppError{Type: apperror.ErrorTypeEpochMismatch, Reason: fmt.Sprintf("Target %s epoch mismatch, expect %d, got %d", targetId, remoteTarget.Epoch(), msg.Epoch)}
 			log.Error("Epoch mismatch", zap.Error(err))
 			return err
 		}
