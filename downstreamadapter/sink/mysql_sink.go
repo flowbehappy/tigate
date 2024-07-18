@@ -126,10 +126,11 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 	s.cancel = cancel
 	for i := 0; i < workerCount; i++ {
 		s.wg.Add(1)
+		workerId := i
 		// s.dmlWorkerTasks = append(s.dmlWorkerTasks, worker.NewMysqlWorkerDMLEventTask(s.conflictDetector.GetOutChByCacheID(int64(i)), db, cfg, 128))
 		go func(ctx context.Context, eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig, maxRows int) {
 			defer s.wg.Done()
-			worker := worker.NewMysqlWorker(eventChan, db, config)
+			worker := worker.NewMysqlWorker(eventChan, db, config, workerId)
 			events := make([]*common.TxnEvent, 0)
 			rows := 0
 			for {
