@@ -53,11 +53,11 @@ func newCluster(
 		spanStats:       make(map[uint64]*spanSubscription),
 		acceptors:       make(map[string]*acceptorStat),
 		msgSender:       mc,
-		changedSpanCh:   make(chan *common.TableSpan, defaultChanelSize),
+		changedSpanCh:   make(chan *common.TableSpan, defaultChannelSize),
 		taskPool:        newScanTaskPool(),
-		eventCh:         make(chan *common.TxnEvent, defaultChanelSize),
+		eventCh:         make(chan *common.TxnEvent, defaultChannelSize),
 		scanWorkerCount: defaultWorkerCount,
-		messageCh:       make(chan *messaging.TargetMessage, defaultChanelSize),
+		messageCh:       make(chan *messaging.TargetMessage, defaultChannelSize),
 		cancel:          cancel,
 		wg:              wg,
 	}
@@ -270,7 +270,7 @@ type scanTaskPool struct {
 func newScanTaskPool() *scanTaskPool {
 	return &scanTaskPool{
 		taskSet:   make(map[*common.TableSpan]*scanTask),
-		fifoQueue: make(chan *common.DataRange, defaultChanelSize),
+		fifoQueue: make(chan *common.DataRange, defaultChannelSize),
 	}
 }
 
