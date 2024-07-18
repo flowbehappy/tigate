@@ -91,17 +91,46 @@ func (e *TxnEvent) GetRows() []*RowChangedEvent {
 	return e.Rows
 }
 
-// // ColumnData represents a column value in row changed event
-// type ColumnData struct {
-// 	// ColumnID may be just a mock id, because we don't store it in redo log.
-// 	// So after restore from redo log, we need to give every a column a mock id.
-// 	// The only guarantee is that the column id is unique in a RowChangedEvent
-// 	ColumnID int64
-// 	Value    interface{}
+// ColumnData represents a column value in row changed event
+type ColumnData struct {
+	// ColumnID may be just a mock id, because we don't store it in redo log.
+	// So after restore from redo log, we need to give every a column a mock id.
+	// The only guarantee is that the column id is unique in a RowChangedEvent
+	ColumnID int64
+	Value    interface{}
 
-// 	// ApproximateBytes is approximate bytes consumed by the column.
-// 	ApproximateBytes int
-// }
+	// ApproximateBytes is approximate bytes consumed by the column.
+	ApproximateBytes int
+}
+
+type RowChangedEventData struct {
+	StartTs  uint64
+	CommitTs uint64
+
+	PhysicalTableID int64
+
+	// NOTICE: We probably store the logical ID inside TableInfo's TableName,
+	// not the physical ID.
+	// For normal table, there is only one ID, which is the physical ID.
+	// AKA TIDB_TABLE_ID.
+	// For partitioned table, there are two kinds of ID:
+	// 1. TIDB_PARTITION_ID is the physical ID of the partition.
+	// 2. TIDB_TABLE_ID is the logical ID of the table.
+	// In general, we always use the physical ID to represent a table, but we
+	// record the logical ID from the DDL event(job.BinlogInfo.TableInfo).
+	// So be careful when using the TableInfo.
+	TableInfo *TableInfo
+
+	Columns    []*ColumnData
+	PreColumns []*ColumnData
+
+	// ApproximateDataSize is the approximate size of protobuf binary
+	// representation of this event.
+	ApproximateDataSize int64
+
+	// ReplicatingTs is ts when a table starts replicating events to downstream.
+	ReplicatingTs uint64
+}
 
 type RowChangedEvent struct {
 	PhysicalTableID int64

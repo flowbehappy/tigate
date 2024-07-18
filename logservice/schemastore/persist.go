@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/flowbehappy/tigate/logservice/eventsource"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
@@ -374,11 +374,6 @@ func (p *persistentStorage) gc(gcTS Timestamp) error {
 	return nil
 }
 
-func getSnapshotMeta(tiStore kv.Storage, ts uint64) *meta.Meta {
-	snapshot := tiStore.GetSnapshot(kv.NewVersion(ts))
-	return meta.NewSnapshotMeta(snapshot)
-}
-
 const mTablePrefix = "Table"
 
 func isTableRawKey(key []byte) bool {
@@ -520,7 +515,7 @@ func readTSFromSnapshot(snap *pebble.Snapshot, key []byte) ([]Timestamp, error) 
 }
 
 func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts Timestamp) (DatabaseInfoMap, error) {
-	meta := getSnapshotMeta(tiStore, uint64(ts))
+	meta := eventsource.GetSnapshotMeta(tiStore, uint64(ts))
 	start := time.Now()
 	dbinfos, err := meta.ListDatabases()
 	if err != nil {

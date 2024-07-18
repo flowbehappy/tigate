@@ -104,6 +104,7 @@ func (s *schemaStore) run(ctx context.Context) error {
 					log.Fatal("write ddl event failed", zap.Error(err))
 				}
 			case Timestamp:
+				// TODO: check resolved ts is monotonically increasing
 				resolvedEvents := s.unsortedCache.fetchSortedDDLEventBeforeTS(v)
 				if len(resolvedEvents) == 0 {
 					continue
@@ -139,11 +140,13 @@ func (s *schemaStore) run(ctx context.Context) error {
 }
 
 func (s *schemaStore) WriteDDLEvent(ddlEvent DDLEvent) error {
+	log.Info("write ddl event", zap.Any("ddlEvent", ddlEvent))
 	s.eventCh <- ddlEvent
 	return nil
 }
 
 func (s *schemaStore) AdvanceResolvedTS(resolvedTS Timestamp) error {
+	log.Info("advance resolved ts", zap.Any("resolvedTS", resolvedTS))
 	s.eventCh <- resolvedTS
 	return nil
 }
