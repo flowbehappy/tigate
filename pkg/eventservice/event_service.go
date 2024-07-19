@@ -22,8 +22,8 @@ type EventService interface {
 	Close()
 }
 
-type EventAcceptorInfo interface {
-	// GetID returns the ID of the acceptor.
+type DispatcherInfo interface {
+	// GetID returns the ID of the dispatcher.
 	GetID() string
 	// GetClusterID returns the ID of the TiDB cluster the acceptor wants to accept events from.
 	GetClusterID() uint64
@@ -42,7 +42,7 @@ type eventService struct {
 	brokers    map[uint64]*eventBroker
 
 	// TODO: use a better way to cache the acceptorInfos
-	acceptorInfoCh chan EventAcceptorInfo
+	acceptorInfoCh chan DispatcherInfo
 }
 
 func NewEventService(ctx context.Context, mc messaging.MessageCenter, eventStore eventstore.EventStore) EventService {
@@ -51,7 +51,7 @@ func NewEventService(ctx context.Context, mc messaging.MessageCenter, eventStore
 		eventStore:     eventStore,
 		ctx:            ctx,
 		brokers:        make(map[uint64]*eventBroker),
-		acceptorInfoCh: make(chan EventAcceptorInfo, defaultChanelSize*16),
+		acceptorInfoCh: make(chan DispatcherInfo, defaultChanelSize*16),
 	}
 	es.mc.RegisterHandler(messaging.EventServiceTopic, es.handleMessage)
 	return es
@@ -66,9 +66,9 @@ func (s *eventService) Run() error {
 			return nil
 		case info := <-s.acceptorInfoCh:
 			if info.IsRegister() {
-				s.registerAcceptor(info)
+				s.registerDispatcher(info)
 			} else {
-				s.deregisterAcceptor(info.GetClusterID(), info.GetID())
+				s.deregisterDispatcher(info.GetClusterID(), info.GetID())
 			}
 		}
 	}
@@ -88,7 +88,7 @@ func (s *eventService) handleMessage(msg *messaging.TargetMessage) error {
 	return nil
 }
 
-func (s *eventService) registerAcceptor(acceptor EventAcceptorInfo) {
+func (s *eventService) registerDispatcher(acceptor DispatcherInfo) {
 	clusterID := acceptor.GetClusterID()
 	startTs := acceptor.GetStartTs()
 	span := acceptor.GetTableSpan()
@@ -99,45 +99,45 @@ func (s *eventService) registerAcceptor(acceptor EventAcceptorInfo) {
 		s.brokers[clusterID] = c
 	}
 
-	spanSub := &spanSubscription{
+	subscription := &spanSubscription{
 		span: span,
 	}
-	spanSub.watermark.Store(uint64(startTs))
+	subscription.watermark.Store(uint64(startTs))
 	// add the acceptor to the cluster.
-	ac := &acceptorStat{
-		acceptor:         acceptor,
-		spanSubscription: spanSub,
-		notify:           c.changedAcceptor,
+	ac := &dispatcherStat{
+		info:             acceptor,
+		spanSubscription: subscription,
+		notify:           c.changedCh,
 	}
 	ac.watermark.Store(uint64(startTs))
 
-	c.acceptors[acceptor.GetID()] = ac
+	c.dispatchers[acceptor.GetID()] = ac
+
 	c.eventStore.RegisterDispatcher(
-		acceptor.GetID(),
-		acceptor.GetTableSpan(),
+		ac.info.GetID(),
+		ac.info.GetTableSpan(),
 		common.Ts(acceptor.GetStartTs()),
-		ac.UpdateEventCount,
-		ac.UpdateWatermark,
+		ac.onNewEvent,
+		ac.onSubscriptionWatermark,
 	)
 	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", acceptor.GetID()))
-
 }
 
-func (s *eventService) deregisterAcceptor(clusterID uint64, accepterID string) {
+func (s *eventService) deregisterDispatcher(clusterID uint64, accepterID string) {
 	c, ok := s.brokers[clusterID]
 	if !ok {
 		return
 	}
-	_, ok = c.acceptors[accepterID]
+	_, ok = c.dispatchers[accepterID]
 	if !ok {
 		return
 	}
 	//TODO: release the resources of the acceptor.
-	delete(c.acceptors, accepterID)
+	delete(c.dispatchers, accepterID)
 	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", accepterID))
 }
 
 // TODO: implement the following functions
-func msgToAcceptorInfo(msg *messaging.TargetMessage) EventAcceptorInfo {
+func msgToAcceptorInfo(msg *messaging.TargetMessage) DispatcherInfo {
 	return msg.Message.(messaging.RegisterDispatcherRequest)
 }
