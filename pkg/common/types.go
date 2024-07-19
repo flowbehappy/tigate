@@ -12,6 +12,10 @@ type TableID int64
 
 type DispatcherID uuid.UUID
 
+func (d *DispatcherID) Msgsize() int {
+	return 16
+}
+
 func (d DispatcherID) MarshalMsg(b []byte) ([]byte, error) {
 	return msgp.AppendBytes(b, d[:]), nil
 }

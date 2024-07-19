@@ -80,7 +80,6 @@ type schemaStore struct {
 	dispatchersMap DispatcherInfoMap
 }
 
-// TODO: remove minRequiredTS
 func NewSchemaStore(
 	root string,
 	pdCli pd.Client,
@@ -88,6 +87,7 @@ func NewSchemaStore(
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
 ) (SchemaStore, error) {
+
 	minRequiredTS := common.Ts(0) // FIXME
 	dataStorage, metaTS, databaseMap := newPersistentStorage(root, kvStorage, minRequiredTS)
 
