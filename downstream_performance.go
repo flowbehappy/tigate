@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"strconv"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
@@ -17,7 +17,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const totalCount = 1000000
+const totalCount = 1000
 
 func initContext(serverId messaging.ServerId) {
 	context.SetService(context.MessageCenter, messaging.NewMessageCenter(serverId, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
@@ -34,8 +34,8 @@ func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatcher
 				{
 					TableInfo: &common.TableInfo{
 						TableName: common.TableName{
-							Schema: "test_schema",
-							Table:  "test_table_" + fmt.Sprintf("%01d", dispatcherId),
+							Schema: "test_schema__0",
+							Table:  "test_table_" + strconv.Itoa(dispatcherId),
 						},
 					},
 					Columns: []*common.Column{
@@ -70,7 +70,7 @@ func main() {
 	eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, &changefeedConfig, serverId, serverId)
 	context.GetService[*heartbeatcollector.HeartBeatCollector](context.HeartbeatCollector).RegisterEventDispatcherManager(eventDispatcherManager)
 
-	dispatcherCount := 10
+	dispatcherCount := 10000
 	tableSpanMap := make(map[uint64]*common.TableSpan)
 	for i := 0; i < dispatcherCount; i++ {
 		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(i)}}
@@ -94,8 +94,8 @@ func main() {
 				dispatcherItem, ok := eventDispatcherManager.GetDispatcherMap().Get(tableSpanMap[uint64(i)])
 				if ok {
 					checkpointTs := dispatcherItem.GetCheckpointTs()
-					log.Info("progress is ", zap.Any("dispatcher id", i), zap.Any("checkpointTs", checkpointTs))
-					if checkpointTs == uint64(totalCount)+11 {
+					//log.Info("progress is ", zap.Any("dispatcher id", i), zap.Any("checkpointTs", checkpointTs))
+					if checkpointTs == uint64(totalCount)+10 {
 						finishVec[i] = true
 						log.Info("One dispatcher is finished", zap.Any("dispatcher id", i))
 						finishCount += 1
