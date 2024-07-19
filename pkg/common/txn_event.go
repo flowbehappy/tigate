@@ -26,6 +26,9 @@ type DDLEvent struct {
 type TxnEvent struct {
 	// ClusterID is the ID of the tidb cluster this event belongs to.
 	ClusterID uint64 `msg:"cluster-id"`
+
+	DispatcherID DispatcherID `msg:"dispatcher-id"`
+
 	// Span of this event belongs to.
 	Span *TableSpan `msg:"-"`
 
