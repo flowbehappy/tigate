@@ -16,7 +16,6 @@
 package common
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
@@ -34,26 +33,13 @@ const (
 )
 
 // RegionFeedEvent from the kv layer.
-// Only one of the event will be set.
 //
 //msgp:ignore RegionFeedEvent
 type RegionFeedEvent struct {
-	Val      *RawKVEntry
-	Resolved *ResolvedSpans
+	Val *RawKVEntry
 
 	// Additional debug info, not used
 	RegionID uint64
-}
-
-// GetValue returns the underlying value
-func (e *RegionFeedEvent) GetValue() interface{} {
-	if e.Val != nil {
-		return e.Val
-	} else if e.Resolved != nil {
-		return e.Resolved
-	} else {
-		return nil
-	}
 }
 
 // ResolvedSpans guarantees all the KV value event
@@ -78,7 +64,8 @@ type RegionComparableSpan struct {
 	Region uint64
 }
 
-// RawKVEntry notify the KV operator
+// RawKVEntry represents a kv change or a resolved ts event
+// TODO: use a different struct
 type RawKVEntry struct {
 	OpType OpType `msg:"op_type"`
 	Key    []byte `msg:"key"`
@@ -114,21 +101,4 @@ func (v *RawKVEntry) String() string {
 // representation of this event.
 func (v *RawKVEntry) ApproximateDataSize() int64 {
 	return int64(len(v.Key) + len(v.Value) + len(v.OldValue))
-}
-
-// ShouldSplitKVEntry checks whether the raw kv entry should be splitted.
-type ShouldSplitKVEntry func(raw *RawKVEntry) bool
-
-// SplitUpdateKVEntry splits the raw kv entry into a delete entry and an insert entry.
-func SplitUpdateKVEntry(raw *RawKVEntry) (*RawKVEntry, *RawKVEntry, error) {
-	if raw == nil {
-		return nil, nil, errors.New("nil event cannot be split")
-	}
-	deleteKVEntry := *raw
-	deleteKVEntry.Value = nil
-
-	insertKVEntry := *raw
-	insertKVEntry.OldValue = nil
-
-	return &deleteKVEntry, &insertKVEntry, nil
 }

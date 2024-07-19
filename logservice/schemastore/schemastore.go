@@ -2,47 +2,50 @@ package schemastore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"sync"
+	"time"
 
+	"github.com/flowbehappy/tigate/logservice/logpuller"
+	"github.com/flowbehappy/tigate/logservice/upstream"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 type SchemaStore interface {
-	// WriteDDLEvent
-	// Note that ddlEvent won't come in order
-	WriteDDLEvent(ddlEvent DDLEvent) error
+	Run(ctx context.Context) error
 
-	AdvanceResolvedTS(resolvedTS Timestamp) error
-
-	DoGC(gcTS Timestamp) error
-
-	GetAllPhysicalTables(dispatcherID DispatcherID, filter Filter, ts Timestamp) ([]TableID, error)
+	// TODO: add filter
+	GetAllPhysicalTables(snapTs common.Ts) ([]TableID, error)
 
 	// RegisterDispatcher register the dispatcher into the schema store.
 	// TODO: return a table info
-	// TODO: the filter seems unnecessary
-	RegisterDispatcher(dispatcherID DispatcherID, tableID TableID, filter Filter, ts Timestamp) error
+	RegisterDispatcher(dispatcherID DispatcherID, tableID TableID, filter Filter, ts common.Ts) error
 
 	// TODO: add interface for TableEventDispatcher
 
-	UpdateDispatcherSendTS(dispatcherID DispatcherID, ts Timestamp) error
+	UpdateDispatcherSendTS(dispatcherID DispatcherID, ts common.Ts) error
 
 	UnregisterDispatcher(dispatcherID DispatcherID) error
 
-	GetMaxFinishedDDLTS() Timestamp
+	GetMaxFinishedDDLTS() common.Ts
 
-	GetTableInfo(tableID TableID, ts Timestamp) (*common.TableInfo, error)
+	GetTableInfo(tableID TableID, ts common.Ts) (*common.TableInfo, error)
 
-	GetNextDDLEvent(dispatcherID DispatcherID) (*DDLEvent, Timestamp, error)
+	GetNextDDLEvent(dispatcherID DispatcherID) (*DDLEvent, common.Ts, error)
 }
 
 type schemaStore struct {
+	ddlJobFetcher *ddlJobFetcher
+
+	storage kv.Storage
+
 	// store unresolved ddl event in memory, it is thread safe
 	unsortedCache *unsortedDDLCache
 
@@ -55,7 +58,7 @@ type schemaStore struct {
 	mu sync.Mutex
 
 	// max finishedTS of all applied ddl events
-	finishedDDLTS Timestamp
+	finishedDDLTS common.Ts
 	// max schemaVersion of all applied ddl events
 	schemaVersion int64
 
@@ -72,10 +75,13 @@ type schemaStore struct {
 	dispatchersMap DispatcherInfoMap
 }
 
-func NewSchemaStore(root string, storage kv.Storage, minRequiredTS Timestamp) (SchemaStore, Timestamp, error) {
-	dataStorage, metaTS, databaseMap := newPersistentStorage(root, storage, minRequiredTS)
+// TODO: remove minRequiredTS
+func NewSchemaStore(root string, up *upstream.Upstream, minRequiredTS common.Ts) (SchemaStore, error) {
+	kvStorage := up.KVStorage
+	dataStorage, metaTS, databaseMap := newPersistentStorage(root, kvStorage, minRequiredTS)
 
 	s := &schemaStore{
+		storage:           kvStorage,
 		unsortedCache:     newUnSortedDDLCache(),
 		dataStorage:       dataStorage,
 		eventCh:           make(chan interface{}, 1024),
@@ -85,14 +91,28 @@ func NewSchemaStore(root string, storage kv.Storage, minRequiredTS Timestamp) (S
 		tableInfoStoreMap: make(TableInfoStoreMap),
 		dispatchersMap:    make(DispatcherInfoMap),
 	}
-	ctx := context.Background()
-	// TODO: cancel this goroutine at exit
-	go s.run(ctx)
+	s.ddlJobFetcher = newDDLJobFetcher(
+		up,
+		metaTS.resolvedTS,
+		s.writeDDLEvent,
+		s.advanceResolvedTs)
 
-	return s, metaTS.resolvedTS, nil
+	return s, nil
 }
 
-func (s *schemaStore) run(ctx context.Context) error {
+func (s *schemaStore) Run(ctx context.Context) error {
+	eg, ctx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
+		return s.batchCommitAndUpdateWatermark(ctx)
+	})
+	eg.Go(func() error {
+		return s.ddlJobFetcher.run(ctx)
+	})
+	return eg.Wait()
+}
+
+// TODO: use a meaningful name
+func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -106,7 +126,7 @@ func (s *schemaStore) run(ctx context.Context) error {
 				if err != nil {
 					log.Fatal("write ddl event failed", zap.Error(err))
 				}
-			case Timestamp:
+			case common.Ts:
 				// TODO: check resolved ts is monotonically increasing
 				resolvedEvents := s.unsortedCache.fetchSortedDDLEventBeforeTS(v)
 				if len(resolvedEvents) == 0 {
@@ -115,7 +135,7 @@ func (s *schemaStore) run(ctx context.Context) error {
 				// TODO: whether the events is ordered by finishedDDLTS and schemaVersion
 				newFinishedDDLTS := resolvedEvents[len(resolvedEvents)-1].Job.BinlogInfo.FinishedTS
 				newSchemaVersion := resolvedEvents[len(resolvedEvents)-1].Job.Version
-				err := s.dataStorage.updateStoreMeta(v, Timestamp(newFinishedDDLTS), Timestamp(newSchemaVersion))
+				err := s.dataStorage.updateStoreMeta(v, common.Ts(newFinishedDDLTS), common.Ts(newSchemaVersion))
 				if err != nil {
 					log.Fatal("update ts failed", zap.Error(err))
 				}
@@ -133,7 +153,7 @@ func (s *schemaStore) run(ctx context.Context) error {
 						return err
 					}
 					s.schemaVersion = event.Job.Version
-					s.finishedDDLTS = Timestamp(event.Job.BinlogInfo.FinishedTS)
+					s.finishedDDLTS = common.Ts(event.Job.BinlogInfo.FinishedTS)
 				}
 			default:
 				log.Fatal("unknown event type")
@@ -142,29 +162,49 @@ func (s *schemaStore) run(ctx context.Context) error {
 	}
 }
 
-func (s *schemaStore) WriteDDLEvent(ddlEvent DDLEvent) error {
-	log.Info("write ddl event", zap.Any("ddlEvent", ddlEvent))
-	s.eventCh <- ddlEvent
-	return nil
+func isSystemDB(dbName string) bool {
+	return dbName == "mysql" || dbName == "sys"
 }
 
-func (s *schemaStore) AdvanceResolvedTS(resolvedTS Timestamp) error {
-	log.Info("advance resolved ts", zap.Any("resolvedTS", resolvedTS))
-	s.eventCh <- resolvedTS
-	return nil
-}
+func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]TableID, error) {
+	meta := logpuller.GetSnapshotMeta(s.storage, uint64(snapTs))
+	start := time.Now()
+	dbinfos, err := meta.ListDatabases()
+	if err != nil {
+		log.Fatal("list databases failed", zap.Error(err))
+	}
 
-func (s *schemaStore) DoGC(gcTS Timestamp) error {
-	// TODO: gc databaseMap
-	return s.dataStorage.gc(gcTS)
-}
+	tableIDs := make([]TableID, 0)
 
-func (s *schemaStore) GetAllPhysicalTables(dispatcherID DispatcherID, filter Filter, ts Timestamp) ([]TableID, error) {
-	return nil, nil
+	for _, dbinfo := range dbinfos {
+		if isSystemDB(dbinfo.Name.O) {
+			continue
+		}
+		log.Info("get database", zap.Any("dbinfo", dbinfo))
+		rawTables, err := meta.GetMetasByDBID(dbinfo.ID)
+		if err != nil {
+			log.Fatal("get tables failed", zap.Error(err))
+		}
+		for _, rawTable := range rawTables {
+			if !isTableRawKey(rawTable.Field) {
+				continue
+			}
+			tbName := &model.TableNameInfo{}
+			err := json.Unmarshal(rawTable.Value, tbName)
+			if err != nil {
+				log.Fatal("get table info failed", zap.Error(err))
+			}
+			tableIDs = append(tableIDs, TableID(tbName.ID))
+		}
+	}
+
+	log.Info("finish write schema snapshot",
+		zap.Any("duration", time.Since(start).Seconds()))
+	return tableIDs, nil
 }
 
 func (s *schemaStore) RegisterDispatcher(
-	dispatcherID DispatcherID, tableID TableID, filter Filter, startTS Timestamp,
+	dispatcherID DispatcherID, tableID TableID, filter Filter, startTS common.Ts,
 ) error {
 	s.mu.Lock()
 	if startTS < s.dataStorage.getGCTS() {
@@ -242,7 +282,7 @@ func (s *schemaStore) RegisterDispatcher(
 	return nil
 }
 
-func (s *schemaStore) UpdateDispatcherSendTS(dispatcherID DispatcherID, ts Timestamp) error {
+func (s *schemaStore) UpdateDispatcherSendTS(dispatcherID DispatcherID, ts common.Ts) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	info, ok := s.dispatchersMap[dispatcherID]
@@ -271,13 +311,13 @@ func (s *schemaStore) UnregisterDispatcher(dispatcherID DispatcherID) error {
 	return nil
 }
 
-func (s *schemaStore) GetMaxFinishedDDLTS() Timestamp {
+func (s *schemaStore) GetMaxFinishedDDLTS() common.Ts {
 	s.mu.Lock()
 	defer s.mu.Lock()
 	return s.finishedDDLTS
 }
 
-func (s *schemaStore) GetTableInfo(tableID TableID, ts Timestamp) (*common.TableInfo, error) {
+func (s *schemaStore) GetTableInfo(tableID TableID, ts common.Ts) (*common.TableInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	store, ok := s.tableInfoStoreMap[tableID]
@@ -288,8 +328,28 @@ func (s *schemaStore) GetTableInfo(tableID TableID, ts Timestamp) (*common.Table
 	return store.getTableInfo(ts)
 }
 
-func (s *schemaStore) GetNextDDLEvent(dispatcherID DispatcherID) (*DDLEvent, Timestamp, error) {
+func (s *schemaStore) GetNextDDLEvent(dispatcherID DispatcherID) (*DDLEvent, common.Ts, error) {
 	return nil, 0, nil
+}
+
+func (s *schemaStore) writeDDLEvent(ddlEvent DDLEvent) error {
+	// log.Info("write ddl event", zap.Any("ddlEvent", ddlEvent))
+	s.eventCh <- ddlEvent
+	return nil
+}
+
+func (s *schemaStore) advanceResolvedTs(resolvedTs common.Ts) error {
+	// log.Info("advance resolved ts", zap.Any("resolvedTS", resolvedTs))
+	s.eventCh <- resolvedTs
+	return nil
+}
+
+// TODO: run gc when calling schemaStore.run
+func (s *schemaStore) doGC() error {
+	// fetch gcTs from upstream
+	gcTs := common.Ts(0)
+	// TODO: gc databaseMap
+	return s.dataStorage.gc(gcTs)
 }
 
 func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfoStoreMap TableInfoStoreMap) error {
@@ -340,10 +400,10 @@ func fillSchemaName(job *model.Job, databaseMap DatabaseInfoMap) error {
 	if !ok {
 		return errors.New("database not found")
 	}
-	if databaseInfo.CreateVersion > Timestamp(job.BinlogInfo.FinishedTS) {
+	if databaseInfo.CreateVersion > common.Ts(job.BinlogInfo.FinishedTS) {
 		return errors.New("database is not created")
 	}
-	if databaseInfo.DeleteVersion < Timestamp(job.BinlogInfo.FinishedTS) {
+	if databaseInfo.DeleteVersion < common.Ts(job.BinlogInfo.FinishedTS) {
 		return errors.New("database is deleted")
 	}
 	job.SchemaName = databaseInfo.Name
@@ -357,7 +417,7 @@ func createSchema(job *model.Job, databaseMap DatabaseInfoMap) error {
 	databaseInfo := &DatabaseInfo{
 		Name:          job.SchemaName,
 		Tables:        make([]TableID, 0),
-		CreateVersion: Timestamp(job.BinlogInfo.FinishedTS),
+		CreateVersion: common.Ts(job.BinlogInfo.FinishedTS),
 		DeleteVersion: math.MaxUint64,
 	}
 	databaseMap[DatabaseID(job.SchemaID)] = databaseInfo
@@ -372,6 +432,6 @@ func dropSchema(job *model.Job, databaseMap DatabaseInfoMap) error {
 	if databaseInfo.isDeleted() {
 		return errors.New("database is already deleted")
 	}
-	databaseInfo.DeleteVersion = Timestamp(job.BinlogInfo.FinishedTS)
+	databaseInfo.DeleteVersion = common.Ts(job.BinlogInfo.FinishedTS)
 	return nil
 }

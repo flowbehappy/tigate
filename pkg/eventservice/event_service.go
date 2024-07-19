@@ -3,7 +3,6 @@ package eventservice
 import (
 	"context"
 
-	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
@@ -22,6 +21,14 @@ type EventService interface {
 	Close()
 }
 
+type logpuller interface {
+	// SubscribeTableSpan subscribes the table span, and returns the latest progress of the table span.
+	// afterUpdate is called when the watermark of the table span is updated.
+	SubscribeTableSpan(span *common.TableSpan, startTs uint64, onSpanUpdate func(watermark uint64)) (uint64, error)
+	// Read return the event of the data range.
+	Read(dataRange ...*common.DataRange) ([][]*common.TxnEvent, error)
+}
+
 type DispatcherInfo interface {
 	// GetID returns the ID of the dispatcher.
 	GetID() string
@@ -36,19 +43,19 @@ type DispatcherInfo interface {
 }
 
 type eventService struct {
-	ctx        context.Context
-	mc         messaging.MessageCenter
-	eventStore eventstore.EventStore
-	brokers    map[uint64]*eventBroker
+	ctx       context.Context
+	mc        messaging.MessageCenter
+	logpuller logpuller
+	brokers   map[uint64]*eventBroker
 
 	// TODO: use a better way to cache the acceptorInfos
 	acceptorInfoCh chan DispatcherInfo
 }
 
-func NewEventService(ctx context.Context, mc messaging.MessageCenter, eventStore eventstore.EventStore) EventService {
+func NewEventService(ctx context.Context, mc messaging.MessageCenter, logpuller logpuller) EventService {
 	es := &eventService{
 		mc:             mc,
-		eventStore:     eventStore,
+		logpuller:      logpuller,
 		ctx:            ctx,
 		brokers:        make(map[uint64]*eventBroker),
 		acceptorInfoCh: make(chan DispatcherInfo, defaultChanelSize*16),
@@ -95,7 +102,7 @@ func (s *eventService) registerDispatcher(acceptor DispatcherInfo) {
 
 	c, ok := s.brokers[clusterID]
 	if !ok {
-		c = newEventBroker(s.ctx, clusterID, s.eventStore, s.mc)
+		c = newEventBroker(s.ctx, clusterID, s.logpuller, s.mc)
 		s.brokers[clusterID] = c
 	}
 
@@ -112,6 +119,8 @@ func (s *eventService) registerDispatcher(acceptor DispatcherInfo) {
 	ac.watermark.Store(uint64(startTs))
 
 	c.dispatchers[acceptor.GetID()] = ac
+
+	// c.logpuller.SubscribeTableSpan(span, startTs, stat.UpdateWatermark)
 
 	c.eventStore.RegisterDispatcher(
 		ac.info.GetID(),

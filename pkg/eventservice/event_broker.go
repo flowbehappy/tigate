@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 
 	"github.com/flowbehappy/tigate/eventpb"
-	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
@@ -21,7 +20,7 @@ type eventBroker struct {
 	// tidbClusterID is the ID of the TiDB cluster this eventStore belongs to.
 	tidbClusterID uint64
 	// eventBroker get events from the eventStore.
-	eventStore eventstore.EventStore
+	logpuller logpuller
 	// msgSender is used to send the events to the dispatchers.
 	msgSender messaging.MessageSender
 
@@ -48,7 +47,7 @@ type eventBroker struct {
 func newEventBroker(
 	ctx context.Context,
 	id uint64,
-	eventStore eventstore.EventStore,
+	logService logpuller,
 	mc messaging.MessageSender,
 ) *eventBroker {
 	ctx, cancel := context.WithCancel(ctx)
@@ -56,7 +55,7 @@ func newEventBroker(
 	c := &eventBroker{
 		ctx:             ctx,
 		tidbClusterID:   id,
-		eventStore:      eventStore,
+		logpuller:       logService,
 		dispatchers:     make(map[string]*dispatcherStat),
 		msgSender:       mc,
 		changedCh:       make(chan *subscriptionChange, defaultChanelSize),
@@ -123,7 +122,9 @@ func (c *eventBroker) runScanWorker() {
 					}
 
 					// scan the event store to get the events in the data range.
-					events, err := c.eventStore.GetIterator(task.dataRange)
+					//events, err := c.eventStore.GetIterator(task.dataRange)
+					events, err := c.logpuller.Read(task.dataRange)
+
 					if err != nil {
 						log.Info("read events failed", zap.Error(err))
 						// push the task back to the task pool.

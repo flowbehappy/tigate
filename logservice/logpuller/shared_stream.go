@@ -11,11 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package eventsource
+package logpuller
 
 import (
 	"context"
+	"encoding/binary"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -23,10 +25,14 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/chann"
 	"github.com/pingcap/tiflow/pkg/util"
+	"github.com/pingcap/tiflow/pkg/util/seahash"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	grpcstatus "google.golang.org/grpc/status"
 )
+
+// To generate a streamID in `newStream`.
+var streamIDGen atomic.Uint64
 
 type requestedStream struct {
 	streamID uint64
@@ -500,4 +506,10 @@ func (s *requestedStream) sendResolvedTs(
 		}
 	}
 	return nil
+}
+
+func hashRegionID(regionID uint64, slots int) int {
+	b := make([]byte, 8)
+	binary.LittleEndian.PutUint64(b, regionID)
+	return int(seahash.Sum64(b) % uint64(slots))
 }

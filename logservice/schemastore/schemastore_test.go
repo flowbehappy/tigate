@@ -1,15 +1,31 @@
-package puller
+// Copyright 2024 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package schemastore
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
-	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/logservice/upstream"
+	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials/insecure"
@@ -18,8 +34,10 @@ import (
 // TODO: this is not a really unit test, more like a usage example.
 // 1. deploy a tidb cluster
 // 2. set global tidb_gc_life_time="100h";
-// 3. begin; select @@tidb_current_ts; and set it to gcTS and checkpointTS;
-func TestBasic(t *testing.T) {
+// 3. begin; select @@tidb_current_ts; and set it to gcTs
+// 4. create some tables;
+// 3. begin; select @@tidb_current_ts; and set it to snapTs;
+func TestBasicDDLJob(t *testing.T) {
 	ctx := context.Background()
 	upstreamManager := upstream.NewManager(ctx)
 	pdEndpoints := []string{"http://127.0.0.1:2379"}
@@ -47,8 +65,16 @@ func TestBasic(t *testing.T) {
 	upstream, err := upstreamManager.AddDefaultUpstream(pdEndpoints, &security.Credential{}, pdClient, etcdCli)
 	require.Nil(t, err)
 
-	gcTS := uint64(451108303014723585) // FIXME every time run
-	schemaStore, _, err := schemastore.NewSchemaStore("/tmp/cdc", upstream.KVStorage, schemastore.Timestamp(gcTS))
+	gcTs := common.Ts(451242620753281028) // FIXME every time run
+	snapTs := common.Ts(451242799289073665)
+	schemaStore, err := NewSchemaStore("/tmp/cdc", upstream, gcTs)
 	require.Nil(t, err)
-	_ = NewDDLJobPuller(ctx, upstream, gcTS, schemaStore)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go schemaStore.Run(ctx)
+	time.Sleep(3 * time.Second)
+	tables, err := schemaStore.GetAllPhysicalTables(snapTs)
+	require.Nil(t, err)
+	log.Info("schema store get all tables", zap.Any("tables", tables))
+	fmt.Printf("all tables")
 }

@@ -15,21 +15,18 @@ package mounter
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"time"
 	"unsafe"
 
-	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -78,45 +75,32 @@ type Mounter interface {
 	// DecodeEvent accepts `common.PolymorphicEvent` with `RawKVEntry` filled and
 	// decodes `RawKVEntry` into `RowChangedEvent`.
 	// If a `common.PolymorphicEvent` should be ignored, it will returns (false, nil).
-	DecodeEvent(ctx context.Context, event *common.PolymorphicEvent) error
+	DecodeEvent(event *common.PolymorphicEvent, tableInfo *common.TableInfo) error
 }
 
 type mounter struct {
-	schemaStore schemastore.SchemaStore
-	tz          *time.Location
-
+	tz *time.Location
 	// decoder and preDecoder are used to decode the raw value, also used to extract checksum,
 	// they should not be nil after decode at least one event in the row format v2.
 	decoder    *rowcodec.DatumMapDecoder
 	preDecoder *rowcodec.DatumMapDecoder
-
-	// encoder is used to calculate the checksum.
-	encoder *rowcodec.Encoder
-	// sctx hold some information can be used by the encoder to calculate the checksum.
-	sctx *stmtctx.StatementContext
 }
 
 // NewMounter creates a mounter
-func NewMounter(
-	schemaStore schemastore.SchemaStore,
-	tz *time.Location,
-) Mounter {
+func NewMounter(tz *time.Location) Mounter {
 	return &mounter{
-		schemaStore: schemaStore,
-		tz:          tz,
-
-		encoder: &rowcodec.Encoder{},
-		sctx:    stmtctx.NewStmtCtxWithTimeZone(tz),
+		tz: tz,
 	}
 }
 
 // DecodeEvent decode kv events using ddl puller's schemaStorage
 // this method could block indefinitely if the DDL puller is lagging.
-func (m *mounter) DecodeEvent(ctx context.Context, event *common.PolymorphicEvent) error {
+// FIXME: avoid use PolymorphicEvent, decode common.RawKVEntry directly and return RowChangedEvent
+func (m *mounter) DecodeEvent(event *common.PolymorphicEvent, tableInfo *common.TableInfo) error {
 	if event.IsResolved() {
 		return nil
 	}
-	row, err := m.unmarshalAndMountRowChanged(ctx, event.RawKV)
+	row, err := m.unmarshalAndMountRowChanged(event.RawKV, tableInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -131,7 +115,10 @@ func (m *mounter) DecodeEvent(ctx context.Context, event *common.PolymorphicEven
 	return nil
 }
 
-func (m *mounter) unmarshalAndMountRowChanged(ctx context.Context, raw *common.RawKVEntry) (*common.RowChangedEventData, error) {
+func (m *mounter) unmarshalAndMountRowChanged(
+	raw *common.RawKVEntry,
+	tableInfo *common.TableInfo,
+) (*common.RowChangedEventData, error) {
 	if !bytes.HasPrefix(raw.Key, tablePrefix) {
 		return nil, nil
 	}
@@ -149,9 +136,6 @@ func (m *mounter) unmarshalAndMountRowChanged(ctx context.Context, raw *common.R
 		PhysicalTableID: physicalTableID,
 		Delete:          raw.OpType == common.OpTypeDelete,
 	}
-	// When async commit is enabled, the commitTs of DMLs may be equals with DDL finishedTs.
-	// A DML whose commitTs is equal to a DDL finishedTs should use the schema info before the DDL.
-	tableInfo, err := m.schemaStore.GetTableInfo(schemastore.TableID(physicalTableID), schemastore.Timestamp(raw.CRTs-1))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -296,7 +280,7 @@ func ParseDDLJob(rawKV *common.RawKVEntry, ddlTableInfo *DDLTableInfo) (*model.J
 		return parseJob(v, rawKV.StartTs, rawKV.CRTs, true)
 	}
 
-	return nil, fmt.Errorf("Unvalid tableID %v in rawKV.Key", tableID)
+	return nil, fmt.Errorf("invalid tableID %v in rawKV.Key", tableID)
 }
 
 // parseJob unmarshal the job from "v".
