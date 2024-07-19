@@ -608,6 +608,12 @@ func (z *TxnEvent) DecodeMsg(dc *msgp.Reader) (err error) {
 				err = msgp.WrapError(err, "ClusterID")
 				return
 			}
+		case "dispatcher-id":
+			err = z.DispatcherID.DecodeMsg(dc)
+			if err != nil {
+				err = msgp.WrapError(err, "DispatcherID")
+				return
+			}
 		case "rows":
 			var zb0002 uint32
 			zb0002, err = dc.ReadArrayHeader()
@@ -670,15 +676,25 @@ func (z *TxnEvent) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z *TxnEvent) EncodeMsg(en *msgp.Writer) (err error) {
-	// map header, size 5
+	// map header, size 6
 	// write "cluster-id"
-	err = en.Append(0x85, 0xaa, 0x63, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x2d, 0x69, 0x64)
+	err = en.Append(0x86, 0xaa, 0x63, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x2d, 0x69, 0x64)
 	if err != nil {
 		return
 	}
 	err = en.WriteUint64(z.ClusterID)
 	if err != nil {
 		err = msgp.WrapError(err, "ClusterID")
+		return
+	}
+	// write "dispatcher-id"
+	err = en.Append(0xad, 0x64, 0x69, 0x73, 0x70, 0x61, 0x74, 0x63, 0x68, 0x65, 0x72, 0x2d, 0x69, 0x64)
+	if err != nil {
+		return
+	}
+	err = z.DispatcherID.EncodeMsg(en)
+	if err != nil {
+		err = msgp.WrapError(err, "DispatcherID")
 		return
 	}
 	// write "rows"
@@ -741,10 +757,17 @@ func (z *TxnEvent) EncodeMsg(en *msgp.Writer) (err error) {
 // MarshalMsg implements msgp.Marshaler
 func (z *TxnEvent) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// map header, size 5
+	// map header, size 6
 	// string "cluster-id"
-	o = append(o, 0x85, 0xaa, 0x63, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x2d, 0x69, 0x64)
+	o = append(o, 0x86, 0xaa, 0x63, 0x6c, 0x75, 0x73, 0x74, 0x65, 0x72, 0x2d, 0x69, 0x64)
 	o = msgp.AppendUint64(o, z.ClusterID)
+	// string "dispatcher-id"
+	o = append(o, 0xad, 0x64, 0x69, 0x73, 0x70, 0x61, 0x74, 0x63, 0x68, 0x65, 0x72, 0x2d, 0x69, 0x64)
+	o, err = z.DispatcherID.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "DispatcherID")
+		return
+	}
 	// string "rows"
 	o = append(o, 0xa4, 0x72, 0x6f, 0x77, 0x73)
 	o = msgp.AppendArrayHeader(o, uint32(len(z.Rows)))
@@ -793,6 +816,12 @@ func (z *TxnEvent) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			z.ClusterID, bts, err = msgp.ReadUint64Bytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "ClusterID")
+				return
+			}
+		case "dispatcher-id":
+			bts, err = z.DispatcherID.UnmarshalMsg(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "DispatcherID")
 				return
 			}
 		case "rows":
@@ -857,7 +886,7 @@ func (z *TxnEvent) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *TxnEvent) Msgsize() (s int) {
-	s = 1 + 11 + msgp.Uint64Size + 5 + msgp.ArrayHeaderSize
+	s = 1 + 11 + msgp.Uint64Size + 14 + z.DispatcherID.Msgsize() + 5 + msgp.ArrayHeaderSize
 	for za0001 := range z.Rows {
 		if z.Rows[za0001] == nil {
 			s += msgp.NilSize
