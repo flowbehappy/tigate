@@ -136,7 +136,7 @@ func NewEventStore(
 		channels = append(channels, make(chan eventWithTableID, 1024))
 	}
 
-	schemaStore, err := schemastore.NewSchemaStore(root, pdCli, regionCache, pdClock, kvStorage)
+	schemaStore, err := schemastore.NewSchemaStore(ctx, root, pdCli, regionCache, pdClock, kvStorage)
 	if err != nil {
 		log.Panic("failed to create schema store", zap.Error(err))
 	}

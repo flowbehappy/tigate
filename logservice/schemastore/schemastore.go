@@ -6,7 +6,6 @@ import (
 	"errors"
 	"math"
 	"sync"
-	"time"
 
 	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -14,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -81,14 +81,21 @@ type schemaStore struct {
 }
 
 func NewSchemaStore(
+	ctx context.Context,
 	root string,
 	pdCli pd.Client,
 	regionCache *tikv.RegionCache,
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
 ) (SchemaStore, error) {
-
-	minRequiredTS := common.Ts(0) // FIXME
+	phy, logic, err := pdCli.GetTS(ctx)
+	if err != nil {
+		log.Panic("get ts failed", zap.Error(err))
+		return nil, err
+	}
+	// FIXME: not sure currentTs will work
+	currentTs := oracle.ComposeTS(phy, logic)
+	minRequiredTS := common.Ts(currentTs)
 	dataStorage, metaTS, databaseMap := newPersistentStorage(root, kvStorage, minRequiredTS)
 
 	s := &schemaStore{
@@ -186,7 +193,6 @@ func isSystemDB(dbName string) bool {
 
 func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]common.TableID, error) {
 	meta := logpuller.GetSnapshotMeta(s.storage, uint64(snapTs))
-	start := time.Now()
 	dbinfos, err := meta.ListDatabases()
 	if err != nil {
 		log.Fatal("list databases failed", zap.Error(err))
@@ -198,8 +204,8 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]common.TableID, 
 		if isSystemDB(dbinfo.Name.O) {
 			continue
 		}
-		log.Info("get database", zap.Any("dbinfo", dbinfo))
 		rawTables, err := meta.GetMetasByDBID(dbinfo.ID)
+		log.Info("get database", zap.Any("dbinfo", dbinfo), zap.Any("rawTables", rawTables))
 		if err != nil {
 			log.Fatal("get tables failed", zap.Error(err))
 		}
@@ -216,8 +222,6 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]common.TableID, 
 		}
 	}
 
-	log.Info("finish write schema snapshot",
-		zap.Any("duration", time.Since(start).Seconds()))
 	return tableIDs, nil
 }
 
