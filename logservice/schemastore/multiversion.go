@@ -20,12 +20,12 @@ type tableInfoItem struct {
 type versionedTableInfoStore struct {
 	mu sync.Mutex
 
-	tableID TableID
+	tableID common.TableID
 
 	// dispatcherID -> max ts successfully send to dispatcher
 	// gcTS = min(dispatchers[dispatcherID])
 	// when gc, just need retain one version <= gcTS
-	dispatchers map[DispatcherID]common.Ts
+	dispatchers map[common.DispatcherID]common.Ts
 
 	// ordered by ts
 	infos []*tableInfoItem
@@ -41,10 +41,10 @@ type versionedTableInfoStore struct {
 	readyToRead chan struct{}
 }
 
-func newEmptyVersionedTableInfoStore(tableID TableID) *versionedTableInfoStore {
+func newEmptyVersionedTableInfoStore(tableID common.TableID) *versionedTableInfoStore {
 	return &versionedTableInfoStore{
 		tableID:       tableID,
-		dispatchers:   make(map[DispatcherID]common.Ts),
+		dispatchers:   make(map[common.DispatcherID]common.Ts),
 		infos:         make([]*tableInfoItem, 0),
 		deleteVersion: math.MaxUint64,
 		initialized:   false,
@@ -60,7 +60,7 @@ func (v *versionedTableInfoStore) addInitialTableInfo(info *common.TableInfo) {
 	v.infos = append(v.infos, &tableInfoItem{version: common.Ts(info.Version), info: info})
 }
 
-func (v *versionedTableInfoStore) getTableID() TableID {
+func (v *versionedTableInfoStore) getTableID() common.TableID {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return v.tableID
@@ -112,7 +112,7 @@ func (v *versionedTableInfoStore) getTableInfo(ts common.Ts) (*common.TableInfo,
 }
 
 // only keep one item with the largest version <= gcTS
-func removeUnusedInfos(infos []*tableInfoItem, dispatchers map[DispatcherID]common.Ts) []*tableInfoItem {
+func removeUnusedInfos(infos []*tableInfoItem, dispatchers map[common.DispatcherID]common.Ts) []*tableInfoItem {
 	if len(infos) == 0 {
 		log.Fatal("no table info found")
 	}
@@ -135,7 +135,7 @@ func removeUnusedInfos(infos []*tableInfoItem, dispatchers map[DispatcherID]comm
 	return infos[target-1:]
 }
 
-func (v *versionedTableInfoStore) registerDispatcher(dispatcherID DispatcherID, ts common.Ts) {
+func (v *versionedTableInfoStore) registerDispatcher(dispatcherID common.DispatcherID, ts common.Ts) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if _, ok := v.dispatchers[dispatcherID]; ok {
@@ -145,7 +145,7 @@ func (v *versionedTableInfoStore) registerDispatcher(dispatcherID DispatcherID, 
 }
 
 // return true when the store can be removed(no registered dispatchers)
-func (v *versionedTableInfoStore) unregisterDispatcher(dispatcherID DispatcherID) bool {
+func (v *versionedTableInfoStore) unregisterDispatcher(dispatcherID common.DispatcherID) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	delete(v.dispatchers, dispatcherID)
@@ -156,7 +156,7 @@ func (v *versionedTableInfoStore) unregisterDispatcher(dispatcherID DispatcherID
 	return false
 }
 
-func (v *versionedTableInfoStore) updateDispatcherSendTS(dispatcherID DispatcherID, ts common.Ts) error {
+func (v *versionedTableInfoStore) updateDispatcherSendTS(dispatcherID common.DispatcherID, ts common.Ts) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if oldTS, ok := v.dispatchers[dispatcherID]; !ok {

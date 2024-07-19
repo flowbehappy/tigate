@@ -26,6 +26,9 @@ type DDLEvent struct {
 type TxnEvent struct {
 	// ClusterID is the ID of the tidb cluster this event belongs to.
 	ClusterID uint64 `msg:"cluster-id"`
+
+	DispatcherID DispatcherID `msg:"dispatcher-id"`
+
 	// Span of this event belongs to.
 	Span *TableSpan `msg:"-"`
 
@@ -154,6 +157,9 @@ type RowChangedEventData struct {
 
 type RowChangedEvent struct {
 	PhysicalTableID int64
+
+	StartTs  uint64
+	CommitTs uint64
 
 	// NOTICE: We probably store the logical ID inside TableInfo's TableName,
 	// not the physical ID.

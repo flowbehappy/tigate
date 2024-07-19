@@ -10,11 +10,17 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/flowbehappy/tigate/logservice/logpuller"
-	"github.com/flowbehappy/tigate/logservice/upstream"
+	"github.com/flowbehappy/tigate/logservice/schemastore"
+	"github.com/flowbehappy/tigate/mounter"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
+	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/pingcap/tiflow/pkg/spanz"
+	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -24,9 +30,11 @@ type EventObserver func(raw *common.RawKVEntry)
 type WatermarkNotifier func(watermark uint64)
 
 type EventStore interface {
+	Name() string
+
 	Run(ctx context.Context) error
 
-	Close(ctx context.Context)
+	Close(ctx context.Context) error
 
 	// add a callback to be called when a new event is added to the store;
 	// but for old data this is not feasiable? may we can just return a current watermark when register
@@ -48,7 +56,7 @@ type EventStore interface {
 }
 
 type EventIterator interface {
-	Next() (rawKV *common.RawKVEntry, isNewTxn bool, err error)
+	Next() (*common.RowChangedEvent, bool, error)
 
 	// Close closes the iterator.
 	Close() error
@@ -70,9 +78,10 @@ type tableState struct {
 	ch chan eventWithTableID
 }
 type eventStore struct {
-	dbs      []*pebble.DB
-	channels []chan eventWithTableID
-	puller   *logpuller.LogPuller
+	schemaStore schemastore.SchemaStore
+	dbs         []*pebble.DB
+	channels    []chan eventWithTableID
+	puller      *logpuller.LogPuller
 
 	gcManager *gcManager
 
@@ -88,12 +97,17 @@ type eventStore struct {
 const dataDir = "event_store"
 const dbCount = 32
 
-func NewEventStore(ctx context.Context, up *upstream.Upstream, root string) EventStore {
-	pdCli := up.PDClient
-	regionCache := up.RegionCache
-	pdClock := up.PDClock
-
-	grpcPool := logpuller.NewConnAndClientPool(up.SecurityConfig)
+func NewEventStore(
+	ctx context.Context,
+	root string,
+	pdCli pd.Client,
+	regionCache *tikv.RegionCache,
+	pdClock pdutil.Clock,
+	kvStorage kv.Storage,
+) EventStore {
+	grpcPool := logpuller.NewConnAndClientPool(
+		&security.Credential{},
+	)
 	clientConfig := &logpuller.SharedClientConfig{
 		KVClientWorkerConcurrent:     32,
 		KVClientGrpcStreamConcurrent: 32,
@@ -121,9 +135,15 @@ func NewEventStore(ctx context.Context, up *upstream.Upstream, root string) Even
 		channels = append(channels, make(chan eventWithTableID, 1024))
 	}
 
+	schemaStore, err := schemastore.NewSchemaStore(root, pdCli, regionCache, pdClock, kvStorage)
+	if err != nil {
+		log.Panic("failed to create schema store", zap.Error(err))
+	}
+
 	store := &eventStore{
-		dbs:      dbs,
-		channels: channels,
+		schemaStore: schemaStore,
+		dbs:         dbs,
+		channels:    channels,
 
 		gcManager: newGCManager(),
 
@@ -153,8 +173,17 @@ func NewEventStore(ctx context.Context, up *upstream.Upstream, root string) Even
 	return store
 }
 
+func (e *eventStore) Name() string {
+	return "eventstore"
+}
+
 func (e *eventStore) Run(ctx context.Context) error {
 	eg, ctx := errgroup.WithContext(ctx)
+
+	eg.Go(func() error {
+		return e.schemaStore.Run(ctx)
+	})
+
 	eg.Go(func() error {
 		return e.puller.Run(ctx)
 	})
@@ -166,7 +195,8 @@ func (e *eventStore) Run(ctx context.Context) error {
 	return eg.Wait()
 }
 
-func (e *eventStore) Close(ctx context.Context) {
+func (e *eventStore) Close(ctx context.Context) error {
+	return nil
 }
 
 type DBBatchEvent struct {
@@ -308,6 +338,7 @@ func (e *eventStore) deleteEvents(span tablepb.Span, startCommitTS uint64, endCo
 }
 
 func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span tablepb.Span, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
+	e.schemaStore.RegisterDispatcher(dispatcherID, common.TableID(span.TableID), startTS)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.tables.ReplaceOrInsert(span, dispatcherID)
@@ -325,6 +356,7 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span t
 }
 
 func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, sendTS uint64) error {
+	e.schemaStore.UpdateDispatcherSendTS(dispatcherID, sendTS)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if tableStat, ok := e.spans[dispatcherID]; ok {
@@ -343,6 +375,7 @@ func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, se
 }
 
 func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
+	e.schemaStore.UnregisterDispatcher(dispatcherID)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if tableStat, ok := e.spans[dispatcherID]; ok {
@@ -376,19 +409,25 @@ func (e *eventStore) GetIterator(dataRange *common.DataRange) (EventIterator, er
 	iter.First()
 
 	return &eventStoreIter{
+		tableID:      common.TableID(span.TableID),
+		schemaStore:  e.schemaStore,
 		innerIter:    iter,
 		prevStartTS:  0,
 		prevCommitTS: 0,
+		iterMounter:  mounter.NewMounter(time.Local), // FIXME
 	}, nil
 }
 
 type eventStoreIter struct {
+	tableID      common.TableID
+	schemaStore  schemastore.SchemaStore
 	innerIter    *pebble.Iterator
 	prevStartTS  uint64
 	prevCommitTS uint64
+	iterMounter  mounter.Mounter
 }
 
-func (iter *eventStoreIter) Next() (*common.RawKVEntry, bool, error) {
+func (iter *eventStoreIter) Next() (*common.RowChangedEvent, bool, error) {
 	if iter.innerIter == nil {
 		log.Panic("iter is nil")
 	}
@@ -411,7 +450,15 @@ func (iter *eventStoreIter) Next() (*common.RawKVEntry, bool, error) {
 	}
 	iter.prevCommitTS = commitTS
 	iter.prevStartTS = startTS
-	return rawKV, isNewTxn, nil
+	tableInfo, err := iter.schemaStore.GetTableInfo(iter.tableID, common.Ts(rawKV.CRTs-1))
+	if err != nil {
+		log.Panic("failed to get table info", zap.Error(err))
+	}
+	row, err := iter.iterMounter.DecodeEvent(rawKV, tableInfo)
+	if err != nil {
+		log.Panic("failed to decode event", zap.Error(err))
+	}
+	return row, isNewTxn, nil
 }
 
 func (iter *eventStoreIter) Close() error {
