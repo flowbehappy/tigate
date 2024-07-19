@@ -5,6 +5,7 @@ import (
 
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
@@ -20,8 +21,9 @@ const (
 // EventService accepts the requests of pulling events.
 // The EventService is a singleton in the system.
 type EventService interface {
-	Run() error
-	Close()
+	Name() string
+	Run(ctx context.Context) error
+	Close(context.Context) error
 }
 
 type logpuller interface {
@@ -55,7 +57,10 @@ type eventService struct {
 	acceptorInfoCh chan DispatcherInfo
 }
 
-func NewEventService(ctx context.Context, mc messaging.MessageCenter, eventStore eventstore.EventStore) EventService {
+func NewEventService(ctx context.Context) EventService {
+	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
+	eventStore := appcontext.GetService[eventstore.EventStore](appcontext.EventStore)
+
 	es := &eventService{
 		mc:             mc,
 		eventStore:     eventStore,
@@ -67,11 +72,15 @@ func NewEventService(ctx context.Context, mc messaging.MessageCenter, eventStore
 	return es
 }
 
-func (s *eventService) Run() error {
+func (s *eventService) Name() string {
+	return appcontext.EventService
+}
+
+func (s *eventService) Run(ctx context.Context) error {
 	log.Info("start event service")
 	for {
 		select {
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			log.Info("event service exited")
 			return nil
 		case info := <-s.acceptorInfoCh:
@@ -84,12 +93,13 @@ func (s *eventService) Run() error {
 	}
 }
 
-func (s *eventService) Close() {
+func (s *eventService) Close(_ context.Context) error {
 	log.Info("event service is closing")
 	for _, c := range s.brokers {
 		c.close()
 	}
 	log.Info("event service is closed")
+	return nil
 }
 
 func (s *eventService) handleMessage(msg *messaging.TargetMessage) error {

@@ -5,10 +5,10 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -113,6 +113,7 @@ func (c *eventBroker) runScanWorker() {
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 					topic := task.dispatcherStat.info.GetTopic()
 					dispatcherID := task.dispatcherStat.info.GetID()
+					uid := common.DispatcherID(uuid.MustParse(dispatcherID))
 
 					// The dispatcher has no new events. In such case, we don't need to scan the event store.
 					// We just send the watermark to the dispatcher.
@@ -135,28 +136,45 @@ func (c *eventBroker) runScanWorker() {
 						continue
 					}
 
+					var txnEvent *common.TxnEvent
 					for {
-						e, _, err := iter.Next()
+						// The first event of the txn must return isNewTxn as true.
+						e, isNewTxn, err := iter.Next()
 						if err != nil {
 							log.Panic("read events failed", zap.Error(err))
 						}
+
+						if isNewTxn {
+							// Send the previous txnEvent to the dispatcher.
+							if txnEvent != nil {
+								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, txnEvent)
+								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
+							}
+							// Create a new txnEvent.
+							txnEvent = &common.TxnEvent{
+								DispatcherID: uid,
+								StartTs:      e.StartTs,
+								CommitTs:     e.CommitTs,
+								Rows:         make([]*common.RowChangedEvent, 0),
+							}
+						}
+
 						if e == nil {
-							waterMarkMsg := &eventpb.EventFeed{
+							watermark := &common.TxnEvent{
 								ResolvedTs:   task.dataRange.EndTs,
-								DispatcherId: dispatcherID,
+								DispatcherID: uid,
 							}
 							// After all the events are sent, we send the watermark to the dispatcher.
-							c.messageCh <- messaging.NewTargetMessage(remoteID, topic, waterMarkMsg)
+							c.messageCh <- messaging.NewTargetMessage(remoteID, topic, watermark)
 							task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
+							continue
 						}
 						// Skip the events that have been sent to the dispatcher.
 						if e.CommitTs <= task.dispatcherStat.watermark.Load() {
 							continue
 						}
 
-						e.DispatcherID = dispatcherID
-						// Send the event to the dispatcher.
-						c.messageCh <- messaging.NewTargetMessage(remoteID, topic, e)
+						txnEvent.Rows = append(txnEvent.Rows, e)
 					}
 				}
 			}

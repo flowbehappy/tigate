@@ -12,12 +12,14 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -116,6 +118,7 @@ type mockSpanStats struct {
 	watermark     uint64
 	pendingEvents []*common.TxnEvent
 	onUpdate      func(watermark uint64)
+	onEvent       func(event *common.RawKVEntry)
 }
 
 func (m *mockSpanStats) update(event []*common.TxnEvent, watermark uint64) {
@@ -124,50 +127,116 @@ func (m *mockSpanStats) update(event []*common.TxnEvent, watermark uint64) {
 	m.onUpdate(watermark)
 }
 
-// mocklogpuller is a mock implementation of the logpuller interface
-type mocklogpuller struct {
+// mockEventStore is a mock implementation of the EventStore interface
+type mockEventStore struct {
 	spans map[uint64]*mockSpanStats
 }
 
-func newMocklogpuller() *mocklogpuller {
-	return &mocklogpuller{
+func newMockEventStore() *mockEventStore {
+	return &mockEventStore{
 		spans: make(map[uint64]*mockSpanStats),
 	}
 }
 
-func (m *mocklogpuller) SubscribeTableSpan(span *common.TableSpan, startTs uint64, onSpanUpdate func(watermark uint64)) (uint64, error) {
-	log.Info("subscribe table span", zap.Any("span", span), zap.Uint64("startTs", startTs))
-	m.spans[span.TableID] = &mockSpanStats{
-		startTs:       startTs,
-		watermark:     startTs,
-		onUpdate:      onSpanUpdate,
-		pendingEvents: make([]*common.TxnEvent, 0),
-	}
-	return startTs, nil
+func (m *mockEventStore) Name() string {
+	return "mockEventStore"
 }
 
-func (m *mocklogpuller) Read(dataRange ...*common.DataRange) ([][]*common.TxnEvent, error) {
-	events := make([][]*common.TxnEvent, 0)
-	for _, dr := range dataRange {
-		events = append(events, m.spans[dr.Span.TableID].pendingEvents)
-		m.spans[dr.Span.TableID].pendingEvents = make([]*common.TxnEvent, 0)
+func (m *mockEventStore) Run(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockEventStore) Close(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockEventStore) RegisterDispatcher(
+	dispatcherID common.DispatcherID,
+	span tablepb.Span,
+	startTS common.Ts,
+	observer eventstore.EventObserver,
+	notifier eventstore.WatermarkNotifier,
+) error {
+	log.Info("subscribe table span", zap.Any("span", span), zap.Uint64("startTs", uint64(startTS)))
+	m.spans[uint64(span.TableID)] = &mockSpanStats{
+		startTs:       uint64(startTS),
+		watermark:     uint64(startTS),
+		onUpdate:      notifier,
+		onEvent:       observer,
+		pendingEvents: make([]*common.TxnEvent, 0),
 	}
-	return events, nil
+	return nil
+}
+
+func (m *mockEventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, gcTS uint64) error {
+	return nil
+}
+
+func (m *mockEventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
+	return nil
+}
+
+func (m *mockEventStore) GetIterator(dataRange *common.DataRange) (eventstore.EventIterator, error) {
+	iter := &mockEventIterator{
+		events: make([]*common.TxnEvent, 0),
+	}
+
+	for _, e := range m.spans[dataRange.Span.TableID].pendingEvents {
+		if e.CommitTs > dataRange.StartTs && e.CommitTs <= dataRange.EndTs {
+			iter.events = append(iter.events, e)
+		}
+	}
+
+	return nil, nil
+}
+
+type mockEventIterator struct {
+	events     []*common.TxnEvent
+	currentTxn *common.TxnEvent
+}
+
+func (m *mockEventIterator) Next() (*common.RowChangedEvent, bool, error) {
+	if len(m.events) == 0 {
+		return nil, false, nil
+	}
+
+	if m.currentTxn == nil {
+		m.currentTxn = m.events[0]
+		m.events = m.events[1:]
+	}
+
+	if len(m.currentTxn.Rows) == 0 {
+		return nil, false, nil
+	}
+
+	row := m.currentTxn.Rows[0]
+	m.currentTxn.Rows = m.currentTxn.Rows[1:]
+	if len(m.currentTxn.Rows) == 0 {
+		m.currentTxn = nil
+	}
+
+	return row, true, nil
+}
+
+func (m *mockEventIterator) Close() error {
+	return nil
 }
 
 func TestEventServiceBasic(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	logpuller := newMocklogpuller()
+	mockStore := newMockEventStore()
 	mc := &mockMessageCenter{
 		messageCh: make(chan *messaging.TargetMessage, 100),
 	}
 
-	es := NewEventService(ctx, mc, logpuller)
+	appcontext.SetService(appcontext.MessageCenter, mc)
+	appcontext.SetService(appcontext.EventStore, mockStore)
+	es := NewEventService(ctx)
 	esImpl := es.(*eventService)
 	go func() {
-		err := es.Run()
+		err := es.Run(ctx)
 		if err != nil {
 			t.Errorf("EventService.Run() error = %v", err)
 		}
@@ -181,7 +250,7 @@ func TestEventServiceBasic(t *testing.T) {
 
 	require.Equal(t, 1, len(esImpl.brokers))
 	require.NotNil(t, esImpl.brokers[acceptorInfo.GetClusterID()])
-	require.Equal(t, 1, len(esImpl.brokers[acceptorInfo.GetClusterID()].spanStats))
+	require.Equal(t, 1, len(esImpl.brokers[acceptorInfo.GetClusterID()].dispatchers))
 
 	// add events to logpuller
 	txnEvent := &common.TxnEvent{
@@ -192,11 +261,13 @@ func TestEventServiceBasic(t *testing.T) {
 		Rows: []*common.RowChangedEvent{
 			{
 				PhysicalTableID: 1,
+				StartTs:         1,
+				CommitTs:        5,
 			},
 		},
 	}
 
-	sourceSpanStat, ok := logpuller.spans[acceptorInfo.span.TableID]
+	sourceSpanStat, ok := mockStore.spans[acceptorInfo.span.TableID]
 	require.True(t, ok)
 
 	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)
@@ -222,7 +293,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	logpuller := newMocklogpuller()
+	logpuller := newMockEventStore()
 	eventService := NewEventService(ctx, appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter), logpuller)
 	//esImpl := eventService.(*eventService)
 	go func() {
