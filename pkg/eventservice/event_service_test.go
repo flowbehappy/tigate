@@ -196,13 +196,15 @@ type mockEventIterator struct {
 }
 
 func (m *mockEventIterator) Next() (*common.RowChangedEvent, bool, error) {
-	if len(m.events) == 0 {
+	if len(m.events) == 0 && m.currentTxn == nil {
 		return nil, false, nil
 	}
 
+	isNewTxn := false
 	if m.currentTxn == nil {
 		m.currentTxn = m.events[0]
 		m.events = m.events[1:]
+		isNewTxn = true
 	}
 
 	if len(m.currentTxn.Rows) == 0 {
@@ -215,7 +217,7 @@ func (m *mockEventIterator) Next() (*common.RowChangedEvent, bool, error) {
 		m.currentTxn = nil
 	}
 
-	return row, true, nil
+	return row, isNewTxn, nil
 }
 
 func (m *mockEventIterator) Close() error {
