@@ -293,11 +293,11 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	logpuller := newMockEventStore()
-	eventService := NewEventService(ctx, appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter), logpuller)
-	//esImpl := eventService.(*eventService)
+	mockStore := newMockEventStore()
+	appcontext.SetService(appcontext.EventStore, mockStore)
+	eventService := NewEventService(ctx)
 	go func() {
-		err := eventService.Run()
+		err := eventService.Run(ctx)
 		if err != nil {
 			t.Errorf("EventService.Run() error = %v", err)
 		}
