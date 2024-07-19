@@ -136,7 +136,7 @@ func NewEventStore(
 		channels = append(channels, make(chan eventWithTableID, 1024))
 	}
 
-	schemaStore, err := schemastore.NewSchemaStore(root, pdCli, regionCache, pdClock, kvStorage)
+	schemaStore, err := schemastore.NewSchemaStore(ctx, root, pdCli, regionCache, pdClock, kvStorage)
 	if err != nil {
 		log.Panic("failed to create schema store", zap.Error(err))
 	}
@@ -357,7 +357,7 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span t
 }
 
 func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, sendTS uint64) error {
-	e.schemaStore.UpdateDispatcherSendTS(dispatcherID, sendTS)
+	e.schemaStore.UpdateDispatcherSendTS(dispatcherID, common.Ts(sendTS))
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if tableStat, ok := e.spans[dispatcherID]; ok {
