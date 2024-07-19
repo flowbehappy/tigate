@@ -72,10 +72,7 @@ type DDLTableInfo struct {
 
 // Mounter is used to parse SQL events from KV events
 type Mounter interface {
-	// DecodeEvent accepts `common.PolymorphicEvent` with `RawKVEntry` filled and
-	// decodes `RawKVEntry` into `RowChangedEvent`.
-	// If a `common.PolymorphicEvent` should be ignored, it will returns (false, nil).
-	DecodeEvent(event *common.PolymorphicEvent, tableInfo *common.TableInfo) error
+	DecodeEvent(rawKV *common.RawKVEntry, tableInfo *common.TableInfo) (*common.RowChangedEvent, error)
 }
 
 type mounter struct {
@@ -93,32 +90,14 @@ func NewMounter(tz *time.Location) Mounter {
 	}
 }
 
-// DecodeEvent decode kv events using ddl puller's schemaStorage
-// this method could block indefinitely if the DDL puller is lagging.
-// FIXME: avoid use PolymorphicEvent, decode common.RawKVEntry directly and return RowChangedEvent
-func (m *mounter) DecodeEvent(event *common.PolymorphicEvent, tableInfo *common.TableInfo) error {
-	if event.IsResolved() {
-		return nil
-	}
-	row, err := m.unmarshalAndMountRowChanged(event.RawKV, tableInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	event.Row = row
-	event.RawKV.Value = nil
-	event.RawKV.OldValue = nil
-
-	m.decoder = nil
-	m.preDecoder = nil
-
-	return nil
+func (m *mounter) DecodeEvent(rawKV *common.RawKVEntry, tableInfo *common.TableInfo) (*common.RowChangedEvent, error) {
+	return m.unmarshalAndMountRowChanged(rawKV, tableInfo)
 }
 
 func (m *mounter) unmarshalAndMountRowChanged(
 	raw *common.RawKVEntry,
 	tableInfo *common.TableInfo,
-) (*common.RowChangedEventData, error) {
+) (*common.RowChangedEvent, error) {
 	if !bytes.HasPrefix(raw.Key, tablePrefix) {
 		return nil, nil
 	}
@@ -330,17 +309,21 @@ func parseJob(v []byte, startTs, CRTs uint64, fromHistoryTable bool) (*model.Job
 
 func datum2Column(
 	tableInfo *common.TableInfo, datums map[int64]types.Datum, tz *time.Location,
-) ([]*common.ColumnData, []types.Datum, []*model.ColumnInfo, error) {
-	cols := make([]*common.ColumnData, len(tableInfo.RowColumnsOffset))
+) ([]*common.Column, []types.Datum, []*model.ColumnInfo, []rowcodec.ColInfo, error) {
+	cols := make([]*common.Column, len(tableInfo.RowColumnsOffset))
 	rawCols := make([]types.Datum, len(tableInfo.RowColumnsOffset))
 
-	// columnInfos should have the same length and order with cols
+	// columnInfos and rowColumnInfos hold different column metadata,
+	// they should have the same length and order.
 	columnInfos := make([]*model.ColumnInfo, len(tableInfo.RowColumnsOffset))
+	rowColumnInfos := make([]rowcodec.ColInfo, len(tableInfo.RowColumnsOffset))
 
-	for _, colInfo := range tableInfo.Columns {
-		// TODO: skip virtual column
+	_, _, extendColumnInfos := tableInfo.GetRowColInfos()
+
+	for idx, colInfo := range tableInfo.Columns {
+		colName := colInfo.Name.O
 		colID := colInfo.ID
-		colDatum, exist := datums[colID]
+		colDatums, exist := datums[colID]
 
 		var (
 			colValue interface{}
@@ -349,32 +332,39 @@ func datum2Column(
 			err      error
 		)
 		if exist {
-			colValue, size, warn, err = formatColVal(colDatum, colInfo)
+			colValue, size, warn, err = formatColVal(colDatums, colInfo)
 		} else {
-			colDatum, colValue, size, warn, err = getDefaultOrZeroValue(colInfo, tz)
+			colDatums, colValue, size, warn, err = getDefaultOrZeroValue(colInfo, tz)
 		}
 		if err != nil {
-			return nil, nil, nil, errors.Trace(err)
+			return nil, nil, nil, nil, errors.Trace(err)
 		}
 		if warn != "" {
 			log.Warn(warn, zap.String("table", tableInfo.TableName.String()),
 				zap.String("column", colInfo.Name.String()))
 		}
 
+		defaultValue := GetDDLDefaultDefinition(colInfo)
 		offset := tableInfo.RowColumnsOffset[colID]
-		rawCols[offset] = colDatum
-		cols[offset] = &common.ColumnData{
-			ColumnID: colID,
-			Value:    colValue,
+		rawCols[offset] = colDatums
+		cols[offset] = &common.Column{
+			Name:      colName,
+			Type:      colInfo.GetType(),
+			Charset:   colInfo.GetCharset(),
+			Collation: colInfo.GetCollate(),
+			Value:     colValue,
+			Default:   defaultValue,
+			Flag:      *tableInfo.ColumnsFlag[colID],
 			// ApproximateBytes = column data size + column struct size
 			ApproximateBytes: size + sizeOfEmptyColumn,
 		}
 		columnInfos[offset] = colInfo
+		rowColumnInfos[offset] = extendColumnInfos[idx]
 	}
-	return cols, rawCols, columnInfos, nil
+	return cols, rawCols, columnInfos, rowColumnInfos, nil
 }
 
-func (m *mounter) mountRowKVEntry(tableInfo *common.TableInfo, row *rowKVEntry, dataSize int64) (*common.RowChangedEventData, common.RowChangedDatums, error) {
+func (m *mounter) mountRowKVEntry(tableInfo *common.TableInfo, row *rowKVEntry, dataSize int64) (*common.RowChangedEvent, common.RowChangedDatums, error) {
 	var (
 		rawRow common.RowChangedDatums
 		err    error
@@ -382,24 +372,24 @@ func (m *mounter) mountRowKVEntry(tableInfo *common.TableInfo, row *rowKVEntry, 
 
 	// Decode previous columns.
 	var (
-		preCols    []*common.ColumnData
+		preCols    []*common.Column
 		preRawCols []types.Datum
 	)
 	if row.PreRowExist {
 		// FIXME(leoppro): using pre table info to mounter pre column datum
 		// the pre column and current column in one event may using different table info
-		preCols, preRawCols, _, err = datum2Column(tableInfo, row.PreRow, m.tz)
+		preCols, preRawCols, _, _, err = datum2Column(tableInfo, row.PreRow, m.tz)
 		if err != nil {
 			return nil, rawRow, errors.Trace(err)
 		}
 	}
 
 	var (
-		cols    []*common.ColumnData
+		cols    []*common.Column
 		rawCols []types.Datum
 	)
 	if row.RowExist {
-		cols, rawCols, _, err = datum2Column(tableInfo, row.Row, m.tz)
+		cols, rawCols, _, _, err = datum2Column(tableInfo, row.Row, m.tz)
 		if err != nil {
 			return nil, rawRow, errors.Trace(err)
 		}
@@ -408,15 +398,12 @@ func (m *mounter) mountRowKVEntry(tableInfo *common.TableInfo, row *rowKVEntry, 
 	rawRow.PreRowDatums = preRawCols
 	rawRow.RowDatums = rawCols
 
-	return &common.RowChangedEventData{
-		StartTs:         row.StartTs,
-		CommitTs:        row.CRTs,
+	return &common.RowChangedEvent{
 		PhysicalTableID: row.PhysicalTableID,
-		TableInfo:       tableInfo,
-		Columns:         cols,
-		PreColumns:      preCols,
 
-		ApproximateDataSize: dataSize,
+		TableInfo:  tableInfo,
+		Columns:    cols,
+		PreColumns: preCols,
 	}, rawRow, nil
 }
 
@@ -578,6 +565,16 @@ func getDefaultOrZeroValue(
 	}
 	v, size, warn, err := formatColVal(d, col)
 	return d, v, size, warn, err
+}
+
+// GetDDLDefaultDefinition returns the default definition of a column.
+func GetDDLDefaultDefinition(col *model.ColumnInfo) interface{} {
+	defaultValue := col.GetDefaultValue()
+	if defaultValue == nil {
+		defaultValue = col.GetOriginDefaultValue()
+	}
+	defaultDatum := types.NewDatum(defaultValue)
+	return defaultDatum.GetValue()
 }
 
 // DecodeTableID decodes the raw key to a table ID

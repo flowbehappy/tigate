@@ -24,6 +24,10 @@ type EventObserver func(raw *common.RawKVEntry)
 type WatermarkNotifier func(watermark uint64)
 
 type EventStore interface {
+	Run(ctx context.Context) error
+
+	Close(ctx context.Context)
+
 	// add a callback to be called when a new event is added to the store;
 	// but for old data this is not feasiable? may we can just return a current watermark when register
 	RegisterDispatcher(
@@ -40,11 +44,11 @@ type EventStore interface {
 
 	// TODO: ignore large txn now, so we can read all transactions of the same commit ts at one time
 	// [startCommitTS, endCommitTS)?
-	GetIterator(span tablepb.Span, startCommitTS uint64, endCommitTS uint64) (EventIterator, error)
+	GetIterator(dataRange *common.DataRange) (EventIterator, error)
 }
 
 type EventIterator interface {
-	Next() (event []byte, isNewTxn bool, err error)
+	Next() (rawKV *common.RawKVEntry, isNewTxn bool, err error)
 
 	// Close closes the iterator.
 	Close() error
@@ -145,15 +149,24 @@ func NewEventStore(ctx context.Context, up *upstream.Upstream, root string) Even
 	}
 	puller := logpuller.NewLogPuller(client, consume, pullerConfig)
 
-	eg, ctx := errgroup.WithContext(ctx)
-	eg.Go(func() error {
-		return puller.Run(ctx)
-	})
-
-	go store.gcManager.run(ctx, &store.wg, store.deleteEvents)
-
 	store.puller = puller
 	return store
+}
+
+func (e *eventStore) Run(ctx context.Context) error {
+	eg, ctx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
+		return e.puller.Run(ctx)
+	})
+
+	eg.Go(func() error {
+		return e.gcManager.run(ctx, e.deleteEvents)
+	})
+
+	return eg.Wait()
+}
+
+func (e *eventStore) Close(ctx context.Context) {
 }
 
 type DBBatchEvent struct {
@@ -340,17 +353,18 @@ func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) erro
 	return nil
 }
 
-func (e *eventStore) GetIterator(span tablepb.Span, startCommitTS uint64, endCommitTS uint64) (EventIterator, error) {
+func (e *eventStore) GetIterator(dataRange *common.DataRange) (EventIterator, error) {
 	// do some check
+	span := *dataRange.Span.ToOldSpan()
 	tableStat := e.getTableStat(span)
-	if tableStat == nil || tableStat.watermark.Load() > uint64(startCommitTS) {
+	if tableStat == nil || tableStat.watermark.Load() > dataRange.StartTs {
 		log.Panic("should not happen")
 	}
 	dbIndex := spanz.HashTableSpan(span, len(e.channels))
 	db := e.dbs[dbIndex]
 	// TODO: respect key range in span
-	start := EncodeTsKey(uint64(span.TableID), uint64(startCommitTS), 0)
-	end := EncodeTsKey(uint64(span.TableID), uint64(endCommitTS), 0)
+	start := EncodeTsKey(uint64(span.TableID), dataRange.StartTs, 0)
+	end := EncodeTsKey(uint64(span.TableID), dataRange.EndTs, 0)
 	// TODO: use TableFilter/UseL6Filters in IterOptions
 	iter, err := db.NewIter(&pebble.IterOptions{
 		LowerBound: start,
@@ -374,7 +388,7 @@ type eventStoreIter struct {
 	prevCommitTS uint64
 }
 
-func (iter *eventStoreIter) Next() ([]byte, bool, error) {
+func (iter *eventStoreIter) Next() (*common.RawKVEntry, bool, error) {
 	if iter.innerIter == nil {
 		log.Panic("iter is nil")
 	}
@@ -386,6 +400,10 @@ func (iter *eventStoreIter) Next() ([]byte, bool, error) {
 	key := iter.innerIter.Key()
 	value := iter.innerIter.Value()
 	_, startTS, commitTS := DecodeKey(key)
+	rawKV := &common.RawKVEntry{}
+	if err := json.Unmarshal(value, rawKV); err != nil {
+		return nil, false, err
+	}
 
 	isNewTxn := false
 	if iter.prevCommitTS != 0 && iter.prevStartTS != 0 && (startTS != iter.prevStartTS || commitTS != iter.prevCommitTS) {
@@ -393,7 +411,7 @@ func (iter *eventStoreIter) Next() ([]byte, bool, error) {
 	}
 	iter.prevCommitTS = commitTS
 	iter.prevStartTS = startTS
-	return value, isNewTxn, nil
+	return rawKV, isNewTxn, nil
 }
 
 func (iter *eventStoreIter) Close() error {
