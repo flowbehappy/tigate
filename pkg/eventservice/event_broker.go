@@ -140,6 +140,8 @@ func (c *eventBroker) runScanWorker() {
 					for {
 						// The first event of the txn must return isNewTxn as true.
 						e, isNewTxn, err := iter.Next()
+						// remove this log after testing
+						log.Info("fizz:read events", zap.Any("event", e), zap.Bool("isNewTxn", isNewTxn))
 						if err != nil {
 							log.Panic("read events failed", zap.Error(err))
 						}
@@ -160,14 +162,21 @@ func (c *eventBroker) runScanWorker() {
 						}
 
 						if e == nil {
+							if txnEvent != nil {
+								// Send the last txnEvent to the dispatcher.
+								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, txnEvent)
+								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
+							}
+
+							// After all the events are sent, we send the watermark to the dispatcher.
 							watermark := &common.TxnEvent{
 								ResolvedTs:   task.dataRange.EndTs,
 								DispatcherID: uid,
 							}
-							// After all the events are sent, we send the watermark to the dispatcher.
 							c.messageCh <- messaging.NewTargetMessage(remoteID, topic, watermark)
 							task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
-							continue
+							iter.Close()
+							break
 						}
 						// Skip the events that have been sent to the dispatcher.
 						if e.CommitTs <= task.dispatcherStat.watermark.Load() {
