@@ -106,11 +106,11 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: fmt.Sprintf("invalid heartbeat response message")}
 	}
 	// TODO: remove me after testing
-	log.Info("fizz received", zap.String("dispatcherID", uuid.UUID(txnEvent.DispatcherID).String()), zap.Any("txnEventLen", len(txnEvent.Rows)))
+	log.Info("fizz received", zap.String("dispatcherID", txnEvent.DispatcherID), zap.Any("txnEventLen", len(txnEvent.Rows)))
 
-	dispatcherId := txnEvent.DispatcherID
+	dispatcherID := txnEvent.DispatcherID
 
-	if dispatcherItem, ok := c.dispatcherMap[common.DispatcherID(dispatcherId)]; ok {
+	if dispatcherItem, ok := c.dispatcherMap[common.DispatcherID(uuid.MustParse(dispatcherID))]; ok {
 		// check whether need to update speed ratio
 		//ok, ratio := dispatcherItem.GetMemoryUsage().UpdatedSpeedRatio(eventResponse.Ratio)
 		// if ok {

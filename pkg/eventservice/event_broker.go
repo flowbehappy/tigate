@@ -158,7 +158,7 @@ func (c *eventBroker) runScanWorker() {
 							}
 							// Create a new txnEvent.
 							txnEvent = &common.TxnEvent{
-								DispatcherID: uid,
+								DispatcherID: uuid.UUID(uid).String(),
 								StartTs:      e.StartTs,
 								CommitTs:     e.CommitTs,
 								Rows:         make([]*common.RowChangedEvent, 0),
@@ -176,7 +176,7 @@ func (c *eventBroker) runScanWorker() {
 							// After all the events are sent, we send the watermark to the dispatcher.
 							watermark := &common.TxnEvent{
 								ResolvedTs:   task.dataRange.EndTs,
-								DispatcherID: uid,
+								DispatcherID: uuid.UUID(uid).String(),
 							}
 							c.messageCh <- messaging.NewTargetMessage(remoteID, topic, watermark)
 							task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
