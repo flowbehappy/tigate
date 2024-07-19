@@ -20,6 +20,7 @@ import (
 	"time"
 
 	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
+	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/maintainer"
 	"github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/flowbehappy/tigate/server/watcher"
@@ -117,6 +118,7 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener()),
 		maintainer.NewMaintainerManager(c.serverID, c.pdEndpoints),
+		eventstore.NewEventStore(ctx, "/tmp/cdc", c.pdClient, c.RegionCache, c.PDClock, c.KVStorage), // FIXME: fix path
 	}
 	// register it into global var
 	for _, subModule := range c.subModules {

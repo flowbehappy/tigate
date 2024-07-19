@@ -7,14 +7,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
-type DispatcherID string
-
-type TableID int64
-
-type DatabaseID int64
-
-type SchemaID int64
-
 type Filter interface{}
 
 type DDLEvent struct {
@@ -24,22 +16,22 @@ type DDLEvent struct {
 }
 
 type DispatcherInfo struct {
-	tableID TableID
+	tableID common.TableID
 	// filter is used to filter specific event types of the table
 	filter Filter
 }
 
 type DatabaseInfo struct {
 	Name          string
-	Tables        []TableID
+	Tables        []common.TableID
 	CreateVersion common.Ts
 	DeleteVersion common.Ts
 }
 
 func (d *DatabaseInfo) isDeleted() bool { return d.DeleteVersion != math.MaxUint64 }
 
-type DatabaseInfoMap map[DatabaseID]*DatabaseInfo
+type DatabaseInfoMap map[common.DatabaseID]*DatabaseInfo
 
-type TableInfoStoreMap map[TableID]*versionedTableInfoStore
+type TableInfoStoreMap map[common.TableID]*versionedTableInfoStore
 
-type DispatcherInfoMap map[DispatcherID]DispatcherInfo
+type DispatcherInfoMap map[common.DispatcherID]DispatcherInfo

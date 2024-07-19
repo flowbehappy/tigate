@@ -155,6 +155,9 @@ type RowChangedEventData struct {
 type RowChangedEvent struct {
 	PhysicalTableID int64
 
+	StartTs  uint64
+	CommitTs uint64
+
 	// NOTICE: We probably store the logical ID inside TableInfo's TableName,
 	// not the physical ID.
 	// For normal table, there is only one ID, which is the physical ID.

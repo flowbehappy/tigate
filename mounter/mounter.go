@@ -401,6 +401,9 @@ func (m *mounter) mountRowKVEntry(tableInfo *common.TableInfo, row *rowKVEntry, 
 	return &common.RowChangedEvent{
 		PhysicalTableID: row.PhysicalTableID,
 
+		StartTs:  row.StartTs,
+		CommitTs: row.CRTs,
+
 		TableInfo:  tableInfo,
 		Columns:    cols,
 		PreColumns: preCols,
