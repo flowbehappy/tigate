@@ -9,7 +9,11 @@ import (
 	"go.uber.org/zap"
 )
 
+//go:generate msgp
+
 // TODO: 想一想这个到底要哪些
+//
+//msgp:ignore DDLEvent
 type DDLEvent struct {
 	Job *model.Job `json:"ddl_job"`
 	// commitTS of the rawKV
@@ -21,16 +25,30 @@ type DDLEvent struct {
 // TODO: field 改成小写？
 type TxnEvent struct {
 	// ClusterID is the ID of the tidb cluster this event belongs to.
-	ClusterID uint64
-	// Span of this event belongs to.
-	Span *TableSpan
+	ClusterID uint64 `msg:"cluster-id"`
 
-	DDLEvent       *DDLEvent
-	Rows           []*RowChangedEvent
-	ResolvedTs     uint64
-	StartTs        uint64
-	CommitTs       uint64
-	PostTxnFlushed func() // 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
+	DispatcherID DispatcherID `msg:"dispatcher-id"`
+
+	// Span of this event belongs to.
+	Span *TableSpan `msg:"-"`
+
+	DDLEvent   *DDLEvent          `msg:"-"` // FIXME
+	Rows       []*RowChangedEvent `msg:"rows"`
+	ResolvedTs uint64             `msg:"resolved-ts"`
+	StartTs    uint64             `msg:"start-ts"`
+	CommitTs   uint64             `msg:"commit-ts"`
+
+	// 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
+	PostTxnFlushed func() `msg:"-"`
+}
+
+func (w *TxnEvent) Marshal() ([]byte, error) {
+	return w.MarshalMsg(nil)
+}
+
+func (w *TxnEvent) Unmarshal(data []byte) error {
+	_, err := w.UnmarshalMsg(data)
+	return err
 }
 
 func (e *TxnEvent) MemoryCost() int {
@@ -92,6 +110,8 @@ func (e *TxnEvent) GetRows() []*RowChangedEvent {
 }
 
 // ColumnData represents a column value in row changed event
+//
+//msgp:ignore ColumnData
 type ColumnData struct {
 	// ColumnID may be just a mock id, because we don't store it in redo log.
 	// So after restore from redo log, we need to give every a column a mock id.
@@ -103,6 +123,9 @@ type ColumnData struct {
 	ApproximateBytes int
 }
 
+// TODO: remove it
+//
+//msgp:ignore RowChangedEventData
 type RowChangedEventData struct {
 	StartTs  uint64
 	CommitTs uint64
@@ -135,6 +158,9 @@ type RowChangedEventData struct {
 type RowChangedEvent struct {
 	PhysicalTableID int64
 
+	StartTs  uint64
+	CommitTs uint64
+
 	// NOTICE: We probably store the logical ID inside TableInfo's TableName,
 	// not the physical ID.
 	// For normal table, there is only one ID, which is the physical ID.
@@ -145,13 +171,13 @@ type RowChangedEvent struct {
 	// In general, we always use the physical ID to represent a table, but we
 	// record the logical ID from the DDL event(job.BinlogInfo.TableInfo).
 	// So be careful when using the TableInfo.
-	TableInfo *TableInfo
+	TableInfo *TableInfo `msg:"-"`
 
-	Columns    []*Column
-	PreColumns []*Column
+	Columns    []*Column `msg:"columns"`
+	PreColumns []*Column `msg:"pre-columns"`
 
 	// ReplicatingTs is ts when a table starts replicating events to downstream.
-	ReplicatingTs uint64
+	ReplicatingTs uint64 `msg:"replicating-ts"`
 }
 
 // GetTableID returns the table ID of the event.
@@ -165,8 +191,8 @@ type Column struct {
 	Type      byte           `msg:"type"`
 	Charset   string         `msg:"charset"`
 	Collation string         `msg:"collation"`
-	Flag      ColumnFlagType `msg:"-"`
-	Value     interface{}    `msg:"-"`
+	Flag      ColumnFlagType `msg:"flag"`   // FIXME
+	Value     interface{}    `msg:"column"` // FIXME: this is incorrect in some cases
 	Default   interface{}    `msg:"-"`
 
 	// ApproximateBytes is approximate bytes consumed by the column.

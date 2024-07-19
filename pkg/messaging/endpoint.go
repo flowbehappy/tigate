@@ -1,5 +1,8 @@
 package messaging
 
-type EndpointInfo struct {
+type Endpoint interface {
+}
+
+type endpoint struct {
 	Address string
 }

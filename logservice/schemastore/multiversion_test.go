@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/stretchr/testify/require"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -28,7 +29,7 @@ func TestCreateTable(t *testing.T) {
 	}
 	store.applyDDL(createDDLJob)
 	require.Equal(t, len(store.infos), 1)
-	require.Equal(t, store.getFirstVersion(), Timestamp(version))
+	require.Equal(t, store.getFirstVersion(), common.Ts(version))
 }
 
 func TestRenameTable(t *testing.T) {
@@ -78,17 +79,17 @@ func TestRenameTable(t *testing.T) {
 	store.applyDDL(renameDDLJob)
 	store.applyDDL(renameDDLJob2)
 	require.Equal(t, len(store.infos), 3)
-	require.Equal(t, store.getFirstVersion(), Timestamp(version))
-	tableInfo, err := store.getTableInfo(Timestamp(version))
+	require.Equal(t, store.getFirstVersion(), common.Ts(version))
+	tableInfo, err := store.getTableInfo(common.Ts(version))
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.Name.O, "t")
-	tableInfo, err = store.getTableInfo(Timestamp(version + 1))
+	tableInfo, err = store.getTableInfo(common.Ts(version + 1))
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.Name.O, "t2")
-	tableInfo, err = store.getTableInfo(Timestamp(version + 2))
+	tableInfo, err = store.getTableInfo(common.Ts(version + 2))
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.Name.O, "t2")
-	tableInfo, err = store.getTableInfo(Timestamp(version + 10))
+	tableInfo, err = store.getTableInfo(common.Ts(version + 10))
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.Name.O, "t3")
 }
@@ -126,8 +127,8 @@ func TestDropTable(t *testing.T) {
 	store.applyDDL(createDDLJob)
 	store.applyDDL(dropDDLJob)
 	require.Equal(t, len(store.infos), 1)
-	require.Equal(t, store.getFirstVersion(), Timestamp(version))
-	tableInfo, err := store.getTableInfo(Timestamp(version))
+	require.Equal(t, store.getFirstVersion(), common.Ts(version))
+	tableInfo, err := store.getTableInfo(common.Ts(version))
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.Name.O, "t")
 }

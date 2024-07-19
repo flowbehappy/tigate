@@ -11,12 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package eventsource
+package logpuller
 
 import (
 	"sync"
 
-	"github.com/flowbehappy/tigate/logservice/eventsource/regionlock"
+	"github.com/flowbehappy/tigate/logservice/logpuller/regionlock"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/tikv/client-go/v2/tikv"
 )

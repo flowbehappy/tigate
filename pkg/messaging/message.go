@@ -22,6 +22,7 @@ const (
 	TypeServerId
 	TypeDMLEvent
 	TypeDDLEvent
+	TypeTxnEvent
 	TypeWatermark
 	TypeHeartBeatRequest
 	TypeHeartBeatResponse
@@ -48,6 +49,8 @@ func (t IOType) String() string {
 		return "DMLEvent"
 	case TypeDDLEvent:
 		return "DDLEvent"
+	case TypeTxnEvent:
+		return "TxnEvent"
 	case TypeHeartBeatRequest:
 		return "HeartBeatRequest"
 	case TypeHeartBeatResponse:
@@ -103,6 +106,7 @@ func (s ServerId) Unmarshal(data []byte) error {
 		log.Panic("Invalid data len, data len is expected 16", zap.Int("len", len(data)), zap.String("data", fmt.Sprintf("%v", data)))
 		return apperror.AppError{Type: apperror.ErrorTypeDecodeData, Reason: fmt.Sprintf("Invalid data len, data len is expected 16")}
 	}
+	// todo: s the serverId is not set
 	uid := string(data)
 	s = ServerId(uid)
 	return nil
@@ -156,7 +160,7 @@ func (r RegisterDispatcherRequest) GetClusterID() uint64 {
 	return 0
 }
 
-func (r RegisterDispatcherRequest) GetTopic() string {
+func (r RegisterDispatcherRequest) GetTopic() common.TopicType {
 	return EventFeedTopic
 }
 
@@ -250,15 +254,15 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 type TargetMessage struct {
 	From     ServerId
 	To       ServerId
-	Epoch    uint64
+	Epoch    common.EpochType
 	Sequence uint64
-	Topic    string
+	Topic    common.TopicType
 	Type     IOType
 	Message  IOTypeT
 }
 
 // NewTargetMessage creates a new TargetMessage to be sent to a target server.
-func NewTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetMessage {
+func NewTargetMessage(To ServerId, Topic common.TopicType, Message IOTypeT) *TargetMessage {
 	var ioType IOType
 	switch Message.(type) {
 	case *Bytes:
@@ -269,6 +273,8 @@ func NewTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetMessage
 		ioType = TypeDMLEvent
 	case *DDLEvent:
 		ioType = TypeDDLEvent
+	case *common.TxnEvent:
+		ioType = TypeTxnEvent
 	case *heartbeatpb.HeartBeatRequest:
 		ioType = TypeHeartBeatRequest
 	case *heartbeatpb.ScheduleDispatcherRequest:

@@ -26,6 +26,7 @@ type ReplicaSet struct {
 	ID           *common.TableSpan
 	ChangefeedID model.ChangeFeedID
 	status       *ReplicaSetStatus
+	stateMachine *scheduler.StateMachine
 
 	checkpointTs uint64
 }
@@ -97,6 +98,14 @@ func (r *ReplicaSet) NewRemoveInferiorMessage(server model.CaptureID) rpc.Messag
 			},
 			ScheduleAction: heartbeatpb.ScheduleAction_Remove,
 		})
+}
+
+func (r *ReplicaSet) SetStateMachine(state *scheduler.StateMachine) {
+	r.stateMachine = state
+}
+
+func (r *ReplicaSet) GetStateMachine() *scheduler.StateMachine {
+	return r.stateMachine
 }
 
 type ReplicaSetStatus struct {

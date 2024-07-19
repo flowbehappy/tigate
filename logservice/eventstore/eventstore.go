@@ -9,15 +9,19 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/flowbehappy/tigate/common"
-	"github.com/flowbehappy/tigate/logservice/eventsource"
-	"github.com/flowbehappy/tigate/logservice/puller"
-	"github.com/flowbehappy/tigate/logservice/txnutil"
-	"github.com/flowbehappy/tigate/logservice/upstream"
+	"github.com/flowbehappy/tigate/logservice/logpuller"
+	"github.com/flowbehappy/tigate/logservice/schemastore"
+	"github.com/flowbehappy/tigate/mounter"
+	"github.com/flowbehappy/tigate/pkg/common"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
+	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -27,12 +31,18 @@ type EventObserver func(raw *common.RawKVEntry)
 type WatermarkNotifier func(watermark uint64)
 
 type EventStore interface {
+	Name() string
+
+	Run(ctx context.Context) error
+
+	Close(ctx context.Context) error
+
 	// add a callback to be called when a new event is added to the store;
 	// but for old data this is not feasiable? may we can just return a current watermark when register
 	RegisterDispatcher(
 		dispatcherID common.DispatcherID,
 		span tablepb.Span,
-		startTS common.Timestamp,
+		startTS common.Ts,
 		observer EventObserver,
 		notifier WatermarkNotifier,
 	) error
@@ -43,11 +53,11 @@ type EventStore interface {
 
 	// TODO: ignore large txn now, so we can read all transactions of the same commit ts at one time
 	// [startCommitTS, endCommitTS)?
-	GetIterator(span tablepb.Span, startCommitTS uint64, endCommitTS uint64) (EventIterator, error)
+	GetIterator(dataRange *common.DataRange) (EventIterator, error)
 }
 
 type EventIterator interface {
-	Next() (event []byte, isNewTxn bool, err error)
+	Next() (*common.RowChangedEvent, bool, error)
 
 	// Close closes the iterator.
 	Close() error
@@ -69,9 +79,10 @@ type tableState struct {
 	ch chan eventWithTableID
 }
 type eventStore struct {
-	dbs      []*pebble.DB
-	channels []chan eventWithTableID
-	puller   *puller.MultiplexingPuller
+	schemaStore schemastore.SchemaStore
+	dbs         []*pebble.DB
+	channels    []chan eventWithTableID
+	puller      *logpuller.LogPuller
 
 	gcManager *gcManager
 
@@ -87,23 +98,28 @@ type eventStore struct {
 const dataDir = "event_store"
 const dbCount = 32
 
-func NewEventStore(ctx context.Context, up *upstream.Upstream, root string) EventStore {
-	pdCli := up.PDClient
-	regionCache := up.RegionCache
-	kvStorage := up.KVStorage
-	pdClock := up.PDClock
-
-	grpcPool := eventsource.NewConnAndClientPool(up.SecurityConfig)
-	clientConfig := &eventsource.SharedClientConfig{
-		KVClientWorkerConcurrent:     16,
-		KVClientGrpcStreamConcurrent: 4,
+func NewEventStore(
+	ctx context.Context,
+	root string,
+	pdCli pd.Client,
+	regionCache *tikv.RegionCache,
+	pdClock pdutil.Clock,
+	kvStorage kv.Storage,
+) EventStore {
+	grpcPool := logpuller.NewConnAndClientPool(
+		&security.Credential{},
+	)
+	clientConfig := &logpuller.SharedClientConfig{
+		KVClientWorkerConcurrent:     32,
+		KVClientGrpcStreamConcurrent: 32,
 		KVClientAdvanceIntervalInMs:  300,
 	}
-	client := eventsource.NewSharedClient(
+	client := logpuller.NewSharedClient(
 		clientConfig,
-		false,
-		pdCli, grpcPool, regionCache, pdClock,
-		txnutil.NewLockerResolver(kvStorage.(tikv.Storage)),
+		pdCli,
+		grpcPool,
+		regionCache,
+		pdClock,
 	)
 
 	dbPath := fmt.Sprintf("%s/%s", root, dataDir)
@@ -120,9 +136,15 @@ func NewEventStore(ctx context.Context, up *upstream.Upstream, root string) Even
 		channels = append(channels, make(chan eventWithTableID, 1024))
 	}
 
+	schemaStore, err := schemastore.NewSchemaStore(ctx, root, pdCli, regionCache, pdClock, kvStorage)
+	if err != nil {
+		log.Panic("failed to create schema store", zap.Error(err))
+	}
+
 	store := &eventStore{
-		dbs:      dbs,
-		channels: channels,
+		schemaStore: schemaStore,
+		dbs:         dbs,
+		channels:    channels,
 
 		gcManager: newGCManager(),
 
@@ -136,28 +158,46 @@ func NewEventStore(ctx context.Context, up *upstream.Upstream, root string) Even
 		}(i)
 	}
 
-	consume := func(ctx context.Context, raw *common.RawKVEntry, spans []tablepb.Span) error {
-		if len(spans) > 1 {
-			log.Panic("DML puller subscribes multiple spans")
-		}
+	consume := func(ctx context.Context, raw *common.RawKVEntry, span tablepb.Span) error {
 		if raw != nil {
-			store.writeEvent(spans[0], raw)
+			store.writeEvent(span, raw)
 		}
 		return nil
 	}
-	// FIXME: increase slots
-	slots, hasher := 1, func(tablepb.Span, int) int { return 0 }
-	mp := puller.NewMultiplexingPuller(client, up.PDClock, consume, slots, hasher, 1)
+	pullerConfig := &logpuller.LogPullerConfig{
+		WorkerCount:  len(dbs),
+		HashSpanFunc: spanz.HashTableSpan,
+	}
+	puller := logpuller.NewLogPuller(client, consume, pullerConfig)
 
+	store.puller = puller
+	return store
+}
+
+func (e *eventStore) Name() string {
+	return appcontext.EventStore
+}
+
+func (e *eventStore) Run(ctx context.Context) error {
 	eg, ctx := errgroup.WithContext(ctx)
+
 	eg.Go(func() error {
-		return mp.Run(ctx)
+		return e.schemaStore.Run(ctx)
 	})
 
-	go store.gcManager.run(ctx, &store.wg, store.deleteEvents)
+	eg.Go(func() error {
+		return e.puller.Run(ctx)
+	})
 
-	store.puller = mp
-	return store
+	eg.Go(func() error {
+		return e.gcManager.run(ctx, e.deleteEvents)
+	})
+
+	return eg.Wait()
+}
+
+func (e *eventStore) Close(ctx context.Context) error {
+	return nil
 }
 
 type DBBatchEvent struct {
@@ -298,7 +338,8 @@ func (e *eventStore) deleteEvents(span tablepb.Span, startCommitTS uint64, endCo
 	return db.DeleteRange(start, end, pebble.NoSync)
 }
 
-func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span tablepb.Span, startTS common.Timestamp, observer EventObserver, notifier WatermarkNotifier) error {
+func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span tablepb.Span, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
+	e.schemaStore.RegisterDispatcher(dispatcherID, common.TableID(span.TableID), startTS)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.tables.ReplaceOrInsert(span, dispatcherID)
@@ -311,12 +352,12 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span t
 	tableState.ch = e.channels[chIndex]
 	tableState.watermark.Store(uint64(startTS))
 	e.spans[dispatcherID] = tableState
-	// TODO: table name is not need?
-	e.puller.Subscribe([]tablepb.Span{span}, eventsource.Ts(startTS), "table_name")
+	e.puller.Subscribe(span, startTS)
 	return nil
 }
 
 func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, sendTS uint64) error {
+	e.schemaStore.UpdateDispatcherSendTS(dispatcherID, common.Ts(sendTS))
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if tableStat, ok := e.spans[dispatcherID]; ok {
@@ -335,27 +376,29 @@ func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, se
 }
 
 func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
+	e.schemaStore.UnregisterDispatcher(dispatcherID)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if tableStat, ok := e.spans[dispatcherID]; ok {
-		e.puller.Unsubscribe([]tablepb.Span{tableStat.span})
+		e.puller.Unsubscribe(tableStat.span)
 		e.tables.Delete(tableStat.span)
 		delete(e.spans, dispatcherID)
 	}
 	return nil
 }
 
-func (e *eventStore) GetIterator(span tablepb.Span, startCommitTS uint64, endCommitTS uint64) (EventIterator, error) {
+func (e *eventStore) GetIterator(dataRange *common.DataRange) (EventIterator, error) {
 	// do some check
+	span := *dataRange.Span.ToOldSpan()
 	tableStat := e.getTableStat(span)
-	if tableStat == nil || tableStat.watermark.Load() > uint64(startCommitTS) {
+	if tableStat == nil || tableStat.watermark.Load() > dataRange.StartTs {
 		log.Panic("should not happen")
 	}
 	dbIndex := spanz.HashTableSpan(span, len(e.channels))
 	db := e.dbs[dbIndex]
 	// TODO: respect key range in span
-	start := EncodeTsKey(uint64(span.TableID), uint64(startCommitTS), 0)
-	end := EncodeTsKey(uint64(span.TableID), uint64(endCommitTS), 0)
+	start := EncodeTsKey(uint64(span.TableID), dataRange.StartTs, 0)
+	end := EncodeTsKey(uint64(span.TableID), dataRange.EndTs, 0)
 	// TODO: use TableFilter/UseL6Filters in IterOptions
 	iter, err := db.NewIter(&pebble.IterOptions{
 		LowerBound: start,
@@ -367,19 +410,25 @@ func (e *eventStore) GetIterator(span tablepb.Span, startCommitTS uint64, endCom
 	iter.First()
 
 	return &eventStoreIter{
+		tableID:      common.TableID(span.TableID),
+		schemaStore:  e.schemaStore,
 		innerIter:    iter,
 		prevStartTS:  0,
 		prevCommitTS: 0,
+		iterMounter:  mounter.NewMounter(time.Local), // FIXME
 	}, nil
 }
 
 type eventStoreIter struct {
+	tableID      common.TableID
+	schemaStore  schemastore.SchemaStore
 	innerIter    *pebble.Iterator
 	prevStartTS  uint64
 	prevCommitTS uint64
+	iterMounter  mounter.Mounter
 }
 
-func (iter *eventStoreIter) Next() ([]byte, bool, error) {
+func (iter *eventStoreIter) Next() (*common.RowChangedEvent, bool, error) {
 	if iter.innerIter == nil {
 		log.Panic("iter is nil")
 	}
@@ -391,6 +440,10 @@ func (iter *eventStoreIter) Next() ([]byte, bool, error) {
 	key := iter.innerIter.Key()
 	value := iter.innerIter.Value()
 	_, startTS, commitTS := DecodeKey(key)
+	rawKV := &common.RawKVEntry{}
+	if err := json.Unmarshal(value, rawKV); err != nil {
+		return nil, false, err
+	}
 
 	isNewTxn := false
 	if iter.prevCommitTS != 0 && iter.prevStartTS != 0 && (startTS != iter.prevStartTS || commitTS != iter.prevCommitTS) {
@@ -398,7 +451,15 @@ func (iter *eventStoreIter) Next() ([]byte, bool, error) {
 	}
 	iter.prevCommitTS = commitTS
 	iter.prevStartTS = startTS
-	return value, isNewTxn, nil
+	tableInfo, err := iter.schemaStore.GetTableInfo(iter.tableID, common.Ts(rawKV.CRTs-1))
+	if err != nil {
+		log.Panic("failed to get table info", zap.Error(err))
+	}
+	row, err := iter.iterMounter.DecodeEvent(rawKV, tableInfo)
+	if err != nil {
+		log.Panic("failed to decode event", zap.Error(err))
+	}
+	return row, isNewTxn, nil
 }
 
 func (iter *eventStoreIter) Close() error {

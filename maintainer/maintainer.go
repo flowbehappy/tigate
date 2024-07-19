@@ -77,12 +77,16 @@ type Maintainer struct {
 	cascadeRemoving *atomic.Bool
 	isSecondary     *atomic.Bool
 
-	msgLock sync.RWMutex
-	msgBuf  []*messaging.TargetMessage
+	msgQueue *MessageQueue
+	msgBuf   []*messaging.TargetMessage
 
 	lastCheckTime time.Time
 
 	lastCheckpointTsTime time.Time
+
+	errLock         sync.Mutex
+	runningErrors   map[messaging.ServerId]*heartbeatpb.RunningError
+	runningWarnings map[messaging.ServerId]*heartbeatpb.RunningError
 }
 
 // NewMaintainer create the maintainer for the changefeed
@@ -111,6 +115,10 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		checkpointTs:    atomic.NewUint64(checkpointTs),
 		pdEndpoints:     pdEndpoints,
 		tableSpans:      utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior](),
+		msgQueue:        NewMessageQueue(1024),
+		msgBuf:          make([]*messaging.TargetMessage, 1024),
+		runningErrors:   map[messaging.ServerId]*heartbeatpb.RunningError{},
+		runningWarnings: map[messaging.ServerId]*heartbeatpb.RunningError{},
 	}
 	if !isSecondary {
 		m.state = heartbeatpb.ComponentState_Working
@@ -183,21 +191,28 @@ func (m *Maintainer) getReplicaSet(id scheduler.InferiorID) scheduler.Inferior {
 }
 
 func (m *Maintainer) handleMessages() error {
-	m.msgLock.Lock()
-	buf := m.msgBuf
-	m.msgBuf = nil
-	m.msgLock.Unlock()
-	for _, msg := range buf {
-		switch msg.Type {
-		case messaging.TypeHeartBeatRequest:
-			if err := m.onHeartBeatRequest(msg); err != nil {
-				return errors.Trace(err)
-			}
-		case messaging.TypeMaintainerBootstrapResponse:
-			m.onMaintainerBootstrapResponse(msg)
-		default:
-			log.Panic("unexpected message type", zap.String("type", msg.Type.String()))
+	size := m.msgQueue.PopMessages(m.msgBuf, len(m.msgBuf))
+	for idx := 0; idx < size; idx++ {
+		msg := m.msgBuf[idx]
+		if err := m.onMessage(msg); err != nil {
+			return errors.Trace(err)
 		}
+
+		m.msgBuf[idx] = nil
+	}
+	return nil
+}
+
+func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
+	switch msg.Type {
+	case messaging.TypeHeartBeatRequest:
+		if err := m.onHeartBeatRequest(msg); err != nil {
+			return errors.Trace(err)
+		}
+	case messaging.TypeMaintainerBootstrapResponse:
+		m.onMaintainerBootstrapResponse(msg)
+	default:
+		log.Panic("unexpected message type", zap.String("type", msg.Type.String()))
 	}
 	return nil
 }
@@ -279,6 +294,16 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 			State: info.ComponentStatus,
 		})
 	}
+	// set error if not nil, todo: only save one
+	m.errLock.Lock()
+	if req.Warning != nil {
+		m.runningWarnings[msg.From] = req.Warning
+	}
+	if req.Err != nil {
+		m.runningErrors[msg.From] = req.Err
+	}
+	m.errLock.Unlock()
+
 	msgs, err := m.supervisor.HandleStatus(msg.From.String(), status)
 	if err != nil {
 		log.Error("handle status failed, ignore", zap.Error(err))
@@ -377,12 +402,34 @@ func (m *Maintainer) closeChangefeed() {
 
 func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 	// todo: fix data race here
-	return &heartbeatpb.MaintainerStatus{
+	m.errLock.Lock()
+	defer m.errLock.Unlock()
+	var runningErrors []*heartbeatpb.RunningError
+	if len(m.runningErrors) > 0 {
+		runningErrors = make([]*heartbeatpb.RunningError, 0, len(m.runningErrors))
+		for _, e := range m.runningErrors {
+			runningErrors = append(runningErrors, e)
+		}
+	}
+	var runningWarnings []*heartbeatpb.RunningError
+	if len(m.runningWarnings) > 0 {
+		runningWarnings = make([]*heartbeatpb.RunningError, 0, len(m.runningWarnings))
+		for _, e := range m.runningWarnings {
+			runningWarnings = append(runningWarnings, e)
+		}
+	}
+
+	status := &heartbeatpb.MaintainerStatus{
 		ChangefeedID: m.id.ID,
 		FeedState:    string(m.changefeedSate),
 		State:        m.state,
 		CheckpointTs: m.checkpointTs.Load(),
+		Warning:      runningWarnings,
+		Err:          runningErrors,
 	}
+	m.runningWarnings = make(map[messaging.ServerId]*heartbeatpb.RunningError)
+	m.runningErrors = make(map[messaging.ServerId]*heartbeatpb.RunningError)
+	return status
 }
 
 func (m *Maintainer) bootstrapMessage(captureID model.CaptureID) rpc.Message {
@@ -393,6 +440,10 @@ func (m *Maintainer) bootstrapMessage(captureID model.CaptureID) rpc.Message {
 			ChangefeedID: m.id.ID,
 			Config:       m.cfgBytes,
 		})
+}
+
+func (m *Maintainer) getMessageQueue() *MessageQueue {
+	return m.msgQueue
 }
 
 func (m *Maintainer) printStatus() {

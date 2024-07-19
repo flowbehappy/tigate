@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"fmt"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"net"
 	"sync"
 	"testing"
@@ -16,11 +17,11 @@ import (
 	"google.golang.org/grpc"
 )
 
-var epoch = uint64(1)
+var epoch = common.EpochType(1)
 
-func newMessageCenterForTest(t *testing.T, timeout time.Duration) (mc *messageCenterImpl, addr string, stop func()) {
+func newMessageCenterForTest(t *testing.T, timeout time.Duration) (*messageCenter, common.AddressType, func()) {
 	port := freeport.GetPort()
-	addr = fmt.Sprintf("127.0.0.1:%d", port)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	lis, err := net.Listen("tcp", addr)
 	require.NoError(t, err)
 
@@ -29,7 +30,7 @@ func newMessageCenterForTest(t *testing.T, timeout time.Duration) (mc *messageCe
 
 	mcConfig := config.NewDefaultMessageCenterConfig()
 	id := NewServerId()
-	mc = NewMessageCenter(id, epoch, mcConfig)
+	mc := NewMessageCenter(id, epoch, mcConfig)
 	epoch++
 	mcs := NewMessageCenterServer(mc)
 	proto.RegisterMessageCenterServer(grpcServer, mcs)
@@ -42,7 +43,7 @@ func newMessageCenterForTest(t *testing.T, timeout time.Duration) (mc *messageCe
 	}()
 
 	timeoutCh := time.After(timeout)
-	stop = func() {
+	stop := func() {
 		<-timeoutCh
 		log.Info("Server has been running for timeout duration, force to stop it",
 			zap.String("addr", addr),
@@ -50,7 +51,7 @@ func newMessageCenterForTest(t *testing.T, timeout time.Duration) (mc *messageCe
 		grpcServer.Stop()
 		wg.Wait()
 	}
-	return
+	return mc, common.AddressType(addr), stop
 }
 
 func TestMessageCenterBasic(t *testing.T) {
@@ -60,9 +61,9 @@ func TestMessageCenterBasic(t *testing.T) {
 	defer mc1Stop()
 	defer mc2Stop()
 	defer mc3Stop()
-	topic1 := "test1"
-	topic2 := "test2"
-	topic3 := "test3"
+	topic1 := common.TopicType("test1")
+	topic2 := common.TopicType("test2")
+	topic3 := common.TopicType("test3")
 
 	mc1.AddTarget(mc2.id, mc2.epoch, mc2Addr)
 	mc1.AddTarget(mc3.id, mc3.epoch, mc3Addr)
@@ -91,7 +92,8 @@ func TestMessageCenterBasic(t *testing.T) {
 	msgBytes := []byte{1, 2, 3, 4}
 	msg := Bytes(msgBytes)
 	targetMsg := NewTargetMessage(mc1.id, topic1, &msg)
-	mc1.SendEvent(targetMsg)
+	err := mc1.SendEvent(targetMsg)
+	require.NoError(t, err)
 	receivedMsg := <-ch1
 	require.Equal(t, targetMsg.To, receivedMsg.To)
 	require.Equal(t, mc1.id, receivedMsg.From)

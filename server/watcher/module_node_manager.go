@@ -15,6 +15,7 @@ package watcher
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"sync"
 	"time"
 
@@ -31,7 +32,7 @@ import (
 
 const NodeManagerName = "node-manager"
 
-var TempEpoch = uint64(1)
+var TempEpoch = common.EpochType(1)
 
 // NodeManager manager the read view of all captures, other modules can get the captures information from it
 // and register server update event handler
@@ -80,7 +81,7 @@ func (c *NodeManager) Tick(ctx context.Context,
 			if _, exist := c.nodes[capture.ID]; !exist {
 
 				sid := messaging.ServerId(capture.ID)
-				appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).AddTarget(sid, TempEpoch, capture.AdvertiseAddr)
+				appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).AddTarget(sid, TempEpoch, common.AddressType(capture.AdvertiseAddr))
 				newCaptures = append(newCaptures, capture)
 			}
 			allCaptures[capture.ID] = capture
