@@ -3,9 +3,12 @@ package eventservice
 import (
 	"context"
 
+	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/google/uuid"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"go.uber.org/zap"
 )
 
@@ -43,19 +46,19 @@ type DispatcherInfo interface {
 }
 
 type eventService struct {
-	ctx       context.Context
-	mc        messaging.MessageCenter
-	logpuller logpuller
-	brokers   map[uint64]*eventBroker
+	ctx        context.Context
+	mc         messaging.MessageCenter
+	eventStore eventstore.EventStore
+	brokers    map[uint64]*eventBroker
 
 	// TODO: use a better way to cache the acceptorInfos
 	acceptorInfoCh chan DispatcherInfo
 }
 
-func NewEventService(ctx context.Context, mc messaging.MessageCenter, logpuller logpuller) EventService {
+func NewEventService(ctx context.Context, mc messaging.MessageCenter, eventStore eventstore.EventStore) EventService {
 	es := &eventService{
 		mc:             mc,
-		logpuller:      logpuller,
+		eventStore:     eventStore,
 		ctx:            ctx,
 		brokers:        make(map[uint64]*eventBroker),
 		acceptorInfoCh: make(chan DispatcherInfo, defaultChanelSize*16),
@@ -102,7 +105,7 @@ func (s *eventService) registerDispatcher(acceptor DispatcherInfo) {
 
 	c, ok := s.brokers[clusterID]
 	if !ok {
-		c = newEventBroker(s.ctx, clusterID, s.logpuller, s.mc)
+		c = newEventBroker(s.ctx, clusterID, s.eventStore, s.mc)
 		s.brokers[clusterID] = c
 	}
 
@@ -121,10 +124,15 @@ func (s *eventService) registerDispatcher(acceptor DispatcherInfo) {
 	c.dispatchers[acceptor.GetID()] = ac
 
 	// c.logpuller.SubscribeTableSpan(span, startTs, stat.UpdateWatermark)
-
+	tbspan := tablepb.Span{
+		TableID:  tablepb.TableID(span.TableID),
+		StartKey: span.StartKey,
+		EndKey:   span.EndKey,
+	}
+	id := uuid.MustParse(acceptor.GetID())
 	c.eventStore.RegisterDispatcher(
-		ac.info.GetID(),
-		ac.info.GetTableSpan(),
+		common.DispatcherID(id),
+		tbspan,
 		common.Ts(acceptor.GetStartTs()),
 		ac.onNewEvent,
 		ac.onSubscriptionWatermark,

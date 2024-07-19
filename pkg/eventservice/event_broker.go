@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/flowbehappy/tigate/eventpb"
+	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
@@ -19,8 +20,8 @@ type eventBroker struct {
 	ctx context.Context
 	// tidbClusterID is the ID of the TiDB cluster this eventStore belongs to.
 	tidbClusterID uint64
-	// eventBroker get events from the eventStore.
-	logpuller logpuller
+	// eventStore is the source of the events, eventBroker get the events from the eventStore.
+	eventStore eventstore.EventStore
 	// msgSender is used to send the events to the dispatchers.
 	msgSender messaging.MessageSender
 
@@ -47,7 +48,7 @@ type eventBroker struct {
 func newEventBroker(
 	ctx context.Context,
 	id uint64,
-	logService logpuller,
+	eventStore eventstore.EventStore,
 	mc messaging.MessageSender,
 ) *eventBroker {
 	ctx, cancel := context.WithCancel(ctx)
@@ -55,7 +56,7 @@ func newEventBroker(
 	c := &eventBroker{
 		ctx:             ctx,
 		tidbClusterID:   id,
-		logpuller:       logService,
+		eventStore:      eventStore,
 		dispatchers:     make(map[string]*dispatcherStat),
 		msgSender:       mc,
 		changedCh:       make(chan *subscriptionChange, defaultChanelSize),
@@ -116,6 +117,9 @@ func (c *eventBroker) runScanWorker() {
 					// The dispatcher has no new events. In such case, we don't need to scan the event store.
 					// We just send the watermark to the dispatcher.
 					if task.eventCount == 0 {
+						waterMarkMsg := &common.TxnEvent{
+							ResolvedTs: task.dataRange.EndTs,
+						}
 						c.messageCh <- messaging.NewTargetMessage(remoteID, topic, waterMarkMsg)
 						task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
 						continue
@@ -123,8 +127,7 @@ func (c *eventBroker) runScanWorker() {
 
 					// scan the event store to get the events in the data range.
 					//events, err := c.eventStore.GetIterator(task.dataRange)
-					events, err := c.logpuller.Read(task.dataRange)
-
+					iter, err := c.eventStore.GetIterator(task.dataRange)
 					if err != nil {
 						log.Info("read events failed", zap.Error(err))
 						// push the task back to the task pool.
@@ -132,46 +135,28 @@ func (c *eventBroker) runScanWorker() {
 						continue
 					}
 
-					// TODO: current we only pass a single task to the logService,
-					// so that we only get a single event slice from the logService.
-					event := events[0]
-					// If the event is empty, it means no new events in the data range,
-					// so we just send the watermark to the dispatcher.
-					if len(event) == 0 {
-						waterMarkMsg := &eventpb.EventFeed{
-							ResolvedTs:   task.dataRange.EndTs,
-							DispatcherId: dispatcherID,
+					for {
+						e, _, err := iter.Next()
+						if err != nil {
+							log.Panic("read events failed", zap.Error(err))
 						}
-						// After all the events are sent, we send the watermark to the dispatcher.
-						c.messageCh <- messaging.NewTargetMessage(remoteID, topic, waterMarkMsg)
-						task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
-					}
-
-					for _, e := range event {
+						if e == nil {
+							waterMarkMsg := &eventpb.EventFeed{
+								ResolvedTs:   task.dataRange.EndTs,
+								DispatcherId: dispatcherID,
+							}
+							// After all the events are sent, we send the watermark to the dispatcher.
+							c.messageCh <- messaging.NewTargetMessage(remoteID, topic, waterMarkMsg)
+							task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
+						}
 						// Skip the events that have been sent to the dispatcher.
 						if e.CommitTs <= task.dispatcherStat.watermark.Load() {
 							continue
 						}
-						if e.IsDDLEvent() {
-							msg := &eventpb.EventFeed{
-								DispatcherId: dispatcherID,
-							}
-							// Send the event to the dispatcher.
-							c.messageCh <- messaging.NewTargetMessage(remoteID, topic, msg)
-						} else {
-							msg := &eventpb.EventFeed{
-								TxnEvents: []*eventpb.TxnEvent{
-									{
-										Events:   nil,
-										StartTs:  e.StartTs,
-										CommitTs: e.CommitTs,
-									},
-								},
-								DispatcherId: dispatcherID,
-							}
-							// Send the event to the dispatcher.
-							c.messageCh <- messaging.NewTargetMessage(remoteID, topic, msg)
-						}
+
+						e.DispatcherID = dispatcherID
+						// Send the event to the dispatcher.
+						c.messageCh <- messaging.NewTargetMessage(remoteID, topic, e)
 					}
 				}
 			}
