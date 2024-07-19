@@ -9,11 +9,13 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/logservice/logpuller"
-	"github.com/flowbehappy/tigate/logservice/upstream"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -24,23 +26,24 @@ type SchemaStore interface {
 	Close(ctx context.Context)
 
 	// TODO: add filter
-	GetAllPhysicalTables(snapTs common.Ts) ([]TableID, error)
+	GetAllPhysicalTables(snapTs common.Ts) ([]common.TableID, error)
 
 	// RegisterDispatcher register the dispatcher into the schema store.
 	// TODO: return a table info
-	RegisterDispatcher(dispatcherID DispatcherID, tableID TableID, filter Filter, ts common.Ts) error
+	// TODO: add filter
+	RegisterDispatcher(dispatcherID common.DispatcherID, tableID common.TableID, ts common.Ts) error
 
 	// TODO: add interface for TableEventDispatcher
 
-	UpdateDispatcherSendTS(dispatcherID DispatcherID, ts common.Ts) error
+	UpdateDispatcherSendTS(dispatcherID common.DispatcherID, ts common.Ts) error
 
-	UnregisterDispatcher(dispatcherID DispatcherID) error
+	UnregisterDispatcher(dispatcherID common.DispatcherID) error
 
 	GetMaxFinishedDDLTS() common.Ts
 
-	GetTableInfo(tableID TableID, ts common.Ts) (*common.TableInfo, error)
+	GetTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error)
 
-	GetNextDDLEvent(dispatcherID DispatcherID) (*DDLEvent, common.Ts, error)
+	GetNextDDLEvent(dispatcherID common.DispatcherID) (*DDLEvent, common.Ts, error)
 }
 
 type schemaStore struct {
@@ -78,8 +81,14 @@ type schemaStore struct {
 }
 
 // TODO: remove minRequiredTS
-func NewSchemaStore(root string, up *upstream.Upstream, minRequiredTS common.Ts) (SchemaStore, error) {
-	kvStorage := up.KVStorage
+func NewSchemaStore(
+	root string,
+	pdCli pd.Client,
+	regionCache *tikv.RegionCache,
+	pdClock pdutil.Clock,
+	kvStorage kv.Storage,
+) (SchemaStore, error) {
+	minRequiredTS := common.Ts(0) // FIXME
 	dataStorage, metaTS, databaseMap := newPersistentStorage(root, kvStorage, minRequiredTS)
 
 	s := &schemaStore{
@@ -94,7 +103,10 @@ func NewSchemaStore(root string, up *upstream.Upstream, minRequiredTS common.Ts)
 		dispatchersMap:    make(DispatcherInfoMap),
 	}
 	s.ddlJobFetcher = newDDLJobFetcher(
-		up,
+		pdCli,
+		regionCache,
+		pdClock,
+		kvStorage,
 		metaTS.resolvedTS,
 		s.writeDDLEvent,
 		s.advanceResolvedTs)
@@ -172,7 +184,7 @@ func isSystemDB(dbName string) bool {
 	return dbName == "mysql" || dbName == "sys"
 }
 
-func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]TableID, error) {
+func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]common.TableID, error) {
 	meta := logpuller.GetSnapshotMeta(s.storage, uint64(snapTs))
 	start := time.Now()
 	dbinfos, err := meta.ListDatabases()
@@ -180,7 +192,7 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]TableID, error) 
 		log.Fatal("list databases failed", zap.Error(err))
 	}
 
-	tableIDs := make([]TableID, 0)
+	tableIDs := make([]common.TableID, 0)
 
 	for _, dbinfo := range dbinfos {
 		if isSystemDB(dbinfo.Name.O) {
@@ -200,7 +212,7 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]TableID, error) 
 			if err != nil {
 				log.Fatal("get table info failed", zap.Error(err))
 			}
-			tableIDs = append(tableIDs, TableID(tbName.ID))
+			tableIDs = append(tableIDs, common.TableID(tbName.ID))
 		}
 	}
 
@@ -210,7 +222,7 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]TableID, error) 
 }
 
 func (s *schemaStore) RegisterDispatcher(
-	dispatcherID DispatcherID, tableID TableID, filter Filter, startTS common.Ts,
+	dispatcherID common.DispatcherID, tableID common.TableID, startTS common.Ts,
 ) error {
 	s.mu.Lock()
 	if startTS < s.dataStorage.getGCTS() {
@@ -218,12 +230,12 @@ func (s *schemaStore) RegisterDispatcher(
 	}
 	s.dispatchersMap[dispatcherID] = DispatcherInfo{
 		tableID: tableID,
-		filter:  filter,
+		// filter:  filter,
 	}
-	getSchemaName := func(schemaID SchemaID) (string, error) {
+	getSchemaName := func(schemaID common.SchemaID) (string, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		databaseInfo, ok := s.databaseMap[DatabaseID(schemaID)]
+		databaseInfo, ok := s.databaseMap[common.DatabaseID(schemaID)]
 		if !ok {
 			return "", errors.New("database not found")
 		}
@@ -288,19 +300,19 @@ func (s *schemaStore) RegisterDispatcher(
 	return nil
 }
 
-func (s *schemaStore) UpdateDispatcherSendTS(dispatcherID DispatcherID, ts common.Ts) error {
+func (s *schemaStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, ts common.Ts) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	info, ok := s.dispatchersMap[dispatcherID]
 	if !ok {
 		return errors.New("dispatcher not found")
 	}
-	store := s.tableInfoStoreMap[TableID(info.tableID)]
+	store := s.tableInfoStoreMap[common.TableID(info.tableID)]
 	store.updateDispatcherSendTS(dispatcherID, ts)
 	return nil
 }
 
-func (s *schemaStore) UnregisterDispatcher(dispatcherID DispatcherID) error {
+func (s *schemaStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	info, ok := s.dispatchersMap[dispatcherID]
@@ -323,7 +335,7 @@ func (s *schemaStore) GetMaxFinishedDDLTS() common.Ts {
 	return s.finishedDDLTS
 }
 
-func (s *schemaStore) GetTableInfo(tableID TableID, ts common.Ts) (*common.TableInfo, error) {
+func (s *schemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	store, ok := s.tableInfoStoreMap[tableID]
@@ -334,7 +346,7 @@ func (s *schemaStore) GetTableInfo(tableID TableID, ts common.Ts) (*common.Table
 	return store.getTableInfo(ts)
 }
 
-func (s *schemaStore) GetNextDDLEvent(dispatcherID DispatcherID) (*DDLEvent, common.Ts, error) {
+func (s *schemaStore) GetNextDDLEvent(dispatcherID common.DispatcherID) (*DDLEvent, common.Ts, error) {
 	return nil, 0, nil
 }
 
@@ -384,12 +396,12 @@ func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfo
 		model.ActionRecoverTable:
 		// no dispatcher should register on these kinds of tables?
 		// TODO: add a cache for these kinds of newly created tables because they may soon be registered?
-		if _, ok := tableInfoStoreMap[TableID(job.TableID)]; ok {
+		if _, ok := tableInfoStoreMap[common.TableID(job.TableID)]; ok {
 			log.Panic("should not happened")
 		}
 		return nil
 	default:
-		tableID := TableID(job.TableID)
+		tableID := common.TableID(job.TableID)
 		store, ok := tableInfoStoreMap[tableID]
 		if !ok {
 			return errors.New("table not found")
@@ -401,7 +413,7 @@ func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfo
 }
 
 func fillSchemaName(job *model.Job, databaseMap DatabaseInfoMap) error {
-	databaseID := DatabaseID(job.SchemaID)
+	databaseID := common.DatabaseID(job.SchemaID)
 	databaseInfo, ok := databaseMap[databaseID]
 	if !ok {
 		return errors.New("database not found")
@@ -417,21 +429,21 @@ func fillSchemaName(job *model.Job, databaseMap DatabaseInfoMap) error {
 }
 
 func createSchema(job *model.Job, databaseMap DatabaseInfoMap) error {
-	if _, ok := databaseMap[DatabaseID(job.SchemaID)]; ok {
+	if _, ok := databaseMap[common.DatabaseID(job.SchemaID)]; ok {
 		return errors.New("database already exists")
 	}
 	databaseInfo := &DatabaseInfo{
 		Name:          job.SchemaName,
-		Tables:        make([]TableID, 0),
+		Tables:        make([]common.TableID, 0),
 		CreateVersion: common.Ts(job.BinlogInfo.FinishedTS),
 		DeleteVersion: math.MaxUint64,
 	}
-	databaseMap[DatabaseID(job.SchemaID)] = databaseInfo
+	databaseMap[common.DatabaseID(job.SchemaID)] = databaseInfo
 	return nil
 }
 
 func dropSchema(job *model.Job, databaseMap DatabaseInfoMap) error {
-	databaseInfo, ok := databaseMap[DatabaseID(job.SchemaID)]
+	databaseInfo, ok := databaseMap[common.DatabaseID(job.SchemaID)]
 	if !ok {
 		return errors.New("database not found")
 	}

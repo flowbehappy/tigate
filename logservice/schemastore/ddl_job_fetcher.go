@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 
 	"github.com/flowbehappy/tigate/logservice/logpuller"
-	"github.com/flowbehappy/tigate/logservice/upstream"
 	"github.com/flowbehappy/tigate/mounter"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/errors"
@@ -29,7 +28,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
+	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/pingcap/tiflow/pkg/spanz"
+	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -50,17 +53,17 @@ type ddlJobFetcher struct {
 }
 
 func newDDLJobFetcher(
-	up *upstream.Upstream,
+	pdCli pd.Client,
+	regionCache *tikv.RegionCache,
+	pdClock pdutil.Clock,
+	kvStorage kv.Storage,
 	startTs common.Ts,
 	writeDDLEvent func(ddlEvent DDLEvent) error,
 	advanceResolvedTs func(resolvedTS common.Ts) error,
 ) *ddlJobFetcher {
-	pdCli := up.PDClient
-	regionCache := up.RegionCache
-	kvStorage := up.KVStorage
-	pdClock := up.PDClock
-
-	grpcPool := logpuller.NewConnAndClientPool(up.SecurityConfig)
+	grpcPool := logpuller.NewConnAndClientPool(
+		&security.Credential{},
+	)
 	clientConfig := &logpuller.SharedClientConfig{
 		KVClientWorkerConcurrent:     8,
 		KVClientGrpcStreamConcurrent: 8,
