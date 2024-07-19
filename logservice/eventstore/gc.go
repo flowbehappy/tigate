@@ -5,13 +5,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"go.uber.org/zap"
 )
 
 type gcRangeItem struct {
-	span tablepb.Span
+	span common.TableSpan
 	// TODO: startCommitTS may be not needed now(just use 0 for every delete range maybe ok),
 	// but after split table range, it may be essential?
 	startCommitTS uint64
@@ -27,7 +27,7 @@ func newGCManager() *gcManager {
 	return &gcManager{}
 }
 
-func (d *gcManager) addGCItem(span tablepb.Span, startCommitTS uint64, endCommitTS uint64) {
+func (d *gcManager) addGCItem(span common.TableSpan, startCommitTS uint64, endCommitTS uint64) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.ranges = append(d.ranges, gcRangeItem{
@@ -45,7 +45,7 @@ func (d *gcManager) fetchAllGCItems() []gcRangeItem {
 	return ranges
 }
 
-type deleteFunc func(span tablepb.Span, startCommitTS uint64, endCommitTS uint64) error
+type deleteFunc func(span common.TableSpan, startCommitTS uint64, endCommitTS uint64) error
 
 func (d *gcManager) run(ctx context.Context, deleteDataRange deleteFunc) error {
 	ticker := time.NewTicker(20 * time.Millisecond)

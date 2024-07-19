@@ -19,7 +19,6 @@ import (
 	"fmt"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 )
 
 // TableSpan implement the InferiorID interface, it is the replicate unit,
@@ -56,13 +55,19 @@ func (s *TableSpan) Equal(inferior any) bool {
 		bytes.Equal(s.EndKey, tbl.EndKey)
 }
 
-// FIXME: remove it
-func (s *TableSpan) ToOldSpan() *tablepb.Span {
-	return &tablepb.Span{
-		TableID:  tablepb.TableID(s.TableID),
-		StartKey: s.StartKey,
-		EndKey:   s.EndKey,
+// UpperBoundKey represents the maximum value.
+var UpperBoundKey = []byte{255, 255, 255, 255, 255}
+
+// HackSpan will set End as UpperBoundKey if End is Nil.
+func HackTableSpan(span TableSpan) TableSpan {
+	if span.StartKey == nil {
+		span.StartKey = []byte{}
 	}
+
+	if span.EndKey == nil {
+		span.EndKey = UpperBoundKey
+	}
+	return span
 }
 
 type DataRange struct {
