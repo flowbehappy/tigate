@@ -13,6 +13,7 @@ import (
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/mounter"
 	"github.com/flowbehappy/tigate/pkg/common"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
@@ -174,7 +175,7 @@ func NewEventStore(
 }
 
 func (e *eventStore) Name() string {
-	return "eventstore"
+	return appcontext.EventStore
 }
 
 func (e *eventStore) Run(ctx context.Context) error {
