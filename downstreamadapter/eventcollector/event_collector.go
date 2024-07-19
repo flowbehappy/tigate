@@ -105,6 +105,8 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 		log.Error("invalid event feed message", zap.Any("msg", msg))
 		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: fmt.Sprintf("invalid heartbeat response message")}
 	}
+	// TODO: remove me after testing
+	log.Info("fizz received", zap.String("dispatcherID", uuid.UUID(txnEvent.DispatcherID).String()), zap.Any("txnEventLen", len(txnEvent.Rows)))
 
 	dispatcherId := txnEvent.DispatcherID
 
