@@ -15,9 +15,10 @@ package watcher
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"sync"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/common"
 
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
