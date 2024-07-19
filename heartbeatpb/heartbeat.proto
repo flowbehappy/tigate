@@ -23,6 +23,8 @@ message HeartBeatRequest {
     uint64 checkpointTs = 2; // eventDispatcherManager 当前全局最小的 checkpointTs
     repeated TableSpanStatus statuses = 3;
     bool compeleteStatus = 4; // 是否包含了所有的 table status
+    RunningError warning = 5;
+    RunningError err = 6;
 }
 
 enum Action {
@@ -76,6 +78,8 @@ message MaintainerStatus {
     string feed_state = 2;
     ComponentState state = 3;
     uint64 checkpoint_ts = 4;
+    repeated RunningError warning = 5;
+    repeated RunningError err = 6;
 }
 
 message CoordinatorBootstrapRequest {
@@ -127,4 +131,11 @@ enum ComponentState {
     Working = 4;
     Stopping = 5;
     Stopped = 6;
+}
+
+message RunningError {
+    string time = 1;
+    string node = 2;
+    string code = 3;
+    string message = 4;
 }

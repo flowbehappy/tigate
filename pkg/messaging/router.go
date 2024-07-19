@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"sync"
 
 	"github.com/pingcap/log"
@@ -12,22 +13,22 @@ type MessageHandler func(msg *TargetMessage) error
 
 type router struct {
 	mu       sync.RWMutex
-	handlers map[string]MessageHandler
+	handlers map[common.TopicType]MessageHandler
 }
 
 func newRouter() *router {
 	return &router{
-		handlers: make(map[string]MessageHandler),
+		handlers: make(map[common.TopicType]MessageHandler),
 	}
 }
 
-func (r *router) registerHandler(msgType string, handler MessageHandler) {
+func (r *router) registerHandler(msgType common.TopicType, handler MessageHandler) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.handlers[msgType] = handler
 }
 
-func (r *router) deRegisterHandler(topic string) {
+func (r *router) deRegisterHandler(topic common.TopicType) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.handlers, topic)
@@ -40,16 +41,22 @@ func (r *router) runDispatch(ctx context.Context, wg *sync.WaitGroup, out <-chan
 		for {
 			select {
 			case <-ctx.Done():
-				log.Info("message router is closing")
+				log.Info("router: close, since context done")
+				return
 			case msg := <-out:
 				r.mu.RLock()
 				handler, ok := r.handlers[msg.Topic]
 				r.mu.RUnlock()
 				if !ok {
+					// todo: is this possible to happens ?
 					log.Debug("no handler for message", zap.Any("msg", msg))
 					continue
 				}
-				_ = handler(msg)
+				err := handler(msg)
+				if err != nil {
+					log.Error("router: close, since handle message failed", zap.Error(err), zap.Any("msg", msg))
+					return
+				}
 			}
 		}
 	}()

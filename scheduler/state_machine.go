@@ -124,6 +124,7 @@ func NewStateMachine(
 		Servers:  make(map[string]Role),
 		Inferior: inferior,
 	}
+	inferior.SetStateMachine(sm)
 	// Count of captures that is in Stopping states.
 	stoppingCount := 0
 	committed := false
@@ -682,7 +683,7 @@ func (s *StateMachine) pollOnWorking(
 	log.Warn("ignore input, unexpected state",
 		zap.Any("status", input),
 		zap.String("captureID", captureID),
-		zap.Any("statemachine", s))
+		zap.Any("statemachine", s.ID.String()))
 	return false, nil
 }
 

@@ -27,7 +27,8 @@ type EventAcceptorInfo interface {
 	GetID() string
 	// GetClusterID returns the ID of the TiDB cluster the acceptor wants to accept events from.
 	GetClusterID() uint64
-	GetTopic() string
+
+	GetTopic() common.TopicType
 	GetServerID() string
 	GetTableSpan() *common.TableSpan
 	GetStartTs() uint64
@@ -102,7 +103,6 @@ func (s *eventService) registerAcceptor(acceptor EventAcceptorInfo) {
 		span: span,
 	}
 	spanSub.watermark.Store(uint64(startTs))
-
 	// add the acceptor to the cluster.
 	ac := &acceptorStat{
 		acceptor:         acceptor,
@@ -110,6 +110,7 @@ func (s *eventService) registerAcceptor(acceptor EventAcceptorInfo) {
 		notify:           c.changedAcceptor,
 	}
 	ac.watermark.Store(uint64(startTs))
+
 	c.acceptors[acceptor.GetID()] = ac
 	c.eventStore.RegisterDispatcher(
 		acceptor.GetID(),
@@ -119,6 +120,7 @@ func (s *eventService) registerAcceptor(acceptor EventAcceptorInfo) {
 		ac.UpdateWatermark,
 	)
 	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", acceptor.GetID()))
+
 }
 
 func (s *eventService) deregisterAcceptor(clusterID uint64, accepterID string) {
