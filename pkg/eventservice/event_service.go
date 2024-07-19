@@ -150,20 +150,20 @@ func (s *eventService) registerDispatcher(acceptor DispatcherInfo) {
 	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", acceptor.GetID()))
 }
 
-func (s *eventService) deregisterAcceptor(acceptor EventAcceptorInfo) {
+func (s *eventService) deregisterAcceptor(acceptor DispatcherInfo) {
 	clusterID := acceptor.GetClusterID()
 	c, ok := s.brokers[clusterID]
 	if !ok {
 		return
 	}
 	acceptorID := acceptor.GetID()
-	_, ok = c.acceptors[acceptorID]
+	_, ok = c.dispatchers[acceptorID]
 	if !ok {
 		return
 	}
 	//TODO: release the resources of the acceptor.
 	delete(c.dispatchers, acceptorID)
-	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", accepterID))
+	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", acceptorID))
 }
 
 // TODO: implement the following functions
