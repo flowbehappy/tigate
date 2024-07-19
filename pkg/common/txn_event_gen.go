@@ -266,6 +266,18 @@ func (z *RowChangedEvent) DecodeMsg(dc *msgp.Reader) (err error) {
 				err = msgp.WrapError(err, "PhysicalTableID")
 				return
 			}
+		case "StartTs":
+			z.StartTs, err = dc.ReadUint64()
+			if err != nil {
+				err = msgp.WrapError(err, "StartTs")
+				return
+			}
+		case "CommitTs":
+			z.CommitTs, err = dc.ReadUint64()
+			if err != nil {
+				err = msgp.WrapError(err, "CommitTs")
+				return
+			}
 		case "columns":
 			var zb0002 uint32
 			zb0002, err = dc.ReadArrayHeader()
@@ -347,15 +359,35 @@ func (z *RowChangedEvent) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z *RowChangedEvent) EncodeMsg(en *msgp.Writer) (err error) {
-	// map header, size 4
+	// map header, size 6
 	// write "PhysicalTableID"
-	err = en.Append(0x84, 0xaf, 0x50, 0x68, 0x79, 0x73, 0x69, 0x63, 0x61, 0x6c, 0x54, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x44)
+	err = en.Append(0x86, 0xaf, 0x50, 0x68, 0x79, 0x73, 0x69, 0x63, 0x61, 0x6c, 0x54, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x44)
 	if err != nil {
 		return
 	}
 	err = en.WriteInt64(z.PhysicalTableID)
 	if err != nil {
 		err = msgp.WrapError(err, "PhysicalTableID")
+		return
+	}
+	// write "StartTs"
+	err = en.Append(0xa7, 0x53, 0x74, 0x61, 0x72, 0x74, 0x54, 0x73)
+	if err != nil {
+		return
+	}
+	err = en.WriteUint64(z.StartTs)
+	if err != nil {
+		err = msgp.WrapError(err, "StartTs")
+		return
+	}
+	// write "CommitTs"
+	err = en.Append(0xa8, 0x43, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x54, 0x73)
+	if err != nil {
+		return
+	}
+	err = en.WriteUint64(z.CommitTs)
+	if err != nil {
+		err = msgp.WrapError(err, "CommitTs")
 		return
 	}
 	// write "columns"
@@ -422,10 +454,16 @@ func (z *RowChangedEvent) EncodeMsg(en *msgp.Writer) (err error) {
 // MarshalMsg implements msgp.Marshaler
 func (z *RowChangedEvent) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// map header, size 4
+	// map header, size 6
 	// string "PhysicalTableID"
-	o = append(o, 0x84, 0xaf, 0x50, 0x68, 0x79, 0x73, 0x69, 0x63, 0x61, 0x6c, 0x54, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x44)
+	o = append(o, 0x86, 0xaf, 0x50, 0x68, 0x79, 0x73, 0x69, 0x63, 0x61, 0x6c, 0x54, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x44)
 	o = msgp.AppendInt64(o, z.PhysicalTableID)
+	// string "StartTs"
+	o = append(o, 0xa7, 0x53, 0x74, 0x61, 0x72, 0x74, 0x54, 0x73)
+	o = msgp.AppendUint64(o, z.StartTs)
+	// string "CommitTs"
+	o = append(o, 0xa8, 0x43, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x54, 0x73)
+	o = msgp.AppendUint64(o, z.CommitTs)
 	// string "columns"
 	o = append(o, 0xa7, 0x63, 0x6f, 0x6c, 0x75, 0x6d, 0x6e, 0x73)
 	o = msgp.AppendArrayHeader(o, uint32(len(z.Columns)))
@@ -482,6 +520,18 @@ func (z *RowChangedEvent) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			z.PhysicalTableID, bts, err = msgp.ReadInt64Bytes(bts)
 			if err != nil {
 				err = msgp.WrapError(err, "PhysicalTableID")
+				return
+			}
+		case "StartTs":
+			z.StartTs, bts, err = msgp.ReadUint64Bytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "StartTs")
+				return
+			}
+		case "CommitTs":
+			z.CommitTs, bts, err = msgp.ReadUint64Bytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "CommitTs")
 				return
 			}
 		case "columns":
@@ -564,7 +614,7 @@ func (z *RowChangedEvent) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *RowChangedEvent) Msgsize() (s int) {
-	s = 1 + 16 + msgp.Int64Size + 8 + msgp.ArrayHeaderSize
+	s = 1 + 16 + msgp.Int64Size + 8 + msgp.Uint64Size + 9 + msgp.Uint64Size + 8 + msgp.ArrayHeaderSize
 	for za0001 := range z.Columns {
 		if z.Columns[za0001] == nil {
 			s += msgp.NilSize

@@ -19,6 +19,10 @@ import (
 // ColumnFlagType is for encapsulating the flag operations for different flags.
 type ColumnFlagType util.Flag
 
+func (c *ColumnFlagType) Msgsize() int {
+	return 8
+}
+
 func (c ColumnFlagType) MarshalMsg(b []byte) ([]byte, error) {
 	return msgp.AppendUint64(b, uint64(c)), nil
 }
