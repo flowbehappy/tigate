@@ -271,11 +271,11 @@ func (m *Maintainer) initChangefeed() error {
 	var err error
 	tableIDs, err := m.GetTableIDs()
 	for id, _ := range tableIDs {
-		start, end := spanz.GetTableRange(id)
+		span := spanz.TableIDToComparableSpan(id)
 		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
 			TableID:  uint64(id),
-			StartKey: start,
-			EndKey:   end,
+			StartKey: span.StartKey,
+			EndKey:   span.EndKey,
 		}}
 		replicaSet := NewReplicaSet(m.id, tableSpan, m.checkpointTs.Load()).(*ReplicaSet)
 		m.tableSpans.ReplaceOrInsert(tableSpan, replicaSet)

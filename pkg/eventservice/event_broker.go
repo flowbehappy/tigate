@@ -110,11 +110,16 @@ func (c *eventBroker) runScanWorker() {
 				case <-c.ctx.Done():
 					return
 				case task := <-c.taskPool.popTask():
+
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 					topic := task.dispatcherStat.info.GetTopic()
 					dispatcherID := task.dispatcherStat.info.GetID()
 					uid := common.DispatcherID(uuid.MustParse(dispatcherID))
 
+					// TODO: remove me after test
+					if task.eventCount != 0 {
+						log.Info("fizz new task, decode uid", zap.String("dispatcherID", dispatcherID), zap.Any("uid", uuid.UUID(uid).String()))
+					}
 					// The dispatcher has no new events. In such case, we don't need to scan the event store.
 					// We just send the watermark to the dispatcher.
 					if task.eventCount == 0 {
@@ -137,16 +142,15 @@ func (c *eventBroker) runScanWorker() {
 					}
 
 					var txnEvent *common.TxnEvent
+					isFirstEvent := true
 					for {
 						// The first event of the txn must return isNewTxn as true.
 						e, isNewTxn, err := iter.Next()
-						// remove this log after testing
-						log.Info("fizz:read events", zap.Any("event", e), zap.Bool("isNewTxn", isNewTxn))
 						if err != nil {
 							log.Panic("read events failed", zap.Error(err))
 						}
 
-						if isNewTxn {
+						if isFirstEvent || isNewTxn {
 							// Send the previous txnEvent to the dispatcher.
 							if txnEvent != nil {
 								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, txnEvent)
@@ -159,6 +163,7 @@ func (c *eventBroker) runScanWorker() {
 								CommitTs:     e.CommitTs,
 								Rows:         make([]*common.RowChangedEvent, 0),
 							}
+							isFirstEvent = false
 						}
 
 						if e == nil {
@@ -201,7 +206,7 @@ func (c *eventBroker) runPushMessageWorker() {
 			case <-c.ctx.Done():
 				return
 			case msg := <-c.messageCh:
-				log.Info("send message", zap.Any("message", msg))
+				//log.Info("send message", zap.Any("message", msg))
 				c.msgSender.SendEvent(msg)
 			}
 		}

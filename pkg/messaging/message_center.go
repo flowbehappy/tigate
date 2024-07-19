@@ -3,8 +3,9 @@ package messaging
 import (
 	"context"
 	"fmt"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"sync"
+
+	"github.com/flowbehappy/tigate/pkg/common"
 
 	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/config"
@@ -139,6 +140,7 @@ func (mc *messageCenter) RemoveTarget(id ServerId) {
 	mc.remoteTargets.Lock()
 	defer mc.remoteTargets.Unlock()
 	if target, ok := mc.remoteTargets.m[id]; ok {
+		log.Info("remove remote target from message center", zap.Stringer("local", mc.id), zap.Stringer("remote", id))
 		target.close()
 		delete(mc.remoteTargets.m, id)
 	}
