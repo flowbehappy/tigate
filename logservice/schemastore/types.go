@@ -30,7 +30,7 @@ type DatabaseInfo struct {
 
 func (d *DatabaseInfo) isDeleted() bool { return d.DeleteVersion != math.MaxUint64 }
 
-type DatabaseInfoMap map[common.DatabaseID]*DatabaseInfo
+type DatabaseInfoMap map[common.SchemaID]*DatabaseInfo
 
 type TableInfoStoreMap map[common.TableID]*versionedTableInfoStore
 

@@ -235,7 +235,7 @@ func (s *schemaStore) RegisterDispatcher(
 	getSchemaName := func(schemaID common.SchemaID) (string, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		databaseInfo, ok := s.databaseMap[common.DatabaseID(schemaID)]
+		databaseInfo, ok := s.databaseMap[common.SchemaID(schemaID)]
 		if !ok {
 			return "", errors.New("database not found")
 		}
@@ -413,7 +413,7 @@ func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfo
 }
 
 func fillSchemaName(job *model.Job, databaseMap DatabaseInfoMap) error {
-	databaseID := common.DatabaseID(job.SchemaID)
+	databaseID := common.SchemaID(job.SchemaID)
 	databaseInfo, ok := databaseMap[databaseID]
 	if !ok {
 		return errors.New("database not found")
@@ -429,7 +429,7 @@ func fillSchemaName(job *model.Job, databaseMap DatabaseInfoMap) error {
 }
 
 func createSchema(job *model.Job, databaseMap DatabaseInfoMap) error {
-	if _, ok := databaseMap[common.DatabaseID(job.SchemaID)]; ok {
+	if _, ok := databaseMap[common.SchemaID(job.SchemaID)]; ok {
 		return errors.New("database already exists")
 	}
 	databaseInfo := &DatabaseInfo{
@@ -438,12 +438,12 @@ func createSchema(job *model.Job, databaseMap DatabaseInfoMap) error {
 		CreateVersion: common.Ts(job.BinlogInfo.FinishedTS),
 		DeleteVersion: math.MaxUint64,
 	}
-	databaseMap[common.DatabaseID(job.SchemaID)] = databaseInfo
+	databaseMap[common.SchemaID(job.SchemaID)] = databaseInfo
 	return nil
 }
 
 func dropSchema(job *model.Job, databaseMap DatabaseInfoMap) error {
-	databaseInfo, ok := databaseMap[common.DatabaseID(job.SchemaID)]
+	databaseInfo, ok := databaseMap[common.SchemaID(job.SchemaID)]
 	if !ok {
 		return errors.New("database not found")
 	}

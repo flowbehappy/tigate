@@ -18,6 +18,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/server/watcher"
+	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/stretchr/testify/require"
@@ -73,7 +74,7 @@ func newMockAcceptorInfo() *mockAcceptorInfo {
 	return &mockAcceptorInfo{
 		clusterID: 1,
 		serverID:  "server1",
-		id:        "id1",
+		id:        uuid.New().String(),
 		topic:     "topic1",
 		span: &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
 			TableID:  1,
@@ -327,7 +328,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 		},
 	}
 
-	sourceSpanStat, ok := logpuller.spans[tableSpan.TableID]
+	sourceSpanStat, ok := mockStore.spans[tableSpan.TableID]
 	require.True(t, ok)
 
 	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)

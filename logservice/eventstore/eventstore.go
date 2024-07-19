@@ -357,7 +357,7 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span t
 }
 
 func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, sendTS uint64) error {
-	e.schemaStore.UpdateDispatcherSendTS(dispatcherID, sendTS)
+	e.schemaStore.UpdateDispatcherSendTS(dispatcherID, common.Ts(sendTS))
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if tableStat, ok := e.spans[dispatcherID]; ok {
