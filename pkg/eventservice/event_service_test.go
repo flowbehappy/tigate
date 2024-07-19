@@ -224,6 +224,49 @@ func (m *mockEventIterator) Close() error {
 	return nil
 }
 
+func TestMockEventIterator(t *testing.T) {
+	iter := &mockEventIterator{
+		events: make([]*common.TxnEvent, 0),
+	}
+
+	// Case 1: empty iterator
+	row, isNewTxn, err := iter.Next()
+	require.Nil(t, err)
+	require.False(t, isNewTxn)
+	require.Nil(t, row)
+
+	// Case 2: iterator with 2 txns that has 2 rows
+	row = &common.RowChangedEvent{
+		PhysicalTableID: 1,
+		StartTs:         1,
+		CommitTs:        5,
+	}
+	txnEvent := &common.TxnEvent{
+		ClusterID: 1,
+		StartTs:   1,
+		Rows:      []*common.RowChangedEvent{row, row},
+	}
+	iter.events = append(iter.events, txnEvent)
+	iter.events = append(iter.events, txnEvent)
+
+	row, isNewTxn, err = iter.Next()
+	require.Nil(t, err)
+	require.True(t, isNewTxn)
+	require.NotNil(t, row)
+	row, isNewTxn, err = iter.Next()
+	require.Nil(t, err)
+	require.False(t, isNewTxn)
+
+	row, isNewTxn, err = iter.Next()
+	require.Nil(t, err)
+	require.True(t, isNewTxn)
+	require.NotNil(t, row)
+	row, isNewTxn, err = iter.Next()
+	require.Nil(t, err)
+	require.False(t, isNewTxn)
+
+}
+
 func TestEventServiceBasic(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
