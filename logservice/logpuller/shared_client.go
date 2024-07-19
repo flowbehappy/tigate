@@ -11,17 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package eventsource
+package logpuller
 
 import (
 	"context"
-	"encoding/binary"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/flowbehappy/tigate/logservice/eventsource/regionlock"
+	"github.com/flowbehappy/tigate/logservice/logpuller/regionlock"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/cdcpb"
@@ -35,7 +33,6 @@ import (
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/pingcap/tiflow/pkg/txnutil"
 	"github.com/pingcap/tiflow/pkg/util"
-	"github.com/pingcap/tiflow/pkg/util/seahash"
 	"github.com/pingcap/tiflow/pkg/version"
 	kvclientv2 "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -61,49 +58,16 @@ const (
 	invalidSubscriptionID   SubscriptionID = SubscriptionID(0)
 )
 
-var (
-	// To generate an ID for a new subscription. And the subscription ID will also be used as
-	// `RequestId` in region requests of the table.
-	subscriptionIDGen atomic.Uint64
-	// To generate a streamID in `newStream`.
-	streamIDGen atomic.Uint64
-)
-
-var (
-	// unreachable error, only used in unit test
-	errUnreachable = errors.New("kv client unreachable error")
-	logPanic       = log.Panic
-)
-
-type eventError struct {
-	err *cdcpb.Error
-}
-
-// Error implement error interface.
-func (e *eventError) Error() string {
-	return e.err.String()
-}
-
-type rpcCtxUnavailableErr struct {
-	verID tikv.RegionVerID
-}
-
-func (e *rpcCtxUnavailableErr) Error() string {
-	return fmt.Sprintf("cannot get rpcCtx for region %v. ver:%v, confver:%v",
-		e.verID.GetID(), e.verID.GetVer(), e.verID.GetConfVer())
-}
-
-type sendRequestToStoreErr struct{}
-
-func (e *sendRequestToStoreErr) Error() string { return "send request to store error" }
+// To generate an ID for a new subscription. And the subscription ID will also be used as
+// `RequestId` in region requests of the table.
+var subscriptionIDGen atomic.Uint64
 
 // SubscriptionID comes from `SharedClient.AllocSubscriptionID`.
 type SubscriptionID uint64
 
-type Ts tablepb.Ts
-
 // MultiplexingEvent wrap a region event with
 // SubscriptionID to indicate which subscription it belongs to.
+// FIXME: rename
 type MultiplexingEvent struct {
 	common.RegionFeedEvent
 	SubscriptionID SubscriptionID
@@ -215,28 +179,25 @@ type SharedClientConfig struct {
 	KVClientWorkerConcurrent     uint // default to 8
 	KVClientGrpcStreamConcurrent uint // default to 1?
 	KVClientAdvanceIntervalInMs  uint // default to 300
+	// filterLoop                   bool
 }
 
 // NewSharedClient creates a client.
 func NewSharedClient(
 	config *SharedClientConfig,
-	filterLoop bool,
 	pd pd.Client,
 	grpcPool *ConnAndClientPool,
 	regionCache *tikv.RegionCache,
 	pdClock pdutil.Clock,
-	lockResolver txnutil.LockResolver,
 ) *SharedClient {
 	s := &SharedClient{
-		config:     config,
-		clusterID:  0,
-		filterLoop: filterLoop,
+		config:    config,
+		clusterID: 0,
 
-		pd:           pd,
-		grpcPool:     grpcPool,
-		regionCache:  regionCache,
-		pdClock:      pdClock,
-		lockResolver: lockResolver,
+		pd:          pd,
+		grpcPool:    grpcPool,
+		regionCache: regionCache,
+		pdClock:     pdClock,
 
 		rangeTaskCh:       chann.NewAutoDrainChann[rangeTask](),
 		regionCh:          chann.NewAutoDrainChann[regionInfo](),
@@ -291,17 +252,6 @@ func (s *SharedClient) Unsubscribe(subID SubscriptionID) {
 	log.Info("event feed unsubscribes table",
 		zap.Any("subscriptionID", rt.subscriptionID),
 		zap.Bool("exists", rt != nil))
-}
-
-// ResolveLock is a function. If outsider subscribers find a span resolved timestamp is
-// advanced slowly or stopped, they can try to resolve locks in the given span.
-func (s *SharedClient) ResolveLock(subID SubscriptionID, targetTs uint64) {
-	s.totalSpans.Lock()
-	rt := s.totalSpans.v[subID]
-	s.totalSpans.Unlock()
-	if rt != nil {
-		rt.resolveStaleLocks(s, targetTs)
-	}
 }
 
 // RegionCount returns subscribed region count for the span.
@@ -433,8 +383,10 @@ func (s *SharedClient) attachRPCContextForRegion(ctx context.Context, region reg
 
 // getStore gets a requestedStore from requestedStores by storeAddr.
 func (s *SharedClient) getStore(
-	ctx context.Context, g *errgroup.Group,
-	storeID uint64, storeAddr string,
+	ctx context.Context,
+	g *errgroup.Group,
+	storeID uint64,
+	storeAddr string,
 ) *requestedStore {
 	var rs *requestedStore
 	if rs = s.stores[storeAddr]; rs != nil {
@@ -805,10 +757,4 @@ func (r *subscribedTable) resolveStaleLocks(s *SharedClient, targetTs uint64) {
 	s.logRegionDetails("event feed finds slow locked ranges",
 		zap.Any("subscriptionID", r.subscriptionID),
 		zap.Any("ranges", res))
-}
-
-func hashRegionID(regionID uint64, slots int) int {
-	b := make([]byte, 8)
-	binary.LittleEndian.PutUint64(b, regionID)
-	return int(seahash.Sum64(b) % uint64(slots))
 }

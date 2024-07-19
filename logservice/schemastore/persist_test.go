@@ -7,20 +7,21 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
-func writeMetaData(db *pebble.DB, gcTS Timestamp, metaTS *schemaMetaTS) error {
+func writeMetaData(db *pebble.DB, gcTS common.Ts, metaTS *schemaMetaTS) error {
 	batch := db.NewBatch()
 	writeTSToBatch(batch, gcTSKey(), gcTS)
 	writeTSToBatch(batch, metaTSKey(), metaTS.resolvedTS, metaTS.finishedDDLTS, metaTS.schemaVersion)
 	return batch.Commit(pebble.Sync)
 }
 
-func writeSchemaSnapshot(db *pebble.DB, snapTS Timestamp, dbInfo *model.DBInfo) error {
+func writeSchemaSnapshot(db *pebble.DB, snapTS common.Ts, dbInfo *model.DBInfo) error {
 	batch := db.NewBatch()
 	schemaKey, err := snapshotSchemaKey(snapTS, SchemaID(dbInfo.ID))
 	if err != nil {
@@ -34,7 +35,7 @@ func writeSchemaSnapshot(db *pebble.DB, snapTS Timestamp, dbInfo *model.DBInfo) 
 	return batch.Commit(pebble.Sync)
 }
 
-func writeTableSnapshot(db *pebble.DB, snapTS Timestamp, schemaID SchemaID, tableInfo *model.TableInfo) error {
+func writeTableSnapshot(db *pebble.DB, snapTS common.Ts, schemaID SchemaID, tableInfo *model.TableInfo) error {
 	batch := db.NewBatch()
 	tableKey, err := snapshotTableKey(snapTS, TableID(tableInfo.ID))
 	if err != nil {
@@ -61,7 +62,7 @@ func TestLoadEmptyPersistentStorage(t *testing.T) {
 	require.Nil(t, err)
 	defer db.Close()
 
-	gcTS := Timestamp(1000)
+	gcTS := common.Ts(1000)
 	metaTS := &schemaMetaTS{
 		resolvedTS:    1000,
 		finishedDDLTS: 3000,
@@ -87,7 +88,7 @@ func TestLoadPersistentStorageWithoutRequiredData(t *testing.T) {
 	require.Nil(t, err)
 	defer db.Close()
 
-	gcTS := Timestamp(1000)
+	gcTS := common.Ts(1000)
 	metaTS := &schemaMetaTS{
 		resolvedTS:    1000,
 		finishedDDLTS: 3000,
@@ -110,7 +111,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 	require.Nil(t, err)
 	defer db.Close()
 
-	gcTS := Timestamp(1000)
+	gcTS := common.Ts(1000)
 	metaTS := &schemaMetaTS{
 		resolvedTS:    2000,
 		finishedDDLTS: 3000,
@@ -188,7 +189,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		require.Nil(t, err)
 		require.Equal(t, "t", tableInfo.Name.O)
 		require.Equal(t, tableID, TableID(tableInfo.ID))
-		tableInfo2, err := store.getTableInfo(Timestamp(renameVersion))
+		tableInfo2, err := store.getTableInfo(common.Ts(renameVersion))
 		require.Nil(t, err)
 		require.Equal(t, "t2", tableInfo2.Name.O)
 	}
@@ -202,7 +203,7 @@ func TestBuildVersionedTableInfoAndApplyDDL(t *testing.T) {
 	require.Nil(t, err)
 	defer db.Close()
 
-	gcTS := Timestamp(1000)
+	gcTS := common.Ts(1000)
 	metaTS := &schemaMetaTS{
 		resolvedTS:    2000,
 		finishedDDLTS: 3000,
@@ -256,7 +257,7 @@ func TestBuildVersionedTableInfoAndApplyDDL(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, "t", tableInfo.Name.O)
 	require.Equal(t, tableID, TableID(tableInfo.ID))
-	tableInfo2, err := store.getTableInfo(Timestamp(renameVersion))
+	tableInfo2, err := store.getTableInfo(common.Ts(renameVersion))
 	require.Nil(t, err)
 	require.Equal(t, "t2", tableInfo2.Name.O)
 }

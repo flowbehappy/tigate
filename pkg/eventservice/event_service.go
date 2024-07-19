@@ -21,7 +21,7 @@ type EventService interface {
 	Close()
 }
 
-type EventSource interface {
+type logpuller interface {
 	// SubscribeTableSpan subscribes the table span, and returns the latest progress of the table span.
 	// afterUpdate is called when the watermark of the table span is updated.
 	SubscribeTableSpan(span *common.TableSpan, startTs uint64, onSpanUpdate func(watermark uint64)) (uint64, error)
@@ -43,19 +43,19 @@ type EventAcceptorInfo interface {
 }
 
 type eventService struct {
-	ctx         context.Context
-	mc          messaging.MessageCenter
-	eventSource EventSource
-	stores      map[uint64]*eventBroker
+	ctx       context.Context
+	mc        messaging.MessageCenter
+	logpuller logpuller
+	stores    map[uint64]*eventBroker
 
 	// TODO: use a better way to cache the acceptorInfos
 	acceptorInfoCh chan EventAcceptorInfo
 }
 
-func NewEventService(ctx context.Context, mc messaging.MessageCenter, eventSource EventSource) EventService {
+func NewEventService(ctx context.Context, mc messaging.MessageCenter, logpuller logpuller) EventService {
 	es := &eventService{
 		mc:             mc,
-		eventSource:    eventSource,
+		logpuller:      logpuller,
 		ctx:            ctx,
 		stores:         make(map[uint64]*eventBroker),
 		acceptorInfoCh: make(chan EventAcceptorInfo, defaultChanelSize*16),
@@ -102,7 +102,7 @@ func (s *eventService) registerAcceptor(acceptor EventAcceptorInfo) {
 
 	c, ok := s.stores[clusterID]
 	if !ok {
-		c = newCluster(s.ctx, clusterID, s.eventSource, s.mc)
+		c = newCluster(s.ctx, clusterID, s.logpuller, s.mc)
 		s.stores[clusterID] = c
 	}
 	// add the acceptor to the cluster.
@@ -125,7 +125,7 @@ func (s *eventService) registerAcceptor(acceptor EventAcceptorInfo) {
 		c.spanStats[span.TableID] = stat
 	}
 	stat.addAcceptor(ac)
-	c.eventSource.SubscribeTableSpan(span, startTs, stat.UpdateWatermark)
+	c.logpuller.SubscribeTableSpan(span, startTs, stat.UpdateWatermark)
 
 	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", acceptor.GetID()))
 }

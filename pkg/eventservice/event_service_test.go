@@ -124,18 +124,18 @@ func (m *mockSpanStats) update(event []*common.TxnEvent, watermark uint64) {
 	m.onUpdate(watermark)
 }
 
-// mockEventSource is a mock implementation of the EventSource interface
-type mockEventSource struct {
+// mocklogpuller is a mock implementation of the logpuller interface
+type mocklogpuller struct {
 	spans map[uint64]*mockSpanStats
 }
 
-func newMockEventSource() *mockEventSource {
-	return &mockEventSource{
+func newMocklogpuller() *mocklogpuller {
+	return &mocklogpuller{
 		spans: make(map[uint64]*mockSpanStats),
 	}
 }
 
-func (m *mockEventSource) SubscribeTableSpan(span *common.TableSpan, startTs uint64, onSpanUpdate func(watermark uint64)) (uint64, error) {
+func (m *mocklogpuller) SubscribeTableSpan(span *common.TableSpan, startTs uint64, onSpanUpdate func(watermark uint64)) (uint64, error) {
 	log.Info("subscribe table span", zap.Any("span", span), zap.Uint64("startTs", startTs))
 	m.spans[span.TableID] = &mockSpanStats{
 		startTs:       startTs,
@@ -146,7 +146,7 @@ func (m *mockEventSource) SubscribeTableSpan(span *common.TableSpan, startTs uin
 	return startTs, nil
 }
 
-func (m *mockEventSource) Read(dataRange ...*common.DataRange) ([][]*common.TxnEvent, error) {
+func (m *mocklogpuller) Read(dataRange ...*common.DataRange) ([][]*common.TxnEvent, error) {
 	events := make([][]*common.TxnEvent, 0)
 	for _, dr := range dataRange {
 		events = append(events, m.spans[dr.Span.TableID].pendingEvents)
@@ -159,12 +159,12 @@ func TestEventServiceBasic(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	eventSource := newMockEventSource()
+	logpuller := newMocklogpuller()
 	mc := &mockMessageCenter{
 		messageCh: make(chan *messaging.TargetMessage, 100),
 	}
 
-	es := NewEventService(ctx, mc, eventSource)
+	es := NewEventService(ctx, mc, logpuller)
 	esImpl := es.(*eventService)
 	go func() {
 		err := es.Run()
@@ -183,7 +183,7 @@ func TestEventServiceBasic(t *testing.T) {
 	require.NotNil(t, esImpl.stores[acceptorInfo.GetClusterID()])
 	require.Equal(t, 1, len(esImpl.stores[acceptorInfo.GetClusterID()].spanStats))
 
-	// add events to eventSource
+	// add events to logpuller
 	txnEvent := &common.TxnEvent{
 		ClusterID: 1,
 		Span:      acceptorInfo.span,
@@ -196,7 +196,7 @@ func TestEventServiceBasic(t *testing.T) {
 		},
 	}
 
-	sourceSpanStat, ok := eventSource.spans[acceptorInfo.span.TableID]
+	sourceSpanStat, ok := logpuller.spans[acceptorInfo.span.TableID]
 	require.True(t, ok)
 
 	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)
@@ -222,8 +222,8 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	eventSource := newMockEventSource()
-	eventService := NewEventService(ctx, appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter), eventSource)
+	logpuller := newMocklogpuller()
+	eventService := NewEventService(ctx, appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter), logpuller)
 	//esImpl := eventService.(*eventService)
 	go func() {
 		err := eventService.Run()
@@ -243,7 +243,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableEventDispatcher, startTs)
 
 	time.Sleep(1 * time.Second)
-	// add events to eventSource
+	// add events to logpuller
 	txnEvent := &common.TxnEvent{
 		ClusterID: 1,
 		Span:      tableSpan,
@@ -256,7 +256,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 		},
 	}
 
-	sourceSpanStat, ok := eventSource.spans[tableSpan.TableID]
+	sourceSpanStat, ok := logpuller.spans[tableSpan.TableID]
 	require.True(t, ok)
 
 	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)

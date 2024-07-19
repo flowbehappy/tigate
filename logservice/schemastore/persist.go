@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/flowbehappy/tigate/logservice/eventsource"
+	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -33,13 +33,13 @@ type persistentStorage struct {
 }
 
 type schemaMetaTS struct {
-	finishedDDLTS Timestamp
-	schemaVersion Timestamp
-	resolvedTS    Timestamp
+	finishedDDLTS common.Ts
+	schemaVersion common.Ts
+	resolvedTS    common.Ts
 }
 
 func newPersistentStorage(
-	root string, storage kv.Storage, currentGCTS Timestamp,
+	root string, storage kv.Storage, currentGCTS common.Ts,
 ) (*persistentStorage, schemaMetaTS, DatabaseInfoMap) {
 	dbPath := fmt.Sprintf("%s/%s", root, dataDir)
 	// TODO: update pebble options
@@ -84,7 +84,7 @@ func newPersistentStorage(
 	return dataStorage, metaTS, databaseMap
 }
 
-func loadPersistentStorage(db *pebble.DB, minRequiredTS Timestamp) (*persistentStorage, schemaMetaTS, DatabaseInfoMap) {
+func loadPersistentStorage(db *pebble.DB, minRequiredTS common.Ts) (*persistentStorage, schemaMetaTS, DatabaseInfoMap) {
 	snap := db.NewSnapshot()
 	defer snap.Close()
 
@@ -111,7 +111,7 @@ func loadPersistentStorage(db *pebble.DB, minRequiredTS Timestamp) (*persistentS
 	metaTS.schemaVersion = values[2]
 
 	// gcTS cannot go back
-	if minRequiredTS < Timestamp(dataStorage.gcTS.Load()) {
+	if minRequiredTS < common.Ts(dataStorage.gcTS.Load()) {
 		log.Panic("shouldn't happend")
 	}
 	// FIXME: > or >=?
@@ -147,8 +147,8 @@ func loadPersistentStorage(db *pebble.DB, minRequiredTS Timestamp) (*persistentS
 		databaseMap[DatabaseID(dbInfo.ID)] = &DatabaseInfo{
 			Name:          dbInfo.Name.O,
 			Tables:        make([]TableID, 0),
-			CreateVersion: Timestamp(dataStorage.getGCTS()),
-			DeleteVersion: Timestamp(math.MaxUint64),
+			CreateVersion: common.Ts(dataStorage.getGCTS()),
+			DeleteVersion: common.Ts(math.MaxUint64),
 		}
 	}
 
@@ -156,7 +156,7 @@ func loadPersistentStorage(db *pebble.DB, minRequiredTS Timestamp) (*persistentS
 	if err != nil {
 		log.Fatal("generate lower bound failed", zap.Error(err))
 	}
-	ddlJobUpperBound, err := ddlJobSchemaKey(Timestamp(math.MaxUint64), SchemaID(math.MaxInt64))
+	ddlJobUpperBound, err := ddlJobSchemaKey(common.Ts(math.MaxUint64), SchemaID(math.MaxInt64))
 	if err != nil {
 		log.Fatal("generate upper bound failed", zap.Error(err))
 	}
@@ -188,7 +188,7 @@ func (p *persistentStorage) writeDDLEvent(ddlEvent DDLEvent) error {
 	batch := p.db.NewBatch()
 	switch ddlEvent.Job.Type {
 	case model.ActionCreateSchema, model.ActionModifySchemaCharsetAndCollate, model.ActionDropSchema:
-		ddlKey, err := ddlJobSchemaKey(Timestamp(ddlEvent.Job.BinlogInfo.FinishedTS), SchemaID(ddlEvent.Job.SchemaID))
+		ddlKey, err := ddlJobSchemaKey(common.Ts(ddlEvent.Job.BinlogInfo.FinishedTS), SchemaID(ddlEvent.Job.SchemaID))
 		if err != nil {
 			return err
 		}
@@ -196,13 +196,13 @@ func (p *persistentStorage) writeDDLEvent(ddlEvent DDLEvent) error {
 		return batch.Commit(pebble.NoSync)
 	default:
 		// TODO: for cross table ddl, need write two events(may be we need a table_id -> name map?)
-		ddlKey, err := ddlJobTableKey(Timestamp(ddlEvent.Job.BinlogInfo.FinishedTS), TableID(ddlEvent.Job.TableID))
+		ddlKey, err := ddlJobTableKey(common.Ts(ddlEvent.Job.BinlogInfo.FinishedTS), TableID(ddlEvent.Job.TableID))
 		if err != nil {
 			return err
 		}
 
 		batch.Set(ddlKey, ddlValue, pebble.NoSync)
-		indexDDLKey, err := indexDDLJobKey(TableID(ddlEvent.Job.TableID), Timestamp(ddlEvent.Job.BinlogInfo.FinishedTS))
+		indexDDLKey, err := indexDDLJobKey(TableID(ddlEvent.Job.TableID), common.Ts(ddlEvent.Job.BinlogInfo.FinishedTS))
 		if err != nil {
 			return err
 		}
@@ -211,7 +211,7 @@ func (p *persistentStorage) writeDDLEvent(ddlEvent DDLEvent) error {
 	}
 }
 
-func (p *persistentStorage) updateStoreMeta(resolvedTS Timestamp, finishedDDLTS Timestamp, schemaVersion Timestamp) error {
+func (p *persistentStorage) updateStoreMeta(resolvedTS common.Ts, finishedDDLTS common.Ts, schemaVersion common.Ts) error {
 	batch := p.db.NewBatch()
 	err := writeTSToBatch(batch, metaTSKey(), resolvedTS, finishedDDLTS, schemaVersion)
 	if err != nil {
@@ -223,7 +223,7 @@ func (p *persistentStorage) updateStoreMeta(resolvedTS Timestamp, finishedDDLTS 
 func tryReadTableInfoFromSnapshot(
 	snap *pebble.Snapshot,
 	tableID TableID,
-	startTS Timestamp,
+	startTS common.Ts,
 	getSchemaName func(schemaID SchemaID) (string, error),
 ) (*common.TableInfo, error) {
 	lowerBound, err := generateKey(indexSnapshotKeyPrefix, uint64(tableID))
@@ -274,7 +274,7 @@ func tryReadTableInfoFromSnapshot(
 	return nil, nil
 }
 
-func readDDLJobTimestampForTable(snap *pebble.Snapshot, tableID TableID, endTS Timestamp) []Timestamp {
+func readDDLJobTimestampForTable(snap *pebble.Snapshot, tableID TableID, endTS common.Ts) []common.Ts {
 	lowerBound, err := generateKey(indexDDLJobKeyPrefix, uint64(tableID))
 	if err != nil {
 		log.Fatal("generate lower bound failed", zap.Error(err))
@@ -291,7 +291,7 @@ func readDDLJobTimestampForTable(snap *pebble.Snapshot, tableID TableID, endTS T
 		log.Fatal("new iterator failed", zap.Error(err))
 	}
 	defer iter.Close()
-	result := make([]Timestamp, 0)
+	result := make([]common.Ts, 0)
 	for iter.First(); iter.Valid(); iter.Next() {
 		_, version, err := parseIndexDDLJobKey(iter.Key())
 		if err != nil {
@@ -305,8 +305,8 @@ func readDDLJobTimestampForTable(snap *pebble.Snapshot, tableID TableID, endTS T
 // build a versionedTableInfoStore within the time range (startTS, endTS]
 func (p *persistentStorage) buildVersionedTableInfoStore(
 	store *versionedTableInfoStore,
-	startTS Timestamp,
-	endTS Timestamp,
+	startTS common.Ts,
+	endTS common.Ts,
 	getSchemaName func(schemaID SchemaID) (string, error),
 ) error {
 	tableID := store.getTableID()
@@ -321,7 +321,7 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 	}
 	allDDLJobTS := readDDLJobTimestampForTable(snap, tableID, endTS)
 	for _, ts := range allDDLJobTS {
-		if tableInfoFromSnap != nil && ts <= Timestamp(tableInfoFromSnap.Version) {
+		if tableInfoFromSnap != nil && ts <= common.Ts(tableInfoFromSnap.Version) {
 			continue
 		}
 		ddlKey, err := ddlJobTableKey(ts, tableID)
@@ -348,11 +348,11 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 	return nil
 }
 
-func (p *persistentStorage) getGCTS() Timestamp {
-	return Timestamp(p.gcTS.Load())
+func (p *persistentStorage) getGCTS() common.Ts {
+	return common.Ts(p.gcTS.Load())
 }
 
-func (p *persistentStorage) gc(gcTS Timestamp) error {
+func (p *persistentStorage) gc(gcTS common.Ts) error {
 	if p.gcRunning.CompareAndSwap(false, true) {
 		return nil
 	}
@@ -386,10 +386,10 @@ const snapshotTableKeyPrefix = "st_"
 const ddlJobSchemaKeyPrefix = "ds_"
 const ddlJobTableKeyPrefix = "dt_"
 
-// table_id -> timestamp
+// table_id -> common.Ts
 const indexSnapshotKeyPrefix = "is_"
 
-// table_id -> timestamp
+// table_id -> common.Ts
 const indexDDLJobKeyPrefix = "id_"
 
 func gcTSKey() []byte {
@@ -436,31 +436,31 @@ func checkAndParseKey(key []byte, prefix string) ([]uint64, error) {
 	}
 }
 
-func snapshotSchemaKey(ts Timestamp, schemaID SchemaID) ([]byte, error) {
+func snapshotSchemaKey(ts common.Ts, schemaID SchemaID) ([]byte, error) {
 	return generateKey(snapshotSchemaKeyPrefix, uint64(ts), uint64(schemaID))
 }
 
-func snapshotTableKey(ts Timestamp, tableID TableID) ([]byte, error) {
+func snapshotTableKey(ts common.Ts, tableID TableID) ([]byte, error) {
 	return generateKey(snapshotTableKeyPrefix, uint64(ts), uint64(tableID))
 }
 
-func ddlJobSchemaKey(ts Timestamp, schemaID SchemaID) ([]byte, error) {
+func ddlJobSchemaKey(ts common.Ts, schemaID SchemaID) ([]byte, error) {
 	return generateKey(ddlJobSchemaKeyPrefix, uint64(ts), uint64(schemaID))
 }
 
-func ddlJobTableKey(ts Timestamp, tableID TableID) ([]byte, error) {
+func ddlJobTableKey(ts common.Ts, tableID TableID) ([]byte, error) {
 	return generateKey(ddlJobTableKeyPrefix, uint64(ts), uint64(tableID))
 }
 
-func indexSnapshotKey(tableID TableID, commitTS Timestamp, schemaID SchemaID) ([]byte, error) {
+func indexSnapshotKey(tableID TableID, commitTS common.Ts, schemaID SchemaID) ([]byte, error) {
 	return generateKey(indexSnapshotKeyPrefix, uint64(tableID), uint64(commitTS), uint64(schemaID))
 }
 
-func indexDDLJobKey(tableID TableID, commitTS Timestamp) ([]byte, error) {
+func indexDDLJobKey(tableID TableID, commitTS common.Ts) ([]byte, error) {
 	return generateKey(indexDDLJobKeyPrefix, uint64(tableID), uint64(commitTS))
 }
 
-func parseIndexSnapshotKey(key []byte) (TableID, Timestamp, SchemaID, error) {
+func parseIndexSnapshotKey(key []byte) (TableID, common.Ts, SchemaID, error) {
 	values, err := checkAndParseKey(key, indexSnapshotKeyPrefix)
 	if err != nil || len(values) != 3 {
 		log.Fatal("parse index key failed",
@@ -469,18 +469,18 @@ func parseIndexSnapshotKey(key []byte) (TableID, Timestamp, SchemaID, error) {
 			zap.Any("values", values),
 			zap.Error(err))
 	}
-	return TableID(values[0]), Timestamp(values[1]), SchemaID(values[2]), nil
+	return TableID(values[0]), common.Ts(values[1]), SchemaID(values[2]), nil
 }
 
-func parseIndexDDLJobKey(key []byte) (TableID, Timestamp, error) {
+func parseIndexDDLJobKey(key []byte) (TableID, common.Ts, error) {
 	values, err := checkAndParseKey(key, indexDDLJobKeyPrefix)
 	if err != nil || len(values) != 2 {
 		log.Fatal("parse index key failed", zap.Error(err))
 	}
-	return TableID(values[0]), Timestamp(values[1]), nil
+	return TableID(values[0]), common.Ts(values[1]), nil
 }
 
-func writeTSToBatch(batch *pebble.Batch, key []byte, ts ...Timestamp) error {
+func writeTSToBatch(batch *pebble.Batch, key []byte, ts ...common.Ts) error {
 	buf := new(bytes.Buffer)
 	for _, t := range ts {
 		err := binary.Write(buf, binary.BigEndian, t)
@@ -492,7 +492,7 @@ func writeTSToBatch(batch *pebble.Batch, key []byte, ts ...Timestamp) error {
 	return nil
 }
 
-func readTSFromSnapshot(snap *pebble.Snapshot, key []byte) ([]Timestamp, error) {
+func readTSFromSnapshot(snap *pebble.Snapshot, key []byte) ([]common.Ts, error) {
 	value, closer, err := snap.Get(key)
 	if err != nil {
 		return nil, err
@@ -500,9 +500,9 @@ func readTSFromSnapshot(snap *pebble.Snapshot, key []byte) ([]Timestamp, error) 
 	defer closer.Close()
 
 	buf := bytes.NewBuffer(value)
-	var values []Timestamp
+	var values []common.Ts
 	for {
-		var ts Timestamp
+		var ts common.Ts
 		err := binary.Read(buf, binary.BigEndian, &ts)
 		if err != nil {
 			if err == io.EOF {
@@ -514,8 +514,8 @@ func readTSFromSnapshot(snap *pebble.Snapshot, key []byte) ([]Timestamp, error) 
 	}
 }
 
-func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts Timestamp) (DatabaseInfoMap, error) {
-	meta := eventsource.GetSnapshotMeta(tiStore, uint64(ts))
+func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Ts) (DatabaseInfoMap, error) {
+	meta := logpuller.GetSnapshotMeta(tiStore, uint64(ts))
 	start := time.Now()
 	dbinfos, err := meta.ListDatabases()
 	if err != nil {
@@ -528,11 +528,14 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts Timestamp) 
 
 	databaseMap := make(DatabaseInfoMap, len(dbinfos))
 	for _, dbinfo := range dbinfos {
+		if isSystemDB(dbinfo.Name.O) {
+			continue
+		}
 		databaseInfo := &DatabaseInfo{
 			Name:          dbinfo.Name.O,
 			Tables:        make([]TableID, 0),
 			CreateVersion: ts,
-			DeleteVersion: Timestamp(math.MaxUint64),
+			DeleteVersion: common.Ts(math.MaxUint64),
 		}
 		databaseMap[DatabaseID(dbinfo.ID)] = databaseInfo
 		schemaKey, err := snapshotSchemaKey(ts, SchemaID(dbinfo.ID))
