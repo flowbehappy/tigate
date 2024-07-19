@@ -18,6 +18,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/server/watcher"
+	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/stretchr/testify/require"
@@ -73,7 +74,7 @@ func newMockAcceptorInfo() *mockAcceptorInfo {
 	return &mockAcceptorInfo{
 		clusterID: 1,
 		serverID:  "server1",
-		id:        "id1",
+		id:        uuid.New().String(),
 		topic:     "topic1",
 		span: &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
 			TableID:  1,
@@ -124,7 +125,13 @@ type mockSpanStats struct {
 func (m *mockSpanStats) update(event []*common.TxnEvent, watermark uint64) {
 	m.pendingEvents = append(m.pendingEvents, event...)
 	m.watermark = watermark
+	for _, e := range event {
+		for _ = range e.Rows {
+			m.onEvent(&common.RawKVEntry{})
+		}
+	}
 	m.onUpdate(watermark)
+
 }
 
 // mockEventStore is a mock implementation of the EventStore interface
@@ -187,7 +194,7 @@ func (m *mockEventStore) GetIterator(dataRange *common.DataRange) (eventstore.Ev
 		}
 	}
 
-	return nil, nil
+	return iter, nil
 }
 
 type mockEventIterator struct {
@@ -196,13 +203,15 @@ type mockEventIterator struct {
 }
 
 func (m *mockEventIterator) Next() (*common.RowChangedEvent, bool, error) {
-	if len(m.events) == 0 {
+	if len(m.events) == 0 && m.currentTxn == nil {
 		return nil, false, nil
 	}
 
+	isNewTxn := false
 	if m.currentTxn == nil {
 		m.currentTxn = m.events[0]
 		m.events = m.events[1:]
+		isNewTxn = true
 	}
 
 	if len(m.currentTxn.Rows) == 0 {
@@ -215,11 +224,65 @@ func (m *mockEventIterator) Next() (*common.RowChangedEvent, bool, error) {
 		m.currentTxn = nil
 	}
 
-	return row, true, nil
+	return row, isNewTxn, nil
 }
 
 func (m *mockEventIterator) Close() error {
 	return nil
+}
+
+func TestMockEventIterator(t *testing.T) {
+	iter := &mockEventIterator{
+		events: make([]*common.TxnEvent, 0),
+	}
+
+	// Case 1: empty iterator
+	row, isNewTxn, err := iter.Next()
+	require.Nil(t, err)
+	require.False(t, isNewTxn)
+	require.Nil(t, row)
+
+	// Case 2: iterator with 2 txns that has 2 rows
+	row = &common.RowChangedEvent{
+		PhysicalTableID: 1,
+		StartTs:         1,
+		CommitTs:        5,
+	}
+	txnEvent1 := &common.TxnEvent{
+		ClusterID: 1,
+		StartTs:   1,
+		Rows:      []*common.RowChangedEvent{row, row},
+	}
+	txnEvent2 := &common.TxnEvent{
+		ClusterID: 1,
+		StartTs:   1,
+		Rows:      []*common.RowChangedEvent{row, row},
+	}
+
+	iter.events = append(iter.events, txnEvent1)
+	iter.events = append(iter.events, txnEvent2)
+
+	// txn-1, row-1
+	row, isNewTxn, err = iter.Next()
+	require.Nil(t, err)
+	require.True(t, isNewTxn)
+	require.NotNil(t, row)
+	// txn-1, row-2
+	row, isNewTxn, err = iter.Next()
+	require.Nil(t, err)
+	require.False(t, isNewTxn)
+	require.NotNil(t, row)
+
+	// txn-2, row1
+	row, isNewTxn, err = iter.Next()
+	require.Nil(t, err)
+	require.True(t, isNewTxn)
+	require.NotNil(t, row)
+	// txn2, row2
+	row, isNewTxn, err = iter.Next()
+	require.Nil(t, err)
+	require.False(t, isNewTxn)
+	require.NotNil(t, row)
 }
 
 func TestEventServiceBasic(t *testing.T) {
@@ -252,13 +315,19 @@ func TestEventServiceBasic(t *testing.T) {
 	require.NotNil(t, esImpl.brokers[acceptorInfo.GetClusterID()])
 	require.Equal(t, 1, len(esImpl.brokers[acceptorInfo.GetClusterID()].dispatchers))
 
+	uid := common.DispatcherID(uuid.MustParse(acceptorInfo.GetID()))
 	// add events to logpuller
 	txnEvent := &common.TxnEvent{
-		ClusterID: 1,
-		Span:      acceptorInfo.span,
-		StartTs:   1,
-		CommitTs:  5,
+		DispatcherID: uid,
+		Span:         acceptorInfo.span,
+		StartTs:      1,
+		CommitTs:     5,
 		Rows: []*common.RowChangedEvent{
+			{
+				PhysicalTableID: 1,
+				StartTs:         1,
+				CommitTs:        5,
+			},
 			{
 				PhysicalTableID: 1,
 				StartTs:         1,
@@ -272,10 +341,37 @@ func TestEventServiceBasic(t *testing.T) {
 
 	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)
 
+	expectedEvent := &common.TxnEvent{
+		DispatcherID: uid,
+		StartTs:      1,
+		CommitTs:     5,
+		Rows: []*common.RowChangedEvent{
+			{
+				PhysicalTableID: 1,
+				StartTs:         1,
+				CommitTs:        5,
+			},
+			{
+				PhysicalTableID: 1,
+				StartTs:         1,
+				CommitTs:        5,
+			},
+		},
+	}
+
 	// receive events from msg center
-	msg := <-mc.messageCh
-	require.NotNil(t, msg)
-	require.Equal(t, acceptorInfo.GetTopic(), msg.Topic)
+	for {
+		msg := <-mc.messageCh
+		txn := msg.Message.(*common.TxnEvent)
+		if len(txn.Rows) == 0 {
+			log.Info("received watermark", zap.Uint64("ts", txn.ResolvedTs))
+			continue
+		}
+		require.NotNil(t, msg)
+		require.Equal(t, acceptorInfo.GetTopic(), msg.Topic)
+		require.Equal(t, expectedEvent, msg.Message.(*common.TxnEvent))
+		return
+	}
 }
 
 func newTestMockDB(t *testing.T) (db *sql.DB, mock sqlmock.Sqlmock) {
@@ -327,7 +423,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 		},
 	}
 
-	sourceSpanStat, ok := logpuller.spans[tableSpan.TableID]
+	sourceSpanStat, ok := mockStore.spans[tableSpan.TableID]
 	require.True(t, ok)
 
 	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)

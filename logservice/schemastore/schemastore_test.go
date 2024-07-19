@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -65,15 +66,16 @@ func TestBasicDDLJob(t *testing.T) {
 	upstream, err := upstreamManager.AddDefaultUpstream(pdEndpoints, &security.Credential{}, pdClient, etcdCli)
 	require.Nil(t, err)
 
-	gcTs := common.Ts(451242620753281028) // FIXME every time run
-	snapTs := common.Ts(451242799289073665)
-	schemaStore, err := NewSchemaStore("/tmp/cdc", upstream, gcTs)
+	schemaStore, err := NewSchemaStore(ctx, "/tmp/cdc", upstream.PDClient, upstream.RegionCache, upstream.PDClock, upstream.KVStorage)
 	require.Nil(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go schemaStore.Run(ctx)
 	time.Sleep(3 * time.Second)
-	tables, err := schemaStore.GetAllPhysicalTables(snapTs)
+	phy, logic, err := upstream.PDClient.GetTS(ctx)
+	require.Nil(t, err)
+	snapTs := oracle.ComposeTS(phy, logic)
+	tables, err := schemaStore.GetAllPhysicalTables(common.Ts(snapTs))
 	require.Nil(t, err)
 	log.Info("schema store get all tables", zap.Any("tables", tables))
 	fmt.Printf("all tables")

@@ -17,6 +17,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -160,12 +161,10 @@ func (w *MysqlWriter) Flush(events []*common.TxnEvent) error {
 	if dmls.rowCount == 0 {
 		return nil
 	}
-
 	if err := w.execDMLWithMaxRetries(dmls); err != nil {
 		log.Error("execute DMLs failed", zap.Error(err))
 		return errors.Trace(err)
 	}
-
 	for _, event := range events {
 		if event.PostTxnFlushed != nil {
 			event.PostTxnFlushed()
@@ -296,7 +295,8 @@ func (w *MysqlWriter) execDMLWithMaxRetries(dmls *preparedDMLs) error {
 		// 		return 0, 0, err
 		// 	}
 		// } else {
-		err = w.sequenceExecute(ctx, dmls, tx, 20*time.Second)
+		// err = w.sequenceExecute(ctx, dmls, tx, 20*time.Second)
+		err = w.multiStmtExecute(ctx, dmls, tx, 20*time.Second)
 		if err != nil {
 			return err
 		}
@@ -332,6 +332,33 @@ func (w *MysqlWriter) sequenceExecute(
 			return err
 		}
 		cancelFunc()
+	}
+	return nil
+}
+
+// execute SQLs in the multi statements way.
+func (w *MysqlWriter) multiStmtExecute(
+	ctx context.Context, dmls *preparedDMLs, tx *sql.Tx, writeTimeout time.Duration,
+) error {
+	var multiStmtArgs []any
+	for _, value := range dmls.values {
+		multiStmtArgs = append(multiStmtArgs, value...)
+	}
+	multiStmtSQL := strings.Join(dmls.sqls, ";")
+
+	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
+	//start := time.Now()
+	_, err := tx.ExecContext(ctx, multiStmtSQL, multiStmtArgs...)
+	if err != nil {
+		log.Error("ExecContext", zap.Error(err))
+		if rbErr := tx.Rollback(); rbErr != nil {
+			if errors.Cause(rbErr) != context.Canceled {
+				log.Warn("failed to rollback txn", zap.Error(rbErr))
+			}
+		}
+		cancel()
+		return err
 	}
 	return nil
 }

@@ -45,7 +45,6 @@ func (d *DispatcherID) DecodeMsg(dc *msgp.Reader) error {
 	return nil
 }
 
-type DatabaseID int64
 type SchemaID int64
 
 type TopicType string

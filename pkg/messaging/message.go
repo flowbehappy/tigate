@@ -22,6 +22,7 @@ const (
 	TypeServerId
 	TypeDMLEvent
 	TypeDDLEvent
+	TypeTxnEvent
 	TypeWatermark
 	TypeHeartBeatRequest
 	TypeHeartBeatResponse
@@ -48,6 +49,8 @@ func (t IOType) String() string {
 		return "DMLEvent"
 	case TypeDDLEvent:
 		return "DDLEvent"
+	case TypeTxnEvent:
+		return "TxnEvent"
 	case TypeHeartBeatRequest:
 		return "HeartBeatRequest"
 	case TypeHeartBeatResponse:
@@ -270,6 +273,8 @@ func NewTargetMessage(To ServerId, Topic common.TopicType, Message IOTypeT) *Tar
 		ioType = TypeDMLEvent
 	case *DDLEvent:
 		ioType = TypeDDLEvent
+	case *common.TxnEvent:
+		ioType = TypeTxnEvent
 	case *heartbeatpb.HeartBeatRequest:
 		ioType = TypeHeartBeatRequest
 	case *heartbeatpb.ScheduleDispatcherRequest:
