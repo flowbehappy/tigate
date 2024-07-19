@@ -327,7 +327,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 		},
 	}
 
-	sourceSpanStat, ok := logpuller.spans[tableSpan.TableID]
+	sourceSpanStat, ok := mockStore.spans[tableSpan.TableID]
 	require.True(t, ok)
 
 	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)
