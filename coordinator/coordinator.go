@@ -180,7 +180,7 @@ func (c *coordinator) sendMessages(msgs []rpc.Message) {
 var allCfs = map[model.ChangeFeedID]*model.ChangeFeedInfo{}
 
 func init() {
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 1000000; i++ {
 		cfID := model.DefaultChangeFeedID(fmt.Sprintf("cf-%d", i+1))
 		allCfs[cfID] = &model.ChangeFeedInfo{
 			ID:      cfID.ID,
@@ -207,7 +207,11 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 		//}
 		//if shouldRunChangefeed(reactor.Info.State) {
 		//	// todo use real changefeed instance here
-		allChangefeedID.ReplaceOrInsert(scheduler.ChangefeedID(id), &changefeed{})
+		cf, ok := c.scheduledChangefeeds[id]
+		if !ok {
+			cf = &changefeed{}
+		}
+		allChangefeedID.ReplaceOrInsert(scheduler.ChangefeedID(id), cf)
 		//}
 	}
 	tasks := c.scheduler.Schedule(

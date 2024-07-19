@@ -45,8 +45,8 @@ func (b *BasicScheduler) Schedule(
 		if len(newInferiors) >= b.batchSize {
 			return false
 		}
-		st, ok := stateMachines.Get(inf)
-		if !ok {
+		st := value.GetStateMachine()
+		if st == nil {
 			newInferiors = append(newInferiors, inf)
 			// The inferior ID is not in the state machine means the two sets are
 			// not identical.

@@ -157,7 +157,7 @@ func (r RegisterDispatcherRequest) GetClusterID() uint64 {
 	return 0
 }
 
-func (r RegisterDispatcherRequest) GetTopic() string {
+func (r RegisterDispatcherRequest) GetTopic() common.TopicType {
 	return EventFeedTopic
 }
 

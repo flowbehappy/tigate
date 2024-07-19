@@ -124,6 +124,7 @@ func NewStateMachine(
 		Servers:  make(map[string]Role),
 		Inferior: inferior,
 	}
+	inferior.SetStateMachine(sm)
 	// Count of captures that is in Stopping states.
 	stoppingCount := 0
 	committed := false
