@@ -121,7 +121,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 		//sinkConfig:             config.SinkConfig,
 		//enableSyncPoint:       false,
 		maintainerID:          maintainerID,
-		tableSpanStatusesChan: make(chan *heartbeatpb.TableSpanStatus, 100),
+		tableSpanStatusesChan: make(chan *heartbeatpb.TableSpanStatus, 1000000),
 		cancel:                cancel,
 		config:                config,
 	}
@@ -156,7 +156,7 @@ func (e *EventDispatcherManager) Init(startTs uint64) error {
 		return err
 	}
 	// e.sink = sink.NewMysqlSink(*e.config.SinkConfig.MySQLConfig.WorkerCount, cfg, db)
-	e.sink = sink.NewMysqlSink(8, cfg, db)
+	e.sink = sink.NewMysqlSink(16, cfg, db)
 	return nil
 	//}
 

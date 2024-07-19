@@ -13,6 +13,8 @@ const (
 	MessageCenter      = "MessageCenter"
 	EventCollector     = "EventCollector"
 	HeartbeatCollector = "HeartbeatCollector"
+	EventStore         = "EventStore"
+	EventService       = "EventService"
 )
 
 // Put all the global instances here.

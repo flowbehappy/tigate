@@ -7,22 +7,23 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
-func writeMetaData(db *pebble.DB, gcTS Timestamp, metaTS *schemaMetaTS) error {
+func writeMetaData(db *pebble.DB, gcTS common.Ts, metaTS *schemaMetaTS) error {
 	batch := db.NewBatch()
 	writeTSToBatch(batch, gcTSKey(), gcTS)
 	writeTSToBatch(batch, metaTSKey(), metaTS.resolvedTS, metaTS.finishedDDLTS, metaTS.schemaVersion)
 	return batch.Commit(pebble.Sync)
 }
 
-func writeSchemaSnapshot(db *pebble.DB, snapTS Timestamp, dbInfo *model.DBInfo) error {
+func writeSchemaSnapshot(db *pebble.DB, snapTS common.Ts, dbInfo *model.DBInfo) error {
 	batch := db.NewBatch()
-	schemaKey, err := snapshotSchemaKey(snapTS, SchemaID(dbInfo.ID))
+	schemaKey, err := snapshotSchemaKey(snapTS, common.SchemaID(dbInfo.ID))
 	if err != nil {
 		log.Fatal("generate schema key failed", zap.Error(err))
 	}
@@ -34,9 +35,9 @@ func writeSchemaSnapshot(db *pebble.DB, snapTS Timestamp, dbInfo *model.DBInfo) 
 	return batch.Commit(pebble.Sync)
 }
 
-func writeTableSnapshot(db *pebble.DB, snapTS Timestamp, schemaID SchemaID, tableInfo *model.TableInfo) error {
+func writeTableSnapshot(db *pebble.DB, snapTS common.Ts, schemaID common.SchemaID, tableInfo *model.TableInfo) error {
 	batch := db.NewBatch()
-	tableKey, err := snapshotTableKey(snapTS, TableID(tableInfo.ID))
+	tableKey, err := snapshotTableKey(snapTS, common.TableID(tableInfo.ID))
 	if err != nil {
 		log.Fatal("generate table key failed", zap.Error(err))
 	}
@@ -45,7 +46,7 @@ func writeTableSnapshot(db *pebble.DB, snapTS Timestamp, schemaID SchemaID, tabl
 		log.Fatal("marshal table failed", zap.Error(err))
 	}
 	batch.Set(tableKey, tableValue, pebble.NoSync)
-	indexKey, err := indexSnapshotKey(TableID(tableInfo.ID), snapTS, SchemaID(schemaID))
+	indexKey, err := indexSnapshotKey(common.TableID(tableInfo.ID), snapTS, common.SchemaID(schemaID))
 	if err != nil {
 		log.Fatal("generate index key failed", zap.Error(err))
 	}
@@ -61,7 +62,7 @@ func TestLoadEmptyPersistentStorage(t *testing.T) {
 	require.Nil(t, err)
 	defer db.Close()
 
-	gcTS := Timestamp(1000)
+	gcTS := common.Ts(1000)
 	metaTS := &schemaMetaTS{
 		resolvedTS:    1000,
 		finishedDDLTS: 3000,
@@ -87,7 +88,7 @@ func TestLoadPersistentStorageWithoutRequiredData(t *testing.T) {
 	require.Nil(t, err)
 	defer db.Close()
 
-	gcTS := Timestamp(1000)
+	gcTS := common.Ts(1000)
 	metaTS := &schemaMetaTS{
 		resolvedTS:    1000,
 		finishedDDLTS: 3000,
@@ -110,7 +111,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 	require.Nil(t, err)
 	defer db.Close()
 
-	gcTS := Timestamp(1000)
+	gcTS := common.Ts(1000)
 	metaTS := &schemaMetaTS{
 		resolvedTS:    2000,
 		finishedDDLTS: 3000,
@@ -121,27 +122,27 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 	require.Nil(t, err)
 
 	schemaID := 50
-	tableID := TableID(99)
+	tableID := common.TableID(99)
 	writeSchemaSnapshot(db, gcTS, &model.DBInfo{
 		ID:   int64(schemaID),
 		Name: model.NewCIStr("test"),
 	})
-	writeTableSnapshot(db, gcTS, SchemaID(schemaID), &model.TableInfo{
+	writeTableSnapshot(db, gcTS, common.SchemaID(schemaID), &model.TableInfo{
 		ID:   int64(tableID),
 		Name: model.NewCIStr("t"),
 	})
 
 	dataStorage, _, databaseMap := loadPersistentStorage(db, 1500)
 	require.Equal(t, 1, len(databaseMap))
-	require.Equal(t, "test", databaseMap[DatabaseID(schemaID)].Name)
+	require.Equal(t, "test", databaseMap[common.SchemaID(schemaID)].Name)
 
 	{
 		store := newEmptyVersionedTableInfoStore(tableID)
-		getSchemaName := func(schemaID SchemaID) (string, error) {
-			if _, ok := databaseMap[DatabaseID(schemaID)]; !ok {
+		getSchemaName := func(schemaID common.SchemaID) (string, error) {
+			if _, ok := databaseMap[common.SchemaID(schemaID)]; !ok {
 				return "", fmt.Errorf("schema not found")
 			}
-			return databaseMap[DatabaseID(schemaID)].Name, nil
+			return databaseMap[common.SchemaID(schemaID)].Name, nil
 		}
 		dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.resolvedTS, getSchemaName)
 		store.setTableInfoInitialized()
@@ -149,7 +150,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		tableInfo, err := store.getTableInfo(gcTS)
 		require.Nil(t, err)
 		require.Equal(t, "t", tableInfo.Name.O)
-		require.Equal(t, tableID, TableID(tableInfo.ID))
+		require.Equal(t, tableID, common.TableID(tableInfo.ID))
 	}
 
 	// mock write some ddl event and load again
@@ -174,11 +175,11 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 	dataStorage, _, _ = loadPersistentStorage(db, 1500)
 	{
 		store := newEmptyVersionedTableInfoStore(tableID)
-		getSchemaName := func(schemaID SchemaID) (string, error) {
-			if _, ok := databaseMap[DatabaseID(schemaID)]; !ok {
+		getSchemaName := func(schemaID common.SchemaID) (string, error) {
+			if _, ok := databaseMap[common.SchemaID(schemaID)]; !ok {
 				return "", fmt.Errorf("schema not found")
 			}
-			return databaseMap[DatabaseID(schemaID)].Name, nil
+			return databaseMap[common.SchemaID(schemaID)].Name, nil
 		}
 		dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.resolvedTS, getSchemaName)
 		store.setTableInfoInitialized()
@@ -187,8 +188,8 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		tableInfo, err := store.getTableInfo(gcTS)
 		require.Nil(t, err)
 		require.Equal(t, "t", tableInfo.Name.O)
-		require.Equal(t, tableID, TableID(tableInfo.ID))
-		tableInfo2, err := store.getTableInfo(Timestamp(renameVersion))
+		require.Equal(t, tableID, common.TableID(tableInfo.ID))
+		tableInfo2, err := store.getTableInfo(common.Ts(renameVersion))
 		require.Nil(t, err)
 		require.Equal(t, "t2", tableInfo2.Name.O)
 	}
@@ -202,7 +203,7 @@ func TestBuildVersionedTableInfoAndApplyDDL(t *testing.T) {
 	require.Nil(t, err)
 	defer db.Close()
 
-	gcTS := Timestamp(1000)
+	gcTS := common.Ts(1000)
 	metaTS := &schemaMetaTS{
 		resolvedTS:    2000,
 		finishedDDLTS: 3000,
@@ -213,26 +214,26 @@ func TestBuildVersionedTableInfoAndApplyDDL(t *testing.T) {
 	require.Nil(t, err)
 
 	schemaID := 50
-	tableID := TableID(99)
+	tableID := common.TableID(99)
 	writeSchemaSnapshot(db, gcTS, &model.DBInfo{
 		ID:   int64(schemaID),
 		Name: model.NewCIStr("test"),
 	})
-	writeTableSnapshot(db, gcTS, SchemaID(schemaID), &model.TableInfo{
+	writeTableSnapshot(db, gcTS, common.SchemaID(schemaID), &model.TableInfo{
 		ID:   int64(tableID),
 		Name: model.NewCIStr("t"),
 	})
 
 	dataStorage, _, databaseMap := loadPersistentStorage(db, 1500)
 	require.Equal(t, 1, len(databaseMap))
-	require.Equal(t, "test", databaseMap[DatabaseID(schemaID)].Name)
+	require.Equal(t, "test", databaseMap[common.SchemaID(schemaID)].Name)
 
 	store := newEmptyVersionedTableInfoStore(tableID)
-	getSchemaName := func(schemaID SchemaID) (string, error) {
-		if _, ok := databaseMap[DatabaseID(schemaID)]; !ok {
+	getSchemaName := func(schemaID common.SchemaID) (string, error) {
+		if _, ok := databaseMap[common.SchemaID(schemaID)]; !ok {
 			return "", fmt.Errorf("schema not found")
 		}
-		return databaseMap[DatabaseID(schemaID)].Name, nil
+		return databaseMap[common.SchemaID(schemaID)].Name, nil
 	}
 	dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.resolvedTS, getSchemaName)
 	renameVersion := uint64(1500)
@@ -255,8 +256,8 @@ func TestBuildVersionedTableInfoAndApplyDDL(t *testing.T) {
 	tableInfo, err := store.getTableInfo(gcTS)
 	require.Nil(t, err)
 	require.Equal(t, "t", tableInfo.Name.O)
-	require.Equal(t, tableID, TableID(tableInfo.ID))
-	tableInfo2, err := store.getTableInfo(Timestamp(renameVersion))
+	require.Equal(t, tableID, common.TableID(tableInfo.ID))
+	tableInfo2, err := store.getTableInfo(common.Ts(renameVersion))
 	require.Nil(t, err)
 	require.Equal(t, "t2", tableInfo2.Name.O)
 }

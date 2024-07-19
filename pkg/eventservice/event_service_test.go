@@ -12,12 +12,15 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/server/watcher"
+	"github.com/google/uuid"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -71,7 +74,7 @@ func newMockAcceptorInfo() *mockAcceptorInfo {
 	return &mockAcceptorInfo{
 		clusterID: 1,
 		serverID:  "server1",
-		id:        "id1",
+		id:        uuid.New().String(),
 		topic:     "topic1",
 		span: &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
 			TableID:  1,
@@ -116,58 +119,187 @@ type mockSpanStats struct {
 	watermark     uint64
 	pendingEvents []*common.TxnEvent
 	onUpdate      func(watermark uint64)
+	onEvent       func(event *common.RawKVEntry)
 }
 
 func (m *mockSpanStats) update(event []*common.TxnEvent, watermark uint64) {
 	m.pendingEvents = append(m.pendingEvents, event...)
 	m.watermark = watermark
+	for _, e := range event {
+		for _ = range e.Rows {
+			m.onEvent(&common.RawKVEntry{})
+		}
+	}
 	m.onUpdate(watermark)
+
 }
 
-// mockEventSource is a mock implementation of the EventSource interface
-type mockEventSource struct {
+// mockEventStore is a mock implementation of the EventStore interface
+type mockEventStore struct {
 	spans map[uint64]*mockSpanStats
 }
 
-func newMockEventSource() *mockEventSource {
-	return &mockEventSource{
+func newMockEventStore() *mockEventStore {
+	return &mockEventStore{
 		spans: make(map[uint64]*mockSpanStats),
 	}
 }
 
-func (m *mockEventSource) SubscribeTableSpan(span *common.TableSpan, startTs uint64, onSpanUpdate func(watermark uint64)) (uint64, error) {
-	log.Info("subscribe table span", zap.Any("span", span), zap.Uint64("startTs", startTs))
-	m.spans[span.TableID] = &mockSpanStats{
-		startTs:       startTs,
-		watermark:     startTs,
-		onUpdate:      onSpanUpdate,
-		pendingEvents: make([]*common.TxnEvent, 0),
-	}
-	return startTs, nil
+func (m *mockEventStore) Name() string {
+	return "mockEventStore"
 }
 
-func (m *mockEventSource) Read(dataRange ...*common.DataRange) ([][]*common.TxnEvent, error) {
-	events := make([][]*common.TxnEvent, 0)
-	for _, dr := range dataRange {
-		events = append(events, m.spans[dr.Span.TableID].pendingEvents)
-		m.spans[dr.Span.TableID].pendingEvents = make([]*common.TxnEvent, 0)
+func (m *mockEventStore) Run(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockEventStore) Close(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockEventStore) RegisterDispatcher(
+	dispatcherID common.DispatcherID,
+	span tablepb.Span,
+	startTS common.Ts,
+	observer eventstore.EventObserver,
+	notifier eventstore.WatermarkNotifier,
+) error {
+	log.Info("subscribe table span", zap.Any("span", span), zap.Uint64("startTs", uint64(startTS)))
+	m.spans[uint64(span.TableID)] = &mockSpanStats{
+		startTs:       uint64(startTS),
+		watermark:     uint64(startTS),
+		onUpdate:      notifier,
+		onEvent:       observer,
+		pendingEvents: make([]*common.TxnEvent, 0),
 	}
-	return events, nil
+	return nil
+}
+
+func (m *mockEventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, gcTS uint64) error {
+	return nil
+}
+
+func (m *mockEventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
+	return nil
+}
+
+func (m *mockEventStore) GetIterator(dataRange *common.DataRange) (eventstore.EventIterator, error) {
+	iter := &mockEventIterator{
+		events: make([]*common.TxnEvent, 0),
+	}
+
+	for _, e := range m.spans[dataRange.Span.TableID].pendingEvents {
+		if e.CommitTs > dataRange.StartTs && e.CommitTs <= dataRange.EndTs {
+			iter.events = append(iter.events, e)
+		}
+	}
+
+	return iter, nil
+}
+
+type mockEventIterator struct {
+	events     []*common.TxnEvent
+	currentTxn *common.TxnEvent
+}
+
+func (m *mockEventIterator) Next() (*common.RowChangedEvent, bool, error) {
+	if len(m.events) == 0 && m.currentTxn == nil {
+		return nil, false, nil
+	}
+
+	isNewTxn := false
+	if m.currentTxn == nil {
+		m.currentTxn = m.events[0]
+		m.events = m.events[1:]
+		isNewTxn = true
+	}
+
+	if len(m.currentTxn.Rows) == 0 {
+		return nil, false, nil
+	}
+
+	row := m.currentTxn.Rows[0]
+	m.currentTxn.Rows = m.currentTxn.Rows[1:]
+	if len(m.currentTxn.Rows) == 0 {
+		m.currentTxn = nil
+	}
+
+	return row, isNewTxn, nil
+}
+
+func (m *mockEventIterator) Close() error {
+	return nil
+}
+
+func TestMockEventIterator(t *testing.T) {
+	iter := &mockEventIterator{
+		events: make([]*common.TxnEvent, 0),
+	}
+
+	// Case 1: empty iterator
+	row, isNewTxn, err := iter.Next()
+	require.Nil(t, err)
+	require.False(t, isNewTxn)
+	require.Nil(t, row)
+
+	// Case 2: iterator with 2 txns that has 2 rows
+	row = &common.RowChangedEvent{
+		PhysicalTableID: 1,
+		StartTs:         1,
+		CommitTs:        5,
+	}
+	txnEvent1 := &common.TxnEvent{
+		ClusterID: 1,
+		StartTs:   1,
+		Rows:      []*common.RowChangedEvent{row, row},
+	}
+	txnEvent2 := &common.TxnEvent{
+		ClusterID: 1,
+		StartTs:   1,
+		Rows:      []*common.RowChangedEvent{row, row},
+	}
+
+	iter.events = append(iter.events, txnEvent1)
+	iter.events = append(iter.events, txnEvent2)
+
+	// txn-1, row-1
+	row, isNewTxn, err = iter.Next()
+	require.Nil(t, err)
+	require.True(t, isNewTxn)
+	require.NotNil(t, row)
+	// txn-1, row-2
+	row, isNewTxn, err = iter.Next()
+	require.Nil(t, err)
+	require.False(t, isNewTxn)
+	require.NotNil(t, row)
+
+	// txn-2, row1
+	row, isNewTxn, err = iter.Next()
+	require.Nil(t, err)
+	require.True(t, isNewTxn)
+	require.NotNil(t, row)
+	// txn2, row2
+	row, isNewTxn, err = iter.Next()
+	require.Nil(t, err)
+	require.False(t, isNewTxn)
+	require.NotNil(t, row)
 }
 
 func TestEventServiceBasic(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	eventSource := newMockEventSource()
+	mockStore := newMockEventStore()
 	mc := &mockMessageCenter{
 		messageCh: make(chan *messaging.TargetMessage, 100),
 	}
 
-	es := NewEventService(ctx, mc, eventSource)
+	appcontext.SetService(appcontext.MessageCenter, mc)
+	appcontext.SetService(appcontext.EventStore, mockStore)
+	es := NewEventService(ctx)
 	esImpl := es.(*eventService)
 	go func() {
-		err := es.Run()
+		err := es.Run(ctx)
 		if err != nil {
 			t.Errorf("EventService.Run() error = %v", err)
 		}
@@ -179,32 +311,67 @@ func TestEventServiceBasic(t *testing.T) {
 	// wait for eventService to process the acceptorInfo
 	time.Sleep(time.Second * 2)
 
-	require.Equal(t, 1, len(esImpl.stores))
-	require.NotNil(t, esImpl.stores[acceptorInfo.GetClusterID()])
-	require.Equal(t, 1, len(esImpl.stores[acceptorInfo.GetClusterID()].spanStats))
+	require.Equal(t, 1, len(esImpl.brokers))
+	require.NotNil(t, esImpl.brokers[acceptorInfo.GetClusterID()])
+	require.Equal(t, 1, len(esImpl.brokers[acceptorInfo.GetClusterID()].dispatchers))
 
-	// add events to eventSource
+	uid := common.DispatcherID(uuid.MustParse(acceptorInfo.GetID()))
+	// add events to logpuller
 	txnEvent := &common.TxnEvent{
-		ClusterID: 1,
-		Span:      acceptorInfo.span,
-		StartTs:   1,
-		CommitTs:  5,
+		DispatcherID: uid,
+		Span:         acceptorInfo.span,
+		StartTs:      1,
+		CommitTs:     5,
 		Rows: []*common.RowChangedEvent{
 			{
 				PhysicalTableID: 1,
+				StartTs:         1,
+				CommitTs:        5,
+			},
+			{
+				PhysicalTableID: 1,
+				StartTs:         1,
+				CommitTs:        5,
 			},
 		},
 	}
 
-	sourceSpanStat, ok := eventSource.spans[acceptorInfo.span.TableID]
+	sourceSpanStat, ok := mockStore.spans[acceptorInfo.span.TableID]
 	require.True(t, ok)
 
 	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)
 
+	expectedEvent := &common.TxnEvent{
+		DispatcherID: uid,
+		StartTs:      1,
+		CommitTs:     5,
+		Rows: []*common.RowChangedEvent{
+			{
+				PhysicalTableID: 1,
+				StartTs:         1,
+				CommitTs:        5,
+			},
+			{
+				PhysicalTableID: 1,
+				StartTs:         1,
+				CommitTs:        5,
+			},
+		},
+	}
+
 	// receive events from msg center
-	msg := <-mc.messageCh
-	require.NotNil(t, msg)
-	require.Equal(t, acceptorInfo.GetTopic(), msg.Topic)
+	for {
+		msg := <-mc.messageCh
+		txn := msg.Message.(*common.TxnEvent)
+		if len(txn.Rows) == 0 {
+			log.Info("received watermark", zap.Uint64("ts", txn.ResolvedTs))
+			continue
+		}
+		require.NotNil(t, msg)
+		require.Equal(t, acceptorInfo.GetTopic(), msg.Topic)
+		require.Equal(t, expectedEvent, msg.Message.(*common.TxnEvent))
+		return
+	}
 }
 
 func newTestMockDB(t *testing.T) (db *sql.DB, mock sqlmock.Sqlmock) {
@@ -222,11 +389,11 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	eventSource := newMockEventSource()
-	eventService := NewEventService(ctx, appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter), eventSource)
-	//esImpl := eventService.(*eventService)
+	mockStore := newMockEventStore()
+	appcontext.SetService(appcontext.EventStore, mockStore)
+	eventService := NewEventService(ctx)
 	go func() {
-		err := eventService.Run()
+		err := eventService.Run(ctx)
 		if err != nil {
 			t.Errorf("EventService.Run() error = %v", err)
 		}
@@ -243,7 +410,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableEventDispatcher, startTs)
 
 	time.Sleep(1 * time.Second)
-	// add events to eventSource
+	// add events to logpuller
 	txnEvent := &common.TxnEvent{
 		ClusterID: 1,
 		Span:      tableSpan,
@@ -256,7 +423,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 		},
 	}
 
-	sourceSpanStat, ok := eventSource.spans[tableSpan.TableID]
+	sourceSpanStat, ok := mockStore.spans[tableSpan.TableID]
 	require.True(t, ok)
 
 	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)

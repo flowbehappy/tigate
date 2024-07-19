@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package eventsource
+package logpuller
 
 import (
 	"context"
@@ -211,7 +211,7 @@ func handleEventEntry(
 		case cdcpb.Event_COMMITTED:
 			resolvedTs := state.getLastResolvedTs()
 			if entry.CommitTs <= resolvedTs {
-				logPanic("The CommitTs must be greater than the resolvedTs",
+				log.Panic("The CommitTs must be greater than the resolvedTs",
 					zap.String("EventType", "COMMITTED"),
 					zap.Uint64("CommitTs", entry.CommitTs),
 					zap.Uint64("resolvedTs", resolvedTs),
@@ -250,7 +250,7 @@ func handleEventEntry(
 			// NOTE: state.getLastResolvedTs() will never less than startTs.
 			resolvedTs := state.getLastResolvedTs()
 			if entry.CommitTs <= resolvedTs {
-				logPanic("The CommitTs must be greater than the resolvedTs",
+				log.Panic("The CommitTs must be greater than the resolvedTs",
 					zap.String("EventType", "COMMIT"),
 					zap.Uint64("CommitTs", entry.CommitTs),
 					zap.Uint64("resolvedTs", resolvedTs),
@@ -304,65 +304,7 @@ func assembleRowEvent(regionID uint64, entry *cdcpb.Event_Row) (common.RegionFee
 }
 
 func (w *sharedRegionWorker) handleResolvedTs(ctx context.Context, batch resolvedTsBatch) {
-	if w.client.config.KVClientAdvanceIntervalInMs > 0 {
-		w.advanceTableSpan(ctx, batch)
-	} else {
-		w.forwardResolvedTsToPullerFrontier(ctx, batch)
-	}
-}
-
-func (w *sharedRegionWorker) forwardResolvedTsToPullerFrontier(ctx context.Context, batch resolvedTsBatch) {
-	resolvedSpans := make(map[SubscriptionID]*struct {
-		spans           []common.RegionComparableSpan
-		subscribedTable *subscribedTable
-	})
-
-	for _, state := range batch.regions {
-		if state.isStale() || !state.isInitialized() {
-			continue
-		}
-
-		spansAndChan := resolvedSpans[state.region.subscribedTable.subscriptionID]
-		if spansAndChan == nil {
-			spansAndChan = &struct {
-				spans           []common.RegionComparableSpan
-				subscribedTable *subscribedTable
-			}{subscribedTable: state.region.subscribedTable}
-			resolvedSpans[state.region.subscribedTable.subscriptionID] = spansAndChan
-		}
-
-		regionID := state.getRegionID()
-		lastResolvedTs := state.getLastResolvedTs()
-		if batch.ts < lastResolvedTs {
-			log.Debug("The resolvedTs is fallen back in kvclient",
-				zap.Uint64("regionID", regionID),
-				zap.Uint64("resolvedTs", batch.ts),
-				zap.Uint64("lastResolvedTs", lastResolvedTs))
-			continue
-		}
-		state.updateResolvedTs(batch.ts)
-
-		span := common.RegionComparableSpan{Span: state.region.span, Region: regionID}
-		span.Span.TableID = state.region.subscribedTable.span.TableID
-		spansAndChan.spans = append(spansAndChan.spans, span)
-	}
-
-	for subscriptionID, spansAndChan := range resolvedSpans {
-		log.Debug("region worker get a ResolvedTs",
-			zap.Any("subscriptionID", subscriptionID),
-			zap.Uint64("ResolvedTs", batch.ts),
-			zap.Int("spanCount", len(spansAndChan.spans)))
-		if len(spansAndChan.spans) > 0 {
-			revent := common.RegionFeedEvent{Resolved: &common.ResolvedSpans{
-				Spans: spansAndChan.spans, ResolvedTs: batch.ts,
-			}}
-			e := newMultiplexingEvent(revent, spansAndChan.subscribedTable)
-			select {
-			case spansAndChan.subscribedTable.eventCh <- e:
-			case <-ctx.Done():
-			}
-		}
-	}
+	w.advanceTableSpan(ctx, batch)
 }
 
 func (w *sharedRegionWorker) advanceTableSpan(ctx context.Context, batch resolvedTsBatch) {
@@ -390,9 +332,9 @@ func (w *sharedRegionWorker) advanceTableSpan(ctx context.Context, batch resolve
 		ts := table.rangeLock.ResolvedTs()
 		if ts > table.startTs {
 			revent := common.RegionFeedEvent{
-				Resolved: &common.ResolvedSpans{
-					Spans:      []common.RegionComparableSpan{{Span: table.span, Region: 0}},
-					ResolvedTs: ts,
+				Val: &common.RawKVEntry{
+					OpType: common.OpTypeResolved,
+					CRTs:   ts,
 				},
 			}
 			e := newMultiplexingEvent(revent, table)

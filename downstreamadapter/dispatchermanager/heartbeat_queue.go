@@ -33,7 +33,7 @@ type HeartbeatRequestQueue struct {
 
 func NewHeartbeatRequestQueue() *HeartbeatRequestQueue {
 	return &HeartbeatRequestQueue{
-		queue: make(chan *HeartBeatRequestWithTargetID, 1000), // 大小后面再说
+		queue: make(chan *HeartBeatRequestWithTargetID, 100000), // 大小后面再说
 	}
 }
 

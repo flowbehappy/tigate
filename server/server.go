@@ -20,8 +20,10 @@ import (
 	"time"
 
 	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
+	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/maintainer"
 	"github.com/flowbehappy/tigate/pkg/common/server"
+	"github.com/flowbehappy/tigate/pkg/eventservice"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/tiflow/pkg/tcpserver"
 
@@ -117,11 +119,18 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener()),
 		maintainer.NewMaintainerManager(c.serverID, c.pdEndpoints),
+		eventstore.NewEventStore(ctx, "/tmp/cdc", c.pdClient, c.RegionCache, c.PDClock, c.KVStorage), // FIXME: fix path
 	}
 	// register it into global var
 	for _, subModule := range c.subModules {
 		appctx.SetService(subModule.Name(), subModule)
 	}
+
+	// initialize eventService, it relies on eventStore, so we need to initialize it after eventStore
+	eventService := eventservice.NewEventService(ctx)
+	c.subModules = append(c.subModules, eventService)
+	appctx.SetService(eventService.Name(), eventService)
+
 	log.Info("server initialized", zap.Any("server", c.info))
 	return nil
 }

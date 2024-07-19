@@ -12,11 +12,43 @@ import (
 	datumTypes "github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tiflow/pkg/util"
+	"github.com/tinylib/msgp/msgp"
 	"go.uber.org/zap"
 )
 
 // ColumnFlagType is for encapsulating the flag operations for different flags.
 type ColumnFlagType util.Flag
+
+func (c *ColumnFlagType) Msgsize() int {
+	return 8
+}
+
+func (c ColumnFlagType) MarshalMsg(b []byte) ([]byte, error) {
+	return msgp.AppendUint64(b, uint64(c)), nil
+}
+
+func (c *ColumnFlagType) UnmarshalMsg(b []byte) (rest []byte, err error) {
+	var value uint64
+	value, rest, err = msgp.ReadUint64Bytes(b)
+	if err != nil {
+		return nil, err
+	}
+	*c = ColumnFlagType(value)
+	return rest, nil
+}
+
+func (c ColumnFlagType) EncodeMsg(en *msgp.Writer) error {
+	return en.WriteUint64(uint64(c))
+}
+
+func (c *ColumnFlagType) DecodeMsg(dc *msgp.Reader) error {
+	value, err := dc.ReadUint64()
+	if err != nil {
+		return err
+	}
+	*c = ColumnFlagType(value)
+	return nil
+}
 
 const (
 	// BinaryFlag means the column charset is binary

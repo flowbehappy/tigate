@@ -47,14 +47,12 @@ func (d *gcManager) fetchAllGCItems() []gcRangeItem {
 
 type deleteFunc func(span tablepb.Span, startCommitTS uint64, endCommitTS uint64) error
 
-func (d *gcManager) run(ctx context.Context, wg *sync.WaitGroup, deleteDataRange deleteFunc) {
-	wg.Add(1)
-	defer wg.Done()
+func (d *gcManager) run(ctx context.Context, deleteDataRange deleteFunc) error {
 	ticker := time.NewTicker(20 * time.Millisecond)
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-ticker.C:
 			ranges := d.fetchAllGCItems()
 			for _, r := range ranges {
@@ -63,6 +61,7 @@ func (d *gcManager) run(ctx context.Context, wg *sync.WaitGroup, deleteDataRange
 				if err != nil {
 					// TODO: add the data range back?
 					log.Fatal("delete fail", zap.Error(err))
+					return err
 				}
 			}
 		}

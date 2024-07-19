@@ -156,6 +156,7 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 						log.Error("Failed to flush events", zap.Error(err))
 						return
 					}
+					//log.Info("Flush events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Duration("duration", time.Since(start)))
 
 					events = events[:0]
 					rows = 0
@@ -163,7 +164,7 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 
 			}
 
-		}(ctx, s.conflictDetector.GetOutChByCacheID(int64(i)), db, cfg, 128)
+		}(ctx, s.conflictDetector.GetOutChByCacheID(int64(i)), db, cfg, 256)
 	}
 }
 
