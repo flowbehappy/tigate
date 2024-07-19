@@ -21,6 +21,8 @@ import (
 type SchemaStore interface {
 	Run(ctx context.Context) error
 
+	Close(ctx context.Context)
+
 	// TODO: add filter
 	GetAllPhysicalTables(snapTs common.Ts) ([]TableID, error)
 
@@ -109,6 +111,10 @@ func (s *schemaStore) Run(ctx context.Context) error {
 		return s.ddlJobFetcher.run(ctx)
 	})
 	return eg.Wait()
+}
+
+func (s *schemaStore) Close(ctx context.Context) {
+
 }
 
 // TODO: use a meaningful name
