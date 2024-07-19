@@ -100,17 +100,13 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 		}
 	*/
 
-	eventFeeds, ok := msg.Message.(*eventpb.EventFeed)
+	txnEvent, ok := msg.Message.(*common.TxnEvent)
 	if !ok {
 		log.Error("invalid event feed message", zap.Any("msg", msg))
 		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: fmt.Sprintf("invalid heartbeat response message")}
 	}
 
-	dispatcherId, err := uuid.Parse(eventFeeds.DispatcherId)
-	if err != nil {
-		log.Error("invalid dispatcher id", zap.String("dispatcher_id", eventFeeds.DispatcherId))
-		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: fmt.Sprintf("invalid dispatcher id: %s", eventFeeds.DispatcherId)}
-	}
+	dispatcherId := txnEvent.DispatcherID
 
 	if dispatcherItem, ok := c.dispatcherMap[common.DispatcherID(dispatcherId)]; ok {
 		// check whether need to update speed ratio
@@ -137,27 +133,31 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 		// 	dispatcherItem.UpdateResolvedTs(eventResponse.ResolvedTs) // todo:枷锁
 		// 	continue
 		// }
-		if eventFeeds.TableInfo != nil {
-			dispatcherItem.(*dispatcher.TableEventDispatcher).InitTableInfo(eventFeeds.TableInfo)
+		//for _, txnEvent := range eventFeeds.TxnEvents {
+		// TODO: message 改过以后重写，先串起来。
+		if txnEvent.IsDMLEvent() {
+			dispatcherItem.PushTxnEvent(txnEvent)
+		} else {
+			dispatcherItem.UpdateResolvedTs(txnEvent.ResolvedTs)
 		}
-		for _, txnEvent := range eventFeeds.TxnEvents {
-			dispatcherItem.PushEvent(txnEvent)
-			/*
-				syncPointInfo := dispatcherItem.GetSyncPointInfo()
-				// 在这里加 sync point？ 这个性能会有明显影响么,这个要测过
-				if syncPointInfo.EnableSyncPoint && event.CommitTs() > syncPointInfo.NextSyncPointTs {
-					dispatcherItem.GetEventChan() <- Event{} //构造 Sync Point Event
-					syncPointInfo.NextSyncPointTs = oracle.GoTimeToTS(
-						oracle.GetTimeFromTS(syncPointInfo.NextSyncPointTs).
-							Add(syncPointInfo.SyncPointInterval))
-				}
-			*/
 
-			// // deal with event
-			// dispatcherItem.GetMemoryUsage().Add(event.CommitTs(), event.MemoryCost())
-			// dispatcherItem.GetEventChan() <- event // 换成一个函数
-		}
-		dispatcherItem.UpdateResolvedTs(eventFeeds.ResolvedTs)
+		// dispatcherItem.UpdateResolvedTs(eventFeeds.ResolvedTs)
+		/*
+			syncPointInfo := dispatcherItem.GetSyncPointInfo()
+			// 在这里加 sync point？ 这个性能会有明显影响么,这个要测过
+			if syncPointInfo.EnableSyncPoint && event.CommitTs() > syncPointInfo.NextSyncPointTs {
+				dispatcherItem.GetEventChan() <- Event{} //构造 Sync Point Event
+				syncPointInfo.NextSyncPointTs = oracle.GoTimeToTS(
+					oracle.GetTimeFromTS(syncPointInfo.NextSyncPointTs).
+						Add(syncPointInfo.SyncPointInterval))
+			}
+		*/
+
+		// // deal with event
+		// dispatcherItem.GetMemoryUsage().Add(event.CommitTs(), event.MemoryCost())
+		// dispatcherItem.GetEventChan() <- event // 换成一个函数
+		//}
+
 	}
 	return nil
 }
