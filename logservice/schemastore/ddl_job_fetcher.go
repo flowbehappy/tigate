@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,120 +11,99 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package puller
+package schemastore
 
 import (
 	"context"
 	"sync/atomic"
-	"time"
 
-	"github.com/flowbehappy/tigate/logservice/eventsource"
-	"github.com/flowbehappy/tigate/logservice/schemastore"
-	"github.com/flowbehappy/tigate/logservice/txnutil"
+	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/logservice/upstream"
 	"github.com/flowbehappy/tigate/mounter"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/spanz"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
-const (
-	ddlPullerStuckWarnDuration = 30 * time.Second
-	// ddl puller should never filter any DDL jobs even if
-	// the changefeed is in BDR mode, because the DDL jobs should
-	// be filtered before they are sent to the sink
-	ddlPullerFilterLoop = false
-)
+type ddlJobFetcher struct {
+	puller *logpuller.LogPullerMultiSpan
 
-// DDLJobPuller is used to pull ddl job from TiKV.
-type DDLJobPuller interface {
-}
+	writeDDLEvent     func(ddlEvent DDLEvent) error
+	advanceResolvedTs func(resolvedTS common.Ts) error
 
-// Note: All unexported methods of `ddlJobPullerImpl` should
-// be called in the same one goroutine.
-type ddlJobPullerImpl struct {
-	mp            *MultiplexingPuller
-	kvStorage     kv.Storage
-	schemaStore   schemastore.SchemaStore
-	resolvedTs    uint64
+	finishedTs    uint64
 	schemaVersion int64
+
 	// ddlTableInfo is initialized when receive the first concurrent DDL job.
 	ddlTableInfo *mounter.DDLTableInfo
+	// kvStorage is used to init `ddlTableInfo`
+	kvStorage kv.Storage
 }
 
-// DDLPullerTableName is the fake table name for ddl puller
-const DDLPullerTableName = "DDL_PULLER"
-
-// NewDDLJobPuller creates a new NewDDLJobPuller,
-// which fetches ddl events starting from checkpointTs.
-func NewDDLJobPuller(
-	ctx context.Context,
+func newDDLJobFetcher(
 	up *upstream.Upstream,
-	checkpointTs uint64,
-	schemaStore schemastore.SchemaStore,
-) DDLJobPuller {
+	startTs common.Ts,
+	writeDDLEvent func(ddlEvent DDLEvent) error,
+	advanceResolvedTs func(resolvedTS common.Ts) error,
+) *ddlJobFetcher {
 	pdCli := up.PDClient
 	regionCache := up.RegionCache
 	kvStorage := up.KVStorage
 	pdClock := up.PDClock
 
-	ddlSpans := spanz.GetAllDDLSpan()
-	for i := range ddlSpans {
-		// NOTE(qupeng): It's better to use different table id when use sharedKvClient.
-		ddlSpans[i].TableID = int64(-1) - int64(i)
-	}
-
-	ddlJobPuller := &ddlJobPullerImpl{
-		schemaStore: schemaStore,
-		kvStorage:   kvStorage,
-	}
-
-	grpcPool := eventsource.NewConnAndClientPool(up.SecurityConfig)
-	clientConfig := &eventsource.SharedClientConfig{
-		KVClientWorkerConcurrent:     16,
-		KVClientGrpcStreamConcurrent: 4,
+	grpcPool := logpuller.NewConnAndClientPool(up.SecurityConfig)
+	clientConfig := &logpuller.SharedClientConfig{
+		KVClientWorkerConcurrent:     8,
+		KVClientGrpcStreamConcurrent: 8,
 		KVClientAdvanceIntervalInMs:  300,
 	}
-	client := eventsource.NewSharedClient(
+	client := logpuller.NewSharedClient(
 		clientConfig,
-		ddlPullerFilterLoop,
-		pdCli, grpcPool, regionCache, pdClock,
-		txnutil.NewLockerResolver(kvStorage.(tikv.Storage)),
+		pdCli,
+		grpcPool,
+		regionCache,
+		pdClock,
 	)
 
-	slots, hasher := 1, func(tablepb.Span, int) int { return 0 }
-	ddlJobPuller.mp = NewMultiplexingPuller(client, up.PDClock, ddlJobPuller.Input, slots, hasher, 1)
-	ddlJobPuller.mp.Subscribe(ddlSpans, eventsource.Ts(checkpointTs), DDLPullerTableName)
+	ddlJobFetcher := &ddlJobFetcher{
+		writeDDLEvent:     writeDDLEvent,
+		advanceResolvedTs: advanceResolvedTs,
+		kvStorage:         kvStorage,
+	}
+	ddlSpans := getAllDDLSpan()
+	pullerConfig := &logpuller.LogPullerConfig{
+		WorkerCount:  1,
+		HashSpanFunc: func(tablepb.Span, int) int { return 0 },
+	}
+	ddlJobFetcher.puller = logpuller.NewLogPullerMultiSpan(client, ddlSpans, startTs, ddlJobFetcher.input, pullerConfig)
 
-	eg, ctx := errgroup.WithContext(ctx)
-	eg.Go(func() error {
-		return ddlJobPuller.mp.Run(ctx)
-	})
-
-	return ddlJobPuller
+	return ddlJobFetcher
 }
 
-// Input receives the raw kv entry and put it into the input channel.
-func (p *ddlJobPullerImpl) Input(
-	ctx context.Context,
-	rawEvent *common.RawKVEntry,
-	_ []tablepb.Span,
-) error {
+func (p *ddlJobFetcher) run(ctx context.Context) error {
+	eg, ctx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
+		return p.puller.Run(ctx)
+	})
+	return eg.Wait()
+}
+
+func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) error {
 	if rawEvent == nil {
 		return nil
 	}
 
-	if rawEvent.OpType == common.OpTypeResolved {
-		p.schemaStore.AdvanceResolvedTS(schemastore.Timestamp(rawEvent.CRTs))
+	if rawEvent.IsResolved() {
+		p.advanceResolvedTs(common.Ts(rawEvent.CRTs))
 		return nil
 	}
 
@@ -137,8 +116,7 @@ func (p *ddlJobPullerImpl) Input(
 		return nil
 	}
 
-	if job.BinlogInfo.FinishedTS <= p.getResolvedTs() ||
-		job.BinlogInfo.SchemaVersion <= p.schemaVersion {
+	if job.BinlogInfo.FinishedTS <= p.getFinishedTs() || job.BinlogInfo.SchemaVersion <= p.schemaVersion {
 		log.Info("ddl job finishedTs less than puller resolvedTs,"+
 			"discard the ddl job",
 			zap.String("schema", job.SchemaName),
@@ -146,22 +124,22 @@ func (p *ddlJobPullerImpl) Input(
 			zap.Uint64("startTs", job.StartTS),
 			zap.Uint64("finishedTs", job.BinlogInfo.FinishedTS),
 			zap.String("query", job.Query),
-			zap.Uint64("pullerResolvedTs", p.getResolvedTs()))
+			zap.Uint64("finishedTs", p.getFinishedTs()))
 		return nil
 	}
 
-	p.schemaStore.WriteDDLEvent(schemastore.DDLEvent{
+	p.writeDDLEvent(DDLEvent{
 		Job:      job,
-		CommitTS: schemastore.Timestamp(rawEvent.CRTs),
+		CommitTS: common.Ts(rawEvent.CRTs),
 	})
 
-	p.setResolvedTs(job.BinlogInfo.FinishedTS)
+	p.setFinishedTs(job.BinlogInfo.FinishedTS)
 	p.schemaVersion = job.BinlogInfo.SchemaVersion
 
 	return nil
 }
 
-func (p *ddlJobPullerImpl) unmarshalDDL(rawKV *common.RawKVEntry) (*model.Job, error) {
+func (p *ddlJobFetcher) unmarshalDDL(rawKV *common.RawKVEntry) (*model.Job, error) {
 	if rawKV.OpType != common.OpTypePut {
 		return nil, nil
 	}
@@ -175,20 +153,20 @@ func (p *ddlJobPullerImpl) unmarshalDDL(rawKV *common.RawKVEntry) (*model.Job, e
 	return mounter.ParseDDLJob(rawKV, p.ddlTableInfo)
 }
 
-func (p *ddlJobPullerImpl) getResolvedTs() uint64 {
-	return atomic.LoadUint64(&p.resolvedTs)
+func (p *ddlJobFetcher) getFinishedTs() uint64 {
+	return atomic.LoadUint64(&p.finishedTs)
 }
 
-func (p *ddlJobPullerImpl) setResolvedTs(ts uint64) {
-	atomic.StoreUint64(&p.resolvedTs, ts)
+func (p *ddlJobFetcher) setFinishedTs(ts uint64) {
+	atomic.StoreUint64(&p.finishedTs, ts)
 }
 
-func (p *ddlJobPullerImpl) initDDLTableInfo() error {
+func (p *ddlJobFetcher) initDDLTableInfo() error {
 	version, err := p.kvStorage.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	snap := eventsource.GetSnapshotMeta(p.kvStorage, version.Ver)
+	snap := logpuller.GetSnapshotMeta(p.kvStorage, version.Ver)
 
 	dbInfos, err := snap.ListDatabases()
 	if err != nil {
@@ -269,4 +247,28 @@ func findColumnByName(cols []*model.ColumnInfo, name string) (*model.ColumnInfo,
 	return nil, cerror.WrapError(
 		cerror.ErrDDLSchemaNotFound,
 		errors.Errorf("can't find column %s", name))
+}
+
+const (
+	// JobTableID is the id of `tidb_ddl_job`.
+	JobTableID = ddl.JobTableID
+	// JobHistoryID is the id of `tidb_ddl_history`
+	JobHistoryID = ddl.HistoryTableID
+)
+
+func getAllDDLSpan() []tablepb.Span {
+	spans := make([]tablepb.Span, 0, 2)
+	start, end := spanz.GetTableRange(JobTableID)
+	spans = append(spans, tablepb.Span{
+		TableID:  JobTableID,
+		StartKey: spanz.ToComparableKey(start),
+		EndKey:   spanz.ToComparableKey(end),
+	})
+	start, end = spanz.GetTableRange(JobHistoryID)
+	spans = append(spans, tablepb.Span{
+		TableID:  JobHistoryID,
+		StartKey: spanz.ToComparableKey(start),
+		EndKey:   spanz.ToComparableKey(end),
+	})
+	return spans
 }

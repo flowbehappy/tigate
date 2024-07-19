@@ -12,14 +12,14 @@ import (
 	"go.uber.org/zap"
 )
 
-// eventBroker get event from the eventSource, and send the event to the acceptors.
+// eventBroker get event from the logpuller, and send the event to the acceptors.
 // Every TiDB cluster has a eventBroker.
 // All span subscriptions and acceptors of the TiDB cluster are managed by the eventBroker.
 type eventBroker struct {
 	ctx context.Context
 	// tidbClusterID is the ID of the TiDB cluster this eventStore belongs to.
 	tidbClusterID uint64
-	eventSource   EventSource
+	logpuller     logpuller
 	msgSender     messaging.MessageSender
 
 	// tableID -> spanSubscription
@@ -41,7 +41,7 @@ type eventBroker struct {
 func newCluster(
 	ctx context.Context,
 	id uint64,
-	logService EventSource,
+	logService logpuller,
 	mc messaging.MessageSender,
 ) *eventBroker {
 	ctx, cancel := context.WithCancel(ctx)
@@ -49,7 +49,7 @@ func newCluster(
 	c := &eventBroker{
 		ctx:             ctx,
 		tidbClusterID:   id,
-		eventSource:     logService,
+		logpuller:       logService,
 		spanStats:       make(map[uint64]*spanSubscription),
 		acceptors:       make(map[string]*acceptorStat),
 		msgSender:       mc,
@@ -103,7 +103,7 @@ func (c *eventBroker) runScanWorker() {
 				case <-c.ctx.Done():
 					return
 				case task := <-c.taskPool.popTask():
-					events, err := c.eventSource.Read(task)
+					events, err := c.logpuller.Read(task)
 					if err != nil {
 						log.Info("read events failed", zap.Error(err))
 						// push the task back to the task pool.

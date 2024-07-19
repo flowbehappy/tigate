@@ -9,15 +9,12 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/flowbehappy/tigate/common"
-	"github.com/flowbehappy/tigate/logservice/eventsource"
-	"github.com/flowbehappy/tigate/logservice/puller"
-	"github.com/flowbehappy/tigate/logservice/txnutil"
+	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/logservice/upstream"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/pingcap/tiflow/pkg/spanz"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -32,7 +29,7 @@ type EventStore interface {
 	RegisterDispatcher(
 		dispatcherID common.DispatcherID,
 		span tablepb.Span,
-		startTS common.Timestamp,
+		startTS common.Ts,
 		observer EventObserver,
 		notifier WatermarkNotifier,
 	) error
@@ -71,7 +68,7 @@ type tableState struct {
 type eventStore struct {
 	dbs      []*pebble.DB
 	channels []chan eventWithTableID
-	puller   *puller.MultiplexingPuller
+	puller   *logpuller.LogPuller
 
 	gcManager *gcManager
 
@@ -90,20 +87,20 @@ const dbCount = 32
 func NewEventStore(ctx context.Context, up *upstream.Upstream, root string) EventStore {
 	pdCli := up.PDClient
 	regionCache := up.RegionCache
-	kvStorage := up.KVStorage
 	pdClock := up.PDClock
 
-	grpcPool := eventsource.NewConnAndClientPool(up.SecurityConfig)
-	clientConfig := &eventsource.SharedClientConfig{
-		KVClientWorkerConcurrent:     16,
-		KVClientGrpcStreamConcurrent: 4,
+	grpcPool := logpuller.NewConnAndClientPool(up.SecurityConfig)
+	clientConfig := &logpuller.SharedClientConfig{
+		KVClientWorkerConcurrent:     32,
+		KVClientGrpcStreamConcurrent: 32,
 		KVClientAdvanceIntervalInMs:  300,
 	}
-	client := eventsource.NewSharedClient(
+	client := logpuller.NewSharedClient(
 		clientConfig,
-		false,
-		pdCli, grpcPool, regionCache, pdClock,
-		txnutil.NewLockerResolver(kvStorage.(tikv.Storage)),
+		pdCli,
+		grpcPool,
+		regionCache,
+		pdClock,
 	)
 
 	dbPath := fmt.Sprintf("%s/%s", root, dataDir)
@@ -136,27 +133,26 @@ func NewEventStore(ctx context.Context, up *upstream.Upstream, root string) Even
 		}(i)
 	}
 
-	consume := func(ctx context.Context, raw *common.RawKVEntry, spans []tablepb.Span) error {
-		if len(spans) > 1 {
-			log.Panic("DML puller subscribes multiple spans")
-		}
+	consume := func(ctx context.Context, raw *common.RawKVEntry, span tablepb.Span) error {
 		if raw != nil {
-			store.writeEvent(spans[0], raw)
+			store.writeEvent(span, raw)
 		}
 		return nil
 	}
-	// FIXME: increase slots
-	slots, hasher := 1, func(tablepb.Span, int) int { return 0 }
-	mp := puller.NewMultiplexingPuller(client, up.PDClock, consume, slots, hasher, 1)
+	pullerConfig := &logpuller.LogPullerConfig{
+		WorkerCount:  len(dbs),
+		HashSpanFunc: spanz.HashTableSpan,
+	}
+	puller := logpuller.NewLogPuller(client, consume, pullerConfig)
 
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
-		return mp.Run(ctx)
+		return puller.Run(ctx)
 	})
 
 	go store.gcManager.run(ctx, &store.wg, store.deleteEvents)
 
-	store.puller = mp
+	store.puller = puller
 	return store
 }
 
@@ -298,7 +294,7 @@ func (e *eventStore) deleteEvents(span tablepb.Span, startCommitTS uint64, endCo
 	return db.DeleteRange(start, end, pebble.NoSync)
 }
 
-func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span tablepb.Span, startTS common.Timestamp, observer EventObserver, notifier WatermarkNotifier) error {
+func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span tablepb.Span, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.tables.ReplaceOrInsert(span, dispatcherID)
@@ -311,8 +307,7 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span t
 	tableState.ch = e.channels[chIndex]
 	tableState.watermark.Store(uint64(startTS))
 	e.spans[dispatcherID] = tableState
-	// TODO: table name is not need?
-	e.puller.Subscribe([]tablepb.Span{span}, eventsource.Ts(startTS), "table_name")
+	e.puller.Subscribe(span, startTS)
 	return nil
 }
 
@@ -338,7 +333,7 @@ func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) erro
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if tableStat, ok := e.spans[dispatcherID]; ok {
-		e.puller.Unsubscribe([]tablepb.Span{tableStat.span})
+		e.puller.Unsubscribe(tableStat.span)
 		e.tables.Delete(tableStat.span)
 		delete(e.spans, dispatcherID)
 	}
