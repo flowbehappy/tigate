@@ -80,6 +80,14 @@ ifeq ("${IS_ALPINE}", "1")
 endif
 GOBUILD  := $(GOEXPERIMENT) CGO_ENABLED=$(CGO) $(GO) build $(BUILD_FLAG) -trimpath $(GOVENDORFLAG)
 
+tools/bin/protoc:
+	@echo "download protoc"
+	./scripts/download-protoc.sh
+
+tools/bin/protoc-gen-go:
+	@echo "download protoc-gen-go"
+	./scripts/download-protoc-gen-go.sh
+
 generate-protobuf: 
 	@echo "generate-protobuf"
 	./scripts/generate-protobuf.sh

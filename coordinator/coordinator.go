@@ -47,7 +47,6 @@ type coordinator struct {
 	lastCheckTime time.Time
 
 	// scheduling fields
-	scheduler  scheduler.Scheduler
 	supervisor *scheduler.Supervisor
 
 	lastState *orchestrator.GlobalReactorState
@@ -56,21 +55,19 @@ type coordinator struct {
 	scheduledChangefeeds map[model.ChangeFeedID]*changefeed
 }
 
-func NewCoordinator(capture *model.CaptureInfo,
-	version int64) server.Coordinator {
+func NewCoordinator(capture *model.CaptureInfo, version int64) server.Coordinator {
 	c := &coordinator{
-		scheduler: scheduler.NewCombineScheduler(
-			scheduler.NewBasicScheduler(1000),
-			scheduler.NewBalanceScheduler(time.Minute, 1000)),
 		version:              version,
 		nodeInfo:             capture,
 		scheduledChangefeeds: make(map[model.ChangeFeedID]*changefeed),
 	}
-
 	c.supervisor = scheduler.NewSupervisor(
 		scheduler.ChangefeedID(model.DefaultChangeFeedID("coordinator")),
 		c.newChangefeed, c.newBootstrapMessage,
+		scheduler.NewBasicScheduler(1000),
+		scheduler.NewBalanceScheduler(time.Minute, 1000),
 	)
+
 	// receive messages
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
 		RegisterHandler(messaging.CoordinatorTopic, func(msg *messaging.TargetMessage) error {
@@ -83,16 +80,18 @@ func NewCoordinator(capture *model.CaptureInfo,
 }
 
 // Tick is the entrance of the coordinator, it will be called by the etcd watcher every 50ms.
-//  1. Handle message reported by other modules
-//  2. check if the node is changed, if a new node is added, send bootstrap message to that node ,
-//     or if a node is removed, clean related state machine that binded to that node
-//  3. schedule unscheduled changefeeds is all node is bootstrapped
-func (c *coordinator) Tick(ctx context.Context,
-	rawState orchestrator.ReactorState) (orchestrator.ReactorState, error) {
+//  1. Handle message reported by other modules.
+//  2. Check if the node is changed:
+//     - if a new node is added, send bootstrap message to that node ,
+//     - if a node is removed, clean related state machine that binded to that node.
+//  3. Schedule changefeeds if all node is bootstrapped.
+func (c *coordinator) Tick(
+	ctx context.Context, rawState orchestrator.ReactorState,
+) (orchestrator.ReactorState, error) {
 	state := rawState.(*orchestrator.GlobalReactorState)
 	c.lastState = state
 
-	// 1. handle grpc  messages
+	// 1. handle grpc messages
 	err := c.handleMessages()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -140,8 +139,7 @@ func (c *coordinator) handleMessages() error {
 				for _, status := range req.Statuses {
 					statues = append(statues, &MaintainerStatus{status})
 				}
-				serverID := msg.From
-				msgs, err := c.supervisor.HandleStatus(serverID.String(), statues)
+				msgs, err := c.supervisor.HandleStatus(msg.From.String(), statues)
 				if err != nil {
 					log.Error("handle status failed", zap.Error(err))
 					return errors.Trace(err)
@@ -180,14 +178,14 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 	if !c.supervisor.CheckAllCaptureInitialized() {
 		return nil, nil
 	}
-	allChangefeedID := utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior]()
+	allChangefeeds := utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior]()
 	// check all changefeeds.
 	for id, reactor := range state.Changefeeds {
 		if reactor.Info == nil {
 			continue
 		}
 		if !preflightCheck(reactor) {
-			log.Info("precheck failed ignored",
+			log.Error("precheck failed ignored",
 				zap.String("id", id.String()))
 			continue
 		}
@@ -197,11 +195,11 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 			if !ok {
 				cf = &changefeed{}
 			}
-			allChangefeedID.ReplaceOrInsert(scheduler.ChangefeedID(id), cf)
+			allChangefeeds.ReplaceOrInsert(scheduler.ChangefeedID(id), cf)
 		}
 	}
-	tasks := c.scheduler.Schedule(
-		allChangefeedID,
+	tasks := c.supervisor.Schedule(
+		allChangefeeds,
 		c.supervisor.GetAllCaptures(),
 		c.supervisor.StateMachines,
 	)
@@ -317,7 +315,8 @@ func preflightCheck(changefeed *orchestrator.ChangefeedReactorState) (ok bool) {
 	return
 }
 
-func updateStatus(changefeed *orchestrator.ChangefeedReactorState,
+func updateStatus(
+	changefeed *orchestrator.ChangefeedReactorState,
 	checkpointTs uint64,
 ) {
 	if checkpointTs == 0 {

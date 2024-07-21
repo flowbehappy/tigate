@@ -213,12 +213,12 @@ func (m *Manager) sendHeartbeat() {
 	if m.coordinatorVersion > 0 {
 		response := &heartbeatpb.MaintainerHeartbeat{}
 		m.maintainers.Range(func(key, value interface{}) bool {
-			m := value.(*Maintainer)
-			if m.statusChanged.Load() ||
-				time.Since(m.lastReportTime) > time.Second*2 {
-				response.Statuses = append(response.Statuses, m.GetMaintainerStatus())
-				m.statusChanged.Store(false)
-				m.lastReportTime = time.Now()
+			changefeedMaintainer := value.(*Maintainer)
+			if changefeedMaintainer.statusChanged.Load() ||
+				time.Since(changefeedMaintainer.lastReportTime) > time.Second*2 {
+				response.Statuses = append(response.Statuses, changefeedMaintainer.GetMaintainerStatus())
+				changefeedMaintainer.statusChanged.Store(false)
+				changefeedMaintainer.lastReportTime = time.Now()
 			}
 			return true
 		})
