@@ -176,7 +176,6 @@ func (s *MysqlSink) AddDMLEvent(tableSpan *common.TableSpan, event *common.TxnEv
 		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
 		return
 	}
-	log.Info("fizz AddDMLEvent", zap.Any("event", event))
 	tableStatus.getProgress().Add(event)
 	tableStatus.getCh() <- event
 }
@@ -197,7 +196,6 @@ func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *
 }*/
 
 func (s *MysqlSink) AddTableSpan(tableSpan *common.TableSpan) {
-	log.Info("fizz AddTableSpan", zap.Any("tableSpan", tableSpan))
 	tableProgress := types.NewTableProgress()
 	ch := make(chan *common.TxnEvent, 1024) // 先瞎拍
 	ctx, cancel := context.WithCancel(context.Background())
@@ -208,7 +206,6 @@ func (s *MysqlSink) AddTableSpan(tableSpan *common.TableSpan) {
 		for {
 			select {
 			case event := <-eventCh:
-				log.Info("fizz add event to conflictDetector", zap.Any("event", event.CommitTs))
 				conflictDetector.Add(event, tableProgress)
 			case <-ctx.Done():
 				return

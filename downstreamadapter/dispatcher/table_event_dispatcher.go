@@ -151,7 +151,6 @@ func (d *TableEventDispatcher) DispatcherEvents(ctx context.Context) {
 			return
 		case event := <-d.GetEventChan():
 			if event.IsDMLEvent() {
-				log.Info("fizz add event to sink", zap.Any("event", event))
 				sink.AddDMLEvent(tableSpan, event)
 			} else {
 				// resolvedTs

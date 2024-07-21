@@ -109,10 +109,6 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 	dispatcherID := txnEvent.DispatcherID
 
 	if dispatcherItem, ok := c.dispatcherMap[common.DispatcherID(uuid.MustParse(dispatcherID))]; ok {
-		// TODO: remove me after testing
-		if len(txnEvent.Rows) != 0 {
-			log.Info("fizz received", zap.String("dispatcherID", txnEvent.DispatcherID), zap.Any("txnEventLen", len(txnEvent.Rows)))
-		}
 
 		// check whether need to update speed ratio
 		//ok, ratio := dispatcherItem.GetMemoryUsage().UpdatedSpeedRatio(eventResponse.Ratio)

@@ -158,7 +158,7 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *common.TxnEvent) error {
 
 func (w *MysqlWriter) Flush(events []*common.TxnEvent) error {
 	dmls := w.prepareDMLs(events)
-	log.Info("flush DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.String("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values))
+	log.Debug("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.String("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values))
 	if dmls.rowCount == 0 {
 		return nil
 	}
@@ -183,7 +183,6 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent) *preparedDMLs {
 	rowCount := 0
 	for _, event := range events {
 		rows := event.GetRows()
-		log.Info("fizz handle txn event", zap.Any("rowsCount", rows))
 		if len(rows) == 0 {
 			continue
 		}

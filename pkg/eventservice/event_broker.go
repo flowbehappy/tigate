@@ -112,11 +112,6 @@ func (c *eventBroker) runScanWorker() {
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 					topic := task.dispatcherStat.info.GetTopic()
 					dispatcherID := task.dispatcherStat.info.GetID()
-
-					// TODO: remove me after test
-					if task.eventCount != 0 {
-						log.Info("fizz new task, decode uid", zap.String("dispatcherID", dispatcherID), zap.Any("eventCount", task.eventCount))
-					}
 					// The dispatcher has no new events. In such case, we don't need to scan the event store.
 					// We just send the watermark to the dispatcher.
 					if task.eventCount == 0 {
@@ -141,20 +136,11 @@ func (c *eventBroker) runScanWorker() {
 
 					var txnEvent *common.TxnEvent
 					isFirstEvent := true
-					count := 0
 					for {
-						log.Info("fizz iterating", zap.Any("count", count))
-						count++
 						// The first event of the txn must return isNewTxn as true.
 						e, isNewTxn, err := iter.Next()
-						log.Info("fizz next", zap.Any("dispatcherID", dispatcherID), zap.Any("isNewTxn", isNewTxn))
 						if err != nil {
 							log.Panic("read events failed", zap.Error(err))
-						}
-						if e != nil {
-							log.Info("fizz read event", zap.Any("dispatcherID", dispatcherID), zap.Any("commitTs", e.CommitTs))
-						} else {
-							log.Info("fizz event is nil")
 						}
 
 						if isFirstEvent || isNewTxn {
@@ -163,7 +149,6 @@ func (c *eventBroker) runScanWorker() {
 								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, txnEvent)
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
 							}
-							log.Info("fizz create a new txn event", zap.Any("dispatcherID", dispatcherID))
 							// Create a new txnEvent.
 							txnEvent = &common.TxnEvent{
 								DispatcherID: dispatcherID,
@@ -175,10 +160,8 @@ func (c *eventBroker) runScanWorker() {
 						}
 
 						if e == nil {
-							log.Info("fizz no more event", zap.Any("dispatcherID", dispatcherID))
 							if txnEvent != nil {
 								// Send the last txnEvent to the dispatcher.
-								log.Info("fizz send message", zap.Any("dispatcherID", txnEvent.DispatcherID), zap.Any("isDML", txnEvent.IsDMLEvent()), zap.Any("len", len(txnEvent.Rows)))
 								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, txnEvent)
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
 							}
@@ -195,14 +178,11 @@ func (c *eventBroker) runScanWorker() {
 						}
 						// Skip the events that have been sent to the dispatcher.
 						if e.CommitTs <= task.dispatcherStat.watermark.Load() {
-							log.Info("fizz skip event", zap.Any("dispatcherID", txnEvent.DispatcherID), zap.Any("commitTs", e.CommitTs))
 							continue
 						}
 
 						txnEvent.Rows = append(txnEvent.Rows, e)
-						log.Info("fizz append row", zap.Any("dispatcherID", txnEvent.DispatcherID))
 					}
-					log.Info("fizz finish scan", zap.Any("dispatcherID", dispatcherID))
 					iter.Close()
 				}
 			}
@@ -263,7 +243,6 @@ func (a *dispatcherStat) onSubscriptionWatermark(watermark uint64) {
 func (a *dispatcherStat) onNewEvent(raw *common.RawKVEntry) {
 	a.spanSubscription.newEventCount.mu.Lock()
 	defer a.spanSubscription.newEventCount.mu.Unlock()
-	log.Info("fizz new event", zap.Any("dispatcherID", a.info.GetID()), zap.Any("startTs", raw.StartTs), zap.Any("commitTs", raw.CRTs))
 	a.spanSubscription.newEventCount.v++
 }
 

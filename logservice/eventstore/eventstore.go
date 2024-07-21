@@ -434,7 +434,6 @@ func (iter *eventStoreIter) Next() (*common.RowChangedEvent, bool, error) {
 	}
 
 	if !iter.innerIter.Valid() {
-		log.Info("fizz internal iter is invalid")
 		return nil, false, nil
 	}
 
