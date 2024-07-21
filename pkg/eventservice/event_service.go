@@ -147,7 +147,7 @@ func (s *eventService) registerDispatcher(acceptor DispatcherInfo) {
 		ac.onNewEvent,
 		ac.onSubscriptionWatermark,
 	)
-	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", acceptor.GetID()))
+	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", acceptor.GetID()), zap.Uint64("tableID", span.TableID), zap.Uint64("startTs", startTs))
 }
 
 func (s *eventService) deregisterAcceptor(acceptor DispatcherInfo) {
