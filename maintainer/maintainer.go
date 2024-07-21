@@ -55,7 +55,6 @@ type Maintainer struct {
 
 	state      heartbeatpb.ComponentState
 	supervisor *scheduler.Supervisor
-	scheduler  scheduler.Scheduler
 
 	changefeedSate model.FeedState
 
@@ -98,10 +97,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	pdEndpoints []string,
 ) *Maintainer {
 	m := &Maintainer{
-		id: cfID,
-		scheduler: scheduler.NewCombineScheduler(
-			scheduler.NewBasicScheduler(1000),
-			scheduler.NewBalanceScheduler(time.Minute, 1000)),
+		id:              cfID,
 		state:           heartbeatpb.ComponentState_Prepared,
 		removed:         atomic.NewBool(false),
 		taskCh:          make(chan Task, 1024),
@@ -124,7 +120,10 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		m.state = heartbeatpb.ComponentState_Working
 	}
 	m.supervisor = scheduler.NewSupervisor(scheduler.ChangefeedID(cfID),
-		m.getReplicaSet, m.bootstrapMessage)
+		m.getReplicaSet, m.bootstrapMessage,
+		scheduler.NewBasicScheduler(1000),
+		scheduler.NewBalanceScheduler(time.Minute, 1000),
+	)
 	return m
 }
 
@@ -248,7 +247,7 @@ func (m *Maintainer) scheduleTableSpan() error {
 		return nil
 	}
 
-	tasks := m.scheduler.Schedule(
+	tasks := m.supervisor.Schedule(
 		m.tableSpans,
 		m.supervisor.GetAllCaptures(),
 		m.supervisor.GetInferiors(),

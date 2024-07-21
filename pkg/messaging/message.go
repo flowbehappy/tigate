@@ -29,12 +29,14 @@ const (
 	TypeScheduleDispatcherRequest
 	TypeEventFeed
 	TypeRegisterDispatcherRequest
+
 	TypeCoordinatorBootstrapRequest
 	TypeCoordinatorBootstrapResponse
 	TypeDispatchMaintainerRequest
 	TypeMaintainerHeartbeatRequest
-	TypeMaintainerBootstrapResponse
 	TypeMaintainerBootstrapRequest
+	TypeMaintainerBootstrapResponse
+
 	TypeMessageError
 	TypeMessageHandShake
 )
