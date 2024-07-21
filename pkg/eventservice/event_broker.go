@@ -8,7 +8,6 @@ import (
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -61,7 +60,7 @@ func newEventBroker(
 		msgSender:       mc,
 		changedCh:       make(chan *subscriptionChange, defaultChannelSize),
 		taskPool:        newScanTaskPool(),
-		scanWorkerCount: defaultWorkerCount,
+		scanWorkerCount: 1,
 		messageCh:       make(chan *messaging.TargetMessage, defaultChannelSize),
 		cancel:          cancel,
 		wg:              wg,
@@ -110,21 +109,15 @@ func (c *eventBroker) runScanWorker() {
 				case <-c.ctx.Done():
 					return
 				case task := <-c.taskPool.popTask():
-
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 					topic := task.dispatcherStat.info.GetTopic()
 					dispatcherID := task.dispatcherStat.info.GetID()
-					uid := common.DispatcherID(uuid.MustParse(dispatcherID))
-
-					// TODO: remove me after test
-					if task.eventCount != 0 {
-						log.Info("fizz new task, decode uid", zap.String("dispatcherID", dispatcherID), zap.Any("uid", uuid.UUID(uid).String()))
-					}
 					// The dispatcher has no new events. In such case, we don't need to scan the event store.
 					// We just send the watermark to the dispatcher.
 					if task.eventCount == 0 {
 						waterMarkMsg := &common.TxnEvent{
-							ResolvedTs: task.dataRange.EndTs,
+							DispatcherID: dispatcherID,
+							ResolvedTs:   task.dataRange.EndTs,
 						}
 						c.messageCh <- messaging.NewTargetMessage(remoteID, topic, waterMarkMsg)
 						task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
@@ -158,7 +151,7 @@ func (c *eventBroker) runScanWorker() {
 							}
 							// Create a new txnEvent.
 							txnEvent = &common.TxnEvent{
-								DispatcherID: uuid.UUID(uid).String(),
+								DispatcherID: dispatcherID,
 								StartTs:      e.StartTs,
 								CommitTs:     e.CommitTs,
 								Rows:         make([]*common.RowChangedEvent, 0),
@@ -176,7 +169,7 @@ func (c *eventBroker) runScanWorker() {
 							// After all the events are sent, we send the watermark to the dispatcher.
 							watermark := &common.TxnEvent{
 								ResolvedTs:   task.dataRange.EndTs,
-								DispatcherID: uuid.UUID(uid).String(),
+								DispatcherID: dispatcherID,
 							}
 							c.messageCh <- messaging.NewTargetMessage(remoteID, topic, watermark)
 							task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
@@ -190,6 +183,7 @@ func (c *eventBroker) runScanWorker() {
 
 						txnEvent.Rows = append(txnEvent.Rows, e)
 					}
+					iter.Close()
 				}
 			}
 		}()
@@ -206,7 +200,6 @@ func (c *eventBroker) runPushMessageWorker() {
 			case <-c.ctx.Done():
 				return
 			case msg := <-c.messageCh:
-				//log.Info("send message", zap.Any("message", msg))
 				c.msgSender.SendEvent(msg)
 			}
 		}

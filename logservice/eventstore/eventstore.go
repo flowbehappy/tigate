@@ -459,6 +459,7 @@ func (iter *eventStoreIter) Next() (*common.RowChangedEvent, bool, error) {
 	if err != nil {
 		log.Panic("failed to decode event", zap.Error(err))
 	}
+	iter.innerIter.Next()
 	return row, isNewTxn, nil
 }
 
