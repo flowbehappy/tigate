@@ -134,7 +134,6 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 			worker := worker.NewMysqlWorker(eventChan, db, config, workerId)
 			events := make([]*common.TxnEvent, 0)
 			rows := 0
-			ticker := time.NewTicker(1 * time.Second)
 			for {
 			loop:
 				for {
@@ -145,10 +144,6 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 						rows += len(txnEvent.Rows)
 						events = append(events, txnEvent)
 						if rows >= maxRows {
-							break loop
-						}
-					case <-ticker.C:
-						if rows > 0 {
 							break loop
 						}
 					default:
