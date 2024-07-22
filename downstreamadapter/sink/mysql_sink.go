@@ -140,8 +140,8 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 					case <-ctx.Done():
 						return
 					case txnEvent := <-worker.GetEventChan():
-						events = append(events, txnEvent)
 						rows += len(txnEvent.Rows)
+						events = append(events, txnEvent)
 						if rows >= maxRows {
 							break loop
 						}
@@ -151,6 +151,7 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 				}
 
 				if rows > 0 {
+					//start := time.Now()
 					err := worker.GetMysqlWriter().Flush(events)
 					if err != nil {
 						log.Error("Failed to flush events", zap.Error(err))
@@ -195,7 +196,7 @@ func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *
 
 func (s *MysqlSink) AddTableSpan(tableSpan *common.TableSpan) {
 	tableProgress := types.NewTableProgress()
-	ch := make(chan *common.TxnEvent, 100) // 先瞎拍
+	ch := make(chan *common.TxnEvent, 1024) // 先瞎拍
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s.wg.Add(1)

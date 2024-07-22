@@ -27,3 +27,22 @@ type Scheduler interface {
 		stateMachines utils.Map[InferiorID, *StateMachine],
 	) []*ScheduleTask
 }
+
+// Schedule generates schedule tasks based on the inputs.
+func (c *Supervisor) Schedule(
+	allInferiors utils.Map[InferiorID, Inferior],
+	aliveCaptures map[model.CaptureID]*CaptureStatus,
+	stateMachines utils.Map[InferiorID, *StateMachine],
+) []*ScheduleTask {
+	for _, sched := range c.schedulers {
+		tasks := sched.Schedule(allInferiors, aliveCaptures, stateMachines)
+		if len(tasks) != 0 {
+			return tasks
+		}
+	}
+	return nil
+}
+
+func (c *Supervisor) Name() string {
+	return "combine-scheduler"
+}

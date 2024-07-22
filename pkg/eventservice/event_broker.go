@@ -8,7 +8,6 @@ import (
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -59,10 +58,10 @@ func newEventBroker(
 		eventStore:      eventStore,
 		dispatchers:     make(map[string]*dispatcherStat),
 		msgSender:       mc,
-		changedCh:       make(chan *subscriptionChange, defaultChanelSize),
+		changedCh:       make(chan *subscriptionChange, defaultChannelSize),
 		taskPool:        newScanTaskPool(),
-		scanWorkerCount: defaultWorkerCount,
-		messageCh:       make(chan *messaging.TargetMessage, defaultChanelSize),
+		scanWorkerCount: 1,
+		messageCh:       make(chan *messaging.TargetMessage, defaultChannelSize),
 		cancel:          cancel,
 		wg:              wg,
 	}
@@ -113,13 +112,12 @@ func (c *eventBroker) runScanWorker() {
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 					topic := task.dispatcherStat.info.GetTopic()
 					dispatcherID := task.dispatcherStat.info.GetID()
-					uid := common.DispatcherID(uuid.MustParse(dispatcherID))
-
 					// The dispatcher has no new events. In such case, we don't need to scan the event store.
 					// We just send the watermark to the dispatcher.
 					if task.eventCount == 0 {
 						waterMarkMsg := &common.TxnEvent{
-							ResolvedTs: task.dataRange.EndTs,
+							DispatcherID: dispatcherID,
+							ResolvedTs:   task.dataRange.EndTs,
 						}
 						c.messageCh <- messaging.NewTargetMessage(remoteID, topic, waterMarkMsg)
 						task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
@@ -137,16 +135,15 @@ func (c *eventBroker) runScanWorker() {
 					}
 
 					var txnEvent *common.TxnEvent
+					isFirstEvent := true
 					for {
 						// The first event of the txn must return isNewTxn as true.
 						e, isNewTxn, err := iter.Next()
-						// remove this log after testing
-						log.Info("fizz:read events", zap.Any("event", e), zap.Bool("isNewTxn", isNewTxn))
 						if err != nil {
 							log.Panic("read events failed", zap.Error(err))
 						}
 
-						if isNewTxn {
+						if isFirstEvent || isNewTxn {
 							// Send the previous txnEvent to the dispatcher.
 							if txnEvent != nil {
 								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, txnEvent)
@@ -154,11 +151,12 @@ func (c *eventBroker) runScanWorker() {
 							}
 							// Create a new txnEvent.
 							txnEvent = &common.TxnEvent{
-								DispatcherID: uid,
+								DispatcherID: dispatcherID,
 								StartTs:      e.StartTs,
 								CommitTs:     e.CommitTs,
 								Rows:         make([]*common.RowChangedEvent, 0),
 							}
+							isFirstEvent = false
 						}
 
 						if e == nil {
@@ -171,7 +169,7 @@ func (c *eventBroker) runScanWorker() {
 							// After all the events are sent, we send the watermark to the dispatcher.
 							watermark := &common.TxnEvent{
 								ResolvedTs:   task.dataRange.EndTs,
-								DispatcherID: uid,
+								DispatcherID: dispatcherID,
 							}
 							c.messageCh <- messaging.NewTargetMessage(remoteID, topic, watermark)
 							task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
@@ -185,6 +183,7 @@ func (c *eventBroker) runScanWorker() {
 
 						txnEvent.Rows = append(txnEvent.Rows, e)
 					}
+					iter.Close()
 				}
 			}
 		}()
@@ -201,7 +200,6 @@ func (c *eventBroker) runPushMessageWorker() {
 			case <-c.ctx.Done():
 				return
 			case msg := <-c.messageCh:
-				log.Info("send message", zap.Any("message", msg))
 				c.msgSender.SendEvent(msg)
 			}
 		}
@@ -292,7 +290,7 @@ type scanTaskPool struct {
 func newScanTaskPool() *scanTaskPool {
 	return &scanTaskPool{
 		taskSet:   make(map[string]*scanTask),
-		fifoQueue: make(chan *scanTask, defaultChanelSize),
+		fifoQueue: make(chan *scanTask, defaultChannelSize),
 	}
 }
 

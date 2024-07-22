@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	defaultChanelSize  = 2048
+	defaultChannelSize = 2048
 	defaultWorkerCount = 32
 )
 
@@ -66,7 +66,7 @@ func NewEventService(ctx context.Context) EventService {
 		eventStore:     eventStore,
 		ctx:            ctx,
 		brokers:        make(map[uint64]*eventBroker),
-		acceptorInfoCh: make(chan DispatcherInfo, defaultChanelSize*16),
+		acceptorInfoCh: make(chan DispatcherInfo, defaultChannelSize*16),
 	}
 	es.mc.RegisterHandler(messaging.EventServiceTopic, es.handleMessage)
 	return es
@@ -87,7 +87,7 @@ func (s *eventService) Run(ctx context.Context) error {
 			if info.IsRegister() {
 				s.registerDispatcher(info)
 			} else {
-				s.deregisterDispatcher(info.GetClusterID(), info.GetID())
+				s.deregisterAcceptor(info)
 			}
 		}
 	}
@@ -147,21 +147,23 @@ func (s *eventService) registerDispatcher(acceptor DispatcherInfo) {
 		ac.onNewEvent,
 		ac.onSubscriptionWatermark,
 	)
-	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", acceptor.GetID()))
+	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", acceptor.GetID()), zap.Uint64("tableID", span.TableID), zap.Uint64("startTs", startTs))
 }
 
-func (s *eventService) deregisterDispatcher(clusterID uint64, accepterID string) {
+func (s *eventService) deregisterAcceptor(acceptor DispatcherInfo) {
+	clusterID := acceptor.GetClusterID()
 	c, ok := s.brokers[clusterID]
 	if !ok {
 		return
 	}
-	_, ok = c.dispatchers[accepterID]
+	acceptorID := acceptor.GetID()
+	_, ok = c.dispatchers[acceptorID]
 	if !ok {
 		return
 	}
 	//TODO: release the resources of the acceptor.
-	delete(c.dispatchers, accepterID)
-	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", accepterID))
+	delete(c.dispatchers, acceptorID)
+	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", acceptorID))
 }
 
 // TODO: implement the following functions

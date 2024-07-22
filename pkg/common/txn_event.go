@@ -28,7 +28,7 @@ type TxnEvent struct {
 	ClusterID uint64 `msg:"cluster-id"`
 
 	// TODO: fix
-	DispatcherID DispatcherID `msg:"dispatcher-id"`
+	DispatcherID string `msg:"dispatcher-id"`
 
 	// Span of this event belongs to.
 	Span *TableSpan `msg:"-"`

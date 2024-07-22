@@ -137,9 +137,9 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: fmt.Sprintf("invalid heartbeat response message")}
 	}
 
-	dispatcherId := txnEvent.DispatcherID
+	dispatcherID := txnEvent.DispatcherID
 
-	if dispatcherItem, ok := c.dispatcherMap.Get(common.DispatcherID(dispatcherId)); ok {
+	if dispatcherItem, ok := c.dispatcherMap.Get(common.DispatcherID(uuid.MustParse(dispatcherID))); ok {
 		// check whether need to update speed ratio
 		//ok, ratio := dispatcherItem.GetMemoryUsage().UpdatedSpeedRatio(eventResponse.Ratio)
 		// if ok {

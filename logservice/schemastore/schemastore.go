@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 
@@ -13,7 +14,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tiflow/pkg/pdutil"
-	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -60,7 +60,8 @@ type schemaStore struct {
 	eventCh chan interface{}
 
 	// all following fields are guarded by this mutex
-	mu sync.Mutex
+	// TODO: Refine the lock usage; it's prone to deadlock
+	mu sync.RWMutex
 
 	// max finishedTS of all applied ddl events
 	finishedDDLTS common.Ts
@@ -88,14 +89,13 @@ func NewSchemaStore(
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
 ) (SchemaStore, error) {
-	phy, logic, err := pdCli.GetTS(ctx)
+	gcSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, "cdc-new-store", 0, 0)
 	if err != nil {
 		log.Panic("get ts failed", zap.Error(err))
 		return nil, err
 	}
-	// FIXME: not sure currentTs will work
-	currentTs := oracle.ComposeTS(phy, logic)
-	minRequiredTS := common.Ts(currentTs)
+
+	minRequiredTS := common.Ts(gcSafePoint)
 	dataStorage, metaTS, databaseMap := newPersistentStorage(root, kvStorage, minRequiredTS)
 
 	s := &schemaStore{
@@ -165,7 +165,6 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 					log.Fatal("update ts failed", zap.Error(err))
 				}
 				s.mu.Lock()
-				defer s.mu.Unlock()
 				for _, event := range resolvedEvents {
 					if event.Job.Version <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= uint64(s.finishedDDLTS) {
 						log.Warn("skip already applied ddl job",
@@ -175,11 +174,13 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 						continue
 					}
 					if err := handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap); err != nil {
+						s.mu.Unlock()
 						return err
 					}
 					s.schemaVersion = event.Job.Version
 					s.finishedDDLTS = common.Ts(event.Job.BinlogInfo.FinishedTS)
 				}
+				s.mu.Unlock()
 			default:
 				log.Fatal("unknown event type")
 			}
@@ -229,16 +230,23 @@ func (s *schemaStore) RegisterDispatcher(
 	dispatcherID common.DispatcherID, tableID common.TableID, startTS common.Ts,
 ) error {
 	s.mu.Lock()
+	// TODO: fix me in the future
 	if startTS < s.dataStorage.getGCTS() {
-		return errors.New("start ts is old than gc ts")
+		s.mu.Unlock()
+		log.Panic("startTs is old than gcTs")
 	}
+
 	s.dispatchersMap[dispatcherID] = DispatcherInfo{
 		tableID: tableID,
 		// filter:  filter,
 	}
 	getSchemaName := func(schemaID common.SchemaID) (string, error) {
-		s.mu.Lock()
-		defer s.mu.Unlock()
+		s.mu.RLock()
+
+		defer func() {
+			s.mu.RUnlock()
+		}()
+
 		databaseInfo, ok := s.databaseMap[common.SchemaID(schemaID)]
 		if !ok {
 			return "", errors.New("database not found")
@@ -280,7 +288,9 @@ func (s *schemaStore) RegisterDispatcher(
 	newStore.setTableInfoInitialized()
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer func() {
+		s.mu.Unlock()
+	}()
 	// check whether the data is gced again
 	if startTS < s.dataStorage.getGCTS() {
 		// TODO: unregister dispatcher, make sure other wait go routines exit successfully
@@ -300,13 +310,12 @@ func (s *schemaStore) RegisterDispatcher(
 	} else {
 		log.Panic("should not happened")
 	}
-
 	return nil
 }
 
 func (s *schemaStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, ts common.Ts) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	info, ok := s.dispatchersMap[dispatcherID]
 	if !ok {
 		return errors.New("dispatcher not found")
@@ -334,17 +343,17 @@ func (s *schemaStore) UnregisterDispatcher(dispatcherID common.DispatcherID) err
 }
 
 func (s *schemaStore) GetMaxFinishedDDLTS() common.Ts {
-	s.mu.Lock()
-	defer s.mu.Lock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.finishedDDLTS
 }
 
 func (s *schemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	store, ok := s.tableInfoStoreMap[tableID]
 	if !ok {
-		return nil, errors.New("table not found")
+		return nil, errors.New(fmt.Sprintf("table %d not found", tableID))
 	}
 	store.waitTableInfoInitialized()
 	return store.getTableInfo(ts)

@@ -40,7 +40,6 @@ func NewGrpcServer(lis net.Listener) *GrpcModule {
 }
 
 func (g *GrpcModule) Run(ctx context.Context) error {
-
 	return g.grpcServer.Serve(g.lis)
 }
 

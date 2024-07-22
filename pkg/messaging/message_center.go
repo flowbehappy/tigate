@@ -3,8 +3,9 @@ package messaging
 import (
 	"context"
 	"fmt"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"sync"
+
+	"github.com/flowbehappy/tigate/pkg/common"
 
 	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/config"
@@ -19,10 +20,7 @@ import (
 // AddTarget and RemoveTarget are not thread-safe, and should be called in the main thread of a server.
 type MessageCenter interface {
 	MessageSender
-	//MessageReceiver
-
-	RegisterHandler(topic common.TopicType, handler MessageHandler)
-	DeRegisterHandler(topic common.TopicType)
+	MessageReceiver
 	AddTarget(id ServerId, epoch common.EpochType, addr common.AddressType)
 	RemoveTarget(id ServerId)
 	Close()
@@ -40,8 +38,10 @@ type MessageSender interface {
 // MessageReceiver is the interface to receive messages from other targets.
 // TODO: Seems this interface is unnecessary, we can remove it later?
 type MessageReceiver interface {
-	ReceiveEvent() (*TargetMessage, error)
-	ReceiveCmd() (*TargetMessage, error)
+	// ReceiveEvent() (*TargetMessage, error)
+	// ReceiveCmd() (*TargetMessage, error)
+	RegisterHandler(topic common.TopicType, handler MessageHandler)
+	DeRegisterHandler(topic common.TopicType)
 }
 
 // gRPC generates two different interfaces, MessageCenter_SendEventsServer
@@ -139,6 +139,7 @@ func (mc *messageCenter) RemoveTarget(id ServerId) {
 	mc.remoteTargets.Lock()
 	defer mc.remoteTargets.Unlock()
 	if target, ok := mc.remoteTargets.m[id]; ok {
+		log.Info("remove remote target from message center", zap.Stringer("local", mc.id), zap.Stringer("remote", id))
 		target.close()
 		delete(mc.remoteTargets.m, id)
 	}
@@ -251,11 +252,13 @@ func NewMessageCenterServer(mc MessageCenter) proto.MessageCenterServer {
 	return &grpcServer{messageCenter: mc.(*messageCenter)}
 }
 
+// SendEvents implements the gRPC service MessageCenter.SendEvents
 func (s *grpcServer) SendEvents(msg *proto.Message, stream proto.MessageCenter_SendEventsServer) error {
 	return s.handleConnect(msg, stream, true)
 	//return s.handleClientConnect(stream, true)
 }
 
+// SendCommands implements the gRPC service MessageCenter.SendCommands
 func (s *grpcServer) SendCommands(msg *proto.Message, stream proto.MessageCenter_SendCommandsServer) error {
 	return s.handleConnect(msg, stream, false)
 	//return s.handleClientConnect(stream, false)

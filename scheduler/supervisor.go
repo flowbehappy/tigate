@@ -39,6 +39,7 @@ type Supervisor struct {
 	RunningTasks  utils.Map[InferiorID, *ScheduleTask]
 
 	maxTaskConcurrency int
+	schedulers         []Scheduler
 
 	ID          InferiorID
 	initialized bool
@@ -68,9 +69,11 @@ func NewCaptureStatus(capture *model.CaptureInfo) *CaptureStatus {
 	}
 }
 
-func NewSupervisor(ID InferiorID,
-	f func(id InferiorID) Inferior,
-	newBootstrap func(id model.CaptureID) rpc.Message) *Supervisor {
+func NewSupervisor(
+	ID InferiorID, f func(id InferiorID) Inferior,
+	newBootstrapMsg NewBootstrapFn,
+	schedulers ...Scheduler,
+) *Supervisor {
 	return &Supervisor{
 		ID:                 ID,
 		StateMachines:      utils.NewBtreeMap[InferiorID, *StateMachine](),
@@ -79,8 +82,9 @@ func NewSupervisor(ID InferiorID,
 		captures:           make(map[model.CaptureID]*CaptureStatus),
 		initStatus:         make(map[model.CaptureID][]InferiorStatus),
 		maxTaskConcurrency: 10000,
+		schedulers:         schedulers,
 		newInferior:        f,
-		newBootstrapMsg:    newBootstrap,
+		newBootstrapMsg:    newBootstrapMsg,
 	}
 }
 

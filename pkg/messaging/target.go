@@ -3,10 +3,11 @@ package messaging
 import (
 	"context"
 	"fmt"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/common"
 
 	. "github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/config"
@@ -109,7 +110,8 @@ func newRemoteMessageTarget(
 	localEpoch, targetEpoch common.EpochType,
 	addr common.AddressType,
 	recvEventCh, recvCmdCh chan *TargetMessage,
-	cfg *config.MessageCenterConfig) *remoteMessageTarget {
+	cfg *config.MessageCenterConfig,
+) *remoteMessageTarget {
 	log.Info("Create remote target", zap.Stringer("local", localID), zap.Stringer("remote", targetId), zap.Any("addr", addr), zap.Any("localEpoch", localEpoch), zap.Any("targetEpoch", targetEpoch))
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &remoteMessageTarget{
