@@ -14,6 +14,7 @@
 package maintainer
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -47,9 +48,8 @@ import (
 // 3. send changefeed status to coordinator
 // 4. handle heartbeat reported by dispatcher
 type Maintainer struct {
-	id       model.ChangeFeedID
-	config   *model.ChangeFeedInfo
-	cfgBytes []byte
+	id     model.ChangeFeedID
+	config *model.ChangeFeedInfo
 
 	checkpointTs *atomic.Uint64
 
@@ -92,7 +92,6 @@ type Maintainer struct {
 func NewMaintainer(cfID model.ChangeFeedID,
 	isSecondary bool,
 	cfg *model.ChangeFeedInfo,
-	cfgBytes []byte,
 	checkpointTs uint64,
 	pdEndpoints []string,
 ) *Maintainer {
@@ -107,7 +106,6 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		removing:        atomic.NewBool(false),
 		cascadeRemoving: atomic.NewBool(false),
 		config:          cfg,
-		cfgBytes:        cfgBytes,
 		checkpointTs:    atomic.NewUint64(checkpointTs),
 		pdEndpoints:     pdEndpoints,
 		tableSpans:      utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior](),
@@ -120,10 +118,11 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		m.state = heartbeatpb.ComponentState_Working
 	}
 	m.supervisor = scheduler.NewSupervisor(scheduler.ChangefeedID(cfID),
-		m.getReplicaSet, m.bootstrapMessage,
+		m.getReplicaSet, m.getNewBootstrapFn(),
 		scheduler.NewBasicScheduler(1000),
 		scheduler.NewBalanceScheduler(time.Minute, 1000),
 	)
+	log.Info("create maintainer", zap.String("id", cfID.String()))
 	return m
 }
 
@@ -431,14 +430,36 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 	return status
 }
 
-func (m *Maintainer) bootstrapMessage(captureID model.CaptureID) rpc.Message {
-	return messaging.NewTargetMessage(
-		messaging.ServerId(captureID),
-		messaging.MaintainerBoostrapRequestTopic,
-		&heartbeatpb.MaintainerBootstrapRequest{
-			ChangefeedID: m.id.ID,
-			Config:       m.cfgBytes,
-		})
+// getNewBootstrapFn returns a function that creates a new bootstrap message to initialize
+// a changefeed dispatcher manager.
+func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
+	cfg := m.config
+	changefeedConfig := model.ChangefeedConfig{
+		Namespace:      cfg.Namespace,
+		ID:             cfg.ID,
+		StartTS:        cfg.StartTs,
+		TargetTS:       cfg.TargetTs,
+		SinkURI:        cfg.SinkURI,
+		ForceReplicate: cfg.Config.ForceReplicate,
+		SinkConfig:     cfg.Config.Sink,
+		// other fileds are not necessary for maintainer
+	}
+	// cfgBytes only holds necessary fields to initialize a changefeed dispatcher.
+	cfgBytes, err := json.Marshal(changefeedConfig)
+	if err != nil {
+		log.Panic("marshal changefeed config failed", zap.Error(err))
+	}
+	log.Info("create maintainer bootstrap message function", zap.String("changefeed", m.id.String()), zap.ByteString("config", cfgBytes))
+	return func(captureID model.CaptureID) rpc.Message {
+		return messaging.NewTargetMessage(
+			messaging.ServerId(captureID),
+			messaging.MaintainerBoostrapRequestTopic,
+			&heartbeatpb.MaintainerBootstrapRequest{
+				ChangefeedID: m.id.ID,
+				Config:       cfgBytes,
+			})
+	}
+
 }
 
 func (m *Maintainer) getMessageQueue() *MessageQueue {

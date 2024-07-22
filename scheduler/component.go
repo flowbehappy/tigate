@@ -55,3 +55,5 @@ func (c ChangefeedID) Equal(t any) bool {
 func (c ChangefeedID) String() string {
 	return c.ID
 }
+
+type NewBootstrapFn func(id model.CaptureID) rpc.Message

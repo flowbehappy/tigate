@@ -183,7 +183,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 				log.Panic("decode changefeed fail", zap.Error(err))
 			}
 			cf = NewMaintainer(cfID, req.IsSecondary,
-				cfConfig, req.Config, req.CheckpointTs, m.pdEndpoints)
+				cfConfig, req.CheckpointTs, m.pdEndpoints)
 			m.maintainers.Store(cfID, cf)
 			threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf.(*Maintainer),
 				threadpool.CPUTask, time.Now())

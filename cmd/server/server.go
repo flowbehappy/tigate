@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tiflow/pkg/cmd/util"
 	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
+	"github.com/pingcap/tiflow/pkg/logutil"
 	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -76,6 +77,15 @@ func (o *options) addFlags(cmd *cobra.Command) {
 
 // run runs the server cmd.
 func (o *options) run(cmd *cobra.Command) error {
+	cancel := util.InitCmd(cmd, &logutil.Config{
+		File:                 o.serverConfig.LogFile,
+		Level:                o.serverConfig.LogLevel,
+		FileMaxSize:          o.serverConfig.Log.File.MaxSize,
+		FileMaxDays:          o.serverConfig.Log.File.MaxDays,
+		FileMaxBackups:       o.serverConfig.Log.File.MaxBackups,
+		ZapInternalErrOutput: o.serverConfig.Log.InternalErrOutput,
+	})
+	defer cancel()
 	config.StoreGlobalServerConfig(o.serverConfig)
 
 	version.LogVersionInfo("Change Data Capture (CDC)")
