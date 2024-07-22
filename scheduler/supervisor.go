@@ -71,7 +71,7 @@ func NewCaptureStatus(capture *model.CaptureInfo) *CaptureStatus {
 
 func NewSupervisor(
 	ID InferiorID, f func(id InferiorID) Inferior,
-	newBootstrap func(id model.CaptureID) rpc.Message,
+	newBootstrapMsg NewBootstrapFn,
 	schedulers ...Scheduler,
 ) *Supervisor {
 	return &Supervisor{
@@ -84,7 +84,7 @@ func NewSupervisor(
 		maxTaskConcurrency: 10000,
 		schedulers:         schedulers,
 		newInferior:        f,
-		newBootstrapMsg:    newBootstrap,
+		newBootstrapMsg:    newBootstrapMsg,
 	}
 }
 
