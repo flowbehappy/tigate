@@ -18,7 +18,6 @@ import (
 	"database/sql"
 	"math"
 	"sync"
-	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/conflictdetector"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
@@ -152,13 +151,13 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 				}
 
 				if rows > 0 {
-					start := time.Now()
+					//start := time.Now()
 					err := worker.GetMysqlWriter().Flush(events)
 					if err != nil {
 						log.Error("Failed to flush events", zap.Error(err))
 						return
 					}
-					log.Info("Flush events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Duration("duration", time.Since(start)))
+					//log.Info("Flush events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Duration("duration", time.Since(start)))
 
 					events = events[:0]
 					rows = 0

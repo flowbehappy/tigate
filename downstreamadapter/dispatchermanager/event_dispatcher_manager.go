@@ -66,6 +66,9 @@ type EventDispatcherManager struct {
 	tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus
 	//filter                      *Filter
 }
+
+// TODO:这个锁会在量级大于几万以后影响明显，10w 的 dispatcher同时创建需要预估10多分钟的开销。
+// 1000个-- 500ms / 10000个 -- 44s, 指数影响
 type DispatcherMap struct {
 	mutex       sync.Mutex
 	dispatchers *utils.BtreeMap[*common.TableSpan, *dispatcher.TableEventDispatcher]
@@ -144,17 +147,20 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 			}
 		}
 	}(ctx, eventDispatcherManager)
+
+	eventDispatcherManager.Init()
 	return eventDispatcherManager
 }
 
-func (e *EventDispatcherManager) Init(startTs uint64) error {
+// func (e *EventDispatcherManager) Init(startTs uint64) error {
+func (e *EventDispatcherManager) Init() error {
 	// Init Sink
 	//if e.sinkType == "Mysql" {
-	if e.config.SinkURI == "" {
-		defaultSinkUri := "mysql://root@127.0.0.1:3306"
-		log.Info("init mysql sink, sink uri is empty, use default sink uri", zap.String("sinkURI", e.config.SinkURI), zap.String("defaultSinkUri", defaultSinkUri))
-		e.config.SinkURI = defaultSinkUri
-	}
+	// if e.config.SinkURI == "" {
+	// 	defaultSinkUri := "mysql://root@127.0.0.1:3306"
+	// 	log.Info("init mysql sink, sink uri is empty, use default sink uri", zap.String("sinkURI", e.config.SinkURI), zap.String("defaultSinkUri", defaultSinkUri))
+	// 	e.config.SinkURI = defaultSinkUri
+	// }
 	cfg, db, err := writer.NewMysqlConfigAndDB(e.config.SinkURI)
 	if err != nil {
 		log.Error("create mysql sink failed", zap.Error(err))
@@ -186,13 +192,13 @@ func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) 
 // 收到 rpc 请求创建，需要通过 event dispatcher manager 来
 func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.TableSpan, startTs uint64) *dispatcher.TableEventDispatcher {
 	// 创建新的 event dispatcher，同时需要把这个去 logService 注册，并且把自己加到对应的某个处理 thread 里
-	if e.dispatcherMap.Len() == 0 {
-		err := e.Init(startTs)
-		if err != nil {
-			log.Error("init sink failed", zap.Error(err))
-			return nil
-		}
-	}
+	// if e.dispatcherMap.Len() == 0 {
+	// 	err := e.Init(startTs)
+	// 	if err != nil {
+	// 		log.Error("init sink failed", zap.Error(err))
+	// 		return nil
+	// 	}
+	// }
 
 	if _, ok := e.dispatcherMap.Get(tableSpan); ok {
 		log.Warn("table span already exists", zap.Any("tableSpan", tableSpan))
@@ -216,7 +222,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 	e.dispatcherMap.Set(tableSpan, tableEventDispatcher)
 	e.CollectHeartbeatInfoOnce(tableSpan.TableSpan, heartbeatpb.ComponentState_Working)
 
-	log.Info("new table event dispatcher created", zap.Any("tableSpan", tableSpan))
+	//log.Info("new table event dispatcher created", zap.Any("tableSpan", tableSpan))
 	return tableEventDispatcher
 }
 

@@ -19,6 +19,7 @@ import (
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"go.uber.org/zap"
 )
 
 const totalCount = 10000
@@ -29,7 +30,11 @@ func initContext(serverId messaging.ServerId) {
 	appcontext.SetService(appcontext.HeartbeatCollector, heartbeatcollector.NewHeartBeatCollector(serverId))
 }
 
-func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatchermanager.EventDispatcherManager, tableSpanMap map[uint64]*common.TableSpan) {
+func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatchermanager.EventDispatcherManager, tableSpan *common.TableSpan) {
+	var IndexColumnsOffset [][]int
+	var offset []int
+	offset = append(offset, 0)
+	IndexColumnsOffset = append(IndexColumnsOffset, offset)
 	for count := 0; count < totalCount; count++ {
 		event := common.TxnEvent{
 			StartTs:  uint64(count) + 10,
@@ -41,6 +46,7 @@ func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatcher
 							Schema: "test_schema__0",
 							Table:  "test_table_" + strconv.Itoa(dispatcherId),
 						},
+						IndexColumnsOffset: IndexColumnsOffset,
 					},
 					Columns: []*common.Column{
 						{Name: "id", Value: count, Flag: common.HandleKeyFlag | common.PrimaryKeyFlag},
@@ -53,7 +59,7 @@ func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatcher
 			},
 		}
 
-		dispatcherItem, ok := eventDispatcherManager.GetDispatcherMap().Get(tableSpanMap[uint64(dispatcherId)])
+		dispatcherItem, ok := eventDispatcherManager.GetDispatcherMap().Get(tableSpan)
 		if ok {
 			dispatcherItem.PushTxnEvent(&event)
 			dispatcherItem.UpdateResolvedTs(uint64(count) + 11)
@@ -65,7 +71,9 @@ func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatcher
 }
 func main() {
 	dispatcherCount := 1000
-	createTables(dispatcherCount)
+	createTables(dispatcherCount / 100)
+
+	time.Sleep(10 * time.Second)
 
 	serverId := messaging.ServerId("test")
 	initContext(serverId)
@@ -78,15 +86,33 @@ func main() {
 	appcontext.GetService[*heartbeatcollector.HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(eventDispatcherManager)
 
 	tableSpanMap := make(map[uint64]*common.TableSpan)
+	var mutex sync.Mutex
+	var wg sync.WaitGroup
+
+	start := time.Now()
 	for i := 0; i < dispatcherCount; i++ {
 		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(i)}}
+		mutex.Lock()
 		tableSpanMap[uint64(i)] = tableSpan
-		eventDispatcherManager.NewTableEventDispatcher(tableSpan, 0)
+		mutex.Unlock()
+		wg.Add(1)
+		go func(tableSpan *common.TableSpan, wg *sync.WaitGroup) {
+			defer wg.Done()
+			eventDispatcherManager.NewTableEventDispatcher(tableSpan, 0)
+		}(tableSpan, &wg)
 	}
+
+	wg.Wait()
+	log.Info("test begin", zap.Any("create dispatcher cost time", time.Since(start)))
 
 	// 插入数据, 先固定 data 格式
 	for i := 0; i < dispatcherCount; i++ {
-		go pushDataIntoDispatcher(i, eventDispatcherManager, tableSpanMap)
+		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(i)}}
+		mutex.Lock()
+		tableSpanMap[uint64(i)] = tableSpan
+		mutex.Unlock()
+		// eventDispatcherManager.NewTableEventDispatcher(tableSpan, 0)
+		go pushDataIntoDispatcher(i, eventDispatcherManager, tableSpan)
 	}
 
 	finishVec := make([]bool, dispatcherCount)
@@ -132,7 +158,7 @@ func createTables(tables int) {
 	// owner := flag.Bool("owner", true, "owner")
 	host := "127.0.0.1"
 	port := 4000
-	thread := 10
+	thread := 100
 	databaseCnt := 1
 	databaseNamePrefix := "test_schema_"
 	tableNamePrefix := "test_table_"
@@ -244,7 +270,7 @@ func createTable(db *sql.Conn, wg *sync.WaitGroup, idx int, tableCnt int, tableN
 		num := idx*tableCnt + i
 		tableName := fmt.Sprintf("%s%d", tableNamePrefix, num)
 		tableCreateSQL := fmt.Sprintf(TableSQL, tableName)
-		//fmt.Println("TableCreateSql", tableCreateSQL)
+		fmt.Println("TableCreateSql", tableCreateSQL)
 		_, err := db.ExecContext(context.Background(), tableCreateSQL)
 		if err != nil {
 			fmt.Printf("Error creating table %s: %s\n", tableName, err.Error())
