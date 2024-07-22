@@ -15,6 +15,7 @@ package eventcollector
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/eventpb"
@@ -27,6 +28,36 @@ import (
 	"go.uber.org/zap"
 )
 
+type DispatcherMap struct {
+	mutex sync.Mutex
+	m     map[common.DispatcherID]dispatcher.Dispatcher // dispatcher_id --> dispatcher
+}
+
+func newDispatcherMap() *DispatcherMap {
+	return &DispatcherMap{
+		m: make(map[common.DispatcherID]dispatcher.Dispatcher),
+	}
+}
+
+func (m *DispatcherMap) Get(dispatcherId common.DispatcherID) (dispatcher.Dispatcher, bool) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	d, ok := m.m[dispatcherId]
+	return d, ok
+}
+
+func (m *DispatcherMap) Set(dispatcherId common.DispatcherID, d dispatcher.Dispatcher) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.m[dispatcherId] = d
+}
+
+func (m *DispatcherMap) Delete(dispatcherId common.DispatcherID) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	delete(m.m, dispatcherId)
+}
+
 /*
 EventCollector is responsible for collecting the events from event service and dispatching them to different dispatchers.
 Besides, EventCollector also generate SyncPoint Event for dispatchers when necessary.
@@ -34,7 +65,7 @@ EventCollector is an instance-level component.
 */
 type EventCollector struct {
 	serverId          messaging.ServerId
-	dispatcherMap     map[common.DispatcherID]dispatcher.Dispatcher // dispatcher_id --> dispatcher
+	dispatcherMap     *DispatcherMap
 	globalMemoryQuota int64
 }
 
@@ -42,7 +73,7 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 	eventCollector := EventCollector{
 		serverId:          serverId,
 		globalMemoryQuota: globalMemoryQuota,
-		dispatcherMap:     make(map[common.DispatcherID]dispatcher.Dispatcher),
+		dispatcherMap:     newDispatcherMap(),
 	}
 	context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(messaging.EventFeedTopic, eventCollector.RecvEventsMessage)
 	return &eventCollector
@@ -65,7 +96,7 @@ func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uin
 		log.Error("failed to send register dispatcher request message", zap.Error(err))
 		return err
 	}
-	c.dispatcherMap[common.DispatcherID(d.GetId())] = d
+	c.dispatcherMap.Set(common.DispatcherID(d.GetId()), d)
 	return nil
 }
 
@@ -86,7 +117,7 @@ func (c *EventCollector) RemoveDispatcher(d dispatcher.Dispatcher) error {
 		log.Error("failed to send register dispatcher request message", zap.Error(err))
 		return err
 	}
-	delete(c.dispatcherMap, common.DispatcherID(d.GetId()))
+	c.dispatcherMap.Delete(common.DispatcherID(d.GetId()))
 	return nil
 }
 
@@ -108,7 +139,7 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 
 	dispatcherId := txnEvent.DispatcherID
 
-	if dispatcherItem, ok := c.dispatcherMap[common.DispatcherID(dispatcherId)]; ok {
+	if dispatcherItem, ok := c.dispatcherMap.Get(common.DispatcherID(dispatcherId)); ok {
 		// check whether need to update speed ratio
 		//ok, ratio := dispatcherItem.GetMemoryUsage().UpdatedSpeedRatio(eventResponse.Ratio)
 		// if ok {

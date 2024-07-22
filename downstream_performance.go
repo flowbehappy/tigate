@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"os/signal"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
@@ -19,9 +22,10 @@ import (
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"go.uber.org/zap"
 )
 
-const totalCount = 10000
+const totalCount = 100000
 
 func initContext(serverId messaging.ServerId) {
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(serverId, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
@@ -29,7 +33,8 @@ func initContext(serverId messaging.ServerId) {
 	appcontext.SetService(appcontext.HeartbeatCollector, heartbeatcollector.NewHeartBeatCollector(serverId))
 }
 
-func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatchermanager.EventDispatcherManager, tableSpanMap map[uint64]*common.TableSpan) {
+func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatchermanager.EventDispatcherManager, tableSpan *common.TableSpan) {
+	eventDispatcherManager.NewTableEventDispatcher(tableSpan, 0)
 	for count := 0; count < totalCount; count++ {
 		event := common.TxnEvent{
 			StartTs:  uint64(count) + 10,
@@ -53,7 +58,7 @@ func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatcher
 			},
 		}
 
-		dispatcherItem, ok := eventDispatcherManager.GetDispatcherMap().Get(tableSpanMap[uint64(dispatcherId)])
+		dispatcherItem, ok := eventDispatcherManager.GetDispatcherMap().Get(tableSpan)
 		if ok {
 			dispatcherItem.PushTxnEvent(&event)
 			dispatcherItem.UpdateResolvedTs(uint64(count) + 11)
@@ -61,32 +66,54 @@ func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatcher
 			log.Error("dispatcher not found")
 		}
 	}
-	//log.Info("Finish Pushing All data into dispatcher", zap.Any("dispatcher id", dispatcherId))
+	log.Info("Finish Pushing All data into dispatcher", zap.Any("dispatcher id", dispatcherId))
 }
 func main() {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
+	go func() {
+		for {
+			select {
+			case sig := <-c:
+				fmt.Printf("Received signal: %s\n", sig.String())
+				// if sig == syscall.SIGTERM {
+				// 	fmt.Println("Terminating program...")
+				// 	// 进行清理工作
+				// }
+				os.Exit(0)
+			}
+		}
+	}()
+
 	dispatcherCount := 1000
-	createTables(dispatcherCount)
+	createTables(dispatcherCount / 100)
 
 	serverId := messaging.ServerId("test")
 	initContext(serverId)
 
 	changefeedConfig := model.ChangefeedConfig{
-		SinkURI: "tidb://root:@127.0.0.1:4000",
+		SinkURI: "tidb://root:@127.0.0.1:34213",
 	}
 	changefeedID := model.DefaultChangeFeedID("test")
 	eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, &changefeedConfig, serverId, serverId)
 	appcontext.GetService[*heartbeatcollector.HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(eventDispatcherManager)
 
 	tableSpanMap := make(map[uint64]*common.TableSpan)
-	for i := 0; i < dispatcherCount; i++ {
-		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(i)}}
-		tableSpanMap[uint64(i)] = tableSpan
-		eventDispatcherManager.NewTableEventDispatcher(tableSpan, 0)
-	}
+	var mutex sync.Mutex
+	// for i := 0; i < dispatcherCount; i++ {
+	// 	tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(i)}}
+	// 	tableSpanMap[uint64(i)] = tableSpan
+	// 	eventDispatcherManager.NewTableEventDispatcher(tableSpan, 0)
+	// }
 
 	// 插入数据, 先固定 data 格式
 	for i := 0; i < dispatcherCount; i++ {
-		go pushDataIntoDispatcher(i, eventDispatcherManager, tableSpanMap)
+		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(i)}}
+		mutex.Lock()
+		tableSpanMap[uint64(i)] = tableSpan
+		mutex.Unlock()
+		// eventDispatcherManager.NewTableEventDispatcher(tableSpan, 0)
+		go pushDataIntoDispatcher(i, eventDispatcherManager, tableSpan)
 	}
 
 	finishVec := make([]bool, dispatcherCount)
@@ -131,8 +158,8 @@ func createTables(tables int) {
 	// username := flag.String("username", "root", "username")
 	// owner := flag.Bool("owner", true, "owner")
 	host := "127.0.0.1"
-	port := 4000
-	thread := 10
+	port := 34213
+	thread := 100
 	databaseCnt := 1
 	databaseNamePrefix := "test_schema_"
 	tableNamePrefix := "test_table_"
@@ -244,7 +271,7 @@ func createTable(db *sql.Conn, wg *sync.WaitGroup, idx int, tableCnt int, tableN
 		num := idx*tableCnt + i
 		tableName := fmt.Sprintf("%s%d", tableNamePrefix, num)
 		tableCreateSQL := fmt.Sprintf(TableSQL, tableName)
-		//fmt.Println("TableCreateSql", tableCreateSQL)
+		fmt.Println("TableCreateSql", tableCreateSQL)
 		_, err := db.ExecContext(context.Background(), tableCreateSQL)
 		if err != nil {
 			fmt.Printf("Error creating table %s: %s\n", tableName, err.Error())

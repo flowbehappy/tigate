@@ -144,10 +144,13 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 			}
 		}
 	}(ctx, eventDispatcherManager)
+
+	eventDispatcherManager.Init()
 	return eventDispatcherManager
 }
 
-func (e *EventDispatcherManager) Init(startTs uint64) error {
+// func (e *EventDispatcherManager) Init(startTs uint64) error {
+func (e *EventDispatcherManager) Init() error {
 	// Init Sink
 	//if e.sinkType == "Mysql" {
 	cfg, db, err := writer.NewMysqlConfigAndDB(e.config.SinkURI)
@@ -181,13 +184,13 @@ func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) 
 // 收到 rpc 请求创建，需要通过 event dispatcher manager 来
 func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.TableSpan, startTs uint64) *dispatcher.TableEventDispatcher {
 	// 创建新的 event dispatcher，同时需要把这个去 logService 注册，并且把自己加到对应的某个处理 thread 里
-	if e.dispatcherMap.Len() == 0 {
-		err := e.Init(startTs)
-		if err != nil {
-			log.Error("init sink failed", zap.Error(err))
-			return nil
-		}
-	}
+	// if e.dispatcherMap.Len() == 0 {
+	// 	err := e.Init(startTs)
+	// 	if err != nil {
+	// 		log.Error("init sink failed", zap.Error(err))
+	// 		return nil
+	// 	}
+	// }
 
 	if _, ok := e.dispatcherMap.Get(tableSpan); ok {
 		log.Warn("table span already exists", zap.Any("tableSpan", tableSpan))
