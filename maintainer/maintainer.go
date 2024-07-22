@@ -375,6 +375,7 @@ func (m *Maintainer) GetTableIDs() (map[int64]struct{}, error) {
 		}
 		tableIDs[tableInfo.ID] = struct{}{}
 	})
+	log.Info("get table ids", zap.Any("count", tableIDs), zap.String("changefeed", m.id.String()))
 	return tableIDs, nil
 }
 
