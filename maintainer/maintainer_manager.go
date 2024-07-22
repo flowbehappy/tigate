@@ -56,7 +56,7 @@ func NewMaintainerManager(selfServerID messaging.ServerId, pdEndpoints []string)
 		pdEndpoints:  pdEndpoints,
 		msgCh:        make(chan *messaging.TargetMessage, 1024),
 	}
-	// receive message coordinator
+	// receive message from coordinator
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
 		RegisterHandler(messaging.MaintainerManagerTopic,
 			func(msg *messaging.TargetMessage) error {
@@ -90,7 +90,7 @@ func (m *Manager) Name() string {
 }
 
 func (m *Manager) Run(ctx context.Context) error {
-	tick := time.NewTicker(time.Millisecond * 50)
+	tick := time.NewTicker(time.Millisecond * 500)
 	for {
 		select {
 		case <-ctx.Done():
@@ -158,7 +158,7 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 	if err != nil {
 		log.Warn("send command failed", zap.Error(err))
 	}
-	log.Info("bootstrap coordinator",
+	log.Info("New coordinator online",
 		zap.Int64("version", m.coordinatorVersion))
 }
 
@@ -213,12 +213,11 @@ func (m *Manager) sendHeartbeat() {
 	if m.coordinatorVersion > 0 {
 		response := &heartbeatpb.MaintainerHeartbeat{}
 		m.maintainers.Range(func(key, value interface{}) bool {
-			changefeedMaintainer := value.(*Maintainer)
-			if changefeedMaintainer.statusChanged.Load() ||
-				time.Since(changefeedMaintainer.lastReportTime) > time.Second*2 {
-				response.Statuses = append(response.Statuses, changefeedMaintainer.GetMaintainerStatus())
-				changefeedMaintainer.statusChanged.Store(false)
-				changefeedMaintainer.lastReportTime = time.Now()
+			cfMaintainer := value.(*Maintainer)
+			if cfMaintainer.statusChanged.Load() || time.Since(cfMaintainer.lastReportTime) > time.Second*2 {
+				response.Statuses = append(response.Statuses, cfMaintainer.GetMaintainerStatus())
+				cfMaintainer.statusChanged.Store(false)
+				cfMaintainer.lastReportTime = time.Now()
 			}
 			return true
 		})
@@ -249,12 +248,11 @@ func (m *Manager) handleMessage(msg *messaging.TargetMessage) {
 	}
 }
 
-func (m *Manager) dispatcherMaintainerMessage(changefeed string,
-	msg *messaging.TargetMessage) {
+func (m *Manager) dispatcherMaintainerMessage(changefeed string, msg *messaging.TargetMessage) {
 	v, ok := m.maintainers.Load(model.DefaultChangeFeedID(changefeed))
 	if !ok {
 		log.Warn("maintainer is not found",
-			zap.String("changefeedID", changefeed))
+			zap.String("changefeedID", changefeed), zap.String("message", msg.String()))
 		return
 	}
 

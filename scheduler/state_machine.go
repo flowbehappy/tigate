@@ -804,7 +804,7 @@ func (s *StateMachine) HandleRemoveInferior() ([]rpc.Message, error) {
 		return nil, nil
 	}
 	// Ignore remove inferior if it's not in Working state.
-	if s.State != SchedulerStatusWorking {
+	if s.State == SchedulerStatusRemoving {
 		log.Warn("remove inferior is ignored",
 			zap.Any("statemachine", s))
 		return nil, nil

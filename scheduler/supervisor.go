@@ -289,7 +289,7 @@ func (s *Supervisor) HandleScheduleTasks(
 	})
 	for _, span := range toBeDeleted {
 		s.RunningTasks.Delete(span)
-		log.Info("remove running task",
+		log.Info("schedule finished, remove running task",
 			zap.String("stid", s.ID.String()),
 			zap.String("id", span.String()))
 	}
@@ -314,12 +314,12 @@ func (s *Supervisor) HandleScheduleTasks(
 
 		// Skip task if the inferior is already running a task,
 		// or the inferior has removed.
-		//if _, ok := s.RunningTasks.Get(id); ok {
-		//	log.Info("ignore task, already exists",
-		//		zap.String("id", s.ID.String()),
-		//		zap.Any("task", task))
-		//	continue
-		//}
+		if _, ok := s.RunningTasks.Get(id); ok {
+			log.Debug("ignore task, already exists",
+				zap.String("id", s.ID.String()),
+				zap.Any("task", task))
+			continue
+		}
 
 		// it's remove or move inferior task, but we can not find the state machine
 		if _, ok := s.StateMachines.Get(id); !ok && task.AddInferior == nil {
@@ -344,8 +344,7 @@ func (s *Supervisor) HandleScheduleTasks(
 		sentMsgs = append(sentMsgs, msgs...)
 		s.RunningTasks.ReplaceOrInsert(id, task)
 		log.Info("add running task",
-			zap.String("stid", s.ID.String()),
-			zap.String("id", s.ID.String()),
+			zap.String("supervisorID", s.ID.String()),
 			zap.Any("task", task))
 	}
 	return sentMsgs, nil

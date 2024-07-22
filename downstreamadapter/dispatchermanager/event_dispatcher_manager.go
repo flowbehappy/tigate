@@ -230,7 +230,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfoOnce(tableSpan *heartbeatpb
 	// component status changed，send heartbeat now
 	e.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
 		Span:            tableSpan,
-		ComponentStatus: heartbeatpb.ComponentState_Working,
+		ComponentStatus: status,
 	}
 	message := e.CollectHeartbeatInfo(false)
 	e.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: message})
@@ -290,13 +290,14 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	   后面我们要测一下这个 msg 的大小，以及 collect 的耗时
 	*/
 
-	var message heartbeatpb.HeartBeatRequest = heartbeatpb.HeartBeatRequest{
+	message := heartbeatpb.HeartBeatRequest{
 		ChangefeedID:    e.changefeedID.ID,
 		CompeleteStatus: needCompleteStatus,
 	}
 
 	var minCheckpointTs uint64 = math.MaxUint64
 
+	toReomveTableSpans := make([]*common.TableSpan, 0)
 	e.dispatcherMap.ForEach(func(tableSpan *common.TableSpan, tableEventDispatcher *dispatcher.TableEventDispatcher) {
 		// If the dispatcher is in removing state, we need to check if it's closed successfully.
 		// If it's closed successfully, we could clean it up.
@@ -316,7 +317,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 					Span:            dispatcherHeartBeatInfo.TableSpan.TableSpan,
 					ComponentStatus: heartbeatpb.ComponentState_Stopped,
 				})
-				e.cleanTableEventDispatcher(dispatcherHeartBeatInfo.TableSpan)
+				toReomveTableSpans = append(toReomveTableSpans, tableSpan)
 				return
 			}
 		}
@@ -332,6 +333,10 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 			})
 		}
 	})
+
+	for _, tableSpan := range toReomveTableSpans {
+		e.cleanTableEventDispatcher(tableSpan)
+	}
 
 	message.CheckpointTs = minCheckpointTs
 	return &message

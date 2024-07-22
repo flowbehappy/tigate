@@ -200,7 +200,7 @@ func (h *OpenAPIV2) listChangeFeeds(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	commonInfos := make([]cdcapi.ChangefeedCommonInfo, len(changefeeds))
+	commonInfos := make([]cdcapi.ChangefeedCommonInfo, 0, len(changefeeds))
 	for id, changefeed := range changefeeds {
 		status, _, err := h.server.GetEtcdClient().GetChangeFeedStatus(c, id)
 		if err != nil {
