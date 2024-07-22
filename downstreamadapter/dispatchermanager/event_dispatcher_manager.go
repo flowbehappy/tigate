@@ -156,11 +156,11 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 func (e *EventDispatcherManager) Init() error {
 	// Init Sink
 	//if e.sinkType == "Mysql" {
-	if e.config.SinkURI == "" {
-		defaultSinkUri := "mysql://root@127.0.0.1:3306"
-		log.Info("init mysql sink, sink uri is empty, use default sink uri", zap.String("sinkURI", e.config.SinkURI), zap.String("defaultSinkUri", defaultSinkUri))
-		e.config.SinkURI = defaultSinkUri
-	}
+	// if e.config.SinkURI == "" {
+	// 	defaultSinkUri := "mysql://root@127.0.0.1:3306"
+	// 	log.Info("init mysql sink, sink uri is empty, use default sink uri", zap.String("sinkURI", e.config.SinkURI), zap.String("defaultSinkUri", defaultSinkUri))
+	// 	e.config.SinkURI = defaultSinkUri
+	// }
 	cfg, db, err := writer.NewMysqlConfigAndDB(e.config.SinkURI)
 	if err != nil {
 		log.Error("create mysql sink failed", zap.Error(err))
