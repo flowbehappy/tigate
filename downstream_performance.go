@@ -19,6 +19,7 @@ import (
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"go.uber.org/zap"
 )
 
 const totalCount = 10000
@@ -206,10 +207,6 @@ func createTables(tables int) {
 	}
 	totalTime := time.Since(start)
 	fmt.Printf("Total execution time: %v\n", totalTime)
-<<<<<<< HEAD
-
-=======
->>>>>>> 6a5567bfb2a9e6a577bffbc997ce668df0dcd5f7
 	//cleanUp()
 }
 
@@ -273,11 +270,7 @@ func createTable(db *sql.Conn, wg *sync.WaitGroup, idx int, tableCnt int, tableN
 		num := idx*tableCnt + i
 		tableName := fmt.Sprintf("%s%d", tableNamePrefix, num)
 		tableCreateSQL := fmt.Sprintf(TableSQL, tableName)
-<<<<<<< HEAD
 		fmt.Println("TableCreateSql", tableCreateSQL)
-=======
-		//fmt.Println("TableCreateSql", tableCreateSQL)
->>>>>>> 6a5567bfb2a9e6a577bffbc997ce668df0dcd5f7
 		_, err := db.ExecContext(context.Background(), tableCreateSQL)
 		if err != nil {
 			fmt.Printf("Error creating table %s: %s\n", tableName, err.Error())
