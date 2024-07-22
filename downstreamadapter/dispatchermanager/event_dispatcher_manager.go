@@ -66,6 +66,9 @@ type EventDispatcherManager struct {
 	tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus
 	//filter                      *Filter
 }
+
+// TODO:这个锁会在量级大于几万以后影响明显，10w 的 dispatcher同时创建需要预估10多分钟的开销。
+// 1000个-- 500ms / 10000个 -- 44s, 指数影响
 type DispatcherMap struct {
 	mutex       sync.Mutex
 	dispatchers *utils.BtreeMap[*common.TableSpan, *dispatcher.TableEventDispatcher]
@@ -214,7 +217,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 	e.dispatcherMap.Set(tableSpan, tableEventDispatcher)
 	e.CollectHeartbeatInfoOnce(tableSpan.TableSpan, heartbeatpb.ComponentState_Working)
 
-	log.Info("new table event dispatcher created", zap.Any("tableSpan", tableSpan))
+	//log.Info("new table event dispatcher created", zap.Any("tableSpan", tableSpan))
 	return tableEventDispatcher
 }
 

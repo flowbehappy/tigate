@@ -4,11 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
-	"os/signal"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
@@ -25,7 +22,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const totalCount = 100000
+const totalCount = 10000
 
 func initContext(serverId messaging.ServerId) {
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(serverId, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
@@ -34,7 +31,10 @@ func initContext(serverId messaging.ServerId) {
 }
 
 func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatchermanager.EventDispatcherManager, tableSpan *common.TableSpan) {
-	eventDispatcherManager.NewTableEventDispatcher(tableSpan, 0)
+	var IndexColumnsOffset [][]int
+	var offset []int
+	offset = append(offset, 0)
+	IndexColumnsOffset = append(IndexColumnsOffset, offset)
 	for count := 0; count < totalCount; count++ {
 		event := common.TxnEvent{
 			StartTs:  uint64(count) + 10,
@@ -46,6 +46,7 @@ func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatcher
 							Schema: "test_schema__0",
 							Table:  "test_table_" + strconv.Itoa(dispatcherId),
 						},
+						IndexColumnsOffset: IndexColumnsOffset,
 					},
 					Columns: []*common.Column{
 						{Name: "id", Value: count, Flag: common.HandleKeyFlag | common.PrimaryKeyFlag},
@@ -66,33 +67,19 @@ func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatcher
 			log.Error("dispatcher not found")
 		}
 	}
-	log.Info("Finish Pushing All data into dispatcher", zap.Any("dispatcher id", dispatcherId))
+	//log.Info("Finish Pushing All data into dispatcher", zap.Any("dispatcher id", dispatcherId))
 }
 func main() {
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
-	go func() {
-		for {
-			select {
-			case sig := <-c:
-				fmt.Printf("Received signal: %s\n", sig.String())
-				// if sig == syscall.SIGTERM {
-				// 	fmt.Println("Terminating program...")
-				// 	// 进行清理工作
-				// }
-				os.Exit(0)
-			}
-		}
-	}()
-
 	dispatcherCount := 1000
 	createTables(dispatcherCount / 100)
+
+	time.Sleep(10 * time.Second)
 
 	serverId := messaging.ServerId("test")
 	initContext(serverId)
 
 	changefeedConfig := model.ChangefeedConfig{
-		SinkURI: "tidb://root:@127.0.0.1:34213",
+		SinkURI: "tidb://root:@127.0.0.1:4000",
 	}
 	changefeedID := model.DefaultChangeFeedID("test")
 	eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, &changefeedConfig, serverId, serverId)
@@ -100,11 +87,23 @@ func main() {
 
 	tableSpanMap := make(map[uint64]*common.TableSpan)
 	var mutex sync.Mutex
-	// for i := 0; i < dispatcherCount; i++ {
-	// 	tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(i)}}
-	// 	tableSpanMap[uint64(i)] = tableSpan
-	// 	eventDispatcherManager.NewTableEventDispatcher(tableSpan, 0)
-	// }
+	var wg sync.WaitGroup
+
+	start := time.Now()
+	for i := 0; i < dispatcherCount; i++ {
+		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(i)}}
+		mutex.Lock()
+		tableSpanMap[uint64(i)] = tableSpan
+		mutex.Unlock()
+		wg.Add(1)
+		go func(tableSpan *common.TableSpan, wg *sync.WaitGroup) {
+			defer wg.Done()
+			eventDispatcherManager.NewTableEventDispatcher(tableSpan, 0)
+		}(tableSpan, &wg)
+	}
+
+	wg.Wait()
+	log.Info("test begin", zap.Any("create dispatcher cost time", time.Since(start)))
 
 	// 插入数据, 先固定 data 格式
 	for i := 0; i < dispatcherCount; i++ {
@@ -158,7 +157,7 @@ func createTables(tables int) {
 	// username := flag.String("username", "root", "username")
 	// owner := flag.Bool("owner", true, "owner")
 	host := "127.0.0.1"
-	port := 34213
+	port := 4000
 	thread := 100
 	databaseCnt := 1
 	databaseNamePrefix := "test_schema_"
@@ -208,6 +207,7 @@ func createTables(tables int) {
 	}
 	totalTime := time.Since(start)
 	fmt.Printf("Total execution time: %v\n", totalTime)
+
 	//cleanUp()
 }
 
