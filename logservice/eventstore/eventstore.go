@@ -211,6 +211,7 @@ type DBBatchEvent struct {
 func (e *eventStore) getTableStat(span common.TableSpan) *tableState {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+	log.Info("get table stat", zap.String("span", span.String()))
 	dispatcherID, ok := e.tables.Get(span)
 	if !ok {
 		return nil
