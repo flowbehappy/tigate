@@ -342,6 +342,10 @@ func (e *eventStore) deleteEvents(span common.TableSpan, startCommitTS uint64, e
 }
 
 func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span common.TableSpan, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
+	log.Info("register dispatcher",
+		zap.Any("dispatcherID", dispatcherID),
+		zap.String("span", span.String()),
+		zap.Uint64("startTS", uint64(startTS)))
 	e.schemaStore.RegisterDispatcher(dispatcherID, common.TableID(span.TableID), startTS)
 	e.mu.Lock()
 	defer e.mu.Unlock()

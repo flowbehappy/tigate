@@ -695,7 +695,6 @@ func (s *SharedClient) logSlowRegions(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 		}
-		log.Info("event feed starts to check locked regions")
 
 		currTime := s.pdClock.CurrentTime()
 		s.totalSpans.RLock()
