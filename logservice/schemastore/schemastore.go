@@ -68,7 +68,7 @@ type schemaStore struct {
 	// max schemaVersion of all applied ddl events
 	schemaVersion int64
 
-	// databaseID -> database info
+	// schemaID -> database info
 	// it contains all databases
 	databaseMap DatabaseInfoMap
 
@@ -426,8 +426,8 @@ func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfo
 }
 
 func fillSchemaName(job *model.Job, databaseMap DatabaseInfoMap) error {
-	databaseID := common.SchemaID(job.SchemaID)
-	databaseInfo, ok := databaseMap[databaseID]
+	schemaID := common.SchemaID(job.SchemaID)
+	databaseInfo, ok := databaseMap[schemaID]
 	if !ok {
 		return errors.New("database not found")
 	}

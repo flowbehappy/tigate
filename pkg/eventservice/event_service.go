@@ -120,7 +120,7 @@ func (s *eventService) registerDispatcher(info DispatcherInfo) {
 
 	c.eventStore.RegisterDispatcher(
 		common.DispatcherID(id),
-		*span,
+		span,
 		common.Ts(info.GetStartTs()),
 		dispatcher.onNewEvent,
 		dispatcher.onSubscriptionWatermark,

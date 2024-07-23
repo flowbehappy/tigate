@@ -55,6 +55,16 @@ func (s *TableSpan) Equal(inferior any) bool {
 		bytes.Equal(s.EndKey, tbl.EndKey)
 }
 
+func (s *TableSpan) Copy() *TableSpan {
+	return &TableSpan{
+		TableSpan: &heartbeatpb.TableSpan{
+			TableID:  s.TableID,
+			StartKey: s.StartKey,
+			EndKey:   s.EndKey,
+		},
+	}
+}
+
 type DataRange struct {
 	ClusterID uint64
 	Span      *TableSpan
