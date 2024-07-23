@@ -6,21 +6,45 @@ import (
 	"time"
 )
 
-type WorkerGenerator[T any] interface {
-	GenWorker() Worker[T]
+const (
+	checkLastSize = 10
+)
+
+type Event interface {
+	HandlerId() string
 }
 
-type Worker[T any] interface {
-	// The worker pull events from the inChan and process it.
-	// If the closeSignal is received, the worker should stop.
-	// The worker should return the unhandled event if any.
-	Handle(inChan <-chan T, closeSignal <-chan struct{}) (last T, has bool)
+type Handler[T Event] interface {
+	Handle(events []*EventStat[T])
 }
 
-type stream[T any] struct {
-	worker Worker[T]
+type Batcher[T Event] interface {
+	IsBatch(batch []*EventStat[T], next *EventStat[T]) bool
+}
 
-	inChan chan T
+type handlerStat[T Event, H Handler[T]] struct {
+	handler H
+	latest  []BoundedRingBuffer[time.Duration]
+}
+
+type EventStat[T Event] struct {
+	Event T
+
+	InQueueTime time.Time
+	HandleTime  time.Time
+	DoneTime    time.Time
+}
+
+type stream[T Event] struct {
+	worker  Handler[T]
+	batcher Batcher[T]
+
+	statMap map[string]*handlerStat[T, Handler[T]]
+
+	inChan     chan *EventStat[T]
+	handleChan chan []*EventStat[T]
+
+	batch []*EventStat[T]
 
 	ready atomic.Bool
 
@@ -32,12 +56,23 @@ type stream[T any] struct {
 	hasDone     sync.WaitGroup
 }
 
-func newStream[T any](worker Worker[T], bufSize int, formerStreams ...*stream[T]) *stream[T] {
+// bufSize: 102400
+func newStream[T Event](worker Handler[T], batcher Batcher[T], acceptedIds []string, bufSize int, formerStreams ...*stream[T]) *stream[T] {
 	s := &stream[T]{
 		worker:        worker,
-		inChan:        make(chan T, bufSize),
+		batcher:       batcher,
+		statMap:       make(map[string]*handlerStat[T, Handler[T]], len(acceptedIds)),
+		inChan:        make(chan *EventStat[T], bufSize),
+		handleChan:    make(chan []*EventStat[T]), // No need to buffer this channel.
 		formerStreams: formerStreams,
 		closeSignal:   make(chan struct{})}
+
+	for _, id := range acceptedIds {
+		s.statMap[id] = &handlerStat[T, Handler[T]]{
+			handler: worker,
+			latest:  make([]BoundedRingBuffer[time.Duration], checkLastSize),
+		}
+	}
 	return s
 }
 
@@ -60,16 +95,48 @@ func (s *stream[T]) close() {
 func (s *stream[T]) start() {
 	s.hasDone.Add(1)
 
-	type EventAndBool struct {
-		e T
-		b bool
-	}
-
-	workerRemain := make(chan EventAndBool)
 	// Start worker to handle events.
 	go func() {
-		e, b := s.worker.Handle(s.inChan, s.closeSignal)
-		workerRemain <- EventAndBool{e, b}
+		for {
+			events, ok := <-s.handleChan
+			if !ok {
+				break
+			}
+
+			s.worker.Handle(events)
+
+			now := time.Now()
+			for _, e := range events {
+				e.DoneTime = now
+			}
+		}
+	}()
+
+	go func() {
+		for {
+			select {
+			case e, ok := <-s.inChan:
+				if !ok {
+					close(s.handleChan)
+					return
+				}
+				if s.batcher.IsBatch(s.batch, e) {
+					s.batch = append(s.batch, e)
+					continue
+				} else {
+					s.handleChan <- s.batch
+
+					// We set the handle time in the maintaining goroutine to avoid
+					// the value being changed by another goroutine, i.e. the worker.
+					now := time.Now()
+					for _, e := range s.batch {
+						e.HandleTime = now
+					}
+
+					s.batch = []*EventStat[T]{e}
+				}
+			}
+		}
 	}()
 
 	// Close and wait for the former streams to finish, and move the remaining events to the inChan.
@@ -96,8 +163,8 @@ func (s *stream[T]) start() {
 			// Drain the remaining events in the inChan.
 			remains := make([]T, 0, 1+len(s.inChan)+len(buf))
 
-			if e, ok := <-workerRemain; ok {
-				remains = append(remains, e)
+			if e := <-workerRemain; e.b {
+				remains = append(remains, e.e)
 			}
 			for e := range s.inChan {
 				remains = append(remains, e)
