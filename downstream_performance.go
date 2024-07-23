@@ -4,13 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
-	"github.com/flowbehappy/tigate/downstreamadapter/heartbeatcollector"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
@@ -22,15 +22,17 @@ import (
 	"go.uber.org/zap"
 )
 
-const totalCount = 10000
+const totalCount = 500
+const dispatcherCount = 1000
+const databaseCount = 20
 
 func initContext(serverId messaging.ServerId) {
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(serverId, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
 	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, serverId)) // 100GB for demo
-	appcontext.SetService(appcontext.HeartbeatCollector, heartbeatcollector.NewHeartBeatCollector(serverId))
+	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(serverId))
 }
 
-func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatchermanager.EventDispatcherManager, tableSpan *common.TableSpan) {
+func pushDataIntoDispatcher(db_index int, dispatcherId int, eventDispatcherManager *dispatchermanager.EventDispatcherManager, tableSpan *common.TableSpan) {
 	var IndexColumnsOffset [][]int
 	var offset []int
 	offset = append(offset, 0)
@@ -43,7 +45,7 @@ func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatcher
 				{
 					TableInfo: &common.TableInfo{
 						TableName: common.TableName{
-							Schema: "test_schema__0",
+							Schema: "test_schema_" + strconv.Itoa(db_index),
 							Table:  "test_table_" + strconv.Itoa(dispatcherId),
 						},
 						IndexColumnsOffset: IndexColumnsOffset,
@@ -54,7 +56,7 @@ func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatcher
 						{Name: "age", Value: dispatcherId % 50},
 						{Name: "gender", Value: "female"},
 					},
-					PhysicalTableID: int64(dispatcherId),
+					PhysicalTableID: int64(db_index*dispatcherCount + dispatcherId),
 				},
 			},
 		}
@@ -70,74 +72,90 @@ func pushDataIntoDispatcher(dispatcherId int, eventDispatcherManager *dispatcher
 	//log.Info("Finish Pushing All data into dispatcher", zap.Any("dispatcher id", dispatcherId))
 }
 func main() {
-	dispatcherCount := 1000
-	createTables(dispatcherCount / 100)
+	go func() {
+		http.ListenAndServe("localhost:6060", nil)
+	}()
+	createTables(dispatcherCount/100, databaseCount)
 
 	time.Sleep(10 * time.Second)
 
 	serverId := messaging.ServerId("test")
 	initContext(serverId)
 
-	changefeedConfig := model.ChangefeedConfig{
-		SinkURI: "tidb://root:@127.0.0.1:4000",
-	}
-	changefeedID := model.DefaultChangeFeedID("test")
-	eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, &changefeedConfig, serverId, serverId)
-	appcontext.GetService[*heartbeatcollector.HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(eventDispatcherManager)
-
-	tableSpanMap := make(map[uint64]*common.TableSpan)
-	var mutex sync.Mutex
 	var wg sync.WaitGroup
-
 	start := time.Now()
-	for i := 0; i < dispatcherCount; i++ {
-		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(i)}}
-		mutex.Lock()
-		tableSpanMap[uint64(i)] = tableSpan
-		mutex.Unlock()
-		wg.Add(1)
-		go func(tableSpan *common.TableSpan, wg *sync.WaitGroup) {
-			defer wg.Done()
-			eventDispatcherManager.NewTableEventDispatcher(tableSpan, 0)
-		}(tableSpan, &wg)
+
+	managerMap := make(map[int]*dispatchermanager.EventDispatcherManager)
+
+	for db_index := 0; db_index < databaseCount; db_index++ {
+		changefeedConfig := model.ChangefeedConfig{
+			SinkURI: "tidb://root:@127.0.0.1:4000",
+		}
+		changefeedID := model.DefaultChangeFeedID("test" + strconv.Itoa(db_index))
+		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, &changefeedConfig, serverId, serverId)
+		managerMap[db_index] = eventDispatcherManager
+		//appcontext.GetService[*heartbeatcollector.HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(eventDispatcherManager)
+
+		tableSpanMap := make(map[uint64]*common.TableSpan)
+		var mutex sync.Mutex
+
+		for i := 0; i < dispatcherCount; i++ {
+			tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(db_index*dispatcherCount + i)}}
+			mutex.Lock()
+			tableSpanMap[uint64(i)] = tableSpan
+			mutex.Unlock()
+			wg.Add(1)
+			go func(tableSpan *common.TableSpan, wg *sync.WaitGroup) {
+				defer wg.Done()
+				eventDispatcherManager.NewTableEventDispatcher(tableSpan, 0)
+			}(tableSpan, &wg)
+		}
 	}
 
 	wg.Wait()
 	log.Info("test begin", zap.Any("create dispatcher cost time", time.Since(start)))
 
 	// 插入数据, 先固定 data 格式
-	for i := 0; i < dispatcherCount; i++ {
-		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(i)}}
-		mutex.Lock()
-		tableSpanMap[uint64(i)] = tableSpan
-		mutex.Unlock()
-		// eventDispatcherManager.NewTableEventDispatcher(tableSpan, 0)
-		go pushDataIntoDispatcher(i, eventDispatcherManager, tableSpan)
+	for db_index := 0; db_index < databaseCount; db_index++ {
+		eventDispatcherManager := managerMap[db_index]
+		for i := 0; i < dispatcherCount; i++ {
+			tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(db_index*dispatcherCount + i)}}
+			// eventDispatcherManager.NewTableEventDispatcher(tableSpan, 0)
+			go pushDataIntoDispatcher(db_index, i, eventDispatcherManager, tableSpan)
+		}
 	}
 
-	finishVec := make([]bool, dispatcherCount)
-	finishCount := 0
-	for i := 0; i < dispatcherCount; i++ {
-		finishVec[i] = false
-	}
-	for {
+	var finishVec [][]bool
+	for db_index := 0; db_index < databaseCount; db_index++ {
+		vec := make([]bool, dispatcherCount)
 		for i := 0; i < dispatcherCount; i++ {
-			if !finishVec[i] {
-				dispatcherItem, ok := eventDispatcherManager.GetDispatcherMap().Get(tableSpanMap[uint64(i)])
-				if ok {
-					checkpointTs := dispatcherItem.GetCheckpointTs()
-					//log.Info("progress is ", zap.Any("dispatcher id", i), zap.Any("checkpointTs", checkpointTs))
-					if checkpointTs == uint64(totalCount)+10 {
-						finishVec[i] = true
-						//log.Info("One dispatcher is finished", zap.Any("dispatcher id", i))
-						finishCount += 1
-						if finishCount == dispatcherCount {
-							log.Info("All data consuming is finished")
-							return
+			vec[i] = false
+		}
+		finishVec = append(finishVec, vec)
+	}
+	finishCount := 0
+	for {
+		for db_index := 0; db_index < databaseCount; db_index++ {
+			eventDispatcherManager := managerMap[db_index]
+			for i := 0; i < dispatcherCount; i++ {
+				if !finishVec[db_index][i] {
+					tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(db_index*dispatcherCount + i)}}
+					dispatcherItem, ok := eventDispatcherManager.GetDispatcherMap().Get(tableSpan)
+					if ok {
+						checkpointTs := dispatcherItem.GetCheckpointTs()
+						//log.Info("progress is ", zap.Any("dispatcher id", i), zap.Any("checkpointTs", checkpointTs))
+						if checkpointTs == uint64(totalCount)+10 {
+							finishVec[db_index][i] = true
+							//log.Info("One dispatcher is finished", zap.Any("dispatcher id", i))
+							finishCount += 1
+							if finishCount == dispatcherCount*databaseCount {
+								log.Info("All data consuming is finished")
+								return
+							}
 						}
+					} else {
+						log.Error("dispatcher not found")
 					}
-				} else {
-					log.Error("dispatcher not found")
 				}
 			}
 		}
@@ -146,7 +164,7 @@ func main() {
 	//log.Info("All data consuming is finished")
 }
 
-func createTables(tables int) {
+func createTables(tables int, db int) {
 	// host := flag.String("host", "127.0.0.1", "host")
 	// port := flag.Int("port", 4000, "port")
 	// thread := flag.Int("thread", 10, "thread")
@@ -159,8 +177,8 @@ func createTables(tables int) {
 	host := "127.0.0.1"
 	port := 4000
 	thread := 100
-	databaseCnt := 1
-	databaseNamePrefix := "test_schema_"
+	databaseCnt := db
+	databaseNamePrefix := "test_schema"
 	tableNamePrefix := "test_table_"
 	tableCnt := tables
 	username := "root"
