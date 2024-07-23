@@ -55,21 +55,6 @@ func (s *TableSpan) Equal(inferior any) bool {
 		bytes.Equal(s.EndKey, tbl.EndKey)
 }
 
-// UpperBoundKey represents the maximum value.
-var UpperBoundKey = []byte{255, 255, 255, 255, 255}
-
-// HackSpan will set End as UpperBoundKey if End is Nil.
-func HackTableSpan(span TableSpan) TableSpan {
-	if span.StartKey == nil {
-		span.StartKey = []byte{}
-	}
-
-	if span.EndKey == nil {
-		span.EndKey = UpperBoundKey
-	}
-	return span
-}
-
 type DataRange struct {
 	ClusterID uint64
 	Span      *TableSpan

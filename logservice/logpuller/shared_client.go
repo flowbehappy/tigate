@@ -489,7 +489,10 @@ func (s *SharedClient) divideSpanAndScheduleRegionRequests(
 
 		for _, regionMeta := range regionMetas {
 			regionSpan := common.TableSpan{
-				&heartbeatpb.TableSpan{StartKey: regionMeta.StartKey, EndKey: regionMeta.EndKey},
+				&heartbeatpb.TableSpan{
+					StartKey: regionMeta.StartKey,
+					EndKey:   regionMeta.EndKey,
+				},
 			}
 			// NOTE: the End key return by the PD API will be nil to represent the biggest key.
 			// So we need to fix it by calling spanz.HackSpan.
@@ -497,8 +500,8 @@ func (s *SharedClient) divideSpanAndScheduleRegionRequests(
 
 			// Find the intersection of the regionSpan returned by PD and the subscribedTable.span.
 			// The intersection is the span that needs to be subscribed.
-			intersectantSpan, err := spanz.Intersect(subscribedTable.span, regionSpan)
-			if err != nil {
+			intersectantSpan := common.GetIntersectSpan(subscribedTable.span, regionSpan)
+			if common.IsEmptySpan(intersectantSpan) {
 				log.Panic("event feed check spans intersect shouldn't fail",
 					zap.Any("subscriptionID", subscribedTable.subscriptionID))
 			}

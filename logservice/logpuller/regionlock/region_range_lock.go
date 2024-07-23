@@ -23,10 +23,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/google/btree"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/processor/tablepb"
-	"github.com/pingcap/tiflow/pkg/spanz"
 	"go.uber.org/zap"
 )
 
@@ -58,7 +58,7 @@ type LockRangeResult struct {
 
 	// RetryRanges is only used when Status is LockRangeStatusStale.
 	// It contains the ranges that should be retried to lock.
-	RetryRanges []tablepb.Span
+	RetryRanges []common.TableSpan
 }
 
 // LockedRangeState is used to access the real-time state changes of a locked range.
@@ -109,7 +109,7 @@ type RangeLock struct {
 	// ID to identify different RangeLock instances, so logs of different instances can be distinguished.
 	id uint64
 	// totalSpan is the total range of the table, totalSpan = unlockedRanges + lockedRanges
-	totalSpan tablepb.Span
+	totalSpan common.TableSpan
 
 	mu sync.RWMutex
 	// unlockedRanges is used to store the resolvedTs of unlocked ranges.
@@ -127,8 +127,10 @@ func NewRangeLock(
 	startKey, endKey []byte, startTs uint64,
 ) *RangeLock {
 	return &RangeLock{
-		id:                     id,
-		totalSpan:              tablepb.Span{StartKey: startKey, EndKey: endKey},
+		id: id,
+		totalSpan: common.TableSpan{
+			&heartbeatpb.TableSpan{StartKey: startKey, EndKey: endKey},
+		},
 		unlockedRanges:         newRangeTsMap(startKey, endKey, startTs),
 		lockedRanges:           btree.NewG(16, rangeLockEntryLess),
 		regionIDToLockedRanges: make(map[uint64]*rangeLockEntry),
@@ -284,7 +286,7 @@ type LockedRangeStatistic struct {
 
 // UnLockRangeStatistic represents a range that is unlocked.
 type UnLockRangeStatistic struct {
-	Span       tablepb.Span
+	Span       common.TableSpan
 	ResolvedTs uint64
 }
 
@@ -305,8 +307,13 @@ func (l *RangeLock) IterAll(
 			action(item.regionID, &item.lockedRangeState)
 		}
 
-		if spanz.EndCompare(lastEnd, item.startKey) < 0 {
-			span := tablepb.Span{StartKey: lastEnd, EndKey: item.startKey}
+		if common.EndCompare(lastEnd, item.startKey) < 0 {
+			span := common.TableSpan{
+				&heartbeatpb.TableSpan{
+					StartKey: lastEnd,
+					EndKey:   item.startKey,
+				},
+			}
 			ts := l.unlockedRanges.getMinTsInRange(lastEnd, item.startKey)
 			r.UnLockedRanges = append(r.UnLockedRanges, UnLockRangeStatistic{Span: span, ResolvedTs: ts})
 		}
@@ -326,8 +333,10 @@ func (l *RangeLock) IterAll(
 		lastEnd = item.endKey
 		return true
 	})
-	if spanz.EndCompare(lastEnd, l.totalSpan.EndKey) < 0 {
-		span := tablepb.Span{StartKey: lastEnd, EndKey: l.totalSpan.EndKey}
+	if common.EndCompare(lastEnd, l.totalSpan.EndKey) < 0 {
+		span := common.TableSpan{
+			&heartbeatpb.TableSpan{StartKey: lastEnd, EndKey: l.totalSpan.EndKey},
+		}
 		ts := l.unlockedRanges.getMinTsInRange(lastEnd, l.totalSpan.EndKey)
 		r.UnLockedRanges = append(r.UnLockedRanges, UnLockRangeStatistic{Span: span, ResolvedTs: ts})
 	}
@@ -337,13 +346,15 @@ func (l *RangeLock) IterAll(
 // IterForTest iterates all locked ranges in the RangeLock and performs the action on each locked range.
 // It is used for testing only.
 func (l *RangeLock) IterForTest(
-	action func(regionID, version uint64, state *LockedRangeState, span tablepb.Span),
+	action func(regionID, version uint64, state *LockedRangeState, span common.TableSpan),
 ) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	l.lockedRanges.Ascend(func(item *rangeLockEntry) bool {
 		if action != nil {
-			span := tablepb.Span{StartKey: item.startKey, EndKey: item.endKey}
+			span := common.TableSpan{
+				&heartbeatpb.TableSpan{StartKey: item.startKey, EndKey: item.endKey},
+			}
 			action(item.regionID, item.regionVersion, &item.lockedRangeState, span)
 		}
 		return true
@@ -456,7 +467,7 @@ func (l *RangeLock) tryLockRange(startKey, endKey []byte, regionID, regionVersio
 	// If the range is stale, we should return the overlapping ranges to the caller,
 	// so that the caller can retry to lock the rest of the range.
 	if isStale {
-		retryRanges := make([]tablepb.Span, 0)
+		retryRanges := make([]common.TableSpan, 0)
 		currentRangeStartKey := startKey
 
 		log.Info("try lock range staled",
@@ -475,14 +486,18 @@ func (l *RangeLock) tryLockRange(startKey, endKey []byte, regionID, regionVersio
 			// must intersect with the current given range.
 			if bytes.Compare(currentRangeStartKey, r.startKey) < 0 {
 				retryRanges = append(retryRanges,
-					tablepb.Span{StartKey: currentRangeStartKey, EndKey: r.startKey})
+					common.TableSpan{
+						&heartbeatpb.TableSpan{StartKey: currentRangeStartKey, EndKey: r.startKey},
+					})
 			}
 			currentRangeStartKey = r.endKey
 		}
 
 		if bytes.Compare(currentRangeStartKey, endKey) < 0 {
 			retryRanges = append(retryRanges,
-				tablepb.Span{StartKey: currentRangeStartKey, EndKey: endKey})
+				common.TableSpan{
+					&heartbeatpb.TableSpan{StartKey: currentRangeStartKey, EndKey: endKey},
+				})
 		}
 
 		return LockRangeResult{

@@ -186,7 +186,7 @@ func handleEventEntry(
 		// We can remove the check in future.
 		comparableKey := spanz.ToComparableKey(entry.GetKey())
 		if entry.Type != cdcpb.Event_INITIALIZED &&
-			!spanz.KeyInSpan(comparableKey, regionSpan) {
+			!common.KeyInSpan(comparableKey, regionSpan) {
 			continue
 		}
 		switch entry.Type {

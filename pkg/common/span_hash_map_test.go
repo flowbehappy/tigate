@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestHashMap(t *testing.T) {
+func TestSpanHashMapBasicOp(t *testing.T) {
 	t.Parallel()
 
 	m := NewSpanHashMap[int]()
@@ -70,7 +70,7 @@ func TestHashMap(t *testing.T) {
 	require.Equal(t, 1, m.Len())
 }
 
-func TestHashMapIter(t *testing.T) {
+func TestSpanHashMapIter(t *testing.T) {
 	t.Parallel()
 
 	m := NewSpanHashMap[int]()
