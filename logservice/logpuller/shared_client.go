@@ -489,7 +489,7 @@ func (s *SharedClient) divideSpanAndScheduleRegionRequests(
 
 		for _, regionMeta := range regionMetas {
 			regionSpan := common.TableSpan{
-				&heartbeatpb.TableSpan{
+				TableSpan: &heartbeatpb.TableSpan{
 					StartKey: regionMeta.StartKey,
 					EndKey:   regionMeta.EndKey,
 				},
