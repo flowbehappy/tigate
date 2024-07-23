@@ -17,17 +17,16 @@ import (
 	"context"
 	"sync"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/processor/tablepb"
-	"github.com/pingcap/tiflow/pkg/spanz"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
 type tableProgress struct {
-	span tablepb.Span
+	span heartbeatpb.TableSpan
 
 	subID SubscriptionID
 
@@ -36,16 +35,16 @@ type tableProgress struct {
 		// removed while consuming events.
 		sync.RWMutex
 		removed bool
-		f       func(context.Context, *common.RawKVEntry, tablepb.Span) error
+		f       func(context.Context, *common.RawKVEntry, heartbeatpb.TableSpan) error
 	}
 }
 
 type LogPuller struct {
 	client  *SharedClient
-	consume func(context.Context, *common.RawKVEntry, tablepb.Span) error
+	consume func(context.Context, *common.RawKVEntry, heartbeatpb.TableSpan) error
 
 	// inputChSelector is used to determine which input channel to use for a given span.
-	inputChSelector func(span tablepb.Span, workerCount int) int
+	inputChSelector func(span heartbeatpb.TableSpan, workerCount int) int
 
 	// inputChs is used to collect events from client.
 	inputChs []chan MultiplexingEvent
@@ -55,7 +54,7 @@ type LogPuller struct {
 		// subscriptionID -> tableProgress
 		tableProgressMap map[SubscriptionID]*tableProgress
 		// span -> subscription
-		subscriptionMap *spanz.HashMap[SubscriptionID]
+		subscriptionMap *common.SpanHashMap[SubscriptionID]
 	}
 }
 
@@ -63,12 +62,12 @@ type LogPullerConfig struct {
 	// `WorkerCount` specifies how many workers will be spawned to handle events from kv client.
 	WorkerCount int
 	// `HashSpanFunc` is used to determine which input channel to use for a given span.
-	HashSpanFunc func(tablepb.Span, int) int
+	HashSpanFunc func(heartbeatpb.TableSpan, int) int
 }
 
 func NewLogPuller(
 	client *SharedClient,
-	consume func(context.Context, *common.RawKVEntry, tablepb.Span) error,
+	consume func(context.Context, *common.RawKVEntry, heartbeatpb.TableSpan) error,
 	config *LogPullerConfig,
 ) *LogPuller {
 	puller := &LogPuller{
@@ -77,7 +76,7 @@ func NewLogPuller(
 		inputChSelector: config.HashSpanFunc,
 	}
 	puller.subscriptions.tableProgressMap = make(map[SubscriptionID]*tableProgress)
-	puller.subscriptions.subscriptionMap = spanz.NewHashMap[SubscriptionID]()
+	puller.subscriptions.subscriptionMap = common.NewSpanHashMap[SubscriptionID]()
 
 	puller.inputChs = make([]chan MultiplexingEvent, 0, config.WorkerCount)
 	for i := 0; i < config.WorkerCount; i++ {
@@ -107,7 +106,7 @@ func (p *LogPuller) Run(ctx context.Context) (err error) {
 }
 
 func (p *LogPuller) Subscribe(
-	span tablepb.Span,
+	span heartbeatpb.TableSpan,
 	startTs common.Ts,
 ) {
 	p.subscriptions.Lock()
@@ -128,7 +127,7 @@ func (p *LogPuller) Subscribe(
 	progress.consume.f = func(
 		ctx context.Context,
 		raw *common.RawKVEntry,
-		span tablepb.Span,
+		span heartbeatpb.TableSpan,
 	) error {
 		progress.consume.RLock()
 		defer progress.consume.RUnlock()
@@ -145,7 +144,7 @@ func (p *LogPuller) Subscribe(
 	p.client.Subscribe(subID, span, uint64(startTs), p.inputChs[slot])
 }
 
-func (p *LogPuller) Unsubscribe(span tablepb.Span) {
+func (p *LogPuller) Unsubscribe(span heartbeatpb.TableSpan) {
 	p.subscriptions.Lock()
 	defer p.subscriptions.Unlock()
 

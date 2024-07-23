@@ -385,6 +385,10 @@ func (m *Maintainer) initTableIDs() (map[int64]struct{}, error) {
 		if f.ShouldIgnoreTable(tableInfo.TableName.Schema, tableInfo.TableName.Table) {
 			return
 		}
+		// TODO: remove this line when the filter can filter out system table
+		if tableInfo.Name.O == "mysql" || tableInfo.Name.O == "sys" {
+			return
+		}
 		if tableInfo.IsSequence() {
 			return
 		}

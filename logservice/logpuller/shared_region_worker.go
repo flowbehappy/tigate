@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/cdcpb"
 	"github.com/pingcap/log"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/spanz"
 	"go.uber.org/zap"
 )
 
@@ -167,7 +166,7 @@ func (w *sharedRegionWorker) handleEventEntry(ctx context.Context, x *cdcpb.Even
 	tableID := state.region.subscribedTable.span.TableID
 	log.Debug("region worker get an Event",
 		zap.Any("subscriptionID", state.region.subscribedTable.subscriptionID),
-		zap.Int64("tableID", tableID),
+		zap.Uint64("tableID", tableID),
 		zap.Int("rows", len(x.Entries.GetEntries())))
 	return handleEventEntry(x, startTs, state, emit, common.TableID(tableID), w.client.logRegionDetails)
 }
@@ -180,15 +179,8 @@ func handleEventEntry(
 	tableID common.TableID,
 	logRegionDetails func(msg string, fields ...zap.Field),
 ) error {
-	regionID, regionSpan, _ := state.getRegionMeta()
+	regionID, _, _ := state.getRegionMeta()
 	for _, entry := range x.Entries.GetEntries() {
-		// NOTE: from TiKV 7.0.0, entries are already filtered out in TiKV side.
-		// We can remove the check in future.
-		comparableKey := spanz.ToComparableKey(entry.GetKey())
-		if entry.Type != cdcpb.Event_INITIALIZED &&
-			!spanz.KeyInSpan(comparableKey, regionSpan) {
-			continue
-		}
 		switch entry.Type {
 		case cdcpb.Event_INITIALIZED:
 			state.setInitialized()
