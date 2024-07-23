@@ -500,14 +500,14 @@ func (s *SharedClient) divideSpanAndScheduleRegionRequests(
 
 			// Find the intersection of the regionSpan returned by PD and the subscribedTable.span.
 			// The intersection is the span that needs to be subscribed.
-			intersectantSpan := common.GetIntersectSpan(subscribedTable.span, regionSpan)
-			if common.IsEmptySpan(intersectantSpan) {
+			intersectSpan := common.GetIntersectSpan(subscribedTable.span, regionSpan)
+			if common.IsEmptySpan(intersectSpan) {
 				log.Panic("event feed check spans intersect shouldn't fail",
 					zap.Any("subscriptionID", subscribedTable.subscriptionID))
 			}
 
 			verID := tikv.NewRegionVerID(regionMeta.Id, regionMeta.RegionEpoch.ConfVer, regionMeta.RegionEpoch.Version)
-			regionInfo := newRegionInfo(verID, intersectantSpan, nil, subscribedTable)
+			regionInfo := newRegionInfo(verID, intersectSpan, nil, subscribedTable)
 
 			// Schedule a region request to subscribe the region.
 			s.scheduleRegionRequest(ctx, regionInfo)

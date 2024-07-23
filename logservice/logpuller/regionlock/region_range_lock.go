@@ -129,7 +129,7 @@ func NewRangeLock(
 	return &RangeLock{
 		id: id,
 		totalSpan: common.TableSpan{
-			&heartbeatpb.TableSpan{StartKey: startKey, EndKey: endKey},
+			TableSpan: &heartbeatpb.TableSpan{StartKey: startKey, EndKey: endKey},
 		},
 		unlockedRanges:         newRangeTsMap(startKey, endKey, startTs),
 		lockedRanges:           btree.NewG(16, rangeLockEntryLess),
@@ -309,10 +309,7 @@ func (l *RangeLock) IterAll(
 
 		if common.EndCompare(lastEnd, item.startKey) < 0 {
 			span := common.TableSpan{
-				&heartbeatpb.TableSpan{
-					StartKey: lastEnd,
-					EndKey:   item.startKey,
-				},
+				TableSpan: &heartbeatpb.TableSpan{StartKey: lastEnd, EndKey: item.startKey},
 			}
 			ts := l.unlockedRanges.getMinTsInRange(lastEnd, item.startKey)
 			r.UnLockedRanges = append(r.UnLockedRanges, UnLockRangeStatistic{Span: span, ResolvedTs: ts})
@@ -335,7 +332,7 @@ func (l *RangeLock) IterAll(
 	})
 	if common.EndCompare(lastEnd, l.totalSpan.EndKey) < 0 {
 		span := common.TableSpan{
-			&heartbeatpb.TableSpan{StartKey: lastEnd, EndKey: l.totalSpan.EndKey},
+			TableSpan: &heartbeatpb.TableSpan{StartKey: lastEnd, EndKey: l.totalSpan.EndKey},
 		}
 		ts := l.unlockedRanges.getMinTsInRange(lastEnd, l.totalSpan.EndKey)
 		r.UnLockedRanges = append(r.UnLockedRanges, UnLockRangeStatistic{Span: span, ResolvedTs: ts})
@@ -353,7 +350,7 @@ func (l *RangeLock) IterForTest(
 	l.lockedRanges.Ascend(func(item *rangeLockEntry) bool {
 		if action != nil {
 			span := common.TableSpan{
-				&heartbeatpb.TableSpan{StartKey: item.startKey, EndKey: item.endKey},
+				TableSpan: &heartbeatpb.TableSpan{StartKey: item.startKey, EndKey: item.endKey},
 			}
 			action(item.regionID, item.regionVersion, &item.lockedRangeState, span)
 		}
@@ -487,7 +484,7 @@ func (l *RangeLock) tryLockRange(startKey, endKey []byte, regionID, regionVersio
 			if bytes.Compare(currentRangeStartKey, r.startKey) < 0 {
 				retryRanges = append(retryRanges,
 					common.TableSpan{
-						&heartbeatpb.TableSpan{StartKey: currentRangeStartKey, EndKey: r.startKey},
+						TableSpan: &heartbeatpb.TableSpan{StartKey: currentRangeStartKey, EndKey: r.startKey},
 					})
 			}
 			currentRangeStartKey = r.endKey
@@ -496,7 +493,7 @@ func (l *RangeLock) tryLockRange(startKey, endKey []byte, regionID, regionVersio
 		if bytes.Compare(currentRangeStartKey, endKey) < 0 {
 			retryRanges = append(retryRanges,
 				common.TableSpan{
-					&heartbeatpb.TableSpan{StartKey: currentRangeStartKey, EndKey: endKey},
+					TableSpan: &heartbeatpb.TableSpan{StartKey: currentRangeStartKey, EndKey: endKey},
 				})
 		}
 
