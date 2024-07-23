@@ -341,12 +341,11 @@ func (e *eventStore) deleteEvents(span common.TableSpan, startCommitTS uint64, e
 	return db.DeleteRange(start, end, pebble.NoSync)
 }
 
-func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span *common.TableSpan, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
+func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, *common.TableSpan, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
 	log.Info("register dispatcher",
 		zap.Any("dispatcherID", dispatcherID),
 		zap.String("span", span.String()),
 		zap.Uint64("startTS", uint64(startTS)))
-	newSpan := span.Copy()
 	e.schemaStore.RegisterDispatcher(dispatcherID, common.TableID(span.TableID), startTS)
 	e.mu.Lock()
 	defer e.mu.Unlock()
