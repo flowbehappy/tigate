@@ -32,6 +32,7 @@ require (
 	github.com/tinylib/msgp v1.1.6
 	github.com/uber-go/atomic v1.4.0
 	github.com/zeebo/assert v1.3.0
+	go.etcd.io/etcd v0.5.0-alpha.5.0.20240320135013-950cd5fbe6ca
 	go.etcd.io/etcd/api/v3 v3.5.12
 	go.etcd.io/etcd/client/pkg/v3 v3.5.12
 	go.etcd.io/etcd/client/v3 v3.5.12
@@ -107,7 +108,9 @@ require (
 	github.com/coocood/bbloom v0.0.0-20190830030839-58deb6228d64 // indirect
 	github.com/coocood/freecache v1.2.1 // indirect
 	github.com/coocood/rtutil v0.0.0-20190304133409-c84515f646f2 // indirect
+	github.com/coreos/go-systemd v0.0.0-20191104093116-d3cd4ed1dbcf // indirect
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
+	github.com/coreos/pkg v0.0.0-20240122114842-bbd7aa9bf6fb // indirect
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548 // indirect
 	github.com/danieljoos/wincred v1.1.2 // indirect
 	github.com/danjacques/gofslock v0.0.0-20240212154529-d899e02bfe22 // indirect

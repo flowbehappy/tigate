@@ -180,16 +180,16 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 	}
 	allChangefeeds := utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior]()
 	// check all changefeeds.
-	for id, reactor := range state.Changefeeds {
-		if reactor.Info == nil {
+	for id, cfState := range state.Changefeeds {
+		if cfState.Info == nil {
 			continue
 		}
-		if !preflightCheck(reactor) {
+		if !preflightCheck(cfState) {
 			log.Error("precheck failed ignored",
 				zap.String("id", id.String()))
 			continue
 		}
-		if shouldRunChangefeed(reactor.Info.State) {
+		if shouldRunChangefeed(cfState.Info.State) {
 			// todo use real changefeed instance here
 			cf, ok := c.scheduledChangefeeds[id]
 			if !ok {
@@ -224,21 +224,24 @@ func (c *coordinator) newChangefeed(id scheduler.InferiorID) scheduler.Inferior 
 func (c *coordinator) saveChangefeedStatus() {
 	if time.Since(c.lastSaveTime) > time.Millisecond*500 {
 		for id, cf := range c.scheduledChangefeeds {
-			status := c.lastState.Changefeeds[id]
+			cfState, ok := c.lastState.Changefeeds[id]
+			if !ok {
+				continue
+			}
 			if !shouldRunChangefeed(model.FeedState(cf.State.FeedState)) {
-				status.PatchInfo(func(info *model.ChangeFeedInfo) (*model.ChangeFeedInfo, bool, error) {
+				cfState.PatchInfo(func(info *model.ChangeFeedInfo) (*model.ChangeFeedInfo, bool, error) {
 					info.State = model.FeedState(cf.State.FeedState)
 					return info, true, nil
 				})
 			}
-			updateStatus(status, cf.checkpointTs)
+			updateStatus(cfState, cf.checkpointTs)
 			saveErrorFn := func(err *heartbeatpb.RunningError) {
 				node, ok := c.lastState.Captures[err.Node]
 				addr := err.Node
 				if ok {
 					addr = node.AdvertiseAddr
 				}
-				status.PatchTaskPosition(err.Node,
+				cfState.PatchTaskPosition(err.Node,
 					func(position *model.TaskPosition) (*model.TaskPosition, bool, error) {
 						if position == nil {
 							position = &model.TaskPosition{}
@@ -319,7 +322,7 @@ func updateStatus(
 	changefeed *orchestrator.ChangefeedReactorState,
 	checkpointTs uint64,
 ) {
-	if checkpointTs == 0 {
+	if checkpointTs == 0 || changefeed == nil {
 		return
 	}
 	changefeed.PatchStatus(

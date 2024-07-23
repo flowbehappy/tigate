@@ -303,7 +303,7 @@ func (d *TableEventDispatcher) TryClose() (uint64, bool) {
 		d.sink.RemoveTableSpan(d.tableSpan)
 		var checkpointTs uint64
 		state := d.GetState()
-		if state.pengdingEvent == nil {
+		if state.pengdingEvent != nil {
 			checkpointTs = state.pengdingEvent.CommitTs - 1
 		} else {
 			checkpointTs = d.GetResolvedTs()

@@ -152,9 +152,9 @@ func newBurstRemoveInferiors(
 				CaptureID: captureID,
 			},
 		})
-		log.Info("burst remove inferior",
-			zap.String("captureID", captureID),
-			zap.Any("ID", id.String()))
+		// log.Info("burst remove inferior",
+		// 	zap.String("captureID", captureID),
+		// 	zap.Any("ID", id.String()))
 	}
 
 	if len(removeTasks) == 0 {

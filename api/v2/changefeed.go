@@ -14,6 +14,7 @@
 package v2
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -27,10 +28,12 @@ import (
 	cdcapi "github.com/pingcap/tiflow/cdc/api/v2"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/owner"
-	cerror "github.com/pingcap/tiflow/pkg/errors"
+	"github.com/pingcap/tiflow/pkg/errors"
+	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/txnutil/gc"
 	"github.com/pingcap/tiflow/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -51,13 +54,13 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 	cfg := &cdcapi.ChangefeedConfig{ReplicaConfig: cdcapi.GetDefaultReplicaConfig()}
 
 	if err := c.BindJSON(&cfg); err != nil {
-		_ = c.Error(cerror.WrapError(cerror.ErrAPIInvalidParam, err))
+		_ = c.Error(errors.WrapError(errors.ErrAPIInvalidParam, err))
 		return
 	}
 
 	// verify sinkURI
 	if cfg.SinkURI == "" {
-		_ = c.Error(cerror.ErrSinkURIInvalid.GenWithStackByArgs(
+		_ = c.Error(errors.ErrSinkURIInvalid.GenWithStackByArgs(
 			"sink_uri is empty, cannot create a changefeed without sink_uri"))
 		return
 	}
@@ -67,7 +70,7 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 		cfg.ID = uuid.New().String()
 	}
 	if err := model.ValidateChangefeedID(cfg.ID); err != nil {
-		_ = c.Error(cerror.ErrAPIInvalidParam.GenWithStack(
+		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack(
 			"invalid changefeed_id: %s", cfg.ID))
 		return
 	}
@@ -77,7 +80,7 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 
 	ts, logical, err := h.server.GetPdClient().GetTS(ctx)
 	if err != nil {
-		_ = c.Error(cerror.ErrPDEtcdAPIError.GenWithStackByArgs("fail to get ts from pd client"))
+		_ = c.Error(errors.ErrPDEtcdAPIError.GenWithStackByArgs("fail to get ts from pd client"))
 		return
 	}
 	currentTSO := oracle.ComposeTS(ts, logical)
@@ -85,7 +88,7 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 	if cfg.StartTs == 0 {
 		cfg.StartTs = currentTSO
 	} else if cfg.StartTs > currentTSO {
-		_ = c.Error(cerror.ErrAPIInvalidParam.GenWithStack(
+		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack(
 			"invalid start-ts %v, larger than current tso %v", cfg.StartTs, currentTSO))
 		return
 	}
@@ -97,8 +100,8 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 		h.server.GetEtcdClient().GetEnsureGCServiceID(gc.EnsureGCServiceCreating),
 		model.ChangeFeedID{Namespace: cfg.Namespace, ID: cfg.ID},
 		ensureTTL, cfg.StartTs); err != nil {
-		if !cerror.ErrStartTsBeforeGC.Equal(err) {
-			_ = c.Error(cerror.ErrPDEtcdAPIError.Wrap(err))
+		if !errors.ErrStartTsBeforeGC.Equal(err) {
+			_ = c.Error(errors.ErrPDEtcdAPIError.Wrap(err))
 			return
 		}
 		_ = c.Error(err)
@@ -107,7 +110,7 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 
 	// verify target ts
 	if cfg.TargetTs > 0 && cfg.TargetTs <= cfg.StartTs {
-		_ = c.Error(cerror.ErrTargetTsBeforeStartTs.GenWithStackByArgs(
+		_ = c.Error(errors.ErrTargetTsBeforeStartTs.GenWithStackByArgs(
 			cfg.TargetTs, cfg.StartTs))
 		return
 	}
@@ -117,7 +120,7 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 	// verify replicaConfig
 	sinkURIParsed, err := url.Parse(cfg.SinkURI)
 	if err != nil {
-		_ = c.Error(cerror.WrapError(cerror.ErrSinkURIInvalid, err))
+		_ = c.Error(errors.WrapError(errors.ErrSinkURIInvalid, err))
 		return
 	}
 	err = replicaCfg.ValidateAndAdjust(sinkURIParsed)
@@ -197,7 +200,7 @@ func (h *OpenAPIV2) listChangeFeeds(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	commonInfos := make([]cdcapi.ChangefeedCommonInfo, len(changefeeds))
+	commonInfos := make([]cdcapi.ChangefeedCommonInfo, 0, len(changefeeds))
 	for id, changefeed := range changefeeds {
 		status, _, err := h.server.GetEtcdClient().GetChangeFeedStatus(c, id)
 		if err != nil {
@@ -306,4 +309,70 @@ func toAPIModel(
 		TaskStatus:     taskStatus,
 	}
 	return apiInfoModel
+}
+
+// deleteChangefeed handles delete changefeed request
+// @Summary Remove a changefeed
+// @Description Remove a changefeed
+// @Tags changefeed,v2
+// @Accept json
+// @Produce json
+// @Param changefeed_id path string true "changefeed_id"
+// @Param namespace query string false "default"
+// @Success 200 {object} EmptyResponse
+// @Failure 500,400 {object} model.HTTPError
+// @Router	/api/v2/changefeeds/{changefeed_id} [delete]
+func (h *OpenAPIV2) deleteChangefeed(c *gin.Context) {
+	ctx := c.Request.Context()
+	changefeedID := model.ChangeFeedID{Namespace: model.DefaultNamespace, ID: c.Param(api.APIOpVarChangefeedID)}
+	if err := model.ValidateChangefeedID(changefeedID.ID); err != nil {
+		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
+			changefeedID.ID))
+		return
+	}
+
+	etcdCli := h.server.GetEtcdClient()
+	cfInfo, err := etcdCli.GetChangeFeedInfo(ctx, changefeedID)
+	if err != nil {
+		if errors.ErrChangeFeedNotExists.Equal(err) {
+			c.JSON(http.StatusOK, nil)
+			return
+		}
+		_ = c.Error(err)
+		return
+	}
+
+	status, _, err := etcdCli.GetChangeFeedStatus(ctx, changefeedID)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	infoKey := etcd.GetEtcdKeyChangeFeedInfo(etcdCli.GetClusterID(), changefeedID)
+	jobKey := etcd.GetEtcdKeyJob(etcdCli.GetClusterID(), changefeedID)
+
+	opsThen := []clientv3.Op{}
+	opsThen = append(opsThen, clientv3.OpDelete(infoKey))
+	opsThen = append(opsThen, clientv3.OpDelete(jobKey))
+
+	resp, err := etcdCli.GetEtcdClient().Txn(ctx, []clientv3.Cmp{}, opsThen, []clientv3.Op{})
+	if !resp.Succeeded {
+		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("delete changefeed %s", changefeedID))
+		_ = c.Error(err)
+		return
+	}
+
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	c.JSON(http.StatusOK, struct {
+		ChangeFeedID string `json:"changefeed_id"`
+		CheckpointTs uint64 `json:"checkpoint_ts"`
+		SinkURI      string `json:"sink_uri"`
+	}{
+		ChangeFeedID: changefeedID.ID,
+		CheckpointTs: status.CheckpointTs,
+		SinkURI:      cfInfo.SinkURI,
+	})
 }

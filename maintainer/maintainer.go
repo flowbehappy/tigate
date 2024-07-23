@@ -126,15 +126,27 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	return m
 }
 
-func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
-	// removing, cancel the task
+func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time) {
+	if m.removed.Load() {
+		// removed, cancel the task
+		return threadpool.Done, time.Time{}
+	}
+
+	taskStatus = threadpool.CPUTask
+	tick = time.Now().Add(50 * time.Millisecond)
 	if m.removing.Load() {
 		//todo: send message to dispatcher manager if changefeed is removed
 		m.closeChangefeed()
-		if m.removed.Load() {
+		if m.supervisor.GetInferiors().Len() == 0 {
+			m.removed.Store(true)
+			m.state = heartbeatpb.ComponentState_Stopped
 			return threadpool.Done, time.Time{}
+		} else {
+			log.Error("maintainer is removing, but still has tasks",
+				zap.Any("tasks", m.supervisor.GetInferiors().Len()))
 		}
 	}
+
 	// init the maintainer, todo: return error and cancel the maintainer
 	if !m.initialized {
 		if err := m.initChangefeed(); err != nil {
@@ -142,22 +154,21 @@ func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
 				zap.String("id", m.id.String()),
 				zap.Error(err))
 			m.initialized = false
-			m.removed.Store(true)
-			m.state = heartbeatpb.ComponentState_Stopped
-			return threadpool.Done, time.Time{}
+			m.removing.Store(true)
+			return
 		}
 		m.initialized = true
 	}
 
 	// not on the primary status, skip running
 	if m.isSecondary.Load() {
-		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
+		return
 	}
 	m.state = heartbeatpb.ComponentState_Working
 
 	// handle messages
 	if err := m.handleMessages(); err != nil {
-		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
+		return
 	}
 
 	nodes := m.nodeManager.GetAliveCaptures()
@@ -165,7 +176,7 @@ func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
 	msgs, err := m.supervisor.HandleAliveCaptureUpdate(nodes)
 	if err != nil {
 		log.Warn("handle capture failed", zap.Error(err))
-		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
+		return
 	}
 	m.sendMessages(msgs)
 
@@ -176,11 +187,11 @@ func (m *Maintainer) Execute() (threadpool.TaskStatus, time.Time) {
 	err = m.scheduleTableSpan()
 	if err != nil {
 		log.Warn("handle capture failed", zap.Error(err))
-		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
+		return
 	}
 	//todo: calculate checkpoint ts
 	m.printStatus()
-	return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
+	return
 }
 
 func (m *Maintainer) getReplicaSet(id scheduler.InferiorID) scheduler.Inferior {
@@ -261,14 +272,18 @@ func (m *Maintainer) scheduleTableSpan() error {
 
 // Close cleanup resources
 func (m *Maintainer) Close() {
+	log.Info("changefeed maintainer closed", zap.String("id", m.id.String()),
+		zap.Bool("removed", m.removed.Load()),
+		zap.Uint64("checkpointTs", m.checkpointTs.Load()),
+		zap.Bool("secondary", m.isSecondary.Load()))
 }
 
 func (m *Maintainer) initChangefeed() error {
 	m.state = heartbeatpb.ComponentState_Prepared
 	m.statusChanged.Store(true)
 	var err error
-	tableIDs, err := m.GetTableIDs()
-	for id, _ := range tableIDs {
+	tableIDs, err := m.initTableIDs()
+	for id := range tableIDs {
 		span := spanz.TableIDToComparableSpan(id)
 		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
 			TableID:  uint64(id),
@@ -344,8 +359,8 @@ func (m *Maintainer) resendSchedulerMessage() {
 	m.sendMessages(msgs)
 }
 
-// GetTableIDs get tables ids base on the filter and checkpoint ts
-func (m *Maintainer) GetTableIDs() (map[int64]struct{}, error) {
+// initTableIDs get tables ids base on the filter and checkpoint ts
+func (m *Maintainer) initTableIDs() (map[int64]struct{}, error) {
 	startTs := m.checkpointTs
 	f, err := filter.NewFilter(m.config.Config, "")
 	if err != nil {
@@ -375,6 +390,7 @@ func (m *Maintainer) GetTableIDs() (map[int64]struct{}, error) {
 		}
 		tableIDs[tableInfo.ID] = struct{}{}
 	})
+	log.Info("get table ids", zap.Any("count", tableIDs), zap.String("changefeed", m.id.String()))
 	return tableIDs, nil
 }
 
@@ -388,13 +404,7 @@ func (m *Maintainer) closeChangefeed() {
 		m.state != heartbeatpb.ComponentState_Stopped {
 		m.state = heartbeatpb.ComponentState_Stopping
 		m.statusChanged.Store(true)
-		//todo: real async close
-		go func() {
-			// send message to dispatcher manager
-			m.state = heartbeatpb.ComponentState_Stopped
-			m.statusChanged.Store(true)
-			m.removed.Store(true)
-		}()
+		m.tableSpans = utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior]()
 	}
 }
 
