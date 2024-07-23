@@ -59,8 +59,8 @@ func (m *mockMessageCenter) RemoveTarget(id messaging.ServerId) {
 func (m *mockMessageCenter) Close() {
 }
 
-// mockAcceptorInfo is a mock implementation of the AcceptorInfo interface
-type mockAcceptorInfo struct {
+// mockDispatcherInfo is a mock implementation of the AcceptorInfo interface
+type mockDispatcherInfo struct {
 	clusterID  uint64
 	serverID   string
 	id         string
@@ -70,14 +70,14 @@ type mockAcceptorInfo struct {
 	isRegister bool
 }
 
-func newMockAcceptorInfo() *mockAcceptorInfo {
-	return &mockAcceptorInfo{
+func newMockAcceptorInfo(dispatcherID string, tableID uint64) *mockDispatcherInfo {
+	return &mockDispatcherInfo{
 		clusterID: 1,
 		serverID:  "server1",
-		id:        uuid.New().String(),
+		id:        dispatcherID,
 		topic:     "topic1",
 		span: &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
-			TableID:  1,
+			TableID:  tableID,
 			StartKey: []byte("a"),
 			EndKey:   []byte("z"),
 		}},
@@ -86,31 +86,31 @@ func newMockAcceptorInfo() *mockAcceptorInfo {
 	}
 }
 
-func (m *mockAcceptorInfo) GetID() string {
+func (m *mockDispatcherInfo) GetID() string {
 	return m.id
 }
 
-func (m *mockAcceptorInfo) GetClusterID() uint64 {
+func (m *mockDispatcherInfo) GetClusterID() uint64 {
 	return m.clusterID
 }
 
-func (m *mockAcceptorInfo) GetTopic() common.TopicType {
+func (m *mockDispatcherInfo) GetTopic() common.TopicType {
 	return m.topic
 }
 
-func (m *mockAcceptorInfo) GetServerID() string {
+func (m *mockDispatcherInfo) GetServerID() string {
 	return m.serverID
 }
 
-func (m *mockAcceptorInfo) GetTableSpan() *common.TableSpan {
+func (m *mockDispatcherInfo) GetTableSpan() *common.TableSpan {
 	return m.span
 }
 
-func (m *mockAcceptorInfo) GetStartTs() uint64 {
+func (m *mockDispatcherInfo) GetStartTs() uint64 {
 	return m.startTs
 }
 
-func (m *mockAcceptorInfo) IsRegister() bool {
+func (m *mockDispatcherInfo) IsRegister() bool {
 	return m.isRegister
 }
 
@@ -126,7 +126,7 @@ func (m *mockSpanStats) update(event []*common.TxnEvent, watermark uint64) {
 	m.pendingEvents = append(m.pendingEvents, event...)
 	m.watermark = watermark
 	for _, e := range event {
-		for _ = range e.Rows {
+		for range e.Rows {
 			m.onEvent(&common.RawKVEntry{})
 		}
 	}
@@ -231,6 +231,7 @@ func (m *mockEventIterator) Close() error {
 	return nil
 }
 
+// This test is to test the mockEventIterator works as expected.
 func TestMockEventIterator(t *testing.T) {
 	iter := &mockEventIterator{
 		events: make([]*common.TxnEvent, 0),
@@ -305,7 +306,7 @@ func TestEventServiceBasic(t *testing.T) {
 		}
 	}()
 
-	acceptorInfo := newMockAcceptorInfo()
+	acceptorInfo := newMockAcceptorInfo(uuid.New().String(), 1)
 	// register acceptor
 	esImpl.acceptorInfoCh <- acceptorInfo
 	// wait for eventService to process the acceptorInfo
@@ -313,12 +314,11 @@ func TestEventServiceBasic(t *testing.T) {
 
 	require.Equal(t, 1, len(esImpl.brokers))
 	require.NotNil(t, esImpl.brokers[acceptorInfo.GetClusterID()])
-	require.Equal(t, 1, len(esImpl.brokers[acceptorInfo.GetClusterID()].dispatchers))
+	require.Equal(t, 1, len(esImpl.brokers[acceptorInfo.GetClusterID()].dispatchers.m))
 
-	uid := common.DispatcherID(uuid.MustParse(acceptorInfo.GetID()))
 	// add events to logpuller
 	txnEvent := &common.TxnEvent{
-		DispatcherID: uid,
+		DispatcherID: acceptorInfo.GetID(),
 		Span:         acceptorInfo.span,
 		StartTs:      1,
 		CommitTs:     5,
@@ -342,7 +342,7 @@ func TestEventServiceBasic(t *testing.T) {
 	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)
 
 	expectedEvent := &common.TxnEvent{
-		DispatcherID: uid,
+		DispatcherID: acceptorInfo.GetID(),
 		StartTs:      1,
 		CommitTs:     5,
 		Rows: []*common.RowChangedEvent{
@@ -429,5 +429,4 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)
 
 	<-tableEventDispatcher.GetEventChan()
-
 }

@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"hash/crc32"
+
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
@@ -25,11 +27,14 @@ type eventBroker struct {
 	msgSender messaging.MessageSender
 
 	// All the dispatchers that register to the eventBroker.
-	dispatchers map[string]*dispatcherStat
-	// changedCh is used to notify some span subscriptions have new events.
+	dispatchers struct {
+		mu sync.RWMutex
+		m  map[string]*dispatcherStat
+	}
+	// changedCh is used to notify span subscription has new events.
 	changedCh chan *subscriptionChange
 	// taskPool is used to store the scan tasks and merge the tasks of same dispatcher.
-	// TODO: Make it support merge the tasks of the same table span, even if the tasks are from different dispatchers.
+	// TODO: Make it support merge the tasks of the saame table span, even if the tasks are from different dispatchers.
 	taskPool *scanTaskPool
 
 	// scanWorkerCount is the number of the scan workers to spawn.
@@ -53,14 +58,17 @@ func newEventBroker(
 	ctx, cancel := context.WithCancel(ctx)
 	wg := &sync.WaitGroup{}
 	c := &eventBroker{
-		ctx:             ctx,
-		tidbClusterID:   id,
-		eventStore:      eventStore,
-		dispatchers:     make(map[string]*dispatcherStat),
+		ctx:           ctx,
+		tidbClusterID: id,
+		eventStore:    eventStore,
+		dispatchers: struct {
+			mu sync.RWMutex
+			m  map[string]*dispatcherStat
+		}{m: make(map[string]*dispatcherStat)},
 		msgSender:       mc,
 		changedCh:       make(chan *subscriptionChange, defaultChannelSize),
 		taskPool:        newScanTaskPool(),
-		scanWorkerCount: 1,
+		scanWorkerCount: defaultWorkerCount,
 		messageCh:       make(chan *messaging.TargetMessage, defaultChannelSize),
 		cancel:          cancel,
 		wg:              wg,
@@ -80,7 +88,9 @@ func (c *eventBroker) runGenerateScanTask() {
 			case <-c.ctx.Done():
 				return
 			case change := <-c.changedCh:
-				dispatcher, ok := c.dispatchers[change.dispatcherInfo.GetID()]
+				c.dispatchers.mu.RLock()
+				dispatcher, ok := c.dispatchers.m[change.dispatcherInfo.GetID()]
+				c.dispatchers.mu.RUnlock()
 				// The dispatcher may be deleted. In such case, we just the stale notification.
 				if !ok {
 					continue
@@ -101,6 +111,7 @@ func (c *eventBroker) runGenerateScanTask() {
 
 func (c *eventBroker) runScanWorker() {
 	for i := 0; i < c.scanWorkerCount; i++ {
+		chIndex := i
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
@@ -108,7 +119,7 @@ func (c *eventBroker) runScanWorker() {
 				select {
 				case <-c.ctx.Done():
 					return
-				case task := <-c.taskPool.popTask():
+				case task := <-c.taskPool.popTask(chIndex):
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 					topic := task.dispatcherStat.info.GetTopic()
 					dispatcherID := task.dispatcherStat.info.GetID()
@@ -128,7 +139,7 @@ func (c *eventBroker) runScanWorker() {
 					//events, err := c.eventStore.GetIterator(task.dataRange)
 					iter, err := c.eventStore.GetIterator(task.dataRange)
 					if err != nil {
-						log.Info("read events failed", zap.Error(err))
+						log.Info("read events failed, push the task back to queue", zap.Error(err))
 						// push the task back to the task pool.
 						c.taskPool.pushTask(task)
 						continue
@@ -211,6 +222,13 @@ func (c *eventBroker) close() {
 	c.wg.Wait()
 }
 
+func (c *eventBroker) removeDispatcher(id string) {
+	c.dispatchers.mu.Lock()
+	defer c.dispatchers.mu.Unlock()
+	delete(c.dispatchers.m, id)
+	c.taskPool.removeTask(id)
+}
+
 // Store the progress of the dispatcher, and the incremental events stats.
 // Those information will be used to decide when will the worker start to handle the push task of this dispatcher.
 type dispatcherStat struct {
@@ -219,17 +237,44 @@ type dispatcherStat struct {
 	// The watermark of the events that have been sent to the dispatcher.
 	watermark atomic.Uint64
 	notify    chan *subscriptionChange
+	// The index of the task queue channel in the taskPool.
+	// We need to make sure the tasks of the same dispatcher are sent to the same task queue
+	// so that it will be handle by the same scan worker. To ensure all events of the dispatcher
+	// are sent in order.
+	chanIndex int
+}
+
+func newDispatcherStat(
+	startTs uint64,
+	info DispatcherInfo,
+	notify chan *subscriptionChange) *dispatcherStat {
+	subscription := &spanSubscription{
+		span: info.GetTableSpan(),
+	}
+	subscription.watermark.Store(uint64(startTs))
+
+	res := &dispatcherStat{
+		info:             info,
+		spanSubscription: subscription,
+		notify:           notify,
+	}
+	res.watermark.Store(startTs)
+	hasher := crc32.NewIEEE()
+	hasher.Write([]byte(info.GetID()))
+	res.chanIndex = int(hasher.Sum32() % defaultWorkerCount)
+	return res
 }
 
 // onSubscriptionWatermark updates the watermark of the table span and send a notification to notify
 // that this table span has new events.
 func (a *dispatcherStat) onSubscriptionWatermark(watermark uint64) {
-	if uint64(watermark) > a.spanSubscription.watermark.Load() {
-		a.spanSubscription.watermark.Store(uint64(watermark))
+	if uint64(watermark) < a.spanSubscription.watermark.Load() {
+		return
 	}
+	a.spanSubscription.watermark.Store(uint64(watermark))
 	sub := &subscriptionChange{
 		dispatcherInfo: a.info,
-		eventCount:     a.GetAndResetNewEventCount(),
+		eventCount:     a.spanSubscription.newEventCount.Swap(0),
 	}
 	select {
 	case a.notify <- sub:
@@ -241,17 +286,10 @@ func (a *dispatcherStat) onSubscriptionWatermark(watermark uint64) {
 // know there are new events, and we don't need to know the exact number of the new events.
 // So we can reduce the contention of the lock.
 func (a *dispatcherStat) onNewEvent(raw *common.RawKVEntry) {
-	a.spanSubscription.newEventCount.mu.Lock()
-	defer a.spanSubscription.newEventCount.mu.Unlock()
-	a.spanSubscription.newEventCount.v++
-}
-
-func (a *dispatcherStat) GetAndResetNewEventCount() uint64 {
-	a.spanSubscription.newEventCount.mu.Lock()
-	defer a.spanSubscription.newEventCount.mu.Unlock()
-	v := a.spanSubscription.newEventCount.v
-	a.spanSubscription.newEventCount.v = 0
-	return v
+	if raw == nil {
+		return
+	}
+	a.spanSubscription.newEventCount.Add(1)
 }
 
 // spanSubscription store the latest progress of the table span in the event store.
@@ -262,10 +300,7 @@ type spanSubscription struct {
 	watermark atomic.Uint64
 	// newEventCount is used to store the number of the new events that have been stored in the event store
 	// since last scanTask is generated.
-	newEventCount struct {
-		mu sync.Mutex
-		v  uint64
-	}
+	newEventCount atomic.Uint64
 }
 
 type subscriptionChange struct {
@@ -280,43 +315,59 @@ type scanTask struct {
 }
 
 type scanTaskPool struct {
-	mu sync.Mutex
-	// taskSet is used to merge the tasks with the same table span.
+	mu      sync.Mutex
 	taskSet map[string]*scanTask
-	// fifoQueue is used to store the tasks that have new changes.
-	fifoQueue chan *scanTask
+	// pendingTaskQueue is used to store the tasks that are waiting to be handled by the scan workers.
+	// The length of the pendingTaskQueue is equal to the number of the scan workers.
+	pendingTaskQueue []chan *scanTask
 }
 
 func newScanTaskPool() *scanTaskPool {
-	return &scanTaskPool{
-		taskSet:   make(map[string]*scanTask),
-		fifoQueue: make(chan *scanTask, defaultChannelSize),
+	res := &scanTaskPool{
+		taskSet:          make(map[string]*scanTask),
+		pendingTaskQueue: make([]chan *scanTask, defaultWorkerCount),
 	}
+	for i := 0; i < defaultWorkerCount; i++ {
+		res.pendingTaskQueue[i] = make(chan *scanTask, defaultChannelSize)
+	}
+	return res
 }
 
-// addTask adds a task to the pool, and merge the task if the task is overlapped with the existing tasks.
+// pushTask pushes a task to the pool,
+// and merge the task if the task is overlapped with the existing tasks.
 func (p *scanTaskPool) pushTask(task *scanTask) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	spanTask := p.taskSet[task.dispatcherStat.info.GetID()]
-
+	id := task.dispatcherStat.info.GetID()
+	spanTask := p.taskSet[id]
 	if spanTask == nil {
 		spanTask = task
-		p.taskSet[task.dispatcherStat.info.GetID()] = spanTask
+		p.taskSet[id] = spanTask
 	}
-
 	// Merge the task into the existing task.
 	mergedRange := task.dataRange.Merge(spanTask.dataRange)
 	spanTask.dataRange = mergedRange
 	spanTask.eventCount += task.eventCount
-	// Update the existing task.
+
+	// Send the task to the corresponding scan worker.
+	ch := p.pendingTaskQueue[spanTask.dispatcherStat.chanIndex]
 	select {
-	case p.fifoQueue <- spanTask:
-		p.taskSet[task.dispatcherStat.info.GetID()] = nil
+	case ch <- spanTask:
+		// The task is sent to the scan worker, we remove it from the taskSet.
+		p.taskSet[id] = nil
 	default:
+		// The task pool is full, we just add it back
+		// to the taskSet, and it will be merged in the next round.
+		p.taskSet[id] = spanTask
 	}
 }
 
-func (p *scanTaskPool) popTask() <-chan *scanTask {
-	return p.fifoQueue
+func (p *scanTaskPool) popTask(chanIndex int) <-chan *scanTask {
+	return p.pendingTaskQueue[chanIndex]
+}
+
+func (p *scanTaskPool) removeTask(id string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.taskSet, id)
 }
