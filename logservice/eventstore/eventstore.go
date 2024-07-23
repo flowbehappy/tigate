@@ -39,7 +39,7 @@ type EventStore interface {
 	// but for old data this is not feasiable? may we can just return a current watermark when register
 	RegisterDispatcher(
 		dispatcherID common.DispatcherID,
-		span common.TableSpan,
+		span *common.TableSpan,
 		startTS common.Ts,
 		observer EventObserver,
 		notifier WatermarkNotifier,
@@ -342,25 +342,26 @@ func (e *eventStore) deleteEvents(span common.TableSpan, startCommitTS uint64, e
 	return db.DeleteRange(start, end, pebble.NoSync)
 }
 
-func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span common.TableSpan, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
+func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span *common.TableSpan, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
 	log.Info("register dispatcher",
 		zap.Any("dispatcherID", dispatcherID),
 		zap.String("span", span.String()),
 		zap.Uint64("startTS", uint64(startTS)))
+	newSpan := span.Copy()
 	e.schemaStore.RegisterDispatcher(dispatcherID, common.TableID(span.TableID), startTS)
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.tables.ReplaceOrInsert(span, dispatcherID)
+	e.tables.ReplaceOrInsert(*newSpan, dispatcherID)
 	tableState := &tableState{
-		span:     span,
+		span:     *newSpan,
 		observer: observer,
 		notifier: notifier,
 	}
-	chIndex := common.HashTableSpan(span, len(e.channels))
+	chIndex := common.HashTableSpan(*newSpan, len(e.channels))
 	tableState.ch = e.channels[chIndex]
 	tableState.watermark.Store(uint64(startTS))
 	e.spans[dispatcherID] = tableState
-	e.puller.Subscribe(span, startTS)
+	e.puller.Subscribe(*newSpan, startTS)
 	return nil
 }
 
