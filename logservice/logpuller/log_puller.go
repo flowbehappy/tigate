@@ -122,6 +122,7 @@ func (p *LogPuller) Subscribe(
 		span:  span,
 		subID: subID,
 	}
+	log.Info("subscribe table", zap.String("span", span.String()), zap.Uint64("startTs", uint64(startTs)))
 
 	progress.consume.f = func(
 		ctx context.Context,
@@ -176,6 +177,7 @@ func (p *LogPuller) runEventHandler(ctx context.Context, inputCh <-chan Multiple
 		if progress == nil {
 			continue
 		}
+		log.Info("meet event", zap.String("span", progress.span.String()))
 
 		if e.Val == nil {
 			log.Debug("meet empty event")
