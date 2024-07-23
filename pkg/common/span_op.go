@@ -158,15 +158,17 @@ func IsSubSpan(sub TableSpan, parents ...TableSpan) bool {
 
 // ToSpan returns a span, keys are encoded in memcomparable format.
 // See: https://github.com/facebook/mysql-5.6/wiki/MyRocks-record-format
-func ToSpan(startKey, endKey []byte) tablepb.Span {
-	return tablepb.Span{
-		StartKey: ToComparableKey(startKey),
-		EndKey:   ToComparableKey(endKey),
+func ToSpan(startKey, endKey []byte) TableSpan {
+	return TableSpan{
+		&heartbeatpb.TableSpan{
+			StartKey: ToComparableKey(startKey),
+			EndKey:   ToComparableKey(endKey),
+		},
 	}
 }
 
 // ToComparableKey returns a memcomparable key.
 // See: https://github.com/facebook/mysql-5.6/wiki/MyRocks-record-format
-func ToComparableKey(key []byte) tablepb.Key {
+func ToComparableKey(key []byte) []byte {
 	return codec.EncodeBytes(nil, key)
 }

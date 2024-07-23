@@ -17,6 +17,7 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/mounter"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -26,11 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/security"
-	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -85,7 +84,7 @@ func newDDLJobFetcher(
 	ddlSpans := getAllDDLSpan()
 	pullerConfig := &logpuller.LogPullerConfig{
 		WorkerCount:  1,
-		HashSpanFunc: func(tablepb.Span, int) int { return 0 },
+		HashSpanFunc: func(common.TableSpan, int) int { return 0 },
 	}
 	ddlJobFetcher.puller = logpuller.NewLogPullerMultiSpan(client, ddlSpans, startTs, ddlJobFetcher.input, pullerConfig)
 
@@ -259,19 +258,23 @@ const (
 	JobHistoryID = ddl.HistoryTableID
 )
 
-func getAllDDLSpan() []tablepb.Span {
-	spans := make([]tablepb.Span, 0, 2)
-	start, end := spanz.GetTableRange(JobTableID)
-	spans = append(spans, tablepb.Span{
-		TableID:  JobTableID,
-		StartKey: spanz.ToComparableKey(start),
-		EndKey:   spanz.ToComparableKey(end),
+func getAllDDLSpan() []common.TableSpan {
+	spans := make([]common.TableSpan, 0, 2)
+	start, end := common.GetTableRange(JobTableID)
+	spans = append(spans, common.TableSpan{
+		TableSpan: &heartbeatpb.TableSpan{
+			TableID:  JobTableID,
+			StartKey: common.ToComparableKey(start),
+			EndKey:   common.ToComparableKey(end),
+		},
 	})
-	start, end = spanz.GetTableRange(JobHistoryID)
-	spans = append(spans, tablepb.Span{
-		TableID:  JobHistoryID,
-		StartKey: spanz.ToComparableKey(start),
-		EndKey:   spanz.ToComparableKey(end),
+	start, end = common.GetTableRange(JobHistoryID)
+	spans = append(spans, common.TableSpan{
+		TableSpan: &heartbeatpb.TableSpan{
+			TableID:  JobHistoryID,
+			StartKey: common.ToComparableKey(start),
+			EndKey:   common.ToComparableKey(end),
+		},
 	})
 	return spans
 }
