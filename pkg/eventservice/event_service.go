@@ -26,14 +26,6 @@ type EventService interface {
 	Close(context.Context) error
 }
 
-type logpuller interface {
-	// SubscribeTableSpan subscribes the table span, and returns the latest progress of the table span.
-	// afterUpdate is called when the watermark of the table span is updated.
-	SubscribeTableSpan(span *common.TableSpan, startTs uint64, onSpanUpdate func(watermark uint64)) (uint64, error)
-	// Read return the event of the data range.
-	Read(dataRange ...*common.DataRange) ([][]*common.TxnEvent, error)
-}
-
 type DispatcherInfo interface {
 	// GetID returns the ID of the dispatcher.
 	GetID() string
@@ -108,10 +100,10 @@ func (s *eventService) handleMessage(msg *messaging.TargetMessage) error {
 	return nil
 }
 
-func (s *eventService) registerDispatcher(acceptor DispatcherInfo) {
-	clusterID := acceptor.GetClusterID()
-	startTs := acceptor.GetStartTs()
-	span := acceptor.GetTableSpan()
+func (s *eventService) registerDispatcher(info DispatcherInfo) {
+	clusterID := info.GetClusterID()
+	startTs := info.GetStartTs()
+	span := info.GetTableSpan()
 
 	c, ok := s.brokers[clusterID]
 	if !ok {
@@ -119,35 +111,28 @@ func (s *eventService) registerDispatcher(acceptor DispatcherInfo) {
 		s.brokers[clusterID] = c
 	}
 
-	subscription := &spanSubscription{
-		span: span,
-	}
-	subscription.watermark.Store(uint64(startTs))
-	// add the acceptor to the cluster.
-	ac := &dispatcherStat{
-		info:             acceptor,
-		spanSubscription: subscription,
-		notify:           c.changedCh,
-	}
-	ac.watermark.Store(uint64(startTs))
+	dispatcher := newDispatcherStat(startTs, info, c.changedCh)
 
-	c.dispatchers[acceptor.GetID()] = ac
+	c.dispatchers.mu.Lock()
+	c.dispatchers.m[info.GetID()] = dispatcher
+	c.dispatchers.mu.Unlock()
 
-	// c.logpuller.SubscribeTableSpan(span, startTs, stat.UpdateWatermark)
 	tbspan := tablepb.Span{
 		TableID:  tablepb.TableID(span.TableID),
 		StartKey: span.StartKey,
 		EndKey:   span.EndKey,
 	}
-	id := uuid.MustParse(acceptor.GetID())
+
+	id := uuid.MustParse(info.GetID())
+
 	c.eventStore.RegisterDispatcher(
 		common.DispatcherID(id),
 		tbspan,
-		common.Ts(acceptor.GetStartTs()),
-		ac.onNewEvent,
-		ac.onSubscriptionWatermark,
+		common.Ts(info.GetStartTs()),
+		dispatcher.onNewEvent,
+		dispatcher.onSubscriptionWatermark,
 	)
-	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", acceptor.GetID()), zap.Uint64("tableID", span.TableID), zap.Uint64("startTs", startTs))
+	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID), zap.Uint64("startTs", startTs))
 }
 
 func (s *eventService) deregisterAcceptor(acceptor DispatcherInfo) {
@@ -157,12 +142,7 @@ func (s *eventService) deregisterAcceptor(acceptor DispatcherInfo) {
 		return
 	}
 	acceptorID := acceptor.GetID()
-	_, ok = c.dispatchers[acceptorID]
-	if !ok {
-		return
-	}
-	//TODO: release the resources of the acceptor.
-	delete(c.dispatchers, acceptorID)
+	c.removeDispatcher(acceptorID)
 	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", acceptorID))
 }
 
