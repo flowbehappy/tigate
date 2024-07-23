@@ -16,12 +16,13 @@ package regionlock
 import (
 	"sort"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/kvproto/pkg/metapb"
 )
 
 // CheckRegionsLeftCover checks whether the regions cover the left part of given span
-func CheckRegionsLeftCover(regions []*metapb.Region, span common.TableSpan) bool {
+func CheckRegionsLeftCover(regions []*metapb.Region, span heartbeatpb.TableSpan) bool {
 	subRegions := CutRegionsLeftCoverSpan(regions, span)
 	return len(regions) > 0 && len(subRegions) == len(regions)
 }
@@ -29,7 +30,7 @@ func CheckRegionsLeftCover(regions []*metapb.Region, span common.TableSpan) bool
 // CutRegionsLeftCoverSpan processes a list of regions to remove those that
 // do not cover the specified span or are discontinuous with the previous region.
 // It returns a new slice containing only the continuous regions that cover the span.
-func CutRegionsLeftCoverSpan(regions []*metapb.Region, spanToCover common.TableSpan) []*metapb.Region {
+func CutRegionsLeftCoverSpan(regions []*metapb.Region, spanToCover heartbeatpb.TableSpan) []*metapb.Region {
 	if len(regions) == 0 {
 		return nil
 	}

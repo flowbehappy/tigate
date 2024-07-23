@@ -16,8 +16,8 @@ package logpuller
 import (
 	"sync"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/logpuller/regionlock"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -36,7 +36,7 @@ type regionInfo struct {
 	// For instance, consider region-1 with a span of [a, d).
 	// It contains 3 tables: t1[a, b), t2[b,c), and t3[c,d).
 	// If only table t1 is subscribed to, then the span of interest is [a,b).
-	span   common.TableSpan
+	span   heartbeatpb.TableSpan
 	rpcCtx *tikv.RPCContext
 
 	// The table that the region belongs to.
@@ -52,7 +52,7 @@ func (s regionInfo) isStoped() bool {
 
 func newRegionInfo(
 	verID tikv.RegionVerID,
-	span common.TableSpan,
+	span heartbeatpb.TableSpan,
 	rpcCtx *tikv.RPCContext,
 	subscribedTable *subscribedTable,
 ) regionInfo {
@@ -188,6 +188,6 @@ func (s *regionFeedState) getRegionInfo() regionInfo {
 	return s.region
 }
 
-func (s *regionFeedState) getRegionMeta() (uint64, common.TableSpan, string) {
+func (s *regionFeedState) getRegionMeta() (uint64, heartbeatpb.TableSpan, string) {
 	return s.region.verID.GetID(), s.region.span, s.region.rpcCtx.Addr
 }

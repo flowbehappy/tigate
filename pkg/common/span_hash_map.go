@@ -42,36 +42,36 @@ func (m *SpanHashMap[T]) Len() int {
 }
 
 // Has returns true if the given key is in the map.
-func (m *SpanHashMap[T]) Has(span TableSpan) bool {
+func (m *SpanHashMap[T]) Has(span heartbeatpb.TableSpan) bool {
 	_, ok := m.hashMap[toHashableSpan(span)]
 	return ok
 }
 
 // Get looks for the key item in the map, returning it.
 // It returns (zeroValue, false) if unable to find that item.
-func (m *SpanHashMap[T]) Get(span TableSpan) (T, bool) {
+func (m *SpanHashMap[T]) Get(span heartbeatpb.TableSpan) (T, bool) {
 	item, ok := m.hashMap[toHashableSpan(span)]
 	return item, ok
 }
 
 // GetV looks for the key item in the map, returning it.
 // It returns zeroValue if unable to find that item.
-func (m *SpanHashMap[T]) GetV(span TableSpan) T {
+func (m *SpanHashMap[T]) GetV(span heartbeatpb.TableSpan) T {
 	item := m.hashMap[toHashableSpan(span)]
 	return item
 }
 
 // Delete removes an item whose key equals to the span.
-func (m *SpanHashMap[T]) Delete(span TableSpan) {
+func (m *SpanHashMap[T]) Delete(span heartbeatpb.TableSpan) {
 	delete(m.hashMap, toHashableSpan(span))
 }
 
 // ReplaceOrInsert adds the given item to the map.
-func (m *SpanHashMap[T]) ReplaceOrInsert(span TableSpan, value T) {
+func (m *SpanHashMap[T]) ReplaceOrInsert(span heartbeatpb.TableSpan, value T) {
 	m.hashMap[toHashableSpan(span)] = value
 }
 
-type ItemIterator[T any] func(span TableSpan, value T) bool
+type ItemIterator[T any] func(span heartbeatpb.TableSpan, value T) bool
 
 // Range calls the iterator for every value in the map until iterator returns
 // false.
@@ -85,7 +85,7 @@ func (m *SpanHashMap[T]) Range(iterator ItemIterator[T]) {
 }
 
 // HashTableSpan hashes the given span to a slot offset.
-func HashTableSpan(span TableSpan, slots int) int {
+func HashTableSpan(span heartbeatpb.TableSpan, slots int) int {
 	b := make([]byte, 8+len(span.StartKey))
 	binary.LittleEndian.PutUint64(b[0:8], uint64(span.TableID))
 	copy(b[8:], span.StartKey)
@@ -100,7 +100,7 @@ type hashableSpan struct {
 }
 
 // toHashableSpan converts a Span to a hashable span.
-func toHashableSpan(span TableSpan) hashableSpan {
+func toHashableSpan(span heartbeatpb.TableSpan) hashableSpan {
 	return hashableSpan{
 		TableID:  span.TableID,
 		StartKey: unsafeBytesToString(span.StartKey),
@@ -109,13 +109,11 @@ func toHashableSpan(span TableSpan) hashableSpan {
 }
 
 // toSpan converts to Span.
-func (h hashableSpan) toSpan() TableSpan {
-	return TableSpan{
-		&heartbeatpb.TableSpan{
-			TableID:  h.TableID,
-			StartKey: unsafeStringToBytes(h.StartKey),
-			EndKey:   unsafeStringToBytes(h.EndKey),
-		},
+func (h hashableSpan) toSpan() heartbeatpb.TableSpan {
+	return heartbeatpb.TableSpan{
+		TableID:  h.TableID,
+		StartKey: unsafeStringToBytes(h.StartKey),
+		EndKey:   unsafeStringToBytes(h.EndKey),
 	}
 }
 

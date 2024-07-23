@@ -17,19 +17,16 @@ import (
 	"bytes"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tiflow/cdc/processor/tablepb"
-	"go.uber.org/zap"
 )
 
 // UpperBoundKey represents the maximum value.
 var UpperBoundKey = []byte{255, 255, 255, 255, 255}
 
 // HackTableSpan will set End as UpperBoundKey if End is Nil.
-func HackTableSpan(span TableSpan) TableSpan {
+func HackTableSpan(span heartbeatpb.TableSpan) heartbeatpb.TableSpan {
 	if span.StartKey == nil {
 		span.StartKey = []byte{}
 	}
@@ -52,16 +49,6 @@ func GetTableRange(tableID int64) (startKey, endKey []byte) {
 	start = append(tablePrefix, sep, recordMarker)
 	end = append(tablePrefix, sep, recordMarker+1)
 	return start, end
-}
-
-// KeyInSpan check if k in the span range.
-func KeyInSpan(k tablepb.Key, span TableSpan) bool {
-	if StartCompare(k, span.StartKey) >= 0 &&
-		EndCompare(k, span.EndKey) < 0 {
-		return true
-	}
-
-	return false
 }
 
 // StartCompare compares two start keys.
@@ -105,14 +92,12 @@ func EndCompare(lhs []byte, rhs []byte) int {
 }
 
 // GetIntersectSpan return the intersect part of lhs and rhs span
-func GetIntersectSpan(lhs TableSpan, rhs TableSpan) TableSpan {
+func GetIntersectSpan(lhs heartbeatpb.TableSpan, rhs heartbeatpb.TableSpan) heartbeatpb.TableSpan {
 	if len(lhs.StartKey) != 0 && EndCompare(lhs.StartKey, rhs.EndKey) >= 0 ||
 		len(rhs.StartKey) != 0 && EndCompare(rhs.StartKey, lhs.EndKey) >= 0 {
-		return TableSpan{
-			&heartbeatpb.TableSpan{
-				StartKey: nil,
-				EndKey:   nil,
-			},
+		return heartbeatpb.TableSpan{
+			StartKey: nil,
+			EndKey:   nil,
 		}
 	}
 
@@ -128,42 +113,24 @@ func GetIntersectSpan(lhs TableSpan, rhs TableSpan) TableSpan {
 		end = rhs.EndKey
 	}
 
-	return TableSpan{
-		&heartbeatpb.TableSpan{
-			StartKey: start,
-			EndKey:   end,
-		},
+	return heartbeatpb.TableSpan{
+		StartKey: start,
+		EndKey:   end,
 	}
 }
 
 // IsEmptySpan returns true if the span is empty.
 // TODO: check whether need span.StartKey >= span.EndKey
-func IsEmptySpan(span TableSpan) bool {
+func IsEmptySpan(span heartbeatpb.TableSpan) bool {
 	return len(span.StartKey) == 0 && len(span.EndKey) == 0
-}
-
-// IsSubSpan returns true if the sub span is parents spans
-func IsSubSpan(sub TableSpan, parents ...TableSpan) bool {
-	if bytes.Compare(sub.StartKey, sub.EndKey) >= 0 {
-		log.Panic("the sub span is invalid", zap.Reflect("subSpan", sub))
-	}
-	for _, parent := range parents {
-		if StartCompare(parent.StartKey, sub.StartKey) <= 0 &&
-			EndCompare(sub.EndKey, parent.EndKey) <= 0 {
-			return true
-		}
-	}
-	return false
 }
 
 // ToSpan returns a span, keys are encoded in memcomparable format.
 // See: https://github.com/facebook/mysql-5.6/wiki/MyRocks-record-format
-func ToSpan(startKey, endKey []byte) TableSpan {
-	return TableSpan{
-		&heartbeatpb.TableSpan{
-			StartKey: ToComparableKey(startKey),
-			EndKey:   ToComparableKey(endKey),
-		},
+func ToSpan(startKey, endKey []byte) heartbeatpb.TableSpan {
+	return heartbeatpb.TableSpan{
+		StartKey: ToComparableKey(startKey),
+		EndKey:   ToComparableKey(endKey),
 	}
 }
 

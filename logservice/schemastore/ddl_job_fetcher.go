@@ -84,7 +84,7 @@ func newDDLJobFetcher(
 	ddlSpans := getAllDDLSpan()
 	pullerConfig := &logpuller.LogPullerConfig{
 		WorkerCount:  1,
-		HashSpanFunc: func(common.TableSpan, int) int { return 0 },
+		HashSpanFunc: func(heartbeatpb.TableSpan, int) int { return 0 },
 	}
 	ddlJobFetcher.puller = logpuller.NewLogPullerMultiSpan(client, ddlSpans, startTs, ddlJobFetcher.input, pullerConfig)
 

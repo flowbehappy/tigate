@@ -131,7 +131,7 @@ type resolveLockTask struct {
 // rangeTask represents a task to subscribe a range span of a table.
 // It can be a part of a table or a whole table, it also can be a part of a region.
 type rangeTask struct {
-	span            common.TableSpan
+	span            heartbeatpb.TableSpan
 	subscribedTable *subscribedTable
 }
 
@@ -157,7 +157,7 @@ type subscribedTable struct {
 	startTs        tablepb.Ts
 
 	// The whole span of the table.
-	span common.TableSpan
+	span heartbeatpb.TableSpan
 	// The range lock of the table,
 	// it is used to prevent duplicate requests to the same region range,
 	// and it also used to calculate this table's resolvedTs.
@@ -223,9 +223,9 @@ func (s *SharedClient) AllocSubscriptionID() SubscriptionID {
 // It new a subscribedTable and store it in `s.totalSpans`,
 // and send a rangeTask to `s.rangeTaskCh`.
 // The rangeTask will be handled in `handleRangeTasks` goroutine.
-func (s *SharedClient) Subscribe(subID SubscriptionID, span common.TableSpan, startTs uint64, eventCh chan<- MultiplexingEvent) {
+func (s *SharedClient) Subscribe(subID SubscriptionID, span heartbeatpb.TableSpan, startTs uint64, eventCh chan<- MultiplexingEvent) {
 	if span.TableID == 0 {
-		log.Panic("event feed subscribe with zero common.TableSpan.TableID")
+		log.Panic("event feed subscribe with zero TableID")
 	}
 
 	rt := s.newSubscribedTable(subID, span, startTs, eventCh)
@@ -443,7 +443,7 @@ func (s *SharedClient) handleRangeTasks(ctx context.Context) error {
 // 3. Schedule a region request to subscribe the region.
 func (s *SharedClient) divideSpanAndScheduleRegionRequests(
 	ctx context.Context,
-	span common.TableSpan,
+	span heartbeatpb.TableSpan,
 	subscribedTable *subscribedTable,
 ) error {
 	// Limit the number of regions loaded at a time to make the load more stable.
@@ -488,11 +488,9 @@ func (s *SharedClient) divideSpanAndScheduleRegionRequests(
 		}
 
 		for _, regionMeta := range regionMetas {
-			regionSpan := common.TableSpan{
-				TableSpan: &heartbeatpb.TableSpan{
-					StartKey: regionMeta.StartKey,
-					EndKey:   regionMeta.EndKey,
-				},
+			regionSpan := heartbeatpb.TableSpan{
+				StartKey: regionMeta.StartKey,
+				EndKey:   regionMeta.EndKey,
 			}
 			// NOTE: the End key return by the PD API will be nil to represent the biggest key.
 			// So we need to fix it by calling spanz.HackSpan.
@@ -549,7 +547,7 @@ func (s *SharedClient) scheduleRegionRequest(ctx context.Context, region regionI
 }
 
 func (s *SharedClient) scheduleRangeRequest(
-	ctx context.Context, span common.TableSpan,
+	ctx context.Context, span heartbeatpb.TableSpan,
 	subscribedTable *subscribedTable,
 ) {
 	select {
@@ -729,7 +727,7 @@ func (s *SharedClient) logSlowRegions(ctx context.Context) error {
 }
 
 func (s *SharedClient) newSubscribedTable(
-	subID SubscriptionID, span common.TableSpan, startTs uint64,
+	subID SubscriptionID, span heartbeatpb.TableSpan, startTs uint64,
 	eventCh chan<- MultiplexingEvent,
 ) *subscribedTable {
 	rangeLock := regionlock.NewRangeLock(uint64(subID), span.StartKey, span.EndKey, startTs)

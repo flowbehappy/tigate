@@ -17,6 +17,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -25,7 +26,7 @@ import (
 )
 
 type tableProgress struct {
-	span common.TableSpan
+	span heartbeatpb.TableSpan
 
 	subID SubscriptionID
 
@@ -34,16 +35,16 @@ type tableProgress struct {
 		// removed while consuming events.
 		sync.RWMutex
 		removed bool
-		f       func(context.Context, *common.RawKVEntry, common.TableSpan) error
+		f       func(context.Context, *common.RawKVEntry, heartbeatpb.TableSpan) error
 	}
 }
 
 type LogPuller struct {
 	client  *SharedClient
-	consume func(context.Context, *common.RawKVEntry, common.TableSpan) error
+	consume func(context.Context, *common.RawKVEntry, heartbeatpb.TableSpan) error
 
 	// inputChSelector is used to determine which input channel to use for a given span.
-	inputChSelector func(span common.TableSpan, workerCount int) int
+	inputChSelector func(span heartbeatpb.TableSpan, workerCount int) int
 
 	// inputChs is used to collect events from client.
 	inputChs []chan MultiplexingEvent
@@ -61,12 +62,12 @@ type LogPullerConfig struct {
 	// `WorkerCount` specifies how many workers will be spawned to handle events from kv client.
 	WorkerCount int
 	// `HashSpanFunc` is used to determine which input channel to use for a given span.
-	HashSpanFunc func(common.TableSpan, int) int
+	HashSpanFunc func(heartbeatpb.TableSpan, int) int
 }
 
 func NewLogPuller(
 	client *SharedClient,
-	consume func(context.Context, *common.RawKVEntry, common.TableSpan) error,
+	consume func(context.Context, *common.RawKVEntry, heartbeatpb.TableSpan) error,
 	config *LogPullerConfig,
 ) *LogPuller {
 	puller := &LogPuller{
@@ -105,7 +106,7 @@ func (p *LogPuller) Run(ctx context.Context) (err error) {
 }
 
 func (p *LogPuller) Subscribe(
-	span common.TableSpan,
+	span heartbeatpb.TableSpan,
 	startTs common.Ts,
 ) {
 	p.subscriptions.Lock()
@@ -126,7 +127,7 @@ func (p *LogPuller) Subscribe(
 	progress.consume.f = func(
 		ctx context.Context,
 		raw *common.RawKVEntry,
-		span common.TableSpan,
+		span heartbeatpb.TableSpan,
 	) error {
 		progress.consume.RLock()
 		defer progress.consume.RUnlock()
@@ -143,7 +144,7 @@ func (p *LogPuller) Subscribe(
 	p.client.Subscribe(subID, span, uint64(startTs), p.inputChs[slot])
 }
 
-func (p *LogPuller) Unsubscribe(span common.TableSpan) {
+func (p *LogPuller) Unsubscribe(span heartbeatpb.TableSpan) {
 	p.subscriptions.Lock()
 	defer p.subscriptions.Unlock()
 

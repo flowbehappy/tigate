@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/mounter"
@@ -62,12 +63,12 @@ type EventIterator interface {
 }
 
 type eventWithTableID struct {
-	span common.TableSpan
+	span heartbeatpb.TableSpan
 	raw  *common.RawKVEntry
 }
 
 type tableState struct {
-	span     common.TableSpan
+	span     heartbeatpb.TableSpan
 	observer EventObserver
 	notifier WatermarkNotifier
 
@@ -156,7 +157,7 @@ func NewEventStore(
 		}(i)
 	}
 
-	consume := func(ctx context.Context, raw *common.RawKVEntry, span common.TableSpan) error {
+	consume := func(ctx context.Context, raw *common.RawKVEntry, span heartbeatpb.TableSpan) error {
 		if raw != nil {
 			store.writeEvent(span, raw)
 		}
@@ -208,7 +209,7 @@ type DBBatchEvent struct {
 	batchResolved *common.SpanHashMap[uint64]
 }
 
-func (e *eventStore) getTableStat(span common.TableSpan) *tableState {
+func (e *eventStore) getTableStat(span heartbeatpb.TableSpan) *tableState {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	log.Info("get table stat", zap.String("span", span.String()))
@@ -241,7 +242,7 @@ func (e *eventStore) batchCommitAndUpdateWatermark(ctx context.Context, batchCh 
 
 			// update resolved ts after commit successfully
 			batchResolved := batchEvent.batchResolved
-			batchResolved.Range(func(span common.TableSpan, resolved uint64) bool {
+			batchResolved.Range(func(span heartbeatpb.TableSpan, resolved uint64) bool {
 				tableState := e.getTableStat(span)
 				if tableState == nil {
 					log.Debug("Table is removed, skip updating resolved")
@@ -321,7 +322,7 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 	}
 }
 
-func (e *eventStore) writeEvent(span common.TableSpan, raw *common.RawKVEntry) {
+func (e *eventStore) writeEvent(span heartbeatpb.TableSpan, raw *common.RawKVEntry) {
 	tableState := e.getTableStat(span)
 	if tableState == nil {
 		log.Panic("should not happen")
@@ -333,7 +334,7 @@ func (e *eventStore) writeEvent(span common.TableSpan, raw *common.RawKVEntry) {
 	tableState.ch <- eventWithTableID{span: span, raw: raw}
 }
 
-func (e *eventStore) deleteEvents(span common.TableSpan, startCommitTS uint64, endCommitTS uint64) error {
+func (e *eventStore) deleteEvents(span heartbeatpb.TableSpan, startCommitTS uint64, endCommitTS uint64) error {
 	dbIndex := common.HashTableSpan(span, len(e.dbs))
 	db := e.dbs[dbIndex]
 	start := EncodeTsKey(uint64(span.TableID), startCommitTS)
@@ -342,26 +343,26 @@ func (e *eventStore) deleteEvents(span common.TableSpan, startCommitTS uint64, e
 	return db.DeleteRange(start, end, pebble.NoSync)
 }
 
-func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, span *common.TableSpan, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
+func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableSpan *common.TableSpan, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
+	span := *tableSpan.TableSpan
 	log.Info("register dispatcher",
 		zap.Any("dispatcherID", dispatcherID),
 		zap.String("span", span.String()),
 		zap.Uint64("startTS", uint64(startTS)))
-	newSpan := span.Copy()
 	e.schemaStore.RegisterDispatcher(dispatcherID, common.TableID(span.TableID), startTS)
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.tables.ReplaceOrInsert(*newSpan, dispatcherID)
+	e.tables.ReplaceOrInsert(span, dispatcherID)
 	tableState := &tableState{
-		span:     *newSpan,
+		span:     span,
 		observer: observer,
 		notifier: notifier,
 	}
-	chIndex := common.HashTableSpan(*newSpan, len(e.channels))
+	chIndex := common.HashTableSpan(span, len(e.channels))
 	tableState.ch = e.channels[chIndex]
 	tableState.watermark.Store(uint64(startTS))
 	e.spans[dispatcherID] = tableState
-	e.puller.Subscribe(*newSpan, startTS)
+	e.puller.Subscribe(span, startTS)
 	return nil
 }
 
@@ -398,12 +399,12 @@ func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) erro
 
 func (e *eventStore) GetIterator(dataRange *common.DataRange) (EventIterator, error) {
 	// do some check
-	span := dataRange.Span
-	tableStat := e.getTableStat(*span)
+	span := *dataRange.Span.TableSpan
+	tableStat := e.getTableStat(span)
 	if tableStat == nil || tableStat.watermark.Load() > dataRange.StartTs {
 		log.Panic("should not happen")
 	}
-	dbIndex := common.HashTableSpan(*span, len(e.channels))
+	dbIndex := common.HashTableSpan(span, len(e.channels))
 	db := e.dbs[dbIndex]
 	// TODO: respect key range in span
 	start := EncodeTsKey(uint64(span.TableID), dataRange.StartTs, 0)

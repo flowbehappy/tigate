@@ -17,6 +17,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"golang.org/x/sync/errgroup"
@@ -47,14 +48,14 @@ func NewLogPullerMultiSpan(
 	}
 	spanResolvedTsMap := common.NewSpanHashMap[common.Ts]()
 	for _, span := range spans {
-		spanResolvedTsMap.ReplaceOrInsert(span, 0)
+		spanResolvedTsMap.ReplaceOrInsert(*span.TableSpan, 0)
 	}
 	pullerWrapper := &LogPullerMultiSpan{
 		spanResolvedTsMap: spanResolvedTsMap,
 		resolvedTs:        common.Ts(startTs),
 	}
 
-	consumeWrapper := func(ctx context.Context, entry *common.RawKVEntry, span common.TableSpan) error {
+	consumeWrapper := func(ctx context.Context, entry *common.RawKVEntry, span heartbeatpb.TableSpan) error {
 		if entry == nil {
 			return nil
 		}
@@ -76,7 +77,7 @@ func (p *LogPullerMultiSpan) Run(ctx context.Context) error {
 	defer p.mu.Unlock()
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error { return p.innerPuller.Run(ctx) })
-	p.spanResolvedTsMap.Range(func(span common.TableSpan, ts common.Ts) bool {
+	p.spanResolvedTsMap.Range(func(span heartbeatpb.TableSpan, ts common.Ts) bool {
 		p.innerPuller.Subscribe(span, p.resolvedTs)
 		return true
 	})
@@ -84,7 +85,7 @@ func (p *LogPullerMultiSpan) Run(ctx context.Context) error {
 }
 
 // return whether the global resolved ts of all spans is updated
-func (p *LogPullerMultiSpan) tryUpdateGlobalResolvedTs(entry *common.RawKVEntry, span common.TableSpan) bool {
+func (p *LogPullerMultiSpan) tryUpdateGlobalResolvedTs(entry *common.RawKVEntry, span heartbeatpb.TableSpan) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	// FIXME: use priority queue to maintain resolved ts
@@ -98,7 +99,7 @@ func (p *LogPullerMultiSpan) tryUpdateGlobalResolvedTs(entry *common.RawKVEntry,
 	p.spanResolvedTsMap.ReplaceOrInsert(span, common.Ts(entry.CRTs))
 
 	currentResolvedTs := common.Ts(0)
-	p.spanResolvedTsMap.Range(func(_ common.TableSpan, v common.Ts) bool {
+	p.spanResolvedTsMap.Range(func(_ heartbeatpb.TableSpan, v common.Ts) bool {
 		if currentResolvedTs == 0 || v < currentResolvedTs {
 			currentResolvedTs = v
 		}
