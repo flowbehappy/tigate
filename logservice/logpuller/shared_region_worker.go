@@ -167,7 +167,7 @@ func (w *sharedRegionWorker) handleEventEntry(ctx context.Context, x *cdcpb.Even
 	tableID := state.region.subscribedTable.span.TableID
 	log.Debug("region worker get an Event",
 		zap.Any("subscriptionID", state.region.subscribedTable.subscriptionID),
-		zap.Int64("tableID", tableID),
+		zap.Uint64("tableID", tableID),
 		zap.Int("rows", len(x.Entries.GetEntries())))
 	return handleEventEntry(x, startTs, state, emit, common.TableID(tableID), w.client.logRegionDetails)
 }
@@ -186,7 +186,7 @@ func handleEventEntry(
 		// We can remove the check in future.
 		comparableKey := spanz.ToComparableKey(entry.GetKey())
 		if entry.Type != cdcpb.Event_INITIALIZED &&
-			!spanz.KeyInSpan(comparableKey, regionSpan) {
+			!common.KeyInSpan(comparableKey, regionSpan) {
 			continue
 		}
 		switch entry.Type {

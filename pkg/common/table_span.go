@@ -19,7 +19,6 @@ import (
 	"fmt"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 )
 
 // TableSpan implement the InferiorID interface, it is the replicate unit,
@@ -54,15 +53,6 @@ func (s *TableSpan) Equal(inferior any) bool {
 	return s.TableID == tbl.TableID &&
 		bytes.Equal(s.StartKey, tbl.StartKey) &&
 		bytes.Equal(s.EndKey, tbl.EndKey)
-}
-
-// FIXME: remove it
-func (s *TableSpan) ToOldSpan() *tablepb.Span {
-	return &tablepb.Span{
-		TableID:  tablepb.TableID(s.TableID),
-		StartKey: s.StartKey,
-		EndKey:   s.EndKey,
-	}
 }
 
 type DataRange struct {

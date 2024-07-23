@@ -9,7 +9,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"go.uber.org/zap"
 )
 
@@ -117,17 +116,11 @@ func (s *eventService) registerDispatcher(info DispatcherInfo) {
 	c.dispatchers.m[info.GetID()] = dispatcher
 	c.dispatchers.mu.Unlock()
 
-	tbspan := tablepb.Span{
-		TableID:  tablepb.TableID(span.TableID),
-		StartKey: span.StartKey,
-		EndKey:   span.EndKey,
-	}
-
 	id := uuid.MustParse(info.GetID())
 
 	c.eventStore.RegisterDispatcher(
 		common.DispatcherID(id),
-		tbspan,
+		*span,
 		common.Ts(info.GetStartTs()),
 		dispatcher.onNewEvent,
 		dispatcher.onSubscriptionWatermark,
