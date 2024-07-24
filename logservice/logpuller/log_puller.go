@@ -164,14 +164,14 @@ func (p *LogPuller) Unsubscribe(span heartbeatpb.TableSpan) {
 
 func (p *LogPuller) runEventHandler(ctx context.Context, inputCh <-chan MultiplexingEvent) error {
 	for {
+		log.Info("try to receive event")
 		var e MultiplexingEvent
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case e = <-inputCh:
+			log.Info("receive event")
 		}
-
-		log.Info("receive event")
 
 		progress := p.getProgress(e.SubscriptionID)
 
