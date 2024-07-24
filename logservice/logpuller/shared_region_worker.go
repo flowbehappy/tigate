@@ -323,13 +323,9 @@ func (w *sharedRegionWorker) advanceTableSpan(ctx context.Context, batch resolve
 	table := batch.regions[0].region.subscribedTable
 	now := time.Now().UnixMilli()
 	lastAdvance := table.lastAdvanceTime.Load()
-	log.Info("try advanceTableSpan")
 	if now-lastAdvance > int64(w.client.config.KVClientAdvanceIntervalInMs) && table.lastAdvanceTime.CompareAndSwap(lastAdvance, now) {
 		ts := table.rangeLock.ResolvedTs()
 		if ts > table.startTs {
-			log.Info("do advanceTableSpan",
-				zap.Uint64("ts", ts),
-				zap.Any("subscriptionID", table.subscriptionID))
 			revent := common.RegionFeedEvent{
 				Val: &common.RawKVEntry{
 					OpType: common.OpTypeResolved,
@@ -339,9 +335,6 @@ func (w *sharedRegionWorker) advanceTableSpan(ctx context.Context, batch resolve
 			e := newMultiplexingEvent(revent, table)
 			select {
 			case table.eventCh <- e:
-				log.Info("advanceTableSpan success",
-					zap.Uint64("ts", ts),
-					zap.Any("subscriptionID", table.subscriptionID))
 			case <-ctx.Done():
 			}
 		}

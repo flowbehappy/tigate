@@ -59,15 +59,12 @@ func NewLogPullerMultiSpan(
 		if entry == nil {
 			return nil
 		}
-		log.Info("multi span consume")
 		if entry.IsResolved() {
-			log.Info("multi span consume resolved")
 			if pullerWrapper.tryUpdateGlobalResolvedTs(entry, span) {
 				return consume(ctx, entry)
 			}
 			return nil
 		}
-		log.Info("begin multi span consume")
 		return consume(ctx, entry)
 	}
 
@@ -91,7 +88,6 @@ func (p *LogPullerMultiSpan) Run(ctx context.Context) error {
 func (p *LogPullerMultiSpan) tryUpdateGlobalResolvedTs(entry *common.RawKVEntry, span heartbeatpb.TableSpan) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	log.Info("tryUpdateGlobalResolvedTs")
 	// FIXME: use priority queue to maintain resolved ts
 	ts, ok := p.spanResolvedTsMap.Get(span)
 	if !ok {
