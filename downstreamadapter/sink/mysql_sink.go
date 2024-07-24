@@ -18,6 +18,7 @@ import (
 	"database/sql"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/conflictdetector"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
@@ -134,24 +135,36 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 			events := make([]*common.TxnEvent, 0)
 			rows := 0
 			for {
-			loop:
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case txnEvent := <-worker.GetEventChan():
-						rows += len(txnEvent.Rows)
-						events = append(events, txnEvent)
-						if rows >= maxRows {
-							break loop
-						}
-					default:
-						break loop
+				needFlush := false
+				select {
+				case <-ctx.Done():
+					return
+				case txnEvent := <-worker.GetEventChan():
+					events = append(events, txnEvent)
+					if rows > maxRows {
+						needFlush = true
 					}
-				}
-
-				if rows > 0 {
-					//start := time.Now()
+					if !needFlush {
+						delay := time.NewTimer(10 * time.Millisecond)
+						for !needFlush {
+							select {
+							case txnEvent := <-worker.GetEventChan():
+								events = append(events, txnEvent)
+								if rows > maxRows {
+									needFlush = true
+								}
+							case <-delay.C:
+								needFlush = true
+							}
+						}
+						// Release resources promptly
+						if !delay.Stop() {
+							select {
+							case <-delay.C:
+							default:
+							}
+						}
+					}
 					err := worker.GetMysqlWriter().Flush(events)
 					if err != nil {
 						log.Error("Failed to flush events", zap.Error(err))
@@ -162,9 +175,7 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 					events = events[:0]
 					rows = 0
 				}
-
 			}
-
 		}(ctx, s.conflictDetector.GetOutChByCacheID(int64(i)), db, cfg, 256)
 	}
 }

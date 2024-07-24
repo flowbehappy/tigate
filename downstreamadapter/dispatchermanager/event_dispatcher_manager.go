@@ -222,7 +222,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 	e.dispatcherMap.Set(tableSpan, tableEventDispatcher)
 	e.CollectHeartbeatInfoOnce(tableSpan.TableSpan, heartbeatpb.ComponentState_Working)
 
-	//log.Info("new table event dispatcher created", zap.Any("tableSpan", tableSpan))
+	log.Info("new table event dispatcher created", zap.Any("tableSpan", tableSpan))
 	return tableEventDispatcher
 }
 
