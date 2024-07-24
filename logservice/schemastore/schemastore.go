@@ -103,10 +103,11 @@ func NewSchemaStore(
 	dataStorage, metaTS, databaseMap := newPersistentStorage(root, kvStorage, minRequiredTS)
 
 	s := &schemaStore{
-		storage:           kvStorage,
-		unsortedCache:     newUnSortedDDLCache(),
-		dataStorage:       dataStorage,
-		eventCh:           make(chan interface{}, 1024),
+		storage:       kvStorage,
+		unsortedCache: newUnSortedDDLCache(),
+		dataStorage:   dataStorage,
+		eventCh:       make(chan interface{}, 1024),
+		// TODO: fix the following two fields
 		finishedDDLTS:     0,
 		schemaVersion:     0,
 		databaseMap:       databaseMap,
@@ -198,6 +199,7 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 						zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS))
 					if err := handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap); err != nil {
 						s.mu.Unlock()
+						log.Error("handle ddl job failed", zap.Error(err))
 						return err
 					}
 					s.schemaVersion = event.Job.Version
@@ -421,9 +423,6 @@ func (s *schemaStore) doGC() error {
 }
 
 func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfoStoreMap TableInfoStoreMap) error {
-	if err := fillSchemaName(job, databaseMap); err != nil {
-		return err
-	}
 
 	switch job.Type {
 	case model.ActionCreateSchema:
@@ -444,6 +443,9 @@ func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfo
 		model.ActionCreateTable,
 		model.ActionCreateView,
 		model.ActionRecoverTable:
+		if err := fillSchemaName(job, databaseMap); err != nil {
+			return err
+		}
 		// no dispatcher should register on these kinds of tables?
 		// TODO: add a cache for these kinds of newly created tables because they may soon be registered?
 		if _, ok := tableInfoStoreMap[common.TableID(job.TableID)]; ok {
@@ -451,6 +453,9 @@ func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfo
 		}
 		return nil
 	default:
+		if err := fillSchemaName(job, databaseMap); err != nil {
+			return err
+		}
 		tableID := common.TableID(job.TableID)
 		store, ok := tableInfoStoreMap[tableID]
 		if !ok {
