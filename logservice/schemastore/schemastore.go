@@ -184,12 +184,12 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 				}
 				s.mu.Lock()
 				for _, event := range resolvedEvents {
-					if event.Job.Version <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTS {
+					if event.Job.BinlogInfo.SchemaVersion <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTS {
 						log.Info("skip already applied ddl job",
 							zap.String("job", event.Job.Query),
-							zap.Int64("jobSchemaVersion", event.Job.Version),
+							zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
 							zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
-							zap.Any("schemaVersion", event.Job.BinlogInfo.SchemaVersion),
+							zap.Any("schemaVersion", s.schemaVersion),
 							zap.Uint64("finishedDDLTS", s.finishedDDLTS))
 						continue
 					}
