@@ -167,7 +167,6 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 				}
 			case common.Ts:
 				// TODO: check resolved ts is monotonically increasing
-				s.maxResolvedTS.Store(uint64(v))
 				resolvedEvents := s.unsortedCache.fetchSortedDDLEventBeforeTS(v)
 				if len(resolvedEvents) == 0 {
 					continue
@@ -206,6 +205,7 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 					s.finishedDDLTS = event.Job.BinlogInfo.FinishedTS
 				}
 				s.mu.Unlock()
+				s.maxResolvedTS.Store(uint64(v))
 			default:
 				log.Fatal("unknown event type")
 			}
