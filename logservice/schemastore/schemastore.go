@@ -189,20 +189,20 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 							zap.String("job", event.Job.Query),
 							zap.Int64("jobSchemaVersion", event.Job.Version),
 							zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
-							zap.Any("schemaVersion", s.schemaVersion),
+							zap.Any("schemaVersion", event.Job.BinlogInfo.SchemaVersion),
 							zap.Uint64("finishedDDLTS", s.finishedDDLTS))
 						continue
 					}
 					log.Info("apply ddl job",
 						zap.String("job", event.Job.Query),
-						zap.Int64("jobSchemaVersion", event.Job.Version),
+						zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
 						zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS))
 					if err := handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap); err != nil {
 						s.mu.Unlock()
 						log.Error("handle ddl job failed", zap.Error(err))
 						return err
 					}
-					s.schemaVersion = event.Job.Version
+					s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
 					s.finishedDDLTS = event.Job.BinlogInfo.FinishedTS
 				}
 				s.mu.Unlock()
