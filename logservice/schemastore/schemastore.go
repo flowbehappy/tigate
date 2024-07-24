@@ -183,6 +183,9 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 				if len(resolvedEvents) == 0 {
 					continue
 				}
+				log.Info("schema store resolved ts",
+					zap.Any("resolvedTs", v),
+					zap.Any("resolvedEventsLen", len(resolvedEvents)))
 				// TODO: whether the events is ordered by finishedDDLTS and schemaVersion
 				newFinishedDDLTS := resolvedEvents[len(resolvedEvents)-1].Job.BinlogInfo.FinishedTS
 				newSchemaVersion := resolvedEvents[len(resolvedEvents)-1].Job.Version
