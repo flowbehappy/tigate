@@ -296,7 +296,7 @@ func (s *Supervisor) HandleScheduleTasks(
 	for idx, task := range tasks {
 		// Check if accepting one more task exceeds maxTaskConcurrency.
 		if s.RunningTasks.Len() >= s.maxTaskConcurrency {
-			log.Panic("Drop tasks since there are too many running task",
+			log.Warn("Drop tasks since there are too many running task",
 				zap.String("id", s.ID.String()),
 				zap.Int("maxTaskConcurrency", s.maxTaskConcurrency),
 				zap.Int("runningTaskCount", s.RunningTasks.Len()),
