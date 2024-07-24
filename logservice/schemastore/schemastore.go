@@ -153,7 +153,7 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 		case data := <-s.eventCh:
 			switch v := data.(type) {
 			case DDLEvent:
-				// TODO: fix
+				// TODO: fix a better way to filter system tables
 				if v.Job.SchemaID == 1 {
 					continue
 				}
@@ -413,7 +413,7 @@ func (s *schemaStore) writeDDLEvent(ddlEvent DDLEvent) error {
 }
 
 func (s *schemaStore) advanceResolvedTs(resolvedTs common.Ts) error {
-	// log.Info("advance resolved ts", zap.Any("resolvedTS", resolvedTs))
+	log.Info("advance resolved ts", zap.Any("resolvedTS", resolvedTs))
 	s.eventCh <- resolvedTs
 	return nil
 }
