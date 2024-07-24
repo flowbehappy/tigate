@@ -14,8 +14,12 @@
 package scheduler
 
 import (
+	"time"
+
 	"github.com/flowbehappy/tigate/utils"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"go.uber.org/zap"
 )
 
 // Scheduler schedules check all untracked inferiors and generate ScheduleTask
@@ -29,12 +33,26 @@ type Scheduler interface {
 }
 
 // Schedule generates schedule tasks based on the inputs.
-func (c *Supervisor) Schedule(
+func (s *Supervisor) Schedule(
 	allInferiors utils.Map[InferiorID, Inferior],
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
 	stateMachines utils.Map[InferiorID, *StateMachine],
 ) []*ScheduleTask {
-	for _, sched := range c.schedulers {
+	if allInferiors.Len() == stateMachines.Len() && time.Since(s.lastScheduleTime) < 60*time.Second {
+		return nil
+	}
+	if s.RunningTasks.Len() >= s.maxTaskConcurrency {
+		log.Warn("Skip scheduling since there are too many running task",
+			zap.String("id", s.ID.String()),
+			zap.Int("totalInferiors", allInferiors.Len()),
+			zap.Int("totalStateMachines", stateMachines.Len()),
+			zap.Int("maxTaskConcurrency", s.maxTaskConcurrency),
+			zap.Int("runningTasks", s.RunningTasks.Len()),
+		)
+		return nil
+	}
+	s.lastScheduleTime = time.Now()
+	for _, sched := range s.schedulers {
 		tasks := sched.Schedule(allInferiors, aliveCaptures, stateMachines)
 		if len(tasks) != 0 {
 			return tasks
@@ -43,6 +61,6 @@ func (c *Supervisor) Schedule(
 	return nil
 }
 
-func (c *Supervisor) Name() string {
+func (s *Supervisor) Name() string {
 	return "combine-scheduler"
 }

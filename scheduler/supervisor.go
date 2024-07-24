@@ -36,9 +36,10 @@ const (
 
 type Supervisor struct {
 	StateMachines utils.Map[InferiorID, *StateMachine]
-	RunningTasks  utils.Map[InferiorID, *ScheduleTask]
 
+	RunningTasks       utils.Map[InferiorID, *ScheduleTask]
 	maxTaskConcurrency int
+	lastScheduleTime   time.Time
 	schedulers         []Scheduler
 
 	ID          InferiorID
@@ -57,15 +58,12 @@ type CaptureStatus struct {
 	state             CaptureState
 	capture           *model.CaptureInfo
 	lastBootstrapTime time.Time
-
-	CheckpointTs uint64
 }
 
 func NewCaptureStatus(capture *model.CaptureInfo) *CaptureStatus {
 	return &CaptureStatus{
-		state:        CaptureStateUninitialized,
-		capture:      capture,
-		CheckpointTs: 0,
+		state:   CaptureStateUninitialized,
+		capture: capture,
 	}
 }
 
@@ -295,11 +293,14 @@ func (s *Supervisor) HandleScheduleTasks(
 	}
 
 	sentMsgs := make([]rpc.Message, 0)
-	for _, task := range tasks {
+	for idx, task := range tasks {
 		// Check if accepting one more task exceeds maxTaskConcurrency.
-		if s.RunningTasks.Len() == s.maxTaskConcurrency {
-			log.Debug("too many running task",
-				zap.String("id", s.ID.String()))
+		if s.RunningTasks.Len() >= s.maxTaskConcurrency {
+			log.Panic("Drop tasks since there are too many running task",
+				zap.String("id", s.ID.String()),
+				zap.Int("maxTaskConcurrency", s.maxTaskConcurrency),
+				zap.Int("runningTaskCount", s.RunningTasks.Len()),
+				zap.Int("pendingTaskCount", len(tasks)-idx))
 			break
 		}
 

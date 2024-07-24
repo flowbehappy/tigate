@@ -16,6 +16,7 @@ package maintainer
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -51,7 +52,8 @@ type Maintainer struct {
 	id     model.ChangeFeedID
 	config *model.ChangeFeedInfo
 
-	checkpointTs *atomic.Uint64
+	checkpointTs          *atomic.Uint64
+	checkpointTsByCapture map[model.CaptureID]uint64
 
 	state      heartbeatpb.ComponentState
 	supervisor *scheduler.Supervisor
@@ -96,23 +98,24 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	pdEndpoints []string,
 ) *Maintainer {
 	m := &Maintainer{
-		id:              cfID,
-		state:           heartbeatpb.ComponentState_Prepared,
-		removed:         atomic.NewBool(false),
-		taskCh:          make(chan Task, 1024),
-		nodeManager:     appctx.GetService[*watcher.NodeManager](watcher.NodeManagerName),
-		statusChanged:   atomic.NewBool(true),
-		isSecondary:     atomic.NewBool(isSecondary),
-		removing:        atomic.NewBool(false),
-		cascadeRemoving: atomic.NewBool(false),
-		config:          cfg,
-		checkpointTs:    atomic.NewUint64(checkpointTs),
-		pdEndpoints:     pdEndpoints,
-		tableSpans:      utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior](),
-		msgQueue:        NewMessageQueue(1024),
-		msgBuf:          make([]*messaging.TargetMessage, 1024),
-		runningErrors:   map[messaging.ServerId]*heartbeatpb.RunningError{},
-		runningWarnings: map[messaging.ServerId]*heartbeatpb.RunningError{},
+		id:                    cfID,
+		state:                 heartbeatpb.ComponentState_Prepared,
+		removed:               atomic.NewBool(false),
+		taskCh:                make(chan Task, 1024),
+		nodeManager:           appctx.GetService[*watcher.NodeManager](watcher.NodeManagerName),
+		statusChanged:         atomic.NewBool(true),
+		isSecondary:           atomic.NewBool(isSecondary),
+		removing:              atomic.NewBool(false),
+		cascadeRemoving:       atomic.NewBool(false),
+		config:                cfg,
+		checkpointTs:          atomic.NewUint64(checkpointTs),
+		checkpointTsByCapture: make(map[model.CaptureID]uint64),
+		pdEndpoints:           pdEndpoints,
+		tableSpans:            utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior](),
+		msgQueue:              NewMessageQueue(1024),
+		msgBuf:                make([]*messaging.TargetMessage, 1024),
+		runningErrors:         map[messaging.ServerId]*heartbeatpb.RunningError{},
+		runningWarnings:       map[messaging.ServerId]*heartbeatpb.RunningError{},
 	}
 	if !isSecondary {
 		m.state = heartbeatpb.ComponentState_Working
@@ -180,6 +183,9 @@ func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time
 	}
 	m.sendMessages(msgs)
 
+	// calc checkpointTs before generate new tasks
+	m.calCheckpointTs()
+
 	// resend dispatcher message
 	m.resendSchedulerMessage()
 
@@ -189,7 +195,6 @@ func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time
 		log.Warn("handle capture failed", zap.Error(err))
 		return
 	}
-	//todo: calculate checkpoint ts
 	m.printStatus()
 	return
 }
@@ -227,17 +232,26 @@ func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
 }
 
 func (m *Maintainer) calCheckpointTs() {
-	if time.Since(m.lastCheckpointTsTime) > time.Second {
-		checkPointTs := m.checkpointTs.Load()
-		m.tableSpans.Ascend(func(key scheduler.InferiorID, value scheduler.Inferior) bool {
-			tblSpan := value.(*ReplicaSet)
-			if checkPointTs < value.(*ReplicaSet).checkpointTs {
-				checkPointTs = tblSpan.checkpointTs
-			}
-			return true
-		})
-		m.checkpointTs.Store(checkPointTs)
-		m.lastCheckpointTsTime = time.Now()
+	if m.tableSpans.Len() != m.supervisor.GetInferiors().Len() || time.Since(m.lastCheckpointTsTime) < 2*time.Second {
+		return
+	}
+	m.lastCheckpointTsTime = time.Now()
+
+	allCaptures := m.supervisor.GetAllCaptures()
+	var checkpointTs uint64 = math.MaxUint64
+	for c := range allCaptures {
+		if _, ok := m.checkpointTsByCapture[c]; !ok {
+			log.Debug("checkpointTs can not be advanced, since missing capture heartbeat",
+				zap.String("capture", c))
+			return
+		}
+		if m.checkpointTsByCapture[c] < checkpointTs {
+			checkpointTs = m.checkpointTsByCapture[c]
+		}
+	}
+
+	if checkpointTs != math.MaxUint64 {
+		m.checkpointTs.Store(checkpointTs)
 	}
 }
 
@@ -297,6 +311,8 @@ func (m *Maintainer) initChangefeed() error {
 }
 
 func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
+	m.checkpointTsByCapture[model.CaptureID(msg.From)] = msg.Message.(*heartbeatpb.HeartBeatRequest).CheckpointTs
+
 	req := msg.Message.(*heartbeatpb.HeartBeatRequest)
 	var status []scheduler.InferiorStatus
 	for _, info := range req.Statuses {
