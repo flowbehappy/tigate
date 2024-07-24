@@ -339,6 +339,9 @@ func (w *sharedRegionWorker) advanceTableSpan(ctx context.Context, batch resolve
 			e := newMultiplexingEvent(revent, table)
 			select {
 			case table.eventCh <- e:
+				log.Info("advanceTableSpan success",
+					zap.Uint64("ts", ts),
+					zap.Any("subscriptionID", table.subscriptionID))
 			case <-ctx.Done():
 			}
 		}

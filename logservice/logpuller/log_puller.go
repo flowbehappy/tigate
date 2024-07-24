@@ -171,6 +171,8 @@ func (p *LogPuller) runEventHandler(ctx context.Context, inputCh <-chan Multiple
 		case e = <-inputCh:
 		}
 
+		log.Info("receive event")
+
 		progress := p.getProgress(e.SubscriptionID)
 
 		// There is a chance that some stale events are received after
