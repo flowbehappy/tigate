@@ -63,7 +63,7 @@ func (b *BasicScheduler) Schedule(
 	// Build add inferior tasks.
 	if len(newInferiors) > 0 {
 		captureIDs := make([]model.CaptureID, 0, len(aliveCaptures))
-		for captureID, _ := range aliveCaptures {
+		for captureID := range aliveCaptures {
 			captureIDs = append(captureIDs, captureID)
 		}
 
