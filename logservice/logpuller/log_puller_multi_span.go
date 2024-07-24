@@ -88,6 +88,7 @@ func (p *LogPullerMultiSpan) Run(ctx context.Context) error {
 func (p *LogPullerMultiSpan) tryUpdateGlobalResolvedTs(entry *common.RawKVEntry, span heartbeatpb.TableSpan) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	log.Info("tryUpdateGlobalResolvedTs")
 	// FIXME: use priority queue to maintain resolved ts
 	ts, ok := p.spanResolvedTsMap.Get(span)
 	if !ok {
