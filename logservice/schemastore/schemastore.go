@@ -153,6 +153,10 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 		case data := <-s.eventCh:
 			switch v := data.(type) {
 			case DDLEvent:
+				// TODO: fix
+				if v.Job.SchemaID == 1 {
+					continue
+				}
 				log.Info("write ddl event",
 					zap.String("schema", v.Job.SchemaName),
 					zap.String("table", v.Job.TableName),
