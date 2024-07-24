@@ -113,6 +113,9 @@ func NewSchemaStore(
 		tableInfoStoreMap: make(TableInfoStoreMap),
 		dispatchersMap:    make(DispatcherInfoMap),
 	}
+	log.Info("new schema store",
+		zap.Uint64("finishedDDLTS", s.finishedDDLTS),
+		zap.Int64("schemaVersion", s.schemaVersion))
 	s.ddlJobFetcher = newDDLJobFetcher(
 		pdCli,
 		regionCache,
@@ -164,7 +167,6 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 			case common.Ts:
 				// TODO: check resolved ts is monotonically increasing
 				s.maxResolvedTS.Store(uint64(v))
-				log.Info("update resolved ts", zap.Any("resolvedTs", v))
 				resolvedEvents := s.unsortedCache.fetchSortedDDLEventBeforeTS(v)
 				if len(resolvedEvents) == 0 {
 					continue
@@ -183,11 +185,17 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 				for _, event := range resolvedEvents {
 					if event.Job.Version <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTS {
 						log.Info("skip already applied ddl job",
-							zap.Any("job", event.Job.Query),
+							zap.String("job", event.Job.Query),
+							zap.Int64("jobSchemaVersion", event.Job.Version),
+							zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
 							zap.Any("schemaVersion", s.schemaVersion),
 							zap.Uint64("finishedDDLTS", s.finishedDDLTS))
 						continue
 					}
+					log.Info("apply ddl job",
+						zap.String("job", event.Job.Query),
+						zap.Int64("jobSchemaVersion", event.Job.Version),
+						zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS))
 					if err := handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap); err != nil {
 						s.mu.Unlock()
 						return err
