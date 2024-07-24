@@ -165,7 +165,12 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 				// if s.shouldFilterDDL(v.Job) {
 				// 	continue
 				// }
-				log.Info("write ddl event", zap.Any("ddlEvent", v))
+				log.Info("write ddl event",
+					zap.String("schema", v.Job.SchemaName),
+					zap.String("table", v.Job.TableName),
+					zap.Uint64("startTs", v.Job.StartTS),
+					zap.Uint64("finishedTs", v.Job.BinlogInfo.FinishedTS),
+					zap.String("query", v.Job.Query))
 				s.unsortedCache.addDDLEvent(v)
 				// TODO: batch ddl event
 				err := s.dataStorage.writeDDLEvent(v)
