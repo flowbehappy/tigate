@@ -165,6 +165,7 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 				if s.shouldFilterDDL(v.Job) {
 					continue
 				}
+				log.Info("write ddl event", zap.Any("ddlEvent", v))
 				s.unsortedCache.addDDLEvent(v)
 				// TODO: batch ddl event
 				err := s.dataStorage.writeDDLEvent(v)
