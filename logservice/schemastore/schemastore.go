@@ -414,7 +414,7 @@ func (s *schemaStore) writeDDLEvent(ddlEvent DDLEvent) error {
 }
 
 func (s *schemaStore) advanceResolvedTs(resolvedTs common.Ts) error {
-	log.Info("advance resolved ts", zap.Any("resolvedTS", resolvedTs))
+	// log.Info("advance resolved ts", zap.Any("resolvedTS", resolvedTs))
 	s.eventCh <- resolvedTs
 	return nil
 }
