@@ -448,8 +448,12 @@ func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfo
 		}
 		// no dispatcher should register on these kinds of tables?
 		// TODO: add a cache for these kinds of newly created tables because they may soon be registered?
-		if _, ok := tableInfoStoreMap[common.TableID(job.TableID)]; ok {
-			log.Panic("should not happened")
+		if store, ok := tableInfoStoreMap[common.TableID(job.TableID)]; ok {
+			// it is possible that it is already registered if the following happens
+			// 1. event send to dispatcher manager
+			// 2. dispatcher register
+			// 3. begin apply ddl to schema store
+			store.applyDDL(job)
 		}
 		return nil
 	default:
