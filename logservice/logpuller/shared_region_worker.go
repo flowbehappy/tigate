@@ -308,7 +308,7 @@ func (w *sharedRegionWorker) advanceTableSpan(ctx context.Context, batch resolve
 		regionID := state.getRegionID()
 		lastResolvedTs := state.getLastResolvedTs()
 		if batch.ts < lastResolvedTs {
-			log.Debug("The resolvedTs is fallen back in kvclient",
+			log.Info("The resolvedTs is fallen back in kvclient",
 				zap.Uint64("regionID", regionID),
 				zap.Uint64("resolvedTs", batch.ts),
 				zap.Uint64("lastResolvedTs", lastResolvedTs))

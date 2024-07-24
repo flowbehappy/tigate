@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -63,8 +65,10 @@ type schemaStore struct {
 	// TODO: Refine the lock usage; it's prone to deadlock
 	mu sync.RWMutex
 
+	maxResolvedTS atomic.Uint64
+
 	// max finishedTS of all applied ddl events
-	finishedDDLTS common.Ts
+	finishedDDLTS uint64
 	// max schemaVersion of all applied ddl events
 	schemaVersion int64
 
@@ -99,16 +103,20 @@ func NewSchemaStore(
 	dataStorage, metaTS, databaseMap := newPersistentStorage(root, kvStorage, minRequiredTS)
 
 	s := &schemaStore{
-		storage:           kvStorage,
-		unsortedCache:     newUnSortedDDLCache(),
-		dataStorage:       dataStorage,
-		eventCh:           make(chan interface{}, 1024),
-		finishedDDLTS:     metaTS.finishedDDLTS,
-		schemaVersion:     int64(metaTS.schemaVersion),
+		storage:       kvStorage,
+		unsortedCache: newUnSortedDDLCache(),
+		dataStorage:   dataStorage,
+		eventCh:       make(chan interface{}, 1024),
+		// TODO: fix the following two fields
+		finishedDDLTS:     0,
+		schemaVersion:     0,
 		databaseMap:       databaseMap,
 		tableInfoStoreMap: make(TableInfoStoreMap),
 		dispatchersMap:    make(DispatcherInfoMap),
 	}
+	log.Info("new schema store",
+		zap.Uint64("finishedDDLTS", s.finishedDDLTS),
+		zap.Int64("schemaVersion", s.schemaVersion))
 	s.ddlJobFetcher = newDDLJobFetcher(
 		pdCli,
 		regionCache,
@@ -145,6 +153,16 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 		case data := <-s.eventCh:
 			switch v := data.(type) {
 			case DDLEvent:
+				// TODO: fix a better way to filter system tables
+				if v.Job.SchemaID == 1 {
+					continue
+				}
+				log.Info("write ddl event",
+					zap.String("schema", v.Job.SchemaName),
+					zap.String("table", v.Job.TableName),
+					zap.Uint64("startTs", v.Job.StartTS),
+					zap.Uint64("finishedTs", v.Job.BinlogInfo.FinishedTS),
+					zap.String("query", v.Job.Query))
 				s.unsortedCache.addDDLEvent(v)
 				// TODO: batch ddl event
 				err := s.dataStorage.writeDDLEvent(v)
@@ -155,8 +173,12 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 				// TODO: check resolved ts is monotonically increasing
 				resolvedEvents := s.unsortedCache.fetchSortedDDLEventBeforeTS(v)
 				if len(resolvedEvents) == 0 {
+					s.maxResolvedTS.Store(uint64(v))
 					continue
 				}
+				log.Info("schema store resolved ts",
+					zap.Any("resolvedTs", v),
+					zap.Any("resolvedEventsLen", len(resolvedEvents)))
 				// TODO: whether the events is ordered by finishedDDLTS and schemaVersion
 				newFinishedDDLTS := resolvedEvents[len(resolvedEvents)-1].Job.BinlogInfo.FinishedTS
 				newSchemaVersion := resolvedEvents[len(resolvedEvents)-1].Job.Version
@@ -166,21 +188,29 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 				}
 				s.mu.Lock()
 				for _, event := range resolvedEvents {
-					if event.Job.Version <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= uint64(s.finishedDDLTS) {
-						log.Warn("skip already applied ddl job",
-							zap.Any("job", event.Job),
+					if event.Job.BinlogInfo.SchemaVersion <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTS {
+						log.Info("skip already applied ddl job",
+							zap.String("job", event.Job.Query),
+							zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+							zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
 							zap.Any("schemaVersion", s.schemaVersion),
-							zap.Any("finishedDDLTS", s.finishedDDLTS))
+							zap.Uint64("finishedDDLTS", s.finishedDDLTS))
 						continue
 					}
+					log.Info("apply ddl job",
+						zap.String("job", event.Job.Query),
+						zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+						zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS))
 					if err := handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap); err != nil {
 						s.mu.Unlock()
+						log.Error("handle ddl job failed", zap.Error(err))
 						return err
 					}
-					s.schemaVersion = event.Job.Version
-					s.finishedDDLTS = common.Ts(event.Job.BinlogInfo.FinishedTS)
+					s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
+					s.finishedDDLTS = event.Job.BinlogInfo.FinishedTS
 				}
 				s.mu.Unlock()
+				s.maxResolvedTS.Store(uint64(v))
 			default:
 				log.Fatal("unknown event type")
 			}
@@ -261,7 +291,7 @@ func (s *schemaStore) RegisterDispatcher(
 		store.registerDispatcher(dispatcherID, startTS)
 		endTS := s.finishedDDLTS
 		s.mu.Unlock()
-		err := s.dataStorage.buildVersionedTableInfoStore(store, startTS, endTS, getSchemaName)
+		err := s.dataStorage.buildVersionedTableInfoStore(store, startTS, common.Ts(endTS), getSchemaName)
 		if err != nil {
 			// TODO: unregister dispatcher, make sure other wait go routines exit successfully
 			return err
@@ -345,15 +375,29 @@ func (s *schemaStore) UnregisterDispatcher(dispatcherID common.DispatcherID) err
 func (s *schemaStore) GetMaxFinishedDDLTS() common.Ts {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.finishedDDLTS
+	return common.Ts(s.finishedDDLTS)
+}
+
+// TODO: fix the sleep
+func (s *schemaStore) waitResolvedTs(ts common.Ts) {
+	for {
+		if s.maxResolvedTS.Load() >= uint64(ts) {
+			return
+		}
+		time.Sleep(time.Millisecond * 100)
+		log.Info("wait resolved ts",
+			zap.Any("ts", ts),
+			zap.Uint64("maxResolvedTS", s.maxResolvedTS.Load()))
+	}
 }
 
 func (s *schemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error) {
+	s.waitResolvedTs(ts)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	store, ok := s.tableInfoStoreMap[tableID]
 	if !ok {
-		return nil, errors.New(fmt.Sprintf("table %d not found", tableID))
+		return nil, fmt.Errorf(fmt.Sprintf("table %d not found", tableID))
 	}
 	store.waitTableInfoInitialized()
 	return store.getTableInfo(ts)
@@ -384,9 +428,6 @@ func (s *schemaStore) doGC() error {
 }
 
 func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfoStoreMap TableInfoStoreMap) error {
-	if err := fillSchemaName(job, databaseMap); err != nil {
-		return err
-	}
 
 	switch job.Type {
 	case model.ActionCreateSchema:
@@ -407,13 +448,23 @@ func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfo
 		model.ActionCreateTable,
 		model.ActionCreateView,
 		model.ActionRecoverTable:
+		if err := fillSchemaName(job, databaseMap); err != nil {
+			return err
+		}
 		// no dispatcher should register on these kinds of tables?
 		// TODO: add a cache for these kinds of newly created tables because they may soon be registered?
-		if _, ok := tableInfoStoreMap[common.TableID(job.TableID)]; ok {
-			log.Panic("should not happened")
+		if store, ok := tableInfoStoreMap[common.TableID(job.TableID)]; ok {
+			// it is possible that it is already registered if the following happens
+			// 1. event send to dispatcher manager
+			// 2. dispatcher register
+			// 3. begin apply ddl to schema store
+			store.applyDDL(job)
 		}
 		return nil
 	default:
+		if err := fillSchemaName(job, databaseMap); err != nil {
+			return err
+		}
 		tableID := common.TableID(job.TableID)
 		store, ok := tableInfoStoreMap[tableID]
 		if !ok {
@@ -429,6 +480,7 @@ func fillSchemaName(job *model.Job, databaseMap DatabaseInfoMap) error {
 	schemaID := common.SchemaID(job.SchemaID)
 	databaseInfo, ok := databaseMap[schemaID]
 	if !ok {
+		log.Error("database not found", zap.Any("schemaID", schemaID))
 		return errors.New("database not found")
 	}
 	if databaseInfo.CreateVersion > common.Ts(job.BinlogInfo.FinishedTS) {
