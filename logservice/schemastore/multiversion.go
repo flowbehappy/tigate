@@ -216,6 +216,16 @@ func (v *versionedTableInfoStore) doApplyDDL(job *model.Job) {
 	if len(v.infos) != 0 && common.Ts(job.BinlogInfo.FinishedTS) <= v.infos[len(v.infos)-1].version {
 		log.Panic("ddl job finished ts should be monotonically increasing")
 	}
+	if len(v.infos) > 0 {
+		if common.Ts(job.BinlogInfo.FinishedTS) <= v.infos[len(v.infos)-1].version {
+			log.Info("ignore job",
+				zap.Int64("tableID", int64(v.tableID)),
+				zap.String("query", job.Query),
+				zap.Uint64("finishedTS", job.BinlogInfo.FinishedTS),
+				zap.Any("infos", v.infos))
+			return
+		}
+	}
 
 	switch job.Type {
 	case model.ActionCreateTable:
