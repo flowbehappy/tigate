@@ -61,6 +61,7 @@ func NewLogPullerMultiSpan(
 		}
 		log.Info("multi span consume")
 		if entry.IsResolved() {
+			log.Info("multi span consume resolved")
 			if pullerWrapper.tryUpdateGlobalResolvedTs(entry, span) {
 				return consume(ctx, entry)
 			}
@@ -76,13 +77,13 @@ func NewLogPullerMultiSpan(
 
 func (p *LogPullerMultiSpan) Run(ctx context.Context) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error { return p.innerPuller.Run(ctx) })
 	p.spanResolvedTsMap.Range(func(span heartbeatpb.TableSpan, ts common.Ts) bool {
 		p.innerPuller.Subscribe(span, p.resolvedTs)
 		return true
 	})
+	p.mu.Unlock()
 	return eg.Wait()
 }
 
