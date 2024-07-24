@@ -136,9 +136,6 @@ func (w *sharedRegionWorker) processEvent(ctx context.Context, event statefulEve
 				return
 			}
 		case *cdcpb.Event_ResolvedTs:
-			log.Info("region worker get a resolvedTs",
-				zap.Uint64("regionID", state.getRegionID()),
-				zap.Uint64("resolvedTs", x.ResolvedTs))
 			w.handleResolvedTs(ctx, resolvedTsBatch{
 				ts:      x.ResolvedTs,
 				regions: []*regionFeedState{state},
