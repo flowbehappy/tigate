@@ -311,7 +311,7 @@ func (w *sharedRegionWorker) advanceTableSpan(ctx context.Context, batch resolve
 		regionID := state.getRegionID()
 		lastResolvedTs := state.getLastResolvedTs()
 		if batch.ts < lastResolvedTs {
-			log.Debug("The resolvedTs is fallen back in kvclient",
+			log.Info("The resolvedTs is fallen back in kvclient",
 				zap.Uint64("regionID", regionID),
 				zap.Uint64("resolvedTs", batch.ts),
 				zap.Uint64("lastResolvedTs", lastResolvedTs))
@@ -323,9 +323,11 @@ func (w *sharedRegionWorker) advanceTableSpan(ctx context.Context, batch resolve
 	table := batch.regions[0].region.subscribedTable
 	now := time.Now().UnixMilli()
 	lastAdvance := table.lastAdvanceTime.Load()
+	log.Info("try advanceTableSpan")
 	if now-lastAdvance > int64(w.client.config.KVClientAdvanceIntervalInMs) && table.lastAdvanceTime.CompareAndSwap(lastAdvance, now) {
 		ts := table.rangeLock.ResolvedTs()
 		if ts > table.startTs {
+			log.Info("do advanceTableSpan", zap.Uint64("ts", ts))
 			revent := common.RegionFeedEvent{
 				Val: &common.RawKVEntry{
 					OpType: common.OpTypeResolved,
