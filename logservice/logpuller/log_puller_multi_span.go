@@ -66,9 +66,12 @@ func NewLogPullerMultiSpan(
 			}
 			return nil
 		}
-		return consume(ctx, entry)
+		err := consume(ctx, entry)
+		if err != nil {
+			log.Error("consume error", zap.Error(err))
+		}
+		return err
 	}
-	log.Info("new log puller 1", zap.Any("config", config.WorkerCount))
 
 	pullerWrapper.innerPuller = NewLogPuller(client, consumeWrapper, config)
 	return pullerWrapper

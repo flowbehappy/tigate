@@ -70,7 +70,6 @@ func NewLogPuller(
 	consume func(context.Context, *common.RawKVEntry, heartbeatpb.TableSpan) error,
 	config *LogPullerConfig,
 ) *LogPuller {
-	log.Info("new log puller 2", zap.Any("config", config.WorkerCount))
 	puller := &LogPuller{
 		client:          client,
 		consume:         consume,
