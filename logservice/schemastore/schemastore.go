@@ -136,6 +136,23 @@ func (s *schemaStore) Close(ctx context.Context) {
 
 }
 
+func (s *schemaStore) shouldFilterDDL(job *model.Job) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if job.BinlogInfo.FinishedTS <= uint64(s.finishedDDLTS) || job.BinlogInfo.SchemaVersion <= s.schemaVersion {
+		log.Info("ddl job finishedTs less than schemaStore finishedDDLTS, "+
+			"discard the ddl job",
+			zap.String("schema", job.SchemaName),
+			zap.String("table", job.TableName),
+			zap.Uint64("startTs", job.StartTS),
+			zap.Uint64("finishedTs", job.BinlogInfo.FinishedTS),
+			zap.String("query", job.Query),
+			zap.Any("finishedTs", s.finishedDDLTS))
+		return true
+	}
+	return false
+}
+
 // TODO: use a meaningful name
 func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 	for {
@@ -145,6 +162,9 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 		case data := <-s.eventCh:
 			switch v := data.(type) {
 			case DDLEvent:
+				if s.shouldFilterDDL(v.Job) {
+					continue
+				}
 				s.unsortedCache.addDDLEvent(v)
 				// TODO: batch ddl event
 				err := s.dataStorage.writeDDLEvent(v)

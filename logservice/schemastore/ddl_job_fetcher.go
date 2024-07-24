@@ -15,14 +15,12 @@ package schemastore
 
 import (
 	"context"
-	"sync/atomic"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/mounter"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -32,7 +30,6 @@ import (
 	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
-	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -41,9 +38,6 @@ type ddlJobFetcher struct {
 
 	writeDDLEvent     func(ddlEvent DDLEvent) error
 	advanceResolvedTs func(resolvedTS common.Ts) error
-
-	finishedTs    uint64
-	schemaVersion int64
 
 	// ddlTableInfo is initialized when receive the first concurrent DDL job.
 	ddlTableInfo *mounter.DDLTableInfo
@@ -118,25 +112,10 @@ func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) 
 		return nil
 	}
 
-	if job.BinlogInfo.FinishedTS <= p.getFinishedTs() || job.BinlogInfo.SchemaVersion <= p.schemaVersion {
-		log.Info("ddl job finishedTs less than puller resolvedTs,"+
-			"discard the ddl job",
-			zap.String("schema", job.SchemaName),
-			zap.String("table", job.TableName),
-			zap.Uint64("startTs", job.StartTS),
-			zap.Uint64("finishedTs", job.BinlogInfo.FinishedTS),
-			zap.String("query", job.Query),
-			zap.Uint64("finishedTs", p.getFinishedTs()))
-		return nil
-	}
-
 	p.writeDDLEvent(DDLEvent{
 		Job:      job,
 		CommitTS: common.Ts(rawEvent.CRTs),
 	})
-
-	p.setFinishedTs(job.BinlogInfo.FinishedTS)
-	p.schemaVersion = job.BinlogInfo.SchemaVersion
 
 	return nil
 }
@@ -153,14 +132,6 @@ func (p *ddlJobFetcher) unmarshalDDL(rawKV *common.RawKVEntry) (*model.Job, erro
 	}
 
 	return mounter.ParseDDLJob(rawKV, p.ddlTableInfo)
-}
-
-func (p *ddlJobFetcher) getFinishedTs() uint64 {
-	return atomic.LoadUint64(&p.finishedTs)
-}
-
-func (p *ddlJobFetcher) setFinishedTs(ts uint64) {
-	atomic.StoreUint64(&p.finishedTs, ts)
 }
 
 func (p *ddlJobFetcher) initDDLTableInfo() error {
