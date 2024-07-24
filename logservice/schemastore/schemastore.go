@@ -183,7 +183,7 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 				for _, event := range resolvedEvents {
 					if event.Job.Version <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTS {
 						log.Info("skip already applied ddl job",
-							zap.Any("job", event.Job),
+							zap.Any("job", event.Job.Query),
 							zap.Any("schemaVersion", s.schemaVersion),
 							zap.Uint64("finishedDDLTS", s.finishedDDLTS))
 						continue

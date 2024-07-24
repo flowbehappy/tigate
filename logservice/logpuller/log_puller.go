@@ -172,7 +172,6 @@ func (p *LogPuller) runEventHandler(ctx context.Context, inputCh <-chan Multiple
 		}
 
 		progress := p.getProgress(e.SubscriptionID)
-
 		// There is a chance that some stale events are received after
 		// the subscription is removed. We can just ignore them.
 		if progress == nil {
