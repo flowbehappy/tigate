@@ -384,7 +384,7 @@ func (s *schemaStore) waitResolvedTs(ts common.Ts) {
 		if s.maxResolvedTS.Load() >= uint64(ts) {
 			return
 		}
-		time.Sleep(time.Millisecond * 300)
+		time.Sleep(time.Millisecond * 100)
 		log.Info("wait resolved ts",
 			zap.Any("ts", ts),
 			zap.Uint64("maxResolvedTS", s.maxResolvedTS.Load()))
