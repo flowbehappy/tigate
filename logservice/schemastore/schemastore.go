@@ -366,7 +366,9 @@ func (s *schemaStore) waitFinishedTs(ts common.Ts) {
 			return
 		}
 		time.Sleep(time.Millisecond * 100)
-		log.Info("wait finished ts", zap.Any("ts", ts))
+		log.Info("wait finished ts",
+			zap.Any("ts", ts),
+			zap.Uint64("finishedDDLTS", s.finishedDDLTS.Load()))
 	}
 }
 
