@@ -55,7 +55,7 @@ func NewConflictDetector(
 		slots:             NewSlots(numSlots),
 		numSlots:          numSlots,
 		closeCh:           make(chan struct{}),
-		notifiedNodes:     make(chan func(), 1000000000), // 需要想过如何设置 buffer 长度
+		notifiedNodes:     make(chan func(), 10000), // 需要想过如何设置 buffer 长度
 	}
 	for i := 0; i < opt.Count; i++ {
 		ret.resolvedTxnCaches[i] = newTxnCache(opt)
