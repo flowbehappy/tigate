@@ -475,6 +475,7 @@ func fillSchemaName(job *model.Job, databaseMap DatabaseInfoMap) error {
 	schemaID := common.SchemaID(job.SchemaID)
 	databaseInfo, ok := databaseMap[schemaID]
 	if !ok {
+		log.Error("database not found", zap.Any("schemaID", schemaID))
 		return errors.New("database not found")
 	}
 	if databaseInfo.CreateVersion > common.Ts(job.BinlogInfo.FinishedTS) {
