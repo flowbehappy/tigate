@@ -164,6 +164,7 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 			case common.Ts:
 				// TODO: check resolved ts is monotonically increasing
 				s.maxResolvedTS.Store(uint64(v))
+				log.Info("update resolved ts", zap.Any("resolvedTs", v))
 				resolvedEvents := s.unsortedCache.fetchSortedDDLEventBeforeTS(v)
 				if len(resolvedEvents) == 0 {
 					continue
@@ -369,7 +370,7 @@ func (s *schemaStore) waitResolvedTs(ts common.Ts) {
 			return
 		}
 		time.Sleep(time.Millisecond * 100)
-		log.Info("wait finished ts",
+		log.Info("wait resolved ts",
 			zap.Any("ts", ts),
 			zap.Uint64("maxResolvedTS", s.maxResolvedTS.Load()))
 	}
