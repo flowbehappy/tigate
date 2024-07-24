@@ -59,12 +59,14 @@ func NewLogPullerMultiSpan(
 		if entry == nil {
 			return nil
 		}
+		log.Info("multi span consume")
 		if entry.IsResolved() {
 			if pullerWrapper.tryUpdateGlobalResolvedTs(entry, span) {
 				return consume(ctx, entry)
 			}
 			return nil
 		}
+		log.Info("begin multi span consume")
 		return consume(ctx, entry)
 	}
 
