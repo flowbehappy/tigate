@@ -97,7 +97,7 @@ func (p *LogPullerMultiSpan) tryUpdateGlobalResolvedTs(entry *common.RawKVEntry,
 	if !ok {
 		log.Panic("unknown span, should not happen")
 	}
-	if ts < common.Ts(entry.CRTs) {
+	if ts > common.Ts(entry.CRTs) {
 		log.Panic("resolved ts should not fallback")
 	}
 	p.spanResolvedTsMap.ReplaceOrInsert(span, common.Ts(entry.CRTs))
