@@ -162,9 +162,9 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 		case data := <-s.eventCh:
 			switch v := data.(type) {
 			case DDLEvent:
-				if s.shouldFilterDDL(v.Job) {
-					continue
-				}
+				// if s.shouldFilterDDL(v.Job) {
+				// 	continue
+				// }
 				log.Info("write ddl event", zap.Any("ddlEvent", v))
 				s.unsortedCache.addDDLEvent(v)
 				// TODO: batch ddl event
@@ -188,7 +188,7 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 				s.mu.Lock()
 				for _, event := range resolvedEvents {
 					if event.Job.Version <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= uint64(s.finishedDDLTS) {
-						log.Warn("skip already applied ddl job",
+						log.Info("skip already applied ddl job",
 							zap.Any("job", event.Job),
 							zap.Any("schemaVersion", s.schemaVersion),
 							zap.Any("finishedDDLTS", s.finishedDDLTS))
@@ -374,7 +374,7 @@ func (s *schemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*commo
 	defer s.mu.RUnlock()
 	store, ok := s.tableInfoStoreMap[tableID]
 	if !ok {
-		return nil, errors.New(fmt.Sprintf("table %d not found", tableID))
+		return nil, fmt.Errorf(fmt.Sprintf("table %d not found", tableID))
 	}
 	store.waitTableInfoInitialized()
 	return store.getTableInfo(ts)
