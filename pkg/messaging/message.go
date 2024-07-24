@@ -234,8 +234,6 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 		m = &heartbeatpb.MaintainerHeartbeat{}
 	case TypeCoordinatorBootstrapResponse:
 		m = &heartbeatpb.CoordinatorBootstrapResponse{}
-	case TypeEventFeed:
-		m = &eventpb.EventFeed{}
 	case TypeRegisterDispatcherRequest:
 		m = &RegisterDispatcherRequest{}
 	case TypeMaintainerBootstrapResponse:
