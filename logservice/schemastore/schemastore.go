@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -64,7 +66,7 @@ type schemaStore struct {
 	mu sync.RWMutex
 
 	// max finishedTS of all applied ddl events
-	finishedDDLTS common.Ts
+	finishedDDLTS atomic.Uint64
 	// max schemaVersion of all applied ddl events
 	schemaVersion int64
 
@@ -103,12 +105,12 @@ func NewSchemaStore(
 		unsortedCache:     newUnSortedDDLCache(),
 		dataStorage:       dataStorage,
 		eventCh:           make(chan interface{}, 1024),
-		finishedDDLTS:     metaTS.finishedDDLTS,
 		schemaVersion:     int64(metaTS.schemaVersion),
 		databaseMap:       databaseMap,
 		tableInfoStoreMap: make(TableInfoStoreMap),
 		dispatchersMap:    make(DispatcherInfoMap),
 	}
+	s.finishedDDLTS.Store(uint64(metaTS.finishedDDLTS))
 	s.ddlJobFetcher = newDDLJobFetcher(
 		pdCli,
 		regionCache,
@@ -136,23 +138,6 @@ func (s *schemaStore) Close(ctx context.Context) {
 
 }
 
-func (s *schemaStore) shouldFilterDDL(job *model.Job) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if job.BinlogInfo.FinishedTS <= uint64(s.finishedDDLTS) || job.BinlogInfo.SchemaVersion <= s.schemaVersion {
-		log.Info("ddl job finishedTs less than schemaStore finishedDDLTS, "+
-			"discard the ddl job",
-			zap.String("schema", job.SchemaName),
-			zap.String("table", job.TableName),
-			zap.Uint64("startTs", job.StartTS),
-			zap.Uint64("finishedTs", job.BinlogInfo.FinishedTS),
-			zap.String("query", job.Query),
-			zap.Any("finishedTs", s.finishedDDLTS))
-		return true
-	}
-	return false
-}
-
 // TODO: use a meaningful name
 func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 	for {
@@ -162,9 +147,6 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 		case data := <-s.eventCh:
 			switch v := data.(type) {
 			case DDLEvent:
-				// if s.shouldFilterDDL(v.Job) {
-				// 	continue
-				// }
 				log.Info("write ddl event",
 					zap.String("schema", v.Job.SchemaName),
 					zap.String("table", v.Job.TableName),
@@ -195,11 +177,11 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 				}
 				s.mu.Lock()
 				for _, event := range resolvedEvents {
-					if event.Job.Version <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= uint64(s.finishedDDLTS) {
+					if event.Job.Version <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTS.Load() {
 						log.Info("skip already applied ddl job",
 							zap.Any("job", event.Job),
 							zap.Any("schemaVersion", s.schemaVersion),
-							zap.Any("finishedDDLTS", s.finishedDDLTS))
+							zap.Uint64("finishedDDLTS", s.finishedDDLTS.Load()))
 						continue
 					}
 					if err := handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap); err != nil {
@@ -207,7 +189,7 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 						return err
 					}
 					s.schemaVersion = event.Job.Version
-					s.finishedDDLTS = common.Ts(event.Job.BinlogInfo.FinishedTS)
+					s.finishedDDLTS.Store(event.Job.BinlogInfo.FinishedTS)
 				}
 				s.mu.Unlock()
 			default:
@@ -288,9 +270,9 @@ func (s *schemaStore) RegisterDispatcher(
 		store = newEmptyVersionedTableInfoStore(tableID)
 		s.tableInfoStoreMap[tableID] = store
 		store.registerDispatcher(dispatcherID, startTS)
-		endTS := s.finishedDDLTS
+		endTS := s.finishedDDLTS.Load()
 		s.mu.Unlock()
-		err := s.dataStorage.buildVersionedTableInfoStore(store, startTS, endTS, getSchemaName)
+		err := s.dataStorage.buildVersionedTableInfoStore(store, startTS, common.Ts(endTS), getSchemaName)
 		if err != nil {
 			// TODO: unregister dispatcher, make sure other wait go routines exit successfully
 			return err
@@ -374,10 +356,21 @@ func (s *schemaStore) UnregisterDispatcher(dispatcherID common.DispatcherID) err
 func (s *schemaStore) GetMaxFinishedDDLTS() common.Ts {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.finishedDDLTS
+	return common.Ts(s.finishedDDLTS.Load())
+}
+
+// TODO: fix the sleep
+func (s *schemaStore) waitFinishedTs(ts common.Ts) {
+	for {
+		if s.finishedDDLTS.Load() >= uint64(ts) {
+			return
+		}
+		time.Sleep(time.Millisecond * 100)
+	}
 }
 
 func (s *schemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error) {
+	s.waitFinishedTs(ts)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	store, ok := s.tableInfoStoreMap[tableID]
