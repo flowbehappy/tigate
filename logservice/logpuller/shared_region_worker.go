@@ -329,7 +329,7 @@ func (w *sharedRegionWorker) advanceTableSpan(ctx context.Context, batch resolve
 		if ts > table.startTs {
 			log.Info("do advanceTableSpan",
 				zap.Uint64("ts", ts),
-				zap.Any("table", table))
+				zap.Any("subscriptionID", table.subscriptionID))
 			revent := common.RegionFeedEvent{
 				Val: &common.RawKVEntry{
 					OpType: common.OpTypeResolved,
