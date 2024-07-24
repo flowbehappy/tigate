@@ -20,6 +20,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -67,6 +68,7 @@ func NewLogPullerMultiSpan(
 		}
 		return consume(ctx, entry)
 	}
+	log.Info("new log puller 1", zap.Any("config", config))
 
 	pullerWrapper.innerPuller = NewLogPuller(client, consumeWrapper, config)
 	return pullerWrapper
