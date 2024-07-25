@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -33,15 +34,20 @@ type persistentStorage struct {
 }
 
 type schemaMetaTS struct {
-	finishedDDLTS common.Ts
-	schemaVersion common.Ts
-	resolvedTS    common.Ts
+	FinishedDDLTS common.Ts `json:"finished_ddl_ts"`
+	SchemaVersion common.Ts `json:"schema_version"`
+	ResolvedTS    common.Ts `json:"resolved_ts"`
 }
 
 func newPersistentStorage(
 	root string, storage kv.Storage, currentGCTS common.Ts,
 ) (*persistentStorage, schemaMetaTS, DatabaseInfoMap) {
 	dbPath := fmt.Sprintf("%s/%s", root, dataDir)
+	// FIXME: avoid remove
+	err := os.RemoveAll(dbPath)
+	if err != nil {
+		log.Panic("fail to remove path")
+	}
 	// TODO: update pebble options
 	// TODO: close pebble db at exit
 	db, err := pebble.Open(dbPath, &pebble.Options{})
@@ -57,6 +63,8 @@ func newPersistentStorage(
 		return dataStorage, metaTS, databaseMap
 	}
 
+	log.Info("schema store create a fresh storage")
+
 	// TODO: create a fresh db instance
 	databaseMap, err = writeSchemaSnapshotToDisk(db, storage, currentGCTS)
 	if err != nil {
@@ -71,14 +79,14 @@ func newPersistentStorage(
 	dataStorage.gcTS.Store(uint64(currentGCTS))
 	// TODO: check whether the following values are correct
 	metaTS = schemaMetaTS{
-		finishedDDLTS: currentGCTS,
-		schemaVersion: currentGCTS,
-		resolvedTS:    currentGCTS,
+		FinishedDDLTS: currentGCTS,
+		SchemaVersion: currentGCTS,
+		ResolvedTS:    currentGCTS,
 	}
 
 	batch := db.NewBatch()
 	writeTSToBatch(batch, gcTSKey(), currentGCTS)
-	writeTSToBatch(batch, metaTSKey(), metaTS.resolvedTS, metaTS.finishedDDLTS, metaTS.schemaVersion)
+	writeTSToBatch(batch, metaTSKey(), metaTS.ResolvedTS, metaTS.FinishedDDLTS, metaTS.SchemaVersion)
 	batch.Commit(pebble.NoSync)
 
 	return dataStorage, metaTS, databaseMap
@@ -106,22 +114,21 @@ func loadPersistentStorage(db *pebble.DB, minRequiredTS common.Ts) (*persistentS
 	if err != nil || len(values) != 3 {
 		return nil, schemaMetaTS{}, nil
 	}
-	metaTS.resolvedTS = values[0]
-	metaTS.finishedDDLTS = values[1]
-	metaTS.schemaVersion = values[2]
+	metaTS.ResolvedTS = values[0]
+	metaTS.FinishedDDLTS = values[1]
+	metaTS.SchemaVersion = values[2]
 
 	// gcTS cannot go back
 	if minRequiredTS < common.Ts(dataStorage.gcTS.Load()) {
 		log.Panic("shouldn't happend")
 	}
 	// FIXME: > or >=?
-	if minRequiredTS > metaTS.resolvedTS {
+	if minRequiredTS > metaTS.ResolvedTS {
 		return nil, schemaMetaTS{}, nil
 	}
 
 	databaseMap := make(DatabaseInfoMap)
 
-	// TODO: read database map from disk
 	snapshotLowerBound, err := snapshotSchemaKey(dataStorage.getGCTS(), 0)
 	if err != nil {
 		log.Fatal("generate lower bound failed", zap.Error(err))
@@ -188,7 +195,9 @@ func (p *persistentStorage) writeDDLEvent(ddlEvent DDLEvent) error {
 	batch := p.db.NewBatch()
 	switch ddlEvent.Job.Type {
 	case model.ActionCreateSchema, model.ActionModifySchemaCharsetAndCollate, model.ActionDropSchema:
-		ddlKey, err := ddlJobSchemaKey(common.Ts(ddlEvent.Job.BinlogInfo.FinishedTS), common.SchemaID(ddlEvent.Job.SchemaID))
+		ddlKey, err := ddlJobSchemaKey(
+			common.Ts(ddlEvent.Job.BinlogInfo.FinishedTS),
+			common.SchemaID(ddlEvent.Job.SchemaID))
 		if err != nil {
 			return err
 		}
@@ -196,7 +205,9 @@ func (p *persistentStorage) writeDDLEvent(ddlEvent DDLEvent) error {
 		return batch.Commit(pebble.NoSync)
 	default:
 		// TODO: for cross table ddl, need write two events(may be we need a table_id -> name map?)
-		ddlKey, err := ddlJobTableKey(common.Ts(ddlEvent.Job.BinlogInfo.FinishedTS), common.TableID(ddlEvent.Job.TableID))
+		ddlKey, err := ddlJobTableKey(
+			common.Ts(ddlEvent.Job.BinlogInfo.FinishedTS),
+			common.TableID(ddlEvent.Job.TableID))
 		if err != nil {
 			return err
 		}

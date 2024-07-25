@@ -98,9 +98,13 @@ func NewSchemaStore(
 		log.Panic("get ts failed", zap.Error(err))
 		return nil, err
 	}
-
 	minRequiredTS := common.Ts(gcSafePoint)
 	dataStorage, metaTS, databaseMap := newPersistentStorage(root, kvStorage, minRequiredTS)
+
+	log.Info("get gc safe point",
+		zap.Uint64("gcSafePoint", gcSafePoint),
+		zap.Any("metaTS", metaTS),
+		zap.Int("databaseMapLen", len(databaseMap)))
 
 	s := &schemaStore{
 		storage:       kvStorage,
@@ -122,7 +126,7 @@ func NewSchemaStore(
 		regionCache,
 		pdClock,
 		kvStorage,
-		metaTS.resolvedTS,
+		metaTS.ResolvedTS,
 		s.writeDDLEvent,
 		s.advanceResolvedTs)
 
@@ -164,11 +168,6 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 					zap.Uint64("finishedTs", v.Job.BinlogInfo.FinishedTS),
 					zap.String("query", v.Job.Query))
 				s.unsortedCache.addDDLEvent(v)
-				// TODO: batch ddl event
-				err := s.dataStorage.writeDDLEvent(v)
-				if err != nil {
-					log.Fatal("write ddl event failed", zap.Error(err))
-				}
 			case common.Ts:
 				// TODO: check resolved ts is monotonically increasing
 				resolvedEvents := s.unsortedCache.fetchSortedDDLEventBeforeTS(v)
@@ -205,6 +204,12 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 						s.mu.Unlock()
 						log.Error("handle ddl job failed", zap.Error(err))
 						return err
+					}
+					// TODO: batch ddl event
+					// TODO: write ddl event before update resolved ts
+					err := s.dataStorage.writeDDLEvent(event)
+					if err != nil {
+						log.Fatal("write ddl event failed", zap.Error(err))
 					}
 					s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
 					s.finishedDDLTS = event.Job.BinlogInfo.FinishedTS
@@ -428,7 +433,6 @@ func (s *schemaStore) doGC() error {
 }
 
 func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfoStoreMap TableInfoStoreMap) error {
-
 	switch job.Type {
 	case model.ActionCreateSchema:
 		return createSchema(job, databaseMap)

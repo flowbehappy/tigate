@@ -56,7 +56,7 @@ func newEmptyVersionedTableInfoStore(tableID common.TableID) *versionedTableInfo
 func (v *versionedTableInfoStore) addInitialTableInfo(info *common.TableInfo) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	assertEmpty(v.infos)
+	// assertEmpty(v.infos)
 	v.infos = append(v.infos, &tableInfoItem{version: common.Ts(info.Version), info: info})
 }
 
@@ -180,15 +180,24 @@ func (v *versionedTableInfoStore) updateDispatcherSendTS(dispatcherID common.Dis
 	return nil
 }
 
-func assertEmpty(infos []*tableInfoItem) {
+func assertEmpty(infos []*tableInfoItem, job *model.Job) {
 	if len(infos) != 0 {
-		log.Panic("shouldn't happen")
+		log.Panic("shouldn't happen",
+			zap.Any("infosLen", len(infos)),
+			zap.Any("lastVersion", infos[len(infos)-1].version),
+			zap.Any("lastTableInfoVersion", infos[len(infos)-1].info.Version),
+			zap.String("query", job.Query),
+			zap.Int64("tableID", job.TableID),
+			zap.Uint64("finishedTs", job.BinlogInfo.FinishedTS),
+			zap.Int64("schemaVersion", job.BinlogInfo.SchemaVersion))
 	}
 }
 
-func assertNonEmpty(infos []*tableInfoItem) {
+func assertNonEmpty(infos []*tableInfoItem, job *model.Job) {
 	if len(infos) == 0 {
-		log.Panic("shouldn't happen")
+		log.Panic("shouldn't happen",
+			zap.Any("infos", infos),
+			zap.String("query", job.Query))
 	}
 }
 
@@ -216,14 +225,26 @@ func (v *versionedTableInfoStore) doApplyDDL(job *model.Job) {
 	if len(v.infos) != 0 && common.Ts(job.BinlogInfo.FinishedTS) <= v.infos[len(v.infos)-1].version {
 		log.Panic("ddl job finished ts should be monotonically increasing")
 	}
+	if len(v.infos) > 0 {
+		// TODO: FinishedTS is not enough, need schema version. But currently there should be no duplicate ddl,
+		// so the following check is useless
+		if common.Ts(job.BinlogInfo.FinishedTS) <= v.infos[len(v.infos)-1].version {
+			log.Info("ignore job",
+				zap.Int64("tableID", int64(v.tableID)),
+				zap.String("query", job.Query),
+				zap.Uint64("finishedTS", job.BinlogInfo.FinishedTS),
+				zap.Any("infos", v.infos))
+			return
+		}
+	}
 
 	switch job.Type {
 	case model.ActionCreateTable:
-		assertEmpty(v.infos)
+		assertEmpty(v.infos, job)
 		info := common.WrapTableInfo(job.SchemaID, job.SchemaName, job.BinlogInfo.FinishedTS, job.BinlogInfo.TableInfo)
 		v.infos = append(v.infos, &tableInfoItem{version: common.Ts(job.BinlogInfo.FinishedTS), info: info})
 	case model.ActionRenameTable:
-		assertNonEmpty(v.infos)
+		assertNonEmpty(v.infos, job)
 		info := common.WrapTableInfo(job.SchemaID, job.SchemaName, job.BinlogInfo.FinishedTS, job.BinlogInfo.TableInfo)
 		v.infos = append(v.infos, &tableInfoItem{version: common.Ts(job.BinlogInfo.FinishedTS), info: info})
 	case model.ActionDropTable, model.ActionTruncateTable:
