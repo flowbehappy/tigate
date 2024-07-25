@@ -97,7 +97,6 @@ type Maintainer struct {
 	scheduleredTaskGuage           prometheus.Gauge
 	runningTaskGuage               prometheus.Gauge
 	tableCountGauge                prometheus.Gauge
-	tableStateGauge                prometheus.Gauge
 }
 
 // NewMaintainer create the maintainer for the changefeed
@@ -133,7 +132,6 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		scheduleredTaskGuage:           metrics.ScheduleTaskGuage.WithLabelValues(cfID.Namespace, cfID.ID),
 		runningTaskGuage:               metrics.RunningScheduleTaskGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		tableCountGauge:                metrics.TableGauge.WithLabelValues(cfID.Namespace, cfID.ID),
-		tableStateGauge:                metrics.TableStateGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 	}
 	if !isSecondary {
 		m.state = heartbeatpb.ComponentState_Working

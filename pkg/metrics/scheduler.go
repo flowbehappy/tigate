@@ -24,7 +24,7 @@ var (
 			Subsystem: "scheduler",
 			Name:      "task",
 			Help:      "The total number of scheduler tasks",
-		}, []string{"namespace", "changefeed", "scheduler", "task"})
+		}, []string{"namespace", "changefeed"})
 
 	TableGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
