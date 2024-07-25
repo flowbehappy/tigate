@@ -359,10 +359,20 @@ func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage)
 func (m *Maintainer) resendSchedulerMessage() {
 	var msgs []rpc.Message
 	m.supervisor.StateMachines.Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
-		if value.State == scheduler.SchedulerStatusPrepare &&
-			time.Since(value.LastMsgTime) > time.Millisecond*200 {
+		if time.Since(value.LastMsgTime) < time.Millisecond*200 {
+			return true
+		}
+		if value.State == scheduler.SchedulerStatusPrepare {
 			server, _ := value.GetRole(scheduler.RoleSecondary)
 			msg, err := value.HandleInferiorStatus(&ReplicaSetStatus{State: heartbeatpb.ComponentState_Absent}, server)
+			if err != nil {
+				log.Error("poll failed", zap.Error(err))
+			}
+			msgs = append(msgs, msg)
+			value.LastMsgTime = time.Now()
+		} else if value.State == scheduler.SchedulerStatusCommit {
+			server, _ := value.GetRole(scheduler.RolePrimary)
+			msg, err := value.HandleInferiorStatus(&ReplicaSetStatus{State: heartbeatpb.ComponentState_Prepared}, server)
 			if err != nil {
 				log.Error("poll failed", zap.Error(err))
 			}
