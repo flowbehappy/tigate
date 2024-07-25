@@ -198,7 +198,7 @@ func (e *eventStore) Run(ctx context.Context) error {
 func (e *eventStore) Close(ctx context.Context) error {
 	for _, db := range e.dbs {
 		if err := db.Close(); err != nil {
-			log.Panic("failed to close pebble db", zap.Error(err))
+			log.Error("failed to close pebble db", zap.Error(err))
 		}
 	}
 	return nil
