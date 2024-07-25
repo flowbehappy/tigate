@@ -194,6 +194,8 @@ func NewStateMachine(
 	// Build state from primary, secondary and captures.
 	if len(sm.Primary) != 0 {
 		sm.State = SchedulerStatusWorking
+		log.Info("initialize a working state state machine",
+			zap.Any("statemachine", sm))
 	}
 	// Move inferior or add inferior is in-progress.
 	if sm.hasRole(RoleSecondary) {
@@ -497,6 +499,9 @@ func (s *StateMachine) pollOnPrepare(
 				// Secondary is stopped, and we still has primary.
 				// Transit to working.
 				s.State = SchedulerStatusWorking
+				log.Info("state transition from prepare to working",
+					zap.String("changefeedID", s.ID.String()),
+					zap.String("inferiorID", input.GetInferiorID().String()))
 			} else {
 				// Secondary is stopped, and we do not have primary.
 				// Transit to Absent. scheduler will schedule it again
@@ -625,6 +630,9 @@ func (s *StateMachine) pollOnCommit(
 			//    Transit to Working, and wait for the next state of
 			//    the primary, Stopping or Stopped.
 			s.State = SchedulerStatusWorking
+			log.Info("state transition from commit to working",
+				zap.String("changefeedID", s.ID.String()),
+				zap.String("inferiorID", input.GetInferiorID().String()))
 			return nil, true, nil
 		}
 		return nil, false, s.multiplePrimaryError(
