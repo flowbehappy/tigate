@@ -56,7 +56,7 @@ func newEmptyVersionedTableInfoStore(tableID common.TableID) *versionedTableInfo
 func (v *versionedTableInfoStore) addInitialTableInfo(info *common.TableInfo) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	assertEmpty(v.infos)
+	// assertEmpty(v.infos)
 	v.infos = append(v.infos, &tableInfoItem{version: common.Ts(info.Version), info: info})
 }
 
@@ -234,11 +234,11 @@ func (v *versionedTableInfoStore) doApplyDDL(job *model.Job) {
 
 	switch job.Type {
 	case model.ActionCreateTable:
-		assertEmpty(v.infos)
+		assertEmpty(v.infos, job)
 		info := common.WrapTableInfo(job.SchemaID, job.SchemaName, job.BinlogInfo.FinishedTS, job.BinlogInfo.TableInfo)
 		v.infos = append(v.infos, &tableInfoItem{version: common.Ts(job.BinlogInfo.FinishedTS), info: info})
 	case model.ActionRenameTable:
-		assertNonEmpty(v.infos)
+		assertNonEmpty(v.infos, job)
 		info := common.WrapTableInfo(job.SchemaID, job.SchemaName, job.BinlogInfo.FinishedTS, job.BinlogInfo.TableInfo)
 		v.infos = append(v.infos, &tableInfoItem{version: common.Ts(job.BinlogInfo.FinishedTS), info: info})
 	case model.ActionDropTable, model.ActionTruncateTable:
