@@ -57,6 +57,9 @@ func (v *versionedTableInfoStore) addInitialTableInfo(info *common.TableInfo) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	// assertEmpty(v.infos)
+	log.Info("addInitialTableInfo",
+		zap.Any("tableID", v.tableID),
+		zap.Uint64("infoVersion", info.Version))
 	v.infos = append(v.infos, &tableInfoItem{version: common.Ts(info.Version), info: info})
 }
 
