@@ -154,22 +154,6 @@ func (c *eventBroker) runScanWorker() {
 							log.Panic("read events failed", zap.Error(err))
 						}
 
-						if isFirstEvent || isNewTxn {
-							// Send the previous txnEvent to the dispatcher.
-							if txnEvent != nil {
-								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, txnEvent)
-								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
-							}
-							// Create a new txnEvent.
-							txnEvent = &common.TxnEvent{
-								DispatcherID: dispatcherID,
-								StartTs:      e.StartTs,
-								CommitTs:     e.CommitTs,
-								Rows:         make([]*common.RowChangedEvent, 0),
-							}
-							isFirstEvent = false
-						}
-
 						if e == nil {
 							if txnEvent != nil {
 								// Send the last txnEvent to the dispatcher.
@@ -187,6 +171,23 @@ func (c *eventBroker) runScanWorker() {
 							iter.Close()
 							break
 						}
+
+						if isFirstEvent || isNewTxn {
+							// Send the previous txnEvent to the dispatcher.
+							if txnEvent != nil {
+								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, txnEvent)
+								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
+							}
+							// Create a new txnEvent.
+							txnEvent = &common.TxnEvent{
+								DispatcherID: dispatcherID,
+								StartTs:      e.StartTs,
+								CommitTs:     e.CommitTs,
+								Rows:         make([]*common.RowChangedEvent, 0),
+							}
+							isFirstEvent = false
+						}
+
 						// Skip the events that have been sent to the dispatcher.
 						if e.CommitTs <= task.dispatcherStat.watermark.Load() {
 							continue
