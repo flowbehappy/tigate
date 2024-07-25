@@ -385,15 +385,19 @@ func (s *schemaStore) GetMaxFinishedDDLTS() common.Ts {
 
 // TODO: fix the sleep
 func (s *schemaStore) waitResolvedTs(tableID common.TableID, ts common.Ts) {
+	start := time.Now()
 	for {
 		if s.maxResolvedTS.Load() >= uint64(ts) {
 			return
 		}
 		time.Sleep(time.Millisecond * 100)
-		log.Info("wait resolved ts",
-			zap.Int64("tableID", int64(tableID)),
-			zap.Any("ts", ts),
-			zap.Uint64("maxResolvedTS", s.maxResolvedTS.Load()))
+		if time.Since(start) > time.Second*5 {
+			log.Info("wait resolved ts slow",
+				zap.Int64("tableID", int64(tableID)),
+				zap.Any("ts", ts),
+				zap.Uint64("maxResolvedTS", s.maxResolvedTS.Load()),
+				zap.Any("time", time.Since(start)))
+		}
 	}
 }
 
