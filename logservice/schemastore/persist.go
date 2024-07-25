@@ -188,7 +188,9 @@ func (p *persistentStorage) writeDDLEvent(ddlEvent DDLEvent) error {
 	batch := p.db.NewBatch()
 	switch ddlEvent.Job.Type {
 	case model.ActionCreateSchema, model.ActionModifySchemaCharsetAndCollate, model.ActionDropSchema:
-		ddlKey, err := ddlJobSchemaKey(common.Ts(ddlEvent.Job.BinlogInfo.FinishedTS), common.SchemaID(ddlEvent.Job.SchemaID))
+		ddlKey, err := ddlJobSchemaKey(
+			common.Ts(ddlEvent.Job.BinlogInfo.FinishedTS),
+			common.SchemaID(ddlEvent.Job.SchemaID))
 		if err != nil {
 			return err
 		}
@@ -196,7 +198,9 @@ func (p *persistentStorage) writeDDLEvent(ddlEvent DDLEvent) error {
 		return batch.Commit(pebble.NoSync)
 	default:
 		// TODO: for cross table ddl, need write two events(may be we need a table_id -> name map?)
-		ddlKey, err := ddlJobTableKey(common.Ts(ddlEvent.Job.BinlogInfo.FinishedTS), common.TableID(ddlEvent.Job.TableID))
+		ddlKey, err := ddlJobTableKey(
+			common.Ts(ddlEvent.Job.BinlogInfo.FinishedTS),
+			common.TableID(ddlEvent.Job.TableID))
 		if err != nil {
 			return err
 		}
