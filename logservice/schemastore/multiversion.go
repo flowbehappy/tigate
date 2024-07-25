@@ -187,7 +187,9 @@ func assertEmpty(infos []*tableInfoItem, job *model.Job) {
 			zap.Any("lastVersion", infos[len(infos)-1].version),
 			zap.Any("lastTableInfoVersion", infos[len(infos)-1].info.Version),
 			zap.String("query", job.Query),
-			zap.Int64("version", job.Version))
+			zap.Int64("tableID", job.TableID),
+			zap.Uint64("finishedTs", job.BinlogInfo.FinishedTS),
+			zap.Int64("schemaVersion", job.BinlogInfo.SchemaVersion))
 	}
 }
 
