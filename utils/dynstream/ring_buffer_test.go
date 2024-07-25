@@ -6,12 +6,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestBoundedRingBuffer(t *testing.T) {
-	rb := NewBoundedRingBuffer[int](3)
+func TestRingBuffer(t *testing.T) {
+	rb := NewRingBuffer[int](3)
 
-	rb.Append(1)
-	rb.Append(2)
-	rb.Append(3)
+	rb.Push(1)
+	rb.Push(2)
+	rb.Push(3)
 
 	{
 		item, ok := rb.Head()
@@ -19,7 +19,7 @@ func TestBoundedRingBuffer(t *testing.T) {
 		assert.Equal(t, 1, item)
 	}
 
-	rb.Append(4)
+	rb.Push(4)
 
 	{
 		item, ok := rb.Head()
@@ -33,10 +33,10 @@ func TestBoundedRingBuffer(t *testing.T) {
 		assert.Equal(t, 4, item)
 	}
 
-	rb.Append(5)
-	rb.Append(6)
-	rb.Append(7)
-	rb.Append(8)
+	rb.Push(5)
+	rb.Push(6)
+	rb.Push(7)
+	rb.Push(8)
 
 	assert.Equal(t, true, rb.IsFull())
 	{
@@ -52,32 +52,32 @@ func TestBoundedRingBuffer(t *testing.T) {
 	}
 
 	{
-		item, ok := rb.Remove()
+		item, ok := rb.Pop()
 		assert.Equal(t, true, ok)
 		assert.Equal(t, 6, item)
 	}
 	{
-		item, ok := rb.Remove()
+		item, ok := rb.Pop()
 		assert.Equal(t, true, ok)
 		assert.Equal(t, 7, item)
 	}
 	{
-		item, ok := rb.Remove()
+		item, ok := rb.Pop()
 		assert.Equal(t, true, ok)
 		assert.Equal(t, 8, item)
 	}
 	{
-		item, ok := rb.Remove()
+		item, ok := rb.Pop()
 		assert.Equal(t, false, ok)
 		assert.Equal(t, 0, item)
 	}
 	assert.Equal(t, true, rb.IsEmpty())
 
-	rb.Append(1)
-	rb.Append(2)
+	rb.Push(1)
+	rb.Push(2)
 	assert.Equal(t, 2, rb.Size())
 
-	rb.Append(3)
+	rb.Push(3)
 
 	assert.Equal(t, 3, rb.Size())
 
@@ -87,7 +87,7 @@ func TestBoundedRingBuffer(t *testing.T) {
 		assert.Equal(t, 1, item)
 	}
 
-	rb.Append(4)
+	rb.Push(4)
 
 	{
 		item, ok := rb.Head()
@@ -99,5 +99,14 @@ func TestBoundedRingBuffer(t *testing.T) {
 		item, ok := rb.Tail()
 		assert.Equal(t, true, ok)
 		assert.Equal(t, 4, item)
+	}
+
+	{
+		itr := rb.Iterator()
+		items := make([]int, 0)
+		for item, ok := itr.Next(); ok; item, ok = itr.Next() {
+			items = append(items, item)
+		}
+		assert.Equal(t, []int{2, 3, 4}, items)
 	}
 }
