@@ -161,12 +161,12 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 				if v.Job.SchemaID == 1 {
 					continue
 				}
-				log.Info("write ddl event",
-					zap.String("schema", v.Job.SchemaName),
-					zap.String("table", v.Job.TableName),
-					zap.Uint64("startTs", v.Job.StartTS),
-					zap.Uint64("finishedTs", v.Job.BinlogInfo.FinishedTS),
-					zap.String("query", v.Job.Query))
+				// log.Info("write ddl event",
+				// 	zap.String("schema", v.Job.SchemaName),
+				// 	zap.String("table", v.Job.TableName),
+				// 	zap.Uint64("startTs", v.Job.StartTS),
+				// 	zap.Uint64("finishedTs", v.Job.BinlogInfo.FinishedTS),
+				// 	zap.String("query", v.Job.Query))
 				s.unsortedCache.addDDLEvent(v)
 			case common.Ts:
 				// TODO: check resolved ts is monotonically increasing
@@ -188,18 +188,18 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 				s.mu.Lock()
 				for _, event := range resolvedEvents {
 					if event.Job.BinlogInfo.SchemaVersion <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTS {
-						log.Info("skip already applied ddl job",
-							zap.String("job", event.Job.Query),
-							zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
-							zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
-							zap.Any("schemaVersion", s.schemaVersion),
-							zap.Uint64("finishedDDLTS", s.finishedDDLTS))
+						// log.Info("skip already applied ddl job",
+						// 	zap.String("job", event.Job.Query),
+						// 	zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+						// 	zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
+						// 	zap.Any("schemaVersion", s.schemaVersion),
+						// 	zap.Uint64("finishedDDLTS", s.finishedDDLTS))
 						continue
 					}
-					log.Info("apply ddl job",
-						zap.String("job", event.Job.Query),
-						zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
-						zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS))
+					// log.Info("apply ddl job",
+					// 	zap.String("job", event.Job.Query),
+					// 	zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+					// 	zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS))
 					if err := handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap); err != nil {
 						s.mu.Unlock()
 						log.Error("handle ddl job failed", zap.Error(err))
