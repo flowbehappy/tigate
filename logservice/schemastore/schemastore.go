@@ -188,18 +188,18 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 				s.mu.Lock()
 				for _, event := range resolvedEvents {
 					if event.Job.BinlogInfo.SchemaVersion <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTS {
-						// log.Info("skip already applied ddl job",
-						// 	zap.String("job", event.Job.Query),
-						// 	zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
-						// 	zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
-						// 	zap.Any("schemaVersion", s.schemaVersion),
-						// 	zap.Uint64("finishedDDLTS", s.finishedDDLTS))
+						log.Info("skip already applied ddl job",
+							zap.String("job", event.Job.Query),
+							zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+							zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
+							zap.Any("schemaVersion", s.schemaVersion),
+							zap.Uint64("finishedDDLTS", s.finishedDDLTS))
 						continue
 					}
-					// log.Info("apply ddl job",
-					// 	zap.String("job", event.Job.Query),
-					// 	zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
-					// 	zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS))
+					log.Info("apply ddl job",
+						zap.String("job", event.Job.Query),
+						zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+						zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS))
 					if err := handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap); err != nil {
 						s.mu.Unlock()
 						log.Error("handle ddl job failed", zap.Error(err))
