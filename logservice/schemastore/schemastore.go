@@ -104,7 +104,7 @@ func NewSchemaStore(
 	log.Info("get gc safe point",
 		zap.Uint64("gcSafePoint", gcSafePoint),
 		zap.Any("metaTS", metaTS),
-		zap.Any("databaseMap", databaseMap))
+		zap.Int("databaseMapLen", len(databaseMap)))
 
 	s := &schemaStore{
 		storage:       kvStorage,

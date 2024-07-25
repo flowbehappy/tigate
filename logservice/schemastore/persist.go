@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -42,6 +43,11 @@ func newPersistentStorage(
 	root string, storage kv.Storage, currentGCTS common.Ts,
 ) (*persistentStorage, schemaMetaTS, DatabaseInfoMap) {
 	dbPath := fmt.Sprintf("%s/%s", root, dataDir)
+	// FIXME: avoid remove
+	err := os.RemoveAll(dbPath)
+	if err != nil {
+		log.Panic("fail to remove path")
+	}
 	// TODO: update pebble options
 	// TODO: close pebble db at exit
 	db, err := pebble.Open(dbPath, &pebble.Options{})
@@ -123,7 +129,6 @@ func loadPersistentStorage(db *pebble.DB, minRequiredTS common.Ts) (*persistentS
 
 	databaseMap := make(DatabaseInfoMap)
 
-	// TODO: read database map from disk
 	snapshotLowerBound, err := snapshotSchemaKey(dataStorage.getGCTS(), 0)
 	if err != nil {
 		log.Fatal("generate lower bound failed", zap.Error(err))
