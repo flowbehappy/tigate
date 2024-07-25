@@ -120,9 +120,10 @@ func NewStateMachine(
 	inferior Inferior,
 ) (*StateMachine, error) {
 	sm := &StateMachine{
-		ID:       id,
-		Servers:  make(map[string]Role),
-		Inferior: inferior,
+		ID:          id,
+		Servers:     make(map[string]Role),
+		Inferior:    inferior,
+		LastMsgTime: time.Now(),
 	}
 	inferior.SetStateMachine(sm)
 	// Count of captures that is in Stopping states.
