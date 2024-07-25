@@ -428,7 +428,6 @@ func (s *schemaStore) doGC() error {
 }
 
 func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfoStoreMap TableInfoStoreMap) error {
-
 	switch job.Type {
 	case model.ActionCreateSchema:
 		return createSchema(job, databaseMap)

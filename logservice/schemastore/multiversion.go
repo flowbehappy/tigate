@@ -180,15 +180,20 @@ func (v *versionedTableInfoStore) updateDispatcherSendTS(dispatcherID common.Dis
 	return nil
 }
 
-func assertEmpty(infos []*tableInfoItem) {
+func assertEmpty(infos []*tableInfoItem, job *model.Job) {
 	if len(infos) != 0 {
-		log.Panic("shouldn't happen")
+		log.Panic("shouldn't happen",
+			zap.Any("infos", infos),
+			zap.String("query", job.Query),
+			zap.Int64("version", job.Version))
 	}
 }
 
-func assertNonEmpty(infos []*tableInfoItem) {
+func assertNonEmpty(infos []*tableInfoItem, job *model.Job) {
 	if len(infos) == 0 {
-		log.Panic("shouldn't happen")
+		log.Panic("shouldn't happen",
+			zap.Any("infos", infos),
+			zap.String("query", job.Query))
 	}
 }
 
