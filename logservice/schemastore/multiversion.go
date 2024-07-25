@@ -57,9 +57,6 @@ func (v *versionedTableInfoStore) addInitialTableInfo(info *common.TableInfo) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	// assertEmpty(v.infos)
-	log.Info("addInitialTableInfo",
-		zap.Any("tableID", v.tableID),
-		zap.Uint64("infoVersion", info.Version))
 	v.infos = append(v.infos, &tableInfoItem{version: common.Ts(info.Version), info: info})
 }
 
@@ -229,6 +226,8 @@ func (v *versionedTableInfoStore) doApplyDDL(job *model.Job) {
 		log.Panic("ddl job finished ts should be monotonically increasing")
 	}
 	if len(v.infos) > 0 {
+		// TODO: FinishedTS is not enough, need schema version. But currently there should be no duplicate ddl,
+		// so the following check is useless
 		if common.Ts(job.BinlogInfo.FinishedTS) <= v.infos[len(v.infos)-1].version {
 			log.Info("ignore job",
 				zap.Int64("tableID", int64(v.tableID)),
