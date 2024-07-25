@@ -183,7 +183,9 @@ func (v *versionedTableInfoStore) updateDispatcherSendTS(dispatcherID common.Dis
 func assertEmpty(infos []*tableInfoItem, job *model.Job) {
 	if len(infos) != 0 {
 		log.Panic("shouldn't happen",
-			zap.Any("infos", infos),
+			zap.Any("infosLen", len(infos)),
+			zap.Any("lastVersion", infos[len(infos)-1].version),
+			zap.Any("lastTableInfoVersion", infos[len(infos)-1].info.Version),
 			zap.String("query", job.Query),
 			zap.Int64("version", job.Version))
 	}
