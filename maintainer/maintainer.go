@@ -80,8 +80,8 @@ type Maintainer struct {
 	msgQueue *MessageQueue
 	msgBuf   []*messaging.TargetMessage
 
-	lastCheckTime time.Time
-
+	lastResendTime       time.Time
+	lastPrintStatusTime  time.Time
 	lastCheckpointTsTime time.Time
 
 	errLock         sync.Mutex
@@ -357,26 +357,35 @@ func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage)
 }
 
 func (m *Maintainer) resendSchedulerMessage() {
+	if time.Since(m.lastResendTime) < time.Second*20 {
+		return
+	}
 	var msgs []rpc.Message
-	m.supervisor.StateMachines.Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
+	m.supervisor.RunningTasks.Ascend(func(key scheduler.InferiorID, _ *scheduler.ScheduleTask) bool {
+		value, ok := m.supervisor.StateMachines.Get(key)
+		if !ok {
+			log.Panic("table span not found", zap.String("changefeedID", m.id.String()), zap.Any("key", key))
+		}
 		if time.Since(value.LastMsgTime) < time.Millisecond*200 {
 			return true
 		}
 		if value.State == scheduler.SchedulerStatusPrepare {
 			server, _ := value.GetRole(scheduler.RoleSecondary)
-			msg, err := value.HandleInferiorStatus(&ReplicaSetStatus{State: heartbeatpb.ComponentState_Absent}, server)
+			status := value.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Absent)
+			msg, err := value.HandleInferiorStatus(status, server)
 			if err != nil {
 				log.Error("poll failed", zap.Error(err))
 			}
-			msgs = append(msgs, msg)
+			msgs = append(msgs, msg...)
 			value.LastMsgTime = time.Now()
 		} else if value.State == scheduler.SchedulerStatusCommit {
 			server, _ := value.GetRole(scheduler.RolePrimary)
-			msg, err := value.HandleInferiorStatus(&ReplicaSetStatus{State: heartbeatpb.ComponentState_Prepared}, server)
+			status := value.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Prepared)
+			msg, err := value.HandleInferiorStatus(status, server)
 			if err != nil {
 				log.Error("poll failed", zap.Error(err))
 			}
-			msgs = append(msgs, msg)
+			msgs = append(msgs, msg...)
 			value.LastMsgTime = time.Now()
 		}
 		return true
@@ -506,7 +515,7 @@ func (m *Maintainer) getMessageQueue() *MessageQueue {
 }
 
 func (m *Maintainer) printStatus() {
-	if time.Since(m.lastCheckTime) > time.Second*120 {
+	if time.Since(m.lastPrintStatusTime) > time.Second*120 {
 		workingTask := 0
 		prepareTask := 0
 		absentTask := 0
@@ -542,6 +551,6 @@ func (m *Maintainer) printStatus() {
 			zap.Int("working", workingTask),
 			zap.Int("removing", removingTask),
 			zap.Int("runningTasks", m.supervisor.RunningTasks.Len()))
-		m.lastCheckTime = time.Now()
+		m.lastPrintStatusTime = time.Now()
 	}
 }
