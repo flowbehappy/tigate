@@ -398,7 +398,7 @@ func (s *schemaStore) waitResolvedTs(tableID common.TableID, ts common.Ts) {
 }
 
 func (s *schemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error) {
-	s.waitResolvedTs(ts)
+	s.waitResolvedTs(tableID, ts)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	store, ok := s.tableInfoStoreMap[tableID]
