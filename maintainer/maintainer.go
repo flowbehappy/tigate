@@ -25,6 +25,7 @@ import (
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	appctx "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
@@ -38,6 +39,8 @@ import (
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/filter"
 	"github.com/pingcap/tiflow/pkg/spanz"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -87,6 +90,14 @@ type Maintainer struct {
 	errLock         sync.Mutex
 	runningErrors   map[messaging.ServerId]*heartbeatpb.RunningError
 	runningWarnings map[messaging.ServerId]*heartbeatpb.RunningError
+
+	changefeedCheckpointTsGauge    prometheus.Gauge
+	changefeedCheckpointTsLagGauge prometheus.Gauge
+	changefeedStatusGauge          prometheus.Gauge
+	scheduleredTaskGuage           prometheus.Gauge
+	runningTaskGuage               prometheus.Gauge
+	tableCountGauge                prometheus.Gauge
+	tableStateGauge                prometheus.Gauge
 }
 
 // NewMaintainer create the maintainer for the changefeed
@@ -115,6 +126,14 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		msgBuf:                make([]*messaging.TargetMessage, 1024),
 		runningErrors:         map[messaging.ServerId]*heartbeatpb.RunningError{},
 		runningWarnings:       map[messaging.ServerId]*heartbeatpb.RunningError{},
+
+		changefeedCheckpointTsGauge:    metrics.ChangefeedCheckpointTsGauge.WithLabelValues(cfID.Namespace, cfID.ID),
+		changefeedCheckpointTsLagGauge: metrics.ChangefeedCheckpointTsLagGauge.WithLabelValues(cfID.Namespace, cfID.ID),
+		changefeedStatusGauge:          metrics.ChangefeedStatusGauge.WithLabelValues(cfID.Namespace, cfID.ID),
+		scheduleredTaskGuage:           metrics.ScheduleTaskGuage.WithLabelValues(cfID.Namespace, cfID.ID),
+		runningTaskGuage:               metrics.RunningScheduleTaskGauge.WithLabelValues(cfID.Namespace, cfID.ID),
+		tableCountGauge:                metrics.TableGauge.WithLabelValues(cfID.Namespace, cfID.ID),
+		tableStateGauge:                metrics.TableStateGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 	}
 	if !isSecondary {
 		m.state = heartbeatpb.ComponentState_Working
@@ -129,6 +148,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 }
 
 func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time) {
+	m.updateMetrics()
 	if m.removed.Load() {
 		// removed, cancel the task
 		return threadpool.Done, time.Time{}
@@ -252,6 +272,16 @@ func (m *Maintainer) calCheckpointTs() {
 	if checkpointTs != math.MaxUint64 {
 		m.checkpointTs.Store(checkpointTs)
 	}
+}
+
+func (m *Maintainer) updateMetrics() {
+	phyCkpTs := oracle.ExtractPhysical(m.checkpointTs.Load())
+	m.changefeedCheckpointTsGauge.Set(float64(phyCkpTs))
+
+	lag := oracle.GetPhysical(time.Now()) - phyCkpTs
+	m.changefeedCheckpointTsLagGauge.Set(float64(lag))
+
+	m.changefeedStatusGauge.Set(float64(m.state))
 }
 
 // send message to remote, todo: use a io thread pool
@@ -516,40 +546,37 @@ func (m *Maintainer) getMessageQueue() *MessageQueue {
 
 func (m *Maintainer) printStatus() {
 	if time.Since(m.lastPrintStatusTime) > time.Second*120 {
-		workingTask := 0
-		prepareTask := 0
-		absentTask := 0
-		commitTask := 0
-		removingTask := 0
+		tableStates := make(map[scheduler.SchedulerStatus]int)
+		for i := 0; i <= 5; i++ {
+			tableStates[scheduler.SchedulerStatus(i)] = 0
+		}
 		// var taskDistribution string
 		m.supervisor.StateMachines.Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
-			switch value.State {
-			case scheduler.SchedulerStatusAbsent:
-				absentTask++
-			case scheduler.SchedulerStatusPrepare:
-				prepareTask++
-			case scheduler.SchedulerStatusCommit:
-				commitTask++
-			case scheduler.SchedulerStatusWorking:
-				workingTask++
-			case scheduler.SchedulerStatusRemoving:
-				removingTask++
+			if _, ok := tableStates[value.State]; !ok {
+				tableStates[value.State] = 0
 			}
+			tableStates[value.State]++
 			// span := key.(*common.TableSpan)
 			// taskDistribution = fmt.Sprintf("%s, %d==>%s", taskDistribution, span.TableID, value.Primary)
 			return true
 		})
+
+		m.tableCountGauge.Set(float64(m.tableSpans.Len()))
+		m.scheduleredTaskGuage.Set(float64(m.supervisor.GetInferiors().Len()))
+		for state, count := range tableStates {
+			metrics.TableStateGauge.WithLabelValues(m.id.Namespace, m.id.ID, state.String()).Set(float64(count))
+		}
 
 		log.Info("table span status",
 			// zap.String("distribution", taskDistribution),
 			zap.String("changefeed", m.id.ID),
 			zap.Int("total", m.tableSpans.Len()),
 			zap.Int("scheduled", m.supervisor.GetInferiors().Len()),
-			zap.Int("absent", absentTask),
-			zap.Int("prepare", prepareTask),
-			zap.Int("commit", commitTask),
-			zap.Int("working", workingTask),
-			zap.Int("removing", removingTask),
+			zap.Int("absent", tableStates[scheduler.SchedulerStatusAbsent]),
+			zap.Int("prepare", tableStates[scheduler.SchedulerStatusPrepare]),
+			zap.Int("commit", tableStates[scheduler.SchedulerStatusCommit]),
+			zap.Int("working", tableStates[scheduler.SchedulerStatusWorking]),
+			zap.Int("removing", tableStates[scheduler.SchedulerStatusRemoving]),
 			zap.Int("runningTasks", m.supervisor.RunningTasks.Len()))
 		m.lastPrintStatusTime = time.Now()
 	}

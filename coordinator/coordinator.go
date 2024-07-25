@@ -23,6 +23,7 @@ import (
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils"
@@ -52,6 +53,7 @@ type coordinator struct {
 	lastState *orchestrator.GlobalReactorState
 
 	lastSaveTime         time.Time
+	lastTickTime         time.Time
 	scheduledChangefeeds map[model.ChangeFeedID]*changefeed
 }
 
@@ -60,6 +62,7 @@ func NewCoordinator(capture *model.CaptureInfo, version int64) server.Coordinato
 		version:              version,
 		nodeInfo:             capture,
 		scheduledChangefeeds: make(map[model.ChangeFeedID]*changefeed),
+		lastTickTime:         time.Now(),
 	}
 	c.supervisor = scheduler.NewSupervisor(
 		scheduler.ChangefeedID(model.DefaultChangeFeedID("coordinator")),
@@ -90,6 +93,10 @@ func (c *coordinator) Tick(
 ) (orchestrator.ReactorState, error) {
 	state := rawState.(*orchestrator.GlobalReactorState)
 	c.lastState = state
+
+	now := time.Now()
+	metrics.CoordinatorCounter.Add(float64(now.Sub(c.lastTickTime)) / float64(time.Second))
+	c.lastTickTime = now
 
 	// 1. handle grpc messages
 	err := c.handleMessages()
