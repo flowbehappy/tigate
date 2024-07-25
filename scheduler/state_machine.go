@@ -425,7 +425,6 @@ func (s *StateMachine) pollOnAbsent(
 		s.State = SchedulerStatusPrepare
 		err := s.setCapture(captureID, RoleSecondary)
 		return nil, true, errors.Trace(err)
-
 	case heartbeatpb.ComponentState_Stopped:
 		// Ignore stopped state as a server may be shutdown unexpectedly.
 		// todo: fix ignore task, already exists error, when add a task and prepare, then receive a stop
@@ -467,6 +466,9 @@ func (s *StateMachine) pollOnPrepare(
 		if s.Primary == captureID {
 			s.Inferior.UpdateStatus(input)
 			return nil, false, nil
+		} else if s.isInRole(captureID, RoleSecondary) {
+			s.State = SchedulerStatusCommit
+			return nil, true, nil
 		}
 	case heartbeatpb.ComponentState_Stopping, heartbeatpb.ComponentState_Stopped:
 		// moving state, primary report status
@@ -560,7 +562,7 @@ func (s *StateMachine) pollOnCommit(
 					zap.Any("status", input),
 					zap.String("captureID", captureID),
 					zap.Any("statemachine", s))
-				s.State = SchedulerStatusWorking
+				s.State = SchedulerStatusAbsent
 				return nil, true, nil
 			}
 			// Primary is stopped, promote secondary to primary.

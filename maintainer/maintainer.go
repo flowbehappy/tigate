@@ -15,7 +15,6 @@ package maintainer
 
 import (
 	"encoding/json"
-	"fmt"
 	"math"
 	"strings"
 	"sync"
@@ -360,10 +359,20 @@ func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage)
 func (m *Maintainer) resendSchedulerMessage() {
 	var msgs []rpc.Message
 	m.supervisor.StateMachines.Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
-		if value.State == scheduler.SchedulerStatusPrepare &&
-			time.Since(value.LastMsgTime) > time.Millisecond*200 {
+		if time.Since(value.LastMsgTime) < time.Millisecond*200 {
+			return true
+		}
+		if value.State == scheduler.SchedulerStatusPrepare {
 			server, _ := value.GetRole(scheduler.RoleSecondary)
 			msg, err := value.HandleInferiorStatus(&ReplicaSetStatus{State: heartbeatpb.ComponentState_Absent}, server)
+			if err != nil {
+				log.Error("poll failed", zap.Error(err))
+			}
+			msgs = append(msgs, msg)
+			value.LastMsgTime = time.Now()
+		} else if value.State == scheduler.SchedulerStatusCommit {
+			server, _ := value.GetRole(scheduler.RolePrimary)
+			msg, err := value.HandleInferiorStatus(&ReplicaSetStatus{State: heartbeatpb.ComponentState_Prepared}, server)
 			if err != nil {
 				log.Error("poll failed", zap.Error(err))
 			}
@@ -497,13 +506,13 @@ func (m *Maintainer) getMessageQueue() *MessageQueue {
 }
 
 func (m *Maintainer) printStatus() {
-	if time.Since(m.lastCheckTime) > time.Second*10 {
+	if time.Since(m.lastCheckTime) > time.Second*120 {
 		workingTask := 0
 		prepareTask := 0
 		absentTask := 0
 		commitTask := 0
 		removingTask := 0
-		var taskDistribution string
+		// var taskDistribution string
 		m.supervisor.StateMachines.Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
 			switch value.State {
 			case scheduler.SchedulerStatusAbsent:
@@ -517,19 +526,22 @@ func (m *Maintainer) printStatus() {
 			case scheduler.SchedulerStatusRemoving:
 				removingTask++
 			}
-			span := key.(*common.TableSpan)
-			taskDistribution = fmt.Sprintf("%s, %d==>%s", taskDistribution, span.TableID, value.Primary)
+			// span := key.(*common.TableSpan)
+			// taskDistribution = fmt.Sprintf("%s, %d==>%s", taskDistribution, span.TableID, value.Primary)
 			return true
 		})
 
 		log.Info("table span status",
-			zap.String("distribution", taskDistribution),
+			// zap.String("distribution", taskDistribution),
 			zap.String("changefeed", m.id.ID),
+			zap.Int("total", m.tableSpans.Len()),
+			zap.Int("scheduled", m.supervisor.GetInferiors().Len()),
 			zap.Int("absent", absentTask),
 			zap.Int("prepare", prepareTask),
 			zap.Int("commit", commitTask),
 			zap.Int("working", workingTask),
-			zap.Int("removing", removingTask))
+			zap.Int("removing", removingTask),
+			zap.Int("runningTasks", m.supervisor.RunningTasks.Len()))
 		m.lastCheckTime = time.Now()
 	}
 }
