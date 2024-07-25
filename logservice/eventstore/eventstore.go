@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -122,6 +123,12 @@ func NewEventStore(
 	)
 
 	dbPath := fmt.Sprintf("%s/%s", root, dataDir)
+
+	// FIXME: avoid remove
+	err := os.RemoveAll(dbPath)
+	if err != nil {
+		log.Panic("fail to remove path")
+	}
 	dbs := make([]*pebble.DB, 0, dbCount)
 	channels := make([]chan eventWithTableID, 0, dbCount)
 	// TODO: update pebble options
