@@ -259,7 +259,7 @@ func (m *Maintainer) sendMessages(msgs []rpc.Message) {
 	for _, msg := range msgs {
 		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(msg.(*messaging.TargetMessage))
 		if err != nil {
-			log.Error("failed to send coordinator request", zap.Any("msg", msg), zap.Error(err))
+			log.Debug("failed to send maintainer request", zap.Any("msg", msg), zap.Error(err))
 			continue
 		}
 	}
@@ -428,7 +428,7 @@ func (m *Maintainer) initTableIDs() (map[int64]struct{}, error) {
 		}
 		tableIDs[tableInfo.ID] = struct{}{}
 	})
-	log.Info("get table ids", zap.Any("count", tableIDs), zap.String("changefeed", m.id.String()))
+	log.Info("get table ids", zap.Int("count", len(tableIDs)), zap.String("changefeed", m.id.String()))
 	return tableIDs, nil
 }
 
