@@ -14,6 +14,8 @@
 package server
 
 import (
+	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
+	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 )
@@ -26,4 +28,6 @@ func init() {
 		collectors.WithGoCollections(collectors.GoRuntimeMemStatsCollection | collectors.GoRuntimeMetricsCollection)))
 
 	initServerMetrics(registry)
+	dispatchermanagermanager.InitMetrics(registry)
+	dispatchermanager.InitMetrics(registry)
 }
