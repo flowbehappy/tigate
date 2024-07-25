@@ -57,6 +57,8 @@ func newPersistentStorage(
 		return dataStorage, metaTS, databaseMap
 	}
 
+	log.Info("schema store create a fresh storage")
+
 	// TODO: create a fresh db instance
 	databaseMap, err = writeSchemaSnapshotToDisk(db, storage, currentGCTS)
 	if err != nil {

@@ -98,9 +98,13 @@ func NewSchemaStore(
 		log.Panic("get ts failed", zap.Error(err))
 		return nil, err
 	}
-
 	minRequiredTS := common.Ts(gcSafePoint)
 	dataStorage, metaTS, databaseMap := newPersistentStorage(root, kvStorage, minRequiredTS)
+
+	log.Info("get gc safe point",
+		zap.Uint64("gcSafePoint", gcSafePoint),
+		zap.Any("metaTS", metaTS),
+		zap.Any("databaseMap", databaseMap))
 
 	s := &schemaStore{
 		storage:       kvStorage,
