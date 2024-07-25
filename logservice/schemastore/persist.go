@@ -33,9 +33,9 @@ type persistentStorage struct {
 }
 
 type schemaMetaTS struct {
-	FinishedDDLTS common.Ts
-	SchemaVersion common.Ts
-	ResolvedTS    common.Ts
+	FinishedDDLTS common.Ts `json:"finished_ddl_ts"`
+	SchemaVersion common.Ts `json:"schema_version"`
+	ResolvedTS    common.Ts `json:"resolved_ts"`
 }
 
 func newPersistentStorage(
