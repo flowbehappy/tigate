@@ -33,9 +33,9 @@ type persistentStorage struct {
 }
 
 type schemaMetaTS struct {
-	finishedDDLTS common.Ts
-	schemaVersion common.Ts
-	resolvedTS    common.Ts
+	FinishedDDLTS common.Ts
+	SchemaVersion common.Ts
+	ResolvedTS    common.Ts
 }
 
 func newPersistentStorage(
@@ -73,14 +73,14 @@ func newPersistentStorage(
 	dataStorage.gcTS.Store(uint64(currentGCTS))
 	// TODO: check whether the following values are correct
 	metaTS = schemaMetaTS{
-		finishedDDLTS: currentGCTS,
-		schemaVersion: currentGCTS,
-		resolvedTS:    currentGCTS,
+		FinishedDDLTS: currentGCTS,
+		SchemaVersion: currentGCTS,
+		ResolvedTS:    currentGCTS,
 	}
 
 	batch := db.NewBatch()
 	writeTSToBatch(batch, gcTSKey(), currentGCTS)
-	writeTSToBatch(batch, metaTSKey(), metaTS.resolvedTS, metaTS.finishedDDLTS, metaTS.schemaVersion)
+	writeTSToBatch(batch, metaTSKey(), metaTS.ResolvedTS, metaTS.FinishedDDLTS, metaTS.SchemaVersion)
 	batch.Commit(pebble.NoSync)
 
 	return dataStorage, metaTS, databaseMap
@@ -108,16 +108,16 @@ func loadPersistentStorage(db *pebble.DB, minRequiredTS common.Ts) (*persistentS
 	if err != nil || len(values) != 3 {
 		return nil, schemaMetaTS{}, nil
 	}
-	metaTS.resolvedTS = values[0]
-	metaTS.finishedDDLTS = values[1]
-	metaTS.schemaVersion = values[2]
+	metaTS.ResolvedTS = values[0]
+	metaTS.FinishedDDLTS = values[1]
+	metaTS.SchemaVersion = values[2]
 
 	// gcTS cannot go back
 	if minRequiredTS < common.Ts(dataStorage.gcTS.Load()) {
 		log.Panic("shouldn't happend")
 	}
 	// FIXME: > or >=?
-	if minRequiredTS > metaTS.resolvedTS {
+	if minRequiredTS > metaTS.ResolvedTS {
 		return nil, schemaMetaTS{}, nil
 	}
 

@@ -126,7 +126,7 @@ func NewSchemaStore(
 		regionCache,
 		pdClock,
 		kvStorage,
-		metaTS.resolvedTS,
+		metaTS.ResolvedTS,
 		s.writeDDLEvent,
 		s.advanceResolvedTs)
 
