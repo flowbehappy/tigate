@@ -125,7 +125,10 @@ func (c *HeartBeatCollector) RecvSchedulerDispatcherRequestMessages(msg *messagi
 		if !scheduleDispatcherRequest.IsSecondary {
 			eventDispatcherManager.NewTableEventDispatcher(&common.TableSpan{TableSpan: config.Span}, config.StartTs)
 		} else {
-			eventDispatcherManager.CollectHeartbeatInfoOnce(config.Span, heartbeatpb.ComponentState_Prepared)
+			eventDispatcherManager.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
+				Span:            config.Span,
+				ComponentStatus: heartbeatpb.ComponentState_Prepared,
+			}
 		}
 	} else if scheduleAction == heartbeatpb.ScheduleAction_Remove {
 		eventDispatcherManager.RemoveTableEventDispatcher(&common.TableSpan{TableSpan: config.Span})

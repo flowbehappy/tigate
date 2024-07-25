@@ -149,6 +149,8 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 	}(ctx, eventDispatcherManager)
 
 	eventDispatcherManager.Init()
+
+	go eventDispatcherManager.CollectHeartbeatInfoWhenStatesChanged(ctx)
 	return eventDispatcherManager
 }
 
@@ -220,33 +222,73 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableEventDispatcher, startTs)
 
 	e.dispatcherMap.Set(tableSpan, tableEventDispatcher)
-	e.CollectHeartbeatInfoOnce(tableSpan.TableSpan, heartbeatpb.ComponentState_Working)
+	e.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
+		Span:            tableSpan.TableSpan,
+		ComponentStatus: heartbeatpb.ComponentState_Working,
+	}
 
 	log.Info("new table event dispatcher created", zap.Any("tableSpan", tableSpan))
 	return tableEventDispatcher
 }
 
-func (e *EventDispatcherManager) CollectHeartbeatInfoOnce(tableSpan *heartbeatpb.TableSpan, status heartbeatpb.ComponentState) {
+// CollectHeartbeatInfoWhenStatesChanged use to collect the heartbeat info when GetTableSpanStatusesChan() get infos
+// It happenes when some dispatchers change status, such as --> working; --> stopped; --> stopping
+// Considering collect the heartbeat info is a time-consuming operation(we need to scan all the dispatchers),
+// We will not collect the heartbeat info as soon as we receive it, but will batch it appropriately.
+func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx context.Context) {
 	// component status changed，send heartbeat now
-	e.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
-		Span:            tableSpan,
-		ComponentStatus: status,
+	statusMessage := make([]*heartbeatpb.TableSpanStatus, 0)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case tableSpanStatus := <-e.GetTableSpanStatusesChan():
+			statusMessage = append(statusMessage, tableSpanStatus)
+
+			delay := time.NewTimer(10 * time.Millisecond)
+		loop:
+			for {
+				select {
+				case tableSpanStatus := <-e.GetTableSpanStatusesChan():
+					statusMessage = append(statusMessage, tableSpanStatus)
+				case <-delay.C:
+					break loop
+				}
+			}
+
+			// Release resources promptly
+			if !delay.Stop() {
+				select {
+				case <-delay.C:
+				default:
+				}
+			}
+
+			message := e.CollectHeartbeatInfo(false)
+			message.Statuses = statusMessage
+			e.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: message})
+			statusMessage = statusMessage[:0]
+		}
 	}
-	message := e.CollectHeartbeatInfo(false)
-	e.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: message})
 }
 
 func (e *EventDispatcherManager) RemoveTableEventDispatcher(tableSpan *common.TableSpan) {
 	dispatcher, ok := e.dispatcherMap.Get(tableSpan)
 	if ok {
 		if dispatcher.GetComponentStatus() == heartbeatpb.ComponentState_Stopping {
-			e.CollectHeartbeatInfoOnce(tableSpan.TableSpan, heartbeatpb.ComponentState_Stopping)
+			e.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
+				Span:            tableSpan.TableSpan,
+				ComponentStatus: heartbeatpb.ComponentState_Stopping,
+			}
 			return
 		}
 		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RemoveDispatcher(dispatcher)
 		dispatcher.Remove()
 	} else {
-		e.CollectHeartbeatInfoOnce(tableSpan.TableSpan, heartbeatpb.ComponentState_Stopped)
+		e.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
+			Span:            tableSpan.TableSpan,
+			ComponentStatus: heartbeatpb.ComponentState_Stopped,
+		}
 	}
 }
 
