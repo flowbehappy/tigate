@@ -21,6 +21,7 @@ import (
 
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
@@ -64,6 +65,8 @@ type EventDispatcherManager struct {
 
 	// tableSpanStatusesChan will fetch the tableSpan status that need to contains in the heartbeat info.
 	tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus
+
+	tableEventDispatcherCount prometheus.Gauge
 	//filter                      *Filter
 }
 
@@ -123,10 +126,11 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 		// sinkURI: config.SinkURI,
 		//sinkConfig:             config.SinkConfig,
 		//enableSyncPoint:       false,
-		maintainerID:          maintainerID,
-		tableSpanStatusesChan: make(chan *heartbeatpb.TableSpanStatus, 1000000),
-		cancel:                cancel,
-		config:                config,
+		maintainerID:              maintainerID,
+		tableSpanStatusesChan:     make(chan *heartbeatpb.TableSpanStatus, 1000000),
+		cancel:                    cancel,
+		config:                    config,
+		tableEventDispatcherCount: TableEventDispatcherCount.WithLabelValues(changefeedID.String()),
 	}
 
 	appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(eventDispatcherManager)
@@ -150,6 +154,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 
 	eventDispatcherManager.Init()
 
+	eventDispatcherManager.wg.Add(1)
 	go eventDispatcherManager.CollectHeartbeatInfoWhenStatesChanged(ctx)
 	return eventDispatcherManager
 }
@@ -227,6 +232,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 		ComponentStatus: heartbeatpb.ComponentState_Working,
 	}
 
+	e.tableEventDispatcherCount.Inc()
 	log.Info("new table event dispatcher created", zap.Any("tableSpan", tableSpan))
 	return tableEventDispatcher
 }
@@ -236,7 +242,8 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 // Considering collect the heartbeat info is a time-consuming operation(we need to scan all the dispatchers),
 // We will not collect the heartbeat info as soon as we receive it, but will batch it appropriately.
 func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx context.Context) {
-	// component status changed，send heartbeat now
+	defer e.wg.Done()
+
 	statusMessage := make([]*heartbeatpb.TableSpanStatus, 0)
 	for {
 		select {
@@ -295,6 +302,7 @@ func (e *EventDispatcherManager) RemoveTableEventDispatcher(tableSpan *common.Ta
 // Only called when the dispatcher is removed successfully.
 func (e *EventDispatcherManager) cleanTableEventDispatcher(tableSpan *common.TableSpan) {
 	e.dispatcherMap.Delete(tableSpan)
+	e.tableEventDispatcherCount.Dec()
 	log.Info("table event dispatcher completely stopped, and delete it from event dispatcher manager", zap.Any("tableSpan", tableSpan))
 }
 

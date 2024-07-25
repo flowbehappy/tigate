@@ -58,6 +58,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 		}
 		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, cfConfig, msg.To, msg.From)
 		m.dispatcherManagers[changefeedID] = eventDispatcherManager
+		EventDispatcherManagerCount.Inc()
 
 		response := &heartbeatpb.MaintainerBootstrapResponse{
 			ChangefeedID: maintainerBootstrapRequest.ChangefeedID,
