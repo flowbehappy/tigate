@@ -11,15 +11,22 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/mounter"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
+	cdckv "github.com/pingcap/tiflow/cdc/kv"
+	"github.com/pingcap/tiflow/cdc/kv/sharedconn"
+	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/tiflow/cdc/processor/tablepb"
+	"github.com/pingcap/tiflow/cdc/puller"
+	cdcConfig "github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/security"
+	"github.com/pingcap/tiflow/pkg/spanz"
+	cdcTxnutil "github.com/pingcap/tiflow/pkg/txnutil"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -82,7 +89,8 @@ type eventStore struct {
 	schemaStore schemastore.SchemaStore
 	dbs         []*pebble.DB
 	channels    []chan eventWithTableID
-	puller      *logpuller.LogPuller
+	// puller      *logpuller.LogPuller
+	puller *puller.MultiplexingPuller
 
 	gcManager *gcManager
 
@@ -106,21 +114,21 @@ func NewEventStore(
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
 ) EventStore {
-	grpcPool := logpuller.NewConnAndClientPool(
-		&security.Credential{},
-	)
-	clientConfig := &logpuller.SharedClientConfig{
-		KVClientWorkerConcurrent:     32,
-		KVClientGrpcStreamConcurrent: 32,
-		KVClientAdvanceIntervalInMs:  300,
-	}
-	client := logpuller.NewSharedClient(
-		clientConfig,
-		pdCli,
-		grpcPool,
-		regionCache,
-		pdClock,
-	)
+	// grpcPool := logpuller.NewConnAndClientPool(
+	// 	&security.Credential{},
+	// )
+	// clientConfig := &logpuller.SharedClientConfig{
+	// 	KVClientWorkerConcurrent:     32,
+	// 	KVClientGrpcStreamConcurrent: 32,
+	// 	KVClientAdvanceIntervalInMs:  300,
+	// }
+	// client := logpuller.NewSharedClient(
+	// 	clientConfig,
+	// 	pdCli,
+	// 	grpcPool,
+	// 	regionCache,
+	// 	pdClock,
+	// )
 
 	dbPath := fmt.Sprintf("%s/%s", root, dataDir)
 
@@ -164,19 +172,63 @@ func NewEventStore(
 		}(i)
 	}
 
-	consume := func(ctx context.Context, raw *common.RawKVEntry, span heartbeatpb.TableSpan) error {
+	// consume := func(ctx context.Context, raw *common.RawKVEntry, span heartbeatpb.TableSpan) error {
+	// 	if raw != nil {
+	// 		store.writeEvent(span, raw)
+	// 	}
+	// 	return nil
+	// }
+	// pullerConfig := &logpuller.LogPullerConfig{
+	// 	WorkerCount:  len(dbs),
+	// 	HashSpanFunc: common.HashTableSpan,
+	// }
+	// puller := logpuller.NewLogPuller(client, pdClock, consume, pullerConfig)
+
+	grpcPool := sharedconn.NewConnAndClientPool(&security.Credential{}, cdckv.GetGlobalGrpcMetrics())
+	client := cdckv.NewSharedClient(
+		model.ChangeFeedID{},
+		&cdcConfig.ServerConfig{},
+		false,
+		pdCli,
+		grpcPool,
+		regionCache,
+		pdClock,
+		cdcTxnutil.NewLockerResolver(kvStorage.(tikv.Storage), model.ChangeFeedID{}),
+	)
+
+	consume := func(ctx context.Context, raw *model.RawKVEntry, spans []tablepb.Span, _ model.ShouldSplitKVEntry) error {
+		if len(spans) > 1 {
+			log.Panic("DML puller subscribes multiple spans")
+		}
+		span := heartbeatpb.TableSpan{
+			TableID:  uint64(spans[0].TableID),
+			StartKey: spans[0].StartKey,
+			EndKey:   spans[0].EndKey,
+		}
+		rawKV := &common.RawKVEntry{
+			OpType:   common.OpType(raw.OpType),
+			Key:      raw.Key,
+			Value:    raw.Value,
+			OldValue: raw.OldValue,
+			StartTs:  raw.StartTs,
+			CRTs:     raw.CRTs,
+			RegionID: raw.RegionID,
+		}
 		if raw != nil {
-			store.writeEvent(span, raw)
+			store.writeEvent(span, rawKV)
 		}
 		return nil
 	}
-	pullerConfig := &logpuller.LogPullerConfig{
-		WorkerCount:  len(dbs),
-		HashSpanFunc: common.HashTableSpan,
-	}
-	puller := logpuller.NewLogPuller(client, pdClock, consume, pullerConfig)
 
-	store.puller = puller
+	store.puller = puller.NewMultiplexingPuller(
+		model.ChangeFeedID{},
+		client,
+		pdClock,
+		consume,
+		len(dbs),
+		spanz.HashTableSpan,
+		8)
+
 	return store
 }
 
@@ -368,7 +420,12 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableS
 	tableState.ch = e.channels[chIndex]
 	tableState.watermark.Store(uint64(startTS))
 	e.spans[dispatcherID] = tableState
-	e.puller.Subscribe(span, startTS)
+	realSpan := tablepb.Span{
+		TableID:  tablepb.TableID(span.TableID),
+		StartKey: span.StartKey,
+		EndKey:   span.EndKey,
+	}
+	e.puller.Subscribe([]tablepb.Span{realSpan}, model.Ts(startTS), "", func(_ *model.RawKVEntry) bool { return false })
 	return nil
 }
 
@@ -396,7 +453,13 @@ func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) erro
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if tableStat, ok := e.spans[dispatcherID]; ok {
-		e.puller.Unsubscribe(tableStat.span)
+		realSpan := tablepb.Span{
+			TableID:  tablepb.TableID(tableStat.span.TableID),
+			StartKey: tableStat.span.StartKey,
+			EndKey:   tableStat.span.EndKey,
+		}
+		e.puller.Unsubscribe([]tablepb.Span{realSpan})
+		// e.puller.Unsubscribe(tableStat.span)
 		e.tables.Delete(tableStat.span)
 		delete(e.spans, dispatcherID)
 	}
