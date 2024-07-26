@@ -431,7 +431,7 @@ func (l *RangeLock) tryLockRange(startKey, endKey []byte, regionID, regionVersio
 		l.regionIDToLockedRanges[regionID] = newEntry
 
 		l.unlockedRanges.unset(startKey, endKey)
-		log.Debug("range locked",
+		log.Info("range locked",
 			zap.Uint64("lockID", l.id),
 			zap.Uint64("regionID", regionID),
 			zap.Uint64("version", regionVersion),
