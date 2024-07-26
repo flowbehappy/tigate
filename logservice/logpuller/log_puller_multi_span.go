@@ -20,6 +20,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/pkg/pdutil"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -37,6 +38,7 @@ type LogPullerMultiSpan struct {
 
 func NewLogPullerMultiSpan(
 	client *SharedClient,
+	pdClock pdutil.Clock,
 	spans []common.TableSpan,
 	startTs common.Ts,
 	consume func(context.Context, *common.RawKVEntry) error,
@@ -68,7 +70,7 @@ func NewLogPullerMultiSpan(
 		return consume(ctx, entry)
 	}
 
-	pullerWrapper.innerPuller = NewLogPuller(client, consumeWrapper, config)
+	pullerWrapper.innerPuller = NewLogPuller(client, pdClock, consumeWrapper, config)
 	return pullerWrapper
 }
 

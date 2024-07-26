@@ -174,7 +174,7 @@ func NewEventStore(
 		WorkerCount:  len(dbs),
 		HashSpanFunc: common.HashTableSpan,
 	}
-	puller := logpuller.NewLogPuller(client, consume, pullerConfig)
+	puller := logpuller.NewLogPuller(client, pdClock, consume, pullerConfig)
 
 	store.puller = puller
 	return store
