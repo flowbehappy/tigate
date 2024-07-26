@@ -18,20 +18,24 @@ import (
 
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // MysqlWorker is use to flush the event downstream
 type MysqlWorker struct {
-	eventChan   <-chan *common.TxnEvent // 获取到能往下游写的 events
-	mysqlWriter *writer.MysqlWriter     // 实际负责做 flush 操作
-	id          int
+	eventChan           <-chan *common.TxnEvent // 获取到能往下游写的 events
+	mysqlWriter         *writer.MysqlWriter     // 实际负责做 flush 操作
+	id                  int
+	WorkerFlushDuration prometheus.Observer
 }
 
-func NewMysqlWorker(eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig, id int) *MysqlWorker {
+func NewMysqlWorker(eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig, id int, changefeedID model.ChangeFeedID) *MysqlWorker {
 	return &MysqlWorker{
-		eventChan:   eventChan,
-		mysqlWriter: writer.NewMysqlWriter(db, config),
-		id:          id,
+		eventChan:           eventChan,
+		mysqlWriter:         writer.NewMysqlWriter(db, config),
+		id:                  id,
+		WorkerFlushDuration: WorkerFlushDuration.WithLabelValues(changefeedID.String(), string(id)),
 	}
 }
 

@@ -174,7 +174,7 @@ func (e *EventDispatcherManager) Init() error {
 		return err
 	}
 	// e.sink = sink.NewMysqlSink(*e.config.SinkConfig.MySQLConfig.WorkerCount, cfg, db)
-	e.sink = sink.NewMysqlSink(16, cfg, db)
+	e.sink = sink.NewMysqlSink(e.changefeedID, 16, cfg, db)
 	return nil
 	//}
 

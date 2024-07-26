@@ -23,6 +23,7 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,7 +39,7 @@ func TestTableEventDispatcher(t *testing.T) {
 	db, mock := newTestMockDB(t)
 	defer db.Close()
 
-	mysqlSink := sink.NewMysqlSink(8, writer.NewMysqlConfig(), db)
+	mysqlSink := sink.NewMysqlSink(model.DefaultChangeFeedID("test1"), 8, writer.NewMysqlConfig(), db)
 	tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1}}
 	startTs := uint64(100)
 

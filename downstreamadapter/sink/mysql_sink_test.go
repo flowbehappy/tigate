@@ -21,6 +21,7 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/stretchr/testify/require"
 	"github.com/zeebo/assert"
 )
@@ -44,7 +45,7 @@ func TestMysqlSinkBasicFunctionality(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	mysqlSink := NewMysqlSink(8, writer.NewMysqlConfig(), db)
+	mysqlSink := NewMysqlSink(model.DefaultChangeFeedID("test1"), 8, writer.NewMysqlConfig(), db)
 	assert.NotNil(t, mysqlSink)
 
 	tableSpan := common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1}}

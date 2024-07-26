@@ -26,9 +26,11 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/causality"
 )
 
@@ -89,7 +91,7 @@ func (s *TableStatus) getProgress() *types.TableProgress {
 // 一个 event dispatcher manager 对应一个 mysqlSink
 // 实现 Sink 的接口
 type MysqlSink struct {
-	//changefeedID     string
+	changefeedID     model.ChangeFeedID
 	conflictDetector *conflictdetector.ConflictDetector
 
 	// 主要是要保持一样的生命周期？不然 channel 会对应不上
@@ -99,11 +101,14 @@ type MysqlSink struct {
 	tableStatuses *TableStatusMap
 	wg            sync.WaitGroup
 	cancel        context.CancelFunc
+
+	flushRows prometheus.Gauge
 }
 
 // event dispatcher manager 初始化的时候创建 mysqlSink 对象
-func NewMysqlSink(workerCount int, cfg *writer.MysqlConfig, db *sql.DB) *MysqlSink {
+func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *writer.MysqlConfig, db *sql.DB) *MysqlSink {
 	mysqlSink := MysqlSink{
+		changefeedID: changefeedID,
 		conflictDetector: conflictdetector.NewConflictDetector(DefaultConflictDetectorSlots, conflictdetector.TxnCacheOption{
 			Count:         workerCount,
 			Size:          1024,
@@ -112,6 +117,8 @@ func NewMysqlSink(workerCount int, cfg *writer.MysqlConfig, db *sql.DB) *MysqlSi
 		tableStatuses: NewTableStatusMap(),
 		//dmlWorkerTasks: make([]*worker.MysqlWorkerDMLEventTask, workerCount),
 	}
+
+	mysqlSink.flushRows = FlushRows.WithLabelValues(mysqlSink.changefeedID.String())
 
 	mysqlSink.initWorker(workerCount, cfg, db)
 
@@ -131,7 +138,7 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 		// s.dmlWorkerTasks = append(s.dmlWorkerTasks, worker.NewMysqlWorkerDMLEventTask(s.conflictDetector.GetOutChByCacheID(int64(i)), db, cfg, 128))
 		go func(ctx context.Context, eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig, maxRows int) {
 			defer s.wg.Done()
-			worker := worker.NewMysqlWorker(eventChan, db, config, workerId)
+			worker := worker.NewMysqlWorker(eventChan, db, config, workerId, s.changefeedID)
 			events := make([]*common.TxnEvent, 0)
 			rows := 0
 			for {
@@ -140,7 +147,9 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 				case <-ctx.Done():
 					return
 				case txnEvent := <-worker.GetEventChan():
+					log.Info("worker get event", zap.Any("workerID", workerId))
 					events = append(events, txnEvent)
+					rows += len(txnEvent.Rows)
 					if rows > maxRows {
 						needFlush = true
 					}
@@ -150,6 +159,7 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 							select {
 							case txnEvent := <-worker.GetEventChan():
 								events = append(events, txnEvent)
+								rows += len(txnEvent.Rows)
 								if rows > maxRows {
 									needFlush = true
 								}
@@ -171,6 +181,9 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 						log.Error("Failed to flush events", zap.Error(err))
 						return
 					}
+					s.flushRows.Add(float64(rows))
+					worker.WorkerFlushDuration.Observe(time.Since(start).Seconds())
+
 					log.Info("Flush events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Duration("duration", time.Since(start)))
 
 					events = events[:0]
