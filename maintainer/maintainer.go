@@ -145,6 +145,23 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	return m
 }
 
+func (m *Maintainer) Run() {
+	// Note: currently the threadPool maybe discard some running task, fix this later.
+	// threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.
+	// 	Submit(m, threadpool.CPUTask, time.Now())
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for range ticker.C {
+			newStatus, _ := m.Execute()
+			if newStatus == threadpool.Done {
+				log.Warn("maintainer is done", zap.String("id", m.id.String()))
+				return
+			}
+		}
+	}()
+}
+
 func (m *Maintainer) cleanupMetrics() {
 	metrics.ChangefeedCheckpointTsGauge.DeleteLabelValues(m.id.Namespace, m.id.ID)
 	metrics.ChangefeedCheckpointTsLagGauge.DeleteLabelValues(m.id.Namespace, m.id.ID)
@@ -156,6 +173,10 @@ func (m *Maintainer) cleanupMetrics() {
 
 func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time) {
 	log.Info("maintainer execute", zap.String("id", m.id.String()))
+	defer func() {
+		log.Info("maintainer execute done", zap.String("id", m.id.String()),
+			zap.Int("status", int(taskStatus)), zap.Time("tickTime", tick))
+	}()
 	m.updateMetrics()
 	if m.removed.Load() {
 		// removed, cancel the task
