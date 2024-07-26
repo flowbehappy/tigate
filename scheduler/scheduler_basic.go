@@ -91,7 +91,7 @@ func (b *BasicScheduler) Schedule(
 	// Build remove inferior tasks.
 	if b.needRemoveInferior {
 		// The two sets are not identical. We need to build a map to find removed inferiors.
-		b.removeInferiorCache = make([]InferiorID, batchSize)
+		b.removeInferiorCache = make([]InferiorID, 0, batchSize)
 		stateMachines.Ascend(func(key InferiorID, value *StateMachine) bool {
 			ok := allInferiors.Has(key)
 			if !ok {

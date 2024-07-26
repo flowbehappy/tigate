@@ -503,6 +503,7 @@ func (m *Maintainer) closeChangefeed() {
 		m.state = heartbeatpb.ComponentState_Stopping
 		m.statusChanged.Store(true)
 		m.tableSpans = utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior]()
+		m.supervisor.MarkNeedAddInferior()
 		m.supervisor.MarkNeedRemoveInferior()
 	}
 }
