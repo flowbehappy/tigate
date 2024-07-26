@@ -138,7 +138,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	}
 	m.supervisor = scheduler.NewSupervisor(scheduler.ChangefeedID(cfID),
 		m.getReplicaSet, m.getNewBootstrapFn(),
-		scheduler.NewBasicScheduler(1000),
+		scheduler.NewBasicScheduler(),
 		scheduler.NewBalanceScheduler(time.Minute, 1000),
 	)
 	log.Info("create maintainer", zap.String("id", cfID.String()))
@@ -366,6 +366,7 @@ func (m *Maintainer) initChangefeed() error {
 		replicaSet := NewReplicaSet(m.id, tableSpan, m.checkpointTs.Load()).(*ReplicaSet)
 		m.tableSpans.ReplaceOrInsert(tableSpan, replicaSet)
 	}
+	m.supervisor.MarkNeedAddInferior()
 	return err
 }
 
@@ -502,6 +503,7 @@ func (m *Maintainer) closeChangefeed() {
 		m.state = heartbeatpb.ComponentState_Stopping
 		m.statusChanged.Store(true)
 		m.tableSpans = utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior]()
+		m.supervisor.MarkNeedRemoveInferior()
 	}
 }
 

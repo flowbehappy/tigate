@@ -67,7 +67,7 @@ func NewCoordinator(capture *model.CaptureInfo, version int64) server.Coordinato
 	c.supervisor = scheduler.NewSupervisor(
 		scheduler.ChangefeedID(model.DefaultChangeFeedID("coordinator")),
 		c.newChangefeed, c.newBootstrapMessage,
-		scheduler.NewBasicScheduler(1000),
+		scheduler.NewBasicScheduler(),
 		scheduler.NewBalanceScheduler(time.Minute, 1000),
 	)
 
@@ -205,6 +205,8 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 			allChangefeeds.ReplaceOrInsert(scheduler.ChangefeedID(id), cf)
 		}
 	}
+	c.supervisor.MarkNeedAddInferior()
+	c.supervisor.MarkNeedRemoveInferior()
 	tasks := c.supervisor.Schedule(
 		allChangefeeds,
 		c.supervisor.GetAllCaptures(),
