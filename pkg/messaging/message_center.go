@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/flowbehappy/tigate/pkg/common"
-
 	"github.com/flowbehappy/tigate/pkg/apperror"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/log"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -89,6 +90,9 @@ type messageCenter struct {
 	wg             *sync.WaitGroup
 	ctx            context.Context
 	cancel         context.CancelFunc
+
+	targetGauge prometheus.Gauge
+	streamGauge prometheus.Gauge
 }
 
 func NewMessageCenter(id ServerId, epoch common.EpochType, cfg *config.MessageCenterConfig) *messageCenter {
@@ -254,12 +258,17 @@ func NewMessageCenterServer(mc MessageCenter) proto.MessageCenterServer {
 
 // SendEvents implements the gRPC service MessageCenter.SendEvents
 func (s *grpcServer) SendEvents(msg *proto.Message, stream proto.MessageCenter_SendEventsServer) error {
+	metricsStreamGauge := metrics.MessagingStreamGauge.WithLabelValues(msg.GetFrom())
+	metricsStreamGauge.Inc()
+	defer metricsStreamGauge.Dec()
 	return s.handleConnect(msg, stream, true)
 	//return s.handleClientConnect(stream, true)
 }
 
 // SendCommands implements the gRPC service MessageCenter.SendCommands
 func (s *grpcServer) SendCommands(msg *proto.Message, stream proto.MessageCenter_SendCommandsServer) error {
+	metricsStreamGauge := metrics.MessagingStreamGauge.WithLabelValues(msg.GetFrom())
+	metricsStreamGauge.Inc()
 	return s.handleConnect(msg, stream, false)
 	//return s.handleClientConnect(stream, false)
 }

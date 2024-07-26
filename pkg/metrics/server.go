@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package metrics
 
 import (
 	"os"
@@ -19,10 +19,11 @@ import (
 	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 )
 
 var (
-	goGC = prometheus.NewGauge(
+	GoGC = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
 			Subsystem: "server",
@@ -30,7 +31,7 @@ var (
 			Help:      "The value of GOGC",
 		})
 
-	goMaxProcs = prometheus.NewGauge(
+	GoMaxProcs = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
 			Subsystem: "server",
@@ -46,14 +47,17 @@ func RecordGoRuntimeSettings() {
 	if val, err := strconv.Atoi(os.Getenv("GOGC")); err == nil {
 		gogcValue = val
 	}
-	goGC.Set(float64(gogcValue))
+	GoGC.Set(float64(gogcValue))
 
 	maxProcs := runtime.GOMAXPROCS(0)
-	goMaxProcs.Set(float64(maxProcs))
+	GoMaxProcs.Set(float64(maxProcs))
 }
 
-// initServerMetrics registers all metrics used in processor
-func initServerMetrics(registry *prometheus.Registry) {
-	registry.MustRegister(goGC)
-	registry.MustRegister(goMaxProcs)
+// InitServerMetrics registers all metrics used in processor
+func InitServerMetrics(registry *prometheus.Registry) {
+	registry.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	registry.MustRegister(prometheus.NewGoCollector(
+		collectors.WithGoCollections(collectors.GoRuntimeMemStatsCollection | collectors.GoRuntimeMetricsCollection)))
+	registry.MustRegister(GoGC)
+	registry.MustRegister(GoMaxProcs)
 }

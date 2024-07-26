@@ -20,17 +20,11 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/worker"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/collectors"
 )
 
 var registry = prometheus.NewRegistry()
 
 func init() {
-	registry.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
-	registry.MustRegister(prometheus.NewGoCollector(
-		collectors.WithGoCollections(collectors.GoRuntimeMemStatsCollection | collectors.GoRuntimeMetricsCollection)))
-
-	initServerMetrics(registry)
 	dispatchermanagermanager.InitMetrics(registry)
 	dispatchermanager.InitMetrics(registry)
 	sink.InitMetrics(registry)
