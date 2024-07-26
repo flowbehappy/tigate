@@ -140,11 +140,28 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	}
 	m.supervisor = scheduler.NewSupervisor(scheduler.ChangefeedID(cfID),
 		m.getReplicaSet, m.getNewBootstrapFn(),
-		scheduler.NewBasicScheduler(1000),
+		scheduler.NewBasicScheduler(),
 		scheduler.NewBalanceScheduler(time.Minute, 1000),
 	)
 	log.Info("create maintainer", zap.String("id", cfID.String()))
 	return m
+}
+
+func (m *Maintainer) Run() {
+	// Note: currently the threadPool maybe discard some running task, fix this later.
+	// threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.
+	// 	Submit(m, threadpool.CPUTask, time.Now())
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for range ticker.C {
+			newStatus, _ := m.Execute()
+			if newStatus == threadpool.Done {
+				log.Warn("maintainer is done", zap.String("id", m.id.String()))
+				return
+			}
+		}
+	}()
 }
 
 func (m *Maintainer) cleanupMetrics() {
@@ -158,6 +175,10 @@ func (m *Maintainer) cleanupMetrics() {
 
 func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time) {
 	log.Info("maintainer execute", zap.String("id", m.id.String()))
+	defer func() {
+		log.Info("maintainer execute done", zap.String("id", m.id.String()),
+			zap.Int("status", int(taskStatus)), zap.Time("tickTime", tick))
+	}()
 	m.updateMetrics()
 	if m.removed.Load() {
 		// removed, cancel the task
@@ -347,6 +368,7 @@ func (m *Maintainer) initChangefeed() error {
 		replicaSet := NewReplicaSet(m.id, tableSpan, m.checkpointTs.Load()).(*ReplicaSet)
 		m.tableSpans.ReplaceOrInsert(tableSpan, replicaSet)
 	}
+	m.supervisor.MarkNeedAddInferior()
 	return err
 }
 
@@ -483,6 +505,8 @@ func (m *Maintainer) closeChangefeed() {
 		m.state = heartbeatpb.ComponentState_Stopping
 		m.statusChanged.Store(true)
 		m.tableSpans = utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior]()
+		m.supervisor.MarkNeedAddInferior()
+		m.supervisor.MarkNeedRemoveInferior()
 	}
 }
 

@@ -22,7 +22,6 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -188,8 +187,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 			cf = NewMaintainer(cfID, req.IsSecondary,
 				cfConfig, req.CheckpointTs, m.pdEndpoints)
 			m.maintainers.Store(cfID, cf)
-			threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf.(*Maintainer),
-				threadpool.CPUTask, time.Now())
+			cf.(*Maintainer).Run()
 		}
 		cf.(*Maintainer).isSecondary.Store(req.IsSecondary)
 	}

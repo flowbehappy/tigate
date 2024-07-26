@@ -21,11 +21,15 @@ import (
 )
 
 type BasicScheduler struct {
-	batchSize int
+	needAddInferior  bool
+	addInferiorCache []InferiorID
+
+	needRemoveInferior  bool
+	removeInferiorCache []InferiorID
 }
 
-func NewBasicScheduler(batchSize int) *BasicScheduler {
-	return &BasicScheduler{batchSize: batchSize}
+func NewBasicScheduler() *BasicScheduler {
+	return &BasicScheduler{}
 }
 
 func (b *BasicScheduler) Name() string {
@@ -36,37 +40,40 @@ func (b *BasicScheduler) Schedule(
 	allInferiors utils.Map[InferiorID, Inferior],
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
 	stateMachines utils.Map[InferiorID, *StateMachine],
+	batchSize int,
 ) []*ScheduleTask {
 	tasks := make([]*ScheduleTask, 0)
-	lenEqual := allInferiors.Len() == stateMachines.Len()
-	allFind := true
-	newInferiors := make([]InferiorID, 0)
-	allInferiors.Ascend(func(inf InferiorID, value Inferior) bool {
-		if len(newInferiors) >= b.batchSize {
-			return false
-		}
-		st := value.GetStateMachine()
-		if st == nil {
-			newInferiors = append(newInferiors, inf)
-			// The inferior ID is not in the state machine means the two sets are
-			// not identical.
-			allFind = false
-			return true
-		}
-		// absent status means we should schedule it again
-		if st.State == SchedulerStatusAbsent {
-			newInferiors = append(newInferiors, inf)
-		}
-		return true
-	})
-
 	// Build add inferior tasks.
-	if len(newInferiors) > 0 {
+	if b.needAddInferior {
+		b.addInferiorCache = make([]InferiorID, 0, batchSize)
+		allInferiors.Ascend(func(inf InferiorID, value Inferior) bool {
+			st := value.GetStateMachine()
+			if st == nil || st.State == SchedulerStatusAbsent {
+				// add case 1: schedule a new inferior
+				// add case 2: reschedule an absent inferior. Currently, we only reschedule each 2 minutes.
+				// TODO: store absent inferiors in a separate map to trigger reschedule quickly.
+				b.addInferiorCache = append(b.addInferiorCache, inf)
+			}
+			return true
+		})
+		b.needAddInferior = false
+	}
+	if len(b.addInferiorCache) > 0 {
+		batch := batchSize
+		if batchSize > len(b.addInferiorCache) {
+			batch = len(b.addInferiorCache)
+		}
+		newInferiors := b.addInferiorCache[:batch]
+		b.addInferiorCache = b.addInferiorCache[batch:]
+		if len(b.addInferiorCache) == 0 {
+			// release for GC
+			b.addInferiorCache = nil
+		}
+
 		captureIDs := make([]model.CaptureID, 0, len(aliveCaptures))
 		for captureID := range aliveCaptures {
 			captureIDs = append(captureIDs, captureID)
 		}
-
 		if len(captureIDs) == 0 {
 			// this should never happen, if no server can be found
 			// for a cluster with n captures, n should be at least 2
@@ -76,28 +83,38 @@ func (b *BasicScheduler) Schedule(
 			return tasks
 		}
 		tasks = append(tasks, newBurstAddInferiors(newInferiors, captureIDs)...)
-		if len(newInferiors) >= b.batchSize {
+		if len(newInferiors) >= batchSize {
 			return tasks
 		}
 	}
 
 	// Build remove inferior tasks.
-	// For most of the time, remove inferiors are unlikely to happen.
-	//
-	// Fast path for check whether two sets are identical
-	if !lenEqual || !allFind {
+	if b.needRemoveInferior {
 		// The two sets are not identical. We need to build a map to find removed inferiors.
-		rmInferiorIDs := make([]InferiorID, 0)
+		b.removeInferiorCache = make([]InferiorID, 0, batchSize)
 		stateMachines.Ascend(func(key InferiorID, value *StateMachine) bool {
 			ok := allInferiors.Has(key)
 			if !ok {
-				rmInferiorIDs = append(rmInferiorIDs, key)
+				b.removeInferiorCache = append(b.removeInferiorCache, key)
 			}
 			return true
 		})
-		removeInferiorTasks := newBurstRemoveInferiors(rmInferiorIDs, stateMachines)
-		if removeInferiorTasks != nil {
-			tasks = append(tasks, removeInferiorTasks...)
+		b.needRemoveInferior = false
+	}
+	if len(b.removeInferiorCache) > 0 {
+		batch := batchSize - len(tasks)
+		if batchSize > len(b.removeInferiorCache) {
+			batch = len(b.removeInferiorCache)
+		}
+		rmInferiors := b.removeInferiorCache[:batch]
+		b.removeInferiorCache = b.removeInferiorCache[batch:]
+		if len(b.removeInferiorCache) == 0 {
+			// release for GC
+			b.removeInferiorCache = nil
+		}
+		tasks = append(tasks, newBurstRemoveInferiors(rmInferiors, stateMachines)...)
+		if len(rmInferiors) >= batchSize {
+			return tasks
 		}
 	}
 	return tasks
@@ -128,19 +145,20 @@ func newBurstAddInferiors(newInferiors []InferiorID, captureIDs []model.CaptureI
 	return addInferiorTasks
 }
 
+// TODO: maybe remove task does not need captureID.
 func newBurstRemoveInferiors(
 	rmInferiors []InferiorID,
 	stateMachines utils.Map[InferiorID, *StateMachine],
 ) []*ScheduleTask {
 	removeTasks := make([]*ScheduleTask, 0, len(rmInferiors))
 	for _, id := range rmInferiors {
-		ccf, _ := stateMachines.Get(id)
+		state, _ := stateMachines.Get(id)
 		var captureID string
-		for server := range ccf.Servers {
+		for server := range state.Servers {
 			captureID = server
 			break
 		}
-		if ccf.Primary == "" {
+		if state.Primary == "" {
 			log.Warn("primary or secondary not found for removed inferior,"+
 				"this may happen if the server shutdown",
 				zap.Any("ID", id.String()))
