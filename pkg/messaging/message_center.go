@@ -88,17 +88,16 @@ type messageCenter struct {
 	receiveEventCh chan *TargetMessage
 	receiveCmdCh   chan *TargetMessage
 	wg             *sync.WaitGroup
-	ctx            context.Context
 	cancel         context.CancelFunc
 
 	targetGauge prometheus.Gauge
 	streamGauge prometheus.Gauge
 }
 
-func NewMessageCenter(id ServerId, epoch common.EpochType, cfg *config.MessageCenterConfig) *messageCenter {
+func NewMessageCenter(ctx context.Context, id ServerId, epoch common.EpochType, cfg *config.MessageCenterConfig) *messageCenter {
 	receiveEventCh := make(chan *TargetMessage, cfg.CacheChannelSize)
 	receiveCmdCh := make(chan *TargetMessage, cfg.CacheChannelSize)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	mc := &messageCenter{
 		id:             id,
 		epoch:          epoch,
@@ -106,14 +105,13 @@ func NewMessageCenter(id ServerId, epoch common.EpochType, cfg *config.MessageCe
 		localTarget:    newLocalMessageTarget(id, receiveEventCh, receiveCmdCh),
 		receiveEventCh: receiveEventCh,
 		receiveCmdCh:   receiveCmdCh,
-		ctx:            ctx,
 		cancel:         cancel,
 		wg:             &sync.WaitGroup{},
 		router:         newRouter(),
 	}
 	mc.remoteTargets.m = make(map[ServerId]*remoteMessageTarget)
-	mc.router.runDispatch(mc.ctx, mc.wg, mc.receiveEventCh)
-	mc.router.runDispatch(mc.ctx, mc.wg, mc.receiveCmdCh)
+	mc.router.runDispatch(ctx, mc.wg, mc.receiveEventCh)
+	mc.router.runDispatch(ctx, mc.wg, mc.receiveCmdCh)
 	log.Info("Create message center success, message router is running.", zap.Stringer("id", id), zap.Any("epoch", epoch))
 	return mc
 }
