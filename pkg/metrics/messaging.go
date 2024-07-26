@@ -40,7 +40,7 @@ var (
 			Subsystem: "messaging",
 			Name:      "drop_message_counter",
 			Help:      "The counter of messages dropped by a message center",
-		}, []string{"target"}) // target: its addr, type: event, command
+		}, []string{"target", "type"}) // target: its addr, type: event, command
 
 	MessagingErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{

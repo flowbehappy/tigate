@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"context"
 	"fmt"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"net"
@@ -28,9 +29,11 @@ func newMessageCenterForTest(t *testing.T, timeout time.Duration) (*messageCente
 	var opts []grpc.ServerOption
 	grpcServer := grpc.NewServer(opts...)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	mcConfig := config.NewDefaultMessageCenterConfig()
 	id := NewServerId()
-	mc := NewMessageCenter(id, epoch, mcConfig)
+	mc := NewMessageCenter(ctx, id, epoch, mcConfig)
 	epoch++
 	mcs := NewMessageCenterServer(mc)
 	proto.RegisterMessageCenterServer(grpcServer, mcs)
@@ -68,7 +71,7 @@ func TestMessageCenterBasic(t *testing.T) {
 	mc1.AddTarget(mc2.id, mc2.epoch, mc2Addr)
 	mc1.AddTarget(mc3.id, mc3.epoch, mc3Addr)
 	ch1 := make(chan *TargetMessage, 1)
-	h1 := func(msg *TargetMessage) error {
+	h1 := func(ctx context.Context, msg *TargetMessage) error {
 		ch1 <- msg
 		log.Info("mc1 received message", zap.Any("msg", msg))
 		return nil
@@ -78,7 +81,7 @@ func TestMessageCenterBasic(t *testing.T) {
 	mc2.AddTarget(mc1.id, mc1.epoch, mc1Addr)
 	mc2.AddTarget(mc3.id, mc3.epoch, mc3Addr)
 	ch2 := make(chan *TargetMessage, 1)
-	h2 := func(msg *TargetMessage) error {
+	h2 := func(ctx context.Context, msg *TargetMessage) error {
 		ch2 <- msg
 		log.Info("mc2 received message", zap.Any("msg", msg))
 		return nil
@@ -115,7 +118,7 @@ func TestMessageCenterBasic(t *testing.T) {
 
 	//Case3: Send a message from mc2 to mc3, remote message.
 	ch3 := make(chan *TargetMessage, 1)
-	h3 := func(msg *TargetMessage) error {
+	h3 := func(ctx context.Context, msg *TargetMessage) error {
 		ch3 <- msg
 		log.Info("mc3 received message", zap.Any("msg", msg))
 		return nil

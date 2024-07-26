@@ -383,12 +383,13 @@ func newTestMockDB(t *testing.T) (db *sql.DB, mock sqlmock.Sqlmock) {
 // The test mainly focus on the communication between dispatcher and event service.
 // When dispatcher created and register in event service, event service need to send events to dispatcher.
 func TestDispatcherCommunicateWithEventService(t *testing.T) {
-	serverId := messaging.NewServerId()
-	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(serverId, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
-	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, serverId)) // 100GB for demo
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	serverId := messaging.NewServerId()
+	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, serverId, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
+	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, serverId)) // 100GB for demo
+
 	mockStore := newMockEventStore()
 	appcontext.SetService(appcontext.EventStore, mockStore)
 	eventService := NewEventService()
