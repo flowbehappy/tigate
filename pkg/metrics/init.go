@@ -19,5 +19,5 @@ func InitMetrics(registry *prometheus.Registry) {
 	InitServerMetrics(registry)
 	InitSchedulerMetrics(registry)
 	InitChangefeedMetrics(registry)
-
+	InitMessagingMetrics(registry)
 }
