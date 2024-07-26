@@ -184,10 +184,12 @@ func NewEventStore(
 	// }
 	// puller := logpuller.NewLogPuller(client, pdClock, consume, pullerConfig)
 
+	conf := cdcConfig.GetGlobalServerConfig()
+
 	grpcPool := sharedconn.NewConnAndClientPool(&security.Credential{}, cdckv.GetGlobalGrpcMetrics())
 	client := cdckv.NewSharedClient(
 		model.ChangeFeedID{},
-		&cdcConfig.ServerConfig{},
+		conf,
 		false,
 		pdCli,
 		grpcPool,
