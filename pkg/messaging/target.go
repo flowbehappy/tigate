@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/flowbehappy/tigate/pkg/metrics"
 
 	. "github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/config"
@@ -26,6 +29,8 @@ type MessageTarget interface {
 
 const (
 	reconnectInterval = 2 * time.Second
+	msgTypeEvent      = "event"
+	msgTypeCommand    = "command"
 )
 
 // remoteMessageTarget implements the SendMessageChannel interface.
@@ -71,6 +76,19 @@ type remoteMessageTarget struct {
 	cancel context.CancelFunc
 	// errCh is used to gather the error from the goroutine spawned by remoteMessageTarget.
 	errCh chan AppError
+
+	sendEventCounter prometheus.Counter
+	dropEventCounter prometheus.Counter
+	recvEventCounter prometheus.Counter
+
+	sendCmdCounter prometheus.Counter
+	dropCmdCounter prometheus.Counter
+	recvCmdCounter prometheus.Counter
+
+	congestedErrorCounter          prometheus.Counter
+	receivedFailedErrorCounter     prometheus.Counter
+	connectionNotfoundErrorCounter prometheus.Counter
+	connectionFailedErrorCounter   prometheus.Counter
 }
 
 func (s *remoteMessageTarget) Epoch() common.EpochType {
@@ -79,28 +97,36 @@ func (s *remoteMessageTarget) Epoch() common.EpochType {
 
 func (s *remoteMessageTarget) sendEvent(msg ...*TargetMessage) error {
 	if !s.eventSender.ready.Load() {
+		s.connectionNotfoundErrorCounter.Inc()
 		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Stream has not been initialized"}
 	}
 	select {
 	case <-s.ctx.Done():
+		s.connectionNotfoundErrorCounter.Inc()
 		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Stream has been closed"}
 	case s.sendEventCh <- s.newMessage(msg...):
+		s.sendEventCounter.Add(float64(len(msg)))
 		return nil
 	default:
+		s.congestedErrorCounter.Inc()
 		return AppError{Type: ErrorTypeMessageCongested, Reason: "Send event message is congested"}
 	}
 }
 
 func (s *remoteMessageTarget) sendCommand(msg ...*TargetMessage) error {
 	if !s.commandSender.ready.Load() {
+		s.connectionNotfoundErrorCounter.Inc()
 		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Stream has not been initialized"}
 	}
 	select {
 	case <-s.ctx.Done():
+		s.connectionNotfoundErrorCounter.Inc()
 		return AppError{Type: ErrorTypeConnectionNotFound, Reason: "Stream has been closed"}
 	case s.sendCmdCh <- s.newMessage(msg...):
+		s.sendCmdCounter.Add(float64(len(msg)))
 		return nil
 	default:
+		s.congestedErrorCounter.Inc()
 		return AppError{Type: ErrorTypeMessageCongested, Reason: "Send command message is congested"}
 	}
 }
@@ -129,6 +155,18 @@ func newRemoteMessageTarget(
 		recvCmdCh:          recvCmdCh,
 		errCh:              make(chan AppError, 8),
 		wg:                 &sync.WaitGroup{},
+
+		sendEventCounter: metrics.MessagingSendMsgCounter.WithLabelValues(string(addr), "event"),
+		dropEventCounter: metrics.MessagingDropMsgCounter.WithLabelValues(string(addr), "event"),
+		recvEventCounter: metrics.MessagingReceiveMsgCounter.WithLabelValues(string(addr), "event"),
+		sendCmdCounter:   metrics.MessagingSendMsgCounter.WithLabelValues(string(addr), "command"),
+		dropCmdCounter:   metrics.MessagingDropMsgCounter.WithLabelValues(string(addr), "command"),
+		recvCmdCounter:   metrics.MessagingReceiveMsgCounter.WithLabelValues(string(addr), "command"),
+
+		congestedErrorCounter:          metrics.MessagingErrorCounter.WithLabelValues(string(addr), "message_congested"),
+		receivedFailedErrorCounter:     metrics.MessagingErrorCounter.WithLabelValues(string(addr), "message_received_failed"),
+		connectionNotfoundErrorCounter: metrics.MessagingErrorCounter.WithLabelValues(string(addr), "connection_not_found"),
+		connectionFailedErrorCounter:   metrics.MessagingErrorCounter.WithLabelValues(string(addr), "connection_failed"),
 	}
 	rt.targetEpoch.Store(targetEpoch)
 	rt.runHandleErr(ctx)
@@ -171,6 +209,12 @@ func (s *remoteMessageTarget) runHandleErr(ctx context.Context) {
 }
 
 func (s *remoteMessageTarget) collectErr(err AppError) {
+	switch err.Type {
+	case ErrorTypeMessageReceiveFailed:
+		s.receivedFailedErrorCounter.Inc()
+	case ErrorTypeConnectionFailed:
+		s.connectionFailedErrorCounter.Inc()
+	}
 	select {
 	case s.errCh <- err:
 	default:
@@ -377,6 +421,12 @@ type localMessageTarget struct {
 	// We only need to push and pull the messages from those channel.
 	recvEventCh chan *TargetMessage
 	recvCmdCh   chan *TargetMessage
+
+	sendEventCounter prometheus.Counter
+	sendCmdCounter   prometheus.Counter
+
+	dropMessageCounter    prometheus.Counter
+	congestedErrorCounter prometheus.Counter
 }
 
 func (s *localMessageTarget) Epoch() common.EpochType {
@@ -384,11 +434,23 @@ func (s *localMessageTarget) Epoch() common.EpochType {
 }
 
 func (s *localMessageTarget) sendEvent(msg ...*TargetMessage) error {
-	return s.sendMsgToChan(s.recvEventCh, msg...)
+	err := s.sendMsgToChan(s.recvEventCh, msg...)
+	if err != nil {
+		s.congestedErrorCounter.Inc()
+	} else {
+		s.sendEventCounter.Add(float64(len(msg)))
+	}
+	return err
 }
 
 func (s *localMessageTarget) sendCommand(msg ...*TargetMessage) error {
-	return s.sendMsgToChan(s.recvCmdCh, msg...)
+	err := s.sendMsgToChan(s.recvCmdCh, msg...)
+	if err != nil {
+		s.congestedErrorCounter.Inc()
+	} else {
+		s.sendCmdCounter.Add(float64(len(msg)))
+	}
+	return err
 }
 
 func newLocalMessageTarget(id ServerId,
@@ -398,11 +460,17 @@ func newLocalMessageTarget(id ServerId,
 		localId:     id,
 		recvEventCh: gatherRecvEventChan,
 		recvCmdCh:   gatherRecvCmdChan,
+
+		sendEventCounter: metrics.MessagingSendMsgCounter.WithLabelValues("local", "event"),
+		sendCmdCounter:   metrics.MessagingSendMsgCounter.WithLabelValues("local", "command"),
+
+		dropMessageCounter:    metrics.MessagingDropMsgCounter.WithLabelValues("local"),
+		congestedErrorCounter: metrics.MessagingErrorCounter.WithLabelValues("local", "message_congested"),
 	}
 }
 
 func (s *localMessageTarget) sendMsgToChan(ch chan *TargetMessage, msg ...*TargetMessage) error {
-	for _, m := range msg {
+	for i, m := range msg {
 		m.To = s.localId
 		m.From = s.localId
 		m.Epoch = s.epoch
@@ -410,7 +478,8 @@ func (s *localMessageTarget) sendMsgToChan(ch chan *TargetMessage, msg ...*Targe
 		select {
 		case ch <- m:
 		default:
-			return AppError{Type: ErrorTypeMessageCongested, Reason: "Send message is congested"}
+			remains := len(msg) - i
+			s.dropMessageCounter.Add(float64(remains))
 		}
 	}
 	return nil
