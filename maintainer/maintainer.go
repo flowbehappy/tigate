@@ -286,7 +286,7 @@ func (m *Maintainer) updateMetrics() {
 	phyCkpTs := oracle.ExtractPhysical(m.checkpointTs.Load())
 	m.changefeedCheckpointTsGauge.Set(float64(phyCkpTs))
 
-	lag := oracle.GetPhysical(time.Now()) - phyCkpTs
+	lag := (oracle.GetPhysical(time.Now()) - phyCkpTs) / 1e3
 	m.changefeedCheckpointTsLagGauge.Set(float64(lag))
 
 	m.changefeedStatusGauge.Set(float64(m.state))
