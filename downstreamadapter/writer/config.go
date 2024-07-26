@@ -154,10 +154,10 @@ func NewMysqlConfigAndDB(sinkURI string) (*MysqlConfig, *sql.DB, error) {
 	// 	return nil, nil, err
 	// }
 
-	cfg.IsWriteSourceExisted, err = CheckIfBDRModeIsSupported(db)
-	if err != nil {
-		log.Error("CheckIfBDRModeIsSupported failed", zap.Error(err))
-		return nil, nil, err
-	}
+	// cfg.IsWriteSourceExisted, err = CheckIfBDRModeIsSupported(db)
+	// if err != nil {
+	// 	log.Error("CheckIfBDRModeIsSupported failed", zap.Error(err))
+	// 	return nil, nil, err
+	// }
 	return cfg, db, nil
 }
