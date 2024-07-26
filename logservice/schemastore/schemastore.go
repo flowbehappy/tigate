@@ -161,12 +161,12 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 				if v.Job.SchemaID == 1 {
 					continue
 				}
-				log.Info("write ddl event",
-					zap.String("schema", v.Job.SchemaName),
-					zap.String("table", v.Job.TableName),
-					zap.Uint64("startTs", v.Job.StartTS),
-					zap.Uint64("finishedTs", v.Job.BinlogInfo.FinishedTS),
-					zap.String("query", v.Job.Query))
+				// log.Info("write ddl event",
+				// 	zap.String("schema", v.Job.SchemaName),
+				// 	zap.String("table", v.Job.TableName),
+				// 	zap.Uint64("startTs", v.Job.StartTS),
+				// 	zap.Uint64("finishedTs", v.Job.BinlogInfo.FinishedTS),
+				// 	zap.String("query", v.Job.Query))
 				s.unsortedCache.addDDLEvent(v)
 			case common.Ts:
 				// TODO: check resolved ts is monotonically increasing
@@ -384,20 +384,25 @@ func (s *schemaStore) GetMaxFinishedDDLTS() common.Ts {
 }
 
 // TODO: fix the sleep
-func (s *schemaStore) waitResolvedTs(ts common.Ts) {
+func (s *schemaStore) waitResolvedTs(tableID common.TableID, ts common.Ts) {
+	start := time.Now()
 	for {
 		if s.maxResolvedTS.Load() >= uint64(ts) {
 			return
 		}
 		time.Sleep(time.Millisecond * 100)
-		log.Info("wait resolved ts",
-			zap.Any("ts", ts),
-			zap.Uint64("maxResolvedTS", s.maxResolvedTS.Load()))
+		if time.Since(start) > time.Second*5 {
+			log.Info("wait resolved ts slow",
+				zap.Int64("tableID", int64(tableID)),
+				zap.Any("ts", ts),
+				zap.Uint64("maxResolvedTS", s.maxResolvedTS.Load()),
+				zap.Any("time", time.Since(start)))
+		}
 	}
 }
 
 func (s *schemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error) {
-	s.waitResolvedTs(ts)
+	s.waitResolvedTs(tableID, ts)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	store, ok := s.tableInfoStoreMap[tableID]

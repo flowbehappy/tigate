@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -122,6 +123,12 @@ func NewEventStore(
 	)
 
 	dbPath := fmt.Sprintf("%s/%s", root, dataDir)
+
+	// FIXME: avoid remove
+	err := os.RemoveAll(dbPath)
+	if err != nil {
+		log.Panic("fail to remove path")
+	}
 	dbs := make([]*pebble.DB, 0, dbCount)
 	channels := make([]chan eventWithTableID, 0, dbCount)
 	// TODO: update pebble options
@@ -198,7 +205,7 @@ func (e *eventStore) Run(ctx context.Context) error {
 func (e *eventStore) Close(ctx context.Context) error {
 	for _, db := range e.dbs {
 		if err := db.Close(); err != nil {
-			log.Panic("failed to close pebble db", zap.Error(err))
+			log.Error("failed to close pebble db", zap.Error(err))
 		}
 	}
 	return nil
@@ -425,6 +432,9 @@ func (e *eventStore) GetIterator(dataRange *common.DataRange) (EventIterator, er
 		prevStartTS:  0,
 		prevCommitTS: 0,
 		iterMounter:  mounter.NewMounter(time.Local), // FIXME
+		startTs:      dataRange.StartTs,
+		endTs:        dataRange.EndTs,
+		rowCount:     0,
 	}, nil
 }
 
@@ -435,6 +445,11 @@ type eventStoreIter struct {
 	prevStartTS  uint64
 	prevCommitTS uint64
 	iterMounter  mounter.Mounter
+
+	// for debug
+	startTs  uint64
+	endTs    uint64
+	rowCount int64
 }
 
 func (iter *eventStoreIter) Next() (*common.RowChangedEvent, bool, error) {
@@ -468,11 +483,18 @@ func (iter *eventStoreIter) Next() (*common.RowChangedEvent, bool, error) {
 	if err != nil {
 		log.Panic("failed to decode event", zap.Error(err))
 	}
+	iter.rowCount++
 	iter.innerIter.Next()
 	return row, isNewTxn, nil
 }
 
 func (iter *eventStoreIter) Close() error {
+	// TODO: remove it before submit
+	// log.Info("event store iter close",
+	// 	zap.Uint64("tableID", uint64(iter.tableID)),
+	// 	zap.Uint64("startTs", iter.startTs),
+	// 	zap.Uint64("endTs", iter.endTs),
+	// 	zap.Int64("rowCount", iter.rowCount))
 	if iter.innerIter != nil {
 		return iter.innerIter.Close()
 	}
