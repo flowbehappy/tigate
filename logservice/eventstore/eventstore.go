@@ -490,11 +490,11 @@ func (iter *eventStoreIter) Next() (*common.RowChangedEvent, bool, error) {
 
 func (iter *eventStoreIter) Close() error {
 	// TODO: remove it before submit
-	log.Info("event store iter close",
-		zap.Uint64("tableID", uint64(iter.tableID)),
-		zap.Uint64("startTs", iter.startTs),
-		zap.Uint64("endTs", iter.endTs),
-		zap.Int64("rowCount", iter.rowCount))
+	// log.Info("event store iter close",
+	// 	zap.Uint64("tableID", uint64(iter.tableID)),
+	// 	zap.Uint64("startTs", iter.startTs),
+	// 	zap.Uint64("endTs", iter.endTs),
+	// 	zap.Int64("rowCount", iter.rowCount))
 	if iter.innerIter != nil {
 		return iter.innerIter.Close()
 	}
