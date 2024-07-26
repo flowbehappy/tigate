@@ -1,14 +1,13 @@
-package dynstream_test
+package deque
 
 import (
 	"testing"
 
-	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestDeque(t *testing.T) {
-	deque := dynstream.NewDeque[int](2, 5)
+	deque := NewDeque[int](2, 5)
 
 	// Test empty deque
 	assert.Equal(t, 0, deque.Length())
@@ -56,5 +55,25 @@ func TestDeque(t *testing.T) {
 	deque.PushFront(6)
 	assert.Equal(t, 5, deque.Length())
 	item, ok = deque.Back()
+	assert.True(t, ok)
 	assert.Equal(t, 2, item)
+
+	// Test Forward and Backward Iterator
+	{
+		itr := deque.ForwardIterator()
+		items := make([]int, 0, deque.Length())
+		for item, ok := itr.Next(); ok; item, ok = itr.Next() {
+			items = append(items, item)
+		}
+		assert.Equal(t, []int{6, 5, 4, 3, 2}, items)
+	}
+
+	{
+		itr := deque.BackwardIterator()
+		items := make([]int, 0, deque.Length())
+		for item, ok := itr.Next(); ok; item, ok = itr.Next() {
+			items = append(items, item)
+		}
+		assert.Equal(t, []int{2, 3, 4, 5, 6}, items)
+	}
 }

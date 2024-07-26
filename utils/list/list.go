@@ -1,4 +1,4 @@
-package dynstream
+package list
 
 // It is a generic List implementation.
 // The original code is copied from list.go in the standard library.

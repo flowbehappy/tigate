@@ -1,4 +1,8 @@
-package dynstream
+package deque
+
+import (
+	"github.com/flowbehappy/tigate/utils/list"
+)
 
 // A deque implemented by a doubly linked list of fixed-size blocks.
 type Deque[T any] struct {
@@ -6,7 +10,7 @@ type Deque[T any] struct {
 	maxLen   int
 	zero     T
 
-	blocks *List[[]T]
+	blocks *list.List[[]T]
 	length int
 
 	// Those indexes point to the first and last available value of the deque.
@@ -21,13 +25,13 @@ func NewDequeDefault[T any]() *Deque[T] {
 // blockLen is the size of each block.
 // maxLen is the maximum length of the deque. If the length exceeds maxLen, the oldest values will be removed. Zero means no limit.
 func NewDeque[T any](blockLen int, maxLen int) *Deque[T] {
-	if blockLen < 8 {
-		panic("blockLen must be at least 8")
+	if blockLen < 2 {
+		panic("blockLen must be at least 2")
 	}
 	d := &Deque[T]{
 		blockLen: blockLen,
 		maxLen:   maxLen,
-		blocks:   NewList[[]T](),
+		blocks:   list.NewList[[]T](),
 	}
 	d.blocks.PushBack(make([]T, blockLen))
 	d.resetEmpty()
@@ -138,6 +142,87 @@ func (d *Deque[T]) PopFront() (T, bool) {
 			d.blocks.Remove(le)
 			d.front = 0
 		}
+	}
+
+	return item, true
+}
+
+type ForwardIter[T any] struct {
+	blocks *list.List[[]T]
+	length int
+
+	front int
+	back  int
+}
+
+func (d *Deque[T]) ForwardIterator() *ForwardIter[T] {
+	copyBlocks := list.NewList[[]T]()
+	for e := d.blocks.Front(); e != nil; e = e.Next() {
+		copyBlocks.PushBack(e.Value)
+	}
+	return &ForwardIter[T]{
+		blocks: copyBlocks,
+		length: d.length,
+		front:  d.front,
+		back:   d.back,
+	}
+}
+
+func (it *ForwardIter[T]) Next() (T, bool) {
+	var zero T
+	if it.length == 0 {
+		return zero, false
+	}
+
+	block := it.blocks.Front().Value
+	item := block[it.front]
+	it.front++
+	it.length--
+
+	if it.front == len(block) {
+		it.blocks.Remove(it.blocks.Front())
+		it.front = 0
+	}
+
+	return item, true
+}
+
+type BackwardIter[T any] struct {
+	blocks *list.List[[]T]
+	length int
+
+	front int
+	back  int
+}
+
+func (d *Deque[T]) BackwardIterator() *BackwardIter[T] {
+	copyBlocks := list.NewList[[]T]()
+	for e := d.blocks.Front(); e != nil; e = e.Next() {
+		copyBlocks.PushBack(e.Value)
+	}
+
+	return &BackwardIter[T]{
+		blocks: copyBlocks,
+		length: d.length,
+		front:  d.front,
+		back:   d.back,
+	}
+}
+
+func (it *BackwardIter[T]) Next() (T, bool) {
+	var zero T
+	if it.length == 0 {
+		return zero, false
+	}
+
+	block := it.blocks.Back().Value
+	item := block[it.back]
+	it.back--
+	it.length--
+
+	if it.back == -1 {
+		it.blocks.Remove(it.blocks.Back())
+		it.back = len(block) - 1
 	}
 
 	return item, true

@@ -1,4 +1,4 @@
-package dynstream
+package ringbuffer
 
 import (
 	"testing"
@@ -9,9 +9,9 @@ import (
 func TestRingBuffer(t *testing.T) {
 	rb := NewRingBuffer[int](3)
 
-	rb.Push(1)
-	rb.Push(2)
-	rb.Push(3)
+	rb.PushTail(1)
+	rb.PushTail(2)
+	rb.PushTail(3)
 
 	{
 		item, ok := rb.Head()
@@ -19,7 +19,7 @@ func TestRingBuffer(t *testing.T) {
 		assert.Equal(t, 1, item)
 	}
 
-	rb.Push(4)
+	rb.PushTail(4)
 
 	{
 		item, ok := rb.Head()
@@ -33,10 +33,10 @@ func TestRingBuffer(t *testing.T) {
 		assert.Equal(t, 4, item)
 	}
 
-	rb.Push(5)
-	rb.Push(6)
-	rb.Push(7)
-	rb.Push(8)
+	rb.PushTail(5)
+	rb.PushTail(6)
+	rb.PushTail(7)
+	rb.PushTail(8)
 
 	assert.Equal(t, true, rb.IsFull())
 	{
@@ -52,32 +52,32 @@ func TestRingBuffer(t *testing.T) {
 	}
 
 	{
-		item, ok := rb.Pop()
+		item, ok := rb.PopHead()
 		assert.Equal(t, true, ok)
 		assert.Equal(t, 6, item)
 	}
 	{
-		item, ok := rb.Pop()
+		item, ok := rb.PopHead()
 		assert.Equal(t, true, ok)
 		assert.Equal(t, 7, item)
 	}
 	{
-		item, ok := rb.Pop()
+		item, ok := rb.PopHead()
 		assert.Equal(t, true, ok)
 		assert.Equal(t, 8, item)
 	}
 	{
-		item, ok := rb.Pop()
+		item, ok := rb.PopHead()
 		assert.Equal(t, false, ok)
 		assert.Equal(t, 0, item)
 	}
 	assert.Equal(t, true, rb.IsEmpty())
 
-	rb.Push(1)
-	rb.Push(2)
+	rb.PushTail(1)
+	rb.PushTail(2)
 	assert.Equal(t, 2, rb.Size())
 
-	rb.Push(3)
+	rb.PushTail(3)
 
 	assert.Equal(t, 3, rb.Size())
 
@@ -87,7 +87,7 @@ func TestRingBuffer(t *testing.T) {
 		assert.Equal(t, 1, item)
 	}
 
-	rb.Push(4)
+	rb.PushTail(4)
 
 	{
 		item, ok := rb.Head()

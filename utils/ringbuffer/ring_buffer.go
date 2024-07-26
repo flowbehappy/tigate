@@ -1,4 +1,4 @@
-package dynstream
+package ringbuffer
 
 type RingBuffer[T any] struct {
 	buffer     []T
@@ -50,7 +50,7 @@ func (rb *RingBuffer[T]) Tail() (T, bool) {
 }
 
 // Push to tail
-func (rb *RingBuffer[T]) Push(item T) {
+func (rb *RingBuffer[T]) PushTail(item T) {
 	insertIndex := rb.tail % (rb.capacity + 1)
 	rb.buffer[insertIndex] = item
 	rb.tail = (rb.tail + 1) % (rb.capacity + 1)
@@ -63,7 +63,7 @@ func (rb *RingBuffer[T]) Push(item T) {
 }
 
 // Pop from head
-func (rb *RingBuffer[T]) Pop() (T, bool) {
+func (rb *RingBuffer[T]) PopHead() (T, bool) {
 	if rb.head == rb.tail {
 		// Buffer is empty
 		return rb.zero, false
