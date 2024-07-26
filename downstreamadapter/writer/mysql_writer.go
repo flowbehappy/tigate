@@ -269,6 +269,7 @@ func (w *MysqlWriter) execDMLWithMaxRetries(dmls *preparedDMLs) error {
 		tx, err := w.db.BeginTx(ctx, nil)
 		if err != nil {
 			log.Error("BeginTx", zap.Error(err))
+			return err
 		}
 
 		// Set session variables first and then execute the transaction.
