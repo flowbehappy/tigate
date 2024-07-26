@@ -20,7 +20,6 @@ import (
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -159,7 +158,7 @@ func (m *mockEventStore) Close(ctx context.Context) error {
 
 func (m *mockEventStore) RegisterDispatcher(
 	dispatcherID common.DispatcherID,
-	span tablepb.Span,
+	span *common.TableSpan,
 	startTS common.Ts,
 	observer eventstore.EventObserver,
 	notifier eventstore.WatermarkNotifier,

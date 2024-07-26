@@ -91,9 +91,12 @@ func (s *eventService) Close(_ context.Context) error {
 	return nil
 }
 
-func (s *eventService) handleMessage(msg *messaging.TargetMessage) error {
-	acceptorInfo := msgToAcceptorInfo(msg)
-	s.acceptorInfoCh <- acceptorInfo
+func (s *eventService) handleMessage(ctx context.Context, msg *messaging.TargetMessage) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case s.acceptorInfoCh <- msgToAcceptorInfo(msg):
+	}
 	return nil
 }
 
@@ -109,7 +112,6 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 	}
 
 	dispatcher := newDispatcherStat(startTs, info, c.changedCh)
-
 	c.dispatchers.mu.Lock()
 	c.dispatchers.m[info.GetID()] = dispatcher
 	c.dispatchers.mu.Unlock()
