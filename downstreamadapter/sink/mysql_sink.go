@@ -165,12 +165,13 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 							}
 						}
 					}
+					start := time.Now()
 					err := worker.GetMysqlWriter().Flush(events)
 					if err != nil {
 						log.Error("Failed to flush events", zap.Error(err))
 						return
 					}
-					//log.Info("Flush events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Duration("duration", time.Since(start)))
+					log.Info("Flush events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Duration("duration", time.Since(start)))
 
 					events = events[:0]
 					rows = 0
@@ -186,6 +187,7 @@ func (s *MysqlSink) AddDMLEvent(tableSpan *common.TableSpan, event *common.TxnEv
 		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
 		return
 	}
+	log.Info("mysql sink recv event", zap.Any("tableID", tableSpan.TableID))
 	tableStatus.getProgress().Add(event)
 	tableStatus.getCh() <- event
 }
