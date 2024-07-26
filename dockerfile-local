@@ -1,4 +1,4 @@
-# docker build -f ./dockerfile-local . -t <target>  --platform linux/amd64
+# make cdc && docker build -f ./dockerfile-local . -t <target>  --platform linux/amd64
 FROM alpine:3.15
 RUN apk add --no-cache tzdata bash curl socat
 EXPOSE 8301
