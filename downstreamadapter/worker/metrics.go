@@ -19,7 +19,7 @@ var (
 	WorkerFlushDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tigate",
-			Subsystem: "sink",
+			Subsystem: "worker",
 			Name:      "worker_flush_duration",
 			Help:      "Flush duration (s) for txn worker.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms~524s

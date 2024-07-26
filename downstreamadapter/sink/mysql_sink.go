@@ -175,6 +175,7 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 							}
 						}
 					}
+					log.Info("Ready to Flush Events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Any("workerID", workerId))
 					start := time.Now()
 					err := worker.GetMysqlWriter().Flush(events)
 					if err != nil {
@@ -184,7 +185,7 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 					s.flushRows.Add(float64(rows))
 					worker.WorkerFlushDuration.Observe(time.Since(start).Seconds())
 
-					log.Info("Flush events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Duration("duration", time.Since(start)))
+					log.Info("Flush events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Duration("duration", time.Since(start)), zap.Any("workerID", workerId))
 
 					events = events[:0]
 					rows = 0
