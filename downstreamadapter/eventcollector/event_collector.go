@@ -141,7 +141,7 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 	log.Info("Recv TxnEvent", zap.Any("dispatcherID", dispatcherID), zap.Any("event is dml event", txnEvent.IsDMLEvent()))
 	if txnEvent.IsDMLEvent() {
 		rowEvent := txnEvent.GetRows()[0]
-		log.Info("Recv TxnEvent", zap.Any("dispatcherID", dispatcherID), zap.Any("event info", rowEvent.CommitTs))
+		log.Info("Recv TxnEvent", zap.Any("dispatcherID", dispatcherID), zap.Any("event info", rowEvent.CommitTs), zap.Any("table name", rowEvent.TableInfo.TableName))
 	}
 
 	if dispatcherItem, ok := c.dispatcherMap.Get(common.DispatcherID(uuid.MustParse(dispatcherID))); ok {
