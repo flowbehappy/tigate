@@ -208,7 +208,7 @@ func NewSharedClient(
 		stores: make(map[string]*requestedStore),
 	}
 	s.totalSpans.v = make(map[SubscriptionID]*subscribedTable)
-	s.logRegionDetails = log.Info
+	s.logRegionDetails = log.Debug
 
 	return s
 }
