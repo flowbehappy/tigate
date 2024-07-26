@@ -23,7 +23,6 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
-	appctx "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/rpc"
@@ -53,6 +52,8 @@ import (
 type Maintainer struct {
 	id     model.ChangeFeedID
 	config *model.ChangeFeedInfo
+
+	mc messaging.MessageCenter
 
 	checkpointTs          *atomic.Uint64
 	checkpointTsByCapture map[model.CaptureID]uint64
@@ -94,8 +95,8 @@ type Maintainer struct {
 	changefeedCheckpointTsGauge    prometheus.Gauge
 	changefeedCheckpointTsLagGauge prometheus.Gauge
 	changefeedStatusGauge          prometheus.Gauge
-	scheduleredTaskGuage           prometheus.Gauge
-	runningTaskGuage               prometheus.Gauge
+	scheduledTaskGauge             prometheus.Gauge
+	runningTaskGauge               prometheus.Gauge
 	tableCountGauge                prometheus.Gauge
 }
 
@@ -108,10 +109,11 @@ func NewMaintainer(cfID model.ChangeFeedID,
 ) *Maintainer {
 	m := &Maintainer{
 		id:                    cfID,
+		mc:                    appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		state:                 heartbeatpb.ComponentState_Prepared,
 		removed:               atomic.NewBool(false),
 		taskCh:                make(chan Task, 1024),
-		nodeManager:           appctx.GetService[*watcher.NodeManager](watcher.NodeManagerName),
+		nodeManager:           appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName),
 		statusChanged:         atomic.NewBool(true),
 		isSecondary:           atomic.NewBool(isSecondary),
 		removing:              atomic.NewBool(false),
@@ -129,8 +131,8 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		changefeedCheckpointTsGauge:    metrics.ChangefeedCheckpointTsGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		changefeedCheckpointTsLagGauge: metrics.ChangefeedCheckpointTsLagGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		changefeedStatusGauge:          metrics.ChangefeedStatusGauge.WithLabelValues(cfID.Namespace, cfID.ID),
-		scheduleredTaskGuage:           metrics.ScheduleTaskGuage.WithLabelValues(cfID.Namespace, cfID.ID),
-		runningTaskGuage:               metrics.RunningScheduleTaskGauge.WithLabelValues(cfID.Namespace, cfID.ID),
+		scheduledTaskGauge:             metrics.ScheduleTaskGuage.WithLabelValues(cfID.Namespace, cfID.ID),
+		runningTaskGauge:               metrics.RunningScheduleTaskGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		tableCountGauge:                metrics.TableGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 	}
 	if !isSecondary {
@@ -295,7 +297,7 @@ func (m *Maintainer) updateMetrics() {
 // send message to remote, todo: use a io thread pool
 func (m *Maintainer) sendMessages(msgs []rpc.Message) {
 	for _, msg := range msgs {
-		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(msg.(*messaging.TargetMessage))
+		err := m.mc.SendCommand(msg.(*messaging.TargetMessage))
 		if err != nil {
 			log.Debug("failed to send maintainer request", zap.Any("msg", msg), zap.Error(err))
 			continue
@@ -570,7 +572,7 @@ func (m *Maintainer) printStatus() {
 		})
 
 		m.tableCountGauge.Set(float64(m.tableSpans.Len()))
-		m.scheduleredTaskGuage.Set(float64(m.supervisor.GetInferiors().Len()))
+		m.scheduledTaskGauge.Set(float64(m.supervisor.GetInferiors().Len()))
 		for state, count := range tableStates {
 			metrics.TableStateGauge.WithLabelValues(m.id.Namespace, m.id.ID, state.String()).Set(float64(count))
 		}

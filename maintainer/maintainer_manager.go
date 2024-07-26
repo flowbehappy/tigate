@@ -34,6 +34,8 @@ import (
 // 2. handle dispatcher command from coordinator: add or remove changefeed maintainer
 // 3. check maintainer liveness
 type Manager struct {
+	mc messaging.MessageCenter
+
 	maintainers sync.Map
 
 	coordinatorID      messaging.ServerId
@@ -50,39 +52,38 @@ type Manager struct {
 // 2. manager manages maintainer lifetime
 // 3. manager report maintainer status to coordinator
 func NewMaintainerManager(selfServerID messaging.ServerId, pdEndpoints []string) *Manager {
+	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	m := &Manager{
+		mc:           mc,
 		maintainers:  sync.Map{},
 		selfServerID: selfServerID,
 		pdEndpoints:  pdEndpoints,
 		msgCh:        make(chan *messaging.TargetMessage, 1024),
 	}
 	// receive message from coordinator
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
-		RegisterHandler(messaging.MaintainerManagerTopic,
-			func(ctx context.Context, msg *messaging.TargetMessage) error {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case m.msgCh <- msg:
-				}
-				return nil
-			})
+	mc.RegisterHandler(messaging.MaintainerManagerTopic,
+		func(ctx context.Context, msg *messaging.TargetMessage) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case m.msgCh <- msg:
+			}
+			return nil
+		})
 
 	// receive bootstrap response message for maintainer
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
-		RegisterHandler(messaging.MaintainerBootstrapResponseTopic,
-			func(ctx context.Context, msg *messaging.TargetMessage) error {
-				req := msg.Message.(*heartbeatpb.MaintainerBootstrapResponse)
-				return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
-			})
+	mc.RegisterHandler(messaging.MaintainerBootstrapResponseTopic,
+		func(ctx context.Context, msg *messaging.TargetMessage) error {
+			req := msg.Message.(*heartbeatpb.MaintainerBootstrapResponse)
+			return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
+		})
 
 	// receive heartbeat message for maintainer
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
-		RegisterHandler(messaging.DispatcherHeartBeatRequestTopic,
-			func(ctx context.Context, msg *messaging.TargetMessage) error {
-				req := msg.Message.(*heartbeatpb.HeartBeatRequest)
-				return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
-			})
+	mc.RegisterHandler(messaging.DispatcherHeartBeatRequestTopic,
+		func(ctx context.Context, msg *messaging.TargetMessage) error {
+			req := msg.Message.(*heartbeatpb.HeartBeatRequest)
+			return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
+		})
 
 	return m
 }
@@ -122,7 +123,7 @@ func (m *Manager) sendMessages(msg *heartbeatpb.MaintainerHeartbeat) {
 		messaging.CoordinatorTopic,
 		msg,
 	)
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(target)
+	err := m.mc.SendCommand(target)
 	if err != nil {
 		log.Warn("send command failed", zap.Error(err))
 	}
