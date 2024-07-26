@@ -207,16 +207,19 @@ func NewEventStore(
 			StartKey: spans[0].StartKey,
 			EndKey:   spans[0].EndKey,
 		}
-		rawKV := &common.RawKVEntry{
-			OpType:   common.OpType(raw.OpType),
-			Key:      raw.Key,
-			Value:    raw.Value,
-			OldValue: raw.OldValue,
-			StartTs:  raw.StartTs,
-			CRTs:     raw.CRTs,
-			RegionID: raw.RegionID,
-		}
 		if raw != nil {
+			rawKV := &common.RawKVEntry{
+				OpType:   common.OpType(raw.OpType),
+				Key:      raw.Key,
+				Value:    raw.Value,
+				OldValue: raw.OldValue,
+				StartTs:  raw.StartTs,
+				CRTs:     raw.CRTs,
+				RegionID: raw.RegionID,
+			}
+			log.Info("consume event",
+				zap.Any("raw", raw),
+				zap.Bool("isDML", raw.OpType != model.OpTypeResolved))
 			store.writeEvent(span, rawKV)
 		}
 		return nil
