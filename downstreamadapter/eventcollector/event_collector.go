@@ -138,6 +138,7 @@ func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
 	}
 
 	dispatcherID := txnEvent.DispatcherID
+	log.Info("Recv TxnEvent", zap.Any("dispatcherID", dispatcherID), zap.Any("event is dml event", txnEvent.IsDMLEvent()))
 
 	if dispatcherItem, ok := c.dispatcherMap.Get(common.DispatcherID(uuid.MustParse(dispatcherID))); ok {
 		// check whether need to update speed ratio
