@@ -51,7 +51,7 @@ func TestEventServiceOneMillionTable(t *testing.T) {
 
 	appcontext.SetService(appcontext.MessageCenter, mc)
 	appcontext.SetService(appcontext.EventStore, mockStore)
-	es := NewEventService(ctx)
+	es := NewEventService()
 	esImpl := es.(*eventService)
 	wg.Add(1)
 	go func() {

@@ -39,7 +39,6 @@ type DispatcherInfo interface {
 }
 
 type eventService struct {
-	ctx        context.Context
 	mc         messaging.MessageCenter
 	eventStore eventstore.EventStore
 	brokers    map[uint64]*eventBroker
@@ -48,14 +47,13 @@ type eventService struct {
 	acceptorInfoCh chan DispatcherInfo
 }
 
-func NewEventService(ctx context.Context) EventService {
+func NewEventService() EventService {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	eventStore := appcontext.GetService[eventstore.EventStore](appcontext.EventStore)
 
 	es := &eventService{
 		mc:             mc,
 		eventStore:     eventStore,
-		ctx:            ctx,
 		brokers:        make(map[uint64]*eventBroker),
 		acceptorInfoCh: make(chan DispatcherInfo, defaultChannelSize*16),
 	}
@@ -76,7 +74,7 @@ func (s *eventService) Run(ctx context.Context) error {
 			return nil
 		case info := <-s.acceptorInfoCh:
 			if info.IsRegister() {
-				s.registerDispatcher(info)
+				s.registerDispatcher(ctx, info)
 			} else {
 				s.deregisterAcceptor(info)
 			}
@@ -99,14 +97,14 @@ func (s *eventService) handleMessage(msg *messaging.TargetMessage) error {
 	return nil
 }
 
-func (s *eventService) registerDispatcher(info DispatcherInfo) {
+func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherInfo) {
 	clusterID := info.GetClusterID()
 	startTs := info.GetStartTs()
 	span := info.GetTableSpan()
 
 	c, ok := s.brokers[clusterID]
 	if !ok {
-		c = newEventBroker(s.ctx, clusterID, s.eventStore, s.mc)
+		c = newEventBroker(ctx, clusterID, s.eventStore, s.mc)
 		s.brokers[clusterID] = c
 	}
 

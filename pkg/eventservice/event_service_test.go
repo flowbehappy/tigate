@@ -297,7 +297,7 @@ func TestEventServiceBasic(t *testing.T) {
 
 	appcontext.SetService(appcontext.MessageCenter, mc)
 	appcontext.SetService(appcontext.EventStore, mockStore)
-	es := NewEventService(ctx)
+	es := NewEventService()
 	esImpl := es.(*eventService)
 	go func() {
 		err := es.Run(ctx)
@@ -391,7 +391,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 	defer cancel()
 	mockStore := newMockEventStore()
 	appcontext.SetService(appcontext.EventStore, mockStore)
-	eventService := NewEventService(ctx)
+	eventService := NewEventService()
 	go func() {
 		err := eventService.Run(ctx)
 		if err != nil {
