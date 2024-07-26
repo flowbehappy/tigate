@@ -480,6 +480,7 @@ func (s *localMessageTarget) sendMsgToChan(ch chan *TargetMessage, msg ...*Targe
 		default:
 			remains := len(msg) - i
 			s.dropMessageCounter.Add(float64(remains))
+			return AppError{Type: ErrorTypeMessageCongested, Reason: "Send message is congested"}
 		}
 	}
 	return nil
