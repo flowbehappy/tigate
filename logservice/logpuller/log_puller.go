@@ -16,19 +16,34 @@ package logpuller
 import (
 	"context"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
+const (
+	resolveLockFence        time.Duration = 4 * time.Second
+	resolveLockTickInterval time.Duration = 2 * time.Second
+)
+
 type tableProgress struct {
+	client *SharedClient
+
 	span heartbeatpb.TableSpan
 
 	subID SubscriptionID
+
+	initialized       atomic.Bool
+	resolvedTsUpdated atomic.Int64
+	resolvedTs        atomic.Uint64
 
 	consume struct {
 		// This lock is used to prevent the table progress from being
@@ -39,8 +54,24 @@ type tableProgress struct {
 	}
 }
 
+func (p *tableProgress) resolveLock(currentTime time.Time) {
+	resolvedTsUpdated := time.Unix(p.resolvedTsUpdated.Load(), 0)
+	if !p.initialized.Load() || time.Since(resolvedTsUpdated) < resolveLockFence {
+		return
+	}
+	resolvedTs := p.resolvedTs.Load()
+	resolvedTime := oracle.GetTimeFromTS(resolvedTs)
+	if currentTime.Sub(resolvedTime) < resolveLockFence {
+		return
+	}
+
+	targetTs := oracle.GoTimeToTS(resolvedTime.Add(resolveLockFence))
+	p.client.ResolveLock(p.subID, targetTs)
+}
+
 type LogPuller struct {
 	client  *SharedClient
+	pdClock pdutil.Clock
 	consume func(context.Context, *common.RawKVEntry, heartbeatpb.TableSpan) error
 
 	// inputChSelector is used to determine which input channel to use for a given span.
@@ -67,11 +98,13 @@ type LogPullerConfig struct {
 
 func NewLogPuller(
 	client *SharedClient,
+	pdClock pdutil.Clock,
 	consume func(context.Context, *common.RawKVEntry, heartbeatpb.TableSpan) error,
 	config *LogPullerConfig,
 ) *LogPuller {
 	puller := &LogPuller{
 		client:          client,
+		pdClock:         pdClock,
 		consume:         consume,
 		inputChSelector: config.HashSpanFunc,
 	}
@@ -96,6 +129,8 @@ func (p *LogPuller) Run(ctx context.Context) (err error) {
 		inputCh := p.inputChs[i]
 		eg.Go(func() error { return p.runEventHandler(ctx, inputCh) })
 	}
+
+	eg.Go(func() error { return p.runResolveLockChecker(ctx) })
 
 	log.Info("LogPuller starts",
 		zap.Int("workerConcurrent", len(p.inputChs)))
@@ -196,4 +231,35 @@ func (p *LogPuller) getProgress(subID SubscriptionID) *tableProgress {
 	p.subscriptions.RLock()
 	defer p.subscriptions.RUnlock()
 	return p.subscriptions.tableProgressMap[subID]
+}
+
+func (p *LogPuller) getAllProgresses() map[*tableProgress]struct{} {
+	p.subscriptions.RLock()
+	defer p.subscriptions.RUnlock()
+	hashset := make(map[*tableProgress]struct{}, len(p.subscriptions.tableProgressMap))
+	for _, value := range p.subscriptions.tableProgressMap {
+		hashset[value] = struct{}{}
+	}
+	return hashset
+}
+
+func (p *LogPuller) runResolveLockChecker(ctx context.Context) error {
+	resolveLockTicker := time.NewTicker(resolveLockTickInterval)
+	defer resolveLockTicker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-resolveLockTicker.C:
+		}
+		currentTime := p.pdClock.CurrentTime()
+		for progress := range p.getAllProgresses() {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				progress.resolveLock(currentTime)
+			}
+		}
+	}
 }
