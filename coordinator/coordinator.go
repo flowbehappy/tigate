@@ -73,7 +73,7 @@ func NewCoordinator(capture *model.CaptureInfo, version int64) server.Coordinato
 
 	// receive messages
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
-		RegisterHandler(messaging.CoordinatorTopic, func(msg *messaging.TargetMessage) error {
+		RegisterHandler(messaging.CoordinatorTopic, func(_ context.Context, msg *messaging.TargetMessage) error {
 			c.msgLock.Lock()
 			c.msgBuf = append(c.msgBuf, msg)
 			c.msgLock.Unlock()

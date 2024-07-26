@@ -51,7 +51,7 @@ func TestEventServiceOneMillionTable(t *testing.T) {
 
 	appcontext.SetService(appcontext.MessageCenter, mc)
 	appcontext.SetService(appcontext.EventStore, mockStore)
-	es := NewEventService(ctx)
+	es := NewEventService()
 	esImpl := es.(*eventService)
 	wg.Add(1)
 	go func() {
@@ -71,7 +71,7 @@ func TestEventServiceOneMillionTable(t *testing.T) {
 		dispatchers = append(dispatchers, acceptorInfo)
 	}
 	for _, dispatcher := range dispatchers {
-		esImpl.registerDispatcher(dispatcher)
+		esImpl.registerDispatcher(ctx, dispatcher)
 	}
 	require.Len(t, esImpl.brokers[clusterID].dispatchers.m, tableNum)
 	log.Info("register 1 million tables", zap.Duration("cost", time.Since(start)))

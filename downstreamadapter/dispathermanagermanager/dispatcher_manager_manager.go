@@ -14,13 +14,14 @@
 package dispatchermanagermanager
 
 import (
+	"context"
 	"encoding/json"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/common/context"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -36,12 +37,12 @@ func NewDispatcherManagerManager() *DispatcherManagerManager {
 	m := &DispatcherManagerManager{
 		dispatcherManagers: make(map[model.ChangeFeedID]*dispatchermanager.EventDispatcherManager),
 	}
-	context.GetService[messaging.MessageCenter](context.MessageCenter).
+	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
 		RegisterHandler(messaging.MaintainerBoostrapRequestTopic, m.RecvMaintainerBootstrapRequest)
 	return m
 }
 
-func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging.TargetMessage) error {
+func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(ctx context.Context, msg *messaging.TargetMessage) error {
 	maintainerBootstrapRequest := msg.Message.(*heartbeatpb.MaintainerBootstrapRequest)
 	changefeedID := model.DefaultChangeFeedID(maintainerBootstrapRequest.ChangefeedID)
 
@@ -65,7 +66,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 			Statuses:     make([]*heartbeatpb.TableSpanStatus, 0),
 		}
 
-		err = context.GetService[messaging.MessageCenter](context.MessageCenter).SendCommand(messaging.NewTargetMessage(
+		err = appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 			msg.From,
 			messaging.MaintainerBootstrapResponseTopic,
 			response,
@@ -91,7 +92,7 @@ func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(msg *messaging
 			CheckpointTs:    0,
 		})
 	})
-	err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendCommand(messaging.NewTargetMessage(
+	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 		msg.From,
 		messaging.MaintainerBootstrapResponseTopic,
 		response,

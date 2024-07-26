@@ -21,7 +21,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -160,7 +159,7 @@ func (m *mockEventStore) Close(ctx context.Context) error {
 
 func (m *mockEventStore) RegisterDispatcher(
 	dispatcherID common.DispatcherID,
-	span tablepb.Span,
+	span *common.TableSpan,
 	startTS common.Ts,
 	observer eventstore.EventObserver,
 	notifier eventstore.WatermarkNotifier,
@@ -298,7 +297,7 @@ func TestEventServiceBasic(t *testing.T) {
 
 	appcontext.SetService(appcontext.MessageCenter, mc)
 	appcontext.SetService(appcontext.EventStore, mockStore)
-	es := NewEventService(ctx)
+	es := NewEventService()
 	esImpl := es.(*eventService)
 	go func() {
 		err := es.Run(ctx)
@@ -392,7 +391,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 	defer cancel()
 	mockStore := newMockEventStore()
 	appcontext.SetService(appcontext.EventStore, mockStore)
-	eventService := NewEventService(ctx)
+	eventService := NewEventService()
 	go func() {
 		err := eventService.Run(ctx)
 		if err != nil {

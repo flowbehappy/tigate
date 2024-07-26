@@ -9,7 +9,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type MessageHandler func(msg *TargetMessage) error
+type MessageHandler func(ctx context.Context, msg *TargetMessage) error
 
 type router struct {
 	mu       sync.RWMutex
@@ -52,7 +52,7 @@ func (r *router) runDispatch(ctx context.Context, wg *sync.WaitGroup, out <-chan
 					log.Debug("no handler for message", zap.Any("msg", msg))
 					continue
 				}
-				err := handler(msg)
+				err := handler(ctx, msg)
 				if err != nil {
 					log.Error("router: close, since handle message failed", zap.Error(err), zap.Any("msg", msg))
 					return

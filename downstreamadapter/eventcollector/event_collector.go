@@ -14,6 +14,7 @@
 package eventcollector
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -21,7 +22,7 @@ import (
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/common/context"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
@@ -75,12 +76,12 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 		globalMemoryQuota: globalMemoryQuota,
 		dispatcherMap:     newDispatcherMap(),
 	}
-	context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(messaging.EventFeedTopic, eventCollector.RecvEventsMessage)
+	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.EventFeedTopic, eventCollector.RecvEventsMessage)
 	return &eventCollector
 }
 
 func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uint64) error {
-	err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendEvent(&messaging.TargetMessage{
+	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendEvent(&messaging.TargetMessage{
 		To:    c.serverId, // demo 中 每个节点都有自己的 eventService
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
@@ -96,12 +97,12 @@ func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uin
 		log.Error("failed to send register dispatcher request message", zap.Error(err))
 		return err
 	}
-	c.dispatcherMap.Set(common.DispatcherID(d.GetId()), d)
+	c.dispatcherMap.Set(d.GetId(), d)
 	return nil
 }
 
 func (c *EventCollector) RemoveDispatcher(d dispatcher.Dispatcher) error {
-	err := context.GetService[messaging.MessageCenter](context.MessageCenter).SendEvent(&messaging.TargetMessage{
+	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendEvent(&messaging.TargetMessage{
 		To:    c.serverId,
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
@@ -121,7 +122,7 @@ func (c *EventCollector) RemoveDispatcher(d dispatcher.Dispatcher) error {
 	return nil
 }
 
-func (c *EventCollector) RecvEventsMessage(msg *messaging.TargetMessage) error {
+func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.TargetMessage) error {
 	/*
 		if dispatcher.GetGlobalMemoryUsage().UsedBytes > c.globalMemoryQuota {
 			// 卡一段时间,怎么拍啊？
