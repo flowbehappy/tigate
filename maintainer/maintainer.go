@@ -53,6 +53,8 @@ type Maintainer struct {
 	id     model.ChangeFeedID
 	config *model.ChangeFeedInfo
 
+	mc messaging.MessageCenter
+
 	checkpointTs          *atomic.Uint64
 	checkpointTsByCapture map[model.CaptureID]uint64
 
@@ -107,6 +109,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 ) *Maintainer {
 	m := &Maintainer{
 		id:                    cfID,
+		mc:                    appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		state:                 heartbeatpb.ComponentState_Prepared,
 		removed:               atomic.NewBool(false),
 		taskCh:                make(chan Task, 1024),
@@ -294,7 +297,7 @@ func (m *Maintainer) updateMetrics() {
 // send message to remote, todo: use a io thread pool
 func (m *Maintainer) sendMessages(msgs []rpc.Message) {
 	for _, msg := range msgs {
-		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(msg.(*messaging.TargetMessage))
+		err := m.mc.SendCommand(msg.(*messaging.TargetMessage))
 		if err != nil {
 			log.Debug("failed to send maintainer request", zap.Any("msg", msg), zap.Error(err))
 			continue
