@@ -158,7 +158,7 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *common.TxnEvent) error {
 
 func (w *MysqlWriter) Flush(events []*common.TxnEvent) error {
 	dmls := w.prepareDMLs(events)
-	log.Debug("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.String("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values))
+	log.Info("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.String("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values))
 	if dmls.rowCount == 0 {
 		return nil
 	}
