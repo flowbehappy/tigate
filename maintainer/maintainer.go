@@ -145,7 +145,17 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	return m
 }
 
+func (m *Maintainer) cleanupMetrics() {
+	metrics.ChangefeedCheckpointTsGauge.DeleteLabelValues(m.id.Namespace, m.id.ID)
+	metrics.ChangefeedCheckpointTsLagGauge.DeleteLabelValues(m.id.Namespace, m.id.ID)
+	metrics.ChangefeedStatusGauge.DeleteLabelValues(m.id.Namespace, m.id.ID)
+	metrics.ScheduleTaskGuage.DeleteLabelValues(m.id.Namespace, m.id.ID)
+	metrics.RunningScheduleTaskGauge.DeleteLabelValues(m.id.Namespace, m.id.ID)
+	metrics.TableGauge.DeleteLabelValues(m.id.Namespace, m.id.ID)
+}
+
 func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time) {
+	log.Info("maintainer execute", zap.String("id", m.id.String()))
 	m.updateMetrics()
 	if m.removed.Load() {
 		// removed, cancel the task
@@ -276,7 +286,7 @@ func (m *Maintainer) updateMetrics() {
 	phyCkpTs := oracle.ExtractPhysical(m.checkpointTs.Load())
 	m.changefeedCheckpointTsGauge.Set(float64(phyCkpTs))
 
-	lag := oracle.GetPhysical(time.Now()) - phyCkpTs
+	lag := (oracle.GetPhysical(time.Now()) - phyCkpTs) / 1e3
 	m.changefeedCheckpointTsLagGauge.Set(float64(lag))
 
 	m.changefeedStatusGauge.Set(float64(m.state))
@@ -313,6 +323,7 @@ func (m *Maintainer) scheduleTableSpan() error {
 
 // Close cleanup resources
 func (m *Maintainer) Close() {
+	m.cleanupMetrics()
 	log.Info("changefeed maintainer closed", zap.String("id", m.id.String()),
 		zap.Bool("removed", m.removed.Load()),
 		zap.Uint64("checkpointTs", m.checkpointTs.Load()),
@@ -466,8 +477,7 @@ func (m *Maintainer) finishAddChangefeed() {
 }
 
 func (m *Maintainer) closeChangefeed() {
-	if m.state != heartbeatpb.ComponentState_Stopping &&
-		m.state != heartbeatpb.ComponentState_Stopped {
+	if m.state != heartbeatpb.ComponentState_Stopping && m.state != heartbeatpb.ComponentState_Stopped {
 		m.state = heartbeatpb.ComponentState_Stopping
 		m.statusChanged.Store(true)
 		m.tableSpans = utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior]()
