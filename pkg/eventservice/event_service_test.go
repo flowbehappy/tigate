@@ -20,6 +20,7 @@ import (
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -402,7 +403,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 	db, _ := newTestMockDB(t)
 	defer db.Close()
 
-	mysqlSink := sink.NewMysqlSink(8, writer.NewMysqlConfig(), db)
+	mysqlSink := sink.NewMysqlSink(model.DefaultChangeFeedID("test1"), 8, writer.NewMysqlConfig(), db)
 	tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: nil, EndKey: nil}}
 	startTs := uint64(1)
 

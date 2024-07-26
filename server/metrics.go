@@ -16,6 +16,8 @@ package server
 import (
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
+	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+	"github.com/flowbehappy/tigate/downstreamadapter/worker"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -31,5 +33,7 @@ func init() {
 	initServerMetrics(registry)
 	dispatchermanagermanager.InitMetrics(registry)
 	dispatchermanager.InitMetrics(registry)
+	sink.InitMetrics(registry)
+	worker.InitMetrics(registry)
 	metrics.InitMetrics(registry)
 }
