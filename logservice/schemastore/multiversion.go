@@ -57,7 +57,7 @@ func (v *versionedTableInfoStore) addInitialTableInfo(info *common.TableInfo) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	// assertEmpty(v.infos)
-	// log.Info("addInitialTableInfo", zap.Int64("tableID", int64(v.tableID)), zap.Uint64("version", info.Version))
+	log.Info("addInitialTableInfo", zap.Int64("tableID", int64(v.tableID)), zap.Uint64("version", info.Version))
 	v.infos = append(v.infos, &tableInfoItem{version: common.Ts(info.Version), info: info})
 }
 
@@ -75,7 +75,7 @@ func (v *versionedTableInfoStore) setTableInfoInitialized() {
 			zap.Int64("tableID", int64(v.tableID)),
 			zap.String("query", job.Query),
 			zap.Uint64("finishedTS", job.BinlogInfo.FinishedTS),
-			zap.Any("infos", v.infos))
+			zap.Any("infosLen", len(v.infos)))
 		v.doApplyDDL(job)
 	}
 	v.initialized = true
