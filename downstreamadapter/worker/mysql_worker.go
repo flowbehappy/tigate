@@ -15,6 +15,7 @@ package worker
 
 import (
 	"database/sql"
+	"strconv"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -35,7 +36,7 @@ func NewMysqlWorker(eventChan <-chan *common.TxnEvent, db *sql.DB, config *write
 		eventChan:           eventChan,
 		mysqlWriter:         writer.NewMysqlWriter(db, config),
 		id:                  id,
-		WorkerFlushDuration: WorkerFlushDuration.WithLabelValues(changefeedID.String(), string(id)),
+		WorkerFlushDuration: WorkerFlushDuration.WithLabelValues(changefeedID.String(), strconv.Itoa(id)),
 	}
 }
 

@@ -24,18 +24,8 @@ var (
 			Name:      "flush_rows",
 			Help:      "The number of rows flushed to downstream.",
 		}, []string{"changefeed"})
-
-	WorkerFlushDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "tigate",
-			Subsystem: "sink",
-			Name:      "worker_flush_duration",
-			Help:      "Flush duration (s) for txn worker.",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms~524s
-		}, []string{"changefeed", "id"})
 )
 
 func InitMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(FlushRows)
-	registry.MustRegister(WorkerFlushDuration)
 }

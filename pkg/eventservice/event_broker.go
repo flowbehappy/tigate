@@ -18,7 +18,6 @@ import (
 // Every TiDB cluster has a eventBroker.
 // All span subscriptions and dispatchers of the TiDB cluster are managed by the eventBroker.
 type eventBroker struct {
-	ctx context.Context
 	// tidbClusterID is the ID of the TiDB cluster this eventStore belongs to.
 	tidbClusterID uint64
 	// eventStore is the source of the events, eventBroker get the events from the eventStore.
@@ -34,7 +33,7 @@ type eventBroker struct {
 	// changedCh is used to notify span subscription has new events.
 	changedCh chan *subscriptionChange
 	// taskPool is used to store the scan tasks and merge the tasks of same dispatcher.
-	// TODO: Make it support merge the tasks of the saame table span, even if the tasks are from different dispatchers.
+	// TODO: Make it support merge the tasks of the same table span, even if the tasks are from different dispatchers.
 	taskPool *scanTaskPool
 
 	// scanWorkerCount is the number of the scan workers to spawn.
@@ -58,7 +57,6 @@ func newEventBroker(
 	ctx, cancel := context.WithCancel(ctx)
 	wg := &sync.WaitGroup{}
 	c := &eventBroker{
-		ctx:           ctx,
 		tidbClusterID: id,
 		eventStore:    eventStore,
 		dispatchers: struct {
@@ -73,19 +71,19 @@ func newEventBroker(
 		cancel:          cancel,
 		wg:              wg,
 	}
-	c.runGenerateScanTask()
-	c.runScanWorker()
-	c.runPushMessageWorker()
+	c.runGenerateScanTask(ctx)
+	c.runScanWorker(ctx)
+	c.runPushMessageWorker(ctx)
 	return c
 }
 
-func (c *eventBroker) runGenerateScanTask() {
+func (c *eventBroker) runGenerateScanTask(ctx context.Context) {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
 		for {
 			select {
-			case <-c.ctx.Done():
+			case <-ctx.Done():
 				return
 			case change := <-c.changedCh:
 				c.dispatchers.mu.RLock()
@@ -109,7 +107,7 @@ func (c *eventBroker) runGenerateScanTask() {
 	}()
 }
 
-func (c *eventBroker) runScanWorker() {
+func (c *eventBroker) runScanWorker(ctx context.Context) {
 	for i := 0; i < c.scanWorkerCount; i++ {
 		chIndex := i
 		c.wg.Add(1)
@@ -117,7 +115,7 @@ func (c *eventBroker) runScanWorker() {
 			defer c.wg.Done()
 			for {
 				select {
-				case <-c.ctx.Done():
+				case <-ctx.Done():
 					return
 				case task := <-c.taskPool.popTask(chIndex):
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
@@ -202,14 +200,14 @@ func (c *eventBroker) runScanWorker() {
 	}
 }
 
-func (c *eventBroker) runPushMessageWorker() {
+func (c *eventBroker) runPushMessageWorker(ctx context.Context) {
 	c.wg.Add(1)
 	// Use a single goroutine to send the messages in order.
 	go func() {
 		defer c.wg.Done()
 		for {
 			select {
-			case <-c.ctx.Done():
+			case <-ctx.Done():
 				return
 			case msg := <-c.messageCh:
 				c.msgSender.SendEvent(msg)
@@ -269,10 +267,10 @@ func newDispatcherStat(
 // onSubscriptionWatermark updates the watermark of the table span and send a notification to notify
 // that this table span has new events.
 func (a *dispatcherStat) onSubscriptionWatermark(watermark uint64) {
-	if uint64(watermark) < a.spanSubscription.watermark.Load() {
+	if watermark < a.spanSubscription.watermark.Load() {
 		return
 	}
-	a.spanSubscription.watermark.Store(uint64(watermark))
+	a.spanSubscription.watermark.Store(watermark)
 	sub := &subscriptionChange{
 		dispatcherInfo: a.info,
 		eventCount:     a.spanSubscription.newEventCount.Swap(0),

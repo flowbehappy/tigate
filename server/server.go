@@ -127,7 +127,7 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 	}
 
 	// initialize eventService, it relies on eventStore, so we need to initialize it after eventStore
-	eventService := eventservice.NewEventService(ctx)
+	eventService := eventservice.NewEventService()
 	c.subModules = append(c.subModules, eventService)
 	appctx.SetService(eventService.Name(), eventService)
 

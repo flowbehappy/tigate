@@ -76,7 +76,7 @@ func TestInferiorStoppedWhenWorking(t *testing.T) {
 		func(id model.CaptureID) rpc.Message {
 			return &messaging.TargetMessage{}
 		})
-	scheduler := NewCombineScheduler(NewBasicScheduler(1000),
+	scheduler := NewCombineScheduler(NewBasicScheduler(),
 		NewBalanceScheduler(time.Minute, 1000))
 	allInferior := []InferiorID{cfID1}
 

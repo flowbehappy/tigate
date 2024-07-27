@@ -13,7 +13,10 @@
 
 package maintainer
 
-import "github.com/flowbehappy/tigate/pkg/messaging"
+import (
+	"context"
+	"github.com/flowbehappy/tigate/pkg/messaging"
+)
 
 // MessageQueue is a size limited queue for caching rpc messages
 type MessageQueue struct {
@@ -26,8 +29,13 @@ func NewMessageQueue(bufSize int) *MessageQueue {
 	}
 }
 
-func (m *MessageQueue) Push(msg *messaging.TargetMessage) {
-	m.msgCh <- msg
+func (m *MessageQueue) Push(ctx context.Context, msg *messaging.TargetMessage) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case m.msgCh <- msg:
+	}
+	return nil
 }
 
 func (m *MessageQueue) PopMessages(buf []*messaging.TargetMessage, maxSize int) int {

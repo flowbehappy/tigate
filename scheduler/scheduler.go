@@ -29,6 +29,7 @@ type Scheduler interface {
 		allInferiors utils.Map[InferiorID, Inferior],
 		aliveCaptures map[model.CaptureID]*CaptureStatus,
 		stateMachines utils.Map[InferiorID, *StateMachine],
+		batchSize int,
 	) []*ScheduleTask
 }
 
@@ -38,10 +39,13 @@ func (s *Supervisor) Schedule(
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
 	stateMachines utils.Map[InferiorID, *StateMachine],
 ) []*ScheduleTask {
-	if allInferiors.Len() == stateMachines.Len() && time.Since(s.lastScheduleTime) < 60*time.Second {
-		return nil
+	if time.Since(s.lastScheduleTime) > 120*time.Second {
+		s.MarkNeedAddInferior()
+		s.MarkNeedRemoveInferior()
 	}
-	if s.RunningTasks.Len() >= s.maxTaskConcurrency {
+
+	batchSize := s.maxTaskConcurrency - s.RunningTasks.Len()
+	if batchSize <= 0 {
 		log.Warn("Skip scheduling since there are too many running task",
 			zap.String("id", s.ID.String()),
 			zap.Int("totalInferiors", allInferiors.Len()),
@@ -51,14 +55,24 @@ func (s *Supervisor) Schedule(
 		)
 		return nil
 	}
-	s.lastScheduleTime = time.Now()
 	for _, sched := range s.schedulers {
-		tasks := sched.Schedule(allInferiors, aliveCaptures, stateMachines)
+		tasks := sched.Schedule(allInferiors, aliveCaptures, stateMachines, batchSize)
 		if len(tasks) != 0 {
+			s.lastScheduleTime = time.Now()
 			return tasks
 		}
 	}
 	return nil
+}
+
+func (s *Supervisor) MarkNeedAddInferior() {
+	basciScheduler := s.schedulers[0].(*BasicScheduler)
+	basciScheduler.needAddInferior = true
+}
+
+func (s *Supervisor) MarkNeedRemoveInferior() {
+	basciScheduler := s.schedulers[0].(*BasicScheduler)
+	basciScheduler.needRemoveInferior = true
 }
 
 func (s *Supervisor) Name() string {

@@ -22,7 +22,6 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -34,6 +33,8 @@ import (
 // 2. handle dispatcher command from coordinator: add or remove changefeed maintainer
 // 3. check maintainer liveness
 type Manager struct {
+	mc messaging.MessageCenter
+
 	maintainers sync.Map
 
 	coordinatorID      messaging.ServerId
@@ -50,37 +51,38 @@ type Manager struct {
 // 2. manager manages maintainer lifetime
 // 3. manager report maintainer status to coordinator
 func NewMaintainerManager(selfServerID messaging.ServerId, pdEndpoints []string) *Manager {
+	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	m := &Manager{
+		mc:           mc,
 		maintainers:  sync.Map{},
 		selfServerID: selfServerID,
 		pdEndpoints:  pdEndpoints,
 		msgCh:        make(chan *messaging.TargetMessage, 1024),
 	}
 	// receive message from coordinator
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
-		RegisterHandler(messaging.MaintainerManagerTopic,
-			func(msg *messaging.TargetMessage) error {
-				m.msgCh <- msg
-				return nil
-			})
+	mc.RegisterHandler(messaging.MaintainerManagerTopic,
+		func(ctx context.Context, msg *messaging.TargetMessage) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case m.msgCh <- msg:
+			}
+			return nil
+		})
 
 	// receive bootstrap response message for maintainer
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
-		RegisterHandler(messaging.MaintainerBootstrapResponseTopic,
-			func(msg *messaging.TargetMessage) error {
-				req := msg.Message.(*heartbeatpb.MaintainerBootstrapResponse)
-				m.dispatcherMaintainerMessage(req.ChangefeedID, msg)
-				return nil
-			})
+	mc.RegisterHandler(messaging.MaintainerBootstrapResponseTopic,
+		func(ctx context.Context, msg *messaging.TargetMessage) error {
+			req := msg.Message.(*heartbeatpb.MaintainerBootstrapResponse)
+			return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
+		})
 
 	// receive heartbeat message for maintainer
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
-		RegisterHandler(messaging.DispatcherHeartBeatRequestTopic,
-			func(msg *messaging.TargetMessage) error {
-				req := msg.Message.(*heartbeatpb.HeartBeatRequest)
-				m.dispatcherMaintainerMessage(req.ChangefeedID, msg)
-				return nil
-			})
+	mc.RegisterHandler(messaging.DispatcherHeartBeatRequestTopic,
+		func(ctx context.Context, msg *messaging.TargetMessage) error {
+			req := msg.Message.(*heartbeatpb.HeartBeatRequest)
+			return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
+		})
 
 	return m
 }
@@ -120,7 +122,7 @@ func (m *Manager) sendMessages(msg *heartbeatpb.MaintainerHeartbeat) {
 		messaging.CoordinatorTopic,
 		msg,
 	)
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(target)
+	err := m.mc.SendCommand(target)
 	if err != nil {
 		log.Warn("send command failed", zap.Error(err))
 	}
@@ -185,8 +187,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 			cf = NewMaintainer(cfID, req.IsSecondary,
 				cfConfig, req.CheckpointTs, m.pdEndpoints)
 			m.maintainers.Store(cfID, cf)
-			threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(cf.(*Maintainer),
-				threadpool.CPUTask, time.Now())
+			cf.(*Maintainer).Run()
 		}
 		cf.(*Maintainer).isSecondary.Store(req.IsSecondary)
 	}
@@ -248,17 +249,19 @@ func (m *Manager) handleMessage(msg *messaging.TargetMessage) {
 	}
 }
 
-func (m *Manager) dispatcherMaintainerMessage(changefeed string, msg *messaging.TargetMessage) {
+func (m *Manager) dispatcherMaintainerMessage(
+	ctx context.Context, changefeed string, msg *messaging.TargetMessage,
+) error {
 	v, ok := m.maintainers.Load(model.DefaultChangeFeedID(changefeed))
 	if !ok {
 		log.Warn("maintainer is not found",
 			zap.String("changefeedID", changefeed), zap.String("message", msg.String()))
-		return
+		return nil
 	}
 
 	maintainer := v.(*Maintainer)
 	if maintainer.isSecondary.Load() {
-		return
+		return nil
 	}
-	maintainer.getMessageQueue().Push(msg)
+	return maintainer.getMessageQueue().Push(ctx, msg)
 }

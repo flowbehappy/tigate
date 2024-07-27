@@ -27,7 +27,7 @@ const dispatcherCount = 1000
 const databaseCount = 20
 
 func initContext(serverId messaging.ServerId) {
-	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(serverId, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
+	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(context.Background(), serverId, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
 	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, serverId)) // 100GB for demo
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(serverId))
 }

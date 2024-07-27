@@ -255,6 +255,17 @@ func (s *SharedClient) Unsubscribe(subID SubscriptionID) {
 		zap.Bool("exists", rt != nil))
 }
 
+// ResolveLock is a function. If outsider subscribers find a span resolved timestamp is
+// advanced slowly or stopped, they can try to resolve locks in the given span.
+func (s *SharedClient) ResolveLock(subID SubscriptionID, targetTs uint64) {
+	s.totalSpans.Lock()
+	rt := s.totalSpans.v[subID]
+	s.totalSpans.Unlock()
+	if rt != nil {
+		rt.resolveStaleLocks(s, targetTs)
+	}
+}
+
 // RegionCount returns subscribed region count for the span.
 func (s *SharedClient) RegionCount(subID SubscriptionID) uint64 {
 	s.totalSpans.RLock()

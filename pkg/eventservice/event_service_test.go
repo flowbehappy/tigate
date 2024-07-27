@@ -21,7 +21,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -160,7 +159,7 @@ func (m *mockEventStore) Close(ctx context.Context) error {
 
 func (m *mockEventStore) RegisterDispatcher(
 	dispatcherID common.DispatcherID,
-	span tablepb.Span,
+	span *common.TableSpan,
 	startTS common.Ts,
 	observer eventstore.EventObserver,
 	notifier eventstore.WatermarkNotifier,
@@ -298,7 +297,7 @@ func TestEventServiceBasic(t *testing.T) {
 
 	appcontext.SetService(appcontext.MessageCenter, mc)
 	appcontext.SetService(appcontext.EventStore, mockStore)
-	es := NewEventService(ctx)
+	es := NewEventService()
 	esImpl := es.(*eventService)
 	go func() {
 		err := es.Run(ctx)
@@ -384,15 +383,16 @@ func newTestMockDB(t *testing.T) (db *sql.DB, mock sqlmock.Sqlmock) {
 // The test mainly focus on the communication between dispatcher and event service.
 // When dispatcher created and register in event service, event service need to send events to dispatcher.
 func TestDispatcherCommunicateWithEventService(t *testing.T) {
-	serverId := messaging.NewServerId()
-	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(serverId, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
-	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, serverId)) // 100GB for demo
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	serverId := messaging.NewServerId()
+	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, serverId, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
+	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, serverId)) // 100GB for demo
+
 	mockStore := newMockEventStore()
 	appcontext.SetService(appcontext.EventStore, mockStore)
-	eventService := NewEventService(ctx)
+	eventService := NewEventService()
 	go func() {
 		err := eventService.Run(ctx)
 		if err != nil {

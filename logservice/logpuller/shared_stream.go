@@ -97,6 +97,11 @@ func newStream(ctx context.Context, c *SharedClient, g *errgroup.Group, r *reque
 			}
 			for _, m := range stream.clearStates() {
 				for _, state := range m {
+					// log.Info("event feed re-schedule pending region",
+					// 	zap.Uint64("streamID", stream.streamID),
+					// 	zap.Uint64("regionID", state.region.verID.GetID()),
+					// 	zap.Uint64("storeID", r.storeID),
+					// 	zap.String("addr", r.storeAddr))
 					state.markStopped(&sendRequestToStoreErr{})
 					sfEvent := newEventItem(nil, state, stream)
 					slot := hashRegionID(state.region.verID.GetID(), len(c.workers))
