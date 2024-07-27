@@ -19,6 +19,7 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/pkg/chann"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -42,7 +43,7 @@ type ConflictDetector struct {
 
 	closeCh chan struct{}
 
-	notifiedNodes chan func()
+	notifiedNodes *chann.DrainableChann[func()]
 	wg            sync.WaitGroup
 }
 
@@ -55,7 +56,7 @@ func NewConflictDetector(
 		slots:             NewSlots(numSlots),
 		numSlots:          numSlots,
 		closeCh:           make(chan struct{}),
-		notifiedNodes:     make(chan func(), 10000), // 需要想过如何设置 buffer 长度
+		notifiedNodes:     chann.NewAutoDrainChann[func()](),
 	}
 	for i := 0; i < opt.Count; i++ {
 		ret.resolvedTxnCaches[i] = newTxnCache(opt)
@@ -77,7 +78,7 @@ func (d *ConflictDetector) runBackgroundTasks() {
 		select {
 		case <-d.closeCh:
 			return
-		case notifyCallback := <-d.notifiedNodes:
+		case notifyCallback := <-d.notifiedNodes.Out():
 			if notifyCallback != nil {
 				notifyCallback()
 			}
@@ -104,7 +105,7 @@ func (d *ConflictDetector) Add(txn *common.TxnEvent, tableProgress *types.TableP
 		return d.sendToCache(txn, cacheID)
 	}
 	node.RandCacheID = func() int64 { return d.nextCacheID.Add(1) % int64(len(d.resolvedTxnCaches)) }
-	node.OnNotified = func(callback func()) { d.notifiedNodes <- callback }
+	node.OnNotified = func(callback func()) { d.notifiedNodes.In() <- callback }
 	d.slots.Add(node)
 }
 
