@@ -113,13 +113,14 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 	if err := c.prepare(ctx); err != nil {
 		return errors.Trace(err)
 	}
+	conf := config.GetGlobalServerConfig()
 	c.subModules = []SubModule{
 		watcher.NewCaptureManager(c.session, c.EtcdClient),
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener()),
 		maintainer.NewMaintainerManager(c.serverID, c.pdEndpoints),
-		eventstore.NewEventStore(ctx, "/tmp/cdc", c.pdClient, c.RegionCache, c.PDClock, c.KVStorage), // FIXME: fix path
+		eventstore.NewEventStore(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage),
 	}
 	// register it into global var
 	for _, subModule := range c.subModules {
