@@ -186,6 +186,8 @@ func NewEventStore(
 
 	conf := cdcConfig.GetGlobalServerConfig()
 
+	conf.KVClient.WorkerConcurrent = 64
+	conf.KVClient.GrpcStreamConcurrent = 8
 	grpcPool := sharedconn.NewConnAndClientPool(&security.Credential{}, cdckv.GetGlobalGrpcMetrics())
 	client := cdckv.NewSharedClient(
 		model.ChangeFeedID{},
