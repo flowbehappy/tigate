@@ -219,9 +219,6 @@ func NewEventStore(
 				CRTs:     raw.CRTs,
 				RegionID: raw.RegionID,
 			}
-			log.Info("consume event",
-				zap.Any("raw", raw),
-				zap.Bool("isDML", raw.OpType != model.OpTypeResolved))
 			store.writeEvent(span, rawKV)
 		}
 		return nil
