@@ -71,6 +71,11 @@ func (v *versionedTableInfoStore) setTableInfoInitialized() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	for _, job := range v.pendingDDLs {
+		log.Info("apply pending ddl",
+			zap.Int64("tableID", int64(v.tableID)),
+			zap.String("query", job.Query),
+			zap.Uint64("finishedTS", job.BinlogInfo.FinishedTS),
+			zap.Any("infos", v.infos))
 		v.doApplyDDL(job)
 	}
 	v.initialized = true
