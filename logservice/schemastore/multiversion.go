@@ -232,7 +232,8 @@ func (v *versionedTableInfoStore) doApplyDDL(job *model.Job) {
 		log.Panic("ddl job finished ts should be monotonically increasing")
 	}
 	log.Info("apply ddl",
-		zap.Int64("schemaVersion", int64(v.infos[len(v.infos)-1].info.Version)))
+		zap.Int64("schemaVersion", int64(v.infos[len(v.infos)-1].info.Version)),
+		zap.Uint64("version", uint64(v.infos[len(v.infos)-1].info.TableInfo.Version)))
 	if len(v.infos) > 0 {
 		// TODO: FinishedTS is not enough, need schema version. But currently there should be no duplicate ddl,
 		// so the following check is useless
