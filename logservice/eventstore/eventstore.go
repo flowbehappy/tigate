@@ -297,6 +297,7 @@ func (e *eventStore) batchCommitAndUpdateWatermark(ctx context.Context, batchCh 
 			// do batch commit
 			batch := batchEvent.batch
 			if !batch.Empty() {
+				log.Info("commit pebble batch", zap.Int("size", len(batch.Repr())))
 				if err := batch.Commit(pebble.NoSync); err != nil {
 					log.Panic("failed to commit pebble batch", zap.Error(err))
 				}
