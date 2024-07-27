@@ -491,6 +491,10 @@ func (e *eventStore) GetIterator(dataRange *common.DataRange) (EventIterator, er
 		return nil, err
 	}
 	iter.First()
+	log.Info("create iterator",
+		zap.Uint64("tableID", uint64(span.TableID)),
+		zap.Uint64("startTs", dataRange.StartTs),
+		zap.Uint64("endTs", dataRange.StartTs))
 
 	return &eventStoreIter{
 		tableID:      common.TableID(span.TableID),
@@ -500,7 +504,7 @@ func (e *eventStore) GetIterator(dataRange *common.DataRange) (EventIterator, er
 		prevCommitTS: 0,
 		iterMounter:  mounter.NewMounter(time.Local), // FIXME
 		startTs:      dataRange.StartTs,
-		endTs:        dataRange.EndTs,
+		endTs:        dataRange.StartTs,
 		rowCount:     0,
 	}, nil
 }
