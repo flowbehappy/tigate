@@ -5,16 +5,10 @@ import (
 	"time"
 )
 
-type destination[T Event, D any] struct {
-	path   Path
-	dest   D
-	stream *stream[T, D]
-}
-
 type DynamicStream[T Event, D any] struct {
 	sourceChan chan T
 
-	destinations map[Path]*destination[T, D]
+	pathMap map[Path]*pathInfo[T, D]
 
 	expectedLatency time.Duration
 	minStream       int
