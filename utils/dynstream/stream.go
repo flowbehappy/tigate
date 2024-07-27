@@ -309,6 +309,24 @@ func (s *stream[T, D]) backgroundLoop() {
 	}
 }
 
+func (s *stream[T, D]) nextEvent() (*EventWrap[T, D], bool) {
+	if len(s.batchEvents) != 0 {
+		return s.batchEvents[len(s.batchEvents)-1], true
+	} else if e, ok := s.waitQueue.Front(); ok {
+		return e, true
+	}
+	return nil, false
+}
+
+func (s *stream[T, D]) lastEvent() (*EventWrap[T, D], bool) {
+	if e, ok := s.waitQueue.Back(); ok {
+		return e, true
+	} else if len(s.batchEvents) != 0 {
+		return s.batchEvents[0], true
+	}
+	return nil, false
+}
+
 func (s *stream[T, D]) reportStat() {
 	count := int64(s.latestHandled.Size())
 	now := time.Now()
@@ -331,18 +349,11 @@ func (s *stream[T, D]) reportStat() {
 		avg = totalTime / time.Duration(count)
 	}
 
-	var runningTime time.Duration
-	if batch, ok := s.latestHandled.Tail(); ok {
-		if rt, running := batch.handleTime(now); running {
-			runningTime = rt
-		}
+	if e, ok := s.nextEvent(); ok {
+		actualWait = max(actualWait, now.Sub(e.inQueueTime))
 	}
 
 	estimatedWait := avg
-	if e, ok := s.waitQueue.Front(); ok {
-		// There could be a very slow event being handled.
-		estimatedWait = now.Sub(e.inQueueTime) + max(runningTime, avg)
-	}
 	if e, ok := s.waitQueue.Back(); ok {
 		estimatedWait = max(estimatedWait, now.Sub(e.inQueueTime)+avg*time.Duration(s.waitQueue.Length()))
 	}
