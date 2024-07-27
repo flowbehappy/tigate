@@ -232,8 +232,8 @@ func (v *versionedTableInfoStore) doApplyDDL(job *model.Job) {
 		log.Panic("ddl job finished ts should be monotonically increasing")
 	}
 	log.Info("apply ddl",
-		zap.Int64("schemaVersion", int64(v.infos[len(v.infos)-1].info.Version)),
-		zap.Uint64("version", uint64(v.infos[len(v.infos)-1].info.TableInfo.Version)),
+		zap.Int64("version", int64(v.infos[len(v.infos)-1].info.Version)),
+		zap.Uint64("schemaVersion", uint64(v.infos[len(v.infos)-1].info.TableInfo.Version)),
 		zap.Int64("jobVersion", job.BinlogInfo.SchemaVersion))
 	if len(v.infos) > 0 {
 		// TODO: FinishedTS is not enough, need schema version. But currently there should be no duplicate ddl,
@@ -243,13 +243,21 @@ func (v *versionedTableInfoStore) doApplyDDL(job *model.Job) {
 				zap.Int64("tableID", int64(v.tableID)),
 				zap.String("query", job.Query),
 				zap.Uint64("finishedTS", job.BinlogInfo.FinishedTS),
-				zap.Any("infos", v.infos))
+				zap.Any("infosLen", len(v.infos)))
 			return
 		}
 	}
 
 	switch job.Type {
 	case model.ActionCreateTable:
+		if len(v.infos) == 1 {
+			// table info may be in snapshot, can not filter redudant job in this case
+			log.Warn("ignore create table job",
+				zap.Int64("tableID", int64(v.tableID)),
+				zap.String("query", job.Query),
+				zap.Uint64("finishedTS", job.BinlogInfo.FinishedTS))
+			break
+		}
 		assertEmpty(v.infos, job)
 		info := common.WrapTableInfo(job.SchemaID, job.SchemaName, job.BinlogInfo.FinishedTS, job.BinlogInfo.TableInfo)
 		v.infos = append(v.infos, &tableInfoItem{version: common.Ts(job.BinlogInfo.FinishedTS), info: info})
