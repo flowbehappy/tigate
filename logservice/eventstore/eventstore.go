@@ -567,7 +567,9 @@ func (iter *eventStoreIter) Close() error {
 		zap.Uint64("endTs", iter.endTs),
 		zap.Int64("rowCount", iter.rowCount))
 	if iter.innerIter != nil {
-		return iter.innerIter.Close()
+		err := iter.innerIter.Close()
+		iter.innerIter = nil
+		return err
 	}
 	return nil
 }
