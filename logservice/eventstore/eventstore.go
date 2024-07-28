@@ -505,7 +505,7 @@ func (e *eventStore) GetIterator(dataRange *common.DataRange) (EventIterator, er
 		prevCommitTS: 0,
 		iterMounter:  mounter.NewMounter(time.Local), // FIXME
 		startTs:      dataRange.StartTs,
-		endTs:        dataRange.StartTs,
+		endTs:        dataRange.EndTs,
 		rowCount:     0,
 	}, nil
 }
