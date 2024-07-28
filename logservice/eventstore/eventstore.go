@@ -104,7 +104,7 @@ type eventStore struct {
 }
 
 const dataDir = "event_store"
-const dbCount = 64
+const dbCount = 1024
 
 func NewEventStore(
 	ctx context.Context,
@@ -187,7 +187,7 @@ func NewEventStore(
 	conf := cdcConfig.GetGlobalServerConfig()
 
 	conf.KVClient.WorkerConcurrent = uint(len(dbs))
-	conf.KVClient.GrpcStreamConcurrent = 8
+	conf.KVClient.GrpcStreamConcurrent = 64
 	grpcPool := sharedconn.NewConnAndClientPool(&security.Credential{}, cdckv.GetGlobalGrpcMetrics())
 	client := cdckv.NewSharedClient(
 		model.ChangeFeedID{},
