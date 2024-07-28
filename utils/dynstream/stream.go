@@ -10,37 +10,7 @@ import (
 	"github.com/flowbehappy/tigate/utils/ringbuffer"
 )
 
-type batch[T Event, D any] struct {
-	events []*EventWrap[T, D]
-
-	startTime time.Time
-	doneTime  time.Time
-}
-
-func (b *batch[T, D]) isRunning() ([]Path, bool) {
-	if !b.doneTime.IsZero() {
-		return nil, false
-	}
-	paths := make([]Path, len(b.events))
-	for i, e := range b.events {
-		paths[i] = e.Path()
-	}
-	return paths, true
-}
-
-// Calculate the time to handle the batch.
-func (b *batch[T, D]) handleTime(now time.Time) (runTime time.Duration, running bool) {
-	doneTime := b.doneTime
-	if doneTime.IsZero() {
-		// The batch is not done yet, use the current time.
-		doneTime = now
-		running = true
-	} else {
-		running = false
-	}
-	runTime = doneTime.Sub(b.startTime)
-	return runTime, running
-}
+const maxInflight = 16
 
 type pathStat struct {
 	path      Path
@@ -48,28 +18,40 @@ type pathStat struct {
 	waitLen   int64
 }
 
-type streamStat[D any] struct {
+type streamStat struct {
 	id uint64
 
-	avg           time.Duration // The average time to handle an event, based on the latest handled events.
-	countOn       int64         // The number of latest events, including the event being handled.
-	queueLen      int64         // The length of the wait queue.
-	estimatedWait time.Duration // The longgest estimated wait time of all waiting events.
-	actualWait    time.Duration // The actual wait time of the latest handled events.
+	// Calculate the time for the past n events.
+	handleTimeOnNum  time.Duration
+	handleCountonNum int64
+
+	// Calculate the time for the past report interval.
+	handleTimeInPeriod  time.Duration
+	handleCountInPeriod int64
+
+	queueLen int64 // The length of the wait queue.
+
+	futureWaitOnNum    time.Duration // The longgest estimated wait time of all waiting events.
+	futureWaitInPeriod time.Duration // The longgest estimated wait time of all waiting events.
+
+	historyWait time.Duration // The max wait time of the latest handled events.
 
 	pathStats []pathStat // Sorted by the total time in descending order.
 }
 
-type stream[T Event, D any] struct {
-	id uint64
+type waitRunning[T Event, D any] struct {
+	path     Path
+	waitChan <-chan *EventWrap[T, D]
+}
 
+type stream[T Event, D any] struct {
+	id    uint64
 	zeroT T
 
-	worker    Handler[T, D]
-	batcher   Batcher[T, D]
-	batchSize int
+	expectedLatency time.Duration
+	reportInterval  time.Duration
 
-	reportInterval time.Duration
+	worker Handler[T, D]
 
 	// The statistics of the paths.
 	// Keep in mind that the pathInfo instance are shared in the pathMap here, the pathMap in DynamicStream,
@@ -77,21 +59,23 @@ type stream[T Event, D any] struct {
 	// It is designed to avoid the frequent mapping by path in different places.
 	pathMap map[Path]*pathInfo[T, D]
 
-	incame int // How many events are put into the stream.
+	incame uint64 // How many events are put into the stream.
 
 	inChan     chan *EventWrap[T, D]          // The buffer channel to receive the events.
 	waitQueue  *deque.Deque[*EventWrap[T, D]] // The queue to store the waiting events.
-	handleChan chan *batch[T, D]              // A synchronized channel to send the batch to the worker. We only handle one batch at a time.
-	doneChan   chan *batch[T, D]              // A buffer channel to receive the done batch.
+	handleChan chan *EventWrap[T, D]          // The buffer channel to send the events to the worker.
+	doneChan   chan *EventWrap[T, D]          // A buffer channel to receive the done events.
 
-	batchEvents []*EventWrap[T, D]
+	inflight      *ringbuffer.RingBuffer[*EventWrap[T, D]] // The batches that are in the handleChan but not likely to be handled.
+	latestHandled *ringbuffer.RingBuffer[*EventWrap[T, D]] // The latest handled batches.
 
-	latestHandled *ringbuffer.RingBuffer[*batch[T, D]]
-	reportChan    chan *streamStat[D]
-
-	formerStreams []*(stream[T, D])
+	handleTime  time.Duration // The total time to handle the events in the report period.
+	handleCount int64         // The number of handled events in the report period.
+	reportChan  chan *streamStat
 
 	hasClosed atomic.Bool
+
+	waitRunning *waitRunning[T, D] // The wait object from the former stream.
 
 	handleDone     sync.WaitGroup
 	backgroundDone sync.WaitGroup
@@ -99,28 +83,25 @@ type stream[T Event, D any] struct {
 
 func newStream[T Event, D any](
 	id uint64,
-	acceptedPaths []*pathInfo[T, D],
-
-	worker Handler[T, D],
-	batcher Batcher[T, D],
-	batchSize int, // 256?
+	expectedLatency time.Duration,
 	reportInterval time.Duration, // 200 milliseconds?
-	reportChan chan *streamStat[D],
-
-	formerStreams ...*stream[T, D]) *stream[T, D] {
+	acceptedPaths []*pathInfo[T, D],
+	worker Handler[T, D],
+	reportChan chan *streamStat,
+) *stream[T, D] {
 	s := &stream[T, D]{
-		worker:         worker,
-		batcher:        batcher,
-		batchSize:      batchSize,
-		reportInterval: reportInterval,
-		pathMap:        make(map[Path]*pathInfo[T, D], len(acceptedPaths)),
-		inChan:         make(chan *EventWrap[T, D], 64),
-		waitQueue:      deque.NewDequeDefault[*EventWrap[T, D]](),
-		handleChan:     make(chan *batch[T, D]),
-		doneChan:       make(chan *batch[T, D], 8),
-		latestHandled:  ringbuffer.NewRingBuffer[*batch[T, D]](8),
-		reportChan:     reportChan,
-		formerStreams:  formerStreams,
+		id:              id,
+		expectedLatency: expectedLatency,
+		reportInterval:  reportInterval,
+		worker:          worker,
+		pathMap:         make(map[Path]*pathInfo[T, D], len(acceptedPaths)),
+		inChan:          make(chan *EventWrap[T, D], 64),
+		waitQueue:       deque.NewDequeDefault[*EventWrap[T, D]](),
+		handleChan:      make(chan *EventWrap[T, D], maxInflight),
+		doneChan:        make(chan *EventWrap[T, D], maxInflight),
+		inflight:        ringbuffer.NewRingBuffer[*EventWrap[T, D]](maxInflight + 1),
+		latestHandled:   ringbuffer.NewRingBuffer[*EventWrap[T, D]](16),
+		reportChan:      reportChan,
 	}
 
 	for _, p := range acceptedPaths {
@@ -130,35 +111,51 @@ func newStream[T Event, D any](
 	return s
 }
 
-func (s *stream[T, D]) start() {
+func (s *stream[T, D]) start(formerStreams ...*stream[T, D]) {
+
 	// Start worker to handle events.
 	s.handleDone.Add(1)
 	go s.handleEventLoop()
 
 	// Start manaing events and statistics.
 	s.backgroundDone.Add(1)
-	go s.backgroundLoop()
+	go s.backgroundLoop(formerStreams)
 }
 
 func (s *stream[T, D]) in() chan *EventWrap[T, D] {
 	return s.inChan
 }
 
-func (s *stream[T, D]) wait() {
-	s.handleDone.Wait()
-	return
-}
-
-// Close the stream and return the paths of the running events.
-func (s *stream[T, D]) close() ([]Path, bool) {
+// Close the stream and return the running event.
+// Not all of the new streams need to wait for the former stream's handle goroutine to finish.
+// Only the streams that are interested in the path of the running event need to wait.
+func (s *stream[T, D]) close(interested ...map[Path]*pathInfo[T, D]) *waitRunning[T, D] {
 	if s.hasClosed.CompareAndSwap(false, true) {
 		close(s.inChan)
 	}
 	s.backgroundDone.Wait()
-	if batch, ok := s.latestHandled.Tail(); ok {
-		return batch.isRunning()
+
+	if len(interested) != 0 {
+		if s.waitRunning != nil {
+			if _, ok := interested[0][s.waitRunning.path]; ok {
+				return s.waitRunning
+			}
+			return nil
+		}
+
+		if e, ok := s.inflight.Front(); ok {
+			if _, ok := interested[0][e.Path()]; ok {
+				waitChan := make(chan *EventWrap[T, D], 1)
+				go func() {
+					s.handleDone.Wait()
+					waitChan <- e
+					close(waitChan)
+				}()
+				return &waitRunning[T, D]{path: e.Path(), waitChan: waitChan}
+			}
+		}
 	}
-	return nil, false
+	return nil
 }
 
 func (s *stream[T, D]) handleEventLoop() {
@@ -168,41 +165,56 @@ func (s *stream[T, D]) handleEventLoop() {
 	}()
 
 	for {
-		batch, ok := <-s.handleChan
+		e, ok := <-s.handleChan
 		if !ok {
-			break
+			// The stream is closing.
+			return
 		}
 
-		s.worker.Handle(batch.events)
+		e.startTime.Store(time.Now())
+		s.worker.Handle(e)
+		e.doneTime.Store(time.Now())
 
-		s.doneChan <- batch
+		s.doneChan <- e
 	}
 }
 
-func (s *stream[T, D]) backgroundLoop() {
+func (s *stream[T, D]) backgroundLoop(formerStreams []*stream[T, D]) {
 	defer func() {
 		close(s.handleChan)
-		// Move all events in the inChan to the waitQueue.
+
+		s.recordAndDrainDoneChan(nil)
+
+		// Move all events in the inChan & handleChan to the waitQueue.
 		now := time.Now()
 		for e := range s.inChan {
 			e.inQueueTime = now
 			s.waitQueue.PushBack(e)
 		}
 
-		// Drop the batches. This stream is closing, no need to report the statistics.
-		// for range s.doneChan {}
+		if ic := s.inflight.Length(); ic > 1 {
+			for {
+				e, _ := s.inflight.PopBack()
+				s.waitQueue.PushFront(e)
+				ic -= 1
+				if ic == 1 {
+					break
+				}
+			}
+		}
+
+		if s.inflight.Length() != 0 {
+			// There is a running event.
+		}
 
 		s.backgroundDone.Done()
 	}()
 
 	// Move the remaining events in the former streams to this stream.
 
-	for _, stream := range s.formerStreams {
-		for _, e := range stream.batchEvents {
-			if _, ok := s.pathMap[e.Path()]; ok {
-				s.waitQueue.PushBack(e)
-			}
-		}
+	for _, stream := range formerStreams {
+		s.waitRunning = stream.close(s.pathMap)
+
 		itr := stream.waitQueue.ForwardIterator()
 		for e, ok := itr.Next(); ok; e, ok = itr.Next() {
 			if _, ok := s.pathMap[e.Path()]; ok {
@@ -210,62 +222,47 @@ func (s *stream[T, D]) backgroundLoop() {
 			}
 		}
 
-		// It is guranteed that the events in stream.inChan are already moved to the waitQueue after stream.close() return.
-		// So we don't need to do it here.
 	}
 
-	// Some former streams might still be running.
-	// We need to wait for the stream we are interested in to finish.
-	for _, stream := range s.formerStreams {
-		paths, running := stream.close()
-		if !running {
-			continue
-		}
-		for _, path := range paths {
-			if _, ok := s.pathMap[path]; ok {
-				stream.wait()
-			}
-		}
-	}
-
-	pushEventToWaitQueue := func(e *EventWrap[T, D]) {
-		s.waitQueue.PushBack(e)
+	pushToWaitQueue := func(e *EventWrap[T, D]) {
 		e.inQueueTime = time.Now()
 		e.pathInfo.waitLen++
+
+		s.waitQueue.PushBack(e)
 		s.incame++
-	}
-
-	afterDone := func(batch *batch[T, D]) {
-		now := time.Now()
-		batch.doneTime = now
-
-		len := len(batch.events)
-		for _, e := range batch.events {
-			// Note that they share the handle time, so we need to divide the time by the number of events.
-			e.pathInfo.totalTime += now.Sub(batch.startTime) / time.Duration(len)
-
-			// Clear the reference to release memory.
-			// We don't need them anymore. But the batch is still in the ring buffer.
-			e.event = s.zeroT
-			e.pathInfo = nil
-		}
 	}
 
 	nextReport := time.Now().Add(s.reportInterval)
 
-	for {
-		for len(s.batchEvents) < s.batchSize {
-			waitEvent, ok := s.waitQueue.Front()
-			if !ok || !s.batcher.IsBatch(s.batchEvents, waitEvent) {
-				break
-			}
-			s.waitQueue.PopBack()
-			s.batchEvents = append(s.batchEvents, waitEvent)
-		}
-		send := len(s.batchEvents) != 0
+	if s.waitRunning != nil {
+		// The waitStream is not nil. We need to wait for the running event from the former stream.
+		// And in the same time, we need to listen to the new events and report the statistics.
+	Loop:
+		for {
+			select {
+			case <-time.After(nextReport.Sub(time.Now())):
+				s.reportStat()
+				nextReport = time.Now().Add(s.reportInterval)
+			case e, ok := <-s.inChan:
+				if !ok {
+					return
+				}
+				pushToWaitQueue(e)
+			case e := <-s.waitRunning.waitChan:
+				if e != nil && e.doneTime.Load() == nil {
+					s.waitQueue.PushFront(e)
+				}
 
-		if send {
-			batch := &batch[T, D]{events: s.batchEvents}
+				s.waitRunning = nil
+				break Loop
+			}
+		}
+	}
+
+	for {
+		nextEvent, ok := s.waitQueue.Front()
+
+		if ok {
 			select {
 			case <-time.After(nextReport.Sub(time.Now())):
 				s.reportStat()
@@ -274,20 +271,12 @@ func (s *stream[T, D]) backgroundLoop() {
 				if !ok {
 					return
 				}
-				pushEventToWaitQueue(e)
-			case done, ok := <-s.doneChan: // Receive the done batch and update the statistics.
-				if !ok {
-					return
-				}
-				afterDone(done)
-			case s.handleChan <- batch: // Send the batch to the worker.
-				s.batchEvents = nil
-
-				batch.startTime = time.Now()
-				s.latestHandled.PushTail(batch) // Store the timing statistics.
-				for _, e := range batch.events {
-					e.pathInfo.waitLen--
-				}
+				pushToWaitQueue(e)
+			case done := <-s.doneChan: // Receive the done batch and update the statistics.
+				s.recordAndDrainDoneChan(done)
+			case s.handleChan <- nextEvent: // Send the batch to the worker.
+				s.waitQueue.PopFront()
+				s.inflight.PushBack(nextEvent)
 			}
 		} else {
 			select {
@@ -298,100 +287,190 @@ func (s *stream[T, D]) backgroundLoop() {
 				if !ok {
 					return
 				}
-				pushEventToWaitQueue(e)
-			case done, ok := <-s.doneChan:
-				if !ok {
-					return
-				}
-				afterDone(done)
+				pushToWaitQueue(e)
+			case done := <-s.doneChan:
+				s.recordAndDrainDoneChan(done)
 			}
 		}
 	}
 }
 
-func (s *stream[T, D]) nextEvent() (*EventWrap[T, D], bool) {
-	if len(s.batchEvents) != 0 {
-		return s.batchEvents[len(s.batchEvents)-1], true
-	} else if e, ok := s.waitQueue.Front(); ok {
-		return e, true
+func (s *stream[T, D]) recordAndDrainDoneChan(first *EventWrap[T, D]) {
+	afterDone := func(e *EventWrap[T, D]) {
+		start := e.startTime.Load().(time.Time)
+		done := e.doneTime.Load().(time.Time)
+		handleTime := done.Sub(start)
+
+		// The batch is done, remove it from the inflight.
+		if head, ok := s.inflight.PopFront(); !ok || head != e {
+			panic("The batch is not the head of the inflight.")
+		}
+
+		// Store the timing statistics.
+		s.handleTime += handleTime
+		s.handleCount++
+
+		e.pathInfo.totalTime += handleTime
+		e.pathInfo.waitLen-- // It is not correct. But we will fix it when report the statistics.
+
+		// Release memory
+		e.event = s.zeroT
+		e.pathInfo = nil
+
+		s.latestHandled.PushBack(e)
 	}
-	return nil, false
+
+	if first != nil {
+		afterDone(first)
+	}
+	for done := range s.doneChan {
+		afterDone(done)
+	}
+}
+
+func (s *stream[T, D]) runningEvent() (*EventWrap[T, D], time.Duration, time.Duration, bool) {
+	if head, ok := s.inflight.Front(); ok {
+		start := head.startTime.Load()
+		done := head.doneTime.Load()
+		if start != nil && done != nil {
+			startTime := start.(time.Time)
+			doneTime := done.(time.Time)
+			return head, doneTime.Sub(startTime), startTime.Sub(head.inQueueTime), true
+		} else if start != nil {
+			startTime := start.(time.Time)
+			return head, time.Now().Sub(startTime), startTime.Sub(head.inQueueTime), true
+		} else {
+			return head, time.Duration(0), time.Now().Sub(head.inQueueTime), true
+		}
+	}
+	return nil, time.Duration(0), time.Duration(0), false
+}
+
+func (s *stream[T, D]) nextEvent() (*EventWrap[T, D], bool) {
+	if s.inflight.Length() < 2 {
+		return nil, false
+	}
+	// The second event in the inflight is the next event.
+	itr := s.inflight.ForwardIterator()
+	itr.Next()
+	e, _ := itr.Next()
+	return e, true
 }
 
 func (s *stream[T, D]) lastEvent() (*EventWrap[T, D], bool) {
 	if e, ok := s.waitQueue.Back(); ok {
 		return e, true
-	} else if len(s.batchEvents) != 0 {
-		return s.batchEvents[0], true
 	}
 	return nil, false
 }
 
 func (s *stream[T, D]) reportStat() {
-	count := int64(s.latestHandled.Size())
+	// Let's drain the doneChan to make the report as accurate as possible.
+	s.recordAndDrainDoneChan(nil)
+
 	now := time.Now()
-	var totalTime time.Duration
-	var actualWait time.Duration
-	eventCount := 0
+	var handleTimeOnNum time.Duration
+	var handleCountOnNum int64
+	handleTimeInPeriod := s.handleTime
+	handleCountInPeriod := s.handleCount
 
-	itr := s.latestHandled.Iterator()
-	for batch, ok := itr.Next(); ok; batch, ok = itr.Next() {
-		rt, _ := batch.handleTime(now)
-		totalTime += rt
-		eventCount += len(batch.events)
+	var historyWait time.Duration
 
-		for _, e := range batch.events {
-			actualWait = max(actualWait, batch.startTime.Sub(e.inQueueTime))
-		}
+	// Count the running event.
+	if _, rt, wt, running := s.runningEvent(); running {
+		handleTimeOnNum += rt
+		handleCountOnNum++
+
+		handleTimeInPeriod += rt
+		handleCountInPeriod++
+
+		historyWait = max(historyWait, wt)
 	}
-	avg := time.Duration(0)
-	if count != 0 {
-		avg = totalTime / time.Duration(count)
+
+	// Count the finished events.
+	itr := s.latestHandled.ForwardIterator()
+	for e, ok := itr.Next(); ok; e, ok = itr.Next() {
+		start := e.startTime.Load().(time.Time)
+		done := e.doneTime.Load().(time.Time)
+		handleTimeOnNum += done.Sub(start)
+		handleCountOnNum++
+
+		historyWait = max(historyWait, start.Sub(e.inQueueTime))
 	}
 
 	if e, ok := s.nextEvent(); ok {
-		actualWait = max(actualWait, now.Sub(e.inQueueTime))
+		historyWait = max(historyWait, now.Sub(e.inQueueTime))
 	}
 
-	estimatedWait := avg
-	if e, ok := s.waitQueue.Back(); ok {
-		estimatedWait = max(estimatedWait, now.Sub(e.inQueueTime)+avg*time.Duration(s.waitQueue.Length()))
+	queueLen := int64(s.waitQueue.Length())
+	if il := s.inflight.Length(); il > 0 {
+		// The head of the inflight is the running event. Don't count it.
+		queueLen += int64(il - 1)
 	}
 
-	// We don't want to block here
+	avgOnNum := time.Duration(0)
+	if handleCountOnNum != 0 {
+		avgOnNum = handleTimeOnNum / time.Duration(handleCountOnNum)
+	}
+	avgInPeriod := time.Duration(0)
+	if handleCountInPeriod != 0 {
+		avgInPeriod = handleTimeInPeriod / time.Duration(handleCountInPeriod)
+	}
+
+	futureWaitOnNum := avgOnNum
+	futureWaitInPeriod := avgInPeriod
+	if e, ok := s.lastEvent(); ok {
+		futureWaitOnNum = max(futureWaitOnNum, now.Sub(e.inQueueTime)+avgOnNum*time.Duration(queueLen))
+		futureWaitInPeriod = max(futureWaitInPeriod, now.Sub(e.inQueueTime)+avgInPeriod*time.Duration(queueLen))
+	}
+
+	stat := &streamStat{
+		handleTimeOnNum:  handleTimeOnNum,
+		handleCountonNum: handleCountOnNum,
+
+		handleTimeInPeriod:  handleTimeInPeriod,
+		handleCountInPeriod: handleCountInPeriod,
+
+		queueLen:           queueLen,
+		futureWaitOnNum:    futureWaitOnNum,
+		futureWaitInPeriod: futureWaitInPeriod,
+		historyWait:        historyWait,
+	}
+	if min(futureWaitOnNum, futureWaitInPeriod, historyWait) >= s.expectedLatency*2 {
+		// The stream is not in a good state.
+		// We need to report the statistics of each path to the scheduler.
+		stat.pathStats = s.resetPathStat()
+	}
 	select {
-	case s.reportChan <- &streamStat[D]{
-		avg:           avg,
-		countOn:       count,
-		queueLen:      int64(s.waitQueue.Length()),
-		estimatedWait: estimatedWait,
-		actualWait:    actualWait,
-		pathStats:     s.resetPathStat(),
-	}:
+	case s.reportChan <- stat:
 	default:
 	}
+
+	// Reset the statistics.
+	s.handleTime = 0
+	s.handleCount = 0
 }
 
 func (s *stream[T, D]) resetPathStat() []pathStat {
 	pathStats := make([]pathStat, len(s.pathMap))
-	// We need to add the time of the running events to the total time.
+	// We need to add the time of the running event to the total time.
 	// To make the scheduler to notice the long running events.
-	if batch, ok := s.latestHandled.Tail(); ok && batch.doneTime.IsZero() {
-		len := len(batch.events)
-		for _, e := range batch.events {
-			// It doesn't matter that we add the time to the total time earlier,
-			// beside when they are done.
-			// Because the total time will be reset to 0 after this call.
-			e.pathInfo.totalTime += time.Now().Sub(batch.startTime) / time.Duration(len)
-		}
-	}
-
+	re, rt, _, running := s.runningEvent()
 	for _, stat := range s.pathMap {
-		pathStats = append(pathStats, pathStat{
+		ps := pathStat{
 			path:      stat.path,
 			totalTime: stat.totalTime,
 			waitLen:   stat.waitLen,
-		})
+		}
+		if running && re.Path() == stat.path {
+			ps.totalTime += rt
+			// One event of this path is running. But we only decrease the waitLen after the event is done.
+			// To make the report more accurate, we decrease the waitLen here.
+			ps.waitLen--
+		}
+		pathStats = append(pathStats)
+
+		// Reset the statistics.
 		stat.totalTime = 0
 	}
 	// Sort the path stats by the total time in descending order.
