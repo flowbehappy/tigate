@@ -174,11 +174,11 @@ func (m *Maintainer) cleanupMetrics() {
 }
 
 func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time) {
-	log.Info("maintainer execute", zap.String("id", m.id.String()))
-	defer func() {
-		log.Info("maintainer execute done", zap.String("id", m.id.String()),
-			zap.Int("status", int(taskStatus)), zap.Time("tickTime", tick))
-	}()
+	// log.Info("maintainer execute", zap.String("id", m.id.String()))
+	// defer func() {
+	// 	log.Info("maintainer execute done", zap.String("id", m.id.String()),
+	// 		zap.Int("status", int(taskStatus)), zap.Time("tickTime", tick))
+	// }()
 	m.updateMetrics()
 	if m.removed.Load() {
 		// removed, cancel the task

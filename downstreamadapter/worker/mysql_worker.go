@@ -15,28 +15,42 @@ package worker
 
 import (
 	"database/sql"
-	"strconv"
+	"fmt"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 // MysqlWorker is use to flush the event downstream
 type MysqlWorker struct {
-	eventChan           <-chan *common.TxnEvent // 获取到能往下游写的 events
-	mysqlWriter         *writer.MysqlWriter     // 实际负责做 flush 操作
-	id                  int
-	WorkerFlushDuration prometheus.Observer
+	eventChan   <-chan *common.TxnEvent // 获取到能往下游写的 events
+	mysqlWriter *writer.MysqlWriter     // 实际负责做 flush 操作
+	id          int
+	// Metrics.
+	MetricConflictDetectDuration prometheus.Observer
+	MetricQueueDuration          prometheus.Observer
+	MetricWorkerFlushDuration    prometheus.Observer
+	MetricWorkerTotalDuration    prometheus.Observer
+	// MetricWorkerHandledRows is the number of rows this worker received from conflict detector.
+	MetricWorkerHandledRows prometheus.Counter
 }
 
 func NewMysqlWorker(eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig, id int, changefeedID model.ChangeFeedID) *MysqlWorker {
+	wid := fmt.Sprintf("%d", id)
+
 	return &MysqlWorker{
-		eventChan:           eventChan,
-		mysqlWriter:         writer.NewMysqlWriter(db, config),
-		id:                  id,
-		WorkerFlushDuration: WorkerFlushDuration.WithLabelValues(changefeedID.String(), strconv.Itoa(id)),
+		eventChan:   eventChan,
+		mysqlWriter: writer.NewMysqlWriter(db, config, changefeedID),
+		id:          id,
+
+		MetricConflictDetectDuration: metrics.ConflictDetectDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
+		MetricQueueDuration:          metrics.QueueDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
+		MetricWorkerFlushDuration:    metrics.WorkerFlushDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID, wid),
+		MetricWorkerTotalDuration:    metrics.WorkerTotalDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID, wid),
+		MetricWorkerHandledRows:      metrics.WorkerHandledRows.WithLabelValues(changefeedID.Namespace, changefeedID.ID, wid),
 	}
 }
 
