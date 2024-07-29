@@ -29,7 +29,7 @@ func TestNewDispatcherStat(t *testing.T) {
 	require.NotNil(t, stat.spanSubscription)
 	require.Equal(t, startTs, stat.spanSubscription.watermark.Load())
 	require.Equal(t, 0, int(stat.spanSubscription.newEventCount.Load()))
-	require.NotEmpty(t, stat.chanIndex)
+	require.NotEmpty(t, stat.workerIndex)
 }
 
 func TestDispatcherStatUpdateWatermark(t *testing.T) {
@@ -146,7 +146,7 @@ func TestScanTaskPool_PushTask(t *testing.T) {
 	pool.pushTask(task2)
 
 	// Verify that the task is sent to corresponding pendingTaskQueue
-	receivedTask := <-pool.pendingTaskQueue[dispatcherStat.chanIndex]
+	receivedTask := <-pool.pendingTaskQueue[dispatcherStat.workerIndex]
 	require.Equal(t, expectedTask, receivedTask)
 
 	// Verify that the task is set to nil in the taskSet

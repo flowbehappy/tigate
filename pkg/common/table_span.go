@@ -105,7 +105,6 @@ func (d *DataRange) Merge(other *DataRange) *DataRange {
 	if other == nil {
 		return d
 	}
-
 	if !d.Span.Equal(other.Span) {
 		return nil
 	}

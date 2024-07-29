@@ -77,6 +77,20 @@ func newEventBroker(
 	return c
 }
 
+func (c *eventBroker) sendWatermark(
+	serverID messaging.ServerId,
+	topicID common.TopicType,
+	dispatcherID string,
+	watermark uint64) {
+	c.messageCh <- messaging.NewTargetMessage(
+		serverID,
+		topicID,
+		&common.TxnEvent{
+			DispatcherID: dispatcherID,
+			ResolvedTs:   watermark,
+		})
+}
+
 func (c *eventBroker) runGenerateScanTask(ctx context.Context) {
 	c.wg.Add(1)
 	go func() {
@@ -119,22 +133,20 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 					return
 				case task := <-c.taskPool.popTask(chIndex):
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
-					topic := task.dispatcherStat.info.GetTopic()
 					dispatcherID := task.dispatcherStat.info.GetID()
-					// The dispatcher has no new events. In such case, we don't need to scan the event store.
-					// We just send the watermark to the dispatcher.
+					topic := task.dispatcherStat.info.GetTopic()
+					if task.eventCount != 0 {
+						log.Info("fizz:start to scan events", zap.String("dispatcher", dispatcherID), zap.Uint64("startTs", task.dataRange.StartTs), zap.Uint64("endTs", task.dataRange.EndTs), zap.Uint64("eventCount", task.eventCount))
+					}
+					//1.The dispatcher has no new events. In such case, we don't need to scan the event store.
+					//We just send the watermark to the dispatcher.
 					if task.eventCount == 0 {
-						waterMarkMsg := &common.TxnEvent{
-							DispatcherID: dispatcherID,
-							ResolvedTs:   task.dataRange.EndTs,
-						}
-						c.messageCh <- messaging.NewTargetMessage(remoteID, topic, waterMarkMsg)
+						c.sendWatermark(remoteID, topic, dispatcherID, task.dataRange.EndTs)
 						task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
 						continue
 					}
 
-					// scan the event store to get the events in the data range.
-					//events, err := c.eventStore.GetIterator(task.dataRange)
+					//2. Get events iterator from eventStore.
 					iter, err := c.eventStore.GetIterator(task.dataRange)
 					if err != nil {
 						log.Info("read events failed, push the task back to queue", zap.Error(err))
@@ -142,30 +154,25 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						c.taskPool.pushTask(task)
 						continue
 					}
-					defer iter.Close()
-
 					var txnEvent *common.TxnEvent
 					isFirstEvent := true
+					// 3. Get the events from the iterator and send them to the dispatcher.
 					for {
-						// The first event of the txn must return isNewTxn as true.
+						//TODO: The first event of the txn must return isNewTxn as true.
 						e, isNewTxn, err := iter.Next()
 						if err != nil {
 							log.Panic("read events failed", zap.Error(err))
 						}
 
 						if e == nil {
+							// Send the last txnEvent to the dispatcher.
 							if txnEvent != nil {
-								// Send the last txnEvent to the dispatcher.
 								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, txnEvent)
+								log.Info("send event to dispatcher", zap.Int("workerID", chIndex), zap.String("dispatcher", dispatcherID), zap.Uint64("startTs", txnEvent.StartTs), zap.Uint64("commitTs", txnEvent.CommitTs))
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
 							}
-
 							// After all the events are sent, we send the watermark to the dispatcher.
-							watermark := &common.TxnEvent{
-								ResolvedTs:   task.dataRange.EndTs,
-								DispatcherID: dispatcherID,
-							}
-							c.messageCh <- messaging.NewTargetMessage(remoteID, topic, watermark)
+							c.sendWatermark(remoteID, topic, dispatcherID, task.dataRange.EndTs)
 							task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
 							break
 						}
@@ -190,9 +197,12 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						if e.CommitTs <= task.dispatcherStat.watermark.Load() {
 							continue
 						}
-						log.Info("send event to dispatcher", zap.Int("workerID", chIndex), zap.String("dispatcher", dispatcherID), zap.Uint64("startTs", e.StartTs), zap.Uint64("commitTs", e.CommitTs))
 						txnEvent.Rows = append(txnEvent.Rows, e)
+						if txnEvent.CommitTs != e.CommitTs {
+							log.Panic("commitTs of the event is different from the commitTs of the txnEvent", zap.Uint64("eventCommitTs", e.CommitTs), zap.Uint64("txnCommitTs", txnEvent.CommitTs))
+						}
 					}
+					iter.Close()
 				}
 			}
 		}()
@@ -239,7 +249,7 @@ type dispatcherStat struct {
 	// We need to make sure the tasks of the same dispatcher are sent to the same task queue
 	// so that it will be handle by the same scan worker. To ensure all events of the dispatcher
 	// are sent in order.
-	chanIndex int
+	workerIndex int
 }
 
 func newDispatcherStat(
@@ -259,7 +269,7 @@ func newDispatcherStat(
 	res.watermark.Store(startTs)
 	hasher := crc32.NewIEEE()
 	hasher.Write([]byte(info.GetID()))
-	res.chanIndex = int(hasher.Sum32() % defaultWorkerCount)
+	res.workerIndex = int(hasher.Sum32() % defaultWorkerCount)
 	return res
 }
 
@@ -338,19 +348,22 @@ func (p *scanTaskPool) pushTask(task *scanTask) {
 	defer p.mu.Unlock()
 	id := task.dispatcherStat.info.GetID()
 	spanTask := p.taskSet[id]
-	if spanTask == nil {
-		spanTask = task
-		p.taskSet[id] = spanTask
-	}
-	// Merge the task into the existing task.
-	mergedRange := task.dataRange.Merge(spanTask.dataRange)
-	spanTask.dataRange = mergedRange
-	spanTask.eventCount += task.eventCount
 
-	// Send the task to the corresponding scan worker.
-	ch := p.pendingTaskQueue[spanTask.dispatcherStat.chanIndex]
+	// There is already a task for the dispatcher, we need to merge the task to the existing task.
+	if spanTask != nil {
+		mergedRange := task.dataRange.Merge(spanTask.dataRange)
+		if mergedRange == nil {
+			log.Panic("merge data range failed", zap.Any("task", task), zap.Any("spanTask", spanTask))
+		}
+		spanTask.dataRange = mergedRange
+		spanTask.eventCount += task.eventCount
+	} else {
+		spanTask = task
+	}
+
 	select {
-	case ch <- spanTask:
+	// Send the task to the corresponding scan worker.
+	case p.pendingTaskQueue[spanTask.dispatcherStat.workerIndex] <- spanTask:
 		// The task is sent to the scan worker, we remove it from the taskSet.
 		p.taskSet[id] = nil
 	default:
