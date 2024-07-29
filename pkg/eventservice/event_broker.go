@@ -223,7 +223,7 @@ func (c *eventBroker) runPushMessageWorker(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case wm := <-c.messageCh:
+			case m := <-c.messageCh:
 				// Send the message to messageCenter. Retry if the send failed.
 				for {
 					select {
@@ -232,9 +232,9 @@ func (c *eventBroker) runPushMessageWorker(ctx context.Context) {
 					default:
 					}
 					// Send the message to the dispatcher.
-					err := c.msgSender.SendEvent(wm.msg)
+					err := c.msgSender.SendEvent(m.msg)
 					// If the message is a watermark, we don't need to retry. Since the watermark is continuous.
-					if err != nil && !wm.isWatermark {
+					if err != nil && !m.isWatermark {
 						log.Debug("send message failed", zap.Error(err))
 						continue
 					}
