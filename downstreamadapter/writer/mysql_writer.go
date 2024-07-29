@@ -158,13 +158,7 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *common.TxnEvent) error {
 
 func (w *MysqlWriter) Flush(events []*common.TxnEvent, workerNum int) error {
 	dmls := w.prepareDMLs(events)
-	tableID := make([]uint64, len(events))
-	// fizz remove it
-	for i, event := range events {
-		tableID[i] = event.Span.GetTableID()
-	}
-
-	log.Info("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.String("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values), zap.Any("startTs", dmls.startTs), zap.Any("tableID", tableID), zap.Any("workerNum", workerNum))
+	log.Info("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.String("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values), zap.Any("startTs", dmls.startTs), zap.Any("workerNum", workerNum))
 	if dmls.rowCount == 0 {
 		return nil
 	}

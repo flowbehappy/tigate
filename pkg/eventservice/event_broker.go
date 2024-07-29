@@ -168,13 +168,20 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 							// Send the last txnEvent to the dispatcher.
 							if txnEvent != nil {
 								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, txnEvent)
-								log.Info("send event to dispatcher", zap.Int("workerID", chIndex), zap.String("dispatcher", dispatcherID), zap.Uint64("startTs", txnEvent.StartTs), zap.Uint64("commitTs", txnEvent.CommitTs), zap.Any("tableID", txnEvent.Span.TableID))
+								log.Info("send event to dispatcher", zap.Int("workerID", chIndex), zap.String("dispatcher", dispatcherID), zap.Uint64("startTs", txnEvent.StartTs), zap.Uint64("commitTs", txnEvent.CommitTs))
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
 							}
 							// After all the events are sent, we send the watermark to the dispatcher.
 							c.sendWatermark(remoteID, topic, dispatcherID, task.dataRange.EndTs)
 							task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
 							break
+						}
+
+						// If the commitTs of the event is less than the watermark of the dispatcher,
+						// we just skip the event.
+						if e.CommitTs <= task.dispatcherStat.watermark.Load() {
+							log.Info("fizz, skip event", zap.Uint64("commitTs", e.CommitTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
+							continue
 						}
 
 						if isFirstEvent || isNewTxn {
@@ -191,11 +198,6 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 								Rows:         make([]*common.RowChangedEvent, 0),
 							}
 							isFirstEvent = false
-						}
-
-						// Skip the events that have been sent to the dispatcher.
-						if e.CommitTs <= task.dispatcherStat.watermark.Load() {
-							continue
 						}
 						txnEvent.Rows = append(txnEvent.Rows, e)
 						if txnEvent.CommitTs != e.CommitTs {
