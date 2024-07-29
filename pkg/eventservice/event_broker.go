@@ -135,9 +135,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 					dispatcherID := task.dispatcherStat.info.GetID()
 					topic := task.dispatcherStat.info.GetTopic()
-					if task.eventCount != 0 {
-						log.Info("fizz:start to scan events", zap.String("dispatcher", dispatcherID), zap.Uint64("startTs", task.dataRange.StartTs), zap.Uint64("endTs", task.dataRange.EndTs), zap.Uint64("eventCount", task.eventCount))
-					}
+
 					//1.The dispatcher has no new events. In such case, we don't need to scan the event store.
 					//We just send the watermark to the dispatcher.
 					if task.eventCount == 0 {
@@ -168,7 +166,6 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 							// Send the last txnEvent to the dispatcher.
 							if txnEvent != nil {
 								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, txnEvent)
-								log.Info("send event to dispatcher", zap.Int("workerID", chIndex), zap.String("dispatcher", dispatcherID), zap.Uint64("startTs", txnEvent.StartTs), zap.Uint64("commitTs", txnEvent.CommitTs))
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
 							}
 							// After all the events are sent, we send the watermark to the dispatcher.
