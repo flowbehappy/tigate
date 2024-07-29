@@ -60,7 +60,7 @@ func newDDLJobFetcher(
 	clientConfig := &logpuller.SharedClientConfig{
 		KVClientWorkerConcurrent:     8,
 		KVClientGrpcStreamConcurrent: 8,
-		KVClientAdvanceIntervalInMs:  300,
+		KVClientAdvanceIntervalInMs:  20,
 	}
 	client := logpuller.NewSharedClient(
 		clientConfig,

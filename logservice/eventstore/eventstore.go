@@ -555,6 +555,9 @@ func (iter *eventStoreIter) Next() (*common.RowChangedEvent, bool, error) {
 	if err != nil {
 		log.Panic("failed to decode event", zap.Error(err))
 	}
+	log.Info("read event",
+		zap.Uint64("tableID", uint64(iter.tableID)),
+		zap.Any("value", row.Columns[0].Value))
 	iter.rowCount++
 	iter.innerIter.Next()
 	return row, isNewTxn, nil
