@@ -16,31 +16,3 @@ type DynamicStream[T Event, D any] struct {
 	wg          sync.WaitGroup
 	closeSignal chan struct{}
 }
-
-// sourceChan: the source channel to read data from
-// workerGen: the worker generator to generate worker
-func NewDynamicStream[T any](
-	sourceChan chan T,
-	idleTime time.Duration, busyTime time.Duration, maxWorker int) *DynamicStream[T] {
-	return &DynamicStream[T]{
-		sourceChan: sourceChan,
-	}
-}
-
-func (ds *DynamicStream[T]) Start() {
-	ds.wg.Add(1)
-	go ds.loop()
-}
-
-func (ds *DynamicStream[T]) Stop() {
-	select {
-	case ds.closeSignal <- struct{}{}:
-	default:
-		break
-	}
-	ds.wg.Wait()
-}
-
-func (ds *DynamicStream[T]) loop() {
-	defer ds.wg.Done()
-}

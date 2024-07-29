@@ -19,13 +19,13 @@ type pathStat struct {
 }
 
 type streamStat struct {
-	id uint64
+	id int64
 
-	// Calculate the time for the past n events.
+	// Based on the past n events.
 	handleTimeOnNum  time.Duration
-	handleCountonNum int64
+	handleCountOnNum int64
 
-	// Calculate the time for the past report interval.
+	// Based on the current report interval.
 	handleTimeInPeriod  time.Duration
 	handleCountInPeriod int64
 
@@ -39,19 +39,19 @@ type streamStat struct {
 	pathStats []pathStat // Sorted by the total time in descending order.
 }
 
-type waitRunning[T Event, D any] struct {
+type runningTask[T Event, D any] struct {
 	path     Path
 	waitChan <-chan *EventWrap[T, D]
 }
 
 type stream[T Event, D any] struct {
-	id    uint64
+	id    int64
 	zeroT T
 
 	expectedLatency time.Duration
 	reportInterval  time.Duration
 
-	worker Handler[T, D]
+	handler Handler[T, D]
 
 	// The statistics of the paths.
 	// Keep in mind that the pathInfo instance are shared in the pathMap here, the pathMap in DynamicStream,
@@ -75,43 +75,52 @@ type stream[T Event, D any] struct {
 
 	hasClosed atomic.Bool
 
-	waitRunning *waitRunning[T, D] // The wait object from the former stream.
+	runningTasks []*runningTask[T, D] // The running tasks from the former stream.
 
+	prepareDone    sync.WaitGroup // For testing.
 	handleDone     sync.WaitGroup
 	backgroundDone sync.WaitGroup
 }
 
 func newStream[T Event, D any](
-	id uint64,
+	id int64,
 	expectedLatency time.Duration,
 	reportInterval time.Duration, // 200 milliseconds?
 	acceptedPaths []*pathInfo[T, D],
-	worker Handler[T, D],
+	handler Handler[T, D],
 	reportChan chan *streamStat,
 ) *stream[T, D] {
 	s := &stream[T, D]{
 		id:              id,
 		expectedLatency: expectedLatency,
 		reportInterval:  reportInterval,
-		worker:          worker,
+		handler:         handler,
 		pathMap:         make(map[Path]*pathInfo[T, D], len(acceptedPaths)),
 		inChan:          make(chan *EventWrap[T, D], 64),
 		waitQueue:       deque.NewDequeDefault[*EventWrap[T, D]](),
 		handleChan:      make(chan *EventWrap[T, D], maxInflight),
 		doneChan:        make(chan *EventWrap[T, D], maxInflight),
-		inflight:        ringbuffer.NewRingBuffer[*EventWrap[T, D]](maxInflight + 1),
-		latestHandled:   ringbuffer.NewRingBuffer[*EventWrap[T, D]](16),
-		reportChan:      reportChan,
+		// The cap of inflight should be at least cap of handleChan + doneChan + 1 (the running event).
+		inflight:      ringbuffer.NewRingBuffer[*EventWrap[T, D]](maxInflight*2 + 1),
+		latestHandled: ringbuffer.NewRingBuffer[*EventWrap[T, D]](16),
+		reportChan:    reportChan,
 	}
 
 	for _, p := range acceptedPaths {
 		s.pathMap[p.path] = p
 	}
 
+	s.prepareDone.Add(1)
+
 	return s
 }
 
+func (s *stream[T, D]) getId() int64 { return s.id }
+
 func (s *stream[T, D]) start(formerStreams ...*stream[T, D]) {
+	if s.hasClosed.Load() {
+		panic("The stream has been closed.")
+	}
 
 	// Start worker to handle events.
 	s.handleDone.Add(1)
@@ -129,33 +138,38 @@ func (s *stream[T, D]) in() chan *EventWrap[T, D] {
 // Close the stream and return the running event.
 // Not all of the new streams need to wait for the former stream's handle goroutine to finish.
 // Only the streams that are interested in the path of the running event need to wait.
-func (s *stream[T, D]) close(interested ...map[Path]*pathInfo[T, D]) *waitRunning[T, D] {
+func (s *stream[T, D]) close(interested ...map[Path]*pathInfo[T, D]) []*runningTask[T, D] {
 	if s.hasClosed.CompareAndSwap(false, true) {
 		close(s.inChan)
 	}
 	s.backgroundDone.Wait()
 
 	if len(interested) != 0 {
-		if s.waitRunning != nil {
-			if _, ok := interested[0][s.waitRunning.path]; ok {
-				return s.waitRunning
+		if len(s.runningTasks) != 0 {
+			// By now this stream is still waiting for the running events from the former stream.
+			rts := make([]*runningTask[T, D], 0)
+			for _, task := range s.runningTasks {
+				if _, ok := interested[0][task.path]; ok {
+					rts = append(rts, task)
+				}
 			}
-			return nil
+			return rts
 		}
 
 		if e, ok := s.inflight.Front(); ok {
+			// This stream is handling events before exit.
 			if _, ok := interested[0][e.Path()]; ok {
 				waitChan := make(chan *EventWrap[T, D], 1)
-				go func() {
+				go func(s *stream[T, D], e *EventWrap[T, D]) {
 					s.handleDone.Wait()
 					waitChan <- e
 					close(waitChan)
-				}()
-				return &waitRunning[T, D]{path: e.Path(), waitChan: waitChan}
+				}(s, e)
+				return []*runningTask[T, D]{{path: e.Path(), waitChan: waitChan}}
 			}
 		}
 	}
-	return nil
+	return []*runningTask[T, D]{}
 }
 
 func (s *stream[T, D]) handleEventLoop() {
@@ -172,7 +186,7 @@ func (s *stream[T, D]) handleEventLoop() {
 		}
 
 		e.startTime.Store(time.Now())
-		s.worker.Handle(e)
+		s.handler.Handle(e)
 		e.doneTime.Store(time.Now())
 
 		s.doneChan <- e
@@ -203,17 +217,13 @@ func (s *stream[T, D]) backgroundLoop(formerStreams []*stream[T, D]) {
 			}
 		}
 
-		if s.inflight.Length() != 0 {
-			// There is a running event.
-		}
-
 		s.backgroundDone.Done()
 	}()
 
 	// Move the remaining events in the former streams to this stream.
 
 	for _, stream := range formerStreams {
-		s.waitRunning = stream.close(s.pathMap)
+		s.runningTasks = append(s.runningTasks, stream.close(s.pathMap)...)
 
 		itr := stream.waitQueue.ForwardIterator()
 		for e, ok := itr.Next(); ok; e, ok = itr.Next() {
@@ -221,8 +231,9 @@ func (s *stream[T, D]) backgroundLoop(formerStreams []*stream[T, D]) {
 				s.waitQueue.PushBack(e)
 			}
 		}
-
 	}
+
+	s.prepareDone.Done()
 
 	pushToWaitQueue := func(e *EventWrap[T, D]) {
 		e.inQueueTime = time.Now()
@@ -232,30 +243,27 @@ func (s *stream[T, D]) backgroundLoop(formerStreams []*stream[T, D]) {
 		s.incame++
 	}
 
-	nextReport := time.Now().Add(s.reportInterval)
+	nextReport := time.NewTimer(s.reportInterval)
 
-	if s.waitRunning != nil {
-		// The waitStream is not nil. We need to wait for the running event from the former stream.
-		// And in the same time, we need to listen to the new events and report the statistics.
-	Loop:
-		for {
-			select {
-			case <-time.After(nextReport.Sub(time.Now())):
-				s.reportStat()
-				nextReport = time.Now().Add(s.reportInterval)
-			case e, ok := <-s.inChan:
-				if !ok {
-					return
-				}
-				pushToWaitQueue(e)
-			case e := <-s.waitRunning.waitChan:
-				if e != nil && e.doneTime.Load() == nil {
-					s.waitQueue.PushFront(e)
-				}
-
-				s.waitRunning = nil
-				break Loop
+	// The waitStream is not nil. We need to wait for the running events from the former streams.
+	// And in the same time, we need to listen to the new events and report the statistics.
+Loop:
+	for len(s.runningTasks) != 0 {
+		select {
+		case <-nextReport.C:
+			s.reportStat()
+			nextReport.Reset(s.reportInterval)
+		case e, ok := <-s.inChan:
+			if !ok {
+				return
 			}
+			pushToWaitQueue(e)
+		case e := <-s.runningTasks[len(s.runningTasks)-1].waitChan:
+			if e != nil && e.doneTime.Load() == nil {
+				s.waitQueue.PushFront(e)
+			}
+			s.runningTasks = s.runningTasks[:len(s.runningTasks)-1]
+			break Loop
 		}
 	}
 
@@ -264,9 +272,9 @@ func (s *stream[T, D]) backgroundLoop(formerStreams []*stream[T, D]) {
 
 		if ok {
 			select {
-			case <-time.After(nextReport.Sub(time.Now())):
+			case <-nextReport.C:
 				s.reportStat()
-				nextReport = time.Now().Add(s.reportInterval)
+				nextReport.Reset(s.reportInterval)
 			case e, ok := <-s.inChan: // Listen to the new events and put them into the wait queue.
 				if !ok {
 					return
@@ -280,9 +288,9 @@ func (s *stream[T, D]) backgroundLoop(formerStreams []*stream[T, D]) {
 			}
 		} else {
 			select {
-			case <-time.After(nextReport.Sub(time.Now())):
+			case <-nextReport.C:
 				s.reportStat()
-				nextReport = time.Now().Add(s.reportInterval)
+				nextReport.Reset(s.reportInterval)
 			case e, ok := <-s.inChan:
 				if !ok {
 					return
@@ -323,8 +331,16 @@ func (s *stream[T, D]) recordAndDrainDoneChan(first *EventWrap[T, D]) {
 	if first != nil {
 		afterDone(first)
 	}
-	for done := range s.doneChan {
-		afterDone(done)
+	for {
+		select {
+		case done := <-s.doneChan:
+			if done == nil {
+				return
+			}
+			afterDone(done)
+		default:
+			return
+		}
 	}
 }
 
@@ -338,9 +354,9 @@ func (s *stream[T, D]) runningEvent() (*EventWrap[T, D], time.Duration, time.Dur
 			return head, doneTime.Sub(startTime), startTime.Sub(head.inQueueTime), true
 		} else if start != nil {
 			startTime := start.(time.Time)
-			return head, time.Now().Sub(startTime), startTime.Sub(head.inQueueTime), true
+			return head, time.Since(startTime), startTime.Sub(head.inQueueTime), true
 		} else {
-			return head, time.Duration(0), time.Now().Sub(head.inQueueTime), true
+			return head, time.Duration(0), time.Since(head.inQueueTime), true
 		}
 	}
 	return nil, time.Duration(0), time.Duration(0), false
@@ -425,8 +441,10 @@ func (s *stream[T, D]) reportStat() {
 	}
 
 	stat := &streamStat{
+		id: s.id,
+
 		handleTimeOnNum:  handleTimeOnNum,
-		handleCountonNum: handleCountOnNum,
+		handleCountOnNum: handleCountOnNum,
 
 		handleTimeInPeriod:  handleTimeInPeriod,
 		handleCountInPeriod: handleCountInPeriod,
@@ -443,6 +461,8 @@ func (s *stream[T, D]) reportStat() {
 	}
 	select {
 	case s.reportChan <- stat:
+		var a int
+		a++
 	default:
 	}
 
@@ -452,7 +472,7 @@ func (s *stream[T, D]) reportStat() {
 }
 
 func (s *stream[T, D]) resetPathStat() []pathStat {
-	pathStats := make([]pathStat, len(s.pathMap))
+	pathStats := make([]pathStat, 0, len(s.pathMap))
 	// We need to add the time of the running event to the total time.
 	// To make the scheduler to notice the long running events.
 	re, rt, _, running := s.runningEvent()
@@ -468,7 +488,7 @@ func (s *stream[T, D]) resetPathStat() []pathStat {
 			// To make the report more accurate, we decrease the waitLen here.
 			ps.waitLen--
 		}
-		pathStats = append(pathStats)
+		pathStats = append(pathStats, ps)
 
 		// Reset the statistics.
 		stat.totalTime = 0

@@ -32,7 +32,6 @@ func (ew *EventWrap[T, D]) Dest() D      { return ew.pathInfo.dest }
 
 type Handler[T Event, D any] interface {
 	Handle(events *EventWrap[T, D])
-	OnDrop(events *EventWrap[T, D])
 }
 
 type pathInfo[T Event, D any] struct {
