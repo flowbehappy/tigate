@@ -132,19 +132,14 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 				case <-ctx.Done():
 					return
 				case task := <-c.taskPool.popTask(chIndex):
-					if task.dataRange.EndTs <= task.dispatcherStat.watermark.Load() {
-						log.Info("fizz:skip the task", zap.Uint64("endTs", task.dataRange.EndTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
+					needScan := task.checkAndAdjustScanTask()
+					if !needScan {
 						continue
-					}
-					if task.dataRange.StartTs < task.dispatcherStat.watermark.Load() {
-						log.Info("fizz:adjust the task startTs", zap.Uint64("startTs", task.dataRange.StartTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
-						task.dataRange.StartTs = task.dispatcherStat.watermark.Load()
 					}
 
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 					dispatcherID := task.dispatcherStat.info.GetID()
 					topic := task.dispatcherStat.info.GetTopic()
-
 					//1.The dispatcher has no new events. In such case, we don't need to scan the event store.
 					//We just send the watermark to the dispatcher.
 					if task.eventCount == 0 {
@@ -185,7 +180,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 
 						// If the commitTs of the event is less than the watermark of the dispatcher,
 						// we just skip the event.
-						if e.CommitTs <= task.dispatcherStat.watermark.Load() {
+						if e.CommitTs < task.dispatcherStat.watermark.Load() {
 							log.Panic("should never Happen", zap.Uint64("commitTs", e.CommitTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
 							continue
 						}
@@ -227,7 +222,21 @@ func (c *eventBroker) runPushMessageWorker(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case msg := <-c.messageCh:
-				c.msgSender.SendEvent(msg)
+				// Send the message to messageCenter. Retry if the send failed.
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+					// Send the message to the dispatcher.
+					err := c.msgSender.SendEvent(msg)
+					if err != nil {
+						log.Debug("send message failed", zap.Error(err))
+						continue
+					}
+					break
+				}
 			}
 		}
 	}()
@@ -328,6 +337,16 @@ type scanTask struct {
 	dispatcherStat *dispatcherStat
 	dataRange      *common.DataRange
 	eventCount     uint64
+}
+
+func (t *scanTask) checkAndAdjustScanTask() bool {
+	if t.dispatcherStat.watermark.Load() >= t.dataRange.EndTs {
+		return false
+	}
+	if t.dispatcherStat.watermark.Load() > t.dataRange.StartTs {
+		t.dataRange.StartTs = t.dispatcherStat.watermark.Load()
+	}
+	return true
 }
 
 type scanTaskPool struct {
