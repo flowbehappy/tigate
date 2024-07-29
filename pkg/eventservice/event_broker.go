@@ -190,7 +190,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						if e.CommitTs <= task.dispatcherStat.watermark.Load() {
 							continue
 						}
-
+						log.Info("send event to dispatcher", zap.Int("workerID", chIndex), zap.String("dispatcher", dispatcherID), zap.Uint64("startTs", e.StartTs), zap.Uint64("commitTs", e.CommitTs))
 						txnEvent.Rows = append(txnEvent.Rows, e)
 					}
 					iter.Close()
