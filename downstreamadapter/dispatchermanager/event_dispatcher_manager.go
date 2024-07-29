@@ -208,7 +208,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 	// }
 
 	if _, ok := e.dispatcherMap.Get(tableSpan); ok {
-		log.Warn("table span already exists", zap.Any("tableSpan", tableSpan))
+		//log.Warn("table span already exists", zap.Any("tableSpan", tableSpan))
 		return nil
 	}
 

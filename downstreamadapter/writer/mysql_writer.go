@@ -156,9 +156,9 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *common.TxnEvent) error {
 		retry.WithIsRetryableErr(errorutil.IsRetryableDDLError))
 }
 
-func (w *MysqlWriter) Flush(events []*common.TxnEvent) error {
+func (w *MysqlWriter) Flush(events []*common.TxnEvent, workerNum int) error {
 	dmls := w.prepareDMLs(events)
-	log.Info("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.String("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values))
+	log.Debug("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.String("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values), zap.Any("startTs", dmls.startTs), zap.Any("workerNum", workerNum))
 	if dmls.rowCount == 0 {
 		return nil
 	}
@@ -324,7 +324,7 @@ func (w *MysqlWriter) sequenceExecute(
 		_, err := tx.ExecContext(ctx, query, args...)
 
 		if err != nil {
-			log.Error("ExecContext", zap.Error(err))
+			log.Error("ExecContext", zap.Error(err), zap.Any("dmls", dmls))
 			if rbErr := tx.Rollback(); rbErr != nil {
 				if errors.Cause(rbErr) != context.Canceled {
 					log.Warn("failed to rollback txn", zap.Error(rbErr))
@@ -353,7 +353,7 @@ func (w *MysqlWriter) multiStmtExecute(
 	//start := time.Now()
 	_, err := tx.ExecContext(ctx, multiStmtSQL, multiStmtArgs...)
 	if err != nil {
-		log.Error("ExecContext", zap.Error(err))
+		log.Error("ExecContext", zap.Error(err), zap.Any("dmls", dmls))
 		if rbErr := tx.Rollback(); rbErr != nil {
 			if errors.Cause(rbErr) != context.Canceled {
 				log.Warn("failed to rollback txn", zap.Error(rbErr))

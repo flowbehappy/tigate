@@ -1,6 +1,7 @@
 package common
 
 import (
+	"fmt"
 	"unsafe"
 
 	"github.com/pingcap/log"
@@ -41,6 +42,10 @@ type TxnEvent struct {
 
 	// 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
 	PostTxnFlushed func() `msg:"-"`
+}
+
+func (w *TxnEvent) String() string {
+	return fmt.Sprintf("TxnEvent{StartTs: %d, CommitTs: %d, Rows: %d, DDLEvent: %v}", w.StartTs, w.CommitTs, len(w.Rows), w.DDLEvent)
 }
 
 func (w *TxnEvent) Marshal() ([]byte, error) {
