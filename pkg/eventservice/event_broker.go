@@ -168,7 +168,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 							// Send the last txnEvent to the dispatcher.
 							if txnEvent != nil {
 								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, txnEvent)
-								log.Info("send event to dispatcher", zap.Int("workerID", chIndex), zap.String("dispatcher", dispatcherID), zap.Uint64("startTs", txnEvent.StartTs), zap.Uint64("commitTs", txnEvent.CommitTs))
+								log.Info("send event to dispatcher", zap.Int("workerID", chIndex), zap.String("dispatcher", dispatcherID), zap.Uint64("startTs", txnEvent.StartTs), zap.Uint64("commitTs", txnEvent.CommitTs), zap.Any("tableID", txnEvent.Span.TableID))
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
 							}
 							// After all the events are sent, we send the watermark to the dispatcher.

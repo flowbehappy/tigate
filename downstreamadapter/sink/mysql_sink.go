@@ -147,7 +147,6 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 				case <-ctx.Done():
 					return
 				case txnEvent := <-worker.GetEventChan():
-					log.Info("worker get event", zap.Any("workerID", workerId))
 					events = append(events, txnEvent)
 					rows += len(txnEvent.Rows)
 					if rows > maxRows {
@@ -175,17 +174,14 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 							}
 						}
 					}
-					//log.Info("Ready to Flush Events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Any("workerID", workerId))
 					start := time.Now()
-					err := worker.GetMysqlWriter().Flush(events)
+					err := worker.GetMysqlWriter().Flush(events, workerId)
 					if err != nil {
 						log.Error("Failed to flush events", zap.Error(err), zap.Any("workerID", workerId), zap.Any("events", events))
 						return
 					}
 					s.flushRows.Add(float64(rows))
 					worker.WorkerFlushDuration.Observe(time.Since(start).Seconds())
-
-					//log.Info("Flush events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Duration("duration", time.Since(start)), zap.Any("workerID", workerId))
 
 					events = events[:0]
 					rows = 0
