@@ -142,7 +142,6 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						c.taskPool.pushTask(task)
 						continue
 					}
-					defer iter.Close()
 
 					var txnEvent *common.TxnEvent
 					isFirstEvent := true
@@ -167,6 +166,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 							}
 							c.messageCh <- messaging.NewTargetMessage(remoteID, topic, watermark)
 							task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
+							iter.Close()
 							break
 						}
 
