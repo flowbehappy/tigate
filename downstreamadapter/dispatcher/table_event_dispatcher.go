@@ -150,7 +150,7 @@ func (d *TableEventDispatcher) DispatcherEvents(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case event := <-d.GetEventChan():
-			// log.Info("TableEventDispatcher get events from eventChan", zap.Any("event is DML", event.IsDMLEvent()), zap.Any("dispatcher table id", d.tableSpan.TableID))
+			log.Info("TableEventDispatcher get events from eventChan", zap.Any("event is DML", event.IsDMLEvent()), zap.Any("dispatcher table id", d.tableSpan.TableID))
 			if event.IsDMLEvent() {
 				sink.AddDMLEvent(tableSpan, event)
 			} else {
