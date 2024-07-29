@@ -174,7 +174,6 @@ func (m *Maintainer) cleanupMetrics() {
 }
 
 func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time) {
-
 	m.updateMetrics()
 	if m.removed.Load() {
 		// removed, cancel the task

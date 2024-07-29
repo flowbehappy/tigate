@@ -11,21 +11,4 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sink
-
-import "github.com/prometheus/client_golang/prometheus"
-
-var (
-	// Metrics is the metrics collector related to dispatcher manager.
-	FlushRows = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "tigate",
-			Subsystem: "sink",
-			Name:      "flush_rows",
-			Help:      "The number of rows flushed to downstream.",
-		}, []string{"changefeed"})
-)
-
-func InitMetrics(registry *prometheus.Registry) {
-	registry.MustRegister(FlushRows)
-}
+package metrics

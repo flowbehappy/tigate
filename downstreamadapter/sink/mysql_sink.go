@@ -26,7 +26,6 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/log"
@@ -101,8 +100,6 @@ type MysqlSink struct {
 	tableStatuses *TableStatusMap
 	wg            sync.WaitGroup
 	cancel        context.CancelFunc
-
-	flushRows prometheus.Gauge
 }
 
 // event dispatcher manager 初始化的时候创建 mysqlSink 对象
@@ -117,8 +114,6 @@ func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *writer.
 		tableStatuses: NewTableStatusMap(),
 		//dmlWorkerTasks: make([]*worker.MysqlWorkerDMLEventTask, workerCount),
 	}
-
-	mysqlSink.flushRows = FlushRows.WithLabelValues(mysqlSink.changefeedID.String())
 
 	mysqlSink.initWorker(workerCount, cfg, db)
 
@@ -138,6 +133,7 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 		// s.dmlWorkerTasks = append(s.dmlWorkerTasks, worker.NewMysqlWorkerDMLEventTask(s.conflictDetector.GetOutChByCacheID(int64(i)), db, cfg, 128))
 		go func(ctx context.Context, eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig, maxRows int) {
 			defer s.wg.Done()
+			totalStart := time.Now()
 			worker := worker.NewMysqlWorker(eventChan, db, config, workerId, s.changefeedID)
 			events := make([]*common.TxnEvent, 0)
 			rows := 0
@@ -157,6 +153,7 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 						for !needFlush {
 							select {
 							case txnEvent := <-worker.GetEventChan():
+								worker.MetricWorkerHandledRows.Add(float64(len(txnEvent.Rows)))
 								events = append(events, txnEvent)
 								rows += len(txnEvent.Rows)
 								if rows > maxRows {
@@ -180,8 +177,13 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 						log.Error("Failed to flush events", zap.Error(err), zap.Any("workerID", workerId), zap.Any("events", events))
 						return
 					}
-					s.flushRows.Add(float64(rows))
-					worker.WorkerFlushDuration.Observe(time.Since(start).Seconds())
+					worker.MetricWorkerFlushDuration.Observe(time.Since(start).Seconds())
+					// we record total time to calcuate the worker busy ratio.
+					// so we record the total time after flushing, to unified statistics on
+					// flush time and total time
+					worker.MetricWorkerTotalDuration.Observe(time.Since(totalStart).Seconds())
+					totalStart = time.Now()
+					log.Info("Flush events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Duration("duration", time.Since(start)), zap.Any("workerID", workerId))
 
 					events = events[:0]
 					rows = 0

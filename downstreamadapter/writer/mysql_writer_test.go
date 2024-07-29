@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/stretchr/testify/require"
 	"github.com/zeebo/assert"
 
@@ -23,7 +24,7 @@ func TestPrepareDMLs(t *testing.T) {
 	defer db.Close()
 
 	cfg := &MysqlConfig{}
-	writer := NewMysqlWriter(db, cfg)
+	writer := NewMysqlWriter(db, cfg, model.ChangeFeedID4Test("test", "test"))
 
 	tests := []struct {
 		name     string
@@ -146,7 +147,7 @@ func TestMysqlWriter_Flush(t *testing.T) {
 		SafeMode: false,
 	}
 
-	writer := NewMysqlWriter(db, cfg)
+	writer := NewMysqlWriter(db, cfg, model.ChangeFeedID4Test("test", "test"))
 
 	events := []*common.TxnEvent{
 		{
@@ -190,7 +191,7 @@ func TestMysqlWriter_Flush_EmptyEvents(t *testing.T) {
 		SafeMode: false,
 	}
 
-	writer := NewMysqlWriter(db, cfg)
+	writer := NewMysqlWriter(db, cfg, model.ChangeFeedID4Test("test", "test"))
 
 	events := []*common.TxnEvent{}
 
