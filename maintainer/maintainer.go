@@ -94,6 +94,8 @@ type Maintainer struct {
 
 	changefeedCheckpointTsGauge    prometheus.Gauge
 	changefeedCheckpointTsLagGauge prometheus.Gauge
+	changefeedResolvedTsGauge      prometheus.Gauge
+	changefeedResolvedTsLagGauge   prometheus.Gauge
 	changefeedStatusGauge          prometheus.Gauge
 	scheduledTaskGauge             prometheus.Gauge
 	runningTaskGauge               prometheus.Gauge
@@ -133,6 +135,8 @@ func NewMaintainer(cfID model.ChangeFeedID,
 
 		changefeedCheckpointTsGauge:    metrics.ChangefeedCheckpointTsGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		changefeedCheckpointTsLagGauge: metrics.ChangefeedCheckpointTsLagGauge.WithLabelValues(cfID.Namespace, cfID.ID),
+		changefeedResolvedTsGauge:      metrics.ChangefeedResolvedTsGauge.WithLabelValues(cfID.Namespace, cfID.ID),
+		changefeedResolvedTsLagGauge:   metrics.ChangefeedResolvedTsLagGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		changefeedStatusGauge:          metrics.ChangefeedStatusGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		scheduledTaskGauge:             metrics.ScheduleTaskGuage.WithLabelValues(cfID.Namespace, cfID.ID),
 		runningTaskGauge:               metrics.RunningScheduleTaskGauge.WithLabelValues(cfID.Namespace, cfID.ID),
@@ -306,9 +310,13 @@ func (m *Maintainer) calCheckpointTs() {
 func (m *Maintainer) updateMetrics() {
 	phyCkpTs := oracle.ExtractPhysical(m.watermark.CheckpointTs)
 	m.changefeedCheckpointTsGauge.Set(float64(phyCkpTs))
-
 	lag := (oracle.GetPhysical(time.Now()) - phyCkpTs) / 1e3
 	m.changefeedCheckpointTsLagGauge.Set(float64(lag))
+
+	phyResolvedTs := oracle.ExtractPhysical(m.watermark.ResolvedTs)
+	m.changefeedResolvedTsGauge.Set(float64(phyResolvedTs))
+	lag = (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
+	m.changefeedResolvedTsLagGauge.Set(float64(lag))
 
 	m.changefeedStatusGauge.Set(float64(m.state))
 }
