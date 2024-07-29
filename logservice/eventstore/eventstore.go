@@ -104,7 +104,7 @@ type eventStore struct {
 }
 
 const dataDir = "event_store"
-const dbCount = 64
+const dbCount = 1024
 
 func NewEventStore(
 	ctx context.Context,
@@ -187,7 +187,7 @@ func NewEventStore(
 	conf := cdcConfig.GetGlobalServerConfig()
 
 	conf.KVClient.WorkerConcurrent = uint(len(dbs))
-	conf.KVClient.GrpcStreamConcurrent = 8
+	conf.KVClient.GrpcStreamConcurrent = 64
 	grpcPool := sharedconn.NewConnAndClientPool(&security.Credential{}, cdckv.GetGlobalGrpcMetrics())
 	client := cdckv.NewSharedClient(
 		model.ChangeFeedID{},
@@ -542,7 +542,7 @@ func (iter *eventStoreIter) Next() (*common.RowChangedEvent, bool, error) {
 	}
 
 	isNewTxn := false
-	if iter.prevCommitTS != 0 && iter.prevStartTS != 0 && (startTS != iter.prevStartTS || commitTS != iter.prevCommitTS) {
+	if iter.prevCommitTS == 0 || (startTS != iter.prevStartTS || commitTS != iter.prevCommitTS) {
 		isNewTxn = true
 	}
 	iter.prevCommitTS = commitTS
@@ -555,14 +555,21 @@ func (iter *eventStoreIter) Next() (*common.RowChangedEvent, bool, error) {
 	if err != nil {
 		log.Panic("failed to decode event", zap.Error(err))
 	}
+	// log.Info("read event",
+	// 	zap.Uint64("tableID", uint64(iter.tableID)),
+	// 	zap.Any("value", row.Columns[0].Value))
 	iter.rowCount++
 	iter.innerIter.Next()
 	return row, isNewTxn, nil
 }
 
 func (iter *eventStoreIter) Close() error {
-	// TODO: remove it before submit
 	if iter.innerIter == nil {
+		log.Info("event store close nil iter",
+			zap.Uint64("tableID", uint64(iter.tableID)),
+			zap.Uint64("startTs", iter.startTs),
+			zap.Uint64("endTs", iter.endTs),
+			zap.Int64("rowCount", iter.rowCount))
 		return nil
 	}
 	log.Info("event store iter close",
