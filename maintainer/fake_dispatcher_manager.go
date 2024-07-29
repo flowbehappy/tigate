@@ -147,7 +147,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 				if manager.maintainerID != "" {
 					response := &heartbeatpb.HeartBeatRequest{
 						ChangefeedID:    manager.id.ID,
-						CheckpointTs:    0,
+						Watermark:       &heartbeatpb.Watermark{CheckpointTs: 0},
 						Statuses:        make([]*heartbeatpb.TableSpanStatus, 0, manager.dispatchers.Len()),
 						CompeleteStatus: false,
 					}

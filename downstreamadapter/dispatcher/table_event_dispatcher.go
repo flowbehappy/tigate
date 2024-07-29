@@ -296,25 +296,25 @@ func (d *TableEventDispatcher) Remove() {
 	d.componentStatus.Set(heartbeatpb.ComponentState_Stopping)
 }
 
-func (d *TableEventDispatcher) TryClose() (uint64, bool) {
+func (d *TableEventDispatcher) TryClose() (w heartbeatpb.Watermark, ok bool) {
 	// removing 后每次收集心跳的时候，call TryClose, 来判断是否能关掉 dispatcher 了（sink.isEmpty)
 	// 如果不能关掉，返回 0， false; 可以关掉的话，就返回 checkpointTs, true -- 这个要对齐过（startTs 和 checkpointTs 的关系）
 	if d.sink.IsEmpty(d.tableSpan) {
 		// calculate the checkpointTs, and clean the resource
 		d.sink.RemoveTableSpan(d.tableSpan)
-		var checkpointTs uint64
 		state := d.GetState()
 		if state.pengdingEvent != nil {
-			checkpointTs = state.pengdingEvent.CommitTs - 1
+			w.CheckpointTs = state.pengdingEvent.CommitTs - 1
 		} else {
-			checkpointTs = d.GetResolvedTs()
+			w.CheckpointTs = d.GetCheckpointTs()
 		}
+		w.ResolvedTs = d.GetResolvedTs()
 
 		//d.MemoryUsage.Clear()
 		d.componentStatus.Set(heartbeatpb.ComponentState_Stopped)
-		return checkpointTs, true
+		return w, true
 	}
-	return 0, false
+	return w, false
 }
 
 func (d *TableEventDispatcher) GetComponentStatus() heartbeatpb.ComponentState {
