@@ -132,6 +132,15 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 				case <-ctx.Done():
 					return
 				case task := <-c.taskPool.popTask(chIndex):
+					if task.dataRange.EndTs <= task.dispatcherStat.watermark.Load() {
+						log.Info("fizz:skip the task", zap.Uint64("endTs", task.dataRange.EndTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
+						continue
+					}
+					if task.dataRange.StartTs < task.dispatcherStat.watermark.Load() {
+						log.Info("fizz:adjust the task startTs", zap.Uint64("startTs", task.dataRange.StartTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
+						task.dataRange.StartTs = task.dispatcherStat.watermark.Load()
+					}
+
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 					dispatcherID := task.dispatcherStat.info.GetID()
 					topic := task.dispatcherStat.info.GetTopic()
@@ -177,7 +186,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						// If the commitTs of the event is less than the watermark of the dispatcher,
 						// we just skip the event.
 						if e.CommitTs <= task.dispatcherStat.watermark.Load() {
-							log.Info("fizz, skip event", zap.Uint64("commitTs", e.CommitTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
+							log.Panic("should never Happen", zap.Uint64("commitTs", e.CommitTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
 							continue
 						}
 
@@ -335,7 +344,7 @@ func newScanTaskPool() *scanTaskPool {
 		pendingTaskQueue: make([]chan *scanTask, defaultWorkerCount),
 	}
 	for i := 0; i < defaultWorkerCount; i++ {
-		res.pendingTaskQueue[i] = make(chan *scanTask, defaultChannelSize)
+		res.pendingTaskQueue[i] = make(chan *scanTask)
 	}
 	return res
 }
