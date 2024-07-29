@@ -71,6 +71,11 @@ func (v *versionedTableInfoStore) setTableInfoInitialized() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	for _, job := range v.pendingDDLs {
+		// log.Info("apply pending ddl",
+		// 	zap.Int64("tableID", int64(v.tableID)),
+		// 	zap.String("query", job.Query),
+		// 	zap.Uint64("finishedTS", job.BinlogInfo.FinishedTS),
+		// 	zap.Any("infosLen", len(v.infos)))
 		v.doApplyDDL(job)
 	}
 	v.initialized = true
@@ -234,13 +239,21 @@ func (v *versionedTableInfoStore) doApplyDDL(job *model.Job) {
 				zap.Int64("tableID", int64(v.tableID)),
 				zap.String("query", job.Query),
 				zap.Uint64("finishedTS", job.BinlogInfo.FinishedTS),
-				zap.Any("infos", v.infos))
+				zap.Any("infosLen", len(v.infos)))
 			return
 		}
 	}
 
 	switch job.Type {
 	case model.ActionCreateTable:
+		if len(v.infos) == 1 {
+			// table info may be in snapshot, can not filter redudant job in this case
+			log.Warn("ignore create table job",
+				zap.Int64("tableID", int64(v.tableID)),
+				zap.String("query", job.Query),
+				zap.Uint64("finishedTS", job.BinlogInfo.FinishedTS))
+			break
+		}
 		assertEmpty(v.infos, job)
 		info := common.WrapTableInfo(job.SchemaID, job.SchemaName, job.BinlogInfo.FinishedTS, job.BinlogInfo.TableInfo)
 		v.infos = append(v.infos, &tableInfoItem{version: common.Ts(job.BinlogInfo.FinishedTS), info: info})

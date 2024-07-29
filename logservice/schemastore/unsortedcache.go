@@ -18,7 +18,7 @@ type unsortedDDLCache struct {
 }
 
 func ddlEventLess(a, b DDLEvent) bool {
-	return a.CommitTS < b.CommitTS
+	return a.CommitTS < b.CommitTS || (a.CommitTS == b.CommitTS && a.Job.BinlogInfo.SchemaVersion < b.Job.BinlogInfo.SchemaVersion)
 }
 
 func newUnSortedDDLCache() *unsortedDDLCache {

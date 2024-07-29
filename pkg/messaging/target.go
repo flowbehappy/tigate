@@ -464,7 +464,7 @@ func newLocalMessageTarget(id ServerId,
 		sendEventCounter: metrics.MessagingSendMsgCounter.WithLabelValues("local", "event"),
 		sendCmdCounter:   metrics.MessagingSendMsgCounter.WithLabelValues("local", "command"),
 
-		dropMessageCounter:    metrics.MessagingDropMsgCounter.WithLabelValues("local"),
+		dropMessageCounter:    metrics.MessagingDropMsgCounter.WithLabelValues("local", "message"),
 		congestedErrorCounter: metrics.MessagingErrorCounter.WithLabelValues("local", "message_congested"),
 	}
 }

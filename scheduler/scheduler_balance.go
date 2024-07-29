@@ -59,7 +59,11 @@ func (b *balanceScheduler) Schedule(
 	allInferiors utils.Map[InferiorID, Inferior],
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
 	stateMachines utils.Map[InferiorID, *StateMachine],
+	batchSize int,
 ) []*ScheduleTask {
+	if b.maxTaskConcurrency < batchSize {
+		batchSize = b.maxTaskConcurrency
+	}
 	if !b.forceBalance {
 		now := time.Now()
 		if now.Sub(b.lastRebalanceTime) < b.checkBalanceInterval {
@@ -70,7 +74,7 @@ func (b *balanceScheduler) Schedule(
 	}
 
 	tasks := buildBalanceMoveTables(
-		b.random, aliveCaptures, stateMachines, b.maxTaskConcurrency)
+		b.random, aliveCaptures, stateMachines, batchSize)
 	b.forceBalance = len(tasks) != 0
 	return tasks
 }

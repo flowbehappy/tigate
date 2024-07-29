@@ -158,7 +158,7 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	c.serverID = id
 	c.session = session
 
-	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(id, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
+	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, id, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
 	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, id)) // 100GB for demo
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(id))
 	//appcontext.SetService("eventService")

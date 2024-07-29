@@ -104,7 +104,7 @@ type eventStore struct {
 }
 
 const dataDir = "event_store"
-const dbCount = 32
+const dbCount = 64
 
 func NewEventStore(
 	ctx context.Context,
@@ -186,6 +186,8 @@ func NewEventStore(
 
 	conf := cdcConfig.GetGlobalServerConfig()
 
+	conf.KVClient.WorkerConcurrent = uint(len(dbs))
+	conf.KVClient.GrpcStreamConcurrent = 8
 	grpcPool := sharedconn.NewConnAndClientPool(&security.Credential{}, cdckv.GetGlobalGrpcMetrics())
 	client := cdckv.NewSharedClient(
 		model.ChangeFeedID{},
@@ -207,16 +209,16 @@ func NewEventStore(
 			StartKey: spans[0].StartKey,
 			EndKey:   spans[0].EndKey,
 		}
-		rawKV := &common.RawKVEntry{
-			OpType:   common.OpType(raw.OpType),
-			Key:      raw.Key,
-			Value:    raw.Value,
-			OldValue: raw.OldValue,
-			StartTs:  raw.StartTs,
-			CRTs:     raw.CRTs,
-			RegionID: raw.RegionID,
-		}
 		if raw != nil {
+			rawKV := &common.RawKVEntry{
+				OpType:   common.OpType(raw.OpType),
+				Key:      raw.Key,
+				Value:    raw.Value,
+				OldValue: raw.OldValue,
+				StartTs:  raw.StartTs,
+				CRTs:     raw.CRTs,
+				RegionID: raw.RegionID,
+			}
 			store.writeEvent(span, rawKV)
 		}
 		return nil
@@ -295,6 +297,7 @@ func (e *eventStore) batchCommitAndUpdateWatermark(ctx context.Context, batchCh 
 			// do batch commit
 			batch := batchEvent.batch
 			if !batch.Empty() {
+				log.Info("commit pebble batch", zap.Int("size", len(batch.Repr())))
 				if err := batch.Commit(pebble.NoSync); err != nil {
 					log.Panic("failed to commit pebble batch", zap.Error(err))
 				}
@@ -489,6 +492,10 @@ func (e *eventStore) GetIterator(dataRange *common.DataRange) (EventIterator, er
 		return nil, err
 	}
 	iter.First()
+	log.Info("create iterator",
+		zap.Uint64("tableID", uint64(span.TableID)),
+		zap.Uint64("startTs", dataRange.StartTs),
+		zap.Uint64("endTs", dataRange.StartTs))
 
 	return &eventStoreIter{
 		tableID:      common.TableID(span.TableID),
@@ -555,13 +562,15 @@ func (iter *eventStoreIter) Next() (*common.RowChangedEvent, bool, error) {
 
 func (iter *eventStoreIter) Close() error {
 	// TODO: remove it before submit
-	// log.Info("event store iter close",
-	// 	zap.Uint64("tableID", uint64(iter.tableID)),
-	// 	zap.Uint64("startTs", iter.startTs),
-	// 	zap.Uint64("endTs", iter.endTs),
-	// 	zap.Int64("rowCount", iter.rowCount))
-	if iter.innerIter != nil {
-		return iter.innerIter.Close()
+	if iter.innerIter == nil {
+		return nil
 	}
-	return nil
+	log.Info("event store iter close",
+		zap.Uint64("tableID", uint64(iter.tableID)),
+		zap.Uint64("startTs", iter.startTs),
+		zap.Uint64("endTs", iter.endTs),
+		zap.Int64("rowCount", iter.rowCount))
+	err := iter.innerIter.Close()
+	iter.innerIter = nil
+	return err
 }

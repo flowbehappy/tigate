@@ -21,12 +21,12 @@ import (
 TaskSchedulerInstance is a singleton instance. It contains the necessary task schedulers for one instance.
 */
 type TaskSchedulerInstance struct {
-	WorkerTaskScheduler          *TaskScheduler
-	EventDispatcherTaskScheduler *TaskScheduler
-	SinkTaskScheduler            *TaskScheduler
-	HeartbeatTaskScheduler       *TaskScheduler
-	EventServiceTaskScheduler    *TaskScheduler
-	MaintainerTaskScheduler      *TaskScheduler
+	// WorkerTaskScheduler          *TaskScheduler
+	// EventDispatcherTaskScheduler *TaskScheduler
+	// SinkTaskScheduler            *TaskScheduler
+	// HeartbeatTaskScheduler       *TaskScheduler
+	// EventServiceTaskScheduler    *TaskScheduler
+	// MaintainerTaskScheduler *TaskScheduler
 }
 
 var TaskSchedulers *TaskSchedulerInstance
@@ -36,12 +36,12 @@ func GetTaskSchedulerInstance() *TaskSchedulerInstance {
 	if TaskSchedulers == nil {
 		once.Do(func() {
 			TaskSchedulers = &TaskSchedulerInstance{
-				WorkerTaskScheduler:          NewTaskSchedulerDefault("WorkerTask"),
-				EventDispatcherTaskScheduler: NewTaskSchedulerDefault("EventDispatcherTask"),
-				SinkTaskScheduler:            NewTaskSchedulerDefault("SinkTask"),
-				HeartbeatTaskScheduler:       NewTaskSchedulerDefault("HeartbeatTask"),
-				EventServiceTaskScheduler:    NewTaskSchedulerDefault("EventServiceTask"),
-				MaintainerTaskScheduler:      NewTaskSchedulerDefault("MaintainerTask"),
+				// WorkerTaskScheduler:          NewTaskSchedulerDefault("WorkerTask"),
+				// EventDispatcherTaskScheduler: NewTaskSchedulerDefault("EventDispatcherTask"),
+				// SinkTaskScheduler:            NewTaskSchedulerDefault("SinkTask"),
+				// HeartbeatTaskScheduler:       NewTaskSchedulerDefault("HeartbeatTask"),
+				// EventServiceTaskScheduler:    NewTaskSchedulerDefault("EventServiceTask"),
+				// MaintainerTaskScheduler: NewTaskSchedulerDefault("MaintainerTask"),
 			}
 		})
 	}

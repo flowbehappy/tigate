@@ -142,6 +142,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						c.taskPool.pushTask(task)
 						continue
 					}
+					defer iter.Close()
 
 					var txnEvent *common.TxnEvent
 					isFirstEvent := true
@@ -166,7 +167,6 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 							}
 							c.messageCh <- messaging.NewTargetMessage(remoteID, topic, watermark)
 							task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
-							iter.Close()
 							break
 						}
 
@@ -193,7 +193,6 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						log.Info("send event to dispatcher", zap.Int("workerID", chIndex), zap.String("dispatcher", dispatcherID), zap.Uint64("startTs", e.StartTs), zap.Uint64("commitTs", e.CommitTs))
 						txnEvent.Rows = append(txnEvent.Rows, e)
 					}
-					iter.Close()
 				}
 			}
 		}()
