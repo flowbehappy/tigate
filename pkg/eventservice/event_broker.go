@@ -177,6 +177,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 							// After all the events are sent, we send the watermark to the dispatcher.
 							c.sendWatermark(remoteID, topic, dispatcherID, task.dataRange.EndTs)
 							task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
+							iter.Close()
 							break
 						}
 
