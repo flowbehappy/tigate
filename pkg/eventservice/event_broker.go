@@ -41,7 +41,7 @@ type eventBroker struct {
 
 	// messageCh is used to receive message from the scanWorker,
 	// and a goroutine is responsible for sending the message to the dispatchers.
-	messageCh chan *messaging.TargetMessage
+	messageCh chan *wrapMessage
 	// wg is used to spawn the goroutines.
 	wg *sync.WaitGroup
 	// cancel is used to cancel the goroutines spawned by the eventBroker.
@@ -67,7 +67,7 @@ func newEventBroker(
 		changedCh:       make(chan *subscriptionChange, defaultChannelSize),
 		taskPool:        newScanTaskPool(),
 		scanWorkerCount: defaultWorkerCount,
-		messageCh:       make(chan *messaging.TargetMessage, defaultChannelSize),
+		messageCh:       make(chan *wrapMessage, defaultChannelSize),
 		cancel:          cancel,
 		wg:              wg,
 	}
@@ -82,13 +82,15 @@ func (c *eventBroker) sendWatermark(
 	topicID common.TopicType,
 	dispatcherID string,
 	watermark uint64) {
-	c.messageCh <- messaging.NewTargetMessage(
-		serverID,
-		topicID,
-		&common.TxnEvent{
-			DispatcherID: dispatcherID,
-			ResolvedTs:   watermark,
-		})
+	c.messageCh <- newWrapMessage(
+		messaging.NewTargetMessage(
+			serverID,
+			topicID,
+			&common.TxnEvent{
+				DispatcherID: dispatcherID,
+				ResolvedTs:   watermark,
+			}),
+		true)
 }
 
 func (c *eventBroker) runGenerateScanTask(ctx context.Context) {
@@ -169,7 +171,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						if e == nil {
 							// Send the last txnEvent to the dispatcher.
 							if txnEvent != nil {
-								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, txnEvent)
+								c.messageCh <- newWrapMessage(messaging.NewTargetMessage(remoteID, topic, txnEvent), false)
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
 							}
 							// After all the events are sent, we send the watermark to the dispatcher.
@@ -188,7 +190,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						if isFirstEvent || isNewTxn {
 							// Send the previous txnEvent to the dispatcher.
 							if txnEvent != nil {
-								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, txnEvent)
+								c.messageCh <- newWrapMessage(messaging.NewTargetMessage(remoteID, topic, txnEvent), false)
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
 							}
 							// Create a new txnEvent.
@@ -221,7 +223,7 @@ func (c *eventBroker) runPushMessageWorker(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case msg := <-c.messageCh:
+			case wm := <-c.messageCh:
 				// Send the message to messageCenter. Retry if the send failed.
 				for {
 					select {
@@ -230,8 +232,9 @@ func (c *eventBroker) runPushMessageWorker(ctx context.Context) {
 					default:
 					}
 					// Send the message to the dispatcher.
-					err := c.msgSender.SendEvent(msg)
-					if err != nil {
+					err := c.msgSender.SendEvent(wm.msg)
+					// If the message is a watermark, we don't need to retry. Since the watermark is continuous.
+					if err != nil && !wm.isWatermark {
 						log.Debug("send message failed", zap.Error(err))
 						continue
 					}
@@ -408,4 +411,16 @@ func (p *scanTaskPool) removeTask(id string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.taskSet, id)
+}
+
+type wrapMessage struct {
+	msg         *messaging.TargetMessage
+	isWatermark bool
+}
+
+func newWrapMessage(msg *messaging.TargetMessage, isWatermark bool) *wrapMessage {
+	return &wrapMessage{
+		msg:         msg,
+		isWatermark: isWatermark,
+	}
 }
