@@ -254,10 +254,12 @@ Loop:
 			s.reportStat()
 			nextReport.Reset(s.reportInterval)
 		case e, ok := <-s.inChan:
+			if e != nil {
+				pushToWaitQueue(e)
+			}
 			if !ok {
 				return
 			}
-			pushToWaitQueue(e)
 		case e := <-s.runningTasks[len(s.runningTasks)-1].waitChan:
 			if e != nil && e.doneTime.Load() == nil {
 				s.waitQueue.PushFront(e)
@@ -276,10 +278,12 @@ Loop:
 				s.reportStat()
 				nextReport.Reset(s.reportInterval)
 			case e, ok := <-s.inChan: // Listen to the new events and put them into the wait queue.
+				if e != nil {
+					pushToWaitQueue(e)
+				}
 				if !ok {
 					return
 				}
-				pushToWaitQueue(e)
 			case done := <-s.doneChan: // Receive the done batch and update the statistics.
 				s.recordAndDrainDoneChan(done)
 			case s.handleChan <- nextEvent: // Send the batch to the worker.
@@ -292,10 +296,12 @@ Loop:
 				s.reportStat()
 				nextReport.Reset(s.reportInterval)
 			case e, ok := <-s.inChan:
+				if e != nil {
+					pushToWaitQueue(e)
+				}
 				if !ok {
 					return
 				}
-				pushToWaitQueue(e)
 			case done := <-s.doneChan:
 				s.recordAndDrainDoneChan(done)
 			}

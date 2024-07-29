@@ -39,7 +39,6 @@ func newMockEvent(id int, path Path, sleep time.Duration, work mockWork, start *
 	return e
 }
 
-func (e *mockEvent) Id() int       { return e.id }
 func (e *mockEvent) Path() Path    { return e.path }
 func (e *mockEvent) Weight() int64 { return 1 }
 
@@ -206,5 +205,23 @@ func TestStreamMerge(t *testing.T) {
 	assert.Equal(t, 2, len(rt))
 	assert.Equal(t, Path("p1"), rt[0].path)
 	assert.Equal(t, Path("p2"), rt[1].path)
+}
 
+func TestStreamManyEvents(t *testing.T) {
+	handler := &mockHandler{}
+	reportChan := make(chan *streamStat, 10)
+
+	p1 := &pathInfo[*mockEvent, any]{path: Path("p1"), dest: "d1"}
+	s1 := newStream(1 /*id*/, 1*time.Millisecond, 8*time.Millisecond /*reportInterval*/, []*pathInfo[*mockEvent, any]{p1}, handler, reportChan)
+	s1.start()
+
+	incr := &atomic.Int32{}
+	wg := &sync.WaitGroup{}
+	total := 100000
+	for i := 0; i < total; i++ {
+		s1.in() <- &EventWrap[*mockEvent, any]{event: newMockEvent(i, Path("p1"), 0 /*sleep*/, &Inc{num: 1, inc: incr}, nil, wg), pathInfo: p1}
+	}
+	wg.Wait()
+
+	assert.Equal(t, int32(total), incr.Load())
 }
