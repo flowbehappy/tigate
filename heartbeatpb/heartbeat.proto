@@ -20,11 +20,16 @@ message TableSpan {
 
 message HeartBeatRequest {
     string changefeedID = 1;
-    uint64 checkpointTs = 2; // eventDispatcherManager 当前全局最小的 checkpointTs
+    Watermark watermark = 2;
     repeated TableSpanStatus statuses = 3;
     bool compeleteStatus = 4; // 是否包含了所有的 table status
     RunningError warning = 5;
     RunningError err = 6;
+}
+
+message Watermark {
+    uint64 checkpointTs = 1; // min checkpointTs of all tables in the eventDispatcherManager
+    uint64 resolvedTs = 2;   // min resolvedTs of all tables in the eventDispatcherManager
 }
 
 enum Action {

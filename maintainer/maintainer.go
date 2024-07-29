@@ -55,8 +55,8 @@ type Maintainer struct {
 
 	mc messaging.MessageCenter
 
-	checkpointTs          *atomic.Uint64
-	checkpointTsByCapture map[model.CaptureID]uint64
+	watermark             *heartbeatpb.Watermark
+	checkpointTsByCapture map[model.CaptureID]heartbeatpb.Watermark
 
 	state      heartbeatpb.ComponentState
 	supervisor *scheduler.Supervisor
@@ -94,6 +94,8 @@ type Maintainer struct {
 
 	changefeedCheckpointTsGauge    prometheus.Gauge
 	changefeedCheckpointTsLagGauge prometheus.Gauge
+	changefeedResolvedTsGauge      prometheus.Gauge
+	changefeedResolvedTsLagGauge   prometheus.Gauge
 	changefeedStatusGauge          prometheus.Gauge
 	scheduledTaskGauge             prometheus.Gauge
 	runningTaskGauge               prometheus.Gauge
@@ -108,19 +110,22 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	pdEndpoints []string,
 ) *Maintainer {
 	m := &Maintainer{
-		id:                    cfID,
-		mc:                    appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
-		state:                 heartbeatpb.ComponentState_Prepared,
-		removed:               atomic.NewBool(false),
-		taskCh:                make(chan Task, 1024),
-		nodeManager:           appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName),
-		statusChanged:         atomic.NewBool(true),
-		isSecondary:           atomic.NewBool(isSecondary),
-		removing:              atomic.NewBool(false),
-		cascadeRemoving:       atomic.NewBool(false),
-		config:                cfg,
-		checkpointTs:          atomic.NewUint64(checkpointTs),
-		checkpointTsByCapture: make(map[model.CaptureID]uint64),
+		id:              cfID,
+		mc:              appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
+		state:           heartbeatpb.ComponentState_Prepared,
+		removed:         atomic.NewBool(false),
+		taskCh:          make(chan Task, 1024),
+		nodeManager:     appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName),
+		statusChanged:   atomic.NewBool(true),
+		isSecondary:     atomic.NewBool(isSecondary),
+		removing:        atomic.NewBool(false),
+		cascadeRemoving: atomic.NewBool(false),
+		config:          cfg,
+		watermark: &heartbeatpb.Watermark{
+			CheckpointTs: checkpointTs,
+			ResolvedTs:   checkpointTs,
+		},
+		checkpointTsByCapture: make(map[model.CaptureID]heartbeatpb.Watermark),
 		pdEndpoints:           pdEndpoints,
 		tableSpans:            utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior](),
 		msgQueue:              NewMessageQueue(1024),
@@ -130,6 +135,8 @@ func NewMaintainer(cfID model.ChangeFeedID,
 
 		changefeedCheckpointTsGauge:    metrics.ChangefeedCheckpointTsGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		changefeedCheckpointTsLagGauge: metrics.ChangefeedCheckpointTsLagGauge.WithLabelValues(cfID.Namespace, cfID.ID),
+		changefeedResolvedTsGauge:      metrics.ChangefeedResolvedTsGauge.WithLabelValues(cfID.Namespace, cfID.ID),
+		changefeedResolvedTsLagGauge:   metrics.ChangefeedResolvedTsLagGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		changefeedStatusGauge:          metrics.ChangefeedStatusGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		scheduledTaskGauge:             metrics.ScheduleTaskGuage.WithLabelValues(cfID.Namespace, cfID.ID),
 		runningTaskGauge:               metrics.RunningScheduleTaskGauge.WithLabelValues(cfID.Namespace, cfID.ID),
@@ -231,9 +238,6 @@ func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time
 	// calc checkpointTs before generate new tasks
 	m.calCheckpointTs()
 
-	// resend dispatcher message
-	m.resendSchedulerMessage()
-
 	// try to schedule table spans
 	err = m.scheduleTableSpan()
 	if err != nil {
@@ -283,29 +287,33 @@ func (m *Maintainer) calCheckpointTs() {
 	m.lastCheckpointTsTime = time.Now()
 
 	allCaptures := m.supervisor.GetAllCaptures()
-	var checkpointTs uint64 = math.MaxUint64
+	newWatermark := heartbeatpb.NewMaxWatermark()
 	for c := range allCaptures {
 		if _, ok := m.checkpointTsByCapture[c]; !ok {
 			log.Debug("checkpointTs can not be advanced, since missing capture heartbeat",
 				zap.String("capture", c))
 			return
 		}
-		if m.checkpointTsByCapture[c] < checkpointTs {
-			checkpointTs = m.checkpointTsByCapture[c]
-		}
+		newWatermark.UpdateMin(m.checkpointTsByCapture[c])
 	}
-
-	if checkpointTs != math.MaxUint64 {
-		m.checkpointTs.Store(checkpointTs)
+	if newWatermark.CheckpointTs != math.MaxUint64 {
+		m.watermark.CheckpointTs = newWatermark.CheckpointTs
+	}
+	if newWatermark.ResolvedTs != math.MaxUint64 {
+		m.watermark.ResolvedTs = newWatermark.ResolvedTs
 	}
 }
 
 func (m *Maintainer) updateMetrics() {
-	phyCkpTs := oracle.ExtractPhysical(m.checkpointTs.Load())
+	phyCkpTs := oracle.ExtractPhysical(m.watermark.CheckpointTs)
 	m.changefeedCheckpointTsGauge.Set(float64(phyCkpTs))
-
 	lag := (oracle.GetPhysical(time.Now()) - phyCkpTs) / 1e3
 	m.changefeedCheckpointTsLagGauge.Set(float64(lag))
+
+	phyResolvedTs := oracle.ExtractPhysical(m.watermark.ResolvedTs)
+	m.changefeedResolvedTsGauge.Set(float64(phyResolvedTs))
+	lag = (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
+	m.changefeedResolvedTsLagGauge.Set(float64(lag))
 
 	m.changefeedStatusGauge.Set(float64(m.state))
 }
@@ -322,16 +330,7 @@ func (m *Maintainer) sendMessages(msgs []rpc.Message) {
 }
 
 func (m *Maintainer) scheduleTableSpan() error {
-	if !m.supervisor.CheckAllCaptureInitialized() {
-		return nil
-	}
-
-	tasks := m.supervisor.Schedule(
-		m.tableSpans,
-		m.supervisor.GetAllCaptures(),
-		m.supervisor.GetInferiors(),
-	)
-	msg, err := m.supervisor.HandleScheduleTasks(tasks)
+	msg, err := m.supervisor.Schedule(m.tableSpans)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -344,7 +343,7 @@ func (m *Maintainer) Close() {
 	m.cleanupMetrics()
 	log.Info("changefeed maintainer closed", zap.String("id", m.id.String()),
 		zap.Bool("removed", m.removed.Load()),
-		zap.Uint64("checkpointTs", m.checkpointTs.Load()),
+		zap.Uint64("checkpointTs", m.watermark.CheckpointTs),
 		zap.Bool("secondary", m.isSecondary.Load()))
 }
 
@@ -360,7 +359,7 @@ func (m *Maintainer) initChangefeed() error {
 			StartKey: span.StartKey,
 			EndKey:   span.EndKey,
 		}}
-		replicaSet := NewReplicaSet(m.id, tableSpan, m.checkpointTs.Load()).(*ReplicaSet)
+		replicaSet := NewReplicaSet(m.id, tableSpan, m.watermark.CheckpointTs).(*ReplicaSet)
 		m.tableSpans.ReplaceOrInsert(tableSpan, replicaSet)
 	}
 	m.supervisor.MarkNeedAddInferior()
@@ -368,7 +367,7 @@ func (m *Maintainer) initChangefeed() error {
 }
 
 func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
-	m.checkpointTsByCapture[model.CaptureID(msg.From)] = msg.Message.(*heartbeatpb.HeartBeatRequest).CheckpointTs
+	m.checkpointTsByCapture[model.CaptureID(msg.From)] = *msg.Message.(*heartbeatpb.HeartBeatRequest).Watermark
 
 	req := msg.Message.(*heartbeatpb.HeartBeatRequest)
 	var status []scheduler.InferiorStatus
@@ -414,46 +413,9 @@ func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage)
 	m.supervisor.UpdateCaptureStatus(msg.From.String(), status)
 }
 
-func (m *Maintainer) resendSchedulerMessage() {
-	if time.Since(m.lastResendTime) < time.Second*20 {
-		return
-	}
-	var msgs []rpc.Message
-	m.supervisor.RunningTasks.Ascend(func(key scheduler.InferiorID, _ *scheduler.ScheduleTask) bool {
-		value, ok := m.supervisor.StateMachines.Get(key)
-		if !ok {
-			log.Panic("table span not found", zap.String("changefeedID", m.id.String()), zap.Any("key", key))
-		}
-		if time.Since(value.LastMsgTime) < time.Millisecond*200 {
-			return true
-		}
-		if value.State == scheduler.SchedulerStatusPrepare {
-			server, _ := value.GetRole(scheduler.RoleSecondary)
-			status := value.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Absent)
-			msg, err := value.HandleInferiorStatus(status, server)
-			if err != nil {
-				log.Error("poll failed", zap.Error(err))
-			}
-			msgs = append(msgs, msg...)
-			value.LastMsgTime = time.Now()
-		} else if value.State == scheduler.SchedulerStatusCommit {
-			server, _ := value.GetRole(scheduler.RolePrimary)
-			status := value.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Prepared)
-			msg, err := value.HandleInferiorStatus(status, server)
-			if err != nil {
-				log.Error("poll failed", zap.Error(err))
-			}
-			msgs = append(msgs, msg...)
-			value.LastMsgTime = time.Now()
-		}
-		return true
-	})
-	m.sendMessages(msgs)
-}
-
 // initTableIDs get tables ids base on the filter and checkpoint ts
 func (m *Maintainer) initTableIDs() (map[int64]struct{}, error) {
-	startTs := m.checkpointTs
+	startTs := m.watermark.CheckpointTs
 	f, err := filter.NewFilter(m.config.Config, "")
 	if err != nil {
 		return nil, errors.Cause(err)
@@ -465,10 +427,10 @@ func (m *Maintainer) initTableIDs() (map[int64]struct{}, error) {
 		return nil, errors.Trace(err)
 	}
 
-	meta := kv.GetSnapshotMeta(kvStore, startTs.Load())
+	meta := kv.GetSnapshotMeta(kvStore, startTs)
 	snap, err := schema.NewSnapshotFromMeta(
 		model.ChangeFeedID4Test("api", "verifyTable"),
-		meta, startTs.Load(), false /* explicitTables */, f)
+		meta, startTs, false /* explicitTables */, f)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -528,7 +490,7 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 		ChangefeedID: m.id.ID,
 		FeedState:    string(m.changefeedSate),
 		State:        m.state,
-		CheckpointTs: m.checkpointTs.Load(),
+		CheckpointTs: m.watermark.CheckpointTs,
 		Warning:      runningWarnings,
 		Err:          runningErrors,
 	}

@@ -40,6 +40,7 @@ type Supervisor struct {
 	RunningTasks       utils.Map[InferiorID, *ScheduleTask]
 	maxTaskConcurrency int
 	lastScheduleTime   time.Time
+	lastResendTime     time.Time
 	schedulers         []Scheduler
 
 	ID          InferiorID
@@ -266,32 +267,10 @@ func (s *Supervisor) handleRemovedNodes(
 	return sentMsgs, nil
 }
 
-// HandleScheduleTasks handles schedule tasks.
-func (s *Supervisor) HandleScheduleTasks(
+// handleScheduleTasks handles schedule tasks.
+func (s *Supervisor) handleScheduleTasks(
 	tasks []*ScheduleTask,
 ) ([]rpc.Message, error) {
-	// Check if a running task is finished.
-	var toBeDeleted []InferiorID
-	s.RunningTasks.Ascend(func(id InferiorID, task *ScheduleTask) bool {
-		if stateMachine, ok := s.StateMachines.Get(id); ok {
-			// If inferior is back to Replicating or Removed,
-			// the running task is finished.
-			if stateMachine.State == SchedulerStatusWorking || stateMachine.HasRemoved() {
-				toBeDeleted = append(toBeDeleted, id)
-			}
-		} else {
-			// No inferior found, remove the task
-			toBeDeleted = append(toBeDeleted, id)
-		}
-		return true
-	})
-	for _, span := range toBeDeleted {
-		s.RunningTasks.Delete(span)
-		log.Info("schedule finished, remove running task",
-			zap.String("stid", s.ID.String()),
-			zap.String("id", span.String()))
-	}
-
 	sentMsgs := make([]rpc.Message, 0)
 	for idx, task := range tasks {
 		// Check if accepting one more task exceeds maxTaskConcurrency.

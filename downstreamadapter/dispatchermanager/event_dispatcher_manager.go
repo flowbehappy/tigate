@@ -15,7 +15,6 @@ package dispatchermanager
 
 import (
 	"context"
-	"math"
 	"sync"
 	"time"
 
@@ -343,9 +342,8 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	message := heartbeatpb.HeartBeatRequest{
 		ChangefeedID:    e.changefeedID.ID,
 		CompeleteStatus: needCompleteStatus,
+		Watermark:       heartbeatpb.NewMaxWatermark(),
 	}
-
-	var minCheckpointTs uint64 = math.MaxUint64
 
 	toReomveTableSpans := make([]*common.TableSpan, 0)
 	e.dispatcherMap.ForEach(func(tableSpan *common.TableSpan, tableEventDispatcher *dispatcher.TableEventDispatcher) {
@@ -356,12 +354,10 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 
 		componentStatus := dispatcherHeartBeatInfo.ComponentStatus
 		if componentStatus == heartbeatpb.ComponentState_Stopping {
-			checkpointTs, ok := tableEventDispatcher.TryClose()
+			watermark, ok := tableEventDispatcher.TryClose()
 			if ok {
 				// remove successfully
-				if minCheckpointTs > checkpointTs {
-					minCheckpointTs = checkpointTs
-				}
+				message.Watermark.UpdateMin(watermark)
 				// If the dispatcher is removed successfully, we need to add the tableSpan into message whether needCompleteStatus is true or not.
 				message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
 					Span:            dispatcherHeartBeatInfo.TableSpan.TableSpan,
@@ -372,9 +368,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 			}
 		}
 
-		if minCheckpointTs > dispatcherHeartBeatInfo.CheckpointTs {
-			minCheckpointTs = dispatcherHeartBeatInfo.CheckpointTs
-		}
+		message.Watermark.UpdateMin(dispatcherHeartBeatInfo.Watermark)
 
 		if needCompleteStatus {
 			message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
@@ -387,8 +381,6 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	for _, tableSpan := range toReomveTableSpans {
 		e.cleanTableEventDispatcher(tableSpan)
 	}
-
-	message.CheckpointTs = minCheckpointTs
 	return &message
 }
 

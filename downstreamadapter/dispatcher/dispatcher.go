@@ -143,7 +143,7 @@ type HeartBeatInfo struct {
 	// BlockTs        uint64
 	// BlockTableSpan []*common.TableSpan
 	// TableSpan      *common.TableSpan
-	CheckpointTs    uint64
+	heartbeatpb.Watermark
 	Id              common.DispatcherID
 	TableSpan       *common.TableSpan
 	ComponentStatus heartbeatpb.ComponentState
@@ -163,9 +163,11 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
 	// 	//TableSpan:    d.GetTableSpan(),
 	// 	Id: d.GetId(),
 	// }
-	checkpointTs := d.GetCheckpointTs()
 	heartBeatInfo := &HeartBeatInfo{
-		CheckpointTs:    checkpointTs,
+		Watermark: heartbeatpb.Watermark{
+			CheckpointTs: d.GetCheckpointTs(),
+			ResolvedTs:   d.GetResolvedTs(),
+		},
 		Id:              d.GetId(),
 		ComponentStatus: d.GetComponentStatus(),
 		TableSpan:       d.GetTableSpan(),
