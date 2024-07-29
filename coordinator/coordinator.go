@@ -207,12 +207,7 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 	}
 	c.supervisor.MarkNeedAddInferior()
 	c.supervisor.MarkNeedRemoveInferior()
-	tasks := c.supervisor.Schedule(
-		allChangefeeds,
-		c.supervisor.GetAllCaptures(),
-		c.supervisor.StateMachines,
-	)
-	return c.supervisor.HandleScheduleTasks(tasks)
+	return c.supervisor.Schedule(allChangefeeds)
 }
 
 func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message {

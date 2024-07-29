@@ -3,8 +3,8 @@ package supervisedtree
 import (
 	"fmt"
 
-	"github.com/flowbehappy/tigate/maintainer"
 	"github.com/flowbehappy/tigate/pkg/apperror"
+	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 
@@ -73,11 +73,11 @@ func (sid *SupervisedNodeID) String() string {
 		sid.ObjectID.String(), sid.Epoch, sid.TaskID, sid.HostInfo, sid.ExtraInfo.Info())
 }
 
-func (sid *SupervisedNodeID) Equal(id maintainer.InferiorID) bool {
+func (sid *SupervisedNodeID) Equal(id scheduler.InferiorID) bool {
 	return sid.ObjectID == id.(*SupervisedNodeID).ObjectID
 }
 
-func (sid *SupervisedNodeID) Less(id maintainer.InferiorID) bool {
+func (sid *SupervisedNodeID) Less(id scheduler.InferiorID) bool {
 	return sid.TaskID < id.(*SupervisedNodeID).TaskID
 }
 

@@ -857,3 +857,23 @@ func (s *StateMachine) HasRemoved() bool {
 	// and there is no server has it.
 	return s.State == SchedulerStatusRemoving && len(s.Servers) == 0
 }
+
+func (s *StateMachine) handleResend() []rpc.Message {
+	var server string
+	var status InferiorStatus
+	switch s.State {
+	case SchedulerStatusPrepare:
+		server, _ = s.GetRole(RoleSecondary)
+		status = s.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Absent)
+	case SchedulerStatusCommit:
+		server, _ = s.GetRole(RolePrimary)
+		status = s.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Prepared)
+	}
+
+	msg, err := s.HandleInferiorStatus(status, server)
+	if err != nil {
+		log.Error("poll failed", zap.Error(err))
+	}
+	s.LastMsgTime = time.Now()
+	return msg
+}

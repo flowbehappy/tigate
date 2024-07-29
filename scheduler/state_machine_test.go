@@ -85,7 +85,7 @@ func TestInferiorStoppedWhenWorking(t *testing.T) {
 		captureInfo.ID: &CaptureStatus{state: CaptureStateInitialized, capture: captureInfo},
 	}
 	tasks := scheduler.Schedule(allInferior, aliveCaptures, sup.StateMachines)
-	msgs, err := sup.HandleScheduleTasks(tasks)
+	msgs, err := sup.handleScheduleTasks(tasks)
 	require.NoError(t, err)
 	require.NotNil(t, msgs)
 	working := []InferiorStatus{
@@ -108,8 +108,8 @@ func TestInferiorStoppedWhenWorking(t *testing.T) {
 		},
 	})
 	tasks = scheduler.Schedule(allInferior, aliveCaptures, sup.StateMachines)
-	msgs, err = sup.HandleScheduleTasks(tasks)
+	msgs, err = sup.handleScheduleTasks(tasks)
 	tasks = scheduler.Schedule(allInferior, aliveCaptures, sup.StateMachines)
-	msgs, err = sup.HandleScheduleTasks(tasks)
+	msgs, err = sup.handleScheduleTasks(tasks)
 
 }

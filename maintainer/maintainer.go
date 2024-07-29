@@ -238,9 +238,6 @@ func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time
 	// calc checkpointTs before generate new tasks
 	m.calCheckpointTs()
 
-	// resend dispatcher message
-	m.resendSchedulerMessage()
-
 	// try to schedule table spans
 	err = m.scheduleTableSpan()
 	if err != nil {
@@ -333,16 +330,7 @@ func (m *Maintainer) sendMessages(msgs []rpc.Message) {
 }
 
 func (m *Maintainer) scheduleTableSpan() error {
-	if !m.supervisor.CheckAllCaptureInitialized() {
-		return nil
-	}
-
-	tasks := m.supervisor.Schedule(
-		m.tableSpans,
-		m.supervisor.GetAllCaptures(),
-		m.supervisor.GetInferiors(),
-	)
-	msg, err := m.supervisor.HandleScheduleTasks(tasks)
+	msg, err := m.supervisor.Schedule(m.tableSpans)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -423,43 +411,6 @@ func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage)
 		})
 	}
 	m.supervisor.UpdateCaptureStatus(msg.From.String(), status)
-}
-
-func (m *Maintainer) resendSchedulerMessage() {
-	if time.Since(m.lastResendTime) < time.Second*20 {
-		return
-	}
-	var msgs []rpc.Message
-	m.supervisor.RunningTasks.Ascend(func(key scheduler.InferiorID, _ *scheduler.ScheduleTask) bool {
-		value, ok := m.supervisor.StateMachines.Get(key)
-		if !ok {
-			log.Panic("table span not found", zap.String("changefeedID", m.id.String()), zap.Any("key", key))
-		}
-		if time.Since(value.LastMsgTime) < time.Millisecond*200 {
-			return true
-		}
-		if value.State == scheduler.SchedulerStatusPrepare {
-			server, _ := value.GetRole(scheduler.RoleSecondary)
-			status := value.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Absent)
-			msg, err := value.HandleInferiorStatus(status, server)
-			if err != nil {
-				log.Error("poll failed", zap.Error(err))
-			}
-			msgs = append(msgs, msg...)
-			value.LastMsgTime = time.Now()
-		} else if value.State == scheduler.SchedulerStatusCommit {
-			server, _ := value.GetRole(scheduler.RolePrimary)
-			status := value.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Prepared)
-			msg, err := value.HandleInferiorStatus(status, server)
-			if err != nil {
-				log.Error("poll failed", zap.Error(err))
-			}
-			msgs = append(msgs, msg...)
-			value.LastMsgTime = time.Now()
-		}
-		return true
-	})
-	m.sendMessages(msgs)
 }
 
 // initTableIDs get tables ids base on the filter and checkpoint ts
