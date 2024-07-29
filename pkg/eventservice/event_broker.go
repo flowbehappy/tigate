@@ -41,7 +41,7 @@ type eventBroker struct {
 
 	// messageCh is used to receive message from the scanWorker,
 	// and a goroutine is responsible for sending the message to the dispatchers.
-	messageCh chan *messaging.TargetMessage
+	messageCh chan *wrapMessage
 	// wg is used to spawn the goroutines.
 	wg *sync.WaitGroup
 	// cancel is used to cancel the goroutines spawned by the eventBroker.
@@ -67,7 +67,7 @@ func newEventBroker(
 		changedCh:       make(chan *subscriptionChange, defaultChannelSize),
 		taskPool:        newScanTaskPool(),
 		scanWorkerCount: defaultWorkerCount,
-		messageCh:       make(chan *messaging.TargetMessage, defaultChannelSize),
+		messageCh:       make(chan *wrapMessage, defaultChannelSize),
 		cancel:          cancel,
 		wg:              wg,
 	}
@@ -75,6 +75,22 @@ func newEventBroker(
 	c.runScanWorker(ctx)
 	c.runPushMessageWorker(ctx)
 	return c
+}
+
+func (c *eventBroker) sendWatermark(
+	serverID messaging.ServerId,
+	topicID common.TopicType,
+	dispatcherID string,
+	watermark uint64) {
+	c.messageCh <- newWrapMessage(
+		messaging.NewTargetMessage(
+			serverID,
+			topicID,
+			&common.TxnEvent{
+				DispatcherID: dispatcherID,
+				ResolvedTs:   watermark,
+			}),
+		true)
 }
 
 func (c *eventBroker) runGenerateScanTask(ctx context.Context) {
@@ -118,23 +134,23 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 				case <-ctx.Done():
 					return
 				case task := <-c.taskPool.popTask(chIndex):
+					needScan := task.checkAndAdjustScanTask()
+					if !needScan {
+						continue
+					}
+
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
-					topic := task.dispatcherStat.info.GetTopic()
 					dispatcherID := task.dispatcherStat.info.GetID()
-					// The dispatcher has no new events. In such case, we don't need to scan the event store.
-					// We just send the watermark to the dispatcher.
+					topic := task.dispatcherStat.info.GetTopic()
+					//1.The dispatcher has no new events. In such case, we don't need to scan the event store.
+					//We just send the watermark to the dispatcher.
 					if task.eventCount == 0 {
-						waterMarkMsg := &common.TxnEvent{
-							DispatcherID: dispatcherID,
-							ResolvedTs:   task.dataRange.EndTs,
-						}
-						c.messageCh <- messaging.NewTargetMessage(remoteID, topic, waterMarkMsg)
+						c.sendWatermark(remoteID, topic, dispatcherID, task.dataRange.EndTs)
 						task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
 						continue
 					}
 
-					// scan the event store to get the events in the data range.
-					//events, err := c.eventStore.GetIterator(task.dataRange)
+					//2. Get events iterator from eventStore.
 					iter, err := c.eventStore.GetIterator(task.dataRange)
 					if err != nil {
 						log.Info("read events failed, push the task back to queue", zap.Error(err))
@@ -142,38 +158,40 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						c.taskPool.pushTask(task)
 						continue
 					}
-
 					var txnEvent *common.TxnEvent
 					isFirstEvent := true
+					// 3. Get the events from the iterator and send them to the dispatcher.
 					for {
-						// The first event of the txn must return isNewTxn as true.
+						//TODO: The first event of the txn must return isNewTxn as true.
 						e, isNewTxn, err := iter.Next()
 						if err != nil {
 							log.Panic("read events failed", zap.Error(err))
 						}
 
 						if e == nil {
+							// Send the last txnEvent to the dispatcher.
 							if txnEvent != nil {
-								// Send the last txnEvent to the dispatcher.
-								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, txnEvent)
+								c.messageCh <- newWrapMessage(messaging.NewTargetMessage(remoteID, topic, txnEvent), false)
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
 							}
-
 							// After all the events are sent, we send the watermark to the dispatcher.
-							watermark := &common.TxnEvent{
-								ResolvedTs:   task.dataRange.EndTs,
-								DispatcherID: dispatcherID,
-							}
-							c.messageCh <- messaging.NewTargetMessage(remoteID, topic, watermark)
+							c.sendWatermark(remoteID, topic, dispatcherID, task.dataRange.EndTs)
 							task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
 							iter.Close()
 							break
 						}
 
+						// If the commitTs of the event is less than the watermark of the dispatcher,
+						// we just skip the event.
+						if e.CommitTs < task.dispatcherStat.watermark.Load() {
+							log.Panic("should never Happen", zap.Uint64("commitTs", e.CommitTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
+							continue
+						}
+
 						if isFirstEvent || isNewTxn {
 							// Send the previous txnEvent to the dispatcher.
 							if txnEvent != nil {
-								c.messageCh <- messaging.NewTargetMessage(remoteID, topic, txnEvent)
+								c.messageCh <- newWrapMessage(messaging.NewTargetMessage(remoteID, topic, txnEvent), false)
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
 							}
 							// Create a new txnEvent.
@@ -185,14 +203,12 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 							}
 							isFirstEvent = false
 						}
-
-						// Skip the events that have been sent to the dispatcher.
-						if e.CommitTs <= task.dispatcherStat.watermark.Load() {
-							continue
-						}
-
 						txnEvent.Rows = append(txnEvent.Rows, e)
+						if txnEvent.CommitTs != e.CommitTs {
+							log.Panic("commitTs of the event is different from the commitTs of the txnEvent", zap.Uint64("eventCommitTs", e.CommitTs), zap.Uint64("txnCommitTs", txnEvent.CommitTs))
+						}
 					}
+					iter.Close()
 				}
 			}
 		}()
@@ -208,8 +224,23 @@ func (c *eventBroker) runPushMessageWorker(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case msg := <-c.messageCh:
-				c.msgSender.SendEvent(msg)
+			case m := <-c.messageCh:
+				// Send the message to messageCenter. Retry if the send failed.
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+					// Send the message to the dispatcher.
+					err := c.msgSender.SendEvent(m.msg)
+					// If the message is a watermark, we don't need to retry. Since the watermark is continuous.
+					if err != nil && !m.isWatermark {
+						log.Debug("send message failed", zap.Error(err))
+						continue
+					}
+					break
+				}
 			}
 		}
 	}()
@@ -239,7 +270,7 @@ type dispatcherStat struct {
 	// We need to make sure the tasks of the same dispatcher are sent to the same task queue
 	// so that it will be handle by the same scan worker. To ensure all events of the dispatcher
 	// are sent in order.
-	chanIndex int
+	workerIndex int
 }
 
 func newDispatcherStat(
@@ -259,7 +290,7 @@ func newDispatcherStat(
 	res.watermark.Store(startTs)
 	hasher := crc32.NewIEEE()
 	hasher.Write([]byte(info.GetID()))
-	res.chanIndex = int(hasher.Sum32() % defaultWorkerCount)
+	res.workerIndex = int(hasher.Sum32() % defaultWorkerCount)
 	return res
 }
 
@@ -312,6 +343,16 @@ type scanTask struct {
 	eventCount     uint64
 }
 
+func (t *scanTask) checkAndAdjustScanTask() bool {
+	if t.dispatcherStat.watermark.Load() >= t.dataRange.EndTs {
+		return false
+	}
+	if t.dispatcherStat.watermark.Load() > t.dataRange.StartTs {
+		t.dataRange.StartTs = t.dispatcherStat.watermark.Load()
+	}
+	return true
+}
+
 type scanTaskPool struct {
 	mu      sync.Mutex
 	taskSet map[string]*scanTask
@@ -326,7 +367,7 @@ func newScanTaskPool() *scanTaskPool {
 		pendingTaskQueue: make([]chan *scanTask, defaultWorkerCount),
 	}
 	for i := 0; i < defaultWorkerCount; i++ {
-		res.pendingTaskQueue[i] = make(chan *scanTask, defaultChannelSize)
+		res.pendingTaskQueue[i] = make(chan *scanTask)
 	}
 	return res
 }
@@ -338,19 +379,22 @@ func (p *scanTaskPool) pushTask(task *scanTask) {
 	defer p.mu.Unlock()
 	id := task.dispatcherStat.info.GetID()
 	spanTask := p.taskSet[id]
-	if spanTask == nil {
-		spanTask = task
-		p.taskSet[id] = spanTask
-	}
-	// Merge the task into the existing task.
-	mergedRange := task.dataRange.Merge(spanTask.dataRange)
-	spanTask.dataRange = mergedRange
-	spanTask.eventCount += task.eventCount
 
-	// Send the task to the corresponding scan worker.
-	ch := p.pendingTaskQueue[spanTask.dispatcherStat.chanIndex]
+	// There is already a task for the dispatcher, we need to merge the task to the existing task.
+	if spanTask != nil {
+		mergedRange := task.dataRange.Merge(spanTask.dataRange)
+		if mergedRange == nil {
+			log.Panic("merge data range failed", zap.Any("task", task), zap.Any("spanTask", spanTask))
+		}
+		spanTask.dataRange = mergedRange
+		spanTask.eventCount += task.eventCount
+	} else {
+		spanTask = task
+	}
+
 	select {
-	case ch <- spanTask:
+	// Send the task to the corresponding scan worker.
+	case p.pendingTaskQueue[spanTask.dispatcherStat.workerIndex] <- spanTask:
 		// The task is sent to the scan worker, we remove it from the taskSet.
 		p.taskSet[id] = nil
 	default:
@@ -368,4 +412,16 @@ func (p *scanTaskPool) removeTask(id string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.taskSet, id)
+}
+
+type wrapMessage struct {
+	msg         *messaging.TargetMessage
+	isWatermark bool
+}
+
+func newWrapMessage(msg *messaging.TargetMessage, isWatermark bool) *wrapMessage {
+	return &wrapMessage{
+		msg:         msg,
+		isWatermark: isWatermark,
+	}
 }

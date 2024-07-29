@@ -143,7 +143,6 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 				case <-ctx.Done():
 					return
 				case txnEvent := <-worker.GetEventChan():
-					log.Info("worker get event", zap.Any("workerID", workerId))
 					events = append(events, txnEvent)
 					rows += len(txnEvent.Rows)
 					if rows > maxRows {
@@ -172,11 +171,10 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 							}
 						}
 					}
-					log.Info("Ready to Flush Events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Any("workerID", workerId))
 					start := time.Now()
-					err := worker.GetMysqlWriter().Flush(events)
+					err := worker.GetMysqlWriter().Flush(events, workerId)
 					if err != nil {
-						log.Error("Failed to flush events", zap.Error(err))
+						log.Error("Failed to flush events", zap.Error(err), zap.Any("workerID", workerId), zap.Any("events", events))
 						return
 					}
 					worker.MetricWorkerFlushDuration.Observe(time.Since(start).Seconds())
@@ -201,7 +199,7 @@ func (s *MysqlSink) AddDMLEvent(tableSpan *common.TableSpan, event *common.TxnEv
 		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
 		return
 	}
-	log.Info("mysql sink recv event", zap.Any("tableID", tableSpan.TableID))
+	//log.Info("mysql sink recv event", zap.Any("tableID", tableSpan.TableID))
 	tableStatus.getProgress().Add(event)
 	tableStatus.getCh() <- event
 }

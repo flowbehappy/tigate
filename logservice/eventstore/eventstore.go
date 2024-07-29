@@ -297,7 +297,6 @@ func (e *eventStore) batchCommitAndUpdateWatermark(ctx context.Context, batchCh 
 			// do batch commit
 			batch := batchEvent.batch
 			if !batch.Empty() {
-				log.Info("commit pebble batch", zap.Int("size", len(batch.Repr())))
 				if err := batch.Commit(pebble.NoSync); err != nil {
 					log.Panic("failed to commit pebble batch", zap.Error(err))
 				}
@@ -492,10 +491,6 @@ func (e *eventStore) GetIterator(dataRange *common.DataRange) (EventIterator, er
 		return nil, err
 	}
 	iter.First()
-	log.Info("create iterator",
-		zap.Uint64("tableID", uint64(span.TableID)),
-		zap.Uint64("startTs", dataRange.StartTs),
-		zap.Uint64("endTs", dataRange.StartTs))
 
 	return &eventStoreIter{
 		tableID:      common.TableID(span.TableID),
@@ -572,11 +567,7 @@ func (iter *eventStoreIter) Close() error {
 			zap.Int64("rowCount", iter.rowCount))
 		return nil
 	}
-	log.Info("event store iter close",
-		zap.Uint64("tableID", uint64(iter.tableID)),
-		zap.Uint64("startTs", iter.startTs),
-		zap.Uint64("endTs", iter.endTs),
-		zap.Int64("rowCount", iter.rowCount))
+
 	err := iter.innerIter.Close()
 	iter.innerIter = nil
 	return err
