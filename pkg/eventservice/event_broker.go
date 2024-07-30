@@ -4,15 +4,22 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"hash/crc32"
 
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/google/uuid"
 	"github.com/pingcap/log"
+	"github.com/prometheus/client_golang/prometheus"
+
 	"go.uber.org/zap"
 )
+
+var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
 
 // eventBroker get event from the eventStore, and send the event to the dispatchers.
 // Every TiDB cluster has a eventBroker.
@@ -81,7 +88,9 @@ func (c *eventBroker) sendWatermark(
 	serverID messaging.ServerId,
 	topicID common.TopicType,
 	dispatcherID string,
-	watermark uint64) {
+	watermark uint64,
+	counter prometheus.Counter,
+) {
 	c.messageCh <- newWrapMessage(
 		messaging.NewTargetMessage(
 			serverID,
@@ -91,6 +100,9 @@ func (c *eventBroker) sendWatermark(
 				ResolvedTs:   watermark,
 			}),
 		true)
+	if counter != nil {
+		counter.Inc()
+	}
 }
 
 func (c *eventBroker) runGenerateScanTask(ctx context.Context) {
@@ -145,7 +157,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 					//1.The dispatcher has no new events. In such case, we don't need to scan the event store.
 					//We just send the watermark to the dispatcher.
 					if task.eventCount == 0 {
-						c.sendWatermark(remoteID, topic, dispatcherID, task.dataRange.EndTs)
+						c.sendWatermark(remoteID, topic, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
 						task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
 						continue
 					}
@@ -160,6 +172,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 					}
 					var txnEvent *common.TxnEvent
 					isFirstEvent := true
+					eventCount := 0
 					// 3. Get the events from the iterator and send them to the dispatcher.
 					for {
 						//TODO: The first event of the txn must return isNewTxn as true.
@@ -173,9 +186,10 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 							if txnEvent != nil {
 								c.messageCh <- newWrapMessage(messaging.NewTargetMessage(remoteID, topic, txnEvent), false)
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
+								task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(txnEvent.Rows)))
 							}
 							// After all the events are sent, we send the watermark to the dispatcher.
-							c.sendWatermark(remoteID, topic, dispatcherID, task.dataRange.EndTs)
+							c.sendWatermark(remoteID, topic, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
 							task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
 							iter.Close()
 							break
@@ -188,11 +202,13 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 							continue
 						}
 
+						eventCount++
 						if isFirstEvent || isNewTxn {
 							// Send the previous txnEvent to the dispatcher.
 							if txnEvent != nil {
 								c.messageCh <- newWrapMessage(messaging.NewTargetMessage(remoteID, topic, txnEvent), false)
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
+								task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(txnEvent.Rows)))
 							}
 							// Create a new txnEvent.
 							txnEvent = &common.TxnEvent{
@@ -208,6 +224,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 							log.Panic("commitTs of the event is different from the commitTs of the txnEvent", zap.Uint64("eventCommitTs", e.CommitTs), zap.Uint64("txnCommitTs", txnEvent.CommitTs))
 						}
 					}
+					task.dispatcherStat.metricSorterOutputEventCountKV.Add(float64(eventCount))
 					iter.Close()
 				}
 			}
@@ -232,6 +249,7 @@ func (c *eventBroker) runPushMessageWorker(ctx context.Context) {
 						return
 					default:
 					}
+					start := time.Now()
 					// Send the message to the dispatcher.
 					err := c.msgSender.SendEvent(m.msg)
 					// If the message is a watermark, we don't need to retry. Since the watermark is continuous.
@@ -239,6 +257,7 @@ func (c *eventBroker) runPushMessageWorker(ctx context.Context) {
 						log.Debug("send message failed", zap.Error(err))
 						continue
 					}
+					metricEventServiceSendEventDuration.Observe(time.Since(start).Seconds())
 					break
 				}
 			}
@@ -254,6 +273,12 @@ func (c *eventBroker) close() {
 func (c *eventBroker) removeDispatcher(id string) {
 	c.dispatchers.mu.Lock()
 	defer c.dispatchers.mu.Unlock()
+
+	_, ok := c.dispatchers.m[id]
+	if !ok {
+		return
+	}
+	c.eventStore.UnregisterDispatcher(common.DispatcherID(uuid.MustParse(id)))
 	delete(c.dispatchers.m, id)
 	c.taskPool.removeTask(id)
 }
@@ -271,6 +296,10 @@ type dispatcherStat struct {
 	// so that it will be handle by the same scan worker. To ensure all events of the dispatcher
 	// are sent in order.
 	workerIndex int
+
+	metricSorterOutputEventCountKV        prometheus.Counter
+	metricEventServiceSendKvCount         prometheus.Counter
+	metricEventServiceSendResolvedTsCount prometheus.Counter
 }
 
 func newDispatcherStat(
@@ -281,11 +310,15 @@ func newDispatcherStat(
 		span: info.GetTableSpan(),
 	}
 	subscription.watermark.Store(uint64(startTs))
-
+	namespace, id := info.GetChangefeedID()
 	res := &dispatcherStat{
 		info:             info,
 		spanSubscription: subscription,
 		notify:           notify,
+
+		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(namespace, id, "kv"),
+		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "kv"),
+		metricEventServiceSendResolvedTsCount: metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "resolved_ts"),
 	}
 	res.watermark.Store(startTs)
 	hasher := crc32.NewIEEE()
@@ -367,7 +400,7 @@ func newScanTaskPool() *scanTaskPool {
 		pendingTaskQueue: make([]chan *scanTask, defaultWorkerCount),
 	}
 	for i := 0; i < defaultWorkerCount; i++ {
-		res.pendingTaskQueue[i] = make(chan *scanTask)
+		res.pendingTaskQueue[i] = make(chan *scanTask, defaultChannelSize)
 	}
 	return res
 }

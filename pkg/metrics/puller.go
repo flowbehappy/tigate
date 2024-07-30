@@ -12,3 +12,24 @@
 // limitations under the License.
 
 package metrics
+
+import (
+	"github.com/pingcap/tiflow/cdc/puller"
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+// PullerEventCounter is the counter of puller's received events
+// There are two types of events: kv (row changed event), resolved (resolved ts event).
+var PullerEventCounter = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Namespace: "ticdc",
+		Subsystem: "puller",
+		Name:      "txn_collect_event_count", // keep the old name for compatibility
+		Help:      "The number of events received by a puller",
+	}, []string{"namespace", "changefeed", "type"}) // types : kv, resolved.
+
+// InitMetrics registers all metrics in this file
+func InitPullerMetrics(registry *prometheus.Registry) {
+	// TODO: Replace this when new puller of tigate is ready
+	puller.InitMetrics(registry)
+}

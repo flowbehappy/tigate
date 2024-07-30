@@ -182,6 +182,10 @@ func (r RegisterDispatcherRequest) IsRegister() bool {
 	return !r.Remove
 }
 
+func (r RegisterDispatcherRequest) GetChangefeedID() (namespace, id string) {
+	return r.Namespace, r.ChangefeedId
+}
+
 type Watermark struct {
 	Span *common.TableSpan
 	Ts   uint64

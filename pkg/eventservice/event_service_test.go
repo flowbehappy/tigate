@@ -114,6 +114,10 @@ func (m *mockDispatcherInfo) IsRegister() bool {
 	return m.isRegister
 }
 
+func (m *mockDispatcherInfo) GetChangefeedID() (namespace, id string) {
+	return "default", "test"
+}
+
 type mockSpanStats struct {
 	startTs       uint64
 	watermark     uint64

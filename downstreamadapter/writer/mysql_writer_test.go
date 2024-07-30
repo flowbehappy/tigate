@@ -176,7 +176,7 @@ func TestMysqlWriter_Flush(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	err := writer.Flush(events)
+	err := writer.Flush(events, 0)
 	require.NoError(t, err)
 
 	err = mock.ExpectationsWereMet()
@@ -195,7 +195,7 @@ func TestMysqlWriter_Flush_EmptyEvents(t *testing.T) {
 
 	events := []*common.TxnEvent{}
 
-	err := writer.Flush(events)
+	err := writer.Flush(events, 0)
 	require.NoError(t, err)
 
 	err = mock.ExpectationsWereMet()
