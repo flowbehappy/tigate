@@ -80,7 +80,7 @@ func NewSupervisor(
 		initialized:        false,
 		captures:           make(map[model.CaptureID]*CaptureStatus),
 		initStatus:         make(map[model.CaptureID][]InferiorStatus),
-		maxTaskConcurrency: 10000,
+		maxTaskConcurrency: 100000,
 		schedulers:         schedulers,
 		newInferior:        f,
 		newBootstrapMsg:    newBootstrapMsg,
