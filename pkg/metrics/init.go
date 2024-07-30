@@ -13,7 +13,9 @@
 
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 func InitMetrics(registry *prometheus.Registry) {
 	InitServerMetrics(registry)
@@ -21,4 +23,5 @@ func InitMetrics(registry *prometheus.Registry) {
 	InitChangefeedMetrics(registry)
 	InitMessagingMetrics(registry)
 	InitSinkMetrics(registry)
+	InitPullerMetrics(registry)
 }
