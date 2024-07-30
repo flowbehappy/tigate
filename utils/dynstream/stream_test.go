@@ -44,19 +44,19 @@ func (e *mockEvent) Weight() int64 { return 1 }
 
 type mockHandler struct{}
 
-func (h *mockHandler) Handle(event *EventWrap[*mockEvent, any]) {
-	if event.event.start != nil {
-		event.event.start.Done()
+func (h *mockHandler) Handle(event *mockEvent, dest any) {
+	if event.start != nil {
+		event.start.Done()
 	}
 
-	if event.event.sleep > 0 {
-		time.Sleep(event.event.sleep)
+	if event.sleep > 0 {
+		time.Sleep(event.sleep)
 	}
 
-	event.event.work.Do()
+	event.work.Do()
 
-	if event.event.done != nil {
-		event.event.done.Done()
+	if event.done != nil {
+		event.done.Done()
 	}
 }
 
@@ -92,19 +92,19 @@ func TestStreamBasic(t *testing.T) {
 
 	p1 := &pathInfo[*mockEvent, any]{path: Path("p1"), dest: "d1"}
 	p2 := &pathInfo[*mockEvent, any]{path: Path("p2"), dest: "d2"}
-	s1 := newStream(1 /*id*/, 1*time.Millisecond, 8*time.Millisecond /*reportInterval*/, []*pathInfo[*mockEvent, any]{p1}, handler, reportChan)
-	s2 := newStream(2 /*id*/, 1*time.Millisecond, 8*time.Millisecond /*reportInterval*/, []*pathInfo[*mockEvent, any]{p2}, handler, reportChan)
+	s1 := newStream(1 /*id*/, 1*time.Millisecond, 8*time.Millisecond /*reportInterval*/, handler, reportChan)
+	s2 := newStream(2 /*id*/, 1*time.Millisecond, 8*time.Millisecond /*reportInterval*/, handler, reportChan)
 
-	s1.start()
-	s2.start()
+	s1.start([]*pathInfo[*mockEvent, any]{p1})
+	s2.start([]*pathInfo[*mockEvent, any]{p2})
 
 	incr := &atomic.Int32{}
 
 	eventDone := &sync.WaitGroup{}
-	event1 := &EventWrap[*mockEvent, any]{event: newMockEvent(1, Path("p1"), 10*time.Millisecond /*sleep*/, &Inc{num: 1, inc: incr}, nil, eventDone), pathInfo: p1}
-	event2 := &EventWrap[*mockEvent, any]{event: newMockEvent(2, Path("p2"), 10*time.Millisecond /*sleep*/, &Inc{num: 2, inc: incr}, nil, eventDone), pathInfo: p2}
-	event3 := &EventWrap[*mockEvent, any]{event: newMockEvent(3, Path("p1"), 10*time.Millisecond /*sleep*/, &Inc{num: 3, inc: incr}, nil, eventDone), pathInfo: p1}
-	event4 := &EventWrap[*mockEvent, any]{event: newMockEvent(4, Path("p2"), 10*time.Millisecond /*sleep*/, &Inc{num: 4, inc: incr}, nil, eventDone), pathInfo: p2}
+	event1 := &eventWrap[*mockEvent, any]{event: newMockEvent(1, Path("p1"), 10*time.Millisecond /*sleep*/, &Inc{num: 1, inc: incr}, nil, eventDone), pathInfo: p1}
+	event2 := &eventWrap[*mockEvent, any]{event: newMockEvent(2, Path("p2"), 10*time.Millisecond /*sleep*/, &Inc{num: 2, inc: incr}, nil, eventDone), pathInfo: p2}
+	event3 := &eventWrap[*mockEvent, any]{event: newMockEvent(3, Path("p1"), 10*time.Millisecond /*sleep*/, &Inc{num: 3, inc: incr}, nil, eventDone), pathInfo: p1}
+	event4 := &eventWrap[*mockEvent, any]{event: newMockEvent(4, Path("p2"), 10*time.Millisecond /*sleep*/, &Inc{num: 4, inc: incr}, nil, eventDone), pathInfo: p2}
 
 	s1.in() <- event1
 	s1.in() <- event3
@@ -145,14 +145,14 @@ Loop:
 		}
 	}
 
-	s3 := newStream(3 /*id*/, 1*time.Millisecond, 8*time.Millisecond /*reportInterval*/, []*pathInfo[*mockEvent, any]{p1, p2}, handler, reportChan)
-	s3.start(s1, s2)
+	s3 := newStream(3 /*id*/, 1*time.Millisecond, 8*time.Millisecond /*reportInterval*/, handler, reportChan)
+	s3.start([]*pathInfo[*mockEvent, any]{p1, p2}, s1, s2)
 
 	eventDone = &sync.WaitGroup{}
-	event5 := &EventWrap[*mockEvent, any]{event: newMockEvent(5, Path("p1"), 0 /*sleep*/, &Inc{num: 5, inc: incr}, nil, eventDone), pathInfo: p1}
-	event6 := &EventWrap[*mockEvent, any]{event: newMockEvent(6, Path("p2"), 0 /*sleep*/, &Inc{num: 6, inc: incr}, nil, eventDone), pathInfo: p2}
-	event7 := &EventWrap[*mockEvent, any]{event: newMockEvent(7, Path("p1"), 0 /*sleep*/, &Inc{num: 7, inc: incr}, nil, eventDone), pathInfo: p1}
-	event8 := &EventWrap[*mockEvent, any]{event: newMockEvent(8, Path("p2"), 0 /*sleep*/, &Inc{num: 8, inc: incr}, nil, eventDone), pathInfo: p2}
+	event5 := &eventWrap[*mockEvent, any]{event: newMockEvent(5, Path("p1"), 0 /*sleep*/, &Inc{num: 5, inc: incr}, nil, eventDone), pathInfo: p1}
+	event6 := &eventWrap[*mockEvent, any]{event: newMockEvent(6, Path("p2"), 0 /*sleep*/, &Inc{num: 6, inc: incr}, nil, eventDone), pathInfo: p2}
+	event7 := &eventWrap[*mockEvent, any]{event: newMockEvent(7, Path("p1"), 0 /*sleep*/, &Inc{num: 7, inc: incr}, nil, eventDone), pathInfo: p1}
+	event8 := &eventWrap[*mockEvent, any]{event: newMockEvent(8, Path("p2"), 0 /*sleep*/, &Inc{num: 8, inc: incr}, nil, eventDone), pathInfo: p2}
 
 	s3.in() <- event5
 	s3.in() <- event6
@@ -173,19 +173,19 @@ func TestStreamMerge(t *testing.T) {
 
 	p1 := &pathInfo[*mockEvent, any]{path: Path("p1"), dest: "d1"}
 	p2 := &pathInfo[*mockEvent, any]{path: Path("p2"), dest: "d2"}
-	s1 := newStream(1 /*id*/, 1*time.Millisecond, 8*time.Millisecond /*reportInterval*/, []*pathInfo[*mockEvent, any]{p1}, handler, reportChan)
-	s2 := newStream(2 /*id*/, 1*time.Millisecond, 8*time.Millisecond /*reportInterval*/, []*pathInfo[*mockEvent, any]{p2}, handler, reportChan)
+	s1 := newStream(1 /*id*/, 1*time.Millisecond, 8*time.Millisecond /*reportInterval*/, handler, reportChan)
+	s2 := newStream(2 /*id*/, 1*time.Millisecond, 8*time.Millisecond /*reportInterval*/, handler, reportChan)
 
-	s1.start()
-	s2.start()
+	s1.start([]*pathInfo[*mockEvent, any]{p1})
+	s2.start([]*pathInfo[*mockEvent, any]{p2})
 
 	incr := &atomic.Int32{}
 
 	secondStart := &sync.WaitGroup{}
-	event1 := &EventWrap[*mockEvent, any]{event: newMockEvent(1, Path("p1"), 0*time.Millisecond /*sleep*/, &Inc{num: 1, inc: incr}, nil, nil), pathInfo: p1}
-	event2 := &EventWrap[*mockEvent, any]{event: newMockEvent(2, Path("p2"), 0*time.Millisecond /*sleep*/, &Inc{num: 2, inc: incr}, nil, nil), pathInfo: p2}
-	event3 := &EventWrap[*mockEvent, any]{event: newMockEvent(3, Path("p1"), 50*time.Millisecond /*sleep*/, &Inc{num: 3, inc: incr}, secondStart, nil), pathInfo: p1}
-	event4 := &EventWrap[*mockEvent, any]{event: newMockEvent(4, Path("p2"), 50*time.Millisecond /*sleep*/, &Inc{num: 4, inc: incr}, secondStart, nil), pathInfo: p2}
+	event1 := &eventWrap[*mockEvent, any]{event: newMockEvent(1, Path("p1"), 0*time.Millisecond /*sleep*/, &Inc{num: 1, inc: incr}, nil, nil), pathInfo: p1}
+	event2 := &eventWrap[*mockEvent, any]{event: newMockEvent(2, Path("p2"), 0*time.Millisecond /*sleep*/, &Inc{num: 2, inc: incr}, nil, nil), pathInfo: p2}
+	event3 := &eventWrap[*mockEvent, any]{event: newMockEvent(3, Path("p1"), 50*time.Millisecond /*sleep*/, &Inc{num: 3, inc: incr}, secondStart, nil), pathInfo: p1}
+	event4 := &eventWrap[*mockEvent, any]{event: newMockEvent(4, Path("p2"), 50*time.Millisecond /*sleep*/, &Inc{num: 4, inc: incr}, secondStart, nil), pathInfo: p2}
 
 	s1.in() <- event1
 	s1.in() <- event3
@@ -195,16 +195,16 @@ func TestStreamMerge(t *testing.T) {
 
 	secondStart.Wait()
 
-	s3 := newStream(3 /*id*/, 1*time.Millisecond, 8*time.Millisecond /*reportInterval*/, []*pathInfo[*mockEvent, any]{p1, p2}, handler, reportChan)
-	s3.start(s1, s2)
+	s3 := newStream(3 /*id*/, 1*time.Millisecond, 8*time.Millisecond /*reportInterval*/, handler, reportChan)
+	s3.start([]*pathInfo[*mockEvent, any]{p1, p2}, s1, s2)
 
 	s3.prepareDone.Wait()
 
 	rt := s3.runningTasks
 
 	assert.Equal(t, 2, len(rt))
-	assert.Equal(t, Path("p1"), rt[0].path)
-	assert.Equal(t, Path("p2"), rt[1].path)
+	assert.Equal(t, Path("p1"), rt[0].event.path())
+	assert.Equal(t, Path("p2"), rt[1].event.path())
 }
 
 func TestStreamManyEvents(t *testing.T) {
@@ -212,14 +212,14 @@ func TestStreamManyEvents(t *testing.T) {
 	reportChan := make(chan *streamStat, 10)
 
 	p1 := &pathInfo[*mockEvent, any]{path: Path("p1"), dest: "d1"}
-	s1 := newStream(1 /*id*/, 1*time.Millisecond, 8*time.Millisecond /*reportInterval*/, []*pathInfo[*mockEvent, any]{p1}, handler, reportChan)
-	s1.start()
+	s1 := newStream(1 /*id*/, 1*time.Millisecond, 8*time.Millisecond /*reportInterval*/, handler, reportChan)
+	s1.start([]*pathInfo[*mockEvent, any]{p1})
 
 	incr := &atomic.Int32{}
 	wg := &sync.WaitGroup{}
 	total := 100000
 	for i := 0; i < total; i++ {
-		s1.in() <- &EventWrap[*mockEvent, any]{event: newMockEvent(i, Path("p1"), 0 /*sleep*/, &Inc{num: 1, inc: incr}, nil, wg), pathInfo: p1}
+		s1.in() <- &eventWrap[*mockEvent, any]{event: newMockEvent(i, Path("p1"), 0 /*sleep*/, &Inc{num: 1, inc: incr}, nil, wg), pathInfo: p1}
 	}
 	wg.Wait()
 

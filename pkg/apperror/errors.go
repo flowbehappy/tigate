@@ -16,6 +16,8 @@ const (
 	ErrorTypeIncomplete ErrorType = 102
 	ErrorTypeDecodeData ErrorType = 103
 	ErrorTypeBufferFull ErrorType = 104
+	ErrorTypeDuplicate  ErrorType = 105
+	ErrorTypeNotExist   ErrorType = 106
 
 	ErrorTypeConnectionFailed     ErrorType = 201
 	ErrorTypeConnectionNotFound   ErrorType = 202
@@ -40,6 +42,14 @@ func (t ErrorType) String() string {
 		return "Invalid"
 	case ErrorTypeIncomplete:
 		return "Incomplete"
+	case ErrorTypeDecodeData:
+		return "DecodeData"
+	case ErrorTypeBufferFull:
+		return "BufferFull"
+	case ErrorTypeDuplicate:
+		return "Duplicate"
+	case ErrorTypeNotExist:
+		return "NotExist"
 	case ErrorTypeConnectionFailed:
 		return "ConnectionFailed"
 	case ErrorTypeConnectionNotFound:
@@ -60,14 +70,21 @@ type AppError struct {
 	Reason string
 }
 
-func (e AppError) Error() string {
+func NewAppError(t ErrorType, reason string) *AppError {
+	return &AppError{
+		Type:   t,
+		Reason: reason,
+	}
+}
+
+func (e *AppError) Error() string {
 	return fmt.Sprintf("ErrorType: %s, Reason: %s", e.Type, e.Reason)
 }
 
-func (e AppError) GetType() ErrorType {
+func (e *AppError) GetType() ErrorType {
 	return e.Type
 }
 
-func (e AppError) Equal(err AppError) bool {
+func (e *AppError) Equal(err AppError) bool {
 	return e.Type == err.Type
 }
