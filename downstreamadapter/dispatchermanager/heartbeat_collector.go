@@ -116,7 +116,7 @@ func (c *HeartBeatCollector) RecvSchedulerDispatcherRequestMessages(ctx context.
 	eventDispatcherManager, ok := c.eventDispatcherManagerMap[changefeedID]
 	if !ok {
 		// Maybe the message is received before the event dispatcher manager is registered, so just ingore it
-		log.Warn("invalid changefeedID in scheduler dispatcher request message", zap.Any("changefeedID", changefeedID))
+		log.Warn("invalid changefeedID in scheduler dispatcher request message", zap.String("changefeedID", changefeedID.String()))
 		return nil
 	}
 	scheduleAction := scheduleDispatcherRequest.ScheduleAction

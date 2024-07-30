@@ -22,6 +22,7 @@ import (
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"go.uber.org/zap"
 )
 
 var _ Scheduler = &balanceScheduler{}
@@ -76,6 +77,9 @@ func (b *balanceScheduler) Schedule(
 	tasks := buildBalanceMoveTables(
 		b.random, aliveCaptures, stateMachines, batchSize)
 	b.forceBalance = len(tasks) != 0
+	log.Info("balance scheduler generate tasks",
+		zap.String("changefeed", string(b.changefeedID.String())),
+		zap.Int("task count", len(tasks)))
 	return tasks
 }
 
