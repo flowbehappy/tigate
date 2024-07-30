@@ -16,6 +16,7 @@ package dispatchermanager
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -107,6 +108,7 @@ func (c *HeartBeatCollector) RecvHeartBeatResponseMessages(msg *messaging.Target
 }*/
 
 func (c *HeartBeatCollector) RecvSchedulerDispatcherRequestMessages(ctx context.Context, msg *messaging.TargetMessage) error {
+	start := time.Now()
 	scheduleDispatcherRequest := msg.Message.(*heartbeatpb.ScheduleDispatcherRequest)
 	changefeedID := model.DefaultChangeFeedID(scheduleDispatcherRequest.ChangefeedID)
 
@@ -134,6 +136,9 @@ func (c *HeartBeatCollector) RecvSchedulerDispatcherRequestMessages(ctx context.
 	} else if scheduleAction == heartbeatpb.ScheduleAction_Remove {
 		eventDispatcherManager.RemoveTableEventDispatcher(&common.TableSpan{TableSpan: config.Span})
 	}
+
+	log.Info("RecvSchedulerDispatcherRequestMessages handle dispatch msg", zap.Any("tableSpan", config.Span),
+		zap.Int64("cost(ns)", time.Since(start).Nanoseconds()), zap.Time("start", start))
 	return nil
 }
 

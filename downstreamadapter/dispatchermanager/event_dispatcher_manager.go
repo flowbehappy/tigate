@@ -30,6 +30,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
@@ -67,6 +68,7 @@ type EventDispatcherManager struct {
 
 	tableEventDispatcherCount prometheus.Gauge
 	//filter                      *Filter
+	metricCreateDispatcherDuration prometheus.Observer
 }
 
 // TODO:这个锁会在量级大于几万以后影响明显，10w 的 dispatcher同时创建需要预估10多分钟的开销。
@@ -125,11 +127,12 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 		// sinkURI: config.SinkURI,
 		//sinkConfig:             config.SinkConfig,
 		//enableSyncPoint:       false,
-		maintainerID:              maintainerID,
-		tableSpanStatusesChan:     make(chan *heartbeatpb.TableSpanStatus, 1000000),
-		cancel:                    cancel,
-		config:                    config,
-		tableEventDispatcherCount: TableEventDispatcherCount.WithLabelValues(changefeedID.String()),
+		maintainerID:                   maintainerID,
+		tableSpanStatusesChan:          make(chan *heartbeatpb.TableSpanStatus, 1000000),
+		cancel:                         cancel,
+		config:                         config,
+		tableEventDispatcherCount:      TableEventDispatcherCount.WithLabelValues(changefeedID.String()),
+		metricCreateDispatcherDuration: metrics.HandleDispatcherRequestDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 	}
 
 	appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(eventDispatcherManager)
@@ -197,6 +200,7 @@ func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) 
 
 // 收到 rpc 请求创建，需要通过 event dispatcher manager 来
 func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.TableSpan, startTs uint64) *dispatcher.TableEventDispatcher {
+	start := time.Now()
 	// 创建新的 event dispatcher，同时需要把这个去 logService 注册，并且把自己加到对应的某个处理 thread 里
 	// if e.dispatcherMap.Len() == 0 {
 	// 	err := e.Init(startTs)
@@ -232,7 +236,9 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 	}
 
 	e.tableEventDispatcherCount.Inc()
-	log.Info("new table event dispatcher created", zap.Any("tableSpan", tableSpan))
+	log.Info("new table event dispatcher created", zap.Any("tableSpan", tableSpan),
+		zap.Int64("cost(ns)", time.Since(start).Nanoseconds()), zap.Time("start", start))
+	e.metricCreateDispatcherDuration.Observe(float64(time.Since(start).Seconds()))
 	return tableEventDispatcher
 }
 
