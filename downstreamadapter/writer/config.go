@@ -92,6 +92,8 @@ type MysqlConfig struct {
 	BatchDMLEnable  bool
 	MultiStmtEnable bool
 	CachePrepStmts  bool
+	// DryRun is used to enable dry-run mode. In dry-run mode, the writer will not write data to the downstream.
+	DryRun bool
 }
 
 // NewConfig returns the default mysql backend config.
