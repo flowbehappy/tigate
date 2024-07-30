@@ -40,8 +40,9 @@ type streamStat struct {
 }
 
 type runningTask[T Event, D any] struct {
-	path     Path
-	waitChan <-chan *EventWrap[T, D]
+	event      *EventWrap[T, D]
+	startTrack time.Time
+	waitChan   <-chan *EventWrap[T, D]
 }
 
 type stream[T Event, D any] struct {
@@ -145,12 +146,14 @@ func (s *stream[T, D]) close(interested ...map[Path]*pathInfo[T, D]) []*runningT
 	s.backgroundDone.Wait()
 
 	if len(interested) != 0 {
+		now := time.Now()
 		if len(s.runningTasks) != 0 {
 			// By now this stream is still waiting for the running events from the former stream.
 			rts := make([]*runningTask[T, D], 0)
 			for _, task := range s.runningTasks {
-				if _, ok := interested[0][task.path]; ok {
-					rts = append(rts, task)
+				if _, ok := interested[0][task.event.Path()]; ok {
+					t := &runningTask[T, D]{event: task.event, startTrack: now, waitChan: task.waitChan}
+					rts = append(rts, t)
 				}
 			}
 			return rts
@@ -165,7 +168,7 @@ func (s *stream[T, D]) close(interested ...map[Path]*pathInfo[T, D]) []*runningT
 					waitChan <- e
 					close(waitChan)
 				}(s, e)
-				return []*runningTask[T, D]{{path: e.Path(), waitChan: waitChan}}
+				return []*runningTask[T, D]{{event: e, startTrack: now, waitChan: waitChan}}
 			}
 		}
 	}
@@ -199,7 +202,8 @@ func (s *stream[T, D]) backgroundLoop(formerStreams []*stream[T, D]) {
 
 		s.recordAndDrainDoneChan(nil)
 
-		// Move all events in the inChan & handleChan to the waitQueue.
+		// Gether all remaing events to the waitQueue,
+		// to make it easier to later streams to take over the work.
 		now := time.Now()
 		for e := range s.inChan {
 			e.inQueueTime = now
@@ -220,54 +224,97 @@ func (s *stream[T, D]) backgroundLoop(formerStreams []*stream[T, D]) {
 		s.backgroundDone.Done()
 	}()
 
+	waitQueueLock := sync.Mutex{}
+	pushToWaitQueue := func(e *EventWrap[T, D], useLock bool) {
+		e.inQueueTime = time.Now()
+		e.pathInfo.waitLen++
+
+		if useLock {
+			waitQueueLock.Lock()
+			defer waitQueueLock.Unlock()
+
+			s.waitQueue.PushBack(e)
+			s.incame++
+		} else {
+			s.waitQueue.PushBack(e)
+			s.incame++
+		}
+	}
+
+	nextReport := time.NewTimer(s.reportInterval)
+
+	// Start a new goroutine to handle the events in the inChan during
+	// the background goroutine waiting for the running events.
+	// To avoid blocking the inChan.
+	earlyFetchStop := make(chan struct{})
+	waitRunningStop := make(chan struct{})
+	earlyFetchDone := sync.WaitGroup{}
+	earlyFetchDone.Add(1)
+	go func() {
+		defer earlyFetchDone.Done()
+		for {
+			select {
+			case <-nextReport.C:
+				s.reportStat()
+				nextReport.Reset(s.reportInterval)
+			case e, ok := <-s.inChan:
+				if e != nil {
+					pushToWaitQueue(e, true)
+				}
+				if !ok {
+					// Because the inChan is occupied by the early fetching goroutine,
+					// we need another signal to stop the waiting for the running events.
+					close(waitRunningStop)
+					return
+				}
+			case <-earlyFetchStop:
+				return
+			}
+		}
+	}()
+
 	// Move the remaining events in the former streams to this stream.
 
 	for _, stream := range formerStreams {
 		s.runningTasks = append(s.runningTasks, stream.close(s.pathMap)...)
 
-		itr := stream.waitQueue.ForwardIterator()
+		// We push to the front of waitQueue here. Because the eary events are being pushed to the back.
+		// We don't want to mix them.
+		itr := stream.waitQueue.BackwardIterator()
 		for e, ok := itr.Next(); ok; e, ok = itr.Next() {
 			if _, ok := s.pathMap[e.Path()]; ok {
+				// Don't call pushToWaitQueue. Because we don't want to update the inQueueTime of the events (They are set by former streams already).
+				waitQueueLock.Lock()
+				defer waitQueueLock.Unlock()
+
 				s.waitQueue.PushBack(e)
+				s.incame++
 			}
 		}
 	}
 
 	s.prepareDone.Done()
 
-	pushToWaitQueue := func(e *EventWrap[T, D]) {
-		e.inQueueTime = time.Now()
-		e.pathInfo.waitLen++
-
-		s.waitQueue.PushBack(e)
-		s.incame++
-	}
-
-	nextReport := time.NewTimer(s.reportInterval)
-
 	// The waitStream is not nil. We need to wait for the running events from the former streams.
 	// And in the same time, we need to listen to the new events and report the statistics.
 Loop:
 	for len(s.runningTasks) != 0 {
 		select {
-		case <-nextReport.C:
-			s.reportStat()
-			nextReport.Reset(s.reportInterval)
-		case e, ok := <-s.inChan:
-			if e != nil {
-				pushToWaitQueue(e)
-			}
-			if !ok {
-				return
-			}
 		case e := <-s.runningTasks[len(s.runningTasks)-1].waitChan:
 			if e != nil && e.doneTime.Load() == nil {
 				s.waitQueue.PushFront(e)
 			}
 			s.runningTasks = s.runningTasks[:len(s.runningTasks)-1]
 			break Loop
+		case <-waitRunningStop:
+			break Loop
 		}
 	}
+
+	// Make the eary fetching goroutine to stop.
+	// This goroutine (background goroutine) will take over the work.
+	close(earlyFetchStop)
+	earlyFetchDone.Wait()
 
 	for {
 		nextEvent, ok := s.waitQueue.Front()
@@ -279,7 +326,7 @@ Loop:
 				nextReport.Reset(s.reportInterval)
 			case e, ok := <-s.inChan: // Listen to the new events and put them into the wait queue.
 				if e != nil {
-					pushToWaitQueue(e)
+					pushToWaitQueue(e, false)
 				}
 				if !ok {
 					return
@@ -297,7 +344,7 @@ Loop:
 				nextReport.Reset(s.reportInterval)
 			case e, ok := <-s.inChan:
 				if e != nil {
-					pushToWaitQueue(e)
+					pushToWaitQueue(e, false)
 				}
 				if !ok {
 					return
@@ -350,7 +397,17 @@ func (s *stream[T, D]) recordAndDrainDoneChan(first *EventWrap[T, D]) {
 	}
 }
 
+// Return (event, already running time, actual waiting time, hasRunningEvent)
 func (s *stream[T, D]) runningEvent() (*EventWrap[T, D], time.Duration, time.Duration, bool) {
+	if len(s.runningTasks) != 0 {
+		longestRunning := s.runningTasks[0]
+		for _, task := range s.runningTasks {
+			if task.startTrack.Before(longestRunning.startTrack) {
+				longestRunning = task
+			}
+		}
+		return longestRunning.event, time.Since(longestRunning.startTrack), time.Duration(0), true
+	}
 	if head, ok := s.inflight.Front(); ok {
 		start := head.startTime.Load()
 		done := head.doneTime.Load()
