@@ -178,6 +178,11 @@ func (w *MysqlWriter) Flush(events []*common.TxnEvent, workerNum int) error {
 			log.Error("execute DMLs failed", zap.Error(err))
 			return errors.Trace(err)
 		}
+	} else {
+		// dry run mode, just record the metrics
+		w.statistics.RecordBatchExecution(func() (int, int64, error) {
+			return dmls.rowCount, 0, nil
+		})
 	}
 
 	for _, event := range events {
