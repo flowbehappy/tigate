@@ -14,8 +14,6 @@
 package scheduler
 
 import (
-	"time"
-
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
@@ -97,11 +95,11 @@ func (s *Supervisor) Name() string {
 }
 
 func (s *Supervisor) checkRunningTasks() (msgs []rpc.Message) {
-	needResend := false
-	if time.Since(s.lastResendTime) > time.Second*20 {
-		needResend = true
-		s.lastResendTime = time.Now()
-	}
+	needResend := true
+	// if time.Since(s.lastResendTime) > time.Second*20 {
+	// 	needResend = true
+	// 	s.lastResendTime = time.Now()
+	// }
 
 	// Check if a running task is finished.
 	var toBeDeleted []InferiorID

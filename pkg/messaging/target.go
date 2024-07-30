@@ -77,15 +77,16 @@ type remoteMessageTarget struct {
 	// errCh is used to gather the error from the goroutine spawned by remoteMessageTarget.
 	errCh chan AppError
 
-	sendEventCounter prometheus.Counter
-	dropEventCounter prometheus.Counter
-	recvEventCounter prometheus.Counter
+	sendEventCounter           prometheus.Counter
+	dropEventCounter           prometheus.Counter
+	recvEventCounter           prometheus.Counter
+	congestedEventErrorCounter prometheus.Counter
 
-	sendCmdCounter prometheus.Counter
-	dropCmdCounter prometheus.Counter
-	recvCmdCounter prometheus.Counter
+	sendCmdCounter           prometheus.Counter
+	dropCmdCounter           prometheus.Counter
+	recvCmdCounter           prometheus.Counter
+	congestedCmdErrorCounter prometheus.Counter
 
-	congestedErrorCounter          prometheus.Counter
 	receivedFailedErrorCounter     prometheus.Counter
 	connectionNotfoundErrorCounter prometheus.Counter
 	connectionFailedErrorCounter   prometheus.Counter
@@ -108,7 +109,7 @@ func (s *remoteMessageTarget) sendEvent(msg ...*TargetMessage) error {
 		s.sendEventCounter.Add(float64(len(msg)))
 		return nil
 	default:
-		s.congestedErrorCounter.Inc()
+		s.congestedEventErrorCounter.Inc()
 		return AppError{Type: ErrorTypeMessageCongested, Reason: "Send event message is congested"}
 	}
 }
@@ -126,7 +127,7 @@ func (s *remoteMessageTarget) sendCommand(msg ...*TargetMessage) error {
 		s.sendCmdCounter.Add(float64(len(msg)))
 		return nil
 	default:
-		s.congestedErrorCounter.Inc()
+		s.congestedCmdErrorCounter.Inc()
 		return AppError{Type: ErrorTypeMessageCongested, Reason: "Send command message is congested"}
 	}
 }
@@ -156,17 +157,19 @@ func newRemoteMessageTarget(
 		errCh:              make(chan AppError, 8),
 		wg:                 &sync.WaitGroup{},
 
-		sendEventCounter: metrics.MessagingSendMsgCounter.WithLabelValues(string(addr), "event"),
-		dropEventCounter: metrics.MessagingDropMsgCounter.WithLabelValues(string(addr), "event"),
-		recvEventCounter: metrics.MessagingReceiveMsgCounter.WithLabelValues(string(addr), "event"),
-		sendCmdCounter:   metrics.MessagingSendMsgCounter.WithLabelValues(string(addr), "command"),
-		dropCmdCounter:   metrics.MessagingDropMsgCounter.WithLabelValues(string(addr), "command"),
-		recvCmdCounter:   metrics.MessagingReceiveMsgCounter.WithLabelValues(string(addr), "command"),
+		sendEventCounter:           metrics.MessagingSendMsgCounter.WithLabelValues(string(addr), "event"),
+		dropEventCounter:           metrics.MessagingDropMsgCounter.WithLabelValues(string(addr), "event"),
+		recvEventCounter:           metrics.MessagingReceiveMsgCounter.WithLabelValues(string(addr), "event"),
+		congestedEventErrorCounter: metrics.MessagingErrorCounter.WithLabelValues(string(addr), "event", "message_congested"),
 
-		congestedErrorCounter:          metrics.MessagingErrorCounter.WithLabelValues(string(addr), "message_congested"),
-		receivedFailedErrorCounter:     metrics.MessagingErrorCounter.WithLabelValues(string(addr), "message_received_failed"),
-		connectionNotfoundErrorCounter: metrics.MessagingErrorCounter.WithLabelValues(string(addr), "connection_not_found"),
-		connectionFailedErrorCounter:   metrics.MessagingErrorCounter.WithLabelValues(string(addr), "connection_failed"),
+		sendCmdCounter:           metrics.MessagingSendMsgCounter.WithLabelValues(string(addr), "command"),
+		dropCmdCounter:           metrics.MessagingDropMsgCounter.WithLabelValues(string(addr), "command"),
+		recvCmdCounter:           metrics.MessagingReceiveMsgCounter.WithLabelValues(string(addr), "command"),
+		congestedCmdErrorCounter: metrics.MessagingErrorCounter.WithLabelValues(string(addr), "command", "message_congested"),
+
+		receivedFailedErrorCounter:     metrics.MessagingErrorCounter.WithLabelValues(string(addr), "message", "message_received_failed"),
+		connectionNotfoundErrorCounter: metrics.MessagingErrorCounter.WithLabelValues(string(addr), "message", "connection_not_found"),
+		connectionFailedErrorCounter:   metrics.MessagingErrorCounter.WithLabelValues(string(addr), "message", "connection_failed"),
 	}
 	rt.targetEpoch.Store(targetEpoch)
 	rt.runHandleErr(ctx)
@@ -422,11 +425,9 @@ type localMessageTarget struct {
 	recvEventCh chan *TargetMessage
 	recvCmdCh   chan *TargetMessage
 
-	sendEventCounter prometheus.Counter
-	sendCmdCounter   prometheus.Counter
-
-	dropMessageCounter    prometheus.Counter
-	congestedErrorCounter prometheus.Counter
+	sendEventCounter   prometheus.Counter
+	dropMessageCounter prometheus.Counter
+	sendCmdCounter     prometheus.Counter
 }
 
 func (s *localMessageTarget) Epoch() common.EpochType {
@@ -436,7 +437,7 @@ func (s *localMessageTarget) Epoch() common.EpochType {
 func (s *localMessageTarget) sendEvent(msg ...*TargetMessage) error {
 	err := s.sendMsgToChan(s.recvEventCh, msg...)
 	if err != nil {
-		s.congestedErrorCounter.Inc()
+		s.recordCongestedMessageError(msgTypeEvent, string(msg[0].Topic))
 	} else {
 		s.sendEventCounter.Add(float64(len(msg)))
 	}
@@ -446,7 +447,7 @@ func (s *localMessageTarget) sendEvent(msg ...*TargetMessage) error {
 func (s *localMessageTarget) sendCommand(msg ...*TargetMessage) error {
 	err := s.sendMsgToChan(s.recvCmdCh, msg...)
 	if err != nil {
-		s.congestedErrorCounter.Inc()
+		s.recordCongestedMessageError(msgTypeCommand, string(msg[0].Topic))
 	} else {
 		s.sendCmdCounter.Add(float64(len(msg)))
 	}
@@ -457,16 +458,17 @@ func newLocalMessageTarget(id ServerId,
 	gatherRecvEventChan chan *TargetMessage,
 	gatherRecvCmdChan chan *TargetMessage) *localMessageTarget {
 	return &localMessageTarget{
-		localId:     id,
-		recvEventCh: gatherRecvEventChan,
-		recvCmdCh:   gatherRecvCmdChan,
-
-		sendEventCounter: metrics.MessagingSendMsgCounter.WithLabelValues("local", "event"),
-		sendCmdCounter:   metrics.MessagingSendMsgCounter.WithLabelValues("local", "command"),
-
-		dropMessageCounter:    metrics.MessagingDropMsgCounter.WithLabelValues("local", "message"),
-		congestedErrorCounter: metrics.MessagingErrorCounter.WithLabelValues("local", "message_congested"),
+		localId:            id,
+		recvEventCh:        gatherRecvEventChan,
+		recvCmdCh:          gatherRecvCmdChan,
+		sendEventCounter:   metrics.MessagingSendMsgCounter.WithLabelValues("local", "event"),
+		dropMessageCounter: metrics.MessagingDropMsgCounter.WithLabelValues("local", "message"),
+		sendCmdCounter:     metrics.MessagingSendMsgCounter.WithLabelValues("local", "command"),
 	}
+}
+
+func (s *localMessageTarget) recordCongestedMessageError(typeE, topic string) {
+	metrics.MessagingErrorCounter.WithLabelValues("local", typeE, "message_congested", topic).Inc()
 }
 
 func (s *localMessageTarget) sendMsgToChan(ch chan *TargetMessage, msg ...*TargetMessage) error {

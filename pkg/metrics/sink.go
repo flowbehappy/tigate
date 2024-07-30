@@ -67,6 +67,15 @@ var (
 			Name:      "execution_error",
 			Help:      "Total count of execution errors.",
 		}, []string{"namespace", "changefeed", "type"}) // type is for `sinkType`
+
+	HandleDispatcherRequestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "sink",
+			Name:      "create_dispatcher_duration",
+			Help:      "Bucketed histogram of create dispatcher time (s) for table span.",
+			Buckets:   prometheus.ExponentialBuckets(0.000001, 2, 20), // 1us~524ms
+		}, []string{"namespace", "changefeed"})
 )
 
 // ---------- Metrics for txn sink and backends. ---------- //
@@ -152,6 +161,7 @@ func InitSinkMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(ExecDDLHistogram)
 	registry.MustRegister(LargeRowSizeHistogram)
 	registry.MustRegister(ExecutionErrorCounter)
+	registry.MustRegister(HandleDispatcherRequestDuration)
 
 	// txn sink metrics
 	registry.MustRegister(ConflictDetectDuration)
