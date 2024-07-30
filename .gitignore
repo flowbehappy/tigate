@@ -2,7 +2,6 @@ bin
 vendor
 tools/bin
 tools/include
-tools
 
 .vscode
 .idea
