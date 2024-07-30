@@ -477,7 +477,10 @@ func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfo
 		tableID := common.TableID(job.TableID)
 		store, ok := tableInfoStoreMap[tableID]
 		if !ok {
-			return errors.New("table not found")
+			log.Warn("table not found",
+				zap.Any("tableID", tableID),
+				zap.Any("job", job))
+			return nil
 		}
 		store.applyDDL(job)
 	}
