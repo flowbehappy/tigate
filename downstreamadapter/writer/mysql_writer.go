@@ -107,6 +107,11 @@ func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *common.TxnEvent) erro
 }
 
 func (w *MysqlWriter) execDDL(event *common.TxnEvent) error {
+	if w.cfg.DryRun {
+		log.Info("Dry run DDL", zap.String("sql", event.GetDDLQuery()))
+		return nil
+	}
+
 	shouldSwitchDB := needSwitchDB(event)
 
 	ctx := context.Background()
@@ -167,10 +172,19 @@ func (w *MysqlWriter) Flush(events []*common.TxnEvent, workerNum int) error {
 	if dmls.rowCount == 0 {
 		return nil
 	}
-	if err := w.execDMLWithMaxRetries(dmls); err != nil {
-		log.Error("execute DMLs failed", zap.Error(err))
-		return errors.Trace(err)
+
+	if !w.cfg.DryRun {
+		if err := w.execDMLWithMaxRetries(dmls); err != nil {
+			log.Error("execute DMLs failed", zap.Error(err))
+			return errors.Trace(err)
+		}
+	} else {
+		// dry run mode, just record the metrics
+		w.statistics.RecordBatchExecution(func() (int, int64, error) {
+			return dmls.rowCount, 0, nil
+		})
 	}
+
 	for _, event := range events {
 		if event.PostTxnFlushed != nil {
 			event.PostTxnFlushed()
@@ -260,6 +274,7 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent) *preparedDMLs {
 }
 
 func (w *MysqlWriter) execDMLWithMaxRetries(dmls *preparedDMLs) error {
+
 	if len(dmls.sqls) != len(dmls.values) {
 		log.Error("unexpected number of sqls and values",
 			zap.Strings("sqls", dmls.sqls),
