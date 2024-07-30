@@ -125,6 +125,7 @@ func (c *MysqlConfig) Apply(sinkURI *url.URL) error {
 }
 
 func NewMysqlConfigAndDB(sinkURI string) (*MysqlConfig, *sql.DB, error) {
+	log.Info("fizz create db connection", zap.String("sinkURI", sinkURI))
 	// create db connection
 	sinkURIParsed, err := url.Parse(sinkURI)
 	if err != nil {
