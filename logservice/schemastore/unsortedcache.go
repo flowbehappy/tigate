@@ -32,7 +32,9 @@ func (c *unsortedDDLCache) addDDLEvent(ddlEvent DDLEvent) {
 	defer c.mutex.Unlock()
 	oldEvent, duplicated := c.ddlEvents.ReplaceOrInsert(ddlEvent)
 	if duplicated {
-		log.Fatal("commitTS conflict", zap.Any("oldEvent", oldEvent), zap.Any("newEvent", ddlEvent))
+		log.Warn("ignore duplicated DDL event",
+			zap.Any("event", ddlEvent),
+			zap.Any("oldEvent", oldEvent))
 	}
 }
 
