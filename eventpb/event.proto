@@ -23,6 +23,8 @@ message EventRequest {
     Filter filter = 4;
     float ratio = 5;
     bool remove = 6; // 要移除的时候设为 true
+    string namespace = 7;
+    string changefeed_id = 8;
 }
 
 message ResolvedTs {
