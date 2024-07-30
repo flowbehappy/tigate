@@ -36,6 +36,7 @@ type DispatcherInfo interface {
 	GetTableSpan() *common.TableSpan
 	GetStartTs() uint64
 	IsRegister() bool
+	GetChangefeedID() (namespace, id string)
 }
 
 type eventService struct {
@@ -128,15 +129,15 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID), zap.Uint64("startTs", startTs))
 }
 
-func (s *eventService) deregisterAcceptor(acceptor DispatcherInfo) {
-	clusterID := acceptor.GetClusterID()
+func (s *eventService) deregisterAcceptor(dispatcherInfo DispatcherInfo) {
+	clusterID := dispatcherInfo.GetClusterID()
 	c, ok := s.brokers[clusterID]
 	if !ok {
 		return
 	}
-	acceptorID := acceptor.GetID()
-	c.removeDispatcher(acceptorID)
-	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", acceptorID))
+	id := dispatcherInfo.GetID()
+	c.removeDispatcher(id)
+	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", id))
 }
 
 // TODO: implement the following functions
