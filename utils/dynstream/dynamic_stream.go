@@ -13,20 +13,28 @@ import (
 type cmdType int
 
 const (
-	typeAddPath cmdType = iota
-	typeRemovePath
+	// For a AddPath request, first send to distributor to check whether the path exists or not,
+	// then send to the scheduler goroutine to decide the stream to add the path,
+	// finally send to the distributor to add the path to the stream.
+	// It is the complexity we need to pay without using a lock.
+	typeAddPathCheck cmdType = iota
+	typeAddPathSched
+	typeAddPathDist
+
+	typeRemovePathSched
+	typeRemovePathDist
 	typeMergeStream
 	typeSplitStream
 )
 
 type cmd struct {
 	cmdType cmdType
-	cmd     any
+	command any
 	done    sync.WaitGroup
 	error   *apperror.AppError
 }
 
-type addPath[D any] struct {
+type addPath[T Event, D any] struct {
 	paths []PathAndDest[D]
 }
 
@@ -44,7 +52,7 @@ type pathInfo[T Event, D any] struct {
 	// Note that although this struct is used by multiple goroutines, it doesn't need synchronization because
 	// 1. path & dest are immutable.
 	// 2. totalTime & waitLen are only accessed by the background goroutine in the stream.
-	// 3. stream is only accessed by the main goroutine in DynamicStream.
+	// 3. stream is only accessed by the distributor goroutine in DynamicStream.
 	// We use one struct to store them together to avoid mapping by path in different places in many times.
 
 	path Path
@@ -64,13 +72,16 @@ type DynamicStream[T Event, D any] struct {
 	minStream       int
 	reportInterval  time.Duration
 
-	// Only accessed by the main goroutine.
-	pathMap map[Path]*pathInfo[T, D]
-	// Only accessed by the scheduler goroutine.
+	pathMap   map[Path]*pathInfo[T, D]
 	streamMap map[int64]*stream[T, D]
 
-	cmdChan    chan *cmd
-	reportChan chan *streamStat
+	streamMinHeap *streamHeap
+	streamMaxHeap *streamHeap
+	streamStats   map[int64]*statAndIndex
+
+	cmdChanSched chan *cmd
+	cmdChanDist  chan *cmd
+	reportChan   chan *streamStat
 
 	streamIdGen atomic.Int64
 
@@ -92,7 +103,7 @@ func NewDynamicStream[T Event, D any](expectedLatency time.Duration) *DynamicStr
 	}
 
 	ds.wg.Add(2)
-	go ds.mainLoop()
+	go ds.distributorLoop()
 	go ds.schedulerLoop()
 
 	return ds
@@ -114,12 +125,13 @@ func (ds *DynamicStream[T, D]) RemovePath(path Path) error {
 
 // Returns ErrorTypeDuplicate if the path already exists.
 func (ds *DynamicStream[T, D]) AddPathBatch(paths ...PathAndDest[D]) error {
+
 	cmd := &cmd{
-		cmdType: typeAddPath,
-		cmd:     &addPath[D]{paths: paths},
+		cmdType: typeAddPathSched,
+		cmd:     &addPath[T, D]{stream: stream, paths: pis},
 	}
 	cmd.done.Add(1)
-	ds.cmdChan <- cmd
+	ds.cmdChanSched <- cmd
 	cmd.done.Wait()
 	return cmd.error
 }
@@ -127,16 +139,16 @@ func (ds *DynamicStream[T, D]) AddPathBatch(paths ...PathAndDest[D]) error {
 // Returns ErrorTypeNotExist if the path doesn't exist.
 func (ds *DynamicStream[T, D]) RemovePathBatch(path ...Path) error {
 	cmd := &cmd{
-		cmdType: typeRemovePath,
+		cmdType: typeRemovePathSched,
 		cmd:     &removePath{path: path},
 	}
 	cmd.done.Add(1)
-	ds.cmdChan <- cmd
+	ds.cmdChanSched <- cmd
 	cmd.done.Wait()
 	return cmd.error
 }
 
-func (ds *DynamicStream[T, D]) mainLoop() {
+func (ds *DynamicStream[T, D]) distributorLoop() {
 	defer func() {
 		for _, pi := range ds.pathMap {
 			pi.stream.close()
@@ -172,7 +184,9 @@ func (ds *DynamicStream[T, D]) schedulerLoop() {
 	defer ds.wg.Done()
 	for {
 		select {
-		case cmd := <-ds.cmdChan:
+		case stat := <-ds.reportChan:
+			if old, ok := ds.streamStats[stat.id]; ok {
+			}
 
 		case <-ds.closeSignal:
 			return
@@ -180,12 +194,25 @@ func (ds *DynamicStream[T, D]) schedulerLoop() {
 	}
 }
 
-func (ds *DynamicStream[T, D]) handleAddPath(cmd *cmd) {
+func (ds *DynamicStream[T, D]) handleAddPathCheck(c *cmd) {
+	addPath := c.command.(*addPath[T, D])
+
+	for _, path := range addPath.paths {
+		if _, ok := ds.pathMap[path.Path]; ok {
+			c.error = apperror.NewAppError(apperror.ErrorTypeDuplicate, fmt.Sprintf("path %s already exists", path.Path))
+			c.done.Done()
+			return
+		}
+	}
+
+	ds.cmdChanSched <- &cmd{cmdType: typeAddPathSched, command: addPath}
+}
+
+func (ds *DynamicStream[T, D]) handleAddPathSched(cmd *cmd) {
+	paths := cmd.command.(*addPath[T, D]).paths
+
 	stream := newStream(ds.streamIdGen.Add(1), ds.expectedLatency, ds.reportInterval, ds.handler, ds.reportChan)
-
-	paths := cmd.cmd.(*addPath[D]).paths
 	pis := make([]*pathInfo[T, D], 0, len(paths))
-
 	for _, path := range paths {
 		if _, ok := ds.pathMap[path.Path]; ok {
 			cmd.error = apperror.NewAppError(apperror.ErrorTypeDuplicate, fmt.Sprintf("path %s already exists", path.Path))
@@ -194,11 +221,5 @@ func (ds *DynamicStream[T, D]) handleAddPath(cmd *cmd) {
 		}
 		pi := &pathInfo[T, D]{path: path.Path, dest: path.Dest, stream: stream}
 		pis = append(pis, pi)
-	}
-
-	stream.start(pis)
-
-	for _, pi := range pis {
-		ds.pathMap[pi.path] = pi
 	}
 }

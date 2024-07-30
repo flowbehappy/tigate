@@ -257,7 +257,7 @@ func (s *stream[T, D]) backgroundLoop(acceptedPaths []*pathInfo[T, D], formerStr
 		}
 	}
 
-	nextReport := time.NewTimer(0) // Make the first report as soon as possible.
+	nextReport := time.NewTimer(s.reportInterval)
 
 	if len(formerStreams) != 0 {
 		// Start a new goroutine (eary fetch) to handle the events in the inChan during
