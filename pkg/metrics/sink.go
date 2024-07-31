@@ -77,6 +77,22 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.000001, 2, 20), // 1us~524ms
 		}, []string{"namespace", "changefeed"})
 
+	EventDispatcherManagerResolvedTsGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "sink",
+			Name:      "event_dispatcher_manager_resolved_ts",
+			Help:      "Resolved ts of event dispatcher manager(changefeed)",
+		}, []string{"namespace", "changefeed"})
+
+	EventDispatcherManagerCheckpointTsGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "sink",
+			Name:      "event_dispatcher_manager_checkpoint_ts",
+			Help:      "Checkpoint ts of event dispatcher manager(changefeed)",
+		}, []string{"namespace", "changefeed"})
+
 	HandleDispatcherRequsetCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "ticdc",
@@ -181,4 +197,7 @@ func InitSinkMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(SinkDMLBatchCommit)
 	registry.MustRegister(SinkDMLBatchCallback)
 	registry.MustRegister(PrepareStatementErrors)
+
+	registry.MustRegister(EventDispatcherManagerResolvedTsGauge)
+	registry.MustRegister(EventDispatcherManagerCheckpointTsGauge)
 }
