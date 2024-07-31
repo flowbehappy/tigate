@@ -120,11 +120,13 @@ func (ch *Chann[T]) unboundedProcessing() {
 		if ok {
 			select {
 			case ch.out <- e:
+				atomic.AddInt64(&ch.cfg.len, -1)
 				ch.queue.PopFront()
 			case e, ok := <-ch.in:
 				if !ok {
 					panic("chann: send-only channel ch.In() closed unexpectedly")
 				}
+				atomic.AddInt64(&ch.cfg.len, 1)
 				ch.queue.PushBack(e)
 			case <-ch.close:
 				ch.unboundedTerminate()
@@ -136,6 +138,7 @@ func (ch *Chann[T]) unboundedProcessing() {
 				if !ok {
 					panic("chann: send-only channel ch.In() closed unexpectedly")
 				}
+				atomic.AddInt64(&ch.cfg.len, 1)
 				ch.queue.PushBack(e)
 			case <-ch.close:
 				ch.unboundedTerminate()
@@ -155,11 +158,11 @@ func (ch *Chann[T]) unboundedTerminate() {
 		ch.queue.PushBack(e)
 	}
 
-	itr := ch.queue.ForwardIterator()
-	for e, ok := itr.Next(); ok; e, ok = itr.Next() {
+	for e, ok := ch.queue.PopFront(); ok; e, ok = ch.queue.PopFront() {
 		// NOTICE: If no receiver is receiving the element, it will be blocked.
 		// So the consumer have to deal with all the elements in the queue.
 		ch.out <- e
+		atomic.AddInt64(&ch.cfg.len, -1)
 	}
 
 	close(ch.out)

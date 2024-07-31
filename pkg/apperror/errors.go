@@ -77,14 +77,14 @@ func NewAppError(t ErrorType, reason string) *AppError {
 	}
 }
 
-func (e *AppError) Error() string {
+func (e AppError) Error() string {
 	return fmt.Sprintf("ErrorType: %s, Reason: %s", e.Type, e.Reason)
 }
 
-func (e *AppError) GetType() ErrorType {
+func (e AppError) GetType() ErrorType {
 	return e.Type
 }
 
-func (e *AppError) Equal(err AppError) bool {
+func (e AppError) Equal(err AppError) bool {
 	return e.Type == err.Type
 }
