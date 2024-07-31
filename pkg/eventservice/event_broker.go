@@ -118,8 +118,10 @@ func (c *eventBroker) runGenerateScanTask(ctx context.Context) {
 				c.dispatchers.mu.RLock()
 				dispatcher, ok := c.dispatchers.m[change.dispatcherInfo.GetID()]
 				c.dispatchers.mu.RUnlock()
+				log.Info("get change", zap.Any("DispatcherID", dispatcher.info.GetID()))
 				// The dispatcher may be deleted. In such case, we just the stale notification.
 				if !ok {
+					log.Info("dispatcher is deleted, skip the notification", zap.Any("DispatcherID", change.dispatcherInfo.GetID()))
 					continue
 				}
 				startTs := dispatcher.watermark.Load()
@@ -334,7 +336,9 @@ func newDispatcherStat(
 // onSubscriptionWatermark updates the watermark of the table span and send a notification to notify
 // that this table span has new events.
 func (a *dispatcherStat) onSubscriptionWatermark(watermark uint64) {
+	log.Info("onSubscriptionWatermark", zap.Any("dispatcherID", a.info.GetID()))
 	if watermark < a.spanSubscription.watermark.Load() {
+		log.Info("onSubscriptionWatermark return", zap.Any("dispatcherID", a.info.GetID()))
 		return
 	}
 	a.spanSubscription.watermark.Store(watermark)
@@ -344,6 +348,7 @@ func (a *dispatcherStat) onSubscriptionWatermark(watermark uint64) {
 	}
 	select {
 	case a.notify <- sub:
+		log.Info("onSubscriptionWatermark send notification", zap.Any("dispatcherID", a.info.GetID()))
 	default:
 	}
 }
