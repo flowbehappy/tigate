@@ -69,6 +69,8 @@ type EventDispatcherManager struct {
 	tableEventDispatcherCount prometheus.Gauge
 	//filter                      *Filter
 	metricCreateDispatcherDuration prometheus.Observer
+	metricCheckpointTs             prometheus.Gauge
+	metricResolveTs                prometheus.Gauge
 }
 
 // TODO:这个锁会在量级大于几万以后影响明显，10w 的 dispatcher同时创建需要预估10多分钟的开销。
@@ -144,6 +146,8 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 		config:                         config,
 		tableEventDispatcherCount:      TableEventDispatcherCount.WithLabelValues(changefeedID.String()),
 		metricCreateDispatcherDuration: metrics.CreateDispatcherDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
+		metricCheckpointTs:             metrics.EventDispatcherManagerCheckpointTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
+		metricResolveTs:                metrics.EventDispatcherManagerResolvedTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 	}
 
 	appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(eventDispatcherManager)
@@ -401,6 +405,9 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	for _, tableSpan := range toReomveTableSpans {
 		e.cleanTableEventDispatcher(tableSpan)
 	}
+
+	e.metricCheckpointTs.Set(float64(message.Watermark.CheckpointTs))
+	e.metricResolveTs.Set(float64(message.Watermark.ResolvedTs))
 	return &message
 }
 
