@@ -100,6 +100,7 @@ func (c *eventBroker) sendWatermark(
 				ResolvedTs:   watermark,
 			}),
 		true)
+	log.Info("send watermark", zap.String("dispatcherID", dispatcherID), zap.Uint64("watermark", watermark))
 	if counter != nil {
 		counter.Inc()
 	}
@@ -153,6 +154,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 					dispatcherID := task.dispatcherStat.info.GetID()
+					log.Info("generate scan task", zap.String("dispatcherID", dispatcherID))
 					topic := task.dispatcherStat.info.GetTopic()
 					//1.The dispatcher has no new events. In such case, we don't need to scan the event store.
 					//We just send the watermark to the dispatcher.
