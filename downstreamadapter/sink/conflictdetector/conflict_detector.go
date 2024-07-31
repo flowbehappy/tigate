@@ -18,8 +18,8 @@ import (
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/utils/chann"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/pkg/chann"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
