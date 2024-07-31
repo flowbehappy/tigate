@@ -160,6 +160,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 					if task.eventCount == 0 {
 						c.sendWatermark(remoteID, topic, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
 						task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
+						task.dispatcherStat.lastSent.Store(time.Now())
 						continue
 					}
 
@@ -188,6 +189,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 								c.messageCh <- newWrapMessage(messaging.NewTargetMessage(remoteID, topic, txnEvent), false)
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
 								task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(txnEvent.Rows)))
+								task.dispatcherStat.lastSent.Store(time.Now())
 							}
 							// After all the events are sent, we send the watermark to the dispatcher.
 							c.sendWatermark(remoteID, topic, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
@@ -210,6 +212,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 								c.messageCh <- newWrapMessage(messaging.NewTargetMessage(remoteID, topic, txnEvent), false)
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
 								task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(txnEvent.Rows)))
+								task.dispatcherStat.lastSent.Store(time.Now())
 							}
 							// Create a new txnEvent.
 							txnEvent = &common.TxnEvent{
@@ -272,6 +275,7 @@ func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 	c.wg.Add(1)
 	ticker := time.NewTicker(time.Second * 10)
 	logDispatcherCount := 0
+	log.Info("start log slow dispatchers")
 	go func() {
 		defer c.wg.Done()
 		for {
@@ -282,7 +286,8 @@ func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 				c.dispatchers.mu.RLock()
 				for _, dispatcher := range c.dispatchers.m {
 					lastUpdate := dispatcher.spanSubscription.lastUpdate.Load().(time.Time)
-					if time.Since(lastUpdate) > time.Second*30 {
+					lastSent := dispatcher.lastSent.Load().(time.Time)
+					if time.Since(lastSent) > time.Second*30 {
 						// limit the log count to avoid log flooding.
 						if logDispatcherCount > 10 {
 							break
@@ -292,6 +297,8 @@ func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 						log.Warn("dispatcher is slow",
 							zap.String("changefeed", id),
 							zap.String("dispatcher", dispatcher.info.GetID()),
+							zap.Time("last-update", lastUpdate),
+							zap.Time("last-sent", lastSent),
 							zap.Uint64("subscription-watermark", dispatcher.spanSubscription.watermark.Load()),
 							zap.Uint64("dispatcher-watermark", dispatcher.watermark.Load()),
 							zap.Uint64("subscription-eventCount", dispatcher.spanSubscription.newEventCount.Load()))
@@ -338,6 +345,8 @@ type dispatcherStat struct {
 	metricSorterOutputEventCountKV        prometheus.Counter
 	metricEventServiceSendKvCount         prometheus.Counter
 	metricEventServiceSendResolvedTsCount prometheus.Counter
+
+	lastSent atomic.Value
 }
 
 func newDispatcherStat(
@@ -361,7 +370,9 @@ func newDispatcherStat(
 		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(namespace, id, "kv"),
 		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "kv"),
 		metricEventServiceSendResolvedTsCount: metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "resolved_ts"),
+		lastSent:                              atomic.Value{},
 	}
+	res.lastSent.Store(time.Now())
 	res.watermark.Store(startTs)
 	hasher := crc32.NewIEEE()
 	hasher.Write([]byte(info.GetID()))
