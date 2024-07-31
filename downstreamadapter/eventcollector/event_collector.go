@@ -139,7 +139,7 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 	}
 
 	dispatcherID := txnEvent.DispatcherID
-	log.Info("Recv TxnEvent", zap.Any("dispatcherID", dispatcherID), zap.Any("event is dml event", txnEvent.IsDMLEvent()))
+	log.Info("Recv TxnEvent", zap.Any("dispatcherID", dispatcherID), zap.Any("event is dml event", txnEvent.IsDMLEvent()), zap.Any("event resolved ts", txnEvent.ResolvedTs))
 	// if txnEvent.IsDMLEvent() {
 	// 	rowEvent := txnEvent.GetRows()[0]
 	// 	log.Info("Recv TxnEvent", zap.Any("dispatcherID", dispatcherID), zap.Any("event info", rowEvent.CommitTs), zap.Any("table name", rowEvent.TableInfo.TableName))

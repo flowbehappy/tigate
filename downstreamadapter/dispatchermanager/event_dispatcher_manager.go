@@ -252,7 +252,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 	}
 
 	e.tableEventDispatcherCount.Inc()
-	log.Info("new table event dispatcher created", zap.Any("tableSpan", tableSpan),
+	log.Info("new table event dispatcher created", zap.Any("tableSpan", tableSpan), zap.Any("changefeedID", e.changefeedID.String()),
 		zap.Int64("cost(ns)", time.Since(start).Nanoseconds()), zap.Time("start", start))
 	e.metricCreateDispatcherDuration.Observe(float64(time.Since(start).Seconds()))
 	return tableEventDispatcher
