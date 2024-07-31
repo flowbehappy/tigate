@@ -137,6 +137,7 @@ func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startT
 	tableEventDispatcher.sink.AddTableSpan(tableSpan)
 	tableEventDispatcher.wg.Add(1)
 	go tableEventDispatcher.DispatcherEvents(ctx)
+	log.Info("Create Table Event Dispatcher", zap.Any("Dispatcherid", tableEventDispatcher.id), zap.Any("table id", tableEventDispatcher.tableSpan.TableID))
 
 	return tableEventDispatcher
 }
