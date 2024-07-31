@@ -74,6 +74,9 @@ func NewConflictDetector(
 }
 
 func (d *ConflictDetector) runBackgroundTasks() {
+	defer func() {
+		d.notifiedNodes.CloseAndDrain()
+	}()
 	for {
 		select {
 		case <-d.closeCh:
