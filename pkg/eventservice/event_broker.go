@@ -256,9 +256,11 @@ func (c *eventBroker) runPushMessageWorker(ctx context.Context) {
 					err := c.msgSender.SendEvent(m.msg)
 					// If the message is a watermark, we don't need to retry. Since the watermark is continuous.
 					if err != nil && !m.isWatermark {
-						log.Debug("send message failed", zap.Error(err))
+						// log.Debug("send message failed", zap.Error(err))
+						log.Error("send message failed", zap.Error(err), zap.Any("message dispatcher id", m.msg.Message.(*common.TxnEvent).DispatcherID))
 						continue
 					}
+					log.Info("send message success", zap.Any("message dispatcher id", m.msg.Message.(*common.TxnEvent).DispatcherID))
 					metricEventServiceSendEventDuration.Observe(time.Since(start).Seconds())
 					break
 				}
