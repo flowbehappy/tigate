@@ -132,7 +132,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 		cancel:                         cancel,
 		config:                         config,
 		tableEventDispatcherCount:      TableEventDispatcherCount.WithLabelValues(changefeedID.String()),
-		metricCreateDispatcherDuration: metrics.HandleDispatcherRequestDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
+		metricCreateDispatcherDuration: metrics.CreateDispatcherDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 	}
 
 	appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(eventDispatcherManager)
