@@ -14,8 +14,6 @@
 package scheduler
 
 import (
-	"time"
-
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
@@ -41,14 +39,9 @@ func (s *Supervisor) schedule(
 	stateMachines utils.Map[InferiorID, *StateMachine],
 	batchSize int,
 ) []*ScheduleTask {
-	if time.Since(s.lastScheduleTime) > 120*time.Second {
-		s.MarkNeedAddInferior()
-		s.MarkNeedRemoveInferior()
-	}
 	for _, sched := range s.schedulers {
 		tasks := sched.Schedule(allInferiors, aliveCaptures, stateMachines, batchSize)
 		if len(tasks) != 0 {
-			s.lastScheduleTime = time.Now()
 			return tasks
 		}
 	}
@@ -59,8 +52,18 @@ func (s *Supervisor) schedule(
 func (s *Supervisor) Schedule(allInferiors utils.Map[InferiorID, Inferior]) ([]rpc.Message, error) {
 	msgs := s.checkRunningTasks()
 
+	if !s.CheckAllCaptureInitialized() {
+		log.Info("skip scheduling since not all captures are initialized",
+			zap.String("id", s.ID.String()),
+			zap.Int("totalInferiors", allInferiors.Len()),
+			zap.Int("totalStateMachines", s.StateMachines.Len()),
+			zap.Int("maxTaskConcurrency", s.maxTaskConcurrency),
+			zap.Int("runningTasks", s.RunningTasks.Len()),
+		)
+		return msgs, nil
+	}
 	batchSize := s.maxTaskConcurrency - s.RunningTasks.Len()
-	if batchSize <= 0 || !s.CheckAllCaptureInitialized() {
+	if batchSize <= 0 {
 		log.Warn("Skip scheduling since there are too many running task",
 			zap.String("id", s.ID.String()),
 			zap.Int("totalInferiors", allInferiors.Len()),
@@ -79,12 +82,12 @@ func (s *Supervisor) Schedule(allInferiors utils.Map[InferiorID, Inferior]) ([]r
 
 func (s *Supervisor) MarkNeedAddInferior() {
 	basciScheduler := s.schedulers[0].(*BasicScheduler)
-	basciScheduler.needAddInferior = true
+	basciScheduler.markNeedAddInferior()
 }
 
 func (s *Supervisor) MarkNeedRemoveInferior() {
 	basciScheduler := s.schedulers[0].(*BasicScheduler)
-	basciScheduler.needRemoveInferior = true
+	basciScheduler.markNeedRemoveInferior()
 }
 
 func (s *Supervisor) Name() string {
@@ -92,11 +95,11 @@ func (s *Supervisor) Name() string {
 }
 
 func (s *Supervisor) checkRunningTasks() (msgs []rpc.Message) {
-	needResend := false
-	if time.Since(s.lastResendTime) > time.Second*20 {
-		needResend = true
-		s.lastResendTime = time.Now()
-	}
+	needResend := true
+	// if time.Since(s.lastResendTime) > time.Second*20 {
+	// 	needResend = true
+	// 	s.lastResendTime = time.Now()
+	// }
 
 	// Check if a running task is finished.
 	var toBeDeleted []InferiorID
@@ -112,6 +115,7 @@ func (s *Supervisor) checkRunningTasks() (msgs []rpc.Message) {
 
 		if needResend {
 			msg := stateMachine.handleResend()
+			log.Info("resend message", zap.Any("msg", msg))
 			msgs = append(msgs, msg...)
 		}
 		return true

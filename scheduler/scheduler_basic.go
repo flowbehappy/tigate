@@ -14,6 +14,8 @@
 package scheduler
 
 import (
+	"time"
+
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -21,6 +23,8 @@ import (
 )
 
 type BasicScheduler struct {
+	lastForceScheduleTime time.Time
+
 	needAddInferior  bool
 	addInferiorCache []InferiorID
 
@@ -29,11 +33,26 @@ type BasicScheduler struct {
 }
 
 func NewBasicScheduler() *BasicScheduler {
-	return &BasicScheduler{}
+	return &BasicScheduler{
+		lastForceScheduleTime: time.Now(),
+	}
 }
 
 func (b *BasicScheduler) Name() string {
 	return "basic-scheduler"
+}
+
+func (b *BasicScheduler) markNeedAddInferior() {
+	b.needAddInferior = true
+}
+
+func (b *BasicScheduler) markNeedRemoveInferior() {
+	b.needRemoveInferior = true
+}
+
+// hasPendingTask
+func (b *BasicScheduler) hasPendingTask() bool {
+	return len(b.addInferiorCache) > 0 || len(b.removeInferiorCache) > 0
 }
 
 func (b *BasicScheduler) Schedule(
@@ -41,8 +60,44 @@ func (b *BasicScheduler) Schedule(
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
 	stateMachines utils.Map[InferiorID, *StateMachine],
 	batchSize int,
-) []*ScheduleTask {
-	tasks := make([]*ScheduleTask, 0)
+) (tasks []*ScheduleTask) {
+	if !b.hasPendingTask() && time.Since(b.lastForceScheduleTime) > 120*time.Second {
+		b.markNeedAddInferior()
+		b.markNeedRemoveInferior()
+		b.lastForceScheduleTime = time.Now()
+	}
+
+	// Build remove inferior tasks.
+	if b.needRemoveInferior {
+		// The two sets are not identical. We need to build a map to find removed inferiors.
+		b.removeInferiorCache = make([]InferiorID, 0, batchSize)
+		stateMachines.Ascend(func(key InferiorID, value *StateMachine) bool {
+			ok := allInferiors.Has(key)
+			if !ok {
+				b.removeInferiorCache = append(b.removeInferiorCache, key)
+			}
+			return true
+		})
+		b.needRemoveInferior = false
+		log.Info("basic scheduler generate new remove inferiors cache", zap.Int("count", len(b.removeInferiorCache)))
+	}
+	if len(b.removeInferiorCache) > 0 {
+		batch := batchSize - len(tasks)
+		if batchSize > len(b.removeInferiorCache) {
+			batch = len(b.removeInferiorCache)
+		}
+		rmInferiors := b.removeInferiorCache[:batch]
+		b.removeInferiorCache = b.removeInferiorCache[batch:]
+		if len(b.removeInferiorCache) == 0 {
+			// release for GC
+			b.removeInferiorCache = nil
+		}
+		tasks = append(tasks, newBurstRemoveInferiors(rmInferiors, stateMachines)...)
+		if len(rmInferiors) >= batchSize {
+			return tasks
+		}
+	}
+
 	// Build add inferior tasks.
 	if b.needAddInferior {
 		b.addInferiorCache = make([]InferiorID, 0, batchSize)
@@ -57,6 +112,7 @@ func (b *BasicScheduler) Schedule(
 			return true
 		})
 		b.needAddInferior = false
+		log.Info("basic scheduler generate new add inferiors cache", zap.Int("count", len(b.addInferiorCache)))
 	}
 	if len(b.addInferiorCache) > 0 {
 		batch := batchSize
@@ -88,35 +144,6 @@ func (b *BasicScheduler) Schedule(
 		}
 	}
 
-	// Build remove inferior tasks.
-	if b.needRemoveInferior {
-		// The two sets are not identical. We need to build a map to find removed inferiors.
-		b.removeInferiorCache = make([]InferiorID, 0, batchSize)
-		stateMachines.Ascend(func(key InferiorID, value *StateMachine) bool {
-			ok := allInferiors.Has(key)
-			if !ok {
-				b.removeInferiorCache = append(b.removeInferiorCache, key)
-			}
-			return true
-		})
-		b.needRemoveInferior = false
-	}
-	if len(b.removeInferiorCache) > 0 {
-		batch := batchSize - len(tasks)
-		if batchSize > len(b.removeInferiorCache) {
-			batch = len(b.removeInferiorCache)
-		}
-		rmInferiors := b.removeInferiorCache[:batch]
-		b.removeInferiorCache = b.removeInferiorCache[batch:]
-		if len(b.removeInferiorCache) == 0 {
-			// release for GC
-			b.removeInferiorCache = nil
-		}
-		tasks = append(tasks, newBurstRemoveInferiors(rmInferiors, stateMachines)...)
-		if len(rmInferiors) >= batchSize {
-			return tasks
-		}
-	}
 	return tasks
 }
 

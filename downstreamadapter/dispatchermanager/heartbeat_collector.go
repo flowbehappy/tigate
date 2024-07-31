@@ -21,6 +21,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -40,6 +41,8 @@ type HeartBeatCollector struct {
 	responseChanMapMutex sync.RWMutex
 	responseChanMap      map[model.ChangeFeedID]*HeartbeatResponseQueue //changefeedID -> HeartbeatResponseQueue
 	requestQueue         *HeartbeatRequestQueue
+
+	dispatcherRequestCh chan *heartbeatpb.ScheduleDispatcherRequest
 }
 
 func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
@@ -48,6 +51,7 @@ func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 		requestQueue:              NewHeartbeatRequestQueue(),
 		responseChanMap:           make(map[model.ChangeFeedID]*HeartbeatResponseQueue),
 		eventDispatcherManagerMap: make(map[model.ChangeFeedID]*EventDispatcherManager),
+		dispatcherRequestCh:       make(chan *heartbeatpb.ScheduleDispatcherRequest, 102400),
 	}
 	//context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(heartbeatResponseTopic, heartBeatCollector.RecvHeartBeatResponseMessages)
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
@@ -55,8 +59,24 @@ func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 	heartBeatCollector.wg.Add(1)
 	go heartBeatCollector.SendHeartBeatMessages()
 
-	return &heartBeatCollector
+	for i := 0; i < 1; i++ {
+		heartBeatCollector.wg.Add(1)
+		go func() {
+			defer heartBeatCollector.wg.Done()
+			for {
+				select {
+				case req := <-heartBeatCollector.dispatcherRequestCh:
+					err := heartBeatCollector.handleDispatcherRequestMessages(req)
+					if err != nil {
+						metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", req.ChangefeedID, "error").Inc()
+					}
+					metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", req.ChangefeedID, "success").Inc()
+				}
+			}
+		}()
+	}
 
+	return &heartBeatCollector
 }
 
 func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherManager) error {
@@ -108,7 +128,19 @@ func (c *HeartBeatCollector) RecvHeartBeatResponseMessages(msg *messaging.Target
 
 func (c *HeartBeatCollector) RecvSchedulerDispatcherRequestMessages(ctx context.Context, msg *messaging.TargetMessage) error {
 	scheduleDispatcherRequest := msg.Message.(*heartbeatpb.ScheduleDispatcherRequest)
-	changefeedID := model.DefaultChangeFeedID(scheduleDispatcherRequest.ChangefeedID)
+
+	select {
+	case c.dispatcherRequestCh <- scheduleDispatcherRequest:
+		metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", scheduleDispatcherRequest.ChangefeedID, "receive").Inc()
+	default:
+		metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", scheduleDispatcherRequest.ChangefeedID, "discard").Inc()
+	}
+	return nil
+}
+
+func (c *HeartBeatCollector) handleDispatcherRequestMessages(req *heartbeatpb.ScheduleDispatcherRequest) error {
+	// start := time.Now()
+	changefeedID := model.DefaultChangeFeedID(req.ChangefeedID)
 
 	c.eventDispatcherManagerMutex.RLock()
 	defer c.eventDispatcherManagerMutex.RUnlock()
@@ -116,24 +148,27 @@ func (c *HeartBeatCollector) RecvSchedulerDispatcherRequestMessages(ctx context.
 	eventDispatcherManager, ok := c.eventDispatcherManagerMap[changefeedID]
 	if !ok {
 		// Maybe the message is received before the event dispatcher manager is registered, so just ingore it
-		log.Warn("invalid changefeedID in scheduler dispatcher request message", zap.Any("changefeedID", changefeedID))
+		log.Warn("invalid changefeedID in scheduler dispatcher request message", zap.String("changefeedID", changefeedID.String()))
 		return nil
 	}
-	scheduleAction := scheduleDispatcherRequest.ScheduleAction
-	config := scheduleDispatcherRequest.Config
+	scheduleAction := req.ScheduleAction
+	config := req.Config
 	if scheduleAction == heartbeatpb.ScheduleAction_Create {
 		// TODO: 后续需要优化这段逻辑，perpared 这种调度状态需要多发 message 回去
-		if !scheduleDispatcherRequest.IsSecondary {
+		if !req.IsSecondary {
 			eventDispatcherManager.NewTableEventDispatcher(&common.TableSpan{TableSpan: config.Span}, config.StartTs)
 		} else {
-			eventDispatcherManager.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
-				Span:            config.Span,
-				ComponentStatus: heartbeatpb.ComponentState_Prepared,
-			}
+			// eventDispatcherManager.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
+			// 	Span:            config.Span,
+			// 	ComponentStatus: heartbeatpb.ComponentState_Prepared,
+			// }
 		}
 	} else if scheduleAction == heartbeatpb.ScheduleAction_Remove {
 		eventDispatcherManager.RemoveTableEventDispatcher(&common.TableSpan{TableSpan: config.Span})
 	}
+
+	// log.Info("RecvSchedulerDispatcherRequestMessages handle dispatch msg", zap.Any("tableSpan", config.Span),
+	// zap.Int64("cost(ns)", time.Since(start).Nanoseconds()), zap.Time("start", start))
 	return nil
 }
 
