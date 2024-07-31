@@ -4,6 +4,8 @@ package chann
 // It is a wrapper of Chann.
 // NOTICE: Please make sure that it is safe to drain rest elements in the channel
 // before closing the channel.
+//
+// Deprecated: Just Don't Use It. Use a channel please.
 type DrainableChann[T any] struct {
 	inner *Chann[T]
 }
