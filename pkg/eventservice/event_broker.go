@@ -80,7 +80,8 @@ func newEventBroker(
 	}
 	c.runGenerateScanTask(ctx)
 	c.runScanWorker(ctx)
-	c.runPushMessageWorker(ctx)
+	c.runSendMessageWorker(ctx)
+	c.logSlowDispatchers(ctx)
 	return c
 }
 
@@ -232,7 +233,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 	}
 }
 
-func (c *eventBroker) runPushMessageWorker(ctx context.Context) {
+func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 	c.wg.Add(1)
 	// Use a single goroutine to send the messages in order.
 	go func() {
@@ -242,6 +243,7 @@ func (c *eventBroker) runPushMessageWorker(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case m := <-c.messageCh:
+
 				// Send the message to messageCenter. Retry if the send failed.
 				for {
 					select {
@@ -257,9 +259,45 @@ func (c *eventBroker) runPushMessageWorker(ctx context.Context) {
 						log.Debug("send message failed", zap.Error(err))
 						continue
 					}
+
 					metricEventServiceSendEventDuration.Observe(time.Since(start).Seconds())
 					break
 				}
+			}
+		}
+	}()
+}
+
+func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
+	c.wg.Add(1)
+	ticker := time.NewTicker(time.Second * 10)
+	logDispatcherCount := 0
+	go func() {
+		defer c.wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				c.dispatchers.mu.RLock()
+				for _, dispatcher := range c.dispatchers.m {
+					lastUpdate := dispatcher.spanSubscription.lastUpdate.Load().(time.Time)
+					if time.Since(lastUpdate) > time.Second*30 {
+						// limit the log count to avoid log flooding.
+						if logDispatcherCount > 10 {
+							break
+						}
+						logDispatcherCount++
+						_, id := dispatcher.info.GetChangefeedID()
+						log.Warn("dispatcher is slow",
+							zap.String("changefeed", id),
+							zap.String("dispatcher", dispatcher.info.GetID()),
+							zap.Uint64("subscription-watermark", dispatcher.spanSubscription.watermark.Load()),
+							zap.Uint64("dispatcher-watermark", dispatcher.watermark.Load()),
+							zap.Uint64("subscription-eventCount", dispatcher.spanSubscription.newEventCount.Load()))
+					}
+				}
+				c.dispatchers.mu.RUnlock()
 			}
 		}
 	}()
@@ -307,9 +345,13 @@ func newDispatcherStat(
 	info DispatcherInfo,
 	notify chan *subscriptionChange) *dispatcherStat {
 	subscription := &spanSubscription{
-		span: info.GetTableSpan(),
+		span:       info.GetTableSpan(),
+		lastUpdate: atomic.Value{},
 	}
+
+	subscription.lastUpdate.Store(time.Now())
 	subscription.watermark.Store(uint64(startTs))
+
 	namespace, id := info.GetChangefeedID()
 	res := &dispatcherStat{
 		info:             info,
@@ -334,6 +376,8 @@ func (a *dispatcherStat) onSubscriptionWatermark(watermark uint64) {
 		return
 	}
 	a.spanSubscription.watermark.Store(watermark)
+	a.spanSubscription.lastUpdate.Store(time.Now())
+
 	sub := &subscriptionChange{
 		dispatcherInfo: a.info,
 		eventCount:     a.spanSubscription.newEventCount.Swap(0),
@@ -363,6 +407,7 @@ type spanSubscription struct {
 	// newEventCount is used to store the number of the new events that have been stored in the event store
 	// since last scanTask is generated.
 	newEventCount atomic.Uint64
+	lastUpdate    atomic.Value
 }
 
 type subscriptionChange struct {
