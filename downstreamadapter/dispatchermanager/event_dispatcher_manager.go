@@ -117,6 +117,17 @@ func (d *DispatcherMap) ForEach(fn func(tableSpan *common.TableSpan, dispatcher 
 	})
 }
 
+func (d *DispatcherMap) GetAllDispatchers() []*dispatcher.TableEventDispatcher {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	var dispatchers []*dispatcher.TableEventDispatcher
+	d.dispatchers.Ascend(func(tableSpan *common.TableSpan, dispatcherItem *dispatcher.TableEventDispatcher) bool {
+		dispatchers = append(dispatchers, dispatcherItem)
+		return true
+	})
+	return dispatchers
+}
+
 func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.ChangefeedConfig, clusterID messaging.ServerId, maintainerID messaging.ServerId) *EventDispatcherManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	eventDispatcherManager := &EventDispatcherManager{
@@ -276,9 +287,11 @@ func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx conte
 				}
 			}
 
-			message := e.CollectHeartbeatInfo(false)
+			var message heartbeatpb.HeartBeatRequest
+			message.ChangefeedID = e.changefeedID.ID
+			//message := e.CollectHeartbeatInfo(false)
 			message.Statuses = statusMessage
-			e.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: message})
+			e.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
 			statusMessage = statusMessage[:0]
 		}
 	}
@@ -352,7 +365,9 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	}
 
 	toReomveTableSpans := make([]*common.TableSpan, 0)
-	e.dispatcherMap.ForEach(func(tableSpan *common.TableSpan, tableEventDispatcher *dispatcher.TableEventDispatcher) {
+	allDispatchers := e.dispatcherMap.GetAllDispatchers()
+	// e.dispatcherMap.ForEach(func(tableSpan *common.TableSpan, tableEventDispatcher *dispatcher.TableEventDispatcher) {
+	for _, tableEventDispatcher := range allDispatchers {
 		// If the dispatcher is in removing state, we need to check if it's closed successfully.
 		// If it's closed successfully, we could clean it up.
 		// TODO: we need to consider how to deal with the checkpointTs of the removed dispatcher if the message will be discarded.
@@ -369,8 +384,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 					Span:            dispatcherHeartBeatInfo.TableSpan.TableSpan,
 					ComponentStatus: heartbeatpb.ComponentState_Stopped,
 				})
-				toReomveTableSpans = append(toReomveTableSpans, tableSpan)
-				return
+				toReomveTableSpans = append(toReomveTableSpans, tableEventDispatcher.GetTableSpan())
 			}
 		}
 
@@ -382,7 +396,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 				ComponentStatus: dispatcherHeartBeatInfo.ComponentStatus,
 			})
 		}
-	})
+	}
 
 	for _, tableSpan := range toReomveTableSpans {
 		e.cleanTableEventDispatcher(tableSpan)
