@@ -367,9 +367,11 @@ func (m *Maintainer) initChangefeed() error {
 }
 
 func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
-	m.checkpointTsByCapture[model.CaptureID(msg.From)] = *msg.Message.(*heartbeatpb.HeartBeatRequest).Watermark
-
 	req := msg.Message.(*heartbeatpb.HeartBeatRequest)
+	if req.Watermark != nil {
+		m.checkpointTsByCapture[model.CaptureID(msg.From)] = *req.Watermark
+	}
+
 	var status []scheduler.InferiorStatus
 	for _, info := range req.Statuses {
 		status = append(status, &ReplicaSetStatus{
