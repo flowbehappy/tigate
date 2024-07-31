@@ -14,7 +14,7 @@ import (
 
 const (
 	defaultChannelSize = 2048
-	defaultWorkerCount = 32
+	defaultWorkerCount = 64
 )
 
 // EventService accepts the requests of pulling events.
@@ -112,7 +112,7 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 		s.brokers[clusterID] = c
 	}
 
-	dispatcher := newDispatcherStat(startTs, info, c.changedCh)
+	dispatcher := newDispatcherStat(startTs, info, c.changedChs)
 	c.dispatchers.mu.Lock()
 	c.dispatchers.m[info.GetID()] = dispatcher
 	c.dispatchers.mu.Unlock()
