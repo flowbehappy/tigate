@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -71,6 +70,9 @@ type schemaStore struct {
 	finishedDDLTS uint64
 	// max schemaVersion of all applied ddl events
 	schemaVersion int64
+
+	// FIXME: remove these hackFields
+	tempStore *versionedTableInfoStore
 
 	// schemaID -> database info
 	// it contains all databases
@@ -200,20 +202,45 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 						zap.String("job", event.Job.Query),
 						zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
 						zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS))
-					if err := handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap); err != nil {
-						s.mu.Unlock()
-						log.Error("handle ddl job failed", zap.Error(err))
-						return err
-					}
-					// TODO: batch ddl event
-					// TODO: write ddl event before update resolved ts
-					err := s.dataStorage.writeDDLEvent(event)
-					if err != nil {
-						log.Fatal("write ddl event failed", zap.Error(err))
-					}
 					s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
 					s.finishedDDLTS = event.Job.BinlogInfo.FinishedTS
+					if s.tempStore == nil {
+						newStore, err := tempHandleResolvedDDLJob(event.Job, s.databaseMap)
+						if err != nil {
+							s.mu.Unlock()
+							log.Error("handle ddl job failed", zap.Error(err))
+						}
+						s.tempStore = newStore
+					}
 				}
+				// for _, event := range resolvedEvents {
+				// 	if event.Job.BinlogInfo.SchemaVersion <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTS {
+				// 		log.Info("skip already applied ddl job",
+				// 			zap.String("job", event.Job.Query),
+				// 			zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+				// 			zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
+				// 			zap.Any("schemaVersion", s.schemaVersion),
+				// 			zap.Uint64("finishedDDLTS", s.finishedDDLTS))
+				// 		continue
+				// 	}
+				// 	log.Info("apply ddl job",
+				// 		zap.String("job", event.Job.Query),
+				// 		zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+				// 		zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS))
+				// 	if err := handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap); err != nil {
+				// 		s.mu.Unlock()
+				// 		log.Error("handle ddl job failed", zap.Error(err))
+				// 		return err
+				// 	}
+				// 	// TODO: batch ddl event
+				// 	// TODO: write ddl event before update resolved ts
+				// 	err := s.dataStorage.writeDDLEvent(event)
+				// 	if err != nil {
+				// 		log.Fatal("write ddl event failed", zap.Error(err))
+				// 	}
+				// 	s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
+				// 	s.finishedDDLTS = event.Job.BinlogInfo.FinishedTS
+				// }
 				s.mu.Unlock()
 				s.maxResolvedTS.Store(uint64(v))
 			default:
@@ -264,116 +291,116 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]common.TableID, 
 func (s *schemaStore) RegisterDispatcher(
 	dispatcherID common.DispatcherID, tableID common.TableID, startTS common.Ts,
 ) error {
-	s.mu.Lock()
-	// TODO: fix me in the future
-	if startTS < s.dataStorage.getGCTS() {
-		s.mu.Unlock()
-		log.Panic("startTs is old than gcTs")
-	}
+	// s.mu.Lock()
+	// // TODO: fix me in the future
+	// if startTS < s.dataStorage.getGCTS() {
+	// 	s.mu.Unlock()
+	// 	log.Panic("startTs is old than gcTs")
+	// }
 
-	s.dispatchersMap[dispatcherID] = DispatcherInfo{
-		tableID: tableID,
-		// filter:  filter,
-	}
-	getSchemaName := func(schemaID common.SchemaID) (string, error) {
-		s.mu.RLock()
+	// s.dispatchersMap[dispatcherID] = DispatcherInfo{
+	// 	tableID: tableID,
+	// 	// filter:  filter,
+	// }
+	// getSchemaName := func(schemaID common.SchemaID) (string, error) {
+	// 	s.mu.RLock()
 
-		defer func() {
-			s.mu.RUnlock()
-		}()
+	// 	defer func() {
+	// 		s.mu.RUnlock()
+	// 	}()
 
-		databaseInfo, ok := s.databaseMap[common.SchemaID(schemaID)]
-		if !ok {
-			return "", errors.New("database not found")
-		}
-		return databaseInfo.Name, nil
-	}
-	// check whether there is already a versionedTableInfoStore satisfy the needs
-	store, ok := s.tableInfoStoreMap[tableID]
-	if !ok {
-		store = newEmptyVersionedTableInfoStore(tableID)
-		s.tableInfoStoreMap[tableID] = store
-		store.registerDispatcher(dispatcherID, startTS)
-		endTS := s.finishedDDLTS
-		s.mu.Unlock()
-		err := s.dataStorage.buildVersionedTableInfoStore(store, startTS, common.Ts(endTS), getSchemaName)
-		if err != nil {
-			// TODO: unregister dispatcher, make sure other wait go routines exit successfully
-			return err
-		}
-		store.setTableInfoInitialized()
-		return nil
-	} else {
-		// prevent old store from gc
-		store.registerDispatcher(dispatcherID, startTS)
-		s.mu.Unlock()
-		store.waitTableInfoInitialized()
-	}
-	if store.getFirstVersion() <= startTS {
-		return nil
-	}
-	endTS := store.getFirstVersion()
+	// 	databaseInfo, ok := s.databaseMap[common.SchemaID(schemaID)]
+	// 	if !ok {
+	// 		return "", errors.New("database not found")
+	// 	}
+	// 	return databaseInfo.Name, nil
+	// }
+	// // check whether there is already a versionedTableInfoStore satisfy the needs
+	// store, ok := s.tableInfoStoreMap[tableID]
+	// if !ok {
+	// 	store = newEmptyVersionedTableInfoStore(tableID)
+	// 	s.tableInfoStoreMap[tableID] = store
+	// 	store.registerDispatcher(dispatcherID, startTS)
+	// 	endTS := s.finishedDDLTS
+	// 	s.mu.Unlock()
+	// 	err := s.dataStorage.buildVersionedTableInfoStore(store, startTS, common.Ts(endTS), getSchemaName)
+	// 	if err != nil {
+	// 		// TODO: unregister dispatcher, make sure other wait go routines exit successfully
+	// 		return err
+	// 	}
+	// 	store.setTableInfoInitialized()
+	// 	return nil
+	// } else {
+	// 	// prevent old store from gc
+	// 	store.registerDispatcher(dispatcherID, startTS)
+	// 	s.mu.Unlock()
+	// 	store.waitTableInfoInitialized()
+	// }
+	// if store.getFirstVersion() <= startTS {
+	// 	return nil
+	// }
+	// endTS := store.getFirstVersion()
 
-	// TODO: there may be multiple dispatchers build the same versionedTableInfoStore, optimize it later
-	newStore := newEmptyVersionedTableInfoStore(tableID)
-	err := s.dataStorage.buildVersionedTableInfoStore(newStore, startTS, endTS, getSchemaName)
-	if err != nil {
-		return err
-	}
-	newStore.setTableInfoInitialized()
+	// // TODO: there may be multiple dispatchers build the same versionedTableInfoStore, optimize it later
+	// newStore := newEmptyVersionedTableInfoStore(tableID)
+	// err := s.dataStorage.buildVersionedTableInfoStore(newStore, startTS, endTS, getSchemaName)
+	// if err != nil {
+	// 	return err
+	// }
+	// newStore.setTableInfoInitialized()
 
-	s.mu.Lock()
-	defer func() {
-		s.mu.Unlock()
-	}()
-	// check whether the data is gced again
-	if startTS < s.dataStorage.getGCTS() {
-		// TODO: unregister dispatcher, make sure other wait go routines exit successfully
-		return errors.New("start ts is old than gc ts")
-	}
-	oldStore, ok := s.tableInfoStoreMap[tableID]
-	if ok {
-		// Note: oldStore must be initialized, no need to check again.
-		// keep the store with smaller version
-		if oldStore.getFirstVersion() <= newStore.getFirstVersion() {
-			return nil
-		} else {
-			newStore.checkAndCopyTailFrom(oldStore)
-			newStore.copyRegisteredDispatchers(oldStore)
-			s.tableInfoStoreMap[tableID] = newStore
-		}
-	} else {
-		log.Panic("should not happened")
-	}
+	// s.mu.Lock()
+	// defer func() {
+	// 	s.mu.Unlock()
+	// }()
+	// // check whether the data is gced again
+	// if startTS < s.dataStorage.getGCTS() {
+	// 	// TODO: unregister dispatcher, make sure other wait go routines exit successfully
+	// 	return errors.New("start ts is old than gc ts")
+	// }
+	// oldStore, ok := s.tableInfoStoreMap[tableID]
+	// if ok {
+	// 	// Note: oldStore must be initialized, no need to check again.
+	// 	// keep the store with smaller version
+	// 	if oldStore.getFirstVersion() <= newStore.getFirstVersion() {
+	// 		return nil
+	// 	} else {
+	// 		newStore.checkAndCopyTailFrom(oldStore)
+	// 		newStore.copyRegisteredDispatchers(oldStore)
+	// 		s.tableInfoStoreMap[tableID] = newStore
+	// 	}
+	// } else {
+	// 	log.Panic("should not happened")
+	// }
 	return nil
 }
 
 func (s *schemaStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, ts common.Ts) error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	info, ok := s.dispatchersMap[dispatcherID]
-	if !ok {
-		return errors.New("dispatcher not found")
-	}
-	store := s.tableInfoStoreMap[common.TableID(info.tableID)]
-	store.updateDispatcherSendTS(dispatcherID, ts)
+	// s.mu.RLock()
+	// defer s.mu.RUnlock()
+	// info, ok := s.dispatchersMap[dispatcherID]
+	// if !ok {
+	// 	return errors.New("dispatcher not found")
+	// }
+	// store := s.tableInfoStoreMap[common.TableID(info.tableID)]
+	// store.updateDispatcherSendTS(dispatcherID, ts)
 	return nil
 }
 
 func (s *schemaStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	info, ok := s.dispatchersMap[dispatcherID]
-	if !ok {
-		return errors.New("dispatcher not found")
-	}
-	tableID := info.tableID
-	delete(s.dispatchersMap, dispatcherID)
-	store := s.tableInfoStoreMap[tableID]
-	removed := store.unregisterDispatcher(dispatcherID)
-	if removed {
-		delete(s.tableInfoStoreMap, tableID)
-	}
+	// s.mu.Lock()
+	// defer s.mu.Unlock()
+	// info, ok := s.dispatchersMap[dispatcherID]
+	// if !ok {
+	// 	return errors.New("dispatcher not found")
+	// }
+	// tableID := info.tableID
+	// delete(s.dispatchersMap, dispatcherID)
+	// store := s.tableInfoStoreMap[tableID]
+	// removed := store.unregisterDispatcher(dispatcherID)
+	// if removed {
+	// 	delete(s.tableInfoStoreMap, tableID)
+	// }
 	return nil
 }
 
@@ -405,12 +432,19 @@ func (s *schemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*commo
 	s.waitResolvedTs(tableID, ts)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	store, ok := s.tableInfoStoreMap[tableID]
-	if !ok {
-		return nil, fmt.Errorf(fmt.Sprintf("table %d not found", tableID))
+	if s.tempStore == nil {
+		log.Panic("should not happen")
 	}
-	store.waitTableInfoInitialized()
-	return store.getTableInfo(ts)
+	return s.tempStore.getTableInfo(ts)
+
+	// s.mu.RLock()
+	// defer s.mu.RUnlock()
+	// store, ok := s.tableInfoStoreMap[tableID]
+	// if !ok {
+	// 	return nil, fmt.Errorf(fmt.Sprintf("table %d not found", tableID))
+	// }
+	// store.waitTableInfoInitialized()
+	// return store.getTableInfo(ts)
 }
 
 func (s *schemaStore) GetNextDDLEvent(dispatcherID common.DispatcherID) (*DDLEvent, common.Ts, error) {
@@ -486,6 +520,27 @@ func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfo
 	}
 
 	return nil
+}
+
+func tempHandleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap) (*versionedTableInfoStore, error) {
+	switch job.Type {
+	case model.ActionCreateSchema:
+		return nil, createSchema(job, databaseMap)
+	case model.ActionCreateTables,
+		model.ActionCreateTable,
+		model.ActionCreateView,
+		model.ActionRecoverTable:
+		if err := fillSchemaName(job, databaseMap); err != nil {
+			return nil, err
+		}
+		store := newEmptyVersionedTableInfoStore(common.TableID(job.TableID))
+		store.applyDDL(job)
+		return store, nil
+	default:
+		log.Warn("unknown job", zap.Any("job", job))
+	}
+
+	return nil, nil
 }
 
 func fillSchemaName(job *model.Job, databaseMap DatabaseInfoMap) error {
