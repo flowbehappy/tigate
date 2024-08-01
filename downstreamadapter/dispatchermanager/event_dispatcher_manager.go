@@ -21,6 +21,7 @@ import (
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/oracle"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
@@ -406,8 +407,8 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 		e.cleanTableEventDispatcher(tableSpan)
 	}
 
-	e.metricCheckpointTs.Set(float64(message.Watermark.CheckpointTs))
-	e.metricResolveTs.Set(float64(message.Watermark.ResolvedTs))
+	e.metricCheckpointTs.Set(float64(oracle.ExtractPhysical(message.Watermark.CheckpointTs)))
+	e.metricResolveTs.Set(float64(oracle.ExtractPhysical(message.Watermark.ResolvedTs)))
 	return &message
 }
 
