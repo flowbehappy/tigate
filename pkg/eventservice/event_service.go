@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	defaultChannelSize = 512
+	defaultChannelSize = 2048
 	defaultWorkerCount = 128
 )
 

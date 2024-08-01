@@ -2,8 +2,9 @@ package messaging
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"sync"
+
+	"github.com/flowbehappy/tigate/pkg/common"
 
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
@@ -36,6 +37,7 @@ func (r *router) deRegisterHandler(topic common.TopicType) {
 
 func (r *router) runDispatch(ctx context.Context, wg *sync.WaitGroup, out <-chan *TargetMessage) {
 	wg.Add(1)
+	batchSize := 32
 	go func() {
 		defer wg.Done()
 		for {
@@ -44,18 +46,31 @@ func (r *router) runDispatch(ctx context.Context, wg *sync.WaitGroup, out <-chan
 				log.Info("router: close, since context done")
 				return
 			case msg := <-out:
-				r.mu.RLock()
-				handler, ok := r.handlers[msg.Topic]
-				r.mu.RUnlock()
-				if !ok {
-					// todo: is this possible to happens ?
-					log.Debug("no handler for message", zap.Any("msg", msg))
-					continue
+				batchMsg := make([]*TargetMessage, 0, 32)
+				batchMsg = append(batchMsg, msg)
+			loop:
+				for i := 0; i < batchSize; i++ {
+					select {
+					case msg := <-out:
+						batchMsg = append(batchMsg, msg)
+					default:
+						break loop
+					}
 				}
-				err := handler(ctx, msg)
-				if err != nil {
-					log.Error("router: close, since handle message failed", zap.Error(err), zap.Any("msg", msg))
-					return
+				for _, msg := range batchMsg {
+					r.mu.RLock()
+					handler, ok := r.handlers[msg.Topic]
+					r.mu.RUnlock()
+					if !ok {
+						// todo: is this possible to happens ?
+						log.Debug("no handler for message", zap.Any("msg", msg))
+						continue
+					}
+					err := handler(ctx, msg)
+					if err != nil {
+						log.Error("router: close, since handle message failed", zap.Error(err), zap.Any("msg", msg))
+						return
+					}
 				}
 			}
 		}

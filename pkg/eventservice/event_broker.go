@@ -261,7 +261,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 					start := time.Now()
 					// Send the message to the dispatcher.
 					err := c.msgSender.SendEvent(m.msg)
-					if err != nil && m.isWatermark {
+					if err != nil && !m.isWatermark {
 						// log.Debug("send message failed", zap.Error(err))
 						log.Error("send message failed", zap.Error(err), zap.Any("message dispatcher id", m.msg.Message.(*common.TxnEvent).DispatcherID))
 						continue
