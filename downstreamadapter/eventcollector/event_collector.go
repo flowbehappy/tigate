@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/eventpb"
@@ -26,6 +27,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/pkg/chann"
 	"go.uber.org/zap"
 )
 
@@ -59,6 +61,11 @@ func (m *DispatcherMap) Delete(dispatcherId common.DispatcherID) {
 	delete(m.m, dispatcherId)
 }
 
+type RegisterInfo struct {
+	dispatcher dispatcher.Dispatcher
+	startTs    uint64
+}
+
 /*
 EventCollector is responsible for collecting the events from event service and dispatching them to different dispatchers.
 Besides, EventCollector also generate SyncPoint Event for dispatchers when necessary.
@@ -68,15 +75,50 @@ type EventCollector struct {
 	serverId          messaging.ServerId
 	dispatcherMap     *DispatcherMap
 	globalMemoryQuota int64
+	wg                sync.WaitGroup
+
+	registerMessageChan *chann.DrainableChann[*RegisterInfo] // for temp
 }
 
 func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *EventCollector {
 	eventCollector := EventCollector{
-		serverId:          serverId,
-		globalMemoryQuota: globalMemoryQuota,
-		dispatcherMap:     newDispatcherMap(),
+		serverId:            serverId,
+		globalMemoryQuota:   globalMemoryQuota,
+		dispatcherMap:       newDispatcherMap(),
+		registerMessageChan: chann.NewAutoDrainChann[*RegisterInfo](),
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.EventFeedTopic, eventCollector.RecvEventsMessage)
+
+	eventCollector.wg.Add(1)
+	go func(c *EventCollector) {
+		defer eventCollector.wg.Done()
+		for {
+			registerInfo := <-eventCollector.registerMessageChan.Out()
+			d := registerInfo.dispatcher
+			startTs := registerInfo.startTs
+			err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendEvent(&messaging.TargetMessage{
+				To:    c.serverId, // demo 中 每个节点都有自己的 eventService
+				Topic: messaging.EventServiceTopic,
+				Type:  messaging.TypeRegisterDispatcherRequest,
+				Message: messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
+					DispatcherId: uuid.UUID(d.GetId()).String(),
+					TableSpan:    d.GetTableSpan().TableSpan,
+					Remove:       false,
+					StartTs:      startTs,
+					ServerId:     c.serverId.String(),
+				}},
+			})
+			if err != nil {
+				log.Error("failed to send register dispatcher request message", zap.Error(err))
+				c.registerMessageChan.In() <- &RegisterInfo{
+					dispatcher: d,
+					startTs:    startTs,
+				}
+			}
+			time.Sleep(10 * time.Millisecond) // for test
+		}
+	}(&eventCollector)
+
 	return &eventCollector
 }
 
@@ -95,6 +137,10 @@ func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uin
 	})
 	if err != nil {
 		log.Error("failed to send register dispatcher request message", zap.Error(err))
+		c.registerMessageChan.In() <- &RegisterInfo{
+			dispatcher: d,
+			startTs:    startTs,
+		}
 		return err
 	}
 	c.dispatcherMap.Set(d.GetId(), d)

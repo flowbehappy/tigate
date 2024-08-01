@@ -142,7 +142,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 		//sinkConfig:             config.SinkConfig,
 		//enableSyncPoint:       false,
 		maintainerID:                   maintainerID,
-		tableSpanStatusesChan:          make(chan *heartbeatpb.TableSpanStatus, 1000000),
+		tableSpanStatusesChan:          make(chan *heartbeatpb.TableSpanStatus, 10000),
 		cancel:                         cancel,
 		config:                         config,
 		tableEventDispatcherCount:      TableEventDispatcherCount.WithLabelValues(changefeedID.String()),

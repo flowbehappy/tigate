@@ -60,7 +60,7 @@ func panicOnTaskStatus(status TaskStatus) {
 //   - Call the TaskHandle.Cancel method. Note that the task will not be removed immediately, but will be removed before the next execution.
 //     If the task is already running, the execution will not be stopped immediately.
 //
-// Refer to the task_example for a typical implementation of the Task interface.
+// Refer to task_example.go for a typical implementation of the Task interface.
 type Task interface {
 	// Execute the task.
 	Execute() (TaskStatus, time.Time)

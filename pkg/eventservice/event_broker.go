@@ -80,7 +80,8 @@ func newEventBroker(
 	}
 	c.runGenerateScanTask(ctx)
 	c.runScanWorker(ctx)
-	c.runPushMessageWorker(ctx)
+	c.runSendMessageWorker(ctx)
+	c.logSlowDispatchers(ctx)
 	return c
 }
 
@@ -163,6 +164,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 					if task.eventCount == 0 {
 						c.sendWatermark(remoteID, topic, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
 						task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
+						task.dispatcherStat.lastSent.Store(time.Now())
 						continue
 					}
 
@@ -191,6 +193,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 								c.messageCh <- newWrapMessage(messaging.NewTargetMessage(remoteID, topic, txnEvent), false)
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
 								task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(txnEvent.Rows)))
+								task.dispatcherStat.lastSent.Store(time.Now())
 							}
 							// After all the events are sent, we send the watermark to the dispatcher.
 							c.sendWatermark(remoteID, topic, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
@@ -213,6 +216,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 								c.messageCh <- newWrapMessage(messaging.NewTargetMessage(remoteID, topic, txnEvent), false)
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
 								task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(txnEvent.Rows)))
+								task.dispatcherStat.lastSent.Store(time.Now())
 							}
 							// Create a new txnEvent.
 							txnEvent = &common.TxnEvent{
@@ -236,7 +240,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 	}
 }
 
-func (c *eventBroker) runPushMessageWorker(ctx context.Context) {
+func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 	c.wg.Add(1)
 	// Use a single goroutine to send the messages in order.
 	go func() {
@@ -246,6 +250,7 @@ func (c *eventBroker) runPushMessageWorker(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case m := <-c.messageCh:
+
 				// Send the message to messageCenter. Retry if the send failed.
 				for {
 					select {
@@ -262,10 +267,48 @@ func (c *eventBroker) runPushMessageWorker(ctx context.Context) {
 						log.Error("send message failed", zap.Error(err), zap.Any("message dispatcher id", m.msg.Message.(*common.TxnEvent).DispatcherID))
 						continue
 					}
-					log.Info("send message success", zap.Any("message dispatcher id", m.msg.Message.(*common.TxnEvent).DispatcherID))
 					metricEventServiceSendEventDuration.Observe(time.Since(start).Seconds())
 					break
 				}
+			}
+		}
+	}()
+}
+
+func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
+	c.wg.Add(1)
+	ticker := time.NewTicker(time.Second * 10)
+	logDispatcherCount := 0
+	log.Info("start log slow dispatchers")
+	go func() {
+		defer c.wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				c.dispatchers.mu.RLock()
+				for _, dispatcher := range c.dispatchers.m {
+					lastUpdate := dispatcher.spanSubscription.lastUpdate.Load().(time.Time)
+					lastSent := dispatcher.lastSent.Load().(time.Time)
+					if time.Since(lastSent) > time.Second*30 {
+						// limit the log count to avoid log flooding.
+						if logDispatcherCount > 10 {
+							break
+						}
+						logDispatcherCount++
+						_, id := dispatcher.info.GetChangefeedID()
+						log.Warn("dispatcher is slow",
+							zap.String("changefeed", id),
+							zap.String("dispatcher", dispatcher.info.GetID()),
+							zap.Time("last-update", lastUpdate),
+							zap.Time("last-sent", lastSent),
+							zap.Uint64("subscription-watermark", dispatcher.spanSubscription.watermark.Load()),
+							zap.Uint64("dispatcher-watermark", dispatcher.watermark.Load()),
+							zap.Uint64("subscription-eventCount", dispatcher.spanSubscription.newEventCount.Load()))
+					}
+				}
+				c.dispatchers.mu.RUnlock()
 			}
 		}
 	}()
@@ -306,6 +349,9 @@ type dispatcherStat struct {
 	metricSorterOutputEventCountKV        prometheus.Counter
 	metricEventServiceSendKvCount         prometheus.Counter
 	metricEventServiceSendResolvedTsCount prometheus.Counter
+
+	lastSent      atomic.Value
+	isInitialized atomic.Bool
 }
 
 func newDispatcherStat(
@@ -313,9 +359,13 @@ func newDispatcherStat(
 	info DispatcherInfo,
 	notify chan *subscriptionChange) *dispatcherStat {
 	subscription := &spanSubscription{
-		span: info.GetTableSpan(),
+		span:       info.GetTableSpan(),
+		lastUpdate: atomic.Value{},
 	}
+
+	subscription.lastUpdate.Store(time.Now())
 	subscription.watermark.Store(uint64(startTs))
+
 	namespace, id := info.GetChangefeedID()
 	res := &dispatcherStat{
 		info:             info,
@@ -325,7 +375,9 @@ func newDispatcherStat(
 		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(namespace, id, "kv"),
 		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "kv"),
 		metricEventServiceSendResolvedTsCount: metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "resolved_ts"),
+		lastSent:                              atomic.Value{},
 	}
+	res.lastSent.Store(time.Now())
 	res.watermark.Store(startTs)
 	hasher := crc32.NewIEEE()
 	hasher.Write([]byte(info.GetID()))
@@ -336,12 +388,18 @@ func newDispatcherStat(
 // onSubscriptionWatermark updates the watermark of the table span and send a notification to notify
 // that this table span has new events.
 func (a *dispatcherStat) onSubscriptionWatermark(watermark uint64) {
-	log.Info("onSubscriptionWatermark", zap.Any("dispatcherID", a.info.GetID()))
+	if !a.isInitialized.Load() {
+		a.isInitialized.Store(true)
+		log.Info("received first resolvedTs", zap.Any("dispatcherID", a.info.GetID()))
+	}
+
 	if watermark < a.spanSubscription.watermark.Load() {
-		log.Info("onSubscriptionWatermark return", zap.Any("dispatcherID", a.info.GetID()))
 		return
 	}
+
 	a.spanSubscription.watermark.Store(watermark)
+	a.spanSubscription.lastUpdate.Store(time.Now())
+
 	sub := &subscriptionChange{
 		dispatcherInfo: a.info,
 		eventCount:     a.spanSubscription.newEventCount.Swap(0),
@@ -372,6 +430,7 @@ type spanSubscription struct {
 	// newEventCount is used to store the number of the new events that have been stored in the event store
 	// since last scanTask is generated.
 	newEventCount atomic.Uint64
+	lastUpdate    atomic.Value
 }
 
 type subscriptionChange struct {

@@ -123,11 +123,11 @@ func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startT
 	ctx, cancel := context.WithCancel(context.Background())
 	tableEventDispatcher := &TableEventDispatcher{
 		id:            common.DispatcherID(uuid.New()),
-		eventCh:       make(chan *common.TxnEvent, 1000),
+		eventCh:       make(chan *common.TxnEvent, 16),
 		tableSpan:     tableSpan,
 		sink:          sink,
 		state:         NewState(),
-		heartbeatChan: make(chan *HeartBeatResponseMessage, 100),
+		heartbeatChan: make(chan *HeartBeatResponseMessage, 16),
 		//SyncPointInfo:   syncPointInfo,
 		//MemoryUsage:     NewMemoryUsage(),
 		componentStatus: newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
@@ -138,6 +138,8 @@ func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startT
 	tableEventDispatcher.wg.Add(1)
 	go tableEventDispatcher.DispatcherEvents(ctx)
 	log.Info("Create Table Event Dispatcher", zap.Any("Dispatcherid string", tableEventDispatcher.id), zap.Any("Dispatcherid string", uuid.UUID(tableEventDispatcher.id).String()), zap.Any("table id", tableEventDispatcher.tableSpan.TableID))
+
+	log.Info("table event dispatcher created", zap.Any("DispatcherID", tableEventDispatcher.id))
 
 	return tableEventDispatcher
 }
