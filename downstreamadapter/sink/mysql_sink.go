@@ -221,7 +221,7 @@ func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *
 
 func (s *MysqlSink) AddTableSpan(tableSpan *common.TableSpan) {
 	tableProgress := types.NewTableProgress()
-	ch := make(chan *common.TxnEvent, 1024) // 先瞎拍
+	ch := make(chan *common.TxnEvent, 16) // 先瞎拍
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s.wg.Add(1)
