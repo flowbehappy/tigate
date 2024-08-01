@@ -27,6 +27,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const createDispatcherConcurrency = 16
+
 /*
 HeartBeatCollect is responsible for sending heartbeat requests and receiving heartbeat responses by messageCenter
 HeartBeatCollector is an instance-level component. It will deal with all the heartbeat messages from all dispatchers in all dispatcher managers.
@@ -42,7 +44,7 @@ type HeartBeatCollector struct {
 	responseChanMap      map[model.ChangeFeedID]*HeartbeatResponseQueue //changefeedID -> HeartbeatResponseQueue
 	requestQueue         *HeartbeatRequestQueue
 
-	dispatcherRequestCh chan *heartbeatpb.ScheduleDispatcherRequest
+	dispatcherRequestCh []chan *heartbeatpb.ScheduleDispatcherRequest
 }
 
 func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
@@ -51,7 +53,7 @@ func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 		requestQueue:              NewHeartbeatRequestQueue(),
 		responseChanMap:           make(map[model.ChangeFeedID]*HeartbeatResponseQueue),
 		eventDispatcherManagerMap: make(map[model.ChangeFeedID]*EventDispatcherManager),
-		dispatcherRequestCh:       make(chan *heartbeatpb.ScheduleDispatcherRequest, 102400),
+		dispatcherRequestCh:       make([]chan *heartbeatpb.ScheduleDispatcherRequest, createDispatcherConcurrency),
 	}
 	//context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(heartbeatResponseTopic, heartBeatCollector.RecvHeartBeatResponseMessages)
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
@@ -59,19 +61,18 @@ func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 	heartBeatCollector.wg.Add(1)
 	go heartBeatCollector.SendHeartBeatMessages()
 
-	for i := 0; i < 1; i++ {
+	for i := 0; i < createDispatcherConcurrency; i++ {
+		idx := i
+		heartBeatCollector.dispatcherRequestCh[idx] = make(chan *heartbeatpb.ScheduleDispatcherRequest, 1024)
 		heartBeatCollector.wg.Add(1)
 		go func() {
 			defer heartBeatCollector.wg.Done()
-			for {
-				select {
-				case req := <-heartBeatCollector.dispatcherRequestCh:
-					err := heartBeatCollector.handleDispatcherRequestMessages(req)
-					if err != nil {
-						metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", req.ChangefeedID, "error").Inc()
-					}
-					metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", req.ChangefeedID, "success").Inc()
+			for req := range heartBeatCollector.dispatcherRequestCh[idx] {
+				err := heartBeatCollector.handleDispatcherRequestMessages(req)
+				if err != nil {
+					metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", req.ChangefeedID, "error").Inc()
 				}
+				metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", req.ChangefeedID, "success").Inc()
 			}
 		}()
 	}
@@ -129,8 +130,9 @@ func (c *HeartBeatCollector) RecvHeartBeatResponseMessages(msg *messaging.Target
 func (c *HeartBeatCollector) RecvSchedulerDispatcherRequestMessages(ctx context.Context, msg *messaging.TargetMessage) error {
 	scheduleDispatcherRequest := msg.Message.(*heartbeatpb.ScheduleDispatcherRequest)
 
+	idx := int(scheduleDispatcherRequest.Config.Span.TableID) % createDispatcherConcurrency
 	select {
-	case c.dispatcherRequestCh <- scheduleDispatcherRequest:
+	case c.dispatcherRequestCh[idx] <- scheduleDispatcherRequest:
 		metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", scheduleDispatcherRequest.ChangefeedID, "receive").Inc()
 	default:
 		metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", scheduleDispatcherRequest.ChangefeedID, "discard").Inc()
