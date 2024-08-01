@@ -27,6 +27,7 @@ import (
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/logutil"
 	"github.com/pingcap/tiflow/pkg/security"
+	cdcversion "github.com/pingcap/tiflow/pkg/version"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -88,7 +89,9 @@ func (o *options) run(cmd *cobra.Command) error {
 	defer cancel()
 	config.StoreGlobalServerConfig(o.serverConfig)
 
+	cdcversion.ReleaseVersion = version.ReleaseVersion
 	version.LogVersionInfo("Change Data Capture (CDC)")
+	log.Info("The tiflow release version is", zap.String("ReleaseVersion", cdcversion.ReleaseVersion))
 
 	util.LogHTTPProxies()
 	server, err := server.NewServer(strings.Split(o.serverPdAddr, ","))
