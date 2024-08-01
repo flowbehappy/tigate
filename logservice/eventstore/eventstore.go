@@ -104,7 +104,7 @@ type eventStore struct {
 }
 
 const dataDir = "event_store"
-const dbCount = 1024
+const dbCount = 64
 
 func NewEventStore(
 	ctx context.Context,
