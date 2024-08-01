@@ -498,6 +498,7 @@ func (p *scanTaskPool) pushTask(task *scanTask) {
 		// The task is sent to the scan worker, we remove it from the taskSet.
 		p.taskSet[id] = nil
 	default:
+		log.Info("task pool is full", zap.Any("task", task))
 		// The task pool is full, we just add it back
 		// to the taskSet, and it will be merged in the next round.
 		p.taskSet[id] = spanTask
