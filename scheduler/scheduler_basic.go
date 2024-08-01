@@ -79,7 +79,9 @@ func (b *BasicScheduler) Schedule(
 			return true
 		})
 		b.needRemoveInferior = false
-		log.Info("basic scheduler generate new remove inferiors cache", zap.Int("count", len(b.removeInferiorCache)))
+		if len(b.removeInferiorCache) > 0 {
+			log.Info("basic scheduler generate new remove inferiors cache", zap.Int("count", len(b.removeInferiorCache)))
+		}
 	}
 	if len(b.removeInferiorCache) > 0 {
 		batch := batchSize - len(tasks)
@@ -112,7 +114,9 @@ func (b *BasicScheduler) Schedule(
 			return true
 		})
 		b.needAddInferior = false
-		log.Info("basic scheduler generate new add inferiors cache", zap.Int("count", len(b.addInferiorCache)))
+		if len(b.addInferiorCache) > 0 {
+			log.Info("basic scheduler generate new add inferiors cache", zap.Int("count", len(b.addInferiorCache)))
+		}
 	}
 	if len(b.addInferiorCache) > 0 {
 		batch := batchSize
