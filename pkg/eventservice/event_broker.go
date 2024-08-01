@@ -242,7 +242,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 
 func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 	c.wg.Add(1)
-	batchSize := 32
+	//batchSize := 32
 	// Use a single goroutine to send the messages in order.
 	go func() {
 		defer c.wg.Done()
@@ -251,21 +251,6 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case m := <-c.messageCh:
-				batchMsg := make([]*messaging.TargetMessage, 0, batchSize)
-				batchMsg = append(batchMsg, m.msg)
-				// Batch the messages to reduce the overhead of the message sender.
-			batch:
-				for len(batchMsg) < batchSize {
-					select {
-					case <-ctx.Done():
-						return
-					case m := <-c.messageCh:
-						batchMsg = append(batchMsg, m.msg)
-					default:
-						break batch
-					}
-				}
-
 				// Send the message to messageCenter. Retry if the send failed.
 				for {
 					select {
@@ -275,8 +260,8 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 					}
 					start := time.Now()
 					// Send the message to the dispatcher.
-					err := c.msgSender.SendEvent(batchMsg...)
-					if err != nil {
+					err := c.msgSender.SendEvent(m.msg)
+					if err != nil && m.isWatermark {
 						// log.Debug("send message failed", zap.Error(err))
 						log.Error("send message failed", zap.Error(err), zap.Any("message dispatcher id", m.msg.Message.(*common.TxnEvent).DispatcherID))
 						continue
