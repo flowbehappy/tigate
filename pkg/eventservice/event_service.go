@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	defaultChannelSize = 2048
-	defaultWorkerCount = 32
+	defaultChannelSize = 8192
+	defaultWorkerCount = 128
 )
 
 // EventService accepts the requests of pulling events.
@@ -112,7 +112,17 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 		s.brokers[clusterID] = c
 	}
 
-	dispatcher := newDispatcherStat(startTs, info, c.changedCh)
+	c.dispatchers.mu.RLock()
+	dispatcher := c.dispatchers.m[info.GetID()]
+	// TODO: refine this logic, since we may have multiple dispatchers for the same table span
+	if dispatcher != nil {
+		c.dispatchers.mu.RUnlock()
+		log.Warn("duplicated acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID), zap.Uint64("startTs", startTs))
+		return
+	}
+	c.dispatchers.mu.RUnlock()
+
+	dispatcher = newDispatcherStat(startTs, info, c.changedCh)
 	c.dispatchers.mu.Lock()
 	c.dispatchers.m[info.GetID()] = dispatcher
 	c.dispatchers.mu.Unlock()
