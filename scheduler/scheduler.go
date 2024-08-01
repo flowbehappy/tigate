@@ -14,6 +14,8 @@
 package scheduler
 
 import (
+	"time"
+
 	"github.com/flowbehappy/tigate/rpc"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
@@ -95,11 +97,11 @@ func (s *Supervisor) Name() string {
 }
 
 func (s *Supervisor) checkRunningTasks() (msgs []rpc.Message) {
-	needResend := true
-	// if time.Since(s.lastResendTime) > time.Second*20 {
-	// 	needResend = true
-	// 	s.lastResendTime = time.Now()
-	// }
+	needResend := false
+	if time.Since(s.lastResendTime) > time.Second*2 {
+		needResend = true
+		s.lastResendTime = time.Now()
+	}
 
 	// Check if a running task is finished.
 	var toBeDeleted []InferiorID
@@ -115,7 +117,7 @@ func (s *Supervisor) checkRunningTasks() (msgs []rpc.Message) {
 
 		if needResend {
 			msg := stateMachine.handleResend()
-			log.Info("resend message", zap.Any("msg", msg))
+			log.Debug("resend message", zap.Any("msg", msg))
 			msgs = append(msgs, msg...)
 		}
 		return true
@@ -123,7 +125,7 @@ func (s *Supervisor) checkRunningTasks() (msgs []rpc.Message) {
 
 	for _, span := range toBeDeleted {
 		s.RunningTasks.Delete(span)
-		log.Info("schedule finished, remove running task",
+		log.Debug("schedule finished, remove running task",
 			zap.String("stid", s.ID.String()),
 			zap.String("id", span.String()))
 	}
