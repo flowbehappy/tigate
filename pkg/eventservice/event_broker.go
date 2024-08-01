@@ -101,7 +101,6 @@ func (c *eventBroker) sendWatermark(
 				ResolvedTs:   watermark,
 			}),
 		true)
-	log.Info("send watermark", zap.String("dispatcherID", dispatcherID), zap.Uint64("watermark", watermark))
 	if counter != nil {
 		counter.Inc()
 	}
@@ -119,7 +118,6 @@ func (c *eventBroker) runGenerateScanTask(ctx context.Context) {
 				c.dispatchers.mu.RLock()
 				dispatcher, ok := c.dispatchers.m[change.dispatcherInfo.GetID()]
 				c.dispatchers.mu.RUnlock()
-				log.Info("get change", zap.Any("DispatcherID", dispatcher.info.GetID()))
 				// The dispatcher may be deleted. In such case, we just the stale notification.
 				if !ok {
 					log.Info("dispatcher is deleted, skip the notification", zap.Any("DispatcherID", change.dispatcherInfo.GetID()))
@@ -157,7 +155,6 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 					dispatcherID := task.dispatcherStat.info.GetID()
-					log.Info("generate scan task", zap.String("dispatcherID", dispatcherID))
 					topic := task.dispatcherStat.info.GetTopic()
 					//1.The dispatcher has no new events. In such case, we don't need to scan the event store.
 					//We just send the watermark to the dispatcher.
@@ -405,7 +402,6 @@ func (a *dispatcherStat) onSubscriptionWatermark(watermark uint64) {
 	}
 	select {
 	case a.notify <- sub:
-		log.Info("onSubscriptionWatermark send notification", zap.Any("dispatcherID", a.info.GetID()))
 	default:
 	}
 }
