@@ -77,13 +77,15 @@ type EventDispatcherManager struct {
 // TODO:这个锁会在量级大于几万以后影响明显，10w 的 dispatcher同时创建需要预估10多分钟的开销。
 // 1000个-- 500ms / 10000个 -- 44s, 指数影响
 type DispatcherMap struct {
-	mutex       sync.Mutex
-	dispatchers *utils.BtreeMap[*common.TableSpan, *dispatcher.TableEventDispatcher]
+	dispatcherCacheForRead []*dispatcher.TableEventDispatcher
+	mutex                  sync.Mutex
+	dispatchers            *utils.BtreeMap[*common.TableSpan, *dispatcher.TableEventDispatcher]
 }
 
 func newDispatcherMap() *DispatcherMap {
 	return &DispatcherMap{
-		dispatchers: utils.NewBtreeMap[*common.TableSpan, *dispatcher.TableEventDispatcher](),
+		dispatcherCacheForRead: make([]*dispatcher.TableEventDispatcher, 0, 1024),
+		dispatchers:            utils.NewBtreeMap[*common.TableSpan, *dispatcher.TableEventDispatcher](),
 	}
 }
 
@@ -120,15 +122,23 @@ func (d *DispatcherMap) ForEach(fn func(tableSpan *common.TableSpan, dispatcher 
 	})
 }
 
+func (d *DispatcherMap) resetDispatcherCache() {
+	if cap(d.dispatcherCacheForRead) > 2048 && cap(d.dispatcherCacheForRead) > d.dispatchers.Len()*2 {
+		d.dispatcherCacheForRead = make([]*dispatcher.TableEventDispatcher, 0, d.dispatchers.Len())
+	}
+	d.dispatcherCacheForRead = d.dispatcherCacheForRead[:0]
+}
+
 func (d *DispatcherMap) GetAllDispatchers() []*dispatcher.TableEventDispatcher {
+	d.resetDispatcherCache()
+
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-	var dispatchers []*dispatcher.TableEventDispatcher
 	d.dispatchers.Ascend(func(tableSpan *common.TableSpan, dispatcherItem *dispatcher.TableEventDispatcher) bool {
-		dispatchers = append(dispatchers, dispatcherItem)
+		d.dispatcherCacheForRead = append(d.dispatcherCacheForRead, dispatcherItem)
 		return true
 	})
-	return dispatchers
+	return d.dispatcherCacheForRead
 }
 
 func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.ChangefeedConfig, clusterID messaging.ServerId, maintainerID messaging.ServerId) *EventDispatcherManager {
@@ -371,12 +381,12 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 
 	toReomveTableSpans := make([]*common.TableSpan, 0)
 	allDispatchers := e.dispatcherMap.GetAllDispatchers()
-	// e.dispatcherMap.ForEach(func(tableSpan *common.TableSpan, tableEventDispatcher *dispatcher.TableEventDispatcher) {
+	dispatcherHeartBeatInfo := &dispatcher.HeartBeatInfo{}
 	for _, tableEventDispatcher := range allDispatchers {
 		// If the dispatcher is in removing state, we need to check if it's closed successfully.
 		// If it's closed successfully, we could clean it up.
 		// TODO: we need to consider how to deal with the checkpointTs of the removed dispatcher if the message will be discarded.
-		dispatcherHeartBeatInfo := dispatcher.CollectDispatcherHeartBeatInfo(tableEventDispatcher)
+		dispatcher.CollectDispatcherHeartBeatInfo(tableEventDispatcher, dispatcherHeartBeatInfo)
 
 		componentStatus := dispatcherHeartBeatInfo.ComponentStatus
 		if componentStatus == heartbeatpb.ComponentState_Stopping {

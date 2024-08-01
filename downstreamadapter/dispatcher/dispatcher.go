@@ -149,7 +149,7 @@ type HeartBeatInfo struct {
 	ComponentStatus heartbeatpb.ComponentState
 }
 
-func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
+func CollectDispatcherHeartBeatInfo(d Dispatcher, h *HeartBeatInfo) {
 
 	// use checkpointTs to release memory usage
 	//d.GetMemoryUsage().Release(checkpointTs)
@@ -163,17 +163,11 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher) *HeartBeatInfo {
 	// 	//TableSpan:    d.GetTableSpan(),
 	// 	Id: d.GetId(),
 	// }
-	heartBeatInfo := &HeartBeatInfo{
-		Watermark: heartbeatpb.Watermark{
-			CheckpointTs: d.GetCheckpointTs(),
-			ResolvedTs:   d.GetResolvedTs(),
-		},
-		Id:              d.GetId(),
-		ComponentStatus: d.GetComponentStatus(),
-		TableSpan:       d.GetTableSpan(),
-	}
-
-	return heartBeatInfo
+	h.Watermark.CheckpointTs = d.GetCheckpointTs()
+	h.Watermark.ResolvedTs = d.GetResolvedTs()
+	h.Id = d.GetId()
+	h.ComponentStatus = d.GetComponentStatus()
+	h.TableSpan = d.GetTableSpan()
 }
 
 /*
