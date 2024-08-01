@@ -123,11 +123,11 @@ func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startT
 	ctx, cancel := context.WithCancel(context.Background())
 	tableEventDispatcher := &TableEventDispatcher{
 		id:            common.DispatcherID(uuid.New()),
-		eventCh:       make(chan *common.TxnEvent, 1000),
+		eventCh:       make(chan *common.TxnEvent, 16),
 		tableSpan:     tableSpan,
 		sink:          sink,
 		state:         NewState(),
-		heartbeatChan: make(chan *HeartBeatResponseMessage, 100),
+		heartbeatChan: make(chan *HeartBeatResponseMessage, 16),
 		//SyncPointInfo:   syncPointInfo,
 		//MemoryUsage:     NewMemoryUsage(),
 		componentStatus: newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
