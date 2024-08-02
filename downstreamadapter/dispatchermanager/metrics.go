@@ -23,7 +23,7 @@ var (
 			Subsystem: "dispatchermanager",
 			Name:      "table_event_dispatcher_count",
 			Help:      "The number of table event dispatchers",
-		}, []string{"changefeed"})
+		}, []string{"namespace", "changefeed"})
 )
 
 func InitMetrics(registry *prometheus.Registry) {

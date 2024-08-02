@@ -155,7 +155,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 		tableSpanStatusesChan:          make(chan *heartbeatpb.TableSpanStatus, 10000),
 		cancel:                         cancel,
 		config:                         config,
-		tableEventDispatcherCount:      TableEventDispatcherCount.WithLabelValues(changefeedID.String()),
+		tableEventDispatcherCount:      TableEventDispatcherCount.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCreateDispatcherDuration: metrics.CreateDispatcherDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCheckpointTs:             metrics.EventDispatcherManagerCheckpointTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricResolveTs:                metrics.EventDispatcherManagerResolvedTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),

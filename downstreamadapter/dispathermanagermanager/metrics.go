@@ -17,13 +17,13 @@ import "github.com/prometheus/client_golang/prometheus"
 
 var (
 	// Metrics is the metrics collector related to dispatcher manager.
-	EventDispatcherManagerCount = prometheus.NewGauge(
+	EventDispatcherManagerCount = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tigate",
 			Subsystem: "dispatchermanagermanager",
 			Name:      "event_dispatcher_manager_count",
 			Help:      "The number of event dispatcher managers",
-		})
+		}, []string{"namespace", "changefeed"})
 )
 
 func InitMetrics(registry *prometheus.Registry) {
