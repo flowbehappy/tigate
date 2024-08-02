@@ -32,7 +32,7 @@ import (
 )
 
 type DispatcherMap struct {
-	mutex sync.Mutex
+	mutex sync.RWMutex
 	m     map[common.DispatcherID]dispatcher.Dispatcher // dispatcher_id --> dispatcher
 }
 
@@ -43,8 +43,8 @@ func newDispatcherMap() *DispatcherMap {
 }
 
 func (m *DispatcherMap) Get(dispatcherId common.DispatcherID) (dispatcher.Dispatcher, bool) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
 	d, ok := m.m[dispatcherId]
 	return d, ok
 }
