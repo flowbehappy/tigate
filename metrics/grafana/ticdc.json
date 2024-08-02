@@ -131,7 +131,7 @@
   "gnetId": null,
   "graphTooltip": 1,
   "id": null,
-  "iteration": 1722594233094,
+  "iteration": 1722595643851,
   "links": [],
   "panels": [
     {
@@ -206,12 +206,12 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tigate_dispatchermanager_table_event_dispatcher_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\", namespace=~\"$namespace\", changefeed=~\"$changefeed\"}) by (namespace,changefeed, instance)",
+              "expr": "sum(tigate_dispatchermanager_table_event_dispatcher_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\", namespace=~\"$namespace\", changefeed=~\"$changefeed\"}) by (instance)",
               "format": "time_series",
               "hide": false,
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "{{namespace}}-{{changefeed}}-{{instance}}",
+              "legendFormat": "{{instance}}",
               "refId": "A",
               "step": 10
             }
@@ -319,12 +319,12 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tigate_dispatchermanagermanager_event_dispatcher_manager_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\", namespace=~\"$namespace\", changefeed=~\"$changefeed\"}) by (namespace,changefeed, instance)",
+              "expr": "sum(tigate_dispatchermanagermanager_event_dispatcher_manager_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\", namespace=~\"$namespace\", changefeed=~\"$changefeed\"}) by (instance)",
               "format": "time_series",
               "hide": false,
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "{{namespace}}-{{changefeed}}-{{instance}}",
+              "legendFormat": "{{instance}}",
               "refId": "A",
               "step": 10
             }
@@ -418,7 +418,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(ticdc_sink_write_bytes_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", namespace=~\"$namespace\", changefeed=~\"$changefeed\",instance=~\"$ticdc_instance\"}[1m])) by (namespace, changefeed, instance, type)",
+              "expr": "sum(rate(ticdc_sink_write_bytes_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", namespace=~\"$namespace\", changefeed=~\"$changefeed\",instance=~\"$ticdc_instance\"}[1m])) by (instance, type)",
               "hide": false,
               "interval": "",
               "legendFormat": "{{namespace}}-{{changefeed}}-{{instance}}-{{type}}",
@@ -22940,7 +22940,7 @@
     ]
   },
   "time": {
-    "from": "now-3h",
+    "from": "now-5m",
     "to": "now"
   },
   "timepicker": {
@@ -22971,5 +22971,5 @@
   "timezone": "browser",
   "title": "test-TiCDC",
   "uid": "YiGL8hBZ0",
-  "version": 3
+  "version": 4
 }
