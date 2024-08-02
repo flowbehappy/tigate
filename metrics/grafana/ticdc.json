@@ -131,7 +131,7 @@
   "gnetId": null,
   "graphTooltip": 1,
   "id": null,
-  "iteration": 1722594233091,
+  "iteration": 1722594233094,
   "links": [],
   "panels": [
     {
@@ -514,7 +514,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(ticdc_sink_handle_dispatcher_request_counter{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", namespace=~\"$namespace\", changefeed=~\"$changefeed\", instance=~\"$ticdc_instance\"}[1m])) by (namespace,changefeed, instance, type)",
+              "expr": "sum(rate(ticdc_sink_handle_dispatcher_request{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", namespace=~\"$namespace\", changefeed=~\"$changefeed\", instance=~\"$ticdc_instance\"}[1m])) by (namespace,changefeed, instance, type)",
               "hide": false,
               "interval": "",
               "legendFormat": "err-{{instance}}-{{target}}-{{type}}",
@@ -22971,5 +22971,5 @@
   "timezone": "browser",
   "title": "test-TiCDC",
   "uid": "YiGL8hBZ0",
-  "version": 2
+  "version": 3
 }
