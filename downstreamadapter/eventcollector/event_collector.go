@@ -66,6 +66,8 @@ type RegisterInfo struct {
 	startTs    uint64
 }
 
+const recvEventConcurrency = 16
+
 /*
 EventCollector is responsible for collecting the events from event service and dispatching them to different dispatchers.
 Besides, EventCollector also generate SyncPoint Event for dispatchers when necessary.
@@ -78,6 +80,8 @@ type EventCollector struct {
 	wg                sync.WaitGroup
 
 	registerMessageChan *chann.DrainableChann[*RegisterInfo] // for temp
+
+	messageChan []chan *common.TxnEvent
 }
 
 func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *EventCollector {
@@ -86,6 +90,7 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 		globalMemoryQuota:   globalMemoryQuota,
 		dispatcherMap:       newDispatcherMap(),
 		registerMessageChan: chann.NewAutoDrainChann[*RegisterInfo](),
+		messageChan:         make([]chan *common.TxnEvent, recvEventConcurrency),
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.EventFeedTopic, eventCollector.RecvEventsMessage)
 
@@ -118,6 +123,26 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 			time.Sleep(10 * time.Millisecond) // for test
 		}
 	}(&eventCollector)
+
+	for i := 0; i < recvEventConcurrency; i++ {
+		idx := i
+		eventCollector.messageChan[idx] = make(chan *common.TxnEvent, 1024)
+		eventCollector.wg.Add(1)
+		go func(c *EventCollector, idx int) {
+			defer c.wg.Done()
+			for {
+				txnEvent := <-c.messageChan[idx] // 阻塞等待
+				dispatcherID := txnEvent.DispatcherID
+				if dispatcherItem, ok := c.dispatcherMap.Get(common.DispatcherID(uuid.MustParse(dispatcherID))); ok {
+					if txnEvent.IsDMLEvent() {
+						dispatcherItem.PushTxnEvent(txnEvent)
+					} else {
+						dispatcherItem.UpdateResolvedTs(txnEvent.ResolvedTs)
+					}
+				}
+			}
+		}(&eventCollector, idx)
+	}
 
 	return &eventCollector
 }
@@ -184,63 +209,68 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: fmt.Sprintf("invalid heartbeat response message")}
 	}
 
-	dispatcherID := txnEvent.DispatcherID
-	// log.Info("Recv TxnEvent", zap.Any("dispatcherID", dispatcherID), zap.Any("event is dml event", txnEvent.IsDMLEvent()))
-	// if txnEvent.IsDMLEvent() {
-	// 	rowEvent := txnEvent.GetRows()[0]
-	// 	log.Info("Recv TxnEvent", zap.Any("dispatcherID", dispatcherID), zap.Any("event info", rowEvent.CommitTs), zap.Any("table name", rowEvent.TableInfo.TableName))
-	// }
+	idx := uuid.MustParse(txnEvent.DispatcherID).ID() % recvEventConcurrency
+	c.messageChan[idx] <- txnEvent
 
-	if dispatcherItem, ok := c.dispatcherMap.Get(common.DispatcherID(uuid.MustParse(dispatcherID))); ok {
-		// check whether need to update speed ratio
-		//ok, ratio := dispatcherItem.GetMemoryUsage().UpdatedSpeedRatio(eventResponse.Ratio)
-		// if ok {
-		// 	request := eventpb.EventRequest{
-		// 		DispatcherId: dispatcherId,
-		// 		TableSpan:    dispatcherItem.GetTableSpan(),
-		// 		Ratio:        ratio,
-		// 		Remove:       false,
-		// 	}
-		// 	// 这个开销大么，在这里等合适么？看看要不要拆一下
-		// 	err := client.Send(&request)
-		// 	if err != nil {
-		// 		//
-		// 	}
-		// }
-
-		// if dispatcherId == dispatcher.TableTriggerEventDispatcherId {
-		// 	for _, event := range eventResponse.Events {
-		// 		dispatcherItem.GetMemoryUsage().Add(event.CommitTs(), event.MemoryCost())
-		// 		dispatcherItem.GetEventChan() <- event // 换成一个函数
-		// 	}
-		// 	dispatcherItem.UpdateResolvedTs(eventResponse.ResolvedTs) // todo:枷锁
-		// 	continue
-		// }
-		//for _, txnEvent := range eventFeeds.TxnEvents {
-		// TODO: message 改过以后重写，先串起来。
-		if txnEvent.IsDMLEvent() {
-			dispatcherItem.PushTxnEvent(txnEvent)
-		} else {
-			dispatcherItem.UpdateResolvedTs(txnEvent.ResolvedTs)
-		}
-
-		// dispatcherItem.UpdateResolvedTs(eventFeeds.ResolvedTs)
-		/*
-			syncPointInfo := dispatcherItem.GetSyncPointInfo()
-			// 在这里加 sync point？ 这个性能会有明显影响么,这个要测过
-			if syncPointInfo.EnableSyncPoint && event.CommitTs() > syncPointInfo.NextSyncPointTs {
-				dispatcherItem.GetEventChan() <- Event{} //构造 Sync Point Event
-				syncPointInfo.NextSyncPointTs = oracle.GoTimeToTS(
-					oracle.GetTimeFromTS(syncPointInfo.NextSyncPointTs).
-						Add(syncPointInfo.SyncPointInterval))
-			}
-		*/
-
-		// // deal with event
-		// dispatcherItem.GetMemoryUsage().Add(event.CommitTs(), event.MemoryCost())
-		// dispatcherItem.GetEventChan() <- event // 换成一个函数
-		//}
-
-	}
 	return nil
 }
+
+// log.Info("Recv TxnEvent", zap.Any("dispatcherID", dispatcherID), zap.Any("event is dml event", txnEvent.IsDMLEvent()))
+// if txnEvent.IsDMLEvent() {
+// 	rowEvent := txnEvent.GetRows()[0]
+// 	log.Info("Recv TxnEvent", zap.Any("dispatcherID", dispatcherID), zap.Any("event info", rowEvent.CommitTs), zap.Any("table name", rowEvent.TableInfo.TableName))
+// }
+
+//if dispatcherItem, ok := c.dispatcherMap.Get(common.DispatcherID(uuid.MustParse(dispatcherID))); ok {
+// check whether need to update speed ratio
+//ok, ratio := dispatcherItem.GetMemoryUsage().UpdatedSpeedRatio(eventResponse.Ratio)
+// if ok {
+// 	request := eventpb.EventRequest{
+// 		DispatcherId: dispatcherId,
+// 		TableSpan:    dispatcherItem.GetTableSpan(),
+// 		Ratio:        ratio,
+// 		Remove:       false,
+// 	}
+// 	// 这个开销大么，在这里等合适么？看看要不要拆一下
+// 	err := client.Send(&request)
+// 	if err != nil {
+// 		//
+// 	}
+// }
+
+// if dispatcherId == dispatcher.TableTriggerEventDispatcherId {
+// 	for _, event := range eventResponse.Events {
+// 		dispatcherItem.GetMemoryUsage().Add(event.CommitTs(), event.MemoryCost())
+// 		dispatcherItem.GetEventChan() <- event // 换成一个函数
+// 	}
+// 	dispatcherItem.UpdateResolvedTs(eventResponse.ResolvedTs) // todo:枷锁
+// 	continue
+// }
+//for _, txnEvent := range eventFeeds.TxnEvents {
+// TODO: message 改过以后重写，先串起来。
+// if txnEvent.IsDMLEvent() {
+// 	dispatcherItem.PushTxnEvent(txnEvent)
+// } else {
+// 	dispatcherItem.UpdateResolvedTs(txnEvent.ResolvedTs)
+// }
+
+// dispatcherItem.UpdateResolvedTs(eventFeeds.ResolvedTs)
+/*
+	syncPointInfo := dispatcherItem.GetSyncPointInfo()
+	// 在这里加 sync point？ 这个性能会有明显影响么,这个要测过
+	if syncPointInfo.EnableSyncPoint && event.CommitTs() > syncPointInfo.NextSyncPointTs {
+		dispatcherItem.GetEventChan() <- Event{} //构造 Sync Point Event
+		syncPointInfo.NextSyncPointTs = oracle.GoTimeToTS(
+			oracle.GetTimeFromTS(syncPointInfo.NextSyncPointTs).
+				Add(syncPointInfo.SyncPointInterval))
+	}
+*/
+
+// // deal with event
+// dispatcherItem.GetMemoryUsage().Add(event.CommitTs(), event.MemoryCost())
+// dispatcherItem.GetEventChan() <- event // 换成一个函数
+//}
+
+// }
+// return nil
+// }
