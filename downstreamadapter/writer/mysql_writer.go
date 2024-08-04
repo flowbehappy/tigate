@@ -181,7 +181,7 @@ func (w *MysqlWriter) Flush(events []*common.TxnEvent, workerNum int) error {
 	} else {
 		// dry run mode, just record the metrics
 		w.statistics.RecordBatchExecution(func() (int, int64, error) {
-			return dmls.rowCount, 0, nil
+			return dmls.rowCount, dmls.approximateSize, nil
 		})
 	}
 
