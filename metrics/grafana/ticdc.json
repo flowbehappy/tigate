@@ -421,7 +421,7 @@
               "expr": "sum(rate(ticdc_sink_write_bytes_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", namespace=~\"$namespace\", changefeed=~\"$changefeed\",instance=~\"$ticdc_instance\"}[1m])) by (instance, type)",
               "hide": false,
               "interval": "",
-              "legendFormat": "{{namespace}}-{{changefeed}}-{{instance}}-{{type}}",
+              "legendFormat": "{{instance}}-{{type}}",
               "queryType": "randomWalk",
               "refId": "A"
             }
