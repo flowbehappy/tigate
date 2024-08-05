@@ -437,7 +437,7 @@ func (s *localMessageTarget) Epoch() common.EpochType {
 func (s *localMessageTarget) sendEvent(msg ...*TargetMessage) error {
 	err := s.sendMsgToChan(s.recvEventCh, msg...)
 	if err != nil {
-		s.recordCongestedMessageError(msgTypeEvent, string(msg[0].Topic))
+		s.recordCongestedMessageError(msgTypeEvent)
 	} else {
 		s.sendEventCounter.Add(float64(len(msg)))
 	}
@@ -447,7 +447,7 @@ func (s *localMessageTarget) sendEvent(msg ...*TargetMessage) error {
 func (s *localMessageTarget) sendCommand(msg ...*TargetMessage) error {
 	err := s.sendMsgToChan(s.recvCmdCh, msg...)
 	if err != nil {
-		s.recordCongestedMessageError(msgTypeCommand, string(msg[0].Topic))
+		s.recordCongestedMessageError(msgTypeCommand)
 	} else {
 		s.sendCmdCounter.Add(float64(len(msg)))
 	}
@@ -467,8 +467,8 @@ func newLocalMessageTarget(id ServerId,
 	}
 }
 
-func (s *localMessageTarget) recordCongestedMessageError(typeE, topic string) {
-	metrics.MessagingErrorCounter.WithLabelValues("local", typeE, "message_congested", topic).Inc()
+func (s *localMessageTarget) recordCongestedMessageError(typeE string) {
+	metrics.MessagingErrorCounter.WithLabelValues("local", typeE, "message_congested").Inc()
 }
 
 func (s *localMessageTarget) sendMsgToChan(ch chan *TargetMessage, msg ...*TargetMessage) error {
