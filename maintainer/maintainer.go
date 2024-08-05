@@ -148,7 +148,6 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	m.supervisor = scheduler.NewSupervisor(scheduler.ChangefeedID(cfID),
 		m.getReplicaSet, m.getNewBootstrapFn(),
 		scheduler.NewBasicScheduler(),
-		scheduler.NewBalanceScheduler(time.Minute, 1000),
 	)
 	log.Info("create maintainer", zap.String("id", cfID.String()))
 	return m
