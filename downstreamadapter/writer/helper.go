@@ -33,10 +33,11 @@ import (
 )
 
 type preparedDMLs struct {
-	startTs  []model.Ts
-	sqls     []string
-	values   [][]interface{}
-	rowCount int
+	startTs         []model.Ts
+	sqls            []string
+	values          [][]interface{}
+	rowCount        int
+	approximateSize int64
 }
 
 // CheckIfBDRModeIsSupported checks if the downstream supports BDR mode.

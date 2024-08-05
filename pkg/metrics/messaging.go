@@ -48,7 +48,7 @@ var (
 			Subsystem: "messaging",
 			Name:      "error_counter",
 			Help:      "The counter of errors occurred in a message center",
-		}, []string{"target", "type", "message", "topic"}) // target: its addr, type: event, command, message: error info
+		}, []string{"target", "type", "message"}) // target: its addr, type: event, command, message: error info
 	MessagingStreamGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",

@@ -181,7 +181,7 @@ func (w *MysqlWriter) Flush(events []*common.TxnEvent, workerNum int) error {
 	} else {
 		// dry run mode, just record the metrics
 		w.statistics.RecordBatchExecution(func() (int, int64, error) {
-			return dmls.rowCount, 0, nil
+			return dmls.rowCount, dmls.approximateSize, nil
 		})
 	}
 
@@ -200,6 +200,12 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent) *preparedDMLs {
 	values := make([][]interface{}, 0)
 
 	rowCount := 0
+	approximateSize := int64(0)
+	calcColsSize := func(cols []*common.Column) {
+		for _, c := range cols {
+			approximateSize += int64(c.ApproximateBytes)
+		}
+	}
 	for _, event := range events {
 		rows := event.GetRows()
 		if len(rows) == 0 {
@@ -223,6 +229,9 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent) *preparedDMLs {
 
 		quoteTable := firstRow.TableInfo.TableName.QuoteString()
 		for _, row := range rows {
+			calcColsSize(row.Columns)
+			calcColsSize(row.PreColumns)
+
 			var query string
 			var args []interface{}
 			// Update Event
@@ -266,15 +275,15 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent) *preparedDMLs {
 	}
 
 	return &preparedDMLs{
-		startTs:  startTs,
-		sqls:     sqls,
-		values:   values,
-		rowCount: rowCount,
+		startTs:         startTs,
+		sqls:            sqls,
+		values:          values,
+		rowCount:        rowCount,
+		approximateSize: approximateSize,
 	}
 }
 
 func (w *MysqlWriter) execDMLWithMaxRetries(dmls *preparedDMLs) error {
-
 	if len(dmls.sqls) != len(dmls.values) {
 		log.Error("unexpected number of sqls and values",
 			zap.Strings("sqls", dmls.sqls),
@@ -311,7 +320,7 @@ func (w *MysqlWriter) execDMLWithMaxRetries(dmls *preparedDMLs) error {
 			return 0, 0, err
 		}
 		log.Debug("Exec Rows succeeded")
-		return dmls.rowCount, 0, nil
+		return dmls.rowCount, dmls.approximateSize, nil
 	}
 	return retry.Do(ctx, func() error {
 		err := w.statistics.RecordBatchExecution(tryExec)
