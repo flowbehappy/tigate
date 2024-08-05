@@ -68,7 +68,6 @@ func NewCoordinator(capture *model.CaptureInfo, version int64) server.Coordinato
 		scheduler.ChangefeedID(model.DefaultChangeFeedID("coordinator")),
 		c.newChangefeed, c.newBootstrapMessage,
 		scheduler.NewBasicScheduler(),
-		scheduler.NewBalanceScheduler(time.Minute, 1000),
 	)
 
 	// receive messages
@@ -213,7 +212,7 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message {
 	return messaging.NewTargetMessage(
 		messaging.ServerId(captureID),
-		"maintainer-manager",
+		messaging.MaintainerManagerTopic,
 		&heartbeatpb.CoordinatorBootstrapRequest{Version: c.version})
 }
 
