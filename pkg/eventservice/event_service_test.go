@@ -162,7 +162,7 @@ func (m *mockEventStore) Close(ctx context.Context) error {
 }
 
 func (m *mockEventStore) RegisterDispatcher(
-	dispatcherID common.DispatcherID,
+	dispatcherID string,
 	span *common.TableSpan,
 	startTS common.Ts,
 	observer eventstore.EventObserver,
@@ -179,11 +179,11 @@ func (m *mockEventStore) RegisterDispatcher(
 	return nil
 }
 
-func (m *mockEventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, gcTS uint64) error {
+func (m *mockEventStore) UpdateDispatcherSendTS(dispatcherID string, gcTS uint64) error {
 	return nil
 }
 
-func (m *mockEventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
+func (m *mockEventStore) UnregisterDispatcher(dispatcherID string) error {
 	return nil
 }
 

@@ -7,6 +7,8 @@ import (
 	"github.com/tinylib/msgp/msgp"
 )
 
+var DefaultEndian = binary.LittleEndian
+
 type Ts uint64
 type TableID int64
 
@@ -52,5 +54,3 @@ type TopicType string
 type EpochType uint64
 
 type AddressType string
-
-var DefaultEndian = binary.LittleEndian

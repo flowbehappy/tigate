@@ -7,7 +7,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -118,10 +117,8 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 	c.dispatchers.m[info.GetID()] = dispatcher
 	c.dispatchers.mu.Unlock()
 
-	id := uuid.MustParse(info.GetID())
-
 	c.eventStore.RegisterDispatcher(
-		common.DispatcherID(id),
+		info.GetID(),
 		span,
 		common.Ts(info.GetStartTs()),
 		dispatcher.onNewEvent,

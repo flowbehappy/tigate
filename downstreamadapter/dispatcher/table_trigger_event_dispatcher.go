@@ -60,7 +60,7 @@ It also communicates with the Maintainer periodically to report self progress,
 and get the other dispatcher's progress and action of the blocked event.
 */
 type TableTriggerEventDispatcher struct {
-	Id common.DispatcherID
+	Id string
 	Ch chan *common.TxnEvent // 接受 event -- 先做个基础版本的，每次处理一条 ddl 的那种
 	//Filter        *Filter               // 发送给 logService
 	Sink          sink.Sink
@@ -92,7 +92,7 @@ func (d *TableTriggerEventDispatcher) GetResolvedTs() uint64 {
 	return d.ResolvedTs
 }
 
-func (d *TableTriggerEventDispatcher) GetId() common.DispatcherID {
+func (d *TableTriggerEventDispatcher) GetId() string {
 	return d.Id
 }
 

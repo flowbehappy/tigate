@@ -12,7 +12,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -323,7 +322,7 @@ func (c *eventBroker) removeDispatcher(id string) {
 	if !ok {
 		return
 	}
-	c.eventStore.UnregisterDispatcher(common.DispatcherID(uuid.MustParse(id)))
+	c.eventStore.UnregisterDispatcher(id)
 	delete(c.dispatchers.m, id)
 	c.taskPool.removeTask(id)
 }
