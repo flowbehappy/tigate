@@ -248,6 +248,9 @@ func (e *EventDispatcherManager) close() {
 	}
 
 	e.sink.Close()
+	metrics.CreateDispatcherDuration.DeleteLabelValues(e.changefeedID.Namespace, e.changefeedID.ID)
+	metrics.EventDispatcherManagerCheckpointTsGauge.DeleteLabelValues(e.changefeedID.Namespace, e.changefeedID.ID)
+	metrics.EventDispatcherManagerResolvedTsGauge.DeleteLabelValues(e.changefeedID.Namespace, e.changefeedID.ID)
 
 	e.closed.Store(true)
 	log.Info("event dispatcher manager closed", zap.Stringer("changefeedID", e.changefeedID))

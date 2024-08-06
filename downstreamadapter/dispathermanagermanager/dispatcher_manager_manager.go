@@ -119,7 +119,7 @@ func (m *DispatcherManagerManager) handleRemoveDispatcherManager(from messaging.
 	changefeedID := model.DefaultChangeFeedID(req.ChangefeedID)
 	response := &heartbeatpb.MaintainerCloseResponse{
 		ChangefeedID: req.ChangefeedID,
-		Success:      false,
+		Success:      true,
 	}
 
 	eventDispatcherManager, ok := m.dispatcherManagers[changefeedID]
@@ -128,8 +128,8 @@ func (m *DispatcherManagerManager) handleRemoveDispatcherManager(from messaging.
 		if closed {
 			delete(m.dispatcherManagers, changefeedID)
 			EventDispatcherManagerCount.WithLabelValues(changefeedID.Namespace, changefeedID.ID).Dec()
-			response.Success = true
 		}
+		response.Success = closed
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 		from,
