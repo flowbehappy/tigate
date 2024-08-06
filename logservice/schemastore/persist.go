@@ -540,8 +540,6 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Ts) 
 		}
 		batch := db.NewBatch()
 		defer batch.Close()
-		log.Info("write schema snapshot for database",
-			zap.String("database", dbinfo.Name.O))
 		databaseInfo := &DatabaseInfo{
 			Name:          dbinfo.Name.O,
 			Tables:        make([]common.TableID, 0),
