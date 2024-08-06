@@ -534,15 +534,13 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Ts) 
 	}
 	log.Info("list database finish")
 
-	// TODO: split multiple batches
-	batch := db.NewBatch()
-	defer batch.Close()
-
 	databaseMap := make(DatabaseInfoMap, len(dbinfos))
 	for _, dbinfo := range dbinfos {
 		if isSystemDB(dbinfo.Name.O) {
 			continue
 		}
+		batch := db.NewBatch()
+		defer batch.Close()
 		log.Info("write schema snapshot for database",
 			zap.String("database", dbinfo.Name.O))
 		databaseInfo := &DatabaseInfo{
@@ -586,19 +584,11 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Ts) 
 				log.Fatal("generate index key failed", zap.Error(err))
 			}
 			batch.Set(indexKey, nil, pebble.NoSync)
-			count += 1
-			if count >= 100 {
-				if err := batch.Commit(pebble.NoSync); err != nil {
-					return nil, err
-				}
-				count = 0
-			}
 		}
-	}
-
-	log.Info("try to commit last batch")
-	if err := batch.Commit(pebble.NoSync); err != nil {
-		return nil, err
+		log.Info("try to commit batch")
+		if err := batch.Commit(pebble.NoSync); err != nil {
+			return nil, err
+		}
 	}
 
 	log.Info("finish write schema snapshot",
