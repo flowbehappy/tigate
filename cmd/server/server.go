@@ -80,7 +80,7 @@ func (o *options) addFlags(cmd *cobra.Command) {
 func (o *options) run(cmd *cobra.Command) error {
 	cancel := util.InitCmd(cmd, &logutil.Config{
 		File:                 o.serverConfig.LogFile,
-		Level:                "debug",
+		Level:                o.serverConfig.LogLevel,
 		FileMaxSize:          o.serverConfig.Log.File.MaxSize,
 		FileMaxDays:          o.serverConfig.Log.File.MaxDays,
 		FileMaxBackups:       o.serverConfig.Log.File.MaxBackups,
