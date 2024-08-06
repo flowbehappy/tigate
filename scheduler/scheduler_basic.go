@@ -35,6 +35,7 @@ type BasicScheduler struct {
 
 func NewBasicScheduler(id InferiorID) *BasicScheduler {
 	return &BasicScheduler{
+		id:                    id,
 		lastForceScheduleTime: time.Now(),
 	}
 }
