@@ -73,6 +73,7 @@ type Maintainer struct {
 
 	pdEndpoints []string
 	nodeManager *watcher.NodeManager
+	nodesClosed map[string]struct{}
 
 	statusChanged  *atomic.Bool
 	lastReportTime time.Time
@@ -116,6 +117,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		removed:         atomic.NewBool(false),
 		taskCh:          make(chan Task, 1024),
 		nodeManager:     appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName),
+		nodesClosed:     make(map[string]struct{}),
 		statusChanged:   atomic.NewBool(true),
 		isSecondary:     atomic.NewBool(isSecondary),
 		removing:        atomic.NewBool(false),

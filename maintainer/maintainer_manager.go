@@ -194,9 +194,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 
 	for _, req := range request.RemoveMaintainers {
 		cfID := model.DefaultChangeFeedID(req.GetId())
-
 		cf, ok := m.maintainers.Load(cfID)
-
 		if !ok {
 			log.Warn("ignore remove maintainer request, "+
 				"since the maintainer not found",
@@ -260,7 +258,7 @@ func (m *Manager) dispatcherMaintainerMessage(
 	}
 
 	maintainer := v.(*Maintainer)
-	if maintainer.isSecondary.Load() {
+	if maintainer.isSecondary.Load() || maintainer.removing.Load() {
 		return nil
 	}
 	return maintainer.getMessageQueue().Push(ctx, msg)

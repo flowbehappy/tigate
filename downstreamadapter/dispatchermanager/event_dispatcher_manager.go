@@ -214,6 +214,32 @@ func (e *EventDispatcherManager) Init() error {
 	//threadpool.GetTaskSchedulerInstance().HeartbeatTaskScheduler.Submit(newHeartbeatRecvTask(e))
 }
 
+func (e *EventDispatcherManager) Close() {
+	log.Info("closing event dispatcher manager", zap.Stringer("changefeedID", e.changefeedID))
+	e.cancel()
+	e.wg.Wait()
+
+	toCloseDispatchers := make([]*dispatcher.TableEventDispatcher, 0)
+	e.dispatcherMap.ForEach(func(tableSpan *common.TableSpan, dispatcher *dispatcher.TableEventDispatcher) {
+		dispatcher.Remove()
+		_, ok := dispatcher.TryClose()
+		if !ok {
+			toCloseDispatchers = append(toCloseDispatchers, dispatcher)
+		}
+	})
+	for _, dispatcher := range toCloseDispatchers {
+		log.Info("waiting for dispatcher to close", zap.Any("tableSpan", dispatcher.GetTableSpan()))
+		ok := false
+		for !ok {
+			_, ok = dispatcher.TryClose()
+		}
+	}
+
+	e.sink.Close()
+
+	log.Info("event dispatcher manager closed", zap.Stringer("changefeedID", e.changefeedID))
+}
+
 /*
 func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) uint64 {
 	k := oracle.GetTimeFromTS(startTs).Sub(time.Unix(0, 0)) / syncPointInterval
