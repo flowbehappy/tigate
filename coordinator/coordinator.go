@@ -373,7 +373,9 @@ func (c *coordinator) printStatus() {
 			zap.Int("prepare", prepareTask),
 			zap.Int("commit", commitTask),
 			zap.Int("working", workingTask),
-			zap.Int("removing", removingTask))
+			zap.Int("removing", removingTask),
+			zap.Any("runningTask", c.supervisor.RunningTasks.Len()),
+		)
 		c.lastCheckTime = time.Now()
 	}
 }
