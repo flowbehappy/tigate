@@ -532,7 +532,6 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Ts) 
 	if err != nil {
 		log.Fatal("list databases failed", zap.Error(err))
 	}
-	log.Info("list database finish")
 
 	databaseMap := make(DatabaseInfoMap, len(dbinfos))
 	for _, dbinfo := range dbinfos {
@@ -584,7 +583,6 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Ts) 
 			}
 			batch.Set(indexKey, nil, pebble.NoSync)
 		}
-		log.Info("try to commit batch")
 		if err := batch.Commit(pebble.NoSync); err != nil {
 			return nil, err
 		}
