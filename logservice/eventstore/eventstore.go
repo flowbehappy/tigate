@@ -544,7 +544,9 @@ func (iter *eventStoreIter) Next() (*common.RowChangedEvent, bool, error) {
 	iter.prevStartTS = startTS
 	tableInfo, err := iter.schemaStore.GetTableInfo(iter.tableID, common.Ts(rawKV.CRTs-1))
 	if err != nil {
-		log.Panic("failed to get table info", zap.Error(err))
+		log.Panic("failed to get table info",
+			zap.Uint64("tableID", uint64(iter.tableID)),
+			zap.Error(err))
 	}
 	row, err := iter.iterMounter.DecodeEvent(rawKV, tableInfo)
 	if err != nil {

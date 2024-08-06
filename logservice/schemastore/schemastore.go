@@ -161,12 +161,12 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 				if v.Job.SchemaID == 1 {
 					continue
 				}
-				// log.Info("write ddl event",
-				// 	zap.String("schema", v.Job.SchemaName),
-				// 	zap.String("table", v.Job.TableName),
-				// 	zap.Uint64("startTs", v.Job.StartTS),
-				// 	zap.Uint64("finishedTs", v.Job.BinlogInfo.FinishedTS),
-				// 	zap.String("query", v.Job.Query))
+				log.Info("write ddl event",
+					zap.String("schema", v.Job.SchemaName),
+					zap.String("table", v.Job.TableName),
+					zap.Uint64("startTs", v.Job.StartTS),
+					zap.Uint64("finishedTs", v.Job.BinlogInfo.FinishedTS),
+					zap.String("query", v.Job.Query))
 				s.unsortedCache.addDDLEvent(v)
 			case common.Ts:
 				// TODO: check resolved ts is monotonically increasing
@@ -284,6 +284,10 @@ func (s *schemaStore) RegisterDispatcher(
 
 		databaseInfo, ok := s.databaseMap[common.SchemaID(schemaID)]
 		if !ok {
+			log.Warn("database not found",
+				zap.Int64("schemaID", int64(schemaID)),
+				zap.Int64("tableID", int64(tableID)),
+				zap.Any("databaseMap", s.databaseMap))
 			return "", errors.New("database not found")
 		}
 		return databaseInfo.Name, nil
@@ -492,7 +496,9 @@ func fillSchemaName(job *model.Job, databaseMap DatabaseInfoMap) error {
 	schemaID := common.SchemaID(job.SchemaID)
 	databaseInfo, ok := databaseMap[schemaID]
 	if !ok {
-		log.Error("database not found", zap.Any("schemaID", schemaID))
+		log.Error("database not found",
+			zap.Int64("schemaID", int64(schemaID)),
+			zap.Any("databaseMap", databaseMap))
 		return errors.New("database not found")
 	}
 	if databaseInfo.CreateVersion > common.Ts(job.BinlogInfo.FinishedTS) {
