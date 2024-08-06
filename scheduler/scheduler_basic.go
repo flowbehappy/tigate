@@ -23,6 +23,7 @@ import (
 )
 
 type BasicScheduler struct {
+	id                    InferiorID
 	lastForceScheduleTime time.Time
 
 	needAddInferior  bool
@@ -32,7 +33,7 @@ type BasicScheduler struct {
 	removeInferiorCache []InferiorID
 }
 
-func NewBasicScheduler() *BasicScheduler {
+func NewBasicScheduler(id InferiorID) *BasicScheduler {
 	return &BasicScheduler{
 		lastForceScheduleTime: time.Now(),
 	}
@@ -80,7 +81,9 @@ func (b *BasicScheduler) Schedule(
 		})
 		b.needRemoveInferior = false
 		if len(b.removeInferiorCache) > 0 {
-			log.Info("basic scheduler generate new remove inferiors cache", zap.Int("count", len(b.removeInferiorCache)))
+			log.Info("basic scheduler generate new remove inferiors cache",
+				zap.String("id", b.id.String()),
+				zap.Int("count", len(b.removeInferiorCache)))
 		}
 	}
 	if len(b.removeInferiorCache) > 0 {
@@ -94,7 +97,7 @@ func (b *BasicScheduler) Schedule(
 			// release for GC
 			b.removeInferiorCache = nil
 		}
-		tasks = append(tasks, newBurstRemoveInferiors(rmInferiors, stateMachines)...)
+		tasks = append(tasks, b.newBurstRemoveInferiors(rmInferiors, stateMachines)...)
 		if len(rmInferiors) >= batchSize {
 			return tasks
 		}
@@ -115,7 +118,9 @@ func (b *BasicScheduler) Schedule(
 		})
 		b.needAddInferior = false
 		if len(b.addInferiorCache) > 0 {
-			log.Info("basic scheduler generate new add inferiors cache", zap.Int("count", len(b.addInferiorCache)))
+			log.Info("basic scheduler generate new add inferiors cache",
+				zap.String("id", b.id.String()),
+				zap.Int("count", len(b.addInferiorCache)))
 		}
 	}
 	if len(b.addInferiorCache) > 0 {
@@ -139,10 +144,11 @@ func (b *BasicScheduler) Schedule(
 			// for a cluster with n captures, n should be at least 2
 			// only n - 1 captures can be in the `stopping` at the same time.
 			log.Warn("cannot found server when add new inferior",
+				zap.String("id", b.id.String()),
 				zap.Any("allCaptureStatus", aliveCaptures))
 			return tasks
 		}
-		tasks = append(tasks, newBurstAddInferiors(newInferiors, captureIDs)...)
+		tasks = append(tasks, b.newBurstAddInferiors(newInferiors, captureIDs)...)
 		if len(newInferiors) >= batchSize {
 			return tasks
 		}
@@ -152,7 +158,7 @@ func (b *BasicScheduler) Schedule(
 }
 
 // newBurstAddInferiors add each new inferior to captures in a round-robin way.
-func newBurstAddInferiors(newInferiors []InferiorID, captureIDs []model.CaptureID,
+func (b *BasicScheduler) newBurstAddInferiors(newInferiors []InferiorID, captureIDs []model.CaptureID,
 ) []*ScheduleTask {
 	idx := 0
 	addInferiorTasks := make([]*ScheduleTask, 0, len(newInferiors))
@@ -165,6 +171,7 @@ func newBurstAddInferiors(newInferiors []InferiorID, captureIDs []model.CaptureI
 					CaptureID: targetCapture,
 				}})
 		log.Info("burst add inferior",
+			zap.String("id", b.id.String()),
 			zap.String("inferior", infID.String()),
 			zap.String("captureID", targetCapture))
 
@@ -177,7 +184,7 @@ func newBurstAddInferiors(newInferiors []InferiorID, captureIDs []model.CaptureI
 }
 
 // TODO: maybe remove task does not need captureID.
-func newBurstRemoveInferiors(
+func (b *BasicScheduler) newBurstRemoveInferiors(
 	rmInferiors []InferiorID,
 	stateMachines utils.Map[InferiorID, *StateMachine],
 ) []*ScheduleTask {
@@ -192,6 +199,7 @@ func newBurstRemoveInferiors(
 		if state.Primary == "" {
 			log.Warn("primary or secondary not found for removed inferior,"+
 				"this may happen if the server shutdown",
+				zap.String("id", b.id.String()),
 				zap.Any("ID", id.String()))
 			continue
 		}

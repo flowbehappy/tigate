@@ -64,10 +64,11 @@ func NewCoordinator(capture *model.CaptureInfo, version int64) server.Coordinato
 		scheduledChangefeeds: make(map[model.ChangeFeedID]*changefeed),
 		lastTickTime:         time.Now(),
 	}
+	id := scheduler.ChangefeedID(model.DefaultChangeFeedID("coordinator"))
 	c.supervisor = scheduler.NewSupervisor(
-		scheduler.ChangefeedID(model.DefaultChangeFeedID("coordinator")),
+		id,
 		c.newChangefeed, c.newBootstrapMessage,
-		scheduler.NewBasicScheduler(),
+		scheduler.NewBasicScheduler(id),
 	)
 
 	// receive messages
