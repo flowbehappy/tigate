@@ -868,6 +868,9 @@ func (s *StateMachine) handleResend() []rpc.Message {
 	case SchedulerStatusCommit:
 		server, _ = s.GetRole(RolePrimary)
 		status = s.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Prepared)
+	case SchedulerStatusRemoving:
+		server, _ = s.GetRole(RolePrimary)
+		status = s.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Working)
 	}
 
 	msg, err := s.HandleInferiorStatus(status, server)

@@ -16,6 +16,7 @@ package dispatchermanager
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/flowbehappy/tigate/utils"
@@ -72,6 +73,9 @@ type EventDispatcherManager struct {
 	metricCreateDispatcherDuration prometheus.Observer
 	metricCheckpointTs             prometheus.Gauge
 	metricResolveTs                prometheus.Gauge
+
+	closing bool
+	closed  atomic.Bool
 }
 
 // TODO:这个锁会在量级大于几万以后影响明显，10w 的 dispatcher同时创建需要预估10多分钟的开销。
@@ -141,7 +145,7 @@ func (d *DispatcherMap) GetAllDispatchers() []*dispatcher.TableEventDispatcher {
 	return d.dispatcherCacheForRead
 }
 
-func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.ChangefeedConfig, clusterID messaging.ServerId, maintainerID messaging.ServerId) *EventDispatcherManager {
+func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.ChangefeedConfig, maintainerID messaging.ServerId) *EventDispatcherManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	eventDispatcherManager := &EventDispatcherManager{
 		dispatcherMap: newDispatcherMap(),
@@ -212,6 +216,44 @@ func (e *EventDispatcherManager) Init() error {
 	// init heartbeat recv and send task
 	// No need to run recv task when there is no ddl event
 	//threadpool.GetTaskSchedulerInstance().HeartbeatTaskScheduler.Submit(newHeartbeatRecvTask(e))
+}
+
+func (e *EventDispatcherManager) TryClose() bool {
+	if !e.closing {
+		e.closing = true
+		go e.close()
+	}
+	return e.closed.Load()
+}
+
+func (e *EventDispatcherManager) close() {
+	log.Info("closing event dispatcher manager", zap.Stringer("changefeedID", e.changefeedID))
+	e.cancel()
+	e.wg.Wait()
+
+	toCloseDispatchers := make([]*dispatcher.TableEventDispatcher, 0)
+	e.dispatcherMap.ForEach(func(tableSpan *common.TableSpan, dispatcher *dispatcher.TableEventDispatcher) {
+		dispatcher.Remove()
+		_, ok := dispatcher.TryClose()
+		if !ok {
+			toCloseDispatchers = append(toCloseDispatchers, dispatcher)
+		}
+	})
+	for _, dispatcher := range toCloseDispatchers {
+		log.Info("waiting for dispatcher to close", zap.Any("tableSpan", dispatcher.GetTableSpan()))
+		ok := false
+		for !ok {
+			_, ok = dispatcher.TryClose()
+		}
+	}
+
+	e.sink.Close()
+	metrics.CreateDispatcherDuration.DeleteLabelValues(e.changefeedID.Namespace, e.changefeedID.ID)
+	metrics.EventDispatcherManagerCheckpointTsGauge.DeleteLabelValues(e.changefeedID.Namespace, e.changefeedID.ID)
+	metrics.EventDispatcherManagerResolvedTsGauge.DeleteLabelValues(e.changefeedID.Namespace, e.changefeedID.ID)
+
+	e.closed.Store(true)
+	log.Info("event dispatcher manager closed", zap.Stringer("changefeedID", e.changefeedID))
 }
 
 /*

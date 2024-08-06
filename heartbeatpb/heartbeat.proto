@@ -122,6 +122,15 @@ message MaintainerBootstrapResponse {
     repeated TableSpanStatus statuses = 2;
 }
 
+message MaintainerCloseRequest {
+    string changefeedID = 1;
+}
+
+message MaintainerCloseResponse {
+    string changefeedID = 1;
+    bool success = 2;
+}
+
 message TableSpanStatus {
     TableSpan span = 1; // for which dispatcher
     ComponentState component_status = 2;

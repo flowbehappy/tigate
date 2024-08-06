@@ -1,5 +1,6 @@
 package messaging
 
+// A topic identifies a message target.
 const (
 	// EventServiceTopic is the topic of the event service.
 	EventServiceTopic = "EventServiceTopic"
@@ -12,6 +13,8 @@ const (
 	MaintainerManagerTopic           = "maintainer-manager"
 	DispatcherHeartBeatRequestTopic  = "HeartBeatRequest"
 	MaintainerBootstrapResponseTopic = "MaintainerBootstrapResponse"
+
+	MaintainerTopic = "maintainer"
 
 	// SchedulerDispatcherTopic is the topic name for dispatcher manager receive scheduler message
 	SchedulerDispatcherTopic       = "SchedulerDispatcherRequest"

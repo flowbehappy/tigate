@@ -281,3 +281,8 @@ func (s *MysqlSink) GetSmallestCommitTs(tableSpan *common.TableSpan) uint64 {
 
 	return tableStatus.getProgress().SmallestCommitTs()
 }
+
+func (s *MysqlSink) Close() {
+	s.cancel()
+	s.wg.Wait()
+}

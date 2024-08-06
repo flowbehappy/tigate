@@ -27,7 +27,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const createDispatcherConcurrency = 16
+const handleDispatcherRequestConcurrency = 16
 
 /*
 HeartBeatCollect is responsible for sending heartbeat requests and receiving heartbeat responses by messageCenter
@@ -53,7 +53,7 @@ func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 		requestQueue:              NewHeartbeatRequestQueue(),
 		responseChanMap:           make(map[model.ChangeFeedID]*HeartbeatResponseQueue),
 		eventDispatcherManagerMap: make(map[model.ChangeFeedID]*EventDispatcherManager),
-		dispatcherRequestCh:       make([]chan *heartbeatpb.ScheduleDispatcherRequest, createDispatcherConcurrency),
+		dispatcherRequestCh:       make([]chan *heartbeatpb.ScheduleDispatcherRequest, handleDispatcherRequestConcurrency),
 	}
 	//context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(heartbeatResponseTopic, heartBeatCollector.RecvHeartBeatResponseMessages)
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
@@ -61,7 +61,7 @@ func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 	heartBeatCollector.wg.Add(1)
 	go heartBeatCollector.SendHeartBeatMessages()
 
-	for i := 0; i < createDispatcherConcurrency; i++ {
+	for i := 0; i < handleDispatcherRequestConcurrency; i++ {
 		idx := i
 		heartBeatCollector.dispatcherRequestCh[idx] = make(chan *heartbeatpb.ScheduleDispatcherRequest, 1024)
 		heartBeatCollector.wg.Add(1)
@@ -130,7 +130,7 @@ func (c *HeartBeatCollector) RecvHeartBeatResponseMessages(msg *messaging.Target
 func (c *HeartBeatCollector) RecvSchedulerDispatcherRequestMessages(ctx context.Context, msg *messaging.TargetMessage) error {
 	scheduleDispatcherRequest := msg.Message.(*heartbeatpb.ScheduleDispatcherRequest)
 
-	idx := int(scheduleDispatcherRequest.Config.Span.TableID) % createDispatcherConcurrency
+	idx := int(scheduleDispatcherRequest.Config.Span.TableID) % handleDispatcherRequestConcurrency
 	select {
 	case c.dispatcherRequestCh[idx] <- scheduleDispatcherRequest:
 		metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", scheduleDispatcherRequest.ChangefeedID, "receive").Inc()
@@ -175,5 +175,6 @@ func (c *HeartBeatCollector) handleDispatcherRequestMessages(req *heartbeatpb.Sc
 }
 
 func (c *HeartBeatCollector) Close() {
-	// todo
+	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
+		DeRegisterHandler(messaging.SchedulerDispatcherTopic)
 }

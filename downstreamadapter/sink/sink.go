@@ -23,4 +23,5 @@ type Sink interface {
 	RemoveTableSpan(tableSpan *common.TableSpan)
 	StopTableSpan(tableSpan *common.TableSpan)
 	GetSmallestCommitTs(tableSpan *common.TableSpan) uint64
+	Close()
 }
