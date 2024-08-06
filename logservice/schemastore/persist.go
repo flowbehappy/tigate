@@ -563,7 +563,6 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Ts) 
 		if err != nil {
 			log.Fatal("get tables failed", zap.Error(err))
 		}
-		count := 0
 		for _, rawTable := range rawTables {
 			if !isTableRawKey(rawTable.Field) {
 				continue
