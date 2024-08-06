@@ -532,6 +532,7 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Ts) 
 	if err != nil {
 		log.Fatal("list databases failed", zap.Error(err))
 	}
+	log.Info("list database finish")
 
 	// TODO: split multiple batches
 	batch := db.NewBatch()
@@ -542,6 +543,8 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Ts) 
 		if isSystemDB(dbinfo.Name.O) {
 			continue
 		}
+		log.Info("write schema snapshot for database",
+			zap.String("database", dbinfo.Name.O))
 		databaseInfo := &DatabaseInfo{
 			Name:          dbinfo.Name.O,
 			Tables:        make([]common.TableID, 0),
@@ -585,6 +588,7 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Ts) 
 		}
 	}
 
+	log.Info("begin to commit batch")
 	if err := batch.Commit(pebble.NoSync); err != nil {
 		return nil, err
 	}
