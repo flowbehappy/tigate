@@ -19,7 +19,7 @@ type Deque[T any] struct {
 }
 
 func NewDequeDefault[T any]() *Deque[T] {
-	return NewDeque[T](128, 0)
+	return NewDeque[T](32, 0)
 }
 
 // blockLen is the size of each block.
@@ -47,11 +47,25 @@ func (d *Deque[T]) resetEmpty() {
 	d.back = d.blockLen/2 - 1
 }
 
+func (d *Deque[T]) BackRef() (*T, bool) {
+	if d.length == 0 {
+		return nil, false
+	}
+	return &d.blocks.Back().Value[d.back], true
+}
+
 func (d *Deque[T]) Back() (T, bool) {
 	if d.length == 0 {
 		return d.zero, false
 	}
 	return d.blocks.Back().Value[d.back], true
+}
+
+func (d *Deque[T]) FrontRef() (*T, bool) {
+	if d.length == 0 {
+		return nil, false
+	}
+	return &d.blocks.Front().Value[d.front], true
 }
 
 func (d *Deque[T]) Front() (T, bool) {
