@@ -342,7 +342,7 @@ func (e *EventDispatcherManager) cleanTableEventDispatcher(tableSpan *common.Tab
 /*
 func (e *EventDispatcherManager) newTableTriggerEventDispatcher(startTs uint64) *dispatcher.TableTriggerEventDispatcher {
 	tableTriggerEventDispatcher := &dispatcher.TableTriggerEventDispatcher{
-		Id: common.DispatcherID(uuid.New()),
+		Id: string(uuid.New()),
 		//Filter:        e.filter,
 		Ch:            make(chan *common.TxnEvent, 1000),
 		ResolvedTs:    startTs,

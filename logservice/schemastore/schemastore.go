@@ -33,19 +33,19 @@ type SchemaStore interface {
 	// RegisterDispatcher register the dispatcher into the schema store.
 	// TODO: return a table info
 	// TODO: add filter
-	RegisterDispatcher(dispatcherID common.DispatcherID, tableID common.TableID, ts common.Ts) error
+	RegisterDispatcher(dispatcherID string, tableID common.TableID, ts common.Ts) error
 
 	// TODO: add interface for TableEventDispatcher
 
-	UpdateDispatcherSendTS(dispatcherID common.DispatcherID, ts common.Ts) error
+	UpdateDispatcherSendTS(dispatcherID string, ts common.Ts) error
 
-	UnregisterDispatcher(dispatcherID common.DispatcherID) error
+	UnregisterDispatcher(dispatcherID string) error
 
 	GetMaxFinishedDDLTS() common.Ts
 
 	GetTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error)
 
-	GetNextDDLEvent(dispatcherID common.DispatcherID) (*DDLEvent, common.Ts, error)
+	GetNextDDLEvent(dispatcherID string) (*DDLEvent, common.Ts, error)
 }
 
 type schemaStore struct {
@@ -262,7 +262,7 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]common.TableID, 
 }
 
 func (s *schemaStore) RegisterDispatcher(
-	dispatcherID common.DispatcherID, tableID common.TableID, startTS common.Ts,
+	dispatcherID string, tableID common.TableID, startTS common.Ts,
 ) error {
 	s.mu.Lock()
 	// TODO: fix me in the future
@@ -348,7 +348,7 @@ func (s *schemaStore) RegisterDispatcher(
 	return nil
 }
 
-func (s *schemaStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, ts common.Ts) error {
+func (s *schemaStore) UpdateDispatcherSendTS(dispatcherID string, ts common.Ts) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	info, ok := s.dispatchersMap[dispatcherID]
@@ -360,7 +360,7 @@ func (s *schemaStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, t
 	return nil
 }
 
-func (s *schemaStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
+func (s *schemaStore) UnregisterDispatcher(dispatcherID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	info, ok := s.dispatchersMap[dispatcherID]
@@ -413,7 +413,7 @@ func (s *schemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*commo
 	return store.getTableInfo(ts)
 }
 
-func (s *schemaStore) GetNextDDLEvent(dispatcherID common.DispatcherID) (*DDLEvent, common.Ts, error) {
+func (s *schemaStore) GetNextDDLEvent(dispatcherID string) (*DDLEvent, common.Ts, error) {
 	return nil, 0, nil
 }
 

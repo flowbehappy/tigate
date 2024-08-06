@@ -94,7 +94,7 @@ and get the other dispatcher's progress and action of the blocked event.
 Each EventDispatcherManager can have multiple TableEventDispatcher.
 */
 type TableEventDispatcher struct {
-	id        common.DispatcherID
+	id        string
 	eventCh   chan *common.TxnEvent // 转换成一个函数
 	tableSpan *common.TableSpan
 	sink      sink.Sink
@@ -122,7 +122,7 @@ type TableEventDispatcher struct {
 func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, syncPointInfo *SyncPointInfo) *TableEventDispatcher {
 	ctx, cancel := context.WithCancel(context.Background())
 	tableEventDispatcher := &TableEventDispatcher{
-		id:            common.DispatcherID(uuid.New()),
+		id:            uuid.NewString(),
 		eventCh:       make(chan *common.TxnEvent, 16),
 		tableSpan:     tableSpan,
 		sink:          sink,
@@ -203,7 +203,7 @@ func (d *TableEventDispatcher) UpdateResolvedTs(ts uint64) {
 	d.GetEventChan() <- &common.TxnEvent{ResolvedTs: ts}
 }
 
-func (d *TableEventDispatcher) GetId() common.DispatcherID {
+func (d *TableEventDispatcher) GetId() string {
 	return d.id
 }
 

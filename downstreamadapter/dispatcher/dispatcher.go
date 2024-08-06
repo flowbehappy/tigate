@@ -58,7 +58,7 @@ type Dispatcher interface {
 	GetResolvedTs() uint64
 	UpdateResolvedTs(uint64)
 	GetCheckpointTs() uint64
-	GetId() common.DispatcherID
+	GetId() string
 	GetDispatcherType() DispatcherType
 	GetHeartBeatChan() chan *HeartBeatResponseMessage
 	//GetSyncPointInfo() *SyncPointInfo
@@ -144,7 +144,7 @@ type HeartBeatInfo struct {
 	// BlockTableSpan []*common.TableSpan
 	// TableSpan      *common.TableSpan
 	heartbeatpb.Watermark
-	Id              common.DispatcherID
+	Id              string
 	TableSpan       *common.TableSpan
 	ComponentStatus heartbeatpb.ComponentState
 }
