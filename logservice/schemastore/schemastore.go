@@ -286,8 +286,7 @@ func (s *schemaStore) RegisterDispatcher(
 		if !ok {
 			log.Warn("database not found",
 				zap.Int64("schemaID", int64(schemaID)),
-				zap.Int64("tableID", int64(tableID)),
-				zap.Any("databaseMap", s.databaseMap))
+				zap.Int64("tableID", int64(tableID)))
 			return "", errors.New("database not found")
 		}
 		return databaseInfo.Name, nil
@@ -498,9 +497,8 @@ func fillSchemaName(job *model.Job, databaseMap DatabaseInfoMap) error {
 	schemaID := common.SchemaID(job.SchemaID)
 	databaseInfo, ok := databaseMap[schemaID]
 	if !ok {
-		log.Error("database not found",
-			zap.Int64("schemaID", int64(schemaID)),
-			zap.Any("databaseMap", databaseMap))
+		log.Warn("database not found",
+			zap.Int64("schemaID", int64(schemaID)))
 		return errors.New("database not found")
 	}
 	if databaseInfo.CreateVersion > common.Ts(job.BinlogInfo.FinishedTS) {
