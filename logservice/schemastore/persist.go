@@ -565,6 +565,7 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Ts) 
 		if err != nil {
 			log.Fatal("get tables failed", zap.Error(err))
 		}
+		count := 0
 		for _, rawTable := range rawTables {
 			if !isTableRawKey(rawTable.Field) {
 				continue
@@ -585,10 +586,17 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Ts) 
 				log.Fatal("generate index key failed", zap.Error(err))
 			}
 			batch.Set(indexKey, nil, pebble.NoSync)
+			count += 1
+			if count >= 100 {
+				if err := batch.Commit(pebble.NoSync); err != nil {
+					return nil, err
+				}
+				count = 0
+			}
 		}
 	}
 
-	log.Info("begin to commit batch")
+	log.Info("try to commit last batch")
 	if err := batch.Commit(pebble.NoSync); err != nil {
 		return nil, err
 	}
