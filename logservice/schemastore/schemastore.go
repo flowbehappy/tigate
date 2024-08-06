@@ -462,7 +462,9 @@ func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfo
 		model.ActionCreateView,
 		model.ActionRecoverTable:
 		if err := fillSchemaName(job, databaseMap); err != nil {
-			return err
+			// FIXME
+			log.Warn("fill schame name failed")
+			return nil
 		}
 		// no dispatcher should register on these kinds of tables?
 		// TODO: add a cache for these kinds of newly created tables because they may soon be registered?
