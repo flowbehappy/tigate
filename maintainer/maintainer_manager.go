@@ -84,6 +84,22 @@ func NewMaintainerManager(selfServerID messaging.ServerId, pdEndpoints []string)
 			return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
 		})
 
+	mc.RegisterHandler(messaging.MaintainerTopic,
+		func(ctx context.Context, msg *messaging.TargetMessage) error {
+			req := msg.Message.(*heartbeatpb.MaintainerCloseResponse)
+			changefeedID := model.DefaultChangeFeedID(req.ChangefeedID)
+			v, ok := m.maintainers.Load(changefeedID)
+			if !ok {
+				log.Warn("maintainer is not found",
+					zap.Stringer("changefeedID", changefeedID), zap.String("message", msg.String()))
+				return nil
+			}
+
+			maintainer := v.(*Maintainer)
+			maintainer.onNodeClosed(msg.From.String(), req)
+			return nil
+		})
+
 	return m
 }
 

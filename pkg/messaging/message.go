@@ -36,6 +36,8 @@ const (
 	TypeMaintainerHeartbeatRequest
 	TypeMaintainerBootstrapRequest
 	TypeMaintainerBootstrapResponse
+	TypeMaintainerCloseRequest
+	TypeMaintainerCloseResponse
 
 	TypeMessageError
 	TypeMessageHandShake
@@ -75,6 +77,10 @@ func (t IOType) String() string {
 		return "BootstrapMaintainerRequest"
 	case TypeMaintainerBootstrapResponse:
 		return "MaintainerBootstrapResponse"
+	case TypeMaintainerCloseRequest:
+		return "MaintainerCloseRequest"
+	case TypeMaintainerCloseResponse:
+		return "MaintainerCloseResponse"
 	case TypeMessageError:
 		return "MessageError"
 	case TypeMessageHandShake:
@@ -242,6 +248,10 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 		m = &RegisterDispatcherRequest{}
 	case TypeMaintainerBootstrapResponse:
 		m = &heartbeatpb.MaintainerBootstrapResponse{}
+	case TypeMaintainerCloseRequest:
+		m = &heartbeatpb.MaintainerCloseRequest{}
+	case TypeMaintainerCloseResponse:
+		m = &heartbeatpb.MaintainerCloseResponse{}
 	case TypeMaintainerBootstrapRequest:
 		m = &heartbeatpb.MaintainerBootstrapRequest{}
 	case TypeMessageError:
@@ -303,6 +313,10 @@ func NewTargetMessage(To ServerId, Topic common.TopicType, Message IOTypeT) *Tar
 		ioType = TypeRegisterDispatcherRequest
 	case *heartbeatpb.MaintainerBootstrapResponse:
 		ioType = TypeMaintainerBootstrapResponse
+	case *heartbeatpb.MaintainerCloseRequest:
+		ioType = TypeMaintainerCloseRequest
+	case *heartbeatpb.MaintainerCloseResponse:
+		ioType = TypeMaintainerCloseResponse
 	default:
 		panic("unknown io type")
 	}

@@ -16,6 +16,7 @@ package dispatchermanager
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/flowbehappy/tigate/utils"
@@ -72,6 +73,9 @@ type EventDispatcherManager struct {
 	metricCreateDispatcherDuration prometheus.Observer
 	metricCheckpointTs             prometheus.Gauge
 	metricResolveTs                prometheus.Gauge
+
+	closing bool
+	closed  atomic.Bool
 }
 
 // TODO:这个锁会在量级大于几万以后影响明显，10w 的 dispatcher同时创建需要预估10多分钟的开销。
@@ -141,7 +145,7 @@ func (d *DispatcherMap) GetAllDispatchers() []*dispatcher.TableEventDispatcher {
 	return d.dispatcherCacheForRead
 }
 
-func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.ChangefeedConfig, clusterID messaging.ServerId, maintainerID messaging.ServerId) *EventDispatcherManager {
+func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.ChangefeedConfig, maintainerID messaging.ServerId) *EventDispatcherManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	eventDispatcherManager := &EventDispatcherManager{
 		dispatcherMap: newDispatcherMap(),
@@ -214,7 +218,15 @@ func (e *EventDispatcherManager) Init() error {
 	//threadpool.GetTaskSchedulerInstance().HeartbeatTaskScheduler.Submit(newHeartbeatRecvTask(e))
 }
 
-func (e *EventDispatcherManager) Close() {
+func (e *EventDispatcherManager) TryClose() bool {
+	if !e.closing {
+		e.closing = true
+		go e.close()
+	}
+	return e.closed.Load()
+}
+
+func (e *EventDispatcherManager) close() {
 	log.Info("closing event dispatcher manager", zap.Stringer("changefeedID", e.changefeedID))
 	e.cancel()
 	e.wg.Wait()
@@ -237,6 +249,7 @@ func (e *EventDispatcherManager) Close() {
 
 	e.sink.Close()
 
+	e.closed.Store(true)
 	log.Info("event dispatcher manager closed", zap.Stringer("changefeedID", e.changefeedID))
 }
 

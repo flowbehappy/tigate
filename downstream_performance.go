@@ -92,7 +92,7 @@ func main() {
 			SinkURI: "tidb://root:@127.0.0.1:4000",
 		}
 		changefeedID := model.DefaultChangeFeedID("test" + strconv.Itoa(db_index))
-		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, &changefeedConfig, serverId, serverId)
+		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, &changefeedConfig, serverId)
 		managerMap[db_index] = eventDispatcherManager
 		//appcontext.GetService[*heartbeatcollector.HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(eventDispatcherManager)
 

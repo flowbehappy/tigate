@@ -183,26 +183,19 @@ func (m *Maintainer) cleanupMetrics() {
 
 func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time) {
 	m.updateMetrics()
-	if m.removed.Load() {
-		// removed, cancel the task
-		return threadpool.Done, time.Time{}
+	if m.removing.Load() {
+		//todo: send message to dispatcher manager if changefeed is removed
+		closed := m.tryCloseChangefeed()
+		if closed {
+			m.removed.Store(true)
+			m.state = heartbeatpb.ComponentState_Stopped
+			return threadpool.Done, time.Time{}
+		}
+		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
 	}
 
 	taskStatus = threadpool.CPUTask
 	tick = time.Now().Add(50 * time.Millisecond)
-	if m.removing.Load() {
-		//todo: send message to dispatcher manager if changefeed is removed
-		m.closeChangefeed()
-		if m.supervisor.GetInferiors().Len() == 0 {
-			m.removed.Store(true)
-			m.state = heartbeatpb.ComponentState_Stopped
-			return threadpool.Done, time.Time{}
-		} else {
-			log.Error("maintainer is removing, but still has tasks",
-				zap.Any("tasks", m.supervisor.GetInferiors().Len()))
-		}
-	}
-
 	// init the maintainer, todo: return error and cancel the maintainer
 	if !m.initialized {
 		if err := m.initChangefeed(); err != nil {
@@ -455,19 +448,34 @@ func (m *Maintainer) initTableIDs() (map[int64]struct{}, error) {
 	return tableIDs, nil
 }
 
-func (m *Maintainer) finishAddChangefeed() {
-	m.state = heartbeatpb.ComponentState_Working
-	m.statusChanged.Store(true)
+func (m *Maintainer) onNodeClosed(from string, response *heartbeatpb.MaintainerCloseResponse) {
+	if response.Success {
+		m.nodesClosed[from] = struct{}{}
+	}
 }
 
-func (m *Maintainer) closeChangefeed() {
+func (m *Maintainer) tryCloseChangefeed() bool {
 	if m.state != heartbeatpb.ComponentState_Stopping && m.state != heartbeatpb.ComponentState_Stopped {
 		m.state = heartbeatpb.ComponentState_Stopping
 		m.statusChanged.Store(true)
-		m.tableSpans = utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior]()
-		m.supervisor.MarkNeedAddInferior()
-		m.supervisor.MarkNeedRemoveInferior()
 	}
+	if !m.cascadeRemoving.Load() {
+		return true
+	}
+
+	msgs := make([]rpc.Message, 0)
+	for node := range m.nodeManager.GetAliveCaptures() {
+		if _, ok := m.nodesClosed[node]; !ok {
+			msgs = append(msgs, messaging.NewTargetMessage(
+				messaging.ServerId(node),
+				messaging.MaintainerBoostrapRequestTopic,
+				&heartbeatpb.MaintainerCloseRequest{
+					ChangefeedID: m.id.ID,
+				}))
+		}
+	}
+	m.sendMessages(msgs)
+	return len(msgs) == 0
 }
 
 func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
