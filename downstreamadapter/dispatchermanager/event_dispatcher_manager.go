@@ -444,6 +444,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 			}
 		}
 
+		log.Info("dispatcher heartbeat info", zap.Any("watermark", dispatcherHeartBeatInfo.Watermark), zap.Any("dispatcher table id", tableEventDispatcher.GetTableSpan().TableID))
 		message.Watermark.UpdateMin(dispatcherHeartBeatInfo.Watermark)
 
 		if needCompleteStatus {
@@ -457,6 +458,8 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	for _, tableSpan := range toReomveTableSpans {
 		e.cleanTableEventDispatcher(tableSpan)
 	}
+
+	log.Info("collect heartbeat info", zap.Any("Watermark", message.Watermark))
 
 	e.metricCheckpointTs.Set(float64(oracle.ExtractPhysical(message.Watermark.CheckpointTs)))
 	e.metricResolveTs.Set(float64(oracle.ExtractPhysical(message.Watermark.ResolvedTs)))
