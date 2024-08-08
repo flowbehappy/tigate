@@ -88,7 +88,8 @@ func TestTableEventDispatcher(t *testing.T) {
 	})
 	tableEventDispatcher.UpdateResolvedTs(110)
 
-	heartBeatInfo := CollectDispatcherHeartBeatInfo(tableEventDispatcher)
+	heartBeatInfo := &HeartBeatInfo{}
+	CollectDispatcherHeartBeatInfo(tableEventDispatcher, heartBeatInfo)
 	require.Equal(t, uint64(100), heartBeatInfo.CheckpointTs)
 	//require.NotEqual(t, 0, tableEventDispatcher.GetMemoryUsage().GetUsedBytes())
 
@@ -106,7 +107,7 @@ func TestTableEventDispatcher(t *testing.T) {
 	err := mock.ExpectationsWereMet()
 	require.NoError(t, err)
 
-	heartBeatInfo = CollectDispatcherHeartBeatInfo(tableEventDispatcher)
+	CollectDispatcherHeartBeatInfo(tableEventDispatcher, heartBeatInfo)
 	require.Equal(t, uint64(110), heartBeatInfo.CheckpointTs)
 	//require.Equal(t, 0, tableEventDispatcher.GetMemoryUsage().GetUsedBytes())
 }

@@ -67,39 +67,6 @@ var (
 			Name:      "execution_error",
 			Help:      "Total count of execution errors.",
 		}, []string{"namespace", "changefeed", "type"}) // type is for `sinkType`
-
-	CreateDispatcherDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "ticdc",
-			Subsystem: "sink",
-			Name:      "create_dispatcher_duration",
-			Help:      "Bucketed histogram of create dispatcher time (s) for table span.",
-			Buckets:   prometheus.ExponentialBuckets(0.000001, 2, 20), // 1us~524ms
-		}, []string{"namespace", "changefeed"})
-
-	EventDispatcherManagerResolvedTsGauge = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "ticdc",
-			Subsystem: "sink",
-			Name:      "event_dispatcher_manager_resolved_ts",
-			Help:      "Resolved ts of event dispatcher manager(changefeed)",
-		}, []string{"namespace", "changefeed"})
-
-	EventDispatcherManagerCheckpointTsGauge = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "ticdc",
-			Subsystem: "sink",
-			Name:      "event_dispatcher_manager_checkpoint_ts",
-			Help:      "Checkpoint ts of event dispatcher manager(changefeed)",
-		}, []string{"namespace", "changefeed"})
-
-	HandleDispatcherRequsetCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "ticdc",
-			Subsystem: "sink",
-			Name:      "handle_dispatcher_request",
-			Help:      "Total count of dispatcher request.",
-		}, []string{"namespace", "changefeed", "type"})
 )
 
 // ---------- Metrics for txn sink and backends. ---------- //
@@ -192,8 +159,6 @@ func InitSinkMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(ExecDDLHistogram)
 	registry.MustRegister(LargeRowSizeHistogram)
 	registry.MustRegister(ExecutionErrorCounter)
-	registry.MustRegister(CreateDispatcherDuration)
-	registry.MustRegister(HandleDispatcherRequsetCounter)
 
 	// txn sink metrics
 	registry.MustRegister(ConflictDetectDuration)
@@ -204,8 +169,4 @@ func InitSinkMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(SinkDMLBatchCommit)
 	registry.MustRegister(SinkDMLBatchCallback)
 	registry.MustRegister(PrepareStatementErrors)
-
-	registry.MustRegister(EventDispatcherManagerResolvedTsGauge)
-	registry.MustRegister(EventDispatcherManagerCheckpointTsGauge)
-	registry.MustRegister(DispatcherReceivedEventCount)
 }

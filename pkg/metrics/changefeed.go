@@ -73,6 +73,22 @@ var (
 			Help:      "The counter of ownership increases every 5 seconds on a owner capture",
 		})
 
+	MaintainerGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "changefeed",
+			Name:      "maintainer_counter",
+			Help:      "The counter of changefeed maintainer",
+		}, []string{"namespace", "changefeed"})
+
+	HandleMaintainerRequsetCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "ticdc",
+			Subsystem: "changefeed",
+			Name:      "handle_maintainer_request",
+			Help:      "Total count of dispatcher request.",
+		}, []string{"namespace", "changefeed", "type"})
+
 	ChangefeedStatusGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
@@ -100,6 +116,8 @@ func InitChangefeedMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(ChangefeedResolvedTsLagGauge)
 	registry.MustRegister(CurrentPDTsGauge)
 	registry.MustRegister(CoordinatorCounter)
+	registry.MustRegister(MaintainerGauge)
+	registry.MustRegister(HandleMaintainerRequsetCounter)
 	registry.MustRegister(ChangefeedStatusGauge)
 	registry.MustRegister(ChangefeedTickDuration)
 }
