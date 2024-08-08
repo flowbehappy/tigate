@@ -23,6 +23,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -70,7 +71,7 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 		}
 		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, cfConfig, from)
 		m.dispatcherManagers[changefeedID] = eventDispatcherManager
-		EventDispatcherManagerCount.WithLabelValues(changefeedID.Namespace, changefeedID.ID).Inc()
+		metrics.EventDispatcherManagerGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID).Inc()
 
 		response := &heartbeatpb.MaintainerBootstrapResponse{
 			ChangefeedID: maintainerBootstrapRequest.ChangefeedID,
@@ -127,7 +128,7 @@ func (m *DispatcherManagerManager) handleRemoveDispatcherManager(from messaging.
 		closed := eventDispatcherManager.TryClose()
 		if closed {
 			delete(m.dispatcherManagers, changefeedID)
-			EventDispatcherManagerCount.WithLabelValues(changefeedID.Namespace, changefeedID.ID).Dec()
+			metrics.EventDispatcherManagerGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID).Dec()
 		}
 		response.Success = closed
 	}

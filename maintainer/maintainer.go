@@ -83,9 +83,7 @@ type Maintainer struct {
 	isSecondary     *atomic.Bool
 
 	msgQueue *MessageQueue
-	msgBuf   []*messaging.TargetMessage
 
-	lastResendTime       time.Time
 	lastPrintStatusTime  time.Time
 	lastCheckpointTsTime time.Time
 
@@ -130,8 +128,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		checkpointTsByCapture: make(map[model.CaptureID]heartbeatpb.Watermark),
 		pdEndpoints:           pdEndpoints,
 		tableSpans:            utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior](),
-		msgQueue:              NewMessageQueue(1024),
-		msgBuf:                make([]*messaging.TargetMessage, 1024),
+		msgQueue:              NewMessageQueue(cfID, 1024),
 		runningErrors:         map[messaging.ServerId]*heartbeatpb.RunningError{},
 		runningWarnings:       map[messaging.ServerId]*heartbeatpb.RunningError{},
 
@@ -152,6 +149,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		scheduler.NewBasicScheduler(scheduler.ChangefeedID(cfID)),
 	)
 	log.Info("create maintainer", zap.String("id", cfID.String()))
+	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace, cfID.ID).Inc()
 	return m
 }
 
@@ -189,6 +187,7 @@ func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time
 		if closed {
 			m.removed.Store(true)
 			m.state = heartbeatpb.ComponentState_Stopped
+			metrics.MaintainerGauge.WithLabelValues(m.id.Namespace, m.id.ID).Dec()
 			return threadpool.Done, time.Time{}
 		}
 		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
@@ -248,14 +247,14 @@ func (m *Maintainer) getReplicaSet(id scheduler.InferiorID) scheduler.Inferior {
 }
 
 func (m *Maintainer) handleMessages() error {
-	size := m.msgQueue.PopMessages(m.msgBuf, len(m.msgBuf))
+	size, buf := m.msgQueue.PopMessages()
 	for idx := 0; idx < size; idx++ {
-		msg := m.msgBuf[idx]
+		msg := buf[idx]
 		if err := m.onMessage(msg); err != nil {
 			return errors.Trace(err)
 		}
 
-		m.msgBuf[idx] = nil
+		buf[idx] = nil
 	}
 	return nil
 }
