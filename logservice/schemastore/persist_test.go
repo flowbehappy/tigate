@@ -23,7 +23,7 @@ func writeMetaData(db *pebble.DB, gcTS common.Ts, metaTS *schemaMetaTS) error {
 
 func writeSchemaSnapshot(db *pebble.DB, snapTS common.Ts, dbInfo *model.DBInfo) error {
 	batch := db.NewBatch()
-	schemaKey, err := snapshotSchemaKey(snapTS, common.SchemaID(dbInfo.ID))
+	schemaKey, err := snapshotSchemaKey(snapTS, int64(dbInfo.ID))
 	if err != nil {
 		log.Fatal("generate schema key failed", zap.Error(err))
 	}
@@ -35,7 +35,7 @@ func writeSchemaSnapshot(db *pebble.DB, snapTS common.Ts, dbInfo *model.DBInfo) 
 	return batch.Commit(pebble.Sync)
 }
 
-func writeTableSnapshot(db *pebble.DB, snapTS common.Ts, schemaID common.SchemaID, tableInfo *model.TableInfo) error {
+func writeTableSnapshot(db *pebble.DB, snapTS common.Ts, schemaID int64, tableInfo *model.TableInfo) error {
 	batch := db.NewBatch()
 	tableKey, err := snapshotTableKey(snapTS, common.TableID(tableInfo.ID))
 	if err != nil {
@@ -46,7 +46,7 @@ func writeTableSnapshot(db *pebble.DB, snapTS common.Ts, schemaID common.SchemaI
 		log.Fatal("marshal table failed", zap.Error(err))
 	}
 	batch.Set(tableKey, tableValue, pebble.NoSync)
-	indexKey, err := indexSnapshotKey(common.TableID(tableInfo.ID), snapTS, common.SchemaID(schemaID))
+	indexKey, err := indexSnapshotKey(common.TableID(tableInfo.ID), snapTS, int64(schemaID))
 	if err != nil {
 		log.Fatal("generate index key failed", zap.Error(err))
 	}
@@ -127,22 +127,22 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		ID:   int64(schemaID),
 		Name: model.NewCIStr("test"),
 	})
-	writeTableSnapshot(db, gcTS, common.SchemaID(schemaID), &model.TableInfo{
+	writeTableSnapshot(db, gcTS, int64(schemaID), &model.TableInfo{
 		ID:   int64(tableID),
 		Name: model.NewCIStr("t"),
 	})
 
 	dataStorage, _, databaseMap := loadPersistentStorage(db, 1500)
 	require.Equal(t, 1, len(databaseMap))
-	require.Equal(t, "test", databaseMap[common.SchemaID(schemaID)].Name)
+	require.Equal(t, "test", databaseMap[int64(schemaID)].Name)
 
 	{
 		store := newEmptyVersionedTableInfoStore(tableID)
-		getSchemaName := func(schemaID common.SchemaID) (string, error) {
-			if _, ok := databaseMap[common.SchemaID(schemaID)]; !ok {
+		getSchemaName := func(schemaID int64) (string, error) {
+			if _, ok := databaseMap[int64(schemaID)]; !ok {
 				return "", fmt.Errorf("schema not found")
 			}
-			return databaseMap[common.SchemaID(schemaID)].Name, nil
+			return databaseMap[int64(schemaID)].Name, nil
 		}
 		dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.resolvedTS, getSchemaName)
 		store.setTableInfoInitialized()
@@ -175,11 +175,11 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 	dataStorage, _, _ = loadPersistentStorage(db, 1500)
 	{
 		store := newEmptyVersionedTableInfoStore(tableID)
-		getSchemaName := func(schemaID common.SchemaID) (string, error) {
-			if _, ok := databaseMap[common.SchemaID(schemaID)]; !ok {
+		getSchemaName := func(schemaID int64) (string, error) {
+			if _, ok := databaseMap[int64(schemaID)]; !ok {
 				return "", fmt.Errorf("schema not found")
 			}
-			return databaseMap[common.SchemaID(schemaID)].Name, nil
+			return databaseMap[int64(schemaID)].Name, nil
 		}
 		dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.resolvedTS, getSchemaName)
 		store.setTableInfoInitialized()
@@ -219,21 +219,21 @@ func TestBuildVersionedTableInfoAndApplyDDL(t *testing.T) {
 		ID:   int64(schemaID),
 		Name: model.NewCIStr("test"),
 	})
-	writeTableSnapshot(db, gcTS, common.SchemaID(schemaID), &model.TableInfo{
+	writeTableSnapshot(db, gcTS, int64(schemaID), &model.TableInfo{
 		ID:   int64(tableID),
 		Name: model.NewCIStr("t"),
 	})
 
 	dataStorage, _, databaseMap := loadPersistentStorage(db, 1500)
 	require.Equal(t, 1, len(databaseMap))
-	require.Equal(t, "test", databaseMap[common.SchemaID(schemaID)].Name)
+	require.Equal(t, "test", databaseMap[int64(schemaID)].Name)
 
 	store := newEmptyVersionedTableInfoStore(tableID)
-	getSchemaName := func(schemaID common.SchemaID) (string, error) {
-		if _, ok := databaseMap[common.SchemaID(schemaID)]; !ok {
+	getSchemaName := func(schemaID int64) (string, error) {
+		if _, ok := databaseMap[int64(schemaID)]; !ok {
 			return "", fmt.Errorf("schema not found")
 		}
-		return databaseMap[common.SchemaID(schemaID)].Name, nil
+		return databaseMap[int64(schemaID)].Name, nil
 	}
 	dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.resolvedTS, getSchemaName)
 	renameVersion := uint64(1500)

@@ -115,7 +115,7 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 	}
 	conf := config.GetGlobalServerConfig()
 	c.subModules = []SubModule{
-		watcher.NewCaptureManager(c.session, c.EtcdClient),
+		watcher.NewNodeManager(c.session, c.EtcdClient),
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener()),

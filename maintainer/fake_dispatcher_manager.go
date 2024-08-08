@@ -96,7 +96,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 					})
 					err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 						manager.maintainerID,
-						common.TopicType("maintainer/"+manager.id.ID),
+						string("maintainer/"+manager.id.ID),
 						response,
 					))
 					if err != nil {
@@ -125,7 +125,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 					if absentSpan != nil {
 						err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 							manager.maintainerID,
-							common.TopicType("maintainer/"+manager.id.ID),
+							string("maintainer/"+manager.id.ID),
 							&heartbeatpb.HeartBeatResponse{
 								ChangefeedID: manager.id.ID,
 								Info: []*heartbeatpb.TableProgressInfo{
@@ -168,7 +168,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 					if len(response.Statuses) != 0 {
 						err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 							manager.maintainerID,
-							common.TopicType("maintainer/"+manager.id.ID),
+							string("maintainer/"+manager.id.ID),
 							response,
 						))
 						if err != nil {

@@ -107,7 +107,7 @@ func (r RegisterDispatcherRequest) GetClusterID() uint64 {
 	return 0
 }
 
-func (r RegisterDispatcherRequest) GetTopic() common.TopicType {
+func (r RegisterDispatcherRequest) GetTopic() string {
 	return EventFeedTopic
 }
 
@@ -173,15 +173,15 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 type TargetMessage struct {
 	From     ServerId
 	To       ServerId
-	Epoch    common.EpochType
+	Epoch    uint64
 	Sequence uint64
-	Topic    common.TopicType
+	Topic    string
 	Type     IOType
 	Message  IOTypeT
 }
 
 // NewTargetMessage creates a new TargetMessage to be sent to a target server.
-func NewTargetMessage(To ServerId, Topic common.TopicType, Message IOTypeT) *TargetMessage {
+func NewTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetMessage {
 	var ioType IOType
 	switch Message.(type) {
 	case *common.TxnEvent:

@@ -18,8 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/common"
-
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
@@ -33,7 +31,9 @@ import (
 
 const NodeManagerName = "node-manager"
 
-var TempEpoch = common.EpochType(1)
+var TempEpoch = uint64(1)
+
+type NodeChangeHandler func(newNodes []*model.CaptureInfo, removedNodes []*model.CaptureInfo)
 
 // NodeManager manager the read view of all captures, other modules can get the captures information from it
 // and register server update event handler
@@ -42,11 +42,13 @@ type NodeManager struct {
 	etcdClient etcd.CDCEtcdClient
 	nodes      map[string]*model.CaptureInfo
 
-	handleRWLock sync.RWMutex
-	handles      map[string]func([]*model.CaptureInfo, []*model.CaptureInfo)
+	nodeChangeHandlers struct {
+		sync.RWMutex
+		m map[string]NodeChangeHandler
+	}
 }
 
-func NewCaptureManager(
+func NewNodeManager(
 	session *concurrency.Session,
 	etcdClient etcd.CDCEtcdClient,
 ) *NodeManager {
@@ -54,6 +56,10 @@ func NewCaptureManager(
 		session:    session,
 		etcdClient: etcdClient,
 		nodes:      make(map[string]*model.CaptureInfo),
+		nodeChangeHandlers: struct {
+			sync.RWMutex
+			m map[string]NodeChangeHandler
+		}{m: make(map[string]NodeChangeHandler)},
 	}
 }
 
@@ -62,41 +68,42 @@ func (c *NodeManager) Name() string {
 }
 
 // Tick is triggered by the server update events
-func (c *NodeManager) Tick(ctx context.Context,
-	raw orchestrator.ReactorState) (orchestrator.ReactorState, error) {
+func (c *NodeManager) Tick(
+	ctx context.Context,
+	raw orchestrator.ReactorState,
+) (orchestrator.ReactorState, error) {
 	state := raw.(*orchestrator.GlobalReactorState)
-	if len(c.nodes) != len(state.Captures) {
-		// find changes
-		removed := make([]*model.CaptureInfo, 0)
-		newCaptures := make([]*model.CaptureInfo, 0)
-		allCaptures := make(map[string]*model.CaptureInfo, len(state.Captures))
-		for _, capture := range c.nodes {
-			if _, exist := state.Captures[capture.ID]; !exist {
-				sid := messaging.ServerId(capture.ID)
-				appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RemoveTarget(sid)
-				removed = append(removed, capture)
-			}
-		}
+	// find changes
+	removed := make([]*model.CaptureInfo, 0)
+	newCaptures := make([]*model.CaptureInfo, 0)
+	allCaptures := make(map[string]*model.CaptureInfo, len(state.Captures))
 
-		for _, capture := range state.Captures {
-			if _, exist := c.nodes[capture.ID]; !exist {
-
-				sid := messaging.ServerId(capture.ID)
-				appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).AddTarget(sid, TempEpoch, common.AddressType(capture.AdvertiseAddr))
-				newCaptures = append(newCaptures, capture)
-			}
-			allCaptures[capture.ID] = capture
+	for _, capture := range c.nodes {
+		if _, exist := state.Captures[capture.ID]; !exist {
+			sid := messaging.ServerId(capture.ID)
+			appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RemoveTarget(sid)
+			removed = append(removed, capture)
 		}
-		log.Info("server change detected", zap.Any("removed", removed),
-			zap.Any("new", newCaptures))
-		c.nodes = allCaptures
+	}
 
-		// notify handler
-		c.handleRWLock.RLock()
-		for _, handle := range c.handles {
-			handle(newCaptures, removed)
+	for _, capture := range state.Captures {
+		if _, exist := c.nodes[capture.ID]; !exist {
+			sid := messaging.ServerId(capture.ID)
+			appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).AddTarget(sid, TempEpoch, string(capture.AdvertiseAddr))
+			newCaptures = append(newCaptures, capture)
 		}
-		c.handleRWLock.RUnlock()
+		allCaptures[capture.ID] = capture
+	}
+
+	log.Info("server change detected", zap.Any("removed", removed),
+		zap.Any("new", newCaptures))
+	c.nodes = allCaptures
+
+	// notify handler
+	c.nodeChangeHandlers.RLock()
+	defer c.nodeChangeHandlers.RUnlock()
+	for _, handler := range c.nodeChangeHandlers.m {
+		handler(newCaptures, removed)
 	}
 	return state, nil
 }
@@ -119,11 +126,10 @@ func (c *NodeManager) Run(ctx context.Context) error {
 			cfg.CaptureSessionTTL), time.Millisecond*50)
 }
 
-func (c *NodeManager) RegisterCaptureChangeHandler(name string,
-	f func([]*model.CaptureInfo, []*model.CaptureInfo)) {
-	c.handleRWLock.Lock()
-	c.handles[name] = f
-	c.handleRWLock.Unlock()
+func (c *NodeManager) RegisterCaptureChangeHandler(name string, handler NodeChangeHandler) {
+	c.nodeChangeHandlers.Lock()
+	defer c.nodeChangeHandlers.Unlock()
+	c.nodeChangeHandlers.m[name] = handler
 }
 
 func (c *NodeManager) Close(ctx context.Context) error {

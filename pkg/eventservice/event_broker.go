@@ -86,7 +86,7 @@ func newEventBroker(
 
 func (c *eventBroker) sendWatermark(
 	serverID messaging.ServerId,
-	topicID common.TopicType,
+	topicID string,
 	dispatcherID string,
 	watermark uint64,
 	counter prometheus.Counter,

@@ -126,7 +126,6 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 				zap.String("captureAddr", capture.capture.AdvertiseAddr),
 				zap.String("server", id))
 			delete(s.captures, id)
-
 			// Only update changes after initialization.
 			if !s.initialized {
 				continue

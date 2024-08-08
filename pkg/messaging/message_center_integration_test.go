@@ -3,7 +3,6 @@ package messaging
 import (
 	"context"
 	"fmt"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"net"
 	"sync"
 	"testing"
@@ -18,9 +17,9 @@ import (
 	"google.golang.org/grpc"
 )
 
-var epoch = common.EpochType(1)
+var epoch = uint64(1)
 
-func newMessageCenterForTest(t *testing.T, timeout time.Duration) (*messageCenter, common.AddressType, func()) {
+func newMessageCenterForTest(t *testing.T, timeout time.Duration) (*messageCenter, string, func()) {
 	port := freeport.GetPort()
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	lis, err := net.Listen("tcp", addr)
@@ -54,7 +53,7 @@ func newMessageCenterForTest(t *testing.T, timeout time.Duration) (*messageCente
 		grpcServer.Stop()
 		wg.Wait()
 	}
-	return mc, common.AddressType(addr), stop
+	return mc, string(addr), stop
 }
 
 func TestMessageCenterBasic(t *testing.T) {
@@ -64,9 +63,9 @@ func TestMessageCenterBasic(t *testing.T) {
 	defer mc1Stop()
 	defer mc2Stop()
 	defer mc3Stop()
-	topic1 := common.TopicType("test1")
-	topic2 := common.TopicType("test2")
-	topic3 := common.TopicType("test3")
+	topic1 := string("test1")
+	topic2 := string("test2")
+	topic3 := string("test3")
 
 	mc1.AddTarget(mc2.id, mc2.epoch, mc2Addr)
 	mc1.AddTarget(mc3.id, mc3.epoch, mc3Addr)

@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/flowbehappy/tigate/pkg/metrics"
@@ -24,7 +23,7 @@ import (
 )
 
 type MessageTarget interface {
-	Epoch() common.EpochType
+	Epoch() uint64
 }
 
 const (
@@ -39,14 +38,14 @@ const (
 // and 1 goroutine to handle grpc stream error.
 type remoteMessageTarget struct {
 	messageCenterID    ServerId
-	messageCenterEpoch common.EpochType
+	messageCenterEpoch uint64
 
 	// The next message sendSequence number.
 	sendSequence atomic.Uint64
 
 	targetEpoch atomic.Value
 	targetId    ServerId
-	targetAddr  common.AddressType
+	targetAddr  string
 
 	// For sending events and commands
 	eventSender   *sendStreamWrapper
@@ -92,8 +91,8 @@ type remoteMessageTarget struct {
 	connectionFailedErrorCounter   prometheus.Counter
 }
 
-func (s *remoteMessageTarget) Epoch() common.EpochType {
-	return s.targetEpoch.Load().(common.EpochType)
+func (s *remoteMessageTarget) Epoch() uint64 {
+	return s.targetEpoch.Load().(uint64)
 }
 
 func (s *remoteMessageTarget) sendEvent(msg ...*TargetMessage) error {
@@ -134,8 +133,8 @@ func (s *remoteMessageTarget) sendCommand(msg ...*TargetMessage) error {
 
 func newRemoteMessageTarget(
 	localID, targetId ServerId,
-	localEpoch, targetEpoch common.EpochType,
-	addr common.AddressType,
+	localEpoch, targetEpoch uint64,
+	addr string,
 	recvEventCh, recvCmdCh chan *TargetMessage,
 	cfg *config.MessageCenterConfig,
 ) *remoteMessageTarget {
@@ -377,8 +376,8 @@ func (s *remoteMessageTarget) runReceiveMessages(stream grpcReceiver, receiveCh 
 				receiveCh <- &TargetMessage{
 					From:     ServerId(message.From),
 					To:       ServerId(message.To),
-					Topic:    common.TopicType(message.Topic),
-					Epoch:    common.EpochType(message.Epoch),
+					Topic:    string(message.Topic),
+					Epoch:    uint64(message.Epoch),
 					Sequence: message.Seqnum,
 					Type:     mt,
 					Message:  msg,
@@ -417,7 +416,7 @@ func (s *remoteMessageTarget) newMessage(msg ...*TargetMessage) *proto.Message {
 // It simply pushes the messages to the messageCenter's channel directly.
 type localMessageTarget struct {
 	localId  ServerId
-	epoch    common.EpochType
+	epoch    uint64
 	sequence atomic.Uint64
 
 	// The gather channel from the message center.
@@ -430,7 +429,7 @@ type localMessageTarget struct {
 	sendCmdCounter     prometheus.Counter
 }
 
-func (s *localMessageTarget) Epoch() common.EpochType {
+func (s *localMessageTarget) Epoch() uint64 {
 	return s.epoch
 }
 
