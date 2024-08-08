@@ -464,7 +464,7 @@ func (m *Maintainer) tryCloseChangefeed() bool {
 	}
 
 	msgs := make([]rpc.Message, 0)
-	for node := range m.nodeManager.GetAliveCaptures() {
+	for node := range m.nodeManager.GetAliveNodes() {
 		if _, ok := m.nodesClosed[node]; !ok {
 			msgs = append(msgs, messaging.NewTargetMessage(
 				messaging.ServerId(node),
