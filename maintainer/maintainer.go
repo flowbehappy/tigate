@@ -225,7 +225,7 @@ func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time
 		return
 	}
 
-	nodes := m.nodeManager.GetAliveCaptures()
+	nodes := m.nodeManager.GetAliveNodes()
 	//check capture changes
 	msgs, err := m.supervisor.HandleAliveCaptureUpdate(nodes)
 	if err != nil {

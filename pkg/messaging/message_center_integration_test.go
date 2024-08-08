@@ -67,8 +67,8 @@ func TestMessageCenterBasic(t *testing.T) {
 	topic2 := string("test2")
 	topic3 := string("test3")
 
-	mc1.AddTarget(mc2.id, mc2.epoch, mc2Addr)
-	mc1.AddTarget(mc3.id, mc3.epoch, mc3Addr)
+	mc1.addTarget(mc2.id, mc2.epoch, mc2Addr)
+	mc1.addTarget(mc3.id, mc3.epoch, mc3Addr)
 	ch1 := make(chan *TargetMessage, 1)
 	h1 := func(ctx context.Context, msg *TargetMessage) error {
 		ch1 <- msg
@@ -77,8 +77,8 @@ func TestMessageCenterBasic(t *testing.T) {
 	}
 	mc1.RegisterHandler(topic1, h1)
 
-	mc2.AddTarget(mc1.id, mc1.epoch, mc1Addr)
-	mc2.AddTarget(mc3.id, mc3.epoch, mc3Addr)
+	mc2.addTarget(mc1.id, mc1.epoch, mc1Addr)
+	mc2.addTarget(mc3.id, mc3.epoch, mc3Addr)
 	ch2 := make(chan *TargetMessage, 1)
 	h2 := func(ctx context.Context, msg *TargetMessage) error {
 		ch2 <- msg
@@ -87,8 +87,8 @@ func TestMessageCenterBasic(t *testing.T) {
 	}
 	mc2.RegisterHandler(topic2, h2)
 
-	mc3.AddTarget(mc1.id, mc1.epoch, mc1Addr)
-	mc3.AddTarget(mc2.id, mc2.epoch, mc2Addr)
+	mc3.addTarget(mc1.id, mc1.epoch, mc1Addr)
+	mc3.addTarget(mc2.id, mc2.epoch, mc2Addr)
 
 	//Case1: Send a message from mc1 to mc1, local message.
 	msgBytes := []byte{1, 2, 3, 4}

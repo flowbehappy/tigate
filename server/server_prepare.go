@@ -24,12 +24,12 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
+	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 
 	"github.com/dustin/go-humanize"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/flowbehappy/tigate/version"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -147,7 +147,7 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	}
 	// TODO: Get id from disk after restart.
 	id := messaging.NewServerId()
-	c.info = &model.CaptureInfo{
+	c.info = &common.NodeInfo{
 		ID:             id.String(),
 		AdvertiseAddr:  conf.AdvertiseAddr,
 		Version:        version.ReleaseVersion,
@@ -158,10 +158,9 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	c.serverID = id
 	c.session = session
 
-	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, id, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
+	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, id, c.info.Epoch, config.NewDefaultMessageCenterConfig()))
 	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, id)) // 100GB for demo
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(id))
-	//appcontext.SetService("eventService")
 
 	c.dispatcherManagerManager = dispatchermanagermanager.NewDispatcherManagerManager()
 	return nil
@@ -223,7 +222,15 @@ func (c *serverImpl) setUpDir() {
 
 // registerNodeToEtcd the server by put the server's information in etcd
 func (c *serverImpl) registerNodeToEtcd(ctx context.Context) error {
-	err := c.EtcdClient.PutCaptureInfo(ctx, c.info, c.session.Lease())
+	cInfo := &model.CaptureInfo{
+		ID:             c.info.ID,
+		AdvertiseAddr:  c.info.AdvertiseAddr,
+		Version:        c.info.Version,
+		GitHash:        c.info.GitHash,
+		DeployPath:     c.info.DeployPath,
+		StartTimestamp: c.info.StartTimestamp,
+	}
+	err := c.EtcdClient.PutCaptureInfo(ctx, cInfo, c.session.Lease())
 	if err != nil {
 		return cerror.WrapError(cerror.ErrCaptureRegister, err)
 	}

@@ -18,10 +18,8 @@ import (
 	"sync"
 	"time"
 
-	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
-	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
@@ -31,16 +29,14 @@ import (
 
 const NodeManagerName = "node-manager"
 
-var TempEpoch = uint64(1)
-
-type NodeChangeHandler func(newNodes []*model.CaptureInfo, removedNodes []*model.CaptureInfo)
+type NodeChangeHandler func(newNodes []*common.NodeInfo, removedNodes []*common.NodeInfo)
 
 // NodeManager manager the read view of all captures, other modules can get the captures information from it
 // and register server update event handler
 type NodeManager struct {
 	session    *concurrency.Session
 	etcdClient etcd.CDCEtcdClient
-	nodes      map[string]*model.CaptureInfo
+	nodes      map[common.NodeID]*common.NodeInfo
 
 	nodeChangeHandlers struct {
 		sync.RWMutex
@@ -55,7 +51,7 @@ func NewNodeManager(
 	return &NodeManager{
 		session:    session,
 		etcdClient: etcdClient,
-		nodes:      make(map[string]*model.CaptureInfo),
+		nodes:      make(map[common.NodeID]*common.NodeInfo),
 		nodeChangeHandlers: struct {
 			sync.RWMutex
 			m map[string]NodeChangeHandler
@@ -74,42 +70,42 @@ func (c *NodeManager) Tick(
 ) (orchestrator.ReactorState, error) {
 	state := raw.(*orchestrator.GlobalReactorState)
 	// find changes
-	removed := make([]*model.CaptureInfo, 0)
-	newCaptures := make([]*model.CaptureInfo, 0)
-	allCaptures := make(map[string]*model.CaptureInfo, len(state.Captures))
+	removed := make([]*common.NodeInfo, 0)
+	newNodes := make([]*common.NodeInfo, 0)
+	allNodes := make(map[common.NodeID]*common.NodeInfo, len(state.Captures))
 
-	for _, capture := range c.nodes {
-		if _, exist := state.Captures[capture.ID]; !exist {
-			sid := messaging.ServerId(capture.ID)
-			appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RemoveTarget(sid)
-			removed = append(removed, capture)
+	for _, node := range c.nodes {
+		if _, exist := state.Captures[node.ID]; !exist {
+			removed = append(removed, node)
 		}
 	}
 
 	for _, capture := range state.Captures {
 		if _, exist := c.nodes[capture.ID]; !exist {
-			sid := messaging.ServerId(capture.ID)
-			appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).AddTarget(sid, TempEpoch, string(capture.AdvertiseAddr))
-			newCaptures = append(newCaptures, capture)
+			node := common.CaptureInfoToNodeInfo(capture)
+			newNodes = append(newNodes, node)
 		}
-		allCaptures[capture.ID] = capture
+		allNodes[capture.ID] = common.CaptureInfoToNodeInfo(capture)
 	}
 
-	log.Info("server change detected", zap.Any("removed", removed),
-		zap.Any("new", newCaptures))
-	c.nodes = allCaptures
+	if len(removed) != 0 || len(newNodes) != 0 {
+		log.Info("server change detected", zap.Any("removed", removed),
+			zap.Any("new", newNodes))
+	}
 
-	// notify handler
+	c.nodes = allNodes
+
+	// handle node change event
 	c.nodeChangeHandlers.RLock()
 	defer c.nodeChangeHandlers.RUnlock()
 	for _, handler := range c.nodeChangeHandlers.m {
-		handler(newCaptures, removed)
+		handler(newNodes, removed)
 	}
 	return state, nil
 }
 
-// GetAliveCaptures get all alive captures, the caller mustn't modify the returned map
-func (c *NodeManager) GetAliveCaptures() map[string]*model.CaptureInfo {
+// GetAliveNodes get all alive captures, the caller mustn't modify the returned map
+func (c *NodeManager) GetAliveNodes() map[common.NodeID]*common.NodeInfo {
 	return c.nodes
 }
 
@@ -126,7 +122,7 @@ func (c *NodeManager) Run(ctx context.Context) error {
 			cfg.CaptureSessionTTL), time.Millisecond*50)
 }
 
-func (c *NodeManager) RegisterCaptureChangeHandler(name string, handler NodeChangeHandler) {
+func (c *NodeManager) RegisterNodeChangeHandler(name string, handler NodeChangeHandler) {
 	c.nodeChangeHandlers.Lock()
 	defer c.nodeChangeHandlers.Unlock()
 	c.nodeChangeHandlers.m[name] = handler

@@ -16,10 +16,10 @@ package scheduler
 import (
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/rpc"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -46,22 +46,22 @@ type Supervisor struct {
 	ID          InferiorID
 	initialized bool
 
-	captures map[model.CaptureID]*CaptureStatus
+	captures map[common.NodeID]*CaptureStatus
 
 	// track all status reported by remote inferiors when bootstrap
-	initStatus map[model.CaptureID][]InferiorStatus
+	initStatus map[common.NodeID][]InferiorStatus
 
 	newInferior     func(id InferiorID) Inferior
-	newBootstrapMsg func(id model.CaptureID) rpc.Message
+	newBootstrapMsg func(id common.NodeID) rpc.Message
 }
 
 type CaptureStatus struct {
 	state             CaptureState
-	capture           *model.CaptureInfo
+	capture           *common.NodeInfo
 	lastBootstrapTime time.Time
 }
 
-func NewCaptureStatus(capture *model.CaptureInfo) *CaptureStatus {
+func NewCaptureStatus(capture *common.NodeInfo) *CaptureStatus {
 	return &CaptureStatus{
 		state:   CaptureStateUninitialized,
 		capture: capture,
@@ -78,8 +78,8 @@ func NewSupervisor(
 		StateMachines:      utils.NewBtreeMap[InferiorID, *StateMachine](),
 		RunningTasks:       utils.NewBtreeMap[InferiorID, *ScheduleTask](),
 		initialized:        false,
-		captures:           make(map[model.CaptureID]*CaptureStatus),
-		initStatus:         make(map[model.CaptureID][]InferiorStatus),
+		captures:           make(map[common.NodeID]*CaptureStatus),
+		initStatus:         make(map[common.NodeID][]InferiorStatus),
 		maxTaskConcurrency: 10000,
 		schedulers:         schedulers,
 		newInferior:        f,
@@ -87,7 +87,7 @@ func NewSupervisor(
 	}
 }
 
-func (s *Supervisor) GetAllCaptures() map[model.CaptureID]*CaptureStatus {
+func (s *Supervisor) GetAllCaptures() map[common.NodeID]*CaptureStatus {
 	return s.captures
 }
 
@@ -103,9 +103,9 @@ func (s *Supervisor) GetInferior(id InferiorID) (*StateMachine, bool) {
 
 // HandleAliveCaptureUpdate update captures liveness.
 func (s *Supervisor) HandleAliveCaptureUpdate(
-	aliveCaptures map[model.CaptureID]*model.CaptureInfo,
+	aliveCaptures map[common.NodeID]*common.NodeInfo,
 ) ([]rpc.Message, error) {
-	var removed []model.CaptureID
+	var removed []common.NodeID
 	msgs := make([]rpc.Message, 0)
 	for id, info := range aliveCaptures {
 		if _, ok := s.captures[id]; !ok {
@@ -126,6 +126,7 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 				zap.String("captureAddr", capture.capture.AdvertiseAddr),
 				zap.String("server", id))
 			delete(s.captures, id)
+
 			// Only update changes after initialization.
 			if !s.initialized {
 				continue
@@ -145,18 +146,18 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 		log.Info("all server initialized",
 			zap.String("ID", s.ID.String()),
 			zap.Int("captureCount", len(s.captures)))
-		statusMap := utils.NewBtreeMap[InferiorID, map[model.CaptureID]InferiorStatus]()
+		statusMap := utils.NewBtreeMap[InferiorID, map[common.NodeID]InferiorStatus]()
 		for captureID, statuses := range s.initStatus {
 			for _, status := range statuses {
 				if ok := statusMap.Has(status.GetInferiorID()); !ok {
-					statusMap.ReplaceOrInsert(status.GetInferiorID(), map[model.CaptureID]InferiorStatus{})
+					statusMap.ReplaceOrInsert(status.GetInferiorID(), map[common.NodeID]InferiorStatus{})
 				}
 				m, _ := statusMap.Get(status.GetInferiorID())
 				m[captureID] = status
 			}
 		}
 		var err error
-		statusMap.Ascend(func(id InferiorID, status map[model.CaptureID]InferiorStatus) bool {
+		statusMap.Ascend(func(id InferiorID, status map[common.NodeID]InferiorStatus) bool {
 			statemachine, err1 := NewStateMachine(id, status, s.newInferior(id))
 			if err1 != nil {
 				err = errors.Trace(err1)
@@ -183,7 +184,7 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 
 // UpdateCaptureStatus update the server status after receive a bootstrap message from remote
 // supervisor will cache the status if the supervisor is not initialized
-func (s *Supervisor) UpdateCaptureStatus(from model.CaptureID, statuses []InferiorStatus) {
+func (s *Supervisor) UpdateCaptureStatus(from common.NodeID, statuses []InferiorStatus) {
 	c, ok := s.captures[from]
 	if !ok {
 		log.Warn("server is not found",
@@ -206,7 +207,7 @@ func (s *Supervisor) UpdateCaptureStatus(from model.CaptureID, statuses []Inferi
 
 // HandleStatus handles inferior status reported by Inferior
 func (s *Supervisor) HandleStatus(
-	from model.CaptureID, statuses []InferiorStatus,
+	from common.NodeID, statuses []InferiorStatus,
 ) ([]rpc.Message, error) {
 	sentMsgs := make([]rpc.Message, 0)
 	for _, status := range statuses {
@@ -236,7 +237,7 @@ func (s *Supervisor) HandleStatus(
 
 // handleRemovedNodes handles server changes.
 func (s *Supervisor) handleRemovedNodes(
-	removed []model.CaptureID,
+	removed []common.NodeID,
 ) ([]rpc.Message, error) {
 	sentMsgs := make([]rpc.Message, 0)
 	if len(removed) > 0 {

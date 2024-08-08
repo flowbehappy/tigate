@@ -19,10 +19,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/common"
 	appctx "github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/gin-gonic/gin"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/httputil"
 	"go.uber.org/zap"
@@ -96,7 +96,7 @@ func ForwardToOwner(c *gin.Context, server appctx.Server) {
 		return
 	}
 
-	var node *model.CaptureInfo
+	var node *common.NodeInfo
 	// get coordinator info
 	node, err = server.GetCoordinatorInfo(ctx)
 	if err != nil {

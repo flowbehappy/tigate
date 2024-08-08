@@ -22,6 +22,8 @@ import (
 	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/maintainer"
+	"github.com/flowbehappy/tigate/pkg/common"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/flowbehappy/tigate/pkg/eventservice"
 	"github.com/flowbehappy/tigate/server/watcher"
@@ -51,7 +53,7 @@ const (
 
 type serverImpl struct {
 	captureMu sync.Mutex
-	info      *model.CaptureInfo
+	info      *common.NodeInfo
 	serverID  messaging.ServerId
 
 	liveness model.Liveness
@@ -114,8 +116,13 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	conf := config.GetGlobalServerConfig()
+	nodeManager := watcher.NewNodeManager(c.session, c.EtcdClient)
+	nodeManager.RegisterNodeChangeHandler(
+		appcontext.MessageCenter,
+		appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).OnNodeChanges)
+
 	c.subModules = []SubModule{
-		watcher.NewNodeManager(c.session, c.EtcdClient),
+		nodeManager,
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener()),
@@ -170,7 +177,7 @@ func (c *serverImpl) Run(stdCtx context.Context) error {
 }
 
 // SelfCaptureInfo gets the server info
-func (c *serverImpl) SelfInfo() (*model.CaptureInfo, error) {
+func (c *serverImpl) SelfInfo() (*common.NodeInfo, error) {
 	// when c.reset has not been called yet, c.info is nil.
 	if c.info != nil {
 		return c.info, nil
@@ -241,7 +248,7 @@ func (c *serverImpl) GetPdClient() pd.Client {
 }
 
 // GetCoordinatorInfo return the controller server info of current TiCDC cluster
-func (c *serverImpl) GetCoordinatorInfo(ctx context.Context) (*model.CaptureInfo, error) {
+func (c *serverImpl) GetCoordinatorInfo(ctx context.Context) (*common.NodeInfo, error) {
 	_, captureInfos, err := c.EtcdClient.GetCaptures(ctx)
 	if err != nil {
 		return nil, err
@@ -254,7 +261,18 @@ func (c *serverImpl) GetCoordinatorInfo(ctx context.Context) (*model.CaptureInfo
 
 	for _, captureInfo := range captureInfos {
 		if captureInfo.ID == coordinatorID {
-			return captureInfo, nil
+			res := &common.NodeInfo{
+				ID:            captureInfo.ID,
+				AdvertiseAddr: captureInfo.AdvertiseAddr,
+
+				Version:        captureInfo.Version,
+				DeployPath:     captureInfo.DeployPath,
+				StartTimestamp: captureInfo.StartTimestamp,
+
+				// Epoch is now not used in TiCDC, so we just set it to 0.
+				Epoch: 0,
+			}
+			return res, nil
 		}
 	}
 	return nil, cerror.ErrOwnerNotFound.FastGenByArgs()
