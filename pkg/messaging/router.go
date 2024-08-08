@@ -48,7 +48,7 @@ func (r *router) runDispatch(ctx context.Context, wg *sync.WaitGroup, out <-chan
 				r.mu.RUnlock()
 				if !ok {
 					// todo: is this possible to happens ?
-					log.Info("no handler for message", zap.Any("msg", msg))
+					log.Debug("no handler for message", zap.Any("msg", msg))
 					continue
 				}
 				err := handler(ctx, msg)

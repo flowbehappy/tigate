@@ -317,8 +317,8 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx context.Context) {
 	defer e.wg.Done()
 
+	statusMessage := make([]*heartbeatpb.TableSpanStatus, 0)
 	for {
-		statusMessage := make([]*heartbeatpb.TableSpanStatus, 0)
 		select {
 		case <-ctx.Done():
 			return
@@ -349,6 +349,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx conte
 			//message := e.CollectHeartbeatInfo(false)
 			message.Statuses = statusMessage
 			e.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
+			statusMessage = statusMessage[:0]
 		}
 	}
 }
@@ -444,7 +445,6 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 			}
 		}
 
-		log.Info("dispatcher heartbeat info", zap.Any("watermark", dispatcherHeartBeatInfo.Watermark), zap.Any("dispatcher table id", tableEventDispatcher.GetTableSpan().TableID))
 		message.Watermark.UpdateMin(dispatcherHeartBeatInfo.Watermark)
 
 		if needCompleteStatus {
@@ -458,8 +458,6 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	for _, tableSpan := range toReomveTableSpans {
 		e.cleanTableEventDispatcher(tableSpan)
 	}
-
-	log.Info("collect heartbeat info", zap.Any("Watermark", message.Watermark))
 
 	e.metricCheckpointTs.Set(float64(oracle.ExtractPhysical(message.Watermark.CheckpointTs)))
 	e.metricResolveTs.Set(float64(oracle.ExtractPhysical(message.Watermark.ResolvedTs)))
