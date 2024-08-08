@@ -217,6 +217,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 				zap.String("changefeed", cfID.String()),
 				zap.Any("request", req))
 			absent = append(absent, req.GetId())
+			continue
 		}
 		cf.(*Maintainer).removing.Store(true)
 		cf.(*Maintainer).cascadeRemoving.Store(req.Cascade)
