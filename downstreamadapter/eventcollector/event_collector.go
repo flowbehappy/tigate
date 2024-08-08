@@ -121,6 +121,7 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 				}
 			}
 			time.Sleep(10 * time.Millisecond) // for test
+			c.dispatcherMap.Set(d.GetId(), d)
 		}
 	}(&eventCollector)
 
