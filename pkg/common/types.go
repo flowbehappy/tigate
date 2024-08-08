@@ -48,9 +48,3 @@ func (d *DispatcherID) DecodeMsg(dc *msgp.Reader) error {
 }
 
 type SchemaID int64
-
-type TopicType string
-
-type EpochType uint64
-
-type AddressType string

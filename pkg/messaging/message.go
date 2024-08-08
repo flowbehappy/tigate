@@ -1,7 +1,6 @@
 package messaging
 
 import (
-	"encoding/binary"
 	"fmt"
 
 	"github.com/flowbehappy/tigate/eventpb"
@@ -19,15 +18,10 @@ type IOType int32
 const (
 	TypeInvalid IOType = iota
 	TypeBytes
-	TypeServerId
-	TypeDMLEvent
-	TypeDDLEvent
 	TypeTxnEvent
-	TypeWatermark
 	TypeHeartBeatRequest
 	TypeHeartBeatResponse
 	TypeScheduleDispatcherRequest
-	TypeEventFeed
 	TypeRegisterDispatcherRequest
 
 	TypeCoordinatorBootstrapRequest
@@ -47,12 +41,6 @@ func (t IOType) String() string {
 	switch t {
 	case TypeBytes:
 		return "Bytes"
-	case TypeServerId:
-		return "ServerId"
-	case TypeDMLEvent:
-		return "DMLEvent"
-	case TypeDDLEvent:
-		return "DDLEvent"
 	case TypeTxnEvent:
 		return "TxnEvent"
 	case TypeHeartBeatRequest:
@@ -69,8 +57,6 @@ func (t IOType) String() string {
 		return "MaintainerHeartbeatRequest"
 	case TypeCoordinatorBootstrapResponse:
 		return "CoordinatorBootstrapResponse"
-	case TypeEventFeed:
-		return "EventFeed"
 	case TypeRegisterDispatcherRequest:
 		return "RegisterDispatcherRequest"
 	case TypeMaintainerBootstrapRequest:
@@ -101,50 +87,9 @@ func (s ServerId) String() string {
 func NewServerId() ServerId {
 	return ServerId(uuid.New().String())
 }
-
 func (b *Bytes) Marshal() ([]byte, error) { return *b, nil }
 func (b *Bytes) Unmarshal(data []byte) error {
 	*b = data
-	return nil
-}
-
-func (s ServerId) Marshal() ([]byte, error) { return []byte(s), nil }
-func (s ServerId) Unmarshal(data []byte) error {
-	if len(data) != 16 {
-		log.Panic("Invalid data len, data len is expected 16", zap.Int("len", len(data)), zap.String("data", fmt.Sprintf("%v", data)))
-		return apperror.AppError{Type: apperror.ErrorTypeDecodeData, Reason: fmt.Sprintf("Invalid data len, data len is expected 16")}
-	}
-	// todo: s the serverId is not set
-	uid := string(data)
-	s = ServerId(uid)
-	return nil
-}
-
-type DMLEvent struct {
-	E *common.TxnEvent
-	// TODO
-}
-
-func (d *DMLEvent) Marshal() ([]byte, error) {
-	// TODO
-	return nil, nil
-}
-
-func (d *DMLEvent) Unmarshal(data []byte) error {
-	return nil
-}
-
-type DDLEvent struct {
-	E *common.TxnEvent
-	// TODO
-}
-
-func (d *DDLEvent) Marshal() ([]byte, error) {
-	// TODO
-	return nil, nil
-}
-
-func (d *DDLEvent) Unmarshal(data []byte) error {
 	return nil
 }
 
@@ -168,7 +113,7 @@ func (r RegisterDispatcherRequest) GetClusterID() uint64 {
 	return 0
 }
 
-func (r RegisterDispatcherRequest) GetTopic() common.TopicType {
+func (r RegisterDispatcherRequest) GetTopic() string {
 	return EventFeedTopic
 }
 
@@ -192,28 +137,6 @@ func (r RegisterDispatcherRequest) GetChangefeedID() (namespace, id string) {
 	return r.Namespace, r.ChangefeedId
 }
 
-type Watermark struct {
-	Span *common.TableSpan
-	Ts   uint64
-}
-
-func (w *Watermark) Marshal() ([]byte, error) {
-	res := make([]byte, 8)
-	binary.LittleEndian.PutUint64(res, w.Ts)
-	spanBytes, err := w.Span.Marshal()
-	if err != nil {
-		return nil, err
-	}
-	res = append(res, spanBytes...)
-	return res, nil
-}
-
-func (w *Watermark) Unmarshal(data []byte) error {
-	w.Ts = binary.LittleEndian.Uint64(data[:8])
-	w.Span = &common.TableSpan{}
-	return w.Span.Unmarshal(data[8:])
-}
-
 type IOTypeT interface {
 	Unmarshal(data []byte) error
 	Marshal() (data []byte, err error)
@@ -222,14 +145,6 @@ type IOTypeT interface {
 func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 	var m IOTypeT
 	switch ioType {
-	case TypeBytes:
-		m = &Bytes{}
-	case TypeServerId:
-		return ServerId(value), nil
-	case TypeDMLEvent:
-		m = &DMLEvent{}
-	case TypeDDLEvent:
-		m = &DDLEvent{}
 	case TypeHeartBeatRequest:
 		m = &heartbeatpb.HeartBeatRequest{}
 	case TypeHeartBeatResponse:
@@ -268,25 +183,17 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 type TargetMessage struct {
 	From     ServerId
 	To       ServerId
-	Epoch    common.EpochType
+	Epoch    uint64
 	Sequence uint64
-	Topic    common.TopicType
+	Topic    string
 	Type     IOType
 	Message  IOTypeT
 }
 
 // NewTargetMessage creates a new TargetMessage to be sent to a target server.
-func NewTargetMessage(To ServerId, Topic common.TopicType, Message IOTypeT) *TargetMessage {
+func NewTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetMessage {
 	var ioType IOType
 	switch Message.(type) {
-	case *Bytes:
-		ioType = TypeBytes
-	case *ServerId:
-		ioType = TypeServerId
-	case *DMLEvent:
-		ioType = TypeDMLEvent
-	case *DDLEvent:
-		ioType = TypeDDLEvent
 	case *common.TxnEvent:
 		ioType = TypeTxnEvent
 	case *heartbeatpb.HeartBeatRequest:
@@ -303,8 +210,6 @@ func NewTargetMessage(To ServerId, Topic common.TopicType, Message IOTypeT) *Tar
 		ioType = TypeHeartBeatResponse
 	case *MessageError:
 		ioType = TypeMessageError
-	case *eventpb.EventFeed:
-		ioType = TypeEventFeed
 	case *heartbeatpb.MaintainerHeartbeat:
 		ioType = TypeMaintainerHeartbeatRequest
 	case *heartbeatpb.CoordinatorBootstrapResponse:

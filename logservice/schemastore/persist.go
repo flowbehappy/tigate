@@ -133,7 +133,7 @@ func loadPersistentStorage(db *pebble.DB, minRequiredTS common.Ts) (*persistentS
 	if err != nil {
 		log.Fatal("generate lower bound failed", zap.Error(err))
 	}
-	snapshotUpperBound, err := snapshotSchemaKey(dataStorage.getGCTS(), common.SchemaID(math.MaxInt64))
+	snapshotUpperBound, err := snapshotSchemaKey(dataStorage.getGCTS(), int64(math.MaxInt64))
 	if err != nil {
 		log.Fatal("generate upper bound failed", zap.Error(err))
 	}
@@ -151,7 +151,7 @@ func loadPersistentStorage(db *pebble.DB, minRequiredTS common.Ts) (*persistentS
 		if err != nil {
 			log.Fatal("get db info failed", zap.Error(err))
 		}
-		databaseMap[common.SchemaID(dbInfo.ID)] = &DatabaseInfo{
+		databaseMap[int64(dbInfo.ID)] = &DatabaseInfo{
 			Name:          dbInfo.Name.O,
 			Tables:        make([]common.TableID, 0),
 			CreateVersion: common.Ts(dataStorage.getGCTS()),
@@ -163,7 +163,7 @@ func loadPersistentStorage(db *pebble.DB, minRequiredTS common.Ts) (*persistentS
 	if err != nil {
 		log.Fatal("generate lower bound failed", zap.Error(err))
 	}
-	ddlJobUpperBound, err := ddlJobSchemaKey(common.Ts(math.MaxUint64), common.SchemaID(math.MaxInt64))
+	ddlJobUpperBound, err := ddlJobSchemaKey(common.Ts(math.MaxUint64), int64(math.MaxInt64))
 	if err != nil {
 		log.Fatal("generate upper bound failed", zap.Error(err))
 	}
@@ -197,7 +197,7 @@ func (p *persistentStorage) writeDDLEvent(ddlEvent DDLEvent) error {
 	case model.ActionCreateSchema, model.ActionModifySchemaCharsetAndCollate, model.ActionDropSchema:
 		ddlKey, err := ddlJobSchemaKey(
 			common.Ts(ddlEvent.Job.BinlogInfo.FinishedTS),
-			common.SchemaID(ddlEvent.Job.SchemaID))
+			int64(ddlEvent.Job.SchemaID))
 		if err != nil {
 			return err
 		}
@@ -235,7 +235,7 @@ func tryReadTableInfoFromSnapshot(
 	snap *pebble.Snapshot,
 	tableID common.TableID,
 	startTS common.Ts,
-	getSchemaName func(schemaID common.SchemaID) (string, error),
+	getSchemaName func(schemaID int64) (string, error),
 ) (*common.TableInfo, error) {
 	lowerBound, err := generateKey(indexSnapshotKeyPrefix, uint64(tableID))
 	if err != nil {
@@ -318,7 +318,7 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 	store *versionedTableInfoStore,
 	startTS common.Ts,
 	endTS common.Ts,
-	getSchemaName func(schemaID common.SchemaID) (string, error),
+	getSchemaName func(schemaID int64) (string, error),
 ) error {
 	tableID := store.getTableID()
 	snap := p.db.NewSnapshot()
@@ -349,7 +349,7 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 		if err != nil {
 			log.Fatal("unmarshal ddl job failed", zap.Error(err))
 		}
-		schemaName, err := getSchemaName(common.SchemaID(ddlEvent.Job.SchemaID))
+		schemaName, err := getSchemaName(int64(ddlEvent.Job.SchemaID))
 		if err != nil {
 			log.Fatal("get schema name failed", zap.Error(err))
 		}
@@ -447,7 +447,7 @@ func checkAndParseKey(key []byte, prefix string) ([]uint64, error) {
 	}
 }
 
-func snapshotSchemaKey(ts common.Ts, schemaID common.SchemaID) ([]byte, error) {
+func snapshotSchemaKey(ts common.Ts, schemaID int64) ([]byte, error) {
 	return generateKey(snapshotSchemaKeyPrefix, uint64(ts), uint64(schemaID))
 }
 
@@ -455,7 +455,7 @@ func snapshotTableKey(ts common.Ts, tableID common.TableID) ([]byte, error) {
 	return generateKey(snapshotTableKeyPrefix, uint64(ts), uint64(tableID))
 }
 
-func ddlJobSchemaKey(ts common.Ts, schemaID common.SchemaID) ([]byte, error) {
+func ddlJobSchemaKey(ts common.Ts, schemaID int64) ([]byte, error) {
 	return generateKey(ddlJobSchemaKeyPrefix, uint64(ts), uint64(schemaID))
 }
 
@@ -463,7 +463,7 @@ func ddlJobTableKey(ts common.Ts, tableID common.TableID) ([]byte, error) {
 	return generateKey(ddlJobTableKeyPrefix, uint64(ts), uint64(tableID))
 }
 
-func indexSnapshotKey(tableID common.TableID, commitTS common.Ts, schemaID common.SchemaID) ([]byte, error) {
+func indexSnapshotKey(tableID common.TableID, commitTS common.Ts, schemaID int64) ([]byte, error) {
 	return generateKey(indexSnapshotKeyPrefix, uint64(tableID), uint64(commitTS), uint64(schemaID))
 }
 
@@ -471,7 +471,7 @@ func indexDDLJobKey(tableID common.TableID, commitTS common.Ts) ([]byte, error) 
 	return generateKey(indexDDLJobKeyPrefix, uint64(tableID), uint64(commitTS))
 }
 
-func parseIndexSnapshotKey(key []byte) (common.TableID, common.Ts, common.SchemaID, error) {
+func parseIndexSnapshotKey(key []byte) (common.TableID, common.Ts, int64, error) {
 	values, err := checkAndParseKey(key, indexSnapshotKeyPrefix)
 	if err != nil || len(values) != 3 {
 		log.Fatal("parse index key failed",
@@ -480,7 +480,7 @@ func parseIndexSnapshotKey(key []byte) (common.TableID, common.Ts, common.Schema
 			zap.Any("values", values),
 			zap.Error(err))
 	}
-	return common.TableID(values[0]), common.Ts(values[1]), common.SchemaID(values[2]), nil
+	return common.TableID(values[0]), common.Ts(values[1]), int64(values[2]), nil
 }
 
 func parseIndexDDLJobKey(key []byte) (common.TableID, common.Ts, error) {
@@ -546,8 +546,8 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Ts) 
 			CreateVersion: ts,
 			DeleteVersion: common.Ts(math.MaxUint64),
 		}
-		databaseMap[common.SchemaID(dbinfo.ID)] = databaseInfo
-		schemaKey, err := snapshotSchemaKey(ts, common.SchemaID(dbinfo.ID))
+		databaseMap[int64(dbinfo.ID)] = databaseInfo
+		schemaKey, err := snapshotSchemaKey(ts, int64(dbinfo.ID))
 		if err != nil {
 			log.Fatal("generate schema key failed", zap.Error(err))
 		}
@@ -575,7 +575,7 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Ts) 
 				log.Fatal("generate table key failed", zap.Error(err))
 			}
 			batch.Set(tableKey, rawTable.Value, pebble.NoSync)
-			indexKey, err := indexSnapshotKey(common.TableID(tbName.ID), ts, common.SchemaID(dbinfo.ID))
+			indexKey, err := indexSnapshotKey(common.TableID(tbName.ID), ts, int64(dbinfo.ID))
 			if err != nil {
 				log.Fatal("generate index key failed", zap.Error(err))
 			}

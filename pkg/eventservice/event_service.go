@@ -31,7 +31,7 @@ type DispatcherInfo interface {
 	// GetClusterID returns the ID of the TiDB cluster the acceptor wants to accept events from.
 	GetClusterID() uint64
 
-	GetTopic() common.TopicType
+	GetTopic() string
 	GetServerID() string
 	GetTableSpan() *common.TableSpan
 	GetStartTs() uint64

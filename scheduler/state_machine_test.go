@@ -18,8 +18,9 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/rpc"
+	"github.com/flowbehappy/tigate/pkg/rpc"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/stretchr/testify/require"
 )
@@ -80,7 +81,7 @@ func TestInferiorStoppedWhenWorking(t *testing.T) {
 		NewBalanceScheduler(time.Minute, 1000))
 	allInferior := []InferiorID{cfID1}
 
-	captureInfo := &model.CaptureInfo{ID: "capture-1"}
+	captureInfo := &common.NodeInfo{ID: "capture-1"}
 	aliveCaptures := map[model.CaptureID]*CaptureStatus{
 		captureInfo.ID: &CaptureStatus{state: CaptureStateInitialized, capture: captureInfo},
 	}

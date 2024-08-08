@@ -20,11 +20,12 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/flowbehappy/tigate/rpc"
+	"github.com/flowbehappy/tigate/pkg/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
@@ -36,7 +37,7 @@ import (
 
 // coordinator implements the Coordinator interface
 type coordinator struct {
-	nodeInfo    *model.CaptureInfo
+	nodeInfo    *common.NodeInfo
 	initialized bool
 	version     int64
 
@@ -57,7 +58,7 @@ type coordinator struct {
 	scheduledChangefeeds map[model.ChangeFeedID]*changefeed
 }
 
-func NewCoordinator(capture *model.CaptureInfo, version int64) server.Coordinator {
+func NewCoordinator(capture *common.NodeInfo, version int64) server.Coordinator {
 	c := &coordinator{
 		version:              version,
 		nodeInfo:             capture,
@@ -105,7 +106,7 @@ func (c *coordinator) Tick(
 	}
 
 	// 2. check if nodes is changed
-	msgs, err := c.supervisor.HandleAliveCaptureUpdate(state.Captures)
+	msgs, err := c.supervisor.HandleAliveCaptureUpdate(common.CaptureInfosToNodeInfos(state.Captures))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

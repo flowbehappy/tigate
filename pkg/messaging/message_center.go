@@ -11,19 +11,18 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/log"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
 // MessageCenter is the interface to send and receive messages to/from other targets.
 // Note: Methods of MessageCenter and MessageSender are thread-safe.
-// AddTarget and RemoveTarget are not thread-safe, and should be called in the main thread of a server.
+// OnNodeChanges is not thread-safe, and should be called in the main thread of a server.
 type MessageCenter interface {
 	MessageSender
 	MessageReceiver
-	AddTarget(id ServerId, epoch common.EpochType, addr common.AddressType)
-	RemoveTarget(id ServerId)
+	// OnNodeChanges is called when the nodes in the cluster are changed. The message center should update the target list.
+	OnNodeChanges(newNodes []*common.NodeInfo, removedNodes []*common.NodeInfo)
 	Close()
 }
 
@@ -37,12 +36,9 @@ type MessageSender interface {
 }
 
 // MessageReceiver is the interface to receive messages from other targets.
-// TODO: Seems this interface is unnecessary, we can remove it later?
 type MessageReceiver interface {
-	// ReceiveEvent() (*TargetMessage, error)
-	// ReceiveCmd() (*TargetMessage, error)
-	RegisterHandler(topic common.TopicType, handler MessageHandler)
-	DeRegisterHandler(topic common.TopicType)
+	RegisterHandler(topic string, handler MessageHandler)
+	DeRegisterHandler(topic string)
 }
 
 // gRPC generates two different interfaces, MessageCenter_SendEventsServer
@@ -71,7 +67,7 @@ type messageCenter struct {
 	id ServerId
 	// The current epoch of the message center,
 	// when every time the message center is restarted, the epoch will be increased by 1.
-	epoch common.EpochType
+	epoch uint64
 	cfg   *config.MessageCenterConfig
 	// The local target, which is the message center itself.
 	localTarget *localMessageTarget
@@ -89,12 +85,9 @@ type messageCenter struct {
 	receiveCmdCh   chan *TargetMessage
 	wg             *sync.WaitGroup
 	cancel         context.CancelFunc
-
-	targetGauge prometheus.Gauge
-	streamGauge prometheus.Gauge
 }
 
-func NewMessageCenter(ctx context.Context, id ServerId, epoch common.EpochType, cfg *config.MessageCenterConfig) *messageCenter {
+func NewMessageCenter(ctx context.Context, id ServerId, epoch uint64, cfg *config.MessageCenterConfig) *messageCenter {
 	receiveEventCh := make(chan *TargetMessage, cfg.CacheChannelSize)
 	receiveCmdCh := make(chan *TargetMessage, cfg.CacheChannelSize)
 	ctx, cancel := context.WithCancel(ctx)
@@ -116,17 +109,26 @@ func NewMessageCenter(ctx context.Context, id ServerId, epoch common.EpochType, 
 	return mc
 }
 
-func (mc *messageCenter) RegisterHandler(topic common.TopicType, handler MessageHandler) {
+func (mc *messageCenter) RegisterHandler(topic string, handler MessageHandler) {
 	mc.router.registerHandler(topic, handler)
 }
 
-func (mc *messageCenter) DeRegisterHandler(topic common.TopicType) {
+func (mc *messageCenter) DeRegisterHandler(topic string) {
 	mc.router.deRegisterHandler(topic)
+}
+
+func (mc *messageCenter) OnNodeChanges(newNodes []*common.NodeInfo, removedNodes []*common.NodeInfo) {
+	for _, node := range newNodes {
+		mc.addTarget(ServerId(node.ID), node.Epoch, node.AdvertiseAddr)
+	}
+	for _, node := range removedNodes {
+		mc.removeTarget(ServerId(node.ID))
+	}
 }
 
 // AddTarget is called when a new remote target is discovered,
 // to add the target to the message center.
-func (mc *messageCenter) AddTarget(id ServerId, epoch common.EpochType, addr common.AddressType) {
+func (mc *messageCenter) addTarget(id ServerId, epoch uint64, addr string) {
 	// If the target is the message center itself, we don't need to add it.
 	if id == mc.id {
 		log.Info("Add local target", zap.Stringer("id", id), zap.Any("epoch", epoch), zap.Any("addr", addr))
@@ -137,7 +139,7 @@ func (mc *messageCenter) AddTarget(id ServerId, epoch common.EpochType, addr com
 	rt.connect()
 }
 
-func (mc *messageCenter) RemoveTarget(id ServerId) {
+func (mc *messageCenter) removeTarget(id ServerId) {
 	mc.remoteTargets.Lock()
 	defer mc.remoteTargets.Unlock()
 	if target, ok := mc.remoteTargets.m[id]; ok {
@@ -159,8 +161,8 @@ func (mc *messageCenter) SendEvent(msg ...*TargetMessage) error {
 	}
 
 	mc.remoteTargets.RLock()
-	defer mc.remoteTargets.RUnlock()
 	target, ok := mc.remoteTargets.m[to]
+	mc.remoteTargets.RUnlock()
 	if !ok {
 		return apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %s not found", to)}
 	}
@@ -179,8 +181,8 @@ func (mc *messageCenter) SendCommand(cmd ...*TargetMessage) error {
 	}
 
 	mc.remoteTargets.RLock()
-	defer mc.remoteTargets.RUnlock()
 	target, ok := mc.remoteTargets.m[to]
+	mc.remoteTargets.RUnlock()
 	if !ok {
 		return apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %s not found", to)}
 	}
@@ -213,7 +215,7 @@ func (mc *messageCenter) Close() {
 
 // touchRemoteTarget returns the remote target by the id,
 // if the target is not found, it will create a new one.
-func (mc *messageCenter) touchRemoteTarget(id ServerId, epoch common.EpochType, addr common.AddressType) *remoteMessageTarget {
+func (mc *messageCenter) touchRemoteTarget(id ServerId, epoch uint64, addr string) *remoteMessageTarget {
 	mc.remoteTargets.Lock()
 	defer mc.remoteTargets.Unlock()
 	if target, ok := mc.remoteTargets.m[id]; ok {
@@ -288,15 +290,15 @@ func (s *grpcServer) handleConnect(msg *proto.Message, stream grpcSender, isEven
 	targetId := ServerId(msg.From)
 
 	s.messageCenter.remoteTargets.RLock()
-	defer s.messageCenter.remoteTargets.RUnlock()
 	remoteTarget, ok := s.messageCenter.remoteTargets.m[targetId]
+	s.messageCenter.remoteTargets.RUnlock()
 	if ok {
 		log.Info("Start to sent message to remote target",
 			zap.Any("messageCenterID", s.messageCenter.id),
 			zap.String("remote", msg.From),
 			zap.Bool("isEvent", isEvent))
 		// The handshake message's epoch should be the same as the target's epoch.
-		if common.EpochType(msg.Epoch) != remoteTarget.Epoch() {
+		if uint64(msg.Epoch) != remoteTarget.Epoch() {
 			err := apperror.AppError{Type: apperror.ErrorTypeEpochMismatch, Reason: fmt.Sprintf("Target %s epoch mismatch, expect %d, got %d", targetId, remoteTarget.Epoch(), msg.Epoch)}
 			log.Error("Epoch mismatch", zap.Error(err))
 			return err
@@ -309,18 +311,6 @@ func (s *grpcServer) handleConnect(msg *proto.Message, stream grpcSender, isEven
 	} else {
 		log.Info("Remote target not found", zap.Any("messageCenter", s.messageCenter.id), zap.Any("remote", targetId))
 		err := &apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %s not found", targetId)}
-		// merr := NewMessageError(err)
-		// pMsg := &proto.Message{
-		// 	From:  s.messageCenter.id.String(),
-		// 	To:    targetId.String(),
-		// 	Epoch: s.messageCenter.epoch,
-		// 	Type:  int32(TypeMessageError),
-		// }
-		// buf, _ := merr.Marshal()
-		// pMsg.Payload = append(pMsg.Payload, buf)
-		// if err := stream.Send(pMsg); err != nil {
-		// 	log.Error("Failed to send message error", zap.Error(err))
-		// }
 		return err
 	}
 }

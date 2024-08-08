@@ -19,11 +19,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-
-	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
-	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
@@ -33,27 +29,33 @@ import (
 
 const NodeManagerName = "node-manager"
 
-var TempEpoch = common.EpochType(1)
+type NodeChangeHandler func(newNodes []*common.NodeInfo, removedNodes []*common.NodeInfo)
 
 // NodeManager manager the read view of all captures, other modules can get the captures information from it
 // and register server update event handler
 type NodeManager struct {
 	session    *concurrency.Session
 	etcdClient etcd.CDCEtcdClient
-	nodes      map[string]*model.CaptureInfo
+	nodes      map[common.NodeID]*common.NodeInfo
 
-	handleRWLock sync.RWMutex
-	handles      map[string]func([]*model.CaptureInfo, []*model.CaptureInfo)
+	nodeChangeHandlers struct {
+		sync.RWMutex
+		m map[string]NodeChangeHandler
+	}
 }
 
-func NewCaptureManager(
+func NewNodeManager(
 	session *concurrency.Session,
 	etcdClient etcd.CDCEtcdClient,
 ) *NodeManager {
 	return &NodeManager{
 		session:    session,
 		etcdClient: etcdClient,
-		nodes:      make(map[string]*model.CaptureInfo),
+		nodes:      make(map[common.NodeID]*common.NodeInfo),
+		nodeChangeHandlers: struct {
+			sync.RWMutex
+			m map[string]NodeChangeHandler
+		}{m: make(map[string]NodeChangeHandler)},
 	}
 }
 
@@ -62,47 +64,48 @@ func (c *NodeManager) Name() string {
 }
 
 // Tick is triggered by the server update events
-func (c *NodeManager) Tick(ctx context.Context,
-	raw orchestrator.ReactorState) (orchestrator.ReactorState, error) {
+func (c *NodeManager) Tick(
+	ctx context.Context,
+	raw orchestrator.ReactorState,
+) (orchestrator.ReactorState, error) {
 	state := raw.(*orchestrator.GlobalReactorState)
-	if len(c.nodes) != len(state.Captures) {
-		// find changes
-		removed := make([]*model.CaptureInfo, 0)
-		newCaptures := make([]*model.CaptureInfo, 0)
-		allCaptures := make(map[string]*model.CaptureInfo, len(state.Captures))
-		for _, capture := range c.nodes {
-			if _, exist := state.Captures[capture.ID]; !exist {
-				sid := messaging.ServerId(capture.ID)
-				appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RemoveTarget(sid)
-				removed = append(removed, capture)
-			}
-		}
+	// find changes
+	removed := make([]*common.NodeInfo, 0)
+	newNodes := make([]*common.NodeInfo, 0)
+	allNodes := make(map[common.NodeID]*common.NodeInfo, len(state.Captures))
 
-		for _, capture := range state.Captures {
-			if _, exist := c.nodes[capture.ID]; !exist {
-
-				sid := messaging.ServerId(capture.ID)
-				appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).AddTarget(sid, TempEpoch, common.AddressType(capture.AdvertiseAddr))
-				newCaptures = append(newCaptures, capture)
-			}
-			allCaptures[capture.ID] = capture
+	for _, node := range c.nodes {
+		if _, exist := state.Captures[node.ID]; !exist {
+			removed = append(removed, node)
 		}
+	}
+
+	for _, capture := range state.Captures {
+		if _, exist := c.nodes[capture.ID]; !exist {
+			node := common.CaptureInfoToNodeInfo(capture)
+			newNodes = append(newNodes, node)
+		}
+		allNodes[capture.ID] = common.CaptureInfoToNodeInfo(capture)
+	}
+
+	if len(removed) != 0 || len(newNodes) != 0 {
 		log.Info("server change detected", zap.Any("removed", removed),
-			zap.Any("new", newCaptures))
-		c.nodes = allCaptures
+			zap.Any("new", newNodes))
+	}
 
-		// notify handler
-		c.handleRWLock.RLock()
-		for _, handle := range c.handles {
-			handle(newCaptures, removed)
-		}
-		c.handleRWLock.RUnlock()
+	c.nodes = allNodes
+
+	// handle node change event
+	c.nodeChangeHandlers.RLock()
+	defer c.nodeChangeHandlers.RUnlock()
+	for _, handler := range c.nodeChangeHandlers.m {
+		handler(newNodes, removed)
 	}
 	return state, nil
 }
 
-// GetAliveCaptures get all alive captures, the caller mustn't modify the returned map
-func (c *NodeManager) GetAliveCaptures() map[string]*model.CaptureInfo {
+// GetAliveNodes get all alive captures, the caller mustn't modify the returned map
+func (c *NodeManager) GetAliveNodes() map[common.NodeID]*common.NodeInfo {
 	return c.nodes
 }
 
@@ -119,11 +122,10 @@ func (c *NodeManager) Run(ctx context.Context) error {
 			cfg.CaptureSessionTTL), time.Millisecond*50)
 }
 
-func (c *NodeManager) RegisterCaptureChangeHandler(name string,
-	f func([]*model.CaptureInfo, []*model.CaptureInfo)) {
-	c.handleRWLock.Lock()
-	c.handles[name] = f
-	c.handleRWLock.Unlock()
+func (c *NodeManager) RegisterNodeChangeHandler(name string, handler NodeChangeHandler) {
+	c.nodeChangeHandlers.Lock()
+	defer c.nodeChangeHandlers.Unlock()
+	c.nodeChangeHandlers.m[name] = handler
 }
 
 func (c *NodeManager) Close(ctx context.Context) error {

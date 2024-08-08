@@ -25,7 +25,7 @@ import (
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/flowbehappy/tigate/rpc"
+	"github.com/flowbehappy/tigate/pkg/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/flowbehappy/tigate/utils"
@@ -220,7 +220,7 @@ func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time
 		return
 	}
 
-	nodes := m.nodeManager.GetAliveCaptures()
+	nodes := m.nodeManager.GetAliveNodes()
 	//check capture changes
 	msgs, err := m.supervisor.HandleAliveCaptureUpdate(nodes)
 	if err != nil {

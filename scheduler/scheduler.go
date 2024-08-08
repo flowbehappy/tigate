@@ -16,7 +16,7 @@ package scheduler
 import (
 	"time"
 
-	"github.com/flowbehappy/tigate/rpc"
+	"github.com/flowbehappy/tigate/pkg/rpc"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"

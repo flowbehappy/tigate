@@ -2,7 +2,6 @@ package messaging
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"sync"
 
 	"github.com/pingcap/log"
@@ -13,22 +12,22 @@ type MessageHandler func(ctx context.Context, msg *TargetMessage) error
 
 type router struct {
 	mu       sync.RWMutex
-	handlers map[common.TopicType]MessageHandler
+	handlers map[string]MessageHandler
 }
 
 func newRouter() *router {
 	return &router{
-		handlers: make(map[common.TopicType]MessageHandler),
+		handlers: make(map[string]MessageHandler),
 	}
 }
 
-func (r *router) registerHandler(msgType common.TopicType, handler MessageHandler) {
+func (r *router) registerHandler(msgType string, handler MessageHandler) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.handlers[msgType] = handler
 }
 
-func (r *router) deRegisterHandler(topic common.TopicType) {
+func (r *router) deRegisterHandler(topic string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.handlers, topic)
