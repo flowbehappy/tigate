@@ -317,8 +317,8 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx context.Context) {
 	defer e.wg.Done()
 
-	statusMessage := make([]*heartbeatpb.TableSpanStatus, 0)
 	for {
+		statusMessage := make([]*heartbeatpb.TableSpanStatus, 0)
 		select {
 		case <-ctx.Done():
 			return
@@ -349,7 +349,6 @@ func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx conte
 			//message := e.CollectHeartbeatInfo(false)
 			message.Statuses = statusMessage
 			e.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
-			statusMessage = statusMessage[:0]
 		}
 	}
 }
