@@ -175,6 +175,13 @@ var (
 			Name:      "txn_prepare_statement_errors",
 			Help:      "Prepare statement errors",
 		}, []string{"namespace", "changefeed"})
+
+	DispatcherReceivedEventCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "ticdc",
+		Subsystem: "dispatcher",
+		Name:      "received_event_count",
+		Help:      "The number of events received by the dispatcher",
+	}, []string{"type"})
 )
 
 // InitMetrics registers all metrics in this file.
@@ -200,4 +207,5 @@ func InitSinkMetrics(registry *prometheus.Registry) {
 
 	registry.MustRegister(EventDispatcherManagerResolvedTsGauge)
 	registry.MustRegister(EventDispatcherManagerCheckpointTsGauge)
+	registry.MustRegister(DispatcherReceivedEventCount)
 }

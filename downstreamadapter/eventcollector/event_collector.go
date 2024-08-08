@@ -25,8 +25,10 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/chann"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -76,15 +78,19 @@ type EventCollector struct {
 	globalMemoryQuota int64
 	wg                sync.WaitGroup
 
-	registerMessageChan *chann.DrainableChann[*RegisterInfo] // for temp
+	registerMessageChan                          *chann.DrainableChann[*RegisterInfo] // for temp
+	metricDispatcherReceivedKVEventCount         prometheus.Counter
+	metricDispatcherReceivedResolvedTsEventCount prometheus.Counter
 }
 
 func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *EventCollector {
 	eventCollector := EventCollector{
-		serverId:            serverId,
-		globalMemoryQuota:   globalMemoryQuota,
-		dispatcherMap:       newDispatcherMap(),
-		registerMessageChan: chann.NewAutoDrainChann[*RegisterInfo](),
+		serverId:                             serverId,
+		globalMemoryQuota:                    globalMemoryQuota,
+		dispatcherMap:                        newDispatcherMap(),
+		registerMessageChan:                  chann.NewAutoDrainChann[*RegisterInfo](),
+		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
+		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.EventFeedTopic, eventCollector.RecvEventsMessage)
 
@@ -219,8 +225,10 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 		// TODO: message 改过以后重写，先串起来。
 		if txnEvent.IsDMLEvent() {
 			dispatcherItem.PushTxnEvent(txnEvent)
+			c.metricDispatcherReceivedKVEventCount.Inc()
 		} else {
 			dispatcherItem.UpdateResolvedTs(txnEvent.ResolvedTs)
+			c.metricDispatcherReceivedResolvedTsEventCount.Inc()
 		}
 
 		// dispatcherItem.UpdateResolvedTs(eventFeeds.ResolvedTs)
