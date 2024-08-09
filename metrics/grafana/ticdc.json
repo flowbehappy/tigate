@@ -476,12 +476,13 @@
           },
           "yaxes": [
             {
-              "format": "none",
+              "format": "short",
               "label": null,
               "logBase": 1,
               "max": null,
               "min": "0",
-              "show": true
+              "show": true,
+              "$$hashKey": "object:1202"
             },
             {
               "format": "none",
@@ -489,7 +490,8 @@
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": false
+              "show": false,
+              "$$hashKey": "object:1203"
             }
           ],
           "yaxis": {
@@ -589,12 +591,13 @@
           },
           "yaxes": [
             {
-              "format": "none",
+              "format": "short",
               "label": null,
               "logBase": 1,
               "max": null,
               "min": "0",
-              "show": true
+              "show": true,
+              "$$hashKey": "object:1227"
             },
             {
               "format": "none",
@@ -602,7 +605,8 @@
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": false
+              "show": false,
+              "$$hashKey": "object:1228"
             }
           ],
           "yaxis": {
@@ -1117,12 +1121,13 @@
           },
           "yaxes": [
             {
-              "format": "none",
+              "format": "short",
               "label": null,
               "logBase": 1,
               "max": null,
               "min": "0",
-              "show": true
+              "show": true,
+              "$$hashKey": "object:1257"
             },
             {
               "format": "none",
@@ -1130,7 +1135,8 @@
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": false
+              "show": false,
+              "$$hashKey": "object:1258"
             }
           ],
           "yaxis": {
@@ -1903,12 +1909,13 @@
           },
           "yaxes": [
             {
-              "format": "none",
+              "format": "bytes",
               "label": null,
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": true
+              "show": true,
+              "$$hashKey": "object:1127"
             },
             {
               "format": "short",
@@ -1916,13 +1923,14 @@
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": true
+              "show": true,
+              "$$hashKey": "object:1128"
             }
           ],
           "yaxis": {
             "align": false,
             "alignLevel": null
-          }
+          },
         },
         {
           "aliasColors": {},

@@ -49,13 +49,9 @@ jobs:
       - name: Build
         run: make cdc
 
-  arm_build:
-    runs-on: [ARM64]
-    name: Arm Build
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [ARM64]
+  linux_build:
+    runs-on: ubuntu-latest 
+    name: Linux Build
     steps:
       - name: Check out code
         uses: actions/checkout@v2
