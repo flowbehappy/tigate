@@ -91,4 +91,6 @@ func InitDisaptcherMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(HandleDispatcherRequsetCounter)
 	registry.MustRegister(DispatcherReceivedEventCount)
 	registry.MustRegister(EventCollectorRegisteredDispatcherCount)
+
+	// for test
 }
