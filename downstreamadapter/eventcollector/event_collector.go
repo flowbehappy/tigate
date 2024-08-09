@@ -122,6 +122,7 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 			}
 			time.Sleep(10 * time.Millisecond) // for test
 			c.dispatcherMap.Set(d.GetId(), d)
+			metrics.EventCollectorRegisteredDispatcherCount.Inc()
 		}
 	}(&eventCollector)
 
@@ -150,6 +151,7 @@ func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uin
 		return err
 	}
 	c.dispatcherMap.Set(d.GetId(), d)
+	metrics.EventCollectorRegisteredDispatcherCount.Inc()
 	return nil
 }
 
