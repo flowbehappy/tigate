@@ -275,12 +275,12 @@ func (d *TableEventDispatcher) decodeEvent(rawTxnEvent *eventpb.TxnEvent) (*comm
 	return txnEvent, nil
 }
 
-func (d *TableEventDispatcher) PushEvent(rawTxnEvent *eventpb.TxnEvent) {
-	// decode the raw event to common.TxnEvent
-	event, _ := d.decodeEvent(rawTxnEvent)
-	//d.GetMemoryUsage().Add(event.CommitTs, event.MemoryCost())
-	d.GetEventChan() <- event // 换成一个函数
-}
+// func (d *TableEventDispatcher) PushEvent(rawTxnEvent *eventpb.TxnEvent) {
+// 	// decode the raw event to common.TxnEvent
+// 	event, _ := d.decodeEvent(rawTxnEvent)
+// 	//d.GetMemoryUsage().Add(event.CommitTs, event.MemoryCost())
+// 	d.GetEventChan() <- event // 换成一个函数
+// }
 
 func (d *TableEventDispatcher) PushTxnEvent(event *common.TxnEvent) {
 	d.GetEventChan() <- event

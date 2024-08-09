@@ -129,7 +129,9 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 	return &eventCollector
 }
 
-func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uint64) error {
+// RegisterDispatcher register a dispatcher to event collector.
+// If the dispatcher is not table trigger event dispatcher, filterConfig will be nil.
+func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uint64, filterConfig *eventpb.FilterConfig) error {
 	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendEvent(&messaging.TargetMessage{
 		To:    c.serverId, // demo 中 每个节点都有自己的 eventService
 		Topic: messaging.EventServiceTopic,
@@ -140,6 +142,7 @@ func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uin
 			Remove:       false,
 			StartTs:      startTs,
 			ServerId:     c.serverId.String(),
+			FilterConfig: filterConfig,
 		}},
 	})
 	if err != nil {
