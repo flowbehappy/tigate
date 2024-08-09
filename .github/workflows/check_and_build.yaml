@@ -50,9 +50,7 @@ jobs:
   #       run: make cdc
 
   centos_build:
-    runs-on: ubuntu-latest
-    container:
-      image: "centos:7"  
+    runs-on: ubuntu-latest 
     name: centos Build
     steps:
       - name: Check out code
