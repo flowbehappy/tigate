@@ -114,7 +114,7 @@ func (r RegisterDispatcherRequest) GetClusterID() uint64 {
 }
 
 func (r RegisterDispatcherRequest) GetTopic() string {
-	return EventFeedTopic
+	return EventCollectorTopic
 }
 
 func (r RegisterDispatcherRequest) GetServerID() string {

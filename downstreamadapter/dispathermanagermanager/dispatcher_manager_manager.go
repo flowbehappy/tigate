@@ -39,16 +39,16 @@ func NewDispatcherManagerManager() *DispatcherManagerManager {
 		dispatcherManagers: make(map[model.ChangeFeedID]*dispatchermanager.EventDispatcherManager),
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
-		RegisterHandler(messaging.MaintainerBoostrapRequestTopic, m.RecvMaintainerBootstrapRequest)
+		RegisterHandler(messaging.DispatcherManagerManagerTopic, m.RecvMaintainerRequest)
 	return m
 }
 
-func (m *DispatcherManagerManager) RecvMaintainerBootstrapRequest(ctx context.Context, msg *messaging.TargetMessage) error {
+func (m *DispatcherManagerManager) RecvMaintainerRequest(ctx context.Context, msg *messaging.TargetMessage) error {
 	switch req := msg.Message.(type) {
 	case *heartbeatpb.MaintainerBootstrapRequest:
 		return m.handleAddDispatcherManager(msg.From, req)
 	case *heartbeatpb.MaintainerCloseRequest:
-		m.handleRemoveDispatcherManager(msg.From, req)
+		return m.handleRemoveDispatcherManager(msg.From, req)
 	default:
 		log.Panic("unknown message type", zap.Any("message", msg.Message))
 	}
@@ -80,7 +80,7 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 
 		err = appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 			from,
-			messaging.MaintainerBootstrapResponseTopic,
+			messaging.MaintainerManagerTopic,
 			response,
 		))
 		if err != nil {
@@ -90,8 +90,10 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 		return nil
 	}
 
-	// set new maintainer id if it's changed
-	if eventDispatcherManager.GetMaintainerID() == from {
+	// We also will receive maintainerBootstrapRequest when the maintainer is restarted,
+	// so we need to update the maintainer id if it's changed
+	// and return all table span info to the new maintainer
+	if eventDispatcherManager.GetMaintainerID() != from {
 		eventDispatcherManager.SetMaintainerID(from)
 	}
 	response := &heartbeatpb.MaintainerBootstrapResponse{
@@ -106,7 +108,7 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 	})
 	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 		from,
-		messaging.MaintainerBootstrapResponseTopic,
+		messaging.MaintainerManagerTopic,
 		response,
 	))
 	if err != nil {
@@ -116,7 +118,7 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 	return nil
 }
 
-func (m *DispatcherManagerManager) handleRemoveDispatcherManager(from messaging.ServerId, req *heartbeatpb.MaintainerCloseRequest) {
+func (m *DispatcherManagerManager) handleRemoveDispatcherManager(from messaging.ServerId, req *heartbeatpb.MaintainerCloseRequest) error {
 	changefeedID := model.DefaultChangeFeedID(req.ChangefeedID)
 	response := &heartbeatpb.MaintainerCloseResponse{
 		ChangefeedID: req.ChangefeedID,
@@ -132,9 +134,15 @@ func (m *DispatcherManagerManager) handleRemoveDispatcherManager(from messaging.
 		}
 		response.Success = closed
 	}
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
+	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
 		from,
 		messaging.MaintainerTopic,
 		response,
 	))
+
+	if err != nil {
+		log.Error("failed to send maintainer bootstrap response", zap.Error(err))
+		return err
+	}
+	return nil
 }

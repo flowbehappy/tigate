@@ -59,30 +59,8 @@ func NewMaintainerManager(selfServerID messaging.ServerId, pdEndpoints []string)
 		pdEndpoints:  pdEndpoints,
 		msgCh:        make(chan *messaging.TargetMessage, 1024),
 	}
-	// receive message from coordinator
-	mc.RegisterHandler(messaging.MaintainerManagerTopic,
-		func(ctx context.Context, msg *messaging.TargetMessage) error {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case m.msgCh <- msg:
-			}
-			return nil
-		})
 
-	// receive bootstrap response message for maintainer
-	mc.RegisterHandler(messaging.MaintainerBootstrapResponseTopic,
-		func(ctx context.Context, msg *messaging.TargetMessage) error {
-			req := msg.Message.(*heartbeatpb.MaintainerBootstrapResponse)
-			return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
-		})
-
-	// receive heartbeat message for maintainer
-	mc.RegisterHandler(messaging.DispatcherHeartBeatRequestTopic,
-		func(ctx context.Context, msg *messaging.TargetMessage) error {
-			req := msg.Message.(*heartbeatpb.HeartBeatRequest)
-			return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
-		})
+	mc.RegisterHandler(messaging.MaintainerManagerTopic, m.RecvMessages)
 
 	mc.RegisterHandler(messaging.MaintainerTopic,
 		func(ctx context.Context, msg *messaging.TargetMessage) error {
@@ -101,6 +79,31 @@ func NewMaintainerManager(selfServerID messaging.ServerId, pdEndpoints []string)
 		})
 
 	return m
+}
+
+func (m *Manager) RecvMessages(ctx context.Context, msg *messaging.TargetMessage) error {
+	switch msg.Type {
+	// receive message from coordinator
+	case messaging.TypeDispatchMaintainerRequest:
+	case messaging.TypeCoordinatorBootstrapRequest:
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case m.msgCh <- msg:
+		}
+		return nil
+	// receive bootstrap response message from dispatcher manager manager
+	case messaging.TypeMaintainerBootstrapResponse:
+		req := msg.Message.(*heartbeatpb.MaintainerBootstrapResponse)
+		return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
+	// receive heartbeat message from dispatchers
+	case messaging.TypeHeartBeatRequest:
+		req := msg.Message.(*heartbeatpb.HeartBeatRequest)
+		return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
+	default:
+		log.Panic("unknown message type", zap.Any("message", msg.Message))
+	}
+	return nil
 }
 
 func (m *Manager) Name() string {

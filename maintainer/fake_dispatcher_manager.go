@@ -42,7 +42,7 @@ func NewFakeMaintainerManager() *FakeDispatcherManagerManager {
 	m := &FakeDispatcherManagerManager{
 		dispatcherManagers: make(map[model.ChangeFeedID]*DispatcherManager),
 	}
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.MaintainerBoostrapRequestTopic,
+	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.DispatcherManagerManagerTopic,
 		func(_ context.Context, msg *messaging.TargetMessage) error {
 			m.msgLock.Lock()
 			m.msgBuf = append(m.msgBuf, msg)
