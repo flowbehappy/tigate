@@ -4,19 +4,21 @@ package messaging
 const (
 	// EventServiceTopic is the topic of the event service.
 	EventServiceTopic = "EventServiceTopic"
-	EventFeedTopic    = "EventFeed"
+
+	// EventCollectorTopic is the topic name for event collector to receive all messages from event service
+	EventCollectorTopic = "event-collector"
 
 	// CoordinatorTopic is the topic name for coordinator to receive all messages from maintainer
 	CoordinatorTopic = "coordinator"
 
 	// MaintainerManagerTopic is the topic name for manager receive all messages from
-	MaintainerManagerTopic           = "maintainer-manager"
-	DispatcherHeartBeatRequestTopic  = "HeartBeatRequest"
-	MaintainerBootstrapResponseTopic = "MaintainerBootstrapResponse"
+	MaintainerManagerTopic = "maintainer-manager"
 
 	MaintainerTopic = "maintainer"
 
-	// SchedulerDispatcherTopic is the topic name for dispatcher manager receive scheduler message
-	SchedulerDispatcherTopic       = "SchedulerDispatcherRequest"
-	MaintainerBoostrapRequestTopic = "MaintainerBoostrapRequest"
+	// HeartbeatCollectorTopic is the topic name for dispatcher manager receive scheduler message
+	HeartbeatCollectorTopic = "heartbeat-collector"
+
+	// DispatcherManagerTopic is the topic name for dispatcher manager manager to receive all messages from maintainers
+	DispatcherManagerManagerTopic = "dispatcher-manager-manager"
 )

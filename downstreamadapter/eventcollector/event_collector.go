@@ -92,7 +92,7 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
 	}
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.EventFeedTopic, eventCollector.RecvEventsMessage)
+	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
 
 	eventCollector.wg.Add(1)
 	go func(c *EventCollector) {

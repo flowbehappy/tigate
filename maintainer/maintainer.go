@@ -467,7 +467,7 @@ func (m *Maintainer) tryCloseChangefeed() bool {
 		if _, ok := m.nodesClosed[node]; !ok {
 			msgs = append(msgs, messaging.NewTargetMessage(
 				messaging.ServerId(node),
-				messaging.MaintainerBoostrapRequestTopic,
+				messaging.DispatcherManagerManagerTopic,
 				&heartbeatpb.MaintainerCloseRequest{
 					ChangefeedID: m.id.ID,
 				}))
@@ -532,7 +532,7 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 	return func(captureID model.CaptureID) rpc.Message {
 		return messaging.NewTargetMessage(
 			messaging.ServerId(captureID),
-			messaging.MaintainerBoostrapRequestTopic,
+			messaging.DispatcherManagerManagerTopic,
 			&heartbeatpb.MaintainerBootstrapRequest{
 				ChangefeedID: m.id.ID,
 				Config:       cfgBytes,
