@@ -66,6 +66,20 @@ var (
 			Name:      "handle_dispatcher_request",
 			Help:      "Total count of dispatcher request.",
 		}, []string{"namespace", "changefeed", "type"})
+
+	DispatcherReceivedEventCount = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "ticdc",
+		Subsystem: "dispatcher",
+		Name:      "received_event_count",
+		Help:      "The number of events received by the dispatcher",
+	}, []string{"type"})
+
+	EventCollectorRegisteredDispatcherCount = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "ticdc",
+		Subsystem: "dispatcher",
+		Name:      "event_collector_registered_dispatcher_count",
+		Help:      "The number of registered dispatchers in the event collector",
+	})
 )
 
 func InitDisaptcherMetrics(registry *prometheus.Registry) {
@@ -75,4 +89,6 @@ func InitDisaptcherMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventDispatcherManagerResolvedTsGauge)
 	registry.MustRegister(EventDispatcherManagerCheckpointTsGauge)
 	registry.MustRegister(HandleDispatcherRequsetCounter)
+	registry.MustRegister(DispatcherReceivedEventCount)
+	registry.MustRegister(EventCollectorRegisteredDispatcherCount)
 }
