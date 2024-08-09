@@ -18,6 +18,7 @@ const (
 	ErrorTypeBufferFull ErrorType = 104
 	ErrorTypeDuplicate  ErrorType = 105
 	ErrorTypeNotExist   ErrorType = 106
+	ErrorTypeClosed     ErrorType = 107
 
 	ErrorTypeConnectionFailed     ErrorType = 201
 	ErrorTypeConnectionNotFound   ErrorType = 202
@@ -50,6 +51,8 @@ func (t ErrorType) String() string {
 		return "Duplicate"
 	case ErrorTypeNotExist:
 		return "NotExist"
+	case ErrorTypeClosed:
+		return "Closed"
 	case ErrorTypeConnectionFailed:
 		return "ConnectionFailed"
 	case ErrorTypeConnectionNotFound:
@@ -68,6 +71,13 @@ func (t ErrorType) String() string {
 type AppError struct {
 	Type   ErrorType
 	Reason string
+}
+
+func NewAppErrorS(t ErrorType) *AppError {
+	return &AppError{
+		Type:   t,
+		Reason: "",
+	}
 }
 
 func NewAppError(t ErrorType, reason string) *AppError {

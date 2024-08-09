@@ -11,14 +11,16 @@ type inc struct {
 	times int
 	n     *atomic.Int64
 	done  *sync.WaitGroup
+
+	path Path
 }
 
-func (e *inc) Path() Path    { return "" }
-func (e *inc) Weight() int64 { return 1 }
+func (e *inc) Path() Path { return e.path }
 
+type D struct{}
 type incHandler struct{}
 
-func (h *incHandler) Handle(event *inc, dest any) {
+func (h *incHandler) Handle(event *inc, dest D) {
 	for i := 0; i < event.times; i++ {
 		event.n.Add(1)
 	}
@@ -27,19 +29,15 @@ func (h *incHandler) Handle(event *inc, dest any) {
 
 func runStream(eventCount int, times int) {
 	handler := &incHandler{}
-	reportChan := make(chan *streamStat, 100)
+	reportChan := make(chan *streamStat[*inc, D], 100)
 
-	pi := &pathInfo[*inc, any]{path: Path("p1"), dest: "d1"}
-	stream := newStream(1 /*id*/, 1*time.Millisecond, 8*time.Millisecond /*reportInterval*/, handler, reportChan)
-	stream.start([]*pathInfo[*inc, any]{pi})
+	pi := newPathInfo[*inc, D](Path("p1"), D{})
+	stream := newStream[*inc, D](1 /*id*/, handler, reportChan, 8*time.Millisecond /*reportInterval*/, 10)
+	stream.start([]*pathInfo[*inc, D]{pi})
 
 	go func() {
 		// Drain the report channel. To avoid the report channel blocking.
-		for {
-			_, ok := <-reportChan
-			if !ok {
-				return
-			}
+		for range reportChan {
 		}
 	}()
 
@@ -48,54 +46,83 @@ func runStream(eventCount int, times int) {
 
 	done.Add(eventCount)
 	for i := 0; i < eventCount; i++ {
-		stream.in() <- &eventWrap[*inc, any]{event: &inc{times: times, n: total, done: done}, pathInfo: pi}
+		stream.in() <- &eventWrap[*inc, D]{event: &inc{times: times, n: total, done: done}, pathInfo: pi}
 	}
 
 	done.Wait()
+	stream.close()
+
 	close(reportChan)
 }
 
 func runLoop(eventCount int, times int) {
 	total := &atomic.Int64{}
-	for i := 0; i < eventCount; i++ {
-		for j := 0; j < times; j++ {
-			total.Add(1)
+	done := &sync.WaitGroup{}
+
+	done.Add(eventCount)
+
+	signal := make(chan struct{}, 100)
+
+	go func() {
+		for range signal {
+			for j := 0; j < times; j++ {
+				total.Add(1)
+			}
+			done.Done()
 		}
+	}()
+
+	for i := 0; i < eventCount; i++ {
+		signal <- struct{}{}
 	}
+	done.Wait()
 }
 
-func BenchmarkStream1000x1(b *testing.B) {
+func BenchmarkSStream1000x1(b *testing.B) {
 	for k := 0; k < b.N; k++ {
 		runStream(1000, 1)
 	}
 }
 
-func BenchmarkStream1000x100(b *testing.B) {
+func BenchmarkSStream1000x100(b *testing.B) {
 	for k := 0; k < b.N; k++ {
 		runStream(1000, 100)
 	}
 }
 
-func BenchmarkStream100000x100(b *testing.B) {
+func BenchmarkSStream100000x100(b *testing.B) {
 	for k := 0; k < b.N; k++ {
 		runStream(100000, 100)
 	}
 }
 
-func BenchmarkLoop1000x1(b *testing.B) {
+func BenchmarkSLoop1000x1(b *testing.B) {
 	for k := 0; k < b.N; k++ {
 		runLoop(1000, 1)
 	}
 }
 
-func BenchmarkLoop1000x100(b *testing.B) {
+func BenchmarkSLoop1000x100(b *testing.B) {
 	for k := 0; k < b.N; k++ {
 		runLoop(1000, 100)
 	}
 }
 
-func BenchmarkLoop100000x100(b *testing.B) {
+func BenchmarkSLoop100000x100(b *testing.B) {
 	for k := 0; k < b.N; k++ {
 		runLoop(100000, 100)
 	}
 }
+
+/*
+goos: darwin
+goarch: amd64
+pkg: github.com/flowbehappy/tigate/utils/dynstream
+cpu: Intel(R) Core(TM) i5-8500 CPU @ 3.00GHz
+BenchmarkSStream1000x1-6                     	    1842	    687181 ns/op	  309550 B/op	    6098 allocs/op
+BenchmarkSStream1000x100-6                   	    1192	   1076355 ns/op	  309529 B/op	    6097 allocs/op
+BenchmarkSStream100000x100-6                 	      12	 104457546 ns/op	30560586 B/op	  606404 allocs/op
+BenchmarkSLoop1000x1-6                       	   17620	     68181 ns/op	     264 B/op	       5 allocs/op
+BenchmarkSLoop1000x100-6                     	    2115	    566871 ns/op	     263 B/op	       4 allocs/op
+BenchmarkSLoop100000x100-6                   	      20	  56798304 ns/op	     264 B/op	       5 allocs/op
+*/
