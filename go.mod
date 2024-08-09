@@ -13,6 +13,7 @@ require (
 	github.com/go-sql-driver/mysql v1.7.1
 	github.com/gogo/protobuf v1.3.2
 	github.com/google/btree v1.1.2
+	github.com/google/martian v2.1.0+incompatible
 	github.com/google/uuid v1.6.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f

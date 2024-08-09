@@ -23,6 +23,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	configNew "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/rpc"
@@ -513,7 +514,7 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 // a changefeed dispatcher manager.
 func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 	cfg := m.config
-	changefeedConfig := model.ChangefeedConfig{
+	changefeedConfig := configNew.ChangefeedConfig{
 		Namespace:      cfg.Namespace,
 		ID:             cfg.ID,
 		StartTS:        cfg.StartTs,
@@ -521,6 +522,7 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 		SinkURI:        cfg.SinkURI,
 		ForceReplicate: cfg.Config.ForceReplicate,
 		SinkConfig:     cfg.Config.Sink,
+		Filter:         cfg.Config.Filter,
 		// other fileds are not necessary for maintainer
 	}
 	// cfgBytes only holds necessary fields to initialize a changefeed dispatcher.

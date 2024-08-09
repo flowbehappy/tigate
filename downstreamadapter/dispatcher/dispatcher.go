@@ -15,7 +15,6 @@ package dispatcher
 
 import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
-	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 )
@@ -63,7 +62,7 @@ type Dispatcher interface {
 	GetHeartBeatChan() chan *HeartBeatResponseMessage
 	//GetSyncPointInfo() *SyncPointInfo
 	//GetMemoryUsage() *MemoryUsage
-	PushEvent(event *eventpb.TxnEvent)
+	// PushEvent(event *eventpb.TxnEvent)
 	PushTxnEvent(event *common.TxnEvent)
 	GetComponentStatus() heartbeatpb.ComponentState
 }

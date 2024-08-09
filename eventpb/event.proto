@@ -3,10 +3,21 @@ package eventpb;
 option go_package = "github.com/flowbehappy/tigate/eventpb";
 
 import "heartbeatpb/heartbeat.proto";
-// 这个 proto 主要描述的是 dispatcher 们跟 logService 交互需要用到的各类定义
-// 包括传输的 event 结构，通信的 rpc 
 
-message Filter {
+message EventFilterRule {
+    repeated string matcher = 1;
+    repeated string ignore_event = 2;
+    repeated string ignore_sql = 3;
+    string ignore_insert_value_expr = 4;
+    string ignore_update_new_value_expr = 5;
+    string ignore_update_old_value_expr = 6;
+    string ignore_delete_value_expr = 7;
+}
+
+message FilterConfig {
+    repeated string rules = 1;
+    repeated uint64 ignore_txn_start_ts = 2;
+    repeated EventFilterRule EventFilters = 3;
 }
 
 
@@ -55,4 +66,5 @@ message RegisterDispatcherRequest {
     bool remove = 5; // 要移除的时候设为 true
     string namespace = 6;
     string changefeed_id = 7;
+    FilterConfig filter_config = 8;
 }

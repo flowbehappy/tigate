@@ -22,6 +22,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/log"
@@ -61,7 +62,7 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 	eventDispatcherManager, ok := m.dispatcherManagers[changefeedID]
 	if !ok {
 		// TODO: decode config
-		cfConfig := &model.ChangefeedConfig{}
+		cfConfig := &config.ChangefeedConfig{}
 		err := json.Unmarshal(maintainerBootstrapRequest.Config, cfConfig)
 		if err != nil {
 			log.Error("failed to unmarshal changefeed config",
@@ -69,6 +70,7 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 				zap.Error(err))
 			return err
 		}
+		// TODO: 这边额外判断一下创建是否失败，创建失败的话，想一下怎么做报错处理
 		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, cfConfig, from)
 		m.dispatcherManagers[changefeedID] = eventDispatcherManager
 		metrics.EventDispatcherManagerGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID).Inc()

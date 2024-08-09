@@ -19,8 +19,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/flowbehappy/tigate/utils"
+	"github.com/google/uuid"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/pkg/filter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 
@@ -28,12 +29,16 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
+	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/tiflow/cdc/model"
+	cfg "github.com/pingcap/tiflow/pkg/config"
 	"go.uber.org/zap"
 )
 
@@ -50,7 +55,7 @@ One EventDispatcherManager can only have one Sink.
 type EventDispatcherManager struct {
 	dispatcherMap *DispatcherMap
 
-	//tableTriggerEventDispatcher *dispatcher.TableTriggerEventDispatcher
+	tableTriggerEventDispatcher *dispatcher.TableTriggerEventDispatcher
 	//heartbeatResponseQueue *HeartbeatResponseQueue
 	heartbeatRequestQueue *HeartbeatRequestQueue
 	//heartBeatSendTask     *HeartBeatSendTask
@@ -58,8 +63,8 @@ type EventDispatcherManager struct {
 	wg     sync.WaitGroup
 
 	changefeedID model.ChangeFeedID
-	config       *model.ChangefeedConfig
-	//sinkType     string
+	config       *config.ChangefeedConfig
+
 	sink sink.Sink
 	// enableSyncPoint       bool
 	// syncPointInterval     time.Duration
@@ -68,8 +73,8 @@ type EventDispatcherManager struct {
 	// tableSpanStatusesChan will fetch the tableSpan status that need to contains in the heartbeat info.
 	tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus
 
-	tableEventDispatcherCount prometheus.Gauge
-	//filter                      *Filter
+	tableEventDispatcherCount      prometheus.Gauge
+	filter                         filter.Filter
 	metricCreateDispatcherDuration prometheus.Observer
 	metricCheckpointTs             prometheus.Gauge
 	metricResolveTs                prometheus.Gauge
@@ -78,94 +83,34 @@ type EventDispatcherManager struct {
 	closed  atomic.Bool
 }
 
-// TODO:这个锁会在量级大于几万以后影响明显，10w 的 dispatcher同时创建需要预估10多分钟的开销。
-// 1000个-- 500ms / 10000个 -- 44s, 指数影响
-type DispatcherMap struct {
-	dispatcherCacheForRead []*dispatcher.TableEventDispatcher
-	mutex                  sync.Mutex
-	dispatchers            *utils.BtreeMap[*common.TableSpan, *dispatcher.TableEventDispatcher]
-}
-
-func newDispatcherMap() *DispatcherMap {
-	return &DispatcherMap{
-		dispatcherCacheForRead: make([]*dispatcher.TableEventDispatcher, 0, 1024),
-		dispatchers:            utils.NewBtreeMap[*common.TableSpan, *dispatcher.TableEventDispatcher](),
-	}
-}
-
-func (d *DispatcherMap) Len() int {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	return d.dispatchers.Len()
-}
-
-func (d *DispatcherMap) Get(tableSpan *common.TableSpan) (*dispatcher.TableEventDispatcher, bool) {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	return d.dispatchers.Get(tableSpan)
-}
-
-func (d *DispatcherMap) Delete(tableSpan *common.TableSpan) {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	d.dispatchers.Delete(tableSpan)
-}
-
-func (d *DispatcherMap) Set(tableSpan *common.TableSpan, dispatcher *dispatcher.TableEventDispatcher) {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	d.dispatchers.ReplaceOrInsert(tableSpan, dispatcher)
-}
-
-func (d *DispatcherMap) ForEach(fn func(tableSpan *common.TableSpan, dispatcher *dispatcher.TableEventDispatcher)) {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	d.dispatchers.Ascend(func(tableSpan *common.TableSpan, dispatcherItem *dispatcher.TableEventDispatcher) bool {
-		fn(tableSpan, dispatcherItem)
-		return true
-	})
-}
-
-func (d *DispatcherMap) resetDispatcherCache() {
-	if cap(d.dispatcherCacheForRead) > 2048 && cap(d.dispatcherCacheForRead) > d.dispatchers.Len()*2 {
-		d.dispatcherCacheForRead = make([]*dispatcher.TableEventDispatcher, 0, d.dispatchers.Len())
-	}
-	d.dispatcherCacheForRead = d.dispatcherCacheForRead[:0]
-}
-
-func (d *DispatcherMap) GetAllDispatchers() []*dispatcher.TableEventDispatcher {
-	d.resetDispatcherCache()
-
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	d.dispatchers.Ascend(func(tableSpan *common.TableSpan, dispatcherItem *dispatcher.TableEventDispatcher) bool {
-		d.dispatcherCacheForRead = append(d.dispatcherCacheForRead, dispatcherItem)
-		return true
-	})
-	return d.dispatcherCacheForRead
-}
-
-func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.ChangefeedConfig, maintainerID messaging.ServerId) *EventDispatcherManager {
+func NewEventDispatcherManager(changefeedID model.ChangeFeedID, changefeedConfig *config.ChangefeedConfig, maintainerID messaging.ServerId) *EventDispatcherManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	eventDispatcherManager := &EventDispatcherManager{
 		dispatcherMap: newDispatcherMap(),
 		changefeedID:  changefeedID,
 		//heartbeatResponseQueue: NewHeartbeatResponseQueue(),
-		//sinkType: config.sinkType,
-		// sinkURI: config.SinkURI,
-		//sinkConfig:             config.SinkConfig,
 		//enableSyncPoint:       false,
 		maintainerID:                   maintainerID,
 		tableSpanStatusesChan:          make(chan *heartbeatpb.TableSpanStatus, 10000),
 		cancel:                         cancel,
-		config:                         config,
+		config:                         changefeedConfig,
 		tableEventDispatcherCount:      metrics.TableEventDispatcherGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCreateDispatcherDuration: metrics.CreateDispatcherDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCheckpointTs:             metrics.EventDispatcherManagerCheckpointTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricResolveTs:                metrics.EventDispatcherManagerResolvedTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 	}
 
+	// TODO: 最后去更新一下 filter 的内部 NewFilter 函数，现在是在套壳适配
+	replicaConfig := cfg.ReplicaConfig{Filter: changefeedConfig.Filter}
+	filter, err := filter.NewFilter(&replicaConfig, changefeedConfig.TimeZone)
+	if err != nil {
+		log.Error("create filter failed", zap.Error(err))
+		return nil
+	}
+	eventDispatcherManager.filter = filter
+
 	appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(eventDispatcherManager)
+
 	eventDispatcherManager.wg.Add(1)
 	go func(ctx context.Context, e *EventDispatcherManager) {
 		defer e.wg.Done()
@@ -184,22 +129,16 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, config *model.Ch
 		}
 	}(ctx, eventDispatcherManager)
 
-	eventDispatcherManager.Init()
+	// TODO: 这个后续需要等有第一个 table 来的时候再初始化
+	eventDispatcherManager.Init(eventDispatcherManager.config.StartTS)
 
 	eventDispatcherManager.wg.Add(1)
 	go eventDispatcherManager.CollectHeartbeatInfoWhenStatesChanged(ctx)
+
 	return eventDispatcherManager
 }
 
-// func (e *EventDispatcherManager) Init(startTs uint64) error {
-func (e *EventDispatcherManager) Init() error {
-	// Init Sink
-	//if e.sinkType == "Mysql" {
-	// if e.config.SinkURI == "" {
-	// 	defaultSinkUri := "mysql://root@127.0.0.1:3306"
-	// 	log.Info("init mysql sink, sink uri is empty, use default sink uri", zap.String("sinkURI", e.config.SinkURI), zap.String("defaultSinkUri", defaultSinkUri))
-	// 	e.config.SinkURI = defaultSinkUri
-	// }
+func (e *EventDispatcherManager) Init(startTs uint64) error {
 	cfg, db, err := writer.NewMysqlConfigAndDB(e.config.SinkURI)
 	if err != nil {
 		log.Error("create mysql sink failed", zap.Error(err))
@@ -210,12 +149,13 @@ func (e *EventDispatcherManager) Init() error {
 	return nil
 	//}
 
-	// Init Table Trigger Event Dispatcher, TODO: in demo we don't need deal with ddl
-	//e.TableTriggerEventDispatcher = e.newTableTriggerEventDispatcher(startTs)
+	//Init Table Trigger Event Dispatcher
+	e.tableTriggerEventDispatcher = e.newTableTriggerEventDispatcher(startTs)
 
 	// init heartbeat recv and send task
 	// No need to run recv task when there is no ddl event
 	//threadpool.GetTaskSchedulerInstance().HeartbeatTaskScheduler.Submit(newHeartbeatRecvTask(e))
+	return nil
 }
 
 func (e *EventDispatcherManager) TryClose() bool {
@@ -269,14 +209,6 @@ func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) 
 // 收到 rpc 请求创建，需要通过 event dispatcher manager 来
 func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.TableSpan, startTs uint64) *dispatcher.TableEventDispatcher {
 	start := time.Now()
-	// 创建新的 event dispatcher，同时需要把这个去 logService 注册，并且把自己加到对应的某个处理 thread 里
-	// if e.dispatcherMap.Len() == 0 {
-	// 	err := e.Init(startTs)
-	// 	if err != nil {
-	// 		log.Error("init sink failed", zap.Error(err))
-	// 		return nil
-	// 	}
-	// }
 
 	if _, ok := e.dispatcherMap.Get(tableSpan); ok {
 		log.Debug("table span already exists", zap.Any("tableSpan", tableSpan))
@@ -295,7 +227,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 	*/
 	tableEventDispatcher := dispatcher.NewTableEventDispatcher(tableSpan, e.sink, startTs, nil)
 
-	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableEventDispatcher, startTs)
+	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableEventDispatcher, startTs, nil)
 
 	e.dispatcherMap.Set(tableSpan, tableEventDispatcher)
 	e.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
@@ -380,25 +312,50 @@ func (e *EventDispatcherManager) cleanTableEventDispatcher(tableSpan *common.Tab
 	log.Info("table event dispatcher completely stopped, and delete it from event dispatcher manager", zap.Any("tableSpan", tableSpan))
 }
 
-/*
 func (e *EventDispatcherManager) newTableTriggerEventDispatcher(startTs uint64) *dispatcher.TableTriggerEventDispatcher {
 	tableTriggerEventDispatcher := &dispatcher.TableTriggerEventDispatcher{
-		Id: string(uuid.New()),
-		//Filter:        e.filter,
+		Id:            uuid.NewString(),
+		Filter:        e.filter,
 		Ch:            make(chan *common.TxnEvent, 1000),
 		ResolvedTs:    startTs,
 		HeartbeatChan: make(chan *dispatcher.HeartBeatResponseMessage, 100),
-		Sink:          e.Sink,
+		Sink:          e.sink,
 		TableSpan:     &common.DDLSpan,
 		State:         dispatcher.NewState(),
-		MemoryUsage:   dispatcher.NewMemoryUsage(),
+		//MemoryUsage:   dispatcher.NewMemoryUsage(),
 	}
-	//threadpool.GetTaskSchedulerInstance().EventDispatcherTaskScheduler.Submit(dispatcher.NewEventDispatcherTask(tableTriggerEventDispatcher))
-	//e.EventCollector.RegisterDispatcher(tableTriggerEventDispatcher, startTs, e.filter)
+
+	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableTriggerEventDispatcher, startTs, toFilterConfigPB(e.config.Filter))
+
 	return tableTriggerEventDispatcher
 
 }
-*/
+
+func toFilterConfigPB(filter *cfg.FilterConfig) *eventpb.FilterConfig {
+	filterConfig := &eventpb.FilterConfig{
+		Rules:            filter.Rules,
+		IgnoreTxnStartTs: filter.IgnoreTxnStartTs,
+		EventFilters:     make([]*eventpb.EventFilterRule, len(filter.EventFilters)),
+	}
+
+	for _, eventFilter := range filter.EventFilters {
+		ignoreEvent := make([]string, len(eventFilter.IgnoreEvent))
+		for _, event := range eventFilter.IgnoreEvent {
+			ignoreEvent = append(ignoreEvent, string(event))
+		}
+		filterConfig.EventFilters = append(filterConfig.EventFilters, &eventpb.EventFilterRule{
+			Matcher:                  eventFilter.Matcher,
+			IgnoreEvent:              ignoreEvent,
+			IgnoreSql:                eventFilter.IgnoreSQL,
+			IgnoreInsertValueExpr:    eventFilter.IgnoreInsertValueExpr,
+			IgnoreUpdateNewValueExpr: eventFilter.IgnoreUpdateNewValueExpr,
+			IgnoreUpdateOldValueExpr: eventFilter.IgnoreUpdateOldValueExpr,
+			IgnoreDeleteValueExpr:    eventFilter.IgnoreDeleteValueExpr,
+		})
+	}
+
+	return filterConfig
+}
 
 // CollectHeartbeatInfo collects the heartbeat info of all the dispatchers and returns a HeartBeatRequest message.
 // When needCompleteStatus is true, it will collect the complete table status of the dispatchers,
@@ -489,4 +446,69 @@ func (e *EventDispatcherManager) GetTableSpanStatusesChan() chan *heartbeatpb.Ta
 
 func (e *EventDispatcherManager) SetMaintainerID(maintainerID messaging.ServerId) {
 	e.maintainerID = maintainerID
+}
+
+type DispatcherMap struct {
+	dispatcherCacheForRead []*dispatcher.TableEventDispatcher
+	mutex                  sync.Mutex
+	dispatchers            *utils.BtreeMap[*common.TableSpan, *dispatcher.TableEventDispatcher]
+}
+
+func newDispatcherMap() *DispatcherMap {
+	return &DispatcherMap{
+		dispatcherCacheForRead: make([]*dispatcher.TableEventDispatcher, 0, 1024),
+		dispatchers:            utils.NewBtreeMap[*common.TableSpan, *dispatcher.TableEventDispatcher](),
+	}
+}
+
+func (d *DispatcherMap) Len() int {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	return d.dispatchers.Len()
+}
+
+func (d *DispatcherMap) Get(tableSpan *common.TableSpan) (*dispatcher.TableEventDispatcher, bool) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	return d.dispatchers.Get(tableSpan)
+}
+
+func (d *DispatcherMap) Delete(tableSpan *common.TableSpan) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	d.dispatchers.Delete(tableSpan)
+}
+
+func (d *DispatcherMap) Set(tableSpan *common.TableSpan, dispatcher *dispatcher.TableEventDispatcher) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	d.dispatchers.ReplaceOrInsert(tableSpan, dispatcher)
+}
+
+func (d *DispatcherMap) ForEach(fn func(tableSpan *common.TableSpan, dispatcher *dispatcher.TableEventDispatcher)) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	d.dispatchers.Ascend(func(tableSpan *common.TableSpan, dispatcherItem *dispatcher.TableEventDispatcher) bool {
+		fn(tableSpan, dispatcherItem)
+		return true
+	})
+}
+
+func (d *DispatcherMap) resetDispatcherCache() {
+	if cap(d.dispatcherCacheForRead) > 2048 && cap(d.dispatcherCacheForRead) > d.dispatchers.Len()*2 {
+		d.dispatcherCacheForRead = make([]*dispatcher.TableEventDispatcher, 0, d.dispatchers.Len())
+	}
+	d.dispatcherCacheForRead = d.dispatcherCacheForRead[:0]
+}
+
+func (d *DispatcherMap) GetAllDispatchers() []*dispatcher.TableEventDispatcher {
+	d.resetDispatcherCache()
+
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	d.dispatchers.Ascend(func(tableSpan *common.TableSpan, dispatcherItem *dispatcher.TableEventDispatcher) bool {
+		d.dispatcherCacheForRead = append(d.dispatcherCacheForRead, dispatcherItem)
+		return true
+	})
+	return d.dispatcherCacheForRead
 }

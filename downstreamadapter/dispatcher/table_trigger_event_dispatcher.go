@@ -15,7 +15,9 @@ package dispatcher
 
 import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/pingcap/tiflow/pkg/filter"
 
 	"github.com/pingcap/log"
 )
@@ -41,8 +43,6 @@ ActionFlashbackCluster -- 只支持没有表结构和库结构变更时同步 --
 ActionMultiSchemaChange -- 这个只是一个 action，不改变 table 本身，但是要卡全局的 ts
 ActionCreateResourceGroup/ActionAlterResourceGroup/ActionDropResourceGroup 卡全局 ts，但是只对下游是 tidb 的时候可用，别的时候都别往下扔
 */
-// 用于接收处理特定的 DDLs
-const TableTriggerEventDispatcherId uint64 = 0
 
 /*
 TableTriggerEventDispatcher implements the Dispatcher interface.
@@ -60,9 +60,9 @@ It also communicates with the Maintainer periodically to report self progress,
 and get the other dispatcher's progress and action of the blocked event.
 */
 type TableTriggerEventDispatcher struct {
-	Id string
-	Ch chan *common.TxnEvent // 接受 event -- 先做个基础版本的，每次处理一条 ddl 的那种
-	//Filter        *Filter               // 发送给 logService
+	Id            string
+	Ch            chan *common.TxnEvent // 接受 event -- 先做个基础版本的，每次处理一条 ddl 的那种
+	Filter        filter.Filter
 	Sink          sink.Sink
 	HeartbeatChan chan *HeartBeatResponseMessage
 	State         *State
@@ -117,7 +117,13 @@ func (d *TableTriggerEventDispatcher) GetMemoryUsage() *MemoryUsage {
 	return d.MemoryUsage
 }
 
-func (d *TableTriggerEventDispatcher) PushEvent(event *common.TxnEvent) {
+func (d *TableTriggerEventDispatcher) PushTxnEvent(event *common.TxnEvent) {
 	//d.GetMemoryUsage().Add(event.CommitTs, event.MemoryCost())
 	d.Ch <- event // 换成一个函数
+}
+
+func (d *TableTriggerEventDispatcher) GetCheckpointTs() uint64 { return 0 }
+
+func (d *TableTriggerEventDispatcher) GetComponentStatus() heartbeatpb.ComponentState {
+	return heartbeatpb.ComponentState_Working
 }
