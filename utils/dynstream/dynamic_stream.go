@@ -138,7 +138,7 @@ type DynamicStream[T Event, D any] struct {
 }
 
 func NewDynamicStreamDefault[T Event, D any](handler Handler[T, D]) *DynamicStream[T, D] {
-	streamCount := max(DefaultStreamCount, runtime.NumCPU()*2)
+	streamCount := max(DefaultStreamCount, runtime.NumCPU())
 	return NewDynamicStream[T, D](handler, DefaultSchedulerInterval, DefaultReportInterval, streamCount)
 }
 
@@ -499,6 +499,7 @@ func (d *DynamicStream[T, D]) scheduler() {
 	}
 
 	nextSchedule := time.Now().Add(d.schedulerInterval)
+	timerChan := time.After(time.Until(nextSchedule))
 Loop:
 	for {
 		select {
@@ -583,8 +584,9 @@ Loop:
 				continue
 			}
 			si.streamStat = stat
-		case <-time.After(time.Until(nextSchedule)):
+		case <-timerChan:
 			nextSchedule = time.Now().Add(d.schedulerInterval)
+			timerChan = time.After(time.Until(nextSchedule))
 			doSchedule(ruleType(scheduleRule.Next()), 0)
 		}
 	}

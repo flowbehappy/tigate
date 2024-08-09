@@ -20,8 +20,9 @@ func runDynamicStream(pathCount int, eventCount int, times int) {
 	wg := &sync.WaitGroup{}
 	wg.Add(eventCount * pathCount)
 
+	total := &atomic.Int64{}
+
 	sendEvents := func(path Path, wg *sync.WaitGroup) {
-		total := &atomic.Int64{}
 		for i := 0; i < eventCount; i++ {
 			ds.In() <- &inc{times: times, n: total, done: wg, path: path}
 		}
@@ -32,6 +33,11 @@ func runDynamicStream(pathCount int, eventCount int, times int) {
 	}
 
 	wg.Wait()
+
+	if total.Load() != int64(pathCount*eventCount*times) {
+		panic("total != pathCount * eventCount * times")
+	}
+
 	ds.Close()
 }
 

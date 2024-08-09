@@ -230,6 +230,8 @@ func (s *stream[T, D]) reportStatLoop() {
 
 	lastReportTime := time.Now()
 	nextReportTime := lastReportTime.Add(s.reportInterval)
+	reportWait := time.After(time.Until(nextReportTime))
+
 	reportRound := nextReportRound.Add(1)
 
 	handleCount := 0
@@ -273,11 +275,12 @@ func (s *stream[T, D]) reportStatLoop() {
 
 		lastReportTime = time.Now()
 		nextReportTime = lastReportTime.Add(s.reportInterval)
+		reportWait = time.After(time.Until(nextReportTime))
 	}
 
 	for {
 		select {
-		case <-time.After(time.Until(nextReportTime)):
+		case <-reportWait:
 			reportStat()
 		case <-s.reportNow:
 			reportStat()
