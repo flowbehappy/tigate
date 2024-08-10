@@ -9,22 +9,22 @@ import (
 )
 
 type simpleEvent struct {
-	path  Path
+	path  string
 	sleep time.Duration
 	wg    *sync.WaitGroup
 }
 
-func newSimpleEvent(path Path, wg *sync.WaitGroup) *simpleEvent {
+func newSimpleEvent(path string, wg *sync.WaitGroup) *simpleEvent {
 	wg.Add(1)
 	return &simpleEvent{path: path, wg: wg}
 }
 
-func newSimpleEventSleep(path Path, wg *sync.WaitGroup, sleep time.Duration) *simpleEvent {
+func newSimpleEventSleep(path string, wg *sync.WaitGroup, sleep time.Duration) *simpleEvent {
 	wg.Add(1)
 	return &simpleEvent{path: path, sleep: sleep, wg: wg}
 }
 
-func (e *simpleEvent) Path() Path { return e.path }
+func (e *simpleEvent) Path() string { return e.path }
 
 type simpleHandler struct{}
 
@@ -42,7 +42,7 @@ func TestDynamicStreamBasic(t *testing.T) {
 	ds := NewDynamicStream(handler, DefaultSchedulerInterval, DefaultReportInterval, 3)
 	ds.Start()
 
-	ds.AddPath([]PathAndDest[struct{}]{
+	ds.AddPath([]PathAndDest[string, struct{}]{
 		{"path1", struct{}{}},
 		{"path2", struct{}{}},
 		{"path3", struct{}{}},
@@ -74,7 +74,7 @@ func TestDynamicStreamSchedule(t *testing.T) {
 		r.wg.Wait()
 	}
 
-	ds.AddPath([]PathAndDest[struct{}]{
+	ds.AddPath([]PathAndDest[string, struct{}]{
 		{"p1", struct{}{}},
 		{"p2", struct{}{}},
 		{"p3", struct{}{}},
@@ -124,7 +124,7 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	assert.Equal(t, 1, len(ds.streamInfos[2].pathMap)) // p3
 	assert.Equal(t, 1, len(ds.streamInfos[3].pathMap)) // p5, Solo stream
 
-	ds.AddPath([]PathAndDest[struct{}]{
+	ds.AddPath([]PathAndDest[string, struct{}]{
 		{"p6", struct{}{}},
 		{"p7", struct{}{}},
 		{"p8", struct{}{}},

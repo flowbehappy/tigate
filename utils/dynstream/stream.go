@@ -14,38 +14,42 @@ var nextReportRound = atomic.Int64{}
 // Only contains one kind of event:
 // 1. event + pathInfo
 // 2. wake = true
-type eventWrap[T Event, D any] struct {
+type eventWrap[P Path, T Event[P], D any] struct {
 	event    T
-	pathInfo *pathInfo[T, D]
+	pathInfo *pathInfo[P, T, D]
 
 	wake bool
 }
 
-type eventSignal[T Event, D any] struct {
-	pathInfo   *pathInfo[T, D]
+func (e eventWrap[P, T, D]) isZero() bool {
+	return e.pathInfo == nil && !e.wake
+}
+
+type eventSignal[P Path, T Event[P], D any] struct {
+	pathInfo   *pathInfo[P, T, D]
 	eventCount int
 }
 
-type doneInfo[T Event, D any] struct {
-	pathInfo   *pathInfo[T, D]
+type doneInfo[P Path, T Event[P], D any] struct {
+	pathInfo   *pathInfo[P, T, D]
 	handleTime time.Duration
 	pendingLen int
 }
 
-type stream[T Event, D any] struct {
+type stream[P Path, T Event[P], D any] struct {
 	id int
 
-	handler Handler[T, D]
+	handler Handler[P, T, D]
 
-	inChan      chan *eventWrap[T, D]            // The buffer channel to receive the events.
-	signalQueue *deque.Deque[*eventSignal[T, D]] // The queue to store the event signals.
-	donChan     chan *doneInfo[T, D]             // The channel to receive the done events.
+	inChan      chan eventWrap[P, T, D]            // The buffer channel to receive the events.
+	signalQueue *deque.Deque[eventSignal[P, T, D]] // The queue to store the event signals.
+	donChan     chan *doneInfo[P, T, D]            // The channel to receive the done events.
 
 	reportNow chan struct{} // For test, make the reportStatLoop to report immediately.
 
 	pendingLen int // The total pending event count of all paths
 
-	reportChan     chan *streamStat[T, D]
+	reportChan     chan *streamStat[P, T, D]
 	reportInterval time.Duration
 	trackTopPaths  int
 
@@ -55,19 +59,19 @@ type stream[T Event, D any] struct {
 	reportDone sync.WaitGroup
 }
 
-func newStream[T Event, D any](
+func newStream[P Path, T Event[P], D any](
 	id int,
-	handler Handler[T, D],
-	reportChan chan *streamStat[T, D],
+	handler Handler[P, T, D],
+	reportChan chan *streamStat[P, T, D],
 	reportInterval time.Duration, // 200 milliseconds?
 	trackTopPaths int,
-) *stream[T, D] {
-	s := &stream[T, D]{
+) *stream[P, T, D] {
+	s := &stream[P, T, D]{
 		id:             id,
 		handler:        handler,
-		inChan:         make(chan *eventWrap[T, D], 64),
-		signalQueue:    deque.NewDequeDefault[*eventSignal[T, D]](),
-		donChan:        make(chan *doneInfo[T, D], 64),
+		inChan:         make(chan eventWrap[P, T, D], 64),
+		signalQueue:    deque.NewDeque[eventSignal[P, T, D]](128, 0),
+		donChan:        make(chan *doneInfo[P, T, D], 64),
 		reportNow:      make(chan struct{}, 1),
 		reportChan:     reportChan,
 		reportInterval: reportInterval,
@@ -77,11 +81,11 @@ func newStream[T Event, D any](
 	return s
 }
 
-func (s *stream[T, D]) in() chan *eventWrap[T, D] {
+func (s *stream[P, T, D]) in() chan eventWrap[P, T, D] {
 	return s.inChan
 }
 
-func (s *stream[T, D]) start(acceptedPaths []*pathInfo[T, D], formerStreams ...*stream[T, D]) {
+func (s *stream[P, T, D]) start(acceptedPaths []*pathInfo[P, T, D], formerStreams ...*stream[P, T, D]) {
 	if s.hasClosed.Load() {
 		panic("The stream has been closed.")
 	}
@@ -96,29 +100,29 @@ func (s *stream[T, D]) start(acceptedPaths []*pathInfo[T, D], formerStreams ...*
 // Close the stream and return the running event.
 // Not all of the new streams need to wait for the former stream's handle goroutine to finish.
 // Only the streams that are interested in the path of the running event need to wait.
-func (s *stream[T, D]) close() {
+func (s *stream[P, T, D]) close() {
 	if s.hasClosed.CompareAndSwap(false, true) {
 		close(s.inChan)
 	}
 	s.handleDone.Wait()
 }
 
-func (s *stream[T, D]) addPaths(newPaths []*pathInfo[T, D]) {
+func (s *stream[P, T, D]) addPaths(newPaths []*pathInfo[P, T, D]) {
 	for _, p := range newPaths {
 		len := p.pendingQueue.Length()
 		if len > 0 {
-			s.signalQueue.PushBack(&eventSignal[T, D]{pathInfo: p, eventCount: len})
+			s.signalQueue.PushBack(eventSignal[P, T, D]{pathInfo: p, eventCount: len})
 			s.pendingLen += len
 		}
 	}
 }
 
-func (s *stream[T, D]) handleLoop(acceptedPaths []*pathInfo[T, D], formerStreams []*stream[T, D]) {
-	pushToPendingQueue := func(e *eventWrap[T, D]) {
+func (s *stream[P, T, D]) handleLoop(acceptedPaths []*pathInfo[P, T, D], formerStreams []*stream[P, T, D]) {
+	pushToPendingQueue := func(e eventWrap[P, T, D]) {
 		if e.wake {
 			// It is a wake event, we set the path to be non-blocking, and generate a signal for all pending events.
 			e.pathInfo.blocking = false
-			s.signalQueue.PushBack(&eventSignal[T, D]{pathInfo: e.pathInfo, eventCount: e.pathInfo.pendingQueue.Length()})
+			s.signalQueue.PushBack(eventSignal[P, T, D]{pathInfo: e.pathInfo, eventCount: e.pathInfo.pendingQueue.Length()})
 		} else {
 			// It is a normal event
 
@@ -126,11 +130,11 @@ func (s *stream[T, D]) handleLoop(acceptedPaths []*pathInfo[T, D], formerStreams
 			e.pathInfo.pendingQueue.PushBack(e.event)
 			s.pendingLen++
 			// Send a signal
-			sg, ok := s.signalQueue.Back()
+			sg, ok := s.signalQueue.BackRef()
 			if ok && sg.pathInfo == e.pathInfo {
 				sg.eventCount++
 			} else {
-				s.signalQueue.PushBack(&eventSignal[T, D]{pathInfo: e.pathInfo, eventCount: 1})
+				s.signalQueue.PushBack(eventSignal[P, T, D]{pathInfo: e.pathInfo, eventCount: 1})
 			}
 		}
 	}
@@ -163,7 +167,7 @@ Loop:
 		if drainPending {
 			select {
 			case e, ok := <-s.inChan:
-				if e != nil {
+				if !e.isZero() {
 					pushToPendingQueue(e)
 					drainPending = false
 				}
@@ -174,7 +178,7 @@ Loop:
 		} else {
 			select {
 			case e, ok := <-s.inChan:
-				if e != nil {
+				if !e.isZero() {
 					pushToPendingQueue(e)
 					drainPending = false
 				}
@@ -219,13 +223,13 @@ Loop:
 				}
 
 				// We want the handle time to be as long as possible
-				s.donChan <- &doneInfo[T, D]{pathInfo: signal.pathInfo, handleTime: time.Since(now), pendingLen: s.pendingLen}
+				s.donChan <- &doneInfo[P, T, D]{pathInfo: signal.pathInfo, handleTime: time.Since(now), pendingLen: s.pendingLen}
 			}
 		}
 	}
 }
 
-func (s *stream[T, D]) reportStatLoop() {
+func (s *stream[P, T, D]) reportStatLoop() {
 	defer s.reportDone.Done()
 
 	lastReportTime := time.Now()
@@ -236,9 +240,9 @@ func (s *stream[T, D]) reportStatLoop() {
 
 	handleCount := 0
 	totalTime := time.Duration(0)
-	mostBusyPaths := heap.NewHeap[*pathStat[T, D]]()
+	mostBusyPaths := heap.NewHeap[*pathStat[P, T, D]]()
 
-	recordStat := func(doneInfo *doneInfo[T, D]) {
+	recordStat := func(doneInfo *doneInfo[P, T, D]) {
 		handleCount++
 		totalTime += doneInfo.handleTime
 
@@ -259,7 +263,7 @@ func (s *stream[T, D]) reportStatLoop() {
 		case <-time.After(10 * time.Millisecond):
 			// If the reportChan is full, we just drop the report.
 			// It could happen when the scheduler is closing or too busy.
-		case s.reportChan <- &streamStat[T, D]{
+		case s.reportChan <- &streamStat[P, T, D]{
 			id:           s.id,
 			period:       time.Since(lastReportTime),
 			totalTime:    totalTime,
@@ -271,7 +275,7 @@ func (s *stream[T, D]) reportStatLoop() {
 		reportRound = nextReportRound.Add(1)
 		handleCount = 0
 		totalTime = time.Duration(0)
-		mostBusyPaths = heap.NewHeap[*pathStat[T, D]]()
+		mostBusyPaths = heap.NewHeap[*pathStat[P, T, D]]()
 
 		lastReportTime = time.Now()
 		nextReportTime = lastReportTime.Add(s.reportInterval)

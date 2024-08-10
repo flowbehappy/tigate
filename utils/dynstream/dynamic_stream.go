@@ -45,26 +45,26 @@ type cmd struct {
 	cmd     interface{}
 }
 
-type addPathCmd[T Event, D any] struct {
-	paths []PathAndDest[D]
-	pis   []*pathInfo[T, D]
+type addPathCmd[P Path, T Event[P], D any] struct {
+	paths []PathAndDest[P, D]
+	pis   []*pathInfo[P, T, D]
 	error error
 
 	wg sync.WaitGroup
 }
 
-type removePathCmd struct {
-	paths  []Path
+type removePathCmd[P Path] struct {
+	paths  []P
 	errors []error
 
 	wg sync.WaitGroup
 }
 
-type arrangeStreamCmd[T Event, D any] struct {
-	oldStreams []*stream[T, D]
+type arrangeStreamCmd[P Path, T Event[P], D any] struct {
+	oldStreams []*stream[P, T, D]
 
-	newStreams     []*stream[T, D]
-	newStreamPaths [][]*pathInfo[T, D]
+	newStreams     []*stream[P, T, D]
+	newStreamPaths [][]*pathInfo[P, T, D]
 }
 
 type reportAndScheduleCmd struct {
@@ -73,13 +73,13 @@ type reportAndScheduleCmd struct {
 	wg     sync.WaitGroup
 }
 
-type streamInfo[T Event, D any] struct {
-	stream     *stream[T, D]
-	streamStat *streamStat[T, D]
-	pathMap    map[*pathInfo[T, D]]struct{}
+type streamInfo[P Path, T Event[P], D any] struct {
+	stream     *stream[P, T, D]
+	streamStat *streamStat[P, T, D]
+	pathMap    map[*pathInfo[P, T, D]]struct{}
 }
 
-func (si *streamInfo[T, D]) runtime() time.Duration {
+func (si *streamInfo[P, T, D]) runtime() time.Duration {
 	if si.streamStat != nil {
 		return si.streamStat.totalTime
 	} else {
@@ -87,7 +87,7 @@ func (si *streamInfo[T, D]) runtime() time.Duration {
 	}
 }
 
-func (si *streamInfo[T, D]) busyRatio(period time.Duration) float64 {
+func (si *streamInfo[P, T, D]) busyRatio(period time.Duration) float64 {
 	if si.streamStat != nil && si.streamStat.totalTime != 0 {
 		if period != 0 {
 			return float64(si.streamStat.totalTime) / float64(period)
@@ -99,7 +99,7 @@ func (si *streamInfo[T, D]) busyRatio(period time.Duration) float64 {
 	}
 }
 
-func (si *streamInfo[T, D]) period() time.Duration {
+func (si *streamInfo[P, T, D]) period() time.Duration {
 	if si.streamStat != nil {
 		return si.streamStat.period
 	} else {
@@ -107,29 +107,29 @@ func (si *streamInfo[T, D]) period() time.Duration {
 	}
 }
 
-type sortedSIs[T Event, D any] []*streamInfo[T, D]
+type sortedSIs[P Path, T Event[P], D any] []*streamInfo[P, T, D]
 
 // implement sort.Interface
-func (s sortedSIs[T, D]) Len() int           { return len(s) }
-func (s sortedSIs[T, D]) Less(i, j int) bool { return s[i].runtime() < s[j].runtime() }
-func (s sortedSIs[T, D]) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s sortedSIs[P, T, D]) Len() int           { return len(s) }
+func (s sortedSIs[P, T, D]) Less(i, j int) bool { return s[i].runtime() < s[j].runtime() }
+func (s sortedSIs[P, T, D]) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
-type DynamicStream[T Event, D any] struct {
+type DynamicStream[P Path, T Event[P], D any] struct {
 	schedulerInterval time.Duration
 	reportInterval    time.Duration
 	trackTopPaths     int
 	baseStreamCount   int
 
-	handler Handler[T, D]
+	handler Handler[P, T, D]
 
-	eventChan  chan T                 // The channel to receive the incomming events by distributor
-	reportChan chan *streamStat[T, D] // The channel to receive the report by scheduler
-	cmdToSchd  chan *cmd              // Send the commands to the scheduler
-	cmdToDist  chan *cmd              // Send the commands to the distributor
+	eventChan  chan T                    // The channel to receive the incomming events by distributor
+	reportChan chan *streamStat[P, T, D] // The channel to receive the report by scheduler
+	cmdToSchd  chan *cmd                 // Send the commands to the scheduler
+	cmdToDist  chan *cmd                 // Send the commands to the distributor
 
 	// The streams to handle the events. Only used in the scheduler.
 	// We put it here mainly to make the tests easier.
-	streamInfos []*streamInfo[T, D]
+	streamInfos []*streamInfo[P, T, D]
 
 	hasClosed atomic.Bool
 
@@ -137,18 +137,18 @@ type DynamicStream[T Event, D any] struct {
 	distDone sync.WaitGroup
 }
 
-func NewDynamicStreamDefault[T Event, D any](handler Handler[T, D]) *DynamicStream[T, D] {
+func NewDynamicStreamDefault[P Path, T Event[P], D any](handler Handler[P, T, D]) *DynamicStream[P, T, D] {
 	streamCount := max(DefaultStreamCount, runtime.NumCPU())
-	return NewDynamicStream[T, D](handler, DefaultSchedulerInterval, DefaultReportInterval, streamCount)
+	return NewDynamicStream[P, T, D](handler, DefaultSchedulerInterval, DefaultReportInterval, streamCount)
 }
 
-func NewDynamicStream[T Event, D any](
-	handler Handler[T, D],
+func NewDynamicStream[P Path, T Event[P], D any](
+	handler Handler[P, T, D],
 	schedulerInterval time.Duration,
 	reportInterval time.Duration,
 	streamCount int,
-) *DynamicStream[T, D] {
-	return &DynamicStream[T, D]{
+) *DynamicStream[P, T, D] {
+	return &DynamicStream[P, T, D]{
 		handler: handler,
 
 		schedulerInterval: schedulerInterval,
@@ -157,33 +157,33 @@ func NewDynamicStream[T Event, D any](
 		baseStreamCount:   streamCount,
 
 		eventChan:  make(chan T, 1024),
-		reportChan: make(chan *streamStat[T, D], 64),
+		reportChan: make(chan *streamStat[P, T, D], 64),
 		cmdToSchd:  make(chan *cmd, 64),
 		cmdToDist:  make(chan *cmd, streamCount),
 
-		streamInfos: make([]*streamInfo[T, D], 0, streamCount),
+		streamInfos: make([]*streamInfo[P, T, D], 0, streamCount),
 	}
 }
 
-func (d *DynamicStream[T, D]) In() chan<- T {
+func (d *DynamicStream[P, T, D]) In() chan<- T {
 	return d.eventChan
 }
 
-func (d *DynamicStream[T, D]) Start() {
+func (d *DynamicStream[P, T, D]) Start() {
 	d.schdDone.Add(1)
 	go d.scheduler()
 	d.distDone.Add(1)
 	go d.distributor()
 }
 
-func (d *DynamicStream[T, D]) Close() {
+func (d *DynamicStream[P, T, D]) Close() {
 	if d.hasClosed.CompareAndSwap(false, true) {
 		close(d.cmdToSchd)
 	}
 	d.schdDone.Wait()
 }
 
-func (d *DynamicStream[T, D]) scheduler() {
+func (d *DynamicStream[P, T, D]) scheduler() {
 	defer func() {
 		close(d.cmdToDist)
 		d.distDone.Wait()
@@ -198,17 +198,17 @@ func (d *DynamicStream[T, D]) scheduler() {
 	nextStreamId := 0
 	nextStreamIndex := NewRoundRobin(d.baseStreamCount)
 
-	newStream := func() *stream[T, D] {
+	newStream := func() *stream[P, T, D] {
 		nextStreamId++
-		return newStream[T, D](nextStreamId, d.handler, d.reportChan, d.reportInterval, d.trackTopPaths)
+		return newStream[P, T, D](nextStreamId, d.handler, d.reportChan, d.reportInterval, d.trackTopPaths)
 	}
-	nextStream := func() *streamInfo[T, D] {
+	nextStream := func() *streamInfo[P, T, D] {
 		// We use round-robin to assign the paths to the streams
 		s := d.streamInfos[nextStreamIndex.Next()]
 		return s
 	}
-	genStreamInfoMap := func(sis []*streamInfo[T, D]) map[int]*streamInfo[T, D] {
-		m := make(map[int]*streamInfo[T, D], len(d.streamInfos))
+	genStreamInfoMap := func(sis []*streamInfo[P, T, D]) map[int]*streamInfo[P, T, D] {
+		m := make(map[int]*streamInfo[P, T, D], len(d.streamInfos))
 		for _, si := range sis {
 			m[si.stream.id] = si
 		}
@@ -217,9 +217,9 @@ func (d *DynamicStream[T, D]) scheduler() {
 
 	for i := 0; i < d.baseStreamCount; i++ {
 		stream := newStream()
-		si := &streamInfo[T, D]{
+		si := &streamInfo[P, T, D]{
 			stream:  stream,
-			pathMap: make(map[*pathInfo[T, D]]struct{}),
+			pathMap: make(map[*pathInfo[P, T, D]]struct{}),
 		}
 
 		d.streamInfos = append(d.streamInfos, si)
@@ -229,7 +229,7 @@ func (d *DynamicStream[T, D]) scheduler() {
 	}
 
 	streamInfoMap := genStreamInfoMap(d.streamInfos)
-	globalPathMap := make(map[Path]struct{}) // Use to check the path duplication
+	globalPathMap := make(map[P]struct{}) // Use to check the path duplication
 
 	scheduleRule := NewRoundRobin(3)
 	doSchedule := func(rule ruleType, testPeriod time.Duration) {
@@ -242,9 +242,9 @@ func (d *DynamicStream[T, D]) scheduler() {
 		// Since the number of streams is small, we don't need to worry about the performance of iterating all the streams.
 
 		if rule == createSoloPath {
-			newSoloStreamInfos := make([]*streamInfo[T, D], 0)
-			arranges := make([]*arrangeStreamCmd[T, D], 0)
-			newStreamInfos := make([]*streamInfo[T, D], 0, len(d.streamInfos))
+			newSoloStreamInfos := make([]*streamInfo[P, T, D], 0)
+			arranges := make([]*arrangeStreamCmd[P, T, D], 0)
+			newStreamInfos := make([]*streamInfo[P, T, D], 0, len(d.streamInfos))
 
 			for i := 0; i < d.baseStreamCount; i++ {
 				si := d.streamInfos[i]
@@ -252,7 +252,7 @@ func (d *DynamicStream[T, D]) scheduler() {
 					newStreamInfos = append(newStreamInfos, si)
 					continue
 				}
-				soloStreamInfos := make([]*streamInfo[T, D], 0)
+				soloStreamInfos := make([]*streamInfo[P, T, D], 0)
 				for _, ps := range si.streamStat.mostBusyPath.All() {
 					period := si.period()
 					if testPeriod != 0 {
@@ -262,9 +262,9 @@ func (d *DynamicStream[T, D]) scheduler() {
 						continue
 					}
 					soloStream := newStream()
-					soloStreamInfo := &streamInfo[T, D]{
+					soloStreamInfo := &streamInfo[P, T, D]{
 						stream:  soloStream,
-						pathMap: map[*pathInfo[T, D]]struct{}{ps.pathInfo: {}},
+						pathMap: map[*pathInfo[P, T, D]]struct{}{ps.pathInfo: {}},
 					}
 
 					if _, ok := si.pathMap[ps.pathInfo]; !ok {
@@ -277,13 +277,13 @@ func (d *DynamicStream[T, D]) scheduler() {
 
 				if len(soloStreamInfos) != 0 {
 					newCurrentStream := newStream()
-					newCurrentStreamInfo := &streamInfo[T, D]{
+					newCurrentStreamInfo := &streamInfo[P, T, D]{
 						stream:  newCurrentStream,
 						pathMap: si.pathMap, // The solo paths are removed from the current stream already
 					}
 
-					newStreams := make([]*stream[T, D], 0, len(soloStreamInfos)+1)
-					newStreamPaths := make([][]*pathInfo[T, D], 0, len(soloStreamInfos)+1)
+					newStreams := make([]*stream[P, T, D], 0, len(soloStreamInfos)+1)
+					newStreamPaths := make([][]*pathInfo[P, T, D], 0, len(soloStreamInfos)+1)
 
 					for _, si := range soloStreamInfos {
 						newStreams = append(newStreams, si.stream)
@@ -292,8 +292,8 @@ func (d *DynamicStream[T, D]) scheduler() {
 					newStreams = append(newStreams, newCurrentStream)
 					newStreamPaths = append(newStreamPaths, SetToSlice(newCurrentStreamInfo.pathMap))
 
-					arranges = append(arranges, &arrangeStreamCmd[T, D]{
-						oldStreams:     []*stream[T, D]{si.stream},
+					arranges = append(arranges, &arrangeStreamCmd[P, T, D]{
+						oldStreams:     []*stream[P, T, D]{si.stream},
 						newStreams:     newStreams,
 						newStreamPaths: newStreamPaths,
 					})
@@ -318,11 +318,11 @@ func (d *DynamicStream[T, D]) scheduler() {
 				}
 			}
 		} else if rule == removeSoloPath {
-			normalSoloStreamInfos := make([]*streamInfo[T, D], 0, len(d.streamInfos))
+			normalSoloStreamInfos := make([]*streamInfo[P, T, D], 0, len(d.streamInfos))
 
-			idleSoloPaths := make([]*pathInfo[T, D], 0)
-			idleSoloStreams := make([]*stream[T, D], 0)
-			idleSoloStreamInfos := make([]*streamInfo[T, D], 0)
+			idleSoloPaths := make([]*pathInfo[P, T, D], 0)
+			idleSoloStreams := make([]*stream[P, T, D], 0)
+			idleSoloStreamInfos := make([]*streamInfo[P, T, D], 0)
 			for i := d.baseStreamCount; i < len(d.streamInfos); i++ {
 				si := d.streamInfos[i]
 				if si.busyRatio(testPeriod) >= IdlePathRatio {
@@ -338,17 +338,17 @@ func (d *DynamicStream[T, D]) scheduler() {
 			}
 
 			if len(idleSoloStreamInfos) != 0 {
-				baseStreamInfos := make([]*streamInfo[T, D], 0, d.baseStreamCount)
+				baseStreamInfos := make([]*streamInfo[P, T, D], 0, d.baseStreamCount)
 				baseStreamInfos = append(baseStreamInfos, d.streamInfos[:d.baseStreamCount]...)
-				sort.Sort(sortedSIs[T, D](baseStreamInfos))
+				sort.Sort(sortedSIs[P, T, D](baseStreamInfos))
 				mostIdleStream := baseStreamInfos[0]
 
-				newPaths := make([]*pathInfo[T, D], 0, len(idleSoloPaths)+len(mostIdleStream.pathMap))
+				newPaths := make([]*pathInfo[P, T, D], 0, len(idleSoloPaths)+len(mostIdleStream.pathMap))
 				newPaths = CopySetToSlice(mostIdleStream.pathMap, newPaths)
 				newPaths = append(newPaths, idleSoloPaths...)
 
 				newStream := newStream()
-				newStreamInfo := &streamInfo[T, D]{
+				newStreamInfo := &streamInfo[P, T, D]{
 					stream:  newStream,
 					pathMap: SliceToSet(newPaths),
 				}
@@ -356,13 +356,13 @@ func (d *DynamicStream[T, D]) scheduler() {
 				oldStreams := idleSoloStreams[:]
 				oldStreams = append(oldStreams, mostIdleStream.stream)
 
-				arrange := &arrangeStreamCmd[T, D]{
+				arrange := &arrangeStreamCmd[P, T, D]{
 					oldStreams:     oldStreams,
-					newStreams:     []*stream[T, D]{newStream},
-					newStreamPaths: [][]*pathInfo[T, D]{newPaths},
+					newStreams:     []*stream[P, T, D]{newStream},
+					newStreamPaths: [][]*pathInfo[P, T, D]{newPaths},
 				}
 
-				newStreamInfos := make([]*streamInfo[T, D], 0, len(d.streamInfos)-len(idleSoloStreamInfos))
+				newStreamInfos := make([]*streamInfo[P, T, D], 0, len(d.streamInfos)-len(idleSoloStreamInfos))
 				newStreamInfos = append(newStreamInfos, newStreamInfo)
 				newStreamInfos = append(newStreamInfos, baseStreamInfos[1:]...)
 				newStreamInfos = append(newStreamInfos, normalSoloStreamInfos...)
@@ -376,12 +376,12 @@ func (d *DynamicStream[T, D]) scheduler() {
 				}
 			}
 		} else if rule == shuffleStreams {
-			arranges := make([]*arrangeStreamCmd[T, D], 0)
-			newStreamInfos := make([]*streamInfo[T, D], 0, len(d.streamInfos))
+			arranges := make([]*arrangeStreamCmd[P, T, D], 0)
+			newStreamInfos := make([]*streamInfo[P, T, D], 0, len(d.streamInfos))
 
-			baseStreamInfos := make([]*streamInfo[T, D], 0, d.baseStreamCount)
+			baseStreamInfos := make([]*streamInfo[P, T, D], 0, d.baseStreamCount)
 			baseStreamInfos = append(baseStreamInfos, d.streamInfos[:d.baseStreamCount]...)
-			sort.Sort(sortedSIs[T, D](baseStreamInfos))
+			sort.Sort(sortedSIs[P, T, D](baseStreamInfos))
 
 			for i := 0; i < d.baseStreamCount/2; i++ {
 				leastBusy := baseStreamInfos[i]
@@ -396,7 +396,7 @@ func (d *DynamicStream[T, D]) scheduler() {
 
 				totalPathsCount := len(mostBusy.pathMap) + len(leastBusy.pathMap)
 
-				pathsChoices := [][]*pathInfo[T, D]{make([]*pathInfo[T, D], 0, totalPathsCount/2+1), make([]*pathInfo[T, D], 0, totalPathsCount/2+1)}
+				pathsChoices := [][]*pathInfo[P, T, D]{make([]*pathInfo[P, T, D], 0, totalPathsCount/2+1), make([]*pathInfo[P, T, D], 0, totalPathsCount/2+1)}
 				nextIdx := NewRoundRobin(2)
 
 				// We only fully shuffle the most busy paths from two streams.
@@ -451,22 +451,22 @@ func (d *DynamicStream[T, D]) scheduler() {
 				}
 
 				stream1 := newStream()
-				stream1Info := &streamInfo[T, D]{
+				stream1Info := &streamInfo[P, T, D]{
 					stream:  stream1,
 					pathMap: SliceToSet(stream1Paths),
 				}
 				stream2 := newStream()
-				stream2Info := &streamInfo[T, D]{
+				stream2Info := &streamInfo[P, T, D]{
 					stream:  stream2,
 					pathMap: SliceToSet(stream2Paths),
 				}
 				// Note that we should never send pathMap instances to the distributor.
 				// Instead, we put the paths to streamXPaths and send it.
 				// Because pathMap will be changed later.
-				arranges = append(arranges, &arrangeStreamCmd[T, D]{
-					oldStreams:     []*stream[T, D]{mostBusy.stream, leastBusy.stream},
-					newStreams:     []*stream[T, D]{stream1, stream2},
-					newStreamPaths: [][]*pathInfo[T, D]{stream1Paths, stream2Paths},
+				arranges = append(arranges, &arrangeStreamCmd[P, T, D]{
+					oldStreams:     []*stream[P, T, D]{mostBusy.stream, leastBusy.stream},
+					newStreams:     []*stream[P, T, D]{stream1, stream2},
+					newStreamPaths: [][]*pathInfo[P, T, D]{stream1Paths, stream2Paths},
 				})
 
 				newStreamInfos = append(newStreamInfos, stream1Info, stream2Info)
@@ -509,7 +509,7 @@ Loop:
 			}
 			switch cmd.cmdType {
 			case typeAddPath:
-				add := cmd.cmd.(*addPathCmd[T, D])
+				add := cmd.cmd.(*addPathCmd[P, T, D])
 
 				// Make sure the paths don't exist already
 				for _, pd := range add.paths {
@@ -520,9 +520,9 @@ Loop:
 					}
 				}
 
-				pis := make([]*pathInfo[T, D], 0, len(add.paths))
+				pis := make([]*pathInfo[P, T, D], 0, len(add.paths))
 				for _, pd := range add.paths {
-					pi := newPathInfo[T, D](pd.Path, pd.Dest)
+					pi := newPathInfo[P, T, D](pd.Path, pd.Dest)
 					si := nextStream()
 					pi.stream = si.stream
 					si.pathMap[pi] = struct{}{}
@@ -535,7 +535,7 @@ Loop:
 				add.wg.Done()
 				d.cmdToDist <- cmd
 			case typeRemovePath:
-				remove := cmd.cmd.(*removePathCmd)
+				remove := cmd.cmd.(*removePathCmd[P])
 				errors := make([]error, len(remove.paths))
 				hasError := false
 				e := NewAppErrorS(ErrorTypeNotExist)
@@ -592,16 +592,16 @@ Loop:
 	}
 }
 
-func (d *DynamicStream[T, D]) distributor() {
+func (d *DynamicStream[P, T, D]) distributor() {
 	defer d.distDone.Done()
 
-	pathMap := make(map[Path]*pathInfo[T, D])
+	pathMap := make(map[P]*pathInfo[P, T, D])
 
 	for {
 		select {
 		case e := <-d.eventChan:
 			if pi, ok := pathMap[e.Path()]; ok {
-				pi.stream.in() <- &eventWrap[T, D]{event: e, pathInfo: pi}
+				pi.stream.in() <- eventWrap[P, T, D]{event: e, pathInfo: pi}
 			}
 			// Otherwise, drop the event
 		case cmd, ok := <-d.cmdToDist:
@@ -610,7 +610,7 @@ func (d *DynamicStream[T, D]) distributor() {
 			}
 			switch cmd.cmdType {
 			case typeAddPath:
-				add := cmd.cmd.(*addPathCmd[T, D])
+				add := cmd.cmd.(*addPathCmd[P, T, D])
 				for _, pi := range add.pis {
 					if _, ok := pathMap[pi.path]; ok {
 						panic(fmt.Sprintf("Path %v already exists in distributor", pi.path))
@@ -619,13 +619,13 @@ func (d *DynamicStream[T, D]) distributor() {
 				}
 				add.wg.Done()
 			case typeRemovePath:
-				remove := cmd.cmd.(*removePathCmd)
+				remove := cmd.cmd.(*removePathCmd[P])
 				for _, p := range remove.paths {
 					delete(pathMap, p)
 				}
 				remove.wg.Done()
 			case typeArrangeStream:
-				arrange := cmd.cmd.(*arrangeStreamCmd[T, D])
+				arrange := cmd.cmd.(*arrangeStreamCmd[P, T, D])
 				for i, paths := range arrange.newStreamPaths {
 					newStream := arrange.newStreams[i]
 					for _, pi := range paths {
@@ -649,11 +649,11 @@ func (d *DynamicStream[T, D]) distributor() {
 // An event with a path not already added will be dropped.
 // If some paths already exist, it will return an ErrorTypeDuplicate error. And no paths are added.
 // If the stream is closed, it will return an ErrorTypeClosed error.
-func (d *DynamicStream[T, D]) AddPath(paths ...PathAndDest[D]) error {
+func (d *DynamicStream[P, T, D]) AddPath(paths ...PathAndDest[P, D]) error {
 	if d.hasClosed.Load() {
 		return NewAppErrorS(ErrorTypeClosed)
 	}
-	add := &addPathCmd[T, D]{paths: paths}
+	add := &addPathCmd[P, T, D]{paths: paths}
 	cmd := &cmd{
 		cmdType: typeAddPath,
 		cmd:     add,
@@ -667,8 +667,8 @@ func (d *DynamicStream[T, D]) AddPath(paths ...PathAndDest[D]) error {
 // RemovePath removes the paths from the dynamic stream. Futher events with the paths will be dropped.
 // If some paths don't exist, it will return ErrorTypeNotExist errors. But the existed paths are still removed.
 // If all paths are removed successfully, return nil.
-func (d *DynamicStream[T, D]) RemovePath(paths ...Path) []error {
-	remove := &removePathCmd{paths: paths}
+func (d *DynamicStream[P, T, D]) RemovePath(paths ...P) []error {
+	remove := &removePathCmd[P]{paths: paths}
 	cmd := &cmd{
 		cmdType: typeRemovePath,
 		cmd:     remove,

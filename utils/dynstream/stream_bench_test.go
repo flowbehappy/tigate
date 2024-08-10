@@ -12,10 +12,10 @@ type inc struct {
 	n     *atomic.Int64
 	done  *sync.WaitGroup
 
-	path Path
+	path string
 }
 
-func (e *inc) Path() Path { return e.path }
+func (e *inc) Path() string { return e.path }
 
 type D struct{}
 type incHandler struct{}
@@ -29,11 +29,11 @@ func (h *incHandler) Handle(event *inc, dest D) {
 
 func runStream(eventCount int, times int) {
 	handler := &incHandler{}
-	reportChan := make(chan *streamStat[*inc, D], 100)
+	reportChan := make(chan *streamStat[string, *inc, D], 100)
 
-	pi := newPathInfo[*inc, D](Path("p1"), D{})
-	stream := newStream[*inc, D](1 /*id*/, handler, reportChan, 8*time.Millisecond /*reportInterval*/, 10)
-	stream.start([]*pathInfo[*inc, D]{pi})
+	pi := newPathInfo[string, *inc, D]("p1", D{})
+	stream := newStream[string, *inc, D](1 /*id*/, handler, reportChan, 8*time.Millisecond /*reportInterval*/, 10)
+	stream.start([]*pathInfo[string, *inc, D]{pi})
 
 	go func() {
 		// Drain the report channel. To avoid the report channel blocking.
@@ -46,7 +46,7 @@ func runStream(eventCount int, times int) {
 
 	done.Add(eventCount)
 	for i := 0; i < eventCount; i++ {
-		stream.in() <- &eventWrap[*inc, D]{event: &inc{times: times, n: total, done: done}, pathInfo: pi}
+		stream.in() <- eventWrap[string, *inc, D]{event: &inc{times: times, n: total, done: done}, pathInfo: pi}
 	}
 
 	done.Wait()
