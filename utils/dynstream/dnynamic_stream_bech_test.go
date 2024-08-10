@@ -138,18 +138,18 @@ func BenchmarkDSDynamicSt1000x1000x100(b *testing.B) {
 	ds.Close()
 }
 
-func BenchmarkDSDynamicSt1000000x100x10(b *testing.B) {
-	ds, inc, wg := prepareDynamicStream(1000000, 100, 10)
+func BenchmarkDSDynamicSt1000000x20x50(b *testing.B) {
+	ds, inc, wg := prepareDynamicStream(1000000, 20, 50)
 
 	b.ResetTimer()
 
 	for k := 0; k < b.N; k++ {
 		inc.Store(0)
-		runDynamicStream(ds, 1000000, 100)
+		runDynamicStream(ds, 1000000, 20)
 		wg.Wait()
 
-		if inc.Load() != int64(1000000*100*10) {
-			panic(fmt.Sprintf("total: %d, expected: %d", inc.Load(), 1000000*100*10))
+		if inc.Load() != int64(1000000*20*50) {
+			panic(fmt.Sprintf("total: %d, expected: %d", inc.Load(), 1000000*20*50))
 		}
 	}
 
@@ -176,18 +176,18 @@ func BenchmarkDSGoroutine1000x1000x100(b *testing.B) {
 	}
 }
 
-func BenchmarkDSGoroutine1000000x100x10(b *testing.B) {
-	chans, handler, inc, wg := prepareGoroutine(1000000, 100, 10)
+func BenchmarkDSGoroutine1000000x20x50(b *testing.B) {
+	chans, handler, inc, wg := prepareGoroutine(1000000, 20, 50)
 
 	b.ResetTimer()
 
 	for k := 0; k < b.N; k++ {
 		inc.Store(0)
-		runGoroutine(chans, 1000000, 100, handler)
+		runGoroutine(chans, 1000000, 20, handler)
 		wg.Wait()
 
-		if inc.Load() != int64(1000000*100*10) {
-			panic(fmt.Sprintf("total: %d, expected: %d", inc.Load(), 1000000*100*10))
+		if inc.Load() != int64(1000000*20*50) {
+			panic(fmt.Sprintf("total: %d, expected: %d", inc.Load(), 1000000*20*50))
 		}
 	}
 
