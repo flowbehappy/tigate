@@ -29,7 +29,7 @@ func (h *incHandler) Handle(event *inc, dest D) {
 
 func runStream(eventCount int, times int) {
 	handler := &incHandler{}
-	reportChan := make(chan *streamStat[string, *inc, D], 100)
+	reportChan := make(chan streamStat[string, *inc, D], 100)
 
 	pi := newPathInfo[string, *inc, D]("p1", D{})
 	stream := newStream[string, *inc, D](1 /*id*/, handler, reportChan, 8*time.Millisecond /*reportInterval*/, 10)

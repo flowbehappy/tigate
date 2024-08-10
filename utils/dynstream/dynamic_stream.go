@@ -75,20 +75,16 @@ type reportAndScheduleCmd struct {
 
 type streamInfo[P Path, T Event[P], D any] struct {
 	stream     *stream[P, T, D]
-	streamStat *streamStat[P, T, D]
+	streamStat streamStat[P, T, D]
 	pathMap    map[*pathInfo[P, T, D]]struct{}
 }
 
 func (si *streamInfo[P, T, D]) runtime() time.Duration {
-	if si.streamStat != nil {
-		return si.streamStat.totalTime
-	} else {
-		return 0
-	}
+	return si.streamStat.totalTime
 }
 
 func (si *streamInfo[P, T, D]) busyRatio(period time.Duration) float64 {
-	if si.streamStat != nil && si.streamStat.totalTime != 0 {
+	if si.streamStat.totalTime != 0 {
 		if period != 0 {
 			return float64(si.streamStat.totalTime) / float64(period)
 		} else {
@@ -100,11 +96,7 @@ func (si *streamInfo[P, T, D]) busyRatio(period time.Duration) float64 {
 }
 
 func (si *streamInfo[P, T, D]) period() time.Duration {
-	if si.streamStat != nil {
-		return si.streamStat.period
-	} else {
-		return 0
-	}
+	return si.streamStat.period
 }
 
 type sortedSIs[P Path, T Event[P], D any] []*streamInfo[P, T, D]
@@ -122,10 +114,10 @@ type DynamicStream[P Path, T Event[P], D any] struct {
 
 	handler Handler[P, T, D]
 
-	eventChan  chan T                    // The channel to receive the incomming events by distributor
-	reportChan chan *streamStat[P, T, D] // The channel to receive the report by scheduler
-	cmdToSchd  chan *cmd                 // Send the commands to the scheduler
-	cmdToDist  chan *cmd                 // Send the commands to the distributor
+	eventChan  chan T                   // The channel to receive the incomming events by distributor
+	reportChan chan streamStat[P, T, D] // The channel to receive the report by scheduler
+	cmdToSchd  chan *cmd                // Send the commands to the scheduler
+	cmdToDist  chan *cmd                // Send the commands to the distributor
 
 	// The streams to handle the events. Only used in the scheduler.
 	// We put it here mainly to make the tests easier.
@@ -157,7 +149,7 @@ func NewDynamicStream[P Path, T Event[P], D any](
 		baseStreamCount:   streamCount,
 
 		eventChan:  make(chan T, 1024),
-		reportChan: make(chan *streamStat[P, T, D], 64),
+		reportChan: make(chan streamStat[P, T, D], 64),
 		cmdToSchd:  make(chan *cmd, 64),
 		cmdToDist:  make(chan *cmd, streamCount),
 

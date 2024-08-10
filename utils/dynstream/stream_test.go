@@ -71,8 +71,8 @@ func (i *Inc) Do() {
 func TestStreamBasic(t *testing.T) {
 	handler := &mockHandler{}
 	reportInterval := 8 * time.Millisecond
-	reportChan := make(chan *streamStat[string, *mockEvent, any], 10)
-	stats := make([]*streamStat[string, *mockEvent, any], 0)
+	reportChan := make(chan streamStat[string, *mockEvent, any], 10)
+	stats := make([]streamStat[string, *mockEvent, any], 0)
 	statWait := sync.WaitGroup{}
 	statWait.Add(1)
 	go func() {
@@ -123,8 +123,8 @@ func TestStreamBasic(t *testing.T) {
 
 	assert.Equal(t, 3*2, len(stats))
 
-	s1Stat := make([]*streamStat[string, *mockEvent, any], 0, 3)
-	s2Stat := make([]*streamStat[string, *mockEvent, any], 0, 3)
+	s1Stat := make([]streamStat[string, *mockEvent, any], 0, 3)
+	s2Stat := make([]streamStat[string, *mockEvent, any], 0, 3)
 	for _, stat := range stats {
 		if stat.id == 1 {
 			s1Stat = append(s1Stat, stat)
@@ -194,7 +194,7 @@ Loop:
 
 func TestStreamMerge(t *testing.T) {
 	handler := &mockHandler{}
-	reportChan := make(chan *streamStat[string, *mockEvent, any], 10)
+	reportChan := make(chan streamStat[string, *mockEvent, any], 10)
 
 	p1 := newPathInfo[string, *mockEvent, any]("p1", "d1")
 	p2 := newPathInfo[string, *mockEvent, any]("p2", "d2")
@@ -231,7 +231,7 @@ func TestStreamMerge(t *testing.T) {
 
 	close(reportChan)
 
-	stats := make([]*streamStat[string, *mockEvent, any], 0)
+	stats := make([]streamStat[string, *mockEvent, any], 0)
 	for stat := range reportChan {
 		stats = append(stats, stat)
 	}
@@ -249,7 +249,7 @@ func TestStreamMerge(t *testing.T) {
 
 func TestStreamManyEvents(t *testing.T) {
 	handler := &mockHandler{}
-	reportChan := make(chan *streamStat[string, *mockEvent, any], 10)
+	reportChan := make(chan streamStat[string, *mockEvent, any], 10)
 
 	p1 := newPathInfo[string, *mockEvent, any]("p1", "d1")
 	s1 := newStream(1 /*id*/, handler, reportChan, 1*time.Hour /*reportInterval*/, 10)
@@ -267,7 +267,7 @@ func TestStreamManyEvents(t *testing.T) {
 	assert.Equal(t, int64(total), incr.Load())
 
 	close(reportChan)
-	stats := make([]*streamStat[string, *mockEvent, any], 0)
+	stats := make([]streamStat[string, *mockEvent, any], 0)
 	for stat := range reportChan {
 		stats = append(stats, stat)
 	}

@@ -27,11 +27,10 @@ type PathAndDest[P Path, D any] struct {
 // ====== internal types ======
 
 type pathStat[P Path, T Event[P], D any] struct {
-	pathInfo   *pathInfo[P, T, D]
-	totalTime  time.Duration
-	count      int
-	pendingLen int
-	heapIndex  int
+	pathInfo  *pathInfo[P, T, D]
+	totalTime time.Duration
+	count     int
+	heapIndex int
 }
 
 func (p *pathStat[P, T, D]) busyRatio(period time.Duration) float64 {
@@ -67,11 +66,13 @@ type pathInfo[P Path, T Event[P], D any] struct {
 }
 
 func newPathInfo[P Path, T Event[P], D any](path P, dest D) *pathInfo[P, T, D] {
-	return &pathInfo[P, T, D]{
+	pi := &pathInfo[P, T, D]{
 		path:         path,
 		dest:         dest,
 		pendingQueue: deque.NewDeque[T](32, 0),
 	}
+	pi.resetStat()
+	return pi
 }
 
 func (pi *pathInfo[P, T, D]) resetStat() {
