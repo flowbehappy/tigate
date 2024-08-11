@@ -8,7 +8,8 @@ import (
 type Deque[T any] struct {
 	blockLen int
 	maxLen   int
-	zero     T
+
+	freeBlock []T // A free block to avoid frequent memory allocation.
 
 	blocks *list.List[[]T]
 	length int
@@ -56,7 +57,8 @@ func (d *Deque[T]) BackRef() (*T, bool) {
 
 func (d *Deque[T]) Back() (T, bool) {
 	if d.length == 0 {
-		return d.zero, false
+		var zero T
+		return zero, false
 	}
 	return d.blocks.Back().Value[d.back], true
 }
@@ -70,7 +72,8 @@ func (d *Deque[T]) FrontRef() (*T, bool) {
 
 func (d *Deque[T]) Front() (T, bool) {
 	if d.length == 0 {
-		return d.zero, false
+		var zero T
+		return zero, false
 	}
 	return d.blocks.Front().Value[d.front], true
 }
@@ -79,7 +82,12 @@ func (d *Deque[T]) PushBack(item T) {
 	block := d.blocks.Back().Value
 	if d.back == d.blockLen-1 {
 		// the last block is full
-		block = make([]T, d.blockLen)
+		if d.freeBlock != nil {
+			block = d.freeBlock
+			d.freeBlock = nil
+		} else {
+			block = make([]T, d.blockLen)
+		}
 		d.blocks.PushBack(block)
 		d.back = -1
 	}
@@ -94,14 +102,15 @@ func (d *Deque[T]) PushBack(item T) {
 }
 
 func (d *Deque[T]) PopBack() (T, bool) {
+	var zero T
 	if d.length == 0 {
-		return d.zero, false
+		return zero, false
 	}
 
 	le := d.blocks.Back()
 	block := le.Value
 	item := block[d.back]
-	block[d.back] = d.zero
+	block[d.back] = zero
 	d.back--
 	d.length--
 
@@ -112,6 +121,9 @@ func (d *Deque[T]) PopBack() (T, bool) {
 		} else {
 			d.blocks.Remove(le)
 			d.back = d.blockLen - 1
+			if d.freeBlock == nil {
+				d.freeBlock = block
+			}
 		}
 	}
 
@@ -122,7 +134,12 @@ func (d *Deque[T]) PushFront(item T) {
 	block := d.blocks.Front().Value
 	if d.front == 0 {
 		// the first block is full
-		block = make([]T, d.blockLen)
+		if d.freeBlock != nil {
+			block = d.freeBlock
+			d.freeBlock = nil
+		} else {
+			block = make([]T, d.blockLen)
+		}
 		d.blocks.PushFront(block)
 		d.front = d.blockLen
 	}
@@ -137,14 +154,15 @@ func (d *Deque[T]) PushFront(item T) {
 }
 
 func (d *Deque[T]) PopFront() (T, bool) {
+	var zero T
 	if d.length == 0 {
-		return d.zero, false
+		return zero, false
 	}
 
 	le := d.blocks.Front()
 	block := le.Value
 	item := block[d.front]
-	block[d.front] = d.zero
+	block[d.front] = zero
 	d.front++
 	d.length--
 
@@ -155,6 +173,9 @@ func (d *Deque[T]) PopFront() (T, bool) {
 		} else {
 			d.blocks.Remove(le)
 			d.front = 0
+			if d.freeBlock == nil {
+				d.freeBlock = block
+			}
 		}
 	}
 

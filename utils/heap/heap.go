@@ -41,11 +41,11 @@ func NewHeap[T Item[T]]() Heap[T] {
 // ====================================
 // Notice: Don't call those methods below directly! They are only called by heap package.
 
-func (h *heapImp[T]) Len() int { return len(h.items) }
-func (h *heapImp[T]) Less(i, j int) bool {
+func (h heapImp[T]) Len() int { return len(h.items) }
+func (h heapImp[T]) Less(i, j int) bool {
 	return h.items[i].CompareTo(h.items[j]) < 0
 }
-func (h *heapImp[T]) Swap(i, j int) {
+func (h heapImp[T]) Swap(i, j int) {
 	h.items[i], h.items[j] = h.items[j], h.items[i]
 	h.items[i].SetHeapIndex(i + 1)
 	h.items[j].SetHeapIndex(j + 1)

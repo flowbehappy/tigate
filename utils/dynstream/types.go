@@ -70,13 +70,14 @@ func newPathInfo[P Path, T Event[P], D any](path P, dest D) *pathInfo[P, T, D] {
 		path:         path,
 		dest:         dest,
 		pendingQueue: deque.NewDeque[T](32, 0),
+		pathStat:     &pathStat[P, T, D]{},
 	}
-	pi.resetStat()
 	return pi
 }
 
 func (pi *pathInfo[P, T, D]) resetStat() {
-	pi.pathStat = &pathStat[P, T, D]{pathInfo: pi}
+	// Don't create a new pathStat on the heap, just reset the fields.
+	(*pi.pathStat) = pathStat[P, T, D]{pathInfo: pi}
 }
 
 type streamStat[P Path, T Event[P], D any] struct {
