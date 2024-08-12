@@ -85,6 +85,7 @@ func (m *Manager) RecvMessages(ctx context.Context, msg *messaging.TargetMessage
 	switch msg.Type {
 	// receive message from coordinator
 	case messaging.TypeDispatchMaintainerRequest:
+		fallthrough
 	case messaging.TypeCoordinatorBootstrapRequest:
 		select {
 		case <-ctx.Done():
