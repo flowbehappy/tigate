@@ -288,7 +288,7 @@ Loop:
 				}
 
 				now := time.Now()
-				s.handler.Handle(e, signal.pathInfo.dest)
+				signal.pathInfo.blocking = s.handler.Handle(e, signal.pathInfo.dest)
 
 				s.donChan <- doneInfo[P, T, D]{pathInfo: signal.pathInfo, handleTime: time.Since(now)}
 
