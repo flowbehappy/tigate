@@ -11,8 +11,11 @@ type Path comparable
 // An event belongs to a path.
 type Event any
 
+// A destination is the place where the event is sent to.
+type Dest any
+
 // The handler interface. The handler processes the event.
-type Handler[P Path, T Event, D any] interface {
+type Handler[P Path, T Event, D Dest] interface {
 	// Get the path of the event. This method is called once for each event.
 	Path(event T) P
 	// Handle processes the event.
@@ -23,7 +26,7 @@ type Handler[P Path, T Event, D any] interface {
 	Handle(event T, dest D) (await bool)
 }
 
-type PathAndDest[P Path, D any] struct {
+type PathAndDest[P Path, D Dest] struct {
 	Path P
 	Dest D
 }
@@ -32,8 +35,10 @@ type PathAndDest[P Path, D any] struct {
 Dynamic stream is a stream that can process events with from different paths concurrently.
   - Events from the same path are processed sequentially.
   - Events from different paths are processed concurrently.
+
+We assume that the handler is CPU-bound and should not be blocked by any waiting. Otherwise, events from other paths will be blocked.
 */
-type DynamicStream[P Path, T Event, D any] interface {
+type DynamicStream[P Path, T Event, D Dest] interface {
 	Start()
 	Close()
 	In() chan<- T
@@ -56,12 +61,12 @@ const DefaultReportInterval = 500 * time.Millisecond
 // We don't need lots of streams because the hanle of events should be CPU-bound and should not be blocked by any waiting.
 const DefaultStreamCount = 128
 
-func NewDynamicStreamDefault[P Path, T Event, D any](handler Handler[P, T, D]) DynamicStream[P, T, D] {
+func NewDynamicStreamDefault[P Path, T Event, D Dest](handler Handler[P, T, D]) DynamicStream[P, T, D] {
 	streamCount := max(DefaultStreamCount, runtime.NumCPU())
 	return NewDynamicStream[P, T, D](handler, DefaultSchedulerInterval, DefaultReportInterval, streamCount)
 }
 
-func NewDynamicStream[P Path, T Event, D any](
+func NewDynamicStream[P Path, T Event, D Dest](
 	handler Handler[P, T, D],
 	schedulerInterval time.Duration,
 	reportInterval time.Duration,

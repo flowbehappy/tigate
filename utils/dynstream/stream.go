@@ -13,7 +13,7 @@ var nextReportRound = atomic.Int64{}
 
 // ====== internal types ======
 
-type pathStat[P Path, T Event, D any] struct {
+type pathStat[P Path, T Event, D Dest] struct {
 	pathInfo  *pathInfo[P, T, D]
 	totalTime time.Duration
 	count     int
@@ -35,7 +35,7 @@ func (p *pathStat[P, T, D]) CompareTo(o *pathStat[P, T, D]) int {
 	return int(p.totalTime - o.totalTime)
 } // It is safe on a 64-bit machine.
 
-type pathInfo[P Path, T Event, D any] struct {
+type pathInfo[P Path, T Event, D Dest] struct {
 	// Note that although this struct is used by multiple goroutines, it doesn't need synchronization because
 	// different fields are either immutable or accessed by different goroutines.
 	// We use one struct to store them together to avoid mapping by path in different places in many times.
@@ -52,7 +52,7 @@ type pathInfo[P Path, T Event, D any] struct {
 	pathStat    *pathStat[P, T, D]
 }
 
-func newPathInfo[P Path, T Event, D any](path P, dest D) *pathInfo[P, T, D] {
+func newPathInfo[P Path, T Event, D Dest](path P, dest D) *pathInfo[P, T, D] {
 	pi := &pathInfo[P, T, D]{
 		path:         path,
 		dest:         dest,
@@ -67,7 +67,7 @@ func (pi *pathInfo[P, T, D]) resetStat() {
 	(*pi.pathStat) = pathStat[P, T, D]{pathInfo: pi}
 }
 
-type streamStat[P Path, T Event, D any] struct {
+type streamStat[P Path, T Event, D Dest] struct {
 	id int
 
 	period    time.Duration
@@ -79,7 +79,7 @@ type streamStat[P Path, T Event, D any] struct {
 	mostBusyPath heap.Heap[*pathStat[P, T, D]]
 }
 
-func tryAddPathToBusyHeap[P Path, T Event, D any](heap heap.Heap[*pathStat[P, T, D]], pi *pathStat[P, T, D], trackTop int) {
+func tryAddPathToBusyHeap[P Path, T Event, D Dest](heap heap.Heap[*pathStat[P, T, D]], pi *pathStat[P, T, D], trackTop int) {
 	if heap.Len() < trackTop {
 		heap.AddOrUpdate(pi)
 	} else if top, _ := heap.PeekTop(); top.CompareTo(pi) < 0 {
@@ -89,25 +89,25 @@ func tryAddPathToBusyHeap[P Path, T Event, D any](heap heap.Heap[*pathStat[P, T,
 }
 
 // Only contains one kind of event:
-// 1. event + pathInfo
+// 1. event
 // 2. wake = true
-type eventWrap[P Path, T Event, D any] struct {
-	event    T
-	pathInfo *pathInfo[P, T, D]
+type eventWrap[P Path, T Event, D Dest] struct {
+	event T
+	wake  bool
 
-	wake bool
+	pathInfo *pathInfo[P, T, D]
 }
 
 func (e eventWrap[P, T, D]) isZero() bool {
 	return e.pathInfo == nil
 }
 
-type eventSignal[P Path, T Event, D any] struct {
+type eventSignal[P Path, T Event, D Dest] struct {
 	pathInfo   *pathInfo[P, T, D]
 	eventCount int
 }
 
-type doneInfo[P Path, T Event, D any] struct {
+type doneInfo[P Path, T Event, D Dest] struct {
 	pathInfo   *pathInfo[P, T, D]
 	handleTime time.Duration
 }
@@ -116,7 +116,10 @@ func (d doneInfo[P, T, D]) isZero() bool {
 	return d.pathInfo == nil
 }
 
-type stream[P Path, T Event, D any] struct {
+// A stream uses two goroutines
+// 1. handleLoop: to handle the events.
+// 2. reportStatLoop: to report the statistics.
+type stream[P Path, T Event, D Dest] struct {
 	id int
 
 	handler Handler[P, T, D]
@@ -139,7 +142,7 @@ type stream[P Path, T Event, D any] struct {
 	reportDone sync.WaitGroup
 }
 
-func newStream[P Path, T Event, D any](
+func newStream[P Path, T Event, D Dest](
 	id int,
 	handler Handler[P, T, D],
 	reportChan chan streamStat[P, T, D],
@@ -177,9 +180,7 @@ func (s *stream[P, T, D]) start(acceptedPaths []*pathInfo[P, T, D], formerStream
 	go s.reportStatLoop()
 }
 
-// Close the stream and return the running event.
-// Not all of the new streams need to wait for the former stream's handle goroutine to finish.
-// Only the streams that are interested in the path of the running event need to wait.
+// Close the stream and wait for all goroutines to exit.
 func (s *stream[P, T, D]) close() {
 	if s.hasClosed.CompareAndSwap(false, true) {
 		close(s.inChan)

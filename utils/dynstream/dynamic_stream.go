@@ -38,7 +38,7 @@ type cmd struct {
 	cmd     interface{}
 }
 
-type addPathCmd[P Path, T Event, D any] struct {
+type addPathCmd[P Path, T Event, D Dest] struct {
 	paths []PathAndDest[P, D]
 	pis   []*pathInfo[P, T, D]
 	error error
@@ -53,7 +53,7 @@ type removePathCmd[P Path] struct {
 	wg sync.WaitGroup
 }
 
-type arrangeStreamCmd[P Path, T Event, D any] struct {
+type arrangeStreamCmd[P Path, T Event, D Dest] struct {
 	oldStreams []*stream[P, T, D]
 
 	newStreams     []*stream[P, T, D]
@@ -66,7 +66,7 @@ type reportAndScheduleCmd struct {
 	wg     sync.WaitGroup
 }
 
-type streamInfo[P Path, T Event, D any] struct {
+type streamInfo[P Path, T Event, D Dest] struct {
 	stream     *stream[P, T, D]
 	streamStat streamStat[P, T, D]
 	pathMap    map[*pathInfo[P, T, D]]struct{}
@@ -92,14 +92,23 @@ func (si *streamInfo[P, T, D]) period() time.Duration {
 	return si.streamStat.period
 }
 
-type sortedSIs[P Path, T Event, D any] []*streamInfo[P, T, D]
+type sortedSIs[P Path, T Event, D Dest] []*streamInfo[P, T, D]
 
 // implement sort.Interface
 func (s sortedSIs[P, T, D]) Len() int           { return len(s) }
 func (s sortedSIs[P, T, D]) Less(i, j int) bool { return s[i].runtime() < s[j].runtime() }
 func (s sortedSIs[P, T, D]) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
-type dynamicStreamImpl[P Path, T Event, D any] struct {
+// This is the implementation of the DynamicStream interface.
+// We use two goroutines
+// 1. The distributor to distribute the events to the streams
+// 2. The scheduler to balance the load of the streams
+//
+// A stream can handle events from multiple paths.
+// Events from the same path are only processed by one particular stream at the same time.
+// The scheduler use several strategies to balance the load of the streams, while the final balanace
+// actions are moving the paths between the streams.
+type dynamicStreamImpl[P Path, T Event, D Dest] struct {
 	schedulerInterval time.Duration
 	reportInterval    time.Duration
 	trackTopPaths     int
@@ -124,7 +133,7 @@ type dynamicStreamImpl[P Path, T Event, D any] struct {
 	distDone sync.WaitGroup
 }
 
-func newDynamicStreamImpl[P Path, T Event, D any](
+func newDynamicStreamImpl[P Path, T Event, D Dest](
 	handler Handler[P, T, D],
 	schedulerInterval time.Duration,
 	reportInterval time.Duration,
@@ -167,6 +176,33 @@ func (d *dynamicStreamImpl[P, T, D]) Close() {
 		close(d.cmdToSchd)
 	}
 	d.schdDone.Wait()
+}
+
+func (d *dynamicStreamImpl[P, T, D]) AddPath(paths ...PathAndDest[P, D]) error {
+	if d.hasClosed.Load() {
+		return NewAppErrorS(ErrorTypeClosed)
+	}
+	add := &addPathCmd[P, T, D]{paths: paths}
+	cmd := &cmd{
+		cmdType: typeAddPath,
+		cmd:     add,
+	}
+	add.wg.Add(2) // need to wait for both scheduler and distributor
+	d.cmdToSchd <- cmd
+	add.wg.Wait()
+	return add.error
+}
+
+func (d *dynamicStreamImpl[P, T, D]) RemovePath(paths ...P) []error {
+	remove := &removePathCmd[P]{paths: paths}
+	cmd := &cmd{
+		cmdType: typeRemovePath,
+		cmd:     remove,
+	}
+	remove.wg.Add(2) // need to wait for both scheduler and distributor
+	d.cmdToSchd <- cmd
+	remove.wg.Wait()
+	return remove.errors
 }
 
 func (d *dynamicStreamImpl[P, T, D]) scheduler() {
@@ -477,11 +513,6 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 		} else {
 			panic("Unknown rule")
 		}
-
-		// Normally, we don't need to reset the statistics, but who knows.
-		// for _, si := range d.streamInfos {
-		// 	si.streamStat = nil
-		// }
 	}
 
 	nextSchedule := time.Now().Add(d.schedulerInterval)
@@ -634,31 +665,4 @@ func (d *dynamicStreamImpl[P, T, D]) distributor() {
 			}
 		}
 	}
-}
-
-func (d *dynamicStreamImpl[P, T, D]) AddPath(paths ...PathAndDest[P, D]) error {
-	if d.hasClosed.Load() {
-		return NewAppErrorS(ErrorTypeClosed)
-	}
-	add := &addPathCmd[P, T, D]{paths: paths}
-	cmd := &cmd{
-		cmdType: typeAddPath,
-		cmd:     add,
-	}
-	add.wg.Add(2) // need to wait for both scheduler and distributor
-	d.cmdToSchd <- cmd
-	add.wg.Wait()
-	return add.error
-}
-
-func (d *dynamicStreamImpl[P, T, D]) RemovePath(paths ...P) []error {
-	remove := &removePathCmd[P]{paths: paths}
-	cmd := &cmd{
-		cmdType: typeRemovePath,
-		cmd:     remove,
-	}
-	remove.wg.Add(2) // need to wait for both scheduler and distributor
-	d.cmdToSchd <- cmd
-	remove.wg.Wait()
-	return remove.errors
 }

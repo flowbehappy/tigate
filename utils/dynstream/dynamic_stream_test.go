@@ -93,8 +93,8 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	ds.In() <- newSimpleEvent("p1", wg)
 	ds.In() <- newSimpleEvent("p2", wg)
 	ds.In() <- newSimpleEvent("p3", wg)
-	ds.In() <- newSimpleEventSleep("p4", wg, 6*time.Millisecond)
-	ds.In() <- newSimpleEventSleep("p5", wg, 6*time.Millisecond)
+	ds.In() <- newSimpleEventSleep("p4", wg, 8*time.Millisecond)
+	ds.In() <- newSimpleEventSleep("p5", wg, 8*time.Millisecond)
 	wg.Wait()
 
 	scheduleNow(createSoloPath, 8*time.Millisecond)
@@ -112,7 +112,7 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	ds.In() <- newSimpleEvent("p2", wg)
 	ds.In() <- newSimpleEvent("p3", wg)
 	ds.In() <- newSimpleEvent("p4", wg)
-	ds.In() <- newSimpleEventSleep("p5", wg, 6*time.Millisecond)
+	ds.In() <- newSimpleEventSleep("p5", wg, 8*time.Millisecond)
 	// time.Sleep(8 * time.Millisecond)
 	wg.Wait()
 
@@ -144,9 +144,9 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	assert.Equal(t, 1, len(ds.streamInfos[3].pathMap)) // p5, Solo stream
 
 	wg = &sync.WaitGroup{}
-	ds.In() <- newSimpleEventSleep("p7", wg, 6*time.Millisecond)
-	ds.In() <- newSimpleEventSleep("p10", wg, 6*time.Millisecond)
-	ds.In() <- newSimpleEventSleep("p9", wg, 6*time.Millisecond)
+	ds.In() <- newSimpleEventSleep("p7", wg, 8*time.Millisecond)
+	ds.In() <- newSimpleEventSleep("p10", wg, 8*time.Millisecond)
+	ds.In() <- newSimpleEventSleep("p9", wg, 8*time.Millisecond)
 	// time.Sleep(8 * time.Millisecond)
 	wg.Wait()
 
