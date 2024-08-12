@@ -204,6 +204,9 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 				cf = &changefeed{}
 			}
 			allChangefeeds.ReplaceOrInsert(scheduler.ChangefeedID(id), cf)
+		} else {
+			// changefeed is stopped
+			allChangefeeds.Delete(scheduler.ChangefeedID(id))
 		}
 	}
 	c.supervisor.MarkNeedAddInferior()
