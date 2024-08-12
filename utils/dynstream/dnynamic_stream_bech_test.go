@@ -2,6 +2,7 @@ package dynstream
 
 import (
 	"fmt"
+	"math"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -10,8 +11,6 @@ import (
 
 type intEvent int
 
-func (e intEvent) Path() int { return int(e) }
-
 type intEventHandler struct {
 	inc   *atomic.Int64
 	times int
@@ -19,14 +18,18 @@ type intEventHandler struct {
 	wg *sync.WaitGroup
 }
 
-func (h *intEventHandler) Handle(event intEvent, dest D) {
+func (h *intEventHandler) Path(event intEvent) int {
+	return int(event)
+}
+func (h *intEventHandler) Handle(event intEvent, dest D) (await bool) {
 	for i := 0; i < h.times; i++ {
 		h.inc.Add(1)
 	}
 	h.wg.Done()
+	return false
 }
 
-func prepareDynamicStream(pathCount int, eventCount int, times int) (*DynamicStream[int, intEvent, D], *atomic.Int64, *sync.WaitGroup) {
+func prepareDynamicStream(pathCount int, eventCount int, times int) (DynamicStream[int, intEvent, D], *atomic.Int64, *sync.WaitGroup) {
 	wg := &sync.WaitGroup{}
 	wg.Add(eventCount * pathCount)
 	inc := &atomic.Int64{}
@@ -46,9 +49,9 @@ func prepareDynamicStream(pathCount int, eventCount int, times int) (*DynamicStr
 	return ds, inc, wg
 }
 
-func runDynamicStream(ds *DynamicStream[int, intEvent, D], pathCount int, eventCount int) {
+func runDynamicStream(ds DynamicStream[int, intEvent, D], pathCount int, eventCount int) {
 	cpuCount := runtime.NumCPU()
-	step := pathCount / cpuCount
+	step := int(math.Ceil(float64(pathCount) / float64(cpuCount)))
 	for s := 0; s < cpuCount; s++ {
 		from := s * step
 		to := min((s+1)*step, pathCount)
@@ -60,6 +63,7 @@ func runDynamicStream(ds *DynamicStream[int, intEvent, D], pathCount int, eventC
 			}
 		}(from, to, eventCount)
 	}
+
 	// for p := 0; p < pathCount; p++ {
 	// 	go func(path int) {
 	// 		for i := 0; i < eventCount; i++ {
@@ -90,7 +94,7 @@ func prepareGoroutine(pathCount int, eventCount int, times int) ([]chan intEvent
 
 func runGoroutine(chans []chan intEvent, pathCount int, eventCount int, handler *intEventHandler) {
 	cpuCount := runtime.NumCPU()
-	step := pathCount / cpuCount
+	step := int(math.Ceil(float64(pathCount) / float64(cpuCount)))
 	for s := 0; s < cpuCount; s++ {
 		from := s * step
 		to := min((s+1)*step, pathCount)

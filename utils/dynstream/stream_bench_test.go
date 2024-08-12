@@ -15,16 +15,18 @@ type inc struct {
 	path string
 }
 
-func (e *inc) Path() string { return e.path }
-
 type D struct{}
 type incHandler struct{}
 
-func (h *incHandler) Handle(event *inc, dest D) {
+func (h *incHandler) Path(event *inc) string {
+	return event.path
+}
+func (h *incHandler) Handle(event *inc, dest D) (await bool) {
 	for i := 0; i < event.times; i++ {
 		event.n.Add(1)
 	}
 	event.done.Done()
+	return false
 }
 
 func runStream(eventCount int, times int) {

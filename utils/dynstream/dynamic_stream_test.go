@@ -24,17 +24,19 @@ func newSimpleEventSleep(path string, wg *sync.WaitGroup, sleep time.Duration) *
 	return &simpleEvent{path: path, sleep: sleep, wg: wg}
 }
 
-func (e *simpleEvent) Path() string { return e.path }
-
 type simpleHandler struct{}
 
-func (h *simpleHandler) Handle(event *simpleEvent, dest struct{}) {
+func (h *simpleHandler) Path(event *simpleEvent) string {
+	return event.path
+}
+func (h *simpleHandler) Handle(event *simpleEvent, dest struct{}) (await bool) {
 	if event.sleep > 0 {
 		time.Sleep(event.sleep)
 	}
 	if event.wg != nil {
 		event.wg.Done()
 	}
+	return false
 }
 
 func TestDynamicStreamBasic(t *testing.T) {
@@ -64,7 +66,7 @@ func TestDynamicStreamBasic(t *testing.T) {
 
 func TestDynamicStreamSchedule(t *testing.T) {
 	handler := &simpleHandler{}
-	ds := NewDynamicStream(handler, 1*time.Hour, 1*time.Hour, 3)
+	ds := newDynamicStreamImpl(handler, 1*time.Hour, 1*time.Hour, 3)
 	ds.Start()
 
 	scheduleNow := func(rule ruleType, period time.Duration) {
