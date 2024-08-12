@@ -17,7 +17,6 @@ import (
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -391,7 +390,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 	defer cancel()
 
 	serverId := messaging.NewServerId()
-	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, serverId, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
+	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, serverId, 1, config.NewDefaultMessageCenterConfig()))
 	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, serverId)) // 100GB for demo
 
 	mockStore := newMockEventStore()
@@ -412,7 +411,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 	startTs := uint64(1)
 
 	tableEventDispatcher := dispatcher.NewTableEventDispatcher(tableSpan, mysqlSink, startTs, nil)
-	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableEventDispatcher, startTs)
+	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableEventDispatcher, startTs, nil)
 
 	time.Sleep(1 * time.Second)
 	// add events to logpuller

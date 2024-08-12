@@ -77,7 +77,7 @@ func (s *eventService) Run(ctx context.Context) error {
 			if info.IsRegister() {
 				s.registerDispatcher(ctx, info)
 			} else {
-				s.deregisterAcceptor(info)
+				s.deregisterDispatcher(info)
 			}
 		}
 	}
@@ -96,7 +96,7 @@ func (s *eventService) handleMessage(ctx context.Context, msg *messaging.TargetM
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case s.acceptorInfoCh <- msgToAcceptorInfo(msg):
+	case s.acceptorInfoCh <- msgToDispatcherInfo(msg):
 	}
 	return nil
 }
@@ -127,7 +127,7 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID), zap.Uint64("startTs", startTs))
 }
 
-func (s *eventService) deregisterAcceptor(dispatcherInfo DispatcherInfo) {
+func (s *eventService) deregisterDispatcher(dispatcherInfo DispatcherInfo) {
 	clusterID := dispatcherInfo.GetClusterID()
 	c, ok := s.brokers[clusterID]
 	if !ok {
@@ -139,6 +139,6 @@ func (s *eventService) deregisterAcceptor(dispatcherInfo DispatcherInfo) {
 }
 
 // TODO: implement the following functions
-func msgToAcceptorInfo(msg *messaging.TargetMessage) DispatcherInfo {
+func msgToDispatcherInfo(msg *messaging.TargetMessage) DispatcherInfo {
 	return msg.Message.(messaging.RegisterDispatcherRequest)
 }

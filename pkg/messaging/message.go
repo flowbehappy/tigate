@@ -18,7 +18,9 @@ type IOType int32
 const (
 	TypeInvalid IOType = iota
 	TypeBytes
+	// LogService related
 	TypeTxnEvent
+
 	TypeHeartBeatRequest
 	TypeHeartBeatResponse
 	TypeScheduleDispatcherRequest

@@ -138,7 +138,7 @@ func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startT
 	tableEventDispatcher.wg.Add(1)
 	go tableEventDispatcher.DispatcherEvents(ctx)
 
-	log.Info("table event dispatcher created", zap.Any("DispatcherID", tableEventDispatcher.id))
+	log.Info("table event dispatcher created", zap.String("DispatcherID", tableEventDispatcher.id), zap.Stringer("tableSpan", tableSpan))
 
 	return tableEventDispatcher
 }
@@ -156,8 +156,8 @@ func (d *TableEventDispatcher) DispatcherEvents(ctx context.Context) {
 			if event.IsDMLEvent() {
 				sink.AddDMLEvent(tableSpan, event)
 			} else {
-				// resolvedTs
-				d.resolvedTs.Set(event.ResolvedTs)
+				// TODO: consider the ddl event
+				continue
 			}
 		}
 	}
@@ -200,7 +200,10 @@ func (d *TableEventDispatcher) GetCheckpointTs() uint64 {
 }
 
 func (d *TableEventDispatcher) UpdateResolvedTs(ts uint64) {
-	d.GetEventChan() <- &common.TxnEvent{ResolvedTs: ts}
+	if d.tableSpan.TableID == uint64(217) {
+		log.Info("fizz update resolvedTs", zap.Uint64("tableID", d.tableSpan.TableID), zap.Uint64("resolvedTs", ts))
+	}
+	d.resolvedTs.Set(ts)
 }
 
 func (d *TableEventDispatcher) GetId() string {

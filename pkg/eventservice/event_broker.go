@@ -146,6 +146,12 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 				case <-ctx.Done():
 					return
 				case task := <-c.taskPool.popTask(chIndex):
+					if task.dispatcherStat.spanSubscription.span.TableID == uint64(217) {
+						log.Info("fizz on scan task",
+							zap.Any("tableID", task.dispatcherStat.spanSubscription.span.TableID),
+							zap.Any("watermark", task.dataRange.EndTs), zap.Any("eventCount", task.eventCount))
+					}
+
 					needScan := task.checkAndAdjustScanTask()
 					if !needScan {
 						continue
@@ -245,7 +251,6 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case m := <-c.messageCh:
-
 				// Send the message to messageCenter. Retry if the send failed.
 				for {
 					select {
@@ -261,7 +266,6 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 						log.Debug("send message failed", zap.Error(err))
 						continue
 					}
-
 					metricEventServiceSendEventDuration.Observe(time.Since(start).Seconds())
 					break
 				}
@@ -392,6 +396,11 @@ func (a *dispatcherStat) onSubscriptionWatermark(watermark uint64) {
 		dispatcherInfo: a.info,
 		eventCount:     a.spanSubscription.newEventCount.Swap(0),
 	}
+	// fizz: remove it after test
+	if a.spanSubscription.span.TableID == uint64(217) {
+		log.Info("fizz onSubscriptionWatermark", zap.Any("tableID", a.spanSubscription.span.TableID), zap.Any("watermark", watermark), zap.Any("eventCount", sub.eventCount))
+	}
+
 	select {
 	case a.notify <- sub:
 	default:
