@@ -240,7 +240,7 @@ func TestCoordinatorScheduling(t *testing.T) {
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	go func() {
-		t.Fatal(http.ListenAndServe(":8080", mux))
+		t.Fatal(http.ListenAndServe(":8300", mux))
 	}()
 
 	ctx := context.Background()
