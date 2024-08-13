@@ -54,6 +54,10 @@ type GID struct {
 	high uint64
 }
 
+func (g GID) IsZero() bool {
+	return g.low == 0 && g.high == 0
+}
+
 func NewGID() GID {
 	uuid := uuid.New()
 	return GID{
