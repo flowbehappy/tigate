@@ -73,14 +73,13 @@ func newEventBroker(
 			mu sync.RWMutex
 			m  map[string]*dispatcherStat
 		}{m: make(map[string]*dispatcherStat)},
-		msgSender:       mc,
-		changedCh:       make(chan *subscriptionChange, defaultChannelSize),
-		taskPool:        newScanTaskPool(),
-		scanWorkerCount: defaultWorkerCount,
-		messageCh:       make(chan *wrapMessage, defaultChannelSize),
-		cancel:          cancel,
-		wg:              wg,
-
+		msgSender:                       mc,
+		changedCh:                       make(chan *subscriptionChange, defaultChannelSize),
+		taskPool:                        newScanTaskPool(),
+		scanWorkerCount:                 defaultWorkerCount,
+		messageCh:                       make(chan *wrapMessage, defaultChannelSize),
+		cancel:                          cancel,
+		wg:                              wg,
 		metricEventServiceResolvedTs:    metrics.EventServiceResolvedTsGauge.WithLabelValues("all"),
 		metricEventServiceResolvedTsLag: metrics.EventServiceResolvedTsLagGauge.WithLabelValues("all"),
 	}
@@ -322,31 +321,32 @@ func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 
 func (c *eventBroker) updateMetrics(ctx context.Context) {
 	ticker := time.NewTicker(time.Second * 5)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			var minResolvedTs uint64
-			c.dispatchers.mu.RLock()
-			for _, dispatcher := range c.dispatchers.m {
-				resolvedTs := dispatcher.spanSubscription.watermark.Load()
-				if minResolvedTs == 0 || resolvedTs < minResolvedTs {
-					minResolvedTs = resolvedTs
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				var minResolvedTs uint64
+				c.dispatchers.mu.RLock()
+				for _, dispatcher := range c.dispatchers.m {
+					resolvedTs := dispatcher.spanSubscription.watermark.Load()
+					if minResolvedTs == 0 || resolvedTs < minResolvedTs {
+						minResolvedTs = resolvedTs
+					}
 				}
+				c.dispatchers.mu.RUnlock()
+				if minResolvedTs == 0 {
+					continue
+				}
+				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
+				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
+				log.Info("fizz on update metrics", zap.Uint64("minResolvedTs", minResolvedTs), zap.Any("lag", lag))
+				c.metricEventServiceResolvedTs.Set(float64(phyResolvedTs))
+				c.metricEventServiceResolvedTsLag.Set(float64(lag))
 			}
-			c.dispatchers.mu.RUnlock()
-			if minResolvedTs == 0 {
-				continue
-			}
-
-			phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
-			lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
-			log.Info("fizz on update metrics", zap.Uint64("minResolvedTs", minResolvedTs), zap.Any("lag", lag))
-			c.metricEventServiceResolvedTs.Set(float64(phyResolvedTs))
-			c.metricEventServiceResolvedTsLag.Set(float64(lag))
 		}
-	}
+	}()
 }
 
 func (c *eventBroker) close() {

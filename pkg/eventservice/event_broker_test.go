@@ -165,3 +165,19 @@ func newTableSpan(tableID uint64, start, end string) *common.TableSpan {
 	}
 	return res
 }
+
+type did struct {
+	cid uint64
+	tid uint64
+	sid uint64
+}
+
+func TestDIDAsMapKey(t *testing.T) {
+	k1 := did{1, 2, 3}
+	k2 := did{1, 2, 4}
+
+	m := make(map[did]string)
+	m[k1] = "a"
+	m[k2] = "b"
+	require.Equal(t, "a", m[k1])
+}
