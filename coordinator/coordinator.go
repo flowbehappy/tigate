@@ -16,6 +16,7 @@ package coordinator
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -31,7 +32,12 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
+	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
+	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/pingcap/tiflow/pkg/txnutil/gc"
+	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -56,14 +62,26 @@ type coordinator struct {
 	lastSaveTime         time.Time
 	lastTickTime         time.Time
 	scheduledChangefeeds utils.Map[scheduler.InferiorID, scheduler.Inferior]
+
+	gcManager  gc.Manager
+	pdClient   pd.Client
+	pdClock    pdutil.Clock
+	etcdClient etcd.CDCEtcdClient
 }
 
-func NewCoordinator(capture *common.NodeInfo, version int64) server.Coordinator {
+func NewCoordinator(capture *common.NodeInfo,
+	pdClient pd.Client,
+	pdClock pdutil.Clock,
+	etcdClient etcd.CDCEtcdClient, version int64) server.Coordinator {
 	c := &coordinator{
 		version:              version,
 		nodeInfo:             capture,
 		scheduledChangefeeds: utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior](),
 		lastTickTime:         time.Now(),
+		gcManager:            gc.NewManager(etcdClient.GetGCServiceID(), pdClient, pdClock),
+		pdClient:             pdClient,
+		etcdClient:           etcdClient,
+		pdClock:              pdClock,
 	}
 	id := scheduler.ChangefeedID(model.DefaultChangeFeedID("coordinator"))
 	c.supervisor = scheduler.NewSupervisor(
@@ -98,6 +116,15 @@ func (c *coordinator) Tick(
 	now := time.Now()
 	metrics.CoordinatorCounter.Add(float64(now.Sub(c.lastTickTime)) / float64(time.Second))
 	c.lastTickTime = now
+
+	// Owner should update GC safepoint before initializing changefeed, so
+	// changefeed can remove its "ticdc-creating" service GC safepoint during
+	// initializing.
+	//
+	// See more gc doc.
+	if err := c.updateGCSafepoint(ctx, state); err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	// 1. handle grpc messages
 	err := c.handleMessages()
@@ -346,6 +373,50 @@ func updateStatus(
 			}
 			return status, changed, nil
 		})
+}
+
+func (c *coordinator) updateGCSafepoint(
+	ctx context.Context, state *orchestrator.GlobalReactorState,
+) error {
+	minCheckpointTs, forceUpdate := c.calculateGCSafepoint(state)
+	// When the changefeed starts up, CDC will do a snapshot read at
+	// (checkpointTs - 1) from TiKV, so (checkpointTs - 1) should be an upper
+	// bound for the GC safepoint.
+	gcSafepointUpperBound := minCheckpointTs - 1
+	err := c.gcManager.TryUpdateGCSafePoint(ctx, gcSafepointUpperBound, forceUpdate)
+	return errors.Trace(err)
+}
+
+// calculateGCSafepoint calculates GCSafepoint for different upstream.
+// Note: we need to maintain a TiCDC service GC safepoint for each upstream TiDB cluster
+// to prevent upstream TiDB GC from removing data that is still needed by TiCDC.
+// GcSafepoint is the minimum checkpointTs of all changefeeds that replicating a same upstream TiDB cluster.
+func (c *coordinator) calculateGCSafepoint(state *orchestrator.GlobalReactorState) (
+	uint64, bool,
+) {
+	var minCpts uint64 = math.MaxUint64
+	var forceUpdate = false
+
+	for changefeedID, changefeedState := range state.Changefeeds {
+		if changefeedState.Info == nil || !changefeedState.Info.NeedBlockGC() {
+			continue
+		}
+		checkpointTs := changefeedState.Info.GetCheckpointTs(changefeedState.Status)
+		if minCpts > checkpointTs {
+			minCpts = checkpointTs
+		}
+		// Force update when adding a new changefeed.
+		exist := c.scheduledChangefeeds.Has(scheduler.ChangefeedID(changefeedID))
+		if !exist {
+			forceUpdate = true
+		}
+	}
+	// check if the upstream has a changefeed, if not we should update the gc safepoint
+	if minCpts == math.MaxUint64 {
+		ts := c.pdClock.CurrentTime()
+		minCpts = oracle.GoTimeToTS(ts)
+	}
+	return minCpts, forceUpdate
 }
 
 func (c *coordinator) printStatus() {

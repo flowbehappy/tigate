@@ -357,6 +357,7 @@ func (m *Maintainer) initChangefeed() error {
 		m.tableSpans.ReplaceOrInsert(tableSpan, replicaSet)
 	}
 	m.supervisor.MarkNeedAddInferior()
+	//todo: remove gc service checkpoint ts
 	return err
 }
 
