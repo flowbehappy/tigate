@@ -42,6 +42,20 @@ var (
 		Help:      "The duration of sending events by the event service",
 		Buckets:   prometheus.DefBuckets,
 	}, []string{"type"})
+	EventServiceResolvedTsGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_service",
+			Name:      "resolved_ts",
+			Help:      "resolved ts of changefeeds",
+		}, []string{"namespace", "changefeed"})
+	EventServiceResolvedTsLagGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_service",
+			Name:      "resolved_ts_lag",
+			Help:      "resolved ts lag of changefeeds in seconds",
+		}, []string{"namespace", "changefeed"})
 )
 
 // InitMetrics registers all metrics in this file.
@@ -49,4 +63,6 @@ func InitEventServiceMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(SorterOutputEventCount)
 	registry.MustRegister(EventServiceSendEventCount)
 	registry.MustRegister(EventServiceSendEventDuration)
+	registry.MustRegister(EventServiceResolvedTsGauge)
+	registry.MustRegister(EventServiceResolvedTsLagGauge)
 }

@@ -52,6 +52,9 @@ type eventBroker struct {
 	wg *sync.WaitGroup
 	// cancel is used to cancel the goroutines spawned by the eventBroker.
 	cancel context.CancelFunc
+
+	metricEventServiceResolvedTs    prometheus.HistogramVec
+	metricEventServiceResolvedTsLag prometheus.HistogramVec
 }
 
 func newEventBroker(

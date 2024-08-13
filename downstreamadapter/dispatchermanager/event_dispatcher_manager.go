@@ -386,6 +386,10 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 		// TODO: we need to consider how to deal with the checkpointTs of the removed dispatcher if the message will be discarded.
 		dispatcher.CollectDispatcherHeartBeatInfo(tableEventDispatcher, dispatcherHeartBeatInfo)
 
+		if dispatcherHeartBeatInfo.TableSpan.TableID == uint64(217) {
+			log.Info("fizz on CollectHeartbeatInfo", zap.Uint64("tableID", dispatcherHeartBeatInfo.TableSpan.TableID), zap.Uint64("checkpointTs", dispatcherHeartBeatInfo.Watermark.CheckpointTs), zap.Uint64("resolvedTs", dispatcherHeartBeatInfo.Watermark.ResolvedTs))
+		}
+
 		componentStatus := dispatcherHeartBeatInfo.ComponentStatus
 		if componentStatus == heartbeatpb.ComponentState_Stopping {
 			watermark, ok := tableEventDispatcher.TryClose()
@@ -407,6 +411,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 			message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
 				Span:            dispatcherHeartBeatInfo.TableSpan.TableSpan,
 				ComponentStatus: dispatcherHeartBeatInfo.ComponentStatus,
+				CheckpointTs:    dispatcherHeartBeatInfo.Watermark.CheckpointTs,
 			})
 		}
 	}
@@ -414,7 +419,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	for _, tableSpan := range toReomveTableSpans {
 		e.cleanTableEventDispatcher(tableSpan)
 	}
-
+	log.Info("fizz on CollectHeartbeatInfo", zap.Uint64("checkpointTs", message.Watermark.CheckpointTs), zap.Uint64("resolvedTs", message.Watermark.ResolvedTs))
 	e.metricCheckpointTs.Set(float64(oracle.ExtractPhysical(message.Watermark.CheckpointTs)))
 	e.metricResolveTs.Set(float64(oracle.ExtractPhysical(message.Watermark.ResolvedTs)))
 	return &message
