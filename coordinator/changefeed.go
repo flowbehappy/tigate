@@ -127,14 +127,15 @@ func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary boo
 }
 
 func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) rpc.Message {
-	_, ok := c.coordinator.lastState.Changefeeds[c.ID]
+	cf, ok := c.coordinator.lastState.Changefeeds[c.ID]
+	cascade := !ok || cf == nil || !shouldRunChangefeed(cf.Info.State)
 	return messaging.NewTargetMessage(messaging.ServerId(server),
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.DispatchMaintainerRequest{
 			RemoveMaintainers: []*heartbeatpb.RemoveMaintainerRequest{
 				{
 					Id:      c.ID.ID,
-					Cascade: !ok,
+					Cascade: cascade,
 				},
 			},
 		})
