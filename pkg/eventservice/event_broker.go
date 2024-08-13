@@ -87,6 +87,7 @@ func newEventBroker(
 	c.runScanWorker(ctx)
 	c.runSendMessageWorker(ctx)
 	c.logSlowDispatchers(ctx)
+	c.updateMetrics(ctx)
 	return c
 }
 

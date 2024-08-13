@@ -47,14 +47,14 @@ var (
 			Namespace: "ticdc",
 			Subsystem: "event_service",
 			Name:      "resolved_ts",
-			Help:      "resolved ts of changefeeds",
+			Help:      "resolved ts of eventService",
 		}, []string{"changefeed"})
 	EventServiceResolvedTsLagGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_service",
 			Name:      "resolved_ts_lag",
-			Help:      "resolved ts lag of changefeeds in seconds",
+			Help:      "resolved ts lag of eventService in seconds",
 		}, []string{"changefeed"})
 )
 

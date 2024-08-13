@@ -98,7 +98,7 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherMa
 func (c *HeartBeatCollector) SendHeartBeatMessages() {
 	for {
 		heartBeatRequestWithTargetID := c.requestQueue.Dequeue()
-		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendEvent(&messaging.TargetMessage{
+		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(&messaging.TargetMessage{
 			To:      heartBeatRequestWithTargetID.TargetID,
 			Topic:   messaging.MaintainerManagerTopic,
 			Type:    messaging.TypeHeartBeatRequest,
