@@ -48,14 +48,14 @@ var (
 			Subsystem: "event_service",
 			Name:      "resolved_ts",
 			Help:      "resolved ts of changefeeds",
-		}, []string{"namespace", "changefeed"})
+		}, []string{"changefeed"})
 	EventServiceResolvedTsLagGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_service",
 			Name:      "resolved_ts_lag",
 			Help:      "resolved ts lag of changefeeds in seconds",
-		}, []string{"namespace", "changefeed"})
+		}, []string{"changefeed"})
 )
 
 // InitMetrics registers all metrics in this file.

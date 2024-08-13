@@ -299,6 +299,8 @@ func (m *Maintainer) calCheckpointTs() {
 }
 
 func (m *Maintainer) updateMetrics() {
+	log.Info("fizz update metrics", zap.String("id", m.id.String()), zap.Uint64("checkpointTs", m.watermark.CheckpointTs), zap.Uint64("resolvedTs", m.watermark.ResolvedTs))
+
 	phyCkpTs := oracle.ExtractPhysical(m.watermark.CheckpointTs)
 	m.changefeedCheckpointTsGauge.Set(float64(phyCkpTs))
 	lag := (oracle.GetPhysical(time.Now()) - phyCkpTs) / 1e3
@@ -368,9 +370,6 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 
 	var status []scheduler.InferiorStatus
 	for _, info := range req.Statuses {
-		if info.Span.TableID == uint64(217) {
-			log.Info("fizz on heartbeat request", zap.Uint64("tableID", info.Span.TableID), zap.Uint64("checkpointTs", info.CheckpointTs))
-		}
 		status = append(status, &ReplicaSetStatus{
 			ID: &common.TableSpan{
 				TableSpan: info.Span,
