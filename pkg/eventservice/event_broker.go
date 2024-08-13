@@ -342,7 +342,7 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 
 			phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
 			lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
-
+			log.Info("fizz on update metrics", zap.Uint64("minResolvedTs", minResolvedTs), zap.Any("lag", lag))
 			c.metricEventServiceResolvedTs.Set(float64(phyResolvedTs))
 			c.metricEventServiceResolvedTsLag.Set(float64(lag))
 		}
