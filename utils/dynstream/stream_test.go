@@ -39,11 +39,13 @@ func newMockEvent(id int, path string, sleep time.Duration, work mockWork, start
 	return e
 }
 
-func (e *mockEvent) Path() string { return e.path }
-
 type mockHandler struct{}
 
-func (h *mockHandler) Handle(event *mockEvent, dest any) {
+func (h *mockHandler) Path(event *mockEvent) string {
+	return event.path
+}
+
+func (h *mockHandler) Handle(event *mockEvent, dest any) (await bool) {
 	if event.start != nil {
 		event.start.Done()
 	}
@@ -57,6 +59,8 @@ func (h *mockHandler) Handle(event *mockEvent, dest any) {
 	if event.done != nil {
 		event.done.Done()
 	}
+
+	return false
 }
 
 type Inc struct {

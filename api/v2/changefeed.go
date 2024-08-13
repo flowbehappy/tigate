@@ -14,6 +14,7 @@
 package v2
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -30,9 +31,11 @@ import (
 	"github.com/pingcap/tiflow/cdc/owner"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/etcd"
+	"github.com/pingcap/tiflow/pkg/filter"
 	"github.com/pingcap/tiflow/pkg/txnutil/gc"
 	"github.com/pingcap/tiflow/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -375,4 +378,333 @@ func (h *OpenAPIV2) deleteChangefeed(c *gin.Context) {
 		CheckpointTs: status.CheckpointTs,
 		SinkURI:      cfInfo.SinkURI,
 	})
+}
+
+// pauseChangefeed handles pause changefeed request
+// PauseChangefeed pauses a changefeed
+// @Summary Pause a changefeed
+// @Description Pause a changefeed
+// @Tags changefeed,v2
+// @Accept json
+// @Produce json
+// @Param changefeed_id  path  string  true  "changefeed_id"
+// @Param namespace query string false "default"
+// @Success 200 {object} EmptyResponse
+// @Failure 500,400 {object} model.HTTPError
+// @Router /api/v2/changefeeds/{changefeed_id}/pause [post]
+func (h *OpenAPIV2) pauseChangefeed(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	changefeedID := model.ChangeFeedID{Namespace: model.DefaultNamespace, ID: c.Param(api.APIOpVarChangefeedID)}
+	if err := model.ValidateChangefeedID(changefeedID.ID); err != nil {
+		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
+			changefeedID.ID))
+		return
+	}
+	if err := model.ValidateChangefeedID(changefeedID.ID); err != nil {
+		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
+			changefeedID.ID))
+		return
+	}
+
+	etcdCli := h.server.GetEtcdClient()
+	infoKey := etcd.GetEtcdKeyChangeFeedInfo(etcdCli.GetClusterID(), changefeedID)
+	resp, err := etcdCli.GetEtcdClient().Get(ctx, infoKey)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	if resp.Count == 0 {
+		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("changefeed: %s not found",
+			changefeedID.ID))
+		return
+	}
+	detail := &model.ChangeFeedInfo{}
+	err = detail.Unmarshal(resp.Kvs[0].Value)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	detail.State = model.StateStopped
+	newStr, err := detail.Marshal()
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	opsThen := []clientv3.Op{}
+	opsThen = append(opsThen, clientv3.OpPut(infoKey, newStr))
+
+	putResp, err := etcdCli.GetEtcdClient().Txn(ctx, []clientv3.Cmp{
+		clientv3.Compare(clientv3.ModRevision(infoKey), "=", resp.Kvs[0].ModRevision),
+	}, opsThen, []clientv3.Op{})
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	if !putResp.Succeeded {
+		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("pause changefeed %s", changefeedID))
+		_ = c.Error(err)
+		return
+	}
+	c.JSON(http.StatusOK, &cdcapi.EmptyResponse{})
+}
+
+// resumeChangefeed handles resume changefeed request.
+// ResumeChangefeed resumes a changefeed
+// @Summary Resume a changefeed
+// @Description Resume a changefeed
+// @Tags changefeed,v2
+// @Accept json
+// @Produce json
+// @Param changefeed_id path string true "changefeed_id"
+// @Param namespace query string false "default"
+// @Param resumeConfig body ResumeChangefeedConfig true "resume config"
+// @Success 200 {object} EmptyResponse
+// @Failure 500,400 {object} model.HTTPError
+// @Router	/api/v2/changefeeds/{changefeed_id}/resume [post]
+func (h *OpenAPIV2) resumeChangefeed(c *gin.Context) {
+	ctx := c.Request.Context()
+	changefeedID := model.ChangeFeedID{Namespace: model.DefaultNamespace, ID: c.Param(api.APIOpVarChangefeedID)}
+	if err := model.ValidateChangefeedID(changefeedID.ID); err != nil {
+		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
+			changefeedID.ID))
+		return
+	}
+	if err := model.ValidateChangefeedID(changefeedID.ID); err != nil {
+		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
+			changefeedID.ID))
+		return
+	}
+
+	cfg := new(cdcapi.ResumeChangefeedConfig)
+	if err := c.BindJSON(&cfg); err != nil {
+		_ = c.Error(errors.WrapError(errors.ErrAPIInvalidParam, err))
+		return
+	}
+	etcdCli := h.server.GetEtcdClient()
+	infoKey := etcd.GetEtcdKeyChangeFeedInfo(etcdCli.GetClusterID(), changefeedID)
+	resp, err := etcdCli.GetEtcdClient().Get(ctx, infoKey)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	if resp.Count == 0 {
+		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("changefeed: %s not found",
+			changefeedID.ID))
+		return
+	}
+	detail := &model.ChangeFeedInfo{}
+	err = detail.Unmarshal(resp.Kvs[0].Value)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	status, _, err := etcdCli.GetChangeFeedStatus(ctx, changefeedID)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	// If there is no overrideCheckpointTs, then check whether the currentCheckpointTs is smaller than gc safepoint or not.
+	newCheckpointTs := status.CheckpointTs
+	if cfg.OverwriteCheckpointTs != 0 {
+		newCheckpointTs = cfg.OverwriteCheckpointTs
+	}
+
+	if err := verifyResumeChangefeedConfig(
+		ctx,
+		h.server.GetPdClient(),
+		etcdCli.GetEnsureGCServiceID(gc.EnsureGCServiceResuming),
+		changefeedID,
+		newCheckpointTs); err != nil {
+		_ = c.Error(err)
+		return
+	}
+	needRemoveGCSafePoint := false
+	defer func() {
+		if !needRemoveGCSafePoint {
+			return
+		}
+		err := gc.UndoEnsureChangefeedStartTsSafety(
+			ctx,
+			h.server.GetPdClient(),
+			etcdCli.GetEnsureGCServiceID(gc.EnsureGCServiceResuming),
+			changefeedID,
+		)
+		if err != nil {
+			_ = c.Error(err)
+			return
+		}
+	}()
+
+	detail.State = model.StateNormal
+	newStr, err := detail.Marshal()
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	opsThen := []clientv3.Op{}
+	opsThen = append(opsThen, clientv3.OpPut(infoKey, newStr))
+
+	putResp, err := etcdCli.GetEtcdClient().Txn(ctx, []clientv3.Cmp{
+		clientv3.Compare(clientv3.ModRevision(infoKey), "=", resp.Kvs[0].ModRevision),
+	}, opsThen, []clientv3.Op{})
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	if !putResp.Succeeded {
+		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("pause changefeed %s", changefeedID))
+		_ = c.Error(err)
+		return
+	}
+
+	c.JSON(http.StatusOK, &cdcapi.EmptyResponse{})
+}
+
+// updateChangefeed handles update changefeed request,
+// it returns the updated changefeedInfo
+// Can only update a changefeed's: TargetTs, SinkURI,
+// ReplicaConfig, PDAddrs, CAPath, CertPath, KeyPath,
+// SyncPointEnabled, SyncPointInterval
+// UpdateChangefeed updates a changefeed
+// @Summary Update a changefeed
+// @Description Update a changefeed
+// @Tags changefeed,v2
+// @Accept json
+// @Produce json
+// @Param changefeed_id  path  string  true  "changefeed_id"
+// @Param namespace query string false "default"
+// @Param changefeedConfig body ChangefeedConfig true "changefeed config"
+// @Success 200 {object} ChangeFeedInfo
+// @Failure 500,400 {object} model.HTTPError
+// @Router /api/v2/changefeeds/{changefeed_id} [put]
+func (h *OpenAPIV2) updateChangefeed(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	changefeedID := model.ChangeFeedID{Namespace: model.DefaultNamespace, ID: c.Param(api.APIOpVarChangefeedID)}
+	if err := model.ValidateChangefeedID(changefeedID.ID); err != nil {
+		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
+			changefeedID.ID))
+		return
+	}
+
+	etcdCli := h.server.GetEtcdClient()
+	infoKey := etcd.GetEtcdKeyChangeFeedInfo(etcdCli.GetClusterID(), changefeedID)
+	resp, err := etcdCli.GetEtcdClient().Get(ctx, infoKey)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	if resp.Count == 0 {
+		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("changefeed: %s not found",
+			changefeedID.ID))
+		return
+	}
+	oldCfInfo := &model.ChangeFeedInfo{}
+	err = oldCfInfo.Unmarshal(resp.Kvs[0].Value)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	switch oldCfInfo.State {
+	case model.StateStopped, model.StateFailed:
+	default:
+		_ = c.Error(
+			errors.ErrChangefeedUpdateRefused.GenWithStackByArgs(
+				"can only update changefeed config when it is stopped or failed",
+			),
+		)
+		return
+	}
+
+	status, _, err := etcdCli.GetChangeFeedStatus(ctx, changefeedID)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	updateCfConfig := &cdcapi.ChangefeedConfig{}
+	if err = c.BindJSON(updateCfConfig); err != nil {
+		_ = c.Error(errors.WrapError(errors.ErrAPIInvalidParam, err))
+		return
+	}
+
+	if updateCfConfig.TargetTs != 0 {
+		if updateCfConfig.TargetTs <= oldCfInfo.StartTs {
+			_ = c.Error(errors.ErrChangefeedUpdateRefused.GenWithStack(
+				"can not update target_ts:%d less than start_ts:%d",
+				updateCfConfig.TargetTs, oldCfInfo.StartTs))
+			return
+		}
+		oldCfInfo.TargetTs = updateCfConfig.TargetTs
+	}
+	if updateCfConfig.ReplicaConfig != nil {
+		oldCfInfo.Config = updateCfConfig.ReplicaConfig.ToInternalReplicaConfig()
+	}
+	if updateCfConfig.SinkURI != "" {
+		oldCfInfo.SinkURI = updateCfConfig.SinkURI
+	}
+
+	// verify changefeed filter
+	_, err = filter.NewFilter(oldCfInfo.Config, "")
+	if err != nil {
+		_ = c.Error(errors.ErrChangefeedUpdateRefused.
+			GenWithStackByArgs(errors.Cause(err).Error()))
+		return
+	}
+
+	err = etcdCli.UpdateChangefeedAndUpstream(ctx, nil, oldCfInfo)
+	if err != nil {
+		_ = c.Error(errors.Trace(err))
+		return
+	}
+	c.JSON(http.StatusOK, toAPIModel(oldCfInfo, status.CheckpointTs, status.CheckpointTs, nil))
+}
+
+// verifyResumeChangefeedConfig verifies the changefeed config before resuming a changefeed
+// overrideCheckpointTs is the checkpointTs of the changefeed that specified by the user.
+// or it is the checkpointTs of the changefeed before it is paused.
+// we need to check weather the resuming changefeed is gc safe or not.
+func verifyResumeChangefeedConfig(
+	ctx context.Context,
+	pdClient pd.Client,
+	gcServiceID string,
+	changefeedID model.ChangeFeedID,
+	overrideCheckpointTs uint64,
+) error {
+	if overrideCheckpointTs == 0 {
+		return nil
+	}
+
+	ts, logical, err := pdClient.GetTS(ctx)
+	if err != nil {
+		return errors.ErrPDEtcdAPIError.GenWithStackByArgs("fail to get ts from pd client")
+	}
+	currentTSO := oracle.ComposeTS(ts, logical)
+	if overrideCheckpointTs > currentTSO {
+		return errors.ErrAPIInvalidParam.GenWithStack(
+			"invalid checkpoint-ts %v, larger than current tso %v", overrideCheckpointTs, currentTSO)
+	}
+
+	// 1h is enough for resuming a changefeed.
+	gcTTL := int64(60 * 60)
+	err = gc.EnsureChangefeedStartTsSafety(
+		ctx,
+		pdClient,
+		gcServiceID,
+		changefeedID,
+		gcTTL, overrideCheckpointTs)
+	if err != nil {
+		if !errors.ErrStartTsBeforeGC.Equal(err) {
+			return errors.ErrPDEtcdAPIError.Wrap(err)
+		}
+		return err
+	}
+
+	return nil
 }

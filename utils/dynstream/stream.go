@@ -11,26 +11,103 @@ import (
 
 var nextReportRound = atomic.Int64{}
 
-// Only contains one kind of event:
-// 1. event + pathInfo
-// 2. wake = true
-type eventWrap[P Path, T Event[P], D any] struct {
-	event    T
-	pathInfo *pathInfo[P, T, D]
+// ====== internal types ======
 
-	wake bool
+type pathStat[P Path, T Event, D Dest] struct {
+	pathInfo  *pathInfo[P, T, D]
+	totalTime time.Duration
+	count     int
+	heapIndex int
+}
+
+func (p *pathStat[P, T, D]) busyRatio(period time.Duration) float64 {
+	if period == 0 {
+		return 0
+	} else {
+		return float64(p.totalTime) / float64(period)
+	}
+}
+
+// Implement heap.Item interface
+func (p *pathStat[P, T, D]) SetHeapIndex(index int) { p.heapIndex = index }
+func (p *pathStat[P, T, D]) GetHeapIndex() int      { return p.heapIndex }
+func (p *pathStat[P, T, D]) CompareTo(o *pathStat[P, T, D]) int {
+	return int(p.totalTime - o.totalTime)
+} // It is safe on a 64-bit machine.
+
+type pathInfo[P Path, T Event, D Dest] struct {
+	// Note that although this struct is used by multiple goroutines, it doesn't need synchronization because
+	// different fields are either immutable or accessed by different goroutines.
+	// We use one struct to store them together to avoid mapping by path in different places in many times.
+
+	path P
+	dest D
+
+	stream *stream[P, T, D]
+
+	pendingQueue *deque.Deque[T]
+	blocking     bool
+
+	reportRound int64
+	pathStat    *pathStat[P, T, D]
+}
+
+func newPathInfo[P Path, T Event, D Dest](path P, dest D) *pathInfo[P, T, D] {
+	pi := &pathInfo[P, T, D]{
+		path:         path,
+		dest:         dest,
+		pendingQueue: deque.NewDeque[T](32, 0),
+		pathStat:     &pathStat[P, T, D]{},
+	}
+	return pi
+}
+
+func (pi *pathInfo[P, T, D]) resetStat() {
+	// Don't create a new pathStat on the heap, just reset the fields.
+	(*pi.pathStat) = pathStat[P, T, D]{pathInfo: pi}
+}
+
+type streamStat[P Path, T Event, D Dest] struct {
+	id int
+
+	period    time.Duration
+	totalTime time.Duration
+	count     int
+
+	pendingLen int
+
+	mostBusyPath heap.Heap[*pathStat[P, T, D]]
+}
+
+func tryAddPathToBusyHeap[P Path, T Event, D Dest](heap heap.Heap[*pathStat[P, T, D]], pi *pathStat[P, T, D], trackTop int) {
+	if heap.Len() < trackTop {
+		heap.AddOrUpdate(pi)
+	} else if top, _ := heap.PeekTop(); top.CompareTo(pi) < 0 {
+		heap.PopTop()
+		heap.AddOrUpdate(pi)
+	}
+}
+
+// Only contains one kind of event:
+// 1. event
+// 2. wake = true
+type eventWrap[P Path, T Event, D Dest] struct {
+	event T
+	wake  bool
+
+	pathInfo *pathInfo[P, T, D]
 }
 
 func (e eventWrap[P, T, D]) isZero() bool {
-	return e.pathInfo == nil && !e.wake
+	return e.pathInfo == nil
 }
 
-type eventSignal[P Path, T Event[P], D any] struct {
+type eventSignal[P Path, T Event, D Dest] struct {
 	pathInfo   *pathInfo[P, T, D]
 	eventCount int
 }
 
-type doneInfo[P Path, T Event[P], D any] struct {
+type doneInfo[P Path, T Event, D Dest] struct {
 	pathInfo   *pathInfo[P, T, D]
 	handleTime time.Duration
 }
@@ -39,7 +116,10 @@ func (d doneInfo[P, T, D]) isZero() bool {
 	return d.pathInfo == nil
 }
 
-type stream[P Path, T Event[P], D any] struct {
+// A stream uses two goroutines
+// 1. handleLoop: to handle the events.
+// 2. reportStatLoop: to report the statistics.
+type stream[P Path, T Event, D Dest] struct {
 	id int
 
 	handler Handler[P, T, D]
@@ -62,7 +142,7 @@ type stream[P Path, T Event[P], D any] struct {
 	reportDone sync.WaitGroup
 }
 
-func newStream[P Path, T Event[P], D any](
+func newStream[P Path, T Event, D Dest](
 	id int,
 	handler Handler[P, T, D],
 	reportChan chan streamStat[P, T, D],
@@ -100,9 +180,7 @@ func (s *stream[P, T, D]) start(acceptedPaths []*pathInfo[P, T, D], formerStream
 	go s.reportStatLoop()
 }
 
-// Close the stream and return the running event.
-// Not all of the new streams need to wait for the former stream's handle goroutine to finish.
-// Only the streams that are interested in the path of the running event need to wait.
+// Close the stream and wait for all goroutines to exit.
 func (s *stream[P, T, D]) close() {
 	if s.hasClosed.CompareAndSwap(false, true) {
 		close(s.inChan)
@@ -189,9 +267,7 @@ Loop:
 					return
 				}
 			default:
-				now := time.Now()
-
-				signal, ok := s.signalQueue.PopFront()
+				signal, ok := s.signalQueue.FrontRef() // We are going to update the signal directly, so we need the reference.
 				if !ok {
 					drainPending = true
 					continue Loop
@@ -201,29 +277,31 @@ Loop:
 				}
 				if signal.pathInfo.blocking {
 					// The path is blocking, we should ignore the signal completely.
+					s.signalQueue.PopFront()
 					continue Loop
 				}
 
 				e, ok := signal.pathInfo.pendingQueue.PopFront()
 				if !ok {
 					// The pendingQueue of the targe path is empty, we should ignore the signal completely.
+					s.signalQueue.PopFront()
 					continue Loop
 				}
 
-				s.handler.Handle(e, signal.pathInfo.dest)
+				now := time.Now()
+				signal.pathInfo.blocking = s.handler.Handle(e, signal.pathInfo.dest)
+
+				s.donChan <- doneInfo[P, T, D]{pathInfo: signal.pathInfo, handleTime: time.Since(now)}
+
 				s.pendingLen--
 				if s.pendingLen < 0 {
 					panic("pendingLen is less than zero")
 				}
 
 				signal.eventCount--
-				if signal.eventCount > 0 {
-					// The signal is still valid, we should push it back to the signalQueue.
-					s.signalQueue.PushFront(signal)
+				if signal.eventCount == 0 {
+					s.signalQueue.PopFront()
 				}
-
-				// We want the handle time to be as long as possible
-				s.donChan <- doneInfo[P, T, D]{pathInfo: signal.pathInfo, handleTime: time.Since(now)}
 			}
 		}
 	}
