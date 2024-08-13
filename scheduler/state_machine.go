@@ -214,7 +214,8 @@ func NewStateMachine(
 		sm.State = SchedulerStatusRemoving
 	}
 	log.Info("initialize state machine",
-		zap.Any("statemachine", sm))
+		zap.Any("id", sm.ID),
+		zap.Any("state", sm.State))
 
 	return sm, nil
 }

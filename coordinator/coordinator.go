@@ -15,7 +15,6 @@ package coordinator
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -263,6 +262,9 @@ func (c *coordinator) saveChangefeedStatus() {
 				return true
 			}
 			cf := value.(*changefeed)
+			if cf.State == nil {
+				return true
+			}
 			if !shouldRunChangefeed(model.FeedState(cf.State.FeedState)) {
 				cfState.PatchInfo(func(info *model.ChangeFeedInfo) (*model.ChangeFeedInfo, bool, error) {
 					info.State = model.FeedState(cf.State.FeedState)
@@ -426,7 +428,6 @@ func (c *coordinator) printStatus() {
 		absentTask := 0
 		commitTask := 0
 		removingTask := 0
-		var taskDistribution string
 		c.supervisor.StateMachines.Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
 			switch value.State {
 			case scheduler.SchedulerStatusAbsent:
@@ -440,11 +441,9 @@ func (c *coordinator) printStatus() {
 			case scheduler.SchedulerStatusRemoving:
 				removingTask++
 			}
-			taskDistribution = fmt.Sprintf("%s, %s==>%s", taskDistribution, value.ID.String(), value.Primary)
 			return true
 		})
 		log.Info("changefeed status",
-			zap.String("distribution", taskDistribution),
 			zap.Int("absent", absentTask),
 			zap.Int("prepare", prepareTask),
 			zap.Int("commit", commitTask),
