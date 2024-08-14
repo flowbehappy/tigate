@@ -116,11 +116,6 @@ func (c *coordinator) Tick(
 	metrics.CoordinatorCounter.Add(float64(now.Sub(c.lastTickTime)) / float64(time.Second))
 	c.lastTickTime = now
 
-	// Owner should update GC safepoint before initializing changefeed, so
-	// changefeed can remove its "ticdc-creating" service GC safepoint during
-	// initializing.
-	//
-	// See more gc doc.
 	if err := c.updateGCSafepoint(ctx, state); err != nil {
 		return nil, errors.Trace(err)
 	}
