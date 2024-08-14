@@ -14,12 +14,16 @@
 package dispatcher
 
 import (
+	"context"
+	"sync"
+
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/pingcap/tiflow/pkg/filter"
-
+	"github.com/google/uuid"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/pkg/filter"
+	"go.uber.org/zap"
 )
 
 //filter 问题 -- 能收到这条就至少说明有相关的 table（比如 renames / create tables / exchange partitions -- 这个应该不支持一个在一个不在的），对于跟 table 有关的表来说，那就前面两种就可以在 ddl 生成的时候用 config 处理了
@@ -85,69 +89,121 @@ It also communicates with the Maintainer periodically to report self progress,
 and get the other dispatcher's progress and action of the blocked event.
 */
 type TableTriggerEventDispatcher struct {
-	Id            string
-	Ch            chan *common.TxnEvent // 接受 event -- 先做个基础版本的，每次处理一条 ddl 的那种
-	Filter        filter.Filter
-	sink          sink.Sink
-	HeartbeatChan chan *HeartBeatResponseMessage
-	State         *State
-	tableSpan     *common.TableSpan // 给一个特殊的 tableSpan
-	ResolvedTs    uint64
+	id              string
+	eventCh         chan *common.TxnEvent
+	filter          filter.Filter
+	sink            sink.Sink
+	ddlActions      chan *heartbeatpb.DispatcherAction
+	tableSpan       *common.TableSpan // 给一个特殊的 tableSpan
+	resolvedTs      *TsWithMutex
+	componentStatus *ComponentStateWithMutex
 
-	MemoryUsage *MemoryUsage
+	tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus
+
+	wg     sync.WaitGroup
+	cancel context.CancelFunc
+	//MemoryUsage *MemoryUsage
+}
+
+func NewTableTriggerEventDispatcher(sink sink.Sink, startTs uint64, tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter) *TableTriggerEventDispatcher {
+	ctx, cancel := context.WithCancel(context.Background())
+	tableTriggerEventDispatcher := &TableTriggerEventDispatcher{
+		id:                    uuid.NewString(),
+		filter:                filter,
+		eventCh:               make(chan *common.TxnEvent, 1000),
+		resolvedTs:            newTsWithMutex(startTs),
+		ddlActions:            make(chan *heartbeatpb.DispatcherAction, 16),
+		tableSpanStatusesChan: tableSpanStatusesChan,
+		sink:                  sink,
+		tableSpan:             &common.DDLSpan,
+		componentStatus:       newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
+		cancel:                cancel,
+		//MemoryUsage:   dispatcher.NewMemoryUsage(),
+	}
+	tableTriggerEventDispatcher.sink.AddTableSpan(tableTriggerEventDispatcher.tableSpan)
+
+	tableTriggerEventDispatcher.wg.Add(1)
+	go tableTriggerEventDispatcher.DispatcherEvents(ctx)
+
+	log.Info("table trigger event dispatcher created", zap.Any("DispatcherID", tableTriggerEventDispatcher.id))
+
+	return tableTriggerEventDispatcher
+}
+
+func (d *TableTriggerEventDispatcher) DispatcherEvents(ctx context.Context) {
+	defer d.wg.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event := <-d.GetEventChan():
+			if event.IsDDLEvent() {
+				AddDDLEventToSinkWhenAvailable(d, event)
+			} else {
+				d.resolvedTs.Set(event.ResolvedTs)
+			}
+		}
+	}
 }
 
 func (d *TableTriggerEventDispatcher) GetSink() sink.Sink {
-	return d.Sink
+	return d.sink
 }
 
 func (d *TableTriggerEventDispatcher) GetTableSpan() *common.TableSpan {
-	return d.TableSpan
-}
-
-func (d *TableTriggerEventDispatcher) GetState() *State {
-	return d.State
+	return d.tableSpan
 }
 
 func (d *TableTriggerEventDispatcher) GetEventChan() chan *common.TxnEvent {
-	return d.Ch
+	return d.eventCh
 }
 
 func (d *TableTriggerEventDispatcher) GetResolvedTs() uint64 {
-	return d.ResolvedTs
+	return d.resolvedTs.Get()
 }
 
 func (d *TableTriggerEventDispatcher) GetId() string {
-	return d.Id
+	return d.id
 }
 
 func (d *TableTriggerEventDispatcher) GetDispatcherType() DispatcherType {
 	return TableTriggerEventDispatcherType
 }
 
-func (d *TableTriggerEventDispatcher) GetHeartBeatChan() chan *HeartBeatResponseMessage {
-	return d.HeartbeatChan
+func (d *TableTriggerEventDispatcher) GetDDLActions() chan *heartbeatpb.DispatcherAction {
+	return d.ddlActions
+}
+
+func (d *TableTriggerEventDispatcher) GetTableSpanStatusesChan() chan *heartbeatpb.TableSpanStatus {
+	return d.tableSpanStatusesChan
 }
 
 func (d *TableTriggerEventDispatcher) UpdateResolvedTs(ts uint64) {
-	d.ResolvedTs = ts
+	d.GetEventChan() <- &common.TxnEvent{ResolvedTs: ts}
 }
 
-func (d *TableTriggerEventDispatcher) GetSyncPointInfo() *SyncPointInfo {
-	log.Error("TableEventDispatcher.GetSyncPointInfo is not implemented")
-	return nil
-}
+// func (d *TableTriggerEventDispatcher) GetSyncPointInfo() *SyncPointInfo {
+// 	log.Error("TableEventDispatcher.GetSyncPointInfo is not implemented")
+// 	return nil
+// }
 
-func (d *TableTriggerEventDispatcher) GetMemoryUsage() *MemoryUsage {
-	return d.MemoryUsage
-}
+// func (d *TableTriggerEventDispatcher) GetMemoryUsage() *MemoryUsage {
+// 	return d.MemoryUsage
+// }
 
 func (d *TableTriggerEventDispatcher) PushTxnEvent(event *common.TxnEvent) {
 	//d.GetMemoryUsage().Add(event.CommitTs, event.MemoryCost())
-	d.Ch <- event // 换成一个函数
+	d.GetEventChan() <- event // 换成一个函数
 }
 
-func (d *TableTriggerEventDispatcher) GetCheckpointTs() uint64 { return 0 }
+func (d *TableTriggerEventDispatcher) GetCheckpointTs() uint64 {
+	checkpointTs := d.GetSink().GetCheckpointTs(d.GetTableSpan())
+	if checkpointTs == 0 {
+		// 说明从没有数据写到过 sink，则选择用 resolveTs 作为 checkpointTs
+		checkpointTs = d.GetResolvedTs()
+	}
+	return checkpointTs
+}
 
 func (d *TableTriggerEventDispatcher) GetComponentStatus() heartbeatpb.ComponentState {
 	return heartbeatpb.ComponentState_Working
@@ -160,7 +216,7 @@ func (d *TableTriggerEventDispatcher) TryClose() (w heartbeatpb.Watermark, ok bo
 	if d.sink.IsEmpty(d.tableSpan) {
 		d.sink.RemoveTableSpan(d.tableSpan)
 		w.CheckpointTs = w.GetCheckpointTs()
-		w.ResolvedTs = d.ResolvedTs
+		w.ResolvedTs = d.GetResolvedTs()
 		return w, true
 	}
 	return w, false

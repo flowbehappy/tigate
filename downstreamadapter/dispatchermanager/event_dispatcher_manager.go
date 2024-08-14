@@ -19,7 +19,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/filter"
 	"github.com/prometheus/client_golang/prometheus"
@@ -147,9 +146,6 @@ func (e *EventDispatcherManager) Init(startTs uint64) error {
 
 	e.sink = sink.NewMysqlSink(e.changefeedID, 16, cfg, db)
 
-	//Init Table Trigger Event Dispatcher
-	e.tableTriggerEventDispatcher = e.newTableTriggerEventDispatcher(startTs)
-
 	// get heartbeat response from HeartBeatResponseQueue, and send to each dispatcher
 	e.wg.Add(1)
 	go func() {
@@ -168,6 +164,9 @@ func (e *EventDispatcherManager) Init(startTs uint64) error {
 			}
 		}
 	}()
+
+	//Init Table Trigger Event Dispatcher
+	e.tableTriggerEventDispatcher = e.newTableTriggerEventDispatcher(startTs)
 
 	return nil
 }
@@ -299,7 +298,6 @@ func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx conte
 
 			var message heartbeatpb.HeartBeatRequest
 			message.ChangefeedID = e.changefeedID.ID
-			//message := e.CollectHeartbeatInfo(false)
 			message.Statuses = statusMessage
 			e.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
 		}
@@ -334,22 +332,11 @@ func (e *EventDispatcherManager) cleanTableEventDispatcher(tableSpan *common.Tab
 }
 
 func (e *EventDispatcherManager) newTableTriggerEventDispatcher(startTs uint64) *dispatcher.TableTriggerEventDispatcher {
-	tableTriggerEventDispatcher := &dispatcher.TableTriggerEventDispatcher{
-		Id:            uuid.NewString(),
-		Filter:        e.filter,
-		Ch:            make(chan *common.TxnEvent, 1000),
-		ResolvedTs:    startTs,
-		HeartbeatChan: make(chan *dispatcher.HeartBeatResponseMessage, 100),
-		sink:          e.sink,
-		tableSpan:     &common.DDLSpan,
-		State:         dispatcher.NewState(),
-		//MemoryUsage:   dispatcher.NewMemoryUsage(),
-	}
+	tableTriggerEventDispatcher := dispatcher.NewTableTriggerEventDispatcher(e.sink, startTs, e.tableSpanStatusesChan, e.filter)
 
 	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableTriggerEventDispatcher, startTs, toFilterConfigPB(e.config.Filter))
 
 	return tableTriggerEventDispatcher
-
 }
 
 func toFilterConfigPB(filter *cfg.FilterConfig) *eventpb.FilterConfig {

@@ -278,7 +278,7 @@ func (s *MysqlSink) GetCheckpointTs(tableSpan *common.TableSpan) uint64 {
 		return math.MaxUint64
 	}
 
-	return tableStatus.getProgress().MaxCheckpointTs()
+	return tableStatus.getProgress().GetCheckpointTs()
 }
 
 func (s *MysqlSink) Close() {

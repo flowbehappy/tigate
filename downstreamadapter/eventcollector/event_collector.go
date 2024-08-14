@@ -196,11 +196,6 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 	}
 
 	dispatcherID := txnEvent.DispatcherID
-	// log.Info("Recv TxnEvent", zap.Any("dispatcherID", dispatcherID), zap.Any("event is dml event", txnEvent.IsDMLEvent()))
-	// if txnEvent.IsDMLEvent() {
-	// 	rowEvent := txnEvent.GetRows()[0]
-	// 	log.Info("Recv TxnEvent", zap.Any("dispatcherID", dispatcherID), zap.Any("event info", rowEvent.CommitTs), zap.Any("table name", rowEvent.TableInfo.TableName))
-	// }
 
 	if dispatcherItem, ok := c.dispatcherMap.Get(dispatcherID); ok {
 		// check whether need to update speed ratio
@@ -229,7 +224,7 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 		// }
 		//for _, txnEvent := range eventFeeds.TxnEvents {
 		// TODO: message 改过以后重写，先串起来。
-		if txnEvent.IsDMLEvent() {
+		if txnEvent.IsDMLEvent() || txnEvent.IsDDLEvent() {
 			dispatcherItem.PushTxnEvent(txnEvent)
 			c.metricDispatcherReceivedKVEventCount.Inc()
 		} else {

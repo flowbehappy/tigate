@@ -77,7 +77,7 @@ func (p *TableProgress) Empty() bool {
 // 返回当前 tableSpan 中最大的 checkpointTs，也就是最大的 ts，并且 <= ts 之前的数据都已经成功写下去了
 // 1. 假设目前 sink 还有没 flush 下去的 event，就拿最小的这个 event的 commitTs。
 // 2. 反之，则选择收到过 event 中 commitTs 最大的那个。
-func (p *TableProgress) MaxCheckpointTs() uint64 {
+func (p *TableProgress) GetCheckpointTs() uint64 {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 

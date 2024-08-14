@@ -14,6 +14,8 @@
 package dispatcher
 
 import (
+	"time"
+
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -64,6 +66,7 @@ type Dispatcher interface {
 	// PushEvent(event *eventpb.TxnEvent)
 	PushTxnEvent(event *common.TxnEvent)
 	GetComponentStatus() heartbeatpb.ComponentState
+	GetTableSpanStatusesChan() chan *heartbeatpb.TableSpanStatus
 
 	TryClose() (w heartbeatpb.Watermark, ok bool)
 }
@@ -90,6 +93,61 @@ type HeartBeatInfo struct {
 	Id              string
 	TableSpan       *common.TableSpan
 	ComponentStatus heartbeatpb.ComponentState
+}
+
+//  1. 如果是单表内的 ddl，达到下推的条件为： sink 中没有还没执行完的当前表的 event
+//  2. 如果是多表内的 ddl 或者是表间的 ddl，则需要满足的条件为：
+//     2.1 sink 中没有还没执行完的当前表的 event
+//     2.2 maintainer 通知自己可以 write 或者 pass event
+func AddDDLEventToSinkWhenAvailable(d Dispatcher, event *common.TxnEvent) {
+	sink := d.GetSink()
+	tableSpan := d.GetTableSpan()
+	if event.IsSingleTableDDL() {
+		if sink.IsEmpty(tableSpan) {
+			sink.AddDMLEvent(tableSpan, event)
+			return
+		} else {
+			// TODO:先写一个 定时 check 的逻辑，后面用 dynamic stream 改造
+			timer := time.NewTimer(time.Millisecond * 50)
+			for {
+				select {
+				case <-timer.C:
+					if sink.IsEmpty(tableSpan) {
+						sink.AddDMLEvent(tableSpan, event)
+						return
+					}
+				}
+			}
+		}
+	}
+
+	d.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
+		Span:            tableSpan.TableSpan,
+		ComponentStatus: heartbeatpb.ComponentState_Working,
+		State: &heartbeatpb.State{
+			IsBlocked:            true,
+			BlockTs:              event.CommitTs,
+			BlockTableSpan:       event.GetBlockedTableSpan(), // 这个包含自己的 span 是不是也无所谓，不然就要剔除掉
+			NeedDroppedTableSpan: event.GetNeedDroppedTableSpan(),
+			NeedAddedTableSpan:   event.GetNeedAddedTableSpan(),
+		},
+	}
+
+	for {
+		dispatcherAction := <-d.GetDDLActions()
+		if dispatcherAction.CommitTs == event.CommitTs {
+			if dispatcherAction.Action == heartbeatpb.Action_Write {
+				sink.AddDDLAndSyncPointEvent(tableSpan, event) // 这个是同步写，所以写完的时候 sink 也 available 了
+				// 写完马上通知 maintainer 推进 checkpointTs
+				d.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
+					Span:            tableSpan.TableSpan,
+					ComponentStatus: heartbeatpb.ComponentState_Working,
+					CheckpointTs:    d.GetCheckpointTs(),
+				}
+			}
+			return
+		}
+	}
 }
 
 func CollectDispatcherHeartBeatInfo(d Dispatcher, h *HeartBeatInfo) {
