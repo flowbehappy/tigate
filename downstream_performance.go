@@ -16,7 +16,6 @@ import (
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -27,7 +26,7 @@ const dispatcherCount = 1000
 const databaseCount = 20
 
 func initContext(serverId messaging.ServerId) {
-	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(context.Background(), serverId, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
+	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(context.Background(), serverId, 100, config.NewDefaultMessageCenterConfig()))
 	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, serverId)) // 100GB for demo
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(serverId))
 }
@@ -88,7 +87,7 @@ func main() {
 	managerMap := make(map[int]*dispatchermanager.EventDispatcherManager)
 
 	for db_index := 0; db_index < databaseCount; db_index++ {
-		changefeedConfig := model.ChangefeedConfig{
+		changefeedConfig := config.ChangefeedConfig{
 			SinkURI: "tidb://root:@127.0.0.1:4000",
 		}
 		changefeedID := model.DefaultChangeFeedID("test" + strconv.Itoa(db_index))

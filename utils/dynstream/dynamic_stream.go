@@ -2,7 +2,6 @@ package dynstream
 
 import (
 	"fmt"
-	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -16,12 +15,6 @@ const TrackTopPaths = 64
 const BusyStreamRatio = 0.5
 const BusyPathRatio = 0.25
 const IdlePathRatio = 0.02
-
-const DefaultSchedulerInterval = 5 * time.Second
-const DefaultReportInterval = 500 * time.Millisecond
-
-// We don't need lots of streams because the hanle of events should be CPU-bound and should not be blocked by any waiting.
-const DefaultStreamCount = 128
 
 type cmdType int
 
@@ -45,7 +38,7 @@ type cmd struct {
 	cmd     interface{}
 }
 
-type addPathCmd[P Path, T Event[P], D any] struct {
+type addPathCmd[P Path, T Event, D Dest] struct {
 	paths []PathAndDest[P, D]
 	pis   []*pathInfo[P, T, D]
 	error error
@@ -60,7 +53,7 @@ type removePathCmd[P Path] struct {
 	wg sync.WaitGroup
 }
 
-type arrangeStreamCmd[P Path, T Event[P], D any] struct {
+type arrangeStreamCmd[P Path, T Event, D Dest] struct {
 	oldStreams []*stream[P, T, D]
 
 	newStreams     []*stream[P, T, D]
@@ -73,7 +66,7 @@ type reportAndScheduleCmd struct {
 	wg     sync.WaitGroup
 }
 
-type streamInfo[P Path, T Event[P], D any] struct {
+type streamInfo[P Path, T Event, D Dest] struct {
 	stream     *stream[P, T, D]
 	streamStat streamStat[P, T, D]
 	pathMap    map[*pathInfo[P, T, D]]struct{}
@@ -99,14 +92,23 @@ func (si *streamInfo[P, T, D]) period() time.Duration {
 	return si.streamStat.period
 }
 
-type sortedSIs[P Path, T Event[P], D any] []*streamInfo[P, T, D]
+type sortedSIs[P Path, T Event, D Dest] []*streamInfo[P, T, D]
 
 // implement sort.Interface
 func (s sortedSIs[P, T, D]) Len() int           { return len(s) }
 func (s sortedSIs[P, T, D]) Less(i, j int) bool { return s[i].runtime() < s[j].runtime() }
 func (s sortedSIs[P, T, D]) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
-type DynamicStream[P Path, T Event[P], D any] struct {
+// This is the implementation of the DynamicStream interface.
+// We use two goroutines
+// 1. The distributor to distribute the events to the streams
+// 2. The scheduler to balance the load of the streams
+//
+// A stream can handle events from multiple paths.
+// Events from the same path are only processed by one particular stream at the same time.
+// The scheduler use several strategies to balance the load of the streams, while the final balanace
+// actions are moving the paths between the streams.
+type dynamicStreamImpl[P Path, T Event, D Dest] struct {
 	schedulerInterval time.Duration
 	reportInterval    time.Duration
 	trackTopPaths     int
@@ -114,7 +116,9 @@ type DynamicStream[P Path, T Event[P], D any] struct {
 
 	handler Handler[P, T, D]
 
-	eventChan  chan T                   // The channel to receive the incomming events by distributor
+	eventChan chan T // The channel to receive the incomming events by distributor
+	wakeChan  chan P // The channel to receive the wake signal by distributor
+
 	reportChan chan streamStat[P, T, D] // The channel to receive the report by scheduler
 	cmdToSchd  chan *cmd                // Send the commands to the scheduler
 	cmdToDist  chan *cmd                // Send the commands to the distributor
@@ -129,18 +133,13 @@ type DynamicStream[P Path, T Event[P], D any] struct {
 	distDone sync.WaitGroup
 }
 
-func NewDynamicStreamDefault[P Path, T Event[P], D any](handler Handler[P, T, D]) *DynamicStream[P, T, D] {
-	streamCount := max(DefaultStreamCount, runtime.NumCPU())
-	return NewDynamicStream[P, T, D](handler, DefaultSchedulerInterval, DefaultReportInterval, streamCount)
-}
-
-func NewDynamicStream[P Path, T Event[P], D any](
+func newDynamicStreamImpl[P Path, T Event, D Dest](
 	handler Handler[P, T, D],
 	schedulerInterval time.Duration,
 	reportInterval time.Duration,
 	streamCount int,
-) *DynamicStream[P, T, D] {
-	return &DynamicStream[P, T, D]{
+) *dynamicStreamImpl[P, T, D] {
+	return &dynamicStreamImpl[P, T, D]{
 		handler: handler,
 
 		schedulerInterval: schedulerInterval,
@@ -157,25 +156,56 @@ func NewDynamicStream[P Path, T Event[P], D any](
 	}
 }
 
-func (d *DynamicStream[P, T, D]) In() chan<- T {
+func (d *dynamicStreamImpl[P, T, D]) In() chan<- T {
 	return d.eventChan
 }
 
-func (d *DynamicStream[P, T, D]) Start() {
+func (d *dynamicStreamImpl[P, T, D]) Wake() chan<- P {
+	return d.wakeChan
+}
+
+func (d *dynamicStreamImpl[P, T, D]) Start() {
 	d.schdDone.Add(1)
 	go d.scheduler()
 	d.distDone.Add(1)
 	go d.distributor()
 }
 
-func (d *DynamicStream[P, T, D]) Close() {
+func (d *dynamicStreamImpl[P, T, D]) Close() {
 	if d.hasClosed.CompareAndSwap(false, true) {
 		close(d.cmdToSchd)
 	}
 	d.schdDone.Wait()
 }
 
-func (d *DynamicStream[P, T, D]) scheduler() {
+func (d *dynamicStreamImpl[P, T, D]) AddPath(paths ...PathAndDest[P, D]) error {
+	if d.hasClosed.Load() {
+		return NewAppErrorS(ErrorTypeClosed)
+	}
+	add := &addPathCmd[P, T, D]{paths: paths}
+	cmd := &cmd{
+		cmdType: typeAddPath,
+		cmd:     add,
+	}
+	add.wg.Add(2) // need to wait for both scheduler and distributor
+	d.cmdToSchd <- cmd
+	add.wg.Wait()
+	return add.error
+}
+
+func (d *dynamicStreamImpl[P, T, D]) RemovePath(paths ...P) []error {
+	remove := &removePathCmd[P]{paths: paths}
+	cmd := &cmd{
+		cmdType: typeRemovePath,
+		cmd:     remove,
+	}
+	remove.wg.Add(2) // need to wait for both scheduler and distributor
+	d.cmdToSchd <- cmd
+	remove.wg.Wait()
+	return remove.errors
+}
+
+func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 	defer func() {
 		close(d.cmdToDist)
 		d.distDone.Wait()
@@ -483,11 +513,6 @@ func (d *DynamicStream[P, T, D]) scheduler() {
 		} else {
 			panic("Unknown rule")
 		}
-
-		// Normally, we don't need to reset the statistics, but who knows.
-		// for _, si := range d.streamInfos {
-		// 	si.streamStat = nil
-		// }
 	}
 
 	nextSchedule := time.Now().Add(d.schedulerInterval)
@@ -584,7 +609,7 @@ Loop:
 	}
 }
 
-func (d *DynamicStream[P, T, D]) distributor() {
+func (d *dynamicStreamImpl[P, T, D]) distributor() {
 	defer d.distDone.Done()
 
 	pathMap := make(map[P]*pathInfo[P, T, D])
@@ -592,10 +617,15 @@ func (d *DynamicStream[P, T, D]) distributor() {
 	for {
 		select {
 		case e := <-d.eventChan:
-			if pi, ok := pathMap[e.Path()]; ok {
+			if pi, ok := pathMap[d.handler.Path(e)]; ok {
 				pi.stream.in() <- eventWrap[P, T, D]{event: e, pathInfo: pi}
 			}
 			// Otherwise, drop the event
+		case p := <-d.wakeChan:
+			if pi, ok := pathMap[p]; ok {
+				pi.stream.in() <- eventWrap[P, T, D]{wake: true, pathInfo: pi}
+			}
+			// Otherwise, drop the wake signal
 		case cmd, ok := <-d.cmdToDist:
 			if !ok {
 				return
@@ -635,38 +665,4 @@ func (d *DynamicStream[P, T, D]) distributor() {
 			}
 		}
 	}
-}
-
-// AddPath adds the paths to the dynamic stream to receive the events.
-// An event with a path not already added will be dropped.
-// If some paths already exist, it will return an ErrorTypeDuplicate error. And no paths are added.
-// If the stream is closed, it will return an ErrorTypeClosed error.
-func (d *DynamicStream[P, T, D]) AddPath(paths ...PathAndDest[P, D]) error {
-	if d.hasClosed.Load() {
-		return NewAppErrorS(ErrorTypeClosed)
-	}
-	add := &addPathCmd[P, T, D]{paths: paths}
-	cmd := &cmd{
-		cmdType: typeAddPath,
-		cmd:     add,
-	}
-	add.wg.Add(2) // need to wait for both scheduler and distributor
-	d.cmdToSchd <- cmd
-	add.wg.Wait()
-	return add.error
-}
-
-// RemovePath removes the paths from the dynamic stream. Futher events with the paths will be dropped.
-// If some paths don't exist, it will return ErrorTypeNotExist errors. But the existed paths are still removed.
-// If all paths are removed successfully, return nil.
-func (d *DynamicStream[P, T, D]) RemovePath(paths ...P) []error {
-	remove := &removePathCmd[P]{paths: paths}
-	cmd := &cmd{
-		cmdType: typeRemovePath,
-		cmd:     remove,
-	}
-	remove.wg.Add(2) // need to wait for both scheduler and distributor
-	d.cmdToSchd <- cmd
-	remove.wg.Wait()
-	return remove.errors
 }

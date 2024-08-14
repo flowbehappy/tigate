@@ -15,7 +15,7 @@ package coordinator
 
 import (
 	"context"
-	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -31,7 +31,12 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
+	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
+	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/pingcap/tiflow/pkg/txnutil/gc"
+	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -55,15 +60,27 @@ type coordinator struct {
 
 	lastSaveTime         time.Time
 	lastTickTime         time.Time
-	scheduledChangefeeds map[model.ChangeFeedID]*changefeed
+	scheduledChangefeeds utils.Map[scheduler.InferiorID, scheduler.Inferior]
+
+	gcManager  gc.Manager
+	pdClient   pd.Client
+	pdClock    pdutil.Clock
+	etcdClient etcd.CDCEtcdClient
 }
 
-func NewCoordinator(capture *common.NodeInfo, version int64) server.Coordinator {
+func NewCoordinator(capture *common.NodeInfo,
+	pdClient pd.Client,
+	pdClock pdutil.Clock,
+	etcdClient etcd.CDCEtcdClient, version int64) server.Coordinator {
 	c := &coordinator{
 		version:              version,
 		nodeInfo:             capture,
-		scheduledChangefeeds: make(map[model.ChangeFeedID]*changefeed),
+		scheduledChangefeeds: utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior](),
 		lastTickTime:         time.Now(),
+		gcManager:            gc.NewManager(etcdClient.GetGCServiceID(), pdClient, pdClock),
+		pdClient:             pdClient,
+		etcdClient:           etcdClient,
+		pdClock:              pdClock,
 	}
 	id := scheduler.ChangefeedID(model.DefaultChangeFeedID("coordinator"))
 	c.supervisor = scheduler.NewSupervisor(
@@ -98,6 +115,10 @@ func (c *coordinator) Tick(
 	now := time.Now()
 	metrics.CoordinatorCounter.Add(float64(now.Sub(c.lastTickTime)) / float64(time.Second))
 	c.lastTickTime = now
+
+	if err := c.updateGCSafepoint(ctx, state); err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	// 1. handle grpc messages
 	err := c.handleMessages()
@@ -186,7 +207,6 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 	if !c.supervisor.CheckAllCaptureInitialized() {
 		return nil, nil
 	}
-	allChangefeeds := utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior]()
 	// check all changefeeds.
 	for id, cfState := range state.Changefeeds {
 		if cfState.Info == nil {
@@ -199,16 +219,18 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 		}
 		if shouldRunChangefeed(cfState.Info.State) {
 			// todo use real changefeed instance here
-			cf, ok := c.scheduledChangefeeds[id]
+			ok := c.scheduledChangefeeds.Has(scheduler.ChangefeedID(id))
 			if !ok {
-				cf = &changefeed{}
+				c.scheduledChangefeeds.ReplaceOrInsert(scheduler.ChangefeedID(id), &changefeed{})
 			}
-			allChangefeeds.ReplaceOrInsert(scheduler.ChangefeedID(id), cf)
+		} else {
+			// changefeed is stopped
+			c.scheduledChangefeeds.Delete(scheduler.ChangefeedID(id))
 		}
 	}
 	c.supervisor.MarkNeedAddInferior()
 	c.supervisor.MarkNeedRemoveInferior()
-	return c.supervisor.Schedule(allChangefeeds)
+	return c.supervisor.Schedule(c.scheduledChangefeeds)
 }
 
 func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message {
@@ -222,16 +244,21 @@ func (c *coordinator) newChangefeed(id scheduler.InferiorID) scheduler.Inferior 
 	cfID := model.ChangeFeedID(id.(scheduler.ChangefeedID))
 	cfInfo := c.lastState.Changefeeds[cfID]
 	cf := newChangefeed(c, cfID, cfInfo.Info, cfInfo.Status.CheckpointTs)
-	c.scheduledChangefeeds[cfInfo.ID] = cf
+	c.scheduledChangefeeds.ReplaceOrInsert(scheduler.ChangefeedID(cfInfo.ID), cf)
 	return cf
 }
 
 func (c *coordinator) saveChangefeedStatus() {
 	if time.Since(c.lastSaveTime) > time.Millisecond*500 {
-		for id, cf := range c.scheduledChangefeeds {
+		c.scheduledChangefeeds.Ascend(func(key scheduler.InferiorID, value scheduler.Inferior) bool {
+			id := model.ChangeFeedID(key.(scheduler.ChangefeedID))
 			cfState, ok := c.lastState.Changefeeds[id]
 			if !ok {
-				continue
+				return true
+			}
+			cf := value.(*changefeed)
+			if cf.State == nil {
+				return true
 			}
 			if !shouldRunChangefeed(model.FeedState(cf.State.FeedState)) {
 				cfState.PatchInfo(func(info *model.ChangeFeedInfo) (*model.ChangeFeedInfo, bool, error) {
@@ -270,7 +297,8 @@ func (c *coordinator) saveChangefeedStatus() {
 					saveErrorFn(err)
 				}
 			}
-		}
+			return true
+		})
 		c.lastSaveTime = time.Now()
 	}
 }
@@ -344,6 +372,50 @@ func updateStatus(
 		})
 }
 
+func (c *coordinator) updateGCSafepoint(
+	ctx context.Context, state *orchestrator.GlobalReactorState,
+) error {
+	minCheckpointTs, forceUpdate := c.calculateGCSafepoint(state)
+	// When the changefeed starts up, CDC will do a snapshot read at
+	// (checkpointTs - 1) from TiKV, so (checkpointTs - 1) should be an upper
+	// bound for the GC safepoint.
+	gcSafepointUpperBound := minCheckpointTs - 1
+	err := c.gcManager.TryUpdateGCSafePoint(ctx, gcSafepointUpperBound, forceUpdate)
+	return errors.Trace(err)
+}
+
+// calculateGCSafepoint calculates GCSafepoint for different upstream.
+// Note: we need to maintain a TiCDC service GC safepoint for each upstream TiDB cluster
+// to prevent upstream TiDB GC from removing data that is still needed by TiCDC.
+// GcSafepoint is the minimum checkpointTs of all changefeeds that replicating a same upstream TiDB cluster.
+func (c *coordinator) calculateGCSafepoint(state *orchestrator.GlobalReactorState) (
+	uint64, bool,
+) {
+	var minCpts uint64 = math.MaxUint64
+	var forceUpdate = false
+
+	for changefeedID, changefeedState := range state.Changefeeds {
+		if changefeedState.Info == nil || !changefeedState.Info.NeedBlockGC() {
+			continue
+		}
+		checkpointTs := changefeedState.Info.GetCheckpointTs(changefeedState.Status)
+		if minCpts > checkpointTs {
+			minCpts = checkpointTs
+		}
+		// Force update when adding a new changefeed.
+		exist := c.scheduledChangefeeds.Has(scheduler.ChangefeedID(changefeedID))
+		if !exist {
+			forceUpdate = true
+		}
+	}
+	// check if the upstream has a changefeed, if not we should update the gc safepoint
+	if minCpts == math.MaxUint64 {
+		ts := c.pdClock.CurrentTime()
+		minCpts = oracle.GoTimeToTS(ts)
+	}
+	return minCpts, forceUpdate
+}
+
 func (c *coordinator) printStatus() {
 	if time.Since(c.lastCheckTime) > time.Second*10 {
 		workingTask := 0
@@ -351,7 +423,6 @@ func (c *coordinator) printStatus() {
 		absentTask := 0
 		commitTask := 0
 		removingTask := 0
-		var taskDistribution string
 		c.supervisor.StateMachines.Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
 			switch value.State {
 			case scheduler.SchedulerStatusAbsent:
@@ -365,11 +436,9 @@ func (c *coordinator) printStatus() {
 			case scheduler.SchedulerStatusRemoving:
 				removingTask++
 			}
-			taskDistribution = fmt.Sprintf("%s, %s==>%s", taskDistribution, value.ID.String(), value.Primary)
 			return true
 		})
 		log.Info("changefeed status",
-			zap.String("distribution", taskDistribution),
 			zap.Int("absent", absentTask),
 			zap.Int("prepare", prepareTask),
 			zap.Int("commit", commitTask),

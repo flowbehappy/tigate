@@ -24,17 +24,19 @@ func newSimpleEventSleep(path string, wg *sync.WaitGroup, sleep time.Duration) *
 	return &simpleEvent{path: path, sleep: sleep, wg: wg}
 }
 
-func (e *simpleEvent) Path() string { return e.path }
-
 type simpleHandler struct{}
 
-func (h *simpleHandler) Handle(event *simpleEvent, dest struct{}) {
+func (h *simpleHandler) Path(event *simpleEvent) string {
+	return event.path
+}
+func (h *simpleHandler) Handle(event *simpleEvent, dest struct{}) (await bool) {
 	if event.sleep > 0 {
 		time.Sleep(event.sleep)
 	}
 	if event.wg != nil {
 		event.wg.Done()
 	}
+	return false
 }
 
 func TestDynamicStreamBasic(t *testing.T) {
@@ -64,7 +66,7 @@ func TestDynamicStreamBasic(t *testing.T) {
 
 func TestDynamicStreamSchedule(t *testing.T) {
 	handler := &simpleHandler{}
-	ds := NewDynamicStream(handler, 1*time.Hour, 1*time.Hour, 3)
+	ds := newDynamicStreamImpl(handler, 1*time.Hour, 1*time.Hour, 3)
 	ds.Start()
 
 	scheduleNow := func(rule ruleType, period time.Duration) {
@@ -91,8 +93,8 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	ds.In() <- newSimpleEvent("p1", wg)
 	ds.In() <- newSimpleEvent("p2", wg)
 	ds.In() <- newSimpleEvent("p3", wg)
-	ds.In() <- newSimpleEventSleep("p4", wg, 6*time.Millisecond)
-	ds.In() <- newSimpleEventSleep("p5", wg, 6*time.Millisecond)
+	ds.In() <- newSimpleEventSleep("p4", wg, 8*time.Millisecond)
+	ds.In() <- newSimpleEventSleep("p5", wg, 8*time.Millisecond)
 	wg.Wait()
 
 	scheduleNow(createSoloPath, 8*time.Millisecond)
@@ -110,7 +112,7 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	ds.In() <- newSimpleEvent("p2", wg)
 	ds.In() <- newSimpleEvent("p3", wg)
 	ds.In() <- newSimpleEvent("p4", wg)
-	ds.In() <- newSimpleEventSleep("p5", wg, 6*time.Millisecond)
+	ds.In() <- newSimpleEventSleep("p5", wg, 8*time.Millisecond)
 	// time.Sleep(8 * time.Millisecond)
 	wg.Wait()
 
@@ -142,9 +144,9 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	assert.Equal(t, 1, len(ds.streamInfos[3].pathMap)) // p5, Solo stream
 
 	wg = &sync.WaitGroup{}
-	ds.In() <- newSimpleEventSleep("p7", wg, 6*time.Millisecond)
-	ds.In() <- newSimpleEventSleep("p10", wg, 6*time.Millisecond)
-	ds.In() <- newSimpleEventSleep("p9", wg, 6*time.Millisecond)
+	ds.In() <- newSimpleEventSleep("p7", wg, 8*time.Millisecond)
+	ds.In() <- newSimpleEventSleep("p10", wg, 8*time.Millisecond)
+	ds.In() <- newSimpleEventSleep("p9", wg, 8*time.Millisecond)
 	// time.Sleep(8 * time.Millisecond)
 	wg.Wait()
 
