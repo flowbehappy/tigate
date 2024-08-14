@@ -15,6 +15,7 @@ package coordinator
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -169,11 +170,11 @@ func (m *mockMaintainerManager) onDispatchMaintainerRequest(
 		cfID := model.DefaultChangeFeedID(req.GetId())
 		cf, ok := m.maintainers.Load(cfID)
 		if !ok {
-			//cfConfig := &model.ChangeFeedInfo{}
-			//err := json.Unmarshal(req.Config, cfConfig)
-			//if err != nil {
-			//	log.Panic("decode changefeed fail", zap.Error(err))
-			//}
+			cfConfig := &model.ChangeFeedInfo{}
+			err := json.Unmarshal(req.Config, cfConfig)
+			if err != nil {
+				log.Panic("decode changefeed fail", zap.Error(err))
+			}
 			cf = &Maintainer{id: cfID, status: &heartbeatpb.MaintainerStatus{
 				ChangefeedID: cfID.ID,
 				State:        heartbeatpb.ComponentState_Working,

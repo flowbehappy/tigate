@@ -535,9 +535,9 @@ func (s *StateMachine) pollOnCommit(
 				// before promoting the secondary, otherwise there may be two
 				// primary that write data and lead to data inconsistency.
 				log.Info("there are unknown captures during commit",
-					zap.Any("status", input),
+					zap.String("status", input.GetInferiorID().String()),
 					zap.String("captureID", captureID),
-					zap.Any("statemachine", s.ID))
+					zap.String("statemachine", s.ID.String()))
 				return nil, false, nil
 			}
 			// No primary, promote secondary to primary.
@@ -548,9 +548,9 @@ func (s *StateMachine) pollOnCommit(
 			}
 
 			log.Info("promote secondary, no primary",
-				zap.Any("status", input),
+				zap.String("status", input.GetInferiorID().String()),
 				zap.String("captureID", captureID),
-				zap.Any("statemachine", s.ID))
+				zap.String("statemachine", s.ID.String()))
 		}
 		// Secondary has been promoted, retry add inferior request.
 		if s.Primary == captureID && !s.hasRole(RoleSecondary) {
@@ -565,9 +565,9 @@ func (s *StateMachine) pollOnCommit(
 			if !s.hasRole(RoleSecondary) {
 				// primary is stopped and there is no secondary, transit to Absent.
 				log.Info("primary is stopped during Commit",
-					zap.Any("status", input),
+					zap.String("status", input.GetInferiorID().String()),
 					zap.String("captureID", captureID),
-					zap.Any("statemachine", s.ID))
+					zap.String("statemachine", s.ID.String()))
 				s.State = SchedulerStatusAbsent
 				return nil, true, nil
 			}
@@ -578,9 +578,9 @@ func (s *StateMachine) pollOnCommit(
 				return nil, false, errors.Trace(err)
 			}
 			log.Info("state promote secondary",
-				zap.Any("status", input),
+				zap.String("status", input.GetInferiorID().String()),
 				zap.String("secondary", captureID),
-				zap.Any("statemachine", s.ID),
+				zap.String("statemachine", s.ID.String()),
 				zap.String("original", original))
 			return s.Inferior.NewAddInferiorMessage(s.Primary, false), false, nil
 		} else if s.isInRole(captureID, RoleSecondary) {
@@ -588,9 +588,9 @@ func (s *StateMachine) pollOnCommit(
 			// upon entering Commit state. Do not change state and wait
 			// the original primary reports its inferior.
 			log.Info("secondary is stopped during Commit",
-				zap.Any("status", input),
+				zap.String("status", input.GetInferiorID().String()),
 				zap.String("captureID", captureID),
-				zap.Any("statemachine", s.ID))
+				zap.String("statemachine", s.ID.String()))
 			err := s.clearCapture(captureID, RoleSecondary)
 			if err != nil {
 				return nil, false, errors.Trace(err)
@@ -602,9 +602,9 @@ func (s *StateMachine) pollOnCommit(
 			return nil, true, nil
 		} else if s.isInRole(captureID, RoleUndetermined) {
 			log.Info("server is stopped during Commit",
-				zap.Any("status", input),
+				zap.String("status", input.GetInferiorID().String()),
 				zap.String("captureID", captureID),
-				zap.Any("statemachine", s.ID))
+				zap.String("statemachine", s.ID.String()))
 			err := s.clearCapture(captureID, RoleUndetermined)
 			return nil, false, errors.Trace(err)
 		}
@@ -644,18 +644,18 @@ func (s *StateMachine) pollOnCommit(
 			return nil, false, nil
 		} else if s.isInRole(captureID, RoleUndetermined) {
 			log.Info("server is stopping during Commit",
-				zap.Any("status", input),
+				zap.String("status", input.GetInferiorID().String()),
 				zap.String("captureID", captureID),
-				zap.Any("statemachine", s.ID))
+				zap.String("statemachine", s.ID.String()))
 			return nil, false, nil
 		}
 
 	case heartbeatpb.ComponentState_Preparing:
 	}
 	log.Warn("ignore input, unexpected state",
-		zap.Any("status", input),
+		zap.String("status", input.GetInferiorID().String()),
 		zap.String("captureID", captureID),
-		zap.Any("statemachine", s.ID))
+		zap.String("statemachine", s.ID.String()))
 	return nil, false, nil
 }
 
@@ -683,7 +683,7 @@ func (s *StateMachine) pollOnWorking(
 			// Primary is stopped, but we still has secondary.
 			// Clear primary and promote secondary when it's prepared.
 			log.Info("primary is stopped during Working",
-				zap.Any("status", input),
+				zap.String("status", input.GetInferiorID().String()),
 				zap.String("captureID", captureID),
 				zap.Any("statemachine", s.ID.String()))
 			s.clearPrimary()
@@ -692,7 +692,7 @@ func (s *StateMachine) pollOnWorking(
 		}
 	}
 	log.Warn("ignore input, unexpected state",
-		zap.Any("status", input),
+		zap.String("status", input.GetInferiorID().String()),
 		zap.String("captureID", captureID),
 		zap.Any("statemachine", s.ID.String()))
 	return false, nil
@@ -718,7 +718,7 @@ func (s *StateMachine) pollOnRemoving(
 		}
 		if err != nil {
 			log.Warn("remove server with error",
-				zap.Any("status", input),
+				zap.String("status", input.GetInferiorID().String()),
 				zap.String("captureID", captureID),
 				zap.Any("statemachine", s.ID),
 				zap.Error(err))
@@ -729,7 +729,7 @@ func (s *StateMachine) pollOnRemoving(
 		return nil, false, nil
 	}
 	log.Warn("ignore input, unexpected  state",
-		zap.Any("status", input),
+		zap.String("status", input.GetInferiorID().String()),
 		zap.String("captureID", captureID),
 		zap.Any("statemachine", s.ID))
 	return nil, false, nil
@@ -748,7 +748,7 @@ func (s *StateMachine) HandleAddInferior(
 	if s.State != SchedulerStatusAbsent {
 		log.Warn("add inferior is ignored",
 			zap.String("captureID", captureID),
-			zap.Any("statemachine", s.ID))
+			zap.String("statemachine", s.ID.String()))
 		return nil, nil
 	}
 	err := s.setCapture(captureID, RoleSecondary)
@@ -763,7 +763,7 @@ func (s *StateMachine) HandleAddInferior(
 	}
 
 	log.Info("state transition, add ingferior",
-		zap.Any("status", status),
+		zap.String("status", status.GetInferiorID().String()),
 		zap.String("captureID", captureID),
 		zap.Any("statemachine", s.ID.String()),
 		zap.Stringer("old", oldState),
@@ -801,7 +801,7 @@ func (s *StateMachine) HandleMoveInferior(
 	}
 	log.Info("state transition, move inferior",
 		zap.Stringer("new", s.State),
-		zap.Any("statemachine", s.ID),
+		zap.Stringer("statemachine", s.ID),
 		zap.Stringer("old", oldState))
 	status := s.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Absent)
 	return s.poll(status, dest)

@@ -157,7 +157,9 @@ func (c *coordinator) handleMessages() error {
 			req := msg.Message.(*heartbeatpb.CoordinatorBootstrapResponse)
 			var statues = make([]scheduler.InferiorStatus, 0, len(req.Statuses))
 			for _, status := range req.Statuses {
-				statues = append(statues, &MaintainerStatus{status})
+				statues = append(statues, &MaintainerStatus{
+					ID:               scheduler.ChangefeedID(model.DefaultChangeFeedID(status.ChangefeedID)),
+					MaintainerStatus: status})
 			}
 			c.supervisor.UpdateCaptureStatus(msg.From.String(), statues)
 		case messaging.TypeMaintainerHeartbeatRequest:
@@ -165,7 +167,9 @@ func (c *coordinator) handleMessages() error {
 				req := msg.Message.(*heartbeatpb.MaintainerHeartbeat)
 				var statues = make([]scheduler.InferiorStatus, 0, len(req.Statuses))
 				for _, status := range req.Statuses {
-					statues = append(statues, &MaintainerStatus{status})
+					statues = append(statues, &MaintainerStatus{
+						ID:               scheduler.ChangefeedID(model.DefaultChangeFeedID(status.ChangefeedID)),
+						MaintainerStatus: status})
 				}
 				msgs, err := c.supervisor.HandleStatus(msg.From.String(), statues)
 				if err != nil {
