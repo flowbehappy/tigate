@@ -23,6 +23,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/pkg/filter"
 	"go.uber.org/zap"
 )
 
@@ -96,6 +97,7 @@ type TableEventDispatcher struct {
 	sink      sink.Sink
 
 	ddlActions            chan *heartbeatpb.DispatcherAction
+	acks                  chan *heartbeatpb.ACK
 	tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus
 
 	//SyncPointInfo *SyncPointInfo
@@ -104,13 +106,18 @@ type TableEventDispatcher struct {
 
 	componentStatus *ComponentStateWithMutex
 
+	filter filter.Filter
+
 	resolvedTs *TsWithMutex // 用来记 eventChan 中目前收到的 event 中收到的最大的 commitTs - 1,不代表 dispatcher 的 checkpointTs
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	ddlPendingEvent *common.TxnEvent
+	ddlFinishCh     chan struct{}
 }
 
-func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, syncPointInfo *SyncPointInfo, tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus) *TableEventDispatcher {
+func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, syncPointInfo *SyncPointInfo, tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter) *TableEventDispatcher {
 	ctx, cancel := context.WithCancel(context.Background())
 	tableEventDispatcher := &TableEventDispatcher{
 		id:                    uuid.NewString(),
@@ -118,16 +125,22 @@ func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startT
 		tableSpan:             tableSpan,
 		sink:                  sink,
 		ddlActions:            make(chan *heartbeatpb.DispatcherAction, 16),
+		acks:                  make(chan *heartbeatpb.ACK, 16),
 		tableSpanStatusesChan: tableSpanStatusesChan,
 		//SyncPointInfo:   syncPointInfo,
 		//MemoryUsage:     NewMemoryUsage(),
 		componentStatus: newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
 		resolvedTs:      newTsWithMutex(startTs),
 		cancel:          cancel,
+		filter:          filter,
+		ddlFinishCh:     make(chan struct{}),
 	}
 	tableEventDispatcher.sink.AddTableSpan(tableSpan)
 	tableEventDispatcher.wg.Add(1)
 	go tableEventDispatcher.DispatcherEvents(ctx)
+
+	tableEventDispatcher.wg.Add(1)
+	go HandleDDLActions(tableEventDispatcher, ctx)
 
 	log.Info("table event dispatcher created", zap.Any("DispatcherID", tableEventDispatcher.id))
 
@@ -195,6 +208,10 @@ func (d *TableEventDispatcher) GetDDLActions() chan *heartbeatpb.DispatcherActio
 	return d.ddlActions
 }
 
+func (d *TableEventDispatcher) GetACKs() chan *heartbeatpb.ACK {
+	return d.acks
+}
+
 func (d *TableEventDispatcher) GetTableSpanStatusesChan() chan *heartbeatpb.TableSpanStatus {
 	return d.tableSpanStatusesChan
 }
@@ -237,4 +254,27 @@ func (d *TableEventDispatcher) TryClose() (w heartbeatpb.Watermark, ok bool) {
 
 func (d *TableEventDispatcher) GetComponentStatus() heartbeatpb.ComponentState {
 	return d.componentStatus.Get()
+}
+
+func (d *TableEventDispatcher) GetFilter() filter.Filter {
+	return d.filter
+}
+
+func (d *TableEventDispatcher) GetWG() *sync.WaitGroup {
+	return &d.wg
+}
+
+func (d *TableEventDispatcher) GetDDLPendingEvent() *common.TxnEvent {
+	return d.ddlPendingEvent
+}
+
+func (d *TableEventDispatcher) SetDDLPendingEvent(event *common.TxnEvent) {
+	if d.ddlPendingEvent != nil {
+		log.Error("there is already a pending ddl event, can not set a new one")
+		return
+	}
+	d.ddlPendingEvent = event
+}
+func (d *TableEventDispatcher) GetDDLFinishCh() chan struct{} {
+	return d.ddlFinishCh
 }

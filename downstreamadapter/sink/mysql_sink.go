@@ -205,6 +205,15 @@ func (s *MysqlSink) AddDMLEvent(tableSpan *common.TableSpan, event *common.TxnEv
 	tableStatus.getCh() <- event
 }
 
+func (s *MysqlSink) PassDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *common.TxnEvent) {
+	tableStatus, ok := s.tableStatuses.Get(tableSpan)
+	if !ok {
+		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
+		return
+	}
+	tableStatus.getProgress().Pass(event)
+}
+
 func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *common.TxnEvent) {
 	tableStatus, ok := s.tableStatuses.Get(tableSpan)
 	if !ok {

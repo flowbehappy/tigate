@@ -45,6 +45,10 @@ type TxnEvent struct {
 	PostTxnFlushed func() `msg:"-"`
 }
 
+func (w *TxnEvent) GetDDLEvent() *DDLEvent {
+	return w.DDLEvent
+}
+
 func (w *TxnEvent) String() string {
 	return fmt.Sprintf("TxnEvent{StartTs: %d, CommitTs: %d, Rows: %d, DDLEvent: %v}", w.StartTs, w.CommitTs, len(w.Rows), w.DDLEvent)
 }
@@ -82,13 +86,15 @@ func (e *TxnEvent) IsSingleTableDDL() bool {
 }
 
 func (e *TxnEvent) GetBlockedTableSpan() []*heartbeatpb.TableSpan {
-
+	return nil
 }
 
 func (e *TxnEvent) GetNeedDroppedTableSpan() []*heartbeatpb.TableSpan {
+	return nil
 }
 
 func (e *TxnEvent) GetNeedAddedTableSpan() []*heartbeatpb.TableSpan {
+	return nil
 }
 
 func (e *TxnEvent) IsSyncPointEvent() bool {

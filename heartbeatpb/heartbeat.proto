@@ -9,15 +9,6 @@ message TableSpan {
 	bytes EndKey    = 3;
 }
 
-// message TableSpanProgress {
-//     TableSpan span = 1;
-//     bool IsBlocked      = 2;
-// 	uint64 BlockTs         = 3;
-// 	repeated TableSpan BlockTableSpan = 4;
-// 	uint64 CheckpointTs    = 5;
-//     string dispatcherID = 6;
-// }
-
 message HeartBeatRequest {
     string changefeedID = 1;
     Watermark watermark = 2;
@@ -43,9 +34,15 @@ message DispatcherAction {
     uint64 CommitTs = 3; // DDLCommitTs
 }
 
+message ACK {
+    TableSpan span = 1;
+    uint64 CommitTs = 2; // DDLCommitTs
+}
+
 message HeartBeatResponse {
     repeated DispatcherAction actions = 1;
     string changefeedID = 2;
+    repeated ACK acks = 3; // only return when received State info in heartbeat request
 }
 
 enum ScheduleAction {

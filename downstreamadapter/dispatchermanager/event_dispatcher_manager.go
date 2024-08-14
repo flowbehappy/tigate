@@ -245,7 +245,7 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 			syncPointInfo.EnableSyncPoint = false
 		}
 	*/
-	tableEventDispatcher := dispatcher.NewTableEventDispatcher(tableSpan, e.sink, startTs, nil, e.tableSpanStatusesChan)
+	tableEventDispatcher := dispatcher.NewTableEventDispatcher(tableSpan, e.sink, startTs, nil, e.tableSpanStatusesChan, e.filter)
 
 	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableEventDispatcher, startTs, nil)
 

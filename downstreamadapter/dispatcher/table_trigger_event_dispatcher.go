@@ -94,6 +94,7 @@ type TableTriggerEventDispatcher struct {
 	filter          filter.Filter
 	sink            sink.Sink
 	ddlActions      chan *heartbeatpb.DispatcherAction
+	acks            chan *heartbeatpb.ACK
 	tableSpan       *common.TableSpan // 给一个特殊的 tableSpan
 	resolvedTs      *TsWithMutex
 	componentStatus *ComponentStateWithMutex
@@ -102,6 +103,9 @@ type TableTriggerEventDispatcher struct {
 
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
+	// ddl 相关的可以考虑塞进一个 struct 去
+	ddlPendingEvent *common.TxnEvent
+	ddlFinishCh     chan struct{}
 	//MemoryUsage *MemoryUsage
 }
 
@@ -113,17 +117,22 @@ func NewTableTriggerEventDispatcher(sink sink.Sink, startTs uint64, tableSpanSta
 		eventCh:               make(chan *common.TxnEvent, 1000),
 		resolvedTs:            newTsWithMutex(startTs),
 		ddlActions:            make(chan *heartbeatpb.DispatcherAction, 16),
+		acks:                  make(chan *heartbeatpb.ACK, 16),
 		tableSpanStatusesChan: tableSpanStatusesChan,
 		sink:                  sink,
 		tableSpan:             &common.DDLSpan,
 		componentStatus:       newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
 		cancel:                cancel,
+		ddlFinishCh:           make(chan struct{}),
 		//MemoryUsage:   dispatcher.NewMemoryUsage(),
 	}
 	tableTriggerEventDispatcher.sink.AddTableSpan(tableTriggerEventDispatcher.tableSpan)
 
 	tableTriggerEventDispatcher.wg.Add(1)
 	go tableTriggerEventDispatcher.DispatcherEvents(ctx)
+
+	tableTriggerEventDispatcher.wg.Add(1)
+	go HandleDDLActions(tableTriggerEventDispatcher, ctx)
 
 	log.Info("table trigger event dispatcher created", zap.Any("DispatcherID", tableTriggerEventDispatcher.id))
 
@@ -174,6 +183,10 @@ func (d *TableTriggerEventDispatcher) GetDDLActions() chan *heartbeatpb.Dispatch
 	return d.ddlActions
 }
 
+func (d *TableTriggerEventDispatcher) GetACKs() chan *heartbeatpb.ACK {
+	return d.acks
+}
+
 func (d *TableTriggerEventDispatcher) GetTableSpanStatusesChan() chan *heartbeatpb.TableSpanStatus {
 	return d.tableSpanStatusesChan
 }
@@ -220,4 +233,28 @@ func (d *TableTriggerEventDispatcher) TryClose() (w heartbeatpb.Watermark, ok bo
 		return w, true
 	}
 	return w, false
+}
+
+func (d *TableTriggerEventDispatcher) GetFilter() filter.Filter {
+	return d.filter
+}
+
+func (d *TableTriggerEventDispatcher) GetWG() *sync.WaitGroup {
+	return &d.wg
+}
+
+func (d *TableTriggerEventDispatcher) GetDDLPendingEvent() *common.TxnEvent {
+	return d.ddlPendingEvent
+}
+
+func (d *TableTriggerEventDispatcher) SetDDLPendingEvent(event *common.TxnEvent) {
+	if d.ddlPendingEvent != nil {
+		log.Error("there is already a pending ddl event, can not set a new one")
+		return
+	}
+	d.ddlPendingEvent = event
+}
+
+func (d *TableTriggerEventDispatcher) GetDDLFinishCh() chan struct{} {
+	return d.ddlFinishCh
 }

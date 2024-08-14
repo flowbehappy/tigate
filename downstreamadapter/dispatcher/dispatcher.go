@@ -14,11 +14,14 @@
 package dispatcher
 
 import (
+	"context"
+	"sync"
 	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/pingcap/tiflow/pkg/filter"
 )
 
 /*
@@ -36,9 +39,9 @@ the dispatcher can't send event to Sink continuously all the time,
 
 The workflow related to the dispatcher is as follows:
 
-		+------------+       +----------------+       +------------+       +--------+       +--------+       +------------+
-		| LogService |  -->  | EventCollector |  -->  | Dispatcher |  -->  |  Sink  |  -->  | Worker |  -->  | Downstream |
-		+------------+       +----------------+       +------------+       +--------+       +--------+       +------------+
+	+--------------+       +----------------+       +------------+       +--------+       +--------+       +------------+
+	| EventService |  -->  | EventCollector |  -->  | Dispatcher |  -->  |  Sink  |  -->  | Worker |  -->  | Downstream |
+	+--------------+       +----------------+       +------------+       +--------+       +--------+       +------------+
 	                                                        |
 										  HeartBeatResponse | HeartBeatRequest
 															|
@@ -61,6 +64,7 @@ type Dispatcher interface {
 	GetId() string
 	GetDispatcherType() DispatcherType
 	GetDDLActions() chan *heartbeatpb.DispatcherAction
+	GetACKs() chan *heartbeatpb.ACK
 	//GetSyncPointInfo() *SyncPointInfo
 	//GetMemoryUsage() *MemoryUsage
 	// PushEvent(event *eventpb.TxnEvent)
@@ -69,6 +73,11 @@ type Dispatcher interface {
 	GetTableSpanStatusesChan() chan *heartbeatpb.TableSpanStatus
 
 	TryClose() (w heartbeatpb.Watermark, ok bool)
+	GetFilter() filter.Filter
+	GetWG() *sync.WaitGroup
+	GetDDLPendingEvent() *common.TxnEvent
+	SetDDLPendingEvent(event *common.TxnEvent)
+	GetDDLFinishCh() chan struct{}
 }
 
 type DispatcherType uint64
@@ -95,11 +104,59 @@ type HeartBeatInfo struct {
 	ComponentStatus heartbeatpb.ComponentState
 }
 
+func HandleDDLActions(d Dispatcher, ctx context.Context) {
+	defer d.GetWG().Done()
+	sink := d.GetSink()
+	tableSpan := d.GetTableSpan()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case dispatcherAction := <-d.GetDDLActions():
+			event := d.GetDDLPendingEvent()
+			if event == nil {
+				// 只可能出现在 event 已经推进了，但是还重复收到了 action 消息的时候，则重发包含 checkpointTs 的心跳
+				d.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
+					Span:            tableSpan.TableSpan,
+					ComponentStatus: heartbeatpb.ComponentState_Working,
+					CheckpointTs:    d.GetCheckpointTs(),
+				}
+				continue
+			}
+			if dispatcherAction.CommitTs == event.CommitTs {
+				if dispatcherAction.Action == heartbeatpb.Action_Write {
+					sink.AddDDLAndSyncPointEvent(tableSpan, event) // 这个是同步写，所以写完的时候 sink 也 available 了
+				} else {
+					sink.PassDDLAndSyncPointEvent(tableSpan, event) // 为了更新 tableProgress，避免 checkpointTs 计算的 corner case
+				}
+				d.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
+					Span:            tableSpan.TableSpan,
+					ComponentStatus: heartbeatpb.ComponentState_Working,
+					CheckpointTs:    d.GetCheckpointTs(),
+				}
+				d.GetDDLFinishCh() <- struct{}{}
+				return
+			}
+		}
+	}
+}
+
 //  1. 如果是单表内的 ddl，达到下推的条件为： sink 中没有还没执行完的当前表的 event
 //  2. 如果是多表内的 ddl 或者是表间的 ddl，则需要满足的条件为：
 //     2.1 sink 中没有还没执行完的当前表的 event
 //     2.2 maintainer 通知自己可以 write 或者 pass event
+//
+// TODO:特殊处理有 add index 的逻辑
 func AddDDLEventToSinkWhenAvailable(d Dispatcher, event *common.TxnEvent) {
+	//filter := d.GetFilter()
+	// TODO: filter 支持
+	// 判断 ddl 是否需要处理，如果不需要处理，直接返回
+	// if filter.ShouldIgnoreDDLEvent(event.GetDDLEvent()) {
+	// 	return
+	// }
+
+	// 需要根据 filter 来判断 ddl.Query 中是否需要调整，只针对 query 中包含多个 sql 语句。所以 的ddl 传来的时候，需要对应传 sql 对应的 table id 信息，用于过滤
+
 	sink := d.GetSink()
 	tableSpan := d.GetTableSpan()
 	if event.IsSingleTableDDL() {
@@ -121,7 +178,10 @@ func AddDDLEventToSinkWhenAvailable(d Dispatcher, event *common.TxnEvent) {
 		}
 	}
 
-	d.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
+	d.SetDDLPendingEvent(event)
+
+	// TODO:消息需要保证发送后收到 ack 才可以停止重发，具体重发时间需要调整
+	message := &heartbeatpb.TableSpanStatus{
 		Span:            tableSpan.TableSpan,
 		ComponentStatus: heartbeatpb.ComponentState_Working,
 		State: &heartbeatpb.State{
@@ -132,38 +192,29 @@ func AddDDLEventToSinkWhenAvailable(d Dispatcher, event *common.TxnEvent) {
 			NeedAddedTableSpan:   event.GetNeedAddedTableSpan(),
 		},
 	}
-
+	d.GetTableSpanStatusesChan() <- message
+	timer := time.NewTimer(time.Millisecond * 100)
+loop:
 	for {
-		dispatcherAction := <-d.GetDDLActions()
-		if dispatcherAction.CommitTs == event.CommitTs {
-			if dispatcherAction.Action == heartbeatpb.Action_Write {
-				sink.AddDDLAndSyncPointEvent(tableSpan, event) // 这个是同步写，所以写完的时候 sink 也 available 了
-				// 写完马上通知 maintainer 推进 checkpointTs
-				d.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
-					Span:            tableSpan.TableSpan,
-					ComponentStatus: heartbeatpb.ComponentState_Working,
-					CheckpointTs:    d.GetCheckpointTs(),
-				}
+		select {
+		case <-timer.C:
+			// 重发消息
+			d.GetTableSpanStatusesChan() <- message
+		case ack := <-d.GetACKs():
+			if ack.CommitTs == event.CommitTs {
+				break loop
 			}
-			return
 		}
 	}
+
+	// 收到 ack 以后可以开始等 actions 来进行处理,等待 finish 信号
+	<-d.GetDDLFinishCh()
 }
 
 func CollectDispatcherHeartBeatInfo(d Dispatcher, h *HeartBeatInfo) {
-
 	// use checkpointTs to release memory usage
 	//d.GetMemoryUsage().Release(checkpointTs)
 
-	//state := d.GetState()
-	// return &HeartBeatInfo{
-	// 	// IsBlocked:      state.isBlocked,
-	// 	// BlockTs:        state.blockTs,
-	// 	// BlockTableSpan: state.blockTableSpan,
-	// 	CheckpointTs: checkpointTs,
-	// 	//TableSpan:    d.GetTableSpan(),
-	// 	Id: d.GetId(),
-	// }
 	h.Watermark.CheckpointTs = d.GetCheckpointTs()
 	h.Watermark.ResolvedTs = d.GetResolvedTs()
 	h.Id = d.GetId()
