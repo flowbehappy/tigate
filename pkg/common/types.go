@@ -48,3 +48,20 @@ func (d *DispatcherID) DecodeMsg(dc *msgp.Reader) error {
 }
 
 type SchemaID int64
+
+type GID struct {
+	low  uint64
+	high uint64
+}
+
+func (g GID) IsZero() bool {
+	return g.low == 0 && g.high == 0
+}
+
+func NewGID() GID {
+	uuid := uuid.New()
+	return GID{
+		low:  binary.LittleEndian.Uint64(uuid[0:8]),
+		high: binary.LittleEndian.Uint64(uuid[8:16]),
+	}
+}
