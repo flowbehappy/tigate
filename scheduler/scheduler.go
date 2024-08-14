@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/rpc"
-	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -27,18 +26,18 @@ import (
 type Scheduler interface {
 	Name() string
 	Schedule(
-		allInferiors utils.Map[InferiorID, Inferior],
+		allInferiors map[InferiorID]Inferior,
 		aliveCaptures map[model.CaptureID]*CaptureStatus,
-		stateMachines utils.Map[InferiorID, *StateMachine],
+		stateMachines map[InferiorID]*StateMachine,
 		batchSize int,
 	) []*ScheduleTask
 }
 
 // Schedule generates schedule tasks based on the inputs.
 func (s *Supervisor) schedule(
-	allInferiors utils.Map[InferiorID, Inferior],
+	allInferiors map[InferiorID]Inferior,
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
-	stateMachines utils.Map[InferiorID, *StateMachine],
+	stateMachines map[InferiorID]*StateMachine,
 	batchSize int,
 ) []*ScheduleTask {
 	for _, sched := range s.schedulers {
@@ -51,27 +50,27 @@ func (s *Supervisor) schedule(
 }
 
 // Schedule generates schedule tasks based on the inputs.
-func (s *Supervisor) Schedule(allInferiors utils.Map[InferiorID, Inferior]) ([]rpc.Message, error) {
+func (s *Supervisor) Schedule(allInferiors map[InferiorID]Inferior) ([]rpc.Message, error) {
 	msgs := s.checkRunningTasks()
 
 	if !s.CheckAllCaptureInitialized() {
 		log.Info("skip scheduling since not all captures are initialized",
 			zap.String("id", s.ID.String()),
-			zap.Int("totalInferiors", allInferiors.Len()),
-			zap.Int("totalStateMachines", s.StateMachines.Len()),
+			zap.Int("totalInferiors", len(allInferiors)),
+			zap.Int("totalStateMachines", len(s.StateMachines)),
 			zap.Int("maxTaskConcurrency", s.maxTaskConcurrency),
-			zap.Int("runningTasks", s.RunningTasks.Len()),
+			zap.Int("runningTasks", len(s.RunningTasks)),
 		)
 		return msgs, nil
 	}
-	batchSize := s.maxTaskConcurrency - s.RunningTasks.Len()
+	batchSize := s.maxTaskConcurrency - len(s.RunningTasks)
 	if batchSize <= 0 {
 		log.Warn("Skip scheduling since there are too many running task",
 			zap.String("id", s.ID.String()),
-			zap.Int("totalInferiors", allInferiors.Len()),
-			zap.Int("totalStateMachines", s.StateMachines.Len()),
+			zap.Int("totalInferiors", len(allInferiors)),
+			zap.Int("totalStateMachines", len(s.StateMachines)),
 			zap.Int("maxTaskConcurrency", s.maxTaskConcurrency),
-			zap.Int("runningTasks", s.RunningTasks.Len()),
+			zap.Int("runningTasks", len(s.RunningTasks)),
 		)
 		return msgs, nil
 	}
@@ -105,14 +104,13 @@ func (s *Supervisor) checkRunningTasks() (msgs []rpc.Message) {
 
 	// Check if a running task is finished.
 	var toBeDeleted []InferiorID
-	s.RunningTasks.Ascend(func(id InferiorID, task *ScheduleTask) bool {
-		stateMachine, ok := s.StateMachines.Get(id)
+	for id, _ := range s.RunningTasks {
+		stateMachine, ok := s.StateMachines[id]
 		if !ok || stateMachine.HasRemoved() || stateMachine.State == SchedulerStatusWorking {
 			// 1. No inferior found, remove the task
 			// 2. The inferior has been removed, remove the task
 			// 3. The task is still working, remove the task
 			toBeDeleted = append(toBeDeleted, id)
-			return true
 		}
 
 		if needResend {
@@ -120,11 +118,10 @@ func (s *Supervisor) checkRunningTasks() (msgs []rpc.Message) {
 			log.Debug("resend message", zap.Any("msg", msg))
 			msgs = append(msgs, msg...)
 		}
-		return true
-	})
+	}
 
 	for _, span := range toBeDeleted {
-		s.RunningTasks.Delete(span)
+		delete(s.RunningTasks, span)
 		log.Debug("schedule finished, remove running task",
 			zap.String("stid", s.ID.String()),
 			zap.String("id", span.String()))

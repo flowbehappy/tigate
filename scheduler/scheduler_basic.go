@@ -16,7 +16,6 @@ package scheduler
 import (
 	"time"
 
-	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -58,9 +57,9 @@ func (b *BasicScheduler) hasPendingTask() bool {
 }
 
 func (b *BasicScheduler) Schedule(
-	allInferiors utils.Map[InferiorID, Inferior],
+	allInferiors map[InferiorID]Inferior,
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
-	stateMachines utils.Map[InferiorID, *StateMachine],
+	stateMachines map[InferiorID]*StateMachine,
 	batchSize int,
 ) (tasks []*ScheduleTask) {
 	if !b.hasPendingTask() && time.Since(b.lastForceScheduleTime) > 120*time.Second {
@@ -73,13 +72,12 @@ func (b *BasicScheduler) Schedule(
 	if b.needRemoveInferior {
 		// The two sets are not identical. We need to build a map to find removed inferiors.
 		b.removeInferiorCache = make([]InferiorID, 0, batchSize)
-		stateMachines.Ascend(func(key InferiorID, value *StateMachine) bool {
-			ok := allInferiors.Has(key)
+		for key, _ := range stateMachines {
+			_, ok := allInferiors[key]
 			if !ok {
 				b.removeInferiorCache = append(b.removeInferiorCache, key)
 			}
-			return true
-		})
+		}
 		b.needRemoveInferior = false
 		if len(b.removeInferiorCache) > 0 {
 			log.Info("basic scheduler generate new remove inferiors cache",
@@ -107,7 +105,7 @@ func (b *BasicScheduler) Schedule(
 	// Build add inferior tasks.
 	if b.needAddInferior {
 		b.addInferiorCache = make([]InferiorID, 0, batchSize)
-		allInferiors.Ascend(func(inf InferiorID, value Inferior) bool {
+		for inf, value := range allInferiors {
 			st := value.GetStateMachine()
 			if st == nil || st.State == SchedulerStatusAbsent {
 				// add case 1: schedule a new inferior
@@ -115,8 +113,7 @@ func (b *BasicScheduler) Schedule(
 				// TODO: store absent inferiors in a separate map to trigger reschedule quickly.
 				b.addInferiorCache = append(b.addInferiorCache, inf)
 			}
-			return true
-		})
+		}
 		b.needAddInferior = false
 		if len(b.addInferiorCache) > 0 {
 			log.Info("basic scheduler generate new add inferiors cache",
@@ -187,11 +184,11 @@ func (b *BasicScheduler) newBurstAddInferiors(newInferiors []InferiorID, capture
 // TODO: maybe remove task does not need captureID.
 func (b *BasicScheduler) newBurstRemoveInferiors(
 	rmInferiors []InferiorID,
-	stateMachines utils.Map[InferiorID, *StateMachine],
+	stateMachines map[InferiorID]*StateMachine,
 ) []*ScheduleTask {
 	removeTasks := make([]*ScheduleTask, 0, len(rmInferiors))
 	for _, id := range rmInferiors {
-		state, _ := stateMachines.Get(id)
+		state, _ := stateMachines[id]
 		var captureID string
 		for server := range state.Servers {
 			captureID = server

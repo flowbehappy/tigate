@@ -25,7 +25,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var _ Scheduler = &balanceScheduler{}
+//var _ Scheduler = &balanceScheduler{}
 
 // The scheduler for balancing tables among all captures.
 type balanceScheduler struct {

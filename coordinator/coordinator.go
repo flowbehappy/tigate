@@ -27,7 +27,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
-	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
@@ -60,7 +59,7 @@ type coordinator struct {
 
 	lastSaveTime         time.Time
 	lastTickTime         time.Time
-	scheduledChangefeeds utils.Map[scheduler.InferiorID, scheduler.Inferior]
+	scheduledChangefeeds map[scheduler.InferiorID]scheduler.Inferior
 
 	gcManager  gc.Manager
 	pdClient   pd.Client
@@ -75,7 +74,7 @@ func NewCoordinator(capture *common.NodeInfo,
 	c := &coordinator{
 		version:              version,
 		nodeInfo:             capture,
-		scheduledChangefeeds: utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior](),
+		scheduledChangefeeds: map[scheduler.InferiorID]scheduler.Inferior{},
 		lastTickTime:         time.Now(),
 		gcManager:            gc.NewManager(etcdClient.GetGCServiceID(), pdClient, pdClock),
 		pdClient:             pdClient,
@@ -219,13 +218,13 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 		}
 		if shouldRunChangefeed(cfState.Info.State) {
 			// todo use real changefeed instance here
-			ok := c.scheduledChangefeeds.Has(scheduler.ChangefeedID(id))
+			_, ok := c.scheduledChangefeeds[scheduler.ChangefeedID(id)]
 			if !ok {
-				c.scheduledChangefeeds.ReplaceOrInsert(scheduler.ChangefeedID(id), &changefeed{})
+				c.scheduledChangefeeds[scheduler.ChangefeedID(id)] = &changefeed{}
 			}
 		} else {
 			// changefeed is stopped
-			c.scheduledChangefeeds.Delete(scheduler.ChangefeedID(id))
+			delete(c.scheduledChangefeeds, scheduler.ChangefeedID(id))
 		}
 	}
 	c.supervisor.MarkNeedAddInferior()
@@ -244,21 +243,21 @@ func (c *coordinator) newChangefeed(id scheduler.InferiorID) scheduler.Inferior 
 	cfID := model.ChangeFeedID(id.(scheduler.ChangefeedID))
 	cfInfo := c.lastState.Changefeeds[cfID]
 	cf := newChangefeed(c, cfID, cfInfo.Info, cfInfo.Status.CheckpointTs)
-	c.scheduledChangefeeds.ReplaceOrInsert(scheduler.ChangefeedID(cfInfo.ID), cf)
+	c.scheduledChangefeeds[scheduler.ChangefeedID(cfInfo.ID)] = cf
 	return cf
 }
 
 func (c *coordinator) saveChangefeedStatus() {
 	if time.Since(c.lastSaveTime) > time.Millisecond*500 {
-		c.scheduledChangefeeds.Ascend(func(key scheduler.InferiorID, value scheduler.Inferior) bool {
+		for key, value := range c.scheduledChangefeeds {
 			id := model.ChangeFeedID(key.(scheduler.ChangefeedID))
 			cfState, ok := c.lastState.Changefeeds[id]
 			if !ok {
-				return true
+				continue
 			}
 			cf := value.(*changefeed)
 			if cf.State == nil {
-				return true
+				continue
 			}
 			if !shouldRunChangefeed(model.FeedState(cf.State.FeedState)) {
 				cfState.PatchInfo(func(info *model.ChangeFeedInfo) (*model.ChangeFeedInfo, bool, error) {
@@ -297,8 +296,7 @@ func (c *coordinator) saveChangefeedStatus() {
 					saveErrorFn(err)
 				}
 			}
-			return true
-		})
+		}
 		c.lastSaveTime = time.Now()
 	}
 }
@@ -403,7 +401,7 @@ func (c *coordinator) calculateGCSafepoint(state *orchestrator.GlobalReactorStat
 			minCpts = checkpointTs
 		}
 		// Force update when adding a new changefeed.
-		exist := c.scheduledChangefeeds.Has(scheduler.ChangefeedID(changefeedID))
+		_, exist := c.scheduledChangefeeds[scheduler.ChangefeedID(changefeedID)]
 		if !exist {
 			forceUpdate = true
 		}
@@ -423,7 +421,7 @@ func (c *coordinator) printStatus() {
 		absentTask := 0
 		commitTask := 0
 		removingTask := 0
-		c.supervisor.StateMachines.Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
+		for _, value := range c.supervisor.StateMachines {
 			switch value.State {
 			case scheduler.SchedulerStatusAbsent:
 				absentTask++
@@ -436,15 +434,14 @@ func (c *coordinator) printStatus() {
 			case scheduler.SchedulerStatusRemoving:
 				removingTask++
 			}
-			return true
-		})
+		}
 		log.Info("changefeed status",
 			zap.Int("absent", absentTask),
 			zap.Int("prepare", prepareTask),
 			zap.Int("commit", commitTask),
 			zap.Int("working", workingTask),
 			zap.Int("removing", removingTask),
-			zap.Any("runningTask", c.supervisor.RunningTasks.Len()),
+			zap.Any("runningTask", len(c.supervisor.RunningTasks)),
 		)
 		c.lastCheckTime = time.Now()
 	}
