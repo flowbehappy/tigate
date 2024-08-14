@@ -14,16 +14,13 @@
 package coordinator
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
-	"go.uber.org/zap"
 )
 
 type ChangeFeedDB interface {
@@ -50,17 +47,17 @@ func newChangefeed(c *coordinator,
 	cfID model.ChangeFeedID,
 	info *model.ChangeFeedInfo,
 	checkpointTs uint64) *changefeed {
-	bytes, err := json.Marshal(info)
-	if err != nil {
-		log.Panic("unable to marshal changefeed config",
-			zap.Any("config", info),
-			zap.Error(err))
-	}
+	//bytes, err := json.Marshal(info)
+	//if err != nil {
+	//	log.Panic("unable to marshal changefeed config",
+	//		zap.Any("config", info),
+	//		zap.Error(err))
+	//}
 	return &changefeed{
-		coordinator:  c,
-		ID:           cfID,
-		Info:         info,
-		configBytes:  bytes,
+		coordinator: c,
+		ID:          cfID,
+		Info:        info,
+		//configBytes:  bytes,
 		checkpointTs: checkpointTs,
 		// init the first status
 		State: &MaintainerStatus{

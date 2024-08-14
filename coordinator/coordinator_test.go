@@ -15,7 +15,6 @@ package coordinator
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -170,12 +169,15 @@ func (m *mockMaintainerManager) onDispatchMaintainerRequest(
 		cfID := model.DefaultChangeFeedID(req.GetId())
 		cf, ok := m.maintainers.Load(cfID)
 		if !ok {
-			cfConfig := &model.ChangeFeedInfo{}
-			err := json.Unmarshal(req.Config, cfConfig)
-			if err != nil {
-				log.Panic("decode changefeed fail", zap.Error(err))
-			}
-			cf = &Maintainer{config: cfConfig}
+			//cfConfig := &model.ChangeFeedInfo{}
+			//err := json.Unmarshal(req.Config, cfConfig)
+			//if err != nil {
+			//	log.Panic("decode changefeed fail", zap.Error(err))
+			//}
+			cf = &Maintainer{id: cfID, status: &heartbeatpb.MaintainerStatus{
+				ChangefeedID: cfID.ID,
+				State:        heartbeatpb.ComponentState_Working,
+			}}
 			m.maintainers.Store(cfID, cf)
 		}
 		cf.(*Maintainer).isSecondary.Store(req.IsSecondary)
@@ -222,14 +224,13 @@ type Maintainer struct {
 	cascadeRemoving atomic.Bool
 	isSecondary     atomic.Bool
 
-	config *model.ChangeFeedInfo
+	//config *model.ChangeFeedInfo
+	id     model.ChangeFeedID
+	status *heartbeatpb.MaintainerStatus
 }
 
 func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
-	return &heartbeatpb.MaintainerStatus{
-		ChangefeedID: m.config.ID,
-		State:        heartbeatpb.ComponentState_Working,
-	}
+	return m.status
 }
 
 func TestCoordinatorScheduling(t *testing.T) {

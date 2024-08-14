@@ -408,7 +408,7 @@ func (s *StateMachine) pollOnAbsent(
 			ok && secondary == captureID {
 			s.State = SchedulerStatusCommit
 			log.Info("state transition, poll, only has secondary capture, schedule directly",
-				zap.Any("status", input),
+				zap.String("status", input.GetInferiorID().String()),
 				zap.String("captureID", captureID),
 				zap.String("old", "absent"),
 				zap.Stringer("new", s.State))
