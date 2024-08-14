@@ -94,8 +94,7 @@ type MysqlSink struct {
 	conflictDetector *conflictdetector.ConflictDetector
 
 	// 主要是要保持一样的生命周期？不然 channel 会对应不上
-	//ddlWorker      *worker.MysqlDDLWorker
-	//dmlWorkerTasks []*worker.MysqlWorkerDMLEventTask
+	ddlWorker *worker.MysqlDDLWorker
 
 	tableStatuses *TableStatusMap
 	wg            sync.WaitGroup
@@ -126,6 +125,8 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 
 	// dml worker task will deal with all the dml events
 	ctx, cancel := context.WithCancel(context.Background())
+	s.ddlWorker = worker.NewMysqlDDLWorker(db, cfg, s.changefeedID)
+
 	s.cancel = cancel
 	for i := 0; i < workerCount; i++ {
 		s.wg.Add(1)
@@ -204,8 +205,7 @@ func (s *MysqlSink) AddDMLEvent(tableSpan *common.TableSpan, event *common.TxnEv
 	tableStatus.getCh() <- event
 }
 
-/*
-func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *common.TxnEvent) { // 或许 ddl 也可以考虑有专用的 worker？
+func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *common.TxnEvent) {
 	tableStatus, ok := s.tableStatuses.Get(tableSpan)
 	if !ok {
 		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
@@ -214,10 +214,9 @@ func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *
 
 	tableStatus.getProgress().Add(event)
 	event.PostTxnFlushed = func() { tableStatus.getProgress().Remove(event) }
-	task := worker.NewMysqlWorkerDDLEventTask(s.ddlWorker, event) // 先固定用 0 号 worker
-	threadpool.GetTaskSchedulerInstance().WorkerTaskScheduler.Submit(task, threadpool.IOTask, time.Time{})
-
-}*/
+	// TODO:这个 ddl 可以并发写么？如果不行的话，后面还要加锁或者排队
+	s.ddlWorker.GetMysqlWriter().FlushDDLEvent(event)
+}
 
 func (s *MysqlSink) AddTableSpan(tableSpan *common.TableSpan) {
 	tableProgress := types.NewTableProgress()
@@ -271,7 +270,7 @@ func (s *MysqlSink) IsEmpty(tableSpan *common.TableSpan) bool {
 	return tableStatus.getProgress().Empty()
 }
 
-func (s *MysqlSink) GetSmallestCommitTs(tableSpan *common.TableSpan) uint64 {
+func (s *MysqlSink) GetCheckpointTs(tableSpan *common.TableSpan) uint64 {
 	tableStatus, ok := s.tableStatuses.Get(tableSpan)
 
 	if !ok {
@@ -279,7 +278,7 @@ func (s *MysqlSink) GetSmallestCommitTs(tableSpan *common.TableSpan) uint64 {
 		return math.MaxUint64
 	}
 
-	return tableStatus.getProgress().SmallestCommitTs()
+	return tableStatus.getProgress().MaxCheckpointTs()
 }
 
 func (s *MysqlSink) Close() {

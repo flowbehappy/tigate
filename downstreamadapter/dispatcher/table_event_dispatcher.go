@@ -14,19 +14,15 @@
 package dispatcher
 
 import (
-	"bytes"
 	"context"
 	"sync"
 	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
-	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/google/uuid"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
@@ -99,17 +95,12 @@ type TableEventDispatcher struct {
 	tableSpan *common.TableSpan
 	sink      sink.Sink
 
-	state *State
-
-	// 搞个 channel 来接收 heartbeat 产生的 信息，然后下推数据这个就可以做成 await 了
-	// heartbeat 会更新依赖的 tableSpan 的 状态，然后满足了就删掉，下次发送就不用发了，但最终推动他变化的还是要收到 action
-	heartbeatChan chan *HeartBeatResponseMessage
+	ddlActions            chan *heartbeatpb.DispatcherAction
+	tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus
 
 	//SyncPointInfo *SyncPointInfo
 
 	//MemoryUsage *MemoryUsage
-
-	tableInfo *common.TableInfo // TODO:后续做成一整个 tableInfo Struct
 
 	componentStatus *ComponentStateWithMutex
 
@@ -119,15 +110,15 @@ type TableEventDispatcher struct {
 	wg     sync.WaitGroup
 }
 
-func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, syncPointInfo *SyncPointInfo) *TableEventDispatcher {
+func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, syncPointInfo *SyncPointInfo, tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus) *TableEventDispatcher {
 	ctx, cancel := context.WithCancel(context.Background())
 	tableEventDispatcher := &TableEventDispatcher{
-		id:            uuid.NewString(),
-		eventCh:       make(chan *common.TxnEvent, 16),
-		tableSpan:     tableSpan,
-		sink:          sink,
-		state:         NewState(),
-		heartbeatChan: make(chan *HeartBeatResponseMessage, 16),
+		id:                    uuid.NewString(),
+		eventCh:               make(chan *common.TxnEvent, 16),
+		tableSpan:             tableSpan,
+		sink:                  sink,
+		ddlActions:            make(chan *heartbeatpb.DispatcherAction, 16),
+		tableSpanStatusesChan: tableSpanStatusesChan,
 		//SyncPointInfo:   syncPointInfo,
 		//MemoryUsage:     NewMemoryUsage(),
 		componentStatus: newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
@@ -143,6 +134,53 @@ func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startT
 	return tableEventDispatcher
 }
 
+//  1. 如果是单表内的 ddl，达到下推的条件为： sink 中没有还没执行完的当前表的 event
+//  2. 如果是多表内的 ddl 或者是表间的 ddl，则需要满足的条件为：
+//     2.1 sink 中没有还没执行完的当前表的 event
+//     2.2 maintainer 通知自己可以 write 或者 pass event
+func (d *TableEventDispatcher) AddDDLEventToSinkWhenAvailable(event *common.TxnEvent) {
+	if event.IsSingleTableDDL() {
+		if d.sink.IsEmpty(d.tableSpan) {
+			d.sink.AddDMLEvent(d.tableSpan, event)
+			return
+		} else {
+			// TODO:先写一个 定时 check 的逻辑，后面用 dynamic stream 改造
+			timer := time.NewTimer(time.Millisecond * 50)
+			for {
+				select {
+				case <-timer.C:
+					if d.sink.IsEmpty(d.tableSpan) {
+						d.sink.AddDMLEvent(d.tableSpan, event)
+						return
+					}
+				}
+			}
+		}
+	}
+
+	d.tableSpanStatusesChan <- &heartbeatpb.TableSpanStatus{
+		Span:            d.tableSpan.TableSpan,
+		ComponentStatus: heartbeatpb.ComponentState_Working,
+		State: &heartbeatpb.State{
+			IsBlocked:            true,
+			BlockTs:              event.CommitTs,
+			BlockTableSpan:       event.GetBlockedTableSpan(), // 这个包含自己的 span 是不是也无所谓，不然就要剔除掉
+			NeedDroppedTableSpan: event.GetNeedDroppedTableSpan(),
+			NeedAddedTableSpan:   event.GetNeedAddedTableSpan(),
+		},
+	}
+
+	for {
+		dispatcherAction := <-d.ddlActions
+		if dispatcherAction.CommitTs == event.CommitTs {
+			if dispatcherAction.Action == heartbeatpb.Action_Write {
+				d.sink.AddDDLAndSyncPointEvent(d.tableSpan, event) // 这个是同步写，所以写完的时候 sink 也 available 了
+			}
+			return
+		}
+	}
+}
+
 func (d *TableEventDispatcher) DispatcherEvents(ctx context.Context) {
 	defer d.wg.Done()
 	tableSpan := d.GetTableSpan()
@@ -152,9 +190,10 @@ func (d *TableEventDispatcher) DispatcherEvents(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case event := <-d.GetEventChan():
-			//log.Info("TableEventDispatcher get events from eventChan", zap.Any("event is DML", event.IsDMLEvent()), zap.Any("dispatcher table id", d.tableSpan.TableID))
 			if event.IsDMLEvent() {
 				sink.AddDMLEvent(tableSpan, event)
+			} else if event.IsDDLEvent() {
+				d.AddDDLEventToSinkWhenAvailable(event)
 			} else {
 				// resolvedTs
 				d.resolvedTs.Set(event.ResolvedTs)
@@ -171,10 +210,6 @@ func (d *TableEventDispatcher) GetTableSpan() *common.TableSpan {
 	return d.tableSpan
 }
 
-func (d *TableEventDispatcher) GetState() *State {
-	return d.state
-}
-
 func (d *TableEventDispatcher) GetEventChan() chan *common.TxnEvent {
 	return d.eventCh
 }
@@ -184,17 +219,10 @@ func (d *TableEventDispatcher) GetResolvedTs() uint64 {
 }
 
 func (d *TableEventDispatcher) GetCheckpointTs() uint64 {
-	var checkpointTs uint64
-	smallestCommitTsInSink := d.GetSink().GetSmallestCommitTs(d.GetTableSpan())
-	if smallestCommitTsInSink == 0 {
-		// state := d.GetState()
-		// if state.pengdingEvent != nil {
-		// 	checkpointTs = state.pengdingEvent.CommitTs - 1
-		// } else {
+	checkpointTs := d.GetSink().GetCheckpointTs(d.GetTableSpan())
+	if checkpointTs == 0 {
+		// 说明从没有数据写到过 sink，则选择用 resolveTs 作为 checkpointTs
 		checkpointTs = d.GetResolvedTs()
-		//}
-	} else {
-		checkpointTs = smallestCommitTsInSink - 1
 	}
 	return checkpointTs
 }
@@ -211,8 +239,8 @@ func (d *TableEventDispatcher) GetDispatcherType() DispatcherType {
 	return TableEventDispatcherType
 }
 
-func (d *TableEventDispatcher) GetHeartBeatChan() chan *HeartBeatResponseMessage {
-	return d.heartbeatChan
+func (d *TableEventDispatcher) GetDDLActions() chan *heartbeatpb.DispatcherAction {
+	return d.ddlActions
 }
 
 //func (d *TableEventDispatcher) GetSyncPointInfo() *SyncPointInfo {
@@ -223,71 +251,8 @@ func (d *TableEventDispatcher) GetHeartBeatChan() chan *HeartBeatResponseMessage
 // 	return d.MemoryUsage
 // }
 
-func (d *TableEventDispatcher) decodeEvent(rawTxnEvent *eventpb.TxnEvent) (*common.TxnEvent, error) {
-	txnEvent := &common.TxnEvent{}
-	for _, rawEvent := range rawTxnEvent.Events {
-		key, physicalTableID, err := decodeTableID(rawEvent.Key)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(rawEvent.OldValue) == 0 && len(rawEvent.Value) == 0 {
-			log.Warn("empty value and old value",
-				zap.Any("raw event", rawEvent))
-		}
-
-		baseInfo := baseKVEntry{
-			StartTs:         rawTxnEvent.StartTs,
-			CRTs:            rawTxnEvent.CommitTs,
-			PhysicalTableID: physicalTableID,
-			Delete:          rawEvent.OpType == eventpb.OpType_OpTypeDelete,
-		}
-
-		row, _ := func() (*model.RowChangedEvent, error) {
-			if bytes.HasPrefix(key, recordPrefix) {
-				rowKV, err := unmarshalRowKVEntry(d.tableInfo, rawEvent.Key, rawEvent.Value, rawEvent.OldValue, baseInfo)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				if rowKV == nil {
-					return nil, nil
-				}
-				row, _, err := mountRowKVEntry(d.tableInfo, rowKV)
-				if err != nil {
-					return nil, err
-				}
-				return row, nil
-			}
-			return nil, nil
-		}()
-
-		if err != nil {
-			return nil, err
-		}
-		txnEvent.Rows = append(txnEvent.Rows, &common.RowChangedEvent{
-			PhysicalTableID: row.PhysicalTableID,
-			TableInfo:       d.tableInfo,
-			ReplicatingTs:   row.ReplicatingTs,
-			Columns:         common.ColumnDatas2Columns(row.Columns, d.tableInfo),
-			PreColumns:      common.ColumnDatas2Columns(row.PreColumns, d.tableInfo),
-		})
-	}
-	return txnEvent, nil
-}
-
-// func (d *TableEventDispatcher) PushEvent(rawTxnEvent *eventpb.TxnEvent) {
-// 	// decode the raw event to common.TxnEvent
-// 	event, _ := d.decodeEvent(rawTxnEvent)
-// 	//d.GetMemoryUsage().Add(event.CommitTs, event.MemoryCost())
-// 	d.GetEventChan() <- event // 换成一个函数
-// }
-
 func (d *TableEventDispatcher) PushTxnEvent(event *common.TxnEvent) {
 	d.GetEventChan() <- event
-}
-
-func (d *TableEventDispatcher) InitTableInfo(tableInfo *eventpb.TableInfo) {
-	//d.tableInfo = decodeTableInfo(tableInfo) // TODO
 }
 
 func (d *TableEventDispatcher) Remove() {
@@ -304,12 +269,7 @@ func (d *TableEventDispatcher) TryClose() (w heartbeatpb.Watermark, ok bool) {
 	if d.sink.IsEmpty(d.tableSpan) {
 		// calculate the checkpointTs, and clean the resource
 		d.sink.RemoveTableSpan(d.tableSpan)
-		state := d.GetState()
-		if state.pengdingEvent != nil {
-			w.CheckpointTs = state.pengdingEvent.CommitTs - 1
-		} else {
-			w.CheckpointTs = d.GetCheckpointTs()
-		}
+		w.CheckpointTs = d.GetCheckpointTs()
 		w.ResolvedTs = d.GetResolvedTs()
 
 		//d.MemoryUsage.Clear()

@@ -27,9 +27,10 @@ import (
 // 本质是要频繁的删除随机数据，插入递增数据，查询最小值，后面自己可以实现一个红黑树吧，或者其他结构，先用 list 苟一苟
 // thread safe
 type TableProgress struct {
-	mutex   sync.Mutex
-	list    *list.List
-	elemMap map[Ts]*list.Element
+	mutex       sync.Mutex
+	list        *list.List
+	elemMap     map[Ts]*list.Element
+	maxCommitTs uint64
 }
 
 // 按 commitTs 为主，startTs 为辅排序
@@ -40,8 +41,9 @@ type Ts struct {
 
 func NewTableProgress() *TableProgress {
 	tableProgress := &TableProgress{
-		list:    list.New(),
-		elemMap: make(map[Ts]*list.Element),
+		list:        list.New(),
+		elemMap:     make(map[Ts]*list.Element),
+		maxCommitTs: 0,
 	}
 	return tableProgress
 }
@@ -52,6 +54,7 @@ func (p *TableProgress) Add(event *common.TxnEvent) {
 	defer p.mutex.Unlock()
 	elem := p.list.PushBack(ts)
 	p.elemMap[ts] = elem
+	p.maxCommitTs = event.CommitTs
 }
 
 // 而且删除可以认为是批量的？但要不要做成批量可以后面再看
@@ -71,14 +74,18 @@ func (p *TableProgress) Empty() bool {
 	return p.list.Len() == 0
 }
 
-// 返回目前 sink 还没 flush 下去的 event 中 commitTs 最小的。
-// 用于结合当前 dispatcher 收到的 resolvedTs，和 event list 中的 event 值计算 table checkpointTs
-func (p *TableProgress) SmallestCommitTs() uint64 {
+// 返回当前 tableSpan 中最大的 checkpointTs，也就是最大的 ts，并且 <= ts 之前的数据都已经成功写下去了
+// 1. 假设目前 sink 还有没 flush 下去的 event，就拿最小的这个 event的 commitTs。
+// 2. 反之，则选择收到过 event 中 commitTs 最大的那个。
+func (p *TableProgress) MaxCheckpointTs() uint64 {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
 	if p.list.Len() == 0 {
-		return 0
+		if p.maxCommitTs == 0 {
+			return 0
+		}
+		return p.maxCommitTs - 1
 	}
-	return p.list.Front().Value.(Ts).commitTs
+	return p.list.Front().Value.(Ts).commitTs - 1
 }

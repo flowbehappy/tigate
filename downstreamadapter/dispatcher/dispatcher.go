@@ -52,19 +52,20 @@ The workflow related to the dispatcher is as follows:
 type Dispatcher interface {
 	GetSink() sink.Sink
 	GetTableSpan() *common.TableSpan
-	GetState() *State
 	GetEventChan() chan *common.TxnEvent
 	GetResolvedTs() uint64
 	UpdateResolvedTs(uint64)
 	GetCheckpointTs() uint64
 	GetId() string
 	GetDispatcherType() DispatcherType
-	GetHeartBeatChan() chan *HeartBeatResponseMessage
+	GetDDLActions() chan *heartbeatpb.DispatcherAction
 	//GetSyncPointInfo() *SyncPointInfo
 	//GetMemoryUsage() *MemoryUsage
 	// PushEvent(event *eventpb.TxnEvent)
 	PushTxnEvent(event *common.TxnEvent)
 	GetComponentStatus() heartbeatpb.ComponentState
+
+	TryClose() (w heartbeatpb.Watermark, ok bool)
 }
 
 type DispatcherType uint64
@@ -73,63 +74,6 @@ const (
 	TableEventDispatcherType        DispatcherType = 0
 	TableTriggerEventDispatcherType DispatcherType = 1
 )
-
-type Action uint64
-
-const (
-	None  Action = 0
-	Write Action = 1
-	Pass  Action = 2
-)
-
-/*
-State displays the status of advancing event and State is used to indicate whether the current pendingEvent can be advanced.
-Only the following events can be blocked:
-1. All the DDL Events
-2. All the Sync Point Events
-3. The Event after the DDL Event or the Sync Point Event
-*/
-type State struct {
-	// False means the events are being pushed down continuously
-	// True means there is an event being blocked
-	isBlocked bool
-	// The blocked Event.
-	// pendingEvent could be nil when isBlocked is true.
-	// Such as one ddl event is sent to downstream,
-	// so the following events can be pushed down only when
-	// the ddl event is flushed to downstream successfully (that means sink is available).
-	pengdingEvent *common.TxnEvent
-	// The pendingEvent is waiting for the progress of these tableSpans to reach the blockTs.
-	blockTableSpan []*common.TableSpan
-	// the commitTs of the pendingEvent, also the ts the tableSpan in the blockTableSpan should reach.
-	blockTs uint64
-	// True means the sink flushes all the previous event successfully,
-	// there is no event of these tableSpan in the Sink now.
-	sinkAvailable bool
-	// The action for the pendingEvent,
-	// it is used to decide whether the pendingEvent should write or just pass.
-	action Action //
-}
-
-func NewState() *State {
-	return &State{
-		isBlocked:      false,
-		pengdingEvent:  nil,
-		blockTableSpan: nil,
-		blockTs:        0,
-		sinkAvailable:  false,
-		action:         None,
-	}
-}
-
-func (s *State) clear() {
-	s.isBlocked = false
-	s.pengdingEvent = nil
-	s.blockTableSpan = nil
-	s.blockTs = 0
-	s.sinkAvailable = false
-	s.action = None
-}
 
 /*
 HeartBeatInfo is used to collect the message for HeartBeatRequest for each dispatcher.
@@ -167,26 +111,4 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher, h *HeartBeatInfo) {
 	h.Id = d.GetId()
 	h.ComponentStatus = d.GetComponentStatus()
 	h.TableSpan = d.GetTableSpan()
-}
-
-/*
-TableSpanProgress shows the progress of the other tableSpan, including:
-1. Whether the tableSpan is blocked, and the ts of blocked event
-2. The checkpointTs of the tableSpan
-*/
-type TableSpanProgress struct {
-	Span         *common.TableSpan
-	IsBlocked    bool
-	BlockTs      uint64
-	CheckpointTs uint64
-}
-
-/*
-HeartBeatReponseMessage includes the message from the HeartBeatResponse, including:
-1. The action for the blocked event
-2. the progress of other tableSpan, which the dispatcher is waiting for.
-*/
-type HeartBeatResponseMessage struct { // 最好需要一个对应，对应 blocked by 什么 event 的 信号，避免出现乱序的问题
-	Action             Action
-	OtherTableProgress []*TableSpanProgress
 }
