@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/cdcpb"
 	"github.com/pingcap/log"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -314,6 +315,9 @@ func (w *sharedRegionWorker) advanceTableSpan(ctx context.Context, batch resolve
 				zap.Uint64("lastResolvedTs", lastResolvedTs))
 			continue
 		}
+
+		log.Info("region worker get a resolvedTs",
+			zap.Any("time", oracle.GetTimeFromTS(batch.ts)))
 		state.updateResolvedTs(batch.ts)
 	}
 
