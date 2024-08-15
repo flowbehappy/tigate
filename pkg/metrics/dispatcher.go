@@ -96,6 +96,15 @@ var (
 		Name:      "event_collector_registered_dispatcher_count",
 		Help:      "The number of registered dispatchers in the event collector",
 	})
+
+	EventCollectorReceivedEventLagDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "dispatcher",
+			Name:      "received_event_lag_duration",
+			Help:      "The duration of lag between the event collector received event and the event's ts",
+			Buckets:   prometheus.DefBuckets,
+		}, []string{"type"})
 )
 
 func InitDisaptcherMetrics(registry *prometheus.Registry) {
@@ -109,4 +118,5 @@ func InitDisaptcherMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(HandleDispatcherRequsetCounter)
 	registry.MustRegister(DispatcherReceivedEventCount)
 	registry.MustRegister(EventCollectorRegisteredDispatcherCount)
+	registry.MustRegister(EventCollectorReceivedEventLagDuration)
 }

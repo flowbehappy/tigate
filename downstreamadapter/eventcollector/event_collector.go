@@ -81,6 +81,8 @@ type EventCollector struct {
 	registerMessageChan                          *chann.DrainableChann[*RegisterInfo] // for temp
 	metricDispatcherReceivedKVEventCount         prometheus.Counter
 	metricDispatcherReceivedResolvedTsEventCount prometheus.Counter
+	metricReceiveEventLagDuration                prometheus.Observer
+	metricReceiveResolvedTsEventLagDuration      prometheus.Observer
 }
 
 func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *EventCollector {
@@ -91,6 +93,8 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 		registerMessageChan:                  chann.NewAutoDrainChann[*RegisterInfo](),
 		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
+		metricReceiveEventLagDuration:                metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("KVEvent"),
+		metricReceiveResolvedTsEventLagDuration:      metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("ResolvedTs"),
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
 
@@ -194,6 +198,7 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 		log.Error("invalid event feed message", zap.Any("msg", msg))
 		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: fmt.Sprintf("invalid heartbeat response message")}
 	}
+	inflightDuration := time.Since(time.Unix(0, msg.CrateAt)).Milliseconds()
 
 	dispatcherID := txnEvent.DispatcherID
 	// log.Info("Recv TxnEvent", zap.Any("dispatcherID", dispatcherID), zap.Any("event is dml event", txnEvent.IsDMLEvent()))
@@ -232,9 +237,11 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 		if txnEvent.IsDMLEvent() {
 			dispatcherItem.PushTxnEvent(txnEvent)
 			c.metricDispatcherReceivedKVEventCount.Inc()
+			c.metricReceiveEventLagDuration.Observe(float64(inflightDuration))
 		} else {
 			dispatcherItem.UpdateResolvedTs(txnEvent.ResolvedTs)
 			c.metricDispatcherReceivedResolvedTsEventCount.Inc()
+			c.metricReceiveResolvedTsEventLagDuration.Observe(float64(inflightDuration))
 		}
 
 		// dispatcherItem.UpdateResolvedTs(eventFeeds.ResolvedTs)
