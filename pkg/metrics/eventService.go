@@ -56,6 +56,14 @@ var (
 			Name:      "resolved_ts_lag",
 			Help:      "resolved ts lag of eventService in seconds",
 		}, []string{"changefeed"})
+	EventServiceScanTaskInQueueDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_service",
+			Name:      "scan_task_in_queue_duration",
+			Help:      "The duration of scanning task in queue",
+			Buckets:   prometheus.DefBuckets,
+		}, []string{"changefeed"})
 )
 
 // InitMetrics registers all metrics in this file.
@@ -65,4 +73,5 @@ func InitEventServiceMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventServiceSendEventDuration)
 	registry.MustRegister(EventServiceResolvedTsGauge)
 	registry.MustRegister(EventServiceResolvedTsLagGauge)
+	registry.MustRegister(EventServiceScanTaskInQueueDuration)
 }

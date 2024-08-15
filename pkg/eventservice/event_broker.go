@@ -56,6 +56,7 @@ type eventBroker struct {
 
 	metricEventServiceResolvedTs    prometheus.Gauge
 	metricEventServiceResolvedTsLag prometheus.Gauge
+	metricTaskInQueueDuration       prometheus.Observer
 }
 
 func newEventBroker(
@@ -82,6 +83,7 @@ func newEventBroker(
 		wg:                              wg,
 		metricEventServiceResolvedTs:    metrics.EventServiceResolvedTsGauge.WithLabelValues("all"),
 		metricEventServiceResolvedTsLag: metrics.EventServiceResolvedTsLagGauge.WithLabelValues("all"),
+		metricTaskInQueueDuration:       metrics.EventServiceScanTaskInQueueDuration.WithLabelValues("all"),
 	}
 	c.runGenerateScanTask(ctx)
 	c.runScanWorker(ctx)
@@ -135,6 +137,7 @@ func (c *eventBroker) runGenerateScanTask(ctx context.Context) {
 					dispatcherStat: dispatcher,
 					dataRange:      dataRange,
 					eventCount:     change.eventCount,
+					createTime:     time.Now(),
 				}
 				c.taskPool.pushTask(task)
 			}
@@ -157,7 +160,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 					if !needScan {
 						continue
 					}
-
+					c.metricTaskInQueueDuration.Observe(time.Since(task.createTime).Seconds())
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 					dispatcherID := task.dispatcherStat.info.GetID()
 					topic := task.dispatcherStat.info.GetTopic()
@@ -169,7 +172,6 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						task.dispatcherStat.lastSent.Store(time.Now())
 						continue
 					}
-
 					//2. Get events iterator from eventStore.
 					iter, err := c.eventStore.GetIterator(task.dataRange)
 					if err != nil {
@@ -463,6 +465,7 @@ type scanTask struct {
 	dispatcherStat *dispatcherStat
 	dataRange      *common.DataRange
 	eventCount     uint64
+	createTime     time.Time
 }
 
 func (t *scanTask) checkAndAdjustScanTask() bool {
