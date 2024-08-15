@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/security"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -378,6 +379,9 @@ func (e *eventStore) writeEvent(span heartbeatpb.TableSpan, raw *common.RawKVEnt
 	}
 	if !raw.IsResolved() {
 		tableState.observer(raw)
+	} else {
+		log.Info("eventStore receive resolve ts",
+			zap.Any("time", oracle.GetTimeFromTS(raw.CRTs)))
 	}
 	tableState.ch <- eventWithTableID{span: span, raw: raw}
 }
