@@ -42,28 +42,28 @@ var (
 		Help:      "The duration of sending events by the event service",
 		Buckets:   prometheus.DefBuckets,
 	}, []string{"type"})
-	EventServiceResolvedTsGauge = prometheus.NewGaugeVec(
+	EventServiceResolvedTsGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_service",
 			Name:      "resolved_ts",
 			Help:      "resolved ts of eventService",
-		}, []string{"changefeed"})
-	EventServiceResolvedTsLagGauge = prometheus.NewGaugeVec(
+		})
+	EventServiceResolvedTsLagGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_service",
 			Name:      "resolved_ts_lag",
 			Help:      "resolved ts lag of eventService in seconds",
-		}, []string{"changefeed"})
-	EventServiceScanTaskInQueueDuration = prometheus.NewHistogramVec(
+		})
+	EventServiceScanTaskInQueueDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_service",
 			Name:      "scan_task_in_queue_duration",
 			Help:      "The duration of scanning task in queue",
 			Buckets:   prometheus.DefBuckets,
-		}, []string{"changefeed"})
+		})
 )
 
 // InitMetrics registers all metrics in this file.

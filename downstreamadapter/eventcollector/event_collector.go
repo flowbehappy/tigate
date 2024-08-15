@@ -16,7 +16,6 @@ package eventcollector
 import (
 	"context"
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
@@ -273,7 +272,7 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 func (c *EventCollector) updateMetrics(ctx context.Context) error {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-	minResolvedTs := uint64(math.MaxUint64)
+	minResolvedTs := uint64(0)
 	go func() {
 		for {
 			select {
@@ -282,7 +281,7 @@ func (c *EventCollector) updateMetrics(ctx context.Context) error {
 			case <-ticker.C:
 				c.dispatcherMap.RLock()
 				for _, d := range c.dispatcherMap.m {
-					if d.GetResolvedTs() < minResolvedTs {
+					if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
 						minResolvedTs = d.GetResolvedTs()
 					}
 				}

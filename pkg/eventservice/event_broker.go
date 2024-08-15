@@ -2,7 +2,6 @@ package eventservice
 
 import (
 	"context"
-	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -76,9 +75,9 @@ func newEventBroker(
 		messageCh:                       make(chan *wrapMessage, defaultChannelSize),
 		cancel:                          cancel,
 		wg:                              wg,
-		metricEventServiceResolvedTs:    metrics.EventServiceResolvedTsGauge.WithLabelValues("all"),
-		metricEventServiceResolvedTsLag: metrics.EventServiceResolvedTsLagGauge.WithLabelValues("all"),
-		metricTaskInQueueDuration:       metrics.EventServiceScanTaskInQueueDuration.WithLabelValues("all"),
+		metricEventServiceResolvedTs:    metrics.EventServiceResolvedTsGauge,
+		metricEventServiceResolvedTsLag: metrics.EventServiceResolvedTsLagGauge,
+		metricTaskInQueueDuration:       metrics.EventServiceScanTaskInQueueDuration,
 	}
 	c.runGenerateScanTask(ctx)
 	c.runScanWorker(ctx)
@@ -312,25 +311,23 @@ func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 }
 
 func (c *eventBroker) updateMetrics(ctx context.Context) {
-	ticker := time.NewTicker(time.Second * 10)
+	ticker := time.NewTicker(time.Second * 5)
 	defer ticker.Stop()
-	minResolvedTs := uint64(math.MaxUint64)
+	minResolvedTs := uint64(0)
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-
 				c.dispatchers.Range(func(key, value interface{}) bool {
 					dispatcher := value.(*dispatcherStat)
 					resolvedTs := dispatcher.spanSubscription.watermark.Load()
-					if resolvedTs < minResolvedTs {
+					if minResolvedTs == 0 || resolvedTs < minResolvedTs {
 						minResolvedTs = resolvedTs
 					}
 					return true
 				})
-
 				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
 				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
 				c.metricEventServiceResolvedTs.Set(float64(phyResolvedTs))
