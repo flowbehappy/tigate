@@ -53,7 +53,6 @@ func newChangefeed(c *coordinator,
 	bytes, err := json.Marshal(info)
 	if err != nil {
 		log.Panic("unable to marshal changefeed config",
-			zap.Any("config", info),
 			zap.Error(err))
 	}
 	return &changefeed{
