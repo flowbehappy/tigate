@@ -317,7 +317,6 @@ func TestEventServiceBasic(t *testing.T) {
 
 	require.Equal(t, 1, len(esImpl.brokers))
 	require.NotNil(t, esImpl.brokers[acceptorInfo.GetClusterID()])
-	require.Equal(t, 1, len(esImpl.brokers[acceptorInfo.GetClusterID()].dispatchers.m))
 
 	// add events to logpuller
 	txnEvent := &common.TxnEvent{

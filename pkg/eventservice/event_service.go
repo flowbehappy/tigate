@@ -115,9 +115,7 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 	}
 
 	dispatcher := newDispatcherStat(startTs, info, c.changedCh)
-	c.dispatchers.mu.Lock()
-	c.dispatchers.m[info.GetID()] = dispatcher
-	c.dispatchers.mu.Unlock()
+	c.dispatchers.Store(info.GetID(), dispatcher)
 
 	firstDuration := time.Since(start)
 	start = time.Now()

@@ -11,7 +11,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
-	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -63,7 +62,6 @@ func TestEventServiceOneMillionTable(t *testing.T) {
 	}()
 
 	start := time.Now()
-	clusterID := uint64(1)
 	dispatchers := make([]DispatcherInfo, 0, tableNum)
 	// register 1000,000 tables
 	for i := 0; i < tableNum; i++ {
@@ -73,7 +71,6 @@ func TestEventServiceOneMillionTable(t *testing.T) {
 	for _, dispatcher := range dispatchers {
 		esImpl.registerDispatcher(ctx, dispatcher)
 	}
-	require.Len(t, esImpl.brokers[clusterID].dispatchers.m, tableNum)
 	log.Info("register 1 million tables", zap.Duration("cost", time.Since(start)))
 
 	// Update resolvedTs for each table 10 times

@@ -34,10 +34,7 @@ type eventBroker struct {
 	msgSender messaging.MessageSender
 
 	// All the dispatchers that register to the eventBroker.
-	dispatchers struct {
-		mu sync.RWMutex
-		m  map[string]*dispatcherStat
-	}
+	dispatchers sync.Map
 	// changedCh is used to notify span subscription has new events.
 	changedCh chan *subscriptionChange
 	// taskPool is used to store the scan tasks and merge the tasks of same dispatcher.
@@ -69,12 +66,9 @@ func newEventBroker(
 	ctx, cancel := context.WithCancel(ctx)
 	wg := &sync.WaitGroup{}
 	c := &eventBroker{
-		tidbClusterID: id,
-		eventStore:    eventStore,
-		dispatchers: struct {
-			mu sync.RWMutex
-			m  map[string]*dispatcherStat
-		}{m: make(map[string]*dispatcherStat)},
+		tidbClusterID:                   id,
+		eventStore:                      eventStore,
+		dispatchers:                     sync.Map{},
 		msgSender:                       mc,
 		changedCh:                       make(chan *subscriptionChange, defaultChannelSize),
 		taskPool:                        newScanTaskPool(),
@@ -124,13 +118,12 @@ func (c *eventBroker) runGenerateScanTask(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case change := <-c.changedCh:
-				c.dispatchers.mu.RLock()
-				dispatcher, ok := c.dispatchers.m[change.dispatcherInfo.GetID()]
-				c.dispatchers.mu.RUnlock()
+				v, ok := c.dispatchers.Load(change.dispatcherInfo.GetID())
 				// The dispatcher may be deleted. In such case, we just the stale notification.
 				if !ok {
 					continue
 				}
+				dispatcher := v.(*dispatcherStat)
 				startTs := dispatcher.watermark.Load()
 				endTs := dispatcher.spanSubscription.watermark.Load()
 				dataRange := common.NewDataRange(c.tidbClusterID, dispatcher.info.GetTableSpan(), startTs, endTs)
@@ -281,7 +274,6 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 	c.wg.Add(1)
 	ticker := time.NewTicker(time.Second * 10)
-	logDispatcherCount := 0
 	log.Info("start log slow dispatchers")
 	go func() {
 		defer c.wg.Done()
@@ -290,14 +282,15 @@ func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				c.dispatchers.mu.RLock()
-				for _, dispatcher := range c.dispatchers.m {
+				logDispatcherCount := 0
+				findSlow := func(key, value interface{}) bool {
+					dispatcher := value.(*dispatcherStat)
 					lastUpdate := dispatcher.spanSubscription.lastUpdate.Load().(time.Time)
 					lastSent := dispatcher.lastSent.Load().(time.Time)
 					if time.Since(lastSent) > time.Second*30 {
 						// limit the log count to avoid log flooding.
 						if logDispatcherCount > 10 {
-							break
+							return false
 						}
 						logDispatcherCount++
 						_, id := dispatcher.info.GetChangefeedID()
@@ -310,8 +303,9 @@ func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 							zap.Uint64("dispatcher-watermark", dispatcher.watermark.Load()),
 							zap.Uint64("subscription-eventCount", dispatcher.spanSubscription.newEventCount.Load()))
 					}
+					return true
 				}
-				c.dispatchers.mu.RUnlock()
+				c.dispatchers.Range(findSlow)
 			}
 		}
 	}()
@@ -327,14 +321,16 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				c.dispatchers.mu.RLock()
-				for _, dispatcher := range c.dispatchers.m {
+
+				c.dispatchers.Range(func(key, value interface{}) bool {
+					dispatcher := value.(*dispatcherStat)
 					resolvedTs := dispatcher.spanSubscription.watermark.Load()
 					if resolvedTs < minResolvedTs {
 						minResolvedTs = resolvedTs
 					}
-				}
-				c.dispatchers.mu.RUnlock()
+					return true
+				})
+
 				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
 				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
 				c.metricEventServiceResolvedTs.Set(float64(phyResolvedTs))
@@ -350,15 +346,12 @@ func (c *eventBroker) close() {
 }
 
 func (c *eventBroker) removeDispatcher(id string) {
-	c.dispatchers.mu.Lock()
-	defer c.dispatchers.mu.Unlock()
-
-	_, ok := c.dispatchers.m[id]
+	_, ok := c.dispatchers.Load(id)
 	if !ok {
 		return
 	}
 	c.eventStore.UnregisterDispatcher(id)
-	delete(c.dispatchers.m, id)
+	c.dispatchers.Delete(id)
 	c.taskPool.removeTask(id)
 }
 
