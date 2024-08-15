@@ -316,8 +316,6 @@ func (w *sharedRegionWorker) advanceTableSpan(ctx context.Context, batch resolve
 			continue
 		}
 
-		log.Info("region worker get a resolvedTs",
-			zap.Any("time", oracle.GetTimeFromTS(batch.ts)))
 		state.updateResolvedTs(batch.ts)
 	}
 
