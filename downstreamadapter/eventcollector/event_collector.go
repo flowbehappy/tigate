@@ -16,6 +16,7 @@ package eventcollector
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -29,12 +30,13 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/chann"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
 type DispatcherMap struct {
-	mutex sync.Mutex
-	m     map[string]dispatcher.Dispatcher // dispatcher_id --> dispatcher
+	sync.RWMutex
+	m map[string]dispatcher.Dispatcher // dispatcher_id --> dispatcher
 }
 
 func newDispatcherMap() *DispatcherMap {
@@ -44,21 +46,21 @@ func newDispatcherMap() *DispatcherMap {
 }
 
 func (m *DispatcherMap) Get(dispatcherId string) (dispatcher.Dispatcher, bool) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	m.RLock()
+	defer m.RUnlock()
 	d, ok := m.m[dispatcherId]
 	return d, ok
 }
 
 func (m *DispatcherMap) Set(dispatcherId string, d dispatcher.Dispatcher) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	m.Lock()
+	defer m.Unlock()
 	m.m[dispatcherId] = d
 }
 
 func (m *DispatcherMap) Delete(dispatcherId string) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	m.Lock()
+	defer m.Unlock()
 	delete(m.m, dispatcherId)
 }
 
@@ -83,6 +85,7 @@ type EventCollector struct {
 	metricDispatcherReceivedResolvedTsEventCount prometheus.Counter
 	metricReceiveEventLagDuration                prometheus.Observer
 	metricReceiveResolvedTsEventLagDuration      prometheus.Observer
+	metricResolvedTsLag                          prometheus.Gauge
 }
 
 func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *EventCollector {
@@ -95,6 +98,7 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
 		metricReceiveEventLagDuration:                metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("KVEvent"),
 		metricReceiveResolvedTsEventLagDuration:      metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("ResolvedTs"),
+		metricResolvedTsLag:                          metrics.EventCollectorResolvedTsLagGauge,
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
 
@@ -129,6 +133,7 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 			metrics.EventCollectorRegisteredDispatcherCount.Inc()
 		}
 	}(&eventCollector)
+	eventCollector.updateMetrics(context.Background())
 
 	return &eventCollector
 }
@@ -262,5 +267,31 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 		//}
 
 	}
+	return nil
+}
+
+func (c *EventCollector) updateMetrics(ctx context.Context) error {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	minResolvedTs := uint64(math.MaxUint64)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				c.dispatcherMap.RLock()
+				for _, d := range c.dispatcherMap.m {
+					if d.GetResolvedTs() < minResolvedTs {
+						minResolvedTs = d.GetResolvedTs()
+					}
+				}
+				c.dispatcherMap.RUnlock()
+				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
+				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
+				c.metricResolvedTsLag.Set(float64(lag))
+			}
+		}
+	}()
 	return nil
 }

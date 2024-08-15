@@ -2,6 +2,7 @@ package eventservice
 
 import (
 	"context"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -88,7 +89,7 @@ func newEventBroker(
 	c.runGenerateScanTask(ctx)
 	c.runScanWorker(ctx)
 	c.runSendMessageWorker(ctx)
-	c.logSlowDispatchers(ctx)
+	//c.logSlowDispatchers(ctx)
 	c.updateMetrics(ctx)
 	return c
 }
@@ -317,25 +318,23 @@ func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 }
 
 func (c *eventBroker) updateMetrics(ctx context.Context) {
-	ticker := time.NewTicker(time.Second * 5)
+	ticker := time.NewTicker(time.Second * 10)
+	defer ticker.Stop()
+	minResolvedTs := uint64(math.MaxUint64)
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				var minResolvedTs uint64
 				c.dispatchers.mu.RLock()
 				for _, dispatcher := range c.dispatchers.m {
 					resolvedTs := dispatcher.spanSubscription.watermark.Load()
-					if minResolvedTs == 0 || resolvedTs < minResolvedTs {
+					if resolvedTs < minResolvedTs {
 						minResolvedTs = resolvedTs
 					}
 				}
 				c.dispatchers.mu.RUnlock()
-				if minResolvedTs == 0 {
-					continue
-				}
 				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
 				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
 				c.metricEventServiceResolvedTs.Set(float64(phyResolvedTs))

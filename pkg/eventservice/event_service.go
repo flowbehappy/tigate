@@ -2,6 +2,7 @@ package eventservice
 
 import (
 	"context"
+	"time"
 
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -106,6 +107,7 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 	startTs := info.GetStartTs()
 	span := info.GetTableSpan()
 
+	start := time.Now()
 	c, ok := s.brokers[clusterID]
 	if !ok {
 		c = newEventBroker(ctx, clusterID, s.eventStore, s.mc)
@@ -117,6 +119,8 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 	c.dispatchers.m[info.GetID()] = dispatcher
 	c.dispatchers.mu.Unlock()
 
+	firstDuration := time.Since(start)
+	start = time.Now()
 	c.eventStore.RegisterDispatcher(
 		info.GetID(),
 		span,
@@ -124,7 +128,9 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 		dispatcher.onNewEvent,
 		dispatcher.onSubscriptionWatermark,
 	)
-	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID), zap.Uint64("startTs", startTs))
+
+	secondDuration := time.Since(start)
+	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID), zap.Uint64("startTs", startTs), zap.Duration("firstDuration", firstDuration), zap.Duration("secondDuration", secondDuration))
 }
 
 func (s *eventService) deregisterDispatcher(dispatcherInfo DispatcherInfo) {
