@@ -299,8 +299,6 @@ func (m *Maintainer) calCheckpointTs() {
 }
 
 func (m *Maintainer) updateMetrics() {
-	log.Info("fizz update metrics", zap.String("id", m.id.String()), zap.Uint64("checkpointTs", m.watermark.CheckpointTs), zap.Uint64("resolvedTs", m.watermark.ResolvedTs))
-
 	phyCkpTs := oracle.ExtractPhysical(m.watermark.CheckpointTs)
 	m.changefeedCheckpointTsGauge.Set(float64(phyCkpTs))
 	lag := (oracle.GetPhysical(time.Now()) - phyCkpTs) / 1e3

@@ -200,9 +200,6 @@ func (d *TableEventDispatcher) GetCheckpointTs() uint64 {
 }
 
 func (d *TableEventDispatcher) UpdateResolvedTs(ts uint64) {
-	if d.tableSpan.TableID == uint64(217) {
-		log.Info("fizz update resolvedTs", zap.Uint64("tableID", d.tableSpan.TableID), zap.Uint64("resolvedTs", ts))
-	}
 	d.resolvedTs.Set(ts)
 }
 

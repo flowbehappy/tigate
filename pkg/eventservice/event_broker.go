@@ -153,12 +153,6 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 				case <-ctx.Done():
 					return
 				case task := <-c.taskPool.popTask(chIndex):
-					if task.dispatcherStat.spanSubscription.span.TableID == uint64(217) {
-						log.Info("fizz on scan task",
-							zap.Any("tableID", task.dispatcherStat.spanSubscription.span.TableID),
-							zap.Any("watermark", task.dataRange.EndTs), zap.Any("eventCount", task.eventCount))
-					}
-
 					needScan := task.checkAndAdjustScanTask()
 					if !needScan {
 						continue
@@ -342,7 +336,6 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 				}
 				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
 				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
-				log.Info("fizz on update metrics", zap.Uint64("minResolvedTs", minResolvedTs), zap.Any("lag", lag))
 				c.metricEventServiceResolvedTs.Set(float64(phyResolvedTs))
 				c.metricEventServiceResolvedTsLag.Set(float64(lag))
 			}
@@ -433,11 +426,6 @@ func (a *dispatcherStat) onSubscriptionWatermark(watermark uint64) {
 		dispatcherInfo: a.info,
 		eventCount:     a.spanSubscription.newEventCount.Swap(0),
 	}
-	// fizz: remove it after test
-	if a.spanSubscription.span.TableID == uint64(217) {
-		log.Info("fizz onSubscriptionWatermark", zap.Any("tableID", a.spanSubscription.span.TableID), zap.Any("watermark", watermark), zap.Any("eventCount", sub.eventCount))
-	}
-
 	select {
 	case a.notify <- sub:
 	default:
