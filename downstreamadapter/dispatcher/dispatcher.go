@@ -79,6 +79,7 @@ type Dispatcher interface {
 	SetDDLPendingEvent(event *common.TxnEvent)
 	GetDDLFinishCh() chan struct{}
 	Remove()
+	GetRemovingStatus() bool
 }
 
 type DispatcherType uint64
@@ -98,6 +99,7 @@ type HeartBeatInfo struct {
 	Id              string
 	TableSpan       *common.TableSpan
 	ComponentStatus heartbeatpb.ComponentState
+	IsRemoving      bool
 }
 
 func HandleDDLActions(d Dispatcher, ctx context.Context) {
@@ -216,6 +218,7 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher, h *HeartBeatInfo) {
 	h.Id = d.GetId()
 	h.ComponentStatus = d.GetComponentStatus()
 	h.TableSpan = d.GetTableSpan()
+	h.IsRemoving = d.GetRemovingStatus()
 }
 
 type SyncPointInfo struct {

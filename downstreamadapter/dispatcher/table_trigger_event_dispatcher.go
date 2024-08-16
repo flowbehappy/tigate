@@ -16,6 +16,7 @@ package dispatcher
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -107,6 +108,9 @@ type TableTriggerEventDispatcher struct {
 	ddlPendingEvent *common.TxnEvent
 	ddlFinishCh     chan struct{}
 	//MemoryUsage *MemoryUsage
+	MemoryUsage *MemoryUsage
+
+	IsRemoving atomic.Bool
 }
 
 func NewTableTriggerEventDispatcher(sink sink.Sink, startTs uint64, tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter) *TableTriggerEventDispatcher {
@@ -264,5 +268,9 @@ func (d *TableTriggerEventDispatcher) Remove() {
 	d.cancel()
 	d.sink.StopTableSpan(d.tableSpan)
 	log.Info("table event dispatcher component status changed to stopping", zap.String("table", d.tableSpan.String()))
-	d.componentStatus.Set(heartbeatpb.ComponentState_Stopping)
+	d.IsRemoving.Store(true)
+}
+
+func (d *TableTriggerEventDispatcher) GetRemovingStatus() bool {
+	return d.IsRemoving.Load()
 }
