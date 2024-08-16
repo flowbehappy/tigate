@@ -25,7 +25,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/flowbehappy/tigate/pkg/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
@@ -87,6 +86,7 @@ func NewCoordinator(capture *common.NodeInfo,
 		id,
 		c.newChangefeed, c.newBootstrapMessage,
 		scheduler.NewBasicScheduler(id),
+		scheduler.NewBalanceScheduler(time.Minute, 1000),
 	)
 
 	// receive messages
@@ -193,9 +193,9 @@ func shouldRunChangefeed(state model.FeedState) bool {
 func (c *coordinator) AsyncStop() {
 }
 
-func (c *coordinator) sendMessages(msgs []rpc.Message) {
+func (c *coordinator) sendMessages(msgs []*messaging.TargetMessage) {
 	for _, msg := range msgs {
-		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(msg.(*messaging.TargetMessage))
+		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(msg)
 		if err != nil {
 			log.Error("failed to send coordinator request", zap.Any("msg", msg), zap.Error(err))
 			continue
@@ -203,7 +203,7 @@ func (c *coordinator) sendMessages(msgs []rpc.Message) {
 	}
 }
 
-func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState) ([]rpc.Message, error) {
+func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState) ([]*messaging.TargetMessage, error) {
 	if !c.supervisor.CheckAllCaptureInitialized() {
 		return nil, nil
 	}
@@ -233,7 +233,8 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 	return c.supervisor.Schedule(c.scheduledChangefeeds)
 }
 
-func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message {
+func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) *messaging.TargetMessage {
+	log.Info("send coordinator bootstrap request", zap.String("to", captureID))
 	return messaging.NewTargetMessage(
 		messaging.ServerId(captureID),
 		messaging.MaintainerManagerTopic,
@@ -419,7 +420,6 @@ func (c *coordinator) calculateGCSafepoint(state *orchestrator.GlobalReactorStat
 func (c *coordinator) printStatus() {
 	if time.Since(c.lastCheckTime) > time.Second*10 {
 		workingTask := 0
-		prepareTask := 0
 		absentTask := 0
 		commitTask := 0
 		removingTask := 0
@@ -427,9 +427,7 @@ func (c *coordinator) printStatus() {
 			switch value.State {
 			case scheduler.SchedulerStatusAbsent:
 				absentTask++
-			case scheduler.SchedulerStatusPrepare:
-				prepareTask++
-			case scheduler.SchedulerStatusCommit:
+			case scheduler.SchedulerStatusCommiting:
 				commitTask++
 			case scheduler.SchedulerStatusWorking:
 				workingTask++
@@ -440,7 +438,6 @@ func (c *coordinator) printStatus() {
 		})
 		log.Info("changefeed status",
 			zap.Int("absent", absentTask),
-			zap.Int("prepare", prepareTask),
 			zap.Int("commit", commitTask),
 			zap.Int("working", workingTask),
 			zap.Int("removing", removingTask),

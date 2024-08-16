@@ -26,7 +26,6 @@ import (
 	configNew "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/flowbehappy/tigate/pkg/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/flowbehappy/tigate/utils"
@@ -81,7 +80,6 @@ type Maintainer struct {
 
 	removing        *atomic.Bool
 	cascadeRemoving *atomic.Bool
-	isSecondary     *atomic.Bool
 
 	msgQueue *MessageQueue
 
@@ -104,7 +102,6 @@ type Maintainer struct {
 
 // NewMaintainer create the maintainer for the changefeed
 func NewMaintainer(cfID model.ChangeFeedID,
-	isSecondary bool,
 	cfg *model.ChangeFeedInfo,
 	checkpointTs uint64,
 	pdEndpoints []string,
@@ -112,13 +109,12 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	m := &Maintainer{
 		id:              cfID,
 		mc:              appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
-		state:           heartbeatpb.ComponentState_Prepared,
+		state:           heartbeatpb.ComponentState_Working,
 		removed:         atomic.NewBool(false),
 		taskCh:          make(chan Task, 1024),
 		nodeManager:     appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName),
 		nodesClosed:     make(map[string]struct{}),
 		statusChanged:   atomic.NewBool(true),
-		isSecondary:     atomic.NewBool(isSecondary),
 		removing:        atomic.NewBool(false),
 		cascadeRemoving: atomic.NewBool(false),
 		config:          cfg,
@@ -141,9 +137,6 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		scheduledTaskGauge:             metrics.ScheduleTaskGuage.WithLabelValues(cfID.Namespace, cfID.ID),
 		runningTaskGauge:               metrics.RunningScheduleTaskGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		tableCountGauge:                metrics.TableGauge.WithLabelValues(cfID.Namespace, cfID.ID),
-	}
-	if !isSecondary {
-		m.state = heartbeatpb.ComponentState_Working
 	}
 	m.supervisor = scheduler.NewSupervisor(scheduler.ChangefeedID(cfID),
 		m.getReplicaSet, m.getNewBootstrapFn(),
@@ -207,11 +200,6 @@ func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time
 			return
 		}
 		m.initialized = true
-	}
-
-	// not on the primary status, skip running
-	if m.isSecondary.Load() {
-		return
 	}
 	m.state = heartbeatpb.ComponentState_Working
 
@@ -313,9 +301,9 @@ func (m *Maintainer) updateMetrics() {
 }
 
 // send message to remote, todo: use a io thread pool
-func (m *Maintainer) sendMessages(msgs []rpc.Message) {
+func (m *Maintainer) sendMessages(msgs []*messaging.TargetMessage) {
 	for _, msg := range msgs {
-		err := m.mc.SendCommand(msg.(*messaging.TargetMessage))
+		err := m.mc.SendCommand(msg)
 		if err != nil {
 			log.Debug("failed to send maintainer request", zap.Any("msg", msg), zap.Error(err))
 			continue
@@ -337,12 +325,11 @@ func (m *Maintainer) Close() {
 	m.cleanupMetrics()
 	log.Info("changefeed maintainer closed", zap.String("id", m.id.String()),
 		zap.Bool("removed", m.removed.Load()),
-		zap.Uint64("checkpointTs", m.watermark.CheckpointTs),
-		zap.Bool("secondary", m.isSecondary.Load()))
+		zap.Uint64("checkpointTs", m.watermark.CheckpointTs))
 }
 
 func (m *Maintainer) initChangefeed() error {
-	m.state = heartbeatpb.ComponentState_Prepared
+	m.state = heartbeatpb.ComponentState_Working
 	m.statusChanged.Store(true)
 	var err error
 	tableIDs, err := m.initTableIDs()
@@ -456,15 +443,14 @@ func (m *Maintainer) onNodeClosed(from string, response *heartbeatpb.MaintainerC
 }
 
 func (m *Maintainer) tryCloseChangefeed() bool {
-	if m.state != heartbeatpb.ComponentState_Stopping && m.state != heartbeatpb.ComponentState_Stopped {
-		m.state = heartbeatpb.ComponentState_Stopping
+	if m.state != heartbeatpb.ComponentState_Stopped {
 		m.statusChanged.Store(true)
 	}
 	if !m.cascadeRemoving.Load() {
 		return true
 	}
 
-	msgs := make([]rpc.Message, 0)
+	msgs := make([]*messaging.TargetMessage, 0)
 	for node := range m.nodeManager.GetAliveNodes() {
 		if _, ok := m.nodesClosed[node]; !ok {
 			msgs = append(msgs, messaging.NewTargetMessage(
@@ -532,7 +518,7 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 		log.Panic("marshal changefeed config failed", zap.Error(err))
 	}
 	log.Info("create maintainer bootstrap message function", zap.String("changefeed", m.id.String()), zap.ByteString("config", cfgBytes))
-	return func(captureID model.CaptureID) rpc.Message {
+	return func(captureID model.CaptureID) *messaging.TargetMessage {
 		return messaging.NewTargetMessage(
 			messaging.ServerId(captureID),
 			messaging.DispatcherManagerManagerTopic,
@@ -577,8 +563,7 @@ func (m *Maintainer) printStatus() {
 			zap.Int("total", m.tableSpans.Len()),
 			zap.Int("scheduled", m.supervisor.GetInferiors().Len()),
 			zap.Int("absent", tableStates[scheduler.SchedulerStatusAbsent]),
-			zap.Int("prepare", tableStates[scheduler.SchedulerStatusPrepare]),
-			zap.Int("commit", tableStates[scheduler.SchedulerStatusCommit]),
+			zap.Int("commit", tableStates[scheduler.SchedulerStatusCommiting]),
 			zap.Int("working", tableStates[scheduler.SchedulerStatusWorking]),
 			zap.Int("removing", tableStates[scheduler.SchedulerStatusRemoving]),
 			zap.Int("runningTasks", m.supervisor.RunningTasks.Len()))
