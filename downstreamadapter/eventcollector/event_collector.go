@@ -63,8 +63,9 @@ func (m *DispatcherMap) Delete(dispatcherId string) {
 }
 
 type RegisterInfo struct {
-	dispatcher dispatcher.Dispatcher
-	startTs    uint64
+	dispatcher   dispatcher.Dispatcher
+	startTs      uint64
+	filterConfig *eventpb.FilterConfig
 }
 
 /*
@@ -111,6 +112,7 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 					Remove:       false,
 					StartTs:      startTs,
 					ServerId:     c.serverId.String(),
+					FilterConfig: registerInfo.filterConfig,
 				}},
 			})
 			if err != nil {
@@ -148,8 +150,9 @@ func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uin
 	if err != nil {
 		log.Error("failed to send register dispatcher request message", zap.Error(err))
 		c.registerMessageChan.In() <- &RegisterInfo{
-			dispatcher: d,
-			startTs:    startTs,
+			dispatcher:   d,
+			startTs:      startTs,
+			filterConfig: filterConfig,
 		}
 		return err
 	}

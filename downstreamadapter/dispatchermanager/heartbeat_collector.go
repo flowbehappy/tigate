@@ -197,7 +197,7 @@ func (c *HeartBeatCollector) handleDispatcherRequestMessages(req *heartbeatpb.Sc
 	if scheduleAction == heartbeatpb.ScheduleAction_Create {
 		// TODO: 后续需要优化这段逻辑，perpared 这种调度状态需要多发 message 回去
 		if !req.IsSecondary {
-			eventDispatcherManager.NewTableEventDispatcher(&common.TableSpan{TableSpan: config.Span}, config.StartTs)
+			eventDispatcherManager.NewDispatcher(&common.TableSpan{TableSpan: config.Span}, config.StartTs)
 		} else {
 			// eventDispatcherManager.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
 			// 	Span:            config.Span,
@@ -205,7 +205,7 @@ func (c *HeartBeatCollector) handleDispatcherRequestMessages(req *heartbeatpb.Sc
 			// }
 		}
 	} else if scheduleAction == heartbeatpb.ScheduleAction_Remove {
-		eventDispatcherManager.RemoveTableEventDispatcher(&common.TableSpan{TableSpan: config.Span})
+		eventDispatcherManager.RemoveDispatcher(&common.TableSpan{TableSpan: config.Span})
 	}
 
 	// log.Info("RecvSchedulerDispatcherRequestMessages handle dispatch msg", zap.Any("tableSpan", config.Span),

@@ -16,7 +16,6 @@ package dispatcher
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -27,61 +26,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type SyncPointInfo struct {
-	EnableSyncPoint   bool
-	SyncPointInterval time.Duration
-	NextSyncPointTs   uint64
-}
-
-type ComponentStateWithMutex struct {
-	mutex           sync.Mutex
-	componentStatus heartbeatpb.ComponentState
-}
-
-func newComponentStateWithMutex(status heartbeatpb.ComponentState) *ComponentStateWithMutex {
-	return &ComponentStateWithMutex{
-		componentStatus: status,
-	}
-}
-
-func (s *ComponentStateWithMutex) Set(status heartbeatpb.ComponentState) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	s.componentStatus = status
-}
-
-func (s *ComponentStateWithMutex) Get() heartbeatpb.ComponentState {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.componentStatus
-}
-
-type TsWithMutex struct {
-	mutex sync.Mutex
-	ts    uint64
-}
-
-func newTsWithMutex(ts uint64) *TsWithMutex {
-	return &TsWithMutex{
-		ts: ts,
-	}
-}
-
-func (r *TsWithMutex) Set(ts uint64) {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-	r.ts = ts
-}
-
-func (r *TsWithMutex) Get() uint64 {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-	return r.ts
-}
-
 /*
-TableEventDispatcher implements the Dispatcher interface.
-
 TableEventDispatcher is dispatcher the event of a normal tableSpan in a changefeed.
 It is responsible for getting the events about the tableSpan from the Logservice and sending them to the Sink in an appropriate order.
 

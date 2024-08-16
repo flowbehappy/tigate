@@ -78,6 +78,7 @@ type Dispatcher interface {
 	GetDDLPendingEvent() *common.TxnEvent
 	SetDDLPendingEvent(event *common.TxnEvent)
 	GetDDLFinishCh() chan struct{}
+	Remove()
 }
 
 type DispatcherType uint64
@@ -90,14 +91,9 @@ const (
 /*
 HeartBeatInfo is used to collect the message for HeartBeatRequest for each dispatcher.
 Mainly about the progress of each dispatcher:
-1. whether the dispatcher is blocked ? If blocked, the info about blocked should be collected.
-2. The checkpointTs of the dispatcher, shows that all the events whose ts <= checkpointTs are flushed to downstream successfully.
+1. The checkpointTs of the dispatcher, shows that all the events whose ts <= checkpointTs are flushed to downstream successfully.
 */
 type HeartBeatInfo struct {
-	// IsBlocked      bool
-	// BlockTs        uint64
-	// BlockTableSpan []*common.TableSpan
-	// TableSpan      *common.TableSpan
 	heartbeatpb.Watermark
 	Id              string
 	TableSpan       *common.TableSpan
@@ -220,4 +216,56 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher, h *HeartBeatInfo) {
 	h.Id = d.GetId()
 	h.ComponentStatus = d.GetComponentStatus()
 	h.TableSpan = d.GetTableSpan()
+}
+
+type SyncPointInfo struct {
+	EnableSyncPoint   bool
+	SyncPointInterval time.Duration
+	NextSyncPointTs   uint64
+}
+
+type ComponentStateWithMutex struct {
+	mutex           sync.Mutex
+	componentStatus heartbeatpb.ComponentState
+}
+
+func newComponentStateWithMutex(status heartbeatpb.ComponentState) *ComponentStateWithMutex {
+	return &ComponentStateWithMutex{
+		componentStatus: status,
+	}
+}
+
+func (s *ComponentStateWithMutex) Set(status heartbeatpb.ComponentState) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.componentStatus = status
+}
+
+func (s *ComponentStateWithMutex) Get() heartbeatpb.ComponentState {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return s.componentStatus
+}
+
+type TsWithMutex struct {
+	mutex sync.Mutex
+	ts    uint64
+}
+
+func newTsWithMutex(ts uint64) *TsWithMutex {
+	return &TsWithMutex{
+		ts: ts,
+	}
+}
+
+func (r *TsWithMutex) Set(ts uint64) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	r.ts = ts
+}
+
+func (r *TsWithMutex) Get() uint64 {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	return r.ts
 }

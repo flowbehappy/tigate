@@ -258,3 +258,11 @@ func (d *TableTriggerEventDispatcher) SetDDLPendingEvent(event *common.TxnEvent)
 func (d *TableTriggerEventDispatcher) GetDDLFinishCh() chan struct{} {
 	return d.ddlFinishCh
 }
+
+func (d *TableTriggerEventDispatcher) Remove() {
+	// TODO: 修改这个 dispatcher 的 status 为 removing
+	d.cancel()
+	d.sink.StopTableSpan(d.tableSpan)
+	log.Info("table event dispatcher component status changed to stopping", zap.String("table", d.tableSpan.String()))
+	d.componentStatus.Set(heartbeatpb.ComponentState_Stopping)
+}

@@ -58,7 +58,7 @@ func (m *DispatcherManagerManager) RecvMaintainerRequest(ctx context.Context, ms
 
 func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.ServerId, maintainerBootstrapRequest *heartbeatpb.MaintainerBootstrapRequest) error {
 	changefeedID := model.DefaultChangeFeedID(maintainerBootstrapRequest.ChangefeedID)
-
+	createTableTriggerEventDispatcher := maintainerBootstrapRequest.GetCreateTableTriggerEventDispatcher()
 	eventDispatcherManager, ok := m.dispatcherManagers[changefeedID]
 	if !ok {
 		// TODO: decode config
@@ -71,7 +71,7 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 			return err
 		}
 		// TODO: 这边额外判断一下创建是否失败，创建失败的话，想一下怎么做报错处理
-		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, cfConfig, from)
+		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, cfConfig, from, createTableTriggerEventDispatcher)
 		m.dispatcherManagers[changefeedID] = eventDispatcherManager
 		metrics.EventDispatcherManagerGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID).Inc()
 
