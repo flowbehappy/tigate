@@ -54,9 +54,8 @@ One EventDispatcherManager can only have one Sink.
 type EventDispatcherManager struct {
 	dispatcherMap *DispatcherMap
 
-	tableTriggerEventDispatcher *dispatcher.TableTriggerEventDispatcher
-	heartbeatResponseQueue      *HeartbeatResponseQueue
-	heartbeatRequestQueue       *HeartbeatRequestQueue
+	heartbeatResponseQueue *HeartbeatResponseQueue
+	heartbeatRequestQueue  *HeartbeatRequestQueue
 	//heartBeatSendTask     *HeartBeatSendTask
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -111,7 +110,8 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, changefeedConfig
 	appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(eventDispatcherManager)
 
 	if createTableTriggerEventDispatcher {
-		eventDispatcherManager.tableTriggerEventDispatcher = eventDispatcherManager.newTableTriggerEventDispatcher(eventDispatcherManager.config.StartTS)
+		dispatcher := eventDispatcherManager.NewDispatcher(&common.DDLSpan, eventDispatcherManager.config.StartTS)
+		eventDispatcherManager.dispatcherMap.Set(&common.DDLSpan, dispatcher)
 	}
 
 	// TODO: 这些后续需要等有第一个 table 来的时候再初始化, 对于纯空的 event dispatcher manager 不要直接创建为好
@@ -186,19 +186,14 @@ func (e *EventDispatcherManager) close() {
 	e.cancel()
 	e.wg.Wait()
 
-	toCloseDispatchers := make([]dispatcher.Dispatcher, 0)
-	e.dispatcherMap.ForEach(func(tableSpan *common.TableSpan, dispatcher *dispatcher.TableEventDispatcher) {
+	toCloseDispatchers := make([]*dispatcher.Dispatcher, 0)
+	e.dispatcherMap.ForEach(func(tableSpan *common.TableSpan, dispatcher *dispatcher.Dispatcher) {
 		dispatcher.Remove()
 		_, ok := dispatcher.TryClose()
 		if !ok {
 			toCloseDispatchers = append(toCloseDispatchers, dispatcher)
 		}
 	})
-
-	_, ok := e.tableTriggerEventDispatcher.TryClose()
-	if !ok {
-		toCloseDispatchers = append(toCloseDispatchers, e.tableTriggerEventDispatcher)
-	}
 
 	for _, dispatcher := range toCloseDispatchers {
 		log.Info("waiting for dispatcher to close", zap.Any("tableSpan", dispatcher.GetTableSpan()))
@@ -228,61 +223,31 @@ func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) 
 }
 */
 
-func (e *EventDispatcherManager) NewDispatcher(tableSpan *common.TableSpan, startTs uint64) {
-	if tableSpan == &common.DDLSpan {
-		e.newTableTriggerEventDispatcher(startTs)
-	} else {
-		e.NewTableEventDispatcher(tableSpan, startTs)
-	}
-}
-
-// TODO:加一个 count 监控
-func (e *EventDispatcherManager) newTableTriggerEventDispatcher(startTs uint64) *dispatcher.TableTriggerEventDispatcher {
-	tableTriggerEventDispatcher := dispatcher.NewTableTriggerEventDispatcher(e.sink, startTs, e.tableSpanStatusesChan, e.filter)
-
-	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableTriggerEventDispatcher, startTs, toFilterConfigPB(e.config.Filter))
-
-	e.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
-		Span:            tableTriggerEventDispatcher.GetTableSpan().TableSpan,
-		ComponentStatus: heartbeatpb.ComponentState_Working,
-	}
-	return tableTriggerEventDispatcher
-}
-
-// 收到 rpc 请求创建，需要通过 event dispatcher manager 来
-func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.TableSpan, startTs uint64) *dispatcher.TableEventDispatcher {
+func (e *EventDispatcherManager) NewDispatcher(tableSpan *common.TableSpan, startTs uint64) *dispatcher.Dispatcher {
 	start := time.Now()
-
 	if _, ok := e.dispatcherMap.Get(tableSpan); ok {
 		log.Debug("table span already exists", zap.Any("tableSpan", tableSpan))
 		return nil
 	}
 
-	/*
-		var syncPointInfo *dispatcher.SyncPointInfo
-		if e.EnableSyncPoint {
-			syncPointInfo.EnableSyncPoint = true
-			syncPointInfo.SyncPointInterval = e.SyncPointInterval
-			syncPointInfo.NextSyncPointTs = calculateStartSyncPointTs(startTs, e.SyncPointInterval)
-		} else {
-			syncPointInfo.EnableSyncPoint = false
-		}
-	*/
-	tableEventDispatcher := dispatcher.NewTableEventDispatcher(tableSpan, e.sink, startTs, nil, e.tableSpanStatusesChan, e.filter)
+	dispatcher := dispatcher.NewDispatcher(tableSpan, e.sink, startTs, e.tableSpanStatusesChan, e.filter)
 
-	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableEventDispatcher, startTs, toFilterConfigPB(e.config.Filter))
+	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(dispatcher, startTs, toFilterConfigPB(e.config.Filter))
 
-	e.dispatcherMap.Set(tableSpan, tableEventDispatcher)
+	e.dispatcherMap.Set(tableSpan, dispatcher)
 	e.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
 		Span:            tableSpan.TableSpan,
 		ComponentStatus: heartbeatpb.ComponentState_Working,
 	}
 
+	//TODO:区分 tableTriggerEventDIspatcher 的 metrics
 	e.tableEventDispatcherCount.Inc()
-	log.Info("new table event dispatcher created", zap.Any("tableSpan", tableSpan),
+
+	log.Info("new dispatcher created", zap.Any("tableSpan", tableSpan),
 		zap.Int64("cost(ns)", time.Since(start).Nanoseconds()), zap.Time("start", start))
 	e.metricCreateDispatcherDuration.Observe(float64(time.Since(start).Seconds()))
-	return tableEventDispatcher
+
+	return dispatcher
 }
 
 // CollectHeartbeatInfoWhenStatesChanged use to collect the heartbeat info when GetTableSpanStatusesChan() get infos
@@ -328,14 +293,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx conte
 }
 
 func (e *EventDispatcherManager) RemoveDispatcher(tableSpan *common.TableSpan) {
-	var dispatcher dispatcher.Dispatcher
-	var ok bool
-	if tableSpan == &common.DDLSpan {
-		dispatcher = e.tableTriggerEventDispatcher
-		ok = dispatcher.GetComponentStatus() == heartbeatpb.ComponentState_Working
-	} else {
-		dispatcher, ok = e.dispatcherMap.Get(tableSpan)
-	}
+	dispatcher, ok := e.dispatcherMap.Get(tableSpan)
 
 	if ok {
 		if dispatcher.GetRemovingStatus() == true {
@@ -407,14 +365,14 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	toReomveTableSpans := make([]*common.TableSpan, 0)
 	allDispatchers := e.dispatcherMap.GetAllDispatchers()
 	dispatcherHeartBeatInfo := &dispatcher.HeartBeatInfo{}
-	for _, tableEventDispatcher := range allDispatchers {
+	for _, dispatcherItem := range allDispatchers {
 		// If the dispatcher is in removing state, we need to check if it's closed successfully.
 		// If it's closed successfully, we could clean it up.
 		// TODO: we need to consider how to deal with the checkpointTs of the removed dispatcher if the message will be discarded.
-		dispatcher.CollectDispatcherHeartBeatInfo(tableEventDispatcher, dispatcherHeartBeatInfo)
+		dispatcherItem.CollectDispatcherHeartBeatInfo(dispatcherHeartBeatInfo)
 
 		if dispatcherHeartBeatInfo.IsRemoving == true {
-			watermark, ok := tableEventDispatcher.TryClose()
+			watermark, ok := dispatcherItem.TryClose()
 			if ok {
 				// remove successfully
 				message.Watermark.UpdateMin(watermark)
@@ -423,7 +381,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 					Span:            dispatcherHeartBeatInfo.TableSpan.TableSpan,
 					ComponentStatus: heartbeatpb.ComponentState_Stopped,
 				})
-				toReomveTableSpans = append(toReomveTableSpans, tableEventDispatcher.GetTableSpan())
+				toReomveTableSpans = append(toReomveTableSpans, dispatcherItem.GetTableSpan())
 			}
 		}
 
@@ -479,15 +437,15 @@ func (e *EventDispatcherManager) SetMaintainerID(maintainerID messaging.ServerId
 }
 
 type DispatcherMap struct {
-	dispatcherCacheForRead []*dispatcher.TableEventDispatcher
+	dispatcherCacheForRead []*dispatcher.Dispatcher
 	mutex                  sync.Mutex
-	dispatchers            *utils.BtreeMap[*common.TableSpan, *dispatcher.TableEventDispatcher]
+	dispatchers            *utils.BtreeMap[*common.TableSpan, *dispatcher.Dispatcher]
 }
 
 func newDispatcherMap() *DispatcherMap {
 	return &DispatcherMap{
-		dispatcherCacheForRead: make([]*dispatcher.TableEventDispatcher, 0, 1024),
-		dispatchers:            utils.NewBtreeMap[*common.TableSpan, *dispatcher.TableEventDispatcher](),
+		dispatcherCacheForRead: make([]*dispatcher.Dispatcher, 0, 1024),
+		dispatchers:            utils.NewBtreeMap[*common.TableSpan, *dispatcher.Dispatcher](),
 	}
 }
 
@@ -497,7 +455,7 @@ func (d *DispatcherMap) Len() int {
 	return d.dispatchers.Len()
 }
 
-func (d *DispatcherMap) Get(tableSpan *common.TableSpan) (*dispatcher.TableEventDispatcher, bool) {
+func (d *DispatcherMap) Get(tableSpan *common.TableSpan) (*dispatcher.Dispatcher, bool) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 	return d.dispatchers.Get(tableSpan)
@@ -509,16 +467,16 @@ func (d *DispatcherMap) Delete(tableSpan *common.TableSpan) {
 	d.dispatchers.Delete(tableSpan)
 }
 
-func (d *DispatcherMap) Set(tableSpan *common.TableSpan, dispatcher *dispatcher.TableEventDispatcher) {
+func (d *DispatcherMap) Set(tableSpan *common.TableSpan, dispatcher *dispatcher.Dispatcher) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 	d.dispatchers.ReplaceOrInsert(tableSpan, dispatcher)
 }
 
-func (d *DispatcherMap) ForEach(fn func(tableSpan *common.TableSpan, dispatcher *dispatcher.TableEventDispatcher)) {
+func (d *DispatcherMap) ForEach(fn func(tableSpan *common.TableSpan, dispatcher *dispatcher.Dispatcher)) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-	d.dispatchers.Ascend(func(tableSpan *common.TableSpan, dispatcherItem *dispatcher.TableEventDispatcher) bool {
+	d.dispatchers.Ascend(func(tableSpan *common.TableSpan, dispatcherItem *dispatcher.Dispatcher) bool {
 		fn(tableSpan, dispatcherItem)
 		return true
 	})
@@ -526,17 +484,17 @@ func (d *DispatcherMap) ForEach(fn func(tableSpan *common.TableSpan, dispatcher 
 
 func (d *DispatcherMap) resetDispatcherCache() {
 	if cap(d.dispatcherCacheForRead) > 2048 && cap(d.dispatcherCacheForRead) > d.dispatchers.Len()*2 {
-		d.dispatcherCacheForRead = make([]*dispatcher.TableEventDispatcher, 0, d.dispatchers.Len())
+		d.dispatcherCacheForRead = make([]*dispatcher.Dispatcher, 0, d.dispatchers.Len())
 	}
 	d.dispatcherCacheForRead = d.dispatcherCacheForRead[:0]
 }
 
-func (d *DispatcherMap) GetAllDispatchers() []*dispatcher.TableEventDispatcher {
+func (d *DispatcherMap) GetAllDispatchers() []*dispatcher.Dispatcher {
 	d.resetDispatcherCache()
 
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-	d.dispatchers.Ascend(func(tableSpan *common.TableSpan, dispatcherItem *dispatcher.TableEventDispatcher) bool {
+	d.dispatchers.Ascend(func(tableSpan *common.TableSpan, dispatcherItem *dispatcher.Dispatcher) bool {
 		d.dispatcherCacheForRead = append(d.dispatcherCacheForRead, dispatcherItem)
 		return true
 	})

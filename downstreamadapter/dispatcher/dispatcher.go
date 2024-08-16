@@ -16,20 +16,26 @@ package dispatcher
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/google/uuid"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/filter"
+	"go.uber.org/zap"
 )
 
 /*
 Dispatcher is responsible for getting events from LogService and sending them to Sink in appropriate order.
 Each dispatcher only deal with the events of one tableSpan in one changefeed.
-Each dispatcher corresponds to an event dispatcher task, working for the core work of the dispatcher.
+Here is a special dispatcher will deal with the events of the DDLSpan in one changefeed, we call it TableTriggerEventDispatcher
+Each EventDispatcherManager will have multiple dispatchers.
+
 All dispatchers in the changefeed of the same node will share the same Sink.
-All dispatchers will communicate with the Maintainer about self progress and whether can push down the blocked event.
+All dispatchers will communicate with the Maintainer about self progress and whether can push down the blocked ddl event.
 
 Because Sink does not flush events to the downstream in strict order.
 the dispatcher can't send event to Sink continuously all the time,
@@ -54,55 +60,203 @@ The workflow related to the dispatcher is as follows:
 	                                                  | Maintainer |
 												      +------------+
 */
-type Dispatcher interface {
-	GetSink() sink.Sink
-	GetTableSpan() *common.TableSpan
-	GetEventChan() chan *common.TxnEvent
-	GetResolvedTs() uint64
-	UpdateResolvedTs(uint64)
-	GetCheckpointTs() uint64
-	GetId() string
-	GetDispatcherType() DispatcherType
-	GetDDLActions() chan *heartbeatpb.DispatcherAction
-	GetACKs() chan *heartbeatpb.ACK
-	//GetSyncPointInfo() *SyncPointInfo
-	//GetMemoryUsage() *MemoryUsage
-	// PushEvent(event *eventpb.TxnEvent)
-	PushTxnEvent(event *common.TxnEvent)
-	GetComponentStatus() heartbeatpb.ComponentState
-	GetTableSpanStatusesChan() chan *heartbeatpb.TableSpanStatus
 
-	TryClose() (w heartbeatpb.Watermark, ok bool)
-	GetFilter() filter.Filter
-	GetWG() *sync.WaitGroup
-	GetDDLPendingEvent() *common.TxnEvent
-	SetDDLPendingEvent(event *common.TxnEvent)
-	GetDDLFinishCh() chan struct{}
-	Remove()
-	GetRemovingStatus() bool
+type Dispatcher struct {
+	id        string
+	eventCh   chan *common.TxnEvent // 转换成一个函数
+	tableSpan *common.TableSpan
+	sink      sink.Sink
+
+	ddlActions            chan *heartbeatpb.DispatcherAction
+	acks                  chan *heartbeatpb.ACK
+	tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus
+
+	//SyncPointInfo *SyncPointInfo
+
+	//MemoryUsage *MemoryUsage
+
+	componentStatus *ComponentStateWithMutex
+
+	filter filter.Filter
+
+	resolvedTs *TsWithMutex // 用来记 eventChan 中目前收到的 event 中收到的最大的 commitTs - 1,不代表 dispatcher 的 checkpointTs
+
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
+	ddlPendingEvent *common.TxnEvent
+	ddlFinishCh     chan struct{}
+	isRemoving      atomic.Bool
 }
 
-type DispatcherType uint64
+func NewDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter) *Dispatcher {
+	ctx, cancel := context.WithCancel(context.Background())
+	dispatcher := &Dispatcher{
+		id:                    uuid.NewString(),
+		eventCh:               make(chan *common.TxnEvent, 16),
+		tableSpan:             tableSpan,
+		sink:                  sink,
+		ddlActions:            make(chan *heartbeatpb.DispatcherAction, 16),
+		acks:                  make(chan *heartbeatpb.ACK, 16),
+		tableSpanStatusesChan: tableSpanStatusesChan,
+		//SyncPointInfo:   syncPointInfo,
+		//MemoryUsage:     NewMemoryUsage(),
+		componentStatus: newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
+		resolvedTs:      newTsWithMutex(startTs),
+		cancel:          cancel,
+		filter:          filter,
+		ddlFinishCh:     make(chan struct{}),
+		isRemoving:      atomic.Bool{},
+	}
 
-const (
-	TableEventDispatcherType        DispatcherType = 0
-	TableTriggerEventDispatcherType DispatcherType = 1
-)
+	dispatcher.sink.AddTableSpan(tableSpan)
+	dispatcher.wg.Add(1)
+	go dispatcher.DispatcherEvents(ctx)
 
-/*
-HeartBeatInfo is used to collect the message for HeartBeatRequest for each dispatcher.
-Mainly about the progress of each dispatcher:
-1. The checkpointTs of the dispatcher, shows that all the events whose ts <= checkpointTs are flushed to downstream successfully.
-*/
-type HeartBeatInfo struct {
-	heartbeatpb.Watermark
-	Id              string
-	TableSpan       *common.TableSpan
-	ComponentStatus heartbeatpb.ComponentState
-	IsRemoving      bool
+	dispatcher.wg.Add(1)
+	go dispatcher.HandleDDLActions(ctx)
+
+	log.Info("dispatcher created", zap.Any("DispatcherID", dispatcher.id))
+
+	return dispatcher
 }
 
-func HandleDDLActions(d Dispatcher, ctx context.Context) {
+func (d *Dispatcher) DispatcherEvents(ctx context.Context) {
+	defer d.wg.Done()
+	tableSpan := d.GetTableSpan()
+	sink := d.GetSink()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event := <-d.GetEventChan():
+			if event.IsDMLEvent() {
+				sink.AddDMLEvent(tableSpan, event)
+			} else if event.IsDDLEvent() {
+				d.AddDDLEventToSinkWhenAvailable(event)
+			} else {
+				d.resolvedTs.Set(event.ResolvedTs)
+			}
+		}
+	}
+}
+
+func (d *Dispatcher) GetSink() sink.Sink {
+	return d.sink
+}
+
+func (d *Dispatcher) GetTableSpan() *common.TableSpan {
+	return d.tableSpan
+}
+
+func (d *Dispatcher) GetEventChan() chan *common.TxnEvent {
+	return d.eventCh
+}
+
+func (d *Dispatcher) GetResolvedTs() uint64 {
+	return d.resolvedTs.Get()
+}
+
+func (d *Dispatcher) GetCheckpointTs() uint64 {
+	checkpointTs := d.GetSink().GetCheckpointTs(d.GetTableSpan())
+	if checkpointTs == 0 {
+		// 说明从没有数据写到过 sink，则选择用 resolveTs 作为 checkpointTs
+		checkpointTs = d.GetResolvedTs()
+	}
+	return checkpointTs
+}
+
+func (d *Dispatcher) UpdateResolvedTs(ts uint64) {
+	d.GetEventChan() <- &common.TxnEvent{ResolvedTs: ts}
+}
+
+func (d *Dispatcher) GetId() string {
+	return d.id
+}
+
+// func (d *Dispatcher) GetDispatcherType() DispatcherType {
+// 	return TableEventDispatcherType
+// }
+
+func (d *Dispatcher) GetDDLActions() chan *heartbeatpb.DispatcherAction {
+	return d.ddlActions
+}
+
+func (d *Dispatcher) GetACKs() chan *heartbeatpb.ACK {
+	return d.acks
+}
+
+func (d *Dispatcher) GetTableSpanStatusesChan() chan *heartbeatpb.TableSpanStatus {
+	return d.tableSpanStatusesChan
+}
+
+//func (d *Dispatcher) GetSyncPointInfo() *SyncPointInfo {
+// 	return d.syncPointInfo
+// }
+
+// func (d *Dispatcher) GetMemoryUsage() *MemoryUsage {
+// 	return d.MemoryUsage
+// }
+
+func (d *Dispatcher) PushTxnEvent(event *common.TxnEvent) {
+	d.GetEventChan() <- event
+}
+
+func (d *Dispatcher) Remove() {
+	// TODO: 修改这个 dispatcher 的 status 为 removing
+	d.cancel()
+	d.sink.StopTableSpan(d.tableSpan)
+	log.Info("table event dispatcher component status changed to stopping", zap.String("table", d.tableSpan.String()))
+	d.isRemoving.Store(true)
+}
+
+func (d *Dispatcher) TryClose() (w heartbeatpb.Watermark, ok bool) {
+	// removing 后每次收集心跳的时候，call TryClose, 来判断是否能关掉 dispatcher 了（sink.isEmpty)
+	// 如果不能关掉，返回 0， false; 可以关掉的话，就返回 checkpointTs, true -- 这个要对齐过（startTs 和 checkpointTs 的关系）
+	if d.sink.IsEmpty(d.tableSpan) {
+		// calculate the checkpointTs, and clean the resource
+		d.sink.RemoveTableSpan(d.tableSpan)
+		w.CheckpointTs = d.GetCheckpointTs()
+		w.ResolvedTs = d.GetResolvedTs()
+
+		//d.MemoryUsage.Clear()
+		d.componentStatus.Set(heartbeatpb.ComponentState_Stopped)
+		return w, true
+	}
+	return w, false
+}
+
+func (d *Dispatcher) GetComponentStatus() heartbeatpb.ComponentState {
+	return d.componentStatus.Get()
+}
+
+func (d *Dispatcher) GetFilter() filter.Filter {
+	return d.filter
+}
+
+func (d *Dispatcher) GetWG() *sync.WaitGroup {
+	return &d.wg
+}
+
+func (d *Dispatcher) GetDDLPendingEvent() *common.TxnEvent {
+	return d.ddlPendingEvent
+}
+
+func (d *Dispatcher) SetDDLPendingEvent(event *common.TxnEvent) {
+	if d.ddlPendingEvent != nil {
+		log.Error("there is already a pending ddl event, can not set a new one")
+		return
+	}
+	d.ddlPendingEvent = event
+}
+func (d *Dispatcher) GetDDLFinishCh() chan struct{} {
+	return d.ddlFinishCh
+}
+func (d *Dispatcher) GetRemovingStatus() bool {
+	return d.isRemoving.Load()
+}
+
+func (d *Dispatcher) HandleDDLActions(ctx context.Context) {
 	defer d.GetWG().Done()
 	sink := d.GetSink()
 	tableSpan := d.GetTableSpan()
@@ -145,7 +299,7 @@ func HandleDDLActions(d Dispatcher, ctx context.Context) {
 //     2.2 maintainer 通知自己可以 write 或者 pass event
 //
 // TODO:特殊处理有 add index 的逻辑
-func AddDDLEventToSinkWhenAvailable(d Dispatcher, event *common.TxnEvent) {
+func (d *Dispatcher) AddDDLEventToSinkWhenAvailable(event *common.TxnEvent) {
 	//filter := d.GetFilter()
 	// TODO: filter 支持
 	// 判断 ddl 是否需要处理，如果不需要处理，直接返回
@@ -209,7 +363,7 @@ loop:
 	<-d.GetDDLFinishCh()
 }
 
-func CollectDispatcherHeartBeatInfo(d Dispatcher, h *HeartBeatInfo) {
+func (d *Dispatcher) CollectDispatcherHeartBeatInfo(h *HeartBeatInfo) {
 	// use checkpointTs to release memory usage
 	//d.GetMemoryUsage().Release(checkpointTs)
 
@@ -219,56 +373,4 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher, h *HeartBeatInfo) {
 	h.ComponentStatus = d.GetComponentStatus()
 	h.TableSpan = d.GetTableSpan()
 	h.IsRemoving = d.GetRemovingStatus()
-}
-
-type SyncPointInfo struct {
-	EnableSyncPoint   bool
-	SyncPointInterval time.Duration
-	NextSyncPointTs   uint64
-}
-
-type ComponentStateWithMutex struct {
-	mutex           sync.Mutex
-	componentStatus heartbeatpb.ComponentState
-}
-
-func newComponentStateWithMutex(status heartbeatpb.ComponentState) *ComponentStateWithMutex {
-	return &ComponentStateWithMutex{
-		componentStatus: status,
-	}
-}
-
-func (s *ComponentStateWithMutex) Set(status heartbeatpb.ComponentState) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	s.componentStatus = status
-}
-
-func (s *ComponentStateWithMutex) Get() heartbeatpb.ComponentState {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.componentStatus
-}
-
-type TsWithMutex struct {
-	mutex sync.Mutex
-	ts    uint64
-}
-
-func newTsWithMutex(ts uint64) *TsWithMutex {
-	return &TsWithMutex{
-		ts: ts,
-	}
-}
-
-func (r *TsWithMutex) Set(ts uint64) {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-	r.ts = ts
-}
-
-func (r *TsWithMutex) Get() uint64 {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-	return r.ts
 }

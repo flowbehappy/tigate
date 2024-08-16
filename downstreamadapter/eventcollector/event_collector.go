@@ -34,23 +34,23 @@ import (
 
 type DispatcherMap struct {
 	mutex sync.Mutex
-	m     map[string]dispatcher.Dispatcher // dispatcher_id --> dispatcher
+	m     map[string]*dispatcher.Dispatcher // dispatcher_id --> dispatcher
 }
 
 func newDispatcherMap() *DispatcherMap {
 	return &DispatcherMap{
-		m: make(map[string]dispatcher.Dispatcher),
+		m: make(map[string]*dispatcher.Dispatcher),
 	}
 }
 
-func (m *DispatcherMap) Get(dispatcherId string) (dispatcher.Dispatcher, bool) {
+func (m *DispatcherMap) Get(dispatcherId string) (*dispatcher.Dispatcher, bool) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	d, ok := m.m[dispatcherId]
 	return d, ok
 }
 
-func (m *DispatcherMap) Set(dispatcherId string, d dispatcher.Dispatcher) {
+func (m *DispatcherMap) Set(dispatcherId string, d *dispatcher.Dispatcher) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	m.m[dispatcherId] = d
@@ -63,7 +63,7 @@ func (m *DispatcherMap) Delete(dispatcherId string) {
 }
 
 type RegisterInfo struct {
-	dispatcher   dispatcher.Dispatcher
+	dispatcher   *dispatcher.Dispatcher
 	startTs      uint64
 	filterConfig *eventpb.FilterConfig
 }
@@ -133,7 +133,7 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 
 // RegisterDispatcher register a dispatcher to event collector.
 // If the dispatcher is not table trigger event dispatcher, filterConfig will be nil.
-func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uint64, filterConfig *eventpb.FilterConfig) error {
+func (c *EventCollector) RegisterDispatcher(d *dispatcher.Dispatcher, startTs uint64, filterConfig *eventpb.FilterConfig) error {
 	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendEvent(&messaging.TargetMessage{
 		To:    c.serverId, // demo 中 每个节点都有自己的 eventService
 		Topic: messaging.EventServiceTopic,
@@ -161,7 +161,7 @@ func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uin
 	return nil
 }
 
-func (c *EventCollector) RemoveDispatcher(d dispatcher.Dispatcher) error {
+func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
 	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendEvent(&messaging.TargetMessage{
 		To:    c.serverId,
 		Topic: messaging.EventServiceTopic,
