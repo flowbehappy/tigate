@@ -138,9 +138,11 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		runningTaskGauge:               metrics.RunningScheduleTaskGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		tableCountGauge:                metrics.TableGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 	}
-	m.supervisor = scheduler.NewSupervisor(scheduler.ChangefeedID(cfID),
+	id := scheduler.ChangefeedID(cfID)
+	m.supervisor = scheduler.NewSupervisor(id,
 		m.getReplicaSet, m.getNewBootstrapFn(),
-		scheduler.NewBasicScheduler(scheduler.ChangefeedID(cfID)),
+		scheduler.NewBasicScheduler(id),
+		scheduler.NewBalanceScheduler(id, time.Minute, 1000),
 	)
 	log.Info("create maintainer", zap.String("id", cfID.String()))
 	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace, cfID.ID).Inc()

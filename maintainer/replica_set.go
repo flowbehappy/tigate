@@ -47,7 +47,7 @@ func (r *ReplicaSet) GetID() scheduler.InferiorID {
 
 func (r *ReplicaSet) UpdateStatus(status scheduler.InferiorStatus) {
 	r.status = status.(*ReplicaSetStatus)
-	if r.status != nil {
+	if r.status != nil && r.status.CheckpointTs > r.checkpointTs {
 		r.checkpointTs = r.status.CheckpointTs
 	}
 }
