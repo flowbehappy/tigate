@@ -110,14 +110,13 @@ func (c *changefeed) IsAlive() bool {
 	return true
 }
 
-func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary bool) rpc.Message {
+func (c *changefeed) NewAddInferiorMessage(server model.CaptureID) rpc.Message {
 	return messaging.NewTargetMessage(messaging.ServerId(server),
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.DispatchMaintainerRequest{
 			AddMaintainers: []*heartbeatpb.AddMaintainerRequest{
 				{
 					Id:           c.ID.ID,
-					IsSecondary:  secondary,
 					CheckpointTs: c.checkpointTs,
 					Config:       c.configBytes,
 				},

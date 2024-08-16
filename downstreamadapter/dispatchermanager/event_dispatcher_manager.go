@@ -288,13 +288,6 @@ func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx conte
 func (e *EventDispatcherManager) RemoveTableEventDispatcher(tableSpan *common.TableSpan) {
 	dispatcher, ok := e.dispatcherMap.Get(tableSpan)
 	if ok {
-		if dispatcher.GetComponentStatus() == heartbeatpb.ComponentState_Stopping {
-			e.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
-				Span:            tableSpan.TableSpan,
-				ComponentStatus: heartbeatpb.ComponentState_Stopping,
-			}
-			return
-		}
 		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RemoveDispatcher(dispatcher)
 		dispatcher.Remove()
 	} else {
@@ -386,20 +379,20 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 		// TODO: we need to consider how to deal with the checkpointTs of the removed dispatcher if the message will be discarded.
 		dispatcher.CollectDispatcherHeartBeatInfo(tableEventDispatcher, dispatcherHeartBeatInfo)
 
-		componentStatus := dispatcherHeartBeatInfo.ComponentStatus
-		if componentStatus == heartbeatpb.ComponentState_Stopping {
-			watermark, ok := tableEventDispatcher.TryClose()
-			if ok {
-				// remove successfully
-				message.Watermark.UpdateMin(watermark)
-				// If the dispatcher is removed successfully, we need to add the tableSpan into message whether needCompleteStatus is true or not.
-				message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
-					Span:            dispatcherHeartBeatInfo.TableSpan.TableSpan,
-					ComponentStatus: heartbeatpb.ComponentState_Stopped,
-				})
-				toReomveTableSpans = append(toReomveTableSpans, tableEventDispatcher.GetTableSpan())
-			}
-		}
+		//componentStatus := dispatcherHeartBeatInfo.ComponentStatus
+		//if componentStatus == heartbeatpb.ComponentState_Stopping {
+		//	watermark, ok := tableEventDispatcher.TryClose()
+		//	if ok {
+		//		// remove successfully
+		//		message.Watermark.UpdateMin(watermark)
+		//		// If the dispatcher is removed successfully, we need to add the tableSpan into message whether needCompleteStatus is true or not.
+		//		message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
+		//			Span:            dispatcherHeartBeatInfo.TableSpan.TableSpan,
+		//			ComponentStatus: heartbeatpb.ComponentState_Stopped,
+		//		})
+		//		toReomveTableSpans = append(toReomveTableSpans, tableEventDispatcher.GetTableSpan())
+		//	}
+		//}
 
 		message.Watermark.UpdateMin(dispatcherHeartBeatInfo.Watermark)
 

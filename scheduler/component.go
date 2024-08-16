@@ -27,7 +27,7 @@ type Inferior interface {
 	GetStateMachine() *StateMachine
 	IsAlive() bool
 	NewInferiorStatus(heartbeatpb.ComponentState) InferiorStatus
-	NewAddInferiorMessage(model.CaptureID, bool) rpc.Message
+	NewAddInferiorMessage(model.CaptureID) rpc.Message
 	NewRemoveInferiorMessage(model.CaptureID) rpc.Message
 }
 

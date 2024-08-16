@@ -178,7 +178,6 @@ func (m *mockMaintainerManager) onDispatchMaintainerRequest(
 			cf = &Maintainer{config: cfConfig}
 			m.maintainers.Store(cfID, cf)
 		}
-		cf.(*Maintainer).isSecondary.Store(req.IsSecondary)
 	}
 
 	for _, req := range request.RemoveMaintainers {
@@ -220,7 +219,6 @@ type Maintainer struct {
 	lastReportTime  time.Time
 	removing        atomic.Bool
 	cascadeRemoving atomic.Bool
-	isSecondary     atomic.Bool
 
 	config *model.ChangeFeedInfo
 }

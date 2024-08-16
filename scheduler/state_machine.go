@@ -14,7 +14,6 @@
 package scheduler
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -28,18 +27,7 @@ import (
 
 // SchedulerStatus is the state of Inferior in scheduler.
 //
-//	 AddInferior
-//	┌────────┐   ┌─────────┐
-//	│ Absent ├─> │ Prepare │
-//	└────────┘   └──┬──────┘
-//	     ┌──────────┘   ^
-//	     v              │ MoveInferior
-//	┌────────┐   ┌──────┴──────┐ RemoveInferior ┌──────────┐
-//	│ Commit ├──>│ Working     │───────────────>│ Removing │
-//	└────────┘   └─────────────┘                └──────────┘
-//
-// When a server shutdown unexpectedly, we may need to transit the state to
-// Absent or Working immediately.
+//	absent -> commit --> working -> removing -> commit
 //
 //nolint:revive
 type SchedulerStatus int
@@ -47,7 +35,6 @@ type SchedulerStatus int
 const (
 	SchedulerStatusUnknown SchedulerStatus = iota
 	SchedulerStatusAbsent
-	SchedulerStatusPrepare
 	SchedulerStatusCommit
 	SchedulerStatusWorking
 	SchedulerStatusRemoving
@@ -57,8 +44,6 @@ func (r SchedulerStatus) String() string {
 	switch r {
 	case SchedulerStatusAbsent:
 		return "Absent"
-	case SchedulerStatusPrepare:
-		return "Prepare"
 	case SchedulerStatusCommit:
 		return "Commit"
 	case SchedulerStatusWorking:
@@ -101,10 +86,8 @@ type StateMachine struct {
 	State SchedulerStatus
 	// Primary is the server ID that is currently running the inferior.
 	Primary model.CaptureID
-	// Servers is a map of captures that has the inferior.
-	// NB: Invariant, 1) at most one primary, 2) primary server must be in
-	//     CaptureRolePrimary.
-	Servers map[model.CaptureID]Role
+	// Primary is the server ID that is this inferior should be moved to
+	Secondary model.CaptureID
 
 	// Inferior handles the real logic
 	Inferior Inferior
@@ -121,14 +104,10 @@ func NewStateMachine(
 ) (*StateMachine, error) {
 	sm := &StateMachine{
 		ID:          id,
-		Servers:     make(map[string]Role),
 		Inferior:    inferior,
 		LastMsgTime: time.Now(),
 	}
 	inferior.SetStateMachine(sm)
-	// Count of captures that is in Stopping states.
-	stoppingCount := 0
-	committed := false
 	for captureID, status := range inferiorStatus {
 		if status.GetInferiorID().Less(sm.ID) {
 			return nil, sm.inconsistentError(status, captureID,
@@ -144,42 +123,7 @@ func NewStateMachine(
 					zap.String("primary", sm.Primary),
 					zap.String("status", status.GetInferiorState().String()))
 			}
-			// Recognize primary if it's inferior is in working state.
-			err := sm.setCapture(captureID, RoleSecondary)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			err = sm.promoteSecondary(captureID)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		case heartbeatpb.ComponentState_Preparing:
-			// Recognize secondary if it's inferior is in preparing state.
-			err := sm.setCapture(captureID, RoleSecondary)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		case heartbeatpb.ComponentState_Prepared:
-			// Recognize secondary and Commit state if it's inferior is in prepared state.
-			committed = true
-			err := sm.setCapture(captureID, RoleSecondary)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		case heartbeatpb.ComponentState_Stopping:
-			// The server is stopping the inferior. It is possible that the
-			// server is primary, and is still working.
-			// We need to wait its state becomes Stopped or Absent before
-			// proceeding further scheduling.
-			log.Warn("found a stopping server during initializing",
-				zap.String("ID", sm.ID.String()),
-				zap.String("statemachine", sm.ID.String()),
-				zap.String("status", status.GetInferiorID().String()))
-			err := sm.setCapture(captureID, RoleUndetermined)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			stoppingCount++
+			sm.Primary = captureID
 		case heartbeatpb.ComponentState_Absent,
 			heartbeatpb.ComponentState_Stopped:
 			// Ignore stop state.
@@ -195,95 +139,14 @@ func NewStateMachine(
 		sm.State = SchedulerStatusWorking
 		log.Info("initialize a working state state machine",
 			zap.String("statemachine", sm.ID.String()))
-	}
-	// Move inferior or add inferior is in-progress.
-	if sm.hasRole(RoleSecondary) {
-		sm.State = SchedulerStatusPrepare
-	}
-	// Move inferior or add inferior is committed.
-	if committed {
-		sm.State = SchedulerStatusCommit
-	}
-	// no server is bind, set to absent status, will trigger an add command
-	if len(sm.Servers) == 0 {
+	} else {
 		sm.State = SchedulerStatusAbsent
-	}
-	// all captures are in stopping status
-	if sm.State == SchedulerStatusUnknown && len(sm.Servers) == stoppingCount {
-		sm.State = SchedulerStatusRemoving
 	}
 	log.Info("initialize state machine",
 		zap.String("id", sm.ID.String()),
 		zap.String("state", sm.State.String()))
 
 	return sm, nil
-}
-
-func (s *StateMachine) hasRole(role Role) bool {
-	_, has := s.GetRole(role)
-	return has
-}
-
-func (s *StateMachine) isInRole(captureID model.CaptureID, role Role) bool {
-	rc, ok := s.Servers[captureID]
-	if !ok {
-		return false
-	}
-	return rc == role
-}
-
-func (s *StateMachine) GetRole(role Role) (model.CaptureID, bool) {
-	for captureID, cr := range s.Servers {
-		if cr == role {
-			return captureID, true
-		}
-	}
-	return "", false
-}
-
-func (s *StateMachine) setCapture(captureID model.CaptureID, role Role) error {
-	cr, ok := s.Servers[captureID]
-	if ok && cr != role {
-		jsonR, _ := json.Marshal(s)
-		return errors.New("marshal server failure: " + string(jsonR))
-	}
-	s.Servers[captureID] = role
-	return nil
-}
-
-func (s *StateMachine) clearCapture(captureID model.CaptureID, role Role) error {
-	cr, ok := s.Servers[captureID]
-	if ok && cr != role {
-		jsonR, _ := json.Marshal(s)
-		return errors.New("marshal server failure: " + string(jsonR))
-	}
-	delete(s.Servers, captureID)
-	return nil
-}
-
-func (s *StateMachine) promoteSecondary(captureID model.CaptureID) error {
-	if s.Primary == captureID {
-		log.Warn("server is already promoted as the primary",
-			zap.String("captureID", captureID),
-			zap.String("statemachine", s.ID.String()))
-		return nil
-	}
-	role, ok := s.Servers[captureID]
-	if ok && role != RoleSecondary {
-		jsonR, _ := json.Marshal(s)
-		return errors.New("marshal server failure: " + string(jsonR))
-	}
-	if s.Primary != "" {
-		delete(s.Servers, s.Primary)
-	}
-	s.Primary = captureID
-	s.Servers[s.Primary] = RolePrimary
-	return nil
-}
-
-func (s *StateMachine) clearPrimary() {
-	delete(s.Servers, s.Primary)
-	s.Primary = ""
 }
 
 //nolint:unparam
@@ -312,63 +175,23 @@ func (s *StateMachine) multiplePrimaryError(
 	return errors.New("inconsistent error: " + msg)
 }
 
-// checkInvariant ensures StateMachine invariant is hold.
-func (s *StateMachine) checkInvariant(
-	input InferiorStatus, captureID model.CaptureID,
-) error {
-	if !s.ID.Equal(input.GetInferiorID()) {
-		return s.inconsistentError(input, captureID,
-			"ID must be the same")
-	}
-	if len(s.Servers) == 0 {
-		if s.State == SchedulerStatusPrepare ||
-			s.State == SchedulerStatusCommit ||
-			s.State == SchedulerStatusWorking {
-			// When the state is in prepare, commit or working, there must
-			// be at least one of primary and secondary.
-			return s.inconsistentError(input, captureID,
-				"empty primary/secondary in state prepare/commit/working")
-		}
-	}
-	roleP, okP := s.Servers[s.Primary]
-	if (!okP && s.Primary != "") || // Primary is not in Servers.
-		(okP && roleP != RolePrimary) { // Primary is not in primary role.
-		return s.inconsistentError(input, captureID,
-			"server inconsistent")
-	}
-
-	// check if the primary role is correct
-	for captureID, role := range s.Servers {
-		if role == RolePrimary && captureID != s.Primary {
-			return s.multiplePrimaryError(input, captureID,
-				"server inconsistent")
-		}
-	}
-	return nil
-}
-
 // poll transit state based on input and the current state.
 func (s *StateMachine) poll(
 	input InferiorStatus, captureID model.CaptureID,
 ) ([]rpc.Message, error) {
-	if _, ok := s.Servers[captureID]; !ok {
+	if s.Primary != captureID {
 		return nil, nil
 	}
 
 	msgBuf := make([]rpc.Message, 0)
 	stateChanged := true
 	for stateChanged {
-		err := s.checkInvariant(input, captureID)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		var err error
 		oldState := s.State
 		var msg rpc.Message
 		switch s.State {
 		case SchedulerStatusAbsent:
 			msg, stateChanged, err = s.pollOnAbsent(input, captureID)
-		case SchedulerStatusPrepare:
-			msg, stateChanged, err = s.pollOnPrepare(input, captureID)
 		case SchedulerStatusCommit:
 			msg, stateChanged, err = s.pollOnCommit(input, captureID)
 		case SchedulerStatusWorking:
@@ -403,112 +226,14 @@ func (s *StateMachine) pollOnAbsent(
 ) (rpc.Message, bool, error) {
 	switch input.GetInferiorState() {
 	case heartbeatpb.ComponentState_Absent:
-		secondary, ok := s.GetRole(RoleSecondary)
-		if s.Primary == "" && len(s.Servers) == 1 &&
-			ok && secondary == captureID {
-			s.State = SchedulerStatusCommit
-			log.Info("state transition, poll, only has secondary capture, schedule directly",
-				zap.String("status", input.GetInferiorID().String()),
-				zap.String("captureID", captureID),
-				zap.String("old", "absent"),
-				zap.Stringer("new", s.State))
-			// No primary, promote secondary to primary.
-			// add directly or move inferior after all primary server is reported stopped status
-			err := s.promoteSecondary(captureID)
-			if err != nil {
-				return nil, false, errors.Trace(err)
-			}
-
-			log.Info("promote secondary, no primary",
-				zap.String("status", input.GetInferiorID().String()),
-				zap.String("captureID", captureID),
-				zap.String("statemachine", s.ID.String()))
-			return s.Inferior.NewAddInferiorMessage(captureID, false), false, nil
-		}
-		s.State = SchedulerStatusPrepare
-		err := s.setCapture(captureID, RoleSecondary)
-		return nil, true, errors.Trace(err)
+		s.State = SchedulerStatusCommit
+		return s.Inferior.NewAddInferiorMessage(captureID), false, nil
 	case heartbeatpb.ComponentState_Stopped:
 		// Ignore stopped state as a server may be shutdown unexpectedly.
 		// todo: fix ignore task, already exists error, when add a task and prepare, then receive a stop
 		// the running task still has the scheduler task
 		return nil, false, nil
-	case heartbeatpb.ComponentState_Preparing,
-		heartbeatpb.ComponentState_Prepared,
-		heartbeatpb.ComponentState_Working,
-		heartbeatpb.ComponentState_Stopping:
-	}
-	log.Warn("ignore input, unexpected state",
-		zap.String("status", input.GetInferiorID().String()),
-		zap.String("captureID", captureID),
-		zap.String("statemachine", s.ID.String()))
-	return nil, false, nil
-}
-
-func (s *StateMachine) pollOnPrepare(
-	input InferiorStatus, captureID model.CaptureID,
-) (rpc.Message, bool, error) {
-	switch input.GetInferiorState() {
-	case heartbeatpb.ComponentState_Absent:
-		if s.isInRole(captureID, RoleSecondary) {
-			return s.Inferior.NewAddInferiorMessage(captureID, true), false, nil
-		}
-	case heartbeatpb.ComponentState_Preparing:
-		if s.isInRole(captureID, RoleSecondary) {
-			// Ignore secondary Preparing, it may take a long time.
-			return nil, false, nil
-		}
-	case heartbeatpb.ComponentState_Prepared:
-		if s.isInRole(captureID, RoleSecondary) {
-			// Secondary is prepared, transit to Commit state.
-			s.State = SchedulerStatusCommit
-			return nil, true, nil
-		}
 	case heartbeatpb.ComponentState_Working:
-		// moving state, and the primary watcher still report status
-		if s.Primary == captureID {
-			s.Inferior.UpdateStatus(input)
-			return nil, false, nil
-		} else if s.isInRole(captureID, RoleSecondary) {
-			s.State = SchedulerStatusCommit
-			return nil, true, nil
-		}
-	case heartbeatpb.ComponentState_Stopping, heartbeatpb.ComponentState_Stopped:
-		// moving state, primary report status
-		if s.Primary == captureID {
-			// Primary is stopped, but we may still has secondary.
-			// Clear primary and promote secondary when it's prepared.
-			log.Info("primary is stopped during Prepare",
-				zap.String("status", input.GetInferiorID().String()),
-				zap.String("captureID", captureID),
-				zap.String("statemachine", s.ID.String()))
-			s.clearPrimary()
-			return nil, false, nil
-		}
-		if s.isInRole(captureID, RoleSecondary) {
-			log.Info("server is stopped during Prepare",
-				zap.String("status", input.GetInferiorID().String()),
-				zap.String("captureID", captureID),
-				zap.String("statemachine", s.ID.String()))
-			err := s.clearCapture(captureID, RoleSecondary)
-			if err != nil {
-				return nil, false, errors.Trace(err)
-			}
-			if s.Primary != "" {
-				// moving state
-				// Secondary is stopped, and we still has primary.
-				// Transit to working.
-				s.State = SchedulerStatusWorking
-				log.Info("state transition from prepare to working",
-					zap.String("changefeedID", s.ID.String()),
-					zap.String("inferiorID", input.GetInferiorID().String()))
-			} else {
-				// Secondary is stopped, and we do not have primary.
-				// Transit to Absent. scheduler will schedule it again
-				s.State = SchedulerStatusAbsent
-			}
-			return nil, true, nil
-		}
 	}
 	log.Warn("ignore input, unexpected state",
 		zap.String("status", input.GetInferiorID().String()),
@@ -521,136 +246,23 @@ func (s *StateMachine) pollOnCommit(
 	input InferiorStatus, captureID model.CaptureID,
 ) (rpc.Message, bool, error) {
 	switch input.GetInferiorState() {
-	case heartbeatpb.ComponentState_Prepared:
-		if s.isInRole(captureID, RoleSecondary) {
-			if s.Primary != "" {
-				// Secondary server is prepared and waiting for stopping primary.
-				// Send message to primary, ask for stopping.
-				return s.Inferior.NewRemoveInferiorMessage(s.Primary), false, nil
-			}
-			if s.hasRole(RoleUndetermined) {
-				// we will has the RoleUndetermined only when server reported stopping status, do not needed to send stop message
-				// There are other captures that have the inferior.
-				// Must waiting for other captures become stopped or absent
-				// before promoting the secondary, otherwise there may be two
-				// primary that write data and lead to data inconsistency.
-				log.Info("there are unknown captures during commit",
-					zap.String("status", input.GetInferiorID().String()),
-					zap.String("captureID", captureID),
-					zap.String("statemachine", s.ID.String()))
-				return nil, false, nil
-			}
-			// No primary, promote secondary to primary.
-			// add directly or move inferior after all primary server is reported stopped status
-			err := s.promoteSecondary(captureID)
-			if err != nil {
-				return nil, false, errors.Trace(err)
-			}
-
-			log.Info("promote secondary, no primary",
-				zap.String("status", input.GetInferiorID().String()),
-				zap.String("captureID", captureID),
-				zap.String("statemachine", s.ID.String()))
-		}
-		// Secondary has been promoted, retry add inferior request.
-		if s.Primary == captureID && !s.hasRole(RoleSecondary) {
-			return s.Inferior.NewAddInferiorMessage(captureID, false), false, nil
-		}
-
 	case heartbeatpb.ComponentState_Stopped, heartbeatpb.ComponentState_Absent:
-		if s.Primary == captureID {
-			s.Inferior.UpdateStatus(input)
-			original := s.Primary
-			s.clearPrimary()
-			if !s.hasRole(RoleSecondary) {
-				// primary is stopped and there is no secondary, transit to Absent.
-				log.Info("primary is stopped during Commit",
-					zap.String("status", input.GetInferiorID().String()),
-					zap.String("captureID", captureID),
-					zap.String("statemachine", s.ID.String()))
-				s.State = SchedulerStatusAbsent
-				return nil, true, nil
-			}
-			// Primary is stopped, promote secondary to primary.
-			secondary, _ := s.GetRole(RoleSecondary)
-			err := s.promoteSecondary(secondary)
-			if err != nil {
-				return nil, false, errors.Trace(err)
-			}
-			log.Info("state promote secondary",
-				zap.String("status", input.GetInferiorID().String()),
-				zap.String("secondary", captureID),
-				zap.String("statemachine", s.ID.String()),
-				zap.String("original", original))
-			return s.Inferior.NewAddInferiorMessage(s.Primary, false), false, nil
-		} else if s.isInRole(captureID, RoleSecondary) {
-			// As it sends Remove to the original primary
-			// upon entering Commit state. Do not change state and wait
-			// the original primary reports its inferior.
-			log.Info("secondary is stopped during Commit",
-				zap.String("status", input.GetInferiorID().String()),
-				zap.String("captureID", captureID),
-				zap.String("statemachine", s.ID.String()))
-			err := s.clearCapture(captureID, RoleSecondary)
-			if err != nil {
-				return nil, false, errors.Trace(err)
-			}
-			if s.Primary == "" {
-				// If there is no primary and secondary is stopped, transit to Absent.
-				s.State = SchedulerStatusAbsent
-			}
-			return nil, true, nil
-		} else if s.isInRole(captureID, RoleUndetermined) {
-			log.Info("server is stopped during Commit",
-				zap.String("status", input.GetInferiorID().String()),
-				zap.String("captureID", captureID),
-				zap.String("statemachine", s.ID.String()))
-			err := s.clearCapture(captureID, RoleUndetermined)
-			return nil, false, errors.Trace(err)
-		}
-
+		s.Inferior.UpdateStatus(input)
+		s.Primary = ""
+		// primary is stopped and there is no secondary, transit to Absent.
+		log.Info("primary is stopped during Commit",
+			zap.String("status", input.GetInferiorID().String()),
+			zap.String("captureID", captureID),
+			zap.String("statemachine", s.ID.String()))
+		s.State = SchedulerStatusAbsent
+		return nil, true, nil
 	case heartbeatpb.ComponentState_Working:
-		// primary is still working
-		if s.Primary == captureID {
-			s.Inferior.UpdateStatus(input)
-			if s.hasRole(RoleSecondary) {
-				// Original primary is not stopped, ask for stopping.
-				return s.Inferior.NewRemoveInferiorMessage(captureID), false, nil
-			}
-
-			// There are three cases for empty secondary.
-			//
-			// 1. Secondary has promoted to primary, and the new primary is
-			//    working, transit to working.
-			// 2. Secondary has shutdown during Commit, the original primary
-			//    does not receive Remove request and continues to
-			//    working, transit to working.
-			// 3. Secondary has shutdown during Commit, we receive a message
-			//    before the original primary receives Remove request.
-			//    Transit to Working, and wait for the next state of
-			//    the primary, Stopping or Stopped.
-			s.State = SchedulerStatusWorking
-			log.Info("state transition from commit to working",
-				zap.String("statemachine", s.ID.String()),
-				zap.String("inferiorID", input.GetInferiorID().String()))
-			return nil, true, nil
-		}
-		return nil, false, s.multiplePrimaryError(
-			input, captureID, "multiple primary")
-
-	case heartbeatpb.ComponentState_Stopping:
-		if s.Primary == captureID && s.hasRole(RoleSecondary) {
-			s.Inferior.UpdateStatus(input)
-			return nil, false, nil
-		} else if s.isInRole(captureID, RoleUndetermined) {
-			log.Info("server is stopping during Commit",
-				zap.String("status", input.GetInferiorID().String()),
-				zap.String("captureID", captureID),
-				zap.String("statemachine", s.ID.String()))
-			return nil, false, nil
-		}
-
-	case heartbeatpb.ComponentState_Preparing:
+		s.Inferior.UpdateStatus(input)
+		s.State = SchedulerStatusWorking
+		log.Info("state transition from commit to working",
+			zap.String("statemachine", s.ID.String()),
+			zap.String("inferiorID", input.GetInferiorID().String()))
+		return nil, true, nil
 	}
 	log.Warn("ignore input, unexpected state",
 		zap.String("status", input.GetInferiorID().String()),
@@ -665,31 +277,13 @@ func (s *StateMachine) pollOnWorking(
 ) (bool, error) {
 	switch input.GetInferiorState() {
 	case heartbeatpb.ComponentState_Working:
-		if s.Primary == captureID {
-			s.Inferior.UpdateStatus(input)
-			return false, nil
-		}
-		return false, s.multiplePrimaryError(
-			input, captureID, "multiple primary")
-
-	case heartbeatpb.ComponentState_Absent:
-	case heartbeatpb.ComponentState_Preparing:
-	case heartbeatpb.ComponentState_Prepared:
-	case heartbeatpb.ComponentState_Stopping:
-		// wait stop
-	case heartbeatpb.ComponentState_Stopped:
-		if s.Primary == captureID {
-			s.Inferior.UpdateStatus(input)
-			// Primary is stopped, but we still has secondary.
-			// Clear primary and promote secondary when it's prepared.
-			log.Info("primary is stopped during Working",
-				zap.String("status", input.GetInferiorID().String()),
-				zap.String("captureID", captureID),
-				zap.String("statemachine", s.ID.String()))
-			s.clearPrimary()
-			s.State = SchedulerStatusAbsent
-			return true, nil
-		}
+		s.Inferior.UpdateStatus(input)
+		return false, nil
+	case heartbeatpb.ComponentState_Absent, heartbeatpb.ComponentState_Stopped:
+		s.Inferior.UpdateStatus(input)
+		s.Primary = ""
+		s.State = SchedulerStatusAbsent
+		return true, nil
 	}
 	log.Warn("ignore input, unexpected state",
 		zap.String("status", input.GetInferiorID().String()),
@@ -703,30 +297,18 @@ func (s *StateMachine) pollOnRemoving(
 	input InferiorStatus, captureID model.CaptureID,
 ) (rpc.Message, bool, error) {
 	switch input.GetInferiorState() {
-	case heartbeatpb.ComponentState_Prepared,
-		heartbeatpb.ComponentState_Preparing,
-		heartbeatpb.ComponentState_Working:
-		return s.Inferior.NewRemoveInferiorMessage(captureID), false, nil
+	case heartbeatpb.ComponentState_Working:
+		s.Inferior.UpdateStatus(input)
+		return nil, false, nil
 	case heartbeatpb.ComponentState_Absent, heartbeatpb.ComponentState_Stopped:
-		var err error
-		if s.Primary == captureID {
-			s.clearPrimary()
-		} else if s.isInRole(captureID, RoleSecondary) {
-			err = s.clearCapture(captureID, RoleSecondary)
+		if s.Secondary != "" {
+			s.Primary = s.Secondary
+			s.Secondary = ""
+			s.State = SchedulerStatusCommit
+			return s.Inferior.NewAddInferiorMessage(s.Primary), true, nil
 		} else {
-			err = s.clearCapture(captureID, RoleUndetermined)
+			return nil, false, nil
 		}
-		if err != nil {
-			log.Warn("remove server with error",
-				zap.String("status", input.GetInferiorID().String()),
-				zap.String("captureID", captureID),
-				zap.String("statemachine", s.ID.String()),
-				zap.Error(err))
-		}
-		return nil, false, nil
-	case heartbeatpb.ComponentState_Stopping:
-		//wait for stopping
-		return nil, false, nil
 	}
 	log.Warn("ignore input, unexpected  state",
 		zap.String("status", input.GetInferiorID().String()),
@@ -751,24 +333,16 @@ func (s *StateMachine) HandleAddInferior(
 			zap.String("statemachine", s.ID.String()))
 		return nil, nil
 	}
-	err := s.setCapture(captureID, RoleSecondary)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	s.Primary = captureID
 	oldState := s.State
-	status := s.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Absent)
-	msgs, err := s.poll(status, captureID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	s.State = SchedulerStatusCommit
 
 	log.Info("state transition, add ingferior",
-		zap.String("status", status.GetInferiorID().String()),
 		zap.String("captureID", captureID),
 		zap.String("statemachine", s.ID.String()),
 		zap.Stringer("old", oldState),
 		zap.Stringer("new", s.State))
-	return msgs, nil
+	return []rpc.Message{s.Inferior.NewAddInferiorMessage(s.Primary)}, nil
 }
 
 func (s *StateMachine) HandleMoveInferior(
@@ -789,22 +363,13 @@ func (s *StateMachine) HandleMoveInferior(
 		return nil, nil
 	}
 	oldState := s.State
-	s.State = SchedulerStatusPrepare
-	err := s.setCapture(dest, RoleSecondary)
-	if err != nil {
-		log.Info("move inferior is failed",
-			zap.Stringer("new", s.State),
-			zap.String("statemachine", s.ID.String()),
-			zap.Stringer("old", oldState),
-			zap.Error(err))
-		return nil, errors.Trace(err)
-	}
+	s.State = SchedulerStatusRemoving
+	s.Secondary = dest
 	log.Info("state transition, move inferior",
 		zap.Stringer("new", s.State),
 		zap.String("statemachine", s.ID.String()),
 		zap.Stringer("old", oldState))
-	status := s.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Absent)
-	return s.poll(status, dest)
+	return []rpc.Message{s.Inferior.NewRemoveInferiorMessage(s.Primary)}, nil
 }
 
 func (s *StateMachine) HandleRemoveInferior() ([]rpc.Message, error) {
@@ -825,9 +390,7 @@ func (s *StateMachine) HandleRemoveInferior() ([]rpc.Message, error) {
 	log.Info("state transition, remove inferiror",
 		zap.String("statemachine", s.ID.String()),
 		zap.Stringer("old", oldState))
-	// fake status to trigger a stop message
-	status := s.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Working)
-	return s.poll(status, s.Primary)
+	return []rpc.Message{s.Inferior.NewRemoveInferiorMessage(s.Primary)}, nil
 }
 
 // HandleCaptureShutdown handle server shutdown event.
@@ -836,47 +399,38 @@ func (s *StateMachine) HandleRemoveInferior() ([]rpc.Message, error) {
 func (s *StateMachine) HandleCaptureShutdown(
 	captureID model.CaptureID,
 ) ([]rpc.Message, bool, error) {
-	_, ok := s.Servers[captureID]
-	if !ok {
+	oldState := s.State
+	if s.Primary == captureID {
+		s.Primary = ""
+		s.State = SchedulerStatusAbsent
+	} else if s.Secondary == captureID {
+		// clear the secondary
+		s.Secondary = ""
+	} else {
 		// r is not affected by the server shutdown.
 		return nil, false, nil
 	}
-	// The server has shutdown, the inferior has stopped.
-	status := s.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Stopped)
-	oldState := s.State
-	msgs, err := s.poll(status, captureID)
 	log.Info("state transition, server shutdown",
 		zap.String("statemachine", s.ID.String()),
 		zap.Stringer("old", oldState),
 		zap.Stringer("new", s.State))
-	return msgs, true, errors.Trace(err)
+	return nil, true, nil
 }
 
 func (s *StateMachine) HasRemoved() bool {
 	// It has been removed successfully if it's state is Removing,
 	// and there is no server has it.
-	return s.State == SchedulerStatusRemoving && len(s.Servers) == 0
+	return s.State == SchedulerStatusRemoving && len(s.Primary) == 0 && len(s.Secondary) == 0
 }
 
-func (s *StateMachine) handleResend() []rpc.Message {
-	var server string
-	var status InferiorStatus
-	switch s.State {
-	case SchedulerStatusPrepare:
-		server, _ = s.GetRole(RoleSecondary)
-		status = s.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Absent)
-	case SchedulerStatusCommit:
-		server, _ = s.GetRole(RolePrimary)
-		status = s.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Prepared)
-	case SchedulerStatusRemoving:
-		server, _ = s.GetRole(RolePrimary)
-		status = s.Inferior.NewInferiorStatus(heartbeatpb.ComponentState_Working)
-	}
-
-	msg, err := s.HandleInferiorStatus(status, server)
-	if err != nil {
-		log.Error("poll failed", zap.Error(err))
-	}
+func (s *StateMachine) handleResend() rpc.Message {
 	s.LastMsgTime = time.Now()
-	return msg
+	switch s.State {
+	case SchedulerStatusCommit:
+		return s.Inferior.NewAddInferiorMessage(s.Primary)
+	case SchedulerStatusRemoving:
+		return s.Inferior.NewRemoveInferiorMessage(s.Primary)
+	default:
+		return nil
+	}
 }

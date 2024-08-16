@@ -204,12 +204,11 @@ func (m *Manager) onDispatchMaintainerRequest(
 			if err != nil {
 				log.Panic("decode changefeed fail", zap.Error(err))
 			}
-			cf = NewMaintainer(cfID, req.IsSecondary,
+			cf = NewMaintainer(cfID,
 				cfConfig, req.CheckpointTs, m.pdEndpoints)
 			m.maintainers.Store(cfID, cf)
 			cf.(*Maintainer).Run()
 		}
-		cf.(*Maintainer).isSecondary.Store(req.IsSecondary)
 	}
 
 	for _, req := range request.RemoveMaintainers {
@@ -279,7 +278,7 @@ func (m *Manager) dispatcherMaintainerMessage(
 	}
 
 	maintainer := v.(*Maintainer)
-	if maintainer.isSecondary.Load() || maintainer.removing.Load() {
+	if maintainer.removing.Load() {
 		return nil
 	}
 	return maintainer.getMessageQueue().Push(ctx, msg)

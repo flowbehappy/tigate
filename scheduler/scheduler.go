@@ -118,7 +118,7 @@ func (s *Supervisor) checkRunningTasks() (msgs []rpc.Message) {
 		if needResend {
 			msg := stateMachine.handleResend()
 			log.Debug("resend message", zap.Any("msg", msg))
-			msgs = append(msgs, msg...)
+			msgs = append(msgs, msg)
 		}
 		return true
 	})

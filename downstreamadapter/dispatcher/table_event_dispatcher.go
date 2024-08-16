@@ -294,8 +294,7 @@ func (d *TableEventDispatcher) Remove() {
 	// TODO: 修改这个 dispatcher 的 status 为 removing
 	d.cancel()
 	d.sink.StopTableSpan(d.tableSpan)
-	log.Info("table event dispatcher component status changed to stopping", zap.String("table", d.tableSpan.String()))
-	d.componentStatus.Set(heartbeatpb.ComponentState_Stopping)
+	log.Info("table event dispatcher is stopping", zap.String("table", d.tableSpan.String()))
 }
 
 func (d *TableEventDispatcher) TryClose() (w heartbeatpb.Watermark, ok bool) {

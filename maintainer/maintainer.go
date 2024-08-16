@@ -81,7 +81,6 @@ type Maintainer struct {
 
 	removing        *atomic.Bool
 	cascadeRemoving *atomic.Bool
-	isSecondary     *atomic.Bool
 
 	msgQueue *MessageQueue
 
@@ -104,7 +103,6 @@ type Maintainer struct {
 
 // NewMaintainer create the maintainer for the changefeed
 func NewMaintainer(cfID model.ChangeFeedID,
-	isSecondary bool,
 	cfg *model.ChangeFeedInfo,
 	checkpointTs uint64,
 	pdEndpoints []string,
@@ -112,13 +110,12 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	m := &Maintainer{
 		id:              cfID,
 		mc:              appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
-		state:           heartbeatpb.ComponentState_Prepared,
+		state:           heartbeatpb.ComponentState_Working,
 		removed:         atomic.NewBool(false),
 		taskCh:          make(chan Task, 1024),
 		nodeManager:     appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName),
 		nodesClosed:     make(map[string]struct{}),
 		statusChanged:   atomic.NewBool(true),
-		isSecondary:     atomic.NewBool(isSecondary),
 		removing:        atomic.NewBool(false),
 		cascadeRemoving: atomic.NewBool(false),
 		config:          cfg,
@@ -141,9 +138,6 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		scheduledTaskGauge:             metrics.ScheduleTaskGuage.WithLabelValues(cfID.Namespace, cfID.ID),
 		runningTaskGauge:               metrics.RunningScheduleTaskGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		tableCountGauge:                metrics.TableGauge.WithLabelValues(cfID.Namespace, cfID.ID),
-	}
-	if !isSecondary {
-		m.state = heartbeatpb.ComponentState_Working
 	}
 	m.supervisor = scheduler.NewSupervisor(scheduler.ChangefeedID(cfID),
 		m.getReplicaSet, m.getNewBootstrapFn(),
@@ -207,11 +201,6 @@ func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time
 			return
 		}
 		m.initialized = true
-	}
-
-	// not on the primary status, skip running
-	if m.isSecondary.Load() {
-		return
 	}
 	m.state = heartbeatpb.ComponentState_Working
 
@@ -337,12 +326,11 @@ func (m *Maintainer) Close() {
 	m.cleanupMetrics()
 	log.Info("changefeed maintainer closed", zap.String("id", m.id.String()),
 		zap.Bool("removed", m.removed.Load()),
-		zap.Uint64("checkpointTs", m.watermark.CheckpointTs),
-		zap.Bool("secondary", m.isSecondary.Load()))
+		zap.Uint64("checkpointTs", m.watermark.CheckpointTs))
 }
 
 func (m *Maintainer) initChangefeed() error {
-	m.state = heartbeatpb.ComponentState_Prepared
+	m.state = heartbeatpb.ComponentState_Working
 	m.statusChanged.Store(true)
 	var err error
 	tableIDs, err := m.initTableIDs()
@@ -456,8 +444,7 @@ func (m *Maintainer) onNodeClosed(from string, response *heartbeatpb.MaintainerC
 }
 
 func (m *Maintainer) tryCloseChangefeed() bool {
-	if m.state != heartbeatpb.ComponentState_Stopping && m.state != heartbeatpb.ComponentState_Stopped {
-		m.state = heartbeatpb.ComponentState_Stopping
+	if m.state != heartbeatpb.ComponentState_Stopped {
 		m.statusChanged.Store(true)
 	}
 	if !m.cascadeRemoving.Load() {
@@ -577,7 +564,6 @@ func (m *Maintainer) printStatus() {
 			zap.Int("total", m.tableSpans.Len()),
 			zap.Int("scheduled", m.supervisor.GetInferiors().Len()),
 			zap.Int("absent", tableStates[scheduler.SchedulerStatusAbsent]),
-			zap.Int("prepare", tableStates[scheduler.SchedulerStatusPrepare]),
 			zap.Int("commit", tableStates[scheduler.SchedulerStatusCommit]),
 			zap.Int("working", tableStates[scheduler.SchedulerStatusWorking]),
 			zap.Int("removing", tableStates[scheduler.SchedulerStatusRemoving]),

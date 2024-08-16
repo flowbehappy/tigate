@@ -419,7 +419,6 @@ func (c *coordinator) calculateGCSafepoint(state *orchestrator.GlobalReactorStat
 func (c *coordinator) printStatus() {
 	if time.Since(c.lastCheckTime) > time.Second*10 {
 		workingTask := 0
-		prepareTask := 0
 		absentTask := 0
 		commitTask := 0
 		removingTask := 0
@@ -427,8 +426,6 @@ func (c *coordinator) printStatus() {
 			switch value.State {
 			case scheduler.SchedulerStatusAbsent:
 				absentTask++
-			case scheduler.SchedulerStatusPrepare:
-				prepareTask++
 			case scheduler.SchedulerStatusCommit:
 				commitTask++
 			case scheduler.SchedulerStatusWorking:
@@ -440,7 +437,6 @@ func (c *coordinator) printStatus() {
 		})
 		log.Info("changefeed status",
 			zap.Int("absent", absentTask),
-			zap.Int("prepare", prepareTask),
 			zap.Int("commit", commitTask),
 			zap.Int("working", workingTask),
 			zap.Int("removing", removingTask),
