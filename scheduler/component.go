@@ -15,7 +15,7 @@ package scheduler
 
 import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/rpc"
+	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/tiflow/cdc/model"
 )
@@ -25,10 +25,9 @@ type Inferior interface {
 	UpdateStatus(InferiorStatus)
 	SetStateMachine(*StateMachine)
 	GetStateMachine() *StateMachine
-	IsAlive() bool
 	NewInferiorStatus(heartbeatpb.ComponentState) InferiorStatus
-	NewAddInferiorMessage(model.CaptureID) rpc.Message
-	NewRemoveInferiorMessage(model.CaptureID) rpc.Message
+	NewAddInferiorMessage(model.CaptureID) *messaging.TargetMessage
+	NewRemoveInferiorMessage(model.CaptureID) *messaging.TargetMessage
 }
 
 type InferiorID interface {
@@ -56,4 +55,4 @@ func (c ChangefeedID) String() string {
 	return c.ID
 }
 
-type NewBootstrapFn func(id model.CaptureID) rpc.Message
+type NewBootstrapFn func(id model.CaptureID) *messaging.TargetMessage

@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/rpc"
+	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
@@ -35,7 +35,7 @@ type SchedulerStatus int
 const (
 	SchedulerStatusUnknown SchedulerStatus = iota
 	SchedulerStatusAbsent
-	SchedulerStatusCommit
+	SchedulerStatusCommiting
 	SchedulerStatusWorking
 	SchedulerStatusRemoving
 )
@@ -44,8 +44,8 @@ func (r SchedulerStatus) String() string {
 	switch r {
 	case SchedulerStatusAbsent:
 		return "Absent"
-	case SchedulerStatusCommit:
-		return "Commit"
+	case SchedulerStatusCommiting:
+		return "Commiting"
 	case SchedulerStatusWorking:
 		return "Working"
 	case SchedulerStatusRemoving:
@@ -92,7 +92,7 @@ type StateMachine struct {
 	// Inferior handles the real logic
 	Inferior Inferior
 
-	LastMsgTime time.Time
+	lastMsgTime time.Time
 }
 
 // NewStateMachine build a state machine from all server reported status
@@ -105,7 +105,7 @@ func NewStateMachine(
 	sm := &StateMachine{
 		ID:          id,
 		Inferior:    inferior,
-		LastMsgTime: time.Now(),
+		lastMsgTime: time.Now(),
 	}
 	inferior.SetStateMachine(sm)
 	for captureID, status := range inferiorStatus {
@@ -178,73 +178,41 @@ func (s *StateMachine) multiplePrimaryError(
 // poll transit state based on input and the current state.
 func (s *StateMachine) poll(
 	input InferiorStatus, captureID model.CaptureID,
-) ([]rpc.Message, error) {
+) (*messaging.TargetMessage, error) {
 	if s.Primary != captureID {
 		return nil, nil
 	}
 
-	msgBuf := make([]rpc.Message, 0)
-	stateChanged := true
-	for stateChanged {
-		var err error
-		oldState := s.State
-		var msg rpc.Message
-		switch s.State {
-		case SchedulerStatusAbsent:
-			msg, stateChanged, err = s.pollOnAbsent(input, captureID)
-		case SchedulerStatusCommit:
-			msg, stateChanged, err = s.pollOnCommit(input, captureID)
-		case SchedulerStatusWorking:
-			stateChanged, err = s.pollOnWorking(input, captureID)
-		case SchedulerStatusRemoving:
-			msg, stateChanged, err = s.pollOnRemoving(input, captureID)
-		default:
-			return nil, s.inconsistentError(
-				input, captureID, "state unknown")
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if msg != nil {
-			msgBuf = append(msgBuf, msg)
-		}
-		if stateChanged {
-			log.Info("state transition, poll",
-				zap.String("status", input.GetInferiorID().String()),
-				zap.String("captureID", captureID),
-				zap.Stringer("old", oldState),
-				zap.Stringer("new", s.State))
-		}
+	var err error
+	oldState := s.State
+	var msg *messaging.TargetMessage
+	switch s.State {
+	case SchedulerStatusCommiting:
+		msg, err = s.pollOnCommit(input, captureID)
+	case SchedulerStatusWorking:
+		err = s.pollOnWorking(input, captureID)
+	case SchedulerStatusRemoving:
+		msg = s.pollOnRemoving(input, captureID)
+	default:
+		return nil, s.inconsistentError(
+			input, captureID, "state unknown")
 	}
-
-	return msgBuf, nil
-}
-
-//nolint:unparam
-func (s *StateMachine) pollOnAbsent(
-	input InferiorStatus, captureID model.CaptureID,
-) (rpc.Message, bool, error) {
-	switch input.GetInferiorState() {
-	case heartbeatpb.ComponentState_Absent:
-		s.State = SchedulerStatusCommit
-		return s.Inferior.NewAddInferiorMessage(captureID), false, nil
-	case heartbeatpb.ComponentState_Stopped:
-		// Ignore stopped state as a server may be shutdown unexpectedly.
-		// todo: fix ignore task, already exists error, when add a task and prepare, then receive a stop
-		// the running task still has the scheduler task
-		return nil, false, nil
-	case heartbeatpb.ComponentState_Working:
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	log.Warn("ignore input, unexpected state",
-		zap.String("status", input.GetInferiorID().String()),
-		zap.String("captureID", captureID),
-		zap.String("statemachine", s.ID.String()))
-	return nil, false, nil
+	if oldState != s.State {
+		log.Info("state transition, poll",
+			zap.String("status", input.GetInferiorID().String()),
+			zap.String("captureID", captureID),
+			zap.Stringer("old", oldState),
+			zap.Stringer("new", s.State))
+	}
+	return msg, nil
 }
 
 func (s *StateMachine) pollOnCommit(
 	input InferiorStatus, captureID model.CaptureID,
-) (rpc.Message, bool, error) {
+) (*messaging.TargetMessage, error) {
 	switch input.GetInferiorState() {
 	case heartbeatpb.ComponentState_Stopped, heartbeatpb.ComponentState_Absent:
 		s.Inferior.UpdateStatus(input)
@@ -255,77 +223,77 @@ func (s *StateMachine) pollOnCommit(
 			zap.String("captureID", captureID),
 			zap.String("statemachine", s.ID.String()))
 		s.State = SchedulerStatusAbsent
-		return nil, true, nil
+		return nil, nil
 	case heartbeatpb.ComponentState_Working:
 		s.Inferior.UpdateStatus(input)
 		s.State = SchedulerStatusWorking
 		log.Info("state transition from commit to working",
 			zap.String("statemachine", s.ID.String()),
 			zap.String("inferiorID", input.GetInferiorID().String()))
-		return nil, true, nil
+		return nil, nil
 	}
 	log.Warn("ignore input, unexpected state",
 		zap.String("status", input.GetInferiorID().String()),
 		zap.String("captureID", captureID),
 		zap.String("statemachine", s.ID.String()))
-	return nil, false, nil
+	return nil, nil
 }
 
 //nolint:unparam
 func (s *StateMachine) pollOnWorking(
 	input InferiorStatus, captureID model.CaptureID,
-) (bool, error) {
+) error {
 	switch input.GetInferiorState() {
 	case heartbeatpb.ComponentState_Working:
 		s.Inferior.UpdateStatus(input)
-		return false, nil
+		return nil
 	case heartbeatpb.ComponentState_Absent, heartbeatpb.ComponentState_Stopped:
 		s.Inferior.UpdateStatus(input)
 		s.Primary = ""
 		s.State = SchedulerStatusAbsent
-		return true, nil
+		return nil
 	}
 	log.Warn("ignore input, unexpected state",
 		zap.String("status", input.GetInferiorID().String()),
 		zap.String("captureID", captureID),
 		zap.String("statemachine", s.ID.String()))
-	return false, nil
+	return nil
 }
 
 //nolint:unparam
 func (s *StateMachine) pollOnRemoving(
 	input InferiorStatus, captureID model.CaptureID,
-) (rpc.Message, bool, error) {
+) *messaging.TargetMessage {
 	switch input.GetInferiorState() {
 	case heartbeatpb.ComponentState_Working:
 		s.Inferior.UpdateStatus(input)
-		return nil, false, nil
+		return nil
 	case heartbeatpb.ComponentState_Absent, heartbeatpb.ComponentState_Stopped:
 		if s.Secondary != "" {
 			s.Primary = s.Secondary
 			s.Secondary = ""
-			s.State = SchedulerStatusCommit
-			return s.Inferior.NewAddInferiorMessage(s.Primary), true, nil
-		} else {
-			return nil, false, nil
+			s.State = SchedulerStatusCommiting
+			return s.Inferior.NewAddInferiorMessage(s.Primary)
 		}
+		// clear the primary to mark the statemachine as removed
+		s.Primary = ""
 	}
 	log.Warn("ignore input, unexpected  state",
 		zap.String("status", input.GetInferiorID().String()),
 		zap.String("captureID", captureID),
 		zap.String("statemachine", s.ID.String()))
-	return nil, false, nil
+	return nil
 }
 
 func (s *StateMachine) HandleInferiorStatus(
 	input InferiorStatus, from model.CaptureID,
-) ([]rpc.Message, error) {
+) (*messaging.TargetMessage, error) {
 	return s.poll(input, from)
 }
 
 func (s *StateMachine) HandleAddInferior(
 	captureID model.CaptureID,
-) ([]rpc.Message, error) {
+) (*messaging.TargetMessage, error) {
 	// Ignore add inferior if it's not in Absent state.
 	if s.State != SchedulerStatusAbsent {
 		log.Warn("add inferior is ignored",
@@ -335,19 +303,19 @@ func (s *StateMachine) HandleAddInferior(
 	}
 	s.Primary = captureID
 	oldState := s.State
-	s.State = SchedulerStatusCommit
+	s.State = SchedulerStatusCommiting
 
 	log.Info("state transition, add ingferior",
 		zap.String("captureID", captureID),
 		zap.String("statemachine", s.ID.String()),
 		zap.Stringer("old", oldState),
 		zap.Stringer("new", s.State))
-	return []rpc.Message{s.Inferior.NewAddInferiorMessage(s.Primary)}, nil
+	return s.Inferior.NewAddInferiorMessage(s.Primary), nil
 }
 
 func (s *StateMachine) HandleMoveInferior(
 	dest model.CaptureID,
-) ([]rpc.Message, error) {
+) (*messaging.TargetMessage, error) {
 	// Ignore move inferior if it has been removed already.
 	if s.HasRemoved() {
 		log.Warn("move inferior is ignored",
@@ -369,10 +337,10 @@ func (s *StateMachine) HandleMoveInferior(
 		zap.Stringer("new", s.State),
 		zap.String("statemachine", s.ID.String()),
 		zap.Stringer("old", oldState))
-	return []rpc.Message{s.Inferior.NewRemoveInferiorMessage(s.Primary)}, nil
+	return s.Inferior.NewRemoveInferiorMessage(s.Primary), nil
 }
 
-func (s *StateMachine) HandleRemoveInferior() ([]rpc.Message, error) {
+func (s *StateMachine) HandleRemoveInferior() (*messaging.TargetMessage, error) {
 	// Ignore remove inferior if it has been removed already.
 	if s.HasRemoved() {
 		log.Warn("remove inferior is ignored",
@@ -390,7 +358,7 @@ func (s *StateMachine) HandleRemoveInferior() ([]rpc.Message, error) {
 	log.Info("state transition, remove inferiror",
 		zap.String("statemachine", s.ID.String()),
 		zap.Stringer("old", oldState))
-	return []rpc.Message{s.Inferior.NewRemoveInferiorMessage(s.Primary)}, nil
+	return s.Inferior.NewRemoveInferiorMessage(s.Primary), nil
 }
 
 // HandleCaptureShutdown handle server shutdown event.
@@ -398,7 +366,7 @@ func (s *StateMachine) HandleRemoveInferior() ([]rpc.Message, error) {
 // whether s is affected by the server shutdown.
 func (s *StateMachine) HandleCaptureShutdown(
 	captureID model.CaptureID,
-) ([]rpc.Message, bool, error) {
+) (*messaging.TargetMessage, bool, error) {
 	oldState := s.State
 	if s.Primary == captureID {
 		s.Primary = ""
@@ -423,10 +391,10 @@ func (s *StateMachine) HasRemoved() bool {
 	return s.State == SchedulerStatusRemoving && len(s.Primary) == 0 && len(s.Secondary) == 0
 }
 
-func (s *StateMachine) handleResend() rpc.Message {
-	s.LastMsgTime = time.Now()
+func (s *StateMachine) handleResend() *messaging.TargetMessage {
+	s.lastMsgTime = time.Now()
 	switch s.State {
-	case SchedulerStatusCommit:
+	case SchedulerStatusCommiting:
 		return s.Inferior.NewAddInferiorMessage(s.Primary)
 	case SchedulerStatusRemoving:
 		return s.Inferior.NewRemoveInferiorMessage(s.Primary)

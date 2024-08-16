@@ -16,7 +16,7 @@ package scheduler
 import (
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/rpc"
+	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -51,7 +51,7 @@ func (s *Supervisor) schedule(
 }
 
 // Schedule generates schedule tasks based on the inputs.
-func (s *Supervisor) Schedule(allInferiors utils.Map[InferiorID, Inferior]) ([]rpc.Message, error) {
+func (s *Supervisor) Schedule(allInferiors utils.Map[InferiorID, Inferior]) ([]*messaging.TargetMessage, error) {
 	msgs := s.checkRunningTasks()
 
 	if !s.CheckAllCaptureInitialized() {
@@ -96,7 +96,7 @@ func (s *Supervisor) Name() string {
 	return "combine-scheduler"
 }
 
-func (s *Supervisor) checkRunningTasks() (msgs []rpc.Message) {
+func (s *Supervisor) checkRunningTasks() (msgs []*messaging.TargetMessage) {
 	needResend := false
 	if time.Since(s.lastResendTime) > time.Second*2 {
 		needResend = true
@@ -117,7 +117,9 @@ func (s *Supervisor) checkRunningTasks() (msgs []rpc.Message) {
 
 		if needResend {
 			msg := stateMachine.handleResend()
-			log.Debug("resend message", zap.Any("msg", msg))
+			log.Info("resend message",
+				zap.String("state", stateMachine.State.String()),
+				zap.String("id", stateMachine.ID.String()))
 			msgs = append(msgs, msg)
 		}
 		return true
@@ -125,7 +127,7 @@ func (s *Supervisor) checkRunningTasks() (msgs []rpc.Message) {
 
 	for _, span := range toBeDeleted {
 		s.RunningTasks.Delete(span)
-		log.Debug("schedule finished, remove running task",
+		log.Info("schedule finished, remove running task",
 			zap.String("stid", s.ID.String()),
 			zap.String("id", span.String()))
 	}

@@ -19,7 +19,6 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/pkg/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -106,11 +105,7 @@ func (c *changefeed) NewInferiorStatus(status heartbeatpb.ComponentState) schedu
 	}}
 }
 
-func (c *changefeed) IsAlive() bool {
-	return true
-}
-
-func (c *changefeed) NewAddInferiorMessage(server model.CaptureID) rpc.Message {
+func (c *changefeed) NewAddInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
 	return messaging.NewTargetMessage(messaging.ServerId(server),
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.DispatchMaintainerRequest{
@@ -124,7 +119,7 @@ func (c *changefeed) NewAddInferiorMessage(server model.CaptureID) rpc.Message {
 		})
 }
 
-func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) rpc.Message {
+func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
 	cf, ok := c.coordinator.lastState.Changefeeds[c.ID]
 	cascade := !ok || cf == nil || !shouldRunChangefeed(cf.Info.State)
 	return messaging.NewTargetMessage(messaging.ServerId(server),

@@ -25,7 +25,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/flowbehappy/tigate/pkg/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
@@ -193,9 +192,9 @@ func shouldRunChangefeed(state model.FeedState) bool {
 func (c *coordinator) AsyncStop() {
 }
 
-func (c *coordinator) sendMessages(msgs []rpc.Message) {
+func (c *coordinator) sendMessages(msgs []*messaging.TargetMessage) {
 	for _, msg := range msgs {
-		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(msg.(*messaging.TargetMessage))
+		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(msg)
 		if err != nil {
 			log.Error("failed to send coordinator request", zap.Any("msg", msg), zap.Error(err))
 			continue
@@ -203,7 +202,7 @@ func (c *coordinator) sendMessages(msgs []rpc.Message) {
 	}
 }
 
-func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState) ([]rpc.Message, error) {
+func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState) ([]*messaging.TargetMessage, error) {
 	if !c.supervisor.CheckAllCaptureInitialized() {
 		return nil, nil
 	}
@@ -233,7 +232,7 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 	return c.supervisor.Schedule(c.scheduledChangefeeds)
 }
 
-func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) rpc.Message {
+func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) *messaging.TargetMessage {
 	return messaging.NewTargetMessage(
 		messaging.ServerId(captureID),
 		messaging.MaintainerManagerTopic,
@@ -426,7 +425,7 @@ func (c *coordinator) printStatus() {
 			switch value.State {
 			case scheduler.SchedulerStatusAbsent:
 				absentTask++
-			case scheduler.SchedulerStatusCommit:
+			case scheduler.SchedulerStatusCommiting:
 				commitTask++
 			case scheduler.SchedulerStatusWorking:
 				workingTask++

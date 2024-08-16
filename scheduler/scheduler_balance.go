@@ -29,7 +29,6 @@ var _ Scheduler = &balanceScheduler{}
 
 // The scheduler for balancing tables among all captures.
 type balanceScheduler struct {
-	id                   InferiorID
 	random               *rand.Rand
 	lastRebalanceTime    time.Time
 	checkBalanceInterval time.Duration
@@ -79,7 +78,6 @@ func (b *balanceScheduler) Schedule(
 		b.random, aliveCaptures, stateMachines, batchSize)
 	b.forceBalance = len(tasks) != 0
 	log.Info("balance scheduler generate tasks",
-		zap.String("id", b.id.String()),
 		zap.String("changefeed", string(b.changefeedID.String())),
 		zap.Int("task count", len(tasks)))
 	return tasks

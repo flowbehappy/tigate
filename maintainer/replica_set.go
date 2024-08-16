@@ -17,7 +17,6 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/pkg/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/tiflow/cdc/model"
 )
@@ -53,10 +52,6 @@ func (r *ReplicaSet) UpdateStatus(status scheduler.InferiorStatus) {
 	}
 }
 
-func (r *ReplicaSet) IsAlive() bool {
-	return true
-}
-
 func (r *ReplicaSet) NewInferiorStatus(state heartbeatpb.ComponentState) scheduler.InferiorStatus {
 	return &ReplicaSetStatus{
 		ID:           r.ID,
@@ -65,7 +60,7 @@ func (r *ReplicaSet) NewInferiorStatus(state heartbeatpb.ComponentState) schedul
 	}
 }
 
-func (r *ReplicaSet) NewAddInferiorMessage(server model.CaptureID) rpc.Message {
+func (r *ReplicaSet) NewAddInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
 	return messaging.NewTargetMessage(messaging.ServerId(server),
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{
@@ -82,7 +77,7 @@ func (r *ReplicaSet) NewAddInferiorMessage(server model.CaptureID) rpc.Message {
 		})
 }
 
-func (r *ReplicaSet) NewRemoveInferiorMessage(server model.CaptureID) rpc.Message {
+func (r *ReplicaSet) NewRemoveInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
 	return messaging.NewTargetMessage(messaging.ServerId(server),
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{

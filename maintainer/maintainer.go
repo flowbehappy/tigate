@@ -26,7 +26,6 @@ import (
 	configNew "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/flowbehappy/tigate/pkg/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/flowbehappy/tigate/utils"
@@ -302,9 +301,9 @@ func (m *Maintainer) updateMetrics() {
 }
 
 // send message to remote, todo: use a io thread pool
-func (m *Maintainer) sendMessages(msgs []rpc.Message) {
+func (m *Maintainer) sendMessages(msgs []*messaging.TargetMessage) {
 	for _, msg := range msgs {
-		err := m.mc.SendCommand(msg.(*messaging.TargetMessage))
+		err := m.mc.SendCommand(msg)
 		if err != nil {
 			log.Debug("failed to send maintainer request", zap.Any("msg", msg), zap.Error(err))
 			continue
@@ -451,7 +450,7 @@ func (m *Maintainer) tryCloseChangefeed() bool {
 		return true
 	}
 
-	msgs := make([]rpc.Message, 0)
+	msgs := make([]*messaging.TargetMessage, 0)
 	for node := range m.nodeManager.GetAliveNodes() {
 		if _, ok := m.nodesClosed[node]; !ok {
 			msgs = append(msgs, messaging.NewTargetMessage(
@@ -519,7 +518,7 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 		log.Panic("marshal changefeed config failed", zap.Error(err))
 	}
 	log.Info("create maintainer bootstrap message function", zap.String("changefeed", m.id.String()), zap.ByteString("config", cfgBytes))
-	return func(captureID model.CaptureID) rpc.Message {
+	return func(captureID model.CaptureID) *messaging.TargetMessage {
 		return messaging.NewTargetMessage(
 			messaging.ServerId(captureID),
 			messaging.DispatcherManagerManagerTopic,
@@ -564,7 +563,7 @@ func (m *Maintainer) printStatus() {
 			zap.Int("total", m.tableSpans.Len()),
 			zap.Int("scheduled", m.supervisor.GetInferiors().Len()),
 			zap.Int("absent", tableStates[scheduler.SchedulerStatusAbsent]),
-			zap.Int("commit", tableStates[scheduler.SchedulerStatusCommit]),
+			zap.Int("commit", tableStates[scheduler.SchedulerStatusCommiting]),
 			zap.Int("working", tableStates[scheduler.SchedulerStatusWorking]),
 			zap.Int("removing", tableStates[scheduler.SchedulerStatusRemoving]),
 			zap.Int("runningTasks", m.supervisor.RunningTasks.Len()))
