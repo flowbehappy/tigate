@@ -15,7 +15,6 @@ package eventcollector
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -33,38 +32,31 @@ import (
 )
 
 type DispatcherMap struct {
-	mutex sync.Mutex
-	m     map[string]dispatcher.Dispatcher // dispatcher_id --> dispatcher
-}
-
-func newDispatcherMap() *DispatcherMap {
-	return &DispatcherMap{
-		m: make(map[string]dispatcher.Dispatcher),
-	}
+	// dispatcher_id --> dispatcher
+	m sync.Map
 }
 
 func (m *DispatcherMap) Get(dispatcherId string) (dispatcher.Dispatcher, bool) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	d, ok := m.m[dispatcherId]
-	return d, ok
+	d, ok := m.m.Load(dispatcherId)
+	if !ok {
+		return nil, false
+	}
+	dispatcher, ok := d.(dispatcher.Dispatcher)
+	return dispatcher, ok
 }
 
 func (m *DispatcherMap) Set(dispatcherId string, d dispatcher.Dispatcher) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	m.m[dispatcherId] = d
+	m.m.Store(dispatcherId, d)
 }
 
 func (m *DispatcherMap) Delete(dispatcherId string) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	delete(m.m, dispatcherId)
+	m.m.Delete(dispatcherId)
 }
 
 type RegisterInfo struct {
-	dispatcher dispatcher.Dispatcher
-	startTs    uint64
+	Dispatcher   dispatcher.Dispatcher
+	StartTs      uint64
+	FilterConfig *eventpb.FilterConfig
 }
 
 /*
@@ -78,7 +70,7 @@ type EventCollector struct {
 	globalMemoryQuota int64
 	wg                sync.WaitGroup
 
-	registerMessageChan                          *chann.DrainableChann[*RegisterInfo] // for temp
+	registerMessageChan                          *chann.DrainableChann[RegisterInfo] // for temp
 	metricDispatcherReceivedKVEventCount         prometheus.Counter
 	metricDispatcherReceivedResolvedTsEventCount prometheus.Counter
 }
@@ -87,73 +79,57 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 	eventCollector := EventCollector{
 		serverId:                             serverId,
 		globalMemoryQuota:                    globalMemoryQuota,
-		dispatcherMap:                        newDispatcherMap(),
-		registerMessageChan:                  chann.NewAutoDrainChann[*RegisterInfo](),
+		dispatcherMap:                        &DispatcherMap{},
+		registerMessageChan:                  chann.NewAutoDrainChann[RegisterInfo](),
 		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
 
 	eventCollector.wg.Add(1)
-	go func(c *EventCollector) {
+	go func() {
 		defer eventCollector.wg.Done()
 		for {
 			registerInfo := <-eventCollector.registerMessageChan.Out()
-			d := registerInfo.dispatcher
-			startTs := registerInfo.startTs
-			err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendEvent(&messaging.TargetMessage{
-				To:    c.serverId, // demo 中 每个节点都有自己的 eventService
-				Topic: messaging.EventServiceTopic,
-				Type:  messaging.TypeRegisterDispatcherRequest,
-				Message: messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
-					DispatcherId: d.GetId(),
-					TableSpan:    d.GetTableSpan().TableSpan,
-					Remove:       false,
-					StartTs:      startTs,
-					ServerId:     c.serverId.String(),
-				}},
-			})
-			if err != nil {
-				log.Error("failed to send register dispatcher request message", zap.Error(err))
-				c.registerMessageChan.In() <- &RegisterInfo{
-					dispatcher: d,
-					startTs:    startTs,
-				}
+			var err error
+			if registerInfo.StartTs > 0 {
+				err = eventCollector.RegisterDispatcher(registerInfo)
+			} else {
+				err = eventCollector.RemoveDispatcher(registerInfo.Dispatcher)
 			}
-			time.Sleep(10 * time.Millisecond) // for test
-			c.dispatcherMap.Set(d.GetId(), d)
-			metrics.EventCollectorRegisteredDispatcherCount.Inc()
+			if err != nil {
+				// Wait for a while to avoid sending too many requests, since the
+				// event service may be busy.
+				time.Sleep(10 * time.Millisecond)
+			}
 		}
-	}(&eventCollector)
+	}()
 
 	return &eventCollector
 }
 
 // RegisterDispatcher register a dispatcher to event collector.
 // If the dispatcher is not table trigger event dispatcher, filterConfig will be nil.
-func (c *EventCollector) RegisterDispatcher(d dispatcher.Dispatcher, startTs uint64, filterConfig *eventpb.FilterConfig) error {
+func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
 	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendEvent(&messaging.TargetMessage{
 		To:    c.serverId, // demo 中 每个节点都有自己的 eventService
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
 		Message: messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
-			DispatcherId: d.GetId(),
-			TableSpan:    d.GetTableSpan().TableSpan,
+			DispatcherId: info.Dispatcher.GetId(),
+			TableSpan:    info.Dispatcher.GetTableSpan().TableSpan,
 			Remove:       false,
-			StartTs:      startTs,
+			StartTs:      info.StartTs,
 			ServerId:     c.serverId.String(),
-			FilterConfig: filterConfig,
+			FilterConfig: info.FilterConfig,
 		}},
 	})
 	if err != nil {
 		log.Error("failed to send register dispatcher request message", zap.Error(err))
-		c.registerMessageChan.In() <- &RegisterInfo{
-			dispatcher: d,
-			startTs:    startTs,
-		}
+		c.registerMessageChan.In() <- info
 		return err
 	}
-	c.dispatcherMap.Set(d.GetId(), d)
+	c.dispatcherMap.Set(info.Dispatcher.GetId(), info.Dispatcher)
 	metrics.EventCollectorRegisteredDispatcherCount.Inc()
 	return nil
 }
@@ -173,6 +149,10 @@ func (c *EventCollector) RemoveDispatcher(d dispatcher.Dispatcher) error {
 	})
 	if err != nil {
 		log.Error("failed to send register dispatcher request message", zap.Error(err))
+		c.registerMessageChan.In() <- RegisterInfo{
+			Dispatcher: d,
+			StartTs:    0,
+		}
 		return err
 	}
 	c.dispatcherMap.Delete(string(d.GetId()))
@@ -192,7 +172,7 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 	txnEvent, ok := msg.Message.(*common.TxnEvent)
 	if !ok {
 		log.Error("invalid event feed message", zap.Any("msg", msg))
-		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: fmt.Sprintf("invalid heartbeat response message")}
+		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: "invalid heartbeat response message"}
 	}
 
 	dispatcherID := txnEvent.DispatcherID

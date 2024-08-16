@@ -227,7 +227,13 @@ func (e *EventDispatcherManager) NewTableEventDispatcher(tableSpan *common.Table
 	*/
 	tableEventDispatcher := dispatcher.NewTableEventDispatcher(tableSpan, e.sink, startTs, nil)
 
-	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableEventDispatcher, startTs, nil)
+	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(
+		eventcollector.RegisterInfo{
+			Dispatcher:   tableEventDispatcher,
+			StartTs:      startTs,
+			FilterConfig: nil,
+		},
+	)
 
 	e.dispatcherMap.Set(tableSpan, tableEventDispatcher)
 	e.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
@@ -322,7 +328,13 @@ func (e *EventDispatcherManager) newTableTriggerEventDispatcher(startTs uint64) 
 		//MemoryUsage:   dispatcher.NewMemoryUsage(),
 	}
 
-	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableTriggerEventDispatcher, startTs, toFilterConfigPB(e.config.Filter))
+	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(
+		eventcollector.RegisterInfo{
+			Dispatcher:   tableTriggerEventDispatcher,
+			StartTs:      startTs,
+			FilterConfig: toFilterConfigPB(e.config.Filter),
+		},
+	)
 
 	return tableTriggerEventDispatcher
 

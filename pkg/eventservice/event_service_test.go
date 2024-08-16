@@ -412,7 +412,12 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 	startTs := uint64(1)
 
 	tableEventDispatcher := dispatcher.NewTableEventDispatcher(tableSpan, mysqlSink, startTs, nil)
-	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(tableEventDispatcher, startTs)
+	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(
+		eventcollector.RegisterInfo{
+			Dispatcher: tableEventDispatcher,
+			StartTs:    startTs,
+		},
+	)
 
 	time.Sleep(1 * time.Second)
 	// add events to logpuller
