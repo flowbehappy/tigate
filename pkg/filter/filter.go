@@ -115,8 +115,8 @@ type Filter interface {
 	// Its purpose is to verify the expression filter config.
 	Verify(tableInfos []*model.TableInfo) error
 
-	// 根据 ddl event 返回需要执行的 ddl query
-	FilterDDLQuery(ddl *common.DDLEvent) error
+	// filter ddl event to update query and influenced table spans
+	FilterDDLEvent(ddl *common.DDLEvent) error
 }
 
 // filter implements Filter.
@@ -158,7 +158,7 @@ func NewFilter(cfg *config.ReplicaConfig, tz string) (Filter, error) {
 	}, nil
 }
 
-func (f *filter) FilterDDLQuery(ddl *common.DDLEvent) error {
+func (f *filter) FilterDDLEvent(ddl *common.DDLEvent) error {
 	query := ddl.Job.Query
 	queryList := strings.Split(query, ";")
 	if len(queryList) == 1 {

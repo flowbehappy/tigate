@@ -305,7 +305,7 @@ func (d *Dispatcher) AddDDLEventToSinkWhenAvailable(event *common.TxnEvent) {
 	// 但应当不出现整个 query 都不需要 send to downstream 的 ddl，这种 ddl 不应该发给 dispatcher
 	// TODO: ddl 影响到的 tableSpan 也在 filter 中过滤一遍
 	filter := d.GetFilter()
-	err := filter.FilterDDLQuery(event.GetDDLEvent())
+	err := filter.FilterDDLEvent(event.GetDDLEvent())
 	if err != nil {
 		log.Error("filter ddl query failed", zap.Error(err))
 		// 这里怎么处理更合适呢？有错然后反上去让 changefeed 报错
