@@ -23,6 +23,6 @@ type Sink interface {
 	AddTableSpan(tableSpan *common.TableSpan)
 	RemoveTableSpan(tableSpan *common.TableSpan)
 	StopTableSpan(tableSpan *common.TableSpan)
-	GetCheckpointTs(tableSpan *common.TableSpan) uint64
+	GetCheckpointTs(tableSpan *common.TableSpan) (uint64, bool)
 	Close()
 }

@@ -111,7 +111,6 @@ func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *writer.
 			BlockStrategy: causality.BlockStrategyWaitEmpty,
 		}),
 		tableStatuses: NewTableStatusMap(),
-		//dmlWorkerTasks: make([]*worker.MysqlWorkerDMLEventTask, workerCount),
 	}
 
 	mysqlSink.initWorker(workerCount, cfg, db)
@@ -120,10 +119,6 @@ func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *writer.
 }
 
 func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql.DB) {
-	// init ddl worker, which is for ddl event and sync point event
-	//s.ddlWorker = &worker.MysqlDDLWorker{MysqlWriter: writer.NewMysqlWriter(db, cfg)}
-
-	// dml worker task will deal with all the dml events
 	ctx, cancel := context.WithCancel(context.Background())
 	s.ddlWorker = worker.NewMysqlDDLWorker(db, cfg, s.changefeedID)
 
@@ -131,7 +126,6 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 	for i := 0; i < workerCount; i++ {
 		s.wg.Add(1)
 		workerId := i
-		// s.dmlWorkerTasks = append(s.dmlWorkerTasks, worker.NewMysqlWorkerDMLEventTask(s.conflictDetector.GetOutChByCacheID(int64(i)), db, cfg, 128))
 		go func(ctx context.Context, eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig, maxRows int) {
 			defer s.wg.Done()
 			totalStart := time.Now()
@@ -222,7 +216,9 @@ func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *
 	}
 
 	tableStatus.getProgress().Add(event)
-	event.PostTxnFlushed = func() { tableStatus.getProgress().Remove(event) }
+	event.PostTxnFlushed = func() {
+		tableStatus.getProgress().Remove(event)
+	}
 	// TODO:这个 ddl 可以并发写么？如果不行的话，后面还要加锁或者排队
 	s.ddlWorker.GetMysqlWriter().FlushDDLEvent(event)
 }
@@ -279,12 +275,12 @@ func (s *MysqlSink) IsEmpty(tableSpan *common.TableSpan) bool {
 	return tableStatus.getProgress().Empty()
 }
 
-func (s *MysqlSink) GetCheckpointTs(tableSpan *common.TableSpan) uint64 {
+func (s *MysqlSink) GetCheckpointTs(tableSpan *common.TableSpan) (uint64, bool) {
 	tableStatus, ok := s.tableStatuses.Get(tableSpan)
 
 	if !ok {
 		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
-		return math.MaxUint64
+		return math.MaxUint64, false
 	}
 
 	return tableStatus.getProgress().GetCheckpointTs()

@@ -380,6 +380,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 				message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
 					Span:            dispatcherHeartBeatInfo.TableSpan.TableSpan,
 					ComponentStatus: heartbeatpb.ComponentState_Stopped,
+					CheckpointTs:    watermark.CheckpointTs,
 				})
 				toReomveTableSpans = append(toReomveTableSpans, dispatcherItem.GetTableSpan())
 			}

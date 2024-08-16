@@ -21,6 +21,7 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/stretchr/testify/require"
 	"github.com/zeebo/assert"
@@ -30,18 +31,15 @@ import (
 func TestMysqlSinkBasicFunctionality(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
 	require.Nil(t, err)
-	/*
-		mock.ExpectBegin()
-		mock.ExpectExec("USE `test`;").WillReturnResult(sqlmock.NewResult(1, 1))
-		mock.ExpectExec("CREATE TABLE `test`.`t` (`id` INT PRIMARY KEY, `name` VARCHAR(255))").WillReturnResult(sqlmock.NewResult(1, 1))
-		mock.ExpectCommit()
-	*/
+
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO `test_schema`.`test_table` (`id`,`name`) VALUES (?,?)").
-		WithArgs(1, "Alice").
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec("UPDATE `test`.`users` SET `id` = ?, `name` = ? WHERE `id` = ? LIMIT 1").
-		WithArgs(1, "Bob", 1).
+	mock.ExpectExec("USE `test`;").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("CREATE TABLE `test`.`t` (`id` INT PRIMARY KEY, `name` VARCHAR(255))").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO `test_schema`.`test_table` (`id`,`name`) VALUES (?,?);UPDATE `test`.`users` SET `id` = ?, `name` = ? WHERE `id` = ? LIMIT 1").
+		WithArgs(1, "Alice", 1, "Bob", 1).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
@@ -51,22 +49,25 @@ func TestMysqlSinkBasicFunctionality(t *testing.T) {
 	tableSpan := common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1}}
 	mysqlSink.AddTableSpan(&tableSpan)
 
-	/*
-		mysqlSink.AddDDLAndSyncPointEvent(&tableSpan, &common.TxnEvent{
-			StartTs:  3,
-			CommitTs: 4,
-			DDLEvent: &common.DDLEvent{
-				Job: &model.Job{
-					Type:       model.ActionCreateTable,
-					SchemaID:   10,
-					SchemaName: "test",
-					TableName:  "t",
-					Query:      "CREATE TABLE `test`.`t` (`id` INT PRIMARY KEY, `name` VARCHAR(255))",
-				},
-				CommitTS: 4,
+	ts, isEmpty := mysqlSink.GetCheckpointTs(&tableSpan)
+	require.NotEqual(t, ts, 0)
+	require.Equal(t, isEmpty, true)
+
+	mysqlSink.AddDDLAndSyncPointEvent(&tableSpan, &common.TxnEvent{
+		StartTs:  1,
+		CommitTs: 1,
+		DDLEvent: &common.DDLEvent{
+			Job: &timodel.Job{
+				Type:       timodel.ActionCreateTable,
+				SchemaID:   10,
+				SchemaName: "test",
+				TableName:  "t",
+				Query:      "CREATE TABLE `test`.`t` (`id` INT PRIMARY KEY, `name` VARCHAR(255))",
 			},
-		})
-	*/
+			CommitTS: 1,
+		},
+	})
+
 	mysqlSink.AddDMLEvent(&tableSpan, &common.TxnEvent{
 		StartTs:  1,
 		CommitTs: 2,
@@ -109,14 +110,30 @@ func TestMysqlSinkBasicFunctionality(t *testing.T) {
 		},
 	})
 
-	require.Equal(t, mysqlSink.IsEmpty(&tableSpan), false)
-	require.NotEqual(t, mysqlSink.GetSmallestCommitTs(&tableSpan), 0)
-
 	time.Sleep(1 * time.Second)
+
+	mysqlSink.PassDDLAndSyncPointEvent(&tableSpan, &common.TxnEvent{
+		StartTs:  3,
+		CommitTs: 4,
+		DDLEvent: &common.DDLEvent{
+			Job: &timodel.Job{
+				Type:       timodel.ActionCreateTable,
+				SchemaID:   10,
+				SchemaName: "test",
+				TableName:  "t2",
+				Query:      "CREATE TABLE `test`.`t2` (`id` INT PRIMARY KEY, `name` VARCHAR(255))",
+			},
+			CommitTS: 4,
+		},
+	})
+
 	err = mock.ExpectationsWereMet()
 	require.NoError(t, err)
 
 	require.Equal(t, mysqlSink.IsEmpty(&tableSpan), true)
-	require.Equal(t, mysqlSink.GetSmallestCommitTs(&tableSpan), uint64(0))
+
+	ts, isEmpty = mysqlSink.GetCheckpointTs(&tableSpan)
+	require.Equal(t, ts, uint64(3))
+	require.Equal(t, isEmpty, true)
 
 }

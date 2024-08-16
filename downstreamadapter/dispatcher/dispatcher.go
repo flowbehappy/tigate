@@ -107,6 +107,7 @@ func NewDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, 
 		filter:          filter,
 		ddlFinishCh:     make(chan struct{}),
 		isRemoving:      atomic.Bool{},
+		ddlPendingEvent: nil,
 	}
 
 	dispatcher.sink.AddTableSpan(tableSpan)
@@ -135,6 +136,7 @@ func (d *Dispatcher) DispatcherEvents(ctx context.Context) {
 			} else if event.IsDDLEvent() {
 				d.AddDDLEventToSinkWhenAvailable(event)
 			} else {
+				log.Info("update resolved ts")
 				d.resolvedTs.Set(event.ResolvedTs)
 			}
 		}
@@ -158,10 +160,14 @@ func (d *Dispatcher) GetResolvedTs() uint64 {
 }
 
 func (d *Dispatcher) GetCheckpointTs() uint64 {
-	checkpointTs := d.GetSink().GetCheckpointTs(d.GetTableSpan())
+	checkpointTs, isEmpty := d.GetSink().GetCheckpointTs(d.GetTableSpan())
 	if checkpointTs == 0 {
 		// 说明从没有数据写到过 sink，则选择用 resolveTs 作为 checkpointTs
-		checkpointTs = d.GetResolvedTs()
+		return d.GetResolvedTs()
+	}
+
+	if isEmpty {
+		return max(checkpointTs, d.GetResolvedTs())
 	}
 	return checkpointTs
 }
