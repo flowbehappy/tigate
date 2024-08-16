@@ -22,9 +22,9 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/pkg/filter"
 	"go.uber.org/zap"
 )
 
@@ -249,6 +249,7 @@ func (d *Dispatcher) SetDDLPendingEvent(event *common.TxnEvent) {
 	}
 	d.ddlPendingEvent = event
 }
+
 func (d *Dispatcher) GetDDLFinishCh() chan struct{} {
 	return d.ddlFinishCh
 }
@@ -300,20 +301,22 @@ func (d *Dispatcher) HandleDDLActions(ctx context.Context) {
 //
 // TODO:特殊处理有 add index 的逻辑
 func (d *Dispatcher) AddDDLEventToSinkWhenAvailable(event *common.TxnEvent) {
-	//filter := d.GetFilter()
-	// TODO: filter 支持
-	// 判断 ddl 是否需要处理，如果不需要处理，直接返回
-	// if filter.ShouldIgnoreDDLEvent(event.GetDDLEvent()) {
-	// 	return
-	// }
-
-	// 需要根据 filter 来判断 ddl.Query 中是否需要调整，只针对 query 中包含多个 sql 语句。所以 的ddl 传来的时候，需要对应传 sql 对应的 table id 信息，用于过滤
+	// 根据 filter 过滤 query 中不需要 send to downstream 的数据
+	// 但应当不出现整个 query 都不需要 send to downstream 的 ddl，这种 ddl 不应该发给 dispatcher
+	// TODO: ddl 影响到的 tableSpan 也在 filter 中过滤一遍
+	filter := d.GetFilter()
+	err := filter.FilterDDLQuery(event.GetDDLEvent())
+	if err != nil {
+		log.Error("filter ddl query failed", zap.Error(err))
+		// 这里怎么处理更合适呢？有错然后反上去让 changefeed 报错
+		return
+	}
 
 	sink := d.GetSink()
 	tableSpan := d.GetTableSpan()
 	if event.IsSingleTableDDL() {
 		if sink.IsEmpty(tableSpan) {
-			sink.AddDMLEvent(tableSpan, event)
+			sink.AddDDLAndSyncPointEvent(tableSpan, event)
 			return
 		} else {
 			// TODO:先写一个 定时 check 的逻辑，后面用 dynamic stream 改造
@@ -322,7 +325,7 @@ func (d *Dispatcher) AddDDLEventToSinkWhenAvailable(event *common.TxnEvent) {
 				select {
 				case <-timer.C:
 					if sink.IsEmpty(tableSpan) {
-						sink.AddDMLEvent(tableSpan, event)
+						sink.AddDDLAndSyncPointEvent(tableSpan, event)
 						return
 					}
 				}

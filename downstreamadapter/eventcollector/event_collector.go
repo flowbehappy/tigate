@@ -118,11 +118,15 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 			if err != nil {
 				log.Error("failed to send register dispatcher request message", zap.Error(err))
 				c.registerMessageChan.In() <- &RegisterInfo{
-					dispatcher: d,
-					startTs:    startTs,
+					dispatcher:   d,
+					startTs:      startTs,
+					filterConfig: registerInfo.filterConfig,
 				}
+				// sleep for a while due to too many messages now
+				time.Sleep(10 * time.Millisecond)
+				continue
 			}
-			time.Sleep(10 * time.Millisecond) // for test
+
 			c.dispatcherMap.Set(d.GetId(), d)
 			metrics.EventCollectorRegisteredDispatcherCount.Inc()
 		}

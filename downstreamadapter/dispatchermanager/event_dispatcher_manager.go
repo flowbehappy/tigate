@@ -19,8 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/pkg/filter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 
