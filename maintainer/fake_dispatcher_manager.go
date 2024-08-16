@@ -128,12 +128,12 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 							string("maintainer/"+manager.id.ID),
 							&heartbeatpb.HeartBeatResponse{
 								ChangefeedID: manager.id.ID,
-								Info: []*heartbeatpb.TableProgressInfo{
-									{
-										Span:            absentSpan.TableSpan,
-										SchedulerStatus: heartbeatpb.ComponentState_Absent,
-									},
-								},
+								// Info: []*heartbeatpb.TableProgressInfo{
+								// 	{
+								// 		Span:            absentSpan.TableSpan,
+								// 		SchedulerStatus: heartbeatpb.ComponentState_Absent,
+								// 	},
+								// },
 							},
 						))
 						if err != nil {

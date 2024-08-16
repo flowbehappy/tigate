@@ -94,8 +94,7 @@ type MysqlSink struct {
 	conflictDetector *conflictdetector.ConflictDetector
 
 	// 主要是要保持一样的生命周期？不然 channel 会对应不上
-	//ddlWorker      *worker.MysqlDDLWorker
-	//dmlWorkerTasks []*worker.MysqlWorkerDMLEventTask
+	ddlWorker *worker.MysqlDDLWorker
 
 	tableStatuses *TableStatusMap
 	wg            sync.WaitGroup
@@ -112,7 +111,6 @@ func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *writer.
 			BlockStrategy: causality.BlockStrategyWaitEmpty,
 		}),
 		tableStatuses: NewTableStatusMap(),
-		//dmlWorkerTasks: make([]*worker.MysqlWorkerDMLEventTask, workerCount),
 	}
 
 	mysqlSink.initWorker(workerCount, cfg, db)
@@ -121,16 +119,13 @@ func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *writer.
 }
 
 func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql.DB) {
-	// init ddl worker, which is for ddl event and sync point event
-	//s.ddlWorker = &worker.MysqlDDLWorker{MysqlWriter: writer.NewMysqlWriter(db, cfg)}
-
-	// dml worker task will deal with all the dml events
 	ctx, cancel := context.WithCancel(context.Background())
+	s.ddlWorker = worker.NewMysqlDDLWorker(db, cfg, s.changefeedID)
+
 	s.cancel = cancel
 	for i := 0; i < workerCount; i++ {
 		s.wg.Add(1)
 		workerId := i
-		// s.dmlWorkerTasks = append(s.dmlWorkerTasks, worker.NewMysqlWorkerDMLEventTask(s.conflictDetector.GetOutChByCacheID(int64(i)), db, cfg, 128))
 		go func(ctx context.Context, eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig, maxRows int) {
 			defer s.wg.Done()
 			totalStart := time.Now()
@@ -204,8 +199,16 @@ func (s *MysqlSink) AddDMLEvent(tableSpan *common.TableSpan, event *common.TxnEv
 	tableStatus.getCh() <- event
 }
 
-/*
-func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *common.TxnEvent) { // 或许 ddl 也可以考虑有专用的 worker？
+func (s *MysqlSink) PassDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *common.TxnEvent) {
+	tableStatus, ok := s.tableStatuses.Get(tableSpan)
+	if !ok {
+		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
+		return
+	}
+	tableStatus.getProgress().Pass(event)
+}
+
+func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *common.TxnEvent) {
 	tableStatus, ok := s.tableStatuses.Get(tableSpan)
 	if !ok {
 		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
@@ -213,11 +216,12 @@ func (s *MysqlSink) AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *
 	}
 
 	tableStatus.getProgress().Add(event)
-	event.PostTxnFlushed = func() { tableStatus.getProgress().Remove(event) }
-	task := worker.NewMysqlWorkerDDLEventTask(s.ddlWorker, event) // 先固定用 0 号 worker
-	threadpool.GetTaskSchedulerInstance().WorkerTaskScheduler.Submit(task, threadpool.IOTask, time.Time{})
-
-}*/
+	event.PostTxnFlushed = func() {
+		tableStatus.getProgress().Remove(event)
+	}
+	// TODO:这个 ddl 可以并发写么？如果不行的话，后面还要加锁或者排队
+	s.ddlWorker.GetMysqlWriter().FlushDDLEvent(event)
+}
 
 func (s *MysqlSink) AddTableSpan(tableSpan *common.TableSpan) {
 	tableProgress := types.NewTableProgress()
@@ -271,15 +275,15 @@ func (s *MysqlSink) IsEmpty(tableSpan *common.TableSpan) bool {
 	return tableStatus.getProgress().Empty()
 }
 
-func (s *MysqlSink) GetSmallestCommitTs(tableSpan *common.TableSpan) uint64 {
+func (s *MysqlSink) GetCheckpointTs(tableSpan *common.TableSpan) (uint64, bool) {
 	tableStatus, ok := s.tableStatuses.Get(tableSpan)
 
 	if !ok {
 		log.Error("unknown Span for Mysql Sink: ", zap.Any("tableSpan", tableSpan))
-		return math.MaxUint64
+		return math.MaxUint64, false
 	}
 
-	return tableStatus.getProgress().SmallestCommitTs()
+	return tableStatus.getProgress().GetCheckpointTs()
 }
 
 func (s *MysqlSink) Close() {

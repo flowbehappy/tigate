@@ -15,9 +15,11 @@ package dispatchermanager
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
@@ -29,6 +31,56 @@ import (
 
 const handleDispatcherRequestConcurrency = 16
 
+type ResponseChanMap struct {
+	responseChanMapMutex sync.RWMutex
+	m                    map[model.ChangeFeedID]*HeartbeatResponseQueue //changefeedID -> HeartbeatResponseQueue
+}
+
+func NewResponseChanMap() *ResponseChanMap {
+	return &ResponseChanMap{
+		m: make(map[model.ChangeFeedID]*HeartbeatResponseQueue),
+	}
+}
+
+func (responseChanMap *ResponseChanMap) Get(changeFeedID model.ChangeFeedID) (heartbeatResponseQueue *HeartbeatResponseQueue, ok bool) {
+	responseChanMap.responseChanMapMutex.RLock()
+	defer responseChanMap.responseChanMapMutex.RUnlock()
+	heartbeatResponseQueue, ok = responseChanMap.m[changeFeedID]
+	return
+}
+
+func (responseChanMap *ResponseChanMap) Set(changeFeedID model.ChangeFeedID, heartbeatResponseQueue *HeartbeatResponseQueue) {
+	responseChanMap.responseChanMapMutex.Lock()
+	defer responseChanMap.responseChanMapMutex.Unlock()
+
+	responseChanMap.m[changeFeedID] = heartbeatResponseQueue
+}
+
+type EventDispatcherManagerMap struct {
+	eventDispatcherManagerMutex sync.RWMutex
+	eventDispatcherManagerMap   map[model.ChangeFeedID]*EventDispatcherManager // changefeedID -> EventDispatcherManager
+}
+
+func NewEventDispatcherManagerMap() *EventDispatcherManagerMap {
+	return &EventDispatcherManagerMap{
+		eventDispatcherManagerMap: make(map[model.ChangeFeedID]*EventDispatcherManager),
+	}
+}
+
+func (eventDispatcherManagerMap *EventDispatcherManagerMap) Get(changeFeedID model.ChangeFeedID) (eventDispatcherManager *EventDispatcherManager, ok bool) {
+	eventDispatcherManagerMap.eventDispatcherManagerMutex.RLock()
+	defer eventDispatcherManagerMap.eventDispatcherManagerMutex.RUnlock()
+	eventDispatcherManager, ok = eventDispatcherManagerMap.eventDispatcherManagerMap[changeFeedID]
+	return
+}
+
+func (eventDispatcherManagerMap *EventDispatcherManagerMap) Set(changeFeedID model.ChangeFeedID, eventDispatcherManager *EventDispatcherManager) {
+	eventDispatcherManagerMap.eventDispatcherManagerMutex.Lock()
+	defer eventDispatcherManagerMap.eventDispatcherManagerMutex.Unlock()
+
+	eventDispatcherManagerMap.eventDispatcherManagerMap[changeFeedID] = eventDispatcherManager
+}
+
 /*
 HeartBeatCollect is responsible for sending heartbeat requests and receiving heartbeat responses by messageCenter
 HeartBeatCollector is an instance-level component. It will deal with all the heartbeat messages from all dispatchers in all dispatcher managers.
@@ -37,12 +89,10 @@ type HeartBeatCollector struct {
 	wg   sync.WaitGroup
 	from messaging.ServerId
 
-	eventDispatcherManagerMutex sync.RWMutex
-	eventDispatcherManagerMap   map[model.ChangeFeedID]*EventDispatcherManager // changefeedID -> EventDispatcherManager
+	eventDispatcherManagerMap *EventDispatcherManagerMap
+	responseChanMap           *ResponseChanMap
 
-	responseChanMapMutex sync.RWMutex
-	responseChanMap      map[model.ChangeFeedID]*HeartbeatResponseQueue //changefeedID -> HeartbeatResponseQueue
-	requestQueue         *HeartbeatRequestQueue
+	requestQueue *HeartbeatRequestQueue
 
 	dispatcherRequestCh []chan *heartbeatpb.ScheduleDispatcherRequest
 }
@@ -51,11 +101,11 @@ func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 	heartBeatCollector := HeartBeatCollector{
 		from:                      serverId,
 		requestQueue:              NewHeartbeatRequestQueue(),
-		responseChanMap:           make(map[model.ChangeFeedID]*HeartbeatResponseQueue),
-		eventDispatcherManagerMap: make(map[model.ChangeFeedID]*EventDispatcherManager),
+		responseChanMap:           NewResponseChanMap(),
+		eventDispatcherManagerMap: NewEventDispatcherManagerMap(),
 		dispatcherRequestCh:       make([]chan *heartbeatpb.ScheduleDispatcherRequest, handleDispatcherRequestConcurrency),
 	}
-	//context.GetService[messaging.MessageCenter](context.MessageCenter).RegisterHandler(heartbeatResponseTopic, heartBeatCollector.RecvHeartBeatResponseMessages)
+	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.HeartbeatCollectorTopic, heartBeatCollector.RecvHeartBeatResponseMessages)
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
 		RegisterHandler(messaging.HeartbeatCollectorTopic, heartBeatCollector.RecvSchedulerDispatcherRequestMessages)
 	heartBeatCollector.wg.Add(1)
@@ -83,14 +133,8 @@ func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherManager) error {
 	m.SetHeartbeatRequestQueue(c.requestQueue)
 
-	c.eventDispatcherManagerMutex.Lock()
-	c.responseChanMapMutex.Lock()
-
-	defer c.eventDispatcherManagerMutex.Unlock()
-	defer c.responseChanMapMutex.Unlock()
-
-	//c.reponseChanMap[m.GetChangeFeedID()] = m.HeartbeatResponseQueue
-	c.eventDispatcherManagerMap[m.GetChangeFeedID()] = m
+	c.responseChanMap.Set(m.GetChangeFeedID(), m.GetHeartbeatResponseQueue())
+	c.eventDispatcherManagerMap.Set(m.GetChangeFeedID(), m)
 
 	return nil
 }
@@ -110,8 +154,7 @@ func (c *HeartBeatCollector) SendHeartBeatMessages() {
 	}
 }
 
-/*
-func (c *HeartBeatCollector) RecvHeartBeatResponseMessages(msg *messaging.TargetMessage) error {
+func (c *HeartBeatCollector) RecvHeartBeatResponseMessages(ctx context.Context, msg *messaging.TargetMessage) error {
 	heartbeatResponse, ok := msg.Message.(*heartbeatpb.HeartBeatResponse)
 	if !ok {
 		log.Error("invalid heartbeat response message", zap.Any("msg", msg))
@@ -119,13 +162,12 @@ func (c *HeartBeatCollector) RecvHeartBeatResponseMessages(msg *messaging.Target
 	}
 	changefeedID := model.DefaultChangeFeedID(heartbeatResponse.ChangefeedID)
 
-	c.responseChanMapMutex.RLock()
-	defer c.responseChanMapMutex.RUnlock()
-	if queue, ok := c.responseChanMap[changefeedID]; ok {
+	queue, ok := c.responseChanMap.Get(changefeedID)
+	if ok {
 		queue.Enqueue(heartbeatResponse)
 	}
 	return nil
-}*/
+}
 
 func (c *HeartBeatCollector) RecvSchedulerDispatcherRequestMessages(ctx context.Context, msg *messaging.TargetMessage) error {
 	scheduleDispatcherRequest := msg.Message.(*heartbeatpb.ScheduleDispatcherRequest)
@@ -144,10 +186,7 @@ func (c *HeartBeatCollector) handleDispatcherRequestMessages(req *heartbeatpb.Sc
 	// start := time.Now()
 	changefeedID := model.DefaultChangeFeedID(req.ChangefeedID)
 
-	c.eventDispatcherManagerMutex.RLock()
-	defer c.eventDispatcherManagerMutex.RUnlock()
-
-	eventDispatcherManager, ok := c.eventDispatcherManagerMap[changefeedID]
+	eventDispatcherManager, ok := c.eventDispatcherManagerMap.Get(changefeedID)
 	if !ok {
 		// Maybe the message is received before the event dispatcher manager is registered, so just ingore it
 		log.Warn("invalid changefeedID in scheduler dispatcher request message", zap.String("changefeedID", changefeedID.String()))
@@ -156,9 +195,9 @@ func (c *HeartBeatCollector) handleDispatcherRequestMessages(req *heartbeatpb.Sc
 	scheduleAction := req.ScheduleAction
 	config := req.Config
 	if scheduleAction == heartbeatpb.ScheduleAction_Create {
-		eventDispatcherManager.NewTableEventDispatcher(&common.TableSpan{TableSpan: config.Span}, config.StartTs)
+		eventDispatcherManager.NewDispatcher(&common.TableSpan{TableSpan: config.Span}, config.StartTs)
 	} else if scheduleAction == heartbeatpb.ScheduleAction_Remove {
-		eventDispatcherManager.RemoveTableEventDispatcher(&common.TableSpan{TableSpan: config.Span})
+		eventDispatcherManager.RemoveDispatcher(&common.TableSpan{TableSpan: config.Span})
 	}
 
 	// log.Info("RecvSchedulerDispatcherRequestMessages handle dispatch msg", zap.Any("tableSpan", config.Span),

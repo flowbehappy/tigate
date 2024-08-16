@@ -64,7 +64,9 @@ func (w *MysqlWriter) FlushDDLEvent(event *common.TxnEvent) error {
 		return err
 	}
 
-	event.PostTxnFlushed()
+	if event.PostTxnFlushed != nil {
+		event.PostTxnFlushed()
+	}
 	return nil
 
 }

@@ -36,16 +36,16 @@ type DispatcherMap struct {
 	m sync.Map
 }
 
-func (m *DispatcherMap) Get(dispatcherId string) (dispatcher.Dispatcher, bool) {
+func (m *DispatcherMap) Get(dispatcherId string) (*dispatcher.Dispatcher, bool) {
 	d, ok := m.m.Load(dispatcherId)
 	if !ok {
 		return nil, false
 	}
-	dispatcher, ok := d.(dispatcher.Dispatcher)
+	dispatcher, ok := d.(*dispatcher.Dispatcher)
 	return dispatcher, ok
 }
 
-func (m *DispatcherMap) Set(dispatcherId string, d dispatcher.Dispatcher) {
+func (m *DispatcherMap) Set(dispatcherId string, d *dispatcher.Dispatcher) {
 	m.m.Store(dispatcherId, d)
 }
 
@@ -54,7 +54,7 @@ func (m *DispatcherMap) Delete(dispatcherId string) {
 }
 
 type RegisterInfo struct {
-	Dispatcher   dispatcher.Dispatcher
+	Dispatcher   *dispatcher.Dispatcher
 	StartTs      uint64
 	FilterConfig *eventpb.FilterConfig
 }
@@ -134,7 +134,7 @@ func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
 	return nil
 }
 
-func (c *EventCollector) RemoveDispatcher(d dispatcher.Dispatcher) error {
+func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
 	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendEvent(&messaging.TargetMessage{
 		To:    c.serverId,
 		Topic: messaging.EventServiceTopic,
@@ -176,11 +176,6 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 	}
 
 	dispatcherID := txnEvent.DispatcherID
-	// log.Info("Recv TxnEvent", zap.Any("dispatcherID", dispatcherID), zap.Any("event is dml event", txnEvent.IsDMLEvent()))
-	// if txnEvent.IsDMLEvent() {
-	// 	rowEvent := txnEvent.GetRows()[0]
-	// 	log.Info("Recv TxnEvent", zap.Any("dispatcherID", dispatcherID), zap.Any("event info", rowEvent.CommitTs), zap.Any("table name", rowEvent.TableInfo.TableName))
-	// }
 
 	if dispatcherItem, ok := c.dispatcherMap.Get(dispatcherID); ok {
 		// check whether need to update speed ratio
@@ -209,7 +204,7 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 		// }
 		//for _, txnEvent := range eventFeeds.TxnEvents {
 		// TODO: message 改过以后重写，先串起来。
-		if txnEvent.IsDMLEvent() {
+		if txnEvent.IsDMLEvent() || txnEvent.IsDDLEvent() {
 			dispatcherItem.PushTxnEvent(txnEvent)
 			c.metricDispatcherReceivedKVEventCount.Inc()
 		} else {
