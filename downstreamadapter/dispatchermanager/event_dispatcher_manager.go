@@ -234,7 +234,13 @@ func (e *EventDispatcherManager) NewDispatcher(tableSpan *common.TableSpan, star
 
 	// TODO:暂时不收 ddl 的 event
 	if tableSpan != &common.DDLSpan {
-		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(dispatcher, startTs, toFilterConfigPB(e.config.Filter))
+		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(
+			eventcollector.RegisterInfo{
+				Dispatcher:   dispatcher,
+				StartTs:      startTs,
+				FilterConfig: toFilterConfigPB(e.config.Filter),
+			},
+		)
 	}
 
 	e.dispatcherMap.Set(tableSpan, dispatcher)

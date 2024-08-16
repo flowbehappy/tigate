@@ -195,15 +195,7 @@ func (c *HeartBeatCollector) handleDispatcherRequestMessages(req *heartbeatpb.Sc
 	scheduleAction := req.ScheduleAction
 	config := req.Config
 	if scheduleAction == heartbeatpb.ScheduleAction_Create {
-		// TODO: 后续需要优化这段逻辑，perpared 这种调度状态需要多发 message 回去
-		if !req.IsSecondary {
-			eventDispatcherManager.NewDispatcher(&common.TableSpan{TableSpan: config.Span}, config.StartTs)
-		} else {
-			// eventDispatcherManager.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
-			// 	Span:            config.Span,
-			// 	ComponentStatus: heartbeatpb.ComponentState_Prepared,
-			// }
-		}
+		eventDispatcherManager.NewDispatcher(&common.TableSpan{TableSpan: config.Span}, config.StartTs)
 	} else if scheduleAction == heartbeatpb.ScheduleAction_Remove {
 		eventDispatcherManager.RemoveDispatcher(&common.TableSpan{TableSpan: config.Span})
 	}

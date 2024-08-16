@@ -59,7 +59,6 @@ message ScheduleDispatcherRequest {
     string changefeedID = 1;
     DispatcherConfig config = 2;
     ScheduleAction scheduleAction = 3;
-    bool is_secondary = 4;
 }
 
 message MaintainerHeartbeat {
@@ -91,8 +90,7 @@ message DispatchMaintainerRequest {
 message AddMaintainerRequest  {
     string id = 1;
     bytes config = 2;
-    bool is_secondary = 3;
-    uint64 checkpoint_ts = 4;
+    uint64 checkpoint_ts = 3;
 }
 
 message RemoveMaintainerRequest  {
@@ -138,11 +136,8 @@ message TableSpanStatus {
 enum ComponentState {
     Unknown = 0;
     Absent = 1;
-    Preparing = 2;
-    Prepared = 3;
-    Working = 4;
-    Stopping = 5;
-    Stopped = 6;
+    Working = 2;
+    Stopped = 3;
 }
 
 message RunningError {
