@@ -91,6 +91,8 @@ func (m *Manager) RecvMessages(ctx context.Context, msg *messaging.TargetMessage
 		case <-ctx.Done():
 			return ctx.Err()
 		case m.msgCh <- msg:
+		default:
+			log.Warn("msg chan is full")
 		}
 		return nil
 	// receive bootstrap response message from dispatcher manager manager
@@ -249,6 +251,7 @@ func (m *Manager) sendHeartbeat() {
 func (m *Manager) handleMessage(msg *messaging.TargetMessage) {
 	switch msg.Type {
 	case messaging.TypeCoordinatorBootstrapRequest:
+		log.Info("received coordinator bootstrap request", zap.String("from", msg.From.String()))
 		m.onCoordinatorBootstrapRequest(msg)
 	case messaging.TypeDispatchMaintainerRequest:
 		absent := m.onDispatchMaintainerRequest(msg)

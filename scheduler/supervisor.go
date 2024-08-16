@@ -245,14 +245,9 @@ func (s *Supervisor) handleRemovedNodes(
 ) ([]*messaging.TargetMessage, error) {
 	sentMsgs := make([]*messaging.TargetMessage, 0)
 	if len(removed) > 0 {
-		var err error
 		s.StateMachines.Ascend(func(id InferiorID, stateMachine *StateMachine) bool {
 			for _, captureID := range removed {
-				msg, affected, err1 := stateMachine.HandleCaptureShutdown(captureID)
-				if err != nil {
-					err = errors.Trace(err1)
-					return false
-				}
+				msg, affected := stateMachine.HandleCaptureShutdown(captureID)
 				if msg != nil {
 					sentMsgs = append(sentMsgs, msg)
 				}
@@ -266,9 +261,6 @@ func (s *Supervisor) handleRemovedNodes(
 			}
 			return true
 		})
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 	}
 	return sentMsgs, nil
 }

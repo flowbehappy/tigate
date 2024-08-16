@@ -33,8 +33,7 @@ import (
 type SchedulerStatus int
 
 const (
-	SchedulerStatusUnknown SchedulerStatus = iota
-	SchedulerStatusAbsent
+	SchedulerStatusAbsent = iota
 	SchedulerStatusCommiting
 	SchedulerStatusWorking
 	SchedulerStatusRemoving
@@ -50,32 +49,6 @@ func (r SchedulerStatus) String() string {
 		return "Working"
 	case SchedulerStatusRemoving:
 		return "Removing"
-	default:
-		return fmt.Sprintf("Unknown %d", r)
-	}
-}
-
-// Role is the role of a server.
-type Role int
-
-const (
-	// RolePrimary primary role.
-	RolePrimary = 1
-	// RoleSecondary secondary role.
-	RoleSecondary = 2
-	// RoleUndetermined means that we don't know its state, it may be
-	// working, stopping or stopped.
-	RoleUndetermined = 3
-)
-
-func (r Role) String() string {
-	switch r {
-	case RolePrimary:
-		return "Primary"
-	case RoleSecondary:
-		return "Secondary"
-	case RoleUndetermined:
-		return "Undetermined"
 	default:
 		return fmt.Sprintf("Unknown %d", r)
 	}
@@ -175,8 +148,8 @@ func (s *StateMachine) multiplePrimaryError(
 	return errors.New("inconsistent error: " + msg)
 }
 
-// poll transit state based on input and the current state.
-func (s *StateMachine) poll(
+// HandleInferiorStatus transit state based on input and the current state.
+func (s *StateMachine) HandleInferiorStatus(
 	input InferiorStatus, captureID model.CaptureID,
 ) (*messaging.TargetMessage, error) {
 	if s.Primary != captureID {
@@ -285,12 +258,6 @@ func (s *StateMachine) pollOnRemoving(
 	return nil
 }
 
-func (s *StateMachine) HandleInferiorStatus(
-	input InferiorStatus, from model.CaptureID,
-) (*messaging.TargetMessage, error) {
-	return s.poll(input, from)
-}
-
 func (s *StateMachine) HandleAddInferior(
 	captureID model.CaptureID,
 ) (*messaging.TargetMessage, error) {
@@ -366,23 +333,39 @@ func (s *StateMachine) HandleRemoveInferior() (*messaging.TargetMessage, error) 
 // whether s is affected by the server shutdown.
 func (s *StateMachine) HandleCaptureShutdown(
 	captureID model.CaptureID,
-) (*messaging.TargetMessage, bool, error) {
+) (*messaging.TargetMessage, bool) {
+	if s.Primary != captureID && s.Secondary != captureID {
+		return nil, false
+	}
 	oldState := s.State
-	if s.Primary == captureID {
+	var msg *messaging.TargetMessage
+	switch oldState {
+	case SchedulerStatusAbsent, SchedulerStatusCommiting, SchedulerStatusWorking:
+		// primary node is stopped, set to absent to reschedule
 		s.Primary = ""
 		s.State = SchedulerStatusAbsent
-	} else if s.Secondary == captureID {
-		// clear the secondary
-		s.Secondary = ""
-	} else {
-		// r is not affected by the server shutdown.
-		return nil, false, nil
+	case SchedulerStatusRemoving:
+		// check if we are moving this state machine
+		if s.Secondary == "" {
+			s.Primary = ""
+			s.State = SchedulerStatusAbsent
+		} else {
+			if s.Secondary == captureID {
+				// destination capture is stopped during moving, clear secondary node
+				s.Secondary = ""
+			} else {
+				// primary capture is stopped, move to secondary
+				s.State = SchedulerStatusCommiting
+				msg = s.Inferior.NewAddInferiorMessage(s.Primary)
+			}
+		}
 	}
 	log.Info("state transition, server shutdown",
 		zap.String("statemachine", s.ID.String()),
+		zap.String("captureID", captureID),
 		zap.Stringer("old", oldState),
 		zap.Stringer("new", s.State))
-	return nil, true, nil
+	return msg, true
 }
 
 func (s *StateMachine) HasRemoved() bool {

@@ -233,6 +233,7 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 }
 
 func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) *messaging.TargetMessage {
+	log.Info("send coordinator bootstrap request", zap.String("to", captureID))
 	return messaging.NewTargetMessage(
 		messaging.ServerId(captureID),
 		messaging.MaintainerManagerTopic,

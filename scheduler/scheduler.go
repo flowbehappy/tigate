@@ -57,6 +57,8 @@ func (s *Supervisor) Schedule(allInferiors utils.Map[InferiorID, Inferior]) ([]*
 	if !s.CheckAllCaptureInitialized() {
 		log.Info("skip scheduling since not all captures are initialized",
 			zap.String("id", s.ID.String()),
+			zap.Bool("initialized", s.initialized),
+			zap.Int("size", len(s.captures)),
 			zap.Int("totalInferiors", allInferiors.Len()),
 			zap.Int("totalStateMachines", s.StateMachines.Len()),
 			zap.Int("maxTaskConcurrency", s.maxTaskConcurrency),
