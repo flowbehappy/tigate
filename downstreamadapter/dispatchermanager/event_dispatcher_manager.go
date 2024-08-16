@@ -232,7 +232,10 @@ func (e *EventDispatcherManager) NewDispatcher(tableSpan *common.TableSpan, star
 
 	dispatcher := dispatcher.NewDispatcher(tableSpan, e.sink, startTs, e.tableSpanStatusesChan, e.filter)
 
-	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(dispatcher, startTs, toFilterConfigPB(e.config.Filter))
+	// TODO:暂时不收 ddl 的 event
+	if tableSpan != &common.DDLSpan {
+		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(dispatcher, startTs, toFilterConfigPB(e.config.Filter))
+	}
 
 	e.dispatcherMap.Set(tableSpan, dispatcher)
 	e.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
@@ -296,7 +299,7 @@ func (e *EventDispatcherManager) RemoveDispatcher(tableSpan *common.TableSpan) {
 	dispatcher, ok := e.dispatcherMap.Get(tableSpan)
 
 	if ok {
-		if dispatcher.GetRemovingStatus() == true {
+		if dispatcher.GetRemovingStatus() {
 			return
 		}
 		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RemoveDispatcher(dispatcher)
@@ -366,12 +369,16 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	allDispatchers := e.dispatcherMap.GetAllDispatchers()
 	dispatcherHeartBeatInfo := &dispatcher.HeartBeatInfo{}
 	for _, dispatcherItem := range allDispatchers {
+		// TODO:ddlSpan先不参与
+		if dispatcherItem.GetTableSpan() == &common.DDLSpan {
+			continue
+		}
 		// If the dispatcher is in removing state, we need to check if it's closed successfully.
 		// If it's closed successfully, we could clean it up.
 		// TODO: we need to consider how to deal with the checkpointTs of the removed dispatcher if the message will be discarded.
 		dispatcherItem.CollectDispatcherHeartBeatInfo(dispatcherHeartBeatInfo)
 
-		if dispatcherHeartBeatInfo.IsRemoving == true {
+		if dispatcherHeartBeatInfo.IsRemoving {
 			watermark, ok := dispatcherItem.TryClose()
 			if ok {
 				// remove successfully

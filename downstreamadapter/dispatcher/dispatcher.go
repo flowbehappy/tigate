@@ -136,7 +136,6 @@ func (d *Dispatcher) DispatcherEvents(ctx context.Context) {
 			} else if event.IsDDLEvent() {
 				d.AddDDLEventToSinkWhenAvailable(event)
 			} else {
-				log.Info("update resolved ts")
 				d.resolvedTs.Set(event.ResolvedTs)
 			}
 		}
