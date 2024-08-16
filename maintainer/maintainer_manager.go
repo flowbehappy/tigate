@@ -91,8 +91,6 @@ func (m *Manager) RecvMessages(ctx context.Context, msg *messaging.TargetMessage
 		case <-ctx.Done():
 			return ctx.Err()
 		case m.msgCh <- msg:
-		default:
-			log.Warn("msg chan is full")
 		}
 		return nil
 	// receive bootstrap response message from dispatcher manager manager

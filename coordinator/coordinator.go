@@ -86,6 +86,7 @@ func NewCoordinator(capture *common.NodeInfo,
 		id,
 		c.newChangefeed, c.newBootstrapMessage,
 		scheduler.NewBasicScheduler(id),
+		scheduler.NewBalanceScheduler(time.Minute, 1000),
 	)
 
 	// receive messages
