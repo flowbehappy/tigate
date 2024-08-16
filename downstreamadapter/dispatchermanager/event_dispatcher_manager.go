@@ -288,11 +288,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx conte
 func (e *EventDispatcherManager) RemoveTableEventDispatcher(tableSpan *common.TableSpan) {
 	dispatcher, ok := e.dispatcherMap.Get(tableSpan)
 	if ok {
-		if dispatcher.GetComponentStatus() == heartbeatpb.ComponentState_Stopping {
-			e.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
-				Span:            tableSpan.TableSpan,
-				ComponentStatus: heartbeatpb.ComponentState_Stopping,
-			}
+		if dispatcher.GetRemovingStatus() == true {
 			return
 		}
 		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RemoveDispatcher(dispatcher)
@@ -322,6 +318,7 @@ func (e *EventDispatcherManager) newTableTriggerEventDispatcher(startTs uint64) 
 		Sink:          e.sink,
 		TableSpan:     &common.DDLSpan,
 		State:         dispatcher.NewState(),
+		IsRemoving:    atomic.Bool{},
 		//MemoryUsage:   dispatcher.NewMemoryUsage(),
 	}
 
@@ -386,8 +383,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 		// TODO: we need to consider how to deal with the checkpointTs of the removed dispatcher if the message will be discarded.
 		dispatcher.CollectDispatcherHeartBeatInfo(tableEventDispatcher, dispatcherHeartBeatInfo)
 
-		componentStatus := dispatcherHeartBeatInfo.ComponentStatus
-		if componentStatus == heartbeatpb.ComponentState_Stopping {
+		if dispatcherHeartBeatInfo.IsRemoving == true {
 			watermark, ok := tableEventDispatcher.TryClose()
 			if ok {
 				// remove successfully

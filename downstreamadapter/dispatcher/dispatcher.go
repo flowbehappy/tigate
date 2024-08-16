@@ -65,6 +65,7 @@ type Dispatcher interface {
 	// PushEvent(event *eventpb.TxnEvent)
 	PushTxnEvent(event *common.TxnEvent)
 	GetComponentStatus() heartbeatpb.ComponentState
+	GetRemovingStatus() bool
 }
 
 type DispatcherType uint64
@@ -146,6 +147,7 @@ type HeartBeatInfo struct {
 	Id              string
 	TableSpan       *common.TableSpan
 	ComponentStatus heartbeatpb.ComponentState
+	IsRemoving      bool
 }
 
 func CollectDispatcherHeartBeatInfo(d Dispatcher, h *HeartBeatInfo) {
@@ -167,6 +169,7 @@ func CollectDispatcherHeartBeatInfo(d Dispatcher, h *HeartBeatInfo) {
 	h.Id = d.GetId()
 	h.ComponentStatus = d.GetComponentStatus()
 	h.TableSpan = d.GetTableSpan()
+	h.IsRemoving = d.GetRemovingStatus()
 }
 
 /*

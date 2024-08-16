@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
@@ -117,6 +118,8 @@ type TableEventDispatcher struct {
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	isRemoving atomic.Bool
 }
 
 func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, syncPointInfo *SyncPointInfo) *TableEventDispatcher {
@@ -133,7 +136,9 @@ func NewTableEventDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startT
 		componentStatus: newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
 		resolvedTs:      newTsWithMutex(startTs),
 		cancel:          cancel,
+		isRemoving:      atomic.Bool{},
 	}
+
 	tableEventDispatcher.sink.AddTableSpan(tableSpan)
 	tableEventDispatcher.wg.Add(1)
 	go tableEventDispatcher.DispatcherEvents(ctx)
@@ -295,7 +300,7 @@ func (d *TableEventDispatcher) Remove() {
 	d.cancel()
 	d.sink.StopTableSpan(d.tableSpan)
 	log.Info("table event dispatcher component status changed to stopping", zap.String("table", d.tableSpan.String()))
-	d.componentStatus.Set(heartbeatpb.ComponentState_Stopping)
+	d.isRemoving.Store(true)
 }
 
 func (d *TableEventDispatcher) TryClose() (w heartbeatpb.Watermark, ok bool) {
@@ -321,4 +326,8 @@ func (d *TableEventDispatcher) TryClose() (w heartbeatpb.Watermark, ok bool) {
 
 func (d *TableEventDispatcher) GetComponentStatus() heartbeatpb.ComponentState {
 	return d.componentStatus.Get()
+}
+
+func (d *TableEventDispatcher) GetRemovingStatus() bool {
+	return d.isRemoving.Load()
 }

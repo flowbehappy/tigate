@@ -14,6 +14,8 @@
 package dispatcher
 
 import (
+	"sync/atomic"
+
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -70,6 +72,8 @@ type TableTriggerEventDispatcher struct {
 	ResolvedTs    uint64
 
 	MemoryUsage *MemoryUsage
+
+	IsRemoving atomic.Bool
 }
 
 func (d *TableTriggerEventDispatcher) GetSink() sink.Sink {
@@ -126,4 +130,8 @@ func (d *TableTriggerEventDispatcher) GetCheckpointTs() uint64 { return 0 }
 
 func (d *TableTriggerEventDispatcher) GetComponentStatus() heartbeatpb.ComponentState {
 	return heartbeatpb.ComponentState_Working
+}
+
+func (d *TableTriggerEventDispatcher) GetRemovingStatus() bool {
+	return d.IsRemoving.Load()
 }
