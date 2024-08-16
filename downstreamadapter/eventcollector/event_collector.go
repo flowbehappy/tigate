@@ -54,9 +54,9 @@ func (m *DispatcherMap) Delete(dispatcherId string) {
 }
 
 type RegisterInfo struct {
-	dispatcher   *dispatcher.Dispatcher
-	startTs      uint64
-	filterConfig *eventpb.FilterConfig
+	Dispatcher   *dispatcher.Dispatcher
+	StartTs      uint64
+	FilterConfig *eventpb.FilterConfig
 }
 
 /*
@@ -92,10 +92,10 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 		for {
 			registerInfo := <-eventCollector.registerMessageChan.Out()
 			var err error
-			if registerInfo.startTs > 0 {
+			if registerInfo.StartTs > 0 {
 				err = eventCollector.RegisterDispatcher(registerInfo)
 			} else {
-				err = eventCollector.RemoveDispatcher(registerInfo.dispatcher)
+				err = eventCollector.RemoveDispatcher(registerInfo.Dispatcher)
 			}
 			if err != nil {
 				// Wait for a while to avoid sending too many requests, since the
@@ -116,12 +116,12 @@ func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
 		Message: messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
-			DispatcherId: info.dispatcher.GetId(),
-			TableSpan:    info.dispatcher.GetTableSpan().TableSpan,
+			DispatcherId: info.Dispatcher.GetId(),
+			TableSpan:    info.Dispatcher.GetTableSpan().TableSpan,
 			Remove:       false,
-			StartTs:      info.startTs,
+			StartTs:      info.StartTs,
 			ServerId:     c.serverId.String(),
-			FilterConfig: info.filterConfig,
+			FilterConfig: info.FilterConfig,
 		}},
 	})
 	if err != nil {
@@ -129,7 +129,7 @@ func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
 		c.registerMessageChan.In() <- info
 		return err
 	}
-	c.dispatcherMap.Set(info.dispatcher.GetId(), info.dispatcher)
+	c.dispatcherMap.Set(info.Dispatcher.GetId(), info.Dispatcher)
 	metrics.EventCollectorRegisteredDispatcherCount.Inc()
 	return nil
 }
@@ -150,8 +150,8 @@ func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
 	if err != nil {
 		log.Error("failed to send register dispatcher request message", zap.Error(err))
 		c.registerMessageChan.In() <- RegisterInfo{
-			dispatcher: d,
-			startTs:    0,
+			Dispatcher: d,
+			StartTs:    0,
 		}
 		return err
 	}
