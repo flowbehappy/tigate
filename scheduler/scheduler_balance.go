@@ -41,14 +41,18 @@ type balanceScheduler struct {
 	forceBalance bool
 
 	maxTaskConcurrency int
-	changefeedID       model.ChangeFeedID
+	id                 InferiorID
 }
 
-func NewBalanceScheduler(interval time.Duration, concurrency int) *balanceScheduler {
+func NewBalanceScheduler(
+	id InferiorID,
+	interval time.Duration,
+	concurrency int) *balanceScheduler {
 	return &balanceScheduler{
 		random:               rand.New(rand.NewSource(time.Now().UnixNano())),
 		checkBalanceInterval: interval,
 		maxTaskConcurrency:   concurrency,
+		id:                   id,
 	}
 }
 
@@ -78,7 +82,9 @@ func (b *balanceScheduler) Schedule(
 		b.random, aliveCaptures, stateMachines, batchSize)
 	b.forceBalance = len(tasks) != 0
 	log.Info("balance scheduler generate tasks",
-		zap.String("changefeed", string(b.changefeedID.String())),
+		zap.Int("capture", len(aliveCaptures)),
+		zap.Int("statemachines", stateMachines.Len()),
+		zap.String("id", b.id.String()),
 		zap.Int("task count", len(tasks)))
 	return tasks
 }

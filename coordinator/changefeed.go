@@ -76,7 +76,9 @@ func (c *changefeed) GetID() scheduler.InferiorID {
 
 func (c *changefeed) UpdateStatus(status scheduler.InferiorStatus) {
 	c.State = status.(*MaintainerStatus)
-	c.checkpointTs = c.State.CheckpointTs
+	if c.State != nil && c.State.CheckpointTs > c.checkpointTs {
+		c.checkpointTs = c.State.CheckpointTs
+	}
 	c.lastHeartBeat = time.Now()
 }
 func (c *changefeed) SetStateMachine(state *scheduler.StateMachine) {

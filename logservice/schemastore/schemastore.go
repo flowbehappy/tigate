@@ -268,7 +268,9 @@ func (s *schemaStore) RegisterDispatcher(
 	// TODO: fix me in the future
 	if startTS < s.dataStorage.getGCTS() {
 		s.mu.Unlock()
-		log.Panic("startTs is old than gcTs")
+		log.Panic("startTs is old than gcTs",
+			zap.Uint64("startTs", uint64(startTS)),
+			zap.Uint64("gcTs", uint64(s.dataStorage.getGCTS())))
 	}
 
 	s.dispatchersMap[dispatcherID] = DispatcherInfo{
