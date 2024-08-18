@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/security"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -82,6 +83,8 @@ type tableState struct {
 	ch chan eventWithTableID
 }
 type eventStore struct {
+	pdClock pdutil.Clock
+
 	schemaStore schemastore.SchemaStore
 	dbs         []*pebble.DB
 	channels    []chan eventWithTableID
@@ -148,6 +151,7 @@ func NewEventStore(
 	}
 
 	store := &eventStore{
+		pdClock:     pdClock,
 		schemaStore: schemaStore,
 		dbs:         dbs,
 		channels:    channels,
@@ -276,11 +280,18 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 		case <-ticker.C:
 			e.mu.RLock()
 			defer e.mu.RUnlock()
+			log.Info("update metrics")
+			currentTime := e.pdClock.CurrentTime()
+			currentPhyTs := oracle.GetPhysical(currentTime)
 			for _, tableState := range e.spans {
 				resolvedTs := tableState.resolvedTs.Load()
+				resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
+				resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
 				watermark := tableState.watermark.Load()
-				metrics.EventStoreRegisterDispatcherResolvedTsLagHist.Observe(float64(resolvedTs))
-				metrics.EventStoreRegisterDispatcherWatermarkLagHist.Observe(float64(watermark))
+				watermarkPhyTs := oracle.ExtractPhysical(watermark)
+				watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
+				metrics.EventStoreRegisterDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
+				metrics.EventStoreRegisterDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
 			}
 		}
 	}
