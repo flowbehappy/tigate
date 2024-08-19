@@ -285,6 +285,9 @@ func (c *EventCollector) updateMetrics(ctx context.Context) error {
 						minResolvedTs = d.GetResolvedTs()
 					}
 				}
+				if minResolvedTs == 0 {
+					continue
+				}
 				c.dispatcherMap.RUnlock()
 				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
 				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3

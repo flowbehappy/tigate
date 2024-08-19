@@ -311,9 +311,11 @@ func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 }
 
 func (c *eventBroker) updateMetrics(ctx context.Context) {
+	c.wg.Add(1)
 	ticker := time.NewTicker(time.Second * 5)
 	defer ticker.Stop()
 	go func() {
+		defer c.wg.Done()
 		for {
 			select {
 			case <-ctx.Done():
@@ -330,6 +332,9 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 					iterCount++
 					return true
 				})
+				if minResolvedTs == 0 {
+					continue
+				}
 				log.Info("update metrics", zap.Uint64("minResolvedTs", minResolvedTs), zap.Int("dispatcherCount", iterCount))
 				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
 				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
