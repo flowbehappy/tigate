@@ -43,8 +43,12 @@ type pathInfo[P Path, T Event, D Dest] struct {
 	path P
 	dest D
 
-	stream  *stream[P, T, D]
-	removed atomic.Bool
+	stream *stream[P, T, D]
+	// This field is used to mark the path as removed, so that the handle goroutine can ignore it.
+	// Note that we should not need to use a atomic.Value here, because this field is set by the RemovePath method,
+	// and we use sync.WaitGroup to wait for finish. So if RemovePath is called in the handle goroutine, it should be
+	// guaranteed to see the memory change of this field.
+	removed bool
 
 	pendingQueue *deque.Deque[T]
 	blocking     bool
@@ -276,7 +280,7 @@ Loop:
 				if signal.eventCount == 0 {
 					panic("signal event count is zero")
 				}
-				if signal.pathInfo.blocking || signal.pathInfo.removed.Load() {
+				if signal.pathInfo.blocking || signal.pathInfo.removed {
 					// The path is blocking or removed, we should ignore the signal completely.
 					s.signalQueue.PopFront()
 					continue Loop
