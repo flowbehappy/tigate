@@ -16,6 +16,7 @@ import (
 	"context"
 	"net"
 
+	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
@@ -27,7 +28,7 @@ type GrpcModule struct {
 	lis        net.Listener
 }
 
-func NewGrpcServer(lis net.Listener) *GrpcModule {
+func NewGrpcServer(lis net.Listener) common.SubModule {
 	option := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(256 * 1024 * 1024), // 256MB
 	}

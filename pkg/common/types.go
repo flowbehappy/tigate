@@ -9,8 +9,8 @@ import (
 
 var DefaultEndian = binary.LittleEndian
 
-type Ts uint64
-type TableID int64
+type Ts = uint64
+type TableID = int64
 
 type DispatcherID uuid.UUID
 

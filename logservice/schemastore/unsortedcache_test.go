@@ -8,7 +8,7 @@ import (
 )
 
 func TestBasic(t *testing.T) {
-	cache := newUnSortedDDLCache()
+	cache := newDDLCache()
 	cache.addDDLEvent(DDLEvent{CommitTS: 1})
 	cache.addDDLEvent(DDLEvent{CommitTS: 100})
 	cache.addDDLEvent(DDLEvent{CommitTS: 50})

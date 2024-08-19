@@ -135,7 +135,7 @@ func (p *LogPuller) Run(ctx context.Context) (err error) {
 	log.Info("LogPuller starts",
 		zap.Int("workerConcurrent", len(p.inputChs)))
 	defer func() {
-		log.Info("LogPuller exits")
+		log.Info("LogPuller exits", zap.Error(err))
 	}()
 	return eg.Wait()
 }

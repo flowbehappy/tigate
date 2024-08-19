@@ -113,6 +113,7 @@ func NewEventStore(
 	regionCache *tikv.RegionCache,
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
+	schemaStore schemastore.SchemaStore,
 ) EventStore {
 	// grpcPool := logpuller.NewConnAndClientPool(
 	// 	&security.Credential{},
@@ -148,11 +149,6 @@ func NewEventStore(
 		}
 		dbs = append(dbs, db)
 		channels = append(channels, make(chan eventWithTableID, 1024))
-	}
-
-	schemaStore, err := schemastore.NewSchemaStore(ctx, root, pdCli, regionCache, pdClock, kvStorage)
-	if err != nil {
-		log.Panic("failed to create schema store", zap.Error(err))
 	}
 
 	store := &eventStore{
@@ -242,10 +238,6 @@ func (e *eventStore) Name() string {
 
 func (e *eventStore) Run(ctx context.Context) error {
 	eg, ctx := errgroup.WithContext(ctx)
-
-	eg.Go(func() error {
-		return e.schemaStore.Run(ctx)
-	})
 
 	eg.Go(func() error {
 		return e.puller.Run(ctx)
