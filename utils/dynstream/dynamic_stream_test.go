@@ -215,5 +215,7 @@ func TestDynamicStreamRemovePath(t *testing.T) {
 	ds.In() <- &simpleEvent{path: "p1", wg: wg}
 	ds.In() <- &simpleEvent{path: "p1", wg: wg}
 
+	// Make sure the two events are put in a stream already.
+	time.Sleep(10 * time.Millisecond)
 	wg.Wait()
 }
