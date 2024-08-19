@@ -43,7 +43,8 @@ type pathInfo[P Path, T Event, D Dest] struct {
 	path P
 	dest D
 
-	stream *stream[P, T, D]
+	stream  *stream[P, T, D]
+	removed atomic.Bool
 
 	pendingQueue *deque.Deque[T]
 	blocking     bool
@@ -275,8 +276,8 @@ Loop:
 				if signal.eventCount == 0 {
 					panic("signal event count is zero")
 				}
-				if signal.pathInfo.blocking {
-					// The path is blocking, we should ignore the signal completely.
+				if signal.pathInfo.blocking || signal.pathInfo.removed.Load() {
+					// The path is blocking or removed, we should ignore the signal completely.
 					s.signalQueue.PopFront()
 					continue Loop
 				}
