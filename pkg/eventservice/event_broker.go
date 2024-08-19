@@ -110,6 +110,14 @@ func (c *eventBroker) sendWatermark(
 	}
 }
 
+func (c *eventBroker) onAsyncNotify(change *subscriptionChange) {
+	select {
+	case c.changedCh <- change:
+	default:
+		// TODO: add metrics to record the drop count.
+	}
+}
+
 func (c *eventBroker) runGenerateScanTask(ctx context.Context) {
 	c.wg.Add(1)
 	go func() {
@@ -314,7 +322,7 @@ func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 
 func (c *eventBroker) updateMetrics(ctx context.Context) {
 	c.wg.Add(1)
-	ticker := time.NewTicker(time.Second * 5)
+	ticker := time.NewTicker(time.Second * 10)
 	go func() {
 		defer c.wg.Done()
 		log.Info("update metrics goroutine is started")
@@ -374,8 +382,8 @@ type dispatcherStat struct {
 	info             DispatcherInfo
 	spanSubscription *spanSubscription
 	// The watermark of the events that have been sent to the dispatcher.
-	watermark atomic.Uint64
-	notify    chan *subscriptionChange
+	watermark     atomic.Uint64
+	onAsyncNotify func(*subscriptionChange)
 	// The index of the task queue channel in the taskPool.
 	// We need to make sure the tasks of the same dispatcher are sent to the same task queue
 	// so that it will be handle by the same scan worker. To ensure all events of the dispatcher
@@ -390,14 +398,12 @@ type dispatcherStat struct {
 }
 
 func newDispatcherStat(
-	startTs uint64,
-	info DispatcherInfo,
-	notify chan *subscriptionChange) *dispatcherStat {
+	startTs uint64, info DispatcherInfo, onAsyncNotify func(*subscriptionChange),
+) *dispatcherStat {
 	subscription := &spanSubscription{
 		span:       info.GetTableSpan(),
 		lastUpdate: atomic.Value{},
 	}
-
 	subscription.lastUpdate.Store(time.Now())
 	subscription.watermark.Store(uint64(startTs))
 
@@ -405,7 +411,7 @@ func newDispatcherStat(
 	res := &dispatcherStat{
 		info:             info,
 		spanSubscription: subscription,
-		notify:           notify,
+		onAsyncNotify:    onAsyncNotify,
 
 		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(namespace, id, "kv"),
 		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "kv"),
@@ -428,15 +434,10 @@ func (a *dispatcherStat) onSubscriptionWatermark(watermark uint64) {
 	}
 	a.spanSubscription.watermark.Store(watermark)
 	a.spanSubscription.lastUpdate.Store(time.Now())
-
-	sub := &subscriptionChange{
+	a.onAsyncNotify(&subscriptionChange{
 		dispatcherInfo: a.info,
 		eventCount:     a.spanSubscription.newEventCount.Swap(0),
-	}
-	select {
-	case a.notify <- sub:
-	default:
-	}
+	})
 }
 
 // TODO: consider to use a better way to update the event count, may be we only need to

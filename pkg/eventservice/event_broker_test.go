@@ -19,13 +19,9 @@ func TestNewDispatcherStat(t *testing.T) {
 		startTs:   startTs,
 	}
 
-	notify := make(chan *subscriptionChange)
-
-	stat := newDispatcherStat(startTs, info, notify)
-
+	stat := newDispatcherStat(startTs, info, func(c *subscriptionChange) {})
 	require.Equal(t, info, stat.info)
 	require.Equal(t, startTs, stat.watermark.Load())
-	require.Equal(t, notify, stat.notify)
 	require.NotNil(t, stat.spanSubscription)
 	require.Equal(t, startTs, stat.spanSubscription.watermark.Load())
 	require.Equal(t, 0, int(stat.spanSubscription.newEventCount.Load()))
@@ -43,7 +39,12 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 
 	notify := make(chan *subscriptionChange)
 
-	stat := newDispatcherStat(startTs, info, notify)
+	stat := newDispatcherStat(startTs, info, func(c *subscriptionChange) {
+		select {
+		case notify <- c:
+		default:
+		}
+	})
 
 	// Case 1: no new events, only watermark change
 	wg.Add(1)
@@ -99,7 +100,7 @@ func TestScanTaskPool_PushTask(t *testing.T) {
 		startTs:   1000,
 		span:      span,
 	}
-	dispatcherStat := newDispatcherStat(dispatcherInfo.startTs, dispatcherInfo, make(chan *subscriptionChange))
+	dispatcherStat := newDispatcherStat(dispatcherInfo.startTs, dispatcherInfo, func(c *subscriptionChange) {})
 	// Create two tasks with overlapping data ranges
 	task1 := &scanTask{
 		dispatcherStat: dispatcherStat,

@@ -113,11 +113,10 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 		c = newEventBroker(ctx, clusterID, s.eventStore, s.mc)
 		s.brokers[clusterID] = c
 	}
-
-	dispatcher := newDispatcherStat(startTs, info, c.changedCh)
+	dispatcher := newDispatcherStat(startTs, info, c.onAsyncNotify)
 	c.dispatchers.Store(info.GetID(), dispatcher)
+	brokerRegisterDuration := time.Since(start)
 
-	firstDuration := time.Since(start)
 	start = time.Now()
 	c.eventStore.RegisterDispatcher(
 		info.GetID(),
@@ -126,9 +125,12 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 		dispatcher.onNewEvent,
 		dispatcher.onSubscriptionWatermark,
 	)
+	eventStoreRegisterDuration := time.Since(start)
 
-	secondDuration := time.Since(start)
-	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID), zap.Uint64("startTs", startTs), zap.Duration("firstDuration", firstDuration), zap.Duration("secondDuration", secondDuration))
+	log.Info("register acceptor", zap.Uint64("clusterID", clusterID),
+		zap.String("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID),
+		zap.Uint64("startTs", startTs), zap.Duration("brokerRegisterDuration", brokerRegisterDuration),
+		zap.Duration("eventStoreRegisterDuration", eventStoreRegisterDuration))
 }
 
 func (s *eventService) deregisterDispatcher(dispatcherInfo DispatcherInfo) {
@@ -142,7 +144,6 @@ func (s *eventService) deregisterDispatcher(dispatcherInfo DispatcherInfo) {
 	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", id))
 }
 
-// TODO: implement the following functions
 func msgToDispatcherInfo(msg *messaging.TargetMessage) DispatcherInfo {
 	return msg.Message.(messaging.RegisterDispatcherRequest)
 }

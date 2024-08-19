@@ -24,9 +24,15 @@ import (
 	"go.uber.org/zap"
 )
 
+var _ messaging.MessageCenter = &mockMessageCenter{}
+
 // mockMessageCenter is a mock implementation of the MessageCenter interface
 type mockMessageCenter struct {
 	messageCh chan *messaging.TargetMessage
+}
+
+func (m *mockMessageCenter) OnNodeChanges(newNodes []*common.NodeInfo, removedNodes []*common.NodeInfo) {
+
 }
 
 func (m *mockMessageCenter) SendEvent(event ...*messaging.TargetMessage) error {

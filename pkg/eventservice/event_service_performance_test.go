@@ -19,14 +19,14 @@ import (
 // Result:
 //  1. It takes about 10 seconds to register 1 million tables.
 //  2. It takes about 300-500ms to update resolvedTs for 1 million tables. The call chain is:
-//     -> dispatcherStat.onSubscriptionWatermark() -> dispatcherStat.notify() -> taskPool.pushTask(), merge task -> scanWorker new Msg -> messageCenter.SendMsg()
+//     -> dispatcherStat.onSubscriptionWatermark() -> dispatcherStat.onAsyncNotify() -> taskPool.pushTask(), merge task -> scanWorker new Msg -> messageCenter.SendMsg()
 //     It should be note that some task of the same dispatcher are merged into one task, so the messageCenter.SendMsg() is not called for each dispatcherStat.onSubscriptionWatermark().
 func TestEventServiceOneMillionTable(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	wg := &sync.WaitGroup{}
 	mockStore := newMockEventStore()
-	tableNum := 1000000
+	tableNum := 100_0000
 	sendRound := 10
 	mc := &mockMessageCenter{
 		messageCh: make(chan *messaging.TargetMessage, 100),
@@ -67,9 +67,7 @@ func TestEventServiceOneMillionTable(t *testing.T) {
 	for i := 0; i < tableNum; i++ {
 		acceptorInfo := newMockAcceptorInfo(uuid.New().String(), uint64(i))
 		dispatchers = append(dispatchers, acceptorInfo)
-	}
-	for _, dispatcher := range dispatchers {
-		esImpl.registerDispatcher(ctx, dispatcher)
+		esImpl.registerDispatcher(ctx, acceptorInfo)
 	}
 	log.Info("register 1 million tables", zap.Duration("cost", time.Since(start)))
 
