@@ -12,6 +12,7 @@ import (
 
 	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/pkg/common"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -23,9 +24,9 @@ import (
 )
 
 type SchemaStore interface {
+	Name() string
 	Run(ctx context.Context) error
-
-	Close(ctx context.Context)
+	Close(ctx context.Context) error
 
 	// TODO: add filter
 	GetAllPhysicalTables(snapTs common.Ts) ([]common.TableID, error)
@@ -54,7 +55,7 @@ type schemaStore struct {
 	storage kv.Storage
 
 	// store unresolved ddl event in memory, it is thread safe
-	unsortedCache *unsortedDDLCache
+	unsortedCache *ddlCache
 
 	// store ddl event and other metadata on disk, it is thread safe
 	dataStorage *persistentStorage
@@ -92,11 +93,10 @@ func NewSchemaStore(
 	regionCache *tikv.RegionCache,
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
-) (SchemaStore, error) {
+) SchemaStore {
 	gcSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, "cdc-new-store", 0, 0)
 	if err != nil {
 		log.Panic("get ts failed", zap.Error(err))
-		return nil, err
 	}
 	minRequiredTS := common.Ts(gcSafePoint)
 	dataStorage, metaTS, databaseMap := newPersistentStorage(root, kvStorage, minRequiredTS)
@@ -108,7 +108,7 @@ func NewSchemaStore(
 
 	s := &schemaStore{
 		storage:       kvStorage,
-		unsortedCache: newUnSortedDDLCache(),
+		unsortedCache: newDDLCache(),
 		dataStorage:   dataStorage,
 		eventCh:       make(chan interface{}, 1024),
 		// TODO: fix the following two fields
@@ -118,6 +118,7 @@ func NewSchemaStore(
 		tableInfoStoreMap: make(TableInfoStoreMap),
 		dispatchersMap:    make(DispatcherInfoMap),
 	}
+
 	log.Info("new schema store",
 		zap.Uint64("finishedDDLTS", s.finishedDDLTS),
 		zap.Int64("schemaVersion", s.schemaVersion))
@@ -129,8 +130,11 @@ func NewSchemaStore(
 		metaTS.ResolvedTS,
 		s.writeDDLEvent,
 		s.advanceResolvedTs)
+	return s
+}
 
-	return s, nil
+func (s *schemaStore) Name() string {
+	return appcontext.SchemaStore
 }
 
 func (s *schemaStore) Run(ctx context.Context) error {
@@ -144,11 +148,10 @@ func (s *schemaStore) Run(ctx context.Context) error {
 	return eg.Wait()
 }
 
-func (s *schemaStore) Close(ctx context.Context) {
-
+func (s *schemaStore) Close(ctx context.Context) error {
+	return nil
 }
 
-// TODO: use a meaningful name
 func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 	for {
 		select {

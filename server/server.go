@@ -21,6 +21,7 @@ import (
 
 	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
+	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/maintainer"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
@@ -121,13 +122,16 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 		appcontext.MessageCenter,
 		appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).OnNodeChanges)
 
+	schemaStore := schemastore.NewSchemaStore(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage)
+
 	c.subModules = []SubModule{
 		nodeManager,
+		schemaStore,
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener()),
 		maintainer.NewMaintainerManager(c.serverID, c.pdEndpoints),
-		eventstore.NewEventStore(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage),
+		eventstore.NewEventStore(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage, schemaStore),
 	}
 	// register it into global var
 	for _, subModule := range c.subModules {
