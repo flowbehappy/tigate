@@ -272,16 +272,16 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 func (c *EventCollector) updateMetrics(ctx context.Context) error {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-	minResolvedTs := uint64(0)
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				minResolvedTs := uint64(0)
 				c.dispatcherMap.RLock()
 				for _, d := range c.dispatcherMap.m {
-					if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
+					if minResolvedTs == uint64(0) || d.GetResolvedTs() < minResolvedTs {
 						minResolvedTs = d.GetResolvedTs()
 					}
 				}

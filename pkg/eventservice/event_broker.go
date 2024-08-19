@@ -313,17 +313,17 @@ func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 func (c *eventBroker) updateMetrics(ctx context.Context) {
 	ticker := time.NewTicker(time.Second * 5)
 	defer ticker.Stop()
-	minResolvedTs := uint64(0)
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				minResolvedTs := uint64(0)
 				c.dispatchers.Range(func(key, value interface{}) bool {
 					dispatcher := value.(*dispatcherStat)
 					resolvedTs := dispatcher.spanSubscription.watermark.Load()
-					if minResolvedTs == 0 || resolvedTs < minResolvedTs {
+					if minResolvedTs == uint64(0) || resolvedTs < minResolvedTs {
 						minResolvedTs = resolvedTs
 					}
 					return true
