@@ -16,14 +16,15 @@ package maintainer
 import (
 	"encoding/json"
 	"math"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	configNew "github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/scheduler"
@@ -31,12 +32,8 @@ import (
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/entry/schema"
-	"github.com/pingcap/tiflow/cdc/kv"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/filter"
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
@@ -300,7 +297,7 @@ func (m *Maintainer) initChangefeed() error {
 	m.statusChanged.Store(true)
 	var err error
 	tableIDs, err := m.initTableIDs()
-	for id := range tableIDs {
+	for _, id := range tableIDs {
 		span := spanz.TableIDToComparableSpan(id)
 		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
 			TableID:  uint64(id),
@@ -367,40 +364,15 @@ func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage)
 }
 
 // initTableIDs get tables ids base on the filter and checkpoint ts
-func (m *Maintainer) initTableIDs() (map[int64]struct{}, error) {
+func (m *Maintainer) initTableIDs() ([]common.TableID, error) {
 	startTs := m.watermark.CheckpointTs
 	f, err := filter.NewFilter(m.config.Config, "")
 	if err != nil {
 		return nil, errors.Cause(err)
 	}
 
-	cfg := config.GetGlobalServerConfig()
-	kvStore, err := kv.CreateTiStore(strings.Join(m.pdEndpoints, ","), cfg.Security)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	meta := kv.GetSnapshotMeta(kvStore, startTs)
-	snap, err := schema.NewSnapshotFromMeta(
-		model.ChangeFeedID4Test("api", "verifyTable"),
-		meta, startTs, false /* explicitTables */, f)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	tableIDs := make(map[int64]struct{})
-	snap.IterTables(true, func(tableInfo *model.TableInfo) {
-		if f.ShouldIgnoreTable(tableInfo.TableName.Schema, tableInfo.TableName.Table) {
-			return
-		}
-		// TODO: remove this line when the filter can filter out system table
-		if tableInfo.Name.O == "mysql" || tableInfo.Name.O == "sys" {
-			return
-		}
-		if tableInfo.IsSequence() {
-			return
-		}
-		tableIDs[tableInfo.ID] = struct{}{}
-	})
+	schemaStore := appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore)
+	tableIDs, err := schemaStore.GetAllPhysicalTables(common.Ts(startTs), f)
 	log.Info("get table ids", zap.Int("count", len(tableIDs)), zap.String("changefeed", m.id.String()))
 	return tableIDs, nil
 }

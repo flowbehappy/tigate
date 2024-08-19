@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/coordinator"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -39,7 +40,7 @@ type elector struct {
 	serverImpl *serverImpl
 }
 
-func NewElector(serverImpl *serverImpl) SubModule {
+func NewElector(serverImpl *serverImpl) common.SubModule {
 	election := concurrency.NewElection(serverImpl.session,
 		etcd.CaptureOwnerKey(serverImpl.EtcdClient.GetClusterID()))
 	return &elector{

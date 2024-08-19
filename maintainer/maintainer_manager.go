@@ -77,7 +77,7 @@ func NewMaintainerManager(selfServerID messaging.ServerId, pdEndpoints []string)
 func (m *Manager) RecvMessages(ctx context.Context, msg *messaging.TargetMessage) error {
 	switch msg.Type {
 	// receive message from coordinator
-	case messaging.TypeDispatchMaintainerRequest:
+	case messaging.TypeAddMaintainerRequest, messaging.TypeRemoveMaintainerRequest:
 		fallthrough
 	case messaging.TypeCoordinatorBootstrapRequest:
 		select {
@@ -180,16 +180,16 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 
 func (m *Manager) onDispatchMaintainerRequest(
 	msg *messaging.TargetMessage,
-) []string {
-	request := msg.Message.(*heartbeatpb.DispatchMaintainerRequest)
+) string {
 	if m.coordinatorID != msg.From {
 		log.Warn("ignore invalid coordinator id",
-			zap.Any("request", request),
+			zap.Any("request", msg),
 			zap.Any("coordinator", msg.From))
-		return nil
+		return ""
 	}
-	absent := make([]string, 0)
-	for _, req := range request.AddMaintainers {
+	switch msg.Type {
+	case messaging.TypeAddMaintainerRequest:
+		req := msg.Message.(*heartbeatpb.AddMaintainerRequest)
 		cfID := model.DefaultChangeFeedID(req.GetId())
 		cf, ok := m.maintainers.Load(cfID)
 		if !ok {
@@ -211,9 +211,8 @@ func (m *Manager) onDispatchMaintainerRequest(
 			m.maintainers.Store(cfID, cf)
 			m.maintainerStream.stream.In() <- &Event{cfID: cfID.ID, eventType: EventInit}
 		}
-	}
-
-	for _, req := range request.RemoveMaintainers {
+	case messaging.TypeRemoveMaintainerRequest:
+		req := msg.Message.(*heartbeatpb.RemoveMaintainerRequest)
 		cfID := model.DefaultChangeFeedID(req.GetId())
 		_, ok := m.maintainers.Load(cfID)
 		if !ok {
@@ -221,8 +220,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 				"since the maintainer not found",
 				zap.String("changefeed", cfID.String()),
 				zap.Any("request", req))
-			absent = append(absent, req.GetId())
-			continue
+			return req.GetId()
 		}
 		m.maintainerStream.stream.In() <- &Event{
 			cfID:      cfID.ID,
@@ -230,7 +228,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 			message:   msg,
 		}
 	}
-	return absent
+	return ""
 }
 
 func (m *Manager) sendHeartbeat() {
@@ -256,13 +254,13 @@ func (m *Manager) handleMessage(msg *messaging.TargetMessage) {
 	case messaging.TypeCoordinatorBootstrapRequest:
 		log.Info("received coordinator bootstrap request", zap.String("from", msg.From.String()))
 		m.onCoordinatorBootstrapRequest(msg)
-	case messaging.TypeDispatchMaintainerRequest:
+	case messaging.TypeAddMaintainerRequest, messaging.TypeRemoveMaintainerRequest:
 		absent := m.onDispatchMaintainerRequest(msg)
 		if m.coordinatorVersion > 0 {
 			response := &heartbeatpb.MaintainerHeartbeat{}
-			for _, id := range absent {
+			if absent != "" {
 				response.Statuses = append(response.Statuses, &heartbeatpb.MaintainerStatus{
-					ChangefeedID: id,
+					ChangefeedID: absent,
 					State:        heartbeatpb.ComponentState_Absent,
 				})
 			}

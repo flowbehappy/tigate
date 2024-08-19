@@ -21,6 +21,7 @@ import (
 
 	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
+	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/maintainer"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
@@ -75,7 +76,7 @@ type serverImpl struct {
 	PDClock     pdutil.Clock
 
 	tcpServer  tcpserver.TCPServer
-	subModules []SubModule
+	subModules []common.SubModule
 }
 
 // NewServer returns a new Server instance
@@ -121,13 +122,16 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 		appcontext.MessageCenter,
 		appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).OnNodeChanges)
 
-	c.subModules = []SubModule{
+	schemaStore := schemastore.NewSchemaStore(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage)
+
+	c.subModules = []common.SubModule{
 		nodeManager,
+		schemaStore,
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener()),
 		maintainer.NewMaintainerManager(c.serverID, c.pdEndpoints),
-		eventstore.NewEventStore(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage),
+		eventstore.NewEventStore(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage, schemaStore),
 	}
 	// register it into global var
 	for _, subModule := range c.subModules {
@@ -161,7 +165,7 @@ func (c *serverImpl) Run(stdCtx context.Context) error {
 	})
 	// start all submodules
 	for _, sub := range c.subModules {
-		func(m SubModule) {
+		func(m common.SubModule) {
 			g.Go(func() error {
 				log.Info("starting sub watcher", zap.String("watcher", m.Name()))
 				return m.Run(stdCtx)

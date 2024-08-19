@@ -184,3 +184,38 @@ func TestDynamicStreamSchedule(t *testing.T) {
 
 	ds.Close()
 }
+
+type removePathHandler struct {
+	ds DynamicStream[string, *simpleEvent, struct{}]
+}
+
+func (h *removePathHandler) Path(event *simpleEvent) string {
+	return event.path
+}
+
+func (h *removePathHandler) Handle(event *simpleEvent, dest struct{}) (await bool) {
+	h.ds.RemovePath(event.path)
+	event.wg.Done()
+	return false
+}
+
+func TestDynamicStreamRemovePath(t *testing.T) {
+	handler := &removePathHandler{}
+	ds := newDynamicStreamImpl(handler, 1*time.Hour, 1*time.Hour, 3)
+	handler.ds = ds
+
+	ds.Start()
+
+	ds.AddPath([]PathAndDest[string, struct{}]{
+		{"p1", struct{}{}},
+		{"p2", struct{}{}}}...)
+
+	wg := &sync.WaitGroup{}
+	wg.Add(1) // Only one event is processed
+	ds.In() <- &simpleEvent{path: "p1", wg: wg}
+	ds.In() <- &simpleEvent{path: "p1", wg: wg}
+
+	// Make sure the two events are put in a stream already.
+	time.Sleep(10 * time.Millisecond)
+	wg.Wait()
+}

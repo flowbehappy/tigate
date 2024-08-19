@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/filter"
@@ -87,6 +88,8 @@ type Dispatcher struct {
 	ddlPendingEvent *common.TxnEvent
 	ddlFinishCh     chan struct{}
 	isRemoving      atomic.Bool
+
+	tableProgress *types.TableProgress
 }
 
 func NewDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter) *Dispatcher {
@@ -108,9 +111,9 @@ func NewDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, 
 		ddlFinishCh:     make(chan struct{}),
 		isRemoving:      atomic.Bool{},
 		ddlPendingEvent: nil,
+		tableProgress:   types.NewTableProgress(),
 	}
 
-	dispatcher.sink.AddTableSpan(tableSpan)
 	dispatcher.wg.Add(1)
 	go dispatcher.DispatcherEvents(ctx)
 
@@ -124,7 +127,6 @@ func NewDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, 
 
 func (d *Dispatcher) DispatcherEvents(ctx context.Context) {
 	defer d.wg.Done()
-	tableSpan := d.GetTableSpan()
 	sink := d.GetSink()
 	for {
 		select {
@@ -132,7 +134,7 @@ func (d *Dispatcher) DispatcherEvents(ctx context.Context) {
 			return
 		case event := <-d.GetEventChan():
 			if event.IsDMLEvent() {
-				sink.AddDMLEvent(tableSpan, event)
+				sink.AddDMLEvent(event, d.tableProgress)
 			} else if event.IsDDLEvent() {
 				d.AddDDLEventToSinkWhenAvailable(event)
 			} else {
@@ -159,7 +161,7 @@ func (d *Dispatcher) GetResolvedTs() uint64 {
 }
 
 func (d *Dispatcher) GetCheckpointTs() uint64 {
-	checkpointTs, isEmpty := d.GetSink().GetCheckpointTs(d.GetTableSpan())
+	checkpointTs, isEmpty := d.tableProgress.GetCheckpointTs()
 	if checkpointTs == 0 {
 		// 说明从没有数据写到过 sink，则选择用 resolveTs 作为 checkpointTs
 		return d.GetResolvedTs()
@@ -210,7 +212,6 @@ func (d *Dispatcher) PushTxnEvent(event *common.TxnEvent) {
 func (d *Dispatcher) Remove() {
 	// TODO: 修改这个 dispatcher 的 status 为 removing
 	d.cancel()
-	d.sink.StopTableSpan(d.tableSpan)
 	log.Info("table event dispatcher component status changed to stopping", zap.String("table", d.tableSpan.String()))
 	d.isRemoving.Store(true)
 }
@@ -218,17 +219,22 @@ func (d *Dispatcher) Remove() {
 func (d *Dispatcher) TryClose() (w heartbeatpb.Watermark, ok bool) {
 	// removing 后每次收集心跳的时候，call TryClose, 来判断是否能关掉 dispatcher 了（sink.isEmpty)
 	// 如果不能关掉，返回 0， false; 可以关掉的话，就返回 checkpointTs, true -- 这个要对齐过（startTs 和 checkpointTs 的关系）
-	if d.sink.IsEmpty(d.tableSpan) {
-		// calculate the checkpointTs, and clean the resource
-		d.sink.RemoveTableSpan(d.tableSpan)
-		w.CheckpointTs = d.GetCheckpointTs()
-		w.ResolvedTs = d.GetResolvedTs()
+	// if d.sink.IsEmpty(d.tableSpan) {
+	// 	// calculate the checkpointTs, and clean the resource
+	// 	d.sink.RemoveTableSpan(d.tableSpan)
+	// 	w.CheckpointTs = d.GetCheckpointTs()
+	// 	w.ResolvedTs = d.GetResolvedTs()
 
-		//d.MemoryUsage.Clear()
-		d.componentStatus.Set(heartbeatpb.ComponentState_Stopped)
-		return w, true
-	}
-	return w, false
+	// 	//d.MemoryUsage.Clear()
+	// 	d.componentStatus.Set(heartbeatpb.ComponentState_Stopped)
+	// 	return w, true
+	// }
+	// return w, false
+	w.CheckpointTs = d.GetCheckpointTs()
+	w.ResolvedTs = d.GetResolvedTs()
+
+	d.componentStatus.Set(heartbeatpb.ComponentState_Stopped)
+	return w, true
 }
 
 func (d *Dispatcher) GetComponentStatus() heartbeatpb.ComponentState {
@@ -283,9 +289,9 @@ func (d *Dispatcher) HandleDDLActions(ctx context.Context) {
 			}
 			if dispatcherAction.CommitTs == event.CommitTs {
 				if dispatcherAction.Action == heartbeatpb.Action_Write {
-					sink.AddDDLAndSyncPointEvent(tableSpan, event) // 这个是同步写，所以写完的时候 sink 也 available 了
+					sink.AddDDLAndSyncPointEvent(event, d.tableProgress) // 这个是同步写，所以写完的时候 sink 也 available 了
 				} else {
-					sink.PassDDLAndSyncPointEvent(tableSpan, event) // 为了更新 tableProgress，避免 checkpointTs 计算的 corner case
+					sink.PassDDLAndSyncPointEvent(event, d.tableProgress) // 为了更新 tableProgress，避免 checkpointTs 计算的 corner case
 				}
 				d.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
 					Span:            tableSpan.TableSpan,
@@ -320,8 +326,8 @@ func (d *Dispatcher) AddDDLEventToSinkWhenAvailable(event *common.TxnEvent) {
 	sink := d.GetSink()
 	tableSpan := d.GetTableSpan()
 	if event.IsSingleTableDDL() {
-		if sink.IsEmpty(tableSpan) {
-			sink.AddDDLAndSyncPointEvent(tableSpan, event)
+		if d.tableProgress.Empty() {
+			sink.AddDDLAndSyncPointEvent(event, d.tableProgress)
 			return
 		} else {
 			// TODO:先写一个 定时 check 的逻辑，后面用 dynamic stream 改造
@@ -329,9 +335,8 @@ func (d *Dispatcher) AddDDLEventToSinkWhenAvailable(event *common.TxnEvent) {
 			for {
 				select {
 				case <-timer.C:
-					if sink.IsEmpty(tableSpan) {
-						sink.AddDDLAndSyncPointEvent(tableSpan, event)
-						return
+					if d.tableProgress.Empty() {
+						sink.AddDDLAndSyncPointEvent(event, d.tableProgress)
 					}
 				}
 			}

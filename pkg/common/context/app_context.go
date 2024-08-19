@@ -13,6 +13,7 @@ const (
 	MessageCenter      = "MessageCenter"
 	EventCollector     = "EventCollector"
 	HeartbeatCollector = "HeartbeatCollector"
+	SchemaStore        = "SchemaStore"
 	EventStore         = "EventStore"
 	EventService       = "EventService"
 )

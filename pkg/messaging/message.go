@@ -26,7 +26,6 @@ const (
 
 	TypeCoordinatorBootstrapRequest
 	TypeCoordinatorBootstrapResponse
-	TypeDispatchMaintainerRequest
 	TypeAddMaintainerRequest
 	TypeRemoveMaintainerRequest
 	TypeMaintainerHeartbeatRequest
@@ -53,8 +52,10 @@ func (t IOType) String() string {
 		return "ScheduleDispatcherRequest"
 	case TypeCoordinatorBootstrapRequest:
 		return "CoordinatorBootstrapRequest"
-	case TypeDispatchMaintainerRequest:
-		return "DispatchMaintainerRequest"
+	case TypeAddMaintainerRequest:
+		return "AddMaintainerRequest"
+	case TypeRemoveMaintainerRequest:
+		return "RemoveMaintainerRequest"
 	case TypeMaintainerHeartbeatRequest:
 		return "MaintainerHeartbeatRequest"
 	case TypeCoordinatorBootstrapResponse:
@@ -155,8 +156,10 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 		m = &heartbeatpb.ScheduleDispatcherRequest{}
 	case TypeCoordinatorBootstrapRequest:
 		m = &heartbeatpb.CoordinatorBootstrapRequest{}
-	case TypeDispatchMaintainerRequest:
-		m = &heartbeatpb.DispatchMaintainerRequest{}
+	case TypeAddMaintainerRequest:
+		m = &heartbeatpb.AddMaintainerRequest{}
+	case TypeRemoveMaintainerRequest:
+		m = &heartbeatpb.RemoveMaintainerRequest{}
 	case TypeMaintainerHeartbeatRequest:
 		m = &heartbeatpb.MaintainerHeartbeat{}
 	case TypeCoordinatorBootstrapResponse:
@@ -204,8 +207,10 @@ func NewTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetMessage
 		ioType = TypeScheduleDispatcherRequest
 	case *heartbeatpb.MaintainerBootstrapRequest:
 		ioType = TypeMaintainerBootstrapRequest
-	case *heartbeatpb.DispatchMaintainerRequest:
-		ioType = TypeDispatchMaintainerRequest
+	case *heartbeatpb.AddMaintainerRequest:
+		ioType = TypeAddMaintainerRequest
+	case *heartbeatpb.RemoveMaintainerRequest:
+		ioType = TypeRemoveMaintainerRequest
 	case *heartbeatpb.CoordinatorBootstrapRequest:
 		ioType = TypeCoordinatorBootstrapRequest
 	case *heartbeatpb.HeartBeatResponse:

@@ -1930,7 +1930,7 @@
           "yaxis": {
             "align": false,
             "alignLevel": null
-          },
+          }
         },
         {
           "aliasColors": {},

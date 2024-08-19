@@ -1,3 +1,16 @@
+// Copyright 2024 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package schemastore
 
 import (
@@ -17,7 +30,7 @@ import (
 func writeMetaData(db *pebble.DB, gcTS common.Ts, metaTS *schemaMetaTS) error {
 	batch := db.NewBatch()
 	writeTSToBatch(batch, gcTSKey(), gcTS)
-	writeTSToBatch(batch, metaTSKey(), metaTS.resolvedTS, metaTS.finishedDDLTS, metaTS.schemaVersion)
+	writeTSToBatch(batch, metaTSKey(), metaTS.ResolvedTS, metaTS.FinishedDDLTS, metaTS.SchemaVersion)
 	return batch.Commit(pebble.Sync)
 }
 
@@ -64,18 +77,18 @@ func TestLoadEmptyPersistentStorage(t *testing.T) {
 
 	gcTS := common.Ts(1000)
 	metaTS := &schemaMetaTS{
-		resolvedTS:    1000,
-		finishedDDLTS: 3000,
-		schemaVersion: 4000,
+		ResolvedTS:    1000,
+		FinishedDDLTS: 3000,
+		SchemaVersion: 4000,
 	}
 
 	err = writeMetaData(db, gcTS, metaTS)
 	require.Nil(t, err)
 
 	dataStorage, newMetaTS, databaseMap := loadPersistentStorage(db, 1000)
-	require.Equal(t, metaTS.resolvedTS, newMetaTS.resolvedTS)
-	require.Equal(t, metaTS.finishedDDLTS, newMetaTS.finishedDDLTS)
-	require.Equal(t, metaTS.schemaVersion, newMetaTS.schemaVersion)
+	require.Equal(t, metaTS.ResolvedTS, newMetaTS.ResolvedTS)
+	require.Equal(t, metaTS.FinishedDDLTS, newMetaTS.FinishedDDLTS)
+	require.Equal(t, metaTS.SchemaVersion, newMetaTS.SchemaVersion)
 	require.Equal(t, 0, len(databaseMap))
 	require.Equal(t, gcTS, dataStorage.getGCTS())
 }
@@ -90,15 +103,15 @@ func TestLoadPersistentStorageWithoutRequiredData(t *testing.T) {
 
 	gcTS := common.Ts(1000)
 	metaTS := &schemaMetaTS{
-		resolvedTS:    1000,
-		finishedDDLTS: 3000,
-		schemaVersion: 4000,
+		ResolvedTS:    1000,
+		FinishedDDLTS: 3000,
+		SchemaVersion: 4000,
 	}
 
 	err = writeMetaData(db, gcTS, metaTS)
 	require.Nil(t, err)
 
-	dataStorage, _, databaseMap := loadPersistentStorage(db, metaTS.resolvedTS+100)
+	dataStorage, _, databaseMap := loadPersistentStorage(db, metaTS.ResolvedTS+100)
 	require.Nil(t, dataStorage)
 	require.Nil(t, databaseMap)
 }
@@ -113,9 +126,9 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 
 	gcTS := common.Ts(1000)
 	metaTS := &schemaMetaTS{
-		resolvedTS:    2000,
-		finishedDDLTS: 3000,
-		schemaVersion: 4000,
+		ResolvedTS:    2000,
+		FinishedDDLTS: 3000,
+		SchemaVersion: 4000,
 	}
 
 	err = writeMetaData(db, gcTS, metaTS)
@@ -144,7 +157,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 			}
 			return databaseMap[int64(schemaID)].Name, nil
 		}
-		dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.resolvedTS, getSchemaName)
+		dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.ResolvedTS, getSchemaName)
 		store.setTableInfoInitialized()
 		require.Equal(t, gcTS, store.getFirstVersion())
 		tableInfo, err := store.getTableInfo(gcTS)
@@ -181,7 +194,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 			}
 			return databaseMap[int64(schemaID)].Name, nil
 		}
-		dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.resolvedTS, getSchemaName)
+		dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.ResolvedTS, getSchemaName)
 		store.setTableInfoInitialized()
 		require.Equal(t, gcTS, store.getFirstVersion())
 		require.Equal(t, 2, len(store.infos))
@@ -205,9 +218,9 @@ func TestBuildVersionedTableInfoAndApplyDDL(t *testing.T) {
 
 	gcTS := common.Ts(1000)
 	metaTS := &schemaMetaTS{
-		resolvedTS:    2000,
-		finishedDDLTS: 3000,
-		schemaVersion: 4000,
+		ResolvedTS:    2000,
+		FinishedDDLTS: 3000,
+		SchemaVersion: 4000,
 	}
 
 	err = writeMetaData(db, gcTS, metaTS)
@@ -235,7 +248,7 @@ func TestBuildVersionedTableInfoAndApplyDDL(t *testing.T) {
 		}
 		return databaseMap[int64(schemaID)].Name, nil
 	}
-	dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.resolvedTS, getSchemaName)
+	dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.ResolvedTS, getSchemaName)
 	renameVersion := uint64(1500)
 	store.applyDDL(&model.Job{
 		Type:     model.ActionRenameTable,
