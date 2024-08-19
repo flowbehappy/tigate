@@ -464,7 +464,9 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableS
 	// 	EndKey:   span.EndKey,
 	// }
 	// e.puller.Subscribe([]tablepb.Span{realSpan}, model.Ts(startTS), "", func(_ *model.RawKVEntry) bool { return false })
+	log.Info("try register puller")
 	e.puller.Subscribe(span, startTS)
+	log.Info("try register puller done")
 	return nil
 }
 
