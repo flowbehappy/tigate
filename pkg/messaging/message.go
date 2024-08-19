@@ -27,6 +27,8 @@ const (
 	TypeCoordinatorBootstrapRequest
 	TypeCoordinatorBootstrapResponse
 	TypeDispatchMaintainerRequest
+	TypeAddMaintainerRequest
+	TypeRemoveMaintainerRequest
 	TypeMaintainerHeartbeatRequest
 	TypeMaintainerBootstrapRequest
 	TypeMaintainerBootstrapResponse

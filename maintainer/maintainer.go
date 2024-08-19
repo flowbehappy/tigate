@@ -81,8 +81,6 @@ type Maintainer struct {
 	removing        *atomic.Bool
 	cascadeRemoving *atomic.Bool
 
-	msgQueue *MessageQueue
-
 	lastPrintStatusTime  time.Time
 	lastCheckpointTsTime time.Time
 
@@ -125,7 +123,6 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		checkpointTsByCapture: make(map[model.CaptureID]heartbeatpb.Watermark),
 		pdEndpoints:           pdEndpoints,
 		tableSpans:            utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior](),
-		msgQueue:              NewMessageQueue(cfID, 1024),
 		runningErrors:         map[messaging.ServerId]*heartbeatpb.RunningError{},
 		runningWarnings:       map[messaging.ServerId]*heartbeatpb.RunningError{},
 
@@ -147,23 +144,6 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	log.Info("create maintainer", zap.String("id", cfID.String()))
 	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace, cfID.ID).Inc()
 	return m
-}
-
-func (m *Maintainer) Run() {
-	// Note: currently the threadPool maybe discard some running task, fix this later.
-	// threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.
-	// 	Submit(m, threadpool.CPUTask, time.Now())
-	go func() {
-		ticker := time.NewTicker(500 * time.Millisecond)
-		defer ticker.Stop()
-		for range ticker.C {
-			newStatus, _ := m.Execute()
-			if newStatus == threadpool.Done {
-				log.Warn("maintainer is done", zap.String("id", m.id.String()))
-				return
-			}
-		}
-	}()
 }
 
 func (m *Maintainer) cleanupMetrics() {
@@ -205,11 +185,6 @@ func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time
 	}
 	m.state = heartbeatpb.ComponentState_Working
 
-	// handle messages
-	if err := m.handleMessages(); err != nil {
-		return
-	}
-
 	nodes := m.nodeManager.GetAliveNodes()
 	//check capture changes
 	msgs, err := m.supervisor.HandleAliveCaptureUpdate(nodes)
@@ -237,19 +212,6 @@ func (m *Maintainer) getReplicaSet(id scheduler.InferiorID) scheduler.Inferior {
 	return tableSpan
 }
 
-func (m *Maintainer) handleMessages() error {
-	size, buf := m.msgQueue.PopMessages()
-	for idx := 0; idx < size; idx++ {
-		msg := buf[idx]
-		if err := m.onMessage(msg); err != nil {
-			return errors.Trace(err)
-		}
-
-		buf[idx] = nil
-	}
-	return nil
-}
-
 func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
 	switch msg.Type {
 	case messaging.TypeHeartBeatRequest:
@@ -258,6 +220,9 @@ func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
 		}
 	case messaging.TypeMaintainerBootstrapResponse:
 		m.onMaintainerBootstrapResponse(msg)
+	case messaging.TypeMaintainerCloseResponse:
+		m.onNodeClosed(string(msg.From), msg.Message.(*heartbeatpb.MaintainerCloseResponse))
+
 	default:
 		log.Panic("unexpected message type", zap.String("type", msg.Type.String()))
 	}
@@ -346,6 +311,8 @@ func (m *Maintainer) initChangefeed() error {
 		m.tableSpans.ReplaceOrInsert(tableSpan, replicaSet)
 	}
 	m.supervisor.MarkNeedAddInferior()
+	log.Info("changefeed maintainer initialized",
+		zap.String("id", m.id.String()))
 	//todo: remove gc service checkpoint ts
 	return err
 }
@@ -530,10 +497,6 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 			})
 	}
 
-}
-
-func (m *Maintainer) getMessageQueue() *MessageQueue {
-	return m.msgQueue
 }
 
 func (m *Maintainer) printStatus() {

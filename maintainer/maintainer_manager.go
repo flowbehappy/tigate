@@ -22,6 +22,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -44,6 +45,8 @@ type Manager struct {
 	pdEndpoints  []string
 
 	msgCh chan *messaging.TargetMessage
+
+	maintainerStream *MaintainerStream
 }
 
 // NewMaintainerManager create a changefeed maintainer manager instance,
@@ -53,29 +56,19 @@ type Manager struct {
 func NewMaintainerManager(selfServerID messaging.ServerId, pdEndpoints []string) *Manager {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	m := &Manager{
-		mc:           mc,
-		maintainers:  sync.Map{},
-		selfServerID: selfServerID,
-		pdEndpoints:  pdEndpoints,
-		msgCh:        make(chan *messaging.TargetMessage, 1024),
+		mc:               mc,
+		maintainers:      sync.Map{},
+		selfServerID:     selfServerID,
+		pdEndpoints:      pdEndpoints,
+		msgCh:            make(chan *messaging.TargetMessage, 1024),
+		maintainerStream: NewMaintainerStream(),
 	}
-
 	mc.RegisterHandler(messaging.MaintainerManagerTopic, m.RecvMessages)
 
 	mc.RegisterHandler(messaging.MaintainerTopic,
 		func(ctx context.Context, msg *messaging.TargetMessage) error {
 			req := msg.Message.(*heartbeatpb.MaintainerCloseResponse)
-			changefeedID := model.DefaultChangeFeedID(req.ChangefeedID)
-			v, ok := m.maintainers.Load(changefeedID)
-			if !ok {
-				log.Warn("maintainer is not found",
-					zap.Stringer("changefeedID", changefeedID), zap.String("message", msg.String()))
-				return nil
-			}
-
-			maintainer := v.(*Maintainer)
-			maintainer.onNodeClosed(msg.From.String(), req)
-			return nil
+			return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
 		})
 
 	return m
@@ -129,6 +122,7 @@ func (m *Manager) Run(ctx context.Context) error {
 				if cf.removed.Load() {
 					cf.Close()
 					m.maintainers.Delete(key)
+					m.maintainerStream.stream.RemovePath(cf.id.ID)
 				}
 				return true
 			})
@@ -204,16 +198,24 @@ func (m *Manager) onDispatchMaintainerRequest(
 			if err != nil {
 				log.Panic("decode changefeed fail", zap.Error(err))
 			}
-			cf = NewMaintainer(cfID,
-				cfConfig, req.CheckpointTs, m.pdEndpoints)
+			cf = NewMaintainer(cfID, cfConfig, req.CheckpointTs, m.pdEndpoints)
+			err = m.maintainerStream.stream.AddPath(dynstream.PathAndDest[string, *Maintainer]{
+				Path: cfID.ID,
+				Dest: cf.(*Maintainer),
+			})
+			if err != nil {
+				log.Warn("add path to dynstream failed, coordinator will retry later",
+					zap.Error(err))
+				continue
+			}
 			m.maintainers.Store(cfID, cf)
-			cf.(*Maintainer).Run()
+			m.maintainerStream.stream.In() <- &Event{cfID: cfID.ID, eventType: EventInit}
 		}
 	}
 
 	for _, req := range request.RemoveMaintainers {
 		cfID := model.DefaultChangeFeedID(req.GetId())
-		cf, ok := m.maintainers.Load(cfID)
+		_, ok := m.maintainers.Load(cfID)
 		if !ok {
 			log.Warn("ignore remove maintainer request, "+
 				"since the maintainer not found",
@@ -222,8 +224,11 @@ func (m *Manager) onDispatchMaintainerRequest(
 			absent = append(absent, req.GetId())
 			continue
 		}
-		cf.(*Maintainer).removing.Store(true)
-		cf.(*Maintainer).cascadeRemoving.Store(req.Cascade)
+		m.maintainerStream.stream.In() <- &Event{
+			cfID:      cfID.ID,
+			eventType: EventMessage,
+			message:   msg,
+		}
 	}
 	return absent
 }
@@ -271,16 +276,22 @@ func (m *Manager) handleMessage(msg *messaging.TargetMessage) {
 func (m *Manager) dispatcherMaintainerMessage(
 	ctx context.Context, changefeed string, msg *messaging.TargetMessage,
 ) error {
-	v, ok := m.maintainers.Load(model.DefaultChangeFeedID(changefeed))
+	_, ok := m.maintainers.Load(model.DefaultChangeFeedID(changefeed))
 	if !ok {
 		log.Warn("maintainer is not found",
 			zap.String("changefeedID", changefeed), zap.String("message", msg.String()))
 		return nil
 	}
-
-	maintainer := v.(*Maintainer)
-	if maintainer.removing.Load() {
-		return nil
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case m.maintainerStream.stream.In() <- &Event{
+		cfID:      changefeed,
+		eventType: EventMessage,
+		message:   msg,
+	}:
+	default:
+		log.Warn("maintainer is busy", zap.String("changefeed", changefeed))
 	}
-	return maintainer.getMessageQueue().Push(ctx, msg)
+	return nil
 }
