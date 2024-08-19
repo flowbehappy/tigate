@@ -177,7 +177,9 @@ type subscribedTable struct {
 
 type SharedClientConfig struct {
 	// how many workers will be used for a single region worker
-	KVClientWorkerConcurrent     uint // default to 8
+	KVClientWorkerConcurrent uint // default to 8
+	// The number of grpc stream between a client and a TiKV instance.
+	// 这里的 grpc stream 和 grpc 里的 stream 是一个概念吗？另外我更想要的应该是一个物理上的连接概念？
 	KVClientGrpcStreamConcurrent uint // default to 1?
 	KVClientAdvanceIntervalInMs  uint // default to 300
 	// filterLoop                   bool
