@@ -51,9 +51,10 @@ type eventBroker struct {
 	// cancel is used to cancel the goroutines spawned by the eventBroker.
 	cancel context.CancelFunc
 
-	metricEventServiceResolvedTs    prometheus.Gauge
-	metricEventServiceResolvedTsLag prometheus.Gauge
-	metricTaskInQueueDuration       prometheus.Observer
+	metricEventServicePullerResolvedTs     prometheus.Gauge
+	metricEventServiceDispatcherResolvedTs prometheus.Gauge
+	metricEventServiceResolvedTsLag        prometheus.Gauge
+	metricTaskInQueueDuration              prometheus.Observer
 }
 
 func newEventBroker(
@@ -65,19 +66,20 @@ func newEventBroker(
 	ctx, cancel := context.WithCancel(ctx)
 	wg := &sync.WaitGroup{}
 	c := &eventBroker{
-		tidbClusterID:                   id,
-		eventStore:                      eventStore,
-		dispatchers:                     sync.Map{},
-		msgSender:                       mc,
-		changedCh:                       make(chan *subscriptionChange, defaultChannelSize),
-		taskPool:                        newScanTaskPool(),
-		scanWorkerCount:                 defaultWorkerCount,
-		messageCh:                       make(chan *wrapMessage, defaultChannelSize),
-		cancel:                          cancel,
-		wg:                              wg,
-		metricEventServiceResolvedTs:    metrics.EventServiceResolvedTsGauge,
-		metricEventServiceResolvedTsLag: metrics.EventServiceResolvedTsLagGauge,
-		metricTaskInQueueDuration:       metrics.EventServiceScanTaskInQueueDuration,
+		tidbClusterID:                          id,
+		eventStore:                             eventStore,
+		dispatchers:                            sync.Map{},
+		msgSender:                              mc,
+		changedCh:                              make(chan *subscriptionChange, defaultChannelSize),
+		taskPool:                               newScanTaskPool(),
+		scanWorkerCount:                        defaultWorkerCount,
+		messageCh:                              make(chan *wrapMessage, defaultChannelSize),
+		cancel:                                 cancel,
+		wg:                                     wg,
+		metricEventServicePullerResolvedTs:     metrics.EventServiceResolvedTsGauge,
+		metricEventServiceResolvedTsLag:        metrics.EventServiceResolvedTsLagGauge.WithLabelValues("puller"),
+		metricEventServiceDispatcherResolvedTs: metrics.EventServiceResolvedTsLagGauge.WithLabelValues("dispatcher"),
+		metricTaskInQueueDuration:              metrics.EventServiceScanTaskInQueueDuration,
 	}
 	c.runGenerateScanTask(ctx)
 	c.runScanWorker(ctx)
@@ -322,24 +324,30 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 				log.Info("update metrics goroutine is closing")
 				return
 			case <-ticker.C:
-				minResolvedTs := uint64(0)
-				iterCount := 0
+				pullerMinResolvedTs := uint64(0)
+				dispatcherMinWaterMark := uint64(0)
 				c.dispatchers.Range(func(key, value interface{}) bool {
 					dispatcher := value.(*dispatcherStat)
 					resolvedTs := dispatcher.spanSubscription.watermark.Load()
-					if minResolvedTs == 0 || resolvedTs < minResolvedTs {
-						minResolvedTs = resolvedTs
+					if pullerMinResolvedTs == 0 || resolvedTs < pullerMinResolvedTs {
+						pullerMinResolvedTs = resolvedTs
 					}
-					iterCount++
+					watermark := dispatcher.watermark.Load()
+					if dispatcherMinWaterMark == 0 || watermark < dispatcherMinWaterMark {
+						dispatcherMinWaterMark = watermark
+					}
 					return true
 				})
-				if minResolvedTs == 0 {
+				if pullerMinResolvedTs == 0 {
 					continue
 				}
-				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
+				phyResolvedTs := oracle.ExtractPhysical(pullerMinResolvedTs)
 				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
-				c.metricEventServiceResolvedTs.Set(float64(phyResolvedTs))
+				c.metricEventServicePullerResolvedTs.Set(float64(phyResolvedTs))
 				c.metricEventServiceResolvedTsLag.Set(float64(lag))
+
+				lag = (oracle.GetPhysical(time.Now()) - oracle.ExtractPhysical(dispatcherMinWaterMark)) / 1e3
+				c.metricEventServiceDispatcherResolvedTs.Set(float64(lag))
 			}
 		}
 	}()

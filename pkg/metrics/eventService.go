@@ -49,13 +49,13 @@ var (
 			Name:      "resolved_ts",
 			Help:      "resolved ts of eventService",
 		})
-	EventServiceResolvedTsLagGauge = prometheus.NewGauge(
+	EventServiceResolvedTsLagGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_service",
 			Name:      "resolved_ts_lag",
 			Help:      "resolved ts lag of eventService in seconds",
-		})
+		}, []string{"type"})
 	EventServiceScanTaskInQueueDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "ticdc",
