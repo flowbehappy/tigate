@@ -166,7 +166,6 @@ func (p *LogPuller) Subscribe(
 	) error {
 		progress.consume.RLock()
 		defer progress.consume.RUnlock()
-		log.Info("try to call consume")
 		if !progress.consume.removed {
 			return p.consume(ctx, raw, span)
 		}
@@ -177,7 +176,6 @@ func (p *LogPuller) Subscribe(
 	p.subscriptions.subscriptionMap.ReplaceOrInsert(span, subID)
 
 	slot := p.inputChSelector(span, len(p.inputChs))
-	log.Info("select channel", zap.Int("slot", slot))
 	p.client.Subscribe(subID, span, uint64(startTs), p.inputChs[slot])
 }
 
@@ -207,7 +205,6 @@ func (p *LogPuller) runEventHandler(ctx context.Context, inputCh <-chan Multiple
 			return ctx.Err()
 		case e = <-inputCh:
 		}
-		log.Info("receive event")
 
 		progress := p.getProgress(e.SubscriptionID)
 		// There is a chance that some stale events are received after

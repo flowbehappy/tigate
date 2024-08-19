@@ -409,7 +409,6 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 }
 
 func (e *eventStore) writeEvent(span heartbeatpb.TableSpan, raw *common.RawKVEntry) {
-
 	tableState := e.getTableStat(span)
 	if tableState == nil {
 		log.Panic("should not happen")
@@ -417,11 +416,8 @@ func (e *eventStore) writeEvent(span heartbeatpb.TableSpan, raw *common.RawKVEnt
 	}
 	if !raw.IsResolved() {
 		tableState.observer(raw)
-		log.Info("eventStore receive event")
 	} else {
 		tableState.resolvedTs.Store(raw.CRTs)
-		log.Info("eventStore receive resolve ts",
-			zap.Any("time", oracle.GetTimeFromTS(raw.CRTs)))
 	}
 	tableState.ch <- eventWithTableID{span: span, raw: raw}
 }
@@ -443,9 +439,7 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableS
 		zap.String("span", tableSpan.String()),
 		zap.Uint64("startTS", uint64(startTS)))
 	e.schemaStore.RegisterDispatcher(dispatcherID, common.TableID(span.TableID), startTS)
-	log.Info("register schemastore done")
 	e.mu.Lock()
-	log.Info("register dispatcher lock done")
 	e.tables.ReplaceOrInsert(span, dispatcherID)
 	tableState := &tableState{
 		span:     span,
@@ -463,9 +457,7 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableS
 	// 	EndKey:   span.EndKey,
 	// }
 	// e.puller.Subscribe([]tablepb.Span{realSpan}, model.Ts(startTS), "", func(_ *model.RawKVEntry) bool { return false })
-	log.Info("try register puller")
 	e.puller.Subscribe(span, startTS)
-	log.Info("try register puller done")
 	return nil
 }
 
