@@ -99,7 +99,8 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 		eventDispatcherManager.SetMaintainerID(from)
 	}
 	response := &heartbeatpb.MaintainerBootstrapResponse{
-		Statuses: make([]*heartbeatpb.TableSpanStatus, 0, eventDispatcherManager.GetDispatcherMap().Len()),
+		ChangefeedID: maintainerBootstrapRequest.ChangefeedID,
+		Statuses:     make([]*heartbeatpb.TableSpanStatus, 0, eventDispatcherManager.GetDispatcherMap().Len()),
 	}
 	eventDispatcherManager.GetDispatcherMap().ForEach(func(tableSpan *common.TableSpan, tableEventDispatcher *dispatcher.TableEventDispatcher) {
 		response.Statuses = append(response.Statuses, &heartbeatpb.TableSpanStatus{
