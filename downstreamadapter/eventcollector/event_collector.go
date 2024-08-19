@@ -271,8 +271,8 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 
 func (c *EventCollector) updateMetrics(ctx context.Context) error {
 	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
 	go func() {
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():

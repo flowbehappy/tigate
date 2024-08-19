@@ -313,8 +313,8 @@ func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 func (c *eventBroker) updateMetrics(ctx context.Context) {
 	c.wg.Add(1)
 	ticker := time.NewTicker(time.Second * 5)
-	defer ticker.Stop()
 	go func() {
+		defer ticker.Stop()
 		defer c.wg.Done()
 		log.Info("fizz update metrics goroutine is started")
 		for {
