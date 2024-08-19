@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/cdcpb"
 	"github.com/pingcap/log"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -314,6 +315,9 @@ func (w *sharedRegionWorker) advanceTableSpan(ctx context.Context, batch resolve
 				zap.Uint64("lastResolvedTs", lastResolvedTs))
 			continue
 		}
+		log.Info("region worker advance resolvedTs",
+			zap.Uint64("regionID", regionID),
+			zap.Uint64("resolvedTs", batch.ts))
 
 		state.updateResolvedTs(batch.ts)
 	}
@@ -324,8 +328,8 @@ func (w *sharedRegionWorker) advanceTableSpan(ctx context.Context, batch resolve
 	if now-lastAdvance > int64(w.client.config.KVClientAdvanceIntervalInMs) && table.lastAdvanceTime.CompareAndSwap(lastAdvance, now) {
 		ts := table.rangeLock.ResolvedTs()
 		if ts > table.startTs {
-			// log.Info("region worker advance resolvedTs",
-			// 	zap.Any("time", oracle.GetTimeFromTS(ts)))
+			log.Info("region worker advance resolvedTs",
+				zap.Any("time", oracle.GetTimeFromTS(ts)))
 			revent := common.RegionFeedEvent{
 				Val: &common.RawKVEntry{
 					OpType: common.OpTypeResolved,
