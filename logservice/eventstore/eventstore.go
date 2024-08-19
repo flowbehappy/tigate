@@ -271,8 +271,6 @@ type DBBatchEvent struct {
 }
 
 func (e *eventStore) updateMetrics(ctx context.Context) error {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
 	ticker := time.NewTicker(1 * time.Second)
 	for {
 		select {
@@ -447,6 +445,7 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableS
 	e.schemaStore.RegisterDispatcher(dispatcherID, common.TableID(span.TableID), startTS)
 	log.Info("register schemastore done")
 	e.mu.Lock()
+	log.Info("register dispatcher lock done")
 	e.tables.ReplaceOrInsert(span, dispatcherID)
 	tableState := &tableState{
 		span:     span,
