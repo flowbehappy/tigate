@@ -445,6 +445,7 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableS
 		zap.String("span", tableSpan.String()),
 		zap.Uint64("startTS", uint64(startTS)))
 	e.schemaStore.RegisterDispatcher(dispatcherID, common.TableID(span.TableID), startTS)
+	log.Info("register schemastore done")
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.tables.ReplaceOrInsert(span, dispatcherID)
