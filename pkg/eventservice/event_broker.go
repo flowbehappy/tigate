@@ -314,7 +314,6 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 	c.wg.Add(1)
 	ticker := time.NewTicker(time.Second * 5)
 	go func() {
-		defer ticker.Stop()
 		defer c.wg.Done()
 		log.Info("update metrics goroutine is started")
 		for {
