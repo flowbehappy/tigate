@@ -76,7 +76,7 @@ type serverImpl struct {
 	PDClock     pdutil.Clock
 
 	tcpServer  tcpserver.TCPServer
-	subModules []SubModule
+	subModules []common.SubModule
 }
 
 // NewServer returns a new Server instance
@@ -124,7 +124,7 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 
 	schemaStore := schemastore.NewSchemaStore(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage)
 
-	c.subModules = []SubModule{
+	c.subModules = []common.SubModule{
 		nodeManager,
 		schemaStore,
 		NewElector(c),
@@ -165,7 +165,7 @@ func (c *serverImpl) Run(stdCtx context.Context) error {
 	})
 	// start all submodules
 	for _, sub := range c.subModules {
-		func(m SubModule) {
+		func(m common.SubModule) {
 			g.Go(func() error {
 				log.Info("starting sub watcher", zap.String("watcher", m.Name()))
 				return m.Run(stdCtx)

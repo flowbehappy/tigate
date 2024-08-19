@@ -13,6 +13,7 @@ import (
 	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -24,12 +25,10 @@ import (
 )
 
 type SchemaStore interface {
-	Name() string
-	Run(ctx context.Context) error
-	Close(ctx context.Context) error
+	common.SubModule
 
 	// TODO: add filter
-	GetAllPhysicalTables(snapTs common.Ts) ([]common.TableID, error)
+	GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]common.TableID, error)
 
 	// RegisterDispatcher register the dispatcher into the schema store.
 	// TODO: return a table info
@@ -143,7 +142,7 @@ func (s *schemaStore) Run(ctx context.Context) error {
 		return s.batchCommitAndUpdateWatermark(ctx)
 	})
 	eg.Go(func() error {
-		return s.ddlJobFetcher.run(ctx)
+		return s.ddlJobFetcher.puller.Run(ctx)
 	})
 	return eg.Wait()
 }
@@ -230,7 +229,7 @@ func isSystemDB(dbName string) bool {
 	return dbName == "mysql" || dbName == "sys"
 }
 
-func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]common.TableID, error) {
+func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]common.TableID, error) {
 	meta := logpuller.GetSnapshotMeta(s.storage, uint64(snapTs))
 	dbinfos, err := meta.ListDatabases()
 	if err != nil {
@@ -240,11 +239,12 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]common.TableID, 
 	tableIDs := make([]common.TableID, 0)
 
 	for _, dbinfo := range dbinfos {
-		if isSystemDB(dbinfo.Name.O) {
+		if isSystemDB(dbinfo.Name.O) ||
+			(filter != nil && filter.ShouldIgnoreSchema(dbinfo.Name.O)) {
 			continue
 		}
 		rawTables, err := meta.GetMetasByDBID(dbinfo.ID)
-		log.Info("get database", zap.Any("dbinfo", dbinfo), zap.Any("rawTables", rawTables))
+		log.Info("get database", zap.Any("dbinfo", dbinfo), zap.Int("rawTablesLen", len(rawTables)))
 		if err != nil {
 			log.Fatal("get tables failed", zap.Error(err))
 		}
@@ -256,6 +256,9 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]common.TableID, 
 			err := json.Unmarshal(rawTable.Value, tbName)
 			if err != nil {
 				log.Fatal("get table info failed", zap.Error(err))
+			}
+			if filter != nil && filter.ShouldIgnoreTable(dbinfo.Name.O, tbName.Name.O) {
+				continue
 			}
 			tableIDs = append(tableIDs, common.TableID(tbName.ID))
 		}

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/api"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pingcap/log"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
@@ -42,7 +43,7 @@ type HttpServer struct {
 
 // NewHttpServer create the HTTP server.
 // `lis` is a listener that gives us plain-text HTTP requests.
-func NewHttpServer(c *serverImpl, lis net.Listener) *HttpServer {
+func NewHttpServer(c *serverImpl, lis net.Listener) common.SubModule {
 	// LimitListener returns a Listener that accepts at most n simultaneous
 	// connections from the provided Listener. Connections that exceed the
 	// limit will wait in a queue and no new goroutines will be created until

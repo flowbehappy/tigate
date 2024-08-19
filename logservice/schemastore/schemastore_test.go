@@ -66,8 +66,7 @@ func TestBasicDDLJob(t *testing.T) {
 	upstream, err := upstreamManager.AddDefaultUpstream(pdEndpoints, &security.Credential{}, pdClient, etcdCli)
 	require.Nil(t, err)
 
-	schemaStore, err := NewSchemaStore(ctx, "/tmp/cdc", upstream.PDClient, upstream.RegionCache, upstream.PDClock, upstream.KVStorage)
-	require.Nil(t, err)
+	schemaStore := NewSchemaStore(ctx, "/tmp/cdc", upstream.PDClient, upstream.RegionCache, upstream.PDClock, upstream.KVStorage)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go schemaStore.Run(ctx)
@@ -75,7 +74,7 @@ func TestBasicDDLJob(t *testing.T) {
 	phy, logic, err := upstream.PDClient.GetTS(ctx)
 	require.Nil(t, err)
 	snapTs := oracle.ComposeTS(phy, logic)
-	tables, err := schemaStore.GetAllPhysicalTables(common.Ts(snapTs))
+	tables, err := schemaStore.GetAllPhysicalTables(common.Ts(snapTs), nil)
 	require.Nil(t, err)
 	log.Info("schema store get all tables", zap.Any("tables", tables))
 	fmt.Printf("all tables")
