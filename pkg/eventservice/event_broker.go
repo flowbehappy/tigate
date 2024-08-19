@@ -316,9 +316,11 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 	defer ticker.Stop()
 	go func() {
 		defer c.wg.Done()
+		log.Info("fizz update metrics goroutine is started")
 		for {
 			select {
 			case <-ctx.Done():
+				log.Info("update metrics goroutine is closing")
 				return
 			case <-ticker.C:
 				minResolvedTs := uint64(0)
