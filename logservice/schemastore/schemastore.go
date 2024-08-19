@@ -253,6 +253,7 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts, f filter.Filter) ([
 			if err != nil {
 				log.Fatal("get table info failed", zap.Error(err))
 			}
+			// TODO: support ignore sequence / forcereplicate / view cases
 			if f != nil && f.ShouldIgnoreTable(dbinfo.Name.O, tbName.Name.O) {
 				continue
 			}
