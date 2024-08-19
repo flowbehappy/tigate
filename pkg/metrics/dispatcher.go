@@ -46,7 +46,7 @@ var (
 	EventDispatcherManagerResolvedTsGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
-			Subsystem: "dispatcher",
+			Subsystem: "dispatchermanager",
 			Name:      "resolved_ts",
 			Help:      "Resolved ts of event dispatcher manager(changefeed)",
 		}, []string{"namespace", "changefeed"})
@@ -54,7 +54,7 @@ var (
 	EventDispatcherManagerResolvedTsLagGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
-			Subsystem: "dispatcher",
+			Subsystem: "dispatchermanager",
 			Name:      "resolved_ts_lag",
 			Help:      "Resolved ts lag of event dispatcher manager(changefeed) in seconds",
 		}, []string{"namespace", "changefeed"})
@@ -62,7 +62,7 @@ var (
 	EventDispatcherManagerCheckpointTsGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
-			Subsystem: "dispatcher",
+			Subsystem: "dispatchermanager",
 			Name:      "checkpoint_ts",
 			Help:      "Checkpoint ts of event dispatcher manager(changefeed)",
 		}, []string{"namespace", "changefeed"})
@@ -70,7 +70,7 @@ var (
 	EventDispatcherManagerCheckpointTsLagGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
-			Subsystem: "dispatcher",
+			Subsystem: "dispatchermanager",
 			Name:      "checkpoint_ts_lag",
 			Help:      "Checkpoint ts lag of event dispatcher manager(changefeed) in seconds",
 		}, []string{"namespace", "changefeed"})
