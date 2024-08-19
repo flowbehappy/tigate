@@ -28,6 +28,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -548,7 +549,7 @@ func writeSchemaSnapshotToDisk(db *pebble.DB, tiStore kv.Storage, ts common.Ts) 
 
 	databaseMap := make(DatabaseInfoMap, len(dbinfos))
 	for _, dbinfo := range dbinfos {
-		if isSystemDB(dbinfo.Name.O) {
+		if filter.IsSysSchema(dbinfo.Name.O) {
 			continue
 		}
 		batch := db.NewBatch()

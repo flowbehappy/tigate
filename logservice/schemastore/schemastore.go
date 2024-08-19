@@ -225,11 +225,7 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 	}
 }
 
-func isSystemDB(dbName string) bool {
-	return dbName == "mysql" || dbName == "sys"
-}
-
-func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]common.TableID, error) {
+func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts, f filter.Filter) ([]common.TableID, error) {
 	meta := logpuller.GetSnapshotMeta(s.storage, uint64(snapTs))
 	dbinfos, err := meta.ListDatabases()
 	if err != nil {
@@ -239,8 +235,8 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts, filter filter.Filte
 	tableIDs := make([]common.TableID, 0)
 
 	for _, dbinfo := range dbinfos {
-		if isSystemDB(dbinfo.Name.O) ||
-			(filter != nil && filter.ShouldIgnoreSchema(dbinfo.Name.O)) {
+		if filter.IsSysSchema(dbinfo.Name.O) ||
+			(f != nil && f.ShouldIgnoreSchema(dbinfo.Name.O)) {
 			continue
 		}
 		rawTables, err := meta.GetMetasByDBID(dbinfo.ID)
@@ -257,7 +253,7 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts, filter filter.Filte
 			if err != nil {
 				log.Fatal("get table info failed", zap.Error(err))
 			}
-			if filter != nil && filter.ShouldIgnoreTable(dbinfo.Name.O, tbName.Name.O) {
+			if f != nil && f.ShouldIgnoreTable(dbinfo.Name.O, tbName.Name.O) {
 				continue
 			}
 			tableIDs = append(tableIDs, common.TableID(tbName.ID))

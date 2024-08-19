@@ -24,8 +24,8 @@ import (
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 )
 
-// isSysSchema returns true if the given schema is a system schema
-func isSysSchema(db string) bool {
+// IsSysSchema returns true if the given schema is a system schema
+func IsSysSchema(db string) bool {
 	switch db {
 	// TiCDCSystemSchema is used by TiCDC only.
 	// Tables in TiCDCSystemSchema should not be replicated by cdc.
