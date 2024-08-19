@@ -278,7 +278,6 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 			e.mu.RLock()
-			defer e.mu.RUnlock()
 			log.Info("update metrics")
 			currentTime := e.pdClock.CurrentTime()
 			currentPhyTs := oracle.GetPhysical(currentTime)
@@ -292,6 +291,7 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 				metrics.EventStoreRegisterDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
 				metrics.EventStoreRegisterDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
 			}
+			e.mu.RUnlock()
 		}
 	}
 }
