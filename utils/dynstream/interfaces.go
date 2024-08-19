@@ -39,17 +39,26 @@ Dynamic stream is a stream that can process events with from different paths con
 We assume that the handler is CPU-bound and should not be blocked by any waiting. Otherwise, events from other paths will be blocked.
 */
 type DynamicStream[P Path, T Event, D Dest] interface {
+	// Start starts the dynamic stream.
+	// It should be called before any other methods.
 	Start()
+	// Close closes the dynamic stream.
+	// No more events can be sent to or processed by the stream after it is closed.
 	Close()
+
 	In() chan<- T
 	Wake() chan<- P
+
 	// AddPath adds the paths to the dynamic stream to receive the events.
 	// An event with a path not already added will be dropped.
+	//
 	// If some paths already exist, it will return an ErrorTypeDuplicate error. And no paths are added.
 	// If the stream is closed, it will return an ErrorTypeClosed error.
 	AddPath(paths ...PathAndDest[P, D]) error
+
 	// RemovePath removes the paths from the dynamic stream.
-	// Futher events with the paths will be dropped.
+	// After this call return, future events with the paths will be dropped, including events which are already in the stream.
+	//
 	// If some paths don't exist, it will return ErrorTypeNotExist errors. But the existed paths are still removed.
 	// If all paths are removed successfully, return nil.
 	RemovePath(paths ...P) []error
