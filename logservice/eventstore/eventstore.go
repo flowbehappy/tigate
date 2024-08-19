@@ -447,7 +447,6 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableS
 	e.schemaStore.RegisterDispatcher(dispatcherID, common.TableID(span.TableID), startTS)
 	log.Info("register schemastore done")
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.tables.ReplaceOrInsert(span, dispatcherID)
 	tableState := &tableState{
 		span:     span,
@@ -458,6 +457,7 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableS
 	tableState.ch = e.channels[chIndex]
 	tableState.watermark.Store(uint64(startTS))
 	e.spans[dispatcherID] = tableState
+	e.mu.Unlock()
 	// realSpan := tablepb.Span{
 	// 	TableID:  tablepb.TableID(span.TableID),
 	// 	StartKey: span.StartKey,
