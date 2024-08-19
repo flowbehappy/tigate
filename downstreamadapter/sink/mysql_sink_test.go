@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
-	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -46,14 +46,13 @@ func TestMysqlSinkBasicFunctionality(t *testing.T) {
 	mysqlSink := NewMysqlSink(model.DefaultChangeFeedID("test1"), 8, writer.NewMysqlConfig(), db)
 	assert.NotNil(t, mysqlSink)
 
-	tableSpan := common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1}}
-	mysqlSink.AddTableSpan(&tableSpan)
+	tableProgress := types.NewTableProgress()
 
-	ts, isEmpty := mysqlSink.GetCheckpointTs(&tableSpan)
+	ts, isEmpty := tableProgress.GetCheckpointTs()
 	require.NotEqual(t, ts, 0)
 	require.Equal(t, isEmpty, true)
 
-	mysqlSink.AddDDLAndSyncPointEvent(&tableSpan, &common.TxnEvent{
+	mysqlSink.AddDDLAndSyncPointEvent(&common.TxnEvent{
 		StartTs:  1,
 		CommitTs: 1,
 		DDLEvent: &common.DDLEvent{
@@ -66,9 +65,9 @@ func TestMysqlSinkBasicFunctionality(t *testing.T) {
 			},
 			CommitTS: 1,
 		},
-	})
+	}, tableProgress)
 
-	mysqlSink.AddDMLEvent(&tableSpan, &common.TxnEvent{
+	mysqlSink.AddDMLEvent(&common.TxnEvent{
 		StartTs:  1,
 		CommitTs: 2,
 		Rows: []*common.RowChangedEvent{
@@ -83,11 +82,12 @@ func TestMysqlSinkBasicFunctionality(t *testing.T) {
 					{Name: "id", Value: 1, Flag: common.HandleKeyFlag | common.PrimaryKeyFlag},
 					{Name: "name", Value: "Alice"},
 				},
+				PhysicalTableID: 1,
 			},
 		},
-	})
+	}, tableProgress)
 
-	mysqlSink.AddDMLEvent(&tableSpan, &common.TxnEvent{
+	mysqlSink.AddDMLEvent(&common.TxnEvent{
 		StartTs:  2,
 		CommitTs: 3,
 		Rows: []*common.RowChangedEvent{
@@ -106,13 +106,14 @@ func TestMysqlSinkBasicFunctionality(t *testing.T) {
 					{Name: "id", Value: 1, Flag: common.HandleKeyFlag | common.PrimaryKeyFlag},
 					{Name: "name", Value: "Bob"},
 				},
+				PhysicalTableID: 1,
 			},
 		},
-	})
+	}, tableProgress)
 
 	time.Sleep(1 * time.Second)
 
-	mysqlSink.PassDDLAndSyncPointEvent(&tableSpan, &common.TxnEvent{
+	mysqlSink.PassDDLAndSyncPointEvent(&common.TxnEvent{
 		StartTs:  3,
 		CommitTs: 4,
 		DDLEvent: &common.DDLEvent{
@@ -125,14 +126,12 @@ func TestMysqlSinkBasicFunctionality(t *testing.T) {
 			},
 			CommitTS: 4,
 		},
-	})
+	}, tableProgress)
 
 	err = mock.ExpectationsWereMet()
 	require.NoError(t, err)
 
-	require.Equal(t, mysqlSink.IsEmpty(&tableSpan), true)
-
-	ts, isEmpty = mysqlSink.GetCheckpointTs(&tableSpan)
+	ts, isEmpty = tableProgress.GetCheckpointTs()
 	require.Equal(t, ts, uint64(3))
 	require.Equal(t, isEmpty, true)
 

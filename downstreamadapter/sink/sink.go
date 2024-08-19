@@ -13,16 +13,19 @@
 
 package sink
 
-import "github.com/flowbehappy/tigate/pkg/common"
+import (
+	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
+	"github.com/flowbehappy/tigate/pkg/common"
+)
 
 type Sink interface {
-	AddDMLEvent(tableSpan *common.TableSpan, event *common.TxnEvent)
-	AddDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *common.TxnEvent)
-	PassDDLAndSyncPointEvent(tableSpan *common.TableSpan, event *common.TxnEvent)
-	IsEmpty(tableSpan *common.TableSpan) bool
-	AddTableSpan(tableSpan *common.TableSpan)
-	RemoveTableSpan(tableSpan *common.TableSpan)
-	StopTableSpan(tableSpan *common.TableSpan)
-	GetCheckpointTs(tableSpan *common.TableSpan) (uint64, bool)
+	AddDMLEvent(event *common.TxnEvent, tableProgress *types.TableProgress)
+	AddDDLAndSyncPointEvent(event *common.TxnEvent, tableProgress *types.TableProgress)
+	PassDDLAndSyncPointEvent(event *common.TxnEvent, tableProgress *types.TableProgress)
+	// IsEmpty(tableSpan *common.TableSpan) bool
+	// AddTableSpan(tableSpan *common.TableSpan)
+	// RemoveTableSpan(tableSpan *common.TableSpan)
+	// StopTableSpan(tableSpan *common.TableSpan)
+	// GetCheckpointTs(tableSpan *common.TableSpan) (uint64, bool)
 	Close()
 }

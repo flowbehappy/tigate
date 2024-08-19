@@ -376,7 +376,7 @@ func (w *MysqlWriter) multiStmtExecute(
 	//start := time.Now()
 	_, err := tx.ExecContext(ctx, multiStmtSQL, multiStmtArgs...)
 	if err != nil {
-		log.Error("ExecContext", zap.Error(err), zap.Any("dmls", dmls))
+		log.Error("ExecContext", zap.Error(err), zap.Any("multiStmtSQL", multiStmtSQL), zap.Any("multiStmtArgs", multiStmtArgs))
 		if rbErr := tx.Rollback(); rbErr != nil {
 			if errors.Cause(rbErr) != context.Canceled {
 				log.Warn("failed to rollback txn", zap.Error(rbErr))
