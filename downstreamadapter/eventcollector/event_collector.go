@@ -281,7 +281,7 @@ func (c *EventCollector) updateMetrics(ctx context.Context) error {
 				minResolvedTs := uint64(0)
 				c.dispatcherMap.RLock()
 				for _, d := range c.dispatcherMap.m {
-					if minResolvedTs == uint64(0) || d.GetResolvedTs() < minResolvedTs {
+					if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
 						minResolvedTs = d.GetResolvedTs()
 					}
 				}

@@ -320,14 +320,17 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 				return
 			case <-ticker.C:
 				minResolvedTs := uint64(0)
+				iterCount := 0
 				c.dispatchers.Range(func(key, value interface{}) bool {
 					dispatcher := value.(*dispatcherStat)
 					resolvedTs := dispatcher.spanSubscription.watermark.Load()
-					if minResolvedTs == uint64(0) || resolvedTs < minResolvedTs {
+					if minResolvedTs == 0 || resolvedTs < minResolvedTs {
 						minResolvedTs = resolvedTs
 					}
+					iterCount++
 					return true
 				})
+				log.Info("update metrics", zap.Uint64("minResolvedTs", minResolvedTs), zap.Int("dispatcherCount", iterCount))
 				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
 				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
 				c.metricEventServiceResolvedTs.Set(float64(phyResolvedTs))
