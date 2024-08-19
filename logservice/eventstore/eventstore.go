@@ -420,11 +420,9 @@ func (e *eventStore) writeEvent(span heartbeatpb.TableSpan, raw *common.RawKVEnt
 		tableState.observer(raw)
 	} else {
 		tableState.resolvedTs.Store(raw.CRTs)
+		log.Info("eventStore receive resolve ts",
+			zap.Any("time", oracle.GetTimeFromTS(raw.CRTs)))
 	}
-	// else {
-	// 	log.Info("eventStore receive resolve ts",
-	// 		zap.Any("time", oracle.GetTimeFromTS(raw.CRTs)))
-	// }
 	tableState.ch <- eventWithTableID{span: span, raw: raw}
 }
 
