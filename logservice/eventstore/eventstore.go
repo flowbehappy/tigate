@@ -418,6 +418,7 @@ func (e *eventStore) writeEvent(span heartbeatpb.TableSpan, raw *common.RawKVEnt
 	}
 	if !raw.IsResolved() {
 		tableState.observer(raw)
+		log.Info("eventStore receive event")
 	} else {
 		tableState.resolvedTs.Store(raw.CRTs)
 		log.Info("eventStore receive resolve ts",
