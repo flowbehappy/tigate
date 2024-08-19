@@ -285,7 +285,6 @@ func (c *EventCollector) updateMetrics(ctx context.Context) error {
 						minResolvedTs = d.GetResolvedTs()
 					}
 				}
-				log.Info("fizz update resolved ts lag", zap.Uint64("minResolvedTs", minResolvedTs))
 				if minResolvedTs == 0 {
 					continue
 				}

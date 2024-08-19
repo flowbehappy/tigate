@@ -316,7 +316,7 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 	go func() {
 		defer ticker.Stop()
 		defer c.wg.Done()
-		log.Info("fizz update metrics goroutine is started")
+		log.Info("update metrics goroutine is started")
 		for {
 			select {
 			case <-ctx.Done():
@@ -334,7 +334,6 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 					iterCount++
 					return true
 				})
-				log.Info("fizz update metrics", zap.Uint64("minResolvedTs", minResolvedTs), zap.Int("dispatcherCount", iterCount))
 				if minResolvedTs == 0 {
 					continue
 				}
