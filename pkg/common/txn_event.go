@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"unsafe"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	timodel "github.com/pingcap/tiflow/cdc/model"
@@ -44,6 +45,10 @@ type TxnEvent struct {
 	PostTxnFlushed func() `msg:"-"`
 }
 
+func (w *TxnEvent) GetDDLEvent() *DDLEvent {
+	return w.DDLEvent
+}
+
 func (w *TxnEvent) String() string {
 	return fmt.Sprintf("TxnEvent{StartTs: %d, CommitTs: %d, Rows: %d, DDLEvent: %v}", w.StartTs, w.CommitTs, len(w.Rows), w.DDLEvent)
 }
@@ -75,17 +80,21 @@ func (e *TxnEvent) IsDDLEvent() bool {
 	return e.DDLEvent != nil
 }
 
-func (e *TxnEvent) IsCrossTableDDL() bool {
+func (e *TxnEvent) IsSingleTableDDL() bool {
 	ddlType := e.GetDDLType()
-	return ddlType == model.ActionCreateSchema || ddlType == model.ActionDropSchema ||
-		ddlType == model.ActionDropTable ||
-		ddlType == model.ActionTruncateTable || ddlType == model.ActionRenameTable ||
-		ddlType == model.ActionAddTablePartition || ddlType == model.ActionDropTablePartition ||
-		ddlType == model.ActionTruncateTablePartition || ddlType == model.ActionRecoverTable ||
-		ddlType == model.ActionRepairTable || ddlType == model.ActionExchangeTablePartition ||
-		ddlType == model.ActionRemovePartitioning || ddlType == model.ActionRenameTables ||
-		ddlType == model.ActionCreateTables || ddlType == model.ActionReorganizePartition ||
-		ddlType == model.ActionFlashbackCluster || ddlType == model.ActionMultiSchemaChange
+	return ddlType == model.ActionAddColumn || ddlType == model.ActionDropColumn || ddlType == model.ActionModifyColumn || ddlType == model.ActionAddIndex || ddlType == model.ActionDropIndex || ddlType == model.ActionModifyTableComment || ddlType == model.ActionRebaseAutoID || ddlType == model.ActionSetDefaultValue || ddlType == model.ActionShardRowID || ddlType == model.ActionModifyTableCharsetAndCollate || ddlType == model.ActionCreateView || ddlType == model.ActionDropView || ddlType == model.ActionAddForeignKey || ddlType == model.ActionDropForeignKey || ddlType == model.ActionRenameIndex || ddlType == model.ActionLockTable || ddlType == model.ActionUnlockTable || ddlType == model.ActionSetTiFlashReplica || ddlType == model.ActionAddPrimaryKey || ddlType == model.ActionDropPrimaryKey || ddlType == model.ActionAddColumns || ddlType == model.ActionDropColumns || ddlType == model.ActionModifyTableAutoIdCache || ddlType == model.ActionRebaseAutoRandomBase || ddlType == model.ActionAlterIndexVisibility || ddlType == model.ActionAddCheckConstraint || ddlType == model.ActionDropCheckConstraint || ddlType == model.ActionAlterCheckConstraint || ddlType == model.ActionDropIndexes || ddlType == model.ActionAlterTableAttributes || ddlType == model.ActionAlterCacheTable || ddlType == model.ActionAlterNoCacheTable || ddlType == model.ActionMultiSchemaChange || ddlType == model.ActionAlterTTLInfo || ddlType == model.ActionAlterTTLRemove || ddlType == model.ActionRepairTable
+}
+
+func (e *TxnEvent) GetBlockedTableSpan() []*heartbeatpb.TableSpan {
+	return nil
+}
+
+func (e *TxnEvent) GetNeedDroppedTableSpan() []*heartbeatpb.TableSpan {
+	return nil
+}
+
+func (e *TxnEvent) GetNeedAddedTableSpan() []*heartbeatpb.TableSpan {
+	return nil
 }
 
 func (e *TxnEvent) IsSyncPointEvent() bool {

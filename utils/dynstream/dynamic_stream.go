@@ -643,7 +643,11 @@ func (d *dynamicStreamImpl[P, T, D]) distributor() {
 			case typeRemovePath:
 				remove := cmd.cmd.(*removePathCmd[P])
 				for _, p := range remove.paths {
-					delete(pathMap, p)
+					pi, ok := pathMap[p]
+					if ok {
+						pi.removed = true
+						delete(pathMap, p)
+					}
 				}
 				remove.wg.Done()
 			case typeArrangeStream:

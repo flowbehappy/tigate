@@ -17,7 +17,6 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/pkg/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/tiflow/cdc/model"
 )
@@ -48,13 +47,9 @@ func (r *ReplicaSet) GetID() scheduler.InferiorID {
 
 func (r *ReplicaSet) UpdateStatus(status scheduler.InferiorStatus) {
 	r.status = status.(*ReplicaSetStatus)
-	if r.status != nil {
+	if r.status != nil && r.status.CheckpointTs > r.checkpointTs {
 		r.checkpointTs = r.status.CheckpointTs
 	}
-}
-
-func (r *ReplicaSet) IsAlive() bool {
-	return true
 }
 
 func (r *ReplicaSet) NewInferiorStatus(state heartbeatpb.ComponentState) scheduler.InferiorStatus {
@@ -65,7 +60,7 @@ func (r *ReplicaSet) NewInferiorStatus(state heartbeatpb.ComponentState) schedul
 	}
 }
 
-func (r *ReplicaSet) NewAddInferiorMessage(server model.CaptureID, isSecondary bool) rpc.Message {
+func (r *ReplicaSet) NewAddInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
 	return messaging.NewTargetMessage(messaging.ServerId(server),
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{
@@ -79,11 +74,10 @@ func (r *ReplicaSet) NewAddInferiorMessage(server model.CaptureID, isSecondary b
 				StartTs: r.checkpointTs,
 			},
 			ScheduleAction: heartbeatpb.ScheduleAction_Create,
-			IsSecondary:    isSecondary,
 		})
 }
 
-func (r *ReplicaSet) NewRemoveInferiorMessage(server model.CaptureID) rpc.Message {
+func (r *ReplicaSet) NewRemoveInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
 	return messaging.NewTargetMessage(messaging.ServerId(server),
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{

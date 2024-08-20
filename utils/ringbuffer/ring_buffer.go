@@ -82,6 +82,12 @@ func (rb *RingBuffer[T]) PushBack(item T) {
 
 // Push to front
 func (rb *RingBuffer[T]) PushFront(item T) {
+	// equivalent to
+	// if rb.front == 0 {
+	//     rb.front = rb.capacity
+	// } else {
+	//     rb.front--
+	// }
 	rb.front = (rb.front + rb.capacity) % (rb.capacity + 1)
 	rb.buffer[rb.front] = item
 
@@ -117,7 +123,7 @@ func (rb *RingBuffer[T]) PopBack() (T, bool) {
 }
 
 func (rb *RingBuffer[T]) IsFull() bool {
-	return (rb.back+1)%rb.capacity == rb.front
+	return (rb.back+1)%(rb.capacity+1) == rb.front
 }
 
 func (rb *RingBuffer[T]) IsEmpty() bool {

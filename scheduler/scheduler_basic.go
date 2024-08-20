@@ -192,11 +192,6 @@ func (b *BasicScheduler) newBurstRemoveInferiors(
 	removeTasks := make([]*ScheduleTask, 0, len(rmInferiors))
 	for _, id := range rmInferiors {
 		state, _ := stateMachines.Get(id)
-		var captureID string
-		for server := range state.Servers {
-			captureID = server
-			break
-		}
 		if state.Primary == "" {
 			log.Warn("primary or secondary not found for removed inferior,"+
 				"this may happen if the server shutdown",
@@ -207,7 +202,7 @@ func (b *BasicScheduler) newBurstRemoveInferiors(
 		removeTasks = append(removeTasks, &ScheduleTask{
 			RemoveInferior: &RemoveInferior{
 				ID:        id,
-				CaptureID: captureID,
+				CaptureID: state.Primary,
 			},
 		})
 		// log.Info("burst remove inferior",

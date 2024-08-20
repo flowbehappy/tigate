@@ -19,7 +19,6 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/pkg/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -53,7 +52,6 @@ func newChangefeed(c *coordinator,
 	bytes, err := json.Marshal(info)
 	if err != nil {
 		log.Panic("unable to marshal changefeed config",
-			zap.Any("config", info),
 			zap.Error(err))
 	}
 	return &changefeed{
@@ -78,7 +76,9 @@ func (c *changefeed) GetID() scheduler.InferiorID {
 
 func (c *changefeed) UpdateStatus(status scheduler.InferiorStatus) {
 	c.State = status.(*MaintainerStatus)
-	c.checkpointTs = c.State.CheckpointTs
+	if c.State != nil && c.State.CheckpointTs > c.checkpointTs {
+		c.checkpointTs = c.State.CheckpointTs
+	}
 	c.lastHeartBeat = time.Now()
 }
 func (c *changefeed) SetStateMachine(state *scheduler.StateMachine) {
@@ -107,36 +107,23 @@ func (c *changefeed) NewInferiorStatus(status heartbeatpb.ComponentState) schedu
 	}}
 }
 
-func (c *changefeed) IsAlive() bool {
-	return true
-}
-
-func (c *changefeed) NewAddInferiorMessage(server model.CaptureID, secondary bool) rpc.Message {
+func (c *changefeed) NewAddInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
 	return messaging.NewTargetMessage(messaging.ServerId(server),
 		messaging.MaintainerManagerTopic,
-		&heartbeatpb.DispatchMaintainerRequest{
-			AddMaintainers: []*heartbeatpb.AddMaintainerRequest{
-				{
-					Id:           c.ID.ID,
-					IsSecondary:  secondary,
-					CheckpointTs: c.checkpointTs,
-					Config:       c.configBytes,
-				},
-			},
+		&heartbeatpb.AddMaintainerRequest{
+			Id:           c.ID.ID,
+			CheckpointTs: c.checkpointTs,
+			Config:       c.configBytes,
 		})
 }
 
-func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) rpc.Message {
+func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
 	cf, ok := c.coordinator.lastState.Changefeeds[c.ID]
 	cascade := !ok || cf == nil || !shouldRunChangefeed(cf.Info.State)
 	return messaging.NewTargetMessage(messaging.ServerId(server),
 		messaging.MaintainerManagerTopic,
-		&heartbeatpb.DispatchMaintainerRequest{
-			RemoveMaintainers: []*heartbeatpb.RemoveMaintainerRequest{
-				{
-					Id:      c.ID.ID,
-					Cascade: cascade,
-				},
-			},
+		&heartbeatpb.RemoveMaintainerRequest{
+			Id:      c.ID.ID,
+			Cascade: cascade,
 		})
 }

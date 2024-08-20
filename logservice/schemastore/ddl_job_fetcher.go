@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
-	"golang.org/x/sync/errgroup"
 )
 
 type ddlJobFetcher struct {
@@ -83,14 +82,6 @@ func newDDLJobFetcher(
 	ddlJobFetcher.puller = logpuller.NewLogPullerMultiSpan(client, pdClock, ddlSpans, startTs, ddlJobFetcher.input, pullerConfig)
 
 	return ddlJobFetcher
-}
-
-func (p *ddlJobFetcher) run(ctx context.Context) error {
-	eg, ctx := errgroup.WithContext(ctx)
-	eg.Go(func() error {
-		return p.puller.Run(ctx)
-	})
-	return eg.Wait()
 }
 
 func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) error {

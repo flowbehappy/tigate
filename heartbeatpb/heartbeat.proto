@@ -9,15 +9,6 @@ message TableSpan {
 	bytes EndKey    = 3;
 }
 
-// message TableSpanProgress {
-//     TableSpan span = 1;
-//     bool IsBlocked      = 2;
-// 	uint64 BlockTs         = 3;
-// 	repeated TableSpan BlockTableSpan = 4;
-// 	uint64 CheckpointTs    = 5;
-//     string dispatcherID = 6;
-// }
-
 message HeartBeatRequest {
     string changefeedID = 1;
     Watermark watermark = 2;
@@ -33,28 +24,25 @@ message Watermark {
 }
 
 enum Action {
-    None = 0;
-    Write = 1;
-    Pass = 2;
+    Write = 0;
+    Pass = 1;
 }
 
-message TableProgress {
+message DispatcherAction {
     TableSpan span = 1;
-    bool IsBlocked      = 2;
-    uint64 BlockTs         = 3;
-    uint64 CheckpointTs    = 4;
+    Action action = 2;
+    uint64 CommitTs = 3; // DDLCommitTs
 }
 
-// 这名字重新取，我真的要吐了
-message TableProgressInfo {
-    TableSpan span = 1; // for which dispatcher
-    repeated TableProgress tableProgresses = 2; // 救命了这名字取得
-    Action action = 3;
-    ComponentState scheduler_status = 4;
+message ACK {
+    TableSpan span = 1;
+    uint64 CommitTs = 2; // DDLCommitTs
 }
+
 message HeartBeatResponse {
-    repeated TableProgressInfo info = 1;
+    repeated DispatcherAction actions = 1;
     string changefeedID = 2;
+    repeated ACK acks = 3; // only return when received State info in heartbeat request
 }
 
 enum ScheduleAction {
@@ -71,7 +59,6 @@ message ScheduleDispatcherRequest {
     string changefeedID = 1;
     DispatcherConfig config = 2;
     ScheduleAction scheduleAction = 3;
-    bool is_secondary = 4;
 }
 
 message MaintainerHeartbeat {
@@ -95,16 +82,10 @@ message CoordinatorBootstrapResponse {
     repeated MaintainerStatus statuses = 1;
 }
 
-message DispatchMaintainerRequest {
-    repeated AddMaintainerRequest add_maintainers = 1;
-    repeated RemoveMaintainerRequest remove_maintainers = 2;
-}
-
 message AddMaintainerRequest  {
     string id = 1;
     bytes config = 2;
-    bool is_secondary = 3;
-    uint64 checkpoint_ts = 4;
+    uint64 checkpoint_ts = 3;
 }
 
 message RemoveMaintainerRequest  {
@@ -115,6 +96,7 @@ message RemoveMaintainerRequest  {
 message MaintainerBootstrapRequest {
     string changefeedID = 1;
     bytes config = 2;
+    bool createTableTriggerEventDispatcher = 3;
 }
 
 message MaintainerBootstrapResponse {
@@ -131,20 +113,26 @@ message MaintainerCloseResponse {
     bool success = 2;
 }
 
+message State {
+    bool IsBlocked      = 1;
+    uint64 BlockTs         = 2;
+    repeated TableSpan BlockTableSpan = 3;
+    repeated TableSpan NeedDroppedTableSpan =4;
+    repeated TableSpan NeedAddedTableSpan = 5;
+}
+
 message TableSpanStatus {
     TableSpan span = 1; // for which dispatcher
     ComponentState component_status = 2;
+    State state = 3;
     uint64 checkpoint_ts = 4;
 }
 
 enum ComponentState {
     Unknown = 0;
     Absent = 1;
-    Preparing = 2;
-    Prepared = 3;
-    Working = 4;
-    Stopping = 5;
-    Stopped = 6;
+    Working = 2;
+    Stopped = 3;
 }
 
 message RunningError {

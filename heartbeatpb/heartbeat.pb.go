@@ -25,21 +25,18 @@ const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 type Action int32
 
 const (
-	Action_None  Action = 0
-	Action_Write Action = 1
-	Action_Pass  Action = 2
+	Action_Write Action = 0
+	Action_Pass  Action = 1
 )
 
 var Action_name = map[int32]string{
-	0: "None",
-	1: "Write",
-	2: "Pass",
+	0: "Write",
+	1: "Pass",
 }
 
 var Action_value = map[string]int32{
-	"None":  0,
-	"Write": 1,
-	"Pass":  2,
+	"Write": 0,
+	"Pass":  1,
 }
 
 func (x Action) String() string {
@@ -78,33 +75,24 @@ func (ScheduleAction) EnumDescriptor() ([]byte, []int) {
 type ComponentState int32
 
 const (
-	ComponentState_Unknown   ComponentState = 0
-	ComponentState_Absent    ComponentState = 1
-	ComponentState_Preparing ComponentState = 2
-	ComponentState_Prepared  ComponentState = 3
-	ComponentState_Working   ComponentState = 4
-	ComponentState_Stopping  ComponentState = 5
-	ComponentState_Stopped   ComponentState = 6
+	ComponentState_Unknown ComponentState = 0
+	ComponentState_Absent  ComponentState = 1
+	ComponentState_Working ComponentState = 2
+	ComponentState_Stopped ComponentState = 3
 )
 
 var ComponentState_name = map[int32]string{
 	0: "Unknown",
 	1: "Absent",
-	2: "Preparing",
-	3: "Prepared",
-	4: "Working",
-	5: "Stopping",
-	6: "Stopped",
+	2: "Working",
+	3: "Stopped",
 }
 
 var ComponentState_value = map[string]int32{
-	"Unknown":   0,
-	"Absent":    1,
-	"Preparing": 2,
-	"Prepared":  3,
-	"Working":   4,
-	"Stopping":  5,
-	"Stopped":   6,
+	"Unknown": 0,
+	"Absent":  1,
+	"Working": 2,
+	"Stopped": 3,
 }
 
 func (x ComponentState) String() string {
@@ -311,25 +299,24 @@ func (m *Watermark) GetResolvedTs() uint64 {
 	return 0
 }
 
-type TableProgress struct {
-	Span         *TableSpan `protobuf:"bytes,1,opt,name=span,proto3" json:"span,omitempty"`
-	IsBlocked    bool       `protobuf:"varint,2,opt,name=IsBlocked,proto3" json:"IsBlocked,omitempty"`
-	BlockTs      uint64     `protobuf:"varint,3,opt,name=BlockTs,proto3" json:"BlockTs,omitempty"`
-	CheckpointTs uint64     `protobuf:"varint,4,opt,name=CheckpointTs,proto3" json:"CheckpointTs,omitempty"`
+type DispatcherAction struct {
+	Span     *TableSpan `protobuf:"bytes,1,opt,name=span,proto3" json:"span,omitempty"`
+	Action   Action     `protobuf:"varint,2,opt,name=action,proto3,enum=heartbeatpb.Action" json:"action,omitempty"`
+	CommitTs uint64     `protobuf:"varint,3,opt,name=CommitTs,proto3" json:"CommitTs,omitempty"`
 }
 
-func (m *TableProgress) Reset()         { *m = TableProgress{} }
-func (m *TableProgress) String() string { return proto.CompactTextString(m) }
-func (*TableProgress) ProtoMessage()    {}
-func (*TableProgress) Descriptor() ([]byte, []int) {
+func (m *DispatcherAction) Reset()         { *m = DispatcherAction{} }
+func (m *DispatcherAction) String() string { return proto.CompactTextString(m) }
+func (*DispatcherAction) ProtoMessage()    {}
+func (*DispatcherAction) Descriptor() ([]byte, []int) {
 	return fileDescriptor_6d584080fdadb670, []int{3}
 }
-func (m *TableProgress) XXX_Unmarshal(b []byte) error {
+func (m *DispatcherAction) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-func (m *TableProgress) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+func (m *DispatcherAction) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
-		return xxx_messageInfo_TableProgress.Marshal(b, m, deterministic)
+		return xxx_messageInfo_DispatcherAction.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
 		n, err := m.MarshalToSizedBuffer(b)
@@ -339,118 +326,95 @@ func (m *TableProgress) XXX_Marshal(b []byte, deterministic bool) ([]byte, error
 		return b[:n], nil
 	}
 }
-func (m *TableProgress) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_TableProgress.Merge(m, src)
+func (m *DispatcherAction) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_DispatcherAction.Merge(m, src)
 }
-func (m *TableProgress) XXX_Size() int {
+func (m *DispatcherAction) XXX_Size() int {
 	return m.Size()
 }
-func (m *TableProgress) XXX_DiscardUnknown() {
-	xxx_messageInfo_TableProgress.DiscardUnknown(m)
+func (m *DispatcherAction) XXX_DiscardUnknown() {
+	xxx_messageInfo_DispatcherAction.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_TableProgress proto.InternalMessageInfo
+var xxx_messageInfo_DispatcherAction proto.InternalMessageInfo
 
-func (m *TableProgress) GetSpan() *TableSpan {
+func (m *DispatcherAction) GetSpan() *TableSpan {
 	if m != nil {
 		return m.Span
 	}
 	return nil
 }
 
-func (m *TableProgress) GetIsBlocked() bool {
-	if m != nil {
-		return m.IsBlocked
-	}
-	return false
-}
-
-func (m *TableProgress) GetBlockTs() uint64 {
-	if m != nil {
-		return m.BlockTs
-	}
-	return 0
-}
-
-func (m *TableProgress) GetCheckpointTs() uint64 {
-	if m != nil {
-		return m.CheckpointTs
-	}
-	return 0
-}
-
-// 这名字重新取，我真的要吐了
-type TableProgressInfo struct {
-	Span            *TableSpan       `protobuf:"bytes,1,opt,name=span,proto3" json:"span,omitempty"`
-	TableProgresses []*TableProgress `protobuf:"bytes,2,rep,name=tableProgresses,proto3" json:"tableProgresses,omitempty"`
-	Action          Action           `protobuf:"varint,3,opt,name=action,proto3,enum=heartbeatpb.Action" json:"action,omitempty"`
-	SchedulerStatus ComponentState   `protobuf:"varint,4,opt,name=scheduler_status,json=schedulerStatus,proto3,enum=heartbeatpb.ComponentState" json:"scheduler_status,omitempty"`
-}
-
-func (m *TableProgressInfo) Reset()         { *m = TableProgressInfo{} }
-func (m *TableProgressInfo) String() string { return proto.CompactTextString(m) }
-func (*TableProgressInfo) ProtoMessage()    {}
-func (*TableProgressInfo) Descriptor() ([]byte, []int) {
-	return fileDescriptor_6d584080fdadb670, []int{4}
-}
-func (m *TableProgressInfo) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *TableProgressInfo) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_TableProgressInfo.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *TableProgressInfo) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_TableProgressInfo.Merge(m, src)
-}
-func (m *TableProgressInfo) XXX_Size() int {
-	return m.Size()
-}
-func (m *TableProgressInfo) XXX_DiscardUnknown() {
-	xxx_messageInfo_TableProgressInfo.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_TableProgressInfo proto.InternalMessageInfo
-
-func (m *TableProgressInfo) GetSpan() *TableSpan {
-	if m != nil {
-		return m.Span
-	}
-	return nil
-}
-
-func (m *TableProgressInfo) GetTableProgresses() []*TableProgress {
-	if m != nil {
-		return m.TableProgresses
-	}
-	return nil
-}
-
-func (m *TableProgressInfo) GetAction() Action {
+func (m *DispatcherAction) GetAction() Action {
 	if m != nil {
 		return m.Action
 	}
-	return Action_None
+	return Action_Write
 }
 
-func (m *TableProgressInfo) GetSchedulerStatus() ComponentState {
+func (m *DispatcherAction) GetCommitTs() uint64 {
 	if m != nil {
-		return m.SchedulerStatus
+		return m.CommitTs
 	}
-	return ComponentState_Unknown
+	return 0
+}
+
+type ACK struct {
+	Span     *TableSpan `protobuf:"bytes,1,opt,name=span,proto3" json:"span,omitempty"`
+	CommitTs uint64     `protobuf:"varint,2,opt,name=CommitTs,proto3" json:"CommitTs,omitempty"`
+}
+
+func (m *ACK) Reset()         { *m = ACK{} }
+func (m *ACK) String() string { return proto.CompactTextString(m) }
+func (*ACK) ProtoMessage()    {}
+func (*ACK) Descriptor() ([]byte, []int) {
+	return fileDescriptor_6d584080fdadb670, []int{4}
+}
+func (m *ACK) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *ACK) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_ACK.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *ACK) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ACK.Merge(m, src)
+}
+func (m *ACK) XXX_Size() int {
+	return m.Size()
+}
+func (m *ACK) XXX_DiscardUnknown() {
+	xxx_messageInfo_ACK.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_ACK proto.InternalMessageInfo
+
+func (m *ACK) GetSpan() *TableSpan {
+	if m != nil {
+		return m.Span
+	}
+	return nil
+}
+
+func (m *ACK) GetCommitTs() uint64 {
+	if m != nil {
+		return m.CommitTs
+	}
+	return 0
 }
 
 type HeartBeatResponse struct {
-	Info         []*TableProgressInfo `protobuf:"bytes,1,rep,name=info,proto3" json:"info,omitempty"`
-	ChangefeedID string               `protobuf:"bytes,2,opt,name=changefeedID,proto3" json:"changefeedID,omitempty"`
+	Actions      []*DispatcherAction `protobuf:"bytes,1,rep,name=actions,proto3" json:"actions,omitempty"`
+	ChangefeedID string              `protobuf:"bytes,2,opt,name=changefeedID,proto3" json:"changefeedID,omitempty"`
+	Acks         []*ACK              `protobuf:"bytes,3,rep,name=acks,proto3" json:"acks,omitempty"`
 }
 
 func (m *HeartBeatResponse) Reset()         { *m = HeartBeatResponse{} }
@@ -486,9 +450,9 @@ func (m *HeartBeatResponse) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_HeartBeatResponse proto.InternalMessageInfo
 
-func (m *HeartBeatResponse) GetInfo() []*TableProgressInfo {
+func (m *HeartBeatResponse) GetActions() []*DispatcherAction {
 	if m != nil {
-		return m.Info
+		return m.Actions
 	}
 	return nil
 }
@@ -498,6 +462,13 @@ func (m *HeartBeatResponse) GetChangefeedID() string {
 		return m.ChangefeedID
 	}
 	return ""
+}
+
+func (m *HeartBeatResponse) GetAcks() []*ACK {
+	if m != nil {
+		return m.Acks
+	}
+	return nil
 }
 
 type DispatcherConfig struct {
@@ -556,7 +527,6 @@ type ScheduleDispatcherRequest struct {
 	ChangefeedID   string            `protobuf:"bytes,1,opt,name=changefeedID,proto3" json:"changefeedID,omitempty"`
 	Config         *DispatcherConfig `protobuf:"bytes,2,opt,name=config,proto3" json:"config,omitempty"`
 	ScheduleAction ScheduleAction    `protobuf:"varint,3,opt,name=scheduleAction,proto3,enum=heartbeatpb.ScheduleAction" json:"scheduleAction,omitempty"`
-	IsSecondary    bool              `protobuf:"varint,4,opt,name=is_secondary,json=isSecondary,proto3" json:"is_secondary,omitempty"`
 }
 
 func (m *ScheduleDispatcherRequest) Reset()         { *m = ScheduleDispatcherRequest{} }
@@ -611,13 +581,6 @@ func (m *ScheduleDispatcherRequest) GetScheduleAction() ScheduleAction {
 		return m.ScheduleAction
 	}
 	return ScheduleAction_Create
-}
-
-func (m *ScheduleDispatcherRequest) GetIsSecondary() bool {
-	if m != nil {
-		return m.IsSecondary
-	}
-	return false
 }
 
 type MaintainerHeartbeat struct {
@@ -836,70 +799,17 @@ func (m *CoordinatorBootstrapResponse) GetStatuses() []*MaintainerStatus {
 	return nil
 }
 
-type DispatchMaintainerRequest struct {
-	AddMaintainers    []*AddMaintainerRequest    `protobuf:"bytes,1,rep,name=add_maintainers,json=addMaintainers,proto3" json:"add_maintainers,omitempty"`
-	RemoveMaintainers []*RemoveMaintainerRequest `protobuf:"bytes,2,rep,name=remove_maintainers,json=removeMaintainers,proto3" json:"remove_maintainers,omitempty"`
-}
-
-func (m *DispatchMaintainerRequest) Reset()         { *m = DispatchMaintainerRequest{} }
-func (m *DispatchMaintainerRequest) String() string { return proto.CompactTextString(m) }
-func (*DispatchMaintainerRequest) ProtoMessage()    {}
-func (*DispatchMaintainerRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_6d584080fdadb670, []int{12}
-}
-func (m *DispatchMaintainerRequest) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *DispatchMaintainerRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_DispatchMaintainerRequest.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *DispatchMaintainerRequest) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_DispatchMaintainerRequest.Merge(m, src)
-}
-func (m *DispatchMaintainerRequest) XXX_Size() int {
-	return m.Size()
-}
-func (m *DispatchMaintainerRequest) XXX_DiscardUnknown() {
-	xxx_messageInfo_DispatchMaintainerRequest.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_DispatchMaintainerRequest proto.InternalMessageInfo
-
-func (m *DispatchMaintainerRequest) GetAddMaintainers() []*AddMaintainerRequest {
-	if m != nil {
-		return m.AddMaintainers
-	}
-	return nil
-}
-
-func (m *DispatchMaintainerRequest) GetRemoveMaintainers() []*RemoveMaintainerRequest {
-	if m != nil {
-		return m.RemoveMaintainers
-	}
-	return nil
-}
-
 type AddMaintainerRequest struct {
 	Id           string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Config       []byte `protobuf:"bytes,2,opt,name=config,proto3" json:"config,omitempty"`
-	IsSecondary  bool   `protobuf:"varint,3,opt,name=is_secondary,json=isSecondary,proto3" json:"is_secondary,omitempty"`
-	CheckpointTs uint64 `protobuf:"varint,4,opt,name=checkpoint_ts,json=checkpointTs,proto3" json:"checkpoint_ts,omitempty"`
+	CheckpointTs uint64 `protobuf:"varint,3,opt,name=checkpoint_ts,json=checkpointTs,proto3" json:"checkpoint_ts,omitempty"`
 }
 
 func (m *AddMaintainerRequest) Reset()         { *m = AddMaintainerRequest{} }
 func (m *AddMaintainerRequest) String() string { return proto.CompactTextString(m) }
 func (*AddMaintainerRequest) ProtoMessage()    {}
 func (*AddMaintainerRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_6d584080fdadb670, []int{13}
+	return fileDescriptor_6d584080fdadb670, []int{12}
 }
 func (m *AddMaintainerRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -942,13 +852,6 @@ func (m *AddMaintainerRequest) GetConfig() []byte {
 	return nil
 }
 
-func (m *AddMaintainerRequest) GetIsSecondary() bool {
-	if m != nil {
-		return m.IsSecondary
-	}
-	return false
-}
-
 func (m *AddMaintainerRequest) GetCheckpointTs() uint64 {
 	if m != nil {
 		return m.CheckpointTs
@@ -965,7 +868,7 @@ func (m *RemoveMaintainerRequest) Reset()         { *m = RemoveMaintainerRequest
 func (m *RemoveMaintainerRequest) String() string { return proto.CompactTextString(m) }
 func (*RemoveMaintainerRequest) ProtoMessage()    {}
 func (*RemoveMaintainerRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_6d584080fdadb670, []int{14}
+	return fileDescriptor_6d584080fdadb670, []int{13}
 }
 func (m *RemoveMaintainerRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1009,15 +912,16 @@ func (m *RemoveMaintainerRequest) GetCascade() bool {
 }
 
 type MaintainerBootstrapRequest struct {
-	ChangefeedID string `protobuf:"bytes,1,opt,name=changefeedID,proto3" json:"changefeedID,omitempty"`
-	Config       []byte `protobuf:"bytes,2,opt,name=config,proto3" json:"config,omitempty"`
+	ChangefeedID                      string `protobuf:"bytes,1,opt,name=changefeedID,proto3" json:"changefeedID,omitempty"`
+	Config                            []byte `protobuf:"bytes,2,opt,name=config,proto3" json:"config,omitempty"`
+	CreateTableTriggerEventDispatcher bool   `protobuf:"varint,3,opt,name=createTableTriggerEventDispatcher,proto3" json:"createTableTriggerEventDispatcher,omitempty"`
 }
 
 func (m *MaintainerBootstrapRequest) Reset()         { *m = MaintainerBootstrapRequest{} }
 func (m *MaintainerBootstrapRequest) String() string { return proto.CompactTextString(m) }
 func (*MaintainerBootstrapRequest) ProtoMessage()    {}
 func (*MaintainerBootstrapRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_6d584080fdadb670, []int{15}
+	return fileDescriptor_6d584080fdadb670, []int{14}
 }
 func (m *MaintainerBootstrapRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1060,6 +964,13 @@ func (m *MaintainerBootstrapRequest) GetConfig() []byte {
 	return nil
 }
 
+func (m *MaintainerBootstrapRequest) GetCreateTableTriggerEventDispatcher() bool {
+	if m != nil {
+		return m.CreateTableTriggerEventDispatcher
+	}
+	return false
+}
+
 type MaintainerBootstrapResponse struct {
 	ChangefeedID string             `protobuf:"bytes,1,opt,name=changefeedID,proto3" json:"changefeedID,omitempty"`
 	Statuses     []*TableSpanStatus `protobuf:"bytes,2,rep,name=statuses,proto3" json:"statuses,omitempty"`
@@ -1069,7 +980,7 @@ func (m *MaintainerBootstrapResponse) Reset()         { *m = MaintainerBootstrap
 func (m *MaintainerBootstrapResponse) String() string { return proto.CompactTextString(m) }
 func (*MaintainerBootstrapResponse) ProtoMessage()    {}
 func (*MaintainerBootstrapResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_6d584080fdadb670, []int{16}
+	return fileDescriptor_6d584080fdadb670, []int{15}
 }
 func (m *MaintainerBootstrapResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1120,7 +1031,7 @@ func (m *MaintainerCloseRequest) Reset()         { *m = MaintainerCloseRequest{}
 func (m *MaintainerCloseRequest) String() string { return proto.CompactTextString(m) }
 func (*MaintainerCloseRequest) ProtoMessage()    {}
 func (*MaintainerCloseRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_6d584080fdadb670, []int{17}
+	return fileDescriptor_6d584080fdadb670, []int{16}
 }
 func (m *MaintainerCloseRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1165,7 +1076,7 @@ func (m *MaintainerCloseResponse) Reset()         { *m = MaintainerCloseResponse
 func (m *MaintainerCloseResponse) String() string { return proto.CompactTextString(m) }
 func (*MaintainerCloseResponse) ProtoMessage()    {}
 func (*MaintainerCloseResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_6d584080fdadb670, []int{18}
+	return fileDescriptor_6d584080fdadb670, []int{17}
 }
 func (m *MaintainerCloseResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -1208,9 +1119,86 @@ func (m *MaintainerCloseResponse) GetSuccess() bool {
 	return false
 }
 
+type State struct {
+	IsBlocked            bool         `protobuf:"varint,1,opt,name=IsBlocked,proto3" json:"IsBlocked,omitempty"`
+	BlockTs              uint64       `protobuf:"varint,2,opt,name=BlockTs,proto3" json:"BlockTs,omitempty"`
+	BlockTableSpan       []*TableSpan `protobuf:"bytes,3,rep,name=BlockTableSpan,proto3" json:"BlockTableSpan,omitempty"`
+	NeedDroppedTableSpan []*TableSpan `protobuf:"bytes,4,rep,name=NeedDroppedTableSpan,proto3" json:"NeedDroppedTableSpan,omitempty"`
+	NeedAddedTableSpan   []*TableSpan `protobuf:"bytes,5,rep,name=NeedAddedTableSpan,proto3" json:"NeedAddedTableSpan,omitempty"`
+}
+
+func (m *State) Reset()         { *m = State{} }
+func (m *State) String() string { return proto.CompactTextString(m) }
+func (*State) ProtoMessage()    {}
+func (*State) Descriptor() ([]byte, []int) {
+	return fileDescriptor_6d584080fdadb670, []int{18}
+}
+func (m *State) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *State) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_State.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *State) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_State.Merge(m, src)
+}
+func (m *State) XXX_Size() int {
+	return m.Size()
+}
+func (m *State) XXX_DiscardUnknown() {
+	xxx_messageInfo_State.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_State proto.InternalMessageInfo
+
+func (m *State) GetIsBlocked() bool {
+	if m != nil {
+		return m.IsBlocked
+	}
+	return false
+}
+
+func (m *State) GetBlockTs() uint64 {
+	if m != nil {
+		return m.BlockTs
+	}
+	return 0
+}
+
+func (m *State) GetBlockTableSpan() []*TableSpan {
+	if m != nil {
+		return m.BlockTableSpan
+	}
+	return nil
+}
+
+func (m *State) GetNeedDroppedTableSpan() []*TableSpan {
+	if m != nil {
+		return m.NeedDroppedTableSpan
+	}
+	return nil
+}
+
+func (m *State) GetNeedAddedTableSpan() []*TableSpan {
+	if m != nil {
+		return m.NeedAddedTableSpan
+	}
+	return nil
+}
+
 type TableSpanStatus struct {
 	Span            *TableSpan     `protobuf:"bytes,1,opt,name=span,proto3" json:"span,omitempty"`
 	ComponentStatus ComponentState `protobuf:"varint,2,opt,name=component_status,json=componentStatus,proto3,enum=heartbeatpb.ComponentState" json:"component_status,omitempty"`
+	State           *State         `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`
 	CheckpointTs    uint64         `protobuf:"varint,4,opt,name=checkpoint_ts,json=checkpointTs,proto3" json:"checkpoint_ts,omitempty"`
 }
 
@@ -1259,6 +1247,13 @@ func (m *TableSpanStatus) GetComponentStatus() ComponentState {
 		return m.ComponentStatus
 	}
 	return ComponentState_Unknown
+}
+
+func (m *TableSpanStatus) GetState() *State {
+	if m != nil {
+		return m.State
+	}
+	return nil
 }
 
 func (m *TableSpanStatus) GetCheckpointTs() uint64 {
@@ -1343,8 +1338,8 @@ func init() {
 	proto.RegisterType((*TableSpan)(nil), "heartbeatpb.TableSpan")
 	proto.RegisterType((*HeartBeatRequest)(nil), "heartbeatpb.HeartBeatRequest")
 	proto.RegisterType((*Watermark)(nil), "heartbeatpb.Watermark")
-	proto.RegisterType((*TableProgress)(nil), "heartbeatpb.TableProgress")
-	proto.RegisterType((*TableProgressInfo)(nil), "heartbeatpb.TableProgressInfo")
+	proto.RegisterType((*DispatcherAction)(nil), "heartbeatpb.DispatcherAction")
+	proto.RegisterType((*ACK)(nil), "heartbeatpb.ACK")
 	proto.RegisterType((*HeartBeatResponse)(nil), "heartbeatpb.HeartBeatResponse")
 	proto.RegisterType((*DispatcherConfig)(nil), "heartbeatpb.DispatcherConfig")
 	proto.RegisterType((*ScheduleDispatcherRequest)(nil), "heartbeatpb.ScheduleDispatcherRequest")
@@ -1352,13 +1347,13 @@ func init() {
 	proto.RegisterType((*MaintainerStatus)(nil), "heartbeatpb.MaintainerStatus")
 	proto.RegisterType((*CoordinatorBootstrapRequest)(nil), "heartbeatpb.CoordinatorBootstrapRequest")
 	proto.RegisterType((*CoordinatorBootstrapResponse)(nil), "heartbeatpb.CoordinatorBootstrapResponse")
-	proto.RegisterType((*DispatchMaintainerRequest)(nil), "heartbeatpb.DispatchMaintainerRequest")
 	proto.RegisterType((*AddMaintainerRequest)(nil), "heartbeatpb.AddMaintainerRequest")
 	proto.RegisterType((*RemoveMaintainerRequest)(nil), "heartbeatpb.RemoveMaintainerRequest")
 	proto.RegisterType((*MaintainerBootstrapRequest)(nil), "heartbeatpb.MaintainerBootstrapRequest")
 	proto.RegisterType((*MaintainerBootstrapResponse)(nil), "heartbeatpb.MaintainerBootstrapResponse")
 	proto.RegisterType((*MaintainerCloseRequest)(nil), "heartbeatpb.MaintainerCloseRequest")
 	proto.RegisterType((*MaintainerCloseResponse)(nil), "heartbeatpb.MaintainerCloseResponse")
+	proto.RegisterType((*State)(nil), "heartbeatpb.State")
 	proto.RegisterType((*TableSpanStatus)(nil), "heartbeatpb.TableSpanStatus")
 	proto.RegisterType((*RunningError)(nil), "heartbeatpb.RunningError")
 }
@@ -1366,78 +1361,76 @@ func init() {
 func init() { proto.RegisterFile("heartbeatpb/heartbeat.proto", fileDescriptor_6d584080fdadb670) }
 
 var fileDescriptor_6d584080fdadb670 = []byte{
-	// 1133 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xa4, 0x57, 0x4d, 0x6f, 0x1b, 0xc5,
-	0x1b, 0xcf, 0xda, 0x8e, 0x5f, 0x9e, 0xb8, 0xce, 0x76, 0xfa, 0x57, 0xea, 0xbc, 0xd4, 0x4a, 0xf7,
-	0x8f, 0x84, 0x49, 0xa5, 0x44, 0xa4, 0x20, 0x40, 0xe2, 0x92, 0x38, 0xad, 0x1a, 0x10, 0x10, 0xad,
-	0x83, 0xd2, 0x72, 0x89, 0xc6, 0xbb, 0x4f, 0xec, 0x95, 0xed, 0x99, 0x65, 0x66, 0x9c, 0x28, 0xe2,
-	0xce, 0x15, 0x6e, 0x7c, 0x07, 0x8e, 0x9c, 0xf9, 0x00, 0x1c, 0x7b, 0xe4, 0x84, 0x50, 0xf2, 0x2d,
-	0x38, 0xa1, 0x99, 0xdd, 0xb5, 0x77, 0xed, 0x44, 0xb5, 0xc5, 0x6d, 0x9e, 0xd7, 0xf9, 0x3d, 0xaf,
-	0xb3, 0x0b, 0x9b, 0x3d, 0xa4, 0x42, 0x75, 0x90, 0xaa, 0xb0, 0xb3, 0x37, 0x3e, 0xef, 0x86, 0x82,
-	0x2b, 0x4e, 0x56, 0x52, 0x42, 0xe7, 0x0d, 0x54, 0x4e, 0x69, 0x67, 0x80, 0xed, 0x90, 0x32, 0x52,
-	0x87, 0x92, 0x21, 0x8e, 0x8f, 0xea, 0xd6, 0xb6, 0xd5, 0x2c, 0xb8, 0x09, 0x49, 0x36, 0xa0, 0xdc,
-	0x56, 0x54, 0xa8, 0x2f, 0xf1, 0xba, 0x9e, 0xdb, 0xb6, 0x9a, 0x55, 0x77, 0x4c, 0x93, 0x35, 0x28,
-	0xbe, 0x60, 0xbe, 0x96, 0xe4, 0x8d, 0x24, 0xa6, 0x9c, 0xdf, 0x72, 0x60, 0xbf, 0xd2, 0x57, 0x1d,
-	0x22, 0x55, 0x2e, 0x7e, 0x3f, 0x42, 0xa9, 0x88, 0x03, 0x55, 0xaf, 0x47, 0x59, 0x17, 0x2f, 0x10,
-	0xfd, 0xf8, 0x9e, 0x8a, 0x9b, 0xe1, 0x91, 0x8f, 0xa0, 0x72, 0x45, 0x15, 0x8a, 0x21, 0x15, 0x7d,
-	0x73, 0xdb, 0xca, 0xfe, 0xda, 0x6e, 0x0a, 0xf4, 0xee, 0x59, 0x22, 0x75, 0x27, 0x8a, 0xe4, 0x53,
-	0x28, 0x4b, 0x45, 0xd5, 0x48, 0xa2, 0xac, 0xe7, 0xb7, 0xf3, 0xcd, 0x95, 0xfd, 0xad, 0x8c, 0xd1,
-	0x38, 0xcc, 0xb6, 0xd1, 0x72, 0xc7, 0xda, 0xa4, 0x09, 0xab, 0x1e, 0x1f, 0x86, 0x38, 0x40, 0x85,
-	0x91, 0xb0, 0x5e, 0xd8, 0xb6, 0x9a, 0x65, 0x77, 0x9a, 0x4d, 0x9e, 0x43, 0xe9, 0x8a, 0x0a, 0x16,
-	0xb0, 0x6e, 0x7d, 0xd9, 0xe0, 0x5a, 0xcf, 0x5c, 0xe1, 0x8e, 0x98, 0x96, 0xbd, 0x10, 0x82, 0x0b,
-	0x37, 0xd1, 0x24, 0xcf, 0x20, 0x8f, 0x42, 0xd4, 0x8b, 0xef, 0x32, 0xd0, 0x5a, 0xce, 0x37, 0x50,
-	0x19, 0x47, 0x17, 0x25, 0x0b, 0xbd, 0x7e, 0xc8, 0x03, 0xa6, 0x4e, 0x65, 0x5c, 0x94, 0x0c, 0x8f,
-	0x34, 0x00, 0x04, 0x4a, 0x3e, 0xb8, 0x44, 0xff, 0x54, 0x9a, 0x6c, 0x15, 0xdc, 0x14, 0xc7, 0xf9,
-	0xc5, 0x82, 0x07, 0x26, 0xf4, 0x13, 0xc1, 0xbb, 0x02, 0xa5, 0x24, 0x3b, 0x50, 0x90, 0x21, 0x65,
-	0xc6, 0xdb, 0x74, 0x66, 0xc7, 0x49, 0x72, 0x8d, 0x0e, 0xd9, 0x82, 0xca, 0xb1, 0x3c, 0x1c, 0x70,
-	0xaf, 0x8f, 0xbe, 0x71, 0x5e, 0x76, 0x27, 0x0c, 0xdd, 0x2f, 0xe6, 0x78, 0x2a, 0x4d, 0xe9, 0x0b,
-	0x6e, 0x42, 0x6a, 0xe4, 0xad, 0x34, 0xf2, 0x42, 0x84, 0x3c, 0xcd, 0x73, 0xfe, 0xb1, 0xe0, 0x61,
-	0x06, 0xd9, 0x31, 0xbb, 0xe0, 0x0b, 0xa1, 0x3b, 0x82, 0x55, 0x95, 0x76, 0x80, 0x3a, 0x01, 0xba,
-	0xf2, 0x1b, 0xb3, 0x66, 0x89, 0x8e, 0x3b, 0x6d, 0x42, 0x9e, 0x41, 0x91, 0x7a, 0x2a, 0xe0, 0xcc,
-	0x04, 0x51, 0xdb, 0x7f, 0x94, 0x31, 0x3e, 0x30, 0x22, 0x37, 0x56, 0x21, 0x2f, 0xc1, 0x96, 0x5e,
-	0x0f, 0xfd, 0xd1, 0x00, 0xc5, 0xb9, 0x9c, 0x34, 0x4b, 0x6d, 0x7f, 0x33, 0x63, 0xd6, 0xe2, 0xc3,
-	0x90, 0x33, 0x64, 0x4a, 0x77, 0x0e, 0xba, 0xab, 0x63, 0xa3, 0xa8, 0x93, 0x9c, 0x3e, 0x3c, 0x4c,
-	0xcd, 0x86, 0x0c, 0x39, 0x93, 0x48, 0xf6, 0xa1, 0x10, 0xb0, 0x0b, 0x5e, 0xb7, 0x4c, 0x10, 0x8d,
-	0xfb, 0x83, 0xd0, 0x99, 0x72, 0x8d, 0xee, 0xcc, 0x40, 0xe5, 0x66, 0x07, 0xca, 0x79, 0x0d, 0xf6,
-	0x51, 0x20, 0x43, 0xaa, 0xbc, 0x1e, 0x8a, 0x16, 0x67, 0x17, 0x41, 0x77, 0xa1, 0x3c, 0xd7, 0xa1,
-	0x24, 0xf5, 0xb4, 0x8f, 0x1b, 0x2c, 0x21, 0x9d, 0xbf, 0x2c, 0x58, 0x6f, 0xc7, 0xa1, 0x4d, 0xae,
-	0x58, 0x64, 0xd8, 0x3f, 0x86, 0xa2, 0x67, 0x10, 0xc5, 0x93, 0xfe, 0x24, 0x83, 0x64, 0x1a, 0xb6,
-	0x1b, 0x2b, 0x93, 0x16, 0xd4, 0x92, 0x94, 0x1e, 0xa4, 0x8b, 0x97, 0xad, 0x42, 0x3b, 0xa3, 0xe2,
-	0x4e, 0x99, 0x90, 0xa7, 0x50, 0x0d, 0xe4, 0xb9, 0x44, 0x8f, 0x33, 0x9f, 0x8a, 0xeb, 0x78, 0xea,
-	0x57, 0x02, 0xd9, 0x4e, 0x58, 0xce, 0x09, 0x3c, 0xfa, 0x8a, 0x06, 0x4c, 0xd1, 0x80, 0xa1, 0x78,
-	0x95, 0xb8, 0x26, 0x9f, 0xa5, 0x96, 0x4d, 0x54, 0xad, 0x2c, 0xee, 0x89, 0xcd, 0xf4, 0xb6, 0x71,
-	0x7e, 0xca, 0x81, 0x3d, 0x2d, 0x9e, 0x2b, 0x53, 0x4f, 0x00, 0xf4, 0xc9, 0x74, 0x1d, 0xc6, 0x75,
-	0xae, 0x68, 0x8e, 0x69, 0x31, 0xf2, 0x21, 0x2c, 0x47, 0x92, 0xfc, 0xbb, 0xdb, 0x31, 0xd2, 0x24,
-	0xff, 0x87, 0x07, 0x93, 0x5d, 0x72, 0xae, 0xc6, 0x63, 0x9a, 0x59, 0x30, 0x99, 0x9d, 0x97, 0x5f,
-	0x74, 0xe7, 0xe5, 0xe7, 0xd8, 0x79, 0x9f, 0xc0, 0x66, 0x8b, 0x73, 0xe1, 0x07, 0x8c, 0x2a, 0x2e,
-	0x0e, 0x39, 0x57, 0x52, 0x09, 0x1a, 0x26, 0x5d, 0x54, 0x87, 0xd2, 0x25, 0x0a, 0xa9, 0x6b, 0xac,
-	0xd3, 0x92, 0x77, 0x13, 0xd2, 0x79, 0x03, 0x5b, 0x77, 0x1b, 0xc6, 0xf3, 0xf4, 0x1f, 0xaa, 0xf4,
-	0xbb, 0x05, 0xeb, 0x49, 0xf3, 0x4d, 0xd4, 0x12, 0x48, 0x5f, 0xc0, 0x2a, 0xf5, 0xfd, 0xf3, 0xe1,
-	0x58, 0x90, 0xf8, 0x7f, 0x9a, 0xdd, 0x1d, 0xbe, 0x3f, 0x63, 0xeb, 0xd6, 0x68, 0x9a, 0x2b, 0x49,
-	0x1b, 0x88, 0xc0, 0x21, 0xbf, 0xc4, 0x8c, 0xbb, 0x68, 0x8f, 0xbd, 0x97, 0xcd, 0x9c, 0x51, 0x9b,
-	0xf5, 0xf8, 0x50, 0x4c, 0x09, 0xa4, 0xf3, 0xa3, 0x05, 0xff, 0xbb, 0xeb, 0x76, 0x52, 0x83, 0x5c,
-	0xe0, 0xc7, 0xed, 0x95, 0x0b, 0x7c, 0xfd, 0x78, 0xa7, 0xc6, 0xaf, 0x3a, 0x9e, 0xaf, 0xe9, 0xd1,
-	0xc8, 0xcf, 0x8c, 0xc6, 0x5c, 0xdd, 0xe3, 0xb4, 0xe0, 0xf1, 0x3d, 0xb0, 0x67, 0xa0, 0xd4, 0xa1,
-	0xe4, 0x51, 0xe9, 0x51, 0x1f, 0xe3, 0x97, 0x26, 0x21, 0x9d, 0xd7, 0xb0, 0x31, 0x31, 0x9f, 0xe9,
-	0x8f, 0x79, 0x66, 0xe7, 0x9e, 0x30, 0x9d, 0x1f, 0x60, 0xf3, 0x4e, 0xcf, 0x71, 0x03, 0xcd, 0xe3,
-	0x3a, 0xfd, 0xdd, 0x91, 0x5b, 0xe4, 0xbb, 0xc3, 0xf9, 0x1c, 0xd6, 0x26, 0x97, 0xb7, 0x06, 0x5c,
-	0xe2, 0x02, 0x21, 0x39, 0x67, 0xf0, 0x78, 0xc6, 0x7a, 0x01, 0xd8, 0x7a, 0xa7, 0x8f, 0x3c, 0x0f,
-	0xa5, 0x4c, 0xb2, 0x1d, 0x93, 0xce, 0xaf, 0x16, 0xac, 0x4e, 0x81, 0x5e, 0xe8, 0xb5, 0x78, 0x09,
-	0xb6, 0x97, 0xac, 0x9b, 0xe4, 0x89, 0xcc, 0xcd, 0xf1, 0x44, 0x7a, 0x69, 0x7a, 0x24, 0xe7, 0xeb,
-	0x2f, 0x1f, 0xaa, 0xe9, 0x85, 0x42, 0x08, 0x14, 0x54, 0x30, 0xc4, 0x38, 0x64, 0x73, 0xd6, 0x3c,
-	0xc6, 0xfd, 0x64, 0x65, 0x9a, 0xb3, 0xe6, 0x79, 0x9a, 0x97, 0x8f, 0x78, 0xfa, 0xac, 0x53, 0x32,
-	0x44, 0x29, 0x69, 0x17, 0xcd, 0x55, 0x15, 0x37, 0x21, 0x77, 0xde, 0x87, 0x62, 0xfc, 0x64, 0x94,
-	0xa1, 0xf0, 0x35, 0x67, 0x68, 0x2f, 0x91, 0x0a, 0x2c, 0x9f, 0x89, 0x40, 0xa1, 0x6d, 0x69, 0xe6,
-	0x09, 0x95, 0xd2, 0xce, 0xed, 0x34, 0xa1, 0x96, 0x7d, 0x73, 0x08, 0x40, 0xb1, 0x25, 0x90, 0x2a,
-	0x6d, 0x02, 0x50, 0x8c, 0x86, 0xc1, 0xb6, 0x76, 0x18, 0xd4, 0xb2, 0x09, 0x20, 0x2b, 0x50, 0xfa,
-	0x96, 0xf5, 0x19, 0xbf, 0x62, 0x91, 0xea, 0x41, 0x47, 0x22, 0x53, 0xb6, 0x45, 0x1e, 0x40, 0xe5,
-	0x44, 0x60, 0x48, 0x45, 0xc0, 0xba, 0x76, 0x8e, 0x54, 0xa1, 0x1c, 0x91, 0xe8, 0xdb, 0x79, 0x6d,
-	0x75, 0xc6, 0x45, 0x5f, 0x8b, 0x0a, 0x5a, 0xd4, 0x56, 0x3c, 0x0c, 0x35, 0xb5, 0xac, 0x45, 0x86,
-	0x42, 0xdf, 0x2e, 0x1e, 0xb6, 0xfe, 0xb8, 0x69, 0x58, 0x6f, 0x6f, 0x1a, 0xd6, 0xdf, 0x37, 0x0d,
-	0xeb, 0xe7, 0xdb, 0xc6, 0xd2, 0xdb, 0xdb, 0xc6, 0xd2, 0x9f, 0xb7, 0x8d, 0xa5, 0xef, 0x3e, 0xe8,
-	0x06, 0xaa, 0x37, 0xea, 0xec, 0x7a, 0x7c, 0xb8, 0x77, 0x31, 0xe0, 0x57, 0x1d, 0xec, 0xd1, 0x30,
-	0xbc, 0xde, 0x53, 0x41, 0x97, 0x2a, 0xdc, 0x4b, 0x95, 0xac, 0x53, 0x34, 0x7f, 0x10, 0xcf, 0xff,
-	0x0d, 0x00, 0x00, 0xff, 0xff, 0xff, 0xe4, 0xc0, 0x68, 0x60, 0x0c, 0x00, 0x00,
+	// 1099 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xa4, 0x57, 0xdd, 0x6e, 0x1b, 0x45,
+	0x14, 0xce, 0x7a, 0x1d, 0xff, 0x9c, 0x04, 0x77, 0x99, 0x56, 0xad, 0xdb, 0xb4, 0x56, 0x58, 0xb8,
+	0x30, 0xa9, 0x94, 0x88, 0x14, 0x54, 0x90, 0x10, 0x52, 0xb2, 0x6d, 0xd5, 0x12, 0x0a, 0xd5, 0x3a,
+	0x28, 0x94, 0x9b, 0x68, 0xbc, 0x7b, 0x62, 0xaf, 0x6c, 0xcf, 0x2c, 0x33, 0xe3, 0x44, 0x15, 0x0f,
+	0xc0, 0x25, 0x48, 0x48, 0x3c, 0x02, 0x0f, 0xc0, 0x2d, 0x2f, 0xc0, 0x65, 0x2f, 0xb8, 0xe0, 0x12,
+	0x25, 0x2f, 0x82, 0x66, 0x76, 0xd7, 0xde, 0x75, 0x9c, 0x1f, 0x8b, 0xbb, 0x39, 0xff, 0x67, 0xbe,
+	0xf3, 0x33, 0xbb, 0xb0, 0xd6, 0x47, 0x2a, 0x54, 0x17, 0xa9, 0x8a, 0xbb, 0x5b, 0x93, 0xf3, 0x66,
+	0x2c, 0xb8, 0xe2, 0x64, 0x25, 0x27, 0x74, 0x5f, 0x43, 0x7d, 0x9f, 0x76, 0x87, 0xd8, 0x89, 0x29,
+	0x23, 0x4d, 0xa8, 0x1a, 0xe2, 0xc5, 0x93, 0xa6, 0xb5, 0x6e, 0xb5, 0xcb, 0x7e, 0x46, 0x92, 0x7b,
+	0x50, 0xeb, 0x28, 0x2a, 0xd4, 0x1e, 0xbe, 0x69, 0x96, 0xd6, 0xad, 0xf6, 0xaa, 0x3f, 0xa1, 0xc9,
+	0x6d, 0xa8, 0x3c, 0x65, 0xa1, 0x96, 0xd8, 0x46, 0x92, 0x52, 0xee, 0x1f, 0x25, 0x70, 0x9e, 0xeb,
+	0x50, 0xbb, 0x48, 0x95, 0x8f, 0x3f, 0x8c, 0x51, 0x2a, 0xe2, 0xc2, 0x6a, 0xd0, 0xa7, 0xac, 0x87,
+	0x47, 0x88, 0x61, 0x1a, 0xa7, 0xee, 0x17, 0x78, 0xe4, 0x63, 0xa8, 0x9f, 0x50, 0x85, 0x62, 0x44,
+	0xc5, 0xc0, 0x44, 0x5b, 0xd9, 0xbe, 0xbd, 0x99, 0x4b, 0x7a, 0xf3, 0x20, 0x93, 0xfa, 0x53, 0x45,
+	0xf2, 0x29, 0xd4, 0xa4, 0xa2, 0x6a, 0x2c, 0x51, 0x36, 0xed, 0x75, 0xbb, 0xbd, 0xb2, 0x7d, 0xbf,
+	0x60, 0x34, 0xb9, 0x66, 0xc7, 0x68, 0xf9, 0x13, 0x6d, 0xd2, 0x86, 0x1b, 0x01, 0x1f, 0xc5, 0x38,
+	0x44, 0x85, 0x89, 0xb0, 0x59, 0x5e, 0xb7, 0xda, 0x35, 0x7f, 0x96, 0x4d, 0x1e, 0x41, 0xf5, 0x84,
+	0x0a, 0x16, 0xb1, 0x5e, 0x73, 0xd9, 0xe4, 0x75, 0xb7, 0x10, 0xc2, 0x1f, 0x33, 0x2d, 0x7b, 0x2a,
+	0x04, 0x17, 0x7e, 0xa6, 0x49, 0x1e, 0x82, 0x8d, 0x42, 0x34, 0x2b, 0x57, 0x19, 0x68, 0x2d, 0xf7,
+	0x1b, 0xa8, 0x4f, 0x6e, 0x97, 0x80, 0x85, 0xc1, 0x20, 0xe6, 0x11, 0x53, 0xfb, 0x32, 0x2d, 0x4a,
+	0x81, 0x47, 0x5a, 0x00, 0x02, 0x25, 0x1f, 0x1e, 0x63, 0xb8, 0x2f, 0x0d, 0x5a, 0x65, 0x3f, 0xc7,
+	0x71, 0x7f, 0xb2, 0xc0, 0x79, 0x12, 0xc9, 0x98, 0xaa, 0xa0, 0x8f, 0x62, 0x27, 0x50, 0x11, 0x67,
+	0x64, 0x03, 0xca, 0x32, 0xa6, 0xcc, 0x38, 0x9c, 0x05, 0x77, 0x82, 0x93, 0x6f, 0x74, 0xc8, 0x43,
+	0xa8, 0x50, 0x63, 0x65, 0x9c, 0x37, 0xb6, 0x6f, 0x16, 0xb4, 0x13, 0x87, 0x7e, 0xaa, 0xa2, 0xfb,
+	0xc4, 0xe3, 0xa3, 0x51, 0xa4, 0xb3, 0xb5, 0x4d, 0x2e, 0x13, 0xda, 0x7d, 0x09, 0xf6, 0x8e, 0xb7,
+	0xb7, 0x50, 0xec, 0xbc, 0xbb, 0xd2, 0x8c, 0xbb, 0xdf, 0x2c, 0x78, 0x37, 0xd7, 0x5e, 0x32, 0xe6,
+	0x4c, 0x22, 0x79, 0x0c, 0xd5, 0x24, 0x15, 0x8d, 0x96, 0x6e, 0x82, 0x07, 0x85, 0x00, 0xb3, 0x48,
+	0xf8, 0x99, 0xf6, 0xb9, 0xc6, 0x2c, 0xcd, 0x69, 0xcc, 0x0f, 0xa0, 0x4c, 0x83, 0x41, 0xd6, 0x5e,
+	0x4e, 0x11, 0x08, 0x6f, 0xcf, 0x37, 0x52, 0xf7, 0xbb, 0x3c, 0xe0, 0x1e, 0x67, 0x47, 0x51, 0x6f,
+	0xa1, 0x4b, 0x37, 0xa1, 0x2a, 0xf5, 0x6c, 0x4d, 0xee, 0x9c, 0x91, 0xee, 0x9f, 0x16, 0xdc, 0xed,
+	0x04, 0x7d, 0x0c, 0xc7, 0x43, 0x9c, 0x86, 0x58, 0x64, 0xb4, 0x3e, 0x81, 0x4a, 0x60, 0x32, 0x4a,
+	0xe7, 0xea, 0x22, 0x74, 0x92, 0xb4, 0xfd, 0x54, 0x99, 0x78, 0xd0, 0x90, 0x69, 0xdc, 0x04, 0x37,
+	0x53, 0xdc, 0xc6, 0xf6, 0x5a, 0xc1, 0xbc, 0x53, 0x50, 0xf1, 0x67, 0x4c, 0xdc, 0x57, 0x70, 0xf3,
+	0x25, 0x8d, 0x98, 0xa2, 0x11, 0x43, 0xf1, 0x3c, 0xb3, 0x23, 0x9f, 0xe5, 0xe6, 0x76, 0x5e, 0xc9,
+	0xa6, 0x36, 0xb3, 0x83, 0xeb, 0xfe, 0x5c, 0x02, 0x67, 0x56, 0x7c, 0x2d, 0x18, 0x1e, 0x00, 0xe8,
+	0xd3, 0xa1, 0xf6, 0x84, 0x69, 0xa9, 0xeb, 0x9a, 0xa3, 0x7d, 0x20, 0xf9, 0x08, 0x96, 0x13, 0xc9,
+	0xbc, 0x5b, 0x7a, 0x7c, 0x14, 0x73, 0x86, 0x4c, 0x19, 0x5d, 0x3f, 0xd1, 0x24, 0xef, 0xc3, 0x3b,
+	0xd3, 0xb1, 0x3c, 0x54, 0xc9, 0x06, 0x99, 0x9d, 0xd5, 0xc2, 0xfa, 0xb0, 0x17, 0x5d, 0x1f, 0xf6,
+	0x35, 0xd6, 0xc7, 0x63, 0x58, 0xf3, 0x38, 0x17, 0x61, 0xc4, 0xa8, 0xe2, 0x62, 0x97, 0x73, 0x25,
+	0x95, 0xa0, 0x71, 0xd6, 0x22, 0x4d, 0xa8, 0x1e, 0xa3, 0x90, 0xba, 0x80, 0x1a, 0x16, 0xdb, 0xcf,
+	0x48, 0xf7, 0x35, 0xdc, 0x9f, 0x6f, 0x98, 0xce, 0xd5, 0xff, 0xa8, 0x52, 0x00, 0xb7, 0x76, 0xc2,
+	0x70, 0xaa, 0x90, 0x25, 0xd3, 0x80, 0x52, 0x14, 0xa6, 0xe5, 0x29, 0x45, 0xa1, 0x7e, 0x47, 0x72,
+	0xbd, 0xb9, 0x3a, 0x69, 0xbe, 0x73, 0xd0, 0xda, 0xe7, 0xa1, 0x75, 0x3d, 0xb8, 0xe3, 0xe3, 0x88,
+	0x1f, 0xe3, 0xd5, 0x71, 0x9a, 0x50, 0x0d, 0xa8, 0x0c, 0x68, 0x98, 0x54, 0xbe, 0xe6, 0x67, 0xa4,
+	0xfb, 0xbb, 0x05, 0xf7, 0xa6, 0xf6, 0xe7, 0xd0, 0xbb, 0x4e, 0x67, 0x5d, 0x74, 0x89, 0xaf, 0xe0,
+	0xbd, 0x40, 0x20, 0x55, 0x68, 0xa6, 0x7d, 0x5f, 0x44, 0xbd, 0x1e, 0x8a, 0xa7, 0xc7, 0xc8, 0xd4,
+	0x74, 0xe8, 0xcc, 0xc5, 0x6a, 0xfe, 0xd5, 0x8a, 0xee, 0x8f, 0xb0, 0x36, 0x37, 0xcf, 0xb4, 0x58,
+	0xd7, 0x49, 0x34, 0xff, 0x5c, 0x96, 0x16, 0x79, 0x2e, 0xdd, 0xcf, 0xe1, 0xf6, 0x34, 0xb8, 0x37,
+	0xe4, 0x12, 0x17, 0x00, 0xc8, 0x3d, 0x80, 0x3b, 0xe7, 0xac, 0x17, 0x48, 0x5b, 0x2f, 0xc7, 0x71,
+	0x10, 0xa0, 0x94, 0x59, 0xf1, 0x52, 0xd2, 0xfd, 0xb5, 0x04, 0xcb, 0xc9, 0xf8, 0xde, 0x87, 0xfa,
+	0x0b, 0xb9, 0x3b, 0xe4, 0xc1, 0x00, 0x93, 0xba, 0xd7, 0xfc, 0x29, 0x43, 0x7b, 0x30, 0xc7, 0xe9,
+	0x7a, 0x4d, 0x49, 0xf2, 0x05, 0x34, 0x92, 0x63, 0x76, 0xf5, 0x74, 0xd1, 0x5f, 0xb4, 0xae, 0x67,
+	0xb4, 0xc9, 0x97, 0x70, 0xeb, 0x6b, 0xc4, 0xf0, 0x89, 0xe0, 0x71, 0x8c, 0xe1, 0xd4, 0x4b, 0xf9,
+	0x52, 0x2f, 0x73, 0x6d, 0xc8, 0x33, 0x20, 0x9a, 0xbf, 0x13, 0x86, 0x79, 0x4f, 0xcb, 0x97, 0x7a,
+	0x9a, 0x63, 0xe1, 0xfe, 0x6d, 0xc1, 0x8d, 0x99, 0x52, 0x2e, 0xf4, 0x18, 0x3d, 0x03, 0x27, 0xc8,
+	0x16, 0xde, 0x61, 0xd2, 0x02, 0xe9, 0x77, 0xc0, 0xa5, 0x5b, 0xf1, 0x46, 0x90, 0xa7, 0xc7, 0xfa,
+	0x1b, 0x2b, 0xb7, 0x52, 0x57, 0xb6, 0x49, 0xf1, 0xe1, 0x58, 0x74, 0x93, 0xba, 0x21, 0xac, 0xe6,
+	0x97, 0x1f, 0x21, 0x50, 0x56, 0xd1, 0x08, 0xd3, 0x96, 0x31, 0x67, 0xcd, 0x63, 0x3c, 0xcc, 0xd6,
+	0xbb, 0x39, 0x6b, 0x5e, 0xa0, 0x79, 0x76, 0xc2, 0xd3, 0x67, 0xdd, 0x10, 0x23, 0x94, 0x92, 0xf6,
+	0xd0, 0x84, 0xaa, 0xfb, 0x19, 0xb9, 0xf1, 0x00, 0x2a, 0xe9, 0x07, 0x53, 0x1d, 0x96, 0x0f, 0x44,
+	0xa4, 0xd0, 0x59, 0x22, 0x35, 0x28, 0xbf, 0xa2, 0x52, 0x3a, 0xd6, 0x46, 0x1b, 0x1a, 0xc5, 0x27,
+	0x8f, 0x00, 0x54, 0x3c, 0x33, 0xbc, 0xce, 0x92, 0x3e, 0x27, 0x1b, 0xc9, 0xb1, 0x36, 0x3c, 0x68,
+	0x14, 0x01, 0x22, 0x2b, 0x50, 0xfd, 0x96, 0x0d, 0x18, 0x3f, 0x61, 0x89, 0xea, 0x4e, 0x57, 0x22,
+	0x53, 0x8e, 0xa5, 0x05, 0x07, 0x5c, 0x0c, 0x22, 0xd6, 0x73, 0x4a, 0x9a, 0xe8, 0x28, 0xd3, 0x19,
+	0x8e, 0xbd, 0xeb, 0xfd, 0x75, 0xda, 0xb2, 0xde, 0x9e, 0xb6, 0xac, 0x7f, 0x4f, 0x5b, 0xd6, 0x2f,
+	0x67, 0xad, 0xa5, 0xb7, 0x67, 0xad, 0xa5, 0x7f, 0xce, 0x5a, 0x4b, 0xdf, 0x7f, 0xd8, 0x8b, 0x54,
+	0x7f, 0xdc, 0xdd, 0x0c, 0xf8, 0x68, 0xeb, 0x68, 0xc8, 0x4f, 0xba, 0xd8, 0xa7, 0x71, 0xfc, 0x66,
+	0x4b, 0x45, 0x3d, 0xaa, 0x70, 0x2b, 0x07, 0x75, 0xb7, 0x62, 0xfe, 0x01, 0x1e, 0xfd, 0x17, 0x00,
+	0x00, 0xff, 0xff, 0x82, 0xd1, 0x05, 0x84, 0x22, 0x0c, 0x00, 0x00,
 }
 
 func (m *TableSpan) Marshal() (dAtA []byte, err error) {
@@ -1605,7 +1598,7 @@ func (m *Watermark) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *TableProgress) Marshal() (dAtA []byte, err error) {
+func (m *DispatcherAction) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -1615,33 +1608,23 @@ func (m *TableProgress) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *TableProgress) MarshalTo(dAtA []byte) (int, error) {
+func (m *DispatcherAction) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *TableProgress) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *DispatcherAction) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
 	_ = l
-	if m.CheckpointTs != 0 {
-		i = encodeVarintHeartbeat(dAtA, i, uint64(m.CheckpointTs))
-		i--
-		dAtA[i] = 0x20
-	}
-	if m.BlockTs != 0 {
-		i = encodeVarintHeartbeat(dAtA, i, uint64(m.BlockTs))
+	if m.CommitTs != 0 {
+		i = encodeVarintHeartbeat(dAtA, i, uint64(m.CommitTs))
 		i--
 		dAtA[i] = 0x18
 	}
-	if m.IsBlocked {
-		i--
-		if m.IsBlocked {
-			dAtA[i] = 1
-		} else {
-			dAtA[i] = 0
-		}
+	if m.Action != 0 {
+		i = encodeVarintHeartbeat(dAtA, i, uint64(m.Action))
 		i--
 		dAtA[i] = 0x10
 	}
@@ -1660,7 +1643,7 @@ func (m *TableProgress) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *TableProgressInfo) Marshal() (dAtA []byte, err error) {
+func (m *ACK) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -1670,39 +1653,20 @@ func (m *TableProgressInfo) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *TableProgressInfo) MarshalTo(dAtA []byte) (int, error) {
+func (m *ACK) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *TableProgressInfo) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *ACK) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
 	_ = l
-	if m.SchedulerStatus != 0 {
-		i = encodeVarintHeartbeat(dAtA, i, uint64(m.SchedulerStatus))
+	if m.CommitTs != 0 {
+		i = encodeVarintHeartbeat(dAtA, i, uint64(m.CommitTs))
 		i--
-		dAtA[i] = 0x20
-	}
-	if m.Action != 0 {
-		i = encodeVarintHeartbeat(dAtA, i, uint64(m.Action))
-		i--
-		dAtA[i] = 0x18
-	}
-	if len(m.TableProgresses) > 0 {
-		for iNdEx := len(m.TableProgresses) - 1; iNdEx >= 0; iNdEx-- {
-			{
-				size, err := m.TableProgresses[iNdEx].MarshalToSizedBuffer(dAtA[:i])
-				if err != nil {
-					return 0, err
-				}
-				i -= size
-				i = encodeVarintHeartbeat(dAtA, i, uint64(size))
-			}
-			i--
-			dAtA[i] = 0x12
-		}
+		dAtA[i] = 0x10
 	}
 	if m.Span != nil {
 		{
@@ -1739,6 +1703,20 @@ func (m *HeartBeatResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if len(m.Acks) > 0 {
+		for iNdEx := len(m.Acks) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Acks[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintHeartbeat(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x1a
+		}
+	}
 	if len(m.ChangefeedID) > 0 {
 		i -= len(m.ChangefeedID)
 		copy(dAtA[i:], m.ChangefeedID)
@@ -1746,10 +1724,10 @@ func (m *HeartBeatResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x12
 	}
-	if len(m.Info) > 0 {
-		for iNdEx := len(m.Info) - 1; iNdEx >= 0; iNdEx-- {
+	if len(m.Actions) > 0 {
+		for iNdEx := len(m.Actions) - 1; iNdEx >= 0; iNdEx-- {
 			{
-				size, err := m.Info[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				size, err := m.Actions[iNdEx].MarshalToSizedBuffer(dAtA[:i])
 				if err != nil {
 					return 0, err
 				}
@@ -1823,16 +1801,6 @@ func (m *ScheduleDispatcherRequest) MarshalToSizedBuffer(dAtA []byte) (int, erro
 	_ = i
 	var l int
 	_ = l
-	if m.IsSecondary {
-		i--
-		if m.IsSecondary {
-			dAtA[i] = 1
-		} else {
-			dAtA[i] = 0
-		}
-		i--
-		dAtA[i] = 0x20
-	}
 	if m.ScheduleAction != 0 {
 		i = encodeVarintHeartbeat(dAtA, i, uint64(m.ScheduleAction))
 		i--
@@ -2037,57 +2005,6 @@ func (m *CoordinatorBootstrapResponse) MarshalToSizedBuffer(dAtA []byte) (int, e
 	return len(dAtA) - i, nil
 }
 
-func (m *DispatchMaintainerRequest) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *DispatchMaintainerRequest) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *DispatchMaintainerRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if len(m.RemoveMaintainers) > 0 {
-		for iNdEx := len(m.RemoveMaintainers) - 1; iNdEx >= 0; iNdEx-- {
-			{
-				size, err := m.RemoveMaintainers[iNdEx].MarshalToSizedBuffer(dAtA[:i])
-				if err != nil {
-					return 0, err
-				}
-				i -= size
-				i = encodeVarintHeartbeat(dAtA, i, uint64(size))
-			}
-			i--
-			dAtA[i] = 0x12
-		}
-	}
-	if len(m.AddMaintainers) > 0 {
-		for iNdEx := len(m.AddMaintainers) - 1; iNdEx >= 0; iNdEx-- {
-			{
-				size, err := m.AddMaintainers[iNdEx].MarshalToSizedBuffer(dAtA[:i])
-				if err != nil {
-					return 0, err
-				}
-				i -= size
-				i = encodeVarintHeartbeat(dAtA, i, uint64(size))
-			}
-			i--
-			dAtA[i] = 0xa
-		}
-	}
-	return len(dAtA) - i, nil
-}
-
 func (m *AddMaintainerRequest) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
@@ -2110,16 +2027,6 @@ func (m *AddMaintainerRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = l
 	if m.CheckpointTs != 0 {
 		i = encodeVarintHeartbeat(dAtA, i, uint64(m.CheckpointTs))
-		i--
-		dAtA[i] = 0x20
-	}
-	if m.IsSecondary {
-		i--
-		if m.IsSecondary {
-			dAtA[i] = 1
-		} else {
-			dAtA[i] = 0
-		}
 		i--
 		dAtA[i] = 0x18
 	}
@@ -2200,6 +2107,16 @@ func (m *MaintainerBootstrapRequest) MarshalToSizedBuffer(dAtA []byte) (int, err
 	_ = i
 	var l int
 	_ = l
+	if m.CreateTableTriggerEventDispatcher {
+		i--
+		if m.CreateTableTriggerEventDispatcher {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x18
+	}
 	if len(m.Config) > 0 {
 		i -= len(m.Config)
 		copy(dAtA[i:], m.Config)
@@ -2331,6 +2248,86 @@ func (m *MaintainerCloseResponse) MarshalToSizedBuffer(dAtA []byte) (int, error)
 	return len(dAtA) - i, nil
 }
 
+func (m *State) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *State) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *State) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.NeedAddedTableSpan) > 0 {
+		for iNdEx := len(m.NeedAddedTableSpan) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.NeedAddedTableSpan[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintHeartbeat(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x2a
+		}
+	}
+	if len(m.NeedDroppedTableSpan) > 0 {
+		for iNdEx := len(m.NeedDroppedTableSpan) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.NeedDroppedTableSpan[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintHeartbeat(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x22
+		}
+	}
+	if len(m.BlockTableSpan) > 0 {
+		for iNdEx := len(m.BlockTableSpan) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.BlockTableSpan[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintHeartbeat(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x1a
+		}
+	}
+	if m.BlockTs != 0 {
+		i = encodeVarintHeartbeat(dAtA, i, uint64(m.BlockTs))
+		i--
+		dAtA[i] = 0x10
+	}
+	if m.IsBlocked {
+		i--
+		if m.IsBlocked {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
 func (m *TableSpanStatus) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
@@ -2355,6 +2352,18 @@ func (m *TableSpanStatus) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i = encodeVarintHeartbeat(dAtA, i, uint64(m.CheckpointTs))
 		i--
 		dAtA[i] = 0x20
+	}
+	if m.State != nil {
+		{
+			size, err := m.State.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintHeartbeat(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x1a
 	}
 	if m.ComponentStatus != 0 {
 		i = encodeVarintHeartbeat(dAtA, i, uint64(m.ComponentStatus))
@@ -2507,7 +2516,7 @@ func (m *Watermark) Size() (n int) {
 	return n
 }
 
-func (m *TableProgress) Size() (n int) {
+func (m *DispatcherAction) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -2516,40 +2525,28 @@ func (m *TableProgress) Size() (n int) {
 	if m.Span != nil {
 		l = m.Span.Size()
 		n += 1 + l + sovHeartbeat(uint64(l))
-	}
-	if m.IsBlocked {
-		n += 2
-	}
-	if m.BlockTs != 0 {
-		n += 1 + sovHeartbeat(uint64(m.BlockTs))
-	}
-	if m.CheckpointTs != 0 {
-		n += 1 + sovHeartbeat(uint64(m.CheckpointTs))
-	}
-	return n
-}
-
-func (m *TableProgressInfo) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.Span != nil {
-		l = m.Span.Size()
-		n += 1 + l + sovHeartbeat(uint64(l))
-	}
-	if len(m.TableProgresses) > 0 {
-		for _, e := range m.TableProgresses {
-			l = e.Size()
-			n += 1 + l + sovHeartbeat(uint64(l))
-		}
 	}
 	if m.Action != 0 {
 		n += 1 + sovHeartbeat(uint64(m.Action))
 	}
-	if m.SchedulerStatus != 0 {
-		n += 1 + sovHeartbeat(uint64(m.SchedulerStatus))
+	if m.CommitTs != 0 {
+		n += 1 + sovHeartbeat(uint64(m.CommitTs))
+	}
+	return n
+}
+
+func (m *ACK) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.Span != nil {
+		l = m.Span.Size()
+		n += 1 + l + sovHeartbeat(uint64(l))
+	}
+	if m.CommitTs != 0 {
+		n += 1 + sovHeartbeat(uint64(m.CommitTs))
 	}
 	return n
 }
@@ -2560,8 +2557,8 @@ func (m *HeartBeatResponse) Size() (n int) {
 	}
 	var l int
 	_ = l
-	if len(m.Info) > 0 {
-		for _, e := range m.Info {
+	if len(m.Actions) > 0 {
+		for _, e := range m.Actions {
 			l = e.Size()
 			n += 1 + l + sovHeartbeat(uint64(l))
 		}
@@ -2569,6 +2566,12 @@ func (m *HeartBeatResponse) Size() (n int) {
 	l = len(m.ChangefeedID)
 	if l > 0 {
 		n += 1 + l + sovHeartbeat(uint64(l))
+	}
+	if len(m.Acks) > 0 {
+		for _, e := range m.Acks {
+			l = e.Size()
+			n += 1 + l + sovHeartbeat(uint64(l))
+		}
 	}
 	return n
 }
@@ -2605,9 +2608,6 @@ func (m *ScheduleDispatcherRequest) Size() (n int) {
 	}
 	if m.ScheduleAction != 0 {
 		n += 1 + sovHeartbeat(uint64(m.ScheduleAction))
-	}
-	if m.IsSecondary {
-		n += 2
 	}
 	return n
 }
@@ -2689,27 +2689,6 @@ func (m *CoordinatorBootstrapResponse) Size() (n int) {
 	return n
 }
 
-func (m *DispatchMaintainerRequest) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if len(m.AddMaintainers) > 0 {
-		for _, e := range m.AddMaintainers {
-			l = e.Size()
-			n += 1 + l + sovHeartbeat(uint64(l))
-		}
-	}
-	if len(m.RemoveMaintainers) > 0 {
-		for _, e := range m.RemoveMaintainers {
-			l = e.Size()
-			n += 1 + l + sovHeartbeat(uint64(l))
-		}
-	}
-	return n
-}
-
 func (m *AddMaintainerRequest) Size() (n int) {
 	if m == nil {
 		return 0
@@ -2723,9 +2702,6 @@ func (m *AddMaintainerRequest) Size() (n int) {
 	l = len(m.Config)
 	if l > 0 {
 		n += 1 + l + sovHeartbeat(uint64(l))
-	}
-	if m.IsSecondary {
-		n += 2
 	}
 	if m.CheckpointTs != 0 {
 		n += 1 + sovHeartbeat(uint64(m.CheckpointTs))
@@ -2762,6 +2738,9 @@ func (m *MaintainerBootstrapRequest) Size() (n int) {
 	l = len(m.Config)
 	if l > 0 {
 		n += 1 + l + sovHeartbeat(uint64(l))
+	}
+	if m.CreateTableTriggerEventDispatcher {
+		n += 2
 	}
 	return n
 }
@@ -2814,6 +2793,39 @@ func (m *MaintainerCloseResponse) Size() (n int) {
 	return n
 }
 
+func (m *State) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.IsBlocked {
+		n += 2
+	}
+	if m.BlockTs != 0 {
+		n += 1 + sovHeartbeat(uint64(m.BlockTs))
+	}
+	if len(m.BlockTableSpan) > 0 {
+		for _, e := range m.BlockTableSpan {
+			l = e.Size()
+			n += 1 + l + sovHeartbeat(uint64(l))
+		}
+	}
+	if len(m.NeedDroppedTableSpan) > 0 {
+		for _, e := range m.NeedDroppedTableSpan {
+			l = e.Size()
+			n += 1 + l + sovHeartbeat(uint64(l))
+		}
+	}
+	if len(m.NeedAddedTableSpan) > 0 {
+		for _, e := range m.NeedAddedTableSpan {
+			l = e.Size()
+			n += 1 + l + sovHeartbeat(uint64(l))
+		}
+	}
+	return n
+}
+
 func (m *TableSpanStatus) Size() (n int) {
 	if m == nil {
 		return 0
@@ -2826,6 +2838,10 @@ func (m *TableSpanStatus) Size() (n int) {
 	}
 	if m.ComponentStatus != 0 {
 		n += 1 + sovHeartbeat(uint64(m.ComponentStatus))
+	}
+	if m.State != nil {
+		l = m.State.Size()
+		n += 1 + l + sovHeartbeat(uint64(l))
 	}
 	if m.CheckpointTs != 0 {
 		n += 1 + sovHeartbeat(uint64(m.CheckpointTs))
@@ -3333,7 +3349,7 @@ func (m *Watermark) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *TableProgress) Unmarshal(dAtA []byte) error {
+func (m *DispatcherAction) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -3356,10 +3372,10 @@ func (m *TableProgress) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: TableProgress: wiretype end group for non-group")
+			return fmt.Errorf("proto: DispatcherAction: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: TableProgress: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: DispatcherAction: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
@@ -3400,9 +3416,9 @@ func (m *TableProgress) Unmarshal(dAtA []byte) error {
 			iNdEx = postIndex
 		case 2:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field IsBlocked", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Action", wireType)
 			}
-			var v int
+			m.Action = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowHeartbeat
@@ -3412,17 +3428,16 @@ func (m *TableProgress) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				v |= int(b&0x7F) << shift
+				m.Action |= Action(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			m.IsBlocked = bool(v != 0)
 		case 3:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field BlockTs", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field CommitTs", wireType)
 			}
-			m.BlockTs = 0
+			m.CommitTs = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowHeartbeat
@@ -3432,26 +3447,7 @@ func (m *TableProgress) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.BlockTs |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 4:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field CheckpointTs", wireType)
-			}
-			m.CheckpointTs = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowHeartbeat
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.CheckpointTs |= uint64(b&0x7F) << shift
+				m.CommitTs |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -3477,7 +3473,7 @@ func (m *TableProgress) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *TableProgressInfo) Unmarshal(dAtA []byte) error {
+func (m *ACK) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -3500,10 +3496,10 @@ func (m *TableProgressInfo) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: TableProgressInfo: wiretype end group for non-group")
+			return fmt.Errorf("proto: ACK: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: TableProgressInfo: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: ACK: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
@@ -3543,44 +3539,10 @@ func (m *TableProgressInfo) Unmarshal(dAtA []byte) error {
 			}
 			iNdEx = postIndex
 		case 2:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field TableProgresses", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowHeartbeat
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthHeartbeat
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthHeartbeat
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.TableProgresses = append(m.TableProgresses, &TableProgress{})
-			if err := m.TableProgresses[len(m.TableProgresses)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		case 3:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Action", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field CommitTs", wireType)
 			}
-			m.Action = 0
+			m.CommitTs = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowHeartbeat
@@ -3590,26 +3552,7 @@ func (m *TableProgressInfo) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.Action |= Action(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 4:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field SchedulerStatus", wireType)
-			}
-			m.SchedulerStatus = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowHeartbeat
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.SchedulerStatus |= ComponentState(b&0x7F) << shift
+				m.CommitTs |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
@@ -3666,7 +3609,7 @@ func (m *HeartBeatResponse) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Info", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Actions", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -3693,8 +3636,8 @@ func (m *HeartBeatResponse) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.Info = append(m.Info, &TableProgressInfo{})
-			if err := m.Info[len(m.Info)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+			m.Actions = append(m.Actions, &DispatcherAction{})
+			if err := m.Actions[len(m.Actions)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex
@@ -3729,6 +3672,40 @@ func (m *HeartBeatResponse) Unmarshal(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.ChangefeedID = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Acks", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Acks = append(m.Acks, &ACK{})
+			if err := m.Acks[len(m.Acks)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
@@ -3972,26 +3949,6 @@ func (m *ScheduleDispatcherRequest) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 4:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field IsSecondary", wireType)
-			}
-			var v int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowHeartbeat
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				v |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			m.IsSecondary = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := skipHeartbeat(dAtA[iNdEx:])
@@ -4470,124 +4427,6 @@ func (m *CoordinatorBootstrapResponse) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *DispatchMaintainerRequest) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowHeartbeat
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: DispatchMaintainerRequest: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: DispatchMaintainerRequest: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field AddMaintainers", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowHeartbeat
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthHeartbeat
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthHeartbeat
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.AddMaintainers = append(m.AddMaintainers, &AddMaintainerRequest{})
-			if err := m.AddMaintainers[len(m.AddMaintainers)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		case 2:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field RemoveMaintainers", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowHeartbeat
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthHeartbeat
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthHeartbeat
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.RemoveMaintainers = append(m.RemoveMaintainers, &RemoveMaintainerRequest{})
-			if err := m.RemoveMaintainers[len(m.RemoveMaintainers)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := skipHeartbeat(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthHeartbeat
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
 func (m *AddMaintainerRequest) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -4684,26 +4523,6 @@ func (m *AddMaintainerRequest) Unmarshal(dAtA []byte) error {
 			}
 			iNdEx = postIndex
 		case 3:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field IsSecondary", wireType)
-			}
-			var v int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowHeartbeat
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				v |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			m.IsSecondary = bool(v != 0)
-		case 4:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field CheckpointTs", wireType)
 			}
@@ -4940,6 +4759,26 @@ func (m *MaintainerBootstrapRequest) Unmarshal(dAtA []byte) error {
 				m.Config = []byte{}
 			}
 			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CreateTableTriggerEventDispatcher", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.CreateTableTriggerEventDispatcher = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := skipHeartbeat(dAtA[iNdEx:])
@@ -5261,6 +5100,197 @@ func (m *MaintainerCloseResponse) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
+func (m *State) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowHeartbeat
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: State: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: State: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field IsBlocked", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.IsBlocked = bool(v != 0)
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field BlockTs", wireType)
+			}
+			m.BlockTs = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.BlockTs |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field BlockTableSpan", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.BlockTableSpan = append(m.BlockTableSpan, &TableSpan{})
+			if err := m.BlockTableSpan[len(m.BlockTableSpan)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field NeedDroppedTableSpan", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.NeedDroppedTableSpan = append(m.NeedDroppedTableSpan, &TableSpan{})
+			if err := m.NeedDroppedTableSpan[len(m.NeedDroppedTableSpan)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field NeedAddedTableSpan", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.NeedAddedTableSpan = append(m.NeedAddedTableSpan, &TableSpan{})
+			if err := m.NeedAddedTableSpan[len(m.NeedAddedTableSpan)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipHeartbeat(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
 func (m *TableSpanStatus) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -5345,6 +5375,42 @@ func (m *TableSpanStatus) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field State", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowHeartbeat
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthHeartbeat
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.State == nil {
+				m.State = &State{}
+			}
+			if err := m.State.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		case 4:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field CheckpointTs", wireType)

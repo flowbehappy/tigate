@@ -21,7 +21,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/pdutil"
-	"golang.org/x/sync/errgroup"
 )
 
 // LogPullerMultiSpan is a simple wrapper around LogPuller.
@@ -76,14 +75,13 @@ func NewLogPullerMultiSpan(
 
 func (p *LogPullerMultiSpan) Run(ctx context.Context) error {
 	p.mu.Lock()
-	eg, ctx := errgroup.WithContext(ctx)
-	eg.Go(func() error { return p.innerPuller.Run(ctx) })
 	p.spanResolvedTsMap.Range(func(span heartbeatpb.TableSpan, ts common.Ts) bool {
 		p.innerPuller.Subscribe(span, p.resolvedTs)
 		return true
 	})
 	p.mu.Unlock()
-	return eg.Wait()
+	
+	return p.innerPuller.Run(ctx)
 }
 
 // return whether the global resolved ts of all spans is updated

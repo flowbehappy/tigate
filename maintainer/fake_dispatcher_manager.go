@@ -128,12 +128,12 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 							string("maintainer/"+manager.id.ID),
 							&heartbeatpb.HeartBeatResponse{
 								ChangefeedID: manager.id.ID,
-								Info: []*heartbeatpb.TableProgressInfo{
-									{
-										Span:            absentSpan.TableSpan,
-										SchedulerStatus: heartbeatpb.ComponentState_Absent,
-									},
-								},
+								// Info: []*heartbeatpb.TableProgressInfo{
+								// 	{
+								// 		Span:            absentSpan.TableSpan,
+								// 		SchedulerStatus: heartbeatpb.ComponentState_Absent,
+								// 	},
+								// },
 							},
 						))
 						if err != nil {
@@ -219,15 +219,12 @@ func (m *DispatcherManager) handleDispatchTableSpanRequest(
 	if request.GetScheduleAction() == heartbeatpb.ScheduleAction_Create {
 		span, ok := m.dispatchers.Get(tableSpan)
 		if !ok {
-			span = NewDispatcher(m.id, tableSpan, request.GetIsSecondary())
+			span = NewDispatcher(m.id, tableSpan)
 			m.dispatchers.ReplaceOrInsert(tableSpan, span)
 			//threadpool.GetTaskSchedulerInstance().MaintainerTaskScheduler.Submit(span, threadpool.CPUTask, time.Now())
 		}
 		span.removing.Store(false)
-		span.isSecondary.Store(request.IsSecondary)
-		if !request.IsSecondary {
-			span.state = heartbeatpb.ComponentState_Working
-		}
+		span.state = heartbeatpb.ComponentState_Working
 	} else {
 		span, ok := m.dispatchers.Get(tableSpan)
 		if !ok {
@@ -248,20 +245,15 @@ type Dispatcher struct {
 	state heartbeatpb.ComponentState
 
 	removing       *atomic.Bool
-	isSecondary    *atomic.Bool
 	lastReportTime time.Time
 }
 
-func NewDispatcher(cfID model.ChangeFeedID, ID *common.TableSpan, isSecondary bool) *Dispatcher {
+func NewDispatcher(cfID model.ChangeFeedID, ID *common.TableSpan) *Dispatcher {
 	d := &Dispatcher{
-		cfID:        cfID,
-		ID:          ID,
-		removing:    atomic.NewBool(false),
-		state:       heartbeatpb.ComponentState_Prepared,
-		isSecondary: atomic.NewBool(isSecondary),
-	}
-	if !isSecondary {
-		d.state = heartbeatpb.ComponentState_Working
+		cfID:     cfID,
+		ID:       ID,
+		removing: atomic.NewBool(false),
+		state:    heartbeatpb.ComponentState_Working,
 	}
 	return d
 }
@@ -271,10 +263,6 @@ func (d *Dispatcher) Execute() (threadpool.TaskStatus, time.Time) {
 	if d.removing.Load() {
 		d.state = heartbeatpb.ComponentState_Stopped
 		return threadpool.Done, time.Time{}
-	}
-	// not on the primary status, skip running
-	if d.isSecondary.Load() {
-		return threadpool.CPUTask, time.Now().Add(500 * time.Millisecond)
 	}
 	d.state = heartbeatpb.ComponentState_Working
 	//todo: handle messages

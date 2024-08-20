@@ -10,6 +10,8 @@ import (
 	"github.com/zeebo/assert"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+
+	timodel "github.com/pingcap/tidb/pkg/parser/model"
 )
 
 func newTestMockDB(t *testing.T) (db *sql.DB, mock sqlmock.Sqlmock) {
@@ -202,17 +204,31 @@ func TestMysqlWriter_Flush_EmptyEvents(t *testing.T) {
 	require.NoError(t, err)
 }
 
-/*
-TODO:
-func TestWithMysqlCluster(t *testing.T) {
-	_, db, err := NewMysqlConfigAndDB("tidb://root:@127.0.0.1:4000")
+func TestMysqlWriter_FlushDDLEvent(t *testing.T) {
+	db, mock := newTestMockDB(t)
+	defer db.Close()
+
+	cfg := &MysqlConfig{}
+
+	writer := NewMysqlWriter(db, cfg, model.ChangeFeedID4Test("test", "test"))
+
+	event := common.TxnEvent{DDLEvent: &common.DDLEvent{
+		Job: &timodel.Job{
+			SchemaName: "test",
+			TableName:  "table1",
+			Query:      "CREATE TABLE table1 (id INT PRIMARY KEY, name VARCHAR(255))",
+		},
+		CommitTS: 10,
+	}}
+
+	mock.ExpectBegin()
+	mock.ExpectExec("USE `test`;").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("CREATE TABLE table1 (id INT PRIMARY KEY, name VARCHAR(255))").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	err := writer.FlushDDLEvent(&event)
 	require.NoError(t, err)
-	rows, err := db.Query("SELECT * from d1.t1")
-	for rows.Next() {
-		var id int
-		var name string
-		err = rows.Scan(&id, &name)
-		require.NoError(t, err)
-		log.Info("id, name", zap.Any("id", id), zap.Any("name", name))
-	}
-}*/
+
+	err = mock.ExpectationsWereMet()
+	require.NoError(t, err)
+}

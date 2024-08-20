@@ -16,28 +16,24 @@ package maintainer
 import (
 	"encoding/json"
 	"math"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	configNew "github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/flowbehappy/tigate/pkg/rpc"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/entry/schema"
-	"github.com/pingcap/tiflow/cdc/kv"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/filter"
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
@@ -81,7 +77,6 @@ type Maintainer struct {
 
 	removing        *atomic.Bool
 	cascadeRemoving *atomic.Bool
-	isSecondary     *atomic.Bool
 
 	msgQueue *MessageQueue
 
@@ -104,7 +99,6 @@ type Maintainer struct {
 
 // NewMaintainer create the maintainer for the changefeed
 func NewMaintainer(cfID model.ChangeFeedID,
-	isSecondary bool,
 	cfg *model.ChangeFeedInfo,
 	checkpointTs uint64,
 	pdEndpoints []string,
@@ -112,13 +106,12 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	m := &Maintainer{
 		id:              cfID,
 		mc:              appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
-		state:           heartbeatpb.ComponentState_Prepared,
+		state:           heartbeatpb.ComponentState_Working,
 		removed:         atomic.NewBool(false),
 		taskCh:          make(chan Task, 1024),
 		nodeManager:     appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName),
 		nodesClosed:     make(map[string]struct{}),
 		statusChanged:   atomic.NewBool(true),
-		isSecondary:     atomic.NewBool(isSecondary),
 		removing:        atomic.NewBool(false),
 		cascadeRemoving: atomic.NewBool(false),
 		config:          cfg,
@@ -142,12 +135,11 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		runningTaskGauge:               metrics.RunningScheduleTaskGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		tableCountGauge:                metrics.TableGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 	}
-	if !isSecondary {
-		m.state = heartbeatpb.ComponentState_Working
-	}
-	m.supervisor = scheduler.NewSupervisor(scheduler.ChangefeedID(cfID),
+	id := scheduler.ChangefeedID(cfID)
+	m.supervisor = scheduler.NewSupervisor(id,
 		m.getReplicaSet, m.getNewBootstrapFn(),
-		scheduler.NewBasicScheduler(scheduler.ChangefeedID(cfID)),
+		scheduler.NewBasicScheduler(id),
+		scheduler.NewBalanceScheduler(id, time.Minute, 1000),
 	)
 	log.Info("create maintainer", zap.String("id", cfID.String()))
 	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace, cfID.ID).Inc()
@@ -207,11 +199,6 @@ func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time
 			return
 		}
 		m.initialized = true
-	}
-
-	// not on the primary status, skip running
-	if m.isSecondary.Load() {
-		return
 	}
 	m.state = heartbeatpb.ComponentState_Working
 
@@ -313,9 +300,9 @@ func (m *Maintainer) updateMetrics() {
 }
 
 // send message to remote, todo: use a io thread pool
-func (m *Maintainer) sendMessages(msgs []rpc.Message) {
+func (m *Maintainer) sendMessages(msgs []*messaging.TargetMessage) {
 	for _, msg := range msgs {
-		err := m.mc.SendCommand(msg.(*messaging.TargetMessage))
+		err := m.mc.SendCommand(msg)
 		if err != nil {
 			log.Debug("failed to send maintainer request", zap.Any("msg", msg), zap.Error(err))
 			continue
@@ -337,16 +324,15 @@ func (m *Maintainer) Close() {
 	m.cleanupMetrics()
 	log.Info("changefeed maintainer closed", zap.String("id", m.id.String()),
 		zap.Bool("removed", m.removed.Load()),
-		zap.Uint64("checkpointTs", m.watermark.CheckpointTs),
-		zap.Bool("secondary", m.isSecondary.Load()))
+		zap.Uint64("checkpointTs", m.watermark.CheckpointTs))
 }
 
 func (m *Maintainer) initChangefeed() error {
-	m.state = heartbeatpb.ComponentState_Prepared
+	m.state = heartbeatpb.ComponentState_Working
 	m.statusChanged.Store(true)
 	var err error
 	tableIDs, err := m.initTableIDs()
-	for id := range tableIDs {
+	for _, id := range tableIDs {
 		span := spanz.TableIDToComparableSpan(id)
 		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
 			TableID:  uint64(id),
@@ -357,6 +343,7 @@ func (m *Maintainer) initChangefeed() error {
 		m.tableSpans.ReplaceOrInsert(tableSpan, replicaSet)
 	}
 	m.supervisor.MarkNeedAddInferior()
+	//todo: remove gc service checkpoint ts
 	return err
 }
 
@@ -410,40 +397,15 @@ func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage)
 }
 
 // initTableIDs get tables ids base on the filter and checkpoint ts
-func (m *Maintainer) initTableIDs() (map[int64]struct{}, error) {
+func (m *Maintainer) initTableIDs() ([]common.TableID, error) {
 	startTs := m.watermark.CheckpointTs
 	f, err := filter.NewFilter(m.config.Config, "")
 	if err != nil {
 		return nil, errors.Cause(err)
 	}
 
-	cfg := config.GetGlobalServerConfig()
-	kvStore, err := kv.CreateTiStore(strings.Join(m.pdEndpoints, ","), cfg.Security)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	meta := kv.GetSnapshotMeta(kvStore, startTs)
-	snap, err := schema.NewSnapshotFromMeta(
-		model.ChangeFeedID4Test("api", "verifyTable"),
-		meta, startTs, false /* explicitTables */, f)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	tableIDs := make(map[int64]struct{})
-	snap.IterTables(true, func(tableInfo *model.TableInfo) {
-		if f.ShouldIgnoreTable(tableInfo.TableName.Schema, tableInfo.TableName.Table) {
-			return
-		}
-		// TODO: remove this line when the filter can filter out system table
-		if tableInfo.Name.O == "mysql" || tableInfo.Name.O == "sys" {
-			return
-		}
-		if tableInfo.IsSequence() {
-			return
-		}
-		tableIDs[tableInfo.ID] = struct{}{}
-	})
+	schemaStore := appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore)
+	tableIDs, err := schemaStore.GetAllPhysicalTables(common.Ts(startTs), f)
 	log.Info("get table ids", zap.Int("count", len(tableIDs)), zap.String("changefeed", m.id.String()))
 	return tableIDs, nil
 }
@@ -455,15 +417,14 @@ func (m *Maintainer) onNodeClosed(from string, response *heartbeatpb.MaintainerC
 }
 
 func (m *Maintainer) tryCloseChangefeed() bool {
-	if m.state != heartbeatpb.ComponentState_Stopping && m.state != heartbeatpb.ComponentState_Stopped {
-		m.state = heartbeatpb.ComponentState_Stopping
+	if m.state != heartbeatpb.ComponentState_Stopped {
 		m.statusChanged.Store(true)
 	}
 	if !m.cascadeRemoving.Load() {
 		return true
 	}
 
-	msgs := make([]rpc.Message, 0)
+	msgs := make([]*messaging.TargetMessage, 0)
 	for node := range m.nodeManager.GetAliveNodes() {
 		if _, ok := m.nodesClosed[node]; !ok {
 			msgs = append(msgs, messaging.NewTargetMessage(
@@ -531,7 +492,7 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 		log.Panic("marshal changefeed config failed", zap.Error(err))
 	}
 	log.Info("create maintainer bootstrap message function", zap.String("changefeed", m.id.String()), zap.ByteString("config", cfgBytes))
-	return func(captureID model.CaptureID) rpc.Message {
+	return func(captureID model.CaptureID) *messaging.TargetMessage {
 		return messaging.NewTargetMessage(
 			messaging.ServerId(captureID),
 			messaging.DispatcherManagerManagerTopic,
@@ -576,8 +537,7 @@ func (m *Maintainer) printStatus() {
 			zap.Int("total", m.tableSpans.Len()),
 			zap.Int("scheduled", m.supervisor.GetInferiors().Len()),
 			zap.Int("absent", tableStates[scheduler.SchedulerStatusAbsent]),
-			zap.Int("prepare", tableStates[scheduler.SchedulerStatusPrepare]),
-			zap.Int("commit", tableStates[scheduler.SchedulerStatusCommit]),
+			zap.Int("commit", tableStates[scheduler.SchedulerStatusCommiting]),
 			zap.Int("working", tableStates[scheduler.SchedulerStatusWorking]),
 			zap.Int("removing", tableStates[scheduler.SchedulerStatusRemoving]),
 			zap.Int("runningTasks", m.supervisor.RunningTasks.Len()))

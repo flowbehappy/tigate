@@ -12,6 +12,8 @@ import (
 
 	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/pkg/common"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -23,12 +25,10 @@ import (
 )
 
 type SchemaStore interface {
-	Run(ctx context.Context) error
-
-	Close(ctx context.Context)
+	common.SubModule
 
 	// TODO: add filter
-	GetAllPhysicalTables(snapTs common.Ts) ([]common.TableID, error)
+	GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]common.TableID, error)
 
 	// RegisterDispatcher register the dispatcher into the schema store.
 	// TODO: return a table info
@@ -54,7 +54,7 @@ type schemaStore struct {
 	storage kv.Storage
 
 	// store unresolved ddl event in memory, it is thread safe
-	unsortedCache *unsortedDDLCache
+	unsortedCache *ddlCache
 
 	// store ddl event and other metadata on disk, it is thread safe
 	dataStorage *persistentStorage
@@ -92,11 +92,10 @@ func NewSchemaStore(
 	regionCache *tikv.RegionCache,
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
-) (SchemaStore, error) {
+) SchemaStore {
 	gcSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, "cdc-new-store", 0, 0)
 	if err != nil {
 		log.Panic("get ts failed", zap.Error(err))
-		return nil, err
 	}
 	minRequiredTS := common.Ts(gcSafePoint)
 	dataStorage, metaTS, databaseMap := newPersistentStorage(root, kvStorage, minRequiredTS)
@@ -108,7 +107,7 @@ func NewSchemaStore(
 
 	s := &schemaStore{
 		storage:       kvStorage,
-		unsortedCache: newUnSortedDDLCache(),
+		unsortedCache: newDDLCache(),
 		dataStorage:   dataStorage,
 		eventCh:       make(chan interface{}, 1024),
 		// TODO: fix the following two fields
@@ -118,6 +117,7 @@ func NewSchemaStore(
 		tableInfoStoreMap: make(TableInfoStoreMap),
 		dispatchersMap:    make(DispatcherInfoMap),
 	}
+
 	log.Info("new schema store",
 		zap.Uint64("finishedDDLTS", s.finishedDDLTS),
 		zap.Int64("schemaVersion", s.schemaVersion))
@@ -129,8 +129,11 @@ func NewSchemaStore(
 		metaTS.ResolvedTS,
 		s.writeDDLEvent,
 		s.advanceResolvedTs)
+	return s
+}
 
-	return s, nil
+func (s *schemaStore) Name() string {
+	return appcontext.SchemaStore
 }
 
 func (s *schemaStore) Run(ctx context.Context) error {
@@ -139,16 +142,15 @@ func (s *schemaStore) Run(ctx context.Context) error {
 		return s.batchCommitAndUpdateWatermark(ctx)
 	})
 	eg.Go(func() error {
-		return s.ddlJobFetcher.run(ctx)
+		return s.ddlJobFetcher.puller.Run(ctx)
 	})
 	return eg.Wait()
 }
 
-func (s *schemaStore) Close(ctx context.Context) {
-
+func (s *schemaStore) Close(ctx context.Context) error {
+	return nil
 }
 
-// TODO: use a meaningful name
 func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 	for {
 		select {
@@ -223,11 +225,7 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 	}
 }
 
-func isSystemDB(dbName string) bool {
-	return dbName == "mysql" || dbName == "sys"
-}
-
-func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]common.TableID, error) {
+func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts, f filter.Filter) ([]common.TableID, error) {
 	meta := logpuller.GetSnapshotMeta(s.storage, uint64(snapTs))
 	dbinfos, err := meta.ListDatabases()
 	if err != nil {
@@ -237,11 +235,12 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]common.TableID, 
 	tableIDs := make([]common.TableID, 0)
 
 	for _, dbinfo := range dbinfos {
-		if isSystemDB(dbinfo.Name.O) {
+		if filter.IsSysSchema(dbinfo.Name.O) ||
+			(f != nil && f.ShouldIgnoreSchema(dbinfo.Name.O)) {
 			continue
 		}
 		rawTables, err := meta.GetMetasByDBID(dbinfo.ID)
-		log.Info("get database", zap.Any("dbinfo", dbinfo), zap.Any("rawTables", rawTables))
+		log.Info("get database", zap.Any("dbinfo", dbinfo), zap.Int("rawTablesLen", len(rawTables)))
 		if err != nil {
 			log.Fatal("get tables failed", zap.Error(err))
 		}
@@ -253,6 +252,10 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts) ([]common.TableID, 
 			err := json.Unmarshal(rawTable.Value, tbName)
 			if err != nil {
 				log.Fatal("get table info failed", zap.Error(err))
+			}
+			// TODO: support ignore sequence / forcereplicate / view cases
+			if f != nil && f.ShouldIgnoreTable(dbinfo.Name.O, tbName.Name.O) {
+				continue
 			}
 			tableIDs = append(tableIDs, common.TableID(tbName.ID))
 		}
@@ -268,7 +271,9 @@ func (s *schemaStore) RegisterDispatcher(
 	// TODO: fix me in the future
 	if startTS < s.dataStorage.getGCTS() {
 		s.mu.Unlock()
-		log.Panic("startTs is old than gcTs")
+		log.Panic("startTs is old than gcTs",
+			zap.Uint64("startTs", uint64(startTS)),
+			zap.Uint64("gcTs", uint64(s.dataStorage.getGCTS())))
 	}
 
 	s.dispatchersMap[dispatcherID] = DispatcherInfo{

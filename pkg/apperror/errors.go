@@ -27,6 +27,8 @@ const (
 	ErrorTypeMessageSendFailed    ErrorType = 206
 	ErrorTypeTargetNotFound       ErrorType = 207
 	ErrorTypeInvalidMessage       ErrorType = 208
+
+	ErrorInvalidDDLEvent ErrorType = 301
 )
 
 func (t ErrorType) String() string {

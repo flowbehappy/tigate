@@ -10,7 +10,7 @@ import (
 	"github.com/google/btree"
 )
 
-type unsortedDDLCache struct {
+type ddlCache struct {
 	mutex sync.Mutex
 	// ordered by commitTS
 	// TODO: is commitTS unique?
@@ -21,13 +21,13 @@ func ddlEventLess(a, b DDLEvent) bool {
 	return a.CommitTS < b.CommitTS || (a.CommitTS == b.CommitTS && a.Job.BinlogInfo.SchemaVersion < b.Job.BinlogInfo.SchemaVersion)
 }
 
-func newUnSortedDDLCache() *unsortedDDLCache {
-	return &unsortedDDLCache{
+func newDDLCache() *ddlCache {
+	return &ddlCache{
 		ddlEvents: btree.NewG[DDLEvent](16, ddlEventLess),
 	}
 }
 
-func (c *unsortedDDLCache) addDDLEvent(ddlEvent DDLEvent) {
+func (c *ddlCache) addDDLEvent(ddlEvent DDLEvent) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	oldEvent, duplicated := c.ddlEvents.ReplaceOrInsert(ddlEvent)
@@ -38,7 +38,7 @@ func (c *unsortedDDLCache) addDDLEvent(ddlEvent DDLEvent) {
 	}
 }
 
-func (c *unsortedDDLCache) fetchSortedDDLEventBeforeTS(ts common.Ts) []DDLEvent {
+func (c *ddlCache) fetchSortedDDLEventBeforeTS(ts common.Ts) []DDLEvent {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	events := make([]DDLEvent, 0)
