@@ -15,7 +15,6 @@ package logpuller
 
 import (
 	"sync"
-	"sync/atomic"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/logpuller/regionlock"
@@ -44,8 +43,6 @@ type regionInfo struct {
 	subscribedTable *subscribedTable
 	// The state of the locked range of the region.
 	lockedRangeState *regionlock.LockedRangeState
-
-	limiterReleased atomic.Bool
 
 	limiter *RegionScanRequestLimiter
 }
@@ -171,17 +168,20 @@ func (s *regionFeedState) getLastResolvedTs() uint64 {
 
 // updateResolvedTs update the resolved ts of the current region feed
 func (s *regionFeedState) updateResolvedTs(resolvedTs uint64) {
-	if !s.region.limiterReleased.Load() {
-		s.region.limiterReleased.Store(true)
-		s.region.limiter.Release()
-	}
 	state := s.region.lockedRangeState
+	needRelease := false
 	for {
 		last := state.ResolvedTs.Load()
 		if last > resolvedTs {
 			return
 		}
+		if last == 0 {
+			needRelease = true
+		}
 		if state.ResolvedTs.CompareAndSwap(last, resolvedTs) {
+			if needRelease {
+				s.region.limiter.Release()
+			}
 			break
 		}
 	}
