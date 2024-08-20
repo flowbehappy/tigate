@@ -46,17 +46,33 @@ var (
 	EventDispatcherManagerResolvedTsGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
-			Subsystem: "sink",
-			Name:      "event_dispatcher_manager_resolved_ts",
+			Subsystem: "dispatchermanager",
+			Name:      "resolved_ts",
 			Help:      "Resolved ts of event dispatcher manager(changefeed)",
+		}, []string{"namespace", "changefeed"})
+
+	EventDispatcherManagerResolvedTsLagGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "dispatchermanager",
+			Name:      "resolved_ts_lag",
+			Help:      "Resolved ts lag of event dispatcher manager(changefeed) in seconds",
 		}, []string{"namespace", "changefeed"})
 
 	EventDispatcherManagerCheckpointTsGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
-			Subsystem: "sink",
-			Name:      "event_dispatcher_manager_checkpoint_ts",
+			Subsystem: "dispatchermanager",
+			Name:      "checkpoint_ts",
 			Help:      "Checkpoint ts of event dispatcher manager(changefeed)",
+		}, []string{"namespace", "changefeed"})
+
+	EventDispatcherManagerCheckpointTsLagGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "dispatchermanager",
+			Name:      "checkpoint_ts_lag",
+			Help:      "Checkpoint ts lag of event dispatcher manager(changefeed) in seconds",
 		}, []string{"namespace", "changefeed"})
 
 	HandleDispatcherRequsetCounter = prometheus.NewCounterVec(
@@ -80,6 +96,23 @@ var (
 		Name:      "event_collector_registered_dispatcher_count",
 		Help:      "The number of registered dispatchers in the event collector",
 	})
+
+	EventCollectorReceivedEventLagDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "dispatcher",
+			Name:      "received_event_lag_duration",
+			Help:      "The duration of lag between the event collector received event and the event's ts",
+			Buckets:   prometheus.DefBuckets,
+		}, []string{"type"})
+
+	EventCollectorResolvedTsLagGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_collector",
+			Name:      "resolved_ts_lag",
+			Help:      "Resolved ts lag of event collector in seconds",
+		})
 )
 
 func InitDisaptcherMetrics(registry *prometheus.Registry) {
@@ -87,8 +120,13 @@ func InitDisaptcherMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(TableEventDispatcherGauge)
 	registry.MustRegister(CreateDispatcherDuration)
 	registry.MustRegister(EventDispatcherManagerResolvedTsGauge)
+	registry.MustRegister(EventDispatcherManagerResolvedTsLagGauge)
 	registry.MustRegister(EventDispatcherManagerCheckpointTsGauge)
+	registry.MustRegister(EventDispatcherManagerCheckpointTsLagGauge)
 	registry.MustRegister(HandleDispatcherRequsetCounter)
 	registry.MustRegister(DispatcherReceivedEventCount)
 	registry.MustRegister(EventCollectorRegisteredDispatcherCount)
+	registry.MustRegister(EventCollectorReceivedEventLagDuration)
+	registry.MustRegister(EventCollectorResolvedTsLagGauge)
+
 }

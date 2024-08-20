@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/chann"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -73,6 +74,9 @@ type EventCollector struct {
 	registerMessageChan                          *chann.DrainableChann[RegisterInfo] // for temp
 	metricDispatcherReceivedKVEventCount         prometheus.Counter
 	metricDispatcherReceivedResolvedTsEventCount prometheus.Counter
+	metricReceiveEventLagDuration                prometheus.Observer
+	metricReceiveResolvedTsEventLagDuration      prometheus.Observer
+	metricResolvedTsLag                          prometheus.Gauge
 }
 
 func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *EventCollector {
@@ -83,6 +87,9 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 		registerMessageChan:                  chann.NewAutoDrainChann[RegisterInfo](),
 		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
+		metricReceiveEventLagDuration:                metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("KVEvent"),
+		metricReceiveResolvedTsEventLagDuration:      metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("ResolvedTs"),
+		metricResolvedTsLag:                          metrics.EventCollectorResolvedTsLagGauge,
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
 
@@ -104,6 +111,8 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 			}
 		}
 	}()
+	// update metrics
+	eventCollector.updateMetrics(context.Background())
 
 	return &eventCollector
 }
@@ -174,6 +183,7 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 		log.Error("invalid event feed message", zap.Any("msg", msg))
 		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: "invalid heartbeat response message"}
 	}
+	inflightDuration := time.Since(time.Unix(0, msg.CrateAt)).Milliseconds()
 
 	dispatcherID := txnEvent.DispatcherID
 
@@ -207,9 +217,11 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 		if txnEvent.IsDMLEvent() || txnEvent.IsDDLEvent() {
 			dispatcherItem.PushTxnEvent(txnEvent)
 			c.metricDispatcherReceivedKVEventCount.Inc()
+			c.metricReceiveEventLagDuration.Observe(float64(inflightDuration))
 		} else {
 			dispatcherItem.UpdateResolvedTs(txnEvent.ResolvedTs)
 			c.metricDispatcherReceivedResolvedTsEventCount.Inc()
+			c.metricReceiveResolvedTsEventLagDuration.Observe(float64(inflightDuration))
 		}
 
 		// dispatcherItem.UpdateResolvedTs(eventFeeds.ResolvedTs)
@@ -230,5 +242,36 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 		//}
 
 	}
+	return nil
+}
+
+func (c *EventCollector) updateMetrics(ctx context.Context) error {
+	ticker := time.NewTicker(10 * time.Second)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				minResolvedTs := uint64(0)
+				c.dispatcherMap.m.Range(func(key, value interface{}) bool {
+					d, ok := value.(*dispatcher.Dispatcher)
+					if !ok {
+						return true
+					}
+					if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
+						minResolvedTs = d.GetResolvedTs()
+					}
+					return true
+				})
+				if minResolvedTs == 0 {
+					continue
+				}
+				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
+				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
+				c.metricResolvedTsLag.Set(float64(lag))
+			}
+		}
+	}()
 	return nil
 }

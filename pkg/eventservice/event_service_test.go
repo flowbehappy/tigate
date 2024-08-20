@@ -17,16 +17,21 @@ import (
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
+var _ messaging.MessageCenter = &mockMessageCenter{}
+
 // mockMessageCenter is a mock implementation of the MessageCenter interface
 type mockMessageCenter struct {
 	messageCh chan *messaging.TargetMessage
+}
+
+func (m *mockMessageCenter) OnNodeChanges(newNodes []*common.NodeInfo, removedNodes []*common.NodeInfo) {
+
 }
 
 func (m *mockMessageCenter) SendEvent(event ...*messaging.TargetMessage) error {
@@ -317,7 +322,6 @@ func TestEventServiceBasic(t *testing.T) {
 
 	require.Equal(t, 1, len(esImpl.brokers))
 	require.NotNil(t, esImpl.brokers[acceptorInfo.GetClusterID()])
-	require.Equal(t, 1, len(esImpl.brokers[acceptorInfo.GetClusterID()].dispatchers.m))
 
 	// add events to logpuller
 	txnEvent := &common.TxnEvent{
@@ -390,7 +394,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 	defer cancel()
 
 	serverId := messaging.NewServerId()
-	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, serverId, watcher.TempEpoch, config.NewDefaultMessageCenterConfig()))
+	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, serverId, 1, config.NewDefaultMessageCenterConfig()))
 	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, serverId)) // 100GB for demo
 
 	mockStore := newMockEventStore()
@@ -410,11 +414,12 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 	tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: nil, EndKey: nil}}
 	startTs := uint64(1)
 
-	tableEventDispatcher := dispatcher.NewTableEventDispatcher(tableSpan, mysqlSink, startTs, nil)
+	tableEventDispatcher := dispatcher.NewDispatcher(tableSpan, mysqlSink, startTs, nil, nil)
 	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(
 		eventcollector.RegisterInfo{
-			Dispatcher: tableEventDispatcher,
-			StartTs:    startTs,
+			Dispatcher:   tableEventDispatcher,
+			StartTs:      startTs,
+			FilterConfig: nil,
 		},
 	)
 

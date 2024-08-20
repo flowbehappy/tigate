@@ -75,7 +75,9 @@ type EventDispatcherManager struct {
 	filter                         filter.Filter
 	metricCreateDispatcherDuration prometheus.Observer
 	metricCheckpointTs             prometheus.Gauge
+	metricCheckpointTsLag          prometheus.Gauge
 	metricResolveTs                prometheus.Gauge
+	metricResolvedTsLag            prometheus.Gauge
 
 	closing bool
 	closed  atomic.Bool
@@ -95,7 +97,9 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, changefeedConfig
 		tableEventDispatcherCount:      metrics.TableEventDispatcherGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCreateDispatcherDuration: metrics.CreateDispatcherDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCheckpointTs:             metrics.EventDispatcherManagerCheckpointTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
+		metricCheckpointTsLag:          metrics.EventDispatcherManagerCheckpointTsLagGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricResolveTs:                metrics.EventDispatcherManagerResolvedTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
+		metricResolvedTsLag:            metrics.EventDispatcherManagerResolvedTsLagGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 	}
 
 	// TODO: 最后去更新一下 filter 的内部 NewFilter 函数，现在是在套壳适配
@@ -383,7 +387,6 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 		// If it's closed successfully, we could clean it up.
 		// TODO: we need to consider how to deal with the checkpointTs of the removed dispatcher if the message will be discarded.
 		dispatcherItem.CollectDispatcherHeartBeatInfo(dispatcherHeartBeatInfo)
-
 		if dispatcherHeartBeatInfo.IsRemoving {
 			watermark, ok := dispatcherItem.TryClose()
 			if ok {
@@ -405,6 +408,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 			message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
 				Span:            dispatcherHeartBeatInfo.TableSpan.TableSpan,
 				ComponentStatus: dispatcherHeartBeatInfo.ComponentStatus,
+				CheckpointTs:    dispatcherHeartBeatInfo.Watermark.CheckpointTs,
 			})
 		}
 	}
@@ -412,9 +416,14 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	for _, tableSpan := range toReomveTableSpans {
 		e.cleanTableEventDispatcher(tableSpan)
 	}
-
-	e.metricCheckpointTs.Set(float64(oracle.ExtractPhysical(message.Watermark.CheckpointTs)))
-	e.metricResolveTs.Set(float64(oracle.ExtractPhysical(message.Watermark.ResolvedTs)))
+	ckptTs := oracle.ExtractPhysical(message.Watermark.CheckpointTs)
+	e.metricCheckpointTs.Set(float64(ckptTs))
+	lag := (oracle.GetPhysical(time.Now()) - ckptTs) / 1e3
+	e.metricCheckpointTsLag.Set(float64(lag))
+	resolvedTs := oracle.ExtractPhysical(message.Watermark.ResolvedTs)
+	e.metricResolveTs.Set(float64(resolvedTs))
+	lag = (oracle.GetPhysical(time.Now()) - resolvedTs) / 1e3
+	e.metricResolvedTsLag.Set(float64(lag))
 	return &message
 }
 
