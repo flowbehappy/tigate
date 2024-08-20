@@ -45,6 +45,10 @@ type TxnEvent struct {
 	PostTxnFlushed func() `msg:"-"`
 }
 
+func (w *TxnEvent) GetDispatcherID() DispatcherID {
+	return w.DispatcherID
+}
+
 func (w *TxnEvent) GetDDLEvent() *DDLEvent {
 	return w.DDLEvent
 }

@@ -18,43 +18,20 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
 const handleDispatcherRequestConcurrency = 16
-
-type ResponseChanMap struct {
-	responseChanMapMutex sync.RWMutex
-	m                    map[model.ChangeFeedID]*HeartbeatResponseQueue //changefeedID -> HeartbeatResponseQueue
-}
-
-func NewResponseChanMap() *ResponseChanMap {
-	return &ResponseChanMap{
-		m: make(map[model.ChangeFeedID]*HeartbeatResponseQueue),
-	}
-}
-
-func (responseChanMap *ResponseChanMap) Get(changeFeedID model.ChangeFeedID) (heartbeatResponseQueue *HeartbeatResponseQueue, ok bool) {
-	responseChanMap.responseChanMapMutex.RLock()
-	defer responseChanMap.responseChanMapMutex.RUnlock()
-	heartbeatResponseQueue, ok = responseChanMap.m[changeFeedID]
-	return
-}
-
-func (responseChanMap *ResponseChanMap) Set(changeFeedID model.ChangeFeedID, heartbeatResponseQueue *HeartbeatResponseQueue) {
-	responseChanMap.responseChanMapMutex.Lock()
-	defer responseChanMap.responseChanMapMutex.Unlock()
-
-	responseChanMap.m[changeFeedID] = heartbeatResponseQueue
-}
 
 type EventDispatcherManagerMap struct {
 	eventDispatcherManagerMutex sync.RWMutex
@@ -90,20 +67,21 @@ type HeartBeatCollector struct {
 	from messaging.ServerId
 
 	eventDispatcherManagerMap *EventDispatcherManagerMap
-	responseChanMap           *ResponseChanMap
 
 	requestQueue *HeartbeatRequestQueue
 
 	dispatcherRequestCh []chan *heartbeatpb.ScheduleDispatcherRequest
+
+	heartBeatResponseDynamicStream dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]
 }
 
 func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 	heartBeatCollector := HeartBeatCollector{
 		from:                      serverId,
 		requestQueue:              NewHeartbeatRequestQueue(),
-		responseChanMap:           NewResponseChanMap(),
 		eventDispatcherManagerMap: NewEventDispatcherManagerMap(),
 		dispatcherRequestCh:       make([]chan *heartbeatpb.ScheduleDispatcherRequest, handleDispatcherRequestConcurrency),
+		heartBeatResponseDynamicStream: appcontext.GetService[dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]](appcontext.HeartBeatResponseDynamicStream)
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.HeartbeatCollectorTopic, heartBeatCollector.RecvHeartBeatResponseMessages)
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
@@ -132,8 +110,9 @@ func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 
 func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherManager) error {
 	m.SetHeartbeatRequestQueue(c.requestQueue)
+	
+	c.heartBeatResponseDynamicStream.AddPath(dynstream.PathAndDest[model.ChangeFeedID, *EventDispatcherManager]{Path: m.changefeedID, Dest: m})
 
-	c.responseChanMap.Set(m.GetChangeFeedID(), m.GetHeartbeatResponseQueue())
 	c.eventDispatcherManagerMap.Set(m.GetChangeFeedID(), m)
 
 	return nil
@@ -154,18 +133,38 @@ func (c *HeartBeatCollector) SendHeartBeatMessages() {
 	}
 }
 
+type HeartBeatResponseHandler struct {
+	DDLActionDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DDLActionWithDispatcherID, *dispatcher.Dispatcher]
+}
+
+func (h *HeartBeatResponseHandler) Path(HeartbeatResponse *heartbeatpb.HeartBeatResponse) model.ChangeFeedID {
+	return model.DefaultChangeFeedID(HeartbeatResponse.ChangefeedID)
+}
+
+func (h *HeartBeatResponseHandler) Handle(heartbeatResponse *heartbeatpb.HeartBeatResponse, eventDispatcherManager *EventDispatcherManager) bool {
+	dispatcherActions := heartbeatResponse.Actions
+	for _, dispatcherAction := range dispatcherActions {
+		tableSpan := dispatcherAction.Span
+		dispatcherItem, ok := eventDispatcherManager.dispatcherMap.Get(&common.TableSpan{TableSpan: tableSpan})
+		if !ok {
+			log.Error("dispatcher not found", zap.Any("tableSpan", tableSpan))
+			continue
+		}
+
+		h.ddlActionDynamicStream.In() <- *dispatcher.NewDDLActionWithDispatcherID(dispatcherAction, dispatcherItem.GetId())
+	}
+	return false
+}
+
 func (c *HeartBeatCollector) RecvHeartBeatResponseMessages(ctx context.Context, msg *messaging.TargetMessage) error {
 	heartbeatResponse, ok := msg.Message.(*heartbeatpb.HeartBeatResponse)
 	if !ok {
 		log.Error("invalid heartbeat response message", zap.Any("msg", msg))
 		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: fmt.Sprintf("invalid heartbeat response message")}
 	}
-	changefeedID := model.DefaultChangeFeedID(heartbeatResponse.ChangefeedID)
 
-	queue, ok := c.responseChanMap.Get(changefeedID)
-	if ok {
-		queue.Enqueue(heartbeatResponse)
-	}
+	heartBeatResponseDynamicStream := appcontext.GetService[dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]](appcontext.HeartBeatResponseDynamicStream)
+	heartBeatResponseDynamicStream.In() <- heartbeatResponse
 	return nil
 }
 

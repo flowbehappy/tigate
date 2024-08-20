@@ -21,11 +21,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/utils/dynstream"
 
 	"github.com/dustin/go-humanize"
 	"github.com/flowbehappy/tigate/pkg/config"
@@ -158,6 +160,11 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	c.serverID = id
 	c.session = session
 
+	ddlActionDynamicStream := dynstream.NewDynamicStreamDefault(&dispatcher.DDLActionsHandler{})
+	appcontext.SetService(appcontext.DDLActionDynamicStream, ddlActionDynamicStream)
+	appcontext.SetService(appcontext.HeartBeatResponseDynamicStream, dynstream.NewDynamicStreamDefault(&dispatchermanager.HeartBeatResponseHandler{DDLActionDynamicStream: ddlActionDynamicStream}))
+
+	// TODO: dynamic stream start
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, id, c.info.Epoch, config.NewDefaultMessageCenterConfig()))
 	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, id)) // 100GB for demo
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(id))
