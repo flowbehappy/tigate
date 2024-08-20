@@ -105,6 +105,7 @@ func (r *RegionScanRequestLimiter) Acquire() bool {
 			return true
 		}
 		r.mutex.Unlock()
+		log.Info("acquire fail")
 		time.Sleep(10 * time.Millisecond)
 	}
 }
@@ -112,6 +113,7 @@ func (r *RegionScanRequestLimiter) Acquire() bool {
 func (r *RegionScanRequestLimiter) Release() {
 	r.mutex.Lock()
 	r.currentRequests--
+	log.Info("release")
 	r.mutex.Unlock()
 }
 
