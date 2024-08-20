@@ -48,28 +48,3 @@ func (q *HeartbeatRequestQueue) Dequeue() *HeartBeatRequestWithTargetID {
 func (q *HeartbeatRequestQueue) Close() {
 	close(q.queue)
 }
-
-/*
-HeartbeatResponseQueue is a channel for HeartBeatCollector to send heartbeat response to all event dispatcher managers.
-*/
-type HeartbeatResponseQueue struct {
-	queue chan *heartbeatpb.HeartBeatResponse
-}
-
-func NewHeartbeatResponseQueue() *HeartbeatResponseQueue {
-	return &HeartbeatResponseQueue{
-		queue: make(chan *heartbeatpb.HeartBeatResponse, 1000), // 带缓冲的 channel
-	}
-}
-
-func (q *HeartbeatResponseQueue) Enqueue(response *heartbeatpb.HeartBeatResponse) {
-	q.queue <- response
-}
-
-func (q *HeartbeatResponseQueue) Dequeue() *heartbeatpb.HeartBeatResponse {
-	return <-q.queue
-}
-
-func (q *HeartbeatResponseQueue) Close() {
-	close(q.queue)
-}

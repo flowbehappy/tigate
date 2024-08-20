@@ -162,7 +162,10 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 
 	ddlActionDynamicStream := dynstream.NewDynamicStreamDefault(&dispatcher.DDLActionsHandler{})
 	appcontext.SetService(appcontext.DDLActionDynamicStream, ddlActionDynamicStream)
-	appcontext.SetService(appcontext.HeartBeatResponseDynamicStream, dynstream.NewDynamicStreamDefault(&dispatchermanager.HeartBeatResponseHandler{DDLActionDynamicStream: ddlActionDynamicStream}))
+
+	heartBeatReponseHandler := dispatchermanager.NewHeartBeatResponseHandler(ddlActionDynamicStream)
+	appcontext.SetService(appcontext.HeartBeatResponseDynamicStream, dynstream.NewDynamicStreamDefault(&heartBeatReponseHandler))
+	appcontext.SetService(appcontext.SchedulerDispatcherRequestDynamicStream, dynstream.NewDynamicStreamDefault(&dispatchermanager.SchedulerDispatcherRequestHandler{}))
 
 	// TODO: dynamic stream start
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, id, c.info.Epoch, config.NewDefaultMessageCenterConfig()))

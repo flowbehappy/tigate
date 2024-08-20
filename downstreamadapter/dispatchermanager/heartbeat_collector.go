@@ -15,12 +15,10 @@ package dispatchermanager
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
@@ -31,33 +29,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const handleDispatcherRequestConcurrency = 16
-
-type EventDispatcherManagerMap struct {
-	eventDispatcherManagerMutex sync.RWMutex
-	eventDispatcherManagerMap   map[model.ChangeFeedID]*EventDispatcherManager // changefeedID -> EventDispatcherManager
-}
-
-func NewEventDispatcherManagerMap() *EventDispatcherManagerMap {
-	return &EventDispatcherManagerMap{
-		eventDispatcherManagerMap: make(map[model.ChangeFeedID]*EventDispatcherManager),
-	}
-}
-
-func (eventDispatcherManagerMap *EventDispatcherManagerMap) Get(changeFeedID model.ChangeFeedID) (eventDispatcherManager *EventDispatcherManager, ok bool) {
-	eventDispatcherManagerMap.eventDispatcherManagerMutex.RLock()
-	defer eventDispatcherManagerMap.eventDispatcherManagerMutex.RUnlock()
-	eventDispatcherManager, ok = eventDispatcherManagerMap.eventDispatcherManagerMap[changeFeedID]
-	return
-}
-
-func (eventDispatcherManagerMap *EventDispatcherManagerMap) Set(changeFeedID model.ChangeFeedID, eventDispatcherManager *EventDispatcherManager) {
-	eventDispatcherManagerMap.eventDispatcherManagerMutex.Lock()
-	defer eventDispatcherManagerMap.eventDispatcherManagerMutex.Unlock()
-
-	eventDispatcherManagerMap.eventDispatcherManagerMap[changeFeedID] = eventDispatcherManager
-}
-
 /*
 HeartBeatCollect is responsible for sending heartbeat requests and receiving heartbeat responses by messageCenter
 HeartBeatCollector is an instance-level component. It will deal with all the heartbeat messages from all dispatchers in all dispatcher managers.
@@ -66,55 +37,33 @@ type HeartBeatCollector struct {
 	wg   sync.WaitGroup
 	from messaging.ServerId
 
-	eventDispatcherManagerMap *EventDispatcherManagerMap
-
 	requestQueue *HeartbeatRequestQueue
 
 	dispatcherRequestCh []chan *heartbeatpb.ScheduleDispatcherRequest
 
-	heartBeatResponseDynamicStream dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]
+	heartBeatResponseDynamicStream          dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]
+	schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.ScheduleDispatcherRequest, *EventDispatcherManager]
 }
 
 func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 	heartBeatCollector := HeartBeatCollector{
-		from:                      serverId,
-		requestQueue:              NewHeartbeatRequestQueue(),
-		eventDispatcherManagerMap: NewEventDispatcherManagerMap(),
-		dispatcherRequestCh:       make([]chan *heartbeatpb.ScheduleDispatcherRequest, handleDispatcherRequestConcurrency),
-		heartBeatResponseDynamicStream: appcontext.GetService[dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]](appcontext.HeartBeatResponseDynamicStream)
+		from:                                    serverId,
+		requestQueue:                            NewHeartbeatRequestQueue(),
+		heartBeatResponseDynamicStream:          appcontext.GetService[dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]](appcontext.HeartBeatResponseDynamicStream),
+		schedulerDispatcherRequestDynamicStream: appcontext.GetService[dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.ScheduleDispatcherRequest, *EventDispatcherManager]](appcontext.SchedulerDispatcherRequestDynamicStream),
 	}
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.HeartbeatCollectorTopic, heartBeatCollector.RecvHeartBeatResponseMessages)
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
-		RegisterHandler(messaging.HeartbeatCollectorTopic, heartBeatCollector.RecvSchedulerDispatcherRequestMessages)
+	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.HeartbeatCollectorTopic, heartBeatCollector.RecvMessages)
+
 	heartBeatCollector.wg.Add(1)
 	go heartBeatCollector.SendHeartBeatMessages()
-
-	for i := 0; i < handleDispatcherRequestConcurrency; i++ {
-		idx := i
-		heartBeatCollector.dispatcherRequestCh[idx] = make(chan *heartbeatpb.ScheduleDispatcherRequest, 1024)
-		heartBeatCollector.wg.Add(1)
-		go func() {
-			defer heartBeatCollector.wg.Done()
-			for req := range heartBeatCollector.dispatcherRequestCh[idx] {
-				err := heartBeatCollector.handleDispatcherRequestMessages(req)
-				if err != nil {
-					metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", req.ChangefeedID, "error").Inc()
-				}
-				metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", req.ChangefeedID, "success").Inc()
-			}
-		}()
-	}
 
 	return &heartBeatCollector
 }
 
 func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherManager) error {
 	m.SetHeartbeatRequestQueue(c.requestQueue)
-	
 	c.heartBeatResponseDynamicStream.AddPath(dynstream.PathAndDest[model.ChangeFeedID, *EventDispatcherManager]{Path: m.changefeedID, Dest: m})
-
-	c.eventDispatcherManagerMap.Set(m.GetChangeFeedID(), m)
-
+	c.schedulerDispatcherRequestDynamicStream.AddPath(dynstream.PathAndDest[model.ChangeFeedID, *EventDispatcherManager]{Path: m.changefeedID, Dest: m})
 	return nil
 }
 
@@ -133,8 +82,52 @@ func (c *HeartBeatCollector) SendHeartBeatMessages() {
 	}
 }
 
+func (c *HeartBeatCollector) RecvMessages(ctx context.Context, msg *messaging.TargetMessage) error {
+	switch msg.Type {
+	case messaging.TypeHeartBeatResponse:
+		heartbeatResponse := msg.Message.(*heartbeatpb.HeartBeatResponse)
+		heartBeatResponseDynamicStream := appcontext.GetService[dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]](appcontext.HeartBeatResponseDynamicStream)
+		heartBeatResponseDynamicStream.In() <- heartbeatResponse
+	case messaging.TypeScheduleDispatcherRequest:
+		scheduleDispatcherRequest := msg.Message.(*heartbeatpb.ScheduleDispatcherRequest)
+		c.schedulerDispatcherRequestDynamicStream.In() <- scheduleDispatcherRequest
+		// TODO: check metrics
+		metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", scheduleDispatcherRequest.ChangefeedID, "receive").Inc()
+	default:
+		log.Panic("unknown message type", zap.Any("message", msg.Message))
+	}
+	return nil
+}
+
+func (c *HeartBeatCollector) Close() {
+	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
+		DeRegisterHandler(messaging.HeartbeatCollectorTopic)
+}
+
+type SchedulerDispatcherRequestHandler struct {
+}
+
+func (h *SchedulerDispatcherRequestHandler) Path(scheduleDispatcherRequest *heartbeatpb.ScheduleDispatcherRequest) model.ChangeFeedID {
+	return model.DefaultChangeFeedID(scheduleDispatcherRequest.ChangefeedID)
+}
+
+func (h *SchedulerDispatcherRequestHandler) Handle(scheduleDispatcherRequest *heartbeatpb.ScheduleDispatcherRequest, eventDispatcherManager *EventDispatcherManager) bool {
+	scheduleAction := scheduleDispatcherRequest.ScheduleAction
+	config := scheduleDispatcherRequest.Config
+	if scheduleAction == heartbeatpb.ScheduleAction_Create {
+		eventDispatcherManager.NewDispatcher(&common.TableSpan{TableSpan: config.Span}, config.StartTs)
+	} else if scheduleAction == heartbeatpb.ScheduleAction_Remove {
+		eventDispatcherManager.RemoveDispatcher(&common.TableSpan{TableSpan: config.Span})
+	}
+	return false
+}
+
 type HeartBeatResponseHandler struct {
-	DDLActionDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DDLActionWithDispatcherID, *dispatcher.Dispatcher]
+	ddlActionDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DDLActionWithDispatcherID, *dispatcher.Dispatcher]
+}
+
+func NewHeartBeatResponseHandler(ddlActionDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DDLActionWithDispatcherID, *dispatcher.Dispatcher]) HeartBeatResponseHandler {
+	return HeartBeatResponseHandler{ddlActionDynamicStream: ddlActionDynamicStream}
 }
 
 func (h *HeartBeatResponseHandler) Path(HeartbeatResponse *heartbeatpb.HeartBeatResponse) model.ChangeFeedID {
@@ -154,57 +147,4 @@ func (h *HeartBeatResponseHandler) Handle(heartbeatResponse *heartbeatpb.HeartBe
 		h.ddlActionDynamicStream.In() <- *dispatcher.NewDDLActionWithDispatcherID(dispatcherAction, dispatcherItem.GetId())
 	}
 	return false
-}
-
-func (c *HeartBeatCollector) RecvHeartBeatResponseMessages(ctx context.Context, msg *messaging.TargetMessage) error {
-	heartbeatResponse, ok := msg.Message.(*heartbeatpb.HeartBeatResponse)
-	if !ok {
-		log.Error("invalid heartbeat response message", zap.Any("msg", msg))
-		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: fmt.Sprintf("invalid heartbeat response message")}
-	}
-
-	heartBeatResponseDynamicStream := appcontext.GetService[dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]](appcontext.HeartBeatResponseDynamicStream)
-	heartBeatResponseDynamicStream.In() <- heartbeatResponse
-	return nil
-}
-
-func (c *HeartBeatCollector) RecvSchedulerDispatcherRequestMessages(ctx context.Context, msg *messaging.TargetMessage) error {
-	scheduleDispatcherRequest := msg.Message.(*heartbeatpb.ScheduleDispatcherRequest)
-
-	idx := int(scheduleDispatcherRequest.Config.Span.TableID) % handleDispatcherRequestConcurrency
-	select {
-	case c.dispatcherRequestCh[idx] <- scheduleDispatcherRequest:
-		metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", scheduleDispatcherRequest.ChangefeedID, "receive").Inc()
-	default:
-		metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", scheduleDispatcherRequest.ChangefeedID, "discard").Inc()
-	}
-	return nil
-}
-
-func (c *HeartBeatCollector) handleDispatcherRequestMessages(req *heartbeatpb.ScheduleDispatcherRequest) error {
-	// start := time.Now()
-	changefeedID := model.DefaultChangeFeedID(req.ChangefeedID)
-
-	eventDispatcherManager, ok := c.eventDispatcherManagerMap.Get(changefeedID)
-	if !ok {
-		// Maybe the message is received before the event dispatcher manager is registered, so just ingore it
-		log.Warn("invalid changefeedID in scheduler dispatcher request message", zap.String("changefeedID", changefeedID.String()))
-		return nil
-	}
-	scheduleAction := req.ScheduleAction
-	config := req.Config
-	if scheduleAction == heartbeatpb.ScheduleAction_Create {
-		eventDispatcherManager.NewDispatcher(&common.TableSpan{TableSpan: config.Span}, config.StartTs)
-	} else if scheduleAction == heartbeatpb.ScheduleAction_Remove {
-		eventDispatcherManager.RemoveDispatcher(&common.TableSpan{TableSpan: config.Span})
-	}
-
-	// log.Info("RecvSchedulerDispatcherRequestMessages handle dispatch msg", zap.Any("tableSpan", config.Span),
-	// zap.Int64("cost(ns)", time.Since(start).Nanoseconds()), zap.Time("start", start))
-	return nil
-}
-
-func (c *HeartBeatCollector) Close() {
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
-		DeRegisterHandler(messaging.HeartbeatCollectorTopic)
 }
