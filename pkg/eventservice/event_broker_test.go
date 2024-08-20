@@ -14,7 +14,7 @@ func TestNewDispatcherStat(t *testing.T) {
 	startTs := uint64(123)
 
 	info := &mockDispatcherInfo{
-		id:        "test",
+		id:        common.NewDispatcherID(),
 		clusterID: 1,
 		startTs:   startTs,
 	}
@@ -32,7 +32,7 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 	startTs := uint64(123)
 	wg := &sync.WaitGroup{}
 	info := &mockDispatcherInfo{
-		id:        "test",
+		id:        common.NewDispatcherID(),
 		clusterID: 1,
 		startTs:   startTs,
 	}
@@ -95,7 +95,7 @@ func TestScanTaskPool_PushTask(t *testing.T) {
 	pool := newScanTaskPool()
 	span := newTableSpan(1, "a", "b")
 	dispatcherInfo := &mockDispatcherInfo{
-		id:        "dispatcher1",
+		id:        common.NewDispatcherID(),
 		clusterID: 1,
 		startTs:   1000,
 		span:      span,
@@ -139,7 +139,7 @@ func TestScanTaskPool_PushTask(t *testing.T) {
 	pool.taskSet[dispatcherInfo.GetID()] = task1
 
 	// Verify that the task is in the taskSet
-	task, ok := pool.taskSet["dispatcher1"]
+	task, ok := pool.taskSet[dispatcherInfo.id]
 	require.True(t, ok)
 	require.Equal(t, task1, task)
 

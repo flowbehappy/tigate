@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -65,7 +65,7 @@ func TestEventServiceOneMillionTable(t *testing.T) {
 	dispatchers := make([]DispatcherInfo, 0, tableNum)
 	// register 1000,000 tables
 	for i := 0; i < tableNum; i++ {
-		acceptorInfo := newMockAcceptorInfo(uuid.New().String(), uint64(i))
+		acceptorInfo := newMockAcceptorInfo(common.NewDispatcherID(), uint64(i))
 		dispatchers = append(dispatchers, acceptorInfo)
 		esImpl.registerDispatcher(ctx, acceptorInfo)
 	}
