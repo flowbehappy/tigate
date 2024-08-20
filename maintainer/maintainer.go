@@ -15,6 +15,7 @@ package maintainer
 
 import (
 	"encoding/json"
+	"github.com/flowbehappy/tigate/utils/dynstream"
 	"math"
 	"sync"
 	"time"
@@ -47,8 +48,9 @@ import (
 // 3. send changefeed status to coordinator
 // 4. handle heartbeat reported by dispatcher
 type Maintainer struct {
-	id     model.ChangeFeedID
-	config *model.ChangeFeedInfo
+	id       model.ChangeFeedID
+	config   *model.ChangeFeedInfo
+	selfNode *common.NodeInfo
 
 	mc messaging.MessageCenter
 
@@ -60,7 +62,6 @@ type Maintainer struct {
 
 	changefeedSate model.FeedState
 
-	taskCh  chan Task
 	removed *atomic.Bool
 
 	initialized bool
@@ -98,15 +99,16 @@ type Maintainer struct {
 // NewMaintainer create the maintainer for the changefeed
 func NewMaintainer(cfID model.ChangeFeedID,
 	cfg *model.ChangeFeedInfo,
+	selfNode *common.NodeInfo,
 	checkpointTs uint64,
 	pdEndpoints []string,
 ) *Maintainer {
 	m := &Maintainer{
 		id:              cfID,
+		selfNode:        selfNode,
 		mc:              appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		state:           heartbeatpb.ComponentState_Working,
 		removed:         atomic.NewBool(false),
-		taskCh:          make(chan Task, 1024),
 		nodeManager:     appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName),
 		nodesClosed:     make(map[string]struct{}),
 		statusChanged:   atomic.NewBool(true),
@@ -322,6 +324,7 @@ func (m *Maintainer) initChangefeed() error {
 	m.supervisor.MarkNeedAddInferior()
 	log.Info("changefeed maintainer initialized",
 		zap.String("id", m.id.String()))
+	m.initialized = true
 	//todo: remove gc service checkpoint ts
 	return err
 }
@@ -452,6 +455,63 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 	m.runningWarnings = make(map[messaging.ServerId]*heartbeatpb.RunningError)
 	m.runningErrors = make(map[messaging.ServerId]*heartbeatpb.RunningError)
 	return status
+}
+
+func (m *Maintainer) Handle(event *Event, dest *Maintainer,
+	stream dynstream.DynamicStream[string, *Event, *Maintainer]) (await bool) {
+	if m.state != heartbeatpb.ComponentState_Stopped {
+		log.Warn("maintainer is not stopped, ignore",
+			zap.String("changefeed", m.id.String()))
+		return false
+	}
+	switch event.eventType {
+	case EventInit:
+		// already initialized
+		if m.initialized {
+			return false
+		}
+		// async initialize the changefeed
+		go func() {
+			err := dest.initChangefeed()
+			if err != nil {
+				m.handleError(err)
+			}
+			stream.Wake() <- event.cfID
+			// ok , let's schedule
+			stream.In() <- &Event{cfID: event.cfID, eventType: EventSchedule}
+		}()
+		return true
+	case EventMessage:
+		if err := dest.onMessage(event.message); err != nil {
+			m.handleError(err)
+		}
+	case EventSchedule:
+		if err := dest.scheduleTableSpan(); err != nil {
+			m.handleError(err)
+		}
+		// reschedule
+	}
+	return false
+}
+
+func (m *Maintainer) handleError(err error) {
+	log.Error("an error occurred in Owner",
+		zap.String("changefeed", m.id.ID), zap.Error(err))
+	var code string
+	if rfcCode, ok := errors.RFCCode(err); ok {
+		code = string(rfcCode)
+	} else {
+		code = string(errors.ErrOwnerUnknown.RFCCode())
+	}
+	m.runningErrors = map[messaging.ServerId]*heartbeatpb.RunningError{
+		messaging.ServerId(m.selfNode.ID): {
+			Time:    time.Now().String(),
+			Node:    m.selfNode.AdvertiseAddr,
+			Code:    code,
+			Message: err.Error(),
+		},
+	}
+	m.statusChanged.Store(true)
 }
 
 // getNewBootstrapFn returns a function that creates a new bootstrap message to initialize

@@ -16,6 +16,7 @@ package maintainer
 import (
 	"context"
 	"encoding/json"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"sync"
 	"time"
 
@@ -41,8 +42,8 @@ type Manager struct {
 	coordinatorID      messaging.ServerId
 	coordinatorVersion int64
 
-	selfServerID messaging.ServerId
-	pdEndpoints  []string
+	selfNode    *common.NodeInfo
+	pdEndpoints []string
 
 	msgCh chan *messaging.TargetMessage
 
@@ -53,12 +54,12 @@ type Manager struct {
 // 1. manager receives bootstrap command from coordinator
 // 2. manager manages maintainer lifetime
 // 3. manager report maintainer status to coordinator
-func NewMaintainerManager(selfServerID messaging.ServerId, pdEndpoints []string) *Manager {
+func NewMaintainerManager(selfNode *common.NodeInfo, pdEndpoints []string) *Manager {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	m := &Manager{
 		mc:               mc,
 		maintainers:      sync.Map{},
-		selfServerID:     selfServerID,
+		selfNode:         selfNode,
 		pdEndpoints:      pdEndpoints,
 		msgCh:            make(chan *messaging.TargetMessage, 1024),
 		maintainerStream: NewMaintainerStream(),
@@ -198,7 +199,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 			if err != nil {
 				log.Panic("decode changefeed fail", zap.Error(err))
 			}
-			cf = NewMaintainer(cfID, cfConfig, req.CheckpointTs, m.pdEndpoints)
+			cf = NewMaintainer(cfID, cfConfig, m.selfNode, req.CheckpointTs, m.pdEndpoints)
 			err = m.maintainerStream.stream.AddPath(dynstream.PathAndDest[string, *Maintainer]{
 				Path: cfID.ID,
 				Dest: cf.(*Maintainer),

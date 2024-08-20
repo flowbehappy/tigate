@@ -155,7 +155,6 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 		DeployPath:     deployPath,
 		StartTimestamp: time.Now().Unix(),
 	}
-	c.serverID = id
 	c.session = session
 
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, id, c.info.Epoch, config.NewDefaultMessageCenterConfig()))

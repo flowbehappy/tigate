@@ -55,7 +55,6 @@ const (
 type serverImpl struct {
 	captureMu sync.Mutex
 	info      *common.NodeInfo
-	serverID  messaging.ServerId
 
 	liveness model.Liveness
 
@@ -130,7 +129,7 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener()),
-		maintainer.NewMaintainerManager(c.serverID, c.pdEndpoints),
+		maintainer.NewMaintainerManager(c.info, c.pdEndpoints),
 		eventstore.NewEventStore(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage, schemaStore),
 	}
 	// register it into global var
