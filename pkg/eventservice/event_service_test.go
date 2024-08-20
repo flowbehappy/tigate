@@ -161,7 +161,7 @@ func (m *mockEventStore) Close(ctx context.Context) error {
 }
 
 func (m *mockEventStore) RegisterDispatcher(
-	dispatcherID string,
+	dispatcherID common.DispatcherID,
 	span *common.TableSpan,
 	startTS common.Ts,
 	observer eventstore.EventObserver,

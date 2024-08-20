@@ -425,7 +425,7 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableS
 	return nil
 }
 
-func (e *eventStore) UpdateDispatcherSendTS(dispatcherID string, sendTS uint64) error {
+func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, sendTS uint64) error {
 	e.schemaStore.UpdateDispatcherSendTS(dispatcherID, common.Ts(sendTS))
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -444,7 +444,7 @@ func (e *eventStore) UpdateDispatcherSendTS(dispatcherID string, sendTS uint64) 
 	return nil
 }
 
-func (e *eventStore) UnregisterDispatcher(dispatcherID string) error {
+func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
 	e.schemaStore.UnregisterDispatcher(dispatcherID)
 	e.mu.Lock()
 	defer e.mu.Unlock()

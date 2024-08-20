@@ -1,7 +1,9 @@
 package common
 
 import (
+	"bytes"
 	"encoding/binary"
+	"strconv"
 
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/google/uuid"
@@ -19,11 +21,20 @@ func NewDispatcherID() DispatcherID {
 	return DispatcherID(NewGID())
 }
 
+func NewDispatcherIDFromPB(pb *eventpb.DispatcherID) DispatcherID {
+	d := DispatcherID{low: pb.Low, high: pb.High}
+	return d
+}
+
 func (d DispatcherID) ToPB() *eventpb.DispatcherID {
 	return &eventpb.DispatcherID{
 		Low:  d.low,
 		High: d.high,
 	}
+}
+
+func (d DispatcherID) String() string {
+	return GID(d).String()
 }
 
 func (d *DispatcherID) Msgsize() int {
@@ -55,6 +66,10 @@ func (d *DispatcherID) Unmarshal(b []byte) error {
 	gid.Unmarshal(b)
 	*d = DispatcherID(gid)
 	return nil
+}
+
+func (d DispatcherID) Marshal() []byte {
+	return GID(d).Marshal()
 }
 
 func (d DispatcherID) EncodeMsg(en *msgp.Writer) error {
@@ -100,4 +115,11 @@ func NewGID() GID {
 		low:  binary.LittleEndian.Uint64(uuid[0:8]),
 		high: binary.LittleEndian.Uint64(uuid[8:16]),
 	}
+}
+
+func (g GID) String() string {
+	var buf bytes.Buffer
+	buf.WriteString(strconv.FormatUint(g.low, 10))
+	buf.WriteString(strconv.FormatUint(g.high, 10))
+	return buf.String()
 }

@@ -105,8 +105,8 @@ func (r RegisterDispatcherRequest) Unmarshal(data []byte) error {
 	return r.RegisterDispatcherRequest.Unmarshal(data)
 }
 
-func (r RegisterDispatcherRequest) GetID() *eventpb.DispatcherID {
-	return r.DispatcherId
+func (r RegisterDispatcherRequest) GetID() common.DispatcherID {
+	return common.NewDispatcherIDFromPB(r.DispatcherId)
 }
 
 func (r RegisterDispatcherRequest) GetClusterID() uint64 {

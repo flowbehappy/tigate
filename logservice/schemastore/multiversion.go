@@ -136,7 +136,7 @@ func (v *versionedTableInfoStore) getTableInfo(ts common.Ts) (*common.TableInfo,
 }
 
 // only keep one item with the largest version <= gcTS
-func removeUnusedInfos(infos []*tableInfoItem, dispatchers map[string]common.Ts) []*tableInfoItem {
+func removeUnusedInfos(infos []*tableInfoItem, dispatchers map[common.DispatcherID]common.Ts) []*tableInfoItem {
 	if len(infos) == 0 {
 		log.Fatal("no table info found")
 	}
@@ -169,7 +169,7 @@ func (v *versionedTableInfoStore) registerDispatcher(dispatcherID common.Dispatc
 }
 
 // return true when the store can be removed(no registered dispatchers)
-func (v *versionedTableInfoStore) unregisterDispatcher(dispatcherID string) bool {
+func (v *versionedTableInfoStore) unregisterDispatcher(dispatcherID common.DispatcherID) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	delete(v.dispatchers, dispatcherID)
@@ -180,7 +180,7 @@ func (v *versionedTableInfoStore) unregisterDispatcher(dispatcherID string) bool
 	return false
 }
 
-func (v *versionedTableInfoStore) updateDispatcherSendTS(dispatcherID string, ts common.Ts) error {
+func (v *versionedTableInfoStore) updateDispatcherSendTS(dispatcherID common.DispatcherID, ts common.Ts) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if oldTS, ok := v.dispatchers[dispatcherID]; !ok {
