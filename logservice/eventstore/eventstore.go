@@ -200,23 +200,23 @@ func NewEventStore(
 		if len(spans) > 1 {
 			log.Panic("DML puller subscribes multiple spans")
 		}
-		span := heartbeatpb.TableSpan{
-			TableID:  uint64(spans[0].TableID),
-			StartKey: spans[0].StartKey,
-			EndKey:   spans[0].EndKey,
-		}
-		if raw != nil {
-			rawKV := &common.RawKVEntry{
-				OpType:   common.OpType(raw.OpType),
-				Key:      raw.Key,
-				Value:    raw.Value,
-				OldValue: raw.OldValue,
-				StartTs:  raw.StartTs,
-				CRTs:     raw.CRTs,
-				RegionID: raw.RegionID,
-			}
-			store.writeEvent(span, rawKV)
-		}
+		// span := heartbeatpb.TableSpan{
+		// 	TableID:  uint64(spans[0].TableID),
+		// 	StartKey: spans[0].StartKey,
+		// 	EndKey:   spans[0].EndKey,
+		// }
+		// if raw != nil {
+		// 	rawKV := &common.RawKVEntry{
+		// 		OpType:   common.OpType(raw.OpType),
+		// 		Key:      raw.Key,
+		// 		Value:    raw.Value,
+		// 		OldValue: raw.OldValue,
+		// 		StartTs:  raw.StartTs,
+		// 		CRTs:     raw.CRTs,
+		// 		RegionID: raw.RegionID,
+		// 	}
+		// 	store.writeEvent(span, rawKV)
+		// }
 		return nil
 	}
 
