@@ -278,11 +278,13 @@ func (c *EventCollector) updateMetrics(ctx context.Context) error {
 				return
 			case <-ticker.C:
 				minResolvedTs := uint64(0)
+				c.dispatcherMap.RLock()
 				for _, d := range c.dispatcherMap.m {
 					if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
 						minResolvedTs = d.GetResolvedTs()
 					}
 				}
+				c.dispatcherMap.RUnlock()
 				if minResolvedTs == 0 {
 					continue
 				}
