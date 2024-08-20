@@ -76,7 +76,7 @@ type Maintainer struct {
 	lastReportTime time.Time
 
 	removing        *atomic.Bool
-	cascadeRemoving *atomic.Bool
+	cascadeRemoving bool
 
 	lastPrintStatusTime  time.Time
 	lastCheckpointTsTime time.Time
@@ -111,7 +111,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		nodesClosed:     make(map[string]struct{}),
 		statusChanged:   atomic.NewBool(true),
 		removing:        atomic.NewBool(false),
-		cascadeRemoving: atomic.NewBool(false),
+		cascadeRemoving: false,
 		config:          cfg,
 		watermark: &heartbeatpb.Watermark{
 			CheckpointTs: checkpointTs,
@@ -219,11 +219,23 @@ func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
 		m.onMaintainerBootstrapResponse(msg)
 	case messaging.TypeMaintainerCloseResponse:
 		m.onNodeClosed(string(msg.From), msg.Message.(*heartbeatpb.MaintainerCloseResponse))
-
+	case messaging.TypeRemoveMaintainerRequest:
+		m.onRemoveMaintainer(msg)
 	default:
 		log.Panic("unexpected message type", zap.String("type", msg.Type.String()))
 	}
 	return nil
+}
+
+func (m *Maintainer) onRemoveMaintainer(msg *messaging.TargetMessage) {
+	m.removing.Store(true)
+	m.cascadeRemoving = msg.Message.(*heartbeatpb.RemoveMaintainerRequest).Cascade
+	closed := m.tryCloseChangefeed()
+	if closed {
+		m.removed.Store(true)
+		m.state = heartbeatpb.ComponentState_Stopped
+		metrics.MaintainerGauge.WithLabelValues(m.id.Namespace, m.id.ID).Dec()
+	}
 }
 
 func (m *Maintainer) calCheckpointTs() {
@@ -372,7 +384,7 @@ func (m *Maintainer) initTableIDs() ([]common.TableID, error) {
 	}
 
 	schemaStore := appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore)
-	tableIDs, err := schemaStore.GetAllPhysicalTables(common.Ts(startTs), f)
+	tableIDs, err := schemaStore.GetAllPhysicalTables(startTs, f)
 	log.Info("get table ids", zap.Int("count", len(tableIDs)), zap.String("changefeed", m.id.String()))
 	return tableIDs, nil
 }
@@ -387,7 +399,7 @@ func (m *Maintainer) tryCloseChangefeed() bool {
 	if m.state != heartbeatpb.ComponentState_Stopped {
 		m.statusChanged.Store(true)
 	}
-	if !m.cascadeRemoving.Load() {
+	if !m.cascadeRemoving {
 		return true
 	}
 
@@ -403,7 +415,11 @@ func (m *Maintainer) tryCloseChangefeed() bool {
 		}
 	}
 	m.sendMessages(msgs)
-	return len(msgs) == 0
+	allRemoved := len(msgs) == 0
+	if !allRemoved {
+		// todo: send a remove task after 50ms
+	}
+	return allRemoved
 }
 
 func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {

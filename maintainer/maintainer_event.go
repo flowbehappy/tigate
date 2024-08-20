@@ -16,7 +16,6 @@ package maintainer
 import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
@@ -42,6 +41,7 @@ type MaintainerStream struct {
 func NewMaintainerStream() *MaintainerStream {
 	s := &MaintainerStream{}
 	s.stream = dynstream.NewDynamicStreamDefault[string, *Event, *Maintainer](s)
+	s.stream.Start()
 	return s
 }
 
@@ -64,13 +64,6 @@ func (m *MaintainerStream) Handle(event *Event, dest *Maintainer) (await bool) {
 			m.stream.In() <- &Event{cfID: event.cfID, eventType: EventSchedule}
 		}()
 		return true
-	case EventRemove:
-		closed := dest.tryCloseChangefeed()
-		if closed {
-			dest.removed.Store(true)
-			dest.state = heartbeatpb.ComponentState_Stopped
-			metrics.MaintainerGauge.WithLabelValues(dest.id.Namespace, dest.id.ID).Dec()
-		}
 	case EventMessage:
 		if err := dest.onMessage(event.message); err != nil {
 			log.Warn("maintainer handle message error",

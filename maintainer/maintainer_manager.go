@@ -206,7 +206,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 			if err != nil {
 				log.Warn("add path to dynstream failed, coordinator will retry later",
 					zap.Error(err))
-				continue
+				return ""
 			}
 			m.maintainers.Store(cfID, cf)
 			m.maintainerStream.stream.In() <- &Event{cfID: cfID.ID, eventType: EventInit}
