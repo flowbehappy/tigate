@@ -172,7 +172,6 @@ func NewEventStore(
 		if raw != nil {
 			store.writeEvent(span, raw)
 		}
-		log.Info("receive nil event")
 		return nil
 	}
 	pullerConfig := &logpuller.LogPullerConfig{
