@@ -37,7 +37,7 @@ type DispatcherMap struct {
 	m sync.Map
 }
 
-func (m *DispatcherMap) Get(dispatcherId string) (*dispatcher.Dispatcher, bool) {
+func (m *DispatcherMap) Get(dispatcherId common.DispatcherID) (*dispatcher.Dispatcher, bool) {
 	d, ok := m.m.Load(dispatcherId)
 	if !ok {
 		return nil, false
@@ -46,11 +46,11 @@ func (m *DispatcherMap) Get(dispatcherId string) (*dispatcher.Dispatcher, bool) 
 	return dispatcher, ok
 }
 
-func (m *DispatcherMap) Set(dispatcherId string, d *dispatcher.Dispatcher) {
+func (m *DispatcherMap) Set(dispatcherId common.DispatcherID, d *dispatcher.Dispatcher) {
 	m.m.Store(dispatcherId, d)
 }
 
-func (m *DispatcherMap) Delete(dispatcherId string) {
+func (m *DispatcherMap) Delete(dispatcherId common.DispatcherID) {
 	m.m.Delete(dispatcherId)
 }
 
@@ -125,7 +125,7 @@ func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
 		Message: messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
-			DispatcherId: info.Dispatcher.GetId(),
+			DispatcherId: info.Dispatcher.GetId().ToPB(),
 			TableSpan:    info.Dispatcher.GetTableSpan().TableSpan,
 			Remove:       false,
 			StartTs:      info.StartTs,
@@ -149,7 +149,7 @@ func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
 		Message: messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
-			DispatcherId: d.GetId(),
+			DispatcherId: d.GetId().ToPB(),
 			Remove:       true,
 			ServerId:     c.serverId.String(),
 			TableSpan:    d.GetTableSpan().TableSpan,
@@ -164,7 +164,7 @@ func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
 		}
 		return err
 	}
-	c.dispatcherMap.Delete(string(d.GetId()))
+	c.dispatcherMap.Delete(d.GetId())
 	return nil
 }
 

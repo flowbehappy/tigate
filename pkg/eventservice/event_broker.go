@@ -92,7 +92,7 @@ func newEventBroker(
 func (c *eventBroker) sendWatermark(
 	serverID messaging.ServerId,
 	topicID string,
-	dispatcherID string,
+	dispatcherID common.DispatcherID,
 	watermark uint64,
 	counter prometheus.Counter,
 ) {
@@ -301,7 +301,7 @@ func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 						_, id := dispatcher.info.GetChangefeedID()
 						log.Warn("dispatcher is slow",
 							zap.String("changefeed", id),
-							zap.String("dispatcher", dispatcher.info.GetID()),
+							zap.Any("dispatcher", dispatcher.info.GetID()),
 							zap.Time("last-update", lastUpdate),
 							zap.Time("last-sent", lastSent),
 							zap.Uint64("subscription-watermark", dispatcher.spanSubscription.watermark.Load()),
@@ -362,7 +362,7 @@ func (c *eventBroker) close() {
 	c.wg.Wait()
 }
 
-func (c *eventBroker) removeDispatcher(id string) {
+func (c *eventBroker) removeDispatcher(id common.DispatcherID) {
 	_, ok := c.dispatchers.Load(id)
 	if !ok {
 		return
@@ -417,7 +417,7 @@ func newDispatcherStat(
 	res.lastSent.Store(time.Now())
 	res.watermark.Store(startTs)
 	hasher := crc32.NewIEEE()
-	hasher.Write([]byte(info.GetID()))
+	hasher.Write(info.GetID().Marshal())
 	res.workerIndex = int(hasher.Sum32() % defaultWorkerCount)
 	return res
 }
@@ -482,7 +482,7 @@ func (t *scanTask) checkAndAdjustScanTask() bool {
 
 type scanTaskPool struct {
 	mu      sync.Mutex
-	taskSet map[string]*scanTask
+	taskSet map[common.DispatcherID]*scanTask
 	// pendingTaskQueue is used to store the tasks that are waiting to be handled by the scan workers.
 	// The length of the pendingTaskQueue is equal to the number of the scan workers.
 	pendingTaskQueue []chan *scanTask
@@ -490,7 +490,7 @@ type scanTaskPool struct {
 
 func newScanTaskPool() *scanTaskPool {
 	res := &scanTaskPool{
-		taskSet:          make(map[string]*scanTask),
+		taskSet:          make(map[common.DispatcherID]*scanTask),
 		pendingTaskQueue: make([]chan *scanTask, defaultWorkerCount),
 	}
 	for i := 0; i < defaultWorkerCount; i++ {
@@ -535,7 +535,7 @@ func (p *scanTaskPool) popTask(chanIndex int) <-chan *scanTask {
 	return p.pendingTaskQueue[chanIndex]
 }
 
-func (p *scanTaskPool) removeTask(id string) {
+func (p *scanTaskPool) removeTask(id common.DispatcherID) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.taskSet, id)

@@ -47,16 +47,16 @@ type EventStore interface {
 	// add a callback to be called when a new event is added to the store;
 	// but for old data this is not feasiable? may we can just return a current watermark when register
 	RegisterDispatcher(
-		dispatcherID string,
+		dispatcherID common.DispatcherID,
 		span *common.TableSpan,
 		startTS common.Ts,
 		observer EventObserver,
 		notifier WatermarkNotifier,
 	) error
 
-	UpdateDispatcherSendTS(dispatcherID string, gcTS uint64) error
+	UpdateDispatcherSendTS(dispatcherID common.DispatcherID, gcTS uint64) error
 
-	UnregisterDispatcher(dispatcherID string) error
+	UnregisterDispatcher(dispatcherID common.DispatcherID) error
 
 	// TODO: ignore large txn now, so we can read all transactions of the same commit ts at one time
 	// [startCommitTS, endCommitTS)?
@@ -99,8 +99,8 @@ type eventStore struct {
 
 	mu sync.RWMutex
 	// TODO: rename the following variables
-	tables *common.SpanHashMap[string]
-	spans  map[string]*tableState
+	tables *common.SpanHashMap[common.DispatcherID]
+	spans  map[common.DispatcherID]*tableState
 }
 
 const dataDir = "event_store"
@@ -158,8 +158,8 @@ func NewEventStore(
 
 		gcManager: newGCManager(),
 
-		tables: common.NewSpanHashMap[string](),
-		spans:  make(map[string]*tableState),
+		tables: common.NewSpanHashMap[common.DispatcherID](),
+		spans:  make(map[common.DispatcherID]*tableState),
 	}
 
 	for i := range dbs {
@@ -397,7 +397,7 @@ func (e *eventStore) deleteEvents(span heartbeatpb.TableSpan, startCommitTS uint
 	return db.DeleteRange(start, end, pebble.NoSync)
 }
 
-func (e *eventStore) RegisterDispatcher(dispatcherID string, tableSpan *common.TableSpan, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
+func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableSpan *common.TableSpan, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
 	span := *tableSpan.TableSpan
 	log.Info("register dispatcher",
 		zap.Any("dispatcherID", dispatcherID),
@@ -425,7 +425,7 @@ func (e *eventStore) RegisterDispatcher(dispatcherID string, tableSpan *common.T
 	return nil
 }
 
-func (e *eventStore) UpdateDispatcherSendTS(dispatcherID string, sendTS uint64) error {
+func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, sendTS uint64) error {
 	e.schemaStore.UpdateDispatcherSendTS(dispatcherID, common.Ts(sendTS))
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -444,7 +444,7 @@ func (e *eventStore) UpdateDispatcherSendTS(dispatcherID string, sendTS uint64) 
 	return nil
 }
 
-func (e *eventStore) UnregisterDispatcher(dispatcherID string) error {
+func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
 	e.schemaStore.UnregisterDispatcher(dispatcherID)
 	e.mu.Lock()
 	defer e.mu.Unlock()
