@@ -10,6 +10,7 @@ var (
 )
 
 const (
+<<<<<<< HEAD
 	MessageCenter           = "MessageCenter"
 	EventCollector          = "EventCollector"
 	HeartbeatCollector      = "HeartbeatCollector"
@@ -17,6 +18,14 @@ const (
 	EventStore              = "EventStore"
 	EventService            = "EventService"
 	DispatcherDynamicStream = "DispatcherDynamicStream"
+=======
+	MessageCenter      = "MessageCenter"
+	EventCollector     = "EventCollector"
+	HeartbeatCollector = "HeartbeatCollector"
+	SchemaStore        = "SchemaStore"
+	EventStore         = "EventStore"
+	EventService       = "EventService"
+>>>>>>> 6a4a533 (schemaStore, maintainer:query tables from schemastore (#210))
 )
 
 // Put all the global instances here.
