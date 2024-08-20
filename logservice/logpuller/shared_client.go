@@ -84,6 +84,37 @@ func newMultiplexingEvent(e common.RegionFeedEvent, table *subscribedTable) Mult
 	}
 }
 
+type RegionScanRequestLimiter struct {
+	mutex           sync.Mutex
+	maxRequests     int
+	currentRequests int
+}
+
+func NewRegionScanRequestLimiter(maxRequests int) *RegionScanRequestLimiter {
+	return &RegionScanRequestLimiter{
+		maxRequests: maxRequests,
+	}
+}
+
+func (r *RegionScanRequestLimiter) Acquire() bool {
+	for {
+		r.mutex.Lock()
+		if r.currentRequests < r.maxRequests {
+			r.currentRequests++
+			r.mutex.Unlock()
+			return true
+		}
+		r.mutex.Unlock()
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func (r *RegionScanRequestLimiter) Release() {
+	r.mutex.Lock()
+	r.currentRequests--
+	r.mutex.Unlock()
+}
+
 // SharedClient is shared by many tables to pull events from TiKV.
 // All exported Methods are thread-safe.
 type SharedClient struct {
@@ -119,6 +150,8 @@ type SharedClient struct {
 	errCh             *chann.DrainableChann[regionErrorInfo]
 
 	logRegionDetails func(msg string, fields ...zap.Field)
+
+	limiter *RegionScanRequestLimiter
 }
 
 type resolveLockTask struct {
@@ -208,6 +241,8 @@ func NewSharedClient(
 		errCh:             chann.NewAutoDrainChann[regionErrorInfo](),
 
 		stores: make(map[string]*requestedStore),
+
+		limiter: NewRegionScanRequestLimiter(1000),
 	}
 	s.totalSpans.v = make(map[SubscriptionID]*subscribedTable)
 	s.logRegionDetails = log.Debug
@@ -518,7 +553,8 @@ func (s *SharedClient) divideSpanAndScheduleRegionRequests(
 			}
 
 			verID := tikv.NewRegionVerID(regionMeta.Id, regionMeta.RegionEpoch.ConfVer, regionMeta.RegionEpoch.Version)
-			regionInfo := newRegionInfo(verID, intersectSpan, nil, subscribedTable)
+			regionInfo := newRegionInfo(verID, intersectSpan, nil, subscribedTable, s.limiter)
+			s.limiter.Acquire()
 
 			// Schedule a region request to subscribe the region.
 			s.scheduleRegionRequest(ctx, regionInfo)

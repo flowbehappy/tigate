@@ -43,6 +43,8 @@ type regionInfo struct {
 	subscribedTable *subscribedTable
 	// The state of the locked range of the region.
 	lockedRangeState *regionlock.LockedRangeState
+
+	limiter *RegionScanRequestLimiter
 }
 
 func (s regionInfo) isStoped() bool {
@@ -55,12 +57,14 @@ func newRegionInfo(
 	span heartbeatpb.TableSpan,
 	rpcCtx *tikv.RPCContext,
 	subscribedTable *subscribedTable,
+	limiter *RegionScanRequestLimiter,
 ) regionInfo {
 	return regionInfo{
 		verID:           verID,
 		span:            span,
 		rpcCtx:          rpcCtx,
 		subscribedTable: subscribedTable,
+		limiter:         limiter,
 	}
 }
 
@@ -151,6 +155,7 @@ func (s *regionFeedState) isInitialized() bool {
 
 func (s *regionFeedState) setInitialized() {
 	s.region.lockedRangeState.Initialzied.Store(true)
+	s.region.limiter.Release()
 }
 
 func (s *regionFeedState) getRegionID() uint64 {

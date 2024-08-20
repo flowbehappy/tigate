@@ -142,7 +142,7 @@ func (s *requestedStream) run(ctx context.Context, c *SharedClient, rs *requeste
 		}
 	}
 
-	// TODO: check store version
+	// FIXME: check store version
 
 	log.Info("event feed going to create grpc stream",
 		zap.Uint64("streamID", s.streamID),
