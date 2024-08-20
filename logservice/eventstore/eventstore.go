@@ -277,7 +277,6 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 			e.mu.RLock()
-			log.Info("update metrics")
 			currentTime := e.pdClock.CurrentTime()
 			currentPhyTs := oracle.GetPhysical(currentTime)
 			for _, tableState := range e.spans {
