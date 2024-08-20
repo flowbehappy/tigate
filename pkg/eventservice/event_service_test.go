@@ -18,7 +18,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/server/watcher"
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/stretchr/testify/require"
@@ -63,14 +62,14 @@ func (m *mockMessageCenter) Close() {
 type mockDispatcherInfo struct {
 	clusterID  uint64
 	serverID   string
-	id         string
+	id         common.DispatcherID
 	topic      string
 	span       *common.TableSpan
 	startTs    uint64
 	isRegister bool
 }
 
-func newMockAcceptorInfo(dispatcherID string, tableID uint64) *mockDispatcherInfo {
+func newMockAcceptorInfo(dispatcherID common.DispatcherID, tableID uint64) *mockDispatcherInfo {
 	return &mockDispatcherInfo{
 		clusterID: 1,
 		serverID:  "server1",
@@ -86,7 +85,7 @@ func newMockAcceptorInfo(dispatcherID string, tableID uint64) *mockDispatcherInf
 	}
 }
 
-func (m *mockDispatcherInfo) GetID() string {
+func (m *mockDispatcherInfo) GetID() common.DispatcherID {
 	return m.id
 }
 
@@ -162,7 +161,7 @@ func (m *mockEventStore) Close(ctx context.Context) error {
 }
 
 func (m *mockEventStore) RegisterDispatcher(
-	dispatcherID string,
+	dispatcherID common.DispatcherID,
 	span *common.TableSpan,
 	startTS common.Ts,
 	observer eventstore.EventObserver,
@@ -179,11 +178,11 @@ func (m *mockEventStore) RegisterDispatcher(
 	return nil
 }
 
-func (m *mockEventStore) UpdateDispatcherSendTS(dispatcherID string, gcTS uint64) error {
+func (m *mockEventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, gcTS uint64) error {
 	return nil
 }
 
-func (m *mockEventStore) UnregisterDispatcher(dispatcherID string) error {
+func (m *mockEventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
 	return nil
 }
 
@@ -310,7 +309,7 @@ func TestEventServiceBasic(t *testing.T) {
 		}
 	}()
 
-	acceptorInfo := newMockAcceptorInfo(uuid.New().String(), 1)
+	acceptorInfo := newMockAcceptorInfo(common.NewDispatcherID(), 1)
 	// register acceptor
 	esImpl.acceptorInfoCh <- acceptorInfo
 	// wait for eventService to process the acceptorInfo

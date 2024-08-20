@@ -27,7 +27,7 @@ type EventService interface {
 
 type DispatcherInfo interface {
 	// GetID returns the ID of the dispatcher.
-	GetID() string
+	GetID() common.DispatcherID
 	// GetClusterID returns the ID of the TiDB cluster the acceptor wants to accept events from.
 	GetClusterID() uint64
 
@@ -124,7 +124,7 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 		dispatcher.onNewEvent,
 		dispatcher.onSubscriptionWatermark,
 	)
-	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID), zap.Uint64("startTs", startTs))
+	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.Any("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID), zap.Uint64("startTs", startTs))
 }
 
 func (s *eventService) deregisterAcceptor(dispatcherInfo DispatcherInfo) {
@@ -135,7 +135,7 @@ func (s *eventService) deregisterAcceptor(dispatcherInfo DispatcherInfo) {
 	}
 	id := dispatcherInfo.GetID()
 	c.removeDispatcher(id)
-	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", id))
+	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.Any("acceptorID", id))
 }
 
 // TODO: implement the following functions
