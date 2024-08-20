@@ -70,7 +70,7 @@ func newEventBroker(
 		eventStore:                             eventStore,
 		dispatchers:                            sync.Map{},
 		msgSender:                              mc,
-		changedCh:                              make(chan *subscriptionChange, defaultChannelSize),
+		changedCh:                              make(chan *subscriptionChange, defaultChannelSize*16),
 		taskPool:                               newScanTaskPool(),
 		scanWorkerCount:                        defaultWorkerCount,
 		messageCh:                              make(chan *wrapMessage, defaultChannelSize),
@@ -111,11 +111,7 @@ func (c *eventBroker) sendWatermark(
 }
 
 func (c *eventBroker) onAsyncNotify(change *subscriptionChange) {
-	select {
-	case c.changedCh <- change:
-	default:
-		// TODO: add metrics to record the drop count.
-	}
+	c.changedCh <- change
 }
 
 func (c *eventBroker) runGenerateScanTask(ctx context.Context) {
