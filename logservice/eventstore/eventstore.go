@@ -16,6 +16,7 @@ import (
 	"github.com/flowbehappy/tigate/mounter"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/pkg/pdutil"
@@ -75,6 +76,8 @@ type tableState struct {
 
 	// data before this watermark won't be needed
 	watermark atomic.Uint64
+
+	resolvedTs atomic.Uint64
 
 	ch chan eventWithTableID
 }
@@ -241,6 +244,10 @@ func (e *eventStore) Run(ctx context.Context) error {
 		return e.gcManager.run(ctx, e.deleteEvents)
 	})
 
+	eg.Go(func() error {
+		return e.updateMetrics(ctx)
+	})
+
 	return eg.Wait()
 }
 
@@ -256,6 +263,27 @@ func (e *eventStore) Close(ctx context.Context) error {
 type DBBatchEvent struct {
 	batch         *pebble.Batch
 	batchResolved *common.SpanHashMap[uint64]
+}
+
+func (e *eventStore) updateMetrics(ctx context.Context) error {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	ticker := time.NewTicker(1 * time.Second)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			e.mu.RLock()
+			defer e.mu.RUnlock()
+			for _, tableState := range e.spans {
+				resolvedTs := tableState.resolvedTs.Load()
+				watermark := tableState.watermark.Load()
+				metrics.EventStoreRegisterDispatcherResolvedTsLagHist.Observe(float64(resolvedTs))
+				metrics.EventStoreRegisterDispatcherWatermarkLagHist.Observe(float64(watermark))
+			}
+		}
+	}
 }
 
 func (e *eventStore) getTableStat(span heartbeatpb.TableSpan) *tableState {
@@ -371,6 +399,7 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 }
 
 func (e *eventStore) writeEvent(span heartbeatpb.TableSpan, raw *common.RawKVEntry) {
+
 	tableState := e.getTableStat(span)
 	if tableState == nil {
 		log.Panic("should not happen")
@@ -378,6 +407,8 @@ func (e *eventStore) writeEvent(span heartbeatpb.TableSpan, raw *common.RawKVEnt
 	}
 	if !raw.IsResolved() {
 		tableState.observer(raw)
+	} else {
+		tableState.resolvedTs.Store(raw.CRTs)
 	}
 	// else {
 	// 	log.Info("eventStore receive resolve ts",
@@ -396,6 +427,7 @@ func (e *eventStore) deleteEvents(span heartbeatpb.TableSpan, startCommitTS uint
 }
 
 func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableSpan *common.TableSpan, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
+	metrics.EventStoreRegisterDispatcherCount.Inc()
 	span := *tableSpan.TableSpan
 	log.Info("register dispatcher",
 		zap.Any("dispatcherID", dispatcherID),
@@ -444,6 +476,7 @@ func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, se
 }
 
 func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
+	metrics.EventStoreRegisterDispatcherCount.Desc()
 	e.schemaStore.UnregisterDispatcher(dispatcherID)
 	e.mu.Lock()
 	defer e.mu.Unlock()
