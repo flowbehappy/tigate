@@ -33,19 +33,19 @@ type SchemaStore interface {
 	// RegisterDispatcher register the dispatcher into the schema store.
 	// TODO: return a table info
 	// TODO: add filter
-	RegisterDispatcher(dispatcherID string, tableID common.TableID, ts common.Ts) error
+	RegisterDispatcher(dispatcherID common.DispatcherID, tableID common.TableID, ts common.Ts) error
 
 	// TODO: add interface for TableEventDispatcher
 
-	UpdateDispatcherSendTS(dispatcherID string, ts common.Ts) error
+	UpdateDispatcherSendTS(dispatcherID common.DispatcherID, ts common.Ts) error
 
-	UnregisterDispatcher(dispatcherID string) error
+	UnregisterDispatcher(dispatcherID common.DispatcherID) error
 
 	GetMaxFinishedDDLTS() common.Ts
 
 	GetTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error)
 
-	GetNextDDLEvent(dispatcherID string) (*DDLEvent, common.Ts, error)
+	GetNextDDLEvent(dispatcherID common.DispatcherID) (*DDLEvent, common.Ts, error)
 }
 
 type schemaStore struct {
@@ -418,7 +418,7 @@ func (s *schemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*commo
 	return store.getTableInfo(ts)
 }
 
-func (s *schemaStore) GetNextDDLEvent(dispatcherID string) (*DDLEvent, common.Ts, error) {
+func (s *schemaStore) GetNextDDLEvent(dispatcherID common.DispatcherID) (*DDLEvent, common.Ts, error) {
 	return nil, 0, nil
 }
 

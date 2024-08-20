@@ -27,7 +27,7 @@ type EventService interface {
 
 type DispatcherInfo interface {
 	// GetID returns the ID of the dispatcher.
-	GetID() string
+	GetID() common.DispatcherID
 	// GetClusterID returns the ID of the TiDB cluster the acceptor wants to accept events from.
 	GetClusterID() uint64
 

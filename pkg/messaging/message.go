@@ -105,7 +105,7 @@ func (r RegisterDispatcherRequest) Unmarshal(data []byte) error {
 	return r.RegisterDispatcherRequest.Unmarshal(data)
 }
 
-func (r RegisterDispatcherRequest) GetID() string {
+func (r RegisterDispatcherRequest) GetID() *eventpb.DispatcherID {
 	return r.DispatcherId
 }
 

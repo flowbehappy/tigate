@@ -3,6 +3,7 @@ package common
 import (
 	"encoding/binary"
 
+	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/google/uuid"
 	"github.com/tinylib/msgp/msgp"
 )
@@ -12,14 +13,25 @@ var DefaultEndian = binary.LittleEndian
 type Ts = uint64
 type TableID = int64
 
-type DispatcherID uuid.UUID
+type DispatcherID GID
+
+func NewDispatcherID() DispatcherID {
+	return DispatcherID(NewGID())
+}
+
+func (d DispatcherID) ToPB() *eventpb.DispatcherID {
+	return &eventpb.DispatcherID{
+		Low:  d.low,
+		High: d.high,
+	}
+}
 
 func (d *DispatcherID) Msgsize() int {
 	return 16
 }
 
 func (d DispatcherID) MarshalMsg(b []byte) ([]byte, error) {
-	return msgp.AppendBytes(b, d[:]), nil
+	return msgp.AppendBytes(b, GID(d).Marshal()), nil
 }
 
 func (d *DispatcherID) UnmarshalMsg(b []byte) ([]byte, error) {
@@ -29,12 +41,24 @@ func (d *DispatcherID) UnmarshalMsg(b []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	copy(d[:], tmp)
+
+	err = d.Unmarshal(tmp)
+	if err != nil {
+		return nil, err
+	}
+
 	return b, nil
 }
 
+func (d *DispatcherID) Unmarshal(b []byte) error {
+	gid := GID{}
+	gid.Unmarshal(b)
+	*d = DispatcherID(gid)
+	return nil
+}
+
 func (d DispatcherID) EncodeMsg(en *msgp.Writer) error {
-	return en.WriteBytes(d[:])
+	return en.WriteBytes(GID(d).Marshal())
 }
 
 func (d *DispatcherID) DecodeMsg(dc *msgp.Reader) error {
@@ -43,8 +67,8 @@ func (d *DispatcherID) DecodeMsg(dc *msgp.Reader) error {
 	if err != nil {
 		return err
 	}
-	copy(d[:], tmp)
-	return nil
+	err = d.Unmarshal(tmp)
+	return err
 }
 
 type SchemaID int64
@@ -56,6 +80,18 @@ type GID struct {
 
 func (g GID) IsZero() bool {
 	return g.low == 0 && g.high == 0
+}
+
+func (g GID) Marshal() []byte {
+	b := make([]byte, 16)
+	binary.LittleEndian.PutUint64(b[0:8], g.low)
+	binary.LittleEndian.PutUint64(b[8:16], g.high)
+	return b
+}
+
+func (g *GID) Unmarshal(b []byte) {
+	g.low = binary.LittleEndian.Uint64(b[0:8])
+	g.high = binary.LittleEndian.Uint64(b[8:16])
 }
 
 func NewGID() GID {
