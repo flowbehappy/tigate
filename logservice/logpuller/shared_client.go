@@ -244,7 +244,7 @@ func NewSharedClient(
 
 		stores: make(map[string]*requestedStore),
 
-		limiter: NewRegionScanRequestLimiter(20),
+		limiter: NewRegionScanRequestLimiter(1000),
 	}
 	s.totalSpans.v = make(map[SubscriptionID]*subscribedTable)
 	s.logRegionDetails = log.Debug
