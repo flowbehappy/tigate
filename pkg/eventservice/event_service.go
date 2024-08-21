@@ -2,6 +2,7 @@ package eventservice
 
 import (
 	"context"
+	"time"
 
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -77,7 +78,7 @@ func (s *eventService) Run(ctx context.Context) error {
 			if info.IsRegister() {
 				s.registerDispatcher(ctx, info)
 			} else {
-				s.deregisterAcceptor(info)
+				s.deregisterDispatcher(info)
 			}
 		}
 	}
@@ -96,7 +97,7 @@ func (s *eventService) handleMessage(ctx context.Context, msg *messaging.TargetM
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case s.acceptorInfoCh <- msgToAcceptorInfo(msg):
+	case s.acceptorInfoCh <- msgToDispatcherInfo(msg):
 	}
 	return nil
 }
@@ -106,17 +107,17 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 	startTs := info.GetStartTs()
 	span := info.GetTableSpan()
 
+	start := time.Now()
 	c, ok := s.brokers[clusterID]
 	if !ok {
 		c = newEventBroker(ctx, clusterID, s.eventStore, s.mc)
 		s.brokers[clusterID] = c
 	}
+	dispatcher := newDispatcherStat(startTs, info, c.onAsyncNotify)
+	c.dispatchers.Store(info.GetID(), dispatcher)
+	brokerRegisterDuration := time.Since(start)
 
-	dispatcher := newDispatcherStat(startTs, info, c.changedCh)
-	c.dispatchers.mu.Lock()
-	c.dispatchers.m[info.GetID()] = dispatcher
-	c.dispatchers.mu.Unlock()
-
+	start = time.Now()
 	c.eventStore.RegisterDispatcher(
 		info.GetID(),
 		span,
@@ -124,10 +125,15 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 		dispatcher.onNewEvent,
 		dispatcher.onSubscriptionWatermark,
 	)
-	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.Any("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID), zap.Uint64("startTs", startTs))
+	eventStoreRegisterDuration := time.Since(start)
+
+	log.Info("register acceptor", zap.Uint64("clusterID", clusterID),
+		zap.Any("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID),
+		zap.Uint64("startTs", startTs), zap.Duration("brokerRegisterDuration", brokerRegisterDuration),
+		zap.Duration("eventStoreRegisterDuration", eventStoreRegisterDuration))
 }
 
-func (s *eventService) deregisterAcceptor(dispatcherInfo DispatcherInfo) {
+func (s *eventService) deregisterDispatcher(dispatcherInfo DispatcherInfo) {
 	clusterID := dispatcherInfo.GetClusterID()
 	c, ok := s.brokers[clusterID]
 	if !ok {
@@ -138,7 +144,6 @@ func (s *eventService) deregisterAcceptor(dispatcherInfo DispatcherInfo) {
 	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.Any("acceptorID", id))
 }
 
-// TODO: implement the following functions
-func msgToAcceptorInfo(msg *messaging.TargetMessage) DispatcherInfo {
+func msgToDispatcherInfo(msg *messaging.TargetMessage) DispatcherInfo {
 	return msg.Message.(messaging.RegisterDispatcherRequest)
 }

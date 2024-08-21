@@ -62,8 +62,16 @@ func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 
 func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherManager) error {
 	m.SetHeartbeatRequestQueue(c.requestQueue)
-	c.heartBeatResponseDynamicStream.AddPath(dynstream.PathAndDest[model.ChangeFeedID, *EventDispatcherManager]{Path: m.changefeedID, Dest: m})
-	c.schedulerDispatcherRequestDynamicStream.AddPath(dynstream.PathAndDest[model.ChangeFeedID, *EventDispatcherManager]{Path: m.changefeedID, Dest: m})
+	err := c.heartBeatResponseDynamicStream.AddPath(dynstream.PathAndDest[model.ChangeFeedID, *EventDispatcherManager]{Path: m.changefeedID, Dest: m})
+	if err != nil {
+		log.Info("heartBeatResponseDynamicStream Failed to add path", zap.Any("ChangefeedID", m.changefeedID))
+		return err
+	}
+	err = c.schedulerDispatcherRequestDynamicStream.AddPath(dynstream.PathAndDest[model.ChangeFeedID, *EventDispatcherManager]{Path: m.changefeedID, Dest: m})
+	if err != nil {
+		log.Info("schedulerDispatcherRequestDynamicStream Failed to add path", zap.Any("ChangefeedID", m.changefeedID))
+		return err
+	}
 	return nil
 }
 
@@ -71,7 +79,7 @@ func (c *HeartBeatCollector) SendHeartBeatMessages() {
 	defer c.wg.Done()
 	for {
 		heartBeatRequestWithTargetID := c.requestQueue.Dequeue()
-		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendEvent(&messaging.TargetMessage{
+		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(&messaging.TargetMessage{
 			To:      heartBeatRequestWithTargetID.TargetID,
 			Topic:   messaging.MaintainerManagerTopic,
 			Type:    messaging.TypeHeartBeatRequest,

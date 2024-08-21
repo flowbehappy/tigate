@@ -89,6 +89,12 @@ type HeartBeatInfo struct {
 	IsRemoving      bool
 }
 
+// DispatcherStatusHandler is used to handle the DispatcherStatus event.
+// Each dispatcher status may contain a ACK info or a dispatcher action or both.
+// If we get a ack info, we need to check whether the ack is for the current pending ddl event. If so, we can cancel the resend task.
+// If we get a dispatcher action, we need to check whether the action is for the current pending ddl event. If so, we can deal the ddl event based on the action.
+// 1. If the action is a write, we need to add the ddl event to the sink for writing to downstream(async).
+// 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and wake the dispatcherEventsHandler
 type DispatcherStatusHandler struct {
 }
 
@@ -117,10 +123,11 @@ func (h *DispatcherStatusHandler) Handle(event DispatcherStatusWithDispatcherID,
 	if dispatcherAction != nil {
 		if dispatcherAction.CommitTs == pendingEvent.CommitTs {
 			if dispatcherAction.Action == heartbeatpb.Action_Write {
-				sink.AddDDLAndSyncPointEvent(pendingEvent, dispatcher.tableProgress) // 这个是同步写，所以写完的时候 sink 也 available 了
+				sink.AddDDLAndSyncPointEvent(pendingEvent, dispatcher.tableProgress)
 			} else {
-				sink.PassDDLAndSyncPointEvent(pendingEvent, dispatcher.tableProgress) // 为了更新 tableProgress，避免 checkpointTs 计算的 corner case
-				// TODO: wake 隔壁 dynamic stream
+				sink.PassDDLAndSyncPointEvent(pendingEvent, dispatcher.tableProgress)
+				dispatcherEventDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
+				dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
 			}
 			dispatcher.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
 				Span:            tableSpan.TableSpan,
@@ -136,6 +143,12 @@ func (h *DispatcherStatusHandler) Handle(event DispatcherStatusWithDispatcherID,
 	return false
 }
 
+// CheckTableProgressEmptyTask is reponsible for checking whether the tableProgress is empty.
+// If the tableProgress is empty,
+// 1. If the event is a single table DDL, it will be added to the sink for writing to downstream(async).
+// 2. If the event is a multi-table DDL, it will generate a TableSpanStatus message with ddl info to send to maintainer.
+// When the tableProgress is empty, the task will finished after this execution.
+// If the tableProgress is not empty, the task will be rescheduled after 10ms.
 type CheckTableProgressEmptyTask struct {
 	dispatcher *Dispatcher
 	taskHandle *threadpool.TaskHandle
@@ -175,6 +188,8 @@ func (t *CheckTableProgressEmptyTask) Execute() (threadpool.TaskStatus, time.Tim
 	return threadpool.CPUTask, time.Now().Add(10 * time.Millisecond)
 }
 
+// Resend Task is reponsible for resending the TableSpanStatus message with ddl info to maintainer each 50ms.
+// The task will be cancelled when the the dispatcher received the ack message from the maintainer
 type ResendTask struct {
 	message    *heartbeatpb.TableSpanStatus
 	dispatcher *Dispatcher
@@ -199,6 +214,23 @@ func (t *ResendTask) Execute() (threadpool.TaskStatus, time.Time) {
 func (t *ResendTask) Cancel() {
 	t.taskHandle.Cancel()
 }
+
+// DispatcherEventsHandler is used to dispatcher the events received.
+// If the event is a DML event, it will be added to the sink for writing to downstream.
+// If the event is a resolved TS event, it will be update the resolvedTs of the dispatcher.
+// If the event is a DDL event,
+//  1. If it is a single table DDL,
+//     a. If the tableProgress is empty（previous events are flushed successfully），it will be added to the sink for writing to downstream(async).
+//     b. If the tableProgress is not empty, we will generate a CheckTableProgressEmptyTask to periodly check whether the tableProgress is empty,
+//     and then add the DDL event to the sink for writing to downstream(async).
+//  2. If it is a multi-table DDL,
+//     a. If the tableProgress is empty（previous events are flushed successfully），We will generate a TableSpanStatus message with ddl info to send to maintainer.
+//     b. If the tableProgress is not empty, we will generate a CheckTableProgressEmptyTask to periodly check whether the tableProgress is empty,
+//     and then we will generate a TableSpanStatus message with ddl info to send to maintainer.
+//     for the multi-table DDL, we will also generate a ResendTask to resend the TableSpanStatus message with ddl info to maintainer each 50ms to avoid message is missing.
+//
+// Considering for ddl event, we always do an async write, so we need to be blocked before the ddl event flushed to downstream successfully.
+// Thus, we add a callback function to let the hander be waked when the ddl event flushed to downstream successfully.
 
 type DispatcherEventsHandler struct {
 }
@@ -225,26 +257,6 @@ func (h *DispatcherEventsHandler) Handle(event *common.TxnEvent, dispatcher *Dis
 		dispatcher.resolvedTs.Set(event.ResolvedTs)
 		return false
 	}
-}
-
-type ACKWithDispatcherID struct {
-	ack          *heartbeatpb.ACK
-	dispatcherID common.DispatcherID
-}
-
-func NewACKWithDispatcherID(ack *heartbeatpb.ACK, dispatcherID common.DispatcherID) *ACKWithDispatcherID {
-	return &ACKWithDispatcherID{
-		ack:          ack,
-		dispatcherID: dispatcherID,
-	}
-}
-
-func (a *ACKWithDispatcherID) GetACK() *heartbeatpb.ACK {
-	return a.ack
-}
-
-func (a *ACKWithDispatcherID) GetDispatcherID() common.DispatcherID {
-	return a.dispatcherID
 }
 
 type DispatcherStatusWithDispatcherID struct {

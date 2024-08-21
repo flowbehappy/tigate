@@ -14,6 +14,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/log"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/oracle"
 
 	"go.uber.org/zap"
 )
@@ -32,10 +33,7 @@ type eventBroker struct {
 	msgSender messaging.MessageSender
 
 	// All the dispatchers that register to the eventBroker.
-	dispatchers struct {
-		mu sync.RWMutex
-		m  map[common.DispatcherID]*dispatcherStat
-	}
+	dispatchers sync.Map
 	// changedCh is used to notify span subscription has new events.
 	changedCh chan *subscriptionChange
 	// taskPool is used to store the scan tasks and merge the tasks of same dispatcher.
@@ -52,6 +50,11 @@ type eventBroker struct {
 	wg *sync.WaitGroup
 	// cancel is used to cancel the goroutines spawned by the eventBroker.
 	cancel context.CancelFunc
+
+	metricEventServicePullerResolvedTs     prometheus.Gauge
+	metricEventServiceDispatcherResolvedTs prometheus.Gauge
+	metricEventServiceResolvedTsLag        prometheus.Gauge
+	metricTaskInQueueDuration              prometheus.Observer
 }
 
 func newEventBroker(
@@ -63,24 +66,26 @@ func newEventBroker(
 	ctx, cancel := context.WithCancel(ctx)
 	wg := &sync.WaitGroup{}
 	c := &eventBroker{
-		tidbClusterID: id,
-		eventStore:    eventStore,
-		dispatchers: struct {
-			mu sync.RWMutex
-			m  map[common.DispatcherID]*dispatcherStat
-		}{m: make(map[common.DispatcherID]*dispatcherStat)},
-		msgSender:       mc,
-		changedCh:       make(chan *subscriptionChange, defaultChannelSize),
-		taskPool:        newScanTaskPool(),
-		scanWorkerCount: defaultWorkerCount,
-		messageCh:       make(chan *wrapMessage, defaultChannelSize),
-		cancel:          cancel,
-		wg:              wg,
+		tidbClusterID:                          id,
+		eventStore:                             eventStore,
+		dispatchers:                            sync.Map{},
+		msgSender:                              mc,
+		changedCh:                              make(chan *subscriptionChange, defaultChannelSize*16),
+		taskPool:                               newScanTaskPool(),
+		scanWorkerCount:                        defaultWorkerCount,
+		messageCh:                              make(chan *wrapMessage, defaultChannelSize),
+		cancel:                                 cancel,
+		wg:                                     wg,
+		metricEventServicePullerResolvedTs:     metrics.EventServiceResolvedTsGauge,
+		metricEventServiceResolvedTsLag:        metrics.EventServiceResolvedTsLagGauge.WithLabelValues("puller"),
+		metricEventServiceDispatcherResolvedTs: metrics.EventServiceResolvedTsLagGauge.WithLabelValues("dispatcher"),
+		metricTaskInQueueDuration:              metrics.EventServiceScanTaskInQueueDuration,
 	}
 	c.runGenerateScanTask(ctx)
 	c.runScanWorker(ctx)
 	c.runSendMessageWorker(ctx)
-	c.logSlowDispatchers(ctx)
+	//c.logSlowDispatchers(ctx)
+	c.updateMetrics(ctx)
 	return c
 }
 
@@ -105,6 +110,10 @@ func (c *eventBroker) sendWatermark(
 	}
 }
 
+func (c *eventBroker) onAsyncNotify(change *subscriptionChange) {
+	c.changedCh <- change
+}
+
 func (c *eventBroker) runGenerateScanTask(ctx context.Context) {
 	c.wg.Add(1)
 	go func() {
@@ -114,13 +123,12 @@ func (c *eventBroker) runGenerateScanTask(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case change := <-c.changedCh:
-				c.dispatchers.mu.RLock()
-				dispatcher, ok := c.dispatchers.m[change.dispatcherInfo.GetID()]
-				c.dispatchers.mu.RUnlock()
+				v, ok := c.dispatchers.Load(change.dispatcherInfo.GetID())
 				// The dispatcher may be deleted. In such case, we just the stale notification.
 				if !ok {
 					continue
 				}
+				dispatcher := v.(*dispatcherStat)
 				startTs := dispatcher.watermark.Load()
 				endTs := dispatcher.spanSubscription.watermark.Load()
 				dataRange := common.NewDataRange(c.tidbClusterID, dispatcher.info.GetTableSpan(), startTs, endTs)
@@ -128,6 +136,7 @@ func (c *eventBroker) runGenerateScanTask(ctx context.Context) {
 					dispatcherStat: dispatcher,
 					dataRange:      dataRange,
 					eventCount:     change.eventCount,
+					createTime:     time.Now(),
 				}
 				c.taskPool.pushTask(task)
 			}
@@ -150,7 +159,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 					if !needScan {
 						continue
 					}
-
+					c.metricTaskInQueueDuration.Observe(time.Since(task.createTime).Seconds())
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 					dispatcherID := task.dispatcherStat.info.GetID()
 					topic := task.dispatcherStat.info.GetTopic()
@@ -162,7 +171,6 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						task.dispatcherStat.lastSent.Store(time.Now())
 						continue
 					}
-
 					//2. Get events iterator from eventStore.
 					iter, err := c.eventStore.GetIterator(task.dataRange)
 					if err != nil {
@@ -245,7 +253,6 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case m := <-c.messageCh:
-
 				// Send the message to messageCenter. Retry if the send failed.
 				for {
 					select {
@@ -261,7 +268,6 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 						log.Debug("send message failed", zap.Error(err))
 						continue
 					}
-
 					metricEventServiceSendEventDuration.Observe(time.Since(start).Seconds())
 					break
 				}
@@ -273,7 +279,6 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 	c.wg.Add(1)
 	ticker := time.NewTicker(time.Second * 10)
-	logDispatcherCount := 0
 	log.Info("start log slow dispatchers")
 	go func() {
 		defer c.wg.Done()
@@ -282,14 +287,15 @@ func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				c.dispatchers.mu.RLock()
-				for _, dispatcher := range c.dispatchers.m {
+				logDispatcherCount := 0
+				findSlow := func(key, value interface{}) bool {
+					dispatcher := value.(*dispatcherStat)
 					lastUpdate := dispatcher.spanSubscription.lastUpdate.Load().(time.Time)
 					lastSent := dispatcher.lastSent.Load().(time.Time)
 					if time.Since(lastSent) > time.Second*30 {
 						// limit the log count to avoid log flooding.
 						if logDispatcherCount > 10 {
-							break
+							return false
 						}
 						logDispatcherCount++
 						_, id := dispatcher.info.GetChangefeedID()
@@ -302,8 +308,50 @@ func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
 							zap.Uint64("dispatcher-watermark", dispatcher.watermark.Load()),
 							zap.Uint64("subscription-eventCount", dispatcher.spanSubscription.newEventCount.Load()))
 					}
+					return true
 				}
-				c.dispatchers.mu.RUnlock()
+				c.dispatchers.Range(findSlow)
+			}
+		}
+	}()
+}
+
+func (c *eventBroker) updateMetrics(ctx context.Context) {
+	c.wg.Add(1)
+	ticker := time.NewTicker(time.Second * 10)
+	go func() {
+		defer c.wg.Done()
+		log.Info("update metrics goroutine is started")
+		for {
+			select {
+			case <-ctx.Done():
+				log.Info("update metrics goroutine is closing")
+				return
+			case <-ticker.C:
+				pullerMinResolvedTs := uint64(0)
+				dispatcherMinWaterMark := uint64(0)
+				c.dispatchers.Range(func(key, value interface{}) bool {
+					dispatcher := value.(*dispatcherStat)
+					resolvedTs := dispatcher.spanSubscription.watermark.Load()
+					if pullerMinResolvedTs == 0 || resolvedTs < pullerMinResolvedTs {
+						pullerMinResolvedTs = resolvedTs
+					}
+					watermark := dispatcher.watermark.Load()
+					if dispatcherMinWaterMark == 0 || watermark < dispatcherMinWaterMark {
+						dispatcherMinWaterMark = watermark
+					}
+					return true
+				})
+				if pullerMinResolvedTs == 0 {
+					continue
+				}
+				phyResolvedTs := oracle.ExtractPhysical(pullerMinResolvedTs)
+				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
+				c.metricEventServicePullerResolvedTs.Set(float64(phyResolvedTs))
+				c.metricEventServiceResolvedTsLag.Set(float64(lag))
+
+				lag = (oracle.GetPhysical(time.Now()) - oracle.ExtractPhysical(dispatcherMinWaterMark)) / 1e3
+				c.metricEventServiceDispatcherResolvedTs.Set(float64(lag))
 			}
 		}
 	}()
@@ -315,15 +363,12 @@ func (c *eventBroker) close() {
 }
 
 func (c *eventBroker) removeDispatcher(id common.DispatcherID) {
-	c.dispatchers.mu.Lock()
-	defer c.dispatchers.mu.Unlock()
-
-	_, ok := c.dispatchers.m[id]
+	_, ok := c.dispatchers.Load(id)
 	if !ok {
 		return
 	}
 	c.eventStore.UnregisterDispatcher(id)
-	delete(c.dispatchers.m, id)
+	c.dispatchers.Delete(id)
 	c.taskPool.removeTask(id)
 }
 
@@ -333,8 +378,8 @@ type dispatcherStat struct {
 	info             DispatcherInfo
 	spanSubscription *spanSubscription
 	// The watermark of the events that have been sent to the dispatcher.
-	watermark atomic.Uint64
-	notify    chan *subscriptionChange
+	watermark     atomic.Uint64
+	onAsyncNotify func(*subscriptionChange)
 	// The index of the task queue channel in the taskPool.
 	// We need to make sure the tasks of the same dispatcher are sent to the same task queue
 	// so that it will be handle by the same scan worker. To ensure all events of the dispatcher
@@ -349,14 +394,12 @@ type dispatcherStat struct {
 }
 
 func newDispatcherStat(
-	startTs uint64,
-	info DispatcherInfo,
-	notify chan *subscriptionChange) *dispatcherStat {
+	startTs uint64, info DispatcherInfo, onAsyncNotify func(*subscriptionChange),
+) *dispatcherStat {
 	subscription := &spanSubscription{
 		span:       info.GetTableSpan(),
 		lastUpdate: atomic.Value{},
 	}
-
 	subscription.lastUpdate.Store(time.Now())
 	subscription.watermark.Store(uint64(startTs))
 
@@ -364,7 +407,7 @@ func newDispatcherStat(
 	res := &dispatcherStat{
 		info:             info,
 		spanSubscription: subscription,
-		notify:           notify,
+		onAsyncNotify:    onAsyncNotify,
 
 		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(namespace, id, "kv"),
 		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "kv"),
@@ -387,15 +430,10 @@ func (a *dispatcherStat) onSubscriptionWatermark(watermark uint64) {
 	}
 	a.spanSubscription.watermark.Store(watermark)
 	a.spanSubscription.lastUpdate.Store(time.Now())
-
-	sub := &subscriptionChange{
+	a.onAsyncNotify(&subscriptionChange{
 		dispatcherInfo: a.info,
 		eventCount:     a.spanSubscription.newEventCount.Swap(0),
-	}
-	select {
-	case a.notify <- sub:
-	default:
-	}
+	})
 }
 
 // TODO: consider to use a better way to update the event count, may be we only need to
@@ -429,6 +467,7 @@ type scanTask struct {
 	dispatcherStat *dispatcherStat
 	dataRange      *common.DataRange
 	eventCount     uint64
+	createTime     time.Time
 }
 
 func (t *scanTask) checkAndAdjustScanTask() bool {

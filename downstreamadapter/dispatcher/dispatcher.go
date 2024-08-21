@@ -20,7 +20,9 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/filter"
+	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -102,7 +104,18 @@ func NewDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, 
 		tableProgress:   types.NewTableProgress(),
 	}
 
-	log.Info("dispatcher created", zap.Any("DispatcherID", dispatcher.id))
+	dispatcherEventDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
+
+	err := dispatcherEventDynamicStream.AddPath(dynstream.PathAndDest[common.DispatcherID, *Dispatcher]{Path: dispatcher.id, Dest: dispatcher})
+	if err != nil {
+		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
+	}
+
+	dispatcherStatusDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithDispatcherID, *Dispatcher]](appcontext.DispatcherStatusDynamicStream)
+	err = dispatcherStatusDynamicStream.AddPath(dynstream.PathAndDest[common.DispatcherID, *Dispatcher]{Path: dispatcher.id, Dest: dispatcher})
+	if err != nil {
+		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
+	}
 
 	return dispatcher
 }
@@ -229,6 +242,23 @@ func (d *Dispatcher) Remove() {
 	// TODO: 修改这个 dispatcher 的 status 为 removing
 	log.Info("table event dispatcher component status changed to stopping", zap.String("table", d.tableSpan.String()))
 	d.isRemoving.Store(true)
+
+	dispatcherEventDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
+	errs := dispatcherEventDynamicStream.RemovePath(d.id)
+
+	for _, err := range errs {
+		if err != nil {
+			log.Error("remove dispatcher from dynamic stream failed", zap.Error(err))
+		}
+	}
+
+	dispatcherStatusDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *heartbeatpb.TableSpanStatus, *Dispatcher]](appcontext.DispatcherStatusDynamicStream)
+	errs = dispatcherStatusDynamicStream.RemovePath(d.id)
+	for _, err := range errs {
+		if err != nil {
+			log.Error("remove dispatcher from dynamic stream failed", zap.Error(err))
+		}
+	}
 }
 
 func (d *Dispatcher) TryClose() (w heartbeatpb.Watermark, ok bool) {

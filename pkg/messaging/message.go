@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -18,7 +19,9 @@ type IOType int32
 const (
 	TypeInvalid IOType = iota
 	TypeBytes
+	// LogService related
 	TypeTxnEvent
+
 	TypeHeartBeatRequest
 	TypeHeartBeatResponse
 	TypeScheduleDispatcherRequest
@@ -193,6 +196,7 @@ type TargetMessage struct {
 	Topic    string
 	Type     IOType
 	Message  IOTypeT
+	CrateAt  int64
 }
 
 // NewTargetMessage creates a new TargetMessage to be sent to a target server.
@@ -238,6 +242,7 @@ func NewTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetMessage
 		Type:    ioType,
 		Topic:   Topic,
 		Message: Message,
+		CrateAt: time.Now().UnixMilli(),
 	}
 }
 

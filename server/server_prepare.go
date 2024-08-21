@@ -163,11 +163,20 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 
 	dispatcherStatusDynamicStream := dynstream.NewDynamicStreamDefault(&dispatcher.DispatcherStatusHandler{})
 	appcontext.SetService(appcontext.DispatcherStatusDynamicStream, dispatcherStatusDynamicStream)
+	dispatcherStatusDynamicStream.Start()
 
 	heartBeatReponseHandler := dispatchermanager.NewHeartBeatResponseHandler(dispatcherStatusDynamicStream)
-	appcontext.SetService(appcontext.HeartBeatResponseDynamicStream, dynstream.NewDynamicStreamDefault(&heartBeatReponseHandler))
-	appcontext.SetService(appcontext.SchedulerDispatcherRequestDynamicStream, dynstream.NewDynamicStreamDefault(&dispatchermanager.SchedulerDispatcherRequestHandler{}))
-	appcontext.SetService(appcontext.DispatcherEventsDynamicStream, dynstream.NewDynamicStreamDefault(&dispatcher.DispatcherEventsHandler{}))
+	heartBeatDynamicStream := dynstream.NewDynamicStreamDefault(&heartBeatReponseHandler)
+	appcontext.SetService(appcontext.HeartBeatResponseDynamicStream, heartBeatDynamicStream)
+	heartBeatDynamicStream.Start()
+
+	schedulerDispatcherRequestDynamicStream := dynstream.NewDynamicStreamDefault(&dispatchermanager.SchedulerDispatcherRequestHandler{})
+	appcontext.SetService(appcontext.SchedulerDispatcherRequestDynamicStream, schedulerDispatcherRequestDynamicStream)
+	schedulerDispatcherRequestDynamicStream.Start()
+
+	dispatcherEventsDynamicStream := dynstream.NewDynamicStreamDefault(&dispatcher.DispatcherEventsHandler{})
+	appcontext.SetService(appcontext.DispatcherEventsDynamicStream, dispatcherEventsDynamicStream)
+	dispatcherEventsDynamicStream.Start()
 
 	// TODO: dynamic stream start
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, id, c.info.Epoch, config.NewDefaultMessageCenterConfig()))
