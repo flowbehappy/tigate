@@ -64,12 +64,12 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherMa
 	m.SetHeartbeatRequestQueue(c.requestQueue)
 	err := c.heartBeatResponseDynamicStream.AddPath(dynstream.PathAndDest[model.ChangeFeedID, *EventDispatcherManager]{Path: m.changefeedID, Dest: m})
 	if err != nil {
-		log.Info("heartBeatResponseDynamicStream Failed to add path", zap.Any("ChangefeedID", m.changefeedID))
+		log.Error("heartBeatResponseDynamicStream Failed to add path", zap.Any("ChangefeedID", m.changefeedID))
 		return err
 	}
 	err = c.schedulerDispatcherRequestDynamicStream.AddPath(dynstream.PathAndDest[model.ChangeFeedID, *EventDispatcherManager]{Path: m.changefeedID, Dest: m})
 	if err != nil {
-		log.Info("schedulerDispatcherRequestDynamicStream Failed to add path", zap.Any("ChangefeedID", m.changefeedID))
+		log.Error("schedulerDispatcherRequestDynamicStream Failed to add path", zap.Any("ChangefeedID", m.changefeedID))
 		return err
 	}
 	return nil
