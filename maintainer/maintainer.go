@@ -16,6 +16,7 @@ package maintainer
 import (
 	"encoding/json"
 	"github.com/flowbehappy/tigate/utils/dynstream"
+	"math"
 	"sync"
 	"time"
 
@@ -181,27 +182,30 @@ func (m *Maintainer) onRemoveMaintainer(cascade bool) {
 
 func (m *Maintainer) calCheckpointTs() {
 	m.updateMetrics()
-	//if m.tableSpans.Len() != m.supervisor.GetInferiors().Len() || time.Since(m.lastCheckpointTsTime) < 2*time.Second {
-	//	return
-	//}
-	//m.lastCheckpointTsTime = time.Now()
-	//
-	//allCaptures := m.supervisor.GetAllCaptures()
-	//newWatermark := heartbeatpb.NewMaxWatermark()
-	//for c := range allCaptures {
-	//	if _, ok := m.checkpointTsByCapture[c]; !ok {
-	//		log.Debug("checkpointTs can not be advanced, since missing capture heartbeat",
-	//			zap.String("capture", c))
-	//		return
-	//	}
-	//	newWatermark.UpdateMin(m.checkpointTsByCapture[c])
-	//}
-	//if newWatermark.CheckpointTs != math.MaxUint64 {
-	//	m.watermark.CheckpointTs = newWatermark.CheckpointTs
-	//}
-	//if newWatermark.ResolvedTs != math.MaxUint64 {
-	//	m.watermark.ResolvedTs = newWatermark.ResolvedTs
-	//}
+	if time.Since(m.lastCheckpointTsTime) < 2*time.Second ||
+		m.scheduler.schedulingTask.Len() != 0 ||
+		m.scheduler.absent.Len() != 0 {
+		return
+	}
+	m.lastCheckpointTsTime = time.Now()
+
+	newWatermark := heartbeatpb.NewMaxWatermark()
+	for id, tasks := range m.scheduler.nodeTasks {
+		if tasks.Len() > 0 {
+			if _, ok := m.checkpointTsByCapture[id]; !ok {
+				log.Debug("checkpointTs can not be advanced, since missing capture heartbeat",
+					zap.String("capture", id))
+				return
+			}
+			newWatermark.UpdateMin(m.checkpointTsByCapture[id])
+		}
+	}
+	if newWatermark.CheckpointTs != math.MaxUint64 {
+		m.watermark.CheckpointTs = newWatermark.CheckpointTs
+	}
+	if newWatermark.ResolvedTs != math.MaxUint64 {
+		m.watermark.ResolvedTs = newWatermark.ResolvedTs
+	}
 }
 
 func (m *Maintainer) updateMetrics() {
@@ -325,7 +329,6 @@ func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage)
 	cachedResp := m.bootstrapper.HandleBootstrapResponse(msg.From, msg.Message[0].(*heartbeatpb.MaintainerBootstrapResponse))
 	if cachedResp != nil {
 		log.Info("all nodes have sent bootstrap response", zap.Int("size", len(cachedResp)))
-
 		var status scheduler.InferiorStatus
 		for server, bootstrapMsg := range cachedResp {
 			for _, info := range bootstrapMsg.Statuses {
@@ -462,8 +465,8 @@ func (m *Maintainer) Handle(event *Event) (await bool) {
 		if err != nil {
 			m.handleError(err)
 		}
-		m.stream.Wake() <- event.cfID
-		log.Info("stream waked", zap.String("changefeed", m.id.String()))
+		//m.stream.Wake() <- event.cfID
+		//log.Info("stream waked", zap.String("changefeed", m.id.String()))
 		//}()
 		return false
 	case EventMessage:
@@ -582,6 +585,7 @@ func (m *Maintainer) handlePeriodTask() {
 	if m.removing {
 		m.sendMaintainerCloseRequestToAllNode()
 	}
+	m.calCheckpointTs()
 	submitScheduledEvent(m.taskScheduler, m.stream, &Event{
 		cfID:      m.id.ID,
 		eventType: EventPeriod,
