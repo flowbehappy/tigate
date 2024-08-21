@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 	"sync"
 	"time"
 
@@ -47,7 +48,8 @@ type Manager struct {
 
 	msgCh chan *messaging.TargetMessage
 
-	maintainerStream *MaintainerStream
+	stream        dynstream.DynamicStream[string, *Event, *Maintainer]
+	taskScheduler *threadpool.TaskScheduler
 }
 
 // NewMaintainerManager create a changefeed maintainer manager instance,
@@ -57,13 +59,15 @@ type Manager struct {
 func NewMaintainerManager(selfNode *common.NodeInfo, pdEndpoints []string) *Manager {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	m := &Manager{
-		mc:               mc,
-		maintainers:      sync.Map{},
-		selfNode:         selfNode,
-		pdEndpoints:      pdEndpoints,
-		msgCh:            make(chan *messaging.TargetMessage, 1024),
-		maintainerStream: NewMaintainerStream(),
+		mc:            mc,
+		maintainers:   sync.Map{},
+		selfNode:      selfNode,
+		pdEndpoints:   pdEndpoints,
+		msgCh:         make(chan *messaging.TargetMessage, 1024),
+		taskScheduler: threadpool.NewTaskSchedulerDefault("maintainer"),
 	}
+	m.stream = dynstream.NewDynamicStreamDefault[string, *Event, *Maintainer](&StreamHandler{})
+	m.stream.Start()
 	mc.RegisterHandler(messaging.MaintainerManagerTopic, m.RecvMessages)
 
 	mc.RegisterHandler(messaging.MaintainerTopic,
@@ -123,7 +127,7 @@ func (m *Manager) Run(ctx context.Context) error {
 				if cf.removed.Load() {
 					cf.Close()
 					m.maintainers.Delete(key)
-					m.maintainerStream.stream.RemovePath(cf.id.ID)
+					m.stream.RemovePath(cf.id.ID)
 				}
 				return true
 			})
@@ -199,8 +203,8 @@ func (m *Manager) onDispatchMaintainerRequest(
 			if err != nil {
 				log.Panic("decode changefeed fail", zap.Error(err))
 			}
-			cf = NewMaintainer(cfID, cfConfig, m.selfNode, req.CheckpointTs, m.pdEndpoints)
-			err = m.maintainerStream.stream.AddPath(dynstream.PathAndDest[string, *Maintainer]{
+			cf = NewMaintainer(cfID, cfConfig, m.selfNode, m.stream, m.taskScheduler, req.CheckpointTs, m.pdEndpoints)
+			err = m.stream.AddPath(dynstream.PathAndDest[string, *Maintainer]{
 				Path: cfID.ID,
 				Dest: cf.(*Maintainer),
 			})
@@ -210,7 +214,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 				return ""
 			}
 			m.maintainers.Store(cfID, cf)
-			m.maintainerStream.stream.In() <- &Event{cfID: cfID.ID, eventType: EventInit}
+			m.stream.In() <- &Event{cfID: cfID.ID, eventType: EventInit}
 		}
 	case messaging.TypeRemoveMaintainerRequest:
 		req := msg.Message.(*heartbeatpb.RemoveMaintainerRequest)
@@ -223,7 +227,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 				zap.Any("request", req))
 			return req.GetId()
 		}
-		m.maintainerStream.stream.In() <- &Event{
+		m.stream.In() <- &Event{
 			cfID:      cfID.ID,
 			eventType: EventMessage,
 			message:   msg,
@@ -284,7 +288,7 @@ func (m *Manager) dispatcherMaintainerMessage(
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case m.maintainerStream.stream.In() <- &Event{
+	case m.stream.In() <- &Event{
 		cfID:      changefeed,
 		eventType: EventMessage,
 		message:   msg,

@@ -16,7 +16,6 @@ package maintainer
 import (
 	"encoding/json"
 	"github.com/flowbehappy/tigate/utils/dynstream"
-	"math"
 	"sync"
 	"time"
 
@@ -30,7 +29,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
-	"github.com/flowbehappy/tigate/utils"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -52,22 +50,21 @@ type Maintainer struct {
 	config   *model.ChangeFeedInfo
 	selfNode *common.NodeInfo
 
-	mc messaging.MessageCenter
+	stream        dynstream.DynamicStream[string, *Event, *Maintainer]
+	taskScheduler *threadpool.TaskScheduler
+	mc            messaging.MessageCenter
 
 	watermark             *heartbeatpb.Watermark
 	checkpointTsByCapture map[model.CaptureID]heartbeatpb.Watermark
 
-	state      heartbeatpb.ComponentState
-	supervisor *scheduler.Supervisor
+	state        heartbeatpb.ComponentState
+	bootstrapper *Bootstrapper
 
 	changefeedSate model.FeedState
 
 	removed *atomic.Bool
 
 	initialized bool
-	// tableSpans track all table spans that need to be scheduled
-	// when dispatcher reported a new table or remove a table, this field should be updated
-	tableSpans utils.Map[scheduler.InferiorID, scheduler.Inferior]
 
 	pdEndpoints []string
 	nodeManager *watcher.NodeManager
@@ -76,7 +73,9 @@ type Maintainer struct {
 	statusChanged  *atomic.Bool
 	lastReportTime time.Time
 
-	removing        *atomic.Bool
+	scheduler *Scheduler
+
+	removing        bool
 	cascadeRemoving bool
 
 	lastPrintStatusTime  time.Time
@@ -100,19 +99,23 @@ type Maintainer struct {
 func NewMaintainer(cfID model.ChangeFeedID,
 	cfg *model.ChangeFeedInfo,
 	selfNode *common.NodeInfo,
+	stream dynstream.DynamicStream[string, *Event, *Maintainer],
+	taskScheduler *threadpool.TaskScheduler,
 	checkpointTs uint64,
 	pdEndpoints []string,
 ) *Maintainer {
 	m := &Maintainer{
 		id:              cfID,
 		selfNode:        selfNode,
+		stream:          stream,
+		taskScheduler:   taskScheduler,
+		scheduler:       NewScheduler(1000),
 		mc:              appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		state:           heartbeatpb.ComponentState_Working,
 		removed:         atomic.NewBool(false),
 		nodeManager:     appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName),
 		nodesClosed:     make(map[string]struct{}),
 		statusChanged:   atomic.NewBool(true),
-		removing:        atomic.NewBool(false),
 		cascadeRemoving: false,
 		config:          cfg,
 		watermark: &heartbeatpb.Watermark{
@@ -121,7 +124,6 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		},
 		checkpointTsByCapture: make(map[model.CaptureID]heartbeatpb.Watermark),
 		pdEndpoints:           pdEndpoints,
-		tableSpans:            utils.NewBtreeMap[scheduler.InferiorID, scheduler.Inferior](),
 		runningErrors:         map[messaging.ServerId]*heartbeatpb.RunningError{},
 		runningWarnings:       map[messaging.ServerId]*heartbeatpb.RunningError{},
 
@@ -134,12 +136,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		runningTaskGauge:               metrics.RunningScheduleTaskGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		tableCountGauge:                metrics.TableGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 	}
-	id := scheduler.ChangefeedID(cfID)
-	m.supervisor = scheduler.NewSupervisor(id,
-		m.getReplicaSet, m.getNewBootstrapFn(),
-		scheduler.NewBasicScheduler(id),
-		scheduler.NewBalanceScheduler(id, time.Minute, 1000),
-	)
+	m.bootstrapper = NewBootstrapper(m.getNewBootstrapFn())
 	log.Info("create maintainer", zap.String("id", cfID.String()))
 	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace, cfID.ID).Inc()
 	return m
@@ -154,114 +151,57 @@ func (m *Maintainer) cleanupMetrics() {
 	metrics.TableGauge.DeleteLabelValues(m.id.Namespace, m.id.ID)
 }
 
-func (m *Maintainer) Execute() (taskStatus threadpool.TaskStatus, tick time.Time) {
-	m.updateMetrics()
-	if m.removing.Load() {
-		//todo: send message to dispatcher manager if changefeed is removed
-		closed := m.tryCloseChangefeed()
-		if closed {
-			m.removed.Store(true)
-			m.state = heartbeatpb.ComponentState_Stopped
-			metrics.MaintainerGauge.WithLabelValues(m.id.Namespace, m.id.ID).Dec()
-			return threadpool.Done, time.Time{}
-		}
-		return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
-	}
-
-	taskStatus = threadpool.CPUTask
-	tick = time.Now().Add(50 * time.Millisecond)
-	// init the maintainer, todo: return error and cancel the maintainer
-	if !m.initialized {
-		if err := m.initChangefeed(); err != nil {
-			log.Warn("init changefeed failed",
-				zap.String("id", m.id.String()),
-				zap.Error(err))
-			m.initialized = false
-			m.removing.Store(true)
-			return
-		}
-		m.initialized = true
-	}
-	m.state = heartbeatpb.ComponentState_Working
-
-	nodes := m.nodeManager.GetAliveNodes()
-	//check capture changes
-	msgs, err := m.supervisor.HandleAliveCaptureUpdate(nodes)
-	if err != nil {
-		log.Warn("handle capture failed", zap.Error(err))
-		return
-	}
-	m.sendMessages(msgs)
-
-	// calc checkpointTs before generate new tasks
-	m.calCheckpointTs()
-
-	// try to schedule table spans
-	err = m.scheduleTableSpan()
-	if err != nil {
-		log.Warn("handle capture failed", zap.Error(err))
-		return
-	}
-	m.printStatus()
-	return
-}
-
-func (m *Maintainer) getReplicaSet(id scheduler.InferiorID) scheduler.Inferior {
-	tableSpan, _ := m.tableSpans.Get(id.(*common.TableSpan))
-	return tableSpan
-}
-
 func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
 	switch msg.Type {
 	case messaging.TypeHeartBeatRequest:
-		if err := m.onHeartBeatRequest(msg); err != nil {
-			return errors.Trace(err)
-		}
+		return m.onHeartBeatRequest(msg)
 	case messaging.TypeMaintainerBootstrapResponse:
-		m.onMaintainerBootstrapResponse(msg)
+		return m.onMaintainerBootstrapResponse(msg)
 	case messaging.TypeMaintainerCloseResponse:
 		m.onNodeClosed(string(msg.From), msg.Message.(*heartbeatpb.MaintainerCloseResponse))
 	case messaging.TypeRemoveMaintainerRequest:
-		m.onRemoveMaintainer(msg)
+		m.onRemoveMaintainer(msg.Message.(*heartbeatpb.RemoveMaintainerRequest).Cascade)
 	default:
 		log.Panic("unexpected message type", zap.String("type", msg.Type.String()))
 	}
 	return nil
 }
 
-func (m *Maintainer) onRemoveMaintainer(msg *messaging.TargetMessage) {
-	m.removing.Store(true)
-	m.cascadeRemoving = msg.Message.(*heartbeatpb.RemoveMaintainerRequest).Cascade
+func (m *Maintainer) onRemoveMaintainer(cascade bool) {
+	m.removing = true
+	m.cascadeRemoving = cascade
 	closed := m.tryCloseChangefeed()
 	if closed {
 		m.removed.Store(true)
 		m.state = heartbeatpb.ComponentState_Stopped
 		metrics.MaintainerGauge.WithLabelValues(m.id.Namespace, m.id.ID).Dec()
+		return
 	}
 }
 
 func (m *Maintainer) calCheckpointTs() {
-	if m.tableSpans.Len() != m.supervisor.GetInferiors().Len() || time.Since(m.lastCheckpointTsTime) < 2*time.Second {
-		return
-	}
-	m.lastCheckpointTsTime = time.Now()
-
-	allCaptures := m.supervisor.GetAllCaptures()
-	newWatermark := heartbeatpb.NewMaxWatermark()
-	for c := range allCaptures {
-		if _, ok := m.checkpointTsByCapture[c]; !ok {
-			log.Debug("checkpointTs can not be advanced, since missing capture heartbeat",
-				zap.String("capture", c))
-			return
-		}
-		newWatermark.UpdateMin(m.checkpointTsByCapture[c])
-	}
-	if newWatermark.CheckpointTs != math.MaxUint64 {
-		m.watermark.CheckpointTs = newWatermark.CheckpointTs
-	}
-	if newWatermark.ResolvedTs != math.MaxUint64 {
-		m.watermark.ResolvedTs = newWatermark.ResolvedTs
-	}
+	m.updateMetrics()
+	//if m.tableSpans.Len() != m.supervisor.GetInferiors().Len() || time.Since(m.lastCheckpointTsTime) < 2*time.Second {
+	//	return
+	//}
+	//m.lastCheckpointTsTime = time.Now()
+	//
+	//allCaptures := m.supervisor.GetAllCaptures()
+	//newWatermark := heartbeatpb.NewMaxWatermark()
+	//for c := range allCaptures {
+	//	if _, ok := m.checkpointTsByCapture[c]; !ok {
+	//		log.Debug("checkpointTs can not be advanced, since missing capture heartbeat",
+	//			zap.String("capture", c))
+	//		return
+	//	}
+	//	newWatermark.UpdateMin(m.checkpointTsByCapture[c])
+	//}
+	//if newWatermark.CheckpointTs != math.MaxUint64 {
+	//	m.watermark.CheckpointTs = newWatermark.CheckpointTs
+	//}
+	//if newWatermark.ResolvedTs != math.MaxUint64 {
+	//	m.watermark.ResolvedTs = newWatermark.ResolvedTs
+	//}
 }
 
 func (m *Maintainer) updateMetrics() {
@@ -290,11 +230,19 @@ func (m *Maintainer) sendMessages(msgs []*messaging.TargetMessage) {
 }
 
 func (m *Maintainer) scheduleTableSpan() error {
-	msg, err := m.supervisor.Schedule(m.tableSpans)
+	msg, err := m.scheduler.Schedule()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	m.sendMessages(msg)
+
+	if m.scheduler.absent.Len() > 0 {
+		// some table span is not scheduled, schedule it later
+		submitScheduledEvent(m.taskScheduler, m.stream, &Event{
+			cfID:      m.id.ID,
+			eventType: EventSchedule,
+		}, time.Now().Add(100*time.Millisecond))
+	}
 	return nil
 }
 
@@ -306,9 +254,7 @@ func (m *Maintainer) Close() {
 		zap.Uint64("checkpointTs", m.watermark.CheckpointTs))
 }
 
-func (m *Maintainer) initChangefeed() error {
-	m.state = heartbeatpb.ComponentState_Working
-	m.statusChanged.Store(true)
+func (m *Maintainer) initialize() error {
 	var err error
 	tableIDs, err := m.initTableIDs()
 	for _, id := range tableIDs {
@@ -319,13 +265,25 @@ func (m *Maintainer) initChangefeed() error {
 			EndKey:   span.EndKey,
 		}}
 		replicaSet := NewReplicaSet(m.id, tableSpan, m.watermark.CheckpointTs).(*ReplicaSet)
-		m.tableSpans.ReplaceOrInsert(tableSpan, replicaSet)
+		stm, err := scheduler.NewStateMachine(tableSpan, nil, replicaSet)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		m.scheduler.absent.ReplaceOrInsert(tableSpan, stm)
 	}
-	m.supervisor.MarkNeedAddInferior()
 	log.Info("changefeed maintainer initialized",
 		zap.String("id", m.id.String()))
 	m.initialized = true
-	//todo: remove gc service checkpoint ts
+	m.state = heartbeatpb.ComponentState_Working
+	m.statusChanged.Store(true)
+
+	// send bootstrap message
+	m.sendMessages(m.bootstrapper.HandleNewNodes(m.nodeManager.GetAliveNodes()))
+	// setup period event
+	submitScheduledEvent(m.taskScheduler, m.stream, &Event{
+		cfID:      m.id.ID,
+		eventType: EventPeriod,
+	}, time.Now().Add(time.Millisecond*500))
 	return err
 }
 
@@ -344,6 +302,12 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 			State: info.ComponentStatus,
 		})
 	}
+	msgs, err := m.scheduler.HandleStatus(msg.From.String(), req.Statuses)
+	if err != nil {
+		log.Error("handle status failed, ignore", zap.Error(err))
+		return errors.Trace(err)
+	}
+	m.sendMessages(msgs)
 	// set error if not nil, todo: only save one
 	m.errLock.Lock()
 	if req.Warning != nil {
@@ -353,29 +317,51 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 		m.runningErrors[msg.From] = req.Err
 	}
 	m.errLock.Unlock()
-
-	msgs, err := m.supervisor.HandleStatus(msg.From.String(), status)
-	if err != nil {
-		log.Error("handle status failed, ignore", zap.Error(err))
-		return errors.Trace(err)
-	}
-	m.sendMessages(msgs)
 	return nil
 }
 
-func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage) {
-	req := msg.Message.(*heartbeatpb.MaintainerBootstrapResponse)
-	var status []scheduler.InferiorStatus
-	for _, info := range req.Statuses {
-		status = append(status, &ReplicaSetStatus{
-			ID: &common.TableSpan{
-				TableSpan: info.Span,
-			},
-			State:        info.ComponentStatus,
-			CheckpointTs: info.CheckpointTs,
-		})
+func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage) error {
+	m.scheduler.AddNewNode(msg.From.String())
+	cachedResp := m.bootstrapper.HandleBootstrapResponse(msg.From, msg.Message.(*heartbeatpb.MaintainerBootstrapResponse))
+	if cachedResp != nil {
+		log.Info("all nodes have sent bootstrap response", zap.Int("size", len(cachedResp)))
+
+		var status scheduler.InferiorStatus
+		for server, bootstrapMsg := range cachedResp {
+			for _, info := range bootstrapMsg.Statuses {
+				status = &ReplicaSetStatus{
+					ID: &common.TableSpan{
+						TableSpan: info.Span,
+					},
+					State:        info.ComponentStatus,
+					CheckpointTs: info.CheckpointTs,
+				}
+				stm, err := scheduler.NewStateMachine(status.GetInferiorID(),
+					map[model.CaptureID]scheduler.InferiorStatus{server: status},
+					NewReplicaSet(m.id, status.GetInferiorID(), info.CheckpointTs))
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+				//working on remote
+				if stm.State != scheduler.SchedulerStatusAbsent {
+					span := stm.ID.(*common.TableSpan)
+					m.scheduler.working.ReplaceOrInsert(span, stm)
+					m.scheduler.absent.Delete(stm.ID.(*common.TableSpan))
+					if m.scheduler.schedulingTask.Has(span) {
+						log.Warn("span state not expected, remove from commiting",
+							zap.String("changefeed", m.id.ID),
+							zap.String("span", span.String()))
+						m.scheduler.schedulingTask.Delete(stm.ID.(*common.TableSpan))
+					}
+				}
+			}
+		}
+		if err := m.scheduleTableSpan(); err != nil {
+			return errors.Trace(err)
+		}
 	}
-	m.supervisor.UpdateCaptureStatus(msg.From.String(), status)
+	return nil
 }
 
 // initTableIDs get tables ids base on the filter and checkpoint ts
@@ -396,6 +382,8 @@ func (m *Maintainer) onNodeClosed(from string, response *heartbeatpb.MaintainerC
 	if response.Success {
 		m.nodesClosed[from] = struct{}{}
 	}
+	// check if all nodes have sent response
+	m.onRemoveMaintainer(m.cascadeRemoving)
 }
 
 func (m *Maintainer) tryCloseChangefeed() bool {
@@ -405,7 +393,10 @@ func (m *Maintainer) tryCloseChangefeed() bool {
 	if !m.cascadeRemoving {
 		return true
 	}
+	return m.sendMaintainerCloseRequestToAllNode()
+}
 
+func (m *Maintainer) sendMaintainerCloseRequestToAllNode() bool {
 	msgs := make([]*messaging.TargetMessage, 0)
 	for node := range m.nodeManager.GetAliveNodes() {
 		if _, ok := m.nodesClosed[node]; !ok {
@@ -418,11 +409,7 @@ func (m *Maintainer) tryCloseChangefeed() bool {
 		}
 	}
 	m.sendMessages(msgs)
-	allRemoved := len(msgs) == 0
-	if !allRemoved {
-		// todo: send a remove task after 50ms
-	}
-	return allRemoved
+	return len(msgs) == 0
 }
 
 func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
@@ -457,9 +444,8 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 	return status
 }
 
-func (m *Maintainer) Handle(event *Event, dest *Maintainer,
-	stream dynstream.DynamicStream[string, *Event, *Maintainer]) (await bool) {
-	if m.state != heartbeatpb.ComponentState_Stopped {
+func (m *Maintainer) Handle(event *Event) (await bool) {
+	if m.state == heartbeatpb.ComponentState_Stopped {
 		log.Warn("maintainer is not stopped, ignore",
 			zap.String("changefeed", m.id.String()))
 		return false
@@ -472,24 +458,25 @@ func (m *Maintainer) Handle(event *Event, dest *Maintainer,
 		}
 		// async initialize the changefeed
 		go func() {
-			err := dest.initChangefeed()
+			err := m.initialize()
 			if err != nil {
 				m.handleError(err)
 			}
-			stream.Wake() <- event.cfID
-			// ok , let's schedule
-			stream.In() <- &Event{cfID: event.cfID, eventType: EventSchedule}
+			m.stream.Wake() <- event.cfID
 		}()
 		return true
 	case EventMessage:
-		if err := dest.onMessage(event.message); err != nil {
+		if err := m.onMessage(event.message); err != nil {
 			m.handleError(err)
 		}
 	case EventSchedule:
-		if err := dest.scheduleTableSpan(); err != nil {
+		if err := m.scheduleTableSpan(); err != nil {
 			m.handleError(err)
 		}
-		// reschedule
+	case EventRemove:
+		m.onRemoveMaintainer(m.cascadeRemoving)
+	case EventPeriod:
+		m.handlePeriodTask()
 	}
 	return false
 }
@@ -550,22 +537,23 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 func (m *Maintainer) printStatus() {
 	if time.Since(m.lastPrintStatusTime) > time.Second*120 {
 		tableStates := make(map[scheduler.SchedulerStatus]int)
-		for i := 0; i <= 5; i++ {
+		for i := 0; i <= 3; i++ {
 			tableStates[scheduler.SchedulerStatus(i)] = 0
 		}
+		total := m.scheduler.absent.Len() + m.scheduler.schedulingTask.Len() + m.scheduler.working.Len()
+		tableStates[scheduler.SchedulerStatusWorking] = m.scheduler.working.Len()
+		tableStates[scheduler.SchedulerStatusAbsent] = m.scheduler.absent.Len()
 		// var taskDistribution string
-		m.supervisor.StateMachines.Ascend(func(key scheduler.InferiorID, value *scheduler.StateMachine) bool {
+		m.scheduler.schedulingTask.Ascend(func(key *common.TableSpan, value *scheduler.StateMachine) bool {
 			if _, ok := tableStates[value.State]; !ok {
 				tableStates[value.State] = 0
 			}
 			tableStates[value.State]++
-			// span := key.(*common.TableSpan)
-			// taskDistribution = fmt.Sprintf("%s, %d==>%s", taskDistribution, span.TableID, value.Primary)
 			return true
 		})
 
-		m.tableCountGauge.Set(float64(m.tableSpans.Len()))
-		m.scheduledTaskGauge.Set(float64(m.supervisor.GetInferiors().Len()))
+		m.tableCountGauge.Set(float64(total))
+		m.scheduledTaskGauge.Set(float64(total - m.scheduler.absent.Len()))
 		for state, count := range tableStates {
 			metrics.TableStateGauge.WithLabelValues(m.id.Namespace, m.id.ID, state.String()).Set(float64(count))
 		}
@@ -573,13 +561,28 @@ func (m *Maintainer) printStatus() {
 		log.Info("table span status",
 			// zap.String("distribution", taskDistribution),
 			zap.String("changefeed", m.id.ID),
-			zap.Int("total", m.tableSpans.Len()),
-			zap.Int("scheduled", m.supervisor.GetInferiors().Len()),
+			zap.Int("total", total),
 			zap.Int("absent", tableStates[scheduler.SchedulerStatusAbsent]),
 			zap.Int("commit", tableStates[scheduler.SchedulerStatusCommiting]),
 			zap.Int("working", tableStates[scheduler.SchedulerStatusWorking]),
 			zap.Int("removing", tableStates[scheduler.SchedulerStatusRemoving]),
-			zap.Int("runningTasks", m.supervisor.RunningTasks.Len()))
+			zap.Int("schedulingTask", m.scheduler.schedulingTask.Len()))
 		m.lastPrintStatusTime = time.Now()
 	}
+}
+
+func (m *Maintainer) handlePeriodTask() {
+	m.printStatus()
+	// resend scheduling message
+	m.sendMessages(m.scheduler.ResendMessage())
+	// resend bootstrap message
+	m.sendMessages(m.bootstrapper.ResendBootstrapMessage())
+	// resend closing message
+	if m.removing {
+		m.sendMaintainerCloseRequestToAllNode()
+	}
+	submitScheduledEvent(m.taskScheduler, m.stream, &Event{
+		cfID:      m.id.ID,
+		eventType: EventPeriod,
+	}, time.Now().Add(time.Millisecond*500))
 }

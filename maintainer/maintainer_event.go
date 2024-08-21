@@ -14,18 +14,18 @@
 package maintainer
 
 import (
-	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/utils/dynstream"
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
+	"github.com/flowbehappy/tigate/utils/threadpool"
+	"time"
 )
 
 const (
 	EventInit = iota
-	EventRemove
 	EventMessage
 	EventSchedule
+	EventRemove
+	EventPeriod
 )
 
 type Event struct {
@@ -34,48 +34,31 @@ type Event struct {
 	message   *messaging.TargetMessage
 }
 
-type MaintainerStream struct {
-	stream dynstream.DynamicStream[string, *Event, *Maintainer]
+type StreamHandler struct {
 }
 
-func NewMaintainerStream() *MaintainerStream {
-	s := &MaintainerStream{}
-	s.stream = dynstream.NewDynamicStreamDefault[string, *Event, *Maintainer](s)
-	s.stream.Start()
-	return s
-}
-
-func (m *MaintainerStream) Path(event *Event) string {
+func (m *StreamHandler) Path(event *Event) string {
 	return event.cfID
 }
 
-func (m *MaintainerStream) Handle(event *Event, dest *Maintainer) (await bool) {
-	switch event.eventType {
-	case EventInit:
-		// async initialize the changefeed
-		go func() {
-			err := dest.initChangefeed()
-			if err != nil {
-				m.stream.RemovePath(event.cfID)
-			}
-			dest.state = heartbeatpb.ComponentState_Working
-			m.stream.Wake() <- event.cfID
-			// ok , let's schedule
-			m.stream.In() <- &Event{cfID: event.cfID, eventType: EventSchedule}
-		}()
-		return true
-	case EventMessage:
-		if err := dest.onMessage(event.message); err != nil {
-			log.Warn("maintainer handle message error",
-				zap.Any("event", event),
-				zap.Error(err))
-		}
-	case EventSchedule:
-		if err := dest.scheduleTableSpan(); err != nil {
-			log.Warn("maintainer schedule table span failed",
-				zap.Error(err))
-		}
-		// reschedule
+func (m *StreamHandler) Handle(event *Event, dest *Maintainer) (await bool) {
+	return dest.Handle(event)
+}
+
+type ScheduleEventTask func() (threadpool.TaskStatus, time.Time)
+
+func (f ScheduleEventTask) Execute() (threadpool.TaskStatus, time.Time) {
+	return f()
+}
+
+func submitScheduledEvent(
+	scheduler *threadpool.TaskScheduler,
+	stream dynstream.DynamicStream[string, *Event, *Maintainer],
+	event *Event,
+	scheduleTime time.Time) {
+	var task ScheduleEventTask = func() (threadpool.TaskStatus, time.Time) {
+		stream.In() <- event
+		return threadpool.Done, time.Time{}
 	}
-	return false
+	scheduler.Submit(task, threadpool.CPUTask, scheduleTime)
 }
