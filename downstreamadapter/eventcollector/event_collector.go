@@ -20,7 +20,6 @@ import (
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/eventpb"
-	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
@@ -78,7 +77,6 @@ type EventCollector struct {
 	metricDispatcherReceivedKVEventCount         prometheus.Counter
 	metricDispatcherReceivedResolvedTsEventCount prometheus.Counter
 	metricReceiveEventLagDuration                prometheus.Observer
-	metricReceiveResolvedTsEventLagDuration      prometheus.Observer
 	metricResolvedTsLag                          prometheus.Gauge
 }
 
@@ -91,8 +89,7 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 		registerMessageChan:                          chann.NewAutoDrainChann[RegisterInfo](),
 		metricDispatcherReceivedKVEventCount:         metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
-		metricReceiveEventLagDuration:                metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("KVEvent"),
-		metricReceiveResolvedTsEventLagDuration:      metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("ResolvedTs"),
+		metricReceiveEventLagDuration:                metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("Msg"),
 		metricResolvedTsLag:                          metrics.EventCollectorResolvedTsLagGauge,
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
@@ -128,14 +125,14 @@ func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
 		To:    c.serverId, // demo 中 每个节点都有自己的 eventService
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
-		Message: messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
+		Message: []messaging.IOTypeT{messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
 			DispatcherId: info.Dispatcher.GetId().ToPB(),
 			TableSpan:    info.Dispatcher.GetTableSpan().TableSpan,
 			Remove:       false,
 			StartTs:      info.StartTs,
 			ServerId:     c.serverId.String(),
 			FilterConfig: info.FilterConfig,
-		}},
+		}}},
 	})
 	if err != nil {
 		log.Error("failed to send register dispatcher request message", zap.Error(err))
@@ -152,14 +149,12 @@ func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
 		To:    c.serverId,
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
-		Message: messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
+		Message: []messaging.IOTypeT{messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
 			DispatcherId: d.GetId().ToPB(),
 			Remove:       true,
 			ServerId:     c.serverId.String(),
 			TableSpan:    d.GetTableSpan().TableSpan,
-		},
-		},
-	})
+		}}}})
 	if err != nil {
 		log.Error("failed to send register dispatcher request message", zap.Error(err))
 		c.registerMessageChan.In() <- RegisterInfo{
@@ -173,32 +168,21 @@ func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
 }
 
 func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.TargetMessage) error {
-	/*
-		if dispatcher.GetGlobalMemoryUsage().UsedBytes > c.globalMemoryQuota {
-			// 卡一段时间,怎么拍啊？
-			log.Info("downstream adapter is out of memory, waiting for 30 seconds")
-			time.Sleep(30 * time.Second)
-			continue
-		}
-	*/
-
-	txnEvent, ok := msg.Message.(*common.TxnEvent)
-	if !ok {
-		log.Error("invalid event feed message", zap.Any("msg", msg))
-		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: "invalid heartbeat response message"}
-	}
 	inflightDuration := time.Since(time.Unix(0, msg.CrateAt)).Milliseconds()
+	c.metricReceiveEventLagDuration.Observe(float64(inflightDuration))
+	for _, msg := range msg.Message {
+		txnEvent, ok := msg.(*common.TxnEvent)
+		if !ok {
+			log.Panic("invalid event feed message", zap.Any("msg", msg))
+		}
+		if txnEvent.IsDMLEvent() || txnEvent.IsDDLEvent() {
+			c.metricDispatcherReceivedKVEventCount.Inc()
+		} else {
+			c.metricDispatcherReceivedResolvedTsEventCount.Inc()
+		}
 
-	if txnEvent.IsDMLEvent() || txnEvent.IsDDLEvent() {
-		c.metricDispatcherReceivedKVEventCount.Inc()
-		c.metricReceiveEventLagDuration.Observe(float64(inflightDuration))
-	} else {
-		c.metricDispatcherReceivedResolvedTsEventCount.Inc()
-		c.metricReceiveResolvedTsEventLagDuration.Observe(float64(inflightDuration))
+		c.dispatcherEventsDynamicStream.In() <- txnEvent
 	}
-
-	c.dispatcherEventsDynamicStream.In() <- txnEvent
-
 	return nil
 }
 

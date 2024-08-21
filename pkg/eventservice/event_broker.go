@@ -19,6 +19,10 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	resolvedTsCacheSize = 8192
+)
+
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
 
 // eventBroker get event from the eventStore, and send the event to the dispatchers.
@@ -35,7 +39,7 @@ type eventBroker struct {
 	// All the dispatchers that register to the eventBroker.
 	dispatchers sync.Map
 	// changedCh is used to notify span subscription has new events.
-	changedCh chan *subscriptionChange
+	changedCh chan subscriptionChange
 	// taskPool is used to store the scan tasks and merge the tasks of same dispatcher.
 	// TODO: Make it support merge the tasks of the same table span, even if the tasks are from different dispatchers.
 	taskPool *scanTaskPool
@@ -45,7 +49,9 @@ type eventBroker struct {
 
 	// messageCh is used to receive message from the scanWorker,
 	// and a goroutine is responsible for sending the message to the dispatchers.
-	messageCh chan *wrapMessage
+	messageCh       chan wrapEvent
+	resolvedTsCache map[messaging.ServerId][]*common.TxnEvent
+
 	// wg is used to spawn the goroutines.
 	wg *sync.WaitGroup
 	// cancel is used to cancel the goroutines spawned by the eventBroker.
@@ -66,14 +72,17 @@ func newEventBroker(
 	ctx, cancel := context.WithCancel(ctx)
 	wg := &sync.WaitGroup{}
 	c := &eventBroker{
-		tidbClusterID:                          id,
-		eventStore:                             eventStore,
-		dispatchers:                            sync.Map{},
-		msgSender:                              mc,
-		changedCh:                              make(chan *subscriptionChange, defaultChannelSize*16),
+		tidbClusterID: id,
+		eventStore:    eventStore,
+		dispatchers:   sync.Map{},
+		msgSender:     mc,
+		// The size of the channel is 16 times of the defaultChannelSize, since the eventBroker may have many dispatchers.
+		// Otherwise, the resolvedTs may be delayed.
+		changedCh:                              make(chan subscriptionChange, defaultChannelSize*16),
 		taskPool:                               newScanTaskPool(),
-		scanWorkerCount:                        defaultWorkerCount,
-		messageCh:                              make(chan *wrapMessage, defaultChannelSize),
+		scanWorkerCount:                        defaultScanWorkerCount,
+		messageCh:                              make(chan wrapEvent, defaultChannelSize),
+		resolvedTsCache:                        make(map[messaging.ServerId][]*common.TxnEvent),
 		cancel:                                 cancel,
 		wg:                                     wg,
 		metricEventServicePullerResolvedTs:     metrics.EventServiceResolvedTsGauge,
@@ -84,33 +93,29 @@ func newEventBroker(
 	c.runGenerateScanTask(ctx)
 	c.runScanWorker(ctx)
 	c.runSendMessageWorker(ctx)
-	//c.logSlowDispatchers(ctx)
 	c.updateMetrics(ctx)
 	return c
 }
 
 func (c *eventBroker) sendWatermark(
 	serverID messaging.ServerId,
-	topicID string,
 	dispatcherID common.DispatcherID,
 	watermark uint64,
 	counter prometheus.Counter,
 ) {
 	c.messageCh <- newWrapMessage(
-		messaging.NewTargetMessage(
-			serverID,
-			topicID,
-			&common.TxnEvent{
-				DispatcherID: dispatcherID,
-				ResolvedTs:   watermark,
-			}),
+		serverID,
+		&common.TxnEvent{
+			DispatcherID: dispatcherID,
+			ResolvedTs:   watermark},
 		true)
+
 	if counter != nil {
 		counter.Inc()
 	}
 }
 
-func (c *eventBroker) onAsyncNotify(change *subscriptionChange) {
+func (c *eventBroker) onAsyncNotify(change subscriptionChange) {
 	c.changedCh <- change
 }
 
@@ -160,31 +165,27 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						continue
 					}
 					c.metricTaskInQueueDuration.Observe(time.Since(task.createTime).Seconds())
+
 					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 					dispatcherID := task.dispatcherStat.info.GetID()
-					topic := task.dispatcherStat.info.GetTopic()
-					//1.The dispatcher has no new events. In such case, we don't need to scan the event store.
+					//1. The dispatcher has no new events. In such case, we don't need to scan the event store.
 					//We just send the watermark to the dispatcher.
 					if task.eventCount == 0 {
-						c.sendWatermark(remoteID, topic, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
+						c.sendWatermark(remoteID, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
 						task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
-						task.dispatcherStat.lastSent.Store(time.Now())
 						continue
 					}
-					//2. Get events iterator from eventStore.
+					//2. Get event iterator from eventStore.
 					iter, err := c.eventStore.GetIterator(task.dataRange)
 					if err != nil {
-						log.Info("read events failed, push the task back to queue", zap.Error(err))
-						// push the task back to the task pool.
-						c.taskPool.pushTask(task)
-						continue
+						log.Panic("read events failed", zap.Error(err))
 					}
-					var txnEvent *common.TxnEvent
-					isFirstEvent := true
-					eventCount := 0
+
 					// 3. Get the events from the iterator and send them to the dispatcher.
+					var txnEvent *common.TxnEvent
+					eventCount := 0
 					for {
-						//TODO: The first event of the txn must return isNewTxn as true.
+						//Node: The first event of the txn must return isNewTxn as true.
 						e, isNewTxn, err := iter.Next()
 						if err != nil {
 							log.Panic("read events failed", zap.Error(err))
@@ -193,15 +194,13 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						if e == nil {
 							// Send the last txnEvent to the dispatcher.
 							if txnEvent != nil {
-								c.messageCh <- newWrapMessage(messaging.NewTargetMessage(remoteID, topic, txnEvent), false)
+								c.messageCh <- newWrapMessage(remoteID, txnEvent, false)
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
 								task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(txnEvent.Rows)))
-								task.dispatcherStat.lastSent.Store(time.Now())
 							}
 							// After all the events are sent, we send the watermark to the dispatcher.
-							c.sendWatermark(remoteID, topic, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
+							c.sendWatermark(remoteID, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
 							task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
-							iter.Close()
 							break
 						}
 
@@ -209,32 +208,24 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						// we just skip the event.
 						if e.CommitTs < task.dispatcherStat.watermark.Load() {
 							log.Panic("should never Happen", zap.Uint64("commitTs", e.CommitTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
-							continue
 						}
 
-						eventCount++
-						if isFirstEvent || isNewTxn {
-							// Send the previous txnEvent to the dispatcher.
-							if txnEvent != nil {
-								c.messageCh <- newWrapMessage(messaging.NewTargetMessage(remoteID, topic, txnEvent), false)
-								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
-								task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(txnEvent.Rows)))
-								task.dispatcherStat.lastSent.Store(time.Now())
-							}
-							// Create a new txnEvent.
+						if isNewTxn {
 							txnEvent = &common.TxnEvent{
 								DispatcherID: dispatcherID,
 								StartTs:      e.StartTs,
 								CommitTs:     e.CommitTs,
 								Rows:         make([]*common.RowChangedEvent, 0),
 							}
-							isFirstEvent = false
 						}
 						txnEvent.Rows = append(txnEvent.Rows, e)
+						eventCount++
+
 						if txnEvent.CommitTs != e.CommitTs {
 							log.Panic("commitTs of the event is different from the commitTs of the txnEvent", zap.Uint64("eventCommitTs", e.CommitTs), zap.Uint64("txnCommitTs", txnEvent.CommitTs))
 						}
 					}
+
 					task.dispatcherStat.metricSorterOutputEventCountKV.Add(float64(eventCount))
 					iter.Close()
 				}
@@ -245,75 +236,89 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 
 func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 	c.wg.Add(1)
+	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 300)
 	// Use a single goroutine to send the messages in order.
 	go func() {
 		defer c.wg.Done()
+		defer flushResolvedTsTicker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case m := <-c.messageCh:
-				// Send the message to messageCenter. Retry if the send failed.
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					default:
-					}
-					start := time.Now()
-					// Send the message to the dispatcher.
-					err := c.msgSender.SendEvent(m.msg)
-					// If the message is a watermark, we don't need to retry. Since the watermark is continuous.
-					if err != nil && !m.isWatermark {
-						log.Debug("send message failed", zap.Error(err))
-						continue
-					}
-					metricEventServiceSendEventDuration.Observe(time.Since(start).Seconds())
-					break
+				if m.isWatermark {
+					// The message is a watermark, we need to cache it, and send it to the dispatcher
+					// when the dispatcher is registered.
+					c.handleResolvedTs(ctx, m)
+					continue
+				}
+				tMsg := messaging.NewSingleTargetMessage(
+					m.serverID,
+					messaging.EventCollectorTopic,
+					m.txnEvent)
+				c.flushResolvedTs(ctx, m.serverID)
+				c.sendMsg(ctx, tMsg)
+			case <-flushResolvedTsTicker.C:
+				for serverID := range c.resolvedTsCache {
+					c.flushResolvedTs(ctx, serverID)
 				}
 			}
 		}
 	}()
 }
 
-func (c *eventBroker) logSlowDispatchers(ctx context.Context) {
-	c.wg.Add(1)
-	ticker := time.NewTicker(time.Second * 10)
-	log.Info("start log slow dispatchers")
-	go func() {
-		defer c.wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				logDispatcherCount := 0
-				findSlow := func(key, value interface{}) bool {
-					dispatcher := value.(*dispatcherStat)
-					lastUpdate := dispatcher.spanSubscription.lastUpdate.Load().(time.Time)
-					lastSent := dispatcher.lastSent.Load().(time.Time)
-					if time.Since(lastSent) > time.Second*30 {
-						// limit the log count to avoid log flooding.
-						if logDispatcherCount > 10 {
-							return false
-						}
-						logDispatcherCount++
-						_, id := dispatcher.info.GetChangefeedID()
-						log.Warn("dispatcher is slow",
-							zap.String("changefeed", id),
-							zap.Any("dispatcher", dispatcher.info.GetID()),
-							zap.Time("last-update", lastUpdate),
-							zap.Time("last-sent", lastSent),
-							zap.Uint64("subscription-watermark", dispatcher.spanSubscription.watermark.Load()),
-							zap.Uint64("dispatcher-watermark", dispatcher.watermark.Load()),
-							zap.Uint64("subscription-eventCount", dispatcher.spanSubscription.newEventCount.Load()))
-					}
-					return true
-				}
-				c.dispatchers.Range(findSlow)
-			}
+func (c *eventBroker) handleResolvedTs(ctx context.Context, e wrapEvent) {
+	cache, ok := c.resolvedTsCache[e.serverID]
+	if !ok {
+		cache = make([]*common.TxnEvent, 0, resolvedTsCacheSize)
+		c.resolvedTsCache[e.serverID] = cache
+	}
+	c.resolvedTsCache[e.serverID] = append(cache, e.txnEvent)
+	if len(c.resolvedTsCache[e.serverID]) >= resolvedTsCacheSize {
+		c.flushResolvedTs(ctx, e.serverID)
+	}
+}
+
+func (c *eventBroker) flushResolvedTs(ctx context.Context, serverID messaging.ServerId) {
+	events, ok := c.resolvedTsCache[serverID]
+	if !ok || len(events) == 0 {
+		return
+	}
+	msg := make([]messaging.IOTypeT, 0, len(events))
+	for i, e := range events {
+		msg = append(msg, e)
+		// Clear the event to release the memory.
+		c.resolvedTsCache[serverID][i] = nil
+	}
+	// Clear the cache.
+	c.resolvedTsCache[serverID] = c.resolvedTsCache[serverID][:0]
+
+	tMsg := messaging.NewBatchTargetMessage(
+		// Note: all resolvedTs would be sent to the same topic.
+		serverID, messaging.EventCollectorTopic,
+		messaging.TypeTxnEvent,
+		msg)
+	c.sendMsg(ctx, tMsg)
+}
+
+func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage) {
+	start := time.Now()
+	// Send the message to messageCenter. Retry if the send failed.
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
 		}
-	}()
+		// Send the message to the dispatcher.
+		err := c.msgSender.SendEvent(tMsg)
+		if err != nil {
+			log.Debug("send message failed, retry it", zap.Error(err))
+			continue
+		}
+		metricEventServiceSendEventDuration.Observe(time.Since(start).Seconds())
+		break
+	}
 }
 
 func (c *eventBroker) updateMetrics(ctx context.Context) {
@@ -369,7 +374,6 @@ func (c *eventBroker) removeDispatcher(id common.DispatcherID) {
 	}
 	c.eventStore.UnregisterDispatcher(id)
 	c.dispatchers.Delete(id)
-	c.taskPool.removeTask(id)
 }
 
 // Store the progress of the dispatcher, and the incremental events stats.
@@ -379,7 +383,7 @@ type dispatcherStat struct {
 	spanSubscription *spanSubscription
 	// The watermark of the events that have been sent to the dispatcher.
 	watermark     atomic.Uint64
-	onAsyncNotify func(*subscriptionChange)
+	onAsyncNotify func(subscriptionChange)
 	// The index of the task queue channel in the taskPool.
 	// We need to make sure the tasks of the same dispatcher are sent to the same task queue
 	// so that it will be handle by the same scan worker. To ensure all events of the dispatcher
@@ -389,12 +393,10 @@ type dispatcherStat struct {
 	metricSorterOutputEventCountKV        prometheus.Counter
 	metricEventServiceSendKvCount         prometheus.Counter
 	metricEventServiceSendResolvedTsCount prometheus.Counter
-
-	lastSent atomic.Value
 }
 
 func newDispatcherStat(
-	startTs uint64, info DispatcherInfo, onAsyncNotify func(*subscriptionChange),
+	startTs uint64, info DispatcherInfo, onAsyncNotify func(subscriptionChange),
 ) *dispatcherStat {
 	subscription := &spanSubscription{
 		span:       info.GetTableSpan(),
@@ -404,7 +406,7 @@ func newDispatcherStat(
 	subscription.watermark.Store(uint64(startTs))
 
 	namespace, id := info.GetChangefeedID()
-	res := &dispatcherStat{
+	dispStat := &dispatcherStat{
 		info:             info,
 		spanSubscription: subscription,
 		onAsyncNotify:    onAsyncNotify,
@@ -412,14 +414,12 @@ func newDispatcherStat(
 		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(namespace, id, "kv"),
 		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "kv"),
 		metricEventServiceSendResolvedTsCount: metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "resolved_ts"),
-		lastSent:                              atomic.Value{},
 	}
-	res.lastSent.Store(time.Now())
-	res.watermark.Store(startTs)
+	dispStat.watermark.Store(startTs)
 	hasher := crc32.NewIEEE()
 	hasher.Write(info.GetID().Marshal())
-	res.workerIndex = int(hasher.Sum32() % defaultWorkerCount)
-	return res
+	dispStat.workerIndex = int(hasher.Sum32() % defaultScanWorkerCount)
+	return dispStat
 }
 
 // onSubscriptionWatermark updates the watermark of the table span and send a notification to notify
@@ -430,7 +430,7 @@ func (a *dispatcherStat) onSubscriptionWatermark(watermark uint64) {
 	}
 	a.spanSubscription.watermark.Store(watermark)
 	a.spanSubscription.lastUpdate.Store(time.Now())
-	a.onAsyncNotify(&subscriptionChange{
+	a.onAsyncNotify(subscriptionChange{
 		dispatcherInfo: a.info,
 		eventCount:     a.spanSubscription.newEventCount.Swap(0),
 	})
@@ -481,7 +481,6 @@ func (t *scanTask) checkAndAdjustScanTask() bool {
 }
 
 type scanTaskPool struct {
-	mu      sync.Mutex
 	taskSet map[common.DispatcherID]*scanTask
 	// pendingTaskQueue is used to store the tasks that are waiting to be handled by the scan workers.
 	// The length of the pendingTaskQueue is equal to the number of the scan workers.
@@ -491,9 +490,9 @@ type scanTaskPool struct {
 func newScanTaskPool() *scanTaskPool {
 	res := &scanTaskPool{
 		taskSet:          make(map[common.DispatcherID]*scanTask),
-		pendingTaskQueue: make([]chan *scanTask, defaultWorkerCount),
+		pendingTaskQueue: make([]chan *scanTask, defaultScanWorkerCount),
 	}
-	for i := 0; i < defaultWorkerCount; i++ {
+	for i := 0; i < defaultScanWorkerCount; i++ {
 		res.pendingTaskQueue[i] = make(chan *scanTask, defaultChannelSize)
 	}
 	return res
@@ -502,8 +501,6 @@ func newScanTaskPool() *scanTaskPool {
 // pushTask pushes a task to the pool,
 // and merge the task if the task is overlapped with the existing tasks.
 func (p *scanTaskPool) pushTask(task *scanTask) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	id := task.dispatcherStat.info.GetID()
 	spanTask := p.taskSet[id]
 
@@ -523,7 +520,7 @@ func (p *scanTaskPool) pushTask(task *scanTask) {
 	// Send the task to the corresponding scan worker.
 	case p.pendingTaskQueue[spanTask.dispatcherStat.workerIndex] <- spanTask:
 		// The task is sent to the scan worker, we remove it from the taskSet.
-		p.taskSet[id] = nil
+		delete(p.taskSet, id)
 	default:
 		// The task pool is full, we just add it back
 		// to the taskSet, and it will be merged in the next round.
@@ -535,20 +532,16 @@ func (p *scanTaskPool) popTask(chanIndex int) <-chan *scanTask {
 	return p.pendingTaskQueue[chanIndex]
 }
 
-func (p *scanTaskPool) removeTask(id common.DispatcherID) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	delete(p.taskSet, id)
-}
-
-type wrapMessage struct {
-	msg         *messaging.TargetMessage
+type wrapEvent struct {
+	serverID    messaging.ServerId
+	txnEvent    *common.TxnEvent
 	isWatermark bool
 }
 
-func newWrapMessage(msg *messaging.TargetMessage, isWatermark bool) *wrapMessage {
-	return &wrapMessage{
-		msg:         msg,
+func newWrapMessage(serverID messaging.ServerId, e *common.TxnEvent, isWatermark bool) wrapEvent {
+	return wrapEvent{
+		serverID:    serverID,
+		txnEvent:    e,
 		isWatermark: isWatermark,
 	}
 }

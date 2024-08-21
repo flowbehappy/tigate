@@ -71,7 +71,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 			for _, msg := range buf {
 				switch msg.Type {
 				case messaging.TypeMaintainerBootstrapRequest:
-					req := msg.Message.(*heartbeatpb.MaintainerBootstrapRequest)
+					req := msg.Message[0].(*heartbeatpb.MaintainerBootstrapRequest)
 					cfID := model.DefaultChangeFeedID(req.ChangefeedID)
 					manager, ok := m.dispatcherManagers[cfID]
 					if !ok {
@@ -94,7 +94,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 						})
 						return true
 					})
-					err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
+					err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewSingleTargetMessage(
 						manager.maintainerID,
 						string("maintainer/"+manager.id.ID),
 						response,
@@ -106,7 +106,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 						zap.String("changefeed", manager.id.ID),
 						zap.String("maintainer node", msg.From.String()))
 				case messaging.TypeScheduleDispatcherRequest:
-					req := msg.Message.(*heartbeatpb.ScheduleDispatcherRequest)
+					req := msg.Message[0].(*heartbeatpb.ScheduleDispatcherRequest)
 					cfID := model.DefaultChangeFeedID(req.ChangefeedID)
 					manager, ok := m.dispatcherManagers[cfID]
 					if !ok {
@@ -123,7 +123,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 					}
 					absentSpan := manager.handleDispatchTableSpanRequest(req)
 					if absentSpan != nil {
-						err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
+						err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewSingleTargetMessage(
 							manager.maintainerID,
 							string("maintainer/"+manager.id.ID),
 							&heartbeatpb.HeartBeatResponse{
@@ -166,7 +166,7 @@ func (m *FakeDispatcherManagerManager) Run(ctx context.Context) error {
 						return true
 					})
 					if len(response.Statuses) != 0 {
-						err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
+						err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewSingleTargetMessage(
 							manager.maintainerID,
 							string("maintainer/"+manager.id.ID),
 							response,

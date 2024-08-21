@@ -31,8 +31,8 @@ type MessageCenter interface {
 // If the message cannot be sent, the method will return an `ErrorTypeMessageCongested` error.
 type MessageSender interface {
 	// TODO: Make these methods support timeout later.
-	SendEvent(msg ...*TargetMessage) error
-	SendCommand(cmd ...*TargetMessage) error
+	SendEvent(msg *TargetMessage) error
+	SendCommand(cmd *TargetMessage) error
 }
 
 // MessageReceiver is the interface to receive messages from other targets.
@@ -149,44 +149,40 @@ func (mc *messageCenter) removeTarget(id ServerId) {
 	}
 }
 
-func (mc *messageCenter) SendEvent(msg ...*TargetMessage) error {
-	if len(msg) == 0 {
+func (mc *messageCenter) SendEvent(msg *TargetMessage) error {
+	if msg == nil {
 		return nil
 	}
 
-	to := msg[0].To
-
-	if to == mc.id {
-		return mc.localTarget.sendEvent(msg...)
+	if msg.To == mc.id {
+		return mc.localTarget.sendEvent(msg)
 	}
 
 	mc.remoteTargets.RLock()
-	target, ok := mc.remoteTargets.m[to]
+	target, ok := mc.remoteTargets.m[msg.To]
 	mc.remoteTargets.RUnlock()
 	if !ok {
-		return apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %s not found", to)}
+		return apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %s not found", msg.To)}
 	}
-	return target.sendEvent(msg...)
+	return target.sendEvent(msg)
 }
 
-func (mc *messageCenter) SendCommand(cmd ...*TargetMessage) error {
-	if len(cmd) == 0 {
+func (mc *messageCenter) SendCommand(msg *TargetMessage) error {
+	if msg == nil {
 		return nil
 	}
 
-	to := cmd[0].To
-
-	if to == mc.id {
-		return mc.localTarget.sendCommand(cmd...)
+	if msg.To == mc.id {
+		return mc.localTarget.sendCommand(msg)
 	}
 
 	mc.remoteTargets.RLock()
-	target, ok := mc.remoteTargets.m[to]
+	target, ok := mc.remoteTargets.m[msg.To]
 	mc.remoteTargets.RUnlock()
 	if !ok {
-		return apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %s not found", to)}
+		return apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %s not found", msg.To)}
 	}
-	return target.sendCommand(cmd...)
+	return target.sendCommand(msg)
 }
 
 func (mc *messageCenter) ReceiveEvent() (*TargetMessage, error) {

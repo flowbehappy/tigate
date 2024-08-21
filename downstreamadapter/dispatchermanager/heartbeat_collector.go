@@ -39,8 +39,6 @@ type HeartBeatCollector struct {
 
 	requestQueue *HeartbeatRequestQueue
 
-	dispatcherRequestCh []chan *heartbeatpb.ScheduleDispatcherRequest
-
 	heartBeatResponseDynamicStream          dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]
 	schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.ScheduleDispatcherRequest, *EventDispatcherManager]
 }
@@ -79,12 +77,12 @@ func (c *HeartBeatCollector) SendHeartBeatMessages() {
 	defer c.wg.Done()
 	for {
 		heartBeatRequestWithTargetID := c.requestQueue.Dequeue()
-		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(&messaging.TargetMessage{
-			To:      heartBeatRequestWithTargetID.TargetID,
-			Topic:   messaging.MaintainerManagerTopic,
-			Type:    messaging.TypeHeartBeatRequest,
-			Message: heartBeatRequestWithTargetID.Request,
-		})
+		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(
+			messaging.NewSingleTargetMessage(
+				heartBeatRequestWithTargetID.TargetID,
+				messaging.MaintainerManagerTopic,
+				heartBeatRequestWithTargetID.Request,
+			))
 		if err != nil {
 			log.Error("failed to send heartbeat request message", zap.Error(err))
 		}
@@ -94,11 +92,11 @@ func (c *HeartBeatCollector) SendHeartBeatMessages() {
 func (c *HeartBeatCollector) RecvMessages(ctx context.Context, msg *messaging.TargetMessage) error {
 	switch msg.Type {
 	case messaging.TypeHeartBeatResponse:
-		heartbeatResponse := msg.Message.(*heartbeatpb.HeartBeatResponse)
+		heartbeatResponse := msg.Message[0].(*heartbeatpb.HeartBeatResponse)
 		heartBeatResponseDynamicStream := appcontext.GetService[dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]](appcontext.HeartBeatResponseDynamicStream)
 		heartBeatResponseDynamicStream.In() <- heartbeatResponse
 	case messaging.TypeScheduleDispatcherRequest:
-		scheduleDispatcherRequest := msg.Message.(*heartbeatpb.ScheduleDispatcherRequest)
+		scheduleDispatcherRequest := msg.Message[0].(*heartbeatpb.ScheduleDispatcherRequest)
 		c.schedulerDispatcherRequestDynamicStream.In() <- scheduleDispatcherRequest
 		// TODO: check metrics
 		metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", scheduleDispatcherRequest.ChangefeedID, "receive").Inc()

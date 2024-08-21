@@ -64,7 +64,7 @@ func NewMaintainerManager(selfServerID messaging.ServerId, pdEndpoints []string)
 
 	mc.RegisterHandler(messaging.MaintainerTopic,
 		func(ctx context.Context, msg *messaging.TargetMessage) error {
-			req := msg.Message.(*heartbeatpb.MaintainerCloseResponse)
+			req := msg.Message[0].(*heartbeatpb.MaintainerCloseResponse)
 			changefeedID := model.DefaultChangeFeedID(req.ChangefeedID)
 			v, ok := m.maintainers.Load(changefeedID)
 			if !ok {
@@ -95,11 +95,11 @@ func (m *Manager) RecvMessages(ctx context.Context, msg *messaging.TargetMessage
 		return nil
 	// receive bootstrap response message from dispatcher manager manager
 	case messaging.TypeMaintainerBootstrapResponse:
-		req := msg.Message.(*heartbeatpb.MaintainerBootstrapResponse)
+		req := msg.Message[0].(*heartbeatpb.MaintainerBootstrapResponse)
 		return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
 	// receive heartbeat message from dispatchers
 	case messaging.TypeHeartBeatRequest:
-		req := msg.Message.(*heartbeatpb.HeartBeatRequest)
+		req := msg.Message[0].(*heartbeatpb.HeartBeatRequest)
 		return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
 	default:
 		log.Panic("unknown message type", zap.Any("message", msg.Message))
@@ -137,7 +137,7 @@ func (m *Manager) Run(ctx context.Context) error {
 }
 
 func (m *Manager) sendMessages(msg *heartbeatpb.MaintainerHeartbeat) {
-	target := messaging.NewTargetMessage(
+	target := messaging.NewSingleTargetMessage(
 		m.coordinatorID,
 		messaging.CoordinatorTopic,
 		msg,
@@ -154,7 +154,7 @@ func (m *Manager) Close(ctx context.Context) error {
 }
 
 func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
-	req := msg.Message.(*heartbeatpb.CoordinatorBootstrapRequest)
+	req := msg.Message[0].(*heartbeatpb.CoordinatorBootstrapRequest)
 	if m.coordinatorVersion > req.Version {
 		log.Warn("ignore invalid coordinator version",
 			zap.Int64("version", req.Version))
@@ -172,7 +172,7 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 		return true
 	})
 
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
+	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewSingleTargetMessage(
 		m.coordinatorID,
 		messaging.CoordinatorTopic,
 		response,
@@ -195,7 +195,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 	}
 	switch msg.Type {
 	case messaging.TypeAddMaintainerRequest:
-		req := msg.Message.(*heartbeatpb.AddMaintainerRequest)
+		req := msg.Message[0].(*heartbeatpb.AddMaintainerRequest)
 		cfID := model.DefaultChangeFeedID(req.GetId())
 		cf, ok := m.maintainers.Load(cfID)
 		if !ok {
@@ -210,7 +210,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 			cf.(*Maintainer).Run()
 		}
 	case messaging.TypeRemoveMaintainerRequest:
-		req := msg.Message.(*heartbeatpb.RemoveMaintainerRequest)
+		req := msg.Message[0].(*heartbeatpb.RemoveMaintainerRequest)
 		cfID := model.DefaultChangeFeedID(req.GetId())
 		cf, ok := m.maintainers.Load(cfID)
 		if !ok {
