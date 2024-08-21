@@ -108,7 +108,7 @@ func (c *changefeed) NewInferiorStatus(status heartbeatpb.ComponentState) schedu
 }
 
 func (c *changefeed) NewAddInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
-	return messaging.NewTargetMessage(messaging.ServerId(server),
+	return messaging.NewSingleTargetMessage(messaging.ServerId(server),
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.AddMaintainerRequest{
 			Id:           c.ID.ID,
@@ -120,7 +120,7 @@ func (c *changefeed) NewAddInferiorMessage(server model.CaptureID) *messaging.Ta
 func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
 	cf, ok := c.coordinator.lastState.Changefeeds[c.ID]
 	cascade := !ok || cf == nil || !shouldRunChangefeed(cf.Info.State)
-	return messaging.NewTargetMessage(messaging.ServerId(server),
+	return messaging.NewSingleTargetMessage(messaging.ServerId(server),
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.RemoveMaintainerRequest{
 			Id:      c.ID.ID,

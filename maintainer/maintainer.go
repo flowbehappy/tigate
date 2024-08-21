@@ -348,7 +348,7 @@ func (m *Maintainer) initChangefeed() error {
 }
 
 func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
-	req := msg.Message.(*heartbeatpb.HeartBeatRequest)
+	req := msg.Message[0].(*heartbeatpb.HeartBeatRequest)
 	if req.Watermark != nil {
 		m.checkpointTsByCapture[model.CaptureID(msg.From)] = *req.Watermark
 	}
@@ -382,7 +382,7 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 }
 
 func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage) {
-	req := msg.Message.(*heartbeatpb.MaintainerBootstrapResponse)
+	req := msg.Message[0].(*heartbeatpb.MaintainerBootstrapResponse)
 	var status []scheduler.InferiorStatus
 	for _, info := range req.Statuses {
 		status = append(status, &ReplicaSetStatus{
@@ -427,7 +427,7 @@ func (m *Maintainer) tryCloseChangefeed() bool {
 	msgs := make([]*messaging.TargetMessage, 0)
 	for node := range m.nodeManager.GetAliveNodes() {
 		if _, ok := m.nodesClosed[node]; !ok {
-			msgs = append(msgs, messaging.NewTargetMessage(
+			msgs = append(msgs, messaging.NewSingleTargetMessage(
 				messaging.ServerId(node),
 				messaging.DispatcherManagerManagerTopic,
 				&heartbeatpb.MaintainerCloseRequest{
@@ -493,7 +493,7 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 	}
 	log.Info("create maintainer bootstrap message function", zap.String("changefeed", m.id.String()), zap.ByteString("config", cfgBytes))
 	return func(captureID model.CaptureID) *messaging.TargetMessage {
-		return messaging.NewTargetMessage(
+		return messaging.NewSingleTargetMessage(
 			messaging.ServerId(captureID),
 			messaging.DispatcherManagerManagerTopic,
 			&heartbeatpb.MaintainerBootstrapRequest{

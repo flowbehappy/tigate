@@ -106,7 +106,7 @@ func (m *mockMaintainerManager) handleMessage(msg *messaging.TargetMessage) {
 	}
 }
 func (m *mockMaintainerManager) sendMessages(msg *heartbeatpb.MaintainerHeartbeat) {
-	target := messaging.NewTargetMessage(
+	target := messaging.NewSingleTargetMessage(
 		m.coordinatorID,
 		messaging.CoordinatorTopic,
 		msg,
@@ -144,7 +144,7 @@ func (m *mockMaintainerManager) onCoordinatorBootstrapRequest(msg *messaging.Tar
 	m.coordinatorVersion = req.Version
 
 	response := &heartbeatpb.CoordinatorBootstrapResponse{}
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
+	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewSingleTargetMessage(
 		m.coordinatorID,
 		messaging.CoordinatorTopic,
 		response,

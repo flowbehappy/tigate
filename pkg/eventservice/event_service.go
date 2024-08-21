@@ -31,7 +31,6 @@ type DispatcherInfo interface {
 	GetID() common.DispatcherID
 	// GetClusterID returns the ID of the TiDB cluster the acceptor wants to accept events from.
 	GetClusterID() uint64
-
 	GetTopic() string
 	GetServerID() string
 	GetTableSpan() *common.TableSpan
@@ -94,10 +93,13 @@ func (s *eventService) Close(_ context.Context) error {
 }
 
 func (s *eventService) handleMessage(ctx context.Context, msg *messaging.TargetMessage) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case s.acceptorInfoCh <- msgToDispatcherInfo(msg):
+	infos := msgToDispatcherInfo(msg)
+	for _, info := range infos {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case s.acceptorInfoCh <- info:
+		}
 	}
 	return nil
 }
@@ -144,6 +146,14 @@ func (s *eventService) deregisterDispatcher(dispatcherInfo DispatcherInfo) {
 	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.Any("acceptorID", id))
 }
 
-func msgToDispatcherInfo(msg *messaging.TargetMessage) DispatcherInfo {
-	return msg.Message.(messaging.RegisterDispatcherRequest)
+func msgToDispatcherInfo(msg *messaging.TargetMessage) []DispatcherInfo {
+	res := make([]DispatcherInfo, 0, len(msg.Message))
+	for _, m := range msg.Message {
+		info, ok := m.(messaging.RegisterDispatcherRequest)
+		if !ok {
+			log.Panic("invalid dispatcher info", zap.Any("info", m))
+		}
+		res = append(res, info)
+	}
+	return res
 }
