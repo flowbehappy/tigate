@@ -175,6 +175,7 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(id))
 
 	appcontext.SetService(appcontext.DispatcherTaskScheduler, threadpool.NewTaskSchedulerDefault(appcontext.DispatcherTaskScheduler))
+	appcontext.SetService(appcontext.HeartBeatTaskScheduler, threadpool.NewTaskSchedulerDefault(appcontext.HeartBeatTaskScheduler))
 
 	c.dispatcherManagerManager = dispatchermanagermanager.NewDispatcherManagerManager()
 	return nil

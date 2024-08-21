@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/filter"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
@@ -55,7 +56,7 @@ type EventDispatcherManager struct {
 	dispatcherMap *DispatcherMap
 
 	heartbeatRequestQueue *HeartbeatRequestQueue
-	//heartBeatSendTask     *HeartBeatSendTask
+
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
@@ -69,15 +70,48 @@ type EventDispatcherManager struct {
 
 	// tableSpanStatusesChan will fetch the tableSpan status that need to contains in the heartbeat info.
 	tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus
-
-	tableEventDispatcherCount      prometheus.Gauge
-	filter                         filter.Filter
-	metricCreateDispatcherDuration prometheus.Observer
-	metricCheckpointTs             prometheus.Gauge
-	metricResolveTs                prometheus.Gauge
+	filter                filter.Filter
 
 	closing bool
 	closed  atomic.Bool
+
+	heartBeatTask *HeartBeatTask
+
+	tableEventDispatcherCount      prometheus.Gauge
+	metricCreateDispatcherDuration prometheus.Observer
+	metricCheckpointTs             prometheus.Gauge
+	metricResolveTs                prometheus.Gauge
+}
+
+type HeartBeatTask struct {
+	taskHandle             *threadpool.TaskHandle
+	eventDispatcherManager *EventDispatcherManager
+	counter                int
+}
+
+func newHeartBeatTask(eventDispatcherManager *EventDispatcherManager) *HeartBeatTask {
+	taskScheduler := appcontext.GetService[*threadpool.TaskScheduler](appcontext.HeartBeatTaskScheduler)
+	t := &HeartBeatTask{
+		eventDispatcherManager: eventDispatcherManager,
+		counter:                0,
+	}
+	t.taskHandle = taskScheduler.Submit(t, threadpool.CPUTask, time.Now().Add(time.Second*1))
+	return t
+}
+
+func (t *HeartBeatTask) Execute() (threadpool.TaskStatus, time.Time) {
+	if t.eventDispatcherManager.closed.Load() {
+		return threadpool.Done, time.Time{}
+	}
+	t.counter = (t.counter + 1) % 10
+	needCompleteStatus := t.counter == 0
+	message := t.eventDispatcherManager.CollectHeartbeatInfo(needCompleteStatus)
+	t.eventDispatcherManager.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: t.eventDispatcherManager.GetMaintainerID(), Request: message})
+	return threadpool.CPUTask, time.Now().Add(time.Second * 1)
+}
+
+func (t *HeartBeatTask) Cancel() {
+	t.taskHandle.Cancel()
 }
 
 func NewEventDispatcherManager(changefeedID model.ChangeFeedID, changefeedConfig *config.ChangefeedConfig, maintainerID messaging.ServerId, createTableTriggerEventDispatcher bool) *EventDispatcherManager {
@@ -114,24 +148,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, changefeedConfig
 
 	// TODO: 这些后续需要等有第一个 table 来的时候再初始化, 对于纯空的 event dispatcher manager 不要直接创建为好
 
-	eventDispatcherManager.wg.Add(1)
-	// collect heartbeat info every 1s
-	go func(ctx context.Context, e *EventDispatcherManager) {
-		defer e.wg.Done()
-		counter := 0
-		ticker := time.NewTicker(time.Second * 1)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				counter = (counter + 1) % 10
-				needCompleteStatus := counter == 0
-				message := e.CollectHeartbeatInfo(needCompleteStatus)
-				e.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: eventDispatcherManager.GetMaintainerID(), Request: message})
-			}
-		}
-	}(ctx, eventDispatcherManager)
+	eventDispatcherManager.heartBeatTask = newHeartBeatTask(eventDispatcherManager)
 
 	eventDispatcherManager.InitSink()
 
@@ -182,6 +199,8 @@ func (e *EventDispatcherManager) close() {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
+
+	e.heartBeatTask.Cancel()
 
 	e.sink.Close()
 	metrics.CreateDispatcherDuration.DeleteLabelValues(e.changefeedID.Namespace, e.changefeedID.ID)
@@ -425,6 +444,7 @@ func (e *EventDispatcherManager) SetMaintainerID(maintainerID messaging.ServerId
 	e.maintainerID = maintainerID
 }
 
+// TODO:use sync.Map
 type DispatcherMap struct {
 	dispatcherCacheForRead []*dispatcher.Dispatcher
 	mutex                  sync.Mutex

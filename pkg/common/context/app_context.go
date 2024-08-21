@@ -21,6 +21,7 @@ const (
 	HeartBeatResponseDynamicStream          = "HeartBeatResponseDynamicStream"
 	SchedulerDispatcherRequestDynamicStream = "SchedulerDispatcherRequestDynamicStream"
 	DispatcherTaskScheduler                 = "DispatcherTaskScheduler"
+	HeartBeatTaskScheduler                  = "HeartBeatTaskScheduler"
 )
 
 // Put all the global instances here.
