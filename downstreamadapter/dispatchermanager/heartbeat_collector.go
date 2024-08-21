@@ -123,11 +123,11 @@ func (h *SchedulerDispatcherRequestHandler) Handle(scheduleDispatcherRequest *he
 }
 
 type HeartBeatResponseHandler struct {
-	ddlActionDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DDLActionWithDispatcherID, *dispatcher.Dispatcher]
+	dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DispatcherStatusWithDispatcherID, *dispatcher.Dispatcher]
 }
 
-func NewHeartBeatResponseHandler(ddlActionDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DDLActionWithDispatcherID, *dispatcher.Dispatcher]) HeartBeatResponseHandler {
-	return HeartBeatResponseHandler{ddlActionDynamicStream: ddlActionDynamicStream}
+func NewHeartBeatResponseHandler(dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DispatcherStatusWithDispatcherID, *dispatcher.Dispatcher]) HeartBeatResponseHandler {
+	return HeartBeatResponseHandler{dispatcherStatusDynamicStream: dispatcherStatusDynamicStream}
 }
 
 func (h *HeartBeatResponseHandler) Path(HeartbeatResponse *heartbeatpb.HeartBeatResponse) model.ChangeFeedID {
@@ -135,16 +135,17 @@ func (h *HeartBeatResponseHandler) Path(HeartbeatResponse *heartbeatpb.HeartBeat
 }
 
 func (h *HeartBeatResponseHandler) Handle(heartbeatResponse *heartbeatpb.HeartBeatResponse, eventDispatcherManager *EventDispatcherManager) bool {
-	dispatcherActions := heartbeatResponse.Actions
-	for _, dispatcherAction := range dispatcherActions {
-		tableSpan := dispatcherAction.Span
+	dispatcherStatuses := heartbeatResponse.GetDispatcherStatuses()
+	for _, dispatcherStatus := range dispatcherStatuses {
+		tableSpan := dispatcherStatus.Span
 		dispatcherItem, ok := eventDispatcherManager.dispatcherMap.Get(&common.TableSpan{TableSpan: tableSpan})
 		if !ok {
 			log.Error("dispatcher not found", zap.Any("tableSpan", tableSpan))
 			continue
 		}
 
-		h.ddlActionDynamicStream.In() <- *dispatcher.NewDDLActionWithDispatcherID(dispatcherAction, dispatcherItem.GetId())
+		h.dispatcherStatusDynamicStream.In() <- *dispatcher.NewDispatcherStatusWithDispatcherID(dispatcherStatus, dispatcherItem.GetId())
 	}
+
 	return false
 }

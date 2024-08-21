@@ -28,6 +28,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/utils/dynstream"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 
 	"github.com/dustin/go-humanize"
 	"github.com/flowbehappy/tigate/pkg/config"
@@ -160,17 +161,20 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	c.serverID = id
 	c.session = session
 
-	ddlActionDynamicStream := dynstream.NewDynamicStreamDefault(&dispatcher.DDLActionsHandler{})
-	appcontext.SetService(appcontext.DDLActionDynamicStream, ddlActionDynamicStream)
+	dispatcherStatusDynamicStream := dynstream.NewDynamicStreamDefault(&dispatcher.DispatcherStatusHandler{})
+	appcontext.SetService(appcontext.DispatcherStatusDynamicStream, dispatcherStatusDynamicStream)
 
-	heartBeatReponseHandler := dispatchermanager.NewHeartBeatResponseHandler(ddlActionDynamicStream)
+	heartBeatReponseHandler := dispatchermanager.NewHeartBeatResponseHandler(dispatcherStatusDynamicStream)
 	appcontext.SetService(appcontext.HeartBeatResponseDynamicStream, dynstream.NewDynamicStreamDefault(&heartBeatReponseHandler))
 	appcontext.SetService(appcontext.SchedulerDispatcherRequestDynamicStream, dynstream.NewDynamicStreamDefault(&dispatchermanager.SchedulerDispatcherRequestHandler{}))
+	appcontext.SetService(appcontext.DispatcherEventsDynamicStream, dynstream.NewDynamicStreamDefault(&dispatcher.DispatcherEventsHandler{}))
 
 	// TODO: dynamic stream start
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, id, c.info.Epoch, config.NewDefaultMessageCenterConfig()))
 	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, id)) // 100GB for demo
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(id))
+
+	appcontext.SetService(appcontext.DispatcherTaskScheduler, threadpool.NewTaskSchedulerDefault(appcontext.DispatcherTaskScheduler))
 
 	c.dispatcherManagerManager = dispatchermanagermanager.NewDispatcherManagerManager()
 	return nil

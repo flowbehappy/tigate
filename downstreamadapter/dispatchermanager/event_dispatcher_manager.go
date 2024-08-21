@@ -54,8 +54,7 @@ One EventDispatcherManager can only have one Sink.
 type EventDispatcherManager struct {
 	dispatcherMap *DispatcherMap
 
-	heartbeatResponseQueue *HeartbeatResponseQueue
-	heartbeatRequestQueue  *HeartbeatRequestQueue
+	heartbeatRequestQueue *HeartbeatRequestQueue
 	//heartBeatSendTask     *HeartBeatSendTask
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -84,9 +83,8 @@ type EventDispatcherManager struct {
 func NewEventDispatcherManager(changefeedID model.ChangeFeedID, changefeedConfig *config.ChangefeedConfig, maintainerID messaging.ServerId, createTableTriggerEventDispatcher bool) *EventDispatcherManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	eventDispatcherManager := &EventDispatcherManager{
-		dispatcherMap:          newDispatcherMap(),
-		changefeedID:           changefeedID,
-		heartbeatResponseQueue: NewHeartbeatResponseQueue(),
+		dispatcherMap: newDispatcherMap(),
+		changefeedID:  changefeedID,
 		//enableSyncPoint:       false,
 		maintainerID:                   maintainerID,
 		tableSpanStatusesChan:          make(chan *heartbeatpb.TableSpanStatus, 10000),
@@ -136,25 +134,6 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, changefeedConfig
 	}(ctx, eventDispatcherManager)
 
 	eventDispatcherManager.InitSink()
-
-	// get heartbeat response from HeartBeatResponseQueue, and send to each dispatcher
-	eventDispatcherManager.wg.Add(1)
-	go func() {
-		defer eventDispatcherManager.wg.Done()
-		for {
-			heartbeatResponse := eventDispatcherManager.GetHeartbeatResponseQueue().Dequeue()
-			dispatcherActions := heartbeatResponse.Actions
-			for _, dispatcherAction := range dispatcherActions {
-				tableSpan := dispatcherAction.Span
-				dispatcher, ok := eventDispatcherManager.dispatcherMap.Get(&common.TableSpan{TableSpan: tableSpan})
-				if !ok {
-					log.Error("dispatcher not found", zap.Any("tableSpan", tableSpan))
-					continue
-				}
-				dispatcher.GetDDLActions() <- dispatcherAction
-			}
-		}
-	}()
 
 	eventDispatcherManager.wg.Add(1)
 	go eventDispatcherManager.CollectHeartbeatInfoWhenStatesChanged(ctx)
@@ -428,10 +407,6 @@ func (e *EventDispatcherManager) GetMaintainerID() messaging.ServerId {
 
 func (e *EventDispatcherManager) GetChangeFeedID() model.ChangeFeedID {
 	return e.changefeedID
-}
-
-func (e *EventDispatcherManager) GetHeartbeatResponseQueue() *HeartbeatResponseQueue {
-	return e.heartbeatResponseQueue
 }
 
 func (e *EventDispatcherManager) GetHeartbeatRequestQueue() *HeartbeatRequestQueue {

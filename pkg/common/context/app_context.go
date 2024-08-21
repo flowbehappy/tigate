@@ -16,10 +16,11 @@ const (
 	SchemaStore                             = "SchemaStore"
 	EventStore                              = "EventStore"
 	EventService                            = "EventService"
-	DispatcherDynamicStream                 = "DispatcherDynamicStream"
-	DDLActionDynamicStream                  = "DDLActionDynamicStream"
+	DispatcherEventsDynamicStream           = "DispatcherEventsDynamicStream"
+	DispatcherStatusDynamicStream           = "DispatcherStatusDynamicStream"
 	HeartBeatResponseDynamicStream          = "HeartBeatResponseDynamicStream"
 	SchedulerDispatcherRequestDynamicStream = "SchedulerDispatcherRequestDynamicStream"
+	DispatcherTaskScheduler                 = "DispatcherTaskScheduler"
 )
 
 // Put all the global instances here.

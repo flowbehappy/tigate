@@ -45,8 +45,9 @@ type MysqlSink struct {
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
 
-	eventChans  []chan *common.TxnEvent
-	workerCount int
+	eventChans   []chan *common.TxnEvent
+	ddlEventChan chan *common.TxnEvent
+	workerCount  int
 }
 
 // event dispatcher manager 初始化的时候创建 mysqlSink 对象
@@ -54,6 +55,7 @@ func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *writer.
 	mysqlSink := MysqlSink{
 		changefeedID: changefeedID,
 		eventChans:   make([]chan *common.TxnEvent, workerCount),
+		ddlEventChan: make(chan *common.TxnEvent, 16),
 		workerCount:  workerCount,
 	}
 
@@ -134,6 +136,20 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 			}
 		}(ctx, s.eventChans[workerId], db, cfg, 256)
 	}
+
+	// ddl flush goroutine
+	s.wg.Add(1)
+	go func(ctx context.Context, ddleEventChan chan *common.TxnEvent) {
+		defer s.wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case event := <-ddleEventChan:
+				s.ddlWorker.GetMysqlWriter().FlushDDLEvent(event)
+			}
+		}
+	}(ctx, s.ddlEventChan)
 }
 
 func (s *MysqlSink) AddDMLEvent(event *common.TxnEvent, tableProgress *types.TableProgress) {
@@ -142,9 +158,7 @@ func (s *MysqlSink) AddDMLEvent(event *common.TxnEvent, tableProgress *types.Tab
 	}
 
 	tableProgress.Add(event)
-	event.PostTxnFlushed = func() {
-		tableProgress.Remove(event)
-	}
+
 	// TODO:后续再优化这里的逻辑，目前有个问题是 physical table id 好像都是偶数？这个后面改个能见人的方法
 	index := event.GetRows()[0].PhysicalTableID % int64(s.workerCount)
 	s.eventChans[index] <- event
@@ -157,10 +171,8 @@ func (s *MysqlSink) PassDDLAndSyncPointEvent(event *common.TxnEvent, tableProgre
 func (s *MysqlSink) AddDDLAndSyncPointEvent(event *common.TxnEvent, tableProgress *types.TableProgress) {
 	// TODO:这个 ddl 可以并发写么？如果不行的话，后面还要加锁或者排队
 	tableProgress.Add(event)
-	event.PostTxnFlushed = func() {
-		tableProgress.Remove(event)
-	}
-	s.ddlWorker.GetMysqlWriter().FlushDDLEvent(event)
+	//s.ddlWorker.GetMysqlWriter().FlushDDLEvent(event)
+	s.ddlEventChan <- event
 }
 
 func (s *MysqlSink) Close() {
