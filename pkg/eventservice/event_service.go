@@ -15,7 +15,7 @@ import (
 const (
 	defaultChannelSize = 1024
 	// TODO: need to adjust the worker count
-	defaultWorkerCount = 8192
+	defaultScanWorkerCount = 8192
 )
 
 // EventService accepts the requests of pulling events.
