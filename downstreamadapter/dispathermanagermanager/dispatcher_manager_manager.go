@@ -45,7 +45,7 @@ func NewDispatcherManagerManager() *DispatcherManagerManager {
 }
 
 func (m *DispatcherManagerManager) RecvMaintainerRequest(ctx context.Context, msg *messaging.TargetMessage) error {
-	switch req := msg.Message.(type) {
+	switch req := msg.Message[0].(type) {
 	case *heartbeatpb.MaintainerBootstrapRequest:
 		return m.handleAddDispatcherManager(msg.From, req)
 	case *heartbeatpb.MaintainerCloseRequest:
@@ -80,11 +80,12 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 			Statuses:     make([]*heartbeatpb.TableSpanStatus, 0),
 		}
 
-		err = appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
-			from,
-			messaging.MaintainerManagerTopic,
-			response,
-		))
+		err = appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(
+			messaging.NewSingleTargetMessage(
+				from,
+				messaging.MaintainerManagerTopic,
+				response,
+			))
 		if err != nil {
 			log.Error("failed to send maintainer bootstrap response", zap.Error(err))
 			return err
@@ -109,11 +110,12 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 			CheckpointTs:    0,
 		})
 	})
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
-		from,
-		messaging.MaintainerManagerTopic,
-		response,
-	))
+	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(
+		messaging.NewSingleTargetMessage(
+			from,
+			messaging.MaintainerManagerTopic,
+			response,
+		))
 	if err != nil {
 		log.Error("failed to send maintainer bootstrap response", zap.Error(err))
 		return err
@@ -137,11 +139,12 @@ func (m *DispatcherManagerManager) handleRemoveDispatcherManager(from messaging.
 		}
 		response.Success = closed
 	}
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewTargetMessage(
-		from,
-		messaging.MaintainerTopic,
-		response,
-	))
+	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(
+		messaging.NewSingleTargetMessage(
+			from,
+			messaging.MaintainerTopic,
+			response,
+		))
 
 	if err != nil {
 		log.Error("failed to send maintainer bootstrap response", zap.Error(err))

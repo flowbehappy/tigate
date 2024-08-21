@@ -195,12 +195,12 @@ type TargetMessage struct {
 	Sequence uint64
 	Topic    string
 	Type     IOType
-	Message  IOTypeT
+	Message  []IOTypeT
 	CrateAt  int64
 }
 
-// NewTargetMessage creates a new TargetMessage to be sent to a target server.
-func NewTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetMessage {
+// NewSingleTargetMessage creates a new TargetMessage to be sent to a target server, with a single message.
+func NewSingleTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetMessage {
 	var ioType IOType
 	switch Message.(type) {
 	case *common.TxnEvent:
@@ -241,7 +241,19 @@ func NewTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetMessage
 		To:      To,
 		Type:    ioType,
 		Topic:   Topic,
-		Message: Message,
+		Message: []IOTypeT{Message},
+		CrateAt: time.Now().UnixMilli(),
+	}
+}
+
+// NewBatchTargetMessage creates a new TargetMessage to be sent to a target server, with multiple messages.
+// All messages in the batch should have the same type and topic.
+func NewBatchTargetMessage(To ServerId, Topic string, Type IOType, Messages []IOTypeT) *TargetMessage {
+	return &TargetMessage{
+		To:      To,
+		Type:    Type,
+		Topic:   Topic,
+		Message: Messages,
 		CrateAt: time.Now().UnixMilli(),
 	}
 }

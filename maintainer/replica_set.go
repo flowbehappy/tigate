@@ -61,7 +61,7 @@ func (r *ReplicaSet) NewInferiorStatus(state heartbeatpb.ComponentState) schedul
 }
 
 func (r *ReplicaSet) NewAddInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
-	return messaging.NewTargetMessage(messaging.ServerId(server),
+	return messaging.NewSingleTargetMessage(messaging.ServerId(server),
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{
 			ChangefeedID: r.ChangefeedID.ID,
@@ -78,7 +78,7 @@ func (r *ReplicaSet) NewAddInferiorMessage(server model.CaptureID) *messaging.Ta
 }
 
 func (r *ReplicaSet) NewRemoveInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
-	return messaging.NewTargetMessage(messaging.ServerId(server),
+	return messaging.NewSingleTargetMessage(messaging.ServerId(server),
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{
 			ChangefeedID: r.ChangefeedID.ID,
