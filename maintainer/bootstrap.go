@@ -62,7 +62,9 @@ func NewBootstrapper(newBootstrapMsg scheduler.NewBootstrapFn) *Bootstrapper {
 }
 
 // HandleBootstrapResponse cache the message reported remote node
-func (b *Bootstrapper) HandleBootstrapResponse(from messaging.ServerId, msg *heartbeatpb.MaintainerBootstrapResponse) map[common.NodeID]*heartbeatpb.MaintainerBootstrapResponse {
+func (b *Bootstrapper) HandleBootstrapResponse(
+	from messaging.ServerId,
+	msg *heartbeatpb.MaintainerBootstrapResponse) map[common.NodeID]*heartbeatpb.MaintainerBootstrapResponse {
 	nodeID := common.NodeID(from)
 	node, ok := b.nodes[nodeID]
 	if !ok {
@@ -80,6 +82,7 @@ func (b *Bootstrapper) HandleBootstrapResponse(from messaging.ServerId, msg *hea
 			// clear the cached data
 			node.cachedBootstrapResp = nil
 		}
+		return allCachedResp
 	}
 	return nil
 }

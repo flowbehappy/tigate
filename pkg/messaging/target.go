@@ -365,39 +365,41 @@ func (s *remoteMessageTarget) runReceiveMessages(stream grpcReceiver, receiveCh 
 				log.Info("Received handshake message", zap.Any("messageCenterID", s.messageCenterID), zap.Any("remote", s.targetId))
 				continue
 			}
+			targetMsg := &TargetMessage{
+				From:     ServerId(message.From),
+				To:       ServerId(message.To),
+				Topic:    string(message.Topic),
+				Epoch:    uint64(message.Epoch),
+				Sequence: message.Seqnum,
+				Type:     mt,
+			}
 			for _, payload := range message.Payload {
 				msg, err := decodeIOType(mt, payload)
 				if err != nil {
 					// TODO: handle this error properly.
 					err := AppError{Type: ErrorTypeInvalidMessage, Reason: errors.Trace(err).Error()}
-					log.Warn("Failed to decode message", zap.Error(err))
-					continue
+					log.Panic("Failed to decode message", zap.Error(err))
 				}
-				receiveCh <- &TargetMessage{
-					From:     ServerId(message.From),
-					To:       ServerId(message.To),
-					Topic:    string(message.Topic),
-					Epoch:    uint64(message.Epoch),
-					Sequence: message.Seqnum,
-					Type:     mt,
-					Message:  msg,
-				}
+				targetMsg.Message = append(targetMsg.Message, msg)
 			}
+			receiveCh <- targetMsg
 		}
 	}()
 }
 
 func (s *remoteMessageTarget) newMessage(msg ...*TargetMessage) *proto.Message {
 	msgBytes := make([][]byte, 0, len(msg))
-	for _, m := range msg {
-		// TODO: use a buffer pool to reduce the memory allocation.
-		buf, err := m.Message.Marshal()
-		if err != nil {
-			log.Panic("marshal message failed ",
-				zap.Any("msg", m),
-				zap.Error(err))
+	for _, tm := range msg {
+		for _, im := range tm.Message {
+			// TODO: use a buffer pool to reduce the memory allocation.
+			buf, err := im.Marshal()
+			if err != nil {
+				log.Panic("marshal message failed ",
+					zap.Any("msg", im),
+					zap.Error(err))
+			}
+			msgBytes = append(msgBytes, buf)
 		}
-		msgBytes = append(msgBytes, buf)
 	}
 	protoMsg := &proto.Message{
 		From:    string(s.messageCenterID),
@@ -433,22 +435,22 @@ func (s *localMessageTarget) Epoch() uint64 {
 	return s.epoch
 }
 
-func (s *localMessageTarget) sendEvent(msg ...*TargetMessage) error {
-	err := s.sendMsgToChan(s.recvEventCh, msg...)
+func (s *localMessageTarget) sendEvent(msg *TargetMessage) error {
+	err := s.sendMsgToChan(s.recvEventCh, msg)
 	if err != nil {
 		s.recordCongestedMessageError(msgTypeEvent)
 	} else {
-		s.sendEventCounter.Add(float64(len(msg)))
+		s.sendEventCounter.Inc()
 	}
 	return err
 }
 
-func (s *localMessageTarget) sendCommand(msg ...*TargetMessage) error {
-	err := s.sendMsgToChan(s.recvCmdCh, msg...)
+func (s *localMessageTarget) sendCommand(msg *TargetMessage) error {
+	err := s.sendMsgToChan(s.recvCmdCh, msg)
 	if err != nil {
 		s.recordCongestedMessageError(msgTypeCommand)
 	} else {
-		s.sendCmdCounter.Add(float64(len(msg)))
+		s.sendCmdCounter.Inc()
 	}
 	return err
 }

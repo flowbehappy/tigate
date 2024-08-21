@@ -24,7 +24,6 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/filter"
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -63,7 +62,7 @@ The workflow related to the dispatcher is as follows:
 */
 
 type Dispatcher struct {
-	id        string
+	id        common.DispatcherID
 	eventCh   chan *common.TxnEvent // 转换成一个函数
 	tableSpan *common.TableSpan
 	sink      sink.Sink
@@ -95,7 +94,7 @@ type Dispatcher struct {
 func NewDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter) *Dispatcher {
 	ctx, cancel := context.WithCancel(context.Background())
 	dispatcher := &Dispatcher{
-		id:                    uuid.NewString(),
+		id:                    common.NewDispatcherID(),
 		eventCh:               make(chan *common.TxnEvent, 16),
 		tableSpan:             tableSpan,
 		sink:                  sink,
@@ -177,7 +176,7 @@ func (d *Dispatcher) UpdateResolvedTs(ts uint64) {
 	d.GetEventChan() <- &common.TxnEvent{ResolvedTs: ts}
 }
 
-func (d *Dispatcher) GetId() string {
+func (d *Dispatcher) GetId() common.DispatcherID {
 	return d.id
 }
 

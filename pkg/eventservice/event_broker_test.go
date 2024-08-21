@@ -14,18 +14,14 @@ func TestNewDispatcherStat(t *testing.T) {
 	startTs := uint64(123)
 
 	info := &mockDispatcherInfo{
-		id:        "test",
+		id:        common.NewDispatcherID(),
 		clusterID: 1,
 		startTs:   startTs,
 	}
 
-	notify := make(chan *subscriptionChange)
-
-	stat := newDispatcherStat(startTs, info, notify)
-
+	stat := newDispatcherStat(startTs, info, func(c subscriptionChange) {})
 	require.Equal(t, info, stat.info)
 	require.Equal(t, startTs, stat.watermark.Load())
-	require.Equal(t, notify, stat.notify)
 	require.NotNil(t, stat.spanSubscription)
 	require.Equal(t, startTs, stat.spanSubscription.watermark.Load())
 	require.Equal(t, 0, int(stat.spanSubscription.newEventCount.Load()))
@@ -36,14 +32,19 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 	startTs := uint64(123)
 	wg := &sync.WaitGroup{}
 	info := &mockDispatcherInfo{
-		id:        "test",
+		id:        common.NewDispatcherID(),
 		clusterID: 1,
 		startTs:   startTs,
 	}
 
-	notify := make(chan *subscriptionChange)
+	notify := make(chan subscriptionChange)
 
-	stat := newDispatcherStat(startTs, info, notify)
+	stat := newDispatcherStat(startTs, info, func(c subscriptionChange) {
+		select {
+		case notify <- c:
+		default:
+		}
+	})
 
 	// Case 1: no new events, only watermark change
 	wg.Add(1)
@@ -94,12 +95,12 @@ func TestScanTaskPool_PushTask(t *testing.T) {
 	pool := newScanTaskPool()
 	span := newTableSpan(1, "a", "b")
 	dispatcherInfo := &mockDispatcherInfo{
-		id:        "dispatcher1",
+		id:        common.NewDispatcherID(),
 		clusterID: 1,
 		startTs:   1000,
 		span:      span,
 	}
-	dispatcherStat := newDispatcherStat(dispatcherInfo.startTs, dispatcherInfo, make(chan *subscriptionChange))
+	dispatcherStat := newDispatcherStat(dispatcherInfo.startTs, dispatcherInfo, func(c subscriptionChange) {})
 	// Create two tasks with overlapping data ranges
 	task1 := &scanTask{
 		dispatcherStat: dispatcherStat,
@@ -138,7 +139,7 @@ func TestScanTaskPool_PushTask(t *testing.T) {
 	pool.taskSet[dispatcherInfo.GetID()] = task1
 
 	// Verify that the task is in the taskSet
-	task, ok := pool.taskSet["dispatcher1"]
+	task, ok := pool.taskSet[dispatcherInfo.id]
 	require.True(t, ok)
 	require.Equal(t, task1, task)
 

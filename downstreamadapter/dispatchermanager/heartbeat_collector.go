@@ -142,12 +142,12 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherMa
 func (c *HeartBeatCollector) SendHeartBeatMessages() {
 	for {
 		heartBeatRequestWithTargetID := c.requestQueue.Dequeue()
-		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendEvent(&messaging.TargetMessage{
-			To:      heartBeatRequestWithTargetID.TargetID,
-			Topic:   messaging.MaintainerManagerTopic,
-			Type:    messaging.TypeHeartBeatRequest,
-			Message: heartBeatRequestWithTargetID.Request,
-		})
+		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(
+			messaging.NewSingleTargetMessage(
+				heartBeatRequestWithTargetID.TargetID,
+				messaging.MaintainerManagerTopic,
+				heartBeatRequestWithTargetID.Request,
+			))
 		if err != nil {
 			log.Error("failed to send heartbeat request message", zap.Error(err))
 		}
@@ -155,7 +155,7 @@ func (c *HeartBeatCollector) SendHeartBeatMessages() {
 }
 
 func (c *HeartBeatCollector) RecvHeartBeatResponseMessages(ctx context.Context, msg *messaging.TargetMessage) error {
-	heartbeatResponse, ok := msg.Message.(*heartbeatpb.HeartBeatResponse)
+	heartbeatResponse, ok := msg.Message[0].(*heartbeatpb.HeartBeatResponse)
 	if !ok {
 		log.Error("invalid heartbeat response message", zap.Any("msg", msg))
 		return apperror.AppError{Type: apperror.ErrorTypeInvalidMessage, Reason: fmt.Sprintf("invalid heartbeat response message")}
@@ -170,8 +170,7 @@ func (c *HeartBeatCollector) RecvHeartBeatResponseMessages(ctx context.Context, 
 }
 
 func (c *HeartBeatCollector) RecvSchedulerDispatcherRequestMessages(ctx context.Context, msg *messaging.TargetMessage) error {
-	scheduleDispatcherRequest := msg.Message.(*heartbeatpb.ScheduleDispatcherRequest)
-
+	scheduleDispatcherRequest := msg.Message[0].(*heartbeatpb.ScheduleDispatcherRequest)
 	idx := int(scheduleDispatcherRequest.Config.Span.TableID) % handleDispatcherRequestConcurrency
 	select {
 	case c.dispatcherRequestCh[idx] <- scheduleDispatcherRequest:

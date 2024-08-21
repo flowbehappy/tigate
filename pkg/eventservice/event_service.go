@@ -2,6 +2,7 @@ package eventservice
 
 import (
 	"context"
+	"time"
 
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -14,7 +15,7 @@ import (
 const (
 	defaultChannelSize = 1024
 	// TODO: need to adjust the worker count
-	defaultWorkerCount = 8192
+	defaultScanWorkerCount = 8192
 )
 
 // EventService accepts the requests of pulling events.
@@ -27,10 +28,9 @@ type EventService interface {
 
 type DispatcherInfo interface {
 	// GetID returns the ID of the dispatcher.
-	GetID() string
+	GetID() common.DispatcherID
 	// GetClusterID returns the ID of the TiDB cluster the acceptor wants to accept events from.
 	GetClusterID() uint64
-
 	GetTopic() string
 	GetServerID() string
 	GetTableSpan() *common.TableSpan
@@ -77,7 +77,7 @@ func (s *eventService) Run(ctx context.Context) error {
 			if info.IsRegister() {
 				s.registerDispatcher(ctx, info)
 			} else {
-				s.deregisterAcceptor(info)
+				s.deregisterDispatcher(info)
 			}
 		}
 	}
@@ -93,10 +93,13 @@ func (s *eventService) Close(_ context.Context) error {
 }
 
 func (s *eventService) handleMessage(ctx context.Context, msg *messaging.TargetMessage) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case s.acceptorInfoCh <- msgToAcceptorInfo(msg):
+	infos := msgToDispatcherInfo(msg)
+	for _, info := range infos {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case s.acceptorInfoCh <- info:
+		}
 	}
 	return nil
 }
@@ -106,17 +109,17 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 	startTs := info.GetStartTs()
 	span := info.GetTableSpan()
 
+	start := time.Now()
 	c, ok := s.brokers[clusterID]
 	if !ok {
 		c = newEventBroker(ctx, clusterID, s.eventStore, s.mc)
 		s.brokers[clusterID] = c
 	}
+	dispatcher := newDispatcherStat(startTs, info, c.onAsyncNotify)
+	c.dispatchers.Store(info.GetID(), dispatcher)
+	brokerRegisterDuration := time.Since(start)
 
-	dispatcher := newDispatcherStat(startTs, info, c.changedCh)
-	c.dispatchers.mu.Lock()
-	c.dispatchers.m[info.GetID()] = dispatcher
-	c.dispatchers.mu.Unlock()
-
+	start = time.Now()
 	c.eventStore.RegisterDispatcher(
 		info.GetID(),
 		span,
@@ -124,10 +127,15 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 		dispatcher.onNewEvent,
 		dispatcher.onSubscriptionWatermark,
 	)
-	log.Info("register acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID), zap.Uint64("startTs", startTs))
+	eventStoreRegisterDuration := time.Since(start)
+
+	log.Info("register acceptor", zap.Uint64("clusterID", clusterID),
+		zap.Any("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID),
+		zap.Uint64("startTs", startTs), zap.Duration("brokerRegisterDuration", brokerRegisterDuration),
+		zap.Duration("eventStoreRegisterDuration", eventStoreRegisterDuration))
 }
 
-func (s *eventService) deregisterAcceptor(dispatcherInfo DispatcherInfo) {
+func (s *eventService) deregisterDispatcher(dispatcherInfo DispatcherInfo) {
 	clusterID := dispatcherInfo.GetClusterID()
 	c, ok := s.brokers[clusterID]
 	if !ok {
@@ -135,10 +143,17 @@ func (s *eventService) deregisterAcceptor(dispatcherInfo DispatcherInfo) {
 	}
 	id := dispatcherInfo.GetID()
 	c.removeDispatcher(id)
-	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.String("acceptorID", id))
+	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.Any("acceptorID", id))
 }
 
-// TODO: implement the following functions
-func msgToAcceptorInfo(msg *messaging.TargetMessage) DispatcherInfo {
-	return msg.Message.(messaging.RegisterDispatcherRequest)
+func msgToDispatcherInfo(msg *messaging.TargetMessage) []DispatcherInfo {
+	res := make([]DispatcherInfo, 0, len(msg.Message))
+	for _, m := range msg.Message {
+		info, ok := m.(messaging.RegisterDispatcherRequest)
+		if !ok {
+			log.Panic("invalid dispatcher info", zap.Any("info", m))
+		}
+		res = append(res, info)
+	}
+	return res
 }

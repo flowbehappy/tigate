@@ -34,4 +34,4 @@ type DatabaseInfoMap map[int64]*DatabaseInfo
 
 type TableInfoStoreMap map[common.TableID]*versionedTableInfoStore
 
-type DispatcherInfoMap map[string]DispatcherInfo
+type DispatcherInfoMap map[common.DispatcherID]DispatcherInfo

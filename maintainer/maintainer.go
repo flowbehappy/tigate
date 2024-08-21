@@ -158,9 +158,9 @@ func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
 	case messaging.TypeMaintainerBootstrapResponse:
 		return m.onMaintainerBootstrapResponse(msg)
 	case messaging.TypeMaintainerCloseResponse:
-		m.onNodeClosed(string(msg.From), msg.Message.(*heartbeatpb.MaintainerCloseResponse))
+		m.onNodeClosed(string(msg.From), msg.Message[0].(*heartbeatpb.MaintainerCloseResponse))
 	case messaging.TypeRemoveMaintainerRequest:
-		m.onRemoveMaintainer(msg.Message.(*heartbeatpb.RemoveMaintainerRequest).Cascade)
+		m.onRemoveMaintainer(msg.Message[0].(*heartbeatpb.RemoveMaintainerRequest).Cascade)
 	default:
 		log.Panic("unexpected message type", zap.String("type", msg.Type.String()))
 	}
@@ -288,7 +288,7 @@ func (m *Maintainer) initialize() error {
 }
 
 func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
-	req := msg.Message.(*heartbeatpb.HeartBeatRequest)
+	req := msg.Message[0].(*heartbeatpb.HeartBeatRequest)
 	if req.Watermark != nil {
 		m.checkpointTsByCapture[model.CaptureID(msg.From)] = *req.Watermark
 	}
@@ -322,7 +322,7 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 
 func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage) error {
 	m.scheduler.AddNewNode(msg.From.String())
-	cachedResp := m.bootstrapper.HandleBootstrapResponse(msg.From, msg.Message.(*heartbeatpb.MaintainerBootstrapResponse))
+	cachedResp := m.bootstrapper.HandleBootstrapResponse(msg.From, msg.Message[0].(*heartbeatpb.MaintainerBootstrapResponse))
 	if cachedResp != nil {
 		log.Info("all nodes have sent bootstrap response", zap.Int("size", len(cachedResp)))
 
@@ -400,7 +400,7 @@ func (m *Maintainer) sendMaintainerCloseRequestToAllNode() bool {
 	msgs := make([]*messaging.TargetMessage, 0)
 	for node := range m.nodeManager.GetAliveNodes() {
 		if _, ok := m.nodesClosed[node]; !ok {
-			msgs = append(msgs, messaging.NewTargetMessage(
+			msgs = append(msgs, messaging.NewSingleTargetMessage(
 				messaging.ServerId(node),
 				messaging.DispatcherManagerManagerTopic,
 				&heartbeatpb.MaintainerCloseRequest{
@@ -457,14 +457,15 @@ func (m *Maintainer) Handle(event *Event) (await bool) {
 			return false
 		}
 		// async initialize the changefeed
-		go func() {
-			err := m.initialize()
-			if err != nil {
-				m.handleError(err)
-			}
-			m.stream.Wake() <- event.cfID
-		}()
-		return true
+		//go func() {
+		err := m.initialize()
+		if err != nil {
+			m.handleError(err)
+		}
+		m.stream.Wake() <- event.cfID
+		log.Info("stream waked", zap.String("changefeed", m.id.String()))
+		//}()
+		return false
 	case EventMessage:
 		if err := m.onMessage(event.message); err != nil {
 			m.handleError(err)
@@ -523,7 +524,7 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 	}
 	log.Info("create maintainer bootstrap message function", zap.String("changefeed", m.id.String()), zap.ByteString("config", cfgBytes))
 	return func(captureID model.CaptureID) *messaging.TargetMessage {
-		return messaging.NewTargetMessage(
+		return messaging.NewSingleTargetMessage(
 			messaging.ServerId(captureID),
 			messaging.DispatcherManagerManagerTopic,
 			&heartbeatpb.MaintainerBootstrapRequest{
