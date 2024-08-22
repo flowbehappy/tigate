@@ -81,26 +81,25 @@ func (c *NodeManager) Tick(
 	}
 
 	for _, capture := range state.Captures {
+		node := common.CaptureInfoToNodeInfo(capture)
 		if _, exist := c.nodes[capture.ID]; !exist {
-			node := common.CaptureInfoToNodeInfo(capture)
 			newNodes = append(newNodes, node)
 		}
 		allNodes[capture.ID] = common.CaptureInfoToNodeInfo(capture)
 	}
 
 	if len(removed) != 0 || len(newNodes) != 0 {
-		log.Info("server change detected", zap.Any("removed", removed),
-			zap.Any("new", newNodes))
+		log.Info("server change detected", zap.Int("removed", len(removed)),
+			zap.Int("new", len(newNodes)))
+		// handle node change event
+		c.nodeChangeHandlers.RLock()
+		defer c.nodeChangeHandlers.RUnlock()
+		for _, handler := range c.nodeChangeHandlers.m {
+			handler(newNodes, removed)
+		}
 	}
 
 	c.nodes = allNodes
-
-	// handle node change event
-	c.nodeChangeHandlers.RLock()
-	defer c.nodeChangeHandlers.RUnlock()
-	for _, handler := range c.nodeChangeHandlers.m {
-		handler(newNodes, removed)
-	}
 	return state, nil
 }
 

@@ -54,14 +54,41 @@ func (s *Scheduler) AddNewNode(id string) {
 	_, ok := s.nodeTasks[id]
 	if ok {
 		log.Info("node already exists", zap.String("id", id))
+		return
 	}
 	log.Info("add new node", zap.String("id", id))
 	s.nodeTasks[id] = utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
 }
 
+func (s *Scheduler) RemoveNode(nodeId string) []*messaging.TargetMessage {
+	stmMap, ok := s.nodeTasks[nodeId]
+	if !ok {
+		log.Info("node is maintained by scheduler, ignore", zap.String("id", nodeId))
+		return nil
+	}
+	var msgs []*messaging.TargetMessage
+	stmMap.Ascend(func(key *common.TableSpan, value *scheduler.StateMachine) bool {
+		oldState := value.State
+		msg, _ := value.HandleCaptureShutdown(nodeId)
+		if msg != nil {
+			msgs = append(msgs, msg)
+		}
+		if value.Primary != "" && value.Primary != nodeId {
+			s.nodeTasks[value.Primary].Delete(key)
+		}
+		s.tryMoveTask(key, value, oldState, nodeId, false)
+		return true
+	})
+	delete(s.nodeTasks, nodeId)
+	return msgs
+}
+
 func (s *Scheduler) Schedule() ([]*messaging.TargetMessage, error) {
 	if len(s.nodeTasks) == 0 {
 		log.Warn("scheduler has no node tasks")
+		return nil, nil
+	}
+	if !s.NeedSchedule() {
 		return nil, nil
 	}
 	priorityQueue := heap.NewHeap[*Item]()
@@ -101,6 +128,10 @@ func (s *Scheduler) Schedule() ([]*messaging.TargetMessage, error) {
 	return msgs, err
 }
 
+func (s *Scheduler) NeedSchedule() bool {
+	return s.absent.Len() > 0
+}
+
 func (s *Scheduler) ResendMessage() []*messaging.TargetMessage {
 	var msgs []*messaging.TargetMessage
 	if s.schedulingTask.Len() > 0 {
@@ -132,6 +163,7 @@ func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpa
 				zap.String("span", span.String()))
 		}
 		oldState := stm.State
+		oldPrimary := stm.Primary
 		var sch scheduler.InferiorStatus = &ReplicaSetStatus{
 			ID:           span,
 			State:        status.ComponentStatus,
@@ -143,22 +175,113 @@ func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpa
 			return nil, errors.Trace(err)
 		}
 		msgs = append(msgs, msg)
-		s.tryMoveTask(span, stm, oldState)
+		s.tryMoveTask(span, stm, oldState, oldPrimary, true)
 	}
 	return msgs, nil
 }
 
 func (s *Scheduler) tryMoveTask(span *common.TableSpan,
 	stm *scheduler.StateMachine,
-	oldSate scheduler.SchedulerStatus) {
-	if stm.HasRemoved() {
-		s.schedulingTask.Delete(span)
-		// remove from node tasks
-		s.nodeTasks[stm.Primary].Delete(span)
+	oldSate scheduler.SchedulerStatus,
+	oldPrimary string,
+	modifyNodeMap bool) {
+	switch oldSate {
+	case scheduler.SchedulerStatusAbsent:
+		s.moveFromAbsent(span, stm, oldPrimary, modifyNodeMap)
+	case scheduler.SchedulerStatusCommiting:
+		s.moveFromCommiting(span, stm, oldPrimary, modifyNodeMap)
+	case scheduler.SchedulerStatusWorking:
+		s.moveFromWorking(span, stm, oldPrimary, modifyNodeMap)
+	case scheduler.SchedulerStatusRemoving:
+		s.moveFromRemoving(span, stm, oldPrimary, modifyNodeMap)
 	}
-	if stm.State != oldSate && stm.State == scheduler.SchedulerStatusWorking {
+}
+
+func (s *Scheduler) moveFromAbsent(span *common.TableSpan,
+	stm *scheduler.StateMachine,
+	oldPrimary string,
+	modifyNodeMap bool) {
+	switch stm.State {
+	case scheduler.SchedulerStatusAbsent:
+	case scheduler.SchedulerStatusCommiting:
+		s.schedulingTask.ReplaceOrInsert(span, stm)
+		if modifyNodeMap {
+			s.nodeTasks[stm.Primary].ReplaceOrInsert(span, stm)
+		}
+	case scheduler.SchedulerStatusWorking:
+		s.working.ReplaceOrInsert(span, stm)
+		if modifyNodeMap {
+			s.nodeTasks[stm.Primary].ReplaceOrInsert(span, stm)
+		}
+	case scheduler.SchedulerStatusRemoving:
+		s.working.ReplaceOrInsert(span, stm)
+		if modifyNodeMap {
+			s.nodeTasks[stm.Primary].ReplaceOrInsert(span, stm)
+		}
+	}
+}
+
+func (s *Scheduler) moveFromCommiting(span *common.TableSpan,
+	stm *scheduler.StateMachine,
+	oldPrimary string,
+	modifyNodeMap bool) {
+	switch stm.State {
+	case scheduler.SchedulerStatusAbsent:
+		s.schedulingTask.Delete(span)
+		s.absent.ReplaceOrInsert(span, stm)
+		if modifyNodeMap {
+			s.nodeTasks[stm.Primary].ReplaceOrInsert(span, stm)
+		}
+	case scheduler.SchedulerStatusCommiting:
+		// state not changed, primary should not be changefeed
+	case scheduler.SchedulerStatusWorking:
 		s.schedulingTask.Delete(span)
 		s.working.ReplaceOrInsert(span, stm)
+	case scheduler.SchedulerStatusRemoving:
+		// still in running task map
+	}
+}
+
+func (s *Scheduler) moveFromWorking(span *common.TableSpan,
+	stm *scheduler.StateMachine,
+	oldPrimary string,
+	modifyNodeMap bool) {
+	switch stm.State {
+	case scheduler.SchedulerStatusAbsent:
+		s.working.Delete(span)
+		s.absent.ReplaceOrInsert(span, stm)
+		if modifyNodeMap {
+			s.nodeTasks[stm.Primary].ReplaceOrInsert(span, stm)
+		}
+	case scheduler.SchedulerStatusCommiting, scheduler.SchedulerStatusRemoving:
+		s.working.Delete(span)
+		s.schedulingTask.ReplaceOrInsert(span, stm)
+	case scheduler.SchedulerStatusWorking:
+		// state not changed, primary should not be changefeed
+	}
+}
+
+func (s *Scheduler) moveFromRemoving(span *common.TableSpan,
+	stm *scheduler.StateMachine,
+	oldPrimary string,
+	modifyNodeMap bool) {
+	switch stm.State {
+	case scheduler.SchedulerStatusAbsent:
+		s.working.Delete(span)
+		s.absent.ReplaceOrInsert(span, stm)
+		if modifyNodeMap {
+			s.nodeTasks[stm.Primary].ReplaceOrInsert(span, stm)
+		}
+	case scheduler.SchedulerStatusCommiting, scheduler.SchedulerStatusRemoving:
+		s.working.Delete(span)
+		s.schedulingTask.ReplaceOrInsert(span, stm)
+	case scheduler.SchedulerStatusWorking:
+		s.schedulingTask.Delete(span)
+		s.working.ReplaceOrInsert(span, stm)
+		if modifyNodeMap && oldPrimary != stm.Primary {
+			s.nodeTasks[stm.Primary].ReplaceOrInsert(span, stm)
+			s.nodeTasks[oldPrimary].Delete(span)
+		}
 	}
 }
 

@@ -48,6 +48,7 @@ type NodeStatus struct {
 }
 
 type Bootstrapper struct {
+	changefeedID    string
 	nodes           map[common.NodeID]*NodeStatus
 	bootstrapped    bool
 	newBootstrapMsg scheduler.NewBootstrapFn
@@ -73,6 +74,10 @@ func (b *Bootstrapper) HandleBootstrapResponse(
 	}
 	node.cachedBootstrapResp = msg
 	node.state = NodeStateInitialized
+	return b.fistBootstrap()
+}
+
+func (b *Bootstrapper) fistBootstrap() map[common.NodeID]*heartbeatpb.MaintainerBootstrapResponse {
 	// first bootstrapped time, return the cached resp and clear it
 	if !b.bootstrapped && b.checkAllCaptureInitialized() {
 		b.bootstrapped = true
@@ -101,6 +106,22 @@ func (b *Bootstrapper) HandleNewNodes(nodes map[common.NodeID]*common.NodeInfo) 
 		}
 	}
 	return msgs
+}
+
+func (b *Bootstrapper) HandleRemoveNodes(nodeIds []string) map[common.NodeID]*heartbeatpb.MaintainerBootstrapResponse {
+	for _, id := range nodeIds {
+		status, ok := b.nodes[id]
+		if ok {
+			delete(b.nodes, id)
+			log.Info("remove node from bootstrap",
+				zap.Int("status", int(status.state)),
+				zap.String("id", id))
+		} else {
+			log.Info("node is node tracked by bootstrap",
+				zap.String("id", id))
+		}
+	}
+	return b.fistBootstrap()
 }
 
 func (b *Bootstrapper) ResendBootstrapMessage() []*messaging.TargetMessage {

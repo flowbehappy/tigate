@@ -75,7 +75,6 @@ func NewMaintainerManager(selfNode *common.NodeInfo, pdEndpoints []string) *Mana
 			req := msg.Message[0].(*heartbeatpb.MaintainerCloseResponse)
 			return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
 		})
-
 	return m
 }
 
