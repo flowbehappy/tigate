@@ -40,7 +40,7 @@ type regionInfo struct {
 	rpcCtx *tikv.RPCContext
 
 	// The table that the region belongs to.
-	subscribedTable *subscribedTable
+	subscribedSpan *subscribedSpan
 	// The state of the locked range of the region.
 	lockedRangeState *regionlock.LockedRangeState
 
@@ -56,15 +56,13 @@ func newRegionInfo(
 	verID tikv.RegionVerID,
 	span heartbeatpb.TableSpan,
 	rpcCtx *tikv.RPCContext,
-	subscribedTable *subscribedTable,
-	limiter *RegionScanRequestLimiter,
-) regionInfo {
-	return regionInfo{
-		verID:           verID,
-		span:            span,
-		rpcCtx:          rpcCtx,
-		subscribedTable: subscribedTable,
-		limiter:         limiter,
+	subscribedSpan *subscribedSpan,
+) *regionInfo {
+	return &regionInfo{
+		verID:          verID,
+		span:           span,
+		rpcCtx:         rpcCtx,
+		subscribedSpan: subscribedSpan,
 	}
 }
 
@@ -73,11 +71,11 @@ func (s regionInfo) resolvedTs() uint64 {
 }
 
 type regionErrorInfo struct {
-	regionInfo
+	*regionInfo
 	err error
 }
 
-func newRegionErrorInfo(info regionInfo, err error) regionErrorInfo {
+func newRegionErrorInfo(info *regionInfo, err error) regionErrorInfo {
 	return regionErrorInfo{
 		regionInfo: info,
 		err:        err,
@@ -85,7 +83,7 @@ func newRegionErrorInfo(info regionInfo, err error) regionErrorInfo {
 }
 
 type regionFeedState struct {
-	region    regionInfo
+	region    *regionInfo
 	requestID uint64
 	matcher   *matcher
 
@@ -103,7 +101,7 @@ type regionFeedState struct {
 	}
 }
 
-func newRegionFeedState(region regionInfo, requestID uint64) *regionFeedState {
+func newRegionFeedState(region *regionInfo, requestID uint64) *regionFeedState {
 	return &regionFeedState{
 		region:    region,
 		requestID: requestID,
@@ -175,6 +173,7 @@ func (s *regionFeedState) updateResolvedTs(resolvedTs uint64) {
 		if last > resolvedTs {
 			return
 		}
+		// Fixme: this is not correct
 		if last == 0 {
 			needRelease = true
 		}
@@ -185,18 +184,9 @@ func (s *regionFeedState) updateResolvedTs(resolvedTs uint64) {
 			break
 		}
 	}
-
-	if s.region.subscribedTable != nil {
-		// When resolvedTs is received, we need to try to resolve the lock of the region.
-		// Because the updated resolvedTs may less than the target resolvedTs we want advance to.
-		s.region.subscribedTable.tryResolveLock(
-			s.region.verID.GetID(),
-			state,
-		)
-	}
 }
 
-func (s *regionFeedState) getRegionInfo() regionInfo {
+func (s *regionFeedState) getRegionInfo() *regionInfo {
 	return s.region
 }
 

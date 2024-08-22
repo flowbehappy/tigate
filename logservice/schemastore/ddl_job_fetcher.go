@@ -18,6 +18,7 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/logpuller"
+	"github.com/flowbehappy/tigate/logservice/txnutil"
 	"github.com/flowbehappy/tigate/mounter"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/errors"
@@ -53,20 +54,18 @@ func newDDLJobFetcher(
 	writeDDLEvent func(ddlEvent DDLEvent) error,
 	advanceResolvedTs func(resolvedTS common.Ts) error,
 ) *ddlJobFetcher {
-	grpcPool := logpuller.NewConnAndClientPool(
-		&security.Credential{},
-	)
-	clientConfig := &logpuller.SharedClientConfig{
-		KVClientWorkerConcurrent:     8,
-		KVClientGrpcStreamConcurrent: 8,
-		KVClientAdvanceIntervalInMs:  20,
+	clientConfig := &logpuller.SubscriptionClientConfig{
+		RegionRequestWorkerPerStore:   2,
+		ChangeEventProcessorNum:       32,
+		AdvanceResolvedTsIntervalInMs: 300,
 	}
-	client := logpuller.NewSharedClient(
+	client := logpuller.NewSubscriptionClient(
 		clientConfig,
 		pdCli,
-		grpcPool,
 		regionCache,
 		pdClock,
+		txnutil.NewLockerResolver(kvStorage.(tikv.Storage)),
+		&security.Credential{},
 	)
 
 	ddlJobFetcher := &ddlJobFetcher{

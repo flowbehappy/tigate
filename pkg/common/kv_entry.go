@@ -32,16 +32,6 @@ const (
 	OpTypeResolved
 )
 
-// RegionFeedEvent from the kv layer.
-//
-//msgp:ignore RegionFeedEvent
-type RegionFeedEvent struct {
-	Val *RawKVEntry
-
-	// Additional debug info, not used
-	RegionID uint64
-}
-
 // ResolvedSpans guarantees all the KV value event
 // with commit ts less than ResolvedTs has been emitted.
 //
