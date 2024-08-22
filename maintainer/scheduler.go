@@ -62,6 +62,21 @@ func NewScheduler(changefeedID string,
 	}
 }
 
+func (s *Scheduler) AddNewTask(stm *scheduler.StateMachine) {
+	s.absent.ReplaceOrInsert(stm.ID.(*common.TableSpan), stm)
+}
+
+func (s *Scheduler) RemoveTask(stm *scheduler.StateMachine) (*messaging.TargetMessage, error) {
+	oldState := stm.State
+	oldPrimary := stm.Primary
+	msg, err := stm.HandleRemoveInferior()
+	if err != nil {
+		return nil, err
+	}
+	s.tryMoveTask(stm.ID.(*common.TableSpan), stm, oldState, oldPrimary, true)
+	return msg, nil
+}
+
 func (s *Scheduler) AddNewNode(id string) {
 	_, ok := s.nodeTasks[id]
 	if ok {
@@ -164,6 +179,20 @@ func (s *Scheduler) TryBalance() ([]*messaging.TargetMessage, error) {
 	return s.balanceTables()
 }
 
+func (s *Scheduler) ResendMessage() []*messaging.TargetMessage {
+	var msgs []*messaging.TargetMessage
+	if s.schedulingTask.Len() > 0 {
+		msgs = make([]*messaging.TargetMessage, 0, s.schedulingTask.Len())
+		s.schedulingTask.Ascend(func(key *common.TableSpan, value *scheduler.StateMachine) bool {
+			if msg := value.HandleResend(); msg != nil {
+				msgs = append(msgs, msg)
+			}
+			return true
+		})
+	}
+	return msgs
+}
+
 func (s *Scheduler) balanceTables() ([]*messaging.TargetMessage, error) {
 	var messages = make([]*messaging.TargetMessage, 0)
 	upperLimitPerCapture := int(math.Ceil(float64(s.working.Len()) / float64(len(s.nodeTasks))))
@@ -248,20 +277,6 @@ func (s *Scheduler) balanceTables() ([]*messaging.TargetMessage, error) {
 		zap.Int("movedSize", movedSize),
 		zap.Int("victims", len(victims)))
 	return messages, nil
-}
-
-func (s *Scheduler) ResendMessage() []*messaging.TargetMessage {
-	var msgs []*messaging.TargetMessage
-	if s.schedulingTask.Len() > 0 {
-		msgs = make([]*messaging.TargetMessage, 0, s.schedulingTask.Len())
-		s.schedulingTask.Ascend(func(key *common.TableSpan, value *scheduler.StateMachine) bool {
-			if msg := value.HandleResend(); msg != nil {
-				msgs = append(msgs, msg)
-			}
-			return true
-		})
-	}
-	return msgs
 }
 
 func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpanStatus) ([]*messaging.TargetMessage, error) {

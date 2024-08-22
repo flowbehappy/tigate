@@ -172,7 +172,7 @@ func (m *Maintainer) HandleEvent(event *Event) (await bool) {
 			if err != nil {
 				m.handleError(err)
 			}
-			m.stream.Wake() <- event.cfID
+			m.stream.Wake() <- event.changefeedID
 			log.Info("stream waked", zap.String("changefeed", m.id.String()))
 		}()
 		return true
@@ -248,7 +248,7 @@ func (m *Maintainer) initialize() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		m.scheduler.absent.ReplaceOrInsert(tableSpan, stm)
+		m.scheduler.AddNewTask(stm)
 	}
 	log.Info("changefeed maintainer initialized",
 		zap.String("id", m.id.String()))
@@ -263,9 +263,9 @@ func (m *Maintainer) initialize() error {
 	// send bootstrap message
 	m.sendMessages(m.bootstrapper.HandleNewNodes(m.nodeManager.GetAliveNodes()))
 	// setup period event
-	submitScheduledEvent(m.taskScheduler, m.stream, &Event{
-		cfID:      m.id.ID,
-		eventType: EventPeriod,
+	SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{
+		changefeedID: m.id.ID,
+		eventType:    EventPeriod,
 	}, time.Now().Add(time.Millisecond*500))
 	return err
 }
@@ -414,9 +414,9 @@ func (m *Maintainer) onScheduleTableSpan() error {
 
 	if m.scheduler.NeedSchedule() {
 		// some table span is not scheduled, schedule it later
-		submitScheduledEvent(m.taskScheduler, m.stream, &Event{
-			cfID:      m.id.ID,
-			eventType: EventSchedule,
+		SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{
+			changefeedID: m.id.ID,
+			eventType:    EventSchedule,
 		}, time.Now().Add(100*time.Millisecond))
 	}
 	return nil
@@ -445,7 +445,6 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 		return errors.Trace(err)
 	}
 	m.sendMessages(msgs)
-	// set error if not nil, todo: only save one
 	m.errLock.Lock()
 	if req.Warning != nil {
 		m.runningWarnings[msg.From] = req.Warning
@@ -637,9 +636,9 @@ func (m *Maintainer) onPeriodTask() {
 	m.handleResendMessage()
 	m.calCheckpointTs()
 	m.onBalance()
-	submitScheduledEvent(m.taskScheduler, m.stream, &Event{
-		cfID:      m.id.ID,
-		eventType: EventPeriod,
+	SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{
+		changefeedID: m.id.ID,
+		eventType:    EventPeriod,
 	}, time.Now().Add(time.Millisecond*500))
 }
 
