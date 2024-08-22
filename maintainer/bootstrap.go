@@ -54,8 +54,9 @@ type Bootstrapper struct {
 	newBootstrapMsg scheduler.NewBootstrapFn
 }
 
-func NewBootstrapper(newBootstrapMsg scheduler.NewBootstrapFn) *Bootstrapper {
+func NewBootstrapper(cfID string, newBootstrapMsg scheduler.NewBootstrapFn) *Bootstrapper {
 	return &Bootstrapper{
+		changefeedID:    cfID,
 		nodes:           make(map[common.NodeID]*NodeStatus),
 		bootstrapped:    false,
 		newBootstrapMsg: newBootstrapMsg,
@@ -69,7 +70,9 @@ func (b *Bootstrapper) HandleBootstrapResponse(
 	nodeID := common.NodeID(from)
 	node, ok := b.nodes[nodeID]
 	if !ok {
-		log.Warn("node is not found, ignore", zap.String("from", nodeID))
+		log.Warn("node is not found, ignore",
+			zap.String("changefeed", b.changefeedID),
+			zap.String("from", nodeID))
 		return nil
 	}
 	node.cachedBootstrapResp = msg
@@ -99,6 +102,7 @@ func (b *Bootstrapper) HandleNewNodes(nodes map[common.NodeID]*common.NodeInfo) 
 			// A new server.
 			b.nodes[info.ID] = NewNodeStatus(info)
 			log.Info("find a new server",
+				zap.String("changefeed", b.changefeedID),
 				zap.String("captureAddr", info.AdvertiseAddr),
 				zap.String("server", info.ID))
 			msgs = append(msgs, b.newBootstrapMsg(id))
@@ -114,10 +118,12 @@ func (b *Bootstrapper) HandleRemoveNodes(nodeIds []string) map[common.NodeID]*he
 		if ok {
 			delete(b.nodes, id)
 			log.Info("remove node from bootstrap",
+				zap.String("changefeed", b.changefeedID),
 				zap.Int("status", int(status.state)),
 				zap.String("id", id))
 		} else {
 			log.Info("node is node tracked by bootstrap",
+				zap.String("changefeed", b.changefeedID),
 				zap.String("id", id))
 		}
 	}

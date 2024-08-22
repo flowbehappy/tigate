@@ -40,19 +40,21 @@ type Scheduler struct {
 
 	nodeTasks map[string]utils.Map[*common.TableSpan, *scheduler.StateMachine]
 
+	changefeedID         string
 	batchSize            int
 	random               *rand.Rand
 	lastRebalanceTime    time.Time
 	checkBalanceInterval time.Duration
 }
 
-func NewScheduler(batchSize int, balanceInterval time.Duration) *Scheduler {
+func NewScheduler(changefeedID string,
+	batchSize int, balanceInterval time.Duration) *Scheduler {
 	return &Scheduler{
-		schedulingTask: utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine](),
-		working:        utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine](),
-		absent:         utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine](),
-
+		schedulingTask:       utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine](),
+		working:              utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine](),
+		absent:               utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine](),
 		nodeTasks:            make(map[string]utils.Map[*common.TableSpan, *scheduler.StateMachine]),
+		changefeedID:         changefeedID,
 		batchSize:            batchSize,
 		random:               rand.New(rand.NewSource(time.Now().UnixNano())),
 		checkBalanceInterval: balanceInterval,
@@ -63,17 +65,23 @@ func NewScheduler(batchSize int, balanceInterval time.Duration) *Scheduler {
 func (s *Scheduler) AddNewNode(id string) {
 	_, ok := s.nodeTasks[id]
 	if ok {
-		log.Info("node already exists", zap.String("id", id))
+		log.Info("node already exists",
+			zap.String("changeeed", s.changefeedID),
+			zap.String("node", id))
 		return
 	}
-	log.Info("add new node", zap.String("id", id))
+	log.Info("add new node",
+		zap.String("changeeed", s.changefeedID),
+		zap.String("node", id))
 	s.nodeTasks[id] = utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
 }
 
 func (s *Scheduler) RemoveNode(nodeId string) []*messaging.TargetMessage {
 	stmMap, ok := s.nodeTasks[nodeId]
 	if !ok {
-		log.Info("node is maintained by scheduler, ignore", zap.String("id", nodeId))
+		log.Info("node is maintained by scheduler, ignore",
+			zap.String("changeeed", s.changefeedID),
+			zap.String("node", nodeId))
 		return nil
 	}
 	var msgs []*messaging.TargetMessage
@@ -95,7 +103,7 @@ func (s *Scheduler) RemoveNode(nodeId string) []*messaging.TargetMessage {
 
 func (s *Scheduler) Schedule() ([]*messaging.TargetMessage, error) {
 	if len(s.nodeTasks) == 0 {
-		log.Warn("scheduler has no node tasks")
+		log.Warn("scheduler has no node tasks", zap.String("changeeed", s.changefeedID))
 		return nil, nil
 	}
 	if !s.NeedSchedule() {
@@ -212,6 +220,7 @@ func (s *Scheduler) balanceTables() ([]*messaging.TargetMessage, error) {
 		return nil, nil
 	}
 
+	movedSize := 0
 	// for each victim table, find the target for it
 	for idx, cf := range victims {
 		if idx >= s.batchSize {
@@ -232,7 +241,12 @@ func (s *Scheduler) balanceTables() ([]*messaging.TargetMessage, error) {
 		// update the task size priority queue
 		item.TaskSize++
 		priorityQueue.AddOrUpdate(item)
+		movedSize++
 	}
+	log.Info("blance done",
+		zap.String("changefeed", s.changefeedID),
+		zap.Int("movedSize", movedSize),
+		zap.Int("victims", len(victims)))
 	return messages, nil
 }
 
@@ -253,7 +267,9 @@ func (s *Scheduler) ResendMessage() []*messaging.TargetMessage {
 func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpanStatus) ([]*messaging.TargetMessage, error) {
 	stMap, ok := s.nodeTasks[from]
 	if !ok {
-		log.Warn("no server id found, ignore", zap.String("from", from))
+		log.Warn("no server id found, ignore",
+			zap.String("changeeed", s.changefeedID),
+			zap.String("from", from))
 		return nil, nil
 	}
 	var msgs = make([]*messaging.TargetMessage, 0)
@@ -262,6 +278,7 @@ func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpa
 		stm, ok := stMap.Get(span)
 		if !ok {
 			log.Warn("no statemachine id found, ignore",
+				zap.String("changeeed", s.changefeedID),
 				zap.String("from", from),
 				zap.String("span", span.String()))
 			continue
@@ -275,7 +292,9 @@ func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpa
 		}
 		msg, err := stm.HandleInferiorStatus(sch, from)
 		if err != nil {
-			log.Error("fail to handle inferior status", zap.String("span", span.String()))
+			log.Error("fail to handle inferior status",
+				zap.String("changeeed", s.changefeedID),
+				zap.String("span", span.String()))
 			return nil, errors.Trace(err)
 		}
 		msgs = append(msgs, msg)

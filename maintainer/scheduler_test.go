@@ -21,10 +21,11 @@ import (
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/stretchr/testify/require"
 	"testing"
+	"time"
 )
 
 func TestSchedule(t *testing.T) {
-	s := NewScheduler(9)
+	s := NewScheduler("test", 9, time.Minute)
 	s.nodeTasks["node1"] = utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
 	s.nodeTasks["node2"] = utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
 	s.nodeTasks["node3"] = utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()

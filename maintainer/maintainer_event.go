@@ -42,7 +42,7 @@ func (m *StreamHandler) Path(event *Event) string {
 }
 
 func (m *StreamHandler) Handle(event *Event, dest *Maintainer) (await bool) {
-	return dest.Handle(event)
+	return dest.HandleEvent(event)
 }
 
 type ScheduleEventTask func() (threadpool.TaskStatus, time.Time)

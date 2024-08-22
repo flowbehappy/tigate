@@ -112,7 +112,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		selfNode:        selfNode,
 		stream:          stream,
 		taskScheduler:   taskScheduler,
-		scheduler:       NewScheduler(1000, time.Minute),
+		scheduler:       NewScheduler(cfID.ID, 10000, time.Minute),
 		mc:              appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		state:           heartbeatpb.ComponentState_Working,
 		removed:         atomic.NewBool(false),
@@ -140,10 +140,134 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		runningTaskGauge:               metrics.RunningScheduleTaskGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		tableCountGauge:                metrics.TableGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 	}
-	m.bootstrapper = NewBootstrapper(m.getNewBootstrapFn())
+	m.bootstrapper = NewBootstrapper(m.id.ID, m.getNewBootstrapFn())
 	log.Info("maintainer is created", zap.String("id", cfID.String()))
 	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace, cfID.ID).Inc()
 	return m
+}
+
+func (m *Maintainer) HandleEvent(event *Event) (await bool) {
+	if m.state == heartbeatpb.ComponentState_Stopped {
+		log.Warn("maintainer is not stopped, ignore",
+			zap.String("changefeed", m.id.String()))
+		return false
+	}
+	// first check the online/offline nodes
+	if m.nodeChanged.Load() {
+		if err := m.onNodeChanged(); err != nil {
+			m.handleError(err)
+			return false
+		}
+		m.nodeChanged.Store(false)
+	}
+	switch event.eventType {
+	case EventInit:
+		// already initialized
+		if m.initialized {
+			return false
+		}
+		// async initialize the changefeed
+		//go func() {
+		err := m.initialize()
+		if err != nil {
+			m.handleError(err)
+		}
+		//m.stream.Wake() <- event.cfID
+		//log.Info("stream waked", zap.String("changefeed", m.id.String()))
+		//}()
+		return false
+	case EventMessage:
+		if err := m.onMessage(event.message); err != nil {
+			m.handleError(err)
+		}
+	case EventSchedule:
+		if err := m.onScheduleTableSpan(); err != nil {
+			m.handleError(err)
+		}
+	case EventRemove:
+		m.onRemoveMaintainer(m.cascadeRemoving)
+	case EventPeriod:
+		m.onPeriodTask()
+	}
+	return false
+}
+
+// Close cleanup resources
+func (m *Maintainer) Close() {
+	m.cleanupMetrics()
+	log.Info("changefeed maintainer closed",
+		zap.String("id", m.id.String()),
+		zap.Bool("removed", m.removed.Load()),
+		zap.Uint64("checkpointTs", m.watermark.CheckpointTs))
+}
+
+func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
+	// todo: fix data race here
+	m.errLock.Lock()
+	defer m.errLock.Unlock()
+	var runningErrors []*heartbeatpb.RunningError
+	if len(m.runningErrors) > 0 {
+		runningErrors = make([]*heartbeatpb.RunningError, 0, len(m.runningErrors))
+		for _, e := range m.runningErrors {
+			runningErrors = append(runningErrors, e)
+		}
+	}
+	var runningWarnings []*heartbeatpb.RunningError
+	if len(m.runningWarnings) > 0 {
+		runningWarnings = make([]*heartbeatpb.RunningError, 0, len(m.runningWarnings))
+		for _, e := range m.runningWarnings {
+			runningWarnings = append(runningWarnings, e)
+		}
+	}
+
+	status := &heartbeatpb.MaintainerStatus{
+		ChangefeedID: m.id.ID,
+		FeedState:    string(m.changefeedSate),
+		State:        m.state,
+		CheckpointTs: m.watermark.CheckpointTs,
+		Warning:      runningWarnings,
+		Err:          runningErrors,
+	}
+	m.runningWarnings = make(map[messaging.ServerId]*heartbeatpb.RunningError)
+	m.runningErrors = make(map[messaging.ServerId]*heartbeatpb.RunningError)
+	return status
+}
+
+func (m *Maintainer) initialize() error {
+	var err error
+	tableIDs, err := m.initTableIDs()
+	for _, id := range tableIDs {
+		span := spanz.TableIDToComparableSpan(id)
+		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+			TableID:  uint64(id),
+			StartKey: span.StartKey,
+			EndKey:   span.EndKey,
+		}}
+		replicaSet := NewReplicaSet(m.id, tableSpan, m.watermark.CheckpointTs).(*ReplicaSet)
+		stm, err := scheduler.NewStateMachine(tableSpan, nil, replicaSet)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		m.scheduler.absent.ReplaceOrInsert(tableSpan, stm)
+	}
+	log.Info("changefeed maintainer initialized",
+		zap.String("id", m.id.String()))
+	m.initialized = true
+	m.state = heartbeatpb.ComponentState_Working
+	m.statusChanged.Store(true)
+
+	// detect the capture changes
+	m.nodeManager.RegisterNodeChangeHandler("maintainer-"+m.id.ID, func(newNodes []*common.NodeInfo, removedNodes []*common.NodeInfo) {
+		m.nodeChanged.Store(true)
+	})
+	// send bootstrap message
+	m.sendMessages(m.bootstrapper.HandleNewNodes(m.nodeManager.GetAliveNodes()))
+	// setup period event
+	submitScheduledEvent(m.taskScheduler, m.stream, &Event{
+		cfID:      m.id.ID,
+		eventType: EventPeriod,
+	}, time.Now().Add(time.Millisecond*500))
+	return err
 }
 
 func (m *Maintainer) cleanupMetrics() {
@@ -215,7 +339,7 @@ func (m *Maintainer) onNodeChanged() error {
 		}
 	}
 	if m.bootstrapper.CheckAllNodeInitialized() {
-		return errors.Trace(m.scheduleTableSpan())
+		return errors.Trace(m.onScheduleTableSpan())
 	}
 	return nil
 }
@@ -276,7 +400,7 @@ func (m *Maintainer) sendMessages(msgs []*messaging.TargetMessage) {
 	}
 }
 
-func (m *Maintainer) scheduleTableSpan() error {
+func (m *Maintainer) onScheduleTableSpan() error {
 	if !m.bootstrapper.CheckAllNodeInitialized() {
 		log.Info("not all node initialized, skip schedule",
 			zap.String("changefeed", m.id.ID))
@@ -296,53 +420,6 @@ func (m *Maintainer) scheduleTableSpan() error {
 		}, time.Now().Add(100*time.Millisecond))
 	}
 	return nil
-}
-
-// Close cleanup resources
-func (m *Maintainer) Close() {
-	m.cleanupMetrics()
-	log.Info("changefeed maintainer closed",
-		zap.String("id", m.id.String()),
-		zap.Bool("removed", m.removed.Load()),
-		zap.Uint64("checkpointTs", m.watermark.CheckpointTs))
-}
-
-func (m *Maintainer) initialize() error {
-	var err error
-	tableIDs, err := m.initTableIDs()
-	for _, id := range tableIDs {
-		span := spanz.TableIDToComparableSpan(id)
-		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
-			TableID:  uint64(id),
-			StartKey: span.StartKey,
-			EndKey:   span.EndKey,
-		}}
-		replicaSet := NewReplicaSet(m.id, tableSpan, m.watermark.CheckpointTs).(*ReplicaSet)
-		stm, err := scheduler.NewStateMachine(tableSpan, nil, replicaSet)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		m.scheduler.absent.ReplaceOrInsert(tableSpan, stm)
-	}
-	log.Info("changefeed maintainer initialized",
-		zap.String("id", m.id.String()))
-	m.initialized = true
-	m.state = heartbeatpb.ComponentState_Working
-	m.statusChanged.Store(true)
-
-	// detect the capture changes
-	m.nodeManager.RegisterNodeChangeHandler("maintainer-"+m.id.ID, func(newNodes []*common.NodeInfo, removedNodes []*common.NodeInfo) {
-		m.nodeChanged.Store(true)
-		m.stream.In() <- &Event{cfID: m.id.ID, eventType: EventPeriod}
-	})
-	// send bootstrap message
-	m.sendMessages(m.bootstrapper.HandleNewNodes(m.nodeManager.GetAliveNodes()))
-	// setup period event
-	submitScheduledEvent(m.taskScheduler, m.stream, &Event{
-		cfID:      m.id.ID,
-		eventType: EventPeriod,
-	}, time.Now().Add(time.Millisecond*500))
-	return err
 }
 
 func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
@@ -428,7 +505,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.M
 			}
 		}
 	}
-	return errors.Trace(m.scheduleTableSpan())
+	return errors.Trace(m.onScheduleTableSpan())
 }
 
 // initTableIDs get tables ids base on the filter and checkpoint ts
@@ -498,84 +575,6 @@ func (m *Maintainer) sendMaintainerCloseRequestToAllNode() bool {
 	return len(msgs) == 0
 }
 
-func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
-	// todo: fix data race here
-	m.errLock.Lock()
-	defer m.errLock.Unlock()
-	var runningErrors []*heartbeatpb.RunningError
-	if len(m.runningErrors) > 0 {
-		runningErrors = make([]*heartbeatpb.RunningError, 0, len(m.runningErrors))
-		for _, e := range m.runningErrors {
-			runningErrors = append(runningErrors, e)
-		}
-	}
-	var runningWarnings []*heartbeatpb.RunningError
-	if len(m.runningWarnings) > 0 {
-		runningWarnings = make([]*heartbeatpb.RunningError, 0, len(m.runningWarnings))
-		for _, e := range m.runningWarnings {
-			runningWarnings = append(runningWarnings, e)
-		}
-	}
-
-	status := &heartbeatpb.MaintainerStatus{
-		ChangefeedID: m.id.ID,
-		FeedState:    string(m.changefeedSate),
-		State:        m.state,
-		CheckpointTs: m.watermark.CheckpointTs,
-		Warning:      runningWarnings,
-		Err:          runningErrors,
-	}
-	m.runningWarnings = make(map[messaging.ServerId]*heartbeatpb.RunningError)
-	m.runningErrors = make(map[messaging.ServerId]*heartbeatpb.RunningError)
-	return status
-}
-
-func (m *Maintainer) Handle(event *Event) (await bool) {
-	if m.state == heartbeatpb.ComponentState_Stopped {
-		log.Warn("maintainer is not stopped, ignore",
-			zap.String("changefeed", m.id.String()))
-		return false
-	}
-	// first check the online/offline nodes
-	if m.nodeChanged.Load() {
-		if err := m.onNodeChanged(); err != nil {
-			m.handleError(err)
-			return false
-		}
-		m.nodeChanged.Store(false)
-	}
-	switch event.eventType {
-	case EventInit:
-		// already initialized
-		if m.initialized {
-			return false
-		}
-		// async initialize the changefeed
-		//go func() {
-		err := m.initialize()
-		if err != nil {
-			m.handleError(err)
-		}
-		//m.stream.Wake() <- event.cfID
-		//log.Info("stream waked", zap.String("changefeed", m.id.String()))
-		//}()
-		return false
-	case EventMessage:
-		if err := m.onMessage(event.message); err != nil {
-			m.handleError(err)
-		}
-	case EventSchedule:
-		if err := m.scheduleTableSpan(); err != nil {
-			m.handleError(err)
-		}
-	case EventRemove:
-		m.onRemoveMaintainer(m.cascadeRemoving)
-	case EventPeriod:
-		m.handlePeriodTask()
-	}
-	return false
-}
-
 func (m *Maintainer) handleError(err error) {
 	log.Error("an error occurred in Owner",
 		zap.String("changefeed", m.id.ID), zap.Error(err))
@@ -633,7 +632,7 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 
 }
 
-func (m *Maintainer) handlePeriodTask() {
+func (m *Maintainer) onPeriodTask() {
 	m.printStatus()
 	m.handleResendMessage()
 	m.calCheckpointTs()
