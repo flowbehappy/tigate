@@ -197,7 +197,7 @@ func TestMaintainerSchedulePerf(t *testing.T) {
 	maintainer := NewMaintainer(cfID, &model.ChangeFeedInfo{
 		Config: config2.GetDefaultReplicaConfig(),
 	}, node, stream, taskScheduler, 10)
-	_ = stream.AddPath(dynstream.PathAndDest[string, *Maintainer]{
+	_ = stream.AddPaths(dynstream.PathAndDest[string, *Maintainer]{
 		Path: cfID.ID,
 		Dest: maintainer,
 	})
