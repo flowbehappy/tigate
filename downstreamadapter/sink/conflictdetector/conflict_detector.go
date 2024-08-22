@@ -96,13 +96,13 @@ func (d *ConflictDetector) runBackgroundTasks() {
 func (d *ConflictDetector) Add(txn *common.TxnEvent, tableProgress *types.TableProgress) {
 	hashes := ConflictKeys(txn)
 	node := d.slots.AllocNode(hashes)
-	txn.PostTxnFlushed = func() { // flush 的时候被调用 这个写法后面要想一下，感觉不是特别好
-		// After this transaction is executed, we can remove the node from the graph,
-		// and resolve related dependencies for these transacitons which depend on this
-		// executed transaction.
-		d.slots.Remove(node)
-		tableProgress.Remove(txn)
-	}
+	// txn.PostTxnFlushed = func() { // flush 的时候被调用 这个写法后面要想一下，感觉不是特别好
+	// 	// After this transaction is executed, we can remove the node from the graph,
+	// 	// and resolve related dependencies for these transacitons which depend on this
+	// 	// executed transaction.
+	// 	d.slots.Remove(node)
+	// 	tableProgress.Remove(txn)
+	// }
 	node.TrySendToTxnCache = func(cacheID int64) bool {
 		// Try sending this txn to related cache as soon as all dependencies are resolved.
 		return d.sendToCache(txn, cacheID)

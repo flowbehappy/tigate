@@ -57,9 +57,7 @@ func (p *TableProgress) Add(event *common.TxnEvent) {
 	p.elemMap[ts] = elem
 	p.maxCommitTs = event.CommitTs
 
-	event.PostTxnFlushed = func() {
-		p.Remove(event)
-	}
+	event.PostTxnFlushed = append(event.PostTxnFlushed, func() { p.Remove(event) })
 }
 
 // 而且删除可以认为是批量的？但要不要做成批量可以后面再看

@@ -29,20 +29,23 @@ enum Action {
 }
 
 message DispatcherAction {
-    TableSpan span = 1;
     Action action = 2;
     uint64 CommitTs = 3; // DDLCommitTs
 }
 
 message ACK {
+    uint64 CommitTs = 1; // DDLCommitTs
+}
+
+message DispatcherStatus {
     TableSpan span = 1;
-    uint64 CommitTs = 2; // DDLCommitTs
+    DispatcherAction action = 2;
+    ACK ack = 3;
 }
 
 message HeartBeatResponse {
-    repeated DispatcherAction actions = 1;
-    string changefeedID = 2;
-    repeated ACK acks = 3; // only return when received State info in heartbeat request
+    string changefeedID = 1;
+    repeated DispatcherStatus dispatcherStatuses = 2;
 }
 
 enum ScheduleAction {
