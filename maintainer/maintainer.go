@@ -112,7 +112,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		selfNode:        selfNode,
 		stream:          stream,
 		taskScheduler:   taskScheduler,
-		scheduler:       NewScheduler(1000),
+		scheduler:       NewScheduler(1000, time.Minute),
 		mc:              appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		state:           heartbeatpb.ComponentState_Working,
 		removed:         atomic.NewBool(false),
@@ -186,7 +186,6 @@ func (m *Maintainer) onRemoveMaintainer(cascade bool) {
 }
 
 func (m *Maintainer) onNodeChanged() error {
-	log.Info("maintainer node changed", zap.String("id", m.id.String()))
 	activeNodes := m.nodeManager.GetAliveNodes()
 	var newNodes = make(map[string]*common.NodeInfo)
 	for id, node := range activeNodes {
@@ -204,8 +203,8 @@ func (m *Maintainer) onNodeChanged() error {
 	}
 	log.Info("maintainer node changed",
 		zap.String("id", m.id.String()),
-		zap.Any("new", newNodes),
-		zap.Any("removed", removedNodes))
+		zap.Int("new", len(newNodes)),
+		zap.Int("removed", len(removedNodes)))
 	m.sendMessages(m.bootstrapper.HandleNewNodes(newNodes))
 	cachedResponse := m.bootstrapper.HandleRemoveNodes(removedNodes)
 	if cachedResponse != nil {
@@ -419,6 +418,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.M
 				span := stm.ID.(*common.TableSpan)
 				m.scheduler.working.ReplaceOrInsert(span, stm)
 				m.scheduler.absent.Delete(stm.ID.(*common.TableSpan))
+				m.scheduler.nodeTasks[stm.Primary].ReplaceOrInsert(span, stm)
 				if m.scheduler.schedulingTask.Has(span) {
 					log.Warn("span state not expected, remove from commiting",
 						zap.String("changefeed", m.id.ID),
@@ -451,6 +451,25 @@ func (m *Maintainer) onNodeClosed(from string, response *heartbeatpb.MaintainerC
 	}
 	// check if all nodes have sent response
 	m.onRemoveMaintainer(m.cascadeRemoving)
+}
+
+func (m *Maintainer) onBalance() {
+	msgs, err := m.scheduler.TryBalance()
+	if err != nil {
+		m.handleError(err)
+	}
+	m.sendMessages(msgs)
+}
+
+func (m *Maintainer) handleResendMessage() {
+	// resend scheduling message
+	m.sendMessages(m.scheduler.ResendMessage())
+	// resend bootstrap message
+	m.sendMessages(m.bootstrapper.ResendBootstrapMessage())
+	// resend closing message
+	if m.removing {
+		m.sendMaintainerCloseRequestToAllNode()
+	}
 }
 
 func (m *Maintainer) tryCloseChangefeed() bool {
@@ -616,15 +635,9 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 
 func (m *Maintainer) handlePeriodTask() {
 	m.printStatus()
-	// resend scheduling message
-	m.sendMessages(m.scheduler.ResendMessage())
-	// resend bootstrap message
-	m.sendMessages(m.bootstrapper.ResendBootstrapMessage())
-	// resend closing message
-	if m.removing {
-		m.sendMaintainerCloseRequestToAllNode()
-	}
+	m.handleResendMessage()
 	m.calCheckpointTs()
+	m.onBalance()
 	submitScheduledEvent(m.taskScheduler, m.stream, &Event{
 		cfID:      m.id.ID,
 		eventType: EventPeriod,
