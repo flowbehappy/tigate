@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/filter"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
@@ -54,9 +55,8 @@ One EventDispatcherManager can only have one Sink.
 type EventDispatcherManager struct {
 	dispatcherMap *DispatcherMap
 
-	heartbeatResponseQueue *HeartbeatResponseQueue
-	heartbeatRequestQueue  *HeartbeatRequestQueue
-	//heartBeatSendTask     *HeartBeatSendTask
+	heartbeatRequestQueue *HeartbeatRequestQueue
+
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
@@ -70,25 +70,56 @@ type EventDispatcherManager struct {
 
 	// tableSpanStatusesChan will fetch the tableSpan status that need to contains in the heartbeat info.
 	tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus
+	filter                filter.Filter
+
+	closing bool
+	closed  atomic.Bool
+
+	heartBeatTask *HeartBeatTask
 
 	tableEventDispatcherCount      prometheus.Gauge
-	filter                         filter.Filter
 	metricCreateDispatcherDuration prometheus.Observer
 	metricCheckpointTs             prometheus.Gauge
 	metricCheckpointTsLag          prometheus.Gauge
 	metricResolveTs                prometheus.Gauge
 	metricResolvedTsLag            prometheus.Gauge
+}
+type HeartBeatTask struct {
+	taskHandle             *threadpool.TaskHandle
+	eventDispatcherManager *EventDispatcherManager
+	counter                int
+}
 
-	closing bool
-	closed  atomic.Bool
+func newHeartBeatTask(eventDispatcherManager *EventDispatcherManager) *HeartBeatTask {
+	taskScheduler := appcontext.GetService[*threadpool.TaskScheduler](appcontext.HeartBeatTaskScheduler)
+	t := &HeartBeatTask{
+		eventDispatcherManager: eventDispatcherManager,
+		counter:                0,
+	}
+	t.taskHandle = taskScheduler.Submit(t, threadpool.CPUTask, time.Now().Add(time.Second*1))
+	return t
+}
+
+func (t *HeartBeatTask) Execute() (threadpool.TaskStatus, time.Time) {
+	if t.eventDispatcherManager.closed.Load() {
+		return threadpool.Done, time.Time{}
+	}
+	t.counter = (t.counter + 1) % 10
+	needCompleteStatus := t.counter == 0
+	message := t.eventDispatcherManager.CollectHeartbeatInfo(needCompleteStatus)
+	t.eventDispatcherManager.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: t.eventDispatcherManager.GetMaintainerID(), Request: message})
+	return threadpool.CPUTask, time.Now().Add(time.Second * 1)
+}
+
+func (t *HeartBeatTask) Cancel() {
+	t.taskHandle.Cancel()
 }
 
 func NewEventDispatcherManager(changefeedID model.ChangeFeedID, changefeedConfig *config.ChangefeedConfig, maintainerID messaging.ServerId, createTableTriggerEventDispatcher bool) *EventDispatcherManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	eventDispatcherManager := &EventDispatcherManager{
-		dispatcherMap:          newDispatcherMap(),
-		changefeedID:           changefeedID,
-		heartbeatResponseQueue: NewHeartbeatResponseQueue(),
+		dispatcherMap: newDispatcherMap(),
+		changefeedID:  changefeedID,
 		//enableSyncPoint:       false,
 		maintainerID:                   maintainerID,
 		tableSpanStatusesChan:          make(chan *heartbeatpb.TableSpanStatus, 10000),
@@ -120,45 +151,9 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, changefeedConfig
 
 	// TODO: 这些后续需要等有第一个 table 来的时候再初始化, 对于纯空的 event dispatcher manager 不要直接创建为好
 
-	eventDispatcherManager.wg.Add(1)
-	// collect heartbeat info every 1s
-	go func(ctx context.Context, e *EventDispatcherManager) {
-		defer e.wg.Done()
-		counter := 0
-		ticker := time.NewTicker(time.Second * 1)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				counter = (counter + 1) % 10
-				needCompleteStatus := counter == 0
-				message := e.CollectHeartbeatInfo(needCompleteStatus)
-				e.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: eventDispatcherManager.GetMaintainerID(), Request: message})
-			}
-		}
-	}(ctx, eventDispatcherManager)
+	eventDispatcherManager.heartBeatTask = newHeartBeatTask(eventDispatcherManager)
 
 	eventDispatcherManager.InitSink()
-
-	// get heartbeat response from HeartBeatResponseQueue, and send to each dispatcher
-	eventDispatcherManager.wg.Add(1)
-	go func() {
-		defer eventDispatcherManager.wg.Done()
-		for {
-			heartbeatResponse := eventDispatcherManager.GetHeartbeatResponseQueue().Dequeue()
-			dispatcherActions := heartbeatResponse.Actions
-			for _, dispatcherAction := range dispatcherActions {
-				tableSpan := dispatcherAction.Span
-				dispatcher, ok := eventDispatcherManager.dispatcherMap.Get(&common.TableSpan{TableSpan: tableSpan})
-				if !ok {
-					log.Error("dispatcher not found", zap.Any("tableSpan", tableSpan))
-					continue
-				}
-				dispatcher.GetDDLActions() <- dispatcherAction
-			}
-		}
-	}()
 
 	eventDispatcherManager.wg.Add(1)
 	go eventDispatcherManager.CollectHeartbeatInfoWhenStatesChanged(ctx)
@@ -207,6 +202,8 @@ func (e *EventDispatcherManager) close() {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
+
+	e.heartBeatTask.Cancel()
 
 	e.sink.Close()
 	metrics.CreateDispatcherDuration.DeleteLabelValues(e.changefeedID.Namespace, e.changefeedID.ID)
@@ -439,10 +436,6 @@ func (e *EventDispatcherManager) GetChangeFeedID() model.ChangeFeedID {
 	return e.changefeedID
 }
 
-func (e *EventDispatcherManager) GetHeartbeatResponseQueue() *HeartbeatResponseQueue {
-	return e.heartbeatResponseQueue
-}
-
 func (e *EventDispatcherManager) GetHeartbeatRequestQueue() *HeartbeatRequestQueue {
 	return e.heartbeatRequestQueue
 }
@@ -459,6 +452,7 @@ func (e *EventDispatcherManager) SetMaintainerID(maintainerID messaging.ServerId
 	e.maintainerID = maintainerID
 }
 
+// TODO:use sync.Map
 type DispatcherMap struct {
 	dispatcherCacheForRead []*dispatcher.Dispatcher
 	mutex                  sync.Mutex

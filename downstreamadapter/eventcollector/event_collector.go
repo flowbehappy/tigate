@@ -24,6 +24,7 @@ import (
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/chann"
 	"github.com/prometheus/client_golang/prometheus"
@@ -70,6 +71,8 @@ type EventCollector struct {
 	globalMemoryQuota int64
 	wg                sync.WaitGroup
 
+	dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *dispatcher.Dispatcher]
+
 	registerMessageChan                          *chann.DrainableChann[RegisterInfo] // for temp
 	metricDispatcherReceivedKVEventCount         prometheus.Counter
 	metricDispatcherReceivedResolvedTsEventCount prometheus.Counter
@@ -79,11 +82,12 @@ type EventCollector struct {
 
 func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *EventCollector {
 	eventCollector := EventCollector{
-		serverId:                             serverId,
-		globalMemoryQuota:                    globalMemoryQuota,
-		dispatcherMap:                        &DispatcherMap{},
-		registerMessageChan:                  chann.NewAutoDrainChann[RegisterInfo](),
-		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
+		serverId:                                     serverId,
+		globalMemoryQuota:                            globalMemoryQuota,
+		dispatcherMap:                                &DispatcherMap{},
+		dispatcherEventsDynamicStream:                appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *dispatcher.Dispatcher]](appcontext.DispatcherEventsDynamicStream),
+		registerMessageChan:                          chann.NewAutoDrainChann[RegisterInfo](),
+		metricDispatcherReceivedKVEventCount:         metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
 		metricReceiveEventLagDuration:                metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("Msg"),
 		metricResolvedTsLag:                          metrics.EventCollectorResolvedTsLagGauge,
@@ -164,15 +168,6 @@ func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
 }
 
 func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.TargetMessage) error {
-	/*
-		if dispatcher.GetGlobalMemoryUsage().UsedBytes > c.globalMemoryQuota {
-			// 卡一段时间,怎么拍啊？
-			log.Info("downstream adapter is out of memory, waiting for 30 seconds")
-			time.Sleep(30 * time.Second)
-			continue
-		}
-	*/
-
 	inflightDuration := time.Since(time.Unix(0, msg.CrateAt)).Milliseconds()
 	c.metricReceiveEventLagDuration.Observe(float64(inflightDuration))
 	for _, msg := range msg.Message {
@@ -180,60 +175,13 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 		if !ok {
 			log.Panic("invalid event feed message", zap.Any("msg", msg))
 		}
-		dispatcherID := txnEvent.DispatcherID
-		if dispatcherItem, ok := c.dispatcherMap.Get(dispatcherID); ok {
-			// check whether need to update speed ratio
-			//ok, ratio := dispatcherItem.GetMemoryUsage().UpdatedSpeedRatio(eventResponse.Ratio)
-			// if ok {
-			// 	request := eventpb.EventRequest{
-			// 		DispatcherId: dispatcherId,
-			// 		TableSpan:    dispatcherItem.GetTableSpan(),
-			// 		Ratio:        ratio,
-			// 		Remove:       false,
-			// 	}
-			// 	// 这个开销大么，在这里等合适么？看看要不要拆一下
-			// 	err := client.Send(&request)
-			// 	if err != nil {
-			// 		//
-			// 	}
-			// }
-
-			// if dispatcherId == dispatcher.TableTriggerEventDispatcherId {
-			// 	for _, event := range eventResponse.Events {
-			// 		dispatcherItem.GetMemoryUsage().Add(event.CommitTs(), event.MemoryCost())
-			// 		dispatcherItem.GetEventChan() <- event // 换成一个函数
-			// 	}
-			// 	dispatcherItem.UpdateResolvedTs(eventResponse.ResolvedTs) // todo:枷锁
-			// 	continue
-			// }
-			//for _, txnEvent := range eventFeeds.TxnEvents {
-			// TODO: message 改过以后重写，先串起来。
-			if txnEvent.IsDMLEvent() || txnEvent.IsDDLEvent() {
-				dispatcherItem.PushTxnEvent(txnEvent)
-				c.metricDispatcherReceivedKVEventCount.Inc()
-			} else {
-				dispatcherItem.UpdateResolvedTs(txnEvent.ResolvedTs)
-				c.metricDispatcherReceivedResolvedTsEventCount.Inc()
-			}
-
-			// dispatcherItem.UpdateResolvedTs(eventFeeds.ResolvedTs)
-			/*
-				syncPointInfo := dispatcherItem.GetSyncPointInfo()
-				// 在这里加 sync point？ 这个性能会有明显影响么,这个要测过
-				if syncPointInfo.EnableSyncPoint && event.CommitTs() > syncPointInfo.NextSyncPointTs {
-					dispatcherItem.GetEventChan() <- Event{} //构造 Sync Point Event
-					syncPointInfo.NextSyncPointTs = oracle.GoTimeToTS(
-						oracle.GetTimeFromTS(syncPointInfo.NextSyncPointTs).
-							Add(syncPointInfo.SyncPointInterval))
-				}
-			*/
-
-			// // deal with event
-			// dispatcherItem.GetMemoryUsage().Add(event.CommitTs(), event.MemoryCost())
-			// dispatcherItem.GetEventChan() <- event // 换成一个函数
-			//}
-
+		if txnEvent.IsDMLEvent() || txnEvent.IsDDLEvent() {
+			c.metricDispatcherReceivedKVEventCount.Inc()
+		} else {
+			c.metricDispatcherReceivedResolvedTsEventCount.Inc()
 		}
+
+		c.dispatcherEventsDynamicStream.In() <- txnEvent
 	}
 	return nil
 }

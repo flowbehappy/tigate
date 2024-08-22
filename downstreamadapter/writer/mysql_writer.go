@@ -64,8 +64,8 @@ func (w *MysqlWriter) FlushDDLEvent(event *common.TxnEvent) error {
 		return err
 	}
 
-	if event.PostTxnFlushed != nil {
-		event.PostTxnFlushed()
+	for _, callback := range event.PostTxnFlushed {
+		callback()
 	}
 	return nil
 
@@ -188,8 +188,8 @@ func (w *MysqlWriter) Flush(events []*common.TxnEvent, workerNum int) error {
 	}
 
 	for _, event := range events {
-		if event.PostTxnFlushed != nil {
-			event.PostTxnFlushed()
+		for _, callback := range event.PostTxnFlushed {
+			callback()
 		}
 	}
 	return nil
