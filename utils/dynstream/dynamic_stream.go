@@ -179,7 +179,7 @@ func (d *dynamicStreamImpl[P, T, D]) Close() {
 	d.schdDone.Wait()
 }
 
-func (d *dynamicStreamImpl[P, T, D]) AddPath(paths ...PathAndDest[P, D]) error {
+func (d *dynamicStreamImpl[P, T, D]) AddPaths(paths ...PathAndDest[P, D]) error {
 	if d.hasClosed.Load() {
 		return NewAppErrorS(ErrorTypeClosed)
 	}
@@ -194,7 +194,11 @@ func (d *dynamicStreamImpl[P, T, D]) AddPath(paths ...PathAndDest[P, D]) error {
 	return add.error
 }
 
-func (d *dynamicStreamImpl[P, T, D]) RemovePath(paths ...P) []error {
+func (d *dynamicStreamImpl[P, T, D]) AddPath(path P, dest D) error {
+	return d.AddPaths(PathAndDest[P, D]{Path: path, Dest: dest})
+}
+
+func (d *dynamicStreamImpl[P, T, D]) RemovePaths(paths ...P) []error {
 	remove := &removePathCmd[P]{paths: paths}
 	cmd := &cmd{
 		cmdType: typeRemovePath,

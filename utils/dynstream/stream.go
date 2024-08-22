@@ -45,8 +45,8 @@ type pathInfo[P Path, T Event, D Dest] struct {
 
 	stream *stream[P, T, D]
 	// This field is used to mark the path as removed, so that the handle goroutine can ignore it.
-	// Note that we should not need to use a atomic.Value here, because this field is set by the RemovePath method,
-	// and we use sync.WaitGroup to wait for finish. So if RemovePath is called in the handle goroutine, it should be
+	// Note that we should not need to use a atomic.Bool here, because this field is set by the RemovePaths method,
+	// and we use sync.WaitGroup to wait for finish. So if RemovePaths is called in the handle goroutine, it should be
 	// guaranteed to see the memory change of this field.
 	removed bool
 
