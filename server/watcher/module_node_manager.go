@@ -24,12 +24,11 @@ import (
 	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
 	"go.etcd.io/etcd/client/v3/concurrency"
-	"go.uber.org/zap"
 )
 
 const NodeManagerName = "node-manager"
 
-type NodeChangeHandler func(newNodes []*common.NodeInfo, removedNodes []*common.NodeInfo)
+type NodeChangeHandler func(map[common.NodeID]*common.NodeInfo)
 
 // NodeManager manager the read view of all captures, other modules can get the captures information from it
 // and register server update event handler
@@ -70,37 +69,33 @@ func (c *NodeManager) Tick(
 ) (orchestrator.ReactorState, error) {
 	state := raw.(*orchestrator.GlobalReactorState)
 	// find changes
-	removed := make([]*common.NodeInfo, 0)
-	newNodes := make([]*common.NodeInfo, 0)
+	changed := false
 	allNodes := make(map[common.NodeID]*common.NodeInfo, len(state.Captures))
 
 	for _, node := range c.nodes {
 		if _, exist := state.Captures[node.ID]; !exist {
-			removed = append(removed, node)
+			changed = true
 		}
 	}
 
 	for _, capture := range state.Captures {
 		if _, exist := c.nodes[capture.ID]; !exist {
-			node := common.CaptureInfoToNodeInfo(capture)
-			newNodes = append(newNodes, node)
+			changed = true
 		}
 		allNodes[capture.ID] = common.CaptureInfoToNodeInfo(capture)
 	}
 
-	if len(removed) != 0 || len(newNodes) != 0 {
-		log.Info("server change detected", zap.Any("removed", removed),
-			zap.Any("new", newNodes))
+	if changed {
+		log.Info("server change detected")
+		// handle node change event
+		c.nodeChangeHandlers.RLock()
+		defer c.nodeChangeHandlers.RUnlock()
+		for _, handler := range c.nodeChangeHandlers.m {
+			handler(allNodes)
+		}
 	}
 
 	c.nodes = allNodes
-
-	// handle node change event
-	c.nodeChangeHandlers.RLock()
-	defer c.nodeChangeHandlers.RUnlock()
-	for _, handler := range c.nodeChangeHandlers.m {
-		handler(newNodes, removed)
-	}
 	return state, nil
 }
 

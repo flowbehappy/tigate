@@ -167,7 +167,7 @@ func (c *serverImpl) Run(stdCtx context.Context) error {
 	for _, sub := range c.subModules {
 		func(m common.SubModule) {
 			g.Go(func() error {
-				log.Info("starting sub watcher", zap.String("watcher", m.Name()))
+				log.Info("starting sub module", zap.String("module", m.Name()))
 				return m.Run(stdCtx)
 			})
 		}(sub)
