@@ -442,16 +442,6 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 	if req.Watermark != nil {
 		m.checkpointTsByCapture[model.CaptureID(msg.From)] = *req.Watermark
 	}
-
-	var status []scheduler.InferiorStatus
-	for _, info := range req.Statuses {
-		status = append(status, &ReplicaSetStatus{
-			ID: &common.TableSpan{
-				TableSpan: info.Span,
-			},
-			State: info.ComponentStatus,
-		})
-	}
 	msgs, err := m.scheduler.HandleStatus(msg.From.String(), req.Statuses)
 	if err != nil {
 		log.Error("handle status failed, ignore",
@@ -460,14 +450,16 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 		return errors.Trace(err)
 	}
 	m.sendMessages(msgs)
-	m.errLock.Lock()
 	if req.Warning != nil {
+		m.errLock.Lock()
 		m.runningWarnings[msg.From] = req.Warning
+		m.errLock.Unlock()
 	}
 	if req.Err != nil {
+		m.errLock.Unlock()
 		m.runningErrors[msg.From] = req.Err
+		m.errLock.Unlock()
 	}
-	m.errLock.Unlock()
 	return nil
 }
 
