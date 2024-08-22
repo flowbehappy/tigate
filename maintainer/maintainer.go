@@ -105,7 +105,6 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	stream dynstream.DynamicStream[string, *Event, *Maintainer],
 	taskScheduler *threadpool.TaskScheduler,
 	checkpointTs uint64,
-	pdEndpoints []string,
 ) *Maintainer {
 	m := &Maintainer{
 		id:              cfID,
@@ -127,7 +126,6 @@ func NewMaintainer(cfID model.ChangeFeedID,
 			ResolvedTs:   checkpointTs,
 		},
 		checkpointTsByCapture: make(map[model.CaptureID]heartbeatpb.Watermark),
-		pdEndpoints:           pdEndpoints,
 		runningErrors:         map[messaging.ServerId]*heartbeatpb.RunningError{},
 		runningWarnings:       map[messaging.ServerId]*heartbeatpb.RunningError{},
 
@@ -147,6 +145,16 @@ func NewMaintainer(cfID model.ChangeFeedID,
 }
 
 func (m *Maintainer) HandleEvent(event *Event) (await bool) {
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start)
+		if duration > time.Millisecond*100 {
+			log.Info("maintainer is too slow",
+				zap.String("id", m.id.String()),
+				zap.Int("type", event.eventType),
+				zap.Duration("duration", duration))
+		}
+	}()
 	if m.state == heartbeatpb.ComponentState_Stopped {
 		log.Warn("maintainer is not stopped, ignore",
 			zap.String("changefeed", m.id.String()))
@@ -643,7 +651,7 @@ func (m *Maintainer) onPeriodTask() {
 }
 
 func (m *Maintainer) printStatus() {
-	if time.Since(m.lastPrintStatusTime) > time.Second*60 {
+	if time.Since(m.lastPrintStatusTime) > time.Second*20 {
 		tableStates := make(map[scheduler.SchedulerStatus]int)
 		total := m.scheduler.TaskSize()
 		tableStates[scheduler.SchedulerStatusWorking] = m.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusWorking)

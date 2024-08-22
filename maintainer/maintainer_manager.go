@@ -202,7 +202,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 			if err != nil {
 				log.Panic("decode changefeed fail", zap.Error(err))
 			}
-			cf = NewMaintainer(cfID, cfConfig, m.selfNode, m.stream, m.taskScheduler, req.CheckpointTs, m.pdEndpoints)
+			cf = NewMaintainer(cfID, cfConfig, m.selfNode, m.stream, m.taskScheduler, req.CheckpointTs)
 			err = m.stream.AddPath(dynstream.PathAndDest[string, *Maintainer]{
 				Path: cfID.ID,
 				Dest: cf.(*Maintainer),

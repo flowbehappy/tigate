@@ -164,7 +164,6 @@ func (s *Scheduler) Schedule() ([]*messaging.TargetMessage, error) {
 	var err error
 	s.absent.Ascend(func(key *common.TableSpan, value *scheduler.StateMachine) bool {
 		item, _ := priorityQueue.PeekTop()
-		s.absent.Delete(key)
 		msg, err1 := value.HandleAddInferior(item.Node)
 		if err1 != nil {
 			err = errors.Trace(err1)
