@@ -29,6 +29,7 @@ import (
 	"time"
 )
 
+// Scheduler schedules tables
 type Scheduler struct {
 	// absent track all table spans that need to be scheduled
 	// when dispatcher reported a new table or remove a table, this field should be updated
@@ -64,6 +65,26 @@ func NewScheduler(changefeedID string,
 
 func (s *Scheduler) AddNewTask(stm *scheduler.StateMachine) {
 	s.absent.ReplaceOrInsert(stm.ID.(*common.TableSpan), stm)
+}
+
+// AddWorkingTask adds a working state task to this scheduler directly,
+// it reported by the bootstrap response
+func (s *Scheduler) AddWorkingTask(stm *scheduler.StateMachine) {
+	if stm.State != scheduler.SchedulerStatusWorking {
+		log.Panic("unexpected state",
+			zap.String("changefeed", s.changefeedID),
+			zap.Any("stm", stm))
+	}
+	span := stm.ID.(*common.TableSpan)
+	s.working.ReplaceOrInsert(span, stm)
+	s.absent.Delete(stm.ID.(*common.TableSpan))
+	s.nodeTasks[stm.Primary].ReplaceOrInsert(span, stm)
+	if s.schedulingTask.Has(span) {
+		log.Warn("span state not expected, remove from commiting",
+			zap.String("changefeed", s.changefeedID),
+			zap.String("span", span.String()))
+		s.schedulingTask.Delete(stm.ID.(*common.TableSpan))
+	}
 }
 
 func (s *Scheduler) RemoveTask(stm *scheduler.StateMachine) (*messaging.TargetMessage, error) {
@@ -124,6 +145,11 @@ func (s *Scheduler) Schedule() ([]*messaging.TargetMessage, error) {
 	if !s.NeedSchedule() {
 		return nil, nil
 	}
+	totalSize := s.batchSize - s.schedulingTask.Len()
+	if totalSize <= 0 {
+		// too many running tasks, skip schedule
+		return nil, nil
+	}
 	priorityQueue := heap.NewHeap[*Item]()
 	for key, m := range s.nodeTasks {
 		priorityQueue.AddOrUpdate(&Item{
@@ -153,7 +179,7 @@ func (s *Scheduler) Schedule() ([]*messaging.TargetMessage, error) {
 		item.TaskSize++
 		priorityQueue.AddOrUpdate(item)
 		taskSize++
-		return taskSize < s.batchSize
+		return taskSize < totalSize
 	})
 	for _, key := range scheduled {
 		s.absent.Delete(key)
@@ -163,6 +189,10 @@ func (s *Scheduler) Schedule() ([]*messaging.TargetMessage, error) {
 
 func (s *Scheduler) NeedSchedule() bool {
 	return s.absent.Len() > 0
+}
+
+func (s *Scheduler) ScheduleFinished() bool {
+	return s.absent.Len() == 0 && s.schedulingTask.Len() == 0
 }
 
 func (s *Scheduler) TryBalance() ([]*messaging.TargetMessage, error) {
@@ -318,6 +348,37 @@ func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpa
 	return msgs, nil
 }
 
+func (s *Scheduler) TaskSize() int {
+	return s.schedulingTask.Len() + s.working.Len() + s.absent.Len()
+}
+
+func (s *Scheduler) GetTaskSizeByState(state scheduler.SchedulerStatus) int {
+	size := 0
+	switch state {
+	case scheduler.SchedulerStatusAbsent:
+		size = s.absent.Len()
+	case scheduler.SchedulerStatusWorking:
+		size = s.working.Len()
+	case scheduler.SchedulerStatusCommiting, scheduler.SchedulerStatusRemoving:
+		s.schedulingTask.Ascend(func(key *common.TableSpan, value *scheduler.StateMachine) bool {
+			if state == value.State {
+				size++
+			}
+			return true
+		})
+	}
+	return size
+}
+
+func (s *Scheduler) GetTaskSizeByNodeID(nodeID string) int {
+	sm, ok := s.nodeTasks[nodeID]
+	if ok {
+		return sm.Len()
+	}
+	return 0
+}
+
+// tryMoveTask moves the StateMachine to the right map and modified the node map if changed
 func (s *Scheduler) tryMoveTask(span *common.TableSpan,
 	stm *scheduler.StateMachine,
 	oldSate scheduler.SchedulerStatus,

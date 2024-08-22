@@ -162,20 +162,7 @@ func (m *Maintainer) HandleEvent(event *Event) (await bool) {
 	}
 	switch event.eventType {
 	case EventInit:
-		// already initialized
-		if m.initialized {
-			return false
-		}
-		// async initialize the changefeed
-		go func() {
-			err := m.initialize()
-			if err != nil {
-				m.handleError(err)
-			}
-			m.stream.Wake() <- event.changefeedID
-			log.Info("stream waked", zap.String("changefeed", m.id.String()))
-		}()
-		return true
+		return m.onInit()
 	case EventMessage:
 		if err := m.onMessage(event.message); err != nil {
 			m.handleError(err)
@@ -279,6 +266,23 @@ func (m *Maintainer) cleanupMetrics() {
 	metrics.TableGauge.DeleteLabelValues(m.id.Namespace, m.id.ID)
 }
 
+func (m *Maintainer) onInit() bool {
+	// already initialized
+	if m.initialized {
+		return false
+	}
+	// async initialize the changefeed
+	go func() {
+		err := m.initialize()
+		if err != nil {
+			m.handleError(err)
+		}
+		m.stream.Wake() <- m.id.ID
+		log.Info("stream waked", zap.String("changefeed", m.id.String()))
+	}()
+	return true
+}
+
 func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
 	switch msg.Type {
 	case messaging.TypeHeartBeatRequest:
@@ -313,13 +317,13 @@ func (m *Maintainer) onNodeChanged() error {
 	activeNodes := m.nodeManager.GetAliveNodes()
 	var newNodes = make(map[string]*common.NodeInfo)
 	for id, node := range activeNodes {
-		if _, ok := m.bootstrapper.nodes[id]; !ok {
+		if _, ok := m.bootstrapper.GetAllNodes()[id]; !ok {
 			newNodes[id] = node
 			m.scheduler.AddNewNode(id)
 		}
 	}
 	var removedNodes []string
-	for id, _ := range m.bootstrapper.nodes {
+	for id, _ := range m.bootstrapper.GetAllNodes() {
 		if _, ok := activeNodes[id]; !ok {
 			removedNodes = append(removedNodes, id)
 			m.sendMessages(m.scheduler.RemoveNode(id))
@@ -347,15 +351,14 @@ func (m *Maintainer) onNodeChanged() error {
 func (m *Maintainer) calCheckpointTs() {
 	m.updateMetrics()
 	if time.Since(m.lastCheckpointTsTime) < 2*time.Second ||
-		m.scheduler.schedulingTask.Len() != 0 ||
-		m.scheduler.absent.Len() != 0 {
+		!m.scheduler.ScheduleFinished() {
 		return
 	}
 	m.lastCheckpointTsTime = time.Now()
 
 	newWatermark := heartbeatpb.NewMaxWatermark()
-	for id, tasks := range m.scheduler.nodeTasks {
-		if tasks.Len() > 0 {
+	for id, _ := range m.bootstrapper.GetAllNodes() {
+		if m.scheduler.GetTaskSizeByNodeID(id) > 0 {
 			if _, ok := m.checkpointTsByCapture[id]; !ok {
 				log.Debug("checkpointTs can not be advanced, since missing capture heartbeat",
 					zap.String("changefeed", m.id.ID),
@@ -489,18 +492,15 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.M
 				return errors.Trace(err)
 			}
 
-			//working on remote
-			if stm.State != scheduler.SchedulerStatusAbsent {
-				span := stm.ID.(*common.TableSpan)
-				m.scheduler.working.ReplaceOrInsert(span, stm)
-				m.scheduler.absent.Delete(stm.ID.(*common.TableSpan))
-				m.scheduler.nodeTasks[stm.Primary].ReplaceOrInsert(span, stm)
-				if m.scheduler.schedulingTask.Has(span) {
-					log.Warn("span state not expected, remove from commiting",
-						zap.String("changefeed", m.id.ID),
-						zap.String("span", span.String()))
-					m.scheduler.schedulingTask.Delete(stm.ID.(*common.TableSpan))
-				}
+			//working on remote, the state must be absent or working since it's reported by remote
+			if stm.State == scheduler.SchedulerStatusAbsent {
+				m.scheduler.AddNewTask(stm)
+			} else if stm.State == scheduler.SchedulerStatusWorking {
+				m.scheduler.AddWorkingTask(stm)
+			} else {
+				log.Panic("unexpected state",
+					zap.String("id", m.id.ID),
+					zap.Any("state", stm.State))
 			}
 		}
 	}
@@ -645,39 +645,31 @@ func (m *Maintainer) onPeriodTask() {
 func (m *Maintainer) printStatus() {
 	if time.Since(m.lastPrintStatusTime) > time.Second*60 {
 		tableStates := make(map[scheduler.SchedulerStatus]int)
-		for i := 0; i <= 3; i++ {
-			tableStates[scheduler.SchedulerStatus(i)] = 0
-		}
-		total := m.scheduler.absent.Len() + m.scheduler.schedulingTask.Len() + m.scheduler.working.Len()
-		tableStates[scheduler.SchedulerStatusWorking] = m.scheduler.working.Len()
-		tableStates[scheduler.SchedulerStatusAbsent] = m.scheduler.absent.Len()
-		m.scheduler.schedulingTask.Ascend(func(key *common.TableSpan, value *scheduler.StateMachine) bool {
-			if _, ok := tableStates[value.State]; !ok {
-				tableStates[value.State] = 0
-			}
-			tableStates[value.State]++
-			return true
-		})
+		total := m.scheduler.TaskSize()
+		tableStates[scheduler.SchedulerStatusWorking] = m.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusWorking)
+		tableStates[scheduler.SchedulerStatusAbsent] = m.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusAbsent)
+		tableStates[scheduler.SchedulerStatusCommiting] = m.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusCommiting)
+		tableStates[scheduler.SchedulerStatusRemoving] = m.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusRemoving)
 
 		m.tableCountGauge.Set(float64(total))
-		m.scheduledTaskGauge.Set(float64(total - m.scheduler.absent.Len()))
+		m.scheduledTaskGauge.Set(float64(total - tableStates[scheduler.SchedulerStatusAbsent]))
 		for state, count := range tableStates {
 			metrics.TableStateGauge.WithLabelValues(m.id.Namespace, m.id.ID, state.String()).Set(float64(count))
 		}
 
 		var taskDistribution string
-		for nodeID, sm := range m.scheduler.nodeTasks {
-			taskDistribution = fmt.Sprintf("%s, %s=%d", taskDistribution, nodeID, sm.Len())
+		for nodeID, _ := range m.bootstrapper.GetAllNodes() {
+			taskDistribution = fmt.Sprintf("%s, %s=%d",
+				taskDistribution, nodeID, m.scheduler.GetTaskSizeByNodeID(nodeID))
 		}
 		log.Info("table span status",
 			zap.String("distribution", taskDistribution),
 			zap.String("changefeed", m.id.ID),
 			zap.Int("total", total),
 			zap.Int("absent", tableStates[scheduler.SchedulerStatusAbsent]),
-			zap.Int("commit", tableStates[scheduler.SchedulerStatusCommiting]),
+			zap.Int("commiting", tableStates[scheduler.SchedulerStatusCommiting]),
 			zap.Int("working", tableStates[scheduler.SchedulerStatusWorking]),
-			zap.Int("removing", tableStates[scheduler.SchedulerStatusRemoving]),
-			zap.Int("schedulingTask", m.scheduler.schedulingTask.Len()))
+			zap.Int("removing", tableStates[scheduler.SchedulerStatusRemoving]))
 		m.lastPrintStatusTime = time.Now()
 	}
 }

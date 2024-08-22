@@ -23,37 +23,21 @@ import (
 	"time"
 )
 
-type NodeState int
-
-const (
-	// NodeStateUninitialized means the server status is unknown,
-	// no heartbeat response received yet.
-	NodeStateUninitialized NodeState = 1
-	// NodeStateInitialized means scheduler has received heartbeat response.
-	NodeStateInitialized NodeState = 2
-)
-
-func NewNodeStatus(node *common.NodeInfo) *NodeStatus {
-	return &NodeStatus{
-		state: NodeStateUninitialized,
-		node:  node,
-	}
-}
-
-type NodeStatus struct {
-	state               NodeState
-	node                *common.NodeInfo
-	cachedBootstrapResp *heartbeatpb.MaintainerBootstrapResponse
-	lastBootstrapTime   time.Time
-}
-
+// Bootstrapper handle the logic of the maintainer startup
+// when a maintainer is started, it must wait of node to reported their managed dispatchers
+// only all dispatcher has reported its status, maintainer can schedule tables
+// maintainer collects all working dispatchers and
 type Bootstrapper struct {
-	changefeedID    string
+	// changefeedID is the log identifier
+	changefeedID string
+	// bootstrap identify is the bootstrapper is already bootstrapped
+	bootstrapped bool
+
 	nodes           map[common.NodeID]*NodeStatus
-	bootstrapped    bool
 	newBootstrapMsg scheduler.NewBootstrapFn
 }
 
+// NewBootstrapper create a new bootstrap for a changefeed maintainer
 func NewBootstrapper(cfID string, newBootstrapMsg scheduler.NewBootstrapFn) *Bootstrapper {
 	return &Bootstrapper{
 		changefeedID:    cfID,
@@ -80,21 +64,7 @@ func (b *Bootstrapper) HandleBootstrapResponse(
 	return b.fistBootstrap()
 }
 
-func (b *Bootstrapper) fistBootstrap() map[common.NodeID]*heartbeatpb.MaintainerBootstrapResponse {
-	// first bootstrapped time, return the cached resp and clear it
-	if !b.bootstrapped && b.checkAllCaptureInitialized() {
-		b.bootstrapped = true
-		allCachedResp := make(map[common.NodeID]*heartbeatpb.MaintainerBootstrapResponse, len(b.nodes))
-		for _, node := range b.nodes {
-			allCachedResp[node.node.ID] = node.cachedBootstrapResp
-			// clear the cached data
-			node.cachedBootstrapResp = nil
-		}
-		return allCachedResp
-	}
-	return nil
-}
-
+// HandleNewNodes add node to bootstrapper and return rpc messages that need to be sent to remote node
 func (b *Bootstrapper) HandleNewNodes(nodes map[common.NodeID]*common.NodeInfo) []*messaging.TargetMessage {
 	msgs := make([]*messaging.TargetMessage, 0, len(nodes))
 	for id, info := range nodes {
@@ -112,6 +82,9 @@ func (b *Bootstrapper) HandleNewNodes(nodes map[common.NodeID]*common.NodeInfo) 
 	return msgs
 }
 
+// HandleRemoveNodes remove node from bootstrapper,
+// finished bootstrap if all node are initialized after these node removed
+// return cached bootstrap
 func (b *Bootstrapper) HandleRemoveNodes(nodeIds []string) map[common.NodeID]*heartbeatpb.MaintainerBootstrapResponse {
 	for _, id := range nodeIds {
 		status, ok := b.nodes[id]
@@ -130,6 +103,7 @@ func (b *Bootstrapper) HandleRemoveNodes(nodeIds []string) map[common.NodeID]*he
 	return b.fistBootstrap()
 }
 
+// ResendBootstrapMessage return rpc message that need to be resent
 func (b *Bootstrapper) ResendBootstrapMessage() []*messaging.TargetMessage {
 	var msgs []*messaging.TargetMessage
 	if !b.CheckAllNodeInitialized() {
@@ -144,12 +118,18 @@ func (b *Bootstrapper) ResendBootstrapMessage() []*messaging.TargetMessage {
 	return msgs
 }
 
+// GetAllNodes return all nodes the tracked by bootstrapper, the returned value must not be modified
+func (b *Bootstrapper) GetAllNodes() map[common.NodeID]*NodeStatus {
+	return b.nodes
+}
+
 // CheckAllNodeInitialized check if all server is initialized.
-// returns true when all server reports the bootstrap response
+// returns true when all server reports the bootstrap response and bootstrapped
 func (b *Bootstrapper) CheckAllNodeInitialized() bool {
 	return b.bootstrapped && b.checkAllCaptureInitialized()
 }
 
+// return true if all node reports the bootstrap response
 func (b *Bootstrapper) checkAllCaptureInitialized() bool {
 	for _, captureStatus := range b.nodes {
 		// CaptureStateStopping is also considered initialized, because when
@@ -160,4 +140,48 @@ func (b *Bootstrapper) checkAllCaptureInitialized() bool {
 		}
 	}
 	return len(b.nodes) != 0
+}
+
+// fistBootstrap check if bootstrapper is initialized first time,
+// return nil is not bootstrapped or already bootstrapped before
+// return cached heartbeatpb.MaintainerBootstrapResponse map if it's not bootstrapped before
+// bootstrapper only return once
+func (b *Bootstrapper) fistBootstrap() map[common.NodeID]*heartbeatpb.MaintainerBootstrapResponse {
+	// first bootstrapped time, return the cached resp and clear it
+	if !b.bootstrapped && b.checkAllCaptureInitialized() {
+		b.bootstrapped = true
+		allCachedResp := make(map[common.NodeID]*heartbeatpb.MaintainerBootstrapResponse, len(b.nodes))
+		for _, node := range b.nodes {
+			allCachedResp[node.node.ID] = node.cachedBootstrapResp
+			// clear the cached data
+			node.cachedBootstrapResp = nil
+		}
+		return allCachedResp
+	}
+	return nil
+}
+
+type NodeState int
+
+const (
+	// NodeStateUninitialized means the server status is unknown,
+	// no bootstrap response received yet.
+	NodeStateUninitialized NodeState = 1
+	// NodeStateInitialized means scheduler has received bootstrap response.
+	NodeStateInitialized NodeState = 2
+)
+
+func NewNodeStatus(node *common.NodeInfo) *NodeStatus {
+	return &NodeStatus{
+		state: NodeStateUninitialized,
+		node:  node,
+	}
+}
+
+// NodeStatus identify the node the need be bootstrapped
+type NodeStatus struct {
+	state               NodeState
+	node                *common.NodeInfo
+	cachedBootstrapResp *heartbeatpb.MaintainerBootstrapResponse
+	lastBootstrapTime   time.Time
 }
