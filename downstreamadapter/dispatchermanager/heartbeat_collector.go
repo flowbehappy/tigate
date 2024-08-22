@@ -60,12 +60,12 @@ func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 
 func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherManager) error {
 	m.SetHeartbeatRequestQueue(c.requestQueue)
-	err := c.heartBeatResponseDynamicStream.AddOnePath(m.changefeedID, m)
+	err := c.heartBeatResponseDynamicStream.AddPath(m.changefeedID, m)
 	if err != nil {
 		log.Error("heartBeatResponseDynamicStream Failed to add path", zap.Any("ChangefeedID", m.changefeedID))
 		return err
 	}
-	err = c.schedulerDispatcherRequestDynamicStream.AddOnePath(m.changefeedID, m)
+	err = c.schedulerDispatcherRequestDynamicStream.AddPath(m.changefeedID, m)
 	if err != nil {
 		log.Error("schedulerDispatcherRequestDynamicStream Failed to add path", zap.Any("ChangefeedID", m.changefeedID))
 		return err

@@ -104,13 +104,13 @@ func NewDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, 
 
 	dispatcherEventsDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
 
-	err := dispatcherEventsDynamicStream.AddOnePath(dispatcher.id, dispatcher)
+	err := dispatcherEventsDynamicStream.AddPath(dispatcher.id, dispatcher)
 	if err != nil {
 		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
 	}
 
 	dispatcherStatusDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithDispatcherID, *Dispatcher]](appcontext.DispatcherStatusDynamicStream)
-	err = dispatcherStatusDynamicStream.AddOnePath(dispatcher.id, dispatcher)
+	err = dispatcherStatusDynamicStream.AddPath(dispatcher.id, dispatcher)
 	if err != nil {
 		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
 	}
@@ -230,7 +230,7 @@ func (d *Dispatcher) Remove() {
 	d.isRemoving.Store(true)
 
 	dispatcherEventDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
-	errs := dispatcherEventDynamicStream.RemovePath(d.id)
+	errs := dispatcherEventDynamicStream.RemovePaths(d.id)
 
 	for _, err := range errs {
 		if err != nil {
@@ -239,7 +239,7 @@ func (d *Dispatcher) Remove() {
 	}
 
 	dispatcherStatusDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *heartbeatpb.TableSpanStatus, *Dispatcher]](appcontext.DispatcherStatusDynamicStream)
-	errs = dispatcherStatusDynamicStream.RemovePath(d.id)
+	errs = dispatcherStatusDynamicStream.RemovePaths(d.id)
 	for _, err := range errs {
 		if err != nil {
 			log.Error("remove dispatcher from dynamic stream failed", zap.Error(err))

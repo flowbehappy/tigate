@@ -43,7 +43,7 @@ func prepareDynamicStream(pathCount int, eventCount int, times int) (DynamicStre
 	ds.Start()
 
 	for i := 0; i < pathCount; i++ {
-		ds.AddPath(PathAndDest[int, D]{Path: i, Dest: D{}})
+		ds.AddPaths(PathAndDest[int, D]{Path: i, Dest: D{}})
 	}
 
 	return ds, inc, wg
