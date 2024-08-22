@@ -16,11 +16,6 @@ import (
 // TODO: 想一想这个到底要哪些
 //
 //msgp:ignore DDLEvent
-type DDLEvent struct {
-	Job *model.Job `json:"ddl_job"`
-	// commitTS of the rawKV
-	CommitTS Ts `json:"commit_ts"`
-}
 
 // TxnEvent represents all events in the current txn
 // It could be a DDL event, or multiple DML events, but can't be both.
