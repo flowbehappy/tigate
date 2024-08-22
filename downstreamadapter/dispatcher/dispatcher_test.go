@@ -23,7 +23,10 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/filter"
+	"github.com/flowbehappy/tigate/utils/dynstream"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -36,8 +39,29 @@ func newTestMockDB(t *testing.T) (db *sql.DB, mock sqlmock.Sqlmock) {
 	return
 }
 
+func setup() {
+	dispatcherEventsDynamicStream := dynstream.NewDynamicStreamDefault(&DispatcherEventsHandler{})
+	appcontext.SetService(appcontext.DispatcherEventsDynamicStream, dispatcherEventsDynamicStream)
+	dispatcherEventsDynamicStream.Start()
+
+	dispatcherStatusDynamicStream := dynstream.NewDynamicStreamDefault(&DispatcherStatusHandler{})
+	appcontext.SetService(appcontext.DispatcherStatusDynamicStream, dispatcherStatusDynamicStream)
+	dispatcherStatusDynamicStream.Start()
+
+	appcontext.SetService(appcontext.DispatcherTaskScheduler, threadpool.NewTaskSchedulerDefault(appcontext.DispatcherTaskScheduler))
+
+}
+
+func teardown() {
+	appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream).Close()
+	appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithDispatcherID, *Dispatcher]](appcontext.DispatcherStatusDynamicStream).Close()
+	appcontext.GetService[*threadpool.TaskScheduler](appcontext.DispatcherTaskScheduler).Stop()
+}
+
 // BasicDispatcher with normal dml cases
 func TestBasicDispatcher(t *testing.T) {
+	setup()
+	defer teardown()
 	db, mock := newTestMockDB(t)
 	defer db.Close()
 
@@ -50,7 +74,9 @@ func TestBasicDispatcher(t *testing.T) {
 
 	dispatcher := NewDispatcher(tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter)
 
-	dispatcher.PushTxnEvent(&common.TxnEvent{
+	dispatcherEventsDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
+
+	dispatcherEventsDynamicStream.In() <- &common.TxnEvent{
 		StartTs:  100,
 		CommitTs: 101,
 		Rows: []*common.RowChangedEvent{
@@ -67,9 +93,10 @@ func TestBasicDispatcher(t *testing.T) {
 				},
 			},
 		},
-	})
+		DispatcherID: dispatcher.id,
+	}
 
-	dispatcher.PushTxnEvent(&common.TxnEvent{
+	dispatcherEventsDynamicStream.In() <- &common.TxnEvent{
 		StartTs:  102,
 		CommitTs: 105,
 		Rows: []*common.RowChangedEvent{
@@ -90,13 +117,13 @@ func TestBasicDispatcher(t *testing.T) {
 				},
 			},
 		},
-	})
-	dispatcher.UpdateResolvedTs(110)
+		DispatcherID: dispatcher.id,
+	}
+	dispatcherEventsDynamicStream.In() <- &common.TxnEvent{ResolvedTs: 110, DispatcherID: dispatcher.id}
 
 	heartBeatInfo := &HeartBeatInfo{}
 	dispatcher.CollectDispatcherHeartBeatInfo(heartBeatInfo)
 	require.Equal(t, uint64(100), heartBeatInfo.CheckpointTs)
-	//require.NotEqual(t, 0, tableEventDispatcher.GetMemoryUsage().GetUsedBytes())
 
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO `test_schema`.`test_table` (`id`,`name`) VALUES (?,?);UPDATE `test`.`users` SET `id` = ?, `name` = ? WHERE `id` = ? LIMIT 1").
@@ -111,10 +138,11 @@ func TestBasicDispatcher(t *testing.T) {
 
 	dispatcher.CollectDispatcherHeartBeatInfo(heartBeatInfo)
 	require.Equal(t, uint64(110), heartBeatInfo.CheckpointTs)
-	//require.Equal(t, 0, tableEventDispatcher.GetMemoryUsage().GetUsedBytes())
 }
 
 func TestDispatcherWithSingleTableDDL(t *testing.T) {
+	setup()
+	defer teardown()
 	db, mock := newTestMockDB(t)
 	defer db.Close()
 
@@ -134,7 +162,9 @@ func TestDispatcherWithSingleTableDDL(t *testing.T) {
 
 	dispatcher := NewDispatcher(tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter)
 
-	dispatcher.PushTxnEvent(&common.TxnEvent{
+	dispatcherEventsDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
+
+	dispatcherEventsDynamicStream.In() <- &common.TxnEvent{
 		StartTs:  102,
 		CommitTs: 102,
 		DDLEvent: &common.DDLEvent{
@@ -146,7 +176,8 @@ func TestDispatcherWithSingleTableDDL(t *testing.T) {
 			},
 			CommitTS: 102,
 		},
-	})
+		DispatcherID: dispatcher.id,
+	}
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -154,9 +185,9 @@ func TestDispatcherWithSingleTableDDL(t *testing.T) {
 	dispatcher.CollectDispatcherHeartBeatInfo(heartBeatInfo)
 	require.Equal(t, uint64(101), heartBeatInfo.CheckpointTs)
 
-	dispatcher.UpdateResolvedTs(110)
+	dispatcherEventsDynamicStream.In() <- &common.TxnEvent{ResolvedTs: 110, DispatcherID: dispatcher.id}
 
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(1 * time.Second)
 	dispatcher.CollectDispatcherHeartBeatInfo(heartBeatInfo)
 	require.Equal(t, uint64(110), heartBeatInfo.CheckpointTs)
 
@@ -165,6 +196,8 @@ func TestDispatcherWithSingleTableDDL(t *testing.T) {
 }
 
 func TestDispatcherWithCrossTableDDL(t *testing.T) {
+	setup()
+	defer teardown()
 	db, mock := newTestMockDB(t)
 	defer db.Close()
 
@@ -184,7 +217,10 @@ func TestDispatcherWithCrossTableDDL(t *testing.T) {
 
 	dispatcher := NewDispatcher(tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter)
 
-	dispatcher.PushTxnEvent(&common.TxnEvent{
+	dispatcherEventsDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
+	dispatcherStatusDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithDispatcherID, *Dispatcher]](appcontext.DispatcherStatusDynamicStream)
+
+	dispatcherEventsDynamicStream.In() <- &common.TxnEvent{
 		StartTs:  102,
 		CommitTs: 102,
 		DDLEvent: &common.DDLEvent{
@@ -196,7 +232,8 @@ func TestDispatcherWithCrossTableDDL(t *testing.T) {
 			},
 			CommitTS: 102,
 		},
-	})
+		DispatcherID: dispatcher.id,
+	}
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -205,10 +242,13 @@ func TestDispatcherWithCrossTableDDL(t *testing.T) {
 
 	require.NotEqual(t, dispatcher.ddlPendingEvent, nil)
 
-	// mock maintainer 给 dispatcher 发 通知消息
-	dispatcher.GetACKs() <- &heartbeatpb.ACK{CommitTs: 102}
-
-	dispatcher.GetDDLActions() <- &heartbeatpb.DispatcherAction{Action: heartbeatpb.Action_Write, CommitTs: 102}
+	dispatcherStatusDynamicStream.In() <- DispatcherStatusWithDispatcherID{
+		dispatcherID: dispatcher.id,
+		dispatcherStatus: &heartbeatpb.DispatcherStatus{
+			Ack:    &heartbeatpb.ACK{CommitTs: 102},
+			Action: &heartbeatpb.DispatcherAction{Action: heartbeatpb.Action_Write, CommitTs: 102},
+		},
+	}
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -218,10 +258,11 @@ func TestDispatcherWithCrossTableDDL(t *testing.T) {
 	heartBeatInfo := &HeartBeatInfo{}
 	dispatcher.CollectDispatcherHeartBeatInfo(heartBeatInfo)
 	require.Equal(t, uint64(101), heartBeatInfo.CheckpointTs)
-
 }
 
 func TestDispatcherWithCrossTableDDLAndDML(t *testing.T) {
+	setup()
+	defer teardown()
 	db, mock := newTestMockDB(t)
 	defer db.Close()
 
@@ -247,7 +288,10 @@ func TestDispatcherWithCrossTableDDLAndDML(t *testing.T) {
 
 	dispatcher := NewDispatcher(tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter)
 
-	dispatcher.PushTxnEvent(&common.TxnEvent{
+	dispatcherEventsDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
+	dispatcherStatusDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithDispatcherID, *Dispatcher]](appcontext.DispatcherStatusDynamicStream)
+
+	dispatcherEventsDynamicStream.In() <- &common.TxnEvent{
 		StartTs:  102,
 		CommitTs: 102,
 		DDLEvent: &common.DDLEvent{
@@ -259,9 +303,10 @@ func TestDispatcherWithCrossTableDDLAndDML(t *testing.T) {
 			},
 			CommitTS: 102,
 		},
-	})
+		DispatcherID: dispatcher.id,
+	}
 
-	dispatcher.PushTxnEvent(&common.TxnEvent{
+	dispatcherEventsDynamicStream.In() <- &common.TxnEvent{
 		StartTs:  102,
 		CommitTs: 105,
 		Rows: []*common.RowChangedEvent{
@@ -282,7 +327,8 @@ func TestDispatcherWithCrossTableDDLAndDML(t *testing.T) {
 				},
 			},
 		},
-	})
+		DispatcherID: dispatcher.id,
+	}
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -294,10 +340,13 @@ func TestDispatcherWithCrossTableDDLAndDML(t *testing.T) {
 	dispatcher.CollectDispatcherHeartBeatInfo(heartBeatInfo)
 	require.Equal(t, uint64(100), heartBeatInfo.CheckpointTs)
 
-	// mock maintainer 给 dispatcher 发 通知消息
-	dispatcher.GetACKs() <- &heartbeatpb.ACK{CommitTs: 102}
-
-	dispatcher.GetDDLActions() <- &heartbeatpb.DispatcherAction{Action: heartbeatpb.Action_Write, CommitTs: 102}
+	dispatcherStatusDynamicStream.In() <- DispatcherStatusWithDispatcherID{
+		dispatcherID: dispatcher.id,
+		dispatcherStatus: &heartbeatpb.DispatcherStatus{
+			Ack:    &heartbeatpb.ACK{CommitTs: 102},
+			Action: &heartbeatpb.DispatcherAction{Action: heartbeatpb.Action_Write, CommitTs: 102},
+		},
+	}
 
 	time.Sleep(30 * time.Millisecond)
 
@@ -306,5 +355,4 @@ func TestDispatcherWithCrossTableDDLAndDML(t *testing.T) {
 
 	dispatcher.CollectDispatcherHeartBeatInfo(heartBeatInfo)
 	require.Equal(t, uint64(104), heartBeatInfo.CheckpointTs)
-
 }

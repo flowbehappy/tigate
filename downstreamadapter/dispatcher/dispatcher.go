@@ -62,7 +62,6 @@ The workflow related to the dispatcher is as follows:
 
 type Dispatcher struct {
 	id        common.DispatcherID
-	eventCh   chan *common.TxnEvent // 转换成一个函数
 	tableSpan *common.TableSpan
 	sink      sink.Sink
 
@@ -76,7 +75,7 @@ type Dispatcher struct {
 
 	filter filter.Filter
 
-	resolvedTs *TsWithMutex // 用来记 eventChan 中目前收到的 event 中收到的最大的 commitTs - 1,不代表 dispatcher 的 checkpointTs
+	resolvedTs *TsWithMutex // 用来记 中目前收到的 event 中收到的最大的 commitTs - 1,不代表 dispatcher 的 checkpointTs
 
 	ddlPendingEvent *common.TxnEvent
 	isRemoving      atomic.Bool
@@ -90,7 +89,6 @@ type Dispatcher struct {
 func NewDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, tableSpanStatusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter) *Dispatcher {
 	dispatcher := &Dispatcher{
 		id:                    common.NewDispatcherID(),
-		eventCh:               make(chan *common.TxnEvent, 16),
 		tableSpan:             tableSpan,
 		sink:                  sink,
 		tableSpanStatusesChan: tableSpanStatusesChan,
@@ -104,9 +102,9 @@ func NewDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, 
 		tableProgress:   types.NewTableProgress(),
 	}
 
-	dispatcherEventDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
+	dispatcherEventsDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
 
-	err := dispatcherEventDynamicStream.AddPath(dynstream.PathAndDest[common.DispatcherID, *Dispatcher]{Path: dispatcher.id, Dest: dispatcher})
+	err := dispatcherEventsDynamicStream.AddPath(dynstream.PathAndDest[common.DispatcherID, *Dispatcher]{Path: dispatcher.id, Dest: dispatcher})
 	if err != nil {
 		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
 	}
@@ -180,10 +178,6 @@ func (d *Dispatcher) GetTableSpan() *common.TableSpan {
 	return d.tableSpan
 }
 
-func (d *Dispatcher) GetEventChan() chan *common.TxnEvent {
-	return d.eventCh
-}
-
 func (d *Dispatcher) GetResolvedTs() uint64 {
 	return d.resolvedTs.Get()
 }
@@ -199,10 +193,6 @@ func (d *Dispatcher) GetCheckpointTs() uint64 {
 		return max(checkpointTs, d.GetResolvedTs())
 	}
 	return checkpointTs
-}
-
-func (d *Dispatcher) UpdateResolvedTs(ts uint64) {
-	d.GetEventChan() <- &common.TxnEvent{ResolvedTs: ts}
 }
 
 func (d *Dispatcher) GetId() common.DispatcherID {
@@ -233,10 +223,6 @@ func (d *Dispatcher) SetResendTask(task *ResendTask) {
 // func (d *Dispatcher) GetMemoryUsage() *MemoryUsage {
 // 	return d.MemoryUsage
 // }
-
-func (d *Dispatcher) PushTxnEvent(event *common.TxnEvent) {
-	d.GetEventChan() <- event
-}
 
 func (d *Dispatcher) Remove() {
 	// TODO: 修改这个 dispatcher 的 status 为 removing
