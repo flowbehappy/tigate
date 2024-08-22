@@ -34,12 +34,12 @@ const (
 	resolveLockTickInterval time.Duration = 2 * time.Second
 )
 
-type tableProgress struct {
-	client *SharedClient
+type spanProgress struct {
+	client *SubscriptionClient
 
 	span heartbeatpb.TableSpan
 
-	subID SubscriptionID
+	subID subscriptionID
 
 	initialized       atomic.Bool
 	resolvedTsUpdated atomic.Int64
@@ -54,7 +54,7 @@ type tableProgress struct {
 	}
 }
 
-func (p *tableProgress) resolveLock(currentTime time.Time) {
+func (p *spanProgress) resolveLock(currentTime time.Time) {
 	resolvedTsUpdated := time.Unix(p.resolvedTsUpdated.Load(), 0)
 	if !p.initialized.Load() || time.Since(resolvedTsUpdated) < resolveLockFence {
 		return
@@ -70,7 +70,7 @@ func (p *tableProgress) resolveLock(currentTime time.Time) {
 }
 
 type LogPuller struct {
-	client  *SharedClient
+	client  *SubscriptionClient
 	pdClock pdutil.Clock
 	consume func(context.Context, *common.RawKVEntry, heartbeatpb.TableSpan) error
 
@@ -78,14 +78,14 @@ type LogPuller struct {
 	inputChSelector func(span heartbeatpb.TableSpan, workerCount int) int
 
 	// inputChs is used to collect events from client.
-	inputChs []chan MultiplexingEvent
+	inputChs []chan LogEvent
 
 	subscriptions struct {
 		sync.RWMutex
-		// subscriptionID -> tableProgress
-		tableProgressMap map[SubscriptionID]*tableProgress
+		// subscriptionID -> spanProgress
+		spanProgressMap map[subscriptionID]*spanProgress
 		// span -> subscription
-		subscriptionMap *common.SpanHashMap[SubscriptionID]
+		subscriptionMap *common.SpanHashMap[subscriptionID]
 	}
 }
 
@@ -97,7 +97,7 @@ type LogPullerConfig struct {
 }
 
 func NewLogPuller(
-	client *SharedClient,
+	client *SubscriptionClient,
 	pdClock pdutil.Clock,
 	consume func(context.Context, *common.RawKVEntry, heartbeatpb.TableSpan) error,
 	config *LogPullerConfig,
@@ -108,12 +108,12 @@ func NewLogPuller(
 		consume:         consume,
 		inputChSelector: config.HashSpanFunc,
 	}
-	puller.subscriptions.tableProgressMap = make(map[SubscriptionID]*tableProgress)
-	puller.subscriptions.subscriptionMap = common.NewSpanHashMap[SubscriptionID]()
+	puller.subscriptions.spanProgressMap = make(map[subscriptionID]*spanProgress)
+	puller.subscriptions.subscriptionMap = common.NewSpanHashMap[subscriptionID]()
 
-	puller.inputChs = make([]chan MultiplexingEvent, 0, config.WorkerCount)
+	puller.inputChs = make([]chan LogEvent, 0, config.WorkerCount)
 	for i := 0; i < config.WorkerCount; i++ {
-		puller.inputChs = append(puller.inputChs, make(chan MultiplexingEvent, 1024))
+		puller.inputChs = append(puller.inputChs, make(chan LogEvent, 1024))
 	}
 	return puller
 }
@@ -152,9 +152,9 @@ func (p *LogPuller) Subscribe(
 		log.Panic("redundant subscription", zap.String("span", span.String()))
 	}
 
-	subID := p.client.AllocSubscriptionID()
+	subID := p.client.AllocsubscriptionID()
 
-	progress := &tableProgress{
+	progress := &spanProgress{
 		span:  span,
 		subID: subID,
 	}
@@ -172,7 +172,7 @@ func (p *LogPuller) Subscribe(
 		return nil
 	}
 
-	p.subscriptions.tableProgressMap[subID] = progress
+	p.subscriptions.spanProgressMap[subID] = progress
 	p.subscriptions.subscriptionMap.ReplaceOrInsert(span, subID)
 
 	slot := p.inputChSelector(span, len(p.inputChs))
@@ -185,33 +185,34 @@ func (p *LogPuller) Unsubscribe(span heartbeatpb.TableSpan) {
 
 	subID, ok := p.subscriptions.subscriptionMap.Get(span)
 	if !ok {
-		log.Panic("unexist unsubscription", zap.String("span", span.String()))
+		log.Warn("unexist unsubscription", zap.String("span", span.String()))
+		return
 	}
-	progress := p.subscriptions.tableProgressMap[subID]
+	progress := p.subscriptions.spanProgressMap[subID]
 
 	progress.consume.Lock()
 	progress.consume.removed = true
 	progress.consume.Unlock()
 	p.client.Unsubscribe(progress.subID)
-	delete(p.subscriptions.tableProgressMap, progress.subID)
+	delete(p.subscriptions.spanProgressMap, progress.subID)
 	p.subscriptions.subscriptionMap.Delete(span)
 }
 
-func (p *LogPuller) runEventHandler(ctx context.Context, inputCh <-chan MultiplexingEvent) error {
+func (p *LogPuller) runEventHandler(ctx context.Context, inputCh <-chan LogEvent) error {
 	for {
-		var e MultiplexingEvent
+		var e LogEvent
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case e = <-inputCh:
 		}
 
-		progress := p.getProgress(e.SubscriptionID)
+		progress := p.getProgress(e.subscriptionID)
 		// There is a chance that some stale events are received after
 		// the subscription is removed. We can just ignore them.
 		if progress == nil {
 			log.Info("meet stale event",
-				zap.Any("subscriptionID", e.SubscriptionID))
+				zap.Any("subscriptionID", e.subscriptionID))
 			continue
 		}
 
@@ -227,17 +228,17 @@ func (p *LogPuller) runEventHandler(ctx context.Context, inputCh <-chan Multiple
 	}
 }
 
-func (p *LogPuller) getProgress(subID SubscriptionID) *tableProgress {
+func (p *LogPuller) getProgress(subID subscriptionID) *spanProgress {
 	p.subscriptions.RLock()
 	defer p.subscriptions.RUnlock()
-	return p.subscriptions.tableProgressMap[subID]
+	return p.subscriptions.spanProgressMap[subID]
 }
 
-func (p *LogPuller) getAllProgresses() map[*tableProgress]struct{} {
+func (p *LogPuller) getAllProgresses() map[*spanProgress]struct{} {
 	p.subscriptions.RLock()
 	defer p.subscriptions.RUnlock()
-	hashset := make(map[*tableProgress]struct{}, len(p.subscriptions.tableProgressMap))
-	for _, value := range p.subscriptions.tableProgressMap {
+	hashset := make(map[*spanProgress]struct{}, len(p.subscriptions.spanProgressMap))
+	for _, value := range p.subscriptions.spanProgressMap {
 		hashset[value] = struct{}{}
 	}
 	return hashset

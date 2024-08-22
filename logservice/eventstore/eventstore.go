@@ -13,6 +13,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
+	"github.com/flowbehappy/tigate/logservice/txnutil"
 	"github.com/flowbehappy/tigate/mounter"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
@@ -103,7 +104,7 @@ type eventStore struct {
 }
 
 const dataDir = "event_store"
-const dbCount = 64
+const dbCount = 32
 
 func NewEventStore(
 	ctx context.Context,
@@ -114,20 +115,18 @@ func NewEventStore(
 	kvStorage kv.Storage,
 	schemaStore schemastore.SchemaStore,
 ) EventStore {
-	grpcPool := logpuller.NewConnAndClientPool(
-		&security.Credential{},
-	)
-	clientConfig := &logpuller.SharedClientConfig{
-		KVClientWorkerConcurrent:     32,
-		KVClientGrpcStreamConcurrent: 32,
-		KVClientAdvanceIntervalInMs:  300,
+	clientConfig := &logpuller.SubscriptionClientConfig{
+		RegionRequestWorkerPerStore:   2,
+		ChangeEventProcessorNum:       32,
+		AdvanceResolvedTsIntervalInMs: 300,
 	}
-	client := logpuller.NewSharedClient(
+	client := logpuller.NewSubscriptionClient(
 		clientConfig,
 		pdCli,
-		grpcPool,
 		regionCache,
 		pdClock,
+		txnutil.NewLockerResolver(kvStorage.(tikv.Storage)),
+		&security.Credential{},
 	)
 
 	dbPath := fmt.Sprintf("%s/%s", root, dataDir)
@@ -180,55 +179,6 @@ func NewEventStore(
 	}
 	puller := logpuller.NewLogPuller(client, pdClock, consume, pullerConfig)
 	store.puller = puller
-
-	// conf := cdcConfig.GetGlobalServerConfig()
-
-	// conf.KVClient.WorkerConcurrent = uint(len(dbs))
-	// conf.KVClient.GrpcStreamConcurrent = 64
-	// grpcPool := sharedconn.NewConnAndClientPool(&security.Credential{}, cdckv.GetGlobalGrpcMetrics())
-	// client := cdckv.NewSharedClient(
-	// 	model.ChangeFeedID{},
-	// 	conf,
-	// 	false,
-	// 	pdCli,
-	// 	grpcPool,
-	// 	regionCache,
-	// 	pdClock,
-	// 	cdcTxnutil.NewLockerResolver(kvStorage.(tikv.Storage), model.ChangeFeedID{}),
-	// )
-
-	// consume := func(ctx context.Context, raw *model.RawKVEntry, spans []tablepb.Span, _ model.ShouldSplitKVEntry) error {
-	// 	if len(spans) > 1 {
-	// 		log.Panic("DML puller subscribes multiple spans")
-	// 	}
-	// 	span := heartbeatpb.TableSpan{
-	// 		TableID:  uint64(spans[0].TableID),
-	// 		StartKey: spans[0].StartKey,
-	// 		EndKey:   spans[0].EndKey,
-	// 	}
-	// 	if raw != nil {
-	// 		rawKV := &common.RawKVEntry{
-	// 			OpType:   common.OpType(raw.OpType),
-	// 			Key:      raw.Key,
-	// 			Value:    raw.Value,
-	// 			OldValue: raw.OldValue,
-	// 			StartTs:  raw.StartTs,
-	// 			CRTs:     raw.CRTs,
-	// 			RegionID: raw.RegionID,
-	// 		}
-	// 		store.writeEvent(span, rawKV)
-	// 	}
-	// 	return nil
-	// }
-
-	// store.puller = puller.NewMultiplexingPuller(
-	// 	model.ChangeFeedID{},
-	// 	client,
-	// 	pdClock,
-	// 	consume,
-	// 	len(dbs),
-	// 	spanz.HashTableSpan,
-	// 	8)
 
 	return store
 }
@@ -413,6 +363,7 @@ func (e *eventStore) writeEvent(span heartbeatpb.TableSpan, raw *common.RawKVEnt
 		return
 	}
 	if !raw.IsResolved() {
+		// TODO: make sure this won't block
 		tableState.observer(raw)
 	} else {
 		tableState.resolvedTs.Store(raw.CRTs)
@@ -490,6 +441,7 @@ func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) erro
 		// 	EndKey:   tableStat.span.EndKey,
 		// }
 		// e.puller.Unsubscribe([]tablepb.Span{realSpan})
+		// FIXME: do we need unlock before puller.Unsubscribe?
 		e.puller.Unsubscribe(tableStat.span)
 		e.tables.Delete(tableStat.span)
 		delete(e.spans, dispatcherID)
