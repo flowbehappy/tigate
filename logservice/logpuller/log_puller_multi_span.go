@@ -36,7 +36,7 @@ type LogPullerMultiSpan struct {
 }
 
 func NewLogPullerMultiSpan(
-	client *SharedClient,
+	client *SubscriptionClient,
 	pdClock pdutil.Clock,
 	spans []common.TableSpan,
 	startTs common.Ts,
@@ -80,7 +80,7 @@ func (p *LogPullerMultiSpan) Run(ctx context.Context) error {
 		return true
 	})
 	p.mu.Unlock()
-	
+
 	return p.innerPuller.Run(ctx)
 }
 
