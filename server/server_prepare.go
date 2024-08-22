@@ -158,7 +158,6 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 		DeployPath:     deployPath,
 		StartTimestamp: time.Now().Unix(),
 	}
-	c.serverID = id
 	c.session = session
 
 	dispatcherStatusDynamicStream := dynstream.NewDynamicStreamDefault(&dispatcher.DispatcherStatusHandler{})

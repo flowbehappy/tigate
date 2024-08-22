@@ -80,7 +80,7 @@ func (p *LogPullerMultiSpan) Run(ctx context.Context) error {
 		return true
 	})
 	p.mu.Unlock()
-	
+
 	return p.innerPuller.Run(ctx)
 }
 
