@@ -148,7 +148,7 @@ func (m *Maintainer) HandleEvent(event *Event) (await bool) {
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
-		if duration > time.Millisecond*100 {
+		if duration > time.Millisecond*500 {
 			log.Info("maintainer is too slow",
 				zap.String("id", m.id.String()),
 				zap.Int("type", event.eventType),
