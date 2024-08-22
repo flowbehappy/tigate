@@ -194,6 +194,10 @@ func (d *dynamicStreamImpl[P, T, D]) AddPath(paths ...PathAndDest[P, D]) error {
 	return add.error
 }
 
+func (d *dynamicStreamImpl[P, T, D]) AddOnePath(path P, dest D) error {
+	return d.AddPath(PathAndDest[P, D]{Path: path, Dest: dest})
+}
+
 func (d *dynamicStreamImpl[P, T, D]) RemovePath(paths ...P) []error {
 	remove := &removePathCmd[P]{paths: paths}
 	cmd := &cmd{

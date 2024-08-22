@@ -104,13 +104,13 @@ func NewDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, 
 
 	dispatcherEventsDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
 
-	err := dispatcherEventsDynamicStream.AddPath(dynstream.PathAndDest[common.DispatcherID, *Dispatcher]{Path: dispatcher.id, Dest: dispatcher})
+	err := dispatcherEventsDynamicStream.AddOnePath(dispatcher.id, dispatcher)
 	if err != nil {
 		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
 	}
 
 	dispatcherStatusDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithDispatcherID, *Dispatcher]](appcontext.DispatcherStatusDynamicStream)
-	err = dispatcherStatusDynamicStream.AddPath(dynstream.PathAndDest[common.DispatcherID, *Dispatcher]{Path: dispatcher.id, Dest: dispatcher})
+	err = dispatcherStatusDynamicStream.AddOnePath(dispatcher.id, dispatcher)
 	if err != nil {
 		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
 	}
