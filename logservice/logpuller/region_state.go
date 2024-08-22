@@ -167,20 +167,12 @@ func (s *regionFeedState) getLastResolvedTs() uint64 {
 // updateResolvedTs update the resolved ts of the current region feed
 func (s *regionFeedState) updateResolvedTs(resolvedTs uint64) {
 	state := s.region.lockedRangeState
-	needRelease := false
 	for {
 		last := state.ResolvedTs.Load()
 		if last > resolvedTs {
 			return
 		}
-		// Fixme: this is not correct
-		if last == 0 {
-			needRelease = true
-		}
 		if state.ResolvedTs.CompareAndSwap(last, resolvedTs) {
-			if needRelease {
-				s.region.limiter.Release()
-			}
 			break
 		}
 	}

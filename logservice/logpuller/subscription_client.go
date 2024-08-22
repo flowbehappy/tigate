@@ -266,7 +266,7 @@ func (s *SubscriptionClient) Run(ctx context.Context) error {
 	g, ctx := errgroup.WithContext(ctx)
 	s.changeEventProcessors = make([]*changeEventProcessor, 0, s.config.ChangeEventProcessorNum)
 	for i := uint(0); i < s.config.ChangeEventProcessorNum; i++ {
-		processor := newchangeEventProcessor(s)
+		processor := newChangeEventProcessor(s)
 		g.Go(func() error { return processor.run(ctx) })
 		s.changeEventProcessors = append(s.changeEventProcessors, processor)
 	}
