@@ -36,7 +36,7 @@ type LogPullerMultiSpan struct {
 }
 
 func NewLogPullerMultiSpan(
-	client *SharedClient,
+	client *SubscriptionClient,
 	pdClock pdutil.Clock,
 	spans []common.TableSpan,
 	startTs common.Ts,
