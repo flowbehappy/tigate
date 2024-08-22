@@ -37,7 +37,11 @@ type TxnEvent struct {
 	CommitTs   uint64             `msg:"commit-ts"`
 
 	// 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
-	PostTxnFlushed func() `msg:"-"`
+	PostTxnFlushed []func() `msg:"-"`
+}
+
+func (w *TxnEvent) GetDispatcherID() DispatcherID {
+	return w.DispatcherID
 }
 
 func (w *TxnEvent) GetDDLEvent() *DDLEvent {
