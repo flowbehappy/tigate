@@ -26,6 +26,7 @@ import (
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/utils/dynstream"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -46,11 +47,15 @@ func setup() {
 	dispatcherStatusDynamicStream := dynstream.NewDynamicStreamDefault(&DispatcherStatusHandler{})
 	appcontext.SetService(appcontext.DispatcherStatusDynamicStream, dispatcherStatusDynamicStream)
 	dispatcherStatusDynamicStream.Start()
+
+	appcontext.SetService(appcontext.DispatcherTaskScheduler, threadpool.NewTaskSchedulerDefault(appcontext.DispatcherTaskScheduler))
+
 }
 
 func teardown() {
 	appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream).Close()
 	appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithDispatcherID, *Dispatcher]](appcontext.DispatcherStatusDynamicStream).Close()
+	appcontext.GetService[*threadpool.TaskScheduler](appcontext.DispatcherTaskScheduler).Stop()
 }
 
 // BasicDispatcher with normal dml cases
