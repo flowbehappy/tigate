@@ -167,15 +167,15 @@ func (m *Maintainer) HandleEvent(event *Event) (await bool) {
 			return false
 		}
 		// async initialize the changefeed
-		//go func() {
-		err := m.initialize()
-		if err != nil {
-			m.handleError(err)
-		}
-		//m.stream.Wake() <- event.cfID
-		//log.Info("stream waked", zap.String("changefeed", m.id.String()))
-		//}()
-		return false
+		go func() {
+			err := m.initialize()
+			if err != nil {
+				m.handleError(err)
+			}
+			m.stream.Wake() <- event.cfID
+			log.Info("stream waked", zap.String("changefeed", m.id.String()))
+		}()
+		return true
 	case EventMessage:
 		if err := m.onMessage(event.message); err != nil {
 			m.handleError(err)
