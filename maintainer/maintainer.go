@@ -144,6 +144,10 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	return m
 }
 
+// HandleEvent implements the event-driven process mode
+// it's the entrance of the Maintainer, it handles all types of Events
+// note: the EventPeriod is a special event that submitted when initializing maintainer
+// , and it will be re-submitted at the end of onPeriodTask
 func (m *Maintainer) HandleEvent(event *Event) (await bool) {
 	start := time.Now()
 	defer func() {
@@ -582,6 +586,9 @@ func (m *Maintainer) sendMaintainerCloseRequestToAllNode() bool {
 	return len(msgs) == 0
 }
 
+// handleError set the caches the error, the error will be reported to coordinator
+// and coordinator remove this maintainer
+// todo: stop maintainer immediately?
 func (m *Maintainer) handleError(err error) {
 	log.Error("an error occurred in Owner",
 		zap.String("changefeed", m.id.ID), zap.Error(err))

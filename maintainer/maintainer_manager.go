@@ -126,7 +126,7 @@ func (m *Manager) Run(ctx context.Context) error {
 				if cf.removed.Load() {
 					cf.Close()
 					m.maintainers.Delete(key)
-					m.stream.RemovePath(cf.id.ID)
+					m.stream.RemovePaths(cf.id.ID)
 				}
 				return true
 			})
@@ -203,7 +203,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 				log.Panic("decode changefeed fail", zap.Error(err))
 			}
 			cf = NewMaintainer(cfID, cfConfig, m.selfNode, m.stream, m.taskScheduler, req.CheckpointTs)
-			err = m.stream.AddPath(dynstream.PathAndDest[string, *Maintainer]{
+			err = m.stream.AddPaths(dynstream.PathAndDest[string, *Maintainer]{
 				Path: cfID.ID,
 				Dest: cf.(*Maintainer),
 			})
