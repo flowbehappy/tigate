@@ -208,7 +208,9 @@ func (s *stream[P, T, D]) handleLoop(acceptedPaths []*pathInfo[P, T, D], formerS
 		if e.wake {
 			// It is a wake event, we set the path to be non-blocking, and generate a signal for all pending events.
 			e.pathInfo.blocking = false
-			s.signalQueue.PushBack(eventSignal[P, T, D]{pathInfo: e.pathInfo, eventCount: e.pathInfo.pendingQueue.Length()})
+			if count := e.pathInfo.pendingQueue.Length(); count > 0 {
+				s.signalQueue.PushBack(eventSignal[P, T, D]{pathInfo: e.pathInfo, eventCount: count})
+			}
 		} else {
 			// It is a normal event
 

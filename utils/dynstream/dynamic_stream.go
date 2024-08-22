@@ -148,7 +148,7 @@ func newDynamicStreamImpl[P Path, T Event, D Dest](
 		baseStreamCount:   streamCount,
 
 		eventChan:  make(chan T, 1024),
-		wakeChan:   make(chan P, 10),
+		wakeChan:   make(chan P, 64),
 		reportChan: make(chan streamStat[P, T, D], 64),
 		cmdToSchd:  make(chan *cmd, 64),
 		cmdToDist:  make(chan *cmd, streamCount),
