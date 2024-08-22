@@ -356,16 +356,6 @@ func toFilterConfigPB(filter *cfg.FilterConfig) *eventpb.FilterConfig {
 // When needCompleteStatus is true, it will collect the complete table status of the dispatchers,
 // otherwise, it will only calculate the min checkpointTs to cutoff the message size.
 func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *heartbeatpb.HeartBeatRequest {
-	/* 这里定义一下 checkpointTs
-	   依旧表示的是小于这个 ts 的值已经落盘到 downstream 了。
-	   我们计算的方式为：
-	   1. 如果 dispatcher 中目前还有 event，则我们就拿要往下写的最大的 commitTs 的那条 event.CommitTs - 1 为 checkpointTs
-	   2. dispatcher 在从 logService 拉数据的时候，会标记到 resolvedTs 为多少（这里指的是完整的 resolvedTs），所以 checkpointTs <= resolvedTs
-
-	   另外我们对于 目前处于 blocked 状态的 dispatcher，我们也会记录他 blocked 住的 ts，以及 blocked 住的 tableSpan
-	   后面我们要测一下这个 msg 的大小，以及 collect 的耗时
-	*/
-
 	message := heartbeatpb.HeartBeatRequest{
 		ChangefeedID:    e.changefeedID.ID,
 		CompeleteStatus: needCompleteStatus,
@@ -452,7 +442,6 @@ func (e *EventDispatcherManager) SetMaintainerID(maintainerID messaging.ServerId
 	e.maintainerID = maintainerID
 }
 
-// TODO:use sync.Map
 type DispatcherMap struct {
 	dispatcherCacheForRead []*dispatcher.Dispatcher
 	mutex                  sync.Mutex

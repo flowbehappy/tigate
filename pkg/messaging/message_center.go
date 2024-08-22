@@ -22,7 +22,7 @@ type MessageCenter interface {
 	MessageSender
 	MessageReceiver
 	// OnNodeChanges is called when the nodes in the cluster are changed. The message center should update the target list.
-	OnNodeChanges(newNodes []*common.NodeInfo, removedNodes []*common.NodeInfo)
+	OnNodeChanges(map[common.NodeID]*common.NodeInfo)
 	Close()
 }
 
@@ -117,12 +117,24 @@ func (mc *messageCenter) DeRegisterHandler(topic string) {
 	mc.router.deRegisterHandler(topic)
 }
 
-func (mc *messageCenter) OnNodeChanges(newNodes []*common.NodeInfo, removedNodes []*common.NodeInfo) {
-	for _, node := range newNodes {
-		mc.addTarget(ServerId(node.ID), node.Epoch, node.AdvertiseAddr)
+func (mc *messageCenter) OnNodeChanges(activeNode map[common.NodeID]*common.NodeInfo) {
+	allTaget := make(map[string]bool)
+	allTaget[mc.id.String()] = true
+	mc.remoteTargets.RLock()
+	for id, _ := range mc.remoteTargets.m {
+		allTaget[id.String()] = true
 	}
-	for _, node := range removedNodes {
-		mc.removeTarget(ServerId(node.ID))
+	mc.remoteTargets.RUnlock()
+
+	for id, node := range activeNode {
+		if _, ok := allTaget[id]; !ok {
+			mc.addTarget(ServerId(node.ID), node.Epoch, node.AdvertiseAddr)
+		}
+	}
+	for id, _ := range allTaget {
+		if _, ok := activeNode[id]; !ok {
+			mc.removeTarget(ServerId(id))
+		}
 	}
 }
 

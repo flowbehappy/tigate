@@ -257,7 +257,7 @@ func (m *Maintainer) initialize() error {
 	m.statusChanged.Store(true)
 
 	// detect the capture changes
-	m.nodeManager.RegisterNodeChangeHandler("maintainer-"+m.id.ID, func(newNodes []*common.NodeInfo, removedNodes []*common.NodeInfo) {
+	m.nodeManager.RegisterNodeChangeHandler("maintainer-"+m.id.ID, func(allNodes map[string]*common.NodeInfo) {
 		m.nodeChanged.Store(true)
 	})
 	// send bootstrap message
