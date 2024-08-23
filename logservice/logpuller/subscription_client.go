@@ -800,12 +800,15 @@ func (r *regionScanRequestLimiter) acquire(ctx context.Context, storeID uint64) 
 		r.mutex.Lock()
 		if r.currentRequests[storeID] < r.maxRequests {
 			r.currentRequests[storeID]++
-			log.Info("acquire success")
+			log.Info("acquire success",
+				zap.Uint64("storeID", storeID),
+				zap.Uint("count", r.currentRequests[storeID]))
 			r.mutex.Unlock()
 			return
 		}
 		r.mutex.Unlock()
-		log.Info("acquire fail")
+		log.Info("acquire fail",
+			zap.Uint64("storeID", storeID))
 		util.Hang(ctx, 10*time.Millisecond)
 	}
 }
@@ -816,9 +819,11 @@ func (r *regionScanRequestLimiter) release(storeID uint64) {
 	}
 	r.mutex.Lock()
 	r.currentRequests[storeID]--
+	log.Info("release",
+		zap.Uint64("storeID", storeID),
+		zap.Uint("count", r.currentRequests[storeID]))
 	if r.currentRequests[storeID] == 0 {
 		delete(r.currentRequests, storeID)
 	}
-	log.Info("release")
 	r.mutex.Unlock()
 }
