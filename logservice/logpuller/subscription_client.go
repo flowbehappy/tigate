@@ -800,6 +800,7 @@ func (r *regionScanRequestLimiter) acquire(ctx context.Context, storeID uint64) 
 		r.mutex.Lock()
 		if r.currentRequests[storeID] < r.maxRequests {
 			r.currentRequests[storeID]++
+			log.Info("acquire success")
 			r.mutex.Unlock()
 			return
 		}
