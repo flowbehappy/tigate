@@ -810,8 +810,14 @@ func (r *regionScanRequestLimiter) acquire(ctx context.Context, storeID uint64) 
 }
 
 func (r *regionScanRequestLimiter) release(storeID uint64) {
+	if r.maxRequests == 0 {
+		return
+	}
 	r.mutex.Lock()
 	r.currentRequests[storeID]--
+	if r.currentRequests[storeID] == 0 {
+		delete(r.currentRequests, storeID)
+	}
 	log.Info("release")
 	r.mutex.Unlock()
 }
