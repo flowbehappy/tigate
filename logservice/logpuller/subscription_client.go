@@ -781,35 +781,57 @@ func (r *subscribedSpan) resolveStaleLocks(targetTs uint64) {
 // thread safe
 type regionScanRequestLimiter struct {
 	mutex           sync.Mutex
-	maxRequests     uint // 0 means unlimited
+	cond            *sync.Cond // 条件变量
+	maxRequests     uint       // 0 means unlimited
 	currentRequests map[uint64]uint
 }
 
 func newRegionScanRequestLimiter(maxRequests uint) *regionScanRequestLimiter {
-	return &regionScanRequestLimiter{
+	limiter := &regionScanRequestLimiter{
 		maxRequests:     maxRequests,
 		currentRequests: make(map[uint64]uint),
 	}
+	limiter.cond = sync.NewCond(&limiter.mutex)
+	return limiter
+}
+
+func (r *regionScanRequestLimiter) close() {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	for storeID := range r.currentRequests {
+		r.currentRequests[storeID] = 0
+	}
+	r.cond.Broadcast()
 }
 
 func (r *regionScanRequestLimiter) acquire(ctx context.Context, storeID uint64) {
 	if r.maxRequests == 0 {
 		return
 	}
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
 	for {
-		r.mutex.Lock()
 		if r.currentRequests[storeID] < r.maxRequests {
 			r.currentRequests[storeID]++
 			log.Info("acquire success",
 				zap.Uint64("storeID", storeID),
 				zap.Uint("count", r.currentRequests[storeID]))
-			r.mutex.Unlock()
 			return
 		}
-		r.mutex.Unlock()
-		log.Info("acquire fail",
+		log.Info("acquire fail, waiting",
 			zap.Uint64("storeID", storeID))
-		util.Hang(ctx, 1000*time.Millisecond)
+
+		// 使用条件变量等待
+		r.cond.Wait()
+
+		// 检查上下文是否被取消
+		if ctx.Err() != nil {
+			log.Info("acquire canceled due to context",
+				zap.Uint64("storeID", storeID))
+			return
+		}
 	}
 }
 
@@ -819,12 +841,16 @@ func (r *regionScanRequestLimiter) release(storeID uint64) {
 	}
 	log.Info("try release")
 	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
 	r.currentRequests[storeID]--
 	log.Info("release",
 		zap.Uint64("storeID", storeID),
 		zap.Uint("count", r.currentRequests[storeID]))
+
 	if r.currentRequests[storeID] == 0 {
 		delete(r.currentRequests, storeID)
 	}
-	r.mutex.Unlock()
+	// 通知等待的goroutine有资源可用
+	r.cond.Signal()
 }
