@@ -28,9 +28,10 @@ import (
 
 func newLogPullerMultiSpanForTest(spans []common.TableSpan, outputCh chan<- *common.RawKVEntry) *LogPullerMultiSpan {
 	clientConfig := &SubscriptionClientConfig{
-		RegionRequestWorkerPerStore:   1,
-		ChangeEventProcessorNum:       2,
-		AdvanceResolvedTsIntervalInMs: 1,
+		RegionRequestWorkerPerStore:        1,
+		ChangeEventProcessorNum:            2,
+		AdvanceResolvedTsIntervalInMs:      1,
+		RegionIncrementalScanLimitPerStore: 100,
 	}
 	client := NewSubscriptionClient(clientConfig, nil, nil, nil, nil, &security.Credential{})
 	consume := func(ctx context.Context, e *common.RawKVEntry) error {

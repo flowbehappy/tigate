@@ -174,9 +174,10 @@ func TestSubscriptionWithFailedTiKV(t *testing.T) {
 	cluster.Bootstrap(11, []uint64{1, 2, 3}, []uint64{4, 5, 6}, 6)
 
 	clientConfig := &SubscriptionClientConfig{
-		RegionRequestWorkerPerStore:   1,
-		ChangeEventProcessorNum:       2,
-		AdvanceResolvedTsIntervalInMs: 1, // must be small to pass the test
+		RegionRequestWorkerPerStore:        1,
+		ChangeEventProcessorNum:            2,
+		AdvanceResolvedTsIntervalInMs:      1, // must be small to pass the test
+		RegionIncrementalScanLimitPerStore: 100,
 	}
 	client := NewSubscriptionClient(
 		clientConfig,

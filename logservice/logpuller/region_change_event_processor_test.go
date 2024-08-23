@@ -30,9 +30,10 @@ import (
 func newSubscriptionClientForTestRegionChangeEventProcessor() *SubscriptionClient {
 	// only requires `SubscriptionClient.onRegionFail`.
 	clientConfig := &SubscriptionClientConfig{
-		RegionRequestWorkerPerStore:   1,
-		ChangeEventProcessorNum:       32,
-		AdvanceResolvedTsIntervalInMs: 300,
+		RegionRequestWorkerPerStore:        1,
+		ChangeEventProcessorNum:            32,
+		AdvanceResolvedTsIntervalInMs:      300,
+		RegionIncrementalScanLimitPerStore: 100,
 	}
 	return NewSubscriptionClient(clientConfig, nil, nil, nil, nil, &security.Credential{})
 }

@@ -279,7 +279,7 @@ func (s *regionRequestWorker) processRegionSendTask(
 			state.start()
 			s.addRegionState(subID, region.verID.GetID(), state)
 
-			// TODO: acquire limit here
+			region.acquireScanQuota(ctx, s.client.regionScanLimiter, s.store.storeID)
 			if err := doSend(s.createRegionRequest(region), subID); err != nil {
 				return err
 			}
@@ -431,38 +431,4 @@ func hashRegionID(regionID uint64, slots int) int {
 	b := make([]byte, 8)
 	binary.LittleEndian.PutUint64(b, regionID)
 	return int(seahash.Sum64(b) % uint64(slots))
-}
-
-type RegionScanRequestLimiter struct {
-	mutex           sync.Mutex
-	maxRequests     int // 0
-	currentRequests int
-}
-
-func NewRegionScanRequestLimiter(maxRequests int) *RegionScanRequestLimiter {
-	return &RegionScanRequestLimiter{
-		maxRequests: maxRequests,
-	}
-}
-
-// TODO: add a ctx parameter
-func (r *RegionScanRequestLimiter) Acquire() bool {
-	for {
-		r.mutex.Lock()
-		if r.currentRequests < r.maxRequests {
-			r.currentRequests++
-			r.mutex.Unlock()
-			return true
-		}
-		r.mutex.Unlock()
-		log.Info("acquire fail")
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
-func (r *RegionScanRequestLimiter) Release() {
-	r.mutex.Lock()
-	r.currentRequests--
-	log.Info("release")
-	r.mutex.Unlock()
 }
