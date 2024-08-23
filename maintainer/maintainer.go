@@ -635,7 +635,6 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 				Config:       cfgBytes,
 			})
 	}
-
 }
 
 func (m *Maintainer) onPeriodTask() {
