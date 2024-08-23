@@ -58,7 +58,7 @@ func TestHandleEventEntryEventOutOfOrder(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	client := newSubscriptionClientForTestRegionChangeEventProcessor()
-	defer client.Close()
+	defer client.Close(ctx)
 
 	processor := newChangeEventProcessor(client)
 	eventCh := make(chan LogEvent, 2)
@@ -167,7 +167,7 @@ func TestHandleResolvedTs(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	client := newSubscriptionClientForTestRegionChangeEventProcessor()
-	defer client.Close()
+	defer client.Close(ctx)
 
 	processor := newChangeEventProcessor(client)
 	eventCh := make(chan LogEvent, 2)

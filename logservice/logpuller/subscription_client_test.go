@@ -189,7 +189,7 @@ func TestSubscriptionWithFailedTiKV(t *testing.T) {
 
 	defer func() {
 		cancel()
-		client.Close()
+		client.Close(ctx)
 		_ = kvStorage.Close()
 		regionCache.Close()
 		pdClient.Close()

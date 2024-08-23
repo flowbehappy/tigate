@@ -140,6 +140,10 @@ func (p *LogPuller) Run(ctx context.Context) (err error) {
 	return eg.Wait()
 }
 
+func (p *LogPuller) Close(ctx context.Context) error {
+	return p.client.Close(ctx)
+}
+
 func (p *LogPuller) Subscribe(
 	span heartbeatpb.TableSpan,
 	startTs common.Ts,

@@ -262,6 +262,10 @@ func (s *SubscriptionClient) RegionCount(subID subscriptionID) uint64 {
 }
 
 func (s *SubscriptionClient) Run(ctx context.Context) error {
+	if s.pd == nil {
+		log.Warn("subsription client should be in test mode, skip run")
+		return nil
+	}
 	s.clusterID = s.pd.GetClusterID(ctx)
 
 	g, ctx := errgroup.WithContext(ctx)
@@ -284,8 +288,9 @@ func (s *SubscriptionClient) Run(ctx context.Context) error {
 }
 
 // Close closes the client. Must be called after `Run` returns.
-func (s *SubscriptionClient) Close() {
+func (s *SubscriptionClient) Close(ctx context.Context) error {
 	// FIXME: close and drain all channels
+	return nil
 }
 
 func (s *SubscriptionClient) setTableStopped(rt *subscribedSpan) {
