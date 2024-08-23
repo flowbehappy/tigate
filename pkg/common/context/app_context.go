@@ -10,18 +10,12 @@ var (
 )
 
 const (
-	MessageCenter                           = "MessageCenter"
-	EventCollector                          = "EventCollector"
-	HeartbeatCollector                      = "HeartbeatCollector"
-	SchemaStore                             = "SchemaStore"
-	EventStore                              = "EventStore"
-	EventService                            = "EventService"
-	DispatcherEventsDynamicStream           = "DispatcherEventsDynamicStream"
-	DispatcherStatusDynamicStream           = "DispatcherStatusDynamicStream"
-	HeartBeatResponseDynamicStream          = "HeartBeatResponseDynamicStream"
-	SchedulerDispatcherRequestDynamicStream = "SchedulerDispatcherRequestDynamicStream"
-	DispatcherTaskScheduler                 = "DispatcherTaskScheduler"
-	HeartBeatTaskScheduler                  = "HeartBeatTaskScheduler"
+	MessageCenter      = "MessageCenter"
+	EventCollector     = "EventCollector"
+	HeartbeatCollector = "HeartbeatCollector"
+	SchemaStore        = "SchemaStore"
+	EventStore         = "EventStore"
+	EventService       = "EventService"
 )
 
 // Put all the global instances here.

@@ -37,7 +37,7 @@ type HeartBeatCollector struct {
 	wg   sync.WaitGroup
 	from messaging.ServerId
 
-	requestQueue *HeartbeatRequestQueue
+	reqQueue *HeartbeatRequestQueue
 
 	heartBeatResponseDynamicStream          dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]
 	schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.ScheduleDispatcherRequest, *EventDispatcherManager]
@@ -46,9 +46,9 @@ type HeartBeatCollector struct {
 func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 	heartBeatCollector := HeartBeatCollector{
 		from:                                    serverId,
-		requestQueue:                            NewHeartbeatRequestQueue(),
-		heartBeatResponseDynamicStream:          appcontext.GetService[dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]](appcontext.HeartBeatResponseDynamicStream),
-		schedulerDispatcherRequestDynamicStream: appcontext.GetService[dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.ScheduleDispatcherRequest, *EventDispatcherManager]](appcontext.SchedulerDispatcherRequestDynamicStream),
+		reqQueue:                                NewHeartbeatRequestQueue(),
+		heartBeatResponseDynamicStream:          GetHeartBeatResponseDynamicStream(),
+		schedulerDispatcherRequestDynamicStream: GetSchedulerDispatcherRequestDynamicStream(),
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.HeartbeatCollectorTopic, heartBeatCollector.RecvMessages)
 
@@ -59,7 +59,7 @@ func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 }
 
 func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherManager) error {
-	m.SetHeartbeatRequestQueue(c.requestQueue)
+	m.SetHeartbeatRequestQueue(c.reqQueue)
 	err := c.heartBeatResponseDynamicStream.AddPath(m.changefeedID, m)
 	if err != nil {
 		log.Error("heartBeatResponseDynamicStream Failed to add path", zap.Any("ChangefeedID", m.changefeedID))
@@ -76,7 +76,7 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherMa
 func (c *HeartBeatCollector) SendHeartBeatMessages() {
 	defer c.wg.Done()
 	for {
-		heartBeatRequestWithTargetID := c.requestQueue.Dequeue()
+		heartBeatRequestWithTargetID := c.reqQueue.Dequeue()
 		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(
 			messaging.NewSingleTargetMessage(
 				heartBeatRequestWithTargetID.TargetID,
@@ -93,7 +93,7 @@ func (c *HeartBeatCollector) RecvMessages(ctx context.Context, msg *messaging.Ta
 	switch msg.Type {
 	case messaging.TypeHeartBeatResponse:
 		heartbeatResponse := msg.Message[0].(*heartbeatpb.HeartBeatResponse)
-		heartBeatResponseDynamicStream := appcontext.GetService[dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]](appcontext.HeartBeatResponseDynamicStream)
+		heartBeatResponseDynamicStream := GetHeartBeatResponseDynamicStream()
 		heartBeatResponseDynamicStream.In() <- heartbeatResponse
 	case messaging.TypeScheduleDispatcherRequest:
 		scheduleDispatcherRequest := msg.Message[0].(*heartbeatpb.ScheduleDispatcherRequest)
@@ -130,11 +130,11 @@ func (h *SchedulerDispatcherRequestHandler) Handle(scheduleDispatcherRequest *he
 }
 
 type HeartBeatResponseHandler struct {
-	dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DispatcherStatusWithDispatcherID, *dispatcher.Dispatcher]
+	dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DispatcherStatusWithID, *dispatcher.Dispatcher]
 }
 
-func NewHeartBeatResponseHandler(dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DispatcherStatusWithDispatcherID, *dispatcher.Dispatcher]) HeartBeatResponseHandler {
-	return HeartBeatResponseHandler{dispatcherStatusDynamicStream: dispatcherStatusDynamicStream}
+func NewHeartBeatResponseHandler() HeartBeatResponseHandler {
+	return HeartBeatResponseHandler{dispatcherStatusDynamicStream: dispatcher.GetDispatcherStatusDynamicStream()}
 }
 
 func (h *HeartBeatResponseHandler) Path(HeartbeatResponse *heartbeatpb.HeartBeatResponse) model.ChangeFeedID {
@@ -151,7 +151,7 @@ func (h *HeartBeatResponseHandler) Handle(heartbeatResponse *heartbeatpb.HeartBe
 			continue
 		}
 
-		h.dispatcherStatusDynamicStream.In() <- *dispatcher.NewDispatcherStatusWithDispatcherID(dispatcherStatus, dispatcherItem.GetId())
+		h.dispatcherStatusDynamicStream.In() <- *dispatcher.NewDispatcherStatusWithID(dispatcherStatus, dispatcherItem.GetId())
 	}
 
 	return false

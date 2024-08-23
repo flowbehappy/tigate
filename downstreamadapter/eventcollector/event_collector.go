@@ -85,7 +85,7 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 		serverId:                                     serverId,
 		globalMemoryQuota:                            globalMemoryQuota,
 		dispatcherMap:                                &DispatcherMap{},
-		dispatcherEventsDynamicStream:                appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *dispatcher.Dispatcher]](appcontext.DispatcherEventsDynamicStream),
+		dispatcherEventsDynamicStream:                dispatcher.GetDispatcherEventsDynamicStream(),
 		registerMessageChan:                          chann.NewAutoDrainChann[RegisterInfo](),
 		metricDispatcherReceivedKVEventCount:         metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
