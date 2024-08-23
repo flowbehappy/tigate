@@ -56,13 +56,17 @@ func NewLogPullerMultiSpan(
 		resolvedTs:        common.Ts(startTs),
 	}
 
+	// consumeWrapper may be called concurrently
 	consumeWrapper := func(ctx context.Context, entry *common.RawKVEntry, span heartbeatpb.TableSpan) error {
 		if entry == nil {
 			return nil
 		}
 		if entry.IsResolved() {
-			if pullerWrapper.tryUpdateGlobalResolvedTs(entry, span) {
-				return consume(ctx, entry)
+			if ts := pullerWrapper.tryUpdateGlobalResolvedTs(entry, span); ts != 0 {
+				return consume(ctx, &common.RawKVEntry{
+					OpType: common.OpTypeResolved,
+					CRTs:   uint64(ts),
+				})
 			}
 			return nil
 		}
@@ -70,22 +74,23 @@ func NewLogPullerMultiSpan(
 	}
 
 	pullerWrapper.innerPuller = NewLogPuller(client, pdClock, consumeWrapper, config)
+	pullerWrapper.spanResolvedTsMap.Range(func(span heartbeatpb.TableSpan, ts common.Ts) bool {
+		pullerWrapper.innerPuller.Subscribe(span, pullerWrapper.resolvedTs)
+		return true
+	})
 	return pullerWrapper
 }
 
 func (p *LogPullerMultiSpan) Run(ctx context.Context) error {
-	p.mu.Lock()
-	p.spanResolvedTsMap.Range(func(span heartbeatpb.TableSpan, ts common.Ts) bool {
-		p.innerPuller.Subscribe(span, p.resolvedTs)
-		return true
-	})
-	p.mu.Unlock()
-
 	return p.innerPuller.Run(ctx)
 }
 
+func (p *LogPullerMultiSpan) Close(ctx context.Context) error {
+	return p.innerPuller.Close(ctx)
+}
+
 // return whether the global resolved ts of all spans is updated
-func (p *LogPullerMultiSpan) tryUpdateGlobalResolvedTs(entry *common.RawKVEntry, span heartbeatpb.TableSpan) bool {
+func (p *LogPullerMultiSpan) tryUpdateGlobalResolvedTs(entry *common.RawKVEntry, span heartbeatpb.TableSpan) common.Ts {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	// FIXME: use priority queue to maintain resolved ts
@@ -108,7 +113,7 @@ func (p *LogPullerMultiSpan) tryUpdateGlobalResolvedTs(entry *common.RawKVEntry,
 	// currentResolvedTs may be 0 if some span have not received resolved ts yet
 	if p.resolvedTs < currentResolvedTs {
 		p.resolvedTs = currentResolvedTs
-		return true
+		return p.resolvedTs
 	}
-	return false
+	return 0
 }
