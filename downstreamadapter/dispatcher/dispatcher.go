@@ -21,7 +21,6 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/filter"
-	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -102,14 +101,13 @@ func NewDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, 
 	}
 
 	dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
-	err := dispatcherStatusDynamicStream.AddPath(dynstream.PathAndDest[common.DispatcherID, *Dispatcher]{Path: dispatcher.id, Dest: dispatcher})
+	err := dispatcherStatusDynamicStream.AddPath(dispatcher.id, dispatcher)
 	if err != nil {
 		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
 	}
 
 	dispatcherEventsDynamicStream := GetDispatcherEventsDynamicStream()
-
-	err = dispatcherEventsDynamicStream.AddPath(dynstream.PathAndDest[common.DispatcherID, *Dispatcher]{Path: dispatcher.id, Dest: dispatcher})
+	err = dispatcherEventsDynamicStream.AddPath(dispatcher.id, dispatcher)
 	if err != nil {
 		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
 	}
@@ -281,7 +279,7 @@ func (d *Dispatcher) Remove() {
 	d.isRemoving.Store(true)
 
 	dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
-	errs := dispatcherEventDynamicStream.RemovePath(d.id)
+	errs := dispatcherEventDynamicStream.RemovePaths(d.id)
 
 	for _, err := range errs {
 		if err != nil {
@@ -290,7 +288,7 @@ func (d *Dispatcher) Remove() {
 	}
 
 	dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
-	errs = dispatcherStatusDynamicStream.RemovePath(d.id)
+	errs = dispatcherStatusDynamicStream.RemovePaths(d.id)
 	for _, err := range errs {
 		if err != nil {
 			log.Error("remove dispatcher from dynamic stream failed", zap.Error(err))

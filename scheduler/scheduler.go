@@ -118,7 +118,7 @@ func (s *Supervisor) checkRunningTasks() (msgs []*messaging.TargetMessage) {
 		}
 
 		if needResend {
-			msg := stateMachine.handleResend()
+			msg := stateMachine.HandleResend()
 			log.Info("resend message",
 				zap.String("state", stateMachine.State.String()),
 				zap.String("id", stateMachine.ID.String()))

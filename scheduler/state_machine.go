@@ -374,7 +374,13 @@ func (s *StateMachine) HasRemoved() bool {
 	return s.State == SchedulerStatusRemoving && len(s.Primary) == 0 && len(s.Secondary) == 0
 }
 
-func (s *StateMachine) handleResend() *messaging.TargetMessage {
+func (s *StateMachine) HandleResend() *messaging.TargetMessage {
+	if s.State == SchedulerStatusWorking {
+		return nil
+	}
+	if time.Since(s.lastMsgTime) < 500*time.Millisecond {
+		return nil
+	}
 	s.lastMsgTime = time.Now()
 	switch s.State {
 	case SchedulerStatusCommiting:

@@ -89,13 +89,13 @@ func (m *mockMaintainerManager) handleMessage(msg *messaging.TargetMessage) {
 	switch msg.Type {
 	case messaging.TypeCoordinatorBootstrapRequest:
 		m.onCoordinatorBootstrapRequest(msg)
-	case messaging.TypeDispatchMaintainerRequest:
+	case messaging.TypeAddMaintainerRequest, messaging.TypeRemoveMaintainerRequest:
 		absent := m.onDispatchMaintainerRequest(msg)
 		if m.coordinatorVersion > 0 {
 			response := &heartbeatpb.MaintainerHeartbeat{}
-			for _, id := range absent {
+			if absent != "" {
 				response.Statuses = append(response.Statuses, &heartbeatpb.MaintainerStatus{
-					ChangefeedID: id,
+					ChangefeedID: absent,
 					State:        heartbeatpb.ComponentState_Absent,
 				})
 			}
@@ -119,7 +119,7 @@ func (m *mockMaintainerManager) sendMessages(msg *heartbeatpb.MaintainerHeartbea
 func (m *mockMaintainerManager) recvMessages(ctx context.Context, msg *messaging.TargetMessage) error {
 	switch msg.Type {
 	// receive message from coordinator
-	case messaging.TypeDispatchMaintainerRequest:
+	case messaging.TypeAddMaintainerRequest, messaging.TypeRemoveMaintainerRequest:
 		fallthrough
 	case messaging.TypeCoordinatorBootstrapRequest:
 		select {
@@ -134,7 +134,7 @@ func (m *mockMaintainerManager) recvMessages(ctx context.Context, msg *messaging
 	return nil
 }
 func (m *mockMaintainerManager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
-	req := msg.Message.(*heartbeatpb.CoordinatorBootstrapRequest)
+	req := msg.Message[0].(*heartbeatpb.CoordinatorBootstrapRequest)
 	if m.coordinatorVersion > req.Version {
 		log.Warn("ignore invalid coordinator version",
 			zap.Int64("version", req.Version))
@@ -157,16 +157,15 @@ func (m *mockMaintainerManager) onCoordinatorBootstrapRequest(msg *messaging.Tar
 }
 func (m *mockMaintainerManager) onDispatchMaintainerRequest(
 	msg *messaging.TargetMessage,
-) []string {
-	request := msg.Message.(*heartbeatpb.DispatchMaintainerRequest)
+) string {
 	if m.coordinatorID != msg.From {
 		log.Warn("ignore invalid coordinator id",
-			zap.Any("request", request),
-			zap.Any("coordinator", msg.From))
-		return nil
+			zap.Any("coordinator", msg.From),
+			zap.Any("request", msg))
+		return ""
 	}
-	absent := make([]string, 0)
-	for _, req := range request.AddMaintainers {
+	if msg.Type == messaging.TypeAddMaintainerRequest {
+		req := msg.Message[0].(*heartbeatpb.AddMaintainerRequest)
 		cfID := model.DefaultChangeFeedID(req.GetId())
 		cf, ok := m.maintainers.Load(cfID)
 		if !ok {
@@ -178,9 +177,8 @@ func (m *mockMaintainerManager) onDispatchMaintainerRequest(
 			cf = &Maintainer{config: cfConfig}
 			m.maintainers.Store(cfID, cf)
 		}
-	}
-
-	for _, req := range request.RemoveMaintainers {
+	} else {
+		req := msg.Message[0].(*heartbeatpb.RemoveMaintainerRequest)
 		cfID := model.DefaultChangeFeedID(req.GetId())
 		cf, ok := m.maintainers.Load(cfID)
 		if !ok {
@@ -188,13 +186,12 @@ func (m *mockMaintainerManager) onDispatchMaintainerRequest(
 				"since the maintainer not found",
 				zap.String("changefeed", cfID.String()),
 				zap.Any("request", req))
-			absent = append(absent, req.GetId())
-			continue
+			return req.GetId()
 		}
 		cf.(*Maintainer).removing.Store(true)
 		cf.(*Maintainer).cascadeRemoving.Store(req.Cascade)
 	}
-	return absent
+	return ""
 }
 func (m *mockMaintainerManager) sendHeartbeat() {
 	if m.coordinatorVersion > 0 {
