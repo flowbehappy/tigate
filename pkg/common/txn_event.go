@@ -114,7 +114,7 @@ func (e *TxnEvent) IsSyncPointEvent() bool {
 func (e *TxnEvent) GetDDLQuery() string {
 	if e.DDLEvent == nil {
 		log.Error("DDLEvent is nil, should not happened in production env", zap.Any("event", e))
-		return "" // 要报错的
+		return ""
 	}
 	return e.DDLEvent.Job.Query
 }
