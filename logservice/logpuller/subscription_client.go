@@ -130,6 +130,8 @@ type SubscriptionClientConfig struct {
 	ChangeEventProcessorNum uint // default to 32?
 	// The time interval to advance resolvedTs for a region
 	AdvanceResolvedTsIntervalInMs uint // default to 300
+	// The limit of concurrent incremental scan regions for every tikv store
+	RegionIncrementalScanLimitPerStore uint
 }
 
 // SubscriptionClient is used to subscribe events of table ranges from TiKV.
@@ -166,6 +168,9 @@ type SubscriptionClient struct {
 	// errCh is used to receive region errors.
 	// The errors will be handled in `handleErrors` goroutine.
 	errCh chan regionErrorInfo
+
+	// used to limit the number of concurrent region incremental scan requests on a single store
+	regionScanLimiter *regionScanRequestLimiter
 }
 
 // NewSubscriptionClient creates a client.
@@ -192,6 +197,8 @@ func NewSubscriptionClient(
 		regionCh:          make(chan *regionInfo, 1024),
 		resolveLockTaskCh: make(chan *resolveLockTask, 1024),
 		errCh:             make(chan regionErrorInfo, 1024),
+
+		regionScanLimiter: newRegionScanRequestLimiter(config.RegionIncrementalScanLimitPerStore),
 	}
 	s.totalSpans.spanMap = make(map[subscriptionID]*subscribedSpan)
 
@@ -319,6 +326,8 @@ func (s *SubscriptionClient) onTableDrained(rt *subscribedSpan) {
 
 // Note: don't block the caller, otherwise there may be deadlock
 func (s *SubscriptionClient) onRegionFail(ctx context.Context, errInfo regionErrorInfo) {
+	errInfo.regionInfo.releaseScanQuotaIfNeed(s.regionScanLimiter)
+
 	select {
 	case <-ctx.Done():
 	case s.errCh <- errInfo:
@@ -767,4 +776,42 @@ func (r *subscribedSpan) resolveStaleLocks(targetTs uint64) {
 	log.Debug("subscription client finds slow locked ranges",
 		zap.Any("subscriptionID", r.subID),
 		zap.Any("ranges", res))
+}
+
+// thread safe
+type regionScanRequestLimiter struct {
+	mutex           sync.Mutex
+	maxRequests     uint // 0 means unlimited
+	currentRequests map[uint64]uint
+}
+
+func newRegionScanRequestLimiter(maxRequests uint) *regionScanRequestLimiter {
+	return &regionScanRequestLimiter{
+		maxRequests:     maxRequests,
+		currentRequests: make(map[uint64]uint),
+	}
+}
+
+func (r *regionScanRequestLimiter) acquire(ctx context.Context, storeID uint64) {
+	if r.maxRequests == 0 {
+		return
+	}
+	for {
+		r.mutex.Lock()
+		if r.currentRequests[storeID] < r.maxRequests {
+			r.currentRequests[storeID]++
+			r.mutex.Unlock()
+			return
+		}
+		r.mutex.Unlock()
+		log.Info("acquire fail")
+		util.Hang(ctx, 10*time.Millisecond)
+	}
+}
+
+func (r *regionScanRequestLimiter) release(storeID uint64) {
+	r.mutex.Lock()
+	r.currentRequests[storeID]--
+	log.Info("release")
+	r.mutex.Unlock()
 }
