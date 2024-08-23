@@ -58,7 +58,7 @@ func newDDLJobFetcher(
 		RegionRequestWorkerPerStore:        1,
 		ChangeEventProcessorNum:            4,
 		AdvanceResolvedTsIntervalInMs:      300,
-		RegionIncrementalScanLimitPerStore: 100,
+		RegionIncrementalScanLimitPerStore: 0,
 	}
 	client := logpuller.NewSubscriptionClient(
 		clientConfig,
