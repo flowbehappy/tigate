@@ -809,7 +809,7 @@ func (r *regionScanRequestLimiter) acquire(ctx context.Context, storeID uint64) 
 		r.mutex.Unlock()
 		log.Info("acquire fail",
 			zap.Uint64("storeID", storeID))
-		util.Hang(ctx, 10*time.Millisecond)
+		util.Hang(ctx, 1000*time.Millisecond)
 	}
 }
 
