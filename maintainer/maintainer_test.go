@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tiflow/cdc/model"
 	config2 "github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/spanz"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"net/http"
 	"net/http/pprof"
@@ -161,7 +162,9 @@ func (m *mockDispatcherManager) sendHeartbeat() {
 	}
 }
 
-func TestMaintainerSchedulePerf(t *testing.T) {
+func TestMaintainerSchedule(t *testing.T) {
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -172,7 +175,6 @@ func TestMaintainerSchedulePerf(t *testing.T) {
 		t.Fatal(http.ListenAndServe(":8300", mux))
 	}()
 
-	ctx := context.Background()
 	node := &common.NodeInfo{ID: uuid.New().String()}
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx,
 		messaging.ServerId(node.ID), 100, config.NewDefaultMessageCenterConfig()))
@@ -211,8 +213,13 @@ func TestMaintainerSchedulePerf(t *testing.T) {
 		t.Fatal("unexpected args", argList)
 	}
 	tableSize := 100
+	sleepTime := 5
 	if len(argList) == 1 {
 		tableSize, _ = strconv.Atoi(argList[0])
+	}
+	if len(argList) == 2 {
+		tableSize, _ = strconv.Atoi(argList[0])
+		sleepTime, _ = strconv.Atoi(argList[1])
 	}
 
 	for id := 0; id < tableSize; id++ {
@@ -237,5 +244,12 @@ func TestMaintainerSchedulePerf(t *testing.T) {
 		changefeedID: maintainer.id.ID,
 		eventType:    EventPeriod,
 	}, time.Now().Add(time.Millisecond*500))
-	time.Sleep(time.Minute * 30)
+	time.Sleep(time.Second * time.Duration(sleepTime))
+
+	cancel()
+	stream.Close()
+	require.Equal(t, tableSize,
+		maintainer.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
+	require.Equal(t, tableSize,
+		maintainer.scheduler.GetTaskSizeByNodeID(node.ID))
 }

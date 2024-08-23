@@ -329,10 +329,11 @@ func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpa
 		}
 		oldState := stm.State
 		oldPrimary := stm.Primary
-		var sch scheduler.InferiorStatus = &ReplicaSetStatus{
+		var sch scheduler.InferiorStatus = ReplicaSetStatus{
 			ID:           span,
 			State:        status.ComponentStatus,
 			CheckpointTs: status.CheckpointTs,
+			DDLStatus:    status.State,
 		}
 		msg, err := stm.HandleInferiorStatus(sch, from)
 		if err != nil {
@@ -393,6 +394,14 @@ func (s *Scheduler) tryMoveTask(span *common.TableSpan,
 	case scheduler.SchedulerStatusRemoving:
 		s.moveFromRemoving(span, stm)
 	}
+	// state machine is remove after state changed, remove from all maps
+	// if removed, new primary node must be empty so we also can
+	// update nodesMap if modifyNodeMap is true
+	if stm.HasRemoved() {
+		s.schedulingTask.Delete(span)
+		s.absent.Delete(span)
+		s.working.Delete(span)
+	}
 	// keep node task map is updated
 	if modifyNodeMap && oldPrimary != stm.Primary {
 		taskMap, ok := s.nodeTasks[oldPrimary]
@@ -411,6 +420,7 @@ func (s *Scheduler) moveFromAbsent(span *common.TableSpan,
 	switch stm.State {
 	case scheduler.SchedulerStatusAbsent:
 	case scheduler.SchedulerStatusCommiting:
+		s.absent.Delete(span)
 		s.schedulingTask.ReplaceOrInsert(span, stm)
 	case scheduler.SchedulerStatusWorking:
 		s.absent.Delete(span)

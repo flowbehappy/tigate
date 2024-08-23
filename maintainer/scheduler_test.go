@@ -47,3 +47,86 @@ func TestSchedule(t *testing.T) {
 	require.Equal(t, s.nodeTasks["node2"].Len(), 3)
 	require.Equal(t, s.nodeTasks["node3"].Len(), 3)
 }
+
+func TestMoveTask(t *testing.T) {
+	s := NewScheduler("test", 9, time.Minute)
+	span := &common.TableSpan{
+		TableSpan: &heartbeatpb.TableSpan{
+			TableID: 1,
+		},
+	}
+	stm, _ := scheduler.NewStateMachine(span, nil, NewReplicaSet(model.DefaultChangeFeedID("test"), span, 0))
+	s.AddNewTask(stm)
+	s.nodeTasks["a"] = utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
+	s.nodeTasks["b"] = utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
+
+	//absent->committing
+	stm.State = scheduler.SchedulerStatusCommiting
+	stm.Primary = "a"
+	s.tryMoveTask(span, stm, scheduler.SchedulerStatusAbsent, "", true)
+	require.Equal(t, 0, s.absent.Len())
+	require.Equal(t, 1, s.nodeTasks["a"].Len())
+	require.Equal(t, 1, s.schedulingTask.Len())
+
+	//committing -> working
+	stm.State = scheduler.SchedulerStatusWorking
+	stm.Primary = "a"
+	s.tryMoveTask(span, stm, scheduler.SchedulerStatusCommiting, "a", true)
+	require.Equal(t, 0, s.absent.Len())
+	require.Equal(t, 1, s.nodeTasks["a"].Len())
+	require.Equal(t, 0, s.schedulingTask.Len())
+	require.Equal(t, 1, s.working.Len())
+
+	//working -> removing
+	stm.HandleMoveInferior("b")
+	stm.Primary = "a"
+	stm.Secondary = "b"
+	s.tryMoveTask(span, stm, scheduler.SchedulerStatusWorking, "a", true)
+	require.Equal(t, 0, s.absent.Len())
+	require.Equal(t, 1, s.nodeTasks["a"].Len())
+	require.Equal(t, 1, s.schedulingTask.Len())
+	require.Equal(t, 0, s.working.Len())
+
+	// removing -> committing
+	stm.HandleInferiorStatus(ReplicaSetStatus{
+		ID:           span,
+		State:        heartbeatpb.ComponentState_Stopped,
+		CheckpointTs: 10,
+	}, "a")
+	s.tryMoveTask(span, stm, scheduler.SchedulerStatusRemoving, "a", true)
+	require.Equal(t, 0, s.absent.Len())
+	require.Equal(t, 0, s.nodeTasks["a"].Len())
+	require.Equal(t, 1, s.nodeTasks["b"].Len())
+	require.Equal(t, 1, s.schedulingTask.Len())
+	require.Equal(t, 0, s.working.Len())
+
+	//committing -> working
+	stm.HandleInferiorStatus(ReplicaSetStatus{
+		ID:           span,
+		State:        heartbeatpb.ComponentState_Working,
+		CheckpointTs: 10,
+	}, "b")
+	s.tryMoveTask(span, stm, scheduler.SchedulerStatusCommiting, "a", true)
+	require.Equal(t, 0, s.absent.Len())
+	require.Equal(t, 0, s.nodeTasks["a"].Len())
+	require.Equal(t, 1, s.nodeTasks["b"].Len())
+	require.Equal(t, 0, s.schedulingTask.Len())
+	require.Equal(t, 1, s.working.Len())
+
+	//working -> removing
+	stm.HandleRemoveInferior()
+	s.tryMoveTask(span, stm, scheduler.SchedulerStatusWorking, "b", true)
+
+	// removing -> removed
+	stm.HandleInferiorStatus(ReplicaSetStatus{
+		ID:           span,
+		State:        heartbeatpb.ComponentState_Stopped,
+		CheckpointTs: 10,
+	}, "b")
+	s.tryMoveTask(span, stm, scheduler.SchedulerStatusWorking, "b", true)
+	require.Equal(t, 0, s.absent.Len())
+	require.Equal(t, 0, s.nodeTasks["a"].Len())
+	require.Equal(t, 0, s.nodeTasks["b"].Len())
+	require.Equal(t, 0, s.schedulingTask.Len())
+	require.Equal(t, 0, s.working.Len())
+}
