@@ -143,7 +143,10 @@ func (w *MysqlWriter) execDDL(event *common.TxnEvent) error {
 		return err
 	}
 
-	if _, err = tx.ExecContext(ctx, event.GetDDLQuery()); err != nil {
+	query := event.GetDDLQuery()
+	_, err = tx.ExecContext(ctx, query)
+	if err != nil {
+		log.Error("Fail to ExecContext", zap.Any("err", err))
 		if rbErr := tx.Rollback(); rbErr != nil {
 			log.Error("Failed to rollback", zap.String("sql", event.GetDDLQuery()), zap.Error(err))
 		}

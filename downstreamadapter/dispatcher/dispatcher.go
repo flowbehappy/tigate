@@ -218,8 +218,8 @@ func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 				NeedAddedTableSpan:   d.ddlPendingEvent.GetNeedAddedTableSpan(),
 			},
 		}
-		d.statusesChan <- message
 		d.SetResendTask(newResendTask(message, d))
+		d.statusesChan <- message
 	}
 }
 
