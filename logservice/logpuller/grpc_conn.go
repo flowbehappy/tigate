@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/cdcpb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/security"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -44,7 +43,7 @@ const (
 
 // `createGRPCConn` return a grpc connection to `target` but no IO is performed.
 // Use of the `ClientConn` for RPCs will automatically cause it to connect.
-func createGRPCConn(credential *security.Credential, target string) (*grpc.ClientConn, error) {
+func createGRPCConn(ctx context.Context, credential *security.Credential, target string) (*grpc.ClientConn, error) {
 	grpcTLSOption, err := credential.ToGRPCDialOption()
 	if err != nil {
 		return nil, err
@@ -71,7 +70,9 @@ func createGRPCConn(credential *security.Credential, target string) (*grpc.Clien
 		}),
 	}
 
-	return grpc.NewClient(target, dialOptions...)
+	return grpc.DialContext(ctx, target, dialOptions...)
+
+	// return grpc.NewClient(target, dialOptions...)
 }
 
 func getContextFromFeatures(ctx context.Context, features []string) context.Context {
@@ -83,32 +84,23 @@ func getContextFromFeatures(ctx context.Context, features []string) context.Cont
 	)
 }
 
-// `Connect` connects to the target and verify that the connection supports stream multiplexing.
-func Connect(ctx context.Context, credential *security.Credential, target string) (*grpc.ClientConn, error) {
-	clientConn, err := createGRPCConn(credential, target)
+type ConnAndClient struct {
+	Conn   *grpc.ClientConn
+	Client cdcpb.ChangeData_EventFeedV2Client
+}
+
+// `Connect` returns a connection and client to remote store.
+func Connect(ctx context.Context, credential *security.Credential, target string) (*ConnAndClient, error) {
+	clientConn, err := createGRPCConn(ctx, credential, target)
 	if err != nil {
 		return nil, err
 	}
 
-	// TODO: just check once
 	rpc := cdcpb.NewChangeDataClient(clientConn)
 	ctx = getContextFromFeatures(ctx, []string{rpcMetaFeatureStreamMultiplexing})
-	var client cdcpb.ChangeData_EventFeedV2Client
-	if client, err = rpc.EventFeedV2(ctx); err == nil {
-		_ = client.CloseSend()
-		_, err = client.Recv()
-	}
-
-	status := grpcstatus.Convert(err)
-	if StatusIsEOF(status) {
-		return clientConn, nil
-	} else if status.Code() == grpccodes.Unimplemented {
-		log.Panic("remote store does not support stream multiplexing")
-		return nil, err
-	} else {
-		// TODO: not sure what to do in this case
-		log.Warn("unexpected grpc status")
-		_ = clientConn.Close()
-		return nil, err
-	}
+	client, err := rpc.EventFeedV2(ctx)
+	return &ConnAndClient{
+		Conn:   clientConn,
+		Client: client,
+	}, err
 }

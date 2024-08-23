@@ -152,7 +152,7 @@ func (p *LogPuller) Subscribe(
 		log.Panic("redundant subscription", zap.String("span", span.String()))
 	}
 
-	subID := p.client.AllocsubscriptionID()
+	subID := p.client.AllocSubscriptionID()
 
 	progress := &spanProgress{
 		span:  span,

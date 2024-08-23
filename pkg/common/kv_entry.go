@@ -17,8 +17,6 @@ package common
 
 import (
 	"fmt"
-
-	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 )
 
 // OpType for the kv, delete or put
@@ -31,28 +29,6 @@ const (
 	OpTypeDelete
 	OpTypeResolved
 )
-
-// ResolvedSpans guarantees all the KV value event
-// with commit ts less than ResolvedTs has been emitted.
-//
-//msgp:ignore ResolvedSpans
-type ResolvedSpans struct {
-	Spans      []RegionComparableSpan
-	ResolvedTs uint64
-}
-
-// String implements fmt.Stringer interface.
-func (rs *ResolvedSpans) String() string {
-	return fmt.Sprintf("span: %v, resolved-ts: %d", rs.Spans, rs.ResolvedTs)
-}
-
-// RegionComparableSpan contains a comparable span and a region id of that span
-//
-//msgp:ignore RegionComparableSpan
-type RegionComparableSpan struct {
-	Span   tablepb.Span
-	Region uint64
-}
 
 // RawKVEntry represents a kv change or a resolved ts event
 // TODO: use a different struct
