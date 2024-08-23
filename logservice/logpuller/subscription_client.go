@@ -62,6 +62,7 @@ type subscriptionID uint64
 
 // regionFeedEvent from the kv layer.
 type regionFeedEvent struct {
+	// TODO: every resolve ts event may allocate a common.RawKVEntry, is it memory consuming?
 	Val *common.RawKVEntry
 
 	// Additional debug info, not used
@@ -198,7 +199,7 @@ func NewSubscriptionClient(
 }
 
 // AllocsubscriptionID gets an ID can be used in `Subscribe`.
-func (s *SubscriptionClient) AllocsubscriptionID() subscriptionID {
+func (s *SubscriptionClient) AllocSubscriptionID() subscriptionID {
 	return subscriptionID(subscriptionIDGen.Add(1))
 }
 
@@ -652,7 +653,7 @@ func (s *SubscriptionClient) handleResolveLockTasks(ctx context.Context) error {
 	}
 
 	doResolve := func(regionID uint64, state *regionlock.LockedRangeState, targetTs uint64) {
-		if state.ResolvedTs.Load() > targetTs || !state.Initialzied.Load() {
+		if state.ResolvedTs.Load() > targetTs || !state.Initialized.Load() {
 			return
 		}
 		if lastRun, ok := resolveLastRun[regionID]; ok {
@@ -743,7 +744,7 @@ func (s *SubscriptionClient) newSubscribedSpan(
 
 	rt.tryResolveLock = func(regionID uint64, state *regionlock.LockedRangeState) {
 		targetTs := rt.staleLocksTargetTs.Load()
-		if state.ResolvedTs.Load() < targetTs && state.Initialzied.Load() {
+		if state.ResolvedTs.Load() < targetTs && state.Initialized.Load() {
 			s.resolveLockTaskCh <- &resolveLockTask{
 				regionID: regionID,
 				targetTs: targetTs,
