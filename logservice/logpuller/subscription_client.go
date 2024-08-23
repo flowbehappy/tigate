@@ -817,6 +817,7 @@ func (r *regionScanRequestLimiter) release(storeID uint64) {
 	if r.maxRequests == 0 {
 		return
 	}
+	log.Info("try release")
 	r.mutex.Lock()
 	r.currentRequests[storeID]--
 	log.Info("release",
