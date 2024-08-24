@@ -168,9 +168,6 @@ type SubscriptionClient struct {
 	// errCh is used to receive region errors.
 	// The errors will be handled in `handleErrors` goroutine.
 	errCh chan regionErrorInfo
-
-	// used to limit the number of concurrent region incremental scan requests on a single store
-	regionScanLimiter *regionScanRequestLimiter
 }
 
 // NewSubscriptionClient creates a client.
@@ -197,8 +194,6 @@ func NewSubscriptionClient(
 		regionCh:          make(chan *regionInfo, 1024),
 		resolveLockTaskCh: make(chan *resolveLockTask, 1024),
 		errCh:             make(chan regionErrorInfo, 1024),
-
-		regionScanLimiter: newRegionScanRequestLimiter(config.RegionIncrementalScanLimitPerStore),
 	}
 	s.totalSpans.spanMap = make(map[subscriptionID]*subscribedSpan)
 
@@ -326,9 +321,6 @@ func (s *SubscriptionClient) onTableDrained(rt *subscribedSpan) {
 
 // Note: don't block the caller, otherwise there may be deadlock
 func (s *SubscriptionClient) onRegionFail(ctx context.Context, errInfo regionErrorInfo) {
-	log.Info("onRegionFail")
-	errInfo.regionInfo.releaseScanQuotaIfNeed(s.regionScanLimiter)
-
 	select {
 	case <-ctx.Done():
 	case s.errCh <- errInfo:
@@ -369,7 +361,7 @@ func (s *SubscriptionClient) handleRegions(ctx context.Context, eg *errgroup.Gro
 		rs = &requestedStore{storeID: storeID, storeAddr: storeAddr}
 		stores[storeID] = rs
 		for i := uint(0); i < s.config.RegionRequestWorkerPerStore; i++ {
-			requestWorker := newRegionRequestWorker(ctx, s, s.credential, eg, rs)
+			requestWorker := newRegionRequestWorker(ctx, s, s.credential, eg, rs, int(s.config.RegionRequestWorkerPerStore)/int(s.config.RegionRequestWorkerPerStore))
 			rs.requestWorkers = append(rs.requestWorkers, requestWorker)
 		}
 
@@ -777,83 +769,4 @@ func (r *subscribedSpan) resolveStaleLocks(targetTs uint64) {
 	log.Debug("subscription client finds slow locked ranges",
 		zap.Any("subscriptionID", r.subID),
 		zap.Any("ranges", res))
-}
-
-// thread safe
-type regionScanRequestLimiter struct {
-	mutex           sync.Mutex
-	cond            *sync.Cond // 条件变量
-	maxRequests     uint       // 0 means unlimited
-	currentRequests map[uint64]uint
-}
-
-func newRegionScanRequestLimiter(maxRequests uint) *regionScanRequestLimiter {
-	limiter := &regionScanRequestLimiter{
-		maxRequests:     maxRequests,
-		currentRequests: make(map[uint64]uint),
-	}
-	limiter.cond = sync.NewCond(&limiter.mutex)
-	return limiter
-}
-
-func (r *regionScanRequestLimiter) close() {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	for storeID := range r.currentRequests {
-		r.currentRequests[storeID] = 0
-	}
-	r.cond.Broadcast()
-}
-
-func (r *regionScanRequestLimiter) acquire(ctx context.Context, storeID uint64, regionID uint64) {
-	if r.maxRequests == 0 {
-		return
-	}
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	for {
-		if r.currentRequests[storeID] < r.maxRequests {
-			r.currentRequests[storeID]++
-			log.Info("acquire success",
-				zap.Uint64("storeID", storeID),
-				zap.Uint64("regionID", regionID),
-				zap.Uint("count", r.currentRequests[storeID]))
-			return
-		}
-		log.Info("acquire fail, waiting",
-			zap.Uint64("storeID", storeID))
-
-		// 使用条件变量等待
-		r.cond.Wait()
-
-		// 检查上下文是否被取消
-		if ctx.Err() != nil {
-			log.Info("acquire canceled due to context",
-				zap.Uint64("storeID", storeID))
-			return
-		}
-	}
-}
-
-func (r *regionScanRequestLimiter) release(storeID uint64, regionID uint64) {
-	if r.maxRequests == 0 {
-		return
-	}
-	log.Info("try release")
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	r.currentRequests[storeID]--
-	log.Info("release",
-		zap.Uint64("storeID", storeID),
-		zap.Uint64("regionID", regionID),
-		zap.Uint("count", r.currentRequests[storeID]))
-
-	if r.currentRequests[storeID] == 0 {
-		delete(r.currentRequests, storeID)
-	}
-	// 通知等待的goroutine有资源可用
-	r.cond.Signal()
 }

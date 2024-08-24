@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tiflow/pkg/version"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 	grpcstatus "google.golang.org/grpc/status"
 )
 
@@ -59,6 +60,8 @@ type regionRequestWorker struct {
 
 		subscriptions map[subscriptionID]regionFeedStates
 	}
+
+	ratelimiter *rate.Limiter
 }
 
 func newRegionRequestWorker(
@@ -67,12 +70,15 @@ func newRegionRequestWorker(
 	credential *security.Credential,
 	g *errgroup.Group,
 	store *requestedStore,
+	regionScanLimit int,
 ) *regionRequestWorker {
 	worker := &regionRequestWorker{
 		workerID:   workerIDGen.Add(1),
 		client:     client,
 		store:      store,
 		requestsCh: make(chan *regionInfo, 256), // 256 is an arbitrary number.
+
+		ratelimiter: rate.NewLimiter(rate.Limit(regionScanLimit), regionScanLimit),
 	}
 	worker.requestedRegions.subscriptions = make(map[subscriptionID]regionFeedStates)
 
@@ -279,7 +285,7 @@ func (s *regionRequestWorker) processRegionSendTask(
 			state.start()
 			s.addRegionState(subID, region.verID.GetID(), state)
 
-			region.acquireScanQuota(ctx, s.client.regionScanLimiter, s.store.storeID)
+			s.ratelimiter.Wait(ctx)
 			if err := doSend(s.createRegionRequest(region), subID); err != nil {
 				return err
 			}
