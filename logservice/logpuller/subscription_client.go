@@ -326,6 +326,7 @@ func (s *SubscriptionClient) onTableDrained(rt *subscribedSpan) {
 
 // Note: don't block the caller, otherwise there may be deadlock
 func (s *SubscriptionClient) onRegionFail(ctx context.Context, errInfo regionErrorInfo) {
+	log.Info("onRegionFail")
 	errInfo.regionInfo.releaseScanQuotaIfNeed(s.regionScanLimiter)
 
 	select {
@@ -805,7 +806,7 @@ func (r *regionScanRequestLimiter) close() {
 	r.cond.Broadcast()
 }
 
-func (r *regionScanRequestLimiter) acquire(ctx context.Context, storeID uint64) {
+func (r *regionScanRequestLimiter) acquire(ctx context.Context, storeID uint64, regionID uint64) {
 	if r.maxRequests == 0 {
 		return
 	}
@@ -817,6 +818,7 @@ func (r *regionScanRequestLimiter) acquire(ctx context.Context, storeID uint64) 
 			r.currentRequests[storeID]++
 			log.Info("acquire success",
 				zap.Uint64("storeID", storeID),
+				zap.Uint64("regionID", regionID),
 				zap.Uint("count", r.currentRequests[storeID]))
 			return
 		}
@@ -835,7 +837,7 @@ func (r *regionScanRequestLimiter) acquire(ctx context.Context, storeID uint64) 
 	}
 }
 
-func (r *regionScanRequestLimiter) release(storeID uint64) {
+func (r *regionScanRequestLimiter) release(storeID uint64, regionID uint64) {
 	if r.maxRequests == 0 {
 		return
 	}
@@ -846,6 +848,7 @@ func (r *regionScanRequestLimiter) release(storeID uint64) {
 	r.currentRequests[storeID]--
 	log.Info("release",
 		zap.Uint64("storeID", storeID),
+		zap.Uint64("regionID", regionID),
 		zap.Uint("count", r.currentRequests[storeID]))
 
 	if r.currentRequests[storeID] == 0 {
