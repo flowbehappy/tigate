@@ -326,6 +326,7 @@ func (s *SubscriptionClient) onTableDrained(rt *subscribedSpan) {
 
 // Note: don't block the caller, otherwise there may be deadlock
 func (s *SubscriptionClient) onRegionFail(ctx context.Context, errInfo regionErrorInfo) {
+	log.Info("onRegionFail")
 	errInfo.regionInfo.releaseScanQuotaIfNeed(s.regionScanLimiter)
 
 	select {
