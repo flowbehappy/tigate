@@ -22,7 +22,6 @@ import (
 	"github.com/flowbehappy/tigate/logservice/logpuller/regionlock"
 	"github.com/pingcap/log"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/zap"
 )
 
 const (
@@ -88,9 +87,6 @@ func (s *regionInfo) acquireScanQuota(ctx context.Context, limiter *regionScanRe
 
 func (s *regionInfo) releaseScanQuotaIfNeed(limiter *regionScanRequestLimiter) {
 	storeID := s.storeID.Load()
-	log.Info("try release scan quota",
-		zap.Uint64("storeID", storeID),
-		zap.Uint64("regionID", s.verID.GetID()))
 	if storeID != 0 {
 		if s.storeID.CompareAndSwap(storeID, 0) {
 			limiter.release(storeID)

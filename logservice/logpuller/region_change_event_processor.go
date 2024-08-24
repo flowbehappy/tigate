@@ -310,7 +310,6 @@ func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resol
 		}
 
 		state.updateResolvedTs(batch.ts)
-		log.Info("advanceTableSpan")
 		state.region.releaseScanQuotaIfNeed(w.client.regionScanLimiter)
 	}
 
