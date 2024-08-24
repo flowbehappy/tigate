@@ -34,11 +34,11 @@ func benchmarkCPUThreadPoolWithWaitReactor(addCount int, sleepTime int, b *testi
 		testCount = 0
 		channel := make(chan int, 1)
 
-		taskScheduler := NewTaskSchedulerDefault("CPUWithWaitTask")
+		taskScheduler := NewThreadPoolDefault()
 		for i := 0; i < count; i++ {
 			// We make the scheduler to call the Execute immediately.
 			// And the Execute will return the next execution time, i.e. time.Now() + delay
-			taskScheduler.Submit(newCPUWithWaitTask(&channel, count, addCount, delay), CPUTask, time.Now())
+			taskScheduler.Submit(newCPUWithWaitTask(&channel, count, addCount, delay), time.Now())
 		}
 
 		<-channel
@@ -61,12 +61,12 @@ func BenchmarkCPUThreadPoolWithWaitReactor10000x1000(b *testing.B) {
 
 // These two test cases are used to compare the cost time and cpu usage of ThreadPool and GoRoutine.
 func benchmarkCostThreadPool(taskCount int, addCount int, b *testing.B) {
-	taskScheduler := NewTaskScheduler("CPUTimeTask", 0, -1)
+	taskScheduler := NewThreadPoolDefault()
 	for k := 0; k < b.N; k++ {
 		testCount = 0
 		channel := make(chan int, 1)
 		for i := 0; i < taskCount; i++ {
-			taskScheduler.Submit(newCPUTimeTask(&channel, addCount, taskCount), CPUTask, time.Now())
+			taskScheduler.Submit(newCPUTimeTask(&channel, addCount, taskCount), time.Now())
 		}
 		<-channel
 	}
