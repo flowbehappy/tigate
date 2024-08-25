@@ -250,6 +250,9 @@ func (s *regionRequestWorker) processRegionSendTask(
 	s.preFetchForConnecting = nil
 	for {
 		// TODO: can region be nil?
+		if region == nil {
+			return errors.New("region is nil")
+		}
 		subID := region.subscribedSpan.subID
 		log.Debug("region request worker gets a singleRegionInfo",
 			zap.Uint64("workerID", s.workerID),
