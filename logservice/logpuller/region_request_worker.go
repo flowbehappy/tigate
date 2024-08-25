@@ -197,6 +197,7 @@ func (s *regionRequestWorker) receiveAndDispatchChangeEventsToProcessor(
 			}
 			return errors.Trace(err)
 		}
+		log.Info("send event", zap.Int("workerID", int(s.workerID)))
 		if len(changeEvent.Events) > 0 {
 			if err := s.dispatchRegionChangeEvents(ctx, changeEvent.Events); err != nil {
 				return err
@@ -207,6 +208,7 @@ func (s *regionRequestWorker) receiveAndDispatchChangeEventsToProcessor(
 				return err
 			}
 		}
+		log.Info("send event done", zap.Int("workerID", int(s.workerID)))
 	}
 }
 
@@ -389,11 +391,9 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 		if state != nil {
 			sfEvent := newEventItem(event, state, s)
 			slot := hashRegionID(regionID, len(s.client.changeEventProcessors))
-			log.Info("send event", zap.Int("workerID", int(s.workerID)), zap.Int("slot", slot))
 			if err := s.client.changeEventProcessors[slot].sendEvent(ctx, sfEvent); err != nil {
 				return errors.Trace(err)
 			}
-			log.Info("send event done", zap.Int("workerID", int(s.workerID)), zap.Int("slot", slot))
 		} else {
 			log.Warn("region request worker receives a region event for an untracked region",
 				zap.Uint64("workerID", s.workerID),
