@@ -213,7 +213,6 @@ func (p *LogPuller) runEventHandler(ctx context.Context, inputCh <-chan LogEvent
 		case e = <-inputCh:
 		}
 
-		log.Info("runEventHandler getEvent")
 		progress := p.getProgress(e.subscriptionID)
 		// There is a chance that some stale events are received after
 		// the subscription is removed. We can just ignore them.
@@ -228,12 +227,10 @@ func (p *LogPuller) runEventHandler(ctx context.Context, inputCh <-chan LogEvent
 			continue
 		}
 
-		log.Info("runEventHandler consume")
 		if err := progress.consume.f(ctx, e.Val, progress.span); err != nil {
 			log.Info("consume error", zap.Error(err))
 			return errors.Trace(err)
 		}
-		log.Info("runEventHandler consume done")
 	}
 }
 
