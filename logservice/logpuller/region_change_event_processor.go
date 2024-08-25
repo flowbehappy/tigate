@@ -72,7 +72,7 @@ type changeEventProcessor struct {
 func newChangeEventProcessor(client *SubscriptionClient) *changeEventProcessor {
 	return &changeEventProcessor{
 		client:  client,
-		inputCh: make(chan statefulEvent, 32), // 32 is an arbitrary number.
+		inputCh: make(chan statefulEvent, 100000), // 32 is an arbitrary number.
 	}
 }
 

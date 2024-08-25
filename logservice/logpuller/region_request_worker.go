@@ -184,7 +184,7 @@ func (s *regionRequestWorker) receiveAndDispatchChangeEventsToProcessor(
 ) error {
 	for {
 		changeEvent, err := conn.Client.Recv()
-		log.Info("receive event")
+		log.Info("receive event", zap.Int("workerID", int(s.workerID)))
 		if err != nil {
 			log.Debug("region request worker receive from grpc stream failed",
 				zap.Uint64("workerID", s.workerID),
