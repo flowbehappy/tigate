@@ -1,115 +1,79 @@
-// Copyright 2024 PingCAP, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package threadpool
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// threadPool is used to continuously get tasks and execute them in a fixed number of threads.
-type threadPool struct {
-	taskType    TaskStatus
-	name        string
+type threadPoolImpl struct {
 	threadCount int
 
-	schedule toBeScheduled
-	taskChan chan *scheduledTask
+	pendingTaskChan chan *scheduledTask
+
+	reactor *waitReactor
 
 	stopSignal chan struct{}
 	wg         sync.WaitGroup
+	hasClosed  atomic.Bool
 }
 
-func newthreadPool(taskType TaskStatus, name string, schedule toBeScheduled, threadCount int) *threadPool {
-	tp := &threadPool{
-		taskType:    taskType,
-		name:        name,
-		threadCount: threadCount,
-
-		schedule:   schedule,
-		taskChan:   make(chan *scheduledTask, threadCount),
-		stopSignal: make(chan struct{}),
+func newThreadPoolImpl(threadCount int) *threadPoolImpl {
+	tp := &threadPoolImpl{
+		threadCount:     threadCount,
+		pendingTaskChan: make(chan *scheduledTask, threadCount),
+		stopSignal:      make(chan struct{}),
 	}
+	tp.reactor = newWaitReactor(tp)
 
+	tp.wg.Add(threadCount)
 	for i := 0; i < threadCount; i++ {
-		tp.wg.Add(1)
-		go tp.loop(i)
-
+		go tp.executeTasks()
 	}
+
 	return tp
 }
 
-func (p *threadPool) toBeExecuted() chan *scheduledTask { return p.taskChan }
+func (t *threadPoolImpl) Submit(task Task, next time.Time) *TaskHandle {
+	st := &scheduledTask{
+		task: task,
+	}
+	t.reactor.newTaskChan <- taskAndTime{st, next}
+	return &TaskHandle{st, t}
+}
 
-func (p *threadPool) loop(int) {
-	defer p.wg.Done()
+func (t *threadPoolImpl) SubmitFunc(task FuncTask, next time.Time) *TaskHandle {
+	return t.Submit(&funcTaskImpl{task}, next)
+}
+
+func (t *threadPoolImpl) Stop() {
+	if t.hasClosed.CompareAndSwap(false, true) {
+		close(t.stopSignal)
+		close(t.reactor.stopSignal)
+	}
+	t.wg.Wait()
+	t.reactor.wg.Wait()
+}
+
+func (t *threadPoolImpl) cancel(st *scheduledTask) {
+	t.reactor.newTaskChan <- taskAndTime{st, time.Time{}}
+}
+
+func (t *threadPoolImpl) executeTasks() {
+	defer t.wg.Done()
 
 	for {
 		select {
-		case <-p.stopSignal:
+		case <-t.stopSignal:
 			return
-		case st := <-p.taskChan:
-			p.handleTask(st)
-			continue
-		}
-	}
-}
-
-// Execute the task, and push the task back to the correct thread pool if the task is not done.
-func (p *threadPool) handleTask(st *scheduledTask) {
-	{
-		if !st.runMutex.TryLock() {
-			// The task is running in another thread.
-			// And the task will be pushed back to the waitingQueue by the thread that is executing the task.
-			return
-		}
-		defer st.runMutex.Unlock()
-
-		// Only execute the task when it is not done.
-		// If the task is done, simply drop it. Because we know that the task is not in any priorityQueue,
-		// and don't need to do any clean up.
-		if TaskStatus(st.status.Load()) != Done {
-			nextStatus, nextTime := st.task.Execute()
-			if nextStatus == Done {
-				st.time = time.Time{}
-				// Here we just return and drop the task.
-				return
-			}
-			for {
-				s := st.status.Load()
-				if s == int32(Done) {
-					st.time = time.Time{}
-					return
-				}
-				if st.status.CompareAndSwap(s, int32(nextStatus)) {
-					break
+		case task := <-t.pendingTaskChan:
+			// Canceled task will not be executed and dropped.
+			if !task.time.IsZero() {
+				next := task.task.Execute()
+				if !next.IsZero() {
+					t.reactor.newTaskChan <- taskAndTime{task, next}
 				}
 			}
-			st.time = nextTime
-		} else {
-			st.time = time.Time{}
-			return
 		}
 	}
-
-	p.schedule.toBeScheduled(TaskStatus(st.status.Load())) <- st
-}
-
-func (p *threadPool) stop() {
-	close(p.stopSignal)
-}
-
-func (p *threadPool) waitForStop() {
-	p.wg.Wait()
 }

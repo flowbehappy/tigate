@@ -35,19 +35,19 @@ func newHeartBeatTask(manager *EventDispatcherManager) *HeartBeatTask {
 		manager: manager,
 		counter: 0,
 	}
-	t.taskHandle = taskScheduler.Submit(t, threadpool.CPUTask, time.Now().Add(time.Second*1))
+	t.taskHandle = taskScheduler.Submit(t, time.Now().Add(time.Second*1))
 	return t
 }
 
-func (t *HeartBeatTask) Execute() (threadpool.TaskStatus, time.Time) {
+func (t *HeartBeatTask) Execute() time.Time {
 	if t.manager.closed.Load() {
-		return threadpool.Done, time.Time{}
+		return time.Time{}
 	}
 	t.counter = (t.counter + 1) % 10
 	needCompleteStatus := t.counter == 0
 	message := t.manager.CollectHeartbeatInfo(needCompleteStatus)
 	t.manager.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: t.manager.GetMaintainerID(), Request: message})
-	return threadpool.CPUTask, time.Now().Add(time.Second * 1)
+	return time.Now().Add(time.Second * 1)
 }
 
 func (t *HeartBeatTask) Cancel() {
@@ -55,18 +55,18 @@ func (t *HeartBeatTask) Cancel() {
 }
 
 var heartBeatTaskSchedulerOnce sync.Once
-var heartBeatTaskScheduler *threadpool.TaskScheduler
+var heartBeatTaskScheduler threadpool.ThreadPool
 
-func GetHeartBeatTaskScheduler() *threadpool.TaskScheduler {
+func GetHeartBeatTaskScheduler() threadpool.ThreadPool {
 	if heartBeatTaskScheduler == nil {
 		heartBeatTaskSchedulerOnce.Do(func() {
-			heartBeatTaskScheduler = threadpool.NewTaskSchedulerDefault("HeartBeatTaskScheduler")
+			heartBeatTaskScheduler = threadpool.NewThreadPoolDefault()
 		})
 	}
 	return heartBeatTaskScheduler
 }
 
-func SetHeartBeatTaskScheduler(taskScheduler *threadpool.TaskScheduler) {
+func SetHeartBeatTaskScheduler(taskScheduler threadpool.ThreadPool) {
 	heartBeatTaskScheduler = taskScheduler
 }
 

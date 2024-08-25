@@ -29,27 +29,12 @@ func newBasicCPUTask(wg *sync.WaitGroup) *BasicCPUTask {
 	return &BasicCPUTask{wg}
 }
 
-func (t *BasicCPUTask) Execute() (TaskStatus, time.Time) {
+func (t *BasicCPUTask) Execute() time.Time {
 	for i := 0; i < 100; i++ {
 		atomic.AddInt64(&testCount, 1)
 	}
 	t.wg.Done()
-	return Done, time.Time{}
-}
-
-type BasicIOTask struct {
-	wg *sync.WaitGroup
-}
-
-func newBasicIOTask(wg *sync.WaitGroup) *BasicIOTask {
-	return &BasicIOTask{wg}
-}
-
-func (t *BasicIOTask) Execute() (TaskStatus, time.Time) {
-	time.Sleep(50 * time.Millisecond)
-	atomic.AddInt64(&testCount, 1)
-	t.wg.Done()
-	return Done, time.Time{}
+	return time.Time{}
 }
 
 type BasicWaitTask struct {
@@ -60,12 +45,12 @@ func newBasicWaitTask(wg *sync.WaitGroup) *BasicWaitTask {
 	return &BasicWaitTask{wg}
 }
 
-func (t *BasicWaitTask) Execute() (TaskStatus, time.Time) {
+func (t *BasicWaitTask) Execute() time.Time {
 	time.Sleep(50 * time.Millisecond)
 	atomic.AddInt64(&testCount, 1)
 	t.wg.Done()
 
-	return Done, time.Time{}
+	return time.Time{}
 }
 
 type PureCPUTask struct {
@@ -84,7 +69,7 @@ func newPureCPUTask(finalChan *chan int, ch *chan int, target int64, addCount in
 	}
 }
 
-func (t *PureCPUTask) Execute() (TaskStatus, time.Time) {
+func (t *PureCPUTask) Execute() time.Time {
 	select {
 	case <-*t.ch:
 		for i := 0; i < t.addCount; i++ {
@@ -93,9 +78,9 @@ func (t *PureCPUTask) Execute() (TaskStatus, time.Time) {
 		if atomic.LoadInt64(&testCount) == int64(t.addCount)*t.target {
 			*t.finalChan <- 1
 		}
-		return Done, time.Time{}
+		return time.Time{}
 	default:
-		return CPUTask, time.Now()
+		return time.Now()
 	}
 }
 
@@ -117,9 +102,9 @@ func newCPUWithWaitTask(finalChan *chan int, taskCount int, addCount int, wait t
 	}
 }
 
-func (t *CPUWithWaitTask) Execute() (TaskStatus, time.Time) {
+func (t *CPUWithWaitTask) Execute() time.Time {
 	if time.Now().Before(t.nextExecTime) {
-		return CPUTask, t.nextExecTime
+		return t.nextExecTime
 	}
 
 	for i := 0; i < t.addCount; i++ {
@@ -130,7 +115,7 @@ func (t *CPUWithWaitTask) Execute() (TaskStatus, time.Time) {
 		*t.finalChan <- 1
 	}
 
-	return Done, time.Time{}
+	return time.Time{}
 }
 
 type CPUTimeTask struct {
@@ -147,7 +132,7 @@ func newCPUTimeTask(finalChan *chan int, addCount int, taskCount int) *CPUTimeTa
 	}
 }
 
-func (t *CPUTimeTask) Execute() (TaskStatus, time.Time) {
+func (t *CPUTimeTask) Execute() time.Time {
 	for i := 0; i < t.addCount; i++ {
 		atomic.AddInt64(&testCount, 1)
 	}
@@ -155,5 +140,5 @@ func (t *CPUTimeTask) Execute() (TaskStatus, time.Time) {
 		*t.finalChan <- 1
 	}
 
-	return Done, time.Time{}
+	return time.Time{}
 }
