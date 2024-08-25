@@ -14,7 +14,6 @@
 package threadpool
 
 import (
-	// "fmt"
 	"sync"
 	"time"
 
@@ -119,7 +118,6 @@ func (r *waitReactor) blockForTest(until int) {
 func (r *waitReactor) scheduleTaskLoop() {
 	defer func() {
 		r.wg.Done()
-		// fmt.Println("scheduleTaskLoop done")
 	}()
 
 	for {
@@ -148,7 +146,6 @@ func (r *waitReactor) scheduleTaskLoop() {
 func (r *waitReactor) executeTaskLoop() {
 	defer func() {
 		r.wg.Done()
-		// fmt.Println("executeTaskLoop done")
 	}()
 
 	for {
@@ -162,7 +159,6 @@ func (r *waitReactor) executeTaskLoop() {
 		}
 
 		if !r.freeToRun {
-			// fmt.Println("waitReactor is disabled")
 			for r.waitingQueue.len() < r.blockUntil {
 				time.Sleep(10 * time.Millisecond)
 			}
@@ -170,15 +166,13 @@ func (r *waitReactor) executeTaskLoop() {
 			continue
 		}
 
-		// fmt.Printf("waitingQueue:%d\n", r.waitingQueue.len())
-
 		now := time.Now()
 
 		nearestTime := time.Time{}
 		ready := false
 
 		// We first peek the top task to see if it is ready.
-		// If yes, we pop it and push it to the toBeExecuted.
+		// If yes, we pop it and push it to the execute list.
 		// We don't pop the task before we believe it is ready.
 		// Because pop is more expensive than peek.
 		task := r.waitingQueue.peekTopTask()
@@ -188,17 +182,15 @@ func (r *waitReactor) executeTaskLoop() {
 			ready = !task.time.After(now)
 			if ready {
 				task = r.waitingQueue.popTopTask()
-				// Here we do the check again because the task may be updated by other goroutines.
+				// A task should only be removed by current goroutine.
+				// And a task's time can only be set to zero (canceled) if it is in the waitingQueue.
 				if task == nil || task.time.After(now) {
 					panic("task should not be nil or after now")
-					// fmt.Printf("popTask task: %d, status: %d\n", task.task.TaskId(), task.status)
 				}
 			} else {
 				task = nil
 			}
 		}
-
-		// fmt.Println("nearestTime:", nearestTime, "ready:", ready)
 
 		if ready {
 			// Zero time means the task is done.
@@ -206,7 +198,6 @@ func (r *waitReactor) executeTaskLoop() {
 				select {
 				// Wait until the runner to execute the task.
 				case r.threadPool.pendingTaskChan <- task:
-					// fmt.Printf("push to toBeExecuted task: %d, status: %d\n", task.task.TaskId(), task.status)
 					break
 				case <-r.stopSignal:
 					return
