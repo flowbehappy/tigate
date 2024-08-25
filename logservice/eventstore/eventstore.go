@@ -116,10 +116,10 @@ func NewEventStore(
 	schemaStore schemastore.SchemaStore,
 ) EventStore {
 	clientConfig := &logpuller.SubscriptionClientConfig{
-		RegionRequestWorkerPerStore:        2,
-		ChangeEventProcessorNum:            32,
+		RegionRequestWorkerPerStore:        1,
+		ChangeEventProcessorNum:            64,
 		AdvanceResolvedTsIntervalInMs:      300,
-		RegionIncrementalScanLimitPerStore: 5,
+		RegionIncrementalScanLimitPerStore: 20,
 	}
 	client := logpuller.NewSubscriptionClient(
 		clientConfig,
