@@ -72,7 +72,7 @@ type changeEventProcessor struct {
 func newChangeEventProcessor(client *SubscriptionClient) *changeEventProcessor {
 	return &changeEventProcessor{
 		client:  client,
-		inputCh: make(chan statefulEvent, 1024), // 1024 is an arbitrary number.
+		inputCh: make(chan statefulEvent, 64), // 64 is an arbitrary number.
 	}
 }
 
@@ -295,6 +295,7 @@ func (w *changeEventProcessor) handleResolvedTs(ctx context.Context, batch resol
 }
 
 func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resolvedTsBatch) {
+	log.Info("advanceTableSpan phase1")
 	for _, state := range batch.regions {
 		if state.isStale() || !state.isInitialized() {
 			continue
@@ -311,14 +312,19 @@ func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resol
 		}
 
 		state.updateResolvedTs(batch.ts)
+		log.Info("releaseScanQuotaIfNeed")
 		state.region.releaseScanQuotaIfNeed(w.client.regionScanLimiter)
+		log.Info("releaseScanQuotaIfNeed doen")
 	}
+	log.Info("advanceTableSpan phase1 done")
 
 	table := batch.regions[0].region.subscribedSpan
 	now := time.Now().UnixMilli()
 	lastAdvance := table.lastAdvanceTime.Load()
 	if now-lastAdvance > int64(w.client.config.AdvanceResolvedTsIntervalInMs) && table.lastAdvanceTime.CompareAndSwap(lastAdvance, now) {
+		log.Info("advanceTableSpan phase2")
 		ts := table.rangeLock.ResolvedTs()
+		log.Info("advanceTableSpan phase2 done")
 		if ts > table.startTs {
 			revent := regionFeedEvent{
 				Val: &common.RawKVEntry{
@@ -327,10 +333,12 @@ func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resol
 				},
 			}
 			e := newLogEvent(revent, table)
+			log.Info("advanceTableSpan phase3")
 			select {
 			case table.eventCh <- e:
 			case <-ctx.Done():
 			}
+			log.Info("advanceTableSpan phase3 done")
 		}
 	}
 }
