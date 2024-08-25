@@ -361,7 +361,7 @@ func (s *SubscriptionClient) handleRegions(ctx context.Context, eg *errgroup.Gro
 		rs = &requestedStore{storeID: storeID, storeAddr: storeAddr}
 		stores[storeID] = rs
 		for i := uint(0); i < s.config.RegionRequestWorkerPerStore; i++ {
-			requestWorker := newRegionRequestWorker(ctx, s, s.credential, eg, rs, int(s.config.RegionRequestWorkerPerStore)/int(s.config.RegionRequestWorkerPerStore))
+			requestWorker := newRegionRequestWorker(ctx, s, s.credential, eg, rs, int(s.config.RegionIncrementalScanLimitPerStore)/int(s.config.RegionRequestWorkerPerStore))
 			rs.requestWorkers = append(rs.requestWorkers, requestWorker)
 		}
 
