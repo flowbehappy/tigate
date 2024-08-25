@@ -149,7 +149,6 @@ func (p *LogPuller) Subscribe(
 	startTs common.Ts,
 ) {
 	p.subscriptions.Lock()
-	defer p.subscriptions.Unlock()
 
 	// FIXME: support subscribe the same span multiple times in LogPuller(not sure whether it is supported already)
 	if _, exists := p.subscriptions.subscriptionMap.Get(span); exists {
@@ -180,11 +179,13 @@ func (p *LogPuller) Subscribe(
 	p.subscriptions.subscriptionMap.ReplaceOrInsert(span, subID)
 
 	slot := p.inputChSelector(span, len(p.inputChs))
+	p.subscriptions.Unlock()
 	p.client.Subscribe(subID, span, uint64(startTs), p.inputChs[slot])
 }
 
 func (p *LogPuller) Unsubscribe(span heartbeatpb.TableSpan) {
 	p.subscriptions.Lock()
+	// TODO: check whether need to unlock before call client.Unsubscribe
 	defer p.subscriptions.Unlock()
 
 	subID, ok := p.subscriptions.subscriptionMap.Get(span)
@@ -197,9 +198,10 @@ func (p *LogPuller) Unsubscribe(span heartbeatpb.TableSpan) {
 	progress.consume.Lock()
 	progress.consume.removed = true
 	progress.consume.Unlock()
-	p.client.Unsubscribe(progress.subID)
 	delete(p.subscriptions.spanProgressMap, progress.subID)
 	p.subscriptions.subscriptionMap.Delete(span)
+
+	p.client.Unsubscribe(progress.subID)
 }
 
 func (p *LogPuller) runEventHandler(ctx context.Context, inputCh <-chan LogEvent) error {
