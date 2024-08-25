@@ -379,7 +379,7 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 		state := s.getRegionState(subscriptionID, regionID)
 		switch x := event.Event.(type) {
 		case *cdcpb.Event_Error:
-			log.Debug("region request worker receives a region error",
+			log.Info("region request worker receives a region error",
 				zap.Uint64("workerID", s.workerID),
 				zap.Any("subscriptionID", subscriptionID),
 				zap.Uint64("regionID", event.RegionId),
@@ -389,9 +389,11 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 		if state != nil {
 			sfEvent := newEventItem(event, state, s)
 			slot := hashRegionID(regionID, len(s.client.changeEventProcessors))
+			log.Info("send event", zap.Int("workerID", int(s.workerID)), zap.Int("slot", slot))
 			if err := s.client.changeEventProcessors[slot].sendEvent(ctx, sfEvent); err != nil {
 				return errors.Trace(err)
 			}
+			log.Info("send event done", zap.Int("workerID", int(s.workerID)), zap.Int("slot", slot))
 		} else {
 			log.Warn("region request worker receives a region event for an untracked region",
 				zap.Uint64("workerID", s.workerID),
