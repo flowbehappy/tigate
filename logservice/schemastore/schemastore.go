@@ -121,14 +121,14 @@ func NewSchemaStore(
 	log.Info("new schema store",
 		zap.Uint64("finishedDDLTS", s.finishedDDLTS),
 		zap.Int64("schemaVersion", s.schemaVersion))
-	s.ddlJobFetcher = newDDLJobFetcher(
-		pdCli,
-		regionCache,
-		pdClock,
-		kvStorage,
-		metaTS.ResolvedTS,
-		s.writeDDLEvent,
-		s.advanceResolvedTs)
+	// s.ddlJobFetcher = newDDLJobFetcher(
+	// 	pdCli,
+	// 	regionCache,
+	// 	pdClock,
+	// 	kvStorage,
+	// 	metaTS.ResolvedTS,
+	// 	s.writeDDLEvent,
+	// 	s.advanceResolvedTs)
 	return s
 }
 
@@ -141,9 +141,9 @@ func (s *schemaStore) Run(ctx context.Context) error {
 	eg.Go(func() error {
 		return s.batchCommitAndUpdateWatermark(ctx)
 	})
-	eg.Go(func() error {
-		return s.ddlJobFetcher.puller.Run(ctx)
-	})
+	// eg.Go(func() error {
+	// 	return s.ddlJobFetcher.puller.Run(ctx)
+	// })
 	return eg.Wait()
 }
 
