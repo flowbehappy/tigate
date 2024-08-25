@@ -816,17 +816,18 @@ func (r *regionScanRequestLimiter) acquire(ctx context.Context, storeID uint64, 
 	for {
 		if r.currentRequests[storeID] < r.maxRequests {
 			r.currentRequests[storeID]++
-			log.Info("acquire success",
-				zap.Uint64("storeID", storeID),
-				zap.Uint64("regionID", regionID),
-				zap.Uint("count", r.currentRequests[storeID]))
+			// log.Info("acquire success",
+			// 	zap.Uint64("storeID", storeID),
+			// 	zap.Uint64("regionID", regionID),
+			// 	zap.Uint("count", r.currentRequests[storeID]))
 			return
 		}
-		log.Info("acquire fail, waiting",
-			zap.Uint64("storeID", storeID))
+		log.Info("acquire fail, waiting", zap.Uint64("storeID", storeID))
 
 		// 使用条件变量等待
 		r.cond.Wait()
+
+		log.Info("try acquire again", zap.Uint64("storeID", storeID))
 
 		// 检查上下文是否被取消
 		if ctx.Err() != nil {
@@ -841,15 +842,15 @@ func (r *regionScanRequestLimiter) release(storeID uint64, regionID uint64) {
 	if r.maxRequests == 0 {
 		return
 	}
-	log.Info("try release")
+	// log.Info("try release")
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
 	r.currentRequests[storeID]--
-	log.Info("release",
-		zap.Uint64("storeID", storeID),
-		zap.Uint64("regionID", regionID),
-		zap.Uint("count", r.currentRequests[storeID]))
+	// log.Info("release",
+	// 	zap.Uint64("storeID", storeID),
+	// 	zap.Uint64("regionID", regionID),
+	// 	zap.Uint("count", r.currentRequests[storeID]))
 
 	if r.currentRequests[storeID] == 0 {
 		delete(r.currentRequests, storeID)
