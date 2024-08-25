@@ -93,9 +93,7 @@ func (w *changeEventProcessor) run(ctx context.Context) error {
 			return ctx.Err()
 		case event = <-w.inputCh:
 		}
-		log.Info("processEvent")
 		w.processEvent(ctx, event)
-		log.Info("processEvent done")
 	}
 }
 
