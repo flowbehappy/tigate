@@ -122,16 +122,16 @@ func newCheckProgressEmptyTask(dispatcher *Dispatcher) *CheckProgressEmptyTask {
 	t := &CheckProgressEmptyTask{
 		dispatcher: dispatcher,
 	}
-	t.taskHandle = taskScheduler.Submit(t, threadpool.CPUTask, time.Now().Add(10*time.Millisecond))
+	t.taskHandle = taskScheduler.Submit(t, time.Now().Add(10*time.Millisecond))
 	return t
 }
 
-func (t *CheckProgressEmptyTask) Execute() (threadpool.TaskStatus, time.Time) {
+func (t *CheckProgressEmptyTask) Execute() time.Time {
 	if t.dispatcher.tableProgress.Empty() {
 		t.dispatcher.DealWithDDLWhenProgressEmpty()
-		return threadpool.Done, time.Time{}
+		return time.Time{}
 	}
-	return threadpool.CPUTask, time.Now().Add(10 * time.Millisecond)
+	return time.Now().Add(10 * time.Millisecond)
 }
 
 // Resend Task is reponsible for resending the TableSpanStatus message with ddl info to maintainer each 50ms.
@@ -148,13 +148,13 @@ func newResendTask(message *heartbeatpb.TableSpanStatus, dispatcher *Dispatcher)
 		message:    message,
 		dispatcher: dispatcher,
 	}
-	t.taskHandle = taskScheduler.Submit(t, threadpool.CPUTask, time.Now().Add(50*time.Millisecond))
+	t.taskHandle = taskScheduler.Submit(t, time.Now().Add(50*time.Millisecond))
 	return t
 }
 
-func (t *ResendTask) Execute() (threadpool.TaskStatus, time.Time) {
+func (t *ResendTask) Execute() time.Time {
 	t.dispatcher.GetStatusesChan() <- t.message
-	return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
+	return time.Now().Add(50 * time.Millisecond)
 }
 
 func (t *ResendTask) Cancel() {
@@ -210,19 +210,19 @@ func (d *DispatcherStatusWithID) GetDispatcherID() common.DispatcherID {
 	return d.id
 }
 
-var DispatcherTaskScheduler *threadpool.TaskScheduler
+var DispatcherTaskScheduler threadpool.ThreadPool
 var dispatcherTaskSchedulerOnce sync.Once
 
-func GetDispatcherTaskScheduler() *threadpool.TaskScheduler {
+func GetDispatcherTaskScheduler() threadpool.ThreadPool {
 	if DispatcherTaskScheduler == nil {
 		dispatcherTaskSchedulerOnce.Do(func() {
-			DispatcherTaskScheduler = threadpool.NewTaskSchedulerDefault("DispatcherTaskScheduler")
+			DispatcherTaskScheduler = threadpool.NewThreadPoolDefault()
 		})
 	}
 	return DispatcherTaskScheduler
 }
 
-func SetDispatcherTaskScheduler(taskScheduler *threadpool.TaskScheduler) {
+func SetDispatcherTaskScheduler(taskScheduler threadpool.ThreadPool) {
 	DispatcherTaskScheduler = taskScheduler
 }
 

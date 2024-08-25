@@ -16,10 +16,11 @@ package maintainer
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/flowbehappy/tigate/utils/dynstream"
 	"math"
 	"sync"
 	"time"
+
+	"github.com/flowbehappy/tigate/utils/dynstream"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
@@ -53,7 +54,7 @@ type Maintainer struct {
 	selfNode *common.NodeInfo
 
 	stream        dynstream.DynamicStream[string, *Event, *Maintainer]
-	taskScheduler *threadpool.TaskScheduler
+	taskScheduler threadpool.ThreadPool
 	mc            messaging.MessageCenter
 
 	watermark             *heartbeatpb.Watermark
@@ -103,7 +104,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	cfg *model.ChangeFeedInfo,
 	selfNode *common.NodeInfo,
 	stream dynstream.DynamicStream[string, *Event, *Maintainer],
-	taskScheduler *threadpool.TaskScheduler,
+	taskScheduler threadpool.ThreadPool,
 	checkpointTs uint64,
 ) *Maintainer {
 	m := &Maintainer{

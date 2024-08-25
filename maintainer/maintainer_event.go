@@ -14,10 +14,11 @@
 package maintainer
 
 import (
+	"time"
+
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/flowbehappy/tigate/utils/threadpool"
-	"time"
 )
 
 const (
@@ -42,15 +43,15 @@ type Event struct {
 
 // SubmitScheduledEvent submits a task to scheduler pool to send a future event
 func SubmitScheduledEvent(
-	scheduler *threadpool.TaskScheduler,
+	scheduler threadpool.ThreadPool,
 	stream dynstream.DynamicStream[string, *Event, *Maintainer],
 	event *Event,
 	scheduleTime time.Time) {
-	var task ScheduleEventTask = func() (threadpool.TaskStatus, time.Time) {
+	task := func() time.Time {
 		stream.In() <- event
-		return threadpool.Done, time.Time{}
+		return time.Time{}
 	}
-	scheduler.Submit(task, threadpool.CPUTask, scheduleTime)
+	scheduler.SubmitFunc(task, scheduleTime)
 }
 
 // StreamHandler implements the dynstream Handler, no real logic, just forward event to the maintainer
@@ -63,11 +64,4 @@ func (m *StreamHandler) Path(event *Event) string {
 
 func (m *StreamHandler) Handle(event *Event, dest *Maintainer) (await bool) {
 	return dest.HandleEvent(event)
-}
-
-// ScheduleEventTask is a func that implement the threadpool.Task
-type ScheduleEventTask func() (threadpool.TaskStatus, time.Time)
-
-func (f ScheduleEventTask) Execute() (threadpool.TaskStatus, time.Time) {
-	return f()
 }

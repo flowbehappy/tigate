@@ -16,6 +16,12 @@ package maintainer
 import (
 	"context"
 	"flag"
+	"net/http"
+	"net/http/pprof"
+	"strconv"
+	"testing"
+	"time"
+
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
@@ -32,11 +38,6 @@ import (
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	"net/http"
-	"net/http/pprof"
-	"strconv"
-	"testing"
-	"time"
 )
 
 type mockDispatcherManager struct {
@@ -195,7 +196,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	dispatcherManager := MockDispatcherManager()
 	go dispatcherManager.Run(ctx)
 
-	taskScheduler := threadpool.NewTaskSchedulerDefault("maintainer")
+	taskScheduler := threadpool.NewThreadPoolDefault()
 	maintainer := NewMaintainer(cfID, &model.ChangeFeedInfo{
 		Config: config2.GetDefaultReplicaConfig(),
 	}, node, stream, taskScheduler, 10)

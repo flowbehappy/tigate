@@ -22,9 +22,7 @@ type TaskId uint64
 
 // Task is the interface for the task to be executed by the thread pool.
 //
-// The return value of the methods are TaskStatus and time.Time.
-//
-// The value of time.Time means the next disired execution time. It can be smaller than the current time.
+// The return value of the methods is time.Time, which means the next disired execution time. It can be smaller than the current time.
 //   - If a task is not going to be executed again, the return value of Task.Execute should be time.Time{}.
 //   - If a task wants to be executed as soon as possible, the return value of Task.Execute should be time.Now().
 //

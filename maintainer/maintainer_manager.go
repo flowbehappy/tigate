@@ -16,10 +16,11 @@ package maintainer
 import (
 	"context"
 	"encoding/json"
-	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/utils/threadpool"
 	"sync"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
@@ -49,7 +50,7 @@ type Manager struct {
 	msgCh chan *messaging.TargetMessage
 
 	stream        dynstream.DynamicStream[string, *Event, *Maintainer]
-	taskScheduler *threadpool.TaskScheduler
+	taskScheduler threadpool.ThreadPool
 }
 
 // NewMaintainerManager create a changefeed maintainer manager instance,
@@ -64,7 +65,7 @@ func NewMaintainerManager(selfNode *common.NodeInfo, pdEndpoints []string) *Mana
 		selfNode:      selfNode,
 		pdEndpoints:   pdEndpoints,
 		msgCh:         make(chan *messaging.TargetMessage, 1024),
-		taskScheduler: threadpool.NewTaskSchedulerDefault("maintainer"),
+		taskScheduler: threadpool.NewThreadPoolDefault(),
 	}
 	m.stream = dynstream.NewDynamicStreamDefault[string, *Event, *Maintainer](&StreamHandler{})
 	m.stream.Start()
