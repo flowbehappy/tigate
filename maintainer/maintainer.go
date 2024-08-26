@@ -414,6 +414,9 @@ func (m *Maintainer) updateMetrics() {
 // send message to remote, todo: use a io thread pool
 func (m *Maintainer) sendMessages(msgs []*messaging.TargetMessage) {
 	for _, msg := range msgs {
+		if msg == nil {
+			continue
+		}
 		if msg.Type == messaging.TypeScheduleDispatcherRequest {
 			if msg.Message[0] == nil {
 				log.Panic("message is nil")
