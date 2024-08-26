@@ -57,13 +57,12 @@ type Manager struct {
 // 1. manager receives bootstrap command from coordinator
 // 2. manager manages maintainer lifetime
 // 3. manager report maintainer status to coordinator
-func NewMaintainerManager(selfNode *common.NodeInfo, pdEndpoints []string) *Manager {
+func NewMaintainerManager(selfNode *common.NodeInfo) *Manager {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	m := &Manager{
 		mc:            mc,
 		maintainers:   sync.Map{},
 		selfNode:      selfNode,
-		pdEndpoints:   pdEndpoints,
 		msgCh:         make(chan *messaging.TargetMessage, 1024),
 		taskScheduler: threadpool.NewThreadPoolDefault(),
 	}
@@ -148,7 +147,7 @@ func (m *Manager) sendMessages(msg *heartbeatpb.MaintainerHeartbeat) {
 }
 
 // Close closes, it's a block call
-func (m *Manager) Close(ctx context.Context) error {
+func (m *Manager) Close(_ context.Context) error {
 	return nil
 }
 
@@ -171,7 +170,7 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 		return true
 	})
 
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewSingleTargetMessage(
+	err := m.mc.SendCommand(messaging.NewSingleTargetMessage(
 		m.coordinatorID,
 		messaging.CoordinatorTopic,
 		response,
@@ -179,7 +178,7 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 	if err != nil {
 		log.Warn("send command failed", zap.Error(err))
 	}
-	log.Info("New coordinator online",
+	log.Info("new coordinator online",
 		zap.Int64("version", m.coordinatorVersion))
 }
 
@@ -260,8 +259,8 @@ func (m *Manager) handleMessage(msg *messaging.TargetMessage) {
 		log.Info("received coordinator bootstrap request", zap.String("from", msg.From.String()))
 		m.onCoordinatorBootstrapRequest(msg)
 	case messaging.TypeAddMaintainerRequest, messaging.TypeRemoveMaintainerRequest:
-		absent := m.onDispatchMaintainerRequest(msg)
 		if m.coordinatorVersion > 0 {
+			absent := m.onDispatchMaintainerRequest(msg)
 			response := &heartbeatpb.MaintainerHeartbeat{}
 			if absent != "" {
 				response.Statuses = append(response.Statuses, &heartbeatpb.MaintainerStatus{

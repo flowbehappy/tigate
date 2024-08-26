@@ -84,7 +84,7 @@ func (c *NodeManager) Tick(
 		}
 		allNodes[capture.ID] = common.CaptureInfoToNodeInfo(capture)
 	}
-
+	c.nodes = allNodes
 	if changed {
 		log.Info("server change detected")
 		// handle node change event
@@ -94,8 +94,6 @@ func (c *NodeManager) Tick(
 			handler(allNodes)
 		}
 	}
-
-	c.nodes = allNodes
 	return state, nil
 }
 
