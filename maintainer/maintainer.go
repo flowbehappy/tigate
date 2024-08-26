@@ -264,7 +264,7 @@ func (m *Maintainer) initialize() error {
 	nodes := m.nodeManager.GetAliveNodes()
 	log.Info("changefeed bootstrap initial nodes",
 		zap.Int("nodes", len(nodes)))
-	var newNodes = make([]*common.NodeInfo, len(nodes))
+	var newNodes = make([]*common.NodeInfo, 0, len(nodes))
 	for id, node := range nodes {
 		newNodes = append(newNodes, node)
 		m.scheduler.AddNewNode(id)
@@ -336,7 +336,7 @@ func (m *Maintainer) onRemoveMaintainer(cascade bool) {
 
 func (m *Maintainer) onNodeChanged() error {
 	activeNodes := m.nodeManager.GetAliveNodes()
-	var newNodes = make([]*common.NodeInfo, len(activeNodes))
+	var newNodes = make([]*common.NodeInfo, 0, len(activeNodes))
 	for id, node := range activeNodes {
 		if _, ok := m.bootstrapper.GetAllNodes()[id]; !ok {
 			newNodes = append(newNodes, node)
