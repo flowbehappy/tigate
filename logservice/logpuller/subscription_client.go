@@ -194,7 +194,7 @@ func NewSubscriptionClient(
 		credential: credential,
 
 		rangeTaskCh:       make(chan *rangeTask, 1024),
-		regionCh:          make(chan *regionInfo, 10240),
+		regionCh:          make(chan *regionInfo, 1024),
 		resolveLockTaskCh: make(chan *resolveLockTask, 1024),
 		errCh:             make(chan regionErrorInfo, 1024),
 
