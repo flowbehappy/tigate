@@ -1,6 +1,9 @@
 package dynstream
 
 import (
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -228,6 +231,12 @@ func (s *stream[P, T, D]) handleLoop(acceptedPaths []*pathInfo[P, T, D], formerS
 	}
 
 	defer func() {
+		if r := recover(); r != nil {
+			log.Error("handleLoop panic",
+				zap.Any("recover", r),
+				zap.Stack("stack"))
+			os.Exit(1)
+		}
 		close(s.donChan)
 
 		// Move remaing events in the inChan to pendingQueue.
