@@ -342,9 +342,7 @@ func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpa
 				zap.String("span", span.String()))
 			return nil, errors.Trace(err)
 		}
-		if msg != nil {
-			msgs = append(msgs, msg)
-		}
+		msgs = append(msgs, msg)
 		s.tryMoveTask(span, stm, oldState, oldPrimary, true)
 	}
 	return msgs, nil

@@ -115,14 +115,12 @@ type SchedulerDispatcherRequestHandler struct {
 }
 
 func (h *SchedulerDispatcherRequestHandler) Path(scheduleDispatcherRequest *heartbeatpb.ScheduleDispatcherRequest) model.ChangeFeedID {
-	log.Info("scheduler request received", zap.Any("scheduleDispatcherRequest", scheduleDispatcherRequest))
 	return model.DefaultChangeFeedID(scheduleDispatcherRequest.ChangefeedID)
 }
 
 func (h *SchedulerDispatcherRequestHandler) Handle(scheduleDispatcherRequest *heartbeatpb.ScheduleDispatcherRequest, eventDispatcherManager *EventDispatcherManager) bool {
 	if scheduleDispatcherRequest == nil {
-		log.Info("scheduler request is nil", zap.Any("scheduleDispatcherRequest", scheduleDispatcherRequest))
-		return false
+		log.Info("scheduler request is nil")
 	}
 	scheduleAction := scheduleDispatcherRequest.ScheduleAction
 	config := scheduleDispatcherRequest.Config
