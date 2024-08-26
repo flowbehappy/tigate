@@ -152,7 +152,7 @@ func (d *Dispatcher) HandleDispatcherStatus(statusWithId DispatcherStatusWithID)
 		if dispatcherStatus.GetAction() != nil {
 			// 只可能出现在 event 已经推进了，但是还重复收到了 action 消息的时候，则重发包含 checkpointTs 的心跳
 			d.statusesChan <- &heartbeatpb.TableSpanStatus{
-				Span:            d.tableSpan.TableSpan,
+				ID:              d.id.ToPB(),
 				ComponentStatus: heartbeatpb.ComponentState_Working,
 				CheckpointTs:    d.GetCheckpointTs(),
 			}
@@ -171,7 +171,7 @@ func (d *Dispatcher) HandleDispatcherStatus(statusWithId DispatcherStatusWithID)
 				dispatcherEventDynamicStream.Wake() <- d.id
 			}
 			d.statusesChan <- &heartbeatpb.TableSpanStatus{
-				Span:            d.tableSpan.TableSpan,
+				ID:              d.id.ToPB(),
 				ComponentStatus: heartbeatpb.ComponentState_Working,
 				CheckpointTs:    d.GetCheckpointTs(),
 			}
@@ -208,7 +208,7 @@ func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 		d.sink.AddDDLAndSyncPointEvent(d.ddlPendingEvent, d.tableProgress)
 	} else {
 		message := &heartbeatpb.TableSpanStatus{
-			Span:            d.tableSpan.TableSpan,
+			ID:              d.id.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			State: &heartbeatpb.State{
 				IsBlocked:            true,

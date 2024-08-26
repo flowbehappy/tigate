@@ -60,8 +60,9 @@ message DispatcherConfig {
 
 message ScheduleDispatcherRequest {
     string changefeedID = 1;
-    DispatcherConfig config = 2;
-    ScheduleAction scheduleAction = 3;
+    DispatcherID ID = 2;
+    DispatcherConfig config = 3;
+    ScheduleAction scheduleAction = 4;
 }
 
 message MaintainerHeartbeat {
@@ -104,7 +105,14 @@ message MaintainerBootstrapRequest {
 
 message MaintainerBootstrapResponse {
     string changefeedID = 1;
-    repeated TableSpanStatus statuses = 2;
+    repeated BootstrapTableSpan spans = 2;
+}
+
+message BootstrapTableSpan {
+    DispatcherID ID = 1;
+    TableSpan span = 2;
+    ComponentState component_status = 3;
+    uint64 checkpoint_ts = 4;
 }
 
 message MaintainerCloseRequest {
@@ -125,7 +133,7 @@ message State {
 }
 
 message TableSpanStatus {
-    TableSpan span = 1; // for which dispatcher
+    DispatcherID ID = 1; // for which dispatcher
     ComponentState component_status = 2;
     State state = 3;
     uint64 checkpoint_ts = 4;
@@ -143,4 +151,9 @@ message RunningError {
     string node = 2;
     string code = 3;
     string message = 4;
+}
+
+message DispatcherID {
+    uint64 high = 1;
+    uint64 low = 2;
 }

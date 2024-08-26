@@ -22,7 +22,8 @@ import (
 )
 
 type ReplicaSet struct {
-	ID           *common.TableSpan
+	ID           common.DispatcherID
+	Span         *common.TableSpan
 	ChangefeedID model.ChangeFeedID
 	status       ReplicaSetStatus
 	stateMachine *scheduler.StateMachine
@@ -32,9 +33,11 @@ type ReplicaSet struct {
 
 func NewReplicaSet(cfID model.ChangeFeedID,
 	id scheduler.InferiorID,
+	span *common.TableSpan,
 	checkpointTs uint64) scheduler.Inferior {
 	r := &ReplicaSet{
-		ID:           id.(*common.TableSpan),
+		ID:           id.(common.DispatcherID),
+		Span:         span,
 		ChangefeedID: cfID,
 		checkpointTs: checkpointTs,
 	}
@@ -56,9 +59,9 @@ func (r *ReplicaSet) NewAddInferiorMessage(server model.CaptureID) *messaging.Ta
 			ChangefeedID: r.ChangefeedID.ID,
 			Config: &heartbeatpb.DispatcherConfig{
 				Span: &heartbeatpb.TableSpan{
-					TableID:  r.ID.TableID,
-					StartKey: r.ID.StartKey,
-					EndKey:   r.ID.EndKey,
+					TableID:  r.Span.TableID,
+					StartKey: r.Span.StartKey,
+					EndKey:   r.Span.EndKey,
 				},
 				StartTs: r.checkpointTs,
 			},
@@ -92,7 +95,7 @@ func (r *ReplicaSet) GetStateMachine() *scheduler.StateMachine {
 }
 
 type ReplicaSetStatus struct {
-	ID           *common.TableSpan
+	ID           common.DispatcherID
 	State        heartbeatpb.ComponentState
 	CheckpointTs uint64
 	DDLStatus    *heartbeatpb.State

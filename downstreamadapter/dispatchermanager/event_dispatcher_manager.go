@@ -215,7 +215,7 @@ func (e *EventDispatcherManager) NewDispatcher(tableSpan *common.TableSpan, star
 
 	e.dispatcherMap.Set(tableSpan, dispatcher)
 	e.GetStatusesChan() <- &heartbeatpb.TableSpanStatus{
-		Span:            tableSpan.TableSpan,
+		ID:              tableSpan,
 		ComponentStatus: heartbeatpb.ComponentState_Working,
 	}
 
