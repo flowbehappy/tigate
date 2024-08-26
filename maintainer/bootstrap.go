@@ -35,6 +35,10 @@ type Bootstrapper struct {
 
 	nodes           map[common.NodeID]*NodeStatus
 	newBootstrapMsg scheduler.NewBootstrapFn
+
+	// for ut test
+	timeNowFunc    func() time.Time
+	resendInterval time.Duration
 }
 
 // NewBootstrapper create a new bootstrap for a changefeed maintainer
@@ -44,6 +48,8 @@ func NewBootstrapper(cfID string, newBootstrapMsg scheduler.NewBootstrapFn) *Boo
 		nodes:           make(map[common.NodeID]*NodeStatus),
 		bootstrapped:    false,
 		newBootstrapMsg: newBootstrapMsg,
+		timeNowFunc:     time.Now,
+		resendInterval:  time.Millisecond * 500,
 	}
 }
 
@@ -65,9 +71,9 @@ func (b *Bootstrapper) HandleBootstrapResponse(
 }
 
 // HandleNewNodes add node to bootstrapper and return rpc messages that need to be sent to remote node
-func (b *Bootstrapper) HandleNewNodes(nodes map[common.NodeID]*common.NodeInfo) []*messaging.TargetMessage {
+func (b *Bootstrapper) HandleNewNodes(nodes []*common.NodeInfo) []*messaging.TargetMessage {
 	msgs := make([]*messaging.TargetMessage, 0, len(nodes))
-	for id, info := range nodes {
+	for _, info := range nodes {
 		if _, ok := b.nodes[info.ID]; !ok {
 			// A new server.
 			b.nodes[info.ID] = NewNodeStatus(info)
@@ -75,8 +81,8 @@ func (b *Bootstrapper) HandleNewNodes(nodes map[common.NodeID]*common.NodeInfo) 
 				zap.String("changefeed", b.changefeedID),
 				zap.String("captureAddr", info.AdvertiseAddr),
 				zap.String("server", info.ID))
-			msgs = append(msgs, b.newBootstrapMsg(id))
-			b.nodes[info.ID].lastBootstrapTime = time.Now()
+			msgs = append(msgs, b.newBootstrapMsg(info.ID))
+			b.nodes[info.ID].lastBootstrapTime = b.timeNowFunc()
 		}
 	}
 	return msgs
@@ -107,11 +113,12 @@ func (b *Bootstrapper) HandleRemoveNodes(nodeIds []string) map[common.NodeID]*he
 func (b *Bootstrapper) ResendBootstrapMessage() []*messaging.TargetMessage {
 	var msgs []*messaging.TargetMessage
 	if !b.CheckAllNodeInitialized() {
+		now := b.timeNowFunc()
 		for id, node := range b.nodes {
 			if node.state == NodeStateUninitialized &&
-				time.Since(node.lastBootstrapTime) > time.Millisecond*500 {
+				now.Sub(node.lastBootstrapTime) >= b.resendInterval {
 				msgs = append(msgs, b.newBootstrapMsg(id))
-				node.lastBootstrapTime = time.Now()
+				node.lastBootstrapTime = now
 			}
 		}
 	}
