@@ -266,10 +266,8 @@ func (m *Maintainer) initialize() error {
 		zap.Int("nodes", len(nodes)))
 	var newNodes = make([]*common.NodeInfo, len(nodes))
 	for id, node := range nodes {
-		if _, ok := m.bootstrapper.GetAllNodes()[id]; !ok {
-			newNodes = append(newNodes, node)
-			m.scheduler.AddNewNode(id)
-		}
+		newNodes = append(newNodes, node)
+		m.scheduler.AddNewNode(id)
 	}
 	m.sendMessages(m.bootstrapper.HandleNewNodes(newNodes))
 	// setup period event
