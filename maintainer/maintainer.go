@@ -418,7 +418,6 @@ func (m *Maintainer) sendMessages(msgs []*messaging.TargetMessage) {
 			if msg.Message[0] == nil {
 				log.Panic("message is nil")
 			}
-			return
 		}
 		err := m.mc.SendCommand(msg)
 		if err != nil {
