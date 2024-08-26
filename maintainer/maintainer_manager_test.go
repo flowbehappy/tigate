@@ -76,7 +76,7 @@ func TestAddMaintainer(t *testing.T) {
 	}
 	data, err := json.Marshal(cfConfig)
 	require.NoError(t, err)
-	mc.SendCommand(messaging.NewSingleTargetMessage(messaging.ServerId(selfNode.ID),
+	_ = mc.SendCommand(messaging.NewSingleTargetMessage(messaging.ServerId(selfNode.ID),
 		messaging.MaintainerManagerTopic, &heartbeatpb.AddMaintainerRequest{
 			Id:           "test",
 			Config:       data,
