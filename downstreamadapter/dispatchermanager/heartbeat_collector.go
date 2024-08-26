@@ -115,6 +115,7 @@ type SchedulerDispatcherRequestHandler struct {
 }
 
 func (h *SchedulerDispatcherRequestHandler) Path(scheduleDispatcherRequest *heartbeatpb.ScheduleDispatcherRequest) model.ChangeFeedID {
+	log.Info("scheduler request received", zap.Any("scheduleDispatcherRequest", scheduleDispatcherRequest))
 	return model.DefaultChangeFeedID(scheduleDispatcherRequest.ChangefeedID)
 }
 
