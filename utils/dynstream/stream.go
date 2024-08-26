@@ -231,9 +231,9 @@ func (s *stream[P, T, D]) handleLoop(acceptedPaths []*pathInfo[P, T, D], formerS
 		close(s.donChan)
 
 		// Move remaing events in the inChan to pendingQueue.
-		for e := range s.inChan {
-			pushToPendingQueue(e)
-		}
+		//for e := range s.inChan {
+		//	pushToPendingQueue(e)
+		//}
 
 		s.reportDone.Wait()
 		s.handleDone.Done()
