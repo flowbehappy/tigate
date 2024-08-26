@@ -11,40 +11,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package version
 
 import (
-	"github.com/flowbehappy/tigate/cmd/version"
-	"os"
-
-	"github.com/flowbehappy/tigate/cmd/server"
+	"github.com/flowbehappy/tigate/version"
 	"github.com/spf13/cobra"
 )
 
-// NewCmd creates the root command.
-func NewCmd() *cobra.Command {
+// NewCmdVersion creates the `version` command.
+func NewCmdVersion() *cobra.Command {
 	return &cobra.Command{
-		Use:   "cdc",
-		Short: "CDC",
-		Long:  `Change Data Capture`,
-		CompletionOptions: cobra.CompletionOptions{
-			DisableDefaultCmd: true,
+		Use:   "version",
+		Short: "Output version information",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			cmd.Print(version.GetRawInfo())
 		},
-	}
-}
-
-// Run runs the root command.
-func main() {
-	cmd := NewCmd()
-
-	cmd.SetOut(os.Stdout)
-	cmd.SetErr(os.Stderr)
-
-	cmd.AddCommand(server.NewCmdServer())
-	cmd.AddCommand(version.NewCmdVersion())
-
-	if err := cmd.Execute(); err != nil {
-		cmd.PrintErrln(err)
-		os.Exit(1)
 	}
 }
