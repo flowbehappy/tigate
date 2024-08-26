@@ -48,8 +48,7 @@ type mockDispatcherManager struct {
 	checkpointTs uint64
 }
 
-func MockDispatcherManager() *mockDispatcherManager {
-	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
+func MockDispatcherManager(mc messaging.MessageCenter) *mockDispatcherManager {
 	m := &mockDispatcherManager{
 		mc:          mc,
 		dispatchers: make([]*heartbeatpb.TableSpanStatus, 0, 1000000),
@@ -193,7 +192,7 @@ func TestMaintainerSchedule(t *testing.T) {
 			}
 			return nil
 		})
-	dispatcherManager := MockDispatcherManager()
+	dispatcherManager := MockDispatcherManager(mc)
 	go dispatcherManager.Run(ctx)
 
 	taskScheduler := threadpool.NewThreadPoolDefault()
