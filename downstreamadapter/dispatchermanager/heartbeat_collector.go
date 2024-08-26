@@ -115,6 +115,9 @@ type SchedulerDispatcherRequestHandler struct {
 }
 
 func (h *SchedulerDispatcherRequestHandler) Path(scheduleDispatcherRequest *heartbeatpb.ScheduleDispatcherRequest) model.ChangeFeedID {
+	if scheduleDispatcherRequest == nil {
+		log.Info("scheduler request is nil in path")
+	}
 	return model.DefaultChangeFeedID(scheduleDispatcherRequest.ChangefeedID)
 }
 
