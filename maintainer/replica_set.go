@@ -41,23 +41,11 @@ func NewReplicaSet(cfID model.ChangeFeedID,
 	return r
 }
 
-func (r *ReplicaSet) GetID() scheduler.InferiorID {
-	return r.ID
-}
-
 func (r *ReplicaSet) UpdateStatus(status scheduler.InferiorStatus) {
 	newStatus := status.(ReplicaSetStatus)
 	if newStatus.CheckpointTs > r.checkpointTs {
 		r.checkpointTs = newStatus.CheckpointTs
 		r.status.CheckpointTs = newStatus.CheckpointTs
-	}
-}
-
-func (r *ReplicaSet) NewInferiorStatus(state heartbeatpb.ComponentState) scheduler.InferiorStatus {
-	return &ReplicaSetStatus{
-		ID:           r.ID,
-		State:        state,
-		CheckpointTs: r.checkpointTs,
 	}
 }
 
