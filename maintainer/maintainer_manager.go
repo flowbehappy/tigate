@@ -170,7 +170,7 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 		return true
 	})
 
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewSingleTargetMessage(
+	err := m.mc.SendCommand(messaging.NewSingleTargetMessage(
 		m.coordinatorID,
 		messaging.CoordinatorTopic,
 		response,
@@ -178,7 +178,7 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 	if err != nil {
 		log.Warn("send command failed", zap.Error(err))
 	}
-	log.Info("New coordinator online",
+	log.Info("new coordinator online",
 		zap.Int64("version", m.coordinatorVersion))
 }
 
@@ -259,8 +259,8 @@ func (m *Manager) handleMessage(msg *messaging.TargetMessage) {
 		log.Info("received coordinator bootstrap request", zap.String("from", msg.From.String()))
 		m.onCoordinatorBootstrapRequest(msg)
 	case messaging.TypeAddMaintainerRequest, messaging.TypeRemoveMaintainerRequest:
-		absent := m.onDispatchMaintainerRequest(msg)
 		if m.coordinatorVersion > 0 {
+			absent := m.onDispatchMaintainerRequest(msg)
 			response := &heartbeatpb.MaintainerHeartbeat{}
 			if absent != "" {
 				response.Statuses = append(response.Statuses, &heartbeatpb.MaintainerStatus{

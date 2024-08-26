@@ -46,6 +46,7 @@ type mockDispatcherManager struct {
 	msgCh        chan *messaging.TargetMessage
 	maintainerID messaging.ServerId
 	checkpointTs uint64
+	changefeedID string
 }
 
 func MockDispatcherManager(mc messaging.MessageCenter) *mockDispatcherManager {
@@ -79,6 +80,8 @@ func (m *mockDispatcherManager) handleMessage(msg *messaging.TargetMessage) {
 		m.onBootstrapRequest(msg)
 	case messaging.TypeScheduleDispatcherRequest:
 		m.onDispatchRequest(msg)
+	case messaging.TypeMaintainerCloseRequest:
+		m.onMaintainerCloseRequest()
 	default:
 		log.Panic("unknown msg type", zap.Any("msg", msg))
 	}
@@ -96,9 +99,10 @@ func (m *mockDispatcherManager) sendMessages(msg *heartbeatpb.HeartBeatRequest) 
 }
 func (m *mockDispatcherManager) recvMessages(ctx context.Context, msg *messaging.TargetMessage) error {
 	switch msg.Type {
-	// receive message from coordinator
+	// receive message from maintainer
 	case messaging.TypeScheduleDispatcherRequest,
-		messaging.TypeMaintainerBootstrapRequest:
+		messaging.TypeMaintainerBootstrapRequest,
+		messaging.TypeMaintainerCloseRequest:
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -116,6 +120,7 @@ func (m *mockDispatcherManager) onBootstrapRequest(msg *messaging.TargetMessage)
 	response := &heartbeatpb.MaintainerBootstrapResponse{
 		ChangefeedID: req.ChangefeedID,
 	}
+	m.changefeedID = req.ChangefeedID
 	err := m.mc.SendCommand(messaging.NewSingleTargetMessage(
 		m.maintainerID,
 		messaging.MaintainerManagerTopic,
@@ -138,19 +143,47 @@ func (m *mockDispatcherManager) onDispatchRequest(
 		return
 	}
 	if request.ScheduleAction == heartbeatpb.ScheduleAction_Create {
-		m.dispatchers = append(m.dispatchers, &heartbeatpb.TableSpanStatus{
+		status := &heartbeatpb.TableSpanStatus{
 			Span:            request.Config.Span,
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			State:           nil,
 			CheckpointTs:    0,
-		})
+		}
+		m.dispatchers = append(m.dispatchers, status)
+	} else {
+		dispatchers := make([]*heartbeatpb.TableSpanStatus, 0, len(m.dispatchers))
+		for _, status := range m.dispatchers {
+			if status.Span.TableID != request.Config.Span.TableID {
+				dispatchers = append(dispatchers, status)
+			} else {
+				status.ComponentStatus = heartbeatpb.ComponentState_Stopped
+				response := &heartbeatpb.HeartBeatRequest{
+					ChangefeedID: m.changefeedID,
+					Watermark: &heartbeatpb.Watermark{
+						CheckpointTs: m.checkpointTs,
+						ResolvedTs:   m.checkpointTs,
+					},
+					Statuses: []*heartbeatpb.TableSpanStatus{status},
+				}
+				m.sendMessages(response)
+			}
+		}
+		m.dispatchers = dispatchers
 	}
+}
+
+func (m *mockDispatcherManager) onMaintainerCloseRequest() {
+	m.mc.SendCommand(messaging.NewSingleTargetMessage(m.maintainerID,
+		messaging.MaintainerTopic, &heartbeatpb.MaintainerCloseResponse{
+			ChangefeedID: m.changefeedID,
+			Success:      true,
+		}))
 }
 
 func (m *mockDispatcherManager) sendHeartbeat() {
 	if m.maintainerID.String() != "" {
 		response := &heartbeatpb.HeartBeatRequest{
-			ChangefeedID: m.maintainerID.String(),
+			ChangefeedID: m.changefeedID,
 			Watermark: &heartbeatpb.Watermark{
 				CheckpointTs: m.checkpointTs,
 				ResolvedTs:   m.checkpointTs,
