@@ -15,6 +15,7 @@ package dispatchermanager
 
 import (
 	"context"
+	"os"
 	"sync"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
@@ -119,6 +120,12 @@ func (h *SchedulerDispatcherRequestHandler) Path(scheduleDispatcherRequest *hear
 }
 
 func (h *SchedulerDispatcherRequestHandler) Handle(scheduleDispatcherRequest *heartbeatpb.ScheduleDispatcherRequest, eventDispatcherManager *EventDispatcherManager) bool {
+	if scheduleDispatcherRequest == nil {
+		log.Error("scheduleDispatcherRequest is nil",
+			zap.Any("scheduleDispatcherRequest", scheduleDispatcherRequest))
+		log.Panic("scheduleDispatcherRequest is nil")
+		os.Exit(1)
+	}
 	scheduleAction := scheduleDispatcherRequest.ScheduleAction
 	config := scheduleDispatcherRequest.Config
 	if scheduleAction == heartbeatpb.ScheduleAction_Create {
