@@ -119,6 +119,10 @@ func (h *SchedulerDispatcherRequestHandler) Path(scheduleDispatcherRequest *hear
 }
 
 func (h *SchedulerDispatcherRequestHandler) Handle(scheduleDispatcherRequest *heartbeatpb.ScheduleDispatcherRequest, eventDispatcherManager *EventDispatcherManager) bool {
+	if scheduleDispatcherRequest == nil {
+		log.Warn("scheduleDispatcherRequest is nil, skip")
+		return false
+	}
 	scheduleAction := scheduleDispatcherRequest.ScheduleAction
 	config := scheduleDispatcherRequest.Config
 	if scheduleAction == heartbeatpb.ScheduleAction_Create {
