@@ -260,8 +260,18 @@ func (m *Maintainer) initialize() error {
 	m.nodeManager.RegisterNodeChangeHandler("maintainer-"+m.id.ID, func(allNodes map[string]*common.NodeInfo) {
 		m.nodeChanged.Store(true)
 	})
-	// send bootstrap message
-	m.sendMessages(m.bootstrapper.HandleNewNodes(m.nodeManager.GetAliveNodes()))
+	// init bootstrapper nodes
+	nodes := m.nodeManager.GetAliveNodes()
+	log.Info("changefeed bootstrap initial nodes",
+		zap.Int("nodes", len(nodes)))
+	var newNodes = make([]*common.NodeInfo, len(nodes))
+	for id, node := range nodes {
+		if _, ok := m.bootstrapper.GetAllNodes()[id]; !ok {
+			newNodes = append(newNodes, node)
+			m.scheduler.AddNewNode(id)
+		}
+	}
+	m.sendMessages(m.bootstrapper.HandleNewNodes(newNodes))
 	// setup period event
 	SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{
 		changefeedID: m.id.ID,
@@ -328,10 +338,10 @@ func (m *Maintainer) onRemoveMaintainer(cascade bool) {
 
 func (m *Maintainer) onNodeChanged() error {
 	activeNodes := m.nodeManager.GetAliveNodes()
-	var newNodes = make(map[string]*common.NodeInfo)
+	var newNodes = make([]*common.NodeInfo, len(activeNodes))
 	for id, node := range activeNodes {
 		if _, ok := m.bootstrapper.GetAllNodes()[id]; !ok {
-			newNodes[id] = node
+			newNodes = append(newNodes, node)
 			m.scheduler.AddNewNode(id)
 		}
 	}

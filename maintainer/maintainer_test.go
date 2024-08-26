@@ -236,9 +236,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	}
 	// send bootstrap message
 	maintainer.sendMessages(maintainer.bootstrapper.HandleNewNodes(
-		map[common.NodeID]*common.NodeInfo{
-			node.ID: node,
-		},
+		[]*common.NodeInfo{node},
 	))
 	// setup period event
 	SubmitScheduledEvent(maintainer.taskScheduler, maintainer.stream, &Event{
