@@ -70,10 +70,6 @@ func newChangefeed(c *coordinator,
 	}
 }
 
-func (c *changefeed) GetID() scheduler.InferiorID {
-	return scheduler.ChangefeedID(c.ID)
-}
-
 func (c *changefeed) UpdateStatus(status scheduler.InferiorStatus) {
 	c.State = status.(*MaintainerStatus)
 	if c.State != nil && c.State.CheckpointTs > c.checkpointTs {
@@ -98,13 +94,6 @@ func (s *MaintainerStatus) GetInferiorID() scheduler.InferiorID {
 }
 func (s *MaintainerStatus) GetInferiorState() heartbeatpb.ComponentState {
 	return s.State
-}
-
-func (c *changefeed) NewInferiorStatus(status heartbeatpb.ComponentState) scheduler.InferiorStatus {
-	return &MaintainerStatus{MaintainerStatus: &heartbeatpb.MaintainerStatus{
-		ChangefeedID: c.ID.ID,
-		State:        status,
-	}}
 }
 
 func (c *changefeed) NewAddInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
