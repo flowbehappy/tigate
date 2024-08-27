@@ -85,7 +85,7 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 		serverId:                                     serverId,
 		globalMemoryQuota:                            globalMemoryQuota,
 		dispatcherMap:                                &DispatcherMap{},
-		dispatcherEventsDynamicStream:                appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, common.Event, *dispatcher.Dispatcher]](appcontext.DispatcherEventsDynamicStream),
+		dispatcherEventsDynamicStream:                dispatcher.GetDispatcherEventsDynamicStream(),
 		registerMessageChan:                          chann.NewAutoDrainChann[RegisterInfo](),
 		metricDispatcherReceivedKVEventCount:         metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
@@ -109,11 +109,6 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 				// Wait for a while to avoid sending too many requests, since the
 				// event service may be busy.
 				time.Sleep(10 * time.Millisecond)
-			}
-		}
-	}()
-	// update metrics
-	eventCollector.updateMetrics(context.Background())
 
 	return &eventCollector
 }

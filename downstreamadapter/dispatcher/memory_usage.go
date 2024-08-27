@@ -163,6 +163,7 @@ type GlobalMemoryUsage struct {
 }
 
 var globalMemoryUsage *GlobalMemoryUsage
+
 var once sync.Once
 
 func GetGlobalMemoryUsage() *GlobalMemoryUsage {

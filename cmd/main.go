@@ -14,6 +14,7 @@
 package main
 
 import (
+	"github.com/flowbehappy/tigate/cmd/version"
 	"os"
 
 	"github.com/flowbehappy/tigate/cmd/server"
@@ -40,6 +41,7 @@ func main() {
 	cmd.SetErr(os.Stderr)
 
 	cmd.AddCommand(server.NewCmdServer())
+	cmd.AddCommand(version.NewCmdVersion())
 
 	if err := cmd.Execute(); err != nil {
 		cmd.PrintErrln(err)

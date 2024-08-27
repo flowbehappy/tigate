@@ -1,6 +1,8 @@
 package dynstream
 
 import (
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,8 +47,8 @@ type pathInfo[P Path, T Event, D Dest] struct {
 
 	stream *stream[P, T, D]
 	// This field is used to mark the path as removed, so that the handle goroutine can ignore it.
-	// Note that we should not need to use a atomic.Value here, because this field is set by the RemovePath method,
-	// and we use sync.WaitGroup to wait for finish. So if RemovePath is called in the handle goroutine, it should be
+	// Note that we should not need to use a atomic.Bool here, because this field is set by the RemovePaths method,
+	// and we use sync.WaitGroup to wait for finish. So if RemovePaths is called in the handle goroutine, it should be
 	// guaranteed to see the memory change of this field.
 	removed bool
 
@@ -208,7 +210,9 @@ func (s *stream[P, T, D]) handleLoop(acceptedPaths []*pathInfo[P, T, D], formerS
 		if e.wake {
 			// It is a wake event, we set the path to be non-blocking, and generate a signal for all pending events.
 			e.pathInfo.blocking = false
-			s.signalQueue.PushBack(eventSignal[P, T, D]{pathInfo: e.pathInfo, eventCount: e.pathInfo.pendingQueue.Length()})
+			if count := e.pathInfo.pendingQueue.Length(); count > 0 {
+				s.signalQueue.PushBack(eventSignal[P, T, D]{pathInfo: e.pathInfo, eventCount: count})
+			}
 		} else {
 			// It is a normal event
 
@@ -226,6 +230,11 @@ func (s *stream[P, T, D]) handleLoop(acceptedPaths []*pathInfo[P, T, D], formerS
 	}
 
 	defer func() {
+		if r := recover(); r != nil {
+			log.Panic("handleLoop panic",
+				zap.Any("recover", r),
+				zap.Stack("stack"))
+		}
 		close(s.donChan)
 
 		// Move remaing events in the inChan to pendingQueue.

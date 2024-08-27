@@ -20,7 +20,6 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
-	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 )
@@ -99,10 +98,11 @@ type HeartBeatInfo struct {
 type DispatcherStatusHandler struct {
 }
 
-func (h *DispatcherStatusHandler) Path(event DispatcherStatusWithDispatcherID) common.DispatcherID {
+func (h *DispatcherStatusHandler) Path(event DispatcherStatusWithID) common.DispatcherID {
 	return event.GetDispatcherID()
 }
 
+<<<<<<< HEAD
 func (h *DispatcherStatusHandler) Handle(event DispatcherStatusWithDispatcherID, dispatcher *Dispatcher) (await bool) {
 	sink := dispatcher.GetSink()
 	tableSpan := dispatcher.GetTableSpan()
@@ -141,6 +141,10 @@ func (h *DispatcherStatusHandler) Handle(event DispatcherStatusWithDispatcherID,
 	if dispatcherStatus.GetAck() != nil {
 		dispatcher.CancelResendTask()
 	}
+=======
+func (h *DispatcherStatusHandler) Handle(event DispatcherStatusWithID, dispatcher *Dispatcher) (await bool) {
+	dispatcher.HandleDispatcherStatus(event)
+>>>>>>> upstream/master
 	return false
 }
 
@@ -150,43 +154,26 @@ func (h *DispatcherStatusHandler) Handle(event DispatcherStatusWithDispatcherID,
 // 2. If the event is a multi-table DDL, it will generate a TableSpanStatus message with ddl info to send to maintainer.
 // When the tableProgress is empty, the task will finished after this execution.
 // If the tableProgress is not empty, the task will be rescheduled after 10ms.
-type CheckTableProgressEmptyTask struct {
+type CheckProgressEmptyTask struct {
 	dispatcher *Dispatcher
 	taskHandle *threadpool.TaskHandle
 }
 
-func newCheckTableProgressEmptyTask(dispatcher *Dispatcher) *CheckTableProgressEmptyTask {
-	taskScheduler := appcontext.GetService[*threadpool.TaskScheduler](appcontext.DispatcherTaskScheduler)
-	t := &CheckTableProgressEmptyTask{
+func newCheckProgressEmptyTask(dispatcher *Dispatcher) *CheckProgressEmptyTask {
+	taskScheduler := GetDispatcherTaskScheduler()
+	t := &CheckProgressEmptyTask{
 		dispatcher: dispatcher,
 	}
-	t.taskHandle = taskScheduler.Submit(t, threadpool.CPUTask, time.Now().Add(10*time.Millisecond))
+	t.taskHandle = taskScheduler.Submit(t, time.Now().Add(10*time.Millisecond))
 	return t
 }
 
-func (t *CheckTableProgressEmptyTask) Execute() (threadpool.TaskStatus, time.Time) {
+func (t *CheckProgressEmptyTask) Execute() time.Time {
 	if t.dispatcher.tableProgress.Empty() {
-		ddlPendingEvent := t.dispatcher.ddlPendingEvent
-		if ddlPendingEvent.IsSingleTableDDL() {
-			t.dispatcher.GetSink().AddDDLAndSyncPointEvent(ddlPendingEvent, t.dispatcher.tableProgress)
-		} else {
-			message := &heartbeatpb.TableSpanStatus{
-				Span:            t.dispatcher.GetTableSpan().TableSpan,
-				ComponentStatus: heartbeatpb.ComponentState_Working,
-				State: &heartbeatpb.State{
-					IsBlocked:            true,
-					BlockTs:              ddlPendingEvent.CommitTs,
-					BlockTableSpan:       ddlPendingEvent.GetBlockedTableSpan(), // 这个包含自己的 span 是不是也无所谓，不然就要剔除掉
-					NeedDroppedTableSpan: ddlPendingEvent.GetNeedDroppedTableSpan(),
-					NeedAddedTableSpan:   ddlPendingEvent.GetNeedAddedTableSpan(),
-				},
-			}
-			t.dispatcher.GetTableSpanStatusesChan() <- message
-			t.dispatcher.SetResendTask(newResendTask(message, t.dispatcher))
-		}
-		return threadpool.Done, time.Time{}
+		t.dispatcher.DealWithDDLWhenProgressEmpty()
+		return time.Time{}
 	}
-	return threadpool.CPUTask, time.Now().Add(10 * time.Millisecond)
+	return time.Now().Add(10 * time.Millisecond)
 }
 
 // Resend Task is reponsible for resending the TableSpanStatus message with ddl info to maintainer each 50ms.
@@ -198,18 +185,18 @@ type ResendTask struct {
 }
 
 func newResendTask(message *heartbeatpb.TableSpanStatus, dispatcher *Dispatcher) *ResendTask {
-	taskScheduler := appcontext.GetService[*threadpool.TaskScheduler](appcontext.DispatcherTaskScheduler)
+	taskScheduler := GetDispatcherTaskScheduler()
 	t := &ResendTask{
 		message:    message,
 		dispatcher: dispatcher,
 	}
-	t.taskHandle = taskScheduler.Submit(t, threadpool.CPUTask, time.Now().Add(50*time.Millisecond))
+	t.taskHandle = taskScheduler.Submit(t, time.Now().Add(50*time.Millisecond))
 	return t
 }
 
-func (t *ResendTask) Execute() (threadpool.TaskStatus, time.Time) {
-	t.dispatcher.GetTableSpanStatusesChan() <- t.message
-	return threadpool.CPUTask, time.Now().Add(50 * time.Millisecond)
+func (t *ResendTask) Execute() time.Time {
+	t.dispatcher.GetStatusesChan() <- t.message
+	return time.Now().Add(50 * time.Millisecond)
 }
 
 func (t *ResendTask) Cancel() {
@@ -241,6 +228,7 @@ func (h *DispatcherEventsHandler) Path(event common.Event) common.DispatcherID {
 }
 
 // TODO: 这个后面需要按照更大的粒度进行攒批
+<<<<<<< HEAD
 func (h *DispatcherEventsHandler) Handle(event common.Event, dispatcher *Dispatcher) bool {
 	sink := dispatcher.GetSink()
 	switch event.GetType() {
@@ -265,24 +253,78 @@ func (h *DispatcherEventsHandler) Handle(event common.Event, dispatcher *Dispatc
 		log.Panic("unknown event type")
 	}
 	return false
+=======
+func (h *DispatcherEventsHandler) Handle(event *common.TxnEvent, dispatcher *Dispatcher) bool {
+	return dispatcher.HandleEvent(event)
 }
 
-type DispatcherStatusWithDispatcherID struct {
-	dispatcherStatus *heartbeatpb.DispatcherStatus
-	dispatcherID     common.DispatcherID
+type DispatcherStatusWithID struct {
+	status *heartbeatpb.DispatcherStatus
+	id     common.DispatcherID
 }
 
-func NewDispatcherStatusWithDispatcherID(dispatcherStatus *heartbeatpb.DispatcherStatus, dispatcherID common.DispatcherID) *DispatcherStatusWithDispatcherID {
-	return &DispatcherStatusWithDispatcherID{
-		dispatcherStatus: dispatcherStatus,
-		dispatcherID:     dispatcherID,
+func NewDispatcherStatusWithID(dispatcherStatus *heartbeatpb.DispatcherStatus, dispatcherID common.DispatcherID) *DispatcherStatusWithID {
+	return &DispatcherStatusWithID{
+		status: dispatcherStatus,
+		id:     dispatcherID,
 	}
 }
 
-func (d *DispatcherStatusWithDispatcherID) GetDispatcherStatus() *heartbeatpb.DispatcherStatus {
-	return d.dispatcherStatus
+func (d *DispatcherStatusWithID) GetDispatcherStatus() *heartbeatpb.DispatcherStatus {
+	return d.status
 }
 
-func (d *DispatcherStatusWithDispatcherID) GetDispatcherID() common.DispatcherID {
-	return d.dispatcherID
+func (d *DispatcherStatusWithID) GetDispatcherID() common.DispatcherID {
+	return d.id
+}
+
+var DispatcherTaskScheduler threadpool.ThreadPool
+var dispatcherTaskSchedulerOnce sync.Once
+
+func GetDispatcherTaskScheduler() threadpool.ThreadPool {
+	if DispatcherTaskScheduler == nil {
+		dispatcherTaskSchedulerOnce.Do(func() {
+			DispatcherTaskScheduler = threadpool.NewThreadPoolDefault()
+		})
+	}
+	return DispatcherTaskScheduler
+>>>>>>> upstream/master
+}
+
+func SetDispatcherTaskScheduler(taskScheduler threadpool.ThreadPool) {
+	DispatcherTaskScheduler = taskScheduler
+}
+
+var dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]
+var dispatcherEventsDynamicStreamOnce sync.Once
+
+func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher] {
+	if dispatcherEventsDynamicStream == nil {
+		dispatcherEventsDynamicStreamOnce.Do(func() {
+			dispatcherEventsDynamicStream = dynstream.NewDynamicStreamDefault(&DispatcherEventsHandler{})
+			dispatcherEventsDynamicStream.Start()
+		})
+	}
+	return dispatcherEventsDynamicStream
+}
+
+func SetDispatcherEventsDynamicStream(dynamicStream dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]) {
+	dispatcherEventsDynamicStream = dynamicStream
+}
+
+var dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithID, *Dispatcher]
+var dispatcherStatusDynamicStreamOnce sync.Once
+
+func GetDispatcherStatusDynamicStream() dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithID, *Dispatcher] {
+	if dispatcherStatusDynamicStream == nil {
+		dispatcherStatusDynamicStreamOnce.Do(func() {
+			dispatcherStatusDynamicStream = dynstream.NewDynamicStreamDefault(&DispatcherStatusHandler{})
+			dispatcherStatusDynamicStream.Start()
+		})
+	}
+	return dispatcherStatusDynamicStream
+}
+
+func SetDispatcherStatusDynamicStream(dynamicStream dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithID, *Dispatcher]) {
+	dispatcherStatusDynamicStream = dynamicStream
 }

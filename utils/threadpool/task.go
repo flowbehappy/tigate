@@ -14,38 +14,17 @@
 package threadpool
 
 import (
-	"fmt"
-	"sync"
-	"sync/atomic"
+	"runtime"
 	"time"
 )
 
 type TaskId uint64
-type TaskStatus int
-
-const (
-	// A task with Done status can not be changed to other status.
-	Done    TaskStatus = 0
-	CPUTask TaskStatus = 1
-	IOTask  TaskStatus = 2
-)
-
-func panicOnTaskStatus(status TaskStatus) {
-	panic(fmt.Sprintf("unexpected task status: %d", status))
-}
 
 // Task is the interface for the task to be executed by the thread pool.
 //
-// The return value of the methods are TaskStatus and time.Time.
-//
-// There are three possible values for TaskStatus:
-//   - CPUTask: The task is a CPU-bound task, which will be executed by the CPU thread pool next time.
-//   - IOTask: The task is an IO-bound task, which will be executed by the IO thread pool next time.
-//   - Done: The task is done, and will not be executed again.
-//
-// The value of time.Time means the next disired execution time. It can be smaller than the current time.
-//   - If a task is not going to be executed again, the return value of Task.Execute should be Done and time.Time{}.
-//   - If a task wants to be executed as soon as possible, the return value of Task.Execute should be CPUTask or IOTask and time.Now().
+// The return value of the methods is time.Time, which means the next disired execution time. It can be smaller than the current time.
+//   - If a task is not going to be executed again, the return value of Task.Execute should be time.Time{}.
+//   - If a task wants to be executed as soon as possible, the return value of Task.Execute should be time.Now().
 //
 // Note that:
 //   - It is not guaranteed that a task will be executed at the exact disired time. The task scheduler will try to execute the task as soon as possible.
@@ -63,44 +42,45 @@ func panicOnTaskStatus(status TaskStatus) {
 // Refer to task_example.go for a typical implementation of the Task interface.
 type Task interface {
 	// Execute the task.
-	Execute() (TaskStatus, time.Time)
+	Execute() time.Time
 }
+
+type FuncTask func() time.Time
 
 type TaskHandle struct {
 	st *scheduledTask
-	ts *TaskScheduler
+	ts *threadPoolImpl
 }
 
 func (h *TaskHandle) Cancel() { h.ts.cancel(h.st) }
 
-type scheduledTask struct {
-	task   Task
-	status atomic.Int32 // TaskStatus
-	time   time.Time    // Next disired execution time.
-
-	index int // The index of the task in the heap.
-
-	// To prevent the task from being executed concurrently.
-	runMutex sync.Mutex
+type ThreadPool interface {
+	Submit(task Task, next time.Time) *TaskHandle
+	SubmitFunc(task FuncTask, next time.Time) *TaskHandle
+	Stop()
 }
 
-func newScheduledTask(task Task, status TaskStatus, time time.Time) *scheduledTask {
-	st := &scheduledTask{
-		task: task,
-		time: time,
-
-		index: -1, // <0 means the task is not in the heap.
+func NewThreadPoolDefault() ThreadPool { return NewThreadPool(0) }
+func NewThreadPool(threadCount int) ThreadPool {
+	if threadCount == 0 {
+		threadCount = runtime.NumCPU() * 2
 	}
-	st.status.Store(int32(status))
-	return st
+	return newThreadPoolImpl(threadCount)
 }
 
-// Implemented by TaskScheduler
-type toBeScheduled interface {
-	toBeScheduled(status TaskStatus) chan *scheduledTask
+type funcTaskImpl struct {
+	f FuncTask
 }
 
-// Implemented by TaskScheduler
-type toBeExecuted interface {
-	toBeExecuted(status TaskStatus) chan *scheduledTask
+func (t *funcTaskImpl) Execute() time.Time { return t.f() }
+
+type scheduledTask struct {
+	task Task
+	time time.Time // Next disired execution time. time.Time{} means the task is done.
+
+	heapIndex int // The index of the task in the heap.
 }
+
+func (m *scheduledTask) SetHeapIndex(index int)             { m.heapIndex = index }
+func (m *scheduledTask) GetHeapIndex() int                  { return m.heapIndex }
+func (m *scheduledTask) CompareTo(other *scheduledTask) int { return int(m.time.Sub(other.time)) }

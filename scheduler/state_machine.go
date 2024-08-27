@@ -243,12 +243,14 @@ func (s *StateMachine) pollOnRemoving(
 		return nil
 	case heartbeatpb.ComponentState_Absent, heartbeatpb.ComponentState_Stopped:
 		if s.Secondary != "" {
+			// primary is stopped and reported last status
+			s.Inferior.UpdateStatus(input)
 			s.Primary = s.Secondary
 			s.Secondary = ""
 			s.State = SchedulerStatusCommiting
 			return s.Inferior.NewAddInferiorMessage(s.Primary)
 		}
-		// clear the primary to mark the statemachine as removed
+		// keep State SchedulerStatusRemoving, and clear the primary to mark the statemachine as removed
 		s.Primary = ""
 	}
 	log.Warn("ignore input, unexpected  state",
@@ -347,12 +349,16 @@ func (s *StateMachine) HandleCaptureShutdown(
 	case SchedulerStatusRemoving:
 		// check if we are moving this state machine
 		if s.Secondary == "" {
+			// no secondary capture, the primary must be stopped,
+			// move the absent status to reschedule it
 			s.Primary = ""
 			s.State = SchedulerStatusAbsent
 		} else {
 			if s.Secondary == captureID {
 				// destination capture is stopped during moving, clear secondary node
 				s.Secondary = ""
+				// move to working state, so we received a stopped status we can reschedule it
+				s.State = SchedulerStatusWorking
 			} else {
 				// primary capture is stopped, move to secondary
 				s.State = SchedulerStatusCommiting
@@ -374,7 +380,13 @@ func (s *StateMachine) HasRemoved() bool {
 	return s.State == SchedulerStatusRemoving && len(s.Primary) == 0 && len(s.Secondary) == 0
 }
 
-func (s *StateMachine) handleResend() *messaging.TargetMessage {
+func (s *StateMachine) HandleResend() *messaging.TargetMessage {
+	if s.State == SchedulerStatusWorking {
+		return nil
+	}
+	if time.Since(s.lastMsgTime) < 500*time.Millisecond {
+		return nil
+	}
 	s.lastMsgTime = time.Now()
 	switch s.State {
 	case SchedulerStatusCommiting:

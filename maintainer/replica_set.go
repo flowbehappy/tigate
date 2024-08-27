@@ -24,7 +24,7 @@ import (
 type ReplicaSet struct {
 	ID           *common.TableSpan
 	ChangefeedID model.ChangeFeedID
-	status       *ReplicaSetStatus
+	status       ReplicaSetStatus
 	stateMachine *scheduler.StateMachine
 
 	checkpointTs uint64
@@ -41,22 +41,11 @@ func NewReplicaSet(cfID model.ChangeFeedID,
 	return r
 }
 
-func (r *ReplicaSet) GetID() scheduler.InferiorID {
-	return r.ID
-}
-
 func (r *ReplicaSet) UpdateStatus(status scheduler.InferiorStatus) {
-	r.status = status.(*ReplicaSetStatus)
-	if r.status != nil && r.status.CheckpointTs > r.checkpointTs {
-		r.checkpointTs = r.status.CheckpointTs
-	}
-}
-
-func (r *ReplicaSet) NewInferiorStatus(state heartbeatpb.ComponentState) scheduler.InferiorStatus {
-	return &ReplicaSetStatus{
-		ID:           r.ID,
-		State:        state,
-		CheckpointTs: r.checkpointTs,
+	newStatus := status.(ReplicaSetStatus)
+	if newStatus.CheckpointTs > r.checkpointTs {
+		r.checkpointTs = newStatus.CheckpointTs
+		r.status.CheckpointTs = newStatus.CheckpointTs
 	}
 }
 
@@ -106,12 +95,13 @@ type ReplicaSetStatus struct {
 	ID           *common.TableSpan
 	State        heartbeatpb.ComponentState
 	CheckpointTs uint64
+	DDLStatus    *heartbeatpb.State
 }
 
-func (c *ReplicaSetStatus) GetInferiorID() scheduler.InferiorID {
+func (c ReplicaSetStatus) GetInferiorID() scheduler.InferiorID {
 	return scheduler.InferiorID(c.ID)
 }
 
-func (c *ReplicaSetStatus) GetInferiorState() heartbeatpb.ComponentState {
+func (c ReplicaSetStatus) GetInferiorState() heartbeatpb.ComponentState {
 	return c.State
 }

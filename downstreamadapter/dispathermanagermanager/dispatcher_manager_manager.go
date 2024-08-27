@@ -57,9 +57,9 @@ func (m *DispatcherManagerManager) RecvMaintainerRequest(ctx context.Context, ms
 }
 
 func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.ServerId, maintainerBootstrapRequest *heartbeatpb.MaintainerBootstrapRequest) error {
-	changefeedID := model.DefaultChangeFeedID(maintainerBootstrapRequest.ChangefeedID)
+	cfId := model.DefaultChangeFeedID(maintainerBootstrapRequest.ChangefeedID)
 	createTableTriggerEventDispatcher := maintainerBootstrapRequest.GetCreateTableTriggerEventDispatcher()
-	eventDispatcherManager, ok := m.dispatcherManagers[changefeedID]
+	manager, ok := m.dispatcherManagers[cfId]
 	if !ok {
 		// TODO: decode config
 		cfConfig := &config.ChangefeedConfig{}
@@ -71,9 +71,9 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 			return err
 		}
 		// TODO: 这边额外判断一下创建是否失败，创建失败的话，想一下怎么做报错处理
-		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, cfConfig, from, createTableTriggerEventDispatcher)
-		m.dispatcherManagers[changefeedID] = eventDispatcherManager
-		metrics.EventDispatcherManagerGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID).Inc()
+		manager := dispatchermanager.NewEventDispatcherManager(cfId, cfConfig, from, createTableTriggerEventDispatcher)
+		m.dispatcherManagers[cfId] = manager
+		metrics.EventDispatcherManagerGauge.WithLabelValues(cfId.Namespace, cfId.ID).Inc()
 
 		response := &heartbeatpb.MaintainerBootstrapResponse{
 			ChangefeedID: maintainerBootstrapRequest.ChangefeedID,
@@ -96,14 +96,14 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 	// We also will receive maintainerBootstrapRequest when the maintainer is restarted,
 	// so we need to update the maintainer id if it's changed
 	// and return all table span info to the new maintainer
-	if eventDispatcherManager.GetMaintainerID() != from {
-		eventDispatcherManager.SetMaintainerID(from)
+	if manager.GetMaintainerID() != from {
+		manager.SetMaintainerID(from)
 	}
 	response := &heartbeatpb.MaintainerBootstrapResponse{
 		ChangefeedID: maintainerBootstrapRequest.ChangefeedID,
-		Statuses:     make([]*heartbeatpb.TableSpanStatus, 0, eventDispatcherManager.GetDispatcherMap().Len()),
+		Statuses:     make([]*heartbeatpb.TableSpanStatus, 0, manager.GetDispatcherMap().Len()),
 	}
-	eventDispatcherManager.GetDispatcherMap().ForEach(func(tableSpan *common.TableSpan, tableEventDispatcher *dispatcher.Dispatcher) {
+	manager.GetDispatcherMap().ForEach(func(tableSpan *common.TableSpan, tableEventDispatcher *dispatcher.Dispatcher) {
 		response.Statuses = append(response.Statuses, &heartbeatpb.TableSpanStatus{
 			Span:            tableEventDispatcher.GetTableSpan().TableSpan,
 			ComponentStatus: tableEventDispatcher.GetComponentStatus(),
@@ -124,18 +124,18 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 }
 
 func (m *DispatcherManagerManager) handleRemoveDispatcherManager(from messaging.ServerId, req *heartbeatpb.MaintainerCloseRequest) error {
-	changefeedID := model.DefaultChangeFeedID(req.ChangefeedID)
+	cfId := model.DefaultChangeFeedID(req.ChangefeedID)
 	response := &heartbeatpb.MaintainerCloseResponse{
 		ChangefeedID: req.ChangefeedID,
 		Success:      true,
 	}
 
-	eventDispatcherManager, ok := m.dispatcherManagers[changefeedID]
+	manager, ok := m.dispatcherManagers[cfId]
 	if ok {
-		closed := eventDispatcherManager.TryClose()
+		closed := manager.TryClose()
 		if closed {
-			delete(m.dispatcherManagers, changefeedID)
-			metrics.EventDispatcherManagerGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID).Dec()
+			delete(m.dispatcherManagers, cfId)
+			metrics.EventDispatcherManagerGauge.WithLabelValues(cfId.Namespace, cfId.ID).Dec()
 		}
 		response.Success = closed
 	}

@@ -44,7 +44,7 @@ func TestDynamicStreamBasic(t *testing.T) {
 	ds := NewDynamicStream(handler, DefaultSchedulerInterval, DefaultReportInterval, 3)
 	ds.Start()
 
-	ds.AddPath([]PathAndDest[string, struct{}]{
+	ds.AddPaths([]PathAndDest[string, struct{}]{
 		{"path1", struct{}{}},
 		{"path2", struct{}{}},
 		{"path3", struct{}{}},
@@ -59,7 +59,7 @@ func TestDynamicStreamBasic(t *testing.T) {
 
 	wg.Wait()
 
-	ds.RemovePath("path1", "path2", "path3", "path4")
+	ds.RemovePaths("path1", "path2", "path3", "path4")
 
 	ds.Close()
 }
@@ -76,7 +76,7 @@ func TestDynamicStreamSchedule(t *testing.T) {
 		r.wg.Wait()
 	}
 
-	ds.AddPath([]PathAndDest[string, struct{}]{
+	ds.AddPaths([]PathAndDest[string, struct{}]{
 		{"p1", struct{}{}},
 		{"p2", struct{}{}},
 		{"p3", struct{}{}},
@@ -126,7 +126,7 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	assert.Equal(t, 1, len(ds.streamInfos[2].pathMap)) // p3
 	assert.Equal(t, 1, len(ds.streamInfos[3].pathMap)) // p5, Solo stream
 
-	ds.AddPath([]PathAndDest[string, struct{}]{
+	ds.AddPaths([]PathAndDest[string, struct{}]{
 		{"p6", struct{}{}},
 		{"p7", struct{}{}},
 		{"p8", struct{}{}},
@@ -194,7 +194,7 @@ func (h *removePathHandler) Path(event *simpleEvent) string {
 }
 
 func (h *removePathHandler) Handle(event *simpleEvent, dest struct{}) (await bool) {
-	h.ds.RemovePath(event.path)
+	h.ds.RemovePaths(event.path)
 	event.wg.Done()
 	return false
 }
@@ -206,7 +206,7 @@ func TestDynamicStreamRemovePath(t *testing.T) {
 
 	ds.Start()
 
-	ds.AddPath([]PathAndDest[string, struct{}]{
+	ds.AddPaths([]PathAndDest[string, struct{}]{
 		{"p1", struct{}{}},
 		{"p2", struct{}{}}}...)
 

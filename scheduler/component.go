@@ -21,11 +21,9 @@ import (
 )
 
 type Inferior interface {
-	GetID() InferiorID
 	UpdateStatus(InferiorStatus)
 	SetStateMachine(*StateMachine)
 	GetStateMachine() *StateMachine
-	NewInferiorStatus(heartbeatpb.ComponentState) InferiorStatus
 	NewAddInferiorMessage(model.CaptureID) *messaging.TargetMessage
 	NewRemoveInferiorMessage(model.CaptureID) *messaging.TargetMessage
 }

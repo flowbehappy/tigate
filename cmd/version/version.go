@@ -11,15 +11,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package maintainer
+package version
 
-import "context"
+import (
+	"github.com/flowbehappy/tigate/version"
+	"github.com/spf13/cobra"
+)
 
-// Task is the execution unit of the Maintainer, Maintainer is a long-running task that submitted to
-// the thread pool,
-// when there is task needed to be executed by the Maintainer, it goes to the Maintainer's taskCh first
-// then the thread pool call the Execute method of Maintainer, Maintainer take a task from the  chanel,
-type Task interface {
-	// Execute the tasks, return error if execute failed
-	Execute(ctx context.Context) error
+// NewCmdVersion creates the `version` command.
+func NewCmdVersion() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Output version information",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			cmd.Print(version.GetRawInfo())
+		},
+	}
 }
