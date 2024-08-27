@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"strconv"
 
-	"github.com/flowbehappy/tigate/eventpb"
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/google/uuid"
 	"github.com/tinylib/msgp/msgp"
 )
@@ -21,13 +21,13 @@ func NewDispatcherID() DispatcherID {
 	return DispatcherID(NewGID())
 }
 
-func NewDispatcherIDFromPB(pb *eventpb.DispatcherID) DispatcherID {
+func NewDispatcherIDFromPB(pb *heartbeatpb.DispatcherID) DispatcherID {
 	d := DispatcherID{low: pb.Low, high: pb.High}
 	return d
 }
 
-func (d DispatcherID) ToPB() *eventpb.DispatcherID {
-	return &eventpb.DispatcherID{
+func (d DispatcherID) ToPB() *heartbeatpb.DispatcherID {
+	return &heartbeatpb.DispatcherID{
 		Low:  d.low,
 		High: d.high,
 	}
@@ -84,6 +84,16 @@ func (d *DispatcherID) DecodeMsg(dc *msgp.Reader) error {
 	}
 	err = d.Unmarshal(tmp)
 	return err
+}
+
+func (d DispatcherID) Equal(inferior any) bool {
+	tbl := inferior.(DispatcherID)
+	return d.low == tbl.low && d.high == tbl.high
+}
+
+func (d DispatcherID) Less(t any) bool {
+	cf := t.(DispatcherID)
+	return d.low < cf.low || d.low == cf.low && d.high < cf.high
 }
 
 type SchemaID int64
