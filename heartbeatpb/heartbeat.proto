@@ -53,9 +53,16 @@ enum ScheduleAction {
     Remove = 1;
 }
 
+
+message DispatcherID {
+    uint64 high = 1;
+    uint64 low = 2;
+}
+
 message DispatcherConfig {
     TableSpan span = 1;
     uint64 startTs = 2;
+    DispatcherID dispatcherID = 3;
 }
 
 message ScheduleDispatcherRequest {

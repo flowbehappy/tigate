@@ -35,7 +35,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/tiflow/cdc/model"
 	cfg "github.com/pingcap/tiflow/pkg/config"
 	"go.uber.org/zap"
@@ -155,7 +154,7 @@ func (e *EventDispatcherManager) close() {
 	e.wg.Wait()
 
 	toCloseDispatchers := make([]*dispatcher.Dispatcher, 0)
-	e.dispatcherMap.ForEach(func(tableSpan *common.TableSpan, dispatcher *dispatcher.Dispatcher) {
+	e.dispatcherMap.ForEach(func(id common.DispatcherID, dispatcher *dispatcher.Dispatcher) {
 		dispatcher.Remove()
 		_, ok := dispatcher.TryClose()
 		if !ok {
@@ -193,7 +192,7 @@ func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) 
 }
 */
 
-func (e *EventDispatcherManager) NewDispatcher(tableSpan *common.TableSpan, startTs uint64) *dispatcher.Dispatcher {
+func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan *common.TableSpan, startTs uint64) *dispatcher.Dispatcher {
 	start := time.Now()
 	if _, ok := e.dispatcherMap.Get(tableSpan); ok {
 		log.Debug("table span already exists", zap.Any("tableSpan", tableSpan))
@@ -289,8 +288,8 @@ func (e *EventDispatcherManager) RemoveDispatcher(tableSpan *common.TableSpan) {
 }
 
 // Only called when the dispatcher is removed successfully.
-func (e *EventDispatcherManager) cleanTableEventDispatcher(tableSpan *common.TableSpan) {
-	e.dispatcherMap.Delete(tableSpan)
+func (e *EventDispatcherManager) cleanTableEventDispatcher(id common.DispatcherID) {
+	e.dispatcherMap.Delete(id)
 	e.tableEventDispatcherCount.Dec()
 	log.Info("table event dispatcher completely stopped, and delete it from event dispatcher manager", zap.Any("tableSpan", tableSpan))
 }
@@ -331,13 +330,12 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 		Watermark:       heartbeatpb.NewMaxWatermark(),
 	}
 
-	toReomveTableSpans := make([]*common.TableSpan, 0)
-	allDispatchers := e.dispatcherMap.GetAllDispatchers()
+	toReomveDispatcherIDs := make([]common.DispatcherID, 0)
 	heartBeatInfo := &dispatcher.HeartBeatInfo{}
-	for _, dispatcherItem := range allDispatchers {
+	e.dispatcherMap.ForEach(func(id common.DispatcherID, dispatcherItem *dispatcher.Dispatcher) {
 		// TODO:ddlSpan先不参与
 		if dispatcherItem.GetTableSpan() == &common.DDLSpan {
-			continue
+			return
 		}
 		// If the dispatcher is in removing state, we need to check if it's closed successfully.
 		// If it's closed successfully, we could clean it up.
@@ -354,7 +352,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 					ComponentStatus: heartbeatpb.ComponentState_Stopped,
 					CheckpointTs:    watermark.CheckpointTs,
 				})
-				toReomveTableSpans = append(toReomveTableSpans, dispatcherItem.GetTableSpan())
+				toReomveDispatcherIDs = append(toReomveDispatcherIDs, id)
 			}
 		}
 
@@ -367,10 +365,10 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 				CheckpointTs:    heartBeatInfo.Watermark.CheckpointTs,
 			})
 		}
-	}
+	})
 
-	for _, tableSpan := range toReomveTableSpans {
-		e.cleanTableEventDispatcher(tableSpan)
+	for _, id := range toReomveDispatcherIDs {
+		e.cleanTableEventDispatcher(id)
 	}
 	ckptTs := oracle.ExtractPhysical(message.Watermark.CheckpointTs)
 	e.metricCheckpointTs.Set(float64(ckptTs))
@@ -411,67 +409,45 @@ func (e *EventDispatcherManager) SetMaintainerID(maintainerID messaging.ServerId
 	e.maintainerID = maintainerID
 }
 
+// 测一下用 sync.Map 的效果和普通的 map 相比
 type DispatcherMap struct {
-	dispatcherCacheForRead []*dispatcher.Dispatcher
-	mutex                  sync.Mutex
-	dispatchers            *utils.BtreeMap[*common.TableSpan, *dispatcher.Dispatcher]
+	m sync.Map
 }
 
 func newDispatcherMap() *DispatcherMap {
 	return &DispatcherMap{
-		dispatcherCacheForRead: make([]*dispatcher.Dispatcher, 0, 1024),
-		dispatchers:            utils.NewBtreeMap[*common.TableSpan, *dispatcher.Dispatcher](),
+		m: sync.Map{},
 	}
 }
 
 func (d *DispatcherMap) Len() int {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	return d.dispatchers.Len()
-}
-
-func (d *DispatcherMap) Get(tableSpan *common.TableSpan) (*dispatcher.Dispatcher, bool) {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	return d.dispatchers.Get(tableSpan)
-}
-
-func (d *DispatcherMap) Delete(tableSpan *common.TableSpan) {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	d.dispatchers.Delete(tableSpan)
-}
-
-func (d *DispatcherMap) Set(tableSpan *common.TableSpan, dispatcher *dispatcher.Dispatcher) {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	d.dispatchers.ReplaceOrInsert(tableSpan, dispatcher)
-}
-
-func (d *DispatcherMap) ForEach(fn func(tableSpan *common.TableSpan, dispatcher *dispatcher.Dispatcher)) {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	d.dispatchers.Ascend(func(tableSpan *common.TableSpan, dispatcherItem *dispatcher.Dispatcher) bool {
-		fn(tableSpan, dispatcherItem)
+	var len = 0
+	d.m.Range(func(_, _ interface{}) bool {
+		len++
 		return true
 	})
+	return len
 }
 
-func (d *DispatcherMap) resetDispatcherCache() {
-	if cap(d.dispatcherCacheForRead) > 2048 && cap(d.dispatcherCacheForRead) > d.dispatchers.Len()*2 {
-		d.dispatcherCacheForRead = make([]*dispatcher.Dispatcher, 0, d.dispatchers.Len())
+func (d *DispatcherMap) Get(id common.DispatcherID) (*dispatcher.Dispatcher, bool) {
+	dispatcherItem, ok := d.m.Load(id)
+	if ok {
+		return dispatcherItem.(*dispatcher.Dispatcher), ok
 	}
-	d.dispatcherCacheForRead = d.dispatcherCacheForRead[:0]
+	return nil, false
 }
 
-func (d *DispatcherMap) GetAllDispatchers() []*dispatcher.Dispatcher {
-	d.resetDispatcherCache()
+func (d *DispatcherMap) Delete(id common.DispatcherID) {
+	d.m.Delete(id)
+}
 
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	d.dispatchers.Ascend(func(tableSpan *common.TableSpan, dispatcherItem *dispatcher.Dispatcher) bool {
-		d.dispatcherCacheForRead = append(d.dispatcherCacheForRead, dispatcherItem)
+func (d *DispatcherMap) Set(id common.DispatcherID, dispatcher *dispatcher.Dispatcher) {
+	d.m.Store(id, dispatcher)
+}
+
+func (d *DispatcherMap) ForEach(fn func(id common.DispatcherID, dispatcher *dispatcher.Dispatcher)) {
+	d.m.Range(func(key, value interface{}) bool {
+		fn(key.(common.DispatcherID), value.(*dispatcher.Dispatcher))
 		return true
 	})
-	return d.dispatcherCacheForRead
 }
