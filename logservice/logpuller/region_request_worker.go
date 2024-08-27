@@ -403,7 +403,7 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 
 func (s *regionRequestWorker) dispatchResolvedTs(ctx context.Context, resolvedTs *cdcpb.ResolvedTs) error {
 	subscriptionID := subscriptionID(resolvedTs.RequestId)
-	sfEvents := make([]statefulEvent, len(s.client.changeEventProcessors))
+	sfEvents := make([]*statefulEvent, len(s.client.changeEventProcessors))
 	for _, regionID := range resolvedTs.Regions {
 		slot := hashRegionID(regionID, len(s.client.changeEventProcessors))
 		if sfEvents[slot].worker == nil {
