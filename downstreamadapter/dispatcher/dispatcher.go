@@ -200,21 +200,35 @@ func (d *Dispatcher) HandleEvent(event *common.TxnEvent) bool {
 	}
 }
 
-// 1.If the event is a single table DDL, it will be added to the sink for writing to downstream(async).
+// 1.If the event is a single table DDL, it will be added to the sink for writing to downstream(async). If the ddl leads to add new tables or drop tables, it should send heartbeat to maintainer
 // 2. If the event is a multi-table DDL, it will generate a TableSpanStatus message with ddl info to send to maintainer.
 func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 	if d.ddlPendingEvent.IsSingleTableDDL() {
 		d.sink.AddDDLAndSyncPointEvent(d.ddlPendingEvent, d.tableProgress)
+		if d.ddlPendingEvent.GetNeedAddedTableSpan() != nil || d.ddlPendingEvent.GetNeedDroppedDispatcherIDs() != nil {
+			message := &heartbeatpb.TableSpanStatus{
+				ID:              d.id.ToPB(),
+				ComponentStatus: heartbeatpb.ComponentState_Working,
+				State: &heartbeatpb.State{
+					IsBlocked:                false,
+					BlockTs:                  d.ddlPendingEvent.CommitTs,
+					NeedDroppedDispatcherIDs: d.ddlPendingEvent.GetNeedDroppedDispatcherIDs(),
+					NeedAddedTableSpan:       d.ddlPendingEvent.GetNeedAddedTableSpan(),
+				},
+			}
+			d.SetResendTask(newResendTask(message, d))
+			d.statusesChan <- message
+		}
 	} else {
 		message := &heartbeatpb.TableSpanStatus{
 			ID:              d.id.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			State: &heartbeatpb.State{
-				IsBlocked:            true,
-				BlockTs:              d.ddlPendingEvent.CommitTs,
-				BlockTableSpan:       d.ddlPendingEvent.GetBlockedTableSpan(), // 这个包含自己的 span 是不是也无所谓，不然就要剔除掉
-				NeedDroppedTableSpan: d.ddlPendingEvent.GetNeedDroppedTableSpan(),
-				NeedAddedTableSpan:   d.ddlPendingEvent.GetNeedAddedTableSpan(),
+				IsBlocked:                true,
+				BlockTs:                  d.ddlPendingEvent.CommitTs,
+				BlockDispatcherIDs:       d.ddlPendingEvent.GetBlockedDispatcherIDs(),
+				NeedDroppedDispatcherIDs: d.ddlPendingEvent.GetNeedDroppedDispatcherIDs(),
+				NeedAddedTableSpan:       d.ddlPendingEvent.GetNeedAddedTableSpan(),
 			},
 		}
 		d.SetResendTask(newResendTask(message, d))

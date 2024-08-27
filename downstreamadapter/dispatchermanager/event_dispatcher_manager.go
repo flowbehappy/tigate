@@ -85,9 +85,7 @@ type EventDispatcherManager struct {
 
 func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 	cfConfig *config.ChangefeedConfig,
-	maintainerID messaging.ServerId,
-	createTableTriggerEventDispatcher bool,
-	tableTriggerEventDispatcherID *heartbeatpb.DispatcherID) *EventDispatcherManager {
+	maintainerID messaging.ServerId) *EventDispatcherManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := &EventDispatcherManager{
 		dispatcherMap: newDispatcherMap(),
@@ -116,14 +114,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 
 	appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(manager)
 
-	if createTableTriggerEventDispatcher {
-		id := common.NewDispatcherIDFromPB(tableTriggerEventDispatcherID)
-		dispatcher := manager.NewDispatcher(id, &common.DDLSpan, manager.config.StartTS)
-		manager.dispatcherMap.Set(id, dispatcher)
-	}
-
 	// TODO: 这些后续需要等有第一个 table 来的时候再初始化, 对于纯空的 event dispatcher manager 不要直接创建为好
-
 	manager.heartBeatTask = newHeartBeatTask(manager)
 
 	manager.InitSink()

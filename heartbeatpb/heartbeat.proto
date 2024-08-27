@@ -100,8 +100,6 @@ message RemoveMaintainerRequest  {
 message MaintainerBootstrapRequest {
     string changefeedID = 1;
     bytes config = 2;
-    bool createTableTriggerEventDispatcher = 3;
-    DispatcherID tableTriggerEventDispatcherID = 4;
 }
 
 message MaintainerBootstrapResponse {
@@ -128,8 +126,8 @@ message MaintainerCloseResponse {
 message State {
     bool IsBlocked      = 1;
     uint64 BlockTs         = 2;
-    repeated TableSpan BlockTableSpan = 3;
-    repeated TableSpan NeedDroppedTableSpan =4;
+    repeated DispatcherID BlockDispatcherIDs = 3;
+    repeated DispatcherID NeedDroppedDispatcherIDs =4;
     repeated TableSpan NeedAddedTableSpan = 5;
 }
 
