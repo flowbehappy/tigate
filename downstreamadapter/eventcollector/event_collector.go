@@ -109,7 +109,9 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 				// Wait for a while to avoid sending too many requests, since the
 				// event service may be busy.
 				time.Sleep(10 * time.Millisecond)
-
+			}
+		}
+	}()
 	return &eventCollector
 }
 

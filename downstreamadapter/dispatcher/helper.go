@@ -14,7 +14,6 @@
 package dispatcher
 
 import (
-	"log"
 	"sync"
 	"time"
 
@@ -102,49 +101,8 @@ func (h *DispatcherStatusHandler) Path(event DispatcherStatusWithID) common.Disp
 	return event.GetDispatcherID()
 }
 
-<<<<<<< HEAD
-func (h *DispatcherStatusHandler) Handle(event DispatcherStatusWithDispatcherID, dispatcher *Dispatcher) (await bool) {
-	sink := dispatcher.GetSink()
-	tableSpan := dispatcher.GetTableSpan()
-	pendingEvent := dispatcher.GetDDLPendingEvent()
-	dispatcherStatus := event.GetDispatcherStatus()
-	if pendingEvent == nil {
-		if dispatcherStatus.GetAction() != nil {
-			// 只可能出现在 event 已经推进了，但是还重复收到了 action 消息的时候，则重发包含 checkpointTs 的心跳
-			dispatcher.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
-				Span:            tableSpan.TableSpan,
-				ComponentStatus: heartbeatpb.ComponentState_Working,
-				CheckpointTs:    dispatcher.GetCheckpointTs(),
-			}
-		}
-		return false
-	}
-
-	dispatcherAction := dispatcherStatus.GetAction()
-	if dispatcherAction != nil {
-		if dispatcherAction.CommitTs == pendingEvent.CommitTs {
-			if dispatcherAction.Action == heartbeatpb.Action_Write {
-				sink.AddDDLAndSyncPointEvent(pendingEvent, dispatcher.tableProgress)
-			} else {
-				sink.PassDDLAndSyncPointEvent(pendingEvent, dispatcher.tableProgress)
-				dispatcherEventDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
-				dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
-			}
-			dispatcher.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
-				Span:            tableSpan.TableSpan,
-				ComponentStatus: heartbeatpb.ComponentState_Working,
-				CheckpointTs:    dispatcher.GetCheckpointTs(),
-			}
-		}
-	}
-
-	if dispatcherStatus.GetAck() != nil {
-		dispatcher.CancelResendTask()
-	}
-=======
 func (h *DispatcherStatusHandler) Handle(event DispatcherStatusWithID, dispatcher *Dispatcher) (await bool) {
 	dispatcher.HandleDispatcherStatus(event)
->>>>>>> upstream/master
 	return false
 }
 
@@ -218,7 +176,7 @@ func (t *ResendTask) Cancel() {
 //     for the multi-table DDL, we will also generate a ResendTask to resend the TableSpanStatus message with ddl info to maintainer each 50ms to avoid message is missing.
 //
 // Considering for ddl event, we always do an async write, so we need to be blocked before the ddl event flushed to downstream successfully.
-// Thus, we add a callback function to let the handler be waked when the ddl event flushed to downstream successfully.
+// Thus, we add a callback function to let the hander be waked when the ddl event flushed to downstream successfully.
 
 type DispatcherEventsHandler struct {
 }
@@ -228,33 +186,7 @@ func (h *DispatcherEventsHandler) Path(event common.Event) common.DispatcherID {
 }
 
 // TODO: 这个后面需要按照更大的粒度进行攒批
-<<<<<<< HEAD
 func (h *DispatcherEventsHandler) Handle(event common.Event, dispatcher *Dispatcher) bool {
-	sink := dispatcher.GetSink()
-	switch event.GetType() {
-	case common.TypeResolvedEvent:
-		dispatcher.resolvedTs.Set(event.(*common.ResolvedEvent).ResolvedTs)
-		return false
-	case common.TypeTxnEvent:
-		txnEvent := event.(*common.TxnEvent)
-		if txnEvent.IsDMLEvent() {
-			sink.AddDMLEvent(txnEvent, dispatcher.tableProgress)
-			return false
-		}
-		if txnEvent.IsDDLEvent() {
-			txnEvent.PostTxnFlushed = append(txnEvent.PostTxnFlushed, func() {
-				dispatcherEventDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
-				dispatcherEventDynamicStream.Wake() <- txnEvent.GetDispatcherID()
-			})
-			dispatcher.AddDDLEventToSinkWhenAvailable(txnEvent)
-			return true
-		}
-	default:
-		log.Panic("unknown event type")
-	}
-	return false
-=======
-func (h *DispatcherEventsHandler) Handle(event *common.TxnEvent, dispatcher *Dispatcher) bool {
 	return dispatcher.HandleEvent(event)
 }
 
@@ -288,17 +220,16 @@ func GetDispatcherTaskScheduler() threadpool.ThreadPool {
 		})
 	}
 	return DispatcherTaskScheduler
->>>>>>> upstream/master
 }
 
 func SetDispatcherTaskScheduler(taskScheduler threadpool.ThreadPool) {
 	DispatcherTaskScheduler = taskScheduler
 }
 
-var dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]
+var dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher]
 var dispatcherEventsDynamicStreamOnce sync.Once
 
-func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher] {
+func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher] {
 	if dispatcherEventsDynamicStream == nil {
 		dispatcherEventsDynamicStreamOnce.Do(func() {
 			dispatcherEventsDynamicStream = dynstream.NewDynamicStreamDefault(&DispatcherEventsHandler{})
@@ -308,7 +239,7 @@ func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.Dispatche
 	return dispatcherEventsDynamicStream
 }
 
-func SetDispatcherEventsDynamicStream(dynamicStream dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]) {
+func SetDispatcherEventsDynamicStream(dynamicStream dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher]) {
 	dispatcherEventsDynamicStream = dynamicStream
 }
 

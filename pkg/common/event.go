@@ -147,34 +147,34 @@ func (t TEvent) Unmarshal(data []byte) error {
 	return nil
 }
 
-type DDLEvent struct {
+type DDLEventX struct {
 	DispatcherID DispatcherID
 	// commitTS of the rawKV
 	CommitTS Ts
 	Job      *model.Job
 }
 
-func (d DDLEvent) GetType() int {
+func (d DDLEventX) GetType() int {
 	return TypeDDLEvent
 }
 
-func (d DDLEvent) GetDispatcherID() DispatcherID {
+func (d DDLEventX) GetDispatcherID() DispatcherID {
 	return d.DispatcherID
 }
 
-func (d DDLEvent) Marshal() ([]byte, error) {
+func (d DDLEventX) Marshal() ([]byte, error) {
 	// TODO
 	log.Panic("DDLEvent.Marshal: not implemented")
 	buf := make([]byte, 0)
 	return buf, nil
 }
 
-func (d DDLEvent) Unmarshal(data []byte) error {
+func (d DDLEventX) Unmarshal(data []byte) error {
 	//TODO
 	log.Panic("DDLEvent.Unmarshal: not implemented")
 	return nil
 }
 
-func (d DDLEvent) String() string {
+func (d DDLEventX) String() string {
 	return fmt.Sprintf("DDLEvent{DispatcherID: %s, CommitTS: %d, Job: %v}", d.DispatcherID, d.CommitTS, d.Job)
 }
