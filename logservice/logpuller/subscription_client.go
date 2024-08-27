@@ -327,7 +327,7 @@ func (s *SubscriptionClient) onTableDrained(rt *subscribedSpan) {
 
 // Note: don't block the caller, otherwise there may be deadlock
 func (s *SubscriptionClient) onRegionFail(ctx context.Context, errInfo *regionErrorInfo) {
-	// errInfo.regionInfo.releaseScanQuotaIfNeed(s.regionScanLimiter)
+	errInfo.regionInfo.releaseScanQuotaIfNeed(s.regionScanLimiter)
 
 	select {
 	case <-ctx.Done():
@@ -804,7 +804,7 @@ func (r *regionScanRequestLimiter) close() {
 	r.cond.Broadcast()
 }
 
-func (r *regionScanRequestLimiter) acquire(ctx context.Context, storeID uint64, regionID uint64) {
+func (r *regionScanRequestLimiter) acquire(ctx context.Context, storeID uint64) {
 	if r.maxRequests == 0 {
 		return
 	}
