@@ -75,8 +75,8 @@ type LogEvent struct {
 	subscriptionID
 }
 
-func newLogEvent(e regionFeedEvent, span *subscribedSpan) LogEvent {
-	return LogEvent{
+func newLogEvent(e regionFeedEvent, span *subscribedSpan) *LogEvent {
+	return &LogEvent{
 		regionFeedEvent: e,
 		subscriptionID:  span.subID,
 	}
@@ -109,8 +109,6 @@ type subscribedSpan struct {
 	// it is used to prevent duplicate requests to the same region range,
 	// and it also used to calculate this table's resolvedTs.
 	rangeLock *regionlock.RangeLock
-	// The output event channel of the span.
-	eventCh chan<- LogEvent
 
 	// To handle span removing.
 	stopped atomic.Bool
@@ -167,7 +165,9 @@ type SubscriptionClient struct {
 	resolveLockTaskCh chan *resolveLockTask
 	// errCh is used to receive region errors.
 	// The errors will be handled in `handleErrors` goroutine.
-	errCh chan regionErrorInfo
+	errCh chan *regionErrorInfo
+
+	consume func(ctx context.Context, e *LogEvent) error
 
 	// used to limit the number of concurrent region incremental scan requests on a single store
 	regionScanLimiter *regionScanRequestLimiter
@@ -196,7 +196,7 @@ func NewSubscriptionClient(
 		rangeTaskCh:       make(chan *rangeTask, 1024),
 		regionCh:          make(chan *regionInfo, 1024),
 		resolveLockTaskCh: make(chan *resolveLockTask, 1024),
-		errCh:             make(chan regionErrorInfo, 1024),
+		errCh:             make(chan *regionErrorInfo, 1024),
 
 		regionScanLimiter: newRegionScanRequestLimiter(config.RegionIncrementalScanLimitPerStore),
 	}
@@ -215,12 +215,12 @@ func (s *SubscriptionClient) AllocSubscriptionID() subscriptionID {
 // It new a subscribedSpan and store it in `s.totalSpans`,
 // and send a rangeTask to `s.rangeTaskCh`.
 // The rangeTask will be handled in `handleRangeTasks` goroutine.
-func (s *SubscriptionClient) Subscribe(subID subscriptionID, span heartbeatpb.TableSpan, startTs uint64, eventCh chan<- LogEvent) {
+func (s *SubscriptionClient) Subscribe(subID subscriptionID, span heartbeatpb.TableSpan, startTs uint64) {
 	if span.TableID == 0 {
 		log.Panic("subscription client subscribe with zero TableID")
 	}
 
-	rt := s.newSubscribedSpan(subID, span, startTs, eventCh)
+	rt := s.newSubscribedSpan(subID, span, startTs)
 	s.totalSpans.Lock()
 	s.totalSpans.spanMap[subID] = rt
 	s.totalSpans.Unlock()
@@ -268,7 +268,8 @@ func (s *SubscriptionClient) RegionCount(subID subscriptionID) uint64 {
 	return 0
 }
 
-func (s *SubscriptionClient) Run(ctx context.Context) error {
+func (s *SubscriptionClient) Run(ctx context.Context, consume func(ctx context.Context, e *LogEvent) error) error {
+	s.consume = consume
 	if s.pd == nil {
 		log.Warn("subsription client should be in test mode, skip run")
 		return nil
@@ -325,8 +326,7 @@ func (s *SubscriptionClient) onTableDrained(rt *subscribedSpan) {
 }
 
 // Note: don't block the caller, otherwise there may be deadlock
-func (s *SubscriptionClient) onRegionFail(ctx context.Context, errInfo regionErrorInfo) {
-	log.Info("onRegionFail")
+func (s *SubscriptionClient) onRegionFail(ctx context.Context, errInfo *regionErrorInfo) {
 	errInfo.regionInfo.releaseScanQuotaIfNeed(s.regionScanLimiter)
 
 	select {
@@ -585,7 +585,7 @@ func (s *SubscriptionClient) handleErrors(ctx context.Context) error {
 	}
 }
 
-func (s *SubscriptionClient) doHandleError(ctx context.Context, errInfo regionErrorInfo) error {
+func (s *SubscriptionClient) doHandleError(ctx context.Context, errInfo *regionErrorInfo) error {
 	if errInfo.subscribedSpan.rangeLock.UnlockRange(
 		errInfo.span.StartKey, errInfo.span.EndKey,
 		errInfo.verID.GetID(), errInfo.verID.GetVer(), errInfo.resolvedTs()) {
@@ -745,7 +745,6 @@ func (s *SubscriptionClient) newSubscribedSpan(
 	subID subscriptionID,
 	span heartbeatpb.TableSpan,
 	startTs uint64,
-	eventCh chan<- LogEvent,
 ) *subscribedSpan {
 	rangeLock := regionlock.NewRangeLock(uint64(subID), span.StartKey, span.EndKey, startTs)
 
@@ -754,7 +753,6 @@ func (s *SubscriptionClient) newSubscribedSpan(
 		span:      span,
 		startTs:   startTs,
 		rangeLock: rangeLock,
-		eventCh:   eventCh,
 	}
 
 	rt.tryResolveLock = func(regionID uint64, state *regionlock.LockedRangeState) {

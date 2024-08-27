@@ -94,7 +94,7 @@ func TestGenerateResolveLockTask(t *testing.T) {
 		StartKey: []byte{'a'},
 		EndKey:   []byte{'z'},
 	}
-	span := client.newSubscribedSpan(subscriptionID(1), rawSpan, 100, nil)
+	span := client.newSubscribedSpan(subscriptionID(1), rawSpan, 100)
 	client.totalSpans.spanMap = make(map[subscriptionID]*subscribedSpan)
 	client.totalSpans.spanMap[subscriptionID(1)] = span
 	client.pdClock = pdutil.NewClock4Test()
@@ -202,16 +202,32 @@ func TestSubscriptionWithFailedTiKV(t *testing.T) {
 	}()
 
 	wg.Add(1)
+	consumeCh := make(chan *LogEvent, 50)
+	consumeLogEvent := func(ctx context.Context, e *LogEvent) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case consumeCh <- e:
+			return nil
+		}
+	}
 	go func() {
 		defer wg.Done()
-		err := client.Run(ctx)
+		err := client.Run(ctx, consumeLogEvent)
 		require.Equal(t, context.Canceled, errors.Cause(err))
 	}()
 
+	// hack to wait SubscriptionClient.consume is set
+	for {
+		if client.consume != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	subID := client.AllocSubscriptionID()
 	span := heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("a"), EndKey: []byte("b")}
-	consumeCh := make(chan LogEvent, 50)
-	client.Subscribe(subID, span, 1, consumeCh)
+	client.Subscribe(subID, span, 1)
 
 	eventsCh1 <- mockInitializedEvent(11, uint64(subID))
 	ts := oracle.GoTimeToTS(pdClock.CurrentTime())

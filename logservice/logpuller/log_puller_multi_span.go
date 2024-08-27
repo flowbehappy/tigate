@@ -41,7 +41,6 @@ func NewLogPullerMultiSpan(
 	spans []common.TableSpan,
 	startTs common.Ts,
 	consume func(context.Context, *common.RawKVEntry) error,
-	config *LogPullerConfig,
 ) *LogPullerMultiSpan {
 	// TODO: remove this when we use a priority queue to maintain the resolved ts.(just check at least one span)
 	if len(spans) != 2 {
@@ -73,7 +72,7 @@ func NewLogPullerMultiSpan(
 		return consume(ctx, entry)
 	}
 
-	pullerWrapper.innerPuller = NewLogPuller(client, pdClock, consumeWrapper, config)
+	pullerWrapper.innerPuller = NewLogPuller(client, pdClock, consumeWrapper)
 	pullerWrapper.spanResolvedTsMap.Range(func(span heartbeatpb.TableSpan, ts common.Ts) bool {
 		pullerWrapper.innerPuller.Subscribe(span, pullerWrapper.resolvedTs)
 		return true

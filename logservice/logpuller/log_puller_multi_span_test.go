@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/security"
@@ -42,10 +41,6 @@ func newLogPullerMultiSpanForTest(spans []common.TableSpan, outputCh chan<- *com
 			return nil
 		}
 	}
-	pullerConfig := &LogPullerConfig{
-		WorkerCount:  1,
-		HashSpanFunc: func(heartbeatpb.TableSpan, int) int { return 0 },
-	}
 
 	return NewLogPullerMultiSpan(
 		client,
@@ -53,7 +48,6 @@ func newLogPullerMultiSpanForTest(spans []common.TableSpan, outputCh chan<- *com
 		spans,
 		1, // start ts
 		consume,
-		pullerConfig,
 	)
 }
 
@@ -81,6 +75,14 @@ func TestMultiplexingPullerResolvedForward(t *testing.T) {
 		puller.Run(ctx)
 	}()
 
+	// hack to wait SubscriptionClient.consume is set
+	for {
+		if puller.innerPuller.client.consume != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	allProgress := puller.innerPuller.getAllProgresses()
 	subIDs := make([]subscriptionID, 0, len(allProgress))
 	for p := range allProgress {
@@ -88,7 +90,7 @@ func TestMultiplexingPullerResolvedForward(t *testing.T) {
 	}
 	require.Equal(t, 2, len(subIDs))
 	for i, subID := range subIDs {
-		puller.innerPuller.inputChs[0] <- LogEvent{
+		puller.innerPuller.client.consume(ctx, &LogEvent{
 			regionFeedEvent: regionFeedEvent{
 				Val: &common.RawKVEntry{
 					OpType: common.OpTypeResolved,
@@ -96,7 +98,7 @@ func TestMultiplexingPullerResolvedForward(t *testing.T) {
 				},
 			},
 			subscriptionID: subID,
-		}
+		})
 	}
 
 	select {

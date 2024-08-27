@@ -147,15 +147,10 @@ func (w *changeEventProcessor) processEvent(ctx context.Context, event statefulE
 // NOTE: context.Canceled won't be treated as an error.
 func (w *changeEventProcessor) handleEventEntry(ctx context.Context, x *cdcpb.Event_Entries_, state *regionFeedState) error {
 	startTs := state.region.subscribedSpan.startTs
-	emit := func(assembled regionFeedEvent) bool {
+	emit := func(assembled regionFeedEvent) error {
 		// TODO: add a metric to indicate whether the event is sent successfully.
 		e := newLogEvent(assembled, state.region.subscribedSpan)
-		select {
-		case state.region.subscribedSpan.eventCh <- e:
-			return true
-		case <-ctx.Done():
-			return false
-		}
+		return w.client.consume(ctx, e)
 	}
 	tableID := state.region.subscribedSpan.span.TableID
 	log.Debug("region change event processor get an Event",
@@ -169,7 +164,7 @@ func handleEventEntry(
 	x *cdcpb.Event_Entries_,
 	startTs uint64,
 	state *regionFeedState,
-	emit func(assembled regionFeedEvent) bool,
+	emit func(assembled regionFeedEvent) error,
 	tableID common.TableID,
 ) error {
 	regionID, _, _ := state.getRegionMeta()
@@ -188,8 +183,8 @@ func handleEventEntry(
 				if err != nil {
 					return errors.Trace(err)
 				}
-				if !emit(revent) {
-					return nil
+				if err := emit(revent); err != nil {
+					return err
 				}
 			}
 			state.matcher.matchCachedRollbackRow(true)
@@ -208,8 +203,8 @@ func handleEventEntry(
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if !emit(revent) {
-				return nil
+			if err := emit(revent); err != nil {
+				return err
 			}
 		case cdcpb.Event_PREWRITE:
 			state.matcher.putPrewriteRow(entry)
@@ -247,8 +242,8 @@ func handleEventEntry(
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if !emit(revent) {
-				return nil
+			if err := emit(revent); err != nil {
+				return err
 			}
 		case cdcpb.Event_ROLLBACK:
 			if !state.isInitialized() {
@@ -325,9 +320,8 @@ func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resol
 				},
 			}
 			e := newLogEvent(revent, table)
-			select {
-			case table.eventCh <- e:
-			case <-ctx.Done():
+			if err := w.client.consume(ctx, e); err != nil {
+				return
 			}
 		}
 	}

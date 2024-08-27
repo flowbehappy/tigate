@@ -27,7 +27,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-func newSubscriptionClientForTestRegionChangeEventProcessor() *SubscriptionClient {
+func newSubscriptionClientForTestRegionChangeEventProcessor(eventCh chan *LogEvent) *SubscriptionClient {
 	// only requires `SubscriptionClient.onRegionFail`.
 	clientConfig := &SubscriptionClientConfig{
 		RegionRequestWorkerPerStore:        1,
@@ -35,7 +35,16 @@ func newSubscriptionClientForTestRegionChangeEventProcessor() *SubscriptionClien
 		AdvanceResolvedTsIntervalInMs:      300,
 		RegionIncrementalScanLimitPerStore: 100,
 	}
-	return NewSubscriptionClient(clientConfig, nil, nil, nil, nil, &security.Credential{})
+	client := NewSubscriptionClient(clientConfig, nil, nil, nil, nil, &security.Credential{})
+	client.consume = func(ctx context.Context, e *LogEvent) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case eventCh <- e:
+			return nil
+		}
+	}
+	return client
 }
 
 // For UPDATE SQL, its prewrite event has both value and old value.
@@ -58,11 +67,12 @@ func newSubscriptionClientForTestRegionChangeEventProcessor() *SubscriptionClien
 func TestHandleEventEntryEventOutOfOrder(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	client := newSubscriptionClientForTestRegionChangeEventProcessor()
+	eventCh := make(chan *LogEvent, 2)
+	client := newSubscriptionClientForTestRegionChangeEventProcessor(eventCh)
+
 	defer client.Close(ctx)
 
 	processor := newChangeEventProcessor(client)
-	eventCh := make(chan LogEvent, 2)
 
 	span := heartbeatpb.TableSpan{
 		StartKey: spanz.ToComparableKey([]byte{}), // TODO: remove spanz dependency
@@ -72,7 +82,7 @@ func TestHandleEventEntryEventOutOfOrder(t *testing.T) {
 		tikv.RegionVerID{},
 		span,
 		&tikv.RPCContext{},
-		&subscribedSpan{subID: subscriptionID(1), eventCh: eventCh},
+		&subscribedSpan{subID: subscriptionID(1)},
 	)
 	region.lockedRangeState = &regionlock.LockedRangeState{}
 	state := newRegionFeedState(region, 1)
@@ -167,26 +177,26 @@ func TestHandleEventEntryEventOutOfOrder(t *testing.T) {
 func TestHandleResolvedTs(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	client := newSubscriptionClientForTestRegionChangeEventProcessor()
+	eventCh := make(chan *LogEvent, 2)
+	client := newSubscriptionClientForTestRegionChangeEventProcessor(eventCh)
 	defer client.Close(ctx)
 
 	processor := newChangeEventProcessor(client)
-	eventCh := make(chan LogEvent, 2)
 
 	s1 := newRegionFeedState(&regionInfo{verID: tikv.NewRegionVerID(1, 1, 1)}, 1)
-	s1.region.subscribedSpan = client.newSubscribedSpan(1, heartbeatpb.TableSpan{}, 0, eventCh)
+	s1.region.subscribedSpan = client.newSubscribedSpan(1, heartbeatpb.TableSpan{}, 0)
 	s1.region.lockedRangeState = &regionlock.LockedRangeState{}
 	s1.setInitialized()
 	s1.updateResolvedTs(9)
 
 	s2 := newRegionFeedState(&regionInfo{verID: tikv.NewRegionVerID(2, 2, 2)}, 2)
-	s2.region.subscribedSpan = client.newSubscribedSpan(2, heartbeatpb.TableSpan{}, 0, eventCh)
+	s2.region.subscribedSpan = client.newSubscribedSpan(2, heartbeatpb.TableSpan{}, 0)
 	s2.region.lockedRangeState = &regionlock.LockedRangeState{}
 	s2.setInitialized()
 	s2.updateResolvedTs(11)
 
 	s3 := newRegionFeedState(&regionInfo{verID: tikv.NewRegionVerID(3, 3, 3)}, 3)
-	s3.region.subscribedSpan = client.newSubscribedSpan(3, heartbeatpb.TableSpan{}, 0, eventCh)
+	s3.region.subscribedSpan = client.newSubscribedSpan(3, heartbeatpb.TableSpan{}, 0)
 	s3.region.lockedRangeState = &regionlock.LockedRangeState{}
 	s3.updateResolvedTs(8)
 
