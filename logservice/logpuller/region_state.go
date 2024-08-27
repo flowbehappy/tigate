@@ -82,7 +82,7 @@ func (s *regionInfo) acquireScanQuota(ctx context.Context, limiter *regionScanRe
 	if !s.storeID.CompareAndSwap(oldStoreID, storeID) {
 		log.Panic("try scan a region more than once at the same time")
 	}
-	limiter.acquire(ctx, storeID, s.verID.GetID())
+	limiter.acquire(ctx, storeID)
 }
 
 func (s *regionInfo) releaseScanQuotaIfNeed(limiter *regionScanRequestLimiter) {
