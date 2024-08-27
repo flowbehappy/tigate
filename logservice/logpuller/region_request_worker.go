@@ -422,7 +422,6 @@ func (s *regionRequestWorker) dispatchResolvedTs(resolvedTs *cdcpb.ResolvedTs) e
 	for i := range s.boolCache {
 		s.boolCache[i] = false
 	}
-	log.Info("region request worker receives a resolved ts", zap.Uint64("workerID", s.workerID), zap.Any("resolvedTs", resolvedTs))
 	for _, regionID := range resolvedTs.Regions {
 		slot := hashRegionID(regionID, len(s.client.changeEventProcessors))
 		if !s.boolCache[slot] {
@@ -449,13 +448,14 @@ func (s *regionRequestWorker) sendBatchedResolvedTs(ctx context.Context) error {
 		case <-ticker.C:
 			s.tsBatches.Lock()
 			for i := range s.tsBatches.events {
-				if len(s.tsBatches.events[i].resolvedTsBatches) > 0 {
-					if err := s.client.changeEventProcessors[i].sendEvent(ctx, s.tsBatches.events[i]); err != nil {
+				event := &s.tsBatches.events[i]
+				if len(event.resolvedTsBatches) > 0 {
+					if err := s.client.changeEventProcessors[i].sendEvent(ctx, *event); err != nil {
 						// TODO: how to handle event.resolvedTsBatches when meet error?
 						s.tsBatches.Unlock()
 						return err
 					}
-					s.tsBatches.events[i].resolvedTsBatches = nil
+					event.resolvedTsBatches = nil
 				}
 			}
 			s.tsBatches.Unlock()
