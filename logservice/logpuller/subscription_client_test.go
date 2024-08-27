@@ -231,7 +231,11 @@ func TestSubscriptionWithFailedTiKV(t *testing.T) {
 
 	eventsCh1 <- mockInitializedEvent(11, uint64(subID))
 	ts := oracle.GoTimeToTS(pdClock.CurrentTime())
-	eventsCh1 <- mockTsEvent(11, ts, uint64(subID))
+	// eventsCh1 <- mockTsEvent(11, ts, uint64(subID))
+	eventsCh1 <- mockTsEventBatch(11, ts, uint64(subID))
+	eventsCh1 <- mockTsEventBatch(11, ts+2, uint64(subID))
+	eventsCh1 <- mockTsEventBatch(11, ts+4, uint64(subID))
+	eventsCh1 <- mockTsEventBatch(11, ts+5, uint64(subID))
 	// After trying to receive something from the invalid store,
 	// it should auto switch to other stores and fetch events finally.
 	select {
@@ -308,6 +312,16 @@ func mockTsEvent(regionID, ts, requestID uint64) *cdcpb.ChangeDataEvent {
 				RequestId: requestID,
 				Event:     &cdcpb.Event_ResolvedTs{ResolvedTs: ts},
 			},
+		},
+	}
+}
+
+func mockTsEventBatch(regionID, ts, requestID uint64) *cdcpb.ChangeDataEvent {
+	return &cdcpb.ChangeDataEvent{
+		ResolvedTs: &cdcpb.ResolvedTs{
+			Regions:   []uint64{regionID},
+			Ts:        ts,
+			RequestId: requestID,
 		},
 	}
 }
