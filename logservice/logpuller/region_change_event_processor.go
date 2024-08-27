@@ -132,6 +132,7 @@ func (w *changeEventProcessor) processEvent(ctx context.Context, event statefulE
 	} else if len(event.resolvedTsBatches) > 0 {
 		log.Info("handle batches", zap.Int("len", len(event.resolvedTsBatches)))
 		for _, batch := range event.resolvedTsBatches {
+			log.Info("handle batched regions", zap.Int("len", len(batch.regions)))
 			w.handleResolvedTs(ctx, batch)
 		}
 		log.Info("handle batches done")
