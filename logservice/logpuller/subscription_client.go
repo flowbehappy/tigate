@@ -122,12 +122,12 @@ type subscribedSpan struct {
 
 type SubscriptionClientConfig struct {
 	// The number of region request workers to send region task for every tikv store
-	RegionRequestWorkerPerStore uint // default to 2?
+	RegionRequestWorkerPerStore uint
 	// The number of region change event processor to process region events
 	// TODO: add a metric for busy ratio?
-	ChangeEventProcessorNum uint // default to 32?
+	ChangeEventProcessorNum uint
 	// The time interval to advance resolvedTs for a region
-	AdvanceResolvedTsIntervalInMs uint // default to 300
+	AdvanceResolvedTsIntervalInMs uint
 	// The limit of concurrent incremental scan regions for every tikv store
 	RegionIncrementalScanLimitPerStore uint
 }
