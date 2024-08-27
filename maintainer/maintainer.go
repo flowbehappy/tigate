@@ -495,13 +495,13 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.M
 	for server, bootstrapMsg := range cachedResp {
 		for _, info := range bootstrapMsg.Spans {
 			dispatcherID := common.NewDispatcherIDFromPB(info.ID)
-			status = &ReplicaSetStatus{
+			status = ReplicaSetStatus{
 				ID:           dispatcherID,
 				State:        info.ComponentStatus,
 				CheckpointTs: info.CheckpointTs,
 			}
 			span := &common.TableSpan{TableSpan: info.Span}
-			stm, err := scheduler.NewStateMachine(status.GetInferiorID(),
+			stm, err := scheduler.NewStateMachine(dispatcherID,
 				map[model.CaptureID]scheduler.InferiorStatus{server: status},
 				NewReplicaSet(m.id, dispatcherID, span, info.CheckpointTs))
 			if err != nil {

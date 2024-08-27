@@ -34,18 +34,10 @@ import (
 	"github.com/pingcap/tiflow/cdc/model"
 	config2 "github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
+	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
-
-type mockSchemaStore struct {
-	schemastore.SchemaStore
-	tables []common.TableID
-}
-
-func (m *mockSchemaStore) GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]common.TableID, error) {
-	return m.tables, nil
-}
 
 // scale out/in close
 func TestMaintainerSchedulesNodeChanges(t *testing.T) {
@@ -75,8 +67,6 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	msg.From = msg.To
 	manager.onCoordinatorBootstrapRequest(msg)
 	go func() {
-		//manager.coordinatorID = messaging.ServerId(selfNode.ID)
-		//manager.coordinatorVersion = 1
 		_ = manager.Run(ctx)
 	}()
 	dispManager := MockDispatcherManager(mc)
@@ -165,6 +155,108 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	require.False(t, ok)
 	manager.stream.Close()
 	cancel()
+}
+
+func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
+	selfNode := &common.NodeInfo{ID: uuid.New().String(), AdvertiseAddr: "127.0.0.1:8300"}
+	nodeManager := watcher.NewNodeManager(nil, nil)
+	appcontext.SetService(watcher.NodeManagerName, nodeManager)
+	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode
+	store := &mockSchemaStore{
+		tables: []common.TableID{1, 2, 3, 4},
+	}
+	appcontext.SetService(appcontext.SchemaStore, store)
+	mc := messaging.NewMessageCenter(ctx,
+		messaging.ServerId(selfNode.ID), 0, config.NewDefaultMessageCenterConfig())
+	appcontext.SetService(appcontext.MessageCenter, mc)
+	startDispatcherNode(ctx, selfNode, mc, nodeManager)
+	nodeManager.RegisterNodeChangeHandler(appcontext.MessageCenter, mc.OnNodeChanges)
+	//discard maintainer manager messages
+	mc.RegisterHandler(messaging.CoordinatorTopic, func(ctx context.Context, msg *messaging.TargetMessage) error {
+		return nil
+	})
+	manager := NewMaintainerManager(selfNode)
+	msg := messaging.NewSingleTargetMessage(messaging.ServerId(selfNode.ID),
+		messaging.MaintainerManagerTopic,
+		&heartbeatpb.CoordinatorBootstrapRequest{Version: 1})
+	msg.From = msg.To
+	manager.onCoordinatorBootstrapRequest(msg)
+	go func() {
+		_ = manager.Run(ctx)
+	}()
+	dispManager := MockDispatcherManager(mc)
+	// table1 and table 2 will be reported by remote
+	var remotedIds []common.DispatcherID
+	for i := 1; i < 3; i++ {
+		span := spanz.TableIDToComparableSpan(int64(i))
+		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+			TableID:  uint64(i),
+			StartKey: span.StartKey,
+			EndKey:   span.EndKey,
+		}}
+		dispatcherID := common.NewDispatcherID()
+		remotedIds = append(remotedIds, dispatcherID)
+		dispManager.bootstrapTables = append(dispManager.bootstrapTables, &heartbeatpb.BootstrapTableSpan{
+			ID: dispatcherID.ToPB(),
+			Span: &heartbeatpb.TableSpan{TableID: tableSpan.TableID,
+				StartKey: tableSpan.StartKey,
+				EndKey:   tableSpan.EndKey},
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    10,
+		})
+	}
+
+	go func() {
+		_ = dispManager.Run(ctx)
+	}()
+	cfID := model.DefaultChangeFeedID("test")
+	cfConfig := &model.ChangeFeedInfo{
+		ID:     cfID.ID,
+		Config: config2.GetDefaultReplicaConfig(),
+	}
+	data, err := json.Marshal(cfConfig)
+	require.NoError(t, err)
+	_ = mc.SendCommand(messaging.NewSingleTargetMessage(messaging.ServerId(selfNode.ID),
+		messaging.MaintainerManagerTopic, &heartbeatpb.AddMaintainerRequest{
+			Id:           cfID.ID,
+			Config:       data,
+			CheckpointTs: 10,
+		}))
+	time.Sleep(5 * time.Second)
+
+	value, _ := manager.maintainers.Load(cfID)
+	maintainer := value.(*Maintainer)
+
+	require.Equal(t, 4,
+		maintainer.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
+	require.Equal(t, 4,
+		maintainer.scheduler.GetTaskSizeByNodeID(selfNode.ID))
+	require.Len(t, remotedIds, 2)
+	foundSize := 0
+	for id, stm := range maintainer.scheduler.working {
+		for _, remotedId := range remotedIds {
+			if id == remotedId {
+				foundSize++
+				tblID := stm.Inferior.(*ReplicaSet).Span.TableID
+				require.True(t, uint64(1) == tblID || uint64(2) == tblID)
+			}
+		}
+	}
+	require.Equal(t, 2, foundSize)
+
+	manager.stream.Close()
+	cancel()
+}
+
+type mockSchemaStore struct {
+	schemastore.SchemaStore
+	tables []common.TableID
+}
+
+func (m *mockSchemaStore) GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]common.TableID, error) {
+	return m.tables, nil
 }
 
 type dispatcherNode struct {

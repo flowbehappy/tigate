@@ -47,6 +47,8 @@ type mockDispatcherManager struct {
 	maintainerID messaging.ServerId
 	checkpointTs uint64
 	changefeedID string
+
+	bootstrapTables []*heartbeatpb.BootstrapTableSpan
 }
 
 func MockDispatcherManager(mc messaging.MessageCenter) *mockDispatcherManager {
@@ -119,6 +121,7 @@ func (m *mockDispatcherManager) onBootstrapRequest(msg *messaging.TargetMessage)
 	m.maintainerID = msg.From
 	response := &heartbeatpb.MaintainerBootstrapResponse{
 		ChangefeedID: req.ChangefeedID,
+		Spans:        m.bootstrapTables,
 	}
 	m.changefeedID = req.ChangefeedID
 	err := m.mc.SendCommand(messaging.NewSingleTargetMessage(
