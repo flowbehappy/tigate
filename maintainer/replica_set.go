@@ -57,6 +57,7 @@ func (r *ReplicaSet) NewAddInferiorMessage(server model.CaptureID) *messaging.Ta
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{
 			ChangefeedID: r.ChangefeedID.ID,
+			ID:           r.ID.ToPB(),
 			Config: &heartbeatpb.DispatcherConfig{
 				Span: &heartbeatpb.TableSpan{
 					TableID:  r.Span.TableID,
@@ -73,15 +74,8 @@ func (r *ReplicaSet) NewRemoveInferiorMessage(server model.CaptureID) *messaging
 	return messaging.NewSingleTargetMessage(messaging.ServerId(server),
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{
-			ChangefeedID: r.ChangefeedID.ID,
-			Config: &heartbeatpb.DispatcherConfig{
-				Span: &heartbeatpb.TableSpan{
-					TableID:  r.ID.TableID,
-					StartKey: r.ID.StartKey,
-					EndKey:   r.ID.EndKey,
-				},
-				StartTs: r.checkpointTs,
-			},
+			ChangefeedID:   r.ChangefeedID.ID,
+			ID:             r.ID.ToPB(),
 			ScheduleAction: heartbeatpb.ScheduleAction_Remove,
 		})
 }

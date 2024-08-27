@@ -114,7 +114,6 @@ func (s *Scheduler) FinishBootstrap(stms utils.Map[*common.TableSpan, *scheduler
 	s.tempTasks.Ascend(func(key *common.TableSpan, stm *scheduler.StateMachine) bool {
 		span := stm.ID.(common.DispatcherID)
 		s.absent[span] = stm
-		s.nodeTasks[stm.Primary][span] = stm
 		return true
 	})
 	s.bootstrapped = true
@@ -346,8 +345,8 @@ func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpa
 	}
 	var msgs = make([]*messaging.TargetMessage, 0)
 	for _, status := range statusList {
-		span := common.NewDispatcherIDFromPB(status.Span)
-		stm, ok := stMap[]
+		span := common.NewDispatcherIDFromPB(status.ID)
+		stm, ok := stMap[span]
 		if !ok {
 			log.Warn("no statemachine id found, ignore",
 				zap.String("changeeed", s.changefeedID),

@@ -16,6 +16,10 @@ package maintainer
 import (
 	"context"
 	"encoding/json"
+	"net"
+	"testing"
+	"time"
+
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -32,9 +36,6 @@ import (
 	"github.com/pingcap/tiflow/pkg/orchestrator"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"net"
-	"testing"
-	"time"
 )
 
 type mockSchemaStore struct {

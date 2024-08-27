@@ -246,7 +246,7 @@ func (m *Maintainer) initialize() error {
 		}}
 		dispatcherID := common.NewDispatcherID()
 		replicaSet := NewReplicaSet(m.id, dispatcherID, tableSpan, m.watermark.CheckpointTs).(*ReplicaSet)
-		stm, err := scheduler.NewStateMachine(tableSpan, nil, replicaSet)
+		stm, err := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
 		if err != nil {
 			return errors.Trace(err)
 		}
