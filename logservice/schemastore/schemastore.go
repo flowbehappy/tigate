@@ -141,9 +141,9 @@ func (s *schemaStore) Run(ctx context.Context) error {
 	eg.Go(func() error {
 		return s.batchCommitAndUpdateWatermark(ctx)
 	})
-	// eg.Go(func() error {
-	// 	return s.ddlJobFetcher.puller.Run(ctx)
-	// })
+	eg.Go(func() error {
+		return s.ddlJobFetcher.puller.Run(ctx)
+	})
 	return eg.Wait()
 }
 

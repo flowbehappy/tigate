@@ -130,12 +130,9 @@ func (w *changeEventProcessor) processEvent(ctx context.Context, event statefulE
 		case *cdcpb.Event_Admin_:
 		}
 	} else if len(event.resolvedTsBatches) > 0 {
-		log.Info("handle batches", zap.Int("len", len(event.resolvedTsBatches)))
 		for _, batch := range event.resolvedTsBatches {
-			log.Info("handle batched regions", zap.Int("len", len(batch.regions)), zap.Int("ts", int(batch.ts)))
 			w.handleResolvedTs(ctx, batch)
 		}
-		log.Info("handle batches done")
 	}
 }
 
