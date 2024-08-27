@@ -58,6 +58,10 @@ func SubmitScheduledEvent(
 type StreamHandler struct {
 }
 
+func NewStreamHandler() *StreamHandler {
+	return &StreamHandler{}
+}
+
 func (m *StreamHandler) Path(event *Event) string {
 	return event.changefeedID
 }

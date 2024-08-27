@@ -126,15 +126,15 @@ func (h *SchedulerDispatcherRequestHandler) Handle(scheduleDispatcherRequest *he
 	scheduleAction := scheduleDispatcherRequest.ScheduleAction
 	config := scheduleDispatcherRequest.Config
 	if scheduleAction == heartbeatpb.ScheduleAction_Create {
-		eventDispatcherManager.NewDispatcher(&common.TableSpan{TableSpan: config.Span}, config.StartTs)
+		eventDispatcherManager.NewDispatcher(common.NewDispatcherIDFromPB(config.DispatcherID), &common.TableSpan{TableSpan: config.Span}, config.StartTs)
 	} else if scheduleAction == heartbeatpb.ScheduleAction_Remove {
-		eventDispatcherManager.RemoveDispatcher(&common.TableSpan{TableSpan: config.Span})
+		eventDispatcherManager.RemoveDispatcher(common.NewDispatcherIDFromPB(config.DispatcherID))
 	}
 	return false
 }
 
 type HeartBeatResponseHandler struct {
-	dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DispatcherStatusWithID, *dispatcher.Dispatcher]
+	dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, *heartbeatpb.DispatcherStatus, *dispatcher.Dispatcher]
 }
 
 func NewHeartBeatResponseHandler() HeartBeatResponseHandler {
@@ -148,14 +148,7 @@ func (h *HeartBeatResponseHandler) Path(HeartbeatResponse *heartbeatpb.HeartBeat
 func (h *HeartBeatResponseHandler) Handle(heartbeatResponse *heartbeatpb.HeartBeatResponse, eventDispatcherManager *EventDispatcherManager) bool {
 	dispatcherStatuses := heartbeatResponse.GetDispatcherStatuses()
 	for _, dispatcherStatus := range dispatcherStatuses {
-		tableSpan := dispatcherStatus.Span
-		dispatcherItem, ok := eventDispatcherManager.dispatcherMap.Get(&common.TableSpan{TableSpan: tableSpan})
-		if !ok {
-			log.Error("dispatcher not found", zap.Any("tableSpan", tableSpan))
-			continue
-		}
-
-		h.dispatcherStatusDynamicStream.In() <- *dispatcher.NewDispatcherStatusWithID(dispatcherStatus, dispatcherItem.GetId())
+		h.dispatcherStatusDynamicStream.In() <- dispatcherStatus
 	}
 
 	return false
