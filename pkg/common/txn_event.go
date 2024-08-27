@@ -22,9 +22,9 @@ type DDLEvent struct {
 	CommitTS Ts `json:"commit_ts"`
 
 	// Just for test now
-	BlockedTableSpan     []*heartbeatpb.TableSpan `json:"blocked_table_span"`
-	NeedDroppedTableSpan []*heartbeatpb.TableSpan `json:"need_dropped_table_span"`
-	NeedAddedTableSpan   []*heartbeatpb.TableSpan `json:"need_added_table_span"`
+	BlockedDispatcherIDs     []*heartbeatpb.DispatcherID `json:"blocked_dispatcher_ids"`
+	NeedDroppedDispatcherIDs []*heartbeatpb.DispatcherID `json:"need_dropped_dispatcher_ids"`
+	NeedAddedTableSpan       []*heartbeatpb.TableSpan    `json:"need_added_table_span"`
 }
 
 // TxnEvent represents all events in the current txn
@@ -109,12 +109,12 @@ func (e *TxnEvent) IsSingleTableDDL() bool {
 
 }
 
-func (e *TxnEvent) GetBlockedTableSpan() []*heartbeatpb.TableSpan {
-	return e.DDLEvent.BlockedTableSpan
+func (e *TxnEvent) GetBlockedDispatcherIDs() []*heartbeatpb.DispatcherID {
+	return e.DDLEvent.BlockedDispatcherIDs
 }
 
-func (e *TxnEvent) GetNeedDroppedTableSpan() []*heartbeatpb.TableSpan {
-	return e.DDLEvent.NeedDroppedTableSpan
+func (e *TxnEvent) GetNeedDroppedDispatcherIDs() []*heartbeatpb.DispatcherID {
+	return e.DDLEvent.NeedDroppedDispatcherIDs
 }
 
 func (e *TxnEvent) GetNeedAddedTableSpan() []*heartbeatpb.TableSpan {
