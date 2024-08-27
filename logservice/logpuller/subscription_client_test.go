@@ -312,6 +312,7 @@ func mockTsEvent(regionID, ts, requestID uint64) *cdcpb.ChangeDataEvent {
 	}
 }
 
+// TODO: add test for batch ts event
 func mockTsEventBatch(regionID, ts, requestID uint64) *cdcpb.ChangeDataEvent {
 	return &cdcpb.ChangeDataEvent{
 		ResolvedTs: &cdcpb.ResolvedTs{
