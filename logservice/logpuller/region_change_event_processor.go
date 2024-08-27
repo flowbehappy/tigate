@@ -48,16 +48,16 @@ type resolvedTsBatch struct {
 	regions []*regionFeedState
 }
 
-func newEventItem(item *cdcpb.Event, state *regionFeedState, worker *regionRequestWorker) statefulEvent {
-	return statefulEvent{
+func newEventItem(item *cdcpb.Event, state *regionFeedState, worker *regionRequestWorker) *statefulEvent {
+	return &statefulEvent{
 		eventItem: eventItem{item, state},
 		worker:    worker,
 		start:     time.Now(),
 	}
 }
 
-func newResolvedTsBatch(ts uint64, worker *regionRequestWorker) statefulEvent {
-	return statefulEvent{
+func newResolvedTsBatch(ts uint64, worker *regionRequestWorker) *statefulEvent {
+	return &statefulEvent{
 		resolvedTsBatch: resolvedTsBatch{ts: ts},
 		worker:          worker,
 		start:           time.Now(),
@@ -66,17 +66,17 @@ func newResolvedTsBatch(ts uint64, worker *regionRequestWorker) statefulEvent {
 
 type changeEventProcessor struct {
 	client  *SubscriptionClient
-	inputCh chan statefulEvent
+	inputCh chan *statefulEvent
 }
 
 func newChangeEventProcessor(client *SubscriptionClient) *changeEventProcessor {
 	return &changeEventProcessor{
 		client:  client,
-		inputCh: make(chan statefulEvent, 64), // 64 is an arbitrary number.
+		inputCh: make(chan *statefulEvent, 64), // 64 is an arbitrary number.
 	}
 }
 
-func (w *changeEventProcessor) sendEvent(ctx context.Context, event statefulEvent) error {
+func (w *changeEventProcessor) sendEvent(ctx context.Context, event *statefulEvent) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -87,7 +87,7 @@ func (w *changeEventProcessor) sendEvent(ctx context.Context, event statefulEven
 
 func (w *changeEventProcessor) run(ctx context.Context) error {
 	for {
-		var event statefulEvent
+		var event *statefulEvent
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -114,7 +114,7 @@ func (w *changeEventProcessor) handleSingleRegionError(ctx context.Context, stat
 	}
 }
 
-func (w *changeEventProcessor) processEvent(ctx context.Context, event statefulEvent) {
+func (w *changeEventProcessor) processEvent(ctx context.Context, event *statefulEvent) {
 	if event.eventItem.state != nil {
 		state := event.eventItem.state
 		if state.isStale() {
