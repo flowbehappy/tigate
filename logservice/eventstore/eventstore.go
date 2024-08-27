@@ -195,9 +195,9 @@ func (e *eventStore) Run(ctx context.Context) error {
 		return e.gcManager.run(ctx, e.deleteEvents)
 	})
 
-	eg.Go(func() error {
-		return e.updateMetrics(ctx)
-	})
+	// eg.Go(func() error {
+	// 	return e.updateMetrics(ctx)
+	// })
 
 	return eg.Wait()
 }
@@ -217,7 +217,7 @@ type DBBatchEvent struct {
 }
 
 func (e *eventStore) updateMetrics(ctx context.Context) error {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
 	for {
 		select {
 		case <-ctx.Done():
