@@ -493,6 +493,10 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.M
 	var status scheduler.InferiorStatus
 	workingMap := utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
 	for server, bootstrapMsg := range cachedResp {
+		log.Info("received bootstrap response",
+			zap.String("changefeed", m.id.ID),
+			zap.String("server", server),
+			zap.Int("size", len(bootstrapMsg.Spans)))
 		for _, info := range bootstrapMsg.Spans {
 			dispatcherID := common.NewDispatcherIDFromPB(info.ID)
 			status = ReplicaSetStatus{

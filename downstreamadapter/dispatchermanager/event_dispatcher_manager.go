@@ -226,7 +226,9 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 	//TODO:区分 tableTriggerEventDIspatcher 的 metrics
 	e.tableEventDispatcherCount.Inc()
 
-	log.Info("new dispatcher created", zap.Any("tableSpan", tableSpan),
+	log.Info("new dispatcher created",
+		zap.String("ID", id.String()),
+		zap.Any("tableSpan", tableSpan),
 		zap.Int64("cost(ns)", time.Since(start).Nanoseconds()), zap.Time("start", start))
 	e.metricCreateDispatcherDuration.Observe(float64(time.Since(start).Seconds()))
 

@@ -92,13 +92,13 @@ func (s *Scheduler) AddTempTask(span *common.TableSpan, stm *scheduler.StateMach
 
 // FinishBootstrap adds working state tasks to this scheduler directly,
 // it reported by the bootstrap response
-func (s *Scheduler) FinishBootstrap(stms utils.Map[*common.TableSpan, *scheduler.StateMachine]) {
+func (s *Scheduler) FinishBootstrap(workingMap utils.Map[*common.TableSpan, *scheduler.StateMachine]) {
 	if s.bootstrapped {
 		log.Panic("already bootstrapped",
 			zap.String("changefeed", s.changefeedID),
-			zap.Any("stms", stms))
+			zap.Any("workingMap", workingMap))
 	}
-	stms.Ascend(func(span *common.TableSpan, stm *scheduler.StateMachine) bool {
+	workingMap.Ascend(func(span *common.TableSpan, stm *scheduler.StateMachine) bool {
 		if stm.State != scheduler.SchedulerStatusWorking {
 			log.Panic("unexpected state",
 				zap.String("changefeed", s.changefeedID),
@@ -109,15 +109,18 @@ func (s *Scheduler) FinishBootstrap(stms utils.Map[*common.TableSpan, *scheduler
 			s.working[dispatcherID] = stm
 			s.nodeTasks[stm.Primary][dispatcherID] = stm
 		} else {
+			// update the map value, later we will skip it
 			s.tempTasks.ReplaceOrInsert(span, stm)
-			span := stm.ID.(common.DispatcherID)
-			s.working[span] = stm
-			delete(s.absent, span)
-			s.nodeTasks[stm.Primary][span] = stm
+			dispatcherID := stm.ID.(common.DispatcherID)
+			s.working[dispatcherID] = stm
+			s.nodeTasks[stm.Primary][dispatcherID] = stm
 		}
 		return true
 	})
 	s.tempTasks.Ascend(func(key *common.TableSpan, stm *scheduler.StateMachine) bool {
+		if stm.State == scheduler.SchedulerStatusWorking {
+			return true
+		}
 		span := stm.ID.(common.DispatcherID)
 		s.absent[span] = stm
 		return true

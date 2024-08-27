@@ -246,9 +246,61 @@ func TestFinishBootstrap(t *testing.T) {
 	require.True(t, s.bootstrapped)
 	require.Equal(t, len(s.nodeTasks["node1"]), 1)
 	require.Equal(t, len(s.working), 1)
+	require.Equal(t, len(s.absent), 0)
+	require.Equal(t, len(s.committing), 0)
+	require.Equal(t, len(s.removing), 0)
 	require.Equal(t, stm2, s.working[dispatcherID2])
 	require.Nil(t, s.tempTasks)
 	require.Panics(t, func() {
 		s.FinishBootstrap(cached)
 	})
+}
+
+// 4 tasks and 2 servers, then add one server, no re-balance will be triggered
+func TestBalanceUnEvenTask(t *testing.T) {
+	s := NewScheduler("test", 1000, 0)
+	s.AddNewNode("node1")
+	s.AddNewNode("node2")
+	for i := 0; i < 4; i++ {
+		span := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+			TableID: uint64(i),
+		}}
+		dispatcherID := common.NewDispatcherID()
+		stm, _ := scheduler.NewStateMachine(dispatcherID, nil,
+			NewReplicaSet(model.ChangeFeedID{}, dispatcherID, span, 1))
+		s.AddNewTask(stm)
+	}
+	msgs, err := s.Schedule()
+	require.NoError(t, err)
+	require.Len(t, msgs, 4)
+	require.Equal(t, len(s.committing), 4)
+	require.Equal(t, len(s.nodeTasks["node1"]), 2)
+	require.Equal(t, len(s.nodeTasks["node2"]), 2)
+	f := func(m map[common.DispatcherID]*scheduler.StateMachine) []*heartbeatpb.TableSpanStatus {
+		var nodeIds []*heartbeatpb.TableSpanStatus
+		for id, _ := range m {
+			nodeIds = append(nodeIds, &heartbeatpb.TableSpanStatus{
+				ID:              id.ToPB(),
+				ComponentStatus: heartbeatpb.ComponentState_Working,
+				CheckpointTs:    10,
+			})
+		}
+		return nodeIds
+	}
+	s.HandleStatus("node1", f(s.nodeTasks["node1"]))
+	s.HandleStatus("node2", f(s.nodeTasks["node2"]))
+	require.Equal(t, len(s.working), 4)
+	require.Equal(t, len(s.committing), 0)
+
+	// add new node
+	s.AddNewNode("node3")
+	msgs, err = s.TryBalance()
+	require.NoError(t, err)
+	require.Len(t, msgs, 0)
+	require.Equal(t, len(s.removing), 0)
+	require.Equal(t, len(s.working), 4)
+	//still on the primary node
+	require.Equal(t, len(s.nodeTasks["node1"]), 2)
+	require.Equal(t, len(s.nodeTasks["node2"]), 2)
+	require.Equal(t, len(s.nodeTasks["node3"]), 0)
 }
