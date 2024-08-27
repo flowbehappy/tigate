@@ -30,10 +30,9 @@ import (
 //  1. all contents come from one same TiKV store stream;
 //  2. eventItem and resolvedTs shouldn't appear simultaneously;
 type statefulEvent struct {
-	eventItem       eventItem
-	resolvedTsBatch resolvedTsBatch
-	worker          *regionRequestWorker
-	start           time.Time
+	eventItem         eventItem
+	resolvedTsBatches []resolvedTsBatch
+	worker            *regionRequestWorker
 }
 
 type eventItem struct {
@@ -48,35 +47,26 @@ type resolvedTsBatch struct {
 	regions []*regionFeedState
 }
 
-func newEventItem(item *cdcpb.Event, state *regionFeedState, worker *regionRequestWorker) *statefulEvent {
-	return &statefulEvent{
+func newEventItem(item *cdcpb.Event, state *regionFeedState, worker *regionRequestWorker) statefulEvent {
+	return statefulEvent{
 		eventItem: eventItem{item, state},
 		worker:    worker,
-		start:     time.Now(),
-	}
-}
-
-func newResolvedTsBatch(ts uint64, worker *regionRequestWorker) *statefulEvent {
-	return &statefulEvent{
-		resolvedTsBatch: resolvedTsBatch{ts: ts},
-		worker:          worker,
-		start:           time.Now(),
 	}
 }
 
 type changeEventProcessor struct {
 	client  *SubscriptionClient
-	inputCh chan *statefulEvent
+	inputCh chan statefulEvent
 }
 
 func newChangeEventProcessor(client *SubscriptionClient) *changeEventProcessor {
 	return &changeEventProcessor{
 		client:  client,
-		inputCh: make(chan *statefulEvent, 64), // 64 is an arbitrary number.
+		inputCh: make(chan statefulEvent, 64), // 64 is an arbitrary number.
 	}
 }
 
-func (w *changeEventProcessor) sendEvent(ctx context.Context, event *statefulEvent) error {
+func (w *changeEventProcessor) sendEvent(ctx context.Context, event statefulEvent) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -87,7 +77,7 @@ func (w *changeEventProcessor) sendEvent(ctx context.Context, event *statefulEve
 
 func (w *changeEventProcessor) run(ctx context.Context) error {
 	for {
-		var event *statefulEvent
+		var event statefulEvent
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -114,7 +104,7 @@ func (w *changeEventProcessor) handleSingleRegionError(ctx context.Context, stat
 	}
 }
 
-func (w *changeEventProcessor) processEvent(ctx context.Context, event *statefulEvent) {
+func (w *changeEventProcessor) processEvent(ctx context.Context, event statefulEvent) {
 	if event.eventItem.state != nil {
 		state := event.eventItem.state
 		if state.isStale() {
@@ -139,8 +129,10 @@ func (w *changeEventProcessor) processEvent(ctx context.Context, event *stateful
 			return
 		case *cdcpb.Event_Admin_:
 		}
-	} else if len(event.resolvedTsBatch.regions) > 0 {
-		w.handleResolvedTs(ctx, event.resolvedTsBatch)
+	} else if len(event.resolvedTsBatches) > 0 {
+		for _, batch := range event.resolvedTsBatches {
+			w.handleResolvedTs(ctx, batch)
+		}
 	}
 }
 
@@ -312,6 +304,7 @@ func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resol
 	lastAdvance := table.lastAdvanceTime.Load()
 	if now-lastAdvance > int64(w.client.config.AdvanceResolvedTsIntervalInMs) && table.lastAdvanceTime.CompareAndSwap(lastAdvance, now) {
 		ts := table.rangeLock.ResolvedTs()
+		// TODO: only send ts when ts is larger than previous ts
 		if ts > table.startTs {
 			revent := regionFeedEvent{
 				Val: &common.RawKVEntry{

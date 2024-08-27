@@ -59,6 +59,14 @@ type regionRequestWorker struct {
 
 		subscriptions map[subscriptionID]regionFeedStates
 	}
+
+	tsBatches struct {
+		sync.Mutex
+		events []statefulEvent
+	}
+
+	// used to indicate whether there are new pending ts events for every processores in dispatchResolvedTs
+	boolCache []bool
 }
 
 func newRegionRequestWorker(
@@ -73,8 +81,14 @@ func newRegionRequestWorker(
 		client:     client,
 		store:      store,
 		requestsCh: make(chan *regionInfo, 256), // 256 is an arbitrary number.
+
+		boolCache: make([]bool, len(client.changeEventProcessors)),
 	}
 	worker.requestedRegions.subscriptions = make(map[subscriptionID]regionFeedStates)
+	worker.tsBatches.events = make([]statefulEvent, len(client.changeEventProcessors))
+	for i := range worker.tsBatches.events {
+		worker.tsBatches.events[i].worker = worker
+	}
 
 	waitForPreFetching := func() error {
 		if worker.preFetchForConnecting != nil {
@@ -138,7 +152,6 @@ func (s *regionRequestWorker) run(ctx context.Context, credential *security.Cred
 			return false
 		}
 	}
-	// TODO: create a new limiter here
 
 	// FIXME: check tikv store version
 
@@ -173,6 +186,7 @@ func (s *regionRequestWorker) run(ctx context.Context, credential *security.Cred
 		return s.receiveAndDispatchChangeEventsToProcessor(gctx, cc)
 	})
 	g.Go(func() error { return s.processRegionSendTask(gctx, cc) })
+	g.Go(func() error { return s.sendBatchedResolvedTs(gctx) })
 	_ = g.Wait()
 	return isCanceled()
 }
@@ -202,7 +216,7 @@ func (s *regionRequestWorker) receiveAndDispatchChangeEventsToProcessor(
 			}
 		}
 		if changeEvent.ResolvedTs != nil {
-			if err := s.dispatchResolvedTs(ctx, changeEvent.ResolvedTs); err != nil {
+			if err := s.dispatchResolvedTs(changeEvent.ResolvedTs); err != nil {
 				return err
 			}
 		}
@@ -401,29 +415,51 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 	return nil
 }
 
-func (s *regionRequestWorker) dispatchResolvedTs(ctx context.Context, resolvedTs *cdcpb.ResolvedTs) error {
+func (s *regionRequestWorker) dispatchResolvedTs(resolvedTs *cdcpb.ResolvedTs) error {
+	s.tsBatches.Lock()
+	defer s.tsBatches.Unlock()
 	subscriptionID := subscriptionID(resolvedTs.RequestId)
-	sfEvents := make([]*statefulEvent, len(s.client.changeEventProcessors))
+	for i := range s.boolCache {
+		s.boolCache[i] = false
+	}
 	for _, regionID := range resolvedTs.Regions {
 		slot := hashRegionID(regionID, len(s.client.changeEventProcessors))
-		if sfEvents[slot] == nil {
-			sfEvents[slot] = newResolvedTsBatch(resolvedTs.Ts, s)
+		if !s.boolCache[slot] {
+			s.tsBatches.events[slot].resolvedTsBatches = append(s.tsBatches.events[slot].resolvedTsBatches, resolvedTsBatch{
+				ts: resolvedTs.Ts,
+			})
+			s.boolCache[slot] = true
 		}
-		x := &sfEvents[slot].resolvedTsBatch
+		batch := &s.tsBatches.events[slot].resolvedTsBatches[len(s.tsBatches.events[slot].resolvedTsBatches)-1]
 		if state := s.getRegionState(subscriptionID, regionID); state != nil {
-			x.regions = append(x.regions, state)
+			batch.regions = append(batch.regions, state)
 		}
 	}
 
-	for i, sfEvent := range sfEvents {
-		if sfEvent != nil {
-			sfEvent.worker = s
-			if err := s.client.changeEventProcessors[i].sendEvent(ctx, sfEvent); err != nil {
-				return err
+	return nil
+}
+
+func (s *regionRequestWorker) sendBatchedResolvedTs(ctx context.Context) error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			s.tsBatches.Lock()
+			for i, event := range s.tsBatches.events {
+				if len(event.resolvedTsBatches) > 0 {
+					if err := s.client.changeEventProcessors[i].sendEvent(ctx, event); err != nil {
+						// TODO: how to handle event.resolvedTsBatches when meet error?
+						s.tsBatches.Unlock()
+						return err
+					}
+					event.resolvedTsBatches = nil
+				}
 			}
+			s.tsBatches.Unlock()
 		}
 	}
-	return nil
 }
 
 func hashRegionID(regionID uint64, slots int) int {
