@@ -38,7 +38,7 @@ message ACK {
 }
 
 message DispatcherStatus {
-    TableSpan span = 1;
+    DispatcherID ID = 1;
     DispatcherAction action = 2;
     ACK ack = 3;
 }
@@ -56,13 +56,13 @@ enum ScheduleAction {
 message DispatcherConfig {
     TableSpan span = 1;
     uint64 startTs = 2;
+    DispatcherID dispatcherID = 3;
 }
 
 message ScheduleDispatcherRequest {
     string changefeedID = 1;
-    DispatcherID ID = 2;
-    DispatcherConfig config = 3;
-    ScheduleAction scheduleAction = 4;
+    DispatcherConfig config = 2;
+    ScheduleAction scheduleAction = 3;
 }
 
 message MaintainerHeartbeat {
@@ -101,6 +101,7 @@ message MaintainerBootstrapRequest {
     string changefeedID = 1;
     bytes config = 2;
     bool createTableTriggerEventDispatcher = 3;
+    DispatcherID tableTriggerEventDispatcherID = 4;
 }
 
 message MaintainerBootstrapResponse {
