@@ -50,7 +50,7 @@ type eventBroker struct {
 	// messageCh is used to receive message from the scanWorker,
 	// and a goroutine is responsible for sending the message to the dispatchers.
 	messageCh       chan wrapEvent
-	resolvedTsCache map[messaging.ServerId][]*common.TxnEvent
+	resolvedTsCache map[messaging.ServerId][]common.ResolvedEvent
 
 	// wg is used to spawn the goroutines.
 	wg *sync.WaitGroup
@@ -82,7 +82,7 @@ func newEventBroker(
 		taskPool:                               newScanTaskPool(),
 		scanWorkerCount:                        defaultScanWorkerCount,
 		messageCh:                              make(chan wrapEvent, defaultChannelSize),
-		resolvedTsCache:                        make(map[messaging.ServerId][]*common.TxnEvent),
+		resolvedTsCache:                        make(map[messaging.ServerId][]common.ResolvedEvent),
 		cancel:                                 cancel,
 		wg:                                     wg,
 		metricEventServicePullerResolvedTs:     metrics.EventServiceResolvedTsGauge,
@@ -103,13 +103,11 @@ func (c *eventBroker) sendWatermark(
 	watermark uint64,
 	counter prometheus.Counter,
 ) {
-	c.messageCh <- newWrapMessage(
+	c.messageCh <- newWrapResolvedEvent(
 		serverID,
-		&common.TxnEvent{
+		common.ResolvedEvent{
 			DispatcherID: dispatcherID,
-			ResolvedTs:   watermark},
-		true)
-
+			ResolvedTs:   watermark})
 	if counter != nil {
 		counter.Inc()
 	}
@@ -194,7 +192,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						if e == nil {
 							// Send the last txnEvent to the dispatcher.
 							if txnEvent != nil {
-								c.messageCh <- newWrapMessage(remoteID, txnEvent, false)
+								c.messageCh <- newWrapTxnEvent(remoteID, txnEvent)
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
 								task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(txnEvent.Rows)))
 							}
@@ -246,7 +244,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case m := <-c.messageCh:
-				if m.isWatermark {
+				if m.msgType == common.TypeResolvedEvent {
 					// The message is a watermark, we need to cache it, and send it to the dispatcher
 					// when the dispatcher is registered.
 					c.handleResolvedTs(ctx, m)
@@ -270,10 +268,10 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 func (c *eventBroker) handleResolvedTs(ctx context.Context, e wrapEvent) {
 	cache, ok := c.resolvedTsCache[e.serverID]
 	if !ok {
-		cache = make([]*common.TxnEvent, 0, resolvedTsCacheSize)
+		cache = make([]common.ResolvedEvent, 0, resolvedTsCacheSize)
 		c.resolvedTsCache[e.serverID] = cache
 	}
-	c.resolvedTsCache[e.serverID] = append(cache, e.txnEvent)
+	c.resolvedTsCache[e.serverID] = append(cache, e.resolvedEvent)
 	if len(c.resolvedTsCache[e.serverID]) >= resolvedTsCacheSize {
 		c.flushResolvedTs(ctx, e.serverID)
 	}
@@ -284,19 +282,14 @@ func (c *eventBroker) flushResolvedTs(ctx context.Context, serverID messaging.Se
 	if !ok || len(events) == 0 {
 		return
 	}
-	msg := make([]messaging.IOTypeT, 0, len(events))
-	for i, e := range events {
-		msg = append(msg, e)
-		// Clear the event to release the memory.
-		c.resolvedTsCache[serverID][i] = nil
-	}
+	msg := &common.BatchResolvedTs{}
+	msg.Events = append(msg.Events, events...)
+	// Clear the event to release the memory.
 	// Clear the cache.
 	c.resolvedTsCache[serverID] = c.resolvedTsCache[serverID][:0]
-
-	tMsg := messaging.NewBatchTargetMessage(
-		// Note: all resolvedTs would be sent to the same topic.
-		serverID, messaging.EventCollectorTopic,
-		messaging.TypeTxnEvent,
+	tMsg := messaging.NewSingleTargetMessage(
+		serverID,
+		messaging.EventCollectorTopic,
 		msg)
 	c.sendMsg(ctx, tMsg)
 }
@@ -533,15 +526,34 @@ func (p *scanTaskPool) popTask(chanIndex int) <-chan *scanTask {
 }
 
 type wrapEvent struct {
-	serverID    messaging.ServerId
-	txnEvent    *common.TxnEvent
-	isWatermark bool
+	serverID messaging.ServerId
+	// TODO: change the type of the txnEvent to common.TEvent
+	txnEvent      *common.TxnEvent
+	resolvedEvent common.ResolvedEvent
+	ddlEvent      common.DDLEvent
+	msgType       int
 }
 
-func newWrapMessage(serverID messaging.ServerId, e *common.TxnEvent, isWatermark bool) wrapEvent {
+func newWrapTxnEvent(serverID messaging.ServerId, e *common.TxnEvent) wrapEvent {
 	return wrapEvent{
-		serverID:    serverID,
-		txnEvent:    e,
-		isWatermark: isWatermark,
+		serverID: serverID,
+		txnEvent: e,
+		msgType:  common.TypeTEvent,
+	}
+}
+
+func newWrapResolvedEvent(serverID messaging.ServerId, e common.ResolvedEvent) wrapEvent {
+	return wrapEvent{
+		serverID:      serverID,
+		resolvedEvent: e,
+		msgType:       common.TypeResolvedEvent,
+	}
+}
+
+func newWrapDDLEvent(serverID messaging.ServerId, e common.DDLEvent) wrapEvent {
+	return wrapEvent{
+		serverID: serverID,
+		ddlEvent: e,
+		msgType:  common.TypeDDLEvent,
 	}
 }

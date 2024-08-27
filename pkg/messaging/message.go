@@ -21,6 +21,7 @@ const (
 	TypeBytes
 	// LogService related
 	TypeTxnEvent
+	TypeBatchResolvedTs
 
 	TypeHeartBeatRequest
 	TypeHeartBeatResponse
@@ -47,6 +48,8 @@ func (t IOType) String() string {
 		return "Bytes"
 	case TypeTxnEvent:
 		return "TxnEvent"
+	case TypeBatchResolvedTs:
+		return "BatchResolvedTs"
 	case TypeHeartBeatRequest:
 		return "HeartBeatRequest"
 	case TypeHeartBeatResponse:
@@ -151,6 +154,10 @@ type IOTypeT interface {
 func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 	var m IOTypeT
 	switch ioType {
+	case TypeTxnEvent:
+		m = &common.TxnEvent{}
+	case TypeBatchResolvedTs:
+		m = &common.BatchResolvedTs{}
 	case TypeHeartBeatRequest:
 		m = &heartbeatpb.HeartBeatRequest{}
 	case TypeHeartBeatResponse:
@@ -205,6 +212,8 @@ func NewSingleTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetM
 	switch Message.(type) {
 	case *common.TxnEvent:
 		ioType = TypeTxnEvent
+	case *common.BatchResolvedTs:
+		ioType = TypeBatchResolvedTs
 	case *heartbeatpb.HeartBeatRequest:
 		ioType = TypeHeartBeatRequest
 	case *heartbeatpb.ScheduleDispatcherRequest:

@@ -14,6 +14,7 @@
 package dispatcher
 
 import (
+	"log"
 	"sync"
 	"time"
 
@@ -126,7 +127,7 @@ func (h *DispatcherStatusHandler) Handle(event DispatcherStatusWithDispatcherID,
 				sink.AddDDLAndSyncPointEvent(pendingEvent, dispatcher.tableProgress)
 			} else {
 				sink.PassDDLAndSyncPointEvent(pendingEvent, dispatcher.tableProgress)
-				dispatcherEventDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
+				dispatcherEventDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
 				dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
 			}
 			dispatcher.GetTableSpanStatusesChan() <- &heartbeatpb.TableSpanStatus{
@@ -230,33 +231,40 @@ func (t *ResendTask) Cancel() {
 //     for the multi-table DDL, we will also generate a ResendTask to resend the TableSpanStatus message with ddl info to maintainer each 50ms to avoid message is missing.
 //
 // Considering for ddl event, we always do an async write, so we need to be blocked before the ddl event flushed to downstream successfully.
-// Thus, we add a callback function to let the hander be waked when the ddl event flushed to downstream successfully.
+// Thus, we add a callback function to let the handler be waked when the ddl event flushed to downstream successfully.
 
 type DispatcherEventsHandler struct {
 }
 
-func (h *DispatcherEventsHandler) Path(event *common.TxnEvent) common.DispatcherID {
+func (h *DispatcherEventsHandler) Path(event common.Event) common.DispatcherID {
 	return event.GetDispatcherID()
 }
 
 // TODO: 这个后面需要按照更大的粒度进行攒批
-func (h *DispatcherEventsHandler) Handle(event *common.TxnEvent, dispatcher *Dispatcher) bool {
+func (h *DispatcherEventsHandler) Handle(event common.Event, dispatcher *Dispatcher) bool {
 	sink := dispatcher.GetSink()
-
-	if event.IsDMLEvent() {
-		sink.AddDMLEvent(event, dispatcher.tableProgress)
+	switch event.GetType() {
+	case common.TypeResolvedEvent:
+		dispatcher.resolvedTs.Set(event.(*common.ResolvedEvent).ResolvedTs)
 		return false
-	} else if event.IsDDLEvent() {
-		event.PostTxnFlushed = append(event.PostTxnFlushed, func() {
-			dispatcherEventDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
-			dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
-		})
-		dispatcher.AddDDLEventToSinkWhenAvailable(event)
-		return true
-	} else {
-		dispatcher.resolvedTs.Set(event.ResolvedTs)
-		return false
+	case common.TypeTxnEvent:
+		txnEvent := event.(*common.TxnEvent)
+		if txnEvent.IsDMLEvent() {
+			sink.AddDMLEvent(txnEvent, dispatcher.tableProgress)
+			return false
+		}
+		if txnEvent.IsDDLEvent() {
+			txnEvent.PostTxnFlushed = append(txnEvent.PostTxnFlushed, func() {
+				dispatcherEventDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
+				dispatcherEventDynamicStream.Wake() <- txnEvent.GetDispatcherID()
+			})
+			dispatcher.AddDDLEventToSinkWhenAvailable(txnEvent)
+			return true
+		}
+	default:
+		log.Panic("unknown event type")
 	}
+	return false
 }
 
 type DispatcherStatusWithDispatcherID struct {

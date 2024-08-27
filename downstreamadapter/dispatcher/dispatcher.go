@@ -104,7 +104,7 @@ func NewDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, 
 		tableProgress:   types.NewTableProgress(),
 	}
 
-	dispatcherEventDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
+	dispatcherEventDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
 
 	err := dispatcherEventDynamicStream.AddPath(dynstream.PathAndDest[common.DispatcherID, *Dispatcher]{Path: dispatcher.id, Dest: dispatcher})
 	if err != nil {
@@ -243,7 +243,7 @@ func (d *Dispatcher) Remove() {
 	log.Info("table event dispatcher component status changed to stopping", zap.String("table", d.tableSpan.String()))
 	d.isRemoving.Store(true)
 
-	dispatcherEventDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
+	dispatcherEventDynamicStream := appcontext.GetService[dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher]](appcontext.DispatcherEventsDynamicStream)
 	errs := dispatcherEventDynamicStream.RemovePath(d.id)
 
 	for _, err := range errs {
