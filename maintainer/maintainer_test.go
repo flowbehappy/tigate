@@ -215,7 +215,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx,
 		messaging.ServerId(node.ID), 100, config.NewDefaultMessageCenterConfig()))
 	appcontext.SetService(watcher.NodeManagerName, watcher.NewNodeManager(nil, nil))
-	stream := dynstream.NewDynamicStreamDefault[string, *Event, *Maintainer](&StreamHandler{})
+	stream := dynstream.NewDynamicStreamDefault[string, *Event, *Maintainer](NewStreamHandler())
 	stream.Start()
 	cfID := model.DefaultChangeFeedID("test")
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
@@ -248,8 +248,8 @@ func TestMaintainerSchedule(t *testing.T) {
 	if len(argList) > 1 {
 		t.Fatal("unexpected args", argList)
 	}
-	tableSize := 100
-	sleepTime := 5
+	tableSize := 1000000
+	sleepTime := 5000000
 	if len(argList) == 1 {
 		tableSize, _ = strconv.Atoi(argList[0])
 	}
