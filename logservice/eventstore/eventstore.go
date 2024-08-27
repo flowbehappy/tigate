@@ -119,7 +119,7 @@ func NewEventStore(
 		RegionRequestWorkerPerStore:        16,
 		ChangeEventProcessorNum:            64,
 		AdvanceResolvedTsIntervalInMs:      600,
-		RegionIncrementalScanLimitPerStore: 600,
+		RegionIncrementalScanLimitPerStore: 800,
 	}
 	client := logpuller.NewSubscriptionClient(
 		clientConfig,
