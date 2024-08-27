@@ -75,11 +75,7 @@ func newDDLJobFetcher(
 		kvStorage:         kvStorage,
 	}
 	ddlSpans := getAllDDLSpan()
-	pullerConfig := &logpuller.LogPullerConfig{
-		WorkerCount:  1,
-		HashSpanFunc: func(heartbeatpb.TableSpan, int) int { return 0 },
-	}
-	ddlJobFetcher.puller = logpuller.NewLogPullerMultiSpan(client, pdClock, ddlSpans, startTs, ddlJobFetcher.input, pullerConfig)
+	ddlJobFetcher.puller = logpuller.NewLogPullerMultiSpan(client, pdClock, ddlSpans, startTs, ddlJobFetcher.input)
 
 	return ddlJobFetcher
 }
