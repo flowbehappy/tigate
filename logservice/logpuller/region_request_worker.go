@@ -422,6 +422,7 @@ func (s *regionRequestWorker) dispatchResolvedTs(resolvedTs *cdcpb.ResolvedTs) e
 	for i := range s.boolCache {
 		s.boolCache[i] = false
 	}
+	log.Info("region request worker receives a resolved ts", zap.Uint64("workerID", s.workerID), zap.Any("resolvedTs", resolvedTs))
 	for _, regionID := range resolvedTs.Regions {
 		slot := hashRegionID(regionID, len(s.client.changeEventProcessors))
 		if !s.boolCache[slot] {
