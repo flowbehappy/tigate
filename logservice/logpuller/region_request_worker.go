@@ -406,18 +406,17 @@ func (s *regionRequestWorker) dispatchResolvedTs(ctx context.Context, resolvedTs
 	sfEvents := make([]*statefulEvent, len(s.client.changeEventProcessors))
 	for _, regionID := range resolvedTs.Regions {
 		slot := hashRegionID(regionID, len(s.client.changeEventProcessors))
-		if sfEvents[slot].worker == nil {
+		if sfEvents[slot] == nil {
 			sfEvents[slot] = newResolvedTsBatch(resolvedTs.Ts, s)
 		}
 		x := &sfEvents[slot].resolvedTsBatch
 		if state := s.getRegionState(subscriptionID, regionID); state != nil {
-			// TODO: x.regions seem not initialized?
 			x.regions = append(x.regions, state)
 		}
 	}
 
 	for i, sfEvent := range sfEvents {
-		if len(sfEvent.resolvedTsBatch.regions) > 0 {
+		if sfEvent != nil {
 			sfEvent.worker = s
 			if err := s.client.changeEventProcessors[i].sendEvent(ctx, sfEvent); err != nil {
 				return err
