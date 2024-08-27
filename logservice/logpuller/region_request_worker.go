@@ -448,14 +448,14 @@ func (s *regionRequestWorker) sendBatchedResolvedTs(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			s.tsBatches.Lock()
-			for i, event := range s.tsBatches.events {
-				if len(event.resolvedTsBatches) > 0 {
-					if err := s.client.changeEventProcessors[i].sendEvent(ctx, event); err != nil {
+			for i := range s.tsBatches.events {
+				if len(s.tsBatches.events[i].resolvedTsBatches) > 0 {
+					if err := s.client.changeEventProcessors[i].sendEvent(ctx, s.tsBatches.events[i]); err != nil {
 						// TODO: how to handle event.resolvedTsBatches when meet error?
 						s.tsBatches.Unlock()
 						return err
 					}
-					event.resolvedTsBatches = nil
+					s.tsBatches.events[i].resolvedTsBatches = nil
 				}
 			}
 			s.tsBatches.Unlock()
