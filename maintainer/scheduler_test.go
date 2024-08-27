@@ -20,6 +20,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/stretchr/testify/require"
 )
@@ -37,12 +38,12 @@ func TestSchedule(t *testing.T) {
 		dispatcherID := common.NewDispatcherID()
 		stm, _ := scheduler.NewStateMachine(dispatcherID, nil,
 			NewReplicaSet(model.ChangeFeedID{}, dispatcherID, span, 1))
-		s.absent[dispatcherID] = stm
+		s.AddNewTask(stm)
 	}
 	msgs, err := s.Schedule()
 	require.NoError(t, err)
 	require.Len(t, msgs, 9)
-	require.Equal(t, len(s.schedulingTask), 9)
+	require.Equal(t, len(s.committing), 9)
 	require.Equal(t, len(s.absent), 991)
 	require.Equal(t, len(s.nodeTasks["node1"]), 3)
 	require.Equal(t, len(s.nodeTasks["node2"]), 3)
@@ -68,7 +69,7 @@ func TestMoveTask(t *testing.T) {
 	s.tryMoveTask(dispatcherID, stm, scheduler.SchedulerStatusAbsent, "", true)
 	require.Equal(t, 0, len(s.absent))
 	require.Equal(t, 1, len(s.nodeTasks["a"]))
-	require.Equal(t, 1, len(s.schedulingTask))
+	require.Equal(t, 1, len(s.committing))
 
 	//committing -> working
 	stm.State = scheduler.SchedulerStatusWorking
@@ -76,21 +77,21 @@ func TestMoveTask(t *testing.T) {
 	s.tryMoveTask(dispatcherID, stm, scheduler.SchedulerStatusCommiting, "a", true)
 	require.Equal(t, 0, len(s.absent))
 	require.Equal(t, 1, len(s.nodeTasks["a"]))
-	require.Equal(t, 0, len(s.schedulingTask))
+	require.Equal(t, 0, len(s.committing))
 	require.Equal(t, 1, len(s.working))
 
 	//working -> removing
-	stm.HandleMoveInferior("b")
+	_, _ = stm.HandleMoveInferior("b")
 	stm.Primary = "a"
 	stm.Secondary = "b"
 	s.tryMoveTask(dispatcherID, stm, scheduler.SchedulerStatusWorking, "a", true)
 	require.Equal(t, 0, len(s.absent))
 	require.Equal(t, 1, len(s.nodeTasks["a"]))
-	require.Equal(t, 1, len(s.schedulingTask))
+	require.Equal(t, 1, len(s.removing))
 	require.Equal(t, 0, len(s.working))
 
 	// removing -> committing
-	stm.HandleInferiorStatus(ReplicaSetStatus{
+	_, _ = stm.HandleInferiorStatus(ReplicaSetStatus{
 		ID:           dispatcherID,
 		State:        heartbeatpb.ComponentState_Stopped,
 		CheckpointTs: 10,
@@ -99,11 +100,11 @@ func TestMoveTask(t *testing.T) {
 	require.Equal(t, 0, len(s.absent))
 	require.Equal(t, 0, len(s.nodeTasks["a"]))
 	require.Equal(t, 1, len(s.nodeTasks["b"]))
-	require.Equal(t, 1, len(s.schedulingTask))
+	require.Equal(t, 1, len(s.committing))
 	require.Equal(t, 0, len(s.working))
 
 	//committing -> working
-	stm.HandleInferiorStatus(ReplicaSetStatus{
+	_, _ = stm.HandleInferiorStatus(ReplicaSetStatus{
 		ID:           dispatcherID,
 		State:        heartbeatpb.ComponentState_Working,
 		CheckpointTs: 10,
@@ -112,7 +113,7 @@ func TestMoveTask(t *testing.T) {
 	require.Equal(t, 0, len(s.absent))
 	require.Equal(t, 0, len(s.nodeTasks["a"]))
 	require.Equal(t, 1, len(s.nodeTasks["b"]))
-	require.Equal(t, 0, len(s.schedulingTask))
+	require.Equal(t, 0, len(s.committing))
 	require.Equal(t, 1, len(s.working))
 
 	//working -> removing
@@ -129,6 +130,125 @@ func TestMoveTask(t *testing.T) {
 	require.Equal(t, 0, len(s.absent))
 	require.Equal(t, 0, len(s.nodeTasks["a"]))
 	require.Equal(t, 0, len(s.nodeTasks["b"]))
-	require.Equal(t, 0, len(s.schedulingTask))
+	require.Equal(t, 0, len(s.committing))
 	require.Equal(t, 0, len(s.working))
+}
+
+func TestBalance(t *testing.T) {
+	s := NewScheduler("test", 1000, 0)
+	s.nodeTasks["node1"] = map[common.DispatcherID]*scheduler.StateMachine{}
+	for i := 0; i < 100; i++ {
+		span := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+			TableID: uint64(i),
+		}}
+		dispatcherID := common.NewDispatcherID()
+		stm, _ := scheduler.NewStateMachine(dispatcherID, nil,
+			NewReplicaSet(model.ChangeFeedID{}, dispatcherID, span, 1))
+		stm.State = scheduler.SchedulerStatusWorking
+		stm.Primary = "node1"
+		s.working[dispatcherID] = stm
+		s.nodeTasks["node1"][dispatcherID] = stm
+	}
+	msgs, err := s.Schedule()
+	require.NoError(t, err)
+	require.Len(t, msgs, 0)
+	require.Equal(t, len(s.working), 100)
+	require.Equal(t, len(s.nodeTasks["node1"]), 100)
+	//add duplicate node
+	s.AddNewNode("node1")
+	// add new node
+	s.AddNewNode("node2")
+	msgs, err = s.TryBalance()
+	require.NoError(t, err)
+	require.Len(t, msgs, 50)
+	require.Equal(t, len(s.removing), 50)
+	require.Equal(t, len(s.working), 50)
+	//still on the primary node
+	require.Equal(t, len(s.nodeTasks["node1"]), 100)
+	require.Equal(t, len(s.nodeTasks["node2"]), 0)
+
+	// remove the node2
+	msgs = s.RemoveNode("node2")
+	require.Len(t, msgs, 0)
+	require.Equal(t, len(s.removing), 0)
+	// changed to working status
+	require.Equal(t, len(s.working), 100)
+	require.Equal(t, len(s.nodeTasks["node1"]), 100)
+	msgs = s.RemoveNode("node2")
+	require.Len(t, msgs, 0)
+}
+
+func TestStoppedWhenMoving(t *testing.T) {
+	s := NewScheduler("test", 1000, 0)
+	s.AddNewNode("node1")
+	s.AddNewNode("node2")
+	id := 1
+	span := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+		TableID: uint64(id),
+	}}
+	dispatcherID := common.NewDispatcherID()
+	stm, _ := scheduler.NewStateMachine(dispatcherID, nil,
+		NewReplicaSet(model.ChangeFeedID{}, dispatcherID, span, 1))
+	stm.State = scheduler.SchedulerStatusWorking
+	stm.Primary = "node1"
+	s.working[dispatcherID] = stm
+	s.nodeTasks["node1"][dispatcherID] = stm
+
+	_, _ = stm.HandleMoveInferior("node2")
+	s.tryMoveTask(dispatcherID, stm, scheduler.SchedulerStatusWorking, "node2", true)
+	require.Equal(t, len(s.removing), 1)
+	// changed to working status
+	require.Equal(t, len(s.working), 0)
+	require.Equal(t, len(s.nodeTasks["node1"]), 1)
+	require.Equal(t, len(s.nodeTasks["node2"]), 0)
+
+	msgs, err := s.HandleStatus("node1", []*heartbeatpb.TableSpanStatus{
+		{
+			ID:              dispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Stopped,
+			CheckpointTs:    10,
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.Equal(t, len(s.committing), 1)
+	require.Equal(t, len(s.removing), 0)
+	require.Equal(t, len(s.nodeTasks["node1"]), 0)
+	require.Equal(t, len(s.nodeTasks["node2"]), 1)
+	require.Equal(t, uint64(10), stm.Inferior.(*ReplicaSet).checkpointTs)
+}
+
+func TestFinishBootstrap(t *testing.T) {
+	s := NewScheduler("test", 1000, 0)
+	s.AddNewNode("node1")
+	span := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+		TableID: uint64(1),
+	}}
+	dispatcherID := common.NewDispatcherID()
+	stm, _ := scheduler.NewStateMachine(dispatcherID, nil,
+		NewReplicaSet(model.ChangeFeedID{}, dispatcherID, span, 1))
+	s.AddTempTask(span, stm)
+
+	dispatcherID2 := common.NewDispatcherID()
+	stm2, err := scheduler.NewStateMachine(dispatcherID2, map[model.CaptureID]scheduler.InferiorStatus{
+		"node1": ReplicaSetStatus{
+			ID:           dispatcherID2,
+			State:        heartbeatpb.ComponentState_Working,
+			CheckpointTs: 10,
+			DDLStatus:    nil,
+		},
+	}, NewReplicaSet(model.ChangeFeedID{}, dispatcherID2, span, 1))
+	require.Nil(t, err)
+	cached := utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
+	cached.ReplaceOrInsert(span, stm2)
+	require.False(t, s.bootstrapped)
+	s.FinishBootstrap(cached)
+	require.True(t, s.bootstrapped)
+	require.Equal(t, len(s.nodeTasks["node1"]), 1)
+	require.Equal(t, len(s.working), 1)
+	require.Equal(t, stm2, s.working[dispatcherID2])
+	require.Nil(t, s.tempTasks)
+	require.Panics(t, func() {
+		s.FinishBootstrap(cached)
+	})
 }
