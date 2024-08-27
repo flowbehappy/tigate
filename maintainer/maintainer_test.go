@@ -147,7 +147,7 @@ func (m *mockDispatcherManager) onDispatchRequest(
 	}
 	if request.ScheduleAction == heartbeatpb.ScheduleAction_Create {
 		status := &heartbeatpb.TableSpanStatus{
-			ID:              request.ID,
+			ID:              request.Config.DispatcherID,
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			State:           nil,
 			CheckpointTs:    0,
@@ -156,7 +156,7 @@ func (m *mockDispatcherManager) onDispatchRequest(
 	} else {
 		dispatchers := make([]*heartbeatpb.TableSpanStatus, 0, len(m.dispatchers))
 		for _, status := range m.dispatchers {
-			if status.ID.High != request.ID.High || status.ID.Low != request.ID.Low {
+			if status.ID.High != request.Config.DispatcherID.High || status.ID.Low != request.Config.DispatcherID.Low {
 				dispatchers = append(dispatchers, status)
 			} else {
 				status.ComponentStatus = heartbeatpb.ComponentState_Stopped
@@ -249,7 +249,7 @@ func TestMaintainerSchedule(t *testing.T) {
 		t.Fatal("unexpected args", argList)
 	}
 	tableSize := 1000000
-	sleepTime := 5000000
+	sleepTime := 600
 	if len(argList) == 1 {
 		tableSize, _ = strconv.Atoi(argList[0])
 	}

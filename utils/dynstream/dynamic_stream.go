@@ -667,7 +667,7 @@ func (d *dynamicStreamImpl[P, T, D]) distributor() {
 					}
 					// Streams must be started and closed in the distributor.
 					// Otherwise, the distributor will send the events to the closed streams.
-					newStream.start(paths)
+					newStream.start(paths, arrange.oldStreams...)
 				}
 			default:
 				panic("Unknown command type")
