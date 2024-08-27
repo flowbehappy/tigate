@@ -116,8 +116,8 @@ func NewEventStore(
 	schemaStore schemastore.SchemaStore,
 ) EventStore {
 	clientConfig := &logpuller.SubscriptionClientConfig{
-		RegionRequestWorkerPerStore:        128,
-		ChangeEventProcessorNum:            128,
+		RegionRequestWorkerPerStore:        16,
+		ChangeEventProcessorNum:            64,
 		AdvanceResolvedTsIntervalInMs:      300,
 		RegionIncrementalScanLimitPerStore: 600,
 	}
@@ -174,11 +174,7 @@ func NewEventStore(
 		}
 		return nil
 	}
-	pullerConfig := &logpuller.LogPullerConfig{
-		WorkerCount:  len(dbs),
-		HashSpanFunc: common.HashTableSpan,
-	}
-	puller := logpuller.NewLogPuller(client, pdClock, consume, pullerConfig)
+	puller := logpuller.NewLogPuller(client, pdClock, consume)
 	store.puller = puller
 
 	return store
