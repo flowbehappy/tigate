@@ -84,9 +84,9 @@ type Dispatcher struct {
 	checkTableProgressEmptyTask *CheckProgressEmptyTask
 }
 
-func NewDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter) *Dispatcher {
+func NewDispatcher(id common.DispatcherID, tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter) *Dispatcher {
 	dispatcher := &Dispatcher{
-		id:           common.NewDispatcherID(),
+		id:           id,
 		tableSpan:    tableSpan,
 		sink:         sink,
 		statusesChan: statusesChan,
@@ -146,8 +146,7 @@ func (d *Dispatcher) AddDDLEventToSinkWhenAvailable(event *common.TxnEvent) {
 // If we get a dispatcher action, we need to check whether the action is for the current pending ddl event. If so, we can deal the ddl event based on the action.
 // 1. If the action is a write, we need to add the ddl event to the sink for writing to downstream(async).
 // 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and wake the dispatcherEventsHandler
-func (d *Dispatcher) HandleDispatcherStatus(statusWithId DispatcherStatusWithID) {
-	dispatcherStatus := statusWithId.GetDispatcherStatus()
+func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.DispatcherStatus) {
 	if d.ddlPendingEvent == nil {
 		if dispatcherStatus.GetAction() != nil {
 			// 只可能出现在 event 已经推进了，但是还重复收到了 action 消息的时候，则重发包含 checkpointTs 的心跳
