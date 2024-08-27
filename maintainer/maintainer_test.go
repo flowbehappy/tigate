@@ -47,6 +47,8 @@ type mockDispatcherManager struct {
 	maintainerID messaging.ServerId
 	checkpointTs uint64
 	changefeedID string
+
+	bootstrapTables []*heartbeatpb.BootstrapTableSpan
 }
 
 func MockDispatcherManager(mc messaging.MessageCenter) *mockDispatcherManager {
@@ -119,6 +121,7 @@ func (m *mockDispatcherManager) onBootstrapRequest(msg *messaging.TargetMessage)
 	m.maintainerID = msg.From
 	response := &heartbeatpb.MaintainerBootstrapResponse{
 		ChangefeedID: req.ChangefeedID,
+		Spans:        m.bootstrapTables,
 	}
 	m.changefeedID = req.ChangefeedID
 	err := m.mc.SendCommand(messaging.NewSingleTargetMessage(
@@ -144,7 +147,7 @@ func (m *mockDispatcherManager) onDispatchRequest(
 	}
 	if request.ScheduleAction == heartbeatpb.ScheduleAction_Create {
 		status := &heartbeatpb.TableSpanStatus{
-			Span:            request.Config.Span,
+			ID:              request.ID,
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			State:           nil,
 			CheckpointTs:    0,
@@ -153,7 +156,7 @@ func (m *mockDispatcherManager) onDispatchRequest(
 	} else {
 		dispatchers := make([]*heartbeatpb.TableSpanStatus, 0, len(m.dispatchers))
 		for _, status := range m.dispatchers {
-			if status.Span.TableID != request.Config.Span.TableID {
+			if status.ID.High != request.ID.High || status.ID.Low != request.ID.Low {
 				dispatchers = append(dispatchers, status)
 			} else {
 				status.ComponentStatus = heartbeatpb.ComponentState_Stopped
@@ -173,7 +176,7 @@ func (m *mockDispatcherManager) onDispatchRequest(
 }
 
 func (m *mockDispatcherManager) onMaintainerCloseRequest() {
-	m.mc.SendCommand(messaging.NewSingleTargetMessage(m.maintainerID,
+	_ = m.mc.SendCommand(messaging.NewSingleTargetMessage(m.maintainerID,
 		messaging.MaintainerTopic, &heartbeatpb.MaintainerCloseResponse{
 			ChangefeedID: m.changefeedID,
 			Success:      true,
@@ -262,8 +265,9 @@ func TestMaintainerSchedule(t *testing.T) {
 			StartKey: span.StartKey,
 			EndKey:   span.EndKey,
 		}}
-		replicaSet := NewReplicaSet(maintainer.id, tableSpan, maintainer.watermark.CheckpointTs).(*ReplicaSet)
-		stm, _ := scheduler.NewStateMachine(tableSpan, nil, replicaSet)
+		dispatcherID := common.NewDispatcherID()
+		replicaSet := NewReplicaSet(maintainer.id, dispatcherID, tableSpan, maintainer.watermark.CheckpointTs).(*ReplicaSet)
+		stm, _ := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
 		maintainer.scheduler.AddNewTask(stm)
 	}
 	// send bootstrap message

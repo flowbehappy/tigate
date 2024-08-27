@@ -68,4 +68,3 @@ message RegisterDispatcherRequest {
     string changefeed_id = 7;
     FilterConfig filter_config = 8;
 }
-

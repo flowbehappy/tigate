@@ -86,6 +86,16 @@ func (d *DispatcherID) DecodeMsg(dc *msgp.Reader) error {
 	return err
 }
 
+func (d DispatcherID) Equal(inferior any) bool {
+	tbl := inferior.(DispatcherID)
+	return d.low == tbl.low && d.high == tbl.high
+}
+
+func (d DispatcherID) Less(t any) bool {
+	cf := t.(DispatcherID)
+	return d.low < cf.low || d.low == cf.low && d.high < cf.high
+}
+
 type SchemaID int64
 
 type GID struct {

@@ -83,7 +83,11 @@ type EventDispatcherManager struct {
 	metricResolvedTsLag            prometheus.Gauge
 }
 
-func NewEventDispatcherManager(changefeedID model.ChangeFeedID, cfConfig *config.ChangefeedConfig, maintainerID messaging.ServerId, createTableTriggerEventDispatcher bool) *EventDispatcherManager {
+func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
+	cfConfig *config.ChangefeedConfig,
+	maintainerID messaging.ServerId,
+	createTableTriggerEventDispatcher bool,
+	tableTriggerEventDispatcherID *heartbeatpb.DispatcherID) *EventDispatcherManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := &EventDispatcherManager{
 		dispatcherMap: newDispatcherMap(),
@@ -113,8 +117,9 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID, cfConfig *config
 	appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(manager)
 
 	if createTableTriggerEventDispatcher {
-		dispatcher := manager.NewDispatcher(&common.DDLSpan, manager.config.StartTS)
-		manager.dispatcherMap.Set(&common.DDLSpan, dispatcher)
+		id := common.NewDispatcherIDFromPB(tableTriggerEventDispatcherID)
+		dispatcher := manager.NewDispatcher(id, &common.DDLSpan, manager.config.StartTS)
+		manager.dispatcherMap.Set(id, dispatcher)
 	}
 
 	// TODO: 这些后续需要等有第一个 table 来的时候再初始化, 对于纯空的 event dispatcher manager 不要直接创建为好
@@ -194,12 +199,12 @@ func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) 
 
 func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan *common.TableSpan, startTs uint64) *dispatcher.Dispatcher {
 	start := time.Now()
-	if _, ok := e.dispatcherMap.Get(tableSpan); ok {
+	if _, ok := e.dispatcherMap.Get(id); ok {
 		log.Debug("table span already exists", zap.Any("tableSpan", tableSpan))
 		return nil
 	}
 
-	dispatcher := dispatcher.NewDispatcher(tableSpan, e.sink, startTs, e.statusesChan, e.filter)
+	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.filter)
 
 	// TODO:暂时不收 ddl 的 event
 	if tableSpan != &common.DDLSpan {
@@ -212,9 +217,9 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 		)
 	}
 
-	e.dispatcherMap.Set(tableSpan, dispatcher)
+	e.dispatcherMap.Set(id, dispatcher)
 	e.GetStatusesChan() <- &heartbeatpb.TableSpanStatus{
-		Span:            tableSpan.TableSpan,
+		ID:              id.ToPB(),
 		ComponentStatus: heartbeatpb.ComponentState_Working,
 	}
 
@@ -270,8 +275,8 @@ func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx conte
 	}
 }
 
-func (e *EventDispatcherManager) RemoveDispatcher(tableSpan *common.TableSpan) {
-	dispatcher, ok := e.dispatcherMap.Get(tableSpan)
+func (e *EventDispatcherManager) RemoveDispatcher(id common.DispatcherID) {
+	dispatcher, ok := e.dispatcherMap.Get(id)
 
 	if ok {
 		if dispatcher.GetRemovingStatus() {
@@ -281,7 +286,7 @@ func (e *EventDispatcherManager) RemoveDispatcher(tableSpan *common.TableSpan) {
 		dispatcher.Remove()
 	} else {
 		e.GetStatusesChan() <- &heartbeatpb.TableSpanStatus{
-			Span:            tableSpan.TableSpan,
+			ID:              id.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Stopped,
 		}
 	}
@@ -291,7 +296,7 @@ func (e *EventDispatcherManager) RemoveDispatcher(tableSpan *common.TableSpan) {
 func (e *EventDispatcherManager) cleanTableEventDispatcher(id common.DispatcherID) {
 	e.dispatcherMap.Delete(id)
 	e.tableEventDispatcherCount.Dec()
-	log.Info("table event dispatcher completely stopped, and delete it from event dispatcher manager", zap.Any("tableSpan", tableSpan))
+	log.Info("table event dispatcher completely stopped, and delete it from event dispatcher manager", zap.Any("dispatcher id", id))
 }
 
 func toFilterConfigPB(filter *cfg.FilterConfig) *eventpb.FilterConfig {
@@ -348,7 +353,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 				message.Watermark.UpdateMin(watermark)
 				// If the dispatcher is removed successfully, we need to add the tableSpan into message whether needCompleteStatus is true or not.
 				message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
-					Span:            heartBeatInfo.TableSpan.TableSpan,
+					ID:              id.ToPB(),
 					ComponentStatus: heartbeatpb.ComponentState_Stopped,
 					CheckpointTs:    watermark.CheckpointTs,
 				})
@@ -360,7 +365,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 
 		if needCompleteStatus {
 			message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
-				Span:            heartBeatInfo.TableSpan.TableSpan,
+				ID:              id.ToPB(),
 				ComponentStatus: heartBeatInfo.ComponentStatus,
 				CheckpointTs:    heartBeatInfo.Watermark.CheckpointTs,
 			})

@@ -14,6 +14,11 @@
 package maintainer
 
 import (
+	"math"
+	"math/rand"
+	"sort"
+	"time"
+
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
@@ -23,23 +28,23 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"go.uber.org/zap"
-	"math"
-	"math/rand"
-	"sort"
-	"time"
 )
 
 // Scheduler schedules tables
 type Scheduler struct {
+	// tempTasks hold all tasks that before scheduler bootstrapped, use the table span as the key
+	// statemachine hold the temp dispatcher ID, if a working state task reported, change the dispatcher ID
+	tempTasks utils.Map[*common.TableSpan, *scheduler.StateMachine]
 	// absent track all table spans that need to be scheduled
 	// when dispatcher reported a new table or remove a table, this field should be updated
-	absent utils.Map[*common.TableSpan, *scheduler.StateMachine]
+	absent map[common.DispatcherID]*scheduler.StateMachine
 
 	// schedulingTask list the task that wait for response
-	schedulingTask utils.Map[*common.TableSpan, *scheduler.StateMachine]
-	working        utils.Map[*common.TableSpan, *scheduler.StateMachine]
+	schedulingTask map[common.DispatcherID]*scheduler.StateMachine
+	working        map[common.DispatcherID]*scheduler.StateMachine
 
-	nodeTasks map[string]utils.Map[*common.TableSpan, *scheduler.StateMachine]
+	nodeTasks    map[string]map[common.DispatcherID]*scheduler.StateMachine
+	bootstrapped bool
 
 	changefeedID         string
 	batchSize            int
@@ -51,11 +56,13 @@ type Scheduler struct {
 func NewScheduler(changefeedID string,
 	batchSize int, balanceInterval time.Duration) *Scheduler {
 	return &Scheduler{
-		schedulingTask:       utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine](),
-		working:              utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine](),
-		absent:               utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine](),
-		nodeTasks:            make(map[string]utils.Map[*common.TableSpan, *scheduler.StateMachine]),
+		tempTasks:            utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine](),
+		schedulingTask:       make(map[common.DispatcherID]*scheduler.StateMachine),
+		working:              make(map[common.DispatcherID]*scheduler.StateMachine),
+		absent:               make(map[common.DispatcherID]*scheduler.StateMachine),
+		nodeTasks:            make(map[string]map[common.DispatcherID]*scheduler.StateMachine),
 		changefeedID:         changefeedID,
+		bootstrapped:         false,
 		batchSize:            batchSize,
 		random:               rand.New(rand.NewSource(time.Now().UnixNano())),
 		checkBalanceInterval: balanceInterval,
@@ -64,27 +71,53 @@ func NewScheduler(changefeedID string,
 }
 
 func (s *Scheduler) AddNewTask(stm *scheduler.StateMachine) {
-	s.absent.ReplaceOrInsert(stm.ID.(*common.TableSpan), stm)
+	s.absent[stm.ID.(common.DispatcherID)] = stm
 }
 
-// AddWorkingTask adds a working state task to this scheduler directly,
+func (s *Scheduler) AddTempTask(span *common.TableSpan, stm *scheduler.StateMachine) {
+	s.tempTasks.ReplaceOrInsert(span, stm)
+}
+
+// FinishBootstrap adds working state tasks to this scheduler directly,
 // it reported by the bootstrap response
-func (s *Scheduler) AddWorkingTask(stm *scheduler.StateMachine) {
-	if stm.State != scheduler.SchedulerStatusWorking {
-		log.Panic("unexpected state",
+func (s *Scheduler) FinishBootstrap(stms utils.Map[*common.TableSpan, *scheduler.StateMachine]) {
+	if s.bootstrapped {
+		log.Panic("already bootstrapped",
 			zap.String("changefeed", s.changefeedID),
-			zap.Any("stm", stm))
+			zap.Any("stms", stms))
 	}
-	span := stm.ID.(*common.TableSpan)
-	s.working.ReplaceOrInsert(span, stm)
-	s.absent.Delete(stm.ID.(*common.TableSpan))
-	s.nodeTasks[stm.Primary].ReplaceOrInsert(span, stm)
-	if s.schedulingTask.Has(span) {
-		log.Warn("span state not expected, remove from commiting",
-			zap.String("changefeed", s.changefeedID),
-			zap.String("span", span.String()))
-		s.schedulingTask.Delete(stm.ID.(*common.TableSpan))
-	}
+	stms.Ascend(func(span *common.TableSpan, stm *scheduler.StateMachine) bool {
+		if stm.State != scheduler.SchedulerStatusWorking {
+			log.Panic("unexpected state",
+				zap.String("changefeed", s.changefeedID),
+				zap.Any("stm", stm))
+		}
+		if !s.tempTasks.Has(span) {
+			dispatcherID := stm.ID.(common.DispatcherID)
+			s.working[dispatcherID] = stm
+			s.nodeTasks[stm.Primary][dispatcherID] = stm
+		} else {
+			s.tempTasks.ReplaceOrInsert(span, stm)
+			span := stm.ID.(common.DispatcherID)
+			s.working[span] = stm
+			delete(s.absent, span)
+			s.nodeTasks[stm.Primary][span] = stm
+			if _, ok := s.schedulingTask[span]; ok {
+				log.Warn("span state not expected, remove from commiting",
+					zap.String("changefeed", s.changefeedID),
+					zap.String("span", span.String()))
+				delete(s.schedulingTask, span)
+			}
+		}
+		return true
+	})
+	s.tempTasks.Ascend(func(key *common.TableSpan, stm *scheduler.StateMachine) bool {
+		span := stm.ID.(common.DispatcherID)
+		s.absent[span] = stm
+		return true
+	})
+	s.bootstrapped = true
+	s.tempTasks = nil
 }
 
 func (s *Scheduler) RemoveTask(stm *scheduler.StateMachine) (*messaging.TargetMessage, error) {
@@ -92,9 +125,9 @@ func (s *Scheduler) RemoveTask(stm *scheduler.StateMachine) (*messaging.TargetMe
 	oldPrimary := stm.Primary
 	msg, err := stm.HandleRemoveInferior()
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
-	s.tryMoveTask(stm.ID.(*common.TableSpan), stm, oldState, oldPrimary, true)
+	s.tryMoveTask(stm.ID.(common.DispatcherID), stm, oldState, oldPrimary, true)
 	return msg, nil
 }
 
@@ -109,7 +142,7 @@ func (s *Scheduler) AddNewNode(id string) {
 	log.Info("add new node",
 		zap.String("changeeed", s.changefeedID),
 		zap.String("node", id))
-	s.nodeTasks[id] = utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
+	s.nodeTasks[id] = make(map[common.DispatcherID]*scheduler.StateMachine)
 }
 
 func (s *Scheduler) RemoveNode(nodeId string) []*messaging.TargetMessage {
@@ -121,18 +154,17 @@ func (s *Scheduler) RemoveNode(nodeId string) []*messaging.TargetMessage {
 		return nil
 	}
 	var msgs []*messaging.TargetMessage
-	stmMap.Ascend(func(key *common.TableSpan, value *scheduler.StateMachine) bool {
+	for key, value := range stmMap {
 		oldState := value.State
 		msg, _ := value.HandleCaptureShutdown(nodeId)
 		if msg != nil {
 			msgs = append(msgs, msg)
 		}
 		if value.Primary != "" && value.Primary != nodeId {
-			s.nodeTasks[value.Primary].Delete(key)
+			delete(s.nodeTasks[value.Primary], key)
 		}
 		s.tryMoveTask(key, value, oldState, nodeId, false)
-		return true
-	})
+	}
 	delete(s.nodeTasks, nodeId)
 	return msgs
 }
@@ -145,7 +177,7 @@ func (s *Scheduler) Schedule() ([]*messaging.TargetMessage, error) {
 	if !s.NeedSchedule() {
 		return nil, nil
 	}
-	totalSize := s.batchSize - s.schedulingTask.Len()
+	totalSize := s.batchSize - len(s.schedulingTask)
 	if totalSize <= 0 {
 		// too many running tasks, skip schedule
 		return nil, nil
@@ -154,48 +186,45 @@ func (s *Scheduler) Schedule() ([]*messaging.TargetMessage, error) {
 	for key, m := range s.nodeTasks {
 		priorityQueue.AddOrUpdate(&Item{
 			Node:     key,
-			TaskSize: m.Len(),
+			TaskSize: len(m),
 		})
 	}
 
 	taskSize := 0
 	var msgs = make([]*messaging.TargetMessage, 0, s.batchSize)
-	var scheduled = make([]*common.TableSpan, 0, s.batchSize)
 	var err error
-	s.absent.Ascend(func(key *common.TableSpan, value *scheduler.StateMachine) bool {
+	for key, value := range s.absent {
 		item, _ := priorityQueue.PeekTop()
-		msg, err1 := value.HandleAddInferior(item.Node)
-		if err1 != nil {
-			err = errors.Trace(err1)
-			return false
+		msg, err := value.HandleAddInferior(item.Node)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		msgs = append(msgs, msg)
 
-		s.schedulingTask.ReplaceOrInsert(key, value)
-		s.nodeTasks[item.Node].ReplaceOrInsert(key, value)
-		scheduled = append(scheduled, key)
+		s.schedulingTask[key] = value
+		s.nodeTasks[item.Node][key] = value
+		delete(s.absent, key)
 
 		item.TaskSize++
 		priorityQueue.AddOrUpdate(item)
 		taskSize++
-		return taskSize < totalSize
-	})
-	for _, key := range scheduled {
-		s.absent.Delete(key)
+		if taskSize >= totalSize {
+			break
+		}
 	}
 	return msgs, err
 }
 
 func (s *Scheduler) NeedSchedule() bool {
-	return s.absent.Len() > 0
+	return len(s.absent) > 0
 }
 
 func (s *Scheduler) ScheduleFinished() bool {
-	return s.absent.Len() == 0 && s.schedulingTask.Len() == 0
+	return len(s.absent) == 0 && len(s.schedulingTask) == 0
 }
 
 func (s *Scheduler) TryBalance() ([]*messaging.TargetMessage, error) {
-	if s.absent.Len() > 0 || s.schedulingTask.Len() > 0 {
+	if len(s.absent) > 0 || len(s.schedulingTask) > 0 {
 		// not in stable schedule state, skip balance
 		return nil, nil
 	}
@@ -210,30 +239,28 @@ func (s *Scheduler) TryBalance() ([]*messaging.TargetMessage, error) {
 
 func (s *Scheduler) ResendMessage() []*messaging.TargetMessage {
 	var msgs []*messaging.TargetMessage
-	if s.schedulingTask.Len() > 0 {
-		msgs = make([]*messaging.TargetMessage, 0, s.schedulingTask.Len())
-		s.schedulingTask.Ascend(func(key *common.TableSpan, value *scheduler.StateMachine) bool {
+	if len(s.schedulingTask) > 0 {
+		msgs = make([]*messaging.TargetMessage, 0, len(s.schedulingTask))
+		for _, value := range s.schedulingTask {
 			if msg := value.HandleResend(); msg != nil {
 				msgs = append(msgs, msg)
 			}
-			return true
-		})
+		}
 	}
 	return msgs
 }
 
 func (s *Scheduler) balanceTables() ([]*messaging.TargetMessage, error) {
 	var messages = make([]*messaging.TargetMessage, 0)
-	upperLimitPerCapture := int(math.Ceil(float64(s.working.Len()) / float64(len(s.nodeTasks))))
+	upperLimitPerCapture := int(math.Ceil(float64(len(s.working)) / float64(len(s.nodeTasks))))
 	// victims holds tables which need to be moved
 	victims := make([]*scheduler.StateMachine, 0)
 	priorityQueue := heap.NewHeap[*Item]()
 	for nodeID, ts := range s.nodeTasks {
 		var changefeeds []*scheduler.StateMachine
-		ts.Ascend(func(key *common.TableSpan, value *scheduler.StateMachine) bool {
+		for _, value := range ts {
 			changefeeds = append(changefeeds, value)
-			return true
-		})
+		}
 		if s.random != nil {
 			// Complexity note: Shuffle has O(n), where `n` is the number of tables.
 			// Also, during a single call of `Schedule`, Shuffle can be called at most
@@ -256,13 +283,13 @@ func (s *Scheduler) balanceTables() ([]*messaging.TargetMessage, error) {
 		if tableNum2Remove <= 0 {
 			priorityQueue.AddOrUpdate(&Item{
 				Node:     nodeID,
-				TaskSize: ts.Len(),
+				TaskSize: len(ts),
 			})
 			continue
 		} else {
 			priorityQueue.AddOrUpdate(&Item{
 				Node:     nodeID,
-				TaskSize: ts.Len() - tableNum2Remove,
+				TaskSize: len(ts) - tableNum2Remove,
 			})
 		}
 
@@ -295,13 +322,13 @@ func (s *Scheduler) balanceTables() ([]*messaging.TargetMessage, error) {
 			return nil, errors.Trace(err)
 		}
 		messages = append(messages, msg)
-		s.tryMoveTask(cf.ID.(*common.TableSpan), cf, oldState, oldPrimary, false)
+		s.tryMoveTask(cf.ID.(common.DispatcherID), cf, oldState, oldPrimary, false)
 		// update the task size priority queue
 		item.TaskSize++
 		priorityQueue.AddOrUpdate(item)
 		movedSize++
 	}
-	log.Info("blance done",
+	log.Info("balance done",
 		zap.String("changefeed", s.changefeedID),
 		zap.Int("movedSize", movedSize),
 		zap.Int("victims", len(victims)))
@@ -318,8 +345,8 @@ func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpa
 	}
 	var msgs = make([]*messaging.TargetMessage, 0)
 	for _, status := range statusList {
-		span := &common.TableSpan{TableSpan: status.Span}
-		stm, ok := stMap.Get(span)
+		span := common.NewDispatcherIDFromPB(status.ID)
+		stm, ok := stMap[span]
 		if !ok {
 			log.Warn("no statemachine id found, ignore",
 				zap.String("changeeed", s.changefeedID),
@@ -349,23 +376,22 @@ func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpa
 }
 
 func (s *Scheduler) TaskSize() int {
-	return s.schedulingTask.Len() + s.working.Len() + s.absent.Len()
+	return len(s.schedulingTask) + len(s.working) + len(s.absent)
 }
 
 func (s *Scheduler) GetTaskSizeByState(state scheduler.SchedulerStatus) int {
 	size := 0
 	switch state {
 	case scheduler.SchedulerStatusAbsent:
-		size = s.absent.Len()
+		size = len(s.absent)
 	case scheduler.SchedulerStatusWorking:
-		size = s.working.Len()
+		size = len(s.working)
 	case scheduler.SchedulerStatusCommiting, scheduler.SchedulerStatusRemoving:
-		s.schedulingTask.Ascend(func(key *common.TableSpan, value *scheduler.StateMachine) bool {
+		for _, value := range s.schedulingTask {
 			if state == value.State {
 				size++
 			}
-			return true
-		})
+		}
 	}
 	return size
 }
@@ -373,13 +399,13 @@ func (s *Scheduler) GetTaskSizeByState(state scheduler.SchedulerStatus) int {
 func (s *Scheduler) GetTaskSizeByNodeID(nodeID string) int {
 	sm, ok := s.nodeTasks[nodeID]
 	if ok {
-		return sm.Len()
+		return len(sm)
 	}
 	return 0
 }
 
 // tryMoveTask moves the StateMachine to the right map and modified the node map if changed
-func (s *Scheduler) tryMoveTask(span *common.TableSpan,
+func (s *Scheduler) tryMoveTask(span common.DispatcherID,
 	stm *scheduler.StateMachine,
 	oldSate scheduler.SchedulerStatus,
 	oldPrimary string,
@@ -398,79 +424,79 @@ func (s *Scheduler) tryMoveTask(span *common.TableSpan,
 	// if removed, new primary node must be empty so we also can
 	// update nodesMap if modifyNodeMap is true
 	if stm.HasRemoved() {
-		s.schedulingTask.Delete(span)
-		s.absent.Delete(span)
-		s.working.Delete(span)
+		delete(s.schedulingTask, span)
+		delete(s.absent, span)
+		delete(s.working, span)
 	}
 	// keep node task map is updated
 	if modifyNodeMap && oldPrimary != stm.Primary {
 		taskMap, ok := s.nodeTasks[oldPrimary]
 		if ok {
-			taskMap.Delete(span)
+			delete(taskMap, span)
 		}
 		taskMap, ok = s.nodeTasks[stm.Primary]
 		if ok {
-			taskMap.ReplaceOrInsert(span, stm)
+			taskMap[span] = stm
 		}
 	}
 }
 
-func (s *Scheduler) moveFromAbsent(span *common.TableSpan,
+func (s *Scheduler) moveFromAbsent(span common.DispatcherID,
 	stm *scheduler.StateMachine) {
 	switch stm.State {
 	case scheduler.SchedulerStatusAbsent:
 	case scheduler.SchedulerStatusCommiting:
-		s.absent.Delete(span)
-		s.schedulingTask.ReplaceOrInsert(span, stm)
+		delete(s.absent, span)
+		s.schedulingTask[span] = stm
 	case scheduler.SchedulerStatusWorking:
-		s.absent.Delete(span)
-		s.working.ReplaceOrInsert(span, stm)
+		delete(s.absent, span)
+		s.working[span] = stm
 	case scheduler.SchedulerStatusRemoving:
-		s.absent.Delete(span)
-		s.schedulingTask.ReplaceOrInsert(span, stm)
+		delete(s.absent, span)
+		s.schedulingTask[span] = stm
 	}
 }
 
-func (s *Scheduler) moveFromCommiting(span *common.TableSpan,
+func (s *Scheduler) moveFromCommiting(span common.DispatcherID,
 	stm *scheduler.StateMachine) {
 	switch stm.State {
 	case scheduler.SchedulerStatusAbsent:
-		s.schedulingTask.Delete(span)
-		s.absent.ReplaceOrInsert(span, stm)
+		delete(s.schedulingTask, span)
+		s.absent[span] = stm
 	case scheduler.SchedulerStatusCommiting, scheduler.SchedulerStatusRemoving:
 		// state not changed, primary should not be changefeed
 	case scheduler.SchedulerStatusWorking:
-		s.schedulingTask.Delete(span)
-		s.working.ReplaceOrInsert(span, stm)
+		delete(s.schedulingTask, span)
+		s.working[span] = stm
 	}
 }
 
-func (s *Scheduler) moveFromWorking(span *common.TableSpan,
+func (s *Scheduler) moveFromWorking(span common.DispatcherID,
 	stm *scheduler.StateMachine) {
 	switch stm.State {
 	case scheduler.SchedulerStatusAbsent:
-		s.working.Delete(span)
-		s.absent.ReplaceOrInsert(span, stm)
+		delete(s.working, span)
+		s.absent[span] = stm
 	case scheduler.SchedulerStatusCommiting, scheduler.SchedulerStatusRemoving:
-		s.working.Delete(span)
-		s.schedulingTask.ReplaceOrInsert(span, stm)
+		delete(s.working, span)
+		s.schedulingTask[span] = stm
 	case scheduler.SchedulerStatusWorking:
 		// state not changed, primary should not be changefeed
 	}
 }
 
-func (s *Scheduler) moveFromRemoving(span *common.TableSpan,
+func (s *Scheduler) moveFromRemoving(span common.DispatcherID,
 	stm *scheduler.StateMachine) {
 	switch stm.State {
 	case scheduler.SchedulerStatusAbsent:
-		s.schedulingTask.Delete(span)
-		s.absent.ReplaceOrInsert(span, stm)
+		delete(s.schedulingTask, span)
+		s.absent[span] = stm
 	case scheduler.SchedulerStatusCommiting,
 		scheduler.SchedulerStatusRemoving:
-		s.schedulingTask.ReplaceOrInsert(span, stm)
+		s.schedulingTask[span] = stm
 	case scheduler.SchedulerStatusWorking:
-		s.schedulingTask.Delete(span)
-		s.working.ReplaceOrInsert(span, stm)
+		delete(s.schedulingTask, span)
+		s.working[span] = stm
 	}
 }
 
