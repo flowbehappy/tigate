@@ -183,19 +183,19 @@ func TestHandleResolvedTs(t *testing.T) {
 
 	processor := newChangeEventProcessor(client)
 
-	s1 := newRegionFeedState(&regionInfo{verID: tikv.NewRegionVerID(1, 1, 1)}, 1)
+	s1 := newRegionFeedState(regionInfo{verID: tikv.NewRegionVerID(1, 1, 1)}, 1)
 	s1.region.subscribedSpan = client.newSubscribedSpan(1, heartbeatpb.TableSpan{}, 0)
 	s1.region.lockedRangeState = &regionlock.LockedRangeState{}
 	s1.setInitialized()
 	s1.updateResolvedTs(9)
 
-	s2 := newRegionFeedState(&regionInfo{verID: tikv.NewRegionVerID(2, 2, 2)}, 2)
+	s2 := newRegionFeedState(regionInfo{verID: tikv.NewRegionVerID(2, 2, 2)}, 2)
 	s2.region.subscribedSpan = client.newSubscribedSpan(2, heartbeatpb.TableSpan{}, 0)
 	s2.region.lockedRangeState = &regionlock.LockedRangeState{}
 	s2.setInitialized()
 	s2.updateResolvedTs(11)
 
-	s3 := newRegionFeedState(&regionInfo{verID: tikv.NewRegionVerID(3, 3, 3)}, 3)
+	s3 := newRegionFeedState(regionInfo{verID: tikv.NewRegionVerID(3, 3, 3)}, 3)
 	s3.region.subscribedSpan = client.newSubscribedSpan(3, heartbeatpb.TableSpan{}, 0)
 	s3.region.lockedRangeState = &regionlock.LockedRangeState{}
 	s3.updateResolvedTs(8)

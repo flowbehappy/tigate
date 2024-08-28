@@ -14,13 +14,10 @@
 package logpuller
 
 import (
-	"context"
 	"sync"
-	"sync/atomic"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/logpuller/regionlock"
-	"github.com/pingcap/log"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -46,9 +43,6 @@ type regionInfo struct {
 	subscribedSpan *subscribedSpan
 	// The state of the locked range of the region.
 	lockedRangeState *regionlock.LockedRangeState
-
-	// used to limit the number of concurrent incremental scan on a store
-	storeID atomic.Uint64
 }
 
 func (s *regionInfo) isStoped() bool {
@@ -61,8 +55,8 @@ func newRegionInfo(
 	span heartbeatpb.TableSpan,
 	rpcCtx *tikv.RPCContext,
 	subscribedSpan *subscribedSpan,
-) *regionInfo {
-	return &regionInfo{
+) regionInfo {
+	return regionInfo{
 		verID:          verID,
 		span:           span,
 		rpcCtx:         rpcCtx,
@@ -74,40 +68,20 @@ func (s *regionInfo) resolvedTs() uint64 {
 	return s.lockedRangeState.ResolvedTs.Load()
 }
 
-func (s *regionInfo) acquireScanQuota(ctx context.Context, limiter *regionScanRequestLimiter, storeID uint64) {
-	oldStoreID := s.storeID.Load()
-	if oldStoreID != 0 {
-		log.Panic("acquire scan quota on a region that already has a storeID")
-	}
-	if !s.storeID.CompareAndSwap(oldStoreID, storeID) {
-		log.Panic("try scan a region more than once at the same time")
-	}
-	limiter.acquire(ctx, storeID)
-}
-
-func (s *regionInfo) releaseScanQuotaIfNeed(limiter *regionScanRequestLimiter) {
-	storeID := s.storeID.Load()
-	if storeID != 0 {
-		if s.storeID.CompareAndSwap(storeID, 0) {
-			limiter.release(storeID, s.verID.GetID())
-		}
-	}
-}
-
 type regionErrorInfo struct {
-	*regionInfo
+	regionInfo
 	err error
 }
 
-func newRegionErrorInfo(info *regionInfo, err error) *regionErrorInfo {
-	return &regionErrorInfo{
+func newRegionErrorInfo(info regionInfo, err error) regionErrorInfo {
+	return regionErrorInfo{
 		regionInfo: info,
 		err:        err,
 	}
 }
 
 type regionFeedState struct {
-	region    *regionInfo
+	region    regionInfo
 	requestID uint64
 	matcher   *matcher
 
@@ -125,7 +99,7 @@ type regionFeedState struct {
 	}
 }
 
-func newRegionFeedState(region *regionInfo, requestID uint64) *regionFeedState {
+func newRegionFeedState(region regionInfo, requestID uint64) *regionFeedState {
 	return &regionFeedState{
 		region:    region,
 		requestID: requestID,
@@ -202,7 +176,7 @@ func (s *regionFeedState) updateResolvedTs(resolvedTs uint64) {
 	}
 }
 
-func (s *regionFeedState) getRegionInfo() *regionInfo {
+func (s *regionFeedState) getRegionInfo() regionInfo {
 	return s.region
 }
 

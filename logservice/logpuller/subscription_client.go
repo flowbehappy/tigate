@@ -156,21 +156,18 @@ type SubscriptionClient struct {
 
 	// rangeTaskCh is used to receive range tasks.
 	// The tasks will be handled in `handleRangeTask` goroutine.
-	rangeTaskCh chan *rangeTask
+	rangeTaskCh chan rangeTask
 	// regionCh is used to receive region tasks have been locked in rangeLock.
 	// The region will be handled in `handleRegions` goroutine.
-	regionCh chan *regionInfo
+	regionCh chan regionInfo
 	// resolveLockTaskCh is used to receive resolve lock tasks.
 	// The tasks will be handled in `handleResolveLockTasks` goroutine.
-	resolveLockTaskCh chan *resolveLockTask
+	resolveLockTaskCh chan resolveLockTask
 	// errCh is used to receive region errors.
 	// The errors will be handled in `handleErrors` goroutine.
-	errCh chan *regionErrorInfo
+	errCh chan regionErrorInfo
 
 	consume func(ctx context.Context, e LogEvent) error
-
-	// used to limit the number of concurrent region incremental scan requests on a single store
-	regionScanLimiter *regionScanRequestLimiter
 }
 
 // NewSubscriptionClient creates a client.
@@ -193,12 +190,10 @@ func NewSubscriptionClient(
 
 		credential: credential,
 
-		rangeTaskCh:       make(chan *rangeTask, 1024),
-		regionCh:          make(chan *regionInfo, 1024),
-		resolveLockTaskCh: make(chan *resolveLockTask, 1024),
-		errCh:             make(chan *regionErrorInfo, 1024),
-
-		regionScanLimiter: newRegionScanRequestLimiter(config.RegionIncrementalScanLimitPerStore),
+		rangeTaskCh:       make(chan rangeTask, 1024),
+		regionCh:          make(chan regionInfo, 1024),
+		resolveLockTaskCh: make(chan resolveLockTask, 1024),
+		errCh:             make(chan regionErrorInfo, 1024),
 	}
 	s.totalSpans.spanMap = make(map[subscriptionID]*subscribedSpan)
 
@@ -225,7 +220,7 @@ func (s *SubscriptionClient) Subscribe(subID subscriptionID, span heartbeatpb.Ta
 	s.totalSpans.spanMap[subID] = rt
 	s.totalSpans.Unlock()
 
-	s.rangeTaskCh <- &rangeTask{span: span, subscribedSpan: rt}
+	s.rangeTaskCh <- rangeTask{span: span, subscribedSpan: rt}
 	log.Info("subscribes span success",
 		zap.Any("subscriptionID", rt.subID),
 		zap.String("span", rt.span.String()))
@@ -309,7 +304,7 @@ func (s *SubscriptionClient) setTableStopped(rt *subscribedSpan) {
 	// Then send a special singleRegionInfo to regionRouter to deregister the table
 	// from all TiKV instances.
 	if rt.stopped.CompareAndSwap(false, true) {
-		s.regionCh <- &regionInfo{subscribedSpan: rt}
+		s.regionCh <- regionInfo{subscribedSpan: rt}
 		if rt.rangeLock.Stop() {
 			s.onTableDrained(rt)
 		}
@@ -326,9 +321,7 @@ func (s *SubscriptionClient) onTableDrained(rt *subscribedSpan) {
 }
 
 // Note: don't block the caller, otherwise there may be deadlock
-func (s *SubscriptionClient) onRegionFail(ctx context.Context, errInfo *regionErrorInfo) {
-	// errInfo.regionInfo.releaseScanQuotaIfNeed(s.regionScanLimiter)
-
+func (s *SubscriptionClient) onRegionFail(ctx context.Context, errInfo regionErrorInfo) {
 	select {
 	case <-ctx.Done():
 	case s.errCh <- errInfo:
@@ -421,7 +414,7 @@ func (s *SubscriptionClient) handleRegions(ctx context.Context, eg *errgroup.Gro
 	}
 }
 
-func (s *SubscriptionClient) attachRPCContextForRegion(ctx context.Context, region *regionInfo) (*regionInfo, bool) {
+func (s *SubscriptionClient) attachRPCContextForRegion(ctx context.Context, region regionInfo) (regionInfo, bool) {
 	bo := tikv.NewBackoffer(ctx, tikvRequestMaxBackoff)
 	rpcCtx, err := s.regionCache.GetTiKVRPCContext(bo, region.verID, kvclientv2.ReplicaReadLeader, 0)
 	if rpcCtx != nil {
@@ -538,7 +531,7 @@ func (s *SubscriptionClient) divideSpanAndScheduleRegionRequests(
 
 // scheduleRegionRequest locks the region's range and send the region to regionCh,
 // which will be handled by handleRegions.
-func (s *SubscriptionClient) scheduleRegionRequest(ctx context.Context, region *regionInfo) {
+func (s *SubscriptionClient) scheduleRegionRequest(ctx context.Context, region regionInfo) {
 	lockRangeResult := region.subscribedSpan.rangeLock.LockRange(
 		ctx, region.span.StartKey, region.span.EndKey, region.verID.GetID(), region.verID.GetVer())
 
@@ -567,7 +560,7 @@ func (s *SubscriptionClient) scheduleRangeRequest(
 	subscribedSpan *subscribedSpan,
 ) {
 	select {
-	case s.rangeTaskCh <- &rangeTask{span: span, subscribedSpan: subscribedSpan}:
+	case s.rangeTaskCh <- rangeTask{span: span, subscribedSpan: subscribedSpan}:
 	case <-ctx.Done():
 	}
 }
@@ -585,7 +578,7 @@ func (s *SubscriptionClient) handleErrors(ctx context.Context) error {
 	}
 }
 
-func (s *SubscriptionClient) doHandleError(ctx context.Context, errInfo *regionErrorInfo) error {
+func (s *SubscriptionClient) doHandleError(ctx context.Context, errInfo regionErrorInfo) error {
 	if errInfo.subscribedSpan.rangeLock.UnlockRange(
 		errInfo.span.StartKey, errInfo.span.EndKey,
 		errInfo.verID.GetID(), errInfo.verID.GetVer(), errInfo.resolvedTs()) {
@@ -758,7 +751,7 @@ func (s *SubscriptionClient) newSubscribedSpan(
 	rt.tryResolveLock = func(regionID uint64, state *regionlock.LockedRangeState) {
 		targetTs := rt.staleLocksTargetTs.Load()
 		if state.ResolvedTs.Load() < targetTs && state.Initialized.Load() {
-			s.resolveLockTaskCh <- &resolveLockTask{
+			s.resolveLockTaskCh <- resolveLockTask{
 				regionID: regionID,
 				targetTs: targetTs,
 				state:    state,
@@ -775,84 +768,4 @@ func (r *subscribedSpan) resolveStaleLocks(targetTs uint64) {
 	log.Debug("subscription client finds slow locked ranges",
 		zap.Any("subscriptionID", r.subID),
 		zap.Any("ranges", res))
-}
-
-// thread safe
-type regionScanRequestLimiter struct {
-	mutex           sync.Mutex
-	cond            *sync.Cond // 条件变量
-	maxRequests     uint       // 0 means unlimited
-	currentRequests map[uint64]uint
-}
-
-func newRegionScanRequestLimiter(maxRequests uint) *regionScanRequestLimiter {
-	limiter := &regionScanRequestLimiter{
-		maxRequests:     maxRequests,
-		currentRequests: make(map[uint64]uint),
-	}
-	limiter.cond = sync.NewCond(&limiter.mutex)
-	return limiter
-}
-
-func (r *regionScanRequestLimiter) close() {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	for storeID := range r.currentRequests {
-		r.currentRequests[storeID] = 0
-	}
-	r.cond.Broadcast()
-}
-
-func (r *regionScanRequestLimiter) acquire(ctx context.Context, storeID uint64) {
-	if r.maxRequests == 0 {
-		return
-	}
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	for {
-		if r.currentRequests[storeID] < r.maxRequests {
-			r.currentRequests[storeID]++
-			// log.Info("acquire success",
-			// 	zap.Uint64("storeID", storeID),
-			// 	zap.Uint64("regionID", regionID),
-			// 	zap.Uint("count", r.currentRequests[storeID]))
-			return
-		}
-		log.Info("acquire fail, waiting", zap.Uint64("storeID", storeID))
-
-		// 使用条件变量等待
-		r.cond.Wait()
-
-		log.Info("try acquire again", zap.Uint64("storeID", storeID))
-
-		// 检查上下文是否被取消
-		if ctx.Err() != nil {
-			log.Info("acquire canceled due to context",
-				zap.Uint64("storeID", storeID))
-			return
-		}
-	}
-}
-
-func (r *regionScanRequestLimiter) release(storeID uint64, regionID uint64) {
-	if r.maxRequests == 0 {
-		return
-	}
-	// log.Info("try release")
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	r.currentRequests[storeID]--
-	// log.Info("release",
-	// 	zap.Uint64("storeID", storeID),
-	// 	zap.Uint64("regionID", regionID),
-	// 	zap.Uint("count", r.currentRequests[storeID]))
-
-	if r.currentRequests[storeID] == 0 {
-		delete(r.currentRequests, storeID)
-	}
-	// 通知等待的goroutine有资源可用
-	r.cond.Signal()
 }
