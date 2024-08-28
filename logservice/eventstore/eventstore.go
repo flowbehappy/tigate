@@ -195,9 +195,9 @@ func (e *eventStore) Run(ctx context.Context) error {
 		return e.gcManager.run(ctx, e.deleteEvents)
 	})
 
-	// eg.Go(func() error {
-	// 	return e.updateMetrics(ctx)
-	// })
+	eg.Go(func() error {
+		return e.updateMetrics(ctx)
+	})
 
 	return eg.Wait()
 }
