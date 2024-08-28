@@ -51,7 +51,7 @@ type regionRequestWorker struct {
 	preFetchForConnecting *regionInfo
 
 	// used to receive region requests from outside.
-	requestsCh chan *regionInfo
+	requestsCh chan regionInfo
 
 	// all regions maintained by this worker.
 	requestedRegions struct {
@@ -80,7 +80,7 @@ func newRegionRequestWorker(
 		workerID:   workerIDGen.Add(1),
 		client:     client,
 		store:      store,
-		requestsCh: make(chan *regionInfo, 256), // 256 is an arbitrary number.
+		requestsCh: make(chan regionInfo, 256), // 256 is an arbitrary number.
 
 		boolCache: make([]bool, len(client.changeEventProcessors)),
 	}
@@ -103,7 +103,8 @@ func newRegionRequestWorker(
 				return ctx.Err()
 			case region := <-worker.requestsCh:
 				if !region.isStoped() {
-					worker.preFetchForConnecting = region
+					worker.preFetchForConnecting = new(regionInfo)
+					*worker.preFetchForConnecting = region
 					return nil
 				}
 			}
@@ -243,18 +244,19 @@ func (s *regionRequestWorker) processRegionSendTask(
 		return nil
 	}
 
-	fetchMoreReq := func() (*regionInfo, error) {
+	fetchMoreReq := func() (regionInfo, error) {
 		for {
+			var region regionInfo
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
-			case region := <-s.requestsCh:
+				return region, ctx.Err()
+			case region = <-s.requestsCh:
 				return region, nil
 			}
 		}
 	}
 
-	region := s.preFetchForConnecting
+	region := *s.preFetchForConnecting
 	s.preFetchForConnecting = nil
 	for {
 		// TODO: can region be nil?
@@ -293,7 +295,6 @@ func (s *regionRequestWorker) processRegionSendTask(
 			state.start()
 			s.addRegionState(subID, region.verID.GetID(), state)
 
-			// region.acquireScanQuota(ctx, s.client.regionScanLimiter, s.store.storeID)
 			if err := doSend(s.createRegionRequest(region), subID); err != nil {
 				return err
 			}
@@ -306,7 +307,7 @@ func (s *regionRequestWorker) processRegionSendTask(
 	}
 }
 
-func (s *regionRequestWorker) createRegionRequest(region *regionInfo) *cdcpb.ChangeDataRequest {
+func (s *regionRequestWorker) createRegionRequest(region regionInfo) *cdcpb.ChangeDataRequest {
 	return &cdcpb.ChangeDataRequest{
 		Header:       &cdcpb.Header{ClusterId: s.client.clusterID, TicdcVersion: version.ReleaseSemver()},
 		RegionId:     region.verID.GetID(),
@@ -370,10 +371,10 @@ func (s *regionRequestWorker) clearRegionStates() map[subscriptionID]regionFeedS
 	return subscriptions
 }
 
-func (s *regionRequestWorker) clearPendingRegions() []*regionInfo {
-	regions := make([]*regionInfo, 0, len(s.requestsCh))
+func (s *regionRequestWorker) clearPendingRegions() []regionInfo {
+	regions := make([]regionInfo, 0, len(s.requestsCh))
 	if s.preFetchForConnecting != nil {
-		region := s.preFetchForConnecting
+		region := *s.preFetchForConnecting
 		s.preFetchForConnecting = nil
 		regions = append(regions, region)
 	}

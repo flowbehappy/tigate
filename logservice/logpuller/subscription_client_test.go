@@ -87,7 +87,7 @@ func newMockServiceSpecificAddr(
 
 func TestGenerateResolveLockTask(t *testing.T) {
 	client := &SubscriptionClient{
-		resolveLockTaskCh: make(chan *resolveLockTask, 10),
+		resolveLockTaskCh: make(chan resolveLockTask, 10),
 	}
 	rawSpan := heartbeatpb.TableSpan{
 		TableID:  1,
@@ -115,7 +115,7 @@ func TestGenerateResolveLockTask(t *testing.T) {
 	// Lock another range, no task will be triggered before initialized.
 	res = span.rangeLock.LockRange(context.Background(), []byte{'c'}, []byte{'d'}, 2, 100)
 	require.Equal(t, regionlock.LockRangeStatusSuccess, res.Status)
-	state := newRegionFeedState(&regionInfo{lockedRangeState: res.LockedRangeState, subscribedSpan: span}, 1)
+	state := newRegionFeedState(regionInfo{lockedRangeState: res.LockedRangeState, subscribedSpan: span}, 1)
 	client.ResolveLock(subscriptionID(1), 200)
 	select {
 	case task := <-client.resolveLockTaskCh:
