@@ -121,7 +121,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 
 	manager.wg.Add(1)
 	go manager.CollectHeartbeatInfoWhenStatesChanged(ctx)
-
+	manager.updateMetrics(ctx)
 	return manager
 }
 
@@ -368,14 +368,6 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	for _, id := range toReomveDispatcherIDs {
 		e.cleanTableEventDispatcher(id)
 	}
-	ckptTs := oracle.ExtractPhysical(message.Watermark.CheckpointTs)
-	e.metricCheckpointTs.Set(float64(ckptTs))
-	lag := (oracle.GetPhysical(time.Now()) - ckptTs) / 1e3
-	e.metricCheckpointTsLag.Set(float64(lag))
-	resolvedTs := oracle.ExtractPhysical(message.Watermark.ResolvedTs)
-	e.metricResolveTs.Set(float64(resolvedTs))
-	lag = (oracle.GetPhysical(time.Now()) - resolvedTs) / 1e3
-	e.metricResolvedTsLag.Set(float64(lag))
 	return &message
 }
 
@@ -405,6 +397,39 @@ func (e *EventDispatcherManager) GetStatusesChan() chan *heartbeatpb.TableSpanSt
 
 func (e *EventDispatcherManager) SetMaintainerID(maintainerID messaging.ServerId) {
 	e.maintainerID = maintainerID
+}
+
+func (e *EventDispatcherManager) updateMetrics(ctx context.Context) error {
+	ticker := time.NewTicker(10 * time.Second)
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				minResolvedTs := uint64(0)
+				e.dispatcherMap.m.Range(func(key, value interface{}) bool {
+					d, ok := value.(*dispatcher.Dispatcher)
+					if !ok {
+						return true
+					}
+					if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
+						minResolvedTs = d.GetResolvedTs()
+					}
+					return true
+				})
+				if minResolvedTs == 0 {
+					continue
+				}
+				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
+				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
+				e.metricResolvedTsLag.Set(float64(lag))
+			}
+		}
+	}()
+	return nil
 }
 
 // 测一下用 sync.Map 的效果和普通的 map 相比
