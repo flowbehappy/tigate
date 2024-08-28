@@ -183,21 +183,27 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 	}
 }
 
-func (d *Dispatcher) HandleEvent(event *common.TxnEvent) bool {
-	if event.IsDMLEvent() {
-		d.sink.AddDMLEvent(event, d.tableProgress)
-		return false
-	} else if event.IsDDLEvent() {
-		event.PostTxnFlushed = append(event.PostTxnFlushed, func() {
-			dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
-			dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
-		})
-		d.AddDDLEventToSinkWhenAvailable(event)
-		return true
-	} else {
-		d.resolvedTs.Set(event.ResolvedTs)
+func (d *Dispatcher) HandleEvent(event common.Event) bool {
+	switch event.GetType() {
+	case common.TypeTxnEvent:
+		event := event.(*common.TxnEvent)
+		if event.IsDMLEvent() {
+			d.sink.AddDMLEvent(event, d.tableProgress)
+			return false
+		} else if event.IsDDLEvent() {
+			event.PostTxnFlushed = append(event.PostTxnFlushed, func() {
+				dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
+				dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
+			})
+			d.AddDDLEventToSinkWhenAvailable(event)
+			return true
+		}
+	case common.TypeResolvedEvent:
+		d.resolvedTs.Set(event.(common.ResolvedEvent).ResolvedTs)
 		return false
 	}
+	log.Panic("invalid event type", zap.Any("event", event))
+	return false
 }
 
 // 1.If the event is a single table DDL, it will be added to the sink for writing to downstream(async). If the ddl leads to add new tables or drop tables, it should send heartbeat to maintainer

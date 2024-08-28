@@ -181,12 +181,12 @@ func (t *ResendTask) Cancel() {
 type DispatcherEventsHandler struct {
 }
 
-func (h *DispatcherEventsHandler) Path(event *common.TxnEvent) common.DispatcherID {
+func (h *DispatcherEventsHandler) Path(event common.Event) common.DispatcherID {
 	return event.GetDispatcherID()
 }
 
 // TODO: 这个后面需要按照更大的粒度进行攒批
-func (h *DispatcherEventsHandler) Handle(event *common.TxnEvent, dispatcher *Dispatcher) bool {
+func (h *DispatcherEventsHandler) Handle(event common.Event, dispatcher *Dispatcher) bool {
 	return dispatcher.HandleEvent(event)
 }
 
@@ -206,10 +206,10 @@ func SetDispatcherTaskScheduler(taskScheduler threadpool.ThreadPool) {
 	DispatcherTaskScheduler = taskScheduler
 }
 
-var dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]
+var dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher]
 var dispatcherEventsDynamicStreamOnce sync.Once
 
-func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher] {
+func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher] {
 	if dispatcherEventsDynamicStream == nil {
 		dispatcherEventsDynamicStreamOnce.Do(func() {
 			dispatcherEventsDynamicStream = dynstream.NewDynamicStreamDefault(&DispatcherEventsHandler{})
@@ -219,7 +219,7 @@ func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.Dispatche
 	return dispatcherEventsDynamicStream
 }
 
-func SetDispatcherEventsDynamicStream(dynamicStream dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *Dispatcher]) {
+func SetDispatcherEventsDynamicStream(dynamicStream dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher]) {
 	dispatcherEventsDynamicStream = dynamicStream
 }
 

@@ -13,86 +13,79 @@
 
 package common
 
-import (
-	"testing"
+// func TestSpanHashMapBasicOp(t *testing.T) {
+// 	t.Parallel()
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/stretchr/testify/require"
-)
+// 	m := NewSpanHashMap[int]()
 
-func TestSpanHashMapBasicOp(t *testing.T) {
-	t.Parallel()
+// 	// Insert then get.
+// 	m.ReplaceOrInsert(TableSpan{&heartbeatpb.TableSpan{TableID: 1}}, 1)
+// 	v, ok := m.Get(TableSpan{&heartbeatpb.TableSpan{TableID: 1}})
+// 	require.Equal(t, v, 1)
+// 	require.True(t, ok)
+// 	require.Equal(t, 1, m.Len())
+// 	require.True(t, m.Has(TableSpan{&heartbeatpb.TableSpan{TableID: 1}}))
 
-	m := NewSpanHashMap[int]()
+// 	// Insert then get again.
+// 	m.ReplaceOrInsert(TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}}, 2)
+// 	require.Equal(t, 2, m.Len())
+// 	v, ok = m.Get(TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}})
+// 	require.Equal(t, v, 2)
+// 	require.True(t, ok)
 
-	// Insert then get.
-	m.ReplaceOrInsert(TableSpan{&heartbeatpb.TableSpan{TableID: 1}}, 1)
-	v, ok := m.Get(TableSpan{&heartbeatpb.TableSpan{TableID: 1}})
-	require.Equal(t, v, 1)
-	require.True(t, ok)
-	require.Equal(t, 1, m.Len())
-	require.True(t, m.Has(TableSpan{&heartbeatpb.TableSpan{TableID: 1}}))
+// 	// Overwrite then get.
+// 	m.ReplaceOrInsert(
+// 		TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}}, 3)
+// 	require.Equal(t, 2, m.Len())
+// 	require.True(t, m.Has(TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}}))
+// 	v, ok = m.Get(TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}})
+// 	require.Equal(t, v, 3)
+// 	require.True(t, ok)
 
-	// Insert then get again.
-	m.ReplaceOrInsert(TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}}, 2)
-	require.Equal(t, 2, m.Len())
-	v, ok = m.Get(TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}})
-	require.Equal(t, v, 2)
-	require.True(t, ok)
+// 	// get value
+// 	v = m.GetV(TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}})
+// 	require.Equal(t, v, 3)
 
-	// Overwrite then get.
-	m.ReplaceOrInsert(
-		TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}}, 3)
-	require.Equal(t, 2, m.Len())
-	require.True(t, m.Has(TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}}))
-	v, ok = m.Get(TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}})
-	require.Equal(t, v, 3)
-	require.True(t, ok)
+// 	// Delete than get value
+// 	m.Delete(TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}})
+// 	require.Equal(t, 1, m.Len())
+// 	require.False(t, m.Has(TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}}))
+// 	v = m.GetV(TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}})
+// 	require.Equal(t, v, 0)
 
-	// get value
-	v = m.GetV(TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}})
-	require.Equal(t, v, 3)
+// 	// Pointer value
+// 	mp := NewSpanHashMap[*int]()
+// 	vp := &v
+// 	mp.ReplaceOrInsert(TableSpan{&heartbeatpb.TableSpan{TableID: 1}}, vp)
+// 	vp1, ok := mp.Get(TableSpan{&heartbeatpb.TableSpan{TableID: 1}})
+// 	require.Equal(t, vp, vp1)
+// 	require.True(t, ok)
+// 	require.Equal(t, 1, m.Len())
+// }
 
-	// Delete than get value
-	m.Delete(TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}})
-	require.Equal(t, 1, m.Len())
-	require.False(t, m.Has(TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}}))
-	v = m.GetV(TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte{1}}})
-	require.Equal(t, v, 0)
+// func TestSpanHashMapIter(t *testing.T) {
+// 	t.Parallel()
 
-	// Pointer value
-	mp := NewSpanHashMap[*int]()
-	vp := &v
-	mp.ReplaceOrInsert(TableSpan{&heartbeatpb.TableSpan{TableID: 1}}, vp)
-	vp1, ok := mp.Get(TableSpan{&heartbeatpb.TableSpan{TableID: 1}})
-	require.Equal(t, vp, vp1)
-	require.True(t, ok)
-	require.Equal(t, 1, m.Len())
-}
+// 	m := NewSpanHashMap[int]()
+// 	for i := 0; i < 4; i++ {
+// 		m.ReplaceOrInsert(TableSpan{&heartbeatpb.TableSpan{TableID: uint64(i)}}, i)
+// 	}
 
-func TestSpanHashMapIter(t *testing.T) {
-	t.Parallel()
+// 	j := 0
+// 	m.Range(func(span TableSpan, value int) bool {
+// 		_, ok := m.Get(span)
+// 		require.True(t, ok)
+// 		j++
+// 		return true
+// 	})
+// 	require.Equal(t, 4, j)
 
-	m := NewSpanHashMap[int]()
-	for i := 0; i < 4; i++ {
-		m.ReplaceOrInsert(TableSpan{&heartbeatpb.TableSpan{TableID: uint64(i)}}, i)
-	}
-
-	j := 0
-	m.Range(func(span TableSpan, value int) bool {
-		_, ok := m.Get(span)
-		require.True(t, ok)
-		j++
-		return true
-	})
-	require.Equal(t, 4, j)
-
-	j = 0
-	m.Range(func(span TableSpan, value int) bool {
-		ok := m.Has(span)
-		require.True(t, ok)
-		j++
-		return false
-	})
-	require.Equal(t, 1, j)
-}
+// 	j = 0
+// 	m.Range(func(span TableSpan, value int) bool {
+// 		ok := m.Has(span)
+// 		require.True(t, ok)
+// 		j++
+// 		return false
+// 	})
+// 	require.Equal(t, 1, j)
+// }

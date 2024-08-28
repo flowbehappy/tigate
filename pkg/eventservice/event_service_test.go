@@ -34,17 +34,13 @@ func (m *mockMessageCenter) OnNodeChanges(newNodes []*common.NodeInfo, removedNo
 
 }
 
-func (m *mockMessageCenter) SendEvent(event ...*messaging.TargetMessage) error {
-	for _, e := range event {
-		m.messageCh <- e
-	}
+func (m *mockMessageCenter) SendEvent(event *messaging.TargetMessage) error {
+	m.messageCh <- event
 	return nil
 }
 
-func (m *mockMessageCenter) SendCommand(command ...*messaging.TargetMessage) error {
-	for _, c := range command {
-		m.messageCh <- c
-	}
+func (m *mockMessageCenter) SendCommand(command *messaging.TargetMessage) error {
+	m.messageCh <- command
 	return nil
 }
 
@@ -369,14 +365,14 @@ func TestEventServiceBasic(t *testing.T) {
 	// receive events from msg center
 	for {
 		msg := <-mc.messageCh
-		txn := msg.Message.(*common.TxnEvent)
+		txn := msg.Message[0].(*common.TxnEvent)
 		if len(txn.Rows) == 0 {
 			log.Info("received watermark", zap.Uint64("ts", txn.ResolvedTs))
 			continue
 		}
 		require.NotNil(t, msg)
 		require.Equal(t, acceptorInfo.GetTopic(), msg.Topic)
-		require.Equal(t, expectedEvent, msg.Message.(*common.TxnEvent))
+		require.Equal(t, expectedEvent, msg.Message[0].(*common.TxnEvent))
 		return
 	}
 }
