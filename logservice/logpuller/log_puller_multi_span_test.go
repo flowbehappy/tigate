@@ -31,7 +31,7 @@ func newLogPullerMultiSpanForTest(spans []common.TableSpan, outputCh chan<- *com
 		ChangeEventProcessorNum:       2,
 		AdvanceResolvedTsIntervalInMs: 1,
 	}
-	client := NewSubscriptionClient(clientConfig, nil, nil, nil, nil, &security.Credential{})
+	client := NewSubscriptionClient("test", clientConfig, nil, nil, nil, nil, &security.Credential{})
 	consume := func(ctx context.Context, e *common.RawKVEntry) error {
 		select {
 		case <-ctx.Done():
