@@ -60,6 +60,7 @@ func newDDLJobFetcher(
 		AdvanceResolvedTsIntervalInMs: 300,
 	}
 	client := logpuller.NewSubscriptionClient(
+		"schemaStore",
 		clientConfig,
 		pdCli,
 		regionCache,

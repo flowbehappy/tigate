@@ -133,6 +133,8 @@ type SubscriptionClientConfig struct {
 // SubscriptionClient is used to subscribe events of table ranges from TiKV.
 // All exported Methods are thread-safe.
 type SubscriptionClient struct {
+	id subscriptionClientID
+
 	config     *SubscriptionClientConfig
 	clusterID  uint64
 	filterLoop bool
@@ -168,8 +170,11 @@ type SubscriptionClient struct {
 	consume func(ctx context.Context, e LogEvent) error
 }
 
+type subscriptionClientID string
+
 // NewSubscriptionClient creates a client.
 func NewSubscriptionClient(
+	id subscriptionClientID,
 	config *SubscriptionClientConfig,
 	pd pd.Client,
 	regionCache *tikv.RegionCache,
@@ -178,6 +183,7 @@ func NewSubscriptionClient(
 	credential *security.Credential,
 ) *SubscriptionClient {
 	s := &SubscriptionClient{
+		id:         id,
 		config:     config,
 		filterLoop: false, // FIXME
 
@@ -220,7 +226,8 @@ func (s *SubscriptionClient) Subscribe(subID SubscriptionID, span heartbeatpb.Ta
 
 	s.rangeTaskCh <- rangeTask{span: span, subscribedSpan: rt}
 	log.Info("subscribes span success",
-		zap.Any("subscriptionID", rt.subID),
+		zap.String("subscriptionClientID", string(s.id)),
+		zap.Uint64("subscriptionID", uint64(rt.subID)),
 		zap.String("span", rt.span.String()))
 }
 
@@ -236,7 +243,8 @@ func (s *SubscriptionClient) Unsubscribe(subID SubscriptionID) {
 	}
 
 	log.Info("unsubscribe span success",
-		zap.Any("subscriptionID", rt.subID),
+		zap.String("subscriptionClientID", string(s.id)),
+		zap.Uint64("subscriptionID", uint64(rt.subID)),
 		zap.Bool("exists", rt != nil))
 }
 
@@ -283,8 +291,8 @@ func (s *SubscriptionClient) Run(ctx context.Context, consume func(ctx context.C
 	g.Go(func() error { return s.handleResolveLockTasks(ctx) })
 	g.Go(func() error { return s.logSlowRegions(ctx) })
 
-	log.Info("subscription client starts")
-	defer log.Info("subscription client exits")
+	log.Info("subscription client starts", zap.String("subscriptionClientID", string(s.id)))
+	defer log.Info("subscription client exits", zap.String("subscriptionClientID", string(s.id)))
 	return g.Wait()
 }
 
@@ -297,7 +305,8 @@ func (s *SubscriptionClient) Close(ctx context.Context) error {
 
 func (s *SubscriptionClient) setTableStopped(rt *subscribedSpan) {
 	log.Info("subscription client starts to stop table",
-		zap.Any("subscriptionID", rt.subID))
+		zap.String("subscriptionClientID", string(s.id)),
+		zap.Uint64("subscriptionID", uint64(rt.subID)))
 
 	// Set stopped to true so we can stop handling region events from the table.
 	// Then send a special singleRegionInfo to regionRouter to deregister the table
@@ -312,7 +321,8 @@ func (s *SubscriptionClient) setTableStopped(rt *subscribedSpan) {
 
 func (s *SubscriptionClient) onTableDrained(rt *subscribedSpan) {
 	log.Info("subscription client stop span is finished",
-		zap.Any("subscriptionID", rt.subID))
+		zap.String("subscriptionClientID", string(s.id)),
+		zap.Uint64("subscriptionID", uint64(rt.subID)))
 
 	s.totalSpans.Lock()
 	defer s.totalSpans.Unlock()
@@ -405,7 +415,8 @@ func (s *SubscriptionClient) handleRegions(ctx context.Context, eg *errgroup.Gro
 
 			log.Debug("subscription client will request a region",
 				zap.Uint64("workID", worker.workerID),
-				zap.Any("subscriptionID", region.subscribedSpan.subID),
+				zap.String("subscriptionClientID", string(s.id)),
+				zap.Uint64("subscriptionID", uint64(region.subscribedSpan.subID)),
 				zap.Uint64("regionID", region.verID.GetID()),
 				zap.Uint64("storeID", store.storeID),
 				zap.String("addr", store.storeAddr))
@@ -422,7 +433,8 @@ func (s *SubscriptionClient) attachRPCContextForRegion(ctx context.Context, regi
 	}
 	if err != nil {
 		log.Debug("subscription client get rpc context fail",
-			zap.Any("subscriptionID", region.subscribedSpan.subID),
+			zap.String("subscriptionClientID", string(s.id)),
+			zap.Uint64("subscriptionID", uint64(region.subscribedSpan.subID)),
 			zap.Uint64("regionID", region.verID.GetID()),
 			zap.Error(err))
 	}
@@ -466,14 +478,16 @@ func (s *SubscriptionClient) divideSpanAndScheduleRegionRequests(
 			backoffBeforeLoad = false
 		}
 		log.Debug("subscription client is going to load regions",
-			zap.Any("subscriptionID", subscribedSpan.subID),
+			zap.String("subscriptionClientID", string(s.id)),
+			zap.Uint64("subscriptionID", uint64(subscribedSpan.subID)),
 			zap.Any("span", nextSpan))
 
 		backoff := tikv.NewBackoffer(ctx, tikvRequestMaxBackoff)
 		regions, err := s.regionCache.BatchLoadRegionsWithKeyRange(backoff, nextSpan.StartKey, nextSpan.EndKey, limit)
 		if err != nil {
 			log.Warn("subscription client load regions failed",
-				zap.Any("subscriptionID", subscribedSpan.subID),
+				zap.String("subscriptionClientID", string(s.id)),
+				zap.Uint64("subscriptionID", uint64(subscribedSpan.subID)),
 				zap.Any("span", nextSpan),
 				zap.Error(err))
 			backoffBeforeLoad = true
@@ -489,7 +503,8 @@ func (s *SubscriptionClient) divideSpanAndScheduleRegionRequests(
 		regionMetas = regionlock.CutRegionsLeftCoverSpan(regionMetas, nextSpan)
 		if len(regionMetas) == 0 {
 			log.Warn("subscription client load regions with holes",
-				zap.Any("subscriptionID", subscribedSpan.subID),
+				zap.String("subscriptionClientID", string(s.id)),
+				zap.Uint64("subscriptionID", uint64(subscribedSpan.subID)),
 				zap.Any("span", nextSpan))
 			backoffBeforeLoad = true
 			continue
@@ -509,7 +524,8 @@ func (s *SubscriptionClient) divideSpanAndScheduleRegionRequests(
 			intersectSpan := common.GetIntersectSpan(subscribedSpan.span, regionSpan)
 			if common.IsEmptySpan(intersectSpan) {
 				log.Panic("subscription client check spans intersect shouldn't fail",
-					zap.Any("subscriptionID", subscribedSpan.subID))
+					zap.String("subscriptionClientID", string(s.id)),
+					zap.Uint64("subscriptionID", uint64(subscribedSpan.subID)))
 			}
 
 			verID := tikv.NewRegionVerID(regionMeta.Id, regionMeta.RegionEpoch.ConfVer, regionMeta.RegionEpoch.Version)
@@ -622,7 +638,8 @@ func (s *SubscriptionClient) doHandleError(ctx context.Context, errInfo regionEr
 		}
 
 		log.Warn("empty or unknown cdc error",
-			zap.Any("subscriptionID", errInfo.subscribedSpan.subID),
+			zap.String("subscriptionClientID", string(s.id)),
+			zap.Uint64("subscriptionID", uint64(errInfo.subscribedSpan.subID)),
 			zap.Stringer("error", innerErr))
 		s.scheduleRegionRequest(ctx, errInfo.regionInfo)
 		return nil
@@ -637,7 +654,8 @@ func (s *SubscriptionClient) doHandleError(ctx context.Context, errInfo regionEr
 	default:
 		// TODO(qupeng): for some errors it's better to just deregister the region from TiKVs.
 		log.Warn("subscription client meets an internal error, fail the changefeed",
-			zap.Any("subscriptionID", errInfo.subscribedSpan.subID),
+			zap.String("subscriptionClientID", string(s.id)),
+			zap.Uint64("subscriptionID", uint64(errInfo.subscribedSpan.subID)),
 			zap.Error(err))
 		return err
 	}
@@ -671,6 +689,7 @@ func (s *SubscriptionClient) handleResolveLockTasks(ctx context.Context) error {
 
 		if err := s.lockResolver.Resolve(ctx, regionID, targetTs); err != nil {
 			log.Warn("subscription client resolve lock fail",
+				zap.String("subscriptionClientID", string(s.id)),
 				zap.Uint64("regionID", regionID),
 				zap.Error(err))
 		}
@@ -710,22 +729,26 @@ func (s *SubscriptionClient) logSlowRegions(ctx context.Context) error {
 			if attr.SlowestRegion.Initialized {
 				if currTime.Sub(ckptTime) > 2*resolveLockMinInterval {
 					log.Info("subscription client finds a initialized slow region",
-						zap.Any("subscriptionID", subscriptionID),
+						zap.String("subscriptionClientID", string(s.id)),
+						zap.Uint64("subscriptionID", uint64(subscriptionID)),
 						zap.Any("slowRegion", attr.SlowestRegion))
 				}
 			} else if currTime.Sub(attr.SlowestRegion.Created) > 10*time.Minute {
 				slowInitializeRegion += 1
 				log.Info("subscription client initializes a region too slow",
-					zap.Any("subscriptionID", subscriptionID),
+					zap.String("subscriptionClientID", string(s.id)),
+					zap.Uint64("subscriptionID", uint64(subscriptionID)),
 					zap.Any("slowRegion", attr.SlowestRegion))
 			} else if currTime.Sub(ckptTime) > 10*time.Minute {
 				log.Info("subscription client finds a uninitialized slow region",
-					zap.Any("subscriptionID", subscriptionID),
+					zap.String("subscriptionClientID", string(s.id)),
+					zap.Uint64("subscriptionID", uint64(subscriptionID)),
 					zap.Any("slowRegion", attr.SlowestRegion))
 			}
 			if len(attr.UnLockedRanges) > 0 {
 				log.Info("subscription client holes exist",
-					zap.Any("subscriptionID", subscriptionID),
+					zap.String("subscriptionClientID", string(s.id)),
+					zap.Uint64("subscriptionID", uint64(subscriptionID)),
 					zap.Any("holes", attr.UnLockedRanges))
 			}
 		}
