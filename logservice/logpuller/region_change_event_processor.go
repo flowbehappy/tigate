@@ -99,7 +99,7 @@ func (w *changeEventProcessor) handleSingleRegionError(ctx context.Context, stat
 			zap.Error(err))
 	}
 	if stepsToRemoved {
-		worker.takeRegionState(subscriptionID(state.requestID), state.getRegionID())
+		worker.takeRegionState(SubscriptionID(state.requestID), state.getRegionID())
 		w.client.onRegionFail(ctx, newRegionErrorInfo(state.getRegionInfo(), err))
 	}
 }

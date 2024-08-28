@@ -27,10 +27,9 @@ import (
 
 func newLogPullerMultiSpanForTest(spans []common.TableSpan, outputCh chan<- *common.RawKVEntry) *LogPullerMultiSpan {
 	clientConfig := &SubscriptionClientConfig{
-		RegionRequestWorkerPerStore:        1,
-		ChangeEventProcessorNum:            2,
-		AdvanceResolvedTsIntervalInMs:      1,
-		RegionIncrementalScanLimitPerStore: 100,
+		RegionRequestWorkerPerStore:   1,
+		ChangeEventProcessorNum:       2,
+		AdvanceResolvedTsIntervalInMs: 1,
 	}
 	client := NewSubscriptionClient(clientConfig, nil, nil, nil, nil, &security.Credential{})
 	consume := func(ctx context.Context, e *common.RawKVEntry) error {
@@ -84,7 +83,7 @@ func TestMultiplexingPullerResolvedForward(t *testing.T) {
 	}
 
 	allProgress := puller.innerPuller.getAllProgresses()
-	subIDs := make([]subscriptionID, 0, len(allProgress))
+	subIDs := make([]SubscriptionID, 0, len(allProgress))
 	for p := range allProgress {
 		subIDs = append(subIDs, p.subID)
 	}
@@ -97,7 +96,7 @@ func TestMultiplexingPullerResolvedForward(t *testing.T) {
 					CRTs:   uint64(1000 + i),
 				},
 			},
-			subscriptionID: subID,
+			SubscriptionID: subID,
 		})
 	}
 

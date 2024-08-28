@@ -94,16 +94,16 @@ func TestGenerateResolveLockTask(t *testing.T) {
 		StartKey: []byte{'a'},
 		EndKey:   []byte{'z'},
 	}
-	span := client.newSubscribedSpan(subscriptionID(1), rawSpan, 100)
-	client.totalSpans.spanMap = make(map[subscriptionID]*subscribedSpan)
-	client.totalSpans.spanMap[subscriptionID(1)] = span
+	span := client.newSubscribedSpan(SubscriptionID(1), rawSpan, 100)
+	client.totalSpans.spanMap = make(map[SubscriptionID]*subscribedSpan)
+	client.totalSpans.spanMap[SubscriptionID(1)] = span
 	client.pdClock = pdutil.NewClock4Test()
 
 	// Lock a range, and then ResolveLock will trigger a task for it.
 	res := span.rangeLock.LockRange(context.Background(), []byte{'b'}, []byte{'c'}, 1, 100)
 	require.Equal(t, regionlock.LockRangeStatusSuccess, res.Status)
 	res.LockedRangeState.Initialized.Store(true)
-	client.ResolveLock(subscriptionID(1), 200)
+	client.ResolveLock(SubscriptionID(1), 200)
 	select {
 	case task := <-client.resolveLockTaskCh:
 		require.Equal(t, uint64(1), task.regionID)
@@ -116,7 +116,7 @@ func TestGenerateResolveLockTask(t *testing.T) {
 	res = span.rangeLock.LockRange(context.Background(), []byte{'c'}, []byte{'d'}, 2, 100)
 	require.Equal(t, regionlock.LockRangeStatusSuccess, res.Status)
 	state := newRegionFeedState(regionInfo{lockedRangeState: res.LockedRangeState, subscribedSpan: span}, 1)
-	client.ResolveLock(subscriptionID(1), 200)
+	client.ResolveLock(SubscriptionID(1), 200)
 	select {
 	case task := <-client.resolveLockTaskCh:
 		require.Equal(t, uint64(1), task.regionID)
@@ -130,7 +130,7 @@ func TestGenerateResolveLockTask(t *testing.T) {
 
 	// Task will be triggered after initialized.
 	state.setInitialized()
-	client.ResolveLock(subscriptionID(1), 200)
+	client.ResolveLock(SubscriptionID(1), 200)
 	select {
 	case <-client.resolveLockTaskCh:
 	case <-time.After(100 * time.Millisecond):
@@ -174,10 +174,9 @@ func TestSubscriptionWithFailedTiKV(t *testing.T) {
 	cluster.Bootstrap(11, []uint64{1, 2, 3}, []uint64{4, 5, 6}, 6)
 
 	clientConfig := &SubscriptionClientConfig{
-		RegionRequestWorkerPerStore:        1,
-		ChangeEventProcessorNum:            2,
-		AdvanceResolvedTsIntervalInMs:      1, // must be small to pass the test
-		RegionIncrementalScanLimitPerStore: 100,
+		RegionRequestWorkerPerStore:   1,
+		ChangeEventProcessorNum:       2,
+		AdvanceResolvedTsIntervalInMs: 1, // must be small to pass the test
 	}
 	client := NewSubscriptionClient(
 		clientConfig,

@@ -174,7 +174,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						continue
 					}
 					//2. Get event iterator from eventStore.
-					iter, err := c.eventStore.GetIterator(task.dataRange)
+					iter, err := c.eventStore.GetIterator(dispatcherID, task.dataRange)
 					if err != nil {
 						log.Panic("read events failed", zap.Error(err))
 					}

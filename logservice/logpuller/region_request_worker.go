@@ -57,7 +57,7 @@ type regionRequestWorker struct {
 	requestedRegions struct {
 		sync.RWMutex
 
-		subscriptions map[subscriptionID]regionFeedStates
+		subscriptions map[SubscriptionID]regionFeedStates
 	}
 
 	tsBatches struct {
@@ -84,7 +84,7 @@ func newRegionRequestWorker(
 
 		boolCache: make([]bool, len(client.changeEventProcessors)),
 	}
-	worker.requestedRegions.subscriptions = make(map[subscriptionID]regionFeedStates)
+	worker.requestedRegions.subscriptions = make(map[SubscriptionID]regionFeedStates)
 	worker.tsBatches.events = make([]statefulEvent, len(client.changeEventProcessors))
 	for i := range worker.tsBatches.events {
 		worker.tsBatches.events[i].worker = worker
@@ -229,7 +229,7 @@ func (s *regionRequestWorker) processRegionSendTask(
 	ctx context.Context,
 	conn *ConnAndClient,
 ) error {
-	doSend := func(req *cdcpb.ChangeDataRequest, subscriptionID subscriptionID) error {
+	doSend := func(req *cdcpb.ChangeDataRequest, subscriptionID SubscriptionID) error {
 		if err := conn.Client.Send(req); err != nil {
 			log.Warn("region request worker send request to grpc stream failed",
 				zap.Uint64("workerID", s.workerID),
@@ -321,7 +321,7 @@ func (s *regionRequestWorker) createRegionRequest(region regionInfo) *cdcpb.Chan
 	}
 }
 
-func (s *regionRequestWorker) addRegionState(subscriptionID subscriptionID, regionID uint64, state *regionFeedState) {
+func (s *regionRequestWorker) addRegionState(subscriptionID SubscriptionID, regionID uint64, state *regionFeedState) {
 	s.requestedRegions.Lock()
 	defer s.requestedRegions.Unlock()
 	states := s.requestedRegions.subscriptions[subscriptionID]
@@ -332,7 +332,7 @@ func (s *regionRequestWorker) addRegionState(subscriptionID subscriptionID, regi
 	states[regionID] = state
 }
 
-func (s *regionRequestWorker) getRegionState(subscriptionID subscriptionID, regionID uint64) *regionFeedState {
+func (s *regionRequestWorker) getRegionState(subscriptionID SubscriptionID, regionID uint64) *regionFeedState {
 	s.requestedRegions.RLock()
 	defer s.requestedRegions.RUnlock()
 	if states, ok := s.requestedRegions.subscriptions[subscriptionID]; ok {
@@ -341,7 +341,7 @@ func (s *regionRequestWorker) getRegionState(subscriptionID subscriptionID, regi
 	return nil
 }
 
-func (s *regionRequestWorker) takeRegionState(subscriptionID subscriptionID, regionID uint64) *regionFeedState {
+func (s *regionRequestWorker) takeRegionState(subscriptionID SubscriptionID, regionID uint64) *regionFeedState {
 	s.requestedRegions.Lock()
 	defer s.requestedRegions.Unlock()
 	if states, ok := s.requestedRegions.subscriptions[subscriptionID]; ok {
@@ -355,7 +355,7 @@ func (s *regionRequestWorker) takeRegionState(subscriptionID subscriptionID, reg
 	return nil
 }
 
-func (s *regionRequestWorker) takeRegionStates(subscriptionID subscriptionID) regionFeedStates {
+func (s *regionRequestWorker) takeRegionStates(subscriptionID SubscriptionID) regionFeedStates {
 	s.requestedRegions.Lock()
 	defer s.requestedRegions.Unlock()
 	states := s.requestedRegions.subscriptions[subscriptionID]
@@ -363,11 +363,11 @@ func (s *regionRequestWorker) takeRegionStates(subscriptionID subscriptionID) re
 	return states
 }
 
-func (s *regionRequestWorker) clearRegionStates() map[subscriptionID]regionFeedStates {
+func (s *regionRequestWorker) clearRegionStates() map[SubscriptionID]regionFeedStates {
 	s.requestedRegions.Lock()
 	defer s.requestedRegions.Unlock()
 	subscriptions := s.requestedRegions.subscriptions
-	s.requestedRegions.subscriptions = make(map[subscriptionID]regionFeedStates)
+	s.requestedRegions.subscriptions = make(map[SubscriptionID]regionFeedStates)
 	return subscriptions
 }
 
@@ -388,7 +388,7 @@ func (s *regionRequestWorker) clearPendingRegions() []regionInfo {
 func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, events []*cdcpb.Event) error {
 	for _, event := range events {
 		regionID := event.RegionId
-		subscriptionID := subscriptionID(event.RequestId)
+		subscriptionID := SubscriptionID(event.RequestId)
 
 		state := s.getRegionState(subscriptionID, regionID)
 		switch x := event.Event.(type) {
@@ -419,7 +419,7 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 func (s *regionRequestWorker) dispatchResolvedTs(resolvedTs *cdcpb.ResolvedTs) error {
 	s.tsBatches.Lock()
 	defer s.tsBatches.Unlock()
-	subscriptionID := subscriptionID(resolvedTs.RequestId)
+	subscriptionID := SubscriptionID(resolvedTs.RequestId)
 	for i := range s.boolCache {
 		s.boolCache[i] = false
 	}
