@@ -293,6 +293,7 @@ func (s *SubscriptionClient) Run(ctx context.Context, consume func(ctx context.C
 // Close closes the client. Must be called after `Run` returns.
 func (s *SubscriptionClient) Close(ctx context.Context) error {
 	// FIXME: close and drain all channels
+
 	return nil
 }
 
@@ -560,8 +561,8 @@ func (s *SubscriptionClient) scheduleRangeRequest(
 	subscribedSpan *subscribedSpan,
 ) {
 	select {
-	case s.rangeTaskCh <- rangeTask{span: span, subscribedSpan: subscribedSpan}:
 	case <-ctx.Done():
+	case s.rangeTaskCh <- rangeTask{span: span, subscribedSpan: subscribedSpan}:
 	}
 }
 
