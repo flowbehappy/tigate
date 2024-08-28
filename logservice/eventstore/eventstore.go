@@ -397,12 +397,6 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableS
 	tableState.watermark.Store(uint64(startTS))
 	e.spans[dispatcherID] = tableState
 	e.mu.Unlock()
-	// realSpan := tablepb.Span{
-	// 	TableID:  tablepb.TableID(span.TableID),
-	// 	StartKey: span.StartKey,
-	// 	EndKey:   span.EndKey,
-	// }
-	// e.puller.Subscribe([]tablepb.Span{realSpan}, model.Ts(startTS), "", func(_ *model.RawKVEntry) bool { return false })
 	e.puller.Subscribe(span, startTS)
 	return nil
 }
@@ -432,12 +426,6 @@ func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) erro
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if tableStat, ok := e.spans[dispatcherID]; ok {
-		// realSpan := tablepb.Span{
-		// 	TableID:  tablepb.TableID(tableStat.span.TableID),
-		// 	StartKey: tableStat.span.StartKey,
-		// 	EndKey:   tableStat.span.EndKey,
-		// }
-		// e.puller.Unsubscribe([]tablepb.Span{realSpan})
 		// FIXME: do we need unlock before puller.Unsubscribe?
 		e.puller.Unsubscribe(tableStat.span)
 		e.tables.Delete(tableStat.span)

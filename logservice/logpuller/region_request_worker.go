@@ -293,7 +293,7 @@ func (s *regionRequestWorker) processRegionSendTask(
 			state.start()
 			s.addRegionState(subID, region.verID.GetID(), state)
 
-			region.acquireScanQuota(ctx, s.client.regionScanLimiter, s.store.storeID)
+			// region.acquireScanQuota(ctx, s.client.regionScanLimiter, s.store.storeID)
 			if err := doSend(s.createRegionRequest(region), subID); err != nil {
 				return err
 			}
