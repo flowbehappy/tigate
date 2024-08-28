@@ -27,7 +27,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-func newSubscriptionClientForTestRegionChangeEventProcessor(eventCh chan *LogEvent) *SubscriptionClient {
+func newSubscriptionClientForTestRegionChangeEventProcessor(eventCh chan LogEvent) *SubscriptionClient {
 	// only requires `SubscriptionClient.onRegionFail`.
 	clientConfig := &SubscriptionClientConfig{
 		RegionRequestWorkerPerStore:        1,
@@ -36,7 +36,7 @@ func newSubscriptionClientForTestRegionChangeEventProcessor(eventCh chan *LogEve
 		RegionIncrementalScanLimitPerStore: 100,
 	}
 	client := NewSubscriptionClient(clientConfig, nil, nil, nil, nil, &security.Credential{})
-	client.consume = func(ctx context.Context, e *LogEvent) error {
+	client.consume = func(ctx context.Context, e LogEvent) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -67,7 +67,7 @@ func newSubscriptionClientForTestRegionChangeEventProcessor(eventCh chan *LogEve
 func TestHandleEventEntryEventOutOfOrder(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	eventCh := make(chan *LogEvent, 2)
+	eventCh := make(chan LogEvent, 2)
 	client := newSubscriptionClientForTestRegionChangeEventProcessor(eventCh)
 
 	defer client.Close(ctx)
@@ -177,7 +177,7 @@ func TestHandleEventEntryEventOutOfOrder(t *testing.T) {
 func TestHandleResolvedTs(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	eventCh := make(chan *LogEvent, 2)
+	eventCh := make(chan LogEvent, 2)
 	client := newSubscriptionClientForTestRegionChangeEventProcessor(eventCh)
 	defer client.Close(ctx)
 

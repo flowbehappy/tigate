@@ -202,8 +202,8 @@ func TestSubscriptionWithFailedTiKV(t *testing.T) {
 	}()
 
 	wg.Add(1)
-	consumeCh := make(chan *LogEvent, 50)
-	consumeLogEvent := func(ctx context.Context, e *LogEvent) error {
+	consumeCh := make(chan LogEvent, 50)
+	consumeLogEvent := func(ctx context.Context, e LogEvent) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

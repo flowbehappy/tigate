@@ -90,7 +90,7 @@ func TestMultiplexingPullerResolvedForward(t *testing.T) {
 	}
 	require.Equal(t, 2, len(subIDs))
 	for i, subID := range subIDs {
-		puller.innerPuller.client.consume(ctx, &LogEvent{
+		puller.innerPuller.client.consume(ctx, LogEvent{
 			regionFeedEvent: regionFeedEvent{
 				Val: &common.RawKVEntry{
 					OpType: common.OpTypeResolved,

@@ -102,7 +102,7 @@ func NewLogPuller(
 func (p *LogPuller) Run(ctx context.Context) (err error) {
 	eg, ctx := errgroup.WithContext(ctx)
 
-	consumeLogEvent := func(ctx context.Context, e *LogEvent) error {
+	consumeLogEvent := func(ctx context.Context, e LogEvent) error {
 		progress := p.getProgress(e.subscriptionID)
 		// There is a chance that some stale events are received after
 		// the subscription is removed. We can just ignore them.
