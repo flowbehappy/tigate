@@ -84,9 +84,9 @@ type Dispatcher struct {
 	checkTableProgressEmptyTask *CheckProgressEmptyTask
 }
 
-func NewDispatcher(tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter) *Dispatcher {
+func NewDispatcher(id common.DispatcherID, tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter) *Dispatcher {
 	dispatcher := &Dispatcher{
-		id:           common.NewDispatcherID(),
+		id:           id,
 		tableSpan:    tableSpan,
 		sink:         sink,
 		statusesChan: statusesChan,
@@ -146,13 +146,12 @@ func (d *Dispatcher) AddDDLEventToSinkWhenAvailable(event *common.TxnEvent) {
 // If we get a dispatcher action, we need to check whether the action is for the current pending ddl event. If so, we can deal the ddl event based on the action.
 // 1. If the action is a write, we need to add the ddl event to the sink for writing to downstream(async).
 // 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and wake the dispatcherEventsHandler
-func (d *Dispatcher) HandleDispatcherStatus(statusWithId DispatcherStatusWithID) {
-	dispatcherStatus := statusWithId.GetDispatcherStatus()
+func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.DispatcherStatus) {
 	if d.ddlPendingEvent == nil {
 		if dispatcherStatus.GetAction() != nil {
 			// 只可能出现在 event 已经推进了，但是还重复收到了 action 消息的时候，则重发包含 checkpointTs 的心跳
 			d.statusesChan <- &heartbeatpb.TableSpanStatus{
-				Span:            d.tableSpan.TableSpan,
+				ID:              d.id.ToPB(),
 				ComponentStatus: heartbeatpb.ComponentState_Working,
 				CheckpointTs:    d.GetCheckpointTs(),
 			}
@@ -171,7 +170,7 @@ func (d *Dispatcher) HandleDispatcherStatus(statusWithId DispatcherStatusWithID)
 				dispatcherEventDynamicStream.Wake() <- d.id
 			}
 			d.statusesChan <- &heartbeatpb.TableSpanStatus{
-				Span:            d.tableSpan.TableSpan,
+				ID:              d.id.ToPB(),
 				ComponentStatus: heartbeatpb.ComponentState_Working,
 				CheckpointTs:    d.GetCheckpointTs(),
 			}
@@ -207,21 +206,35 @@ func (d *Dispatcher) HandleEvent(event common.Event) bool {
 	return false
 }
 
-// 1.If the event is a single table DDL, it will be added to the sink for writing to downstream(async).
+// 1.If the event is a single table DDL, it will be added to the sink for writing to downstream(async). If the ddl leads to add new tables or drop tables, it should send heartbeat to maintainer
 // 2. If the event is a multi-table DDL, it will generate a TableSpanStatus message with ddl info to send to maintainer.
 func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 	if d.ddlPendingEvent.IsSingleTableDDL() {
 		d.sink.AddDDLAndSyncPointEvent(d.ddlPendingEvent, d.tableProgress)
+		if d.ddlPendingEvent.GetNeedAddedTableSpan() != nil || d.ddlPendingEvent.GetNeedDroppedDispatcherIDs() != nil {
+			message := &heartbeatpb.TableSpanStatus{
+				ID:              d.id.ToPB(),
+				ComponentStatus: heartbeatpb.ComponentState_Working,
+				State: &heartbeatpb.State{
+					IsBlocked:                false,
+					BlockTs:                  d.ddlPendingEvent.CommitTs,
+					NeedDroppedDispatcherIDs: d.ddlPendingEvent.GetNeedDroppedDispatcherIDs(),
+					NeedAddedTableSpan:       d.ddlPendingEvent.GetNeedAddedTableSpan(),
+				},
+			}
+			d.SetResendTask(newResendTask(message, d))
+			d.statusesChan <- message
+		}
 	} else {
 		message := &heartbeatpb.TableSpanStatus{
-			Span:            d.tableSpan.TableSpan,
+			ID:              d.id.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			State: &heartbeatpb.State{
-				IsBlocked:            true,
-				BlockTs:              d.ddlPendingEvent.CommitTs,
-				BlockTableSpan:       d.ddlPendingEvent.GetBlockedTableSpan(), // 这个包含自己的 span 是不是也无所谓，不然就要剔除掉
-				NeedDroppedTableSpan: d.ddlPendingEvent.GetNeedDroppedTableSpan(),
-				NeedAddedTableSpan:   d.ddlPendingEvent.GetNeedAddedTableSpan(),
+				IsBlocked:                true,
+				BlockTs:                  d.ddlPendingEvent.CommitTs,
+				BlockDispatcherIDs:       d.ddlPendingEvent.GetBlockedDispatcherIDs(),
+				NeedDroppedDispatcherIDs: d.ddlPendingEvent.GetNeedDroppedDispatcherIDs(),
+				NeedAddedTableSpan:       d.ddlPendingEvent.GetNeedAddedTableSpan(),
 			},
 		}
 		d.SetResendTask(newResendTask(message, d))

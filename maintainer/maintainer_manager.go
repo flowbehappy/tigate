@@ -66,7 +66,7 @@ func NewMaintainerManager(selfNode *common.NodeInfo) *Manager {
 		msgCh:         make(chan *messaging.TargetMessage, 1024),
 		taskScheduler: threadpool.NewThreadPoolDefault(),
 	}
-	m.stream = dynstream.NewDynamicStreamDefault[string, *Event, *Maintainer](&StreamHandler{})
+	m.stream = dynstream.NewDynamicStreamDefault[string, *Event, *Maintainer](NewStreamHandler())
 	m.stream.Start()
 	mc.RegisterHandler(messaging.MaintainerManagerTopic, m.RecvMessages)
 

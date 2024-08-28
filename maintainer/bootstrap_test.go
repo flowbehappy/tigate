@@ -14,13 +14,14 @@
 package maintainer
 
 import (
+	"testing"
+	"time"
+
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/stretchr/testify/require"
-	"testing"
-	"time"
 )
 
 func TestHandleBootstrapResponse(t *testing.T) {
@@ -34,7 +35,7 @@ func TestHandleBootstrapResponse(t *testing.T) {
 		"ef",
 		&heartbeatpb.MaintainerBootstrapResponse{
 			ChangefeedID: "cf",
-			Statuses:     []*heartbeatpb.TableSpanStatus{{}},
+			Spans:        []*heartbeatpb.BootstrapTableSpan{{}},
 		})
 	require.Nil(t, cached)
 
@@ -43,7 +44,7 @@ func TestHandleBootstrapResponse(t *testing.T) {
 		"ab",
 		&heartbeatpb.MaintainerBootstrapResponse{
 			ChangefeedID: "cf",
-			Statuses:     []*heartbeatpb.TableSpanStatus{{}},
+			Spans:        []*heartbeatpb.BootstrapTableSpan{{}},
 		})
 	require.Nil(t, cached)
 	// all node bootstrapped
@@ -51,11 +52,11 @@ func TestHandleBootstrapResponse(t *testing.T) {
 		"cd",
 		&heartbeatpb.MaintainerBootstrapResponse{
 			ChangefeedID: "cf",
-			Statuses:     []*heartbeatpb.TableSpanStatus{{}, {}},
+			Spans:        []*heartbeatpb.BootstrapTableSpan{{}, {}},
 		})
 	require.NotNil(t, cached)
-	require.Equal(t, 1, len(cached["ab"].Statuses))
-	require.Equal(t, 2, len(cached["cd"].Statuses))
+	require.Equal(t, 1, len(cached["ab"].Spans))
+	require.Equal(t, 2, len(cached["cd"].Spans))
 	require.True(t, b.CheckAllNodeInitialized())
 }
 
@@ -87,11 +88,11 @@ func TestHandleRemoveNodes(t *testing.T) {
 		"ab",
 		&heartbeatpb.MaintainerBootstrapResponse{
 			ChangefeedID: "cf",
-			Statuses:     []*heartbeatpb.TableSpanStatus{{}, {}},
+			Spans:        []*heartbeatpb.BootstrapTableSpan{{}, {}},
 		})
 	require.Nil(t, cached)
 	cached = b.HandleRemoveNodes([]string{"cd"})
-	require.Equal(t, 2, len(cached["ab"].Statuses))
+	require.Equal(t, 2, len(cached["ab"].Spans))
 	require.True(t, b.CheckAllNodeInitialized())
 }
 
@@ -129,7 +130,7 @@ func TestCheckAllNodeInitialized(t *testing.T) {
 		"ab",
 		&heartbeatpb.MaintainerBootstrapResponse{
 			ChangefeedID: "cf",
-			Statuses:     []*heartbeatpb.TableSpanStatus{{}},
+			Spans:        []*heartbeatpb.BootstrapTableSpan{{}},
 		})
 	require.True(t, b.CheckAllNodeInitialized())
 }

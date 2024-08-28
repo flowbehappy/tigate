@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/utils"
 	"github.com/flowbehappy/tigate/utils/dynstream"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -243,12 +244,13 @@ func (m *Maintainer) initialize() error {
 			StartKey: span.StartKey,
 			EndKey:   span.EndKey,
 		}}
-		replicaSet := NewReplicaSet(m.id, tableSpan, m.watermark.CheckpointTs).(*ReplicaSet)
-		stm, err := scheduler.NewStateMachine(tableSpan, nil, replicaSet)
+		dispatcherID := common.NewDispatcherID()
+		replicaSet := NewReplicaSet(m.id, dispatcherID, tableSpan, m.watermark.CheckpointTs).(*ReplicaSet)
+		stm, err := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		m.scheduler.AddNewTask(stm)
+		m.scheduler.AddTempTask(tableSpan, stm)
 	}
 	log.Info("changefeed maintainer initialized",
 		zap.String("id", m.id.String()))
@@ -489,34 +491,38 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.M
 		zap.String("changefeed", m.id.ID),
 		zap.Int("size", len(cachedResp)))
 	var status scheduler.InferiorStatus
+	workingMap := utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
 	for server, bootstrapMsg := range cachedResp {
-		for _, info := range bootstrapMsg.Statuses {
-			status = &ReplicaSetStatus{
-				ID: &common.TableSpan{
-					TableSpan: info.Span,
-				},
+		log.Info("received bootstrap response",
+			zap.String("changefeed", m.id.ID),
+			zap.String("server", server),
+			zap.Int("size", len(bootstrapMsg.Spans)))
+		for _, info := range bootstrapMsg.Spans {
+			dispatcherID := common.NewDispatcherIDFromPB(info.ID)
+			status = ReplicaSetStatus{
+				ID:           dispatcherID,
 				State:        info.ComponentStatus,
 				CheckpointTs: info.CheckpointTs,
 			}
-			stm, err := scheduler.NewStateMachine(status.GetInferiorID(),
+			span := &common.TableSpan{TableSpan: info.Span}
+			stm, err := scheduler.NewStateMachine(dispatcherID,
 				map[model.CaptureID]scheduler.InferiorStatus{server: status},
-				NewReplicaSet(m.id, status.GetInferiorID(), info.CheckpointTs))
+				NewReplicaSet(m.id, dispatcherID, span, info.CheckpointTs))
 			if err != nil {
 				return errors.Trace(err)
 			}
 
 			//working on remote, the state must be absent or working since it's reported by remote
-			if stm.State == scheduler.SchedulerStatusAbsent {
-				m.scheduler.AddNewTask(stm)
-			} else if stm.State == scheduler.SchedulerStatusWorking {
-				m.scheduler.AddWorkingTask(stm)
-			} else {
+			if stm.State == scheduler.SchedulerStatusWorking {
+				workingMap.ReplaceOrInsert(span, stm)
+			} else if stm.State != scheduler.SchedulerStatusAbsent {
 				log.Panic("unexpected state",
 					zap.String("id", m.id.ID),
 					zap.Any("state", stm.State))
 			}
 		}
 	}
+	m.scheduler.FinishBootstrap(workingMap)
 	return errors.Trace(m.onScheduleTableSpan())
 }
 

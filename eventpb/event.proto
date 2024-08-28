@@ -53,13 +53,13 @@ message TableInfo {
 message EventFeed {
     repeated TxnEvent txn_events = 1; // 包含多个 txn events
     uint64 resolved_ts = 2; // 跟上述 event 同时出现 -- 就是标记目前达成的 resolvedTs
-    DispatcherID dispatcher_id = 3; // 表示这个 event 是 对应哪个 dispatcher 的
+    heartbeatpb.DispatcherID dispatcher_id = 3; // 表示这个 event 是 对应哪个 dispatcher 的
     float ratio = 4; // 表示这个 event 应该被发送到哪个 dispatcher 的 ratio
     TableInfo table_info = 5; // 包含 table 相关信息，包括表名，主键，列名等
 }
 
 message RegisterDispatcherRequest {
-    DispatcherID dispatcher_id = 1;
+    heartbeatpb.DispatcherID dispatcher_id = 1;
     heartbeatpb.TableSpan table_span = 2;
     uint64 start_ts = 3;
     string server_id = 4;
@@ -67,10 +67,4 @@ message RegisterDispatcherRequest {
     string namespace = 6;
     string changefeed_id = 7;
     FilterConfig filter_config = 8;
-}
-
-
-message DispatcherID {
-    uint64 high = 1;
-    uint64 low = 2;
 }

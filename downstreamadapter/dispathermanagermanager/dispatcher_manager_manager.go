@@ -58,7 +58,6 @@ func (m *DispatcherManagerManager) RecvMaintainerRequest(ctx context.Context, ms
 
 func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.ServerId, maintainerBootstrapRequest *heartbeatpb.MaintainerBootstrapRequest) error {
 	cfId := model.DefaultChangeFeedID(maintainerBootstrapRequest.ChangefeedID)
-	createTableTriggerEventDispatcher := maintainerBootstrapRequest.GetCreateTableTriggerEventDispatcher()
 	manager, ok := m.dispatcherManagers[cfId]
 	if !ok {
 		// TODO: decode config
@@ -71,13 +70,13 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 			return err
 		}
 		// TODO: 这边额外判断一下创建是否失败，创建失败的话，想一下怎么做报错处理
-		manager := dispatchermanager.NewEventDispatcherManager(cfId, cfConfig, from, createTableTriggerEventDispatcher)
+		manager := dispatchermanager.NewEventDispatcherManager(cfId, cfConfig, from)
 		m.dispatcherManagers[cfId] = manager
 		metrics.EventDispatcherManagerGauge.WithLabelValues(cfId.Namespace, cfId.ID).Inc()
 
 		response := &heartbeatpb.MaintainerBootstrapResponse{
 			ChangefeedID: maintainerBootstrapRequest.ChangefeedID,
-			Statuses:     make([]*heartbeatpb.TableSpanStatus, 0),
+			Spans:        make([]*heartbeatpb.BootstrapTableSpan, 0),
 		}
 
 		err = appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(
@@ -101,13 +100,14 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 	}
 	response := &heartbeatpb.MaintainerBootstrapResponse{
 		ChangefeedID: maintainerBootstrapRequest.ChangefeedID,
-		Statuses:     make([]*heartbeatpb.TableSpanStatus, 0, manager.GetDispatcherMap().Len()),
+		Spans:        make([]*heartbeatpb.BootstrapTableSpan, 0, manager.GetDispatcherMap().Len()),
 	}
-	manager.GetDispatcherMap().ForEach(func(tableSpan *common.TableSpan, tableEventDispatcher *dispatcher.Dispatcher) {
-		response.Statuses = append(response.Statuses, &heartbeatpb.TableSpanStatus{
+	manager.GetDispatcherMap().ForEach(func(id common.DispatcherID, tableEventDispatcher *dispatcher.Dispatcher) {
+		response.Spans = append(response.Spans, &heartbeatpb.BootstrapTableSpan{
+			ID:              id.ToPB(),
 			Span:            tableEventDispatcher.GetTableSpan().TableSpan,
 			ComponentStatus: tableEventDispatcher.GetComponentStatus(),
-			CheckpointTs:    0,
+			CheckpointTs:    tableEventDispatcher.GetCheckpointTs(),
 		})
 	})
 	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(

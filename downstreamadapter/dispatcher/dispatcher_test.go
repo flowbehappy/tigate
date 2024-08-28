@@ -38,10 +38,6 @@ func newTestMockDB(t *testing.T) (db *sql.DB, mock sqlmock.Sqlmock) {
 	return
 }
 
-func teardown() {
-	GetDispatcherTaskScheduler().Stop()
-}
-
 // BasicDispatcher with normal dml cases
 func TestBasicDispatcher(t *testing.T) {
 	db, mock := newTestMockDB(t)
@@ -54,7 +50,7 @@ func TestBasicDispatcher(t *testing.T) {
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
 	filter, _ := filter.NewFilter(&config.ReplicaConfig{Filter: &config.FilterConfig{}}, "")
 
-	dispatcher := NewDispatcher(tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter)
+	dispatcher := NewDispatcher(common.NewDispatcherID(), tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter)
 
 	dispatcherEventsDynamicStream := GetDispatcherEventsDynamicStream()
 
@@ -140,7 +136,7 @@ func TestDispatcherWithSingleTableDDL(t *testing.T) {
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
 	filter, _ := filter.NewFilter(&config.ReplicaConfig{Filter: &config.FilterConfig{}}, "")
 
-	dispatcher := NewDispatcher(tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter)
+	dispatcher := NewDispatcher(common.NewDispatcherID(), tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter)
 
 	dispatcherEventsDynamicStream := GetDispatcherEventsDynamicStream()
 	dispatcherEventsDynamicStream.In() <- &common.TxnEvent{
@@ -175,14 +171,13 @@ func TestDispatcherWithSingleTableDDL(t *testing.T) {
 }
 
 func TestDispatcherWithCrossTableDDL(t *testing.T) {
-	defer teardown()
 	db, mock := newTestMockDB(t)
 	defer db.Close()
 
 	mock.ExpectBegin()
 	mock.ExpectExec("USE `test_schema`;").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec("Create table `test_schema`.`test_table` (id int primary key, name varchar(255))").
+	mock.ExpectExec("DROP TABLE `test_schema`.`test_table`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
@@ -193,7 +188,7 @@ func TestDispatcherWithCrossTableDDL(t *testing.T) {
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
 	filter, _ := filter.NewFilter(&config.ReplicaConfig{Filter: &config.FilterConfig{}}, "")
 
-	dispatcher := NewDispatcher(tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter)
+	dispatcher := NewDispatcher(common.NewDispatcherID(), tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter)
 
 	dispatcherEventsDynamicStream := GetDispatcherEventsDynamicStream()
 	dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
@@ -203,10 +198,10 @@ func TestDispatcherWithCrossTableDDL(t *testing.T) {
 		CommitTs: 102,
 		DDLEvent: &common.DDLEvent{
 			Job: &timodel.Job{
-				Type:       timodel.ActionCreateTable,
+				Type:       timodel.ActionDropTable,
 				SchemaName: "test_schema",
 				TableName:  "test_table",
-				Query:      "Create table `test_schema`.`test_table` (id int primary key, name varchar(255))",
+				Query:      "DROP TABLE `test_schema`.`test_table`",
 			},
 			CommitTS: 102,
 		},
@@ -218,12 +213,10 @@ func TestDispatcherWithCrossTableDDL(t *testing.T) {
 
 	require.NotEqual(t, dispatcher.ddlPendingEvent, nil)
 
-	dispatcherStatusDynamicStream.In() <- DispatcherStatusWithID{
-		id: dispatcher.id,
-		status: &heartbeatpb.DispatcherStatus{
-			Ack:    &heartbeatpb.ACK{CommitTs: 102},
-			Action: &heartbeatpb.DispatcherAction{Action: heartbeatpb.Action_Write, CommitTs: 102},
-		},
+	dispatcherStatusDynamicStream.In() <- &heartbeatpb.DispatcherStatus{
+		ID:     dispatcher.id.ToPB(),
+		Ack:    &heartbeatpb.ACK{CommitTs: 102},
+		Action: &heartbeatpb.DispatcherAction{Action: heartbeatpb.Action_Write, CommitTs: 102},
 	}
 
 	time.Sleep(10 * time.Millisecond)
@@ -237,14 +230,13 @@ func TestDispatcherWithCrossTableDDL(t *testing.T) {
 }
 
 func TestDispatcherWithCrossTableDDLAndDML(t *testing.T) {
-	//defer teardown()
 	db, mock := newTestMockDB(t)
 	defer db.Close()
 
 	mock.ExpectBegin()
 	mock.ExpectExec("USE `test_schema`;").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec("Create table `test_schema`.`test_table` (id int primary key, name varchar(255))").
+	mock.ExpectExec("DROP TABLE `test_schema`.`test_table`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
@@ -261,7 +253,7 @@ func TestDispatcherWithCrossTableDDLAndDML(t *testing.T) {
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
 	filter, _ := filter.NewFilter(&config.ReplicaConfig{Filter: &config.FilterConfig{}}, "")
 
-	dispatcher := NewDispatcher(tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter)
+	dispatcher := NewDispatcher(common.NewDispatcherID(), tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter)
 
 	dispatcherEventsDynamicStream := GetDispatcherEventsDynamicStream()
 	dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
@@ -271,10 +263,10 @@ func TestDispatcherWithCrossTableDDLAndDML(t *testing.T) {
 		CommitTs: 102,
 		DDLEvent: &common.DDLEvent{
 			Job: &timodel.Job{
-				Type:       timodel.ActionCreateTable,
+				Type:       timodel.ActionDropTable,
 				SchemaName: "test_schema",
 				TableName:  "test_table",
-				Query:      "Create table `test_schema`.`test_table` (id int primary key, name varchar(255))",
+				Query:      "DROP TABLE `test_schema`.`test_table`",
 			},
 			CommitTS: 102,
 		},
@@ -313,12 +305,10 @@ func TestDispatcherWithCrossTableDDLAndDML(t *testing.T) {
 	dispatcher.CollectDispatcherHeartBeatInfo(heartBeatInfo)
 	require.Equal(t, uint64(100), heartBeatInfo.CheckpointTs)
 
-	dispatcherStatusDynamicStream.In() <- DispatcherStatusWithID{
-		id: dispatcher.id,
-		status: &heartbeatpb.DispatcherStatus{
-			Ack:    &heartbeatpb.ACK{CommitTs: 102},
-			Action: &heartbeatpb.DispatcherAction{Action: heartbeatpb.Action_Write, CommitTs: 102},
-		},
+	dispatcherStatusDynamicStream.In() <- &heartbeatpb.DispatcherStatus{
+		ID:     dispatcher.id.ToPB(),
+		Ack:    &heartbeatpb.ACK{CommitTs: 102},
+		Action: &heartbeatpb.DispatcherAction{Action: heartbeatpb.Action_Write, CommitTs: 102},
 	}
 
 	time.Sleep(30 * time.Millisecond)
@@ -330,9 +320,9 @@ func TestDispatcherWithCrossTableDDLAndDML(t *testing.T) {
 	require.Equal(t, uint64(104), heartBeatInfo.CheckpointTs)
 }
 
-func mockMaintainerResponse(statusChan chan *heartbeatpb.TableSpanStatus, tableSpanToDispatcherIDMap map[uint64]common.DispatcherID) {
+func mockMaintainerResponse(statusChan chan *heartbeatpb.TableSpanStatus) {
 	dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
-	tsMap := make(map[uint64]uint64)
+	tsMap := make(map[common.DispatcherID]uint64)
 	finishCommitTs := uint64(0)
 	for {
 		select {
@@ -341,51 +331,41 @@ func mockMaintainerResponse(statusChan chan *heartbeatpb.TableSpanStatus, tableS
 				continue
 			}
 			if msg.State.IsBlocked {
-				response := DispatcherStatusWithID{
-					id: tableSpanToDispatcherIDMap[msg.Span.TableID],
-					status: &heartbeatpb.DispatcherStatus{
-						Ack:  &heartbeatpb.ACK{CommitTs: msg.State.BlockTs},
-						Span: msg.Span,
-					},
+				response := &heartbeatpb.DispatcherStatus{
+					ID:  msg.ID,
+					Ack: &heartbeatpb.ACK{CommitTs: msg.State.BlockTs},
 				}
 				if msg.State.BlockTs <= finishCommitTs {
 					continue
 				}
-				if msg.State.GetBlockTableSpan() == nil {
-					response.status.Action = &heartbeatpb.DispatcherAction{
-						Action:   heartbeatpb.Action_Write,
-						CommitTs: msg.State.BlockTs,
-					}
-					dispatcherStatusDynamicStream.In() <- response
+				if msg.State.GetBlockDispatcherIDs() == nil {
+					log.Error("BlockDispatcherIDs is nil, but is blocked is true")
 				} else {
-					tsMap[msg.Span.TableID] = msg.State.BlockTs
-					blockedTableSpan := msg.State.GetBlockTableSpan()
+					tsMap[common.NewDispatcherIDFromPB(msg.ID)] = msg.State.BlockTs
+					BlockedDispatcherIDs := msg.State.GetBlockDispatcherIDs()
 					flag := true
-					for _, span := range blockedTableSpan {
-						if tsMap[span.TableID] < msg.State.BlockTs {
+					for _, dispatcherID := range BlockedDispatcherIDs {
+						if tsMap[common.NewDispatcherIDFromPB(dispatcherID)] < msg.State.BlockTs {
 							flag = false
 							break
 						}
 					}
 					if flag {
 						finishCommitTs = msg.State.BlockTs
-						response.status.Action = &heartbeatpb.DispatcherAction{
+						response.Action = &heartbeatpb.DispatcherAction{
 							Action:   heartbeatpb.Action_Write,
 							CommitTs: msg.State.BlockTs,
 						}
 						log.Info("Send Write Action to Dispatcher", zap.Any("commitTs", msg.State.BlockTs))
 						dispatcherStatusDynamicStream.In() <- response
 						// 同时通知相关的其他 span
-						for _, span := range blockedTableSpan {
-							if span.TableID != msg.Span.TableID {
-								dispatcherStatusDynamicStream.In() <- DispatcherStatusWithID{
-									id: tableSpanToDispatcherIDMap[span.TableID],
-									status: &heartbeatpb.DispatcherStatus{
-										Span: msg.Span,
-										Action: &heartbeatpb.DispatcherAction{
-											Action:   heartbeatpb.Action_Pass,
-											CommitTs: msg.State.BlockTs,
-										},
+						for _, dispatcherID := range BlockedDispatcherIDs {
+							if dispatcherID != msg.ID {
+								dispatcherStatusDynamicStream.In() <- &heartbeatpb.DispatcherStatus{
+									ID: msg.ID,
+									Action: &heartbeatpb.DispatcherAction{
+										Action:   heartbeatpb.Action_Pass,
+										CommitTs: msg.State.BlockTs,
 									},
 								}
 							}
@@ -442,23 +422,17 @@ func TestMultiDispatcherWithMultipleDDLs(t *testing.T) {
 
 	ddlTableSpan := &common.DDLSpan
 
-	tableTriggerEventDispatcher := NewDispatcher(ddlTableSpan, mysqlSink, startTs, statusChan, filter)
+	tableTriggerEventDispatcher := NewDispatcher(common.NewDispatcherID(), ddlTableSpan, mysqlSink, startTs, statusChan, filter)
 
 	table1TableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1}}
 	table2TableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 2}}
 
-	table1Dispatcher := NewDispatcher(table1TableSpan, mysqlSink, startTs, statusChan, filter)
-	table2Dispatcher := NewDispatcher(table2TableSpan, mysqlSink, startTs, statusChan, filter)
+	table1Dispatcher := NewDispatcher(common.NewDispatcherID(), table1TableSpan, mysqlSink, startTs, statusChan, filter)
+	table2Dispatcher := NewDispatcher(common.NewDispatcherID(), table2TableSpan, mysqlSink, startTs, statusChan, filter)
 
 	dispatcherEventsDynamicStream := GetDispatcherEventsDynamicStream()
 
-	tableSpanToDispatcherIDMap := map[uint64]common.DispatcherID{
-		1:                    table1Dispatcher.id,
-		2:                    table2Dispatcher.id,
-		ddlTableSpan.TableID: tableTriggerEventDispatcher.id,
-	}
-
-	go mockMaintainerResponse(statusChan, tableSpanToDispatcherIDMap)
+	go mockMaintainerResponse(statusChan)
 
 	/*
 		push these events in order:
@@ -543,38 +517,37 @@ func TestMultiDispatcherWithMultipleDDLs(t *testing.T) {
 				Query:      "TRUNCATE TABLE `test`.`table1`",
 			},
 			CommitTS: 110,
-			BlockedTableSpan: []*heartbeatpb.TableSpan{
-				{TableID: 1}, {TableID: ddlTableSpan.TableID},
+			BlockedDispatcherIDs: []*heartbeatpb.DispatcherID{
+				table1Dispatcher.id.ToPB(),
+				tableTriggerEventDispatcher.id.ToPB(),
 			},
 			NeedAddedTableSpan: []*heartbeatpb.TableSpan{
 				{TableID: 4},
 			},
-			NeedDroppedTableSpan: []*heartbeatpb.TableSpan{
-				{TableID: 1},
+			NeedDroppedDispatcherIDs: []*heartbeatpb.DispatcherID{
+				table1Dispatcher.id.ToPB(),
 			},
 		},
 		DispatcherID: table1Dispatcher.id,
 	}
 
 	dispatcherEventsDynamicStream.In() <- &common.TxnEvent{
-		StartTs:  109,
-		CommitTs: 110,
+		StartTs:  111,
+		CommitTs: 112,
 		DDLEvent: &common.DDLEvent{
 			Job: &timodel.Job{
-				Type:       timodel.ActionTruncateTable,
+				Type:       timodel.ActionDropTable,
 				SchemaName: "test",
-				TableName:  "table1",
-				Query:      "TRUNCATE TABLE `test`.`table1`",
+				TableName:  "table2",
+				Query:      "DROP TABLE `test`.`table2`",
 			},
-			CommitTS: 110,
-			BlockedTableSpan: []*heartbeatpb.TableSpan{
-				{TableID: 1}, {TableID: ddlTableSpan.TableID},
+			CommitTS: 112,
+			BlockedDispatcherIDs: []*heartbeatpb.DispatcherID{
+				table2Dispatcher.id.ToPB(),
+				tableTriggerEventDispatcher.id.ToPB(),
 			},
-			NeedAddedTableSpan: []*heartbeatpb.TableSpan{
-				{TableID: 4},
-			},
-			NeedDroppedTableSpan: []*heartbeatpb.TableSpan{
-				{TableID: 1},
+			NeedDroppedDispatcherIDs: []*heartbeatpb.DispatcherID{
+				table2Dispatcher.id.ToPB(),
 			},
 		},
 		DispatcherID: tableTriggerEventDispatcher.id,
@@ -591,32 +564,12 @@ func TestMultiDispatcherWithMultipleDDLs(t *testing.T) {
 				Query:      "DROP TABLE `test`.`table2`",
 			},
 			CommitTS: 112,
-			BlockedTableSpan: []*heartbeatpb.TableSpan{
-				{TableID: 2}, {TableID: ddlTableSpan.TableID},
+			BlockedDispatcherIDs: []*heartbeatpb.DispatcherID{
+				table2Dispatcher.id.ToPB(),
+				tableTriggerEventDispatcher.id.ToPB(),
 			},
-			NeedDroppedTableSpan: []*heartbeatpb.TableSpan{
-				{TableID: 2},
-			},
-		},
-		DispatcherID: tableTriggerEventDispatcher.id,
-	}
-
-	dispatcherEventsDynamicStream.In() <- &common.TxnEvent{
-		StartTs:  111,
-		CommitTs: 112,
-		DDLEvent: &common.DDLEvent{
-			Job: &timodel.Job{
-				Type:       timodel.ActionDropTable,
-				SchemaName: "test",
-				TableName:  "table2",
-				Query:      "DROP TABLE `test`.`table2`",
-			},
-			CommitTS: 112,
-			BlockedTableSpan: []*heartbeatpb.TableSpan{
-				{TableID: 2}, {TableID: ddlTableSpan.TableID},
-			},
-			NeedDroppedTableSpan: []*heartbeatpb.TableSpan{
-				{TableID: 2},
+			NeedDroppedDispatcherIDs: []*heartbeatpb.DispatcherID{
+				table2Dispatcher.id.ToPB(),
 			},
 		},
 		DispatcherID: table2Dispatcher.id,
