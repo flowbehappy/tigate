@@ -555,6 +555,9 @@ func newWrapDDLEvent(serverID messaging.ServerId, e common.DDLEvent) wrapEvent {
 	}
 }
 
+// resolvedTsCache is used to cache the resolvedTs events.
+// We use it instead of a primitive slice to reduce the allocation
+// of the memory and reduce the GC pressure.
 type resolvedTsCache struct {
 	cache []common.ResolvedEvent
 	// len is the number of the events in the cache.
