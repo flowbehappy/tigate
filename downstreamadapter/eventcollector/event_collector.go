@@ -71,7 +71,7 @@ type EventCollector struct {
 	globalMemoryQuota int64
 	wg                sync.WaitGroup
 
-	dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, *common.TxnEvent, *dispatcher.Dispatcher]
+	dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, common.Event, *dispatcher.Dispatcher]
 
 	registerMessageChan                          *chann.DrainableChann[RegisterInfo] // for temp
 	metricDispatcherReceivedKVEventCount         prometheus.Counter
@@ -112,9 +112,6 @@ func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *Ev
 			}
 		}
 	}()
-	// update metrics
-	eventCollector.updateMetrics(context.Background())
-
 	return &eventCollector
 }
 
@@ -171,17 +168,20 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 	inflightDuration := time.Since(time.Unix(0, msg.CrateAt)).Milliseconds()
 	c.metricReceiveEventLagDuration.Observe(float64(inflightDuration))
 	for _, msg := range msg.Message {
-		txnEvent, ok := msg.(*common.TxnEvent)
+		event, ok := msg.(common.Event)
 		if !ok {
-			log.Panic("invalid event feed message", zap.Any("msg", msg))
+			log.Panic("invalid message type", zap.Any("msg", msg))
 		}
-		if txnEvent.IsDMLEvent() || txnEvent.IsDDLEvent() {
+		switch event.GetType() {
+		case common.TypeBatchResolvedTs:
+			for _, e := range event.(*common.BatchResolvedTs).Events {
+				c.metricDispatcherReceivedResolvedTsEventCount.Inc()
+				c.dispatcherEventsDynamicStream.In() <- e
+			}
+		default:
 			c.metricDispatcherReceivedKVEventCount.Inc()
-		} else {
-			c.metricDispatcherReceivedResolvedTsEventCount.Inc()
+			c.dispatcherEventsDynamicStream.In() <- event
 		}
-
-		c.dispatcherEventsDynamicStream.In() <- txnEvent
 	}
 	return nil
 }

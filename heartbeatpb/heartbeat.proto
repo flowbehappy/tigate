@@ -127,8 +127,8 @@ message MaintainerCloseResponse {
 message State {
     bool IsBlocked      = 1;
     uint64 BlockTs         = 2;
-    repeated TableSpan BlockTableSpan = 3;
-    repeated TableSpan NeedDroppedTableSpan =4;
+    repeated DispatcherID BlockDispatcherIDs = 3;
+    repeated DispatcherID NeedDroppedDispatcherIDs =4;
     repeated TableSpan NeedAddedTableSpan = 5;
 }
 

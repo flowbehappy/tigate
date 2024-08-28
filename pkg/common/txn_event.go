@@ -22,9 +22,9 @@ type DDLEvent struct {
 	CommitTS Ts `json:"commit_ts"`
 
 	// Just for test now
-	BlockedTableSpan     []*heartbeatpb.TableSpan `json:"blocked_table_span"`
-	NeedDroppedTableSpan []*heartbeatpb.TableSpan `json:"need_dropped_table_span"`
-	NeedAddedTableSpan   []*heartbeatpb.TableSpan `json:"need_added_table_span"`
+	BlockedDispatcherIDs     []*heartbeatpb.DispatcherID `json:"blocked_dispatcher_ids"`
+	NeedDroppedDispatcherIDs []*heartbeatpb.DispatcherID `json:"need_dropped_dispatcher_ids"`
+	NeedAddedTableSpan       []*heartbeatpb.TableSpan    `json:"need_added_table_span"`
 }
 
 // TxnEvent represents all events in the current txn
@@ -48,6 +48,10 @@ type TxnEvent struct {
 
 	// 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
 	PostTxnFlushed []func() `msg:"-"`
+}
+
+func (w TxnEvent) GetType() int {
+	return TypeTxnEvent
 }
 
 func (w *TxnEvent) GetDispatcherID() DispatcherID {
@@ -91,15 +95,30 @@ func (e *TxnEvent) IsDDLEvent() bool {
 
 func (e *TxnEvent) IsSingleTableDDL() bool {
 	ddlType := e.GetDDLType()
-	return ddlType == model.ActionAddColumn || ddlType == model.ActionDropColumn || ddlType == model.ActionModifyColumn || ddlType == model.ActionAddIndex || ddlType == model.ActionDropIndex || ddlType == model.ActionModifyTableComment || ddlType == model.ActionRebaseAutoID || ddlType == model.ActionSetDefaultValue || ddlType == model.ActionShardRowID || ddlType == model.ActionModifyTableCharsetAndCollate || ddlType == model.ActionCreateView || ddlType == model.ActionDropView || ddlType == model.ActionAddForeignKey || ddlType == model.ActionDropForeignKey || ddlType == model.ActionRenameIndex || ddlType == model.ActionLockTable || ddlType == model.ActionUnlockTable || ddlType == model.ActionSetTiFlashReplica || ddlType == model.ActionAddPrimaryKey || ddlType == model.ActionDropPrimaryKey || ddlType == model.ActionAddColumns || ddlType == model.ActionDropColumns || ddlType == model.ActionModifyTableAutoIdCache || ddlType == model.ActionRebaseAutoRandomBase || ddlType == model.ActionAlterIndexVisibility || ddlType == model.ActionAddCheckConstraint || ddlType == model.ActionDropCheckConstraint || ddlType == model.ActionAlterCheckConstraint || ddlType == model.ActionDropIndexes || ddlType == model.ActionAlterTableAttributes || ddlType == model.ActionAlterCacheTable || ddlType == model.ActionAlterNoCacheTable || ddlType == model.ActionMultiSchemaChange || ddlType == model.ActionAlterTTLInfo || ddlType == model.ActionAlterTTLRemove || ddlType == model.ActionRepairTable || ddlType == model.ActionFlashbackCluster || ddlType == model.ActionCreatePlacementPolicy || ddlType == model.ActionAlterPlacementPolicy || ddlType == model.ActionDropPlacementPolicy || ddlType == model.ActionCreateResourceGroup || ddlType == model.ActionAlterResourceGroup || ddlType == model.ActionDropResourceGroup || ddlType == model.ActionCreateSchema
+	return ddlType == model.ActionAddColumn || ddlType == model.ActionDropColumn || ddlType == model.ActionModifyColumn ||
+		ddlType == model.ActionAddIndex || ddlType == model.ActionDropIndex || ddlType == model.ActionModifyTableComment ||
+		ddlType == model.ActionRebaseAutoID || ddlType == model.ActionSetDefaultValue || ddlType == model.ActionShardRowID ||
+		ddlType == model.ActionModifyTableCharsetAndCollate || ddlType == model.ActionCreateView || ddlType == model.ActionDropView ||
+		ddlType == model.ActionAddForeignKey || ddlType == model.ActionDropForeignKey || ddlType == model.ActionRenameIndex ||
+		ddlType == model.ActionLockTable || ddlType == model.ActionUnlockTable || ddlType == model.ActionSetTiFlashReplica ||
+		ddlType == model.ActionAddPrimaryKey || ddlType == model.ActionDropPrimaryKey || ddlType == model.ActionAddColumns ||
+		ddlType == model.ActionDropColumns || ddlType == model.ActionModifyTableAutoIdCache || ddlType == model.ActionRebaseAutoRandomBase ||
+		ddlType == model.ActionAlterIndexVisibility || ddlType == model.ActionAddCheckConstraint || ddlType == model.ActionDropCheckConstraint ||
+		ddlType == model.ActionAlterCheckConstraint || ddlType == model.ActionDropIndexes || ddlType == model.ActionAlterTableAttributes ||
+		ddlType == model.ActionAlterCacheTable || ddlType == model.ActionAlterNoCacheTable || ddlType == model.ActionMultiSchemaChange ||
+		ddlType == model.ActionAlterTTLInfo || ddlType == model.ActionAlterTTLRemove || ddlType == model.ActionRepairTable ||
+		ddlType == model.ActionCreatePlacementPolicy || ddlType == model.ActionAlterPlacementPolicy || ddlType == model.ActionRecoverTable ||
+		ddlType == model.ActionDropPlacementPolicy || ddlType == model.ActionCreateSchema || ddlType == model.ActionRecoverSchema ||
+		ddlType == model.ActionCreateTables || ddlType == model.ActionRenameTable || ddlType == model.ActionTruncateTable || ddlType == model.ActionCreateTable
+
 }
 
-func (e *TxnEvent) GetBlockedTableSpan() []*heartbeatpb.TableSpan {
-	return e.DDLEvent.BlockedTableSpan
+func (e *TxnEvent) GetBlockedDispatcherIDs() []*heartbeatpb.DispatcherID {
+	return e.DDLEvent.BlockedDispatcherIDs
 }
 
-func (e *TxnEvent) GetNeedDroppedTableSpan() []*heartbeatpb.TableSpan {
-	return e.DDLEvent.NeedDroppedTableSpan
+func (e *TxnEvent) GetNeedDroppedDispatcherIDs() []*heartbeatpb.DispatcherID {
+	return e.DDLEvent.NeedDroppedDispatcherIDs
 }
 
 func (e *TxnEvent) GetNeedAddedTableSpan() []*heartbeatpb.TableSpan {
