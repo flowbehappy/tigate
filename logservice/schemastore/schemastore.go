@@ -148,7 +148,7 @@ func (s *schemaStore) Run(ctx context.Context) error {
 }
 
 func (s *schemaStore) Close(ctx context.Context) error {
-	return nil
+	return s.ddlJobFetcher.close(ctx)
 }
 
 func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {

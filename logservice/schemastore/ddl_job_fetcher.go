@@ -80,6 +80,10 @@ func newDDLJobFetcher(
 	return ddlJobFetcher
 }
 
+func (p *ddlJobFetcher) close(ctx context.Context) error {
+	return p.puller.Close(ctx)
+}
+
 func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) error {
 	if rawEvent == nil {
 		return nil
