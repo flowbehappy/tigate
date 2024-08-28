@@ -252,6 +252,14 @@ func (m *Maintainer) initialize() error {
 		}
 		m.scheduler.AddTempTask(tableSpan, stm)
 	}
+
+	// add a table_event_trigger dispatcher
+	ddlTableSpan := &common.DDLSpan
+	dispatcherID := common.NewDispatcherID()
+	replicaSet := NewReplicaSet(m.id, dispatcherID, ddlTableSpan, m.watermark.CheckpointTs).(*ReplicaSet)
+	stm, _ := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
+	m.scheduler.AddTempTask(ddlTableSpan, stm)
+
 	log.Info("changefeed maintainer initialized",
 		zap.String("id", m.id.String()))
 	m.initialized = true

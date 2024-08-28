@@ -198,7 +198,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.filter)
 
 	// TODO:暂时不收 ddl 的 event
-	if tableSpan != &common.DDLSpan {
+	if !tableSpan.Equal(&common.DDLSpan) {
 		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(
 			eventcollector.RegisterInfo{
 				Dispatcher:   dispatcher,
@@ -332,7 +332,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	heartBeatInfo := &dispatcher.HeartBeatInfo{}
 	e.dispatcherMap.ForEach(func(id common.DispatcherID, dispatcherItem *dispatcher.Dispatcher) {
 		// TODO:ddlSpan先不参与
-		if dispatcherItem.GetTableSpan() == &common.DDLSpan {
+		if dispatcherItem.GetTableSpan().Equal(&common.DDLSpan) {
 			return
 		}
 		// If the dispatcher is in removing state, we need to check if it's closed successfully.

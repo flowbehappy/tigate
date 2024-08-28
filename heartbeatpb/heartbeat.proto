@@ -100,6 +100,7 @@ message RemoveMaintainerRequest  {
 message MaintainerBootstrapRequest {
     string changefeedID = 1;
     bytes config = 2;
+    uint64 checkpoint_ts = 3;
 }
 
 message MaintainerBootstrapResponse {
