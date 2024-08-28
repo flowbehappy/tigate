@@ -48,7 +48,8 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	appcontext.SetService(watcher.NodeManagerName, nodeManager)
 	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode
 	store := &mockSchemaStore{
-		tables: []common.TableID{1, 2, 3, 4},
+		// 3 tables and a ddl_event_trigger as a table
+		tables: []common.TableID{1, 2, 3},
 	}
 	appcontext.SetService(appcontext.SchemaStore, store)
 	mc := messaging.NewMessageCenter(ctx,
@@ -165,7 +166,8 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	appcontext.SetService(watcher.NodeManagerName, nodeManager)
 	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode
 	store := &mockSchemaStore{
-		tables: []common.TableID{1, 2, 3, 4},
+		// 3 tables and a ddl_event_trigger as a table
+		tables: []common.TableID{1, 2, 3},
 	}
 	appcontext.SetService(appcontext.SchemaStore, store)
 	mc := messaging.NewMessageCenter(ctx,
@@ -235,7 +237,11 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 		maintainer.scheduler.GetTaskSizeByNodeID(selfNode.ID))
 	require.Len(t, remotedIds, 2)
 	foundSize := 0
+	hasDDLDispatcher := false
 	for id, stm := range maintainer.scheduler.working {
+		if stm.Inferior.(*ReplicaSet).Span.Equal(&common.DDLSpan) {
+			hasDDLDispatcher = true
+		}
 		for _, remotedId := range remotedIds {
 			if id == remotedId {
 				foundSize++
@@ -245,7 +251,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 		}
 	}
 	require.Equal(t, 2, foundSize)
-
+	require.True(t, hasDDLDispatcher)
 	manager.stream.Close()
 	cancel()
 }

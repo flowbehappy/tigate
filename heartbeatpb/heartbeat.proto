@@ -100,8 +100,7 @@ message RemoveMaintainerRequest  {
 message MaintainerBootstrapRequest {
     string changefeedID = 1;
     bytes config = 2;
-    bool createTableTriggerEventDispatcher = 3;
-    DispatcherID tableTriggerEventDispatcherID = 4;
+    uint64 checkpoint_ts = 3;
 }
 
 message MaintainerBootstrapResponse {
