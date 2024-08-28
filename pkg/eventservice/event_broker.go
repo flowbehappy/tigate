@@ -49,8 +49,8 @@ type eventBroker struct {
 
 	// messageCh is used to receive message from the scanWorker,
 	// and a goroutine is responsible for sending the message to the dispatchers.
-	messageCh       chan wrapEvent
-	resolvedTsCache map[messaging.ServerId][]common.ResolvedEvent
+	messageCh        chan wrapEvent
+	resolvedTsCaches map[messaging.ServerId]*resolvedTsCache
 
 	// wg is used to spawn the goroutines.
 	wg *sync.WaitGroup
@@ -82,7 +82,7 @@ func newEventBroker(
 		taskPool:                               newScanTaskPool(),
 		scanWorkerCount:                        defaultScanWorkerCount,
 		messageCh:                              make(chan wrapEvent, defaultChannelSize),
-		resolvedTsCache:                        make(map[messaging.ServerId][]common.ResolvedEvent),
+		resolvedTsCaches:                       make(map[messaging.ServerId]*resolvedTsCache),
 		cancel:                                 cancel,
 		wg:                                     wg,
 		metricEventServicePullerResolvedTs:     metrics.EventServiceResolvedTsGauge,
@@ -257,7 +257,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 				c.flushResolvedTs(ctx, m.serverID)
 				c.sendMsg(ctx, tMsg)
 			case <-flushResolvedTsTicker.C:
-				for serverID := range c.resolvedTsCache {
+				for serverID := range c.resolvedTsCaches {
 					c.flushResolvedTs(ctx, serverID)
 				}
 			}
@@ -266,27 +266,24 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 }
 
 func (c *eventBroker) handleResolvedTs(ctx context.Context, e wrapEvent) {
-	cache, ok := c.resolvedTsCache[e.serverID]
+	cache, ok := c.resolvedTsCaches[e.serverID]
 	if !ok {
-		cache = make([]common.ResolvedEvent, 0, resolvedTsCacheSize)
-		c.resolvedTsCache[e.serverID] = cache
+		cache = newResolvedTsCache(resolvedTsCacheSize)
+		c.resolvedTsCaches[e.serverID] = cache
 	}
-	c.resolvedTsCache[e.serverID] = append(cache, e.resolvedEvent)
-	if len(c.resolvedTsCache[e.serverID]) >= resolvedTsCacheSize {
+	cache.add(e.resolvedEvent)
+	if cache.isFull() {
 		c.flushResolvedTs(ctx, e.serverID)
 	}
 }
 
 func (c *eventBroker) flushResolvedTs(ctx context.Context, serverID messaging.ServerId) {
-	events, ok := c.resolvedTsCache[serverID]
-	if !ok || len(events) == 0 {
+	cache, ok := c.resolvedTsCaches[serverID]
+	if !ok || cache.len == 0 {
 		return
 	}
 	msg := &common.BatchResolvedTs{}
-	msg.Events = append(msg.Events, events...)
-	// Clear the event to release the memory.
-	// Clear the cache.
-	c.resolvedTsCache[serverID] = c.resolvedTsCache[serverID][:0]
+	msg.Events = append(msg.Events, cache.getAll()...)
 	tMsg := messaging.NewSingleTargetMessage(
 		serverID,
 		messaging.EventCollectorTopic,
@@ -556,4 +553,38 @@ func newWrapDDLEvent(serverID messaging.ServerId, e common.DDLEvent) wrapEvent {
 		ddlEvent: e,
 		msgType:  common.TypeDDLEvent,
 	}
+}
+
+type resolvedTsCache struct {
+	cache []common.ResolvedEvent
+	// len is the number of the events in the cache.
+	len int
+	// limit is the max number of the events that the cache can store.
+	limit int
+}
+
+func newResolvedTsCache(limit int) *resolvedTsCache {
+	return &resolvedTsCache{
+		cache: make([]common.ResolvedEvent, limit),
+		limit: limit,
+	}
+}
+
+func (c *resolvedTsCache) add(e common.ResolvedEvent) {
+	c.cache[c.len] = e
+	c.len++
+}
+
+func (c *resolvedTsCache) isFull() bool {
+	return c.len >= c.limit
+}
+
+func (c *resolvedTsCache) getAll() []common.ResolvedEvent {
+	res := c.cache[:c.len]
+	c.reset()
+	return res
+}
+
+func (c *resolvedTsCache) reset() {
+	c.len = 0
 }
