@@ -39,7 +39,7 @@ type spanProgress struct {
 
 	span heartbeatpb.TableSpan
 
-	subID subscriptionID
+	subID SubscriptionID
 
 	initialized       atomic.Bool
 	resolvedTsUpdated atomic.Int64
@@ -50,7 +50,7 @@ type spanProgress struct {
 		// removed while consuming events.
 		sync.RWMutex
 		removed bool
-		f       func(context.Context, *common.RawKVEntry, heartbeatpb.TableSpan) error
+		f       func(context.Context, *common.RawKVEntry, SubscriptionID) error
 	}
 }
 
@@ -72,29 +72,26 @@ func (p *spanProgress) resolveLock(currentTime time.Time) {
 type LogPuller struct {
 	client  *SubscriptionClient
 	pdClock pdutil.Clock
-	consume func(context.Context, *common.RawKVEntry, heartbeatpb.TableSpan) error
+	consume func(context.Context, *common.RawKVEntry, SubscriptionID) error
 
 	subscriptions struct {
 		sync.RWMutex
 		// subscriptionID -> spanProgress
-		spanProgressMap map[subscriptionID]*spanProgress
-		// span -> subscription
-		subscriptionMap *common.SpanHashMap[subscriptionID]
+		spanProgressMap map[SubscriptionID]*spanProgress
 	}
 }
 
 func NewLogPuller(
 	client *SubscriptionClient,
 	pdClock pdutil.Clock,
-	consume func(context.Context, *common.RawKVEntry, heartbeatpb.TableSpan) error,
+	consume func(context.Context, *common.RawKVEntry, SubscriptionID) error,
 ) *LogPuller {
 	puller := &LogPuller{
 		client:  client,
 		pdClock: pdClock,
 		consume: consume,
 	}
-	puller.subscriptions.spanProgressMap = make(map[subscriptionID]*spanProgress)
-	puller.subscriptions.subscriptionMap = common.NewSpanHashMap[subscriptionID]()
+	puller.subscriptions.spanProgressMap = make(map[SubscriptionID]*spanProgress)
 
 	return puller
 }
@@ -103,12 +100,12 @@ func (p *LogPuller) Run(ctx context.Context) (err error) {
 	eg, ctx := errgroup.WithContext(ctx)
 
 	consumeLogEvent := func(ctx context.Context, e LogEvent) error {
-		progress := p.getProgress(e.subscriptionID)
+		progress := p.getProgress(e.SubscriptionID)
 		// There is a chance that some stale events are received after
 		// the subscription is removed. We can just ignore them.
 		if progress == nil {
 			log.Info("meet stale event",
-				zap.Any("subscriptionID", e.subscriptionID))
+				zap.Any("subscriptionID", e.SubscriptionID))
 			return nil
 		}
 
@@ -117,7 +114,7 @@ func (p *LogPuller) Run(ctx context.Context) (err error) {
 			return nil
 		}
 
-		if err := progress.consume.f(ctx, e.Val, progress.span); err != nil {
+		if err := progress.consume.f(ctx, e.Val, e.SubscriptionID); err != nil {
 			log.Info("consume error", zap.Error(err))
 			return errors.Trace(err)
 		}
@@ -143,13 +140,8 @@ func (p *LogPuller) Close(ctx context.Context) error {
 func (p *LogPuller) Subscribe(
 	span heartbeatpb.TableSpan,
 	startTs common.Ts,
-) {
+) SubscriptionID {
 	p.subscriptions.Lock()
-
-	// FIXME: support subscribe the same span multiple times in LogPuller(not sure whether it is supported already)
-	if _, exists := p.subscriptions.subscriptionMap.Get(span); exists {
-		log.Panic("redundant subscription", zap.String("span", span.String()))
-	}
 
 	subID := p.client.AllocSubscriptionID()
 
@@ -161,45 +153,43 @@ func (p *LogPuller) Subscribe(
 	progress.consume.f = func(
 		ctx context.Context,
 		raw *common.RawKVEntry,
-		span heartbeatpb.TableSpan,
+		subID SubscriptionID,
 	) error {
 		progress.consume.RLock()
 		defer progress.consume.RUnlock()
 		if !progress.consume.removed {
-			return p.consume(ctx, raw, span)
+			return p.consume(ctx, raw, subID)
 		}
 		return nil
 	}
 
 	p.subscriptions.spanProgressMap[subID] = progress
-	p.subscriptions.subscriptionMap.ReplaceOrInsert(span, subID)
 	p.subscriptions.Unlock()
 
 	p.client.Subscribe(subID, span, uint64(startTs))
+	return subID
 }
 
-func (p *LogPuller) Unsubscribe(span heartbeatpb.TableSpan) {
+func (p *LogPuller) Unsubscribe(subID SubscriptionID) {
 	p.subscriptions.Lock()
-	// TODO: check whether need to unlock before call client.Unsubscribe
 	defer p.subscriptions.Unlock()
 
-	subID, ok := p.subscriptions.subscriptionMap.Get(span)
+	progress, ok := p.subscriptions.spanProgressMap[subID]
 	if !ok {
-		log.Warn("unexist unsubscription", zap.String("span", span.String()))
+		log.Warn("unexist unsubscription", zap.Uint64("subscriptionID", uint64(subID)))
 		return
 	}
-	progress := p.subscriptions.spanProgressMap[subID]
 
 	progress.consume.Lock()
 	progress.consume.removed = true
 	progress.consume.Unlock()
 	delete(p.subscriptions.spanProgressMap, progress.subID)
-	p.subscriptions.subscriptionMap.Delete(span)
 
+	// TODO: check whether need to unlock before call client.Unsubscribe
 	p.client.Unsubscribe(progress.subID)
 }
 
-func (p *LogPuller) getProgress(subID subscriptionID) *spanProgress {
+func (p *LogPuller) getProgress(subID SubscriptionID) *spanProgress {
 	p.subscriptions.RLock()
 	defer p.subscriptions.RUnlock()
 	return p.subscriptions.spanProgressMap[subID]

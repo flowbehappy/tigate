@@ -58,7 +58,7 @@ var subscriptionIDGen atomic.Uint64
 
 // subscriptionID is a unique identifier for a subscription.
 // It is used as `RequestId` in region requests to remote store.
-type subscriptionID uint64
+type SubscriptionID uint64
 
 // regionFeedEvent from the kv layer.
 type regionFeedEvent struct {
@@ -72,13 +72,13 @@ type regionFeedEvent struct {
 // LogEvent wrap a region event with subscriptionID to indicate which subscription it belongs to.
 type LogEvent struct {
 	regionFeedEvent
-	subscriptionID
+	SubscriptionID
 }
 
 func newLogEvent(e regionFeedEvent, span *subscribedSpan) LogEvent {
 	return LogEvent{
 		regionFeedEvent: e,
-		subscriptionID:  span.subID,
+		SubscriptionID:  span.subID,
 	}
 }
 
@@ -100,7 +100,7 @@ type rangeTask struct {
 // It contains a sub span of a table(or the total span of a table),
 // the startTs of the table, and the output event channel.
 type subscribedSpan struct {
-	subID   subscriptionID
+	subID   SubscriptionID
 	startTs tablepb.Ts
 
 	// The target span
@@ -128,8 +128,6 @@ type SubscriptionClientConfig struct {
 	ChangeEventProcessorNum uint
 	// The time interval to advance resolvedTs for a region
 	AdvanceResolvedTsIntervalInMs uint
-	// The limit of concurrent incremental scan regions for every tikv store
-	RegionIncrementalScanLimitPerStore uint
 }
 
 // SubscriptionClient is used to subscribe events of table ranges from TiKV.
@@ -149,7 +147,7 @@ type SubscriptionClient struct {
 
 	totalSpans struct {
 		sync.RWMutex
-		spanMap map[subscriptionID]*subscribedSpan
+		spanMap map[SubscriptionID]*subscribedSpan
 	}
 
 	changeEventProcessors []*changeEventProcessor
@@ -195,14 +193,14 @@ func NewSubscriptionClient(
 		resolveLockTaskCh: make(chan resolveLockTask, 1024),
 		errCh:             make(chan regionErrorInfo, 1024),
 	}
-	s.totalSpans.spanMap = make(map[subscriptionID]*subscribedSpan)
+	s.totalSpans.spanMap = make(map[SubscriptionID]*subscribedSpan)
 
 	return s
 }
 
 // AllocsubscriptionID gets an ID can be used in `Subscribe`.
-func (s *SubscriptionClient) AllocSubscriptionID() subscriptionID {
-	return subscriptionID(subscriptionIDGen.Add(1))
+func (s *SubscriptionClient) AllocSubscriptionID() SubscriptionID {
+	return SubscriptionID(subscriptionIDGen.Add(1))
 }
 
 // Subscribe the given table span.
@@ -210,7 +208,7 @@ func (s *SubscriptionClient) AllocSubscriptionID() subscriptionID {
 // It new a subscribedSpan and store it in `s.totalSpans`,
 // and send a rangeTask to `s.rangeTaskCh`.
 // The rangeTask will be handled in `handleRangeTasks` goroutine.
-func (s *SubscriptionClient) Subscribe(subID subscriptionID, span heartbeatpb.TableSpan, startTs uint64) {
+func (s *SubscriptionClient) Subscribe(subID SubscriptionID, span heartbeatpb.TableSpan, startTs uint64) {
 	if span.TableID == 0 {
 		log.Panic("subscription client subscribe with zero TableID")
 	}
@@ -228,7 +226,7 @@ func (s *SubscriptionClient) Subscribe(subID subscriptionID, span heartbeatpb.Ta
 
 // Unsubscribe the given table span. All covered regions will be deregistered asynchronously.
 // NOTE: `span.TableID` must be set correctly.
-func (s *SubscriptionClient) Unsubscribe(subID subscriptionID) {
+func (s *SubscriptionClient) Unsubscribe(subID SubscriptionID) {
 	// NOTE: `subID` is cleared from `s.totalSpans` in `onTableDrained`.
 	s.totalSpans.Lock()
 	rt := s.totalSpans.spanMap[subID]
@@ -244,7 +242,7 @@ func (s *SubscriptionClient) Unsubscribe(subID subscriptionID) {
 
 // ResolveLock is a function. If outsider subscribers find a span resolved timestamp is
 // advanced slowly or stopped, they can try to resolve locks in the given span.
-func (s *SubscriptionClient) ResolveLock(subID subscriptionID, targetTs uint64) {
+func (s *SubscriptionClient) ResolveLock(subID SubscriptionID, targetTs uint64) {
 	s.totalSpans.Lock()
 	rt := s.totalSpans.spanMap[subID]
 	s.totalSpans.Unlock()
@@ -254,7 +252,7 @@ func (s *SubscriptionClient) ResolveLock(subID subscriptionID, targetTs uint64) 
 }
 
 // RegionCount returns subscribed region count for the span.
-func (s *SubscriptionClient) RegionCount(subID subscriptionID) uint64 {
+func (s *SubscriptionClient) RegionCount(subID SubscriptionID) uint64 {
 	s.totalSpans.RLock()
 	defer s.totalSpans.RUnlock()
 	if rt := s.totalSpans.spanMap[subID]; rt != nil {
@@ -736,7 +734,7 @@ func (s *SubscriptionClient) logSlowRegions(ctx context.Context) error {
 }
 
 func (s *SubscriptionClient) newSubscribedSpan(
-	subID subscriptionID,
+	subID SubscriptionID,
 	span heartbeatpb.TableSpan,
 	startTs uint64,
 ) *subscribedSpan {

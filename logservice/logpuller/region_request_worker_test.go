@@ -21,7 +21,7 @@ import (
 
 func TestRegionStatesOperation(t *testing.T) {
 	worker := &regionRequestWorker{}
-	worker.requestedRegions.subscriptions = make(map[subscriptionID]regionFeedStates)
+	worker.requestedRegions.subscriptions = make(map[SubscriptionID]regionFeedStates)
 
 	require.Nil(t, worker.getRegionState(1, 2))
 	require.Nil(t, worker.takeRegionState(1, 2))

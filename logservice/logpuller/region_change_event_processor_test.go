@@ -30,10 +30,9 @@ import (
 func newSubscriptionClientForTestRegionChangeEventProcessor(eventCh chan LogEvent) *SubscriptionClient {
 	// only requires `SubscriptionClient.onRegionFail`.
 	clientConfig := &SubscriptionClientConfig{
-		RegionRequestWorkerPerStore:        1,
-		ChangeEventProcessorNum:            32,
-		AdvanceResolvedTsIntervalInMs:      300,
-		RegionIncrementalScanLimitPerStore: 100,
+		RegionRequestWorkerPerStore:   1,
+		ChangeEventProcessorNum:       32,
+		AdvanceResolvedTsIntervalInMs: 300,
 	}
 	client := NewSubscriptionClient(clientConfig, nil, nil, nil, nil, &security.Credential{})
 	client.consume = func(ctx context.Context, e LogEvent) error {
@@ -82,7 +81,7 @@ func TestHandleEventEntryEventOutOfOrder(t *testing.T) {
 		tikv.RegionVerID{},
 		span,
 		&tikv.RPCContext{},
-		&subscribedSpan{subID: subscriptionID(1)},
+		&subscribedSpan{subID: SubscriptionID(1)},
 	)
 	region.lockedRangeState = &regionlock.LockedRangeState{}
 	state := newRegionFeedState(region, 1)
