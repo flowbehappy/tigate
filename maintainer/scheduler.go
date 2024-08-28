@@ -129,7 +129,28 @@ func (s *Scheduler) FinishBootstrap(workingMap utils.Map[*common.TableSpan, *sch
 	s.tempTasks = nil
 }
 
-func (s *Scheduler) RemoveTask(stm *scheduler.StateMachine) (*messaging.TargetMessage, error) {
+// GetTask queries a task by dispatcherID, return nil if not found
+func (s *Scheduler) GetTask(dispatcherID common.DispatcherID) *scheduler.StateMachine {
+	var stm *scheduler.StateMachine
+	var ok bool
+	for _, m := range s.totalMaps {
+		stm, ok = m[dispatcherID]
+		if ok {
+			break
+		}
+	}
+	return stm
+}
+
+// RemoveTask removes task by dispatcherID
+func (s *Scheduler) RemoveTask(dispatcherID common.DispatcherID) (*messaging.TargetMessage, error) {
+	var stm = s.GetTask(dispatcherID)
+	if stm == nil {
+		log.Warn("dispatcher is not found",
+			zap.String("cf", s.changefeedID),
+			zap.Any("dispatcherID", s.changefeedID))
+		return nil, nil
+	}
 	oldState := stm.State
 	oldPrimary := stm.Primary
 	msg, err := stm.HandleRemoveInferior()
@@ -219,7 +240,9 @@ func (s *Scheduler) Schedule() ([]*messaging.TargetMessage, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		msgs = append(msgs, msg)
+		if msg != nil {
+			msgs = append(msgs, msg)
+		}
 
 		s.committing[key] = value
 		s.nodeTasks[item.Node][key] = value
