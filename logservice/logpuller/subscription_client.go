@@ -75,8 +75,8 @@ type LogEvent struct {
 	subscriptionID
 }
 
-func newLogEvent(e regionFeedEvent, span *subscribedSpan) *LogEvent {
-	return &LogEvent{
+func newLogEvent(e regionFeedEvent, span *subscribedSpan) LogEvent {
+	return LogEvent{
 		regionFeedEvent: e,
 		subscriptionID:  span.subID,
 	}
@@ -167,7 +167,7 @@ type SubscriptionClient struct {
 	// The errors will be handled in `handleErrors` goroutine.
 	errCh chan *regionErrorInfo
 
-	consume func(ctx context.Context, e *LogEvent) error
+	consume func(ctx context.Context, e LogEvent) error
 
 	// used to limit the number of concurrent region incremental scan requests on a single store
 	regionScanLimiter *regionScanRequestLimiter
@@ -268,7 +268,7 @@ func (s *SubscriptionClient) RegionCount(subID subscriptionID) uint64 {
 	return 0
 }
 
-func (s *SubscriptionClient) Run(ctx context.Context, consume func(ctx context.Context, e *LogEvent) error) error {
+func (s *SubscriptionClient) Run(ctx context.Context, consume func(ctx context.Context, e LogEvent) error) error {
 	s.consume = consume
 	if s.pd == nil {
 		log.Warn("subsription client should be in test mode, skip run")
