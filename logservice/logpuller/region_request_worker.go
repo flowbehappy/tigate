@@ -270,7 +270,7 @@ func (s *regionRequestWorker) processRegionSendTask(
 		log.Debug("region request worker gets a singleRegionInfo",
 			zap.String("subscriptionClientID", string(s.client.id)),
 			zap.Uint64("workerID", s.workerID),
-			zap.Any("subscriptionID", subID),
+			zap.Uint64("subscriptionID", uint64(subID)),
 			zap.Uint64("regionID", region.verID.GetID()),
 			zap.Uint64("storeID", s.store.storeID),
 			zap.String("addr", s.store.storeAddr))
@@ -403,7 +403,7 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 			log.Info("region request worker receives a region error",
 				zap.String("subscriptionClientID", string(s.client.id)),
 				zap.Uint64("workerID", s.workerID),
-				zap.Any("subscriptionID", subscriptionID),
+				zap.Uint64("subscriptionID", uint64(subscriptionID)),
 				zap.Uint64("regionID", event.RegionId),
 				zap.Bool("stateIsNil", state == nil),
 				zap.Any("error", x.Error))
@@ -418,7 +418,7 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 			log.Warn("region request worker receives a region event for an untracked region",
 				zap.String("subscriptionClientID", string(s.client.id)),
 				zap.Uint64("workerID", s.workerID),
-				zap.Any("subscriptionID", subscriptionID),
+				zap.Uint64("subscriptionID", uint64(subscriptionID)),
 				zap.Uint64("regionID", event.RegionId))
 		}
 	}
