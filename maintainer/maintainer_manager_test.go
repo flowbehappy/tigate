@@ -61,7 +61,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	mc.RegisterHandler(messaging.CoordinatorTopic, func(ctx context.Context, msg *messaging.TargetMessage) error {
 		return nil
 	})
-	manager := NewMaintainerManager(selfNode)
+	manager := NewMaintainerManager(selfNode, nil, nil)
 	msg := messaging.NewSingleTargetMessage(messaging.ServerId(selfNode.ID),
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.CoordinatorBootstrapRequest{Version: 1})
@@ -179,7 +179,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	mc.RegisterHandler(messaging.CoordinatorTopic, func(ctx context.Context, msg *messaging.TargetMessage) error {
 		return nil
 	})
-	manager := NewMaintainerManager(selfNode)
+	manager := NewMaintainerManager(selfNode, nil, nil)
 	msg := messaging.NewSingleTargetMessage(messaging.ServerId(selfNode.ID),
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.CoordinatorBootstrapRequest{Version: 1})

@@ -20,11 +20,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/utils"
-	"github.com/flowbehappy/tigate/utils/dynstream"
-
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
+	"github.com/flowbehappy/tigate/maintainer/split"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	configNew "github.com/flowbehappy/tigate/pkg/config"
@@ -33,11 +31,13 @@ import (
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
+	"github.com/flowbehappy/tigate/utils"
+	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/spanz"
+	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/atomic"
@@ -107,6 +107,8 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	selfNode *common.NodeInfo,
 	stream dynstream.DynamicStream[string, *Event, *Maintainer],
 	taskScheduler threadpool.ThreadPool,
+	pdapi pdutil.PDAPIClient,
+	regionCache split.RegionCache,
 	checkpointTs uint64,
 ) *Maintainer {
 	m := &Maintainer{
@@ -114,7 +116,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		selfNode:        selfNode,
 		stream:          stream,
 		taskScheduler:   taskScheduler,
-		scheduler:       NewScheduler(cfID.ID, 10000, time.Minute),
+		scheduler:       NewScheduler(cfID.ID, checkpointTs, pdapi, regionCache, cfg.Config.Scheduler, 10000, time.Minute),
 		mc:              appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		state:           heartbeatpb.ComponentState_Working,
 		removed:         atomic.NewBool(false),
@@ -239,28 +241,11 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 func (m *Maintainer) initialize() error {
 	var err error
 	tableIDs, err := m.initTableIDs()
+	tableMap := make(map[int64]struct{})
 	for _, id := range tableIDs {
-		span := spanz.TableIDToComparableSpan(id)
-		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
-			TableID:  uint64(id),
-			StartKey: span.StartKey,
-			EndKey:   span.EndKey,
-		}}
-		dispatcherID := common.NewDispatcherID()
-		replicaSet := NewReplicaSet(m.id, dispatcherID, tableSpan, m.watermark.CheckpointTs).(*ReplicaSet)
-		stm, err := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		m.scheduler.AddTempTask(tableSpan, stm)
+		tableMap[id] = struct{}{}
 	}
-
-	// add a table_event_trigger dispatcher
-	ddlTableSpan := &common.DDLSpan
-	dispatcherID := common.NewDispatcherID()
-	replicaSet := NewReplicaSet(m.id, dispatcherID, ddlTableSpan, m.watermark.CheckpointTs).(*ReplicaSet)
-	stm, _ := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
-	m.scheduler.AddTempTask(ddlTableSpan, stm)
+	m.scheduler.SetCurrentTables(tableMap)
 
 	log.Info("changefeed maintainer initialized",
 		zap.String("id", m.id.String()))
@@ -509,7 +494,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.M
 		zap.String("changefeed", m.id.ID),
 		zap.Int("size", len(cachedResp)))
 	var status scheduler.InferiorStatus
-	workingMap := utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
+	workingMap := make(map[uint64]utils.Map[*common.TableSpan, *scheduler.StateMachine])
 	for server, bootstrapMsg := range cachedResp {
 		log.Info("received bootstrap response",
 			zap.String("changefeed", m.id.ID),
@@ -532,7 +517,12 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.M
 
 			//working on remote, the state must be absent or working since it's reported by remote
 			if stm.State == scheduler.SchedulerStatusWorking {
-				workingMap.ReplaceOrInsert(span, stm)
+				tableMap, ok := workingMap[span.TableID]
+				if !ok {
+					tableMap = utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
+					workingMap[span.TableID] = tableMap
+				}
+				tableMap.ReplaceOrInsert(span, stm)
 			} else if stm.State != scheduler.SchedulerStatusAbsent {
 				log.Panic("unexpected state",
 					zap.String("id", m.id.ID),
@@ -540,7 +530,9 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.M
 			}
 		}
 	}
-	m.scheduler.FinishBootstrap(workingMap)
+	if err := m.scheduler.FinishBootstrap(workingMap); err != nil {
+		return errors.Trace(err)
+	}
 	return errors.Trace(m.onScheduleTableSpan())
 }
 
