@@ -424,7 +424,6 @@ func (m *ACK) GetCommitTs() uint64 {
 }
 
 type DispatcherStatus struct {
-	// when type is normal, dispatcherIds len must be 1
 	InfluencedDispatchers *InfluencedDispatchers `protobuf:"bytes,1,opt,name=influencedDispatchers,proto3" json:"influencedDispatchers,omitempty"`
 	Action                *DispatcherAction      `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
 	Ack                   *ACK                   `protobuf:"bytes,3,opt,name=ack,proto3" json:"ack,omitempty"`

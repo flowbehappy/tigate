@@ -38,7 +38,6 @@ message ACK {
 }
 
 message DispatcherStatus {
-    // when type is normal, dispatcherIds len must be 1
     InfluencedDispatchers influencedDispatchers = 1;
     DispatcherAction action = 2;
     ACK ack = 3;

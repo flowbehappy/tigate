@@ -150,7 +150,9 @@ func (h *HeartBeatResponseHandler) Handle(heartbeatResponse *heartbeatpb.HeartBe
 	for _, dispatcherStatus := range dispatcherStatuses {
 		influencedDispatchersType := dispatcherStatus.InfluencedDispatchers.InfluenceType
 		if influencedDispatchersType == heartbeatpb.InfluenceType_Normal {
-			h.dispatcherStatusDynamicStream.In() <- dispatcher.NewDispatcherStatusWithID(dispatcherStatus, common.NewDispatcherIDFromPB(dispatcherStatus.InfluencedDispatchers.DispatcherIDs[0]))
+			for _, dispatcherID := range dispatcherStatus.InfluencedDispatchers.DispatcherIDs {
+				h.dispatcherStatusDynamicStream.In() <- dispatcher.NewDispatcherStatusWithID(dispatcherStatus, common.NewDispatcherIDFromPB(dispatcherID))
+			}
 		} else if influencedDispatchersType == heartbeatpb.InfluenceType_DB {
 			// 找出 db 对应的所有 id 扔进去, 记得查看 exclude_dispatcher_id
 		} else if influencedDispatchersType == heartbeatpb.InfluenceType_All {
