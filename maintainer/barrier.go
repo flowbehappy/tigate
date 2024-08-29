@@ -252,6 +252,7 @@ func (b *BlockEvent) sendPassAction() []*messaging.TargetMessage {
 				messaging.HeartbeatCollectorTopic,
 				&heartbeatpb.HeartBeatResponse{DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
 					{
+						ID: dispatcherID.ToPB(),
 						Action: &heartbeatpb.DispatcherAction{
 							Action:   heartbeatpb.Action_Pass,
 							CommitTs: b.commitTs,
