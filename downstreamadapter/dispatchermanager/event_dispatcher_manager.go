@@ -410,15 +410,10 @@ func (e *EventDispatcherManager) updateMetrics(ctx context.Context) error {
 				return
 			case <-ticker.C:
 				minResolvedTs := uint64(0)
-				e.dispatcherMap.m.Range(func(key, value interface{}) bool {
-					d, ok := value.(*dispatcher.Dispatcher)
-					if !ok {
-						return true
+				e.dispatcherMap.ForEach(func(_ common.DispatcherID, dispatcherItem *dispatcher.Dispatcher) {
+					if minResolvedTs == 0 || dispatcherItem.GetResolvedTs() < minResolvedTs {
+						minResolvedTs = dispatcherItem.GetResolvedTs()
 					}
-					if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
-						minResolvedTs = d.GetResolvedTs()
-					}
-					return true
 				})
 				if minResolvedTs == 0 {
 					continue
@@ -432,7 +427,6 @@ func (e *EventDispatcherManager) updateMetrics(ctx context.Context) error {
 	return nil
 }
 
-// 测一下用 sync.Map 的效果和普通的 map 相比
 type DispatcherMap struct {
 	m sync.Map
 }

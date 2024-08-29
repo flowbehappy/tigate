@@ -38,7 +38,7 @@ message ACK {
 }
 
 message DispatcherStatus {
-    DispatcherID ID = 1;
+    InfluencedDispatchers influencedDispatchers = 1; // 这个最好保证，如果是 normal传回来的时候 dispatcherIds 是唯一的
     DispatcherAction action = 2;
     ACK ack = 3;
 }
@@ -124,12 +124,25 @@ message MaintainerCloseResponse {
     bool success = 2;
 }
 
+enum InfluenceType {
+    All = 0;
+    DB = 1;
+    Normal = 2;
+}
+
+message InfluencedDispatchers {
+    InfluenceType InfluenceType = 1;
+	repeated DispatcherID DispatcherIDs = 2; 
+	int64 SchemaID = 3;
+    DispatcherID excludeDispatcherId = 4; // just use for db / all influence
+}
+
 message State {
     bool IsBlocked      = 1;
     uint64 BlockTs         = 2;
-    repeated DispatcherID BlockDispatcherIDs = 3;
-    repeated DispatcherID NeedDroppedDispatcherIDs =4;
-    repeated TableSpan NeedAddedTableSpan = 5;
+    InfluencedDispatchers BlockDispatchers = 3;
+    InfluencedDispatchers NeedDroppedDispatchers =4;
+    repeated int64 NeedAddedTables = 5;
 }
 
 message TableSpanStatus {

@@ -211,15 +211,15 @@ func (d *Dispatcher) HandleEvent(event common.Event) bool {
 func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 	if d.ddlPendingEvent.IsSingleTableDDL() {
 		d.sink.AddDDLAndSyncPointEvent(d.ddlPendingEvent, d.tableProgress)
-		if d.ddlPendingEvent.GetNeedAddedTableSpan() != nil || d.ddlPendingEvent.GetNeedDroppedDispatcherIDs() != nil {
+		if d.ddlPendingEvent.GetNeedAddedTables() != nil || d.ddlPendingEvent.GetNeedDroppedDispatchers() != nil {
 			message := &heartbeatpb.TableSpanStatus{
 				ID:              d.id.ToPB(),
 				ComponentStatus: heartbeatpb.ComponentState_Working,
 				State: &heartbeatpb.State{
-					IsBlocked:                false,
-					BlockTs:                  d.ddlPendingEvent.CommitTs,
-					NeedDroppedDispatcherIDs: d.ddlPendingEvent.GetNeedDroppedDispatcherIDs(),
-					NeedAddedTableSpan:       d.ddlPendingEvent.GetNeedAddedTableSpan(),
+					IsBlocked:              false,
+					BlockTs:                d.ddlPendingEvent.CommitTs,
+					NeedDroppedDispatchers: d.ddlPendingEvent.GetNeedDroppedDispatchers().ToPB(),
+					NeedAddedTables:        d.ddlPendingEvent.GetNeedAddedTables(),
 				},
 			}
 			d.SetResendTask(newResendTask(message, d))
@@ -230,11 +230,11 @@ func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 			ID:              d.id.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			State: &heartbeatpb.State{
-				IsBlocked:                true,
-				BlockTs:                  d.ddlPendingEvent.CommitTs,
-				BlockDispatcherIDs:       d.ddlPendingEvent.GetBlockedDispatcherIDs(),
-				NeedDroppedDispatcherIDs: d.ddlPendingEvent.GetNeedDroppedDispatcherIDs(),
-				NeedAddedTableSpan:       d.ddlPendingEvent.GetNeedAddedTableSpan(),
+				IsBlocked:              true,
+				BlockTs:                d.ddlPendingEvent.CommitTs,
+				BlockDispatchers:       d.ddlPendingEvent.GetBlockedDispatchers().ToPB(),
+				NeedDroppedDispatchers: d.ddlPendingEvent.GetNeedDroppedDispatchers().ToPB(),
+				NeedAddedTables:        d.ddlPendingEvent.GetNeedAddedTables(),
 			},
 		}
 		d.SetResendTask(newResendTask(message, d))
