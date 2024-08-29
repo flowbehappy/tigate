@@ -208,7 +208,13 @@ func (t TableName) String() string {
 
 // QuoteSchema quotes a full table name
 func QuoteSchema(schema string, table string) string {
-	return fmt.Sprintf("`%s`.`%s`", EscapeName(schema), EscapeName(table))
+	var builder strings.Builder
+	builder.WriteString("`")
+	builder.WriteString(EscapeName(schema))
+	builder.WriteString("`.`")
+	builder.WriteString(EscapeName(table))
+	builder.WriteString("`")
+	return builder.String()
 }
 
 // QuoteName wraps a name with "`"

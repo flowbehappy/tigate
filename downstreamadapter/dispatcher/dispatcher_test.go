@@ -97,7 +97,10 @@ func TestBasicDispatcher(t *testing.T) {
 		},
 		DispatcherID: dispatcher.id,
 	}
-	dispatcherEventsDynamicStream.In() <- &common.TxnEvent{ResolvedTs: 110, DispatcherID: dispatcher.id}
+	dispatcherEventsDynamicStream.In() <- common.ResolvedEvent{
+		DispatcherID: dispatcher.id,
+		ResolvedTs:   110,
+	}
 
 	heartBeatInfo := &HeartBeatInfo{}
 	dispatcher.CollectDispatcherHeartBeatInfo(heartBeatInfo)
@@ -160,7 +163,10 @@ func TestDispatcherWithSingleTableDDL(t *testing.T) {
 	dispatcher.CollectDispatcherHeartBeatInfo(heartBeatInfo)
 	require.Equal(t, uint64(101), heartBeatInfo.CheckpointTs)
 
-	dispatcherEventsDynamicStream.In() <- &common.TxnEvent{ResolvedTs: 110, DispatcherID: dispatcher.id}
+	dispatcherEventsDynamicStream.In() <- common.ResolvedEvent{
+		DispatcherID: dispatcher.id,
+		ResolvedTs:   110,
+	}
 
 	time.Sleep(1 * time.Second)
 	dispatcher.CollectDispatcherHeartBeatInfo(heartBeatInfo)
