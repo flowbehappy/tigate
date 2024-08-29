@@ -18,8 +18,11 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
+	"github.com/pingcap/tiflow/pkg/spanz"
+	"go.uber.org/zap"
 )
 
 type Barrier struct {
@@ -131,7 +134,9 @@ func (b *Barrier) handleStateHeartbeat(changefeedID string,
 	if blockState.IsBlocked {
 		event, ok := b.blockedTs[blockState.BlockTs]
 		ack := &heartbeatpb.DispatcherStatus{
-			ID:  status.ID,
+			InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
+				InfluenceType: heartbeatpb.InfluenceType_Normal,
+			},
 			Ack: &heartbeatpb.ACK{CommitTs: status.CheckpointTs}}
 		if !ok {
 			event = NewBlockEvent(changefeedID, b.scheduler, blockState)
@@ -157,7 +162,9 @@ func (b *Barrier) handleStateHeartbeat(changefeedID string,
 		// not blocked event, it must be sent by table event trigger dispatcher
 		// the ddl already synced to downstream , e.g.: create table, drop table
 		distacherStatus = &heartbeatpb.DispatcherStatus{
-			ID:  status.ID,
+			InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
+				InfluenceType: heartbeatpb.InfluenceType_Normal,
+			},
 			Ack: &heartbeatpb.ACK{CommitTs: status.CheckpointTs},
 		}
 		msgs, err = NewBlockEvent(changefeedID, b.scheduler, blockState).scheduleBlockEvent()
@@ -176,8 +183,8 @@ type BlockEvent struct {
 	selectedDispatcher common.DispatcherID
 	// todo: support big set of dispatcher, like sync point, create database
 	blockedDispatcherMap map[common.DispatcherID]bool
-	newTableSpans        []*heartbeatpb.TableSpan
-	dropDispatcherIDs    []*heartbeatpb.DispatcherID
+	newTables            []int64
+	dropDispatcherIDs    *heartbeatpb.InfluencedDispatchers
 }
 
 func NewBlockEvent(cfID string, scheduler *Scheduler,
@@ -187,19 +194,21 @@ func NewBlockEvent(cfID string, scheduler *Scheduler,
 		selected:             false,
 		cfID:                 cfID,
 		commitTs:             status.BlockTs,
-		newTableSpans:        status.NeedAddedTableSpan,
-		dropDispatcherIDs:    status.NeedDroppedDispatcherIDs,
+		newTables:            status.NeedAddedTables,
+		dropDispatcherIDs:    status.NeedDroppedDispatchers,
 		blockedDispatcherMap: make(map[common.DispatcherID]bool),
 	}
-	for _, block := range status.BlockDispatcherIDs {
-		event.blockedDispatcherMap[common.NewDispatcherIDFromPB(block)] = false
+	if status.BlockDispatchers != nil {
+		for _, block := range status.BlockDispatchers.DispatcherIDs {
+			event.blockedDispatcherMap[common.NewDispatcherIDFromPB(block)] = false
+		}
 	}
 	return event
 }
 
 func (b *BlockEvent) scheduleBlockEvent() ([]*messaging.TargetMessage, error) {
 	var msgs []*messaging.TargetMessage
-	for _, removed := range b.dropDispatcherIDs {
+	for _, removed := range b.dropDispatcherIDs.DispatcherIDs {
 		msg, err := b.scheduler.RemoveTask(common.NewDispatcherIDFromPB(removed))
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -208,14 +217,19 @@ func (b *BlockEvent) scheduleBlockEvent() ([]*messaging.TargetMessage, error) {
 			msgs = append(msgs, msg)
 		}
 	}
-	for _, add := range b.newTableSpans {
-		tableSpan := &common.TableSpan{TableSpan: add}
+	for _, add := range b.newTables {
+		span := spanz.TableIDToComparableSpan(add)
+		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+			TableID:  uint64(add),
+			StartKey: span.StartKey,
+			EndKey:   span.EndKey,
+		}}
 		dispatcherID := common.NewDispatcherID()
 		replicaSet := NewReplicaSet(model.DefaultChangeFeedID(b.cfID),
 			dispatcherID, tableSpan, b.commitTs).(*ReplicaSet)
 		stm, err := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
 		if err != nil {
-			return nil, errors.Trace(err)
+			log.Panic("failed to create state machine", zap.Error(err))
 		}
 		b.scheduler.AddNewTask(stm)
 	}
@@ -252,7 +266,9 @@ func (b *BlockEvent) sendPassAction() []*messaging.TargetMessage {
 				messaging.HeartbeatCollectorTopic,
 				&heartbeatpb.HeartBeatResponse{DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
 					{
-						ID: dispatcherID.ToPB(),
+						InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
+							InfluenceType: heartbeatpb.InfluenceType_Normal,
+						},
 						Action: &heartbeatpb.DispatcherAction{
 							Action:   heartbeatpb.Action_Pass,
 							CommitTs: b.commitTs,
