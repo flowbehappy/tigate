@@ -93,7 +93,7 @@ func newRegionRequestWorker(
 	waitForPreFetching := func() error {
 		if worker.preFetchForConnecting != nil {
 			log.Panic("preFetchForConnecting should be nil",
-				zap.String("subscriptionClientID", string(worker.client.id)),
+				zap.Int("subscriptionClientID", int(worker.client.id)),
 				zap.Uint64("workerID", worker.workerID),
 				zap.Uint64("storeID", store.storeID),
 				zap.String("addr", store.storeAddr))
@@ -158,14 +158,14 @@ func (s *regionRequestWorker) run(ctx context.Context, credential *security.Cred
 	// FIXME: check tikv store version
 
 	log.Info("region request worker going to create grpc stream",
-		zap.String("subscriptionClientID", string(s.client.id)),
+		zap.Int("subscriptionClientID", int(s.client.id)),
 		zap.Uint64("workerID", s.workerID),
 		zap.Uint64("storeID", s.store.storeID),
 		zap.String("addr", s.store.storeAddr))
 
 	defer func() {
 		log.Info("region request worker exits",
-			zap.String("subscriptionClientID", string(s.client.id)),
+			zap.Int("subscriptionClientID", int(s.client.id)),
 			zap.Uint64("workerID", s.workerID),
 			zap.Uint64("storeID", s.store.storeID),
 			zap.String("addr", s.store.storeAddr),
@@ -176,7 +176,7 @@ func (s *regionRequestWorker) run(ctx context.Context, credential *security.Cred
 	cc, err := Connect(gctx, credential, s.store.storeAddr)
 	if err != nil {
 		log.Warn("region request worker create grpc stream failed",
-			zap.String("subscriptionClientID", string(s.client.id)),
+			zap.Int("subscriptionClientID", int(s.client.id)),
 			zap.Uint64("workerID", s.workerID),
 			zap.Uint64("storeID", s.store.storeID),
 			zap.String("addr", s.store.storeAddr),
@@ -205,7 +205,7 @@ func (s *regionRequestWorker) receiveAndDispatchChangeEventsToProcessor(
 		changeEvent, err := conn.Client.Recv()
 		if err != nil {
 			log.Debug("region request worker receive from grpc stream failed",
-				zap.String("subscriptionClientID", string(s.client.id)),
+				zap.Int("subscriptionClientID", int(s.client.id)),
 				zap.Uint64("workerID", s.workerID),
 				zap.Uint64("storeID", s.store.storeID),
 				zap.String("addr", s.store.storeAddr),
@@ -237,7 +237,7 @@ func (s *regionRequestWorker) processRegionSendTask(
 	doSend := func(req *cdcpb.ChangeDataRequest, subscriptionID SubscriptionID) error {
 		if err := conn.Client.Send(req); err != nil {
 			log.Warn("region request worker send request to grpc stream failed",
-				zap.String("subscriptionClientID", string(s.client.id)),
+				zap.Int("subscriptionClientID", int(s.client.id)),
 				zap.Uint64("workerID", s.workerID),
 				zap.Uint64("subscriptionID", uint64(subscriptionID)),
 				zap.Uint64("regionID", req.RegionId),
@@ -268,7 +268,7 @@ func (s *regionRequestWorker) processRegionSendTask(
 		// TODO: can region be nil?
 		subID := region.subscribedSpan.subID
 		log.Debug("region request worker gets a singleRegionInfo",
-			zap.String("subscriptionClientID", string(s.client.id)),
+			zap.Int("subscriptionClientID", int(s.client.id)),
 			zap.Uint64("workerID", s.workerID),
 			zap.Uint64("subscriptionID", uint64(subID)),
 			zap.Uint64("regionID", region.verID.GetID()),
@@ -400,8 +400,8 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 		state := s.getRegionState(subscriptionID, regionID)
 		switch x := event.Event.(type) {
 		case *cdcpb.Event_Error:
-			log.Info("region request worker receives a region error",
-				zap.String("subscriptionClientID", string(s.client.id)),
+			log.Debug("region request worker receives a region error",
+				zap.Int("subscriptionClientID", int(s.client.id)),
 				zap.Uint64("workerID", s.workerID),
 				zap.Uint64("subscriptionID", uint64(subscriptionID)),
 				zap.Uint64("regionID", event.RegionId),
@@ -416,7 +416,7 @@ func (s *regionRequestWorker) dispatchRegionChangeEvents(ctx context.Context, ev
 			}
 		} else {
 			log.Warn("region request worker receives a region event for an untracked region",
-				zap.String("subscriptionClientID", string(s.client.id)),
+				zap.Int("subscriptionClientID", int(s.client.id)),
 				zap.Uint64("workerID", s.workerID),
 				zap.Uint64("subscriptionID", uint64(subscriptionID)),
 				zap.Uint64("regionID", event.RegionId))

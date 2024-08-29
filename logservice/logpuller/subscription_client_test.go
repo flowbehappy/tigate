@@ -179,7 +179,7 @@ func TestSubscriptionWithFailedTiKV(t *testing.T) {
 		AdvanceResolvedTsIntervalInMs: 1, // must be small to pass the test
 	}
 	client := NewSubscriptionClient(
-		"test",
+		ClientIDTest,
 		clientConfig,
 		pdClient,
 		regionCache,

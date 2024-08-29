@@ -34,7 +34,7 @@ func newSubscriptionClientForTestRegionChangeEventProcessor(eventCh chan LogEven
 		ChangeEventProcessorNum:       32,
 		AdvanceResolvedTsIntervalInMs: 300,
 	}
-	client := NewSubscriptionClient("test", clientConfig, nil, nil, nil, nil, &security.Credential{})
+	client := NewSubscriptionClient(ClientIDTest, clientConfig, nil, nil, nil, nil, &security.Credential{})
 	client.consume = func(ctx context.Context, e LogEvent) error {
 		select {
 		case <-ctx.Done():
