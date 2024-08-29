@@ -92,7 +92,7 @@ func (w *changeEventProcessor) handleSingleRegionError(ctx context.Context, stat
 	err := state.takeError()
 	if err != nil {
 		log.Debug("region change event processor get a region error",
-			zap.String("subscriptionClientID", string(w.client.id)),
+			zap.Int("subscriptionClientID", int(w.client.id)),
 			zap.Uint64("workerID", worker.workerID),
 			zap.Uint64("subscriptionID", uint64(state.region.subscribedSpan.subID)),
 			zap.Uint64("regionID", state.region.verID.GetID()),
@@ -147,7 +147,7 @@ func (w *changeEventProcessor) handleEventEntry(ctx context.Context, x *cdcpb.Ev
 	}
 	tableID := state.region.subscribedSpan.span.TableID
 	log.Debug("region change event processor get an Event",
-		zap.String("subscriptionClientID", string(w.client.id)),
+		zap.Int("subscriptionClientID", int(w.client.id)),
 		zap.Uint64("subscriptionID", uint64(state.region.subscribedSpan.subID)),
 		zap.Uint64("tableID", tableID),
 		zap.Int("rows", len(x.Entries.GetEntries())))
@@ -291,7 +291,7 @@ func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resol
 		lastResolvedTs := state.getLastResolvedTs()
 		if batch.ts < lastResolvedTs {
 			log.Info("The resolvedTs is fallen back in kvclient",
-				zap.String("subscriptionClientID", string(w.client.id)),
+				zap.Int("subscriptionClientID", int(w.client.id)),
 				zap.Uint64("subscriptionID", uint64(state.region.subscribedSpan.subID)),
 				zap.Uint64("regionID", regionID),
 				zap.Uint64("resolvedTs", batch.ts),

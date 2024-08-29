@@ -125,7 +125,7 @@ func NewEventStore(
 		AdvanceResolvedTsIntervalInMs: 600,
 	}
 	client := logpuller.NewSubscriptionClient(
-		"eventStore",
+		logpuller.ClientIDEventStore,
 		clientConfig,
 		pdCli,
 		regionCache,
