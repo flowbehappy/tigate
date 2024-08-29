@@ -21,6 +21,8 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils/threadpool"
+	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/tikv/client-go/v2/tikv"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
@@ -45,7 +47,8 @@ type Manager struct {
 	coordinatorVersion int64
 
 	selfNode    *common.NodeInfo
-	pdEndpoints []string
+	pdapi       pdutil.PDAPIClient
+	regionCache *tikv.RegionCache
 
 	msgCh chan *messaging.TargetMessage
 
@@ -57,7 +60,9 @@ type Manager struct {
 // 1. manager receives bootstrap command from coordinator
 // 2. manager manages maintainer lifetime
 // 3. manager report maintainer status to coordinator
-func NewMaintainerManager(selfNode *common.NodeInfo) *Manager {
+func NewMaintainerManager(selfNode *common.NodeInfo,
+	pdapi pdutil.PDAPIClient,
+	regionCache *tikv.RegionCache) *Manager {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	m := &Manager{
 		mc:            mc,
@@ -65,6 +70,8 @@ func NewMaintainerManager(selfNode *common.NodeInfo) *Manager {
 		selfNode:      selfNode,
 		msgCh:         make(chan *messaging.TargetMessage, 1024),
 		taskScheduler: threadpool.NewThreadPoolDefault(),
+		pdapi:         pdapi,
+		regionCache:   regionCache,
 	}
 	m.stream = dynstream.NewDynamicStreamDefault[string, *Event, *Maintainer](NewStreamHandler())
 	m.stream.Start()
@@ -202,7 +209,9 @@ func (m *Manager) onDispatchMaintainerRequest(
 			if err != nil {
 				log.Panic("decode changefeed fail", zap.Error(err))
 			}
-			cf = NewMaintainer(cfID, cfConfig, m.selfNode, m.stream, m.taskScheduler, req.CheckpointTs)
+			cf = NewMaintainer(cfID, cfConfig, m.selfNode, m.stream, m.taskScheduler,
+				nil, nil,
+				req.CheckpointTs)
 			err = m.stream.AddPaths(dynstream.PathAndDest[string, *Maintainer]{
 				Path: cfID.ID,
 				Dest: cf.(*Maintainer),

@@ -59,6 +59,7 @@ type serverImpl struct {
 	liveness model.Liveness
 
 	pdClient      pd.Client
+	pdAPIClient   pdutil.PDAPIClient
 	pdEndpoints   []string
 	coordinatorMu sync.Mutex
 	coordinator   server.Coordinator
@@ -129,7 +130,7 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener()),
-		maintainer.NewMaintainerManager(c.info),
+		maintainer.NewMaintainerManager(c.info, c.pdAPIClient, c.RegionCache),
 		eventstore.NewEventStore(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage, schemaStore),
 	}
 	// register it into global var

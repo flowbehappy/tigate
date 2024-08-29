@@ -234,7 +234,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	taskScheduler := threadpool.NewThreadPoolDefault()
 	maintainer := NewMaintainer(cfID, &model.ChangeFeedInfo{
 		Config: config2.GetDefaultReplicaConfig(),
-	}, node, stream, taskScheduler, 10)
+	}, node, stream, taskScheduler, nil, nil, 10)
 	_ = stream.AddPaths(dynstream.PathAndDest[string, *Maintainer]{
 		Path: cfID.ID,
 		Dest: maintainer,
@@ -283,8 +283,9 @@ func TestMaintainerSchedule(t *testing.T) {
 
 	cancel()
 	stream.Close()
-	require.Equal(t, tableSize,
+	//include a ddl dispatcher
+	require.Equal(t, tableSize+1,
 		maintainer.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
-	require.Equal(t, tableSize,
+	require.Equal(t, tableSize+1,
 		maintainer.scheduler.GetTaskSizeByNodeID(node.ID))
 }

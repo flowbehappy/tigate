@@ -26,7 +26,7 @@ import (
 )
 
 func TestSchedule(t *testing.T) {
-	s := NewScheduler("test", 9, time.Minute)
+	s := NewScheduler("test", 1, nil, nil, nil, 9, time.Minute)
 	s.nodeTasks["node1"] = map[common.DispatcherID]*scheduler.StateMachine{}
 	s.nodeTasks["node2"] = map[common.DispatcherID]*scheduler.StateMachine{}
 	s.nodeTasks["node3"] = map[common.DispatcherID]*scheduler.StateMachine{}
@@ -51,7 +51,7 @@ func TestSchedule(t *testing.T) {
 }
 
 func TestMoveTask(t *testing.T) {
-	s := NewScheduler("test", 9, time.Minute)
+	s := NewScheduler("test", 1, nil, nil, nil, 9, time.Minute)
 	span := &common.TableSpan{
 		TableSpan: &heartbeatpb.TableSpan{
 			TableID: 1,
@@ -117,11 +117,11 @@ func TestMoveTask(t *testing.T) {
 	require.Equal(t, 1, len(s.working))
 
 	//working -> removing
-	stm.HandleRemoveInferior()
+	_, _ = stm.HandleRemoveInferior()
 	s.tryMoveTask(dispatcherID, stm, scheduler.SchedulerStatusWorking, "b", true)
 
 	// removing -> removed
-	stm.HandleInferiorStatus(ReplicaSetStatus{
+	_, _ = stm.HandleInferiorStatus(ReplicaSetStatus{
 		ID:           dispatcherID,
 		State:        heartbeatpb.ComponentState_Stopped,
 		CheckpointTs: 10,
@@ -135,7 +135,7 @@ func TestMoveTask(t *testing.T) {
 }
 
 func TestBalance(t *testing.T) {
-	s := NewScheduler("test", 1000, 0)
+	s := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
 	s.nodeTasks["node1"] = map[common.DispatcherID]*scheduler.StateMachine{}
 	for i := 0; i < 100; i++ {
 		span := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
@@ -179,7 +179,7 @@ func TestBalance(t *testing.T) {
 }
 
 func TestStoppedWhenMoving(t *testing.T) {
-	s := NewScheduler("test", 1000, 0)
+	s := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
 	s.AddNewNode("node1")
 	s.AddNewNode("node2")
 	id := 1
@@ -219,15 +219,12 @@ func TestStoppedWhenMoving(t *testing.T) {
 }
 
 func TestFinishBootstrap(t *testing.T) {
-	s := NewScheduler("test", 1000, 0)
+	s := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
 	s.AddNewNode("node1")
 	span := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
 		TableID: uint64(1),
 	}}
-	dispatcherID := common.NewDispatcherID()
-	stm, _ := scheduler.NewStateMachine(dispatcherID, nil,
-		NewReplicaSet(model.ChangeFeedID{}, dispatcherID, span, 1))
-	s.AddTempTask(span, stm)
+	s.SetCurrentTables(map[int64]struct{}{1: {}})
 
 	dispatcherID2 := common.NewDispatcherID()
 	stm2, err := scheduler.NewStateMachine(dispatcherID2, map[model.CaptureID]scheduler.InferiorStatus{
@@ -242,23 +239,28 @@ func TestFinishBootstrap(t *testing.T) {
 	cached := utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
 	cached.ReplaceOrInsert(span, stm2)
 	require.False(t, s.bootstrapped)
-	s.FinishBootstrap(cached)
+	err = s.FinishBootstrap(map[uint64]utils.Map[*common.TableSpan, *scheduler.StateMachine]{
+		1: cached,
+	})
+	require.Nil(t, err)
 	require.True(t, s.bootstrapped)
 	require.Equal(t, len(s.nodeTasks["node1"]), 1)
 	require.Equal(t, len(s.working), 1)
-	require.Equal(t, len(s.absent), 0)
+	// ddl dispatcher
+	_, ddlDispatcher := s.absent[s.ddlDispatcherID]
+	require.True(t, ddlDispatcher)
 	require.Equal(t, len(s.committing), 0)
 	require.Equal(t, len(s.removing), 0)
 	require.Equal(t, stm2, s.working[dispatcherID2])
-	require.Nil(t, s.tempTasks)
+	require.Nil(t, s.initializedTableMap)
 	require.Panics(t, func() {
-		s.FinishBootstrap(cached)
+		_ = s.FinishBootstrap(map[uint64]utils.Map[*common.TableSpan, *scheduler.StateMachine]{})
 	})
 }
 
 // 4 tasks and 2 servers, then add one server, no re-balance will be triggered
 func TestBalanceUnEvenTask(t *testing.T) {
-	s := NewScheduler("test", 1000, 0)
+	s := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
 	s.AddNewNode("node1")
 	s.AddNewNode("node2")
 	for i := 0; i < 4; i++ {
@@ -287,8 +289,8 @@ func TestBalanceUnEvenTask(t *testing.T) {
 		}
 		return nodeIds
 	}
-	s.HandleStatus("node1", f(s.nodeTasks["node1"]))
-	s.HandleStatus("node2", f(s.nodeTasks["node2"]))
+	_, _ = s.HandleStatus("node1", f(s.nodeTasks["node1"]))
+	_, _ = s.HandleStatus("node2", f(s.nodeTasks["node2"]))
 	require.Equal(t, len(s.working), 4)
 	require.Equal(t, len(s.committing), 0)
 

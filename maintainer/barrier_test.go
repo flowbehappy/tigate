@@ -25,7 +25,7 @@ import (
 )
 
 func TestBlock(t *testing.T) {
-	sche := NewScheduler("test", 1000, 0)
+	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	sche.AddNewNode("node2")
 	var blockedDispatcherIDS []*heartbeatpb.DispatcherID
@@ -178,7 +178,7 @@ func TestBlock(t *testing.T) {
 }
 
 func TestNonBlocked(t *testing.T) {
-	sche := NewScheduler("test", 1000, 0)
+	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	barrier := NewBarrier(sche)
 
