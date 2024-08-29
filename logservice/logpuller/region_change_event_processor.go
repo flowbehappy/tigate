@@ -300,6 +300,7 @@ func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resol
 		}
 
 		state.updateResolvedTs(batch.ts)
+		state.region.releaseScanQuotaIfNeed(w.client.regionScanLimiter)
 	}
 
 	table := batch.regions[0].region.subscribedSpan

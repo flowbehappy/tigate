@@ -55,9 +55,10 @@ func newDDLJobFetcher(
 	advanceResolvedTs func(resolvedTS common.Ts) error,
 ) *ddlJobFetcher {
 	clientConfig := &logpuller.SubscriptionClientConfig{
-		RegionRequestWorkerPerStore:   1,
-		ChangeEventProcessorNum:       4,
-		AdvanceResolvedTsIntervalInMs: 300,
+		RegionRequestWorkerPerStore:        1,
+		ChangeEventProcessorNum:            4,
+		AdvanceResolvedTsIntervalInMs:      300,
+		RegionIncrementalScanLimitPerStore: 0,
 	}
 	client := logpuller.NewSubscriptionClient(
 		logpuller.ClientIDSchemaStore,

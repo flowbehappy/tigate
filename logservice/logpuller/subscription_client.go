@@ -128,6 +128,8 @@ type SubscriptionClientConfig struct {
 	ChangeEventProcessorNum uint
 	// The time interval to advance resolvedTs for a region
 	AdvanceResolvedTsIntervalInMs uint
+	// The limit of concurrent incremental scan regions for every tikv store, 0 means unlimited
+	RegionIncrementalScanLimitPerStore uint
 }
 
 // SubscriptionClient is used to subscribe events of table ranges from TiKV.
@@ -167,6 +169,9 @@ type SubscriptionClient struct {
 	// The errors will be handled in `handleErrors` goroutine.
 	errCh chan regionErrorInfo
 
+	// used to limit the number of concurrent region incremental scan requests on a single store
+	regionScanLimiter *regionScanRequestLimiter
+
 	consume func(ctx context.Context, e LogEvent) error
 }
 
@@ -205,6 +210,8 @@ func NewSubscriptionClient(
 		regionCh:          make(chan regionInfo, 1024),
 		resolveLockTaskCh: make(chan resolveLockTask, 1024),
 		errCh:             make(chan regionErrorInfo, 1024),
+
+		regionScanLimiter: newRegionScanRequestLimiter(config.RegionIncrementalScanLimitPerStore),
 	}
 	s.totalSpans.spanMap = make(map[SubscriptionID]*subscribedSpan)
 
@@ -307,6 +314,7 @@ func (s *SubscriptionClient) Run(ctx context.Context, consume func(ctx context.C
 func (s *SubscriptionClient) Close(ctx context.Context) error {
 	// FIXME: close and drain all channels
 
+	s.regionScanLimiter.close()
 	return nil
 }
 
@@ -338,6 +346,8 @@ func (s *SubscriptionClient) onTableDrained(rt *subscribedSpan) {
 
 // Note: don't block the caller, otherwise there may be deadlock
 func (s *SubscriptionClient) onRegionFail(ctx context.Context, errInfo regionErrorInfo) {
+	errInfo.regionInfo.releaseScanQuotaIfNeed(s.regionScanLimiter)
+
 	select {
 	case <-ctx.Done():
 	case s.errCh <- errInfo:
@@ -798,4 +808,81 @@ func (r *subscribedSpan) resolveStaleLocks(targetTs uint64) {
 	log.Debug("subscription client finds slow locked ranges",
 		zap.Uint64("subscriptionID", uint64(r.subID)),
 		zap.Any("ranges", res))
+}
+
+// regionScanRequestLimiter is used to limit the concurrent number of region in incremental state for a tikv store.
+type regionScanRequestLimiter struct {
+	mutex           sync.Mutex
+	cond            *sync.Cond // 条件变量
+	maxRequests     uint       // 0 means unlimited
+	currentRequests map[uint64]uint
+}
+
+func newRegionScanRequestLimiter(maxRequests uint) *regionScanRequestLimiter {
+	limiter := &regionScanRequestLimiter{
+		maxRequests:     maxRequests,
+		currentRequests: make(map[uint64]uint),
+	}
+	limiter.cond = sync.NewCond(&limiter.mutex)
+	return limiter
+}
+
+func (r *regionScanRequestLimiter) close() {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	for storeID := range r.currentRequests {
+		r.currentRequests[storeID] = 0
+	}
+	r.cond.Broadcast()
+}
+
+func (r *regionScanRequestLimiter) acquire(ctx context.Context, storeID uint64, regionID uint64) {
+	if r.maxRequests == 0 {
+		return
+	}
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	for {
+		if r.currentRequests[storeID] < r.maxRequests {
+			r.currentRequests[storeID]++
+			// log.Info("acquire success",
+			// 	zap.Uint64("storeID", storeID),
+			// 	zap.Uint64("regionID", regionID),
+			// 	zap.Uint("count", r.currentRequests[storeID]))
+			return
+		}
+		log.Info("acquire fail, waiting", zap.Uint64("storeID", storeID))
+
+		r.cond.Wait()
+
+		log.Info("try acquire again", zap.Uint64("storeID", storeID))
+
+		if ctx.Err() != nil {
+			log.Info("acquire canceled due to context",
+				zap.Uint64("storeID", storeID))
+			return
+		}
+	}
+}
+
+func (r *regionScanRequestLimiter) release(storeID uint64, regionID uint64) {
+	if r.maxRequests == 0 {
+		return
+	}
+	// log.Info("try release")
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	r.currentRequests[storeID]--
+	// log.Info("release",
+	// 	zap.Uint64("storeID", storeID),
+	// 	zap.Uint64("regionID", regionID),
+	// 	zap.Uint("count", r.currentRequests[storeID]))
+
+	if r.currentRequests[storeID] == 0 {
+		delete(r.currentRequests, storeID)
+	}
+	r.cond.Signal()
 }
