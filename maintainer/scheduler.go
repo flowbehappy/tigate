@@ -14,27 +14,32 @@
 package maintainer
 
 import (
+	"context"
 	"math"
 	"math/rand"
 	"sort"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/maintainer/split"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/flowbehappy/tigate/utils/heap"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/errors"
+	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/pingcap/tiflow/pkg/spanz"
 	"go.uber.org/zap"
 )
 
 // Scheduler schedules and balance tables
 type Scheduler struct {
-	// tempTasks hold all tasks that before scheduler bootstrapped, use the table span as the key
-	// state machine hold the temp dispatcher ID, if a working state task reported, change the dispatcher ID
-	tempTasks utils.Map[*common.TableSpan, *scheduler.StateMachine]
+	// initializedTableMap hold all tables that before scheduler bootstrapped
+	initializedTableMap map[int64]struct{}
 	// absent track all table spans that need to be scheduled
 	// when dispatcher reported a new table or remove a table, this field should be updated
 	absent map[common.DispatcherID]*scheduler.StateMachine
@@ -50,6 +55,11 @@ type Scheduler struct {
 	totalMaps    []map[common.DispatcherID]*scheduler.StateMachine
 	bootstrapped bool
 
+	splitter               *split.Splitter
+	spanReplicationEnabled bool
+	startCheckpointTs      uint64
+	ddlDispatcherID        common.DispatcherID
+
 	changefeedID         string
 	batchSize            int
 	random               *rand.Rand
@@ -58,20 +68,29 @@ type Scheduler struct {
 }
 
 func NewScheduler(changefeedID string,
+	checkpointTs uint64,
+	pdapi pdutil.PDAPIClient,
+	regionCache split.RegionCache,
+	config *config.ChangefeedSchedulerConfig,
 	batchSize int, balanceInterval time.Duration) *Scheduler {
 	s := &Scheduler{
-		tempTasks:            utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine](),
+		initializedTableMap:  make(map[int64]struct{}),
 		committing:           make(map[common.DispatcherID]*scheduler.StateMachine),
 		removing:             make(map[common.DispatcherID]*scheduler.StateMachine),
 		working:              make(map[common.DispatcherID]*scheduler.StateMachine),
 		absent:               make(map[common.DispatcherID]*scheduler.StateMachine),
 		nodeTasks:            make(map[string]map[common.DispatcherID]*scheduler.StateMachine),
+		startCheckpointTs:    checkpointTs,
 		changefeedID:         changefeedID,
 		bootstrapped:         false,
 		batchSize:            batchSize,
 		random:               rand.New(rand.NewSource(time.Now().UnixNano())),
 		checkBalanceInterval: balanceInterval,
 		lastRebalanceTime:    time.Now(),
+	}
+	if config != nil && config.EnableTableAcrossNodes {
+		s.splitter = split.NewSplitter(changefeedID, pdapi, regionCache, config)
+		s.spanReplicationEnabled = true
 	}
 	// put all maps to totalMaps
 	s.totalMaps = make([]map[common.DispatcherID]*scheduler.StateMachine, 4)
@@ -86,47 +105,72 @@ func (s *Scheduler) AddNewTask(stm *scheduler.StateMachine) {
 	s.absent[stm.ID.(common.DispatcherID)] = stm
 }
 
-func (s *Scheduler) AddTempTask(span *common.TableSpan, stm *scheduler.StateMachine) {
-	s.tempTasks.ReplaceOrInsert(span, stm)
+func (s *Scheduler) SetCurrentTables(tables map[int64]struct{}) {
+	s.initializedTableMap = tables
 }
 
 // FinishBootstrap adds working state tasks to this scheduler directly,
 // it reported by the bootstrap response
-func (s *Scheduler) FinishBootstrap(workingMap utils.Map[*common.TableSpan, *scheduler.StateMachine]) {
+func (s *Scheduler) FinishBootstrap(workingMap map[uint64]utils.Map[*common.TableSpan, *scheduler.StateMachine]) error {
 	if s.bootstrapped {
 		log.Panic("already bootstrapped",
 			zap.String("changefeed", s.changefeedID),
 			zap.Any("workingMap", workingMap))
 	}
-	workingMap.Ascend(func(span *common.TableSpan, stm *scheduler.StateMachine) bool {
-		if stm.State != scheduler.SchedulerStatusWorking {
-			log.Panic("unexpected state",
-				zap.String("changefeed", s.changefeedID),
-				zap.Any("stm", stm))
-		}
-		if !s.tempTasks.Has(span) {
-			dispatcherID := stm.ID.(common.DispatcherID)
-			s.working[dispatcherID] = stm
-			s.nodeTasks[stm.Primary][dispatcherID] = stm
+	for tableID := range s.initializedTableMap {
+		tableMap, ok := workingMap[uint64(tableID)]
+		span := spanz.TableIDToComparableSpan(tableID)
+		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+			TableID:  uint64(tableID),
+			StartKey: span.StartKey,
+			EndKey:   span.EndKey,
+		}}
+		if !ok {
+			tableSpans := []*common.TableSpan{tableSpan}
+			if s.spanReplicationEnabled {
+				//split the whole table span base on the configuration, todo: background split table
+				tableSpans = s.splitter.SplitSpans(context.Background(), tableSpan, len(s.nodeTasks))
+			}
+			if err := s.addNewSpans(tableID, tableSpans); err != nil {
+				return errors.Trace(err)
+			}
 		} else {
-			// update the map value, later we will skip it
-			s.tempTasks.ReplaceOrInsert(span, stm)
-			dispatcherID := stm.ID.(common.DispatcherID)
-			s.working[dispatcherID] = stm
-			s.nodeTasks[stm.Primary][dispatcherID] = stm
+			log.Info("table already working in other server",
+				zap.String("changefeed", s.changefeedID),
+				zap.Int64("tableID", tableID))
+			s.addWorkingSpans(tableMap)
+			if s.spanReplicationEnabled {
+				holes := split.FindHoles(tableMap, tableSpan)
+				// todo: split the hole
+				if err := s.addNewSpans(tableID, holes); err != nil {
+					return errors.Trace(err)
+				}
+			}
+			// delete it
+			delete(workingMap, uint64(tableID))
 		}
-		return true
-	})
-	s.tempTasks.Ascend(func(key *common.TableSpan, stm *scheduler.StateMachine) bool {
-		if stm.State == scheduler.SchedulerStatusWorking {
-			return true
+	}
+	ddlSpanFound := false
+	// tables that not included in init table map we get from tikv at checkpoint ts
+	// that can happen if a table is created after checkpoint ts
+	// the initial table map only contains real physical tables,
+	// ddl table is special table id (0), can be included in the bootstrap response message
+	for tableID, tableMap := range workingMap {
+		log.Info("found a tables not in initial table map",
+			zap.String("changefeed", s.changefeedID),
+			zap.Uint64("id", tableID))
+		if s.addWorkingSpans(tableMap) {
+			ddlSpanFound = true
 		}
-		span := stm.ID.(common.DispatcherID)
-		s.absent[span] = stm
-		return true
-	})
+	}
+
+	// add a table_event_trigger dispatcher if not found
+	if !ddlSpanFound {
+		s.addDDLDispatcher()
+	}
 	s.bootstrapped = true
-	s.tempTasks = nil
+	s.initializedTableMap = nil
+	return nil
 }
 
 // GetTask queries a task by dispatcherID, return nil if not found
@@ -435,6 +479,58 @@ func (s *Scheduler) GetTaskSizeByNodeID(nodeID string) int {
 		return len(sm)
 	}
 	return 0
+}
+
+func (s *Scheduler) addDDLDispatcher() {
+	ddlTableSpan := &common.DDLSpan
+	dispatcherID := common.NewDispatcherID()
+	s.ddlDispatcherID = dispatcherID
+	replicaSet := NewReplicaSet(model.DefaultChangeFeedID(s.changefeedID), dispatcherID,
+		ddlTableSpan, s.startCheckpointTs).(*ReplicaSet)
+	stm, _ := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
+	s.AddNewTask(stm)
+	log.Info("create table event trigger dispatcher",
+		zap.String("changefeed", s.changefeedID),
+		zap.String("dispatcher", dispatcherID.String()))
+}
+
+func (s *Scheduler) addWorkingSpans(tableMap utils.Map[*common.TableSpan, *scheduler.StateMachine]) bool {
+	ddlSpanFound := false
+	tableMap.Ascend(func(span *common.TableSpan, stm *scheduler.StateMachine) bool {
+		if stm.State != scheduler.SchedulerStatusWorking {
+			log.Panic("unexpected state",
+				zap.String("changefeed", s.changefeedID),
+				zap.Any("stm", stm))
+		}
+		dispatcherID := stm.ID.(common.DispatcherID)
+		s.working[dispatcherID] = stm
+		s.nodeTasks[stm.Primary][dispatcherID] = stm
+		if span.TableID == 0 {
+			ddlSpanFound = true
+			s.ddlDispatcherID = dispatcherID
+		}
+		return true
+	})
+	return ddlSpanFound
+}
+
+func (s *Scheduler) addNewSpans(tableID int64, tableSpans []*common.TableSpan) error {
+	for _, newSpan := range tableSpans {
+		newTableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+			TableID:  uint64(tableID),
+			StartKey: newSpan.StartKey,
+			EndKey:   newSpan.EndKey,
+		}}
+		dispatcherID := common.NewDispatcherID()
+		replicaSet := NewReplicaSet(model.DefaultChangeFeedID(s.changefeedID),
+			dispatcherID, newTableSpan, s.startCheckpointTs).(*ReplicaSet)
+		stm, err := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.AddNewTask(stm)
+	}
+	return nil
 }
 
 // tryMoveTask moves the StateMachine to the right map and modified the node map if changed
