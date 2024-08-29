@@ -38,7 +38,8 @@ message ACK {
 }
 
 message DispatcherStatus {
-    InfluencedDispatchers influencedDispatchers = 1; // 这个最好保证，如果是 normal传回来的时候 dispatcherIds 是唯一的
+    // when type is normal, dispatcherIds len must be 1
+    InfluencedDispatchers influencedDispatchers = 1;
     DispatcherAction action = 2;
     ACK ack = 3;
 }
@@ -132,9 +133,12 @@ enum InfluenceType {
 
 message InfluencedDispatchers {
     InfluenceType InfluenceType = 1;
+    // only exist when type is normal
 	repeated DispatcherID DispatcherIDs = 2; 
+    // only exist when type is DB.
 	int64 SchemaID = 3;
-    DispatcherID excludeDispatcherId = 4; // just use for db / all influence
+    // only exist when type is all or db, and in heartbeat response.
+    DispatcherID excludeDispatcherId = 4;
 }
 
 message State {

@@ -424,6 +424,7 @@ func (m *ACK) GetCommitTs() uint64 {
 }
 
 type DispatcherStatus struct {
+	// when type is normal, dispatcherIds len must be 1
 	InfluencedDispatchers *InfluencedDispatchers `protobuf:"bytes,1,opt,name=influencedDispatchers,proto3" json:"influencedDispatchers,omitempty"`
 	Action                *DispatcherAction      `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
 	Ack                   *ACK                   `protobuf:"bytes,3,opt,name=ack,proto3" json:"ack,omitempty"`
@@ -1260,10 +1261,13 @@ func (m *MaintainerCloseResponse) GetSuccess() bool {
 }
 
 type InfluencedDispatchers struct {
-	InfluenceType       InfluenceType   `protobuf:"varint,1,opt,name=InfluenceType,proto3,enum=heartbeatpb.InfluenceType" json:"InfluenceType,omitempty"`
-	DispatcherIDs       []*DispatcherID `protobuf:"bytes,2,rep,name=DispatcherIDs,proto3" json:"DispatcherIDs,omitempty"`
-	SchemaID            int64           `protobuf:"varint,3,opt,name=SchemaID,proto3" json:"SchemaID,omitempty"`
-	ExcludeDispatcherId *DispatcherID   `protobuf:"bytes,4,opt,name=excludeDispatcherId,proto3" json:"excludeDispatcherId,omitempty"`
+	InfluenceType InfluenceType `protobuf:"varint,1,opt,name=InfluenceType,proto3,enum=heartbeatpb.InfluenceType" json:"InfluenceType,omitempty"`
+	// only exist when type is normal
+	DispatcherIDs []*DispatcherID `protobuf:"bytes,2,rep,name=DispatcherIDs,proto3" json:"DispatcherIDs,omitempty"`
+	// only exist when type is DB.
+	SchemaID int64 `protobuf:"varint,3,opt,name=SchemaID,proto3" json:"SchemaID,omitempty"`
+	// only exist when type is all or db, and in heartbeat response.
+	ExcludeDispatcherId *DispatcherID `protobuf:"bytes,4,opt,name=excludeDispatcherId,proto3" json:"excludeDispatcherId,omitempty"`
 }
 
 func (m *InfluencedDispatchers) Reset()         { *m = InfluencedDispatchers{} }
