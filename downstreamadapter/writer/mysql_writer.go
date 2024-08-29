@@ -170,8 +170,8 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *common.TxnEvent) error {
 		retry.WithIsRetryableErr(errorutil.IsRetryableDDLError))
 }
 
-func (w *MysqlWriter) Flush(events []*common.TxnEvent, workerNum int) error {
-	dmls := w.prepareDMLs(events)
+func (w *MysqlWriter) Flush(events []*common.TxnEvent, workerNum int, rows int) error {
+	dmls := w.prepareDMLs(events, rows)
 	if dmls.rowCount == 0 {
 		return nil
 	}
@@ -196,13 +196,10 @@ func (w *MysqlWriter) Flush(events []*common.TxnEvent, workerNum int) error {
 	return nil
 }
 
-func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent) *preparedDMLs {
-	// TODO: use a sync.Pool to reduce allocations.
-	startTs := make([]uint64, 0)
-	sqls := make([]string, 0)
-	values := make([][]interface{}, 0)
+func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent, rowCount int) *preparedDMLs {
+	sqls := make([]string, 0, rowCount)
+	values := make([][]interface{}, 0, rowCount)
 
-	rowCount := 0
 	approximateSize := int64(0)
 	calcColsSize := func(cols []*common.Column) {
 		for _, c := range cols {
@@ -214,12 +211,8 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent) *preparedDMLs {
 		if len(rows) == 0 {
 			continue
 		}
-		rowCount += len(rows)
 
 		firstRow := rows[0]
-		if len(startTs) == 0 || startTs[len(startTs)-1] != event.StartTs {
-			startTs = append(startTs, event.StartTs)
-		}
 
 		// translateToInsert control the update and insert behavior.
 		translateToInsert := !w.cfg.SafeMode
@@ -278,7 +271,6 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent) *preparedDMLs {
 	}
 
 	return &preparedDMLs{
-		startTs:         startTs,
 		sqls:            sqls,
 		values:          values,
 		rowCount:        rowCount,

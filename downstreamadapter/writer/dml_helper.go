@@ -26,6 +26,7 @@ import (
 // `WHERE` conditions come from `preCols` and SET clause targets come from `cols`.
 func prepareUpdate(quoteTable string, preCols, cols []*common.Column) (string, []interface{}) {
 	var builder strings.Builder
+	builder.Grow(64)
 	builder.WriteString("UPDATE ")
 	builder.WriteString(quoteTable)
 	builder.WriteString(" SET ")
@@ -86,6 +87,7 @@ func prepareReplace(
 	translateToInsert bool,
 ) (string, []interface{}) {
 	var builder strings.Builder
+	builder.Grow(32)
 	columnNames := make([]string, 0, len(cols))
 	args := make([]interface{}, 0, len(cols))
 	for _, col := range cols {
@@ -141,6 +143,7 @@ func appendQueryArgs(args []interface{}, col *common.Column) []interface{} {
 // sql: `DELETE FROM `test`.`t` WHERE x = ? AND y >= ? LIMIT 1`
 func prepareDelete(quoteTable string, cols []*common.Column) (string, []interface{}) {
 	var builder strings.Builder
+	builder.Grow(64)
 	builder.WriteString("DELETE FROM ")
 	builder.WriteString(quoteTable)
 	builder.WriteString(" WHERE ")
