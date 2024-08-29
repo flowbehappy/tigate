@@ -79,6 +79,7 @@ type Maintainer struct {
 	lastReportTime time.Time
 
 	scheduler *Scheduler
+	barrier   *Barrier
 
 	removing        bool
 	cascadeRemoving bool
@@ -141,6 +142,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		tableCountGauge:                metrics.TableGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 	}
 	m.bootstrapper = NewBootstrapper(m.id.ID, m.getNewBootstrapFn())
+	m.barrier = NewBarrier(m.scheduler)
 	log.Info("maintainer is created", zap.String("id", cfID.String()))
 	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace, cfID.ID).Inc()
 	return m
@@ -462,6 +464,14 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 		m.checkpointTsByCapture[model.CaptureID(msg.From)] = *req.Watermark
 	}
 	msgs, err := m.scheduler.HandleStatus(msg.From.String(), req.Statuses)
+	if err != nil {
+		log.Error("handle status failed, ignore",
+			zap.String("changefeed", m.id.ID),
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+	m.sendMessages(msgs)
+	msgs, err = m.barrier.HandleStatus(msg.From, req)
 	if err != nil {
 		log.Error("handle status failed, ignore",
 			zap.String("changefeed", m.id.ID),

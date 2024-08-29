@@ -166,3 +166,41 @@ func newTableSpan(tableID uint64, start, end string) *common.TableSpan {
 	}
 	return res
 }
+
+func TestResolvedTsCache(t *testing.T) {
+	rc := newResolvedTsCache(10)
+	require.Equal(t, 0, rc.len)
+	require.Equal(t, 10, len(rc.cache))
+	require.Equal(t, 10, rc.limit)
+
+	// Case 1: insert a new resolved ts
+	rc.add(common.ResolvedEvent{
+		DispatcherID: common.NewDispatcherID(),
+		ResolvedTs:   100,
+	})
+	require.Equal(t, 1, rc.len)
+	require.Equal(t, uint64(100), rc.cache[0].ResolvedTs)
+	require.False(t, rc.isFull())
+
+	// Case 2: add more resolved ts until full
+	i := 1
+	for !rc.isFull() {
+		rc.add(common.ResolvedEvent{
+			DispatcherID: common.NewDispatcherID(),
+			ResolvedTs:   uint64(100 + i),
+		})
+		i++
+	}
+	require.Equal(t, 10, rc.len)
+	require.Equal(t, uint64(100), rc.cache[0].ResolvedTs)
+	require.Equal(t, uint64(109), rc.cache[9].ResolvedTs)
+	require.True(t, rc.isFull())
+
+	// Case 3: get all resolved ts
+	res := rc.getAll()
+	require.Equal(t, 10, len(res))
+	require.Equal(t, 0, rc.len)
+	require.Equal(t, uint64(100), res[0].ResolvedTs)
+	require.Equal(t, uint64(109), res[9].ResolvedTs)
+	require.False(t, rc.isFull())
+}
