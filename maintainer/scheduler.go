@@ -105,6 +105,18 @@ func (s *Scheduler) AddNewTask(stm *scheduler.StateMachine) {
 	s.absent[stm.ID.(common.DispatcherID)] = stm
 }
 
+func (s *Scheduler) AddNewTable(tableSpan *common.TableSpan) error {
+	tableSpans := []*common.TableSpan{tableSpan}
+	if s.spanReplicationEnabled {
+		//split the whole table span base on the configuration, todo: background split table
+		tableSpans = s.splitter.SplitSpans(context.Background(), tableSpan, len(s.nodeTasks))
+	}
+	if err := s.addNewSpans(int64(tableSpan.TableID), tableSpans); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func (s *Scheduler) SetCurrentTables(tables map[int64]struct{}) {
 	s.initializedTableMap = tables
 }
@@ -117,7 +129,7 @@ func (s *Scheduler) FinishBootstrap(workingMap map[uint64]utils.Map[*common.Tabl
 			zap.String("changefeed", s.changefeedID),
 			zap.Any("workingMap", workingMap))
 	}
-	for tableID := range s.initializedTableMap {
+	for tableID, _ := range s.initializedTableMap {
 		tableMap, ok := workingMap[uint64(tableID)]
 		span := spanz.TableIDToComparableSpan(tableID)
 		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
@@ -126,12 +138,7 @@ func (s *Scheduler) FinishBootstrap(workingMap map[uint64]utils.Map[*common.Tabl
 			EndKey:   span.EndKey,
 		}}
 		if !ok {
-			tableSpans := []*common.TableSpan{tableSpan}
-			if s.spanReplicationEnabled {
-				//split the whole table span base on the configuration, todo: background split table
-				tableSpans = s.splitter.SplitSpans(context.Background(), tableSpan, len(s.nodeTasks))
-			}
-			if err := s.addNewSpans(tableID, tableSpans); err != nil {
+			if err := s.AddNewTable(tableSpan); err != nil {
 				return errors.Trace(err)
 			}
 		} else {

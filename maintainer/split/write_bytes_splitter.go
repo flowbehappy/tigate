@@ -88,7 +88,7 @@ func (m *writeSplitter) split(
 	}
 
 	splitInfo := m.splitRegionsByWrittenKeysV1(span.TableID, regions, spansNum)
-	log.Info("schedulerv3: split span by written keys",
+	log.Info("split span by written keys",
 		zap.String("namespace", m.changefeedID.Namespace),
 		zap.String("changefeed", m.changefeedID.ID),
 		zap.String("span", span.String()),
