@@ -83,7 +83,7 @@ func (s *Splitter) SplitSpans(ctx context.Context,
 	spans := []*common.TableSpan{span}
 	for _, sp := range s.splitters {
 		spans = sp.split(ctx, span, totalCaptures)
-		if len(spans) > 0 {
+		if len(spans) > 1 {
 			return spans
 		}
 	}

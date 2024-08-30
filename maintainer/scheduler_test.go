@@ -14,6 +14,8 @@
 package maintainer
 
 import (
+	"bytes"
+	"context"
 	"testing"
 	"time"
 
@@ -22,6 +24,10 @@ import (
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/tiflow/cdc/processor/tablepb"
+	config2 "github.com/pingcap/tiflow/pkg/config"
+	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/stretchr/testify/require"
 )
 
@@ -305,4 +311,97 @@ func TestBalanceUnEvenTask(t *testing.T) {
 	require.Equal(t, len(s.nodeTasks["node1"]), 2)
 	require.Equal(t, len(s.nodeTasks["node2"]), 2)
 	require.Equal(t, len(s.nodeTasks["node3"]), 0)
+}
+
+func TestSplitTableWhenBootstrapFinished(t *testing.T) {
+	pdAPI := &mockPdAPI{
+		regions: make(map[int64][]pdutil.RegionInfo),
+	}
+	s := NewScheduler("test", 1,
+		pdAPI,
+		nil, &config2.ChangefeedSchedulerConfig{
+			EnableTableAcrossNodes: true,
+			RegionThreshold:        0,
+			WriteKeyThreshold:      1,
+		}, 1000, 0)
+	s.AddNewNode("node1")
+	s.AddNewNode("node2")
+
+	// 1 is already split, and 2 will be split
+	s.SetCurrentTables(map[int64]struct{}{
+		1: {},
+		2: {},
+	})
+
+	totalSpan := spanz.TableIDToComparableSpan(1)
+	pdAPI.regions[1] = []pdutil.RegionInfo{
+		pdutil.NewTestRegionInfo(1, totalSpan.StartKey, appendNew(totalSpan.StartKey, 'a'), uint64(1)),
+		pdutil.NewTestRegionInfo(2, appendNew(totalSpan.StartKey, 'a'), appendNew(totalSpan.StartKey, 'b'), uint64(1)),
+		pdutil.NewTestRegionInfo(3, appendNew(totalSpan.StartKey, 'b'), appendNew(totalSpan.StartKey, 'c'), uint64(1)),
+		pdutil.NewTestRegionInfo(4, appendNew(totalSpan.StartKey, 'c'), totalSpan.EndKey, uint64(1)),
+	}
+	pdAPI.regions[2] = []pdutil.RegionInfo{
+		pdutil.NewTestRegionInfo(2, []byte("a"), []byte("b"), uint64(1)),
+		pdutil.NewTestRegionInfo(3, []byte("b"), []byte("c"), uint64(1)),
+		pdutil.NewTestRegionInfo(4, []byte("c"), []byte("d"), uint64(1)),
+		pdutil.NewTestRegionInfo(5, []byte("e"), []byte("f"), uint64(1)),
+	}
+	reportedSpans := []*common.TableSpan{
+		{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: appendNew(totalSpan.StartKey, 'a'), EndKey: appendNew(totalSpan.StartKey, 'b')}}, // 1 region // 1 region
+		{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: appendNew(totalSpan.StartKey, 'b'), EndKey: appendNew(totalSpan.StartKey, 'c')}},
+	}
+	cached := utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
+	for _, span := range reportedSpans {
+		dispatcherID1 := common.NewDispatcherID()
+		stm1, err := scheduler.NewStateMachine(dispatcherID1, map[model.CaptureID]scheduler.InferiorStatus{
+			"node1": ReplicaSetStatus{
+				ID:           dispatcherID1,
+				State:        heartbeatpb.ComponentState_Working,
+				CheckpointTs: 10,
+			},
+		}, NewReplicaSet(model.ChangeFeedID{}, dispatcherID1, span, 1))
+		require.Nil(t, err)
+		cached.ReplaceOrInsert(span, stm1)
+	}
+
+	ddlDispatcherID := common.NewDispatcherID()
+	ddlStm, err := scheduler.NewStateMachine(ddlDispatcherID, map[model.CaptureID]scheduler.InferiorStatus{
+		"node1": ReplicaSetStatus{
+			ID:           ddlDispatcherID,
+			State:        heartbeatpb.ComponentState_Working,
+			CheckpointTs: 10,
+		},
+	}, NewReplicaSet(model.ChangeFeedID{}, ddlDispatcherID, &common.DDLSpan, 1))
+	require.Nil(t, err)
+	ddlCache := utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
+	ddlCache.ReplaceOrInsert(&common.DDLSpan, ddlStm)
+
+	require.False(t, s.bootstrapped)
+	err = s.FinishBootstrap(map[uint64]utils.Map[*common.TableSpan, *scheduler.StateMachine]{
+		0: ddlCache,
+		1: cached,
+	})
+	require.Nil(t, err)
+	require.Equal(t, ddlDispatcherID, s.ddlDispatcherID)
+	//total 9 regions,
+	// table 1: 2 holes will be inserted to absent
+	// table 2: split to 4 spans, will be inserted to absent
+	require.Len(t, s.absent, 6)
+	// table 1 has two working span,  plus a working ddl span
+	require.Len(t, s.working, 3)
+	require.True(t, s.bootstrapped)
+}
+
+func appendNew(origin []byte, c byte) []byte {
+	nb := bytes.Clone(origin)
+	return append(nb, c)
+}
+
+type mockPdAPI struct {
+	pdutil.PDAPIClient
+	regions map[int64][]pdutil.RegionInfo
+}
+
+func (m *mockPdAPI) ScanRegions(ctx context.Context, span tablepb.Span) ([]pdutil.RegionInfo, error) {
+	return m.regions[span.TableID], nil
 }
