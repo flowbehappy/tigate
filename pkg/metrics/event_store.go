@@ -18,18 +18,10 @@ import (
 )
 
 var (
-	EventStoreRegisterDispatcherCount = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "ticdc",
-			Subsystem: "event_service",
-			Name:      "register_dispatcher_count",
-			Help:      "Total count of registered dispatchers of event store.",
-		})
-
 	EventStoreRegisterDispatcherResolvedTsLagHist = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "ticdc",
-			Subsystem: "event_service",
+			Subsystem: "event_store",
 			Name:      "register_dispatcher_resolved_ts_lag",
 			Help:      "Resolved Ts lag histogram of registered dispatchers for event store.",
 			Buckets:   prometheus.DefBuckets,
@@ -38,7 +30,7 @@ var (
 	EventStoreRegisterDispatcherWatermarkLagHist = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "ticdc",
-			Subsystem: "event_service",
+			Subsystem: "event_store",
 			Name:      "register_dispatcher_watermark_lag",
 			Help:      "Watermark lag histogram of registered dispatchers for event store.",
 			Buckets:   prometheus.DefBuckets,
@@ -46,7 +38,6 @@ var (
 )
 
 func InitEventStoreMetrics(registry *prometheus.Registry) {
-	registry.MustRegister(EventStoreRegisterDispatcherCount)
 	registry.MustRegister(EventStoreRegisterDispatcherResolvedTsLagHist)
 	registry.MustRegister(EventStoreRegisterDispatcherWatermarkLagHist)
 }

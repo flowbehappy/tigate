@@ -205,7 +205,6 @@ func (e *eventStore) Run(ctx context.Context) error {
 }
 
 func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableSpan *common.TableSpan, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
-	metrics.EventStoreRegisterDispatcherCount.Inc()
 	span := *tableSpan.TableSpan
 	log.Info("register dispatcher",
 		zap.Any("dispatcherID", dispatcherID),
@@ -251,7 +250,6 @@ func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, se
 }
 
 func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
-	metrics.EventStoreRegisterDispatcherCount.Desc()
 	log.Info("unregister dispatcher", zap.Any("dispatcherID", dispatcherID))
 	e.schemaStore.UnregisterDispatcher(dispatcherID)
 	e.spanStates.Lock()

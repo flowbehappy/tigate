@@ -21,9 +21,11 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -79,6 +81,9 @@ type LogPuller struct {
 		// subscriptionID -> spanProgress
 		spanProgressMap map[SubscriptionID]*spanProgress
 	}
+
+	CounterKv       prometheus.Counter
+	CounterResolved prometheus.Counter
 }
 
 func NewLogPuller(
@@ -97,7 +102,13 @@ func NewLogPuller(
 }
 
 func (p *LogPuller) Run(ctx context.Context) (err error) {
-	eg, ctx := errgroup.WithContext(ctx)
+	p.CounterKv = metrics.EventStoreReceivedEventCount.WithLabelValues("kv")
+	p.CounterResolved = metrics.EventStoreReceivedEventCount.WithLabelValues("resolved")
+	defer func() {
+		metrics.EventStoreReceivedEventCount.DeleteLabelValues("kv")
+		metrics.EventStoreReceivedEventCount.DeleteLabelValues("resolved")
+		log.Info("LogPuller exits", zap.Error(err))
+	}()
 
 	consumeLogEvent := func(ctx context.Context, e LogEvent) error {
 		progress := p.getProgress(e.SubscriptionID)
@@ -114,7 +125,12 @@ func (p *LogPuller) Run(ctx context.Context) (err error) {
 			return nil
 		}
 
-		// TODO: relase e.Val here
+		if e.Val.IsResolved() {
+			p.CounterResolved.Inc()
+		} else {
+			p.CounterKv.Inc()
+		}
+
 		if err := progress.consume.f(ctx, e.Val, e.SubscriptionID); err != nil {
 			log.Info("consume error", zap.Error(err))
 			return errors.Trace(err)
@@ -122,15 +138,13 @@ func (p *LogPuller) Run(ctx context.Context) (err error) {
 		return nil
 	}
 
+	eg, ctx := errgroup.WithContext(ctx)
 	// Start the kv client.
 	eg.Go(func() error { return p.client.Run(ctx, consumeLogEvent) })
 
 	eg.Go(func() error { return p.runResolveLockChecker(ctx) })
 
 	log.Info("LogPuller starts")
-	defer func() {
-		log.Info("LogPuller exits", zap.Error(err))
-	}()
 	return eg.Wait()
 }
 
