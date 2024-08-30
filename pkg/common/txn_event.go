@@ -22,9 +22,9 @@ type DDLEvent struct {
 	CommitTS Ts `json:"commit_ts"`
 
 	// Just for test now
-	BlockedDispatcherIDs     []*heartbeatpb.DispatcherID `json:"blocked_dispatcher_ids"`
-	NeedDroppedDispatcherIDs []*heartbeatpb.DispatcherID `json:"need_dropped_dispatcher_ids"`
-	NeedAddedTableSpan       []*heartbeatpb.TableSpan    `json:"need_added_table_span"`
+	BlockedDispatchers     *InfluencedDispatchers `json:"blocked_dispatchers"`
+	NeedDroppedDispatchers *InfluencedDispatchers `json:"need_dropped_dispatchers"`
+	NeedAddedTables        []int64                `json:"need_added_tables"`
 }
 
 // TxnEvent represents all events in the current txn
@@ -113,16 +113,55 @@ func (e *TxnEvent) IsSingleTableDDL() bool {
 
 }
 
-func (e *TxnEvent) GetBlockedDispatcherIDs() []*heartbeatpb.DispatcherID {
-	return e.DDLEvent.BlockedDispatcherIDs
+type InfluenceType int
+
+const (
+	All InfluenceType = iota // influence all tables
+	DB                       // influence all tables in the same database
+	Normal
+)
+
+func (t InfluenceType) toPB() heartbeatpb.InfluenceType {
+	switch t {
+	case All:
+		return heartbeatpb.InfluenceType_All
+	case DB:
+		return heartbeatpb.InfluenceType_DB
+	case Normal:
+		return heartbeatpb.InfluenceType_Normal
+	default:
+		log.Error("unknown influence type")
+	}
+	return heartbeatpb.InfluenceType_Normal
 }
 
-func (e *TxnEvent) GetNeedDroppedDispatcherIDs() []*heartbeatpb.DispatcherID {
-	return e.DDLEvent.NeedDroppedDispatcherIDs
+type InfluencedDispatchers struct {
+	InfluenceType InfluenceType
+	DispatcherIDs []*heartbeatpb.DispatcherID
+	SchemaID      int64
 }
 
-func (e *TxnEvent) GetNeedAddedTableSpan() []*heartbeatpb.TableSpan {
-	return e.DDLEvent.NeedAddedTableSpan
+func (i *InfluencedDispatchers) ToPB() *heartbeatpb.InfluencedDispatchers {
+	if i == nil {
+		return nil
+	}
+	return &heartbeatpb.InfluencedDispatchers{
+		InfluenceType: i.InfluenceType.toPB(),
+		DispatcherIDs: i.DispatcherIDs,
+		SchemaID:      i.SchemaID,
+	}
+}
+
+func (e *TxnEvent) GetBlockedDispatchers() *InfluencedDispatchers {
+	return e.DDLEvent.BlockedDispatchers
+}
+
+func (e *TxnEvent) GetNeedDroppedDispatchers() *InfluencedDispatchers {
+	return e.DDLEvent.NeedDroppedDispatchers
+}
+
+func (e *TxnEvent) GetNeedAddedTables() []int64 {
+	return e.DDLEvent.NeedAddedTables
 }
 
 func (e *TxnEvent) IsSyncPointEvent() bool {

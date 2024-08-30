@@ -134,7 +134,7 @@ func (h *SchedulerDispatcherRequestHandler) Handle(scheduleDispatcherRequest *he
 }
 
 type HeartBeatResponseHandler struct {
-	dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, *heartbeatpb.DispatcherStatus, *dispatcher.Dispatcher]
+	dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DispatcherStatusWithID, *dispatcher.Dispatcher]
 }
 
 func NewHeartBeatResponseHandler() HeartBeatResponseHandler {
@@ -148,7 +148,16 @@ func (h *HeartBeatResponseHandler) Path(HeartbeatResponse *heartbeatpb.HeartBeat
 func (h *HeartBeatResponseHandler) Handle(heartbeatResponse *heartbeatpb.HeartBeatResponse, eventDispatcherManager *EventDispatcherManager) bool {
 	dispatcherStatuses := heartbeatResponse.GetDispatcherStatuses()
 	for _, dispatcherStatus := range dispatcherStatuses {
-		h.dispatcherStatusDynamicStream.In() <- dispatcherStatus
+		influencedDispatchersType := dispatcherStatus.InfluencedDispatchers.InfluenceType
+		if influencedDispatchersType == heartbeatpb.InfluenceType_Normal {
+			for _, dispatcherID := range dispatcherStatus.InfluencedDispatchers.DispatcherIDs {
+				h.dispatcherStatusDynamicStream.In() <- dispatcher.NewDispatcherStatusWithID(dispatcherStatus, common.NewDispatcherIDFromPB(dispatcherID))
+			}
+		} else if influencedDispatchersType == heartbeatpb.InfluenceType_DB {
+			// 找出 db 对应的所有 id 扔进去, 记得查看 exclude_dispatcher_id
+		} else if influencedDispatchersType == heartbeatpb.InfluenceType_All {
+			// 遍历所有 dispatcher 扔进去, 记得查看 exclude_dispatcher_id
+		}
 	}
 
 	return false
