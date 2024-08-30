@@ -24,7 +24,7 @@ type DDLEvent struct {
 	// Just for test now
 	BlockedDispatchers     *InfluencedDispatchers `json:"blocked_dispatchers"`
 	NeedDroppedDispatchers *InfluencedDispatchers `json:"need_dropped_dispatchers"`
-	NeedAddedTables        []int64                `json:"need_added_tables"`
+	NeedAddedTables        []Table                `json:"need_added_tables"`
 }
 
 // TxnEvent represents all events in the current txn
@@ -152,6 +152,22 @@ func (i *InfluencedDispatchers) ToPB() *heartbeatpb.InfluencedDispatchers {
 	}
 }
 
+func ToTablesPB(tables []Table) []*heartbeatpb.Table {
+	res := make([]*heartbeatpb.Table, len(tables))
+	for i, t := range tables {
+		res[i] = &heartbeatpb.Table{
+			SchemaID: t.SchemaID,
+			TableID:  t.TableID,
+		}
+	}
+	return res
+}
+
+type Table struct {
+	SchemaID int64
+	TableID  int64
+}
+
 func (e *TxnEvent) GetBlockedDispatchers() *InfluencedDispatchers {
 	return e.DDLEvent.BlockedDispatchers
 }
@@ -160,7 +176,7 @@ func (e *TxnEvent) GetNeedDroppedDispatchers() *InfluencedDispatchers {
 	return e.DDLEvent.NeedDroppedDispatchers
 }
 
-func (e *TxnEvent) GetNeedAddedTables() []int64 {
+func (e *TxnEvent) GetNeedAddedTables() []Table {
 	return e.DDLEvent.NeedAddedTables
 }
 

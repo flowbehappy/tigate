@@ -82,9 +82,11 @@ type Dispatcher struct {
 
 	resendTask                  *ResendTask
 	checkTableProgressEmptyTask *CheckProgressEmptyTask
+
+	schemaID int64
 }
 
-func NewDispatcher(id common.DispatcherID, tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter) *Dispatcher {
+func NewDispatcher(id common.DispatcherID, tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter, schemaID int64) *Dispatcher {
 	dispatcher := &Dispatcher{
 		id:           id,
 		tableSpan:    tableSpan,
@@ -98,6 +100,7 @@ func NewDispatcher(id common.DispatcherID, tableSpan *common.TableSpan, sink sin
 		isRemoving:      atomic.Bool{},
 		ddlPendingEvent: nil,
 		tableProgress:   types.NewTableProgress(),
+		schemaID:        schemaID,
 	}
 
 	dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
@@ -219,7 +222,7 @@ func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 					IsBlocked:              false,
 					BlockTs:                d.ddlPendingEvent.CommitTs,
 					NeedDroppedDispatchers: d.ddlPendingEvent.GetNeedDroppedDispatchers().ToPB(),
-					NeedAddedTables:        d.ddlPendingEvent.GetNeedAddedTables(),
+					NeedAddedTables:        common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
 				},
 			}
 			d.SetResendTask(newResendTask(message, d))
@@ -234,7 +237,7 @@ func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 				BlockTs:                d.ddlPendingEvent.CommitTs,
 				BlockDispatchers:       d.ddlPendingEvent.GetBlockedDispatchers().ToPB(),
 				NeedDroppedDispatchers: d.ddlPendingEvent.GetNeedDroppedDispatchers().ToPB(),
-				NeedAddedTables:        d.ddlPendingEvent.GetNeedAddedTables(),
+				NeedAddedTables:        common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
 			},
 		}
 		d.SetResendTask(newResendTask(message, d))
@@ -282,6 +285,10 @@ func (d *Dispatcher) CancelResendTask() {
 
 func (d *Dispatcher) SetResendTask(task *ResendTask) {
 	d.resendTask = task
+}
+
+func (d *Dispatcher) GetSchemaID() int64 {
+	return d.schemaID
 }
 
 //func (d *Dispatcher) GetSyncPointInfo() *SyncPointInfo {
