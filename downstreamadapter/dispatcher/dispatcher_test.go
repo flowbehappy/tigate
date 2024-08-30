@@ -49,7 +49,7 @@ func TestBasicDispatcher(t *testing.T) {
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
 	filter, _ := filter.NewFilter(&config.ReplicaConfig{Filter: &config.FilterConfig{}}, "")
 
-	dispatcher := NewDispatcher(common.NewDispatcherID(), tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter)
+	dispatcher := NewDispatcher(common.NewDispatcherID(), tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter, 0)
 
 	dispatcherEventsDynamicStream := GetDispatcherEventsDynamicStream()
 
@@ -138,7 +138,7 @@ func TestDispatcherWithSingleTableDDL(t *testing.T) {
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
 	filter, _ := filter.NewFilter(&config.ReplicaConfig{Filter: &config.FilterConfig{}}, "")
 
-	dispatcher := NewDispatcher(common.NewDispatcherID(), tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter)
+	dispatcher := NewDispatcher(common.NewDispatcherID(), tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter, 0)
 
 	dispatcherEventsDynamicStream := GetDispatcherEventsDynamicStream()
 	dispatcherEventsDynamicStream.In() <- &common.TxnEvent{
@@ -193,7 +193,7 @@ func TestDispatcherWithCrossTableDDL(t *testing.T) {
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
 	filter, _ := filter.NewFilter(&config.ReplicaConfig{Filter: &config.FilterConfig{}}, "")
 
-	dispatcher := NewDispatcher(common.NewDispatcherID(), tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter)
+	dispatcher := NewDispatcher(common.NewDispatcherID(), tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter, 0)
 
 	dispatcherEventsDynamicStream := GetDispatcherEventsDynamicStream()
 	dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
@@ -257,7 +257,7 @@ func TestDispatcherWithCrossTableDDLAndDML(t *testing.T) {
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
 	filter, _ := filter.NewFilter(&config.ReplicaConfig{Filter: &config.FilterConfig{}}, "")
 
-	dispatcher := NewDispatcher(common.NewDispatcherID(), tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter)
+	dispatcher := NewDispatcher(common.NewDispatcherID(), tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter, 0)
 
 	dispatcherEventsDynamicStream := GetDispatcherEventsDynamicStream()
 	dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
@@ -437,13 +437,13 @@ func TestMultiDispatcherWithMultipleDDLs(t *testing.T) {
 
 	ddlTableSpan := &common.DDLSpan
 
-	tableTriggerEventDispatcher := NewDispatcher(common.NewDispatcherID(), ddlTableSpan, mysqlSink, startTs, statusChan, filter)
+	tableTriggerEventDispatcher := NewDispatcher(common.NewDispatcherID(), ddlTableSpan, mysqlSink, startTs, statusChan, filter, 0)
 
 	table1TableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1}}
 	table2TableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 2}}
 
-	table1Dispatcher := NewDispatcher(common.NewDispatcherID(), table1TableSpan, mysqlSink, startTs, statusChan, filter)
-	table2Dispatcher := NewDispatcher(common.NewDispatcherID(), table2TableSpan, mysqlSink, startTs, statusChan, filter)
+	table1Dispatcher := NewDispatcher(common.NewDispatcherID(), table1TableSpan, mysqlSink, startTs, statusChan, filter, 0)
+	table2Dispatcher := NewDispatcher(common.NewDispatcherID(), table2TableSpan, mysqlSink, startTs, statusChan, filter, 0)
 
 	dbDispatcherIdsMap := make(map[int64][]common.DispatcherID)
 	dbDispatcherIdsMap[1] = append(dbDispatcherIdsMap[1], table1Dispatcher.id)
@@ -489,8 +489,13 @@ func TestMultiDispatcherWithMultipleDDLs(t *testing.T) {
 				TableName:  "test_table",
 				Query:      "Create table `test_schema`.`test_table` (id int primary key, name varchar(255))",
 			},
-			CommitTS:        103,
-			NeedAddedTables: []int64{3},
+			CommitTS: 103,
+			NeedAddedTables: []common.Table{
+				{
+					SchemaID: 1,
+					TableID:  3,
+				},
+			},
 		},
 		DispatcherID: tableTriggerEventDispatcher.id,
 	}
@@ -543,7 +548,12 @@ func TestMultiDispatcherWithMultipleDDLs(t *testing.T) {
 					tableTriggerEventDispatcher.id.ToPB(),
 				},
 			},
-			NeedAddedTables: []int64{4},
+			NeedAddedTables: []common.Table{
+				{
+					SchemaID: 1,
+					TableID:  1,
+				},
+			},
 			NeedDroppedDispatchers: &common.InfluencedDispatchers{
 				InfluenceType: common.Normal,
 				DispatcherIDs: []*heartbeatpb.DispatcherID{

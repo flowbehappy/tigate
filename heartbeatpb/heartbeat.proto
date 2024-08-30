@@ -57,6 +57,7 @@ message DispatcherConfig {
     TableSpan span = 1;
     uint64 startTs = 2;
     DispatcherID dispatcherID = 3;
+    int64 schemaID = 4;
 }
 
 message ScheduleDispatcherRequest {
@@ -140,12 +141,17 @@ message InfluencedDispatchers {
     DispatcherID excludeDispatcherId = 4;
 }
 
+message Table {
+    int64 tableID = 1;
+    int64 schemaID = 2;
+}
+
 message State {
     bool IsBlocked      = 1;
     uint64 BlockTs         = 2;
     InfluencedDispatchers BlockDispatchers = 3;
     InfluencedDispatchers NeedDroppedDispatchers =4;
-    repeated int64 NeedAddedTables = 5;
+    repeated Table NeedAddedTables = 5;
 }
 
 message TableSpanStatus {

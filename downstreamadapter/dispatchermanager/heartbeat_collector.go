@@ -126,7 +126,7 @@ func (h *SchedulerDispatcherRequestHandler) Handle(scheduleDispatcherRequest *he
 	scheduleAction := scheduleDispatcherRequest.ScheduleAction
 	config := scheduleDispatcherRequest.Config
 	if scheduleAction == heartbeatpb.ScheduleAction_Create {
-		eventDispatcherManager.NewDispatcher(common.NewDispatcherIDFromPB(config.DispatcherID), &common.TableSpan{TableSpan: config.Span}, config.StartTs)
+		eventDispatcherManager.NewDispatcher(common.NewDispatcherIDFromPB(config.DispatcherID), &common.TableSpan{TableSpan: config.Span}, config.StartTs, config.SchemaID)
 	} else if scheduleAction == heartbeatpb.ScheduleAction_Remove {
 		eventDispatcherManager.RemoveDispatcher(common.NewDispatcherIDFromPB(config.DispatcherID))
 	}
@@ -154,9 +154,21 @@ func (h *HeartBeatResponseHandler) Handle(heartbeatResponse *heartbeatpb.HeartBe
 				h.dispatcherStatusDynamicStream.In() <- dispatcher.NewDispatcherStatusWithID(dispatcherStatus, common.NewDispatcherIDFromPB(dispatcherID))
 			}
 		} else if influencedDispatchersType == heartbeatpb.InfluenceType_DB {
-			// 找出 db 对应的所有 id 扔进去, 记得查看 exclude_dispatcher_id
+			schemaID := dispatcherStatus.InfluencedDispatchers.SchemaID
+			excludeDispatcherID := common.NewDispatcherIDFromPB(dispatcherStatus.InfluencedDispatchers.ExcludeDispatcherId)
+			dispatcherIds := eventDispatcherManager.GetAllDispatchers(schemaID)
+			for _, id := range dispatcherIds {
+				if id != excludeDispatcherID {
+					h.dispatcherStatusDynamicStream.In() <- dispatcher.NewDispatcherStatusWithID(dispatcherStatus, id)
+				}
+			}
 		} else if influencedDispatchersType == heartbeatpb.InfluenceType_All {
-			// 遍历所有 dispatcher 扔进去, 记得查看 exclude_dispatcher_id
+			excludeDispatcherID := common.NewDispatcherIDFromPB(dispatcherStatus.InfluencedDispatchers.ExcludeDispatcherId)
+			eventDispatcherManager.GetDispatcherMap().ForEach(func(id common.DispatcherID, _ *dispatcher.Dispatcher) {
+				if id != excludeDispatcherID {
+					h.dispatcherStatusDynamicStream.In() <- dispatcher.NewDispatcherStatusWithID(dispatcherStatus, id)
+				}
+			})
 		}
 	}
 

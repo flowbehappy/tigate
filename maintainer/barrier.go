@@ -183,7 +183,7 @@ type BlockEvent struct {
 	selectedDispatcher common.DispatcherID
 	// todo: support big set of dispatcher, like sync point, create database
 	blockedDispatcherMap map[common.DispatcherID]bool
-	newTables            []int64
+	newTables            []*heartbeatpb.Table
 	dropDispatcherIDs    *heartbeatpb.InfluencedDispatchers
 }
 
@@ -218,9 +218,9 @@ func (b *BlockEvent) scheduleBlockEvent() ([]*messaging.TargetMessage, error) {
 		}
 	}
 	for _, add := range b.newTables {
-		span := spanz.TableIDToComparableSpan(add)
+		span := spanz.TableIDToComparableSpan(add.TableID)
 		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
-			TableID:  uint64(add),
+			TableID:  uint64(add.TableID),
 			StartKey: span.StartKey,
 			EndKey:   span.EndKey,
 		}}
