@@ -18,6 +18,7 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/logpuller"
+	"github.com/flowbehappy/tigate/logservice/txnutil"
 	"github.com/flowbehappy/tigate/mounter"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/errors"
@@ -53,20 +54,20 @@ func newDDLJobFetcher(
 	writeDDLEvent func(ddlEvent DDLEvent) error,
 	advanceResolvedTs func(resolvedTS common.Ts) error,
 ) *ddlJobFetcher {
-	grpcPool := logpuller.NewConnAndClientPool(
-		&security.Credential{},
-	)
-	clientConfig := &logpuller.SharedClientConfig{
-		KVClientWorkerConcurrent:     8,
-		KVClientGrpcStreamConcurrent: 8,
-		KVClientAdvanceIntervalInMs:  20,
+	clientConfig := &logpuller.SubscriptionClientConfig{
+		RegionRequestWorkerPerStore:        1,
+		ChangeEventProcessorNum:            4,
+		AdvanceResolvedTsIntervalInMs:      300,
+		RegionIncrementalScanLimitPerStore: 0,
 	}
-	client := logpuller.NewSharedClient(
+	client := logpuller.NewSubscriptionClient(
+		logpuller.ClientIDSchemaStore,
 		clientConfig,
 		pdCli,
-		grpcPool,
 		regionCache,
 		pdClock,
+		txnutil.NewLockerResolver(kvStorage.(tikv.Storage)),
+		&security.Credential{},
 	)
 
 	ddlJobFetcher := &ddlJobFetcher{
@@ -75,13 +76,13 @@ func newDDLJobFetcher(
 		kvStorage:         kvStorage,
 	}
 	ddlSpans := getAllDDLSpan()
-	pullerConfig := &logpuller.LogPullerConfig{
-		WorkerCount:  1,
-		HashSpanFunc: func(heartbeatpb.TableSpan, int) int { return 0 },
-	}
-	ddlJobFetcher.puller = logpuller.NewLogPullerMultiSpan(client, pdClock, ddlSpans, startTs, ddlJobFetcher.input, pullerConfig)
+	ddlJobFetcher.puller = logpuller.NewLogPullerMultiSpan(client, pdClock, ddlSpans, startTs, ddlJobFetcher.input)
 
 	return ddlJobFetcher
+}
+
+func (p *ddlJobFetcher) close(ctx context.Context) error {
+	return p.puller.Close(ctx)
 }
 
 func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) error {
