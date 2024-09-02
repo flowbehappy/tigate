@@ -156,21 +156,13 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 				m[captureID] = status
 			}
 		}
-		var err error
 		statusMap.Ascend(func(id InferiorID, status map[common.NodeID]InferiorStatus) bool {
-			statemachine, err1 := NewStateMachine(id, status, s.newInferior(id))
-			if err1 != nil {
-				err = errors.Trace(err1)
-				return false
-			}
+			statemachine := NewStateMachine(id, status, s.newInferior(id))
 			if statemachine.State != SchedulerStatusAbsent {
 				s.StateMachines.ReplaceOrInsert(id, statemachine)
 			}
 			return true
 		})
-		if err != nil {
-			return nil, err
-		}
 		s.initialized = true
 		s.initStatus = nil
 	}
@@ -221,10 +213,7 @@ func (s *Supervisor) HandleStatus(
 				zap.Any("message", status))
 			continue
 		}
-		msg, err := stateMachine.HandleInferiorStatus(status, from)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		msg := stateMachine.HandleInferiorStatus(status, from)
 		if stateMachine.HasRemoved() {
 			log.Info("inferior has removed",
 				zap.String("ID", s.ID.String()),
@@ -308,16 +297,12 @@ func (s *Supervisor) handleScheduleTasks(
 		}
 
 		var msg *messaging.TargetMessage
-		var err error
 		if task.AddInferior != nil {
-			msg, err = s.handleAddInferiorTask(task.AddInferior)
+			msg = s.handleAddInferiorTask(task.AddInferior)
 		} else if task.RemoveInferior != nil {
-			msg, err = s.handleRemoveInferiorTask(task.RemoveInferior)
+			msg = s.handleRemoveInferiorTask(task.RemoveInferior)
 		} else if task.MoveInferior != nil {
-			msg, err = s.handleMoveInferiorTask(task.MoveInferior)
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
+			msg = s.handleMoveInferiorTask(task.MoveInferior)
 		}
 		if msg != nil {
 			sentMsgs = append(sentMsgs, msg)
@@ -332,14 +317,10 @@ func (s *Supervisor) handleScheduleTasks(
 
 func (s *Supervisor) handleAddInferiorTask(
 	task *AddInferior,
-) (*messaging.TargetMessage, error) {
-	var err error
+) *messaging.TargetMessage {
 	stateMachine, ok := s.StateMachines.Get(task.ID)
 	if !ok {
-		stateMachine, err = NewStateMachine(task.ID, nil, s.newInferior(task.ID))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		stateMachine = NewStateMachine(task.ID, nil, s.newInferior(task.ID))
 		s.StateMachines.ReplaceOrInsert(task.ID, stateMachine)
 	}
 	return stateMachine.HandleAddInferior(task.CaptureID)
@@ -347,33 +328,33 @@ func (s *Supervisor) handleAddInferiorTask(
 
 func (s *Supervisor) handleRemoveInferiorTask(
 	task *RemoveInferior,
-) (*messaging.TargetMessage, error) {
+) *messaging.TargetMessage {
 	stateMachine, ok := s.StateMachines.Get(task.ID)
 	if !ok {
 		log.Warn("statemachine not found",
 			zap.Stringer("ID", s.ID),
 			zap.Stringer("inferior", task.ID))
-		return nil, nil
+		return nil
 	}
 	if stateMachine.HasRemoved() {
 		log.Info("inferior has removed",
 			zap.Stringer("ID", s.ID),
 			zap.Stringer("inferior", task.ID))
 		s.StateMachines.Delete(task.ID)
-		return nil, nil
+		return nil
 	}
 	return stateMachine.HandleRemoveInferior()
 }
 
 func (s *Supervisor) handleMoveInferiorTask(
 	task *MoveInferior,
-) (*messaging.TargetMessage, error) {
+) *messaging.TargetMessage {
 	stateMachine, ok := s.StateMachines.Get(task.ID)
 	if !ok {
 		log.Warn("statemachine not found",
 			zap.Stringer("ID", s.ID),
 			zap.Stringer("inferior", task.ID))
-		return nil, nil
+		return nil
 	}
 	return stateMachine.HandleMoveInferior(task.DestCapture)
 }

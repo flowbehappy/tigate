@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
-	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"go.uber.org/zap"
@@ -102,7 +101,7 @@ func NewScheduler(changefeedID string,
 	return s
 }
 
-func (s *Scheduler) AddNewTable(table common.Table) error {
+func (s *Scheduler) AddNewTable(table common.Table) {
 	span := spanz.TableIDToComparableSpan(table.TableID)
 	tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
 		TableID:  uint64(table.TableID),
@@ -114,10 +113,7 @@ func (s *Scheduler) AddNewTable(table common.Table) error {
 		//split the whole table span base on the configuration, todo: background split table
 		tableSpans = s.splitter.SplitSpans(context.Background(), tableSpan, len(s.nodeTasks))
 	}
-	if err := s.addNewSpans(table.SchemaID, int64(tableSpan.TableID), tableSpans); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	s.addNewSpans(table.SchemaID, int64(tableSpan.TableID), tableSpans)
 }
 
 func (s *Scheduler) SetInitialTables(tables []common.Table) {
@@ -126,7 +122,7 @@ func (s *Scheduler) SetInitialTables(tables []common.Table) {
 
 // FinishBootstrap adds working state tasks to this scheduler directly,
 // it reported by the bootstrap response
-func (s *Scheduler) FinishBootstrap(workingMap map[uint64]utils.Map[*common.TableSpan, *scheduler.StateMachine]) error {
+func (s *Scheduler) FinishBootstrap(workingMap map[uint64]utils.Map[*common.TableSpan, *scheduler.StateMachine]) {
 	if s.bootstrapped {
 		log.Panic("already bootstrapped",
 			zap.String("changefeed", s.changefeedID),
@@ -135,9 +131,7 @@ func (s *Scheduler) FinishBootstrap(workingMap map[uint64]utils.Map[*common.Tabl
 	for _, table := range s.initialTables {
 		tableMap, ok := workingMap[uint64(table.TableID)]
 		if !ok {
-			if err := s.AddNewTable(table); err != nil {
-				return errors.Trace(err)
-			}
+			s.AddNewTable(table)
 		} else {
 			span := spanz.TableIDToComparableSpan(table.TableID)
 			tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
@@ -152,9 +146,7 @@ func (s *Scheduler) FinishBootstrap(workingMap map[uint64]utils.Map[*common.Tabl
 			if s.spanReplicationEnabled {
 				holes := split.FindHoles(tableMap, tableSpan)
 				// todo: split the hole
-				if err := s.addNewSpans(table.SchemaID, table.TableID, holes); err != nil {
-					return errors.Trace(err)
-				}
+				s.addNewSpans(table.SchemaID, table.TableID, holes)
 			}
 			// delete it
 			delete(workingMap, uint64(table.TableID))
@@ -180,7 +172,6 @@ func (s *Scheduler) FinishBootstrap(workingMap map[uint64]utils.Map[*common.Tabl
 	}
 	s.bootstrapped = true
 	s.initialTables = nil
-	return nil
 }
 
 // GetTask queries a task by dispatcherID, return nil if not found
@@ -197,22 +188,19 @@ func (s *Scheduler) GetTask(dispatcherID common.DispatcherID) *scheduler.StateMa
 }
 
 // RemoveTask removes task by dispatcherID
-func (s *Scheduler) RemoveTask(dispatcherID common.DispatcherID) (*messaging.TargetMessage, error) {
+func (s *Scheduler) RemoveTask(dispatcherID common.DispatcherID) *messaging.TargetMessage {
 	var stm = s.GetTask(dispatcherID)
 	if stm == nil {
 		log.Warn("dispatcher is not found",
 			zap.String("cf", s.changefeedID),
 			zap.Any("dispatcherID", s.changefeedID))
-		return nil, nil
+		return nil
 	}
 	oldState := stm.State
 	oldPrimary := stm.Primary
-	msg, err := stm.HandleRemoveInferior()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	msg := stm.HandleRemoveInferior()
 	s.tryMoveTask(stm.ID.(common.DispatcherID), stm, oldState, oldPrimary, true)
-	return msg, nil
+	return msg
 }
 
 func (s *Scheduler) AddNewNode(id string) {
@@ -264,18 +252,18 @@ func (s *Scheduler) RemoveNode(nodeId string) []*messaging.TargetMessage {
 	return msgs
 }
 
-func (s *Scheduler) Schedule() ([]*messaging.TargetMessage, error) {
+func (s *Scheduler) Schedule() []*messaging.TargetMessage {
 	if len(s.nodeTasks) == 0 {
 		log.Warn("scheduler has no node tasks", zap.String("changeeed", s.changefeedID))
-		return nil, nil
+		return nil
 	}
 	if !s.NeedSchedule() {
-		return nil, nil
+		return nil
 	}
 	totalSize := s.batchSize - len(s.committing) - len(s.removing)
 	if totalSize <= 0 {
 		// too many running tasks, skip schedule
-		return nil, nil
+		return nil
 	}
 	priorityQueue := heap.NewHeap[*Item]()
 	for key, m := range s.nodeTasks {
@@ -287,13 +275,9 @@ func (s *Scheduler) Schedule() ([]*messaging.TargetMessage, error) {
 
 	taskSize := 0
 	var msgs = make([]*messaging.TargetMessage, 0, s.batchSize)
-	var err error
 	for key, value := range s.absent {
 		item, _ := priorityQueue.PeekTop()
-		msg, err := value.HandleAddInferior(item.Node)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		msg := value.HandleAddInferior(item.Node)
 		if msg != nil {
 			msgs = append(msgs, msg)
 		}
@@ -309,7 +293,7 @@ func (s *Scheduler) Schedule() ([]*messaging.TargetMessage, error) {
 			break
 		}
 	}
-	return msgs, err
+	return msgs
 }
 
 func (s *Scheduler) NeedSchedule() bool {
@@ -320,15 +304,15 @@ func (s *Scheduler) ScheduleFinished() bool {
 	return len(s.absent) == 0 && len(s.committing) == 0 && len(s.removing) == 0
 }
 
-func (s *Scheduler) TryBalance() ([]*messaging.TargetMessage, error) {
+func (s *Scheduler) TryBalance() []*messaging.TargetMessage {
 	if !s.ScheduleFinished() {
 		// not in stable schedule state, skip balance
-		return nil, nil
+		return nil
 	}
 	now := time.Now()
 	if now.Sub(s.lastRebalanceTime) < s.checkBalanceInterval {
 		// skip balance.
-		return nil, nil
+		return nil
 	}
 	s.lastRebalanceTime = now
 	return s.balanceTables()
@@ -348,7 +332,7 @@ func (s *Scheduler) ResendMessage() []*messaging.TargetMessage {
 	return msgs
 }
 
-func (s *Scheduler) balanceTables() ([]*messaging.TargetMessage, error) {
+func (s *Scheduler) balanceTables() []*messaging.TargetMessage {
 	var messages = make([]*messaging.TargetMessage, 0)
 	upperLimitPerCapture := int(math.Ceil(float64(len(s.working)) / float64(len(s.nodeTasks))))
 	// victims holds tables which need to be moved
@@ -400,7 +384,7 @@ func (s *Scheduler) balanceTables() ([]*messaging.TargetMessage, error) {
 		}
 	}
 	if len(victims) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	movedSize := 0
@@ -415,10 +399,7 @@ func (s *Scheduler) balanceTables() ([]*messaging.TargetMessage, error) {
 		target := item.Node
 		oldState := cf.State
 		oldPrimary := cf.Primary
-		msg, err := cf.HandleMoveInferior(target)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		msg := cf.HandleMoveInferior(target)
 		messages = append(messages, msg)
 		s.tryMoveTask(cf.ID.(common.DispatcherID), cf, oldState, oldPrimary, false)
 		// update the task size priority queue
@@ -430,16 +411,16 @@ func (s *Scheduler) balanceTables() ([]*messaging.TargetMessage, error) {
 		zap.String("changefeed", s.changefeedID),
 		zap.Int("movedSize", movedSize),
 		zap.Int("victims", len(victims)))
-	return messages, nil
+	return messages
 }
 
-func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpanStatus) ([]*messaging.TargetMessage, error) {
+func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpanStatus) []*messaging.TargetMessage {
 	stMap, ok := s.nodeTasks[from]
 	if !ok {
 		log.Warn("no server id found, ignore",
 			zap.String("changeeed", s.changefeedID),
 			zap.String("from", from))
-		return nil, nil
+		return nil
 	}
 	var msgs = make([]*messaging.TargetMessage, 0)
 	for _, status := range statusList {
@@ -460,19 +441,13 @@ func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpa
 			CheckpointTs: status.CheckpointTs,
 			DDLStatus:    status.State,
 		}
-		msg, err := stm.HandleInferiorStatus(sch, from)
-		if err != nil {
-			log.Error("fail to handle inferior status",
-				zap.String("changeeed", s.changefeedID),
-				zap.String("span", span.String()))
-			return nil, errors.Trace(err)
-		}
+		msg := stm.HandleInferiorStatus(sch, from)
 		if msg != nil {
 			msgs = append(msgs, msg)
 		}
 		s.tryMoveTask(span, stm, oldState, oldPrimary, true)
 	}
-	return msgs, nil
+	return msgs
 }
 
 func (s *Scheduler) TaskSize() int {
@@ -524,7 +499,7 @@ func (s *Scheduler) addWorkingSpans(tableMap utils.Map[*common.TableSpan, *sched
 	return ddlSpanFound
 }
 
-func (s *Scheduler) addNewSpans(schemaID, tableID int64, tableSpans []*common.TableSpan) error {
+func (s *Scheduler) addNewSpans(schemaID, tableID int64, tableSpans []*common.TableSpan) {
 	for _, newSpan := range tableSpans {
 		newTableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
 			TableID:  uint64(tableID),
@@ -534,10 +509,7 @@ func (s *Scheduler) addNewSpans(schemaID, tableID int64, tableSpans []*common.Ta
 		dispatcherID := common.NewDispatcherID()
 		replicaSet := NewReplicaSet(model.DefaultChangeFeedID(s.changefeedID),
 			dispatcherID, schemaID, newTableSpan, s.startCheckpointTs).(*ReplicaSet)
-		stm, err := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		stm := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
 		s.absent[dispatcherID] = stm
 		schemaMap, ok := s.schemaTasks[schemaID]
 		if !ok {
@@ -546,7 +518,6 @@ func (s *Scheduler) addNewSpans(schemaID, tableID int64, tableSpans []*common.Ta
 		}
 		schemaMap[dispatcherID] = stm
 	}
-	return nil
 }
 
 // tryMoveTask moves the StateMachine to the right map and modified the node map if changed
