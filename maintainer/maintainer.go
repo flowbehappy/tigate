@@ -172,10 +172,7 @@ func (m *Maintainer) HandleEvent(event *Event) (await bool) {
 	}
 	// first check the online/offline nodes
 	if m.nodeChanged.Load() {
-		if err := m.onNodeChanged(); err != nil {
-			m.handleError(err)
-			return false
-		}
+		m.onNodeChanged()
 		m.nodeChanged.Store(false)
 	}
 	switch event.eventType {
@@ -186,9 +183,7 @@ func (m *Maintainer) HandleEvent(event *Event) (await bool) {
 			m.handleError(err)
 		}
 	case EventSchedule:
-		if err := m.onScheduleTableSpan(); err != nil {
-			m.handleError(err)
-		}
+		m.onScheduleTableSpan()
 	case EventRemove:
 		m.onRemoveMaintainer(m.cascadeRemoving)
 	case EventPeriod:
@@ -239,8 +234,10 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 }
 
 func (m *Maintainer) initialize() error {
-	var err error
 	tables, err := m.initTables()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	m.scheduler.SetInitialTables(tables)
 
 	log.Info("changefeed maintainer initialized",
@@ -268,7 +265,7 @@ func (m *Maintainer) initialize() error {
 		changefeedID: m.id.ID,
 		eventType:    EventPeriod,
 	}, time.Now().Add(time.Millisecond*500))
-	return err
+	return nil
 }
 
 func (m *Maintainer) cleanupMetrics() {
@@ -302,7 +299,7 @@ func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
 	case messaging.TypeHeartBeatRequest:
 		return m.onHeartBeatRequest(msg)
 	case messaging.TypeMaintainerBootstrapResponse:
-		return m.onMaintainerBootstrapResponse(msg)
+		m.onMaintainerBootstrapResponse(msg)
 	case messaging.TypeMaintainerCloseResponse:
 		m.onNodeClosed(string(msg.From), msg.Message[0].(*heartbeatpb.MaintainerCloseResponse))
 	case messaging.TypeRemoveMaintainerRequest:
@@ -323,11 +320,10 @@ func (m *Maintainer) onRemoveMaintainer(cascade bool) {
 		m.removed.Store(true)
 		m.state = heartbeatpb.ComponentState_Stopped
 		metrics.MaintainerGauge.WithLabelValues(m.id.Namespace, m.id.ID).Dec()
-		return
 	}
 }
 
-func (m *Maintainer) onNodeChanged() error {
+func (m *Maintainer) onNodeChanged() {
 	activeNodes := m.nodeManager.GetAliveNodes()
 	var newNodes = make([]*common.NodeInfo, 0, len(activeNodes))
 	for id, node := range activeNodes {
@@ -352,14 +348,11 @@ func (m *Maintainer) onNodeChanged() error {
 	if cachedResponse != nil {
 		log.Info("bootstrap done after removed some nodes",
 			zap.String("id", m.id.String()))
-		if err := m.onBootstrapDone(cachedResponse); err != nil {
-			return errors.Trace(err)
-		}
+		m.onBootstrapDone(cachedResponse)
 	}
 	if m.bootstrapper.CheckAllNodeInitialized() {
-		return errors.Trace(m.onScheduleTableSpan())
+		m.onScheduleTableSpan()
 	}
-	return nil
 }
 
 func (m *Maintainer) calCheckpointTs() {
@@ -417,16 +410,13 @@ func (m *Maintainer) sendMessages(msgs []*messaging.TargetMessage) {
 	}
 }
 
-func (m *Maintainer) onScheduleTableSpan() error {
+func (m *Maintainer) onScheduleTableSpan() {
 	if !m.bootstrapper.CheckAllNodeInitialized() {
 		log.Info("not all node initialized, skip schedule",
 			zap.String("changefeed", m.id.ID))
-		return nil
+		return
 	}
-	msg, err := m.scheduler.Schedule()
-	if err != nil {
-		return errors.Trace(err)
-	}
+	msg := m.scheduler.Schedule()
 	m.sendMessages(msg)
 
 	if m.scheduler.NeedSchedule() {
@@ -436,7 +426,6 @@ func (m *Maintainer) onScheduleTableSpan() error {
 			eventType:    EventSchedule,
 		}, time.Now().Add(100*time.Millisecond))
 	}
-	return nil
 }
 
 func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
@@ -444,15 +433,9 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 	if req.Watermark != nil {
 		m.checkpointTsByCapture[model.CaptureID(msg.From)] = *req.Watermark
 	}
-	msgs, err := m.scheduler.HandleStatus(msg.From.String(), req.Statuses)
-	if err != nil {
-		log.Error("handle status failed, ignore",
-			zap.String("changefeed", m.id.ID),
-			zap.Error(err))
-		return errors.Trace(err)
-	}
+	msgs := m.scheduler.HandleStatus(msg.From.String(), req.Statuses)
 	m.sendMessages(msgs)
-	msgs, err = m.barrier.HandleStatus(msg.From, req)
+	msgs, err := m.barrier.HandleStatus(msg.From, req)
 	if err != nil {
 		log.Error("handle status failed, ignore",
 			zap.String("changefeed", m.id.ID),
@@ -473,18 +456,18 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 	return nil
 }
 
-func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage) error {
+func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage) {
 	log.Info("received maintainer bootstrap response",
 		zap.String("changefeed", m.id.ID),
 		zap.String("server", msg.From.String()))
 	m.scheduler.AddNewNode(msg.From.String())
 	cachedResp := m.bootstrapper.HandleBootstrapResponse(msg.From, msg.Message[0].(*heartbeatpb.MaintainerBootstrapResponse))
-	return m.onBootstrapDone(cachedResp)
+	m.onBootstrapDone(cachedResp)
 }
 
-func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.MaintainerBootstrapResponse) error {
+func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.MaintainerBootstrapResponse) {
 	if cachedResp == nil {
-		return nil
+		return
 	}
 	log.Info("all nodes have sent bootstrap response",
 		zap.String("changefeed", m.id.ID),
@@ -504,12 +487,9 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.M
 				CheckpointTs: info.CheckpointTs,
 			}
 			span := &common.TableSpan{TableSpan: info.Span}
-			stm, err := scheduler.NewStateMachine(dispatcherID,
+			stm := scheduler.NewStateMachine(dispatcherID,
 				map[model.CaptureID]scheduler.InferiorStatus{server: status},
 				NewReplicaSet(m.id, dispatcherID, info.SchemaID, span, info.CheckpointTs))
-			if err != nil {
-				return errors.Trace(err)
-			}
 
 			//working on remote, the state must be absent or working since it's reported by remote
 			if stm.State == scheduler.SchedulerStatusWorking {
@@ -526,10 +506,8 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.M
 			}
 		}
 	}
-	if err := m.scheduler.FinishBootstrap(workingMap); err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(m.onScheduleTableSpan())
+	m.scheduler.FinishBootstrap(workingMap)
+	m.onScheduleTableSpan()
 }
 
 // initTableIDs get tables ids base on the filter and checkpoint ts
@@ -555,11 +533,7 @@ func (m *Maintainer) onNodeClosed(from string, response *heartbeatpb.MaintainerC
 }
 
 func (m *Maintainer) onBalance() {
-	msgs, err := m.scheduler.TryBalance()
-	if err != nil {
-		m.handleError(err)
-	}
-	m.sendMessages(msgs)
+	m.sendMessages(m.scheduler.TryBalance())
 }
 
 func (m *Maintainer) handleResendMessage() {

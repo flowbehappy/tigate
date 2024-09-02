@@ -17,7 +17,6 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/pingcap/tiflow/pkg/errors"
 )
 
 type Barrier struct {
@@ -90,20 +89,14 @@ func (b *Barrier) handleNoStateHeartbeat(dispatcherID common.DispatcherID, check
 	if !ok {
 		return nil, nil
 	}
-	var (
-		err  error
-		msgs []*messaging.TargetMessage
-	)
+	var msgs []*messaging.TargetMessage
 	// there is a block event and the dispatcher advanced its checkpoint ts
 	// which means we have sent pass or write action to it
 	if checkpointTs > event.commitTs {
 		// the writer already synced ddl to downstream
 		if event.selectedDispatcher == dispatcherID {
 			// schedule new and removed tasks
-			msgs, err = event.scheduleBlockEvent()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			msgs = event.scheduleBlockEvent()
 			msgs = append(msgs, event.sendPassAction()...)
 		}
 
@@ -123,7 +116,6 @@ func (b *Barrier) handleStateHeartbeat(changefeedID string,
 	var (
 		msgs            []*messaging.TargetMessage
 		distacherStatus *heartbeatpb.DispatcherStatus
-		err             error
 	)
 	blockState := status.State
 	if blockState.IsBlocked {
@@ -162,10 +154,7 @@ func (b *Barrier) handleStateHeartbeat(changefeedID string,
 			},
 			Ack: &heartbeatpb.ACK{CommitTs: status.CheckpointTs},
 		}
-		msgs, err = NewBlockEvent(changefeedID, b.scheduler, blockState).scheduleBlockEvent()
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
+		msgs = NewBlockEvent(changefeedID, b.scheduler, blockState).scheduleBlockEvent()
 	}
 	return msgs, distacherStatus, nil
 }
@@ -201,13 +190,10 @@ func NewBlockEvent(cfID string, scheduler *Scheduler,
 	return event
 }
 
-func (b *BlockEvent) scheduleBlockEvent() ([]*messaging.TargetMessage, error) {
+func (b *BlockEvent) scheduleBlockEvent() []*messaging.TargetMessage {
 	var msgs []*messaging.TargetMessage
 	for _, removed := range b.dropDispatcherIDs.DispatcherIDs {
-		msg, err := b.scheduler.RemoveTask(common.NewDispatcherIDFromPB(removed))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		msg := b.scheduler.RemoveTask(common.NewDispatcherIDFromPB(removed))
 		if msg != nil {
 			msgs = append(msgs, msg)
 		}
@@ -219,12 +205,9 @@ func (b *BlockEvent) scheduleBlockEvent() ([]*messaging.TargetMessage, error) {
 		})
 	}
 	// todo: trigger a schedule event support filter, rename table or databases
-	msgList, err := b.scheduler.Schedule()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	msgList := b.scheduler.Schedule()
 	msgs = append(msgs, msgList...)
-	return msgs, nil
+	return msgs
 }
 
 func (b *BlockEvent) allDispatcherReported() bool {
