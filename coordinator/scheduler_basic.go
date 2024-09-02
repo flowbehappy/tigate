@@ -11,29 +11,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package coordinator
 
 import (
 	"time"
 
-	"github.com/flowbehappy/tigate/utils"
+	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
 type BasicScheduler struct {
-	id                    InferiorID
+	id                    scheduler.InferiorID
 	lastForceScheduleTime time.Time
 
 	needAddInferior  bool
-	addInferiorCache []InferiorID
+	addInferiorCache []scheduler.ChangefeedID
 
 	needRemoveInferior  bool
-	removeInferiorCache []InferiorID
+	removeInferiorCache []scheduler.ChangefeedID
 }
 
-func NewBasicScheduler(id InferiorID) *BasicScheduler {
+func NewBasicScheduler(id scheduler.ChangefeedID) *BasicScheduler {
 	return &BasicScheduler{
 		id:                    id,
 		lastForceScheduleTime: time.Now(),
@@ -58,9 +58,9 @@ func (b *BasicScheduler) hasPendingTask() bool {
 }
 
 func (b *BasicScheduler) Schedule(
-	allInferiors utils.Map[InferiorID, Inferior],
+	allInferiors map[scheduler.ChangefeedID]scheduler.Inferior,
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
-	stateMachines utils.Map[InferiorID, *StateMachine],
+	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
 	batchSize int,
 ) (tasks []*ScheduleTask) {
 	if !b.hasPendingTask() && time.Since(b.lastForceScheduleTime) > 120*time.Second {
@@ -72,14 +72,13 @@ func (b *BasicScheduler) Schedule(
 	// Build remove inferior tasks.
 	if b.needRemoveInferior {
 		// The two sets are not identical. We need to build a map to find removed inferiors.
-		b.removeInferiorCache = make([]InferiorID, 0, batchSize)
-		stateMachines.Ascend(func(key InferiorID, value *StateMachine) bool {
-			ok := allInferiors.Has(key)
+		b.removeInferiorCache = make([]scheduler.ChangefeedID, 0, batchSize)
+		for key, _ := range stateMachines {
+			_, ok := allInferiors[key]
 			if !ok {
 				b.removeInferiorCache = append(b.removeInferiorCache, key)
 			}
-			return true
-		})
+		}
 		b.needRemoveInferior = false
 		if len(b.removeInferiorCache) > 0 {
 			log.Info("basic scheduler generate new remove inferiors cache",
@@ -106,17 +105,16 @@ func (b *BasicScheduler) Schedule(
 
 	// Build add inferior tasks.
 	if b.needAddInferior {
-		b.addInferiorCache = make([]InferiorID, 0, batchSize)
-		allInferiors.Ascend(func(inf InferiorID, value Inferior) bool {
+		b.addInferiorCache = make([]scheduler.ChangefeedID, 0, batchSize)
+		for inf, value := range allInferiors {
 			st := value.GetStateMachine()
-			if st == nil || st.State == SchedulerStatusAbsent {
+			if st == nil || st.State == scheduler.SchedulerStatusAbsent {
 				// add case 1: schedule a new inferior
 				// add case 2: reschedule an absent inferior. Currently, we only reschedule each 2 minutes.
 				// TODO: store absent inferiors in a separate map to trigger reschedule quickly.
 				b.addInferiorCache = append(b.addInferiorCache, inf)
 			}
-			return true
-		})
+		}
 		b.needAddInferior = false
 		if len(b.addInferiorCache) > 0 {
 			log.Info("basic scheduler generate new add inferiors cache",
@@ -159,7 +157,7 @@ func (b *BasicScheduler) Schedule(
 }
 
 // newBurstAddInferiors add each new inferior to captures in a round-robin way.
-func (b *BasicScheduler) newBurstAddInferiors(newInferiors []InferiorID, captureIDs []model.CaptureID,
+func (b *BasicScheduler) newBurstAddInferiors(newInferiors []scheduler.ChangefeedID, captureIDs []model.CaptureID,
 ) []*ScheduleTask {
 	idx := 0
 	addInferiorTasks := make([]*ScheduleTask, 0, len(newInferiors))
@@ -186,12 +184,12 @@ func (b *BasicScheduler) newBurstAddInferiors(newInferiors []InferiorID, capture
 
 // TODO: maybe remove task does not need captureID.
 func (b *BasicScheduler) newBurstRemoveInferiors(
-	rmInferiors []InferiorID,
-	stateMachines utils.Map[InferiorID, *StateMachine],
+	rmInferiors []scheduler.ChangefeedID,
+	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
 ) []*ScheduleTask {
 	removeTasks := make([]*ScheduleTask, 0, len(rmInferiors))
 	for _, id := range rmInferiors {
-		state, _ := stateMachines.Get(id)
+		state, _ := stateMachines[id]
 		if state.Primary == "" {
 			log.Warn("primary or secondary not found for removed inferior,"+
 				"this may happen if the server shutdown",

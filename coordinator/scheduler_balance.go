@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package coordinator
 
 import (
 	"math"
@@ -19,7 +19,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/flowbehappy/tigate/utils"
+	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -41,11 +41,11 @@ type balanceScheduler struct {
 	forceBalance bool
 
 	maxTaskConcurrency int
-	id                 InferiorID
+	id                 scheduler.InferiorID
 }
 
 func NewBalanceScheduler(
-	id InferiorID,
+	id scheduler.InferiorID,
 	interval time.Duration,
 	concurrency int) *balanceScheduler {
 	return &balanceScheduler{
@@ -61,9 +61,9 @@ func (b *balanceScheduler) Name() string {
 }
 
 func (b *balanceScheduler) Schedule(
-	allInferiors utils.Map[InferiorID, Inferior],
+	allInferiors map[scheduler.ChangefeedID]scheduler.Inferior,
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
-	stateMachines utils.Map[InferiorID, *StateMachine],
+	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
 	batchSize int,
 ) []*ScheduleTask {
 	if b.maxTaskConcurrency < batchSize {
@@ -83,7 +83,7 @@ func (b *balanceScheduler) Schedule(
 	b.forceBalance = len(tasks) != 0
 	log.Info("balance scheduler generate tasks",
 		zap.Int("capture", len(aliveCaptures)),
-		zap.Int("statemachines", stateMachines.Len()),
+		zap.Int("statemachines", len(stateMachines)),
 		zap.String("id", b.id.String()),
 		zap.Int("task count", len(tasks)))
 	return tasks
@@ -92,7 +92,7 @@ func (b *balanceScheduler) Schedule(
 func buildBalanceMoveTables(
 	random *rand.Rand,
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
-	stateMachines utils.Map[InferiorID, *StateMachine],
+	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
 	maxTaskConcurrency int,
 ) []*ScheduleTask {
 	moves := newBalanceMoveTables(
@@ -109,31 +109,29 @@ func buildBalanceMoveTables(
 func newBalanceMoveTables(
 	random *rand.Rand,
 	aliveCaptures map[model.CaptureID]*CaptureStatus,
-	stateMachines utils.Map[InferiorID, *StateMachine],
+	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
 	maxTaskLimit int,
 ) []*MoveInferior {
-	tablesPerCapture := make(map[model.CaptureID]utils.Map[InferiorID, *StateMachine])
+	tablesPerCapture := make(map[model.CaptureID]map[scheduler.ChangefeedID]*scheduler.StateMachine)
 	for captureID := range aliveCaptures {
-		tablesPerCapture[captureID] = utils.NewBtreeMap[InferiorID, *StateMachine]()
+		tablesPerCapture[captureID] = make(map[scheduler.ChangefeedID]*scheduler.StateMachine)
 	}
 
-	stateMachines.Ascend(func(key InferiorID, value *StateMachine) bool {
-		if value.State == SchedulerStatusWorking {
-			tablesPerCapture[value.Primary].ReplaceOrInsert(key, value)
+	for key, value := range stateMachines {
+		if value.State == scheduler.SchedulerStatusWorking {
+			tablesPerCapture[value.Primary][key] = value
 		}
-		return true
-	})
+	}
 
 	// findVictim return tables which need to be moved
-	upperLimitPerCapture := int(math.Ceil(float64(stateMachines.Len()) / float64(len(aliveCaptures))))
+	upperLimitPerCapture := int(math.Ceil(float64(len(stateMachines)) / float64(len(aliveCaptures))))
 
-	victims := make([]*StateMachine, 0)
+	victims := make([]*scheduler.StateMachine, 0)
 	for _, ts := range tablesPerCapture {
-		var changefeeds []*StateMachine
-		ts.Ascend(func(key InferiorID, value *StateMachine) bool {
+		var changefeeds []*scheduler.StateMachine
+		for _, value := range ts {
 			changefeeds = append(changefeeds, value)
-			return true
-		})
+		}
 		if random != nil {
 			// Complexity note: Shuffle has O(n), where `n` is the number of tables.
 			// Also, during a single call of `Schedule`, Shuffle can be called at most
@@ -148,7 +146,7 @@ func newBalanceMoveTables(
 			// sort the spans here so that the result is deterministic,
 			// which would aid testing and debugging.
 			sort.Slice(changefeeds, func(i, j int) bool {
-				return changefeeds[i].ID.Less(changefeeds[j].ID)
+				return changefeeds[i].ID.String() < changefeeds[j].ID.String()
 			})
 		}
 
@@ -162,7 +160,7 @@ func newBalanceMoveTables(
 				break
 			}
 			victims = append(victims, cf)
-			ts.Delete(cf.ID)
+			delete(ts, cf.ID.(scheduler.ChangefeedID))
 			tableNum2Remove--
 		}
 	}
@@ -172,7 +170,7 @@ func newBalanceMoveTables(
 
 	captureWorkload := make(map[model.CaptureID]int)
 	for captureID, ts := range tablesPerCapture {
-		captureWorkload[captureID] = randomizeWorkload(random, ts.Len())
+		captureWorkload[captureID] = randomizeWorkload(random, len(ts))
 	}
 	// for each victim table, find the target for it
 	moveTables := make([]*MoveInferior, 0, len(victims))
@@ -197,11 +195,11 @@ func newBalanceMoveTables(
 		}
 
 		moveTables = append(moveTables, &MoveInferior{
-			ID:          cf.ID,
+			ID:          cf.ID.(scheduler.ChangefeedID),
 			DestCapture: target,
 		})
-		tablesPerCapture[target].ReplaceOrInsert(cf.ID, cf)
-		captureWorkload[target] = randomizeWorkload(random, tablesPerCapture[target].Len())
+		tablesPerCapture[target][cf.ID.(scheduler.ChangefeedID)] = cf
+		captureWorkload[target] = randomizeWorkload(random, len(tablesPerCapture[target]))
 	}
 
 	return moveTables
