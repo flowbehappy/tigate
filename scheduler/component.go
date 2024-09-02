@@ -16,7 +16,6 @@ package scheduler
 import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/tiflow/cdc/model"
 )
 
@@ -29,7 +28,6 @@ type Inferior interface {
 }
 
 type InferiorID interface {
-	utils.MapKey
 	Equal(t any) bool
 	String() string
 }
@@ -41,14 +39,11 @@ type InferiorStatus interface {
 
 type ChangefeedID model.ChangeFeedID
 
-func (c ChangefeedID) Less(t any) bool {
-	cf := t.(ChangefeedID)
-	return c.ID < cf.ID
-}
 func (c ChangefeedID) Equal(t any) bool {
 	cf := t.(ChangefeedID)
 	return c.ID == cf.ID
 }
+
 func (c ChangefeedID) String() string {
 	return c.ID
 }

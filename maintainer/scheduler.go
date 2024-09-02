@@ -357,7 +357,7 @@ func (s *Scheduler) balanceTables() []*messaging.TargetMessage {
 			// sort the spans here so that the result is deterministic,
 			// which would aid testing and debugging.
 			sort.Slice(changefeeds, func(i, j int) bool {
-				return changefeeds[i].ID.Less(changefeeds[j].ID)
+				return changefeeds[i].ID.String() < changefeeds[j].ID.String()
 			})
 		}
 
