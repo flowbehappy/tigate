@@ -111,9 +111,10 @@ message MaintainerBootstrapResponse {
 
 message BootstrapTableSpan {
     DispatcherID ID = 1;
-    TableSpan span = 2;
-    ComponentState component_status = 3;
-    uint64 checkpoint_ts = 4;
+    int64  SchemaID = 2;
+    TableSpan span = 3;
+    ComponentState component_status = 4;
+    uint64 checkpoint_ts = 5;
 }
 
 message MaintainerCloseRequest {

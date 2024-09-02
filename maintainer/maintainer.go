@@ -240,12 +240,8 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 
 func (m *Maintainer) initialize() error {
 	var err error
-	tableIDs, err := m.initTableIDs()
-	tableMap := make(map[int64]struct{})
-	for _, id := range tableIDs {
-		tableMap[id] = struct{}{}
-	}
-	m.scheduler.SetCurrentTables(tableMap)
+	tables, err := m.initTables()
+	m.scheduler.SetInitialTables(tables)
 
 	log.Info("changefeed maintainer initialized",
 		zap.String("id", m.id.String()))
@@ -510,7 +506,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.M
 			span := &common.TableSpan{TableSpan: info.Span}
 			stm, err := scheduler.NewStateMachine(dispatcherID,
 				map[model.CaptureID]scheduler.InferiorStatus{server: status},
-				NewReplicaSet(m.id, dispatcherID, span, info.CheckpointTs))
+				NewReplicaSet(m.id, dispatcherID, info.SchemaID, span, info.CheckpointTs))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -537,7 +533,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.M
 }
 
 // initTableIDs get tables ids base on the filter and checkpoint ts
-func (m *Maintainer) initTableIDs() ([]common.TableID, error) {
+func (m *Maintainer) initTables() ([]common.Table, error) {
 	startTs := m.watermark.CheckpointTs
 	f, err := filter.NewFilter(m.config.Config, "")
 	if err != nil {
@@ -545,9 +541,9 @@ func (m *Maintainer) initTableIDs() ([]common.TableID, error) {
 	}
 
 	schemaStore := appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore)
-	tableIDs, err := schemaStore.GetAllPhysicalTables(startTs, f)
-	log.Info("get table ids", zap.Int("count", len(tableIDs)), zap.String("changefeed", m.id.String()))
-	return tableIDs, nil
+	tables, err := schemaStore.GetAllPhysicalTables(startTs, f)
+	log.Info("get table ids", zap.Int("count", len(tables)), zap.String("changefeed", m.id.String()))
+	return tables, nil
 }
 
 func (m *Maintainer) onNodeClosed(from string, response *heartbeatpb.MaintainerCloseResponse) {

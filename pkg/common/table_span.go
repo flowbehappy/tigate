@@ -27,6 +27,9 @@ type TableSpan struct {
 	*heartbeatpb.TableSpan
 }
 
+// DDLSpanSchemaID is the special schema id for DDL
+var DDLSpanSchemaID int64 = 0
+
 // DDLSpan is the special span for Table Trigger Event Dispatcher
 var DDLSpan = TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 0, StartKey: nil, EndKey: nil}}
 

@@ -17,12 +17,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/scheduler"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/spanz"
-	"go.uber.org/zap"
 )
 
 type Barrier struct {
@@ -218,20 +213,10 @@ func (b *BlockEvent) scheduleBlockEvent() ([]*messaging.TargetMessage, error) {
 		}
 	}
 	for _, add := range b.newTables {
-		span := spanz.TableIDToComparableSpan(add.TableID)
-		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
-			TableID:  uint64(add.TableID),
-			StartKey: span.StartKey,
-			EndKey:   span.EndKey,
-		}}
-		dispatcherID := common.NewDispatcherID()
-		replicaSet := NewReplicaSet(model.DefaultChangeFeedID(b.cfID),
-			dispatcherID, tableSpan, b.commitTs).(*ReplicaSet)
-		stm, err := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
-		if err != nil {
-			log.Panic("failed to create state machine", zap.Error(err))
-		}
-		b.scheduler.AddNewTask(stm)
+		b.scheduler.AddNewTable(common.Table{
+			SchemaID: add.SchemaID,
+			TableID:  add.TableID,
+		})
 	}
 	// todo: trigger a schedule event support filter, rename table or databases
 	msgList, err := b.scheduler.Schedule()
