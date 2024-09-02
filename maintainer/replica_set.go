@@ -23,6 +23,7 @@ import (
 
 type ReplicaSet struct {
 	ID           common.DispatcherID
+	SchemaID     int64
 	Span         *common.TableSpan
 	ChangefeedID model.ChangeFeedID
 	status       ReplicaSetStatus
@@ -33,10 +34,12 @@ type ReplicaSet struct {
 
 func NewReplicaSet(cfID model.ChangeFeedID,
 	id scheduler.InferiorID,
+	SchemaID int64,
 	span *common.TableSpan,
 	checkpointTs uint64) scheduler.Inferior {
 	r := &ReplicaSet{
 		ID:           id.(common.DispatcherID),
+		SchemaID:     SchemaID,
 		Span:         span,
 		ChangefeedID: cfID,
 		checkpointTs: checkpointTs,

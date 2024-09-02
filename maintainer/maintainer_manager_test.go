@@ -49,7 +49,8 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode
 	store := &mockSchemaStore{
 		// 3 tables and a ddl_event_trigger as a table
-		tables: []common.TableID{1, 2, 3},
+		tables: []common.Table{
+			{SchemaID: 1, TableID: 1}, {SchemaID: 1, TableID: 2}, {SchemaID: 1, TableID: 3}},
 	}
 	appcontext.SetService(appcontext.SchemaStore, store)
 	mc := messaging.NewMessageCenter(ctx,
@@ -167,7 +168,8 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode
 	store := &mockSchemaStore{
 		// 3 tables and a ddl_event_trigger as a table
-		tables: []common.TableID{1, 2, 3},
+		tables: []common.Table{
+			{SchemaID: 1, TableID: 1}, {SchemaID: 1, TableID: 2}, {SchemaID: 1, TableID: 3}},
 	}
 	appcontext.SetService(appcontext.SchemaStore, store)
 	mc := messaging.NewMessageCenter(ctx,
@@ -201,7 +203,8 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 		dispatcherID := common.NewDispatcherID()
 		remotedIds = append(remotedIds, dispatcherID)
 		dispManager.bootstrapTables = append(dispManager.bootstrapTables, &heartbeatpb.BootstrapTableSpan{
-			ID: dispatcherID.ToPB(),
+			ID:       dispatcherID.ToPB(),
+			SchemaID: 1,
 			Span: &heartbeatpb.TableSpan{TableID: tableSpan.TableID,
 				StartKey: tableSpan.StartKey,
 				EndKey:   tableSpan.EndKey},
@@ -258,10 +261,10 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 
 type mockSchemaStore struct {
 	schemastore.SchemaStore
-	tables []common.TableID
+	tables []common.Table
 }
 
-func (m *mockSchemaStore) GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]common.TableID, error) {
+func (m *mockSchemaStore) GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]common.Table, error) {
 	return m.tables, nil
 }
 

@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	config2 "github.com/pingcap/tiflow/pkg/config"
-	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -259,16 +258,10 @@ func TestMaintainerSchedule(t *testing.T) {
 	}
 
 	for id := 0; id < tableSize; id++ {
-		span := spanz.TableIDToComparableSpan(int64(id))
-		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
-			TableID:  uint64(id),
-			StartKey: span.StartKey,
-			EndKey:   span.EndKey,
-		}}
-		dispatcherID := common.NewDispatcherID()
-		replicaSet := NewReplicaSet(maintainer.id, dispatcherID, tableSpan, maintainer.watermark.CheckpointTs).(*ReplicaSet)
-		stm, _ := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
-		maintainer.scheduler.AddNewTask(stm)
+		maintainer.scheduler.AddNewTable(common.Table{
+			SchemaID: 1,
+			TableID:  int64(id),
+		})
 	}
 	// send bootstrap message
 	maintainer.sendMessages(maintainer.bootstrapper.HandleNewNodes(

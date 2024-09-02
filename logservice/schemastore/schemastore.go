@@ -28,7 +28,7 @@ type SchemaStore interface {
 	common.SubModule
 
 	// TODO: add filter
-	GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]common.TableID, error)
+	GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]common.Table, error)
 
 	// RegisterDispatcher register the dispatcher into the schema store.
 	// TODO: return a table info
@@ -225,14 +225,14 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 	}
 }
 
-func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts, f filter.Filter) ([]common.TableID, error) {
+func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts, f filter.Filter) ([]common.Table, error) {
 	meta := logpuller.GetSnapshotMeta(s.storage, uint64(snapTs))
 	dbinfos, err := meta.ListDatabases()
 	if err != nil {
 		log.Fatal("list databases failed", zap.Error(err))
 	}
 
-	tableIDs := make([]common.TableID, 0)
+	tables := make([]common.Table, 0)
 
 	for _, dbinfo := range dbinfos {
 		if filter.IsSysSchema(dbinfo.Name.O) ||
@@ -257,11 +257,14 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts, f filter.Filter) ([
 			if f != nil && f.ShouldIgnoreTable(dbinfo.Name.O, tbName.Name.O) {
 				continue
 			}
-			tableIDs = append(tableIDs, common.TableID(tbName.ID))
+			tables = append(tables, common.Table{
+				SchemaID: dbinfo.ID,
+				TableID:  tbName.ID,
+			})
 		}
 	}
 
-	return tableIDs, nil
+	return tables, nil
 }
 
 func (s *schemaStore) RegisterDispatcher(
