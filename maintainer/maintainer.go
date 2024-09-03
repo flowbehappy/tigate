@@ -545,6 +545,8 @@ func (m *Maintainer) handleResendMessage() {
 	if m.removing {
 		m.sendMaintainerCloseRequestToAllNode()
 	}
+	// resend barrier ack messages
+	m.sendMessages(m.barrier.Resend())
 }
 
 func (m *Maintainer) tryCloseChangefeed() bool {
@@ -633,6 +635,9 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 }
 
 func (m *Maintainer) onPeriodTask() {
+	if !m.scheduler.NeedSchedule() {
+		m.sendMessages(m.scheduler.Schedule())
+	}
 	m.printStatus()
 	m.handleResendMessage()
 	m.calCheckpointTs()
