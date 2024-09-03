@@ -11,6 +11,7 @@ import (
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/log"
@@ -76,6 +77,7 @@ func newEventBroker(
 	c := &eventBroker{
 		tidbClusterID: id,
 		eventStore:    eventStore,
+		schemaStore:   appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore),
 		dispatchers:   sync.Map{},
 		msgSender:     mc,
 		// The size of the channel is 16 times of the defaultChannelSize, since the eventBroker may have many dispatchers.

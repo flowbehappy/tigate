@@ -287,7 +287,7 @@ func (s *schemaStore) RegisterDispatcher(
 			zap.Uint64("gcTs", uint64(s.dataStorage.getGCTS())))
 	}
 
-	if span.Equal(common.DDLSpan) {
+	if span.Equal(&common.DDLSpan) {
 		if _, ok := s.tableTriggerDispatcherMap[dispatcherID]; ok {
 			s.mu.Unlock()
 			return errors.New("table trigger dispatcher already exists")
