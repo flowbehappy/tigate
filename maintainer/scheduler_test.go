@@ -360,9 +360,9 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 			State:        heartbeatpb.ComponentState_Working,
 			CheckpointTs: 10,
 		},
-	}, NewReplicaSet(model.ChangeFeedID{}, ddlDispatcherID, common.DDLSpanSchemaID, &common.DDLSpan, 1))
+	}, NewReplicaSet(model.ChangeFeedID{}, ddlDispatcherID, common.DDLSpanSchemaID, common.DDLSpan, 1))
 	ddlCache := utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
-	ddlCache.ReplaceOrInsert(&common.DDLSpan, ddlStm)
+	ddlCache.ReplaceOrInsert(common.DDLSpan, ddlStm)
 
 	require.False(t, s.bootstrapped)
 	s.FinishBootstrap(map[uint64]utils.Map[*common.TableSpan, *scheduler.StateMachine]{

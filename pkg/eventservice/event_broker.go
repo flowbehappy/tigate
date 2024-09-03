@@ -100,7 +100,7 @@ func newEventBroker(
 	}
 	c.runGenerateScanTask(ctx)
 	c.runScanWorker(ctx)
-	c.tickTableTriggerDispatchers(ctx)
+	// c.tickTableTriggerDispatchers(ctx)
 	c.runSendMessageWorker(ctx)
 	c.updateMetrics(ctx)
 	return c

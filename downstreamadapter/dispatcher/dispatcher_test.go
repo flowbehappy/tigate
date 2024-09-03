@@ -187,7 +187,7 @@ func TestDispatcherWithCrossTableDDL(t *testing.T) {
 	mock.ExpectCommit()
 
 	mysqlSink := sink.NewMysqlSink(model.DefaultChangeFeedID("test1"), 8, writer.NewMysqlConfig(), db)
-	tableSpan := &common.DDLSpan
+	tableSpan := common.DDLSpan
 	startTs := uint64(100)
 
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
@@ -251,7 +251,7 @@ func TestDispatcherWithCrossTableDDLAndDML(t *testing.T) {
 	mock.ExpectCommit()
 
 	mysqlSink := sink.NewMysqlSink(model.DefaultChangeFeedID("test1"), 8, writer.NewMysqlConfig(), db)
-	tableSpan := &common.DDLSpan
+	tableSpan := common.DDLSpan
 	startTs := uint64(100)
 
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
@@ -435,7 +435,7 @@ func TestMultiDispatcherWithMultipleDDLs(t *testing.T) {
 	statusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
 	startTs := uint64(100)
 
-	ddlTableSpan := &common.DDLSpan
+	ddlTableSpan := common.DDLSpan
 
 	tableTriggerEventDispatcher := NewDispatcher(common.NewDispatcherID(), ddlTableSpan, mysqlSink, startTs, statusChan, filter, 0)
 
