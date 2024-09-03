@@ -19,7 +19,7 @@ import (
 
 // MapKey is the comparable key of the map
 type MapKey interface {
-	Less(any any) bool
+	Less(other any) bool
 }
 
 // ItemIterator iterates the map, return false to stop the iteration
