@@ -495,7 +495,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.M
 			if stm.State == scheduler.SchedulerStatusWorking {
 				tableMap, ok := workingMap[span.TableID]
 				if !ok {
-					tableMap = utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine]()
+					tableMap = utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine](heartbeatpb.LessTableSpan)
 					workingMap[span.TableID] = tableMap
 				}
 				tableMap.ReplaceOrInsert(span, stm)
