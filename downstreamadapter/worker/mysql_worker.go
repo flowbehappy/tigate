@@ -26,8 +26,8 @@ import (
 
 // MysqlWorker is use to flush the event downstream
 type MysqlWorker struct {
-	eventChan   <-chan *common.TxnEvent // 获取到能往下游写的 events
-	mysqlWriter *writer.MysqlWriter     // 实际负责做 flush 操作
+	eventChan   <-chan *common.TEvent // 获取到能往下游写的 events
+	mysqlWriter *writer.MysqlWriter   // 实际负责做 flush 操作
 	id          int
 	// Metrics.
 	MetricConflictDetectDuration prometheus.Observer
@@ -38,7 +38,7 @@ type MysqlWorker struct {
 	MetricWorkerHandledRows prometheus.Counter
 }
 
-func NewMysqlWorker(eventChan <-chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig, id int, changefeedID model.ChangeFeedID) *MysqlWorker {
+func NewMysqlWorker(eventChan <-chan *common.TEvent, db *sql.DB, config *writer.MysqlConfig, id int, changefeedID model.ChangeFeedID) *MysqlWorker {
 	wid := fmt.Sprintf("%d", id)
 
 	return &MysqlWorker{
@@ -54,7 +54,7 @@ func NewMysqlWorker(eventChan <-chan *common.TxnEvent, db *sql.DB, config *write
 	}
 }
 
-func (t *MysqlWorker) GetEventChan() <-chan *common.TxnEvent {
+func (t *MysqlWorker) GetEventChan() <-chan *common.TEvent {
 	return t.eventChan
 }
 

@@ -22,6 +22,20 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
+type Event interface {
+	GetType() int
+	GetDispatcherID() DispatcherID
+	GetCommitTs() Ts
+	GetStartTs() Ts
+}
+
+// FlushableEvent is an event that can be flushed to downstream by a dispatcher.
+type FlushableEvent interface {
+	Event
+	PostFlush()
+	AddPostFlushFunc(func())
+}
+
 const (
 	txnRowCount = 2018
 )
@@ -38,11 +52,6 @@ const (
 	TypeTxnEvent
 )
 
-type Event interface {
-	GetType() int
-	GetDispatcherID() DispatcherID
-}
-
 type BatchResolvedTs struct {
 	Events []ResolvedEvent
 }
@@ -54,6 +63,16 @@ func (b BatchResolvedTs) GetType() int {
 func (b BatchResolvedTs) GetDispatcherID() DispatcherID {
 	// It's a fake dispatcherID.
 	return NewDispatcherID()
+}
+
+func (b BatchResolvedTs) GetCommitTs() Ts {
+	// It's a fake commitTs.
+	return 0
+}
+
+func (b BatchResolvedTs) GetStartTs() Ts {
+	// It's a fake startTs.
+	return 0
 }
 
 func (b *BatchResolvedTs) Marshal() ([]byte, error) {
@@ -95,6 +114,14 @@ func (e ResolvedEvent) GetType() int {
 
 func (e ResolvedEvent) GetDispatcherID() DispatcherID {
 	return e.DispatcherID
+}
+
+func (e ResolvedEvent) GetCommitTs() Ts {
+	return e.ResolvedTs
+}
+
+func (e ResolvedEvent) GetStartTs() Ts {
+	return e.ResolvedTs
 }
 
 func (e ResolvedEvent) Marshal() ([]byte, error) {
@@ -149,6 +176,10 @@ type TEvent struct {
 	RowTypes []RowType    `json:"row_types"`
 	// Offset is the offset of the current row in the transaction.
 	Offset int `json:"offset"`
+
+	// The following fields are set and used by dispatcher.
+	ReplicatingTs  uint64   `json:"replicating_ts"`
+	PostTxnFlushed []func() `msg:"-"`
 }
 
 func NewTEvent(
@@ -193,15 +224,33 @@ func (t *TEvent) AppendRow(raw *RawKVEntry,
 	return nil
 }
 
-func (t TEvent) GetType() int {
+func (t *TEvent) GetType() int {
 	return TypeTEvent
 }
 
-func (t TEvent) GetDispatcherID() DispatcherID {
+func (t *TEvent) GetDispatcherID() DispatcherID {
 	return t.DispatcherID
 }
 
-func (t TEvent) GetNextRow() (Row, bool) {
+func (t *TEvent) GetCommitTs() Ts {
+	return Ts(t.CommitTs)
+}
+
+func (t *TEvent) GetStartTs() Ts {
+	return Ts(t.StartTs)
+}
+
+func (t *TEvent) PostFlush() {
+	for _, f := range t.PostTxnFlushed {
+		f()
+	}
+}
+
+func (t *TEvent) AddPostFlushFunc(f func()) {
+	t.PostTxnFlushed = append(t.PostTxnFlushed, f)
+}
+
+func (t *TEvent) GetNextRow() (Row, bool) {
 	if t.Offset >= t.Rows.NumRows() {
 		return Row{}, false
 	}
@@ -237,7 +286,7 @@ func (t TEvent) GetNextRow() (Row, bool) {
 
 // Len returns the number of row change events in the transaction.
 // Note: An update event is counted as 1 row.
-func (t TEvent) Len() int {
+func (t *TEvent) Len() int {
 	return len(t.RowTypes)
 }
 
@@ -248,7 +297,7 @@ func (t TEvent) Marshal() ([]byte, error) {
 	return buf, nil
 }
 
-func (t TEvent) Unmarshal(data []byte) error {
+func (t *TEvent) Unmarshal(data []byte) error {
 	//TODO
 	log.Panic("TEvent.Unmarshal: not implemented")
 	return nil

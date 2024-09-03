@@ -17,7 +17,8 @@ import (
 //
 //msgp:ignore DDLEvent
 type DDLEvent struct {
-	Job *model.Job `json:"ddl_job"`
+	DispatcherID DispatcherID `json:"dispatcher_id"`
+	Job          *model.Job   `json:"ddl_job"`
 	// commitTS of the rawKV
 	CommitTS Ts `json:"commit_ts"`
 
@@ -25,6 +26,90 @@ type DDLEvent struct {
 	BlockedDispatcherIDs     []*heartbeatpb.DispatcherID `json:"blocked_dispatcher_ids"`
 	NeedDroppedDispatcherIDs []*heartbeatpb.DispatcherID `json:"need_dropped_dispatcher_ids"`
 	NeedAddedTableSpan       []*heartbeatpb.TableSpan    `json:"need_added_table_span"`
+	// 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
+	PostTxnFlushed []func() `msg:"-"`
+}
+
+func (d *DDLEvent) GetType() int {
+	return TypeDDLEvent
+}
+
+func (d *DDLEvent) GetDispatcherID() DispatcherID {
+	return d.DispatcherID
+}
+
+func (d *DDLEvent) GetCommitTs() Ts {
+	return d.CommitTS
+}
+
+func (d *DDLEvent) GetStartTs() Ts {
+	return d.CommitTS
+}
+
+func (d *DDLEvent) PostFlush() {
+	for _, f := range d.PostTxnFlushed {
+		f()
+	}
+}
+
+func (d *DDLEvent) AddPostFlushFunc(f func()) {
+	d.PostTxnFlushed = append(d.PostTxnFlushed, f)
+}
+
+func (e *DDLEvent) GetBlockedDispatcherIDs() []*heartbeatpb.DispatcherID {
+	return e.BlockedDispatcherIDs
+}
+
+func (e *DDLEvent) GetNeedDroppedDispatcherIDs() []*heartbeatpb.DispatcherID {
+	return e.NeedDroppedDispatcherIDs
+}
+
+func (e *DDLEvent) GetNeedAddedTableSpan() []*heartbeatpb.TableSpan {
+	return e.NeedAddedTableSpan
+}
+
+func (e *DDLEvent) IsSyncPointEvent() bool {
+	// TODO
+	return false
+}
+
+func (e *DDLEvent) GetDDLQuery() string {
+	if e == nil {
+		log.Error("DDLEvent is nil, should not happened in production env", zap.Any("event", e))
+		return ""
+	}
+	return e.Job.Query
+}
+
+func (e *DDLEvent) GetDDLSchemaName() string {
+	if e == nil {
+		return "" // 要报错的
+	}
+	return e.Job.SchemaName
+}
+
+func (e *DDLEvent) GetDDLType() model.ActionType {
+	return e.Job.Type
+}
+
+func (e *DDLEvent) IsSingleTableDDL() bool {
+	ddlType := e.Job.Type
+	return ddlType == model.ActionAddColumn || ddlType == model.ActionDropColumn || ddlType == model.ActionModifyColumn ||
+		ddlType == model.ActionAddIndex || ddlType == model.ActionDropIndex || ddlType == model.ActionModifyTableComment ||
+		ddlType == model.ActionRebaseAutoID || ddlType == model.ActionSetDefaultValue || ddlType == model.ActionShardRowID ||
+		ddlType == model.ActionModifyTableCharsetAndCollate || ddlType == model.ActionCreateView || ddlType == model.ActionDropView ||
+		ddlType == model.ActionAddForeignKey || ddlType == model.ActionDropForeignKey || ddlType == model.ActionRenameIndex ||
+		ddlType == model.ActionLockTable || ddlType == model.ActionUnlockTable || ddlType == model.ActionSetTiFlashReplica ||
+		ddlType == model.ActionAddPrimaryKey || ddlType == model.ActionDropPrimaryKey || ddlType == model.ActionAddColumns ||
+		ddlType == model.ActionDropColumns || ddlType == model.ActionModifyTableAutoIdCache || ddlType == model.ActionRebaseAutoRandomBase ||
+		ddlType == model.ActionAlterIndexVisibility || ddlType == model.ActionAddCheckConstraint || ddlType == model.ActionDropCheckConstraint ||
+		ddlType == model.ActionAlterCheckConstraint || ddlType == model.ActionDropIndexes || ddlType == model.ActionAlterTableAttributes ||
+		ddlType == model.ActionAlterCacheTable || ddlType == model.ActionAlterNoCacheTable || ddlType == model.ActionMultiSchemaChange ||
+		ddlType == model.ActionAlterTTLInfo || ddlType == model.ActionAlterTTLRemove || ddlType == model.ActionRepairTable ||
+		ddlType == model.ActionCreatePlacementPolicy || ddlType == model.ActionAlterPlacementPolicy || ddlType == model.ActionRecoverTable ||
+		ddlType == model.ActionDropPlacementPolicy || ddlType == model.ActionCreateSchema || ddlType == model.ActionRecoverSchema ||
+		ddlType == model.ActionCreateTables || ddlType == model.ActionRenameTable || ddlType == model.ActionTruncateTable || ddlType == model.ActionCreateTable
+
 }
 
 // TxnEvent represents all events in the current txn
@@ -91,62 +176,6 @@ func (e *TxnEvent) IsDMLEvent() bool {
 
 func (e *TxnEvent) IsDDLEvent() bool {
 	return e.DDLEvent != nil
-}
-
-func (e *TxnEvent) IsSingleTableDDL() bool {
-	ddlType := e.GetDDLType()
-	return ddlType == model.ActionAddColumn || ddlType == model.ActionDropColumn || ddlType == model.ActionModifyColumn ||
-		ddlType == model.ActionAddIndex || ddlType == model.ActionDropIndex || ddlType == model.ActionModifyTableComment ||
-		ddlType == model.ActionRebaseAutoID || ddlType == model.ActionSetDefaultValue || ddlType == model.ActionShardRowID ||
-		ddlType == model.ActionModifyTableCharsetAndCollate || ddlType == model.ActionCreateView || ddlType == model.ActionDropView ||
-		ddlType == model.ActionAddForeignKey || ddlType == model.ActionDropForeignKey || ddlType == model.ActionRenameIndex ||
-		ddlType == model.ActionLockTable || ddlType == model.ActionUnlockTable || ddlType == model.ActionSetTiFlashReplica ||
-		ddlType == model.ActionAddPrimaryKey || ddlType == model.ActionDropPrimaryKey || ddlType == model.ActionAddColumns ||
-		ddlType == model.ActionDropColumns || ddlType == model.ActionModifyTableAutoIdCache || ddlType == model.ActionRebaseAutoRandomBase ||
-		ddlType == model.ActionAlterIndexVisibility || ddlType == model.ActionAddCheckConstraint || ddlType == model.ActionDropCheckConstraint ||
-		ddlType == model.ActionAlterCheckConstraint || ddlType == model.ActionDropIndexes || ddlType == model.ActionAlterTableAttributes ||
-		ddlType == model.ActionAlterCacheTable || ddlType == model.ActionAlterNoCacheTable || ddlType == model.ActionMultiSchemaChange ||
-		ddlType == model.ActionAlterTTLInfo || ddlType == model.ActionAlterTTLRemove || ddlType == model.ActionRepairTable ||
-		ddlType == model.ActionCreatePlacementPolicy || ddlType == model.ActionAlterPlacementPolicy || ddlType == model.ActionRecoverTable ||
-		ddlType == model.ActionDropPlacementPolicy || ddlType == model.ActionCreateSchema || ddlType == model.ActionRecoverSchema ||
-		ddlType == model.ActionCreateTables || ddlType == model.ActionRenameTable || ddlType == model.ActionTruncateTable || ddlType == model.ActionCreateTable
-
-}
-
-func (e *TxnEvent) GetBlockedDispatcherIDs() []*heartbeatpb.DispatcherID {
-	return e.DDLEvent.BlockedDispatcherIDs
-}
-
-func (e *TxnEvent) GetNeedDroppedDispatcherIDs() []*heartbeatpb.DispatcherID {
-	return e.DDLEvent.NeedDroppedDispatcherIDs
-}
-
-func (e *TxnEvent) GetNeedAddedTableSpan() []*heartbeatpb.TableSpan {
-	return e.DDLEvent.NeedAddedTableSpan
-}
-
-func (e *TxnEvent) IsSyncPointEvent() bool {
-	// TODO
-	return false
-}
-
-func (e *TxnEvent) GetDDLQuery() string {
-	if e.DDLEvent == nil {
-		log.Error("DDLEvent is nil, should not happened in production env", zap.Any("event", e))
-		return ""
-	}
-	return e.DDLEvent.Job.Query
-}
-
-func (e *TxnEvent) GetDDLSchemaName() string {
-	if e.DDLEvent == nil {
-		return "" // 要报错的
-	}
-	return e.DDLEvent.Job.SchemaName
-}
-
-func (e *TxnEvent) GetDDLType() model.ActionType {
-	return e.DDLEvent.Job.Type
 }
 
 func (e *TxnEvent) GetRows() []*RowChangedEvent {

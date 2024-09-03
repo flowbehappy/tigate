@@ -45,8 +45,8 @@ type MysqlSink struct {
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
 
-	eventChans   []chan *common.TxnEvent
-	ddlEventChan chan *common.TxnEvent
+	eventChans   []chan *common.TEvent
+	ddlEventChan chan *common.DDLEvent
 	workerCount  int
 }
 
@@ -54,13 +54,13 @@ type MysqlSink struct {
 func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *writer.MysqlConfig, db *sql.DB) *MysqlSink {
 	mysqlSink := MysqlSink{
 		changefeedID: changefeedID,
-		eventChans:   make([]chan *common.TxnEvent, workerCount),
-		ddlEventChan: make(chan *common.TxnEvent, 16),
+		eventChans:   make([]chan *common.TEvent, workerCount),
+		ddlEventChan: make(chan *common.DDLEvent, 16),
 		workerCount:  workerCount,
 	}
 
 	for i := 0; i < workerCount; i++ {
-		mysqlSink.eventChans[i] = make(chan *common.TxnEvent, 16)
+		mysqlSink.eventChans[i] = make(chan *common.TEvent, 16)
 	}
 
 	mysqlSink.initWorker(workerCount, cfg, db)
@@ -76,11 +76,11 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 	for i := 0; i < workerCount; i++ {
 		s.wg.Add(1)
 		workerId := i
-		go func(ctx context.Context, eventChan chan *common.TxnEvent, db *sql.DB, config *writer.MysqlConfig, maxRows int) {
+		go func(ctx context.Context, eventChan chan *common.TEvent, db *sql.DB, config *writer.MysqlConfig, maxRows int) {
 			defer s.wg.Done()
 			totalStart := time.Now()
 			worker := worker.NewMysqlWorker(eventChan, db, config, workerId, s.changefeedID)
-			events := make([]*common.TxnEvent, 0)
+			events := make([]*common.TEvent, 0)
 			rows := 0
 			for {
 				needFlush := false
@@ -89,7 +89,7 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 					return
 				case txnEvent := <-worker.GetEventChan():
 					events = append(events, txnEvent)
-					rows += len(txnEvent.Rows)
+					rows += txnEvent.Len()
 					if rows > maxRows {
 						needFlush = true
 					}
@@ -98,9 +98,9 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 						for !needFlush {
 							select {
 							case txnEvent := <-worker.GetEventChan():
-								worker.MetricWorkerHandledRows.Add(float64(len(txnEvent.Rows)))
+								worker.MetricWorkerHandledRows.Add(float64(txnEvent.Len()))
 								events = append(events, txnEvent)
-								rows += len(txnEvent.Rows)
+								rows += txnEvent.Len()
 								if rows > maxRows {
 									needFlush = true
 								}
@@ -139,7 +139,7 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 
 	// ddl flush goroutine
 	s.wg.Add(1)
-	go func(ctx context.Context, ddleEventChan chan *common.TxnEvent) {
+	go func(ctx context.Context, ddleEventChan chan *common.DDLEvent) {
 		defer s.wg.Done()
 		for {
 			select {
@@ -152,23 +152,23 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 	}(ctx, s.ddlEventChan)
 }
 
-func (s *MysqlSink) AddDMLEvent(event *common.TxnEvent, tableProgress *types.TableProgress) {
-	if len(event.GetRows()) == 0 {
+func (s *MysqlSink) AddDMLEvent(event *common.TEvent, tableProgress *types.TableProgress) {
+	if event.Len() == 0 {
 		return
 	}
 
 	tableProgress.Add(event)
 
 	// TODO:后续再优化这里的逻辑，目前有个问题是 physical table id 好像都是偶数？这个后面改个能见人的方法
-	index := event.GetRows()[0].PhysicalTableID % int64(s.workerCount)
+	index := int64(event.PhysicalTableID) % int64(s.workerCount)
 	s.eventChans[index] <- event
 }
 
-func (s *MysqlSink) PassDDLAndSyncPointEvent(event *common.TxnEvent, tableProgress *types.TableProgress) {
+func (s *MysqlSink) PassDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress) {
 	tableProgress.Pass(event)
 }
 
-func (s *MysqlSink) AddDDLAndSyncPointEvent(event *common.TxnEvent, tableProgress *types.TableProgress) {
+func (s *MysqlSink) AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress) {
 	// TODO:这个 ddl 可以并发写么？如果不行的话，后面还要加锁或者排队
 	tableProgress.Add(event)
 	//s.ddlWorker.GetMysqlWriter().FlushDDLEvent(event)

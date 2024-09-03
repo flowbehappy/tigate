@@ -54,7 +54,7 @@ func NewMysqlWriter(db *sql.DB, cfg *MysqlConfig, changefeedID model.ChangeFeedI
 	}
 }
 
-func (w *MysqlWriter) FlushDDLEvent(event *common.TxnEvent) error {
+func (w *MysqlWriter) FlushDDLEvent(event *common.DDLEvent) error {
 	if event.GetDDLType() == timodel.ActionAddIndex && w.cfg.IsTiDB {
 		return w.asyncExecAddIndexDDLIfTimeout(event)
 	}
@@ -71,24 +71,24 @@ func (w *MysqlWriter) FlushDDLEvent(event *common.TxnEvent) error {
 
 }
 
-func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *common.TxnEvent) error {
+func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *common.DDLEvent) error {
 	done := make(chan error, 1)
 	// wait for 2 seconds at most
 	tick := time.NewTimer(2 * time.Second)
 	defer tick.Stop()
 	log.Info("async exec add index ddl start",
-		zap.Uint64("commitTs", event.CommitTs),
+		zap.Uint64("commitTs", event.CommitTS),
 		zap.String("ddl", event.GetDDLQuery()))
 	go func() {
 		if err := w.execDDLWithMaxRetries(event); err != nil {
 			log.Error("async exec add index ddl failed",
-				zap.Uint64("commitTs", event.CommitTs),
+				zap.Uint64("commitTs", event.CommitTS),
 				zap.String("ddl", event.GetDDLQuery()))
 			done <- err
 			return
 		}
 		log.Info("async exec add index ddl done",
-			zap.Uint64("commitTs", event.CommitTs),
+			zap.Uint64("commitTs", event.CommitTS),
 			zap.String("ddl", event.GetDDLQuery()))
 		done <- nil
 	}()
@@ -102,13 +102,13 @@ func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *common.TxnEvent) erro
 		// then if the ddl is failed, the downstream ddl is lost.
 		// because the checkpoint ts is forwarded.
 		log.Info("async add index ddl is still running",
-			zap.Uint64("commitTs", event.CommitTs),
+			zap.Uint64("commitTs", event.CommitTS),
 			zap.String("ddl", event.GetDDLQuery()))
 		return nil
 	}
 }
 
-func (w *MysqlWriter) execDDL(event *common.TxnEvent) error {
+func (w *MysqlWriter) execDDL(event *common.DDLEvent) error {
 	if w.cfg.DryRun {
 		log.Info("Dry run DDL", zap.String("sql", event.GetDDLQuery()))
 		return nil
@@ -162,7 +162,7 @@ func (w *MysqlWriter) execDDL(event *common.TxnEvent) error {
 	return nil
 }
 
-func (w *MysqlWriter) execDDLWithMaxRetries(event *common.TxnEvent) error {
+func (w *MysqlWriter) execDDLWithMaxRetries(event *common.DDLEvent) error {
 	return retry.Do(context.Background(), func() error {
 		return w.execDDL(event)
 	}, retry.WithBackoffBaseDelay(pmysql.BackoffBaseDelay.Milliseconds()),
@@ -171,7 +171,7 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *common.TxnEvent) error {
 		retry.WithIsRetryableErr(errorutil.IsRetryableDDLError))
 }
 
-func (w *MysqlWriter) Flush(events []*common.TxnEvent, workerNum int) error {
+func (w *MysqlWriter) Flush(events []*common.TEvent, workerNum int) error {
 	dmls := w.prepareDMLs(events)
 	log.Debug("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.String("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values), zap.Any("startTs", dmls.startTs), zap.Any("workerNum", workerNum))
 	if dmls.rowCount == 0 {
@@ -198,7 +198,7 @@ func (w *MysqlWriter) Flush(events []*common.TxnEvent, workerNum int) error {
 	return nil
 }
 
-func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent) *preparedDMLs {
+func (w *MysqlWriter) prepareDMLs(events []*common.TEvent) *preparedDMLs {
 	// TODO: use a sync.Pool to reduce allocations.
 	startTs := make([]uint64, 0)
 	sqls := make([]string, 0)
