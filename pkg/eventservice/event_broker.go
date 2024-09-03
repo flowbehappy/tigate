@@ -9,9 +9,12 @@ import (
 	"hash/crc32"
 
 	"github.com/flowbehappy/tigate/logservice/eventstore"
+	"github.com/flowbehappy/tigate/logservice/schemastore"
+
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/pingcap/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
@@ -32,7 +35,9 @@ type eventBroker struct {
 	// tidbClusterID is the ID of the TiDB cluster this eventStore belongs to.
 	tidbClusterID uint64
 	// eventStore is the source of the events, eventBroker get the events from the eventStore.
-	eventStore eventstore.EventStore
+	eventStore  eventstore.EventStore
+	schemaStore schemastore.SchemaStore
+	mounter     mounter.Mounter
 	// msgSender is used to send the events to the dispatchers.
 	msgSender messaging.MessageSender
 
@@ -67,13 +72,17 @@ func newEventBroker(
 	ctx context.Context,
 	id uint64,
 	eventStore eventstore.EventStore,
+	schemaStore schemastore.SchemaStore,
 	mc messaging.MessageSender,
+	tz *time.Location,
 ) *eventBroker {
 	ctx, cancel := context.WithCancel(ctx)
 	wg := &sync.WaitGroup{}
 	c := &eventBroker{
 		tidbClusterID: id,
 		eventStore:    eventStore,
+		schemaStore:   schemaStore,
+		mounter:       mounter.NewMounter(tz),
 		dispatchers:   sync.Map{},
 		msgSender:     mc,
 		// The size of the channel is 16 times of the defaultChannelSize, since the eventBroker may have many dispatchers.
@@ -180,7 +189,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 					}
 
 					// 3. Get the events from the iterator and send them to the dispatcher.
-					var txnEvent *common.TxnEvent
+					var txnEvent *common.TEvent
 					eventCount := 0
 					for {
 						//Node: The first event of the txn must return isNewTxn as true.
@@ -194,7 +203,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 							if txnEvent != nil {
 								c.messageCh <- newWrapTxnEvent(remoteID, txnEvent)
 								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
-								task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(txnEvent.Rows)))
+								task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(txnEvent.RowTypes)))
 							}
 							// After all the events are sent, we send the watermark to the dispatcher.
 							c.sendWatermark(remoteID, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
@@ -204,26 +213,27 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 
 						// If the commitTs of the event is less than the watermark of the dispatcher,
 						// we just skip the event.
-						if e.CommitTs < task.dispatcherStat.watermark.Load() {
-							log.Panic("should never Happen", zap.Uint64("commitTs", e.CommitTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
+						if e.CRTs < task.dispatcherStat.watermark.Load() {
+							log.Panic("should never Happen", zap.Uint64("commitTs", e.CRTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
 						}
 
 						if isNewTxn {
-							txnEvent = &common.TxnEvent{
-								DispatcherID: dispatcherID,
-								StartTs:      e.StartTs,
-								CommitTs:     e.CommitTs,
-								Rows:         make([]*common.RowChangedEvent, 0),
+							tableID := task.dispatcherStat.info.GetTableSpan().TableID
+							tableInfo, err := c.schemaStore.GetTableInfo(int64(tableID), e.CRTs-1)
+							if err != nil {
+								// FIXME handle the error
+								log.Panic("get table info failed", zap.Error(err))
 							}
+							txnEvent = common.NewTEvent(dispatcherID, tableID, e.StartTs, e.CRTs, tableInfo)
 						}
-						txnEvent.Rows = append(txnEvent.Rows, e)
+						txnEvent.AppendRow(e, c.mounter.DecodeToChunk)
 						eventCount++
-
-						if txnEvent.CommitTs != e.CommitTs {
-							log.Panic("commitTs of the event is different from the commitTs of the txnEvent", zap.Uint64("eventCommitTs", e.CommitTs), zap.Uint64("txnCommitTs", txnEvent.CommitTs))
+						if txnEvent.CommitTs != e.CRTs {
+							log.Panic("commitTs of the event is different from the commitTs of the txnEvent",
+								zap.Uint64("eventCommitTs", e.CRTs),
+								zap.Uint64("txnCommitTs", txnEvent.CommitTs))
 						}
 					}
-
 					task.dispatcherStat.metricSorterOutputEventCountKV.Add(float64(eventCount))
 					iter.Close()
 				}
@@ -525,13 +535,13 @@ func (p *scanTaskPool) popTask(chanIndex int) <-chan *scanTask {
 type wrapEvent struct {
 	serverID messaging.ServerId
 	// TODO: change the type of the txnEvent to common.TEvent
-	txnEvent      *common.TxnEvent
+	txnEvent      *common.TEvent
 	resolvedEvent common.ResolvedEvent
 	ddlEvent      common.DDLEvent
 	msgType       int
 }
 
-func newWrapTxnEvent(serverID messaging.ServerId, e *common.TxnEvent) wrapEvent {
+func newWrapTxnEvent(serverID messaging.ServerId, e *common.TEvent) wrapEvent {
 	return wrapEvent{
 		serverID: serverID,
 		txnEvent: e,

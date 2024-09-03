@@ -23,6 +23,10 @@ import (
 )
 
 const (
+	txnRowCount = 2018
+)
+
+const (
 	// TEvent is the event type of a transaction.
 	TypeTEvent = iota
 	// DDLEvent is the event type of a DDL.
@@ -113,17 +117,80 @@ func (e ResolvedEvent) String() string {
 	return fmt.Sprintf("ResolvedEvent{DispatcherID: %s, ResolvedTs: %d}", e.DispatcherID, e.ResolvedTs)
 }
 
+type Row struct {
+	PreRow chunk.Row
+	Row    chunk.Row
+	RowType
+}
+
+type RowType int
+
+const (
+	// RowTypeDelete represents a delete row.
+	RowTypeDelete RowType = iota
+	// RowTypeInsert represents a insert row.
+	RowTypeInsert
+	// RowTypeUpdate represents a update row.
+	RowTypeUpdate
+)
+
 // TEvent represent a transaction, it contains the rows of the transaction.
 // Note: The PreRows is the rows before the transaction, it is used to generate the update and delete SQL.
 // The Rows is the rows after the transaction, it is used to generate the insert and update SQL.
 type TEvent struct {
-	DispatcherID    DispatcherID
-	PhysicalTableID uint64
-	StartTs         uint64
-	CommitTs        uint64
+	DispatcherID    DispatcherID `json:"dispatcher_id"`
+	PhysicalTableID uint64       `json:"physical_table_id"`
+	StartTs         uint64       `json:"start_ts"`
+	CommitTs        uint64       `json:"commit_ts"`
 
-	Rows    chunk.Chunk
-	PreRows chunk.Chunk
+	TableInfo *TableInfo `json:"table_info"`
+
+	Rows     *chunk.Chunk `json:"rows"`
+	RowTypes []RowType    `json:"row_types"`
+	// Offset is the offset of the current row in the transaction.
+	Offset int `json:"offset"`
+}
+
+func NewTEvent(
+	dispatcherID DispatcherID,
+	tableID uint64,
+	startTs,
+	commitTs uint64,
+	tableInfo *TableInfo) *TEvent {
+	// FIXME: check if chk isFull in the future
+	chk := chunk.NewChunkWithCapacity(tableInfo.GetFileSlice(), txnRowCount)
+	return &TEvent{
+		DispatcherID:    dispatcherID,
+		PhysicalTableID: tableID,
+		StartTs:         startTs,
+		CommitTs:        commitTs,
+		TableInfo:       tableInfo,
+		Rows:            chk,
+		RowTypes:        make([]RowType, 1),
+		Offset:          0,
+	}
+}
+
+func (t *TEvent) AppendRow(raw *RawKVEntry,
+	decode func(
+		rawKv *RawKVEntry,
+		tableInfo *TableInfo, chk *chunk.Chunk) (int, error),
+) error {
+	RowType := RowTypeInsert
+	if raw.OpType == OpTypeDelete {
+		RowType = RowTypeDelete
+	}
+	if len(raw.Value) != 0 && len(raw.OldValue) != 0 {
+		RowType = RowTypeUpdate
+	}
+	count, err := decode(raw, t.TableInfo, t.Rows)
+	if err != nil {
+		return err
+	}
+	if count != 0 {
+		t.RowTypes = append(t.RowTypes, RowType)
+	}
+	return nil
 }
 
 func (t TEvent) GetType() int {
@@ -132,6 +199,46 @@ func (t TEvent) GetType() int {
 
 func (t TEvent) GetDispatcherID() DispatcherID {
 	return t.DispatcherID
+}
+
+func (t TEvent) GetNextRow() (Row, bool) {
+	if t.Offset >= t.Rows.NumRows() {
+		return Row{}, false
+	}
+	rowType := t.RowTypes[t.Offset]
+	switch rowType {
+	case RowTypeInsert:
+		row := Row{
+			Row:     t.Rows.GetRow(t.Offset),
+			RowType: rowType,
+		}
+		t.Offset++
+		return row, true
+	case RowTypeDelete:
+		row := Row{
+			PreRow:  t.Rows.GetRow(t.Offset),
+			RowType: rowType,
+		}
+		t.Offset++
+		return row, true
+	case RowTypeUpdate:
+		row := Row{
+			PreRow:  t.Rows.GetRow(t.Offset),
+			Row:     t.Rows.GetRow(t.Offset + 1),
+			RowType: rowType,
+		}
+		t.Offset += 2
+		return row, true
+	default:
+		log.Panic("TEvent.GetNextRow: invalid row type")
+	}
+	return Row{}, false
+}
+
+// Len returns the number of row change events in the transaction.
+// Note: An update event is counted as 1 row.
+func (t TEvent) Len() int {
+	return len(t.RowTypes)
 }
 
 func (t TEvent) Marshal() ([]byte, error) {

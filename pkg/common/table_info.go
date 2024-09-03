@@ -304,6 +304,8 @@ type TableInfo struct {
 	rowColFieldTps map[int64]*types.FieldType
 	// only for new row format decoder
 	handleColID []int64
+	// rowColFieldTpsSlice is used to decode chunk from raw value bytes
+	rowColFieldTpsSlice []*types.FieldType
 
 	// number of virtual columns
 	virtualColumnCount int
@@ -494,6 +496,11 @@ func (ti *TableInfo) String() string {
 // GetRowColInfos returns all column infos for rowcodec
 func (ti *TableInfo) GetRowColInfos() ([]int64, map[int64]*types.FieldType, []rowcodec.ColInfo) {
 	return ti.handleColID, ti.rowColFieldTps, ti.rowColInfos
+}
+
+// GetFileSlice returns the field types of all columns
+func (ti *TableInfo) GetFileSlice() []*types.FieldType {
+	return ti.rowColFieldTpsSlice
 }
 
 // GetColInfosForRowChangedEvent return column infos for non-virtual columns
@@ -687,6 +694,7 @@ func WrapTableInfo(schemaID int64, schemaName string, version uint64, info *mode
 			VirtualGenCol: col.IsGenerated(),
 		}
 		ti.rowColFieldTps[col.ID] = ti.rowColInfos[i].Ft
+		ti.rowColFieldTpsSlice = append(ti.rowColFieldTpsSlice, ti.rowColInfos[i].Ft)
 	}
 
 	for _, idx := range ti.Indices {
