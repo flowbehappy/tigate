@@ -48,8 +48,6 @@ type SchemaStore interface {
 	GetTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error)
 
 	GetNextDDLEvent(dispatcherID common.DispatcherID) (*DDLEvent, common.Ts, error)
-
-	Get
 }
 
 type schemaStore struct {
