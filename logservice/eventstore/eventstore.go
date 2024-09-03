@@ -61,9 +61,8 @@ type EventStore interface {
 
 type EventIterator interface {
 	Next() (*common.RowChangedEvent, bool, error)
-
 	// Close closes the iterator.
-	Close() error
+	Close() (eventCnt int64, err error)
 }
 
 type eventWithSpanState struct {
@@ -123,7 +122,7 @@ func NewEventStore(
 		RegionRequestWorkerPerStore:        16,
 		ChangeEventProcessorNum:            64,
 		AdvanceResolvedTsIntervalInMs:      600,
-		RegionIncrementalScanLimitPerStore: 900,
+		RegionIncrementalScanLimitPerStore: 20000,
 	}
 	client := logpuller.NewSubscriptionClient(
 		logpuller.ClientIDEventStore,
@@ -210,7 +209,6 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableS
 		zap.Any("dispatcherID", dispatcherID),
 		zap.String("span", tableSpan.String()),
 		zap.Uint64("startTS", uint64(startTS)))
-	e.schemaStore.RegisterDispatcher(dispatcherID, common.TableID(span.TableID), startTS)
 	subID := e.puller.Subscribe(span, startTS)
 
 	e.spanStates.Lock()
@@ -231,6 +229,7 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableS
 }
 
 func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, sendTS uint64) error {
+	// TODO: update sendTs in event service
 	e.schemaStore.UpdateDispatcherSendTS(dispatcherID, common.Ts(sendTS))
 	e.spanStates.Lock()
 	defer e.spanStates.Unlock()
@@ -251,7 +250,6 @@ func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, se
 
 func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
 	log.Info("unregister dispatcher", zap.Any("dispatcherID", dispatcherID))
-	e.schemaStore.UnregisterDispatcher(dispatcherID)
 	e.spanStates.Lock()
 	defer e.spanStates.Unlock()
 	if state, ok := e.spanStates.dispatcherMap[dispatcherID]; ok {
@@ -514,17 +512,17 @@ func (iter *eventStoreIter) Next() (*common.RowChangedEvent, bool, error) {
 	return row, isNewTxn, nil
 }
 
-func (iter *eventStoreIter) Close() error {
+func (iter *eventStoreIter) Close() (int64, error) {
 	if iter.innerIter == nil {
 		log.Info("event store close nil iter",
 			zap.Uint64("tableID", uint64(iter.tableID)),
 			zap.Uint64("startTs", iter.startTs),
 			zap.Uint64("endTs", iter.endTs),
 			zap.Int64("rowCount", iter.rowCount))
-		return nil
+		return 0, nil
 	}
 
 	err := iter.innerIter.Close()
 	iter.innerIter = nil
-	return err
+	return iter.rowCount, err
 }

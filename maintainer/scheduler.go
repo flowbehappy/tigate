@@ -467,10 +467,10 @@ func (s *Scheduler) GetTaskSizeByNodeID(nodeID string) int {
 }
 
 func (s *Scheduler) addDDLDispatcher() {
-	ddlTableSpan := &common.DDLSpan
+	ddlTableSpan := common.DDLSpan
 	s.addNewSpans(common.DDLSpanSchemaID, int64(ddlTableSpan.TableID), []*common.TableSpan{ddlTableSpan})
 	var dispatcherID common.DispatcherID
-	for id, _ := range s.schemaTasks[common.DDLSpanSchemaID] {
+	for id := range s.schemaTasks[common.DDLSpanSchemaID] {
 		dispatcherID = id
 	}
 	s.ddlDispatcherID = dispatcherID

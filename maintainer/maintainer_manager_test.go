@@ -242,7 +242,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	foundSize := 0
 	hasDDLDispatcher := false
 	for id, stm := range maintainer.scheduler.working {
-		if stm.Inferior.(*ReplicaSet).Span.Equal(&common.DDLSpan) {
+		if stm.Inferior.(*ReplicaSet).Span.Equal(common.DDLSpan) {
 			hasDDLDispatcher = true
 		}
 		for _, remotedId := range remotedIds {

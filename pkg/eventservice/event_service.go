@@ -2,13 +2,13 @@ package eventservice
 
 import (
 	"context"
-	"time"
 
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/pkg/config"
 	"go.uber.org/zap"
 )
 
@@ -37,6 +37,7 @@ type DispatcherInfo interface {
 	GetStartTs() uint64
 	IsRegister() bool
 	GetChangefeedID() (namespace, id string)
+	GetFilterConfig() *config.FilterConfig
 }
 
 type eventService struct {
@@ -106,33 +107,12 @@ func (s *eventService) handleMessage(ctx context.Context, msg *messaging.TargetM
 
 func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherInfo) {
 	clusterID := info.GetClusterID()
-	startTs := info.GetStartTs()
-	span := info.GetTableSpan()
-
-	start := time.Now()
 	c, ok := s.brokers[clusterID]
 	if !ok {
 		c = newEventBroker(ctx, clusterID, s.eventStore, s.mc)
 		s.brokers[clusterID] = c
 	}
-	dispatcher := newDispatcherStat(startTs, info, c.onAsyncNotify)
-	c.dispatchers.Store(info.GetID(), dispatcher)
-	brokerRegisterDuration := time.Since(start)
-
-	start = time.Now()
-	c.eventStore.RegisterDispatcher(
-		info.GetID(),
-		span,
-		common.Ts(info.GetStartTs()),
-		dispatcher.onNewEvent,
-		dispatcher.onSubscriptionWatermark,
-	)
-	eventStoreRegisterDuration := time.Since(start)
-
-	log.Info("register acceptor", zap.Uint64("clusterID", clusterID),
-		zap.Any("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID),
-		zap.Uint64("startTs", startTs), zap.Duration("brokerRegisterDuration", brokerRegisterDuration),
-		zap.Duration("eventStoreRegisterDuration", eventStoreRegisterDuration))
+	c.addDispatcher(info)
 }
 
 func (s *eventService) deregisterDispatcher(dispatcherInfo DispatcherInfo) {
@@ -141,9 +121,7 @@ func (s *eventService) deregisterDispatcher(dispatcherInfo DispatcherInfo) {
 	if !ok {
 		return
 	}
-	id := dispatcherInfo.GetID()
-	c.removeDispatcher(id)
-	log.Info("deregister acceptor", zap.Uint64("clusterID", clusterID), zap.Any("acceptorID", id))
+	c.removeDispatcher(dispatcherInfo)
 }
 
 func msgToDispatcherInfo(msg *messaging.TargetMessage) []DispatcherInfo {

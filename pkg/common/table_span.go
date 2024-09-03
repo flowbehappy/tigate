@@ -31,7 +31,7 @@ type TableSpan struct {
 var DDLSpanSchemaID int64 = 0
 
 // DDLSpan is the special span for Table Trigger Event Dispatcher
-var DDLSpan = TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 0, StartKey: nil, EndKey: nil}}
+var DDLSpan = &TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 0, StartKey: nil, EndKey: nil}}
 
 // Less compares two Spans, defines the order between spans.
 func (s *TableSpan) Less(inferior any) bool {

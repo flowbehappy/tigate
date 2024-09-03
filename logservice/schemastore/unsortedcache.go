@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 
@@ -53,4 +54,9 @@ func (c *ddlCache) fetchSortedDDLEventBeforeTS(ts common.Ts) []DDLEvent {
 		c.ddlEvents.Delete(event)
 	}
 	return events
+}
+
+type ddlListWithFilter struct {
+	events []DDLEvent
+	filter filter.Filter
 }

@@ -513,7 +513,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.M
 // initTableIDs get tables ids base on the filter and checkpoint ts
 func (m *Maintainer) initTables() ([]common.Table, error) {
 	startTs := m.watermark.CheckpointTs
-	f, err := filter.NewFilter(m.config.Config, "")
+	f, err := filter.NewFilter(m.config.Config.Filter, "", m.config.Config.ForceReplicate)
 	if err != nil {
 		return nil, errors.Cause(err)
 	}

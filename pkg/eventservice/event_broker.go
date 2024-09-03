@@ -9,7 +9,10 @@ import (
 	"hash/crc32"
 
 	"github.com/flowbehappy/tigate/logservice/eventstore"
+	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/log"
@@ -32,12 +35,15 @@ type eventBroker struct {
 	// tidbClusterID is the ID of the TiDB cluster this eventStore belongs to.
 	tidbClusterID uint64
 	// eventStore is the source of the events, eventBroker get the events from the eventStore.
-	eventStore eventstore.EventStore
+	eventStore  eventstore.EventStore
+	schemaStore schemastore.SchemaStore
 	// msgSender is used to send the events to the dispatchers.
 	msgSender messaging.MessageSender
 
 	// All the dispatchers that register to the eventBroker.
 	dispatchers sync.Map
+	// dispatcherID -> dispatcherStat map, track all table trigger dispatchers.
+	tableTriggerDispatchers sync.Map
 	// changedCh is used to notify span subscription has new events.
 	changedCh chan subscriptionChange
 	// taskPool is used to store the scan tasks and merge the tasks of same dispatcher.
@@ -72,10 +78,12 @@ func newEventBroker(
 	ctx, cancel := context.WithCancel(ctx)
 	wg := &sync.WaitGroup{}
 	c := &eventBroker{
-		tidbClusterID: id,
-		eventStore:    eventStore,
-		dispatchers:   sync.Map{},
-		msgSender:     mc,
+		tidbClusterID:           id,
+		eventStore:              eventStore,
+		schemaStore:             appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore),
+		dispatchers:             sync.Map{},
+		tableTriggerDispatchers: sync.Map{},
+		msgSender:               mc,
 		// The size of the channel is 16 times of the defaultChannelSize, since the eventBroker may have many dispatchers.
 		// Otherwise, the resolvedTs may be delayed.
 		changedCh:                              make(chan subscriptionChange, defaultChannelSize*16),
@@ -92,6 +100,7 @@ func newEventBroker(
 	}
 	c.runGenerateScanTask(ctx)
 	c.runScanWorker(ctx)
+	c.tickTableTriggerDispatchers(ctx)
 	c.runSendMessageWorker(ctx)
 	c.updateMetrics(ctx)
 	return c
@@ -158,77 +167,141 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 				case <-ctx.Done():
 					return
 				case task := <-c.taskPool.popTask(chIndex):
-					needScan := task.checkAndAdjustScanTask()
-					if !needScan {
-						continue
-					}
-					c.metricTaskInQueueDuration.Observe(time.Since(task.createTime).Seconds())
-
-					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
-					dispatcherID := task.dispatcherStat.info.GetID()
-					//1. The dispatcher has no new events. In such case, we don't need to scan the event store.
-					//We just send the watermark to the dispatcher.
-					if task.eventCount == 0 {
-						c.sendWatermark(remoteID, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
-						task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
-						continue
-					}
-					//2. Get event iterator from eventStore.
-					iter, err := c.eventStore.GetIterator(dispatcherID, task.dataRange)
-					if err != nil {
-						log.Panic("read events failed", zap.Error(err))
-					}
-
-					// 3. Get the events from the iterator and send them to the dispatcher.
-					var txnEvent *common.TxnEvent
-					eventCount := 0
-					for {
-						//Node: The first event of the txn must return isNewTxn as true.
-						e, isNewTxn, err := iter.Next()
-						if err != nil {
-							log.Panic("read events failed", zap.Error(err))
-						}
-
-						if e == nil {
-							// Send the last txnEvent to the dispatcher.
-							if txnEvent != nil {
-								c.messageCh <- newWrapTxnEvent(remoteID, txnEvent)
-								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
-								task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(txnEvent.Rows)))
-							}
-							// After all the events are sent, we send the watermark to the dispatcher.
-							c.sendWatermark(remoteID, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
-							task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
-							break
-						}
-
-						// If the commitTs of the event is less than the watermark of the dispatcher,
-						// we just skip the event.
-						if e.CommitTs < task.dispatcherStat.watermark.Load() {
-							log.Panic("should never Happen", zap.Uint64("commitTs", e.CommitTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
-						}
-
-						if isNewTxn {
-							txnEvent = &common.TxnEvent{
-								DispatcherID: dispatcherID,
-								StartTs:      e.StartTs,
-								CommitTs:     e.CommitTs,
-								Rows:         make([]*common.RowChangedEvent, 0),
-							}
-						}
-						txnEvent.Rows = append(txnEvent.Rows, e)
-						eventCount++
-
-						if txnEvent.CommitTs != e.CommitTs {
-							log.Panic("commitTs of the event is different from the commitTs of the txnEvent", zap.Uint64("eventCommitTs", e.CommitTs), zap.Uint64("txnCommitTs", txnEvent.CommitTs))
-						}
-					}
-
-					task.dispatcherStat.metricSorterOutputEventCountKV.Add(float64(eventCount))
-					iter.Close()
+					c.doScan(task)
 				}
 			}
 		}()
+	}
+}
+
+// TODO: maybe event driven model is better. It is coupled with the detail implementation of
+// the schemaStore, we will refactor it later.
+func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		ticker := time.NewTicker(time.Millisecond * 300)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				c.tableTriggerDispatchers.Range(func(key, value interface{}) bool {
+					dispatcher := value.(*dispatcherStat)
+					startTs := dispatcher.watermark.Load()
+					remoteID := messaging.ServerId(dispatcher.info.GetServerID())
+					// TODO: maybe limit 1 is enough.
+					ddlEvents, endTs, err := c.schemaStore.GetNextTableTriggerEvents(dispatcher.filter, startTs, 10)
+					if err != nil {
+						log.Panic("get table trigger events failed", zap.Error(err))
+					}
+					for _, e := range ddlEvents {
+						c.sendDDL(remoteID, e, dispatcher)
+					}
+					// After all the events are sent, we send the watermark to the dispatcher.
+					c.sendWatermark(remoteID, dispatcher.info.GetID(), endTs, dispatcher.metricEventServiceSendResolvedTsCount)
+					dispatcher.watermark.Store(endTs)
+					return true
+				})
+			}
+		}
+	}()
+}
+
+func (c *eventBroker) sendDDL(remoteID messaging.ServerId, e common.DDLEvent, d *dispatcherStat) {
+	c.messageCh <- newWrapDDLEvent(remoteID, e)
+	d.metricEventServiceSendDDLCount.Inc()
+}
+
+// TODO: handle error properly.
+func (c *eventBroker) doScan(task *scanTask) {
+	needScan := task.checkAndAdjustScanTask()
+	if !needScan {
+		return
+	}
+	c.metricTaskInQueueDuration.Observe(time.Since(task.createTime).Seconds())
+
+	remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
+	dispatcherID := task.dispatcherStat.info.GetID()
+	ddlEvents, endTs, err := c.schemaStore.GetNextDDLEvents(int64(task.dataRange.Span.TableID), task.dataRange.StartTs, task.dataRange.EndTs)
+	if err != nil {
+		log.Panic("get ddl events failed", zap.Error(err))
+	}
+	if endTs < task.dataRange.EndTs {
+		task.dataRange.EndTs = endTs
+	}
+
+	defer func() {
+		// drain the ddlEvents
+		for _, e := range ddlEvents {
+			c.sendDDL(remoteID, e, task.dispatcherStat)
+		}
+		// After all the events are sent, we send the watermark to the dispatcher.
+		c.sendWatermark(remoteID, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
+		task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
+	}()
+
+	// 1. Fastpath: the dispatcher has no new events. In such case, we don't need to scan the event store.
+	// We just send the watermark to the dispatcher.
+	if task.eventCount == 0 {
+		return
+	}
+
+	//2. Get event iterator from eventStore.
+	iter, err := c.eventStore.GetIterator(dispatcherID, task.dataRange)
+	if err != nil {
+		log.Panic("read events failed", zap.Error(err))
+	}
+	defer func() {
+		eventCount, _ := iter.Close()
+		if eventCount != 0 {
+			task.dispatcherStat.metricSorterOutputEventCountKV.Add(float64(eventCount))
+		}
+	}()
+	// 3. Get the events from the iterator and send them to the dispatcher.
+	sendTxn := func(t *common.TxnEvent) {
+		if t != nil {
+			if len(ddlEvents) > 0 && t.CommitTs > ddlEvents[0].CommitTS {
+				c.sendDDL(remoteID, ddlEvents[0], task.dispatcherStat)
+				ddlEvents = ddlEvents[1:]
+			}
+			c.messageCh <- newWrapTxnEvent(remoteID, t)
+			task.dispatcherStat.watermark.Store(t.CommitTs)
+			task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(t.Rows)))
+		}
+	}
+	var txnEvent *common.TxnEvent
+	for {
+		//Node: The first event of the txn must return isNewTxn as true.
+		e, isNewTxn, err := iter.Next()
+		if err != nil {
+			log.Panic("read events failed", zap.Error(err))
+		}
+		if e == nil {
+			// Send the last txnEvent to the dispatcher.
+			sendTxn(txnEvent)
+			return
+		}
+		if e.CommitTs < task.dispatcherStat.watermark.Load() {
+			// If the commitTs of the event is less than the watermark of the dispatcher,
+			// there are some bugs in the eventStore.
+			log.Panic("should never Happen", zap.Uint64("commitTs", e.CommitTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
+		}
+
+		if isNewTxn {
+			sendTxn(txnEvent)
+			txnEvent = &common.TxnEvent{
+				DispatcherID: dispatcherID,
+				StartTs:      e.StartTs,
+				CommitTs:     e.CommitTs,
+				Rows:         make([]*common.RowChangedEvent, 0),
+			}
+		}
+		if txnEvent.CommitTs != e.CommitTs {
+			log.Panic("commitTs of the event is different from the commitTs of the txnEvent", zap.Uint64("eventCommitTs", e.CommitTs), zap.Uint64("txnCommitTs", txnEvent.CommitTs))
+		}
+		txnEvent.Rows = append(txnEvent.Rows, e)
 	}
 }
 
@@ -357,19 +430,62 @@ func (c *eventBroker) close() {
 	c.wg.Wait()
 }
 
-func (c *eventBroker) removeDispatcher(id common.DispatcherID) {
+func (c *eventBroker) addDispatcher(info DispatcherInfo) {
+	filter, err := filter.NewFilter(info.GetFilterConfig(), "", false)
+	if err != nil {
+		panic(err)
+	}
+
+	start := time.Now()
+	span := info.GetTableSpan()
+	startTs := info.GetStartTs()
+	dispatcher := newDispatcherStat(startTs, info, c.onAsyncNotify, filter)
+	if span.Equal(common.DDLSpan) {
+		c.tableTriggerDispatchers.Store(info.GetID(), dispatcher)
+		log.Info("table trigger dispatcher register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
+			zap.Any("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID),
+			zap.Uint64("startTs", startTs), zap.Duration("brokerRegisterDuration", time.Since(start)))
+		return
+	}
+
+	c.dispatchers.Store(info.GetID(), dispatcher)
+	brokerRegisterDuration := time.Since(start)
+
+	start = time.Now()
+	c.eventStore.RegisterDispatcher(
+		info.GetID(),
+		span,
+		common.Ts(info.GetStartTs()),
+		dispatcher.onNewEvent,
+		dispatcher.onSubscriptionWatermark,
+	)
+	c.schemaStore.RegisterDispatcher(info.GetID(), span, common.Ts(info.GetStartTs()), filter)
+	eventStoreRegisterDuration := time.Since(start)
+
+	log.Info("register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
+		zap.Any("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID),
+		zap.Uint64("startTs", startTs), zap.Duration("brokerRegisterDuration", brokerRegisterDuration),
+		zap.Duration("eventStoreRegisterDuration", eventStoreRegisterDuration))
+}
+
+func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
+	id := dispatcherInfo.GetID()
 	_, ok := c.dispatchers.Load(id)
 	if !ok {
+		c.tableTriggerDispatchers.Delete(id)
 		return
 	}
 	c.eventStore.UnregisterDispatcher(id)
+	c.schemaStore.UnregisterDispatcher(id)
 	c.dispatchers.Delete(id)
+	log.Info("deregister acceptor", zap.Uint64("clusterID", c.tidbClusterID), zap.Any("acceptorID", id))
 }
 
 // Store the progress of the dispatcher, and the incremental events stats.
 // Those information will be used to decide when will the worker start to handle the push task of this dispatcher.
 type dispatcherStat struct {
 	info             DispatcherInfo
+	filter           filter.Filter
 	spanSubscription *spanSubscription
 	// The watermark of the events that have been sent to the dispatcher.
 	watermark     atomic.Uint64
@@ -382,11 +498,12 @@ type dispatcherStat struct {
 
 	metricSorterOutputEventCountKV        prometheus.Counter
 	metricEventServiceSendKvCount         prometheus.Counter
+	metricEventServiceSendDDLCount        prometheus.Counter
 	metricEventServiceSendResolvedTsCount prometheus.Counter
 }
 
 func newDispatcherStat(
-	startTs uint64, info DispatcherInfo, onAsyncNotify func(subscriptionChange),
+	startTs uint64, info DispatcherInfo, onAsyncNotify func(subscriptionChange), filter filter.Filter,
 ) *dispatcherStat {
 	subscription := &spanSubscription{
 		span:       info.GetTableSpan(),
@@ -398,11 +515,13 @@ func newDispatcherStat(
 	namespace, id := info.GetChangefeedID()
 	dispStat := &dispatcherStat{
 		info:             info,
+		filter:           filter,
 		spanSubscription: subscription,
 		onAsyncNotify:    onAsyncNotify,
 
 		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(namespace, id, "kv"),
 		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "kv"),
+		metricEventServiceSendDDLCount:        metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "ddl"),
 		metricEventServiceSendResolvedTsCount: metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "resolved_ts"),
 	}
 	dispStat.watermark.Store(startTs)
