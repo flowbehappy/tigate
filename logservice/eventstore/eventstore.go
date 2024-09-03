@@ -55,7 +55,7 @@ type EventStore interface {
 	UnregisterDispatcher(dispatcherID common.DispatcherID) error
 
 	// TODO: ignore large txn now, so we can read all transactions of the same commit ts at one time
-	// [startCommitTS, endCommitTS)?
+	// (startCommitTS, endCommitTS]?
 	GetIterator(dispatcherID common.DispatcherID, dataRange *common.DataRange) (EventIterator, error)
 }
 
@@ -273,8 +273,9 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange *co
 	dbIndex := common.HashTableSpan(span, len(e.eventChs))
 	db := e.dbs[dbIndex]
 	// TODO: respect key range in span
-	start := EncodeTsKey(uint64(span.TableID), dataRange.StartTs, 0)
-	end := EncodeTsKey(uint64(span.TableID), dataRange.EndTs, 0)
+	// convert endTs to inclusive: [startTs, endTs) -> (startTs, endTs]
+	start := EncodeTsKey(uint64(span.TableID), dataRange.StartTs+1, 0)
+	end := EncodeTsKey(uint64(span.TableID), dataRange.EndTs+1, 0)
 	// TODO: use TableFilter/UseL6Filters in IterOptions
 	iter, err := db.NewIter(&pebble.IterOptions{
 		LowerBound: start,
