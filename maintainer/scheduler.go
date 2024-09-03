@@ -101,6 +101,18 @@ func NewScheduler(changefeedID string,
 	return s
 }
 
+func (s *Scheduler) GetTasksBySchemaID(schemaID int64) map[common.DispatcherID]*scheduler.StateMachine {
+	return s.schemaTasks[schemaID]
+}
+
+func (s *Scheduler) GetAllNodes() []string {
+	var nodes = make([]string, 0, len(s.nodeTasks))
+	for id := range s.nodeTasks {
+		nodes = append(nodes, id)
+	}
+	return nodes
+}
+
 func (s *Scheduler) AddNewTable(table common.Table) {
 	span := spanz.TableIDToComparableSpan(table.TableID)
 	tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
