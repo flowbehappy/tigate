@@ -333,7 +333,7 @@ func (s *Scheduler) TryBalance() []*messaging.TargetMessage {
 func (s *Scheduler) ResendMessage() []*messaging.TargetMessage {
 	var msgs []*messaging.TargetMessage
 	resend := func(m map[common.DispatcherID]*scheduler.StateMachine) {
-		for _, value := range s.committing {
+		for _, value := range m {
 			if msg := value.HandleResend(); msg != nil {
 				msgs = append(msgs, msg)
 			}
