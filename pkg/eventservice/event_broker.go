@@ -160,15 +160,20 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 				case <-ctx.Done():
 					return
 				case task := <-c.taskPool.popTask(chIndex):
-					c.scanTask(ctx, task)
+					c.doScan(task)
 				}
 			}
 		}()
 	}
 }
 
+func (c *eventBroker) sendDDL(remoteID messaging.ServerId, e common.DDLEvent, d *dispatcherStat) {
+	c.messageCh <- newWrapDDLEvent(remoteID, e)
+	d.metricEventServiceSendDDLCount.Inc()
+}
+
 // TODO: handle error properly.
-func (c *eventBroker) scanTask(ctx context.Context, task *scanTask) {
+func (c *eventBroker) doScan(task *scanTask) {
 	needScan := task.checkAndAdjustScanTask()
 	if !needScan {
 		return
@@ -177,7 +182,19 @@ func (c *eventBroker) scanTask(ctx context.Context, task *scanTask) {
 
 	remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 	dispatcherID := task.dispatcherStat.info.GetID()
+	ddlEvents, endTs, err := c.schemaStore.GetNextDDLEvents(int64(task.dataRange.Span.TableID), task.dataRange.StartTs, task.dataRange.EndTs)
+	if err != nil {
+		log.Panic("get ddl events failed", zap.Error(err))
+	}
+	if endTs < task.dataRange.EndTs {
+		task.dataRange.EndTs = endTs
+	}
+
 	defer func() {
+		// drain the ddlEvents
+		for _, e := range ddlEvents {
+			c.sendDDL(remoteID, e, task.dispatcherStat)
+		}
 		// After all the events are sent, we send the watermark to the dispatcher.
 		c.sendWatermark(remoteID, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
 		task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
@@ -203,6 +220,10 @@ func (c *eventBroker) scanTask(ctx context.Context, task *scanTask) {
 	// 3. Get the events from the iterator and send them to the dispatcher.
 	sendTxn := func(t *common.TxnEvent) {
 		if t != nil {
+			if len(ddlEvents) > 0 && t.CommitTs > ddlEvents[0].CommitTS {
+				c.sendDDL(remoteID, ddlEvents[0], task.dispatcherStat)
+				ddlEvents = ddlEvents[1:]
+			}
 			c.messageCh <- newWrapTxnEvent(remoteID, t)
 			task.dispatcherStat.watermark.Store(t.CommitTs)
 			task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(t.Rows)))
@@ -227,6 +248,7 @@ func (c *eventBroker) scanTask(ctx context.Context, task *scanTask) {
 		}
 
 		if isNewTxn {
+			sendTxn(txnEvent)
 			txnEvent = &common.TxnEvent{
 				DispatcherID: dispatcherID,
 				StartTs:      e.StartTs,
@@ -392,6 +414,7 @@ type dispatcherStat struct {
 
 	metricSorterOutputEventCountKV        prometheus.Counter
 	metricEventServiceSendKvCount         prometheus.Counter
+	metricEventServiceSendDDLCount        prometheus.Counter
 	metricEventServiceSendResolvedTsCount prometheus.Counter
 }
 
@@ -413,6 +436,7 @@ func newDispatcherStat(
 
 		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(namespace, id, "kv"),
 		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "kv"),
+		metricEventServiceSendDDLCount:        metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "ddl"),
 		metricEventServiceSendResolvedTsCount: metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "resolved_ts"),
 	}
 	dispStat.watermark.Store(startTs)

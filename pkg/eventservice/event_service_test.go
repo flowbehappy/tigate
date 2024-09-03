@@ -236,8 +236,8 @@ func (m *mockEventIterator) Next() (*common.RowChangedEvent, bool, error) {
 	return row, isNewTxn, nil
 }
 
-func (m *mockEventIterator) Close() error {
-	return nil
+func (m *mockEventIterator) Close() (int64, error) {
+	return 0, nil
 }
 
 // This test is to test the mockEventIterator works as expected.

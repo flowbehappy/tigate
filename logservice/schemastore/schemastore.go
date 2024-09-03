@@ -47,7 +47,8 @@ type SchemaStore interface {
 
 	GetTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error)
 
-	GetNextDDLEvent(dispatcherID common.DispatcherID) (*DDLEvent, common.Ts, error)
+	// GetNextDDLEvents returns the next ddl event which finishedTs is within the range (start, end]
+	GetNextDDLEvents(id common.TableID, start, end common.Ts) ([]common.DDLEvent, common.Ts, error)
 }
 
 type schemaStore struct {
@@ -441,8 +442,8 @@ func (s *schemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*commo
 	return store.getTableInfo(ts)
 }
 
-func (s *schemaStore) GetNextDDLEvent(dispatcherID common.DispatcherID) (*DDLEvent, common.Ts, error) {
-	return nil, 0, nil
+func (s *schemaStore) GetNextDDLEvents(id common.TableID, start, end common.Ts) ([]common.DDLEvent, common.Ts, error) {
+	return nil, end, nil
 }
 
 func (s *schemaStore) writeDDLEvent(ddlEvent DDLEvent) error {
