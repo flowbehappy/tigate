@@ -7,8 +7,10 @@ import (
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/pkg/config"
 	"go.uber.org/zap"
 )
 
@@ -37,6 +39,7 @@ type DispatcherInfo interface {
 	GetStartTs() uint64
 	IsRegister() bool
 	GetChangefeedID() (namespace, id string)
+	GetFilterConfig() *config.FilterConfig
 }
 
 type eventService struct {
@@ -127,6 +130,12 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 		dispatcher.onNewEvent,
 		dispatcher.onSubscriptionWatermark,
 	)
+
+	filter, err := filter.NewFilter(info.GetFilterConfig(), "", false)
+	if err != nil {
+		panic(err)
+	}
+	c.schemaStore.RegisterDispatcher(info.GetID(), span, common.Ts(info.GetStartTs()), filter)
 	eventStoreRegisterDuration := time.Since(start)
 
 	log.Info("register acceptor", zap.Uint64("clusterID", clusterID),

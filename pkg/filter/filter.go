@@ -133,21 +133,21 @@ type filter struct {
 }
 
 // NewFilter creates a filter.
-func NewFilter(cfg *config.ReplicaConfig, tz string) (Filter, error) {
-	f, err := VerifyTableRules(cfg.Filter)
+func NewFilter(cfg *config.FilterConfig, tz string, caseSensitive bool) (Filter, error) {
+	f, err := VerifyTableRules(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	if !cfg.CaseSensitive {
+	if !caseSensitive {
 		f = tfilter.CaseInsensitive(f)
 	}
 
-	dmlExprFilter, err := newExprFilter(tz, cfg.Filter)
+	dmlExprFilter, err := newExprFilter(tz, cfg)
 	if err != nil {
 		return nil, err
 	}
-	sqlEventFilter, err := newSQLEventFilter(cfg.Filter)
+	sqlEventFilter, err := newSQLEventFilter(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +155,7 @@ func NewFilter(cfg *config.ReplicaConfig, tz string) (Filter, error) {
 		tableFilter:      f,
 		dmlExprFilter:    dmlExprFilter,
 		sqlEventFilter:   sqlEventFilter,
-		ignoreTxnStartTs: cfg.Filter.IgnoreTxnStartTs,
+		ignoreTxnStartTs: cfg.IgnoreTxnStartTs,
 	}, nil
 }
 

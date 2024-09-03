@@ -9,6 +9,7 @@ import (
 	"hash/crc32"
 
 	"github.com/flowbehappy/tigate/logservice/eventstore"
+	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
@@ -32,7 +33,8 @@ type eventBroker struct {
 	// tidbClusterID is the ID of the TiDB cluster this eventStore belongs to.
 	tidbClusterID uint64
 	// eventStore is the source of the events, eventBroker get the events from the eventStore.
-	eventStore eventstore.EventStore
+	eventStore  eventstore.EventStore
+	schemaStore schemastore.SchemaStore
 	// msgSender is used to send the events to the dispatchers.
 	msgSender messaging.MessageSender
 
@@ -173,12 +175,12 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
 						continue
 					}
+
 					//2. Get event iterator from eventStore.
 					iter, err := c.eventStore.GetIterator(dispatcherID, task.dataRange)
 					if err != nil {
 						log.Panic("read events failed", zap.Error(err))
 					}
-
 					// 3. Get the events from the iterator and send them to the dispatcher.
 					var txnEvent *common.TxnEvent
 					eventCount := 0
@@ -363,6 +365,7 @@ func (c *eventBroker) removeDispatcher(id common.DispatcherID) {
 		return
 	}
 	c.eventStore.UnregisterDispatcher(id)
+	c.schemaStore.UnregisterDispatcher(id)
 	c.dispatchers.Delete(id)
 }
 

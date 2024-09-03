@@ -110,7 +110,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 
 	// TODO: 最后去更新一下 filter 的内部 NewFilter 函数，现在是在套壳适配
 	replicaConfig := cfg.ReplicaConfig{Filter: cfConfig.Filter}
-	filter, err := filter.NewFilter(&replicaConfig, cfConfig.TimeZone)
+	filter, err := filter.NewFilter(replicaConfig.Filter, cfConfig.TimeZone, replicaConfig.CaseSensitive)
 	if err != nil {
 		log.Error("create filter failed", zap.Error(err))
 		return nil

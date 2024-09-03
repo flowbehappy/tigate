@@ -210,7 +210,6 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableS
 		zap.Any("dispatcherID", dispatcherID),
 		zap.String("span", tableSpan.String()),
 		zap.Uint64("startTS", uint64(startTS)))
-	e.schemaStore.RegisterDispatcher(dispatcherID, common.TableID(span.TableID), startTS)
 	subID := e.puller.Subscribe(span, startTS)
 
 	e.spanStates.Lock()
@@ -231,6 +230,7 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableS
 }
 
 func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, sendTS uint64) error {
+	// TODO: update sendTs in event service
 	e.schemaStore.UpdateDispatcherSendTS(dispatcherID, common.Ts(sendTS))
 	e.spanStates.Lock()
 	defer e.spanStates.Unlock()
@@ -251,7 +251,6 @@ func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, se
 
 func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
 	log.Info("unregister dispatcher", zap.Any("dispatcherID", dispatcherID))
-	e.schemaStore.UnregisterDispatcher(dispatcherID)
 	e.spanStates.Lock()
 	defer e.spanStates.Unlock()
 	if state, ok := e.spanStates.dispatcherMap[dispatcherID]; ok {

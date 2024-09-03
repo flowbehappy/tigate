@@ -47,7 +47,7 @@ func TestBasicDispatcher(t *testing.T) {
 	startTs := uint64(100)
 
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
-	filter, _ := filter.NewFilter(&config.ReplicaConfig{Filter: &config.FilterConfig{}}, "")
+	filter, _ := filter.NewFilter(&config.FilterConfig{}, "", false)
 
 	dispatcher := NewDispatcher(common.NewDispatcherID(), tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter, 0)
 
@@ -136,7 +136,7 @@ func TestDispatcherWithSingleTableDDL(t *testing.T) {
 	startTs := uint64(100)
 
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
-	filter, _ := filter.NewFilter(&config.ReplicaConfig{Filter: &config.FilterConfig{}}, "")
+	filter, _ := filter.NewFilter(&config.FilterConfig{}, "", false)
 
 	dispatcher := NewDispatcher(common.NewDispatcherID(), tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter, 0)
 
@@ -191,7 +191,7 @@ func TestDispatcherWithCrossTableDDL(t *testing.T) {
 	startTs := uint64(100)
 
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
-	filter, _ := filter.NewFilter(&config.ReplicaConfig{Filter: &config.FilterConfig{}}, "")
+	filter, _ := filter.NewFilter(&config.FilterConfig{}, "", false)
 
 	dispatcher := NewDispatcher(common.NewDispatcherID(), tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter, 0)
 
@@ -255,7 +255,7 @@ func TestDispatcherWithCrossTableDDLAndDML(t *testing.T) {
 	startTs := uint64(100)
 
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
-	filter, _ := filter.NewFilter(&config.ReplicaConfig{Filter: &config.FilterConfig{}}, "")
+	filter, _ := filter.NewFilter(&config.FilterConfig{}, "", false)
 
 	dispatcher := NewDispatcher(common.NewDispatcherID(), tableSpan, mysqlSink, startTs, tableSpanStatusChan, filter, 0)
 
@@ -431,7 +431,7 @@ func TestMultiDispatcherWithMultipleDDLs(t *testing.T) {
 	mock.ExpectCommit()
 
 	mysqlSink := sink.NewMysqlSink(model.DefaultChangeFeedID("test1"), 8, writer.NewMysqlConfig(), db)
-	filter, _ := filter.NewFilter(&config.ReplicaConfig{Filter: &config.FilterConfig{}}, "")
+	filter, _ := filter.NewFilter(&config.FilterConfig{}, "", false)
 	statusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
 	startTs := uint64(100)
 

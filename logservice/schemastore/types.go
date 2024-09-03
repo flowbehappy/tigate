@@ -7,8 +7,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
-type Filter interface{}
-
 type DDLEvent struct {
 	Job *model.Job `json:"ddl_job"`
 	// commitTS of the rawKV
@@ -17,8 +15,6 @@ type DDLEvent struct {
 
 type DispatcherInfo struct {
 	tableID common.TableID
-	// filter is used to filter specific event types of the table
-	filter Filter
 }
 
 type DatabaseInfo struct {

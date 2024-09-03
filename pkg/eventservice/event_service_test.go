@@ -19,6 +19,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	tconfig "github.com/pingcap/tiflow/pkg/config"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -116,6 +117,10 @@ func (m *mockDispatcherInfo) IsRegister() bool {
 
 func (m *mockDispatcherInfo) GetChangefeedID() (namespace, id string) {
 	return "default", "test"
+}
+
+func (m *mockDispatcherInfo) GetFilterConfig() *tconfig.FilterConfig {
+	return nil
 }
 
 type mockSpanStats struct {
@@ -410,7 +415,7 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 	tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: nil, EndKey: nil}}
 	startTs := uint64(1)
 	id := common.NewDispatcherID()
-	tableEventDispatcher := dispatcher.NewDispatcher(id, tableSpan, mysqlSink, startTs, nil, nil)
+	tableEventDispatcher := dispatcher.NewDispatcher(id, tableSpan, mysqlSink, startTs, nil, nil, 0)
 	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(
 		eventcollector.RegisterInfo{
 			Dispatcher:   tableEventDispatcher,
