@@ -178,15 +178,3 @@ func buildColumnList(names []string) string {
 }
 
 // placeHolder returns a string separated by comma
-// n must be greater or equal than 1, or the function will panic
-func placeHolder(n int) string {
-	var builder strings.Builder
-	builder.Grow((n-1)*2 + 1)
-	for i := 0; i < n; i++ {
-		if i > 0 {
-			builder.WriteString(",")
-		}
-		builder.WriteString("?")
-	}
-	return builder.String()
-}

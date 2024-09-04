@@ -32,8 +32,9 @@ func (m *mounter) rawKVToChunkV2(value []byte, tableInfo *common.TableInfo, chk 
 		return nil
 	}
 	v, ok := m.chunkDecoders.Load(tableInfo.ID)
-	d := v.(*chunkDecoder)
+	var d *chunkDecoder
 	if ok {
+		d = v.(*chunkDecoder)
 		if d.version != tableInfo.UpdateTS {
 			m.chunkDecoders.Delete(tableInfo.ID)
 			d = nil
@@ -42,6 +43,7 @@ func (m *mounter) rawKVToChunkV2(value []byte, tableInfo *common.TableInfo, chk 
 			if err != nil {
 				return errors.Trace(err)
 			}
+
 		}
 	}
 	handleColIDs, _, reqCols := tableInfo.GetRowColInfos()

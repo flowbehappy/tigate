@@ -537,7 +537,7 @@ type wrapEvent struct {
 	// TODO: change the type of the txnEvent to common.TEvent
 	txnEvent      *common.TEvent
 	resolvedEvent common.ResolvedEvent
-	ddlEvent      common.DDLEvent
+	ddlEvent      *common.DDLEvent
 	msgType       int
 }
 
@@ -557,7 +557,7 @@ func newWrapResolvedEvent(serverID messaging.ServerId, e common.ResolvedEvent) w
 	}
 }
 
-func newWrapDDLEvent(serverID messaging.ServerId, e common.DDLEvent) wrapEvent {
+func newWrapDDLEvent(serverID messaging.ServerId, e *common.DDLEvent) wrapEvent {
 	return wrapEvent{
 		serverID: serverID,
 		ddlEvent: e,
