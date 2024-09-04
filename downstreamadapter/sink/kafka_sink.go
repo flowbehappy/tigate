@@ -108,11 +108,6 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, replicaConf
 		return nil, errors.Trace(err)
 	}
 
-	// encoder, err := builder.NewRowEventEncoder(ctx, encoderConfig)
-	// if err != nil {
-	// 	return nil, cerror.WrapError(cerror.ErrKafkaNewProducer, err)
-	// }
-
 	failpointCh := make(chan error, 1)
 	asyncProducer, err := factory.AsyncProducer(ctx, failpointCh)
 	if err != nil {
