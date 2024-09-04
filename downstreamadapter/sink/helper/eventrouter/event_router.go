@@ -75,11 +75,9 @@ func NewEventRouter(cfg *config.ReplicaConfig, protocol config.Protocol, default
 }
 
 // GetTopicForRowChange returns the target topic for row changes.
-func (s *EventRouter) GetTopicForRowChange(row *common.RowChangedEvent) string {
-	schema := row.TableInfo.GetSchemaName()
-	table := row.TableInfo.GetTableName()
-	topicGenerator := s.matchTopicGenerator(schema, table)
-	return topicGenerator.Substitute(schema, table)
+func (s *EventRouter) GetTopicForRowChange(tableInfo *common.TableInfo) string {
+	topicGenerator := s.matchTopicGenerator(tableInfo.TableName.Schema, tableInfo.TableName.Table)
+	return topicGenerator.Substitute(tableInfo.TableName.Schema, tableInfo.TableName.Table)
 }
 
 // GetTopicForDDL returns the target topic for DDL.
@@ -110,8 +108,8 @@ func (s *EventRouter) GetPartitionForRowChange(row *common.RowChangedEvent, part
 }
 
 // GetPartitionForRowChange returns the target partition for row changes.
-func (s *EventRouter) GetPartitionGeneratorForRowChange(row *common.RowChangedEvent) partition.PartitionGenerator {
-	return s.GetPartitionDispatcher(row.TableInfo.GetSchemaName(), row.TableInfo.GetTableName())
+func (s *EventRouter) GetPartitionGeneratorForRowChange(tableInfo *common.TableInfo) partition.PartitionGenerator {
+	return s.GetPartitionDispatcher(tableInfo.GetSchemaName(), tableInfo.GetTableName())
 }
 
 // GetPartitionDispatcher returns the partition dispatcher for a specific table.

@@ -184,7 +184,7 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 	var m IOTypeT
 	switch ioType {
 	case TypeTxnEvent:
-		m = &common.TxnEvent{}
+		m = &common.TEvent{}
 	case TypeBatchResolvedTs:
 		m = &common.BatchResolvedTs{}
 	case TypeHeartBeatRequest:
@@ -239,7 +239,7 @@ type TargetMessage struct {
 func NewSingleTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetMessage {
 	var ioType IOType
 	switch Message.(type) {
-	case *common.TxnEvent:
+	case *common.TEvent:
 		ioType = TypeTxnEvent
 	case *common.BatchResolvedTs:
 		ioType = TypeBatchResolvedTs

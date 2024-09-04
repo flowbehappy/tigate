@@ -36,6 +36,7 @@ type preparedDMLs struct {
 	values          [][]interface{}
 	rowCount        int
 	approximateSize int64
+	startTs         []uint64
 }
 
 // CheckIfBDRModeIsSupported checks if the downstream supports BDR mode.
@@ -311,7 +312,7 @@ func CreateMysqlDBConn(dsnStr string) (*sql.DB, error) {
 	return db, nil
 }
 
-func needSwitchDB(event *common.TxnEvent) bool {
+func needSwitchDB(event *common.DDLEvent) bool {
 	if len(event.GetDDLSchemaName()) == 0 {
 		return false
 	}

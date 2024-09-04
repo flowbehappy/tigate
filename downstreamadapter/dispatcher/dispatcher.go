@@ -75,7 +75,7 @@ type Dispatcher struct {
 
 	resolvedTs *TsWithMutex // 用来记 中目前收到的 event 中收到的最大的 commitTs - 1,不代表 dispatcher 的 checkpointTs
 
-	ddlPendingEvent *common.TxnEvent
+	ddlPendingEvent *common.DDLEvent
 	isRemoving      atomic.Bool
 
 	tableProgress *types.TableProgress
@@ -124,11 +124,11 @@ func NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, sin
 //     2.2 maintainer 通知自己可以 write 或者 pass event
 //
 // TODO:特殊处理有 add index 的逻辑
-func (d *Dispatcher) addDDLEventToSinkWhenAvailable(event *common.TxnEvent) {
+func (d *Dispatcher) addDDLEventToSinkWhenAvailable(event *common.DDLEvent) {
 	// 根据 filter 过滤 query 中不需要 send to downstream 的数据
 	// 但应当不出现整个 query 都不需要 send to downstream 的 ddl，这种 ddl 不应该发给 dispatcher
 	// TODO: ddl 影响到的 tableSpan 也在 filter 中过滤一遍
-	err := d.filter.FilterDDLEvent(event.GetDDLEvent())
+	err := d.filter.FilterDDLEvent(event)
 	if err != nil {
 		log.Error("filter ddl query failed", zap.Error(err))
 		// 这里怎么处理更合适呢？有错然后反上去让 changefeed 报错
@@ -164,7 +164,7 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 
 	action := dispatcherStatus.GetAction()
 	if action != nil {
-		if action.CommitTs == d.ddlPendingEvent.CommitTs {
+		if action.CommitTs == d.ddlPendingEvent.CommitTS {
 			if action.Action == heartbeatpb.Action_Write {
 				d.sink.AddDDLAndSyncPointEvent(d.ddlPendingEvent, d.tableProgress)
 			} else {
@@ -181,29 +181,27 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 	}
 
 	ack := dispatcherStatus.GetAck()
-	if ack != nil && ack.CommitTs == d.ddlPendingEvent.CommitTs {
+	if ack != nil && ack.CommitTs == d.ddlPendingEvent.CommitTS {
 		d.CancelResendTask()
 	}
 }
 
 func (d *Dispatcher) HandleEvent(event common.Event) (block bool) {
 	switch event.GetType() {
-	case common.TypeTxnEvent:
-		event := event.(*common.TxnEvent)
-		if event.IsDMLEvent() {
-			d.sink.AddDMLEvent(event, d.tableProgress)
-			return false
-		} else if event.IsDDLEvent() {
-			event.PostTxnFlushed = append(event.PostTxnFlushed, func() {
-				dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
-				dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
-			})
-			d.addDDLEventToSinkWhenAvailable(event)
-			return true
-		}
 	case common.TypeResolvedEvent:
 		d.resolvedTs.Set(event.(common.ResolvedEvent).ResolvedTs)
 		return false
+	case common.TypeTEvent:
+		d.sink.AddDMLEvent(event.(*common.TEvent), d.tableProgress)
+		return false
+	case common.TypeDDLEvent:
+		event := event.(*common.DDLEvent)
+		event.AddPostFlushFunc(func() {
+			dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
+			dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
+		})
+		d.addDDLEventToSinkWhenAvailable(event)
+		return true
 	}
 	log.Panic("invalid event type", zap.Any("event", event))
 	return false
@@ -220,7 +218,7 @@ func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 				ComponentStatus: heartbeatpb.ComponentState_Working,
 				State: &heartbeatpb.State{
 					IsBlocked:         false,
-					BlockTs:           d.ddlPendingEvent.CommitTs,
+					BlockTs:           d.ddlPendingEvent.CommitTS,
 					NeedDroppedTables: d.ddlPendingEvent.GetNeedDroppedTables().ToPB(),
 					NeedAddedTables:   common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
 				},
@@ -234,7 +232,7 @@ func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			State: &heartbeatpb.State{
 				IsBlocked:         true,
-				BlockTs:           d.ddlPendingEvent.CommitTs,
+				BlockTs:           d.ddlPendingEvent.CommitTS,
 				BlockTables:       d.ddlPendingEvent.GetBlockedTables().ToPB(),
 				NeedDroppedTables: d.ddlPendingEvent.GetNeedDroppedTables().ToPB(),
 				NeedAddedTables:   common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),

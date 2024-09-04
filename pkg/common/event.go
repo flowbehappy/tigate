@@ -16,10 +16,28 @@ package common
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"go.uber.org/zap"
+)
+
+type Event interface {
+	GetType() int
+	GetDispatcherID() DispatcherID
+	GetCommitTs() Ts
+	GetStartTs() Ts
+}
+
+// FlushableEvent is an event that can be flushed to downstream by a dispatcher.
+type FlushableEvent interface {
+	Event
+	PostFlush()
+	AddPostFlushFunc(func())
+}
+
+const (
+	txnRowCount = 2018
 )
 
 const (
@@ -34,9 +52,17 @@ const (
 	TypeTxnEvent
 )
 
-type Event interface {
-	GetType() int
-	GetDispatcherID() DispatcherID
+func RowTypeToString(rowType RowType) string {
+	switch rowType {
+	case RowTypeInsert:
+		return "Insert"
+	case RowTypeDelete:
+		return "Delete"
+	case RowTypeUpdate:
+		return "Update"
+	default:
+		return "Unknown"
+	}
 }
 
 type BatchResolvedTs struct {
@@ -50,6 +76,16 @@ func (b BatchResolvedTs) GetType() int {
 func (b BatchResolvedTs) GetDispatcherID() DispatcherID {
 	// It's a fake dispatcherID.
 	return NewDispatcherID()
+}
+
+func (b BatchResolvedTs) GetCommitTs() Ts {
+	// It's a fake commitTs.
+	return 0
+}
+
+func (b BatchResolvedTs) GetStartTs() Ts {
+	// It's a fake startTs.
+	return 0
 }
 
 func (b *BatchResolvedTs) Marshal() ([]byte, error) {
@@ -93,6 +129,14 @@ func (e ResolvedEvent) GetDispatcherID() DispatcherID {
 	return e.DispatcherID
 }
 
+func (e ResolvedEvent) GetCommitTs() Ts {
+	return e.ResolvedTs
+}
+
+func (e ResolvedEvent) GetStartTs() Ts {
+	return e.ResolvedTs
+}
+
 func (e ResolvedEvent) Marshal() ([]byte, error) {
 	buf := e.DispatcherID.Marshal()
 	buf = append(buf, make([]byte, 8)...)
@@ -117,21 +161,134 @@ func (e ResolvedEvent) String() string {
 // Note: The PreRows is the rows before the transaction, it is used to generate the update and delete SQL.
 // The Rows is the rows after the transaction, it is used to generate the insert and update SQL.
 type TEvent struct {
-	DispatcherID    DispatcherID
-	PhysicalTableID uint64
-	StartTs         uint64
-	CommitTs        uint64
+	DispatcherID    DispatcherID `json:"dispatcher_id"`
+	PhysicalTableID uint64       `json:"physical_table_id"`
+	StartTs         uint64       `json:"start_ts"`
+	CommitTs        uint64       `json:"commit_ts"`
 
-	Rows    chunk.Chunk
-	PreRows chunk.Chunk
+	TableInfo *TableInfo `json:"table_info"`
+
+	Rows     *chunk.Chunk `json:"rows"`
+	RowTypes []RowType    `json:"row_types"`
+	// Offset is the offset of the current row in the transaction.
+	Offset int `json:"offset"`
+	len    int
+
+	// The following fields are set and used by dispatcher.
+	ReplicatingTs  uint64   `json:"replicating_ts"`
+	PostTxnFlushed []func() `msg:"-"`
 }
 
-func (t TEvent) GetType() int {
+func NewTEvent(
+	dispatcherID DispatcherID,
+	tableID uint64,
+	startTs,
+	commitTs uint64,
+	tableInfo *TableInfo) *TEvent {
+	// FIXME: check if chk isFull in the future
+	chk := chunk.NewChunkWithCapacity(tableInfo.GetFileSlice(), txnRowCount)
+	return &TEvent{
+		DispatcherID:    dispatcherID,
+		PhysicalTableID: tableID,
+		StartTs:         startTs,
+		CommitTs:        commitTs,
+		TableInfo:       tableInfo,
+		Rows:            chk,
+		RowTypes:        make([]RowType, 0, 1),
+		Offset:          0,
+	}
+}
+
+func (t *TEvent) AppendRow(raw *RawKVEntry,
+	decode func(
+		rawKv *RawKVEntry,
+		tableInfo *TableInfo, chk *chunk.Chunk) (int, error),
+) error {
+	RowType := RowTypeInsert
+	if raw.OpType == OpTypeDelete {
+		RowType = RowTypeDelete
+	}
+	if len(raw.Value) != 0 && len(raw.OldValue) != 0 {
+		RowType = RowTypeUpdate
+	}
+	count, err := decode(raw, t.TableInfo, t.Rows)
+	if err != nil {
+		return err
+	}
+	log.Info("fizz TEvent.AppendRow", zap.Int("count", count), zap.Any("rowType", RowTypeToString(RowType)))
+	if count == 1 {
+		t.RowTypes = append(t.RowTypes, RowType)
+	} else if count == 2 {
+		t.RowTypes = append(t.RowTypes, RowType, RowType)
+	}
+	t.len += 1
+	return nil
+}
+
+func (t *TEvent) GetType() int {
 	return TypeTEvent
 }
 
-func (t TEvent) GetDispatcherID() DispatcherID {
+func (t *TEvent) GetDispatcherID() DispatcherID {
 	return t.DispatcherID
+}
+
+func (t *TEvent) GetCommitTs() Ts {
+	return Ts(t.CommitTs)
+}
+
+func (t *TEvent) GetStartTs() Ts {
+	return Ts(t.StartTs)
+}
+
+func (t *TEvent) PostFlush() {
+	for _, f := range t.PostTxnFlushed {
+		f()
+	}
+}
+
+func (t *TEvent) AddPostFlushFunc(f func()) {
+	t.PostTxnFlushed = append(t.PostTxnFlushed, f)
+}
+
+func (t *TEvent) GetNextRow() (*Row, bool) {
+	if t.Offset >= len(t.RowTypes) {
+		return &Row{}, false
+	}
+	rowType := t.RowTypes[t.Offset]
+	switch rowType {
+	case RowTypeInsert:
+		row := &Row{
+			Row:     t.Rows.GetRow(t.Offset),
+			RowType: rowType,
+		}
+		t.Offset++
+		return row, true
+	case RowTypeDelete:
+		row := &Row{
+			PreRow:  t.Rows.GetRow(t.Offset),
+			RowType: rowType,
+		}
+		t.Offset++
+		return row, true
+	case RowTypeUpdate:
+		row := &Row{
+			PreRow:  t.Rows.GetRow(t.Offset),
+			Row:     t.Rows.GetRow(t.Offset + 1),
+			RowType: rowType,
+		}
+		t.Offset += 2
+		return row, true
+	default:
+		log.Panic("TEvent.GetNextRow: invalid row type")
+	}
+	return &Row{}, false
+}
+
+// Len returns the number of row change events in the transaction.
+// Note: An update event is counted as 1 row.
+func (t *TEvent) Len() int {
+	return t.len
 }
 
 func (t TEvent) Marshal() ([]byte, error) {
@@ -141,40 +298,60 @@ func (t TEvent) Marshal() ([]byte, error) {
 	return buf, nil
 }
 
-func (t TEvent) Unmarshal(data []byte) error {
+func (t *TEvent) Unmarshal(data []byte) error {
 	//TODO
 	log.Panic("TEvent.Unmarshal: not implemented")
 	return nil
 }
 
-type DDLEventX struct {
-	DispatcherID DispatcherID
-	// commitTS of the rawKV
-	CommitTS Ts
-	Job      *model.Job
+type Row struct {
+	PreRow  chunk.Row
+	Row     chunk.Row
+	RowType RowType
 }
 
-func (d DDLEventX) GetType() int {
-	return TypeDDLEvent
-}
+type RowType int
 
-func (d DDLEventX) GetDispatcherID() DispatcherID {
-	return d.DispatcherID
-}
+const (
+	// RowTypeDelete represents a delete row.
+	RowTypeDelete RowType = iota
+	// RowTypeInsert represents a insert row.
+	RowTypeInsert
+	// RowTypeUpdate represents a update row.
+	RowTypeUpdate
+)
 
-func (d DDLEventX) Marshal() ([]byte, error) {
-	// TODO
-	log.Panic("DDLEvent.Marshal: not implemented")
-	buf := make([]byte, 0)
-	return buf, nil
-}
+// func (r *Row) ToSQL(safeMode bool) (string, []interface{}) {
+// 	switch r.RowType {
+// 	case RowTypeInsert:
+// 		return r.ToInsert(safeMode)
+// 	case RowTypeDelete:
+// 		return r.ToDelete()
+// 	case RowTypeUpdate:
+// 		return nil, nil
+// 	default:
+// 		log.Panic("Row.ToSQL: invalid row type")
+// 	}
+// 	return nil, nil
+// }
 
-func (d DDLEventX) Unmarshal(data []byte) error {
-	//TODO
-	log.Panic("DDLEvent.Unmarshal: not implemented")
-	return nil
-}
+// func (r *Row) ToInsert(safeMode bool) (string, []interface{}) {
+// 	if r.RowType != RowTypeInsert {
+// 		log.Panic("Row.ToInsertSQL: invalid row type")
+// 	}
+// 	return "", nil
+// }
 
-func (d DDLEventX) String() string {
-	return fmt.Sprintf("DDLEvent{DispatcherID: %s, CommitTS: %d, Job: %v}", d.DispatcherID, d.CommitTS, d.Job)
-}
+// func (r *Row) ToDelete(safeMode bool) (string, []interface{}) {
+// 	if r.RowType != RowTypeDelete {
+// 		log.Panic("Row.ToDeleteSQL: invalid row type")
+// 	}
+// 	return "", nil
+// }
+
+// func (r *Row) ToUpdate(safeMode bool) (string, []interface{}) {
+// 	if r.RowType != RowTypeUpdate {
+// 		log.Panic("Row.ToUpdateSQL: invalid row type")
+// 	}
+// 	return "", nil
+// }
