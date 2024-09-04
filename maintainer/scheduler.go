@@ -303,7 +303,7 @@ func (s *Scheduler) NeedSchedule() bool {
 
 // ScheduleFinished return false if not all task are running in working state
 func (s *Scheduler) ScheduleFinished() bool {
-	return s.TaskSize() != s.GetTaskSizeByState(scheduler.SchedulerStatusWorking)
+	return s.TaskSize() == s.GetTaskSizeByState(scheduler.SchedulerStatusWorking)
 }
 
 func (s *Scheduler) TryBalance() []*messaging.TargetMessage {
