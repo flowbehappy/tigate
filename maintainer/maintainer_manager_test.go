@@ -196,7 +196,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	for i := 1; i < 3; i++ {
 		span := spanz.TableIDToComparableSpan(int64(i))
 		tableSpan := &heartbeatpb.TableSpan{
-			TableID:  uint64(i),
+			TableID:  int64(i),
 			StartKey: span.StartKey,
 			EndKey:   span.EndKey,
 		}
@@ -249,7 +249,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 			if id == remotedId {
 				foundSize++
 				tblID := stm.Inferior.(*ReplicaSet).Span.TableID
-				require.True(t, uint64(1) == tblID || uint64(2) == tblID)
+				require.True(t, int64(1) == tblID || int64(2) == tblID)
 			}
 		}
 	}

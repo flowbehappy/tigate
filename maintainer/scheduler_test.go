@@ -145,7 +145,7 @@ func TestBalance(t *testing.T) {
 	s := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
 	s.nodeTasks["node1"] = map[common.DispatcherID]*scheduler.StateMachine{}
 	for i := 0; i < 100; i++ {
-		span := &heartbeatpb.TableSpan{TableID: uint64(i)}
+		span := &heartbeatpb.TableSpan{TableID: int64(i)}
 		dispatcherID := common.NewDispatcherID()
 		stm := scheduler.NewStateMachine(dispatcherID, nil,
 			NewReplicaSet(model.ChangeFeedID{}, dispatcherID, 1, span, 1))
@@ -186,7 +186,7 @@ func TestStoppedWhenMoving(t *testing.T) {
 	s.AddNewNode("node1")
 	s.AddNewNode("node2")
 	id := 1
-	span := &heartbeatpb.TableSpan{TableID: uint64(id)}
+	span := &heartbeatpb.TableSpan{TableID: int64(id)}
 	dispatcherID := common.NewDispatcherID()
 	stm := scheduler.NewStateMachine(dispatcherID, nil,
 		NewReplicaSet(model.ChangeFeedID{}, dispatcherID, 1, span, 1))
@@ -221,7 +221,7 @@ func TestStoppedWhenMoving(t *testing.T) {
 func TestFinishBootstrap(t *testing.T) {
 	s := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
 	s.AddNewNode("node1")
-	span := &heartbeatpb.TableSpan{TableID: uint64(1)}
+	span := &heartbeatpb.TableSpan{TableID: int64(1)}
 	s.SetInitialTables([]common.Table{{TableID: 1, SchemaID: 1}})
 
 	dispatcherID2 := common.NewDispatcherID()
@@ -236,7 +236,7 @@ func TestFinishBootstrap(t *testing.T) {
 	cached := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine]()
 	cached.ReplaceOrInsert(span, stm2)
 	require.False(t, s.bootstrapped)
-	s.FinishBootstrap(map[uint64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]{
+	s.FinishBootstrap(map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]{
 		1: cached,
 	})
 	require.True(t, s.bootstrapped)
@@ -250,7 +250,7 @@ func TestFinishBootstrap(t *testing.T) {
 	require.Equal(t, stm2, s.Working()[dispatcherID2])
 	require.Nil(t, s.initialTables)
 	require.Panics(t, func() {
-		s.FinishBootstrap(map[uint64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]{})
+		s.FinishBootstrap(map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]{})
 	})
 }
 
@@ -359,7 +359,7 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 	ddlCache.ReplaceOrInsert(heartbeatpb.DDLSpan, ddlStm)
 
 	require.False(t, s.bootstrapped)
-	s.FinishBootstrap(map[uint64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]{
+	s.FinishBootstrap(map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]{
 		0: ddlCache,
 		1: cached,
 	})

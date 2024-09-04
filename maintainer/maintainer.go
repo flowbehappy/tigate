@@ -473,7 +473,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.M
 		zap.String("changefeed", m.id.ID),
 		zap.Int("size", len(cachedResp)))
 	var status scheduler.InferiorStatus
-	workingMap := make(map[uint64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine])
+	workingMap := make(map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine])
 	for server, bootstrapMsg := range cachedResp {
 		log.Info("received bootstrap response",
 			zap.String("changefeed", m.id.ID),
