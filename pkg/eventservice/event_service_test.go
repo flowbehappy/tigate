@@ -11,11 +11,14 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
+	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
+	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -23,6 +26,159 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
+
+func initEventService(
+	ctx context.Context, t *testing.T,
+	mc messaging.MessageCenter, mockStore eventstore.EventStore,
+) *eventService {
+	appcontext.SetService(appcontext.MessageCenter, mc)
+	appcontext.SetService(appcontext.EventStore, mockStore)
+	appcontext.SetService(appcontext.SchemaStore, newMockSchemaStore())
+	es := NewEventService()
+	esImpl := es.(*eventService)
+	go func() {
+		err := esImpl.Run(ctx)
+		if err != nil {
+			t.Errorf("EventService.Run() error = %v", err)
+		}
+	}()
+	return esImpl
+}
+
+func TestEventServiceBasic(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mockStore := newMockEventStore()
+	mc := &mockMessageCenter{
+		messageCh: make(chan *messaging.TargetMessage, 100),
+	}
+	esImpl := initEventService(ctx, t, mc, mockStore)
+
+	acceptorInfo := newMockAcceptorInfo(common.NewDispatcherID(), 1)
+	// register acceptor
+	esImpl.acceptorInfoCh <- acceptorInfo
+	// wait for eventService to process the acceptorInfo
+	time.Sleep(time.Second * 2)
+
+	require.Equal(t, 1, len(esImpl.brokers))
+	require.NotNil(t, esImpl.brokers[acceptorInfo.GetClusterID()])
+
+	// add events to logpuller
+	txnEvent := &common.TxnEvent{
+		DispatcherID: acceptorInfo.GetID(),
+		Span:         acceptorInfo.span,
+		StartTs:      1,
+		CommitTs:     5,
+		Rows: []*common.RowChangedEvent{
+			{
+				PhysicalTableID: 1,
+				StartTs:         1,
+				CommitTs:        5,
+			},
+			{
+				PhysicalTableID: 1,
+				StartTs:         1,
+				CommitTs:        5,
+			},
+		},
+	}
+
+	sourceSpanStat, ok := mockStore.spans[acceptorInfo.span.TableID]
+	require.True(t, ok)
+
+	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)
+
+	expectedEvent := &common.TxnEvent{
+		DispatcherID: acceptorInfo.GetID(),
+		StartTs:      1,
+		CommitTs:     5,
+		Rows: []*common.RowChangedEvent{
+			{
+				PhysicalTableID: 1,
+				StartTs:         1,
+				CommitTs:        5,
+			},
+			{
+				PhysicalTableID: 1,
+				StartTs:         1,
+				CommitTs:        5,
+			},
+		},
+	}
+
+	// receive events from msg center
+	for {
+		msg := <-mc.messageCh
+		txn := msg.Message[0].(*common.TxnEvent)
+		if len(txn.Rows) == 0 {
+			log.Info("received watermark", zap.Uint64("ts", txn.ResolvedTs))
+			continue
+		}
+		require.NotNil(t, msg)
+		require.Equal(t, "event-collector", msg.Topic)
+		require.Equal(t, expectedEvent, msg.Message[0].(*common.TxnEvent))
+		return
+	}
+}
+
+// The test mainly focus on the communication between dispatcher and event service.
+// When dispatcher created and register in event service, event service need to send events to dispatcher.
+func TestDispatcherCommunicateWithEventService(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	serverId := messaging.NewServerId()
+	mc := messaging.NewMessageCenter(ctx, serverId, 1, config.NewDefaultMessageCenterConfig())
+	mockStore := newMockEventStore()
+	_ = initEventService(ctx, t, mc, mockStore)
+	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, serverId)) // 100GB for demo
+
+	db, _ := newTestMockDB(t)
+	defer db.Close()
+
+	mysqlSink := sink.NewMysqlSink(model.DefaultChangeFeedID("test1"), 8, writer.NewMysqlConfig(), db)
+	tableSpan := &heartbeatpb.TableSpan{TableID: 1, StartKey: nil, EndKey: nil}
+	startTs := uint64(1)
+	id := common.NewDispatcherID()
+	tableEventDispatcher := dispatcher.NewDispatcher(id, tableSpan, mysqlSink, startTs, nil, nil, 0)
+	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(
+		eventcollector.RegisterInfo{
+			Dispatcher:   tableEventDispatcher,
+			StartTs:      startTs,
+			FilterConfig: &eventpb.FilterConfig{Rules: []string{"*.*"}},
+		},
+	)
+
+	time.Sleep(1 * time.Second)
+	// add events to logpuller
+	txnEvent := &common.TxnEvent{
+		ClusterID: 1,
+		Span:      tableSpan,
+		StartTs:   1,
+		CommitTs:  5,
+		Rows: []*common.RowChangedEvent{
+			{
+				PhysicalTableID: 1,
+				StartTs:         1,
+				CommitTs:        5,
+			},
+		},
+	}
+
+	sourceSpanStat, ok := mockStore.spans[tableSpan.TableID]
+	require.True(t, ok)
+
+	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)
+
+	// <-tableEventDispatcher.GetEventChan()
+}
+
+func newTestMockDB(t *testing.T) (db *sql.DB, mock sqlmock.Sqlmock) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
+	require.Nil(t, err)
+	return
+}
 
 var _ messaging.MessageCenter = &mockMessageCenter{}
 
@@ -120,7 +276,9 @@ func (m *mockDispatcherInfo) GetChangefeedID() (namespace, id string) {
 }
 
 func (m *mockDispatcherInfo) GetFilterConfig() *tconfig.FilterConfig {
-	return nil
+	return &tconfig.FilterConfig{
+		Rules: []string{"*.*"},
+	}
 }
 
 type mockSpanStats struct {
@@ -142,6 +300,8 @@ func (m *mockSpanStats) update(event []*common.TxnEvent, watermark uint64) {
 	m.onUpdate(watermark)
 
 }
+
+var _ eventstore.EventStore = &mockEventStore{}
 
 // mockEventStore is a mock implementation of the EventStore interface
 type mockEventStore struct {
@@ -192,7 +352,7 @@ func (m *mockEventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) 
 	return nil
 }
 
-func (m *mockEventStore) GetIterator(dataRange *common.DataRange) (eventstore.EventIterator, error) {
+func (m *mockEventStore) GetIterator(dispatcherID common.DispatcherID, dataRange *common.DataRange) (eventstore.EventIterator, error) {
 	iter := &mockEventIterator{
 		events: make([]*common.TxnEvent, 0),
 	}
@@ -295,153 +455,36 @@ func TestMockEventIterator(t *testing.T) {
 	require.NotNil(t, row)
 }
 
-func TestEventServiceBasic(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+type mockSchemaStore struct {
+	schemastore.SchemaStore
 
-	mockStore := newMockEventStore()
-	mc := &mockMessageCenter{
-		messageCh: make(chan *messaging.TargetMessage, 100),
-	}
+	dispatchers map[common.DispatcherID]common.TableID
+	resolvedTs  uint64
+}
 
-	appcontext.SetService(appcontext.MessageCenter, mc)
-	appcontext.SetService(appcontext.EventStore, mockStore)
-	es := NewEventService()
-	esImpl := es.(*eventService)
-	go func() {
-		err := es.Run(ctx)
-		if err != nil {
-			t.Errorf("EventService.Run() error = %v", err)
-		}
-	}()
-
-	acceptorInfo := newMockAcceptorInfo(common.NewDispatcherID(), 1)
-	// register acceptor
-	esImpl.acceptorInfoCh <- acceptorInfo
-	// wait for eventService to process the acceptorInfo
-	time.Sleep(time.Second * 2)
-
-	require.Equal(t, 1, len(esImpl.brokers))
-	require.NotNil(t, esImpl.brokers[acceptorInfo.GetClusterID()])
-
-	// add events to logpuller
-	txnEvent := &common.TxnEvent{
-		DispatcherID: acceptorInfo.GetID(),
-		Span:         acceptorInfo.span,
-		StartTs:      1,
-		CommitTs:     5,
-		Rows: []*common.RowChangedEvent{
-			{
-				PhysicalTableID: 1,
-				StartTs:         1,
-				CommitTs:        5,
-			},
-			{
-				PhysicalTableID: 1,
-				StartTs:         1,
-				CommitTs:        5,
-			},
-		},
-	}
-
-	sourceSpanStat, ok := mockStore.spans[acceptorInfo.span.TableID]
-	require.True(t, ok)
-
-	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)
-
-	expectedEvent := &common.TxnEvent{
-		DispatcherID: acceptorInfo.GetID(),
-		StartTs:      1,
-		CommitTs:     5,
-		Rows: []*common.RowChangedEvent{
-			{
-				PhysicalTableID: 1,
-				StartTs:         1,
-				CommitTs:        5,
-			},
-			{
-				PhysicalTableID: 1,
-				StartTs:         1,
-				CommitTs:        5,
-			},
-		},
-	}
-
-	// receive events from msg center
-	for {
-		msg := <-mc.messageCh
-		txn := msg.Message[0].(*common.TxnEvent)
-		if len(txn.Rows) == 0 {
-			log.Info("received watermark", zap.Uint64("ts", txn.ResolvedTs))
-			continue
-		}
-		require.NotNil(t, msg)
-		require.Equal(t, acceptorInfo.GetTopic(), msg.Topic)
-		require.Equal(t, expectedEvent, msg.Message[0].(*common.TxnEvent))
-		return
+func newMockSchemaStore() *mockSchemaStore {
+	return &mockSchemaStore{
+		dispatchers: make(map[common.DispatcherID]common.TableID),
+		resolvedTs:  0,
 	}
 }
 
-func newTestMockDB(t *testing.T) (db *sql.DB, mock sqlmock.Sqlmock) {
-	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
-	require.Nil(t, err)
-	return
+func (m *mockSchemaStore) RegisterDispatcher(
+	dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan,
+	startTS common.Ts, filter filter.Filter,
+) error {
+	m.dispatchers[dispatcherID] = common.TableID(span.TableID)
+	return nil
 }
 
-// The test mainly focus on the communication between dispatcher and event service.
-// When dispatcher created and register in event service, event service need to send events to dispatcher.
-func TestDispatcherCommunicateWithEventService(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+func (m *mockSchemaStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
+	delete(m.dispatchers, dispatcherID)
+	return nil
+}
 
-	serverId := messaging.NewServerId()
-	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, serverId, 1, config.NewDefaultMessageCenterConfig()))
-	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, serverId)) // 100GB for demo
-
-	mockStore := newMockEventStore()
-	appcontext.SetService(appcontext.EventStore, mockStore)
-	eventService := NewEventService()
-	go func() {
-		err := eventService.Run(ctx)
-		if err != nil {
-			t.Errorf("EventService.Run() error = %v", err)
-		}
-	}()
-
-	db, _ := newTestMockDB(t)
-	defer db.Close()
-
-	mysqlSink := sink.NewMysqlSink(model.DefaultChangeFeedID("test1"), 8, writer.NewMysqlConfig(), db)
-	tableSpan := &heartbeatpb.TableSpan{TableID: 1, StartKey: nil, EndKey: nil}
-	startTs := uint64(1)
-	id := common.NewDispatcherID()
-	tableEventDispatcher := dispatcher.NewDispatcher(id, tableSpan, mysqlSink, startTs, nil, nil, 0)
-	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(
-		eventcollector.RegisterInfo{
-			Dispatcher:   tableEventDispatcher,
-			StartTs:      startTs,
-			FilterConfig: nil,
-		},
-	)
-
-	time.Sleep(1 * time.Second)
-	// add events to logpuller
-	txnEvent := &common.TxnEvent{
-		ClusterID: 1,
-		Span:      tableSpan,
-		StartTs:   1,
-		CommitTs:  5,
-		Rows: []*common.RowChangedEvent{
-			{
-				PhysicalTableID: 1,
-			},
-		},
-	}
-
-	sourceSpanStat, ok := mockStore.spans[tableSpan.TableID]
-	require.True(t, ok)
-
-	sourceSpanStat.update([]*common.TxnEvent{txnEvent}, txnEvent.CommitTs)
-
-	// <-tableEventDispatcher.GetEventChan()
+func (m *mockSchemaStore) GetNextDDLEvents(id common.TableID, start, end common.Ts) ([]common.DDLEvent, common.Ts, error) {
+	return nil, end, nil
+}
+func (m *mockSchemaStore) GetNextTableTriggerEvents(f filter.Filter, start common.Ts, limit int) ([]common.DDLEvent, common.Ts, error) {
+	return nil, m.resolvedTs, nil
 }
