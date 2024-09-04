@@ -109,7 +109,7 @@ func TestDownstream(t *testing.T) {
 			wg.Add(1)
 			go func(wg *sync.WaitGroup) {
 				defer wg.Done()
-				tableSpan := &heartbeatpb.TableSpan{TableID: uint64(db_index*dispatcherCount + i)}
+				tableSpan := &heartbeatpb.TableSpan{TableID: int64(db_index*dispatcherCount + i)}
 				dispatcherID := common.NewDispatcherID()
 				mutex.Lock()
 				dispatcherIDSet[dispatcherID] = nil
