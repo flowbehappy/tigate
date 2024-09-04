@@ -36,6 +36,7 @@ type preparedDMLs struct {
 	values          [][]interface{}
 	rowCount        int
 	approximateSize int64
+	startTs         []uint64
 }
 
 // CheckIfBDRModeIsSupported checks if the downstream supports BDR mode.

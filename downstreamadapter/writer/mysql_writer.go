@@ -270,6 +270,7 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TEvent) *preparedDMLs {
 		values:          values,
 		rowCount:        rowCount,
 		approximateSize: approximateSize,
+		startTs:         startTs,
 	}
 }
 

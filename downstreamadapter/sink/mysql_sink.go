@@ -117,7 +117,7 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 						}
 					}
 					start := time.Now()
-					err := worker.GetMysqlWriter().Flush(events, workerId, rows)
+					err := worker.GetMysqlWriter().Flush(events, workerId)
 					if err != nil {
 						log.Error("Failed to flush events", zap.Error(err), zap.Any("workerID", workerId), zap.Any("events", events))
 						return

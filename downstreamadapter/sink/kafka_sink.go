@@ -150,21 +150,20 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, replicaConf
 	}, nil
 }
 
-func (s *KafkaSink) AddDMLEvent(event *common.TxnEvent, tableProgress *types.TableProgress) {
-	if len(event.GetRows()) == 0 {
+func (s *KafkaSink) AddDMLEvent(event *common.TEvent, tableProgress *types.TableProgress) {
+	if event.Len() == 0 {
 		return
 	}
 	tableProgress.Add(event)
 
-	firstRow := event.GetRows()[0]
-	topic := s.eventRouter.GetTopicForRowChange(firstRow)
+	topic := s.eventRouter.GetTopicForRowChange(event.TableInfo)
 	partitionNum, err := s.topicManager.GetPartitionNum(s.ctx, topic)
 	if err != nil {
 		s.cancel(err)
 		log.Error("failed to get partition number for topic", zap.String("topic", topic), zap.Error(err))
 		return
 	}
-	partitonGenerator := s.eventRouter.GetPartitionGeneratorForRowChange(firstRow)
+	partitonGenerator := s.eventRouter.GetPartitionGeneratorForRowChange(event.TableInfo)
 
 	toRowCallback := func(postTxnFlushed []func(), totalCount uint64) func() {
 		var calledCount atomic.Uint64
@@ -178,10 +177,16 @@ func (s *KafkaSink) AddDMLEvent(event *common.TxnEvent, tableProgress *types.Tab
 		}
 	}
 
-	rowsCount := uint64(len(event.GetRows()))
+	rowsCount := uint64(event.Len())
 	rowCallback := toRowCallback(event.PostTxnFlushed, rowsCount)
 
-	for _, row := range event.GetRows() {
+	for {
+		_, ok := event.GetNextRow()
+		if !ok {
+			break
+		}
+		// FIXME: pass a real row
+		row := &common.RowChangedEvent{}
 		err = s.columnSelector.Apply(row)
 		if err != nil {
 			s.cancel(err)
@@ -212,11 +217,11 @@ func (s *KafkaSink) AddDMLEvent(event *common.TxnEvent, tableProgress *types.Tab
 
 }
 
-func (s *KafkaSink) PassDDLAndSyncPointEvent(event *common.TxnEvent, tableProgress *types.TableProgress) {
+func (s *KafkaSink) PassDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress) {
 	tableProgress.Pass(event)
 }
 
-func (s *KafkaSink) AddDDLAndSyncPointEvent(event *common.TxnEvent, tableProgress *types.TableProgress) {
+func (s *KafkaSink) AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress) {
 }
 
 func (s *KafkaSink) Close() {

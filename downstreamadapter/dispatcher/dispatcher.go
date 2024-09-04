@@ -124,7 +124,7 @@ func NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, sin
 //     2.2 maintainer 通知自己可以 write 或者 pass event
 //
 // TODO:特殊处理有 add index 的逻辑
-func (d *Dispatcher) AddDDLEventToSinkWhenAvailable(event *common.DDLEvent) {
+func (d *Dispatcher) addDDLEventToSinkWhenAvailable(event *common.DDLEvent) {
 	// 根据 filter 过滤 query 中不需要 send to downstream 的数据
 	// 但应当不出现整个 query 都不需要 send to downstream 的 ddl，这种 ddl 不应该发给 dispatcher
 	// TODO: ddl 影响到的 tableSpan 也在 filter 中过滤一遍
