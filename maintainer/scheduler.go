@@ -39,17 +39,9 @@ import (
 type Scheduler struct {
 	//  initialTables hold all tables that before scheduler bootstrapped
 	initialTables []common.Table
-	// absent track all table spans that need to be scheduled
-	// when dispatcher reported a new table or remove a table, this field should be updated
-	absent map[common.DispatcherID]*scheduler.StateMachine
-
-	// removing and committing are the task that waiting for response
-	removing   map[common.DispatcherID]*scheduler.StateMachine
-	committing map[common.DispatcherID]*scheduler.StateMachine
-	// working map hold all task that remote reported work state, will not schedule it
-	working map[common.DispatcherID]*scheduler.StateMachine
-
-	nodeTasks   map[string]map[common.DispatcherID]*scheduler.StateMachine
+	// group the tasks by nodes
+	nodeTasks map[string]map[common.DispatcherID]*scheduler.StateMachine
+	// group the tasks by schema id
 	schemaTasks map[int64]map[common.DispatcherID]*scheduler.StateMachine
 	// totalMaps holds all state maps, absent, committing, working and removing
 	totalMaps    []map[common.DispatcherID]*scheduler.StateMachine
@@ -74,10 +66,6 @@ func NewScheduler(changefeedID string,
 	config *config.ChangefeedSchedulerConfig,
 	batchSize int, balanceInterval time.Duration) *Scheduler {
 	s := &Scheduler{
-		committing:           make(map[common.DispatcherID]*scheduler.StateMachine),
-		removing:             make(map[common.DispatcherID]*scheduler.StateMachine),
-		working:              make(map[common.DispatcherID]*scheduler.StateMachine),
-		absent:               make(map[common.DispatcherID]*scheduler.StateMachine),
 		nodeTasks:            make(map[string]map[common.DispatcherID]*scheduler.StateMachine),
 		schemaTasks:          make(map[int64]map[common.DispatcherID]*scheduler.StateMachine),
 		startCheckpointTs:    checkpointTs,
@@ -94,10 +82,10 @@ func NewScheduler(changefeedID string,
 	}
 	// put all maps to totalMaps
 	s.totalMaps = make([]map[common.DispatcherID]*scheduler.StateMachine, 4)
-	s.totalMaps[scheduler.SchedulerStatusAbsent] = s.absent
-	s.totalMaps[scheduler.SchedulerStatusCommiting] = s.committing
-	s.totalMaps[scheduler.SchedulerStatusWorking] = s.working
-	s.totalMaps[scheduler.SchedulerStatusRemoving] = s.removing
+	s.totalMaps[scheduler.SchedulerStatusAbsent] = make(map[common.DispatcherID]*scheduler.StateMachine)
+	s.totalMaps[scheduler.SchedulerStatusCommiting] = make(map[common.DispatcherID]*scheduler.StateMachine)
+	s.totalMaps[scheduler.SchedulerStatusWorking] = make(map[common.DispatcherID]*scheduler.StateMachine)
+	s.totalMaps[scheduler.SchedulerStatusRemoving] = make(map[common.DispatcherID]*scheduler.StateMachine)
 	return s
 }
 
@@ -250,7 +238,7 @@ func (s *Scheduler) RemoveNode(nodeId string) []*messaging.TargetMessage {
 		s.tryMoveTask(key, value, oldState, nodeId, false)
 	}
 	// check removing map, maybe some task are moving to this node
-	for key, value := range s.removing {
+	for key, value := range s.Removing() {
 		if value.Secondary == nodeId {
 			oldState := value.State
 			msg, _ := value.HandleCaptureShutdown(nodeId)
@@ -272,7 +260,7 @@ func (s *Scheduler) Schedule() []*messaging.TargetMessage {
 	if !s.NeedSchedule() {
 		return nil
 	}
-	totalSize := s.batchSize - len(s.committing) - len(s.removing)
+	totalSize := s.batchSize - len(s.Removing()) - len(s.Commiting())
 	if totalSize <= 0 {
 		// too many running tasks, skip schedule
 		return nil
@@ -287,16 +275,17 @@ func (s *Scheduler) Schedule() []*messaging.TargetMessage {
 
 	taskSize := 0
 	var msgs = make([]*messaging.TargetMessage, 0, s.batchSize)
-	for key, value := range s.absent {
+	absent := s.Absent()
+	for key, value := range absent {
 		item, _ := priorityQueue.PeekTop()
 		msg := value.HandleAddInferior(item.Node)
 		if msg != nil {
 			msgs = append(msgs, msg)
 		}
 
-		s.committing[key] = value
+		s.Commiting()[key] = value
 		s.nodeTasks[item.Node][key] = value
-		delete(s.absent, key)
+		delete(absent, key)
 
 		item.TaskSize++
 		priorityQueue.AddOrUpdate(item)
@@ -309,11 +298,12 @@ func (s *Scheduler) Schedule() []*messaging.TargetMessage {
 }
 
 func (s *Scheduler) NeedSchedule() bool {
-	return len(s.absent) > 0
+	return s.GetTaskSizeByState(scheduler.SchedulerStatusAbsent) > 0
 }
 
+// ScheduleFinished return false if not all task are running in working state
 func (s *Scheduler) ScheduleFinished() bool {
-	return len(s.absent) == 0 && len(s.committing) == 0 && len(s.removing) == 0
+	return s.TaskSize() == s.GetTaskSizeByState(scheduler.SchedulerStatusWorking)
 }
 
 func (s *Scheduler) TryBalance() []*messaging.TargetMessage {
@@ -339,14 +329,14 @@ func (s *Scheduler) ResendMessage() []*messaging.TargetMessage {
 			}
 		}
 	}
-	resend(s.committing)
-	resend(s.removing)
+	resend(s.Commiting())
+	resend(s.Removing())
 	return msgs
 }
 
 func (s *Scheduler) balanceTables() []*messaging.TargetMessage {
 	var messages = make([]*messaging.TargetMessage, 0)
-	upperLimitPerCapture := int(math.Ceil(float64(len(s.working)) / float64(len(s.nodeTasks))))
+	upperLimitPerCapture := int(math.Ceil(float64(s.TaskSize()) / float64(len(s.nodeTasks))))
 	// victims holds tables which need to be moved
 	victims := make([]*scheduler.StateMachine, 0)
 	priorityQueue := heap.NewHeap[*Item]()
@@ -463,11 +453,35 @@ func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpa
 }
 
 func (s *Scheduler) TaskSize() int {
-	return len(s.committing) + len(s.working) + len(s.absent) + len(s.removing)
+	size := 0
+	for _, m := range s.totalMaps {
+		size += len(m)
+	}
+	return size
+}
+
+func (s *Scheduler) Absent() map[common.DispatcherID]*scheduler.StateMachine {
+	return s.getTaskByState(scheduler.SchedulerStatusAbsent)
+}
+
+func (s *Scheduler) Commiting() map[common.DispatcherID]*scheduler.StateMachine {
+	return s.getTaskByState(scheduler.SchedulerStatusCommiting)
+}
+
+func (s *Scheduler) Working() map[common.DispatcherID]*scheduler.StateMachine {
+	return s.getTaskByState(scheduler.SchedulerStatusWorking)
+}
+
+func (s *Scheduler) Removing() map[common.DispatcherID]*scheduler.StateMachine {
+	return s.getTaskByState(scheduler.SchedulerStatusRemoving)
+}
+
+func (s *Scheduler) getTaskByState(state scheduler.SchedulerStatus) map[common.DispatcherID]*scheduler.StateMachine {
+	return s.totalMaps[state]
 }
 
 func (s *Scheduler) GetTaskSizeByState(state scheduler.SchedulerStatus) int {
-	return len(s.totalMaps[state])
+	return len(s.getTaskByState(state))
 }
 
 func (s *Scheduler) GetTaskSizeByNodeID(nodeID string) int {
@@ -500,7 +514,7 @@ func (s *Scheduler) addWorkingSpans(tableMap utils.Map[*common.TableSpan, *sched
 				zap.Any("stm", stm))
 		}
 		dispatcherID := stm.ID.(common.DispatcherID)
-		s.working[dispatcherID] = stm
+		s.Working()[dispatcherID] = stm
 		s.nodeTasks[stm.Primary][dispatcherID] = stm
 		if span.TableID == 0 {
 			ddlSpanFound = true
@@ -522,7 +536,7 @@ func (s *Scheduler) addNewSpans(schemaID, tableID int64, tableSpans []*common.Ta
 		replicaSet := NewReplicaSet(model.DefaultChangeFeedID(s.changefeedID),
 			dispatcherID, schemaID, newTableSpan, s.startCheckpointTs).(*ReplicaSet)
 		stm := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
-		s.absent[dispatcherID] = stm
+		s.Absent()[dispatcherID] = stm
 		schemaMap, ok := s.schemaTasks[schemaID]
 		if !ok {
 			schemaMap = make(map[common.DispatcherID]*scheduler.StateMachine)
@@ -546,10 +560,9 @@ func (s *Scheduler) tryMoveTask(dispatcherID common.DispatcherID,
 	// if removed, new primary node must be empty so we also can
 	// update nodesMap if modifyNodeMap is true
 	if stm.HasRemoved() {
-		delete(s.removing, dispatcherID)
-		delete(s.absent, dispatcherID)
-		delete(s.committing, dispatcherID)
-		delete(s.working, dispatcherID)
+		for _, m := range s.totalMaps {
+			delete(m, dispatcherID)
+		}
 		delete(s.schemaTasks[stm.Inferior.(*ReplicaSet).SchemaID], dispatcherID)
 	}
 	// keep node task map is updated
