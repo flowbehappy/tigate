@@ -172,75 +172,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 				case <-ctx.Done():
 					return
 				case task := <-c.taskPool.popTask(chIndex):
-					needScan := task.checkAndAdjustScanTask()
-					if !needScan {
-						continue
-					}
-					c.metricTaskInQueueDuration.Observe(time.Since(task.createTime).Seconds())
-
-					remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
-					dispatcherID := task.dispatcherStat.info.GetID()
-					//1. The dispatcher has no new events. In such case, we don't need to scan the event store.
-					//We just send the watermark to the dispatcher.
-					if task.eventCount == 0 {
-						c.sendWatermark(remoteID, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
-						task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
-						continue
-					}
-					//2. Get event iterator from eventStore.
-					iter, err := c.eventStore.GetIterator(dispatcherID, task.dataRange)
-					if err != nil {
-						log.Panic("read events failed", zap.Error(err))
-					}
-
-					// 3. Get the events from the iterator and send them to the dispatcher.
-					var txnEvent *common.TEvent
-					eventCount := 0
-					for {
-						//Node: The first event of the txn must return isNewTxn as true.
-						e, isNewTxn, err := iter.Next()
-						if err != nil {
-							log.Panic("read events failed", zap.Error(err))
-						}
-
-						if e == nil {
-							// Send the last txnEvent to the dispatcher.
-							if txnEvent != nil {
-								c.messageCh <- newWrapTxnEvent(remoteID, txnEvent)
-								task.dispatcherStat.watermark.Store(txnEvent.CommitTs)
-								task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(txnEvent.RowTypes)))
-							}
-							// After all the events are sent, we send the watermark to the dispatcher.
-							c.sendWatermark(remoteID, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
-							task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
-							break
-						}
-
-						// If the commitTs of the event is less than the watermark of the dispatcher,
-						// we just skip the event.
-						if e.CRTs < task.dispatcherStat.watermark.Load() {
-							log.Panic("should never Happen", zap.Uint64("commitTs", e.CRTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
-						}
-
-						if isNewTxn {
-							tableID := task.dispatcherStat.info.GetTableSpan().TableID
-							tableInfo, err := c.schemaStore.GetTableInfo(int64(tableID), e.CRTs-1)
-							if err != nil {
-								// FIXME handle the error
-								log.Panic("get table info failed", zap.Error(err))
-							}
-							txnEvent = common.NewTEvent(dispatcherID, tableID, e.StartTs, e.CRTs, tableInfo)
-						}
-						txnEvent.AppendRow(e, c.mounter.DecodeToChunk)
-						eventCount++
-						if txnEvent.CommitTs != e.CRTs {
-							log.Panic("commitTs of the event is different from the commitTs of the txnEvent",
-								zap.Uint64("eventCommitTs", e.CRTs),
-								zap.Uint64("txnCommitTs", txnEvent.CommitTs))
-						}
-					}
-					task.dispatcherStat.metricSorterOutputEventCountKV.Add(float64(eventCount))
-					iter.Close()
+					c.doScan(task)
 				}
 			}
 		}()
@@ -346,6 +278,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 	}
 	var txnEvent *common.TEvent
 	for {
+		log.Info("fizz scan event", zap.Uint64("startTs", task.dataRange.StartTs), zap.Uint64("endTs", task.dataRange.EndTs))
 		//Node: The first event of the txn must return isNewTxn as true.
 		e, isNewTxn, err := iter.Next()
 		if err != nil {

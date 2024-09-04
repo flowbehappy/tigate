@@ -252,7 +252,7 @@ func (t *TEvent) AddPostFlushFunc(f func()) {
 }
 
 func (t *TEvent) GetNextRow() (*Row, bool) {
-	if t.Offset >= t.Rows.NumRows() {
+	if t.Offset >= len(t.RowTypes) {
 		return &Row{}, false
 	}
 	rowType := t.RowTypes[t.Offset]
