@@ -37,6 +37,16 @@ message ACK {
     uint64 CommitTs = 1; // DDLCommitTs
 }
 
+message InfluencedDispatchers {
+    InfluenceType InfluenceType = 1;
+    // only exist when type is normal
+	repeated DispatcherID DispatcherIDs = 2; 
+    // only exist when type is DB.
+	int64 SchemaID = 3;
+    // only exist when type is all or db, and in heartbeat response.
+    DispatcherID excludeDispatcherId = 4;
+}
+
 message DispatcherStatus {
     InfluencedDispatchers influencedDispatchers = 1;
     DispatcherAction action = 2;
@@ -132,14 +142,12 @@ enum InfluenceType {
     Normal = 2;
 }
 
-message InfluencedDispatchers {
+message InfluencedTables {
     InfluenceType InfluenceType = 1;
     // only exist when type is normal
-	repeated DispatcherID DispatcherIDs = 2; 
+	repeated int64  TableIDs  = 2; 
     // only exist when type is DB.
 	int64 SchemaID = 3;
-    // only exist when type is all or db, and in heartbeat response.
-    DispatcherID excludeDispatcherId = 4;
 }
 
 message Table {
@@ -150,8 +158,8 @@ message Table {
 message State {
     bool IsBlocked      = 1;
     uint64 BlockTs         = 2;
-    InfluencedDispatchers BlockDispatchers = 3;
-    InfluencedDispatchers NeedDroppedDispatchers =4;
+    InfluencedTables BlockTables = 3;
+    InfluencedTables NeedDroppedTables =4;
     repeated Table NeedAddedTables = 5;
 }
 

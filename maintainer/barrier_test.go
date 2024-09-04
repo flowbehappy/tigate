@@ -30,7 +30,7 @@ func TestNormalBlock(t *testing.T) {
 	sche.AddNewNode("node1")
 	sche.AddNewNode("node2")
 	var blockedDispatcherIDS []*heartbeatpb.DispatcherID
-	for id := 0; id < 3; id++ {
+	for id := 1; id < 4; id++ {
 		span := spanz.TableIDToComparableSpan(int64(id))
 		tableSpan := &heartbeatpb.TableSpan{
 			TableID:  uint64(id),
@@ -41,6 +41,7 @@ func TestNormalBlock(t *testing.T) {
 		blockedDispatcherIDS = append(blockedDispatcherIDS, dispatcherID.ToPB())
 		replicaSet := NewReplicaSet(model.DefaultChangeFeedID("test"), dispatcherID, 1, tableSpan, 0)
 		stm := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
+		stm.State = scheduler.SchedulerStatusWorking
 		sche.Working()[dispatcherID] = stm
 		stm.Primary = "node1"
 		sche.nodeTasks["node1"][dispatcherID] = stm
@@ -48,6 +49,7 @@ func TestNormalBlock(t *testing.T) {
 
 	var selectDispatcherID = common.NewDispatcherIDFromPB(blockedDispatcherIDS[2])
 	sche.nodeTasks["node2"][selectDispatcherID] = sche.nodeTasks["node1"][selectDispatcherID]
+	dropID := int64(sche.nodeTasks["node2"][selectDispatcherID].Inferior.(*ReplicaSet).Span.TableID)
 	delete(sche.nodeTasks["node1"], selectDispatcherID)
 
 	newSpan := &heartbeatpb.Table{TableID: 10, SchemaID: 1}
@@ -62,13 +64,13 @@ func TestNormalBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					BlockDispatchers: &heartbeatpb.InfluencedDispatchers{
+					BlockTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						DispatcherIDs: blockedDispatcherIDS,
+						TableIDs:      []int64{1, 2, 3},
 					},
-					NeedDroppedDispatchers: &heartbeatpb.InfluencedDispatchers{
+					NeedDroppedTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						DispatcherIDs: []*heartbeatpb.DispatcherID{selectDispatcherID.ToPB()},
+						TableIDs:      []int64{dropID},
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
@@ -79,13 +81,13 @@ func TestNormalBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					BlockDispatchers: &heartbeatpb.InfluencedDispatchers{
+					BlockTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						DispatcherIDs: blockedDispatcherIDS,
+						TableIDs:      []int64{1, 2, 3},
 					},
-					NeedDroppedDispatchers: &heartbeatpb.InfluencedDispatchers{
+					NeedDroppedTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						DispatcherIDs: []*heartbeatpb.DispatcherID{selectDispatcherID.ToPB()},
+						TableIDs:      []int64{dropID},
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
@@ -107,13 +109,13 @@ func TestNormalBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					BlockDispatchers: &heartbeatpb.InfluencedDispatchers{
+					BlockTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						DispatcherIDs: blockedDispatcherIDS,
+						TableIDs:      []int64{1, 2, 3},
 					},
-					NeedDroppedDispatchers: &heartbeatpb.InfluencedDispatchers{
+					NeedDroppedTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						DispatcherIDs: []*heartbeatpb.DispatcherID{selectDispatcherID.ToPB()},
+						TableIDs:      []int64{dropID},
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
@@ -139,13 +141,13 @@ func TestNormalBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					BlockDispatchers: &heartbeatpb.InfluencedDispatchers{
+					BlockTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						DispatcherIDs: blockedDispatcherIDS,
+						TableIDs:      []int64{1, 2, 3},
 					},
-					NeedDroppedDispatchers: &heartbeatpb.InfluencedDispatchers{
+					NeedDroppedTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						DispatcherIDs: []*heartbeatpb.DispatcherID{selectDispatcherID.ToPB()},
+						TableIDs:      []int64{dropID},
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
@@ -156,13 +158,13 @@ func TestNormalBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					BlockDispatchers: &heartbeatpb.InfluencedDispatchers{
+					BlockTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						DispatcherIDs: blockedDispatcherIDS,
+						TableIDs:      []int64{1, 2, 3},
 					},
-					NeedDroppedDispatchers: &heartbeatpb.InfluencedDispatchers{
+					NeedDroppedTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						DispatcherIDs: []*heartbeatpb.DispatcherID{selectDispatcherID.ToPB()},
+						TableIDs:      []int64{dropID},
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
@@ -214,8 +216,9 @@ func TestSchemaBlock(t *testing.T) {
 	sche.AddNewNode("node2")
 	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 1})
 	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 2})
-	sche.AddNewTable(common.Table{SchemaID: 2, TableID: 1})
+	sche.AddNewTable(common.Table{SchemaID: 2, TableID: 3})
 	var dispatcherIDs []*heartbeatpb.DispatcherID
+	var dropTables = []int64{1, 2}
 	for key, stm := range sche.Absent() {
 		if stm.Inferior.(*ReplicaSet).SchemaID == 1 {
 			dispatcherIDs = append(dispatcherIDs, key.ToPB())
@@ -237,13 +240,13 @@ func TestSchemaBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					BlockDispatchers: &heartbeatpb.InfluencedDispatchers{
+					BlockTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_DB,
 						SchemaID:      1,
 					},
-					NeedDroppedDispatchers: &heartbeatpb.InfluencedDispatchers{
+					NeedDroppedTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						DispatcherIDs: dispatcherIDs,
+						TableIDs:      dropTables,
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
@@ -267,13 +270,13 @@ func TestSchemaBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					BlockDispatchers: &heartbeatpb.InfluencedDispatchers{
+					BlockTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_DB,
 						SchemaID:      1,
 					},
-					NeedDroppedDispatchers: &heartbeatpb.InfluencedDispatchers{
+					NeedDroppedTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						DispatcherIDs: dispatcherIDs,
+						TableIDs:      dropTables,
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
@@ -304,13 +307,13 @@ func TestSchemaBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					BlockDispatchers: &heartbeatpb.InfluencedDispatchers{
+					BlockTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_DB,
 						SchemaID:      1,
 					},
-					NeedDroppedDispatchers: &heartbeatpb.InfluencedDispatchers{
+					NeedDroppedTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						DispatcherIDs: dispatcherIDs,
+						TableIDs:      dropTables,
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
@@ -377,8 +380,9 @@ func TestSyncPointBlock(t *testing.T) {
 	sche.AddNewNode("node2")
 	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 1})
 	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 2})
-	sche.AddNewTable(common.Table{SchemaID: 2, TableID: 1})
+	sche.AddNewTable(common.Table{SchemaID: 2, TableID: 3})
 	var dispatcherIDs []*heartbeatpb.DispatcherID
+	var dropTables = []int64{1, 2, 3}
 	for key, stm := range sche.Absent() {
 		dispatcherIDs = append(dispatcherIDs, key.ToPB())
 		stm.Primary = "node1"
@@ -400,13 +404,13 @@ func TestSyncPointBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					BlockDispatchers: &heartbeatpb.InfluencedDispatchers{
+					BlockTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_All,
 						SchemaID:      1,
 					},
-					NeedDroppedDispatchers: &heartbeatpb.InfluencedDispatchers{
+					NeedDroppedTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						DispatcherIDs: dispatcherIDs,
+						TableIDs:      dropTables,
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
@@ -417,13 +421,13 @@ func TestSyncPointBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					BlockDispatchers: &heartbeatpb.InfluencedDispatchers{
+					BlockTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_All,
 						SchemaID:      1,
 					},
-					NeedDroppedDispatchers: &heartbeatpb.InfluencedDispatchers{
+					NeedDroppedTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						DispatcherIDs: dispatcherIDs,
+						TableIDs:      dropTables,
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
@@ -447,13 +451,13 @@ func TestSyncPointBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					BlockDispatchers: &heartbeatpb.InfluencedDispatchers{
+					BlockTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_All,
 						SchemaID:      1,
 					},
-					NeedDroppedDispatchers: &heartbeatpb.InfluencedDispatchers{
+					NeedDroppedTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
-						DispatcherIDs: dispatcherIDs,
+						TableIDs:      dropTables,
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
@@ -516,7 +520,7 @@ func TestNonBlocked(t *testing.T) {
 	barrier := NewBarrier(sche)
 
 	var blockedDispatcherIDS []*heartbeatpb.DispatcherID
-	for id := 0; id < 3; id++ {
+	for id := 1; id < 4; id++ {
 		blockedDispatcherIDS = append(blockedDispatcherIDS, common.NewDispatcherID().ToPB())
 	}
 	msgs, err := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
@@ -527,8 +531,8 @@ func TestNonBlocked(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: false,
 					BlockTs:   10,
-					BlockDispatchers: &heartbeatpb.InfluencedDispatchers{
-						DispatcherIDs: blockedDispatcherIDS,
+					NeedDroppedTables: &heartbeatpb.InfluencedTables{
+						TableIDs:      []int64{1, 2, 3},
 						InfluenceType: heartbeatpb.InfluenceType_Normal,
 					},
 					NeedAddedTables: []*heartbeatpb.Table{
