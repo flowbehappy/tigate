@@ -90,7 +90,7 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer pdAPIClient.Close()
+	c.pdAPIClient = pdAPIClient
 	log.Info("create etcdCli", zap.Strings("endpoints", c.pdEndpoints))
 	// we do not pass a `context` to create an etcd client,
 	// to prevent it's cancelled when the server is closing.

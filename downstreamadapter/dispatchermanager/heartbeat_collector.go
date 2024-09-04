@@ -126,7 +126,7 @@ func (h *SchedulerDispatcherRequestHandler) Handle(scheduleDispatcherRequest *he
 	scheduleAction := scheduleDispatcherRequest.ScheduleAction
 	config := scheduleDispatcherRequest.Config
 	if scheduleAction == heartbeatpb.ScheduleAction_Create {
-		eventDispatcherManager.NewDispatcher(common.NewDispatcherIDFromPB(config.DispatcherID), &common.TableSpan{TableSpan: config.Span}, config.StartTs)
+		eventDispatcherManager.NewDispatcher(common.NewDispatcherIDFromPB(config.DispatcherID), config.Span, config.StartTs, config.SchemaID)
 	} else if scheduleAction == heartbeatpb.ScheduleAction_Remove {
 		eventDispatcherManager.RemoveDispatcher(common.NewDispatcherIDFromPB(config.DispatcherID))
 	}
@@ -134,7 +134,7 @@ func (h *SchedulerDispatcherRequestHandler) Handle(scheduleDispatcherRequest *he
 }
 
 type HeartBeatResponseHandler struct {
-	dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, *heartbeatpb.DispatcherStatus, *dispatcher.Dispatcher]
+	dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DispatcherStatusWithID, *dispatcher.Dispatcher]
 }
 
 func NewHeartBeatResponseHandler() HeartBeatResponseHandler {
@@ -148,7 +148,28 @@ func (h *HeartBeatResponseHandler) Path(HeartbeatResponse *heartbeatpb.HeartBeat
 func (h *HeartBeatResponseHandler) Handle(heartbeatResponse *heartbeatpb.HeartBeatResponse, eventDispatcherManager *EventDispatcherManager) bool {
 	dispatcherStatuses := heartbeatResponse.GetDispatcherStatuses()
 	for _, dispatcherStatus := range dispatcherStatuses {
-		h.dispatcherStatusDynamicStream.In() <- dispatcherStatus
+		influencedDispatchersType := dispatcherStatus.InfluencedDispatchers.InfluenceType
+		if influencedDispatchersType == heartbeatpb.InfluenceType_Normal {
+			for _, dispatcherID := range dispatcherStatus.InfluencedDispatchers.DispatcherIDs {
+				h.dispatcherStatusDynamicStream.In() <- dispatcher.NewDispatcherStatusWithID(dispatcherStatus, common.NewDispatcherIDFromPB(dispatcherID))
+			}
+		} else if influencedDispatchersType == heartbeatpb.InfluenceType_DB {
+			schemaID := dispatcherStatus.InfluencedDispatchers.SchemaID
+			excludeDispatcherID := common.NewDispatcherIDFromPB(dispatcherStatus.InfluencedDispatchers.ExcludeDispatcherId)
+			dispatcherIds := eventDispatcherManager.GetAllDispatchers(schemaID)
+			for _, id := range dispatcherIds {
+				if id != excludeDispatcherID {
+					h.dispatcherStatusDynamicStream.In() <- dispatcher.NewDispatcherStatusWithID(dispatcherStatus, id)
+				}
+			}
+		} else if influencedDispatchersType == heartbeatpb.InfluenceType_All {
+			excludeDispatcherID := common.NewDispatcherIDFromPB(dispatcherStatus.InfluencedDispatchers.ExcludeDispatcherId)
+			eventDispatcherManager.GetDispatcherMap().ForEach(func(id common.DispatcherID, _ *dispatcher.Dispatcher) {
+				if id != excludeDispatcherID {
+					h.dispatcherStatusDynamicStream.In() <- dispatcher.NewDispatcherStatusWithID(dispatcherStatus, id)
+				}
+			})
+		}
 	}
 
 	return false

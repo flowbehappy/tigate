@@ -75,6 +75,10 @@ type EventDispatcherManager struct {
 
 	heartBeatTask *HeartBeatTask
 
+	schemaIDToDispatchers *SchemaIDToDispatchers
+
+	tableTriggerEventDispatcherID *common.DispatcherID
+
 	tableEventDispatcherCount      prometheus.Gauge
 	metricCreateDispatcherDuration prometheus.Observer
 	metricCheckpointTs             prometheus.Gauge
@@ -95,6 +99,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 		statusesChan:                   make(chan *heartbeatpb.TableSpanStatus, 10000),
 		cancel:                         cancel,
 		config:                         cfConfig,
+		schemaIDToDispatchers:          newSchemaIDToDispatchers(),
 		tableEventDispatcherCount:      metrics.TableEventDispatcherGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCreateDispatcherDuration: metrics.CreateDispatcherDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCheckpointTs:             metrics.EventDispatcherManagerCheckpointTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
@@ -105,7 +110,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 
 	// TODO: 最后去更新一下 filter 的内部 NewFilter 函数，现在是在套壳适配
 	replicaConfig := cfg.ReplicaConfig{Filter: cfConfig.Filter}
-	filter, err := filter.NewFilter(&replicaConfig, cfConfig.TimeZone)
+	filter, err := filter.NewFilter(replicaConfig.Filter, cfConfig.TimeZone, replicaConfig.CaseSensitive)
 	if err != nil {
 		log.Error("create filter failed", zap.Error(err))
 		return nil
@@ -188,26 +193,28 @@ func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) 
 }
 */
 
-func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan *common.TableSpan, startTs uint64) *dispatcher.Dispatcher {
+func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTs uint64, schemaID int64) *dispatcher.Dispatcher {
 	start := time.Now()
 	if _, ok := e.dispatcherMap.Get(id); ok {
 		log.Debug("table span already exists", zap.Any("tableSpan", tableSpan))
 		return nil
 	}
 
-	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.filter)
+	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.filter, schemaID)
 
-	// TODO:暂时不收 ddl 的 event
-	if !tableSpan.Equal(&common.DDLSpan) {
-		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(
-			eventcollector.RegisterInfo{
-				Dispatcher:   dispatcher,
-				StartTs:      startTs,
-				FilterConfig: toFilterConfigPB(e.config.Filter),
-			},
-		)
+	if tableSpan.Equal(heartbeatpb.DDLSpan) {
+		e.tableTriggerEventDispatcherID = &id
+	} else {
+		e.schemaIDToDispatchers.Set(schemaID, id)
 	}
 
+	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(
+		eventcollector.RegisterInfo{
+			Dispatcher:   dispatcher,
+			StartTs:      startTs,
+			FilterConfig: toFilterConfigPB(e.config.Filter),
+		},
+	)
 	e.dispatcherMap.Set(id, dispatcher)
 	e.GetStatusesChan() <- &heartbeatpb.TableSpanStatus{
 		ID:              id.ToPB(),
@@ -286,8 +293,12 @@ func (e *EventDispatcherManager) RemoveDispatcher(id common.DispatcherID) {
 }
 
 // Only called when the dispatcher is removed successfully.
-func (e *EventDispatcherManager) cleanTableEventDispatcher(id common.DispatcherID) {
+func (e *EventDispatcherManager) cleanTableEventDispatcher(id common.DispatcherID, schemaID int64) {
 	e.dispatcherMap.Delete(id)
+	e.schemaIDToDispatchers.Delete(schemaID, id)
+	if e.tableTriggerEventDispatcherID != nil && *e.tableTriggerEventDispatcherID == id {
+		e.tableTriggerEventDispatcherID = nil
+	}
 	e.tableEventDispatcherCount.Dec()
 	log.Info("table event dispatcher completely stopped, and delete it from event dispatcher manager", zap.Any("dispatcher id", id))
 }
@@ -329,12 +340,9 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	}
 
 	toReomveDispatcherIDs := make([]common.DispatcherID, 0)
+	removeDispatcherSchemaIDs := make([]int64, 0)
 	heartBeatInfo := &dispatcher.HeartBeatInfo{}
 	e.dispatcherMap.ForEach(func(id common.DispatcherID, dispatcherItem *dispatcher.Dispatcher) {
-		// TODO:ddlSpan先不参与
-		if dispatcherItem.GetTableSpan().Equal(&common.DDLSpan) {
-			return
-		}
 		// If the dispatcher is in removing state, we need to check if it's closed successfully.
 		// If it's closed successfully, we could clean it up.
 		// TODO: we need to consider how to deal with the checkpointTs of the removed dispatcher if the message will be discarded.
@@ -351,6 +359,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 					CheckpointTs:    watermark.CheckpointTs,
 				})
 				toReomveDispatcherIDs = append(toReomveDispatcherIDs, id)
+				removeDispatcherSchemaIDs = append(removeDispatcherSchemaIDs, dispatcherItem.GetSchemaID())
 			}
 		}
 
@@ -365,14 +374,18 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 		}
 	})
 
-	for _, id := range toReomveDispatcherIDs {
-		e.cleanTableEventDispatcher(id)
+	for idx, id := range toReomveDispatcherIDs {
+		e.cleanTableEventDispatcher(id, removeDispatcherSchemaIDs[idx])
 	}
 	return &message
 }
 
 func (e *EventDispatcherManager) GetDispatcherMap() *DispatcherMap {
 	return e.dispatcherMap
+}
+
+func (e *EventDispatcherManager) GetSchemaIDToDispatchers() *SchemaIDToDispatchers {
+	return e.schemaIDToDispatchers
 }
 
 func (e *EventDispatcherManager) GetMaintainerID() messaging.ServerId {
@@ -399,6 +412,15 @@ func (e *EventDispatcherManager) SetMaintainerID(maintainerID messaging.ServerId
 	e.maintainerID = maintainerID
 }
 
+// Get all dispatchers id of the specified schemaID. Including the tableTriggerEventDispatcherID if exists.
+func (e *EventDispatcherManager) GetAllDispatchers(schemaID int64) []common.DispatcherID {
+	dispatcherIDs := e.GetSchemaIDToDispatchers().GetDispatcherIDs(schemaID)
+	if e.tableTriggerEventDispatcherID != nil {
+		dispatcherIDs = append(dispatcherIDs, *e.tableTriggerEventDispatcherID)
+	}
+	return dispatcherIDs
+}
+
 func (e *EventDispatcherManager) updateMetrics(ctx context.Context) error {
 	ticker := time.NewTicker(10 * time.Second)
 	e.wg.Add(1)
@@ -410,15 +432,10 @@ func (e *EventDispatcherManager) updateMetrics(ctx context.Context) error {
 				return
 			case <-ticker.C:
 				minResolvedTs := uint64(0)
-				e.dispatcherMap.m.Range(func(key, value interface{}) bool {
-					d, ok := value.(*dispatcher.Dispatcher)
-					if !ok {
-						return true
+				e.dispatcherMap.ForEach(func(_ common.DispatcherID, dispatcherItem *dispatcher.Dispatcher) {
+					if minResolvedTs == 0 || dispatcherItem.GetResolvedTs() < minResolvedTs {
+						minResolvedTs = dispatcherItem.GetResolvedTs()
 					}
-					if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
-						minResolvedTs = d.GetResolvedTs()
-					}
-					return true
 				})
 				if minResolvedTs == 0 {
 					continue
@@ -432,7 +449,6 @@ func (e *EventDispatcherManager) updateMetrics(ctx context.Context) error {
 	return nil
 }
 
-// 测一下用 sync.Map 的效果和普通的 map 相比
 type DispatcherMap struct {
 	m sync.Map
 }
@@ -473,4 +489,45 @@ func (d *DispatcherMap) ForEach(fn func(id common.DispatcherID, dispatcher *disp
 		fn(key.(common.DispatcherID), value.(*dispatcher.Dispatcher))
 		return true
 	})
+}
+
+type SchemaIDToDispatchers struct {
+	mutex sync.RWMutex
+	m     map[int64]map[common.DispatcherID]interface{}
+}
+
+func newSchemaIDToDispatchers() *SchemaIDToDispatchers {
+	return &SchemaIDToDispatchers{
+		m: make(map[int64]map[common.DispatcherID]interface{}),
+	}
+}
+
+func (s *SchemaIDToDispatchers) Set(schemaID int64, dispatcherID common.DispatcherID) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if _, ok := s.m[schemaID]; !ok {
+		s.m[schemaID] = make(map[common.DispatcherID]interface{})
+	}
+	s.m[schemaID][dispatcherID] = struct{}{}
+}
+
+func (s *SchemaIDToDispatchers) Delete(schemaID int64, dispatcherID common.DispatcherID) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if _, ok := s.m[schemaID]; ok {
+		delete(s.m[schemaID], dispatcherID)
+	}
+}
+
+func (s *SchemaIDToDispatchers) GetDispatcherIDs(schemaID int64) []common.DispatcherID {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	if ids, ok := s.m[schemaID]; ok {
+		dispatcherIDs := make([]common.DispatcherID, 0, len(ids))
+		for id := range ids {
+			dispatcherIDs = append(dispatcherIDs, id)
+		}
+		return dispatcherIDs
+	}
+	return nil
 }

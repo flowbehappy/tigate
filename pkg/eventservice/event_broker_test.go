@@ -19,7 +19,7 @@ func TestNewDispatcherStat(t *testing.T) {
 		startTs:   startTs,
 	}
 
-	stat := newDispatcherStat(startTs, info, func(c subscriptionChange) {})
+	stat := newDispatcherStat(startTs, info, func(c subscriptionChange) {}, nil)
 	require.Equal(t, info, stat.info)
 	require.Equal(t, startTs, stat.watermark.Load())
 	require.NotNil(t, stat.spanSubscription)
@@ -44,7 +44,7 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 		case notify <- c:
 		default:
 		}
-	})
+	}, nil)
 
 	// Case 1: no new events, only watermark change
 	wg.Add(1)
@@ -100,7 +100,7 @@ func TestScanTaskPool_PushTask(t *testing.T) {
 		startTs:   1000,
 		span:      span,
 	}
-	dispatcherStat := newDispatcherStat(dispatcherInfo.startTs, dispatcherInfo, func(c subscriptionChange) {})
+	dispatcherStat := newDispatcherStat(dispatcherInfo.startTs, dispatcherInfo, func(c subscriptionChange) {}, nil)
 	// Create two tasks with overlapping data ranges
 	task1 := &scanTask{
 		dispatcherStat: dispatcherStat,
@@ -157,9 +157,8 @@ func TestScanTaskPool_PushTask(t *testing.T) {
 
 }
 
-func newTableSpan(tableID uint64, start, end string) *common.TableSpan {
-	res := &common.TableSpan{}
-	res.TableSpan = &heartbeatpb.TableSpan{
+func newTableSpan(tableID uint64, start, end string) *heartbeatpb.TableSpan {
+	res := &heartbeatpb.TableSpan{
 		TableID:  tableID,
 		StartKey: []byte(start),
 		EndKey:   []byte(end),

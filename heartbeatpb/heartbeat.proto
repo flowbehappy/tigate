@@ -38,7 +38,7 @@ message ACK {
 }
 
 message DispatcherStatus {
-    DispatcherID ID = 1;
+    InfluencedDispatchers influencedDispatchers = 1;
     DispatcherAction action = 2;
     ACK ack = 3;
 }
@@ -57,6 +57,7 @@ message DispatcherConfig {
     TableSpan span = 1;
     uint64 startTs = 2;
     DispatcherID dispatcherID = 3;
+    int64 schemaID = 4;
 }
 
 message ScheduleDispatcherRequest {
@@ -110,9 +111,10 @@ message MaintainerBootstrapResponse {
 
 message BootstrapTableSpan {
     DispatcherID ID = 1;
-    TableSpan span = 2;
-    ComponentState component_status = 3;
-    uint64 checkpoint_ts = 4;
+    int64  SchemaID = 2;
+    TableSpan span = 3;
+    ComponentState component_status = 4;
+    uint64 checkpoint_ts = 5;
 }
 
 message MaintainerCloseRequest {
@@ -124,12 +126,33 @@ message MaintainerCloseResponse {
     bool success = 2;
 }
 
+enum InfluenceType {
+    All = 0;
+    DB = 1;
+    Normal = 2;
+}
+
+message InfluencedDispatchers {
+    InfluenceType InfluenceType = 1;
+    // only exist when type is normal
+	repeated DispatcherID DispatcherIDs = 2; 
+    // only exist when type is DB.
+	int64 SchemaID = 3;
+    // only exist when type is all or db, and in heartbeat response.
+    DispatcherID excludeDispatcherId = 4;
+}
+
+message Table {
+    int64 tableID = 1;
+    int64 schemaID = 2;
+}
+
 message State {
     bool IsBlocked      = 1;
     uint64 BlockTs         = 2;
-    repeated DispatcherID BlockDispatcherIDs = 3;
-    repeated DispatcherID NeedDroppedDispatcherIDs =4;
-    repeated TableSpan NeedAddedTableSpan = 5;
+    InfluencedDispatchers BlockDispatchers = 3;
+    InfluencedDispatchers NeedDroppedDispatchers =4;
+    repeated Table NeedAddedTables = 5;
 }
 
 message TableSpanStatus {

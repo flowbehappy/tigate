@@ -15,12 +15,14 @@ package logpuller
 
 import (
 	"context"
+	"math"
 	"sync"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/pdutil"
+	"go.uber.org/zap"
 )
 
 // LogPullerMultiSpan is a simple wrapper around LogPuller.
@@ -29,86 +31,90 @@ import (
 type LogPullerMultiSpan struct {
 	innerPuller *LogPuller
 
-	mu                sync.Mutex
-	spanResolvedTsMap *common.SpanHashMap[common.Ts]
-	// resolvedTs is the minimum resolved ts of all spans.
-	resolvedTs common.Ts
+	mu sync.Mutex
+
+	resolvedTsMap map[SubscriptionID]common.Ts
+
+	startTs common.Ts
 }
 
 func NewLogPullerMultiSpan(
-	client *SharedClient,
+	client *SubscriptionClient,
 	pdClock pdutil.Clock,
-	spans []common.TableSpan,
+	spans []heartbeatpb.TableSpan,
 	startTs common.Ts,
 	consume func(context.Context, *common.RawKVEntry) error,
-	config *LogPullerConfig,
 ) *LogPullerMultiSpan {
 	// TODO: remove this when we use a priority queue to maintain the resolved ts.(just check at least one span)
 	if len(spans) != 2 {
 		log.Panic("not supported")
 	}
-	spanResolvedTsMap := common.NewSpanHashMap[common.Ts]()
-	for _, span := range spans {
-		spanResolvedTsMap.ReplaceOrInsert(*span.TableSpan, 0)
-	}
 	pullerWrapper := &LogPullerMultiSpan{
-		spanResolvedTsMap: spanResolvedTsMap,
-		resolvedTs:        common.Ts(startTs),
+		resolvedTsMap: make(map[SubscriptionID]common.Ts),
+		startTs:       startTs,
 	}
 
-	consumeWrapper := func(ctx context.Context, entry *common.RawKVEntry, span heartbeatpb.TableSpan) error {
+	// consumeWrapper may be called concurrently
+	consumeWrapper := func(ctx context.Context, entry *common.RawKVEntry, subID SubscriptionID) error {
 		if entry == nil {
 			return nil
 		}
 		if entry.IsResolved() {
-			if pullerWrapper.tryUpdateGlobalResolvedTs(entry, span) {
-				return consume(ctx, entry)
+			if ts := pullerWrapper.tryUpdateGlobalResolvedTs(entry, subID); ts != 0 {
+				return consume(ctx, &common.RawKVEntry{
+					OpType: common.OpTypeResolved,
+					CRTs:   uint64(ts),
+				})
 			}
 			return nil
 		}
 		return consume(ctx, entry)
 	}
 
-	pullerWrapper.innerPuller = NewLogPuller(client, pdClock, consumeWrapper, config)
+	pullerWrapper.innerPuller = NewLogPuller(client, pdClock, consumeWrapper)
+	for _, span := range spans {
+		subID := pullerWrapper.innerPuller.Subscribe(span, pullerWrapper.startTs)
+		pullerWrapper.resolvedTsMap[subID] = 0
+	}
 	return pullerWrapper
 }
 
 func (p *LogPullerMultiSpan) Run(ctx context.Context) error {
-	p.mu.Lock()
-	p.spanResolvedTsMap.Range(func(span heartbeatpb.TableSpan, ts common.Ts) bool {
-		p.innerPuller.Subscribe(span, p.resolvedTs)
-		return true
-	})
-	p.mu.Unlock()
-
 	return p.innerPuller.Run(ctx)
 }
 
+func (p *LogPullerMultiSpan) Close(ctx context.Context) error {
+	return p.innerPuller.Close(ctx)
+}
+
 // return whether the global resolved ts of all spans is updated
-func (p *LogPullerMultiSpan) tryUpdateGlobalResolvedTs(entry *common.RawKVEntry, span heartbeatpb.TableSpan) bool {
+func (p *LogPullerMultiSpan) tryUpdateGlobalResolvedTs(entry *common.RawKVEntry, subID SubscriptionID) common.Ts {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	// FIXME: use priority queue to maintain resolved ts
-	ts, ok := p.spanResolvedTsMap.Get(span)
+	ts, ok := p.resolvedTsMap[subID]
 	if !ok {
-		log.Panic("unknown span, should not happen")
+		log.Panic("unknown zubscriptionID, should not happen",
+			zap.Uint64("subID", uint64(subID)))
 	}
 	if ts > common.Ts(entry.CRTs) {
-		log.Panic("resolved ts should not fallback")
+		log.Panic("resolved ts should not fallback",
+			zap.Uint64("oldResolvedTs", uint64(ts)),
+			zap.Uint64("newResolvedTs", entry.CRTs))
 	}
-	p.spanResolvedTsMap.ReplaceOrInsert(span, common.Ts(entry.CRTs))
+	p.resolvedTsMap[subID] = common.Ts(entry.CRTs)
 
-	currentResolvedTs := common.Ts(0)
-	p.spanResolvedTsMap.Range(func(_ heartbeatpb.TableSpan, v common.Ts) bool {
-		if currentResolvedTs == 0 || v < currentResolvedTs {
+	currentResolvedTs := common.Ts(math.MaxUint64)
+	for _, v := range p.resolvedTsMap {
+		if v < currentResolvedTs {
 			currentResolvedTs = v
 		}
-		return true
-	})
-	// currentResolvedTs may be 0 if some span have not received resolved ts yet
-	if p.resolvedTs < currentResolvedTs {
-		p.resolvedTs = currentResolvedTs
-		return true
 	}
-	return false
+	if currentResolvedTs == math.MaxUint64 {
+		log.Panic("should not happen")
+	}
+	if currentResolvedTs > p.startTs {
+		return currentResolvedTs
+	}
+	return 0
 }

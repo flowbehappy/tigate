@@ -83,9 +83,29 @@ Mainly about the progress of each dispatcher:
 type HeartBeatInfo struct {
 	heartbeatpb.Watermark
 	Id              common.DispatcherID
-	TableSpan       *common.TableSpan
+	TableSpan       *heartbeatpb.TableSpan
 	ComponentStatus heartbeatpb.ComponentState
 	IsRemoving      bool
+}
+
+type DispatcherStatusWithID struct {
+	id     common.DispatcherID
+	status *heartbeatpb.DispatcherStatus
+}
+
+func NewDispatcherStatusWithID(dispatcherStatus *heartbeatpb.DispatcherStatus, dispatcherID common.DispatcherID) DispatcherStatusWithID {
+	return DispatcherStatusWithID{
+		status: dispatcherStatus,
+		id:     dispatcherID,
+	}
+}
+
+func (d *DispatcherStatusWithID) GetDispatcherStatus() *heartbeatpb.DispatcherStatus {
+	return d.status
+}
+
+func (d *DispatcherStatusWithID) GetDispatcherID() common.DispatcherID {
+	return d.id
 }
 
 // DispatcherStatusHandler is used to handle the DispatcherStatus event.
@@ -97,12 +117,12 @@ type HeartBeatInfo struct {
 type DispatcherStatusHandler struct {
 }
 
-func (h *DispatcherStatusHandler) Path(event *heartbeatpb.DispatcherStatus) common.DispatcherID {
-	return common.NewDispatcherIDFromPB(event.ID)
+func (h *DispatcherStatusHandler) Path(event DispatcherStatusWithID) common.DispatcherID {
+	return event.GetDispatcherID()
 }
 
-func (h *DispatcherStatusHandler) Handle(event *heartbeatpb.DispatcherStatus, dispatcher *Dispatcher) (await bool) {
-	dispatcher.HandleDispatcherStatus(event)
+func (h *DispatcherStatusHandler) Handle(event DispatcherStatusWithID, dispatcher *Dispatcher) (await bool) {
+	dispatcher.HandleDispatcherStatus(event.GetDispatcherStatus())
 	return false
 }
 
@@ -223,10 +243,10 @@ func SetDispatcherEventsDynamicStream(dynamicStream dynstream.DynamicStream[comm
 	dispatcherEventsDynamicStream = dynamicStream
 }
 
-var dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, *heartbeatpb.DispatcherStatus, *Dispatcher]
+var dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithID, *Dispatcher]
 var dispatcherStatusDynamicStreamOnce sync.Once
 
-func GetDispatcherStatusDynamicStream() dynstream.DynamicStream[common.DispatcherID, *heartbeatpb.DispatcherStatus, *Dispatcher] {
+func GetDispatcherStatusDynamicStream() dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithID, *Dispatcher] {
 	if dispatcherStatusDynamicStream == nil {
 		dispatcherStatusDynamicStreamOnce.Do(func() {
 			dispatcherStatusDynamicStream = dynstream.NewDynamicStreamDefault(&DispatcherStatusHandler{})
@@ -236,6 +256,6 @@ func GetDispatcherStatusDynamicStream() dynstream.DynamicStream[common.Dispatche
 	return dispatcherStatusDynamicStream
 }
 
-func SetDispatcherStatusDynamicStream(dynamicStream dynstream.DynamicStream[common.DispatcherID, *heartbeatpb.DispatcherStatus, *Dispatcher]) {
+func SetDispatcherStatusDynamicStream(dynamicStream dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithID, *Dispatcher]) {
 	dispatcherStatusDynamicStream = dynamicStream
 }

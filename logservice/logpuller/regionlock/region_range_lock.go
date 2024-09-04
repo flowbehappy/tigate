@@ -64,7 +64,7 @@ type LockRangeResult struct {
 // LockedRangeState is used to access the real-time state changes of a locked range.
 type LockedRangeState struct {
 	ResolvedTs  atomic.Uint64
-	Initialzied atomic.Bool
+	Initialized atomic.Bool
 	Created     time.Time
 }
 
@@ -109,7 +109,7 @@ type RangeLock struct {
 	// ID to identify different RangeLock instances, so logs of different instances can be distinguished.
 	id uint64
 	// totalSpan is the total range of the table, totalSpan = unlockedRanges + lockedRanges
-	totalSpan common.TableSpan
+	totalSpan heartbeatpb.TableSpan
 
 	mu sync.RWMutex
 	// unlockedRanges is used to store the resolvedTs of unlocked ranges.
@@ -127,10 +127,8 @@ func NewRangeLock(
 	startKey, endKey []byte, startTs uint64,
 ) *RangeLock {
 	return &RangeLock{
-		id: id,
-		totalSpan: common.TableSpan{
-			TableSpan: &heartbeatpb.TableSpan{StartKey: startKey, EndKey: endKey},
-		},
+		id:                     id,
+		totalSpan:              heartbeatpb.TableSpan{StartKey: startKey, EndKey: endKey},
 		unlockedRanges:         newRangeTsMap(startKey, endKey, startTs),
 		lockedRanges:           btree.NewG(16, rangeLockEntryLess),
 		regionIDToLockedRanges: make(map[uint64]*rangeLockEntry),
@@ -286,7 +284,7 @@ type LockedRangeStatistic struct {
 
 // UnLockRangeStatistic represents a range that is unlocked.
 type UnLockRangeStatistic struct {
-	Span       common.TableSpan
+	Span       heartbeatpb.TableSpan
 	ResolvedTs uint64
 }
 
@@ -308,9 +306,7 @@ func (l *RangeLock) IterAll(
 		}
 
 		if common.EndCompare(lastEnd, item.startKey) < 0 {
-			span := common.TableSpan{
-				TableSpan: &heartbeatpb.TableSpan{StartKey: lastEnd, EndKey: item.startKey},
-			}
+			span := heartbeatpb.TableSpan{StartKey: lastEnd, EndKey: item.startKey}
 			ts := l.unlockedRanges.getMinTsInRange(lastEnd, item.startKey)
 			r.UnLockedRanges = append(r.UnLockedRanges, UnLockRangeStatistic{Span: span, ResolvedTs: ts})
 		}
@@ -318,22 +314,20 @@ func (l *RangeLock) IterAll(
 		if resolvedTs > r.FastestRegion.ResolvedTs {
 			r.FastestRegion.RegionID = item.regionID
 			r.FastestRegion.ResolvedTs = resolvedTs
-			r.FastestRegion.Initialized = item.lockedRangeState.Initialzied.Load()
+			r.FastestRegion.Initialized = item.lockedRangeState.Initialized.Load()
 			r.FastestRegion.Created = item.lockedRangeState.Created
 		}
 		if resolvedTs < r.SlowestRegion.ResolvedTs {
 			r.SlowestRegion.RegionID = item.regionID
 			r.SlowestRegion.ResolvedTs = resolvedTs
-			r.SlowestRegion.Initialized = item.lockedRangeState.Initialzied.Load()
+			r.SlowestRegion.Initialized = item.lockedRangeState.Initialized.Load()
 			r.SlowestRegion.Created = item.lockedRangeState.Created
 		}
 		lastEnd = item.endKey
 		return true
 	})
 	if common.EndCompare(lastEnd, l.totalSpan.EndKey) < 0 {
-		span := common.TableSpan{
-			TableSpan: &heartbeatpb.TableSpan{StartKey: lastEnd, EndKey: l.totalSpan.EndKey},
-		}
+		span := heartbeatpb.TableSpan{StartKey: lastEnd, EndKey: l.totalSpan.EndKey}
 		ts := l.unlockedRanges.getMinTsInRange(lastEnd, l.totalSpan.EndKey)
 		r.UnLockedRanges = append(r.UnLockedRanges, UnLockRangeStatistic{Span: span, ResolvedTs: ts})
 	}
@@ -343,15 +337,13 @@ func (l *RangeLock) IterAll(
 // IterForTest iterates all locked ranges in the RangeLock and performs the action on each locked range.
 // It is used for testing only.
 func (l *RangeLock) IterForTest(
-	action func(regionID, version uint64, state *LockedRangeState, span common.TableSpan),
+	action func(regionID, version uint64, state *LockedRangeState, span heartbeatpb.TableSpan),
 ) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	l.lockedRanges.Ascend(func(item *rangeLockEntry) bool {
 		if action != nil {
-			span := common.TableSpan{
-				TableSpan: &heartbeatpb.TableSpan{StartKey: item.startKey, EndKey: item.endKey},
-			}
+			span := heartbeatpb.TableSpan{StartKey: item.startKey, EndKey: item.endKey}
 			action(item.regionID, item.regionVersion, &item.lockedRangeState, span)
 		}
 		return true

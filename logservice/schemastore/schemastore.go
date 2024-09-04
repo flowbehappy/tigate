@@ -3,13 +3,13 @@ package schemastore
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -28,12 +29,14 @@ type SchemaStore interface {
 	common.SubModule
 
 	// TODO: add filter
-	GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]common.TableID, error)
+	GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]common.Table, error)
 
 	// RegisterDispatcher register the dispatcher into the schema store.
 	// TODO: return a table info
-	// TODO: add filter
-	RegisterDispatcher(dispatcherID common.DispatcherID, tableID common.TableID, ts common.Ts) error
+	RegisterDispatcher(
+		dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan,
+		startTS common.Ts, filter filter.Filter,
+	) error
 
 	// TODO: add interface for TableEventDispatcher
 
@@ -45,7 +48,9 @@ type SchemaStore interface {
 
 	GetTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error)
 
-	GetNextDDLEvent(dispatcherID common.DispatcherID) (*DDLEvent, common.Ts, error)
+	// GetNextDDLEvents returns the next ddl event which finishedTs is within the range (start, end]
+	GetNextDDLEvents(id common.TableID, start, end common.Ts) ([]common.DDLEvent, common.Ts, error)
+	GetNextTableTriggerEvents(f filter.Filter, start common.Ts, limit int) ([]common.DDLEvent, common.Ts, error)
 }
 
 type schemaStore struct {
@@ -83,6 +88,8 @@ type schemaStore struct {
 	// dispatcherID -> dispatch info
 	// TODO: how to deal with table event dispatchers？
 	dispatchersMap DispatcherInfoMap
+
+	tableTriggerDispatcherMap map[common.DispatcherID]*ddlListWithFilter
 }
 
 func NewSchemaStore(
@@ -148,7 +155,7 @@ func (s *schemaStore) Run(ctx context.Context) error {
 }
 
 func (s *schemaStore) Close(ctx context.Context) error {
-	return nil
+	return s.ddlJobFetcher.close(ctx)
 }
 
 func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
@@ -213,6 +220,7 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 					if err != nil {
 						log.Fatal("write ddl event failed", zap.Error(err))
 					}
+					s.handleTriggerEvent(event)
 					s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
 					s.finishedDDLTS = event.Job.BinlogInfo.FinishedTS
 				}
@@ -225,14 +233,14 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 	}
 }
 
-func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts, f filter.Filter) ([]common.TableID, error) {
+func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts, f filter.Filter) ([]common.Table, error) {
 	meta := logpuller.GetSnapshotMeta(s.storage, uint64(snapTs))
 	dbinfos, err := meta.ListDatabases()
 	if err != nil {
 		log.Fatal("list databases failed", zap.Error(err))
 	}
 
-	tableIDs := make([]common.TableID, 0)
+	tables := make([]common.Table, 0)
 
 	for _, dbinfo := range dbinfos {
 		if filter.IsSysSchema(dbinfo.Name.O) ||
@@ -257,15 +265,20 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts, f filter.Filter) ([
 			if f != nil && f.ShouldIgnoreTable(dbinfo.Name.O, tbName.Name.O) {
 				continue
 			}
-			tableIDs = append(tableIDs, common.TableID(tbName.ID))
+			tables = append(tables, common.Table{
+				SchemaID: dbinfo.ID,
+				TableID:  tbName.ID,
+			})
 		}
 	}
 
-	return tableIDs, nil
+	return tables, nil
 }
 
 func (s *schemaStore) RegisterDispatcher(
-	dispatcherID common.DispatcherID, tableID common.TableID, startTS common.Ts,
+	dispatcherID common.DispatcherID,
+	span *heartbeatpb.TableSpan, startTS common.Ts,
+	filter filter.Filter, /* only for table trigger dispatcher */
 ) error {
 	s.mu.Lock()
 	// TODO: fix me in the future
@@ -276,13 +289,26 @@ func (s *schemaStore) RegisterDispatcher(
 			zap.Uint64("gcTs", uint64(s.dataStorage.getGCTS())))
 	}
 
+	if span.Equal(heartbeatpb.DDLSpan) {
+		if _, ok := s.tableTriggerDispatcherMap[dispatcherID]; ok {
+			s.mu.Unlock()
+			return errors.New("table trigger dispatcher already exists")
+		}
+		s.tableTriggerDispatcherMap[dispatcherID] = &ddlListWithFilter{
+			events: make([]DDLEvent, 0),
+			filter: filter,
+		}
+		// TODO: restore the ddl event list from the persistent storage
+		s.mu.Unlock()
+		return nil
+	}
+
+	tableID := common.TableID(span.TableID)
 	s.dispatchersMap[dispatcherID] = DispatcherInfo{
 		tableID: tableID,
-		// filter:  filter,
 	}
 	getSchemaName := func(schemaID int64) (string, error) {
 		s.mu.RLock()
-
 		defer func() {
 			s.mu.RUnlock()
 		}()
@@ -418,8 +444,12 @@ func (s *schemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*commo
 	return store.getTableInfo(ts)
 }
 
-func (s *schemaStore) GetNextDDLEvent(dispatcherID common.DispatcherID) (*DDLEvent, common.Ts, error) {
-	return nil, 0, nil
+func (s *schemaStore) GetNextDDLEvents(id common.TableID, start, end common.Ts) ([]common.DDLEvent, common.Ts, error) {
+	return nil, end, nil
+}
+
+func (s *schemaStore) GetNextTableTriggerEvents(f filter.Filter, start common.Ts, limit int) ([]common.DDLEvent, common.Ts, error) {
+	return nil, s.maxResolvedTS.Load(), nil
 }
 
 func (s *schemaStore) writeDDLEvent(ddlEvent DDLEvent) error {
@@ -440,6 +470,16 @@ func (s *schemaStore) doGC() error {
 	gcTs := common.Ts(0)
 	// TODO: gc databaseMap
 	return s.dataStorage.gc(gcTs)
+}
+
+// handleTriggerEvent should be called with s.mu.Lock()
+func (s *schemaStore) handleTriggerEvent(event DDLEvent) {
+	for _, trigger := range s.tableTriggerDispatcherMap {
+		if trigger.filter.ShouldDiscardDDL(event.Job.Type, event.Job.SchemaName, event.Job.TableName) {
+			continue
+		}
+		trigger.events = append(trigger.events, event)
+	}
 }
 
 func handleResolvedDDLJob(job *model.Job, databaseMap DatabaseInfoMap, tableInfoStoreMap TableInfoStoreMap) error {

@@ -14,65 +14,19 @@
 package common
 
 import (
-	"bytes"
-	"encoding/hex"
 	"fmt"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 )
 
-// TableSpan implement the InferiorID interface, it is the replicate unit,
-// it can be a partial table region is the split table feature is enable for kafka sink
-type TableSpan struct {
-	*heartbeatpb.TableSpan
-}
-
-// DDLSpan is the special span for Table Trigger Event Dispatcher
-var DDLSpan = TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 0, StartKey: nil, EndKey: nil}}
-
-// Less compares two Spans, defines the order between spans.
-func (s *TableSpan) Less(inferior any) bool {
-	tbl := inferior.(*TableSpan)
-	if s.TableID < tbl.TableID {
-		return true
-	}
-	if bytes.Compare(s.StartKey, tbl.StartKey) < 0 {
-		return true
-	}
-	return false
-}
-
-func (s *TableSpan) String() string {
-	return fmt.Sprintf("id: %d, startKey: %s, endKey: %s",
-		s.TableID, hex.EncodeToString(s.StartKey),
-		hex.EncodeToString(s.EndKey))
-}
-
-func (s *TableSpan) Equal(inferior any) bool {
-	tbl := inferior.(*TableSpan)
-	return s.TableID == tbl.TableID &&
-		bytes.Equal(s.StartKey, tbl.StartKey) &&
-		bytes.Equal(s.EndKey, tbl.EndKey)
-}
-
-func (s *TableSpan) Copy() *TableSpan {
-	return &TableSpan{
-		TableSpan: &heartbeatpb.TableSpan{
-			TableID:  s.TableID,
-			StartKey: s.StartKey,
-			EndKey:   s.EndKey,
-		},
-	}
-}
-
 type DataRange struct {
 	ClusterID uint64
-	Span      *TableSpan
+	Span      *heartbeatpb.TableSpan
 	StartTs   uint64
 	EndTs     uint64
 }
 
-func NewDataRange(clusterID uint64, span *TableSpan, startTs, endTs uint64) *DataRange {
+func NewDataRange(clusterID uint64, span *heartbeatpb.TableSpan, startTs, endTs uint64) *DataRange {
 	return &DataRange{
 		ClusterID: clusterID,
 		Span:      span,

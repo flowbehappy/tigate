@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
-	"database/sql"
-	"fmt"
 	"net/http"
+	_ "net/http/pprof"
 	"strconv"
 	"sync"
+	"testing"
 	"time"
 
+	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -18,12 +19,13 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	ticonfig "github.com/pingcap/tiflow/pkg/config"
 	"go.uber.org/zap"
 )
 
 const totalCount = 500
-const dispatcherCount = 1000
-const databaseCount = 20
+const dispatcherCount = 100000
+const databaseCount = 1
 
 func initContext(serverId messaging.ServerId) {
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(context.Background(), serverId, 100, config.NewDefaultMessageCenterConfig()))
@@ -31,52 +33,58 @@ func initContext(serverId messaging.ServerId) {
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(serverId))
 }
 
-func pushDataIntoDispatcher(db_index int, dispatcherId int, eventDispatcherManager *dispatchermanager.EventDispatcherManager, tableSpan *common.TableSpan) {
-	var IndexColumnsOffset [][]int
-	var offset []int
-	offset = append(offset, 0)
-	IndexColumnsOffset = append(IndexColumnsOffset, offset)
-	for count := 0; count < totalCount; count++ {
-		event := common.TxnEvent{
-			StartTs:  uint64(count) + 10,
-			CommitTs: uint64(count) + 11,
+var eventPool = sync.Pool{
+	New: func() interface{} {
+		return common.TxnEvent{
+			StartTs:  0,
+			CommitTs: 0,
 			Rows: []*common.RowChangedEvent{
 				{
 					TableInfo: &common.TableInfo{
 						TableName: common.TableName{
-							Schema: "test_schema_" + strconv.Itoa(db_index),
-							Table:  "test_table_" + strconv.Itoa(dispatcherId),
+							Schema: "test_schema_1",
+							Table:  "test_table_",
 						},
-						IndexColumnsOffset: IndexColumnsOffset,
 					},
 					Columns: []*common.Column{
-						{Name: "id", Value: count, Flag: common.HandleKeyFlag | common.PrimaryKeyFlag},
+						{Name: "id", Value: 0, Flag: common.HandleKeyFlag | common.PrimaryKeyFlag},
 						{Name: "name", Value: "Alice"},
-						{Name: "age", Value: dispatcherId % 50},
+						{Name: "age", Value: 0},
 						{Name: "gender", Value: "female"},
 					},
-					PhysicalTableID: int64(db_index*dispatcherCount + dispatcherId),
+					PhysicalTableID: 0,
 				},
 			},
 		}
+	},
+}
 
-		dispatcherItem, ok := eventDispatcherManager.GetDispatcherMap().Get(tableSpan)
-		if ok {
-			dispatcherItem.PushTxnEvent(&event)
-			dispatcherItem.UpdateResolvedTs(uint64(count) + 11)
-		} else {
-			log.Error("dispatcher not found")
+func pushDataIntoDispatchers(dispatcherIDSet map[common.DispatcherID]interface{}) {
+	// 因为开了 dryrun，所以不用避免冲突，随便写'
+	dispatcherEventsDynamicStream := dispatcher.GetDispatcherEventsDynamicStream()
+	for count := 1; count <= totalCount; count++ {
+		idx := 0
+		for id, _ := range dispatcherIDSet {
+			event := eventPool.Get().(common.TxnEvent)
+			event.StartTs = uint64(count) + 10
+			event.CommitTs = uint64(count) + 11
+			event.Rows[0].Columns[0].Value = count
+			event.Rows[0].Columns[2].Value = idx % 50
+			event.DispatcherID = id
+			event.Rows[0].PhysicalTableID = int64(idx)
+
+			dispatcherEventsDynamicStream.In() <- &event
+
+			eventPool.Put(event)
 		}
 	}
-	//log.Info("Finish Pushing All data into dispatcher", zap.Any("dispatcher id", dispatcherId))
+	log.Info("finished to push data into dispatchers")
 }
-func main() {
+func TestDownstream(t *testing.T) {
 	go func() {
-		http.ListenAndServe("localhost:6060", nil)
+		http.ListenAndServe("0.0.0.0:6100", nil)
 	}()
-	createTables(dispatcherCount/100, databaseCount)
-
-	time.Sleep(10 * time.Second)
+	//createTables(dispatcherCount/100, databaseCount)
 
 	serverId := messaging.ServerId("test")
 	initContext(serverId)
@@ -86,28 +94,28 @@ func main() {
 
 	managerMap := make(map[int]*dispatchermanager.EventDispatcherManager)
 
+	dispatcherIDSet := make(map[common.DispatcherID]interface{})
+	var mutex sync.Mutex
 	for db_index := 0; db_index < databaseCount; db_index++ {
 		changefeedConfig := config.ChangefeedConfig{
-			SinkURI: "tidb://root:@127.0.0.1:4000",
+			SinkURI: "tidb://root:@127.0.0.1:4000?dry-run=true",
+			Filter:  &ticonfig.FilterConfig{},
 		}
 		changefeedID := model.DefaultChangeFeedID("test" + strconv.Itoa(db_index))
 		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, &changefeedConfig, serverId)
 		managerMap[db_index] = eventDispatcherManager
-		//appcontext.GetService[*heartbeatcollector.HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(eventDispatcherManager)
-
-		tableSpanMap := make(map[uint64]*common.TableSpan)
-		var mutex sync.Mutex
 
 		for i := 0; i < dispatcherCount; i++ {
-			tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(db_index*dispatcherCount + i)}}
-			mutex.Lock()
-			tableSpanMap[uint64(i)] = tableSpan
-			mutex.Unlock()
 			wg.Add(1)
-			go func(tableSpan *common.TableSpan, wg *sync.WaitGroup) {
+			go func(wg *sync.WaitGroup) {
 				defer wg.Done()
-				eventDispatcherManager.NewTableEventDispatcher(tableSpan, 0)
-			}(tableSpan, &wg)
+				tableSpan := &heartbeatpb.TableSpan{TableID: uint64(db_index*dispatcherCount + i)}
+				dispatcherID := common.NewDispatcherID()
+				mutex.Lock()
+				dispatcherIDSet[dispatcherID] = nil
+				mutex.Unlock()
+				eventDispatcherManager.NewDispatcher(dispatcherID, tableSpan, 0, 1)
+			}(&wg)
 		}
 	}
 
@@ -115,54 +123,34 @@ func main() {
 	log.Info("test begin", zap.Any("create dispatcher cost time", time.Since(start)))
 
 	// 插入数据, 先固定 data 格式
-	for db_index := 0; db_index < databaseCount; db_index++ {
-		eventDispatcherManager := managerMap[db_index]
-		for i := 0; i < dispatcherCount; i++ {
-			tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(db_index*dispatcherCount + i)}}
-			// eventDispatcherManager.NewTableEventDispatcher(tableSpan, 0)
-			go pushDataIntoDispatcher(db_index, i, eventDispatcherManager, tableSpan)
-		}
-	}
+	go pushDataIntoDispatchers(dispatcherIDSet)
 
-	var finishVec [][]bool
-	for db_index := 0; db_index < databaseCount; db_index++ {
-		vec := make([]bool, dispatcherCount)
-		for i := 0; i < dispatcherCount; i++ {
-			vec[i] = false
-		}
-		finishVec = append(finishVec, vec)
-	}
 	finishCount := 0
+	finishVec := make([]bool, databaseCount)
+	for db_index := 0; db_index < databaseCount; db_index++ {
+		finishVec[db_index] = false
+	}
 	for {
 		for db_index := 0; db_index < databaseCount; db_index++ {
+			if finishVec[db_index] {
+				continue
+			}
 			eventDispatcherManager := managerMap[db_index]
-			for i := 0; i < dispatcherCount; i++ {
-				if !finishVec[db_index][i] {
-					tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(db_index*dispatcherCount + i)}}
-					dispatcherItem, ok := eventDispatcherManager.GetDispatcherMap().Get(tableSpan)
-					if ok {
-						checkpointTs := dispatcherItem.GetCheckpointTs()
-						//log.Info("progress is ", zap.Any("dispatcher id", i), zap.Any("checkpointTs", checkpointTs))
-						if checkpointTs == uint64(totalCount)+10 {
-							finishVec[db_index][i] = true
-							//log.Info("One dispatcher is finished", zap.Any("dispatcher id", i))
-							finishCount += 1
-							if finishCount == dispatcherCount*databaseCount {
-								log.Info("All data consuming is finished")
-								return
-							}
-						}
-					} else {
-						log.Error("dispatcher not found")
-					}
+			message := eventDispatcherManager.CollectHeartbeatInfo(false)
+			checkpointTs := message.Watermark.CheckpointTs
+			if checkpointTs == uint64(totalCount)+10 {
+				finishVec[db_index] = true
+				finishCount++
+				if finishCount == databaseCount {
+					log.Info("All data consuming is finished")
+					return
 				}
 			}
 		}
 	}
-
-	//log.Info("All data consuming is finished")
 }
 
+/*
 func createTables(tables int, db int) {
 	// host := flag.String("host", "127.0.0.1", "host")
 	// port := flag.Int("port", 4000, "port")
@@ -295,3 +283,4 @@ func createTable(db *sql.Conn, wg *sync.WaitGroup, idx int, tableCnt int, tableN
 	}
 	wg.Done()
 }
+*/

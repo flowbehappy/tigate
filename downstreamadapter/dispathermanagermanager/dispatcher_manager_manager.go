@@ -105,7 +105,8 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 	manager.GetDispatcherMap().ForEach(func(id common.DispatcherID, tableEventDispatcher *dispatcher.Dispatcher) {
 		response.Spans = append(response.Spans, &heartbeatpb.BootstrapTableSpan{
 			ID:              id.ToPB(),
-			Span:            tableEventDispatcher.GetTableSpan().TableSpan,
+			SchemaID:        tableEventDispatcher.GetSchemaID(),
+			Span:            tableEventDispatcher.GetTableSpan(),
 			ComponentStatus: tableEventDispatcher.GetComponentStatus(),
 			CheckpointTs:    tableEventDispatcher.GetCheckpointTs(),
 		})

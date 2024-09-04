@@ -60,7 +60,7 @@ The workflow related to the dispatcher is as follows:
 
 type Dispatcher struct {
 	id        common.DispatcherID
-	tableSpan *common.TableSpan
+	tableSpan *heartbeatpb.TableSpan
 	sink      sink.Sink
 
 	statusesChan chan *heartbeatpb.TableSpanStatus
@@ -82,9 +82,11 @@ type Dispatcher struct {
 
 	resendTask                  *ResendTask
 	checkTableProgressEmptyTask *CheckProgressEmptyTask
+
+	schemaID int64
 }
 
-func NewDispatcher(id common.DispatcherID, tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter) *Dispatcher {
+func NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, sink sink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter, schemaID int64) *Dispatcher {
 	dispatcher := &Dispatcher{
 		id:           id,
 		tableSpan:    tableSpan,
@@ -98,6 +100,7 @@ func NewDispatcher(id common.DispatcherID, tableSpan *common.TableSpan, sink sin
 		isRemoving:      atomic.Bool{},
 		ddlPendingEvent: nil,
 		tableProgress:   types.NewTableProgress(),
+		schemaID:        schemaID,
 	}
 
 	dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
@@ -183,27 +186,22 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 	}
 }
 
-func (d *Dispatcher) HandleEvent(event common.Event) bool {
+func (d *Dispatcher) HandleEvent(event common.Event) (block bool) {
 	switch event.GetType() {
-	// case common.TypeTxnEvent:
-	// 	event := event.(*common.TxnEvent)
-	// 	if event.IsDMLEvent() {
-	// 		d.sink.AddDMLEvent(event, d.tableProgress)
-	// 		return false
-	// 	} else if event.IsDDLEvent() {
-	// 		event.PostTxnFlushed = append(event.PostTxnFlushed, func() {
-	// 			dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
-	// 			dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
-	// 		})
-	// 		d.AddDDLEventToSinkWhenAvailable(event)
-	// 		return true
-	// 	}
 	case common.TypeResolvedEvent:
 		d.resolvedTs.Set(event.(common.ResolvedEvent).ResolvedTs)
 		return false
 	case common.TypeTEvent:
 		d.sink.AddDMLEvent(event.(*common.TEvent), d.tableProgress)
 		return false
+	case common.TypeDDLEvent:
+		event := event.(*common.DDLEvent)
+		event.AddPostFlushFunc(func() {
+			dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
+			dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
+		})
+		d.addDDLEventToSinkWhenAvailable(event)
+		return true
 	}
 	log.Panic("invalid event type", zap.Any("event", event))
 	return false
@@ -214,15 +212,15 @@ func (d *Dispatcher) HandleEvent(event common.Event) bool {
 func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 	if d.ddlPendingEvent.IsSingleTableDDL() {
 		d.sink.AddDDLAndSyncPointEvent(d.ddlPendingEvent, d.tableProgress)
-		if d.ddlPendingEvent.GetNeedAddedTableSpan() != nil || d.ddlPendingEvent.GetNeedDroppedDispatcherIDs() != nil {
+		if d.ddlPendingEvent.GetNeedAddedTables() != nil || d.ddlPendingEvent.GetNeedDroppedDispatchers() != nil {
 			message := &heartbeatpb.TableSpanStatus{
 				ID:              d.id.ToPB(),
 				ComponentStatus: heartbeatpb.ComponentState_Working,
 				State: &heartbeatpb.State{
-					IsBlocked:                false,
-					BlockTs:                  d.ddlPendingEvent.CommitTS,
-					NeedDroppedDispatcherIDs: d.ddlPendingEvent.GetNeedDroppedDispatcherIDs(),
-					NeedAddedTableSpan:       d.ddlPendingEvent.GetNeedAddedTableSpan(),
+					IsBlocked:              false,
+					BlockTs:                d.ddlPendingEvent.CommitTS,
+					NeedDroppedDispatchers: d.ddlPendingEvent.GetNeedDroppedDispatchers().ToPB(),
+					NeedAddedTables:        common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
 				},
 			}
 			d.SetResendTask(newResendTask(message, d))
@@ -233,11 +231,11 @@ func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 			ID:              d.id.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			State: &heartbeatpb.State{
-				IsBlocked:                true,
-				BlockTs:                  d.ddlPendingEvent.CommitTS,
-				BlockDispatcherIDs:       d.ddlPendingEvent.GetBlockedDispatcherIDs(),
-				NeedDroppedDispatcherIDs: d.ddlPendingEvent.GetNeedDroppedDispatcherIDs(),
-				NeedAddedTableSpan:       d.ddlPendingEvent.GetNeedAddedTableSpan(),
+				IsBlocked:              true,
+				BlockTs:                d.ddlPendingEvent.CommitTS,
+				BlockDispatchers:       d.ddlPendingEvent.GetBlockedDispatchers().ToPB(),
+				NeedDroppedDispatchers: d.ddlPendingEvent.GetNeedDroppedDispatchers().ToPB(),
+				NeedAddedTables:        common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
 			},
 		}
 		d.SetResendTask(newResendTask(message, d))
@@ -245,7 +243,7 @@ func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 	}
 }
 
-func (d *Dispatcher) GetTableSpan() *common.TableSpan {
+func (d *Dispatcher) GetTableSpan() *heartbeatpb.TableSpan {
 	return d.tableSpan
 }
 
@@ -285,6 +283,10 @@ func (d *Dispatcher) CancelResendTask() {
 
 func (d *Dispatcher) SetResendTask(task *ResendTask) {
 	d.resendTask = task
+}
+
+func (d *Dispatcher) GetSchemaID() int64 {
+	return d.schemaID
 }
 
 //func (d *Dispatcher) GetSyncPointInfo() *SyncPointInfo {

@@ -55,7 +55,6 @@ func TestPrepareDMLs(t *testing.T) {
 				},
 			},
 			expected: &preparedDMLs{
-				startTs:  []uint64{1},
 				sqls:     []string{"REPLACE INTO `test`.`users` (`id`,`name`) VALUES (?,?)"},
 				values:   [][]interface{}{{1, "Alice"}},
 				rowCount: 1,
@@ -104,7 +103,6 @@ func TestPrepareDMLs(t *testing.T) {
 				},
 			},
 			expected: &preparedDMLs{
-				startTs: []uint64{1, 2},
 				sqls: []string{
 					"REPLACE INTO `test`.`users` (`id`,`name`) VALUES (?,?)",
 					"UPDATE `test`.`users` SET `id` = ?, `name` = ? WHERE `id` = ? LIMIT 1",
@@ -125,7 +123,6 @@ func TestPrepareDMLs(t *testing.T) {
 				},
 			},
 			expected: &preparedDMLs{
-				startTs:  []uint64{},
 				sqls:     []string{},
 				values:   [][]interface{}{},
 				rowCount: 0,
@@ -135,7 +132,7 @@ func TestPrepareDMLs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := writer.prepareDMLs(tt.events)
+			result := writer.prepareDMLs(tt.events, tt.expected.rowCount)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -178,7 +175,7 @@ func TestMysqlWriter_Flush(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	err := writer.Flush(events, 0)
+	err := writer.Flush(events, 0, 1)
 	require.NoError(t, err)
 
 	err = mock.ExpectationsWereMet()
@@ -197,7 +194,7 @@ func TestMysqlWriter_Flush_EmptyEvents(t *testing.T) {
 
 	events := []*common.TxnEvent{}
 
-	err := writer.Flush(events, 0)
+	err := writer.Flush(events, 0, 0)
 	require.NoError(t, err)
 
 	err = mock.ExpectationsWereMet()

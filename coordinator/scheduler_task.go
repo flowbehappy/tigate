@@ -16,6 +16,7 @@ package coordinator
 import (
 	"fmt"
 
+	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/tiflow/cdc/model"
 )
 
@@ -53,7 +54,7 @@ func (s *ScheduleTask) String() string {
 
 // MoveInferior is a schedule task for moving a inferior.
 type MoveInferior struct {
-	ID          model.ChangeFeedID
+	ID          scheduler.ChangefeedID
 	DestCapture model.CaptureID
 }
 
@@ -64,7 +65,7 @@ func (t MoveInferior) String() string {
 
 // AddInferior is a schedule task for adding an inferior.
 type AddInferior struct {
-	ID        model.ChangeFeedID
+	ID        scheduler.ChangefeedID
 	CaptureID model.CaptureID
 }
 
@@ -75,7 +76,7 @@ func (t AddInferior) String() string {
 
 // RemoveInferior is a schedule task for removing an inferior.
 type RemoveInferior struct {
-	ID        model.ChangeFeedID
+	ID        scheduler.ChangefeedID
 	CaptureID model.CaptureID
 }
 

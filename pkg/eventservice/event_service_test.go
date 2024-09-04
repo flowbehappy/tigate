@@ -19,6 +19,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	tconfig "github.com/pingcap/tiflow/pkg/config"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -65,7 +66,7 @@ type mockDispatcherInfo struct {
 	serverID   string
 	id         common.DispatcherID
 	topic      string
-	span       *common.TableSpan
+	span       *heartbeatpb.TableSpan
 	startTs    uint64
 	isRegister bool
 }
@@ -76,11 +77,11 @@ func newMockAcceptorInfo(dispatcherID common.DispatcherID, tableID uint64) *mock
 		serverID:  "server1",
 		id:        dispatcherID,
 		topic:     "topic1",
-		span: &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+		span: &heartbeatpb.TableSpan{
 			TableID:  tableID,
 			StartKey: []byte("a"),
 			EndKey:   []byte("z"),
-		}},
+		},
 		startTs:    1,
 		isRegister: true,
 	}
@@ -102,7 +103,7 @@ func (m *mockDispatcherInfo) GetServerID() string {
 	return m.serverID
 }
 
-func (m *mockDispatcherInfo) GetTableSpan() *common.TableSpan {
+func (m *mockDispatcherInfo) GetTableSpan() *heartbeatpb.TableSpan {
 	return m.span
 }
 
@@ -116,6 +117,10 @@ func (m *mockDispatcherInfo) IsRegister() bool {
 
 func (m *mockDispatcherInfo) GetChangefeedID() (namespace, id string) {
 	return "default", "test"
+}
+
+func (m *mockDispatcherInfo) GetFilterConfig() *tconfig.FilterConfig {
+	return nil
 }
 
 type mockSpanStats struct {
@@ -163,7 +168,7 @@ func (m *mockEventStore) Close(ctx context.Context) error {
 
 func (m *mockEventStore) RegisterDispatcher(
 	dispatcherID common.DispatcherID,
-	span *common.TableSpan,
+	span *heartbeatpb.TableSpan,
 	startTS common.Ts,
 	observer eventstore.EventObserver,
 	notifier eventstore.WatermarkNotifier,
@@ -231,8 +236,8 @@ func (m *mockEventIterator) Next() (*common.RowChangedEvent, bool, error) {
 	return row, isNewTxn, nil
 }
 
-func (m *mockEventIterator) Close() error {
-	return nil
+func (m *mockEventIterator) Close() (int64, error) {
+	return 0, nil
 }
 
 // This test is to test the mockEventIterator works as expected.
@@ -407,10 +412,10 @@ func TestDispatcherCommunicateWithEventService(t *testing.T) {
 	defer db.Close()
 
 	mysqlSink := sink.NewMysqlSink(model.DefaultChangeFeedID("test1"), 8, writer.NewMysqlConfig(), db)
-	tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: nil, EndKey: nil}}
+	tableSpan := &heartbeatpb.TableSpan{TableID: 1, StartKey: nil, EndKey: nil}
 	startTs := uint64(1)
 	id := common.NewDispatcherID()
-	tableEventDispatcher := dispatcher.NewDispatcher(id, tableSpan, mysqlSink, startTs, nil, nil)
+	tableEventDispatcher := dispatcher.NewDispatcher(id, tableSpan, mysqlSink, startTs, nil, nil, 0)
 	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(
 		eventcollector.RegisterInfo{
 			Dispatcher:   tableEventDispatcher,

@@ -26,7 +26,10 @@ import (
 // `WHERE` conditions come from `preCols` and SET clause targets come from `cols`.
 func prepareUpdate(quoteTable string, preCols, cols []*common.Column) (string, []interface{}) {
 	var builder strings.Builder
-	builder.WriteString("UPDATE " + quoteTable + " SET ")
+	builder.Grow(64)
+	builder.WriteString("UPDATE ")
+	builder.WriteString(quoteTable)
+	builder.WriteString(" SET ")
 
 	columnNames := make([]string, 0, len(cols))
 	args := make([]interface{}, 0, len(cols)+len(preCols))
@@ -42,9 +45,13 @@ func prepareUpdate(quoteTable string, preCols, cols []*common.Column) (string, [
 	}
 	for i, column := range columnNames {
 		if i == len(columnNames)-1 {
-			builder.WriteString("`" + quotes.EscapeName(column) + "` = ?")
+			builder.WriteString("`")
+			builder.WriteString(quotes.EscapeName(column))
+			builder.WriteString("` = ?")
 		} else {
-			builder.WriteString("`" + quotes.EscapeName(column) + "` = ?, ")
+			builder.WriteString("`")
+			builder.WriteString(quotes.EscapeName(column))
+			builder.WriteString("` = ?, ")
 		}
 	}
 
@@ -58,9 +65,11 @@ func prepareUpdate(quoteTable string, preCols, cols []*common.Column) (string, [
 			builder.WriteString(" AND ")
 		}
 		if wargs[i] == nil {
-			builder.WriteString(quotes.QuoteName(colNames[i]) + " IS NULL")
+			builder.WriteString(common.QuoteName(colNames[i]))
+			builder.WriteString(" IS NULL")
 		} else {
-			builder.WriteString(quotes.QuoteName(colNames[i]) + " = ?")
+			builder.WriteString(common.QuoteName(colNames[i]))
+			builder.WriteString(" = ?")
 			args = append(args, wargs[i])
 		}
 	}
@@ -78,6 +87,7 @@ func prepareReplace(
 	translateToInsert bool,
 ) (string, []interface{}) {
 	var builder strings.Builder
+	builder.Grow(32)
 	columnNames := make([]string, 0, len(cols))
 	args := make([]interface{}, 0, len(cols))
 	for _, col := range cols {
@@ -91,14 +101,20 @@ func prepareReplace(
 		return "", nil
 	}
 
-	colList := "(" + buildColumnList(columnNames) + ")"
 	if translateToInsert {
-		builder.WriteString("INSERT INTO " + quoteTable + " " + colList + " VALUES ")
+		builder.WriteString("INSERT INTO ")
 	} else {
-		builder.WriteString("REPLACE INTO " + quoteTable + " " + colList + " VALUES ")
+		builder.WriteString("REPLACE INTO ")
 	}
+	builder.WriteString(quoteTable)
+	builder.WriteString(" (")
+	builder.WriteString(buildColumnList(columnNames))
+	builder.WriteString(") VALUES ")
+
 	if appendPlaceHolder {
-		builder.WriteString("(" + placeHolder(len(columnNames)) + ")")
+		builder.WriteString("(")
+		builder.WriteString(placeHolder(len(columnNames)))
+		builder.WriteString(")")
 	}
 
 	return builder.String(), args
@@ -127,7 +143,10 @@ func appendQueryArgs(args []interface{}, col *common.Column) []interface{} {
 // sql: `DELETE FROM `test`.`t` WHERE x = ? AND y >= ? LIMIT 1`
 func prepareDelete(quoteTable string, cols []*common.Column) (string, []interface{}) {
 	var builder strings.Builder
-	builder.WriteString("DELETE FROM " + quoteTable + " WHERE ")
+	builder.Grow(64)
+	builder.WriteString("DELETE FROM ")
+	builder.WriteString(quoteTable)
+	builder.WriteString(" WHERE ")
 
 	colNames, wargs := whereSlice(cols)
 	if len(wargs) == 0 {
@@ -139,9 +158,11 @@ func prepareDelete(quoteTable string, cols []*common.Column) (string, []interfac
 			builder.WriteString(" AND ")
 		}
 		if wargs[i] == nil {
-			builder.WriteString(quotes.QuoteName(colNames[i]) + " IS NULL")
+			builder.WriteString(common.QuoteName(colNames[i]))
+			builder.WriteString(" IS NULL")
 		} else {
-			builder.WriteString(quotes.QuoteName(colNames[i]) + " = ?")
+			builder.WriteString(common.QuoteName(colNames[i]))
+			builder.WriteString(" = ?")
 			args = append(args, wargs[i])
 		}
 	}
@@ -170,7 +191,7 @@ func buildColumnList(names []string) string {
 		if i > 0 {
 			b.WriteString(",")
 		}
-		b.WriteString(quotes.QuoteName(name))
+		b.WriteString(common.QuoteName(name))
 
 	}
 

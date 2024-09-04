@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	config2 "github.com/pingcap/tiflow/pkg/config"
-	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -234,7 +233,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	taskScheduler := threadpool.NewThreadPoolDefault()
 	maintainer := NewMaintainer(cfID, &model.ChangeFeedInfo{
 		Config: config2.GetDefaultReplicaConfig(),
-	}, node, stream, taskScheduler, 10)
+	}, node, stream, taskScheduler, nil, nil, 10)
 	_ = stream.AddPaths(dynstream.PathAndDest[string, *Maintainer]{
 		Path: cfID.ID,
 		Dest: maintainer,
@@ -259,16 +258,10 @@ func TestMaintainerSchedule(t *testing.T) {
 	}
 
 	for id := 0; id < tableSize; id++ {
-		span := spanz.TableIDToComparableSpan(int64(id))
-		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
-			TableID:  uint64(id),
-			StartKey: span.StartKey,
-			EndKey:   span.EndKey,
-		}}
-		dispatcherID := common.NewDispatcherID()
-		replicaSet := NewReplicaSet(maintainer.id, dispatcherID, tableSpan, maintainer.watermark.CheckpointTs).(*ReplicaSet)
-		stm, _ := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
-		maintainer.scheduler.AddNewTask(stm)
+		maintainer.scheduler.AddNewTable(common.Table{
+			SchemaID: 1,
+			TableID:  int64(id),
+		})
 	}
 	// send bootstrap message
 	maintainer.sendMessages(maintainer.bootstrapper.HandleNewNodes(
@@ -283,8 +276,9 @@ func TestMaintainerSchedule(t *testing.T) {
 
 	cancel()
 	stream.Close()
-	require.Equal(t, tableSize,
+	//include a ddl dispatcher
+	require.Equal(t, tableSize+1,
 		maintainer.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
-	require.Equal(t, tableSize,
+	require.Equal(t, tableSize+1,
 		maintainer.scheduler.GetTaskSizeByNodeID(node.ID))
 }

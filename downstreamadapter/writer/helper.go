@@ -27,13 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"go.uber.org/zap"
 )
 
 type preparedDMLs struct {
-	startTs         []model.Ts
 	sqls            []string
 	values          [][]interface{}
 	rowCount        int

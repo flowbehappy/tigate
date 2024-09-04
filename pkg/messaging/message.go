@@ -9,6 +9,8 @@ import (
 	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
+	bf "github.com/pingcap/tiflow/pkg/binlog-filter"
+	"github.com/pingcap/tiflow/pkg/config"
 	"go.uber.org/zap"
 
 	"github.com/google/uuid"
@@ -130,8 +132,8 @@ func (r RegisterDispatcherRequest) GetServerID() string {
 	return r.ServerId
 }
 
-func (r RegisterDispatcherRequest) GetTableSpan() *common.TableSpan {
-	return &common.TableSpan{TableSpan: r.TableSpan}
+func (r RegisterDispatcherRequest) GetTableSpan() *heartbeatpb.TableSpan {
+	return r.TableSpan
 }
 
 func (r RegisterDispatcherRequest) GetStartTs() uint64 {
@@ -144,6 +146,33 @@ func (r RegisterDispatcherRequest) IsRegister() bool {
 
 func (r RegisterDispatcherRequest) GetChangefeedID() (namespace, id string) {
 	return r.Namespace, r.ChangefeedId
+}
+
+func (r RegisterDispatcherRequest) GetFilterConfig() *config.FilterConfig {
+	cfg := r.RegisterDispatcherRequest.FilterConfig
+	if cfg == nil {
+		return nil
+	}
+	filterCfg := &config.FilterConfig{
+		Rules:            cfg.Rules,
+		IgnoreTxnStartTs: cfg.IgnoreTxnStartTs,
+	}
+	for _, rule := range cfg.EventFilters {
+		f := &config.EventFilterRule{
+			Matcher:                  rule.Matcher,
+			IgnoreSQL:                rule.IgnoreSql,
+			IgnoreInsertValueExpr:    rule.IgnoreInsertValueExpr,
+			IgnoreUpdateNewValueExpr: rule.IgnoreUpdateNewValueExpr,
+			IgnoreUpdateOldValueExpr: rule.IgnoreUpdateOldValueExpr,
+			IgnoreDeleteValueExpr:    rule.IgnoreDeleteValueExpr,
+		}
+		for _, e := range rule.IgnoreEvent {
+			f.IgnoreEvent = append(f.IgnoreEvent, bf.EventType(e))
+		}
+
+		filterCfg.EventFilters = append(filterCfg.EventFilters, f)
+	}
+	return filterCfg
 }
 
 type IOTypeT interface {

@@ -15,7 +15,7 @@ package worker
 
 import (
 	"database/sql"
-	"fmt"
+	"strconv"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -39,7 +39,7 @@ type MysqlWorker struct {
 }
 
 func NewMysqlWorker(eventChan <-chan *common.TEvent, db *sql.DB, config *writer.MysqlConfig, id int, changefeedID model.ChangeFeedID) *MysqlWorker {
-	wid := fmt.Sprintf("%d", id)
+	wid := strconv.Itoa(id)
 
 	return &MysqlWorker{
 		eventChan:   eventChan,

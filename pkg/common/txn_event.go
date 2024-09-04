@@ -23,9 +23,10 @@ type DDLEvent struct {
 	CommitTS Ts `json:"commit_ts"`
 
 	// Just for test now
-	BlockedDispatcherIDs     []*heartbeatpb.DispatcherID `json:"blocked_dispatcher_ids"`
-	NeedDroppedDispatcherIDs []*heartbeatpb.DispatcherID `json:"need_dropped_dispatcher_ids"`
-	NeedAddedTableSpan       []*heartbeatpb.TableSpan    `json:"need_added_table_span"`
+	// Just for test now
+	BlockedTables     *InfluencedTables `json:"blocked_tables"`
+	NeedDroppedTables *InfluencedTables `json:"need_dropped_tables"`
+	NeedAddedTables   []Table           `json:"need_added_tables"`
 	// 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
 	PostTxnFlushed []func() `msg:"-"`
 }
@@ -56,16 +57,16 @@ func (d *DDLEvent) AddPostFlushFunc(f func()) {
 	d.PostTxnFlushed = append(d.PostTxnFlushed, f)
 }
 
-func (e *DDLEvent) GetBlockedDispatcherIDs() []*heartbeatpb.DispatcherID {
-	return e.BlockedDispatcherIDs
+func (e *DDLEvent) GetBlockedTables() *InfluencedTables {
+	return e.BlockedTables
 }
 
-func (e *DDLEvent) GetNeedDroppedDispatcherIDs() []*heartbeatpb.DispatcherID {
-	return e.NeedDroppedDispatcherIDs
+func (e *DDLEvent) GetNeedDroppedTables() *InfluencedTables {
+	return e.NeedDroppedTables
 }
 
-func (e *DDLEvent) GetNeedAddedTableSpan() []*heartbeatpb.TableSpan {
-	return e.NeedAddedTableSpan
+func (e *DDLEvent) GetNeedAddedTables() []Table {
+	return e.NeedAddedTables
 }
 
 func (e *DDLEvent) IsSyncPointEvent() bool {
@@ -123,7 +124,7 @@ type TxnEvent struct {
 	DispatcherID DispatcherID `msg:"dispatcher-id"`
 
 	// Span of this event belongs to.
-	Span *TableSpan `msg:"-"`
+	Span *heartbeatpb.TableSpan `msg:"-"`
 
 	DDLEvent   *DDLEvent          `msg:"-"` // FIXME
 	Rows       []*RowChangedEvent `msg:"rows"`
@@ -178,8 +179,59 @@ func (e *TxnEvent) IsDDLEvent() bool {
 	return e.DDLEvent != nil
 }
 
-func (e *TxnEvent) GetRows() []*RowChangedEvent {
-	return e.Rows
+type InfluenceType int
+
+const (
+	All InfluenceType = iota // influence all tables
+	DB                       // influence all tables in the same database
+	Normal
+)
+
+func (t InfluenceType) toPB() heartbeatpb.InfluenceType {
+	switch t {
+	case All:
+		return heartbeatpb.InfluenceType_All
+	case DB:
+		return heartbeatpb.InfluenceType_DB
+	case Normal:
+		return heartbeatpb.InfluenceType_Normal
+	default:
+		log.Error("unknown influence type")
+	}
+	return heartbeatpb.InfluenceType_Normal
+}
+
+type InfluencedTables struct {
+	InfluenceType InfluenceType
+	TableIDs      []int64
+	SchemaID      int64
+}
+
+func (i *InfluencedTables) ToPB() *heartbeatpb.InfluencedTables {
+	if i == nil {
+		return nil
+	}
+	return &heartbeatpb.InfluencedTables{
+		InfluenceType: i.InfluenceType.toPB(),
+		TableIDs:      i.TableIDs,
+		SchemaID:      i.SchemaID,
+	}
+}
+
+func ToTablesPB(tables []Table) []*heartbeatpb.Table {
+	res := make([]*heartbeatpb.Table, len(tables))
+	for i, t := range tables {
+		res[i] = &heartbeatpb.Table{
+			SchemaID: t.SchemaID,
+			TableID:  t.TableID,
+		}
+	}
+	return res
+}
+
+type Table struct {
+	SchemaID int64
+	TableID  int64
 }
 
 // ColumnData represents a column value in row changed event
