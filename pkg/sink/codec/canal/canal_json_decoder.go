@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/sink/codec"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/decoder"
 	"github.com/goccy/go-json"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -54,7 +54,7 @@ type batchDecoder struct {
 // NewBatchDecoder return a decoder for canal-json
 func NewBatchDecoder(
 	ctx context.Context, codecConfig *ticommon.Config, db *sql.DB,
-) (codec.RowEventDecoder, error) {
+) (decoder.RowEventDecoder, error) {
 	var (
 		externalStorage storage.ExternalStorage
 		err             error

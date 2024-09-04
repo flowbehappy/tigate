@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/sink/codec"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/errors"
@@ -96,7 +96,7 @@ func (d *BatchEncoder) Build() []*ticommon.Message {
 }
 
 // newBatchEncoder creates a new Debezium BatchEncoder.
-func newBatchEncoder(c *ticommon.Config, clusterID string) codec.RowEventEncoder {
+func NewBatchEncoder(c *ticommon.Config, clusterID string) encoder.RowEventEncoder {
 	batch := &BatchEncoder{
 		messages: nil,
 		config:   c,
@@ -109,23 +109,4 @@ func newBatchEncoder(c *ticommon.Config, clusterID string) codec.RowEventEncoder
 	return batch
 }
 
-type batchEncoderBuilder struct {
-	config    *ticommon.Config
-	clusterID string
-}
-
-// NewBatchEncoderBuilder creates a Debezium batchEncoderBuilder.
-func NewBatchEncoderBuilder(config *ticommon.Config, clusterID string) codec.RowEventEncoderBuilder {
-	return &batchEncoderBuilder{
-		config:    config,
-		clusterID: clusterID,
-	}
-}
-
-// Build a `BatchEncoder`
-func (b *batchEncoderBuilder) Build() codec.RowEventEncoder {
-	return newBatchEncoder(b.config, b.clusterID)
-}
-
-// CleanMetrics do nothing
-func (b *batchEncoderBuilder) CleanMetrics() {}
+func (d *BatchEncoder) Clean() {}

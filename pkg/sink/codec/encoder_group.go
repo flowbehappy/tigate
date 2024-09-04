@@ -20,11 +20,12 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
-	helper "github.com/pingcap/tiflow/pkg/sink/codec/common"
+	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 	"github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -49,12 +50,13 @@ type EncoderGroup interface {
 type encoderGroup struct {
 	changefeedID model.ChangeFeedID
 
-	builder RowEventEncoderBuilder
 	// concurrency is the number of encoder pipelines to run
 	concurrency int
 	// inputCh is the input channel for each encoder pipeline
 	inputCh []chan *future
 	index   uint64
+
+	rowEventEncoders []encoder.RowEventEncoder
 
 	outputCh chan *future
 
@@ -63,8 +65,9 @@ type encoderGroup struct {
 
 // NewEncoderGroup creates a new EncoderGroup instance
 func NewEncoderGroup(
+	ctx context.Context,
 	cfg *config.SinkConfig,
-	builder RowEventEncoderBuilder,
+	encoderConfig *ticommon.Config,
 	changefeedID model.ChangeFeedID,
 ) *encoderGroup {
 	concurrency := util.GetOrZero(cfg.EncoderConcurrency)
@@ -72,17 +75,29 @@ func NewEncoderGroup(
 		concurrency = config.DefaultEncoderGroupConcurrency
 	}
 	inputCh := make([]chan *future, concurrency)
+	rowEventEncoders := make([]encoder.RowEventEncoder, concurrency)
+	var err error
 	for i := 0; i < concurrency; i++ {
 		inputCh[i] = make(chan *future, defaultInputChanSize)
+		rowEventEncoders[i], err = NewRowEventEncoder(ctx, encoderConfig)
+		if err != nil {
+			log.Error("failed to create row event encoder", zap.Error(err))
+			return nil
+		}
 	}
 	outCh := make(chan *future, defaultInputChanSize*concurrency)
 
 	var bootstrapWorker *bootstrapWorker
 	if cfg.ShouldSendBootstrapMsg() {
+		rowEventEncoder, err := NewRowEventEncoder(ctx, encoderConfig)
+		if err != nil {
+			log.Error("failed to create row event encoder", zap.Error(err))
+			return nil
+		}
 		bootstrapWorker = newBootstrapWorker(
 			changefeedID,
 			outCh,
-			builder.Build(),
+			rowEventEncoder,
 			util.GetOrZero(cfg.SendBootstrapIntervalInSec),
 			util.GetOrZero(cfg.SendBootstrapInMsgCount),
 			util.GetOrZero(cfg.SendBootstrapToAllPartition),
@@ -91,13 +106,13 @@ func NewEncoderGroup(
 	}
 
 	return &encoderGroup{
-		changefeedID:    changefeedID,
-		builder:         builder,
-		concurrency:     concurrency,
-		inputCh:         inputCh,
-		index:           0,
-		outputCh:        outCh,
-		bootstrapWorker: bootstrapWorker,
+		changefeedID:     changefeedID,
+		rowEventEncoders: rowEventEncoders,
+		concurrency:      concurrency,
+		inputCh:          inputCh,
+		index:            0,
+		outputCh:         outCh,
+		bootstrapWorker:  bootstrapWorker,
 	}
 }
 
@@ -126,7 +141,6 @@ func (g *encoderGroup) Run(ctx context.Context) error {
 }
 
 func (g *encoderGroup) runEncoder(ctx context.Context, idx int) error {
-	encoder := g.builder.Build()
 	inputCh := g.inputCh[idx]
 	metric := encoderGroupInputChanSizeGauge.
 		WithLabelValues(g.changefeedID.Namespace, g.changefeedID.ID, strconv.Itoa(idx))
@@ -140,12 +154,13 @@ func (g *encoderGroup) runEncoder(ctx context.Context, idx int) error {
 			metric.Set(float64(len(inputCh)))
 		case future := <-inputCh:
 			for _, event := range future.events {
-				err := encoder.AppendRowChangedEvent(ctx, future.Key.Topic, event.Event, event.Callback)
+				err := g.rowEventEncoders[idx].AppendRowChangedEvent(ctx, future.Key.Topic, event.Event, event.Callback)
 				if err != nil {
 					return errors.Trace(err)
 				}
 			}
-			future.Messages = encoder.Build()
+			future.Messages = g.rowEventEncoders[idx].Build()
+			// TODO:是不是要用后清零
 			close(future.done)
 		}
 	}
@@ -187,8 +202,10 @@ func (g *encoderGroup) Output() <-chan *future {
 
 func (g *encoderGroup) cleanMetrics() {
 	encoderGroupInputChanSizeGauge.DeleteLabelValues(g.changefeedID.Namespace, g.changefeedID.ID)
-	g.builder.CleanMetrics()
-	helper.CleanMetrics(g.changefeedID)
+	for _, encoder := range g.rowEventEncoders {
+		encoder.Clean()
+	}
+	ticommon.CleanMetrics(g.changefeedID)
 }
 
 // future is a wrapper of the result of encoding events
@@ -197,7 +214,7 @@ func (g *encoderGroup) cleanMetrics() {
 type future struct {
 	Key      model.TopicPartitionKey
 	events   []*common.RowEvent
-	Messages []*helper.Message
+	Messages []*ticommon.Message
 	done     chan struct{}
 }
 

@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/sink/codec"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/internal"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -93,7 +93,7 @@ func (m *messageRow) dropNotUpdatedColumns() {
 			continue
 		}
 		// value equal
-		if codec.IsColumnValueEqual(oldValue.Value, value.Value) {
+		if encoder.IsColumnValueEqual(oldValue.Value, value.Value) {
 			delete(m.PreColumns, col)
 		}
 	}

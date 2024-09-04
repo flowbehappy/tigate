@@ -15,6 +15,7 @@ package worker
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -48,7 +48,7 @@ type KafkaWorker struct {
 	protocol config.Protocol
 	// msgChan caches the messages to be sent.
 	// It is an unbounded channel.
-	msgChan *chann.DrainableChann[common.MQRowEvent]
+	msgChan *chann.DrainableChann[*common.MQRowEvent]
 	// ticker used to force flush the batched messages when the interval is reached.
 	ticker *time.Ticker
 
@@ -65,6 +65,9 @@ type KafkaWorker struct {
 	metricMQWorkerBatchDuration prometheus.Observer
 	// statistics is used to record DML metrics.
 	statistics *metrics.Statistics
+
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // newWorker creates a new flush worker.
@@ -75,10 +78,11 @@ func NewKafkaWorker(
 	encoderGroup codec.EncoderGroup,
 	statistics *metrics.Statistics,
 ) *KafkaWorker {
+	ctx, cancel := context.WithCancel(context.Background())
 	w := &KafkaWorker{
 		changeFeedID:                      id,
 		protocol:                          protocol,
-		msgChan:                           chann.NewAutoDrainChann[common.MQRowEvent](),
+		msgChan:                           chann.NewAutoDrainChann[*common.MQRowEvent](),
 		ticker:                            time.NewTicker(batchInterval),
 		encoderGroup:                      encoderGroup,
 		producer:                          producer,
@@ -86,41 +90,30 @@ func NewKafkaWorker(
 		metricMQWorkerBatchSize:           mq.WorkerBatchSize.WithLabelValues(id.Namespace, id.ID),
 		metricMQWorkerBatchDuration:       mq.WorkerBatchDuration.WithLabelValues(id.Namespace, id.ID),
 		statistics:                        statistics,
+		cancel:                            cancel,
 	}
 
-	return w
-}
-
-func (w *KafkaWorker) GetEventChan() chan<- common.MQRowEvent {
-	return w.msgChan.In()
-}
-
-// run starts a loop that keeps collecting, sorting and sending messages
-// until it encounters an error or is interrupted.
-func (w *KafkaWorker) run(ctx context.Context) (retErr error) {
-	defer func() {
-		w.ticker.Stop()
-		log.Info("MQ sink worker exited", zap.Error(retErr),
-			zap.String("namespace", w.changeFeedID.Namespace),
-			zap.String("changefeed", w.changeFeedID.ID),
-			zap.String("protocol", w.protocol.String()),
-		)
-	}()
-
-	g, ctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
+	w.wg.Add(3)
+	go func() error {
+		defer w.wg.Done()
 		return w.encoderGroup.Run(ctx)
-	})
-	g.Go(func() error {
+	}()
+	go func() error {
+		defer w.wg.Done()
 		if w.protocol.IsBatchEncode() {
 			return w.batchEncodeRun(ctx)
 		}
 		return w.nonBatchEncodeRun(ctx)
-	})
-	g.Go(func() error {
+	}()
+	go func() error {
+		defer w.wg.Done()
 		return w.sendMessages(ctx)
-	})
-	return g.Wait()
+	}()
+	return w
+}
+
+func (w *KafkaWorker) GetEventChan() chan<- *common.MQRowEvent {
+	return w.msgChan.In()
 }
 
 // nonBatchEncodeRun add events to the encoder group immediately.
@@ -156,7 +149,7 @@ func (w *KafkaWorker) batchEncodeRun(ctx context.Context) (retErr error) {
 		zap.String("protocol", w.protocol.String()),
 	)
 
-	msgsBuf := make([]common.MQRowEvent, batchSize)
+	msgsBuf := make([]*common.MQRowEvent, batchSize)
 	for {
 		start := time.Now()
 		msgCount, err := w.batch(ctx, msgsBuf, batchInterval)
@@ -184,7 +177,7 @@ func (w *KafkaWorker) batchEncodeRun(ctx context.Context) (retErr error) {
 // batch collects a batch of messages from w.msgChan into buffer.
 // It returns the number of messages collected.
 // Note: It will block until at least one message is received.
-func (w *KafkaWorker) batch(ctx context.Context, buffer []common.MQRowEvent, flushInterval time.Duration) (int, error) {
+func (w *KafkaWorker) batch(ctx context.Context, buffer []*common.MQRowEvent, flushInterval time.Duration) (int, error) {
 	msgCount := 0
 	maxBatchSize := len(buffer)
 	// We need to receive at least one message or be interrupted,
@@ -233,7 +226,7 @@ func (w *KafkaWorker) batch(ctx context.Context, buffer []common.MQRowEvent, flu
 }
 
 // group groups messages by its key.
-func (w *KafkaWorker) group(msgs []common.MQRowEvent) map[model.TopicPartitionKey][]*common.RowEvent {
+func (w *KafkaWorker) group(msgs []*common.MQRowEvent) map[model.TopicPartitionKey][]*common.RowEvent {
 	groupedMsgs := make(map[model.TopicPartitionKey][]*common.RowEvent)
 	for _, msg := range msgs {
 		if _, ok := groupedMsgs[msg.Key]; !ok {

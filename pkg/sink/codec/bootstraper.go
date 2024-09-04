@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -39,7 +40,7 @@ const (
 type bootstrapWorker struct {
 	changefeedID                model.ChangeFeedID
 	activeTables                sync.Map
-	encoder                     RowEventEncoder
+	rowEventEncoder             encoder.RowEventEncoder
 	sendBootstrapInterval       time.Duration
 	sendBootstrapInMsgCount     int32
 	sendBootstrapToAllPartition bool
@@ -52,7 +53,7 @@ type bootstrapWorker struct {
 func newBootstrapWorker(
 	changefeedID model.ChangeFeedID,
 	outCh chan<- *future,
-	encoder RowEventEncoder,
+	rowEventEncoder encoder.RowEventEncoder,
 	sendBootstrapInterval int64,
 	sendBootstrapInMsgCount int32,
 	sendBootstrapToAllPartition bool,
@@ -66,7 +67,7 @@ func newBootstrapWorker(
 	return &bootstrapWorker{
 		changefeedID:                changefeedID,
 		outCh:                       outCh,
-		encoder:                     encoder,
+		rowEventEncoder:             rowEventEncoder,
 		activeTables:                sync.Map{},
 		sendBootstrapInterval:       time.Duration(sendBootstrapInterval) * time.Second,
 		sendBootstrapInMsgCount:     sendBootstrapInMsgCount,
@@ -79,6 +80,7 @@ func (b *bootstrapWorker) run(ctx context.Context) error {
 	sendTicker := time.NewTicker(bootstrapWorkerTickerInterval)
 	gcTicker := time.NewTicker(bootstrapWorkerGCInterval)
 	defer func() {
+		b.rowEventEncoder.Clean()
 		gcTicker.Stop()
 		sendTicker.Stop()
 	}()
@@ -156,7 +158,7 @@ func (b *bootstrapWorker) generateEvents(
 	tableInfo *model.TableInfo,
 ) ([]*future, error) {
 	res := make([]*future, 0, totalPartition)
-	msg, err := b.encoder.EncodeDDLEvent(model.NewBootstrapDDLEvent(tableInfo))
+	msg, err := b.rowEventEncoder.EncodeDDLEvent(model.NewBootstrapDDLEvent(tableInfo))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
