@@ -3,12 +3,11 @@ package main
 import (
 	"context"
 	"net/http"
+	_ "net/http/pprof"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
-
-	_ "net/http/pprof"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
@@ -110,12 +109,12 @@ func TestDownstream(t *testing.T) {
 			wg.Add(1)
 			go func(wg *sync.WaitGroup) {
 				defer wg.Done()
-				tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: uint64(db_index*dispatcherCount + i)}}
+				tableSpan := &heartbeatpb.TableSpan{TableID: uint64(db_index*dispatcherCount + i)}
 				dispatcherID := common.NewDispatcherID()
 				mutex.Lock()
 				dispatcherIDSet[dispatcherID] = nil
 				mutex.Unlock()
-				eventDispatcherManager.NewDispatcher(dispatcherID, tableSpan, 0)
+				eventDispatcherManager.NewDispatcher(dispatcherID, tableSpan, 0, 1)
 			}(&wg)
 		}
 	}

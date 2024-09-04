@@ -221,23 +221,19 @@ const (
 	JobHistoryID = ddl.HistoryTableID
 )
 
-func getAllDDLSpan() []common.TableSpan {
-	spans := make([]common.TableSpan, 0, 2)
+func getAllDDLSpan() []heartbeatpb.TableSpan {
+	spans := make([]heartbeatpb.TableSpan, 0, 2)
 	start, end := common.GetTableRange(JobTableID)
-	spans = append(spans, common.TableSpan{
-		TableSpan: &heartbeatpb.TableSpan{
-			TableID:  JobTableID,
-			StartKey: common.ToComparableKey(start),
-			EndKey:   common.ToComparableKey(end),
-		},
+	spans = append(spans, heartbeatpb.TableSpan{
+		TableID:  JobTableID,
+		StartKey: common.ToComparableKey(start),
+		EndKey:   common.ToComparableKey(end),
 	})
 	start, end = common.GetTableRange(JobHistoryID)
-	spans = append(spans, common.TableSpan{
-		TableSpan: &heartbeatpb.TableSpan{
-			TableID:  JobHistoryID,
-			StartKey: common.ToComparableKey(start),
-			EndKey:   common.ToComparableKey(end),
-		},
+	spans = append(spans, heartbeatpb.TableSpan{
+		TableID:  JobHistoryID,
+		StartKey: common.ToComparableKey(start),
+		EndKey:   common.ToComparableKey(end),
 	})
 	return spans
 }

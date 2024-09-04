@@ -126,7 +126,7 @@ func (h *SchedulerDispatcherRequestHandler) Handle(scheduleDispatcherRequest *he
 	scheduleAction := scheduleDispatcherRequest.ScheduleAction
 	config := scheduleDispatcherRequest.Config
 	if scheduleAction == heartbeatpb.ScheduleAction_Create {
-		eventDispatcherManager.NewDispatcher(common.NewDispatcherIDFromPB(config.DispatcherID), &common.TableSpan{TableSpan: config.Span}, config.StartTs, config.SchemaID)
+		eventDispatcherManager.NewDispatcher(common.NewDispatcherIDFromPB(config.DispatcherID), config.Span, config.StartTs, config.SchemaID)
 	} else if scheduleAction == heartbeatpb.ScheduleAction_Remove {
 		eventDispatcherManager.RemoveDispatcher(common.NewDispatcherIDFromPB(config.DispatcherID))
 	}

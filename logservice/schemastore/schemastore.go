@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
@@ -33,7 +34,7 @@ type SchemaStore interface {
 	// RegisterDispatcher register the dispatcher into the schema store.
 	// TODO: return a table info
 	RegisterDispatcher(
-		dispatcherID common.DispatcherID, span *common.TableSpan,
+		dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan,
 		startTS common.Ts, filter filter.Filter,
 	) error
 
@@ -276,7 +277,7 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts, f filter.Filter) ([
 
 func (s *schemaStore) RegisterDispatcher(
 	dispatcherID common.DispatcherID,
-	span *common.TableSpan, startTS common.Ts,
+	span *heartbeatpb.TableSpan, startTS common.Ts,
 	filter filter.Filter, /* only for table trigger dispatcher */
 ) error {
 	s.mu.Lock()
@@ -288,7 +289,7 @@ func (s *schemaStore) RegisterDispatcher(
 			zap.Uint64("gcTs", uint64(s.dataStorage.getGCTS())))
 	}
 
-	if span.Equal(common.DDLSpan) {
+	if span.Equal(heartbeatpb.DDLSpan) {
 		if _, ok := s.tableTriggerDispatcherMap[dispatcherID]; ok {
 			s.mu.Unlock()
 			return errors.New("table trigger dispatcher already exists")

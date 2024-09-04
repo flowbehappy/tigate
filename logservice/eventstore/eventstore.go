@@ -44,7 +44,7 @@ type EventStore interface {
 	// but for old data this is not feasiable? may we can just return a current watermark when register
 	RegisterDispatcher(
 		dispatcherID common.DispatcherID,
-		span *common.TableSpan,
+		span *heartbeatpb.TableSpan,
 		startTS common.Ts,
 		observer EventObserver,
 		notifier WatermarkNotifier,
@@ -203,12 +203,12 @@ func (e *eventStore) Run(ctx context.Context) error {
 	return eg.Wait()
 }
 
-func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableSpan *common.TableSpan, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
-	span := *tableSpan.TableSpan
+func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
+	span := *tableSpan
 	log.Info("register dispatcher",
 		zap.Any("dispatcherID", dispatcherID),
 		zap.String("span", tableSpan.String()),
-		zap.Uint64("startTS", uint64(startTS)))
+		zap.Uint64("startTS", startTS))
 	subID := e.puller.Subscribe(span, startTS)
 
 	e.spanStates.Lock()

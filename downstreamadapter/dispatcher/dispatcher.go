@@ -60,7 +60,7 @@ The workflow related to the dispatcher is as follows:
 
 type Dispatcher struct {
 	id        common.DispatcherID
-	tableSpan *common.TableSpan
+	tableSpan *heartbeatpb.TableSpan
 	sink      sink.Sink
 
 	statusesChan chan *heartbeatpb.TableSpanStatus
@@ -86,7 +86,7 @@ type Dispatcher struct {
 	schemaID int64
 }
 
-func NewDispatcher(id common.DispatcherID, tableSpan *common.TableSpan, sink sink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter, schemaID int64) *Dispatcher {
+func NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, sink sink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter, schemaID int64) *Dispatcher {
 	dispatcher := &Dispatcher{
 		id:           id,
 		tableSpan:    tableSpan,
@@ -245,7 +245,7 @@ func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 	}
 }
 
-func (d *Dispatcher) GetTableSpan() *common.TableSpan {
+func (d *Dispatcher) GetTableSpan() *heartbeatpb.TableSpan {
 	return d.tableSpan
 }
 

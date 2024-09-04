@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -42,82 +41,82 @@ func TestRegionCountSplitSpan(t *testing.T) {
 
 	cases := []struct {
 		totalCaptures int
-		span          *common.TableSpan
-		expectSpans   []*common.TableSpan
+		span          *heartbeatpb.TableSpan
+		expectSpans   []*heartbeatpb.TableSpan
 	}{
 		{
 			totalCaptures: 7,
-			span:          &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")}},
-			expectSpans: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t1_1")}},   // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_1"), EndKey: []byte("t1_2")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_2"), EndKey: []byte("t1_3")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_3"), EndKey: []byte("t1_4")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_4"), EndKey: []byte("t2")}},   // 1 region
+			span:          &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")},
+			expectSpans: []*heartbeatpb.TableSpan{
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t1_1")},   // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_1"), EndKey: []byte("t1_2")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_2"), EndKey: []byte("t1_3")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_3"), EndKey: []byte("t1_4")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_4"), EndKey: []byte("t2")},   // 1 region
 			},
 		},
 		{
 			totalCaptures: 6,
-			span:          &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")}},
-			expectSpans: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t1_1")}},   // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_1"), EndKey: []byte("t1_2")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_2"), EndKey: []byte("t1_3")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_3"), EndKey: []byte("t1_4")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_4"), EndKey: []byte("t2")}},   // 1 region
+			span:          &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")},
+			expectSpans: []*heartbeatpb.TableSpan{
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t1_1")},   // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_1"), EndKey: []byte("t1_2")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_2"), EndKey: []byte("t1_3")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_3"), EndKey: []byte("t1_4")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_4"), EndKey: []byte("t2")},   // 1 region
 			},
 		},
 		{
 			totalCaptures: 5,
-			span:          &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")}},
-			expectSpans: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t1_1")}},   // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_1"), EndKey: []byte("t1_2")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_2"), EndKey: []byte("t1_3")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_3"), EndKey: []byte("t1_4")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_4"), EndKey: []byte("t2")}},   // 1 region
+			span:          &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")},
+			expectSpans: []*heartbeatpb.TableSpan{
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t1_1")},   // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_1"), EndKey: []byte("t1_2")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_2"), EndKey: []byte("t1_3")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_3"), EndKey: []byte("t1_4")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_4"), EndKey: []byte("t2")},   // 1 region
 			},
 		},
 		{
 			totalCaptures: 4,
-			span:          &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")}},
-			expectSpans: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t1_1")}},   // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_1"), EndKey: []byte("t1_2")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_2"), EndKey: []byte("t1_3")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_3"), EndKey: []byte("t1_4")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_4"), EndKey: []byte("t2")}},   // 1 region
+			span:          &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")},
+			expectSpans: []*heartbeatpb.TableSpan{
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t1_1")},   // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_1"), EndKey: []byte("t1_2")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_2"), EndKey: []byte("t1_3")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_3"), EndKey: []byte("t1_4")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_4"), EndKey: []byte("t2")},   // 1 region
 			},
 		},
 		{
 			totalCaptures: 3,
-			span:          &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")}},
-			expectSpans: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t1_1")}},   // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_1"), EndKey: []byte("t1_2")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_2"), EndKey: []byte("t1_3")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_3"), EndKey: []byte("t1_4")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_4"), EndKey: []byte("t2")}},   // 1 region
+			span:          &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")},
+			expectSpans: []*heartbeatpb.TableSpan{
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t1_1")},   // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_1"), EndKey: []byte("t1_2")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_2"), EndKey: []byte("t1_3")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_3"), EndKey: []byte("t1_4")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_4"), EndKey: []byte("t2")},   // 1 region
 			},
 		},
 		{
 			totalCaptures: 2,
-			span:          &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")}},
-			expectSpans: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t1_1")}},   // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_1"), EndKey: []byte("t1_2")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_2"), EndKey: []byte("t1_3")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_3"), EndKey: []byte("t1_4")}}, // 1 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_4"), EndKey: []byte("t2")}},   // 1 region
+			span:          &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")},
+			expectSpans: []*heartbeatpb.TableSpan{
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t1_1")},   // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_1"), EndKey: []byte("t1_2")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_2"), EndKey: []byte("t1_3")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_3"), EndKey: []byte("t1_4")}, // 1 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_4"), EndKey: []byte("t2")},   // 1 region
 			},
 		},
 		{
 			totalCaptures: 1,
-			span:          &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")}},
-			expectSpans: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t1_2")}},   // 2 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_2"), EndKey: []byte("t1_4")}}, // 2 region
-				{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_4"), EndKey: []byte("t2")}},   // 1 region
+			span:          &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")},
+			expectSpans: []*heartbeatpb.TableSpan{
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t1_2")},   // 2 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_2"), EndKey: []byte("t1_4")}, // 2 region
+				&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1_4"), EndKey: []byte("t2")},   // 1 region
 			},
 		},
 	}
@@ -202,7 +201,7 @@ func TestRegionCountEvenlySplitSpan(t *testing.T) {
 		splitter := newRegionCountSplitter(model.ChangeFeedID{}, cache, cfg.RegionThreshold)
 		spans := splitter.split(
 			context.Background(),
-			&common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")}},
+			&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")},
 			cs.totalCaptures,
 		)
 
@@ -237,10 +236,10 @@ func TestSplitSpanRegionOutOfOrder(t *testing.T) {
 		RegionThreshold:        1,
 	}
 	splitter := newRegionCountSplitter(model.ChangeFeedID{}, cache, cfg.RegionThreshold)
-	span := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")}}
+	span := &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")}
 	spans := splitter.split(context.Background(), span, 1)
 	require.Equal(
-		t, []*common.TableSpan{{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")}}}, spans)
+		t, []*heartbeatpb.TableSpan{&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")}}, spans)
 }
 
 // mockCache mocks tikv.RegionCache.

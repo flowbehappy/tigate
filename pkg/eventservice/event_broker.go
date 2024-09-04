@@ -2,12 +2,12 @@ package eventservice
 
 import (
 	"context"
+	"hash/crc32"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"hash/crc32"
-
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -440,7 +440,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	span := info.GetTableSpan()
 	startTs := info.GetStartTs()
 	dispatcher := newDispatcherStat(startTs, info, c.onAsyncNotify, filter)
-	if span.Equal(common.DDLSpan) {
+	if span.Equal(heartbeatpb.DDLSpan) {
 		c.tableTriggerDispatchers.Store(info.GetID(), dispatcher)
 		log.Info("table trigger dispatcher register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
 			zap.Any("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID),
@@ -558,7 +558,7 @@ func (a *dispatcherStat) onNewEvent(raw *common.RawKVEntry) {
 // spanSubscription store the latest progress of the table span in the event store.
 // And it also store the dispatchers that want to listen to the events of this table span.
 type spanSubscription struct {
-	span *common.TableSpan
+	span *heartbeatpb.TableSpan
 	// The watermark of the events that have been stored in the event store.
 	watermark atomic.Uint64
 	// newEventCount is used to store the number of the new events that have been stored in the event store

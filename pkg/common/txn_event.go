@@ -38,7 +38,7 @@ type TxnEvent struct {
 	DispatcherID DispatcherID `msg:"dispatcher-id"`
 
 	// Span of this event belongs to.
-	Span *TableSpan `msg:"-"`
+	Span *heartbeatpb.TableSpan `msg:"-"`
 
 	DDLEvent   *DDLEvent          `msg:"-"` // FIXME
 	Rows       []*RowChangedEvent `msg:"rows"`

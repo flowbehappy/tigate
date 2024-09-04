@@ -3,6 +3,7 @@ package eventservice
 import (
 	"context"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
@@ -33,7 +34,7 @@ type DispatcherInfo interface {
 	GetClusterID() uint64
 	GetTopic() string
 	GetServerID() string
-	GetTableSpan() *common.TableSpan
+	GetTableSpan() *heartbeatpb.TableSpan
 	GetStartTs() uint64
 	IsRegister() bool
 	GetChangefeedID() (namespace, id string)

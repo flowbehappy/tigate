@@ -19,7 +19,6 @@ import (
 	"math"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/tikv/client-go/v2/tikv"
@@ -43,8 +42,8 @@ func newRegionCountSplitter(
 }
 
 func (m *regionCountSplitter) split(
-	ctx context.Context, span *common.TableSpan, captureNum int,
-) []*common.TableSpan {
+	ctx context.Context, span *heartbeatpb.TableSpan, captureNum int,
+) []*heartbeatpb.TableSpan {
 	bo := tikv.NewBackoffer(ctx, 500)
 	regions, err := m.regionCache.ListRegionIDsInKeyRange(bo, span.StartKey, span.EndKey)
 	if err != nil {
@@ -52,7 +51,7 @@ func (m *regionCountSplitter) split(
 			zap.String("changefeed", m.changefeedID.ID),
 			zap.String("span", span.String()),
 			zap.Error(err))
-		return []*common.TableSpan{span}
+		return []*heartbeatpb.TableSpan{span}
 	}
 	if len(regions) <= m.regionThreshold || captureNum == 0 {
 		log.Info("skip split span by region count",
@@ -61,14 +60,14 @@ func (m *regionCountSplitter) split(
 			zap.Int("totalCaptures", captureNum),
 			zap.Int("regionCount", len(regions)),
 			zap.Int("regionThreshold", m.regionThreshold))
-		return []*common.TableSpan{span}
+		return []*heartbeatpb.TableSpan{span}
 	}
 
 	stepper := newEvenlySplitStepper(
 		getSpansNumber(len(regions), captureNum),
 		len(regions))
 
-	spans := make([]*common.TableSpan, 0, stepper.SpanCount())
+	spans := make([]*heartbeatpb.TableSpan, 0, stepper.SpanCount())
 	start, end := 0, stepper.Step()
 	for {
 		startRegion, err := m.regionCache.LocateRegionByID(bo, regions[start])
@@ -78,7 +77,7 @@ func (m *regionCountSplitter) split(
 				zap.String("changefeed", m.changefeedID.ID),
 				zap.String("span", span.String()),
 				zap.Error(err))
-			return []*common.TableSpan{span}
+			return []*heartbeatpb.TableSpan{span}
 		}
 		endRegion, err := m.regionCache.LocateRegionByID(bo, regions[end-1])
 		if err != nil {
@@ -87,7 +86,7 @@ func (m *regionCountSplitter) split(
 				zap.String("changefeed", m.changefeedID.ID),
 				zap.String("span", span.String()),
 				zap.Error(err))
-			return []*common.TableSpan{span}
+			return []*heartbeatpb.TableSpan{span}
 		}
 		if len(spans) > 0 &&
 			bytes.Compare(spans[len(spans)-1].EndKey, startRegion.StartKey) > 0 {
@@ -97,14 +96,13 @@ func (m *regionCountSplitter) split(
 				zap.String("span", span.String()),
 				zap.Stringer("lastSpan", spans[len(spans)-1]),
 				zap.Stringer("region", startRegion))
-			return []*common.TableSpan{span}
+			return []*heartbeatpb.TableSpan{span}
 		}
-		spans = append(spans, &common.TableSpan{
-			TableSpan: &heartbeatpb.TableSpan{
-				TableID:  span.TableID,
-				StartKey: startRegion.StartKey,
-				EndKey:   endRegion.EndKey,
-			}},
+		spans = append(spans, &heartbeatpb.TableSpan{
+			TableID:  span.TableID,
+			StartKey: startRegion.StartKey,
+			EndKey:   endRegion.EndKey,
+		},
 		)
 
 		if end == len(regions) {

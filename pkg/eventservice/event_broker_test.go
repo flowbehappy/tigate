@@ -157,9 +157,8 @@ func TestScanTaskPool_PushTask(t *testing.T) {
 
 }
 
-func newTableSpan(tableID uint64, start, end string) *common.TableSpan {
-	res := &common.TableSpan{}
-	res.TableSpan = &heartbeatpb.TableSpan{
+func newTableSpan(tableID uint64, start, end string) *heartbeatpb.TableSpan {
+	res := &heartbeatpb.TableSpan{
 		TableID:  tableID,
 		StartKey: []byte(start),
 		EndKey:   []byte(end),

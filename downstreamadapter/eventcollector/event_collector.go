@@ -124,7 +124,7 @@ func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
 		Type:  messaging.TypeRegisterDispatcherRequest,
 		Message: []messaging.IOTypeT{messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
 			DispatcherId: info.Dispatcher.GetId().ToPB(),
-			TableSpan:    info.Dispatcher.GetTableSpan().TableSpan,
+			TableSpan:    info.Dispatcher.GetTableSpan(),
 			Remove:       false,
 			StartTs:      info.StartTs,
 			ServerId:     c.serverId.String(),
@@ -150,7 +150,7 @@ func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
 			DispatcherId: d.GetId().ToPB(),
 			Remove:       true,
 			ServerId:     c.serverId.String(),
-			TableSpan:    d.GetTableSpan().TableSpan,
+			TableSpan:    d.GetTableSpan(),
 		}}}})
 	if err != nil {
 		log.Error("failed to send register dispatcher request message", zap.Error(err))

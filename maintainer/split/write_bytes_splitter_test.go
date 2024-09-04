@@ -21,7 +21,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/stretchr/testify/require"
@@ -207,7 +207,7 @@ func TestSplitRegionsByWrittenKeysConfig(t *testing.T) {
 	re.EqualValues(1, info.Spans[0].TableID)
 
 	splitter.writeKeyThreshold = 0
-	spans := splitter.split(context.Background(), &common.TableSpan{}, 3)
+	spans := splitter.split(context.Background(), &heartbeatpb.TableSpan{}, 3)
 	require.Empty(t, spans)
 }
 

@@ -18,6 +18,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/pdutil"
@@ -40,7 +41,7 @@ type LogPullerMultiSpan struct {
 func NewLogPullerMultiSpan(
 	client *SubscriptionClient,
 	pdClock pdutil.Clock,
-	spans []common.TableSpan,
+	spans []heartbeatpb.TableSpan,
 	startTs common.Ts,
 	consume func(context.Context, *common.RawKVEntry) error,
 ) *LogPullerMultiSpan {
@@ -72,7 +73,7 @@ func NewLogPullerMultiSpan(
 
 	pullerWrapper.innerPuller = NewLogPuller(client, pdClock, consumeWrapper)
 	for _, span := range spans {
-		subID := pullerWrapper.innerPuller.Subscribe(*span.TableSpan, pullerWrapper.startTs)
+		subID := pullerWrapper.innerPuller.Subscribe(span, pullerWrapper.startTs)
 		pullerWrapper.resolvedTsMap[subID] = 0
 	}
 	return pullerWrapper
