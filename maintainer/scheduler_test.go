@@ -233,7 +233,7 @@ func TestFinishBootstrap(t *testing.T) {
 			DDLStatus:    nil,
 		},
 	}, NewReplicaSet(model.ChangeFeedID{}, dispatcherID2, 1, span, 1))
-	cached := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine]()
+	cached := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine](heartbeatpb.LessTableSpan)
 	cached.ReplaceOrInsert(span, stm2)
 	require.False(t, s.bootstrapped)
 	s.FinishBootstrap(map[uint64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]{
@@ -334,7 +334,7 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 		{TableID: 1, StartKey: appendNew(totalSpan.StartKey, 'a'), EndKey: appendNew(totalSpan.StartKey, 'b')}, // 1 region // 1 region
 		{TableID: 1, StartKey: appendNew(totalSpan.StartKey, 'b'), EndKey: appendNew(totalSpan.StartKey, 'c')},
 	}
-	cached := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine]()
+	cached := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine](heartbeatpb.LessTableSpan)
 	for _, span := range reportedSpans {
 		dispatcherID1 := common.NewDispatcherID()
 		stm1 := scheduler.NewStateMachine(dispatcherID1, map[model.CaptureID]scheduler.InferiorStatus{
@@ -355,7 +355,7 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 			CheckpointTs: 10,
 		},
 	}, NewReplicaSet(model.ChangeFeedID{}, ddlDispatcherID, heartbeatpb.DDLSpanSchemaID, heartbeatpb.DDLSpan, 1))
-	ddlCache := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine]()
+	ddlCache := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine](heartbeatpb.LessTableSpan)
 	ddlCache.ReplaceOrInsert(heartbeatpb.DDLSpan, ddlStm)
 
 	require.False(t, s.bootstrapped)

@@ -21,14 +21,6 @@ const (
 	defaultScanWorkerCount = 8192
 )
 
-// EventService accepts the requests of pulling events.
-// The EventService is a singleton in the system.
-type EventService interface {
-	Name() string
-	Run(ctx context.Context) error
-	Close(context.Context) error
-}
-
 type DispatcherInfo interface {
 	// GetID returns the ID of the dispatcher.
 	GetID() common.DispatcherID
@@ -43,6 +35,8 @@ type DispatcherInfo interface {
 	GetFilterConfig() *config.FilterConfig
 }
 
+// EventService accepts the requests of pulling events.
+// The EventService is a singleton in the system.
 type eventService struct {
 	mc          messaging.MessageCenter
 	eventStore  eventstore.EventStore
@@ -54,7 +48,7 @@ type eventService struct {
 	tz             *time.Location
 }
 
-func NewEventService() EventService {
+func NewEventService() common.SubModule {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	eventStore := appcontext.GetService[eventstore.EventStore](appcontext.EventStore)
 	schemaStore := appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore)

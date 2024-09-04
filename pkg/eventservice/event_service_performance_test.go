@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
@@ -48,18 +47,7 @@ func TestEventServiceOneMillionTable(t *testing.T) {
 		}
 	}()
 
-	appcontext.SetService(appcontext.MessageCenter, mc)
-	appcontext.SetService(appcontext.EventStore, mockStore)
-	es := NewEventService()
-	esImpl := es.(*eventService)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		err := es.Run(ctx)
-		if err != nil {
-			t.Errorf("EventService.Run() error = %v", err)
-		}
-	}()
+	esImpl := initEventService(ctx, t, mc, mockStore)
 
 	start := time.Now()
 	dispatchers := make([]DispatcherInfo, 0, tableNum)
