@@ -187,13 +187,34 @@ func (s *Scheduler) GetTask(dispatcherID common.DispatcherID) *scheduler.StateMa
 	return stm
 }
 
-// RemoveTask removes task by dispatcherID
-func (s *Scheduler) RemoveTask(dispatcherID common.DispatcherID) *messaging.TargetMessage {
-	var stm = s.GetTask(dispatcherID)
+func (s *Scheduler) RemoveAllTasks() []*messaging.TargetMessage {
+	var msgs []*messaging.TargetMessage
+	for _, m := range s.totalMaps {
+		for _, stm := range m {
+			msg := s.RemoveTask(stm)
+			if msg != nil {
+				msgs = append(msgs, msg)
+			}
+		}
+	}
+	return msgs
+}
+
+func (s *Scheduler) RemoveTask(stm *scheduler.StateMachine) *messaging.TargetMessage {
 	if stm == nil {
 		log.Warn("dispatcher is not found",
 			zap.String("cf", s.changefeedID),
 			zap.Any("dispatcherID", s.changefeedID))
+		return nil
+	}
+	if stm.State == scheduler.SchedulerStatusAbsent {
+		replica := stm.Inferior.(*ReplicaSet)
+		id := replica.ID
+		log.Info("remove a absent task",
+			zap.String("changefeed", s.changefeedID),
+			zap.String("id", id.String()))
+		delete(s.Absent(), id)
+		delete(s.schemaTasks[replica.SchemaID], id)
 		return nil
 	}
 	oldState := stm.State
@@ -201,6 +222,29 @@ func (s *Scheduler) RemoveTask(dispatcherID common.DispatcherID) *messaging.Targ
 	msg := stm.HandleRemoveInferior()
 	s.tryMoveTask(stm.ID.(common.DispatcherID), stm, oldState, oldPrimary, true)
 	return msg
+}
+
+// RemoveTaskByID removes task by dispatcherID
+func (s *Scheduler) RemoveTaskByID(dispatcherID common.DispatcherID) *messaging.TargetMessage {
+	return s.RemoveTask(s.GetTask(dispatcherID))
+}
+
+func (s *Scheduler) GetTasksByTableIDs(tableIDs ...int64) []*scheduler.StateMachine {
+	tableMap := make(map[int64]bool, len(tableIDs))
+	for _, tableID := range tableIDs {
+		tableMap[tableID] = true
+	}
+	var stms []*scheduler.StateMachine
+	for _, m := range s.totalMaps {
+		for _, stm := range m {
+			replica := stm.Inferior.(*ReplicaSet)
+			if !tableMap[int64(replica.Span.TableID)] {
+				continue
+			}
+			stms = append(stms, stm)
+		}
+	}
+	return stms
 }
 
 func (s *Scheduler) AddNewNode(id string) {

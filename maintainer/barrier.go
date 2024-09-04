@@ -19,6 +19,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/scheduler"
 )
 
 // Barrier manage the block events for the changefeed
@@ -116,26 +117,38 @@ func (b *Barrier) Resend() []*messaging.TargetMessage {
 
 func (b *Barrier) handleOneStatus(changefeedID string, status *heartbeatpb.TableSpanStatus) ([]*messaging.TargetMessage, *heartbeatpb.DispatcherStatus, error) {
 	dispatcherID := common.NewDispatcherIDFromPB(status.ID)
-	var (
-		msgs            []*messaging.TargetMessage
-		distacherStatus *heartbeatpb.DispatcherStatus
-		err             error
-	)
 	if status.State == nil {
-		msgs, err = b.handleNoStateHeartbeat(dispatcherID, status.CheckpointTs)
-		return msgs, distacherStatus, err
-	} else {
-		msgs, distacherStatus, err = b.handleStateHeartbeat(changefeedID, dispatcherID, status)
+		return b.handleNoStateHeartbeat(dispatcherID, status.CheckpointTs)
 	}
-	return msgs, distacherStatus, nil
+	return b.handleStateHeartbeat(changefeedID, dispatcherID, status)
 }
 
-func (b *Barrier) handleNoStateHeartbeat(dispatcherID common.DispatcherID, checkpointTs uint64) ([]*messaging.TargetMessage, error) {
+func (b *Barrier) handleNoStateHeartbeat(dispatcherID common.DispatcherID, checkpointTs uint64) ([]*messaging.TargetMessage, *heartbeatpb.DispatcherStatus, error) {
 	event, ok := b.blockedDispatcher[dispatcherID]
 	// no block event found
 	if !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
+	// no block event send ,but reached the block point
+	if checkpointTs == event.commitTs {
+		event.advancedDispatchers[dispatcherID] = true
+		// all dispatcher reported heartbeat, select one to write
+		if !event.selected && event.allDispatcherReported() {
+			distacherStatus := &heartbeatpb.DispatcherStatus{
+				InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
+					InfluenceType: heartbeatpb.InfluenceType_Normal,
+					DispatcherIDs: []*heartbeatpb.DispatcherID{dispatcherID.ToPB()},
+				},
+				Action: &heartbeatpb.DispatcherAction{
+					Action:   heartbeatpb.Action_Write,
+					CommitTs: event.commitTs,
+				}}
+			event.writerDispatcher = dispatcherID
+			event.selected = true
+			return nil, distacherStatus, nil
+		}
+	}
+
 	var msgs []*messaging.TargetMessage
 	// there is a block event and the dispatcher advanced its checkpoint ts
 	// which means we have sent pass or write action to it
@@ -156,7 +169,7 @@ func (b *Barrier) handleNoStateHeartbeat(dispatcherID common.DispatcherID, check
 			delete(b.blockedTs, event.commitTs)
 		}
 	}
-	return msgs, nil
+	return msgs, nil, nil
 }
 
 func (b *Barrier) handleStateHeartbeat(changefeedID string,
@@ -171,7 +184,7 @@ func (b *Barrier) handleStateHeartbeat(changefeedID string,
 		event, ok := b.blockedTs[blockState.BlockTs]
 		ack := &heartbeatpb.DispatcherStatus{
 			InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
-				InfluenceType: blockState.BlockDispatchers.InfluenceType,
+				InfluenceType: blockState.BlockTables.InfluenceType,
 			},
 			Ack: &heartbeatpb.ACK{CommitTs: blockState.BlockTs}}
 		if !ok {
@@ -199,7 +212,10 @@ func (b *Barrier) handleStateHeartbeat(changefeedID string,
 		// the ddl already synced to downstream , e.g.: create table, drop table
 		distacherStatus = &heartbeatpb.DispatcherStatus{
 			InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
-				InfluenceType: blockState.BlockDispatchers.InfluenceType,
+				InfluenceType: heartbeatpb.InfluenceType_Normal,
+				DispatcherIDs: []*heartbeatpb.DispatcherID{
+					dispatcherID.ToPB(),
+				},
 			},
 			Ack: &heartbeatpb.ACK{CommitTs: blockState.BlockTs},
 		}
@@ -217,10 +233,14 @@ type BarrierEvent struct {
 	writerDispatcher         common.DispatcherID
 	writerDispatcherAdvanced bool
 	newTables                []*heartbeatpb.Table
-	blockedDispatchers       *heartbeatpb.InfluencedDispatchers
-	dropDispatchers          *heartbeatpb.InfluencedDispatchers
-	advancedDispatchers      map[common.DispatcherID]bool
-	lastResendTime           time.Time
+	blockedDispatchers       *heartbeatpb.InfluencedTables
+	dropDispatchers          *heartbeatpb.InfluencedTables
+
+	blockedTasks []*scheduler.StateMachine
+	dropTasks    []*scheduler.StateMachine
+
+	advancedDispatchers map[common.DispatcherID]bool
+	lastResendTime      time.Time
 }
 
 func NewBlockEvent(cfID string, scheduler *Scheduler,
@@ -230,11 +250,17 @@ func NewBlockEvent(cfID string, scheduler *Scheduler,
 		selected:            false,
 		cfID:                cfID,
 		commitTs:            status.BlockTs,
-		blockedDispatchers:  status.BlockDispatchers,
+		blockedDispatchers:  status.BlockTables,
 		newTables:           status.NeedAddedTables,
-		dropDispatchers:     status.NeedDroppedDispatchers,
+		dropDispatchers:     status.NeedDroppedTables,
 		advancedDispatchers: make(map[common.DispatcherID]bool),
 		lastResendTime:      time.Now(),
+	}
+	if event.blockedDispatchers != nil && event.blockedDispatchers.InfluenceType == heartbeatpb.InfluenceType_Normal {
+		event.blockedTasks = event.scheduler.GetTasksByTableIDs(event.blockedDispatchers.TableIDs...)
+	}
+	if event.dropDispatchers != nil && event.dropDispatchers.InfluenceType == heartbeatpb.InfluenceType_Normal {
+		event.dropTasks = event.scheduler.GetTasksByTableIDs(event.dropDispatchers.TableIDs...)
 	}
 	return event
 }
@@ -243,19 +269,23 @@ func (b *BarrierEvent) scheduleBlockEvent() []*messaging.TargetMessage {
 	var msgs []*messaging.TargetMessage
 	// dispatcher notify us to drop some tables, by dispatcher ID or schema ID
 	if b.dropDispatchers != nil {
-		for _, removed := range b.dropDispatchers.DispatcherIDs {
-			msg := b.scheduler.RemoveTask(common.NewDispatcherIDFromPB(removed))
-			if msg != nil {
-				msgs = append(msgs, msg)
-			}
-		}
-		if b.dropDispatchers.InfluenceType == heartbeatpb.InfluenceType_DB {
-			for dispatcherID, _ := range b.scheduler.GetTasksBySchemaID(b.dropDispatchers.SchemaID) {
-				msg := b.scheduler.RemoveTask(dispatcherID)
+		switch b.dropDispatchers.InfluenceType {
+		case heartbeatpb.InfluenceType_DB:
+			for _, stm := range b.scheduler.GetTasksBySchemaID(b.dropDispatchers.SchemaID) {
+				msg := b.scheduler.RemoveTask(stm)
 				if msg != nil {
 					msgs = append(msgs, msg)
 				}
 			}
+		case heartbeatpb.InfluenceType_Normal:
+			for _, stm := range b.dropTasks {
+				msg := b.scheduler.RemoveTask(stm)
+				if msg != nil {
+					msgs = append(msgs, msg)
+				}
+			}
+		case heartbeatpb.InfluenceType_All:
+			msgs = append(msgs, b.scheduler.RemoveAllTasks()...)
 		}
 	}
 	for _, add := range b.newTables {
@@ -280,7 +310,7 @@ func (b *BarrierEvent) allDispatcherReported() bool {
 	case heartbeatpb.InfluenceType_All:
 		return len(b.advancedDispatchers) >= b.scheduler.TaskSize()
 	case heartbeatpb.InfluenceType_Normal:
-		return len(b.advancedDispatchers) >= len(b.blockedDispatchers.DispatcherIDs)
+		return len(b.advancedDispatchers) >= len(b.blockedTasks)
 	}
 	return false
 }
@@ -335,14 +365,13 @@ func (b *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
 		}
 	case heartbeatpb.InfluenceType_Normal:
 		// send pass action
-		for _, dispatcherIDPB := range b.blockedDispatchers.DispatcherIDs {
-			dispatcherID := common.NewDispatcherIDFromPB(dispatcherIDPB)
-			// skip write dispatcher, we already send the write action
-			if b.writerDispatcher == dispatcherID {
+		for _, stm := range b.blockedTasks {
+			if stm == nil || stm.Primary == "" {
 				continue
 			}
-			stm := b.scheduler.GetTask(dispatcherID)
-			if stm == nil || stm.Primary == "" {
+			replica := stm.Inferior.(*ReplicaSet)
+			dispatcherID := replica.ID
+			if dispatcherID == b.writerDispatcher {
 				continue
 			}
 			msg, ok := msgMap[stm.Primary]
@@ -362,7 +391,7 @@ func (b *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
 				msgMap[stm.Primary] = msg
 			}
 			influencedDispatchers := msg.Message[0].(*heartbeatpb.HeartBeatResponse).DispatcherStatuses[0].InfluencedDispatchers
-			influencedDispatchers.DispatcherIDs = append(influencedDispatchers.DispatcherIDs, dispatcherIDPB)
+			influencedDispatchers.DispatcherIDs = append(influencedDispatchers.DispatcherIDs, dispatcherID.ToPB())
 		}
 	}
 	var msgs = make([]*messaging.TargetMessage, 0, len(msgMap))

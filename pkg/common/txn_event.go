@@ -22,9 +22,9 @@ type DDLEvent struct {
 	CommitTS Ts `json:"commit_ts"`
 
 	// Just for test now
-	BlockedDispatchers     *InfluencedDispatchers `json:"blocked_dispatchers"`
-	NeedDroppedDispatchers *InfluencedDispatchers `json:"need_dropped_dispatchers"`
-	NeedAddedTables        []Table                `json:"need_added_tables"`
+	BlockedTables     *InfluencedTables `json:"blocked_tables"`
+	NeedDroppedTables *InfluencedTables `json:"need_dropped_tables"`
+	NeedAddedTables   []Table           `json:"need_added_tables"`
 }
 
 // TxnEvent represents all events in the current txn
@@ -135,19 +135,19 @@ func (t InfluenceType) toPB() heartbeatpb.InfluenceType {
 	return heartbeatpb.InfluenceType_Normal
 }
 
-type InfluencedDispatchers struct {
+type InfluencedTables struct {
 	InfluenceType InfluenceType
-	DispatcherIDs []*heartbeatpb.DispatcherID
+	TableIDs      []int64
 	SchemaID      int64
 }
 
-func (i *InfluencedDispatchers) ToPB() *heartbeatpb.InfluencedDispatchers {
+func (i *InfluencedTables) ToPB() *heartbeatpb.InfluencedTables {
 	if i == nil {
 		return nil
 	}
-	return &heartbeatpb.InfluencedDispatchers{
+	return &heartbeatpb.InfluencedTables{
 		InfluenceType: i.InfluenceType.toPB(),
-		DispatcherIDs: i.DispatcherIDs,
+		TableIDs:      i.TableIDs,
 		SchemaID:      i.SchemaID,
 	}
 }
@@ -168,12 +168,12 @@ type Table struct {
 	TableID  int64
 }
 
-func (e *TxnEvent) GetBlockedDispatchers() *InfluencedDispatchers {
-	return e.DDLEvent.BlockedDispatchers
+func (e *TxnEvent) GetBlockedTables() *InfluencedTables {
+	return e.DDLEvent.BlockedTables
 }
 
-func (e *TxnEvent) GetNeedDroppedDispatchers() *InfluencedDispatchers {
-	return e.DDLEvent.NeedDroppedDispatchers
+func (e *TxnEvent) GetNeedDroppedTables() *InfluencedTables {
+	return e.DDLEvent.NeedDroppedTables
 }
 
 func (e *TxnEvent) GetNeedAddedTables() []Table {
