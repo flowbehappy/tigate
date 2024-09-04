@@ -241,7 +241,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	require.Len(t, remotedIds, 2)
 	foundSize := 0
 	hasDDLDispatcher := false
-	for id, stm := range maintainer.scheduler.working {
+	for id, stm := range maintainer.scheduler.Working() {
 		if stm.Inferior.(*ReplicaSet).Span.Equal(common.DDLSpan) {
 			hasDDLDispatcher = true
 		}

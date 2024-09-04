@@ -41,7 +41,7 @@ func TestNormalBlock(t *testing.T) {
 		blockedDispatcherIDS = append(blockedDispatcherIDS, dispatcherID.ToPB())
 		replicaSet := NewReplicaSet(model.DefaultChangeFeedID("test"), dispatcherID, 1, tableSpan, 0)
 		stm := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
-		sche.working[dispatcherID] = stm
+		sche.Working()[dispatcherID] = stm
 		stm.Primary = "node1"
 		sche.nodeTasks["node1"][dispatcherID] = stm
 	}
@@ -216,7 +216,7 @@ func TestSchemaBlock(t *testing.T) {
 	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 2})
 	sche.AddNewTable(common.Table{SchemaID: 2, TableID: 1})
 	var dispatcherIDs []*heartbeatpb.DispatcherID
-	for key, stm := range sche.absent {
+	for key, stm := range sche.Absent() {
 		if stm.Inferior.(*ReplicaSet).SchemaID == 1 {
 			dispatcherIDs = append(dispatcherIDs, key.ToPB())
 		}
@@ -352,10 +352,10 @@ func TestSchemaBlock(t *testing.T) {
 	require.Len(t, barrier.blockedTs, 1)
 	// the writer already advanced
 	require.Len(t, barrier.blockedDispatcher, 1)
-	require.Equal(t, 0, len(sche.absent))
-	require.Equal(t, 1, len(sche.committing))
-	require.Equal(t, 2, len(sche.removing))
-	require.Equal(t, 1, len(sche.working))
+	require.Equal(t, 0, len(sche.Absent()))
+	require.Equal(t, 1, len(sche.Commiting()))
+	require.Equal(t, 2, len(sche.Removing()))
+	require.Equal(t, 1, len(sche.Working()))
 	// other dispatcher advanced checkpoint ts
 	msgs, err = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
@@ -379,7 +379,7 @@ func TestSyncPointBlock(t *testing.T) {
 	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 2})
 	sche.AddNewTable(common.Table{SchemaID: 2, TableID: 1})
 	var dispatcherIDs []*heartbeatpb.DispatcherID
-	for key, stm := range sche.absent {
+	for key, stm := range sche.Absent() {
 		dispatcherIDs = append(dispatcherIDs, key.ToPB())
 		stm.Primary = "node1"
 		stm.State = scheduler.SchedulerStatusWorking
@@ -544,5 +544,5 @@ func TestNonBlocked(t *testing.T) {
 	require.Len(t, msgs, 3)
 	require.Len(t, barrier.blockedTs, 0)
 	require.Len(t, barrier.blockedDispatcher, 0)
-	require.Len(t, barrier.scheduler.committing, 2)
+	require.Len(t, barrier.scheduler.Commiting(), 2)
 }
