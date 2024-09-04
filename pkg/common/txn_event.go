@@ -7,7 +7,9 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	timodel "github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/tiflow/pkg/integrity"
 	"go.uber.org/zap"
 )
 
@@ -303,6 +305,10 @@ type RowChangedEvent struct {
 
 	// ReplicatingTs is ts when a table starts replicating events to downstream.
 	ReplicatingTs uint64 `msg:"replicating-ts"`
+
+	// Checksum for the event, only not nil if the upstream TiDB enable the row level checksum
+	// and TiCDC set the integrity check level to the correctness.
+	Checksum *integrity.Checksum
 }
 
 // GetTableID returns the table ID of the event.
@@ -388,4 +394,95 @@ func columnData2Column(col *timodel.ColumnData, tableInfo *TableInfo) *Column {
 		Value:     col.Value,
 		Default:   GetColumnDefaultValue(colInfo),
 	}
+}
+
+// IsDelete returns true if the row is a delete event
+func (r *RowChangedEvent) IsDelete() bool {
+	return len(r.PreColumns) != 0 && len(r.Columns) == 0
+}
+
+// IsInsert returns true if the row is an insert event
+func (r *RowChangedEvent) IsInsert() bool {
+	return len(r.PreColumns) == 0 && len(r.Columns) != 0
+}
+
+// IsUpdate returns true if the row is an update event
+func (r *RowChangedEvent) IsUpdate() bool {
+	return len(r.PreColumns) != 0 && len(r.Columns) != 0
+}
+
+// HandleKeyColInfos returns the column(s) and colInfo(s) corresponding to the handle key(s)
+func (r *RowChangedEvent) HandleKeyColInfos() ([]*Column, []rowcodec.ColInfo) {
+	pkeyCols := make([]*Column, 0)
+	pkeyColInfos := make([]rowcodec.ColInfo, 0)
+
+	var cols []*Column
+	if r.IsDelete() {
+		cols = r.PreColumns
+	} else {
+		cols = r.Columns
+	}
+
+	tableInfo := r.TableInfo
+	colInfos := tableInfo.GetColInfosForRowChangedEvent()
+	for i, col := range cols {
+		if col != nil && col.Flag.IsHandleKey() {
+			pkeyCols = append(pkeyCols, col)
+			pkeyColInfos = append(pkeyColInfos, colInfos[i])
+		}
+	}
+
+	// It is okay not to have handle keys, so the empty array is an acceptable result
+	return pkeyCols, pkeyColInfos
+}
+
+// PrimaryKeyColumnNames return all primary key's name
+func (r *RowChangedEvent) PrimaryKeyColumnNames() []string {
+	var result []string
+
+	var cols []*Column
+	if r.IsDelete() {
+		cols = r.PreColumns
+	} else {
+		cols = r.Columns
+	}
+
+	result = make([]string, 0)
+	for _, col := range cols {
+		if col != nil && col.Flag.IsPrimaryKey() {
+			result = append(result, col.Name)
+		}
+	}
+	return result
+}
+
+// GetHandleAndUniqueIndexOffsets4Test is used to get the offsets of handle columns and other unique index columns in test
+func GetHandleAndUniqueIndexOffsets4Test(cols []*Column) [][]int {
+	result := make([][]int, 0)
+	handleColumns := make([]int, 0)
+	for i, col := range cols {
+		if col.Flag.IsHandleKey() {
+			handleColumns = append(handleColumns, i)
+		} else if col.Flag.IsUniqueKey() {
+			// When there is a unique key which is not handle key,
+			// we cannot get the accurate index info for this key.
+			// So just be aggressive to make each unique column a unique index
+			// to make sure there is no write conflict when syncing data in tests.
+			result = append(result, []int{i})
+		}
+	}
+	if len(handleColumns) != 0 {
+		result = append(result, handleColumns)
+	}
+	return result
+}
+
+type MQRowEvent struct {
+	Key      timodel.TopicPartitionKey
+	RowEvent RowEvent
+}
+
+type RowEvent struct {
+	Event    *RowChangedEvent
+	Callback func()
 }

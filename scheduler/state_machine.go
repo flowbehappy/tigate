@@ -314,7 +314,7 @@ func (s *StateMachine) HandleRemoveInferior() *messaging.TargetMessage {
 	}
 	oldState := s.State
 	s.State = SchedulerStatusRemoving
-	log.Info("state transition, remove inferiror",
+	log.Info("state transition, remove inferior",
 		zap.String("statemachine", s.ID.String()),
 		zap.Stringer("old", oldState))
 	return s.Inferior.NewRemoveInferiorMessage(s.Primary)

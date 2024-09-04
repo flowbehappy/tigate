@@ -212,15 +212,15 @@ func (d *Dispatcher) HandleEvent(event common.Event) (block bool) {
 func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 	if d.ddlPendingEvent.IsSingleTableDDL() {
 		d.sink.AddDDLAndSyncPointEvent(d.ddlPendingEvent, d.tableProgress)
-		if d.ddlPendingEvent.GetNeedAddedTables() != nil || d.ddlPendingEvent.GetNeedDroppedDispatchers() != nil {
+		if d.ddlPendingEvent.GetNeedAddedTables() != nil || d.ddlPendingEvent.GetNeedDroppedTables() != nil {
 			message := &heartbeatpb.TableSpanStatus{
 				ID:              d.id.ToPB(),
 				ComponentStatus: heartbeatpb.ComponentState_Working,
 				State: &heartbeatpb.State{
-					IsBlocked:              false,
-					BlockTs:                d.ddlPendingEvent.CommitTS,
-					NeedDroppedDispatchers: d.ddlPendingEvent.GetNeedDroppedDispatchers().ToPB(),
-					NeedAddedTables:        common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
+					IsBlocked:         false,
+					BlockTs:           d.ddlPendingEvent.CommitTS,
+					NeedDroppedTables: d.ddlPendingEvent.GetNeedDroppedTables().ToPB(),
+					NeedAddedTables:   common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
 				},
 			}
 			d.SetResendTask(newResendTask(message, d))
@@ -231,11 +231,11 @@ func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 			ID:              d.id.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			State: &heartbeatpb.State{
-				IsBlocked:              true,
-				BlockTs:                d.ddlPendingEvent.CommitTS,
-				BlockDispatchers:       d.ddlPendingEvent.GetBlockedDispatchers().ToPB(),
-				NeedDroppedDispatchers: d.ddlPendingEvent.GetNeedDroppedDispatchers().ToPB(),
-				NeedAddedTables:        common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
+				IsBlocked:         true,
+				BlockTs:           d.ddlPendingEvent.CommitTS,
+				BlockTables:       d.ddlPendingEvent.GetBlockedTables().ToPB(),
+				NeedDroppedTables: d.ddlPendingEvent.GetNeedDroppedTables().ToPB(),
+				NeedAddedTables:   common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
 			},
 		}
 		d.SetResendTask(newResendTask(message, d))

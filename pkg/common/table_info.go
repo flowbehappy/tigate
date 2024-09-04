@@ -736,3 +736,248 @@ func GetColumnDefaultValue(col *model.ColumnInfo) interface{} {
 	defaultDatum := datumTypes.NewDatum(defaultValue)
 	return defaultDatum.GetValue()
 }
+
+// BuildTableInfoWithPKNames4Test builds a table info from given information.
+func BuildTableInfoWithPKNames4Test(schemaName, tableName string, columns []*Column, pkNames map[string]struct{}) *TableInfo {
+	if len(pkNames) == 0 {
+		return BuildTableInfo(schemaName, tableName, columns, nil)
+	}
+	indexColumns := make([][]int, 1)
+	indexColumns[0] = make([]int, 0)
+	for i, col := range columns {
+		if _, ok := pkNames[col.Name]; ok {
+			indexColumns[0] = append(indexColumns[0], i)
+			col.Flag.SetIsHandleKey()
+			col.Flag.SetIsPrimaryKey()
+		}
+	}
+	if len(indexColumns[0]) != len(pkNames) {
+		log.Panic("cannot find all pks",
+			zap.Any("indexColumns", indexColumns),
+			zap.Any("pkNames", pkNames))
+	}
+	return BuildTableInfo(schemaName, tableName, columns, indexColumns)
+}
+
+// BuildTableInfo builds a table info from given information.
+// Note that some fields of the result TableInfo may just be mocked.
+// The only guarantee is that we can use the result to reconstrut the information in `Column`.
+// The main use cases of this function it to build TableInfo from redo log and in tests.
+func BuildTableInfo(schemaName, tableName string, columns []*Column, indexColumns [][]int) *TableInfo {
+	tidbTableInfo := BuildTiDBTableInfo(tableName, columns, indexColumns)
+	return WrapTableInfo(100 /* not used */, schemaName, 1000 /* not used */, tidbTableInfo)
+}
+
+// BuildTiDBTableInfo is a simple wrapper over BuildTiDBTableInfoImpl which create a default ColumnIDAllocator.
+func BuildTiDBTableInfo(tableName string, columns []*Column, indexColumns [][]int) *model.TableInfo {
+	return BuildTiDBTableInfoImpl(tableName, columns, indexColumns, NewIncrementalColumnIDAllocator())
+}
+
+// IncrementalColumnIDAllocator allocates column id in an incremental way.
+// At most of the time, it is the default implementation when you don't care the column id's concrete value.
+//
+//msgp:ignore IncrementalColumnIDAllocator
+type IncrementalColumnIDAllocator struct {
+	nextColID int64
+}
+
+// NewIncrementalColumnIDAllocator creates a new IncrementalColumnIDAllocator
+func NewIncrementalColumnIDAllocator() *IncrementalColumnIDAllocator {
+	return &IncrementalColumnIDAllocator{
+		nextColID: 100, // 100 is an arbitrary number
+	}
+}
+
+// GetColumnID return the next mock column id
+func (d *IncrementalColumnIDAllocator) GetColumnID(name string) int64 {
+	result := d.nextColID
+	d.nextColID += 1
+	return result
+}
+
+// ColumnIDAllocator represents the interface to allocate column id for tableInfo
+type ColumnIDAllocator interface {
+	// GetColumnID return the column id according to the column name
+	GetColumnID(name string) int64
+}
+
+// BuildTiDBTableInfoImpl builds a TiDB TableInfo from given information.
+// Note the result TableInfo may not be same as the original TableInfo in tidb.
+// The only guarantee is that you can restore the `Name`, `Type`, `Charset`, `Collation`
+// and `Flag` field of `Column` using the result TableInfo.
+// The precondition required for calling this function:
+//  1. There must be at least one handle key in `columns`;
+//  2. The handle key must either be a primary key or a non null unique key;
+//  3. The index that is selected as the handle must be provided in `indexColumns`;
+func BuildTiDBTableInfoImpl(
+	tableName string,
+	columns []*Column,
+	indexColumns [][]int,
+	columnIDAllocator ColumnIDAllocator,
+) *model.TableInfo {
+	ret := &model.TableInfo{}
+	ret.Name = model.NewCIStr(tableName)
+
+	hasPrimaryKeyColumn := false
+	for i, col := range columns {
+		columnInfo := &model.ColumnInfo{
+			Offset: i,
+			State:  model.StatePublic,
+		}
+		if col == nil {
+			// actually, col should never be nil according to `datum2Column` and `WrapTableInfo` in prod env
+			// we mock it as generated column just for test
+			columnInfo.Name = model.NewCIStr("omitted")
+			columnInfo.GeneratedExprString = "pass_generated_check"
+			columnInfo.GeneratedStored = false
+			ret.Columns = append(ret.Columns, columnInfo)
+			continue
+		}
+		// add a mock id to identify columns inside cdc
+		columnInfo.ID = columnIDAllocator.GetColumnID(col.Name)
+		columnInfo.Name = model.NewCIStr(col.Name)
+		columnInfo.SetType(col.Type)
+
+		if col.Collation != "" {
+			columnInfo.SetCollate(col.Collation)
+		} else {
+			// collation is not stored, give it a default value
+			columnInfo.SetCollate(mysql.UTF8MB4DefaultCollation)
+		}
+
+		// inverse initColumnsFlag
+		flag := col.Flag
+		if col.Charset != "" {
+			columnInfo.SetCharset(col.Charset)
+		} else if flag.IsBinary() {
+			columnInfo.SetCharset("binary")
+		} else {
+			// charset is not stored, give it a default value
+			columnInfo.SetCharset(mysql.UTF8MB4Charset)
+		}
+		if flag.IsGeneratedColumn() {
+			// we do not use this field, so we set it to any non-empty string
+			columnInfo.GeneratedExprString = "pass_generated_check"
+			columnInfo.GeneratedStored = true
+		}
+		if flag.IsPrimaryKey() {
+			columnInfo.AddFlag(mysql.PriKeyFlag)
+			hasPrimaryKeyColumn = true
+			if !flag.IsHandleKey() {
+				log.Panic("Primary key must be handle key",
+					zap.String("table", tableName),
+					zap.Any("columns", columns),
+					zap.Any("indexColumns", indexColumns))
+			}
+			// just set it for test compatibility,
+			// actually we cannot deduce the value of IsCommonHandle from the provided args.
+			ret.IsCommonHandle = true
+		}
+		if flag.IsUniqueKey() {
+			columnInfo.AddFlag(mysql.UniqueKeyFlag)
+		}
+		if flag.IsHandleKey() {
+			if !flag.IsPrimaryKey() && !flag.IsUniqueKey() {
+				log.Panic("Handle key must either be primary key or unique key",
+					zap.String("table", tableName),
+					zap.Any("columns", columns),
+					zap.Any("indexColumns", indexColumns))
+			}
+		}
+		if !flag.IsNullable() {
+			columnInfo.AddFlag(mysql.NotNullFlag)
+		}
+		if flag.IsMultipleKey() {
+			columnInfo.AddFlag(mysql.MultipleKeyFlag)
+		}
+		if flag.IsUnsigned() {
+			columnInfo.AddFlag(mysql.UnsignedFlag)
+		}
+		ret.Columns = append(ret.Columns, columnInfo)
+	}
+
+	hasPrimaryKeyIndex := false
+	hasHandleIndex := false
+	// TiCDC handles columns according to the following rules:
+	// 1. If a primary key (PK) exists, it is chosen.
+	// 2. If there is no PK, TiCDC looks for a not null unique key (UK) with the least number of columns and the smallest index ID.
+	// So we assign the smallest index id to the index which is selected as handle to mock this behavior.
+	minIndexID := int64(1)
+	nextMockIndexID := minIndexID + 1
+	for i, colOffsets := range indexColumns {
+		indexInfo := &model.IndexInfo{
+			Name:  model.NewCIStr(fmt.Sprintf("idx_%d", i)),
+			State: model.StatePublic,
+		}
+		firstCol := columns[colOffsets[0]]
+		if firstCol == nil {
+			// when the referenced column is nil, we already have a handle index
+			// so we can skip this index.
+			// only happens for DELETE event and old value feature is disabled
+			continue
+		}
+		if firstCol.Flag.IsPrimaryKey() {
+			indexInfo.Unique = true
+		}
+		if firstCol.Flag.IsUniqueKey() {
+			indexInfo.Unique = true
+		}
+
+		isPrimary := true
+		isAllColumnsHandle := true
+		for _, offset := range colOffsets {
+			col := columns[offset]
+			// When only all columns in the index are primary key, then the index is primary key.
+			if col == nil || !col.Flag.IsPrimaryKey() {
+				isPrimary = false
+			}
+			if col == nil || !col.Flag.IsHandleKey() {
+				isAllColumnsHandle = false
+			}
+
+			tiCol := ret.Columns[offset]
+			indexCol := &model.IndexColumn{}
+			indexCol.Name = tiCol.Name
+			indexCol.Offset = offset
+			indexInfo.Columns = append(indexInfo.Columns, indexCol)
+			indexInfo.Primary = isPrimary
+		}
+		hasPrimaryKeyIndex = hasPrimaryKeyIndex || isPrimary
+		if isAllColumnsHandle {
+			// If there is no primary index, only one index will contain columns which are all handles.
+			// If there is a primary index, the primary index must be the handle.
+			// And there may be another index which is a subset of the primary index. So we skip this check.
+			if hasHandleIndex && !hasPrimaryKeyColumn {
+				log.Panic("Multiple handle index found",
+					zap.String("table", tableName),
+					zap.Any("colOffsets", colOffsets),
+					zap.String("indexName", indexInfo.Name.O),
+					zap.Any("columns", columns),
+					zap.Any("indexColumns", indexColumns))
+			}
+			hasHandleIndex = true
+		}
+		// If there is no primary column, we need allocate the min index id to the one selected as handle.
+		// In other cases, we don't care the concrete value of index id.
+		if isAllColumnsHandle && !hasPrimaryKeyColumn {
+			indexInfo.ID = minIndexID
+		} else {
+			indexInfo.ID = nextMockIndexID
+			nextMockIndexID += 1
+		}
+
+		// TODO: revert the "all column set index related flag" to "only the
+		// first column set index related flag" if needed
+
+		ret.Indices = append(ret.Indices, indexInfo)
+	}
+	if hasPrimaryKeyColumn != hasPrimaryKeyIndex {
+		log.Panic("Primary key column and primary key index is not consistent",
+			zap.String("table", tableName),
+			zap.Any("columns", columns),
+			zap.Any("indexColumns", indexColumns),
+			zap.Bool("hasPrimaryKeyColumn", hasPrimaryKeyColumn),
+			zap.Bool("hasPrimaryKeyIndex", hasPrimaryKeyIndex))
+	}
+	return ret
+}
