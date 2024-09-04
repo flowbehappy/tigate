@@ -172,6 +172,7 @@ type TEvent struct {
 	RowTypes []RowType    `json:"row_types"`
 	// Offset is the offset of the current row in the transaction.
 	Offset int `json:"offset"`
+	len    int
 
 	// The following fields are set and used by dispatcher.
 	ReplicatingTs  uint64   `json:"replicating_ts"`
@@ -220,6 +221,7 @@ func (t *TEvent) AppendRow(raw *RawKVEntry,
 	} else if count == 2 {
 		t.RowTypes = append(t.RowTypes, RowType, RowType)
 	}
+	t.len += 1
 	return nil
 }
 
@@ -286,7 +288,7 @@ func (t *TEvent) GetNextRow() (*Row, bool) {
 // Len returns the number of row change events in the transaction.
 // Note: An update event is counted as 1 row.
 func (t *TEvent) Len() int {
-	return len(t.RowTypes)
+	return t.len
 }
 
 func (t TEvent) Marshal() ([]byte, error) {

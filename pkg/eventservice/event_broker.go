@@ -188,7 +188,7 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 						continue
 					}
 					//2. Get event iterator from eventStore.
-					iter, err := c.eventStore.GetIterator(task.dataRange)
+					iter, err := c.eventStore.GetIterator(dispatcherID, task.dataRange)
 					if err != nil {
 						log.Panic("read events failed", zap.Error(err))
 					}
@@ -333,7 +333,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 		}
 	}()
 	// 3. Get the events from the iterator and send them to the dispatcher.
-	sendTxn := func(t *common.TxnEvent) {
+	sendTxn := func(t *common.TEvent) {
 		if t != nil {
 			if len(ddlEvents) > 0 && t.CommitTs > ddlEvents[0].CommitTS {
 				c.sendDDL(remoteID, ddlEvents[0], task.dispatcherStat)
@@ -341,10 +341,10 @@ func (c *eventBroker) doScan(task *scanTask) {
 			}
 			c.messageCh <- newWrapTxnEvent(remoteID, t)
 			task.dispatcherStat.watermark.Store(t.CommitTs)
-			task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(t.Rows)))
+			task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(t.Len()))
 		}
 	}
-	var txnEvent *common.TxnEvent
+	var txnEvent *common.TEvent
 	for {
 		//Node: The first event of the txn must return isNewTxn as true.
 		e, isNewTxn, err := iter.Next()
@@ -356,25 +356,22 @@ func (c *eventBroker) doScan(task *scanTask) {
 			sendTxn(txnEvent)
 			return
 		}
-		if e.CommitTs < task.dispatcherStat.watermark.Load() {
+		if e.CRTs < task.dispatcherStat.watermark.Load() {
 			// If the commitTs of the event is less than the watermark of the dispatcher,
 			// there are some bugs in the eventStore.
-			log.Panic("should never Happen", zap.Uint64("commitTs", e.CommitTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
+			log.Panic("should never Happen", zap.Uint64("commitTs", e.CRTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
 		}
-
 		if isNewTxn {
 			sendTxn(txnEvent)
-			txnEvent = &common.TxnEvent{
-				DispatcherID: dispatcherID,
-				StartTs:      e.StartTs,
-				CommitTs:     e.CommitTs,
-				Rows:         make([]*common.RowChangedEvent, 0),
+			tableID := task.dispatcherStat.info.GetTableSpan().TableID
+			tableInfo, err := c.schemaStore.GetTableInfo(int64(tableID), e.CRTs-1)
+			if err != nil {
+				// FIXME handle the error
+				log.Panic("get table info failed", zap.Error(err))
 			}
+			txnEvent = common.NewTEvent(dispatcherID, tableID, e.StartTs, e.CRTs, tableInfo)
 		}
-		if txnEvent.CommitTs != e.CommitTs {
-			log.Panic("commitTs of the event is different from the commitTs of the txnEvent", zap.Uint64("eventCommitTs", e.CommitTs), zap.Uint64("txnCommitTs", txnEvent.CommitTs))
-		}
-		txnEvent.Rows = append(txnEvent.Rows, e)
+		txnEvent.AppendRow(e, c.mounter.DecodeToChunk)
 	}
 }
 
@@ -739,10 +736,10 @@ func newWrapResolvedEvent(serverID messaging.ServerId, e common.ResolvedEvent) w
 	}
 }
 
-func newWrapDDLEvent(serverID messaging.ServerId, e *common.DDLEvent) wrapEvent {
+func newWrapDDLEvent(serverID messaging.ServerId, e common.DDLEvent) wrapEvent {
 	return wrapEvent{
 		serverID: serverID,
-		ddlEvent: e,
+		ddlEvent: &e,
 		msgType:  common.TypeDDLEvent,
 	}
 }

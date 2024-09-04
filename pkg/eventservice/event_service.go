@@ -2,6 +2,7 @@ package eventservice
 
 import (
 	"context"
+	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
