@@ -32,11 +32,11 @@ func TestNormalBlock(t *testing.T) {
 	var blockedDispatcherIDS []*heartbeatpb.DispatcherID
 	for id := 0; id < 3; id++ {
 		span := spanz.TableIDToComparableSpan(int64(id))
-		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+		tableSpan := &heartbeatpb.TableSpan{
 			TableID:  uint64(id),
 			StartKey: span.StartKey,
 			EndKey:   span.EndKey,
-		}}
+		}
 		dispatcherID := common.NewDispatcherID()
 		blockedDispatcherIDS = append(blockedDispatcherIDS, dispatcherID.ToPB())
 		replicaSet := NewReplicaSet(model.DefaultChangeFeedID("test"), dispatcherID, 1, tableSpan, 0)

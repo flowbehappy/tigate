@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
@@ -50,8 +49,8 @@ type RegionCache interface {
 
 type splitter interface {
 	split(
-		ctx context.Context, span *common.TableSpan, totalCaptures int,
-	) []*common.TableSpan
+		ctx context.Context, span *heartbeatpb.TableSpan, totalCaptures int,
+	) []*heartbeatpb.TableSpan
 }
 
 type Splitter struct {
@@ -78,9 +77,9 @@ func NewSplitter(
 }
 
 func (s *Splitter) SplitSpans(ctx context.Context,
-	span *common.TableSpan,
-	totalCaptures int) []*common.TableSpan {
-	spans := []*common.TableSpan{span}
+	span *heartbeatpb.TableSpan,
+	totalCaptures int) []*heartbeatpb.TableSpan {
+	spans := []*heartbeatpb.TableSpan{span}
 	for _, sp := range s.splitters {
 		spans = sp.split(ctx, span, totalCaptures)
 		if len(spans) > 1 {
@@ -91,26 +90,22 @@ func (s *Splitter) SplitSpans(ctx context.Context,
 }
 
 // FindHoles returns an array of Span that are not covered in the range
-func FindHoles(currentSpan utils.Map[*common.TableSpan, *scheduler.StateMachine], totalSpan *common.TableSpan) []*common.TableSpan {
-	lastSpan := &common.TableSpan{
-		TableSpan: &heartbeatpb.TableSpan{
-			TableID:  totalSpan.TableID,
-			StartKey: totalSpan.StartKey,
-			EndKey:   totalSpan.StartKey,
-		},
+func FindHoles(currentSpan utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine], totalSpan *heartbeatpb.TableSpan) []*heartbeatpb.TableSpan {
+	lastSpan := &heartbeatpb.TableSpan{
+		TableID:  totalSpan.TableID,
+		StartKey: totalSpan.StartKey,
+		EndKey:   totalSpan.StartKey,
 	}
-	var holes []*common.TableSpan
+	var holes []*heartbeatpb.TableSpan
 	// table span is sorted
-	currentSpan.Ascend(func(current *common.TableSpan, value *scheduler.StateMachine) bool {
+	currentSpan.Ascend(func(current *heartbeatpb.TableSpan, value *scheduler.StateMachine) bool {
 		ord := bytes.Compare(lastSpan.EndKey, current.StartKey)
 		if ord < 0 {
 			// Find a hole.
-			holes = append(holes, &common.TableSpan{
-				TableSpan: &heartbeatpb.TableSpan{
-					TableID:  totalSpan.TableID,
-					StartKey: lastSpan.EndKey,
-					EndKey:   current.StartKey,
-				},
+			holes = append(holes, &heartbeatpb.TableSpan{
+				TableID:  totalSpan.TableID,
+				StartKey: lastSpan.EndKey,
+				EndKey:   current.StartKey,
 			})
 		} else if ord > 0 {
 			log.Panic("map is out of order",
@@ -123,11 +118,10 @@ func FindHoles(currentSpan utils.Map[*common.TableSpan, *scheduler.StateMachine]
 	// Check if there is a hole in the end.
 	// the lastSpan not reach the totalSpan end
 	if !bytes.Equal(lastSpan.EndKey, totalSpan.EndKey) {
-		holes = append(holes, &common.TableSpan{
-			TableSpan: &heartbeatpb.TableSpan{
-				StartKey: lastSpan.EndKey,
-				EndKey:   totalSpan.EndKey,
-			}})
+		holes = append(holes, &heartbeatpb.TableSpan{
+			StartKey: lastSpan.EndKey,
+			EndKey:   totalSpan.EndKey,
+		})
 	}
 	return holes
 }

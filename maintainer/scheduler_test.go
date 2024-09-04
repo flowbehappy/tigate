@@ -145,9 +145,7 @@ func TestBalance(t *testing.T) {
 	s := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
 	s.nodeTasks["node1"] = map[common.DispatcherID]*scheduler.StateMachine{}
 	for i := 0; i < 100; i++ {
-		span := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
-			TableID: uint64(i),
-		}}
+		span := &heartbeatpb.TableSpan{TableID: uint64(i)}
 		dispatcherID := common.NewDispatcherID()
 		stm := scheduler.NewStateMachine(dispatcherID, nil,
 			NewReplicaSet(model.ChangeFeedID{}, dispatcherID, 1, span, 1))
@@ -188,9 +186,7 @@ func TestStoppedWhenMoving(t *testing.T) {
 	s.AddNewNode("node1")
 	s.AddNewNode("node2")
 	id := 1
-	span := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
-		TableID: uint64(id),
-	}}
+	span := &heartbeatpb.TableSpan{TableID: uint64(id)}
 	dispatcherID := common.NewDispatcherID()
 	stm := scheduler.NewStateMachine(dispatcherID, nil,
 		NewReplicaSet(model.ChangeFeedID{}, dispatcherID, 1, span, 1))
@@ -225,9 +221,7 @@ func TestStoppedWhenMoving(t *testing.T) {
 func TestFinishBootstrap(t *testing.T) {
 	s := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
 	s.AddNewNode("node1")
-	span := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
-		TableID: uint64(1),
-	}}
+	span := &heartbeatpb.TableSpan{TableID: uint64(1)}
 	s.SetInitialTables([]common.Table{{TableID: 1, SchemaID: 1}})
 
 	dispatcherID2 := common.NewDispatcherID()
@@ -239,10 +233,10 @@ func TestFinishBootstrap(t *testing.T) {
 			DDLStatus:    nil,
 		},
 	}, NewReplicaSet(model.ChangeFeedID{}, dispatcherID2, 1, span, 1))
-	cached := utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
+	cached := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine]()
 	cached.ReplaceOrInsert(span, stm2)
 	require.False(t, s.bootstrapped)
-	s.FinishBootstrap(map[uint64]utils.Map[*common.TableSpan, *scheduler.StateMachine]{
+	s.FinishBootstrap(map[uint64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]{
 		1: cached,
 	})
 	require.True(t, s.bootstrapped)
@@ -256,7 +250,7 @@ func TestFinishBootstrap(t *testing.T) {
 	require.Equal(t, stm2, s.Working()[dispatcherID2])
 	require.Nil(t, s.initialTables)
 	require.Panics(t, func() {
-		s.FinishBootstrap(map[uint64]utils.Map[*common.TableSpan, *scheduler.StateMachine]{})
+		s.FinishBootstrap(map[uint64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]{})
 	})
 }
 
@@ -336,11 +330,11 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 		pdutil.NewTestRegionInfo(4, []byte("c"), []byte("d"), uint64(1)),
 		pdutil.NewTestRegionInfo(5, []byte("e"), []byte("f"), uint64(1)),
 	}
-	reportedSpans := []*common.TableSpan{
-		{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: appendNew(totalSpan.StartKey, 'a'), EndKey: appendNew(totalSpan.StartKey, 'b')}}, // 1 region // 1 region
-		{TableSpan: &heartbeatpb.TableSpan{TableID: 1, StartKey: appendNew(totalSpan.StartKey, 'b'), EndKey: appendNew(totalSpan.StartKey, 'c')}},
+	reportedSpans := []*heartbeatpb.TableSpan{
+		{TableID: 1, StartKey: appendNew(totalSpan.StartKey, 'a'), EndKey: appendNew(totalSpan.StartKey, 'b')}, // 1 region // 1 region
+		{TableID: 1, StartKey: appendNew(totalSpan.StartKey, 'b'), EndKey: appendNew(totalSpan.StartKey, 'c')},
 	}
-	cached := utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
+	cached := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine]()
 	for _, span := range reportedSpans {
 		dispatcherID1 := common.NewDispatcherID()
 		stm1 := scheduler.NewStateMachine(dispatcherID1, map[model.CaptureID]scheduler.InferiorStatus{
@@ -360,12 +354,12 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 			State:        heartbeatpb.ComponentState_Working,
 			CheckpointTs: 10,
 		},
-	}, NewReplicaSet(model.ChangeFeedID{}, ddlDispatcherID, common.DDLSpanSchemaID, common.DDLSpan, 1))
-	ddlCache := utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
-	ddlCache.ReplaceOrInsert(common.DDLSpan, ddlStm)
+	}, NewReplicaSet(model.ChangeFeedID{}, ddlDispatcherID, heartbeatpb.DDLSpanSchemaID, heartbeatpb.DDLSpan, 1))
+	ddlCache := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine]()
+	ddlCache.ReplaceOrInsert(heartbeatpb.DDLSpan, ddlStm)
 
 	require.False(t, s.bootstrapped)
-	s.FinishBootstrap(map[uint64]utils.Map[*common.TableSpan, *scheduler.StateMachine]{
+	s.FinishBootstrap(map[uint64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]{
 		0: ddlCache,
 		1: cached,
 	})

@@ -193,7 +193,7 @@ func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) 
 }
 */
 
-func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan *common.TableSpan, startTs uint64, schemaID int64) *dispatcher.Dispatcher {
+func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTs uint64, schemaID int64) *dispatcher.Dispatcher {
 	start := time.Now()
 	if _, ok := e.dispatcherMap.Get(id); ok {
 		log.Debug("table span already exists", zap.Any("tableSpan", tableSpan))
@@ -202,7 +202,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 
 	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.filter, schemaID)
 
-	if tableSpan.Equal(common.DDLSpan) {
+	if tableSpan.Equal(heartbeatpb.DDLSpan) {
 		e.tableTriggerEventDispatcherID = &id
 	} else {
 		e.schemaIDToDispatchers.Set(schemaID, id)

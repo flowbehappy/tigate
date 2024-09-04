@@ -132,8 +132,8 @@ func (r RegisterDispatcherRequest) GetServerID() string {
 	return r.ServerId
 }
 
-func (r RegisterDispatcherRequest) GetTableSpan() *common.TableSpan {
-	return &common.TableSpan{TableSpan: r.TableSpan}
+func (r RegisterDispatcherRequest) GetTableSpan() *heartbeatpb.TableSpan {
+	return r.TableSpan
 }
 
 func (r RegisterDispatcherRequest) GetStartTs() uint64 {

@@ -17,7 +17,6 @@ import (
 	"testing"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/stretchr/testify/require"
@@ -25,70 +24,70 @@ import (
 
 func TestMapFindHole(t *testing.T) {
 	cases := []struct {
-		spans        []*common.TableSpan
-		rang         *common.TableSpan
-		expectedHole []*common.TableSpan
+		spans        []*heartbeatpb.TableSpan
+		rang         *heartbeatpb.TableSpan
+		expectedHole []*heartbeatpb.TableSpan
 	}{
 		{ // 0. all found.
-			spans: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t1_1")}},
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_1"), EndKey: []byte("t1_2")}},
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_2"), EndKey: []byte("t2_0")}},
+			spans: []*heartbeatpb.TableSpan{
+				{StartKey: []byte("t1_0"), EndKey: []byte("t1_1")},
+				{StartKey: []byte("t1_1"), EndKey: []byte("t1_2")},
+				{StartKey: []byte("t1_2"), EndKey: []byte("t2_0")},
 			},
-			rang: &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t2_0")}},
+			rang: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t2_0")},
 		},
 		{ // 1. on hole in the middle.
-			spans: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t1_1")}},
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_3"), EndKey: []byte("t1_4")}},
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_4"), EndKey: []byte("t2_0")}},
+			spans: []*heartbeatpb.TableSpan{
+				{StartKey: []byte("t1_0"), EndKey: []byte("t1_1")},
+				{StartKey: []byte("t1_3"), EndKey: []byte("t1_4")},
+				{StartKey: []byte("t1_4"), EndKey: []byte("t2_0")},
 			},
-			rang: &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t2_0")}},
-			expectedHole: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_1"), EndKey: []byte("t1_3")}},
+			rang: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t2_0")},
+			expectedHole: []*heartbeatpb.TableSpan{
+				{StartKey: []byte("t1_1"), EndKey: []byte("t1_3")},
 			},
 		},
 		{ // 2. two holes in the middle.
-			spans: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t1_1")}},
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_2"), EndKey: []byte("t1_3")}},
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_4"), EndKey: []byte("t2_0")}},
+			spans: []*heartbeatpb.TableSpan{
+				{StartKey: []byte("t1_0"), EndKey: []byte("t1_1")},
+				{StartKey: []byte("t1_2"), EndKey: []byte("t1_3")},
+				{StartKey: []byte("t1_4"), EndKey: []byte("t2_0")},
 			},
-			rang: &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t2_0")}},
-			expectedHole: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_1"), EndKey: []byte("t1_2")}},
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_3"), EndKey: []byte("t1_4")}},
+			rang: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t2_0")},
+			expectedHole: []*heartbeatpb.TableSpan{
+				{StartKey: []byte("t1_1"), EndKey: []byte("t1_2")},
+				{StartKey: []byte("t1_3"), EndKey: []byte("t1_4")},
 			},
 		},
 		{ // 3. all missing.
-			spans: []*common.TableSpan{},
-			rang:  &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t2_0")}},
-			expectedHole: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t2_0")}},
+			spans: []*heartbeatpb.TableSpan{},
+			rang:  &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t2_0")},
+			expectedHole: []*heartbeatpb.TableSpan{
+				{StartKey: []byte("t1_0"), EndKey: []byte("t2_0")},
 			},
 		},
 		{ // 4. start not found
-			spans: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_4"), EndKey: []byte("t2_0")}},
+			spans: []*heartbeatpb.TableSpan{
+				{StartKey: []byte("t1_4"), EndKey: []byte("t2_0")},
 			},
-			rang: &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t2_0")}},
-			expectedHole: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t1_4")}},
+			rang: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t2_0")},
+			expectedHole: []*heartbeatpb.TableSpan{
+				{StartKey: []byte("t1_0"), EndKey: []byte("t1_4")},
 			},
 		},
 		{ // 5. end not found
-			spans: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t1_1")}},
+			spans: []*heartbeatpb.TableSpan{
+				{StartKey: []byte("t1_0"), EndKey: []byte("t1_1")},
 			},
-			rang: &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t2_0")}},
-			expectedHole: []*common.TableSpan{
-				{TableSpan: &heartbeatpb.TableSpan{StartKey: []byte("t1_1"), EndKey: []byte("t2_0")}},
+			rang: &heartbeatpb.TableSpan{StartKey: []byte("t1_0"), EndKey: []byte("t2_0")},
+			expectedHole: []*heartbeatpb.TableSpan{
+				{StartKey: []byte("t1_1"), EndKey: []byte("t2_0")},
 			},
 		},
 	}
 
 	for i, cs := range cases {
-		m := utils.NewBtreeMap[*common.TableSpan, *scheduler.StateMachine]()
+		m := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine]()
 		for _, span := range cs.spans {
 			m.ReplaceOrInsert(span, &scheduler.StateMachine{})
 		}

@@ -18,7 +18,6 @@ import (
 	"encoding/hex"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
@@ -38,7 +37,7 @@ type splitRegionsInfo struct {
 	RegionCounts []int
 	Weights      []uint64
 	WriteKeys    []uint64
-	Spans        []*common.TableSpan
+	Spans        []*heartbeatpb.TableSpan
 }
 
 func newWriteSplitter(
@@ -55,9 +54,9 @@ func newWriteSplitter(
 
 func (m *writeSplitter) split(
 	ctx context.Context,
-	span *common.TableSpan,
+	span *heartbeatpb.TableSpan,
 	captureNum int,
-) []*common.TableSpan {
+) []*heartbeatpb.TableSpan {
 	if m.writeKeyThreshold == 0 {
 		return nil
 	}
@@ -73,7 +72,7 @@ func (m *writeSplitter) split(
 			zap.String("changefeed", m.changefeedID.ID),
 			zap.String("span", span.String()),
 			zap.Error(err))
-		return []*common.TableSpan{span}
+		return []*heartbeatpb.TableSpan{span}
 	}
 
 	spansNum := getSpansNumber(len(regions), captureNum)
@@ -84,7 +83,7 @@ func (m *writeSplitter) split(
 			zap.String("changefeed", m.changefeedID.ID),
 			zap.String("span", span.String()),
 			zap.Error(err))
-		return []*common.TableSpan{span}
+		return []*heartbeatpb.TableSpan{span}
 	}
 
 	splitInfo := m.splitRegionsByWrittenKeysV1(span.TableID, regions, spansNum)
@@ -141,12 +140,11 @@ func (m *writeSplitter) splitRegionsByWrittenKeysV1(
 		return &splitRegionsInfo{
 			RegionCounts: []int{len(regions)},
 			Weights:      []uint64{totalWriteNormalized},
-			Spans: []*common.TableSpan{{
-				&heartbeatpb.TableSpan{
-					TableID:  tableID,
-					StartKey: decodeKey(regions[0].StartKey),
-					EndKey:   decodeKey(regions[len(regions)-1].EndKey),
-				}}},
+			Spans: []*heartbeatpb.TableSpan{{
+				TableID:  tableID,
+				StartKey: decodeKey(regions[0].StartKey),
+				EndKey:   decodeKey(regions[len(regions)-1].EndKey),
+			}},
 		}
 	}
 
@@ -159,7 +157,7 @@ func (m *writeSplitter) splitRegionsByWrittenKeysV1(
 		regionCounts = make([]int, 0, baseSpansNum)
 		writeKeys    = make([]uint64, 0, baseSpansNum)
 		weights      = make([]uint64, 0, baseSpansNum)
-		spans        = make([]*common.TableSpan, 0, baseSpansNum)
+		spans        = make([]*heartbeatpb.TableSpan, 0, baseSpansNum)
 	)
 
 	// Temp variables used in the loop
@@ -182,12 +180,11 @@ func (m *writeSplitter) splitRegionsByWrittenKeysV1(
 		// then we need to add more restSpans (restWeight / writeLimitPerSpan) to split the rest regions.
 		if restSpans == 1 {
 			if restWeight < int64(writeLimitPerSpan) {
-				spans = append(spans, &common.TableSpan{
-					&heartbeatpb.TableSpan{
-						TableID:  tableID,
-						StartKey: decodeKey(regions[spanStartIndex].StartKey),
-						EndKey:   decodeKey(regions[len(regions)-1].EndKey),
-					}})
+				spans = append(spans, &heartbeatpb.TableSpan{
+					TableID:  tableID,
+					StartKey: decodeKey(regions[spanStartIndex].StartKey),
+					EndKey:   decodeKey(regions[len(regions)-1].EndKey),
+				})
 
 				lastSpanRegionCount := len(regions) - spanStartIndex
 				lastSpanWriteWeight := uint64(0)
@@ -209,12 +206,11 @@ func (m *writeSplitter) splitRegionsByWrittenKeysV1(
 		// If the restRegions is less than equal to restSpans,
 		// then every region will be a span.
 		if restRegions <= restSpans {
-			spans = append(spans, &common.TableSpan{
-				&heartbeatpb.TableSpan{
-					TableID:  tableID,
-					StartKey: decodeKey(regions[spanStartIndex].StartKey),
-					EndKey:   decodeKey(regions[i].EndKey),
-				}})
+			spans = append(spans, &heartbeatpb.TableSpan{
+				TableID:  tableID,
+				StartKey: decodeKey(regions[spanStartIndex].StartKey),
+				EndKey:   decodeKey(regions[i].EndKey),
+			})
 			regionCounts = append(regionCounts, regionCount)
 			weights = append(weights, spanWriteWeight)
 
@@ -231,12 +227,11 @@ func (m *writeSplitter) splitRegionsByWrittenKeysV1(
 		// is larger than spanRegionLimit, then use the region range from
 		// spanStartIndex to i to as a span.
 		if spanWriteWeight > writeLimitPerSpan || regionCount >= spanRegionLimit {
-			spans = append(spans, &common.TableSpan{
-				&heartbeatpb.TableSpan{
-					TableID:  tableID,
-					StartKey: decodeKey(regions[spanStartIndex].StartKey),
-					EndKey:   decodeKey(regions[i].EndKey),
-				}})
+			spans = append(spans, &heartbeatpb.TableSpan{
+				TableID:  tableID,
+				StartKey: decodeKey(regions[spanStartIndex].StartKey),
+				EndKey:   decodeKey(regions[i].EndKey),
+			})
 			regionCounts = append(regionCounts, regionCount)
 			weights = append(weights, spanWriteWeight)
 			// reset the temp variables to start a new span

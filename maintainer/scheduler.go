@@ -103,12 +103,12 @@ func (s *Scheduler) GetAllNodes() []string {
 
 func (s *Scheduler) AddNewTable(table common.Table) {
 	span := spanz.TableIDToComparableSpan(table.TableID)
-	tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+	tableSpan := &heartbeatpb.TableSpan{
 		TableID:  uint64(table.TableID),
 		StartKey: span.StartKey,
 		EndKey:   span.EndKey,
-	}}
-	tableSpans := []*common.TableSpan{tableSpan}
+	}
+	tableSpans := []*heartbeatpb.TableSpan{tableSpan}
 	if s.spanReplicationEnabled {
 		//split the whole table span base on the configuration, todo: background split table
 		tableSpans = s.splitter.SplitSpans(context.Background(), tableSpan, len(s.nodeTasks))
@@ -122,7 +122,7 @@ func (s *Scheduler) SetInitialTables(tables []common.Table) {
 
 // FinishBootstrap adds working state tasks to this scheduler directly,
 // it reported by the bootstrap response
-func (s *Scheduler) FinishBootstrap(workingMap map[uint64]utils.Map[*common.TableSpan, *scheduler.StateMachine]) {
+func (s *Scheduler) FinishBootstrap(workingMap map[uint64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]) {
 	if s.bootstrapped {
 		log.Panic("already bootstrapped",
 			zap.String("changefeed", s.changefeedID),
@@ -134,11 +134,11 @@ func (s *Scheduler) FinishBootstrap(workingMap map[uint64]utils.Map[*common.Tabl
 			s.AddNewTable(table)
 		} else {
 			span := spanz.TableIDToComparableSpan(table.TableID)
-			tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+			tableSpan := &heartbeatpb.TableSpan{
 				TableID:  uint64(table.TableID),
 				StartKey: span.StartKey,
 				EndKey:   span.EndKey,
-			}}
+			}
 			log.Info("table already working in other server",
 				zap.String("changefeed", s.changefeedID),
 				zap.Int64("tableID", table.TableID))
@@ -493,10 +493,10 @@ func (s *Scheduler) GetTaskSizeByNodeID(nodeID string) int {
 }
 
 func (s *Scheduler) addDDLDispatcher() {
-	ddlTableSpan := common.DDLSpan
-	s.addNewSpans(common.DDLSpanSchemaID, int64(ddlTableSpan.TableID), []*common.TableSpan{ddlTableSpan})
+	ddlTableSpan := heartbeatpb.DDLSpan
+	s.addNewSpans(heartbeatpb.DDLSpanSchemaID, int64(ddlTableSpan.TableID), []*heartbeatpb.TableSpan{ddlTableSpan})
 	var dispatcherID common.DispatcherID
-	for id := range s.schemaTasks[common.DDLSpanSchemaID] {
+	for id := range s.schemaTasks[heartbeatpb.DDLSpanSchemaID] {
 		dispatcherID = id
 	}
 	s.ddlDispatcherID = dispatcherID
@@ -505,9 +505,9 @@ func (s *Scheduler) addDDLDispatcher() {
 		zap.String("dispatcher", dispatcherID.String()))
 }
 
-func (s *Scheduler) addWorkingSpans(tableMap utils.Map[*common.TableSpan, *scheduler.StateMachine]) bool {
+func (s *Scheduler) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]) bool {
 	ddlSpanFound := false
-	tableMap.Ascend(func(span *common.TableSpan, stm *scheduler.StateMachine) bool {
+	tableMap.Ascend(func(span *heartbeatpb.TableSpan, stm *scheduler.StateMachine) bool {
 		if stm.State != scheduler.SchedulerStatusWorking {
 			log.Panic("unexpected state",
 				zap.String("changefeed", s.changefeedID),
@@ -525,13 +525,13 @@ func (s *Scheduler) addWorkingSpans(tableMap utils.Map[*common.TableSpan, *sched
 	return ddlSpanFound
 }
 
-func (s *Scheduler) addNewSpans(schemaID, tableID int64, tableSpans []*common.TableSpan) {
+func (s *Scheduler) addNewSpans(schemaID, tableID int64, tableSpans []*heartbeatpb.TableSpan) {
 	for _, newSpan := range tableSpans {
-		newTableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+		newTableSpan := &heartbeatpb.TableSpan{
 			TableID:  uint64(tableID),
 			StartKey: newSpan.StartKey,
 			EndKey:   newSpan.EndKey,
-		}}
+		}
 		dispatcherID := common.NewDispatcherID()
 		replicaSet := NewReplicaSet(model.DefaultChangeFeedID(s.changefeedID),
 			dispatcherID, schemaID, newTableSpan, s.startCheckpointTs).(*ReplicaSet)

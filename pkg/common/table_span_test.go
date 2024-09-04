@@ -8,12 +8,10 @@ import (
 )
 
 func TestMergeDataRange(t *testing.T) {
-	span1 := &TableSpan{
-		TableSpan: &heartbeatpb.TableSpan{
-			TableID:  1,
-			StartKey: []byte("a"),
-			EndKey:   []byte("z"),
-		},
+	span1 := &heartbeatpb.TableSpan{
+		TableID:  1,
+		StartKey: []byte("a"),
+		EndKey:   []byte("z"),
 	}
 	dataRange1 := NewDataRange(1, span1, 10, 20)
 	dataRange2 := NewDataRange(1, span1, 15, 25)
@@ -32,38 +30,30 @@ func TestMergeDataRange(t *testing.T) {
 	require.Equal(t, expectedDataRange, mergedDataRange)
 
 	// Case 3: Merge two data ranges with different spans.
-	span2 := &TableSpan{
-		TableSpan: &heartbeatpb.TableSpan{
-			TableID:  1,
-			StartKey: []byte("b"),
-			EndKey:   []byte("y"),
-		},
+	span2 := &heartbeatpb.TableSpan{
+		TableID:  1,
+		StartKey: []byte("b"),
+		EndKey:   []byte("y"),
 	}
 	dataRange4 := NewDataRange(1, span2, 10, 20)
 	mergedDataRange = dataRange1.Merge(dataRange4)
 	require.Nil(t, mergedDataRange)
 }
 func TestDataRangeEqual(t *testing.T) {
-	span1 := &TableSpan{
-		TableSpan: &heartbeatpb.TableSpan{
-			TableID:  1,
-			StartKey: []byte("a"),
-			EndKey:   []byte("z"),
-		},
+	span1 := &heartbeatpb.TableSpan{
+		TableID:  1,
+		StartKey: []byte("a"),
+		EndKey:   []byte("z"),
 	}
-	span2 := &TableSpan{
-		TableSpan: &heartbeatpb.TableSpan{
-			TableID:  1,
-			StartKey: []byte("a"),
-			EndKey:   []byte("z"),
-		},
+	span2 := &heartbeatpb.TableSpan{
+		TableID:  1,
+		StartKey: []byte("a"),
+		EndKey:   []byte("z"),
 	}
-	span3 := &TableSpan{
-		TableSpan: &heartbeatpb.TableSpan{
-			TableID:  2,
-			StartKey: []byte("b"),
-			EndKey:   []byte("y"),
-		},
+	span3 := &heartbeatpb.TableSpan{
+		TableID:  2,
+		StartKey: []byte("b"),
+		EndKey:   []byte("y"),
 	}
 
 	dataRange1 := NewDataRange(1, span1, 10, 20)
@@ -76,26 +66,20 @@ func TestDataRangeEqual(t *testing.T) {
 	require.False(t, dataRange1.Equal(dataRange4))
 }
 func TestTableSpanLess(t *testing.T) {
-	span1 := &TableSpan{
-		TableSpan: &heartbeatpb.TableSpan{
-			TableID:  1,
-			StartKey: []byte("a"),
-			EndKey:   []byte("z"),
-		},
+	span1 := &heartbeatpb.TableSpan{
+		TableID:  1,
+		StartKey: []byte("a"),
+		EndKey:   []byte("z"),
 	}
-	span2 := &TableSpan{
-		TableSpan: &heartbeatpb.TableSpan{
-			TableID:  2,
-			StartKey: []byte("b"),
-			EndKey:   []byte("y"),
-		},
+	span2 := &heartbeatpb.TableSpan{
+		TableID:  2,
+		StartKey: []byte("b"),
+		EndKey:   []byte("y"),
 	}
-	span3 := &TableSpan{
-		TableSpan: &heartbeatpb.TableSpan{
-			TableID:  2,
-			StartKey: []byte("c"),
-			EndKey:   []byte("x"),
-		},
+	span3 := &heartbeatpb.TableSpan{
+		TableID:  2,
+		StartKey: []byte("c"),
+		EndKey:   []byte("x"),
 	}
 
 	require.True(t, span1.Less(span2))
@@ -103,26 +87,20 @@ func TestTableSpanLess(t *testing.T) {
 	require.True(t, span2.Less(span3))
 }
 func TestTableSpanEqual(t *testing.T) {
-	span1 := &TableSpan{
-		TableSpan: &heartbeatpb.TableSpan{
-			TableID:  1,
-			StartKey: []byte("a"),
-			EndKey:   []byte("z"),
-		},
+	span1 := &heartbeatpb.TableSpan{
+		TableID:  1,
+		StartKey: []byte("a"),
+		EndKey:   []byte("z"),
 	}
-	span2 := &TableSpan{
-		TableSpan: &heartbeatpb.TableSpan{
-			TableID:  1,
-			StartKey: []byte("a"),
-			EndKey:   []byte("z"),
-		},
+	span2 := &heartbeatpb.TableSpan{
+		TableID:  1,
+		StartKey: []byte("a"),
+		EndKey:   []byte("z"),
 	}
-	span3 := &TableSpan{
-		TableSpan: &heartbeatpb.TableSpan{
-			TableID:  2,
-			StartKey: []byte("b"),
-			EndKey:   []byte("y"),
-		},
+	span3 := &heartbeatpb.TableSpan{
+		TableID:  2,
+		StartKey: []byte("b"),
+		EndKey:   []byte("y"),
 	}
 
 	require.True(t, span1.Equal(span2))

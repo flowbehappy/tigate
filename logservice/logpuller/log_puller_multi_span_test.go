@@ -19,13 +19,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/stretchr/testify/require"
 )
 
-func newLogPullerMultiSpanForTest(spans []common.TableSpan, outputCh chan<- *common.RawKVEntry) *LogPullerMultiSpan {
+func newLogPullerMultiSpanForTest(spans []heartbeatpb.TableSpan, outputCh chan<- *common.RawKVEntry) *LogPullerMultiSpan {
 	clientConfig := &SubscriptionClientConfig{
 		RegionRequestWorkerPerStore:   1,
 		ChangeEventProcessorNum:       2,
@@ -55,15 +56,9 @@ func TestMultiplexingPullerResolvedForward(t *testing.T) {
 	outputCh := make(chan *common.RawKVEntry, 16)
 	rawSpan1 := common.ToSpan([]byte("t_a"), []byte("t_e"))
 	rawSpan1.TableID = 100
-	span1 := common.TableSpan{
-		TableSpan: &rawSpan1,
-	}
 	rawSpan2 := common.ToSpan([]byte("t_f"), []byte("t_z"))
 	rawSpan2.TableID = 101
-	span2 := common.TableSpan{
-		TableSpan: &rawSpan2,
-	}
-	puller := newLogPullerMultiSpanForTest([]common.TableSpan{span1, span2}, outputCh)
+	puller := newLogPullerMultiSpanForTest([]heartbeatpb.TableSpan{rawSpan1, rawSpan2}, outputCh)
 	defer puller.Close(ctx)
 
 	ctx, cancel := context.WithCancel(context.Background())

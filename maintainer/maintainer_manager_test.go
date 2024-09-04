@@ -195,11 +195,11 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	var remotedIds []common.DispatcherID
 	for i := 1; i < 3; i++ {
 		span := spanz.TableIDToComparableSpan(int64(i))
-		tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{
+		tableSpan := &heartbeatpb.TableSpan{
 			TableID:  uint64(i),
 			StartKey: span.StartKey,
 			EndKey:   span.EndKey,
-		}}
+		}
 		dispatcherID := common.NewDispatcherID()
 		remotedIds = append(remotedIds, dispatcherID)
 		dispManager.bootstrapTables = append(dispManager.bootstrapTables, &heartbeatpb.BootstrapTableSpan{
@@ -242,7 +242,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	foundSize := 0
 	hasDDLDispatcher := false
 	for id, stm := range maintainer.scheduler.Working() {
-		if stm.Inferior.(*ReplicaSet).Span.Equal(common.DDLSpan) {
+		if stm.Inferior.(*ReplicaSet).Span.Equal(heartbeatpb.DDLSpan) {
 			hasDDLDispatcher = true
 		}
 		for _, remotedId := range remotedIds {

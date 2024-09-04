@@ -43,7 +43,7 @@ func TestBasicDispatcher(t *testing.T) {
 	defer db.Close()
 
 	mysqlSink := sink.NewMysqlSink(model.DefaultChangeFeedID("test1"), 8, writer.NewMysqlConfig(), db)
-	tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1}}
+	tableSpan := &heartbeatpb.TableSpan{TableID: 1}
 	startTs := uint64(100)
 
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
@@ -132,7 +132,7 @@ func TestDispatcherWithSingleTableDDL(t *testing.T) {
 	mock.ExpectCommit()
 
 	mysqlSink := sink.NewMysqlSink(model.DefaultChangeFeedID("test1"), 8, writer.NewMysqlConfig(), db)
-	tableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1}}
+	tableSpan := &heartbeatpb.TableSpan{TableID: 1}
 	startTs := uint64(100)
 
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
@@ -187,7 +187,7 @@ func TestDispatcherWithCrossTableDDL(t *testing.T) {
 	mock.ExpectCommit()
 
 	mysqlSink := sink.NewMysqlSink(model.DefaultChangeFeedID("test1"), 8, writer.NewMysqlConfig(), db)
-	tableSpan := common.DDLSpan
+	tableSpan := heartbeatpb.DDLSpan
 	startTs := uint64(100)
 
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
@@ -251,7 +251,7 @@ func TestDispatcherWithCrossTableDDLAndDML(t *testing.T) {
 	mock.ExpectCommit()
 
 	mysqlSink := sink.NewMysqlSink(model.DefaultChangeFeedID("test1"), 8, writer.NewMysqlConfig(), db)
-	tableSpan := common.DDLSpan
+	tableSpan := heartbeatpb.DDLSpan
 	startTs := uint64(100)
 
 	tableSpanStatusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
@@ -435,12 +435,12 @@ func TestMultiDispatcherWithMultipleDDLs(t *testing.T) {
 	statusChan := make(chan *heartbeatpb.TableSpanStatus, 10)
 	startTs := uint64(100)
 
-	ddlTableSpan := common.DDLSpan
+	ddlTableSpan := heartbeatpb.DDLSpan
 
 	tableTriggerEventDispatcher := NewDispatcher(common.NewDispatcherID(), ddlTableSpan, mysqlSink, startTs, statusChan, filter, 0)
 
-	table1TableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 1}}
-	table2TableSpan := &common.TableSpan{TableSpan: &heartbeatpb.TableSpan{TableID: 2}}
+	table1TableSpan := &heartbeatpb.TableSpan{TableID: 1}
+	table2TableSpan := &heartbeatpb.TableSpan{TableID: 2}
 
 	table1Dispatcher := NewDispatcher(common.NewDispatcherID(), table1TableSpan, mysqlSink, startTs, statusChan, filter, 0)
 	table2Dispatcher := NewDispatcher(common.NewDispatcherID(), table2TableSpan, mysqlSink, startTs, statusChan, filter, 0)
