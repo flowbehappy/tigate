@@ -19,7 +19,7 @@ import (
 	"encoding/binary"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/sink/codec"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -149,7 +149,7 @@ func (d *BatchEncoder) AppendRowChangedEvent(
 		// Before we create a new message, we should handle the previous callbacks.
 		d.tryBuildCallback()
 		versionHead := make([]byte, 8)
-		binary.BigEndian.PutUint64(versionHead, codec.BatchVersion1)
+		binary.BigEndian.PutUint64(versionHead, encoder.BatchVersion1)
 		msg := ticommon.NewMsg(config.ProtocolOpen, versionHead, nil,
 			0, model.MessageTypeRow, nil, nil)
 		d.messageBuf = append(d.messageBuf, msg)
@@ -183,7 +183,7 @@ func (d *BatchEncoder) AppendRowChangedEvent(
 
 func newMessage(key, value []byte) *ticommon.Message {
 	versionHead := make([]byte, 8)
-	binary.BigEndian.PutUint64(versionHead, codec.BatchVersion1)
+	binary.BigEndian.PutUint64(versionHead, encoder.BatchVersion1)
 	message := ticommon.NewMsg(config.ProtocolOpen, versionHead, nil, 0, model.MessageTypeRow, nil, nil)
 
 	var (
@@ -227,7 +227,7 @@ func (d *BatchEncoder) EncodeDDLEvent(e *model.DDLEvent) (*ticommon.Message, err
 
 	keyBuf := new(bytes.Buffer)
 	var versionByte [8]byte
-	binary.BigEndian.PutUint64(versionByte[:], codec.BatchVersion1)
+	binary.BigEndian.PutUint64(versionByte[:], encoder.BatchVersion1)
 	keyBuf.Write(versionByte[:])
 	keyBuf.Write(keyLenByte[:])
 	keyBuf.Write(key)
@@ -255,7 +255,7 @@ func (d *BatchEncoder) EncodeCheckpointEvent(ts uint64) (*ticommon.Message, erro
 
 	keyBuf := new(bytes.Buffer)
 	var versionByte [8]byte
-	binary.BigEndian.PutUint64(versionByte[:], codec.BatchVersion1)
+	binary.BigEndian.PutUint64(versionByte[:], encoder.BatchVersion1)
 	keyBuf.Write(versionByte[:])
 	keyBuf.Write(keyLenByte[:])
 	keyBuf.Write(key)
@@ -332,40 +332,20 @@ func (d *BatchEncoder) newClaimCheckLocationMessage(
 	return key, value, nil
 }
 
-type batchEncoderBuilder struct {
-	claimCheck *claimcheck.ClaimCheck
-	config     *ticommon.Config
-}
-
-// Build a BatchEncoder
-func (b *batchEncoderBuilder) Build() codec.RowEventEncoder {
-	return NewBatchEncoder(b.config, b.claimCheck)
-}
-
-func (b *batchEncoderBuilder) CleanMetrics() {
-	if b.claimCheck != nil {
-		b.claimCheck.CleanMetrics()
+func (d *BatchEncoder) Clean() {
+	if d.claimCheck != nil {
+		d.claimCheck.CleanMetrics()
 	}
 }
 
-// NewBatchEncoderBuilder creates an open-protocol batchEncoderBuilder.
-func NewBatchEncoderBuilder(
-	ctx context.Context, config *ticommon.Config,
-) (codec.RowEventEncoderBuilder, error) {
+// NewBatchEncoder creates a new BatchEncoder.
+func NewBatchEncoder(ctx context.Context, config *ticommon.Config) (encoder.RowEventEncoder, error) {
 	claimCheck, err := claimcheck.New(ctx, config.LargeMessageHandle, config.ChangefeedID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &batchEncoderBuilder{
-		config:     config,
-		claimCheck: claimCheck,
-	}, nil
-}
-
-// NewBatchEncoder creates a new BatchEncoder.
-func NewBatchEncoder(config *ticommon.Config, claimCheck *claimcheck.ClaimCheck) codec.RowEventEncoder {
 	return &BatchEncoder{
 		config:     config,
 		claimCheck: claimCheck,
-	}
+	}, nil
 }

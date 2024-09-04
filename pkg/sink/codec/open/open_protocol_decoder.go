@@ -22,7 +22,8 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/sink/codec"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/decoder"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/internal"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -52,7 +53,7 @@ type BatchDecoder struct {
 }
 
 // NewBatchDecoder creates a new BatchDecoder.
-func NewBatchDecoder(ctx context.Context, config *ticommon.Config, db *sql.DB) (codec.RowEventDecoder, error) {
+func NewBatchDecoder(ctx context.Context, config *ticommon.Config, db *sql.DB) (decoder.RowEventDecoder, error) {
 	var (
 		externalStorage storage.ExternalStorage
 		err             error
@@ -85,7 +86,7 @@ func (b *BatchDecoder) AddKeyValue(key, value []byte) error {
 	}
 	version := binary.BigEndian.Uint64(key[:8])
 	key = key[8:]
-	if version != codec.BatchVersion1 {
+	if version != encoder.BatchVersion1 {
 		return cerror.ErrOpenProtocolCodecInvalidData.
 			GenWithStack("unexpected key format version")
 	}
@@ -319,7 +320,7 @@ func (b *BatchDecoder) assembleEventFromClaimCheckStorage(ctx context.Context) (
 	}
 
 	version := binary.BigEndian.Uint64(claimCheckM.Key[:8])
-	if version != codec.BatchVersion1 {
+	if version != encoder.BatchVersion1 {
 		return nil, cerror.ErrOpenProtocolCodecInvalidData.
 			GenWithStack("unexpected key format version")
 	}

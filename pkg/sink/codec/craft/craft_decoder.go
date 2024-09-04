@@ -15,7 +15,7 @@ package craft
 
 import (
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/sink/codec"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/decoder"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
@@ -128,7 +128,7 @@ func (b *batchDecoder) NextDDLEvent() (*model.DDLEvent, error) {
 	return event, nil
 }
 
-func newBatchDecoder(_, value []byte) (codec.RowEventDecoder, error) {
+func newBatchDecoder(_, value []byte) (decoder.RowEventDecoder, error) {
 	decoder := NewBatchDecoderWithAllocator(NewSliceAllocator(64))
 	err := decoder.AddKeyValue(nil, value)
 	return decoder, err
@@ -137,7 +137,7 @@ func newBatchDecoder(_, value []byte) (codec.RowEventDecoder, error) {
 // NewBatchDecoderWithAllocator creates a new batchDecoder with given allocator.
 func NewBatchDecoderWithAllocator(
 	allocator *SliceAllocator,
-) codec.RowEventDecoder {
+) decoder.RowEventDecoder {
 	return &batchDecoder{
 		allocator: allocator,
 	}

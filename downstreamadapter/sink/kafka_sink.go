@@ -25,7 +25,6 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/worker/dmlproducer"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec"
-	"github.com/flowbehappy/tigate/pkg/sink/codec/builder"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -108,10 +107,6 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, replicaConf
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	encoderBuilder, err := builder.NewRowEventEncoderBuilder(ctx, encoderConfig)
-	if err != nil {
-		return nil, cerror.WrapError(cerror.ErrKafkaNewProducer, err)
-	}
 
 	failpointCh := make(chan error, 1)
 	asyncProducer, err := factory.AsyncProducer(ctx, failpointCh)
@@ -121,7 +116,7 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, replicaConf
 
 	metricsCollector := factory.MetricsCollector(utils.RoleProcessor, adminClient)
 	dmlProducer := dmlproducer.NewKafkaDMLProducer(ctx, changefeedID, asyncProducer, metricsCollector)
-	encoderGroup := codec.NewEncoderGroup(replicaConfig.Sink, encoderBuilder, changefeedID)
+	encoderGroup := codec.NewEncoderGroup(ctx, replicaConfig.Sink, encoderConfig, changefeedID)
 
 	statistics := timetrics.NewStatistics(changefeedID, sink.RowSink)
 	worker := worker.NewKafkaWorker(changefeedID, protocol, dmlProducer, encoderGroup, statistics)
@@ -201,7 +196,7 @@ func (s *KafkaSink) AddDMLEvent(event *common.TEvent, tableProgress *types.Table
 			return
 		}
 
-		s.worker.GetEventChan() <- common.MQRowEvent{
+		s.worker.GetEventChan() <- &common.MQRowEvent{
 			Key: model.TopicPartitionKey{
 				Topic:          topic,
 				Partition:      index,

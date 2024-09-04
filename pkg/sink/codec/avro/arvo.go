@@ -24,7 +24,7 @@ import (
 	"strings"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/sink/codec"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/linkedin/goavro/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -978,6 +978,8 @@ func (a *BatchEncoder) columnToAvroData(
 	}
 }
 
+func (a *BatchEncoder) Clean() {}
+
 const (
 	// avro does not send ddl and checkpoint message, the following 2 field is used to distinguish
 	// TiCDC DDL event and checkpoint event, only used for testing purpose, not for production
@@ -1008,10 +1010,8 @@ const (
 	valueSchemaSuffix = "-value"
 )
 
-// NewBatchEncoderBuilder creates an avro batchEncoderBuilder.
-func NewBatchEncoderBuilder(
-	ctx context.Context, config *ticommon.Config,
-) (codec.RowEventEncoderBuilder, error) {
+// NewAvroEncoder return a avro encoder.
+func NewAvroEncoder(ctx context.Context, config *ticommon.Config) (encoder.RowEventEncoder, error) {
 	var schemaM SchemaManager
 	var err error
 
@@ -1030,30 +1030,12 @@ func NewBatchEncoderBuilder(
 	default:
 		return nil, cerror.ErrAvroSchemaAPIError.GenWithStackByArgs(schemaRegistryType)
 	}
-
-	return &batchEncoderBuilder{
-		namespace: config.ChangefeedID.Namespace,
-		config:    config,
-		schemaM:   schemaM,
-	}, nil
-}
-
-// Build an AvroEventBatchEncoder.
-func (b *batchEncoderBuilder) Build() codec.RowEventEncoder {
-	return NewAvroEncoder(b.namespace, b.schemaM, b.config)
-}
-
-// CleanMetrics is a no-op for AvroEventBatchEncoder.
-func (b *batchEncoderBuilder) CleanMetrics() {}
-
-// NewAvroEncoder return a avro encoder.
-func NewAvroEncoder(namespace string, schemaM SchemaManager, config *ticommon.Config) codec.RowEventEncoder {
 	return &BatchEncoder{
-		namespace: namespace,
+		namespace: config.ChangefeedID.Namespace,
 		schemaM:   schemaM,
 		result:    make([]*ticommon.Message, 0, 1),
 		config:    config,
-	}
+	}, nil
 }
 
 // // SetupEncoderAndSchemaRegistry4Testing start a local schema registry for testing.

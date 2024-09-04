@@ -17,7 +17,7 @@ import (
 	"context"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/sink/codec"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -158,8 +158,10 @@ func (d *BatchEncoder) resetPacket() {
 	}
 }
 
+func (d *BatchEncoder) Clean() {}
+
 // newBatchEncoder creates a new canalBatchEncoder.
-func newBatchEncoder(config *ticommon.Config) codec.RowEventEncoder {
+func NewBatchEncoder(config *ticommon.Config) (encoder.RowEventEncoder, error) {
 	encoder := &BatchEncoder{
 		messages:     &canal.Messages{},
 		callbackBuf:  make([]func(), 0),
@@ -169,24 +171,5 @@ func newBatchEncoder(config *ticommon.Config) codec.RowEventEncoder {
 	}
 
 	encoder.resetPacket()
-	return encoder
-}
-
-type batchEncoderBuilder struct {
-	config *ticommon.Config
-}
-
-// Build a `canalBatchEncoder`
-func (b *batchEncoderBuilder) Build() codec.RowEventEncoder {
-	return newBatchEncoder(b.config)
-}
-
-// CleanMetrics is a no-op for canalBatchEncoder.
-func (b *batchEncoderBuilder) CleanMetrics() {}
-
-// NewBatchEncoderBuilder creates a canal batchEncoderBuilder.
-func NewBatchEncoderBuilder(config *ticommon.Config) codec.RowEventEncoderBuilder {
-	return &batchEncoderBuilder{
-		config: config,
-	}
+	return encoder, nil
 }

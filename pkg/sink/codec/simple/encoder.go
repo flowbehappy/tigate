@@ -17,7 +17,7 @@ import (
 	"context"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/sink/codec"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -28,7 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type encoder struct {
+type Encoder struct {
 	messages []*ticommon.Message
 
 	config     *ticommon.Config
@@ -36,8 +36,25 @@ type encoder struct {
 	marshaller marshaller
 }
 
+func NewEncoder(ctx context.Context, config *ticommon.Config) (encoder.RowEventEncoder, error) {
+	claimCheck, err := claimcheck.New(ctx, config.LargeMessageHandle, config.ChangefeedID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	marshaller, err := newMarshaller(config)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &Encoder{
+		messages:   make([]*ticommon.Message, 0, 1),
+		config:     config,
+		claimCheck: claimCheck,
+		marshaller: marshaller,
+	}, nil
+}
+
 // AppendRowChangedEvent implement the RowEventEncoder interface
-func (e *encoder) AppendRowChangedEvent(
+func (e *Encoder) AppendRowChangedEvent(
 	ctx context.Context, _ string, event *common.RowChangedEvent, callback func(),
 ) error {
 	value, err := e.marshaller.MarshalRowChangedEvent(event, false, "")
@@ -114,7 +131,7 @@ func (e *encoder) AppendRowChangedEvent(
 }
 
 // Build implement the RowEventEncoder interface
-func (e *encoder) Build() []*ticommon.Message {
+func (e *Encoder) Build() []*ticommon.Message {
 	var result []*ticommon.Message
 	if len(e.messages) != 0 {
 		result = e.messages
@@ -124,7 +141,7 @@ func (e *encoder) Build() []*ticommon.Message {
 }
 
 // EncodeCheckpointEvent implement the DDLEventBatchEncoder interface
-func (e *encoder) EncodeCheckpointEvent(ts uint64) (*ticommon.Message, error) {
+func (e *Encoder) EncodeCheckpointEvent(ts uint64) (*ticommon.Message, error) {
 	value, err := e.marshaller.MarshalCheckpoint(ts)
 	if err != nil {
 		return nil, err
@@ -136,7 +153,7 @@ func (e *encoder) EncodeCheckpointEvent(ts uint64) (*ticommon.Message, error) {
 }
 
 // EncodeDDLEvent implement the DDLEventBatchEncoder interface
-func (e *encoder) EncodeDDLEvent(event *model.DDLEvent) (*ticommon.Message, error) {
+func (e *Encoder) EncodeDDLEvent(event *model.DDLEvent) (*ticommon.Message, error) {
 	value, err := e.marshaller.MarshalDDLEvent(event)
 	if err != nil {
 		return nil, err
@@ -159,39 +176,9 @@ func (e *encoder) EncodeDDLEvent(event *model.DDLEvent) (*ticommon.Message, erro
 	return result, nil
 }
 
-type builder struct {
-	config     *ticommon.Config
-	claimCheck *claimcheck.ClaimCheck
-	marshaller marshaller
-}
-
-// NewBuilder returns a new builder
-func NewBuilder(ctx context.Context, config *ticommon.Config) (*builder, error) {
-	claimCheck, err := claimcheck.New(ctx, config.LargeMessageHandle, config.ChangefeedID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	m, err := newMarshaller(config)
-	return &builder{
-		config:     config,
-		claimCheck: claimCheck,
-		marshaller: m,
-	}, errors.Trace(err)
-}
-
-// Build implement the RowEventEncoderBuilder interface
-func (b *builder) Build() codec.RowEventEncoder {
-	return &encoder{
-		messages:   make([]*ticommon.Message, 0, 1),
-		config:     b.config,
-		claimCheck: b.claimCheck,
-		marshaller: b.marshaller,
-	}
-}
-
 // CleanMetrics implement the RowEventEncoderBuilder interface
-func (b *builder) CleanMetrics() {
-	if b.claimCheck != nil {
-		b.claimCheck.CleanMetrics()
+func (e *Encoder) Clean() {
+	if e.claimCheck != nil {
+		e.claimCheck.CleanMetrics()
 	}
 }

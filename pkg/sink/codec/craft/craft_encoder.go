@@ -17,7 +17,7 @@ import (
 	"context"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/sink/codec"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
@@ -97,32 +97,17 @@ func (e *BatchEncoder) flush() {
 }
 
 // NewBatchEncoder creates a new BatchEncoder.
-func NewBatchEncoder(config *ticommon.Config) codec.RowEventEncoder {
+func NewBatchEncoder(config *ticommon.Config) encoder.RowEventEncoder {
 	// 64 is a magic number that come up with these assumptions and manual benchmark.
 	// 1. Most table will not have more than 64 columns
 	// 2. It only worth allocating slices in batch for slices that's small enough
 	return NewBatchEncoderWithAllocator(NewSliceAllocator(64), config)
 }
 
-type batchEncoderBuilder struct {
-	config *ticommon.Config
-}
-
-// Build a BatchEncoder
-func (b *batchEncoderBuilder) Build() codec.RowEventEncoder {
-	return NewBatchEncoder(b.config)
-}
-
-// CleanMetrics do nothing
-func (b *batchEncoderBuilder) CleanMetrics() {}
-
-// NewBatchEncoderBuilder creates a craft batchEncoderBuilder.
-func NewBatchEncoderBuilder(config *ticommon.Config) codec.RowEventEncoderBuilder {
-	return &batchEncoderBuilder{config: config}
-}
+func (e *BatchEncoder) Clean() {}
 
 // NewBatchEncoderWithAllocator creates a new BatchEncoder with given allocator.
-func NewBatchEncoderWithAllocator(allocator *SliceAllocator, config *ticommon.Config) codec.RowEventEncoder {
+func NewBatchEncoderWithAllocator(allocator *SliceAllocator, config *ticommon.Config) encoder.RowEventEncoder {
 	return &BatchEncoder{
 		allocator:        allocator,
 		messageBuf:       make([]*ticommon.Message, 0, 2),

@@ -19,7 +19,7 @@ import (
 	"encoding/binary"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/sink/codec"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -34,6 +34,18 @@ type BatchEncoder struct {
 	batchSize   int
 
 	config *ticommon.Config
+}
+
+// newBatchEncoder creates a new maxwell BatchEncoder.
+func NewBatchEncoder(config *ticommon.Config) encoder.RowEventEncoder {
+	batch := &BatchEncoder{
+		keyBuf:      &bytes.Buffer{},
+		valueBuf:    &bytes.Buffer{},
+		callbackBuf: make([]func(), 0),
+		config:      config,
+	}
+	batch.reset()
+	return batch
 }
 
 // EncodeCheckpointEvent implements the RowEventEncoder interface
@@ -107,37 +119,8 @@ func (d *BatchEncoder) reset() {
 	d.valueBuf.Reset()
 	d.batchSize = 0
 	var versionByte [8]byte
-	binary.BigEndian.PutUint64(versionByte[:], codec.BatchVersion1)
+	binary.BigEndian.PutUint64(versionByte[:], encoder.BatchVersion1)
 	d.keyBuf.Write(versionByte[:])
 }
 
-// newBatchEncoder creates a new maxwell BatchEncoder.
-func newBatchEncoder(config *ticommon.Config) codec.RowEventEncoder {
-	batch := &BatchEncoder{
-		keyBuf:      &bytes.Buffer{},
-		valueBuf:    &bytes.Buffer{},
-		callbackBuf: make([]func(), 0),
-		config:      config,
-	}
-	batch.reset()
-	return batch
-}
-
-type batchEncoderBuilder struct {
-	config *ticommon.Config
-}
-
-// NewBatchEncoderBuilder creates a maxwell batchEncoderBuilder.
-func NewBatchEncoderBuilder(config *ticommon.Config) codec.RowEventEncoderBuilder {
-	return &batchEncoderBuilder{
-		config: config,
-	}
-}
-
-// Build a `maxwellBatchEncoder`
-func (b *batchEncoderBuilder) Build() codec.RowEventEncoder {
-	return newBatchEncoder(b.config)
-}
-
-// CleanMetrics do nothing
-func (b *batchEncoderBuilder) CleanMetrics() {}
+func (d *BatchEncoder) Clean() {}

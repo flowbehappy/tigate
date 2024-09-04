@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/sink/codec"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/goccy/go-json"
 	"github.com/mailru/easyjson/jwriter"
 	"github.com/pingcap/errors"
@@ -313,15 +313,20 @@ type JSONRowEventEncoder struct {
 }
 
 // newJSONRowEventEncoder creates a new JSONRowEventEncoder
-func newJSONRowEventEncoder(
-	config *ticommon.Config, claimCheck *claimcheck.ClaimCheck,
-) codec.RowEventEncoder {
+func NewJSONRowEventEncoder(ctx context.Context, config *ticommon.Config) (encoder.RowEventEncoder, error) {
+	claimCheck, err := claimcheck.New(ctx, config.LargeMessageHandle, config.ChangefeedID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return &JSONRowEventEncoder{
 		builder:    newCanalEntryBuilder(config),
 		messages:   make([]*ticommon.Message, 0, 1),
 		config:     config,
 		claimCheck: claimCheck,
-	}
+	}, nil
 }
 
 func (c *JSONRowEventEncoder) newJSONMessageForDDL(e *model.DDLEvent) canalJSONMessageInterface {
@@ -528,27 +533,10 @@ func (c *JSONRowEventEncoder) EncodeDDLEvent(e *model.DDLEvent) (*ticommon.Messa
 	return ticommon.NewDDLMsg(config.ProtocolCanalJSON, nil, value, e), nil
 }
 
-type jsonRowEventEncoderBuilder struct {
-	config *ticommon.Config
-
-	claimCheck *claimcheck.ClaimCheck
-}
-
-// NewJSONRowEventEncoderBuilder creates a canal-json batchEncoderBuilder.
-func NewJSONRowEventEncoderBuilder(ctx context.Context, config *ticommon.Config) (codec.RowEventEncoderBuilder, error) {
-	claimCheck, err := claimcheck.New(ctx, config.LargeMessageHandle, config.ChangefeedID)
-	if err != nil {
-		return nil, errors.Trace(err)
+func (b *JSONRowEventEncoder) Clean() {
+	if b.claimCheck != nil {
+		b.claimCheck.CleanMetrics()
 	}
-	return &jsonRowEventEncoderBuilder{
-		config:     config,
-		claimCheck: claimCheck,
-	}, nil
-}
-
-// Build a `jsonRowEventEncoderBuilder`
-func (b *jsonRowEventEncoderBuilder) Build() codec.RowEventEncoder {
-	return newJSONRowEventEncoder(b.config, b.claimCheck)
 }
 
 func shouldIgnoreColumn(col *common.Column,
@@ -561,15 +549,9 @@ func shouldIgnoreColumn(col *common.Column,
 			return false
 		}
 		// value equal
-		if codec.IsColumnValueEqual(newCol.Value, col.Value) {
+		if encoder.IsColumnValueEqual(newCol.Value, col.Value) {
 			return true
 		}
 	}
 	return false
-}
-
-func (b *jsonRowEventEncoderBuilder) CleanMetrics() {
-	if b.claimCheck != nil {
-		b.claimCheck.CleanMetrics()
-	}
 }
