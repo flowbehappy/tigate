@@ -162,7 +162,7 @@ func (e ResolvedEvent) String() string {
 // The Rows is the rows after the transaction, it is used to generate the insert and update SQL.
 type TEvent struct {
 	DispatcherID    DispatcherID `json:"dispatcher_id"`
-	PhysicalTableID uint64       `json:"physical_table_id"`
+	PhysicalTableID int64        `json:"physical_table_id"`
 	StartTs         uint64       `json:"start_ts"`
 	CommitTs        uint64       `json:"commit_ts"`
 
@@ -181,7 +181,7 @@ type TEvent struct {
 
 func NewTEvent(
 	dispatcherID DispatcherID,
-	tableID uint64,
+	tableID int64,
 	startTs,
 	commitTs uint64,
 	tableInfo *TableInfo) *TEvent {
