@@ -265,7 +265,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 		}
 	}()
 	// 3. Get the events from the iterator and send them to the dispatcher.
-	sendTxn := func(t *common.TEvent) {
+	sendTxn := func(t *common.DMLEvent) {
 		if t != nil {
 			if len(ddlEvents) > 0 && t.CommitTs > ddlEvents[0].CommitTS {
 				c.sendDDL(remoteID, ddlEvents[0], task.dispatcherStat)
@@ -276,7 +276,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 			task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(t.Len()))
 		}
 	}
-	var txnEvent *common.TEvent
+	var txnEvent *common.DMLEvent
 	for {
 		//Node: The first event of the txn must return isNewTxn as true.
 		e, isNewTxn, err := iter.Next()
@@ -301,7 +301,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 				// FIXME handle the error
 				log.Panic("get table info failed", zap.Error(err))
 			}
-			txnEvent = common.NewTEvent(dispatcherID, tableID, e.StartTs, e.CRTs, tableInfo)
+			txnEvent = common.NewDMLEvent(dispatcherID, tableID, e.StartTs, e.CRTs, tableInfo)
 		}
 		txnEvent.AppendRow(e, c.mounter.DecodeToChunk)
 	}
@@ -357,7 +357,7 @@ func (c *eventBroker) flushResolvedTs(ctx context.Context, serverID messaging.Se
 	if !ok || cache.len == 0 {
 		return
 	}
-	msg := &common.BatchResolvedTs{}
+	msg := &common.BatchResolvedEvent{}
 	msg.Events = append(msg.Events, cache.getAll()...)
 	tMsg := messaging.NewSingleTargetMessage(
 		serverID,
@@ -646,17 +646,17 @@ func (p *scanTaskPool) popTask(chanIndex int) <-chan *scanTask {
 type wrapEvent struct {
 	serverID messaging.ServerId
 	// TODO: change the type of the txnEvent to common.TEvent
-	txnEvent      *common.TEvent
+	txnEvent      *common.DMLEvent
 	resolvedEvent common.ResolvedEvent
 	ddlEvent      *common.DDLEvent
 	msgType       int
 }
 
-func newWrapTxnEvent(serverID messaging.ServerId, e *common.TEvent) wrapEvent {
+func newWrapTxnEvent(serverID messaging.ServerId, e *common.DMLEvent) wrapEvent {
 	return wrapEvent{
 		serverID: serverID,
 		txnEvent: e,
-		msgType:  common.TypeTEvent,
+		msgType:  common.TypeDMLEvent,
 	}
 }
 

@@ -20,7 +20,7 @@ import (
 // sql: `REPLACE INTO `test`.`t` VALUES (?,?,?)`
 func buildInsert(
 	tableInfo *common.TableInfo,
-	row *common.Row,
+	row common.RowDelta,
 	appendPlaceHolder bool,
 	safeMode bool,
 ) (string, []interface{}) {
@@ -52,7 +52,7 @@ func buildInsert(
 
 // prepareDelete builds a parametric DELETE statement as following
 // sql: `DELETE FROM `test`.`t` WHERE x = ? AND y >= ? LIMIT 1`
-func buildDelete(tableInfo *common.TableInfo, row *common.Row) (string, []interface{}) {
+func buildDelete(tableInfo *common.TableInfo, row common.RowDelta) (string, []interface{}) {
 	var builder strings.Builder
 	quoteTable := tableInfo.TableName.QuoteString()
 	builder.WriteString("DELETE FROM " + quoteTable + " WHERE ")
@@ -78,7 +78,7 @@ func buildDelete(tableInfo *common.TableInfo, row *common.Row) (string, []interf
 	return sql, args
 }
 
-func buildUpdate(tableInfo *common.TableInfo, row *common.Row) (string, []interface{}) {
+func buildUpdate(tableInfo *common.TableInfo, row common.RowDelta) (string, []interface{}) {
 	var builder strings.Builder
 	builder.WriteString("UPDATE " + tableInfo.TableName.QuoteString() + " SET ")
 

@@ -22,7 +22,7 @@ const (
 	TypeInvalid IOType = iota
 	TypeBytes
 	// LogService related
-	TypeTxnEvent
+	TypeDMLEvent
 	TypeBatchResolvedTs
 
 	TypeHeartBeatRequest
@@ -48,8 +48,8 @@ func (t IOType) String() string {
 	switch t {
 	case TypeBytes:
 		return "Bytes"
-	case TypeTxnEvent:
-		return "TxnEvent"
+	case TypeDMLEvent:
+		return "DMLEvent"
 	case TypeBatchResolvedTs:
 		return "BatchResolvedTs"
 	case TypeHeartBeatRequest:
@@ -183,10 +183,10 @@ type IOTypeT interface {
 func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 	var m IOTypeT
 	switch ioType {
-	case TypeTxnEvent:
-		m = &common.TEvent{}
+	case TypeDMLEvent:
+		m = &common.DMLEvent{}
 	case TypeBatchResolvedTs:
-		m = &common.BatchResolvedTs{}
+		m = &common.BatchResolvedEvent{}
 	case TypeHeartBeatRequest:
 		m = &heartbeatpb.HeartBeatRequest{}
 	case TypeHeartBeatResponse:
@@ -239,9 +239,9 @@ type TargetMessage struct {
 func NewSingleTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetMessage {
 	var ioType IOType
 	switch Message.(type) {
-	case *common.TEvent:
-		ioType = TypeTxnEvent
-	case *common.BatchResolvedTs:
+	case *common.DMLEvent:
+		ioType = TypeDMLEvent
+	case *common.BatchResolvedEvent:
 		ioType = TypeBatchResolvedTs
 	case *heartbeatpb.HeartBeatRequest:
 		ioType = TypeHeartBeatRequest

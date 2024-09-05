@@ -29,9 +29,8 @@ import (
 )
 
 var (
-	tablePrefix  = []byte{'t'}
-	recordPrefix = []byte("_r")
-	metaPrefix   = []byte("m")
+	tablePrefix = []byte{'t'}
+	metaPrefix  = []byte("m")
 )
 
 var (
