@@ -504,8 +504,8 @@ func (ti *TableInfo) GetRowColInfos() ([]int64, map[int64]*types.FieldType, []ro
 	return ti.handleColID, ti.rowColFieldTps, ti.rowColInfos
 }
 
-// GetFileSlice returns the field types of all columns
-func (ti *TableInfo) GetFileSlice() []*types.FieldType {
+// GetFieldSlice returns the field types of all columns
+func (ti *TableInfo) GetFieldSlice() []*types.FieldType {
 	return ti.rowColFieldTpsSlice
 }
 

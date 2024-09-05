@@ -210,7 +210,7 @@ func (d *Dispatcher) HandleEvent(event common.Event) (block bool) {
 // 1.If the event is a single table DDL, it will be added to the sink for writing to downstream(async). If the ddl leads to add new tables or drop tables, it should send heartbeat to maintainer
 // 2. If the event is a multi-table DDL, it will generate a TableSpanStatus message with ddl info to send to maintainer.
 func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
-	if d.ddlPendingEvent.IsSingleTableDDL() {
+	if filter.ShouldBlock(d.ddlPendingEvent.Job.Type) {
 		d.sink.AddDDLAndSyncPointEvent(d.ddlPendingEvent, d.tableProgress)
 		if d.ddlPendingEvent.GetNeedAddedTables() != nil || d.ddlPendingEvent.GetNeedDroppedTables() != nil {
 			message := &heartbeatpb.TableSpanStatus{
