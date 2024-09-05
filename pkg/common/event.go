@@ -17,8 +17,12 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/pingcap/tidb/pkg/parser/model"
+
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"go.uber.org/zap"
 )
 
 type Event interface {
@@ -36,58 +40,47 @@ type FlushableEvent interface {
 }
 
 const (
-	txnRowCount = 2018
+	txnRowCount = 2
 )
 
 const (
 	// TEvent is the event type of a transaction.
-	TypeTEvent = iota
+	TypeDMLEvent = iota
 	// DDLEvent is the event type of a DDL.
 	TypeDDLEvent
 	// ResolvedEvent is the event type of a resolvedTs.
 	TypeResolvedEvent
 	// BatchResolvedTs is the event type of a batch resolvedTs.
-	TypeBatchResolvedTs
-	TypeTxnEvent
+	TypeBatchResolvedEvent
 )
 
-func RowTypeToString(rowType RowType) string {
-	switch rowType {
-	case RowTypeInsert:
-		return "Insert"
-	case RowTypeDelete:
-		return "Delete"
-	case RowTypeUpdate:
-		return "Update"
-	default:
-		return "Unknown"
-	}
-}
+// fakeDispatcherID is a fake dispatcherID for batch resolvedTs.
+var fakeDispatcherID = DispatcherID{low: 0, high: 0}
 
-type BatchResolvedTs struct {
+type BatchResolvedEvent struct {
 	Events []ResolvedEvent
 }
 
-func (b BatchResolvedTs) GetType() int {
-	return TypeBatchResolvedTs
+func (b BatchResolvedEvent) GetType() int {
+	return TypeBatchResolvedEvent
 }
 
-func (b BatchResolvedTs) GetDispatcherID() DispatcherID {
+func (b BatchResolvedEvent) GetDispatcherID() DispatcherID {
 	// It's a fake dispatcherID.
-	return NewDispatcherID()
+	return fakeDispatcherID
 }
 
-func (b BatchResolvedTs) GetCommitTs() Ts {
+func (b BatchResolvedEvent) GetCommitTs() Ts {
 	// It's a fake commitTs.
 	return 0
 }
 
-func (b BatchResolvedTs) GetStartTs() Ts {
+func (b BatchResolvedEvent) GetStartTs() Ts {
 	// It's a fake startTs.
 	return 0
 }
 
-func (b *BatchResolvedTs) Marshal() ([]byte, error) {
+func (b *BatchResolvedEvent) Marshal() ([]byte, error) {
 	buf := make([]byte, 0, len(b.Events)*24)
 	for _, e := range b.Events {
 		data, err := e.Marshal()
@@ -99,7 +92,7 @@ func (b *BatchResolvedTs) Marshal() ([]byte, error) {
 	return buf, nil
 }
 
-func (b *BatchResolvedTs) Unmarshal(data []byte) error {
+func (b *BatchResolvedEvent) Unmarshal(data []byte) error {
 	if len(data)%24 != 0 {
 		log.Panic("BatchResolvedTs.Unmarshal: invalid data")
 	}
@@ -156,37 +149,35 @@ func (e ResolvedEvent) String() string {
 	return fmt.Sprintf("ResolvedEvent{DispatcherID: %s, ResolvedTs: %d}", e.DispatcherID, e.ResolvedTs)
 }
 
-// TEvent represent a transaction, it contains the rows of the transaction.
-// Note: The PreRows is the rows before the transaction, it is used to generate the update and delete SQL.
-// The Rows is the rows after the transaction, it is used to generate the insert and update SQL.
-type TEvent struct {
+// DMLEvent represent a batch of DMLs of a whole or partial of a transaction.
+type DMLEvent struct {
 	DispatcherID    DispatcherID `json:"dispatcher_id"`
 	PhysicalTableID int64        `json:"physical_table_id"`
 	StartTs         uint64       `json:"start_ts"`
 	CommitTs        uint64       `json:"commit_ts"`
 
-	TableInfo *TableInfo `json:"table_info"`
-
-	Rows     *chunk.Chunk `json:"rows"`
-	RowTypes []RowType    `json:"row_types"`
 	// Offset is the offset of the current row in the transaction.
 	Offset int `json:"offset"`
 	len    int
+
+	TableInfo *TableInfo   `json:"table_info"`
+	Rows      *chunk.Chunk `json:"rows"`
+	RowTypes  []RowType    `json:"row_types"`
 
 	// The following fields are set and used by dispatcher.
 	ReplicatingTs  uint64   `json:"replicating_ts"`
 	PostTxnFlushed []func() `msg:"-"`
 }
 
-func NewTEvent(
+func NewDMLEvent(
 	dispatcherID DispatcherID,
 	tableID int64,
 	startTs,
 	commitTs uint64,
-	tableInfo *TableInfo) *TEvent {
+	tableInfo *TableInfo) *DMLEvent {
 	// FIXME: check if chk isFull in the future
 	chk := chunk.NewChunkWithCapacity(tableInfo.GetFileSlice(), txnRowCount)
-	return &TEvent{
+	return &DMLEvent{
 		DispatcherID:    dispatcherID,
 		PhysicalTableID: tableID,
 		StartTs:         startTs,
@@ -198,7 +189,7 @@ func NewTEvent(
 	}
 }
 
-func (t *TEvent) AppendRow(raw *RawKVEntry,
+func (t *DMLEvent) AppendRow(raw *RawKVEntry,
 	decode func(
 		rawKv *RawKVEntry,
 		tableInfo *TableInfo, chk *chunk.Chunk) (int, error),
@@ -223,54 +214,54 @@ func (t *TEvent) AppendRow(raw *RawKVEntry,
 	return nil
 }
 
-func (t *TEvent) GetType() int {
-	return TypeTEvent
+func (t *DMLEvent) GetType() int {
+	return TypeDMLEvent
 }
 
-func (t *TEvent) GetDispatcherID() DispatcherID {
+func (t *DMLEvent) GetDispatcherID() DispatcherID {
 	return t.DispatcherID
 }
 
-func (t *TEvent) GetCommitTs() Ts {
+func (t *DMLEvent) GetCommitTs() Ts {
 	return Ts(t.CommitTs)
 }
 
-func (t *TEvent) GetStartTs() Ts {
+func (t *DMLEvent) GetStartTs() Ts {
 	return Ts(t.StartTs)
 }
 
-func (t *TEvent) PostFlush() {
+func (t *DMLEvent) PostFlush() {
 	for _, f := range t.PostTxnFlushed {
 		f()
 	}
 }
 
-func (t *TEvent) AddPostFlushFunc(f func()) {
+func (t *DMLEvent) AddPostFlushFunc(f func()) {
 	t.PostTxnFlushed = append(t.PostTxnFlushed, f)
 }
 
-func (t *TEvent) GetNextRow() (*Row, bool) {
+func (t *DMLEvent) GetNextRow() (RowDelta, bool) {
 	if t.Offset >= len(t.RowTypes) {
-		return &Row{}, false
+		return RowDelta{}, false
 	}
 	rowType := t.RowTypes[t.Offset]
 	switch rowType {
 	case RowTypeInsert:
-		row := &Row{
+		row := RowDelta{
 			Row:     t.Rows.GetRow(t.Offset),
 			RowType: rowType,
 		}
 		t.Offset++
 		return row, true
 	case RowTypeDelete:
-		row := &Row{
+		row := RowDelta{
 			PreRow:  t.Rows.GetRow(t.Offset),
 			RowType: rowType,
 		}
 		t.Offset++
 		return row, true
 	case RowTypeUpdate:
-		row := &Row{
+		row := RowDelta{
 			PreRow:  t.Rows.GetRow(t.Offset),
 			Row:     t.Rows.GetRow(t.Offset + 1),
 			RowType: rowType,
@@ -280,29 +271,29 @@ func (t *TEvent) GetNextRow() (*Row, bool) {
 	default:
 		log.Panic("TEvent.GetNextRow: invalid row type")
 	}
-	return &Row{}, false
+	return RowDelta{}, false
 }
 
 // Len returns the number of row change events in the transaction.
 // Note: An update event is counted as 1 row.
-func (t *TEvent) Len() int {
+func (t *DMLEvent) Len() int {
 	return t.len
 }
 
-func (t TEvent) Marshal() ([]byte, error) {
+func (t DMLEvent) Marshal() ([]byte, error) {
 	// TODO
 	log.Panic("TEvent.Marshal: not implemented")
 	buf := make([]byte, 0)
 	return buf, nil
 }
 
-func (t *TEvent) Unmarshal(data []byte) error {
+func (t *DMLEvent) Unmarshal(data []byte) error {
 	//TODO
 	log.Panic("TEvent.Unmarshal: not implemented")
 	return nil
 }
 
-type Row struct {
+type RowDelta struct {
 	PreRow  chunk.Row
 	Row     chunk.Row
 	RowType RowType
@@ -319,37 +310,166 @@ const (
 	RowTypeUpdate
 )
 
-// func (r *Row) ToSQL(safeMode bool) (string, []interface{}) {
-// 	switch r.RowType {
-// 	case RowTypeInsert:
-// 		return r.ToInsert(safeMode)
-// 	case RowTypeDelete:
-// 		return r.ToDelete()
-// 	case RowTypeUpdate:
-// 		return nil, nil
-// 	default:
-// 		log.Panic("Row.ToSQL: invalid row type")
-// 	}
-// 	return nil, nil
-// }
+func RowTypeToString(rowType RowType) string {
+	switch rowType {
+	case RowTypeInsert:
+		return "Insert"
+	case RowTypeDelete:
+		return "Delete"
+	case RowTypeUpdate:
+		return "Update"
+	default:
+		return "Unknown"
+	}
+}
 
-// func (r *Row) ToInsert(safeMode bool) (string, []interface{}) {
-// 	if r.RowType != RowTypeInsert {
-// 		log.Panic("Row.ToInsertSQL: invalid row type")
-// 	}
-// 	return "", nil
-// }
+type DDLEvent struct {
+	DispatcherID DispatcherID `json:"dispatcher_id"`
+	Job          *model.Job   `json:"ddl_job"`
+	// commitTS of the rawKV
+	CommitTS Ts `json:"commit_ts"`
 
-// func (r *Row) ToDelete(safeMode bool) (string, []interface{}) {
-// 	if r.RowType != RowTypeDelete {
-// 		log.Panic("Row.ToDeleteSQL: invalid row type")
-// 	}
-// 	return "", nil
-// }
+	// Just for test now
+	// Just for test now
+	BlockedTables     *InfluencedTables `json:"blocked_tables"`
+	NeedDroppedTables *InfluencedTables `json:"need_dropped_tables"`
+	NeedAddedTables   []Table           `json:"need_added_tables"`
+	// 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
+	PostTxnFlushed []func() `msg:"-"`
+}
 
-// func (r *Row) ToUpdate(safeMode bool) (string, []interface{}) {
-// 	if r.RowType != RowTypeUpdate {
-// 		log.Panic("Row.ToUpdateSQL: invalid row type")
-// 	}
-// 	return "", nil
-// }
+func (d *DDLEvent) GetType() int {
+	return TypeDDLEvent
+}
+
+func (d *DDLEvent) GetDispatcherID() DispatcherID {
+	return d.DispatcherID
+}
+
+func (d *DDLEvent) GetCommitTs() Ts {
+	return d.CommitTS
+}
+
+func (d *DDLEvent) GetStartTs() Ts {
+	return d.CommitTS
+}
+
+func (d *DDLEvent) PostFlush() {
+	for _, f := range d.PostTxnFlushed {
+		f()
+	}
+}
+
+func (d *DDLEvent) AddPostFlushFunc(f func()) {
+	d.PostTxnFlushed = append(d.PostTxnFlushed, f)
+}
+
+func (e *DDLEvent) GetBlockedTables() *InfluencedTables {
+	return e.BlockedTables
+}
+
+func (e *DDLEvent) GetNeedDroppedTables() *InfluencedTables {
+	return e.NeedDroppedTables
+}
+
+func (e *DDLEvent) GetNeedAddedTables() []Table {
+	return e.NeedAddedTables
+}
+
+func (e *DDLEvent) IsSyncPointEvent() bool {
+	// TODO
+	return false
+}
+
+func (e *DDLEvent) GetDDLQuery() string {
+	if e == nil {
+		log.Error("DDLEvent is nil, should not happened in production env", zap.Any("event", e))
+		return ""
+	}
+	return e.Job.Query
+}
+
+func (e *DDLEvent) GetDDLSchemaName() string {
+	if e == nil {
+		return "" // 要报错的
+	}
+	return e.Job.SchemaName
+}
+
+func (e *DDLEvent) GetDDLType() model.ActionType {
+	return e.Job.Type
+}
+
+func (e *DDLEvent) IsSingleTableDDL() bool {
+	ddlType := e.Job.Type
+	return ddlType == model.ActionAddColumn || ddlType == model.ActionDropColumn || ddlType == model.ActionModifyColumn ||
+		ddlType == model.ActionAddIndex || ddlType == model.ActionDropIndex || ddlType == model.ActionModifyTableComment ||
+		ddlType == model.ActionRebaseAutoID || ddlType == model.ActionSetDefaultValue || ddlType == model.ActionShardRowID ||
+		ddlType == model.ActionModifyTableCharsetAndCollate || ddlType == model.ActionCreateView || ddlType == model.ActionDropView ||
+		ddlType == model.ActionAddForeignKey || ddlType == model.ActionDropForeignKey || ddlType == model.ActionRenameIndex ||
+		ddlType == model.ActionLockTable || ddlType == model.ActionUnlockTable || ddlType == model.ActionSetTiFlashReplica ||
+		ddlType == model.ActionAddPrimaryKey || ddlType == model.ActionDropPrimaryKey || ddlType == model.ActionAddColumns ||
+		ddlType == model.ActionDropColumns || ddlType == model.ActionModifyTableAutoIdCache || ddlType == model.ActionRebaseAutoRandomBase ||
+		ddlType == model.ActionAlterIndexVisibility || ddlType == model.ActionAddCheckConstraint || ddlType == model.ActionDropCheckConstraint ||
+		ddlType == model.ActionAlterCheckConstraint || ddlType == model.ActionDropIndexes || ddlType == model.ActionAlterTableAttributes ||
+		ddlType == model.ActionAlterCacheTable || ddlType == model.ActionAlterNoCacheTable || ddlType == model.ActionMultiSchemaChange ||
+		ddlType == model.ActionAlterTTLInfo || ddlType == model.ActionAlterTTLRemove || ddlType == model.ActionRepairTable ||
+		ddlType == model.ActionCreatePlacementPolicy || ddlType == model.ActionAlterPlacementPolicy || ddlType == model.ActionRecoverTable ||
+		ddlType == model.ActionDropPlacementPolicy || ddlType == model.ActionCreateSchema || ddlType == model.ActionRecoverSchema ||
+		ddlType == model.ActionCreateTables || ddlType == model.ActionRenameTable || ddlType == model.ActionTruncateTable || ddlType == model.ActionCreateTable
+
+}
+
+type InfluenceType int
+
+const (
+	All InfluenceType = iota // influence all tables
+	DB                       // influence all tables in the same database
+	Normal
+)
+
+func (t InfluenceType) toPB() heartbeatpb.InfluenceType {
+	switch t {
+	case All:
+		return heartbeatpb.InfluenceType_All
+	case DB:
+		return heartbeatpb.InfluenceType_DB
+	case Normal:
+		return heartbeatpb.InfluenceType_Normal
+	default:
+		log.Error("unknown influence type")
+	}
+	return heartbeatpb.InfluenceType_Normal
+}
+
+type InfluencedTables struct {
+	InfluenceType InfluenceType
+	TableIDs      []int64
+	SchemaID      int64
+}
+
+func (i *InfluencedTables) ToPB() *heartbeatpb.InfluencedTables {
+	if i == nil {
+		return nil
+	}
+	return &heartbeatpb.InfluencedTables{
+		InfluenceType: i.InfluenceType.toPB(),
+		TableIDs:      i.TableIDs,
+		SchemaID:      i.SchemaID,
+	}
+}
+func ToTablesPB(tables []Table) []*heartbeatpb.Table {
+	res := make([]*heartbeatpb.Table, len(tables))
+	for i, t := range tables {
+		res[i] = &heartbeatpb.Table{
+			SchemaID: t.SchemaID,
+			TableID:  t.TableID,
+		}
+	}
+	return res
+}
+
+type Table struct {
+	SchemaID int64
+	TableID  int64
+}

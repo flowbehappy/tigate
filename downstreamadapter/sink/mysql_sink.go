@@ -45,7 +45,7 @@ type MysqlSink struct {
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
 
-	eventChans   []chan *common.TEvent
+	eventChans   []chan *common.DMLEvent
 	ddlEventChan chan *common.DDLEvent
 	workerCount  int
 }
@@ -54,13 +54,13 @@ type MysqlSink struct {
 func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *writer.MysqlConfig, db *sql.DB) *MysqlSink {
 	mysqlSink := MysqlSink{
 		changefeedID: changefeedID,
-		eventChans:   make([]chan *common.TEvent, workerCount),
+		eventChans:   make([]chan *common.DMLEvent, workerCount),
 		ddlEventChan: make(chan *common.DDLEvent, 16),
 		workerCount:  workerCount,
 	}
 
 	for i := 0; i < workerCount; i++ {
-		mysqlSink.eventChans[i] = make(chan *common.TEvent, 16)
+		mysqlSink.eventChans[i] = make(chan *common.DMLEvent, 16)
 	}
 
 	mysqlSink.initWorker(workerCount, cfg, db)
@@ -76,11 +76,11 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 	for i := 0; i < workerCount; i++ {
 		s.wg.Add(1)
 		workerId := i
-		go func(ctx context.Context, eventChan chan *common.TEvent, db *sql.DB, config *writer.MysqlConfig, maxRows int) {
+		go func(ctx context.Context, eventChan chan *common.DMLEvent, db *sql.DB, config *writer.MysqlConfig, maxRows int) {
 			defer s.wg.Done()
 			totalStart := time.Now()
 			worker := worker.NewMysqlWorker(eventChan, db, config, workerId, s.changefeedID)
-			events := make([]*common.TEvent, 0)
+			events := make([]*common.DMLEvent, 0)
 			rows := 0
 			for {
 				needFlush := false
@@ -152,7 +152,7 @@ func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql
 	}(ctx, s.ddlEventChan)
 }
 
-func (s *MysqlSink) AddDMLEvent(event *common.TEvent, tableProgress *types.TableProgress) {
+func (s *MysqlSink) AddDMLEvent(event *common.DMLEvent, tableProgress *types.TableProgress) {
 	if event.Len() == 0 {
 		return
 	}

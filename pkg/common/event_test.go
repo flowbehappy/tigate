@@ -47,14 +47,14 @@ func TestBatchResolvedTs(t *testing.T) {
 		ResolvedTs:   456,
 	}
 
-	b := BatchResolvedTs{
+	b := BatchResolvedEvent{
 		Events: []ResolvedEvent{e, e2},
 	}
 	data, err := b.Marshal()
 	require.NoError(t, err)
 	require.Len(t, data, 48)
 
-	var b2 BatchResolvedTs
+	var b2 BatchResolvedEvent
 	err = b2.Unmarshal(data)
 	require.NoError(t, err)
 	require.Equal(t, b, b2)

@@ -191,8 +191,8 @@ func (d *Dispatcher) HandleEvent(event common.Event) (block bool) {
 	case common.TypeResolvedEvent:
 		d.resolvedTs.Set(event.(common.ResolvedEvent).ResolvedTs)
 		return false
-	case common.TypeTEvent:
-		d.sink.AddDMLEvent(event.(*common.TEvent), d.tableProgress)
+	case common.TypeDMLEvent:
+		d.sink.AddDMLEvent(event.(*common.DMLEvent), d.tableProgress)
 		return false
 	case common.TypeDDLEvent:
 		event := event.(*common.DDLEvent)

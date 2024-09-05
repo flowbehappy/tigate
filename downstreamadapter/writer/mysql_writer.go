@@ -170,7 +170,7 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *common.DDLEvent) error {
 		retry.WithIsRetryableErr(errorutil.IsRetryableDDLError))
 }
 
-func (w *MysqlWriter) Flush(events []*common.TEvent, workerNum int) error {
+func (w *MysqlWriter) Flush(events []*common.DMLEvent, workerNum int) error {
 	dmls := w.prepareDMLs(events)
 	log.Info("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.Any("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values), zap.Any("startTs", dmls.startTs), zap.Any("workerNum", workerNum))
 	if dmls.rowCount == 0 {
@@ -197,7 +197,7 @@ func (w *MysqlWriter) Flush(events []*common.TEvent, workerNum int) error {
 	return nil
 }
 
-func (w *MysqlWriter) prepareDMLs(events []*common.TEvent) *preparedDMLs {
+func (w *MysqlWriter) prepareDMLs(events []*common.DMLEvent) *preparedDMLs {
 	// TODO: use a sync.Pool to reduce allocations.
 	startTs := make([]uint64, 0)
 	sqls := make([]string, 0)

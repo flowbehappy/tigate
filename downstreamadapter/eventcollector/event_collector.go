@@ -173,8 +173,8 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 			log.Panic("invalid message type", zap.Any("msg", msg))
 		}
 		switch event.GetType() {
-		case common.TypeBatchResolvedTs:
-			for _, e := range event.(*common.BatchResolvedTs).Events {
+		case common.TypeBatchResolvedEvent:
+			for _, e := range event.(*common.BatchResolvedEvent).Events {
 				c.metricDispatcherReceivedResolvedTsEventCount.Inc()
 				c.dispatcherEventsDynamicStream.In() <- e
 			}

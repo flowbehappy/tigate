@@ -145,7 +145,7 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, replicaConf
 	}, nil
 }
 
-func (s *KafkaSink) AddDMLEvent(event *common.TEvent, tableProgress *types.TableProgress) {
+func (s *KafkaSink) AddDMLEvent(event *common.DMLEvent, tableProgress *types.TableProgress) {
 	if event.Len() == 0 {
 		return
 	}

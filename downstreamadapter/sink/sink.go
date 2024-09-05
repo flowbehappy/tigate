@@ -19,7 +19,7 @@ import (
 )
 
 type Sink interface {
-	AddDMLEvent(event *common.TEvent, tableProgress *types.TableProgress)
+	AddDMLEvent(event *common.DMLEvent, tableProgress *types.TableProgress)
 	AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress)
 	PassDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress)
 	// IsEmpty(tableSpan *common.TableSpan) bool
