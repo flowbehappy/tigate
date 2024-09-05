@@ -172,7 +172,7 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *common.DDLEvent) error {
 
 func (w *MysqlWriter) Flush(events []*common.TEvent, workerNum int) error {
 	dmls := w.prepareDMLs(events)
-	log.Info("fizz 2 prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.String("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values), zap.Any("startTs", dmls.startTs), zap.Any("workerNum", workerNum))
+	log.Info("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.Any("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values), zap.Any("startTs", dmls.startTs), zap.Any("workerNum", workerNum))
 	if dmls.rowCount == 0 {
 		return nil
 	}
@@ -206,7 +206,6 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TEvent) *preparedDMLs {
 	approximateSize := int64(0)
 
 	for _, event := range events {
-		log.Info("fizz prepareDMLs", zap.Any("event", event.Rows.ToString(event.TableInfo.GetFileSlice())), zap.Any("len event", event.Len()), zap.Any("rowNum", event.Rows.NumRows()))
 		if event.Len() == 0 {
 			continue
 		}
@@ -229,9 +228,6 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TEvent) *preparedDMLs {
 			row, ok := event.GetNextRow()
 			if !ok {
 				break
-			}
-			if row.RowType == common.RowTypeUpdate {
-				log.Info("fizz get row", zap.Any("preRow", row.PreRow.ToString(event.TableInfo.GetFileSlice())), zap.Any("row", row.Row.ToString(event.TableInfo.GetFileSlice())), zap.Any("rowType", row.RowType))
 			}
 			var query string
 			var args []interface{}
