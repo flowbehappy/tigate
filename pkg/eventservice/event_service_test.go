@@ -227,7 +227,7 @@ type mockDispatcherInfo struct {
 	isRegister bool
 }
 
-func newMockAcceptorInfo(dispatcherID common.DispatcherID, tableID uint64) *mockDispatcherInfo {
+func newMockAcceptorInfo(dispatcherID common.DispatcherID, tableID int64) *mockDispatcherInfo {
 	return &mockDispatcherInfo{
 		clusterID: 1,
 		serverID:  "server1",
@@ -305,12 +305,12 @@ var _ eventstore.EventStore = &mockEventStore{}
 
 // mockEventStore is a mock implementation of the EventStore interface
 type mockEventStore struct {
-	spans map[uint64]*mockSpanStats
+	spans map[common.TableID]*mockSpanStats
 }
 
 func newMockEventStore() *mockEventStore {
 	return &mockEventStore{
-		spans: make(map[uint64]*mockSpanStats),
+		spans: make(map[common.TableID]*mockSpanStats),
 	}
 }
 
@@ -334,7 +334,7 @@ func (m *mockEventStore) RegisterDispatcher(
 	notifier eventstore.WatermarkNotifier,
 ) error {
 	log.Info("subscribe table span", zap.Any("span", span), zap.Uint64("startTs", uint64(startTS)))
-	m.spans[uint64(span.TableID)] = &mockSpanStats{
+	m.spans[span.TableID] = &mockSpanStats{
 		startTs:       uint64(startTS),
 		watermark:     uint64(startTS),
 		onUpdate:      notifier,

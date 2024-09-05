@@ -159,7 +159,7 @@ func TestScanTaskPool_PushTask(t *testing.T) {
 
 }
 
-func newTableSpan(tableID uint64, start, end string) *heartbeatpb.TableSpan {
+func newTableSpan(tableID int64, start, end string) *heartbeatpb.TableSpan {
 	return &heartbeatpb.TableSpan{
 		TableID:  tableID,
 		StartKey: []byte(start),

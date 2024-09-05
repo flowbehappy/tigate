@@ -176,7 +176,7 @@ func NewDMLEvent(
 	commitTs uint64,
 	tableInfo *TableInfo) *DMLEvent {
 	// FIXME: check if chk isFull in the future
-	chk := chunk.NewChunkWithCapacity(tableInfo.GetFileSlice(), txnRowCount)
+	chk := chunk.NewChunkWithCapacity(tableInfo.GetFieldSlice(), txnRowCount)
 	return &DMLEvent{
 		DispatcherID:    dispatcherID,
 		PhysicalTableID: tableID,
@@ -398,26 +398,6 @@ func (e *DDLEvent) GetDDLSchemaName() string {
 
 func (e *DDLEvent) GetDDLType() model.ActionType {
 	return e.Job.Type
-}
-
-func (e *DDLEvent) IsSingleTableDDL() bool {
-	ddlType := e.Job.Type
-	return ddlType == model.ActionAddColumn || ddlType == model.ActionDropColumn || ddlType == model.ActionModifyColumn ||
-		ddlType == model.ActionAddIndex || ddlType == model.ActionDropIndex || ddlType == model.ActionModifyTableComment ||
-		ddlType == model.ActionRebaseAutoID || ddlType == model.ActionSetDefaultValue || ddlType == model.ActionShardRowID ||
-		ddlType == model.ActionModifyTableCharsetAndCollate || ddlType == model.ActionCreateView || ddlType == model.ActionDropView ||
-		ddlType == model.ActionAddForeignKey || ddlType == model.ActionDropForeignKey || ddlType == model.ActionRenameIndex ||
-		ddlType == model.ActionLockTable || ddlType == model.ActionUnlockTable || ddlType == model.ActionSetTiFlashReplica ||
-		ddlType == model.ActionAddPrimaryKey || ddlType == model.ActionDropPrimaryKey || ddlType == model.ActionAddColumns ||
-		ddlType == model.ActionDropColumns || ddlType == model.ActionModifyTableAutoIdCache || ddlType == model.ActionRebaseAutoRandomBase ||
-		ddlType == model.ActionAlterIndexVisibility || ddlType == model.ActionAddCheckConstraint || ddlType == model.ActionDropCheckConstraint ||
-		ddlType == model.ActionAlterCheckConstraint || ddlType == model.ActionDropIndexes || ddlType == model.ActionAlterTableAttributes ||
-		ddlType == model.ActionAlterCacheTable || ddlType == model.ActionAlterNoCacheTable || ddlType == model.ActionMultiSchemaChange ||
-		ddlType == model.ActionAlterTTLInfo || ddlType == model.ActionAlterTTLRemove || ddlType == model.ActionRepairTable ||
-		ddlType == model.ActionCreatePlacementPolicy || ddlType == model.ActionAlterPlacementPolicy || ddlType == model.ActionRecoverTable ||
-		ddlType == model.ActionDropPlacementPolicy || ddlType == model.ActionCreateSchema || ddlType == model.ActionRecoverSchema ||
-		ddlType == model.ActionCreateTables || ddlType == model.ActionRenameTable || ddlType == model.ActionTruncateTable || ddlType == model.ActionCreateTable
-
 }
 
 type InfluenceType int
