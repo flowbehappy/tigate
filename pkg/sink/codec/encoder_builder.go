@@ -8,7 +8,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/sink/codec/craft"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/debezium"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
-	"github.com/flowbehappy/tigate/pkg/sink/codec/maxwell"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/open"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/simple"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -24,8 +23,6 @@ func NewRowEventEncoder(ctx context.Context, cfg *common.Config) (encoder.RowEve
 		return canal.NewBatchEncoder(cfg)
 	case config.ProtocolAvro:
 		return avro.NewAvroEncoder(ctx, cfg)
-	case config.ProtocolMaxwell:
-		return maxwell.NewBatchEncoder(cfg), nil
 	case config.ProtocolCanalJSON:
 		return canal.NewJSONRowEventEncoder(ctx, cfg)
 	case config.ProtocolCraft:
