@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"go.uber.org/zap"
 )
 
 type Event interface {
@@ -215,7 +214,6 @@ func (t *TEvent) AppendRow(raw *RawKVEntry,
 	if err != nil {
 		return err
 	}
-	log.Info("fizz TEvent.AppendRow", zap.Int("count", count), zap.Any("rowType", RowTypeToString(RowType)))
 	if count == 1 {
 		t.RowTypes = append(t.RowTypes, RowType)
 	} else if count == 2 {

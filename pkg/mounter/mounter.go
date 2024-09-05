@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"sync"
 	"time"
 	"unsafe"
 
@@ -80,8 +79,6 @@ type Mounter interface {
 
 type mounter struct {
 	tz *time.Location
-	// TableInfo.UpdateTs to ChunkDecoder
-	chunkDecoders sync.Map
 	// decoder and preDecoder are used to decode the raw value, also used to extract checksum,
 	// they should not be nil after decode at least one event in the row format v2.
 	decoder    *rowcodec.DatumMapDecoder
@@ -91,8 +88,7 @@ type mounter struct {
 // NewMounter creates a mounter
 func NewMounter(tz *time.Location) Mounter {
 	return &mounter{
-		tz:            tz,
-		chunkDecoders: sync.Map{},
+		tz: tz,
 	}
 }
 
@@ -125,7 +121,6 @@ func (m *mounter) DecodeToChunk(raw *common.RawKVEntry, tableInfo *common.TableI
 		}
 		count++
 	}
-
 	if len(raw.Value) != 0 {
 		if !rowcodec.IsNewFormat(raw.Value) {
 			err := m.rawKVToChunkV1(raw.Value, tableInfo, chk, recordID)
@@ -140,7 +135,6 @@ func (m *mounter) DecodeToChunk(raw *common.RawKVEntry, tableInfo *common.TableI
 		}
 		count++
 	}
-
 	return count, nil
 }
 

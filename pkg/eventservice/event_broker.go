@@ -278,7 +278,6 @@ func (c *eventBroker) doScan(task *scanTask) {
 	}
 	var txnEvent *common.TEvent
 	for {
-		log.Info("fizz scan event", zap.Uint64("startTs", task.dataRange.StartTs), zap.Uint64("endTs", task.dataRange.EndTs))
 		//Node: The first event of the txn must return isNewTxn as true.
 		e, isNewTxn, err := iter.Next()
 		if err != nil {

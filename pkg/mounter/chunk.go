@@ -17,34 +17,9 @@ import (
 	"go.uber.org/zap"
 )
 
-type chunkDecoder struct {
-	tableID int64
-	version uint64
-	decoder *rowcodec.ChunkDecoder
-}
-
-func (c *chunkDecoder) decode(value []byte, handle kv.Handle, chk *chunk.Chunk) error {
-	return c.decoder.DecodeToChunk(value, handle, chk)
-}
-
 func (m *mounter) rawKVToChunkV2(value []byte, tableInfo *common.TableInfo, chk *chunk.Chunk, handle kv.Handle) error {
 	if len(value) == 0 {
 		return nil
-	}
-	v, ok := m.chunkDecoders.Load(tableInfo.ID)
-	var d *chunkDecoder
-	if ok {
-		d = v.(*chunkDecoder)
-		if d.version != tableInfo.UpdateTS {
-			m.chunkDecoders.Delete(tableInfo.ID)
-			d = nil
-		} else {
-			err := d.decode(value, handle, chk)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-		}
 	}
 	handleColIDs, _, reqCols := tableInfo.GetRowColInfos()
 	// This function is used to set the default value for the column that
@@ -73,18 +48,11 @@ func (m *mounter) rawKVToChunkV2(value []byte, tableInfo *common.TableInfo, chk 
 		return nil
 	}
 	decoder := rowcodec.NewChunkDecoder(reqCols, handleColIDs, defVal, m.tz)
-	d = &chunkDecoder{
-		tableID: tableInfo.ID,
-		version: tableInfo.UpdateTS,
-		decoder: decoder,
-	}
 	// cache it for later use
-	m.chunkDecoders.Store(tableInfo.ID, d)
-	err := d.decode(value, handle, chk)
+	err := decoder.DecodeToChunk(value, handle, chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	return nil
 }
 
