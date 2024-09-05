@@ -14,10 +14,10 @@ import (
 	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/logservice/txnutil"
-	"github.com/flowbehappy/tigate/mounter"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/pkg/pdutil"
@@ -60,7 +60,8 @@ type EventStore interface {
 }
 
 type EventIterator interface {
-	Next() (*common.RowChangedEvent, bool, error)
+	Next() (*common.RawKVEntry, bool, error)
+
 	// Close closes the iterator.
 	Close() (eventCnt int64, err error)
 }
@@ -473,7 +474,7 @@ type eventStoreIter struct {
 	rowCount int64
 }
 
-func (iter *eventStoreIter) Next() (*common.RowChangedEvent, bool, error) {
+func (iter *eventStoreIter) Next() (*common.RawKVEntry, bool, error) {
 	if iter.innerIter == nil {
 		log.Panic("iter is nil")
 	}
@@ -489,27 +490,18 @@ func (iter *eventStoreIter) Next() (*common.RowChangedEvent, bool, error) {
 	if err := json.Unmarshal(value, rawKV); err != nil {
 		return nil, false, err
 	}
-
 	isNewTxn := false
 	if iter.prevCommitTS == 0 || (startTS != iter.prevStartTS || commitTS != iter.prevCommitTS) {
 		isNewTxn = true
 	}
 	iter.prevCommitTS = commitTS
 	iter.prevStartTS = startTS
-	tableInfo, err := iter.schemaStore.GetTableInfo(iter.tableID, common.Ts(rawKV.CRTs-1))
-	if err != nil {
-		log.Panic("failed to get table info", zap.Error(err))
-	}
-	row, err := iter.iterMounter.DecodeEvent(rawKV, tableInfo)
-	if err != nil {
-		log.Panic("failed to decode event", zap.Error(err))
-	}
 	// log.Info("read event",
 	// 	zap.Uint64("tableID", uint64(iter.tableID)),
 	// 	zap.Any("value", row.Columns[0].Value))
 	iter.rowCount++
 	iter.innerIter.Next()
-	return row, isNewTxn, nil
+	return rawKV, isNewTxn, nil
 }
 
 func (iter *eventStoreIter) Close() (int64, error) {

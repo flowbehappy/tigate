@@ -87,7 +87,7 @@ func TestMapFindHole(t *testing.T) {
 	}
 
 	for i, cs := range cases {
-		m := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine]()
+		m := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine](heartbeatpb.LessTableSpan)
 		for _, span := range cs.spans {
 			m.ReplaceOrInsert(span, &scheduler.StateMachine{})
 		}

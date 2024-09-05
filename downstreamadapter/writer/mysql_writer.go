@@ -53,7 +53,7 @@ func NewMysqlWriter(db *sql.DB, cfg *MysqlConfig, changefeedID model.ChangeFeedI
 	}
 }
 
-func (w *MysqlWriter) FlushDDLEvent(event *common.TxnEvent) error {
+func (w *MysqlWriter) FlushDDLEvent(event *common.DDLEvent) error {
 	if event.GetDDLType() == timodel.ActionAddIndex && w.cfg.IsTiDB {
 		return w.asyncExecAddIndexDDLIfTimeout(event)
 	}
@@ -70,24 +70,24 @@ func (w *MysqlWriter) FlushDDLEvent(event *common.TxnEvent) error {
 
 }
 
-func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *common.TxnEvent) error {
+func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *common.DDLEvent) error {
 	done := make(chan error, 1)
 	// wait for 2 seconds at most
 	tick := time.NewTimer(2 * time.Second)
 	defer tick.Stop()
 	log.Info("async exec add index ddl start",
-		zap.Uint64("commitTs", event.CommitTs),
+		zap.Uint64("commitTs", event.CommitTS),
 		zap.String("ddl", event.GetDDLQuery()))
 	go func() {
 		if err := w.execDDLWithMaxRetries(event); err != nil {
 			log.Error("async exec add index ddl failed",
-				zap.Uint64("commitTs", event.CommitTs),
+				zap.Uint64("commitTs", event.CommitTS),
 				zap.String("ddl", event.GetDDLQuery()))
 			done <- err
 			return
 		}
 		log.Info("async exec add index ddl done",
-			zap.Uint64("commitTs", event.CommitTs),
+			zap.Uint64("commitTs", event.CommitTS),
 			zap.String("ddl", event.GetDDLQuery()))
 		done <- nil
 	}()
@@ -101,13 +101,13 @@ func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *common.TxnEvent) erro
 		// then if the ddl is failed, the downstream ddl is lost.
 		// because the checkpoint ts is forwarded.
 		log.Info("async add index ddl is still running",
-			zap.Uint64("commitTs", event.CommitTs),
+			zap.Uint64("commitTs", event.CommitTS),
 			zap.String("ddl", event.GetDDLQuery()))
 		return nil
 	}
 }
 
-func (w *MysqlWriter) execDDL(event *common.TxnEvent) error {
+func (w *MysqlWriter) execDDL(event *common.DDLEvent) error {
 	if w.cfg.DryRun {
 		log.Info("Dry run DDL", zap.String("sql", event.GetDDLQuery()))
 		return nil
@@ -161,7 +161,7 @@ func (w *MysqlWriter) execDDL(event *common.TxnEvent) error {
 	return nil
 }
 
-func (w *MysqlWriter) execDDLWithMaxRetries(event *common.TxnEvent) error {
+func (w *MysqlWriter) execDDLWithMaxRetries(event *common.DDLEvent) error {
 	return retry.Do(context.Background(), func() error {
 		return w.execDDL(event)
 	}, retry.WithBackoffBaseDelay(pmysql.BackoffBaseDelay.Milliseconds()),
@@ -170,8 +170,9 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *common.TxnEvent) error {
 		retry.WithIsRetryableErr(errorutil.IsRetryableDDLError))
 }
 
-func (w *MysqlWriter) Flush(events []*common.TxnEvent, workerNum int, rows int) error {
-	dmls := w.prepareDMLs(events, rows)
+func (w *MysqlWriter) Flush(events []*common.TEvent, workerNum int) error {
+	dmls := w.prepareDMLs(events)
+	log.Info("fizz 2 prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.String("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values), zap.Any("startTs", dmls.startTs), zap.Any("workerNum", workerNum))
 	if dmls.rowCount == 0 {
 		return nil
 	}
@@ -196,46 +197,44 @@ func (w *MysqlWriter) Flush(events []*common.TxnEvent, workerNum int, rows int) 
 	return nil
 }
 
-func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent, rowCount int) *preparedDMLs {
-	sqls := make([]string, 0, rowCount)
-	values := make([][]interface{}, 0, rowCount)
-
+func (w *MysqlWriter) prepareDMLs(events []*common.TEvent) *preparedDMLs {
+	// TODO: use a sync.Pool to reduce allocations.
+	startTs := make([]uint64, 0)
+	sqls := make([]string, 0)
+	values := make([][]interface{}, 0)
+	rowCount := 0
 	approximateSize := int64(0)
-	calcColsSize := func(cols []*common.Column) {
-		for _, c := range cols {
-			approximateSize += int64(c.ApproximateBytes)
-		}
-	}
+
 	for _, event := range events {
-		rows := event.GetRows()
-		if len(rows) == 0 {
+		log.Info("fizz prepareDMLs", zap.Any("event", event.Rows.ToString(event.TableInfo.GetFileSlice())))
+		if event.Len() == 0 {
 			continue
 		}
-
-		firstRow := rows[0]
+		// For metrics and logging.
+		rowCount += event.Len()
+		approximateSize += event.Rows.MemoryUsage()
+		if len(startTs) == 0 || startTs[len(startTs)-1] != event.StartTs {
+			startTs = append(startTs, event.StartTs)
+		}
 
 		// translateToInsert control the update and insert behavior.
 		translateToInsert := !w.cfg.SafeMode
-		translateToInsert = translateToInsert && event.CommitTs > firstRow.ReplicatingTs
+		translateToInsert = translateToInsert && event.CommitTs > event.ReplicatingTs
 		log.Debug("translate to insert",
 			zap.Bool("translateToInsert", translateToInsert),
 			zap.Uint64("firstRowCommitTs", event.CommitTs),
-			zap.Uint64("firstRowReplicatingTs", firstRow.ReplicatingTs),
+			zap.Uint64("firstRowReplicatingTs", event.ReplicatingTs),
 			zap.Bool("safeMode", w.cfg.SafeMode))
-
-		quoteTable := firstRow.TableInfo.TableName.QuoteString()
-		for _, row := range rows {
-			calcColsSize(row.Columns)
-			calcColsSize(row.PreColumns)
-
+		for {
+			row, ok := event.GetNextRow()
+			if !ok {
+				break
+			}
 			var query string
 			var args []interface{}
 			// Update Event
-			if len(row.PreColumns) != 0 && len(row.Columns) != 0 {
-				query, args = prepareUpdate(
-					quoteTable,
-					row.GetPreColumns(),
-					row.GetColumns())
+			if row.RowType == common.RowTypeUpdate {
+				query, args = buildUpdate(event.TableInfo, row)
 				if query != "" {
 					sqls = append(sqls, query)
 					values = append(values, args)
@@ -244,8 +243,8 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent, rowCount int) *prep
 			}
 
 			// Delete Event
-			if len(row.PreColumns) != 0 {
-				query, args = prepareDelete(quoteTable, row.GetPreColumns())
+			if row.RowType == common.RowTypeDelete {
+				query, args = buildDelete(event.TableInfo, row)
 				if query != "" {
 					sqls = append(sqls, query)
 					values = append(values, args)
@@ -256,12 +255,8 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent, rowCount int) *prep
 			// It will be translated directly into a
 			// INSERT(not in safe mode)
 			// or REPLACE(in safe mode) SQL.
-			if len(row.Columns) != 0 {
-				query, args = prepareReplace(
-					quoteTable,
-					row.GetColumns(),
-					true,
-					translateToInsert)
+			if row.RowType == common.RowTypeInsert {
+				query, args = buildInsert(event.TableInfo, row, true, w.cfg.SafeMode)
 				if query != "" {
 					sqls = append(sqls, query)
 					values = append(values, args)
@@ -275,6 +270,7 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TxnEvent, rowCount int) *prep
 		values:          values,
 		rowCount:        rowCount,
 		approximateSize: approximateSize,
+		startTs:         startTs,
 	}
 }
 

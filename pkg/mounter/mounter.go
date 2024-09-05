@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"go.uber.org/zap"
@@ -73,10 +75,13 @@ type DDLTableInfo struct {
 // Mounter is used to parse SQL events from KV events
 type Mounter interface {
 	DecodeEvent(rawKV *common.RawKVEntry, tableInfo *common.TableInfo) (*common.RowChangedEvent, error)
+	DecodeToChunk(rawKV *common.RawKVEntry, tableInfo *common.TableInfo, chk *chunk.Chunk) (int, error)
 }
 
 type mounter struct {
 	tz *time.Location
+	// TableInfo.UpdateTs to ChunkDecoder
+	chunkDecoders sync.Map
 	// decoder and preDecoder are used to decode the raw value, also used to extract checksum,
 	// they should not be nil after decode at least one event in the row format v2.
 	decoder    *rowcodec.DatumMapDecoder
@@ -86,8 +91,57 @@ type mounter struct {
 // NewMounter creates a mounter
 func NewMounter(tz *time.Location) Mounter {
 	return &mounter{
-		tz: tz,
+		tz:            tz,
+		chunkDecoders: sync.Map{},
 	}
+}
+
+// DecodeToChunk decodes the raw KV entry to a chunk, it returns the number of rows decoded.
+func (m *mounter) DecodeToChunk(raw *common.RawKVEntry, tableInfo *common.TableInfo, chk *chunk.Chunk) (int, error) {
+	recordID, err := tablecodec.DecodeRowKey(raw.Key)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if !bytes.HasPrefix(raw.Key, tablePrefix) {
+		return 0, nil
+	}
+
+	// key, physicalTableID, err := decodeTableID(raw.Key)
+	// if err != nil {
+	// 	return nil
+	// }
+	count := 0
+	if len(raw.OldValue) != 0 {
+		if !rowcodec.IsNewFormat(raw.OldValue) {
+			err := m.rawKVToChunkV1(raw.OldValue, tableInfo, chk, recordID)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+		} else {
+			err := m.rawKVToChunkV2(raw.OldValue, tableInfo, chk, recordID)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+		}
+		count++
+	}
+
+	if len(raw.Value) != 0 {
+		if !rowcodec.IsNewFormat(raw.Value) {
+			err := m.rawKVToChunkV1(raw.Value, tableInfo, chk, recordID)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+		} else {
+			err := m.rawKVToChunkV2(raw.Value, tableInfo, chk, recordID)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+		}
+		count++
+	}
+
+	return count, nil
 }
 
 func (m *mounter) DecodeEvent(rawKV *common.RawKVEntry, tableInfo *common.TableInfo) (*common.RowChangedEvent, error) {
@@ -114,9 +168,6 @@ func (m *mounter) unmarshalAndMountRowChanged(
 		CRTs:            raw.CRTs,
 		PhysicalTableID: physicalTableID,
 		Delete:          raw.OpType == common.OpTypeDelete,
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 	if bytes.HasPrefix(key, recordPrefix) {
 		rowKV, err := m.unmarshalRowKVEntry(tableInfo, raw.Key, raw.Value, raw.OldValue, baseInfo)

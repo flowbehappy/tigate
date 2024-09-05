@@ -15,6 +15,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/pingcap/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
@@ -37,6 +38,7 @@ type eventBroker struct {
 	// eventStore is the source of the events, eventBroker get the events from the eventStore.
 	eventStore  eventstore.EventStore
 	schemaStore schemastore.SchemaStore
+	mounter     mounter.Mounter
 	// msgSender is used to send the events to the dispatchers.
 	msgSender messaging.MessageSender
 
@@ -73,13 +75,16 @@ func newEventBroker(
 	ctx context.Context,
 	id uint64,
 	eventStore eventstore.EventStore,
+	schemaStore schemastore.SchemaStore,
 	mc messaging.MessageSender,
+	tz *time.Location,
 ) *eventBroker {
 	ctx, cancel := context.WithCancel(ctx)
 	wg := &sync.WaitGroup{}
 	c := &eventBroker{
 		tidbClusterID:           id,
 		eventStore:              eventStore,
+		mounter:                 mounter.NewMounter(tz),
 		schemaStore:             appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore),
 		dispatchers:             sync.Map{},
 		tableTriggerDispatchers: sync.Map{},
@@ -260,7 +265,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 		}
 	}()
 	// 3. Get the events from the iterator and send them to the dispatcher.
-	sendTxn := func(t *common.TxnEvent) {
+	sendTxn := func(t *common.TEvent) {
 		if t != nil {
 			if len(ddlEvents) > 0 && t.CommitTs > ddlEvents[0].CommitTS {
 				c.sendDDL(remoteID, ddlEvents[0], task.dispatcherStat)
@@ -268,11 +273,12 @@ func (c *eventBroker) doScan(task *scanTask) {
 			}
 			c.messageCh <- newWrapTxnEvent(remoteID, t)
 			task.dispatcherStat.watermark.Store(t.CommitTs)
-			task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(len(t.Rows)))
+			task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(t.Len()))
 		}
 	}
-	var txnEvent *common.TxnEvent
+	var txnEvent *common.TEvent
 	for {
+		log.Info("fizz scan event", zap.Uint64("startTs", task.dataRange.StartTs), zap.Uint64("endTs", task.dataRange.EndTs))
 		//Node: The first event of the txn must return isNewTxn as true.
 		e, isNewTxn, err := iter.Next()
 		if err != nil {
@@ -283,25 +289,22 @@ func (c *eventBroker) doScan(task *scanTask) {
 			sendTxn(txnEvent)
 			return
 		}
-		if e.CommitTs < task.dispatcherStat.watermark.Load() {
+		if e.CRTs < task.dispatcherStat.watermark.Load() {
 			// If the commitTs of the event is less than the watermark of the dispatcher,
 			// there are some bugs in the eventStore.
-			log.Panic("should never Happen", zap.Uint64("commitTs", e.CommitTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
+			log.Panic("should never Happen", zap.Uint64("commitTs", e.CRTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
 		}
-
 		if isNewTxn {
 			sendTxn(txnEvent)
-			txnEvent = &common.TxnEvent{
-				DispatcherID: dispatcherID,
-				StartTs:      e.StartTs,
-				CommitTs:     e.CommitTs,
-				Rows:         make([]*common.RowChangedEvent, 0),
+			tableID := task.dispatcherStat.info.GetTableSpan().TableID
+			tableInfo, err := c.schemaStore.GetTableInfo(int64(tableID), e.CRTs-1)
+			if err != nil {
+				// FIXME handle the error
+				log.Panic("get table info failed", zap.Error(err))
 			}
+			txnEvent = common.NewTEvent(dispatcherID, tableID, e.StartTs, e.CRTs, tableInfo)
 		}
-		if txnEvent.CommitTs != e.CommitTs {
-			log.Panic("commitTs of the event is different from the commitTs of the txnEvent", zap.Uint64("eventCommitTs", e.CommitTs), zap.Uint64("txnCommitTs", txnEvent.CommitTs))
-		}
-		txnEvent.Rows = append(txnEvent.Rows, e)
+		txnEvent.AppendRow(e, c.mounter.DecodeToChunk)
 	}
 }
 
@@ -644,13 +647,13 @@ func (p *scanTaskPool) popTask(chanIndex int) <-chan *scanTask {
 type wrapEvent struct {
 	serverID messaging.ServerId
 	// TODO: change the type of the txnEvent to common.TEvent
-	txnEvent      *common.TxnEvent
+	txnEvent      *common.TEvent
 	resolvedEvent common.ResolvedEvent
-	ddlEvent      common.DDLEvent
+	ddlEvent      *common.DDLEvent
 	msgType       int
 }
 
-func newWrapTxnEvent(serverID messaging.ServerId, e *common.TxnEvent) wrapEvent {
+func newWrapTxnEvent(serverID messaging.ServerId, e *common.TEvent) wrapEvent {
 	return wrapEvent{
 		serverID: serverID,
 		txnEvent: e,
@@ -669,7 +672,7 @@ func newWrapResolvedEvent(serverID messaging.ServerId, e common.ResolvedEvent) w
 func newWrapDDLEvent(serverID messaging.ServerId, e common.DDLEvent) wrapEvent {
 	return wrapEvent{
 		serverID: serverID,
-		ddlEvent: e,
+		ddlEvent: &e,
 		msgType:  common.TypeDDLEvent,
 	}
 }

@@ -49,20 +49,19 @@ func NewTableProgress() *TableProgress {
 	return tableProgress
 }
 
-func (p *TableProgress) Add(event *common.TxnEvent) {
-	ts := Ts{startTs: event.StartTs, commitTs: event.CommitTs}
+func (p *TableProgress) Add(event common.FlushableEvent) {
+	ts := Ts{startTs: event.GetStartTs(), commitTs: event.GetCommitTs()}
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	elem := p.list.PushBack(ts)
 	p.elemMap[ts] = elem
-	p.maxCommitTs = event.CommitTs
-
-	event.PostTxnFlushed = append(event.PostTxnFlushed, func() { p.Remove(event) })
+	p.maxCommitTs = event.GetCommitTs()
+	event.AddPostFlushFunc(func() { p.Remove(event) })
 }
 
 // 而且删除可以认为是批量的？但要不要做成批量可以后面再看
-func (p *TableProgress) Remove(event *common.TxnEvent) {
-	ts := Ts{startTs: event.StartTs, commitTs: event.CommitTs}
+func (p *TableProgress) Remove(event common.Event) {
+	ts := Ts{startTs: event.GetStartTs(), commitTs: event.GetCommitTs()}
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	if elem, ok := p.elemMap[ts]; ok {
@@ -77,10 +76,10 @@ func (p *TableProgress) Empty() bool {
 	return p.list.Len() == 0
 }
 
-func (p *TableProgress) Pass(event *common.TxnEvent) {
+func (p *TableProgress) Pass(event *common.DDLEvent) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	p.maxCommitTs = event.CommitTs
+	p.maxCommitTs = event.CommitTS
 }
 
 // 返回当前 tableSpan 中最大的 checkpointTs，也就是最大的 ts，并且 <= ts 之前的数据都已经成功写下去了

@@ -26,6 +26,7 @@ func TestNewDispatcherStat(t *testing.T) {
 	require.Equal(t, startTs, stat.spanSubscription.watermark.Load())
 	require.Equal(t, 0, int(stat.spanSubscription.newEventCount.Load()))
 	require.NotEmpty(t, stat.workerIndex)
+	require.Nil(t, stat.filter)
 }
 
 func TestDispatcherStatUpdateWatermark(t *testing.T) {
@@ -91,6 +92,7 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 
 	wg.Wait()
 }
+
 func TestScanTaskPool_PushTask(t *testing.T) {
 	pool := newScanTaskPool()
 	span := newTableSpan(1, "a", "b")
@@ -150,20 +152,19 @@ func TestScanTaskPool_PushTask(t *testing.T) {
 	receivedTask := <-pool.pendingTaskQueue[dispatcherStat.workerIndex]
 	require.Equal(t, expectedTask, receivedTask)
 
-	// Verify that the task is set to nil in the taskSet
+	// Verify that the task is removed from taskSet
 	task, ok = pool.taskSet[dispatcherInfo.GetID()]
-	require.True(t, ok)
+	require.False(t, ok)
 	require.Nil(t, task)
 
 }
 
 func newTableSpan(tableID uint64, start, end string) *heartbeatpb.TableSpan {
-	res := &heartbeatpb.TableSpan{
+	return &heartbeatpb.TableSpan{
 		TableID:  tableID,
 		StartKey: []byte(start),
 		EndKey:   []byte(end),
 	}
-	return res
 }
 
 func TestResolvedTsCache(t *testing.T) {

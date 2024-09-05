@@ -2,9 +2,11 @@ package eventservice
 
 import (
 	"context"
+	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
+	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
@@ -18,14 +20,6 @@ const (
 	// TODO: need to adjust the worker count
 	defaultScanWorkerCount = 8192
 )
-
-// EventService accepts the requests of pulling events.
-// The EventService is a singleton in the system.
-type EventService interface {
-	Name() string
-	Run(ctx context.Context) error
-	Close(context.Context) error
-}
 
 type DispatcherInfo interface {
 	// GetID returns the ID of the dispatcher.
@@ -41,24 +35,30 @@ type DispatcherInfo interface {
 	GetFilterConfig() *config.FilterConfig
 }
 
+// EventService accepts the requests of pulling events.
+// The EventService is a singleton in the system.
 type eventService struct {
-	mc         messaging.MessageCenter
-	eventStore eventstore.EventStore
-	brokers    map[uint64]*eventBroker
+	mc          messaging.MessageCenter
+	eventStore  eventstore.EventStore
+	schemaStore schemastore.SchemaStore
+	brokers     map[uint64]*eventBroker
 
 	// TODO: use a better way to cache the acceptorInfos
 	acceptorInfoCh chan DispatcherInfo
+	tz             *time.Location
 }
 
-func NewEventService() EventService {
+func NewEventService() common.SubModule {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	eventStore := appcontext.GetService[eventstore.EventStore](appcontext.EventStore)
-
+	schemaStore := appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore)
 	es := &eventService{
 		mc:             mc,
 		eventStore:     eventStore,
+		schemaStore:    schemaStore,
 		brokers:        make(map[uint64]*eventBroker),
 		acceptorInfoCh: make(chan DispatcherInfo, defaultChannelSize*16),
+		tz:             time.Local, // FIXME use the timezone from the config
 	}
 	es.mc.RegisterHandler(messaging.EventServiceTopic, es.handleMessage)
 	return es
@@ -110,7 +110,7 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 	clusterID := info.GetClusterID()
 	c, ok := s.brokers[clusterID]
 	if !ok {
-		c = newEventBroker(ctx, clusterID, s.eventStore, s.mc)
+		c = newEventBroker(ctx, clusterID, s.eventStore, s.schemaStore, s.mc, s.tz)
 		s.brokers[clusterID] = c
 	}
 	c.addDispatcher(info)
