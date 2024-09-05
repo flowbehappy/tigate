@@ -118,7 +118,7 @@ func (m *writeSplitter) split(
 //     than spanRegionLimit, then use the region range from spanStartIndex to i to as a span.
 //  4. Return the split result.
 func (m *writeSplitter) splitRegionsByWrittenKeysV1(
-	tableID uint64,
+	tableID int64,
 	regions []pdutil.RegionInfo,
 	baseSpansNum int,
 ) *splitRegionsInfo {

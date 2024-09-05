@@ -94,7 +94,7 @@ func HashTableSpan(span heartbeatpb.TableSpan, slots int) int {
 
 // hashableSpan is a hashable span, which can be used as a map key.
 type hashableSpan struct {
-	TableID  uint64
+	TableID  int64
 	StartKey string
 	EndKey   string
 }

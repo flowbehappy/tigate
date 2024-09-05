@@ -149,9 +149,9 @@ func (w *changeEventProcessor) handleEventEntry(ctx context.Context, x *cdcpb.Ev
 	log.Debug("region change event processor get an Event",
 		zap.Int("subscriptionClientID", int(w.client.id)),
 		zap.Uint64("subscriptionID", uint64(state.region.subscribedSpan.subID)),
-		zap.Uint64("tableID", tableID),
+		zap.Int64("tableID", tableID),
 		zap.Int("rows", len(x.Entries.GetEntries())))
-	return handleEventEntry(x, startTs, state, emit, common.TableID(tableID))
+	return handleEventEntry(x, startTs, state, emit, tableID)
 }
 
 func handleEventEntry(

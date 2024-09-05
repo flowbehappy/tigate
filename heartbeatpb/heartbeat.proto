@@ -4,7 +4,7 @@ package heartbeatpb;
 option go_package = "github.com/flowbehappy/tigate/heartbeatpb";
 
 message TableSpan {
-    uint64 TableID   = 1;
+    int64 TableID   = 1;
 	bytes StartKey  = 2;
 	bytes EndKey    = 3;
 }

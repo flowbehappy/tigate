@@ -224,7 +224,7 @@ func TestSplitRegionEven(t *testing.T) {
 		}
 	}
 	splitter := newWriteSplitter(model.ChangeFeedID4Test("test", "test"), nil, 4)
-	info := splitter.splitRegionsByWrittenKeysV1(uint64(tblID), regions, 5)
+	info := splitter.splitRegionsByWrittenKeysV1(tblID, regions, 5)
 	require.Len(t, info.RegionCounts, 5)
 	require.Len(t, info.Weights, 5)
 	for i, w := range info.Weights {

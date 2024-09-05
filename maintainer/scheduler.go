@@ -104,7 +104,7 @@ func (s *Scheduler) GetAllNodes() []string {
 func (s *Scheduler) AddNewTable(table common.Table) {
 	span := spanz.TableIDToComparableSpan(table.TableID)
 	tableSpan := &heartbeatpb.TableSpan{
-		TableID:  uint64(table.TableID),
+		TableID:  table.TableID,
 		StartKey: span.StartKey,
 		EndKey:   span.EndKey,
 	}
@@ -122,20 +122,20 @@ func (s *Scheduler) SetInitialTables(tables []common.Table) {
 
 // FinishBootstrap adds working state tasks to this scheduler directly,
 // it reported by the bootstrap response
-func (s *Scheduler) FinishBootstrap(workingMap map[uint64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]) {
+func (s *Scheduler) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]) {
 	if s.bootstrapped {
 		log.Panic("already bootstrapped",
 			zap.String("changefeed", s.changefeedID),
 			zap.Any("workingMap", workingMap))
 	}
 	for _, table := range s.initialTables {
-		tableMap, ok := workingMap[uint64(table.TableID)]
+		tableMap, ok := workingMap[table.TableID]
 		if !ok {
 			s.AddNewTable(table)
 		} else {
 			span := spanz.TableIDToComparableSpan(table.TableID)
 			tableSpan := &heartbeatpb.TableSpan{
-				TableID:  uint64(table.TableID),
+				TableID:  table.TableID,
 				StartKey: span.StartKey,
 				EndKey:   span.EndKey,
 			}
@@ -149,7 +149,7 @@ func (s *Scheduler) FinishBootstrap(workingMap map[uint64]utils.Map[*heartbeatpb
 				s.addNewSpans(table.SchemaID, table.TableID, holes)
 			}
 			// delete it
-			delete(workingMap, uint64(table.TableID))
+			delete(workingMap, table.TableID)
 		}
 	}
 	ddlSpanFound := false
@@ -160,7 +160,7 @@ func (s *Scheduler) FinishBootstrap(workingMap map[uint64]utils.Map[*heartbeatpb
 	for tableID, tableMap := range workingMap {
 		log.Info("found a tables not in initial table map",
 			zap.String("changefeed", s.changefeedID),
-			zap.Uint64("id", tableID))
+			zap.Int64("id", tableID))
 		if s.addWorkingSpans(tableMap) {
 			ddlSpanFound = true
 		}
@@ -572,7 +572,7 @@ func (s *Scheduler) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, *
 func (s *Scheduler) addNewSpans(schemaID, tableID int64, tableSpans []*heartbeatpb.TableSpan) {
 	for _, newSpan := range tableSpans {
 		newTableSpan := &heartbeatpb.TableSpan{
-			TableID:  uint64(tableID),
+			TableID:  tableID,
 			StartKey: newSpan.StartKey,
 			EndKey:   newSpan.EndKey,
 		}

@@ -446,7 +446,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	if span.Equal(heartbeatpb.DDLSpan) {
 		c.tableTriggerDispatchers.Store(info.GetID(), dispatcher)
 		log.Info("table trigger dispatcher register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
-			zap.Any("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID),
+			zap.Any("acceptorID", info.GetID()), zap.Int64("tableID", span.TableID),
 			zap.Uint64("startTs", startTs), zap.Duration("brokerRegisterDuration", time.Since(start)))
 		return
 	}
@@ -466,7 +466,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	eventStoreRegisterDuration := time.Since(start)
 
 	log.Info("register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
-		zap.Any("acceptorID", info.GetID()), zap.Uint64("tableID", span.TableID),
+		zap.Any("acceptorID", info.GetID()), zap.Int64("tableID", span.TableID),
 		zap.Uint64("startTs", startTs), zap.Duration("brokerRegisterDuration", brokerRegisterDuration),
 		zap.Duration("eventStoreRegisterDuration", eventStoreRegisterDuration))
 }

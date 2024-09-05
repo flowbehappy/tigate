@@ -33,7 +33,7 @@ func TestNormalBlock(t *testing.T) {
 	for id := 1; id < 4; id++ {
 		span := spanz.TableIDToComparableSpan(int64(id))
 		tableSpan := &heartbeatpb.TableSpan{
-			TableID:  uint64(id),
+			TableID:  int64(id),
 			StartKey: span.StartKey,
 			EndKey:   span.EndKey,
 		}
