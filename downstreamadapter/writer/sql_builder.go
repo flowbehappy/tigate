@@ -57,7 +57,7 @@ func buildDelete(tableInfo *common.TableInfo, row *common.Row) (string, []interf
 	quoteTable := tableInfo.TableName.QuoteString()
 	builder.WriteString("DELETE FROM " + quoteTable + " WHERE ")
 
-	colNames, wargs := whereClause(&row.PreRow, tableInfo)
+	colNames, wargs := whereSlice(&row.PreRow, tableInfo)
 	if len(wargs) == 0 {
 		return "", nil
 	}
@@ -83,7 +83,7 @@ func buildUpdate(tableInfo *common.TableInfo, row *common.Row) (string, []interf
 	builder.WriteString("UPDATE " + tableInfo.TableName.QuoteString() + " SET ")
 
 	columnNames := make([]string, 0, len(tableInfo.Columns))
-	allArgs := make([]interface{}, 0, len(tableInfo.Columns)*2)
+	allArgs := make([]interface{}, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
 		if col == nil || tableInfo.ColumnsFlag[col.ID].IsGeneratedColumn() {
 			continue
@@ -111,7 +111,7 @@ func buildUpdate(tableInfo *common.TableInfo, row *common.Row) (string, []interf
 	}
 
 	builder.WriteString(" WHERE ")
-	colNames, wargs := whereClause(&row.PreRow, tableInfo)
+	colNames, wargs := whereSlice(&row.PreRow, tableInfo)
 	if len(wargs) == 0 {
 		return "", nil
 	}
@@ -235,14 +235,13 @@ func formatColVal(row *chunk.Row, col *model.ColumnInfo, idx int) (
 	return v, nil
 }
 
-// whereClause builds a parametric WHERE clause as following
-// sql: `WHERE {} = ? AND {} > ?`
-func whereClause(row *chunk.Row, tableInfo *common.TableInfo) ([]string, []interface{}) {
+// whereSlice returns the column names and values for the WHERE clause
+func whereSlice(row *chunk.Row, tableInfo *common.TableInfo) ([]string, []interface{}) {
 	args := make([]interface{}, 0, len(tableInfo.Columns))
 	colNames := make([]string, 0, len(tableInfo.Columns))
 	// Try to use unique key values when available
 	for i, col := range tableInfo.Columns {
-		if col == nil || tableInfo.ColumnsFlag[col.ID].IsHandleKey() {
+		if col == nil || !tableInfo.ColumnsFlag[col.ID].IsHandleKey() {
 			continue
 		}
 		colNames = append(colNames, col.Name.O)
@@ -253,9 +252,23 @@ func whereClause(row *chunk.Row, tableInfo *common.TableInfo) ([]string, []inter
 		}
 		args = append(args, v)
 	}
+
+	// if no explicit row id but force replicate, use all key-values in where condition
+	if len(colNames) == 0 {
+		for i, col := range tableInfo.Columns {
+			colNames = append(colNames, col.Name.O)
+			v, err := formatColVal(row, col, i)
+			if err != nil {
+				// FIXME: handle error
+				log.Panic("formatColVal failed", zap.Error(err))
+			}
+			args = append(args, v)
+		}
+	}
 	return colNames, args
 }
 
+// placeHolder returns a string with n placeholders separated by commas
 // n must be greater or equal than 1, or the function will panic
 func placeHolder(n int) string {
 	var builder strings.Builder

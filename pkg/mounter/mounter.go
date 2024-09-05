@@ -125,7 +125,7 @@ func (m *mounter) DecodeToChunk(raw *common.RawKVEntry, tableInfo *common.TableI
 		}
 		count++
 	}
-
+	log.Info("fizz DecodeToChunk 1", zap.Any("rows", chk.NumRows()))
 	if len(raw.Value) != 0 {
 		if !rowcodec.IsNewFormat(raw.Value) {
 			err := m.rawKVToChunkV1(raw.Value, tableInfo, chk, recordID)
@@ -140,7 +140,7 @@ func (m *mounter) DecodeToChunk(raw *common.RawKVEntry, tableInfo *common.TableI
 		}
 		count++
 	}
-
+	log.Info("fizz DecodeToChunk 2", zap.Any("rows", chk.NumRows()))
 	return count, nil
 }
 

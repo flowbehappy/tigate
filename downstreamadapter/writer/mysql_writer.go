@@ -206,7 +206,7 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TEvent) *preparedDMLs {
 	approximateSize := int64(0)
 
 	for _, event := range events {
-		log.Info("fizz prepareDMLs", zap.Any("event", event.Rows.ToString(event.TableInfo.GetFileSlice())))
+		log.Info("fizz prepareDMLs", zap.Any("event", event.Rows.ToString(event.TableInfo.GetFileSlice())), zap.Any("len event", event.Len()), zap.Any("rowNum", event.Rows.NumRows()))
 		if event.Len() == 0 {
 			continue
 		}
@@ -229,6 +229,9 @@ func (w *MysqlWriter) prepareDMLs(events []*common.TEvent) *preparedDMLs {
 			row, ok := event.GetNextRow()
 			if !ok {
 				break
+			}
+			if row.RowType == common.RowTypeUpdate {
+				log.Info("fizz get row", zap.Any("preRow", row.PreRow.ToString(event.TableInfo.GetFileSlice())), zap.Any("row", row.Row.ToString(event.TableInfo.GetFileSlice())), zap.Any("rowType", row.RowType))
 			}
 			var query string
 			var args []interface{}

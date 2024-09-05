@@ -186,6 +186,7 @@ func NewTEvent(
 	commitTs uint64,
 	tableInfo *TableInfo) *TEvent {
 	// FIXME: check if chk isFull in the future
+	log.Info("fizz NewTEvent", zap.Any("fileSliceLen", len(tableInfo.GetFileSlice())))
 	chk := chunk.NewChunkWithCapacity(tableInfo.GetFileSlice(), txnRowCount)
 	return &TEvent{
 		DispatcherID:    dispatcherID,
@@ -215,7 +216,7 @@ func (t *TEvent) AppendRow(raw *RawKVEntry,
 	if err != nil {
 		return err
 	}
-	log.Info("fizz TEvent.AppendRow", zap.Int("count", count), zap.Any("rowType", RowTypeToString(RowType)))
+	log.Info("fizz TEvent.AppendRow", zap.Int("count", count), zap.Any("rowType", RowTypeToString(RowType)), zap.Any("rowNum", t.Rows.NumRows()))
 	if count == 1 {
 		t.RowTypes = append(t.RowTypes, RowType)
 	} else if count == 2 {
