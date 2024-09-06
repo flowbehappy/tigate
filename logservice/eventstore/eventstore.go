@@ -275,16 +275,16 @@ func (e *eventStore) RegisterDispatcher(
 func (e *eventStore) UpdateDispatcherSendTS(
 	dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, sendTS uint64,
 ) error {
-	// // TODO: update sendTs in event service
-	// e.schemaStore.UpdateDispatcherSendTS(dispatcherID, common.Ts(sendTS))
-	// e.spanStates.Lock()
-	// defer e.spanStates.Unlock()
-	// if state, ok := e.spanStates.dispatcherMap.Get(span); ok {
-	// 	if !ok {
-	// 		log.Panic("should not happen", zap.Any("dispatcherID", dispatcherID))
-	// 	}
-	// 	state.dispatchrs[dispatcherID].watermark = sendTS
-	// }
+	// TODO: update sendTs in event service
+	e.schemaStore.UpdateDispatcherSendTS(dispatcherID, common.Ts(sendTS))
+	e.spanStates.Lock()
+	defer e.spanStates.Unlock()
+	if state, ok := e.spanStates.dispatcherMap.Get(span); ok {
+		if !ok {
+			log.Panic("should not happen", zap.Any("dispatcherID", dispatcherID))
+		}
+		state.dispatchers[dispatcherID].watermark = sendTS
+	}
 	return nil
 }
 
@@ -495,7 +495,7 @@ func (e *eventStore) writeEvent(subID logpuller.SubscriptionID, raw *common.RawK
 	e.spanStates.RUnlock()
 	if !raw.IsResolved() {
 		// TODO: make sure this won't block
-		// state.observer(raw)
+		state.observer(raw)
 	}
 	e.eventChs[state.chIndex] <- eventWithSpanState{
 		raw:   raw,
