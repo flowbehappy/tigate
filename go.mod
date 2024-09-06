@@ -31,12 +31,14 @@ require (
 	github.com/pingcap/kvproto v0.0.0-20240620063548-118a4cab53e4
 	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
 	github.com/pingcap/tidb v1.1.0-beta.0.20240722024203-504960d51b2a
+	github.com/pingcap/tidb/parser v0.0.0-20231013125129-93a834a6bf8d
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20240722015532-8edd4ed54376
 	github.com/pingcap/tiflow v0.0.0-20240903073028-995ea7644377
 	github.com/prometheus/client_golang v1.19.1
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.9.0
+	github.com/thanhpk/randstr v1.0.6
 	github.com/tikv/client-go/v2 v2.0.8-0.20240703095801-d73cc1ed6503
 	github.com/tikv/pd v1.1.0-beta.0.20240407022249-7179657d129b
 	github.com/tikv/pd/client v0.0.0-20240717053728-5ec6af403019
@@ -51,7 +53,6 @@ require (
 	go.uber.org/zap v1.27.0
 	golang.org/x/net v0.27.0
 	golang.org/x/sync v0.7.0
-	golang.org/x/sys v0.22.0
 	golang.org/x/text v0.16.0
 	golang.org/x/time v0.5.0
 	google.golang.org/grpc v1.64.0
@@ -311,6 +312,7 @@ require (
 	golang.org/x/exp v0.0.0-20240604190554-fc45aab8b7f8 // indirect
 	golang.org/x/mod v0.18.0 // indirect
 	golang.org/x/oauth2 v0.21.0 // indirect
+	golang.org/x/sys v0.22.0 // indirect
 	golang.org/x/term v0.22.0 // indirect
 	golang.org/x/tools v0.22.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect

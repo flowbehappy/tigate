@@ -154,7 +154,7 @@ func (g *encoderGroup) runEncoder(ctx context.Context, idx int) error {
 			metric.Set(float64(len(inputCh)))
 		case future := <-inputCh:
 			for _, event := range future.events {
-				err := g.rowEventEncoders[idx].AppendRowChangedEvent(ctx, future.Key.Topic, event.Event, event.Callback)
+				err := g.rowEventEncoders[idx].AppendRowChangedEvent(ctx, future.Key.Topic, event)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -172,12 +172,12 @@ func (g *encoderGroup) AddEvents(
 	events ...*common.RowEvent,
 ) error {
 	// bootstrapWorker only not nil when the protocol is simple
-	if g.bootstrapWorker != nil {
-		err := g.bootstrapWorker.addEvent(ctx, key, events[0].Event)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
+	// if g.bootstrapWorker != nil {
+	// 	err := g.bootstrapWorker.addEvent(ctx, key, events[0].Event)
+	// 	if err != nil {
+	// 		return errors.Trace(err)
+	// 	}
+	// }
 
 	future := newFuture(key, events...)
 	index := atomic.AddUint64(&g.index, 1) % uint64(g.concurrency)

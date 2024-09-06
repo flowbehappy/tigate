@@ -17,7 +17,6 @@ import (
 	"context"
 	"net/url"
 
-	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/columnselector"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/topicmanager"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
@@ -45,7 +44,7 @@ type KafkaSink struct {
 
 	protocol config.Protocol
 
-	columnSelector *columnselector.ColumnSelector
+	columnSelector *common.ColumnSelector
 	// eventRouter used to route events to the right topic and partition.
 	eventRouter *eventrouter.EventRouter
 	// topicManager used to manage topics.
@@ -98,7 +97,7 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, replicaConf
 		return nil, errors.Trace(err)
 	}
 
-	columnSelector, err := columnselector.New(replicaConfig)
+	columnSelector, err := common.New(replicaConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -159,7 +158,7 @@ func (s *KafkaSink) AddDMLEvent(event *common.DMLEvent, tableProgress *types.Tab
 		return
 	}
 	partitonGenerator := s.eventRouter.GetPartitionGeneratorForRowChange(event.TableInfo)
-
+	selector := s.columnSelector.GetSelector(event.TableInfo.TableName.Schema, event.TableInfo.TableName.Table)
 	toRowCallback := func(postTxnFlushed []func(), totalCount uint64) func() {
 		var calledCount atomic.Uint64
 		// The callback of the last row will trigger the callback of the txn.
@@ -176,20 +175,12 @@ func (s *KafkaSink) AddDMLEvent(event *common.DMLEvent, tableProgress *types.Tab
 	rowCallback := toRowCallback(event.PostTxnFlushed, rowsCount)
 
 	for {
-		_, ok := event.GetNextRow()
+		row, ok := event.GetNextRow()
 		if !ok {
 			break
 		}
-		// FIXME: pass a real row
-		row := &common.RowChangedEvent{}
-		err = s.columnSelector.Apply(row)
-		if err != nil {
-			s.cancel(err)
-			log.Error("failed to do column selector for row", zap.Error(err))
-			return
-		}
 
-		index, key, err := partitonGenerator.GeneratePartitionIndexAndKey(row, partitionNum)
+		index, key, err := partitonGenerator.GeneratePartitionIndexAndKey(&row, partitionNum, event.TableInfo, event.CommitTs)
 		if err != nil {
 			s.cancel(err)
 			log.Error("failed to generate partition index and key for row", zap.Error(err))
@@ -204,8 +195,11 @@ func (s *KafkaSink) AddDMLEvent(event *common.DMLEvent, tableProgress *types.Tab
 				TotalPartition: partitionNum,
 			},
 			RowEvent: common.RowEvent{
-				Event:    row,
-				Callback: rowCallback,
+				TableInfo:      event.TableInfo,
+				CommitTs:       event.CommitTs,
+				Event:          row,
+				Callback:       rowCallback,
+				ColumnSelector: selector,
 			},
 		}
 	}

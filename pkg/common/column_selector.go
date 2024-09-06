@@ -11,10 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package columnselector
+package common
 
 import (
-	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/pingcap/tiflow/cdc/sink/dmlsink/mq/dispatcher"
 	"github.com/pingcap/tiflow/cdc/sink/dmlsink/mq/dispatcher/partition"
@@ -22,14 +22,14 @@ import (
 	"github.com/pingcap/tiflow/pkg/errors"
 )
 
-type selector struct {
+type Selector struct {
 	tableF  filter.Filter
 	columnM filter.ColumnFilter
 }
 
 func newSelector(
 	rule *config.ColumnSelector, caseSensitive bool,
-) (*selector, error) {
+) (*Selector, error) {
 	tableM, err := filter.Parse(rule.Matcher)
 	if err != nil {
 		return nil, errors.WrapError(errors.ErrFilterRuleInvalid, err, rule.Matcher)
@@ -42,74 +42,35 @@ func newSelector(
 		return nil, errors.WrapError(errors.ErrFilterRuleInvalid, err, rule.Columns)
 	}
 
-	return &selector{
+	return &Selector{
 		tableF:  tableM,
 		columnM: columnM,
 	}, nil
 }
 
 // Match implements Transformer interface
-func (s *selector) Match(schema, table string) bool {
+func (s *Selector) Match(schema, table string) bool {
 	return s.tableF.MatchTable(schema, table)
 }
 
-// Apply implements Transformer interface
-// return error if the given event cannot match the selector, or the column cannot be filtered out.
-// the caller's should make sure the given event match the selector first before apply it.
-func (s *selector) Apply(event *common.RowChangedEvent) error {
-	// defensive check, this should not happen.
-	if !s.Match(event.TableInfo.GetSchemaName(), event.TableInfo.GetTableName()) {
-		return errors.ErrColumnSelectorFailed.GenWithStack(
-			"the given event does not match the column selector, table: %v", event.TableInfo.TableName)
+// Select decide whether the col should be encoded or not.
+func (s *Selector) Select(colInfo *model.ColumnInfo) bool {
+	colName := colInfo.Name.O
+	if s.columnM.MatchColumn(colName) {
+		return true
 	}
-
-	retainedColumns := make(map[string]struct{}, len(event.Columns))
-	if len(event.Columns) != 0 {
-		for idx, column := range event.Columns {
-			colName := column.Name
-			if s.columnM.MatchColumn(colName) {
-				retainedColumns[colName] = struct{}{}
-				continue
-			}
-			event.Columns[idx] = nil
-		}
-
-		if !verifyIndices(event.TableInfo, retainedColumns) {
-			return errors.ErrColumnSelectorFailed.GenWithStack(
-				"no primary key columns or unique key columns obtained after filter out, "+
-					"table: %+v", event.TableInfo.TableName)
-		}
-	}
-
-	if len(event.PreColumns) != 0 {
-		clear(retainedColumns)
-		for idx, column := range event.PreColumns {
-			colName := column.Name
-			if s.columnM.MatchColumn(colName) {
-				retainedColumns[colName] = struct{}{}
-				continue
-			}
-			event.PreColumns[idx] = nil
-		}
-		if !verifyIndices(event.TableInfo, retainedColumns) {
-			return errors.ErrColumnSelectorFailed.GenWithStack(
-				"no primary key columns or unique key columns obtained after filter out, "+
-					"table: %+v", event.TableInfo.TableName)
-		}
-	}
-
-	return nil
+	return false
 }
 
 // ColumnSelector manages an array of selectors, the first selector match the given
 // event is used to select out columns.
 type ColumnSelector struct {
-	selectors []*selector
+	selectors []*Selector
 }
 
 // New return a column selector
 func New(cfg *config.ReplicaConfig) (*ColumnSelector, error) {
-	selectors := make([]*selector, 0, len(cfg.Sink.ColumnSelectors))
+	selectors := make([]*Selector, 0, len(cfg.Sink.ColumnSelectors))
 	for _, r := range cfg.Sink.ColumnSelectors {
 		selector, err := newSelector(r, cfg.CaseSensitive)
 		if err != nil {
@@ -123,11 +84,10 @@ func New(cfg *config.ReplicaConfig) (*ColumnSelector, error) {
 	}, nil
 }
 
-// Apply the column selector to the given event.
-func (c *ColumnSelector) Apply(event *common.RowChangedEvent) error {
+func (c *ColumnSelector) GetSelector(schema, table string) *Selector {
 	for _, s := range c.selectors {
-		if s.Match(event.TableInfo.GetSchemaName(), event.TableInfo.GetTableName()) {
-			return s.Apply(event)
+		if s.Match(schema, table) {
+			return s
 		}
 	}
 	return nil
@@ -137,7 +97,7 @@ func (c *ColumnSelector) Apply(event *common.RowChangedEvent) error {
 // 1. if the column is filter out, it must not be a part of handle key or the unique key.
 // 2. if the filtered out column is used in the column dispatcher, return error.
 func (c *ColumnSelector) VerifyTables(
-	infos []*common.TableInfo, eventRouter *dispatcher.EventRouter,
+	infos []*TableInfo, eventRouter *dispatcher.EventRouter,
 ) error {
 	if len(c.selectors) == 0 {
 		return nil
@@ -188,7 +148,7 @@ func (c *ColumnSelector) VerifyTables(
 
 // verifyIndices return true if the primary key retained,
 // else at least there are one unique key columns in the retained columns.
-func verifyIndices(table *common.TableInfo, retainedColumns map[string]struct{}) bool {
+func verifyIndices(table *TableInfo, retainedColumns map[string]struct{}) bool {
 	primaryKeyColumns := table.GetPrimaryKeyColumnNames()
 
 	retained := true

@@ -27,6 +27,11 @@ func newTsPartitionGenerator() *TsPartitionGenerator {
 	return &TsPartitionGenerator{}
 }
 
-func (t *TsPartitionGenerator) GeneratePartitionIndexAndKey(row *common.RowChangedEvent, partitionNum int32) (int32, string, error) {
-	return int32(row.CommitTs % uint64(partitionNum)), strconv.FormatUint(row.CommitTs, 10), nil
+func (t *TsPartitionGenerator) GeneratePartitionIndexAndKey(
+	row *common.RowDelta,
+	partitionNum int32,
+	tableInfo *common.TableInfo,
+	commitTs uint64,
+) (int32, string, error) {
+	return int32(commitTs % uint64(partitionNum)), strconv.FormatUint(commitTs, 10), nil
 }
