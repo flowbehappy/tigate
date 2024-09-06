@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"strings"
 	"sync"
 	"time"
@@ -51,25 +52,6 @@ const (
 	cleanMetaDuration = 10 * time.Second
 )
 
-// Server represents a server, it monitors the changefeed
-// information in etcd and schedules Task on it.
-type Server interface {
-	Run(ctx context.Context) error
-	Close(ctx context.Context)
-
-	SelfInfo() (*common.NodeInfo, error)
-	Liveness() model.Liveness
-
-	GetCoordinator() (Coordinator, error)
-	IsCoordinator() bool
-
-	// GetCoordinatorInfo returns the coordinator server， it will be used when forward api request
-	GetCoordinatorInfo(ctx context.Context) (*common.NodeInfo, error)
-
-	GetPdClient() pd.Client
-	GetEtcdClient() etcd.CDCEtcdClient
-}
-
 type server struct {
 	captureMu sync.Mutex
 	info      *common.NodeInfo
@@ -80,7 +62,7 @@ type server struct {
 	pdAPIClient   pdutil.PDAPIClient
 	pdEndpoints   []string
 	coordinatorMu sync.Mutex
-	coordinator   Coordinator
+	coordinator   node.Coordinator
 
 	dispatcherManagerManager *dispatchermanagermanager.DispatcherManagerManager
 
@@ -98,7 +80,7 @@ type server struct {
 }
 
 // NewServer returns a new Server instance
-func NewServer(conf *config.ServerConfig, pdEndpoints []string) (Server, error) {
+func NewServer(conf *config.ServerConfig, pdEndpoints []string) (node.Server, error) {
 	// This is to make communication between nodes possible.
 	// In other words, the nodes have to trust each other.
 	if len(conf.Security.CertAllowedCN) != 0 {
@@ -202,14 +184,14 @@ func (c *server) SelfInfo() (*common.NodeInfo, error) {
 	return nil, cerror.ErrCaptureNotInitialized.GenWithStackByArgs()
 }
 
-func (c *server) setCoordinator(co Coordinator) {
+func (c *server) setCoordinator(co node.Coordinator) {
 	c.coordinatorMu.Lock()
 	defer c.coordinatorMu.Unlock()
 	c.coordinator = co
 }
 
 // GetCoordinator returns coordinator if it is the coordinator.
-func (c *server) GetCoordinator() (Coordinator, error) {
+func (c *server) GetCoordinator() (node.Coordinator, error) {
 	c.coordinatorMu.Lock()
 	defer c.coordinatorMu.Unlock()
 	if c.coordinator == nil {

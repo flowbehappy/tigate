@@ -15,17 +15,17 @@ package v2
 
 import (
 	"github.com/flowbehappy/tigate/api/middleware"
-	appctx "github.com/flowbehappy/tigate/pkg/common/server"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/gin-gonic/gin"
 )
 
 // OpenAPIV2 provides CDC v2 APIs
 type OpenAPIV2 struct {
-	server appctx.Server
+	server node.Server
 }
 
 // NewOpenAPIV2 creates a new OpenAPIV2.
-func NewOpenAPIV2(c appctx.Server) OpenAPIV2 {
+func NewOpenAPIV2(c node.Server) OpenAPIV2 {
 	return OpenAPIV2{c}
 }
 
