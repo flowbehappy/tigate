@@ -247,7 +247,7 @@ func (e *eventStore) RegisterDispatcher(
 		e.spanStates.dispatcherMap.ReplaceOrInsert(&span, state)
 		e.spanStates.subscriptionMap[subID] = state
 	}
-	state, _ := e.spanStates.dispatcherMap.Get(&span)
+	state, _ := e.spanStates.dispatcherMap.Get(tableSpan)
 	state.watermarks[dispatcherID] = &atomic.Uint64{}
 	state.watermarks[dispatcherID].Store(uint64(startTS))
 	return nil
