@@ -45,14 +45,14 @@ type BtreeMap[KeyT, ValueT any] struct {
 
 // NewBtreeMap returns a new BtreeMap.
 func NewBtreeMap[KeyT, ValueT any](lessKeyF func(KeyT, KeyT) bool) *BtreeMap[KeyT, ValueT] {
-	return NewBtreeMapWithDegree[KeyT, ValueT](defaultDegree, nil)
+	return NewBtreeMapWithDegree[KeyT, ValueT](defaultDegree, lessKeyF)
 }
 
 // NewBtreeMapWithDegree returns a new BtreeMap with the given degree.
-func NewBtreeMapWithDegree[KeyT, ValueT any](degree int, lessKey func(KeyT, KeyT) bool) *BtreeMap[KeyT, ValueT] {
+func NewBtreeMapWithDegree[KeyT, ValueT any](degree int, lessKeyF func(KeyT, KeyT) bool) *BtreeMap[KeyT, ValueT] {
 	return &BtreeMap[KeyT, ValueT]{
 		tree: btree.NewG(degree, func(a, b Item[KeyT, ValueT]) bool {
-			return lessKey(a.k, b.k)
+			return lessKeyF(a.k, b.k)
 		}),
 	}
 }
