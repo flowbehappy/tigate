@@ -9,6 +9,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
+	tconfig "github.com/pingcap/tiflow/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,7 +22,8 @@ func TestNewDispatcherStat(t *testing.T) {
 		startTs:   startTs,
 	}
 
-	stat := newDispatcherStat(startTs, info, nil)
+	spanSubscription := newSpanSubscription(info.GetTableSpan(), startTs)
+	stat := newDispatcherStat(startTs, info, spanSubscription, nil)
 	require.Equal(t, info, stat.info)
 	require.Equal(t, startTs, stat.watermark.Load())
 	require.NotNil(t, stat.spanSubscription)
@@ -39,7 +41,8 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 		startTs:   startTs,
 	}
 
-	stat := newDispatcherStat(startTs, info, nil)
+	spanSubscription := newSpanSubscription(info.GetTableSpan(), startTs)
+	stat := newDispatcherStat(startTs, info, spanSubscription, nil)
 
 	sendNewEvent := func(maxTs uint64) {
 		g := &sync.WaitGroup{}
@@ -51,7 +54,7 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 			g.Add(1)
 			go func() {
 				defer g.Done()
-				stat.onNewEvent(&common.RawKVEntry{
+				stat.spanSubscription.onNewEvent(&common.RawKVEntry{
 					CRTs: ts,
 				})
 			}()
@@ -60,13 +63,13 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 	}
 
 	// Case 1: no new events, only watermark change
-	stat.onSubscriptionWatermark(456)
+	stat.spanSubscription.onSubscriptionWatermark(456)
 	require.Equal(t, uint64(456), stat.spanSubscription.watermark.Load())
 	log.Info("pass TestDispatcherStatUpdateWatermark case 1")
 
 	// Case 2: new events, and watermark increase
 	sendNewEvent(startTs)
-	stat.onSubscriptionWatermark(789)
+	stat.spanSubscription.onSubscriptionWatermark(789)
 	require.Equal(t, uint64(789), stat.spanSubscription.watermark.Load())
 	require.Equal(t, startTs, stat.spanSubscription.maxEventCommitTs.Load())
 	log.Info("pass TestDispatcherStatUpdateWatermark case 2")
@@ -78,7 +81,7 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		stat.onSubscriptionWatermark(456)
+		stat.spanSubscription.onSubscriptionWatermark(456)
 		close(done)
 	}()
 	<-done
@@ -98,7 +101,8 @@ func TestScanTaskPool_PushTask(t *testing.T) {
 		startTs:   1000,
 		span:      span,
 	}
-	dispatcherStat := newDispatcherStat(dispatcherInfo.startTs, dispatcherInfo, nil)
+	s := newSpanSubscription(span, dispatcherInfo.startTs)
+	dispatcherStat := newDispatcherStat(dispatcherInfo.startTs, dispatcherInfo, s, nil)
 
 	now := time.Now()
 	task1 := &scanTask{
@@ -175,4 +179,87 @@ func TestResolvedTsCache(t *testing.T) {
 	require.Equal(t, uint64(100), res[0].ResolvedTs)
 	require.Equal(t, uint64(109), res[9].ResolvedTs)
 	require.False(t, rc.isFull())
+}
+
+// mockDispatcherInfo is a mock implementation of the AcceptorInfo interface
+type mockDispatcherInfo struct {
+	clusterID  uint64
+	serverID   string
+	id         common.DispatcherID
+	topic      string
+	span       *heartbeatpb.TableSpan
+	startTs    uint64
+	isRegister bool
+}
+
+func newMockAcceptorInfo(dispatcherID common.DispatcherID, tableID int64) *mockDispatcherInfo {
+	return &mockDispatcherInfo{
+		clusterID: 1,
+		serverID:  "server1",
+		id:        dispatcherID,
+		topic:     "topic1",
+		span: &heartbeatpb.TableSpan{
+			TableID:  tableID,
+			StartKey: []byte("a"),
+			EndKey:   []byte("z"),
+		},
+		startTs:    1,
+		isRegister: true,
+	}
+}
+
+func (m *mockDispatcherInfo) GetID() common.DispatcherID {
+	return m.id
+}
+
+func (m *mockDispatcherInfo) GetClusterID() uint64 {
+	return m.clusterID
+}
+
+func (m *mockDispatcherInfo) GetTopic() string {
+	return m.topic
+}
+
+func (m *mockDispatcherInfo) GetServerID() string {
+	return m.serverID
+}
+
+func (m *mockDispatcherInfo) GetTableSpan() *heartbeatpb.TableSpan {
+	return m.span
+}
+
+func (m *mockDispatcherInfo) GetStartTs() uint64 {
+	return m.startTs
+}
+
+func (m *mockDispatcherInfo) IsRegister() bool {
+	return m.isRegister
+}
+
+func (m *mockDispatcherInfo) GetChangefeedID() (namespace, id string) {
+	return "default", "test"
+}
+
+func (m *mockDispatcherInfo) GetFilterConfig() *tconfig.FilterConfig {
+	return &tconfig.FilterConfig{
+		Rules: []string{"*.*"},
+	}
+}
+
+type mockSpanStats struct {
+	startTs       uint64
+	watermark     uint64
+	pendingEvents []*common.DMLEvent
+	onUpdate      func(watermark uint64)
+	onEvent       func(event *common.RawKVEntry)
+}
+
+func (m *mockSpanStats) update(event []*common.DMLEvent, watermark uint64) {
+	m.pendingEvents = append(m.pendingEvents, event...)
+	m.watermark = watermark
+	for _, e := range event {
+		_ = e
+		m.onEvent(&common.RawKVEntry{})
+	}
+	m.onUpdate(watermark)
 }

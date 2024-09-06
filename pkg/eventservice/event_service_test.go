@@ -16,13 +16,11 @@ import (
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
-	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
-	tconfig "github.com/pingcap/tiflow/pkg/config"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -214,91 +212,6 @@ func (m *mockMessageCenter) RemoveTarget(id messaging.ServerId) {
 }
 
 func (m *mockMessageCenter) Close() {
-}
-
-// mockDispatcherInfo is a mock implementation of the AcceptorInfo interface
-type mockDispatcherInfo struct {
-	clusterID  uint64
-	serverID   string
-	id         common.DispatcherID
-	topic      string
-	span       *heartbeatpb.TableSpan
-	startTs    uint64
-	isRegister bool
-}
-
-func newMockAcceptorInfo(dispatcherID common.DispatcherID, tableID int64) *mockDispatcherInfo {
-	return &mockDispatcherInfo{
-		clusterID: 1,
-		serverID:  "server1",
-		id:        dispatcherID,
-		topic:     "topic1",
-		span: &heartbeatpb.TableSpan{
-			TableID:  tableID,
-			StartKey: []byte("a"),
-			EndKey:   []byte("z"),
-		},
-		startTs:    1,
-		isRegister: true,
-	}
-}
-
-func (m *mockDispatcherInfo) GetID() common.DispatcherID {
-	return m.id
-}
-
-func (m *mockDispatcherInfo) GetClusterID() uint64 {
-	return m.clusterID
-}
-
-func (m *mockDispatcherInfo) GetTopic() string {
-	return m.topic
-}
-
-func (m *mockDispatcherInfo) GetServerID() string {
-	return m.serverID
-}
-
-func (m *mockDispatcherInfo) GetTableSpan() *heartbeatpb.TableSpan {
-	return m.span
-}
-
-func (m *mockDispatcherInfo) GetStartTs() uint64 {
-	return m.startTs
-}
-
-func (m *mockDispatcherInfo) IsRegister() bool {
-	return m.isRegister
-}
-
-func (m *mockDispatcherInfo) GetChangefeedID() (namespace, id string) {
-	return "default", "test"
-}
-
-func (m *mockDispatcherInfo) GetFilterConfig() *tconfig.FilterConfig {
-	return &tconfig.FilterConfig{
-		Rules: []string{"*.*"},
-	}
-}
-
-type mockSpanStats struct {
-	startTs       uint64
-	watermark     uint64
-	pendingEvents []*common.DMLEvent
-	onUpdate      func(watermark uint64)
-	onEvent       func(event *common.RawKVEntry)
-}
-
-func (m *mockSpanStats) update(event []*common.DMLEvent, watermark uint64) {
-	m.pendingEvents = append(m.pendingEvents, event...)
-	m.watermark = watermark
-	for _, e := range event {
-		for range e.Rows {
-			m.onEvent(&common.RawKVEntry{})
-		}
-	}
-	m.onUpdate(watermark)
-
 }
 
 var _ eventstore.EventStore = &mockEventStore{}

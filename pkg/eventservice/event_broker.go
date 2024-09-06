@@ -45,6 +45,8 @@ type eventBroker struct {
 
 	// All the dispatchers that register to the eventBroker.
 	dispatchers sync.Map
+	// Not support split table span yet.
+	spans map[common.TableID]*spanSubscription
 	// dispatcherID -> dispatcherStat map, track all table trigger dispatchers.
 	tableTriggerDispatchers sync.Map
 	// taskPool is used to store the scan tasks and merge the tasks of same dispatcher.
@@ -393,6 +395,18 @@ func (c *eventBroker) close() {
 	c.wg.Wait()
 }
 
+func (c *eventBroker) onNotify(s *spanSubscription, watermark uint64) {
+	s.onSubscriptionWatermark(watermark)
+	s.dispatchers.RLock()
+	defer s.dispatchers.RUnlock()
+	for _, stat := range s.dispatchers.m {
+		c.taskPool.pushTask(&scanTask{
+			dispatcherStat: stat,
+			createTime:     time.Now(),
+		})
+	}
+}
+
 func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	filter, err := filter.NewFilter(info.GetFilterConfig(), "", false)
 	if err != nil {
@@ -403,7 +417,12 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	id := info.GetID()
 	span := info.GetTableSpan()
 	startTs := info.GetStartTs()
-	dispatcher := newDispatcherStat(startTs, info, filter)
+	spanSubscription, ok := c.spans[span.TableID]
+	if !ok {
+		spanSubscription = newSpanSubscription(span, startTs)
+		c.spans[span.TableID] = spanSubscription
+	}
+	dispatcher := newDispatcherStat(startTs, info, spanSubscription, filter)
 	if span.Equal(heartbeatpb.DDLSpan) {
 		c.tableTriggerDispatchers.Store(id, dispatcher)
 		log.Info("table trigger dispatcher register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
@@ -420,14 +439,8 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		id,
 		span,
 		common.Ts(info.GetStartTs()),
-		dispatcher.onNewEvent,
-		func(watermark uint64) {
-			dispatcher.onSubscriptionWatermark(watermark)
-			c.taskPool.pushTask(&scanTask{
-				dispatcherStat: dispatcher,
-				createTime:     time.Now(),
-			})
-		},
+		dispatcher.spanSubscription.onNewEvent,
+		func(watermark uint64) { c.onNotify(dispatcher.spanSubscription, watermark) },
 	)
 	c.schemaStore.RegisterDispatcher(id, span, common.Ts(info.GetStartTs()), filter)
 	eventStoreRegisterDuration := time.Since(start)
@@ -440,7 +453,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 
 func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
 	id := dispatcherInfo.GetID()
-	_, ok := c.dispatchers.Load(id)
+	stat, ok := c.dispatchers.Load(id)
 	if !ok {
 		c.tableTriggerDispatchers.Delete(id)
 		return
@@ -448,6 +461,12 @@ func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
 	c.eventStore.UnregisterDispatcher(id, dispatcherInfo.GetTableSpan())
 	c.schemaStore.UnregisterDispatcher(id)
 	c.dispatchers.Delete(id)
+
+	spanSubscription := stat.(*dispatcherStat).spanSubscription
+	dispatcherCnt := spanSubscription.removeDispatcher(id)
+	if dispatcherCnt == 0 {
+		delete(c.spans, spanSubscription.span.TableID)
+	}
 	log.Info("deregister acceptor", zap.Uint64("clusterID", c.tidbClusterID), zap.Any("acceptorID", id))
 }
 
@@ -471,15 +490,10 @@ type dispatcherStat struct {
 	metricEventServiceSendResolvedTsCount prometheus.Counter
 }
 
-func newDispatcherStat(startTs uint64, info DispatcherInfo, filter filter.Filter) *dispatcherStat {
-	subscription := &spanSubscription{
-		span:       info.GetTableSpan(),
-		lastUpdate: atomic.Value{},
-	}
-	subscription.lastUpdate.Store(time.Now())
-	subscription.watermark.Store(uint64(startTs))
-	subscription.maxEventCommitTs.Store(uint64(startTs))
-
+func newDispatcherStat(
+	startTs uint64, info DispatcherInfo,
+	subscription *spanSubscription, filter filter.Filter,
+) *dispatcherStat {
 	namespace, id := info.GetChangefeedID()
 	dispStat := &dispatcherStat{
 		info:             info,
@@ -495,28 +509,9 @@ func newDispatcherStat(startTs uint64, info DispatcherInfo, filter filter.Filter
 	hasher := crc32.NewIEEE()
 	hasher.Write(info.GetID().Marshal())
 	dispStat.workerIndex = int(hasher.Sum32() % defaultScanWorkerCount)
+
+	subscription.addDispatcher(dispStat)
 	return dispStat
-}
-
-// onSubscriptionWatermark updates the watermark of the table span and send a notification to notify
-// that this table span has new events.
-func (a *dispatcherStat) onSubscriptionWatermark(watermark uint64) {
-	if watermark < a.spanSubscription.watermark.Load() {
-		return
-	}
-	a.spanSubscription.watermark.Store(watermark)
-	a.spanSubscription.lastUpdate.Store(time.Now())
-}
-
-// onNewEvent is used to track whether there are new events in the event store, so that
-// we can skip some unnecessary scan tasks.
-// TODO: consider to use a better way to reduce the contention of the lock, maybe it is
-// not necessary to update the maxEventCommitTs for every event.
-func (a *dispatcherStat) onNewEvent(raw *common.RawKVEntry) {
-	if raw == nil {
-		return
-	}
-	util.MustCompareAndMonotonicIncrease(&a.spanSubscription.maxEventCommitTs, raw.CRTs)
 }
 
 func (a *dispatcherStat) getDataRange() (*common.DataRange, bool) {
@@ -536,11 +531,66 @@ func (a *dispatcherStat) getDataRange() (*common.DataRange, bool) {
 // And it also store the dispatchers that want to listen to the events of this table span.
 type spanSubscription struct {
 	span *heartbeatpb.TableSpan
+	// map dispatcherID -> dispatcherStat
+	dispatchers struct {
+		sync.RWMutex
+		m map[common.DispatcherID]*dispatcherStat
+	}
 	// The watermark of the events that have been stored in the event store.
 	watermark  atomic.Uint64
 	lastUpdate atomic.Value
 	// The commitTs of the latest kv event that has been stored in the event store.
 	maxEventCommitTs atomic.Uint64
+}
+
+func newSpanSubscription(span *heartbeatpb.TableSpan, startTs uint64) *spanSubscription {
+	s := &spanSubscription{
+		span:             span,
+		watermark:        atomic.Uint64{},
+		lastUpdate:       atomic.Value{},
+		maxEventCommitTs: atomic.Uint64{},
+	}
+	s.watermark.Store(startTs)
+	s.maxEventCommitTs.Store(startTs)
+	s.lastUpdate.Store(time.Now())
+	return s
+}
+
+func (s *spanSubscription) addDispatcher(stat *dispatcherStat) {
+	s.dispatchers.Lock()
+	defer s.dispatchers.Unlock()
+	if s.dispatchers.m == nil {
+		s.dispatchers.m = make(map[common.DispatcherID]*dispatcherStat)
+	}
+	s.dispatchers.m[stat.info.GetID()] = stat
+}
+
+func (s *spanSubscription) removeDispatcher(id common.DispatcherID) int {
+	s.dispatchers.Lock()
+	defer s.dispatchers.Unlock()
+	delete(s.dispatchers.m, id)
+	return len(s.dispatchers.m)
+}
+
+// onSubscriptionWatermark updates the watermark of the table span and send a notification to notify
+// that this table span has new events.
+func (s *spanSubscription) onSubscriptionWatermark(watermark uint64) {
+	if watermark < s.watermark.Load() {
+		return
+	}
+	s.watermark.Store(watermark)
+	s.lastUpdate.Store(time.Now())
+}
+
+// onNewEvent is used to track whether there are new events in the event store, so that
+// we can skip some unnecessary scan tasks.
+// TODO: consider to use a better way to reduce the contention of the lock, maybe it is
+// not necessary to update the maxEventCommitTs for every event.
+func (s *spanSubscription) onNewEvent(raw *common.RawKVEntry) {
+	if raw == nil {
+		return
+	}
+	util.MustCompareAndMonotonicIncrease(&s.maxEventCommitTs, raw.CRTs)
 }
 
 type scanTask struct {
