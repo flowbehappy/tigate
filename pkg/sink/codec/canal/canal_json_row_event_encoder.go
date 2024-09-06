@@ -518,19 +518,20 @@ func (c *JSONRowEventEncoder) Build() []*ticommon.Message {
 }
 
 // EncodeDDLEvent encodes DDL events
-func (c *JSONRowEventEncoder) EncodeDDLEvent(e *model.DDLEvent) (*ticommon.Message, error) {
-	message := c.newJSONMessageForDDL(e)
-	value, err := json.Marshal(message)
-	if err != nil {
-		return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
-	}
-	value, err = ticommon.Compress(
-		c.config.ChangefeedID, c.config.LargeMessageHandle.LargeMessageHandleCompression, value,
-	)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return ticommon.NewDDLMsg(config.ProtocolCanalJSON, nil, value, e), nil
+func (c *JSONRowEventEncoder) EncodeDDLEvent(e *common.DDLEvent) (*ticommon.Message, error) {
+	// message := c.newJSONMessageForDDL(e)
+	// value, err := json.Marshal(message)
+	// if err != nil {
+	// 	return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
+	// }
+	// value, err = ticommon.Compress(
+	// 	c.config.ChangefeedID, c.config.LargeMessageHandle.LargeMessageHandleCompression, value,
+	// )
+	// if err != nil {
+	// 	return nil, errors.Trace(err)
+	// }
+	// return ticommon.NewDDLMsg(config.ProtocolCanalJSON, nil, value, e), nil
+	return nil, nil
 }
 
 func (b *JSONRowEventEncoder) Clean() {
