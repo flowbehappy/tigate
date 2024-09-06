@@ -15,6 +15,8 @@ package server
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/pkg/logger"
+	"github.com/pingcap/log"
 	"os"
 	"strings"
 
@@ -22,11 +24,9 @@ import (
 	"github.com/flowbehappy/tigate/server"
 	"github.com/flowbehappy/tigate/version"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/cmd/util"
 	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/logutil"
 	"github.com/pingcap/tiflow/pkg/security"
 	cdcversion "github.com/pingcap/tiflow/pkg/version"
 	"github.com/spf13/cobra"
@@ -77,22 +77,9 @@ func (o *options) addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&o.allowedCertCN, "cert-allowed-cn", "", "Verify caller's identity (cert Common Name). Use ',' to separate multiple CN")
 }
 
-// InitCmd initializes the logger, the default context and returns its cancel function.
-func InitCmd(cmd *cobra.Command, logCfg *logutil.Config) {
-	err := logutil.InitLogger(
-		logCfg,
-		logutil.WithInitGRPCLogger(),
-		logutil.WithInitSaramaLogger(),
-		logutil.WithInitMySQLLogger())
-	if err != nil {
-		cmd.Printf("init logger error %v\n", errors.ErrorStack(err))
-		os.Exit(1)
-	}
-}
-
 // run runs the server cmd.
 func (o *options) run(cmd *cobra.Command) error {
-	loggerConfig := &logutil.Config{
+	loggerConfig := &logger.Config{
 		File:                 o.serverConfig.LogFile,
 		Level:                o.serverConfig.LogLevel,
 		FileMaxSize:          o.serverConfig.Log.File.MaxSize,
@@ -100,7 +87,11 @@ func (o *options) run(cmd *cobra.Command) error {
 		FileMaxBackups:       o.serverConfig.Log.File.MaxBackups,
 		ZapInternalErrOutput: o.serverConfig.Log.InternalErrOutput,
 	}
-	InitCmd(cmd, loggerConfig)
+	err := logger.InitLogger(loggerConfig)
+	if err != nil {
+		cmd.Printf("init logger error %v\n", errors.ErrorStack(err))
+		os.Exit(1)
+	}
 	log.Info("init log", zap.String("file", loggerConfig.File), zap.String("level", loggerConfig.Level))
 
 	ctx, cancel := context.WithCancel(context.Background())
