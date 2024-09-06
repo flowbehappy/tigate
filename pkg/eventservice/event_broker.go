@@ -477,7 +477,7 @@ func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
 		c.tableTriggerDispatchers.Delete(id)
 		return
 	}
-	c.eventStore.UnregisterDispatcher(id)
+	c.eventStore.UnregisterDispatcher(id, dispatcherInfo.GetTableSpan())
 	c.schemaStore.UnregisterDispatcher(id)
 	c.dispatchers.Delete(id)
 	log.Info("deregister acceptor", zap.Uint64("clusterID", c.tidbClusterID), zap.Any("acceptorID", id))

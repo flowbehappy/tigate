@@ -18,6 +18,7 @@ import (
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/mounter"
+	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/pkg/pdutil"
@@ -50,9 +51,9 @@ type EventStore interface {
 		notifier WatermarkNotifier,
 	) error
 
-	UpdateDispatcherSendTS(dispatcherID common.DispatcherID, gcTS uint64) error
+	UpdateDispatcherSendTS(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, gcTS uint64) error
 
-	UnregisterDispatcher(dispatcherID common.DispatcherID) error
+	UnregisterDispatcher(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) error
 
 	// TODO: ignore large txn now, so we can read all transactions of the same commit ts at one time
 	// (startCommitTS, endCommitTS]?
@@ -79,13 +80,25 @@ type spanState struct {
 	subID logpuller.SubscriptionID
 
 	// data before this watermark won't be needed
-	watermark atomic.Uint64
+	watermarks map[common.DispatcherID]*atomic.Uint64
 
 	// the resolveTs persisted in the store
 	resolvedTs atomic.Uint64
 
 	ch chan eventWithSpanState
 }
+
+func (s *spanState) minWatermark() uint64 {
+	minWatermark := uint64(0)
+	for _, watermark := range s.watermarks {
+		wm := watermark.Load()
+		if minWatermark == 0 || wm < minWatermark {
+			minWatermark = wm
+		}
+	}
+	return minWatermark
+}
+
 type eventStore struct {
 	pdClock pdutil.Clock
 
@@ -102,7 +115,7 @@ type eventStore struct {
 
 	spanStates struct {
 		sync.RWMutex
-		dispatcherMap   map[common.DispatcherID]*spanState
+		dispatcherMap   *utils.BtreeMap[*heartbeatpb.TableSpan, *spanState]
 		subscriptionMap map[logpuller.SubscriptionID]*spanState
 	}
 }
@@ -161,7 +174,7 @@ func NewEventStore(
 		store.dbs = append(store.dbs, db)
 		store.eventChs = append(store.eventChs, make(chan eventWithSpanState, 1024))
 	}
-	store.spanStates.dispatcherMap = make(map[common.DispatcherID]*spanState)
+	store.spanStates.dispatcherMap = utils.NewBtreeMap[*heartbeatpb.TableSpan, *spanState](heartbeatpb.LessTableSpan)
 	store.spanStates.subscriptionMap = make(map[logpuller.SubscriptionID]*spanState)
 
 	for i := range store.dbs {
@@ -204,7 +217,10 @@ func (e *eventStore) Run(ctx context.Context) error {
 	return eg.Wait()
 }
 
-func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
+func (e *eventStore) RegisterDispatcher(
+	dispatcherID common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTS common.Ts,
+	observer EventObserver, notifier WatermarkNotifier,
+) error {
 	span := *tableSpan
 	log.Info("register dispatcher",
 		zap.Any("dispatcherID", dispatcherID),
@@ -215,33 +231,42 @@ func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableS
 	e.spanStates.Lock()
 	defer e.spanStates.Unlock()
 	state := &spanState{
-		span:     span,
-		observer: observer,
-		notifier: notifier,
-		subID:    subID,
+		span:       span,
+		watermarks: make(map[common.DispatcherID]*atomic.Uint64),
+		observer:   observer,
+		notifier:   notifier,
+		subID:      subID,
 	}
 	// TODO: may we don't need to hash on span?
 	chIndex := common.HashTableSpan(span, len(e.eventChs))
 	state.ch = e.eventChs[chIndex]
-	state.watermark.Store(uint64(startTS))
-	e.spanStates.dispatcherMap[dispatcherID] = state
+	state.watermarks[dispatcherID] = &atomic.Uint64{}
+	state.resolvedTs.Store(uint64(startTS))
+
+	e.spanStates.dispatcherMap.ReplaceOrInsert(&span, state)
 	e.spanStates.subscriptionMap[subID] = state
 	return nil
 }
 
-func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, sendTS uint64) error {
+func (e *eventStore) UpdateDispatcherSendTS(
+	dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, sendTS uint64,
+) error {
 	// TODO: update sendTs in event service
 	e.schemaStore.UpdateDispatcherSendTS(dispatcherID, common.Ts(sendTS))
 	e.spanStates.Lock()
 	defer e.spanStates.Unlock()
-	if state, ok := e.spanStates.dispatcherMap[dispatcherID]; ok {
+	if state, ok := e.spanStates.dispatcherMap.Get(span); ok {
+		watermark, ok := state.watermarks[dispatcherID]
+		if !ok {
+			log.Panic("should not happen", zap.Any("dispatcherID", dispatcherID))
+		}
 		for {
-			currentWatermark := state.watermark.Load()
+			currentWatermark := watermark.Load()
 			if sendTS <= currentWatermark {
 				return nil
 			}
-			if state.watermark.CompareAndSwap(currentWatermark, sendTS) {
-				e.gcManager.addGCItem(state.span, currentWatermark, sendTS)
+			if watermark.CompareAndSwap(currentWatermark, sendTS) {
+				// TODO: handle gc in another goroutine
 				return nil
 			}
 		}
@@ -249,23 +274,37 @@ func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, se
 	return nil
 }
 
-func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
-	log.Info("unregister dispatcher", zap.Any("dispatcherID", dispatcherID))
+func (e *eventStore) UnregisterDispatcher(
+	dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan,
+) error {
+	log.Info("unregister dispatcher", zap.Stringer("dispatcherID", dispatcherID))
 	e.spanStates.Lock()
 	defer e.spanStates.Unlock()
-	if state, ok := e.spanStates.dispatcherMap[dispatcherID]; ok {
+	state, ok := e.spanStates.dispatcherMap.Get(span)
+	if !ok {
+		log.Panic("deregister an unregistered span", zap.String("span", span.String()))
+	}
+	if _, ok := state.watermarks[dispatcherID]; ok {
+		delete(state.watermarks, dispatcherID)
+	} else {
+		log.Panic("deregister an unregistered dispatcher", zap.Stringer("dispatcherID", dispatcherID))
+	}
+
+	if len(state.watermarks) == 0 {
 		// TODO: do we need unlock before puller.Unsubscribe?
 		e.puller.Unsubscribe(state.subID)
-		delete(e.spanStates.dispatcherMap, dispatcherID)
+		e.spanStates.dispatcherMap.Delete(span)
 		delete(e.spanStates.subscriptionMap, state.subID)
+		log.Info("remove a span in eventstore", zap.String("span", span.String()))
 	}
 	return nil
 }
 
 func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange *common.DataRange) (EventIterator, error) {
 	// do some check
-	state, ok := e.spanStates.dispatcherMap[dispatcherID]
-	if !ok || state.watermark.Load() > dataRange.StartTs {
+	state, ok := e.spanStates.dispatcherMap.Get(dataRange.Span)
+	watermark, okw := state.watermarks[dispatcherID]
+	if !ok || !okw || watermark.Load() > dataRange.StartTs {
 		log.Panic("should not happen")
 	}
 	span := state.span
@@ -324,7 +363,7 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 				resolvedTs := tableState.resolvedTs.Load()
 				resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
 				resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
-				watermark := tableState.watermark.Load()
+				watermark := tableState.minWatermark()
 				watermarkPhyTs := oracle.ExtractPhysical(watermark)
 				watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
 				metrics.EventStoreRegisterDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
