@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"os"
 	"strings"
 
 	"github.com/fatih/color"
@@ -76,16 +77,34 @@ func (o *options) addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&o.allowedCertCN, "cert-allowed-cn", "", "Verify caller's identity (cert Common Name). Use ',' to separate multiple CN")
 }
 
+// InitCmd initializes the logger, the default context and returns its cancel function.
+func InitCmd(cmd *cobra.Command, logCfg *logutil.Config) {
+	err := logutil.InitLogger(
+		logCfg,
+		logutil.WithInitGRPCLogger(),
+		logutil.WithInitSaramaLogger(),
+		logutil.WithInitMySQLLogger())
+	if err != nil {
+		cmd.Printf("init logger error %v\n", errors.ErrorStack(err))
+		os.Exit(1)
+	}
+}
+
 // run runs the server cmd.
 func (o *options) run(cmd *cobra.Command) error {
-	cancel := util.InitCmd(cmd, &logutil.Config{
+	loggerConfig := &logutil.Config{
 		File:                 o.serverConfig.LogFile,
 		Level:                o.serverConfig.LogLevel,
 		FileMaxSize:          o.serverConfig.Log.File.MaxSize,
 		FileMaxDays:          o.serverConfig.Log.File.MaxDays,
 		FileMaxBackups:       o.serverConfig.Log.File.MaxBackups,
 		ZapInternalErrOutput: o.serverConfig.Log.InternalErrOutput,
-	})
+	}
+	InitCmd(cmd, loggerConfig)
+	log.Info("init log", zap.String("file", loggerConfig.File), zap.String("level", loggerConfig.Level))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	setDefaultContext(ctx)
 	defer cancel()
 	config.StoreGlobalServerConfig(o.serverConfig)
 
@@ -94,21 +113,20 @@ func (o *options) run(cmd *cobra.Command) error {
 	log.Info("The tiflow release version is", zap.String("ReleaseVersion", cdcversion.ReleaseVersion))
 
 	util.LogHTTPProxies()
-	server, err := server.NewServer(strings.Split(o.serverPdAddr, ","))
+	svr, err := server.NewServer(strings.Split(o.serverPdAddr, ","))
 	if err != nil {
 		log.Error("create cdc server failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 
 	// Run TiCDC server.
-	ctx := context.Background()
-	err = server.Run(ctx)
+	err = svr.Run(ctx)
 	if err != nil && errors.Cause(err) != context.Canceled {
 		log.Warn("cdc server exits with error", zap.Error(err))
 	} else {
 		log.Info("cdc server exits normally")
 	}
-	server.Close(ctx)
+	svr.Close(ctx)
 	return nil
 }
 
