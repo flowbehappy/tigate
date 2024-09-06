@@ -104,11 +104,15 @@ func (o *options) run(cmd *cobra.Command) error {
 	log.Info("The tiflow release version is", zap.String("ReleaseVersion", cdcversion.ReleaseVersion))
 
 	util.LogHTTPProxies()
-	svr, err := server.NewServer(strings.Split(o.serverPdAddr, ","))
+
+	pdEndpoints := strings.Split(o.serverPdAddr, ",")
+	svr, err := server.NewServer(o.serverConfig, pdEndpoints)
 	if err != nil {
 		log.Error("create cdc server failed", zap.Error(err))
 		return errors.Trace(err)
 	}
+	log.Info("CDC server created",
+		zap.Strings("pd", pdEndpoints), zap.Stringer("config", o.serverConfig))
 
 	// Run TiCDC server.
 	err = svr.Run(ctx)

@@ -98,9 +98,7 @@ type server struct {
 }
 
 // NewServer returns a new Server instance
-func NewServer(pdEndpoints []string) (Server, error) {
-	conf := config.GetGlobalServerConfig()
-
+func NewServer(conf *config.ServerConfig, pdEndpoints []string) (Server, error) {
 	// This is to make communication between nodes possible.
 	// In other words, the nodes have to trust each other.
 	if len(conf.Security.CertAllowedCN) != 0 {
@@ -123,9 +121,6 @@ func NewServer(pdEndpoints []string) (Server, error) {
 		pdEndpoints: pdEndpoints,
 		tcpServer:   tcpServer,
 	}
-
-	log.Info("CDC server created",
-		zap.Strings("pd", pdEndpoints), zap.Stringer("config", conf))
 	return s, nil
 }
 
