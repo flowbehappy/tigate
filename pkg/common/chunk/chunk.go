@@ -1,4 +1,4 @@
-// Copyright 2024 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -612,12 +612,6 @@ func (c *Chunk) AppendJSON(colIdx int, j types.BinaryJSON) {
 	c.columns[colIdx].AppendJSON(j)
 }
 
-// AppendVectorFloat32 appends a VectorFloat32 value to the chunk.
-func (c *Chunk) AppendVectorFloat32(colIdx int, v types.VectorFloat32) {
-	c.appendSel(colIdx)
-	c.columns[colIdx].AppendVectorFloat32(v)
-}
-
 func (c *Chunk) appendSel(colIdx int) {
 	if colIdx == 0 && c.sel != nil { // use column 0 as standard
 		c.sel = append(c.sel, c.columns[0].length)
@@ -651,8 +645,6 @@ func (c *Chunk) AppendDatum(colIdx int, d *types.Datum) {
 		c.AppendTime(colIdx, d.GetMysqlTime())
 	case types.KindMysqlJSON:
 		c.AppendJSON(colIdx, d.GetMysqlJSON())
-	case types.KindVectorFloat32:
-		c.AppendVectorFloat32(colIdx, d.GetVectorFloat32())
 	}
 }
 
