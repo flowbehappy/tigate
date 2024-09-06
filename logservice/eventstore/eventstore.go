@@ -85,7 +85,7 @@ type spanState struct {
 	// the resolveTs persisted in the store
 	resolvedTs atomic.Uint64
 
-	ch chan eventWithSpanState
+	chIndex int
 }
 
 func (s *spanState) minWatermark() uint64 {
@@ -226,25 +226,29 @@ func (e *eventStore) RegisterDispatcher(
 		zap.Any("dispatcherID", dispatcherID),
 		zap.String("span", tableSpan.String()),
 		zap.Uint64("startTS", startTS))
-	subID := e.puller.Subscribe(span, startTS)
 
 	e.spanStates.Lock()
 	defer e.spanStates.Unlock()
-	state := &spanState{
-		span:       span,
-		watermarks: make(map[common.DispatcherID]*atomic.Uint64),
-		observer:   observer,
-		notifier:   notifier,
-		subID:      subID,
+	if _, ok := e.spanStates.dispatcherMap.Get(&span); !ok {
+		log.Info("add a span in eventstore", zap.String("span", span.String()))
+		subID := e.puller.Subscribe(span, startTS)
+		state := &spanState{
+			span:       span,
+			watermarks: make(map[common.DispatcherID]*atomic.Uint64),
+			observer:   observer,
+			notifier:   notifier,
+			subID:      subID,
+			// TODO: support split table to multiple spans
+			chIndex: common.HashTableSpan(span, len(e.eventChs)),
+		}
+		// TODO: how to support different startTs for different dispatchers?
+		state.resolvedTs.Store(uint64(startTS))
+		e.spanStates.dispatcherMap.ReplaceOrInsert(&span, state)
+		e.spanStates.subscriptionMap[subID] = state
 	}
-	// TODO: may we don't need to hash on span?
-	chIndex := common.HashTableSpan(span, len(e.eventChs))
-	state.ch = e.eventChs[chIndex]
+	state, _ := e.spanStates.dispatcherMap.Get(&span)
 	state.watermarks[dispatcherID] = &atomic.Uint64{}
-	state.resolvedTs.Store(uint64(startTS))
-
-	e.spanStates.dispatcherMap.ReplaceOrInsert(&span, state)
-	e.spanStates.subscriptionMap[subID] = state
+	state.watermarks[dispatcherID].Store(uint64(startTS))
 	return nil
 }
 
@@ -308,8 +312,7 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange *co
 		log.Panic("should not happen")
 	}
 	span := state.span
-	dbIndex := common.HashTableSpan(span, len(e.eventChs))
-	db := e.dbs[dbIndex]
+	db := e.dbs[state.chIndex]
 	// TODO: respect key range in span
 	// convert endTs to inclusive: [startTs, endTs) -> (startTs, endTs]
 	start := EncodeTsKey(uint64(span.TableID), dataRange.StartTs+1, 0)
@@ -484,7 +487,7 @@ func (e *eventStore) writeEvent(subID logpuller.SubscriptionID, raw *common.RawK
 		// TODO: make sure this won't block
 		state.observer(raw)
 	}
-	state.ch <- eventWithSpanState{
+	e.eventChs[state.chIndex] <- eventWithSpanState{
 		raw:   raw,
 		state: state,
 	}

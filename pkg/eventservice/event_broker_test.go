@@ -1,8 +1,10 @@
 package eventservice
 
 import (
+	"math/rand"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -19,12 +21,11 @@ func TestNewDispatcherStat(t *testing.T) {
 		startTs:   startTs,
 	}
 
-	stat := newDispatcherStat(startTs, info, func(c subscriptionChange) {}, nil)
+	stat := newDispatcherStat(startTs, info, nil)
 	require.Equal(t, info, stat.info)
 	require.Equal(t, startTs, stat.watermark.Load())
 	require.NotNil(t, stat.spanSubscription)
 	require.Equal(t, startTs, stat.spanSubscription.watermark.Load())
-	require.Equal(t, 0, int(stat.spanSubscription.newEventCount.Load()))
 	require.NotEmpty(t, stat.workerIndex)
 	require.Nil(t, stat.filter)
 }
@@ -38,46 +39,41 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 		startTs:   startTs,
 	}
 
-	notify := make(chan subscriptionChange)
+	stat := newDispatcherStat(startTs, info, nil)
 
-	stat := newDispatcherStat(startTs, info, func(c subscriptionChange) {
-		select {
-		case notify <- c:
-		default:
+	sendNewEvent := func(maxTs uint64) {
+		g := &sync.WaitGroup{}
+		for i := 0; i < 64; i++ {
+			ts := rand.Uint64() % maxTs
+			if i == 10 {
+				ts = maxTs
+			}
+			g.Add(1)
+			go func() {
+				defer g.Done()
+				stat.onNewEvent(&common.RawKVEntry{
+					CRTs: ts,
+				})
+			}()
 		}
-	}, nil)
+		g.Wait()
+	}
 
 	// Case 1: no new events, only watermark change
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		stat.onSubscriptionWatermark(456)
-	}()
-	subChange := <-notify
+	stat.onSubscriptionWatermark(456)
 	require.Equal(t, uint64(456), stat.spanSubscription.watermark.Load())
-	require.Equal(t, info.id, subChange.dispatcherInfo.GetID())
-	require.Equal(t, uint64(0), subChange.eventCount)
 	log.Info("pass TestDispatcherStatUpdateWatermark case 1")
 
 	// Case 2: new events, and watermark increase
-	stat.onNewEvent(&common.RawKVEntry{})
-	stat.onNewEvent(&common.RawKVEntry{})
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		stat.onSubscriptionWatermark(789)
-	}()
-	subChange = <-notify
+	sendNewEvent(startTs)
+	stat.onSubscriptionWatermark(789)
 	require.Equal(t, uint64(789), stat.spanSubscription.watermark.Load())
-	require.Equal(t, info.id, subChange.dispatcherInfo.GetID())
-	require.Equal(t, uint64(2), subChange.eventCount)
-	require.Equal(t, 0, int(stat.spanSubscription.newEventCount.Load()))
+	require.Equal(t, startTs, stat.spanSubscription.maxEventCommitTs.Load())
 	log.Info("pass TestDispatcherStatUpdateWatermark case 2")
 
 	// Case 3: new events, and watermark decrease
 	// watermark should not decrease and no notification
-	stat.onNewEvent(&common.RawKVEntry{})
-	stat.onNewEvent(&common.RawKVEntry{})
+	sendNewEvent(360)
 	done := make(chan struct{})
 	wg.Add(1)
 	go func() {
@@ -87,7 +83,7 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 	}()
 	<-done
 	require.Equal(t, uint64(789), stat.spanSubscription.watermark.Load())
-	require.Equal(t, 2, int(stat.spanSubscription.newEventCount.Load()))
+	require.Equal(t, uint64(360), stat.spanSubscription.maxEventCommitTs.Load())
 	log.Info("pass TestDispatcherStatUpdateWatermark case 3")
 
 	wg.Wait()
@@ -102,39 +98,17 @@ func TestScanTaskPool_PushTask(t *testing.T) {
 		startTs:   1000,
 		span:      span,
 	}
-	dispatcherStat := newDispatcherStat(dispatcherInfo.startTs, dispatcherInfo, func(c subscriptionChange) {}, nil)
-	// Create two tasks with overlapping data ranges
+	dispatcherStat := newDispatcherStat(dispatcherInfo.startTs, dispatcherInfo, nil)
+
+	now := time.Now()
 	task1 := &scanTask{
 		dispatcherStat: dispatcherStat,
-		dataRange: &common.DataRange{
-			ClusterID: uint64(1),
-			Span:      span,
-			StartTs:   1000,
-			EndTs:     2000,
-		},
-		eventCount: 10,
+		createTime:     now.Add(1 * time.Second),
 	}
 
 	task2 := &scanTask{
 		dispatcherStat: dispatcherStat,
-		dataRange: &common.DataRange{
-			ClusterID: 1,
-			Span:      span,
-			StartTs:   1500,
-			EndTs:     2500,
-		},
-		eventCount: 5,
-	}
-
-	expectedTask := &scanTask{
-		dispatcherStat: dispatcherStat,
-		dataRange: &common.DataRange{
-			ClusterID: 1,
-			Span:      span,
-			StartTs:   1000,
-			EndTs:     2500,
-		},
-		eventCount: 15,
+		createTime:     now.Add(2 * time.Second),
 	}
 
 	// make the pool contain the task1 already
@@ -147,16 +121,14 @@ func TestScanTaskPool_PushTask(t *testing.T) {
 
 	// Push the second task
 	pool.pushTask(task2)
-
-	// Verify that the task is sent to corresponding pendingTaskQueue
+	// Verify that the task1 is sent to corresponding pendingTaskQueue, task2 is dropped since duplicate.
 	receivedTask := <-pool.pendingTaskQueue[dispatcherStat.workerIndex]
-	require.Equal(t, expectedTask, receivedTask)
+	require.Equal(t, task1, receivedTask)
 
 	// Verify that the task is removed from taskSet
 	task, ok = pool.taskSet[dispatcherInfo.GetID()]
 	require.False(t, ok)
 	require.Nil(t, task)
-
 }
 
 func newTableSpan(tableID int64, start, end string) *heartbeatpb.TableSpan {
