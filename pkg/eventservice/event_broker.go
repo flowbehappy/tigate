@@ -89,6 +89,7 @@ func newEventBroker(
 		schemaStore:                            appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore),
 		dispatchers:                            sync.Map{},
 		tableTriggerDispatchers:                sync.Map{},
+		spans:                                  make(map[common.TableID]*spanSubscription),
 		msgSender:                              mc,
 		taskPool:                               newScanTaskPool(),
 		scanWorkerCount:                        defaultScanWorkerCount,
