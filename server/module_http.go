@@ -43,7 +43,7 @@ type HttpServer struct {
 
 // NewHttpServer create the HTTP server.
 // `lis` is a listener that gives us plain-text HTTP requests.
-func NewHttpServer(c *serverImpl, lis net.Listener) common.SubModule {
+func NewHttpServer(c *server, lis net.Listener) common.SubModule {
 	// LimitListener returns a Listener that accepts at most n simultaneous
 	// connections from the provided Listener. Connections that exceed the
 	// limit will wait in a queue and no new goroutines will be created until

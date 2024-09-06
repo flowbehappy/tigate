@@ -15,6 +15,7 @@ package coordinator
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/server"
 	"math"
 	"sync"
 	"time"
@@ -22,7 +23,6 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
-	"github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/scheduler"
