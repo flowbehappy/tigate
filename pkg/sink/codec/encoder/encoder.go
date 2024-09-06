@@ -37,7 +37,7 @@ type RowEventEncoder interface {
 	// EncodeDDLEvent appends a DDL event into the batch
 	EncodeDDLEvent(e *common.DDLEvent) (*ticommon.Message, error)
 	// AppendRowChangedEvent appends a row changed event into the batch or buffer.
-	AppendRowChangedEvent(context.Context, string, *common.RowChangedEvent, func()) error
+	AppendRowChangedEvent(context.Context, string, *common.RowEvent) error
 	// Build builds the batch messages from AppendRowChangedEvent and returns the messages.
 	Build() []*ticommon.Message
 	// clean the resources

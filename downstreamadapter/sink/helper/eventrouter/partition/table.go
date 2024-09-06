@@ -34,11 +34,16 @@ func newTablePartitionGenerator() *TablePartitionGenerator {
 }
 
 // GeneratePartitionIndexAndKey returns the target partition to which a row changed event should be dispatched.
-func (t *TablePartitionGenerator) GeneratePartitionIndexAndKey(row *common.RowChangedEvent, partitionNum int32) (int32, string, error) {
+func (t *TablePartitionGenerator) GeneratePartitionIndexAndKey(
+	row *common.RowDelta,
+	partitionNum int32,
+	tableInfo *common.TableInfo,
+	commitTs uint64,
+) (int32, string, error) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 	t.hasher.Reset()
 	// distribute partition by table
-	t.hasher.Write([]byte(row.TableInfo.GetSchemaName()), []byte(row.TableInfo.GetTableName()))
-	return int32(t.hasher.Sum32() % uint32(partitionNum)), row.TableInfo.TableName.String(), nil
+	t.hasher.Write([]byte(tableInfo.GetSchemaName()), []byte(tableInfo.GetTableName()))
+	return int32(t.hasher.Sum32() % uint32(partitionNum)), tableInfo.TableName.String(), nil
 }

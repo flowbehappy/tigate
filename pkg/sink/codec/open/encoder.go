@@ -34,8 +34,7 @@ type BatchEncoder struct {
 func (d *BatchEncoder) AppendRowChangedEvent(
 	ctx context.Context,
 	_ string,
-	e *common.RowChangedEvent,
-	callback func(),
+	e *common.RowEvent,
 ) error {
 	key, value, length, err := encodeRowChangedEvent(e, d.config, false, "")
 	if err != nil {
@@ -96,7 +95,7 @@ func (d *BatchEncoder) AppendRowChangedEvent(
 		}
 	}
 
-	d.pushMessage(key, value, callback)
+	d.pushMessage(key, value, e.Callback)
 	return nil
 }
 
