@@ -80,18 +80,24 @@ type spanState struct {
 	subID logpuller.SubscriptionID
 
 	// data before this watermark won't be needed
-	watermarks map[common.DispatcherID]*atomic.Uint64
+	dispatchrs map[common.DispatcherID]*dispatcherStat
 
 	// the resolveTs persisted in the store
 	resolvedTs atomic.Uint64
+	chIndex    int
+}
 
-	chIndex int
+// maybe it can be removed
+type dispatcherStat struct {
+	dispatcherID common.DispatcherID
+	watermark    uint64
+	startTS      uint64
 }
 
 func (s *spanState) minWatermark() uint64 {
 	minWatermark := uint64(0)
-	for _, watermark := range s.watermarks {
-		wm := watermark.Load()
+	for _, d := range s.dispatchrs {
+		wm := d.watermark
 		if minWatermark == 0 || wm < minWatermark {
 			minWatermark = wm
 		}
@@ -228,28 +234,40 @@ func (e *eventStore) RegisterDispatcher(
 		zap.Uint64("startTS", startTS))
 
 	e.spanStates.Lock()
-	defer e.spanStates.Unlock()
-	if _, ok := e.spanStates.dispatcherMap.Get(&span); !ok {
-		log.Info("add a span in eventstore", zap.String("span", span.String()))
-		subID := e.puller.Subscribe(span, startTS)
-		state := &spanState{
-			span:       span,
-			watermarks: make(map[common.DispatcherID]*atomic.Uint64),
-			observer:   observer,
-			notifier:   notifier,
-			subID:      subID,
-			// TODO: support split table to multiple subSpans.
-			// maybe share data for different subSpan is meaningless.
-			chIndex: common.HashTableSpan(span, len(e.eventChs)),
+	if state, ok := e.spanStates.dispatcherMap.Get(&span); ok {
+		state.dispatchrs[dispatcherID] = &dispatcherStat{
+			dispatcherID: dispatcherID,
+			startTS:      startTS,
+			watermark:    startTS,
 		}
-		// TODO: how to support different startTs for different dispatchers?
-		state.resolvedTs.Store(uint64(startTS))
-		e.spanStates.dispatcherMap.ReplaceOrInsert(&span, state)
-		e.spanStates.subscriptionMap[subID] = state
+		e.spanStates.Unlock()
+		return nil
 	}
-	state, _ := e.spanStates.dispatcherMap.Get(tableSpan)
-	state.watermarks[dispatcherID] = &atomic.Uint64{}
-	state.watermarks[dispatcherID].Store(uint64(startTS))
+
+	log.Info("add a span in eventstore", zap.String("span", span.String()))
+	subID := e.puller.Subscribe(span, startTS)
+	state := &spanState{
+		span:       span,
+		observer:   observer,
+		dispatchrs: make(map[common.DispatcherID]*dispatcherStat),
+		notifier:   notifier,
+		subID:      subID,
+		// TODO: support split table to multiple subSpans.
+		// maybe share data for different subSpan is meaningless.
+		chIndex: common.HashTableSpan(span, len(e.eventChs)),
+	}
+	// TODO: how to support different startTs for different dispatchers?
+	state.resolvedTs.Store(uint64(startTS))
+	state.dispatchrs[dispatcherID] = &dispatcherStat{
+		dispatcherID: dispatcherID,
+		startTS:      startTS,
+		watermark:    startTS,
+	}
+
+	e.spanStates.Lock()
+	defer e.spanStates.Unlock()
+	e.spanStates.dispatcherMap.ReplaceOrInsert(&span, state)
+	e.spanStates.subscriptionMap[subID] = state
 	return nil
 }
 
@@ -261,20 +279,10 @@ func (e *eventStore) UpdateDispatcherSendTS(
 	e.spanStates.Lock()
 	defer e.spanStates.Unlock()
 	if state, ok := e.spanStates.dispatcherMap.Get(span); ok {
-		watermark, ok := state.watermarks[dispatcherID]
 		if !ok {
 			log.Panic("should not happen", zap.Any("dispatcherID", dispatcherID))
 		}
-		for {
-			currentWatermark := watermark.Load()
-			if sendTS <= currentWatermark {
-				return nil
-			}
-			if watermark.CompareAndSwap(currentWatermark, sendTS) {
-				// TODO: handle gc in another goroutine
-				return nil
-			}
-		}
+		state.dispatchrs[dispatcherID].watermark = sendTS
 	}
 	return nil
 }
@@ -289,13 +297,13 @@ func (e *eventStore) UnregisterDispatcher(
 	if !ok {
 		log.Panic("deregister an unregistered span", zap.String("span", span.String()))
 	}
-	if _, ok := state.watermarks[dispatcherID]; ok {
-		delete(state.watermarks, dispatcherID)
+	if _, ok := state.dispatchrs[dispatcherID]; ok {
+		delete(state.dispatchrs, dispatcherID)
 	} else {
 		log.Panic("deregister an unregistered dispatcher", zap.Stringer("dispatcherID", dispatcherID))
 	}
 
-	if len(state.watermarks) == 0 {
+	if len(state.dispatchrs) == 0 {
 		// TODO: do we need unlock before puller.Unsubscribe?
 		e.puller.Unsubscribe(state.subID)
 		e.spanStates.dispatcherMap.Delete(span)
@@ -308,8 +316,8 @@ func (e *eventStore) UnregisterDispatcher(
 func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange *common.DataRange) (EventIterator, error) {
 	// do some check
 	state, ok := e.spanStates.dispatcherMap.Get(dataRange.Span)
-	watermark, okw := state.watermarks[dispatcherID]
-	if !ok || !okw || watermark.Load() > dataRange.StartTs {
+	dispatcher, okw := state.dispatchrs[dispatcherID]
+	if !ok || !okw || dispatcher.watermark > dataRange.StartTs {
 		log.Panic("should not happen")
 	}
 	span := state.span
