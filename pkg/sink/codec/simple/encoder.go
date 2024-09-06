@@ -29,8 +29,7 @@ import (
 )
 
 type Encoder struct {
-	messages []*ticommon.Message
-
+	messages   []*ticommon.Message
 	config     *ticommon.Config
 	claimCheck *claimcheck.ClaimCheck
 	marshaller marshaller
@@ -54,16 +53,13 @@ func NewEncoder(ctx context.Context, config *ticommon.Config) (encoder.RowEventE
 }
 
 // AppendRowChangedEvent implement the RowEventEncoder interface
-func (e *Encoder) AppendRowChangedEvent(
-	ctx context.Context, _ string, event *common.RowChangedEvent, callback func(),
-) error {
+func (e *Encoder) AppendRowChangedEvent(ctx context.Context, _ string, event *common.RowChangedEvent, callback func()) error {
 	value, err := e.marshaller.MarshalRowChangedEvent(event, false, "")
 	if err != nil {
 		return err
 	}
 
-	value, err = ticommon.Compress(e.config.ChangefeedID,
-		e.config.LargeMessageHandle.LargeMessageHandleCompression, value)
+	value, err = ticommon.Compress(e.config.ChangefeedID, e.config.LargeMessageHandle.LargeMessageHandleCompression, value)
 	if err != nil {
 		return err
 	}
@@ -106,8 +102,7 @@ func (e *Encoder) AppendRowChangedEvent(
 	if err != nil {
 		return err
 	}
-	value, err = ticommon.Compress(e.config.ChangefeedID,
-		e.config.LargeMessageHandle.LargeMessageHandleCompression, value)
+	value, err = ticommon.Compress(e.config.ChangefeedID, e.config.LargeMessageHandle.LargeMessageHandleCompression, value)
 	if err != nil {
 		return err
 	}
@@ -153,27 +148,28 @@ func (e *Encoder) EncodeCheckpointEvent(ts uint64) (*ticommon.Message, error) {
 }
 
 // EncodeDDLEvent implement the DDLEventBatchEncoder interface
-func (e *Encoder) EncodeDDLEvent(event *model.DDLEvent) (*ticommon.Message, error) {
-	value, err := e.marshaller.MarshalDDLEvent(event)
-	if err != nil {
-		return nil, err
-	}
+func (e *Encoder) EncodeDDLEvent(event *common.DDLEvent) (*ticommon.Message, error) {
+	// value, err := e.marshaller.MarshalDDLEvent(event)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
-	value, err = ticommon.Compress(e.config.ChangefeedID,
-		e.config.LargeMessageHandle.LargeMessageHandleCompression, value)
-	if err != nil {
-		return nil, err
-	}
-	result := ticommon.NewDDLMsg(config.ProtocolSimple, nil, value, event)
+	// value, err = ticommon.Compress(e.config.ChangefeedID,
+	// 	e.config.LargeMessageHandle.LargeMessageHandleCompression, value)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// result := ticommon.NewDDLMsg(config.ProtocolSimple, nil, value, event)
 
-	if result.Length() > e.config.MaxMessageBytes {
-		log.Error("DDL message is too large for simple",
-			zap.Int("maxMessageBytes", e.config.MaxMessageBytes),
-			zap.Int("length", result.Length()),
-			zap.Any("table", event.TableInfo.TableName))
-		return nil, cerror.ErrMessageTooLarge.GenWithStackByArgs()
-	}
-	return result, nil
+	// if result.Length() > e.config.MaxMessageBytes {
+	// 	log.Error("DDL message is too large for simple",
+	// 		zap.Int("maxMessageBytes", e.config.MaxMessageBytes),
+	// 		zap.Int("length", result.Length()),
+	// 		zap.Any("table", event.TableInfo.TableName))
+	// 	return nil, cerror.ErrMessageTooLarge.GenWithStackByArgs()
+	// }
+	// return result, nil
+	return nil, nil
 }
 
 // CleanMetrics implement the RowEventEncoderBuilder interface

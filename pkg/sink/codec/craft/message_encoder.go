@@ -312,22 +312,23 @@ func NewResolvedEventEncoder(allocator *SliceAllocator, ts uint64) *MessageEncod
 }
 
 // NewDDLEventEncoder creates a new encoder with given allocator and timestamp
-func NewDDLEventEncoder(allocator *SliceAllocator, ev *model.DDLEvent) *MessageEncoder {
-	ty := uint64(ev.Type)
-	query := ev.Query
-	var schema, table *string
-	if len(ev.TableInfo.TableName.Schema) > 0 {
-		schema = &ev.TableInfo.TableName.Schema
-	}
-	if len(ev.TableInfo.TableName.Table) > 0 {
-		table = &ev.TableInfo.TableName.Table
-	}
-	return NewMessageEncoder(allocator).encodeHeaders(&Headers{
-		ts:        allocator.oneUint64Slice(ev.CommitTs),
-		ty:        allocator.oneUint64Slice(uint64(model.MessageTypeDDL)),
-		partition: oneNullInt64Slice,
-		schema:    allocator.oneNullableStringSlice(schema),
-		table:     allocator.oneNullableStringSlice(table),
-		count:     1,
-	}).encodeUvarint(ty).encodeString(query).encodeBodySize()
+func NewDDLEventEncoder(allocator *SliceAllocator, ev *common.DDLEvent) *MessageEncoder {
+	// ty := uint64(ev.Type)
+	// query := ev.Query
+	// var schema, table *string
+	// if len(ev.TableInfo.TableName.Schema) > 0 {
+	// 	schema = &ev.TableInfo.TableName.Schema
+	// }
+	// if len(ev.TableInfo.TableName.Table) > 0 {
+	// 	table = &ev.TableInfo.TableName.Table
+	// }
+	// return NewMessageEncoder(allocator).encodeHeaders(&Headers{
+	// 	ts:        allocator.oneUint64Slice(ev.CommitTs),
+	// 	ty:        allocator.oneUint64Slice(uint64(model.MessageTypeDDL)),
+	// 	partition: oneNullInt64Slice,
+	// 	schema:    allocator.oneNullableStringSlice(schema),
+	// 	table:     allocator.oneNullableStringSlice(table),
+	// 	count:     1,
+	// }).encodeUvarint(ty).encodeString(query).encodeBodySize()
+	return nil
 }
