@@ -238,7 +238,8 @@ func (e *eventStore) RegisterDispatcher(
 			observer:   observer,
 			notifier:   notifier,
 			subID:      subID,
-			// TODO: support split table to multiple spans
+			// TODO: support split table to multiple subSpans.
+			// maybe share data for different subSpan is meaningless.
 			chIndex: common.HashTableSpan(span, len(e.eventChs)),
 		}
 		// TODO: how to support different startTs for different dispatchers?
