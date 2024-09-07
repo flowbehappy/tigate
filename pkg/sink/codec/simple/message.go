@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	ticommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
+	commonNew "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/pingcap/log"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/integrity"
+	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 	"github.com/pingcap/tiflow/pkg/sink/codec/utils"
 	"go.uber.org/zap"
 )
@@ -400,7 +401,7 @@ func buildRowChangedEvent(
 			Version:   msg.Checksum.Version,
 		}
 
-		err := ticommon.VerifyChecksum(result, db)
+		err := commonNew.VerifyChecksum(result, db)
 		if err != nil || msg.Checksum.Corrupted {
 			log.Warn("consumer detect checksum corrupted",
 				zap.String("schema", msg.Schema), zap.String("table", msg.Table))
@@ -548,7 +549,7 @@ func newDDLMessage(ddl *model.DDLEvent) *message {
 	return msg
 }
 
-func (a *jsonMarshaller) newDMLMessage(
+func (a *JSONMarshaller) newDMLMessage(
 	event *common.RowChangedEvent,
 	onlyHandleKey bool, claimCheckFileName string,
 ) *message {
@@ -586,7 +587,7 @@ func (a *jsonMarshaller) newDMLMessage(
 	return m
 }
 
-func (a *jsonMarshaller) formatColumns(
+func (a *JSONMarshaller) formatColumns(
 	columns []*common.Column, tableInfo *common.TableInfo, onlyHandleKey bool,
 ) map[string]interface{} {
 	result := make(map[string]interface{}, len(columns))

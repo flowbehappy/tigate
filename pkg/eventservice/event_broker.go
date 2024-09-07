@@ -17,6 +17,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/pkg/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 
@@ -44,13 +45,13 @@ type eventBroker struct {
 
 	// All the dispatchers that register to the eventBroker.
 	dispatchers sync.Map
+	// Not support split table span yet.
+	spans map[common.TableID]*spanSubscription
 	// dispatcherID -> dispatcherStat map, track all table trigger dispatchers.
 	tableTriggerDispatchers sync.Map
-	// changedCh is used to notify span subscription has new events.
-	changedCh chan subscriptionChange
 	// taskPool is used to store the scan tasks and merge the tasks of same dispatcher.
 	// TODO: Make it support merge the tasks of the same table span, even if the tasks are from different dispatchers.
-	taskPool *scanTaskPool
+	taskPool *scanTaskQueue
 
 	// scanWorkerCount is the number of the scan workers to spawn.
 	scanWorkerCount int
@@ -82,16 +83,14 @@ func newEventBroker(
 	ctx, cancel := context.WithCancel(ctx)
 	wg := &sync.WaitGroup{}
 	c := &eventBroker{
-		tidbClusterID:           id,
-		eventStore:              eventStore,
-		mounter:                 mounter.NewMounter(tz),
-		schemaStore:             appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore),
-		dispatchers:             sync.Map{},
-		tableTriggerDispatchers: sync.Map{},
-		msgSender:               mc,
-		// The size of the channel is 16 times of the defaultChannelSize, since the eventBroker may have many dispatchers.
-		// Otherwise, the resolvedTs may be delayed.
-		changedCh:                              make(chan subscriptionChange, defaultChannelSize*16),
+		tidbClusterID:                          id,
+		eventStore:                             eventStore,
+		mounter:                                mounter.NewMounter(tz),
+		schemaStore:                            appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore),
+		dispatchers:                            sync.Map{},
+		tableTriggerDispatchers:                sync.Map{},
+		spans:                                  make(map[common.TableID]*spanSubscription),
+		msgSender:                              mc,
 		taskPool:                               newScanTaskPool(),
 		scanWorkerCount:                        defaultScanWorkerCount,
 		messageCh:                              make(chan wrapEvent, defaultChannelSize),
@@ -103,7 +102,6 @@ func newEventBroker(
 		metricEventServiceDispatcherResolvedTs: metrics.EventServiceResolvedTsLagGauge.WithLabelValues("dispatcher"),
 		metricTaskInQueueDuration:              metrics.EventServiceScanTaskInQueueDuration,
 	}
-	c.runGenerateScanTask(ctx)
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
 	c.runSendMessageWorker(ctx)
@@ -125,40 +123,6 @@ func (c *eventBroker) sendWatermark(
 	if counter != nil {
 		counter.Inc()
 	}
-}
-
-func (c *eventBroker) onAsyncNotify(change subscriptionChange) {
-	c.changedCh <- change
-}
-
-func (c *eventBroker) runGenerateScanTask(ctx context.Context) {
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case change := <-c.changedCh:
-				v, ok := c.dispatchers.Load(change.dispatcherInfo.GetID())
-				// The dispatcher may be deleted. In such case, we just the stale notification.
-				if !ok {
-					continue
-				}
-				dispatcher := v.(*dispatcherStat)
-				startTs := dispatcher.watermark.Load()
-				endTs := dispatcher.spanSubscription.watermark.Load()
-				dataRange := common.NewDataRange(c.tidbClusterID, dispatcher.info.GetTableSpan(), startTs, endTs)
-				task := &scanTask{
-					dispatcherStat: dispatcher,
-					dataRange:      dataRange,
-					eventCount:     change.eventCount,
-					createTime:     time.Now(),
-				}
-				c.taskPool.pushTask(task)
-			}
-		}
-	}()
 }
 
 func (c *eventBroker) runScanWorker(ctx context.Context) {
@@ -221,7 +185,7 @@ func (c *eventBroker) sendDDL(remoteID messaging.ServerId, e common.DDLEvent, d 
 
 // TODO: handle error properly.
 func (c *eventBroker) doScan(task *scanTask) {
-	needScan := task.checkAndAdjustScanTask()
+	dataRange, needScan := task.dispatcherStat.getDataRange()
 	if !needScan {
 		return
 	}
@@ -229,12 +193,12 @@ func (c *eventBroker) doScan(task *scanTask) {
 
 	remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 	dispatcherID := task.dispatcherStat.info.GetID()
-	ddlEvents, endTs, err := c.schemaStore.GetNextDDLEvents(int64(task.dataRange.Span.TableID), task.dataRange.StartTs, task.dataRange.EndTs)
+	ddlEvents, endTs, err := c.schemaStore.GetNextDDLEvents(dataRange.Span.TableID, dataRange.StartTs, dataRange.EndTs)
 	if err != nil {
 		log.Panic("get ddl events failed", zap.Error(err))
 	}
-	if endTs < task.dataRange.EndTs {
-		task.dataRange.EndTs = endTs
+	if endTs < dataRange.EndTs {
+		dataRange.EndTs = endTs
 	}
 
 	defer func() {
@@ -243,18 +207,18 @@ func (c *eventBroker) doScan(task *scanTask) {
 			c.sendDDL(remoteID, e, task.dispatcherStat)
 		}
 		// After all the events are sent, we send the watermark to the dispatcher.
-		c.sendWatermark(remoteID, dispatcherID, task.dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
-		task.dispatcherStat.watermark.Store(task.dataRange.EndTs)
+		c.sendWatermark(remoteID, dispatcherID, dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
+		task.dispatcherStat.watermark.Store(dataRange.EndTs)
 	}()
 
 	// 1. Fastpath: the dispatcher has no new events. In such case, we don't need to scan the event store.
 	// We just send the watermark to the dispatcher.
-	if task.eventCount == 0 {
+	if dataRange.StartTs >= task.dispatcherStat.spanSubscription.maxEventCommitTs.Load() {
 		return
 	}
 
 	//2. Get event iterator from eventStore.
-	iter, err := c.eventStore.GetIterator(dispatcherID, task.dataRange)
+	iter, err := c.eventStore.GetIterator(dispatcherID, dataRange)
 	if err != nil {
 		log.Panic("read events failed", zap.Error(err))
 	}
@@ -432,6 +396,18 @@ func (c *eventBroker) close() {
 	c.wg.Wait()
 }
 
+func (c *eventBroker) onNotify(s *spanSubscription, watermark uint64) {
+	s.onSubscriptionWatermark(watermark)
+	s.dispatchers.RLock()
+	defer s.dispatchers.RUnlock()
+	for _, stat := range s.dispatchers.m {
+		c.taskPool.pushTask(&scanTask{
+			dispatcherStat: stat,
+			createTime:     time.Now(),
+		})
+	}
+}
+
 func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	filter, err := filter.NewFilter(info.GetFilterConfig(), "", false)
 	if err != nil {
@@ -439,47 +415,59 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	}
 
 	start := time.Now()
+	id := info.GetID()
 	span := info.GetTableSpan()
 	startTs := info.GetStartTs()
-	dispatcher := newDispatcherStat(startTs, info, c.onAsyncNotify, filter)
+	spanSubscription, ok := c.spans[span.TableID]
+	if !ok {
+		spanSubscription = newSpanSubscription(span, startTs)
+		c.spans[span.TableID] = spanSubscription
+	}
+	dispatcher := newDispatcherStat(startTs, info, spanSubscription, filter)
 	if span.Equal(heartbeatpb.DDLSpan) {
-		c.tableTriggerDispatchers.Store(info.GetID(), dispatcher)
+		c.tableTriggerDispatchers.Store(id, dispatcher)
 		log.Info("table trigger dispatcher register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
-			zap.Any("acceptorID", info.GetID()), zap.Int64("tableID", span.TableID),
+			zap.Any("acceptorID", id), zap.Int64("tableID", span.TableID),
 			zap.Uint64("startTs", startTs), zap.Duration("brokerRegisterDuration", time.Since(start)))
 		return
 	}
 
-	c.dispatchers.Store(info.GetID(), dispatcher)
+	c.dispatchers.Store(id, dispatcher)
 	brokerRegisterDuration := time.Since(start)
 
 	start = time.Now()
 	c.eventStore.RegisterDispatcher(
-		info.GetID(),
+		id,
 		span,
 		common.Ts(info.GetStartTs()),
-		dispatcher.onNewEvent,
-		dispatcher.onSubscriptionWatermark,
+		dispatcher.spanSubscription.onNewEvent,
+		func(watermark uint64) { c.onNotify(dispatcher.spanSubscription, watermark) },
 	)
-	c.schemaStore.RegisterDispatcher(info.GetID(), span, common.Ts(info.GetStartTs()), filter)
+	c.schemaStore.RegisterDispatcher(id, span, common.Ts(info.GetStartTs()), filter)
 	eventStoreRegisterDuration := time.Since(start)
 
 	log.Info("register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
-		zap.Any("acceptorID", info.GetID()), zap.Int64("tableID", span.TableID),
+		zap.Any("acceptorID", id), zap.Int64("tableID", span.TableID),
 		zap.Uint64("startTs", startTs), zap.Duration("brokerRegisterDuration", brokerRegisterDuration),
 		zap.Duration("eventStoreRegisterDuration", eventStoreRegisterDuration))
 }
 
 func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
 	id := dispatcherInfo.GetID()
-	_, ok := c.dispatchers.Load(id)
+	stat, ok := c.dispatchers.Load(id)
 	if !ok {
 		c.tableTriggerDispatchers.Delete(id)
 		return
 	}
-	c.eventStore.UnregisterDispatcher(id)
+	c.eventStore.UnregisterDispatcher(id, dispatcherInfo.GetTableSpan())
 	c.schemaStore.UnregisterDispatcher(id)
 	c.dispatchers.Delete(id)
+
+	spanSubscription := stat.(*dispatcherStat).spanSubscription
+	dispatcherCnt := spanSubscription.removeDispatcher(id)
+	if dispatcherCnt == 0 {
+		delete(c.spans, spanSubscription.span.TableID)
+	}
 	log.Info("deregister acceptor", zap.Uint64("clusterID", c.tidbClusterID), zap.Any("acceptorID", id))
 }
 
@@ -490,8 +478,7 @@ type dispatcherStat struct {
 	filter           filter.Filter
 	spanSubscription *spanSubscription
 	// The watermark of the events that have been sent to the dispatcher.
-	watermark     atomic.Uint64
-	onAsyncNotify func(subscriptionChange)
+	watermark atomic.Uint64
 	// The index of the task queue channel in the taskPool.
 	// We need to make sure the tasks of the same dispatcher are sent to the same task queue
 	// so that it will be handle by the same scan worker. To ensure all events of the dispatcher
@@ -505,21 +492,14 @@ type dispatcherStat struct {
 }
 
 func newDispatcherStat(
-	startTs uint64, info DispatcherInfo, onAsyncNotify func(subscriptionChange), filter filter.Filter,
+	startTs uint64, info DispatcherInfo,
+	subscription *spanSubscription, filter filter.Filter,
 ) *dispatcherStat {
-	subscription := &spanSubscription{
-		span:       info.GetTableSpan(),
-		lastUpdate: atomic.Value{},
-	}
-	subscription.lastUpdate.Store(time.Now())
-	subscription.watermark.Store(uint64(startTs))
-
 	namespace, id := info.GetChangefeedID()
 	dispStat := &dispatcherStat{
 		info:             info,
 		filter:           filter,
 		spanSubscription: subscription,
-		onAsyncNotify:    onAsyncNotify,
 
 		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(namespace, id, "kv"),
 		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "kv"),
@@ -530,76 +510,104 @@ func newDispatcherStat(
 	hasher := crc32.NewIEEE()
 	hasher.Write(info.GetID().Marshal())
 	dispStat.workerIndex = int(hasher.Sum32() % defaultScanWorkerCount)
+
+	subscription.addDispatcher(dispStat)
 	return dispStat
 }
 
-// onSubscriptionWatermark updates the watermark of the table span and send a notification to notify
-// that this table span has new events.
-func (a *dispatcherStat) onSubscriptionWatermark(watermark uint64) {
-	if watermark < a.spanSubscription.watermark.Load() {
-		return
+func (a *dispatcherStat) getDataRange() (*common.DataRange, bool) {
+	r := &common.DataRange{
+		Span:    a.info.GetTableSpan(),
+		StartTs: a.watermark.Load(),
+		EndTs:   a.spanSubscription.watermark.Load(),
 	}
-	a.spanSubscription.watermark.Store(watermark)
-	a.spanSubscription.lastUpdate.Store(time.Now())
-	a.onAsyncNotify(subscriptionChange{
-		dispatcherInfo: a.info,
-		eventCount:     a.spanSubscription.newEventCount.Swap(0),
-	})
-}
-
-// TODO: consider to use a better way to update the event count, may be we only need to
-// know there are new events, and we don't need to know the exact number of the new events.
-// So we can reduce the contention of the lock.
-func (a *dispatcherStat) onNewEvent(raw *common.RawKVEntry) {
-	if raw == nil {
-		return
+	if r.StartTs >= r.EndTs {
+		// no kv events within (start, end]
+		return r, false
 	}
-	a.spanSubscription.newEventCount.Add(1)
+	return r, true
 }
 
 // spanSubscription store the latest progress of the table span in the event store.
 // And it also store the dispatchers that want to listen to the events of this table span.
 type spanSubscription struct {
 	span *heartbeatpb.TableSpan
+	// map dispatcherID -> dispatcherStat
+	dispatchers struct {
+		sync.RWMutex
+		m map[common.DispatcherID]*dispatcherStat
+	}
 	// The watermark of the events that have been stored in the event store.
-	watermark atomic.Uint64
-	// newEventCount is used to store the number of the new events that have been stored in the event store
-	// since last scanTask is generated.
-	newEventCount atomic.Uint64
-	lastUpdate    atomic.Value
+	watermark  atomic.Uint64
+	lastUpdate atomic.Value
+	// The commitTs of the latest kv event that has been stored in the event store.
+	maxEventCommitTs atomic.Uint64
 }
 
-type subscriptionChange struct {
-	dispatcherInfo DispatcherInfo
-	eventCount     uint64
+func newSpanSubscription(span *heartbeatpb.TableSpan, startTs uint64) *spanSubscription {
+	s := &spanSubscription{
+		span:             span,
+		watermark:        atomic.Uint64{},
+		lastUpdate:       atomic.Value{},
+		maxEventCommitTs: atomic.Uint64{},
+	}
+	s.watermark.Store(startTs)
+	s.maxEventCommitTs.Store(startTs)
+	s.lastUpdate.Store(time.Now())
+	return s
+}
+
+func (s *spanSubscription) addDispatcher(stat *dispatcherStat) {
+	s.dispatchers.Lock()
+	defer s.dispatchers.Unlock()
+	if s.dispatchers.m == nil {
+		s.dispatchers.m = make(map[common.DispatcherID]*dispatcherStat)
+	}
+	s.dispatchers.m[stat.info.GetID()] = stat
+}
+
+func (s *spanSubscription) removeDispatcher(id common.DispatcherID) int {
+	s.dispatchers.Lock()
+	defer s.dispatchers.Unlock()
+	delete(s.dispatchers.m, id)
+	return len(s.dispatchers.m)
+}
+
+// onSubscriptionWatermark updates the watermark of the table span and send a notification to notify
+// that this table span has new events.
+func (s *spanSubscription) onSubscriptionWatermark(watermark uint64) {
+	if watermark < s.watermark.Load() {
+		return
+	}
+	s.watermark.Store(watermark)
+	s.lastUpdate.Store(time.Now())
+}
+
+// onNewEvent is used to track whether there are new events in the event store, so that
+// we can skip some unnecessary scan tasks.
+// TODO: consider to use a better way to reduce the contention of the lock, maybe it is
+// not necessary to update the maxEventCommitTs for every event.
+func (s *spanSubscription) onNewEvent(raw *common.RawKVEntry) {
+	if raw == nil {
+		return
+	}
+	util.MustCompareAndMonotonicIncrease(&s.maxEventCommitTs, raw.CRTs)
 }
 
 type scanTask struct {
 	dispatcherStat *dispatcherStat
-	dataRange      *common.DataRange
-	eventCount     uint64
 	createTime     time.Time
 }
 
-func (t *scanTask) checkAndAdjustScanTask() bool {
-	if t.dispatcherStat.watermark.Load() >= t.dataRange.EndTs {
-		return false
-	}
-	if t.dispatcherStat.watermark.Load() > t.dataRange.StartTs {
-		t.dataRange.StartTs = t.dispatcherStat.watermark.Load()
-	}
-	return true
-}
-
-type scanTaskPool struct {
+type scanTaskQueue struct {
 	taskSet map[common.DispatcherID]*scanTask
 	// pendingTaskQueue is used to store the tasks that are waiting to be handled by the scan workers.
 	// The length of the pendingTaskQueue is equal to the number of the scan workers.
 	pendingTaskQueue []chan *scanTask
 }
 
-func newScanTaskPool() *scanTaskPool {
-	res := &scanTaskPool{
+func newScanTaskPool() *scanTaskQueue {
+	res := &scanTaskQueue{
 		taskSet:          make(map[common.DispatcherID]*scanTask),
 		pendingTaskQueue: make([]chan *scanTask, defaultScanWorkerCount),
 	}
@@ -611,26 +619,16 @@ func newScanTaskPool() *scanTaskPool {
 
 // pushTask pushes a task to the pool,
 // and merge the task if the task is overlapped with the existing tasks.
-func (p *scanTaskPool) pushTask(task *scanTask) {
+func (p *scanTaskQueue) pushTask(task *scanTask) {
 	id := task.dispatcherStat.info.GetID()
 	spanTask := p.taskSet[id]
-
 	// There is already a task for the dispatcher, we need to merge the task to the existing task.
-	if spanTask != nil {
-		mergedRange := task.dataRange.Merge(spanTask.dataRange)
-		if mergedRange == nil {
-			log.Panic("merge data range failed", zap.Any("task", task), zap.Any("spanTask", spanTask))
-		}
-		spanTask.dataRange = mergedRange
-		spanTask.eventCount += task.eventCount
-	} else {
+	if spanTask == nil {
 		spanTask = task
 	}
-
 	select {
-	// Send the task to the corresponding scan worker.
 	case p.pendingTaskQueue[spanTask.dispatcherStat.workerIndex] <- spanTask:
-		// The task is sent to the scan worker, we remove it from the taskSet.
+		// Send the task to the corresponding scan worker and remove it from the taskSet.
 		delete(p.taskSet, id)
 	default:
 		// The task pool is full, we just add it back
@@ -639,7 +637,7 @@ func (p *scanTaskPool) pushTask(task *scanTask) {
 	}
 }
 
-func (p *scanTaskPool) popTask(chanIndex int) <-chan *scanTask {
+func (p *scanTaskQueue) popTask(chanIndex int) <-chan *scanTask {
 	return p.pendingTaskQueue[chanIndex]
 }
 

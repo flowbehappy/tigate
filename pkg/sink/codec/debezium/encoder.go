@@ -79,7 +79,7 @@ func (d *BatchEncoder) AppendRowChangedEvent(
 
 // EncodeDDLEvent implements the RowEventEncoder interface
 // DDL message unresolved tso
-func (d *BatchEncoder) EncodeDDLEvent(e *model.DDLEvent) (*ticommon.Message, error) {
+func (d *BatchEncoder) EncodeDDLEvent(e *common.DDLEvent) (*ticommon.Message, error) {
 	// Schema Change Events are currently not supported.
 	return nil, nil
 }
@@ -95,6 +95,8 @@ func (d *BatchEncoder) Build() []*ticommon.Message {
 	return result
 }
 
+func (d *BatchEncoder) Clean() {}
+
 // newBatchEncoder creates a new Debezium BatchEncoder.
 func NewBatchEncoder(c *ticommon.Config, clusterID string) encoder.RowEventEncoder {
 	batch := &BatchEncoder{
@@ -108,5 +110,3 @@ func NewBatchEncoder(c *ticommon.Config, clusterID string) encoder.RowEventEncod
 	}
 	return batch
 }
-
-func (d *BatchEncoder) Clean() {}

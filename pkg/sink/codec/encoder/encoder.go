@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/pingcap/tiflow/cdc/model"
 	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 )
 
@@ -30,28 +29,18 @@ const (
 	MemBufShrinkThreshold = 1024 * 1024
 )
 
-// DDLEventBatchEncoder is an abstraction for DDL event encoder.
-type DDLEventBatchEncoder interface {
+// RowEventEncoder is an abstraction for events encoder
+type RowEventEncoder interface {
 	// EncodeCheckpointEvent appends a checkpoint event into the batch.
 	// This event will be broadcast to all partitions to signal a global checkpoint.
 	EncodeCheckpointEvent(ts uint64) (*ticommon.Message, error)
 	// EncodeDDLEvent appends a DDL event into the batch
-	EncodeDDLEvent(e *model.DDLEvent) (*ticommon.Message, error)
-}
-
-// MessageBuilder is an abstraction to build message.
-type MessageBuilder interface {
-	// Build builds the batch and returns the bytes of key and value.
-	// Should be called after `AppendRowChangedEvent`
-	Build() []*ticommon.Message
-}
-
-// RowEventEncoder is an abstraction for events encoder
-type RowEventEncoder interface {
-	DDLEventBatchEncoder
+	EncodeDDLEvent(e *common.DDLEvent) (*ticommon.Message, error)
 	// AppendRowChangedEvent appends a row changed event into the batch or buffer.
-	AppendRowChangedEvent(context.Context, string, *common.RowChangedEvent, func()) error
-	MessageBuilder
+	AppendRowChangedEvent(context.Context, string, *common.RowEvent) error
+	// Build builds the batch messages from AppendRowChangedEvent and returns the messages.
+	Build() []*ticommon.Message
+	// clean the resources
 	Clean()
 }
 

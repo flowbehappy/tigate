@@ -18,6 +18,7 @@ import (
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/mounter"
+	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/pkg/pdutil"
@@ -50,9 +51,9 @@ type EventStore interface {
 		notifier WatermarkNotifier,
 	) error
 
-	UpdateDispatcherSendTS(dispatcherID common.DispatcherID, gcTS uint64) error
+	UpdateDispatcherSendTS(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, gcTS uint64) error
 
-	UnregisterDispatcher(dispatcherID common.DispatcherID) error
+	UnregisterDispatcher(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) error
 
 	// TODO: ignore large txn now, so we can read all transactions of the same commit ts at one time
 	// (startCommitTS, endCommitTS]?
@@ -79,13 +80,31 @@ type spanState struct {
 	subID logpuller.SubscriptionID
 
 	// data before this watermark won't be needed
-	watermark atomic.Uint64
+	dispatchers map[common.DispatcherID]*dispatcherStat
 
 	// the resolveTs persisted in the store
 	resolvedTs atomic.Uint64
-
-	ch chan eventWithSpanState
+	chIndex    int
 }
+
+// maybe it can be removed
+type dispatcherStat struct {
+	dispatcherID common.DispatcherID
+	watermark    uint64
+	startTS      uint64
+}
+
+func (s *spanState) minWatermark() uint64 {
+	minWatermark := uint64(0)
+	for _, d := range s.dispatchers {
+		wm := d.watermark
+		if minWatermark == 0 || wm < minWatermark {
+			minWatermark = wm
+		}
+	}
+	return minWatermark
+}
+
 type eventStore struct {
 	pdClock pdutil.Clock
 
@@ -102,7 +121,7 @@ type eventStore struct {
 
 	spanStates struct {
 		sync.RWMutex
-		dispatcherMap   map[common.DispatcherID]*spanState
+		dispatcherMap   *utils.BtreeMap[*heartbeatpb.TableSpan, *spanState]
 		subscriptionMap map[logpuller.SubscriptionID]*spanState
 	}
 }
@@ -161,7 +180,7 @@ func NewEventStore(
 		store.dbs = append(store.dbs, db)
 		store.eventChs = append(store.eventChs, make(chan eventWithSpanState, 1024))
 	}
-	store.spanStates.dispatcherMap = make(map[common.DispatcherID]*spanState)
+	store.spanStates.dispatcherMap = utils.NewBtreeMap[*heartbeatpb.TableSpan, *spanState](heartbeatpb.LessTableSpan)
 	store.spanStates.subscriptionMap = make(map[logpuller.SubscriptionID]*spanState)
 
 	for i := range store.dbs {
@@ -204,73 +223,106 @@ func (e *eventStore) Run(ctx context.Context) error {
 	return eg.Wait()
 }
 
-func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTS common.Ts, observer EventObserver, notifier WatermarkNotifier) error {
+func (e *eventStore) RegisterDispatcher(
+	dispatcherID common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTS common.Ts,
+	observer EventObserver, notifier WatermarkNotifier,
+) error {
 	span := *tableSpan
 	log.Info("register dispatcher",
 		zap.Any("dispatcherID", dispatcherID),
 		zap.String("span", tableSpan.String()),
 		zap.Uint64("startTS", startTS))
+
+	e.spanStates.Lock()
+	if state, ok := e.spanStates.dispatcherMap.Get(&span); ok {
+		state.dispatchers[dispatcherID] = &dispatcherStat{
+			dispatcherID: dispatcherID,
+			startTS:      startTS,
+			watermark:    startTS,
+		}
+		e.spanStates.Unlock()
+		return nil
+	}
+
+	e.spanStates.Unlock()
+	log.Info("add a span in eventstore", zap.String("span", span.String()))
 	subID := e.puller.Subscribe(span, startTS)
+	state := &spanState{
+		span:        span,
+		observer:    observer,
+		dispatchers: make(map[common.DispatcherID]*dispatcherStat),
+		notifier:    notifier,
+		subID:       subID,
+		// TODO: support split table to multiple subSpans.
+		// maybe share data for different subSpan is meaningless.
+		chIndex: common.HashTableSpan(span, len(e.eventChs)),
+	}
+	// TODO: how to support different startTs for different dispatchers?
+	state.resolvedTs.Store(uint64(startTS))
+	state.dispatchers[dispatcherID] = &dispatcherStat{
+		dispatcherID: dispatcherID,
+		startTS:      startTS,
+		watermark:    startTS,
+	}
 
 	e.spanStates.Lock()
 	defer e.spanStates.Unlock()
-	state := &spanState{
-		span:     span,
-		observer: observer,
-		notifier: notifier,
-		subID:    subID,
-	}
-	// TODO: may we don't need to hash on span?
-	chIndex := common.HashTableSpan(span, len(e.eventChs))
-	state.ch = e.eventChs[chIndex]
-	state.watermark.Store(uint64(startTS))
-	e.spanStates.dispatcherMap[dispatcherID] = state
+	e.spanStates.dispatcherMap.ReplaceOrInsert(&span, state)
 	e.spanStates.subscriptionMap[subID] = state
 	return nil
 }
 
-func (e *eventStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, sendTS uint64) error {
+func (e *eventStore) UpdateDispatcherSendTS(
+	dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, sendTS uint64,
+) error {
 	// TODO: update sendTs in event service
 	e.schemaStore.UpdateDispatcherSendTS(dispatcherID, common.Ts(sendTS))
 	e.spanStates.Lock()
 	defer e.spanStates.Unlock()
-	if state, ok := e.spanStates.dispatcherMap[dispatcherID]; ok {
-		for {
-			currentWatermark := state.watermark.Load()
-			if sendTS <= currentWatermark {
-				return nil
-			}
-			if state.watermark.CompareAndSwap(currentWatermark, sendTS) {
-				e.gcManager.addGCItem(state.span, currentWatermark, sendTS)
-				return nil
-			}
+	if state, ok := e.spanStates.dispatcherMap.Get(span); ok {
+		if !ok {
+			log.Panic("should not happen", zap.Any("dispatcherID", dispatcherID))
 		}
+		state.dispatchers[dispatcherID].watermark = sendTS
 	}
 	return nil
 }
 
-func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
-	log.Info("unregister dispatcher", zap.Any("dispatcherID", dispatcherID))
+func (e *eventStore) UnregisterDispatcher(
+	dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan,
+) error {
+	log.Info("unregister dispatcher", zap.Stringer("dispatcherID", dispatcherID))
 	e.spanStates.Lock()
 	defer e.spanStates.Unlock()
-	if state, ok := e.spanStates.dispatcherMap[dispatcherID]; ok {
+	state, ok := e.spanStates.dispatcherMap.Get(span)
+	if !ok {
+		log.Panic("deregister an unregistered span", zap.String("span", span.String()))
+	}
+	if _, ok := state.dispatchers[dispatcherID]; ok {
+		delete(state.dispatchers, dispatcherID)
+	} else {
+		log.Panic("deregister an unregistered dispatcher", zap.Stringer("dispatcherID", dispatcherID))
+	}
+
+	if len(state.dispatchers) == 0 {
 		// TODO: do we need unlock before puller.Unsubscribe?
 		e.puller.Unsubscribe(state.subID)
-		delete(e.spanStates.dispatcherMap, dispatcherID)
+		e.spanStates.dispatcherMap.Delete(span)
 		delete(e.spanStates.subscriptionMap, state.subID)
+		log.Info("remove a span in eventstore", zap.String("span", span.String()))
 	}
 	return nil
 }
 
 func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange *common.DataRange) (EventIterator, error) {
 	// do some check
-	state, ok := e.spanStates.dispatcherMap[dispatcherID]
-	if !ok || state.watermark.Load() > dataRange.StartTs {
+	state, ok := e.spanStates.dispatcherMap.Get(dataRange.Span)
+	dispatcher, okw := state.dispatchers[dispatcherID]
+	if !ok || !okw || dispatcher.watermark > dataRange.StartTs {
 		log.Panic("should not happen")
 	}
 	span := state.span
-	dbIndex := common.HashTableSpan(span, len(e.eventChs))
-	db := e.dbs[dbIndex]
+	db := e.dbs[state.chIndex]
 	// TODO: respect key range in span
 	// convert endTs to inclusive: [startTs, endTs) -> (startTs, endTs]
 	start := EncodeTsKey(uint64(span.TableID), dataRange.StartTs+1, 0)
@@ -324,7 +376,7 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 				resolvedTs := tableState.resolvedTs.Load()
 				resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
 				resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
-				watermark := tableState.watermark.Load()
+				watermark := tableState.minWatermark()
 				watermarkPhyTs := oracle.ExtractPhysical(watermark)
 				watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
 				metrics.EventStoreRegisterDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
@@ -445,7 +497,7 @@ func (e *eventStore) writeEvent(subID logpuller.SubscriptionID, raw *common.RawK
 		// TODO: make sure this won't block
 		state.observer(raw)
 	}
-	state.ch <- eventWithSpanState{
+	e.eventChs[state.chIndex] <- eventWithSpanState{
 		raw:   raw,
 		state: state,
 	}

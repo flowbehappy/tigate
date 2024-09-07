@@ -42,33 +42,38 @@ func newColumnsPartitionGenerator(columns []string) *ColumnsPartitionGenerator {
 	}
 }
 
-func (r *ColumnsPartitionGenerator) GeneratePartitionIndexAndKey(row *common.RowChangedEvent, partitionNum int32) (int32, string, error) {
+func (r *ColumnsPartitionGenerator) GeneratePartitionIndexAndKey(row *common.RowDelta, partitionNum int32, tableInfo *common.TableInfo, commitTs uint64) (int32, string, error) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 	r.hasher.Reset()
 
-	r.hasher.Write([]byte(row.TableInfo.GetSchemaName()), []byte(row.TableInfo.GetTableName()))
+	r.hasher.Write([]byte(tableInfo.GetSchemaName()), []byte(tableInfo.GetTableName()))
 
-	dispatchCols := row.Columns
-	if len(dispatchCols) == 0 {
-		dispatchCols = row.PreColumns
+	rowData := row.Row
+	if rowData.IsEmpty() {
+		rowData = row.PreRow
 	}
 
-	offsets, ok := row.TableInfo.OffsetsByNames(r.Columns)
+	offsets, ok := tableInfo.OffsetsByNames(r.Columns)
 	if !ok {
 		log.Error("columns not found when dispatch event",
-			zap.Any("tableName", row.TableInfo.GetTableName()),
+			zap.Any("tableName", tableInfo.GetTableName()),
 			zap.Strings("columns", r.Columns))
 		return 0, "", errors.ErrDispatcherFailed.GenWithStack(
-			"columns not found when dispatch event, table: %v, columns: %v", row.TableInfo.GetTableName(), r.Columns)
+			"columns not found when dispatch event, table: %v, columns: %v", tableInfo.GetTableName(), r.Columns)
 	}
 
 	for idx := 0; idx < len(r.Columns); idx++ {
-		col := dispatchCols[offsets[idx]]
-		if col == nil {
+		colInfo := tableInfo.Columns[offsets[idx]]
+		value, err := common.FormatColVal(&rowData, colInfo, idx)
+		if err != nil {
+			// FIXME:
+			log.Panic("FormatColVal failed", zap.Error(err))
+		}
+		if value == nil {
 			continue
 		}
-		r.hasher.Write([]byte(r.Columns[idx]), []byte(model.ColumnValueString(col.Value)))
+		r.hasher.Write([]byte(r.Columns[idx]), []byte(model.ColumnValueString(value)))
 	}
 
 	sum32 := r.hasher.Sum32()

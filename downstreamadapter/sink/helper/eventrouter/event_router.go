@@ -102,12 +102,6 @@ func (s *EventRouter) GetTopicForDDL(ddl *model.DDLEvent) string {
 }
 
 // GetPartitionForRowChange returns the target partition for row changes.
-func (s *EventRouter) GetPartitionForRowChange(row *common.RowChangedEvent, partitionNum int32) (int32, string, error) {
-	return s.GetPartitionDispatcher(row.TableInfo.GetSchemaName(), row.TableInfo.GetTableName()).
-		GeneratePartitionIndexAndKey(row, partitionNum)
-}
-
-// GetPartitionForRowChange returns the target partition for row changes.
 func (s *EventRouter) GetPartitionGeneratorForRowChange(tableInfo *common.TableInfo) partition.PartitionGenerator {
 	return s.GetPartitionDispatcher(tableInfo.GetSchemaName(), tableInfo.GetTableName())
 }

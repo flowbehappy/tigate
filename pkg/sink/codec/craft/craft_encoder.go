@@ -59,9 +59,10 @@ func (e *BatchEncoder) AppendRowChangedEvent(
 }
 
 // EncodeDDLEvent implements the RowEventEncoder interface
-func (e *BatchEncoder) EncodeDDLEvent(ev *model.DDLEvent) (*ticommon.Message, error) {
-	return ticommon.NewDDLMsg(config.ProtocolCraft,
-		nil, NewDDLEventEncoder(e.allocator, ev).Encode(), ev), nil
+func (e *BatchEncoder) EncodeDDLEvent(ev *common.DDLEvent) (*ticommon.Message, error) {
+	// return ticommon.NewDDLMsg(config.ProtocolCraft,
+	// 	nil, NewDDLEventEncoder(e.allocator, ev).Encode(), ev), nil
+	return nil, nil
 }
 
 // Build implements the RowEventEncoder interface

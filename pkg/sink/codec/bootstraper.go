@@ -137,7 +137,7 @@ func (b *bootstrapWorker) sendBootstrapMsg(ctx context.Context, table *tableStat
 		return nil
 	}
 	table.reset()
-	tableInfo := table.tableInfo.Load().(*model.TableInfo)
+	tableInfo := table.tableInfo.Load().(*common.TableInfo)
 	events, err := b.generateEvents(table.topic, table.totalPartition.Load(), tableInfo)
 	if err != nil {
 		return errors.Trace(err)
@@ -152,13 +152,22 @@ func (b *bootstrapWorker) sendBootstrapMsg(ctx context.Context, table *tableStat
 	return nil
 }
 
+func NewBootstrapDDLEvent(tableInfo *common.TableInfo) *common.DDLEvent {
+	return &common.DDLEvent{
+		// StartTs:  0,
+		CommitTS: 0,
+		// TableInfo:   tableInfo,
+		// IsBootstrap: true,
+	}
+}
+
 func (b *bootstrapWorker) generateEvents(
 	topic string,
 	totalPartition int32,
-	tableInfo *model.TableInfo,
+	tableInfo *common.TableInfo,
 ) ([]*future, error) {
 	res := make([]*future, 0, totalPartition)
-	msg, err := b.rowEventEncoder.EncodeDDLEvent(model.NewBootstrapDDLEvent(tableInfo))
+	msg, err := b.rowEventEncoder.EncodeDDLEvent(NewBootstrapDDLEvent(tableInfo))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

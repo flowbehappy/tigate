@@ -278,27 +278,27 @@ type ddlEvent struct {
 
 // EncodeDDLEvent only encode DDL event if the watermark event is enabled
 // it's only used for the testing purpose.
-func (a *BatchEncoder) EncodeDDLEvent(e *model.DDLEvent) (*ticommon.Message, error) {
-	if a.config.EnableTiDBExtension && a.config.AvroEnableWatermark {
-		buf := new(bytes.Buffer)
-		_ = binary.Write(buf, binary.BigEndian, ddlByte)
+func (a *BatchEncoder) EncodeDDLEvent(e *common.DDLEvent) (*ticommon.Message, error) {
+	// if a.config.EnableTiDBExtension && a.config.AvroEnableWatermark {
+	// 	buf := new(bytes.Buffer)
+	// 	_ = binary.Write(buf, binary.BigEndian, ddlByte)
 
-		event := &ddlEvent{
-			Query:    e.Query,
-			Type:     e.Type,
-			Schema:   e.TableInfo.TableName.Schema,
-			Table:    e.TableInfo.TableName.Table,
-			CommitTs: e.CommitTs,
-		}
-		data, err := json.Marshal(event)
-		if err != nil {
-			return nil, cerror.WrapError(cerror.ErrAvroToEnvelopeError, err)
-		}
-		buf.Write(data)
+	// 	event := &ddlEvent{
+	// 		Query:    e.Query,
+	// 		Type:     e.Type,
+	// 		Schema:   e.TableInfo.TableName.Schema,
+	// 		Table:    e.TableInfo.TableName.Table,
+	// 		CommitTs: e.CommitTs,
+	// 	}
+	// 	data, err := json.Marshal(event)
+	// 	if err != nil {
+	// 		return nil, cerror.WrapError(cerror.ErrAvroToEnvelopeError, err)
+	// 	}
+	// 	buf.Write(data)
 
-		value := buf.Bytes()
-		return ticommon.NewDDLMsg(config.ProtocolAvro, nil, value, e), nil
-	}
+	// 	value := buf.Bytes()
+	// 	return ticommon.NewDDLMsg(config.ProtocolAvro, nil, value, e), nil
+	// }
 
 	return nil, nil
 }

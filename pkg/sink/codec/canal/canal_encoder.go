@@ -69,36 +69,37 @@ func (d *BatchEncoder) AppendRowChangedEvent(
 }
 
 // EncodeDDLEvent implements the RowEventEncoder interface
-func (d *BatchEncoder) EncodeDDLEvent(e *model.DDLEvent) (*ticommon.Message, error) {
-	entry, err := d.entryBuilder.fromDDLEvent(e)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	b, err := proto.Marshal(entry)
-	if err != nil {
-		return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
-	}
+func (d *BatchEncoder) EncodeDDLEvent(e *common.DDLEvent) (*ticommon.Message, error) {
+	// entry, err := d.entryBuilder.fromDDLEvent(e)
+	// if err != nil {
+	// 	return nil, errors.Trace(err)
+	// }
+	// b, err := proto.Marshal(entry)
+	// if err != nil {
+	// 	return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
+	// }
 
-	messages := new(canal.Messages)
-	messages.Messages = append(messages.Messages, b)
-	b, err = messages.Marshal()
-	if err != nil {
-		return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
-	}
+	// messages := new(canal.Messages)
+	// messages.Messages = append(messages.Messages, b)
+	// b, err = messages.Marshal()
+	// if err != nil {
+	// 	return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
+	// }
 
-	packet := &canal.Packet{
-		VersionPresent: &canal.Packet_Version{
-			Version: CanalPacketVersion,
-		},
-		Type: canal.PacketType_MESSAGES,
-	}
-	packet.Body = b
-	b, err = packet.Marshal()
-	if err != nil {
-		return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
-	}
+	// packet := &canal.Packet{
+	// 	VersionPresent: &canal.Packet_Version{
+	// 		Version: CanalPacketVersion,
+	// 	},
+	// 	Type: canal.PacketType_MESSAGES,
+	// }
+	// packet.Body = b
+	// b, err = packet.Marshal()
+	// if err != nil {
+	// 	return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
+	// }
 
-	return ticommon.NewDDLMsg(config.ProtocolCanal, nil, b, e), nil
+	// return ticommon.NewDDLMsg(config.ProtocolCanal, nil, b, e), nil
+	return nil, nil
 }
 
 // Build implements the RowEventEncoder interface
