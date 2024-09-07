@@ -71,19 +71,14 @@ type schemaStore struct {
 	mu sync.RWMutex
 
 	maxResolvedTS atomic.Uint64
-
 	// max finishedTS of all applied ddl events
 	finishedDDLTS uint64
 	// max schemaVersion of all applied ddl events
 	schemaVersion int64
 
-	// schemaID -> database info
-	// it contains all databases
-	databaseMap DatabaseInfoMap
-
 	// tableID -> versioned store
 	// it just contains tables which have registered dispatchers
-	tableInfoStoreMap TableInfoStoreMap
+	tableInfoStoreMap map[common.TableID]*versionedTableInfoStore
 
 	// dispatcherID -> dispatch info
 	// TODO: how to deal with table event dispatchers？
@@ -91,6 +86,8 @@ type schemaStore struct {
 
 	tableTriggerDispatcherMap map[common.DispatcherID]*ddlListWithFilter
 }
+
+// TODO: add a go routine fetch gc from persist storage to gc data in tableInfoStoreMap
 
 func NewSchemaStore(
 	ctx context.Context,

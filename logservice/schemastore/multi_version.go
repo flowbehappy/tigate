@@ -226,6 +226,16 @@ func assertNonDeleted(v *versionedTableInfoStore) {
 	}
 }
 
+func (v *versionedTableInfoStore) applyDDLFromPersistStorage(job *model.Job) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.initialized {
+		log.Panic("should not happen")
+	}
+
+	v.doApplyDDL(job)
+}
+
 func (v *versionedTableInfoStore) applyDDL(job *model.Job) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -240,6 +250,7 @@ func (v *versionedTableInfoStore) applyDDL(job *model.Job) {
 }
 
 // lock must be hold by the caller
+// TODO: filter old ddl: there may be some pending ddls which is also written to disk and applied to table info store already
 func (v *versionedTableInfoStore) doApplyDDL(job *model.Job) {
 	if len(v.infos) != 0 && common.Ts(job.BinlogInfo.FinishedTS) <= v.infos[len(v.infos)-1].version {
 		log.Panic("ddl job finished ts should be monotonically increasing")

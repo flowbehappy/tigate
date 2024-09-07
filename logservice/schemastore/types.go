@@ -1,8 +1,6 @@
 package schemastore
 
 import (
-	"math"
-
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
@@ -13,10 +11,6 @@ type DDLEvent struct {
 	CommitTS common.Ts `json:"commit_ts"`
 }
 
-type DispatcherInfo struct {
-	tableID common.TableID
-}
-
 type DatabaseInfo struct {
 	Name          string
 	Tables        []common.TableID
@@ -24,10 +18,10 @@ type DatabaseInfo struct {
 	DeleteVersion common.Ts
 }
 
-func (d *DatabaseInfo) isDeleted() bool { return d.DeleteVersion != math.MaxUint64 }
+func (d *DatabaseInfo) needGc(gcTs common.Ts) bool { return d.DeleteVersion < gcTs }
 
-type DatabaseInfoMap map[int64]*DatabaseInfo
-
-type TableInfoStoreMap map[common.TableID]*versionedTableInfoStore
-
-type DispatcherInfoMap map[common.DispatcherID]DispatcherInfo
+type TableInfoEntry struct {
+	Version   int    `json:"version"`
+	SchemaID  int64  `json:"schema_id"`
+	TableInfo []byte `json:"table_info"`
+}
