@@ -186,6 +186,7 @@ func formatColVal(row *chunk.Row, col *model.ColumnInfo, idx int) (
 	case mysql.TypeBit:
 		d := row.GetDatum(idx, &col.FieldType)
 		dp := &d
+
 		// Encode bits as integers to avoid pingcap/tidb#10988 (which also affects MySQL itself)
 		v, err = dp.GetBinaryLiteral().ToInt(types.DefaultStmtNoWarningContext)
 		if err != nil {
@@ -197,7 +198,6 @@ func formatColVal(row *chunk.Row, col *model.ColumnInfo, idx int) (
 		if b == nil {
 			b = emptyBytes
 		}
-
 		v = b
 	case mysql.TypeFloat:
 		b := row.GetFloat32(idx)
