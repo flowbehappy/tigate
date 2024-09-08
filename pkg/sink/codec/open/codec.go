@@ -224,22 +224,20 @@ func writeColumnFieldValue(writer *util.JSONWriter, col *timodel.ColumnInfo, row
 	case mysql.TypeEnum, mysql.TypeSet:
 		value := row.GetEnum(idx).Value
 		writer.WriteUint64Field("v", value)
-	case mysql.TypeNewDecimal:
-		d := row.GetMyDecimal(idx)
-		value := d.String()
-		writer.WriteStringField("v", value)
-	case mysql.TypeFloat:
-		value := row.GetFloat32(idx)
-		writer.WriteFloat32Field("v", value)
-	case mysql.TypeDouble:
-		value := row.GetFloat64(idx)
-		writer.WriteFloat64Field("v", value)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeTimestamp:
-		value := row.GetTime(idx).String()
-		writer.WriteStringField("v", value)
+		value := row.GetTime(idx)
+		if value.IsZero() {
+			writer.WriteNullField("v")
+		} else {
+			writer.WriteStringField("v", value.String())
+		}
 	case mysql.TypeDuration:
-		value := row.GetDuration(idx, 0).String()
-		writer.WriteStringField("v", value)
+		value := row.GetDuration(idx, 0)
+		if value.ToNumber().IsZero() {
+			writer.WriteNullField("v")
+		} else {
+			writer.WriteStringField("v", value.String())
+		}
 	case mysql.TypeJSON:
 		value := row.GetJSON(idx).String()
 		writer.WriteStringField("v", value)
@@ -367,24 +365,6 @@ func writeColumnFieldValueIfUpdated(
 		preRowValue := preRow.GetEnum(idx).Value
 		if rowValue != preRowValue {
 			writeFunc(func() { writer.WriteUint64Field("v", preRowValue) })
-		}
-	case mysql.TypeNewDecimal:
-		rowValue := row.GetMyDecimal(idx)
-		preRowValue := preRow.GetMyDecimal(idx)
-		if rowValue.Compare(preRowValue) != 0 {
-			writeFunc(func() { writer.WriteStringField("v", preRowValue.String()) })
-		}
-	case mysql.TypeFloat:
-		rowValue := row.GetFloat32(idx)
-		preRowValue := preRow.GetFloat32(idx)
-		if rowValue != preRowValue {
-			writeFunc(func() { writer.WriteFloat32Field("v", preRowValue) })
-		}
-	case mysql.TypeDouble:
-		rowvalue := row.GetFloat64(idx)
-		preRowValue := preRow.GetFloat64(idx)
-		if rowvalue != preRowValue {
-			writeFunc(func() { writer.WriteFloat64Field("v", preRowValue) })
 		}
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeTimestamp:
 		rowValue := row.GetTime(idx).String()
