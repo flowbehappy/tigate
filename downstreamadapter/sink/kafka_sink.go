@@ -44,7 +44,7 @@ type KafkaSink struct {
 
 	protocol config.Protocol
 
-	columnSelector *common.ColumnSelector
+	columnSelector *common.ColumnSelectors
 	// eventRouter used to route events to the right topic and partition.
 	eventRouter *eventrouter.EventRouter
 	// topicManager used to manage topics.

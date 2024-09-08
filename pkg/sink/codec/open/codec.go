@@ -18,7 +18,7 @@ import (
 	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 )
 
-func encodeRowChangedEvent(e *common.RowEvent, config *ticommon.Config, largeMessageOnlyHandleKeyColumns bool, claimCheckLocationName string) ([]byte, []byte, int, error) {
+func encodeRowChangeEventWithoutCompress(e *common.RowEvent, config *ticommon.Config, largeMessageOnlyHandleKeyColumns bool, claimCheckLocationName string) ([]byte, []byte, error) {
 	keyBuf := &bytes.Buffer{}
 	valueBuf := &bytes.Buffer{}
 	keyWriter := util.BorrowJSONWriter(keyBuf)
@@ -38,53 +38,71 @@ func encodeRowChangedEvent(e *common.RowEvent, config *ticommon.Config, largeMes
 	var err error
 	if e.IsDelete() {
 		onlyHandleKeyColumns := config.DeleteOnlyHandleKeyColumns || largeMessageOnlyHandleKeyColumns
-
-		valueWriter.WriteArrayField("d", func() {
-			err = writeColumnFieldValues(valueWriter, e.GetPreRows(), e.TableInfo, e.ColumnSelector, onlyHandleKeyColumns)
+		valueWriter.WriteObject(func() {
+			valueWriter.WriteObjectField("d", func() {
+				err = writeColumnFieldValues(valueWriter, e.GetPreRows(), e.TableInfo, e.ColumnSelector, onlyHandleKeyColumns)
+			})
 		})
 		if err != nil {
-			return nil, nil, 0, err
+			return nil, nil, err
 		}
 	} else if e.IsInsert() {
-		valueWriter.WriteArrayField("u", func() {
-			err = writeColumnFieldValues(valueWriter, e.GetRows(), e.TableInfo, e.ColumnSelector, largeMessageOnlyHandleKeyColumns)
+		valueWriter.WriteObject(func() {
+			valueWriter.WriteObjectField("u", func() {
+				err = writeColumnFieldValues(valueWriter, e.GetRows(), e.TableInfo, e.ColumnSelector, largeMessageOnlyHandleKeyColumns)
+			})
 		})
 		if err != nil {
-			return nil, nil, 0, err
+			return nil, nil, err
 		}
 	} else if e.IsUpdate() {
-		valueWriter.WriteArrayField("u", func() {
-			err = writeColumnFieldValues(valueWriter, e.GetRows(), e.TableInfo, e.ColumnSelector, largeMessageOnlyHandleKeyColumns)
+		valueWriter.WriteObject(func() {
+			valueWriter.WriteObjectField("u", func() {
+				err = writeColumnFieldValues(valueWriter, e.GetRows(), e.TableInfo, e.ColumnSelector, largeMessageOnlyHandleKeyColumns)
+			})
+			if err != nil {
+				return
+			}
+			if !config.OnlyOutputUpdatedColumns {
+				valueWriter.WriteObjectField("p", func() {
+					err = writeColumnFieldValues(valueWriter, e.GetPreRows(), e.TableInfo, e.ColumnSelector, largeMessageOnlyHandleKeyColumns)
+				})
+			} else {
+				valueWriter.WriteObjectField("p", func() {
+					writeUpdatedColumnFieldValues(valueWriter, e.GetPreRows(), e.GetRows(), e.TableInfo, e.ColumnSelector, largeMessageOnlyHandleKeyColumns)
+				})
+			}
 		})
+
 		if err != nil {
-			return nil, nil, 0, err
-		}
-		valueWriter.WriteArrayField("p", func() {
-			err = writeColumnFieldValues(valueWriter, e.GetPreRows(), e.TableInfo, e.ColumnSelector, largeMessageOnlyHandleKeyColumns)
-		})
-		if err != nil {
-			return nil, nil, 0, err
+			return nil, nil, err
 		}
 	}
 
 	util.ReturnJSONWriter(keyWriter)
 	util.ReturnJSONWriter(valueWriter)
 
-	value, err := ticommon.Compress(
-		config.ChangefeedID, config.LargeMessageHandle.LargeMessageHandleCompression, valueBuf.Bytes(),
-	)
+	return keyBuf.Bytes(), valueBuf.Bytes(), nil
+}
 
+func encodeRowChangedEvent(e *common.RowEvent, config *ticommon.Config, largeMessageOnlyHandleKeyColumns bool, claimCheckLocationName string) ([]byte, []byte, int, error) {
+	key, value, err := encodeRowChangeEventWithoutCompress(e, config, largeMessageOnlyHandleKeyColumns, claimCheckLocationName)
 	if err != nil {
 		return nil, nil, 0, err
 	}
 
-	key := keyBuf.Bytes()
+	valueCompressed, err := ticommon.Compress(
+		config.ChangefeedID, config.LargeMessageHandle.LargeMessageHandleCompression, value,
+	)
+	if err != nil {
+		return nil, nil, 0, err
+	}
 
 	// for single message that is longer than max-message-bytes
 	// 16 is the length of `keyLenByte` and `valueLenByte`, 8 is the length of `versionHead`
-	length := len(key) + len(value) + ticommon.MaxRecordOverhead + 16 + 8
+	length := len(key) + len(valueCompressed) + ticommon.MaxRecordOverhead + 16 + 8
 
-	return key, value, length, nil
+	return key, valueCompressed, length, nil
 }
 
 func encodeDDLEvent(e *common.DDLEvent, config *ticommon.Config) ([]byte, []byte, error) {
@@ -174,8 +192,10 @@ func writeColumnFieldValue(writer *util.JSONWriter, col *timodel.ColumnInfo, row
 	flag := *tableInfo.ColumnsFlag[col.ID]
 	whereHandle := flag.IsHandleKey()
 
-	writer.WriteStringField("t", string(colType)) // todo:please check performance
-	writer.WriteBoolField("h", whereHandle)
+	writer.WriteIntField("t", int(colType)) // todo:please check performance
+	if whereHandle {
+		writer.WriteBoolField("h", whereHandle)
+	}
 	writer.WriteUint64Field("f", uint64(flag))
 
 	// TODO:deal with nil
@@ -188,53 +208,59 @@ func writeColumnFieldValue(writer *util.JSONWriter, col *timodel.ColumnInfo, row
 		if err != nil {
 			return nil
 		}
-		writer.WriteUint64Field(col.Name.O, value)
+		writer.WriteUint64Field("v", value)
 	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 		value := row.GetBytes(idx)
 		if value == nil {
 			value = common.EmptyBytes
 		}
-		writer.WriteBase64StringField(col.Name.O, value)
+		writer.WriteBase64StringField("v", value)
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
 		value := row.GetBytes(idx)
 		if value == nil {
 			value = common.EmptyBytes
 		}
-		writer.WriteStringField(col.Name.O, string(hack.String(value)))
+		writer.WriteStringField("v", string(hack.String(value)))
 	case mysql.TypeEnum, mysql.TypeSet:
 		value := row.GetEnum(idx).Value
-		writer.WriteUint64Field(col.Name.O, value)
+		writer.WriteUint64Field("v", value)
 	case mysql.TypeNewDecimal:
 		d := row.GetMyDecimal(idx)
 		value := d.String()
-		writer.WriteStringField(col.Name.O, value)
+		writer.WriteStringField("v", value)
 	case mysql.TypeFloat:
 		value := row.GetFloat32(idx)
-		writer.WriteFloat32Field(col.Name.O, value)
+		writer.WriteFloat32Field("v", value)
 	case mysql.TypeDouble:
 		value := row.GetFloat64(idx)
-		writer.WriteFloat64Field(col.Name.O, value)
+		writer.WriteFloat64Field("v", value)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeTimestamp:
 		value := row.GetTime(idx).String()
-		writer.WriteStringField(col.Name.O, value)
+		writer.WriteStringField("v", value)
 	case mysql.TypeDuration:
 		value := row.GetDuration(idx, 0).String()
-		writer.WriteStringField(col.Name.O, value)
+		writer.WriteStringField("v", value)
 	case mysql.TypeJSON:
 		value := row.GetJSON(idx).String()
-		writer.WriteStringField(col.Name.O, value)
+		writer.WriteStringField("v", value)
 	default:
 		d := row.GetDatum(idx, &col.FieldType)
 		// NOTICE: GetValue() may return some types that go sql not support, which will cause sink DML fail
 		// Make specified convert upper if you need
 		// Go sql support type ref to: https://github.com/golang/go/blob/go1.17.4/src/database/sql/driver/types.go#L236
 		value := d.GetValue()
-		writer.WriteAnyField(col.Name.O, value)
+		writer.WriteAnyField("v", value)
 	}
 	return nil
 }
 
-func writeColumnFieldValues(jWriter *util.JSONWriter, row *chunk.Row, tableInfo *common.TableInfo, selector *common.Selector, onlyHandleKeyColumns bool) error {
+func writeColumnFieldValues(
+	jWriter *util.JSONWriter,
+	row *chunk.Row,
+	tableInfo *common.TableInfo,
+	selector common.Selector,
+	onlyHandleKeyColumns bool,
+) error {
 	flag := false // flag to check if any column is written
 
 	colInfo := tableInfo.Columns
@@ -255,4 +281,143 @@ func writeColumnFieldValues(jWriter *util.JSONWriter, row *chunk.Row, tableInfo 
 		return cerror.ErrOpenProtocolCodecInvalidData.GenWithStack("not found handle key columns for the delete event")
 	}
 	return nil
+}
+
+func writeUpdatedColumnFieldValues(
+	jWriter *util.JSONWriter,
+	preRow *chunk.Row,
+	row *chunk.Row,
+	tableInfo *common.TableInfo,
+	selector common.Selector,
+	onlyHandleKeyColumns bool,
+) {
+	// we don't need check here whether after column selector there still exists handle key column
+	// because writeUpdatedColumnFieldValues only can be called after successfully dealing with one row event
+	colInfo := tableInfo.Columns
+
+	for idx, col := range colInfo {
+		if selector.Select(col) {
+			if onlyHandleKeyColumns && !tableInfo.ColumnsFlag[col.ID].IsHandleKey() {
+				continue
+			}
+			writeColumnFieldValueIfUpdated(jWriter, col, preRow, row, idx, tableInfo)
+		}
+	}
+}
+
+func writeColumnFieldValueIfUpdated(
+	writer *util.JSONWriter,
+	col *timodel.ColumnInfo,
+	preRow *chunk.Row,
+	row *chunk.Row,
+	idx int,
+	tableInfo *common.TableInfo,
+) error {
+
+	colType := col.GetType()
+	flag := *tableInfo.ColumnsFlag[col.ID]
+	whereHandle := flag.IsHandleKey()
+
+	writeFunc := func(writeColumnValue func()) {
+		writer.WriteObjectField(col.Name.O, func() {
+			writer.WriteStringField("t", string(colType)) // todo:please check performance
+			if whereHandle {
+				writer.WriteBoolField("h", whereHandle)
+			}
+			writer.WriteUint64Field("f", uint64(flag))
+			writeColumnValue()
+		})
+	}
+
+	switch col.GetType() {
+	case mysql.TypeBit:
+		rowDatum := row.GetDatum(idx, &col.FieldType)
+		rowDatumPoint := &rowDatum
+		// Encode bits as integers to avoid pingcap/tidb#10988 (which also affects MySQL itself)
+		rowValue, _ := rowDatumPoint.GetBinaryLiteral().ToInt(types.DefaultStmtNoWarningContext)
+
+		preRowDatum := row.GetDatum(idx, &col.FieldType)
+		preRowDatumPoint := &preRowDatum
+		// Encode bits as integers to avoid pingcap/tidb#10988 (which also affects MySQL itself)
+		preRowValue, _ := preRowDatumPoint.GetBinaryLiteral().ToInt(types.DefaultStmtNoWarningContext)
+		// if err != nil {
+		// 	return false, err
+		// }
+
+		if rowValue != preRowValue {
+			writeFunc(func() { writer.WriteUint64Field("v", preRowValue) })
+		}
+	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		rowValue := row.GetBytes(idx)
+		preRowValue := preRow.GetBytes(idx)
+		if !bytes.Equal(rowValue, preRowValue) {
+			writeFunc(func() { writer.WriteBase64StringField("v", preRowValue) })
+		}
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
+		rowValue := row.GetBytes(idx)
+		preRowValue := preRow.GetBytes(idx)
+		if !bytes.Equal(rowValue, preRowValue) {
+			if preRowValue == nil {
+				preRowValue = common.EmptyBytes
+			}
+			writeFunc(func() { writer.WriteStringField("v", string(hack.String(preRowValue))) })
+		}
+	case mysql.TypeEnum, mysql.TypeSet:
+		rowValue := row.GetEnum(idx).Value
+		preRowValue := preRow.GetEnum(idx).Value
+		if rowValue != preRowValue {
+			writeFunc(func() { writer.WriteUint64Field("v", preRowValue) })
+		}
+	case mysql.TypeNewDecimal:
+		rowValue := row.GetMyDecimal(idx)
+		preRowValue := preRow.GetMyDecimal(idx)
+		if rowValue.Compare(preRowValue) != 0 {
+			writeFunc(func() { writer.WriteStringField("v", preRowValue.String()) })
+		}
+	case mysql.TypeFloat:
+		rowValue := row.GetFloat32(idx)
+		preRowValue := preRow.GetFloat32(idx)
+		if rowValue != preRowValue {
+			writeFunc(func() { writer.WriteFloat32Field("v", preRowValue) })
+		}
+	case mysql.TypeDouble:
+		rowvalue := row.GetFloat64(idx)
+		preRowValue := preRow.GetFloat64(idx)
+		if rowvalue != preRowValue {
+			writeFunc(func() { writer.WriteFloat64Field("v", preRowValue) })
+		}
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeTimestamp:
+		rowValue := row.GetTime(idx).String()
+		preRowValue := preRow.GetTime(idx).String()
+		if rowValue != preRowValue {
+			writeFunc(func() { writer.WriteStringField("v", preRowValue) })
+		}
+	case mysql.TypeDuration:
+		rowValue := row.GetDuration(idx, 0)
+		preRowValue := preRow.GetDuration(idx, 0)
+		if rowValue != preRowValue {
+			writeFunc(func() { writer.WriteStringField("v", preRowValue.String()) })
+		}
+	case mysql.TypeJSON:
+		rowValue := row.GetJSON(idx).String()
+		preRowValue := preRow.GetJSON(idx).String()
+		if rowValue != preRowValue {
+			writeFunc(func() { writer.WriteStringField("v", preRowValue) })
+		}
+	default:
+		rowDatum := row.GetDatum(idx, &col.FieldType)
+		// NOTICE: GetValue() may return some types that go sql not support, which will cause sink DML fail
+		// Make specified convert upper if you need
+		// Go sql support type ref to: https://github.com/golang/go/blob/go1.17.4/src/database/sql/driver/types.go#L236
+		rowValue := rowDatum.GetValue()
+
+		preRowDatum := preRow.GetDatum(idx, &col.FieldType)
+		preRowValue := preRowDatum.GetValue()
+
+		if rowValue != preRowValue {
+			writeFunc(func() { writer.WriteAnyField("v", preRowValue) })
+		}
+	}
+	return nil
+
 }

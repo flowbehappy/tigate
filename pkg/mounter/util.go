@@ -84,6 +84,12 @@ func (s *EventTestHelper) ApplyJob(job *timodel.Job) {
 		job.BinlogInfo.TableInfo)
 }
 
+func (s *EventTestHelper) GetTableInfo(job *timodel.Job) *common.TableInfo {
+	key := toTableInfosKey(job.SchemaName, job.TableName)
+	log.Info("apply job", zap.String("jobKey", key), zap.Any("job", job))
+	return s.tableInfos[key]
+}
+
 // DDL2Job executes the DDL stmt and returns the DDL job
 func (s *EventTestHelper) DDL2Job(ddl string) *timodel.Job {
 	s.tk.MustExec(ddl)

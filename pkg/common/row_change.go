@@ -265,7 +265,7 @@ type RowEvent struct {
 	TableInfo      *TableInfo
 	CommitTs       uint64
 	Event          RowDelta
-	ColumnSelector *Selector
+	ColumnSelector Selector
 	Callback       func()
 }
 
