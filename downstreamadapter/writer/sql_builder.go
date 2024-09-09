@@ -10,6 +10,14 @@ import (
 	"go.uber.org/zap"
 )
 
+type preparedDMLs struct {
+	sqls            []string
+	values          [][]interface{}
+	rowCount        int
+	approximateSize int64
+	startTs         []uint64
+}
+
 // prepareReplace builds a parametrics REPLACE statement as following
 // sql: `REPLACE INTO `test`.`t` VALUES (?,?,?)`
 func buildInsert(
