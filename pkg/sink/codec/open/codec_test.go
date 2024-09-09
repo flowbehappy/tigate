@@ -119,13 +119,144 @@ func TestDMLEvent(t *testing.T) {
 
 }
 
-func TestDDLEvent(t *testing.T) {}
+func TestOnlyOutputUpdatedEvent(t *testing.T) {
+	helper := mounter.NewEventTestHelper(t)
+	defer helper.Close()
 
-func TestResolvedTsEvent(t *testing.T) {}
+	helper.Tk().MustExec("use test")
 
-func TestHandleOnlyEvent(t *testing.T) {}
+	protocolConfig := ticommon.NewConfig(config.ProtocolOpen)
+	protocolConfig.OnlyOutputUpdatedColumns = true
 
-func TestEncodeWithColumnSelector(t *testing.T) {}
+	{
+		job := helper.DDL2Job(`create table test.t(a tinyint primary key, b int, c decimal(10,2), d json, e char(10), f binary(10), g blob)`)
+		event := helper.DML2Event("test", "t", `insert into test.t values (1, 123, 123.12, '{"key1": "value1"}',"Alice",0x0102030405060708090A,0x4944330300000000)`)
+		eventNew := helper.DML2Event("test", "t", `update test.t set b = 456,c = 456.45 where a = 1`)
+		tableInfo := helper.GetTableInfo(job)
+
+		preRow, _ := event.GetNextRow()
+		row, _ := eventNew.GetNextRow()
+		row.PreRow = preRow.Row
+
+		updateRowEvent := &common.RowEvent{
+			TableInfo:      tableInfo,
+			CommitTs:       1,
+			Event:          row,
+			ColumnSelector: common.NewDefaultColumnSelector(),
+			Callback:       func() {}}
+
+		_, value, err := encodeRowChangeEventWithoutCompress(updateRowEvent, protocolConfig, false, "")
+		require.NoError(t, err)
+
+		require.Equal(t, `{"u":{"a":{"t":1,"h":true,"f":11,"v":1},"b":{"t":3,"f":65,"v":456},"c":{"t":246,"f":65,"v":"456.45"},"d":{"t":245,"f":65,"v":"{\"key1\": \"value1\"}"},"e":{"t":254,"f":64,"v":"Alice"},"f":{"t":254,"f":65,"v":"\\x01\\x02\\x03\\x04\\x05\\x06\\a\\b\\t\\n"},"g":{"t":252,"f":65,"v":"SUQzAwAAAAA="}},"p":{"b":{"t":3,"f":65,"v":123},"c":{"t":246,"f":65,"v":"123.12"}}}`, string(value))
+
+	}
+}
+
+func TestHandleOnlyEvent(t *testing.T) {
+	helper := mounter.NewEventTestHelper(t)
+	defer helper.Close()
+
+	helper.Tk().MustExec("use test")
+
+	job := helper.DDL2Job(`create table test.t(a tinyint primary key, b int)`)
+
+	tableInfo := helper.GetTableInfo(job)
+	protocolConfig := ticommon.NewConfig(config.ProtocolOpen)
+
+	// Insert
+	dmlEvent := helper.DML2Event("test", "t", `insert into test.t values (1, 123)`)
+	require.NotNil(t, dmlEvent)
+	insertRow, ok := dmlEvent.GetNextRow()
+	require.True(t, ok)
+
+	insertRowEvent := &common.RowEvent{
+		TableInfo:      tableInfo,
+		CommitTs:       1,
+		Event:          insertRow,
+		ColumnSelector: common.NewDefaultColumnSelector(),
+		Callback:       func() {}}
+
+	key, value, err := encodeRowChangeEventWithoutCompress(insertRowEvent, protocolConfig, true, "")
+	require.NoError(t, err)
+
+	require.Equal(t, `{"ts":1,"scm":"test","tbl":"t","t":1}`, string(key))
+	require.Equal(t, `{"u":{"a":{"t":1,"h":true,"f":11,"v":1}}}`, string(value))
+}
+
+func TestDDLEvent(t *testing.T) {
+	helper := mounter.NewEventTestHelper(t)
+	defer helper.Close()
+
+	helper.Tk().MustExec("use test")
+
+	job := helper.DDL2Job(`create table test.t(a tinyint primary key, b int)`)
+
+	protocolConfig := ticommon.NewConfig(config.ProtocolOpen)
+
+	ddlEvent := &common.DDLEvent{
+		Job:      job,
+		CommitTS: 1,
+	}
+
+	key, value, err := encodeDDLEvent(ddlEvent, protocolConfig)
+	require.NoError(t, err)
+
+	require.Equal(t, `{"ts":1,"scm":"test","tbl":"t","t":2}`, string(key)[16:])
+	require.Equal(t, `{"q":"create table test.t(a tinyint primary key, b int)","t":3}`, string(value)[8:]) // ?
+
+}
+
+func TestResolvedTsEvent(t *testing.T) {
+	key, value, err := encodeResolvedTs(12345678)
+	require.NoError(t, err)
+
+	require.Equal(t, `{"ts":12345678,"t":3}`, string(key)[16:])
+	require.Equal(t, 8, len(string(value)))
+
+}
+
+func TestEncodeWithColumnSelector(t *testing.T) {
+	helper := mounter.NewEventTestHelper(t)
+	defer helper.Close()
+	helper.Tk().MustExec("use test")
+
+	replicaConfig := config.GetDefaultReplicaConfig()
+	replicaConfig.Sink.ColumnSelectors = []*config.ColumnSelector{
+		{
+			Matcher: []string{"test.*"},
+			Columns: []string{"a*"},
+		},
+	}
+	selectors, err := common.NewColumnSelectors(replicaConfig)
+	require.NoError(t, err)
+	selector := selectors.GetSelector("test", "t")
+
+	job := helper.DDL2Job(`create table test.t(a tinyint primary key, b int)`)
+
+	tableInfo := helper.GetTableInfo(job)
+	protocolConfig := ticommon.NewConfig(config.ProtocolOpen)
+
+	dmlEvent := helper.DML2Event("test", "t", `insert into test.t values (1, 123)`)
+	require.NotNil(t, dmlEvent)
+	insertRow, ok := dmlEvent.GetNextRow()
+	require.True(t, ok)
+
+	insertRowEvent := &common.RowEvent{
+		TableInfo:      tableInfo,
+		CommitTs:       1,
+		Event:          insertRow,
+		ColumnSelector: selector,
+		Callback:       func() {}}
+
+	key, value, err := encodeRowChangeEventWithoutCompress(insertRowEvent, protocolConfig, false, "")
+	require.NoError(t, err)
+
+	require.Equal(t, `{"ts":1,"scm":"test","tbl":"t","t":1}`, string(key))
+	require.Equal(t, `{"u":{"a":{"t":1,"h":true,"f":11,"v":1}}}`, string(value))
+
+	// todo: column selector 匹配后没有 handle 列报错
+}
 
 // 包括多个 message 压缩，callback 值等
 func TestEncodeMessages(t *testing.T) {}

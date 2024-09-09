@@ -78,7 +78,7 @@ type ColumnSelectors struct {
 }
 
 // New return a column selectors
-func New(cfg *config.ReplicaConfig) (*ColumnSelectors, error) {
+func NewColumnSelectors(cfg *config.ReplicaConfig) (*ColumnSelectors, error) {
 	selectors := make([]*ColumnSelector, 0, len(cfg.Sink.ColumnSelectors))
 	for _, r := range cfg.Sink.ColumnSelectors {
 		selector, err := newColumnSelector(r, cfg.CaseSensitive)
