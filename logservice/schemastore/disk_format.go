@@ -17,8 +17,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
-	"fmt"
-	"io"
 	"math"
 	"strings"
 	"time"
@@ -38,17 +36,60 @@ import (
 //     {prefix11}{snapshot_ts}{table_id} -> table info and schema id
 //     {prefix12}{snapshot_ts}{schema_id} -> database info
 //  2. ddl jobs
-//     {prefix21}{finished_ddl_ts}{table_id} -> ddl job related to table
-//     {prefix22}{finished_ddl_ts}{schema_id} -> ddl job related to database
-//     {prefix23}{finished_ddl_ts} -> other kinds of ddl job
-//     Note: for ddl jobs related to multiple tables, they will be stored multiple times under different keys.
-//     TODO: if finished_ddl_ts is unique, we can use {prefix}{finished_ddl_ts} as the key
+//     {prefix21}{finished_ddl_ts} -> ddl job
+//     NOTE: {finished_ddl_ts} must be unique
 //  3. metadata
 //     {key31} -> {snapshot_ts}
 //     {key32} -> {max_finished_ddl_ts}{schema_version}{resolved_ts}
 //     the valid data keys on disk includes snapshot data at `snapshot_ts`
 //     and ddl jobs in the range (snapshot_ts, max_finished_ddl_ts]
 //     and we will pull ddl job from `resolved_ts` at restart if the current gc ts is smaller than resolved_ts.
+
+const snapshotSchemaKeyPrefix = "ss_"
+const snapshotTableKeyPrefix = "st_"
+
+const ddlKeyPrefix = "ds_"
+
+func gcTsKey() []byte {
+	return []byte("gc")
+}
+
+func upperBoundKey() []byte {
+	return []byte("up")
+}
+
+func schemaInfoKey(ts common.Ts, schemaID int64) ([]byte, error) {
+	buf := new(bytes.Buffer)
+	buf.WriteString(snapshotSchemaKeyPrefix)
+	if err := binary.Write(buf, binary.BigEndian, ts); err != nil {
+		return nil, err
+	}
+	if err := binary.Write(buf, binary.BigEndian, schemaID); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func tableInfoKey(ts common.Ts, tableID common.TableID) ([]byte, error) {
+	buf := new(bytes.Buffer)
+	buf.WriteString(snapshotTableKeyPrefix)
+	if err := binary.Write(buf, binary.BigEndian, ts); err != nil {
+		return nil, err
+	}
+	if err := binary.Write(buf, binary.BigEndian, tableID); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func ddlJobKey(ts common.Ts) ([]byte, error) {
+	buf := new(bytes.Buffer)
+	buf.WriteString(ddlKeyPrefix)
+	if err := binary.Write(buf, binary.BigEndian, ts); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
 
 func readGcTs(db *pebble.DB) (uint64, error) {
 	snap := db.NewSnapshot()
@@ -142,7 +183,7 @@ func loadTablesInKVSnap(snap *pebble.Snapshot, snapVersion common.Ts) (map[commo
 	return tablesInKVSnap, nil
 }
 
-// load the database info in the range (snapVersion, maxVersion]
+// load the database info and ddl history in the range (snapVersion, upperBound]
 func loadDatabaseInfoAndDDLHistory(
 	snap *pebble.Snapshot,
 	snapVersion common.Ts,
@@ -153,7 +194,7 @@ func loadDatabaseInfoAndDDLHistory(
 	return nil, nil, nil, nil
 }
 
-func readSchemaIDAndTableInfoFromKVSnap(snap *pebble.Snapshot, tableID common.TableID, version common.Ts) (int64, *model.TableInfo) {
+func readSchemaIDAndTableInfoFromKVSnap(snap *pebble.Snapshot, tableID common.TableID, version common.Ts) (common.SchemaID, *model.TableInfo) {
 	targetKey, err := tableInfoKey(version, tableID)
 	if err != nil {
 		log.Fatal("generate table info failed", zap.Error(err))
@@ -179,12 +220,11 @@ func readSchemaIDAndTableInfoFromKVSnap(snap *pebble.Snapshot, tableID common.Ta
 	if err != nil {
 		log.Fatal("unmarshal table info failed", zap.Error(err))
 	}
-	return table_info_entry.SchemaID, tableInfo
+	return common.SchemaID(table_info_entry.SchemaID), tableInfo
 }
 
-// TODO: verify a version can have just one ddl job?
-func readTableDDLEvent(snap *pebble.Snapshot, tableID common.TableID, version common.Ts) DDLEvent {
-	ddlKey, err := ddlJobTableKey(version, tableID)
+func readDDLEvent(snap *pebble.Snapshot, version common.Ts) DDLEvent {
+	ddlKey, err := ddlJobKey(version)
 	if err != nil {
 		log.Fatal("generate ddl job key failed", zap.Error(err))
 	}
@@ -201,126 +241,20 @@ func readTableDDLEvent(snap *pebble.Snapshot, tableID common.TableID, version co
 	return ddlEvent
 }
 
-const snapshotSchemaKeyPrefix = "ss_"
-const snapshotTableKeyPrefix = "st_"
-
-const ddlJobSchemaKeyPrefix = "ds_"
-const ddlJobTableKeyPrefix = "dt_"
-
-// table_id -> common.Ts
-const indexSnapshotKeyPrefix = "is_"
-
-// table_id -> common.Ts
-const indexDDLJobKeyPrefix = "id_"
-
-func gcTsKey() []byte {
-	return []byte("gc")
-}
-
-func upperBoundKey() []byte {
-	return []byte("up")
-}
-
-// key format: <prefix><values[0]><values[1]>...
-func generateKey(prefix string, values ...uint64) ([]byte, error) {
-	buf := new(bytes.Buffer)
-	_, err := buf.WriteString(prefix)
-	if err != nil {
-		return nil, err
-	}
-	for _, v := range values {
-		err = binary.Write(buf, binary.BigEndian, v)
+func writeDDLEvents(db *pebble.DB, ddlEvents ...DDLEvent) error {
+	batch := db.NewBatch()
+	for _, event := range ddlEvents {
+		ddlKey, err := ddlJobKey(common.Ts(event.Job.BinlogInfo.FinishedTS))
 		if err != nil {
-			return nil, err
+			return err
 		}
-	}
-	return buf.Bytes(), nil
-}
-
-func checkAndParseKey(key []byte, prefix string) ([]uint64, error) {
-	if !strings.HasPrefix(string(key), prefix) {
-		return nil, fmt.Errorf("invalid key prefix: %s", string(key))
-	}
-	buf := bytes.NewBuffer(key)
-	buf.Next(len(prefix))
-	var values []uint64
-	for {
-		var v uint64
-		err := binary.Read(buf, binary.BigEndian, &v)
+		ddlValue, err := json.Marshal(event)
 		if err != nil {
-			if err == io.EOF {
-				return values, nil
-			}
-			return nil, err
+			return err
 		}
-		values = append(values, v)
+		batch.Set(ddlKey, ddlValue, pebble.NoSync)
 	}
-}
-
-func schemaInfoKey(ts common.Ts, schemaID int64) ([]byte, error) {
-	return generateKey(snapshotSchemaKeyPrefix, uint64(ts), uint64(schemaID))
-}
-
-func tableInfoKey(ts common.Ts, tableID common.TableID) ([]byte, error) {
-	return generateKey(snapshotTableKeyPrefix, uint64(ts), uint64(tableID))
-}
-
-func ddlJobSchemaKey(ts common.Ts, schemaID int64) ([]byte, error) {
-	return generateKey(ddlJobSchemaKeyPrefix, uint64(ts), uint64(schemaID))
-}
-
-func ddlJobTableKey(ts common.Ts, tableID common.TableID) ([]byte, error) {
-	return generateKey(ddlJobTableKeyPrefix, uint64(ts), uint64(tableID))
-}
-
-func indexSnapshotKey(tableID common.TableID, commitTS common.Ts, schemaID int64) ([]byte, error) {
-	return generateKey(indexSnapshotKeyPrefix, uint64(tableID), uint64(commitTS), uint64(schemaID))
-}
-
-func indexDDLJobKey(tableID common.TableID, commitTS common.Ts) ([]byte, error) {
-	return generateKey(indexDDLJobKeyPrefix, uint64(tableID), uint64(commitTS))
-}
-
-func parseIndexSnapshotKey(key []byte) (common.TableID, common.Ts, int64, error) {
-	values, err := checkAndParseKey(key, indexSnapshotKeyPrefix)
-	if err != nil || len(values) != 3 {
-		log.Fatal("parse index key failed",
-			zap.Any("key", key),
-			zap.Any("keyLength", len(key)),
-			zap.Any("values", values),
-			zap.Error(err))
-	}
-	return common.TableID(values[0]), common.Ts(values[1]), int64(values[2]), nil
-}
-
-func parseIndexDDLJobKey(key []byte) (common.TableID, common.Ts, error) {
-	values, err := checkAndParseKey(key, indexDDLJobKeyPrefix)
-	if err != nil || len(values) != 2 {
-		log.Fatal("parse index key failed", zap.Error(err))
-	}
-	return common.TableID(values[0]), common.Ts(values[1]), nil
-}
-
-func readTSFromSnapshot(snap *pebble.Snapshot, key []byte) ([]common.Ts, error) {
-	value, closer, err := snap.Get(key)
-	if err != nil {
-		return nil, err
-	}
-	defer closer.Close()
-
-	buf := bytes.NewBuffer(value)
-	var values []common.Ts
-	for {
-		var ts common.Ts
-		err := binary.Read(buf, binary.BigEndian, &ts)
-		if err != nil {
-			if err == io.EOF {
-				return values, nil
-			}
-			return nil, err
-		}
-		values = append(values, ts)
-	}
+	return batch.Commit(pebble.NoSync)
 }
 
 const mTablePrefix = "Table"
@@ -413,9 +347,9 @@ func writeSchemaSnapshotAndMeta(
 
 	writeGcTs(db, snapTs)
 	upperBound := upperBoundMeta{
-		FinishedDDLTS: 0,
+		FinishedDDLTs: 0,
 		SchemaVersion: 0,
-		ResolvedTS:    snapTs,
+		ResolvedTs:    snapTs,
 	}
 	writeUpperBoundMeta(db, upperBound)
 

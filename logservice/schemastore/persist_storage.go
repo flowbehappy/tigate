@@ -16,13 +16,17 @@ package schemastore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"os"
 	"sync"
 	"sync/atomic"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -63,12 +67,19 @@ type persistentStorage struct {
 	tablesDDLHistory map[common.TableID][]uint64
 
 	tableTriggerDDLHistory []uint64
+
+	// tableID -> versioned store
+	// it just contains tables which is used by dispatchers
+	tableInfoStoreMap map[common.TableID]*versionedTableInfoStore
+
+	// tableID -> total registered count
+	tableRegisteredCount map[common.TableID]int
 }
 
 type upperBoundMeta struct {
-	FinishedDDLTS common.Ts `json:"finished_ddl_ts"`
+	FinishedDDLTs common.Ts `json:"finished_ddl_ts"`
 	SchemaVersion int64     `json:"schema_version"`
-	ResolvedTS    common.Ts `json:"resolved_ts"`
+	ResolvedTs    common.Ts `json:"resolved_ts"`
 }
 
 func newPersistentStorage(
@@ -108,7 +119,7 @@ func newPersistentStorage(
 	if err != nil {
 		isDataReusable = false
 	}
-	if gcSafePoint >= upperBound.ResolvedTS {
+	if gcSafePoint >= upperBound.ResolvedTs {
 		isDataReusable = false
 	}
 
@@ -122,6 +133,8 @@ func newPersistentStorage(
 		tablesInKVSnap:         make(map[common.TableID]bool),
 		tablesDDLHistory:       make(map[common.TableID][]uint64),
 		tableTriggerDDLHistory: make([]uint64, 0),
+		tableInfoStoreMap:      make(map[common.TableID]*versionedTableInfoStore),
+		tableRegisteredCount:   make(map[common.TableID]int),
 	}
 	if isDataReusable {
 		dataStorage.initializeFromDisk(upperBound)
@@ -133,7 +146,9 @@ func newPersistentStorage(
 		dataStorage.gc(ctx)
 	}()
 
-	// TODO: start a go routine to update upper bound periodically
+	go func() {
+		dataStorage.updateUpperBound(ctx)
+	}()
 
 	return dataStorage, upperBound
 }
@@ -176,50 +191,110 @@ func (p *persistentStorage) initializeFromDisk(upperBound upperBoundMeta) {
 	}
 }
 
-func (p *persistentStorage) writeDDLEvent(ddlEvent DDLEvent) error {
-	// TODO: do we need to ignore some ddl event?
-	ddlValue, err := json.Marshal(ddlEvent)
-	if err != nil {
-		return err
+func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...DDLEvent) error {
+	// TODO: ignore some ddl event
+
+	// TODO: check ddl events are sorted
+
+	p.mu.Lock()
+	for _, event := range ddlEvents {
+		updateDatabaseInfo(event.Job, p.databaseMap)
+		updateDDLHistory(event.Job, p.tablesDDLHistory, p.tableTriggerDDLHistory)
+		updateRegisteredTableInfoStore(event.Job, p.tableInfoStoreMap)
 	}
-	switch ddlEvent.Job.Type {
-	case model.ActionCreateSchema, model.ActionModifySchemaCharsetAndCollate, model.ActionDropSchema:
-		batch := p.db.NewBatch()
-		ddlKey, err := ddlJobSchemaKey(
-			common.Ts(ddlEvent.Job.BinlogInfo.FinishedTS),
-			int64(ddlEvent.Job.SchemaID))
+	p.mu.Unlock()
+
+	writeDDLEvents(p.db, ddlEvents...)
+	return nil
+}
+
+// FIXME: load the info from disk
+func (p *persistentStorage) getAllPhysicalTables(snapTs common.Ts, tableFilter filter.Filter) ([]common.Table, error) {
+	meta := logpuller.GetSnapshotMeta(p.kvStorage, uint64(snapTs))
+	dbinfos, err := meta.ListDatabases()
+	if err != nil {
+		log.Fatal("list databases failed", zap.Error(err))
+	}
+
+	tables := make([]common.Table, 0)
+
+	for _, dbinfo := range dbinfos {
+		if filter.IsSysSchema(dbinfo.Name.O) ||
+			(tableFilter != nil && tableFilter.ShouldIgnoreSchema(dbinfo.Name.O)) {
+			continue
+		}
+		rawTables, err := meta.GetMetasByDBID(dbinfo.ID)
+		log.Info("get database", zap.Any("dbinfo", dbinfo), zap.Int("rawTablesLen", len(rawTables)))
 		if err != nil {
-			return err
+			log.Fatal("get tables failed", zap.Error(err))
 		}
-		batch.Set(ddlKey, ddlValue, pebble.NoSync)
-		return batch.Commit(pebble.NoSync)
-	case model.ActionCreateTable:
-		batch := p.db.NewBatch()
-		// TODO: for cross table ddl, need write two events(may be we need a table_id -> name map?)
-		tableID := ddlEvent.Job.TableID
-		finishedTs := ddlEvent.Job.BinlogInfo.FinishedTS
-		p.mu.Lock()
-		if _, ok := p.tablesDDLHistory[tableID]; ok {
-			log.Panic("should not happen")
+		for _, rawTable := range rawTables {
+			if !isTableRawKey(rawTable.Field) {
+				continue
+			}
+			tbName := &model.TableNameInfo{}
+			err := json.Unmarshal(rawTable.Value, tbName)
+			if err != nil {
+				log.Fatal("get table info failed", zap.Error(err))
+			}
+			// TODO: support ignore sequence / forcereplicate / view cases
+			if tableFilter != nil && tableFilter.ShouldIgnoreTable(dbinfo.Name.O, tbName.Name.O) {
+				continue
+			}
+			tables = append(tables, common.Table{
+				SchemaID: dbinfo.ID,
+				TableID:  tbName.ID,
+			})
 		}
-		p.tablesDDLHistory[tableID] = []uint64{finishedTs}
-		p.tableTriggerDDLHistory = append(p.tableTriggerDDLHistory, finishedTs)
-		p.mu.Unlock()
-		ddlKey, err := ddlJobTableKey(common.Ts(finishedTs), common.TableID(tableID))
-		if err != nil {
-			return err
+	}
+
+	return tables, nil
+}
+
+// only return when table info is initialized
+func (p *persistentStorage) registerTable(tableID common.TableID) error {
+	p.mu.Lock()
+	p.tableRegisteredCount[tableID] += 1
+	store, ok := p.tableInfoStoreMap[tableID]
+	if !ok {
+		store = newEmptyVersionedTableInfoStore(tableID)
+		p.tableInfoStoreMap[tableID] = store
+	}
+	p.mu.Unlock()
+
+	if !ok {
+		return p.buildVersionedTableInfoStore(store)
+	}
+
+	store.waitTableInfoInitialized()
+	return nil
+}
+
+func (p *persistentStorage) unregisterTable(tableID common.TableID) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.tableRegisteredCount[tableID] -= 1
+	if p.tableRegisteredCount[tableID] <= 0 {
+		if _, ok := p.tableInfoStoreMap[tableID]; !ok {
+			return fmt.Errorf(fmt.Sprintf("table %d not found", tableID))
 		}
-		batch.Set(ddlKey, ddlValue, pebble.NoSync)
-		return batch.Commit(pebble.NoSync)
-	default:
-		log.Panic("unknown ddl type", zap.Any("ddlType", ddlEvent.Job.Type))
+		delete(p.tableInfoStoreMap, tableID)
 	}
 	return nil
 }
 
+func (p *persistentStorage) getTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error) {
+	p.mu.Lock()
+	store, ok := p.tableInfoStoreMap[tableID]
+	if !ok {
+		return nil, fmt.Errorf(fmt.Sprintf("table %d not found", tableID))
+	}
+	p.mu.Unlock()
+	return store.getTableInfo(ts)
+}
+
 func (p *persistentStorage) buildVersionedTableInfoStore(
 	store *versionedTableInfoStore,
-	getSchemaName func(schemaID int64) (string, error),
 ) error {
 	tableID := store.getTableID()
 	// get snapshot from disk before get current gc ts to make sure data is not deleted by gc process
@@ -233,6 +308,19 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 	allDDLFinishedTs = append(allDDLFinishedTs, p.tablesDDLHistory[tableID]...)
 	p.mu.RUnlock()
 
+	getSchemaName := func(schemaID common.SchemaID) (string, error) {
+		p.mu.RLock()
+		defer func() {
+			p.mu.RUnlock()
+		}()
+
+		databaseInfo, ok := p.databaseMap[schemaID]
+		if !ok {
+			return "", errors.New("database not found")
+		}
+		return databaseInfo.Name, nil
+	}
+
 	if inKVSnap {
 		if err := addTableInfoFromKVSnap(store, kvSnapVersion, storageSnap, getSchemaName); err != nil {
 			return err
@@ -240,8 +328,9 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 	}
 
 	for _, version := range allDDLFinishedTs {
-		ddlEvent := readTableDDLEvent(storageSnap, tableID, version)
-		schemaName, err := getSchemaName(int64(ddlEvent.Job.SchemaID))
+		ddlEvent := readDDLEvent(storageSnap, version)
+		// TODO: check ddlEvent type
+		schemaName, err := getSchemaName(common.SchemaID(ddlEvent.Job.SchemaID))
 		if err != nil {
 			log.Fatal("get schema name failed", zap.Error(err))
 		}
@@ -249,6 +338,7 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 
 		store.applyDDLFromPersistStorage(ddlEvent.Job)
 	}
+	store.setTableInfoInitialized()
 	return nil
 }
 
@@ -256,14 +346,14 @@ func addTableInfoFromKVSnap(
 	store *versionedTableInfoStore,
 	kvSnapVersion common.Ts,
 	snap *pebble.Snapshot,
-	getSchemaName func(schemaID int64) (string, error),
+	getSchemaName func(schemaID common.SchemaID) (string, error),
 ) error {
 	schemaID, rawTableInfo := readSchemaIDAndTableInfoFromKVSnap(snap, store.getTableID(), kvSnapVersion)
 	schemaName, err := getSchemaName(schemaID)
 	if err != nil {
 		return err
 	}
-	tableInfo := common.WrapTableInfo(schemaID, schemaName, uint64(kvSnapVersion), rawTableInfo)
+	tableInfo := common.WrapTableInfo(int64(schemaID), schemaName, uint64(kvSnapVersion), rawTableInfo)
 	store.addInitialTableInfo(tableInfo)
 	return nil
 }
@@ -297,5 +387,160 @@ func (p *persistentStorage) gc(ctx context.Context) error {
 }
 
 func (p *persistentStorage) doGc() error {
+	return nil
+}
+
+func (p *persistentStorage) updateUpperBound(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+			// TODO: update upper bound periodically
+		}
+	}
+}
+
+func updateDatabaseInfo(
+	job *model.Job,
+	databaseMap map[common.SchemaID]*DatabaseInfo,
+) error {
+	switch job.Type {
+	case model.ActionCreateSchema:
+		return createSchema(job, databaseMap)
+	case model.ActionModifySchemaCharsetAndCollate:
+		// ignore
+		return nil
+	case model.ActionDropSchema:
+		return dropSchema(job, databaseMap)
+	case model.ActionRenameTables:
+		var oldSchemaIDs, newSchemaIDs, oldTableIDs []int64
+		var newTableNames, oldSchemaNames []*model.CIStr
+		err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &newTableNames, &oldTableIDs, &oldSchemaNames)
+		if err != nil {
+			return err
+		}
+	default:
+		log.Panic("unknown ddl type", zap.Any("ddlType", job.Type))
+	}
+
+	return nil
+}
+
+func updateDDLHistory(
+	job *model.Job,
+	tablesDDLHistory map[common.TableID][]uint64,
+	tableTriggerDDLHistory []uint64,
+) error {
+	// switch job.Type {
+	// case model.ActionCreateSchema:
+	// 	return createSchema(job, databaseMap)
+	// case model.ActionModifySchemaCharsetAndCollate:
+	// 	// ignore
+	// 	return nil
+	// case model.ActionDropSchema:
+	// 	return dropSchema(job, databaseMap)
+	// case model.ActionRenameTables:
+	// 	var oldSchemaIDs, newSchemaIDs, oldTableIDs []int64
+	// 	var newTableNames, oldSchemaNames []*model.CIStr
+	// 	err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &newTableNames, &oldTableIDs, &oldSchemaNames)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// case model.ActionCreateTable:
+	// 	tableID := job.TableID
+	// 	finishedTs := job.BinlogInfo.FinishedTS
+	// 	if _, ok := tablesDDLHistory[tableID]; ok {
+	// 		log.Panic("should not happen")
+	// 	}
+	// 	tablesDDLHistory[tableID] = []uint64{finishedTs}
+	// 	tableTriggerDDLHistory = append(tableTriggerDDLHistory, finishedTs)
+	// case model.ActionCreateTables,
+	// 	model.ActionCreateView,
+	// 	model.ActionRecoverTable:
+	// 	if err := fillSchemaName(job, databaseMap); err != nil {
+	// 		return err
+	// 	}
+	// 	// no dispatcher should register on these kinds of tables?
+	// 	// TODO: add a cache for these kinds of newly created tables because they may soon be registered?
+	// 	if store, ok := tableInfoStoreMap[common.TableID(job.TableID)]; ok {
+	// 		// it is possible that it is already registered if the following happens
+	// 		// 1. event send to dispatcher manager
+	// 		// 2. dispatcher register
+	// 		// 3. begin apply ddl to schema store
+	// 		store.applyDDL(job)
+	// 	}
+	// 	return nil
+	// default:
+	// 	log.Panic("unknown ddl type", zap.Any("ddlType", job.Type))
+	// }
+
+	return nil
+}
+
+func updateRegisteredTableInfoStore(
+	job *model.Job,
+	tableInfoStoreMap map[common.TableID]*versionedTableInfoStore,
+) error {
+	switch job.Type {
+	// case model.ActionCreateTables,
+	// 	model.ActionCreateView,
+	// 	model.ActionRecoverTable:
+	// 	if err := fillSchemaName(job, databaseMap); err != nil {
+	// 		return err
+	// 	}
+	// 	// no dispatcher should register on these kinds of tables?
+	// 	// TODO: add a cache for these kinds of newly created tables because they may soon be registered?
+	// 	if store, ok := tableInfoStoreMap[common.TableID(job.TableID)]; ok {
+	// 		// it is possible that it is already registered if the following happens
+	// 		// 1. event send to dispatcher manager
+	// 		// 2. dispatcher register
+	// 		// 3. begin apply ddl to schema store
+	// 		store.applyDDL(job)
+	// 	}
+	// 	return nil
+	}
+	return nil
+}
+
+func fillSchemaName(job *model.Job, databaseMap map[common.SchemaID]*DatabaseInfo) error {
+	schemaID := common.SchemaID(job.SchemaID)
+	databaseInfo, ok := databaseMap[schemaID]
+	if !ok {
+		log.Error("database not found", zap.Any("schemaID", schemaID))
+		return errors.New("database not found")
+	}
+	if databaseInfo.CreateVersion > common.Ts(job.BinlogInfo.FinishedTS) {
+		return errors.New("database is not created")
+	}
+	if databaseInfo.DeleteVersion < common.Ts(job.BinlogInfo.FinishedTS) {
+		return errors.New("database is deleted")
+	}
+	job.SchemaName = databaseInfo.Name
+	return nil
+}
+
+func createSchema(job *model.Job, databaseMap map[common.SchemaID]*DatabaseInfo) error {
+	if _, ok := databaseMap[common.SchemaID(job.SchemaID)]; ok {
+		return errors.New("database already exists")
+	}
+	databaseInfo := &DatabaseInfo{
+		Name:          job.SchemaName,
+		Tables:        make([]common.TableID, 0),
+		CreateVersion: common.Ts(job.BinlogInfo.FinishedTS),
+		DeleteVersion: math.MaxUint64,
+	}
+	databaseMap[common.SchemaID(job.SchemaID)] = databaseInfo
+	return nil
+}
+
+func dropSchema(job *model.Job, databaseMap map[common.SchemaID]*DatabaseInfo) error {
+	databaseInfo, ok := databaseMap[common.SchemaID(job.SchemaID)]
+	if !ok {
+		return errors.New("database not found")
+	}
+	if databaseInfo.DeleteVersion != math.MaxUint64 {
+		return errors.New("database is already deleted")
+	}
+	databaseInfo.DeleteVersion = common.Ts(job.BinlogInfo.FinishedTS)
 	return nil
 }

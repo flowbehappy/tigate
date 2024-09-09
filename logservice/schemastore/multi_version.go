@@ -35,11 +35,6 @@ type versionedTableInfoStore struct {
 
 	tableID common.TableID
 
-	// dispatcherID -> max ts successfully send to dispatcher
-	// gcTS = min(dispatchers[dispatcherID])
-	// when gc, just need retain one version <= gcTS
-	dispatchers map[common.DispatcherID]common.Ts
-
 	// ordered by ts
 	infos []*tableInfoItem
 
@@ -57,7 +52,6 @@ type versionedTableInfoStore struct {
 func newEmptyVersionedTableInfoStore(tableID common.TableID) *versionedTableInfoStore {
 	return &versionedTableInfoStore{
 		tableID:       tableID,
-		dispatchers:   make(map[common.DispatcherID]common.Ts),
 		infos:         make([]*tableInfoItem, 0),
 		deleteVersion: math.MaxUint64,
 		initialized:   false,
@@ -99,15 +93,6 @@ func (v *versionedTableInfoStore) waitTableInfoInitialized() {
 	<-v.readyToRead
 }
 
-func (v *versionedTableInfoStore) getFirstVersion() common.Ts {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if len(v.infos) == 0 {
-		return math.MaxUint64
-	}
-	return v.infos[0].version
-}
-
 // return the table info with the largest version <= ts
 func (v *versionedTableInfoStore) getTableInfo(ts common.Ts) (*common.TableInfo, error) {
 	v.mu.Lock()
@@ -136,67 +121,22 @@ func (v *versionedTableInfoStore) getTableInfo(ts common.Ts) (*common.TableInfo,
 }
 
 // only keep one item with the largest version <= gcTS
-func removeUnusedInfos(infos []*tableInfoItem, dispatchers map[common.DispatcherID]common.Ts) []*tableInfoItem {
-	if len(infos) == 0 {
+func (v *versionedTableInfoStore) gc(gcTs common.Ts) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if len(v.infos) == 0 {
 		log.Fatal("no table info found")
 	}
 
-	gcTS := common.Ts(math.MaxUint64)
-	for _, ts := range dispatchers {
-		if ts < gcTS {
-			gcTS = ts
-		}
-	}
-
-	target := sort.Search(len(infos), func(i int) bool {
-		return infos[i].version > gcTS
+	target := sort.Search(len(v.infos), func(i int) bool {
+		return v.infos[i].version > gcTs
 	})
 	// TODO: all info version is larger than gcTS seems impossible?
 	if target == 0 {
-		return infos
+		return
 	}
 
-	return infos[target-1:]
-}
-
-func (v *versionedTableInfoStore) registerDispatcher(dispatcherID common.DispatcherID, ts common.Ts) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if _, ok := v.dispatchers[dispatcherID]; ok {
-		log.Info("dispatcher already registered", zap.Any("dispatcherID", dispatcherID))
-	}
-	v.dispatchers[dispatcherID] = ts
-}
-
-// return true when the store can be removed(no registered dispatchers)
-func (v *versionedTableInfoStore) unregisterDispatcher(dispatcherID common.DispatcherID) bool {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	delete(v.dispatchers, dispatcherID)
-	if len(v.dispatchers) == 0 {
-		return true
-	}
-	v.infos = removeUnusedInfos(v.infos, v.dispatchers)
-	return false
-}
-
-func (v *versionedTableInfoStore) updateDispatcherSendTS(dispatcherID common.DispatcherID, ts common.Ts) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if oldTS, ok := v.dispatchers[dispatcherID]; !ok {
-		log.Error("dispatcher cannot be found when update send ts",
-			zap.Any("dispatcherID", dispatcherID), zap.Any("ts", ts))
-		return errors.New("dispatcher not found")
-	} else {
-		if ts < oldTS {
-			log.Error("send ts should be monotonically increasing",
-				zap.Any("oldTS", oldTS), zap.Any("newTS", ts))
-			return errors.New("send ts should be monotonically increasing")
-		}
-	}
-	v.dispatchers[dispatcherID] = ts
-	v.infos = removeUnusedInfos(v.infos, v.dispatchers)
-	return nil
+	v.infos = v.infos[target-1:]
 }
 
 func assertEmpty(infos []*tableInfoItem, job *model.Job) {
@@ -290,54 +230,4 @@ func (v *versionedTableInfoStore) doApplyDDL(job *model.Job) {
 	default:
 		// TODO: idenitify unexpected ddl or specify all expected ddl
 	}
-}
-
-func (v *versionedTableInfoStore) copyRegisteredDispatchers(src *versionedTableInfoStore) {
-	v.mu.Lock()
-	src.mu.Lock()
-	defer func() {
-		v.mu.Unlock()
-		src.mu.Unlock()
-	}()
-	if src.tableID != v.tableID {
-		log.Panic("tableID not match")
-	}
-	for dispatcherID, ts := range src.dispatchers {
-		if _, ok := v.dispatchers[dispatcherID]; ok {
-			log.Panic("dispatcher already registered")
-		}
-		v.dispatchers[dispatcherID] = ts
-	}
-}
-
-func (v *versionedTableInfoStore) checkAndCopyTailFrom(src *versionedTableInfoStore) {
-	v.mu.Lock()
-	src.mu.Lock()
-	defer func() {
-		v.mu.Unlock()
-		src.mu.Unlock()
-	}()
-	if src.tableID != v.tableID {
-		log.Panic("tableID not match")
-	}
-	if len(src.infos) == 0 {
-		return
-	}
-	if len(v.infos) == 0 {
-		v.infos = append(v.infos, src.infos[len(src.infos)-1])
-	}
-	// Check if the overlapping parts have the same common.Ts
-	startCheckIndexInDest := sort.Search(len(v.infos), func(i int) bool {
-		return v.infos[i].version >= src.infos[0].version
-	})
-	for i := startCheckIndexInDest; i < len(v.infos); i++ {
-		if v.infos[i].version != src.infos[i-startCheckIndexInDest].version {
-			log.Panic("version not match")
-		}
-	}
-
-	startCopyIndexInSrc := len(v.infos) - startCheckIndexInDest
-	v.infos = append(v.infos, src.infos[startCopyIndexInSrc:]...)
-
-	v.deleteVersion = src.deleteVersion
 }
