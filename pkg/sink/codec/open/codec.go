@@ -12,7 +12,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink/codec"
@@ -121,7 +120,7 @@ func encodeDDLEvent(e *common.DDLEvent, config *ticommon.Config) ([]byte, []byte
 
 	valueWriter.WriteObject(func() {
 		valueWriter.WriteStringField("q", e.Job.Query)
-		valueWriter.WriteStringField("t", string(e.Job.Type))
+		valueWriter.WriteIntField("t", int(e.Job.Type))
 	})
 
 	util.ReturnJSONWriter(keyWriter)
@@ -344,20 +343,28 @@ func writeColumnFieldValueIfUpdated(
 	idx int,
 	tableInfo *common.TableInfo,
 ) error {
-
 	colType := col.GetType()
 	flag := *tableInfo.ColumnsFlag[col.ID]
 	whereHandle := flag.IsHandleKey()
 
 	writeFunc := func(writeColumnValue func()) {
 		writer.WriteObjectField(col.Name.O, func() {
-			writer.WriteStringField("t", string(colType)) // todo:please check performance
+			writer.WriteIntField("t", int(colType))
 			if whereHandle {
 				writer.WriteBoolField("h", whereHandle)
 			}
 			writer.WriteUint64Field("f", uint64(flag))
 			writeColumnValue()
 		})
+	}
+
+	if row.IsNull(idx) && preRow.IsNull(idx) {
+		return nil
+	} else if preRow.IsNull(idx) && !row.IsNull(idx) {
+		writeFunc(func() { writer.WriteNullField("v") })
+		return nil
+	} else if !preRow.IsNull(idx) && row.IsNull(idx) {
+		return writeColumnFieldValue(writer, col, preRow, idx, tableInfo)
 	}
 
 	switch col.GetType() {
@@ -382,40 +389,78 @@ func writeColumnFieldValueIfUpdated(
 		rowValue := row.GetBytes(idx)
 		preRowValue := preRow.GetBytes(idx)
 		if !bytes.Equal(rowValue, preRowValue) {
-			writeFunc(func() { writer.WriteBase64StringField("v", preRowValue) })
+			if len(preRowValue) == 0 {
+				writeFunc(func() { writer.WriteNullField("v") })
+			} else {
+				writeFunc(func() { writer.WriteBase64StringField("v", preRowValue) })
+			}
 		}
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
 		rowValue := row.GetBytes(idx)
 		preRowValue := preRow.GetBytes(idx)
 		if !bytes.Equal(rowValue, preRowValue) {
-			if preRowValue == nil {
-				preRowValue = common.EmptyBytes
+			if len(preRowValue) == 0 {
+				writeFunc(func() { writer.WriteNullField("v") })
+			} else {
+				if flag.IsBinary() {
+					str := string(preRowValue)
+					str = strconv.Quote(str)
+					str = str[1 : len(str)-1]
+					writeFunc(func() { writer.WriteStringField("v", str) })
+				} else {
+					writeFunc(func() { writer.WriteStringField("v", string(preRowValue)) })
+				}
 			}
-			writeFunc(func() { writer.WriteStringField("v", string(hack.String(preRowValue))) })
 		}
 	case mysql.TypeEnum, mysql.TypeSet:
 		rowValue := row.GetEnum(idx).Value
 		preRowValue := preRow.GetEnum(idx).Value
 		if rowValue != preRowValue {
-			writeFunc(func() { writer.WriteUint64Field("v", preRowValue) })
+			if preRowValue == 0 {
+				writeFunc(func() { writer.WriteNullField("v") })
+			} else {
+				writeFunc(func() { writer.WriteUint64Field("v", preRowValue) })
+			}
 		}
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeTimestamp:
-		rowValue := row.GetTime(idx).String()
-		preRowValue := preRow.GetTime(idx).String()
+		rowValue := row.GetTime(idx)
+		preRowValue := preRow.GetTime(idx)
 		if rowValue != preRowValue {
-			writeFunc(func() { writer.WriteStringField("v", preRowValue) })
+			if preRowValue.IsZero() {
+				writeFunc(func() { writer.WriteNullField("v") })
+			} else {
+				writeFunc(func() { writer.WriteStringField("v", preRowValue.String()) })
+			}
 		}
 	case mysql.TypeDuration:
 		rowValue := row.GetDuration(idx, 0)
 		preRowValue := preRow.GetDuration(idx, 0)
 		if rowValue != preRowValue {
-			writeFunc(func() { writer.WriteStringField("v", preRowValue.String()) })
+			if preRowValue.ToNumber().IsZero() {
+				writeFunc(func() { writer.WriteNullField("v") })
+			} else {
+				writeFunc(func() { writer.WriteStringField("v", preRowValue.String()) })
+			}
 		}
 	case mysql.TypeJSON:
 		rowValue := row.GetJSON(idx).String()
 		preRowValue := preRow.GetJSON(idx).String()
 		if rowValue != preRowValue {
-			writeFunc(func() { writer.WriteStringField("v", preRowValue) })
+			if preRow.GetJSON(idx).IsZero() {
+				writeFunc(func() { writer.WriteNullField("v") })
+			} else {
+				writeFunc(func() { writer.WriteStringField("v", preRowValue) })
+			}
+		}
+	case mysql.TypeNewDecimal:
+		rowValue := row.GetMyDecimal(idx)
+		preValue := preRow.GetMyDecimal(idx)
+		if rowValue.Compare(preValue) != 0 {
+			if preValue.IsZero() {
+				writeFunc(func() { writer.WriteNullField("v") })
+			} else {
+				writeFunc(func() { writer.WriteStringField("v", preValue.String()) })
+			}
 		}
 	default:
 		rowDatum := row.GetDatum(idx, &col.FieldType)

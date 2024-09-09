@@ -97,7 +97,7 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, replicaConf
 		return nil, errors.Trace(err)
 	}
 
-	columnSelector, err := common.New(replicaConfig)
+	columnSelector, err := common.NewColumnSelectors(replicaConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

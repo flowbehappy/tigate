@@ -58,7 +58,7 @@ func TestColumnSelectorGetSelector(t *testing.T) {
 			Columns: []string{"co?1"},
 		},
 	}
-	selectors, err := New(replicaConfig)
+	selectors, err := NewColumnSelectors(replicaConfig)
 	require.NoError(t, err)
 
 	{
