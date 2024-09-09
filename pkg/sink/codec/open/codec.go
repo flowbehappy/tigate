@@ -8,7 +8,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/flowbehappy/tigate/pkg/util"
-	"github.com/pingcap/log"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -49,7 +48,6 @@ func encodeRowChangeEventWithoutCompress(e *common.RowEvent, config *ticommon.Co
 			return nil, nil, err
 		}
 	} else if e.IsInsert() {
-		log.Info("insert event")
 		valueWriter.WriteObject(func() {
 			valueWriter.WriteObjectField("u", func() {
 				err = writeColumnFieldValues(valueWriter, e.GetRows(), e.TableInfo, e.ColumnSelector, largeMessageOnlyHandleKeyColumns)
@@ -59,7 +57,6 @@ func encodeRowChangeEventWithoutCompress(e *common.RowEvent, config *ticommon.Co
 			return nil, nil, err
 		}
 	} else if e.IsUpdate() {
-		log.Info("update event")
 		valueWriter.WriteObject(func() {
 			valueWriter.WriteObjectField("u", func() {
 				err = writeColumnFieldValues(valueWriter, e.GetRows(), e.TableInfo, e.ColumnSelector, largeMessageOnlyHandleKeyColumns)
