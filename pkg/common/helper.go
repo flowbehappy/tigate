@@ -18,6 +18,9 @@ var EmptyBytes = make([]byte, 0)
 func FormatColVal(row *chunk.Row, col *model.ColumnInfo, idx int) (
 	value interface{}, err error,
 ) {
+	if row.IsNull(idx) {
+		return nil, nil
+	}
 	var v interface{}
 	switch col.GetType() {
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeTimestamp:

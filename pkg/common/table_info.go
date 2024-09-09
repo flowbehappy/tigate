@@ -346,7 +346,7 @@ func (ti *TableInfo) findHandleIndex() {
 	}
 	handleIndexOffset := -1
 	for i, idx := range ti.Indices {
-		if !ti.IsIndexUnique(idx) {
+		if !ti.IsIndexUniqueAndNotNull(idx) {
 			continue
 		}
 		if idx.Primary {
@@ -364,6 +364,7 @@ func (ti *TableInfo) findHandleIndex() {
 		}
 	}
 	if handleIndexOffset >= 0 {
+		log.Info("find handle index", zap.String("table", ti.TableName.String()), zap.String("index", ti.Indices[handleIndexOffset].Name.O))
 		ti.HandleIndexID = ti.Indices[handleIndexOffset].ID
 	}
 }
@@ -550,8 +551,8 @@ func (ti *TableInfo) IsEligible(forceReplicate bool) bool {
 	return ti.HasUniqueColumn()
 }
 
-// IsIndexUnique returns whether the index is unique
-func (ti *TableInfo) IsIndexUnique(indexInfo *model.IndexInfo) bool {
+// IsIndexUnique returns whether the index is unique and all columns are not null
+func (ti *TableInfo) IsIndexUniqueAndNotNull(indexInfo *model.IndexInfo) bool {
 	if indexInfo.Primary {
 		return true
 	}
@@ -704,7 +705,7 @@ func WrapTableInfo(schemaID int64, schemaName string, version uint64, info *mode
 	}
 
 	for _, idx := range ti.Indices {
-		if ti.IsIndexUnique(idx) {
+		if ti.IsIndexUniqueAndNotNull(idx) {
 			ti.hasUniqueColumn = true
 		}
 		if idx.Primary || idx.Unique {

@@ -161,9 +161,10 @@ func (s *EventTestHelper) DDL2Jobs(ddl string, jobCnt int) []*timodel.Job {
 
 // DML2Event execute the dml(s) and return the corresponding DMLEvent.
 // Note:
-// 1. It does not support `delete` since the key value cannot be found
+// 1. It dose not support `delete` since the key value cannot be found
 // after the query executed.
 // 2. You must execute create table statement before calling this function.
+// 3. You must set the preRow of the DMLEvent by yourself, since we can not get it from TiDB.
 func (s *EventTestHelper) DML2Event(schema, table string, dml ...string) *common.DMLEvent {
 	key := toTableInfosKey(schema, table)
 	log.Info("dml2event", zap.String("key", key))
