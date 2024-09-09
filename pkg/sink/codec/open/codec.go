@@ -3,10 +3,12 @@ package open
 import (
 	"bytes"
 	"encoding/binary"
+	"strconv"
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/flowbehappy/tigate/pkg/util"
+	"github.com/pingcap/log"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -47,6 +49,7 @@ func encodeRowChangeEventWithoutCompress(e *common.RowEvent, config *ticommon.Co
 			return nil, nil, err
 		}
 	} else if e.IsInsert() {
+		log.Info("insert event")
 		valueWriter.WriteObject(func() {
 			valueWriter.WriteObjectField("u", func() {
 				err = writeColumnFieldValues(valueWriter, e.GetRows(), e.TableInfo, e.ColumnSelector, largeMessageOnlyHandleKeyColumns)
@@ -56,6 +59,7 @@ func encodeRowChangeEventWithoutCompress(e *common.RowEvent, config *ticommon.Co
 			return nil, nil, err
 		}
 	} else if e.IsUpdate() {
+		log.Info("update event")
 		valueWriter.WriteObject(func() {
 			valueWriter.WriteObjectField("u", func() {
 				err = writeColumnFieldValues(valueWriter, e.GetRows(), e.TableInfo, e.ColumnSelector, largeMessageOnlyHandleKeyColumns)
@@ -198,32 +202,53 @@ func writeColumnFieldValue(writer *util.JSONWriter, col *timodel.ColumnInfo, row
 	}
 	writer.WriteUint64Field("f", uint64(flag))
 
-	// TODO:deal with nil
+	if row.IsNull(idx) {
+		writer.WriteNullField("v")
+		return nil
+	}
+
 	switch col.GetType() {
 	case mysql.TypeBit:
 		d := row.GetDatum(idx, &col.FieldType)
-		dp := &d
-		// Encode bits as integers to avoid pingcap/tidb#10988 (which also affects MySQL itself)
-		value, err := dp.GetBinaryLiteral().ToInt(types.DefaultStmtNoWarningContext)
-		if err != nil {
-			return nil
+		if d.IsNull() {
+			writer.WriteNullField("v")
+		} else {
+			dp := &d
+			// Encode bits as integers to avoid pingcap/tidb#10988 (which also affects MySQL itself)
+			value, err := dp.GetBinaryLiteral().ToInt(types.DefaultStmtNoWarningContext)
+			if err != nil {
+				return nil
+			}
+			writer.WriteUint64Field("v", value)
 		}
-		writer.WriteUint64Field("v", value)
 	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 		value := row.GetBytes(idx)
-		if value == nil {
-			value = common.EmptyBytes
+		if len(value) == 0 {
+			writer.WriteNullField("v")
+		} else {
+			writer.WriteBase64StringField("v", value)
 		}
-		writer.WriteBase64StringField("v", value)
-	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString:
 		value := row.GetBytes(idx)
-		if value == nil {
-			value = common.EmptyBytes
+		if len(value) == 0 {
+			writer.WriteNullField("v")
+		} else {
+			if flag.IsBinary() {
+				str := string(value)
+				str = strconv.Quote(str)
+				str = str[1 : len(str)-1]
+				writer.WriteStringField("v", str)
+			} else {
+				writer.WriteStringField("v", string(value))
+			}
 		}
-		writer.WriteStringField("v", string(hack.String(value)))
 	case mysql.TypeEnum, mysql.TypeSet:
 		value := row.GetEnum(idx).Value
-		writer.WriteUint64Field("v", value)
+		if value == 0 {
+			writer.WriteNullField("v")
+		} else {
+			writer.WriteUint64Field("v", value)
+		}
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeTimestamp:
 		value := row.GetTime(idx)
 		if value.IsZero() {
@@ -239,8 +264,19 @@ func writeColumnFieldValue(writer *util.JSONWriter, col *timodel.ColumnInfo, row
 			writer.WriteStringField("v", value.String())
 		}
 	case mysql.TypeJSON:
-		value := row.GetJSON(idx).String()
-		writer.WriteStringField("v", value)
+		value := row.GetJSON(idx)
+		if value.IsZero() {
+			writer.WriteNullField("v")
+		} else {
+			writer.WriteStringField("v", value.String())
+		}
+	case mysql.TypeNewDecimal:
+		value := row.GetMyDecimal(idx)
+		if value.IsZero() {
+			writer.WriteNullField("v")
+		} else {
+			writer.WriteStringField("v", value.String())
+		}
 	default:
 		d := row.GetDatum(idx, &col.FieldType)
 		// NOTICE: GetValue() may return some types that go sql not support, which will cause sink DML fail
