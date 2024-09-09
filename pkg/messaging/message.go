@@ -23,6 +23,7 @@ const (
 	TypeBytes
 	// LogService related
 	TypeDMLEvent
+	TypeDDLEvent
 	TypeBatchResolvedTs
 
 	TypeHeartBeatRequest
@@ -50,6 +51,8 @@ func (t IOType) String() string {
 		return "Bytes"
 	case TypeDMLEvent:
 		return "DMLEvent"
+	case TypeDDLEvent:
+		return "DDLEvent"
 	case TypeBatchResolvedTs:
 		return "BatchResolvedTs"
 	case TypeHeartBeatRequest:
@@ -185,6 +188,8 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 	switch ioType {
 	case TypeDMLEvent:
 		m = &common.DMLEvent{}
+	case TypeDDLEvent:
+		m = &common.DDLEvent{}
 	case TypeBatchResolvedTs:
 		m = &common.BatchResolvedEvent{}
 	case TypeHeartBeatRequest:
@@ -241,6 +246,8 @@ func NewSingleTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetM
 	switch Message.(type) {
 	case *common.DMLEvent:
 		ioType = TypeDMLEvent
+	case *common.DDLEvent:
+		ioType = TypeDDLEvent
 	case *common.BatchResolvedEvent:
 		ioType = TypeBatchResolvedTs
 	case *heartbeatpb.HeartBeatRequest:

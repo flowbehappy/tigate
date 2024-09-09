@@ -1,6 +1,8 @@
 package eventservice
 
 import (
+	"context"
+	"fmt"
 	"math/rand"
 	"sync"
 	"testing"
@@ -8,6 +10,8 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/pingcap/log"
 	tconfig "github.com/pingcap/tiflow/pkg/config"
 	"github.com/stretchr/testify/require"
@@ -181,6 +185,109 @@ func TestResolvedTsCache(t *testing.T) {
 	require.False(t, rc.isFull())
 }
 
+func genEvents(helper *mounter.EventTestHelper, t *testing.T, ddl string, dmls ...string) (common.DDLEvent, []*common.RawKVEntry) {
+	job := helper.DDL2Job(ddl)
+	schema := job.SchemaName
+	table := job.TableName
+	kvEvents1 := helper.DML2RawKv(schema, table, dmls...)
+	for _, e := range kvEvents1 {
+		require.Equal(t, job.BinlogInfo.TableInfo.UpdateTS-1, e.StartTs)
+		require.Equal(t, job.BinlogInfo.TableInfo.UpdateTS+1, e.CRTs)
+	}
+	return common.DDLEvent{
+		CommitTS: job.BinlogInfo.TableInfo.UpdateTS,
+		Job:      job,
+	}, kvEvents1
+}
+
+func TestSendEvents(t *testing.T) {
+	helper := mounter.NewEventTestHelper(t)
+	defer helper.Close()
+
+	helper.Tk().MustExec("use test")
+	ddlEvent, kvEvents := genEvents(helper, t, `create table test.t(id int primary key, c char(50))`, []string{
+		`insert into test.t(id,c) values (0, "c0")`,
+		`insert into test.t(id,c) values (1, "c1")`,
+		`insert into test.t(id,c) values (2, "c2")`,
+	}...)
+	require.NotNil(t, kvEvents)
+
+	ddlEvent1, _ := genEvents(helper, t, `alter table test.t add column dummy int default 0`)
+	require.Less(t, ddlEvent.CommitTS, ddlEvent1.CommitTS)
+
+	ddlEvent2, kvEvents2 := genEvents(helper, t, `alter table test.t add column d int`, []string{
+		`insert into test.t(id,c,d) values (10, "c10", 10)`,
+		`insert into test.t(id,c,d) values (11, "c11", 11)`,
+		`insert into test.t(id,c,d) values (12, "c12", 12)`,
+	}...)
+	require.NotNil(t, kvEvents2)
+	require.Less(t, kvEvents[0].CRTs, kvEvents2[1].CRTs)
+	require.Less(t, ddlEvent.CommitTS, ddlEvent2.CommitTS)
+
+	wg := &sync.WaitGroup{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	eventStore := newMockEventStore()
+	schemaStore := newMockSchemaStore()
+	msgCh := make(chan *messaging.TargetMessage, 1024)
+	mc := &mockMessageCenter{messageCh: msgCh}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		expected := []struct {
+			t        int // type
+			commitTs common.Ts
+		}{
+			{t: common.TypeDDLEvent, commitTs: ddlEvent.CommitTS},
+			{t: common.TypeDMLEvent, commitTs: kvEvents[0].CRTs},
+			{t: common.TypeDDLEvent, commitTs: ddlEvent1.CommitTS},
+			{t: common.TypeDDLEvent, commitTs: ddlEvent2.CommitTS},
+			{t: common.TypeDMLEvent, commitTs: kvEvents2[0].CRTs},
+			{t: common.TypeBatchResolvedEvent, commitTs: common.Ts(0)},
+		}
+		cnt := 0
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msgs := <-msgCh:
+				for _, msg := range msgs.Message {
+					event, ok := msg.(common.Event)
+					require.True(t, ok)
+					fmt.Printf("cnt: %d -> %+v\n", cnt, event)
+					require.Equal(t, expected[cnt].t, event.GetType(), "cnt: %d, e: %+v", cnt, event)
+					require.Equal(t, expected[cnt].commitTs, event.GetCommitTs(), "cnt: %d, e: %+v", cnt, event)
+					cnt++
+
+					if cnt == len(expected) {
+						return
+					}
+				}
+			}
+		}
+	}()
+
+	s := newEventBroker(ctx, 1, eventStore, schemaStore, mc, time.Local)
+	defer s.close()
+
+	// Register the dispatcher
+	tableID := ddlEvent.Job.TableID
+	info := newMockAcceptorInfo(common.NewDispatcherID(), tableID)
+	s.addDispatcher(info)
+	_, ok := s.spans[tableID]
+	require.True(t, ok)
+
+	schemaStore.AppendDDLEvent(tableID, ddlEvent, ddlEvent1, ddlEvent2)
+
+	span, ok := eventStore.spans[tableID]
+	require.True(t, ok)
+	span.update(ddlEvent2.CommitTS+1, append(kvEvents, kvEvents2...)...)
+
+	wg.Wait()
+}
+
 // mockDispatcherInfo is a mock implementation of the AcceptorInfo interface
 type mockDispatcherInfo struct {
 	clusterID  uint64
@@ -249,17 +356,16 @@ func (m *mockDispatcherInfo) GetFilterConfig() *tconfig.FilterConfig {
 type mockSpanStats struct {
 	startTs       uint64
 	watermark     uint64
-	pendingEvents []*common.DMLEvent
+	pendingEvents []*common.RawKVEntry
 	onUpdate      func(watermark uint64)
 	onEvent       func(event *common.RawKVEntry)
 }
 
-func (m *mockSpanStats) update(event []*common.DMLEvent, watermark uint64) {
-	m.pendingEvents = append(m.pendingEvents, event...)
+func (m *mockSpanStats) update(watermark uint64, events ...*common.RawKVEntry) {
+	m.pendingEvents = append(m.pendingEvents, events...)
 	m.watermark = watermark
-	for _, e := range event {
-		_ = e
-		m.onEvent(&common.RawKVEntry{})
+	for _, e := range events {
+		m.onEvent(e)
 	}
 	m.onUpdate(watermark)
 }

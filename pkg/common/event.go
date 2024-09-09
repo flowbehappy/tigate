@@ -15,6 +15,7 @@ package common
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -398,6 +399,15 @@ func (e *DDLEvent) GetDDLSchemaName() string {
 
 func (e *DDLEvent) GetDDLType() model.ActionType {
 	return e.Job.Type
+}
+
+func (t DDLEvent) Marshal() ([]byte, error) {
+	// TODO: optimize it
+	return json.Marshal(t)
+}
+
+func (t *DDLEvent) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, t)
 }
 
 type InfluenceType int
