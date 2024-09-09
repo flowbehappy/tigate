@@ -23,6 +23,7 @@ require (
 	github.com/google/btree v1.1.2
 	github.com/google/uuid v1.6.0
 	github.com/imdario/mergo v0.3.16
+	github.com/json-iterator/go v1.1.12
 	github.com/linkedin/goavro/v2 v2.11.1
 	github.com/mailru/easyjson v0.7.7
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
@@ -38,7 +39,6 @@ require (
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.9.0
-	github.com/thanhpk/randstr v1.0.6
 	github.com/tikv/client-go/v2 v2.0.8-0.20240703095801-d73cc1ed6503
 	github.com/tikv/pd v1.1.0-beta.0.20240407022249-7179657d129b
 	github.com/tikv/pd/client v0.0.0-20240717053728-5ec6af403019
@@ -50,6 +50,7 @@ require (
 	go.etcd.io/etcd/client/v3 v3.5.12
 	go.etcd.io/etcd/server/v3 v3.5.12
 	go.uber.org/atomic v1.11.0
+	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/net v0.27.0
 	golang.org/x/sync v0.7.0
@@ -193,7 +194,6 @@ require (
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df // indirect
 	github.com/jonboulle/clockwork v0.4.0 // indirect
 	github.com/joomcode/errorx v1.0.1 // indirect
-	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
 	github.com/klauspost/compress v1.17.8 // indirect
 	github.com/klauspost/cpuid v1.3.1 // indirect

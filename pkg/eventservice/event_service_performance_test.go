@@ -76,7 +76,7 @@ func TestEventServiceOneMillionTable(t *testing.T) {
 				if !ok {
 					continue
 				}
-				sub.update(nil, sub.watermark+1)
+				sub.update(sub.watermark + 1)
 			}
 			log.Info("send resolvedTs events for 1 million tables", zap.Duration("cost", time.Since(sendStart)), zap.Any("round", round))
 			round++

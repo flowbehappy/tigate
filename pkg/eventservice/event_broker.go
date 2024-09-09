@@ -11,7 +11,6 @@ import (
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
-	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
@@ -86,7 +85,7 @@ func newEventBroker(
 		tidbClusterID:                          id,
 		eventStore:                             eventStore,
 		mounter:                                mounter.NewMounter(tz),
-		schemaStore:                            appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore),
+		schemaStore:                            schemaStore,
 		dispatchers:                            sync.Map{},
 		tableTriggerDispatchers:                sync.Map{},
 		spans:                                  make(map[common.TableID]*spanSubscription),
@@ -179,7 +178,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 }
 
 func (c *eventBroker) sendDDL(remoteID messaging.ServerId, e common.DDLEvent, d *dispatcherStat) {
-	c.messageCh <- newWrapDDLEvent(remoteID, e)
+	c.messageCh <- newWrapDDLEvent(remoteID, &e)
 	d.metricEventServiceSendDDLCount.Inc()
 }
 
@@ -231,7 +230,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 	// 3. Get the events from the iterator and send them to the dispatcher.
 	sendTxn := func(t *common.DMLEvent) {
 		if t != nil {
-			if len(ddlEvents) > 0 && t.CommitTs > ddlEvents[0].CommitTS {
+			for len(ddlEvents) > 0 && t.CommitTs > ddlEvents[0].CommitTS {
 				c.sendDDL(remoteID, ddlEvents[0], task.dispatcherStat)
 				ddlEvents = ddlEvents[1:]
 			}
@@ -260,7 +259,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 		if isNewTxn {
 			sendTxn(txnEvent)
 			tableID := task.dispatcherStat.info.GetTableSpan().TableID
-			tableInfo, err := c.schemaStore.GetTableInfo(int64(tableID), e.CRTs-1)
+			tableInfo, err := c.schemaStore.GetTableInfo(tableID, e.CRTs-1)
 			if err != nil {
 				// FIXME handle the error
 				log.Panic("get table info failed", zap.Error(err))
@@ -292,7 +291,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 				tMsg := messaging.NewSingleTargetMessage(
 					m.serverID,
 					messaging.EventCollectorTopic,
-					m.txnEvent)
+					m.e)
 				c.flushResolvedTs(ctx, m.serverID)
 				c.sendMsg(ctx, tMsg)
 			case <-flushResolvedTsTicker.C:
@@ -304,15 +303,15 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 	}()
 }
 
-func (c *eventBroker) handleResolvedTs(ctx context.Context, e wrapEvent) {
-	cache, ok := c.resolvedTsCaches[e.serverID]
+func (c *eventBroker) handleResolvedTs(ctx context.Context, m wrapEvent) {
+	cache, ok := c.resolvedTsCaches[m.serverID]
 	if !ok {
 		cache = newResolvedTsCache(resolvedTsCacheSize)
-		c.resolvedTsCaches[e.serverID] = cache
+		c.resolvedTsCaches[m.serverID] = cache
 	}
-	cache.add(e.resolvedEvent)
+	cache.add(*m.e.(*common.ResolvedEvent))
 	if cache.isFull() {
-		c.flushResolvedTs(ctx, e.serverID)
+		c.flushResolvedTs(ctx, m.serverID)
 	}
 }
 
@@ -643,33 +642,30 @@ func (p *scanTaskQueue) popTask(chanIndex int) <-chan *scanTask {
 
 type wrapEvent struct {
 	serverID messaging.ServerId
-	// TODO: change the type of the txnEvent to common.TEvent
-	txnEvent      *common.DMLEvent
-	resolvedEvent common.ResolvedEvent
-	ddlEvent      *common.DDLEvent
-	msgType       int
+	e        messaging.IOTypeT
+	msgType  int
 }
 
 func newWrapTxnEvent(serverID messaging.ServerId, e *common.DMLEvent) wrapEvent {
 	return wrapEvent{
 		serverID: serverID,
-		txnEvent: e,
+		e:        e,
 		msgType:  common.TypeDMLEvent,
 	}
 }
 
 func newWrapResolvedEvent(serverID messaging.ServerId, e common.ResolvedEvent) wrapEvent {
 	return wrapEvent{
-		serverID:      serverID,
-		resolvedEvent: e,
-		msgType:       common.TypeResolvedEvent,
+		serverID: serverID,
+		e:        &e,
+		msgType:  common.TypeResolvedEvent,
 	}
 }
 
-func newWrapDDLEvent(serverID messaging.ServerId, e common.DDLEvent) wrapEvent {
+func newWrapDDLEvent(serverID messaging.ServerId, e *common.DDLEvent) wrapEvent {
 	return wrapEvent{
 		serverID: serverID,
-		ddlEvent: &e,
+		e:        e,
 		msgType:  common.TypeDDLEvent,
 	}
 }

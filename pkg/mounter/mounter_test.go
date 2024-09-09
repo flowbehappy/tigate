@@ -638,7 +638,6 @@ func TestAllTypes(t *testing.T) {
 	// Convert "C4E3BAC3CAC0BDE7" to binary data then compare
 	binaryFormat = []byte{0xC4, 0xE3, 0xBA, 0xC3, 0xCA, 0xC0, 0xBD, 0xE7}
 	require.Equal(t, binaryFormat, row.Row.GetBytes(44))
-
 }
 
 func TestNullColumn(t *testing.T) {
