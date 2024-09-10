@@ -39,7 +39,7 @@ func TestBasicType(t *testing.T) {
 		Callback:       func() {}}
 
 	protocolConfig := ticommon.NewConfig(config.ProtocolOpen)
-	key, value, err := encodeRowChangeEventWithoutCompress(rowEvent, protocolConfig, false, "")
+	key, value, _, err := encodeRowChangedEvent(rowEvent, protocolConfig, false, "")
 	require.NoError(t, err)
 	require.Equal(t, `{"ts":1,"scm":"test","tbl":"t","t":1}`, string(key))
 	require.Equal(t, `{"u":{"a":{"t":1,"h":true,"f":11,"v":1},"b":{"t":1,"f":65,"v":null},"c":{"t":1,"f":65,"v":1},"d":{"t":1,"f":65,"v":null},"e":{"t":2,"f":65,"v":-1},"f":{"t":2,"f":65,"v":null},"g":{"t":3,"f":65,"v":123},"h":{"t":3,"f":65,"v":null},"i":{"t":4,"f":65,"v":153.123},"j":{"t":4,"f":65,"v":null},"k":{"t":5,"f":65,"v":153.123},"l":{"t":5,"f":65,"v":null},"m":{"t":7,"f":65,"v":"1973-12-30 15:30:00"},"n":{"t":7,"f":65,"v":null},"o":{"t":8,"f":65,"v":123},"p":{"t":8,"f":65,"v":null},"q":{"t":9,"f":65,"v":123},"r":{"t":9,"f":65,"v":null},"s":{"t":10,"f":65,"v":"2000-01-01"},"t":{"t":10,"f":65,"v":null},"u":{"t":11,"f":65,"v":"23:59:59"},"v":{"t":11,"f":65,"v":null},"w":{"t":12,"f":65,"v":"2015-12-20 23:58:58"},"x":{"t":12,"f":65,"v":null},"y":{"t":13,"f":193,"v":1970},"z":{"t":13,"f":193,"v":null},"aa":{"t":15,"f":64,"v":"测试"},"ab":{"t":15,"f":64,"v":null},"ac":{"t":15,"f":65,"v":"\\x01\\x02\\x03\\x04\\x05\\x06\\a\\b\\t\\n"},"ad":{"t":15,"f":65,"v":null},"ae":{"t":16,"f":193,"v":81},"af":{"t":16,"f":193,"v":null},"ag":{"t":245,"f":65,"v":"{\"key1\": \"value1\"}"},"ah":{"t":245,"f":65,"v":null},"ai":{"t":246,"f":65,"v":"129012.12"},"aj":{"t":246,"f":65,"v":null},"ak":{"t":247,"f":64,"v":1},"al":{"t":247,"f":64,"v":null},"am":{"t":248,"f":64,"v":2},"an":{"t":248,"f":64,"v":null},"ao":{"t":249,"f":64,"v":"NXJXTDZLK1ZkR1Y0ZEE9PQ=="},"ap":{"t":249,"f":64,"v":null},"aq":{"t":249,"f":65,"v":"iVBORw0KGgo="},"ar":{"t":249,"f":65,"v":null},"as1":{"t":250,"f":64,"v":"NXJXTDZLK1ZkR1Y0ZEE9PQ=="},"at":{"t":250,"f":64,"v":null},"au":{"t":250,"f":65,"v":"SUQzAwAAAAA="},"av":{"t":250,"f":65,"v":null},"aw":{"t":251,"f":64,"v":"NXJXTDZLK1ZkR1Y0ZEE9PQ=="},"ax":{"t":251,"f":64,"v":null},"ay":{"t":251,"f":65,"v":"UEsDBBQAAAAIAA=="},"az":{"t":251,"f":65,"v":null},"ba":{"t":252,"f":64,"v":"NXJXTDZLK1ZkR1Y0ZEE9PQ=="},"bb":{"t":252,"f":64,"v":null},"bc":{"t":252,"f":65,"v":"JVBERi0xLjQ="},"bd":{"t":252,"f":65,"v":null},"be":{"t":254,"f":64,"v":"Alice"},"bf":{"t":254,"f":64,"v":null},"bg":{"t":254,"f":65,"v":"\\x01\\x02\\x03\\x04\\x05\\x06\\a\\b\\t\\n"},"bh":{"t":254,"f":65,"v":null}}}`, string(value))
@@ -70,11 +70,12 @@ func TestDMLEvent(t *testing.T) {
 		ColumnSelector: common.NewDefaultColumnSelector(),
 		Callback:       func() {}}
 
-	key, value, err := encodeRowChangeEventWithoutCompress(insertRowEvent, protocolConfig, false, "")
+	key, value, length, err := encodeRowChangedEvent(insertRowEvent, protocolConfig, false, "")
 	require.NoError(t, err)
 
 	require.Equal(t, `{"ts":1,"scm":"test","tbl":"t","t":1}`, string(key))
 	require.Equal(t, `{"u":{"a":{"t":1,"h":true,"f":11,"v":1},"b":{"t":3,"f":65,"v":123}}}`, string(value))
+	require.Equal(t, len(string(key))+len(string(value))+ticommon.MaxRecordOverhead+16+8, length)
 
 	// Update
 	dmlEvent = helper.DML2Event("test", "t", `update test.t set b = 456 where a = 1`)
@@ -90,7 +91,7 @@ func TestDMLEvent(t *testing.T) {
 		ColumnSelector: common.NewDefaultColumnSelector(),
 		Callback:       func() {}}
 
-	key, value, err = encodeRowChangeEventWithoutCompress(updateRowEvent, protocolConfig, false, "")
+	key, value, _, err = encodeRowChangedEvent(updateRowEvent, protocolConfig, false, "")
 	require.NoError(t, err)
 
 	require.Equal(t, `{"ts":2,"scm":"test","tbl":"t","t":1}`, string(key))
@@ -110,7 +111,7 @@ func TestDMLEvent(t *testing.T) {
 			ColumnSelector: common.NewDefaultColumnSelector(),
 			Callback:       func() {}}
 
-		key, value, err := encodeRowChangeEventWithoutCompress(updateRowEvent, protocolConfig, false, "")
+		key, value, _, err := encodeRowChangedEvent(updateRowEvent, protocolConfig, false, "")
 		require.NoError(t, err)
 
 		require.Equal(t, `{"ts":3,"scm":"test","tbl":"t","t":1}`, string(key))
@@ -145,7 +146,7 @@ func TestOnlyOutputUpdatedEvent(t *testing.T) {
 			ColumnSelector: common.NewDefaultColumnSelector(),
 			Callback:       func() {}}
 
-		_, value, err := encodeRowChangeEventWithoutCompress(updateRowEvent, protocolConfig, false, "")
+		_, value, _, err := encodeRowChangedEvent(updateRowEvent, protocolConfig, false, "")
 		require.NoError(t, err)
 
 		require.Equal(t, `{"u":{"a":{"t":1,"h":true,"f":11,"v":1},"b":{"t":3,"f":65,"v":456},"c":{"t":246,"f":65,"v":"456.45"},"d":{"t":245,"f":65,"v":"{\"key1\": \"value1\"}"},"e":{"t":254,"f":64,"v":"Alice"},"f":{"t":254,"f":65,"v":"\\x01\\x02\\x03\\x04\\x05\\x06\\a\\b\\t\\n"},"g":{"t":252,"f":65,"v":"SUQzAwAAAAA="}},"p":{"b":{"t":3,"f":65,"v":123},"c":{"t":246,"f":65,"v":"123.12"}}}`, string(value))
@@ -177,7 +178,7 @@ func TestHandleOnlyEvent(t *testing.T) {
 		ColumnSelector: common.NewDefaultColumnSelector(),
 		Callback:       func() {}}
 
-	key, value, err := encodeRowChangeEventWithoutCompress(insertRowEvent, protocolConfig, true, "")
+	key, value, _, err := encodeRowChangedEvent(insertRowEvent, protocolConfig, true, "")
 	require.NoError(t, err)
 
 	require.Equal(t, `{"ts":1,"scm":"test","tbl":"t","t":1}`, string(key))
@@ -249,7 +250,7 @@ func TestEncodeWithColumnSelector(t *testing.T) {
 		ColumnSelector: selector,
 		Callback:       func() {}}
 
-	key, value, err := encodeRowChangeEventWithoutCompress(insertRowEvent, protocolConfig, false, "")
+	key, value, _, err := encodeRowChangedEvent(insertRowEvent, protocolConfig, false, "")
 	require.NoError(t, err)
 
 	require.Equal(t, `{"ts":1,"scm":"test","tbl":"t","t":1}`, string(key))
@@ -257,6 +258,3 @@ func TestEncodeWithColumnSelector(t *testing.T) {
 
 	// todo: column selector 匹配后没有 handle 列报错
 }
-
-// 包括多个 message 压缩，callback 值等
-func TestEncodeMessages(t *testing.T) {}
