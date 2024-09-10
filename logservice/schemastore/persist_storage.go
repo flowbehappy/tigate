@@ -199,9 +199,19 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...DDLEvent) error {
 
 	p.mu.Lock()
 	for _, event := range ddlEvents {
-		updateDatabaseInfo(event.Job, p.databaseMap)
-		updateDDLHistory(event.Job, p.tablesDDLHistory, p.tableTriggerDDLHistory)
-		updateRegisteredTableInfoStore(event.Job, p.tableInfoStoreMap)
+		skip, err := updateDatabaseInfo(event.Job, p.databaseMap)
+		if err != nil {
+			return err
+		}
+		if skip {
+			continue
+		}
+		if p.tableTriggerDDLHistory, err = updateDDLHistory(event.Job, p.tablesDDLHistory, p.tableTriggerDDLHistory); err != nil {
+			return err
+		}
+		if err := updateRegisteredTableInfoStore(event.Job, p.tableInfoStoreMap); err != nil {
+			return err
+		}
 	}
 	p.mu.Unlock()
 
@@ -331,28 +341,6 @@ func (p *persistentStorage) getNextDDLEvents(tableID common.TableID, start, end 
 		events[i].NeedAddedTables = nil
 	}
 	return events
-}
-
-func (p *persistentStorage) getNextTableTriggerEvent(tableFilter filter.Filter, startTs common.Ts) DDLEvent {
-	for {
-		p.mu.Lock()
-		index := sort.Search(len(p.tableTriggerDDLHistory), func(i int) bool {
-			return p.tableTriggerDDLHistory[i] > startTs
-		})
-		if index == len(p.tableTriggerDDLHistory) {
-			return DDLEvent{}
-		}
-		targetTs := p.tableTriggerDDLHistory[index]
-		storageSnap := p.db.NewSnapshot()
-		defer storageSnap.Close()
-		p.mu.Unlock()
-
-		event := readDDLEvent(storageSnap, targetTs)
-		if tableFilter.ShouldDiscardDDL(event.Job.Type, event.Job.SchemaName, event.Job.TableName) {
-			continue
-		}
-		return event
-	}
 }
 
 func (p *persistentStorage) getNextTableTriggerEvents(tableFilter filter.Filter, start common.Ts, limit int) []common.DDLEvent {
@@ -511,78 +499,58 @@ func (p *persistentStorage) updateUpperBound(ctx context.Context) error {
 func updateDatabaseInfo(
 	job *model.Job,
 	databaseMap map[common.SchemaID]*DatabaseInfo,
-) error {
+) (bool, error) {
 	switch job.Type {
 	case model.ActionCreateSchema:
-		return createSchema(job, databaseMap)
+		if _, ok := databaseMap[common.SchemaID(job.SchemaID)]; ok {
+			log.Warn("database already exists. ignore DDL ",
+				zap.String("DDL", job.Query),
+				zap.Int64("jobID", job.ID),
+				zap.Uint64("finishTs", job.BinlogInfo.FinishedTS),
+				zap.Int64("jobSchemaVersion", job.BinlogInfo.SchemaVersion))
+			return true, nil
+		}
+		databaseMap[common.SchemaID(job.SchemaID)] = &DatabaseInfo{
+			Name:          job.SchemaName,
+			Tables:        make([]common.TableID, 0),
+			CreateVersion: common.Ts(job.BinlogInfo.FinishedTS),
+			DeleteVersion: math.MaxUint64,
+		}
 	case model.ActionModifySchemaCharsetAndCollate:
 		// ignore
-		return nil
 	case model.ActionDropSchema:
-		return dropSchema(job, databaseMap)
+		// return dropSchema(job, databaseMap)
 	case model.ActionRenameTables:
-		var oldSchemaIDs, newSchemaIDs, oldTableIDs []int64
-		var newTableNames, oldSchemaNames []*model.CIStr
-		err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &newTableNames, &oldTableIDs, &oldSchemaNames)
-		if err != nil {
-			return err
-		}
+		// var oldSchemaIDs, newSchemaIDs, oldTableIDs []int64
+		// var newTableNames, oldSchemaNames []*model.CIStr
+		// err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &newTableNames, &oldTableIDs, &oldSchemaNames)
+		// if err != nil {
+		// 	return err
+		// }
 	default:
-		log.Panic("unknown ddl type", zap.Any("ddlType", job.Type))
+		log.Panic("unknown ddl type",
+			zap.Any("ddlType", job.Type),
+			zap.String("DDL", job.Query))
 	}
 
-	return nil
+	return false, nil
 }
 
 func updateDDLHistory(
 	job *model.Job,
 	tablesDDLHistory map[common.TableID][]uint64,
 	tableTriggerDDLHistory []uint64,
-) error {
-	// switch job.Type {
-	// case model.ActionCreateSchema:
-	// 	return createSchema(job, databaseMap)
-	// case model.ActionModifySchemaCharsetAndCollate:
-	// 	// ignore
-	// 	return nil
-	// case model.ActionDropSchema:
-	// 	return dropSchema(job, databaseMap)
-	// case model.ActionRenameTables:
-	// 	var oldSchemaIDs, newSchemaIDs, oldTableIDs []int64
-	// 	var newTableNames, oldSchemaNames []*model.CIStr
-	// 	err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &newTableNames, &oldTableIDs, &oldSchemaNames)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// case model.ActionCreateTable:
-	// 	tableID := job.TableID
-	// 	finishedTs := job.BinlogInfo.FinishedTS
-	// 	if _, ok := tablesDDLHistory[tableID]; ok {
-	// 		log.Panic("should not happen")
-	// 	}
-	// 	tablesDDLHistory[tableID] = []uint64{finishedTs}
-	// 	tableTriggerDDLHistory = append(tableTriggerDDLHistory, finishedTs)
-	// case model.ActionCreateTables,
-	// 	model.ActionCreateView,
-	// 	model.ActionRecoverTable:
-	// 	if err := fillSchemaName(job, databaseMap); err != nil {
-	// 		return err
-	// 	}
-	// 	// no dispatcher should register on these kinds of tables?
-	// 	// TODO: add a cache for these kinds of newly created tables because they may soon be registered?
-	// 	if store, ok := tableInfoStoreMap[common.TableID(job.TableID)]; ok {
-	// 		// it is possible that it is already registered if the following happens
-	// 		// 1. event send to dispatcher manager
-	// 		// 2. dispatcher register
-	// 		// 3. begin apply ddl to schema store
-	// 		store.applyDDL(job)
-	// 	}
-	// 	return nil
-	// default:
-	// 	log.Panic("unknown ddl type", zap.Any("ddlType", job.Type))
-	// }
+) ([]uint64, error) {
+	switch job.Type {
+	case model.ActionCreateSchema:
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, job.BinlogInfo.FinishedTS)
+	default:
+		log.Panic("unknown ddl type",
+			zap.Any("ddlType", job.Type),
+			zap.String("DDL", job.Query))
+	}
 
-	return nil
+	return tableTriggerDDLHistory, nil
 }
 
 func updateRegisteredTableInfoStore(

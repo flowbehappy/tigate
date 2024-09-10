@@ -218,8 +218,16 @@ func loadDatabaseInfoAndDDLHistory(
 		if err != nil {
 			log.Fatal("unmarshal ddl job failed", zap.Error(err))
 		}
-		updateDatabaseInfo(ddlEvent.Job, databaseMap)
-		updateDDLHistory(ddlEvent.Job, tablesDDLHistory, tableTriggerDDLHistory)
+		skip, err := updateDatabaseInfo(ddlEvent.Job, databaseMap)
+		if err != nil {
+			log.Panic("updateDatabaseInfo error", zap.Error(err))
+		}
+		if skip {
+			continue
+		}
+		if tableTriggerDDLHistory, err = updateDDLHistory(ddlEvent.Job, tablesDDLHistory, tableTriggerDDLHistory); err != nil {
+			log.Panic("updateDDLHistory error", zap.Error(err))
+		}
 	}
 
 	return databaseMap, tablesDDLHistory, tableTriggerDDLHistory, nil

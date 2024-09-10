@@ -14,7 +14,6 @@
 package schemastore
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -24,253 +23,308 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
-func writeMetaData(db *pebble.DB, gcTS common.Ts, metaTS *schemaMetaTS) error {
-	batch := db.NewBatch()
-	writeTSToBatch(batch, gcTSKey(), gcTS)
-	writeTSToBatch(batch, metaTSKey(), metaTS.ResolvedTS, metaTS.FinishedDDLTS, metaTS.SchemaVersion)
-	return batch.Commit(pebble.Sync)
+// func writeMetaData(db *pebble.DB, gcTS common.Ts, metaTS *schemaMetaTS) error {
+// 	batch := db.NewBatch()
+// 	writeTSToBatch(batch, gcTSKey(), gcTS)
+// 	writeTSToBatch(batch, metaTSKey(), metaTS.ResolvedTS, metaTS.FinishedDDLTS, metaTS.SchemaVersion)
+// 	return batch.Commit(pebble.Sync)
+// }
+
+// func writeSchemaSnapshot(db *pebble.DB, snapTS common.Ts, dbInfo *model.DBInfo) error {
+// 	batch := db.NewBatch()
+// 	schemaKey, err := snapshotSchemaKey(snapTS, int64(dbInfo.ID))
+// 	if err != nil {
+// 		log.Fatal("generate schema key failed", zap.Error(err))
+// 	}
+// 	schemaValue, err := json.Marshal(dbInfo)
+// 	if err != nil {
+// 		log.Fatal("marshal schema failed", zap.Error(err))
+// 	}
+// 	batch.Set(schemaKey, schemaValue, pebble.NoSync)
+// 	return batch.Commit(pebble.Sync)
+// }
+
+// func writeTableSnapshot(db *pebble.DB, snapTS common.Ts, schemaID int64, tableInfo *model.TableInfo) error {
+// 	batch := db.NewBatch()
+// 	tableKey, err := snapshotTableKey(snapTS, common.TableID(tableInfo.ID))
+// 	if err != nil {
+// 		log.Fatal("generate table key failed", zap.Error(err))
+// 	}
+// 	tableValue, err := json.Marshal(tableInfo)
+// 	if err != nil {
+// 		log.Fatal("marshal table failed", zap.Error(err))
+// 	}
+// 	batch.Set(tableKey, tableValue, pebble.NoSync)
+// 	indexKey, err := indexSnapshotKey(common.TableID(tableInfo.ID), snapTS, int64(schemaID))
+// 	if err != nil {
+// 		log.Fatal("generate index key failed", zap.Error(err))
+// 	}
+// 	batch.Set(indexKey, nil, pebble.NoSync)
+// 	return batch.Commit(pebble.Sync)
+// }
+
+// func TestLoadEmptyPersistentStorage(t *testing.T) {
+// 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+// 	err := os.RemoveAll(dbPath)
+// 	require.Nil(t, err)
+// 	db, err := pebble.Open(dbPath, &pebble.Options{})
+// 	require.Nil(t, err)
+// 	defer db.Close()
+
+// 	gcTS := common.Ts(1000)
+// 	metaTS := &schemaMetaTS{
+// 		ResolvedTS:    1000,
+// 		FinishedDDLTS: 3000,
+// 		SchemaVersion: 4000,
+// 	}
+
+// 	err = writeMetaData(db, gcTS, metaTS)
+// 	require.Nil(t, err)
+
+// 	dataStorage, newMetaTS, databaseMap := loadPersistentStorage(db, 1000)
+// 	require.Equal(t, metaTS.ResolvedTS, newMetaTS.ResolvedTS)
+// 	require.Equal(t, metaTS.FinishedDDLTS, newMetaTS.FinishedDDLTS)
+// 	require.Equal(t, metaTS.SchemaVersion, newMetaTS.SchemaVersion)
+// 	require.Equal(t, 0, len(databaseMap))
+// 	require.Equal(t, gcTS, dataStorage.getGCTS())
+// }
+
+// func TestLoadPersistentStorageWithoutRequiredData(t *testing.T) {
+// 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+// 	err := os.RemoveAll(dbPath)
+// 	require.Nil(t, err)
+// 	db, err := pebble.Open(dbPath, &pebble.Options{})
+// 	require.Nil(t, err)
+// 	defer db.Close()
+
+// 	gcTS := common.Ts(1000)
+// 	metaTS := &schemaMetaTS{
+// 		ResolvedTS:    1000,
+// 		FinishedDDLTS: 3000,
+// 		SchemaVersion: 4000,
+// 	}
+
+// 	err = writeMetaData(db, gcTS, metaTS)
+// 	require.Nil(t, err)
+
+// 	dataStorage, _, databaseMap := loadPersistentStorage(db, metaTS.ResolvedTS+100)
+// 	require.Nil(t, dataStorage)
+// 	require.Nil(t, databaseMap)
+// }
+
+// func TestBuildVersionedTableInfoStore(t *testing.T) {
+// 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+// 	err := os.RemoveAll(dbPath)
+// 	require.Nil(t, err)
+// 	db, err := pebble.Open(dbPath, &pebble.Options{})
+// 	require.Nil(t, err)
+// 	defer db.Close()
+
+// 	gcTS := common.Ts(1000)
+// 	metaTS := &schemaMetaTS{
+// 		ResolvedTS:    2000,
+// 		FinishedDDLTS: 3000,
+// 		SchemaVersion: 4000,
+// 	}
+
+// 	err = writeMetaData(db, gcTS, metaTS)
+// 	require.Nil(t, err)
+
+// 	schemaID := 50
+// 	tableID := common.TableID(99)
+// 	writeSchemaSnapshot(db, gcTS, &model.DBInfo{
+// 		ID:   int64(schemaID),
+// 		Name: model.NewCIStr("test"),
+// 	})
+// 	writeTableSnapshot(db, gcTS, int64(schemaID), &model.TableInfo{
+// 		ID:   int64(tableID),
+// 		Name: model.NewCIStr("t"),
+// 	})
+
+// 	dataStorage, _, databaseMap := loadPersistentStorage(db, 1500)
+// 	require.Equal(t, 1, len(databaseMap))
+// 	require.Equal(t, "test", databaseMap[int64(schemaID)].Name)
+
+// 	{
+// 		store := newEmptyVersionedTableInfoStore(tableID)
+// 		getSchemaName := func(schemaID int64) (string, error) {
+// 			if _, ok := databaseMap[int64(schemaID)]; !ok {
+// 				return "", fmt.Errorf("schema not found")
+// 			}
+// 			return databaseMap[int64(schemaID)].Name, nil
+// 		}
+// 		dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.ResolvedTS, getSchemaName)
+// 		store.setTableInfoInitialized()
+// 		require.Equal(t, gcTS, store.getFirstVersion())
+// 		tableInfo, err := store.getTableInfo(gcTS)
+// 		require.Nil(t, err)
+// 		require.Equal(t, "t", tableInfo.Name.O)
+// 		require.Equal(t, tableID, common.TableID(tableInfo.ID))
+// 	}
+
+// 	// mock write some ddl event and load again
+// 	renameVersion := uint64(1500)
+// 	err = dataStorage.writeDDLEvent(DDLEvent{
+// 		Job: &model.Job{
+// 			Type:     model.ActionRenameTable,
+// 			SchemaID: int64(schemaID),
+// 			BinlogInfo: &model.HistoryInfo{
+// 				SchemaVersion: 3000,
+// 				TableInfo: &model.TableInfo{
+// 					ID:   int64(tableID),
+// 					Name: model.NewCIStr("t2"),
+// 				},
+// 				FinishedTS: renameVersion,
+// 			},
+// 			TableID: int64(tableID),
+// 		},
+// 	})
+// 	require.Nil(t, err)
+
+// 	dataStorage, _, _ = loadPersistentStorage(db, 1500)
+// 	{
+// 		store := newEmptyVersionedTableInfoStore(tableID)
+// 		getSchemaName := func(schemaID int64) (string, error) {
+// 			if _, ok := databaseMap[int64(schemaID)]; !ok {
+// 				return "", fmt.Errorf("schema not found")
+// 			}
+// 			return databaseMap[int64(schemaID)].Name, nil
+// 		}
+// 		dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.ResolvedTS, getSchemaName)
+// 		store.setTableInfoInitialized()
+// 		require.Equal(t, gcTS, store.getFirstVersion())
+// 		require.Equal(t, 2, len(store.infos))
+// 		tableInfo, err := store.getTableInfo(gcTS)
+// 		require.Nil(t, err)
+// 		require.Equal(t, "t", tableInfo.Name.O)
+// 		require.Equal(t, tableID, common.TableID(tableInfo.ID))
+// 		tableInfo2, err := store.getTableInfo(common.Ts(renameVersion))
+// 		require.Nil(t, err)
+// 		require.Equal(t, "t2", tableInfo2.Name.O)
+// 	}
+// }
+
+// func TestBuildVersionedTableInfoAndApplyDDL(t *testing.T) {
+// 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+// 	err := os.RemoveAll(dbPath)
+// 	require.Nil(t, err)
+// 	db, err := pebble.Open(dbPath, &pebble.Options{})
+// 	require.Nil(t, err)
+// 	defer db.Close()
+
+// 	gcTS := common.Ts(1000)
+// 	metaTS := &schemaMetaTS{
+// 		ResolvedTS:    2000,
+// 		FinishedDDLTS: 3000,
+// 		SchemaVersion: 4000,
+// 	}
+
+// 	err = writeMetaData(db, gcTS, metaTS)
+// 	require.Nil(t, err)
+
+// 	schemaID := 50
+// 	tableID := common.TableID(99)
+// 	writeSchemaSnapshot(db, gcTS, &model.DBInfo{
+// 		ID:   int64(schemaID),
+// 		Name: model.NewCIStr("test"),
+// 	})
+// 	writeTableSnapshot(db, gcTS, int64(schemaID), &model.TableInfo{
+// 		ID:   int64(tableID),
+// 		Name: model.NewCIStr("t"),
+// 	})
+
+// 	dataStorage, _, databaseMap := loadPersistentStorage(db, 1500)
+// 	require.Equal(t, 1, len(databaseMap))
+// 	require.Equal(t, "test", databaseMap[int64(schemaID)].Name)
+
+// 	store := newEmptyVersionedTableInfoStore(tableID)
+// 	getSchemaName := func(schemaID int64) (string, error) {
+// 		if _, ok := databaseMap[int64(schemaID)]; !ok {
+// 			return "", fmt.Errorf("schema not found")
+// 		}
+// 		return databaseMap[int64(schemaID)].Name, nil
+// 	}
+// 	dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.ResolvedTS, getSchemaName)
+// 	renameVersion := uint64(1500)
+// 	store.applyDDL(&model.Job{
+// 		Type:     model.ActionRenameTable,
+// 		SchemaID: int64(schemaID),
+// 		BinlogInfo: &model.HistoryInfo{
+// 			SchemaVersion: 3000,
+// 			TableInfo: &model.TableInfo{
+// 				ID:   int64(tableID),
+// 				Name: model.NewCIStr("t2"),
+// 			},
+// 			FinishedTS: renameVersion,
+// 		},
+// 		TableID: int64(tableID),
+// 	})
+// 	store.setTableInfoInitialized()
+// 	require.Equal(t, gcTS, store.getFirstVersion())
+// 	require.Equal(t, 2, len(store.infos))
+// 	tableInfo, err := store.getTableInfo(gcTS)
+// 	require.Nil(t, err)
+// 	require.Equal(t, "t", tableInfo.Name.O)
+// 	require.Equal(t, tableID, common.TableID(tableInfo.ID))
+// 	tableInfo2, err := store.getTableInfo(common.Ts(renameVersion))
+// 	require.Nil(t, err)
+// 	require.Equal(t, "t2", tableInfo2.Name.O)
+// }
+
+func newPersistentStorageForTest(db *pebble.DB, gcTs common.Ts, upperBound upperBoundMeta) *persistentStorage {
+	p := &persistentStorage{
+		pdCli:                  nil,
+		kvStorage:              nil,
+		db:                     db,
+		gcTs:                   gcTs,
+		databaseMap:            make(map[common.SchemaID]*DatabaseInfo),
+		tablesInKVSnap:         make(map[common.TableID]bool),
+		tablesDDLHistory:       make(map[common.TableID][]uint64),
+		tableTriggerDDLHistory: make([]uint64, 0),
+		tableInfoStoreMap:      make(map[common.TableID]*versionedTableInfoStore),
+		tableRegisteredCount:   make(map[common.TableID]int),
+	}
+	p.initializeFromDisk(upperBound)
+	return p
 }
 
-func writeSchemaSnapshot(db *pebble.DB, snapTS common.Ts, dbInfo *model.DBInfo) error {
-	batch := db.NewBatch()
-	schemaKey, err := snapshotSchemaKey(snapTS, int64(dbInfo.ID))
+func newEmptyPersistentStorageForTest(dbPath string) *persistentStorage {
+	db, err := pebble.Open(dbPath, &pebble.Options{})
 	if err != nil {
-		log.Fatal("generate schema key failed", zap.Error(err))
+		log.Panic("create database fail")
 	}
-	schemaValue, err := json.Marshal(dbInfo)
-	if err != nil {
-		log.Fatal("marshal schema failed", zap.Error(err))
+	gcTs := 0
+	upperBound := upperBoundMeta{
+		FinishedDDLTs: 0,
+		SchemaVersion: 0,
+		ResolvedTs:    0,
 	}
-	batch.Set(schemaKey, schemaValue, pebble.NoSync)
-	return batch.Commit(pebble.Sync)
+	return newPersistentStorageForTest(db, uint64(gcTs), upperBound)
 }
 
-func writeTableSnapshot(db *pebble.DB, snapTS common.Ts, schemaID int64, tableInfo *model.TableInfo) error {
-	batch := db.NewBatch()
-	tableKey, err := snapshotTableKey(snapTS, common.TableID(tableInfo.ID))
-	if err != nil {
-		log.Fatal("generate table key failed", zap.Error(err))
-	}
-	tableValue, err := json.Marshal(tableInfo)
-	if err != nil {
-		log.Fatal("marshal table failed", zap.Error(err))
-	}
-	batch.Set(tableKey, tableValue, pebble.NoSync)
-	indexKey, err := indexSnapshotKey(common.TableID(tableInfo.ID), snapTS, int64(schemaID))
-	if err != nil {
-		log.Fatal("generate index key failed", zap.Error(err))
-	}
-	batch.Set(indexKey, nil, pebble.NoSync)
-	return batch.Commit(pebble.Sync)
-}
-
-func TestLoadEmptyPersistentStorage(t *testing.T) {
+func TestSchemaDDL(t *testing.T) {
 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
 	err := os.RemoveAll(dbPath)
 	require.Nil(t, err)
-	db, err := pebble.Open(dbPath, &pebble.Options{})
-	require.Nil(t, err)
-	defer db.Close()
+	pStorage := newEmptyPersistentStorageForTest(dbPath)
 
-	gcTS := common.Ts(1000)
-	metaTS := &schemaMetaTS{
-		ResolvedTS:    1000,
-		FinishedDDLTS: 3000,
-		SchemaVersion: 4000,
-	}
-
-	err = writeMetaData(db, gcTS, metaTS)
-	require.Nil(t, err)
-
-	dataStorage, newMetaTS, databaseMap := loadPersistentStorage(db, 1000)
-	require.Equal(t, metaTS.ResolvedTS, newMetaTS.ResolvedTS)
-	require.Equal(t, metaTS.FinishedDDLTS, newMetaTS.FinishedDDLTS)
-	require.Equal(t, metaTS.SchemaVersion, newMetaTS.SchemaVersion)
-	require.Equal(t, 0, len(databaseMap))
-	require.Equal(t, gcTS, dataStorage.getGCTS())
-}
-
-func TestLoadPersistentStorageWithoutRequiredData(t *testing.T) {
-	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
-	err := os.RemoveAll(dbPath)
-	require.Nil(t, err)
-	db, err := pebble.Open(dbPath, &pebble.Options{})
-	require.Nil(t, err)
-	defer db.Close()
-
-	gcTS := common.Ts(1000)
-	metaTS := &schemaMetaTS{
-		ResolvedTS:    1000,
-		FinishedDDLTS: 3000,
-		SchemaVersion: 4000,
-	}
-
-	err = writeMetaData(db, gcTS, metaTS)
-	require.Nil(t, err)
-
-	dataStorage, _, databaseMap := loadPersistentStorage(db, metaTS.ResolvedTS+100)
-	require.Nil(t, dataStorage)
-	require.Nil(t, databaseMap)
-}
-
-func TestBuildVersionedTableInfoStore(t *testing.T) {
-	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
-	err := os.RemoveAll(dbPath)
-	require.Nil(t, err)
-	db, err := pebble.Open(dbPath, &pebble.Options{})
-	require.Nil(t, err)
-	defer db.Close()
-
-	gcTS := common.Ts(1000)
-	metaTS := &schemaMetaTS{
-		ResolvedTS:    2000,
-		FinishedDDLTS: 3000,
-		SchemaVersion: 4000,
-	}
-
-	err = writeMetaData(db, gcTS, metaTS)
-	require.Nil(t, err)
-
-	schemaID := 50
-	tableID := common.TableID(99)
-	writeSchemaSnapshot(db, gcTS, &model.DBInfo{
-		ID:   int64(schemaID),
-		Name: model.NewCIStr("test"),
-	})
-	writeTableSnapshot(db, gcTS, int64(schemaID), &model.TableInfo{
-		ID:   int64(tableID),
-		Name: model.NewCIStr("t"),
-	})
-
-	dataStorage, _, databaseMap := loadPersistentStorage(db, 1500)
-	require.Equal(t, 1, len(databaseMap))
-	require.Equal(t, "test", databaseMap[int64(schemaID)].Name)
-
-	{
-		store := newEmptyVersionedTableInfoStore(tableID)
-		getSchemaName := func(schemaID int64) (string, error) {
-			if _, ok := databaseMap[int64(schemaID)]; !ok {
-				return "", fmt.Errorf("schema not found")
-			}
-			return databaseMap[int64(schemaID)].Name, nil
-		}
-		dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.ResolvedTS, getSchemaName)
-		store.setTableInfoInitialized()
-		require.Equal(t, gcTS, store.getFirstVersion())
-		tableInfo, err := store.getTableInfo(gcTS)
-		require.Nil(t, err)
-		require.Equal(t, "t", tableInfo.Name.O)
-		require.Equal(t, tableID, common.TableID(tableInfo.ID))
-	}
-
-	// mock write some ddl event and load again
-	renameVersion := uint64(1500)
-	err = dataStorage.writeDDLEvent(DDLEvent{
+	ddlEvent := DDLEvent{
 		Job: &model.Job{
-			Type:     model.ActionRenameTable,
-			SchemaID: int64(schemaID),
+			Type:     model.ActionCreateSchema,
+			SchemaID: 300,
 			BinlogInfo: &model.HistoryInfo{
-				SchemaVersion: 3000,
-				TableInfo: &model.TableInfo{
-					ID:   int64(tableID),
-					Name: model.NewCIStr("t2"),
-				},
-				FinishedTS: renameVersion,
+				SchemaVersion: 100,
+				TableInfo:     nil,
+				FinishedTS:    200,
 			},
-			TableID: int64(tableID),
 		},
-	})
-	require.Nil(t, err)
-
-	dataStorage, _, _ = loadPersistentStorage(db, 1500)
-	{
-		store := newEmptyVersionedTableInfoStore(tableID)
-		getSchemaName := func(schemaID int64) (string, error) {
-			if _, ok := databaseMap[int64(schemaID)]; !ok {
-				return "", fmt.Errorf("schema not found")
-			}
-			return databaseMap[int64(schemaID)].Name, nil
-		}
-		dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.ResolvedTS, getSchemaName)
-		store.setTableInfoInitialized()
-		require.Equal(t, gcTS, store.getFirstVersion())
-		require.Equal(t, 2, len(store.infos))
-		tableInfo, err := store.getTableInfo(gcTS)
-		require.Nil(t, err)
-		require.Equal(t, "t", tableInfo.Name.O)
-		require.Equal(t, tableID, common.TableID(tableInfo.ID))
-		tableInfo2, err := store.getTableInfo(common.Ts(renameVersion))
-		require.Nil(t, err)
-		require.Equal(t, "t2", tableInfo2.Name.O)
-	}
-}
-
-func TestBuildVersionedTableInfoAndApplyDDL(t *testing.T) {
-	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
-	err := os.RemoveAll(dbPath)
-	require.Nil(t, err)
-	db, err := pebble.Open(dbPath, &pebble.Options{})
-	require.Nil(t, err)
-	defer db.Close()
-
-	gcTS := common.Ts(1000)
-	metaTS := &schemaMetaTS{
-		ResolvedTS:    2000,
-		FinishedDDLTS: 3000,
-		SchemaVersion: 4000,
 	}
 
-	err = writeMetaData(db, gcTS, metaTS)
-	require.Nil(t, err)
+	pStorage.handleSortedDDLEvents(ddlEvent)
 
-	schemaID := 50
-	tableID := common.TableID(99)
-	writeSchemaSnapshot(db, gcTS, &model.DBInfo{
-		ID:   int64(schemaID),
-		Name: model.NewCIStr("test"),
-	})
-	writeTableSnapshot(db, gcTS, int64(schemaID), &model.TableInfo{
-		ID:   int64(tableID),
-		Name: model.NewCIStr("t"),
-	})
-
-	dataStorage, _, databaseMap := loadPersistentStorage(db, 1500)
-	require.Equal(t, 1, len(databaseMap))
-	require.Equal(t, "test", databaseMap[int64(schemaID)].Name)
-
-	store := newEmptyVersionedTableInfoStore(tableID)
-	getSchemaName := func(schemaID int64) (string, error) {
-		if _, ok := databaseMap[int64(schemaID)]; !ok {
-			return "", fmt.Errorf("schema not found")
-		}
-		return databaseMap[int64(schemaID)].Name, nil
-	}
-	dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.ResolvedTS, getSchemaName)
-	renameVersion := uint64(1500)
-	store.applyDDL(&model.Job{
-		Type:     model.ActionRenameTable,
-		SchemaID: int64(schemaID),
-		BinlogInfo: &model.HistoryInfo{
-			SchemaVersion: 3000,
-			TableInfo: &model.TableInfo{
-				ID:   int64(tableID),
-				Name: model.NewCIStr("t2"),
-			},
-			FinishedTS: renameVersion,
-		},
-		TableID: int64(tableID),
-	})
-	store.setTableInfoInitialized()
-	require.Equal(t, gcTS, store.getFirstVersion())
-	require.Equal(t, 2, len(store.infos))
-	tableInfo, err := store.getTableInfo(gcTS)
-	require.Nil(t, err)
-	require.Equal(t, "t", tableInfo.Name.O)
-	require.Equal(t, tableID, common.TableID(tableInfo.ID))
-	tableInfo2, err := store.getTableInfo(common.Ts(renameVersion))
-	require.Nil(t, err)
-	require.Equal(t, "t2", tableInfo2.Name.O)
+	require.Equal(t, len(pStorage.databaseMap), 1)
+	require.Equal(t, len(pStorage.tableTriggerDDLHistory), 1)
+	require.Equal(t, pStorage.tableTriggerDDLHistory[0], uint64(200))
 }
