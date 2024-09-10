@@ -18,7 +18,7 @@ import (
 	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 )
 
-func encodeRowChangeEventWithoutCompress(e *common.RowEvent, config *ticommon.Config, largeMessageOnlyHandleKeyColumns bool, claimCheckLocationName string) ([]byte, []byte, error) {
+func encodeRowChangedEvent(e *common.RowEvent, config *ticommon.Config, largeMessageOnlyHandleKeyColumns bool, claimCheckLocationName string) ([]byte, []byte, int, error) {
 	keyBuf := &bytes.Buffer{}
 	valueBuf := &bytes.Buffer{}
 	keyWriter := util.BorrowJSONWriter(keyBuf)
@@ -43,18 +43,12 @@ func encodeRowChangeEventWithoutCompress(e *common.RowEvent, config *ticommon.Co
 				err = writeColumnFieldValues(valueWriter, e.GetPreRows(), e.TableInfo, e.ColumnSelector, onlyHandleKeyColumns)
 			})
 		})
-		if err != nil {
-			return nil, nil, err
-		}
 	} else if e.IsInsert() {
 		valueWriter.WriteObject(func() {
 			valueWriter.WriteObjectField("u", func() {
 				err = writeColumnFieldValues(valueWriter, e.GetRows(), e.TableInfo, e.ColumnSelector, largeMessageOnlyHandleKeyColumns)
 			})
 		})
-		if err != nil {
-			return nil, nil, err
-		}
 	} else if e.IsUpdate() {
 		valueWriter.WriteObject(func() {
 			valueWriter.WriteObjectField("u", func() {
@@ -73,23 +67,17 @@ func encodeRowChangeEventWithoutCompress(e *common.RowEvent, config *ticommon.Co
 				})
 			}
 		})
-
-		if err != nil {
-			return nil, nil, err
-		}
 	}
 
 	util.ReturnJSONWriter(keyWriter)
 	util.ReturnJSONWriter(valueWriter)
 
-	return keyBuf.Bytes(), valueBuf.Bytes(), nil
-}
-
-func encodeRowChangedEvent(e *common.RowEvent, config *ticommon.Config, largeMessageOnlyHandleKeyColumns bool, claimCheckLocationName string) ([]byte, []byte, int, error) {
-	key, value, err := encodeRowChangeEventWithoutCompress(e, config, largeMessageOnlyHandleKeyColumns, claimCheckLocationName)
 	if err != nil {
 		return nil, nil, 0, err
 	}
+
+	key := keyBuf.Bytes()
+	value := valueBuf.Bytes()
 
 	valueCompressed, err := ticommon.Compress(
 		config.ChangefeedID, config.LargeMessageHandle.LargeMessageHandleCompression, value,
