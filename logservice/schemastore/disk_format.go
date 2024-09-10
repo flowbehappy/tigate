@@ -189,9 +189,77 @@ func loadDatabaseInfoAndDDLHistory(
 	snapVersion common.Ts,
 	upperBound upperBoundMeta,
 ) (map[common.SchemaID]*DatabaseInfo, map[common.TableID][]uint64, []uint64, error) {
-	// 1. load database in snap
-	// 2. apply schema ddl and table ddl
-	return nil, nil, nil, nil
+	// load database info at `snapVersion`
+	databaseMap := loadDatabaseInfoFromSnap(snap, snapVersion)
+
+	tablesDDLHistory := make(map[common.TableID][]uint64)
+	tableTriggerDDLHistory := make([]uint64, 0)
+
+	// apply ddl jobs
+	startKey, err := ddlJobKey(snapVersion)
+	if err != nil {
+		log.Fatal("generate lower bound failed", zap.Error(err))
+	}
+	endKey, err := ddlJobKey(upperBound.FinishedDDLTs)
+	if err != nil {
+		log.Fatal("generate upper bound failed", zap.Error(err))
+	}
+	snapIter, err := snap.NewIter(&pebble.IterOptions{
+		LowerBound: startKey,
+		UpperBound: endKey,
+	})
+	if err != nil {
+		log.Fatal("new iterator failed", zap.Error(err))
+	}
+	defer snapIter.Close()
+	for snapIter.First(); snapIter.Valid(); snapIter.Next() {
+		var ddlEvent DDLEvent
+		err = json.Unmarshal(snapIter.Value(), &ddlEvent)
+		if err != nil {
+			log.Fatal("unmarshal ddl job failed", zap.Error(err))
+		}
+		updateDatabaseInfo(ddlEvent.Job, databaseMap)
+		updateDDLHistory(ddlEvent.Job, tablesDDLHistory, tableTriggerDDLHistory)
+	}
+
+	return databaseMap, tablesDDLHistory, tableTriggerDDLHistory, nil
+}
+
+func loadDatabaseInfoFromSnap(snap *pebble.Snapshot, snapVersion common.Ts) map[common.SchemaID]*DatabaseInfo {
+	databaseMap := make(map[common.SchemaID]*DatabaseInfo)
+
+	startKey, err := schemaInfoKey(snapVersion, 0)
+	if err != nil {
+		log.Fatal("generate lower bound failed", zap.Error(err))
+	}
+	endKey, err := schemaInfoKey(snapVersion, math.MaxInt64)
+	if err != nil {
+		log.Fatal("generate upper bound failed", zap.Error(err))
+	}
+	snapIter, err := snap.NewIter(&pebble.IterOptions{
+		LowerBound: startKey,
+		UpperBound: endKey,
+	})
+	if err != nil {
+		log.Fatal("new iterator failed", zap.Error(err))
+	}
+	defer snapIter.Close()
+	for snapIter.First(); snapIter.Valid(); snapIter.Next() {
+		var dbInfo model.DBInfo
+		if err := json.Unmarshal(snapIter.Value(), &dbInfo); err != nil {
+			log.Fatal("unmarshal db info failed", zap.Error(err))
+		}
+
+		databaseInfo := &DatabaseInfo{
+			Name:          dbInfo.Name.O,
+			Tables:        make([]common.TableID, 0),
+			CreateVersion: snapVersion,
+			DeleteVersion: common.Ts(math.MaxUint64),
+		}
+		databaseMap[common.SchemaID(dbInfo.ID)] = databaseInfo
+	}
+
+	return databaseMap
 }
 
 func readSchemaIDAndTableInfoFromKVSnap(snap *pebble.Snapshot, tableID common.TableID, version common.Ts) (common.SchemaID, *model.TableInfo) {
@@ -304,31 +372,31 @@ func writeSchemaSnapshotAndMeta(
 ) (map[common.SchemaID]*DatabaseInfo, map[common.TableID]bool, upperBoundMeta, error) {
 	meta := logpuller.GetSnapshotMeta(tiStore, uint64(snapTs))
 	start := time.Now()
-	dbinfos, err := meta.ListDatabases()
+	dbInfos, err := meta.ListDatabases()
 	if err != nil {
 		log.Fatal("list databases failed", zap.Error(err))
 	}
 
-	databaseMap := make(map[common.SchemaID]*DatabaseInfo, len(dbinfos))
+	databaseMap := make(map[common.SchemaID]*DatabaseInfo, len(dbInfos))
 	tablesInKVSnap := make(map[common.TableID]bool)
-	for _, dbinfo := range dbinfos {
-		if filter.IsSysSchema(dbinfo.Name.O) {
+	for _, dbInfo := range dbInfos {
+		if filter.IsSysSchema(dbInfo.Name.O) {
 			continue
 		}
 		databaseInfo := &DatabaseInfo{
-			Name:          dbinfo.Name.O,
+			Name:          dbInfo.Name.O,
 			Tables:        make([]common.TableID, 0),
 			CreateVersion: snapTs,
 			DeleteVersion: common.Ts(math.MaxUint64),
 		}
-		databaseMap[common.SchemaID(dbinfo.ID)] = databaseInfo
+		databaseMap[common.SchemaID(dbInfo.ID)] = databaseInfo
 
 		batch := db.NewBatch()
 		defer batch.Close()
 
-		writeSchemaInfoToBatch(batch, snapTs, dbinfo)
+		writeSchemaInfoToBatch(batch, snapTs, dbInfo)
 
-		rawTables, err := meta.GetMetasByDBID(dbinfo.ID)
+		rawTables, err := meta.GetMetasByDBID(dbInfo.ID)
 		if err != nil {
 			log.Fatal("get tables failed", zap.Error(err))
 		}
@@ -336,7 +404,7 @@ func writeSchemaSnapshotAndMeta(
 			if !isTableRawKey(rawTable.Field) {
 				continue
 			}
-			tableID := writeTableInfoToBatch(batch, snapTs, dbinfo.ID, rawTable.Value)
+			tableID := writeTableInfoToBatch(batch, snapTs, dbInfo.ID, rawTable.Value)
 			databaseInfo.Tables = append(databaseInfo.Tables, tableID)
 			tablesInKVSnap[tableID] = true
 		}

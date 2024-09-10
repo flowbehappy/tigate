@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -291,6 +292,113 @@ func (p *persistentStorage) getTableInfo(tableID common.TableID, ts common.Ts) (
 	}
 	p.mu.Unlock()
 	return store.getTableInfo(ts)
+}
+
+func (p *persistentStorage) getNextDDLEvents(tableID common.TableID, start, end common.Ts) []common.DDLEvent {
+	p.mu.Lock()
+	history, ok := p.tablesDDLHistory[tableID]
+	if !ok {
+		return nil
+	}
+	index := sort.Search(len(history), func(i int) bool {
+		return history[i] > start
+	})
+	// no events to read
+	if index == len(history) {
+		return nil
+	}
+	// copy all target ts to a new slice
+	allTargetTs := make([]common.Ts, 0)
+	for i := index; i < len(history); i++ {
+		if history[i] <= end {
+			allTargetTs = append(allTargetTs, history[i])
+		}
+	}
+
+	storageSnap := p.db.NewSnapshot()
+	defer storageSnap.Close()
+	p.mu.Unlock()
+
+	events := make([]common.DDLEvent, len(allTargetTs))
+	for i, ts := range allTargetTs {
+		rawEvent := readDDLEvent(storageSnap, ts)
+		events[i].Job = rawEvent.Job
+		// FIXME: rename to finished ts
+		events[i].CommitTS = rawEvent.CommitTS
+		// FIXME
+		events[i].BlockedTables = nil
+		events[i].NeedDroppedTables = nil
+		events[i].NeedAddedTables = nil
+	}
+	return events
+}
+
+func (p *persistentStorage) getNextTableTriggerEvent(tableFilter filter.Filter, startTs common.Ts) DDLEvent {
+	for {
+		p.mu.Lock()
+		index := sort.Search(len(p.tableTriggerDDLHistory), func(i int) bool {
+			return p.tableTriggerDDLHistory[i] > startTs
+		})
+		if index == len(p.tableTriggerDDLHistory) {
+			return DDLEvent{}
+		}
+		targetTs := p.tableTriggerDDLHistory[index]
+		storageSnap := p.db.NewSnapshot()
+		defer storageSnap.Close()
+		p.mu.Unlock()
+
+		event := readDDLEvent(storageSnap, targetTs)
+		if tableFilter.ShouldDiscardDDL(event.Job.Type, event.Job.SchemaName, event.Job.TableName) {
+			continue
+		}
+		return event
+	}
+}
+
+func (p *persistentStorage) getNextTableTriggerEvents(tableFilter filter.Filter, start common.Ts, limit int) []common.DDLEvent {
+	events := make([]common.DDLEvent, 0)
+	nextStartTs := start
+	storageSnap := p.db.NewSnapshot()
+	defer storageSnap.Close()
+	for {
+		allTargetTs := make([]common.Ts, 0, limit)
+		p.mu.Lock()
+		index := sort.Search(len(p.tableTriggerDDLHistory), func(i int) bool {
+			return p.tableTriggerDDLHistory[i] > nextStartTs
+		})
+		// no more events to read
+		if index == len(p.tableTriggerDDLHistory) {
+			return events
+		}
+		for i := index; i < len(p.tableTriggerDDLHistory); i++ {
+			allTargetTs = append(allTargetTs, p.tableTriggerDDLHistory[i])
+			if len(allTargetTs) >= limit-len(events) {
+				break
+			}
+		}
+		p.mu.Unlock()
+
+		if len(allTargetTs) == 0 {
+			return events
+		}
+
+		for _, ts := range allTargetTs {
+			rawEvent := readDDLEvent(storageSnap, ts)
+			if tableFilter.ShouldDiscardDDL(rawEvent.Job.Type, rawEvent.Job.SchemaName, rawEvent.Job.TableName) {
+				continue
+			}
+			events = append(events, common.DDLEvent{
+				Job: rawEvent.Job,
+				// FIXME: rename to finished ts
+				CommitTS: rawEvent.CommitTS,
+				// FIXME
+				BlockedTables:     nil,
+				NeedDroppedTables: nil,
+				NeedAddedTables:   nil,
+			})
+		}
+		nextStartTs = allTargetTs[len(allTargetTs)-1]
+	}
 }
 
 func (p *persistentStorage) buildVersionedTableInfoStore(

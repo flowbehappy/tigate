@@ -29,10 +29,11 @@ type SchemaStore interface {
 
 	GetTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error)
 
-	// GetNextDDLEvents returns the next ddl event which finishedTs is within the range (start, end]
-	GetNextDDLEvents(id common.TableID, start, end common.Ts) ([]common.DDLEvent, common.Ts, error)
+	// GetNextDDLEvents returns the next ddl events which finishedTs are within the range (start, end]
+	// and it returns a timestamp which means there will be no more ddl events before(<=) it
+	GetNextDDLEvents(tableID common.TableID, start, end common.Ts) ([]common.DDLEvent, common.Ts)
 
-	GetNextTableTriggerEvents(f filter.Filter, start common.Ts, limit int) ([]common.DDLEvent, common.Ts, error)
+	GetNextTableTriggerEvents(tableFilter filter.Filter, start common.Ts, limit int) ([]common.DDLEvent, common.Ts)
 }
 
 type schemaStore struct {
@@ -179,12 +180,22 @@ func (s *schemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*commo
 	return s.dataStorage.getTableInfo(tableID, ts)
 }
 
-func (s *schemaStore) GetNextDDLEvents(id common.TableID, start, end common.Ts) ([]common.DDLEvent, common.Ts, error) {
-	return nil, end, nil
+func (s *schemaStore) GetNextDDLEvents(tableID common.TableID, start, end common.Ts) ([]common.DDLEvent, common.Ts) {
+	currentResolvedTs := s.resolvedTs.Load()
+	if currentResolvedTs < end {
+		end = currentResolvedTs
+	}
+	return s.dataStorage.getNextDDLEvents(tableID, start, end), end
 }
 
-func (s *schemaStore) GetNextTableTriggerEvents(f filter.Filter, start common.Ts, limit int) ([]common.DDLEvent, common.Ts, error) {
-	return nil, s.resolvedTs.Load(), nil
+func (s *schemaStore) GetNextTableTriggerEvents(tableFilter filter.Filter, start common.Ts, limit int) ([]common.DDLEvent, common.Ts) {
+	// must get resolved ts first
+	currentResolvedTs := s.resolvedTs.Load()
+	events := s.dataStorage.getNextTableTriggerEvents(tableFilter, start, limit)
+	if len(events) == limit {
+		return events, events[limit-1].CommitTS
+	}
+	return events, currentResolvedTs
 }
 
 func (s *schemaStore) writeDDLEvent(ddlEvent DDLEvent) {
