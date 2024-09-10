@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	ticonfig "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/mounter"
+	newcommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tiflow/pkg/config"
 	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
@@ -38,7 +40,7 @@ func TestBasicType(t *testing.T) {
 		ColumnSelector: common.NewDefaultColumnSelector(),
 		Callback:       func() {}}
 
-	protocolConfig := ticommon.NewConfig(config.ProtocolOpen)
+	protocolConfig := newcommon.NewConfig(config.ProtocolOpen)
 	key, value, _, err := encodeRowChangedEvent(rowEvent, protocolConfig, false, "")
 	require.NoError(t, err)
 	require.Equal(t, `{"ts":1,"scm":"test","tbl":"t","t":1}`, string(key))
@@ -55,7 +57,7 @@ func TestDMLEvent(t *testing.T) {
 	job := helper.DDL2Job(`create table test.t(a tinyint primary key, b int)`)
 
 	tableInfo := helper.GetTableInfo(job)
-	protocolConfig := ticommon.NewConfig(config.ProtocolOpen)
+	protocolConfig := newcommon.NewConfig(config.ProtocolOpen)
 
 	// Insert
 	dmlEvent := helper.DML2Event("test", "t", `insert into test.t values (1, 123)`)
@@ -126,7 +128,7 @@ func TestOnlyOutputUpdatedEvent(t *testing.T) {
 
 	helper.Tk().MustExec("use test")
 
-	protocolConfig := ticommon.NewConfig(config.ProtocolOpen)
+	protocolConfig := newcommon.NewConfig(config.ProtocolOpen)
 	protocolConfig.OnlyOutputUpdatedColumns = true
 
 	{
@@ -163,7 +165,7 @@ func TestHandleOnlyEvent(t *testing.T) {
 	job := helper.DDL2Job(`create table test.t(a tinyint primary key, b int)`)
 
 	tableInfo := helper.GetTableInfo(job)
-	protocolConfig := ticommon.NewConfig(config.ProtocolOpen)
+	protocolConfig := newcommon.NewConfig(config.ProtocolOpen)
 
 	// Insert
 	dmlEvent := helper.DML2Event("test", "t", `insert into test.t values (1, 123)`)
@@ -193,7 +195,7 @@ func TestDDLEvent(t *testing.T) {
 
 	job := helper.DDL2Job(`create table test.t(a tinyint primary key, b int)`)
 
-	protocolConfig := ticommon.NewConfig(config.ProtocolOpen)
+	protocolConfig := newcommon.NewConfig(config.ProtocolOpen)
 
 	ddlEvent := &common.DDLEvent{
 		Job:      job,
@@ -222,21 +224,21 @@ func TestEncodeWithColumnSelector(t *testing.T) {
 	defer helper.Close()
 	helper.Tk().MustExec("use test")
 
-	replicaConfig := config.GetDefaultReplicaConfig()
-	replicaConfig.Sink.ColumnSelectors = []*config.ColumnSelector{
+	sinkConfig := ticonfig.SinkConfig{}
+	sinkConfig.ColumnSelectors = []*ticonfig.ColumnSelector{
 		{
 			Matcher: []string{"test.*"},
 			Columns: []string{"a*"},
 		},
 	}
-	selectors, err := common.NewColumnSelectors(replicaConfig)
+	selectors, err := common.NewColumnSelectors(&sinkConfig)
 	require.NoError(t, err)
 	selector := selectors.GetSelector("test", "t")
 
 	job := helper.DDL2Job(`create table test.t(a tinyint primary key, b int)`)
 
 	tableInfo := helper.GetTableInfo(job)
-	protocolConfig := ticommon.NewConfig(config.ProtocolOpen)
+	protocolConfig := newcommon.NewConfig(config.ProtocolOpen)
 
 	dmlEvent := helper.DML2Event("test", "t", `insert into test.t values (1, 123)`)
 	require.NotNil(t, dmlEvent)

@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	ticonfig "github.com/flowbehappy/tigate/pkg/config"
+	newCommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -56,7 +58,7 @@ type encoderGroup struct {
 	inputCh []chan *future
 	index   uint64
 
-	rowEventEncoders []encoder.RowEventEncoder
+	rowEventEncoders []encoder.EventEncoder
 
 	outputCh chan *future
 
@@ -66,8 +68,8 @@ type encoderGroup struct {
 // NewEncoderGroup creates a new EncoderGroup instance
 func NewEncoderGroup(
 	ctx context.Context,
-	cfg *config.SinkConfig,
-	encoderConfig *ticommon.Config,
+	cfg *ticonfig.SinkConfig,
+	encoderConfig *newCommon.Config,
 	changefeedID model.ChangeFeedID,
 ) *encoderGroup {
 	concurrency := util.GetOrZero(cfg.EncoderConcurrency)
@@ -75,11 +77,11 @@ func NewEncoderGroup(
 		concurrency = config.DefaultEncoderGroupConcurrency
 	}
 	inputCh := make([]chan *future, concurrency)
-	rowEventEncoders := make([]encoder.RowEventEncoder, concurrency)
+	rowEventEncoders := make([]encoder.EventEncoder, concurrency)
 	var err error
 	for i := 0; i < concurrency; i++ {
 		inputCh[i] = make(chan *future, defaultInputChanSize)
-		rowEventEncoders[i], err = NewRowEventEncoder(ctx, encoderConfig)
+		rowEventEncoders[i], err = NewEventEncoder(ctx, encoderConfig)
 		if err != nil {
 			log.Error("failed to create row event encoder", zap.Error(err))
 			return nil
@@ -89,7 +91,7 @@ func NewEncoderGroup(
 
 	var bootstrapWorker *bootstrapWorker
 	if cfg.ShouldSendBootstrapMsg() {
-		rowEventEncoder, err := NewRowEventEncoder(ctx, encoderConfig)
+		rowEventEncoder, err := NewEventEncoder(ctx, encoderConfig)
 		if err != nil {
 			log.Error("failed to create row event encoder", zap.Error(err))
 			return nil

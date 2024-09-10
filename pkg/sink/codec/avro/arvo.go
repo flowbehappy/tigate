@@ -1011,7 +1011,7 @@ const (
 )
 
 // NewAvroEncoder return a avro encoder.
-func NewAvroEncoder(ctx context.Context, config *ticommon.Config) (encoder.RowEventEncoder, error) {
+func NewAvroEncoder(ctx context.Context, config *ticommon.Config) (encoder.EventEncoder, error) {
 	var schemaM SchemaManager
 	var err error
 

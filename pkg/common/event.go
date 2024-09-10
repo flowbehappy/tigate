@@ -331,7 +331,6 @@ type DDLEvent struct {
 	CommitTS Ts `json:"commit_ts"`
 
 	// Just for test now
-	// Just for test now
 	BlockedTables     *InfluencedTables `json:"blocked_tables"`
 	NeedDroppedTables *InfluencedTables `json:"need_dropped_tables"`
 	NeedAddedTables   []Table           `json:"need_added_tables"`

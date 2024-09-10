@@ -14,9 +14,9 @@
 package common
 
 import (
+	ticonfig "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
-	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/errors"
 )
 
@@ -40,7 +40,7 @@ type ColumnSelector struct {
 }
 
 func newColumnSelector(
-	rule *config.ColumnSelector, caseSensitive bool,
+	rule *ticonfig.ColumnSelector, caseSensitive bool,
 ) (*ColumnSelector, error) {
 	tableM, err := filter.Parse(rule.Matcher)
 	if err != nil {
@@ -78,10 +78,10 @@ type ColumnSelectors struct {
 }
 
 // New return a column selectors
-func NewColumnSelectors(cfg *config.ReplicaConfig) (*ColumnSelectors, error) {
-	selectors := make([]*ColumnSelector, 0, len(cfg.Sink.ColumnSelectors))
-	for _, r := range cfg.Sink.ColumnSelectors {
-		selector, err := newColumnSelector(r, cfg.CaseSensitive)
+func NewColumnSelectors(sinkConfig *ticonfig.SinkConfig) (*ColumnSelectors, error) {
+	selectors := make([]*ColumnSelector, 0, len(sinkConfig.ColumnSelectors))
+	for _, r := range sinkConfig.ColumnSelectors {
+		selector, err := newColumnSelector(r, sinkConfig.CaseSensitive)
 		if err != nil {
 			return nil, err
 		}

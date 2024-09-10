@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	newcommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -25,7 +26,7 @@ type BatchEncoder struct {
 
 	claimCheck *claimcheck.ClaimCheck
 
-	config *ticommon.Config
+	config *newcommon.Config
 }
 
 // AppendRowChangedEvent implements the RowEventEncoder interface
@@ -184,7 +185,7 @@ func enhancedKeyValue(key, value []byte) ([]byte, []byte) {
 }
 
 // NewBatchEncoder creates a new BatchEncoder.
-func NewBatchEncoder(ctx context.Context, config *ticommon.Config) (encoder.RowEventEncoder, error) {
+func NewBatchEncoder(ctx context.Context, config *newcommon.Config) (encoder.EventEncoder, error) {
 	claimCheck, err := claimcheck.New(ctx, config.LargeMessageHandle, config.ChangefeedID)
 	if err != nil {
 		return nil, errors.Trace(err)
