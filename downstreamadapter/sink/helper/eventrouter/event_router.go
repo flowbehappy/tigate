@@ -17,6 +17,7 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter/partition"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter/topic"
 	"github.com/flowbehappy/tigate/pkg/common"
+	ticonfig "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/log"
 	tableFilter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -38,11 +39,11 @@ type EventRouter struct {
 }
 
 // NewEventRouter creates a new EventRouter.
-func NewEventRouter(cfg *config.ReplicaConfig, protocol config.Protocol, defaultTopic, scheme string) (*EventRouter, error) {
+func NewEventRouter(sinkConfig *ticonfig.SinkConfig, protocol config.Protocol, defaultTopic, scheme string) (*EventRouter, error) {
 	// If an event does not match any dispatching rules in the config file,
 	// it will be dispatched by the default partition dispatcher and
 	// static topic dispatcher because it matches *.* rule.
-	ruleConfigs := append(cfg.Sink.DispatchRules, &config.DispatchRule{
+	ruleConfigs := append(sinkConfig.DispatchRules, &ticonfig.DispatchRule{
 		Matcher:       []string{"*.*"},
 		PartitionRule: "default",
 		TopicRule:     "",
@@ -55,7 +56,7 @@ func NewEventRouter(cfg *config.ReplicaConfig, protocol config.Protocol, default
 		if err != nil {
 			return nil, cerror.WrapError(cerror.ErrFilterRuleInvalid, err, ruleConfig.Matcher)
 		}
-		if !cfg.CaseSensitive {
+		if !sinkConfig.CaseSensitive {
 			f = tableFilter.CaseInsensitive(f)
 		}
 

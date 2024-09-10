@@ -23,7 +23,11 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/worker"
 	"github.com/flowbehappy/tigate/downstreamadapter/worker/dmlproducer"
 	"github.com/flowbehappy/tigate/pkg/common"
+	ticonfig "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/sink/codec"
+	"github.com/flowbehappy/tigate/pkg/sink/kafka"
+	v2 "github.com/flowbehappy/tigate/pkg/sink/kafka/v2"
+	tiutils "github.com/flowbehappy/tigate/pkg/sink/util"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -32,8 +36,7 @@ import (
 	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink"
-	"github.com/pingcap/tiflow/pkg/sink/kafka"
-	v2 "github.com/pingcap/tiflow/pkg/sink/kafka/v2"
+	tikafka "github.com/pingcap/tiflow/pkg/sink/kafka"
 	utils "github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -52,33 +55,33 @@ type KafkaSink struct {
 	topicManager topicmanager.TopicManager
 
 	worker      *worker.KafkaWorker
-	adminClient kafka.ClusterAdminClient
+	adminClient tikafka.ClusterAdminClient
 	scheme      string
 
 	ctx    context.Context
 	cancel context.CancelCauseFunc // todo?
 }
 
-func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, replicaConfig *config.ReplicaConfig) (*KafkaSink, error) {
+func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig) (*KafkaSink, error) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	topic, err := util.GetTopic(sinkURI)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	scheme := sink.GetScheme(sinkURI)
-	protocol, err := util.GetProtocol(utils.GetOrZero(replicaConfig.Sink.Protocol))
+	protocol, err := util.GetProtocol(utils.GetOrZero(sinkConfig.Protocol))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	options := kafka.NewOptions()
-	if err := options.Apply(changefeedID, sinkURI, replicaConfig); err != nil {
+	if err := options.Apply(changefeedID, sinkURI, sinkConfig); err != nil {
 		return nil, cerror.WrapError(cerror.ErrKafkaInvalidConfig, err)
 	}
 
 	// todo
 	factoryCreator := kafka.NewSaramaFactory
-	if utils.GetOrZero(replicaConfig.Sink.EnableKafkaSinkV2) {
+	if utils.GetOrZero(sinkConfig.EnableKafkaSinkV2) {
 		factoryCreator = v2.NewFactory
 	}
 
@@ -92,17 +95,17 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, replicaConf
 		return nil, cerror.WrapError(cerror.ErrKafkaNewProducer, err)
 	}
 
-	eventRouter, err := eventrouter.NewEventRouter(replicaConfig, protocol, topic, scheme)
+	eventRouter, err := eventrouter.NewEventRouter(sinkConfig, protocol, topic, scheme)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	columnSelector, err := common.NewColumnSelectors(replicaConfig)
+	columnSelector, err := common.NewColumnSelectors(sinkConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	encoderConfig, err := util.GetEncoderConfig(changefeedID, sinkURI, protocol, replicaConfig, options.MaxMessageBytes)
+	encoderConfig, err := tiutils.GetEncoderConfig(changefeedID, sinkURI, protocol, sinkConfig, options.MaxMessageBytes)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -115,7 +118,7 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, replicaConf
 
 	metricsCollector := factory.MetricsCollector(utils.RoleProcessor, adminClient)
 	dmlProducer := dmlproducer.NewKafkaDMLProducer(ctx, changefeedID, asyncProducer, metricsCollector)
-	encoderGroup := codec.NewEncoderGroup(ctx, replicaConfig.Sink, encoderConfig, changefeedID)
+	encoderGroup := codec.NewEncoderGroup(ctx, sinkConfig, encoderConfig, changefeedID)
 
 	statistics := timetrics.NewStatistics(changefeedID, sink.RowSink)
 	worker := worker.NewKafkaWorker(changefeedID, protocol, dmlProducer, encoderGroup, statistics)

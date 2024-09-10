@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	configNew "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -204,7 +205,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 		cfID := model.DefaultChangeFeedID(req.GetId())
 		cf, ok := m.maintainers.Load(cfID)
 		if !ok {
-			cfConfig := &model.ChangeFeedInfo{}
+			cfConfig := &configNew.ChangeFeedInfo{}
 			err := json.Unmarshal(req.Config, cfConfig)
 			if err != nil {
 				log.Panic("decode changefeed fail", zap.Error(err))

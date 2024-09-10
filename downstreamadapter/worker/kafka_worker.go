@@ -238,14 +238,8 @@ func (w *KafkaWorker) group(msgs []*common.MQRowEvent) map[model.TopicPartitionK
 }
 
 func (w *KafkaWorker) sendMessages(ctx context.Context) error {
-	ticker := time.NewTicker(15 * time.Second)
-	metric := codec.EncoderGroupOutputChanSizeGauge.
-		WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
-	defer func() {
-		ticker.Stop()
-		codec.EncoderGroupOutputChanSizeGauge.
-			DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
-	}()
+	metricSendMessageDuration := mq.WorkerSendMessageDuration.WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+	defer mq.WorkerSendMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
 
 	var err error
 	outCh := w.encoderGroup.Output()
@@ -253,8 +247,6 @@ func (w *KafkaWorker) sendMessages(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return errors.Trace(ctx.Err())
-		case <-ticker.C:
-			metric.Set(float64(len(outCh)))
 		case future, ok := <-outCh:
 			if !ok {
 				log.Warn("MQ sink encoder's output channel closed",
@@ -280,7 +272,7 @@ func (w *KafkaWorker) sendMessages(ctx context.Context) error {
 				}); err != nil {
 					return err
 				}
-				w.metricMQWorkerSendMessageDuration.Observe(time.Since(start).Seconds())
+				metricSendMessageDuration.Observe(time.Since(start).Seconds())
 			}
 		}
 	}

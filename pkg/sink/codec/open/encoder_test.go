@@ -8,12 +8,12 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/mounter"
+	newcommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/config"
 	ticonfig "github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
-	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -36,7 +36,7 @@ func readByteToUint(b []byte) uint64 {
 
 func TestEncoderOneMessage(t *testing.T) {
 	ctx := context.Background()
-	config := ticommon.NewConfig(config.ProtocolOpen)
+	config := newcommon.NewConfig(config.ProtocolOpen)
 	batchEncoder, err := NewBatchEncoder(ctx, config)
 	require.NoError(t, err)
 
@@ -84,7 +84,7 @@ func TestEncoderOneMessage(t *testing.T) {
 
 func TestEncoderMultipleMessage(t *testing.T) {
 	ctx := context.Background()
-	config := ticommon.NewConfig(config.ProtocolOpen)
+	config := newcommon.NewConfig(config.ProtocolOpen)
 	config = config.WithMaxMessageBytes(400)
 
 	batchEncoder, err := NewBatchEncoder(ctx, config)
@@ -157,7 +157,7 @@ func TestEncoderMultipleMessage(t *testing.T) {
 
 func TestLargeMessage(t *testing.T) {
 	ctx := context.Background()
-	config := ticommon.NewConfig(config.ProtocolOpen)
+	config := newcommon.NewConfig(config.ProtocolOpen)
 	config = config.WithMaxMessageBytes(100)
 	batchEncoder, err := NewBatchEncoder(ctx, config)
 	require.NoError(t, err)
@@ -189,7 +189,7 @@ func TestLargeMessage(t *testing.T) {
 
 func TestLargeMessageWithHandle(t *testing.T) {
 	ctx := context.Background()
-	config := ticommon.NewConfig(config.ProtocolOpen)
+	config := newcommon.NewConfig(config.ProtocolOpen)
 	config = config.WithMaxMessageBytes(150)
 	config.LargeMessageHandle.LargeMessageHandleOption = ticonfig.LargeMessageHandleOptionHandleKeyOnly
 	batchEncoder, err := NewBatchEncoder(ctx, config)
@@ -233,7 +233,7 @@ func TestLargeMessageWithHandle(t *testing.T) {
 
 func TestLargeMessageWithoutHandle(t *testing.T) {
 	ctx := context.Background()
-	config := ticommon.NewConfig(config.ProtocolOpen)
+	config := newcommon.NewConfig(config.ProtocolOpen)
 	config = config.WithMaxMessageBytes(150)
 	config.LargeMessageHandle.LargeMessageHandleOption = ticonfig.LargeMessageHandleOptionHandleKeyOnly
 	batchEncoder, err := NewBatchEncoder(ctx, config)

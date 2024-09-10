@@ -27,7 +27,6 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
-	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -131,13 +130,12 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 }
 
 func (e *EventDispatcherManager) InitSink() error {
-	cfg, db, err := writer.NewMysqlConfigAndDB(e.config.SinkURI)
+	sink, err := sink.NewSink(e.config, e.changefeedID)
 	if err != nil {
-		log.Error("create mysql sink failed", zap.Error(err))
+		log.Error("create sink failed", zap.Error(err))
 		return err
 	}
-
-	e.sink = sink.NewMysqlSink(e.changefeedID, 16, cfg, db)
+	e.sink = sink
 	return nil
 }
 

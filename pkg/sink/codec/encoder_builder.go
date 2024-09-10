@@ -3,11 +3,11 @@ package codec
 import (
 	"context"
 
+	"github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/open"
 	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/sink/codec/common"
 )
 
 func NewRowEventEncoder(ctx context.Context, cfg *common.Config) (encoder.RowEventEncoder, error) {

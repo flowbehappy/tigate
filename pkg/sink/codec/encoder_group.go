@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	ticonfig "github.com/flowbehappy/tigate/pkg/config"
+	newCommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -66,8 +68,8 @@ type encoderGroup struct {
 // NewEncoderGroup creates a new EncoderGroup instance
 func NewEncoderGroup(
 	ctx context.Context,
-	cfg *config.SinkConfig,
-	encoderConfig *ticommon.Config,
+	cfg *ticonfig.SinkConfig,
+	encoderConfig *newCommon.Config,
 	changefeedID model.ChangeFeedID,
 ) *encoderGroup {
 	concurrency := util.GetOrZero(cfg.EncoderConcurrency)
