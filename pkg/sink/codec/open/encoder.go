@@ -185,7 +185,7 @@ func enhancedKeyValue(key, value []byte) ([]byte, []byte) {
 }
 
 // NewBatchEncoder creates a new BatchEncoder.
-func NewBatchEncoder(ctx context.Context, config *newcommon.Config) (encoder.RowEventEncoder, error) {
+func NewBatchEncoder(ctx context.Context, config *newcommon.Config) (encoder.EventEncoder, error) {
 	claimCheck, err := claimcheck.New(ctx, config.LargeMessageHandle, config.ChangefeedID)
 	if err != nil {
 		return nil, errors.Trace(err)

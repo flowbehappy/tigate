@@ -313,7 +313,7 @@ type JSONRowEventEncoder struct {
 }
 
 // newJSONRowEventEncoder creates a new JSONRowEventEncoder
-func NewJSONRowEventEncoder(ctx context.Context, config *ticommon.Config) (encoder.RowEventEncoder, error) {
+func NewJSONRowEventEncoder(ctx context.Context, config *ticommon.Config) (encoder.EventEncoder, error) {
 	claimCheck, err := claimcheck.New(ctx, config.LargeMessageHandle, config.ChangefeedID)
 	if err != nil {
 		return nil, errors.Trace(err)

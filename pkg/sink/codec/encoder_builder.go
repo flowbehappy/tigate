@@ -10,7 +10,7 @@ import (
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 )
 
-func NewRowEventEncoder(ctx context.Context, cfg *common.Config) (encoder.RowEventEncoder, error) {
+func NewEventEncoder(ctx context.Context, cfg *common.Config) (encoder.EventEncoder, error) {
 	switch cfg.Protocol {
 	case config.ProtocolDefault, config.ProtocolOpen:
 		return open.NewBatchEncoder(ctx, cfg)

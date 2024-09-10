@@ -29,8 +29,8 @@ const (
 	MemBufShrinkThreshold = 1024 * 1024
 )
 
-// RowEventEncoder is an abstraction for events encoder
-type RowEventEncoder interface {
+// EventEncoder is an abstraction for events encoder
+type EventEncoder interface {
 	// EncodeCheckpointEvent appends a checkpoint event into the batch.
 	// This event will be broadcast to all partitions to signal a global checkpoint.
 	EncodeCheckpointEvent(ts uint64) (*ticommon.Message, error)

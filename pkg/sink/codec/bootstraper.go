@@ -40,7 +40,7 @@ const (
 type bootstrapWorker struct {
 	changefeedID                model.ChangeFeedID
 	activeTables                sync.Map
-	rowEventEncoder             encoder.RowEventEncoder
+	rowEventEncoder             encoder.EventEncoder
 	sendBootstrapInterval       time.Duration
 	sendBootstrapInMsgCount     int32
 	sendBootstrapToAllPartition bool
@@ -53,7 +53,7 @@ type bootstrapWorker struct {
 func newBootstrapWorker(
 	changefeedID model.ChangeFeedID,
 	outCh chan<- *future,
-	rowEventEncoder encoder.RowEventEncoder,
+	rowEventEncoder encoder.EventEncoder,
 	sendBootstrapInterval int64,
 	sendBootstrapInMsgCount int32,
 	sendBootstrapToAllPartition bool,

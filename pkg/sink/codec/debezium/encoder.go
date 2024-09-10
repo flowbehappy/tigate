@@ -98,7 +98,7 @@ func (d *BatchEncoder) Build() []*ticommon.Message {
 func (d *BatchEncoder) Clean() {}
 
 // newBatchEncoder creates a new Debezium BatchEncoder.
-func NewBatchEncoder(c *ticommon.Config, clusterID string) encoder.RowEventEncoder {
+func NewBatchEncoder(c *ticommon.Config, clusterID string) encoder.EventEncoder {
 	batch := &BatchEncoder{
 		messages: nil,
 		config:   c,

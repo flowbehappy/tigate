@@ -58,7 +58,7 @@ type encoderGroup struct {
 	inputCh []chan *future
 	index   uint64
 
-	rowEventEncoders []encoder.RowEventEncoder
+	rowEventEncoders []encoder.EventEncoder
 
 	outputCh chan *future
 
@@ -77,11 +77,11 @@ func NewEncoderGroup(
 		concurrency = config.DefaultEncoderGroupConcurrency
 	}
 	inputCh := make([]chan *future, concurrency)
-	rowEventEncoders := make([]encoder.RowEventEncoder, concurrency)
+	rowEventEncoders := make([]encoder.EventEncoder, concurrency)
 	var err error
 	for i := 0; i < concurrency; i++ {
 		inputCh[i] = make(chan *future, defaultInputChanSize)
-		rowEventEncoders[i], err = NewRowEventEncoder(ctx, encoderConfig)
+		rowEventEncoders[i], err = NewEventEncoder(ctx, encoderConfig)
 		if err != nil {
 			log.Error("failed to create row event encoder", zap.Error(err))
 			return nil
@@ -91,7 +91,7 @@ func NewEncoderGroup(
 
 	var bootstrapWorker *bootstrapWorker
 	if cfg.ShouldSendBootstrapMsg() {
-		rowEventEncoder, err := NewRowEventEncoder(ctx, encoderConfig)
+		rowEventEncoder, err := NewEventEncoder(ctx, encoderConfig)
 		if err != nil {
 			log.Error("failed to create row event encoder", zap.Error(err))
 			return nil

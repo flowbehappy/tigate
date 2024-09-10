@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/tiflow/cdc/sink/ddlsink/mq/ddlproducer"
 	timetrics "github.com/pingcap/tiflow/cdc/sink/metrics"
 	"github.com/pingcap/tiflow/cdc/sink/util"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -54,7 +55,8 @@ type KafkaSink struct {
 	// It is also responsible for creating topics.
 	topicManager topicmanager.TopicManager
 
-	worker      *worker.KafkaWorker
+	dmlWorker   *worker.KafkaWorker
+	ddlWorker   *worker.KafkaDDLWorker
 	adminClient tikafka.ClusterAdminClient
 	scheme      string
 
@@ -121,7 +123,7 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, sinkConfig 
 	encoderGroup := codec.NewEncoderGroup(ctx, sinkConfig, encoderConfig, changefeedID)
 
 	statistics := timetrics.NewStatistics(changefeedID, sink.RowSink)
-	worker := worker.NewKafkaWorker(changefeedID, protocol, dmlProducer, encoderGroup, statistics)
+	dmlWorker := worker.NewKafkaWorker(changefeedID, protocol, dmlProducer, encoderGroup, statistics)
 
 	topicManager, err := topicmanager.GetTopicManagerAndTryCreateTopic(
 		ctx,
@@ -137,13 +139,27 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, sinkConfig 
 		}
 		return nil, err
 	}
+
+	encoder, err := codec.NewEventEncoder(ctx, encoderConfig)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	syncProducer, err := factory.SyncProducer(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ddlProducer := ddlproducer.NewKafkaDDLProducer(ctx, changefeedID, syncProducer)
+	ddlWorker := worker.NewKafkaDDLWorker(changefeedID, protocol, ddlProducer, encoder, statistics)
+
 	return &KafkaSink{
 		ctx:            ctx,
 		cancel:         cancel,
 		topicManager:   topicManager,
 		eventRouter:    eventRouter,
 		columnSelector: columnSelector,
-		worker:         worker,
+		dmlWorker:      dmlWorker,
+		ddlWorker:      ddlWorker,
 	}, nil
 }
 
@@ -190,7 +206,7 @@ func (s *KafkaSink) AddDMLEvent(event *common.DMLEvent, tableProgress *types.Tab
 			return
 		}
 
-		s.worker.GetEventChan() <- &common.MQRowEvent{
+		s.dmlWorker.GetEventChan() <- &common.MQRowEvent{
 			Key: model.TopicPartitionKey{
 				Topic:          topic,
 				Partition:      index,
@@ -214,6 +230,8 @@ func (s *KafkaSink) PassDDLAndSyncPointEvent(event *common.DDLEvent, tableProgre
 }
 
 func (s *KafkaSink) AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress) {
+	tableProgress.Add(event)
+	s.ddlWorker.GetEventChan() <- event
 }
 
 func (s *KafkaSink) Close() {

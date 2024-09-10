@@ -35,7 +35,7 @@ type Encoder struct {
 	marshaller marshaller
 }
 
-func NewEncoder(ctx context.Context, config *ticommon.Config) (encoder.RowEventEncoder, error) {
+func NewEncoder(ctx context.Context, config *ticommon.Config) (encoder.EventEncoder, error) {
 	claimCheck, err := claimcheck.New(ctx, config.LargeMessageHandle, config.ChangefeedID)
 	if err != nil {
 		return nil, errors.Trace(err)
