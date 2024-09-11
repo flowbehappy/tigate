@@ -64,6 +64,13 @@ var (
 			Help:      "The duration of scanning task in queue",
 			Buckets:   prometheus.DefBuckets,
 		})
+	EventServiceDispatcherGuage = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_service",
+			Name:      "dispatcher_count",
+			Help:      "The number of dispatchers in event service",
+		}, []string{"cluster"})
 )
 
 // InitMetrics registers all metrics in this file.
@@ -74,4 +81,5 @@ func InitEventServiceMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventServiceResolvedTsGauge)
 	registry.MustRegister(EventServiceResolvedTsLagGauge)
 	registry.MustRegister(EventServiceScanTaskInQueueDuration)
+	registry.MustRegister(EventServiceDispatcherGuage)
 }

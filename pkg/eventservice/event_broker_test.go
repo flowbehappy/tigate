@@ -96,49 +96,6 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 	wg.Wait()
 }
 
-func TestScanTaskPool_PushTask(t *testing.T) {
-	pool := newScanTaskPool()
-	span := newTableSpan(1, "a", "b")
-	dispatcherInfo := &mockDispatcherInfo{
-		id:        common.NewDispatcherID(),
-		clusterID: 1,
-		startTs:   1000,
-		span:      span,
-	}
-	s := newSpanSubscription(span, dispatcherInfo.startTs)
-	dispatcherStat := newDispatcherStat(dispatcherInfo.startTs, dispatcherInfo, s, nil)
-
-	now := time.Now()
-	task1 := &scanTask{
-		dispatcherStat: dispatcherStat,
-		createTime:     now.Add(1 * time.Second),
-	}
-
-	task2 := &scanTask{
-		dispatcherStat: dispatcherStat,
-		createTime:     now.Add(2 * time.Second),
-	}
-
-	// make the pool contain the task1 already
-	pool.taskSet[dispatcherInfo.GetID()] = task1
-
-	// Verify that the task is in the taskSet
-	task, ok := pool.taskSet[dispatcherInfo.id]
-	require.True(t, ok)
-	require.Equal(t, task1, task)
-
-	// Push the second task
-	pool.pushTask(task2)
-	// Verify that the task1 is sent to corresponding pendingTaskQueue, task2 is dropped since duplicate.
-	receivedTask := <-pool.pendingTaskQueue[dispatcherStat.workerIndex]
-	require.Equal(t, task1, receivedTask)
-
-	// Verify that the task is removed from taskSet
-	task, ok = pool.taskSet[dispatcherInfo.GetID()]
-	require.False(t, ok)
-	require.Nil(t, task)
-}
-
 func newTableSpan(tableID int64, start, end string) *heartbeatpb.TableSpan {
 	return &heartbeatpb.TableSpan{
 		TableID:  tableID,

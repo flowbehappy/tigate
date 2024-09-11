@@ -128,7 +128,7 @@ func (s *eventService) deregisterDispatcher(dispatcherInfo DispatcherInfo) {
 func msgToDispatcherInfo(msg *messaging.TargetMessage) []DispatcherInfo {
 	res := make([]DispatcherInfo, 0, len(msg.Message))
 	for _, m := range msg.Message {
-		info, ok := m.(messaging.RegisterDispatcherRequest)
+		info, ok := m.(*messaging.RegisterDispatcherRequest)
 		if !ok {
 			log.Panic("invalid dispatcher info", zap.Any("info", m))
 		}

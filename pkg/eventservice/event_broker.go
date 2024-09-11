@@ -3,6 +3,7 @@ package eventservice
 import (
 	"context"
 	"hash/crc32"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -59,12 +60,14 @@ type eventBroker struct {
 	// and a goroutine is responsible for sending the message to the dispatchers.
 	messageCh        chan wrapEvent
 	resolvedTsCaches map[messaging.ServerId]*resolvedTsCache
+	notifyCh         chan *spanSubscription
 
 	// wg is used to spawn the goroutines.
 	wg *sync.WaitGroup
 	// cancel is used to cancel the goroutines spawned by the eventBroker.
 	cancel context.CancelFunc
 
+	metricDispatcherCount                  prometheus.Gauge
 	metricEventServicePullerResolvedTs     prometheus.Gauge
 	metricEventServiceDispatcherResolvedTs prometheus.Gauge
 	metricEventServiceResolvedTsLag        prometheus.Gauge
@@ -86,6 +89,7 @@ func newEventBroker(
 		eventStore:                             eventStore,
 		mounter:                                mounter.NewMounter(tz),
 		schemaStore:                            schemaStore,
+		notifyCh:                               make(chan *spanSubscription, defaultChannelSize*16),
 		dispatchers:                            sync.Map{},
 		tableTriggerDispatchers:                sync.Map{},
 		spans:                                  make(map[common.TableID]*spanSubscription),
@@ -96,6 +100,7 @@ func newEventBroker(
 		resolvedTsCaches:                       make(map[messaging.ServerId]*resolvedTsCache),
 		cancel:                                 cancel,
 		wg:                                     wg,
+		metricDispatcherCount:                  metrics.EventServiceDispatcherGuage.WithLabelValues(strconv.FormatUint(id, 10)),
 		metricEventServicePullerResolvedTs:     metrics.EventServiceResolvedTsGauge,
 		metricEventServiceResolvedTsLag:        metrics.EventServiceResolvedTsLagGauge.WithLabelValues("puller"),
 		metricEventServiceDispatcherResolvedTs: metrics.EventServiceResolvedTsLagGauge.WithLabelValues("dispatcher"),
@@ -105,6 +110,7 @@ func newEventBroker(
 	c.tickTableTriggerDispatchers(ctx)
 	c.runSendMessageWorker(ctx)
 	c.updateMetrics(ctx)
+	c.runGenTasks(ctx)
 	return c
 }
 
@@ -140,6 +146,26 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 			}
 		}()
 	}
+}
+
+func (c *eventBroker) runGenTasks(ctx context.Context) {
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case s := <-c.notifyCh:
+				s.dispatchers.RLock()
+				for _, stat := range s.dispatchers.m {
+					c.taskPool.pushTask(&scanTask{
+						dispatcherStat: stat,
+						createTime:     time.Now(),
+					})
+				}
+				s.dispatchers.RUnlock()
+			}
+		}
+	}()
 }
 
 // TODO: maybe event driven model is better. It is coupled with the detail implementation of
@@ -397,14 +423,7 @@ func (c *eventBroker) close() {
 
 func (c *eventBroker) onNotify(s *spanSubscription, watermark uint64) {
 	s.onSubscriptionWatermark(watermark)
-	s.dispatchers.RLock()
-	defer s.dispatchers.RUnlock()
-	for _, stat := range s.dispatchers.m {
-		c.taskPool.pushTask(&scanTask{
-			dispatcherStat: stat,
-			createTime:     time.Now(),
-		})
-	}
+	c.notifyCh <- s
 }
 
 func (c *eventBroker) addDispatcher(info DispatcherInfo) {
@@ -413,6 +432,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		panic(err)
 	}
 
+	defer c.metricDispatcherCount.Inc()
 	start := time.Now()
 	id := info.GetID()
 	span := info.GetTableSpan()
@@ -452,6 +472,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 }
 
 func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
+	defer c.metricDispatcherCount.Dec()
 	id := dispatcherInfo.GetID()
 	stat, ok := c.dispatchers.Load(id)
 	if !ok {
