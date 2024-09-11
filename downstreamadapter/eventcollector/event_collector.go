@@ -122,7 +122,7 @@ func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
 		To:    c.serverId, // demo 中 每个节点都有自己的 eventService
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
-		Message: []messaging.IOTypeT{messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
+		Message: []messaging.IOTypeT{&messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
 			DispatcherId: info.Dispatcher.GetId().ToPB(),
 			TableSpan:    info.Dispatcher.GetTableSpan(),
 			Remove:       false,
@@ -146,7 +146,7 @@ func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
 		To:    c.serverId,
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
-		Message: []messaging.IOTypeT{messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
+		Message: []messaging.IOTypeT{&messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
 			DispatcherId: d.GetId().ToPB(),
 			Remove:       true,
 			ServerId:     c.serverId.String(),
