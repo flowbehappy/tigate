@@ -21,7 +21,8 @@ type incHandler struct{}
 func (h *incHandler) Path(event *inc) string {
 	return event.path
 }
-func (h *incHandler) Handle(event *inc, dest D) (await bool) {
+func (h *incHandler) Handle(dest D, events ...*inc) (await bool) {
+	event := events[0]
 	for i := 0; i < event.times; i++ {
 		event.n.Add(1)
 	}
@@ -34,7 +35,7 @@ func runStream(eventCount int, times int) {
 	reportChan := make(chan streamStat[string, *inc, D], 100)
 
 	pi := newPathInfo[string, *inc, D]("p1", D{})
-	stream := newStream[string, *inc, D](1 /*id*/, handler, reportChan, 8*time.Millisecond /*reportInterval*/, 10)
+	stream := newStream[string, *inc, D](1 /*id*/, handler, 1, reportChan, 8*time.Millisecond /*reportInterval*/, 10)
 	stream.start([]*pathInfo[string, *inc, D]{pi})
 
 	go func() {

@@ -114,7 +114,8 @@ type dynamicStreamImpl[P Path, T Event, D Dest] struct {
 	trackTopPaths     int
 	baseStreamCount   int
 
-	handler Handler[P, T, D]
+	handler   Handler[P, T, D]
+	batchSize int
 
 	eventChan chan T // The channel to receive the incomming events by distributor
 	wakeChan  chan P // The channel to receive the wake signal by distributor
@@ -135,12 +136,15 @@ type dynamicStreamImpl[P Path, T Event, D Dest] struct {
 
 func newDynamicStreamImpl[P Path, T Event, D Dest](
 	handler Handler[P, T, D],
+	batchSize int,
 	schedulerInterval time.Duration,
 	reportInterval time.Duration,
 	streamCount int,
 ) *dynamicStreamImpl[P, T, D] {
+	batchSize = max(batchSize, 1)
 	return &dynamicStreamImpl[P, T, D]{
-		handler: handler,
+		handler:   handler,
+		batchSize: batchSize,
 
 		schedulerInterval: schedulerInterval,
 		reportInterval:    reportInterval,
@@ -227,7 +231,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 
 	newStream := func() *stream[P, T, D] {
 		nextStreamId++
-		return newStream[P, T, D](nextStreamId, d.handler, d.reportChan, d.reportInterval, d.trackTopPaths)
+		return newStream[P, T, D](nextStreamId, d.handler, 1, d.reportChan, d.reportInterval, d.trackTopPaths)
 	}
 	nextStream := func() *streamInfo[P, T, D] {
 		// We use round-robin to assign the paths to the streams

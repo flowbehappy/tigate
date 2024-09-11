@@ -1,11 +1,12 @@
 package dynstream
 
 import (
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 
 	"github.com/flowbehappy/tigate/utils/deque"
 	"github.com/flowbehappy/tigate/utils/heap"
@@ -129,7 +130,8 @@ func (d doneInfo[P, T, D]) isZero() bool {
 type stream[P Path, T Event, D Dest] struct {
 	id int
 
-	handler Handler[P, T, D]
+	handler   Handler[P, T, D]
+	batchSize int
 
 	inChan      chan eventWrap[P, T, D]            // The buffer channel to receive the events.
 	signalQueue *deque.Deque[eventSignal[P, T, D]] // The queue to store the event signals.
@@ -152,6 +154,7 @@ type stream[P Path, T Event, D Dest] struct {
 func newStream[P Path, T Event, D Dest](
 	id int,
 	handler Handler[P, T, D],
+	batchSize int,
 	reportChan chan streamStat[P, T, D],
 	reportInterval time.Duration, // 200 milliseconds?
 	trackTopPaths int,
@@ -159,6 +162,7 @@ func newStream[P Path, T Event, D Dest](
 	s := &stream[P, T, D]{
 		id:             id,
 		handler:        handler,
+		batchSize:      batchSize,
 		inChan:         make(chan eventWrap[P, T, D], 64),
 		signalQueue:    deque.NewDeque[eventSignal[P, T, D]](128, 0),
 		donChan:        make(chan doneInfo[P, T, D], 64),
@@ -256,6 +260,7 @@ func (s *stream[P, T, D]) handleLoop(acceptedPaths []*pathInfo[P, T, D], formerS
 	s.addPaths(acceptedPaths)
 
 	drainPending := false
+	eventBuf := make([]T, 0, s.batchSize)
 
 Loop:
 	for {
@@ -295,27 +300,39 @@ Loop:
 					continue Loop
 				}
 
-				e, ok := signal.pathInfo.pendingQueue.PopFront()
-				if !ok {
-					// The pendingQueue of the targe path is empty, we should ignore the signal completely.
-					s.signalQueue.PopFront()
-					continue Loop
+				handleCount := min(signal.eventCount, s.batchSize)
+
+				for i := 0; i < handleCount; i++ {
+					e, ok := signal.pathInfo.pendingQueue.PopFront()
+					if !ok {
+						// The signal could contain more events than the pendingQueue,
+						// which is possible when the path is removed or recovered from blocked.
+						break
+					}
+					eventBuf = append(eventBuf, e)
 				}
 
-				now := time.Now()
-				signal.pathInfo.blocking = s.handler.Handle(e, signal.pathInfo.dest)
+				actualCount := len(eventBuf)
 
-				s.donChan <- doneInfo[P, T, D]{pathInfo: signal.pathInfo, handleTime: time.Since(now)}
+				if actualCount != 0 {
+					now := time.Now()
+					signal.pathInfo.blocking = s.handler.Handle(signal.pathInfo.dest, eventBuf...)
+					s.donChan <- doneInfo[P, T, D]{pathInfo: signal.pathInfo, handleTime: time.Since(now)}
+				}
 
-				s.pendingLen--
+				s.pendingLen -= actualCount
 				if s.pendingLen < 0 {
 					panic("pendingLen is less than zero")
 				}
 
-				signal.eventCount--
-				if signal.eventCount == 0 {
+				signal.eventCount -= handleCount
+				if signal.eventCount == 0 || actualCount < handleCount {
+					// signal.eventCount == 0 means the signal is handled completely.
+					// actualCount < handleCount means the pendingQueue is drained.
 					s.signalQueue.PopFront()
 				}
+
+				eventBuf = eventBuf[:0]
 			}
 		}
 	}
