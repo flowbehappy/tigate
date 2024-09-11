@@ -29,19 +29,21 @@ type simpleHandler struct{}
 func (h *simpleHandler) Path(event *simpleEvent) string {
 	return event.path
 }
-func (h *simpleHandler) Handle(event *simpleEvent, dest struct{}) (await bool) {
-	if event.sleep > 0 {
-		time.Sleep(event.sleep)
-	}
-	if event.wg != nil {
-		event.wg.Done()
+func (h *simpleHandler) Handle(dest struct{}, events ...*simpleEvent) (await bool) {
+	for _, event := range events {
+		if event.sleep > 0 {
+			time.Sleep(event.sleep)
+		}
+		if event.wg != nil {
+			event.wg.Done()
+		}
 	}
 	return false
 }
 
 func TestDynamicStreamBasic(t *testing.T) {
 	handler := &simpleHandler{}
-	ds := NewDynamicStream(handler, DefaultSchedulerInterval, DefaultReportInterval, 3)
+	ds := NewDynamicStream(handler, DefaultSchedulerInterval, DefaultReportInterval, 3, Option{BatchSize: 2})
 	ds.Start()
 
 	ds.AddPaths([]PathAndDest[string, struct{}]{
@@ -55,6 +57,8 @@ func TestDynamicStreamBasic(t *testing.T) {
 	ds.In() <- newSimpleEvent("path1", wg)
 	ds.In() <- newSimpleEvent("path2", wg)
 	ds.In() <- newSimpleEvent("path3", wg)
+	ds.In() <- newSimpleEvent("path3", wg)
+	ds.In() <- newSimpleEvent("path3", wg)
 	ds.In() <- newSimpleEvent("path4", wg)
 
 	wg.Wait()
@@ -66,7 +70,7 @@ func TestDynamicStreamBasic(t *testing.T) {
 
 func TestDynamicStreamSchedule(t *testing.T) {
 	handler := &simpleHandler{}
-	ds := newDynamicStreamImpl(handler, 1*time.Hour, 1*time.Hour, 3)
+	ds := newDynamicStreamImpl(handler, 1, 1*time.Hour, 1*time.Hour, 3)
 	ds.Start()
 
 	scheduleNow := func(rule ruleType, period time.Duration) {
@@ -193,7 +197,8 @@ func (h *removePathHandler) Path(event *simpleEvent) string {
 	return event.path
 }
 
-func (h *removePathHandler) Handle(event *simpleEvent, dest struct{}) (await bool) {
+func (h *removePathHandler) Handle(dest struct{}, events ...*simpleEvent) (await bool) {
+	event := events[0]
 	h.ds.RemovePaths(event.path)
 	event.wg.Done()
 	return false
@@ -201,7 +206,7 @@ func (h *removePathHandler) Handle(event *simpleEvent, dest struct{}) (await boo
 
 func TestDynamicStreamRemovePath(t *testing.T) {
 	handler := &removePathHandler{}
-	ds := newDynamicStreamImpl(handler, 1*time.Hour, 1*time.Hour, 3)
+	ds := newDynamicStreamImpl(handler, 1, 1*time.Hour, 1*time.Hour, 3)
 	handler.ds = ds
 
 	ds.Start()

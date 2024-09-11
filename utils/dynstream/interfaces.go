@@ -20,10 +20,11 @@ type Handler[P Path, T Event, D Dest] interface {
 	Path(event T) P
 	// Handle processes the event.
 	// The dest is included in the argument to avoid the requirement of another mapping to get the destination.
-	// If the event is processed successfully, it should return false.
-	// If the event is processed asynchronously, it should return true. The later events of the path are blocked
+	// If the events are processed successfully, it should return false.
+	// If the events are processed asynchronously, it should return true. The later events of the path are blocked
 	// until a wake signal is sent to DynamicStream's Wake channel.
-	Handle(event T, dest D) (await bool)
+	// The len(events) is guaranteed to be greater than 0.
+	Handle(dest D, events ...T) (await bool)
 }
 
 type PathAndDest[P Path, D Dest] struct {
@@ -71,9 +72,13 @@ const DefaultReportInterval = 500 * time.Millisecond
 // We don't need lots of streams because the hanle of events should be CPU-bound and should not be blocked by any waiting.
 const DefaultStreamCount = 128
 
-func NewDynamicStreamDefault[P Path, T Event, D Dest](handler Handler[P, T, D]) DynamicStream[P, T, D] {
+type Option struct {
+	BatchSize int // The batch size of handling events. 0 means no batch.
+}
+
+func NewDynamicStreamDefault[P Path, T Event, D Dest](handler Handler[P, T, D], option ...Option) DynamicStream[P, T, D] {
 	streamCount := max(DefaultStreamCount, runtime.NumCPU())
-	return NewDynamicStream[P, T, D](handler, DefaultSchedulerInterval, DefaultReportInterval, streamCount)
+	return NewDynamicStream[P, T, D](handler, DefaultSchedulerInterval, DefaultReportInterval, streamCount, option...)
 }
 
 func NewDynamicStream[P Path, T Event, D Dest](
@@ -81,6 +86,11 @@ func NewDynamicStream[P Path, T Event, D Dest](
 	schedulerInterval time.Duration,
 	reportInterval time.Duration,
 	streamCount int,
+	option ...Option,
 ) DynamicStream[P, T, D] {
-	return newDynamicStreamImpl(handler, schedulerInterval, reportInterval, streamCount)
+	opt := Option{}
+	if len(option) > 0 {
+		opt = option[0]
+	}
+	return newDynamicStreamImpl(handler, opt.BatchSize, schedulerInterval, reportInterval, streamCount)
 }

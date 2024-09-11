@@ -45,7 +45,8 @@ func (h *mockHandler) Path(event *mockEvent) string {
 	return event.path
 }
 
-func (h *mockHandler) Handle(event *mockEvent, dest any) (await bool) {
+func (h *mockHandler) Handle(dest any, events ...*mockEvent) (await bool) {
+	event := events[0]
 	if event.start != nil {
 		event.start.Done()
 	}
@@ -97,8 +98,8 @@ func TestStreamBasic(t *testing.T) {
 	p1 := newPathInfo[string, *mockEvent, any]("p1", "d1")
 	p2 := newPathInfo[string, *mockEvent, any]("p2", "d2")
 	p3 := newPathInfo[string, *mockEvent, any]("p3", "d3")
-	s1 := newStream(1 /*id*/, handler, reportChan, reportInterval, 10)
-	s2 := newStream(2 /*id*/, handler, reportChan, reportInterval, 10)
+	s1 := newStream(1 /*id*/, handler, 1, reportChan, reportInterval, 10)
+	s2 := newStream(2 /*id*/, handler, 1, reportChan, reportInterval, 10)
 
 	s1.start([]*pathInfo[string, *mockEvent, any]{p1})
 	s2.start([]*pathInfo[string, *mockEvent, any]{p2})
@@ -150,7 +151,7 @@ Loop:
 		}
 	}
 
-	s3 := newStream(3 /*id*/, handler, reportChan, 1*time.Hour /*don't report*/, 10)
+	s3 := newStream(3 /*id*/, handler, 1, reportChan, 1*time.Hour /*don't report*/, 10)
 	s3.start([]*pathInfo[string, *mockEvent, any]{p1, p2}, s1, s2)
 
 	eventDone = &sync.WaitGroup{}
@@ -202,8 +203,8 @@ func TestStreamMerge(t *testing.T) {
 
 	p1 := newPathInfo[string, *mockEvent, any]("p1", "d1")
 	p2 := newPathInfo[string, *mockEvent, any]("p2", "d2")
-	s1 := newStream(1 /*id*/, handler, reportChan, 1*time.Hour /*reportInterval*/, 10)
-	s2 := newStream(2 /*id*/, handler, reportChan, 1*time.Hour /*reportInterval*/, 10)
+	s1 := newStream(1 /*id*/, handler, 1, reportChan, 1*time.Hour /*reportInterval*/, 10)
+	s2 := newStream(2 /*id*/, handler, 1, reportChan, 1*time.Hour /*reportInterval*/, 10)
 
 	s1.start([]*pathInfo[string, *mockEvent, any]{p1})
 	s2.start([]*pathInfo[string, *mockEvent, any]{p2})
@@ -220,7 +221,7 @@ func TestStreamMerge(t *testing.T) {
 
 	wg.Wait()
 
-	s3 := newStream(3 /*id*/, handler, reportChan, 1*time.Hour /*reportInterval*/, 10)
+	s3 := newStream(3 /*id*/, handler, 1, reportChan, 1*time.Hour /*reportInterval*/, 10)
 	s3.start([]*pathInfo[string, *mockEvent, any]{p1, p2}, s1, s2)
 
 	wg = &sync.WaitGroup{}
@@ -256,7 +257,7 @@ func TestStreamManyEvents(t *testing.T) {
 	reportChan := make(chan streamStat[string, *mockEvent, any], 10)
 
 	p1 := newPathInfo[string, *mockEvent, any]("p1", "d1")
-	s1 := newStream(1 /*id*/, handler, reportChan, 1*time.Hour /*reportInterval*/, 10)
+	s1 := newStream(1 /*id*/, handler, 1, reportChan, 1*time.Hour /*reportInterval*/, 10)
 	s1.start([]*pathInfo[string, *mockEvent, any]{p1})
 
 	incr := &atomic.Int64{}

@@ -21,7 +21,7 @@ type intEventHandler struct {
 func (h *intEventHandler) Path(event intEvent) int {
 	return int(event)
 }
-func (h *intEventHandler) Handle(event intEvent, dest D) (await bool) {
+func (h *intEventHandler) Handle(dest D, events ...intEvent) (await bool) {
 	for i := 0; i < h.times; i++ {
 		h.inc.Add(1)
 	}
@@ -118,7 +118,7 @@ func runGoroutine(chans []chan intEvent, pathCount int, eventCount int, handler 
 	for i := 0; i < pathCount; i++ {
 		go func(ch chan intEvent) {
 			for e := range ch {
-				handler.Handle(e, D{})
+				handler.Handle(D{}, e)
 			}
 		}(chans[i])
 	}
