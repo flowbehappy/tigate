@@ -255,7 +255,7 @@ func (w *MysqlWriter) prepareDMLs(events []*common.DMLEvent) *preparedDMLs {
 			// INSERT(not in safe mode)
 			// or REPLACE(in safe mode) SQL.
 			if row.RowType == common.RowTypeInsert {
-				query, args = buildInsert(event.TableInfo, row, true, w.cfg.SafeMode)
+				query, args = buildInsert(event.TableInfo, row, w.cfg.SafeMode)
 				if query != "" {
 					sqls = append(sqls, query)
 					values = append(values, args)
