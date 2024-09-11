@@ -353,6 +353,8 @@ func TestCreateDropSchemaTableDDL(t *testing.T) {
 		require.Equal(t, 1, len(pStorage.tablesFromDDLJobs))
 		require.Equal(t, 2, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(201), pStorage.tableTriggerDDLHistory[1])
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID]))
 	}
 
 	// create another table
@@ -376,6 +378,9 @@ func TestCreateDropSchemaTableDDL(t *testing.T) {
 		require.Equal(t, 2, len(pStorage.tablesFromDDLJobs))
 		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(203), pStorage.tableTriggerDDLHistory[2])
+		require.Equal(t, 2, len(pStorage.tablesDDLHistory))
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID2]))
+		require.Equal(t, uint64(203), pStorage.tablesDDLHistory[tableID2][0])
 	}
 
 	// drop a table
@@ -398,9 +403,39 @@ func TestCreateDropSchemaTableDDL(t *testing.T) {
 		require.Equal(t, 1, len(pStorage.tablesFromDDLJobs))
 		require.Equal(t, 4, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(205), pStorage.tableTriggerDDLHistory[3])
-		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
-		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID2]))
-		require.Equal(t, uint64(205), pStorage.tablesDDLHistory[tableID2][0])
+		require.Equal(t, 2, len(pStorage.tablesDDLHistory))
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID]))
+		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID2]))
+		require.Equal(t, uint64(205), pStorage.tablesDDLHistory[tableID2][1])
+	}
+
+	// truncate a table
+	tableID3 := common.TableID(112)
+	{
+		ddlEvent := DDLEvent{
+			Job: &model.Job{
+				Type:     model.ActionTruncateTable,
+				SchemaID: int64(schemaID),
+				TableID:  int64(tableID),
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 107,
+					TableInfo: &model.TableInfo{
+						ID: int64(tableID3),
+					},
+					FinishedTS: 207,
+				},
+			},
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+
+		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
+		require.Equal(t, 1, len(pStorage.tablesFromDDLJobs))
+		require.Equal(t, 4, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
+		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID]))
+		require.Equal(t, uint64(207), pStorage.tablesDDLHistory[tableID][1])
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID3]))
+		require.Equal(t, uint64(207), pStorage.tablesDDLHistory[tableID3][0])
 	}
 
 	// drop db
@@ -423,9 +458,10 @@ func TestCreateDropSchemaTableDDL(t *testing.T) {
 		require.Equal(t, common.Ts(300), pStorage.databaseMap[schemaID].DeleteVersion)
 		require.Equal(t, 5, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(300), pStorage.tableTriggerDDLHistory[4])
-		require.Equal(t, 2, len(pStorage.tablesDDLHistory))
-		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID]))
-		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID2]))
-		require.Equal(t, uint64(300), pStorage.tablesDDLHistory[tableID][0])
+		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
+		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID]))
+		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID2]))
+		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID3]))
+		require.Equal(t, uint64(300), pStorage.tablesDDLHistory[tableID3][1])
 	}
 }

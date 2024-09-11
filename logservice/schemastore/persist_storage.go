@@ -70,6 +70,11 @@ type persistentStorage struct {
 	// table id -> a sorted list of finished ts for the table's ddl events
 	tablesDDLHistory map[common.TableID][]uint64
 
+	// it has two use cases:
+	// 1. store the ddl events need to send to a table dispatcher
+	//    Note: some ddl events in the history may never be send,
+	//          for example the create table ddl, truncate table ddl(usually the first event)
+	// 2. build table info store for a table
 	tableTriggerDDLHistory []uint64
 
 	// tableID -> versioned store
@@ -517,6 +522,36 @@ func updateDatabaseInfoAndTables(
 	databaseMap map[common.SchemaID]*DatabaseInfo,
 	tablesFromDDLJobs map[common.TableID]bool,
 ) (bool, error) {
+	dropTable := func(schemaID common.SchemaID, tableID common.TableID) {
+		databaseInfo, ok := databaseMap[schemaID]
+		if !ok {
+			log.Panic("database not found. ",
+				zap.String("DDL", job.Query),
+				zap.Int64("jobID", job.ID),
+				zap.Int64("schemaID", job.SchemaID),
+				zap.Int64("tableID", job.TableID),
+				zap.Uint64("finishTs", job.BinlogInfo.FinishedTS),
+				zap.Int64("jobSchemaVersion", job.BinlogInfo.SchemaVersion))
+		}
+		delete(databaseInfo.Tables, tableID)
+		delete(tablesFromDDLJobs, tableID)
+	}
+
+	createTable := func(schemaID common.SchemaID, tableID common.TableID) {
+		databaseInfo, ok := databaseMap[schemaID]
+		if !ok {
+			log.Panic("database not found.",
+				zap.String("DDL", job.Query),
+				zap.Int64("jobID", job.ID),
+				zap.Int64("schemaID", job.SchemaID),
+				zap.Int64("tableID", job.TableID),
+				zap.Uint64("finishTs", job.BinlogInfo.FinishedTS),
+				zap.Int64("jobSchemaVersion", job.BinlogInfo.SchemaVersion))
+		}
+		databaseInfo.Tables[tableID] = true
+		tablesFromDDLJobs[tableID] = true
+	}
+
 	switch job.Type {
 	case model.ActionCreateSchema:
 		if _, ok := databaseMap[common.SchemaID(job.SchemaID)]; ok {
@@ -550,33 +585,19 @@ func updateDatabaseInfoAndTables(
 		}
 		databaseInfo.DeleteVersion = common.Ts(job.BinlogInfo.FinishedTS)
 	case model.ActionCreateTable:
-		databaseInfo, ok := databaseMap[common.SchemaID(job.SchemaID)]
-		if !ok {
-			log.Panic("database not found.",
-				zap.String("DDL", job.Query),
-				zap.Int64("jobID", job.ID),
-				zap.Int64("schemaID", job.SchemaID),
-				zap.Int64("tableID", job.TableID),
-				zap.Uint64("finishTs", job.BinlogInfo.FinishedTS),
-				zap.Int64("jobSchemaVersion", job.BinlogInfo.SchemaVersion))
-			return true, nil
-		}
-		databaseInfo.Tables[common.TableID(job.TableID)] = true
-		tablesFromDDLJobs[common.TableID(job.TableID)] = true
+		createTable(common.SchemaID(job.SchemaID), common.TableID(job.TableID))
 	case model.ActionDropTable:
-		databaseInfo, ok := databaseMap[common.SchemaID(job.SchemaID)]
-		if !ok {
-			log.Panic("database not found.",
-				zap.String("DDL", job.Query),
-				zap.Int64("jobID", job.ID),
-				zap.Int64("schemaID", job.SchemaID),
-				zap.Int64("tableID", job.TableID),
-				zap.Uint64("finishTs", job.BinlogInfo.FinishedTS),
-				zap.Int64("jobSchemaVersion", job.BinlogInfo.SchemaVersion))
-			return true, nil
-		}
-		delete(databaseInfo.Tables, common.TableID(job.TableID))
-		delete(tablesFromDDLJobs, common.TableID(job.TableID))
+		dropTable(common.SchemaID(job.SchemaID), common.TableID(job.TableID))
+	case model.ActionAddColumn,
+		model.ActionDropColumn,
+		model.ActionAddIndex,
+		model.ActionDropIndex,
+		model.ActionAddForeignKey,
+		model.ActionDropForeignKey:
+		// ignore
+	case model.ActionTruncateTable:
+		dropTable(common.SchemaID(job.SchemaID), common.TableID(job.TableID))
+		createTable(common.SchemaID(job.SchemaID), job.BinlogInfo.TableInfo.ID)
 
 	// case model.ActionModifySchemaCharsetAndCollate:
 	// 	// ignore
@@ -604,6 +625,10 @@ func updateDDLHistory(
 	tablesDDLHistory map[common.TableID][]uint64,
 	tableTriggerDDLHistory []uint64,
 ) ([]uint64, error) {
+	addTableHistory := func(tableID common.TableID) {
+		tablesDDLHistory[tableID] = append(tablesDDLHistory[tableID], job.BinlogInfo.FinishedTS)
+	}
+
 	switch job.Type {
 	case model.ActionCreateSchema:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, job.BinlogInfo.FinishedTS)
@@ -614,13 +639,23 @@ func updateDDLHistory(
 			log.Panic("cannot find database", zap.Int64("schemaID", job.SchemaID))
 		}
 		for tableID := range databaseInfo.Tables {
-			tablesDDLHistory[tableID] = append(tablesDDLHistory[tableID], job.BinlogInfo.FinishedTS)
+			addTableHistory(tableID)
 		}
-	case model.ActionCreateTable:
+	case model.ActionCreateTable,
+		model.ActionDropTable:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, job.BinlogInfo.FinishedTS)
-	case model.ActionDropTable:
-		tableTriggerDDLHistory = append(tableTriggerDDLHistory, job.BinlogInfo.FinishedTS)
-		tablesDDLHistory[common.TableID(job.TableID)] = append(tablesDDLHistory[common.TableID(job.TableID)], job.BinlogInfo.FinishedTS)
+		addTableHistory(common.TableID(job.TableID))
+	case model.ActionAddColumn,
+		model.ActionDropColumn,
+		model.ActionAddIndex,
+		model.ActionDropIndex,
+		model.ActionAddForeignKey,
+		model.ActionDropForeignKey:
+		addTableHistory(common.TableID(job.TableID))
+	case model.ActionTruncateTable:
+		addTableHistory(common.TableID(job.TableID))
+		addTableHistory(common.TableID(job.BinlogInfo.TableInfo.ID))
+
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", job.Type),
@@ -635,11 +670,18 @@ func updateRegisteredTableInfoStore(
 	tableInfoStoreMap map[common.TableID]*versionedTableInfoStore,
 ) error {
 	switch job.Type {
-	case model.ActionCreateSchema:
-	case model.ActionDropSchema:
-	case model.ActionCreateTable:
+	case model.ActionCreateSchema,
+		model.ActionDropSchema,
+		model.ActionCreateTable,
+		model.ActionAddIndex,
+		model.ActionDropIndex,
+		model.ActionAddForeignKey,
+		model.ActionDropForeignKey:
 		// ignore
-	case model.ActionDropTable:
+	case model.ActionDropTable,
+		model.ActionAddColumn,
+		model.ActionDropColumn,
+		model.ActionTruncateTable:
 		store, ok := tableInfoStoreMap[common.TableID(job.TableID)]
 		if ok {
 			store.applyDDL(job)
