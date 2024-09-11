@@ -189,13 +189,20 @@ func (s *schemaStore) GetNextDDLEvents(tableID common.TableID, start, end common
 }
 
 func (s *schemaStore) GetNextTableTriggerEvents(tableFilter filter.Filter, start common.Ts, limit int) ([]common.DDLEvent, common.Ts) {
+	if limit == 0 {
+		log.Panic("limit cannot be 0")
+	}
 	// must get resolved ts first
 	currentResolvedTs := s.resolvedTs.Load()
 	events := s.dataStorage.getNextTableTriggerEvents(tableFilter, start, limit)
 	if len(events) == limit {
 		return events, events[limit-1].CommitTS
 	}
-	return events, currentResolvedTs
+	end := currentResolvedTs
+	if len(events) > 0 && events[len(events)-1].CommitTS > currentResolvedTs {
+		end = events[len(events)-1].CommitTS
+	}
+	return events, end
 }
 
 func (s *schemaStore) writeDDLEvent(ddlEvent DDLEvent) {

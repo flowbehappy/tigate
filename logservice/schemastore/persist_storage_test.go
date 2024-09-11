@@ -304,27 +304,128 @@ func newEmptyPersistentStorageForTest(dbPath string) *persistentStorage {
 	return newPersistentStorageForTest(db, uint64(gcTs), upperBound)
 }
 
-func TestSchemaDDL(t *testing.T) {
+func TestCreateDropSchemaTableDDL(t *testing.T) {
 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
 	err := os.RemoveAll(dbPath)
 	require.Nil(t, err)
 	pStorage := newEmptyPersistentStorageForTest(dbPath)
 
-	ddlEvent := DDLEvent{
-		Job: &model.Job{
-			Type:     model.ActionCreateSchema,
-			SchemaID: 300,
-			BinlogInfo: &model.HistoryInfo{
-				SchemaVersion: 100,
-				TableInfo:     nil,
-				FinishedTS:    200,
+	schemaID := common.SchemaID(300)
+	// create db
+	{
+		ddlEvent := DDLEvent{
+			Job: &model.Job{
+				Type:     model.ActionCreateSchema,
+				SchemaID: int64(schemaID),
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 100,
+					TableInfo:     nil,
+					FinishedTS:    200,
+				},
 			},
-		},
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+
+		require.Equal(t, 1, len(pStorage.databaseMap))
+		require.Equal(t, common.Ts(200), pStorage.databaseMap[schemaID].CreateVersion)
+		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, uint64(200), pStorage.tableTriggerDDLHistory[0])
 	}
 
-	pStorage.handleSortedDDLEvents(ddlEvent)
+	// create a table
+	tableID := common.TableID(100)
+	{
+		ddlEvent := DDLEvent{
+			Job: &model.Job{
+				Type:     model.ActionCreateTable,
+				SchemaID: int64(schemaID),
+				TableID:  int64(tableID),
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 101,
+					TableInfo:     nil,
+					FinishedTS:    201,
+				},
+			},
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
 
-	require.Equal(t, len(pStorage.databaseMap), 1)
-	require.Equal(t, len(pStorage.tableTriggerDDLHistory), 1)
-	require.Equal(t, pStorage.tableTriggerDDLHistory[0], uint64(200))
+		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
+		require.Equal(t, 1, len(pStorage.tablesFromDDLJobs))
+		require.Equal(t, 2, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, uint64(201), pStorage.tableTriggerDDLHistory[1])
+	}
+
+	// create another table
+	tableID2 := common.TableID(105)
+	{
+		ddlEvent := DDLEvent{
+			Job: &model.Job{
+				Type:     model.ActionCreateTable,
+				SchemaID: int64(schemaID),
+				TableID:  int64(tableID2),
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 103,
+					TableInfo:     nil,
+					FinishedTS:    203,
+				},
+			},
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+
+		require.Equal(t, 2, len(pStorage.databaseMap[schemaID].Tables))
+		require.Equal(t, 2, len(pStorage.tablesFromDDLJobs))
+		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, uint64(203), pStorage.tableTriggerDDLHistory[2])
+	}
+
+	// drop a table
+	{
+		ddlEvent := DDLEvent{
+			Job: &model.Job{
+				Type:     model.ActionDropTable,
+				SchemaID: int64(schemaID),
+				TableID:  int64(tableID2),
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 105,
+					TableInfo:     nil,
+					FinishedTS:    205,
+				},
+			},
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+
+		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
+		require.Equal(t, 1, len(pStorage.tablesFromDDLJobs))
+		require.Equal(t, 4, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, uint64(205), pStorage.tableTriggerDDLHistory[3])
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID2]))
+		require.Equal(t, uint64(205), pStorage.tablesDDLHistory[tableID2][0])
+	}
+
+	// drop db
+	{
+		ddlEvent := DDLEvent{
+			Job: &model.Job{
+				Type:     model.ActionDropSchema,
+				SchemaID: int64(schemaID),
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 200,
+					TableInfo:     nil,
+					FinishedTS:    300,
+				},
+			},
+		}
+
+		pStorage.handleSortedDDLEvents(ddlEvent)
+
+		require.Equal(t, 1, len(pStorage.databaseMap))
+		require.Equal(t, common.Ts(300), pStorage.databaseMap[schemaID].DeleteVersion)
+		require.Equal(t, 5, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, uint64(300), pStorage.tableTriggerDDLHistory[4])
+		require.Equal(t, 2, len(pStorage.tablesDDLHistory))
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID]))
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID2]))
+		require.Equal(t, uint64(300), pStorage.tablesDDLHistory[tableID][0])
+	}
 }

@@ -13,7 +13,7 @@ type DDLEvent struct {
 
 type DatabaseInfo struct {
 	Name          string
-	Tables        []common.TableID
+	Tables        map[common.TableID]bool
 	CreateVersion common.Ts
 	DeleteVersion common.Ts
 }
