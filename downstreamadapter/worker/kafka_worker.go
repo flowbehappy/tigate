@@ -268,6 +268,9 @@ func (w *KafkaWorker) sendMessages(ctx context.Context) error {
 						message); err != nil {
 						return 0, 0, err
 					}
+					if err != nil {
+						log.Error("Async Send Message failed", zap.Any("error", err))
+					}
 					return message.GetRowsCount(), int64(message.Length()), nil
 				}); err != nil {
 					return err

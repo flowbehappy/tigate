@@ -68,6 +68,10 @@ func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *writer.
 	return &mysqlSink
 }
 
+func (s *MysqlSink) SinkType() SinkType {
+	return MysqlSinkType
+}
+
 func (s *MysqlSink) initWorker(workerCount int, cfg *writer.MysqlConfig, db *sql.DB) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.ddlWorker = worker.NewMysqlDDLWorker(db, cfg, s.changefeedID)
@@ -174,6 +178,8 @@ func (s *MysqlSink) AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgres
 	//s.ddlWorker.GetMysqlWriter().FlushDDLEvent(event)
 	s.ddlEventChan <- event
 }
+
+func (s *MysqlSink) AddCheckpointTs(ts uint64) {}
 
 func (s *MysqlSink) Close() {
 	s.cancel()
