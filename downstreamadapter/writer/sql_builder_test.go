@@ -1,3 +1,16 @@
+// Copyright 2024 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package writer
 
 import (
@@ -9,7 +22,7 @@ import (
 )
 
 // This table has 45 columns
-var createTableSQL = `create table t (
+var preCreateTableSQL = `create table t (
 	id          int primary key auto_increment,
  
 	c_tinyint   tinyint   null,
@@ -68,38 +81,57 @@ var createTableSQL = `create table t (
 	image tinyblob
  );`
 
-func TestBuildInsert(t *testing.T) {
+var preInsertDataSQL = `insert into t values (
+	2,
+	1, 2, 3, 4, 5,
+	1, 2, 3, 4, 5,
+	2020.0202, 2020.0303,
+	  2020.0404, 2021.1208,
+	3.1415, 2.7182, 8000, 179394.233,
+	'2020-02-20', '2020-02-20 02:20:20', '2020-02-20 02:20:20', '02:20:20', '2020',
+	'89504E470D0A1A0A', '89504E470D0A1A0A', '89504E470D0A1A0A', '89504E470D0A1A0A',
+	x'89504E470D0A1A0A', x'89504E470D0A1A0A', x'89504E470D0A1A0A', x'89504E470D0A1A0A',
+	'89504E470D0A1A0A', '89504E470D0A1A0A', x'89504E470D0A1A0A', x'89504E470D0A1A0A',
+	'b', 'b,c', b'1000001', '{
+"key1": "value1",
+"key2": "value2",
+"key3": "123"
+}',
+	'测试', "中国", "上海", "你好,世界", 0xC4E3BAC3CAC0BDE7
+);`
+
+func getRowForTest(t testing.TB) (insert, delete, update common.RowDelta, tableInfo *common.TableInfo) {
 	helper := mounter.NewEventTestHelper(t)
 	defer helper.Close()
 
 	helper.Tk().MustExec("use test")
+	_ = helper.DDL2Job(preCreateTableSQL)
 
-	_ = helper.DDL2Job(createTableSQL)
-
-	insertDataSQL := `insert into t values (
-		2,
-		1, 2, 3, 4, 5,
-		1, 2, 3, 4, 5,
-		2020.0202, 2020.0303,
-		  2020.0404, 2021.1208,
-		3.1415, 2.7182, 8000, 179394.233,
-		'2020-02-20', '2020-02-20 02:20:20', '2020-02-20 02:20:20', '02:20:20', '2020',
-		'89504E470D0A1A0A', '89504E470D0A1A0A', '89504E470D0A1A0A', '89504E470D0A1A0A',
-		x'89504E470D0A1A0A', x'89504E470D0A1A0A', x'89504E470D0A1A0A', x'89504E470D0A1A0A',
-		'89504E470D0A1A0A', '89504E470D0A1A0A', x'89504E470D0A1A0A', x'89504E470D0A1A0A',
-		'b', 'b,c', b'1000001', '{
-   "key1": "value1",
-   "key2": "value2",
-   "key3": "123"
-   }',
-		'测试', "中国", "上海", "你好,世界", 0xC4E3BAC3CAC0BDE7
-   );`
-
-	event := helper.DML2Event("test", "t", insertDataSQL)
+	event := helper.DML2Event("test", "t", preInsertDataSQL)
 	require.NotNil(t, event)
-	row, ok := event.GetNextRow()
+	insert, ok := event.GetNextRow()
 	require.True(t, ok)
-	require.NotNil(t, row)
+	require.NotNil(t, insert)
+
+	updateSQL := "update t set c_varchar = 'test2' where id = 1;"
+	event = helper.DML2Event("test", "t", updateSQL)
+	require.NotNil(t, event)
+	update, ok = event.GetNextRow()
+	require.True(t, ok)
+	require.NotNil(t, update)
+	update.PreRow = insert.Row
+	update.RowType = common.RowTypeUpdate
+
+	delete = common.RowDelta{
+		PreRow:  insert.Row,
+		RowType: common.RowTypeDelete,
+	}
+
+	return insert, delete, update, event.TableInfo
+}
+
+func TestBuildInsert(t *testing.T) {
+	insert, _, _, tableInfo := getRowForTest(t)
 
 	exportedArgs := []interface{}{
 		// int
@@ -134,14 +166,14 @@ func TestBuildInsert(t *testing.T) {
 
 	// case 1: Convert to INSERT INTO
 	exportedSQL := "INSERT INTO `test`.`t` (`id`,`c_tinyint`,`c_smallint`,`c_mediumint`,`c_int`,`c_bigint`,`c_unsigned_tinyint`,`c_unsigned_smallint`,`c_unsigned_mediumint`,`c_unsigned_int`,`c_unsigned_bigint`,`c_float`,`c_double`,`c_decimal`,`c_decimal_2`,`c_unsigned_float`,`c_unsigned_double`,`c_unsigned_decimal`,`c_unsigned_decimal_2`,`c_date`,`c_datetime`,`c_timestamp`,`c_time`,`c_year`,`c_tinytext`,`c_text`,`c_mediumtext`,`c_longtext`,`c_tinyblob`,`c_blob`,`c_mediumblob`,`c_longblob`,`c_char`,`c_varchar`,`c_binary`,`c_varbinary`,`c_enum`,`c_set`,`c_bit`,`c_json`,`name`,`country`,`city`,`description`,`image`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-	sql, args := buildInsert(event.TableInfo, row, true, false)
+	sql, args := buildInsert(tableInfo, insert, false)
 	require.Equal(t, exportedSQL, sql)
 	require.Len(t, args, 45)
 	require.Equal(t, exportedArgs, args)
 
 	// case 2: Convert to REPLACE INTO
 	exportedSQL = "REPLACE INTO `test`.`t` (`id`,`c_tinyint`,`c_smallint`,`c_mediumint`,`c_int`,`c_bigint`,`c_unsigned_tinyint`,`c_unsigned_smallint`,`c_unsigned_mediumint`,`c_unsigned_int`,`c_unsigned_bigint`,`c_float`,`c_double`,`c_decimal`,`c_decimal_2`,`c_unsigned_float`,`c_unsigned_double`,`c_unsigned_decimal`,`c_unsigned_decimal_2`,`c_date`,`c_datetime`,`c_timestamp`,`c_time`,`c_year`,`c_tinytext`,`c_text`,`c_mediumtext`,`c_longtext`,`c_tinyblob`,`c_blob`,`c_mediumblob`,`c_longblob`,`c_char`,`c_varchar`,`c_binary`,`c_varbinary`,`c_enum`,`c_set`,`c_bit`,`c_json`,`name`,`country`,`city`,`description`,`image`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-	sql, args = buildInsert(event.TableInfo, row, true, true)
+	sql, args = buildInsert(tableInfo, insert, true)
 	require.Equal(t, exportedSQL, sql)
 	require.Len(t, args, 45)
 	require.Equal(t, exportedArgs, args)
@@ -292,7 +324,7 @@ func TestBuildUpdate(t *testing.T) {
 	row.PreRow = oldRow.Row
 	row.RowType = common.RowTypeUpdate
 
-	expectedSQL := "UPDATE `test`.`t` SET `id` = ?, `name` = ? WHERE `id` = ? LIMIT 1"
+	expectedSQL := "UPDATE `test`.`t` SET `id` = ?,`name` = ? WHERE `id` = ? LIMIT 1"
 	expectedArgs := []interface{}{int64(1), "test2", int64(1)}
 	sql, args := buildUpdate(event.TableInfo, row)
 	require.Equal(t, expectedSQL, sql)
@@ -320,7 +352,7 @@ func TestBuildUpdate(t *testing.T) {
 	row.PreRow = oldRow.Row
 	row.RowType = common.RowTypeUpdate
 
-	expectedSQL = "UPDATE `test`.`t2` SET `id` = ?, `name` = ?, `age` = ? WHERE `name` = ? AND `age` = ? LIMIT 1"
+	expectedSQL = "UPDATE `test`.`t2` SET `id` = ?,`name` = ?,`age` = ? WHERE `name` = ? AND `age` = ? LIMIT 1"
 	expectedArgs = []interface{}{int64(1), "test2", int64(20), "test", int64(20)}
 	sql, args = buildUpdate(event.TableInfo, row)
 	require.Equal(t, expectedSQL, sql)
