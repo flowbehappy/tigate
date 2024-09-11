@@ -27,16 +27,25 @@ import (
 	"go.uber.org/zap"
 )
 
+type SinkType int
+
+const (
+	MysqlSinkType SinkType = iota
+	KafkaSinkType
+)
+
 type Sink interface {
 	AddDMLEvent(event *common.DMLEvent, tableProgress *types.TableProgress)
 	AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress)
 	PassDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress)
+	AddCheckpointTs(ts uint64)
 	// IsEmpty(tableSpan *common.TableSpan) bool
 	// AddTableSpan(tableSpan *common.TableSpan)
 	// RemoveTableSpan(tableSpan *common.TableSpan)
 	// StopTableSpan(tableSpan *common.TableSpan)
 	// GetCheckpointTs(tableSpan *common.TableSpan) (uint64, bool)
 	Close()
+	SinkType() SinkType
 }
 
 func NewSink(config *config.ChangefeedConfig, changefeedID model.ChangeFeedID) (Sink, error) {

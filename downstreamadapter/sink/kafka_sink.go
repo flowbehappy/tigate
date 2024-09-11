@@ -64,6 +64,10 @@ type KafkaSink struct {
 	cancel context.CancelCauseFunc // todo?
 }
 
+func (s *KafkaSink) SinkType() SinkType {
+	return KafkaSinkType
+}
+
 func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig) (*KafkaSink, error) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	topic, err := util.GetTopic(sinkURI)
@@ -81,7 +85,6 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, sinkConfig 
 		return nil, cerror.WrapError(cerror.ErrKafkaInvalidConfig, err)
 	}
 
-	// todo
 	factoryCreator := kafka.NewSaramaFactory
 	if utils.GetOrZero(sinkConfig.EnableKafkaSinkV2) {
 		factoryCreator = v2.NewFactory
@@ -95,6 +98,26 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, sinkConfig 
 	adminClient, err := factory.AdminClient(ctx)
 	if err != nil {
 		return nil, cerror.WrapError(cerror.ErrKafkaNewProducer, err)
+	}
+
+	// adjust the option configuration before creating the kafka client
+	if err = kafka.AdjustOptions(ctx, adminClient, options, topic); err != nil {
+		return nil, cerror.WrapError(cerror.ErrKafkaNewProducer, err)
+	}
+
+	topicManager, err := topicmanager.GetTopicManagerAndTryCreateTopic(
+		ctx,
+		changefeedID,
+		topic,
+		options.DeriveTopicConfig(),
+		adminClient,
+	)
+
+	if err != nil {
+		if adminClient != nil {
+			adminClient.Close()
+		}
+		return nil, err
 	}
 
 	eventRouter, err := eventrouter.NewEventRouter(sinkConfig, protocol, topic, scheme)
@@ -124,21 +147,6 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, sinkConfig 
 
 	statistics := timetrics.NewStatistics(changefeedID, sink.RowSink)
 	dmlWorker := worker.NewKafkaWorker(changefeedID, protocol, dmlProducer, encoderGroup, statistics)
-
-	topicManager, err := topicmanager.GetTopicManagerAndTryCreateTopic(
-		ctx,
-		changefeedID,
-		topic,
-		options.DeriveTopicConfig(),
-		adminClient,
-	)
-
-	if err != nil {
-		if adminClient != nil {
-			adminClient.Close()
-		}
-		return nil, err
-	}
 
 	encoder, err := codec.NewEventEncoder(ctx, encoderConfig)
 	if err != nil {
@@ -232,6 +240,10 @@ func (s *KafkaSink) PassDDLAndSyncPointEvent(event *common.DDLEvent, tableProgre
 func (s *KafkaSink) AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress) {
 	tableProgress.Add(event)
 	s.ddlWorker.GetEventChan() <- event
+}
+
+func (s *KafkaSink) AddCheckpointTs(ts uint64) {
+	//s.ddlWorker.GetEventChan() <- &common.ResolvedEvent{ResolvedTs: ts}
 }
 
 func (s *KafkaSink) Close() {
