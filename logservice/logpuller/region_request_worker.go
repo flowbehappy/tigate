@@ -433,6 +433,7 @@ func (s *regionRequestWorker) dispatchResolvedTs(resolvedTs *cdcpb.ResolvedTs) e
 	for i := range s.boolCache {
 		s.boolCache[i] = false
 	}
+	s.client.metrics.batchResolvedSize.Observe(float64(len(resolvedTs.Regions)))
 	for _, regionID := range resolvedTs.Regions {
 		slot := hashRegionID(regionID, len(s.client.changeEventProcessors))
 		if !s.boolCache[slot] {
