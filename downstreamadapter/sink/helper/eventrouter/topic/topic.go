@@ -4,8 +4,16 @@ import (
 	"github.com/pingcap/tiflow/pkg/config"
 )
 
+type TopicGeneratorType int
+
+const (
+	StaticTopicGeneratorType TopicGeneratorType = iota
+	DynamicTopicGeneratorType
+)
+
 type TopicGenerator interface {
 	Substitute(schema, table string) string
+	TopicGeneratorType() TopicGeneratorType
 }
 
 type StaticTopicGenerator struct {
@@ -24,8 +32,8 @@ func (s *StaticTopicGenerator) Substitute(schema, table string) string {
 	return s.topic
 }
 
-func (s *StaticTopicGenerator) String() string {
-	return s.topic
+func (s *StaticTopicGenerator) TopicGeneratorType() TopicGeneratorType {
+	return StaticTopicGeneratorType
 }
 
 // DynamicTopicGenerator is a topic generator which dispatches rows and DDLs
@@ -46,8 +54,8 @@ func (d *DynamicTopicGenerator) Substitute(schema, table string) string {
 	return d.expression.Substitute(schema, table)
 }
 
-func (d *DynamicTopicGenerator) String() string {
-	return string(d.expression)
+func (d *DynamicTopicGenerator) TopicGeneratorType() TopicGeneratorType {
+	return DynamicTopicGeneratorType
 }
 
 func GetTopicGenerator(

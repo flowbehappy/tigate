@@ -105,6 +105,31 @@ func (s *EventRouter) GetTopicForDDL(ddl *common.DDLEvent) string {
 	return topicGenerator.Substitute(schema, table)
 }
 
+// GetActiveTopics returns a list of the corresponding topics
+// for the tables that are actively synchronized.
+func (s *EventRouter) GetActiveTopics(activeTables []*common.SchemaTableName) []string {
+	topics := make([]string, 0)
+	topicsMap := make(map[string]bool, len(activeTables))
+	for _, tableName := range activeTables {
+		topicDispatcher := s.matchTopicGenerator(tableName.SchemaName, tableName.TableName)
+		if topicDispatcher.TopicGeneratorType() == topic.StaticTopicGeneratorType {
+			continue
+		}
+		topicName := topicDispatcher.Substitute(tableName.SchemaName, tableName.TableName)
+		if !topicsMap[topicName] {
+			topicsMap[topicName] = true
+			topics = append(topics, topicName)
+		}
+	}
+
+	// We also need to add the default topic.
+	if !topicsMap[s.defaultTopic] {
+		topics = append(topics, s.defaultTopic)
+	}
+
+	return topics
+}
+
 // GetPartitionForRowChange returns the target partition for row changes.
 func (s *EventRouter) GetPartitionGeneratorForRowChange(tableInfo *common.TableInfo) partition.PartitionGenerator {
 	return s.GetPartitionDispatcher(tableInfo.GetSchemaName(), tableInfo.GetTableName())

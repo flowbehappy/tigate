@@ -152,6 +152,49 @@ func (w *KafkaDDLWorker) encodeAndSendDDLEvents() error {
 			err = w.statistics.RecordDDLExecution(func() error {
 				return w.producer.SyncSendMessage(w.ctx, topic, 0, message)
 			})
+
+			if err != nil {
+				log.Error("Failed to RecordDDLExecution",
+					zap.String("namespace", w.changeFeedID.Namespace),
+					zap.String("changefeed", w.changeFeedID.ID),
+					zap.Error(err))
+				continue
+			}
+
 		}
 	}
+}
+
+func (w *KafkaDDLWorker) WriteCheckpointTs(ts uint64, tableNames []*common.SchemaTableName) error {
+	msg, err := w.encoder.EncodeCheckpointEvent(ts)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// NOTICE: When there are no tables to replicate,
+	// we need to send checkpoint ts to the default topic.
+	// This will be compatible with the old behavior.
+	if len(tableNames) == 0 {
+		topic := w.eventRouter.GetDefaultTopic()
+		partitionNum, err := w.topicManager.GetPartitionNum(w.ctx, topic)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		log.Debug("Emit checkpointTs to default topic",
+			zap.String("topic", topic), zap.Uint64("checkpointTs", ts))
+		err = w.producer.SyncBroadcastMessage(w.ctx, topic, partitionNum, msg)
+		return errors.Trace(err)
+	}
+
+	topics := w.eventRouter.GetActiveTopics(tableNames)
+	for _, topic := range topics {
+		partitionNum, err := w.topicManager.GetPartitionNum(w.ctx, topic)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = w.producer.SyncBroadcastMessage(w.ctx, topic, partitionNum, msg)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }

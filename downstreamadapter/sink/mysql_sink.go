@@ -179,7 +179,7 @@ func (s *MysqlSink) AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgres
 	s.ddlEventChan <- event
 }
 
-func (s *MysqlSink) AddCheckpointTs(ts uint64) {}
+func (s *MysqlSink) AddCheckpointTs(ts uint64, tableNames []*common.SchemaTableName) {}
 
 func (s *MysqlSink) Close() {
 	s.cancel()

@@ -38,7 +38,7 @@ type Sink interface {
 	AddDMLEvent(event *common.DMLEvent, tableProgress *types.TableProgress)
 	AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress)
 	PassDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress)
-	AddCheckpointTs(ts uint64)
+	AddCheckpointTs(ts uint64, tableNames []*common.SchemaTableName)
 	// IsEmpty(tableSpan *common.TableSpan) bool
 	// AddTableSpan(tableSpan *common.TableSpan)
 	// RemoveTableSpan(tableSpan *common.TableSpan)

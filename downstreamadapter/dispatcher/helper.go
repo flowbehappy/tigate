@@ -265,3 +265,80 @@ func GetDispatcherStatusDynamicStream() dynstream.DynamicStream[common.Dispatche
 func SetDispatcherStatusDynamicStream(dynamicStream dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithID, *Dispatcher]) {
 	dispatcherStatusDynamicStream = dynamicStream
 }
+
+// TableNameStore is used to store all the table name(schema name with table name).
+// TableNameStore only exists in the table trigger event dispatcher, which means each changefeed only has one TableNameStore.
+// TableNameStore support to provide all the table name of the specified ts(only support incremental ts)
+// When meeting Create Table / Create Tables / Drop Table / Rename Table / Rename Tables / Drop Database / Recover Table
+// TableNameStore need to update the table name info.
+type TableNameStore struct {
+	// store all the existing table which existed at the latest query ts
+	existingTables map[string]map[string]*common.SchemaTableName // databaseName -> {tableName -> SchemaTableName}
+	// store the change of table name from the latest query ts to now(latest event)
+	latestTableChanges *LatestTableChanges
+}
+
+func NewTableNameStore() *TableNameStore {
+	return &TableNameStore{
+		existingTables:     make(map[string]map[string]*common.SchemaTableName),
+		latestTableChanges: &LatestTableChanges{m: make(map[uint64]*common.TableNameChange)},
+	}
+}
+
+func (s *TableNameStore) AddEvent(event *common.DDLEvent) {
+	if event.TableNameChange != nil {
+		s.latestTableChanges.Add(event)
+	}
+}
+
+// GetAllTableNames only will be called when maintainer send message to ask dispatcher to write checkpointTs to downstream.
+// So the ts must be <= the latest received event ts of table trigger event dispatcher.
+func (s *TableNameStore) GetAllTableNames(ts uint64) []*common.SchemaTableName {
+	s.latestTableChanges.mutex.Lock()
+	if len(s.latestTableChanges.m) > 0 {
+		// update the existingTables with the latest table changes <= ts
+		for commitTs, tableNameChange := range s.latestTableChanges.m {
+			if commitTs <= ts {
+				if tableNameChange.DropDatabaseName != "" {
+					delete(s.existingTables, tableNameChange.DropDatabaseName)
+				} else {
+					for _, addName := range tableNameChange.AddName {
+						if s.existingTables[addName.SchemaName] == nil {
+							s.existingTables[addName.SchemaName] = make(map[string]*common.SchemaTableName, 0)
+						}
+						s.existingTables[addName.SchemaName][addName.TableName] = &addName
+					}
+					for _, dropName := range tableNameChange.DropName {
+						delete(s.existingTables[dropName.SchemaName], dropName.TableName)
+						if len(s.existingTables[dropName.SchemaName]) == 0 {
+							delete(s.existingTables, dropName.SchemaName)
+						}
+					}
+				}
+			}
+			delete(s.latestTableChanges.m, commitTs)
+		}
+	}
+
+	s.latestTableChanges.mutex.Unlock()
+
+	tableNames := make([]*common.SchemaTableName, 0)
+	for _, tables := range s.existingTables {
+		for _, tableName := range tables {
+			tableNames = append(tableNames, tableName)
+		}
+	}
+
+	return tableNames
+}
+
+type LatestTableChanges struct {
+	mutex sync.Mutex
+	m     map[uint64]*common.TableNameChange
+}
+
+func (l *LatestTableChanges) Add(ddlEvent *common.DDLEvent) {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	l.m[ddlEvent.CommitTS] = ddlEvent.TableNameChange
+}

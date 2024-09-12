@@ -103,3 +103,16 @@ func GetHeartBeatResponseDynamicStream() dynstream.DynamicStream[model.ChangeFee
 func SetHeartBeatResponseDynamicStream(dynamicStream dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]) {
 	heartBeatResponseDynamicStream = dynamicStream
 }
+
+var checkpointTsMessageDynamicStream dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.CheckpointTsMessage, *EventDispatcherManager]
+var checkpointTsMessageDynamicStreamOnce sync.Once
+
+func GetCheckpointTsMessageDynamicStream() dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.CheckpointTsMessage, *EventDispatcherManager] {
+	if checkpointTsMessageDynamicStream == nil {
+		checkpointTsMessageDynamicStreamOnce.Do(func() {
+			checkpointTsMessageDynamicStream = dynstream.NewDynamicStream(&CheckpointTsMessageHandler{})
+			checkpointTsMessageDynamicStream.Start()
+		})
+	}
+	return checkpointTsMessageDynamicStream
+}

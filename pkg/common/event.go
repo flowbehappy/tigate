@@ -324,6 +324,21 @@ func RowTypeToString(rowType RowType) string {
 	}
 }
 
+type SchemaTableName struct {
+	SchemaName string
+	TableName  string
+}
+
+// TableChange will record each ddl change of the table name.
+// Each TableChange is related to a ddl event
+// only Create Table / Create Tables / Drop Table / Rename Table / Rename Tables these ddl event
+// will make the table name change.
+type TableNameChange struct {
+	AddName          []SchemaTableName
+	DropName         []SchemaTableName
+	DropDatabaseName string
+}
+
 type DDLEvent struct {
 	DispatcherID DispatcherID `json:"dispatcher_id"`
 	Job          *model.Job   `json:"ddl_job"`
@@ -334,6 +349,8 @@ type DDLEvent struct {
 	BlockedTables     *InfluencedTables `json:"blocked_tables"`
 	NeedDroppedTables *InfluencedTables `json:"need_dropped_tables"`
 	NeedAddedTables   []Table           `json:"need_added_tables"`
+
+	TableNameChange *TableNameChange `json:"table_name_change"`
 	// 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
 	PostTxnFlushed []func() `msg:"-"`
 }

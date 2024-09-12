@@ -242,7 +242,7 @@ func (s *KafkaSink) AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgres
 	s.ddlWorker.GetEventChan() <- event
 }
 
-func (s *KafkaSink) AddCheckpointTs(ts uint64) {
+func (s *KafkaSink) AddCheckpointTs(ts uint64, tableNames []*common.SchemaTableName) {
 	//s.ddlWorker.GetEventChan() <- &common.ResolvedEvent{ResolvedTs: ts}
 }
 
