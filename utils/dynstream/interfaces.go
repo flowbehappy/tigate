@@ -72,7 +72,7 @@ type DynamicStream[P Path, T Event, D Dest] interface {
 }
 
 const DefaultSchedulerInterval = 1 * time.Second
-const DefaultReportInterval = 200 * time.Millisecond
+const DefaultReportInterval = 500 * time.Millisecond
 
 // We don't need lots of streams because the hanle of events should be CPU-bound and should not be blocked by any waiting.
 const DefaultStreamCount = 64
