@@ -105,7 +105,8 @@ func NewMessageCenter(ctx context.Context, id ServerId, epoch uint64, cfg *confi
 	mc.remoteTargets.m = make(map[ServerId]*remoteMessageTarget)
 	mc.router.runDispatch(ctx, mc.wg, mc.receiveEventCh)
 	mc.router.runDispatch(ctx, mc.wg, mc.receiveCmdCh)
-	log.Info("Create message center success, message router is running.", zap.Stringer("id", id), zap.Any("epoch", epoch))
+	log.Info("create message center success, message router is running.",
+		zap.Stringer("id", id), zap.Any("epoch", epoch))
 	return mc
 }
 

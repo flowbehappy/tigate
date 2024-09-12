@@ -109,6 +109,7 @@ func NewServer(conf *config.ServerConfig, pdEndpoints []string) (node.Server, er
 // initialize the server before run it.
 func (c *server) initialize(ctx context.Context) error {
 	if err := c.prepare(ctx); err != nil {
+		log.Error("server prepare failed", zap.Any("server", c.info), zap.Error(err))
 		return errors.Trace(err)
 	}
 	conf := config.GetGlobalServerConfig()

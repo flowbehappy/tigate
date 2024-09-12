@@ -247,7 +247,6 @@ func (c *server) newEtcdSession(ctx context.Context) (*concurrency.Session, erro
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	log.Info("create session successfully", zap.Any("session", sess))
 	return sess, nil
 }
 
