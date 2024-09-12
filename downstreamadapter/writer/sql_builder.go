@@ -67,7 +67,9 @@ func buildInsert(
 func buildDelete(tableInfo *common.TableInfo, row common.RowDelta) (string, []interface{}) {
 	var builder strings.Builder
 	quoteTable := tableInfo.TableName.QuoteString()
-	builder.WriteString("DELETE FROM " + quoteTable + " WHERE ")
+	builder.WriteString("DELETE FROM ")
+	builder.WriteString(quoteTable)
+	builder.WriteString(" WHERE ")
 
 	colNames, whereArgs := whereSlice(&row.PreRow, tableInfo)
 	if len(whereArgs) == 0 {
@@ -79,9 +81,11 @@ func buildDelete(tableInfo *common.TableInfo, row common.RowDelta) (string, []in
 			builder.WriteString(" AND ")
 		}
 		if whereArgs[i] == nil {
-			builder.WriteString(quotes.QuoteName(colNames[i]) + " IS NULL")
+			builder.WriteString(quotes.QuoteName(colNames[i]))
+			builder.WriteString(" IS NULL")
 		} else {
-			builder.WriteString(quotes.QuoteName(colNames[i]) + " = ?")
+			builder.WriteString(quotes.QuoteName(colNames[i]))
+			builder.WriteString(" = ?")
 			args = append(args, whereArgs[i])
 		}
 	}
@@ -118,9 +122,11 @@ func buildUpdate(tableInfo *common.TableInfo, row common.RowDelta) (string, []in
 			builder.WriteString(" AND ")
 		}
 		if whereArgs[i] == nil {
-			builder.WriteString(quotes.QuoteName(whereColNames[i]) + " IS NULL")
+			builder.WriteString(quotes.QuoteName(whereColNames[i]))
+			builder.WriteString(" IS NULL")
 		} else {
-			builder.WriteString(quotes.QuoteName(whereColNames[i]) + " = ?")
+			builder.WriteString(quotes.QuoteName(whereColNames[i]))
+			builder.WriteString(" = ?")
 			args = append(args, whereArgs[i])
 		}
 	}
