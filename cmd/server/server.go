@@ -37,7 +37,7 @@ import (
 // options defines flags for the `server` command.
 type options struct {
 	serverConfig         *config.ServerConfig
-	serverPdAddr         string
+	pdEndpoints          []string
 	serverConfigFilePath string
 
 	caPath        string
@@ -68,7 +68,7 @@ func (o *options) addFlags(cmd *cobra.Command) {
 
 	cmd.Flags().StringVar(&o.serverConfig.DataDir, "data-dir", o.serverConfig.DataDir, "the path to the directory used to store TiCDC-generated data")
 
-	cmd.Flags().StringVar(&o.serverPdAddr, "pd", "http://127.0.0.1:2379", "Set the PD endpoints to use. Use ',' to separate multiple PDs")
+	cmd.Flags().StringSliceVar(&o.pdEndpoints, "pd", []string{"http://127.0.0.1:2379"}, "Set the PD endpoints to use. Use ',' to separate multiple PDs")
 	cmd.Flags().StringVar(&o.serverConfigFilePath, "config", "", "Path of the configuration file")
 
 	cmd.Flags().StringVar(&o.caPath, "ca", "", "CA certificate path for TLS connection")
@@ -97,7 +97,6 @@ func (o *options) run(cmd *cobra.Command) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	setDefaultContext(ctx)
 	defer cancel()
-	config.StoreGlobalServerConfig(o.serverConfig)
 
 	cdcversion.ReleaseVersion = version.ReleaseVersion
 	version.LogVersionInfo("Change Data Capture (CDC)")
@@ -105,14 +104,13 @@ func (o *options) run(cmd *cobra.Command) error {
 
 	util.LogHTTPProxies()
 
-	pdEndpoints := strings.Split(o.serverPdAddr, ",")
-	svr, err := server.NewServer(o.serverConfig, pdEndpoints)
+	svr, err := server.NewServer(o.serverConfig, o.pdEndpoints)
 	if err != nil {
 		log.Error("create cdc server failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	log.Info("CDC server created",
-		zap.Strings("pd", pdEndpoints), zap.Stringer("config", o.serverConfig))
+		zap.Strings("pd", o.pdEndpoints), zap.Stringer("config", o.serverConfig))
 
 	// Run TiCDC server.
 	err = svr.Run(ctx)
@@ -127,10 +125,7 @@ func (o *options) run(cmd *cobra.Command) error {
 
 // complete adapts from the command line args and config file to the data required.
 func (o *options) complete(cmd *cobra.Command) error {
-	o.serverConfig.Security = o.getCredential()
-
 	cfg := config.GetDefaultServerConfig()
-
 	if len(o.serverConfigFilePath) > 0 {
 		// strict decode config file, but ignore debug item
 		if err := util.StrictDecodeFile(o.serverConfigFilePath, "TiCDC server", cfg, config.DebugConfigurationItem); err != nil {
@@ -138,6 +133,7 @@ func (o *options) complete(cmd *cobra.Command) error {
 		}
 	}
 
+	o.serverConfig.Security = o.getCredential()
 	cmd.Flags().Visit(func(flag *pflag.Flag) {
 		switch flag.Name {
 		case "addr":
@@ -181,16 +177,16 @@ func (o *options) complete(cmd *cobra.Command) error {
 	}
 
 	o.serverConfig = cfg
-
+	config.StoreGlobalServerConfig(o.serverConfig)
 	return nil
 }
 
 // validate checks that the provided attach options are specified.
 func (o *options) validate() error {
-	if len(o.serverPdAddr) == 0 {
+	if len(o.pdEndpoints) == 0 {
 		return cerror.ErrInvalidServerOption.GenWithStack("empty PD address")
 	}
-	for _, ep := range strings.Split(o.serverPdAddr, ",") {
+	for _, ep := range o.pdEndpoints {
 		// NOTICE: The configuration used here is the one that has been completed,
 		// as it may be configured by the configuration file.
 		if err := util.VerifyPdEndpoint(ep, o.serverConfig.Security.IsTLSEnabled()); err != nil {
