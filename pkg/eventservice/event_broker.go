@@ -104,7 +104,7 @@ func newEventBroker(
 		metricEventServicePullerResolvedTs:     metrics.EventServiceResolvedTsGauge,
 		metricEventServiceResolvedTsLag:        metrics.EventServiceResolvedTsLagGauge.WithLabelValues("puller"),
 		metricEventServiceDispatcherResolvedTs: metrics.EventServiceResolvedTsLagGauge.WithLabelValues("dispatcher"),
-		metricTaskInQueueDuration:              metrics.EventServiceScanTaskInQueueDuration,
+		metricTaskInQueueDuration:              metrics.EventServiceScanDuration,
 	}
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
@@ -159,7 +159,6 @@ func (c *eventBroker) runGenTasks(ctx context.Context) {
 				for _, stat := range s.dispatchers.m {
 					c.taskPool.pushTask(&scanTask{
 						dispatcherStat: stat,
-						createTime:     time.Now(),
 					})
 				}
 				s.dispatchers.RUnlock()
@@ -214,7 +213,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 	if !needScan {
 		return
 	}
-	c.metricTaskInQueueDuration.Observe(time.Since(task.createTime).Seconds())
+	start := time.Now()
 
 	remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 	dispatcherID := task.dispatcherStat.info.GetID()
@@ -275,6 +274,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 		if e == nil {
 			// Send the last txnEvent to the dispatcher.
 			sendTxn(txnEvent)
+			c.metricTaskInQueueDuration.Observe(time.Since(start).Seconds())
 			return
 		}
 		if e.CRTs < task.dispatcherStat.watermark.Load() {
@@ -618,7 +618,6 @@ func (s *spanSubscription) onNewEvent(raw *common.RawKVEntry) {
 
 type scanTask struct {
 	dispatcherStat *dispatcherStat
-	createTime     time.Time
 }
 
 type scanTaskQueue struct {

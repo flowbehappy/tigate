@@ -195,7 +195,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(ticdc_event_service_scan_task_in_queue_duration_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (le)",
+              "expr": "sum(rate(ticdc_event_service_scan_duration_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (le)",
               "format": "heatmap",
               "instant": false,
               "interval": "",
@@ -204,7 +204,7 @@
               "refId": "A"
             }
           ],
-          "title": "Event service scan task queue duration",
+          "title": "Event service scan duration",
           "tooltip": {
             "show": true,
             "showHistogram": true
