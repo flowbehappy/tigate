@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	newcommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -20,22 +21,19 @@ import (
 // One message can contain at most MaxBatchSize events, and the total size of the message cannot exceed MaxMessageBytes.
 type BatchEncoder struct {
 	messages []*ticommon.Message
-	// Record the number of events that have been batched in the latest message
-	eventCount int
 	// buff the callback of the latest message
 	callbackBuff []func()
 
 	claimCheck *claimcheck.ClaimCheck
 
-	config *ticommon.Config
+	config *newcommon.Config
 }
 
 // AppendRowChangedEvent implements the RowEventEncoder interface
 func (d *BatchEncoder) AppendRowChangedEvent(
 	ctx context.Context,
 	_ string,
-	e *common.RowChangedEvent,
-	callback func(),
+	e *common.RowEvent,
 ) error {
 	key, value, length, err := encodeRowChangedEvent(e, d.config, false, "")
 	if err != nil {
@@ -96,7 +94,7 @@ func (d *BatchEncoder) AppendRowChangedEvent(
 		}
 	}
 
-	d.pushMessage(key, value, callback)
+	d.pushMessage(key, value, e.Callback)
 	return nil
 }
 
@@ -121,7 +119,7 @@ func (d *BatchEncoder) pushMessage(key, value []byte, callback func()) {
 	binary.BigEndian.PutUint64(keyLenByte[:], uint64(len(key)))
 	binary.BigEndian.PutUint64(valueLenByte[:], uint64(len(value)))
 
-	if len(d.messages) == 0 || d.messages[len(d.messages)-1].Length()+length > d.config.MaxMessageBytes || d.eventCount >= d.config.MaxBatchSize {
+	if len(d.messages) == 0 || d.messages[len(d.messages)-1].Length()+length > d.config.MaxMessageBytes || d.messages[len(d.messages)-1].GetRowsCount() >= d.config.MaxBatchSize {
 		d.finalizeCallback()
 		// create a new message
 		versionHead := make([]byte, 8)
@@ -136,10 +134,9 @@ func (d *BatchEncoder) pushMessage(key, value []byte, callback func()) {
 		message.Key = append(message.Key, keyLenByte[:]...)
 		message.Key = append(message.Key, key...)
 		message.Value = append(message.Value, value...)
-
+		message.IncRowsCount()
 		d.callbackBuff = append(d.callbackBuff, callback)
 		d.messages = append(d.messages, &message)
-		d.eventCount = 1
 		return
 	}
 
@@ -147,9 +144,10 @@ func (d *BatchEncoder) pushMessage(key, value []byte, callback func()) {
 	latestMessage := d.messages[len(d.messages)-1]
 	latestMessage.Key = append(latestMessage.Key, keyLenByte[:]...)
 	latestMessage.Key = append(latestMessage.Key, key...)
-	latestMessage.Value = append(latestMessage.Value, value...)
 	latestMessage.Value = append(latestMessage.Value, valueLenByte[:]...)
+	latestMessage.Value = append(latestMessage.Value, value...)
 	d.callbackBuff = append(d.callbackBuff, callback)
+	latestMessage.IncRowsCount()
 
 }
 
@@ -187,7 +185,7 @@ func enhancedKeyValue(key, value []byte) ([]byte, []byte) {
 }
 
 // NewBatchEncoder creates a new BatchEncoder.
-func NewBatchEncoder(ctx context.Context, config *ticommon.Config) (encoder.RowEventEncoder, error) {
+func NewBatchEncoder(ctx context.Context, config *newcommon.Config) (encoder.EventEncoder, error) {
 	claimCheck, err := claimcheck.New(ctx, config.LargeMessageHandle, config.ChangefeedID)
 	if err != nil {
 		return nil, errors.Trace(err)

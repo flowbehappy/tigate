@@ -98,7 +98,7 @@ func (e *BatchEncoder) flush() {
 }
 
 // NewBatchEncoder creates a new BatchEncoder.
-func NewBatchEncoder(config *ticommon.Config) encoder.RowEventEncoder {
+func NewBatchEncoder(config *ticommon.Config) encoder.EventEncoder {
 	// 64 is a magic number that come up with these assumptions and manual benchmark.
 	// 1. Most table will not have more than 64 columns
 	// 2. It only worth allocating slices in batch for slices that's small enough
@@ -108,7 +108,7 @@ func NewBatchEncoder(config *ticommon.Config) encoder.RowEventEncoder {
 func (e *BatchEncoder) Clean() {}
 
 // NewBatchEncoderWithAllocator creates a new BatchEncoder with given allocator.
-func NewBatchEncoderWithAllocator(allocator *SliceAllocator, config *ticommon.Config) encoder.RowEventEncoder {
+func NewBatchEncoderWithAllocator(allocator *SliceAllocator, config *ticommon.Config) encoder.EventEncoder {
 	return &BatchEncoder{
 		allocator:        allocator,
 		messageBuf:       make([]*ticommon.Message, 0, 2),

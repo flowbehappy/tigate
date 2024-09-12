@@ -172,7 +172,7 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *common.DDLEvent) error {
 
 func (w *MysqlWriter) Flush(events []*common.DMLEvent, workerNum int) error {
 	dmls := w.prepareDMLs(events)
-	log.Info("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.Any("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values), zap.Any("startTs", dmls.startTs), zap.Any("workerNum", workerNum))
+	//log.Debug("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.Any("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values), zap.Any("startTs", dmls.startTs), zap.Any("workerNum", workerNum))
 	if dmls.rowCount == 0 {
 		return nil
 	}
@@ -255,7 +255,7 @@ func (w *MysqlWriter) prepareDMLs(events []*common.DMLEvent) *preparedDMLs {
 			// INSERT(not in safe mode)
 			// or REPLACE(in safe mode) SQL.
 			if row.RowType == common.RowTypeInsert {
-				query, args = buildInsert(event.TableInfo, row, true, w.cfg.SafeMode)
+				query, args = buildInsert(event.TableInfo, row, w.cfg.SafeMode)
 				if query != "" {
 					sqls = append(sqls, query)
 					values = append(values, args)

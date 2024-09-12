@@ -17,24 +17,27 @@ import (
 	"context"
 	"net/url"
 
-	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/columnselector"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/topicmanager"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/downstreamadapter/worker"
 	"github.com/flowbehappy/tigate/downstreamadapter/worker/dmlproducer"
 	"github.com/flowbehappy/tigate/pkg/common"
+	ticonfig "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/sink/codec"
+	"github.com/flowbehappy/tigate/pkg/sink/kafka"
+	v2 "github.com/flowbehappy/tigate/pkg/sink/kafka/v2"
+	tiutils "github.com/flowbehappy/tigate/pkg/sink/util"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/tiflow/cdc/sink/ddlsink/mq/ddlproducer"
 	timetrics "github.com/pingcap/tiflow/cdc/sink/metrics"
 	"github.com/pingcap/tiflow/cdc/sink/util"
 	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink"
-	"github.com/pingcap/tiflow/pkg/sink/kafka"
-	v2 "github.com/pingcap/tiflow/pkg/sink/kafka/v2"
+	tikafka "github.com/pingcap/tiflow/pkg/sink/kafka"
 	utils "github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -45,41 +48,45 @@ type KafkaSink struct {
 
 	protocol config.Protocol
 
-	columnSelector *columnselector.ColumnSelector
+	columnSelector *common.ColumnSelectors
 	// eventRouter used to route events to the right topic and partition.
 	eventRouter *eventrouter.EventRouter
 	// topicManager used to manage topics.
 	// It is also responsible for creating topics.
 	topicManager topicmanager.TopicManager
 
-	worker      *worker.KafkaWorker
-	adminClient kafka.ClusterAdminClient
+	dmlWorker   *worker.KafkaWorker
+	ddlWorker   *worker.KafkaDDLWorker
+	adminClient tikafka.ClusterAdminClient
 	scheme      string
 
 	ctx    context.Context
 	cancel context.CancelCauseFunc // todo?
 }
 
-func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, replicaConfig *config.ReplicaConfig) (*KafkaSink, error) {
+func (s *KafkaSink) SinkType() SinkType {
+	return KafkaSinkType
+}
+
+func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig) (*KafkaSink, error) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	topic, err := util.GetTopic(sinkURI)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	scheme := sink.GetScheme(sinkURI)
-	protocol, err := util.GetProtocol(utils.GetOrZero(replicaConfig.Sink.Protocol))
+	protocol, err := util.GetProtocol(utils.GetOrZero(sinkConfig.Protocol))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	options := kafka.NewOptions()
-	if err := options.Apply(changefeedID, sinkURI, replicaConfig); err != nil {
+	if err := options.Apply(changefeedID, sinkURI, sinkConfig); err != nil {
 		return nil, cerror.WrapError(cerror.ErrKafkaInvalidConfig, err)
 	}
 
-	// todo
 	factoryCreator := kafka.NewSaramaFactory
-	if utils.GetOrZero(replicaConfig.Sink.EnableKafkaSinkV2) {
+	if utils.GetOrZero(sinkConfig.EnableKafkaSinkV2) {
 		factoryCreator = v2.NewFactory
 	}
 
@@ -93,33 +100,10 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, replicaConf
 		return nil, cerror.WrapError(cerror.ErrKafkaNewProducer, err)
 	}
 
-	eventRouter, err := eventrouter.NewEventRouter(replicaConfig, protocol, topic, scheme)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	columnSelector, err := columnselector.New(replicaConfig)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	encoderConfig, err := util.GetEncoderConfig(changefeedID, sinkURI, protocol, replicaConfig, options.MaxMessageBytes)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	failpointCh := make(chan error, 1)
-	asyncProducer, err := factory.AsyncProducer(ctx, failpointCh)
-	if err != nil {
+	// adjust the option configuration before creating the kafka client
+	if err = kafka.AdjustOptions(ctx, adminClient, options, topic); err != nil {
 		return nil, cerror.WrapError(cerror.ErrKafkaNewProducer, err)
 	}
-
-	metricsCollector := factory.MetricsCollector(utils.RoleProcessor, adminClient)
-	dmlProducer := dmlproducer.NewKafkaDMLProducer(ctx, changefeedID, asyncProducer, metricsCollector)
-	encoderGroup := codec.NewEncoderGroup(ctx, replicaConfig.Sink, encoderConfig, changefeedID)
-
-	statistics := timetrics.NewStatistics(changefeedID, sink.RowSink)
-	worker := worker.NewKafkaWorker(changefeedID, protocol, dmlProducer, encoderGroup, statistics)
 
 	topicManager, err := topicmanager.GetTopicManagerAndTryCreateTopic(
 		ctx,
@@ -135,13 +119,55 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, replicaConf
 		}
 		return nil, err
 	}
+
+	eventRouter, err := eventrouter.NewEventRouter(sinkConfig, protocol, topic, scheme)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	columnSelector, err := common.NewColumnSelectors(sinkConfig)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	encoderConfig, err := tiutils.GetEncoderConfig(changefeedID, sinkURI, protocol, sinkConfig, options.MaxMessageBytes)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	failpointCh := make(chan error, 1)
+	asyncProducer, err := factory.AsyncProducer(ctx, failpointCh)
+	if err != nil {
+		return nil, cerror.WrapError(cerror.ErrKafkaNewProducer, err)
+	}
+
+	metricsCollector := factory.MetricsCollector(utils.RoleProcessor, adminClient)
+	dmlProducer := dmlproducer.NewKafkaDMLProducer(ctx, changefeedID, asyncProducer, metricsCollector)
+	encoderGroup := codec.NewEncoderGroup(ctx, sinkConfig, encoderConfig, changefeedID)
+
+	statistics := timetrics.NewStatistics(changefeedID, sink.RowSink)
+	dmlWorker := worker.NewKafkaWorker(changefeedID, protocol, dmlProducer, encoderGroup, statistics)
+
+	encoder, err := codec.NewEventEncoder(ctx, encoderConfig)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	syncProducer, err := factory.SyncProducer(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ddlProducer := ddlproducer.NewKafkaDDLProducer(ctx, changefeedID, syncProducer)
+	ddlWorker := worker.NewKafkaDDLWorker(changefeedID, protocol, ddlProducer, encoder, statistics)
+
 	return &KafkaSink{
 		ctx:            ctx,
 		cancel:         cancel,
 		topicManager:   topicManager,
 		eventRouter:    eventRouter,
 		columnSelector: columnSelector,
-		worker:         worker,
+		dmlWorker:      dmlWorker,
+		ddlWorker:      ddlWorker,
 	}, nil
 }
 
@@ -159,7 +185,7 @@ func (s *KafkaSink) AddDMLEvent(event *common.DMLEvent, tableProgress *types.Tab
 		return
 	}
 	partitonGenerator := s.eventRouter.GetPartitionGeneratorForRowChange(event.TableInfo)
-
+	selector := s.columnSelector.GetSelector(event.TableInfo.TableName.Schema, event.TableInfo.TableName.Table)
 	toRowCallback := func(postTxnFlushed []func(), totalCount uint64) func() {
 		var calledCount atomic.Uint64
 		// The callback of the last row will trigger the callback of the txn.
@@ -176,27 +202,19 @@ func (s *KafkaSink) AddDMLEvent(event *common.DMLEvent, tableProgress *types.Tab
 	rowCallback := toRowCallback(event.PostTxnFlushed, rowsCount)
 
 	for {
-		_, ok := event.GetNextRow()
+		row, ok := event.GetNextRow()
 		if !ok {
 			break
 		}
-		// FIXME: pass a real row
-		row := &common.RowChangedEvent{}
-		err = s.columnSelector.Apply(row)
-		if err != nil {
-			s.cancel(err)
-			log.Error("failed to do column selector for row", zap.Error(err))
-			return
-		}
 
-		index, key, err := partitonGenerator.GeneratePartitionIndexAndKey(row, partitionNum)
+		index, key, err := partitonGenerator.GeneratePartitionIndexAndKey(&row, partitionNum, event.TableInfo, event.CommitTs)
 		if err != nil {
 			s.cancel(err)
 			log.Error("failed to generate partition index and key for row", zap.Error(err))
 			return
 		}
 
-		s.worker.GetEventChan() <- &common.MQRowEvent{
+		s.dmlWorker.GetEventChan() <- &common.MQRowEvent{
 			Key: model.TopicPartitionKey{
 				Topic:          topic,
 				Partition:      index,
@@ -204,8 +222,11 @@ func (s *KafkaSink) AddDMLEvent(event *common.DMLEvent, tableProgress *types.Tab
 				TotalPartition: partitionNum,
 			},
 			RowEvent: common.RowEvent{
-				Event:    row,
-				Callback: rowCallback,
+				TableInfo:      event.TableInfo,
+				CommitTs:       event.CommitTs,
+				Event:          row,
+				Callback:       rowCallback,
+				ColumnSelector: selector,
 			},
 		}
 	}
@@ -217,6 +238,12 @@ func (s *KafkaSink) PassDDLAndSyncPointEvent(event *common.DDLEvent, tableProgre
 }
 
 func (s *KafkaSink) AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress) {
+	tableProgress.Add(event)
+	s.ddlWorker.GetEventChan() <- event
+}
+
+func (s *KafkaSink) AddCheckpointTs(ts uint64) {
+	//s.ddlWorker.GetEventChan() <- &common.ResolvedEvent{ResolvedTs: ts}
 }
 
 func (s *KafkaSink) Close() {

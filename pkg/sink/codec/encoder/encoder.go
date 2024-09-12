@@ -29,15 +29,15 @@ const (
 	MemBufShrinkThreshold = 1024 * 1024
 )
 
-// RowEventEncoder is an abstraction for events encoder
-type RowEventEncoder interface {
+// EventEncoder is an abstraction for events encoder
+type EventEncoder interface {
 	// EncodeCheckpointEvent appends a checkpoint event into the batch.
 	// This event will be broadcast to all partitions to signal a global checkpoint.
 	EncodeCheckpointEvent(ts uint64) (*ticommon.Message, error)
 	// EncodeDDLEvent appends a DDL event into the batch
 	EncodeDDLEvent(e *common.DDLEvent) (*ticommon.Message, error)
 	// AppendRowChangedEvent appends a row changed event into the batch or buffer.
-	AppendRowChangedEvent(context.Context, string, *common.RowChangedEvent, func()) error
+	AppendRowChangedEvent(context.Context, string, *common.RowEvent) error
 	// Build builds the batch messages from AppendRowChangedEvent and returns the messages.
 	Build() []*ticommon.Message
 	// clean the resources

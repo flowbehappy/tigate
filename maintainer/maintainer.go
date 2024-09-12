@@ -51,7 +51,7 @@ import (
 // 4. handle heartbeat reported by dispatcher
 type Maintainer struct {
 	id       model.ChangeFeedID
-	config   *model.ChangeFeedInfo
+	config   *configNew.ChangeFeedInfo
 	selfNode *common.NodeInfo
 
 	stream        dynstream.DynamicStream[string, *Event, *Maintainer]
@@ -103,7 +103,7 @@ type Maintainer struct {
 
 // NewMaintainer create the maintainer for the changefeed
 func NewMaintainer(cfID model.ChangeFeedID,
-	cfg *model.ChangeFeedInfo,
+	cfg *configNew.ChangeFeedInfo,
 	selfNode *common.NodeInfo,
 	stream dynstream.DynamicStream[string, *Event, *Maintainer],
 	taskScheduler threadpool.ThreadPool,

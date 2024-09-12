@@ -17,9 +17,9 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter/partition"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter/topic"
 	"github.com/flowbehappy/tigate/pkg/common"
+	ticonfig "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/log"
 	tableFilter "github.com/pingcap/tidb/pkg/util/table-filter"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 )
@@ -38,11 +38,11 @@ type EventRouter struct {
 }
 
 // NewEventRouter creates a new EventRouter.
-func NewEventRouter(cfg *config.ReplicaConfig, protocol config.Protocol, defaultTopic, scheme string) (*EventRouter, error) {
+func NewEventRouter(sinkConfig *ticonfig.SinkConfig, protocol config.Protocol, defaultTopic, scheme string) (*EventRouter, error) {
 	// If an event does not match any dispatching rules in the config file,
 	// it will be dispatched by the default partition dispatcher and
 	// static topic dispatcher because it matches *.* rule.
-	ruleConfigs := append(cfg.Sink.DispatchRules, &config.DispatchRule{
+	ruleConfigs := append(sinkConfig.DispatchRules, &ticonfig.DispatchRule{
 		Matcher:       []string{"*.*"},
 		PartitionRule: "default",
 		TopicRule:     "",
@@ -55,7 +55,7 @@ func NewEventRouter(cfg *config.ReplicaConfig, protocol config.Protocol, default
 		if err != nil {
 			return nil, cerror.WrapError(cerror.ErrFilterRuleInvalid, err, ruleConfig.Matcher)
 		}
-		if !cfg.CaseSensitive {
+		if !sinkConfig.CaseSensitive {
 			f = tableFilter.CaseInsensitive(f)
 		}
 
@@ -81,30 +81,28 @@ func (s *EventRouter) GetTopicForRowChange(tableInfo *common.TableInfo) string {
 }
 
 // GetTopicForDDL returns the target topic for DDL.
-func (s *EventRouter) GetTopicForDDL(ddl *model.DDLEvent) string {
-	var schema, table string
-	if ddl.PreTableInfo != nil {
-		if ddl.PreTableInfo.TableName.Table == "" {
-			return s.defaultTopic
-		}
-		schema = ddl.PreTableInfo.TableName.Schema
-		table = ddl.PreTableInfo.TableName.Table
-	} else {
-		if ddl.TableInfo.TableName.Table == "" {
-			return s.defaultTopic
-		}
-		schema = ddl.TableInfo.TableName.Schema
-		table = ddl.TableInfo.TableName.Table
-	}
+func (s *EventRouter) GetTopicForDDL(ddl *common.DDLEvent) string {
+	schema := ddl.Job.SchemaName
+	table := ddl.Job.TableName
+
+	// TODO: fix this
+	//var schema, table string
+	// if ddl.PreTableInfo != nil {
+	// 	if ddl.PreTableInfo.TableName.Table == "" {
+	// 		return s.defaultTopic
+	// 	}
+	// 	schema = ddl.PreTableInfo.TableName.Schema
+	// 	table = ddl.PreTableInfo.TableName.Table
+	// } else {
+	// 	if ddl.TableInfo.TableName.Table == "" {
+	// 		return s.defaultTopic
+	// 	}
+	// 	schema = ddl.TableInfo.TableName.Schema
+	// 	table = ddl.TableInfo.TableName.Table
+	// }
 
 	topicGenerator := s.matchTopicGenerator(schema, table)
 	return topicGenerator.Substitute(schema, table)
-}
-
-// GetPartitionForRowChange returns the target partition for row changes.
-func (s *EventRouter) GetPartitionForRowChange(row *common.RowChangedEvent, partitionNum int32) (int32, string, error) {
-	return s.GetPartitionDispatcher(row.TableInfo.GetSchemaName(), row.TableInfo.GetTableName()).
-		GeneratePartitionIndexAndKey(row, partitionNum)
 }
 
 // GetPartitionForRowChange returns the target partition for row changes.

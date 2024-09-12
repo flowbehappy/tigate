@@ -1,12 +1,19 @@
 package eventservice
 
 import (
+	"context"
+	"fmt"
+	"math/rand"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/pingcap/log"
+	tconfig "github.com/pingcap/tiflow/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,12 +26,12 @@ func TestNewDispatcherStat(t *testing.T) {
 		startTs:   startTs,
 	}
 
-	stat := newDispatcherStat(startTs, info, func(c subscriptionChange) {}, nil)
+	spanSubscription := newSpanSubscription(info.GetTableSpan(), startTs)
+	stat := newDispatcherStat(startTs, info, spanSubscription, nil)
 	require.Equal(t, info, stat.info)
 	require.Equal(t, startTs, stat.watermark.Load())
 	require.NotNil(t, stat.spanSubscription)
 	require.Equal(t, startTs, stat.spanSubscription.watermark.Load())
-	require.Equal(t, 0, int(stat.spanSubscription.newEventCount.Load()))
 	require.NotEmpty(t, stat.workerIndex)
 	require.Nil(t, stat.filter)
 }
@@ -38,125 +45,55 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 		startTs:   startTs,
 	}
 
-	notify := make(chan subscriptionChange)
+	spanSubscription := newSpanSubscription(info.GetTableSpan(), startTs)
+	stat := newDispatcherStat(startTs, info, spanSubscription, nil)
 
-	stat := newDispatcherStat(startTs, info, func(c subscriptionChange) {
-		select {
-		case notify <- c:
-		default:
+	sendNewEvent := func(maxTs uint64) {
+		g := &sync.WaitGroup{}
+		for i := 0; i < 64; i++ {
+			ts := rand.Uint64() % maxTs
+			if i == 10 {
+				ts = maxTs
+			}
+			g.Add(1)
+			go func() {
+				defer g.Done()
+				stat.spanSubscription.onNewEvent(&common.RawKVEntry{
+					CRTs: ts,
+				})
+			}()
 		}
-	}, nil)
+		g.Wait()
+	}
 
 	// Case 1: no new events, only watermark change
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		stat.onSubscriptionWatermark(456)
-	}()
-	subChange := <-notify
+	stat.spanSubscription.onSubscriptionWatermark(456)
 	require.Equal(t, uint64(456), stat.spanSubscription.watermark.Load())
-	require.Equal(t, info.id, subChange.dispatcherInfo.GetID())
-	require.Equal(t, uint64(0), subChange.eventCount)
 	log.Info("pass TestDispatcherStatUpdateWatermark case 1")
 
 	// Case 2: new events, and watermark increase
-	stat.onNewEvent(&common.RawKVEntry{})
-	stat.onNewEvent(&common.RawKVEntry{})
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		stat.onSubscriptionWatermark(789)
-	}()
-	subChange = <-notify
+	sendNewEvent(startTs)
+	stat.spanSubscription.onSubscriptionWatermark(789)
 	require.Equal(t, uint64(789), stat.spanSubscription.watermark.Load())
-	require.Equal(t, info.id, subChange.dispatcherInfo.GetID())
-	require.Equal(t, uint64(2), subChange.eventCount)
-	require.Equal(t, 0, int(stat.spanSubscription.newEventCount.Load()))
+	require.Equal(t, startTs, stat.spanSubscription.maxEventCommitTs.Load())
 	log.Info("pass TestDispatcherStatUpdateWatermark case 2")
 
 	// Case 3: new events, and watermark decrease
 	// watermark should not decrease and no notification
-	stat.onNewEvent(&common.RawKVEntry{})
-	stat.onNewEvent(&common.RawKVEntry{})
+	sendNewEvent(360)
 	done := make(chan struct{})
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		stat.onSubscriptionWatermark(456)
+		stat.spanSubscription.onSubscriptionWatermark(456)
 		close(done)
 	}()
 	<-done
 	require.Equal(t, uint64(789), stat.spanSubscription.watermark.Load())
-	require.Equal(t, 2, int(stat.spanSubscription.newEventCount.Load()))
+	require.Equal(t, uint64(360), stat.spanSubscription.maxEventCommitTs.Load())
 	log.Info("pass TestDispatcherStatUpdateWatermark case 3")
 
 	wg.Wait()
-}
-
-func TestScanTaskPool_PushTask(t *testing.T) {
-	pool := newScanTaskPool()
-	span := newTableSpan(1, "a", "b")
-	dispatcherInfo := &mockDispatcherInfo{
-		id:        common.NewDispatcherID(),
-		clusterID: 1,
-		startTs:   1000,
-		span:      span,
-	}
-	dispatcherStat := newDispatcherStat(dispatcherInfo.startTs, dispatcherInfo, func(c subscriptionChange) {}, nil)
-	// Create two tasks with overlapping data ranges
-	task1 := &scanTask{
-		dispatcherStat: dispatcherStat,
-		dataRange: &common.DataRange{
-			ClusterID: uint64(1),
-			Span:      span,
-			StartTs:   1000,
-			EndTs:     2000,
-		},
-		eventCount: 10,
-	}
-
-	task2 := &scanTask{
-		dispatcherStat: dispatcherStat,
-		dataRange: &common.DataRange{
-			ClusterID: 1,
-			Span:      span,
-			StartTs:   1500,
-			EndTs:     2500,
-		},
-		eventCount: 5,
-	}
-
-	expectedTask := &scanTask{
-		dispatcherStat: dispatcherStat,
-		dataRange: &common.DataRange{
-			ClusterID: 1,
-			Span:      span,
-			StartTs:   1000,
-			EndTs:     2500,
-		},
-		eventCount: 15,
-	}
-
-	// make the pool contain the task1 already
-	pool.taskSet[dispatcherInfo.GetID()] = task1
-
-	// Verify that the task is in the taskSet
-	task, ok := pool.taskSet[dispatcherInfo.id]
-	require.True(t, ok)
-	require.Equal(t, task1, task)
-
-	// Push the second task
-	pool.pushTask(task2)
-
-	// Verify that the task is sent to corresponding pendingTaskQueue
-	receivedTask := <-pool.pendingTaskQueue[dispatcherStat.workerIndex]
-	require.Equal(t, expectedTask, receivedTask)
-
-	// Verify that the task is removed from taskSet
-	task, ok = pool.taskSet[dispatcherInfo.GetID()]
-	require.False(t, ok)
-	require.Nil(t, task)
-
 }
 
 func newTableSpan(tableID int64, start, end string) *heartbeatpb.TableSpan {
@@ -203,4 +140,189 @@ func TestResolvedTsCache(t *testing.T) {
 	require.Equal(t, uint64(100), res[0].ResolvedTs)
 	require.Equal(t, uint64(109), res[9].ResolvedTs)
 	require.False(t, rc.isFull())
+}
+
+func genEvents(helper *mounter.EventTestHelper, t *testing.T, ddl string, dmls ...string) (common.DDLEvent, []*common.RawKVEntry) {
+	job := helper.DDL2Job(ddl)
+	schema := job.SchemaName
+	table := job.TableName
+	kvEvents1 := helper.DML2RawKv(schema, table, dmls...)
+	for _, e := range kvEvents1 {
+		require.Equal(t, job.BinlogInfo.TableInfo.UpdateTS-1, e.StartTs)
+		require.Equal(t, job.BinlogInfo.TableInfo.UpdateTS+1, e.CRTs)
+	}
+	return common.DDLEvent{
+		CommitTS: job.BinlogInfo.TableInfo.UpdateTS,
+		Job:      job,
+	}, kvEvents1
+}
+
+func TestSendEvents(t *testing.T) {
+	helper := mounter.NewEventTestHelper(t)
+	defer helper.Close()
+
+	helper.Tk().MustExec("use test")
+	ddlEvent, kvEvents := genEvents(helper, t, `create table test.t(id int primary key, c char(50))`, []string{
+		`insert into test.t(id,c) values (0, "c0")`,
+		`insert into test.t(id,c) values (1, "c1")`,
+		`insert into test.t(id,c) values (2, "c2")`,
+	}...)
+	require.NotNil(t, kvEvents)
+
+	ddlEvent1, _ := genEvents(helper, t, `alter table test.t add column dummy int default 0`)
+	require.Less(t, ddlEvent.CommitTS, ddlEvent1.CommitTS)
+
+	ddlEvent2, kvEvents2 := genEvents(helper, t, `alter table test.t add column d int`, []string{
+		`insert into test.t(id,c,d) values (10, "c10", 10)`,
+		`insert into test.t(id,c,d) values (11, "c11", 11)`,
+		`insert into test.t(id,c,d) values (12, "c12", 12)`,
+	}...)
+	require.NotNil(t, kvEvents2)
+	require.Less(t, kvEvents[0].CRTs, kvEvents2[1].CRTs)
+	require.Less(t, ddlEvent.CommitTS, ddlEvent2.CommitTS)
+
+	wg := &sync.WaitGroup{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	eventStore := newMockEventStore()
+	schemaStore := newMockSchemaStore()
+	msgCh := make(chan *messaging.TargetMessage, 1024)
+	mc := &mockMessageCenter{messageCh: msgCh}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		expected := []struct {
+			t        int // type
+			commitTs common.Ts
+		}{
+			{t: common.TypeDDLEvent, commitTs: ddlEvent.CommitTS},
+			{t: common.TypeDMLEvent, commitTs: kvEvents[0].CRTs},
+			{t: common.TypeDDLEvent, commitTs: ddlEvent1.CommitTS},
+			{t: common.TypeDDLEvent, commitTs: ddlEvent2.CommitTS},
+			{t: common.TypeDMLEvent, commitTs: kvEvents2[0].CRTs},
+			{t: common.TypeBatchResolvedEvent, commitTs: common.Ts(0)},
+		}
+		cnt := 0
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msgs := <-msgCh:
+				for _, msg := range msgs.Message {
+					event, ok := msg.(common.Event)
+					require.True(t, ok)
+					fmt.Printf("cnt: %d -> %+v\n", cnt, event)
+					require.Equal(t, expected[cnt].t, event.GetType(), "cnt: %d, e: %+v", cnt, event)
+					require.Equal(t, expected[cnt].commitTs, event.GetCommitTs(), "cnt: %d, e: %+v", cnt, event)
+					cnt++
+
+					if cnt == len(expected) {
+						return
+					}
+				}
+			}
+		}
+	}()
+
+	s := newEventBroker(ctx, 1, eventStore, schemaStore, mc, time.Local)
+	defer s.close()
+
+	// Register the dispatcher
+	tableID := ddlEvent.Job.TableID
+	info := newMockAcceptorInfo(common.NewDispatcherID(), tableID)
+	s.addDispatcher(info)
+	_, ok := s.spans[tableID]
+	require.True(t, ok)
+
+	schemaStore.AppendDDLEvent(tableID, ddlEvent, ddlEvent1, ddlEvent2)
+
+	span, ok := eventStore.spans[tableID]
+	require.True(t, ok)
+	span.update(ddlEvent2.CommitTS+1, append(kvEvents, kvEvents2...)...)
+
+	wg.Wait()
+}
+
+// mockDispatcherInfo is a mock implementation of the AcceptorInfo interface
+type mockDispatcherInfo struct {
+	clusterID  uint64
+	serverID   string
+	id         common.DispatcherID
+	topic      string
+	span       *heartbeatpb.TableSpan
+	startTs    uint64
+	isRegister bool
+}
+
+func newMockAcceptorInfo(dispatcherID common.DispatcherID, tableID int64) *mockDispatcherInfo {
+	return &mockDispatcherInfo{
+		clusterID: 1,
+		serverID:  "server1",
+		id:        dispatcherID,
+		topic:     "topic1",
+		span: &heartbeatpb.TableSpan{
+			TableID:  tableID,
+			StartKey: []byte("a"),
+			EndKey:   []byte("z"),
+		},
+		startTs:    1,
+		isRegister: true,
+	}
+}
+
+func (m *mockDispatcherInfo) GetID() common.DispatcherID {
+	return m.id
+}
+
+func (m *mockDispatcherInfo) GetClusterID() uint64 {
+	return m.clusterID
+}
+
+func (m *mockDispatcherInfo) GetTopic() string {
+	return m.topic
+}
+
+func (m *mockDispatcherInfo) GetServerID() string {
+	return m.serverID
+}
+
+func (m *mockDispatcherInfo) GetTableSpan() *heartbeatpb.TableSpan {
+	return m.span
+}
+
+func (m *mockDispatcherInfo) GetStartTs() uint64 {
+	return m.startTs
+}
+
+func (m *mockDispatcherInfo) IsRegister() bool {
+	return m.isRegister
+}
+
+func (m *mockDispatcherInfo) GetChangefeedID() (namespace, id string) {
+	return "default", "test"
+}
+
+func (m *mockDispatcherInfo) GetFilterConfig() *tconfig.FilterConfig {
+	return &tconfig.FilterConfig{
+		Rules: []string{"*.*"},
+	}
+}
+
+type mockSpanStats struct {
+	startTs       uint64
+	watermark     uint64
+	pendingEvents []*common.RawKVEntry
+	onUpdate      func(watermark uint64)
+	onEvent       func(event *common.RawKVEntry)
+}
+
+func (m *mockSpanStats) update(watermark uint64, events ...*common.RawKVEntry) {
+	m.pendingEvents = append(m.pendingEvents, events...)
+	m.watermark = watermark
+	for _, e := range events {
+		m.onEvent(e)
+	}
+	m.onUpdate(watermark)
 }

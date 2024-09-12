@@ -4,6 +4,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	timodel "github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/integrity"
@@ -11,8 +12,6 @@ import (
 )
 
 //go:generate msgp
-
-// TODO: 想一想这个到底要哪些
 //
 //msgp:ignore DDLEvent
 
@@ -263,6 +262,29 @@ type MQRowEvent struct {
 }
 
 type RowEvent struct {
-	Event    *RowChangedEvent
-	Callback func()
+	TableInfo      *TableInfo
+	CommitTs       uint64
+	Event          RowDelta
+	ColumnSelector Selector
+	Callback       func()
+}
+
+func (e *RowEvent) IsDelete() bool {
+	return !e.Event.PreRow.IsEmpty() && e.Event.Row.IsEmpty()
+}
+
+func (e *RowEvent) IsUpdate() bool {
+	return !e.Event.PreRow.IsEmpty() && !e.Event.Row.IsEmpty()
+}
+
+func (e *RowEvent) IsInsert() bool {
+	return e.Event.PreRow.IsEmpty() && !e.Event.Row.IsEmpty()
+}
+
+func (e *RowEvent) GetRows() *chunk.Row {
+	return &e.Event.Row
+}
+
+func (e *RowEvent) GetPreRows() *chunk.Row {
+	return &e.Event.PreRow
 }

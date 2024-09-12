@@ -14,18 +14,56 @@
 package sink
 
 import (
+	"net/url"
+
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
+	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/cdc/model"
+	cerror "github.com/pingcap/tiflow/pkg/errors"
+	"github.com/pingcap/tiflow/pkg/sink"
+	"go.uber.org/zap"
+)
+
+type SinkType int
+
+const (
+	MysqlSinkType SinkType = iota
+	KafkaSinkType
 )
 
 type Sink interface {
 	AddDMLEvent(event *common.DMLEvent, tableProgress *types.TableProgress)
 	AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress)
 	PassDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress)
+	AddCheckpointTs(ts uint64)
 	// IsEmpty(tableSpan *common.TableSpan) bool
 	// AddTableSpan(tableSpan *common.TableSpan)
 	// RemoveTableSpan(tableSpan *common.TableSpan)
 	// StopTableSpan(tableSpan *common.TableSpan)
 	// GetCheckpointTs(tableSpan *common.TableSpan) (uint64, bool)
 	Close()
+	SinkType() SinkType
+}
+
+func NewSink(config *config.ChangefeedConfig, changefeedID model.ChangeFeedID) (Sink, error) {
+	sinkURI, err := url.Parse(config.SinkURI)
+	if err != nil {
+		return nil, cerror.WrapError(cerror.ErrSinkURIInvalid, err)
+	}
+	scheme := sink.GetScheme(sinkURI)
+	switch scheme {
+	case sink.MySQLScheme, sink.MySQLSSLScheme, sink.TiDBScheme, sink.TiDBSSLScheme:
+		cfg, db, err := writer.NewMysqlConfigAndDB(sinkURI)
+		if err != nil {
+			log.Error("create mysql sink failed", zap.Error(err))
+			return nil, err
+		}
+		return NewMysqlSink(changefeedID, 16, cfg, db), nil
+	case sink.KafkaScheme, sink.KafkaSSLScheme:
+		return NewKafkaSink(changefeedID, sinkURI, config.SinkConfig)
+	}
+	return nil, nil
 }

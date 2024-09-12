@@ -162,7 +162,7 @@ func (d *BatchEncoder) resetPacket() {
 func (d *BatchEncoder) Clean() {}
 
 // newBatchEncoder creates a new canalBatchEncoder.
-func NewBatchEncoder(config *ticommon.Config) (encoder.RowEventEncoder, error) {
+func NewBatchEncoder(config *ticommon.Config) (encoder.EventEncoder, error) {
 	encoder := &BatchEncoder{
 		messages:     &canal.Messages{},
 		callbackBuf:  make([]func(), 0),

@@ -76,7 +76,7 @@ var schedulerDispatcherRequestDynamicStreamOnce sync.Once
 func GetSchedulerDispatcherRequestDynamicStream() dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.ScheduleDispatcherRequest, *EventDispatcherManager] {
 	if schedulerDispatcherRequestDynamicStream == nil {
 		schedulerDispatcherRequestDynamicStreamOnce.Do(func() {
-			schedulerDispatcherRequestDynamicStream = dynstream.NewDynamicStreamDefault(&SchedulerDispatcherRequestHandler{})
+			schedulerDispatcherRequestDynamicStream = dynstream.NewDynamicStream(&SchedulerDispatcherRequestHandler{})
 			schedulerDispatcherRequestDynamicStream.Start()
 		})
 	}
@@ -93,7 +93,7 @@ var heartBeatResponseDynamicStreamOnce sync.Once
 func GetHeartBeatResponseDynamicStream() dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager] {
 	if heartBeatResponseDynamicStream == nil {
 		heartBeatResponseDynamicStreamOnce.Do(func() {
-			heartBeatResponseDynamicStream = dynstream.NewDynamicStreamDefault(&HeartBeatResponseHandler{dispatcher.GetDispatcherStatusDynamicStream()})
+			heartBeatResponseDynamicStream = dynstream.NewDynamicStream(&HeartBeatResponseHandler{dispatcher.GetDispatcherStatusDynamicStream()})
 			heartBeatResponseDynamicStream.Start()
 		})
 	}

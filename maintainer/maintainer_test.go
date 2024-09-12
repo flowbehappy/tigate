@@ -26,6 +26,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/config"
+	configNew "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
@@ -34,7 +35,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
-	config2 "github.com/pingcap/tiflow/pkg/config"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -214,7 +214,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx,
 		messaging.ServerId(node.ID), 100, config.NewDefaultMessageCenterConfig()))
 	appcontext.SetService(watcher.NodeManagerName, watcher.NewNodeManager(nil, nil))
-	stream := dynstream.NewDynamicStreamDefault[string, *Event, *Maintainer](NewStreamHandler())
+	stream := dynstream.NewDynamicStream[string, *Event, *Maintainer](NewStreamHandler())
 	stream.Start()
 	cfID := model.DefaultChangeFeedID("test")
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
@@ -231,8 +231,8 @@ func TestMaintainerSchedule(t *testing.T) {
 	go dispatcherManager.Run(ctx)
 
 	taskScheduler := threadpool.NewThreadPoolDefault()
-	maintainer := NewMaintainer(cfID, &model.ChangeFeedInfo{
-		Config: config2.GetDefaultReplicaConfig(),
+	maintainer := NewMaintainer(cfID, &configNew.ChangeFeedInfo{
+		Config: configNew.GetDefaultReplicaConfig(),
 	}, node, stream, taskScheduler, nil, nil, 10)
 	_ = stream.AddPaths(dynstream.PathAndDest[string, *Maintainer]{
 		Path: cfID.ID,

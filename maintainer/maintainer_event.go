@@ -66,6 +66,11 @@ func (m *StreamHandler) Path(event *Event) string {
 	return event.changefeedID
 }
 
-func (m *StreamHandler) Handle(event *Event, dest *Maintainer) (await bool) {
+func (m *StreamHandler) Handle(dest *Maintainer, events ...*Event) (await bool) {
+	if len(events) != 1 {
+		// TODO: Support batch
+		panic("unexpected event count")
+	}
+	event := events[0]
 	return dest.HandleEvent(event)
 }

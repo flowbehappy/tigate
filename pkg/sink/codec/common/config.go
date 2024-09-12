@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"time"
 
+	ticonfig "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/imdario/mergo"
 	"github.com/pingcap/errors"
@@ -54,7 +55,7 @@ type Config struct {
 	AvroConfluentSchemaRegistry    string
 	AvroDecimalHandlingMode        string
 	AvroBigintUnsignedHandlingMode string
-	AvroGlueSchemaRegistry         *config.GlueSchemaRegistryConfig
+	AvroGlueSchemaRegistry         *ticonfig.GlueSchemaRegistryConfig
 	// EnableWatermarkEvent set to true, avro encode DDL and checkpoint event
 	// and send to the downstream kafka, they cannot be consumed by the confluent official consumer
 	// and would cause error, so this is only used for ticdc internal testing purpose, should not be
@@ -174,14 +175,14 @@ type urlConfig struct {
 }
 
 // Apply fill the Config
-func (c *Config) Apply(sinkURI *url.URL, replicaConfig *config.ReplicaConfig) error {
+func (c *Config) Apply(sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig) error {
 	req := &http.Request{URL: sinkURI}
 	var err error
 	urlParameter := &urlConfig{}
 	if err := binding.Query.Bind(req, urlParameter); err != nil {
 		return cerror.WrapError(cerror.ErrMySQLInvalidConfig, err)
 	}
-	if urlParameter, err = mergeConfig(replicaConfig, urlParameter); err != nil {
+	if urlParameter, err = mergeConfig(sinkConfig, urlParameter); err != nil {
 		return err
 	}
 
@@ -214,51 +215,51 @@ func (c *Config) Apply(sinkURI *url.URL, replicaConfig *config.ReplicaConfig) er
 	if urlParameter.AvroSchemaRegistry != "" {
 		c.AvroConfluentSchemaRegistry = urlParameter.AvroSchemaRegistry
 	}
-	if replicaConfig.Sink.KafkaConfig != nil &&
-		replicaConfig.Sink.KafkaConfig.GlueSchemaRegistryConfig != nil {
-		c.AvroGlueSchemaRegistry = replicaConfig.Sink.KafkaConfig.GlueSchemaRegistryConfig
+	if sinkConfig.KafkaConfig != nil &&
+		sinkConfig.KafkaConfig.GlueSchemaRegistryConfig != nil {
+		c.AvroGlueSchemaRegistry = sinkConfig.KafkaConfig.GlueSchemaRegistryConfig
 	}
-	if c.Protocol == config.ProtocolAvro && replicaConfig.ForceReplicate {
+	if c.Protocol == config.ProtocolAvro && sinkConfig.ForceReplicate {
 		return cerror.ErrCodecInvalidConfig.GenWithStack(
 			`force-replicate must be disabled, when using avro protocol`)
 	}
 
-	if replicaConfig.Sink != nil {
-		c.Terminator = util.GetOrZero(replicaConfig.Sink.Terminator)
-		if replicaConfig.Sink.CSVConfig != nil {
-			c.Delimiter = replicaConfig.Sink.CSVConfig.Delimiter
-			c.Quote = replicaConfig.Sink.CSVConfig.Quote
-			c.NullString = replicaConfig.Sink.CSVConfig.NullString
-			c.IncludeCommitTs = replicaConfig.Sink.CSVConfig.IncludeCommitTs
-			c.BinaryEncodingMethod = replicaConfig.Sink.CSVConfig.BinaryEncodingMethod
-			c.OutputOldValue = replicaConfig.Sink.CSVConfig.OutputOldValue
-			c.OutputHandleKey = replicaConfig.Sink.CSVConfig.OutputHandleKey
+	if sinkConfig != nil {
+		c.Terminator = util.GetOrZero(sinkConfig.Terminator)
+		if sinkConfig.CSVConfig != nil {
+			c.Delimiter = sinkConfig.CSVConfig.Delimiter
+			c.Quote = sinkConfig.CSVConfig.Quote
+			c.NullString = sinkConfig.CSVConfig.NullString
+			c.IncludeCommitTs = sinkConfig.CSVConfig.IncludeCommitTs
+			c.BinaryEncodingMethod = sinkConfig.CSVConfig.BinaryEncodingMethod
+			c.OutputOldValue = sinkConfig.CSVConfig.OutputOldValue
+			c.OutputHandleKey = sinkConfig.CSVConfig.OutputHandleKey
 		}
-		if replicaConfig.Sink.KafkaConfig != nil && replicaConfig.Sink.KafkaConfig.LargeMessageHandle != nil {
-			c.LargeMessageHandle = replicaConfig.Sink.KafkaConfig.LargeMessageHandle
+		if sinkConfig.KafkaConfig != nil && sinkConfig.KafkaConfig.LargeMessageHandle != nil {
+			c.LargeMessageHandle = sinkConfig.KafkaConfig.LargeMessageHandle
 		}
-		if !c.LargeMessageHandle.Disabled() && replicaConfig.ForceReplicate {
+		if !c.LargeMessageHandle.Disabled() && sinkConfig.ForceReplicate {
 			return cerror.ErrCodecInvalidConfig.GenWithStack(
 				`force-replicate must be disabled, when the large message handle is enabled, large message handle: "%s"`,
 				c.LargeMessageHandle.LargeMessageHandleOption)
 		}
-		if replicaConfig.Sink.OpenProtocol != nil {
-			c.OpenOutputOldValue = replicaConfig.Sink.OpenProtocol.OutputOldValue
+		if sinkConfig.OpenProtocol != nil {
+			c.OpenOutputOldValue = sinkConfig.OpenProtocol.OutputOldValue
 		}
-		if replicaConfig.Sink.Debezium != nil {
-			c.DebeziumOutputOldValue = replicaConfig.Sink.Debezium.OutputOldValue
+		if sinkConfig.Debezium != nil {
+			c.DebeziumOutputOldValue = sinkConfig.Debezium.OutputOldValue
 		}
 	}
 	if urlParameter.OnlyOutputUpdatedColumns != nil {
 		c.OnlyOutputUpdatedColumns = *urlParameter.OnlyOutputUpdatedColumns
 	}
 
-	if replicaConfig.Integrity != nil {
-		c.EnableRowChecksum = replicaConfig.Integrity.Enabled()
+	if sinkConfig.Integrity != nil {
+		c.EnableRowChecksum = sinkConfig.Integrity.Enabled()
 	}
 
-	c.DeleteOnlyHandleKeyColumns = util.GetOrZero(replicaConfig.Sink.DeleteOnlyOutputHandleKeyColumns)
-	if c.DeleteOnlyHandleKeyColumns && replicaConfig.ForceReplicate {
+	c.DeleteOnlyHandleKeyColumns = util.GetOrZero(sinkConfig.DeleteOnlyOutputHandleKeyColumns)
+	if c.DeleteOnlyHandleKeyColumns && sinkConfig.ForceReplicate {
 		return cerror.ErrCodecInvalidConfig.GenWithStack(
 			`force-replicate must be disabled when configuration "delete-only-output-handle-key-columns" is true.`)
 	}
@@ -291,21 +292,21 @@ func (c *Config) Apply(sinkURI *url.URL, replicaConfig *config.ReplicaConfig) er
 }
 
 func mergeConfig(
-	replicaConfig *config.ReplicaConfig,
+	sinkConfig *ticonfig.SinkConfig,
 	urlParameters *urlConfig,
 ) (*urlConfig, error) {
 	dest := &urlConfig{}
-	if replicaConfig.Sink != nil {
-		dest.AvroSchemaRegistry = util.GetOrZero(replicaConfig.Sink.SchemaRegistry)
-		dest.OnlyOutputUpdatedColumns = replicaConfig.Sink.OnlyOutputUpdatedColumns
-		dest.ContentCompatible = replicaConfig.Sink.ContentCompatible
+	if sinkConfig != nil {
+		dest.AvroSchemaRegistry = util.GetOrZero(sinkConfig.SchemaRegistry)
+		dest.OnlyOutputUpdatedColumns = sinkConfig.OnlyOutputUpdatedColumns
+		dest.ContentCompatible = sinkConfig.ContentCompatible
 		if util.GetOrZero(dest.ContentCompatible) {
 			dest.OnlyOutputUpdatedColumns = util.AddressOf(true)
 		}
-		if replicaConfig.Sink.KafkaConfig != nil {
-			dest.MaxMessageBytes = replicaConfig.Sink.KafkaConfig.MaxMessageBytes
-			if replicaConfig.Sink.KafkaConfig.CodecConfig != nil {
-				codecConfig := replicaConfig.Sink.KafkaConfig.CodecConfig
+		if sinkConfig.KafkaConfig != nil {
+			dest.MaxMessageBytes = sinkConfig.KafkaConfig.MaxMessageBytes
+			if sinkConfig.KafkaConfig.CodecConfig != nil {
+				codecConfig := sinkConfig.KafkaConfig.CodecConfig
 				dest.EnableTiDBExtension = codecConfig.EnableTiDBExtension
 				dest.MaxBatchSize = codecConfig.MaxBatchSize
 				dest.AvroEnableWatermark = codecConfig.AvroEnableWatermark
@@ -314,8 +315,8 @@ func mergeConfig(
 				dest.EncodingFormatType = codecConfig.EncodingFormat
 			}
 		}
-		if replicaConfig.Sink.DebeziumDisableSchema != nil {
-			dest.DebeziumDisableSchema = replicaConfig.Sink.DebeziumDisableSchema
+		if sinkConfig.DebeziumDisableSchema != nil {
+			dest.DebeziumDisableSchema = sinkConfig.DebeziumDisableSchema
 		}
 	}
 	if err := mergo.Merge(dest, urlParameters, mergo.WithOverride); err != nil {

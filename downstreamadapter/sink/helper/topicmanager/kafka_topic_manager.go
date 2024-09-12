@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	tikafka "github.com/flowbehappy/tigate/pkg/sink/kafka"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -44,7 +45,7 @@ type kafkaTopicManager struct {
 
 	admin kafka.ClusterAdminClient
 
-	cfg *kafka.AutoCreateTopicConfig
+	cfg *tikafka.AutoCreateTopicConfig
 
 	topics sync.Map
 
@@ -59,7 +60,7 @@ func GetTopicManagerAndTryCreateTopic(
 	ctx context.Context,
 	changefeedID model.ChangeFeedID,
 	topic string,
-	topicCfg *kafka.AutoCreateTopicConfig,
+	topicCfg *tikafka.AutoCreateTopicConfig,
 	adminClient kafka.ClusterAdminClient,
 ) (TopicManager, error) {
 	topicManager := newKafkaTopicManager(
@@ -79,7 +80,7 @@ func newKafkaTopicManager(
 	defaultTopic string,
 	changefeedID model.ChangeFeedID,
 	admin kafka.ClusterAdminClient,
-	cfg *kafka.AutoCreateTopicConfig,
+	cfg *tikafka.AutoCreateTopicConfig,
 ) *kafkaTopicManager {
 	mgr := &kafkaTopicManager{
 		defaultTopic:      defaultTopic,

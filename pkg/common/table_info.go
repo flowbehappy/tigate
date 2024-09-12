@@ -254,6 +254,13 @@ const (
 	HandleIndexTableIneligible = -2
 )
 
+const (
+	preSQLInsert = iota
+	preSQLReplace
+	preSQLUpdate
+	preSQLDelete
+)
+
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
 	*model.TableInfo
@@ -317,6 +324,7 @@ type TableInfo struct {
 	virtualColumnCount int
 	// rowColInfosWithoutVirtualCols is the same as rowColInfos, but without virtual columns
 	rowColInfosWithoutVirtualCols *[]rowcodec.ColInfo
+	PreSQLs                       map[string]string
 }
 
 func (ti *TableInfo) initRowColInfosWithoutVirtualCols() {
@@ -346,7 +354,7 @@ func (ti *TableInfo) findHandleIndex() {
 	}
 	handleIndexOffset := -1
 	for i, idx := range ti.Indices {
-		if !ti.IsIndexUnique(idx) {
+		if !ti.IsIndexUniqueAndNotNull(idx) {
 			continue
 		}
 		if idx.Primary {
@@ -364,6 +372,7 @@ func (ti *TableInfo) findHandleIndex() {
 		}
 	}
 	if handleIndexOffset >= 0 {
+		log.Info("find handle index", zap.String("table", ti.TableName.String()), zap.String("index", ti.Indices[handleIndexOffset].Name.O))
 		ti.HandleIndexID = ti.Indices[handleIndexOffset].ID
 	}
 }
@@ -423,6 +432,78 @@ func (ti *TableInfo) initColumnsFlag() {
 			ti.ColumnsFlag[colInfo.ID] = flag
 		}
 	}
+}
+
+func (ti *TableInfo) initPreSQLs() {
+	ti.PreSQLs = make(map[string]string)
+	ti.PreSQLs["insert"] = ti.genPreSQLInsert(false, true)
+	ti.PreSQLs["replace"] = ti.genPreSQLInsert(true, true)
+	ti.PreSQLs["update"] = ti.genPreSQLUpdate()
+}
+
+func (ti *TableInfo) genPreSQLInsert(isReplace bool, needPlaceHolder bool) string {
+	var builder strings.Builder
+	colList := "(" + ti.getColumnList(false) + ")"
+	quoteTable := ti.TableName.QuoteString()
+	if isReplace {
+		builder.WriteString("REPLACE INTO " + quoteTable + " " + colList + " VALUES ")
+	} else {
+		builder.WriteString("INSERT INTO " + quoteTable + " " + colList + " VALUES ")
+	}
+	if needPlaceHolder {
+		builder.WriteString("(" + placeHolder(len(ti.Columns)-ti.virtualColumnCount) + ")")
+	}
+	return builder.String()
+}
+
+func (ti *TableInfo) genPreSQLUpdate() string {
+	var builder strings.Builder
+	builder.WriteString("UPDATE " + ti.TableName.QuoteString() + " SET ")
+	builder.WriteString(ti.getColumnList(true))
+	return builder.String()
+}
+
+// placeHolder returns a string with n placeholders separated by commas
+// n must be greater or equal than 1, or the function will panic
+func placeHolder(n int) string {
+	var builder strings.Builder
+	builder.Grow((n-1)*2 + 1)
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			builder.WriteString(",")
+		}
+		builder.WriteString("?")
+	}
+	return builder.String()
+}
+
+func (ti *TableInfo) getColumnList(isUpdate bool) string {
+	var b strings.Builder
+	for i, col := range ti.Columns {
+		if col == nil || ti.ColumnsFlag[col.ID].IsGeneratedColumn() {
+			continue
+		}
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(QuoteName(col.Name.O))
+		if isUpdate {
+			b.WriteString(" = ?")
+		}
+	}
+	return b.String()
+}
+
+func (ti *TableInfo) GetPreInsertSQL() string {
+	return ti.PreSQLs["insert"]
+}
+
+func (ti *TableInfo) GetPreReplaceSQL() string {
+	return ti.PreSQLs["replace"]
+}
+
+func (ti *TableInfo) GetPreUpdateSQL() string {
+	return ti.PreSQLs["update"]
 }
 
 // GetColumnInfo returns the column info by ID
@@ -550,8 +631,8 @@ func (ti *TableInfo) IsEligible(forceReplicate bool) bool {
 	return ti.HasUniqueColumn()
 }
 
-// IsIndexUnique returns whether the index is unique
-func (ti *TableInfo) IsIndexUnique(indexInfo *model.IndexInfo) bool {
+// IsIndexUnique returns whether the index is unique and all columns are not null
+func (ti *TableInfo) IsIndexUniqueAndNotNull(indexInfo *model.IndexInfo) bool {
 	if indexInfo.Primary {
 		return true
 	}
@@ -704,7 +785,7 @@ func WrapTableInfo(schemaID int64, schemaName string, version uint64, info *mode
 	}
 
 	for _, idx := range ti.Indices {
-		if ti.IsIndexUnique(idx) {
+		if ti.IsIndexUniqueAndNotNull(idx) {
 			ti.hasUniqueColumn = true
 		}
 		if idx.Primary || idx.Unique {
@@ -724,6 +805,9 @@ func WrapTableInfo(schemaID int64, schemaName string, version uint64, info *mode
 	ti.initRowColInfosWithoutVirtualCols()
 	ti.findHandleIndex()
 	ti.initColumnsFlag()
+	// This function must be called after the functions above were called
+	// because it depends on the result of the functions above
+	ti.initPreSQLs()
 	return ti
 }
 

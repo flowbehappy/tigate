@@ -118,7 +118,12 @@ func (h *SchedulerDispatcherRequestHandler) Path(scheduleDispatcherRequest *hear
 	return model.DefaultChangeFeedID(scheduleDispatcherRequest.ChangefeedID)
 }
 
-func (h *SchedulerDispatcherRequestHandler) Handle(scheduleDispatcherRequest *heartbeatpb.ScheduleDispatcherRequest, eventDispatcherManager *EventDispatcherManager) bool {
+func (h *SchedulerDispatcherRequestHandler) Handle(eventDispatcherManager *EventDispatcherManager, reqs ...*heartbeatpb.ScheduleDispatcherRequest) bool {
+	if len(reqs) != 1 {
+		// TODO: Support batch
+		panic("invalid request count")
+	}
+	scheduleDispatcherRequest := reqs[0]
 	if scheduleDispatcherRequest == nil {
 		log.Warn("scheduleDispatcherRequest is nil, skip")
 		return false
@@ -145,7 +150,12 @@ func (h *HeartBeatResponseHandler) Path(HeartbeatResponse *heartbeatpb.HeartBeat
 	return model.DefaultChangeFeedID(HeartbeatResponse.ChangefeedID)
 }
 
-func (h *HeartBeatResponseHandler) Handle(heartbeatResponse *heartbeatpb.HeartBeatResponse, eventDispatcherManager *EventDispatcherManager) bool {
+func (h *HeartBeatResponseHandler) Handle(eventDispatcherManager *EventDispatcherManager, resps ...*heartbeatpb.HeartBeatResponse) bool {
+	if len(resps) != 1 {
+		// TODO: Support batch
+		panic("invalid response count")
+	}
+	heartbeatResponse := resps[0]
 	dispatcherStatuses := heartbeatResponse.GetDispatcherStatuses()
 	for _, dispatcherStatus := range dispatcherStatuses {
 		influencedDispatchersType := dispatcherStatus.InfluencedDispatchers.InfluenceType

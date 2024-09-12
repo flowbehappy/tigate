@@ -2,6 +2,7 @@ package dynstream
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,19 +30,23 @@ type simpleHandler struct{}
 func (h *simpleHandler) Path(event *simpleEvent) string {
 	return event.path
 }
-func (h *simpleHandler) Handle(event *simpleEvent, dest struct{}) (await bool) {
-	if event.sleep > 0 {
-		time.Sleep(event.sleep)
-	}
-	if event.wg != nil {
-		event.wg.Done()
+func (h *simpleHandler) Handle(dest struct{}, events ...*simpleEvent) (await bool) {
+	for _, event := range events {
+		if event.sleep > 0 {
+			time.Sleep(event.sleep)
+		}
+		if event.wg != nil {
+			event.wg.Done()
+		}
 	}
 	return false
 }
 
 func TestDynamicStreamBasic(t *testing.T) {
 	handler := &simpleHandler{}
-	ds := NewDynamicStream(handler, DefaultSchedulerInterval, DefaultReportInterval, 3)
+	option := NewOption()
+	option.BatchSize = 2
+	ds := NewDynamicStream(handler, option)
 	ds.Start()
 
 	ds.AddPaths([]PathAndDest[string, struct{}]{
@@ -55,6 +60,8 @@ func TestDynamicStreamBasic(t *testing.T) {
 	ds.In() <- newSimpleEvent("path1", wg)
 	ds.In() <- newSimpleEvent("path2", wg)
 	ds.In() <- newSimpleEvent("path3", wg)
+	ds.In() <- newSimpleEvent("path3", wg)
+	ds.In() <- newSimpleEvent("path3", wg)
 	ds.In() <- newSimpleEvent("path4", wg)
 
 	wg.Wait()
@@ -66,7 +73,11 @@ func TestDynamicStreamBasic(t *testing.T) {
 
 func TestDynamicStreamSchedule(t *testing.T) {
 	handler := &simpleHandler{}
-	ds := newDynamicStreamImpl(handler, 1*time.Hour, 1*time.Hour, 3)
+	option := NewOption()
+	option.SchedulerInterval = 1 * time.Hour
+	option.ReportInterval = 1 * time.Hour
+	option.StreamCount = 3
+	ds := newDynamicStreamImpl(handler, option)
 	ds.Start()
 
 	scheduleNow := func(rule ruleType, period time.Duration) {
@@ -193,7 +204,8 @@ func (h *removePathHandler) Path(event *simpleEvent) string {
 	return event.path
 }
 
-func (h *removePathHandler) Handle(event *simpleEvent, dest struct{}) (await bool) {
+func (h *removePathHandler) Handle(dest struct{}, events ...*simpleEvent) (await bool) {
+	event := events[0]
 	h.ds.RemovePaths(event.path)
 	event.wg.Done()
 	return false
@@ -201,7 +213,11 @@ func (h *removePathHandler) Handle(event *simpleEvent, dest struct{}) (await boo
 
 func TestDynamicStreamRemovePath(t *testing.T) {
 	handler := &removePathHandler{}
-	ds := newDynamicStreamImpl(handler, 1*time.Hour, 1*time.Hour, 3)
+	option := NewOption()
+	option.SchedulerInterval = 1 * time.Hour
+	option.ReportInterval = 1 * time.Hour
+	option.StreamCount = 3
+	ds := newDynamicStreamImpl(handler, option)
 	handler.ds = ds
 
 	ds.Start()
@@ -218,4 +234,86 @@ func TestDynamicStreamRemovePath(t *testing.T) {
 	// Make sure the two events are put in a stream already.
 	time.Sleep(10 * time.Millisecond)
 	wg.Wait()
+
+	ds.Close()
+}
+
+type incEvent struct {
+	path  string
+	total *atomic.Int64
+	inc   int64
+	wg    *sync.WaitGroup
+}
+
+type incEventHandler struct {
+	dropCount *sync.WaitGroup
+}
+
+func (h *incEventHandler) OnDrop(dest struct{}, event incEvent) {
+	h.dropCount.Done()
+}
+
+func (h *incEventHandler) Path(event incEvent) string {
+	return event.path
+}
+func (h *incEventHandler) Handle(dest struct{}, events ...incEvent) (await bool) {
+	for _, event := range events {
+		event.total.Add(event.inc)
+		event.wg.Done()
+	}
+	return false
+}
+
+func TestDynamicStreamDrop(t *testing.T) {
+
+	check := func(option Option, expect int64) {
+		eventCountDown := &sync.WaitGroup{}
+
+		handleWait := &sync.WaitGroup{}
+		handleWait.Add(1)
+
+		handler := &incEventHandler{
+			dropCount: eventCountDown,
+		}
+		ds := newDynamicStreamImpl(handler, option)
+		ds.Start()
+
+		ds.AddPath("p1", struct{}{})
+		total := &atomic.Int64{}
+
+		eventCountDown.Add(3)
+		ds.In() <- incEvent{path: "p1", total: total, inc: 1, wg: eventCountDown}
+		ds.In() <- incEvent{path: "p1", total: total, inc: 3, wg: eventCountDown}
+		ds.In() <- incEvent{path: "p1", total: total, inc: 5, wg: eventCountDown}
+
+		handleWait.Done()
+		eventCountDown.Wait()
+		assert.Equal(t, expect, total.Load())
+
+		ds.Close()
+	}
+
+	option := NewOption()
+
+	{
+		check(option, 9)
+	}
+
+	{
+		option.MaxPendingLength = 1
+		option.DropPolicy = DropLate
+		check(option, 1)
+	}
+
+	{
+		option.MaxPendingLength = 2
+		option.DropPolicy = DropLate
+		check(option, 4) // 1 + 3
+	}
+
+	{
+		option.MaxPendingLength = 2
+		option.DropPolicy = DropEarly
+		check(option, 8) // 3 + 5
+	}
 }

@@ -121,8 +121,10 @@ func (h *DispatcherStatusHandler) Path(event DispatcherStatusWithID) common.Disp
 	return event.GetDispatcherID()
 }
 
-func (h *DispatcherStatusHandler) Handle(event DispatcherStatusWithID, dispatcher *Dispatcher) (await bool) {
-	dispatcher.HandleDispatcherStatus(event.GetDispatcherStatus())
+func (h *DispatcherStatusHandler) Handle(dispatcher *Dispatcher, events ...DispatcherStatusWithID) (await bool) {
+	for _, event := range events {
+		dispatcher.HandleDispatcherStatus(event.GetDispatcherStatus())
+	}
 	return false
 }
 
@@ -206,8 +208,12 @@ func (h *DispatcherEventsHandler) Path(event common.Event) common.DispatcherID {
 }
 
 // TODO: 这个后面需要按照更大的粒度进行攒批
-func (h *DispatcherEventsHandler) Handle(event common.Event, dispatcher *Dispatcher) bool {
-	return dispatcher.HandleEvent(event)
+func (h *DispatcherEventsHandler) Handle(dispatcher *Dispatcher, event ...common.Event) bool {
+	if len(event) != 1 {
+		// TODO: Handle batch events
+		panic("only one event is allowed")
+	}
+	return dispatcher.HandleEvent(event[0])
 }
 
 var DispatcherTaskScheduler threadpool.ThreadPool
@@ -232,7 +238,7 @@ var dispatcherEventsDynamicStreamOnce sync.Once
 func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher] {
 	if dispatcherEventsDynamicStream == nil {
 		dispatcherEventsDynamicStreamOnce.Do(func() {
-			dispatcherEventsDynamicStream = dynstream.NewDynamicStreamDefault(&DispatcherEventsHandler{})
+			dispatcherEventsDynamicStream = dynstream.NewDynamicStream(&DispatcherEventsHandler{})
 			dispatcherEventsDynamicStream.Start()
 		})
 	}
@@ -249,7 +255,7 @@ var dispatcherStatusDynamicStreamOnce sync.Once
 func GetDispatcherStatusDynamicStream() dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithID, *Dispatcher] {
 	if dispatcherStatusDynamicStream == nil {
 		dispatcherStatusDynamicStreamOnce.Do(func() {
-			dispatcherStatusDynamicStream = dynstream.NewDynamicStreamDefault(&DispatcherStatusHandler{})
+			dispatcherStatusDynamicStream = dynstream.NewDynamicStream(&DispatcherStatusHandler{})
 			dispatcherStatusDynamicStream.Start()
 		})
 	}

@@ -25,6 +25,10 @@ func newKeyPartitionGenerator(partitionKey string) *KeyPartitionGenerator {
 	}
 }
 
-func (t *KeyPartitionGenerator) GeneratePartitionIndexAndKey(*common.RowChangedEvent, int32) (int32, string, error) {
+func (t *KeyPartitionGenerator) GeneratePartitionIndexAndKey(row *common.RowDelta,
+	partitionNum int32,
+	tableInfo *common.TableInfo,
+	commitTs uint64,
+) (int32, string, error) {
 	return 0, t.partitionKey, nil
 }
