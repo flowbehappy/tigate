@@ -30,6 +30,7 @@ const (
 	TypeHeartBeatResponse
 	TypeScheduleDispatcherRequest
 	TypeRegisterDispatcherRequest
+	TypeCheckpointTsMessage
 
 	TypeCoordinatorBootstrapRequest
 	TypeCoordinatorBootstrapResponse
@@ -85,6 +86,8 @@ func (t IOType) String() string {
 		return "MessageError"
 	case TypeMessageHandShake:
 		return "MessageHandShake"
+	case TypeCheckpointTsMessage:
+		return "CheckpointTsMessage"
 	default:
 	}
 	return "Unknown"
@@ -218,6 +221,8 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 		m = &heartbeatpb.MaintainerCloseResponse{}
 	case TypeMaintainerBootstrapRequest:
 		m = &heartbeatpb.MaintainerBootstrapRequest{}
+	case TypeCheckpointTsMessage:
+		m = &heartbeatpb.CheckpointTsMessage{}
 	case TypeMessageError:
 		m = &MessageError{AppError: &apperror.AppError{}}
 	default:

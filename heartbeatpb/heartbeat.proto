@@ -58,6 +58,11 @@ message HeartBeatResponse {
     repeated DispatcherStatus dispatcherStatuses = 2;
 }
 
+message CheckpointTsMessage {
+    string changefeedID = 1;
+    uint64 checkpointTs = 2;
+}
+
 enum ScheduleAction {
     Create = 0;
     Remove = 1;

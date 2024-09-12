@@ -77,6 +77,8 @@ type EventDispatcherManager struct {
 	schemaIDToDispatchers *SchemaIDToDispatchers
 
 	tableTriggerEventDispatcherID *common.DispatcherID
+	// TODO:
+	tableTriggerEventDispatcher *dispatcher.Dispatcher
 
 	tableEventDispatcherCount      prometheus.Gauge
 	metricCreateDispatcherDuration prometheus.Observer
@@ -202,6 +204,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 
 	if tableSpan.Equal(heartbeatpb.DDLSpan) {
 		e.tableTriggerEventDispatcherID = &id
+		e.tableTriggerEventDispatcher = dispatcher
 	} else {
 		e.schemaIDToDispatchers.Set(schemaID, id)
 	}

@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
+	"github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
@@ -41,6 +42,7 @@ type HeartBeatCollector struct {
 
 	heartBeatResponseDynamicStream          dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]
 	schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.ScheduleDispatcherRequest, *EventDispatcherManager]
+	checkpointTsMessageDynamicStream        dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.CheckpointTsMessage, *EventDispatcherManager]
 }
 
 func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
@@ -49,6 +51,7 @@ func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
 		reqQueue:                                NewHeartbeatRequestQueue(),
 		heartBeatResponseDynamicStream:          GetHeartBeatResponseDynamicStream(),
 		schedulerDispatcherRequestDynamicStream: GetSchedulerDispatcherRequestDynamicStream(),
+		checkpointTsMessageDynamicStream:        GetCheckpointTsMessageDynamicStream(),
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.HeartbeatCollectorTopic, heartBeatCollector.RecvMessages)
 
@@ -100,6 +103,9 @@ func (c *HeartBeatCollector) RecvMessages(ctx context.Context, msg *messaging.Ta
 		c.schedulerDispatcherRequestDynamicStream.In() <- scheduleDispatcherRequest
 		// TODO: check metrics
 		metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", scheduleDispatcherRequest.ChangefeedID, "receive").Inc()
+	case messaging.TypeCheckpointTsMessage:
+		checkpointTsMessage := msg.Message[0].(*heartbeatpb.CheckpointTsMessage)
+		c.checkpointTsMessageDynamicStream.In() <- checkpointTsMessage
 	default:
 		log.Panic("unknown message type", zap.Any("message", msg.Message))
 	}
@@ -182,5 +188,28 @@ func (h *HeartBeatResponseHandler) Handle(eventDispatcherManager *EventDispatche
 		}
 	}
 
+	return false
+}
+
+type CheckpointTsMessageHandler struct{}
+
+func NewCheckpointTsMessageHandler() CheckpointTsMessageHandler {
+	return CheckpointTsMessageHandler{}
+}
+
+func (h *CheckpointTsMessageHandler) Path(checkpointTsMessage *heartbeatpb.CheckpointTsMessage) model.ChangeFeedID {
+	return model.DefaultChangeFeedID(checkpointTsMessage.ChangefeedID)
+}
+
+func (h *CheckpointTsMessageHandler) Handle(eventDispatcherManager *EventDispatcherManager, messages ...*heartbeatpb.CheckpointTsMessage) bool {
+	if len(messages) != 1 {
+		// TODO: Support batch
+		panic("invalid message count")
+	}
+	checkpointTsMessage := messages[0]
+	if eventDispatcherManager.tableTriggerEventDispatcher != nil && eventDispatcherManager.sink.SinkType() != sink.MysqlSinkType {
+		tableTriggerEventDispatcher := eventDispatcherManager.tableTriggerEventDispatcher
+		tableTriggerEventDispatcher.HandleCheckpointTs(checkpointTsMessage.CheckpointTs)
+	}
 	return false
 }

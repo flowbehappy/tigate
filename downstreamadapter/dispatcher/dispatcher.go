@@ -16,7 +16,7 @@ package dispatcher
 import (
 	"sync/atomic"
 
-	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+	tisink "github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -61,7 +61,7 @@ The workflow related to the dispatcher is as follows:
 type Dispatcher struct {
 	id        common.DispatcherID
 	tableSpan *heartbeatpb.TableSpan
-	sink      sink.Sink
+	sink      tisink.Sink
 
 	statusesChan chan *heartbeatpb.TableSpanStatus
 
@@ -84,9 +84,12 @@ type Dispatcher struct {
 	checkTableProgressEmptyTask *CheckProgressEmptyTask
 
 	schemaID int64
+
+	// only exist when the dispatcher is a table trigger event dispatcher
+	tableNameStore *TableNameStore
 }
 
-func NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, sink sink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter, schemaID int64) *Dispatcher {
+func NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, sink tisink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter, schemaID int64) *Dispatcher {
 	dispatcher := &Dispatcher{
 		id:           id,
 		tableSpan:    tableSpan,
@@ -101,6 +104,12 @@ func NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, sin
 		ddlPendingEvent: nil,
 		tableProgress:   types.NewTableProgress(),
 		schemaID:        schemaID,
+	}
+
+	// only when is not mysql sink, table trigger event dispatcher need tableNameStore to store the table name
+	// in order to calculate all the topics when sending checkpointTs to downstream
+	if tableSpan.Equal(heartbeatpb.DDLSpan) && dispatcher.sink.SinkType() != tisink.MysqlSinkType {
+		dispatcher.tableNameStore = NewTableNameStore()
 	}
 
 	dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
@@ -196,6 +205,9 @@ func (d *Dispatcher) HandleEvent(event common.Event) (block bool) {
 		return false
 	case common.TypeDDLEvent:
 		event := event.(*common.DDLEvent)
+		if d.tableNameStore != nil {
+			d.tableNameStore.AddEvent(event)
+		}
 		event.AddPostFlushFunc(func() {
 			dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
 			dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
@@ -352,4 +364,14 @@ func (d *Dispatcher) CollectDispatcherHeartBeatInfo(h *HeartBeatInfo) {
 	h.ComponentStatus = d.GetComponentStatus()
 	h.TableSpan = d.GetTableSpan()
 	h.IsRemoving = d.GetRemovingStatus()
+}
+
+func (d *Dispatcher) HandleCheckpointTs(checkpointTs uint64) {
+	if d.tableNameStore == nil {
+		log.Error("Should not HandleCheckpointTs for table trigger event dispatcher without tableNameStore")
+		return
+	}
+
+	tableNames := d.tableNameStore.GetAllTableNames(checkpointTs)
+	d.sink.AddCheckpointTs(checkpointTs, tableNames)
 }
