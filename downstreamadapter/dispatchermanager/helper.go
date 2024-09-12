@@ -110,7 +110,7 @@ var checkpointTsMessageDynamicStreamOnce sync.Once
 func GetCheckpointTsMessageDynamicStream() dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.CheckpointTsMessage, *EventDispatcherManager] {
 	if checkpointTsMessageDynamicStream == nil {
 		checkpointTsMessageDynamicStreamOnce.Do(func() {
-			checkpointTsMessageDynamicStream = dynstream.NewDynamicStreamDefault(&CheckpointTsMessageHandler{})
+			checkpointTsMessageDynamicStream = dynstream.NewDynamicStream(&CheckpointTsMessageHandler{})
 			checkpointTsMessageDynamicStream.Start()
 		})
 	}
