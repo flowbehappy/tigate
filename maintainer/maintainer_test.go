@@ -214,7 +214,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx,
 		messaging.ServerId(node.ID), 100, config.NewDefaultMessageCenterConfig()))
 	appcontext.SetService(watcher.NodeManagerName, watcher.NewNodeManager(nil, nil))
-	stream := dynstream.NewDynamicStreamDefault[string, *Event, *Maintainer](NewStreamHandler())
+	stream := dynstream.NewDynamicStream[string, *Event, *Maintainer](NewStreamHandler())
 	stream.Start()
 	cfID := model.DefaultChangeFeedID("test")
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)

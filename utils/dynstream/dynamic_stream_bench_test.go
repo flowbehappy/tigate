@@ -39,7 +39,7 @@ func prepareDynamicStream(pathCount int, eventCount int, times int) (DynamicStre
 		times: times,
 		wg:    wg}
 
-	ds := NewDynamicStreamDefault(handler)
+	ds := NewDynamicStream(handler)
 	ds.Start()
 
 	for i := 0; i < pathCount; i++ {

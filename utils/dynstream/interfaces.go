@@ -1,7 +1,7 @@
 package dynstream
 
 import (
-	"runtime"
+	"sync"
 	"time"
 )
 
@@ -25,6 +25,11 @@ type Handler[P Path, T Event, D Dest] interface {
 	// until a wake signal is sent to DynamicStream's Wake channel.
 	// The len(events) is guaranteed to be greater than 0.
 	Handle(dest D, events ...T) (await bool)
+}
+
+type DropListener[P Path, T Event, D Dest] interface {
+	// OnDrop is called when an event is dropped.
+	OnDrop(dest D, event T)
 }
 
 type PathAndDest[P Path, D Dest] struct {
@@ -70,27 +75,56 @@ const DefaultSchedulerInterval = 5 * time.Second
 const DefaultReportInterval = 500 * time.Millisecond
 
 // We don't need lots of streams because the hanle of events should be CPU-bound and should not be blocked by any waiting.
-const DefaultStreamCount = 128
+const DefaultStreamCount = 64
+
+type DropPolicy int
+
+const (
+	// Drop the late come events of the path.
+	DropLate DropPolicy = 0
+	// Drop the early come events of the path.
+	DropEarly DropPolicy = 1
+)
 
 type Option struct {
-	BatchSize int // The batch size of handling events. 0 means no batch.
+	SchedulerInterval time.Duration // The interval of the scheduler. The scheduler is used to balance the paths between streams.
+	ReportInterval    time.Duration // The interval of reporting the status of stream, the status is used by the scheduler.
+	StreamCount       int           // The count of streams. I.e. the count of goroutines to handle events.
+	BatchSize         int           // The batch size of handling events. <= 1 means no batch.
+
+	// Note that if you specify a MaxPendingLength and DropPolicy, the handler can implement the DropListener interface to listen to the dropped events.
+	// Otherwise the events will be dropped silently.
+	MaxPendingLength int        // The max pending length of a path. <= 0 means no limit.
+	DropPolicy       DropPolicy // The drop policy of the events of a path when the pending length is greater than MaxPendingLength.
+
+	handleWait *sync.WaitGroup // For testing. Don't handle events until this wait group is done.
 }
 
-func NewDynamicStreamDefault[P Path, T Event, D Dest](handler Handler[P, T, D], option ...Option) DynamicStream[P, T, D] {
-	streamCount := max(DefaultStreamCount, runtime.NumCPU())
-	return NewDynamicStream[P, T, D](handler, DefaultSchedulerInterval, DefaultReportInterval, streamCount, option...)
+func NewOption() Option {
+	return Option{
+		SchedulerInterval: DefaultSchedulerInterval,
+		ReportInterval:    DefaultReportInterval,
+		StreamCount:       DefaultStreamCount,
+		BatchSize:         1,
+		MaxPendingLength:  0,
+		DropPolicy:        DropLate,
+	}
 }
 
-func NewDynamicStream[P Path, T Event, D Dest](
-	handler Handler[P, T, D],
-	schedulerInterval time.Duration,
-	reportInterval time.Duration,
-	streamCount int,
-	option ...Option,
-) DynamicStream[P, T, D] {
-	opt := Option{}
+func (o *Option) fix() {
+	if o.BatchSize <= 0 {
+		o.BatchSize = 1
+	}
+	if o.MaxPendingLength < 0 {
+		o.MaxPendingLength = 0
+	}
+}
+
+func NewDynamicStream[P Path, T Event, D Dest](handler Handler[P, T, D], option ...Option) DynamicStream[P, T, D] {
+	opt := NewOption()
 	if len(option) > 0 {
 		opt = option[0]
 	}
-	return newDynamicStreamImpl(handler, opt.BatchSize, schedulerInterval, reportInterval, streamCount)
+	opt.fix()
+	return newDynamicStreamImpl(handler, opt)
 }
