@@ -130,8 +130,8 @@ func (d doneInfo[P, T, D]) isZero() bool {
 type stream[P Path, T Event, D Dest] struct {
 	id int
 
-	handler   Handler[P, T, D]
-	batchSize int
+	handler      Handler[P, T, D]
+	dropListener DropListener[P, T, D]
 
 	inChan      chan eventWrap[P, T, D]            // The buffer channel to receive the events.
 	signalQueue *deque.Deque[eventSignal[P, T, D]] // The queue to store the event signals.
@@ -141,9 +141,9 @@ type stream[P Path, T Event, D Dest] struct {
 
 	pendingLen int // The total pending event count of all paths
 
-	reportChan     chan streamStat[P, T, D]
-	reportInterval time.Duration
-	trackTopPaths  int
+	reportChan    chan streamStat[P, T, D]
+	trackTopPaths int
+	option        Option
 
 	hasClosed atomic.Bool
 
@@ -154,22 +154,23 @@ type stream[P Path, T Event, D Dest] struct {
 func newStream[P Path, T Event, D Dest](
 	id int,
 	handler Handler[P, T, D],
-	batchSize int,
 	reportChan chan streamStat[P, T, D],
-	reportInterval time.Duration, // 200 milliseconds?
 	trackTopPaths int,
+	option Option,
 ) *stream[P, T, D] {
 	s := &stream[P, T, D]{
-		id:             id,
-		handler:        handler,
-		batchSize:      batchSize,
-		inChan:         make(chan eventWrap[P, T, D], 64),
-		signalQueue:    deque.NewDeque[eventSignal[P, T, D]](128, 0),
-		donChan:        make(chan doneInfo[P, T, D], 64),
-		reportNow:      make(chan struct{}, 1),
-		reportChan:     reportChan,
-		reportInterval: reportInterval,
-		trackTopPaths:  trackTopPaths,
+		id:            id,
+		handler:       handler,
+		inChan:        make(chan eventWrap[P, T, D], 64),
+		signalQueue:   deque.NewDeque[eventSignal[P, T, D]](128, 0),
+		donChan:       make(chan doneInfo[P, T, D], 64),
+		reportNow:     make(chan struct{}, 1),
+		reportChan:    reportChan,
+		trackTopPaths: trackTopPaths,
+		option:        option,
+	}
+	if dl, ok := handler.(DropListener[P, T, D]); ok {
+		s.dropListener = dl
 	}
 
 	return s
@@ -214,21 +215,40 @@ func (s *stream[P, T, D]) handleLoop(acceptedPaths []*pathInfo[P, T, D], formerS
 		if e.wake {
 			// It is a wake event, we set the path to be non-blocking, and generate a signal for all pending events.
 			e.pathInfo.blocking = false
-			if count := e.pathInfo.pendingQueue.Length(); count > 0 {
+			count := e.pathInfo.pendingQueue.Length()
+			if count > 0 {
 				s.signalQueue.PushBack(eventSignal[P, T, D]{pathInfo: e.pathInfo, eventCount: count})
 			}
 		} else {
 			// It is a normal event
 
 			// Push to pendingQueue
-			e.pathInfo.pendingQueue.PushBack(e.event)
-			s.pendingLen++
-			// Send a signal
-			sg, ok := s.signalQueue.BackRef()
-			if ok && sg.pathInfo == e.pathInfo {
-				sg.eventCount++
+			if s.option.MaxPendingLength > 0 && e.pathInfo.pendingQueue.Length() >= s.option.MaxPendingLength {
+				switch s.option.DropPolicy {
+				case DropLate:
+					if s.dropListener != nil {
+						s.dropListener.OnDrop(e.pathInfo.dest, e.event)
+					}
+					return
+				case DropEarly:
+					dropped, _ := e.pathInfo.pendingQueue.PopFront()
+					if s.dropListener != nil {
+						s.dropListener.OnDrop(e.pathInfo.dest, dropped)
+					}
+
+					e.pathInfo.pendingQueue.PushBack(e.event)
+					return
+				}
 			} else {
-				s.signalQueue.PushBack(eventSignal[P, T, D]{pathInfo: e.pathInfo, eventCount: 1})
+				e.pathInfo.pendingQueue.PushBack(e.event)
+				s.pendingLen++
+				// Send a signal
+				sg, ok := s.signalQueue.BackRef()
+				if ok && sg.pathInfo == e.pathInfo {
+					sg.eventCount++
+				} else {
+					s.signalQueue.PushBack(eventSignal[P, T, D]{pathInfo: e.pathInfo, eventCount: 1})
+				}
 			}
 		}
 	}
@@ -260,7 +280,12 @@ func (s *stream[P, T, D]) handleLoop(acceptedPaths []*pathInfo[P, T, D], formerS
 	s.addPaths(acceptedPaths)
 
 	drainPending := false
-	eventBuf := make([]T, 0, s.batchSize)
+	eventBuf := make([]T, 0, s.option.BatchSize)
+
+	// For testing. Don't handle events until this wait group is done.
+	if s.option.handleWait != nil {
+		s.option.handleWait.Wait()
+	}
 
 Loop:
 	for {
@@ -300,7 +325,7 @@ Loop:
 					continue Loop
 				}
 
-				handleCount := min(signal.eventCount, s.batchSize)
+				handleCount := min(signal.eventCount, s.option.BatchSize)
 
 				for i := 0; i < handleCount; i++ {
 					e, ok := signal.pathInfo.pendingQueue.PopFront()
@@ -342,7 +367,7 @@ func (s *stream[P, T, D]) reportStatLoop() {
 	defer s.reportDone.Done()
 
 	lastReportTime := time.Now()
-	nextReportTime := lastReportTime.Add(s.reportInterval)
+	nextReportTime := lastReportTime.Add(s.option.ReportInterval)
 	reportWait := time.After(time.Until(nextReportTime))
 
 	reportRound := nextReportRound.Add(1)
@@ -386,7 +411,7 @@ func (s *stream[P, T, D]) reportStatLoop() {
 		mostBusyPaths = heap.NewHeap[*pathStat[P, T, D]]()
 
 		lastReportTime = time.Now()
-		nextReportTime = lastReportTime.Add(s.reportInterval)
+		nextReportTime = lastReportTime.Add(s.option.ReportInterval)
 		reportWait = time.After(time.Until(nextReportTime))
 	}
 

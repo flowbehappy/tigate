@@ -74,7 +74,7 @@ func NewMaintainerManager(selfNode *common.NodeInfo,
 		pdapi:         pdapi,
 		regionCache:   regionCache,
 	}
-	m.stream = dynstream.NewDynamicStreamDefault[string, *Event, *Maintainer](NewStreamHandler())
+	m.stream = dynstream.NewDynamicStream[string, *Event, *Maintainer](NewStreamHandler())
 	m.stream.Start()
 	mc.RegisterHandler(messaging.MaintainerManagerTopic, m.RecvMessages)
 

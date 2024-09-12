@@ -15,7 +15,6 @@ package server
 
 import (
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	cdckv "github.com/pingcap/tiflow/cdc/kv"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -23,5 +22,4 @@ var registry = prometheus.NewRegistry()
 
 func init() {
 	metrics.InitMetrics(registry)
-	cdckv.InitMetrics(registry)
 }

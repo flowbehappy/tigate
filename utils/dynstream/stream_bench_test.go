@@ -4,7 +4,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 type inc struct {
@@ -35,7 +34,7 @@ func runStream(eventCount int, times int) {
 	reportChan := make(chan streamStat[string, *inc, D], 100)
 
 	pi := newPathInfo[string, *inc, D]("p1", D{})
-	stream := newStream[string, *inc, D](1 /*id*/, handler, 1, reportChan, 8*time.Millisecond /*reportInterval*/, 10)
+	stream := newStream[string, *inc, D](1 /*id*/, handler, reportChan, 10, NewOption())
 	stream.start([]*pathInfo[string, *inc, D]{pi})
 
 	go func() {

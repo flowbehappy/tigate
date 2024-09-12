@@ -75,7 +75,8 @@ func (i *Inc) Do() {
 
 func TestStreamBasic(t *testing.T) {
 	handler := &mockHandler{}
-	reportInterval := 8 * time.Millisecond
+	option := NewOption()
+	option.ReportInterval = 8 * time.Millisecond
 	reportChan := make(chan streamStat[string, *mockEvent, any], 10)
 	stats := make([]streamStat[string, *mockEvent, any], 0)
 	statWait := sync.WaitGroup{}
@@ -84,7 +85,7 @@ func TestStreamBasic(t *testing.T) {
 		defer statWait.Done()
 
 		// Wait for 3 rounds
-		stop := time.NewTimer(reportInterval*3 + reportInterval/2)
+		stop := time.NewTimer(option.ReportInterval*3 + option.ReportInterval/2)
 		for {
 			select {
 			case stat := <-reportChan:
@@ -98,8 +99,8 @@ func TestStreamBasic(t *testing.T) {
 	p1 := newPathInfo[string, *mockEvent, any]("p1", "d1")
 	p2 := newPathInfo[string, *mockEvent, any]("p2", "d2")
 	p3 := newPathInfo[string, *mockEvent, any]("p3", "d3")
-	s1 := newStream(1 /*id*/, handler, 1, reportChan, reportInterval, 10)
-	s2 := newStream(2 /*id*/, handler, 1, reportChan, reportInterval, 10)
+	s1 := newStream(1 /*id*/, handler, reportChan, 10, option)
+	s2 := newStream(2 /*id*/, handler, reportChan, 10, option)
 
 	s1.start([]*pathInfo[string, *mockEvent, any]{p1})
 	s2.start([]*pathInfo[string, *mockEvent, any]{p2})
@@ -151,7 +152,9 @@ Loop:
 		}
 	}
 
-	s3 := newStream(3 /*id*/, handler, 1, reportChan, 1*time.Hour /*don't report*/, 10)
+	option = NewOption()
+	option.ReportInterval = 1 * time.Hour /*don't report*/
+	s3 := newStream(3 /*id*/, handler, reportChan, 10, option)
 	s3.start([]*pathInfo[string, *mockEvent, any]{p1, p2}, s1, s2)
 
 	eventDone = &sync.WaitGroup{}
@@ -203,8 +206,10 @@ func TestStreamMerge(t *testing.T) {
 
 	p1 := newPathInfo[string, *mockEvent, any]("p1", "d1")
 	p2 := newPathInfo[string, *mockEvent, any]("p2", "d2")
-	s1 := newStream(1 /*id*/, handler, 1, reportChan, 1*time.Hour /*reportInterval*/, 10)
-	s2 := newStream(2 /*id*/, handler, 1, reportChan, 1*time.Hour /*reportInterval*/, 10)
+	option := NewOption()
+	option.ReportInterval = 1 * time.Hour /*don't report*/
+	s1 := newStream(1 /*id*/, handler, reportChan, 10, option)
+	s2 := newStream(2 /*id*/, handler, reportChan, 10, option)
 
 	s1.start([]*pathInfo[string, *mockEvent, any]{p1})
 	s2.start([]*pathInfo[string, *mockEvent, any]{p2})
@@ -221,7 +226,7 @@ func TestStreamMerge(t *testing.T) {
 
 	wg.Wait()
 
-	s3 := newStream(3 /*id*/, handler, 1, reportChan, 1*time.Hour /*reportInterval*/, 10)
+	s3 := newStream(3 /*id*/, handler, reportChan, 10, option)
 	s3.start([]*pathInfo[string, *mockEvent, any]{p1, p2}, s1, s2)
 
 	wg = &sync.WaitGroup{}
@@ -257,7 +262,9 @@ func TestStreamManyEvents(t *testing.T) {
 	reportChan := make(chan streamStat[string, *mockEvent, any], 10)
 
 	p1 := newPathInfo[string, *mockEvent, any]("p1", "d1")
-	s1 := newStream(1 /*id*/, handler, 1, reportChan, 1*time.Hour /*reportInterval*/, 10)
+	option := NewOption()
+	option.ReportInterval = 1 * time.Hour
+	s1 := newStream(1 /*id*/, handler, reportChan, 10, option)
 	s1.start([]*pathInfo[string, *mockEvent, any]{p1})
 
 	incr := &atomic.Int64{}

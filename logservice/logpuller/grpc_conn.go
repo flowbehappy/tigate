@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/kvproto/pkg/cdcpb"
 	"github.com/pingcap/tiflow/pkg/security"
 	"google.golang.org/grpc"
@@ -68,6 +69,12 @@ func createGRPCConn(ctx context.Context, credential *security.Credential, target
 			Timeout:             3 * time.Second,
 			PermitWithoutStream: true,
 		}),
+	}
+
+	grpcMetrics := metrics.GetGlobalGrpcMetrics()
+	if grpcMetrics != nil {
+		dialOptions = append(dialOptions, grpc.WithUnaryInterceptor(grpcMetrics.UnaryClientInterceptor()))
+		dialOptions = append(dialOptions, grpc.WithStreamInterceptor(grpcMetrics.StreamClientInterceptor()))
 	}
 
 	return grpc.DialContext(ctx, target, dialOptions...)

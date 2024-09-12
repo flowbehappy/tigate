@@ -238,7 +238,7 @@ var dispatcherEventsDynamicStreamOnce sync.Once
 func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher] {
 	if dispatcherEventsDynamicStream == nil {
 		dispatcherEventsDynamicStreamOnce.Do(func() {
-			dispatcherEventsDynamicStream = dynstream.NewDynamicStreamDefault(&DispatcherEventsHandler{})
+			dispatcherEventsDynamicStream = dynstream.NewDynamicStream(&DispatcherEventsHandler{})
 			dispatcherEventsDynamicStream.Start()
 		})
 	}
@@ -255,7 +255,7 @@ var dispatcherStatusDynamicStreamOnce sync.Once
 func GetDispatcherStatusDynamicStream() dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithID, *Dispatcher] {
 	if dispatcherStatusDynamicStream == nil {
 		dispatcherStatusDynamicStreamOnce.Do(func() {
-			dispatcherStatusDynamicStream = dynstream.NewDynamicStreamDefault(&DispatcherStatusHandler{})
+			dispatcherStatusDynamicStream = dynstream.NewDynamicStream(&DispatcherStatusHandler{})
 			dispatcherStatusDynamicStream.Start()
 		})
 	}

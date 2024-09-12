@@ -109,13 +109,11 @@ func (s sortedSIs[P, T, D]) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 // The scheduler use several strategies to balance the load of the streams, while the final balanace
 // actions are moving the paths between the streams.
 type dynamicStreamImpl[P Path, T Event, D Dest] struct {
-	schedulerInterval time.Duration
-	reportInterval    time.Duration
-	trackTopPaths     int
-	baseStreamCount   int
+	trackTopPaths   int
+	baseStreamCount int
 
-	handler   Handler[P, T, D]
-	batchSize int
+	handler Handler[P, T, D]
+	option  Option
 
 	eventChan chan T // The channel to receive the incomming events by distributor
 	wakeChan  chan P // The channel to receive the wake signal by distributor
@@ -136,28 +134,22 @@ type dynamicStreamImpl[P Path, T Event, D Dest] struct {
 
 func newDynamicStreamImpl[P Path, T Event, D Dest](
 	handler Handler[P, T, D],
-	batchSize int,
-	schedulerInterval time.Duration,
-	reportInterval time.Duration,
-	streamCount int,
+	option Option,
 ) *dynamicStreamImpl[P, T, D] {
-	batchSize = max(batchSize, 1)
 	return &dynamicStreamImpl[P, T, D]{
-		handler:   handler,
-		batchSize: batchSize,
+		handler: handler,
+		option:  option,
 
-		schedulerInterval: schedulerInterval,
-		reportInterval:    reportInterval,
-		trackTopPaths:     TrackTopPaths,
-		baseStreamCount:   streamCount,
+		trackTopPaths:   TrackTopPaths,
+		baseStreamCount: option.StreamCount,
 
 		eventChan:  make(chan T, 1024),
 		wakeChan:   make(chan P, 64),
 		reportChan: make(chan streamStat[P, T, D], 64),
 		cmdToSchd:  make(chan *cmd, 64),
-		cmdToDist:  make(chan *cmd, streamCount),
+		cmdToDist:  make(chan *cmd, option.StreamCount),
 
-		streamInfos: make([]*streamInfo[P, T, D], 0, streamCount),
+		streamInfos: make([]*streamInfo[P, T, D], 0, option.StreamCount),
 	}
 }
 
@@ -231,7 +223,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 
 	newStream := func() *stream[P, T, D] {
 		nextStreamId++
-		return newStream[P, T, D](nextStreamId, d.handler, 1, d.reportChan, d.reportInterval, d.trackTopPaths)
+		return newStream[P, T, D](nextStreamId, d.handler, d.reportChan, d.trackTopPaths, d.option)
 	}
 	nextStream := func() *streamInfo[P, T, D] {
 		// We use round-robin to assign the paths to the streams
@@ -524,7 +516,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 		}
 	}
 
-	nextSchedule := time.Now().Add(d.schedulerInterval)
+	nextSchedule := time.Now().Add(d.option.SchedulerInterval)
 	timerChan := time.After(time.Until(nextSchedule))
 Loop:
 	for {
@@ -611,7 +603,7 @@ Loop:
 			}
 			si.streamStat = stat
 		case <-timerChan:
-			nextSchedule = time.Now().Add(d.schedulerInterval)
+			nextSchedule = time.Now().Add(d.option.SchedulerInterval)
 			timerChan = time.After(time.Until(nextSchedule))
 			doSchedule(ruleType(scheduleRule.Next()), 0)
 		}

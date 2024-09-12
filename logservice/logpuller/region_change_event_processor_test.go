@@ -71,7 +71,7 @@ func TestHandleEventEntryEventOutOfOrder(t *testing.T) {
 
 	defer client.Close(ctx)
 
-	processor := newChangeEventProcessor(client)
+	processor := newChangeEventProcessor(1, client)
 
 	span := heartbeatpb.TableSpan{
 		StartKey: spanz.ToComparableKey([]byte{}), // TODO: remove spanz dependency
@@ -180,7 +180,7 @@ func TestHandleResolvedTs(t *testing.T) {
 	client := newSubscriptionClientForTestRegionChangeEventProcessor(eventCh)
 	defer client.Close(ctx)
 
-	processor := newChangeEventProcessor(client)
+	processor := newChangeEventProcessor(1, client)
 
 	s1 := newRegionFeedState(regionInfo{verID: tikv.NewRegionVerID(1, 1, 1)}, 1)
 	s1.region.subscribedSpan = client.newSubscribedSpan(1, heartbeatpb.TableSpan{}, 0)
