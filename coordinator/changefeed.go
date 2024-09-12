@@ -15,6 +15,7 @@ package coordinator
 
 import (
 	"encoding/json"
+	"net/url"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -22,6 +23,7 @@ import (
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/tiflow/pkg/sink"
 	"go.uber.org/zap"
 )
 
@@ -43,23 +45,33 @@ type changefeed struct {
 
 	coordinator  *coordinator
 	stateMachine *scheduler.StateMachine
+
+	lastSavedCheckpointTs uint64
+	isMQSink              bool
 }
 
 func newChangefeed(c *coordinator,
 	cfID model.ChangeFeedID,
 	info *model.ChangeFeedInfo,
 	checkpointTs uint64) *changefeed {
+	uri, err := url.Parse(info.SinkURI)
+	if err != nil {
+		log.Panic("unable to marshal changefeed config",
+			zap.Error(err))
+	}
 	bytes, err := json.Marshal(info)
 	if err != nil {
 		log.Panic("unable to marshal changefeed config",
 			zap.Error(err))
 	}
 	return &changefeed{
-		coordinator:  c,
-		ID:           cfID,
-		Info:         info,
-		configBytes:  bytes,
-		checkpointTs: checkpointTs,
+		coordinator:           c,
+		ID:                    cfID,
+		Info:                  info,
+		configBytes:           bytes,
+		checkpointTs:          checkpointTs,
+		lastSavedCheckpointTs: checkpointTs,
+		isMQSink:              sink.IsMQScheme(uri.Scheme),
 		// init the first status
 		State: &MaintainerStatus{
 			MaintainerStatus: &heartbeatpb.MaintainerStatus{
@@ -114,5 +126,14 @@ func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) *messaging
 		&heartbeatpb.RemoveMaintainerRequest{
 			Id:      c.ID.ID,
 			Cascade: cascade,
+		})
+}
+
+func (c *changefeed) NewCheckpointTsMessage(ts uint64) *messaging.TargetMessage {
+	return messaging.NewSingleTargetMessage(messaging.ServerId(c.stateMachine.Primary),
+		messaging.MaintainerManagerTopic,
+		&heartbeatpb.CheckpointTsMessage{
+			ChangefeedID: c.ID.ID,
+			CheckpointTs: ts,
 		})
 }
