@@ -282,6 +282,10 @@ func (w *changeEventProcessor) handleResolvedTs(ctx context.Context, batch resol
 }
 
 func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resolvedTsBatch) {
+	if len(batch.regions) == 0 {
+		return
+	}
+
 	for _, state := range batch.regions {
 		if state.isStale() || !state.isInitialized() {
 			continue

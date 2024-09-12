@@ -71,7 +71,7 @@ type eventBroker struct {
 	metricEventServicePullerResolvedTs     prometheus.Gauge
 	metricEventServiceDispatcherResolvedTs prometheus.Gauge
 	metricEventServiceResolvedTsLag        prometheus.Gauge
-	metricTaskInQueueDuration              prometheus.Observer
+	metricScanEventDuration                prometheus.Observer
 }
 
 func newEventBroker(
@@ -104,7 +104,7 @@ func newEventBroker(
 		metricEventServicePullerResolvedTs:     metrics.EventServiceResolvedTsGauge,
 		metricEventServiceResolvedTsLag:        metrics.EventServiceResolvedTsLagGauge.WithLabelValues("puller"),
 		metricEventServiceDispatcherResolvedTs: metrics.EventServiceResolvedTsLagGauge.WithLabelValues("dispatcher"),
-		metricTaskInQueueDuration:              metrics.EventServiceScanDuration,
+		metricScanEventDuration:                metrics.EventServiceScanDuration,
 	}
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
@@ -274,7 +274,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 		if e == nil {
 			// Send the last txnEvent to the dispatcher.
 			sendTxn(txnEvent)
-			c.metricTaskInQueueDuration.Observe(time.Since(start).Seconds())
+			c.metricScanEventDuration.Observe(time.Since(start).Seconds())
 			return
 		}
 		if e.CRTs < task.dispatcherStat.watermark.Load() {
