@@ -304,6 +304,8 @@ func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
 		m.onNodeClosed(string(msg.From), msg.Message[0].(*heartbeatpb.MaintainerCloseResponse))
 	case messaging.TypeRemoveMaintainerRequest:
 		m.onRemoveMaintainer(msg.Message[0].(*heartbeatpb.RemoveMaintainerRequest).Cascade)
+	case messaging.TypeCheckpointTsMessage:
+		m.onCheckpointTsPersisted(msg.Message[0].(*heartbeatpb.CheckpointTsMessage))
 	default:
 		log.Panic("unexpected message type",
 			zap.String("changefeed", m.id.ID),
@@ -321,6 +323,18 @@ func (m *Maintainer) onRemoveMaintainer(cascade bool) {
 		m.state = heartbeatpb.ComponentState_Stopped
 		metrics.MaintainerGauge.WithLabelValues(m.id.Namespace, m.id.ID).Dec()
 	}
+}
+
+func (m *Maintainer) onCheckpointTsPersisted(msg *heartbeatpb.CheckpointTsMessage) {
+	stm := m.scheduler.GetTask(m.scheduler.ddlDispatcherID)
+	if stm == nil {
+		log.Warn("ddl dispatcher is not found, can not send checkpoint message",
+			zap.String("id", m.id.String()))
+		return
+	}
+	m.sendMessages([]*messaging.TargetMessage{
+		messaging.NewSingleTargetMessage(messaging.ServerId(stm.Primary), messaging.HeartbeatCollectorTopic, msg),
+	})
 }
 
 func (m *Maintainer) onNodeChanged() {

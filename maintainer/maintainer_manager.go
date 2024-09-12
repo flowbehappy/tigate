@@ -98,13 +98,16 @@ func (m *Manager) RecvMessages(ctx context.Context, msg *messaging.TargetMessage
 		case m.msgCh <- msg:
 		}
 		return nil
-	// receive bootstrap response message from dispatcher manager manager
+	// receive bootstrap response message from the dispatcher manager
 	case messaging.TypeMaintainerBootstrapResponse:
 		req := msg.Message[0].(*heartbeatpb.MaintainerBootstrapResponse)
 		return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
 	// receive heartbeat message from dispatchers
 	case messaging.TypeHeartBeatRequest:
 		req := msg.Message[0].(*heartbeatpb.HeartBeatRequest)
+		return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
+	case messaging.TypeCheckpointTsMessage:
+		req := msg.Message[0].(*heartbeatpb.CheckpointTsMessage)
 		return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
 	default:
 		log.Panic("unknown message type", zap.Any("message", msg.Message))
