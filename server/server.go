@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"strings"
 	"sync"
 	"time"
@@ -25,7 +26,6 @@ import (
 	"github.com/flowbehappy/tigate/maintainer"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
-	"github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/flowbehappy/tigate/pkg/eventservice"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/tiflow/pkg/tcpserver"
@@ -52,7 +52,7 @@ const (
 	cleanMetaDuration = 10 * time.Second
 )
 
-type serverImpl struct {
+type server struct {
 	captureMu sync.Mutex
 	info      *common.NodeInfo
 
@@ -62,7 +62,7 @@ type serverImpl struct {
 	pdAPIClient   pdutil.PDAPIClient
 	pdEndpoints   []string
 	coordinatorMu sync.Mutex
-	coordinator   server.Coordinator
+	coordinator   node.Coordinator
 
 	dispatcherManagerManager *dispatchermanagermanager.DispatcherManagerManager
 
@@ -80,9 +80,7 @@ type serverImpl struct {
 }
 
 // NewServer returns a new Server instance
-func NewServer(pdEndpoints []string) (server.Server, error) {
-	conf := config.GetGlobalServerConfig()
-
+func NewServer(conf *config.ServerConfig, pdEndpoints []string) (node.Server, error) {
 	// This is to make communication between nodes possible.
 	// In other words, the nodes have to trust each other.
 	if len(conf.Security.CertAllowedCN) != 0 {
@@ -101,19 +99,17 @@ func NewServer(pdEndpoints []string) (server.Server, error) {
 		return nil, errors.Trace(err)
 	}
 
-	s := &serverImpl{
+	s := &server{
 		pdEndpoints: pdEndpoints,
 		tcpServer:   tcpServer,
 	}
-
-	log.Info("CDC server created",
-		zap.Strings("pd", pdEndpoints), zap.Stringer("config", conf))
 	return s, nil
 }
 
 // initialize the server before run it.
-func (c *serverImpl) initialize(ctx context.Context) error {
+func (c *server) initialize(ctx context.Context) error {
 	if err := c.prepare(ctx); err != nil {
+		log.Error("server prepare failed", zap.Any("server", c.info), zap.Error(err))
 		return errors.Trace(err)
 	}
 	conf := config.GetGlobalServerConfig()
@@ -148,40 +144,40 @@ func (c *serverImpl) initialize(ctx context.Context) error {
 }
 
 // Run runs the server
-func (c *serverImpl) Run(stdCtx context.Context) error {
-	err := c.initialize(stdCtx)
+func (c *server) Run(ctx context.Context) error {
+	err := c.initialize(ctx)
 	if err != nil {
 		log.Error("init server failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	defer func() {
-		c.Close(stdCtx)
+		c.Close(ctx)
 	}()
 
-	g, stdCtx := errgroup.WithContext(stdCtx)
+	g, ctx := errgroup.WithContext(ctx)
 	// start tcp server
 	g.Go(func() error {
-		return c.tcpServer.Run(stdCtx)
+		return c.tcpServer.Run(ctx)
 	})
 	// start all submodules
 	for _, sub := range c.subModules {
 		func(m common.SubModule) {
 			g.Go(func() error {
 				log.Info("starting sub module", zap.String("module", m.Name()))
-				return m.Run(stdCtx)
+				return m.Run(ctx)
 			})
 		}(sub)
 	}
 	// register server to etcd after we started all modules
-	err = c.registerNodeToEtcd(stdCtx)
+	err = c.registerNodeToEtcd(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return errors.Trace(g.Wait())
 }
 
-// SelfCaptureInfo gets the server info
-func (c *serverImpl) SelfInfo() (*common.NodeInfo, error) {
+// SelfInfo gets the server info
+func (c *server) SelfInfo() (*common.NodeInfo, error) {
 	// when c.reset has not been called yet, c.info is nil.
 	if c.info != nil {
 		return c.info, nil
@@ -189,14 +185,14 @@ func (c *serverImpl) SelfInfo() (*common.NodeInfo, error) {
 	return nil, cerror.ErrCaptureNotInitialized.GenWithStackByArgs()
 }
 
-func (c *serverImpl) setCoordinator(co server.Coordinator) {
+func (c *server) setCoordinator(co node.Coordinator) {
 	c.coordinatorMu.Lock()
 	defer c.coordinatorMu.Unlock()
 	c.coordinator = co
 }
 
 // GetCoordinator returns coordinator if it is the coordinator.
-func (c *serverImpl) GetCoordinator() (server.Coordinator, error) {
+func (c *server) GetCoordinator() (node.Coordinator, error) {
 	c.coordinatorMu.Lock()
 	defer c.coordinatorMu.Unlock()
 	if c.coordinator == nil {
@@ -208,7 +204,7 @@ func (c *serverImpl) GetCoordinator() (server.Coordinator, error) {
 // Close closes the server by deregister it from etcd,
 // it also closes the coordinator and processorManager
 // Note: this function should be reentrant
-func (c *serverImpl) Close(ctx context.Context) {
+func (c *server) Close(ctx context.Context) {
 	// Safety: Here we mainly want to stop the coordinator
 	// and ignore it if the coordinator does not exist or is not set.
 	o, _ := c.GetCoordinator()
@@ -236,23 +232,23 @@ func (c *serverImpl) Close(ctx context.Context) {
 }
 
 // Liveness returns liveness of the server.
-func (c *serverImpl) Liveness() model.Liveness {
+func (c *server) Liveness() model.Liveness {
 	return c.liveness.Load()
 }
 
 // IsCoordinator returns whether the server is an coordinator
-func (c *serverImpl) IsCoordinator() bool {
+func (c *server) IsCoordinator() bool {
 	c.coordinatorMu.Lock()
 	defer c.coordinatorMu.Unlock()
 	return c.coordinator != nil
 }
 
-func (c *serverImpl) GetPdClient() pd.Client {
+func (c *server) GetPdClient() pd.Client {
 	return c.pdClient
 }
 
 // GetCoordinatorInfo return the controller server info of current TiCDC cluster
-func (c *serverImpl) GetCoordinatorInfo(ctx context.Context) (*common.NodeInfo, error) {
+func (c *server) GetCoordinatorInfo(ctx context.Context) (*common.NodeInfo, error) {
 	_, captureInfos, err := c.EtcdClient.GetCaptures(ctx)
 	if err != nil {
 		return nil, err
@@ -286,6 +282,6 @@ func isErrCompacted(err error) bool {
 	return strings.Contains(err.Error(), "required revision has been compacted")
 }
 
-func (c *serverImpl) GetEtcdClient() etcd.CDCEtcdClient {
+func (c *server) GetEtcdClient() etcd.CDCEtcdClient {
 	return c.EtcdClient
 }

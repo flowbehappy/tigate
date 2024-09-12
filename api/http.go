@@ -14,10 +14,10 @@
 package api
 
 import (
+	"github.com/flowbehappy/tigate/pkg/node"
 	"net/http/pprof"
 
 	v2 "github.com/flowbehappy/tigate/api/v2"
-	appctx "github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -26,7 +26,7 @@ import (
 // RegisterRoutes create a router for OpenAPI
 func RegisterRoutes(
 	router *gin.Engine,
-	server appctx.Server,
+	server node.Server,
 	registry prometheus.Gatherer,
 ) {
 

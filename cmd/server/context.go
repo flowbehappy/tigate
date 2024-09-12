@@ -13,20 +13,15 @@
 
 package server
 
-import (
-	"context"
+import "context"
 
-	"github.com/pingcap/tiflow/pkg/orchestrator"
-)
+var defaultContext context.Context
 
-// Coordinator is the master of the ticdc cluster,
-// 1. schedules changefeed maintainer to ticdc watcher
-// 2. save changefeed checkpoint ts to etcd
-// 3. send checkpoint to downstream
-// 4. manager gc safe point
-// 5. response for open API call
-type Coordinator interface {
-	AsyncStop()
-	// Tick handles messages
-	Tick(ctx context.Context, metadata orchestrator.ReactorState) (orchestrator.ReactorState, error)
+func setDefaultContext(ctx context.Context) {
+	defaultContext = ctx
+}
+
+// GetDefaultContext returns the default context for command line usage.
+func GetDefaultContext() context.Context {
+	return defaultContext
 }

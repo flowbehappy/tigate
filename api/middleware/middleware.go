@@ -15,12 +15,12 @@ package middleware
 
 import (
 	"bufio"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	appctx "github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/gin-gonic/gin"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -72,7 +72,7 @@ func LogMiddleware() gin.HandlerFunc {
 }
 
 // ForwardToCoordinatorMiddleware forward a request to controller
-func ForwardToCoordinatorMiddleware(server appctx.Server) gin.HandlerFunc {
+func ForwardToCoordinatorMiddleware(server node.Server) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		if !server.IsCoordinator() {
 			ForwardToOwner(ctx, server)
@@ -88,7 +88,7 @@ func ForwardToCoordinatorMiddleware(server appctx.Server) gin.HandlerFunc {
 }
 
 // ForwardToOwner forwards a request to the controller
-func ForwardToOwner(c *gin.Context, server appctx.Server) {
+func ForwardToOwner(c *gin.Context, server node.Server) {
 	ctx := c.Request.Context()
 	info, err := server.SelfInfo()
 	if err != nil {

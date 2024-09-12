@@ -15,6 +15,7 @@ package coordinator
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"math"
 	"sync"
 	"time"
@@ -22,7 +23,6 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
-	"github.com/flowbehappy/tigate/pkg/common/server"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/scheduler"
@@ -69,7 +69,7 @@ type coordinator struct {
 func NewCoordinator(capture *common.NodeInfo,
 	pdClient pd.Client,
 	pdClock pdutil.Clock,
-	etcdClient etcd.CDCEtcdClient, version int64) server.Coordinator {
+	etcdClient etcd.CDCEtcdClient, version int64) node.Coordinator {
 	c := &coordinator{
 		version:              version,
 		nodeInfo:             capture,

@@ -57,7 +57,7 @@ const (
 	maxGcTunerMemory = 512 * 1024 * 1024 * 1024
 )
 
-func (c *serverImpl) prepare(ctx context.Context) error {
+func (c *server) prepare(ctx context.Context) error {
 	conf := cdcconfig.GetGlobalServerConfig()
 	grpcTLSOption, err := conf.Security.ToGRPCDialOption()
 	if err != nil {
@@ -165,7 +165,7 @@ func (c *serverImpl) prepare(ctx context.Context) error {
 	return nil
 }
 
-func (c *serverImpl) setMemoryLimit() {
+func (c *server) setMemoryLimit() {
 	conf := cdcconfig.GetGlobalServerConfig()
 	if conf.GcTunerMemoryThreshold > maxGcTunerMemory {
 		// If total memory is larger than 512GB, we will not set memory limit.
@@ -186,7 +186,7 @@ func (c *serverImpl) setMemoryLimit() {
 	}
 }
 
-func (c *serverImpl) initDir() error {
+func (c *server) initDir() error {
 	c.setUpDir()
 	conf := cdcconfig.GetGlobalServerConfig()
 	// Ensure data dir exists and read-writable.
@@ -206,7 +206,7 @@ func (c *serverImpl) initDir() error {
 	return nil
 }
 
-func (c *serverImpl) setUpDir() {
+func (c *server) setUpDir() {
 	conf := cdcconfig.GetGlobalServerConfig()
 	if conf.DataDir != "" {
 		conf.Sorter.SortDir = filepath.Join(conf.DataDir, cdcconfig.DefaultSortDir)
@@ -220,7 +220,7 @@ func (c *serverImpl) setUpDir() {
 }
 
 // registerNodeToEtcd the server by put the server's information in etcd
-func (c *serverImpl) registerNodeToEtcd(ctx context.Context) error {
+func (c *server) registerNodeToEtcd(ctx context.Context) error {
 	cInfo := &model.CaptureInfo{
 		ID:             c.info.ID,
 		AdvertiseAddr:  c.info.AdvertiseAddr,
@@ -236,7 +236,7 @@ func (c *serverImpl) registerNodeToEtcd(ctx context.Context) error {
 	return nil
 }
 
-func (c *serverImpl) newEtcdSession(ctx context.Context) (*concurrency.Session, error) {
+func (c *server) newEtcdSession(ctx context.Context) (*concurrency.Session, error) {
 	cfg := cdcconfig.GetGlobalServerConfig()
 	lease, err := c.EtcdClient.GetEtcdClient().Grant(ctx, int64(cfg.CaptureSessionTTL))
 	if err != nil {
@@ -247,7 +247,6 @@ func (c *serverImpl) newEtcdSession(ctx context.Context) (*concurrency.Session, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	log.Info("create session successfully", zap.Any("session", sess))
 	return sess, nil
 }
 
