@@ -280,7 +280,7 @@ func newPersistentStorageForTest(db *pebble.DB, gcTs common.Ts, upperBound upper
 		db:                     db,
 		gcTs:                   gcTs,
 		databaseMap:            make(map[common.SchemaID]*DatabaseInfo),
-		tablesInKVSnap:         make(map[common.TableID]bool),
+		tablesBasicInfo:        make(map[common.TableID]*VersionedTableBasicInfo),
 		tablesDDLHistory:       make(map[common.TableID][]uint64),
 		tableTriggerDDLHistory: make([]uint64, 0),
 		tableInfoStoreMap:      make(map[common.TableID]*versionedTableInfoStore),
@@ -350,7 +350,7 @@ func TestCreateDropSchemaTableDDL(t *testing.T) {
 		pStorage.handleSortedDDLEvents(ddlEvent)
 
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
-		require.Equal(t, 1, len(pStorage.tablesFromDDLJobs))
+		require.Equal(t, 1, len(pStorage.tablesBasicInfo))
 		require.Equal(t, 2, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(201), pStorage.tableTriggerDDLHistory[1])
 		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
@@ -375,7 +375,7 @@ func TestCreateDropSchemaTableDDL(t *testing.T) {
 		pStorage.handleSortedDDLEvents(ddlEvent)
 
 		require.Equal(t, 2, len(pStorage.databaseMap[schemaID].Tables))
-		require.Equal(t, 2, len(pStorage.tablesFromDDLJobs))
+		require.Equal(t, 2, len(pStorage.tablesBasicInfo))
 		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(203), pStorage.tableTriggerDDLHistory[2])
 		require.Equal(t, 2, len(pStorage.tablesDDLHistory))
@@ -400,7 +400,7 @@ func TestCreateDropSchemaTableDDL(t *testing.T) {
 		pStorage.handleSortedDDLEvents(ddlEvent)
 
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
-		require.Equal(t, 1, len(pStorage.tablesFromDDLJobs))
+		require.Equal(t, 1, len(pStorage.tablesBasicInfo))
 		require.Equal(t, 4, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(205), pStorage.tableTriggerDDLHistory[3])
 		require.Equal(t, 2, len(pStorage.tablesDDLHistory))
@@ -429,7 +429,7 @@ func TestCreateDropSchemaTableDDL(t *testing.T) {
 		pStorage.handleSortedDDLEvents(ddlEvent)
 
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
-		require.Equal(t, 1, len(pStorage.tablesFromDDLJobs))
+		require.Equal(t, 1, len(pStorage.tablesBasicInfo))
 		require.Equal(t, 4, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
 		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID]))
@@ -464,4 +464,8 @@ func TestCreateDropSchemaTableDDL(t *testing.T) {
 		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID3]))
 		require.Equal(t, uint64(300), pStorage.tablesDDLHistory[tableID3][1])
 	}
+}
+
+func TestRenameTable(t *testing.T) {
+
 }

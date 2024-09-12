@@ -20,8 +20,18 @@ type DatabaseInfo struct {
 
 func (d *DatabaseInfo) needGc(gcTs common.Ts) bool { return d.DeleteVersion < gcTs }
 
-type TableInfoEntry struct {
-	Version   int    `json:"version"`
-	SchemaID  int64  `json:"schema_id"`
-	TableInfo []byte `json:"table_info"`
+type SchemaIDWithVersion struct {
+	SchemaID      common.SchemaID
+	CreateVersion common.Ts
+}
+
+type TableNameWithVersion struct {
+	Name          string
+	CreateVersion common.Ts
+}
+
+type VersionedTableBasicInfo struct {
+	SchemaIDs     []SchemaIDWithVersion
+	Names         []TableNameWithVersion
+	CreateVersion common.Ts
 }

@@ -56,11 +56,7 @@ type persistentStorage struct {
 	// the current gcTs on disk
 	gcTs uint64
 
-	// all table ids is the current kv snapshot
-	tablesInKVSnap map[common.TableID]bool
-
-	// newly create tables from ddl jobs
-	tablesFromDDLJobs map[common.TableID]bool
+	tablesBasicInfo map[common.TableID]*VersionedTableBasicInfo
 
 	// schemaID -> database info
 	// it contains all databases and deleted databases
@@ -139,7 +135,7 @@ func newPersistentStorage(
 		db:                     db,
 		gcTs:                   gcTs,
 		databaseMap:            make(map[common.SchemaID]*DatabaseInfo),
-		tablesInKVSnap:         make(map[common.TableID]bool),
+		tablesBasicInfo:        make(map[common.TableID]*VersionedTableBasicInfo),
 		tablesDDLHistory:       make(map[common.TableID][]uint64),
 		tableTriggerDDLHistory: make([]uint64, 0),
 		tableInfoStoreMap:      make(map[common.TableID]*versionedTableInfoStore),
@@ -176,7 +172,7 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 	log.Info("schema store create a fresh storage")
 
 	var upperBound upperBoundMeta
-	if p.databaseMap, p.tablesInKVSnap, upperBound, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs); err != nil {
+	if p.databaseMap, p.tablesBasicInfo, upperBound, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs); err != nil {
 		// TODO: retry
 		log.Fatal("fail to initialize from kv snapshot")
 	}
@@ -191,15 +187,15 @@ func (p *persistentStorage) initializeFromDisk(upperBound upperBoundMeta) {
 	defer storageSnap.Close()
 
 	var err error
-	if p.tablesInKVSnap, err = loadTablesInKVSnap(storageSnap, p.gcTs); err != nil {
+	if p.tablesBasicInfo, err = loadTablesInKVSnap(storageSnap, p.gcTs); err != nil {
 		log.Fatal("load tables in kv snapshot failed")
 	}
 
-	if p.databaseMap, p.tablesFromDDLJobs, p.tablesDDLHistory, p.tableTriggerDDLHistory, err = loadDatabaseInfoAndDDLHistory(
+	if p.databaseMap, p.tablesDDLHistory, p.tableTriggerDDLHistory, err = loadDatabaseInfoAndDDLHistory(
 		storageSnap,
 		p.gcTs,
 		upperBound,
-		p.tablesInKVSnap); err != nil {
+		p.tablesBasicInfo); err != nil {
 		log.Fatal("fail to initialize from disk")
 	}
 }
@@ -384,7 +380,11 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 
 	p.mu.RLock()
 	kvSnapVersion := p.gcTs
-	_, inKVSnap := p.tablesInKVSnap[tableID]
+	tableBasicInfo, ok := p.tablesBasicInfo[tableID]
+	if !ok {
+		log.Panic("table not found", zap.Int64("tableID", int64(tableID)))
+	}
+	inKVSnap := tableBasicInfo.CreateVersion == kvSnapVersion
 	var allDDLFinishedTs []uint64
 	allDDLFinishedTs = append(allDDLFinishedTs, p.tablesDDLHistory[tableID]...)
 	p.mu.RUnlock()
@@ -488,8 +488,9 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...DDLEvent) error {
 
 	p.mu.Lock()
 	for _, event := range ddlEvents {
+		// TODO: may be don't need to fillSchemaName?
 		fillSchemaName(event.Job, p.databaseMap)
-		skip, err := updateDatabaseInfoAndTables(event.Job, p.databaseMap, p.tablesFromDDLJobs)
+		skip, err := updateDatabaseInfoAndTableInfo(event.Job, p.databaseMap, p.tablesBasicInfo)
 		if err != nil {
 			return err
 		}
@@ -501,8 +502,7 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...DDLEvent) error {
 		if p.tableTriggerDDLHistory, err = updateDDLHistory(
 			event.Job,
 			p.databaseMap,
-			p.tablesInKVSnap,
-			p.tablesFromDDLJobs,
+			p.tablesBasicInfo,
 			p.tablesDDLHistory,
 			p.tableTriggerDDLHistory); err != nil {
 			return err
@@ -517,39 +517,54 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...DDLEvent) error {
 	return nil
 }
 
-func updateDatabaseInfoAndTables(
+func updateDatabaseInfoAndTableInfo(
 	job *model.Job,
 	databaseMap map[common.SchemaID]*DatabaseInfo,
-	tablesFromDDLJobs map[common.TableID]bool,
+	tablesBasicInfo map[common.TableID]*VersionedTableBasicInfo,
 ) (bool, error) {
-	dropTable := func(schemaID common.SchemaID, tableID common.TableID) {
-		databaseInfo, ok := databaseMap[schemaID]
-		if !ok {
-			log.Panic("database not found. ",
-				zap.String("DDL", job.Query),
-				zap.Int64("jobID", job.ID),
-				zap.Int64("schemaID", job.SchemaID),
-				zap.Int64("tableID", job.TableID),
-				zap.Uint64("finishTs", job.BinlogInfo.FinishedTS),
-				zap.Int64("jobSchemaVersion", job.BinlogInfo.SchemaVersion))
-		}
-		delete(databaseInfo.Tables, tableID)
-		delete(tablesFromDDLJobs, tableID)
-	}
-
-	createTable := func(schemaID common.SchemaID, tableID common.TableID) {
+	addTableToDB := func(schemaID common.SchemaID, tableID common.TableID) {
 		databaseInfo, ok := databaseMap[schemaID]
 		if !ok {
 			log.Panic("database not found.",
 				zap.String("DDL", job.Query),
 				zap.Int64("jobID", job.ID),
-				zap.Int64("schemaID", job.SchemaID),
-				zap.Int64("tableID", job.TableID),
+				zap.Int64("schemaID", int64(schemaID)),
+				zap.Int64("tableID", int64(tableID)),
 				zap.Uint64("finishTs", job.BinlogInfo.FinishedTS),
 				zap.Int64("jobSchemaVersion", job.BinlogInfo.SchemaVersion))
 		}
 		databaseInfo.Tables[tableID] = true
-		tablesFromDDLJobs[tableID] = true
+	}
+
+	removeTableFromDB := func(schemaID common.SchemaID, tableID common.TableID) {
+		databaseInfo, ok := databaseMap[schemaID]
+		if !ok {
+			log.Panic("database not found. ",
+				zap.String("DDL", job.Query),
+				zap.Int64("jobID", job.ID),
+				zap.Int64("schemaID", int64(schemaID)),
+				zap.Int64("tableID", int64(tableID)),
+				zap.Uint64("finishTs", job.BinlogInfo.FinishedTS),
+				zap.Int64("jobSchemaVersion", job.BinlogInfo.SchemaVersion))
+		}
+		delete(databaseInfo.Tables, tableID)
+	}
+
+	createTable := func(schemaID common.SchemaID, tableID common.TableID) bool {
+		if _, ok := tablesBasicInfo[tableID]; ok {
+			return false
+		}
+		addTableToDB(schemaID, tableID)
+		tablesBasicInfo[tableID] = &VersionedTableBasicInfo{
+			SchemaIDs: []SchemaIDWithVersion{{SchemaID: schemaID, CreateVersion: common.Ts(job.BinlogInfo.FinishedTS)}},
+			Names:     []TableNameWithVersion{{Name: job.TableName, CreateVersion: common.Ts(job.BinlogInfo.FinishedTS)}},
+		}
+		return true
+	}
+
+	dropTable := func(schemaID common.SchemaID, tableID common.TableID) {
+		removeTableFromDB(schemaID, tableID)
+		delete(tablesBasicInfo, tableID)
 	}
 
 	switch job.Type {
@@ -585,7 +600,17 @@ func updateDatabaseInfoAndTables(
 		}
 		databaseInfo.DeleteVersion = common.Ts(job.BinlogInfo.FinishedTS)
 	case model.ActionCreateTable:
-		createTable(common.SchemaID(job.SchemaID), common.TableID(job.TableID))
+		ok := createTable(common.SchemaID(job.SchemaID), common.TableID(job.TableID))
+		if !ok {
+			log.Warn("table already exists. ignore DDL ",
+				zap.String("DDL", job.Query),
+				zap.Int64("jobID", job.ID),
+				zap.Int64("schemaID", job.SchemaID),
+				zap.Int64("tableID", job.TableID),
+				zap.Uint64("finishTs", job.BinlogInfo.FinishedTS),
+				zap.Int64("jobSchemaVersion", job.BinlogInfo.SchemaVersion))
+			return true, nil
+		}
 	case model.ActionDropTable:
 		dropTable(common.SchemaID(job.SchemaID), common.TableID(job.TableID))
 	case model.ActionAddColumn,
@@ -593,11 +618,34 @@ func updateDatabaseInfoAndTables(
 		model.ActionAddIndex,
 		model.ActionDropIndex,
 		model.ActionAddForeignKey,
-		model.ActionDropForeignKey:
+		model.ActionDropForeignKey,
+		model.ActionModifyColumn,
+		model.ActionRebaseAutoID:
 		// ignore
 	case model.ActionTruncateTable:
 		dropTable(common.SchemaID(job.SchemaID), common.TableID(job.TableID))
 		createTable(common.SchemaID(job.SchemaID), job.BinlogInfo.TableInfo.ID)
+	case model.ActionRenameTable:
+		oldSchemaID := getSchemaID(tablesBasicInfo, common.TableID(job.TableID), common.Ts(job.BinlogInfo.FinishedTS-1))
+		if oldSchemaID != common.SchemaID(job.SchemaID) {
+			modifySchemaID(tablesBasicInfo, common.TableID(job.TableID), common.SchemaID(job.SchemaID), common.Ts(job.BinlogInfo.FinishedTS))
+			databaseInfo, ok := databaseMap[oldSchemaID]
+			if !ok {
+				log.Panic("database not found. ",
+					zap.String("DDL", job.Query),
+					zap.Int64("jobID", job.ID),
+					zap.Int64("schemaID", int64(oldSchemaID)),
+					zap.Int64("tableID", job.TableID),
+					zap.Uint64("finishTs", job.BinlogInfo.FinishedTS),
+					zap.Int64("jobSchemaVersion", job.BinlogInfo.SchemaVersion))
+			}
+			delete(databaseInfo.Tables, common.TableID(job.TableID))
+		}
+		oldTableName := getTableName(tablesBasicInfo, common.TableID(job.TableID), common.Ts(job.BinlogInfo.FinishedTS-1))
+		if oldTableName != job.BinlogInfo.TableInfo.Name.O {
+			modifyTableName(tablesBasicInfo, common.TableID(job.TableID), job.BinlogInfo.TableInfo.Name.O, common.Ts(job.BinlogInfo.FinishedTS))
+		}
+		// TODO
 
 	// case model.ActionModifySchemaCharsetAndCollate:
 	// 	// ignore
@@ -620,8 +668,7 @@ func updateDatabaseInfoAndTables(
 func updateDDLHistory(
 	job *model.Job,
 	databaseMap map[common.SchemaID]*DatabaseInfo,
-	tablesInKVSnap map[common.TableID]bool,
-	tablesFromDDLJobs map[common.TableID]bool,
+	tablesBasicInfo map[common.TableID]*VersionedTableBasicInfo,
 	tablesDDLHistory map[common.TableID][]uint64,
 	tableTriggerDDLHistory []uint64,
 ) ([]uint64, error) {
@@ -650,7 +697,9 @@ func updateDDLHistory(
 		model.ActionAddIndex,
 		model.ActionDropIndex,
 		model.ActionAddForeignKey,
-		model.ActionDropForeignKey:
+		model.ActionDropForeignKey,
+		model.ActionModifyColumn,
+		model.ActionRebaseAutoID:
 		addTableHistory(common.TableID(job.TableID))
 	case model.ActionTruncateTable:
 		addTableHistory(common.TableID(job.TableID))
@@ -681,7 +730,9 @@ func updateRegisteredTableInfoStore(
 	case model.ActionDropTable,
 		model.ActionAddColumn,
 		model.ActionDropColumn,
-		model.ActionTruncateTable:
+		model.ActionTruncateTable,
+		model.ActionModifyColumn,
+		model.ActionRebaseAutoID:
 		store, ok := tableInfoStoreMap[common.TableID(job.TableID)]
 		if ok {
 			store.applyDDL(job)
@@ -732,4 +783,76 @@ func fillSchemaName(job *model.Job, databaseMap map[common.SchemaID]*DatabaseInf
 	}
 	job.SchemaName = databaseInfo.Name
 	return nil
+}
+
+func modifySchemaID(
+	tablesBasicInfo map[common.TableID]*VersionedTableBasicInfo,
+	tableID common.TableID,
+	schemaID common.SchemaID,
+	version common.Ts,
+) {
+	info, ok := tablesBasicInfo[tableID]
+	if !ok {
+		log.Panic("table not found", zap.Int64("tableID", int64(tableID)))
+	}
+
+	info.SchemaIDs = append(info.SchemaIDs, SchemaIDWithVersion{
+		SchemaID:      schemaID,
+		CreateVersion: version,
+	})
+}
+
+// return the schema id with largest version which is less than or equal to the given version
+func getSchemaID(
+	tablesBasicInfo map[common.TableID]*VersionedTableBasicInfo,
+	tableID common.TableID,
+	version common.Ts,
+) common.SchemaID {
+	info, ok := tablesBasicInfo[tableID]
+	if !ok {
+		log.Panic("table not found", zap.Int64("tableID", int64(tableID)))
+	}
+
+	index := sort.Search(len(info.SchemaIDs), func(i int) bool {
+		return info.SchemaIDs[i].CreateVersion > version
+	})
+	if index == 0 {
+		log.Panic("should not happen")
+	}
+	return info.SchemaIDs[index-1].SchemaID
+}
+
+func modifyTableName(
+	tablesBasicInfo map[common.TableID]*VersionedTableBasicInfo,
+	tableID common.TableID,
+	tableName string,
+	version common.Ts,
+) {
+	info, ok := tablesBasicInfo[tableID]
+	if !ok {
+		log.Panic("table not found", zap.Int64("tableID", int64(tableID)))
+	}
+	info.Names = append(info.Names, TableNameWithVersion{
+		Name:          tableName,
+		CreateVersion: version,
+	})
+}
+
+// return the table name with largest version which is less than or equal to the given version
+func getTableName(
+	tablesBasicInfo map[common.TableID]*VersionedTableBasicInfo,
+	tableID common.TableID,
+	version common.Ts,
+) string {
+	info, ok := tablesBasicInfo[tableID]
+	if !ok {
+		log.Panic("table not found", zap.Int64("tableID", int64(tableID)))
+	}
+	index := sort.Search(len(info.Names), func(i int) bool {
+		return info.Names[i].CreateVersion > version
+	})
+	if index == 0 {
+		log.Panic("should not happen")
+	}
+	return info.Names[index-1].Name
 }
