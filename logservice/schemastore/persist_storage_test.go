@@ -310,8 +310,8 @@ func TestCreateDropSchemaTableDDL(t *testing.T) {
 	require.Nil(t, err)
 	pStorage := newEmptyPersistentStorageForTest(dbPath)
 
-	schemaID := common.SchemaID(300)
 	// create db
+	schemaID := common.SchemaID(300)
 	{
 		ddlEvent := DDLEvent{
 			Job: &model.Job{
@@ -467,5 +467,102 @@ func TestCreateDropSchemaTableDDL(t *testing.T) {
 }
 
 func TestRenameTable(t *testing.T) {
+	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+	err := os.RemoveAll(dbPath)
+	require.Nil(t, err)
+	pStorage := newEmptyPersistentStorageForTest(dbPath)
 
+	schemaID1 := common.SchemaID(300)
+	// create db1
+	{
+		ddlEvent := DDLEvent{
+			Job: &model.Job{
+				Type:     model.ActionCreateSchema,
+				SchemaID: int64(schemaID1),
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 100,
+					TableInfo:     nil,
+					FinishedTS:    200,
+				},
+			},
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	schemaID2 := common.SchemaID(305)
+	// create db2
+	{
+		ddlEvent := DDLEvent{
+			Job: &model.Job{
+				Type:     model.ActionCreateSchema,
+				SchemaID: int64(schemaID2),
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 101,
+					TableInfo:     nil,
+					FinishedTS:    201,
+				},
+			},
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	// create a table
+	tableID := common.TableID(100)
+	{
+		ddlEvent := DDLEvent{
+			Job: &model.Job{
+				Type:     model.ActionCreateTable,
+				SchemaID: int64(schemaID1),
+				TableID:  int64(tableID),
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 501,
+					TableInfo: &model.TableInfo{
+						ID:   int64(tableID),
+						Name: model.NewCIStr("t1"),
+					},
+					FinishedTS: 601,
+				},
+			},
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+		require.Equal(t, 2, len(pStorage.databaseMap))
+		require.Equal(t, 1, len(pStorage.databaseMap[schemaID1].Tables))
+		require.Equal(t, 0, len(pStorage.databaseMap[schemaID2].Tables))
+		require.Equal(t, common.Ts(601), pStorage.tablesBasicInfo[tableID].CreateVersion)
+		require.Equal(t, common.Ts(601), pStorage.tablesBasicInfo[tableID].SchemaIDs[0].CreateVersion)
+		require.Equal(t, schemaID1, pStorage.tablesBasicInfo[tableID].SchemaIDs[0].SchemaID)
+		require.Equal(t, common.Ts(601), pStorage.tablesBasicInfo[tableID].Names[0].CreateVersion)
+		require.Equal(t, "t1", pStorage.tablesBasicInfo[tableID].Names[0].Name)
+	}
+
+	// rename table
+	{
+		ddlEvent := DDLEvent{
+			Job: &model.Job{
+				Type:     model.ActionRenameTable,
+				SchemaID: int64(schemaID2),
+				TableID:  int64(tableID),
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 505,
+					TableInfo: &model.TableInfo{
+						ID:   int64(tableID),
+						Name: model.NewCIStr("t2"),
+					},
+					FinishedTS: 605,
+				},
+			},
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+		require.Equal(t, 2, len(pStorage.databaseMap))
+		require.Equal(t, 0, len(pStorage.databaseMap[schemaID1].Tables))
+		require.Equal(t, 1, len(pStorage.databaseMap[schemaID2].Tables))
+		require.Equal(t, common.Ts(605), pStorage.tablesBasicInfo[tableID].SchemaIDs[1].CreateVersion)
+		require.Equal(t, schemaID2, pStorage.tablesBasicInfo[tableID].SchemaIDs[1].SchemaID)
+		require.Equal(t, schemaID2, getSchemaID(pStorage.tablesBasicInfo, tableID, common.Ts(605)))
+		require.Equal(t, schemaID1, getSchemaID(pStorage.tablesBasicInfo, tableID, common.Ts(604)))
+		require.Equal(t, common.Ts(605), pStorage.tablesBasicInfo[tableID].Names[1].CreateVersion)
+		require.Equal(t, "t2", pStorage.tablesBasicInfo[tableID].Names[1].Name)
+		require.Equal(t, "t2", getTableName(pStorage.tablesBasicInfo, tableID, common.Ts(605)))
+		require.Equal(t, "t1", getTableName(pStorage.tablesBasicInfo, tableID, common.Ts(604)))
+	}
 }

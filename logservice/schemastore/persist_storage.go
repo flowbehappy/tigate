@@ -556,8 +556,9 @@ func updateDatabaseInfoAndTableInfo(
 		}
 		addTableToDB(schemaID, tableID)
 		tablesBasicInfo[tableID] = &VersionedTableBasicInfo{
-			SchemaIDs: []SchemaIDWithVersion{{SchemaID: schemaID, CreateVersion: common.Ts(job.BinlogInfo.FinishedTS)}},
-			Names:     []TableNameWithVersion{{Name: job.TableName, CreateVersion: common.Ts(job.BinlogInfo.FinishedTS)}},
+			SchemaIDs:     []SchemaIDWithVersion{{SchemaID: schemaID, CreateVersion: common.Ts(job.BinlogInfo.FinishedTS)}},
+			Names:         []TableNameWithVersion{{Name: job.BinlogInfo.TableInfo.Name.O, CreateVersion: common.Ts(job.BinlogInfo.FinishedTS)}},
+			CreateVersion: common.Ts(job.BinlogInfo.FinishedTS),
 		}
 		return true
 	}
@@ -624,22 +625,14 @@ func updateDatabaseInfoAndTableInfo(
 		// ignore
 	case model.ActionTruncateTable:
 		dropTable(common.SchemaID(job.SchemaID), common.TableID(job.TableID))
+		// TODO: do we need to the return value of createTable?
 		createTable(common.SchemaID(job.SchemaID), job.BinlogInfo.TableInfo.ID)
 	case model.ActionRenameTable:
 		oldSchemaID := getSchemaID(tablesBasicInfo, common.TableID(job.TableID), common.Ts(job.BinlogInfo.FinishedTS-1))
 		if oldSchemaID != common.SchemaID(job.SchemaID) {
 			modifySchemaID(tablesBasicInfo, common.TableID(job.TableID), common.SchemaID(job.SchemaID), common.Ts(job.BinlogInfo.FinishedTS))
-			databaseInfo, ok := databaseMap[oldSchemaID]
-			if !ok {
-				log.Panic("database not found. ",
-					zap.String("DDL", job.Query),
-					zap.Int64("jobID", job.ID),
-					zap.Int64("schemaID", int64(oldSchemaID)),
-					zap.Int64("tableID", job.TableID),
-					zap.Uint64("finishTs", job.BinlogInfo.FinishedTS),
-					zap.Int64("jobSchemaVersion", job.BinlogInfo.SchemaVersion))
-			}
-			delete(databaseInfo.Tables, common.TableID(job.TableID))
+			removeTableFromDB(oldSchemaID, common.TableID(job.TableID))
+			addTableToDB(common.SchemaID(job.SchemaID), common.TableID(job.TableID))
 		}
 		oldTableName := getTableName(tablesBasicInfo, common.TableID(job.TableID), common.Ts(job.BinlogInfo.FinishedTS-1))
 		if oldTableName != job.BinlogInfo.TableInfo.Name.O {
@@ -704,7 +697,9 @@ func updateDDLHistory(
 	case model.ActionTruncateTable:
 		addTableHistory(common.TableID(job.TableID))
 		addTableHistory(common.TableID(job.BinlogInfo.TableInfo.ID))
-
+	case model.ActionRenameTable:
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, job.BinlogInfo.FinishedTS)
+		addTableHistory(common.TableID(job.TableID))
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", job.Type),
@@ -725,7 +720,8 @@ func updateRegisteredTableInfoStore(
 		model.ActionAddIndex,
 		model.ActionDropIndex,
 		model.ActionAddForeignKey,
-		model.ActionDropForeignKey:
+		model.ActionDropForeignKey,
+		model.ActionRenameTable:
 		// ignore
 	case model.ActionDropTable,
 		model.ActionAddColumn,
