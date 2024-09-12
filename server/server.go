@@ -144,39 +144,39 @@ func (c *server) initialize(ctx context.Context) error {
 }
 
 // Run runs the server
-func (c *server) Run(stdCtx context.Context) error {
-	err := c.initialize(stdCtx)
+func (c *server) Run(ctx context.Context) error {
+	err := c.initialize(ctx)
 	if err != nil {
 		log.Error("init server failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	defer func() {
-		c.Close(stdCtx)
+		c.Close(ctx)
 	}()
 
-	g, stdCtx := errgroup.WithContext(stdCtx)
+	g, ctx := errgroup.WithContext(ctx)
 	// start tcp server
 	g.Go(func() error {
-		return c.tcpServer.Run(stdCtx)
+		return c.tcpServer.Run(ctx)
 	})
 	// start all submodules
 	for _, sub := range c.subModules {
 		func(m common.SubModule) {
 			g.Go(func() error {
 				log.Info("starting sub module", zap.String("module", m.Name()))
-				return m.Run(stdCtx)
+				return m.Run(ctx)
 			})
 		}(sub)
 	}
 	// register server to etcd after we started all modules
-	err = c.registerNodeToEtcd(stdCtx)
+	err = c.registerNodeToEtcd(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return errors.Trace(g.Wait())
 }
 
-// SelfCaptureInfo gets the server info
+// SelfInfo gets the server info
 func (c *server) SelfInfo() (*common.NodeInfo, error) {
 	// when c.reset has not been called yet, c.info is nil.
 	if c.info != nil {
