@@ -76,8 +76,6 @@ type EventDispatcherManager struct {
 
 	schemaIDToDispatchers *SchemaIDToDispatchers
 
-	tableTriggerEventDispatcherID *common.DispatcherID
-	// TODO:
 	tableTriggerEventDispatcher *dispatcher.Dispatcher
 
 	tableEventDispatcherCount      prometheus.Gauge
@@ -203,7 +201,6 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.filter, schemaID)
 
 	if tableSpan.Equal(heartbeatpb.DDLSpan) {
-		e.tableTriggerEventDispatcherID = &id
 		e.tableTriggerEventDispatcher = dispatcher
 	} else {
 		e.schemaIDToDispatchers.Set(schemaID, id)
@@ -297,8 +294,8 @@ func (e *EventDispatcherManager) RemoveDispatcher(id common.DispatcherID) {
 func (e *EventDispatcherManager) cleanTableEventDispatcher(id common.DispatcherID, schemaID int64) {
 	e.dispatcherMap.Delete(id)
 	e.schemaIDToDispatchers.Delete(schemaID, id)
-	if e.tableTriggerEventDispatcherID != nil && *e.tableTriggerEventDispatcherID == id {
-		e.tableTriggerEventDispatcherID = nil
+	if e.tableTriggerEventDispatcher != nil && e.tableTriggerEventDispatcher.GetId() == id {
+		e.tableTriggerEventDispatcher = nil
 	}
 	e.tableEventDispatcherCount.Dec()
 	log.Info("table event dispatcher completely stopped, and delete it from event dispatcher manager", zap.Any("dispatcher id", id))
@@ -416,8 +413,8 @@ func (e *EventDispatcherManager) SetMaintainerID(maintainerID messaging.ServerId
 // Get all dispatchers id of the specified schemaID. Including the tableTriggerEventDispatcherID if exists.
 func (e *EventDispatcherManager) GetAllDispatchers(schemaID int64) []common.DispatcherID {
 	dispatcherIDs := e.GetSchemaIDToDispatchers().GetDispatcherIDs(schemaID)
-	if e.tableTriggerEventDispatcherID != nil {
-		dispatcherIDs = append(dispatcherIDs, *e.tableTriggerEventDispatcherID)
+	if e.tableTriggerEventDispatcher != nil {
+		dispatcherIDs = append(dispatcherIDs, e.tableTriggerEventDispatcher.GetId())
 	}
 	return dispatcherIDs
 }
