@@ -19,6 +19,8 @@ import (
 )
 
 var (
+	grpcMetrics = grpc_prometheus.NewClientMetrics()
+
 	EventStoreReceivedEventCount = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "ticdc",
@@ -63,7 +65,7 @@ var (
 			Subsystem: "kvclient",
 			Name:      "batch_resolved_event_size",
 			Help:      "The number of region in one batch resolved ts event",
-			Buckets:   prometheus.ExponentialBuckets(2, 2, 16),
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 16),
 		}, []string{"type"})
 	LockResolveDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -106,8 +108,12 @@ var (
 		}, []string{"type", "id"})
 )
 
+func GetGlobalGrpcMetrics() *grpc_prometheus.ClientMetrics {
+	return grpcMetrics
+}
+
 func InitPullerMetrics(registry *prometheus.Registry) {
-	registry.MustRegister(grpc_prometheus.NewClientMetrics())
+	registry.MustRegister(grpcMetrics)
 	registry.MustRegister(RegionWorkerProcessDuration)
 	registry.MustRegister(RegionWorkerTotalDuration)
 	registry.MustRegister(EventStoreReceivedEventCount)
