@@ -71,8 +71,8 @@ type DynamicStream[P Path, T Event, D Dest] interface {
 	RemovePaths(paths ...P) []error
 }
 
-const DefaultSchedulerInterval = 5 * time.Second
-const DefaultReportInterval = 500 * time.Millisecond
+const DefaultSchedulerInterval = 1 * time.Second
+const DefaultReportInterval = 200 * time.Millisecond
 
 // We don't need lots of streams because the hanle of events should be CPU-bound and should not be blocked by any waiting.
 const DefaultStreamCount = 64
@@ -92,7 +92,7 @@ type Option struct {
 	StreamCount       int           // The count of streams. I.e. the count of goroutines to handle events.
 	BatchSize         int           // The batch size of handling events. <= 1 means no batch.
 
-	// Note that if you specify a MaxPendingLength and DropPolicy, the handler can implement the DropListener interface to listen to the dropped events.
+	// Note that if you specify MaxPendingLength and DropPolicy, the handler can implement the DropListener interface to listen to the dropped events.
 	// Otherwise the events will be dropped silently.
 	MaxPendingLength int        // The max pending length of a path. <= 0 means no limit.
 	DropPolicy       DropPolicy // The drop policy of the events of a path when the pending length is greater than MaxPendingLength.

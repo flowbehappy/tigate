@@ -257,9 +257,12 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 	scheduleRule := NewRoundRobin(3)
 	doSchedule := func(rule ruleType, testPeriod time.Duration) {
 		// The goal of scheduler is to balance the load of the streams, with mimimum changes.
-		// We have three rules:
-		// 1. If some stream is too busy, we make the busy paths solo in a new stream.
-		// 2. If some solo stream is idle, we combine them and move them into a base stream.
+		// First of all, we have consistent number (baseStreamCount) of basic streams, and unlimited number of solo streams.
+		// They are all in the d.streamInfos. The first baseStreamCount streams are the basic streams, and the rest are solo streams.
+		// When a path is added, it is assigned to a basic stream with round-robin strategy. It could be imbalance, but we balance it
+		// by three rules later:
+		// 1. If a stream is too busy, we make the busy path a solo stream.
+		// 2. If a solo stream is idle, we combine it into a base stream.
 		// 3. If the most busy stream is too busy and the least busy stream is not busy, we shuffle the paths between them.
 		// We use round-robin to apply the rules to the streams.
 		// Since the number of streams is small, we don't need to worry about the performance of iterating all the streams.

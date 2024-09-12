@@ -245,12 +245,10 @@ type incEvent struct {
 	wg    *sync.WaitGroup
 }
 
-type incEventHandler struct {
-	dropCount *sync.WaitGroup
-}
+type incEventHandler struct{}
 
 func (h *incEventHandler) OnDrop(dest struct{}, event incEvent) {
-	h.dropCount.Done()
+	event.wg.Done()
 }
 
 func (h *incEventHandler) Path(event incEvent) string {
@@ -272,9 +270,7 @@ func TestDynamicStreamDrop(t *testing.T) {
 		handleWait := &sync.WaitGroup{}
 		handleWait.Add(1)
 
-		handler := &incEventHandler{
-			dropCount: eventCountDown,
-		}
+		handler := &incEventHandler{}
 		ds := newDynamicStreamImpl(handler, option)
 		ds.Start()
 
