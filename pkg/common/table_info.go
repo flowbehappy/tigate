@@ -443,22 +443,31 @@ func (ti *TableInfo) initPreSQLs() {
 
 func (ti *TableInfo) genPreSQLInsert(isReplace bool, needPlaceHolder bool) string {
 	var builder strings.Builder
-	colList := "(" + ti.getColumnList(false) + ")"
-	quoteTable := ti.TableName.QuoteString()
+
 	if isReplace {
-		builder.WriteString("REPLACE INTO " + quoteTable + " " + colList + " VALUES ")
+		builder.WriteString("REPLACE INTO ")
 	} else {
-		builder.WriteString("INSERT INTO " + quoteTable + " " + colList + " VALUES ")
+		builder.WriteString("INSERT INTO ")
 	}
+	quoteTable := ti.TableName.QuoteString()
+	builder.WriteString(quoteTable)
+	builder.WriteString(" (")
+	builder.WriteString(ti.getColumnList(false))
+	builder.WriteString(") VALUES ")
+
 	if needPlaceHolder {
-		builder.WriteString("(" + placeHolder(len(ti.Columns)-ti.virtualColumnCount) + ")")
+		builder.WriteString("(")
+		builder.WriteString(placeHolder(len(ti.Columns) - ti.virtualColumnCount))
+		builder.WriteString(")")
 	}
 	return builder.String()
 }
 
 func (ti *TableInfo) genPreSQLUpdate() string {
 	var builder strings.Builder
-	builder.WriteString("UPDATE " + ti.TableName.QuoteString() + " SET ")
+	builder.WriteString("UPDATE ")
+	builder.WriteString(ti.TableName.QuoteString())
+	builder.WriteString(" SET ")
 	builder.WriteString(ti.getColumnList(true))
 	return builder.String()
 }
