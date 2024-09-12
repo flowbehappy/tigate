@@ -16,13 +16,16 @@ package logpuller
 import (
 	"context"
 	"encoding/hex"
+	"strconv"
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/cdcpb"
 	"github.com/pingcap/log"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -57,12 +60,19 @@ func newEventItem(item *cdcpb.Event, state *regionFeedState, worker *regionReque
 type changeEventProcessor struct {
 	client  *SubscriptionClient
 	inputCh chan statefulEvent
+
+	metricProcessDuration prometheus.Observer
+	metricTotalDuration   prometheus.Observer
 }
 
-func newChangeEventProcessor(client *SubscriptionClient) *changeEventProcessor {
+func newChangeEventProcessor(id uint, client *SubscriptionClient) *changeEventProcessor {
+	clientID := client.id.String()
+	workerID := strconv.Itoa(int(id))
 	return &changeEventProcessor{
-		client:  client,
-		inputCh: make(chan statefulEvent, 64), // 64 is an arbitrary number.
+		client:                client,
+		inputCh:               make(chan statefulEvent, 64), // 64 is an arbitrary number.
+		metricProcessDuration: metrics.RegionWorkerProcessDuration.WithLabelValues(clientID, workerID),
+		metricTotalDuration:   metrics.RegionWorkerTotalDuration.WithLabelValues(clientID, workerID),
 	}
 }
 
@@ -76,6 +86,7 @@ func (w *changeEventProcessor) sendEvent(ctx context.Context, event statefulEven
 }
 
 func (w *changeEventProcessor) run(ctx context.Context) error {
+	start := time.Now()
 	for {
 		var event statefulEvent
 		select {
@@ -84,6 +95,8 @@ func (w *changeEventProcessor) run(ctx context.Context) error {
 		case event = <-w.inputCh:
 		}
 		w.processEvent(ctx, event)
+		w.metricTotalDuration.Observe(time.Since(start).Seconds())
+		start = time.Now()
 	}
 }
 
@@ -106,6 +119,10 @@ func (w *changeEventProcessor) handleSingleRegionError(ctx context.Context, stat
 }
 
 func (w *changeEventProcessor) processEvent(ctx context.Context, event statefulEvent) {
+	start := time.Now()
+	defer func() {
+		w.metricProcessDuration.Observe(time.Since(start).Seconds())
+	}()
 	if event.eventItem.state != nil {
 		state := event.eventItem.state
 		if state.isStale() {

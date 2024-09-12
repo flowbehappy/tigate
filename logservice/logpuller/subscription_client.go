@@ -23,6 +23,7 @@ import (
 	"github.com/flowbehappy/tigate/logservice/logpuller/regionlock"
 	"github.com/flowbehappy/tigate/logservice/txnutil"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/pingcap/tiflow/pkg/util"
+	"github.com/prometheus/client_golang/prometheus"
 	kvclientv2 "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -51,6 +53,17 @@ const (
 
 	loadRegionRetryInterval time.Duration = 100 * time.Millisecond
 	resolveLockMinInterval  time.Duration = 10 * time.Second
+)
+
+var (
+	metricFeedNotLeaderCounter        = metrics.EventFeedErrorCounter.WithLabelValues("NotLeader")
+	metricFeedEpochNotMatchCounter    = metrics.EventFeedErrorCounter.WithLabelValues("EpochNotMatch")
+	metricFeedRegionNotFoundCounter   = metrics.EventFeedErrorCounter.WithLabelValues("RegionNotFound")
+	metricFeedDuplicateRequestCounter = metrics.EventFeedErrorCounter.WithLabelValues("DuplicateRequest")
+	metricFeedUnknownErrorCounter     = metrics.EventFeedErrorCounter.WithLabelValues("Unknown")
+	metricFeedRPCCtxUnavailable       = metrics.EventFeedErrorCounter.WithLabelValues("RPCCtxUnavailable")
+	metricStoreSendRequestErr         = metrics.EventFeedErrorCounter.WithLabelValues("SendRequestToStore")
+	metricKvIsBusyCounter             = metrics.EventFeedErrorCounter.WithLabelValues("KvIsBusy")
 )
 
 // To generate an ID for a new subscription.
@@ -132,12 +145,23 @@ type SubscriptionClientConfig struct {
 	RegionIncrementalScanLimitPerStore uint
 }
 
+type sharedClientMetrics struct {
+	// regionLockDuration    prometheus.Observer
+	// regionLocateDuration  prometheus.Observer
+	// regionConnectDuration prometheus.Observer
+	batchResolvedSize prometheus.Observer
+	// lockResolveWaitDuration prometheus.Observer
+	// lockResolveRunDuration  prometheus.Observer
+	// slowInitializeRegion prometheus.Gauge
+}
+
 // SubscriptionClient is used to subscribe events of table ranges from TiKV.
 // All exported Methods are thread-safe.
 type SubscriptionClient struct {
 	id SubscriptionClientID
 
 	config     *SubscriptionClientConfig
+	metrics    sharedClientMetrics
 	clusterID  uint64
 	filterLoop bool
 
@@ -184,6 +208,19 @@ const (
 	ClientIDTest        SubscriptionClientID = 100
 )
 
+func (id SubscriptionClientID) String() string {
+	switch id {
+	case ClientIDEventStore:
+		return "EventStore"
+	case ClientIDSchemaStore:
+		return "SchemaStore"
+	case ClientIDTest:
+		return "Test"
+	default:
+		return "Unknown"
+	}
+}
+
 // NewSubscriptionClient creates a client.
 func NewSubscriptionClient(
 	id SubscriptionClientID,
@@ -214,13 +251,18 @@ func NewSubscriptionClient(
 		regionScanLimiter: newRegionScanRequestLimiter(config.RegionIncrementalScanLimitPerStore),
 	}
 	s.totalSpans.spanMap = make(map[SubscriptionID]*subscribedSpan)
-
+	s.initMetrics()
 	return s
 }
 
 // AllocsubscriptionID gets an ID can be used in `Subscribe`.
 func (s *SubscriptionClient) AllocSubscriptionID() SubscriptionID {
 	return SubscriptionID(subscriptionIDGen.Add(1))
+}
+
+func (s *SubscriptionClient) initMetrics() {
+	id := s.id.String()
+	s.metrics.batchResolvedSize = metrics.BatchResolvedEventSize.WithLabelValues(id)
 }
 
 // Subscribe the given table span.
@@ -294,7 +336,7 @@ func (s *SubscriptionClient) Run(ctx context.Context, consume func(ctx context.C
 	g, ctx := errgroup.WithContext(ctx)
 	s.changeEventProcessors = make([]*changeEventProcessor, 0, s.config.ChangeEventProcessorNum)
 	for i := uint(0); i < s.config.ChangeEventProcessorNum; i++ {
-		processor := newChangeEventProcessor(s)
+		processor := newChangeEventProcessor(i, s)
 		g.Go(func() error { return processor.run(ctx) })
 		s.changeEventProcessors = append(s.changeEventProcessors, processor)
 	}
@@ -628,24 +670,29 @@ func (s *SubscriptionClient) doHandleError(ctx context.Context, errInfo regionEr
 			zap.Stringer("error", innerErr))
 
 		if notLeader := innerErr.GetNotLeader(); notLeader != nil {
+			metricFeedNotLeaderCounter.Inc()
 			s.regionCache.UpdateLeader(errInfo.verID, notLeader.GetLeader(), errInfo.rpcCtx.AccessIdx)
 			s.scheduleRegionRequest(ctx, errInfo.regionInfo)
 			return nil
 		}
 		if innerErr.GetEpochNotMatch() != nil {
+			metricFeedEpochNotMatchCounter.Inc()
 			s.scheduleRangeRequest(ctx, errInfo.span, errInfo.subscribedSpan)
 			return nil
 		}
 		if innerErr.GetRegionNotFound() != nil {
+			metricFeedRegionNotFoundCounter.Inc()
 			s.scheduleRangeRequest(ctx, errInfo.span, errInfo.subscribedSpan)
 			return nil
 		}
 		if innerErr.GetServerIsBusy() != nil {
+			metricKvIsBusyCounter.Inc()
 			s.scheduleRegionRequest(ctx, errInfo.regionInfo)
 			return nil
 		}
 		if duplicated := innerErr.GetDuplicateRequest(); duplicated != nil {
 			// TODO(qupeng): It's better to add a new machanism to deregister one region.
+			metricFeedDuplicateRequestCounter.Inc()
 			return errors.New("duplicate request")
 		}
 		if compatibility := innerErr.GetCompatibility(); compatibility != nil {
@@ -659,12 +706,15 @@ func (s *SubscriptionClient) doHandleError(ctx context.Context, errInfo regionEr
 			zap.Int("subscriptionClientID", int(s.id)),
 			zap.Uint64("subscriptionID", uint64(errInfo.subscribedSpan.subID)),
 			zap.Stringer("error", innerErr))
+		metricFeedUnknownErrorCounter.Inc()
 		s.scheduleRegionRequest(ctx, errInfo.regionInfo)
 		return nil
 	case *rpcCtxUnavailableErr:
+		metricFeedRPCCtxUnavailable.Inc()
 		s.scheduleRangeRequest(ctx, errInfo.span, errInfo.subscribedSpan)
 		return nil
 	case *sendRequestToStoreErr:
+		metricStoreSendRequestErr.Inc()
 		bo := tikv.NewBackoffer(ctx, tikvRequestMaxBackoff)
 		s.regionCache.OnSendFail(bo, errInfo.rpcCtx, regionScheduleReload, err)
 		s.scheduleRegionRequest(ctx, errInfo.regionInfo)
