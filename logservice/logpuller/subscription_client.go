@@ -167,7 +167,7 @@ type SubscriptionClient struct {
 	resolveLockTaskCh chan resolveLockTask
 	// errCh is used to receive region errors.
 	// The errors will be handled in `handleErrors` goroutine.
-	errCh chan regionErrorInfo
+	errCache *errCache
 
 	// used to limit the number of concurrent region incremental scan requests on a single store
 	regionScanLimiter *regionScanRequestLimiter
@@ -209,7 +209,7 @@ func NewSubscriptionClient(
 		rangeTaskCh:       make(chan rangeTask, 1024),
 		regionCh:          make(chan regionInfo, 1024),
 		resolveLockTaskCh: make(chan resolveLockTask, 1024),
-		errCh:             make(chan regionErrorInfo, 1024),
+		errCache:          newErrCache(),
 
 		regionScanLimiter: newRegionScanRequestLimiter(config.RegionIncrementalScanLimitPerStore),
 	}
@@ -304,6 +304,7 @@ func (s *SubscriptionClient) Run(ctx context.Context, consume func(ctx context.C
 	g.Go(func() error { return s.handleErrors(ctx) })
 	g.Go(func() error { return s.handleResolveLockTasks(ctx) })
 	g.Go(func() error { return s.logSlowRegions(ctx) })
+	g.Go(func() error { return s.errCache.dispatch(ctx) })
 
 	log.Info("subscription client starts", zap.Int("subscriptionClientID", int(s.id)))
 	defer log.Info("subscription client exits", zap.Int("subscriptionClientID", int(s.id)))
@@ -345,21 +346,9 @@ func (s *SubscriptionClient) onTableDrained(rt *subscribedSpan) {
 }
 
 // Note: don't block the caller, otherwise there may be deadlock
-func (s *SubscriptionClient) onRegionFail(ctx context.Context, errInfo regionErrorInfo) {
+func (s *SubscriptionClient) onRegionFail(errInfo regionErrorInfo) {
 	errInfo.regionInfo.releaseScanQuotaIfNeed(s.regionScanLimiter)
-
-	select {
-	case <-ctx.Done():
-	case s.errCh <- errInfo:
-	default:
-		log.Warn("error channel is full, start a goroutine to send the error")
-		go func() {
-			select {
-			case <-ctx.Done():
-			case s.errCh <- errInfo:
-			}
-		}()
-	}
+	s.errCache.add(errInfo)
 }
 
 // requestedStore represents a store that has been connected.
@@ -455,7 +444,7 @@ func (s *SubscriptionClient) attachRPCContextForRegion(ctx context.Context, regi
 			zap.Uint64("regionID", region.verID.GetID()),
 			zap.Error(err))
 	}
-	s.onRegionFail(ctx, newRegionErrorInfo(region, &rpcCtxUnavailableErr{verID: region.verID}))
+	s.onRegionFail(newRegionErrorInfo(region, &rpcCtxUnavailableErr{verID: region.verID}))
 	return region, false
 }
 
@@ -602,7 +591,7 @@ func (s *SubscriptionClient) handleErrors(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case errInfo := <-s.errCh:
+		case errInfo := <-s.errCache.errCh:
 			if err := s.doHandleError(ctx, errInfo); err != nil {
 				return err
 			}
@@ -885,4 +874,53 @@ func (r *regionScanRequestLimiter) release(storeID uint64, regionID uint64) {
 		delete(r.currentRequests, storeID)
 	}
 	r.cond.Signal()
+}
+
+type errCache struct {
+	sync.Mutex
+	cache  []regionErrorInfo
+	errCh  chan regionErrorInfo
+	notify chan struct{}
+}
+
+func newErrCache() *errCache {
+	return &errCache{
+		cache:  make([]regionErrorInfo, 0, 1024),
+		errCh:  make(chan regionErrorInfo, 1024),
+		notify: make(chan struct{}, 1024),
+	}
+}
+
+func (e *errCache) add(errInfo regionErrorInfo) {
+	e.Lock()
+	defer e.Unlock()
+	e.cache = append(e.cache, errInfo)
+	select {
+	case e.notify <- struct{}{}:
+	default:
+	}
+}
+
+func (e *errCache) dispatch(ctx context.Context) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	sendToErrCh := func() {
+		e.Lock()
+		defer e.Unlock()
+		if len(e.cache) == 0 {
+			return
+		}
+		errInfo := e.cache[0]
+		e.cache = e.cache[1:]
+		e.errCh <- errInfo
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			sendToErrCh()
+		case <-e.notify:
+			sendToErrCh()
+		}
+	}
 }

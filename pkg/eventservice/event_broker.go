@@ -368,6 +368,8 @@ func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage
 		err := c.msgSender.SendEvent(tMsg)
 		if err != nil {
 			log.Debug("send message failed, retry it", zap.Error(err))
+			// Wait for a while and retry to avoid the dropped message flood.
+			time.Sleep(time.Millisecond * 10)
 			continue
 		}
 		metricEventServiceSendEventDuration.Observe(time.Since(start).Seconds())
@@ -620,7 +622,6 @@ type scanTask struct {
 }
 
 type scanTaskQueue struct {
-	taskSet map[common.DispatcherID]*scanTask
 	// pendingTaskQueue is used to store the tasks that are waiting to be handled by the scan workers.
 	// The length of the pendingTaskQueue is equal to the number of the scan workers.
 	pendingTaskQueue []chan *scanTask
@@ -628,7 +629,6 @@ type scanTaskQueue struct {
 
 func newScanTaskPool() *scanTaskQueue {
 	res := &scanTaskQueue{
-		taskSet:          make(map[common.DispatcherID]*scanTask),
 		pendingTaskQueue: make([]chan *scanTask, defaultScanWorkerCount),
 	}
 	for i := 0; i < defaultScanWorkerCount; i++ {
@@ -640,20 +640,10 @@ func newScanTaskPool() *scanTaskQueue {
 // pushTask pushes a task to the pool,
 // and merge the task if the task is overlapped with the existing tasks.
 func (p *scanTaskQueue) pushTask(task *scanTask) {
-	id := task.dispatcherStat.info.GetID()
-	spanTask := p.taskSet[id]
-	// There is already a task for the dispatcher, we need to merge the task to the existing task.
-	if spanTask == nil {
-		spanTask = task
-	}
 	select {
-	case p.pendingTaskQueue[spanTask.dispatcherStat.workerIndex] <- spanTask:
-		// Send the task to the corresponding scan worker and remove it from the taskSet.
-		delete(p.taskSet, id)
+	case p.pendingTaskQueue[task.dispatcherStat.workerIndex] <- task:
 	default:
-		// The task pool is full, we just add it back
-		// to the taskSet, and it will be merged in the next round.
-		p.taskSet[id] = spanTask
+		// If the queue is full, we just drop the task
 	}
 }
 
