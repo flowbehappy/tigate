@@ -101,7 +101,7 @@ func (w *changeEventProcessor) handleSingleRegionError(ctx context.Context, stat
 	}
 	if stepsToRemoved {
 		worker.takeRegionState(SubscriptionID(state.requestID), state.getRegionID())
-		w.client.onRegionFail(ctx, newRegionErrorInfo(state.getRegionInfo(), err))
+		w.client.onRegionFail(newRegionErrorInfo(state.getRegionInfo(), err))
 	}
 }
 
@@ -282,6 +282,10 @@ func (w *changeEventProcessor) handleResolvedTs(ctx context.Context, batch resol
 }
 
 func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resolvedTsBatch) {
+	if len(batch.regions) == 0 {
+		return
+	}
+
 	for _, state := range batch.regions {
 		if state.isStale() || !state.isInitialized() {
 			continue

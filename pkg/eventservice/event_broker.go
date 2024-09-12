@@ -71,7 +71,7 @@ type eventBroker struct {
 	metricEventServicePullerResolvedTs     prometheus.Gauge
 	metricEventServiceDispatcherResolvedTs prometheus.Gauge
 	metricEventServiceResolvedTsLag        prometheus.Gauge
-	metricTaskInQueueDuration              prometheus.Observer
+	metricScanEventDuration                prometheus.Observer
 }
 
 func newEventBroker(
@@ -104,7 +104,7 @@ func newEventBroker(
 		metricEventServicePullerResolvedTs:     metrics.EventServiceResolvedTsGauge,
 		metricEventServiceResolvedTsLag:        metrics.EventServiceResolvedTsLagGauge.WithLabelValues("puller"),
 		metricEventServiceDispatcherResolvedTs: metrics.EventServiceResolvedTsLagGauge.WithLabelValues("dispatcher"),
-		metricTaskInQueueDuration:              metrics.EventServiceScanTaskInQueueDuration,
+		metricScanEventDuration:                metrics.EventServiceScanDuration,
 	}
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
@@ -159,7 +159,6 @@ func (c *eventBroker) runGenTasks(ctx context.Context) {
 				for _, stat := range s.dispatchers.m {
 					c.taskPool.pushTask(&scanTask{
 						dispatcherStat: stat,
-						createTime:     time.Now(),
 					})
 				}
 				s.dispatchers.RUnlock()
@@ -214,7 +213,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 	if !needScan {
 		return
 	}
-	c.metricTaskInQueueDuration.Observe(time.Since(task.createTime).Seconds())
+	start := time.Now()
 
 	remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
 	dispatcherID := task.dispatcherStat.info.GetID()
@@ -275,6 +274,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 		if e == nil {
 			// Send the last txnEvent to the dispatcher.
 			sendTxn(txnEvent)
+			c.metricScanEventDuration.Observe(time.Since(start).Seconds())
 			return
 		}
 		if e.CRTs < task.dispatcherStat.watermark.Load() {
@@ -368,6 +368,8 @@ func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage
 		err := c.msgSender.SendEvent(tMsg)
 		if err != nil {
 			log.Debug("send message failed, retry it", zap.Error(err))
+			// Wait for a while and retry to avoid the dropped message flood.
+			time.Sleep(time.Millisecond * 10)
 			continue
 		}
 		metricEventServiceSendEventDuration.Observe(time.Since(start).Seconds())
@@ -616,11 +618,9 @@ func (s *spanSubscription) onNewEvent(raw *common.RawKVEntry) {
 
 type scanTask struct {
 	dispatcherStat *dispatcherStat
-	createTime     time.Time
 }
 
 type scanTaskQueue struct {
-	taskSet map[common.DispatcherID]*scanTask
 	// pendingTaskQueue is used to store the tasks that are waiting to be handled by the scan workers.
 	// The length of the pendingTaskQueue is equal to the number of the scan workers.
 	pendingTaskQueue []chan *scanTask
@@ -628,7 +628,6 @@ type scanTaskQueue struct {
 
 func newScanTaskPool() *scanTaskQueue {
 	res := &scanTaskQueue{
-		taskSet:          make(map[common.DispatcherID]*scanTask),
 		pendingTaskQueue: make([]chan *scanTask, defaultScanWorkerCount),
 	}
 	for i := 0; i < defaultScanWorkerCount; i++ {
@@ -640,20 +639,10 @@ func newScanTaskPool() *scanTaskQueue {
 // pushTask pushes a task to the pool,
 // and merge the task if the task is overlapped with the existing tasks.
 func (p *scanTaskQueue) pushTask(task *scanTask) {
-	id := task.dispatcherStat.info.GetID()
-	spanTask := p.taskSet[id]
-	// There is already a task for the dispatcher, we need to merge the task to the existing task.
-	if spanTask == nil {
-		spanTask = task
-	}
 	select {
-	case p.pendingTaskQueue[spanTask.dispatcherStat.workerIndex] <- spanTask:
-		// Send the task to the corresponding scan worker and remove it from the taskSet.
-		delete(p.taskSet, id)
+	case p.pendingTaskQueue[task.dispatcherStat.workerIndex] <- task:
 	default:
-		// The task pool is full, we just add it back
-		// to the taskSet, and it will be merged in the next round.
-		p.taskSet[id] = spanTask
+		// If the queue is full, we just drop the task
 	}
 }
 

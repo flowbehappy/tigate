@@ -56,12 +56,12 @@ var (
 			Name:      "resolved_ts_lag",
 			Help:      "resolved ts lag of eventService in seconds",
 		}, []string{"type"})
-	EventServiceScanTaskInQueueDuration = prometheus.NewHistogram(
+	EventServiceScanDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_service",
-			Name:      "scan_task_in_queue_duration",
-			Help:      "The duration of scanning task in queue",
+			Name:      "scan_duration",
+			Help:      "The duration of scanning a data range from eventStore",
 			Buckets:   prometheus.DefBuckets,
 		})
 	EventServiceDispatcherGuage = prometheus.NewGaugeVec(
@@ -80,6 +80,6 @@ func InitEventServiceMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventServiceSendEventDuration)
 	registry.MustRegister(EventServiceResolvedTsGauge)
 	registry.MustRegister(EventServiceResolvedTsLagGauge)
-	registry.MustRegister(EventServiceScanTaskInQueueDuration)
+	registry.MustRegister(EventServiceScanDuration)
 	registry.MustRegister(EventServiceDispatcherGuage)
 }
