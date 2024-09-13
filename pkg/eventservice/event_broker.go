@@ -85,6 +85,7 @@ func newEventBroker(
 ) *eventBroker {
 	ctx, cancel := context.WithCancel(ctx)
 	wg := &sync.WaitGroup{}
+
 	c := &eventBroker{
 		tidbClusterID:                          id,
 		eventStore:                             eventStore,
@@ -293,6 +294,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 			}
 			txnEvent = common.NewDMLEvent(dispatcherID, tableID, e.StartTs, e.CRTs, tableInfo)
 		}
+
 		txnEvent.AppendRow(e, c.mounter.DecodeToChunk)
 	}
 }

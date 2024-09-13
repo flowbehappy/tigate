@@ -21,6 +21,7 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/metrics"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/cdcpb"
 	"github.com/pingcap/log"
@@ -68,6 +69,7 @@ type changeEventProcessor struct {
 func newChangeEventProcessor(id uint, client *SubscriptionClient) *changeEventProcessor {
 	clientID := client.id.String()
 	workerID := strconv.Itoa(int(id))
+
 	return &changeEventProcessor{
 		client:                client,
 		inputCh:               make(chan statefulEvent, 64), // 64 is an arbitrary number.
@@ -168,10 +170,10 @@ func (w *changeEventProcessor) handleEventEntry(ctx context.Context, x *cdcpb.Ev
 		zap.Uint64("subscriptionID", uint64(state.region.subscribedSpan.subID)),
 		zap.Int64("tableID", tableID),
 		zap.Int("rows", len(x.Entries.GetEntries())))
-	return handleEventEntry(x, startTs, state, emit, tableID)
+	return w.doHandle(x, startTs, state, emit, tableID)
 }
 
-func handleEventEntry(
+func (w *changeEventProcessor) doHandle(
 	x *cdcpb.Event_Entries_,
 	startTs uint64,
 	state *regionFeedState,
@@ -190,7 +192,7 @@ func handleEventEntry(
 				zap.Stringer("span", &state.region.span))
 
 			for _, cachedEvent := range state.matcher.matchCachedRow(true) {
-				revent, err := assembleRowEvent(regionID, cachedEvent)
+				revent, err := w.assembleRowEvent(regionID, cachedEvent)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -210,7 +212,7 @@ func handleEventEntry(
 				return errUnreachable
 			}
 
-			revent, err := assembleRowEvent(regionID, entry)
+			revent, err := w.assembleRowEvent(regionID, entry)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -249,7 +251,7 @@ func handleEventEntry(
 				return errUnreachable
 			}
 
-			revent, err := assembleRowEvent(regionID, entry)
+			revent, err := w.assembleRowEvent(regionID, entry)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -267,7 +269,7 @@ func handleEventEntry(
 	return nil
 }
 
-func assembleRowEvent(regionID uint64, entry *cdcpb.Event_Row) (regionFeedEvent, error) {
+func (w *changeEventProcessor) assembleRowEvent(regionID uint64, entry *cdcpb.Event_Row) (regionFeedEvent, error) {
 	var opType common.OpType
 	switch entry.GetOpType() {
 	case cdcpb.Event_Row_DELETE:
@@ -278,7 +280,7 @@ func assembleRowEvent(regionID uint64, entry *cdcpb.Event_Row) (regionFeedEvent,
 		return regionFeedEvent{}, cerror.ErrUnknownKVEventType.GenWithStackByArgs(entry.GetOpType(), entry)
 	}
 
-	revent := regionFeedEvent{
+	return regionFeedEvent{
 		RegionID: regionID,
 		Val: &common.RawKVEntry{
 			OpType:   opType,
@@ -289,9 +291,8 @@ func assembleRowEvent(regionID uint64, entry *cdcpb.Event_Row) (regionFeedEvent,
 			RegionID: regionID,
 			OldValue: entry.GetOldValue(),
 		},
-	}
+	}, nil
 
-	return revent, nil
 }
 
 func (w *changeEventProcessor) handleResolvedTs(ctx context.Context, batch resolvedTsBatch) {
