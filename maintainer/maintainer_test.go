@@ -16,6 +16,7 @@ package maintainer
 import (
 	"context"
 	"flag"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"net/http"
 	"net/http/pprof"
 	"strconv"
@@ -32,7 +33,6 @@ import (
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/flowbehappy/tigate/utils/threadpool"
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/stretchr/testify/require"
@@ -43,7 +43,7 @@ type mockDispatcherManager struct {
 	mc           messaging.MessageCenter
 	dispatchers  []*heartbeatpb.TableSpanStatus
 	msgCh        chan *messaging.TargetMessage
-	maintainerID messaging.ServerId
+	maintainerID node.ID
 	checkpointTs uint64
 	changefeedID string
 
@@ -210,9 +210,9 @@ func TestMaintainerSchedule(t *testing.T) {
 		t.Fatal(http.ListenAndServe(":8300", mux))
 	}()
 
-	node := &common.NodeInfo{ID: uuid.New().String()}
+	n := node.NewInfo("", "")
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx,
-		messaging.ServerId(node.ID), 100, config.NewDefaultMessageCenterConfig()))
+		n.ID, 100, config.NewDefaultMessageCenterConfig()))
 	appcontext.SetService(watcher.NodeManagerName, watcher.NewNodeManager(nil, nil))
 	stream := dynstream.NewDynamicStream[string, *Event, *Maintainer](NewStreamHandler())
 	stream.Start()
@@ -233,7 +233,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	taskScheduler := threadpool.NewThreadPoolDefault()
 	maintainer := NewMaintainer(cfID, &configNew.ChangeFeedInfo{
 		Config: configNew.GetDefaultReplicaConfig(),
-	}, node, stream, taskScheduler, nil, nil, 10)
+	}, n, stream, taskScheduler, nil, nil, 10)
 	_ = stream.AddPaths(dynstream.PathAndDest[string, *Maintainer]{
 		Path: cfID.ID,
 		Dest: maintainer,
@@ -265,7 +265,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	}
 	// send bootstrap message
 	maintainer.sendMessages(maintainer.bootstrapper.HandleNewNodes(
-		[]*common.NodeInfo{node},
+		[]*node.Info{n},
 	))
 	// setup period event
 	SubmitScheduledEvent(maintainer.taskScheduler, maintainer.stream, &Event{
@@ -280,5 +280,5 @@ func TestMaintainerSchedule(t *testing.T) {
 	require.Equal(t, tableSize+1,
 		maintainer.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
 	require.Equal(t, tableSize+1,
-		maintainer.scheduler.GetTaskSizeByNodeID(node.ID))
+		maintainer.scheduler.GetTaskSizeByNodeID(n.ID))
 }

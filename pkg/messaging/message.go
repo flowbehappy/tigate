@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"fmt"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"time"
 
 	"github.com/flowbehappy/tigate/eventpb"
@@ -12,8 +13,6 @@ import (
 	bf "github.com/pingcap/tiflow/pkg/binlog-filter"
 	"github.com/pingcap/tiflow/pkg/config"
 	"go.uber.org/zap"
-
-	"github.com/google/uuid"
 )
 
 type IOType int32
@@ -95,15 +94,6 @@ func (t IOType) String() string {
 
 type Bytes []byte
 
-type ServerId string
-
-func (s ServerId) String() string {
-	return string(s)
-}
-
-func NewServerId() ServerId {
-	return ServerId(uuid.New().String())
-}
 func (b *Bytes) Marshal() ([]byte, error) { return *b, nil }
 func (b *Bytes) Unmarshal(data []byte) error {
 	*b = data
@@ -235,8 +225,8 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 // TargetMessage is a wrapper of message to be sent to a target server.
 // It contains the source server id, the target server id, the message type and the message.
 type TargetMessage struct {
-	From     ServerId
-	To       ServerId
+	From     node.ID
+	To       node.ID
 	Epoch    uint64
 	Sequence uint64
 	Topic    string
@@ -246,7 +236,7 @@ type TargetMessage struct {
 }
 
 // NewSingleTargetMessage creates a new TargetMessage to be sent to a target server, with a single message.
-func NewSingleTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetMessage {
+func NewSingleTargetMessage(To node.ID, Topic string, Message IOTypeT) *TargetMessage {
 	var ioType IOType
 	switch Message.(type) {
 	case *common.DMLEvent:
@@ -300,7 +290,7 @@ func NewSingleTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetM
 
 // NewBatchTargetMessage creates a new TargetMessage to be sent to a target server, with multiple messages.
 // All messages in the batch should have the same type and topic.
-func NewBatchTargetMessage(To ServerId, Topic string, Type IOType, Messages []IOTypeT) *TargetMessage {
+func NewBatchTargetMessage(To node.ID, Topic string, Type IOType, Messages []IOTypeT) *TargetMessage {
 	return &TargetMessage{
 		To:      To,
 		Type:    Type,

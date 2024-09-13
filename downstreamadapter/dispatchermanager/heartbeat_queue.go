@@ -15,7 +15,7 @@ package dispatchermanager
 
 import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/node"
 )
 
 /*
@@ -23,7 +23,7 @@ HeartbeatRequestQueue is a channel for all event dispatcher managers to send hea
 */
 
 type HeartBeatRequestWithTargetID struct {
-	TargetID messaging.ServerId
+	TargetID node.ID
 	Request  *heartbeatpb.HeartBeatRequest
 }
 

@@ -16,6 +16,7 @@ package maintainer
 import (
 	"bytes"
 	"context"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"testing"
 	"time"
 
@@ -225,7 +226,7 @@ func TestFinishBootstrap(t *testing.T) {
 	s.SetInitialTables([]common.Table{{TableID: 1, SchemaID: 1}})
 
 	dispatcherID2 := common.NewDispatcherID()
-	stm2 := scheduler.NewStateMachine(dispatcherID2, map[model.CaptureID]scheduler.InferiorStatus{
+	stm2 := scheduler.NewStateMachine(dispatcherID2, map[node.ID]scheduler.InferiorStatus{
 		"node1": ReplicaSetStatus{
 			ID:           dispatcherID2,
 			State:        heartbeatpb.ComponentState_Working,
@@ -337,7 +338,7 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 	cached := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine](heartbeatpb.LessTableSpan)
 	for _, span := range reportedSpans {
 		dispatcherID1 := common.NewDispatcherID()
-		stm1 := scheduler.NewStateMachine(dispatcherID1, map[model.CaptureID]scheduler.InferiorStatus{
+		stm1 := scheduler.NewStateMachine(dispatcherID1, map[node.ID]scheduler.InferiorStatus{
 			"node1": ReplicaSetStatus{
 				ID:           dispatcherID1,
 				State:        heartbeatpb.ComponentState_Working,
@@ -348,7 +349,7 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 	}
 
 	ddlDispatcherID := common.NewDispatcherID()
-	ddlStm := scheduler.NewStateMachine(ddlDispatcherID, map[model.CaptureID]scheduler.InferiorStatus{
+	ddlStm := scheduler.NewStateMachine(ddlDispatcherID, map[node.ID]scheduler.InferiorStatus{
 		"node1": ReplicaSetStatus{
 			ID:           ddlDispatcherID,
 			State:        heartbeatpb.ComponentState_Working,
@@ -383,6 +384,6 @@ type mockPdAPI struct {
 	regions map[int64][]pdutil.RegionInfo
 }
 
-func (m *mockPdAPI) ScanRegions(ctx context.Context, span tablepb.Span) ([]pdutil.RegionInfo, error) {
+func (m *mockPdAPI) ScanRegions(_ context.Context, span tablepb.Span) ([]pdutil.RegionInfo, error) {
 	return m.regions[span.TableID], nil
 }

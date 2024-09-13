@@ -15,6 +15,7 @@ package coordinator
 
 import (
 	"encoding/json"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"net/url"
 	"time"
 
@@ -108,8 +109,8 @@ func (s *MaintainerStatus) GetInferiorState() heartbeatpb.ComponentState {
 	return s.State
 }
 
-func (c *changefeed) NewAddInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
-	return messaging.NewSingleTargetMessage(messaging.ServerId(server),
+func (c *changefeed) NewAddInferiorMessage(server node.ID) *messaging.TargetMessage {
+	return messaging.NewSingleTargetMessage(server,
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.AddMaintainerRequest{
 			Id:           c.ID.ID,
@@ -118,10 +119,10 @@ func (c *changefeed) NewAddInferiorMessage(server model.CaptureID) *messaging.Ta
 		})
 }
 
-func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
+func (c *changefeed) NewRemoveInferiorMessage(server node.ID) *messaging.TargetMessage {
 	cf, ok := c.coordinator.lastState.Changefeeds[c.ID]
 	cascade := !ok || cf == nil || !shouldRunChangefeed(cf.Info.State)
-	return messaging.NewSingleTargetMessage(messaging.ServerId(server),
+	return messaging.NewSingleTargetMessage(server,
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.RemoveMaintainerRequest{
 			Id:      c.ID.ID,
@@ -130,7 +131,7 @@ func (c *changefeed) NewRemoveInferiorMessage(server model.CaptureID) *messaging
 }
 
 func (c *changefeed) NewCheckpointTsMessage(ts uint64) *messaging.TargetMessage {
-	return messaging.NewSingleTargetMessage(messaging.ServerId(c.stateMachine.Primary),
+	return messaging.NewSingleTargetMessage(c.stateMachine.Primary,
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.CheckpointTsMessage{
 			ChangefeedID: c.ID.ID,

@@ -16,6 +16,7 @@ package dispatchermanagermanager
 import (
 	"context"
 	"encoding/json"
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
@@ -56,7 +57,7 @@ func (m *DispatcherManagerManager) RecvMaintainerRequest(ctx context.Context, ms
 	return nil
 }
 
-func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.ServerId, maintainerBootstrapRequest *heartbeatpb.MaintainerBootstrapRequest) error {
+func (m *DispatcherManagerManager) handleAddDispatcherManager(from node.ID, maintainerBootstrapRequest *heartbeatpb.MaintainerBootstrapRequest) error {
 	cfId := model.DefaultChangeFeedID(maintainerBootstrapRequest.ChangefeedID)
 	manager, ok := m.dispatcherManagers[cfId]
 	if !ok {
@@ -124,7 +125,7 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from messaging.Ser
 	return nil
 }
 
-func (m *DispatcherManagerManager) handleRemoveDispatcherManager(from messaging.ServerId, req *heartbeatpb.MaintainerCloseRequest) error {
+func (m *DispatcherManagerManager) handleRemoveDispatcherManager(from node.ID, req *heartbeatpb.MaintainerCloseRequest) error {
 	cfId := model.DefaultChangeFeedID(req.ChangefeedID)
 	response := &heartbeatpb.MaintainerCloseResponse{
 		ChangefeedID: req.ChangefeedID,

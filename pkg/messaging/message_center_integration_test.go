@@ -3,6 +3,7 @@ package messaging
 import (
 	"context"
 	"fmt"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"net"
 	"sync"
 	"testing"
@@ -31,7 +32,7 @@ func newMessageCenterForTest(t *testing.T, timeout time.Duration) (*messageCente
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mcConfig := config.NewDefaultMessageCenterConfig()
-	id := NewServerId()
+	id := node.NewID()
 	mc := NewMessageCenter(ctx, id, epoch, mcConfig)
 	epoch++
 	mcs := NewMessageCenterServer(mc)

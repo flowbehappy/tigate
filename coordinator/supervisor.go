@@ -14,9 +14,9 @@
 package coordinator
 
 import (
+	"github.com/flowbehappy/tigate/pkg/node"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
@@ -46,22 +46,22 @@ type Supervisor struct {
 	ID          scheduler.InferiorID
 	initialized bool
 
-	captures map[common.NodeID]*CaptureStatus
+	captures map[node.ID]*CaptureStatus
 
 	// track all status reported by remote inferiors when bootstrap
-	initStatus map[common.NodeID][]scheduler.InferiorStatus
+	initStatus map[node.ID][]scheduler.InferiorStatus
 
 	newInferior     func(id scheduler.InferiorID) scheduler.Inferior
-	newBootstrapMsg func(id common.NodeID) *messaging.TargetMessage
+	newBootstrapMsg func(id node.ID) *messaging.TargetMessage
 }
 
 type CaptureStatus struct {
 	state             CaptureState
-	capture           *common.NodeInfo
+	capture           *node.Info
 	lastBootstrapTime time.Time
 }
 
-func NewCaptureStatus(capture *common.NodeInfo) *CaptureStatus {
+func NewCaptureStatus(capture *node.Info) *CaptureStatus {
 	return &CaptureStatus{
 		state:   CaptureStateUninitialized,
 		capture: capture,
@@ -78,8 +78,8 @@ func NewSupervisor(
 		StateMachines:      make(map[scheduler.ChangefeedID]*scheduler.StateMachine),
 		RunningTasks:       make(map[scheduler.ChangefeedID]*ScheduleTask),
 		initialized:        false,
-		captures:           make(map[common.NodeID]*CaptureStatus),
-		initStatus:         make(map[common.NodeID][]scheduler.InferiorStatus),
+		captures:           make(map[node.ID]*CaptureStatus),
+		initStatus:         make(map[node.ID][]scheduler.InferiorStatus),
 		maxTaskConcurrency: 10000,
 		schedulers:         schedulers,
 		newInferior:        f,
@@ -87,7 +87,7 @@ func NewSupervisor(
 	}
 }
 
-func (s *Supervisor) GetAllCaptures() map[common.NodeID]*CaptureStatus {
+func (s *Supervisor) GetAllCaptures() map[node.ID]*CaptureStatus {
 	return s.captures
 }
 
@@ -98,9 +98,9 @@ func (s *Supervisor) GetInferiors() map[scheduler.ChangefeedID]*scheduler.StateM
 
 // HandleAliveCaptureUpdate update captures liveness.
 func (s *Supervisor) HandleAliveCaptureUpdate(
-	aliveCaptures map[common.NodeID]*common.NodeInfo,
+	aliveCaptures map[node.ID]*node.Info,
 ) ([]*messaging.TargetMessage, error) {
-	var removed []common.NodeID
+	var removed []node.ID
 	msgs := make([]*messaging.TargetMessage, 0)
 	for id, info := range aliveCaptures {
 		if _, ok := s.captures[id]; !ok {
@@ -109,7 +109,7 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 			log.Info("find a new server",
 				zap.String("ID", s.ID.String()),
 				zap.String("captureAddr", info.AdvertiseAddr),
-				zap.String("server", id))
+				zap.Any("server", id))
 		}
 	}
 
@@ -119,7 +119,7 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 			log.Info("removed a server",
 				zap.String("ID", s.ID.String()),
 				zap.String("captureAddr", capture.capture.AdvertiseAddr),
-				zap.String("server", id))
+				zap.Any("server", id))
 			delete(s.captures, id)
 
 			// Only update changes after initialization.
@@ -141,12 +141,12 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 		log.Info("all server initialized",
 			zap.String("ID", s.ID.String()),
 			zap.Int("captureCount", len(s.captures)))
-		statusMap := make(map[scheduler.InferiorID]map[common.NodeID]scheduler.InferiorStatus)
+		statusMap := make(map[scheduler.InferiorID]map[node.ID]scheduler.InferiorStatus)
 		for captureID, statuses := range s.initStatus {
 			for _, status := range statuses {
 				nodeMap, ok := statusMap[status.GetInferiorID()]
 				if !ok {
-					nodeMap = make(map[common.NodeID]scheduler.InferiorStatus)
+					nodeMap = make(map[node.ID]scheduler.InferiorStatus)
 					statusMap[status.GetInferiorID()] = nodeMap
 				}
 				nodeMap[captureID] = status
@@ -173,18 +173,18 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 
 // UpdateCaptureStatus update the server status after receive a bootstrap message from remote
 // supervisor will cache the status if the supervisor is not initialized
-func (s *Supervisor) UpdateCaptureStatus(from common.NodeID, statuses []scheduler.InferiorStatus) {
+func (s *Supervisor) UpdateCaptureStatus(from node.ID, statuses []scheduler.InferiorStatus) {
 	c, ok := s.captures[from]
 	if !ok {
 		log.Warn("server is not found",
 			zap.String("ID", s.ID.String()),
-			zap.String("server", from))
+			zap.Any("server", from))
 	}
 	if c.state == CaptureStateUninitialized {
 		c.state = CaptureStateInitialized
 		log.Info("server initialized",
 			zap.String("ID", s.ID.String()),
-			zap.String("server", c.capture.ID),
+			zap.Any("server", c.capture.ID),
 			zap.String("captureAddr", c.capture.AdvertiseAddr))
 	}
 	// scheduler is not initialized, is still collecting the remote server stauts
@@ -196,7 +196,7 @@ func (s *Supervisor) UpdateCaptureStatus(from common.NodeID, statuses []schedule
 
 // HandleStatus handles inferior status reported by Inferior
 func (s *Supervisor) HandleStatus(
-	from common.NodeID, statuses []scheduler.InferiorStatus,
+	from node.ID, statuses []scheduler.InferiorStatus,
 ) ([]*messaging.TargetMessage, error) {
 	sentMsgs := make([]*messaging.TargetMessage, 0)
 	for _, status := range statuses {
@@ -225,7 +225,7 @@ func (s *Supervisor) HandleStatus(
 
 // handleRemovedNodes handles server changes.
 func (s *Supervisor) handleRemovedNodes(
-	removed []common.NodeID,
+	removed []node.ID,
 ) ([]*messaging.TargetMessage, error) {
 	sentMsgs := make([]*messaging.TargetMessage, 0)
 	if len(removed) > 0 {

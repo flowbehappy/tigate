@@ -16,6 +16,7 @@ package maintainer
 import (
 	"context"
 	"encoding/json"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"net"
 	"testing"
 	"time"
@@ -30,7 +31,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
-	"github.com/google/uuid"
 	"github.com/pingcap/tiflow/cdc/model"
 	config2 "github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
@@ -43,7 +43,7 @@ import (
 func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
-	selfNode := &common.NodeInfo{ID: uuid.New().String(), AdvertiseAddr: "127.0.0.1:8300"}
+	selfNode := node.NewInfo("127.0.0.1:8300", "")
 	nodeManager := watcher.NewNodeManager(nil, nil)
 	appcontext.SetService(watcher.NodeManagerName, nodeManager)
 	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode
@@ -53,8 +53,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 			{SchemaID: 1, TableID: 1}, {SchemaID: 1, TableID: 2}, {SchemaID: 1, TableID: 3}},
 	}
 	appcontext.SetService(appcontext.SchemaStore, store)
-	mc := messaging.NewMessageCenter(ctx,
-		messaging.ServerId(selfNode.ID), 0, config.NewDefaultMessageCenterConfig())
+	mc := messaging.NewMessageCenter(ctx, selfNode.ID, 0, config.NewDefaultMessageCenterConfig())
 	appcontext.SetService(appcontext.MessageCenter, mc)
 	startDispatcherNode(ctx, selfNode, mc, nodeManager)
 	nodeManager.RegisterNodeChangeHandler(appcontext.MessageCenter, mc.OnNodeChanges)
@@ -63,7 +62,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 		return nil
 	})
 	manager := NewMaintainerManager(selfNode, nil, nil)
-	msg := messaging.NewSingleTargetMessage(messaging.ServerId(selfNode.ID),
+	msg := messaging.NewSingleTargetMessage(selfNode.ID,
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.CoordinatorBootstrapRequest{Version: 1})
 	msg.From = msg.To
@@ -81,7 +80,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	}
 	data, err := json.Marshal(cfConfig)
 	require.NoError(t, err)
-	_ = mc.SendCommand(messaging.NewSingleTargetMessage(messaging.ServerId(selfNode.ID),
+	_ = mc.SendCommand(messaging.NewSingleTargetMessage(selfNode.ID,
 		messaging.MaintainerManagerTopic, &heartbeatpb.AddMaintainerRequest{
 			Id:           "test",
 			Config:       data,
@@ -98,12 +97,15 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 		maintainer.scheduler.GetTaskSizeByNodeID(selfNode.ID))
 
 	// add 2 new node
-	node2 := &common.NodeInfo{ID: uuid.New().String(), AdvertiseAddr: "127.0.0.1:8400"}
-	mc2 := messaging.NewMessageCenter(ctx, messaging.ServerId(node2.ID), 0, config.NewDefaultMessageCenterConfig())
-	node3 := &common.NodeInfo{ID: uuid.New().String(), AdvertiseAddr: "127.0.0.1:8500"}
-	mc3 := messaging.NewMessageCenter(ctx, messaging.ServerId(node3.ID), 0, config.NewDefaultMessageCenterConfig())
-	node4 := &common.NodeInfo{ID: uuid.New().String(), AdvertiseAddr: "127.0.0.1:8600"}
-	mc4 := messaging.NewMessageCenter(ctx, messaging.ServerId(node4.ID), 0, config.NewDefaultMessageCenterConfig())
+	node2 := node.NewInfo("127.0.0.1:8400", "")
+	mc2 := messaging.NewMessageCenter(ctx, node2.ID, 0, config.NewDefaultMessageCenterConfig())
+
+	node3 := node.NewInfo("127.0.0.1:8500", "")
+	mc3 := messaging.NewMessageCenter(ctx, node3.ID, 0, config.NewDefaultMessageCenterConfig())
+
+	node4 := node.NewInfo("127.0.0.1:8600", "")
+	mc4 := messaging.NewMessageCenter(ctx, node4.ID, 0, config.NewDefaultMessageCenterConfig())
+
 	startDispatcherNode(ctx, node2, mc2, nodeManager)
 	dn3 := startDispatcherNode(ctx, node3, mc3, nodeManager)
 	dn4 := startDispatcherNode(ctx, node4, mc4, nodeManager)
@@ -113,10 +115,10 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	// notify node changes
 	_, _ = nodeManager.Tick(ctx, &orchestrator.GlobalReactorState{
 		Captures: map[model.CaptureID]*model.CaptureInfo{
-			selfNode.ID: {ID: selfNode.ID, AdvertiseAddr: selfNode.AdvertiseAddr},
-			node2.ID:    {ID: node2.ID, AdvertiseAddr: node2.AdvertiseAddr},
-			node3.ID:    {ID: node3.ID, AdvertiseAddr: node3.AdvertiseAddr},
-			node4.ID:    {ID: node4.ID, AdvertiseAddr: node4.AdvertiseAddr},
+			model.CaptureID(selfNode.ID): {ID: model.CaptureID(selfNode.ID), AdvertiseAddr: selfNode.AdvertiseAddr},
+			model.CaptureID(node2.ID):    {ID: model.CaptureID(node2.ID), AdvertiseAddr: node2.AdvertiseAddr},
+			model.CaptureID(node3.ID):    {ID: model.CaptureID(node3.ID), AdvertiseAddr: node3.AdvertiseAddr},
+			model.CaptureID(node4.ID):    {ID: model.CaptureID(node4.ID), AdvertiseAddr: node4.AdvertiseAddr},
 		}})
 
 	time.Sleep(5 * time.Second)
@@ -136,8 +138,8 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	dn4.stop()
 	_, _ = nodeManager.Tick(ctx, &orchestrator.GlobalReactorState{
 		Captures: map[model.CaptureID]*model.CaptureInfo{
-			selfNode.ID: {ID: selfNode.ID, AdvertiseAddr: selfNode.AdvertiseAddr},
-			node2.ID:    {ID: node2.ID, AdvertiseAddr: node2.AdvertiseAddr},
+			model.CaptureID(selfNode.ID): {ID: model.CaptureID(selfNode.ID), AdvertiseAddr: selfNode.AdvertiseAddr},
+			model.CaptureID(node2.ID):    {ID: model.CaptureID(node2.ID), AdvertiseAddr: node2.AdvertiseAddr},
 		}})
 	time.Sleep(5 * time.Second)
 	require.Equal(t, 4,
@@ -148,7 +150,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 		maintainer.scheduler.GetTaskSizeByNodeID(node2.ID))
 
 	//close maintainer
-	err = mc.SendCommand(messaging.NewSingleTargetMessage(messaging.ServerId(selfNode.ID), messaging.MaintainerManagerTopic,
+	err = mc.SendCommand(messaging.NewSingleTargetMessage(selfNode.ID, messaging.MaintainerManagerTopic,
 		&heartbeatpb.RemoveMaintainerRequest{Id: cfID.ID, Cascade: true}))
 	require.NoError(t, err)
 	time.Sleep(2 * time.Second)
@@ -162,7 +164,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
-	selfNode := &common.NodeInfo{ID: uuid.New().String(), AdvertiseAddr: "127.0.0.1:8300"}
+	selfNode := node.NewInfo("127.0.0.1:8300", "")
 	nodeManager := watcher.NewNodeManager(nil, nil)
 	appcontext.SetService(watcher.NodeManagerName, nodeManager)
 	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode
@@ -172,8 +174,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 			{SchemaID: 1, TableID: 1}, {SchemaID: 1, TableID: 2}, {SchemaID: 1, TableID: 3}},
 	}
 	appcontext.SetService(appcontext.SchemaStore, store)
-	mc := messaging.NewMessageCenter(ctx,
-		messaging.ServerId(selfNode.ID), 0, config.NewDefaultMessageCenterConfig())
+	mc := messaging.NewMessageCenter(ctx, selfNode.ID, 0, config.NewDefaultMessageCenterConfig())
 	appcontext.SetService(appcontext.MessageCenter, mc)
 	startDispatcherNode(ctx, selfNode, mc, nodeManager)
 	nodeManager.RegisterNodeChangeHandler(appcontext.MessageCenter, mc.OnNodeChanges)
@@ -182,7 +183,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 		return nil
 	})
 	manager := NewMaintainerManager(selfNode, nil, nil)
-	msg := messaging.NewSingleTargetMessage(messaging.ServerId(selfNode.ID),
+	msg := messaging.NewSingleTargetMessage(selfNode.ID,
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.CoordinatorBootstrapRequest{Version: 1})
 	msg.From = msg.To
@@ -223,7 +224,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	}
 	data, err := json.Marshal(cfConfig)
 	require.NoError(t, err)
-	_ = mc.SendCommand(messaging.NewSingleTargetMessage(messaging.ServerId(selfNode.ID),
+	_ = mc.SendCommand(messaging.NewSingleTargetMessage(selfNode.ID,
 		messaging.MaintainerManagerTopic, &heartbeatpb.AddMaintainerRequest{
 			Id:           cfID.ID,
 			Config:       data,
@@ -279,7 +280,7 @@ func (d *dispatcherNode) stop() {
 }
 
 func startDispatcherNode(ctx context.Context,
-	node *common.NodeInfo, mc messaging.MessageCenter, nodeManager *watcher.NodeManager) *dispatcherNode {
+	node *node.Info, mc messaging.MessageCenter, nodeManager *watcher.NodeManager) *dispatcherNode {
 	nodeManager.RegisterNodeChangeHandler(node.ID, mc.OnNodeChanges)
 	ctx, cancel := context.WithCancel(ctx)
 	dispManager := MockDispatcherManager(mc)

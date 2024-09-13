@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"net/http"
 	"net/http/pprof"
 	"strconv"
@@ -26,7 +27,6 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
@@ -55,7 +55,7 @@ type mockMaintainerManager struct {
 	mc                 messaging.MessageCenter
 	msgCh              chan *messaging.TargetMessage
 	coordinatorVersion int64
-	coordinatorID      messaging.ServerId
+	coordinatorID      node.ID
 	maintainers        sync.Map
 }
 
@@ -239,11 +239,11 @@ func TestCoordinatorScheduling(t *testing.T) {
 	}()
 
 	ctx := context.Background()
-	node := &common.NodeInfo{ID: uuid.New().String()}
+	node := &node.Info{ID: uuid.New().String()}
 	etcdClient := mock_etcd.NewMockCDCEtcdClient(gomock.NewController(t))
 	etcdClient.EXPECT().GetGCServiceID().Return("default").AnyTimes()
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx,
-		messaging.ServerId(node.ID), 100, config.NewDefaultMessageCenterConfig()))
+		node.ID(node.ID), 100, config.NewDefaultMessageCenterConfig()))
 	m := NewMaintainerManager()
 	go m.Run(ctx)
 

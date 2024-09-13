@@ -16,10 +16,10 @@ package maintainer
 import (
 	"context"
 	"encoding/json"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/common"
 	configNew "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/tiflow/pkg/pdutil"
@@ -44,10 +44,10 @@ type Manager struct {
 
 	maintainers sync.Map
 
-	coordinatorID      messaging.ServerId
+	coordinatorID      node.ID
 	coordinatorVersion int64
 
-	selfNode    *common.NodeInfo
+	selfNode    *node.Info
 	pdapi       pdutil.PDAPIClient
 	regionCache *tikv.RegionCache
 
@@ -61,7 +61,7 @@ type Manager struct {
 // 1. manager receives bootstrap command from coordinator
 // 2. manager manages maintainer lifetime
 // 3. manager report maintainer status to coordinator
-func NewMaintainerManager(selfNode *common.NodeInfo,
+func NewMaintainerManager(selfNode *node.Info,
 	pdapi pdutil.PDAPIClient,
 	regionCache *tikv.RegionCache) *Manager {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
@@ -244,6 +244,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 			eventType:    EventMessage,
 			message:      msg,
 		}
+	default:
 	}
 	return ""
 }
@@ -285,6 +286,7 @@ func (m *Manager) handleMessage(msg *messaging.TargetMessage) {
 				m.sendMessages(response)
 			}
 		}
+	default:
 	}
 }
 

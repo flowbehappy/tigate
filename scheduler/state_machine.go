@@ -15,6 +15,7 @@ package scheduler
 
 import (
 	"fmt"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -58,9 +59,9 @@ type StateMachine struct {
 	ID    InferiorID
 	State SchedulerStatus
 	// Primary is the server ID that is currently running the inferior.
-	Primary model.CaptureID
+	Primary node.ID
 	// Primary is the server ID that is this inferior should be moved to
-	Secondary model.CaptureID
+	Secondary node.ID
 
 	// Inferior handles the real logic
 	Inferior Inferior
@@ -72,7 +73,7 @@ type StateMachine struct {
 // it could be called after a scheduler is bootstrapped
 func NewStateMachine(
 	id InferiorID,
-	inferiorStatus map[model.CaptureID]InferiorStatus,
+	inferiorStatus map[node.ID]InferiorStatus,
 	inferior Inferior,
 ) *StateMachine {
 	sm := &StateMachine{
@@ -91,7 +92,7 @@ func NewStateMachine(
 					zap.Any("status", inferiorStatus),
 					zap.Error(sm.multiplePrimaryError(
 						status, captureID, "multiple primary",
-						zap.String("primary", sm.Primary))))
+						zap.Any("primary", sm.Primary))))
 			}
 			sm.Primary = captureID
 		case heartbeatpb.ComponentState_Absent,
@@ -134,10 +135,10 @@ func (s *StateMachine) inconsistentError(
 }
 
 func (s *StateMachine) multiplePrimaryError(
-	input InferiorStatus, captureID model.CaptureID, msg string, fields ...zap.Field,
+	input InferiorStatus, node node.ID, msg string, fields ...zap.Field,
 ) error {
 	fields = append(fields, []zap.Field{
-		zap.String("captureID", captureID),
+		zap.Any("node", node),
 		zap.String("state", input.GetInferiorState().String()),
 		zap.String("statemachine", s.ID.String()),
 	}...)
@@ -147,9 +148,9 @@ func (s *StateMachine) multiplePrimaryError(
 
 // HandleInferiorStatus transit state based on input and the current state.
 func (s *StateMachine) HandleInferiorStatus(
-	input InferiorStatus, captureID model.CaptureID,
+	input InferiorStatus, id node.ID,
 ) *messaging.TargetMessage {
-	if s.Primary != captureID {
+	if s.Primary != id {
 		return nil
 	}
 
@@ -157,21 +158,21 @@ func (s *StateMachine) HandleInferiorStatus(
 	var msg *messaging.TargetMessage
 	switch s.State {
 	case SchedulerStatusCommiting:
-		s.pollOnCommit(input, captureID)
+		s.pollOnCommit(input, id)
 	case SchedulerStatusWorking:
-		s.pollOnWorking(input, captureID)
+		s.pollOnWorking(input, id)
 	case SchedulerStatusRemoving:
-		msg = s.pollOnRemoving(input, captureID)
+		msg = s.pollOnRemoving(input, id)
 	default:
 		log.Panic("state unknown",
-			zap.String("captureID", captureID),
+			zap.Any("id", id),
 			zap.Any("status", input),
 			zap.Any("stm", s))
 	}
 	if oldState != s.State {
 		log.Info("state transition, poll",
 			zap.String("status", input.GetInferiorID().String()),
-			zap.String("captureID", captureID),
+			zap.Any("captureID", id),
 			zap.Stringer("old", oldState),
 			zap.Stringer("new", s.State))
 	}
@@ -179,7 +180,7 @@ func (s *StateMachine) HandleInferiorStatus(
 }
 
 func (s *StateMachine) pollOnCommit(
-	input InferiorStatus, captureID model.CaptureID,
+	input InferiorStatus, id node.ID,
 ) {
 	switch input.GetInferiorState() {
 	case heartbeatpb.ComponentState_Stopped, heartbeatpb.ComponentState_Absent:
@@ -188,7 +189,7 @@ func (s *StateMachine) pollOnCommit(
 		// primary is stopped and there is no secondary, transit to Absent.
 		log.Info("primary is stopped during Commit",
 			zap.String("status", input.GetInferiorID().String()),
-			zap.String("captureID", captureID),
+			zap.Any("id", id),
 			zap.String("statemachine", s.ID.String()))
 		s.State = SchedulerStatusAbsent
 	case heartbeatpb.ComponentState_Working:
@@ -200,13 +201,13 @@ func (s *StateMachine) pollOnCommit(
 	default:
 		log.Warn("ignore input, unexpected state",
 			zap.String("status", input.GetInferiorID().String()),
-			zap.String("captureID", captureID),
+			zap.Any("id", id),
 			zap.String("statemachine", s.ID.String()))
 	}
 }
 
 func (s *StateMachine) pollOnWorking(
-	input InferiorStatus, captureID model.CaptureID,
+	input InferiorStatus, id node.ID,
 ) {
 	switch input.GetInferiorState() {
 	case heartbeatpb.ComponentState_Working:
@@ -218,14 +219,14 @@ func (s *StateMachine) pollOnWorking(
 	default:
 		log.Warn("ignore input, unexpected state",
 			zap.String("status", input.GetInferiorID().String()),
-			zap.String("captureID", captureID),
+			zap.Any("id", id),
 			zap.String("statemachine", s.ID.String()))
 	}
 }
 
 //nolint:unparam
 func (s *StateMachine) pollOnRemoving(
-	input InferiorStatus, captureID model.CaptureID,
+	input InferiorStatus, id node.ID,
 ) *messaging.TargetMessage {
 	switch input.GetInferiorState() {
 	case heartbeatpb.ComponentState_Working:
@@ -245,27 +246,27 @@ func (s *StateMachine) pollOnRemoving(
 	}
 	log.Warn("ignore input, unexpected  state",
 		zap.String("status", input.GetInferiorID().String()),
-		zap.String("captureID", captureID),
+		zap.Any("id", id),
 		zap.String("statemachine", s.ID.String()))
 	return nil
 }
 
 func (s *StateMachine) HandleAddInferior(
-	captureID model.CaptureID,
+	id node.ID,
 ) *messaging.TargetMessage {
 	// Ignore add inferior if it's not in Absent state.
 	if s.State != SchedulerStatusAbsent {
 		log.Warn("add inferior is ignored",
-			zap.String("captureID", captureID),
+			zap.Any("id", id),
 			zap.String("statemachine", s.ID.String()))
 		return nil
 	}
-	s.Primary = captureID
+	s.Primary = id
 	oldState := s.State
 	s.State = SchedulerStatusCommiting
 
-	log.Info("state transition, add ingferior",
-		zap.String("captureID", captureID),
+	log.Info("state transition, add inferior",
+		zap.Any("id", id),
 		zap.String("statemachine", s.ID.String()),
 		zap.Stringer("old", oldState),
 		zap.Stringer("new", s.State))
@@ -273,7 +274,7 @@ func (s *StateMachine) HandleAddInferior(
 }
 
 func (s *StateMachine) HandleMoveInferior(
-	dest model.CaptureID,
+	dest node.ID,
 ) *messaging.TargetMessage {
 	// Ignore move inferior if it has been removed already.
 	if s.HasRemoved() {
@@ -324,9 +325,9 @@ func (s *StateMachine) HandleRemoveInferior() *messaging.TargetMessage {
 // Besides returning messages and errors, it also returns a bool to indicate
 // whether s is affected by the server shutdown.
 func (s *StateMachine) HandleCaptureShutdown(
-	captureID model.CaptureID,
+	id node.ID,
 ) (*messaging.TargetMessage, bool) {
-	if s.Primary != captureID && s.Secondary != captureID {
+	if s.Primary != id && s.Secondary != id {
 		return nil, false
 	}
 	oldState := s.State
@@ -344,7 +345,7 @@ func (s *StateMachine) HandleCaptureShutdown(
 			s.Primary = ""
 			s.State = SchedulerStatusAbsent
 		} else {
-			if s.Secondary == captureID {
+			if s.Secondary == id {
 				// destination capture is stopped during moving, clear secondary node
 				s.Secondary = ""
 				// move to working state, so we received a stopped status we can reschedule it
@@ -358,7 +359,7 @@ func (s *StateMachine) HandleCaptureShutdown(
 	}
 	log.Info("state transition, server shutdown",
 		zap.String("statemachine", s.ID.String()),
-		zap.String("captureID", captureID),
+		zap.Any("id", id),
 		zap.Stringer("old", oldState),
 		zap.Stringer("new", s.State))
 	return msg, true

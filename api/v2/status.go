@@ -44,7 +44,7 @@ func (h *OpenAPIV2) serverStatus(c *gin.Context) {
 		Version:   version.ReleaseVersion,
 		GitHash:   version.GitHash,
 		Pid:       os.Getpid(),
-		ID:        info.ID,
+		ID:        string(info.ID),
 		ClusterID: etcdClient.GetClusterID(),
 		IsOwner:   h.server.IsCoordinator(),
 		Liveness:  h.server.Liveness(),

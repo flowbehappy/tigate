@@ -14,6 +14,7 @@
 package coordinator
 
 import (
+	"github.com/flowbehappy/tigate/pkg/node"
 	"math"
 	"math/rand"
 	"sort"
@@ -21,7 +22,6 @@ import (
 
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
@@ -61,8 +61,8 @@ func (b *balanceScheduler) Name() string {
 }
 
 func (b *balanceScheduler) Schedule(
-	allInferiors map[scheduler.ChangefeedID]scheduler.Inferior,
-	aliveCaptures map[model.CaptureID]*CaptureStatus,
+	_ map[scheduler.ChangefeedID]scheduler.Inferior,
+	aliveCaptures map[node.ID]*CaptureStatus,
 	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
 	batchSize int,
 ) []*ScheduleTask {
@@ -91,7 +91,7 @@ func (b *balanceScheduler) Schedule(
 
 func buildBalanceMoveTables(
 	random *rand.Rand,
-	aliveCaptures map[model.CaptureID]*CaptureStatus,
+	aliveCaptures map[node.ID]*CaptureStatus,
 	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
 	maxTaskConcurrency int,
 ) []*ScheduleTask {
@@ -108,11 +108,11 @@ func buildBalanceMoveTables(
 
 func newBalanceMoveTables(
 	random *rand.Rand,
-	aliveCaptures map[model.CaptureID]*CaptureStatus,
+	aliveCaptures map[node.ID]*CaptureStatus,
 	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
 	maxTaskLimit int,
 ) []*MoveInferior {
-	tablesPerCapture := make(map[model.CaptureID]map[scheduler.ChangefeedID]*scheduler.StateMachine)
+	tablesPerCapture := make(map[node.ID]map[scheduler.ChangefeedID]*scheduler.StateMachine)
 	for captureID := range aliveCaptures {
 		tablesPerCapture[captureID] = make(map[scheduler.ChangefeedID]*scheduler.StateMachine)
 	}
@@ -168,14 +168,14 @@ func newBalanceMoveTables(
 		return nil
 	}
 
-	captureWorkload := make(map[model.CaptureID]int)
+	captureWorkload := make(map[node.ID]int)
 	for captureID, ts := range tablesPerCapture {
 		captureWorkload[captureID] = randomizeWorkload(random, len(ts))
 	}
 	// for each victim table, find the target for it
 	moveTables := make([]*MoveInferior, 0, len(victims))
 	for idx, cf := range victims {
-		target := ""
+		var target node.ID
 		minWorkload := math.MaxInt64
 
 		for captureID, workload := range captureWorkload {

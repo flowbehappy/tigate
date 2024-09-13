@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -96,7 +95,7 @@ func ForwardToOwner(c *gin.Context, server node.Server) {
 		return
 	}
 
-	var node *common.NodeInfo
+	var node *node.Info
 	// get coordinator info
 	node, err = server.GetCoordinatorInfo(ctx)
 	if err != nil {
@@ -108,7 +107,7 @@ func ForwardToOwner(c *gin.Context, server node.Server) {
 }
 
 // ForwardToServer forward request to another
-func ForwardToServer(c *gin.Context, fromID, toAddr string) {
+func ForwardToServer(c *gin.Context, fromID node.ID, toAddr string) {
 	ctx := c.Request.Context()
 
 	timeStr := c.GetHeader(forwardTimes)
@@ -154,11 +153,11 @@ func ForwardToServer(c *gin.Context, fromID, toAddr string) {
 	log.Info("forwarding request to server",
 		zap.String("url", c.Request.RequestURI),
 		zap.String("method", c.Request.Method),
-		zap.String("fromID", fromID),
+		zap.Any("fromID", fromID),
 		zap.String("toAddr", toAddr),
 		zap.String("forwardTimes", timeStr))
 
-	req.Header.Add(forwardFrom, fromID)
+	req.Header.Add(forwardFrom, string(fromID))
 	lastForwardTimes++
 	req.Header.Add(forwardTimes, strconv.Itoa(int(lastForwardTimes)))
 	// forward toAddr owner

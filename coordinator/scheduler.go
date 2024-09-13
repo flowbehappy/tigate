@@ -14,12 +14,12 @@
 package coordinator
 
 import (
+	"github.com/flowbehappy/tigate/pkg/node"
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
@@ -28,7 +28,7 @@ type Scheduler interface {
 	Name() string
 	Schedule(
 		allInferiors map[scheduler.ChangefeedID]scheduler.Inferior,
-		aliveCaptures map[model.CaptureID]*CaptureStatus,
+		aliveCaptures map[node.ID]*CaptureStatus,
 		stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
 		batchSize int,
 	) []*ScheduleTask
@@ -37,7 +37,7 @@ type Scheduler interface {
 // Schedule generates schedule tasks based on the inputs.
 func (s *Supervisor) schedule(
 	allInferiors map[scheduler.ChangefeedID]scheduler.Inferior,
-	aliveCaptures map[model.CaptureID]*CaptureStatus,
+	aliveCaptures map[node.ID]*CaptureStatus,
 	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
 	batchSize int,
 ) []*ScheduleTask {

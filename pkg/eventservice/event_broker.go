@@ -2,6 +2,7 @@ package eventservice
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"hash/crc32"
 	"strconv"
 	"sync"
@@ -59,7 +60,7 @@ type eventBroker struct {
 	// messageCh is used to receive message from the scanWorker,
 	// and a goroutine is responsible for sending the message to the dispatchers.
 	messageCh        chan wrapEvent
-	resolvedTsCaches map[messaging.ServerId]*resolvedTsCache
+	resolvedTsCaches map[node.ID]*resolvedTsCache
 	notifyCh         chan *spanSubscription
 
 	// wg is used to spawn the goroutines.
@@ -97,7 +98,7 @@ func newEventBroker(
 		taskPool:                               newScanTaskPool(),
 		scanWorkerCount:                        defaultScanWorkerCount,
 		messageCh:                              make(chan wrapEvent, defaultChannelSize),
-		resolvedTsCaches:                       make(map[messaging.ServerId]*resolvedTsCache),
+		resolvedTsCaches:                       make(map[node.ID]*resolvedTsCache),
 		cancel:                                 cancel,
 		wg:                                     wg,
 		metricDispatcherCount:                  metrics.EventServiceDispatcherGuage.WithLabelValues(strconv.FormatUint(id, 10)),
@@ -115,13 +116,13 @@ func newEventBroker(
 }
 
 func (c *eventBroker) sendWatermark(
-	serverID messaging.ServerId,
+	server node.ID,
 	dispatcherID common.DispatcherID,
 	watermark uint64,
 	counter prometheus.Counter,
 ) {
 	c.messageCh <- newWrapResolvedEvent(
-		serverID,
+		server,
 		common.ResolvedEvent{
 			DispatcherID: dispatcherID,
 			ResolvedTs:   watermark})
@@ -183,7 +184,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 				c.tableTriggerDispatchers.Range(func(key, value interface{}) bool {
 					dispatcher := value.(*dispatcherStat)
 					startTs := dispatcher.watermark.Load()
-					remoteID := messaging.ServerId(dispatcher.info.GetServerID())
+					remoteID := node.ID(dispatcher.info.GetServerID())
 					// TODO: maybe limit 1 is enough.
 					ddlEvents, endTs, err := c.schemaStore.GetNextTableTriggerEvents(dispatcher.filter, startTs, 10)
 					if err != nil {
@@ -202,7 +203,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 	}()
 }
 
-func (c *eventBroker) sendDDL(remoteID messaging.ServerId, e common.DDLEvent, d *dispatcherStat) {
+func (c *eventBroker) sendDDL(remoteID node.ID, e common.DDLEvent, d *dispatcherStat) {
 	c.messageCh <- newWrapDDLEvent(remoteID, &e)
 	d.metricEventServiceSendDDLCount.Inc()
 }
@@ -215,7 +216,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 	}
 	start := time.Now()
 
-	remoteID := messaging.ServerId(task.dispatcherStat.info.GetServerID())
+	remoteID := node.ID(task.dispatcherStat.info.GetServerID())
 	dispatcherID := task.dispatcherStat.info.GetID()
 	ddlEvents, endTs, err := c.schemaStore.GetNextDDLEvents(dataRange.Span.TableID, dataRange.StartTs, dataRange.EndTs)
 	if err != nil {
@@ -341,7 +342,7 @@ func (c *eventBroker) handleResolvedTs(ctx context.Context, m wrapEvent) {
 	}
 }
 
-func (c *eventBroker) flushResolvedTs(ctx context.Context, serverID messaging.ServerId) {
+func (c *eventBroker) flushResolvedTs(ctx context.Context, serverID node.ID) {
 	cache, ok := c.resolvedTsCaches[serverID]
 	if !ok || cache.len == 0 {
 		return
@@ -651,12 +652,12 @@ func (p *scanTaskQueue) popTask(chanIndex int) <-chan *scanTask {
 }
 
 type wrapEvent struct {
-	serverID messaging.ServerId
+	serverID node.ID
 	e        messaging.IOTypeT
 	msgType  int
 }
 
-func newWrapTxnEvent(serverID messaging.ServerId, e *common.DMLEvent) wrapEvent {
+func newWrapTxnEvent(serverID node.ID, e *common.DMLEvent) wrapEvent {
 	return wrapEvent{
 		serverID: serverID,
 		e:        e,
@@ -664,7 +665,7 @@ func newWrapTxnEvent(serverID messaging.ServerId, e *common.DMLEvent) wrapEvent 
 	}
 }
 
-func newWrapResolvedEvent(serverID messaging.ServerId, e common.ResolvedEvent) wrapEvent {
+func newWrapResolvedEvent(serverID node.ID, e common.ResolvedEvent) wrapEvent {
 	return wrapEvent{
 		serverID: serverID,
 		e:        &e,
@@ -672,7 +673,7 @@ func newWrapResolvedEvent(serverID messaging.ServerId, e common.ResolvedEvent) w
 	}
 }
 
-func newWrapDDLEvent(serverID messaging.ServerId, e *common.DDLEvent) wrapEvent {
+func newWrapDDLEvent(serverID node.ID, e *common.DDLEvent) wrapEvent {
 	return wrapEvent{
 		serverID: serverID,
 		e:        e,

@@ -27,7 +27,7 @@ const totalCount = 500
 const dispatcherCount = 100000
 const databaseCount = 1
 
-func initContext(serverId messaging.ServerId) {
+func initContext(serverId node.ID) {
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(context.Background(), serverId, 100, config.NewDefaultMessageCenterConfig()))
 	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, serverId)) // 100GB for demo
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(serverId))
@@ -86,7 +86,7 @@ func TestDownstream(t *testing.T) {
 	}()
 	//createTables(dispatcherCount/100, databaseCount)
 
-	serverId := messaging.ServerId("test")
+	serverId := node.ID("test")
 	initContext(serverId)
 
 	var wg sync.WaitGroup

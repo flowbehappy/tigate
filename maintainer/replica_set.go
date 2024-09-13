@@ -17,6 +17,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/tiflow/cdc/model"
 )
@@ -55,8 +56,8 @@ func (r *ReplicaSet) UpdateStatus(status scheduler.InferiorStatus) {
 	}
 }
 
-func (r *ReplicaSet) NewAddInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
-	return messaging.NewSingleTargetMessage(messaging.ServerId(server),
+func (r *ReplicaSet) NewAddInferiorMessage(server node.ID) *messaging.TargetMessage {
+	return messaging.NewSingleTargetMessage(server,
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{
 			ChangefeedID: r.ChangefeedID.ID,
@@ -73,8 +74,8 @@ func (r *ReplicaSet) NewAddInferiorMessage(server model.CaptureID) *messaging.Ta
 		})
 }
 
-func (r *ReplicaSet) NewRemoveInferiorMessage(server model.CaptureID) *messaging.TargetMessage {
-	return messaging.NewSingleTargetMessage(messaging.ServerId(server),
+func (r *ReplicaSet) NewRemoveInferiorMessage(server node.ID) *messaging.TargetMessage {
+	return messaging.NewSingleTargetMessage(server,
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{
 			ChangefeedID: r.ChangefeedID.ID,

@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,13 +25,11 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
-	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 
 	"github.com/dustin/go-humanize"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/version"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
@@ -146,20 +145,12 @@ func (c *server) prepare(ctx context.Context) error {
 		deployPath = ""
 	}
 	// TODO: Get id from disk after restart.
-	id := messaging.NewServerId()
-	c.info = &common.NodeInfo{
-		ID:             id.String(),
-		AdvertiseAddr:  conf.AdvertiseAddr,
-		Version:        version.ReleaseVersion,
-		GitHash:        version.GitHash,
-		DeployPath:     deployPath,
-		StartTimestamp: time.Now().Unix(),
-	}
+	c.info = node.NewInfo(conf.AdvertiseAddr, deployPath)
 	c.session = session
 
-	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, id, c.info.Epoch, config.NewDefaultMessageCenterConfig()))
-	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, id)) // 100GB for demo
-	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(id))
+	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, c.info.ID, c.info.Epoch, config.NewDefaultMessageCenterConfig()))
+	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, c.info.ID)) // 100GB for demo
+	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(c.info.ID))
 
 	c.dispatcherManagerManager = dispatchermanagermanager.NewDispatcherManagerManager()
 	return nil
@@ -222,7 +213,7 @@ func (c *server) setUpDir() {
 // registerNodeToEtcd the server by put the server's information in etcd
 func (c *server) registerNodeToEtcd(ctx context.Context) error {
 	cInfo := &model.CaptureInfo{
-		ID:             c.info.ID,
+		ID:             model.CaptureID(c.info.ID),
 		AdvertiseAddr:  c.info.AdvertiseAddr,
 		Version:        c.info.Version,
 		GitHash:        c.info.GitHash,

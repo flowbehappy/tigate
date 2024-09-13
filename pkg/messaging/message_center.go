@@ -3,10 +3,10 @@ package messaging
 import (
 	"context"
 	"fmt"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 
 	"github.com/flowbehappy/tigate/pkg/apperror"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
 	"github.com/flowbehappy/tigate/pkg/metrics"
@@ -22,7 +22,7 @@ type MessageCenter interface {
 	MessageSender
 	MessageReceiver
 	// OnNodeChanges is called when the nodes in the cluster are changed. The message center should update the target list.
-	OnNodeChanges(map[common.NodeID]*common.NodeInfo)
+	OnNodeChanges(map[node.ID]*node.Info)
 	Close()
 }
 
@@ -64,7 +64,7 @@ type grpcSender interface {
 // We might use multiple channels later.
 type messageCenter struct {
 	// The server id of the message center
-	id ServerId
+	id node.ID
 	// The current epoch of the message center,
 	// when every time the message center is restarted, the epoch will be increased by 1.
 	epoch uint64
@@ -74,7 +74,7 @@ type messageCenter struct {
 	// The remote targets, which are the other message centers in remote servers.
 	remoteTargets struct {
 		sync.RWMutex
-		m map[ServerId]*remoteMessageTarget
+		m map[node.ID]*remoteMessageTarget
 	}
 
 	grpcServer *grpc.Server
@@ -87,7 +87,7 @@ type messageCenter struct {
 	cancel         context.CancelFunc
 }
 
-func NewMessageCenter(ctx context.Context, id ServerId, epoch uint64, cfg *config.MessageCenterConfig) *messageCenter {
+func NewMessageCenter(ctx context.Context, id node.ID, epoch uint64, cfg *config.MessageCenterConfig) *messageCenter {
 	receiveEventCh := make(chan *TargetMessage, cfg.CacheChannelSize)
 	receiveCmdCh := make(chan *TargetMessage, cfg.CacheChannelSize)
 	ctx, cancel := context.WithCancel(ctx)
@@ -102,7 +102,7 @@ func NewMessageCenter(ctx context.Context, id ServerId, epoch uint64, cfg *confi
 		wg:             &sync.WaitGroup{},
 		router:         newRouter(),
 	}
-	mc.remoteTargets.m = make(map[ServerId]*remoteMessageTarget)
+	mc.remoteTargets.m = make(map[node.ID]*remoteMessageTarget)
 	mc.router.runDispatch(ctx, mc.wg, mc.receiveEventCh)
 	mc.router.runDispatch(ctx, mc.wg, mc.receiveCmdCh)
 	log.Info("create message center success, message router is running.",
@@ -118,30 +118,30 @@ func (mc *messageCenter) DeRegisterHandler(topic string) {
 	mc.router.deRegisterHandler(topic)
 }
 
-func (mc *messageCenter) OnNodeChanges(activeNode map[common.NodeID]*common.NodeInfo) {
-	allTaget := make(map[string]bool)
-	allTaget[mc.id.String()] = true
+func (mc *messageCenter) OnNodeChanges(activeNode map[node.ID]*node.Info) {
+	allTarget := make(map[node.ID]bool)
+	allTarget[mc.id] = true
 	mc.remoteTargets.RLock()
 	for id, _ := range mc.remoteTargets.m {
-		allTaget[id.String()] = true
+		allTarget[id] = true
 	}
 	mc.remoteTargets.RUnlock()
 
 	for id, node := range activeNode {
-		if _, ok := allTaget[id]; !ok {
-			mc.addTarget(ServerId(node.ID), node.Epoch, node.AdvertiseAddr)
+		if _, ok := allTarget[id]; !ok {
+			mc.addTarget(node.ID, node.Epoch, node.AdvertiseAddr)
 		}
 	}
-	for id, _ := range allTaget {
+	for id, _ := range allTarget {
 		if _, ok := activeNode[id]; !ok {
-			mc.removeTarget(ServerId(id))
+			mc.removeTarget(id)
 		}
 	}
 }
 
 // AddTarget is called when a new remote target is discovered,
 // to add the target to the message center.
-func (mc *messageCenter) addTarget(id ServerId, epoch uint64, addr string) {
+func (mc *messageCenter) addTarget(id node.ID, epoch uint64, addr string) {
 	// If the target is the message center itself, we don't need to add it.
 	if id == mc.id {
 		log.Info("Add local target", zap.Stringer("id", id), zap.Any("epoch", epoch), zap.Any("addr", addr))
@@ -152,7 +152,7 @@ func (mc *messageCenter) addTarget(id ServerId, epoch uint64, addr string) {
 	rt.connect()
 }
 
-func (mc *messageCenter) removeTarget(id ServerId) {
+func (mc *messageCenter) removeTarget(id node.ID) {
 	mc.remoteTargets.Lock()
 	defer mc.remoteTargets.Unlock()
 	if target, ok := mc.remoteTargets.m[id]; ok {
@@ -224,7 +224,7 @@ func (mc *messageCenter) Close() {
 
 // touchRemoteTarget returns the remote target by the id,
 // if the target is not found, it will create a new one.
-func (mc *messageCenter) touchRemoteTarget(id ServerId, epoch uint64, addr string) *remoteMessageTarget {
+func (mc *messageCenter) touchRemoteTarget(id node.ID, epoch uint64, addr string) *remoteMessageTarget {
 	mc.remoteTargets.Lock()
 	defer mc.remoteTargets.Unlock()
 	if target, ok := mc.remoteTargets.m[id]; ok {
@@ -282,7 +282,7 @@ func (s *grpcServer) SendCommands(msg *proto.Message, stream proto.MessageCenter
 	//return s.handleClientConnect(stream, false)
 }
 
-func (s *grpcServer) id() ServerId {
+func (s *grpcServer) id() node.ID {
 	return s.messageCenter.id
 }
 
@@ -290,13 +290,13 @@ func (s *grpcServer) id() ServerId {
 // So the message center can receive messages from the client.
 func (s *grpcServer) handleConnect(msg *proto.Message, stream grpcSender, isEvent bool) error {
 	// The first message is an empty message without payload, to identify the client server id.
-	to := ServerId(msg.To)
+	to := node.ID(msg.To)
 	if to != s.id() {
 		err := apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %s not found", to)}
 		log.Error("Target not found", zap.Error(err))
 		return err
 	}
-	targetId := ServerId(msg.From)
+	targetId := node.ID(msg.From)
 
 	s.messageCenter.remoteTargets.RLock()
 	remoteTarget, ok := s.messageCenter.remoteTargets.m[targetId]

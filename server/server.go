@@ -54,7 +54,7 @@ const (
 
 type server struct {
 	captureMu sync.Mutex
-	info      *common.NodeInfo
+	info      *node.Info
 
 	liveness model.Liveness
 
@@ -177,7 +177,7 @@ func (c *server) Run(ctx context.Context) error {
 }
 
 // SelfInfo gets the server info
-func (c *server) SelfInfo() (*common.NodeInfo, error) {
+func (c *server) SelfInfo() (*node.Info, error) {
 	// when c.reset has not been called yet, c.info is nil.
 	if c.info != nil {
 		return c.info, nil
@@ -210,7 +210,7 @@ func (c *server) Close(ctx context.Context) {
 	o, _ := c.GetCoordinator()
 	if o != nil {
 		o.AsyncStop()
-		log.Info("coordinator closed", zap.String("captureID", c.info.ID))
+		log.Info("coordinator closed", zap.String("captureID", string(c.info.ID)))
 	}
 
 	for _, subModule := range c.subModules {
@@ -223,9 +223,9 @@ func (c *server) Close(ctx context.Context) {
 
 	// delete server info from etcd
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), cleanMetaDuration)
-	if err := c.EtcdClient.DeleteCaptureInfo(timeoutCtx, c.info.ID); err != nil {
+	if err := c.EtcdClient.DeleteCaptureInfo(timeoutCtx, model.CaptureID(c.info.ID)); err != nil {
 		log.Warn("failed to delete server info when server exited",
-			zap.String("captureID", c.info.ID),
+			zap.String("captureID", string(c.info.ID)),
 			zap.Error(err))
 	}
 	cancel()
@@ -248,7 +248,7 @@ func (c *server) GetPdClient() pd.Client {
 }
 
 // GetCoordinatorInfo return the controller server info of current TiCDC cluster
-func (c *server) GetCoordinatorInfo(ctx context.Context) (*common.NodeInfo, error) {
+func (c *server) GetCoordinatorInfo(ctx context.Context) (*node.Info, error) {
 	_, captureInfos, err := c.EtcdClient.GetCaptures(ctx)
 	if err != nil {
 		return nil, err
@@ -261,8 +261,8 @@ func (c *server) GetCoordinatorInfo(ctx context.Context) (*common.NodeInfo, erro
 
 	for _, captureInfo := range captureInfos {
 		if captureInfo.ID == coordinatorID {
-			res := &common.NodeInfo{
-				ID:            captureInfo.ID,
+			res := &node.Info{
+				ID:            node.ID(captureInfo.ID),
 				AdvertiseAddr: captureInfo.AdvertiseAddr,
 
 				Version:        captureInfo.Version,
