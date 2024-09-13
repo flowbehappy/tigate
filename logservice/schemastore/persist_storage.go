@@ -23,6 +23,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/flowbehappy/tigate/logservice/logpuller"
@@ -55,6 +56,10 @@ type persistentStorage struct {
 
 	// the current gcTs on disk
 	gcTs uint64
+
+	upperBound upperBoundMeta
+
+	upperBoundChanged bool
 
 	tablesBasicInfo map[int64]*VersionedTableBasicInfo
 
@@ -92,7 +97,7 @@ func newPersistentStorage(
 	root string,
 	pdCli pd.Client,
 	storage kv.Storage,
-) (*persistentStorage, upperBoundMeta) {
+) *persistentStorage {
 	gcSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, "cdc-new-store", 0, 0)
 	if err != nil {
 		log.Panic("get ts failed", zap.Error(err))
@@ -134,6 +139,7 @@ func newPersistentStorage(
 		kvStorage:              storage,
 		db:                     db,
 		gcTs:                   gcTs,
+		upperBound:             upperBound,
 		databaseMap:            make(map[int64]*DatabaseInfo),
 		tablesBasicInfo:        make(map[int64]*VersionedTableBasicInfo),
 		tablesDDLHistory:       make(map[int64][]uint64),
@@ -142,9 +148,9 @@ func newPersistentStorage(
 		tableRegisteredCount:   make(map[int64]int),
 	}
 	if isDataReusable {
-		dataStorage.initializeFromDisk(upperBound)
+		dataStorage.initializeFromDisk()
 	} else {
-		upperBound = dataStorage.initializeFromKVStorage(dbPath, storage, gcSafePoint)
+		dataStorage.initializeFromKVStorage(dbPath, storage, gcSafePoint)
 	}
 
 	go func() {
@@ -152,13 +158,13 @@ func newPersistentStorage(
 	}()
 
 	go func() {
-		dataStorage.updateUpperBound(ctx)
+		dataStorage.persistUpperBoundPeriodically(ctx)
 	}()
 
-	return dataStorage, upperBound
+	return dataStorage
 }
 
-func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.Storage, gcTs uint64) upperBoundMeta {
+func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.Storage, gcTs uint64) {
 	// TODO: avoid recreate db if the path is empty at start
 	if err := os.RemoveAll(dbPath); err != nil {
 		log.Panic("fail to remove path")
@@ -171,16 +177,14 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 	}
 	log.Info("schema store create a fresh storage")
 
-	var upperBound upperBoundMeta
-	if p.databaseMap, p.tablesBasicInfo, upperBound, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs); err != nil {
+	if p.databaseMap, p.tablesBasicInfo, p.upperBound, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs); err != nil {
 		// TODO: retry
 		log.Fatal("fail to initialize from kv snapshot")
 	}
 	p.gcTs = gcTs
-	return upperBound
 }
 
-func (p *persistentStorage) initializeFromDisk(upperBound upperBoundMeta) {
+func (p *persistentStorage) initializeFromDisk() {
 	// TODO: cleanObseleteData?
 
 	storageSnap := p.db.NewSnapshot()
@@ -194,7 +198,7 @@ func (p *persistentStorage) initializeFromDisk(upperBound upperBoundMeta) {
 	if p.databaseMap, p.tablesDDLHistory, p.tableTriggerDDLHistory, err = loadDatabaseInfoAndDDLHistory(
 		storageSnap,
 		p.gcTs,
-		upperBound,
+		p.upperBound,
 		p.tablesBasicInfo); err != nil {
 		log.Fatal("fail to initialize from disk")
 	}
@@ -463,12 +467,37 @@ func (p *persistentStorage) doGc() error {
 	return nil
 }
 
-func (p *persistentStorage) updateUpperBound(ctx context.Context) error {
+func (p *persistentStorage) updateUpperBound(upperBound upperBoundMeta) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.upperBound = upperBound
+	p.upperBoundChanged = true
+}
+
+func (p *persistentStorage) getUpperBound() upperBoundMeta {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.upperBound
+}
+
+func (p *persistentStorage) persistUpperBoundPeriodically(ctx context.Context) error {
+	ticker := time.NewTicker(5 * time.Second)
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-			// TODO: update upper bound periodically
+		case <-ticker.C:
+			p.mu.Lock()
+			if !p.upperBoundChanged {
+				log.Warn("schema store upper bound not changed")
+				p.mu.Unlock()
+				continue
+			}
+			upperBound := p.upperBound
+			p.upperBoundChanged = false
+			p.mu.Unlock()
+
+			writeUpperBoundMeta(p.db, upperBound)
 		}
 	}
 }
@@ -477,8 +506,6 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 	// TODO: ignore some ddl event
 
 	// TODO: check ddl events are sorted
-
-	// TODO: build PersistedDDLEvent here
 
 	p.mu.Lock()
 	for _, event := range ddlEvents {

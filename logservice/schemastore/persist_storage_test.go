@@ -33,6 +33,7 @@ func newPersistentStorageForTest(db *pebble.DB, gcTs uint64, upperBound upperBou
 		kvStorage:              nil,
 		db:                     db,
 		gcTs:                   gcTs,
+		upperBound:             upperBound,
 		databaseMap:            make(map[int64]*DatabaseInfo),
 		tablesBasicInfo:        make(map[int64]*VersionedTableBasicInfo),
 		tablesDDLHistory:       make(map[int64][]uint64),
@@ -40,7 +41,7 @@ func newPersistentStorageForTest(db *pebble.DB, gcTs uint64, upperBound upperBou
 		tableInfoStoreMap:      make(map[int64]*versionedTableInfoStore),
 		tableRegisteredCount:   make(map[int64]int),
 	}
-	p.initializeFromDisk(upperBound)
+	p.initializeFromDisk()
 	return p
 }
 

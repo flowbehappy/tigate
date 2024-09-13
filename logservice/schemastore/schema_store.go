@@ -2,7 +2,6 @@ package schemastore
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -53,12 +52,12 @@ type schemaStore struct {
 	pendingResolveTs atomic.Uint64
 
 	// max resolvedTs of all applied ddl events
+	// it must be updated with mutex locked
 	resolvedTs atomic.Uint64
 
-	// all following fields are guarded by this mutex
-	mu sync.Mutex
-
 	// the following two fields are used to filter out duplicate ddl events
+	// they will just be updated and read by a single goroutine, so no lock is needed
+
 	// max finishedTs of all applied ddl events
 	finishedDDLTs uint64
 	// max schemaVersion of all applied ddl events
@@ -73,7 +72,8 @@ func NewSchemaStore(
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
 ) SchemaStore {
-	dataStorage, upperBound := newPersistentStorage(ctx, root, pdCli, kvStorage)
+	dataStorage := newPersistentStorage(ctx, root, pdCli, kvStorage)
+	upperBound := dataStorage.getUpperBound()
 
 	s := &schemaStore{
 		unsortedCache: newDDLCache(),
@@ -138,7 +138,7 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 
 					// TODO: avoid allocate a new slice if event in resolvedEvents is all valid
 					validEvents := make([]PersistedDDLEvent, 0, len(resolvedEvents))
-					s.mu.Lock()
+
 					for _, event := range resolvedEvents {
 						// TODO: build persisted ddl event after filter
 						if event.SchemaVersion <= s.schemaVersion || event.FinishedTs <= s.finishedDDLTs {
@@ -150,16 +150,21 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 								zap.Uint64("finishedDDLTS", s.finishedDDLTs))
 							continue
 						}
+						// TODO: build persisted ddl event after filter
 						validEvents = append(validEvents, event)
 						// need to update the following two members for every event to filter out later duplicate events
 						s.schemaVersion = event.SchemaVersion
 						s.finishedDDLTs = event.FinishedTs
 					}
-					s.mu.Unlock()
-
 					s.dataStorage.handleSortedDDLEvents(validEvents...)
 				}
+				// TODO: resolved ts are updated after ddl events written to disk, do we need to optimize it?
 				s.resolvedTs.Store(pendingTs)
+				s.dataStorage.updateUpperBound(upperBoundMeta{
+					FinishedDDLTs: s.finishedDDLTs,
+					SchemaVersion: s.schemaVersion,
+					ResolvedTs:    pendingTs,
+				})
 			}
 		}
 	}
