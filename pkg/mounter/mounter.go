@@ -21,17 +21,13 @@ import (
 	"unsafe"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tiflow/pkg/spanz"
-
-	"go.uber.org/zap"
 )
 
 // DDLTableInfo contains the tableInfo about tidb_ddl_job and tidb_ddl_history
@@ -118,18 +114,6 @@ func IsLegacyFormatJob(rawKV *common.RawKVEntry) bool {
 func ParseDDLJob(rawKV *common.RawKVEntry, ddlTableInfo *DDLTableInfo) (*model.Job, error) {
 	var v []byte
 	var datum types.Datum
-
-	zstdDecoder, err := zstd.NewReader(nil)
-	if err != nil {
-		log.Panic("failed to create zstd decoder", zap.Error(err))
-	}
-	defer zstdDecoder.Close()
-	if rawKV.CompressType == common.CompressTypeZstd {
-		rawKV.Value, err = zstdDecoder.DecodeAll(rawKV.Value, nil)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
 
 	// for test case only
 	if bytes.HasPrefix(rawKV.Key, metaPrefix) {

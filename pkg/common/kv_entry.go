@@ -46,14 +46,13 @@ type RawKVEntry struct {
 	StartTs uint64 `msg:"start_ts"` // offset 12 bytes
 	// Commit or resolved TS
 	// Additional debug info
-	RegionID     uint64       `msg:"region_id"`     // offset 20 bytes
-	CompressType CompressType `msg:"compress_type"` // offset 28 bytes
+	RegionID uint64 `msg:"region_id"` // offset 20 bytes
 
-	KeyLen      uint32 `msg:"key_len"`       // offset 32 bytes
-	ValueLen    uint32 `msg:"value_len"`     // offset 36 bytes
-	OldValueLen uint32 `msg:"old_value_len"` // offset 40 bytes
+	KeyLen      uint32 `msg:"key_len"`       // offset 28 bytes
+	ValueLen    uint32 `msg:"value_len"`     // offset 32 bytes
+	OldValueLen uint32 `msg:"old_value_len"` // offset 36 bytes
 
-	Key []byte `msg:"key"` // offset 44 bytes
+	Key []byte `msg:"key"` // offset 40 bytes
 	// nil for delete type
 	Value []byte `msg:"value"`
 	// nil for insert type
@@ -92,7 +91,6 @@ func (v *RawKVEntry) Encode() []byte {
 	buf = binary.LittleEndian.AppendUint64(buf, v.CRTs)
 	buf = binary.LittleEndian.AppendUint64(buf, v.StartTs)
 	buf = binary.LittleEndian.AppendUint64(buf, v.RegionID)
-	buf = binary.LittleEndian.AppendUint32(buf, uint32(v.CompressType))
 
 	v.KeyLen = uint32(len(v.Key))
 	v.ValueLen = uint32(len(v.Value))
@@ -111,7 +109,7 @@ func (v *RawKVEntry) Encode() []byte {
 
 // Decode deserializes a byte slice into a RawKVEntry
 func (v *RawKVEntry) Decode(data []byte) error {
-	if len(data) < 40 { // Minimum size for fixed-length fields
+	if len(data) < 36 { // Minimum size for fixed-length fields
 		return fmt.Errorf("insufficient data length")
 	}
 
@@ -124,8 +122,6 @@ func (v *RawKVEntry) Decode(data []byte) error {
 	offset += 8
 	v.RegionID = binary.LittleEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	v.CompressType = CompressType(binary.LittleEndian.Uint32(data[offset : offset+4]))
-	offset += 4
 
 	v.KeyLen = binary.LittleEndian.Uint32(data[offset : offset+4])
 	offset += 4

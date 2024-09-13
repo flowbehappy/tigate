@@ -16,12 +16,11 @@ import (
 
 func getRawKVEntry() *RawKVEntry {
 	res := &RawKVEntry{
-		OpType:       OpTypePut,
-		CRTs:         1234567890,
-		StartTs:      9876543210,
-		RegionID:     42,
-		CompressType: CompressTypeNone,
-		Key:          []byte("test-key"),
+		OpType:   OpTypePut,
+		CRTs:     1234567890,
+		StartTs:  9876543210,
+		RegionID: 42,
+		Key:      []byte("test-key"),
 	}
 	var value string
 	// 1600 bytes

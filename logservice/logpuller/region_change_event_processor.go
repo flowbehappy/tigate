@@ -21,7 +21,7 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/klauspost/compress/zstd"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/cdcpb"
 	"github.com/pingcap/log"
@@ -64,26 +64,17 @@ type changeEventProcessor struct {
 
 	metricProcessDuration prometheus.Observer
 	metricTotalDuration   prometheus.Observer
-
-	zstdEncoder *zstd.Encoder
 }
 
 func newChangeEventProcessor(id uint, client *SubscriptionClient) *changeEventProcessor {
 	clientID := client.id.String()
 	workerID := strconv.Itoa(int(id))
 
-	// Create the zstd encoder
-	encoder, err := zstd.NewWriter(nil)
-	if err != nil {
-		log.Fatal("Failed to create zstd encoder", zap.Error(err))
-	}
-
 	return &changeEventProcessor{
 		client:                client,
 		inputCh:               make(chan statefulEvent, 64), // 64 is an arbitrary number.
 		metricProcessDuration: metrics.RegionWorkerProcessDuration.WithLabelValues(clientID, workerID),
 		metricTotalDuration:   metrics.RegionWorkerTotalDuration.WithLabelValues(clientID, workerID),
-		zstdEncoder:           encoder, // Initialize the encoder
 	}
 }
 
@@ -289,27 +280,16 @@ func (w *changeEventProcessor) assembleRowEvent(regionID uint64, entry *cdcpb.Ev
 		return regionFeedEvent{}, cerror.ErrUnknownKVEventType.GenWithStackByArgs(entry.GetOpType(), entry)
 	}
 
-	var compressedValue []byte
-	var compressOldValue []byte
-	// Use the pre-created encoder
-	if len(entry.GetValue()) != 0 {
-		compressedValue = w.zstdEncoder.EncodeAll(entry.GetValue(), nil)
-	}
-	if len(entry.GetOldValue()) != 0 {
-		compressOldValue = w.zstdEncoder.EncodeAll(entry.GetOldValue(), nil)
-	}
-
 	return regionFeedEvent{
 		RegionID: regionID,
 		Val: &common.RawKVEntry{
-			OpType:       opType,
-			Key:          entry.Key,
-			Value:        compressedValue,
-			StartTs:      entry.StartTs,
-			CRTs:         entry.CommitTs,
-			RegionID:     regionID,
-			OldValue:     compressOldValue,
-			CompressType: common.CompressTypeZstd,
+			OpType:   opType,
+			Key:      entry.Key,
+			Value:    entry.GetValue(),
+			StartTs:  entry.StartTs,
+			CRTs:     entry.CommitTs,
+			RegionID: regionID,
+			OldValue: entry.GetOldValue(),
 		},
 	}, nil
 
@@ -363,12 +343,5 @@ func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resol
 				return
 			}
 		}
-	}
-}
-
-// Add a Close method to properly release resources
-func (w *changeEventProcessor) Close() {
-	if w.zstdEncoder != nil {
-		w.zstdEncoder.Close()
 	}
 }
