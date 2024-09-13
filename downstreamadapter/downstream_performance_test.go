@@ -17,6 +17,7 @@ import (
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	ticonfig "github.com/pingcap/tiflow/pkg/config"
@@ -24,7 +25,7 @@ import (
 )
 
 const totalCount = 500
-const dispatcherCount = 100000
+const dispatcherCount = 10000
 const databaseCount = 1
 
 func initContext(serverId messaging.ServerId) {
@@ -33,53 +34,52 @@ func initContext(serverId messaging.ServerId) {
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(serverId))
 }
 
-var eventPool = sync.Pool{
-	New: func() interface{} {
-		return common.TxnEvent{
-			StartTs:  0,
-			CommitTs: 0,
-			Rows: []*common.RowChangedEvent{
-				{
-					TableInfo: &common.TableInfo{
-						TableName: common.TableName{
-							Schema: "test_schema_1",
-							Table:  "test_table_",
-						},
-					},
-					Columns: []*common.Column{
-						{Name: "id", Value: 0, Flag: common.HandleKeyFlag | common.PrimaryKeyFlag},
-						{Name: "name", Value: "Alice"},
-						{Name: "age", Value: 0},
-						{Name: "gender", Value: "female"},
-					},
-					PhysicalTableID: 0,
-				},
-			},
-		}
-	},
-}
-
-func pushDataIntoDispatchers(dispatcherIDSet map[common.DispatcherID]interface{}) {
+func pushDataIntoDispatchers(dispatcherIDSet map[common.DispatcherID]interface{}, helper *mounter.EventTestHelper) {
 	// 因为开了 dryrun，所以不用避免冲突，随便写'
 	dispatcherEventsDynamicStream := dispatcher.GetDispatcherEventsDynamicStream()
-	for count := 1; count <= totalCount; count++ {
-		idx := 0
-		for id, _ := range dispatcherIDSet {
-			event := eventPool.Get().(common.TxnEvent)
-			event.StartTs = uint64(count) + 10
-			event.CommitTs = uint64(count) + 11
-			event.Rows[0].Columns[0].Value = count
-			event.Rows[0].Columns[2].Value = idx % 50
-			event.DispatcherID = id
-			event.Rows[0].PhysicalTableID = int64(idx)
+	idx := 0
+	var mutex sync.Mutex
+	for id, _ := range dispatcherIDSet {
+		go func(idx int, id common.DispatcherID) {
+			log.Info("start to push data into dispatcher", zap.Int("idx", idx), zap.Stringer("id", id))
+			tableName := "test.t" + strconv.Itoa(idx)
+			ddlQuery := "create table " + tableName + " (a int primary key, b int, c double, d varchar(100))"
+			_ = helper.DDL2Job(ddlQuery)
+			for count := 1; count <= totalCount; count++ {
+				// if count == 1 {
+				// 	ddlQuery := "create table " + tableName + " (a int primary key, b int, c double, d varchar(100))"
+				// 	_ = helper.DDL2Job(ddlQuery)
+				// }
 
-			dispatcherEventsDynamicStream.In() <- &event
-
-			eventPool.Put(event)
-		}
+				event := helper.DML2Event("test", "t"+strconv.Itoa(int(idx)), "insert into "+tableName+" values ("+strconv.Itoa(count)+", 1, 1.1, 'test')")
+				event.DispatcherID = id
+				event.PhysicalTableID = int64(idx)
+				dispatcherEventsDynamicStream.In() <- event
+			}
+		}(idx, id)
+		idx += 1
 	}
-	log.Info("finished to push data into dispatchers")
+
+	// for count := 1; count <= totalCount; count++ {
+	// 	idx := 0
+	// 	for id, _ := range dispatcherIDSet {
+	// 		tableName := "test.t" + strconv.Itoa(int(idx))
+	// 		if count == 1 {
+	// 			ddlQuery := "create table " + tableName + " (a int primary key, b int, c double, d varchar(100))"
+	// 			_ = helper.DDL2Job(ddlQuery)
+	// 		}
+
+	// 		event := helper.DML2Event("test", "t"+strconv.Itoa(int(idx)), "insert into "+tableName+" values ("+strconv.Itoa(count)+", 1, 1.1, 'test')")
+	// 		event.DispatcherID = id
+	// 		event.PhysicalTableID = int64(idx)
+	// 		dispatcherEventsDynamicStream.In() <- event
+
+	// 		idx += 1
+	// 	}
+	// }
+	// log.Info("finished to push data into dispatchers")
 }
+
 func TestDownstream(t *testing.T) {
 	go func() {
 		http.ListenAndServe("0.0.0.0:6100", nil)
@@ -88,6 +88,11 @@ func TestDownstream(t *testing.T) {
 
 	serverId := messaging.ServerId("test")
 	initContext(serverId)
+
+	helper := mounter.NewEventTestHelper(t)
+	defer helper.Close()
+
+	helper.Tk().MustExec("use test")
 
 	var wg sync.WaitGroup
 	start := time.Now()
@@ -123,7 +128,7 @@ func TestDownstream(t *testing.T) {
 	log.Info("test begin", zap.Any("create dispatcher cost time", time.Since(start)))
 
 	// 插入数据, 先固定 data 格式
-	go pushDataIntoDispatchers(dispatcherIDSet)
+	go pushDataIntoDispatchers(dispatcherIDSet, helper)
 
 	finishCount := 0
 	finishVec := make([]bool, databaseCount)

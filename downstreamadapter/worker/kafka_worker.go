@@ -18,6 +18,10 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/atomic"
+
+	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter"
+	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/topicmanager"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec"
 	"github.com/pingcap/errors"
@@ -26,7 +30,6 @@ import (
 	"github.com/pingcap/tiflow/cdc/sink/dmlsink/mq/dmlproducer"
 	"github.com/pingcap/tiflow/cdc/sink/metrics"
 	"github.com/pingcap/tiflow/cdc/sink/metrics/mq"
-	"github.com/pingcap/tiflow/pkg/chann"
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -46,12 +49,18 @@ type KafkaWorker struct {
 	changeFeedID model.ChangeFeedID
 	// protocol indicates the protocol used by this sink.
 	protocol config.Protocol
-	// msgChan caches the messages to be sent.
-	// It is an unbounded channel.
-	msgChan *chann.DrainableChann[*common.MQRowEvent]
+
+	eventChan chan *common.DMLEvent
+	rowChan   chan *common.MQRowEvent
 	// ticker used to force flush the batched messages when the interval is reached.
 	ticker *time.Ticker
 
+	columnSelector *common.ColumnSelectors
+	// eventRouter used to route events to the right topic and partition.
+	eventRouter *eventrouter.EventRouter
+	// topicManager used to manage topics.
+	// It is also responsible for creating topics.
+	topicManager topicmanager.TopicManager
 	encoderGroup codec.EncoderGroup
 
 	// producer is used to send the messages to the Kafka broker.
@@ -76,15 +85,22 @@ func NewKafkaWorker(
 	protocol config.Protocol,
 	producer dmlproducer.DMLProducer,
 	encoderGroup codec.EncoderGroup,
+	columnSelector *common.ColumnSelectors,
+	eventRouter *eventrouter.EventRouter,
+	topicManager topicmanager.TopicManager,
 	statistics *metrics.Statistics,
 ) *KafkaWorker {
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &KafkaWorker{
 		changeFeedID:                      id,
 		protocol:                          protocol,
-		msgChan:                           chann.NewAutoDrainChann[*common.MQRowEvent](),
+		eventChan:                         make(chan *common.DMLEvent, 32),
+		rowChan:                           make(chan *common.MQRowEvent, 32),
 		ticker:                            time.NewTicker(batchInterval),
 		encoderGroup:                      encoderGroup,
+		columnSelector:                    columnSelector,
+		eventRouter:                       eventRouter,
+		topicManager:                      topicManager,
 		producer:                          producer,
 		metricMQWorkerSendMessageDuration: mq.WorkerSendMessageDuration.WithLabelValues(id.Namespace, id.ID),
 		metricMQWorkerBatchSize:           mq.WorkerBatchSize.WithLabelValues(id.Namespace, id.ID),
@@ -93,7 +109,9 @@ func NewKafkaWorker(
 		cancel:                            cancel,
 	}
 
-	w.wg.Add(3)
+	w.wg.Add(4)
+	go w.calculateKeyPartitions(ctx)
+
 	go func() error {
 		defer w.wg.Done()
 		return w.encoderGroup.Run(ctx)
@@ -105,15 +123,74 @@ func NewKafkaWorker(
 		}
 		return w.nonBatchEncodeRun(ctx)
 	}()
-	go func() error {
-		defer w.wg.Done()
-		return w.sendMessages(ctx)
-	}()
+	go w.sendMessages(ctx)
 	return w
 }
 
-func (w *KafkaWorker) GetEventChan() chan<- *common.MQRowEvent {
-	return w.msgChan.In()
+func (w *KafkaWorker) calculateKeyPartitions(ctx context.Context) {
+	defer w.wg.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event := <-w.eventChan:
+			topic := w.eventRouter.GetTopicForRowChange(event.TableInfo)
+			partitionNum, err := w.topicManager.GetPartitionNum(ctx, topic)
+			if err != nil {
+				log.Error("failed to get partition number for topic", zap.String("topic", topic), zap.Error(err))
+				return
+			}
+			partitonGenerator := w.eventRouter.GetPartitionGeneratorForRowChange(event.TableInfo)
+			selector := w.columnSelector.GetSelector(event.TableInfo.TableName.Schema, event.TableInfo.TableName.Table)
+			toRowCallback := func(postTxnFlushed []func(), totalCount uint64) func() {
+				var calledCount atomic.Uint64
+				// The callback of the last row will trigger the callback of the txn.
+				return func() {
+					if calledCount.Inc() == totalCount {
+						for _, callback := range postTxnFlushed {
+							callback()
+						}
+					}
+				}
+			}
+
+			rowsCount := uint64(event.Len())
+			rowCallback := toRowCallback(event.PostTxnFlushed, rowsCount)
+
+			for {
+				row, ok := event.GetNextRow()
+				if !ok {
+					break
+				}
+
+				index, key, err := partitonGenerator.GeneratePartitionIndexAndKey(&row, partitionNum, event.TableInfo, event.CommitTs)
+				if err != nil {
+					log.Error("failed to generate partition index and key for row", zap.Error(err))
+					return
+				}
+
+				w.rowChan <- &common.MQRowEvent{
+					Key: model.TopicPartitionKey{
+						Topic:          topic,
+						Partition:      index,
+						PartitionKey:   key,
+						TotalPartition: partitionNum,
+					},
+					RowEvent: common.RowEvent{
+						TableInfo:      event.TableInfo,
+						CommitTs:       event.CommitTs,
+						Event:          row,
+						Callback:       rowCallback,
+						ColumnSelector: selector,
+					},
+				}
+			}
+		}
+	}
+}
+
+func (w *KafkaWorker) GetEventChan() chan<- *common.DMLEvent {
+	return w.eventChan
 }
 
 // nonBatchEncodeRun add events to the encoder group immediately.
@@ -127,7 +204,7 @@ func (w *KafkaWorker) nonBatchEncodeRun(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return errors.Trace(ctx.Err())
-		case event, ok := <-w.msgChan.Out():
+		case event, ok := <-w.rowChan:
 			if !ok {
 				log.Warn("MQ sink flush worker channel closed",
 					zap.String("namespace", w.changeFeedID.Namespace),
@@ -185,7 +262,7 @@ func (w *KafkaWorker) batch(ctx context.Context, buffer []*common.MQRowEvent, fl
 	select {
 	case <-ctx.Done():
 		return msgCount, ctx.Err()
-	case msg, ok := <-w.msgChan.Out():
+	case msg, ok := <-w.rowChan:
 		if !ok {
 			log.Warn("MQ sink flush worker channel closed")
 			return msgCount, nil
@@ -204,7 +281,7 @@ func (w *KafkaWorker) batch(ctx context.Context, buffer []*common.MQRowEvent, fl
 		select {
 		case <-ctx.Done():
 			return msgCount, ctx.Err()
-		case msg, ok := <-w.msgChan.Out():
+		case msg, ok := <-w.rowChan:
 			if !ok {
 				log.Warn("MQ sink flush worker channel closed")
 				return msgCount, nil
@@ -238,6 +315,7 @@ func (w *KafkaWorker) group(msgs []*common.MQRowEvent) map[model.TopicPartitionK
 }
 
 func (w *KafkaWorker) sendMessages(ctx context.Context) error {
+	defer w.wg.Done()
 	metricSendMessageDuration := mq.WorkerSendMessageDuration.WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
 	defer mq.WorkerSendMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
 
@@ -282,7 +360,6 @@ func (w *KafkaWorker) sendMessages(ctx context.Context) error {
 }
 
 func (w *KafkaWorker) close() {
-	w.msgChan.CloseAndDrain()
 	w.producer.Close()
 	mq.WorkerSendMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
 	mq.WorkerBatchSize.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
