@@ -184,8 +184,9 @@ func loadTablesInKVSnap(snap *pebble.Snapshot, snapVersion common.Ts) (map[commo
 			log.Fatal("unmarshal table name info failed", zap.Error(err))
 		}
 		tablesInKVSnap[tbNameInfo.ID] = &VersionedTableBasicInfo{
-			SchemaIDs: []SchemaIDWithVersion{{SchemaID: common.SchemaID(table_info_entry.SchemaID), CreateVersion: snapVersion}},
-			Names:     []TableNameWithVersion{{Name: tbNameInfo.Name.O, CreateVersion: snapVersion}},
+			SchemaIDs:     []SchemaIDWithVersion{{SchemaID: common.SchemaID(table_info_entry.SchemaID), CreateVersion: snapVersion}},
+			Names:         []TableNameWithVersion{{Name: tbNameInfo.Name.O, CreateVersion: snapVersion}},
+			CreateVersion: snapVersion,
 		}
 	}
 
