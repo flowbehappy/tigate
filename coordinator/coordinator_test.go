@@ -55,7 +55,7 @@ type mockMaintainerManager struct {
 	mc                 messaging.MessageCenter
 	msgCh              chan *messaging.TargetMessage
 	coordinatorVersion int64
-	coordinatorID      messaging.ServerId
+	coordinatorID      node.ID
 	maintainers        sync.Map
 }
 
@@ -243,7 +243,7 @@ func TestCoordinatorScheduling(t *testing.T) {
 	etcdClient := mock_etcd.NewMockCDCEtcdClient(gomock.NewController(t))
 	etcdClient.EXPECT().GetGCServiceID().Return("default").AnyTimes()
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx,
-		messaging.ServerId(node.ID), 100, config.NewDefaultMessageCenterConfig()))
+		node.ID(node.ID), 100, config.NewDefaultMessageCenterConfig()))
 	m := NewMaintainerManager()
 	go m.Run(ctx)
 

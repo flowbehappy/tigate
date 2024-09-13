@@ -16,6 +16,7 @@ package watcher
 import (
 	"context"
 	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/pingcap/tiflow/cdc/model"
 	"sync"
 	"time"
 
@@ -39,7 +40,7 @@ type NodeManager struct {
 
 	nodeChangeHandlers struct {
 		sync.RWMutex
-		m map[string]NodeChangeHandler
+		m map[node.ID]NodeChangeHandler
 	}
 }
 
@@ -53,8 +54,8 @@ func NewNodeManager(
 		nodes:      make(map[node.ID]*node.Info),
 		nodeChangeHandlers: struct {
 			sync.RWMutex
-			m map[string]NodeChangeHandler
-		}{m: make(map[string]NodeChangeHandler)},
+			m map[node.ID]NodeChangeHandler
+		}{m: make(map[node.ID]NodeChangeHandler)},
 	}
 }
 
@@ -73,16 +74,16 @@ func (c *NodeManager) Tick(
 	allNodes := make(map[node.ID]*node.Info, len(state.Captures))
 
 	for _, node := range c.nodes {
-		if _, exist := state.Captures[node.ID]; !exist {
+		if _, exist := state.Captures[model.CaptureID(node.ID)]; !exist {
 			changed = true
 		}
 	}
 
 	for _, capture := range state.Captures {
-		if _, exist := c.nodes[capture.ID]; !exist {
+		if _, exist := c.nodes[node.ID(capture.ID)]; !exist {
 			changed = true
 		}
-		allNodes[capture.ID] = node.CaptureInfoToNodeInfo(capture)
+		allNodes[node.ID(capture.ID)] = node.CaptureInfoToNodeInfo(capture)
 	}
 	c.nodes = allNodes
 	if changed {
@@ -115,7 +116,7 @@ func (c *NodeManager) Run(ctx context.Context) error {
 			cfg.CaptureSessionTTL), time.Millisecond*50)
 }
 
-func (c *NodeManager) RegisterNodeChangeHandler(name string, handler NodeChangeHandler) {
+func (c *NodeManager) RegisterNodeChangeHandler(name node.ID, handler NodeChangeHandler) {
 	c.nodeChangeHandlers.Lock()
 	defer c.nodeChangeHandlers.Unlock()
 	c.nodeChangeHandlers.m[name] = handler

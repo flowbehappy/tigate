@@ -14,6 +14,7 @@
 package maintainer
 
 import (
+	"github.com/flowbehappy/tigate/pkg/node"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -45,7 +46,7 @@ func NewBarrier(scheduler *Scheduler) *Barrier {
 	}
 }
 
-func (b *Barrier) HandleStatus(from messaging.ServerId,
+func (b *Barrier) HandleStatus(from node.ID,
 	request *heartbeatpb.HeartBeatRequest) ([]*messaging.TargetMessage, error) {
 	var msgs []*messaging.TargetMessage
 	var dispatcherStatus []*heartbeatpb.DispatcherStatus
@@ -89,7 +90,7 @@ func (b *Barrier) Resend() []*messaging.TargetMessage {
 			if stm == nil || stm.Primary == "" {
 				continue
 			}
-			msg := messaging.NewSingleTargetMessage(messaging.ServerId(stm.Primary), messaging.HeartbeatCollectorTopic,
+			msg := messaging.NewSingleTargetMessage(stm.Primary, messaging.HeartbeatCollectorTopic,
 				&heartbeatpb.HeartBeatResponse{DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
 					{
 						Action: &heartbeatpb.DispatcherAction{
@@ -319,7 +320,7 @@ func (b *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
 	if b.blockedDispatchers == nil {
 		return []*messaging.TargetMessage{}
 	}
-	msgMap := make(map[string]*messaging.TargetMessage)
+	msgMap := make(map[node.ID]*messaging.TargetMessage)
 	switch b.blockedDispatchers.InfluenceType {
 	case heartbeatpb.InfluenceType_DB:
 		for _, stm := range b.scheduler.GetTasksBySchemaID(b.blockedDispatchers.SchemaID) {
@@ -328,7 +329,7 @@ func (b *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
 			}
 			msg, ok := msgMap[stm.Primary]
 			if !ok {
-				msg = messaging.NewSingleTargetMessage(messaging.ServerId(stm.Primary), messaging.HeartbeatCollectorTopic,
+				msg = messaging.NewSingleTargetMessage(stm.Primary, messaging.HeartbeatCollectorTopic,
 					&heartbeatpb.HeartBeatResponse{DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
 						{
 							Action: &heartbeatpb.DispatcherAction{
@@ -346,8 +347,8 @@ func (b *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
 			}
 		}
 	case heartbeatpb.InfluenceType_All:
-		for _, node := range b.scheduler.GetAllNodes() {
-			msg := messaging.NewSingleTargetMessage(messaging.ServerId(node), messaging.HeartbeatCollectorTopic,
+		for _, n := range b.scheduler.GetAllNodes() {
+			msg := messaging.NewSingleTargetMessage(n, messaging.HeartbeatCollectorTopic,
 				&heartbeatpb.HeartBeatResponse{DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
 					{
 						Action: &heartbeatpb.DispatcherAction{
@@ -361,7 +362,7 @@ func (b *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
 						},
 					},
 				}})
-			msgMap[node] = msg
+			msgMap[n] = msg
 		}
 	case heartbeatpb.InfluenceType_Normal:
 		// send pass action
@@ -376,7 +377,7 @@ func (b *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
 			}
 			msg, ok := msgMap[stm.Primary]
 			if !ok {
-				msg = messaging.NewSingleTargetMessage(messaging.ServerId(stm.Primary), messaging.HeartbeatCollectorTopic,
+				msg = messaging.NewSingleTargetMessage(stm.Primary, messaging.HeartbeatCollectorTopic,
 					&heartbeatpb.HeartBeatResponse{DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
 						{
 							Action: &heartbeatpb.DispatcherAction{

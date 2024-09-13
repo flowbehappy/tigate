@@ -55,14 +55,13 @@ func NewBootstrapper(cfID string, newBootstrapMsg scheduler.NewBootstrapFn) *Boo
 
 // HandleBootstrapResponse cache the message reported remote node
 func (b *Bootstrapper) HandleBootstrapResponse(
-	from messaging.ServerId,
+	from node.ID,
 	msg *heartbeatpb.MaintainerBootstrapResponse) map[node.ID]*heartbeatpb.MaintainerBootstrapResponse {
-	nodeID := node.ID(from)
-	node, ok := b.nodes[nodeID]
+	node, ok := b.nodes[from]
 	if !ok {
 		log.Warn("node is not found, ignore",
 			zap.String("changefeed", b.changefeedID),
-			zap.String("from", nodeID))
+			zap.Any("from", from))
 		return nil
 	}
 	node.cachedBootstrapResp = msg
@@ -80,7 +79,7 @@ func (b *Bootstrapper) HandleNewNodes(nodes []*node.Info) []*messaging.TargetMes
 			log.Info("find a new server",
 				zap.String("changefeed", b.changefeedID),
 				zap.String("captureAddr", info.AdvertiseAddr),
-				zap.String("server", info.ID))
+				zap.Any("server", info.ID))
 			msgs = append(msgs, b.newBootstrapMsg(info.ID))
 			b.nodes[info.ID].lastBootstrapTime = b.timeNowFunc()
 		}
@@ -91,19 +90,19 @@ func (b *Bootstrapper) HandleNewNodes(nodes []*node.Info) []*messaging.TargetMes
 // HandleRemoveNodes remove node from bootstrapper,
 // finished bootstrap if all node are initialized after these node removed
 // return cached bootstrap
-func (b *Bootstrapper) HandleRemoveNodes(nodeIds []string) map[node.ID]*heartbeatpb.MaintainerBootstrapResponse {
-	for _, id := range nodeIds {
+func (b *Bootstrapper) HandleRemoveNodes(nodeIDs []node.ID) map[node.ID]*heartbeatpb.MaintainerBootstrapResponse {
+	for _, id := range nodeIDs {
 		status, ok := b.nodes[id]
 		if ok {
 			delete(b.nodes, id)
 			log.Info("remove node from bootstrap",
 				zap.String("changefeed", b.changefeedID),
 				zap.Int("status", int(status.state)),
-				zap.String("id", id))
+				zap.Any("id", id))
 		} else {
 			log.Info("node is node tracked by bootstrap",
 				zap.String("changefeed", b.changefeedID),
-				zap.String("id", id))
+				zap.Any("id", id))
 		}
 	}
 	return b.fistBootstrap()

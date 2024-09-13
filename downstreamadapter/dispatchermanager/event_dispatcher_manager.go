@@ -15,6 +15,7 @@ package dispatchermanager
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,7 +33,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/config"
-	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/tiflow/cdc/model"
 	cfg "github.com/pingcap/tiflow/pkg/config"
@@ -63,7 +63,7 @@ type EventDispatcherManager struct {
 	sink sink.Sink
 	// enableSyncPoint       bool
 	// syncPointInterval     time.Duration
-	maintainerID messaging.ServerId
+	maintainerID node.ID
 
 	// statusesChan will fetch the tableSpan status that need to contains in the heartbeat info.
 	statusesChan chan *heartbeatpb.TableSpanStatus
@@ -88,7 +88,7 @@ type EventDispatcherManager struct {
 
 func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 	cfConfig *config.ChangefeedConfig,
-	maintainerID messaging.ServerId) *EventDispatcherManager {
+	maintainerID node.ID) *EventDispatcherManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := &EventDispatcherManager{
 		dispatcherMap: newDispatcherMap(),
@@ -386,7 +386,7 @@ func (e *EventDispatcherManager) GetSchemaIDToDispatchers() *SchemaIDToDispatche
 	return e.schemaIDToDispatchers
 }
 
-func (e *EventDispatcherManager) GetMaintainerID() messaging.ServerId {
+func (e *EventDispatcherManager) GetMaintainerID() node.ID {
 	return e.maintainerID
 }
 
@@ -406,7 +406,7 @@ func (e *EventDispatcherManager) GetStatusesChan() chan *heartbeatpb.TableSpanSt
 	return e.statusesChan
 }
 
-func (e *EventDispatcherManager) SetMaintainerID(maintainerID messaging.ServerId) {
+func (e *EventDispatcherManager) SetMaintainerID(maintainerID node.ID) {
 	e.maintainerID = maintainerID
 }
 

@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"github.com/flowbehappy/tigate/pkg/node"
 	"testing"
 
 	"github.com/flowbehappy/tigate/pkg/config"
@@ -9,9 +10,9 @@ import (
 	"go.uber.org/zap"
 )
 
-func newRemoteMessageTargetForTest(t *testing.T) *remoteMessageTarget {
-	localId := NewServerId()
-	remoteId := NewServerId()
+func newRemoteMessageTargetForTest() *remoteMessageTarget {
+	localId := node.NewID()
+	remoteId := node.NewID()
 	cfg := config.NewDefaultMessageCenterConfig()
 	receivedMsgCh := make(chan *TargetMessage, 1)
 	rt := newRemoteMessageTarget(localId, remoteId, 1, 1, "", receivedMsgCh, receivedMsgCh, cfg)
@@ -19,7 +20,7 @@ func newRemoteMessageTargetForTest(t *testing.T) *remoteMessageTarget {
 }
 
 func TestRemoteTargetNewMessage(t *testing.T) {
-	rt := newRemoteMessageTargetForTest(t)
+	rt := newRemoteMessageTargetForTest()
 	defer rt.close()
 
 	msg := &TargetMessage{

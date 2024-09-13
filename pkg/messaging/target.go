@@ -3,6 +3,7 @@ package messaging
 import (
 	"context"
 	"fmt"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,14 +38,14 @@ const (
 // Currently it spawns 2 goroutines for each remote target, and 2 goroutines for each local target,
 // and 1 goroutine to handle grpc stream error.
 type remoteMessageTarget struct {
-	messageCenterID    ServerId
+	messageCenterID    node.ID
 	messageCenterEpoch uint64
 
 	// The next message sendSequence number.
 	sendSequence atomic.Uint64
 
 	targetEpoch atomic.Value
-	targetId    ServerId
+	targetId    node.ID
 	targetAddr  string
 
 	// For sending events and commands
@@ -132,7 +133,7 @@ func (s *remoteMessageTarget) sendCommand(msg ...*TargetMessage) error {
 }
 
 func newRemoteMessageTarget(
-	localID, targetId ServerId,
+	localID, targetId node.ID,
 	localEpoch, targetEpoch uint64,
 	addr string,
 	recvEventCh, recvCmdCh chan *TargetMessage,
@@ -366,10 +367,10 @@ func (s *remoteMessageTarget) runReceiveMessages(stream grpcReceiver, receiveCh 
 				continue
 			}
 			targetMsg := &TargetMessage{
-				From:     ServerId(message.From),
-				To:       ServerId(message.To),
-				Topic:    string(message.Topic),
-				Epoch:    uint64(message.Epoch),
+				From:     node.ID(message.From),
+				To:       node.ID(message.To),
+				Topic:    message.Topic,
+				Epoch:    message.Epoch,
 				Sequence: message.Seqnum,
 				Type:     mt,
 			}
@@ -417,7 +418,7 @@ func (s *remoteMessageTarget) newMessage(msg ...*TargetMessage) *proto.Message {
 // It is used to send messages to the local server.
 // It simply pushes the messages to the messageCenter's channel directly.
 type localMessageTarget struct {
-	localId  ServerId
+	localId  node.ID
 	epoch    uint64
 	sequence atomic.Uint64
 
@@ -455,7 +456,7 @@ func (s *localMessageTarget) sendCommand(msg *TargetMessage) error {
 	return err
 }
 
-func newLocalMessageTarget(id ServerId,
+func newLocalMessageTarget(id node.ID,
 	gatherRecvEventChan chan *TargetMessage,
 	gatherRecvCmdChan chan *TargetMessage) *localMessageTarget {
 	return &localMessageTarget{

@@ -160,7 +160,7 @@ func (c *coordinator) handleMessages() error {
 			for _, status := range req.Statuses {
 				statues = append(statues, &MaintainerStatus{status})
 			}
-			c.supervisor.UpdateCaptureStatus(msg.From.String(), statues)
+			c.supervisor.UpdateCaptureStatus(msg.From, statues)
 		case messaging.TypeMaintainerHeartbeatRequest:
 			if c.supervisor.CheckAllCaptureInitialized() {
 				req := msg.Message[0].(*heartbeatpb.MaintainerHeartbeat)
@@ -168,7 +168,7 @@ func (c *coordinator) handleMessages() error {
 				for _, status := range req.Statuses {
 					statues = append(statues, &MaintainerStatus{status})
 				}
-				msgs, err := c.supervisor.HandleStatus(msg.From.String(), statues)
+				msgs, err := c.supervisor.HandleStatus(msg.From, statues)
 				if err != nil {
 					log.Error("handle status failed", zap.Error(err))
 					return errors.Trace(err)
@@ -233,10 +233,10 @@ func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState)
 	return c.supervisor.Schedule(c.scheduledChangefeeds)
 }
 
-func (c *coordinator) newBootstrapMessage(captureID model.CaptureID) *messaging.TargetMessage {
-	log.Info("send coordinator bootstrap request", zap.String("to", captureID))
+func (c *coordinator) newBootstrapMessage(id node.ID) *messaging.TargetMessage {
+	log.Info("send coordinator bootstrap request", zap.Any("to", id))
 	return messaging.NewSingleTargetMessage(
-		messaging.ServerId(captureID),
+		id,
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.CoordinatorBootstrapRequest{Version: c.version})
 }

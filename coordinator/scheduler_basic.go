@@ -14,11 +14,11 @@
 package coordinator
 
 import (
+	"github.com/flowbehappy/tigate/pkg/node"
 	"time"
 
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
@@ -59,7 +59,7 @@ func (b *BasicScheduler) hasPendingTask() bool {
 
 func (b *BasicScheduler) Schedule(
 	allInferiors map[scheduler.ChangefeedID]scheduler.Inferior,
-	aliveCaptures map[model.CaptureID]*CaptureStatus,
+	aliveCaptures map[node.ID]*CaptureStatus,
 	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
 	batchSize int,
 ) (tasks []*ScheduleTask) {
@@ -134,7 +134,7 @@ func (b *BasicScheduler) Schedule(
 			b.addInferiorCache = nil
 		}
 
-		captureIDs := make([]model.CaptureID, 0, len(aliveCaptures))
+		captureIDs := make([]node.ID, 0, len(aliveCaptures))
 		for captureID := range aliveCaptures {
 			captureIDs = append(captureIDs, captureID)
 		}
@@ -157,22 +157,22 @@ func (b *BasicScheduler) Schedule(
 }
 
 // newBurstAddInferiors add each new inferior to captures in a round-robin way.
-func (b *BasicScheduler) newBurstAddInferiors(newInferiors []scheduler.ChangefeedID, captureIDs []model.CaptureID,
+func (b *BasicScheduler) newBurstAddInferiors(newInferiors []scheduler.ChangefeedID, captureIDs []node.ID,
 ) []*ScheduleTask {
 	idx := 0
 	addInferiorTasks := make([]*ScheduleTask, 0, len(newInferiors))
 	for _, infID := range newInferiors {
-		targetCapture := captureIDs[idx]
+		target := captureIDs[idx]
 		addInferiorTasks = append(addInferiorTasks,
 			&ScheduleTask{
 				AddInferior: &AddInferior{
 					ID:        infID,
-					CaptureID: targetCapture,
+					CaptureID: target,
 				}})
 		log.Info("burst add inferior",
 			zap.String("id", b.id.String()),
 			zap.String("inferior", infID.String()),
-			zap.String("captureID", targetCapture))
+			zap.Any("serverID", target))
 
 		idx++
 		if idx >= len(captureIDs) {

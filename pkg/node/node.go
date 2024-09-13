@@ -16,14 +16,22 @@ package node
 import (
 	"encoding/json"
 	"github.com/flowbehappy/tigate/version"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"time"
 )
 
-// ID is the type for node ID
-type ID = string
+type ID string
+
+func (s ID) String() string {
+	return string(s)
+}
+
+func NewID() ID {
+	return ID(uuid.New().String())
+}
 
 // Info store in etcd.
 type Info struct {
@@ -39,9 +47,9 @@ type Info struct {
 	Epoch uint64 `json:"epoch"`
 }
 
-func NewInfo(id ID, addr string, deployPath string) *Info {
+func NewInfo(addr string, deployPath string) *Info {
 	return &Info{
-		ID:             id,
+		ID:             NewID(),
 		AdvertiseAddr:  addr,
 		Version:        version.ReleaseVersion,
 		GitHash:        version.GitHash,
@@ -69,7 +77,7 @@ func (c *Info) Unmarshal(data []byte) error {
 
 func CaptureInfoToNodeInfo(captureInfo *model.CaptureInfo) *Info {
 	return &Info{
-		ID:             captureInfo.ID,
+		ID:             ID(captureInfo.ID),
 		AdvertiseAddr:  captureInfo.AdvertiseAddr,
 		Version:        captureInfo.Version,
 		GitHash:        captureInfo.GitHash,
@@ -81,7 +89,7 @@ func CaptureInfoToNodeInfo(captureInfo *model.CaptureInfo) *Info {
 func CaptureInfosToNodeInfos(captureInfos map[model.CaptureID]*model.CaptureInfo) map[ID]*Info {
 	nodeInfos := make(map[ID]*Info)
 	for _, ci := range captureInfos {
-		nodeInfos[ci.ID] = CaptureInfoToNodeInfo(ci)
+		nodeInfos[ID(ci.ID)] = CaptureInfoToNodeInfo(ci)
 	}
 	return nodeInfos
 

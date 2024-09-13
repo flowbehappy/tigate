@@ -145,13 +145,12 @@ func (c *server) prepare(ctx context.Context) error {
 		deployPath = ""
 	}
 	// TODO: Get id from disk after restart.
-	id := messaging.NewServerId()
-	c.info = node.NewInfo(id.String(), conf.AdvertiseAddr, deployPath)
+	c.info = node.NewInfo(conf.AdvertiseAddr, deployPath)
 	c.session = session
 
-	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, id, c.info.Epoch, config.NewDefaultMessageCenterConfig()))
-	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, id)) // 100GB for demo
-	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(id))
+	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, c.info.ID, c.info.Epoch, config.NewDefaultMessageCenterConfig()))
+	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, c.info.ID)) // 100GB for demo
+	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(c.info.ID))
 
 	c.dispatcherManagerManager = dispatchermanagermanager.NewDispatcherManagerManager()
 	return nil
@@ -214,7 +213,7 @@ func (c *server) setUpDir() {
 // registerNodeToEtcd the server by put the server's information in etcd
 func (c *server) registerNodeToEtcd(ctx context.Context) error {
 	cInfo := &model.CaptureInfo{
-		ID:             c.info.ID,
+		ID:             model.CaptureID(c.info.ID),
 		AdvertiseAddr:  c.info.AdvertiseAddr,
 		Version:        c.info.Version,
 		GitHash:        c.info.GitHash,

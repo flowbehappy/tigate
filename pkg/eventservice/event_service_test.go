@@ -137,10 +137,10 @@ func (m *mockMessageCenter) RegisterHandler(topic string, handler messaging.Mess
 func (m *mockMessageCenter) DeRegisterHandler(topic string) {
 }
 
-func (m *mockMessageCenter) AddTarget(id messaging.ServerId, epoch uint64, addr string) {
+func (m *mockMessageCenter) AddTarget(id node.ID, epoch uint64, addr string) {
 }
 
-func (m *mockMessageCenter) RemoveTarget(id messaging.ServerId) {
+func (m *mockMessageCenter) RemoveTarget(id node.ID) {
 }
 
 func (m *mockMessageCenter) Close() {

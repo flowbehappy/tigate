@@ -15,6 +15,7 @@ package maintainer
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"math"
 	"math/rand"
 	"sort"
@@ -40,7 +41,7 @@ type Scheduler struct {
 	//  initialTables hold all tables that before scheduler bootstrapped
 	initialTables []common.Table
 	// group the tasks by nodes
-	nodeTasks map[string]map[common.DispatcherID]*scheduler.StateMachine
+	nodeTasks map[node.ID]map[common.DispatcherID]*scheduler.StateMachine
 	// group the tasks by schema id
 	schemaTasks map[int64]map[common.DispatcherID]*scheduler.StateMachine
 	// totalMaps holds all state maps, absent, committing, working and removing
@@ -66,7 +67,7 @@ func NewScheduler(changefeedID string,
 	config *config.ChangefeedSchedulerConfig,
 	batchSize int, balanceInterval time.Duration) *Scheduler {
 	s := &Scheduler{
-		nodeTasks:            make(map[string]map[common.DispatcherID]*scheduler.StateMachine),
+		nodeTasks:            make(map[node.ID]map[common.DispatcherID]*scheduler.StateMachine),
 		schemaTasks:          make(map[int64]map[common.DispatcherID]*scheduler.StateMachine),
 		startCheckpointTs:    checkpointTs,
 		changefeedID:         changefeedID,
@@ -93,8 +94,8 @@ func (s *Scheduler) GetTasksBySchemaID(schemaID int64) map[common.DispatcherID]*
 	return s.schemaTasks[schemaID]
 }
 
-func (s *Scheduler) GetAllNodes() []string {
-	var nodes = make([]string, 0, len(s.nodeTasks))
+func (s *Scheduler) GetAllNodes() []node.ID {
+	var nodes = make([]node.ID, 0, len(s.nodeTasks))
 	for id := range s.nodeTasks {
 		nodes = append(nodes, id)
 	}
@@ -113,7 +114,7 @@ func (s *Scheduler) AddNewTable(table common.Table) {
 		//split the whole table span base on the configuration, todo: background split table
 		tableSpans = s.splitter.SplitSpans(context.Background(), tableSpan, len(s.nodeTasks))
 	}
-	s.addNewSpans(table.SchemaID, int64(tableSpan.TableID), tableSpans)
+	s.addNewSpans(table.SchemaID, tableSpan.TableID, tableSpans)
 }
 
 func (s *Scheduler) SetInitialTables(tables []common.Table) {
@@ -238,7 +239,7 @@ func (s *Scheduler) GetTasksByTableIDs(tableIDs ...int64) []*scheduler.StateMach
 	for _, m := range s.totalMaps {
 		for _, stm := range m {
 			replica := stm.Inferior.(*ReplicaSet)
-			if !tableMap[int64(replica.Span.TableID)] {
+			if !tableMap[replica.Span.TableID] {
 				continue
 			}
 			stms = append(stms, stm)
@@ -247,52 +248,52 @@ func (s *Scheduler) GetTasksByTableIDs(tableIDs ...int64) []*scheduler.StateMach
 	return stms
 }
 
-func (s *Scheduler) AddNewNode(id string) {
+func (s *Scheduler) AddNewNode(id node.ID) {
 	_, ok := s.nodeTasks[id]
 	if ok {
 		log.Info("node already exists",
-			zap.String("changeeed", s.changefeedID),
-			zap.String("node", id))
+			zap.String("changefeed", s.changefeedID),
+			zap.Any("node", id))
 		return
 	}
 	log.Info("add new node",
-		zap.String("changeeed", s.changefeedID),
-		zap.String("node", id))
+		zap.String("changefeed", s.changefeedID),
+		zap.Any("node", id))
 	s.nodeTasks[id] = make(map[common.DispatcherID]*scheduler.StateMachine)
 }
 
-func (s *Scheduler) RemoveNode(nodeId string) []*messaging.TargetMessage {
-	stmMap, ok := s.nodeTasks[nodeId]
+func (s *Scheduler) RemoveNode(id node.ID) []*messaging.TargetMessage {
+	stmMap, ok := s.nodeTasks[id]
 	if !ok {
 		log.Info("node is maintained by scheduler, ignore",
-			zap.String("changeeed", s.changefeedID),
-			zap.String("node", nodeId))
+			zap.String("changefeed", s.changefeedID),
+			zap.Any("node", id))
 		return nil
 	}
 	var msgs []*messaging.TargetMessage
 	for key, value := range stmMap {
 		oldState := value.State
-		msg, _ := value.HandleCaptureShutdown(nodeId)
+		msg, _ := value.HandleCaptureShutdown(id)
 		if msg != nil {
 			msgs = append(msgs, msg)
 		}
-		if value.Primary != "" && value.Primary != nodeId {
+		if value.Primary != "" && value.Primary != id {
 			delete(s.nodeTasks[value.Primary], key)
 		}
-		s.tryMoveTask(key, value, oldState, nodeId, false)
+		s.tryMoveTask(key, value, oldState, id, false)
 	}
 	// check removing map, maybe some task are moving to this node
 	for key, value := range s.Removing() {
-		if value.Secondary == nodeId {
+		if value.Secondary == id {
 			oldState := value.State
-			msg, _ := value.HandleCaptureShutdown(nodeId)
+			msg, _ := value.HandleCaptureShutdown(id)
 			if msg != nil {
 				msgs = append(msgs, msg)
 			}
-			s.tryMoveTask(key, value, oldState, nodeId, false)
+			s.tryMoveTask(key, value, oldState, id, false)
 		}
 	}
-	delete(s.nodeTasks, nodeId)
+	delete(s.nodeTasks, id)
 	return msgs
 }
 
@@ -460,12 +461,12 @@ func (s *Scheduler) balanceTables() []*messaging.TargetMessage {
 	return messages
 }
 
-func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpanStatus) []*messaging.TargetMessage {
+func (s *Scheduler) HandleStatus(from node.ID, statusList []*heartbeatpb.TableSpanStatus) []*messaging.TargetMessage {
 	stMap, ok := s.nodeTasks[from]
 	if !ok {
 		log.Warn("no server id found, ignore",
-			zap.String("changeeed", s.changefeedID),
-			zap.String("from", from))
+			zap.String("changefeed", s.changefeedID),
+			zap.Any("from", from))
 		return nil
 	}
 	var msgs = make([]*messaging.TargetMessage, 0)
@@ -474,8 +475,8 @@ func (s *Scheduler) HandleStatus(from string, statusList []*heartbeatpb.TableSpa
 		stm, ok := stMap[span]
 		if !ok {
 			log.Warn("no statemachine id found, ignore",
-				zap.String("changeeed", s.changefeedID),
-				zap.String("from", from),
+				zap.String("changefeed", s.changefeedID),
+				zap.Any("from", from),
 				zap.String("span", span.String()))
 			continue
 		}
@@ -528,8 +529,8 @@ func (s *Scheduler) GetTaskSizeByState(state scheduler.SchedulerStatus) int {
 	return len(s.getTaskByState(state))
 }
 
-func (s *Scheduler) GetTaskSizeByNodeID(nodeID string) int {
-	sm, ok := s.nodeTasks[nodeID]
+func (s *Scheduler) GetTaskSizeByNodeID(id node.ID) int {
+	sm, ok := s.nodeTasks[id]
 	if ok {
 		return len(sm)
 	}
@@ -538,7 +539,7 @@ func (s *Scheduler) GetTaskSizeByNodeID(nodeID string) int {
 
 func (s *Scheduler) addDDLDispatcher() {
 	ddlTableSpan := heartbeatpb.DDLSpan
-	s.addNewSpans(heartbeatpb.DDLSpanSchemaID, int64(ddlTableSpan.TableID), []*heartbeatpb.TableSpan{ddlTableSpan})
+	s.addNewSpans(heartbeatpb.DDLSpanSchemaID, ddlTableSpan.TableID, []*heartbeatpb.TableSpan{ddlTableSpan})
 	var dispatcherID common.DispatcherID
 	for id := range s.schemaTasks[heartbeatpb.DDLSpanSchemaID] {
 		dispatcherID = id
@@ -594,7 +595,7 @@ func (s *Scheduler) addNewSpans(schemaID, tableID int64, tableSpans []*heartbeat
 func (s *Scheduler) tryMoveTask(dispatcherID common.DispatcherID,
 	stm *scheduler.StateMachine,
 	oldSate scheduler.SchedulerStatus,
-	oldPrimary string,
+	oldPrimary node.ID,
 	modifyNodeMap bool) {
 	if oldSate != stm.State {
 		delete(s.totalMaps[oldSate], dispatcherID)
@@ -623,7 +624,7 @@ func (s *Scheduler) tryMoveTask(dispatcherID common.DispatcherID,
 }
 
 type Item struct {
-	Node     string
+	Node     node.ID
 	TaskSize int
 	index    int
 }

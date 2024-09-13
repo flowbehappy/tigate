@@ -44,7 +44,7 @@ type Manager struct {
 
 	maintainers sync.Map
 
-	coordinatorID      messaging.ServerId
+	coordinatorID      node.ID
 	coordinatorVersion int64
 
 	selfNode    *node.Info
@@ -244,6 +244,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 			eventType:    EventMessage,
 			message:      msg,
 		}
+	default:
 	}
 	return ""
 }
@@ -285,6 +286,7 @@ func (m *Manager) handleMessage(msg *messaging.TargetMessage) {
 				m.sendMessages(response)
 			}
 		}
+	default:
 	}
 }
 

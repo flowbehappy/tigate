@@ -49,7 +49,7 @@ func TestNormalBlock(t *testing.T) {
 
 	var selectDispatcherID = common.NewDispatcherIDFromPB(blockedDispatcherIDS[2])
 	sche.nodeTasks["node2"][selectDispatcherID] = sche.nodeTasks["node1"][selectDispatcherID]
-	dropID := int64(sche.nodeTasks["node2"][selectDispatcherID].Inferior.(*ReplicaSet).Span.TableID)
+	dropID := sche.nodeTasks["node2"][selectDispatcherID].Inferior.(*ReplicaSet).Span.TableID
 	delete(sche.nodeTasks["node1"], selectDispatcherID)
 
 	newSpan := &heartbeatpb.Table{TableID: 10, SchemaID: 1}

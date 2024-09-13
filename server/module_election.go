@@ -83,11 +83,11 @@ func (e *elector) campaignCoordinator(ctx context.Context) error {
 		// Before campaign check liveness
 		if e.svr.liveness.Load() == model.LivenessCaptureStopping {
 			log.Info("do not campaign coordinator, liveness is stopping",
-				zap.String("captureID", e.svr.info.ID))
+				zap.Any("captureID", e.svr.info.ID))
 			return nil
 		}
 		// Campaign to be the coordinator, it blocks until it been elected.
-		if err := e.election.Campaign(ctx, e.svr.info.ID); err != nil {
+		if err := e.election.Campaign(ctx, string(e.svr.info.ID)); err != nil {
 			rootErr := errors.Cause(err)
 			if rootErr == context.Canceled {
 				return nil
@@ -97,7 +97,7 @@ func (e *elector) campaignCoordinator(ctx context.Context) error {
 				continue
 			}
 			log.Warn("campaign coordinator failed",
-				zap.String("captureID", e.svr.info.ID), zap.Error(err))
+				zap.String("captureID", string(e.svr.info.ID)), zap.Error(err))
 			return cerror.ErrCaptureSuicide.GenWithStackByArgs()
 		}
 		// After campaign check liveness again.
@@ -107,20 +107,20 @@ func (e *elector) campaignCoordinator(ctx context.Context) error {
 			log.Info("resign coordinator actively, liveness is stopping")
 			if resignErr := e.resign(ctx); resignErr != nil {
 				log.Warn("resign coordinator actively failed",
-					zap.String("captureID", e.svr.info.ID), zap.Error(resignErr))
+					zap.String("captureID", string(e.svr.info.ID)), zap.Error(resignErr))
 				return errors.Trace(err)
 			}
 			return nil
 		}
 
 		coordinatorVersion, err := e.svr.EtcdClient.GetOwnerRevision(ctx,
-			e.svr.info.ID)
+			model.CaptureID(e.svr.info.ID))
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		log.Info("campaign coordinator successfully",
-			zap.String("captureID", e.svr.info.ID),
+			zap.String("captureID", string(e.svr.info.ID)),
 			zap.Int64("coordinatorVersion", coordinatorVersion))
 
 		co := coordinator.NewCoordinator(e.svr.info,
@@ -148,24 +148,24 @@ func (e *elector) campaignCoordinator(ctx context.Context) error {
 			resignCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if resignErr := e.resign(resignCtx); resignErr != nil {
 				if errors.Cause(resignErr) != context.DeadlineExceeded {
-					log.Info("coordinator resign failed", zap.String("captureID", e.svr.info.ID),
+					log.Info("coordinator resign failed", zap.String("captureID", string(e.svr.info.ID)),
 						zap.Error(resignErr), zap.Int64("coordinatorVersion", coordinatorVersion))
 					cancel()
 					return errors.Trace(resignErr)
 				}
 
-				log.Warn("coordinator resign timeout", zap.String("captureID", e.svr.info.ID),
+				log.Warn("coordinator resign timeout", zap.String("captureID", string(e.svr.info.ID)),
 					zap.Error(resignErr), zap.Int64("coordinatorVersion", coordinatorVersion))
 			}
 			cancel()
 		}
 
 		log.Info("coordinator resigned successfully",
-			zap.String("captureID", e.svr.info.ID),
+			zap.String("captureID", string(e.svr.info.ID)),
 			zap.Int64("coordinatorVersion", coordinatorVersion))
 		if err != nil {
 			log.Warn("run coordinator exited with error",
-				zap.String("captureID", e.svr.info.ID),
+				zap.String("captureID", string(e.svr.info.ID)),
 				zap.Int64("coordinatorVersion", coordinatorVersion),
 				zap.Error(err))
 			// for errors, return error and let server exits or restart
@@ -173,12 +173,12 @@ func (e *elector) campaignCoordinator(ctx context.Context) error {
 		}
 		// if coordinator exits normally, continue the campaign loop and try to election coordinator again
 		log.Info("run coordinator exited normally",
-			zap.String("captureID", e.svr.info.ID),
+			zap.String("captureID", string(e.svr.info.ID)),
 			zap.Int64("coordinatorVersion", coordinatorVersion))
 	}
 }
 
-func (e *elector) Close(ctx context.Context) error {
+func (e *elector) Close(_ context.Context) error {
 	return nil
 }
 

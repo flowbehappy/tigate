@@ -60,7 +60,7 @@ type Maintainer struct {
 	mc            messaging.MessageCenter
 
 	watermark             *heartbeatpb.Watermark
-	checkpointTsByCapture map[model.CaptureID]heartbeatpb.Watermark
+	checkpointTsByCapture map[node.ID]heartbeatpb.Watermark
 
 	state        heartbeatpb.ComponentState
 	bootstrapper *Bootstrapper
@@ -73,7 +73,7 @@ type Maintainer struct {
 
 	pdEndpoints []string
 	nodeManager *watcher.NodeManager
-	nodesClosed map[string]struct{}
+	nodesClosed map[node.ID]struct{}
 
 	statusChanged  *atomic.Bool
 	nodeChanged    *atomic.Bool
@@ -89,8 +89,8 @@ type Maintainer struct {
 	lastCheckpointTsTime time.Time
 
 	errLock         sync.Mutex
-	runningErrors   map[messaging.ServerId]*heartbeatpb.RunningError
-	runningWarnings map[messaging.ServerId]*heartbeatpb.RunningError
+	runningErrors   map[node.ID]*heartbeatpb.RunningError
+	runningWarnings map[node.ID]*heartbeatpb.RunningError
 
 	changefeedCheckpointTsGauge    prometheus.Gauge
 	changefeedCheckpointTsLagGauge prometheus.Gauge
@@ -122,7 +122,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		state:           heartbeatpb.ComponentState_Working,
 		removed:         atomic.NewBool(false),
 		nodeManager:     appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName),
-		nodesClosed:     make(map[string]struct{}),
+		nodesClosed:     make(map[node.ID]struct{}),
 		statusChanged:   atomic.NewBool(true),
 		nodeChanged:     atomic.NewBool(false),
 		cascadeRemoving: false,
@@ -131,9 +131,9 @@ func NewMaintainer(cfID model.ChangeFeedID,
 			CheckpointTs: checkpointTs,
 			ResolvedTs:   checkpointTs,
 		},
-		checkpointTsByCapture: make(map[model.CaptureID]heartbeatpb.Watermark),
-		runningErrors:         map[messaging.ServerId]*heartbeatpb.RunningError{},
-		runningWarnings:       map[messaging.ServerId]*heartbeatpb.RunningError{},
+		checkpointTsByCapture: make(map[node.ID]heartbeatpb.Watermark),
+		runningErrors:         map[node.ID]*heartbeatpb.RunningError{},
+		runningWarnings:       map[node.ID]*heartbeatpb.RunningError{},
 
 		changefeedCheckpointTsGauge:    metrics.ChangefeedCheckpointTsGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		changefeedCheckpointTsLagGauge: metrics.ChangefeedCheckpointTsLagGauge.WithLabelValues(cfID.Namespace, cfID.ID),
@@ -229,8 +229,8 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 		Warning:      runningWarnings,
 		Err:          runningErrors,
 	}
-	m.runningWarnings = make(map[messaging.ServerId]*heartbeatpb.RunningError)
-	m.runningErrors = make(map[messaging.ServerId]*heartbeatpb.RunningError)
+	m.runningWarnings = make(map[node.ID]*heartbeatpb.RunningError)
+	m.runningErrors = make(map[node.ID]*heartbeatpb.RunningError)
 	return status
 }
 
@@ -248,7 +248,7 @@ func (m *Maintainer) initialize() error {
 	m.statusChanged.Store(true)
 
 	// detect the capture changes
-	m.nodeManager.RegisterNodeChangeHandler("maintainer-"+m.id.ID, func(allNodes map[string]*node.Info) {
+	m.nodeManager.RegisterNodeChangeHandler(node.ID("maintainer-"+m.id.ID), func(allNodes map[node.ID]*node.Info) {
 		m.nodeChanged.Store(true)
 	})
 	// init bootstrapper nodes
@@ -256,8 +256,8 @@ func (m *Maintainer) initialize() error {
 	log.Info("changefeed bootstrap initial nodes",
 		zap.Int("nodes", len(nodes)))
 	var newNodes = make([]*node.Info, 0, len(nodes))
-	for id, node := range nodes {
-		newNodes = append(newNodes, node)
+	for id, n := range nodes {
+		newNodes = append(newNodes, n)
 		m.scheduler.AddNewNode(id)
 	}
 	m.sendMessages(m.bootstrapper.HandleNewNodes(newNodes))
@@ -302,7 +302,7 @@ func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
 	case messaging.TypeMaintainerBootstrapResponse:
 		m.onMaintainerBootstrapResponse(msg)
 	case messaging.TypeMaintainerCloseResponse:
-		m.onNodeClosed(string(msg.From), msg.Message[0].(*heartbeatpb.MaintainerCloseResponse))
+		m.onNodeClosed(msg.From, msg.Message[0].(*heartbeatpb.MaintainerCloseResponse))
 	case messaging.TypeRemoveMaintainerRequest:
 		m.onRemoveMaintainer(msg.Message[0].(*heartbeatpb.RemoveMaintainerRequest).Cascade)
 	case messaging.TypeCheckpointTsMessage:
@@ -334,20 +334,20 @@ func (m *Maintainer) onCheckpointTsPersisted(msg *heartbeatpb.CheckpointTsMessag
 		return
 	}
 	m.sendMessages([]*messaging.TargetMessage{
-		messaging.NewSingleTargetMessage(messaging.ServerId(stm.Primary), messaging.HeartbeatCollectorTopic, msg),
+		messaging.NewSingleTargetMessage(stm.Primary, messaging.HeartbeatCollectorTopic, msg),
 	})
 }
 
 func (m *Maintainer) onNodeChanged() {
 	activeNodes := m.nodeManager.GetAliveNodes()
 	var newNodes = make([]*node.Info, 0, len(activeNodes))
-	for id, node := range activeNodes {
+	for id, n := range activeNodes {
 		if _, ok := m.bootstrapper.GetAllNodes()[id]; !ok {
-			newNodes = append(newNodes, node)
+			newNodes = append(newNodes, n)
 			m.scheduler.AddNewNode(id)
 		}
 	}
-	var removedNodes []string
+	var removedNodes []node.ID
 	for id, _ := range m.bootstrapper.GetAllNodes() {
 		if _, ok := activeNodes[id]; !ok {
 			removedNodes = append(removedNodes, id)
@@ -384,7 +384,7 @@ func (m *Maintainer) calCheckpointTs() {
 			if _, ok := m.checkpointTsByCapture[id]; !ok {
 				log.Debug("checkpointTs can not be advanced, since missing capture heartbeat",
 					zap.String("changefeed", m.id.ID),
-					zap.String("capture", id))
+					zap.Any("node", id))
 				return
 			}
 			newWatermark.UpdateMin(m.checkpointTsByCapture[id])
@@ -446,9 +446,9 @@ func (m *Maintainer) onScheduleTableSpan() {
 func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 	req := msg.Message[0].(*heartbeatpb.HeartBeatRequest)
 	if req.Watermark != nil {
-		m.checkpointTsByCapture[model.CaptureID(msg.From)] = *req.Watermark
+		m.checkpointTsByCapture[msg.From] = *req.Watermark
 	}
-	msgs := m.scheduler.HandleStatus(msg.From.String(), req.Statuses)
+	msgs := m.scheduler.HandleStatus(msg.From, req.Statuses)
 	m.sendMessages(msgs)
 	msgs, err := m.barrier.HandleStatus(msg.From, req)
 	if err != nil {
@@ -474,8 +474,8 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage) {
 	log.Info("received maintainer bootstrap response",
 		zap.String("changefeed", m.id.ID),
-		zap.String("server", msg.From.String()))
-	m.scheduler.AddNewNode(msg.From.String())
+		zap.Any("server", msg.From))
+	m.scheduler.AddNewNode(msg.From)
 	cachedResp := m.bootstrapper.HandleBootstrapResponse(msg.From, msg.Message[0].(*heartbeatpb.MaintainerBootstrapResponse))
 	m.onBootstrapDone(cachedResp)
 }
@@ -492,7 +492,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 	for server, bootstrapMsg := range cachedResp {
 		log.Info("received bootstrap response",
 			zap.String("changefeed", m.id.ID),
-			zap.String("server", server),
+			zap.Any("server", server),
 			zap.Int("size", len(bootstrapMsg.Spans)))
 		for _, info := range bootstrapMsg.Spans {
 			dispatcherID := common.NewDispatcherIDFromPB(info.ID)
@@ -503,7 +503,9 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 			}
 			span := info.Span
 			stm := scheduler.NewStateMachine(dispatcherID,
-				map[model.CaptureID]scheduler.InferiorStatus{server: status},
+				map[node.ID]scheduler.InferiorStatus{
+					server: status,
+				},
 				NewReplicaSet(m.id, dispatcherID, info.SchemaID, span, info.CheckpointTs))
 
 			//working on remote, the state must be absent or working since it's reported by remote
@@ -539,7 +541,7 @@ func (m *Maintainer) initTables() ([]common.Table, error) {
 	return tables, nil
 }
 
-func (m *Maintainer) onNodeClosed(from string, response *heartbeatpb.MaintainerCloseResponse) {
+func (m *Maintainer) onNodeClosed(from node.ID, response *heartbeatpb.MaintainerCloseResponse) {
 	if response.Success {
 		m.nodesClosed[from] = struct{}{}
 	}
@@ -576,10 +578,10 @@ func (m *Maintainer) tryCloseChangefeed() bool {
 
 func (m *Maintainer) sendMaintainerCloseRequestToAllNode() bool {
 	msgs := make([]*messaging.TargetMessage, 0)
-	for node := range m.nodeManager.GetAliveNodes() {
-		if _, ok := m.nodesClosed[node]; !ok {
+	for n := range m.nodeManager.GetAliveNodes() {
+		if _, ok := m.nodesClosed[n]; !ok {
 			msgs = append(msgs, messaging.NewSingleTargetMessage(
-				messaging.ServerId(node),
+				n,
 				messaging.DispatcherManagerManagerTopic,
 				&heartbeatpb.MaintainerCloseRequest{
 					ChangefeedID: m.id.ID,
@@ -602,8 +604,8 @@ func (m *Maintainer) handleError(err error) {
 	} else {
 		code = string(errors.ErrOwnerUnknown.RFCCode())
 	}
-	m.runningErrors = map[messaging.ServerId]*heartbeatpb.RunningError{
-		messaging.ServerId(m.selfNode.ID): {
+	m.runningErrors = map[node.ID]*heartbeatpb.RunningError{
+		m.selfNode.ID: {
 			Time:    time.Now().String(),
 			Node:    m.selfNode.AdvertiseAddr,
 			Code:    code,
@@ -635,12 +637,12 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 			zap.String("changefeed", m.id.ID),
 			zap.Error(err))
 	}
-	return func(captureID model.CaptureID) *messaging.TargetMessage {
+	return func(id node.ID) *messaging.TargetMessage {
 		log.Info("send maintainer bootstrap message",
 			zap.String("changefeed", m.id.String()),
-			zap.String("server", captureID))
+			zap.Any("server", id))
 		return messaging.NewSingleTargetMessage(
-			messaging.ServerId(captureID),
+			id,
 			messaging.DispatcherManagerManagerTopic,
 			&heartbeatpb.MaintainerBootstrapRequest{
 				ChangefeedID: m.id.ID,

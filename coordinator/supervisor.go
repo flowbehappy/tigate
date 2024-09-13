@@ -109,7 +109,7 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 			log.Info("find a new server",
 				zap.String("ID", s.ID.String()),
 				zap.String("captureAddr", info.AdvertiseAddr),
-				zap.String("server", id))
+				zap.Any("server", id))
 		}
 	}
 
@@ -119,7 +119,7 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 			log.Info("removed a server",
 				zap.String("ID", s.ID.String()),
 				zap.String("captureAddr", capture.capture.AdvertiseAddr),
-				zap.String("server", id))
+				zap.Any("server", id))
 			delete(s.captures, id)
 
 			// Only update changes after initialization.
@@ -178,13 +178,13 @@ func (s *Supervisor) UpdateCaptureStatus(from node.ID, statuses []scheduler.Infe
 	if !ok {
 		log.Warn("server is not found",
 			zap.String("ID", s.ID.String()),
-			zap.String("server", from))
+			zap.Any("server", from))
 	}
 	if c.state == CaptureStateUninitialized {
 		c.state = CaptureStateInitialized
 		log.Info("server initialized",
 			zap.String("ID", s.ID.String()),
-			zap.String("server", c.capture.ID),
+			zap.Any("server", c.capture.ID),
 			zap.String("captureAddr", c.capture.AdvertiseAddr))
 	}
 	// scheduler is not initialized, is still collecting the remote server stauts

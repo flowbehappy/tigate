@@ -15,6 +15,7 @@ package dispatchermanager
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
@@ -36,7 +37,7 @@ HeartBeatCollector is an instance-level component. It will deal with all the hea
 */
 type HeartBeatCollector struct {
 	wg   sync.WaitGroup
-	from messaging.ServerId
+	from node.ID
 
 	reqQueue *HeartbeatRequestQueue
 
@@ -45,7 +46,7 @@ type HeartBeatCollector struct {
 	checkpointTsMessageDynamicStream        dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.CheckpointTsMessage, *EventDispatcherManager]
 }
 
-func NewHeartBeatCollector(serverId messaging.ServerId) *HeartBeatCollector {
+func NewHeartBeatCollector(serverId node.ID) *HeartBeatCollector {
 	heartBeatCollector := HeartBeatCollector{
 		from:                                    serverId,
 		reqQueue:                                NewHeartbeatRequestQueue(),

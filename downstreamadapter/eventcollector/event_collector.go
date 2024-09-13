@@ -15,6 +15,7 @@ package eventcollector
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 	"time"
 
@@ -66,7 +67,7 @@ Besides, EventCollector also generate SyncPoint Event for dispatchers when neces
 EventCollector is an instance-level component.
 */
 type EventCollector struct {
-	serverId          messaging.ServerId
+	serverId          node.ID
 	dispatcherMap     *DispatcherMap
 	globalMemoryQuota int64
 	wg                sync.WaitGroup
@@ -80,7 +81,7 @@ type EventCollector struct {
 	metricResolvedTsLag                          prometheus.Gauge
 }
 
-func NewEventCollector(globalMemoryQuota int64, serverId messaging.ServerId) *EventCollector {
+func NewEventCollector(globalMemoryQuota int64, serverId node.ID) *EventCollector {
 	eventCollector := EventCollector{
 		serverId:                                     serverId,
 		globalMemoryQuota:                            globalMemoryQuota,
