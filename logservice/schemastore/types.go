@@ -18,10 +18,9 @@ type PersistedDDLEvent struct {
 	// - ExchangeTablePartition: non-partitioned table id
 	TableID       int64            `json:"table_id"`
 	SchemaName    string           `json:"schema_name"`
-	TableName     string           `json:"table_name"`
 	Query         string           `json:"query"`
 	SchemaVersion int64            `json:"schema_version"`
-	DBInfo        *model.DBInfo    `json:"db_info"`
+	DBInfo        *model.DBInfo    `json:"-"`
 	TableInfo     *model.TableInfo `json:"table_info"`
 	FinishedTs    uint64           `json:"finished_ts"`
 	BDRRole       string           `json:"bdr_role"`
@@ -33,13 +32,10 @@ type PersistedDDLEvent struct {
 
 func buildPersistedDDLEvent(job *model.Job) PersistedDDLEvent {
 	return PersistedDDLEvent{
-		ID:       job.ID,
-		Type:     byte(job.Type),
-		SchemaID: job.SchemaID,
-		TableID:  job.TableID,
-		// TODO: fill in schema name and table name
-		SchemaName:     job.SchemaName,
-		TableName:      job.TableName,
+		ID:             job.ID,
+		Type:           byte(job.Type),
+		SchemaID:       job.SchemaID,
+		TableID:        job.TableID,
 		Query:          job.Query,
 		SchemaVersion:  job.BinlogInfo.SchemaVersion,
 		DBInfo:         job.BinlogInfo.DBInfo,

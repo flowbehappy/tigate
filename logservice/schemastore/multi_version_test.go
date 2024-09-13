@@ -28,7 +28,6 @@ func TestCreateTable(t *testing.T) {
 		Type:       byte(model.ActionCreateTable),
 		SchemaID:   10,
 		SchemaName: "test",
-		TableName:  "t",
 		TableInfo: &model.TableInfo{
 			ID:   100,
 			Name: model.NewCIStr("t"),
@@ -47,7 +46,6 @@ func TestRenameTable(t *testing.T) {
 		Type:       byte(model.ActionCreateTable),
 		SchemaID:   10,
 		SchemaName: "test",
-		TableName:  "t",
 		TableInfo: &model.TableInfo{
 			ID:   100,
 			Name: model.NewCIStr("t"),
@@ -58,7 +56,6 @@ func TestRenameTable(t *testing.T) {
 		Type:       byte(model.ActionRenameTable),
 		SchemaID:   10,
 		SchemaName: "test",
-		TableName:  "t2",
 		TableInfo: &model.TableInfo{
 			ID:   100,
 			Name: model.NewCIStr("t2"),
@@ -69,7 +66,6 @@ func TestRenameTable(t *testing.T) {
 		Type:       byte(model.ActionRenameTable),
 		SchemaID:   10,
 		SchemaName: "test",
-		TableName:  "t3",
 		TableInfo: &model.TableInfo{
 			ID:   100,
 			Name: model.NewCIStr("t3"),
@@ -102,7 +98,6 @@ func TestDropTable(t *testing.T) {
 		Type:       byte(model.ActionCreateTable),
 		SchemaID:   10,
 		SchemaName: "test",
-		TableName:  "t",
 		TableInfo: &model.TableInfo{
 			ID:   100,
 			Name: model.NewCIStr("t"),
@@ -113,7 +108,6 @@ func TestDropTable(t *testing.T) {
 		Type:       byte(model.ActionDropTable),
 		SchemaID:   10,
 		SchemaName: "test",
-		TableName:  "t",
 		TableInfo: &model.TableInfo{
 			ID:   100,
 			Name: model.NewCIStr("t"),

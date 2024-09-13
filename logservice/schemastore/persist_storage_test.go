@@ -225,8 +225,12 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 			Type:          byte(model.ActionCreateSchema),
 			SchemaID:      int64(schemaID),
 			SchemaVersion: 100,
-			TableInfo:     nil,
-			FinishedTs:    200,
+			DBInfo: &model.DBInfo{
+				ID:   int64(schemaID),
+				Name: model.NewCIStr("test"),
+			},
+			TableInfo:  nil,
+			FinishedTs: 200,
 		}
 		pStorage.handleSortedDDLEvents(ddlEvent)
 
@@ -336,8 +340,12 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 			Type:          byte(model.ActionDropSchema),
 			SchemaID:      int64(schemaID),
 			SchemaVersion: 200,
-			TableInfo:     nil,
-			FinishedTs:    300,
+			DBInfo: &model.DBInfo{
+				ID:   int64(schemaID),
+				Name: model.NewCIStr("test"),
+			},
+			TableInfo:  nil,
+			FinishedTs: 300,
 		}
 
 		pStorage.handleSortedDDLEvents(ddlEvent)
@@ -367,8 +375,12 @@ func TestHandleRenameTable(t *testing.T) {
 			Type:          byte(model.ActionCreateSchema),
 			SchemaID:      int64(schemaID1),
 			SchemaVersion: 100,
-			TableInfo:     nil,
-			FinishedTs:    200,
+			DBInfo: &model.DBInfo{
+				ID:   int64(schemaID1),
+				Name: model.NewCIStr("test"),
+			},
+			TableInfo:  nil,
+			FinishedTs: 200,
 		}
 		pStorage.handleSortedDDLEvents(ddlEvent)
 	}
@@ -380,8 +392,12 @@ func TestHandleRenameTable(t *testing.T) {
 			Type:          byte(model.ActionCreateSchema),
 			SchemaID:      int64(schemaID2),
 			SchemaVersion: 101,
-			TableInfo:     nil,
-			FinishedTs:    201,
+			DBInfo: &model.DBInfo{
+				ID:   int64(schemaID2),
+				Name: model.NewCIStr("test2"),
+			},
+			TableInfo:  nil,
+			FinishedTs: 201,
 		}
 		pStorage.handleSortedDDLEvents(ddlEvent)
 	}
@@ -452,8 +468,12 @@ func TestFetchDDLEvents(t *testing.T) {
 			Type:          byte(model.ActionCreateSchema),
 			SchemaID:      int64(schemaID),
 			SchemaVersion: 100,
-			TableInfo:     nil,
-			FinishedTs:    200,
+			DBInfo: &model.DBInfo{
+				ID:   int64(schemaID),
+				Name: model.NewCIStr("test"),
+			},
+			TableInfo:  nil,
+			FinishedTs: 200,
 		}
 		pStorage.handleSortedDDLEvents(ddlEvent)
 	}
@@ -500,7 +520,8 @@ func TestFetchDDLEvents(t *testing.T) {
 			TableID:       int64(tableID),
 			SchemaVersion: 507,
 			TableInfo: &model.TableInfo{
-				ID: int64(tableID2),
+				ID:   int64(tableID2),
+				Name: model.NewCIStr("t2"),
 			},
 			FinishedTs: 607,
 		}
@@ -513,6 +534,8 @@ func TestFetchDDLEvents(t *testing.T) {
 		require.Equal(t, 2, len(ddlEvents))
 		require.Equal(t, uint64(605), ddlEvents[0].FinishedTs)
 		require.Equal(t, uint64(607), ddlEvents[1].FinishedTs)
+		require.Equal(t, "test", ddlEvents[1].SchemaName)
+		require.Equal(t, "t2", ddlEvents[1].TableName)
 	}
 
 	// fetch all table trigger ddl events

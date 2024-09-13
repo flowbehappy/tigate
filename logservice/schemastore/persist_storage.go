@@ -318,7 +318,7 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64
 	events := make([]common.DDLEvent, len(allTargetTs))
 	for i, ts := range allTargetTs {
 		rawEvent := readDDLEvent(storageSnap, ts)
-		events[i] = buildDDLEvent(rawEvent)
+		events[i] = buildDDLEvent(&rawEvent)
 	}
 
 	return events
@@ -353,10 +353,14 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 		}
 		for _, ts := range allTargetTs {
 			rawEvent := readDDLEvent(storageSnap, ts)
-			if tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.SchemaName, rawEvent.TableName) {
+			var tableName string
+			if rawEvent.TableInfo != nil {
+				tableName = rawEvent.TableInfo.Name.O
+			}
+			if tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.SchemaName, tableName) {
 				continue
 			}
-			events = append(events, buildDDLEvent(rawEvent))
+			events = append(events, buildDDLEvent(&rawEvent))
 		}
 		if len(events) >= limit {
 			return events
@@ -505,10 +509,9 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 	// TODO: check ddl events are sorted
 
 	p.mu.Lock()
-	for _, event := range ddlEvents {
-		// TODO: may be don't need to fillSchemaName?
-		fillSchemaName(event, p.databaseMap)
-		skip, err := updateDatabaseInfoAndTableInfo(&event, p.databaseMap, p.tablesBasicInfo)
+	for i := range ddlEvents {
+		fillSchemaName(&ddlEvents[i], p.databaseMap)
+		skip, err := updateDatabaseInfoAndTableInfo(&ddlEvents[i], p.databaseMap, p.tablesBasicInfo)
 		if err != nil {
 			return err
 		}
@@ -518,14 +521,14 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 			continue
 		}
 		if p.tableTriggerDDLHistory, err = updateDDLHistory(
-			&event,
+			&ddlEvents[i],
 			p.databaseMap,
 			p.tablesBasicInfo,
 			p.tablesDDLHistory,
 			p.tableTriggerDDLHistory); err != nil {
 			return err
 		}
-		if err := updateRegisteredTableInfoStore(event, p.tableInfoStoreMap); err != nil {
+		if err := updateRegisteredTableInfoStore(ddlEvents[i], p.tableInfoStoreMap); err != nil {
 			return err
 		}
 	}
@@ -603,6 +606,7 @@ func updateDatabaseInfoAndTableInfo(
 			CreateVersion: uint64(event.FinishedTs),
 			DeleteVersion: math.MaxUint64,
 		}
+		log.Info("create database", zap.String("database", event.SchemaName))
 	case model.ActionDropSchema:
 		databaseInfo, ok := databaseMap[int64(event.SchemaID)]
 		if !ok {
@@ -770,16 +774,18 @@ func updateRegisteredTableInfoStore(
 	return nil
 }
 
-func buildDDLEvent(rawEvent PersistedDDLEvent) common.DDLEvent {
+func buildDDLEvent(rawEvent *PersistedDDLEvent) common.DDLEvent {
 	event := common.DDLEvent{
 		Type:       rawEvent.Type,
 		SchemaID:   rawEvent.SchemaID,
 		TableID:    rawEvent.TableID,
 		SchemaName: rawEvent.SchemaName,
-		TableName:  rawEvent.TableName,
 		Query:      rawEvent.Query,
 		TableInfo:  rawEvent.TableInfo,
 		FinishedTs: rawEvent.FinishedTs,
+	}
+	if rawEvent.TableInfo != nil {
+		event.TableName = rawEvent.TableInfo.Name.O
 	}
 
 	switch model.ActionType(rawEvent.Type) {
@@ -843,27 +849,31 @@ func buildDDLEvent(rawEvent PersistedDDLEvent) common.DDLEvent {
 	return event
 }
 
-func fillSchemaName(event PersistedDDLEvent, databaseMap map[int64]*DatabaseInfo) error {
-	// FIXME: only fill schema name for needed ddl
-
-	if model.ActionType(event.Type) == model.ActionCreateSchema || model.ActionType(event.Type) == model.ActionDropSchema {
-		return nil
+func fillSchemaName(event *PersistedDDLEvent, databaseMap map[int64]*DatabaseInfo) {
+	switch model.ActionType(event.Type) {
+	case model.ActionCreateSchema,
+		model.ActionDropSchema:
+		event.SchemaName = event.DBInfo.Name.O
+		log.Info("fill schema name", zap.String("schemaName", event.SchemaName))
+	default:
+		databaseInfo, ok := databaseMap[event.SchemaID]
+		if !ok {
+			log.Panic("database not found",
+				zap.Int64("schemaID", event.SchemaID))
+		}
+		if databaseInfo.CreateVersion > uint64(event.FinishedTs) {
+			log.Panic("database is not created",
+				zap.Int64("schemaID", event.SchemaID))
+		}
+		if databaseInfo.DeleteVersion < uint64(event.FinishedTs) {
+			log.Panic("database is deleted",
+				zap.Int64("schemaID", event.SchemaID))
+		}
+		event.SchemaName = databaseInfo.Name
+		log.Info("fill schema name",
+			zap.String("schemaName", event.SchemaName),
+			zap.Any("type", event.Type))
 	}
-
-	schemaID := int64(event.SchemaID)
-	databaseInfo, ok := databaseMap[schemaID]
-	if !ok {
-		log.Error("database not found", zap.Any("schemaID", schemaID))
-		return errors.New("database not found")
-	}
-	if databaseInfo.CreateVersion > uint64(event.FinishedTs) {
-		return errors.New("database is not created")
-	}
-	if databaseInfo.DeleteVersion < uint64(event.FinishedTs) {
-		return errors.New("database is deleted")
-	}
-	event.SchemaName = databaseInfo.Name
-	return nil
 }
 
 func modifySchemaID(
