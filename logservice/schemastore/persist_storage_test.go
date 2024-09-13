@@ -20,8 +20,10 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -531,7 +533,7 @@ func TestRenameTable(t *testing.T) {
 	}
 }
 
-func TestFetchTableDDLEvents(t *testing.T) {
+func TestFetchDDLEvents(t *testing.T) {
 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
 	err := os.RemoveAll(dbPath)
 	require.Nil(t, err)
@@ -599,8 +601,36 @@ func TestFetchTableDDLEvents(t *testing.T) {
 		pStorage.handleSortedDDLEvents(ddlEvent)
 	}
 
-	ddlEvents := pStorage.fetchTableDDLEvents(tableID, 601, 607)
-	require.Equal(t, 2, len(ddlEvents))
-	require.Equal(t, uint64(605), ddlEvents[0].FinishedTs)
-	require.Equal(t, uint64(607), ddlEvents[1].FinishedTs)
+	// fetch table ddl events
+	{
+		ddlEvents := pStorage.fetchTableDDLEvents(tableID, 601, 607)
+		require.Equal(t, 2, len(ddlEvents))
+		require.Equal(t, uint64(605), ddlEvents[0].FinishedTs)
+		require.Equal(t, uint64(607), ddlEvents[1].FinishedTs)
+	}
+
+	// fetch all table trigger ddl events
+	{
+		filteConfig := &config.FilterConfig{}
+		eventFilter, err := filter.NewFilter(filteConfig, "", false)
+		require.Nil(t, err)
+		tableTriggerDDLEvents := pStorage.fetchTableTriggerDDLEvents(eventFilter, 0, 10)
+		require.Equal(t, 3, len(tableTriggerDDLEvents))
+		require.Equal(t, uint64(200), tableTriggerDDLEvents[0].FinishedTs)
+		require.Equal(t, uint64(601), tableTriggerDDLEvents[1].FinishedTs)
+		require.Equal(t, uint64(605), tableTriggerDDLEvents[2].FinishedTs)
+	}
+
+	// fetch partial table trigger ddl events
+	{
+		filteConfig := &config.FilterConfig{}
+		eventFilter, err := filter.NewFilter(filteConfig, "", false)
+		require.Nil(t, err)
+		tableTriggerDDLEvents := pStorage.fetchTableTriggerDDLEvents(eventFilter, 0, 2)
+		require.Equal(t, 2, len(tableTriggerDDLEvents))
+		require.Equal(t, uint64(200), tableTriggerDDLEvents[0].FinishedTs)
+		require.Equal(t, uint64(601), tableTriggerDDLEvents[1].FinishedTs)
+	}
+
+	// TODO: test filter
 }

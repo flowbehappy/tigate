@@ -333,6 +333,7 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 		})
 		// no more events to read
 		if index == len(p.tableTriggerDDLHistory) {
+			p.mu.Unlock()
 			return events
 		}
 		for i := index; i < len(p.tableTriggerDDLHistory); i++ {
@@ -346,14 +347,15 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 		if len(allTargetTs) == 0 {
 			return events
 		}
-
 		for _, ts := range allTargetTs {
 			rawEvent := readDDLEvent(storageSnap, ts)
 			if tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.SchemaName, rawEvent.TableName) {
 				continue
 			}
-
 			events = append(events, buildDDLEvent(rawEvent))
+		}
+		if len(events) >= limit {
+			return events
 		}
 		nextStartTs = allTargetTs[len(allTargetTs)-1]
 	}
