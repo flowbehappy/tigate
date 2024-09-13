@@ -2,7 +2,6 @@ package eventstore
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
@@ -439,11 +438,8 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 			return
 		}
 		key := EncodeKey(uint64(item.state.span.TableID), item.raw)
-		value, err := json.Marshal(item.raw)
-		if err != nil {
-			log.Panic("failed to marshal event", zap.Error(err))
-		}
-		if err = batch.Set(key, value, pebble.NoSync); err != nil {
+		value := item.raw.Encode()
+		if err := batch.Set(key, value, pebble.NoSync); err != nil {
 			log.Panic("failed to update pebble batch", zap.Error(err))
 		}
 	}
@@ -539,9 +535,7 @@ func (iter *eventStoreIter) Next() (*common.RawKVEntry, bool, error) {
 	value := iter.innerIter.Value()
 	_, startTS, commitTS := DecodeKey(key)
 	rawKV := &common.RawKVEntry{}
-	if err := json.Unmarshal(value, rawKV); err != nil {
-		return nil, false, err
-	}
+	rawKV.Decode(value)
 	isNewTxn := false
 	if iter.prevCommitTS == 0 || (startTS != iter.prevStartTS || commitTS != iter.prevCommitTS) {
 		isNewTxn = true
