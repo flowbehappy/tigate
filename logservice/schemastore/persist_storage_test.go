@@ -34,8 +34,8 @@ func newPersistentStorageForTest(db *pebble.DB, gcTs uint64, upperBound upperBou
 		db:                     db,
 		gcTs:                   gcTs,
 		upperBound:             upperBound,
-		databaseMap:            make(map[int64]*DatabaseInfo),
-		tablesBasicInfo:        make(map[int64]*VersionedTableBasicInfo),
+		tableMap:               make(map[int64]*BasicTableInfo),
+		databaseMap:            make(map[int64]*BasicDatabaseInfo),
 		tablesDDLHistory:       make(map[int64][]uint64),
 		tableTriggerDDLHistory: make([]uint64, 0),
 		tableInfoStoreMap:      make(map[int64]*versionedTableInfoStore),
@@ -223,10 +223,10 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateSchema),
-			SchemaID:      int64(schemaID),
+			SchemaID:      schemaID,
 			SchemaVersion: 100,
 			DBInfo: &model.DBInfo{
-				ID:   int64(schemaID),
+				ID:   schemaID,
 				Name: model.NewCIStr("test"),
 			},
 			TableInfo:  nil,
@@ -235,7 +235,7 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 		pStorage.handleSortedDDLEvents(ddlEvent)
 
 		require.Equal(t, 1, len(pStorage.databaseMap))
-		require.Equal(t, uint64(200), pStorage.databaseMap[schemaID].CreateVersion)
+		require.Equal(t, "test", pStorage.databaseMap[schemaID].Name)
 		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(200), pStorage.tableTriggerDDLHistory[0])
 	}
@@ -256,7 +256,7 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 		pStorage.handleSortedDDLEvents(ddlEvent)
 
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
-		require.Equal(t, 1, len(pStorage.tablesBasicInfo))
+		require.Equal(t, 1, len(pStorage.tableMap))
 		require.Equal(t, 2, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(201), pStorage.tableTriggerDDLHistory[1])
 		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
@@ -279,7 +279,7 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 		pStorage.handleSortedDDLEvents(ddlEvent)
 
 		require.Equal(t, 2, len(pStorage.databaseMap[schemaID].Tables))
-		require.Equal(t, 2, len(pStorage.tablesBasicInfo))
+		require.Equal(t, 2, len(pStorage.tableMap))
 		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(203), pStorage.tableTriggerDDLHistory[2])
 		require.Equal(t, 2, len(pStorage.tablesDDLHistory))
@@ -300,7 +300,7 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 		pStorage.handleSortedDDLEvents(ddlEvent)
 
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
-		require.Equal(t, 1, len(pStorage.tablesBasicInfo))
+		require.Equal(t, 1, len(pStorage.tableMap))
 		require.Equal(t, 4, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(205), pStorage.tableTriggerDDLHistory[3])
 		require.Equal(t, 2, len(pStorage.tablesDDLHistory))
@@ -325,7 +325,7 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 		pStorage.handleSortedDDLEvents(ddlEvent)
 
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
-		require.Equal(t, 1, len(pStorage.tablesBasicInfo))
+		require.Equal(t, 1, len(pStorage.tableMap))
 		require.Equal(t, 4, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
 		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID]))
@@ -338,10 +338,10 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionDropSchema),
-			SchemaID:      int64(schemaID),
+			SchemaID:      schemaID,
 			SchemaVersion: 200,
 			DBInfo: &model.DBInfo{
-				ID:   int64(schemaID),
+				ID:   schemaID,
 				Name: model.NewCIStr("test"),
 			},
 			TableInfo:  nil,
@@ -350,8 +350,7 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 
 		pStorage.handleSortedDDLEvents(ddlEvent)
 
-		require.Equal(t, 1, len(pStorage.databaseMap))
-		require.Equal(t, uint64(300), pStorage.databaseMap[schemaID].DeleteVersion)
+		require.Equal(t, 0, len(pStorage.databaseMap))
 		require.Equal(t, 5, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(300), pStorage.tableTriggerDDLHistory[4])
 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
@@ -407,8 +406,8 @@ func TestHandleRenameTable(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateTable),
-			SchemaID:      int64(schemaID1),
-			TableID:       int64(tableID),
+			SchemaID:      schemaID1,
+			TableID:       tableID,
 			SchemaVersion: 501,
 			TableInfo: &model.TableInfo{
 				ID:   int64(tableID),
@@ -420,11 +419,9 @@ func TestHandleRenameTable(t *testing.T) {
 		require.Equal(t, 2, len(pStorage.databaseMap))
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID1].Tables))
 		require.Equal(t, 0, len(pStorage.databaseMap[schemaID2].Tables))
-		require.Equal(t, uint64(601), pStorage.tablesBasicInfo[tableID].CreateVersion)
-		require.Equal(t, uint64(601), pStorage.tablesBasicInfo[tableID].SchemaIDs[0].CreateVersion)
-		require.Equal(t, schemaID1, pStorage.tablesBasicInfo[tableID].SchemaIDs[0].SchemaID)
-		require.Equal(t, uint64(601), pStorage.tablesBasicInfo[tableID].Names[0].CreateVersion)
-		require.Equal(t, "t1", pStorage.tablesBasicInfo[tableID].Names[0].Name)
+		require.Equal(t, false, pStorage.tableMap[tableID].InKVSnap)
+		require.Equal(t, schemaID1, pStorage.tableMap[tableID].SchemaID)
+		require.Equal(t, "t1", pStorage.tableMap[tableID].Name)
 	}
 
 	// rename table
@@ -444,14 +441,9 @@ func TestHandleRenameTable(t *testing.T) {
 		require.Equal(t, 2, len(pStorage.databaseMap))
 		require.Equal(t, 0, len(pStorage.databaseMap[schemaID1].Tables))
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID2].Tables))
-		require.Equal(t, uint64(605), pStorage.tablesBasicInfo[tableID].SchemaIDs[1].CreateVersion)
-		require.Equal(t, schemaID2, pStorage.tablesBasicInfo[tableID].SchemaIDs[1].SchemaID)
-		require.Equal(t, schemaID2, getSchemaID(pStorage.tablesBasicInfo, tableID, uint64(605)))
-		require.Equal(t, schemaID1, getSchemaID(pStorage.tablesBasicInfo, tableID, uint64(604)))
-		require.Equal(t, uint64(605), pStorage.tablesBasicInfo[tableID].Names[1].CreateVersion)
-		require.Equal(t, "t2", pStorage.tablesBasicInfo[tableID].Names[1].Name)
-		require.Equal(t, "t2", getTableName(pStorage.tablesBasicInfo, tableID, uint64(605)))
-		require.Equal(t, "t1", getTableName(pStorage.tablesBasicInfo, tableID, uint64(604)))
+		require.Equal(t, false, pStorage.tableMap[tableID].InKVSnap)
+		require.Equal(t, schemaID2, pStorage.tableMap[tableID].SchemaID)
+		require.Equal(t, "t2", pStorage.tableMap[tableID].Name)
 	}
 }
 

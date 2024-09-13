@@ -1,6 +1,7 @@
 package schemastore
 
 import (
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
@@ -27,7 +28,14 @@ type PersistedDDLEvent struct {
 	// CDCWriteSource indicates the source of CDC write.
 	CDCWriteSource uint64 `json:"cdc_write_source"`
 
-	// TODO: add pre table name
+	// only used for drop schema
+	TablesInSchema map[int64]bool `json:"-"`
+
+	BlockedTables     *common.InfluencedTables `json:"blocked_tables"`
+	NeedDroppedTables *common.InfluencedTables `json:"need_dropped_tables"`
+	NeedAddedTables   []common.Table           `json:"need_added_tables"`
+
+	TableNameChange *common.TableNameChange `json:"table_name_change"`
 }
 
 func buildPersistedDDLEvent(job *model.Job) PersistedDDLEvent {
@@ -46,31 +54,15 @@ func buildPersistedDDLEvent(job *model.Job) PersistedDDLEvent {
 	}
 }
 
-//msgp:ignore DatabaseInfo
-type DatabaseInfo struct {
-	Name          string
-	Tables        map[int64]bool
-	CreateVersion uint64
-	DeleteVersion uint64
+//msgp:ignore BasicDatabaseInfo
+type BasicDatabaseInfo struct {
+	Name   string
+	Tables map[int64]bool
 }
 
-func (d *DatabaseInfo) needGc(gcTs uint64) bool { return d.DeleteVersion < gcTs }
-
-//msgp:ignore SchemaIDWithVersion
-type SchemaIDWithVersion struct {
-	SchemaID      int64
-	CreateVersion uint64
-}
-
-//msgp:ignore TableNameWithVersion
-type TableNameWithVersion struct {
-	Name          string
-	CreateVersion uint64
-}
-
-//msgp:ignore VersionedTableBasicInfo
-type VersionedTableBasicInfo struct {
-	SchemaIDs     []SchemaIDWithVersion
-	Names         []TableNameWithVersion
-	CreateVersion uint64
+//msgp:ignore BasicTableInfo
+type BasicTableInfo struct {
+	SchemaID int64
+	Name     string
+	InKVSnap bool
 }

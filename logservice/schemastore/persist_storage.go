@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"sort"
 	"sync"
@@ -61,12 +60,12 @@ type persistentStorage struct {
 
 	upperBoundChanged bool
 
-	tablesBasicInfo map[int64]*VersionedTableBasicInfo
+	tableMap map[int64]*BasicTableInfo
 
 	// schemaID -> database info
 	// it contains all databases and deleted databases
 	// will only be removed when its delete version is smaller than gc ts
-	databaseMap map[int64]*DatabaseInfo
+	databaseMap map[int64]*BasicDatabaseInfo
 
 	// table id -> a sorted list of finished ts for the table's ddl events
 	tablesDDLHistory map[int64][]uint64
@@ -140,8 +139,8 @@ func newPersistentStorage(
 		db:                     db,
 		gcTs:                   gcTs,
 		upperBound:             upperBound,
-		databaseMap:            make(map[int64]*DatabaseInfo),
-		tablesBasicInfo:        make(map[int64]*VersionedTableBasicInfo),
+		tableMap:               make(map[int64]*BasicTableInfo),
+		databaseMap:            make(map[int64]*BasicDatabaseInfo),
 		tablesDDLHistory:       make(map[int64][]uint64),
 		tableTriggerDDLHistory: make([]uint64, 0),
 		tableInfoStoreMap:      make(map[int64]*versionedTableInfoStore),
@@ -177,7 +176,7 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 	}
 	log.Info("schema store create a fresh storage")
 
-	if p.databaseMap, p.tablesBasicInfo, p.upperBound, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs); err != nil {
+	if p.databaseMap, p.tableMap, p.upperBound, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs); err != nil {
 		// TODO: retry
 		log.Fatal("fail to initialize from kv snapshot")
 	}
@@ -191,7 +190,7 @@ func (p *persistentStorage) initializeFromDisk() {
 	defer storageSnap.Close()
 
 	var err error
-	if p.tablesBasicInfo, err = loadTablesInKVSnap(storageSnap, p.gcTs); err != nil {
+	if p.tableMap, err = loadTablesInKVSnap(storageSnap, p.gcTs); err != nil {
 		log.Fatal("load tables in kv snapshot failed")
 	}
 
@@ -199,7 +198,7 @@ func (p *persistentStorage) initializeFromDisk() {
 		storageSnap,
 		p.gcTs,
 		p.upperBound,
-		p.tablesBasicInfo); err != nil {
+		p.tableMap); err != nil {
 		log.Fatal("fail to initialize from disk")
 	}
 }
@@ -379,11 +378,11 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 
 	p.mu.RLock()
 	kvSnapVersion := p.gcTs
-	tableBasicInfo, ok := p.tablesBasicInfo[tableID]
+	tableBasicInfo, ok := p.tableMap[tableID]
 	if !ok {
 		log.Panic("table not found", zap.Int64("tableID", int64(tableID)))
 	}
-	inKVSnap := tableBasicInfo.CreateVersion == kvSnapVersion
+	inKVSnap := tableBasicInfo.InKVSnap
 	var allDDLFinishedTs []uint64
 	allDDLFinishedTs = append(allDDLFinishedTs, p.tablesDDLHistory[tableID]...)
 	p.mu.RUnlock()
@@ -505,13 +504,13 @@ func (p *persistentStorage) persistUpperBoundPeriodically(ctx context.Context) e
 
 func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent) error {
 	// TODO: ignore some ddl event
-
 	// TODO: check ddl events are sorted
 
 	p.mu.Lock()
 	for i := range ddlEvents {
 		fillSchemaName(&ddlEvents[i], p.databaseMap)
-		skip, err := updateDatabaseInfoAndTableInfo(&ddlEvents[i], p.databaseMap, p.tablesBasicInfo)
+		fillInfluencedInfo(&ddlEvents[i], p.databaseMap, p.tableMap)
+		skip, err := updateDatabaseInfoAndTableInfo(&ddlEvents[i], p.databaseMap, p.tableMap)
 		if err != nil {
 			return err
 		}
@@ -523,7 +522,7 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 		if p.tableTriggerDDLHistory, err = updateDDLHistory(
 			&ddlEvents[i],
 			p.databaseMap,
-			p.tablesBasicInfo,
+			p.tableMap,
 			p.tablesDDLHistory,
 			p.tableTriggerDDLHistory); err != nil {
 			return err
@@ -538,10 +537,92 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 	return nil
 }
 
+func fillSchemaName(
+	event *PersistedDDLEvent,
+	databaseMap map[int64]*BasicDatabaseInfo,
+) {
+	switch model.ActionType(event.Type) {
+	case model.ActionCreateSchema,
+		model.ActionDropSchema:
+		event.SchemaName = event.DBInfo.Name.O
+	default:
+		databaseInfo, ok := databaseMap[event.SchemaID]
+		if !ok {
+			log.Panic("database not found",
+				zap.Int64("schemaID", event.SchemaID))
+		}
+		event.SchemaName = databaseInfo.Name
+	}
+}
+
+func fillInfluencedInfo(
+	event *PersistedDDLEvent,
+	databaseMap map[int64]*BasicDatabaseInfo,
+	tableMap map[int64]*BasicTableInfo,
+) {
+	switch model.ActionType(event.Type) {
+	case model.ActionCreateSchema,
+		model.ActionAddColumn,
+		model.ActionDropColumn,
+		model.ActionAddIndex,
+		model.ActionDropIndex,
+		model.ActionAddForeignKey,
+		model.ActionDropForeignKey,
+		model.ActionModifyColumn,
+		model.ActionRebaseAutoID,
+		model.ActionSetDefaultValue,
+		model.ActionShardRowID,
+		model.ActionModifyTableComment,
+		model.ActionRenameIndex:
+		// ignore
+	case model.ActionDropSchema:
+		event.NeedDroppedTables = &common.InfluencedTables{
+			InfluenceType: common.DB,
+			SchemaID:      event.SchemaID,
+		}
+	case model.ActionCreateTable:
+		event.NeedAddedTables = []common.Table{
+			{
+				SchemaID: event.SchemaID,
+				TableID:  event.TableID,
+			},
+		}
+	case model.ActionDropTable:
+		event.NeedDroppedTables = &common.InfluencedTables{
+			InfluenceType: common.Normal,
+			TableIDs:      []int64{event.TableID},
+		}
+	case model.ActionTruncateTable:
+		event.NeedDroppedTables = &common.InfluencedTables{
+			InfluenceType: common.Normal,
+			TableIDs:      []int64{event.TableID},
+		}
+		event.NeedAddedTables = []common.Table{
+			{
+				SchemaID: event.SchemaID,
+				TableID:  event.TableInfo.ID,
+			},
+		}
+	case model.ActionRenameTable:
+		event.BlockedTables = &common.InfluencedTables{
+			InfluenceType: common.Normal,
+			TableIDs:      []int64{event.TableID},
+		}
+	case model.ActionCreateView:
+		event.BlockedTables = &common.InfluencedTables{
+			InfluenceType: common.All,
+		}
+	default:
+		log.Panic("unknown ddl type",
+			zap.Any("ddlType", event.Type),
+			zap.String("DDL", event.Query))
+	}
+}
+
 func updateDatabaseInfoAndTableInfo(
 	event *PersistedDDLEvent,
-	databaseMap map[int64]*DatabaseInfo,
-	tablesBasicInfo map[int64]*VersionedTableBasicInfo,
+	databaseMap map[int64]*BasicDatabaseInfo,
+	tableMap map[int64]*BasicTableInfo,
 ) (bool, error) {
 	addTableToDB := func(schemaID int64, tableID int64) {
 		databaseInfo, ok := databaseMap[schemaID]
@@ -572,21 +653,21 @@ func updateDatabaseInfoAndTableInfo(
 	}
 
 	createTable := func(schemaID int64, tableID int64) bool {
-		if _, ok := tablesBasicInfo[tableID]; ok {
+		if _, ok := tableMap[tableID]; ok {
 			return false
 		}
 		addTableToDB(schemaID, tableID)
-		tablesBasicInfo[tableID] = &VersionedTableBasicInfo{
-			SchemaIDs:     []SchemaIDWithVersion{{SchemaID: schemaID, CreateVersion: uint64(event.FinishedTs)}},
-			Names:         []TableNameWithVersion{{Name: event.TableInfo.Name.O, CreateVersion: uint64(event.FinishedTs)}},
-			CreateVersion: uint64(event.FinishedTs),
+		tableMap[tableID] = &BasicTableInfo{
+			SchemaID: schemaID,
+			Name:     event.TableInfo.Name.O,
+			InKVSnap: false,
 		}
 		return true
 	}
 
 	dropTable := func(schemaID int64, tableID int64) {
 		removeTableFromDB(schemaID, tableID)
-		delete(tablesBasicInfo, tableID)
+		delete(tableMap, tableID)
 	}
 
 	switch model.ActionType(event.Type) {
@@ -600,28 +681,13 @@ func updateDatabaseInfoAndTableInfo(
 				zap.Int64("jobSchemaVersion", event.SchemaVersion))
 			return true, nil
 		}
-		databaseMap[int64(event.SchemaID)] = &DatabaseInfo{
-			Name:          event.SchemaName,
-			Tables:        make(map[int64]bool),
-			CreateVersion: uint64(event.FinishedTs),
-			DeleteVersion: math.MaxUint64,
+		databaseMap[int64(event.SchemaID)] = &BasicDatabaseInfo{
+			Name:   event.SchemaName,
+			Tables: make(map[int64]bool),
 		}
-		log.Info("create database", zap.String("database", event.SchemaName))
 	case model.ActionDropSchema:
-		databaseInfo, ok := databaseMap[int64(event.SchemaID)]
-		if !ok {
-			log.Warn("database not found. ignore DDL ",
-				zap.String("DDL", event.Query),
-				zap.Int64("jobID", event.ID),
-				zap.Int64("schemaID", event.SchemaID),
-				zap.Uint64("finishTs", event.FinishedTs),
-				zap.Int64("jobSchemaVersion", event.SchemaVersion))
-			return true, nil
-		}
-		if databaseInfo.DeleteVersion != math.MaxUint64 {
-			log.Panic("should not happen")
-		}
-		databaseInfo.DeleteVersion = uint64(event.FinishedTs)
+		event.TablesInSchema = databaseMap[event.SchemaID].Tables
+		delete(databaseMap, event.SchemaID)
 	case model.ActionCreateTable:
 		ok := createTable(int64(event.SchemaID), int64(event.TableID))
 		if !ok {
@@ -646,20 +712,17 @@ func updateDatabaseInfoAndTableInfo(
 		model.ActionRebaseAutoID:
 		// ignore
 	case model.ActionTruncateTable:
-		dropTable(int64(event.SchemaID), int64(event.TableID))
+		dropTable(event.SchemaID, event.TableID)
 		// TODO: do we need to the return value of createTable?
-		createTable(int64(event.SchemaID), event.TableInfo.ID)
+		createTable(event.SchemaID, event.TableInfo.ID)
 	case model.ActionRenameTable:
-		oldSchemaID := getSchemaID(tablesBasicInfo, int64(event.TableID), uint64(event.FinishedTs-1))
-		if oldSchemaID != int64(event.SchemaID) {
-			modifySchemaID(tablesBasicInfo, int64(event.TableID), int64(event.SchemaID), uint64(event.FinishedTs))
+		oldSchemaID := tableMap[event.TableID].SchemaID
+		if oldSchemaID != event.SchemaID {
+			tableMap[event.TableID].SchemaID = event.SchemaID
 			removeTableFromDB(oldSchemaID, int64(event.TableID))
 			addTableToDB(int64(event.SchemaID), int64(event.TableID))
 		}
-		oldTableName := getTableName(tablesBasicInfo, int64(event.TableID), uint64(event.FinishedTs-1))
-		if oldTableName != event.TableInfo.Name.O {
-			modifyTableName(tablesBasicInfo, int64(event.TableID), event.TableInfo.Name.O, uint64(event.FinishedTs))
-		}
+		tableMap[event.TableID].Name = event.TableInfo.Name.O
 	case model.ActionSetDefaultValue,
 		model.ActionShardRowID,
 		model.ActionModifyTableComment,
@@ -680,8 +743,8 @@ func updateDatabaseInfoAndTableInfo(
 
 func updateDDLHistory(
 	ddlEvent *PersistedDDLEvent,
-	databaseMap map[int64]*DatabaseInfo,
-	tablesBasicInfo map[int64]*VersionedTableBasicInfo,
+	databaseMap map[int64]*BasicDatabaseInfo,
+	tablesBasicInfo map[int64]*BasicTableInfo,
 	tablesDDLHistory map[int64][]uint64,
 	tableTriggerDDLHistory []uint64,
 ) ([]uint64, error) {
@@ -698,11 +761,7 @@ func updateDDLHistory(
 		}
 	case model.ActionDropSchema:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
-		databaseInfo, ok := databaseMap[int64(ddlEvent.SchemaID)]
-		if !ok {
-			log.Panic("cannot find database", zap.Int64("schemaID", ddlEvent.SchemaID))
-		}
-		for tableID := range databaseInfo.Tables {
+		for tableID := range ddlEvent.TablesInSchema {
 			addTableHistory(tableID)
 		}
 	case model.ActionCreateTable,
@@ -788,162 +847,11 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent) common.DDLEvent {
 		event.TableName = rawEvent.TableInfo.Name.O
 	}
 
-	switch model.ActionType(rawEvent.Type) {
-	case model.ActionCreateSchema,
-		model.ActionAddColumn,
-		model.ActionDropColumn,
-		model.ActionAddIndex,
-		model.ActionDropIndex,
-		model.ActionAddForeignKey,
-		model.ActionDropForeignKey,
-		model.ActionModifyColumn,
-		model.ActionRebaseAutoID,
-		model.ActionSetDefaultValue,
-		model.ActionShardRowID,
-		model.ActionModifyTableComment,
-		model.ActionRenameIndex:
-		// ignore
-	case model.ActionDropSchema:
-		event.NeedDroppedTables = &common.InfluencedTables{
-			InfluenceType: common.DB,
-			SchemaID:      rawEvent.SchemaID,
-		}
-	case model.ActionCreateTable:
-		event.NeedAddedTables = []common.Table{
-			{
-				SchemaID: rawEvent.SchemaID,
-				TableID:  rawEvent.TableID,
-			},
-		}
-	case model.ActionDropTable:
-		event.NeedDroppedTables = &common.InfluencedTables{
-			InfluenceType: common.Normal,
-			TableIDs:      []int64{rawEvent.TableID},
-		}
-	case model.ActionTruncateTable:
-		event.NeedDroppedTables = &common.InfluencedTables{
-			InfluenceType: common.Normal,
-			TableIDs:      []int64{rawEvent.TableID},
-		}
-		event.NeedAddedTables = []common.Table{
-			{
-				SchemaID: rawEvent.SchemaID,
-				// TODO: may be we cannot read it?
-				TableID: rawEvent.TableInfo.ID,
-			},
-		}
-	case model.ActionRenameTable:
-		event.BlockedTables = &common.InfluencedTables{
-			InfluenceType: common.Normal,
-			TableIDs:      []int64{rawEvent.TableID},
-		}
-	case model.ActionCreateView:
-		event.BlockedTables = &common.InfluencedTables{
-			InfluenceType: common.All,
-		}
-	default:
-		log.Panic("unknown ddl type",
-			zap.Any("ddlType", rawEvent.Type),
-			zap.String("DDL", rawEvent.Query))
-	}
+	// TODO: respect filter
+	event.BlockedTables = rawEvent.BlockedTables
+	event.NeedDroppedTables = rawEvent.NeedDroppedTables
+	event.NeedAddedTables = rawEvent.NeedAddedTables
+	event.TableNameChange = rawEvent.TableNameChange
+
 	return event
-}
-
-func fillSchemaName(event *PersistedDDLEvent, databaseMap map[int64]*DatabaseInfo) {
-	switch model.ActionType(event.Type) {
-	case model.ActionCreateSchema,
-		model.ActionDropSchema:
-		event.SchemaName = event.DBInfo.Name.O
-		log.Info("fill schema name", zap.String("schemaName", event.SchemaName))
-	default:
-		databaseInfo, ok := databaseMap[event.SchemaID]
-		if !ok {
-			log.Panic("database not found",
-				zap.Int64("schemaID", event.SchemaID))
-		}
-		if databaseInfo.CreateVersion > uint64(event.FinishedTs) {
-			log.Panic("database is not created",
-				zap.Int64("schemaID", event.SchemaID))
-		}
-		if databaseInfo.DeleteVersion < uint64(event.FinishedTs) {
-			log.Panic("database is deleted",
-				zap.Int64("schemaID", event.SchemaID))
-		}
-		event.SchemaName = databaseInfo.Name
-		log.Info("fill schema name",
-			zap.String("schemaName", event.SchemaName),
-			zap.Any("type", event.Type))
-	}
-}
-
-func modifySchemaID(
-	tablesBasicInfo map[int64]*VersionedTableBasicInfo,
-	tableID int64,
-	schemaID int64,
-	version uint64,
-) {
-	info, ok := tablesBasicInfo[tableID]
-	if !ok {
-		log.Panic("table not found", zap.Int64("tableID", int64(tableID)))
-	}
-
-	info.SchemaIDs = append(info.SchemaIDs, SchemaIDWithVersion{
-		SchemaID:      schemaID,
-		CreateVersion: version,
-	})
-}
-
-// return the schema id with largest version which is less than or equal to the given version
-func getSchemaID(
-	tablesBasicInfo map[int64]*VersionedTableBasicInfo,
-	tableID int64,
-	version uint64,
-) int64 {
-	info, ok := tablesBasicInfo[tableID]
-	if !ok {
-		log.Panic("table not found", zap.Int64("tableID", int64(tableID)))
-	}
-
-	index := sort.Search(len(info.SchemaIDs), func(i int) bool {
-		return info.SchemaIDs[i].CreateVersion > version
-	})
-	if index == 0 {
-		log.Panic("should not happen")
-	}
-	return info.SchemaIDs[index-1].SchemaID
-}
-
-func modifyTableName(
-	tablesBasicInfo map[int64]*VersionedTableBasicInfo,
-	tableID int64,
-	tableName string,
-	version uint64,
-) {
-	info, ok := tablesBasicInfo[tableID]
-	if !ok {
-		log.Panic("table not found", zap.Int64("tableID", int64(tableID)))
-	}
-	info.Names = append(info.Names, TableNameWithVersion{
-		Name:          tableName,
-		CreateVersion: version,
-	})
-}
-
-// return the table name with largest version which is less than or equal to the given version
-func getTableName(
-	tablesBasicInfo map[int64]*VersionedTableBasicInfo,
-	tableID int64,
-	version uint64,
-) string {
-	info, ok := tablesBasicInfo[tableID]
-	if !ok {
-		log.Panic("table not found", zap.Int64("tableID", int64(tableID)))
-	}
-	index := sort.Search(len(info.Names), func(i int) bool {
-		return info.Names[i].CreateVersion > version
-	})
-	if index == 0 {
-		log.Panic("should not happen")
-	}
-	return info.Names[index-1].Name
 }
