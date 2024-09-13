@@ -436,34 +436,31 @@ func addTableInfoFromKVSnap(
 }
 
 func (p *persistentStorage) gc(ctx context.Context) error {
-	// if p.gcRunning.CompareAndSwap(false, true) {
-	// 	return nil
-	// }
-	// defer p.gcRunning.Store(false)
-	// p.gcTS.Store(uint64(gcTS))
-	// // TODO: write snapshot(schema and table) to disk(don't need to be in the same batch) and maintain the key that need be deleted(or just write it to a delete batch)
-
-	// // update gcTS in disk, must do it before delete any data
-	// batch := p.db.NewBatch()
-	// if err := writeTSToBatch(batch, gcTSKey(), gcTS); err != nil {
-	// 	return err
-	// }
-	// if err := batch.Commit(pebble.NoSync); err != nil {
-	// 	return err
-	// }
-	// // TODO: delete old data(including index data, so we need to read data one by one)
-	// // may be write and delete in the same batch?
-
+	ticker := time.NewTicker(5 * time.Minute)
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-			// TODO: get gc ts periodically
+		case <-ticker.C:
+			gcSafePoint, err := p.pdCli.UpdateServiceGCSafePoint(ctx, "cdc-new-store", 0, 0)
+			if err != nil {
+				log.Warn("get ts failed", zap.Error(err))
+				continue
+			}
+			p.doGc(gcSafePoint)
 		}
 	}
 }
 
-func (p *persistentStorage) doGc() error {
+func (p *persistentStorage) doGc(gcTs uint64) error {
+	if gcTs <= p.gcTs {
+		return nil
+	}
+	// TODO: gc data on disk and in memory
+	// write new snspashot on disk
+	// writeGcTs(p.db, gcTs)
+	// delete range on disk
+	// delete data in memory
 	return nil
 }
 
