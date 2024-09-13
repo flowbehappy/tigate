@@ -71,6 +71,8 @@ func TestDynamicStreamBasic(t *testing.T) {
 	ds.Close()
 }
 
+// Note that this test is not deterministic because streams are running in separate goroutines.
+// Maybe we should disable it in the test.
 func TestDynamicStreamSchedule(t *testing.T) {
 	handler := &simpleHandler{}
 	option := NewOption()
@@ -110,7 +112,7 @@ func TestDynamicStreamSchedule(t *testing.T) {
 
 	scheduleNow(createSoloPath, 8*time.Millisecond)
 
-	// path4 is very busy, so it should be moved to a solo stream
+	// path4 and path5 are very busy, so they should become solo streams
 	assert.Equal(t, 5, len(ds.streamInfos))
 	assert.Equal(t, 1, len(ds.streamInfos[0].pathMap)) // p1
 	assert.Equal(t, 1, len(ds.streamInfos[1].pathMap)) // p2
@@ -124,7 +126,7 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	ds.In() <- newSimpleEvent("p3", wg)
 	ds.In() <- newSimpleEvent("p4", wg)
 	ds.In() <- newSimpleEventSleep("p5", wg, 8*time.Millisecond)
-	// time.Sleep(8 * time.Millisecond)
+
 	wg.Wait()
 
 	scheduleNow(removeSoloPath, 8*time.Millisecond)
@@ -146,7 +148,6 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	}...)
 
 	scheduleNow(shuffleStreams, 8*time.Millisecond)
-	// scheduleNow(createSoloPath, 10 * time.Millisecond)
 
 	assert.Equal(t, 4, len(ds.streamInfos))
 	assert.Equal(t, 4, len(ds.streamInfos[0].pathMap)) // p1, p4, p7, p10
@@ -158,7 +159,7 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	ds.In() <- newSimpleEventSleep("p7", wg, 8*time.Millisecond)
 	ds.In() <- newSimpleEventSleep("p10", wg, 8*time.Millisecond)
 	ds.In() <- newSimpleEventSleep("p9", wg, 8*time.Millisecond)
-	// time.Sleep(8 * time.Millisecond)
+
 	wg.Wait()
 
 	scheduleNow(createSoloPath, 8*time.Millisecond)
@@ -184,7 +185,7 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	ds.In() <- newSimpleEventSleep("p7", wg, 2*time.Millisecond)
 	ds.In() <- newSimpleEventSleep("p10", wg, 2*time.Millisecond)
 	ds.In() <- newSimpleEventSleep("p9", wg, 2*time.Millisecond)
-	// time.Sleep(10 * time.Millisecond)
+
 	wg.Wait()
 
 	scheduleNow(shuffleStreams, 8*time.Millisecond)
@@ -231,8 +232,10 @@ func TestDynamicStreamRemovePath(t *testing.T) {
 	ds.In() <- &simpleEvent{path: "p1", wg: wg}
 	ds.In() <- &simpleEvent{path: "p1", wg: wg}
 
-	// Make sure the two events are put in a stream already.
+	// The case is good if it doesn't panic
+	// Sleep is to make sure events are actually processed
 	time.Sleep(10 * time.Millisecond)
+
 	wg.Wait()
 
 	ds.Close()
@@ -263,12 +266,9 @@ func (h *incEventHandler) Handle(dest struct{}, events ...incEvent) (await bool)
 }
 
 func TestDynamicStreamDrop(t *testing.T) {
-
-	check := func(option Option, expect int64) {
-		eventCountDown := &sync.WaitGroup{}
-
-		handleWait := &sync.WaitGroup{}
-		handleWait.Add(1)
+	check := func(option Option) int64 {
+		option.handleWait = &sync.WaitGroup{}
+		option.handleWait.Add(1)
 
 		handler := &incEventHandler{}
 		ds := newDynamicStreamImpl(handler, option)
@@ -277,39 +277,42 @@ func TestDynamicStreamDrop(t *testing.T) {
 		ds.AddPath("p1", struct{}{})
 		total := &atomic.Int64{}
 
+		eventCountDown := &sync.WaitGroup{}
 		eventCountDown.Add(3)
 		ds.In() <- incEvent{path: "p1", total: total, inc: 1, wg: eventCountDown}
 		ds.In() <- incEvent{path: "p1", total: total, inc: 3, wg: eventCountDown}
 		ds.In() <- incEvent{path: "p1", total: total, inc: 5, wg: eventCountDown}
 
-		handleWait.Done()
+		time.Sleep(10 * time.Millisecond) // Make sure all the events are in the pending queue or dropped
+		option.handleWait.Done()
 		eventCountDown.Wait()
-		assert.Equal(t, expect, total.Load())
 
 		ds.Close()
+
+		return total.Load()
 	}
 
 	option := NewOption()
 
 	{
-		check(option, 9)
+		assert.Equal(t, 9, check(option))
 	}
 
 	{
 		option.MaxPendingLength = 1
 		option.DropPolicy = DropLate
-		check(option, 1)
+		assert.Equal(t, 1, check(option))
 	}
 
 	{
 		option.MaxPendingLength = 2
 		option.DropPolicy = DropLate
-		check(option, 4) // 1 + 3
+		assert.Equal(t, 4, check(option)) // 1 + 3
 	}
 
 	{
 		option.MaxPendingLength = 2
 		option.DropPolicy = DropEarly
-		check(option, 8) // 3 + 5
+		assert.Equal(t, 8, check(option)) // 3 + 5
 	}
 }

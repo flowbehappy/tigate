@@ -11,9 +11,9 @@ import (
 	. "github.com/flowbehappy/tigate/utils"
 )
 
-const TrackTopPaths = 64
-const BusyStreamRatio = 0.5
-const BusyPathRatio = 0.25
+const TrackTopPaths = 16
+const BusyStreamRatio = 0.3
+const BusyPathRatio = 0.1
 const IdlePathRatio = 0.02
 
 type cmdType int
@@ -429,7 +429,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 				// The reset paths can mostly stay together as before.
 				// We would like paths to keep staying in the same stream when possible.
 				// It might create some optimization opportunities for golang runtime or the OS.
-
+				addedPaths := 0
 				for _, ps := range mostBusy.streamStat.mostBusyPath.All() {
 					idx := nextIdx.Next()
 					pathsChoices[idx] = append(pathsChoices[idx], ps.pathInfo)
@@ -438,6 +438,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 					}
 					// To make the following shuffle easier
 					delete(mostBusy.pathMap, ps.pathInfo)
+					addedPaths++
 				}
 				for _, ps := range leastBusy.streamStat.mostBusyPath.All() {
 					idx := nextIdx.Next()
@@ -447,6 +448,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 					}
 					// To make the following shuffle easier
 					delete(leastBusy.pathMap, ps.pathInfo)
+					addedPaths++
 				}
 
 				stream1Paths := pathsChoices[0]
@@ -466,6 +468,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 					} else {
 						stream2Paths = append(stream2Paths, pi)
 					}
+					addedPaths++
 				}
 				for pi := range leastBusy.pathMap {
 					if i < stream1Moves {
@@ -474,6 +477,11 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 					} else {
 						stream2Paths = append(stream2Paths, pi)
 					}
+					addedPaths++
+				}
+
+				if addedPaths != totalPathsCount || len(stream1Paths)+len(stream2Paths) != totalPathsCount {
+					panic(fmt.Sprintf("The paths are not added correctly: %d, %d, %d", addedPaths, totalPathsCount, len(stream1Paths)+len(stream2Paths)))
 				}
 
 				stream1 := newStream()
