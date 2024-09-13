@@ -141,20 +141,20 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 
 					for _, event := range resolvedEvents {
 						// TODO: build persisted ddl event after filter
-						if event.SchemaVersion <= s.schemaVersion || event.FinishedTs <= s.finishedDDLTs {
+						if event.Job.BinlogInfo.SchemaVersion <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTs {
 							log.Info("skip already applied ddl job",
-								zap.String("job", event.Query),
-								zap.Int64("jobSchemaVersion", event.SchemaVersion),
-								zap.Uint64("jobFinishTs", event.FinishedTs),
+								zap.String("job", event.Job.Query),
+								zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+								zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
 								zap.Any("schemaVersion", s.schemaVersion),
 								zap.Uint64("finishedDDLTS", s.finishedDDLTs))
 							continue
 						}
 						// TODO: build persisted ddl event after filter
-						validEvents = append(validEvents, event)
+						validEvents = append(validEvents, buildPersistedDDLEvent(event.Job))
 						// need to update the following two members for every event to filter out later duplicate events
-						s.schemaVersion = event.SchemaVersion
-						s.finishedDDLTs = event.FinishedTs
+						s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
+						s.finishedDDLTs = event.Job.BinlogInfo.FinishedTS
 					}
 					s.dataStorage.handleSortedDDLEvents(validEvents...)
 				}
@@ -212,15 +212,15 @@ func (s *schemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, star
 	return events, end
 }
 
-func (s *schemaStore) writeDDLEvent(ddlEvent PersistedDDLEvent) {
+func (s *schemaStore) writeDDLEvent(ddlEvent DDLJobWithCommitTs) {
 	log.Debug("write ddl event",
-		zap.Int64("schemaID", ddlEvent.SchemaID),
-		zap.Int64("tableID", ddlEvent.TableID),
-		zap.Uint64("finishedTs", ddlEvent.FinishedTs),
-		zap.String("query", ddlEvent.Query))
+		zap.Int64("schemaID", ddlEvent.Job.SchemaID),
+		zap.Int64("tableID", ddlEvent.Job.TableID),
+		zap.Uint64("finishedTs", ddlEvent.Job.BinlogInfo.FinishedTS),
+		zap.String("query", ddlEvent.Job.Query))
 
 	// TODO: find a better way to filter out system tables
-	if ddlEvent.SchemaID != 1 {
+	if ddlEvent.Job.SchemaID != 1 {
 		s.unsortedCache.addDDLEvent(ddlEvent)
 	}
 }

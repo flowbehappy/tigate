@@ -66,3 +66,10 @@ type BasicTableInfo struct {
 	Name     string
 	InKVSnap bool
 }
+
+// msgp:ignore DDLJobWithCommitTs
+type DDLJobWithCommitTs struct {
+	Job *model.Job
+	// the commitTs of the rawKVEntry which contains the DDL job
+	CommitTs uint64
+}

@@ -12,20 +12,22 @@ import (
 type ddlCache struct {
 	mutex sync.Mutex
 	// ordered by FinishedTs
-	ddlEvents *btree.BTreeG[PersistedDDLEvent]
+	ddlEvents *btree.BTreeG[DDLJobWithCommitTs]
 }
 
-func ddlEventLess(a, b PersistedDDLEvent) bool {
-	return a.FinishedTs < b.FinishedTs || (a.FinishedTs == b.FinishedTs && a.SchemaVersion < b.SchemaVersion)
+func ddlEventLess(a, b DDLJobWithCommitTs) bool {
+	// TODO: commitTs or finishedTs
+	return a.CommitTs < b.CommitTs ||
+		(a.CommitTs == b.CommitTs && a.Job.BinlogInfo.SchemaVersion < b.Job.BinlogInfo.SchemaVersion)
 }
 
 func newDDLCache() *ddlCache {
 	return &ddlCache{
-		ddlEvents: btree.NewG[PersistedDDLEvent](16, ddlEventLess),
+		ddlEvents: btree.NewG[DDLJobWithCommitTs](16, ddlEventLess),
 	}
 }
 
-func (c *ddlCache) addDDLEvent(ddlEvent PersistedDDLEvent) {
+func (c *ddlCache) addDDLEvent(ddlEvent DDLJobWithCommitTs) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	oldEvent, duplicated := c.ddlEvents.ReplaceOrInsert(ddlEvent)
@@ -36,12 +38,12 @@ func (c *ddlCache) addDDLEvent(ddlEvent PersistedDDLEvent) {
 	}
 }
 
-func (c *ddlCache) fetchSortedDDLEventBeforeTS(ts uint64) []PersistedDDLEvent {
+func (c *ddlCache) fetchSortedDDLEventBeforeTS(ts uint64) []DDLJobWithCommitTs {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	events := make([]PersistedDDLEvent, 0)
-	c.ddlEvents.Ascend(func(event PersistedDDLEvent) bool {
-		if event.FinishedTs <= ts {
+	events := make([]DDLJobWithCommitTs, 0)
+	c.ddlEvents.Ascend(func(event DDLJobWithCommitTs) bool {
+		if event.CommitTs <= ts {
 			events = append(events, event)
 			return true
 		}
