@@ -21,20 +21,20 @@ import (
 type SchemaStore interface {
 	common.SubModule
 
-	GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]common.Table, error)
+	GetAllPhysicalTables(snapTs uint64, filter filter.Filter) ([]common.Table, error)
 
-	RegisterTable(tableID common.TableID) error
+	RegisterTable(tableID int64) error
 
-	UnregisterTable(tableID common.TableID) error
+	UnregisterTable(tableID int64) error
 
-	GetTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error)
+	GetTableInfo(tableID int64, ts uint64) (*common.TableInfo, error)
 
 	// FetchTableDDLEvents returns the next ddl events which finishedTs are within the range (start, end]
 	// and it returns a timestamp which means there will be no more ddl events before(<=) it
 	// TODO: add a parameter limit
-	FetchTableDDLEvents(tableID common.TableID, start, end common.Ts) ([]common.DDLEvent, common.Ts)
+	FetchTableDDLEvents(tableID int64, start, end uint64) ([]common.DDLEvent, uint64)
 
-	FetchTableTriggerDDLEvents(tableFilter filter.Filter, start common.Ts, limit int) ([]common.DDLEvent, common.Ts)
+	FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]common.DDLEvent, uint64)
 }
 
 type schemaStore struct {
@@ -165,24 +165,24 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 	}
 }
 
-func (s *schemaStore) GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]common.Table, error) {
+func (s *schemaStore) GetAllPhysicalTables(snapTs uint64, filter filter.Filter) ([]common.Table, error) {
 	return s.dataStorage.getAllPhysicalTables(snapTs, filter)
 }
 
-func (s *schemaStore) RegisterTable(tableID common.TableID) error {
+func (s *schemaStore) RegisterTable(tableID int64) error {
 	return s.dataStorage.registerTable(tableID)
 }
 
-func (s *schemaStore) UnregisterTable(tableID common.TableID) error {
+func (s *schemaStore) UnregisterTable(tableID int64) error {
 	return s.dataStorage.unregisterTable(tableID)
 }
 
-func (s *schemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error) {
+func (s *schemaStore) GetTableInfo(tableID int64, ts uint64) (*common.TableInfo, error) {
 	s.waitResolvedTs(tableID, ts)
 	return s.dataStorage.getTableInfo(tableID, ts)
 }
 
-func (s *schemaStore) FetchTableDDLEvents(tableID common.TableID, start, end common.Ts) ([]common.DDLEvent, common.Ts) {
+func (s *schemaStore) FetchTableDDLEvents(tableID int64, start, end uint64) ([]common.DDLEvent, uint64) {
 	currentResolvedTs := s.resolvedTs.Load()
 	if currentResolvedTs < end {
 		end = currentResolvedTs
@@ -190,7 +190,7 @@ func (s *schemaStore) FetchTableDDLEvents(tableID common.TableID, start, end com
 	return s.dataStorage.fetchTableDDLEvents(tableID, start, end), end
 }
 
-func (s *schemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, start common.Ts, limit int) ([]common.DDLEvent, common.Ts) {
+func (s *schemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]common.DDLEvent, uint64) {
 	if limit == 0 {
 		log.Panic("limit cannot be 0")
 	}
@@ -220,18 +220,18 @@ func (s *schemaStore) writeDDLEvent(ddlEvent PersistedDDLEvent) {
 	}
 }
 
-func (s *schemaStore) advanceResolvedTs(resolvedTs common.Ts) {
+func (s *schemaStore) advanceResolvedTs(resolvedTs uint64) {
 	// log.Info("advance resolved ts", zap.Any("resolvedTS", resolvedTs))
 	if resolvedTs < s.pendingResolveTs.Load() {
 		log.Panic("resolved ts should not fallback",
 			zap.Uint64("pendingResolveTs", s.pendingResolveTs.Load()),
-			zap.Uint64("newResolvedTs", uint64(resolvedTs)))
+			zap.Uint64("newResolvedTs", resolvedTs))
 	}
 	s.pendingResolveTs.Store(resolvedTs)
 }
 
 // TODO: use notify instead of sleep
-func (s *schemaStore) waitResolvedTs(tableID common.TableID, ts common.Ts) {
+func (s *schemaStore) waitResolvedTs(tableID int64, ts uint64) {
 	start := time.Now()
 	for {
 		if s.resolvedTs.Load() >= uint64(ts) {
@@ -240,7 +240,7 @@ func (s *schemaStore) waitResolvedTs(tableID common.TableID, ts common.Ts) {
 		time.Sleep(time.Millisecond * 100)
 		if time.Since(start) > time.Second*5 {
 			log.Info("wait resolved ts slow",
-				zap.Int64("tableID", int64(tableID)),
+				zap.Int64("tableID", tableID),
 				zap.Any("ts", ts),
 				zap.Uint64("resolvedTS", s.resolvedTs.Load()),
 				zap.Any("time", time.Since(start)))

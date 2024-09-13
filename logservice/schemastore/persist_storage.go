@@ -56,15 +56,15 @@ type persistentStorage struct {
 	// the current gcTs on disk
 	gcTs uint64
 
-	tablesBasicInfo map[common.TableID]*VersionedTableBasicInfo
+	tablesBasicInfo map[int64]*VersionedTableBasicInfo
 
 	// schemaID -> database info
 	// it contains all databases and deleted databases
 	// will only be removed when its delete version is smaller than gc ts
-	databaseMap map[common.SchemaID]*DatabaseInfo
+	databaseMap map[int64]*DatabaseInfo
 
 	// table id -> a sorted list of finished ts for the table's ddl events
-	tablesDDLHistory map[common.TableID][]uint64
+	tablesDDLHistory map[int64][]uint64
 
 	// it has two use cases:
 	// 1. store the ddl events need to send to a table dispatcher
@@ -75,16 +75,16 @@ type persistentStorage struct {
 
 	// tableID -> versioned store
 	// it just contains tables which is used by dispatchers
-	tableInfoStoreMap map[common.TableID]*versionedTableInfoStore
+	tableInfoStoreMap map[int64]*versionedTableInfoStore
 
 	// tableID -> total registered count
-	tableRegisteredCount map[common.TableID]int
+	tableRegisteredCount map[int64]int
 }
 
 type upperBoundMeta struct {
-	FinishedDDLTs common.Ts `json:"finished_ddl_ts"`
-	SchemaVersion int64     `json:"schema_version"`
-	ResolvedTs    common.Ts `json:"resolved_ts"`
+	FinishedDDLTs uint64 `json:"finished_ddl_ts"`
+	SchemaVersion int64  `json:"schema_version"`
+	ResolvedTs    uint64 `json:"resolved_ts"`
 }
 
 func newPersistentStorage(
@@ -134,12 +134,12 @@ func newPersistentStorage(
 		kvStorage:              storage,
 		db:                     db,
 		gcTs:                   gcTs,
-		databaseMap:            make(map[common.SchemaID]*DatabaseInfo),
-		tablesBasicInfo:        make(map[common.TableID]*VersionedTableBasicInfo),
-		tablesDDLHistory:       make(map[common.TableID][]uint64),
+		databaseMap:            make(map[int64]*DatabaseInfo),
+		tablesBasicInfo:        make(map[int64]*VersionedTableBasicInfo),
+		tablesDDLHistory:       make(map[int64][]uint64),
 		tableTriggerDDLHistory: make([]uint64, 0),
-		tableInfoStoreMap:      make(map[common.TableID]*versionedTableInfoStore),
-		tableRegisteredCount:   make(map[common.TableID]int),
+		tableInfoStoreMap:      make(map[int64]*versionedTableInfoStore),
+		tableRegisteredCount:   make(map[int64]int),
 	}
 	if isDataReusable {
 		dataStorage.initializeFromDisk(upperBound)
@@ -158,7 +158,7 @@ func newPersistentStorage(
 	return dataStorage, upperBound
 }
 
-func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.Storage, gcTs common.Ts) upperBoundMeta {
+func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.Storage, gcTs uint64) upperBoundMeta {
 	// TODO: avoid recreate db if the path is empty at start
 	if err := os.RemoveAll(dbPath); err != nil {
 		log.Panic("fail to remove path")
@@ -201,7 +201,7 @@ func (p *persistentStorage) initializeFromDisk(upperBound upperBoundMeta) {
 }
 
 // FIXME: load the info from disk
-func (p *persistentStorage) getAllPhysicalTables(snapTs common.Ts, tableFilter filter.Filter) ([]common.Table, error) {
+func (p *persistentStorage) getAllPhysicalTables(snapTs uint64, tableFilter filter.Filter) ([]common.Table, error) {
 	meta := logpuller.GetSnapshotMeta(p.kvStorage, uint64(snapTs))
 	dbinfos, err := meta.ListDatabases()
 	if err != nil {
@@ -244,7 +244,7 @@ func (p *persistentStorage) getAllPhysicalTables(snapTs common.Ts, tableFilter f
 }
 
 // only return when table info is initialized
-func (p *persistentStorage) registerTable(tableID common.TableID) error {
+func (p *persistentStorage) registerTable(tableID int64) error {
 	p.mu.Lock()
 	p.tableRegisteredCount[tableID] += 1
 	store, ok := p.tableInfoStoreMap[tableID]
@@ -262,7 +262,7 @@ func (p *persistentStorage) registerTable(tableID common.TableID) error {
 	return nil
 }
 
-func (p *persistentStorage) unregisterTable(tableID common.TableID) error {
+func (p *persistentStorage) unregisterTable(tableID int64) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.tableRegisteredCount[tableID] -= 1
@@ -275,7 +275,7 @@ func (p *persistentStorage) unregisterTable(tableID common.TableID) error {
 	return nil
 }
 
-func (p *persistentStorage) getTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error) {
+func (p *persistentStorage) getTableInfo(tableID int64, ts uint64) (*common.TableInfo, error) {
 	p.mu.Lock()
 	store, ok := p.tableInfoStoreMap[tableID]
 	if !ok {
@@ -286,7 +286,7 @@ func (p *persistentStorage) getTableInfo(tableID common.TableID, ts common.Ts) (
 }
 
 // TODO: not all ddl in p.tablesDDLHistory should be sent to the dispatcher, verify dispatcher will set the right range
-func (p *persistentStorage) fetchTableDDLEvents(tableID common.TableID, start, end common.Ts) []common.DDLEvent {
+func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64) []common.DDLEvent {
 	p.mu.Lock()
 	history, ok := p.tablesDDLHistory[tableID]
 	if !ok {
@@ -300,7 +300,7 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID common.TableID, start, e
 		return nil
 	}
 	// copy all target ts to a new slice
-	allTargetTs := make([]common.Ts, 0)
+	allTargetTs := make([]uint64, 0)
 	for i := index; i < len(history); i++ {
 		if history[i] <= end {
 			allTargetTs = append(allTargetTs, history[i])
@@ -320,13 +320,13 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID common.TableID, start, e
 	return events
 }
 
-func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter, start common.Ts, limit int) []common.DDLEvent {
+func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) []common.DDLEvent {
 	events := make([]common.DDLEvent, 0)
 	nextStartTs := start
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
 	for {
-		allTargetTs := make([]common.Ts, 0, limit)
+		allTargetTs := make([]uint64, 0, limit)
 		p.mu.Lock()
 		index := sort.Search(len(p.tableTriggerDDLHistory), func(i int) bool {
 			return p.tableTriggerDDLHistory[i] > nextStartTs
@@ -380,7 +380,7 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 	allDDLFinishedTs = append(allDDLFinishedTs, p.tablesDDLHistory[tableID]...)
 	p.mu.RUnlock()
 
-	getSchemaName := func(schemaID common.SchemaID) (string, error) {
+	getSchemaName := func(schemaID int64) (string, error) {
 		p.mu.RLock()
 		defer func() {
 			p.mu.RUnlock()
@@ -403,7 +403,7 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 		ddlEvent := readDDLEvent(storageSnap, version)
 		// TODO: check ddlEvent type
 		// TODO: no need fill it here, schemaName should be in event
-		schemaName, err := getSchemaName(common.SchemaID(ddlEvent.SchemaID))
+		schemaName, err := getSchemaName(int64(ddlEvent.SchemaID))
 		if err != nil {
 			log.Fatal("get schema name failed", zap.Error(err))
 		}
@@ -417,9 +417,9 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 
 func addTableInfoFromKVSnap(
 	store *versionedTableInfoStore,
-	kvSnapVersion common.Ts,
+	kvSnapVersion uint64,
 	snap *pebble.Snapshot,
-	getSchemaName func(schemaID common.SchemaID) (string, error),
+	getSchemaName func(schemaID int64) (string, error),
 ) error {
 	schemaID, rawTableInfo := readSchemaIDAndTableInfoFromKVSnap(snap, store.getTableID(), kvSnapVersion)
 	schemaName, err := getSchemaName(schemaID)
@@ -513,10 +513,10 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 
 func updateDatabaseInfoAndTableInfo(
 	event *PersistedDDLEvent,
-	databaseMap map[common.SchemaID]*DatabaseInfo,
-	tablesBasicInfo map[common.TableID]*VersionedTableBasicInfo,
+	databaseMap map[int64]*DatabaseInfo,
+	tablesBasicInfo map[int64]*VersionedTableBasicInfo,
 ) (bool, error) {
-	addTableToDB := func(schemaID common.SchemaID, tableID common.TableID) {
+	addTableToDB := func(schemaID int64, tableID int64) {
 		databaseInfo, ok := databaseMap[schemaID]
 		if !ok {
 			log.Panic("database not found.",
@@ -530,7 +530,7 @@ func updateDatabaseInfoAndTableInfo(
 		databaseInfo.Tables[tableID] = true
 	}
 
-	removeTableFromDB := func(schemaID common.SchemaID, tableID common.TableID) {
+	removeTableFromDB := func(schemaID int64, tableID int64) {
 		databaseInfo, ok := databaseMap[schemaID]
 		if !ok {
 			log.Panic("database not found. ",
@@ -544,27 +544,27 @@ func updateDatabaseInfoAndTableInfo(
 		delete(databaseInfo.Tables, tableID)
 	}
 
-	createTable := func(schemaID common.SchemaID, tableID common.TableID) bool {
+	createTable := func(schemaID int64, tableID int64) bool {
 		if _, ok := tablesBasicInfo[tableID]; ok {
 			return false
 		}
 		addTableToDB(schemaID, tableID)
 		tablesBasicInfo[tableID] = &VersionedTableBasicInfo{
-			SchemaIDs:     []SchemaIDWithVersion{{SchemaID: schemaID, CreateVersion: common.Ts(event.FinishedTs)}},
-			Names:         []TableNameWithVersion{{Name: event.TableInfo.Name.O, CreateVersion: common.Ts(event.FinishedTs)}},
-			CreateVersion: common.Ts(event.FinishedTs),
+			SchemaIDs:     []SchemaIDWithVersion{{SchemaID: schemaID, CreateVersion: uint64(event.FinishedTs)}},
+			Names:         []TableNameWithVersion{{Name: event.TableInfo.Name.O, CreateVersion: uint64(event.FinishedTs)}},
+			CreateVersion: uint64(event.FinishedTs),
 		}
 		return true
 	}
 
-	dropTable := func(schemaID common.SchemaID, tableID common.TableID) {
+	dropTable := func(schemaID int64, tableID int64) {
 		removeTableFromDB(schemaID, tableID)
 		delete(tablesBasicInfo, tableID)
 	}
 
 	switch model.ActionType(event.Type) {
 	case model.ActionCreateSchema:
-		if _, ok := databaseMap[common.SchemaID(event.SchemaID)]; ok {
+		if _, ok := databaseMap[int64(event.SchemaID)]; ok {
 			log.Warn("database already exists. ignore DDL ",
 				zap.String("DDL", event.Query),
 				zap.Int64("jobID", event.ID),
@@ -573,14 +573,14 @@ func updateDatabaseInfoAndTableInfo(
 				zap.Int64("jobSchemaVersion", event.SchemaVersion))
 			return true, nil
 		}
-		databaseMap[common.SchemaID(event.SchemaID)] = &DatabaseInfo{
+		databaseMap[int64(event.SchemaID)] = &DatabaseInfo{
 			Name:          event.SchemaName,
-			Tables:        make(map[common.TableID]bool),
-			CreateVersion: common.Ts(event.FinishedTs),
+			Tables:        make(map[int64]bool),
+			CreateVersion: uint64(event.FinishedTs),
 			DeleteVersion: math.MaxUint64,
 		}
 	case model.ActionDropSchema:
-		databaseInfo, ok := databaseMap[common.SchemaID(event.SchemaID)]
+		databaseInfo, ok := databaseMap[int64(event.SchemaID)]
 		if !ok {
 			log.Warn("database not found. ignore DDL ",
 				zap.String("DDL", event.Query),
@@ -593,9 +593,9 @@ func updateDatabaseInfoAndTableInfo(
 		if databaseInfo.DeleteVersion != math.MaxUint64 {
 			log.Panic("should not happen")
 		}
-		databaseInfo.DeleteVersion = common.Ts(event.FinishedTs)
+		databaseInfo.DeleteVersion = uint64(event.FinishedTs)
 	case model.ActionCreateTable:
-		ok := createTable(common.SchemaID(event.SchemaID), common.TableID(event.TableID))
+		ok := createTable(int64(event.SchemaID), int64(event.TableID))
 		if !ok {
 			log.Warn("table already exists. ignore DDL ",
 				zap.String("DDL", event.Query),
@@ -607,7 +607,7 @@ func updateDatabaseInfoAndTableInfo(
 			return true, nil
 		}
 	case model.ActionDropTable:
-		dropTable(common.SchemaID(event.SchemaID), common.TableID(event.TableID))
+		dropTable(int64(event.SchemaID), int64(event.TableID))
 	case model.ActionAddColumn,
 		model.ActionDropColumn,
 		model.ActionAddIndex,
@@ -618,19 +618,19 @@ func updateDatabaseInfoAndTableInfo(
 		model.ActionRebaseAutoID:
 		// ignore
 	case model.ActionTruncateTable:
-		dropTable(common.SchemaID(event.SchemaID), common.TableID(event.TableID))
+		dropTable(int64(event.SchemaID), int64(event.TableID))
 		// TODO: do we need to the return value of createTable?
-		createTable(common.SchemaID(event.SchemaID), event.TableInfo.ID)
+		createTable(int64(event.SchemaID), event.TableInfo.ID)
 	case model.ActionRenameTable:
-		oldSchemaID := getSchemaID(tablesBasicInfo, common.TableID(event.TableID), common.Ts(event.FinishedTs-1))
-		if oldSchemaID != common.SchemaID(event.SchemaID) {
-			modifySchemaID(tablesBasicInfo, common.TableID(event.TableID), common.SchemaID(event.SchemaID), common.Ts(event.FinishedTs))
-			removeTableFromDB(oldSchemaID, common.TableID(event.TableID))
-			addTableToDB(common.SchemaID(event.SchemaID), common.TableID(event.TableID))
+		oldSchemaID := getSchemaID(tablesBasicInfo, int64(event.TableID), uint64(event.FinishedTs-1))
+		if oldSchemaID != int64(event.SchemaID) {
+			modifySchemaID(tablesBasicInfo, int64(event.TableID), int64(event.SchemaID), uint64(event.FinishedTs))
+			removeTableFromDB(oldSchemaID, int64(event.TableID))
+			addTableToDB(int64(event.SchemaID), int64(event.TableID))
 		}
-		oldTableName := getTableName(tablesBasicInfo, common.TableID(event.TableID), common.Ts(event.FinishedTs-1))
+		oldTableName := getTableName(tablesBasicInfo, int64(event.TableID), uint64(event.FinishedTs-1))
 		if oldTableName != event.TableInfo.Name.O {
-			modifyTableName(tablesBasicInfo, common.TableID(event.TableID), event.TableInfo.Name.O, common.Ts(event.FinishedTs))
+			modifyTableName(tablesBasicInfo, int64(event.TableID), event.TableInfo.Name.O, uint64(event.FinishedTs))
 		}
 	case model.ActionSetDefaultValue,
 		model.ActionShardRowID,
@@ -652,12 +652,12 @@ func updateDatabaseInfoAndTableInfo(
 
 func updateDDLHistory(
 	ddlEvent *PersistedDDLEvent,
-	databaseMap map[common.SchemaID]*DatabaseInfo,
-	tablesBasicInfo map[common.TableID]*VersionedTableBasicInfo,
-	tablesDDLHistory map[common.TableID][]uint64,
+	databaseMap map[int64]*DatabaseInfo,
+	tablesBasicInfo map[int64]*VersionedTableBasicInfo,
+	tablesDDLHistory map[int64][]uint64,
 	tableTriggerDDLHistory []uint64,
 ) ([]uint64, error) {
-	addTableHistory := func(tableID common.TableID) {
+	addTableHistory := func(tableID int64) {
 		tablesDDLHistory[tableID] = append(tablesDDLHistory[tableID], ddlEvent.FinishedTs)
 	}
 
@@ -670,7 +670,7 @@ func updateDDLHistory(
 		}
 	case model.ActionDropSchema:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
-		databaseInfo, ok := databaseMap[common.SchemaID(ddlEvent.SchemaID)]
+		databaseInfo, ok := databaseMap[int64(ddlEvent.SchemaID)]
 		if !ok {
 			log.Panic("cannot find database", zap.Int64("schemaID", ddlEvent.SchemaID))
 		}
@@ -680,7 +680,7 @@ func updateDDLHistory(
 	case model.ActionCreateTable,
 		model.ActionDropTable:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
-		addTableHistory(common.TableID(ddlEvent.TableID))
+		addTableHistory(int64(ddlEvent.TableID))
 	case model.ActionAddColumn,
 		model.ActionDropColumn,
 		model.ActionAddIndex,
@@ -693,13 +693,13 @@ func updateDDLHistory(
 		model.ActionShardRowID,
 		model.ActionModifyTableComment,
 		model.ActionRenameIndex:
-		addTableHistory(common.TableID(ddlEvent.TableID))
+		addTableHistory(int64(ddlEvent.TableID))
 	case model.ActionTruncateTable:
-		addTableHistory(common.TableID(ddlEvent.TableID))
-		addTableHistory(common.TableID(ddlEvent.TableInfo.ID))
+		addTableHistory(int64(ddlEvent.TableID))
+		addTableHistory(int64(ddlEvent.TableInfo.ID))
 	case model.ActionRenameTable:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
-		addTableHistory(common.TableID(ddlEvent.TableID))
+		addTableHistory(int64(ddlEvent.TableID))
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", ddlEvent.Type),
@@ -711,7 +711,7 @@ func updateDDLHistory(
 
 func updateRegisteredTableInfoStore(
 	event PersistedDDLEvent,
-	tableInfoStoreMap map[common.TableID]*versionedTableInfoStore,
+	tableInfoStoreMap map[int64]*versionedTableInfoStore,
 ) error {
 	switch model.ActionType(event.Type) {
 	case model.ActionCreateSchema,
@@ -734,7 +734,7 @@ func updateRegisteredTableInfoStore(
 		model.ActionShardRowID,
 		model.ActionModifyTableComment,
 		model.ActionRenameIndex:
-		store, ok := tableInfoStoreMap[common.TableID(event.TableID)]
+		store, ok := tableInfoStoreMap[int64(event.TableID)]
 		if ok {
 			store.applyDDL(event)
 		}
@@ -819,23 +819,23 @@ func buildDDLEvent(rawEvent PersistedDDLEvent) common.DDLEvent {
 	return event
 }
 
-func fillSchemaName(event PersistedDDLEvent, databaseMap map[common.SchemaID]*DatabaseInfo) error {
+func fillSchemaName(event PersistedDDLEvent, databaseMap map[int64]*DatabaseInfo) error {
 	// FIXME: only fill schema name for needed ddl
 
 	if model.ActionType(event.Type) == model.ActionCreateSchema || model.ActionType(event.Type) == model.ActionDropSchema {
 		return nil
 	}
 
-	schemaID := common.SchemaID(event.SchemaID)
+	schemaID := int64(event.SchemaID)
 	databaseInfo, ok := databaseMap[schemaID]
 	if !ok {
 		log.Error("database not found", zap.Any("schemaID", schemaID))
 		return errors.New("database not found")
 	}
-	if databaseInfo.CreateVersion > common.Ts(event.FinishedTs) {
+	if databaseInfo.CreateVersion > uint64(event.FinishedTs) {
 		return errors.New("database is not created")
 	}
-	if databaseInfo.DeleteVersion < common.Ts(event.FinishedTs) {
+	if databaseInfo.DeleteVersion < uint64(event.FinishedTs) {
 		return errors.New("database is deleted")
 	}
 	event.SchemaName = databaseInfo.Name
@@ -843,10 +843,10 @@ func fillSchemaName(event PersistedDDLEvent, databaseMap map[common.SchemaID]*Da
 }
 
 func modifySchemaID(
-	tablesBasicInfo map[common.TableID]*VersionedTableBasicInfo,
-	tableID common.TableID,
-	schemaID common.SchemaID,
-	version common.Ts,
+	tablesBasicInfo map[int64]*VersionedTableBasicInfo,
+	tableID int64,
+	schemaID int64,
+	version uint64,
 ) {
 	info, ok := tablesBasicInfo[tableID]
 	if !ok {
@@ -861,10 +861,10 @@ func modifySchemaID(
 
 // return the schema id with largest version which is less than or equal to the given version
 func getSchemaID(
-	tablesBasicInfo map[common.TableID]*VersionedTableBasicInfo,
-	tableID common.TableID,
-	version common.Ts,
-) common.SchemaID {
+	tablesBasicInfo map[int64]*VersionedTableBasicInfo,
+	tableID int64,
+	version uint64,
+) int64 {
 	info, ok := tablesBasicInfo[tableID]
 	if !ok {
 		log.Panic("table not found", zap.Int64("tableID", int64(tableID)))
@@ -880,10 +880,10 @@ func getSchemaID(
 }
 
 func modifyTableName(
-	tablesBasicInfo map[common.TableID]*VersionedTableBasicInfo,
-	tableID common.TableID,
+	tablesBasicInfo map[int64]*VersionedTableBasicInfo,
+	tableID int64,
 	tableName string,
-	version common.Ts,
+	version uint64,
 ) {
 	info, ok := tablesBasicInfo[tableID]
 	if !ok {
@@ -897,9 +897,9 @@ func modifyTableName(
 
 // return the table name with largest version which is less than or equal to the given version
 func getTableName(
-	tablesBasicInfo map[common.TableID]*VersionedTableBasicInfo,
-	tableID common.TableID,
-	version common.Ts,
+	tablesBasicInfo map[int64]*VersionedTableBasicInfo,
+	tableID int64,
+	version uint64,
 ) string {
 	info, ok := tablesBasicInfo[tableID]
 	if !ok {

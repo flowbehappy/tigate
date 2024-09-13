@@ -3,7 +3,6 @@ package schemastore
 import (
 	"testing"
 
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,12 +17,12 @@ func TestBasic(t *testing.T) {
 	cache.addDDLEvent(PersistedDDLEvent{FinishedTs: 15})
 	events := cache.fetchSortedDDLEventBeforeTS(30)
 	require.Equal(t, len(events), 4)
-	require.Equal(t, events[0].FinishedTs, common.Ts(1))
-	require.Equal(t, events[1].FinishedTs, common.Ts(9))
-	require.Equal(t, events[2].FinishedTs, common.Ts(15))
-	require.Equal(t, events[3].FinishedTs, common.Ts(30))
+	require.Equal(t, events[0].FinishedTs, uint64(1))
+	require.Equal(t, events[1].FinishedTs, uint64(9))
+	require.Equal(t, events[2].FinishedTs, uint64(15))
+	require.Equal(t, events[3].FinishedTs, uint64(30))
 	events = cache.fetchSortedDDLEventBeforeTS(50)
 	require.Equal(t, len(events), 2)
-	require.Equal(t, events[0].FinishedTs, common.Ts(40))
-	require.Equal(t, events[1].FinishedTs, common.Ts(50))
+	require.Equal(t, events[0].FinishedTs, uint64(40))
+	require.Equal(t, events[1].FinishedTs, uint64(50))
 }

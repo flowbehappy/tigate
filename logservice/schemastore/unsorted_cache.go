@@ -3,7 +3,6 @@ package schemastore
 import (
 	"sync"
 
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 
@@ -37,7 +36,7 @@ func (c *ddlCache) addDDLEvent(ddlEvent PersistedDDLEvent) {
 	}
 }
 
-func (c *ddlCache) fetchSortedDDLEventBeforeTS(ts common.Ts) []PersistedDDLEvent {
+func (c *ddlCache) fetchSortedDDLEventBeforeTS(ts uint64) []PersistedDDLEvent {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	events := make([]PersistedDDLEvent, 0)

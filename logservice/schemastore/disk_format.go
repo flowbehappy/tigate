@@ -23,7 +23,6 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/flowbehappy/tigate/logservice/logpuller"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -58,7 +57,7 @@ func upperBoundKey() []byte {
 	return []byte("up")
 }
 
-func schemaInfoKey(ts common.Ts, schemaID int64) ([]byte, error) {
+func schemaInfoKey(ts uint64, schemaID int64) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	buf.WriteString(snapshotSchemaKeyPrefix)
 	if err := binary.Write(buf, binary.BigEndian, ts); err != nil {
@@ -70,7 +69,7 @@ func schemaInfoKey(ts common.Ts, schemaID int64) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func tableInfoKey(ts common.Ts, tableID common.TableID) ([]byte, error) {
+func tableInfoKey(ts uint64, tableID int64) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	buf.WriteString(snapshotTableKeyPrefix)
 	if err := binary.Write(buf, binary.BigEndian, ts); err != nil {
@@ -82,7 +81,7 @@ func tableInfoKey(ts common.Ts, tableID common.TableID) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func ddlJobKey(ts common.Ts) ([]byte, error) {
+func ddlJobKey(ts uint64) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	buf.WriteString(ddlKeyPrefix)
 	if err := binary.Write(buf, binary.BigEndian, ts); err != nil {
@@ -107,7 +106,7 @@ func readGcTs(db *pebble.DB) (uint64, error) {
 	return gcTs, nil
 }
 
-func writeGcTs(db *pebble.DB, gcTs common.Ts) {
+func writeGcTs(db *pebble.DB, gcTs uint64) {
 	batch := db.NewBatch()
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.BigEndian, uint64(gcTs))
@@ -154,8 +153,8 @@ type TableInfoEntry struct {
 	TableInfo []byte `json:"table_info"`
 }
 
-func loadTablesInKVSnap(snap *pebble.Snapshot, snapVersion common.Ts) (map[common.TableID]*VersionedTableBasicInfo, error) {
-	tablesInKVSnap := make(map[common.TableID]*VersionedTableBasicInfo)
+func loadTablesInKVSnap(snap *pebble.Snapshot, snapVersion uint64) (map[int64]*VersionedTableBasicInfo, error) {
+	tablesInKVSnap := make(map[int64]*VersionedTableBasicInfo)
 
 	startKey, err := tableInfoKey(snapVersion, 0)
 	if err != nil {
@@ -184,7 +183,7 @@ func loadTablesInKVSnap(snap *pebble.Snapshot, snapVersion common.Ts) (map[commo
 			log.Fatal("unmarshal table name info failed", zap.Error(err))
 		}
 		tablesInKVSnap[tbNameInfo.ID] = &VersionedTableBasicInfo{
-			SchemaIDs:     []SchemaIDWithVersion{{SchemaID: common.SchemaID(table_info_entry.SchemaID), CreateVersion: snapVersion}},
+			SchemaIDs:     []SchemaIDWithVersion{{SchemaID: int64(table_info_entry.SchemaID), CreateVersion: snapVersion}},
 			Names:         []TableNameWithVersion{{Name: tbNameInfo.Name.O, CreateVersion: snapVersion}},
 			CreateVersion: snapVersion,
 		}
@@ -196,14 +195,14 @@ func loadTablesInKVSnap(snap *pebble.Snapshot, snapVersion common.Ts) (map[commo
 // load the database info and ddl history in the range (snapVersion, upperBound]
 func loadDatabaseInfoAndDDLHistory(
 	snap *pebble.Snapshot,
-	snapVersion common.Ts,
+	snapVersion uint64,
 	upperBound upperBoundMeta,
-	tablesBasicInfo map[common.TableID]*VersionedTableBasicInfo,
-) (map[common.SchemaID]*DatabaseInfo, map[common.TableID][]uint64, []uint64, error) {
+	tablesBasicInfo map[int64]*VersionedTableBasicInfo,
+) (map[int64]*DatabaseInfo, map[int64][]uint64, []uint64, error) {
 	// load database info at `snapVersion`
 	databaseMap := loadDatabaseInfoFromSnap(snap, snapVersion)
 
-	tablesDDLHistory := make(map[common.TableID][]uint64)
+	tablesDDLHistory := make(map[int64][]uint64)
 	tableTriggerDDLHistory := make([]uint64, 0)
 
 	// apply ddl jobs
@@ -249,8 +248,8 @@ func loadDatabaseInfoAndDDLHistory(
 	return databaseMap, tablesDDLHistory, tableTriggerDDLHistory, nil
 }
 
-func loadDatabaseInfoFromSnap(snap *pebble.Snapshot, snapVersion common.Ts) map[common.SchemaID]*DatabaseInfo {
-	databaseMap := make(map[common.SchemaID]*DatabaseInfo)
+func loadDatabaseInfoFromSnap(snap *pebble.Snapshot, snapVersion uint64) map[int64]*DatabaseInfo {
+	databaseMap := make(map[int64]*DatabaseInfo)
 
 	startKey, err := schemaInfoKey(snapVersion, 0)
 	if err != nil {
@@ -276,17 +275,17 @@ func loadDatabaseInfoFromSnap(snap *pebble.Snapshot, snapVersion common.Ts) map[
 
 		databaseInfo := &DatabaseInfo{
 			Name:          dbInfo.Name.O,
-			Tables:        make(map[common.TableID]bool),
+			Tables:        make(map[int64]bool),
 			CreateVersion: snapVersion,
-			DeleteVersion: common.Ts(math.MaxUint64),
+			DeleteVersion: uint64(math.MaxUint64),
 		}
-		databaseMap[common.SchemaID(dbInfo.ID)] = databaseInfo
+		databaseMap[int64(dbInfo.ID)] = databaseInfo
 	}
 
 	return databaseMap
 }
 
-func readSchemaIDAndTableInfoFromKVSnap(snap *pebble.Snapshot, tableID common.TableID, version common.Ts) (common.SchemaID, *model.TableInfo) {
+func readSchemaIDAndTableInfoFromKVSnap(snap *pebble.Snapshot, tableID int64, version uint64) (int64, *model.TableInfo) {
 	targetKey, err := tableInfoKey(version, tableID)
 	if err != nil {
 		log.Fatal("generate table info failed", zap.Error(err))
@@ -312,10 +311,10 @@ func readSchemaIDAndTableInfoFromKVSnap(snap *pebble.Snapshot, tableID common.Ta
 	if err != nil {
 		log.Fatal("unmarshal table info failed", zap.Error(err))
 	}
-	return common.SchemaID(table_info_entry.SchemaID), tableInfo
+	return int64(table_info_entry.SchemaID), tableInfo
 }
 
-func readDDLEvent(snap *pebble.Snapshot, version common.Ts) PersistedDDLEvent {
+func readDDLEvent(snap *pebble.Snapshot, version uint64) PersistedDDLEvent {
 	ddlKey, err := ddlJobKey(version)
 	if err != nil {
 		log.Fatal("generate ddl job key failed", zap.Error(err))
@@ -336,7 +335,7 @@ func readDDLEvent(snap *pebble.Snapshot, version common.Ts) PersistedDDLEvent {
 func writeDDLEvents(db *pebble.DB, ddlEvents ...PersistedDDLEvent) error {
 	batch := db.NewBatch()
 	for _, event := range ddlEvents {
-		ddlKey, err := ddlJobKey(common.Ts(event.FinishedTs))
+		ddlKey, err := ddlJobKey(uint64(event.FinishedTs))
 		if err != nil {
 			return err
 		}
@@ -355,7 +354,7 @@ func isTableRawKey(key []byte) bool {
 	return strings.HasPrefix(string(key), mTablePrefix)
 }
 
-func writeSchemaInfoToBatch(batch *pebble.Batch, ts common.Ts, info *model.DBInfo) {
+func writeSchemaInfoToBatch(batch *pebble.Batch, ts uint64, info *model.DBInfo) {
 	schemaKey, err := schemaInfoKey(ts, int64(info.ID))
 	if err != nil {
 		log.Fatal("generate schema key failed", zap.Error(err))
@@ -367,12 +366,12 @@ func writeSchemaInfoToBatch(batch *pebble.Batch, ts common.Ts, info *model.DBInf
 	batch.Set(schemaKey, schemaValue, pebble.NoSync)
 }
 
-func writeTableInfoToBatch(batch *pebble.Batch, ts common.Ts, schemaID int64, tableInfoValue []byte) (common.TableID, string) {
+func writeTableInfoToBatch(batch *pebble.Batch, ts uint64, schemaID int64, tableInfoValue []byte) (int64, string) {
 	tbNameInfo := model.TableNameInfo{}
 	if err := json.Unmarshal(tableInfoValue, &tbNameInfo); err != nil {
 		log.Fatal("unmarshal table info failed", zap.Error(err))
 	}
-	tableKey, err := tableInfoKey(ts, common.TableID(tbNameInfo.ID))
+	tableKey, err := tableInfoKey(ts, int64(tbNameInfo.ID))
 	if err != nil {
 		log.Fatal("generate table key failed", zap.Error(err))
 	}
@@ -392,8 +391,8 @@ func writeTableInfoToBatch(batch *pebble.Batch, ts common.Ts, schemaID int64, ta
 func writeSchemaSnapshotAndMeta(
 	db *pebble.DB,
 	tiStore kv.Storage,
-	snapTs common.Ts,
-) (map[common.SchemaID]*DatabaseInfo, map[common.TableID]*VersionedTableBasicInfo, upperBoundMeta, error) {
+	snapTs uint64,
+) (map[int64]*DatabaseInfo, map[int64]*VersionedTableBasicInfo, upperBoundMeta, error) {
 	meta := logpuller.GetSnapshotMeta(tiStore, uint64(snapTs))
 	start := time.Now()
 	dbInfos, err := meta.ListDatabases()
@@ -401,19 +400,19 @@ func writeSchemaSnapshotAndMeta(
 		log.Fatal("list databases failed", zap.Error(err))
 	}
 
-	databaseMap := make(map[common.SchemaID]*DatabaseInfo, len(dbInfos))
-	tablesInKVSnap := make(map[common.TableID]*VersionedTableBasicInfo)
+	databaseMap := make(map[int64]*DatabaseInfo, len(dbInfos))
+	tablesInKVSnap := make(map[int64]*VersionedTableBasicInfo)
 	for _, dbInfo := range dbInfos {
 		if filter.IsSysSchema(dbInfo.Name.O) {
 			continue
 		}
 		databaseInfo := &DatabaseInfo{
 			Name:          dbInfo.Name.O,
-			Tables:        make(map[common.TableID]bool),
+			Tables:        make(map[int64]bool),
 			CreateVersion: snapTs,
-			DeleteVersion: common.Ts(math.MaxUint64),
+			DeleteVersion: uint64(math.MaxUint64),
 		}
-		databaseMap[common.SchemaID(dbInfo.ID)] = databaseInfo
+		databaseMap[int64(dbInfo.ID)] = databaseInfo
 
 		batch := db.NewBatch()
 		defer batch.Close()
@@ -431,7 +430,7 @@ func writeSchemaSnapshotAndMeta(
 			tableID, tableName := writeTableInfoToBatch(batch, snapTs, dbInfo.ID, rawTable.Value)
 			databaseInfo.Tables[tableID] = true
 			tablesInKVSnap[tableID] = &VersionedTableBasicInfo{
-				SchemaIDs: []SchemaIDWithVersion{{SchemaID: common.SchemaID(dbInfo.ID), CreateVersion: snapTs}},
+				SchemaIDs: []SchemaIDWithVersion{{SchemaID: int64(dbInfo.ID), CreateVersion: snapTs}},
 				Names:     []TableNameWithVersion{{Name: tableName, CreateVersion: snapTs}},
 			}
 		}

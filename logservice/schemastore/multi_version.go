@@ -26,19 +26,19 @@ import (
 )
 
 type tableInfoItem struct {
-	version common.Ts
+	version uint64
 	info    *common.TableInfo
 }
 
 type versionedTableInfoStore struct {
 	mu sync.Mutex
 
-	tableID common.TableID
+	tableID int64
 
 	// ordered by ts
 	infos []*tableInfoItem
 
-	deleteVersion common.Ts
+	deleteVersion uint64
 
 	initialized bool
 
@@ -49,7 +49,7 @@ type versionedTableInfoStore struct {
 	readyToRead chan struct{}
 }
 
-func newEmptyVersionedTableInfoStore(tableID common.TableID) *versionedTableInfoStore {
+func newEmptyVersionedTableInfoStore(tableID int64) *versionedTableInfoStore {
 	return &versionedTableInfoStore{
 		tableID:       tableID,
 		infos:         make([]*tableInfoItem, 0),
@@ -65,10 +65,10 @@ func (v *versionedTableInfoStore) addInitialTableInfo(info *common.TableInfo) {
 	defer v.mu.Unlock()
 	// assertEmpty(v.infos)
 	// log.Info("addInitialTableInfo", zap.Int64("tableID", int64(v.tableID)), zap.Uint64("version", info.Version))
-	v.infos = append(v.infos, &tableInfoItem{version: common.Ts(info.Version), info: info})
+	v.infos = append(v.infos, &tableInfoItem{version: uint64(info.Version), info: info})
 }
 
-func (v *versionedTableInfoStore) getTableID() common.TableID {
+func (v *versionedTableInfoStore) getTableID() int64 {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return v.tableID
@@ -94,7 +94,7 @@ func (v *versionedTableInfoStore) waitTableInfoInitialized() {
 }
 
 // return the table info with the largest version <= ts
-func (v *versionedTableInfoStore) getTableInfo(ts common.Ts) (*common.TableInfo, error) {
+func (v *versionedTableInfoStore) getTableInfo(ts uint64) (*common.TableInfo, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -121,7 +121,7 @@ func (v *versionedTableInfoStore) getTableInfo(ts common.Ts) (*common.TableInfo,
 }
 
 // only keep one item with the largest version <= gcTS
-func (v *versionedTableInfoStore) gc(gcTs common.Ts) {
+func (v *versionedTableInfoStore) gc(gcTs uint64) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if len(v.infos) == 0 {
@@ -161,7 +161,7 @@ func assertNonEmpty(infos []*tableInfoItem, event PersistedDDLEvent) {
 }
 
 func assertNonDeleted(v *versionedTableInfoStore) {
-	if v.deleteVersion != common.Ts(math.MaxUint64) {
+	if v.deleteVersion != uint64(math.MaxUint64) {
 		log.Panic("shouldn't happen")
 	}
 }
@@ -192,13 +192,13 @@ func (v *versionedTableInfoStore) applyDDL(event PersistedDDLEvent) {
 // lock must be hold by the caller
 // TODO: filter old ddl: there may be some pending ddls which is also written to disk and applied to table info store already
 func (v *versionedTableInfoStore) doApplyDDL(event PersistedDDLEvent) {
-	if len(v.infos) != 0 && common.Ts(event.FinishedTs) <= v.infos[len(v.infos)-1].version {
+	if len(v.infos) != 0 && uint64(event.FinishedTs) <= v.infos[len(v.infos)-1].version {
 		log.Panic("ddl job finished ts should be monotonically increasing")
 	}
 	if len(v.infos) > 0 {
 		// TODO: FinishedTS is not enough, need schema version. But currently there should be no duplicate ddl,
 		// so the following check is useless
-		if common.Ts(event.FinishedTs) <= v.infos[len(v.infos)-1].version {
+		if uint64(event.FinishedTs) <= v.infos[len(v.infos)-1].version {
 			log.Info("ignore job",
 				zap.Int64("tableID", int64(v.tableID)),
 				zap.String("query", event.Query),
@@ -220,13 +220,13 @@ func (v *versionedTableInfoStore) doApplyDDL(event PersistedDDLEvent) {
 		}
 		assertEmpty(v.infos, event)
 		info := common.WrapTableInfo(event.SchemaID, event.SchemaName, event.FinishedTs, event.TableInfo)
-		v.infos = append(v.infos, &tableInfoItem{version: common.Ts(event.FinishedTs), info: info})
+		v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 	case model.ActionRenameTable:
 		assertNonEmpty(v.infos, event)
 		info := common.WrapTableInfo(event.SchemaID, event.SchemaName, event.FinishedTs, event.TableInfo)
-		v.infos = append(v.infos, &tableInfoItem{version: common.Ts(event.FinishedTs), info: info})
+		v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 	case model.ActionDropTable, model.ActionTruncateTable:
-		v.deleteVersion = common.Ts(event.FinishedTs)
+		v.deleteVersion = uint64(event.FinishedTs)
 	default:
 		// TODO: idenitify unexpected ddl or specify all expected ddl
 	}

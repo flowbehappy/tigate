@@ -16,7 +16,6 @@ package schemastore
 import (
 	"testing"
 
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
@@ -81,16 +80,16 @@ func TestRenameTable(t *testing.T) {
 	store.applyDDL(renameDDLJob)
 	store.applyDDL(renameDDLJob2)
 	require.Equal(t, len(store.infos), 3)
-	tableInfo, err := store.getTableInfo(common.Ts(version))
+	tableInfo, err := store.getTableInfo(uint64(version))
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.Name.O, "t")
-	tableInfo, err = store.getTableInfo(common.Ts(version + 1))
+	tableInfo, err = store.getTableInfo(uint64(version + 1))
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.Name.O, "t2")
-	tableInfo, err = store.getTableInfo(common.Ts(version + 2))
+	tableInfo, err = store.getTableInfo(uint64(version + 2))
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.Name.O, "t2")
-	tableInfo, err = store.getTableInfo(common.Ts(version + 10))
+	tableInfo, err = store.getTableInfo(uint64(version + 10))
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.Name.O, "t3")
 }
@@ -124,7 +123,7 @@ func TestDropTable(t *testing.T) {
 	store.applyDDL(createDDLJob)
 	store.applyDDL(dropDDLJob)
 	require.Equal(t, len(store.infos), 1)
-	tableInfo, err := store.getTableInfo(common.Ts(version))
+	tableInfo, err := store.getTableInfo(uint64(version))
 	require.Nil(t, err)
 	require.Equal(t, tableInfo.Name.O, "t")
 }

@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -28,18 +27,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newPersistentStorageForTest(db *pebble.DB, gcTs common.Ts, upperBound upperBoundMeta) *persistentStorage {
+func newPersistentStorageForTest(db *pebble.DB, gcTs uint64, upperBound upperBoundMeta) *persistentStorage {
 	p := &persistentStorage{
 		pdCli:                  nil,
 		kvStorage:              nil,
 		db:                     db,
 		gcTs:                   gcTs,
-		databaseMap:            make(map[common.SchemaID]*DatabaseInfo),
-		tablesBasicInfo:        make(map[common.TableID]*VersionedTableBasicInfo),
-		tablesDDLHistory:       make(map[common.TableID][]uint64),
+		databaseMap:            make(map[int64]*DatabaseInfo),
+		tablesBasicInfo:        make(map[int64]*VersionedTableBasicInfo),
+		tablesDDLHistory:       make(map[int64][]uint64),
 		tableTriggerDDLHistory: make([]uint64, 0),
-		tableInfoStoreMap:      make(map[common.TableID]*versionedTableInfoStore),
-		tableRegisteredCount:   make(map[common.TableID]int),
+		tableInfoStoreMap:      make(map[int64]*versionedTableInfoStore),
+		tableRegisteredCount:   make(map[int64]int),
 	}
 	p.initializeFromDisk(upperBound)
 	return p
@@ -68,7 +67,7 @@ func TestReadWriteMeta(t *testing.T) {
 	defer db.Close()
 
 	{
-		gcTS := common.Ts(1000)
+		gcTS := uint64(1000)
 		upperBound := upperBoundMeta{
 			FinishedDDLTs: 3000,
 			SchemaVersion: 4000,
@@ -89,7 +88,7 @@ func TestReadWriteMeta(t *testing.T) {
 
 	// update gcTs
 	{
-		gcTS := common.Ts(2000)
+		gcTS := uint64(2000)
 
 		writeGcTs(db, gcTS)
 
@@ -122,7 +121,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 	require.Nil(t, err)
 	defer db.Close()
 
-	gcTs := common.Ts(1000)
+	gcTs := uint64(1000)
 	upperBound := upperBoundMeta{
 		FinishedDDLTs: 3000,
 		SchemaVersion: 4000,
@@ -131,8 +130,8 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 	writeGcTs(db, gcTs)
 	writeUpperBoundMeta(db, upperBound)
 
-	schemaID := common.SchemaID(50)
-	tableID := common.TableID(99)
+	schemaID := int64(50)
+	tableID := int64(99)
 	{
 		batch := db.NewBatch()
 		writeSchemaInfoToBatch(batch, gcTs, &model.DBInfo{
@@ -160,7 +159,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		tableInfo, err := store.getTableInfo(gcTs)
 		require.Nil(t, err)
 		require.Equal(t, "t", tableInfo.Name.O)
-		require.Equal(t, tableID, common.TableID(tableInfo.ID))
+		require.Equal(t, tableID, int64(tableInfo.ID))
 	}
 
 	// rename table
@@ -189,8 +188,8 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		tableInfo, err := store.getTableInfo(gcTs)
 		require.Nil(t, err)
 		require.Equal(t, "t", tableInfo.Name.O)
-		require.Equal(t, tableID, common.TableID(tableInfo.ID))
-		tableInfo2, err := store.getTableInfo(common.Ts(renameVersion))
+		require.Equal(t, tableID, int64(tableInfo.ID))
+		tableInfo2, err := store.getTableInfo(uint64(renameVersion))
 		require.Nil(t, err)
 		require.Equal(t, "t2", tableInfo2.Name.O)
 
@@ -206,7 +205,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 			},
 			FinishedTs: renameVersion2,
 		})
-		tableInfo3, err := store.getTableInfo(common.Ts(renameVersion2))
+		tableInfo3, err := store.getTableInfo(uint64(renameVersion2))
 		require.Nil(t, err)
 		require.Equal(t, "t3", tableInfo3.Name.O)
 	}
@@ -219,7 +218,7 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	pStorage := newEmptyPersistentStorageForTest(dbPath)
 
 	// create db
-	schemaID := common.SchemaID(300)
+	schemaID := int64(300)
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateSchema),
@@ -231,13 +230,13 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 		pStorage.handleSortedDDLEvents(ddlEvent)
 
 		require.Equal(t, 1, len(pStorage.databaseMap))
-		require.Equal(t, common.Ts(200), pStorage.databaseMap[schemaID].CreateVersion)
+		require.Equal(t, uint64(200), pStorage.databaseMap[schemaID].CreateVersion)
 		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(200), pStorage.tableTriggerDDLHistory[0])
 	}
 
 	// create a table
-	tableID := common.TableID(100)
+	tableID := int64(100)
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateTable),
@@ -260,7 +259,7 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	}
 
 	// create another table
-	tableID2 := common.TableID(105)
+	tableID2 := int64(105)
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateTable),
@@ -306,7 +305,7 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	}
 
 	// truncate a table
-	tableID3 := common.TableID(112)
+	tableID3 := int64(112)
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionTruncateTable),
@@ -343,7 +342,7 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 		pStorage.handleSortedDDLEvents(ddlEvent)
 
 		require.Equal(t, 1, len(pStorage.databaseMap))
-		require.Equal(t, common.Ts(300), pStorage.databaseMap[schemaID].DeleteVersion)
+		require.Equal(t, uint64(300), pStorage.databaseMap[schemaID].DeleteVersion)
 		require.Equal(t, 5, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(300), pStorage.tableTriggerDDLHistory[4])
 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
@@ -361,7 +360,7 @@ func TestHandleRenameTable(t *testing.T) {
 	pStorage := newEmptyPersistentStorageForTest(dbPath)
 
 	// create db1
-	schemaID1 := common.SchemaID(300)
+	schemaID1 := int64(300)
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateSchema),
@@ -374,7 +373,7 @@ func TestHandleRenameTable(t *testing.T) {
 	}
 
 	// create db2
-	schemaID2 := common.SchemaID(305)
+	schemaID2 := int64(305)
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateSchema),
@@ -387,7 +386,7 @@ func TestHandleRenameTable(t *testing.T) {
 	}
 
 	// create a table
-	tableID := common.TableID(100)
+	tableID := int64(100)
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateTable),
@@ -404,10 +403,10 @@ func TestHandleRenameTable(t *testing.T) {
 		require.Equal(t, 2, len(pStorage.databaseMap))
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID1].Tables))
 		require.Equal(t, 0, len(pStorage.databaseMap[schemaID2].Tables))
-		require.Equal(t, common.Ts(601), pStorage.tablesBasicInfo[tableID].CreateVersion)
-		require.Equal(t, common.Ts(601), pStorage.tablesBasicInfo[tableID].SchemaIDs[0].CreateVersion)
+		require.Equal(t, uint64(601), pStorage.tablesBasicInfo[tableID].CreateVersion)
+		require.Equal(t, uint64(601), pStorage.tablesBasicInfo[tableID].SchemaIDs[0].CreateVersion)
 		require.Equal(t, schemaID1, pStorage.tablesBasicInfo[tableID].SchemaIDs[0].SchemaID)
-		require.Equal(t, common.Ts(601), pStorage.tablesBasicInfo[tableID].Names[0].CreateVersion)
+		require.Equal(t, uint64(601), pStorage.tablesBasicInfo[tableID].Names[0].CreateVersion)
 		require.Equal(t, "t1", pStorage.tablesBasicInfo[tableID].Names[0].Name)
 	}
 
@@ -428,14 +427,14 @@ func TestHandleRenameTable(t *testing.T) {
 		require.Equal(t, 2, len(pStorage.databaseMap))
 		require.Equal(t, 0, len(pStorage.databaseMap[schemaID1].Tables))
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID2].Tables))
-		require.Equal(t, common.Ts(605), pStorage.tablesBasicInfo[tableID].SchemaIDs[1].CreateVersion)
+		require.Equal(t, uint64(605), pStorage.tablesBasicInfo[tableID].SchemaIDs[1].CreateVersion)
 		require.Equal(t, schemaID2, pStorage.tablesBasicInfo[tableID].SchemaIDs[1].SchemaID)
-		require.Equal(t, schemaID2, getSchemaID(pStorage.tablesBasicInfo, tableID, common.Ts(605)))
-		require.Equal(t, schemaID1, getSchemaID(pStorage.tablesBasicInfo, tableID, common.Ts(604)))
-		require.Equal(t, common.Ts(605), pStorage.tablesBasicInfo[tableID].Names[1].CreateVersion)
+		require.Equal(t, schemaID2, getSchemaID(pStorage.tablesBasicInfo, tableID, uint64(605)))
+		require.Equal(t, schemaID1, getSchemaID(pStorage.tablesBasicInfo, tableID, uint64(604)))
+		require.Equal(t, uint64(605), pStorage.tablesBasicInfo[tableID].Names[1].CreateVersion)
 		require.Equal(t, "t2", pStorage.tablesBasicInfo[tableID].Names[1].Name)
-		require.Equal(t, "t2", getTableName(pStorage.tablesBasicInfo, tableID, common.Ts(605)))
-		require.Equal(t, "t1", getTableName(pStorage.tablesBasicInfo, tableID, common.Ts(604)))
+		require.Equal(t, "t2", getTableName(pStorage.tablesBasicInfo, tableID, uint64(605)))
+		require.Equal(t, "t1", getTableName(pStorage.tablesBasicInfo, tableID, uint64(604)))
 	}
 }
 
@@ -446,7 +445,7 @@ func TestFetchDDLEvents(t *testing.T) {
 	pStorage := newEmptyPersistentStorageForTest(dbPath)
 
 	// create db
-	schemaID := common.SchemaID(300)
+	schemaID := int64(300)
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateSchema),
@@ -459,7 +458,7 @@ func TestFetchDDLEvents(t *testing.T) {
 	}
 
 	// create a table
-	tableID := common.TableID(100)
+	tableID := int64(100)
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateTable),
@@ -492,7 +491,7 @@ func TestFetchDDLEvents(t *testing.T) {
 	}
 
 	// truncate table
-	tableID2 := common.TableID(105)
+	tableID2 := int64(105)
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionTruncateTable),

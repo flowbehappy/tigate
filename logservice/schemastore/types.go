@@ -1,7 +1,6 @@
 package schemastore
 
 import (
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
@@ -54,28 +53,28 @@ func buildPersistedDDLEvent(job *model.Job) PersistedDDLEvent {
 //msgp:ignore DatabaseInfo
 type DatabaseInfo struct {
 	Name          string
-	Tables        map[common.TableID]bool
-	CreateVersion common.Ts
-	DeleteVersion common.Ts
+	Tables        map[int64]bool
+	CreateVersion uint64
+	DeleteVersion uint64
 }
 
-func (d *DatabaseInfo) needGc(gcTs common.Ts) bool { return d.DeleteVersion < gcTs }
+func (d *DatabaseInfo) needGc(gcTs uint64) bool { return d.DeleteVersion < gcTs }
 
 //msgp:ignore SchemaIDWithVersion
 type SchemaIDWithVersion struct {
-	SchemaID      common.SchemaID
-	CreateVersion common.Ts
+	SchemaID      int64
+	CreateVersion uint64
 }
 
 //msgp:ignore TableNameWithVersion
 type TableNameWithVersion struct {
 	Name          string
-	CreateVersion common.Ts
+	CreateVersion uint64
 }
 
 //msgp:ignore VersionedTableBasicInfo
 type VersionedTableBasicInfo struct {
 	SchemaIDs     []SchemaIDWithVersion
 	Names         []TableNameWithVersion
-	CreateVersion common.Ts
+	CreateVersion uint64
 }

@@ -37,7 +37,7 @@ type ddlJobFetcher struct {
 	puller *logpuller.LogPullerMultiSpan
 
 	writeDDLEvent     func(ddlEvent PersistedDDLEvent)
-	advanceResolvedTs func(resolvedTS common.Ts)
+	advanceResolvedTs func(resolvedTS uint64)
 
 	// ddlTableInfo is initialized when receive the first concurrent DDL job.
 	ddlTableInfo *mounter.DDLTableInfo
@@ -50,9 +50,9 @@ func newDDLJobFetcher(
 	regionCache *tikv.RegionCache,
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
-	startTs common.Ts,
+	startTs uint64,
 	writeDDLEvent func(ddlEvent PersistedDDLEvent),
-	advanceResolvedTs func(resolvedTS common.Ts),
+	advanceResolvedTs func(resolvedTS uint64),
 ) *ddlJobFetcher {
 	clientConfig := &logpuller.SubscriptionClientConfig{
 		RegionRequestWorkerPerStore:        1,
@@ -95,7 +95,7 @@ func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) 
 	}
 
 	if rawEvent.IsResolved() {
-		p.advanceResolvedTs(common.Ts(rawEvent.CRTs))
+		p.advanceResolvedTs(uint64(rawEvent.CRTs))
 		return nil
 	}
 
