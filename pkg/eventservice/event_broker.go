@@ -16,6 +16,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/mounter"
+	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/util"
 	"github.com/prometheus/client_golang/prometheus"
@@ -72,6 +73,8 @@ type eventBroker struct {
 	metricEventServiceDispatcherResolvedTs prometheus.Gauge
 	metricEventServiceResolvedTsLag        prometheus.Gauge
 	metricScanEventDuration                prometheus.Observer
+
+	zstdDecoder *zstd.Decoder
 }
 
 func newEventBroker(
@@ -84,6 +87,11 @@ func newEventBroker(
 ) *eventBroker {
 	ctx, cancel := context.WithCancel(ctx)
 	wg := &sync.WaitGroup{}
+	zstdDecoder, err := zstd.NewReader(nil)
+	if err != nil {
+		log.Panic("failed to create zstd decoder", zap.Error(err))
+	}
+
 	c := &eventBroker{
 		tidbClusterID:                          id,
 		eventStore:                             eventStore,
@@ -105,6 +113,7 @@ func newEventBroker(
 		metricEventServiceResolvedTsLag:        metrics.EventServiceResolvedTsLagGauge.WithLabelValues("puller"),
 		metricEventServiceDispatcherResolvedTs: metrics.EventServiceResolvedTsLagGauge.WithLabelValues("dispatcher"),
 		metricScanEventDuration:                metrics.EventServiceScanDuration,
+		zstdDecoder:                            zstdDecoder,
 	}
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
@@ -292,6 +301,23 @@ func (c *eventBroker) doScan(task *scanTask) {
 			}
 			txnEvent = common.NewDMLEvent(dispatcherID, tableID, e.StartTs, e.CRTs, tableInfo)
 		}
+		// Decompress the event if it is compressed.
+		if e.CompressType == common.CompressTypeZstd {
+			if len(e.Value) != 0 {
+				decompressed, err := c.zstdDecoder.DecodeAll(e.Value, nil)
+				if err != nil {
+					log.Panic("failed to decompress zstd event", zap.Error(err))
+				}
+				e.Value = decompressed
+			}
+			if len(e.OldValue) != 0 {
+				decompressed, err := c.zstdDecoder.DecodeAll(e.OldValue, nil)
+				if err != nil {
+					log.Panic("failed to decompress zstd event", zap.Error(err))
+				}
+				e.OldValue = decompressed
+			}
+		}
 		txnEvent.AppendRow(e, c.mounter.DecodeToChunk)
 	}
 }
@@ -421,6 +447,9 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 func (c *eventBroker) close() {
 	c.cancel()
 	c.wg.Wait()
+	if c.zstdDecoder != nil {
+		c.zstdDecoder.Close()
+	}
 }
 
 func (c *eventBroker) onNotify(s *spanSubscription, watermark uint64) {

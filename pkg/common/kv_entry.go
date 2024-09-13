@@ -30,6 +30,13 @@ const (
 	OpTypeResolved
 )
 
+type CompressType int32
+
+const (
+	CompressTypeNone = iota
+	CompressTypeZstd
+)
+
 // RawKVEntry represents a kv change or a resolved ts event
 // TODO: use a different struct
 type RawKVEntry struct {
@@ -44,7 +51,8 @@ type RawKVEntry struct {
 	CRTs uint64 `msg:"crts"`
 
 	// Additional debug info
-	RegionID uint64 `msg:"region_id"`
+	RegionID     uint64       `msg:"region_id"`
+	CompressType CompressType `msg:"compress_type"`
 }
 
 func (v *RawKVEntry) IsResolved() bool {
