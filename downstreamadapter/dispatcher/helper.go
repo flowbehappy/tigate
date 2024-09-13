@@ -340,5 +340,5 @@ type LatestTableChanges struct {
 func (l *LatestTableChanges) Add(ddlEvent *common.DDLEvent) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
-	l.m[ddlEvent.CommitTS] = ddlEvent.TableNameChange
+	l.m[ddlEvent.FinishedTs] = ddlEvent.TableNameChange
 }

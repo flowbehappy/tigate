@@ -76,18 +76,18 @@ func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *common.DDLEvent) erro
 	tick := time.NewTimer(2 * time.Second)
 	defer tick.Stop()
 	log.Info("async exec add index ddl start",
-		zap.Uint64("commitTs", event.CommitTS),
+		zap.Uint64("commitTs", event.FinishedTs),
 		zap.String("ddl", event.GetDDLQuery()))
 	go func() {
 		if err := w.execDDLWithMaxRetries(event); err != nil {
 			log.Error("async exec add index ddl failed",
-				zap.Uint64("commitTs", event.CommitTS),
+				zap.Uint64("commitTs", event.FinishedTs),
 				zap.String("ddl", event.GetDDLQuery()))
 			done <- err
 			return
 		}
 		log.Info("async exec add index ddl done",
-			zap.Uint64("commitTs", event.CommitTS),
+			zap.Uint64("commitTs", event.FinishedTs),
 			zap.String("ddl", event.GetDDLQuery()))
 		done <- nil
 	}()
@@ -101,7 +101,7 @@ func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *common.DDLEvent) erro
 		// then if the ddl is failed, the downstream ddl is lost.
 		// because the checkpoint ts is forwarded.
 		log.Info("async add index ddl is still running",
-			zap.Uint64("commitTs", event.CommitTS),
+			zap.Uint64("commitTs", event.FinishedTs),
 			zap.String("ddl", event.GetDDLQuery()))
 		return nil
 	}

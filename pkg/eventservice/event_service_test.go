@@ -91,7 +91,7 @@ func TestEventServiceBasic(t *testing.T) {
 			case *common.DDLEvent:
 				require.NotNil(t, msg)
 				require.Equal(t, "event-collector", msg.Topic)
-				require.Equal(t, ddlEvent.CommitTS, e.CommitTS)
+				require.Equal(t, ddlEvent.FinishedTs, e.FinishedTs)
 			case *common.BatchResolvedEvent:
 				require.NotNil(t, msg)
 				log.Info("received watermark", zap.Uint64("ts", e.Events[0].ResolvedTs))
@@ -346,13 +346,13 @@ func (m *mockSchemaStore) GetNextDDLEvents(id common.TableID, start, end common.
 		return nil, end, nil
 	}
 	l := sort.Search(len(events), func(i int) bool {
-		return events[i].CommitTS > start
+		return events[i].FinishedTs > start
 	})
 	if l == len(events) {
 		return nil, end, nil
 	}
 	r := sort.Search(len(events), func(i int) bool {
-		return events[i].CommitTS > end
+		return events[i].FinishedTs > end
 	})
 	m.DDLEvents[id] = events[r:]
 	return events[l:r], end, nil

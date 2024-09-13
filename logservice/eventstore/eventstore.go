@@ -275,8 +275,6 @@ func (e *eventStore) RegisterDispatcher(
 func (e *eventStore) UpdateDispatcherSendTS(
 	dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, sendTS uint64,
 ) error {
-	// TODO: update sendTs in event service
-	e.schemaStore.UpdateDispatcherSendTS(dispatcherID, common.Ts(sendTS))
 	e.spanStates.Lock()
 	defer e.spanStates.Unlock()
 	if state, ok := e.spanStates.dispatcherMap.Get(span); ok {

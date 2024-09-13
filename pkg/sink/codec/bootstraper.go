@@ -155,7 +155,7 @@ func (b *bootstrapWorker) sendBootstrapMsg(ctx context.Context, table *tableStat
 func NewBootstrapDDLEvent(tableInfo *common.TableInfo) *common.DDLEvent {
 	return &common.DDLEvent{
 		// StartTs:  0,
-		CommitTS: 0,
+		FinishedTs: 0,
 		// TableInfo:   tableInfo,
 		// IsBootstrap: true,
 	}

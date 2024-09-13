@@ -22,6 +22,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
@@ -173,7 +174,7 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 
 	action := dispatcherStatus.GetAction()
 	if action != nil {
-		if action.CommitTs == d.ddlPendingEvent.CommitTS {
+		if action.CommitTs == d.ddlPendingEvent.FinishedTs {
 			if action.Action == heartbeatpb.Action_Write {
 				d.sink.AddDDLAndSyncPointEvent(d.ddlPendingEvent, d.tableProgress)
 			} else {
@@ -190,7 +191,7 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 	}
 
 	ack := dispatcherStatus.GetAck()
-	if ack != nil && ack.CommitTs == d.ddlPendingEvent.CommitTS {
+	if ack != nil && ack.CommitTs == d.ddlPendingEvent.FinishedTs {
 		d.CancelResendTask()
 	}
 }
@@ -222,7 +223,7 @@ func (d *Dispatcher) HandleEvent(event common.Event) (block bool) {
 // 1.If the event is a single table DDL, it will be added to the sink for writing to downstream(async). If the ddl leads to add new tables or drop tables, it should send heartbeat to maintainer
 // 2. If the event is a multi-table DDL, it will generate a TableSpanStatus message with ddl info to send to maintainer.
 func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
-	if filter.ShouldBlock(d.ddlPendingEvent.Job.Type) {
+	if filter.ShouldBlock(model.ActionType(d.ddlPendingEvent.Type)) {
 		d.sink.AddDDLAndSyncPointEvent(d.ddlPendingEvent, d.tableProgress)
 		if d.ddlPendingEvent.GetNeedAddedTables() != nil || d.ddlPendingEvent.GetNeedDroppedTables() != nil {
 			message := &heartbeatpb.TableSpanStatus{
@@ -230,7 +231,7 @@ func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 				ComponentStatus: heartbeatpb.ComponentState_Working,
 				State: &heartbeatpb.State{
 					IsBlocked:         false,
-					BlockTs:           d.ddlPendingEvent.CommitTS,
+					BlockTs:           d.ddlPendingEvent.FinishedTs,
 					NeedDroppedTables: d.ddlPendingEvent.GetNeedDroppedTables().ToPB(),
 					NeedAddedTables:   common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
 				},
@@ -244,7 +245,7 @@ func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			State: &heartbeatpb.State{
 				IsBlocked:         true,
-				BlockTs:           d.ddlPendingEvent.CommitTS,
+				BlockTs:           d.ddlPendingEvent.FinishedTs,
 				BlockTables:       d.ddlPendingEvent.GetBlockedTables().ToPB(),
 				NeedDroppedTables: d.ddlPendingEvent.GetNeedDroppedTables().ToPB(),
 				NeedAddedTables:   common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),

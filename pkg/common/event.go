@@ -375,7 +375,11 @@ func (d *DDLEvent) GetDispatcherID() DispatcherID {
 	return d.DispatcherID
 }
 
-func (d *DDLEvent) GetFinishedTs() Ts {
+func (d *DDLEvent) GetStartTs() Ts {
+	return 0
+}
+
+func (d *DDLEvent) GetCommitTs() Ts {
 	return d.FinishedTs
 }
 
