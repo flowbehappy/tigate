@@ -36,7 +36,7 @@ import (
 type ddlJobFetcher struct {
 	puller *logpuller.LogPullerMultiSpan
 
-	writeDDLEvent     func(ddlEvent DDLEvent)
+	writeDDLEvent     func(ddlEvent PersistedDDLEvent)
 	advanceResolvedTs func(resolvedTS common.Ts)
 
 	// ddlTableInfo is initialized when receive the first concurrent DDL job.
@@ -51,7 +51,7 @@ func newDDLJobFetcher(
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
 	startTs common.Ts,
-	writeDDLEvent func(ddlEvent DDLEvent),
+	writeDDLEvent func(ddlEvent PersistedDDLEvent),
 	advanceResolvedTs func(resolvedTS common.Ts),
 ) *ddlJobFetcher {
 	clientConfig := &logpuller.SubscriptionClientConfig{
@@ -108,10 +108,7 @@ func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) 
 		return nil
 	}
 
-	p.writeDDLEvent(DDLEvent{
-		Job:      job,
-		CommitTS: common.Ts(rawEvent.CRTs),
-	})
+	p.writeDDLEvent(buildPersistedDDLEvent(job))
 
 	return nil
 }

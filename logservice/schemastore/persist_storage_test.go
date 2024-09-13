@@ -472,8 +472,8 @@ func TestRenameTable(t *testing.T) {
 	require.Nil(t, err)
 	pStorage := newEmptyPersistentStorageForTest(dbPath)
 
-	schemaID1 := common.SchemaID(300)
 	// create db1
+	schemaID1 := common.SchemaID(300)
 	{
 		ddlEvent := DDLEvent{
 			Job: &model.Job{
@@ -489,8 +489,8 @@ func TestRenameTable(t *testing.T) {
 		pStorage.handleSortedDDLEvents(ddlEvent)
 	}
 
-	schemaID2 := common.SchemaID(305)
 	// create db2
+	schemaID2 := common.SchemaID(305)
 	{
 		ddlEvent := DDLEvent{
 			Job: &model.Job{
@@ -565,4 +565,94 @@ func TestRenameTable(t *testing.T) {
 		require.Equal(t, "t2", getTableName(pStorage.tablesBasicInfo, tableID, common.Ts(605)))
 		require.Equal(t, "t1", getTableName(pStorage.tablesBasicInfo, tableID, common.Ts(604)))
 	}
+}
+
+func TestGetDDLEvents(t *testing.T) {
+	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+	err := os.RemoveAll(dbPath)
+	require.Nil(t, err)
+	pStorage := newEmptyPersistentStorageForTest(dbPath)
+
+	// create db
+	schemaID := common.SchemaID(300)
+	{
+		ddlEvent := DDLEvent{
+			Job: &model.Job{
+				Type:     model.ActionCreateSchema,
+				SchemaID: int64(schemaID),
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 100,
+					TableInfo:     nil,
+					FinishedTS:    200,
+				},
+			},
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	// create a table
+	tableID := common.TableID(100)
+	{
+		ddlEvent := DDLEvent{
+			Job: &model.Job{
+				Type:     model.ActionCreateTable,
+				SchemaID: int64(schemaID),
+				TableID:  int64(tableID),
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 501,
+					TableInfo: &model.TableInfo{
+						ID:   int64(tableID),
+						Name: model.NewCIStr("t1"),
+					},
+					FinishedTS: 601,
+				},
+			},
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	// rename table
+	{
+		ddlEvent := DDLEvent{
+			Job: &model.Job{
+				Type:     model.ActionRenameTable,
+				SchemaID: int64(schemaID),
+				TableID:  int64(tableID),
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 505,
+					TableInfo: &model.TableInfo{
+						ID:   int64(tableID),
+						Name: model.NewCIStr("t2"),
+					},
+					FinishedTS: 605,
+				},
+			},
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	// truncate table
+	tableID2 := common.TableID(105)
+	{
+		ddlEvent := DDLEvent{
+			Job: &model.Job{
+				Type:     model.ActionTruncateTable,
+				SchemaID: int64(schemaID),
+				TableID:  int64(tableID),
+				BinlogInfo: &model.HistoryInfo{
+					SchemaVersion: 507,
+					TableInfo: &model.TableInfo{
+						ID: int64(tableID2),
+					},
+					FinishedTS: 607,
+				},
+			},
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	ddlEvents := pStorage.getDDLEvents(tableID, 601, 607)
+	require.Equal(t, 2, len(ddlEvents))
+	require.Equal(t, uint64(601), ddlEvents[0].CommitTS)
+	require.Equal(t, uint64(605), ddlEvents[1].CommitTS)
 }

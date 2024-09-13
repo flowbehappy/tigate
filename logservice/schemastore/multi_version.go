@@ -42,7 +42,7 @@ type versionedTableInfoStore struct {
 
 	initialized bool
 
-	pendingDDLs []*model.Job
+	pendingDDLs []PersistedDDLEvent
 
 	// used to indicate whether the table info build is ready
 	// must wait on it before reading table info from store
@@ -55,7 +55,7 @@ func newEmptyVersionedTableInfoStore(tableID common.TableID) *versionedTableInfo
 		infos:         make([]*tableInfoItem, 0),
 		deleteVersion: math.MaxUint64,
 		initialized:   false,
-		pendingDDLs:   make([]*model.Job, 0),
+		pendingDDLs:   make([]PersistedDDLEvent, 0),
 		readyToRead:   make(chan struct{}),
 	}
 }
@@ -139,24 +139,24 @@ func (v *versionedTableInfoStore) gc(gcTs common.Ts) {
 	v.infos = v.infos[target-1:]
 }
 
-func assertEmpty(infos []*tableInfoItem, job *model.Job) {
+func assertEmpty(infos []*tableInfoItem, event PersistedDDLEvent) {
 	if len(infos) != 0 {
 		log.Panic("shouldn't happen",
 			zap.Any("infosLen", len(infos)),
 			zap.Any("lastVersion", infos[len(infos)-1].version),
 			zap.Any("lastTableInfoVersion", infos[len(infos)-1].info.Version),
-			zap.String("query", job.Query),
-			zap.Int64("tableID", job.TableID),
-			zap.Uint64("finishedTs", job.BinlogInfo.FinishedTS),
-			zap.Int64("schemaVersion", job.BinlogInfo.SchemaVersion))
+			zap.String("query", event.Query),
+			zap.Int64("tableID", event.TableID),
+			zap.Uint64("finishedTs", event.FinishedTs),
+			zap.Int64("schemaVersion", event.SchemaVersion))
 	}
 }
 
-func assertNonEmpty(infos []*tableInfoItem, job *model.Job) {
+func assertNonEmpty(infos []*tableInfoItem, event PersistedDDLEvent) {
 	if len(infos) == 0 {
 		log.Panic("shouldn't happen",
 			zap.Any("infos", infos),
-			zap.String("query", job.Query))
+			zap.String("query", event.Query))
 	}
 }
 
@@ -166,67 +166,67 @@ func assertNonDeleted(v *versionedTableInfoStore) {
 	}
 }
 
-func (v *versionedTableInfoStore) applyDDLFromPersistStorage(job *model.Job) {
+func (v *versionedTableInfoStore) applyDDLFromPersistStorage(event PersistedDDLEvent) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.initialized {
 		log.Panic("should not happen")
 	}
 
-	v.doApplyDDL(job)
+	v.doApplyDDL(event)
 }
 
-func (v *versionedTableInfoStore) applyDDL(job *model.Job) {
+func (v *versionedTableInfoStore) applyDDL(event PersistedDDLEvent) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	// delete table should not receive more ddl
 	assertNonDeleted(v)
 
 	if !v.initialized {
-		v.pendingDDLs = append(v.pendingDDLs, job)
+		v.pendingDDLs = append(v.pendingDDLs, event)
 		return
 	}
-	v.doApplyDDL(job)
+	v.doApplyDDL(event)
 }
 
 // lock must be hold by the caller
 // TODO: filter old ddl: there may be some pending ddls which is also written to disk and applied to table info store already
-func (v *versionedTableInfoStore) doApplyDDL(job *model.Job) {
-	if len(v.infos) != 0 && common.Ts(job.BinlogInfo.FinishedTS) <= v.infos[len(v.infos)-1].version {
+func (v *versionedTableInfoStore) doApplyDDL(event PersistedDDLEvent) {
+	if len(v.infos) != 0 && common.Ts(event.FinishedTs) <= v.infos[len(v.infos)-1].version {
 		log.Panic("ddl job finished ts should be monotonically increasing")
 	}
 	if len(v.infos) > 0 {
 		// TODO: FinishedTS is not enough, need schema version. But currently there should be no duplicate ddl,
 		// so the following check is useless
-		if common.Ts(job.BinlogInfo.FinishedTS) <= v.infos[len(v.infos)-1].version {
+		if common.Ts(event.FinishedTs) <= v.infos[len(v.infos)-1].version {
 			log.Info("ignore job",
 				zap.Int64("tableID", int64(v.tableID)),
-				zap.String("query", job.Query),
-				zap.Uint64("finishedTS", job.BinlogInfo.FinishedTS),
+				zap.String("query", event.Query),
+				zap.Uint64("finishedTS", event.FinishedTs),
 				zap.Any("infosLen", len(v.infos)))
 			return
 		}
 	}
 
-	switch job.Type {
+	switch model.ActionType(event.Type) {
 	case model.ActionCreateTable:
 		if len(v.infos) == 1 {
 			// table info may be in snapshot, can not filter redudant job in this case
 			log.Warn("ignore create table job",
 				zap.Int64("tableID", int64(v.tableID)),
-				zap.String("query", job.Query),
-				zap.Uint64("finishedTS", job.BinlogInfo.FinishedTS))
+				zap.String("query", event.Query),
+				zap.Uint64("finishedTS", event.FinishedTs))
 			break
 		}
-		assertEmpty(v.infos, job)
-		info := common.WrapTableInfo(job.SchemaID, job.SchemaName, job.BinlogInfo.FinishedTS, job.BinlogInfo.TableInfo)
-		v.infos = append(v.infos, &tableInfoItem{version: common.Ts(job.BinlogInfo.FinishedTS), info: info})
+		assertEmpty(v.infos, event)
+		info := common.WrapTableInfo(event.SchemaID, event.SchemaName, event.FinishedTs, event.TableInfo)
+		v.infos = append(v.infos, &tableInfoItem{version: common.Ts(event.FinishedTs), info: info})
 	case model.ActionRenameTable:
-		assertNonEmpty(v.infos, job)
-		info := common.WrapTableInfo(job.SchemaID, job.SchemaName, job.BinlogInfo.FinishedTS, job.BinlogInfo.TableInfo)
-		v.infos = append(v.infos, &tableInfoItem{version: common.Ts(job.BinlogInfo.FinishedTS), info: info})
+		assertNonEmpty(v.infos, event)
+		info := common.WrapTableInfo(event.SchemaID, event.SchemaName, event.FinishedTs, event.TableInfo)
+		v.infos = append(v.infos, &tableInfoItem{version: common.Ts(event.FinishedTs), info: info})
 	case model.ActionDropTable, model.ActionTruncateTable:
-		v.deleteVersion = common.Ts(job.BinlogInfo.FinishedTS)
+		v.deleteVersion = common.Ts(event.FinishedTs)
 	default:
 		// TODO: idenitify unexpected ddl or specify all expected ddl
 	}

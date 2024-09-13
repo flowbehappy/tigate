@@ -223,12 +223,12 @@ func loadDatabaseInfoAndDDLHistory(
 	}
 	defer snapIter.Close()
 	for snapIter.First(); snapIter.Valid(); snapIter.Next() {
-		var ddlEvent DDLEvent
+		var ddlEvent PersistedDDLEvent
 		err = json.Unmarshal(snapIter.Value(), &ddlEvent)
 		if err != nil {
 			log.Fatal("unmarshal ddl job failed", zap.Error(err))
 		}
-		skip, err := updateDatabaseInfoAndTableInfo(ddlEvent.Job, databaseMap, tablesBasicInfo)
+		skip, err := updateDatabaseInfoAndTableInfo(&ddlEvent, databaseMap, tablesBasicInfo)
 		if err != nil {
 			log.Panic("updateDatabaseInfo error", zap.Error(err))
 		}
@@ -236,7 +236,7 @@ func loadDatabaseInfoAndDDLHistory(
 			continue
 		}
 		if tableTriggerDDLHistory, err = updateDDLHistory(
-			ddlEvent.Job,
+			&ddlEvent,
 			databaseMap,
 			tablesBasicInfo,
 			tablesDDLHistory,
@@ -314,7 +314,7 @@ func readSchemaIDAndTableInfoFromKVSnap(snap *pebble.Snapshot, tableID common.Ta
 	return common.SchemaID(table_info_entry.SchemaID), tableInfo
 }
 
-func readDDLEvent(snap *pebble.Snapshot, version common.Ts) DDLEvent {
+func readDDLEvent(snap *pebble.Snapshot, version common.Ts) PersistedDDLEvent {
 	ddlKey, err := ddlJobKey(version)
 	if err != nil {
 		log.Fatal("generate ddl job key failed", zap.Error(err))
@@ -324,7 +324,7 @@ func readDDLEvent(snap *pebble.Snapshot, version common.Ts) DDLEvent {
 		log.Fatal("get ddl job failed", zap.Error(err))
 	}
 	defer closer.Close()
-	var ddlEvent DDLEvent
+	var ddlEvent PersistedDDLEvent
 	err = json.Unmarshal(ddlValue, &ddlEvent)
 	if err != nil {
 		log.Fatal("unmarshal ddl job failed", zap.Error(err))
@@ -332,10 +332,10 @@ func readDDLEvent(snap *pebble.Snapshot, version common.Ts) DDLEvent {
 	return ddlEvent
 }
 
-func writeDDLEvents(db *pebble.DB, ddlEvents ...DDLEvent) error {
+func writeDDLEvents(db *pebble.DB, ddlEvents ...PersistedDDLEvent) error {
 	batch := db.NewBatch()
 	for _, event := range ddlEvents {
-		ddlKey, err := ddlJobKey(common.Ts(event.Job.BinlogInfo.FinishedTS))
+		ddlKey, err := ddlJobKey(common.Ts(event.FinishedTs))
 		if err != nil {
 			return err
 		}

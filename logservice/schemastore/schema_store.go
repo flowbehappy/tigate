@@ -29,11 +29,12 @@ type SchemaStore interface {
 
 	GetTableInfo(tableID common.TableID, ts common.Ts) (*common.TableInfo, error)
 
-	// GetNextDDLEvents returns the next ddl events which finishedTs are within the range (start, end]
+	// FetchTableDDLEvents returns the next ddl events which finishedTs are within the range (start, end]
 	// and it returns a timestamp which means there will be no more ddl events before(<=) it
-	GetNextDDLEvents(tableID common.TableID, start, end common.Ts) ([]common.DDLEvent, common.Ts)
+	// TODO: add a parameter limit
+	FetchTableDDLEvents(tableID common.TableID, start, end common.Ts) ([]common.DDLEvent, common.Ts)
 
-	GetNextTableTriggerEvents(tableFilter filter.Filter, start common.Ts, limit int) ([]common.DDLEvent, common.Ts)
+	FetchTableTriggerDDLEvents(tableFilter filter.Filter, start common.Ts, limit int) ([]common.DDLEvent, common.Ts)
 }
 
 type schemaStore struct {
@@ -136,22 +137,23 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 						zap.Int("resolvedEventsLen", len(resolvedEvents)))
 
 					// TODO: avoid allocate a new slice if event in resolvedEvents is all valid
-					validEvents := make([]DDLEvent, 0, len(resolvedEvents))
+					validEvents := make([]PersistedDDLEvent, 0, len(resolvedEvents))
 					s.mu.Lock()
 					for _, event := range resolvedEvents {
-						if event.Job.BinlogInfo.SchemaVersion <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTs {
+						// TODO: build persisted ddl event after filter
+						if event.SchemaVersion <= s.schemaVersion || event.FinishedTs <= s.finishedDDLTs {
 							log.Info("skip already applied ddl job",
-								zap.String("job", event.Job.Query),
-								zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
-								zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
+								zap.String("job", event.Query),
+								zap.Int64("jobSchemaVersion", event.SchemaVersion),
+								zap.Uint64("jobFinishTs", event.FinishedTs),
 								zap.Any("schemaVersion", s.schemaVersion),
 								zap.Uint64("finishedDDLTS", s.finishedDDLTs))
 							continue
 						}
 						validEvents = append(validEvents, event)
 						// need to update the following two members for every event to filter out later duplicate events
-						s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
-						s.finishedDDLTs = event.Job.BinlogInfo.FinishedTS
+						s.schemaVersion = event.SchemaVersion
+						s.finishedDDLTs = event.FinishedTs
 					}
 					s.mu.Unlock()
 
@@ -180,21 +182,21 @@ func (s *schemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*commo
 	return s.dataStorage.getTableInfo(tableID, ts)
 }
 
-func (s *schemaStore) GetNextDDLEvents(tableID common.TableID, start, end common.Ts) ([]common.DDLEvent, common.Ts) {
+func (s *schemaStore) FetchTableDDLEvents(tableID common.TableID, start, end common.Ts) ([]common.DDLEvent, common.Ts) {
 	currentResolvedTs := s.resolvedTs.Load()
 	if currentResolvedTs < end {
 		end = currentResolvedTs
 	}
-	return s.dataStorage.getNextDDLEvents(tableID, start, end), end
+	return s.dataStorage.fetchTableDDLEvents(tableID, start, end), end
 }
 
-func (s *schemaStore) GetNextTableTriggerEvents(tableFilter filter.Filter, start common.Ts, limit int) ([]common.DDLEvent, common.Ts) {
+func (s *schemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, start common.Ts, limit int) ([]common.DDLEvent, common.Ts) {
 	if limit == 0 {
 		log.Panic("limit cannot be 0")
 	}
 	// must get resolved ts first
 	currentResolvedTs := s.resolvedTs.Load()
-	events := s.dataStorage.getNextTableTriggerEvents(tableFilter, start, limit)
+	events := s.dataStorage.fetchTableTriggerDDLEvents(tableFilter, start, limit)
 	if len(events) == limit {
 		return events, events[limit-1].CommitTS
 	}
@@ -205,16 +207,15 @@ func (s *schemaStore) GetNextTableTriggerEvents(tableFilter filter.Filter, start
 	return events, end
 }
 
-func (s *schemaStore) writeDDLEvent(ddlEvent DDLEvent) {
+func (s *schemaStore) writeDDLEvent(ddlEvent PersistedDDLEvent) {
 	log.Debug("write ddl event",
-		zap.String("schema", ddlEvent.Job.SchemaName),
-		zap.String("table", ddlEvent.Job.TableName),
-		zap.Uint64("startTs", ddlEvent.Job.StartTS),
-		zap.Uint64("finishedTs", ddlEvent.Job.BinlogInfo.FinishedTS),
-		zap.String("query", ddlEvent.Job.Query))
+		zap.Int64("schemaID", ddlEvent.SchemaID),
+		zap.Int64("tableID", ddlEvent.TableID),
+		zap.Uint64("finishedTs", ddlEvent.FinishedTs),
+		zap.String("query", ddlEvent.Query))
 
 	// TODO: find a better way to filter out system tables
-	if ddlEvent.Job.SchemaID != 1 {
+	if ddlEvent.SchemaID != 1 {
 		s.unsortedCache.addDDLEvent(ddlEvent)
 	}
 }
