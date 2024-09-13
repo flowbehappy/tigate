@@ -16,6 +16,7 @@ package maintainer
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"math"
 	"sync"
 	"time"
@@ -52,7 +53,7 @@ import (
 type Maintainer struct {
 	id       model.ChangeFeedID
 	config   *configNew.ChangeFeedInfo
-	selfNode *common.NodeInfo
+	selfNode *node.Info
 
 	stream        dynstream.DynamicStream[string, *Event, *Maintainer]
 	taskScheduler threadpool.ThreadPool
@@ -104,7 +105,7 @@ type Maintainer struct {
 // NewMaintainer create the maintainer for the changefeed
 func NewMaintainer(cfID model.ChangeFeedID,
 	cfg *configNew.ChangeFeedInfo,
-	selfNode *common.NodeInfo,
+	selfNode *node.Info,
 	stream dynstream.DynamicStream[string, *Event, *Maintainer],
 	taskScheduler threadpool.ThreadPool,
 	pdapi pdutil.PDAPIClient,
@@ -247,14 +248,14 @@ func (m *Maintainer) initialize() error {
 	m.statusChanged.Store(true)
 
 	// detect the capture changes
-	m.nodeManager.RegisterNodeChangeHandler("maintainer-"+m.id.ID, func(allNodes map[string]*common.NodeInfo) {
+	m.nodeManager.RegisterNodeChangeHandler("maintainer-"+m.id.ID, func(allNodes map[string]*node.Info) {
 		m.nodeChanged.Store(true)
 	})
 	// init bootstrapper nodes
 	nodes := m.nodeManager.GetAliveNodes()
 	log.Info("changefeed bootstrap initial nodes",
 		zap.Int("nodes", len(nodes)))
-	var newNodes = make([]*common.NodeInfo, 0, len(nodes))
+	var newNodes = make([]*node.Info, 0, len(nodes))
 	for id, node := range nodes {
 		newNodes = append(newNodes, node)
 		m.scheduler.AddNewNode(id)
@@ -339,7 +340,7 @@ func (m *Maintainer) onCheckpointTsPersisted(msg *heartbeatpb.CheckpointTsMessag
 
 func (m *Maintainer) onNodeChanged() {
 	activeNodes := m.nodeManager.GetAliveNodes()
-	var newNodes = make([]*common.NodeInfo, 0, len(activeNodes))
+	var newNodes = make([]*node.Info, 0, len(activeNodes))
 	for id, node := range activeNodes {
 		if _, ok := m.bootstrapper.GetAllNodes()[id]; !ok {
 			newNodes = append(newNodes, node)
@@ -479,7 +480,7 @@ func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage)
 	m.onBootstrapDone(cachedResp)
 }
 
-func (m *Maintainer) onBootstrapDone(cachedResp map[common.NodeID]*heartbeatpb.MaintainerBootstrapResponse) {
+func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.MaintainerBootstrapResponse) {
 	if cachedResp == nil {
 		return
 	}

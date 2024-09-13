@@ -16,6 +16,7 @@ package maintainer
 import (
 	"context"
 	"encoding/json"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"net"
 	"testing"
 	"time"
@@ -43,7 +44,7 @@ import (
 func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
-	selfNode := &common.NodeInfo{ID: uuid.New().String(), AdvertiseAddr: "127.0.0.1:8300"}
+	selfNode := &node.Info{ID: uuid.New().String(), AdvertiseAddr: "127.0.0.1:8300"}
 	nodeManager := watcher.NewNodeManager(nil, nil)
 	appcontext.SetService(watcher.NodeManagerName, nodeManager)
 	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode
@@ -98,11 +99,11 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 		maintainer.scheduler.GetTaskSizeByNodeID(selfNode.ID))
 
 	// add 2 new node
-	node2 := &common.NodeInfo{ID: uuid.New().String(), AdvertiseAddr: "127.0.0.1:8400"}
+	node2 := &node.Info{ID: uuid.New().String(), AdvertiseAddr: "127.0.0.1:8400"}
 	mc2 := messaging.NewMessageCenter(ctx, messaging.ServerId(node2.ID), 0, config.NewDefaultMessageCenterConfig())
-	node3 := &common.NodeInfo{ID: uuid.New().String(), AdvertiseAddr: "127.0.0.1:8500"}
+	node3 := &node.Info{ID: uuid.New().String(), AdvertiseAddr: "127.0.0.1:8500"}
 	mc3 := messaging.NewMessageCenter(ctx, messaging.ServerId(node3.ID), 0, config.NewDefaultMessageCenterConfig())
-	node4 := &common.NodeInfo{ID: uuid.New().String(), AdvertiseAddr: "127.0.0.1:8600"}
+	node4 := &node.Info{ID: uuid.New().String(), AdvertiseAddr: "127.0.0.1:8600"}
 	mc4 := messaging.NewMessageCenter(ctx, messaging.ServerId(node4.ID), 0, config.NewDefaultMessageCenterConfig())
 	startDispatcherNode(ctx, node2, mc2, nodeManager)
 	dn3 := startDispatcherNode(ctx, node3, mc3, nodeManager)
@@ -162,7 +163,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
-	selfNode := &common.NodeInfo{ID: uuid.New().String(), AdvertiseAddr: "127.0.0.1:8300"}
+	selfNode := &node.Info{ID: uuid.New().String(), AdvertiseAddr: "127.0.0.1:8300"}
 	nodeManager := watcher.NewNodeManager(nil, nil)
 	appcontext.SetService(watcher.NodeManagerName, nodeManager)
 	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode
@@ -279,7 +280,7 @@ func (d *dispatcherNode) stop() {
 }
 
 func startDispatcherNode(ctx context.Context,
-	node *common.NodeInfo, mc messaging.MessageCenter, nodeManager *watcher.NodeManager) *dispatcherNode {
+	node *node.Info, mc messaging.MessageCenter, nodeManager *watcher.NodeManager) *dispatcherNode {
 	nodeManager.RegisterNodeChangeHandler(node.ID, mc.OnNodeChanges)
 	ctx, cancel := context.WithCancel(ctx)
 	dispManager := MockDispatcherManager(mc)

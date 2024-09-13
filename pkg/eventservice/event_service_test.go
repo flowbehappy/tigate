@@ -3,6 +3,7 @@ package eventservice
 import (
 	"context"
 	"database/sql"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"sort"
 	"testing"
 	"time"
@@ -116,7 +117,7 @@ type mockMessageCenter struct {
 	messageCh chan *messaging.TargetMessage
 }
 
-func (m *mockMessageCenter) OnNodeChanges(nodeInfos map[string]*common.NodeInfo) {
+func (m *mockMessageCenter) OnNodeChanges(nodeInfos map[string]*node.Info) {
 
 }
 

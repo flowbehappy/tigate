@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -96,7 +95,7 @@ func ForwardToOwner(c *gin.Context, server node.Server) {
 		return
 	}
 
-	var node *common.NodeInfo
+	var node *node.Info
 	// get coordinator info
 	node, err = server.GetCoordinatorInfo(ctx)
 	if err != nil {

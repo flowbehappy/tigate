@@ -15,10 +15,10 @@ package watcher
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/etcd"
@@ -28,14 +28,14 @@ import (
 
 const NodeManagerName = "node-manager"
 
-type NodeChangeHandler func(map[common.NodeID]*common.NodeInfo)
+type NodeChangeHandler func(map[node.ID]*node.Info)
 
 // NodeManager manager the read view of all captures, other modules can get the captures information from it
 // and register server update event handler
 type NodeManager struct {
 	session    *concurrency.Session
 	etcdClient etcd.CDCEtcdClient
-	nodes      map[common.NodeID]*common.NodeInfo
+	nodes      map[node.ID]*node.Info
 
 	nodeChangeHandlers struct {
 		sync.RWMutex
@@ -50,7 +50,7 @@ func NewNodeManager(
 	return &NodeManager{
 		session:    session,
 		etcdClient: etcdClient,
-		nodes:      make(map[common.NodeID]*common.NodeInfo),
+		nodes:      make(map[node.ID]*node.Info),
 		nodeChangeHandlers: struct {
 			sync.RWMutex
 			m map[string]NodeChangeHandler
@@ -70,7 +70,7 @@ func (c *NodeManager) Tick(
 	state := raw.(*orchestrator.GlobalReactorState)
 	// find changes
 	changed := false
-	allNodes := make(map[common.NodeID]*common.NodeInfo, len(state.Captures))
+	allNodes := make(map[node.ID]*node.Info, len(state.Captures))
 
 	for _, node := range c.nodes {
 		if _, exist := state.Captures[node.ID]; !exist {
@@ -82,7 +82,7 @@ func (c *NodeManager) Tick(
 		if _, exist := c.nodes[capture.ID]; !exist {
 			changed = true
 		}
-		allNodes[capture.ID] = common.CaptureInfoToNodeInfo(capture)
+		allNodes[capture.ID] = node.CaptureInfoToNodeInfo(capture)
 	}
 	c.nodes = allNodes
 	if changed {
@@ -98,7 +98,7 @@ func (c *NodeManager) Tick(
 }
 
 // GetAliveNodes get all alive captures, the caller mustn't modify the returned map
-func (c *NodeManager) GetAliveNodes() map[common.NodeID]*common.NodeInfo {
+func (c *NodeManager) GetAliveNodes() map[node.ID]*node.Info {
 	return c.nodes
 }
 

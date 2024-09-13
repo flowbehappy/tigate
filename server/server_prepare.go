@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,13 +25,11 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
-	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 
 	"github.com/dustin/go-humanize"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/version"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
@@ -147,14 +146,7 @@ func (c *server) prepare(ctx context.Context) error {
 	}
 	// TODO: Get id from disk after restart.
 	id := messaging.NewServerId()
-	c.info = &common.NodeInfo{
-		ID:             id.String(),
-		AdvertiseAddr:  conf.AdvertiseAddr,
-		Version:        version.ReleaseVersion,
-		GitHash:        version.GitHash,
-		DeployPath:     deployPath,
-		StartTimestamp: time.Now().Unix(),
-	}
+	c.info = node.NewInfo(id.String(), conf.AdvertiseAddr, deployPath)
 	c.session = session
 
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, id, c.info.Epoch, config.NewDefaultMessageCenterConfig()))

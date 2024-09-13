@@ -54,7 +54,7 @@ const (
 
 type server struct {
 	captureMu sync.Mutex
-	info      *common.NodeInfo
+	info      *node.Info
 
 	liveness model.Liveness
 
@@ -177,7 +177,7 @@ func (c *server) Run(ctx context.Context) error {
 }
 
 // SelfInfo gets the server info
-func (c *server) SelfInfo() (*common.NodeInfo, error) {
+func (c *server) SelfInfo() (*node.Info, error) {
 	// when c.reset has not been called yet, c.info is nil.
 	if c.info != nil {
 		return c.info, nil
@@ -248,7 +248,7 @@ func (c *server) GetPdClient() pd.Client {
 }
 
 // GetCoordinatorInfo return the controller server info of current TiCDC cluster
-func (c *server) GetCoordinatorInfo(ctx context.Context) (*common.NodeInfo, error) {
+func (c *server) GetCoordinatorInfo(ctx context.Context) (*node.Info, error) {
 	_, captureInfos, err := c.EtcdClient.GetCaptures(ctx)
 	if err != nil {
 		return nil, err
@@ -261,7 +261,7 @@ func (c *server) GetCoordinatorInfo(ctx context.Context) (*common.NodeInfo, erro
 
 	for _, captureInfo := range captureInfos {
 		if captureInfo.ID == coordinatorID {
-			res := &common.NodeInfo{
+			res := &node.Info{
 				ID:            captureInfo.ID,
 				AdvertiseAddr: captureInfo.AdvertiseAddr,
 

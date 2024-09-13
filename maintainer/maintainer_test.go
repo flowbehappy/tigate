@@ -16,6 +16,7 @@ package maintainer
 import (
 	"context"
 	"flag"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"net/http"
 	"net/http/pprof"
 	"strconv"
@@ -210,7 +211,7 @@ func TestMaintainerSchedule(t *testing.T) {
 		t.Fatal(http.ListenAndServe(":8300", mux))
 	}()
 
-	node := &common.NodeInfo{ID: uuid.New().String()}
+	node := &node.Info{ID: uuid.New().String()}
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx,
 		messaging.ServerId(node.ID), 100, config.NewDefaultMessageCenterConfig()))
 	appcontext.SetService(watcher.NodeManagerName, watcher.NewNodeManager(nil, nil))
@@ -265,7 +266,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	}
 	// send bootstrap message
 	maintainer.sendMessages(maintainer.bootstrapper.HandleNewNodes(
-		[]*common.NodeInfo{node},
+		[]*node.NodeInfo{node},
 	))
 	// setup period event
 	SubmitScheduledEvent(maintainer.taskScheduler, maintainer.stream, &Event{

@@ -3,10 +3,10 @@ package messaging
 import (
 	"context"
 	"fmt"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 
 	"github.com/flowbehappy/tigate/pkg/apperror"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
 	"github.com/flowbehappy/tigate/pkg/metrics"
@@ -22,7 +22,7 @@ type MessageCenter interface {
 	MessageSender
 	MessageReceiver
 	// OnNodeChanges is called when the nodes in the cluster are changed. The message center should update the target list.
-	OnNodeChanges(map[common.NodeID]*common.NodeInfo)
+	OnNodeChanges(map[node.ID]*node.Info)
 	Close()
 }
 
@@ -118,7 +118,7 @@ func (mc *messageCenter) DeRegisterHandler(topic string) {
 	mc.router.deRegisterHandler(topic)
 }
 
-func (mc *messageCenter) OnNodeChanges(activeNode map[common.NodeID]*common.NodeInfo) {
+func (mc *messageCenter) OnNodeChanges(activeNode map[node.ID]*node.Info) {
 	allTaget := make(map[string]bool)
 	allTaget[mc.id.String()] = true
 	mc.remoteTargets.RLock()

@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
@@ -40,7 +39,7 @@ import (
 
 // coordinator implements the Coordinator interface
 type coordinator struct {
-	nodeInfo    *common.NodeInfo
+	nodeInfo    *node.Info
 	initialized bool
 	version     int64
 
@@ -66,7 +65,7 @@ type coordinator struct {
 	etcdClient etcd.CDCEtcdClient
 }
 
-func NewCoordinator(capture *common.NodeInfo,
+func NewCoordinator(capture *node.Info,
 	pdClient pd.Client,
 	pdClock pdutil.Clock,
 	etcdClient etcd.CDCEtcdClient, version int64) node.Coordinator {
@@ -126,7 +125,7 @@ func (c *coordinator) Tick(
 	}
 
 	// 2. check if nodes is changed
-	msgs, err := c.supervisor.HandleAliveCaptureUpdate(common.CaptureInfosToNodeInfos(state.Captures))
+	msgs, err := c.supervisor.HandleAliveCaptureUpdate(node.CaptureInfosToNodeInfos(state.Captures))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -14,11 +14,11 @@
 package maintainer
 
 import (
+	"github.com/flowbehappy/tigate/pkg/node"
 	"testing"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/stretchr/testify/require"
@@ -28,7 +28,7 @@ func TestHandleBootstrapResponse(t *testing.T) {
 	b := NewBootstrapper("test", func(id model.CaptureID) *messaging.TargetMessage {
 		return &messaging.TargetMessage{}
 	})
-	msgs := b.HandleNewNodes([]*common.NodeInfo{{ID: "ab"}, {ID: "cd"}})
+	msgs := b.HandleNewNodes([]*node.Info{{ID: "ab"}, {ID: "cd"}})
 	require.Len(t, msgs, 2)
 	// not found
 	cached := b.HandleBootstrapResponse(
@@ -64,10 +64,10 @@ func TestAddNewNode(t *testing.T) {
 	b := NewBootstrapper("test", func(id model.CaptureID) *messaging.TargetMessage {
 		return &messaging.TargetMessage{}
 	})
-	msgs := b.HandleNewNodes([]*common.NodeInfo{{ID: "ab"}})
+	msgs := b.HandleNewNodes([]*node.Info{{ID: "ab"}})
 	require.Len(t, msgs, 1)
 	require.True(t, b.nodes["ab"].state == NodeStateUninitialized)
-	msgs = b.HandleNewNodes([]*common.NodeInfo{{
+	msgs = b.HandleNewNodes([]*node.Info{{
 		ID: "ab",
 	}, {ID: "cd"}})
 	require.Len(t, msgs, 1)
@@ -79,7 +79,7 @@ func TestHandleRemoveNodes(t *testing.T) {
 	b := NewBootstrapper("test", func(id model.CaptureID) *messaging.TargetMessage {
 		return &messaging.TargetMessage{}
 	})
-	msgs := b.HandleNewNodes([]*common.NodeInfo{{ID: "ab"}, {ID: "cd"}})
+	msgs := b.HandleNewNodes([]*node.Info{{ID: "ab"}, {ID: "cd"}})
 	require.Len(t, msgs, 2)
 	// bootstrap one node and the remove another, bootstrapper should be initialized
 	cached := b.HandleRemoveNodes([]string{"ef"})
@@ -104,12 +104,12 @@ func TestResendBootstrapMessage(t *testing.T) {
 	})
 	b.resendInterval = time.Second * 2
 	b.timeNowFunc = func() time.Time { return time.Unix(0, 0) }
-	msgs := b.HandleNewNodes([]*common.NodeInfo{{ID: "ab"}})
+	msgs := b.HandleNewNodes([]*node.Info{{ID: "ab"}})
 	require.Len(t, msgs, 1)
 	b.timeNowFunc = func() time.Time {
 		return time.Unix(1, 0)
 	}
-	msgs = b.HandleNewNodes([]*common.NodeInfo{{ID: "cd"}})
+	msgs = b.HandleNewNodes([]*node.Info{{ID: "cd"}})
 	require.Len(t, msgs, 1)
 	b.timeNowFunc = func() time.Time {
 		return time.Unix(2, 0)
@@ -123,7 +123,7 @@ func TestCheckAllNodeInitialized(t *testing.T) {
 	b := NewBootstrapper("test", func(id model.CaptureID) *messaging.TargetMessage {
 		return &messaging.TargetMessage{}
 	})
-	msgs := b.HandleNewNodes([]*common.NodeInfo{{ID: "ab"}})
+	msgs := b.HandleNewNodes([]*node.Info{{ID: "ab"}})
 	require.Len(t, msgs, 1)
 	require.False(t, b.CheckAllNodeInitialized())
 	b.HandleBootstrapResponse(
@@ -139,7 +139,7 @@ func TestGetAllNodes(t *testing.T) {
 	b := NewBootstrapper("test", func(id model.CaptureID) *messaging.TargetMessage {
 		return &messaging.TargetMessage{}
 	})
-	b.HandleNewNodes([]*common.NodeInfo{{ID: "ab"}, {ID: "cd"}})
+	b.HandleNewNodes([]*node.Info{{ID: "ab"}, {ID: "cd"}})
 	nodes := b.GetAllNodes()
 	require.Equal(t, 2, len(nodes))
 	// modify nodes out of bootstrap

@@ -11,22 +11,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package common
+package node
 
 import (
 	"encoding/json"
-
+	"github.com/flowbehappy/tigate/version"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
+	"time"
 )
 
-// NodeID is the type for node ID
-type NodeID = string
+// ID is the type for node ID
+type ID = string
 
-// NodeInfo store in etcd.
-type NodeInfo struct {
-	ID            NodeID `json:"id"`
+// Info store in etcd.
+type Info struct {
+	ID            ID     `json:"id"`
 	AdvertiseAddr string `json:"address"`
 
 	Version        string `json:"version"`
@@ -38,8 +39,19 @@ type NodeInfo struct {
 	Epoch uint64 `json:"epoch"`
 }
 
+func NewInfo(id ID, addr string, deployPath string) *Info {
+	return &Info{
+		ID:             id,
+		AdvertiseAddr:  addr,
+		Version:        version.ReleaseVersion,
+		GitHash:        version.GitHash,
+		DeployPath:     deployPath,
+		StartTimestamp: time.Now().Unix(),
+	}
+}
+
 // Marshal using json.Marshal.
-func (c *NodeInfo) Marshal() ([]byte, error) {
+func (c *Info) Marshal() ([]byte, error) {
 	data, err := json.Marshal(c)
 	if err != nil {
 		return nil, cerror.WrapError(cerror.ErrMarshalFailed, err)
@@ -49,14 +61,14 @@ func (c *NodeInfo) Marshal() ([]byte, error) {
 }
 
 // Unmarshal from binary data.
-func (c *NodeInfo) Unmarshal(data []byte) error {
+func (c *Info) Unmarshal(data []byte) error {
 	err := json.Unmarshal(data, c)
 	return errors.Annotatef(cerror.WrapError(cerror.ErrUnmarshalFailed, err),
 		"unmarshal data: %v", data)
 }
 
-func CaptureInfoToNodeInfo(captureInfo *model.CaptureInfo) *NodeInfo {
-	return &NodeInfo{
+func CaptureInfoToNodeInfo(captureInfo *model.CaptureInfo) *Info {
+	return &Info{
 		ID:             captureInfo.ID,
 		AdvertiseAddr:  captureInfo.AdvertiseAddr,
 		Version:        captureInfo.Version,
@@ -66,8 +78,8 @@ func CaptureInfoToNodeInfo(captureInfo *model.CaptureInfo) *NodeInfo {
 	}
 }
 
-func CaptureInfosToNodeInfos(captureInfos map[model.CaptureID]*model.CaptureInfo) map[NodeID]*NodeInfo {
-	nodeInfos := make(map[NodeID]*NodeInfo)
+func CaptureInfosToNodeInfos(captureInfos map[model.CaptureID]*model.CaptureInfo) map[ID]*Info {
+	nodeInfos := make(map[ID]*Info)
 	for _, ci := range captureInfos {
 		nodeInfos[ci.ID] = CaptureInfoToNodeInfo(ci)
 	}

@@ -16,7 +16,6 @@ package node
 import (
 	"context"
 
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/etcd"
 	pd "github.com/tikv/pd/client"
@@ -28,14 +27,14 @@ type Server interface {
 	Run(ctx context.Context) error
 	Close(ctx context.Context)
 
-	SelfInfo() (*common.NodeInfo, error)
+	SelfInfo() (*Info, error)
 	Liveness() model.Liveness
 
 	GetCoordinator() (Coordinator, error)
 	IsCoordinator() bool
 
 	// GetCoordinatorInfo returns the coordinator server， it will be used when forward api request
-	GetCoordinatorInfo(ctx context.Context) (*common.NodeInfo, error)
+	GetCoordinatorInfo(ctx context.Context) (*Info, error)
 
 	GetPdClient() pd.Client
 	GetEtcdClient() etcd.CDCEtcdClient
