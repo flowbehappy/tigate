@@ -283,6 +283,8 @@ func NewSingleTargetMessage(To ServerId, Topic string, Message IOTypeT) *TargetM
 		ioType = TypeMaintainerCloseRequest
 	case *heartbeatpb.MaintainerCloseResponse:
 		ioType = TypeMaintainerCloseResponse
+	case *heartbeatpb.CheckpointTsMessage:
+		ioType = TypeCheckpointTsMessage
 	default:
 		panic("unknown io type")
 	}

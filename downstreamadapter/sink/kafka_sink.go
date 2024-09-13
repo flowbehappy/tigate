@@ -243,7 +243,7 @@ func (s *KafkaSink) AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgres
 }
 
 func (s *KafkaSink) AddCheckpointTs(ts uint64, tableNames []*common.SchemaTableName) {
-	//s.ddlWorker.GetEventChan() <- &common.ResolvedEvent{ResolvedTs: ts}
+	s.ddlWorker.WriteCheckpointTs(ts, tableNames)
 }
 
 func (s *KafkaSink) Close() {

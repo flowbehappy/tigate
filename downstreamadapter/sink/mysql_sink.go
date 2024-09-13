@@ -175,7 +175,6 @@ func (s *MysqlSink) PassDDLAndSyncPointEvent(event *common.DDLEvent, tableProgre
 func (s *MysqlSink) AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress) {
 	// TODO:这个 ddl 可以并发写么？如果不行的话，后面还要加锁或者排队
 	tableProgress.Add(event)
-	//s.ddlWorker.GetMysqlWriter().FlushDDLEvent(event)
 	s.ddlEventChan <- event
 }
 
