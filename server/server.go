@@ -25,13 +25,11 @@ import (
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/maintainer"
 	"github.com/flowbehappy/tigate/pkg/common"
-	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/eventservice"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/tiflow/pkg/tcpserver"
 
 	appctx "github.com/flowbehappy/tigate/pkg/common/context"
-	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
@@ -114,10 +112,6 @@ func (c *server) initialize(ctx context.Context) error {
 	}
 	conf := config.GetGlobalServerConfig()
 	nodeManager := watcher.NewNodeManager(c.session, c.EtcdClient)
-	nodeManager.RegisterNodeChangeHandler(
-		appcontext.MessageCenter,
-		appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).OnNodeChanges)
-
 	schemaStore := schemastore.NewSchemaStore(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage)
 
 	c.subModules = []common.SubModule{
