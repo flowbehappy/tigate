@@ -311,17 +311,11 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID common.TableID, start, e
 	defer storageSnap.Close()
 	p.mu.Unlock()
 
-	rawEvents := make([]PersistedDDLEvent, len(allTargetTs))
-	for i, ts := range allTargetTs {
-		rawEvents[i] = readDDLEvent(storageSnap, ts)
-	}
-
-	p.mu.Lock()
 	events := make([]common.DDLEvent, len(allTargetTs))
-	for i, rawEvent := range rawEvents {
-		events[i] = buildDDLEvent(rawEvent, p.tablesBasicInfo, p.databaseMap)
+	for i, ts := range allTargetTs {
+		rawEvent := readDDLEvent(storageSnap, ts)
+		events[i] = buildDDLEvent(rawEvent)
 	}
-	p.mu.Unlock()
 
 	return events
 }
@@ -358,15 +352,8 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 			if tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.SchemaName, rawEvent.TableName) {
 				continue
 			}
-			events = append(events, common.DDLEvent{
-				Job: rawEvent.Job,
-				// FIXME: rename to finished ts
-				CommitTS: rawEvent.CommitTS,
-				// FIXME
-				BlockedTables:     nil,
-				NeedDroppedTables: nil,
-				NeedAddedTables:   nil,
-			})
+
+			events = append(events, buildDDLEvent(rawEvent))
 		}
 		nextStartTs = allTargetTs[len(allTargetTs)-1]
 	}
@@ -757,15 +744,19 @@ func updateRegisteredTableInfoStore(
 	return nil
 }
 
-func buildDDLEvent(
-	rawEvent PersistedDDLEvent,
-	tablesBasicInfo map[common.TableID]*VersionedTableBasicInfo,
-	databaseMap map[common.SchemaID]*DatabaseInfo,
-) common.DDLEvent {
-	var event common.DDLEvent
-	// event.Job = rawEvent.Job
-	event.CommitTS = rawEvent.FinishedTs
-	switch event.Job.Type {
+func buildDDLEvent(rawEvent PersistedDDLEvent) common.DDLEvent {
+	event := common.DDLEvent{
+		Type:       rawEvent.Type,
+		SchemaID:   rawEvent.SchemaID,
+		TableID:    rawEvent.TableID,
+		SchemaName: rawEvent.SchemaName,
+		TableName:  rawEvent.TableName,
+		Query:      rawEvent.Query,
+		TableInfo:  rawEvent.TableInfo,
+		FinishedTs: rawEvent.FinishedTs,
+	}
+
+	switch model.ActionType(rawEvent.Type) {
 	case model.ActionCreateSchema,
 		model.ActionAddColumn,
 		model.ActionDropColumn,
@@ -783,36 +774,36 @@ func buildDDLEvent(
 	case model.ActionDropSchema:
 		event.NeedDroppedTables = &common.InfluencedTables{
 			InfluenceType: common.DB,
-			SchemaID:      event.Job.SchemaID,
+			SchemaID:      rawEvent.SchemaID,
 		}
 	case model.ActionCreateTable:
 		event.NeedAddedTables = []common.Table{
 			{
-				SchemaID: event.Job.SchemaID,
-				TableID:  event.Job.TableID,
+				SchemaID: rawEvent.SchemaID,
+				TableID:  rawEvent.TableID,
 			},
 		}
 	case model.ActionDropTable:
 		event.NeedDroppedTables = &common.InfluencedTables{
 			InfluenceType: common.Normal,
-			TableIDs:      []int64{event.Job.TableID},
+			TableIDs:      []int64{rawEvent.TableID},
 		}
 	case model.ActionTruncateTable:
 		event.NeedDroppedTables = &common.InfluencedTables{
 			InfluenceType: common.Normal,
-			TableIDs:      []int64{event.Job.TableID},
+			TableIDs:      []int64{rawEvent.TableID},
 		}
 		event.NeedAddedTables = []common.Table{
 			{
-				SchemaID: event.Job.SchemaID,
+				SchemaID: rawEvent.SchemaID,
 				// TODO: may be we cannot read it?
-				TableID: event.Job.BinlogInfo.TableInfo.ID,
+				TableID: rawEvent.TableInfo.ID,
 			},
 		}
 	case model.ActionRenameTable:
 		event.BlockedTables = &common.InfluencedTables{
 			InfluenceType: common.Normal,
-			TableIDs:      []int64{event.Job.TableID},
+			TableIDs:      []int64{rawEvent.TableID},
 		}
 	case model.ActionCreateView:
 		event.BlockedTables = &common.InfluencedTables{
@@ -820,8 +811,8 @@ func buildDDLEvent(
 		}
 	default:
 		log.Panic("unknown ddl type",
-			zap.Any("ddlType", event.Job.Type),
-			zap.String("DDL", event.Job.Query))
+			zap.Any("ddlType", rawEvent.Type),
+			zap.String("DDL", rawEvent.Query))
 	}
 	return event
 }

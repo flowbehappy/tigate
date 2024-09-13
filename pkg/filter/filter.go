@@ -99,13 +99,13 @@ func NewFilter(cfg *config.FilterConfig, tz string, caseSensitive bool) (Filter,
 }
 
 func (f *filter) FilterDDLEvent(ddl *common.DDLEvent) error {
-	query := ddl.Job.Query
+	query := ddl.Query
 	queryList := strings.Split(query, ";")
 	if len(queryList) == 1 {
 		return nil
 	}
-	multiTableInfos := ddl.Job.BinlogInfo.MultipleTableInfos
-	schemaName := ddl.Job.SchemaName
+	multiTableInfos := ddl.MultipleTableInfos
+	schemaName := ddl.SchemaName
 	if len(multiTableInfos) != len(queryList) {
 		log.Error("DDL Event is not valid, query count not equal to table count", zap.Any("ddl", ddl))
 		return apperror.NewAppError(apperror.ErrorInvalidDDLEvent, "DDL Event is not valid, query count not equal to table count")
@@ -120,7 +120,7 @@ func (f *filter) FilterDDLEvent(ddl *common.DDLEvent) error {
 		}
 	}
 	if len(finalQuery) != len(queryList) {
-		ddl.Job.Query = strings.Join(finalQuery, ";")
+		ddl.Query = strings.Join(finalQuery, ";")
 	}
 	// TODO: 应该同时要更新一下 ddl 依赖的 table 信息
 	return nil
