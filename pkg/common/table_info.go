@@ -434,7 +434,7 @@ func (ti *TableInfo) initColumnsFlag() {
 	}
 }
 
-func (ti *TableInfo) initPreSQLs() {
+func (ti *TableInfo) InitPreSQLs() {
 	ti.PreSQLs = make(map[string]string)
 	ti.PreSQLs["insert"] = ti.genPreSQLInsert(false, true)
 	ti.PreSQLs["replace"] = ti.genPreSQLInsert(true, true)
@@ -814,9 +814,6 @@ func WrapTableInfo(schemaID int64, schemaName string, version uint64, info *mode
 	ti.initRowColInfosWithoutVirtualCols()
 	ti.findHandleIndex()
 	ti.initColumnsFlag()
-	// This function must be called after the functions above were called
-	// because it depends on the result of the functions above
-	ti.initPreSQLs()
 	return ti
 }
 
@@ -858,7 +855,9 @@ func BuildTableInfoWithPKNames4Test(schemaName, tableName string, columns []*Col
 // The main use cases of this function it to build TableInfo from redo log and in tests.
 func BuildTableInfo(schemaName, tableName string, columns []*Column, indexColumns [][]int) *TableInfo {
 	tidbTableInfo := BuildTiDBTableInfo(tableName, columns, indexColumns)
-	return WrapTableInfo(100 /* not used */, schemaName, 1000 /* not used */, tidbTableInfo)
+	info := WrapTableInfo(100 /* not used */, schemaName, 1000 /* not used */, tidbTableInfo)
+	info.InitPreSQLs()
+	return info
 }
 
 // BuildTiDBTableInfo is a simple wrapper over BuildTiDBTableInfoImpl which create a default ColumnIDAllocator.

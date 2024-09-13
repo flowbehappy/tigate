@@ -306,7 +306,7 @@ func newEmptyPersistentStorageForTest(dbPath string) *persistentStorage {
 	return newPersistentStorageForTest(db, uint64(gcTs), upperBound)
 }
 
-func TestCreateDropSchemaTableDDL(t *testing.T) {
+func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
 	err := os.RemoveAll(dbPath)
 	require.Nil(t, err)
@@ -448,7 +448,7 @@ func TestCreateDropSchemaTableDDL(t *testing.T) {
 	}
 }
 
-func TestRenameTable(t *testing.T) {
+func TestHandleRenameTable(t *testing.T) {
 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
 	err := os.RemoveAll(dbPath)
 	require.Nil(t, err)
