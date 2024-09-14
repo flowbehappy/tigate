@@ -292,10 +292,10 @@ func (p *persistentStorage) getTableInfo(tableID int64, ts uint64) (*common.Tabl
 
 // TODO: not all ddl in p.tablesDDLHistory should be sent to the dispatcher, verify dispatcher will set the right range
 func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64) []common.DDLEvent {
-	p.mu.Lock()
+	p.mu.RLock()
 	history, ok := p.tablesDDLHistory[tableID]
 	if !ok {
-		p.mu.Unlock()
+		p.mu.RUnlock()
 		return nil
 	}
 	index := sort.Search(len(history), func(i int) bool {
@@ -303,7 +303,7 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64
 	})
 	// no events to read
 	if index == len(history) {
-		p.mu.Unlock()
+		p.mu.RUnlock()
 		return nil
 	}
 	// copy all target ts to a new slice
@@ -316,7 +316,7 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64
 
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
-	p.mu.Unlock()
+	p.mu.RUnlock()
 
 	events := make([]common.DDLEvent, len(allTargetTs))
 	for i, ts := range allTargetTs {
@@ -334,7 +334,7 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 	defer storageSnap.Close()
 	for {
 		allTargetTs := make([]uint64, 0, limit)
-		p.mu.Lock()
+		p.mu.RLock()
 		log.Info("fetchTableTriggerDDLEvents",
 			zap.Any("start", start),
 			zap.Int("limit", limit),
@@ -344,7 +344,7 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 		})
 		// no more events to read
 		if index == len(p.tableTriggerDDLHistory) {
-			p.mu.Unlock()
+			p.mu.RUnlock()
 			return events
 		}
 		for i := index; i < len(p.tableTriggerDDLHistory); i++ {
@@ -353,7 +353,7 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 				break
 			}
 		}
-		p.mu.Unlock()
+		p.mu.RUnlock()
 
 		if len(allTargetTs) == 0 {
 			return events
@@ -484,8 +484,8 @@ func (p *persistentStorage) updateUpperBound(upperBound upperBoundMeta) {
 }
 
 func (p *persistentStorage) getUpperBound() upperBoundMeta {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	return p.upperBound
 }
 
