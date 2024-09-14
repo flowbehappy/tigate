@@ -427,8 +427,6 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 			log.Fatal("get schema name failed", zap.Error(err))
 		}
 		ddlEvent.SchemaName = schemaName
-		log.Info("apply ddl event",
-			zap.Any("ddlEvent", ddlEvent))
 
 		store.applyDDLFromPersistStorage(ddlEvent)
 	}
@@ -678,9 +676,6 @@ func updateDatabaseInfoAndTableInfo(
 			Name:     event.TableInfo.Name.O,
 			InKVSnap: false,
 		}
-		log.Info("create table",
-			zap.String("DDL", event.Query),
-			zap.Int64("tableID", tableID))
 		return true
 	}
 
