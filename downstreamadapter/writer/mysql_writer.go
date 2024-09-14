@@ -163,7 +163,22 @@ func (w *MysqlWriter) execDDL(event *common.DDLEvent) error {
 
 func (w *MysqlWriter) execDDLWithMaxRetries(event *common.DDLEvent) error {
 	return retry.Do(context.Background(), func() error {
-		return w.execDDL(event)
+		err := w.statistics.RecordDDLExecution(func() error { return w.execDDL(event) })
+		if err != nil {
+			if errorutil.IsIgnorableMySQLDDLError(err) {
+				// NOTE: don't change the log, some tests depend on it.
+				log.Info("Execute DDL failed, but error can be ignored",
+					zap.String("ddl", event.Job.Query),
+					zap.Error(err))
+				// If the error is ignorable, we will ignore the error directly.
+				return nil
+			}
+			log.Warn("Execute DDL with error, retry later",
+				zap.String("ddl", event.Job.Query),
+				zap.Error(err))
+			return err
+		}
+		return nil
 	}, retry.WithBackoffBaseDelay(pmysql.BackoffBaseDelay.Milliseconds()),
 		retry.WithBackoffMaxDelay(pmysql.BackoffMaxDelay.Milliseconds()),
 		retry.WithMaxTries(defaultDDLMaxRetry),

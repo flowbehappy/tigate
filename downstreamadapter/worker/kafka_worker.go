@@ -23,13 +23,12 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/topicmanager"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/sink/codec"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/sink/dmlsink/mq/dmlproducer"
-	"github.com/pingcap/tiflow/cdc/sink/metrics"
-	"github.com/pingcap/tiflow/cdc/sink/metrics/mq"
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -102,9 +101,9 @@ func NewKafkaWorker(
 		eventRouter:                       eventRouter,
 		topicManager:                      topicManager,
 		producer:                          producer,
-		metricMQWorkerSendMessageDuration: mq.WorkerSendMessageDuration.WithLabelValues(id.Namespace, id.ID),
-		metricMQWorkerBatchSize:           mq.WorkerBatchSize.WithLabelValues(id.Namespace, id.ID),
-		metricMQWorkerBatchDuration:       mq.WorkerBatchDuration.WithLabelValues(id.Namespace, id.ID),
+		metricMQWorkerSendMessageDuration: metrics.WorkerSendMessageDuration.WithLabelValues(id.Namespace, id.ID),
+		metricMQWorkerBatchSize:           metrics.WorkerBatchSize.WithLabelValues(id.Namespace, id.ID),
+		metricMQWorkerBatchDuration:       metrics.WorkerBatchDuration.WithLabelValues(id.Namespace, id.ID),
 		statistics:                        statistics,
 		cancel:                            cancel,
 	}
@@ -267,11 +266,9 @@ func (w *KafkaWorker) batch(ctx context.Context, buffer []*common.MQRowEvent, fl
 			log.Warn("MQ sink flush worker channel closed")
 			return msgCount, nil
 		}
-		//if msg.RowEvent != nil {
-		//w.statistics.ObserveRows(msg.RowEvent)
+
 		buffer[msgCount] = msg
 		msgCount++
-		// }
 	}
 
 	// Reset the ticker to start a new batching.
@@ -287,11 +284,8 @@ func (w *KafkaWorker) batch(ctx context.Context, buffer []*common.MQRowEvent, fl
 				return msgCount, nil
 			}
 
-			//if msg.RowEvent != nil {
-			//w.statistics.ObserveRows(msg.rowEvent.Event)
 			buffer[msgCount] = msg
 			msgCount++
-			//}
 
 			if msgCount >= maxBatchSize {
 				return msgCount, nil
@@ -316,8 +310,6 @@ func (w *KafkaWorker) group(msgs []*common.MQRowEvent) map[model.TopicPartitionK
 
 func (w *KafkaWorker) sendMessages(ctx context.Context) error {
 	defer w.wg.Done()
-	metricSendMessageDuration := mq.WorkerSendMessageDuration.WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
-	defer mq.WorkerSendMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
 
 	var err error
 	outCh := w.encoderGroup.Output()
@@ -353,7 +345,7 @@ func (w *KafkaWorker) sendMessages(ctx context.Context) error {
 				}); err != nil {
 					return err
 				}
-				metricSendMessageDuration.Observe(time.Since(start).Seconds())
+				w.metricMQWorkerSendMessageDuration.Observe(time.Since(start).Seconds())
 			}
 		}
 	}
@@ -361,7 +353,7 @@ func (w *KafkaWorker) sendMessages(ctx context.Context) error {
 
 func (w *KafkaWorker) close() {
 	w.producer.Close()
-	mq.WorkerSendMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
-	mq.WorkerBatchSize.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
-	mq.WorkerBatchDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+	metrics.WorkerSendMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+	metrics.WorkerBatchSize.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+	metrics.WorkerBatchDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
 }
