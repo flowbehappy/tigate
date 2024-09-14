@@ -176,13 +176,17 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 	if p.db, err = pebble.Open(dbPath, &pebble.Options{}); err != nil {
 		log.Fatal("open db failed", zap.Error(err))
 	}
-	log.Info("schema store create a fresh storage")
+	log.Info("schema store initialize from kv storage begin",
+		zap.Uint64("snapTs", gcTs))
 
 	if p.databaseMap, p.tableMap, p.upperBound, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs); err != nil {
 		// TODO: retry
 		log.Fatal("fail to initialize from kv snapshot")
 	}
 	p.gcTs = gcTs
+	log.Info("schema store initialize from kv storage done",
+		zap.Int("databaseMapLen", len(p.databaseMap)),
+		zap.Int("tableMapLen", len(p.tableMap)))
 }
 
 func (p *persistentStorage) initializeFromDisk() {
@@ -473,6 +477,7 @@ func (p *persistentStorage) doGc(gcTs uint64) error {
 	// writeGcTs(p.db, gcTs)
 	// delete range on disk
 	// delete data in memory
+	// log
 	return nil
 }
 
