@@ -144,6 +144,54 @@ var (
 		}, []string{"namespace", "changefeed"})
 )
 
+// ---------- Metrics for kafka sink and backends. ---------- //
+var (
+	// WorkerSendMessageDuration records the duration of flushing a group messages.
+	WorkerSendMessageDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "sink",
+			Name:      "mq_worker_send_message_duration",
+			Help:      "Send Message duration(s) for MQ worker.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms~524s
+		}, []string{"namespace", "changefeed"})
+	// WorkerBatchSize record the size of each batched messages.
+	WorkerBatchSize = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "sink",
+			Name:      "mq_worker_batch_size",
+			Help:      "Batch size for MQ worker.",
+			Buckets:   prometheus.ExponentialBuckets(4, 2, 10), // 4 ~ 2048
+		}, []string{"namespace", "changefeed"})
+	// WorkerBatchDuration record the time duration cost on batch messages.
+	WorkerBatchDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "sink",
+			Name:      "mq_worker_batch_duration",
+			Help:      "Batch duration for MQ worker.",
+			Buckets:   prometheus.ExponentialBuckets(0.004, 2, 10), // 4ms ~ 2s
+		}, []string{"namespace", "changefeed"})
+
+	CheckpointTsMessageDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "sink",
+			Name:      "mq_checkpoint_ts_message_duration",
+			Help:      "Duration of sending checkpoint ts message.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms~524s
+		}, []string{"namespace", "changefeed"})
+
+	CheckpointTsMessageCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "sink",
+			Name:      "mq_checkpoint_ts_message_count",
+			Help:      "Number of checkpoint ts messages sent.",
+		}, []string{"namespace", "changefeed"})
+)
+
 // InitMetrics registers all metrics in this file.
 func InitSinkMetrics(registry *prometheus.Registry) {
 	// common sink metrics
@@ -162,4 +210,11 @@ func InitSinkMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(SinkDMLBatchCommit)
 	registry.MustRegister(SinkDMLBatchCallback)
 	registry.MustRegister(PrepareStatementErrors)
+
+	// kafka sink metrics
+	registry.MustRegister(WorkerSendMessageDuration)
+	registry.MustRegister(WorkerBatchSize)
+	registry.MustRegister(WorkerBatchDuration)
+	registry.MustRegister(CheckpointTsMessageDuration)
+	registry.MustRegister(CheckpointTsMessageCount)
 }

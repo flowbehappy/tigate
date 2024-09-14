@@ -24,6 +24,7 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/worker/dmlproducer"
 	"github.com/flowbehappy/tigate/pkg/common"
 	ticonfig "github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/sink/codec"
 	"github.com/flowbehappy/tigate/pkg/sink/kafka"
 	v2 "github.com/flowbehappy/tigate/pkg/sink/kafka/v2"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/sink/ddlsink/mq/ddlproducer"
-	timetrics "github.com/pingcap/tiflow/cdc/sink/metrics"
 	"github.com/pingcap/tiflow/cdc/sink/util"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink"
@@ -126,7 +126,7 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, sinkConfig 
 	dmlProducer := dmlproducer.NewKafkaDMLProducer(ctx, changefeedID, asyncProducer, metricsCollector)
 	encoderGroup := codec.NewEncoderGroup(ctx, sinkConfig, encoderConfig, changefeedID)
 
-	statistics := timetrics.NewStatistics(changefeedID, sink.RowSink)
+	statistics := metrics.NewStatistics(changefeedID, "KafkaSink")
 	dmlWorker := worker.NewKafkaWorker(changefeedID, protocol, dmlProducer, encoderGroup, columnSelector, eventRouter, topicManager, statistics)
 
 	encoder, err := codec.NewEventEncoder(ctx, encoderConfig)

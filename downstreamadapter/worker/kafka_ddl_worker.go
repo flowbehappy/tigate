@@ -8,15 +8,13 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/topicmanager"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/sink/ddlsink/mq/ddlproducer"
-	"github.com/pingcap/tiflow/cdc/sink/metrics"
-	"github.com/pingcap/tiflow/cdc/sink/metrics/mq"
 	"github.com/pingcap/tiflow/pkg/config"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -46,13 +44,6 @@ type KafkaDDLWorker struct {
 	// producer is used to send the messages to the Kafka broker.
 	producer ddlproducer.DDLProducer
 
-	// metricMQWorkerSendMessageDuration tracks the time duration cost on send messages.
-	metricMQWorkerSendMessageDuration prometheus.Observer
-	// metricMQWorkerBatchSize tracks each batch's size.
-	metricMQWorkerBatchSize prometheus.Observer
-	// metricMQWorkerBatchDuration tracks the time duration cost on batch messages.
-	metricMQWorkerBatchDuration prometheus.Observer
-	// statistics is used to record DML metrics.
 	statistics    *metrics.Statistics
 	partitionRule DDLDispatchRule
 	ctx           context.Context
@@ -92,21 +83,18 @@ func NewKafkaDDLWorker(
 ) *KafkaDDLWorker {
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &KafkaDDLWorker{
-		ctx:                               ctx,
-		changeFeedID:                      id,
-		protocol:                          protocol,
-		ddlEventChan:                      make(chan *common.DDLEvent, 16),
-		ticker:                            time.NewTicker(batchInterval),
-		encoder:                           encoder,
-		producer:                          producer,
-		eventRouter:                       eventRouter,
-		topicManager:                      topicManager,
-		metricMQWorkerSendMessageDuration: mq.WorkerSendMessageDuration.WithLabelValues(id.Namespace, id.ID),
-		metricMQWorkerBatchSize:           mq.WorkerBatchSize.WithLabelValues(id.Namespace, id.ID),
-		metricMQWorkerBatchDuration:       mq.WorkerBatchDuration.WithLabelValues(id.Namespace, id.ID),
-		statistics:                        statistics,
-		cancel:                            cancel,
-		partitionRule:                     getDDLDispatchRule(protocol),
+		ctx:           ctx,
+		changeFeedID:  id,
+		protocol:      protocol,
+		ddlEventChan:  make(chan *common.DDLEvent, 16),
+		ticker:        time.NewTicker(batchInterval),
+		encoder:       encoder,
+		producer:      producer,
+		eventRouter:   eventRouter,
+		topicManager:  topicManager,
+		statistics:    statistics,
+		cancel:        cancel,
+		partitionRule: getDDLDispatchRule(protocol),
 	}
 
 	w.wg.Add(1)
@@ -176,6 +164,15 @@ func (w *KafkaDDLWorker) encodeAndSendDDLEvents() error {
 
 func (w *KafkaDDLWorker) encodeAndSendCheckpointEvents() error {
 	defer w.wg.Done()
+
+	checkpointTsMessageDuration := metrics.CheckpointTsMessageDuration.WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+	checkpointTsMessageCount := metrics.CheckpointTsMessageCount.WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+
+	defer func() {
+		metrics.CheckpointTsMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+		metrics.CheckpointTsMessageCount.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+	}()
+
 	for {
 		select {
 		case <-w.ctx.Done():
@@ -187,6 +184,7 @@ func (w *KafkaDDLWorker) encodeAndSendCheckpointEvents() error {
 					zap.String("changefeed", w.changeFeedID.ID))
 				return nil
 			}
+			start := time.Now()
 			ts := checkpointInfo.Ts
 			tableNames := checkpointInfo.TableNames
 			msg, err := w.encoder.EncodeCheckpointEvent(ts)
@@ -219,6 +217,8 @@ func (w *KafkaDDLWorker) encodeAndSendCheckpointEvents() error {
 					return errors.Trace(err)
 				}
 			}
+			checkpointTsMessageCount.Inc()
+			checkpointTsMessageDuration.Observe(time.Since(start).Seconds())
 		}
 	}
 }

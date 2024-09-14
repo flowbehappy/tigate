@@ -103,4 +103,5 @@ func (b *Statistics) Close() {
 	ExecBatchHistogram.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
 	LargeRowSizeHistogram.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
 	ExecutionErrorCounter.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
+	TotalWriteBytesCounter.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
 }

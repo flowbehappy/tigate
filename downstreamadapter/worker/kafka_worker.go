@@ -23,15 +23,13 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/topicmanager"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/sink/codec"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/sink/dmlsink/mq/dmlproducer"
-	"github.com/pingcap/tiflow/cdc/sink/metrics"
-	"github.com/pingcap/tiflow/cdc/sink/metrics/mq"
 	"github.com/pingcap/tiflow/pkg/config"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -66,12 +64,6 @@ type KafkaWorker struct {
 	// producer is used to send the messages to the Kafka broker.
 	producer dmlproducer.DMLProducer
 
-	// metricMQWorkerSendMessageDuration tracks the time duration cost on send messages.
-	metricMQWorkerSendMessageDuration prometheus.Observer
-	// metricMQWorkerBatchSize tracks each batch's size.
-	metricMQWorkerBatchSize prometheus.Observer
-	// metricMQWorkerBatchDuration tracks the time duration cost on batch messages.
-	metricMQWorkerBatchDuration prometheus.Observer
 	// statistics is used to record DML metrics.
 	statistics *metrics.Statistics
 
@@ -92,21 +84,18 @@ func NewKafkaWorker(
 ) *KafkaWorker {
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &KafkaWorker{
-		changeFeedID:                      id,
-		protocol:                          protocol,
-		eventChan:                         make(chan *common.DMLEvent, 32),
-		rowChan:                           make(chan *common.MQRowEvent, 32),
-		ticker:                            time.NewTicker(batchInterval),
-		encoderGroup:                      encoderGroup,
-		columnSelector:                    columnSelector,
-		eventRouter:                       eventRouter,
-		topicManager:                      topicManager,
-		producer:                          producer,
-		metricMQWorkerSendMessageDuration: mq.WorkerSendMessageDuration.WithLabelValues(id.Namespace, id.ID),
-		metricMQWorkerBatchSize:           mq.WorkerBatchSize.WithLabelValues(id.Namespace, id.ID),
-		metricMQWorkerBatchDuration:       mq.WorkerBatchDuration.WithLabelValues(id.Namespace, id.ID),
-		statistics:                        statistics,
-		cancel:                            cancel,
+		changeFeedID:   id,
+		protocol:       protocol,
+		eventChan:      make(chan *common.DMLEvent, 32),
+		rowChan:        make(chan *common.MQRowEvent, 32),
+		ticker:         time.NewTicker(batchInterval),
+		encoderGroup:   encoderGroup,
+		columnSelector: columnSelector,
+		eventRouter:    eventRouter,
+		topicManager:   topicManager,
+		producer:       producer,
+		statistics:     statistics,
+		cancel:         cancel,
 	}
 
 	w.wg.Add(4)
@@ -226,6 +215,13 @@ func (w *KafkaWorker) batchEncodeRun(ctx context.Context) (retErr error) {
 		zap.String("protocol", w.protocol.String()),
 	)
 
+	metricBatchDuration := metrics.WorkerBatchDuration.WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+	metricBatchSize := metrics.WorkerBatchSize.WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+	defer func() {
+		metrics.WorkerBatchDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+		metrics.WorkerBatchSize.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+	}()
+
 	msgsBuf := make([]*common.MQRowEvent, batchSize)
 	for {
 		start := time.Now()
@@ -237,8 +233,8 @@ func (w *KafkaWorker) batchEncodeRun(ctx context.Context) (retErr error) {
 			continue
 		}
 
-		w.metricMQWorkerBatchSize.Observe(float64(msgCount))
-		w.metricMQWorkerBatchDuration.Observe(time.Since(start).Seconds())
+		metricBatchSize.Observe(float64(msgCount))
+		metricBatchDuration.Observe(time.Since(start).Seconds())
 
 		msgs := msgsBuf[:msgCount]
 		// Group messages by its TopicPartitionKey before adding them to the encoder group.
@@ -267,11 +263,9 @@ func (w *KafkaWorker) batch(ctx context.Context, buffer []*common.MQRowEvent, fl
 			log.Warn("MQ sink flush worker channel closed")
 			return msgCount, nil
 		}
-		//if msg.RowEvent != nil {
-		//w.statistics.ObserveRows(msg.RowEvent)
+
 		buffer[msgCount] = msg
 		msgCount++
-		// }
 	}
 
 	// Reset the ticker to start a new batching.
@@ -287,11 +281,8 @@ func (w *KafkaWorker) batch(ctx context.Context, buffer []*common.MQRowEvent, fl
 				return msgCount, nil
 			}
 
-			//if msg.RowEvent != nil {
-			//w.statistics.ObserveRows(msg.rowEvent.Event)
 			buffer[msgCount] = msg
 			msgCount++
-			//}
 
 			if msgCount >= maxBatchSize {
 				return msgCount, nil
@@ -316,8 +307,8 @@ func (w *KafkaWorker) group(msgs []*common.MQRowEvent) map[model.TopicPartitionK
 
 func (w *KafkaWorker) sendMessages(ctx context.Context) error {
 	defer w.wg.Done()
-	metricSendMessageDuration := mq.WorkerSendMessageDuration.WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
-	defer mq.WorkerSendMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+	metricSendMessageDuration := metrics.WorkerSendMessageDuration.WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+	defer metrics.WorkerSendMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
 
 	var err error
 	outCh := w.encoderGroup.Output()
@@ -361,7 +352,4 @@ func (w *KafkaWorker) sendMessages(ctx context.Context) error {
 
 func (w *KafkaWorker) close() {
 	w.producer.Close()
-	mq.WorkerSendMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
-	mq.WorkerBatchSize.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
-	mq.WorkerBatchDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
 }
