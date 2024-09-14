@@ -69,9 +69,8 @@ type server struct {
 
 	EtcdClient etcd.CDCEtcdClient
 
-	KVStorage   kv.Storage
-	RegionCache *tikv.RegionCache
-	PDClock     pdutil.Clock
+	KVStorage kv.Storage
+	PDClock   pdutil.Clock
 
 	tcpServer  tcpserver.TCPServer
 	subModules []common.SubModule
@@ -110,18 +109,18 @@ func (c *server) initialize(ctx context.Context) error {
 		log.Error("server prepare failed", zap.Any("server", c.info), zap.Error(err))
 		return errors.Trace(err)
 	}
-	conf := config.GetGlobalServerConfig()
-	nodeManager := watcher.NewNodeManager(c.session, c.EtcdClient)
-	schemaStore := schemastore.NewSchemaStore(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage)
 
+	dataDir := config.GetGlobalServerConfig().DataDir
+	regionCache := tikv.NewRegionCache(c.pdClient)
+	schemaStore := schemastore.NewSchemaStore(ctx, dataDir, c.pdClient, regionCache, c.PDClock, c.KVStorage)
 	c.subModules = []common.SubModule{
-		nodeManager,
+		watcher.NewNodeManager(c.session, c.EtcdClient),
 		schemaStore,
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener()),
-		maintainer.NewMaintainerManager(c.info, c.pdAPIClient, c.RegionCache),
-		eventstore.NewEventStore(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage, schemaStore),
+		maintainer.NewMaintainerManager(c.info, c.pdAPIClient, regionCache),
+		eventstore.NewEventStore(ctx, dataDir, c.pdClient, regionCache, c.PDClock, c.KVStorage, schemaStore),
 	}
 	// register it into global var
 	for _, subModule := range c.subModules {
