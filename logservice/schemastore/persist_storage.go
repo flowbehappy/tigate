@@ -149,6 +149,8 @@ func newPersistentStorage(
 	if isDataReusable {
 		dataStorage.initializeFromDisk()
 	} else {
+		db.Close()
+		dataStorage.db = nil
 		dataStorage.initializeFromKVStorage(dbPath, storage, gcSafePoint)
 	}
 
