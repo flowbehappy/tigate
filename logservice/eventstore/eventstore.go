@@ -317,7 +317,9 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange *co
 	state, ok := e.spanStates.dispatcherMap.Get(dataRange.Span)
 	dispatcher, okw := state.dispatchers[dispatcherID]
 	if !ok || !okw || dispatcher.watermark > dataRange.StartTs {
-		log.Panic("should not happen")
+		log.Panic("should not happen",
+			zap.Uint64("watermark", dispatcher.watermark),
+			zap.Uint64("startTs", dataRange.StartTs))
 	}
 	span := state.span
 	db := e.dbs[state.chIndex]

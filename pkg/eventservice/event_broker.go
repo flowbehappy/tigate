@@ -219,6 +219,10 @@ func (c *eventBroker) doScan(task *scanTask) {
 		dataRange.EndTs = endTs
 	}
 
+	if dataRange.EndTs <= dataRange.StartTs {
+		return
+	}
+
 	defer func() {
 		// drain the ddlEvents
 		for _, e := range ddlEvents {
