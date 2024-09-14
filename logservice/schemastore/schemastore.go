@@ -102,10 +102,10 @@ func NewSchemaStore(
 ) SchemaStore {
 	gcSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, "cdc-new-store", 0, 0)
 	if err != nil {
-		log.Panic("schemaStore: update service gc safe-point failed", zap.Error(err))
+		log.Panic("update service gc safe-point failed", zap.Error(err))
 	}
 	dataStorage, metaTS, databaseMap := newPersistentStorage(root, kvStorage, gcSafePoint)
-	log.Info("schemaStore: persistent storage created",
+	log.Info("persistent storage created",
 		zap.Uint64("gcSafePoint", gcSafePoint),
 		zap.Any("metaTS", metaTS),
 		zap.Int("databaseMapLen", len(databaseMap)))
@@ -130,7 +130,7 @@ func NewSchemaStore(
 		metaTS.ResolvedTS,
 		s.writeDDLEvent,
 		s.advanceResolvedTs)
-	log.Info("schemaStore: initialized",
+	log.Info("initialized",
 		zap.Uint64("finishedDDLTS", s.finishedDDLTS),
 		zap.Int64("schemaVersion", s.schemaVersion))
 	return s
@@ -281,7 +281,7 @@ func (s *schemaStore) RegisterDispatcher(
 	// TODO: fix me in the future
 	if startTS < s.dataStorage.getGCTS() {
 		s.mu.Unlock()
-		log.Panic("schemaStore: startTs is old than gcTs",
+		log.Panic("startTs < gcTs",
 			zap.Uint64("startTs", startTS), zap.Uint64("gcTs", s.dataStorage.getGCTS()))
 	}
 
@@ -360,7 +360,7 @@ func (s *schemaStore) RegisterDispatcher(
 	}
 	oldStore, ok := s.tableInfoStoreMap[tableID]
 	if !ok {
-		log.Panic("schemaStore: cannot find the table info, should not happened", zap.Int64("tableID", tableID))
+		log.Panic("cannot find the table info, should not happened", zap.Int64("tableID", tableID))
 	}
 	// Note: oldStore must be initialized, no need to check again.
 	// keep the store with smaller version

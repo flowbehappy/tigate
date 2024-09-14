@@ -338,7 +338,7 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange *co
 	iter.First()
 
 	return &eventStoreIter{
-		tableID:      common.TableID(span.TableID),
+		tableID:      span.TableID,
 		schemaStore:  e.schemaStore,
 		innerIter:    iter,
 		prevStartTS:  0,
