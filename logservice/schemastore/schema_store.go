@@ -48,11 +48,10 @@ type schemaStore struct {
 	// TODO: remove it and update resolve ts periodically
 	eventCh chan interface{}
 
-	// pending resolved ts for apply
+	// resolved ts pending for apply
 	pendingResolveTs atomic.Uint64
 
 	// max resolvedTs of all applied ddl events
-	// it must be updated with mutex locked
 	resolvedTs atomic.Uint64
 
 	// the following two fields are used to filter out duplicate ddl events
