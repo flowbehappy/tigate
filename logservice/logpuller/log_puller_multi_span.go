@@ -63,7 +63,7 @@ func NewLogPullerMultiSpan(
 			if ts := pullerWrapper.tryUpdateGlobalResolvedTs(entry, subID); ts != 0 {
 				return consume(ctx, &common.RawKVEntry{
 					OpType: common.OpTypeResolved,
-					CRTs:   ts,
+					CRTs:   uint64(ts),
 				})
 			}
 			return nil

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/logservice/upstream"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/stretchr/testify/require"
@@ -73,7 +74,7 @@ func TestBasicDDLJob(t *testing.T) {
 	phy, logic, err := upstream.PDClient.GetTS(ctx)
 	require.Nil(t, err)
 	snapTs := oracle.ComposeTS(phy, logic)
-	tables, err := schemaStore.GetAllPhysicalTables(snapTs, nil)
+	tables, err := schemaStore.GetAllPhysicalTables(common.Ts(snapTs), nil)
 	require.Nil(t, err)
 	log.Info("schema store get all tables", zap.Any("tables", tables))
 	fmt.Printf("all tables")

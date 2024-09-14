@@ -36,8 +36,8 @@ import (
 type ddlJobFetcher struct {
 	puller *logpuller.LogPullerMultiSpan
 
-	writeDDLEvent     ddlEventHandler
-	advanceResolvedTs resolvedTsHandler
+	writeDDLEvent     func(ddlEvent DDLEvent) error
+	advanceResolvedTs func(resolvedTS common.Ts) error
 
 	// ddlTableInfo is initialized when receive the first concurrent DDL job.
 	ddlTableInfo *mounter.DDLTableInfo
@@ -45,18 +45,14 @@ type ddlJobFetcher struct {
 	kvStorage kv.Storage
 }
 
-type ddlEventHandler func(ctx context.Context, ddlEvent DDLEvent) error
-
-type resolvedTsHandler func(ctx context.Context, resolvedTs common.Ts) error
-
 func newDDLJobFetcher(
 	pdCli pd.Client,
 	regionCache *tikv.RegionCache,
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
 	startTs common.Ts,
-	handler ddlEventHandler,
-	tsHandler resolvedTsHandler,
+	writeDDLEvent func(ddlEvent DDLEvent) error,
+	advanceResolvedTs func(resolvedTS common.Ts) error,
 ) *ddlJobFetcher {
 	clientConfig := &logpuller.SubscriptionClientConfig{
 		RegionRequestWorkerPerStore:        1,
@@ -75,17 +71,14 @@ func newDDLJobFetcher(
 	)
 
 	ddlJobFetcher := &ddlJobFetcher{
-		writeDDLEvent:     handler,
-		advanceResolvedTs: tsHandler,
+		writeDDLEvent:     writeDDLEvent,
+		advanceResolvedTs: advanceResolvedTs,
 		kvStorage:         kvStorage,
 	}
 	ddlSpans := getAllDDLSpan()
 	ddlJobFetcher.puller = logpuller.NewLogPullerMultiSpan(client, pdClock, ddlSpans, startTs, ddlJobFetcher.input)
-	return ddlJobFetcher
-}
 
-func (p *ddlJobFetcher) run(ctx context.Context) error {
-	return p.puller.Run(ctx)
+	return ddlJobFetcher
 }
 
 func (p *ddlJobFetcher) close(ctx context.Context) error {
@@ -98,10 +91,7 @@ func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) 
 	}
 
 	if rawEvent.IsResolved() {
-		err := p.advanceResolvedTs(ctx, rawEvent.CRTs)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.advanceResolvedTs(common.Ts(rawEvent.CRTs))
 		return nil
 	}
 
@@ -114,13 +104,11 @@ func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) 
 		return nil
 	}
 
-	err = p.writeDDLEvent(ctx, DDLEvent{
+	p.writeDDLEvent(DDLEvent{
 		Job:      job,
-		CommitTS: rawEvent.CRTs,
+		CommitTS: common.Ts(rawEvent.CRTs),
 	})
-	if err != nil {
-		return errors.Trace(err)
-	}
+
 	return nil
 }
 

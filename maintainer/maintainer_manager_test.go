@@ -56,7 +56,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	mc := messaging.NewMessageCenter(ctx, selfNode.ID, 0, config.NewDefaultMessageCenterConfig())
 	appcontext.SetService(appcontext.MessageCenter, mc)
 	startDispatcherNode(ctx, selfNode, mc, nodeManager)
-	nodeManager.registerNodeChangeHandler(appcontext.MessageCenter, mc.OnNodeChanges)
+	nodeManager.RegisterNodeChangeHandler(appcontext.MessageCenter, mc.OnNodeChanges)
 	//discard maintainer manager messages
 	mc.RegisterHandler(messaging.CoordinatorTopic, func(ctx context.Context, msg *messaging.TargetMessage) error {
 		return nil
@@ -177,7 +177,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	mc := messaging.NewMessageCenter(ctx, selfNode.ID, 0, config.NewDefaultMessageCenterConfig())
 	appcontext.SetService(appcontext.MessageCenter, mc)
 	startDispatcherNode(ctx, selfNode, mc, nodeManager)
-	nodeManager.registerNodeChangeHandler(appcontext.MessageCenter, mc.OnNodeChanges)
+	nodeManager.RegisterNodeChangeHandler(appcontext.MessageCenter, mc.OnNodeChanges)
 	//discard maintainer manager messages
 	mc.RegisterHandler(messaging.CoordinatorTopic, func(ctx context.Context, msg *messaging.TargetMessage) error {
 		return nil
@@ -281,7 +281,7 @@ func (d *dispatcherNode) stop() {
 
 func startDispatcherNode(ctx context.Context,
 	node *node.Info, mc messaging.MessageCenter, nodeManager *watcher.NodeManager) *dispatcherNode {
-	nodeManager.registerNodeChangeHandler(node.ID, mc.OnNodeChanges)
+	nodeManager.RegisterNodeChangeHandler(node.ID, mc.OnNodeChanges)
 	ctx, cancel := context.WithCancel(ctx)
 	dispManager := MockDispatcherManager(mc)
 	go func() {
