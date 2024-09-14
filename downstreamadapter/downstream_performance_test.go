@@ -24,7 +24,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const totalCount = 500
+const totalCount = 30
 const dispatcherCount = 10000
 const databaseCount = 1
 
@@ -39,48 +39,45 @@ func pushDataIntoDispatchers(dispatcherIDSet map[common.DispatcherID]interface{}
 	dispatcherEventsDynamicStream := dispatcher.GetDispatcherEventsDynamicStream()
 	idx := 0
 	var mutex sync.Mutex
+	var wg sync.WaitGroup
+	var listMutex sync.Mutex
+	eventList := make([]*common.DMLEvent, 0, totalCount*dispatcherCount)
 	for id, _ := range dispatcherIDSet {
+		wg.Add(1)
 		go func(idx int, id common.DispatcherID) {
-			log.Info("start to push data into dispatcher", zap.Int("idx", idx), zap.Stringer("id", id))
+			defer wg.Done()
 			tableName := "test.t" + strconv.Itoa(idx)
 			ddlQuery := "create table " + tableName + " (a int primary key, b int, c double, d varchar(100))"
+			mutex.Lock()
 			_ = helper.DDL2Job(ddlQuery)
+			mutex.Unlock()
 			for count := 1; count <= totalCount; count++ {
-				// if count == 1 {
-				// 	ddlQuery := "create table " + tableName + " (a int primary key, b int, c double, d varchar(100))"
-				// 	_ = helper.DDL2Job(ddlQuery)
-				// }
-
+				mutex.Lock()
 				event := helper.DML2Event("test", "t"+strconv.Itoa(int(idx)), "insert into "+tableName+" values ("+strconv.Itoa(count)+", 1, 1.1, 'test')")
+				mutex.Unlock()
 				event.DispatcherID = id
 				event.PhysicalTableID = int64(idx)
-				dispatcherEventsDynamicStream.In() <- event
+				event.StartTs = uint64(count) + 10
+				event.CommitTs = uint64(count) + 11
+
+				listMutex.Lock()
+				eventList = append(eventList, event)
+				listMutex.Unlock()
 			}
 		}(idx, id)
 		idx += 1
 	}
 
-	// for count := 1; count <= totalCount; count++ {
-	// 	idx := 0
-	// 	for id, _ := range dispatcherIDSet {
-	// 		tableName := "test.t" + strconv.Itoa(int(idx))
-	// 		if count == 1 {
-	// 			ddlQuery := "create table " + tableName + " (a int primary key, b int, c double, d varchar(100))"
-	// 			_ = helper.DDL2Job(ddlQuery)
-	// 		}
-
-	// 		event := helper.DML2Event("test", "t"+strconv.Itoa(int(idx)), "insert into "+tableName+" values ("+strconv.Itoa(count)+", 1, 1.1, 'test')")
-	// 		event.DispatcherID = id
-	// 		event.PhysicalTableID = int64(idx)
-	// 		dispatcherEventsDynamicStream.In() <- event
-
-	// 		idx += 1
-	// 	}
-	// }
-	// log.Info("finished to push data into dispatchers")
+	wg.Wait()
+	log.Warn("begin to push data into dispatchers")
+	for _, event := range eventList {
+		dispatcherEventsDynamicStream.In() <- event
+	}
+	log.Warn("end to push data into dispatchers")
 }
 
 func TestDownstream(t *testing.T) {
+	log.SetLevel(zap.WarnLevel)
 	go func() {
 		http.ListenAndServe("0.0.0.0:6100", nil)
 	}()
@@ -101,10 +98,15 @@ func TestDownstream(t *testing.T) {
 
 	dispatcherIDSet := make(map[common.DispatcherID]interface{})
 	var mutex sync.Mutex
+	openProtocol := "open-protocol"
 	for db_index := 0; db_index < databaseCount; db_index++ {
 		changefeedConfig := config.ChangefeedConfig{
-			SinkURI: "tidb://root:@127.0.0.1:4000?dry-run=true",
+			// SinkURI: "tidb://root:@127.0.0.1:4000?dry-run=true",
+			SinkURI: "kafka://127.0.0.1:9094/topic-name?protocol=open-protocol&kafka-version=2.4.0&max-message-bytes=67108864&replication-factor=1",
 			Filter:  &ticonfig.FilterConfig{},
+			SinkConfig: &config.SinkConfig{
+				Protocol: &openProtocol,
+			},
 		}
 		changefeedID := model.DefaultChangeFeedID("test" + strconv.Itoa(db_index))
 		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, &changefeedConfig, serverId)
@@ -125,7 +127,7 @@ func TestDownstream(t *testing.T) {
 	}
 
 	wg.Wait()
-	log.Info("test begin", zap.Any("create dispatcher cost time", time.Since(start)))
+	log.Warn("test begin", zap.Any("create dispatcher cost time", time.Since(start)))
 
 	// 插入数据, 先固定 data 格式
 	go pushDataIntoDispatchers(dispatcherIDSet, helper)
@@ -147,12 +149,13 @@ func TestDownstream(t *testing.T) {
 				finishVec[db_index] = true
 				finishCount++
 				if finishCount == databaseCount {
-					log.Info("All data consuming is finished")
+					log.Warn("All data consuming is finished")
 					return
 				}
 			}
 		}
 	}
+
 }
 
 /*
