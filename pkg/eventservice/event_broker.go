@@ -462,7 +462,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		dispatcher.spanSubscription.onNewEvent,
 		func(watermark uint64) { c.onNotify(dispatcher.spanSubscription, watermark) },
 	)
-	c.schemaStore.RegisterTable(span.GetTableID())
+	c.schemaStore.RegisterTable(span.GetTableID(), info.GetStartTs())
 	eventStoreRegisterDuration := time.Since(start)
 
 	log.Info("register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
