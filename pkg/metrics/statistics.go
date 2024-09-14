@@ -41,7 +41,6 @@ func NewStatistics(
 	statistics.metricTotalWriteBytesCnt = TotalWriteBytesCounter.WithLabelValues(namespcae, changefeedID, s)
 	statistics.metricRowSizeHis = LargeRowSizeHistogram.WithLabelValues(namespcae, changefeedID, s)
 	statistics.metricExecErrCnt = ExecutionErrorCounter.WithLabelValues(namespcae, changefeedID, s)
-	statistics.metricExecDDLCnt = ExecDDLCounter.WithLabelValues(namespcae, changefeedID, s)
 	return statistics
 }
 
@@ -54,8 +53,6 @@ type Statistics struct {
 
 	// Histogram for DDL Executing duration.
 	metricExecDDLHis prometheus.Observer
-	// counter for ddl
-	metricExecDDLCnt prometheus.Gauge
 	// Histogram for DML batch size.
 	metricExecBatchHis prometheus.Observer
 	// Counter for total bytes of DML.
@@ -96,7 +93,6 @@ func (b *Statistics) RecordDDLExecution(executor func() error) error {
 		b.metricExecErrCnt.Inc()
 		return err
 	}
-	b.metricExecDDLCnt.Inc()
 	b.metricExecDDLHis.Observe(time.Since(start).Seconds())
 	return nil
 }
@@ -107,6 +103,5 @@ func (b *Statistics) Close() {
 	ExecBatchHistogram.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
 	LargeRowSizeHistogram.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
 	ExecutionErrorCounter.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
-	ExecDDLCounter.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
 	TotalWriteBytesCounter.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
 }

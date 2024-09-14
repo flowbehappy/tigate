@@ -59,14 +59,6 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 18),
 		}, []string{"namespace", "changefeed", "type"}) // type is for `sinkType`
 
-	ExecDDLCounter = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "ticdc",
-			Subsystem: "sink",
-			Name:      "ddl_exec_count",
-			Help:      "Total count of executed DDLs.",
-		}, []string{"namespace", "changefeed", "type"}) // type is for `sinkType`
-
 	// ExecutionErrorCounter is the counter of execution errors.
 	ExecutionErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -208,7 +200,6 @@ func InitSinkMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(ExecDDLHistogram)
 	registry.MustRegister(LargeRowSizeHistogram)
 	registry.MustRegister(ExecutionErrorCounter)
-	registry.MustRegister(ExecDDLCounter)
 
 	// txn sink metrics
 	registry.MustRegister(ConflictDetectDuration)
