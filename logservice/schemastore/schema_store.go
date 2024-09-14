@@ -192,8 +192,14 @@ func (s *schemaStore) FetchTableDDLEvents(tableID int64, start, end uint64) ([]c
 	if currentResolvedTs < end {
 		end = currentResolvedTs
 	}
-	log.Info("FetchTableDDLEvents")
-	defer log.Info("FetchTableDDLEvents end")
+	log.Info("FetchTableDDLEvents",
+		zap.Int64("tableID", tableID),
+		zap.Uint64("start", start),
+		zap.Uint64("end", end))
+	defer log.Info("FetchTableDDLEvents end",
+		zap.Int64("tableID", tableID),
+		zap.Uint64("start", start),
+		zap.Uint64("end", end))
 	return s.dataStorage.fetchTableDDLEvents(tableID, start, end), end
 }
 

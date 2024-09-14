@@ -295,6 +295,7 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64
 	p.mu.Lock()
 	history, ok := p.tablesDDLHistory[tableID]
 	if !ok {
+		p.mu.Unlock()
 		return nil
 	}
 	index := sort.Search(len(history), func(i int) bool {
@@ -302,6 +303,7 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64
 	})
 	// no events to read
 	if index == len(history) {
+		p.mu.Unlock()
 		return nil
 	}
 	// copy all target ts to a new slice
