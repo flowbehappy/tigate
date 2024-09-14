@@ -152,8 +152,8 @@ func genEvents(helper *mounter.EventTestHelper, t *testing.T, ddl string, dmls .
 		require.Equal(t, job.BinlogInfo.TableInfo.UpdateTS+1, e.CRTs)
 	}
 	return common.DDLEvent{
-		CommitTS: job.BinlogInfo.TableInfo.UpdateTS,
-		Job:      job,
+		FinishedTs: job.BinlogInfo.TableInfo.UpdateTS,
+		Job:        job,
 	}, kvEvents1
 }
 
@@ -170,7 +170,7 @@ func TestSendEvents(t *testing.T) {
 	require.NotNil(t, kvEvents)
 
 	ddlEvent1, _ := genEvents(helper, t, `alter table test.t add column dummy int default 0`)
-	require.Less(t, ddlEvent.CommitTS, ddlEvent1.CommitTS)
+	require.Less(t, ddlEvent.FinishedTs, ddlEvent1.FinishedTs)
 
 	ddlEvent2, kvEvents2 := genEvents(helper, t, `alter table test.t add column d int`, []string{
 		`insert into test.t(id,c,d) values (10, "c10", 10)`,
@@ -179,7 +179,7 @@ func TestSendEvents(t *testing.T) {
 	}...)
 	require.NotNil(t, kvEvents2)
 	require.Less(t, kvEvents[0].CRTs, kvEvents2[1].CRTs)
-	require.Less(t, ddlEvent.CommitTS, ddlEvent2.CommitTS)
+	require.Less(t, ddlEvent.FinishedTs, ddlEvent2.FinishedTs)
 
 	wg := &sync.WaitGroup{}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -197,10 +197,10 @@ func TestSendEvents(t *testing.T) {
 			t        int // type
 			commitTs common.Ts
 		}{
-			{t: common.TypeDDLEvent, commitTs: ddlEvent.CommitTS},
+			{t: common.TypeDDLEvent, commitTs: ddlEvent.FinishedTs},
 			{t: common.TypeDMLEvent, commitTs: kvEvents[0].CRTs},
-			{t: common.TypeDDLEvent, commitTs: ddlEvent1.CommitTS},
-			{t: common.TypeDDLEvent, commitTs: ddlEvent2.CommitTS},
+			{t: common.TypeDDLEvent, commitTs: ddlEvent1.FinishedTs},
+			{t: common.TypeDDLEvent, commitTs: ddlEvent2.FinishedTs},
 			{t: common.TypeDMLEvent, commitTs: kvEvents2[0].CRTs},
 			{t: common.TypeBatchResolvedEvent, commitTs: common.Ts(0)},
 		}
@@ -230,7 +230,7 @@ func TestSendEvents(t *testing.T) {
 	defer s.close()
 
 	// Register the dispatcher
-	tableID := ddlEvent.Job.TableID
+	tableID := ddlEvent.TableID
 	info := newMockAcceptorInfo(common.NewDispatcherID(), tableID)
 	s.addDispatcher(info)
 	_, ok := s.spans[tableID]
@@ -240,7 +240,7 @@ func TestSendEvents(t *testing.T) {
 
 	span, ok := eventStore.spans[tableID]
 	require.True(t, ok)
-	span.update(ddlEvent2.CommitTS+1, append(kvEvents, kvEvents2...)...)
+	span.update(ddlEvent2.FinishedTs+1, append(kvEvents, kvEvents2...)...)
 
 	wg.Wait()
 }

@@ -341,9 +341,21 @@ type TableNameChange struct {
 
 type DDLEvent struct {
 	DispatcherID DispatcherID `json:"dispatcher_id"`
-	Job          *model.Job   `json:"ddl_job"`
-	// commitTS of the rawKV
-	CommitTS Ts `json:"commit_ts"`
+	Type         byte         `json:"type"`
+	// SchemaID means different for different job types:
+	// - ExchangeTablePartition: db id of non-partitioned table
+	SchemaID int64 `json:"schema_id"`
+	// TableID means different for different job types:
+	// - ExchangeTablePartition: non-partitioned table id
+	TableID    int64            `json:"table_id"`
+	SchemaName string           `json:"schema_name"`
+	TableName  string           `json:"table_name"`
+	Query      string           `json:"query"`
+	TableInfo  *model.TableInfo `json:"table_info"`
+	FinishedTs uint64           `json:"finished_ts"`
+
+	// TODO: just here for compile, may be changed later
+	MultipleTableInfos []*TableInfo `json:"multiple_table_infos"`
 
 	// Just for test now
 	BlockedTables     *InfluencedTables `json:"blocked_tables"`
@@ -363,12 +375,12 @@ func (d *DDLEvent) GetDispatcherID() DispatcherID {
 	return d.DispatcherID
 }
 
-func (d *DDLEvent) GetCommitTs() Ts {
-	return d.CommitTS
+func (d *DDLEvent) GetStartTs() Ts {
+	return 0
 }
 
-func (d *DDLEvent) GetStartTs() Ts {
-	return d.CommitTS
+func (d *DDLEvent) GetCommitTs() Ts {
+	return d.FinishedTs
 }
 
 func (d *DDLEvent) PostFlush() {
@@ -403,18 +415,18 @@ func (e *DDLEvent) GetDDLQuery() string {
 		log.Error("DDLEvent is nil, should not happened in production env", zap.Any("event", e))
 		return ""
 	}
-	return e.Job.Query
+	return e.Query
 }
 
 func (e *DDLEvent) GetDDLSchemaName() string {
 	if e == nil {
 		return "" // 要报错的
 	}
-	return e.Job.SchemaName
+	return e.SchemaName
 }
 
 func (e *DDLEvent) GetDDLType() model.ActionType {
-	return e.Job.Type
+	return model.ActionType(e.Type)
 }
 
 func (t DDLEvent) Marshal() ([]byte, error) {

@@ -17,12 +17,14 @@ import (
 	"context"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 // LogPullerMultiSpan is a simple wrapper around LogPuller.
@@ -31,11 +33,17 @@ import (
 type LogPullerMultiSpan struct {
 	innerPuller *LogPuller
 
+	startTs common.Ts
+
+	consume func(context.Context, *common.RawKVEntry) error
+
 	mu sync.Mutex
 
 	resolvedTsMap map[SubscriptionID]common.Ts
 
-	startTs common.Ts
+	prevResolvedTs common.Ts
+
+	pendingResolvedTs common.Ts
 }
 
 func NewLogPullerMultiSpan(
@@ -50,8 +58,11 @@ func NewLogPullerMultiSpan(
 		log.Panic("not supported")
 	}
 	pullerWrapper := &LogPullerMultiSpan{
-		resolvedTsMap: make(map[SubscriptionID]common.Ts),
-		startTs:       startTs,
+		startTs:           startTs,
+		consume:           consume,
+		resolvedTsMap:     make(map[SubscriptionID]common.Ts),
+		prevResolvedTs:    0,
+		pendingResolvedTs: 0,
 	}
 
 	// consumeWrapper may be called concurrently
@@ -60,12 +71,7 @@ func NewLogPullerMultiSpan(
 			return nil
 		}
 		if entry.IsResolved() {
-			if ts := pullerWrapper.tryUpdateGlobalResolvedTs(entry, subID); ts != 0 {
-				return consume(ctx, &common.RawKVEntry{
-					OpType: common.OpTypeResolved,
-					CRTs:   uint64(ts),
-				})
-			}
+			pullerWrapper.tryUpdatePendingResolvedTs(entry, subID)
 			return nil
 		}
 		return consume(ctx, entry)
@@ -80,7 +86,14 @@ func NewLogPullerMultiSpan(
 }
 
 func (p *LogPullerMultiSpan) Run(ctx context.Context) error {
-	return p.innerPuller.Run(ctx)
+	eg, ctx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
+		return p.sendResolvedTsPeriodically(ctx)
+	})
+	eg.Go(func() error {
+		return p.innerPuller.Run(ctx)
+	})
+	return eg.Wait()
 }
 
 func (p *LogPullerMultiSpan) Close(ctx context.Context) error {
@@ -88,7 +101,7 @@ func (p *LogPullerMultiSpan) Close(ctx context.Context) error {
 }
 
 // return whether the global resolved ts of all spans is updated
-func (p *LogPullerMultiSpan) tryUpdateGlobalResolvedTs(entry *common.RawKVEntry, subID SubscriptionID) common.Ts {
+func (p *LogPullerMultiSpan) tryUpdatePendingResolvedTs(entry *common.RawKVEntry, subID SubscriptionID) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	// FIXME: use priority queue to maintain resolved ts
@@ -113,8 +126,25 @@ func (p *LogPullerMultiSpan) tryUpdateGlobalResolvedTs(entry *common.RawKVEntry,
 	if currentResolvedTs == math.MaxUint64 {
 		log.Panic("should not happen")
 	}
-	if currentResolvedTs > p.startTs {
-		return currentResolvedTs
+	p.pendingResolvedTs = currentResolvedTs
+}
+
+func (p *LogPullerMultiSpan) sendResolvedTsPeriodically(ctx context.Context) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			p.mu.Lock()
+			if p.pendingResolvedTs > p.prevResolvedTs {
+				p.consume(ctx, &common.RawKVEntry{
+					OpType: common.OpTypeResolved,
+					CRTs:   common.Ts(p.pendingResolvedTs),
+				})
+				p.prevResolvedTs = p.pendingResolvedTs
+			}
+			p.mu.Unlock()
+		}
 	}
-	return 0
 }

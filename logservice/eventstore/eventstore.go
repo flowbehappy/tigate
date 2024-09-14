@@ -290,8 +290,6 @@ func (e *eventStore) RegisterDispatcher(
 func (e *eventStore) UpdateDispatcherSendTS(
 	dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, sendTS uint64,
 ) error {
-	// TODO: update sendTs in event service
-	e.schemaStore.UpdateDispatcherSendTS(dispatcherID, common.Ts(sendTS))
 	e.spanStates.Lock()
 	defer e.spanStates.Unlock()
 	if state, ok := e.spanStates.dispatcherMap.Get(span); ok {
@@ -334,7 +332,9 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange *co
 	state, ok := e.spanStates.dispatcherMap.Get(dataRange.Span)
 	dispatcher, okw := state.dispatchers[dispatcherID]
 	if !ok || !okw || dispatcher.watermark > dataRange.StartTs {
-		log.Panic("should not happen")
+		log.Panic("should not happen",
+			zap.Uint64("watermark", dispatcher.watermark),
+			zap.Uint64("startTs", dataRange.StartTs))
 	}
 	span := state.span
 	db := e.dbs[state.chIndex]
@@ -565,9 +565,6 @@ func (iter *eventStoreIter) Next() (*common.RawKVEntry, bool, error) {
 	}
 	iter.prevCommitTS = commitTS
 	iter.prevStartTS = startTS
-	// log.Info("read event",
-	// 	zap.Uint64("tableID", uint64(iter.tableID)),
-	// 	zap.Any("value", row.Columns[0].Value))
 	iter.rowCount++
 	iter.innerIter.Next()
 	return rawKV, isNewTxn, nil

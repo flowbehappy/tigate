@@ -79,7 +79,7 @@ func (p *TableProgress) Empty() bool {
 func (p *TableProgress) Pass(event *common.DDLEvent) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
-	p.maxCommitTs = event.CommitTS
+	p.maxCommitTs = event.FinishedTs
 }
 
 // 返回当前 tableSpan 中最大的 checkpointTs，也就是最大的 ts，并且 <= ts 之前的数据都已经成功写下去了

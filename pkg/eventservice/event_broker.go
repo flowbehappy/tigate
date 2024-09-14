@@ -187,10 +187,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 					startTs := dispatcher.watermark.Load()
 					remoteID := node.ID(dispatcher.info.GetServerID())
 					// TODO: maybe limit 1 is enough.
-					ddlEvents, endTs, err := c.schemaStore.GetNextTableTriggerEvents(dispatcher.filter, startTs, 10)
-					if err != nil {
-						log.Panic("get table trigger events failed", zap.Error(err))
-					}
+					ddlEvents, endTs := c.schemaStore.FetchTableTriggerDDLEvents(dispatcher.filter, startTs, 10)
 					for _, e := range ddlEvents {
 						c.sendDDL(remoteID, e, dispatcher)
 					}
@@ -219,12 +216,13 @@ func (c *eventBroker) doScan(task *scanTask) {
 
 	remoteID := node.ID(task.dispatcherStat.info.GetServerID())
 	dispatcherID := task.dispatcherStat.info.GetID()
-	ddlEvents, endTs, err := c.schemaStore.GetNextDDLEvents(dataRange.Span.TableID, dataRange.StartTs, dataRange.EndTs)
-	if err != nil {
-		log.Panic("get ddl events failed", zap.Error(err))
-	}
+	ddlEvents, endTs := c.schemaStore.FetchTableDDLEvents(dataRange.Span.TableID, dataRange.StartTs, dataRange.EndTs)
 	if endTs < dataRange.EndTs {
 		dataRange.EndTs = endTs
+	}
+
+	if dataRange.EndTs <= dataRange.StartTs {
+		return
 	}
 
 	defer func() {
@@ -257,7 +255,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 	// 3. Get the events from the iterator and send them to the dispatcher.
 	sendTxn := func(t *common.DMLEvent) {
 		if t != nil {
-			for len(ddlEvents) > 0 && t.CommitTs > ddlEvents[0].CommitTS {
+			for len(ddlEvents) > 0 && t.CommitTs > ddlEvents[0].FinishedTs {
 				c.sendDDL(remoteID, ddlEvents[0], task.dispatcherStat)
 				ddlEvents = ddlEvents[1:]
 			}
@@ -467,7 +465,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		dispatcher.spanSubscription.onNewEvent,
 		func(watermark uint64) { c.onNotify(dispatcher.spanSubscription, watermark) },
 	)
-	c.schemaStore.RegisterDispatcher(id, span, common.Ts(info.GetStartTs()), filter)
+	c.schemaStore.RegisterTable(span.GetTableID(), info.GetStartTs())
 	eventStoreRegisterDuration := time.Since(start)
 
 	log.Info("register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
@@ -485,7 +483,7 @@ func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
 		return
 	}
 	c.eventStore.UnregisterDispatcher(id, dispatcherInfo.GetTableSpan())
-	c.schemaStore.UnregisterDispatcher(id)
+	c.schemaStore.UnregisterTable(dispatcherInfo.GetTableSpan().TableID)
 	c.dispatchers.Delete(id)
 
 	spanSubscription := stat.(*dispatcherStat).spanSubscription

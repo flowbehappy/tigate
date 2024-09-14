@@ -36,8 +36,8 @@ import (
 type ddlJobFetcher struct {
 	puller *logpuller.LogPullerMultiSpan
 
-	writeDDLEvent     func(ddlEvent DDLEvent) error
-	advanceResolvedTs func(resolvedTS common.Ts) error
+	writeDDLEvent     func(ddlEvent DDLJobWithCommitTs)
+	advanceResolvedTs func(resolvedTS uint64)
 
 	// ddlTableInfo is initialized when receive the first concurrent DDL job.
 	ddlTableInfo *mounter.DDLTableInfo
@@ -50,9 +50,9 @@ func newDDLJobFetcher(
 	regionCache *tikv.RegionCache,
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
-	startTs common.Ts,
-	writeDDLEvent func(ddlEvent DDLEvent) error,
-	advanceResolvedTs func(resolvedTS common.Ts) error,
+	startTs uint64,
+	writeDDLEvent func(ddlEvent DDLJobWithCommitTs),
+	advanceResolvedTs func(resolvedTS uint64),
 ) *ddlJobFetcher {
 	clientConfig := &logpuller.SubscriptionClientConfig{
 		RegionRequestWorkerPerStore:        1,
@@ -81,6 +81,10 @@ func newDDLJobFetcher(
 	return ddlJobFetcher
 }
 
+func (p *ddlJobFetcher) run(ctx context.Context) error {
+	return p.puller.Run(ctx)
+}
+
 func (p *ddlJobFetcher) close(ctx context.Context) error {
 	return p.puller.Close(ctx)
 }
@@ -91,7 +95,7 @@ func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) 
 	}
 
 	if rawEvent.IsResolved() {
-		p.advanceResolvedTs(common.Ts(rawEvent.CRTs))
+		p.advanceResolvedTs(uint64(rawEvent.CRTs))
 		return nil
 	}
 
@@ -104,9 +108,9 @@ func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) 
 		return nil
 	}
 
-	p.writeDDLEvent(DDLEvent{
+	p.writeDDLEvent(DDLJobWithCommitTs{
 		Job:      job,
-		CommitTS: common.Ts(rawEvent.CRTs),
+		CommitTs: rawEvent.CRTs,
 	})
 
 	return nil

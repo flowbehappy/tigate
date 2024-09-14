@@ -101,15 +101,15 @@ func encodeDDLEvent(e *common.DDLEvent, config *newcommon.Config) ([]byte, []byt
 	valueWriter := util.BorrowJSONWriter(valueBuf)
 
 	keyWriter.WriteObject(func() {
-		keyWriter.WriteUint64Field("ts", e.CommitTS)
-		keyWriter.WriteStringField("scm", e.Job.SchemaName)
-		keyWriter.WriteStringField("tbl", e.Job.TableName)
+		keyWriter.WriteUint64Field("ts", e.FinishedTs)
+		keyWriter.WriteStringField("scm", e.SchemaName)
+		keyWriter.WriteStringField("tbl", e.TableName)
 		keyWriter.WriteIntField("t", int(model.MessageTypeDDL))
 	})
 
 	valueWriter.WriteObject(func() {
-		valueWriter.WriteStringField("q", e.Job.Query)
-		valueWriter.WriteIntField("t", int(e.Job.Type))
+		valueWriter.WriteStringField("q", e.Query)
+		valueWriter.WriteIntField("t", int(e.Type))
 	})
 
 	util.ReturnJSONWriter(keyWriter)

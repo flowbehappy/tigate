@@ -82,8 +82,8 @@ func (s *EventRouter) GetTopicForRowChange(tableInfo *common.TableInfo) string {
 
 // GetTopicForDDL returns the target topic for DDL.
 func (s *EventRouter) GetTopicForDDL(ddl *common.DDLEvent) string {
-	schema := ddl.Job.SchemaName
-	table := ddl.Job.TableName
+	schema := ddl.SchemaName
+	table := ddl.TableName
 
 	// TODO: fix this
 	//var schema, table string
