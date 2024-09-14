@@ -220,12 +220,14 @@ func (v *versionedTableInfoStore) doApplyDDL(event PersistedDDLEvent) {
 		}
 		assertEmpty(v.infos, event)
 		info := common.WrapTableInfo(event.SchemaID, event.SchemaName, event.FinishedTs, event.TableInfo)
+		info.InitPreSQLs()
 		v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 	case model.ActionRenameTable,
 		model.ActionAddColumn,
 		model.ActionDropColumn:
 		assertNonEmpty(v.infos, event)
 		info := common.WrapTableInfo(event.SchemaID, event.SchemaName, event.FinishedTs, event.TableInfo)
+		info.InitPreSQLs()
 		v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 	case model.ActionDropTable, model.ActionTruncateTable:
 		v.deleteVersion = uint64(event.FinishedTs)
