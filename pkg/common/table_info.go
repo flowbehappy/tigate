@@ -663,7 +663,9 @@ func (ti *TableInfo) IsIndexUniqueAndNotNull(indexInfo *model.IndexInfo) bool {
 
 // Clone clones the TableInfo
 func (ti *TableInfo) Clone() *TableInfo {
-	return WrapTableInfo(ti.SchemaID, ti.TableName.Schema, ti.Version, ti.TableInfo.Clone())
+	new_info := WrapTableInfo(ti.SchemaID, ti.TableName.Schema, ti.Version, ti.TableInfo.Clone())
+	new_info.InitPreSQLs()
+	return new_info
 }
 
 // GetIndex return the corresponding index by the given name.
