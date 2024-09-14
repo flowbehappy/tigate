@@ -155,6 +155,41 @@ func (s *schemaStore) Close(ctx context.Context) error {
 	return s.ddlJobFetcher.close(ctx)
 }
 
+func (s *schemaStore) handleDDLEvents(events []DDLEvent) error {
+	s.mu.Lock()
+	defer s.mu.Lock()
+	for _, event := range events {
+		if event.Job.BinlogInfo.SchemaVersion <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTS {
+			log.Info("skip already applied ddl job",
+				zap.String("job", event.Job.Query),
+				zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+				zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
+				zap.Any("schemaVersion", s.schemaVersion),
+				zap.Uint64("finishedDDLTS", s.finishedDDLTS))
+			continue
+		}
+		log.Info("apply ddl job",
+			zap.String("job", event.Job.Query),
+			zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+			zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS))
+		if err := handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap); err != nil {
+			log.Error("handle ddl job failed", zap.Error(err))
+			return errors.Trace(err)
+		}
+		// TODO: batch ddl event
+		// TODO: write ddl event before update resolved ts
+		err := s.dataStorage.writeDDLEvent(event)
+		if err != nil {
+			log.Error("write ddl event failed", zap.Error(err))
+			return errors.Trace(err)
+		}
+		s.handleTriggerEvent(event)
+		s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
+		s.finishedDDLTS = event.Job.BinlogInfo.FinishedTS
+	}
+	return nil
+}
+
 func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 	for {
 		select {
@@ -185,43 +220,20 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 					zap.Any("resolvedTs", v),
 					zap.Any("resolvedEventsLen", len(resolvedEvents)))
 				// TODO: whether the events is ordered by finishedDDLTS and schemaVersion
-				newFinishedDDLTS := resolvedEvents[len(resolvedEvents)-1].Job.BinlogInfo.FinishedTS
-				newSchemaVersion := resolvedEvents[len(resolvedEvents)-1].Job.Version
-				err := s.dataStorage.updateStoreMeta(v, newFinishedDDLTS, common.Ts(newSchemaVersion))
+				latestDDLEvent := resolvedEvents[len(resolvedEvents)-1]
+				latestFinishedTS := latestDDLEvent.Job.BinlogInfo.FinishedTS
+				latestSchemaVersion := latestDDLEvent.Job.Version
+				err := s.dataStorage.updateStoreMeta(v, latestFinishedTS, common.Ts(latestSchemaVersion))
 				if err != nil {
-					log.Fatal("update ts failed", zap.Error(err))
+					log.Error("update ts to store meta failed",
+						zap.Uint64("latestFinishedTs", latestFinishedTS),
+						zap.Int64("latestSchemaVersion", latestSchemaVersion),
+						zap.Error(err))
+					return err
 				}
-				s.mu.Lock()
-				for _, event := range resolvedEvents {
-					if event.Job.BinlogInfo.SchemaVersion <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTS {
-						log.Info("skip already applied ddl job",
-							zap.String("job", event.Job.Query),
-							zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
-							zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
-							zap.Any("schemaVersion", s.schemaVersion),
-							zap.Uint64("finishedDDLTS", s.finishedDDLTS))
-						continue
-					}
-					log.Info("apply ddl job",
-						zap.String("job", event.Job.Query),
-						zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
-						zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS))
-					if err := handleResolvedDDLJob(event.Job, s.databaseMap, s.tableInfoStoreMap); err != nil {
-						s.mu.Unlock()
-						log.Error("handle ddl job failed", zap.Error(err))
-						return err
-					}
-					// TODO: batch ddl event
-					// TODO: write ddl event before update resolved ts
-					err = s.dataStorage.writeDDLEvent(event)
-					if err != nil {
-						log.Fatal("write ddl event failed", zap.Error(err))
-					}
-					s.handleTriggerEvent(event)
-					s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
-					s.finishedDDLTS = event.Job.BinlogInfo.FinishedTS
+				if err = s.handleDDLEvents(resolvedEvents); err != nil {
+					return err
 				}
-				s.mu.Unlock()
 				s.maxResolvedTS.Store(v)
 			default:
 				log.Fatal("unknown event type")

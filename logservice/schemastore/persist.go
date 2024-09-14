@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tiflow/pkg/errors"
 	"io"
 	"math"
 	"os"
@@ -276,9 +277,13 @@ func (p *persistentStorage) updateStoreMeta(resolvedTS common.Ts, finishedDDLTS 
 	batch := p.db.NewBatch()
 	err := writeTSToBatch(batch, metaTSKey(), resolvedTS, finishedDDLTS, schemaVersion)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
-	return batch.Commit(pebble.NoSync)
+	err = batch.Commit(pebble.NoSync)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func tryReadTableInfoFromSnapshot(
