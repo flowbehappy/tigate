@@ -81,7 +81,6 @@ func newDDLJobFetcher(
 	}
 	ddlSpans := getAllDDLSpan()
 	ddlJobFetcher.puller = logpuller.NewLogPullerMultiSpan(client, pdClock, ddlSpans, startTs, ddlJobFetcher.input)
-
 	return ddlJobFetcher
 }
 

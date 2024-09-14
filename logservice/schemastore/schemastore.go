@@ -281,9 +281,8 @@ func (s *schemaStore) RegisterDispatcher(
 	// TODO: fix me in the future
 	if startTS < s.dataStorage.getGCTS() {
 		s.mu.Unlock()
-		log.Panic("startTs is old than gcTs",
-			zap.Uint64("startTs", startTS),
-			zap.Uint64("gcTs", s.dataStorage.getGCTS()))
+		log.Panic("schemaStore: startTs is old than gcTs",
+			zap.Uint64("startTs", startTS), zap.Uint64("gcTs", s.dataStorage.getGCTS()))
 	}
 
 	if span.Equal(heartbeatpb.DDLSpan) {
@@ -360,19 +359,17 @@ func (s *schemaStore) RegisterDispatcher(
 		return errors.New("start ts is old than gc ts")
 	}
 	oldStore, ok := s.tableInfoStoreMap[tableID]
-	if ok {
-		// Note: oldStore must be initialized, no need to check again.
-		// keep the store with smaller version
-		if oldStore.getFirstVersion() <= newStore.getFirstVersion() {
-			return nil
-		} else {
-			newStore.checkAndCopyTailFrom(oldStore)
-			newStore.copyRegisteredDispatchers(oldStore)
-			s.tableInfoStoreMap[tableID] = newStore
-		}
-	} else {
-		log.Panic("should not happened")
+	if !ok {
+		log.Panic("schemaStore: cannot find the table info, should not happened", zap.Int64("tableID", tableID))
 	}
+	// Note: oldStore must be initialized, no need to check again.
+	// keep the store with smaller version
+	if oldStore.getFirstVersion() <= newStore.getFirstVersion() {
+		return nil
+	}
+	newStore.checkAndCopyTailFrom(oldStore)
+	newStore.copyRegisteredDispatchers(oldStore)
+	s.tableInfoStoreMap[tableID] = newStore
 	return nil
 }
 
@@ -384,7 +381,10 @@ func (s *schemaStore) UpdateDispatcherSendTS(dispatcherID common.DispatcherID, t
 		return errors.New("dispatcher not found")
 	}
 	store := s.tableInfoStoreMap[info.tableID]
-	store.updateDispatcherSendTS(dispatcherID, ts)
+	err := store.updateDispatcherSendTS(dispatcherID, ts)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
