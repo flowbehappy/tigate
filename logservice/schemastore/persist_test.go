@@ -36,7 +36,7 @@ func writeMetaData(db *pebble.DB, gcTS common.Ts, metaTS *schemaMetaTS) error {
 
 func writeSchemaSnapshot(db *pebble.DB, snapTS common.Ts, dbInfo *model.DBInfo) error {
 	batch := db.NewBatch()
-	schemaKey, err := snapshotSchemaKey(snapTS, dbInfo.ID)
+	schemaKey, err := snapshotSchemaKey(snapTS, int64(dbInfo.ID))
 	if err != nil {
 		log.Fatal("generate schema key failed", zap.Error(err))
 	}
@@ -50,7 +50,7 @@ func writeSchemaSnapshot(db *pebble.DB, snapTS common.Ts, dbInfo *model.DBInfo) 
 
 func writeTableSnapshot(db *pebble.DB, snapTS common.Ts, schemaID int64, tableInfo *model.TableInfo) error {
 	batch := db.NewBatch()
-	tableKey, err := snapshotTableKey(snapTS, tableInfo.ID)
+	tableKey, err := snapshotTableKey(snapTS, common.TableID(tableInfo.ID))
 	if err != nil {
 		log.Fatal("generate table key failed", zap.Error(err))
 	}
@@ -59,7 +59,7 @@ func writeTableSnapshot(db *pebble.DB, snapTS common.Ts, schemaID int64, tableIn
 		log.Fatal("marshal table failed", zap.Error(err))
 	}
 	batch.Set(tableKey, tableValue, pebble.NoSync)
-	indexKey, err := indexSnapshotKey(tableInfo.ID, snapTS, schemaID)
+	indexKey, err := indexSnapshotKey(common.TableID(tableInfo.ID), snapTS, int64(schemaID))
 	if err != nil {
 		log.Fatal("generate index key failed", zap.Error(err))
 	}
@@ -141,7 +141,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		Name: model.NewCIStr("test"),
 	})
 	writeTableSnapshot(db, gcTS, int64(schemaID), &model.TableInfo{
-		ID:   tableID,
+		ID:   int64(tableID),
 		Name: model.NewCIStr("t"),
 	})
 
@@ -152,10 +152,10 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 	{
 		store := newEmptyVersionedTableInfoStore(tableID)
 		getSchemaName := func(schemaID int64) (string, error) {
-			if _, ok := databaseMap[schemaID]; !ok {
+			if _, ok := databaseMap[int64(schemaID)]; !ok {
 				return "", fmt.Errorf("schema not found")
 			}
-			return databaseMap[schemaID].Name, nil
+			return databaseMap[int64(schemaID)].Name, nil
 		}
 		dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.ResolvedTS, getSchemaName)
 		store.setTableInfoInitialized()
@@ -163,7 +163,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		tableInfo, err := store.getTableInfo(gcTS)
 		require.Nil(t, err)
 		require.Equal(t, "t", tableInfo.Name.O)
-		require.Equal(t, tableID, tableInfo.ID)
+		require.Equal(t, tableID, common.TableID(tableInfo.ID))
 	}
 
 	// mock write some ddl event and load again
@@ -175,12 +175,12 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 			BinlogInfo: &model.HistoryInfo{
 				SchemaVersion: 3000,
 				TableInfo: &model.TableInfo{
-					ID:   tableID,
+					ID:   int64(tableID),
 					Name: model.NewCIStr("t2"),
 				},
 				FinishedTS: renameVersion,
 			},
-			TableID: tableID,
+			TableID: int64(tableID),
 		},
 	})
 	require.Nil(t, err)
@@ -189,10 +189,10 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 	{
 		store := newEmptyVersionedTableInfoStore(tableID)
 		getSchemaName := func(schemaID int64) (string, error) {
-			if _, ok := databaseMap[schemaID]; !ok {
+			if _, ok := databaseMap[int64(schemaID)]; !ok {
 				return "", fmt.Errorf("schema not found")
 			}
-			return databaseMap[schemaID].Name, nil
+			return databaseMap[int64(schemaID)].Name, nil
 		}
 		dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.ResolvedTS, getSchemaName)
 		store.setTableInfoInitialized()
@@ -201,8 +201,8 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		tableInfo, err := store.getTableInfo(gcTS)
 		require.Nil(t, err)
 		require.Equal(t, "t", tableInfo.Name.O)
-		require.Equal(t, tableID, tableInfo.ID)
-		tableInfo2, err := store.getTableInfo(renameVersion)
+		require.Equal(t, tableID, common.TableID(tableInfo.ID))
+		tableInfo2, err := store.getTableInfo(common.Ts(renameVersion))
 		require.Nil(t, err)
 		require.Equal(t, "t2", tableInfo2.Name.O)
 	}
@@ -233,7 +233,7 @@ func TestBuildVersionedTableInfoAndApplyDDL(t *testing.T) {
 		Name: model.NewCIStr("test"),
 	})
 	writeTableSnapshot(db, gcTS, int64(schemaID), &model.TableInfo{
-		ID:   tableID,
+		ID:   int64(tableID),
 		Name: model.NewCIStr("t"),
 	})
 
@@ -243,10 +243,10 @@ func TestBuildVersionedTableInfoAndApplyDDL(t *testing.T) {
 
 	store := newEmptyVersionedTableInfoStore(tableID)
 	getSchemaName := func(schemaID int64) (string, error) {
-		if _, ok := databaseMap[schemaID]; !ok {
+		if _, ok := databaseMap[int64(schemaID)]; !ok {
 			return "", fmt.Errorf("schema not found")
 		}
-		return databaseMap[schemaID].Name, nil
+		return databaseMap[int64(schemaID)].Name, nil
 	}
 	dataStorage.buildVersionedTableInfoStore(store, gcTS, metaTS.ResolvedTS, getSchemaName)
 	renameVersion := uint64(1500)
@@ -256,12 +256,12 @@ func TestBuildVersionedTableInfoAndApplyDDL(t *testing.T) {
 		BinlogInfo: &model.HistoryInfo{
 			SchemaVersion: 3000,
 			TableInfo: &model.TableInfo{
-				ID:   tableID,
+				ID:   int64(tableID),
 				Name: model.NewCIStr("t2"),
 			},
 			FinishedTS: renameVersion,
 		},
-		TableID: tableID,
+		TableID: int64(tableID),
 	})
 	store.setTableInfoInitialized()
 	require.Equal(t, gcTS, store.getFirstVersion())
@@ -269,8 +269,8 @@ func TestBuildVersionedTableInfoAndApplyDDL(t *testing.T) {
 	tableInfo, err := store.getTableInfo(gcTS)
 	require.Nil(t, err)
 	require.Equal(t, "t", tableInfo.Name.O)
-	require.Equal(t, tableID, tableInfo.ID)
-	tableInfo2, err := store.getTableInfo(renameVersion)
+	require.Equal(t, tableID, common.TableID(tableInfo.ID))
+	tableInfo2, err := store.getTableInfo(common.Ts(renameVersion))
 	require.Nil(t, err)
 	require.Equal(t, "t2", tableInfo2.Name.O)
 }

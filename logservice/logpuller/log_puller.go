@@ -181,7 +181,7 @@ func (p *LogPuller) Subscribe(
 	p.subscriptions.spanProgressMap[subID] = progress
 	p.subscriptions.Unlock()
 
-	p.client.Subscribe(subID, span, startTs)
+	p.client.Subscribe(subID, span, uint64(startTs))
 	return subID
 }
 

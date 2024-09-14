@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/fsutil"
 	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
@@ -123,6 +124,7 @@ func (c *server) prepare(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
+	c.RegionCache = tikv.NewRegionCache(c.pdClient)
 	c.PDClock, err = pdutil.NewClock(ctx, c.pdClient)
 	if err != nil {
 		return errors.Trace(err)

@@ -15,8 +15,6 @@ package watcher
 
 import (
 	"context"
-	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
-	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/pingcap/tiflow/cdc/model"
 	"sync"
@@ -50,7 +48,7 @@ func NewNodeManager(
 	session *concurrency.Session,
 	etcdClient etcd.CDCEtcdClient,
 ) *NodeManager {
-	m := &NodeManager{
+	return &NodeManager{
 		session:    session,
 		etcdClient: etcdClient,
 		nodes:      make(map[node.ID]*node.Info),
@@ -59,10 +57,6 @@ func NewNodeManager(
 			m map[node.ID]NodeChangeHandler
 		}{m: make(map[node.ID]NodeChangeHandler)},
 	}
-	m.RegisterNodeChangeHandler(
-		appcontext.MessageCenter,
-		appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).OnNodeChanges)
-	return m
 }
 
 func (c *NodeManager) Name() string {
