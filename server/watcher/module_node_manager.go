@@ -59,7 +59,7 @@ func NewNodeManager(
 			m map[node.ID]NodeChangeHandler
 		}{m: make(map[node.ID]NodeChangeHandler)},
 	}
-	m.registerNodeChangeHandler(
+	m.RegisterNodeChangeHandler(
 		appcontext.MessageCenter,
 		appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).OnNodeChanges)
 	return m
@@ -122,7 +122,7 @@ func (c *NodeManager) Run(ctx context.Context) error {
 			cfg.CaptureSessionTTL), time.Millisecond*50)
 }
 
-func (c *NodeManager) registerNodeChangeHandler(name node.ID, handler NodeChangeHandler) {
+func (c *NodeManager) RegisterNodeChangeHandler(name node.ID, handler NodeChangeHandler) {
 	c.nodeChangeHandlers.Lock()
 	defer c.nodeChangeHandlers.Unlock()
 	c.nodeChangeHandlers.m[name] = handler
