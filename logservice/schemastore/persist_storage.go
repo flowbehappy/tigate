@@ -713,7 +713,7 @@ func updateDatabaseInfoAndTableInfo(
 		// ignore
 	case model.ActionTruncateTable:
 		dropTable(event.SchemaID, event.TableID)
-		// TODO: do we need to the return value of createTable?
+		// TODO: do we need check the return value of createTable?
 		createTable(event.SchemaID, event.TableInfo.ID)
 	case model.ActionRenameTable:
 		oldSchemaID := tableMap[event.TableID].SchemaID
@@ -744,7 +744,7 @@ func updateDatabaseInfoAndTableInfo(
 func updateDDLHistory(
 	ddlEvent *PersistedDDLEvent,
 	databaseMap map[int64]*BasicDatabaseInfo,
-	tablesBasicInfo map[int64]*BasicTableInfo,
+	tableMap map[int64]*BasicTableInfo,
 	tablesDDLHistory map[int64][]uint64,
 	tableTriggerDDLHistory []uint64,
 ) ([]uint64, error) {
@@ -756,7 +756,7 @@ func updateDDLHistory(
 	case model.ActionCreateSchema,
 		model.ActionCreateView:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
-		for tableID := range tablesBasicInfo {
+		for tableID := range tableMap {
 			addTableHistory(tableID)
 		}
 	case model.ActionDropSchema:
