@@ -91,7 +91,7 @@ func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) 
 	}
 
 	if rawEvent.IsResolved() {
-		p.advanceResolvedTs(common.Ts(rawEvent.CRTs))
+		p.advanceResolvedTs(rawEvent.CRTs)
 		return nil
 	}
 
@@ -106,7 +106,7 @@ func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) 
 
 	p.writeDDLEvent(DDLEvent{
 		Job:      job,
-		CommitTS: common.Ts(rawEvent.CRTs),
+		CommitTS: rawEvent.CRTs,
 	})
 
 	return nil

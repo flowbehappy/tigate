@@ -117,7 +117,7 @@ func loadPersistentStorage(db *pebble.DB, minRequiredTS common.Ts) (*persistentS
 	}
 	dataStorage.gcRunning.Store(false)
 	values, err := readTSFromSnapshot(snap, gcTSKey())
-	// TODO: distiguish between non exist key error and other error
+	// TODO: distinguish between non exist key error and other error
 	if err != nil || len(values) != 1 {
 		return nil, schemaMetaTS{}, nil
 	}
@@ -374,7 +374,7 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 }
 
 func (p *persistentStorage) getGCTS() common.Ts {
-	return common.Ts(p.gcTS.Load())
+	return p.gcTS.Load()
 }
 
 func (p *persistentStorage) gc(gcTS common.Ts) error {
