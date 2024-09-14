@@ -60,29 +60,26 @@ func newPersistentStorage(
 	// FIXME: avoid remove
 	err := os.RemoveAll(dbPath)
 	if err != nil {
-		log.Panic("fail to remove path")
+		log.Panic("persistentStorage: fail to remove path", zap.String("path", dbPath), zap.Error(err))
 	}
 	// TODO: update pebble options
 	// TODO: close pebble db at exit
 	db, err := pebble.Open(dbPath, &pebble.Options{})
 	if err != nil {
-		log.Fatal("open db failed", zap.Error(err))
+		log.Fatal("persistentStorage: open db failed", zap.String("path", dbPath), zap.Error(err))
 	}
 
 	// TODO: cleanObseleteData?
 
 	dataStorage, metaTS, databaseMap := loadPersistentStorage(db, currentGCTS)
-
 	if dataStorage != nil {
 		return dataStorage, metaTS, databaseMap
 	}
 
-	log.Info("schema store create a fresh storage")
-
 	// TODO: create a fresh db instance
 	databaseMap, err = writeSchemaSnapshotToDisk(db, storage, currentGCTS)
 	if err != nil {
-		log.Fatal("write schema snapshot failed", zap.Error(err))
+		log.Fatal("persistentStorage: write schema snapshot failed", zap.Error(err))
 	}
 	dataStorage = &persistentStorage{
 		gcRunning: atomic.Bool{},
@@ -99,16 +96,31 @@ func newPersistentStorage(
 	}
 
 	batch := db.NewBatch()
-	writeTSToBatch(batch, gcTSKey(), currentGCTS)
-	writeTSToBatch(batch, metaTSKey(), metaTS.ResolvedTS, metaTS.FinishedDDLTS, metaTS.SchemaVersion)
-	batch.Commit(pebble.NoSync)
+	err = writeTSToBatch(batch, gcTSKey(), currentGCTS)
+	if err != nil {
+		log.Fatal("persistentStorage: write gcTS failed", zap.Error(err))
+	}
+	err = writeTSToBatch(batch, metaTSKey(), metaTS.ResolvedTS, metaTS.FinishedDDLTS, metaTS.SchemaVersion)
+	if err != nil {
+		log.Fatal("persistentStorage: write metaTS failed", zap.Error(err))
+	}
+	err = batch.Commit(pebble.NoSync)
+	if err != nil {
+		log.Fatal("persistentStorage: commit batch failed", zap.Error(err))
+	}
 
+	log.Info("persistentStorage: schema store create a fresh storage", zap.String("path", dbPath))
 	return dataStorage, metaTS, databaseMap
 }
 
 func loadPersistentStorage(db *pebble.DB, minRequiredTS common.Ts) (*persistentStorage, schemaMetaTS, DatabaseInfoMap) {
 	snap := db.NewSnapshot()
-	defer snap.Close()
+	defer func() {
+		err := snap.Close()
+		if err != nil {
+			log.Warn("persistentStorage: close snapshot failed", zap.Error(err))
+		}
+	}()
 
 	dataStorage := &persistentStorage{
 		gcRunning: atomic.Bool{},
@@ -123,6 +135,12 @@ func loadPersistentStorage(db *pebble.DB, minRequiredTS common.Ts) (*persistentS
 	}
 	dataStorage.gcTS.Store(values[0])
 
+	// gcTS cannot go back
+	if minRequiredTS < dataStorage.gcTS.Load() {
+		log.Panic("persistentStorage: gcSafePoint < gcTs, shouldn't happen",
+			zap.Uint64("gcSafePoint", minRequiredTS), zap.Uint64("gcTS", dataStorage.gcTS.Load()))
+	}
+
 	var metaTS schemaMetaTS
 	values, err = readTSFromSnapshot(snap, metaTSKey())
 	if err != nil || len(values) != 3 {
@@ -132,10 +150,6 @@ func loadPersistentStorage(db *pebble.DB, minRequiredTS common.Ts) (*persistentS
 	metaTS.FinishedDDLTS = values[1]
 	metaTS.SchemaVersion = values[2]
 
-	// gcTS cannot go back
-	if minRequiredTS < dataStorage.gcTS.Load() {
-		log.Panic("shouldn't happend")
-	}
 	// FIXME: > or >=?
 	if minRequiredTS > metaTS.ResolvedTS {
 		return nil, schemaMetaTS{}, nil
@@ -145,57 +159,79 @@ func loadPersistentStorage(db *pebble.DB, minRequiredTS common.Ts) (*persistentS
 
 	snapshotLowerBound, err := snapshotSchemaKey(dataStorage.getGCTS(), 0)
 	if err != nil {
-		log.Fatal("generate lower bound failed", zap.Error(err))
+		log.Fatal("persistentStorage: generate lower bound failed", zap.Error(err))
 	}
 	snapshotUpperBound, err := snapshotSchemaKey(dataStorage.getGCTS(), int64(math.MaxInt64))
 	if err != nil {
-		log.Fatal("generate upper bound failed", zap.Error(err))
+		log.Fatal("persistentStorage: generate upper bound failed", zap.Error(err))
 	}
 	snapIter, err := snap.NewIter(&pebble.IterOptions{
 		LowerBound: snapshotLowerBound,
 		UpperBound: snapshotUpperBound,
 	})
 	if err != nil {
-		log.Fatal("new iterator failed", zap.Error(err))
+		log.Fatal("persistentStorage: new iterator failed", zap.Error(err))
 	}
-	defer snapIter.Close()
+	defer func() {
+		err = snapIter.Close()
+		if err != nil {
+			log.Warn("persistentStorage: close iterator failed", zap.Error(err))
+		}
+	}()
 	for snapIter.First(); snapIter.Valid(); snapIter.Next() {
 		dbInfo := &model.DBInfo{}
-		err := json.Unmarshal(snapIter.Value(), dbInfo)
+		value, err := snapIter.ValueAndErr()
 		if err != nil {
-			log.Fatal("get db info failed", zap.Error(err))
+			log.Fatal("persistentStorage: read value failed", zap.Error(err))
+		}
+		err = json.Unmarshal(value, dbInfo)
+		if err != nil {
+			log.Fatal("persistentStorage: unmarshal db info failed", zap.Error(err))
 		}
 		databaseMap[dbInfo.ID] = &DatabaseInfo{
 			Name:          dbInfo.Name.O,
 			Tables:        make([]common.TableID, 0),
-			CreateVersion: common.Ts(dataStorage.getGCTS()),
+			CreateVersion: dataStorage.getGCTS(),
 			DeleteVersion: common.Ts(math.MaxUint64),
 		}
 	}
 
 	ddlJobLowerBound, err := ddlJobSchemaKey(dataStorage.getGCTS(), 0)
 	if err != nil {
-		log.Fatal("generate lower bound failed", zap.Error(err))
+		log.Fatal("persistentStorage: generate lower bound failed", zap.Error(err))
 	}
 	ddlJobUpperBound, err := ddlJobSchemaKey(common.Ts(math.MaxUint64), int64(math.MaxInt64))
 	if err != nil {
-		log.Fatal("generate upper bound failed", zap.Error(err))
+		log.Fatal("persistentStorage: generate upper bound failed", zap.Error(err))
 	}
 	ddlJobIter, err := snap.NewIter(&pebble.IterOptions{
 		LowerBound: ddlJobLowerBound,
 		UpperBound: ddlJobUpperBound,
 	})
 	if err != nil {
-		log.Fatal("new iterator failed", zap.Error(err))
+		log.Fatal("persistentStorage: new ddl job iterator failed", zap.Error(err))
 	}
-	defer ddlJobIter.Close()
+	defer func() {
+		err = ddlJobIter.Close()
+		if err != nil {
+			log.Warn("persistentStorage: close ddl job iterator failed", zap.Error(err))
+		}
+	}()
+
 	for ddlJobIter.First(); ddlJobIter.Valid(); ddlJobIter.Next() {
 		ddlJob := &model.Job{}
-		err := json.Unmarshal(ddlJobIter.Value(), ddlJob)
+		value, err := ddlJobIter.ValueAndErr()
 		if err != nil {
-			log.Fatal("get db info failed", zap.Error(err))
+			log.Fatal("persistentStorage: read value failed", zap.Error(err))
 		}
-		handleResolvedDDLJob(ddlJob, databaseMap, nil)
+		err = json.Unmarshal(value, ddlJob)
+		if err != nil {
+			log.Fatal("persistentStorage: unmarshal ddl job info failed", zap.Error(err))
+		}
+		err = handleResolvedDDLJob(ddlJob, databaseMap, nil)
+		if err != nil {
+			log.Fatal("persistentStorage: handle ddl job failed", zap.Error(err))
+		}
 	}
 
 	return dataStorage, metaTS, databaseMap

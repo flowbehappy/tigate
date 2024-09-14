@@ -102,10 +102,10 @@ func NewSchemaStore(
 ) SchemaStore {
 	gcSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, "cdc-new-store", 0, 0)
 	if err != nil {
-		log.Panic("get ts failed", zap.Error(err))
+		log.Panic("schemaStore: update service gc safe-point failed", zap.Error(err))
 	}
 	dataStorage, metaTS, databaseMap := newPersistentStorage(root, kvStorage, gcSafePoint)
-	log.Info("get gc safe point",
+	log.Info("schemaStore: persistent storage created",
 		zap.Uint64("gcSafePoint", gcSafePoint),
 		zap.Any("metaTS", metaTS),
 		zap.Int("databaseMapLen", len(databaseMap)))
@@ -122,10 +122,6 @@ func NewSchemaStore(
 		tableInfoStoreMap: make(TableInfoStoreMap),
 		dispatchersMap:    make(DispatcherInfoMap),
 	}
-
-	log.Info("new schema store",
-		zap.Uint64("finishedDDLTS", s.finishedDDLTS),
-		zap.Int64("schemaVersion", s.schemaVersion))
 	s.ddlJobFetcher = newDDLJobFetcher(
 		pdCli,
 		regionCache,
@@ -134,6 +130,9 @@ func NewSchemaStore(
 		metaTS.ResolvedTS,
 		s.writeDDLEvent,
 		s.advanceResolvedTs)
+	log.Info("schemaStore: initialized",
+		zap.Uint64("finishedDDLTS", s.finishedDDLTS),
+		zap.Int64("schemaVersion", s.schemaVersion))
 	return s
 }
 
@@ -147,7 +146,7 @@ func (s *schemaStore) Run(ctx context.Context) error {
 		return s.batchCommitAndUpdateWatermark(ctx)
 	})
 	eg.Go(func() error {
-		return s.ddlJobFetcher.puller.Run(ctx)
+		return s.ddlJobFetcher.run(ctx)
 	})
 	return eg.Wait()
 }
@@ -214,7 +213,7 @@ func (s *schemaStore) batchCommitAndUpdateWatermark(ctx context.Context) error {
 					}
 					// TODO: batch ddl event
 					// TODO: write ddl event before update resolved ts
-					err := s.dataStorage.writeDDLEvent(event)
+					err = s.dataStorage.writeDDLEvent(event)
 					if err != nil {
 						log.Fatal("write ddl event failed", zap.Error(err))
 					}
@@ -450,15 +449,23 @@ func (s *schemaStore) GetNextTableTriggerEvents(f filter.Filter, start common.Ts
 	return nil, s.maxResolvedTS.Load(), nil
 }
 
-func (s *schemaStore) writeDDLEvent(ddlEvent DDLEvent) error {
+func (s *schemaStore) writeDDLEvent(ctx context.Context, ddlEvent DDLEvent) error {
 	// log.Info("write ddl event", zap.Any("ddlEvent", ddlEvent))
-	s.eventCh <- ddlEvent
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case s.eventCh <- ddlEvent:
+	}
 	return nil
 }
 
-func (s *schemaStore) advanceResolvedTs(resolvedTs common.Ts) error {
+func (s *schemaStore) advanceResolvedTs(ctx context.Context, resolvedTs common.Ts) error {
 	// log.Info("advance resolved ts", zap.Any("resolvedTS", resolvedTs))
-	s.eventCh <- resolvedTs
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case s.eventCh <- resolvedTs:
+	}
 	return nil
 }
 
