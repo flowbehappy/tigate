@@ -548,9 +548,6 @@ func (iter *eventStoreIter) Next() (*common.RawKVEntry, bool, error) {
 	}
 	iter.prevCommitTS = commitTS
 	iter.prevStartTS = startTS
-	log.Info("read event",
-		zap.Uint64("tableID", uint64(iter.tableID)),
-		zap.Uint64("commitTS", commitTS))
 	iter.rowCount++
 	iter.innerIter.Next()
 	return rawKV, isNewTxn, nil

@@ -192,11 +192,12 @@ func (s *schemaStore) FetchTableDDLEvents(tableID int64, start, end uint64) ([]c
 	if currentResolvedTs < end {
 		end = currentResolvedTs
 	}
-	log.Info("FetchTableDDLEvents",
+	// TODO: remove the following log
+	log.Debug("FetchTableDDLEvents",
 		zap.Int64("tableID", tableID),
 		zap.Uint64("start", start),
 		zap.Uint64("end", end))
-	defer log.Info("FetchTableDDLEvents end",
+	defer log.Debug("FetchTableDDLEvents end",
 		zap.Int64("tableID", tableID),
 		zap.Uint64("start", start),
 		zap.Uint64("end", end))
@@ -207,7 +208,8 @@ func (s *schemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, star
 	if limit == 0 {
 		log.Panic("limit cannot be 0")
 	}
-	log.Info("FetchTableTriggerDDLEvents",
+	// TODO: remove the following log
+	log.Debug("FetchTableTriggerDDLEvents",
 		zap.Uint64("start", start),
 		zap.Int("limit", limit))
 	// must get resolved ts first
@@ -220,7 +222,7 @@ func (s *schemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, star
 	if len(events) > 0 && events[len(events)-1].FinishedTs > currentResolvedTs {
 		end = events[len(events)-1].FinishedTs
 	}
-	log.Info("FetchTableTriggerDDLEvents end",
+	log.Debug("FetchTableTriggerDDLEvents end",
 		zap.Uint64("start", start),
 		zap.Int("limit", limit),
 		zap.Uint64("end", end),
