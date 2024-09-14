@@ -63,7 +63,12 @@ func NewSink(config *config.ChangefeedConfig, changefeedID model.ChangeFeedID) (
 		}
 		return NewMysqlSink(changefeedID, 16, cfg, db), nil
 	case sink.KafkaScheme, sink.KafkaSSLScheme:
-		return NewKafkaSink(changefeedID, sinkURI, config.SinkConfig)
+		sink, err := NewKafkaSink(changefeedID, sinkURI, config.SinkConfig)
+		if err != nil {
+			log.Error("create kafka sink failed", zap.Error(err))
+			return nil, err
+		}
+		return sink, nil
 	}
 	return nil, nil
 }

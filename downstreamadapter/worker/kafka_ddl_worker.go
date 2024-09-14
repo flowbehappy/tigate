@@ -15,21 +15,24 @@ import (
 	"github.com/pingcap/tiflow/cdc/sink/ddlsink/mq/ddlproducer"
 	"github.com/pingcap/tiflow/cdc/sink/metrics"
 	"github.com/pingcap/tiflow/cdc/sink/metrics/mq"
-	"github.com/pingcap/tiflow/pkg/chann"
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
+
+type CheckpointInfo struct {
+	Ts         uint64
+	TableNames []*common.SchemaTableName
+}
 
 // worker will send messages to the DML producer on a batch basis.
 type KafkaDDLWorker struct {
 	// changeFeedID indicates this sink belongs to which processor(changefeed).
 	changeFeedID model.ChangeFeedID
 	// protocol indicates the protocol used by this sink.
-	protocol config.Protocol
-	// msgChan caches the messages to be sent.
-	// It is an unbounded channel.
-	msgChan *chann.DrainableChann[*common.DDLEvent]
+	protocol           config.Protocol
+	ddlEventChan       chan *common.DDLEvent
+	checkpointInfoChan chan *CheckpointInfo
 	// ticker used to force flush the batched messages when the interval is reached.
 	ticker *time.Ticker
 
@@ -83,6 +86,8 @@ func NewKafkaDDLWorker(
 	protocol config.Protocol,
 	producer ddlproducer.DDLProducer,
 	encoder encoder.EventEncoder,
+	eventRouter *eventrouter.EventRouter,
+	topicManager topicmanager.TopicManager,
 	statistics *metrics.Statistics,
 ) *KafkaDDLWorker {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -90,10 +95,12 @@ func NewKafkaDDLWorker(
 		ctx:                               ctx,
 		changeFeedID:                      id,
 		protocol:                          protocol,
-		msgChan:                           chann.NewAutoDrainChann[*common.DDLEvent](),
+		ddlEventChan:                      make(chan *common.DDLEvent, 16),
 		ticker:                            time.NewTicker(batchInterval),
 		encoder:                           encoder,
 		producer:                          producer,
+		eventRouter:                       eventRouter,
+		topicManager:                      topicManager,
 		metricMQWorkerSendMessageDuration: mq.WorkerSendMessageDuration.WithLabelValues(id.Namespace, id.ID),
 		metricMQWorkerBatchSize:           mq.WorkerBatchSize.WithLabelValues(id.Namespace, id.ID),
 		metricMQWorkerBatchDuration:       mq.WorkerBatchDuration.WithLabelValues(id.Namespace, id.ID),
@@ -103,24 +110,26 @@ func NewKafkaDDLWorker(
 	}
 
 	w.wg.Add(1)
-	go func() {
-		defer w.wg.Done()
-		// TODO:后面做一下性能测试看看要不要拆开做 pipeline
-		w.encodeAndSendDDLEvents()
-	}()
+	go w.encodeAndSendDDLEvents()
+	go w.encodeAndSendCheckpointEvents()
 	return w
 }
 
-func (w *KafkaDDLWorker) GetEventChan() chan<- *common.DDLEvent {
-	return w.msgChan.In()
+func (w *KafkaDDLWorker) GetDDLEventChan() chan<- *common.DDLEvent {
+	return w.ddlEventChan
+}
+
+func (w *KafkaDDLWorker) GetCheckpointInfoChan() chan<- *CheckpointInfo {
+	return w.checkpointInfoChan
 }
 
 func (w *KafkaDDLWorker) encodeAndSendDDLEvents() error {
+	defer w.wg.Done()
 	for {
 		select {
 		case <-w.ctx.Done():
 			return errors.Trace(w.ctx.Err())
-		case event, ok := <-w.msgChan.Out():
+		case event, ok := <-w.ddlEventChan:
 			if !ok {
 				log.Warn("MQ sink flush worker channel closed",
 					zap.String("namespace", w.changeFeedID.Namespace),
@@ -165,36 +174,51 @@ func (w *KafkaDDLWorker) encodeAndSendDDLEvents() error {
 	}
 }
 
-func (w *KafkaDDLWorker) WriteCheckpointTs(ts uint64, tableNames []*common.SchemaTableName) error {
-	msg, err := w.encoder.EncodeCheckpointEvent(ts)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// NOTICE: When there are no tables to replicate,
-	// we need to send checkpoint ts to the default topic.
-	// This will be compatible with the old behavior.
-	if len(tableNames) == 0 {
-		topic := w.eventRouter.GetDefaultTopic()
-		partitionNum, err := w.topicManager.GetPartitionNum(w.ctx, topic)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		log.Debug("Emit checkpointTs to default topic",
-			zap.String("topic", topic), zap.Uint64("checkpointTs", ts))
-		err = w.producer.SyncBroadcastMessage(w.ctx, topic, partitionNum, msg)
-		return errors.Trace(err)
-	}
+func (w *KafkaDDLWorker) encodeAndSendCheckpointEvents() error {
+	defer w.wg.Done()
+	for {
+		select {
+		case <-w.ctx.Done():
+			return errors.Trace(w.ctx.Err())
+		case checkpointInfo, ok := <-w.checkpointInfoChan:
+			if !ok {
+				log.Warn("MQ sink flush worker channel closed",
+					zap.String("namespace", w.changeFeedID.Namespace),
+					zap.String("changefeed", w.changeFeedID.ID))
+				return nil
+			}
+			ts := checkpointInfo.Ts
+			tableNames := checkpointInfo.TableNames
+			msg, err := w.encoder.EncodeCheckpointEvent(ts)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// NOTICE: When there are no tables to replicate,
+			// we need to send checkpoint ts to the default topic.
+			// This will be compatible with the old behavior.
+			if len(tableNames) == 0 {
+				topic := w.eventRouter.GetDefaultTopic()
+				partitionNum, err := w.topicManager.GetPartitionNum(w.ctx, topic)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				log.Debug("Emit checkpointTs to default topic",
+					zap.String("topic", topic), zap.Uint64("checkpointTs", ts))
+				err = w.producer.SyncBroadcastMessage(w.ctx, topic, partitionNum, msg)
+				return errors.Trace(err)
+			}
 
-	topics := w.eventRouter.GetActiveTopics(tableNames)
-	for _, topic := range topics {
-		partitionNum, err := w.topicManager.GetPartitionNum(w.ctx, topic)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = w.producer.SyncBroadcastMessage(w.ctx, topic, partitionNum, msg)
-		if err != nil {
-			return errors.Trace(err)
+			topics := w.eventRouter.GetActiveTopics(tableNames)
+			for _, topic := range topics {
+				partitionNum, err := w.topicManager.GetPartitionNum(w.ctx, topic)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				err = w.producer.SyncBroadcastMessage(w.ctx, topic, partitionNum, msg)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
 		}
 	}
-	return nil
 }
