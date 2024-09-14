@@ -438,6 +438,7 @@ func addTableInfoFromKVSnap(
 		return err
 	}
 	tableInfo := common.WrapTableInfo(int64(schemaID), schemaName, uint64(kvSnapVersion), rawTableInfo)
+	tableInfo.InitPreSQLs()
 	store.addInitialTableInfo(tableInfo)
 	return nil
 }
