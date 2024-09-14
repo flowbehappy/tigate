@@ -15,7 +15,6 @@ import (
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/sink/ddlsink/mq/ddlproducer"
 	"github.com/pingcap/tiflow/pkg/config"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -44,11 +43,6 @@ type KafkaDDLWorker struct {
 
 	// producer is used to send the messages to the Kafka broker.
 	producer ddlproducer.DDLProducer
-
-	// record the duration of encoding and sending one checkpointTs messages to the Kafka broker.
-	metricsCheckpointTsMessageDuration prometheus.Observer
-
-	metricsCheckpointTsMessageCount prometheus.Gauge
 
 	statistics    *metrics.Statistics
 	partitionRule DDLDispatchRule
@@ -89,20 +83,18 @@ func NewKafkaDDLWorker(
 ) *KafkaDDLWorker {
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &KafkaDDLWorker{
-		ctx:                                ctx,
-		changeFeedID:                       id,
-		protocol:                           protocol,
-		ddlEventChan:                       make(chan *common.DDLEvent, 16),
-		ticker:                             time.NewTicker(batchInterval),
-		encoder:                            encoder,
-		producer:                           producer,
-		eventRouter:                        eventRouter,
-		topicManager:                       topicManager,
-		statistics:                         statistics,
-		cancel:                             cancel,
-		partitionRule:                      getDDLDispatchRule(protocol),
-		metricsCheckpointTsMessageDuration: metrics.CheckpointTsMessageDuration.WithLabelValues(id.Namespace, id.ID),
-		metricsCheckpointTsMessageCount:    metrics.CheckpointTsMessageCount.WithLabelValues(id.Namespace, id.ID),
+		ctx:           ctx,
+		changeFeedID:  id,
+		protocol:      protocol,
+		ddlEventChan:  make(chan *common.DDLEvent, 16),
+		ticker:        time.NewTicker(batchInterval),
+		encoder:       encoder,
+		producer:      producer,
+		eventRouter:   eventRouter,
+		topicManager:  topicManager,
+		statistics:    statistics,
+		cancel:        cancel,
+		partitionRule: getDDLDispatchRule(protocol),
 	}
 
 	w.wg.Add(1)
@@ -172,6 +164,15 @@ func (w *KafkaDDLWorker) encodeAndSendDDLEvents() error {
 
 func (w *KafkaDDLWorker) encodeAndSendCheckpointEvents() error {
 	defer w.wg.Done()
+
+	checkpointTsMessageDuration := metrics.CheckpointTsMessageDuration.WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+	checkpointTsMessageCount := metrics.CheckpointTsMessageCount.WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+
+	defer func() {
+		metrics.CheckpointTsMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+		metrics.CheckpointTsMessageCount.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+	}()
+
 	for {
 		select {
 		case <-w.ctx.Done():
@@ -216,8 +217,8 @@ func (w *KafkaDDLWorker) encodeAndSendCheckpointEvents() error {
 					return errors.Trace(err)
 				}
 			}
-			w.metricsCheckpointTsMessageCount.Inc()
-			w.metricsCheckpointTsMessageDuration.Observe(time.Since(start).Seconds())
+			checkpointTsMessageCount.Inc()
+			checkpointTsMessageDuration.Observe(time.Since(start).Seconds())
 		}
 	}
 }

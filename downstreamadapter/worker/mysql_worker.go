@@ -25,41 +25,27 @@ import (
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
 // MysqlWorker is use to flush the event downstream
 type MysqlWorker struct {
-	eventChan   chan *common.DMLEvent // 获取到能往下游写的 events
-	mysqlWriter *writer.MysqlWriter   // 实际负责做 flush 操作
-	id          int
-	// Metrics.
-	MetricConflictDetectDuration prometheus.Observer
-	MetricQueueDuration          prometheus.Observer
-	MetricWorkerFlushDuration    prometheus.Observer
-	MetricWorkerTotalDuration    prometheus.Observer
-	// MetricWorkerHandledRows is the number of rows this worker received from conflict detector.
-	MetricWorkerHandledRows prometheus.Counter
+	eventChan    chan *common.DMLEvent
+	mysqlWriter  *writer.MysqlWriter
+	id           int
+	changefeedID model.ChangeFeedID
 
 	wg      sync.WaitGroup
 	maxRows int
 }
 
 func NewMysqlWorker(db *sql.DB, config *writer.MysqlConfig, id int, changefeedID model.ChangeFeedID, ctx context.Context, maxRows int) *MysqlWorker {
-	wid := strconv.Itoa(id)
-
 	worker := &MysqlWorker{
-		mysqlWriter: writer.NewMysqlWriter(db, config, changefeedID),
-		id:          id,
-		maxRows:     maxRows,
-		eventChan:   make(chan *common.DMLEvent, 16),
-
-		MetricConflictDetectDuration: metrics.ConflictDetectDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
-		MetricQueueDuration:          metrics.QueueDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
-		MetricWorkerFlushDuration:    metrics.WorkerFlushDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID, wid),
-		MetricWorkerTotalDuration:    metrics.WorkerTotalDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID, wid),
-		MetricWorkerHandledRows:      metrics.WorkerHandledRows.WithLabelValues(changefeedID.Namespace, changefeedID.ID, wid),
+		mysqlWriter:  writer.NewMysqlWriter(db, config, changefeedID),
+		id:           id,
+		maxRows:      maxRows,
+		eventChan:    make(chan *common.DMLEvent, 16),
+		changefeedID: changefeedID,
 	}
 	worker.wg.Add(1)
 	go worker.Run(ctx)
@@ -73,6 +59,16 @@ func (t *MysqlWorker) GetEventChan() chan *common.DMLEvent {
 
 func (t *MysqlWorker) Run(ctx context.Context) {
 	defer t.wg.Done()
+	workerFlushDuration := metrics.WorkerFlushDuration.WithLabelValues(t.changefeedID.Namespace, t.changefeedID.ID, strconv.Itoa(t.id))
+	workerTotalDuration := metrics.WorkerTotalDuration.WithLabelValues(t.changefeedID.Namespace, t.changefeedID.ID, strconv.Itoa(t.id))
+	workerHandledRows := metrics.WorkerHandledRows.WithLabelValues(t.changefeedID.Namespace, t.changefeedID.ID, strconv.Itoa(t.id))
+
+	defer func() {
+		metrics.WorkerFlushDuration.DeleteLabelValues(t.changefeedID.Namespace, t.changefeedID.ID, strconv.Itoa(t.id))
+		metrics.WorkerTotalDuration.DeleteLabelValues(t.changefeedID.Namespace, t.changefeedID.ID, strconv.Itoa(t.id))
+		metrics.WorkerHandledRows.DeleteLabelValues(t.changefeedID.Namespace, t.changefeedID.ID, strconv.Itoa(t.id))
+	}()
+
 	totalStart := time.Now()
 
 	events := make([]*common.DMLEvent, 0)
@@ -93,7 +89,7 @@ func (t *MysqlWorker) Run(ctx context.Context) {
 				for !needFlush {
 					select {
 					case txnEvent := <-t.eventChan:
-						t.MetricWorkerHandledRows.Add(float64(txnEvent.Len()))
+						workerHandledRows.Add(float64(txnEvent.Len()))
 						events = append(events, txnEvent)
 						rows += txnEvent.Len()
 						if rows > t.maxRows {
@@ -117,11 +113,11 @@ func (t *MysqlWorker) Run(ctx context.Context) {
 				log.Error("Failed to flush events", zap.Error(err), zap.Any("workerID", t.id), zap.Any("events", events))
 				return
 			}
-			t.MetricWorkerFlushDuration.Observe(time.Since(start).Seconds())
+			workerFlushDuration.Observe(time.Since(start).Seconds())
 			// we record total time to calcuate the worker busy ratio.
 			// so we record the total time after flushing, to unified statistics on
 			// flush time and total time
-			t.MetricWorkerTotalDuration.Observe(time.Since(totalStart).Seconds())
+			workerTotalDuration.Observe(time.Since(totalStart).Seconds())
 			totalStart = time.Now()
 			log.Info("Flush events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Duration("duration", time.Since(start)), zap.Any("workerID", t.id))
 
