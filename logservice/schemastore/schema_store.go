@@ -22,7 +22,7 @@ type SchemaStore interface {
 
 	GetAllPhysicalTables(snapTs uint64, filter filter.Filter) ([]common.Table, error)
 
-	RegisterTable(tableID int64) error
+	RegisterTable(tableID int64, startTs uint64) error
 
 	UnregisterTable(tableID int64) error
 
@@ -121,7 +121,7 @@ func (s *schemaStore) Close(ctx context.Context) error {
 }
 
 func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
-	ticker := time.NewTicker(50 * time.Millisecond)
+	ticker := time.NewTicker(20 * time.Millisecond)
 	for {
 		select {
 		case <-ctx.Done():
@@ -135,7 +135,6 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 						zap.Uint64("resolvedTs", pendingTs),
 						zap.Int("resolvedEventsLen", len(resolvedEvents)))
 
-					// TODO: avoid allocate a new slice if event in resolvedEvents is all valid
 					validEvents := make([]PersistedDDLEvent, 0, len(resolvedEvents))
 
 					for _, event := range resolvedEvents {
@@ -149,7 +148,6 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 								zap.Uint64("finishedDDLTS", s.finishedDDLTs))
 							continue
 						}
-						// TODO: build persisted ddl event after filter
 						validEvents = append(validEvents, buildPersistedDDLEvent(event.Job))
 						// need to update the following two members for every event to filter out later duplicate events
 						s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
@@ -173,7 +171,8 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs uint64, filter filter.Filter) 
 	return s.dataStorage.getAllPhysicalTables(snapTs, filter)
 }
 
-func (s *schemaStore) RegisterTable(tableID int64) error {
+func (s *schemaStore) RegisterTable(tableID int64, startTs uint64) error {
+	s.waitResolvedTs(tableID, startTs)
 	return s.dataStorage.registerTable(tableID)
 }
 
@@ -259,7 +258,7 @@ func (s *schemaStore) waitResolvedTs(tableID int64, ts uint64) {
 		if s.resolvedTs.Load() >= uint64(ts) {
 			return
 		}
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(time.Millisecond * 50)
 		if time.Since(start) > time.Second*5 {
 			log.Info("wait resolved ts slow",
 				zap.Int64("tableID", tableID),

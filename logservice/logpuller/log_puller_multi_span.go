@@ -130,7 +130,7 @@ func (p *LogPullerMultiSpan) tryUpdatePendingResolvedTs(entry *common.RawKVEntry
 }
 
 func (p *LogPullerMultiSpan) sendResolvedTsPeriodically(ctx context.Context) error {
-	ticker := time.NewTicker(20 * time.Millisecond)
+	ticker := time.NewTicker(10 * time.Millisecond)
 	for {
 		select {
 		case <-ctx.Done():
