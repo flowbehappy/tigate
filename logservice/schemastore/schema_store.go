@@ -192,11 +192,11 @@ func (s *schemaStore) FetchTableDDLEvents(tableID int64, start, end uint64) ([]c
 		end = currentResolvedTs
 	}
 	// TODO: remove the following log
-	log.Debug("FetchTableDDLEvents",
+	log.Info("FetchTableDDLEvents",
 		zap.Int64("tableID", tableID),
 		zap.Uint64("start", start),
 		zap.Uint64("end", end))
-	defer log.Debug("FetchTableDDLEvents end",
+	defer log.Info("FetchTableDDLEvents end",
 		zap.Int64("tableID", tableID),
 		zap.Uint64("start", start),
 		zap.Uint64("end", end))
