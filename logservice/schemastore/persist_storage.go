@@ -523,7 +523,7 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 	p.mu.Lock()
 	for i := range ddlEvents {
 		fillSchemaName(&ddlEvents[i], p.databaseMap)
-		fillInfluencedInfo(&ddlEvents[i], p.databaseMap, p.tableMap)
+		fillInfluencedTableInfo(&ddlEvents[i], p.databaseMap, p.tableMap)
 		skip, err := updateDatabaseInfoAndTableInfo(&ddlEvents[i], p.databaseMap, p.tableMap)
 		if err != nil {
 			return err
@@ -569,7 +569,7 @@ func fillSchemaName(
 	}
 }
 
-func fillInfluencedInfo(
+func fillInfluencedTableInfo(
 	event *PersistedDDLEvent,
 	databaseMap map[int64]*BasicDatabaseInfo,
 	tableMap map[int64]*BasicTableInfo,
