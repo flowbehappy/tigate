@@ -124,6 +124,9 @@ func (v *versionedTableInfoStore) getTableInfo(ts uint64) (*common.TableInfo, er
 func (v *versionedTableInfoStore) gc(gcTs uint64) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if !v.initialized {
+		return
+	}
 	if len(v.infos) == 0 {
 		log.Fatal("no table info found")
 	}

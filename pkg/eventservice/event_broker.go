@@ -2,12 +2,13 @@ package eventservice
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"hash/crc32"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
@@ -187,7 +188,10 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 					startTs := dispatcher.watermark.Load()
 					remoteID := node.ID(dispatcher.info.GetServerID())
 					// TODO: maybe limit 1 is enough.
-					ddlEvents, endTs := c.schemaStore.FetchTableTriggerDDLEvents(dispatcher.filter, startTs, 10)
+					ddlEvents, endTs, err := c.schemaStore.FetchTableTriggerDDLEvents(dispatcher.filter, startTs, 10)
+					if err != nil {
+						log.Panic("get table trigger events failed", zap.Error(err))
+					}
 					for _, e := range ddlEvents {
 						c.sendDDL(remoteID, e, dispatcher)
 					}
@@ -216,7 +220,10 @@ func (c *eventBroker) doScan(task *scanTask) {
 
 	remoteID := node.ID(task.dispatcherStat.info.GetServerID())
 	dispatcherID := task.dispatcherStat.info.GetID()
-	ddlEvents, endTs := c.schemaStore.FetchTableDDLEvents(dataRange.Span.TableID, dataRange.StartTs, dataRange.EndTs)
+	ddlEvents, endTs, err := c.schemaStore.FetchTableDDLEvents(dataRange.Span.TableID, dataRange.StartTs, dataRange.EndTs)
+	if err != nil {
+		log.Panic("get ddl events failed", zap.Error(err))
+	}
 	if endTs < dataRange.EndTs {
 		dataRange.EndTs = endTs
 	}

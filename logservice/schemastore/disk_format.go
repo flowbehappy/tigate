@@ -390,7 +390,7 @@ func writeSchemaSnapshotAndMeta(
 	db *pebble.DB,
 	tiStore kv.Storage,
 	snapTs uint64,
-) (map[int64]*BasicDatabaseInfo, map[int64]*BasicTableInfo, upperBoundMeta, error) {
+) (map[int64]*BasicDatabaseInfo, map[int64]*BasicTableInfo, error) {
 	meta := logpuller.GetSnapshotMeta(tiStore, uint64(snapTs))
 	start := time.Now()
 	dbInfos, err := meta.ListDatabases()
@@ -432,19 +432,59 @@ func writeSchemaSnapshotAndMeta(
 			}
 		}
 		if err := batch.Commit(pebble.NoSync); err != nil {
-			return nil, nil, upperBoundMeta{}, err
+			return nil, nil, err
 		}
 	}
 
 	writeGcTs(db, snapTs)
-	upperBound := upperBoundMeta{
-		FinishedDDLTs: 0,
-		SchemaVersion: 0,
-		ResolvedTs:    snapTs,
-	}
-	writeUpperBoundMeta(db, upperBound)
 
 	log.Info("finish write schema snapshot",
 		zap.Any("duration", time.Since(start).Seconds()))
-	return databaseMap, tablesInKVSnap, upperBound, nil
+	return databaseMap, tablesInKVSnap, nil
+}
+
+func cleanObseleteData(db *pebble.DB, oldGcTs uint64, gcTs uint64) {
+	batch := db.NewBatch()
+	defer batch.Close()
+
+	// table info
+	{
+		startKey, err := tableInfoKey(oldGcTs, 0)
+		if err != nil {
+			log.Fatal("generate lower bound failed", zap.Error(err))
+		}
+		endKey, err := tableInfoKey(gcTs, 0)
+		if err != nil {
+			log.Fatal("generate upper bound failed", zap.Error(err))
+		}
+		batch.DeleteRange(startKey, endKey, pebble.NoSync)
+	}
+	// database info
+	{
+		startKey, err := schemaInfoKey(oldGcTs, 0)
+		if err != nil {
+			log.Fatal("generate lower bound failed", zap.Error(err))
+		}
+		endKey, err := schemaInfoKey(gcTs, 0)
+		if err != nil {
+			log.Fatal("generate upper bound failed", zap.Error(err))
+		}
+		batch.DeleteRange(startKey, endKey, pebble.NoSync)
+	}
+	// ddl job
+	{
+		startKey, err := ddlJobKey(oldGcTs)
+		if err != nil {
+			log.Fatal("generate lower bound failed", zap.Error(err))
+		}
+		endKey, err := ddlJobKey(gcTs)
+		if err != nil {
+			log.Fatal("generate upper bound failed", zap.Error(err))
+		}
+		batch.DeleteRange(startKey, endKey, pebble.NoSync)
+	}
+
+	if err := batch.Commit(pebble.NoSync); err != nil {
+		log.Fatal("clean obselete data failed", zap.Error(err))
+	}
 }

@@ -522,7 +522,8 @@ func TestFetchDDLEvents(t *testing.T) {
 
 	// fetch table ddl events
 	{
-		ddlEvents := pStorage.fetchTableDDLEvents(tableID, 601, 607)
+		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, 601, 607)
+		require.Nil(t, err)
 		require.Equal(t, 2, len(ddlEvents))
 		require.Equal(t, uint64(605), ddlEvents[0].FinishedTs)
 		require.Equal(t, uint64(607), ddlEvents[1].FinishedTs)
@@ -535,7 +536,8 @@ func TestFetchDDLEvents(t *testing.T) {
 		filteConfig := &config.FilterConfig{}
 		eventFilter, err := filter.NewFilter(filteConfig, "", false)
 		require.Nil(t, err)
-		tableTriggerDDLEvents := pStorage.fetchTableTriggerDDLEvents(eventFilter, 0, 10)
+		tableTriggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(eventFilter, 0, 10)
+		require.Nil(t, err)
 		require.Equal(t, 3, len(tableTriggerDDLEvents))
 		require.Equal(t, uint64(200), tableTriggerDDLEvents[0].FinishedTs)
 		require.Equal(t, uint64(601), tableTriggerDDLEvents[1].FinishedTs)
@@ -547,7 +549,8 @@ func TestFetchDDLEvents(t *testing.T) {
 		filteConfig := &config.FilterConfig{}
 		eventFilter, err := filter.NewFilter(filteConfig, "", false)
 		require.Nil(t, err)
-		tableTriggerDDLEvents := pStorage.fetchTableTriggerDDLEvents(eventFilter, 0, 2)
+		tableTriggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(eventFilter, 0, 2)
+		require.Nil(t, err)
 		require.Equal(t, 2, len(tableTriggerDDLEvents))
 		require.Equal(t, uint64(200), tableTriggerDDLEvents[0].FinishedTs)
 		require.Equal(t, uint64(601), tableTriggerDDLEvents[1].FinishedTs)
