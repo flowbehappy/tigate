@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func newPersistentStorageForTest(db *pebble.DB, gcTs uint64, upperBound upperBoundMeta) *persistentStorage {
@@ -57,6 +58,32 @@ func newEmptyPersistentStorageForTest(dbPath string) *persistentStorage {
 		ResolvedTs:    0,
 	}
 	return newPersistentStorageForTest(db, uint64(gcTs), upperBound)
+}
+
+func mockWriteKVSnapOnDisk(db *pebble.DB, snapTs uint64, dbInfos map[int64]*model.DBInfo) map[int64]*BasicTableInfo {
+	batch := db.NewBatch()
+	defer batch.Close()
+	tablesInKVSnap := make(map[int64]*BasicTableInfo)
+	for _, dbInfo := range dbInfos {
+		writeSchemaInfoToBatch(batch, snapTs, dbInfo)
+		for _, tableInfo := range dbInfo.Tables {
+			tablesInKVSnap[tableInfo.ID] = &BasicTableInfo{
+				SchemaID: dbInfo.ID,
+				Name:     tableInfo.Name.O,
+				InKVSnap: true,
+			}
+			tableInfoValue, err := json.Marshal(tableInfo)
+			if err != nil {
+				log.Panic("marshal table info fail", zap.Error(err))
+			}
+			writeTableInfoToBatch(batch, snapTs, dbInfo.ID, tableInfoValue)
+		}
+	}
+	if err := batch.Commit(pebble.NoSync); err != nil {
+		log.Panic("commit batch fail", zap.Error(err))
+	}
+	writeGcTs(db, snapTs)
+	return tablesInKVSnap
 }
 
 func TestReadWriteMeta(t *testing.T) {
@@ -557,4 +584,154 @@ func TestFetchDDLEvents(t *testing.T) {
 	}
 
 	// TODO: test filter
+}
+
+func TestGC(t *testing.T) {
+	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+	err := os.RemoveAll(dbPath)
+	require.Nil(t, err)
+	db, err := pebble.Open(dbPath, &pebble.Options{})
+	require.Nil(t, err)
+	defer db.Close()
+
+	schemaID := int64(300)
+	gcTs := uint64(600)
+	tableID1 := int64(100)
+	tableID2 := int64(200)
+	{
+		databaseInfo := make(map[int64]*model.DBInfo)
+		databaseInfo[schemaID] = &model.DBInfo{
+			ID:   schemaID,
+			Name: model.NewCIStr("test"),
+			Tables: []*model.TableInfo{
+				{
+					ID:   tableID1,
+					Name: model.NewCIStr("t1"),
+				},
+				{
+					ID:   tableID2,
+					Name: model.NewCIStr("t2"),
+				},
+			},
+		}
+		mockWriteKVSnapOnDisk(db, gcTs, databaseInfo)
+	}
+
+	pStorage := newPersistentStorageForTest(db, gcTs, upperBoundMeta{
+		FinishedDDLTs: 0,
+		SchemaVersion: 0,
+		ResolvedTs:    gcTs,
+	})
+
+	// create table t3
+	tableID3 := int64(500)
+	{
+		ddlEvent := PersistedDDLEvent{
+			Type:          byte(model.ActionCreateTable),
+			SchemaID:      schemaID,
+			TableID:       tableID3,
+			SchemaVersion: 501,
+			TableInfo: &model.TableInfo{
+				ID:   tableID3,
+				Name: model.NewCIStr("t3"),
+			},
+			FinishedTs: 601,
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	// drop table t2
+	{
+		ddlEvent := PersistedDDLEvent{
+			Type:          byte(model.ActionDropTable),
+			SchemaID:      schemaID,
+			TableID:       tableID2,
+			SchemaVersion: 503,
+			TableInfo:     nil,
+			FinishedTs:    603,
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	// rename table t1
+	{
+		ddlEvent := PersistedDDLEvent{
+			Type:          byte(model.ActionRenameTable),
+			SchemaID:      schemaID,
+			TableID:       tableID1,
+			SchemaVersion: 505,
+			TableInfo: &model.TableInfo{
+				ID:   int64(tableID1),
+				Name: model.NewCIStr("t1_r"),
+			},
+			FinishedTs: 605,
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	// write upper bound
+	newUpperBound := upperBoundMeta{
+		FinishedDDLTs: 700,
+		SchemaVersion: 509,
+		ResolvedTs:    705,
+	}
+	{
+		writeUpperBoundMeta(db, newUpperBound)
+	}
+
+	pStorage.registerTable(tableID1, gcTs+1)
+
+	// mock gc
+	newGcTs := uint64(603)
+	{
+		databaseInfo := make(map[int64]*model.DBInfo)
+		databaseInfo[schemaID] = &model.DBInfo{
+			ID:   schemaID,
+			Name: model.NewCIStr("test"),
+			Tables: []*model.TableInfo{
+				{
+					ID:   tableID1,
+					Name: model.NewCIStr("t1"),
+				},
+				{
+					ID:   tableID3,
+					Name: model.NewCIStr("t3"),
+				},
+			},
+		}
+		tablesInKVSnap := mockWriteKVSnapOnDisk(db, newGcTs, databaseInfo)
+
+		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
+		require.Equal(t, false, pStorage.tableMap[tableID3].InKVSnap)
+		pStorage.cleanObseleteDataInMemory(newGcTs, tablesInKVSnap)
+		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, uint64(605), pStorage.tableTriggerDDLHistory[0])
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID1]))
+		require.Equal(t, true, pStorage.tableMap[tableID3].InKVSnap)
+		tableInfoT1, err := pStorage.getTableInfo(tableID1, newGcTs)
+		require.Nil(t, err)
+		require.Equal(t, "t1", tableInfoT1.Name.O)
+		tableInfoT1, err = pStorage.getTableInfo(tableID1, 606)
+		require.Nil(t, err)
+		require.Equal(t, "t1_r", tableInfoT1.Name.O)
+	}
+
+	pStorage = newPersistentStorageForTest(db, newGcTs, newUpperBound)
+	{
+		require.Equal(t, newGcTs, pStorage.gcTs)
+		require.Equal(t, newUpperBound, pStorage.upperBound)
+		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, uint64(605), pStorage.tableTriggerDDLHistory[0])
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID1]))
+		require.Equal(t, true, pStorage.tableMap[tableID3].InKVSnap)
+	}
+
+	// TODO: test obsolete data can be removed
+}
+
+func TestGetAllPhysicalTables(t *testing.T) {
+
 }

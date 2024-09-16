@@ -315,7 +315,7 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64
 	history, ok := p.tablesDDLHistory[tableID]
 	if !ok {
 		p.mu.RUnlock()
-		return nil, fmt.Errorf("table %d not found", tableID)
+		return nil, nil
 	}
 	index := sort.Search(len(history), func(i int) bool {
 		return history[i] > start
@@ -505,14 +505,15 @@ func (p *persistentStorage) doGc(gcTs uint64) error {
 	p.mu.Unlock()
 
 	start := time.Now()
-	if _, _, err := writeSchemaSnapshotAndMeta(p.db, p.kvStorage, gcTs); err != nil {
+	_, tablesInKVSnap, err := writeSchemaSnapshotAndMeta(p.db, p.kvStorage, gcTs)
+	if err != nil {
 		// TODO: retry
 		log.Warn("fail to write kv snapshot during gc",
 			zap.Uint64("gcTs", gcTs))
 	}
 
 	// clean data in memeory before clean data on disk
-	p.cleanObseleteDataInMemory(gcTs)
+	p.cleanObseleteDataInMemory(gcTs, tablesInKVSnap)
 	cleanObseleteData(p.db, oldGcTs, gcTs)
 
 	log.Info("gc finish",
@@ -522,29 +523,37 @@ func (p *persistentStorage) doGc(gcTs uint64) error {
 	return nil
 }
 
-func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64) {
+func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64, tablesInKVSnap map[int64]*BasicTableInfo) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.gcTs = gcTs
+
+	for tableID := range tablesInKVSnap {
+		p.tableMap[tableID].InKVSnap = true
+	}
+
 	// clean tablesDDLHistory
 	for tableID, history := range p.tablesDDLHistory {
-		// keep one version which is smaller than gcTs
-		i := sort.Search(len(history), func(i int) bool {
-			return history[i] >= gcTs
-		})
-		if i == 0 {
+		if _, ok := tablesInKVSnap[tableID]; !ok {
+			delete(p.tablesDDLHistory, tableID)
 			continue
 		}
-		p.tablesDDLHistory[tableID] = history[i-1:]
+
+		i := sort.Search(len(history), func(i int) bool {
+			return history[i] > gcTs
+		})
+		if i == len(history) {
+			delete(p.tablesDDLHistory, tableID)
+			continue
+		}
+		p.tablesDDLHistory[tableID] = history[i:]
 	}
 
 	// clean tableTriggerDDLHistory
 	i := sort.Search(len(p.tableTriggerDDLHistory), func(i int) bool {
-		return p.tableTriggerDDLHistory[i] >= gcTs
+		return p.tableTriggerDDLHistory[i] > gcTs
 	})
-	if i != 0 {
-		p.tableTriggerDDLHistory = p.tableTriggerDDLHistory[i-1:]
-	}
+	p.tableTriggerDDLHistory = p.tableTriggerDDLHistory[i:]
 
 	// clean tableInfoStoreMap
 	for _, store := range p.tableInfoStoreMap {

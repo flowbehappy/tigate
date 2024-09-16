@@ -206,7 +206,7 @@ func loadDatabaseInfoAndDDLHistory(
 	tableTriggerDDLHistory := make([]uint64, 0)
 
 	// apply ddl jobs
-	startKey, err := ddlJobKey(snapVersion)
+	startKey, err := ddlJobKey(snapVersion + 1)
 	if err != nil {
 		log.Fatal("generate lower bound failed", zap.Error(err))
 	}
