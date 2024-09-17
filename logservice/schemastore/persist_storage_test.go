@@ -28,7 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func newPersistentStorageForTest(db *pebble.DB, gcTs uint64, upperBound upperBoundMeta) *persistentStorage {
+func loadPersistentStorageForTest(db *pebble.DB, gcTs uint64, upperBound upperBoundMeta) *persistentStorage {
 	p := &persistentStorage{
 		pdCli:                  nil,
 		kvStorage:              nil,
@@ -57,7 +57,24 @@ func newEmptyPersistentStorageForTest(dbPath string) *persistentStorage {
 		SchemaVersion: 0,
 		ResolvedTs:    0,
 	}
-	return newPersistentStorageForTest(db, uint64(gcTs), upperBound)
+	return loadPersistentStorageForTest(db, uint64(gcTs), upperBound)
+}
+
+func newPersistentStorageForTest(dbPath string, gcTs uint64, initialDBInfos map[int64]*model.DBInfo) *persistentStorage {
+	db, err := pebble.Open(dbPath, &pebble.Options{})
+	if err != nil {
+		log.Panic("create database fail")
+	}
+	if len(initialDBInfos) > 0 {
+		mockWriteKVSnapOnDisk(db, gcTs, initialDBInfos)
+	}
+	upperBound := upperBoundMeta{
+		FinishedDDLTs: 0,
+		SchemaVersion: 0,
+		ResolvedTs:    gcTs,
+	}
+	writeUpperBoundMeta(db, upperBound)
+	return loadPersistentStorageForTest(db, uint64(gcTs), upperBound)
 }
 
 func mockWriteKVSnapOnDisk(db *pebble.DB, snapTs uint64, dbInfos map[int64]*model.DBInfo) map[int64]*BasicTableInfo {
@@ -145,39 +162,23 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
 	err := os.RemoveAll(dbPath)
 	require.Nil(t, err)
-	db, err := pebble.Open(dbPath, &pebble.Options{})
-	require.Nil(t, err)
-	defer db.Close()
 
 	gcTs := uint64(1000)
-	upperBound := upperBoundMeta{
-		FinishedDDLTs: 3000,
-		SchemaVersion: 4000,
-		ResolvedTs:    2000,
-	}
-	writeGcTs(db, gcTs)
-	writeUpperBoundMeta(db, upperBound)
-
 	schemaID := int64(50)
 	tableID := int64(99)
-	{
-		batch := db.NewBatch()
-		writeSchemaInfoToBatch(batch, gcTs, &model.DBInfo{
-			ID:   int64(schemaID),
-			Name: model.NewCIStr("test"),
-		})
-		tableInfo := &model.TableInfo{
-			ID:   int64(tableID),
-			Name: model.NewCIStr("t"),
-		}
-		tableInfoValue, err := json.Marshal(tableInfo)
-		require.Nil(t, err)
-		writeTableInfoToBatch(batch, gcTs, int64(schemaID), tableInfoValue)
-		err = batch.Commit(pebble.Sync)
-		require.Nil(t, err)
+	databaseInfo := make(map[int64]*model.DBInfo)
+	databaseInfo[schemaID] = &model.DBInfo{
+		ID:   schemaID,
+		Name: model.NewCIStr("test"),
+		Tables: []*model.TableInfo{
+			{
+				ID:   tableID,
+				Name: model.NewCIStr("t1"),
+			},
+		},
 	}
+	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
 
-	pStorage := newPersistentStorageForTest(db, gcTs, upperBound)
 	require.Equal(t, 1, len(pStorage.databaseMap))
 	require.Equal(t, "test", pStorage.databaseMap[schemaID].Name)
 
@@ -186,7 +187,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		pStorage.buildVersionedTableInfoStore(store)
 		tableInfo, err := store.getTableInfo(gcTs)
 		require.Nil(t, err)
-		require.Equal(t, "t", tableInfo.Name.O)
+		require.Equal(t, "t1", tableInfo.Name.O)
 		require.Equal(t, tableID, int64(tableInfo.ID))
 	}
 
@@ -208,14 +209,19 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		require.Nil(t, err)
 	}
 
-	pStorage = newPersistentStorageForTest(db, gcTs, upperBound)
+	upperBound := upperBoundMeta{
+		FinishedDDLTs: 3000,
+		SchemaVersion: 4000,
+		ResolvedTs:    2000,
+	}
+	pStorage = loadPersistentStorageForTest(pStorage.db, gcTs, upperBound)
 	{
 		store := newEmptyVersionedTableInfoStore(tableID)
 		pStorage.buildVersionedTableInfoStore(store)
 		require.Equal(t, 2, len(store.infos))
 		tableInfo, err := store.getTableInfo(gcTs)
 		require.Nil(t, err)
-		require.Equal(t, "t", tableInfo.Name.O)
+		require.Equal(t, "t1", tableInfo.Name.O)
 		require.Equal(t, tableID, int64(tableInfo.ID))
 		tableInfo2, err := store.getTableInfo(uint64(renameVersion))
 		require.Nil(t, err)
@@ -392,41 +398,21 @@ func TestHandleRenameTable(t *testing.T) {
 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
 	err := os.RemoveAll(dbPath)
 	require.Nil(t, err)
-	pStorage := newEmptyPersistentStorageForTest(dbPath)
 
-	// create db1
+	gcTs := uint64(500)
 	schemaID1 := int64(300)
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateSchema),
-			SchemaID:      int64(schemaID1),
-			SchemaVersion: 100,
-			DBInfo: &model.DBInfo{
-				ID:   int64(schemaID1),
-				Name: model.NewCIStr("test"),
-			},
-			TableInfo:  nil,
-			FinishedTs: 200,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-	}
-
-	// create db2
 	schemaID2 := int64(305)
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateSchema),
-			SchemaID:      int64(schemaID2),
-			SchemaVersion: 101,
-			DBInfo: &model.DBInfo{
-				ID:   int64(schemaID2),
-				Name: model.NewCIStr("test2"),
-			},
-			TableInfo:  nil,
-			FinishedTs: 201,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+
+	databaseInfo := make(map[int64]*model.DBInfo)
+	databaseInfo[schemaID1] = &model.DBInfo{
+		ID:   schemaID1,
+		Name: model.NewCIStr("test"),
 	}
+	databaseInfo[schemaID2] = &model.DBInfo{
+		ID:   schemaID2,
+		Name: model.NewCIStr("test2"),
+	}
+	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
 
 	// create a table
 	tableID := int64(100)
@@ -590,38 +576,28 @@ func TestGC(t *testing.T) {
 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
 	err := os.RemoveAll(dbPath)
 	require.Nil(t, err)
-	db, err := pebble.Open(dbPath, &pebble.Options{})
-	require.Nil(t, err)
-	defer db.Close()
 
 	schemaID := int64(300)
 	gcTs := uint64(600)
 	tableID1 := int64(100)
 	tableID2 := int64(200)
-	{
-		databaseInfo := make(map[int64]*model.DBInfo)
-		databaseInfo[schemaID] = &model.DBInfo{
-			ID:   schemaID,
-			Name: model.NewCIStr("test"),
-			Tables: []*model.TableInfo{
-				{
-					ID:   tableID1,
-					Name: model.NewCIStr("t1"),
-				},
-				{
-					ID:   tableID2,
-					Name: model.NewCIStr("t2"),
-				},
-			},
-		}
-		mockWriteKVSnapOnDisk(db, gcTs, databaseInfo)
-	}
 
-	pStorage := newPersistentStorageForTest(db, gcTs, upperBoundMeta{
-		FinishedDDLTs: 0,
-		SchemaVersion: 0,
-		ResolvedTs:    gcTs,
-	})
+	databaseInfo := make(map[int64]*model.DBInfo)
+	databaseInfo[schemaID] = &model.DBInfo{
+		ID:   schemaID,
+		Name: model.NewCIStr("test"),
+		Tables: []*model.TableInfo{
+			{
+				ID:   tableID1,
+				Name: model.NewCIStr("t1"),
+			},
+			{
+				ID:   tableID2,
+				Name: model.NewCIStr("t2"),
+			},
+		},
+	}
+	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
 
 	// create table t3
 	tableID3 := int64(500)
@@ -676,7 +652,7 @@ func TestGC(t *testing.T) {
 		ResolvedTs:    705,
 	}
 	{
-		writeUpperBoundMeta(db, newUpperBound)
+		writeUpperBoundMeta(pStorage.db, newUpperBound)
 	}
 
 	pStorage.registerTable(tableID1, gcTs+1)
@@ -699,7 +675,7 @@ func TestGC(t *testing.T) {
 				},
 			},
 		}
-		tablesInKVSnap := mockWriteKVSnapOnDisk(db, newGcTs, databaseInfo)
+		tablesInKVSnap := mockWriteKVSnapOnDisk(pStorage.db, newGcTs, databaseInfo)
 
 		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
@@ -718,7 +694,7 @@ func TestGC(t *testing.T) {
 		require.Equal(t, "t1_r", tableInfoT1.Name.O)
 	}
 
-	pStorage = newPersistentStorageForTest(db, newGcTs, newUpperBound)
+	pStorage = loadPersistentStorageForTest(pStorage.db, newGcTs, newUpperBound)
 	{
 		require.Equal(t, newGcTs, pStorage.gcTs)
 		require.Equal(t, newUpperBound, pStorage.upperBound)
@@ -736,38 +712,28 @@ func TestGetAllPhysicalTables(t *testing.T) {
 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
 	err := os.RemoveAll(dbPath)
 	require.Nil(t, err)
-	db, err := pebble.Open(dbPath, &pebble.Options{})
-	require.Nil(t, err)
-	defer db.Close()
 
 	schemaID := int64(300)
 	gcTs := uint64(600)
 	tableID1 := int64(100)
 	tableID2 := int64(200)
-	{
-		databaseInfo := make(map[int64]*model.DBInfo)
-		databaseInfo[schemaID] = &model.DBInfo{
-			ID:   schemaID,
-			Name: model.NewCIStr("test"),
-			Tables: []*model.TableInfo{
-				{
-					ID:   tableID1,
-					Name: model.NewCIStr("t1"),
-				},
-				{
-					ID:   tableID2,
-					Name: model.NewCIStr("t2"),
-				},
-			},
-		}
-		mockWriteKVSnapOnDisk(db, gcTs, databaseInfo)
-	}
 
-	pStorage := newPersistentStorageForTest(db, gcTs, upperBoundMeta{
-		FinishedDDLTs: 0,
-		SchemaVersion: 0,
-		ResolvedTs:    gcTs,
-	})
+	databaseInfo := make(map[int64]*model.DBInfo)
+	databaseInfo[schemaID] = &model.DBInfo{
+		ID:   schemaID,
+		Name: model.NewCIStr("test"),
+		Tables: []*model.TableInfo{
+			{
+				ID:   tableID1,
+				Name: model.NewCIStr("t1"),
+			},
+			{
+				ID:   tableID2,
+				Name: model.NewCIStr("t2"),
+			},
+		},
+	}
+	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
 
 	// create table t3
 	tableID3 := int64(500)
