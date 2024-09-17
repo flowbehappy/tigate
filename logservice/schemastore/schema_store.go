@@ -168,6 +168,7 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 }
 
 func (s *schemaStore) GetAllPhysicalTables(snapTs uint64, filter filter.Filter) ([]common.Table, error) {
+	s.waitResolvedTs(0, snapTs)
 	return s.dataStorage.getAllPhysicalTables(snapTs, filter)
 }
 

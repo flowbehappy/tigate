@@ -733,5 +733,87 @@ func TestGC(t *testing.T) {
 }
 
 func TestGetAllPhysicalTables(t *testing.T) {
+	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+	err := os.RemoveAll(dbPath)
+	require.Nil(t, err)
+	db, err := pebble.Open(dbPath, &pebble.Options{})
+	require.Nil(t, err)
+	defer db.Close()
 
+	schemaID := int64(300)
+	gcTs := uint64(600)
+	tableID1 := int64(100)
+	tableID2 := int64(200)
+	{
+		databaseInfo := make(map[int64]*model.DBInfo)
+		databaseInfo[schemaID] = &model.DBInfo{
+			ID:   schemaID,
+			Name: model.NewCIStr("test"),
+			Tables: []*model.TableInfo{
+				{
+					ID:   tableID1,
+					Name: model.NewCIStr("t1"),
+				},
+				{
+					ID:   tableID2,
+					Name: model.NewCIStr("t2"),
+				},
+			},
+		}
+		mockWriteKVSnapOnDisk(db, gcTs, databaseInfo)
+	}
+
+	pStorage := newPersistentStorageForTest(db, gcTs, upperBoundMeta{
+		FinishedDDLTs: 0,
+		SchemaVersion: 0,
+		ResolvedTs:    gcTs,
+	})
+
+	// create table t3
+	tableID3 := int64(500)
+	{
+		ddlEvent := PersistedDDLEvent{
+			Type:          byte(model.ActionCreateTable),
+			SchemaID:      schemaID,
+			TableID:       tableID3,
+			SchemaVersion: 501,
+			TableInfo: &model.TableInfo{
+				ID:   tableID3,
+				Name: model.NewCIStr("t3"),
+			},
+			FinishedTs: 601,
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	// drop table t2
+	{
+		ddlEvent := PersistedDDLEvent{
+			Type:          byte(model.ActionDropTable),
+			SchemaID:      schemaID,
+			TableID:       tableID2,
+			SchemaVersion: 503,
+			TableInfo:     nil,
+			FinishedTs:    603,
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	{
+		allPhysicalTables, err := pStorage.getAllPhysicalTables(600, nil)
+		require.Nil(t, err)
+		require.Equal(t, 2, len(allPhysicalTables))
+	}
+
+	{
+		allPhysicalTables, err := pStorage.getAllPhysicalTables(601, nil)
+		require.Nil(t, err)
+		require.Equal(t, 3, len(allPhysicalTables))
+	}
+
+	{
+		allPhysicalTables, err := pStorage.getAllPhysicalTables(603, nil)
+		require.Nil(t, err)
+		require.Equal(t, 2, len(allPhysicalTables))
+	}
 }

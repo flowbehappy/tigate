@@ -15,7 +15,6 @@ package schemastore
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -25,7 +24,6 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
@@ -196,67 +194,44 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 }
 
 func (p *persistentStorage) initializeFromDisk() {
-	// TODO: cleanObseleteData?
+	cleanObseleteData(p.db, 0, p.gcTs)
 
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
 
 	var err error
+	if p.databaseMap, err = loadDatabasesInKVSnap(storageSnap, p.gcTs); err != nil {
+		log.Fatal("load database info from disk failed")
+	}
+
 	if p.tableMap, err = loadTablesInKVSnap(storageSnap, p.gcTs); err != nil {
 		log.Fatal("load tables in kv snapshot failed")
 	}
 
-	if p.databaseMap, p.tablesDDLHistory, p.tableTriggerDDLHistory, err = loadDatabaseInfoAndDDLHistory(
+	if p.tablesDDLHistory, p.tableTriggerDDLHistory, err = loadAndApplyDDLHistory(
 		storageSnap,
 		p.gcTs,
-		p.upperBound,
+		p.upperBound.FinishedDDLTs,
+		p.databaseMap,
 		p.tableMap); err != nil {
 		log.Fatal("fail to initialize from disk")
 	}
 }
 
-// FIXME: load the info from disk
+// getAllPhysicalTables returns all physical tables in the snapshot
+// caller must ensure current resolve ts is larger than snapTs
 func (p *persistentStorage) getAllPhysicalTables(snapTs uint64, tableFilter filter.Filter) ([]common.Table, error) {
-	// TODO: check snapTs doesn't pass gcTs
-	meta := logpuller.GetSnapshotMeta(p.kvStorage, uint64(snapTs))
-	dbinfos, err := meta.ListDatabases()
-	if err != nil {
-		log.Fatal("list databases failed", zap.Error(err))
+	storageSnap := p.db.NewSnapshot()
+	defer storageSnap.Close()
+
+	p.mu.Lock()
+	if snapTs < p.gcTs {
+		return nil, fmt.Errorf("snapTs %d is smaller than gcTs %d", snapTs, p.gcTs)
 	}
+	gcTs := p.gcTs
+	p.mu.Unlock()
 
-	tables := make([]common.Table, 0)
-
-	for _, dbinfo := range dbinfos {
-		if filter.IsSysSchema(dbinfo.Name.O) ||
-			(tableFilter != nil && tableFilter.ShouldIgnoreSchema(dbinfo.Name.O)) {
-			continue
-		}
-		rawTables, err := meta.GetMetasByDBID(dbinfo.ID)
-		log.Info("get database", zap.Any("dbinfo", dbinfo), zap.Int("rawTablesLen", len(rawTables)))
-		if err != nil {
-			log.Fatal("get tables failed", zap.Error(err))
-		}
-		for _, rawTable := range rawTables {
-			if !isTableRawKey(rawTable.Field) {
-				continue
-			}
-			tbName := &model.TableNameInfo{}
-			err := json.Unmarshal(rawTable.Value, tbName)
-			if err != nil {
-				log.Fatal("get table info failed", zap.Error(err))
-			}
-			// TODO: support ignore sequence / forcereplicate / view cases
-			if tableFilter != nil && tableFilter.ShouldIgnoreTable(dbinfo.Name.O, tbName.Name.O) {
-				continue
-			}
-			tables = append(tables, common.Table{
-				SchemaID: dbinfo.ID,
-				TableID:  tbName.ID,
-			})
-		}
-	}
-
-	return tables, nil
+	return loadAllPhysicalTablesInSnap(storageSnap, gcTs, snapTs, tableFilter)
 }
 
 // only return when table info is initialized

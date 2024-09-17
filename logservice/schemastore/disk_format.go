@@ -23,6 +23,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/flowbehappy/tigate/logservice/logpuller"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -147,20 +148,55 @@ func writeUpperBoundMeta(db *pebble.DB, upperBound upperBoundMeta) {
 	}
 }
 
+func loadDatabasesInKVSnap(snap *pebble.Snapshot, gcTs uint64) (map[int64]*BasicDatabaseInfo, error) {
+	databaseMap := make(map[int64]*BasicDatabaseInfo)
+
+	startKey, err := schemaInfoKey(gcTs, 0)
+	if err != nil {
+		log.Fatal("generate lower bound failed", zap.Error(err))
+	}
+	endKey, err := schemaInfoKey(gcTs, math.MaxInt64)
+	if err != nil {
+		log.Fatal("generate upper bound failed", zap.Error(err))
+	}
+	snapIter, err := snap.NewIter(&pebble.IterOptions{
+		LowerBound: startKey,
+		UpperBound: endKey,
+	})
+	if err != nil {
+		log.Fatal("new iterator failed", zap.Error(err))
+	}
+	defer snapIter.Close()
+	for snapIter.First(); snapIter.Valid(); snapIter.Next() {
+		var dbInfo model.DBInfo
+		if err := json.Unmarshal(snapIter.Value(), &dbInfo); err != nil {
+			log.Fatal("unmarshal db info failed", zap.Error(err))
+		}
+
+		databaseInfo := &BasicDatabaseInfo{
+			Name:   dbInfo.Name.O,
+			Tables: make(map[int64]bool),
+		}
+		databaseMap[int64(dbInfo.ID)] = databaseInfo
+	}
+
+	return databaseMap, nil
+}
+
 type TableInfoEntry struct {
 	Version   int    `json:"version"`
 	SchemaID  int64  `json:"schema_id"`
 	TableInfo []byte `json:"table_info"`
 }
 
-func loadTablesInKVSnap(snap *pebble.Snapshot, snapVersion uint64) (map[int64]*BasicTableInfo, error) {
+func loadTablesInKVSnap(snap *pebble.Snapshot, gcTs uint64) (map[int64]*BasicTableInfo, error) {
 	tablesInKVSnap := make(map[int64]*BasicTableInfo)
 
-	startKey, err := tableInfoKey(snapVersion, 0)
+	startKey, err := tableInfoKey(gcTs, 0)
 	if err != nil {
 		log.Fatal("generate lower bound failed", zap.Error(err))
 	}
-	endKey, err := tableInfoKey(snapVersion, math.MaxInt64)
+	endKey, err := tableInfoKey(gcTs, math.MaxInt64)
 	if err != nil {
 		log.Fatal("generate upper bound failed", zap.Error(err))
 	}
@@ -192,25 +228,23 @@ func loadTablesInKVSnap(snap *pebble.Snapshot, snapVersion uint64) (map[int64]*B
 	return tablesInKVSnap, nil
 }
 
-// load the database info and ddl history in the range (snapVersion, upperBound]
-func loadDatabaseInfoAndDDLHistory(
+// load the ddl jobs in the range (gcTs, upperBound] and apply the ddl job to update database and table info
+func loadAndApplyDDLHistory(
 	snap *pebble.Snapshot,
-	snapVersion uint64,
-	upperBound upperBoundMeta,
+	gcTs uint64,
+	maxFinishedDDLTs uint64,
+	databaseMap map[int64]*BasicDatabaseInfo,
 	tableMap map[int64]*BasicTableInfo,
-) (map[int64]*BasicDatabaseInfo, map[int64][]uint64, []uint64, error) {
-	// load database info at `snapVersion`
-	databaseMap := loadDatabaseInfoFromSnap(snap, snapVersion)
-
+) (map[int64][]uint64, []uint64, error) {
 	tablesDDLHistory := make(map[int64][]uint64)
 	tableTriggerDDLHistory := make([]uint64, 0)
 
 	// apply ddl jobs
-	startKey, err := ddlJobKey(snapVersion + 1)
+	startKey, err := ddlJobKey(gcTs + 1)
 	if err != nil {
 		log.Fatal("generate lower bound failed", zap.Error(err))
 	}
-	endKey, err := ddlJobKey(upperBound.FinishedDDLTs)
+	endKey, err := ddlJobKey(maxFinishedDDLTs)
 	if err != nil {
 		log.Fatal("generate upper bound failed", zap.Error(err))
 	}
@@ -245,42 +279,7 @@ func loadDatabaseInfoAndDDLHistory(
 		}
 	}
 
-	return databaseMap, tablesDDLHistory, tableTriggerDDLHistory, nil
-}
-
-func loadDatabaseInfoFromSnap(snap *pebble.Snapshot, snapVersion uint64) map[int64]*BasicDatabaseInfo {
-	databaseMap := make(map[int64]*BasicDatabaseInfo)
-
-	startKey, err := schemaInfoKey(snapVersion, 0)
-	if err != nil {
-		log.Fatal("generate lower bound failed", zap.Error(err))
-	}
-	endKey, err := schemaInfoKey(snapVersion, math.MaxInt64)
-	if err != nil {
-		log.Fatal("generate upper bound failed", zap.Error(err))
-	}
-	snapIter, err := snap.NewIter(&pebble.IterOptions{
-		LowerBound: startKey,
-		UpperBound: endKey,
-	})
-	if err != nil {
-		log.Fatal("new iterator failed", zap.Error(err))
-	}
-	defer snapIter.Close()
-	for snapIter.First(); snapIter.Valid(); snapIter.Next() {
-		var dbInfo model.DBInfo
-		if err := json.Unmarshal(snapIter.Value(), &dbInfo); err != nil {
-			log.Fatal("unmarshal db info failed", zap.Error(err))
-		}
-
-		databaseInfo := &BasicDatabaseInfo{
-			Name:   dbInfo.Name.O,
-			Tables: make(map[int64]bool),
-		}
-		databaseMap[int64(dbInfo.ID)] = databaseInfo
-	}
-
-	return databaseMap
+	return tablesDDLHistory, tableTriggerDDLHistory, nil
 }
 
 func readSchemaIDAndTableInfoFromKVSnap(snap *pebble.Snapshot, tableID int64, version uint64) (int64, *model.TableInfo) {
@@ -487,4 +486,62 @@ func cleanObseleteData(db *pebble.DB, oldGcTs uint64, gcTs uint64) {
 	if err := batch.Commit(pebble.NoSync); err != nil {
 		log.Fatal("clean obselete data failed", zap.Error(err))
 	}
+}
+
+func loadAllPhysicalTablesInSnap(
+	storageSnap *pebble.Snapshot,
+	gcTs uint64,
+	snapVersion uint64,
+	tableFilter filter.Filter,
+) ([]common.Table, error) {
+	// TODO: respect tableFilter(filter table in kv snap is easy, filter ddl jobs need more attention)
+	databaseMap, err := loadDatabasesInKVSnap(storageSnap, gcTs)
+	if err != nil {
+		return nil, err
+	}
+
+	tableMap, err := loadTablesInKVSnap(storageSnap, gcTs)
+	if err != nil {
+		return nil, err
+	}
+
+	// apply ddl jobs in range (gcTs, snapVersion]
+	startKey, err := ddlJobKey(gcTs + 1)
+	if err != nil {
+		log.Fatal("generate lower bound failed", zap.Error(err))
+	}
+	endKey, err := ddlJobKey(snapVersion + 1)
+	if err != nil {
+		log.Fatal("generate upper bound failed", zap.Error(err))
+	}
+	snapIter, err := storageSnap.NewIter(&pebble.IterOptions{
+		LowerBound: startKey,
+		UpperBound: endKey,
+	})
+	if err != nil {
+		log.Fatal("new iterator failed", zap.Error(err))
+	}
+	defer snapIter.Close()
+	for snapIter.First(); snapIter.Valid(); snapIter.Next() {
+		var ddlEvent PersistedDDLEvent
+		err = json.Unmarshal(snapIter.Value(), &ddlEvent)
+		if err != nil {
+			log.Fatal("unmarshal ddl job failed", zap.Error(err))
+		}
+		_, err := updateDatabaseInfoAndTableInfo(&ddlEvent, databaseMap, tableMap)
+		if err != nil {
+			log.Panic("updateDatabaseInfo error", zap.Error(err))
+		}
+	}
+	tables := make([]common.Table, 0)
+	for tableID, tableInfo := range tableMap {
+		if tableFilter != nil && tableFilter.ShouldIgnoreTable(databaseMap[tableInfo.SchemaID].Name, tableInfo.Name) {
+			continue
+		}
+		tables = append(tables, common.Table{
+			SchemaID: tableInfo.SchemaID,
+			TableID:  tableID,
+		})
+	}
+	return tables, nil
 }
