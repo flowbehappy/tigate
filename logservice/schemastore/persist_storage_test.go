@@ -25,9 +25,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
-func newPersistentStorageForTest(db *pebble.DB, gcTs uint64, upperBound upperBoundMeta) *persistentStorage {
+func loadPersistentStorageForTest(db *pebble.DB, gcTs uint64, upperBound upperBoundMeta) *persistentStorage {
 	p := &persistentStorage{
 		pdCli:                  nil,
 		kvStorage:              nil,
@@ -56,7 +57,50 @@ func newEmptyPersistentStorageForTest(dbPath string) *persistentStorage {
 		SchemaVersion: 0,
 		ResolvedTs:    0,
 	}
-	return newPersistentStorageForTest(db, uint64(gcTs), upperBound)
+	return loadPersistentStorageForTest(db, uint64(gcTs), upperBound)
+}
+
+func newPersistentStorageForTest(dbPath string, gcTs uint64, initialDBInfos map[int64]*model.DBInfo) *persistentStorage {
+	db, err := pebble.Open(dbPath, &pebble.Options{})
+	if err != nil {
+		log.Panic("create database fail")
+	}
+	if len(initialDBInfos) > 0 {
+		mockWriteKVSnapOnDisk(db, gcTs, initialDBInfos)
+	}
+	upperBound := upperBoundMeta{
+		FinishedDDLTs: 0,
+		SchemaVersion: 0,
+		ResolvedTs:    gcTs,
+	}
+	writeUpperBoundMeta(db, upperBound)
+	return loadPersistentStorageForTest(db, uint64(gcTs), upperBound)
+}
+
+func mockWriteKVSnapOnDisk(db *pebble.DB, snapTs uint64, dbInfos map[int64]*model.DBInfo) map[int64]*BasicTableInfo {
+	batch := db.NewBatch()
+	defer batch.Close()
+	tablesInKVSnap := make(map[int64]*BasicTableInfo)
+	for _, dbInfo := range dbInfos {
+		writeSchemaInfoToBatch(batch, snapTs, dbInfo)
+		for _, tableInfo := range dbInfo.Tables {
+			tablesInKVSnap[tableInfo.ID] = &BasicTableInfo{
+				SchemaID: dbInfo.ID,
+				Name:     tableInfo.Name.O,
+				InKVSnap: true,
+			}
+			tableInfoValue, err := json.Marshal(tableInfo)
+			if err != nil {
+				log.Panic("marshal table info fail", zap.Error(err))
+			}
+			writeTableInfoToBatch(batch, snapTs, dbInfo.ID, tableInfoValue)
+		}
+	}
+	if err := batch.Commit(pebble.NoSync); err != nil {
+		log.Panic("commit batch fail", zap.Error(err))
+	}
+	writeGcTs(db, snapTs)
+	return tablesInKVSnap
 }
 
 func TestReadWriteMeta(t *testing.T) {
@@ -118,39 +162,23 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
 	err := os.RemoveAll(dbPath)
 	require.Nil(t, err)
-	db, err := pebble.Open(dbPath, &pebble.Options{})
-	require.Nil(t, err)
-	defer db.Close()
 
 	gcTs := uint64(1000)
-	upperBound := upperBoundMeta{
-		FinishedDDLTs: 3000,
-		SchemaVersion: 4000,
-		ResolvedTs:    2000,
-	}
-	writeGcTs(db, gcTs)
-	writeUpperBoundMeta(db, upperBound)
-
 	schemaID := int64(50)
 	tableID := int64(99)
-	{
-		batch := db.NewBatch()
-		writeSchemaInfoToBatch(batch, gcTs, &model.DBInfo{
-			ID:   int64(schemaID),
-			Name: model.NewCIStr("test"),
-		})
-		tableInfo := &model.TableInfo{
-			ID:   int64(tableID),
-			Name: model.NewCIStr("t"),
-		}
-		tableInfoValue, err := json.Marshal(tableInfo)
-		require.Nil(t, err)
-		writeTableInfoToBatch(batch, gcTs, int64(schemaID), tableInfoValue)
-		err = batch.Commit(pebble.Sync)
-		require.Nil(t, err)
+	databaseInfo := make(map[int64]*model.DBInfo)
+	databaseInfo[schemaID] = &model.DBInfo{
+		ID:   schemaID,
+		Name: model.NewCIStr("test"),
+		Tables: []*model.TableInfo{
+			{
+				ID:   tableID,
+				Name: model.NewCIStr("t1"),
+			},
+		},
 	}
+	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
 
-	pStorage := newPersistentStorageForTest(db, gcTs, upperBound)
 	require.Equal(t, 1, len(pStorage.databaseMap))
 	require.Equal(t, "test", pStorage.databaseMap[schemaID].Name)
 
@@ -159,7 +187,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		pStorage.buildVersionedTableInfoStore(store)
 		tableInfo, err := store.getTableInfo(gcTs)
 		require.Nil(t, err)
-		require.Equal(t, "t", tableInfo.Name.O)
+		require.Equal(t, "t1", tableInfo.Name.O)
 		require.Equal(t, tableID, int64(tableInfo.ID))
 	}
 
@@ -181,24 +209,29 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		require.Nil(t, err)
 	}
 
-	pStorage = newPersistentStorageForTest(db, gcTs, upperBound)
+	upperBound := upperBoundMeta{
+		FinishedDDLTs: 3000,
+		SchemaVersion: 4000,
+		ResolvedTs:    2000,
+	}
+	pStorage = loadPersistentStorageForTest(pStorage.db, gcTs, upperBound)
 	{
 		store := newEmptyVersionedTableInfoStore(tableID)
 		pStorage.buildVersionedTableInfoStore(store)
 		require.Equal(t, 2, len(store.infos))
 		tableInfo, err := store.getTableInfo(gcTs)
 		require.Nil(t, err)
-		require.Equal(t, "t", tableInfo.Name.O)
-		require.Equal(t, tableID, int64(tableInfo.ID))
-		tableInfo2, err := store.getTableInfo(uint64(renameVersion))
+		require.Equal(t, "t1", tableInfo.Name.O)
+		require.Equal(t, tableID, tableInfo.ID)
+		tableInfo2, err := store.getTableInfo(renameVersion)
 		require.Nil(t, err)
 		require.Equal(t, "t2", tableInfo2.Name.O)
 
 		renameVersion2 := uint64(3000)
 		store.applyDDL(PersistedDDLEvent{
 			Type:          byte(model.ActionRenameTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID),
+			SchemaID:      schemaID,
+			TableID:       tableID,
 			SchemaVersion: 3000,
 			TableInfo: &model.TableInfo{
 				ID:   int64(tableID),
@@ -206,7 +239,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 			},
 			FinishedTs: renameVersion2,
 		})
-		tableInfo3, err := store.getTableInfo(uint64(renameVersion2))
+		tableInfo3, err := store.getTableInfo(renameVersion2)
 		require.Nil(t, err)
 		require.Equal(t, "t3", tableInfo3.Name.O)
 	}
@@ -245,8 +278,8 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID),
+			SchemaID:      schemaID,
+			TableID:       tableID,
 			SchemaVersion: 101,
 			TableInfo: &model.TableInfo{
 				Name: model.NewCIStr("t1"),
@@ -268,8 +301,8 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID2),
+			SchemaID:      schemaID,
+			TableID:       tableID2,
 			SchemaVersion: 103,
 			TableInfo: &model.TableInfo{
 				Name: model.NewCIStr("t2"),
@@ -291,8 +324,8 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionDropTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID2),
+			SchemaID:      schemaID,
+			TableID:       tableID2,
 			SchemaVersion: 105,
 			TableInfo:     nil,
 			FinishedTs:    205,
@@ -314,11 +347,11 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionTruncateTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID),
+			SchemaID:      schemaID,
+			TableID:       tableID,
 			SchemaVersion: 107,
 			TableInfo: &model.TableInfo{
-				ID: int64(tableID3),
+				ID: tableID3,
 			},
 			FinishedTs: 207,
 		}
@@ -365,41 +398,21 @@ func TestHandleRenameTable(t *testing.T) {
 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
 	err := os.RemoveAll(dbPath)
 	require.Nil(t, err)
-	pStorage := newEmptyPersistentStorageForTest(dbPath)
 
-	// create db1
+	gcTs := uint64(500)
 	schemaID1 := int64(300)
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateSchema),
-			SchemaID:      int64(schemaID1),
-			SchemaVersion: 100,
-			DBInfo: &model.DBInfo{
-				ID:   int64(schemaID1),
-				Name: model.NewCIStr("test"),
-			},
-			TableInfo:  nil,
-			FinishedTs: 200,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-	}
-
-	// create db2
 	schemaID2 := int64(305)
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateSchema),
-			SchemaID:      int64(schemaID2),
-			SchemaVersion: 101,
-			DBInfo: &model.DBInfo{
-				ID:   int64(schemaID2),
-				Name: model.NewCIStr("test2"),
-			},
-			TableInfo:  nil,
-			FinishedTs: 201,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+
+	databaseInfo := make(map[int64]*model.DBInfo)
+	databaseInfo[schemaID1] = &model.DBInfo{
+		ID:   schemaID1,
+		Name: model.NewCIStr("test"),
 	}
+	databaseInfo[schemaID2] = &model.DBInfo{
+		ID:   schemaID2,
+		Name: model.NewCIStr("test2"),
+	}
+	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
 
 	// create a table
 	tableID := int64(100)
@@ -428,11 +441,11 @@ func TestHandleRenameTable(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionRenameTable),
-			SchemaID:      int64(schemaID2),
-			TableID:       int64(tableID),
+			SchemaID:      schemaID2,
+			TableID:       tableID,
 			SchemaVersion: 505,
 			TableInfo: &model.TableInfo{
-				ID:   int64(tableID),
+				ID:   tableID,
 				Name: model.NewCIStr("t2"),
 			},
 			FinishedTs: 605,
@@ -475,11 +488,11 @@ func TestFetchDDLEvents(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID),
+			SchemaID:      schemaID,
+			TableID:       tableID,
 			SchemaVersion: 501,
 			TableInfo: &model.TableInfo{
-				ID:   int64(tableID),
+				ID:   tableID,
 				Name: model.NewCIStr("t1"),
 			},
 			FinishedTs: 601,
@@ -491,11 +504,11 @@ func TestFetchDDLEvents(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionRenameTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID),
+			SchemaID:      schemaID,
+			TableID:       tableID,
 			SchemaVersion: 505,
 			TableInfo: &model.TableInfo{
-				ID:   int64(tableID),
+				ID:   tableID,
 				Name: model.NewCIStr("t2"),
 			},
 			FinishedTs: 605,
@@ -508,11 +521,11 @@ func TestFetchDDLEvents(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionTruncateTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID),
+			SchemaID:      schemaID,
+			TableID:       tableID,
 			SchemaVersion: 507,
 			TableInfo: &model.TableInfo{
-				ID:   int64(tableID2),
+				ID:   tableID2,
 				Name: model.NewCIStr("t2"),
 			},
 			FinishedTs: 607,
@@ -522,7 +535,8 @@ func TestFetchDDLEvents(t *testing.T) {
 
 	// fetch table ddl events
 	{
-		ddlEvents := pStorage.fetchTableDDLEvents(tableID, 601, 607)
+		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, 601, 607)
+		require.Nil(t, err)
 		require.Equal(t, 2, len(ddlEvents))
 		require.Equal(t, uint64(605), ddlEvents[0].FinishedTs)
 		require.Equal(t, uint64(607), ddlEvents[1].FinishedTs)
@@ -535,7 +549,8 @@ func TestFetchDDLEvents(t *testing.T) {
 		filteConfig := &config.FilterConfig{}
 		eventFilter, err := filter.NewFilter(filteConfig, "", false)
 		require.Nil(t, err)
-		tableTriggerDDLEvents := pStorage.fetchTableTriggerDDLEvents(eventFilter, 0, 10)
+		tableTriggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(eventFilter, 0, 10)
+		require.Nil(t, err)
 		require.Equal(t, 3, len(tableTriggerDDLEvents))
 		require.Equal(t, uint64(200), tableTriggerDDLEvents[0].FinishedTs)
 		require.Equal(t, uint64(601), tableTriggerDDLEvents[1].FinishedTs)
@@ -547,11 +562,224 @@ func TestFetchDDLEvents(t *testing.T) {
 		filteConfig := &config.FilterConfig{}
 		eventFilter, err := filter.NewFilter(filteConfig, "", false)
 		require.Nil(t, err)
-		tableTriggerDDLEvents := pStorage.fetchTableTriggerDDLEvents(eventFilter, 0, 2)
+		tableTriggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(eventFilter, 0, 2)
+		require.Nil(t, err)
 		require.Equal(t, 2, len(tableTriggerDDLEvents))
 		require.Equal(t, uint64(200), tableTriggerDDLEvents[0].FinishedTs)
 		require.Equal(t, uint64(601), tableTriggerDDLEvents[1].FinishedTs)
 	}
 
 	// TODO: test filter
+}
+
+func TestGC(t *testing.T) {
+	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+	err := os.RemoveAll(dbPath)
+	require.Nil(t, err)
+
+	schemaID := int64(300)
+	gcTs := uint64(600)
+	tableID1 := int64(100)
+	tableID2 := int64(200)
+
+	databaseInfo := make(map[int64]*model.DBInfo)
+	databaseInfo[schemaID] = &model.DBInfo{
+		ID:   schemaID,
+		Name: model.NewCIStr("test"),
+		Tables: []*model.TableInfo{
+			{
+				ID:   tableID1,
+				Name: model.NewCIStr("t1"),
+			},
+			{
+				ID:   tableID2,
+				Name: model.NewCIStr("t2"),
+			},
+		},
+	}
+	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
+
+	// create table t3
+	tableID3 := int64(500)
+	{
+		ddlEvent := PersistedDDLEvent{
+			Type:          byte(model.ActionCreateTable),
+			SchemaID:      schemaID,
+			TableID:       tableID3,
+			SchemaVersion: 501,
+			TableInfo: &model.TableInfo{
+				ID:   tableID3,
+				Name: model.NewCIStr("t3"),
+			},
+			FinishedTs: 601,
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	// drop table t2
+	{
+		ddlEvent := PersistedDDLEvent{
+			Type:          byte(model.ActionDropTable),
+			SchemaID:      schemaID,
+			TableID:       tableID2,
+			SchemaVersion: 503,
+			TableInfo:     nil,
+			FinishedTs:    603,
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	// rename table t1
+	{
+		ddlEvent := PersistedDDLEvent{
+			Type:          byte(model.ActionRenameTable),
+			SchemaID:      schemaID,
+			TableID:       tableID1,
+			SchemaVersion: 505,
+			TableInfo: &model.TableInfo{
+				ID:   int64(tableID1),
+				Name: model.NewCIStr("t1_r"),
+			},
+			FinishedTs: 605,
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	// write upper bound
+	newUpperBound := upperBoundMeta{
+		FinishedDDLTs: 700,
+		SchemaVersion: 509,
+		ResolvedTs:    705,
+	}
+	{
+		writeUpperBoundMeta(pStorage.db, newUpperBound)
+	}
+
+	pStorage.registerTable(tableID1, gcTs+1)
+
+	// mock gc
+	newGcTs := uint64(603)
+	{
+		databaseInfo := make(map[int64]*model.DBInfo)
+		databaseInfo[schemaID] = &model.DBInfo{
+			ID:   schemaID,
+			Name: model.NewCIStr("test"),
+			Tables: []*model.TableInfo{
+				{
+					ID:   tableID1,
+					Name: model.NewCIStr("t1"),
+				},
+				{
+					ID:   tableID3,
+					Name: model.NewCIStr("t3"),
+				},
+			},
+		}
+		tablesInKVSnap := mockWriteKVSnapOnDisk(pStorage.db, newGcTs, databaseInfo)
+
+		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
+		require.Equal(t, false, pStorage.tableMap[tableID3].InKVSnap)
+		pStorage.cleanObseleteDataInMemory(newGcTs, tablesInKVSnap)
+		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, uint64(605), pStorage.tableTriggerDDLHistory[0])
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID1]))
+		require.Equal(t, true, pStorage.tableMap[tableID3].InKVSnap)
+		tableInfoT1, err := pStorage.getTableInfo(tableID1, newGcTs)
+		require.Nil(t, err)
+		require.Equal(t, "t1", tableInfoT1.Name.O)
+		tableInfoT1, err = pStorage.getTableInfo(tableID1, 606)
+		require.Nil(t, err)
+		require.Equal(t, "t1_r", tableInfoT1.Name.O)
+	}
+
+	pStorage = loadPersistentStorageForTest(pStorage.db, newGcTs, newUpperBound)
+	{
+		require.Equal(t, newGcTs, pStorage.gcTs)
+		require.Equal(t, newUpperBound, pStorage.upperBound)
+		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, uint64(605), pStorage.tableTriggerDDLHistory[0])
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
+		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID1]))
+		require.Equal(t, true, pStorage.tableMap[tableID3].InKVSnap)
+	}
+
+	// TODO: test obsolete data can be removed
+}
+
+func TestGetAllPhysicalTables(t *testing.T) {
+	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+	err := os.RemoveAll(dbPath)
+	require.Nil(t, err)
+
+	schemaID := int64(300)
+	gcTs := uint64(600)
+	tableID1 := int64(100)
+	tableID2 := int64(200)
+
+	databaseInfo := make(map[int64]*model.DBInfo)
+	databaseInfo[schemaID] = &model.DBInfo{
+		ID:   schemaID,
+		Name: model.NewCIStr("test"),
+		Tables: []*model.TableInfo{
+			{
+				ID:   tableID1,
+				Name: model.NewCIStr("t1"),
+			},
+			{
+				ID:   tableID2,
+				Name: model.NewCIStr("t2"),
+			},
+		},
+	}
+	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
+
+	// create table t3
+	tableID3 := int64(500)
+	{
+		ddlEvent := PersistedDDLEvent{
+			Type:          byte(model.ActionCreateTable),
+			SchemaID:      schemaID,
+			TableID:       tableID3,
+			SchemaVersion: 501,
+			TableInfo: &model.TableInfo{
+				ID:   tableID3,
+				Name: model.NewCIStr("t3"),
+			},
+			FinishedTs: 601,
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	// drop table t2
+	{
+		ddlEvent := PersistedDDLEvent{
+			Type:          byte(model.ActionDropTable),
+			SchemaID:      schemaID,
+			TableID:       tableID2,
+			SchemaVersion: 503,
+			TableInfo:     nil,
+			FinishedTs:    603,
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	{
+		allPhysicalTables, err := pStorage.getAllPhysicalTables(600, nil)
+		require.Nil(t, err)
+		require.Equal(t, 2, len(allPhysicalTables))
+	}
+
+	{
+		allPhysicalTables, err := pStorage.getAllPhysicalTables(601, nil)
+		require.Nil(t, err)
+		require.Equal(t, 3, len(allPhysicalTables))
+	}
+
+	{
+		allPhysicalTables, err := pStorage.getAllPhysicalTables(603, nil)
+		require.Nil(t, err)
+		require.Equal(t, 2, len(allPhysicalTables))
+	}
 }

@@ -168,13 +168,13 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *common.DDLEvent) error {
 			if errorutil.IsIgnorableMySQLDDLError(err) {
 				// NOTE: don't change the log, some tests depend on it.
 				log.Info("Execute DDL failed, but error can be ignored",
-					zap.String("ddl", event.Job.Query),
+					zap.String("ddl", event.Query),
 					zap.Error(err))
 				// If the error is ignorable, we will ignore the error directly.
 				return nil
 			}
 			log.Warn("Execute DDL with error, retry later",
-				zap.String("ddl", event.Job.Query),
+				zap.String("ddl", event.Query),
 				zap.Error(err))
 			return err
 		}

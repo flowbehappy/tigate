@@ -435,6 +435,11 @@ func (ti *TableInfo) initColumnsFlag() {
 }
 
 func (ti *TableInfo) InitPreSQLs() {
+	// TODO: find better way to hold the preSQLs
+	if len(ti.Columns) == 0 {
+		log.Warn("table has no columns, should be in test mode", zap.String("table", ti.TableName.String()))
+		return
+	}
 	ti.PreSQLs = make(map[string]string)
 	ti.PreSQLs["insert"] = ti.genPreSQLInsert(false, true)
 	ti.PreSQLs["replace"] = ti.genPreSQLInsert(true, true)

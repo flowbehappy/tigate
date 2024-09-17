@@ -150,14 +150,18 @@ enum InfluenceType {
 message InfluencedTables {
     InfluenceType InfluenceType = 1;
     // only exist when type is normal
-	repeated int64  TableIDs  = 2; 
+	repeated int64 TableIDs  = 2; 
+	repeated string TableNames  = 3; 
     // only exist when type is DB.
-	int64 SchemaID = 3;
+	int64 SchemaID = 4;
+    string SchemaName = 5;
 }
 
 message Table {
-    int64 tableID = 1;
-    int64 schemaID = 2;
+    int64 TableID = 1;
+    int64 SchemaID = 2;
+    string TableName = 3;
+    string SchemaName = 4;
 }
 
 message State {

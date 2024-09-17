@@ -15,7 +15,6 @@ package schemastore
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -25,7 +24,6 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
@@ -179,82 +177,70 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 	log.Info("schema store initialize from kv storage begin",
 		zap.Uint64("snapTs", gcTs))
 
-	if p.databaseMap, p.tableMap, p.upperBound, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs); err != nil {
+	if p.databaseMap, p.tableMap, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs); err != nil {
 		// TODO: retry
 		log.Fatal("fail to initialize from kv snapshot")
 	}
 	p.gcTs = gcTs
+	p.upperBound = upperBoundMeta{
+		FinishedDDLTs: 0,
+		SchemaVersion: 0,
+		ResolvedTs:    gcTs,
+	}
+	writeUpperBoundMeta(p.db, p.upperBound)
 	log.Info("schema store initialize from kv storage done",
 		zap.Int("databaseMapLen", len(p.databaseMap)),
 		zap.Int("tableMapLen", len(p.tableMap)))
 }
 
 func (p *persistentStorage) initializeFromDisk() {
-	// TODO: cleanObseleteData?
+	cleanObseleteData(p.db, 0, p.gcTs)
 
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
 
 	var err error
+	if p.databaseMap, err = loadDatabasesInKVSnap(storageSnap, p.gcTs); err != nil {
+		log.Fatal("load database info from disk failed")
+	}
+
 	if p.tableMap, err = loadTablesInKVSnap(storageSnap, p.gcTs); err != nil {
 		log.Fatal("load tables in kv snapshot failed")
 	}
 
-	if p.databaseMap, p.tablesDDLHistory, p.tableTriggerDDLHistory, err = loadDatabaseInfoAndDDLHistory(
+	if p.tablesDDLHistory, p.tableTriggerDDLHistory, err = loadAndApplyDDLHistory(
 		storageSnap,
 		p.gcTs,
-		p.upperBound,
+		p.upperBound.FinishedDDLTs,
+		p.databaseMap,
 		p.tableMap); err != nil {
 		log.Fatal("fail to initialize from disk")
 	}
 }
 
-// FIXME: load the info from disk
+// getAllPhysicalTables returns all physical tables in the snapshot
+// caller must ensure current resolve ts is larger than snapTs
 func (p *persistentStorage) getAllPhysicalTables(snapTs uint64, tableFilter filter.Filter) ([]common.Table, error) {
-	meta := logpuller.GetSnapshotMeta(p.kvStorage, uint64(snapTs))
-	dbinfos, err := meta.ListDatabases()
-	if err != nil {
-		log.Fatal("list databases failed", zap.Error(err))
+	storageSnap := p.db.NewSnapshot()
+	defer storageSnap.Close()
+
+	p.mu.Lock()
+	if snapTs < p.gcTs {
+		return nil, fmt.Errorf("snapTs %d is smaller than gcTs %d", snapTs, p.gcTs)
 	}
+	gcTs := p.gcTs
+	p.mu.Unlock()
 
-	tables := make([]common.Table, 0)
-
-	for _, dbinfo := range dbinfos {
-		if filter.IsSysSchema(dbinfo.Name.O) ||
-			(tableFilter != nil && tableFilter.ShouldIgnoreSchema(dbinfo.Name.O)) {
-			continue
-		}
-		rawTables, err := meta.GetMetasByDBID(dbinfo.ID)
-		log.Info("get database", zap.Any("dbinfo", dbinfo), zap.Int("rawTablesLen", len(rawTables)))
-		if err != nil {
-			log.Fatal("get tables failed", zap.Error(err))
-		}
-		for _, rawTable := range rawTables {
-			if !isTableRawKey(rawTable.Field) {
-				continue
-			}
-			tbName := &model.TableNameInfo{}
-			err := json.Unmarshal(rawTable.Value, tbName)
-			if err != nil {
-				log.Fatal("get table info failed", zap.Error(err))
-			}
-			// TODO: support ignore sequence / forcereplicate / view cases
-			if tableFilter != nil && tableFilter.ShouldIgnoreTable(dbinfo.Name.O, tbName.Name.O) {
-				continue
-			}
-			tables = append(tables, common.Table{
-				SchemaID: dbinfo.ID,
-				TableID:  tbName.ID,
-			})
-		}
-	}
-
-	return tables, nil
+	return loadAllPhysicalTablesInSnap(storageSnap, gcTs, snapTs, tableFilter)
 }
 
 // only return when table info is initialized
-func (p *persistentStorage) registerTable(tableID int64) error {
+func (p *persistentStorage) registerTable(tableID int64, startTs uint64) error {
 	p.mu.Lock()
+	if startTs < p.gcTs {
+		p.mu.Unlock()
+		return fmt.Errorf("startTs %d is smaller than gcTs %d", startTs, p.gcTs)
+	}
 	p.tableRegisteredCount[tableID] += 1
 	store, ok := p.tableInfoStoreMap[tableID]
 	if !ok {
@@ -295,12 +281,16 @@ func (p *persistentStorage) getTableInfo(tableID int64, ts uint64) (*common.Tabl
 }
 
 // TODO: not all ddl in p.tablesDDLHistory should be sent to the dispatcher, verify dispatcher will set the right range
-func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64) []common.DDLEvent {
+func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64) ([]common.DDLEvent, error) {
 	p.mu.RLock()
+	if start < p.gcTs {
+		p.mu.Unlock()
+		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
+	}
 	history, ok := p.tablesDDLHistory[tableID]
 	if !ok {
 		p.mu.RUnlock()
-		return nil
+		return nil, nil
 	}
 	index := sort.Search(len(history), func(i int) bool {
 		return history[i] > start
@@ -308,7 +298,7 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64
 	// no events to read
 	if index == len(history) {
 		p.mu.RUnlock()
-		return nil
+		return nil, nil
 	}
 	// copy all target ts to a new slice
 	allTargetTs := make([]uint64, 0)
@@ -328,10 +318,17 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64
 		events[i] = buildDDLEvent(&rawEvent)
 	}
 
-	return events
+	return events, nil
 }
 
-func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) []common.DDLEvent {
+func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]common.DDLEvent, error) {
+	p.mu.Lock()
+	if start < p.gcTs {
+		p.mu.Unlock()
+		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
+	}
+	p.mu.Unlock()
+
 	events := make([]common.DDLEvent, 0)
 	nextStartTs := start
 	storageSnap := p.db.NewSnapshot()
@@ -349,7 +346,7 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 		// no more events to read
 		if index == len(p.tableTriggerDDLHistory) {
 			p.mu.RUnlock()
-			return events
+			return events, nil
 		}
 		for i := index; i < len(p.tableTriggerDDLHistory); i++ {
 			allTargetTs = append(allTargetTs, p.tableTriggerDDLHistory[i])
@@ -360,7 +357,7 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 		p.mu.RUnlock()
 
 		if len(allTargetTs) == 0 {
-			return events
+			return events, nil
 		}
 		for _, ts := range allTargetTs {
 			rawEvent := readDDLEvent(storageSnap, ts)
@@ -374,7 +371,7 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 			events = append(events, buildDDLEvent(&rawEvent))
 		}
 		if len(events) >= limit {
-			return events
+			return events, nil
 		}
 		nextStartTs = allTargetTs[len(allTargetTs)-1]
 	}
@@ -469,16 +466,74 @@ func (p *persistentStorage) gc(ctx context.Context) error {
 }
 
 func (p *persistentStorage) doGc(gcTs uint64) error {
+	p.mu.Lock()
+	if gcTs > p.upperBound.ResolvedTs {
+		log.Panic("gc safe point is larger than resolvedTs",
+			zap.Uint64("gcTs", gcTs),
+			zap.Uint64("resolvedTs", p.upperBound.ResolvedTs))
+	}
 	if gcTs <= p.gcTs {
+		p.mu.Unlock()
 		return nil
 	}
-	// TODO: gc data on disk and in memory
-	// write new snspashot on disk
-	// writeGcTs(p.db, gcTs)
-	// delete range on disk
-	// delete data in memory
-	// log
+	oldGcTs := p.gcTs
+	p.mu.Unlock()
+
+	start := time.Now()
+	_, tablesInKVSnap, err := writeSchemaSnapshotAndMeta(p.db, p.kvStorage, gcTs)
+	if err != nil {
+		// TODO: retry
+		log.Warn("fail to write kv snapshot during gc",
+			zap.Uint64("gcTs", gcTs))
+	}
+
+	// clean data in memeory before clean data on disk
+	p.cleanObseleteDataInMemory(gcTs, tablesInKVSnap)
+	cleanObseleteData(p.db, oldGcTs, gcTs)
+
+	log.Info("gc finish",
+		zap.Uint64("gcTs", gcTs),
+		zap.Any("duration", time.Since(start).Seconds()))
+
 	return nil
+}
+
+func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64, tablesInKVSnap map[int64]*BasicTableInfo) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.gcTs = gcTs
+
+	for tableID := range tablesInKVSnap {
+		p.tableMap[tableID].InKVSnap = true
+	}
+
+	// clean tablesDDLHistory
+	for tableID, history := range p.tablesDDLHistory {
+		if _, ok := tablesInKVSnap[tableID]; !ok {
+			delete(p.tablesDDLHistory, tableID)
+			continue
+		}
+
+		i := sort.Search(len(history), func(i int) bool {
+			return history[i] > gcTs
+		})
+		if i == len(history) {
+			delete(p.tablesDDLHistory, tableID)
+			continue
+		}
+		p.tablesDDLHistory[tableID] = history[i:]
+	}
+
+	// clean tableTriggerDDLHistory
+	i := sort.Search(len(p.tableTriggerDDLHistory), func(i int) bool {
+		return p.tableTriggerDDLHistory[i] > gcTs
+	})
+	p.tableTriggerDDLHistory = p.tableTriggerDDLHistory[i:]
+
+	// clean tableInfoStoreMap
+	for _, store := range p.tableInfoStoreMap {
+		store.gc(gcTs)
+	}
 }
 
 func (p *persistentStorage) updateUpperBound(upperBound upperBoundMeta) {
@@ -523,7 +578,7 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 	p.mu.Lock()
 	for i := range ddlEvents {
 		fillSchemaName(&ddlEvents[i], p.databaseMap)
-		fillInfluencedInfo(&ddlEvents[i], p.databaseMap, p.tableMap)
+		fillInfluencedTableInfo(&ddlEvents[i], p.databaseMap, p.tableMap)
 		skip, err := updateDatabaseInfoAndTableInfo(&ddlEvents[i], p.databaseMap, p.tableMap)
 		if err != nil {
 			return err
@@ -569,7 +624,7 @@ func fillSchemaName(
 	}
 }
 
-func fillInfluencedInfo(
+func fillInfluencedTableInfo(
 	event *PersistedDDLEvent,
 	databaseMap map[int64]*BasicDatabaseInfo,
 	tableMap map[int64]*BasicTableInfo,
@@ -593,6 +648,7 @@ func fillInfluencedInfo(
 		event.NeedDroppedTables = &common.InfluencedTables{
 			InfluenceType: common.DB,
 			SchemaID:      event.SchemaID,
+			SchemaName:    event.SchemaName,
 		}
 	case model.ActionCreateTable:
 		event.NeedAddedTables = []common.Table{

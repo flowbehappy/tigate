@@ -362,6 +362,7 @@ type DDLEvent struct {
 	NeedDroppedTables *InfluencedTables `json:"need_dropped_tables"`
 	NeedAddedTables   []Table           `json:"need_added_tables"`
 
+	// Deprecated
 	TableNameChange *TableNameChange `json:"table_name_change"`
 	// 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
 	PostTxnFlushed []func() `msg:"-"`
@@ -463,7 +464,9 @@ func (t InfluenceType) toPB() heartbeatpb.InfluenceType {
 type InfluencedTables struct {
 	InfluenceType InfluenceType
 	TableIDs      []int64
+	TableNames    []string
 	SchemaID      int64
+	SchemaName    string
 }
 
 func (i *InfluencedTables) ToPB() *heartbeatpb.InfluencedTables {
@@ -473,21 +476,27 @@ func (i *InfluencedTables) ToPB() *heartbeatpb.InfluencedTables {
 	return &heartbeatpb.InfluencedTables{
 		InfluenceType: i.InfluenceType.toPB(),
 		TableIDs:      i.TableIDs,
+		TableNames:    i.TableNames,
 		SchemaID:      i.SchemaID,
+		SchemaName:    i.SchemaName,
 	}
 }
 func ToTablesPB(tables []Table) []*heartbeatpb.Table {
 	res := make([]*heartbeatpb.Table, len(tables))
 	for i, t := range tables {
 		res[i] = &heartbeatpb.Table{
-			SchemaID: t.SchemaID,
-			TableID:  t.TableID,
+			TableID:    t.TableID,
+			SchemaID:   t.SchemaID,
+			TableName:  t.TableName,
+			SchemaName: t.SchemaName,
 		}
 	}
 	return res
 }
 
 type Table struct {
-	SchemaID int64
-	TableID  int64
+	SchemaID   int64
+	SchemaName string
+	TableID    int64
+	TableName  string
 }
