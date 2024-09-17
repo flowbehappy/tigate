@@ -648,6 +648,7 @@ func fillInfluencedTableInfo(
 		event.NeedDroppedTables = &common.InfluencedTables{
 			InfluenceType: common.DB,
 			SchemaID:      event.SchemaID,
+			SchemaName:    event.SchemaName,
 		}
 	case model.ActionCreateTable:
 		event.NeedAddedTables = []common.Table{

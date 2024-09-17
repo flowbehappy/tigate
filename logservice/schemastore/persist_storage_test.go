@@ -222,16 +222,16 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		tableInfo, err := store.getTableInfo(gcTs)
 		require.Nil(t, err)
 		require.Equal(t, "t1", tableInfo.Name.O)
-		require.Equal(t, tableID, int64(tableInfo.ID))
-		tableInfo2, err := store.getTableInfo(uint64(renameVersion))
+		require.Equal(t, tableID, tableInfo.ID)
+		tableInfo2, err := store.getTableInfo(renameVersion)
 		require.Nil(t, err)
 		require.Equal(t, "t2", tableInfo2.Name.O)
 
 		renameVersion2 := uint64(3000)
 		store.applyDDL(PersistedDDLEvent{
 			Type:          byte(model.ActionRenameTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID),
+			SchemaID:      schemaID,
+			TableID:       tableID,
 			SchemaVersion: 3000,
 			TableInfo: &model.TableInfo{
 				ID:   int64(tableID),
@@ -239,7 +239,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 			},
 			FinishedTs: renameVersion2,
 		})
-		tableInfo3, err := store.getTableInfo(uint64(renameVersion2))
+		tableInfo3, err := store.getTableInfo(renameVersion2)
 		require.Nil(t, err)
 		require.Equal(t, "t3", tableInfo3.Name.O)
 	}
@@ -278,8 +278,8 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID),
+			SchemaID:      schemaID,
+			TableID:       tableID,
 			SchemaVersion: 101,
 			TableInfo: &model.TableInfo{
 				Name: model.NewCIStr("t1"),
@@ -301,8 +301,8 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID2),
+			SchemaID:      schemaID,
+			TableID:       tableID2,
 			SchemaVersion: 103,
 			TableInfo: &model.TableInfo{
 				Name: model.NewCIStr("t2"),
@@ -324,8 +324,8 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionDropTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID2),
+			SchemaID:      schemaID,
+			TableID:       tableID2,
 			SchemaVersion: 105,
 			TableInfo:     nil,
 			FinishedTs:    205,
@@ -347,11 +347,11 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionTruncateTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID),
+			SchemaID:      schemaID,
+			TableID:       tableID,
 			SchemaVersion: 107,
 			TableInfo: &model.TableInfo{
-				ID: int64(tableID3),
+				ID: tableID3,
 			},
 			FinishedTs: 207,
 		}
@@ -441,11 +441,11 @@ func TestHandleRenameTable(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionRenameTable),
-			SchemaID:      int64(schemaID2),
-			TableID:       int64(tableID),
+			SchemaID:      schemaID2,
+			TableID:       tableID,
 			SchemaVersion: 505,
 			TableInfo: &model.TableInfo{
-				ID:   int64(tableID),
+				ID:   tableID,
 				Name: model.NewCIStr("t2"),
 			},
 			FinishedTs: 605,
@@ -488,11 +488,11 @@ func TestFetchDDLEvents(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID),
+			SchemaID:      schemaID,
+			TableID:       tableID,
 			SchemaVersion: 501,
 			TableInfo: &model.TableInfo{
-				ID:   int64(tableID),
+				ID:   tableID,
 				Name: model.NewCIStr("t1"),
 			},
 			FinishedTs: 601,
@@ -504,11 +504,11 @@ func TestFetchDDLEvents(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionRenameTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID),
+			SchemaID:      schemaID,
+			TableID:       tableID,
 			SchemaVersion: 505,
 			TableInfo: &model.TableInfo{
-				ID:   int64(tableID),
+				ID:   tableID,
 				Name: model.NewCIStr("t2"),
 			},
 			FinishedTs: 605,
@@ -521,11 +521,11 @@ func TestFetchDDLEvents(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionTruncateTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID),
+			SchemaID:      schemaID,
+			TableID:       tableID,
 			SchemaVersion: 507,
 			TableInfo: &model.TableInfo{
-				ID:   int64(tableID2),
+				ID:   tableID2,
 				Name: model.NewCIStr("t2"),
 			},
 			FinishedTs: 607,
