@@ -312,6 +312,7 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64
 	defer storageSnap.Close()
 	p.mu.RUnlock()
 
+	// TODO: if the first event is a create table ddl, return error?
 	events := make([]common.DDLEvent, len(allTargetTs))
 	for i, ts := range allTargetTs {
 		rawEvent := readDDLEvent(storageSnap, ts)

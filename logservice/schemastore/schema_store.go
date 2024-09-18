@@ -173,12 +173,12 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 }
 
 func (s *schemaStore) GetAllPhysicalTables(snapTs uint64, filter filter.Filter) ([]common.Table, error) {
-	s.waitResolvedTs(0, snapTs)
+	s.waitResolvedTs(0, snapTs, 10*time.Second)
 	return s.dataStorage.getAllPhysicalTables(snapTs, filter)
 }
 
 func (s *schemaStore) RegisterTable(tableID int64, startTs uint64) error {
-	s.waitResolvedTs(tableID, startTs)
+	s.waitResolvedTs(tableID, startTs, 5*time.Second)
 	return s.dataStorage.registerTable(tableID, startTs)
 }
 
@@ -187,7 +187,7 @@ func (s *schemaStore) UnregisterTable(tableID int64) error {
 }
 
 func (s *schemaStore) GetTableInfo(tableID int64, ts uint64) (*common.TableInfo, error) {
-	s.waitResolvedTs(tableID, ts)
+	s.waitResolvedTs(tableID, ts, 2*time.Second)
 	return s.dataStorage.getTableInfo(tableID, ts)
 }
 
@@ -269,19 +269,21 @@ func (s *schemaStore) advanceResolvedTs(resolvedTs uint64) {
 }
 
 // TODO: use notify instead of sleep
-func (s *schemaStore) waitResolvedTs(tableID int64, ts uint64) {
+func (s *schemaStore) waitResolvedTs(tableID int64, ts uint64, logInterval time.Duration) {
 	start := time.Now()
+	lastLogTime := time.Now()
 	for {
 		if s.resolvedTs.Load() >= uint64(ts) {
 			return
 		}
-		time.Sleep(time.Millisecond * 20)
-		if time.Since(start) > time.Second*5 {
+		time.Sleep(time.Millisecond * 10)
+		if time.Since(lastLogTime) > logInterval {
 			log.Info("wait resolved ts slow",
 				zap.Int64("tableID", tableID),
 				zap.Any("ts", ts),
 				zap.Uint64("resolvedTS", s.resolvedTs.Load()),
 				zap.Any("time", time.Since(start)))
+			lastLogTime = time.Now()
 		}
 	}
 }
