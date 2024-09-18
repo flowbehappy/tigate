@@ -318,6 +318,12 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64
 		rawEvent := readDDLEvent(storageSnap, ts)
 		events[i] = buildDDLEvent(&rawEvent)
 	}
+	log.Info("fetchTableDDLEvents",
+		zap.Int64("tableID", tableID),
+		zap.Uint64("start", start),
+		zap.Uint64("end", end),
+		zap.Any("history", history),
+		zap.Any("allTargetTs", allTargetTs))
 
 	return events, nil
 }
@@ -666,22 +672,38 @@ func fillInfluencedTableInfo(
 		event.NeedDroppedTables = &common.InfluencedTables{
 			InfluenceType: common.Normal,
 			TableIDs:      []int64{event.TableID},
+			TableNames: []string{
+				tableMap[event.TableID].Name,
+			},
+			SchemaID:   event.SchemaID,
+			SchemaName: event.SchemaName,
 		}
 	case model.ActionTruncateTable:
+		tableName := tableMap[event.TableID].Name
 		event.NeedDroppedTables = &common.InfluencedTables{
 			InfluenceType: common.Normal,
 			TableIDs:      []int64{event.TableID},
+			TableNames: []string{
+				tableName,
+			},
+			SchemaID:   event.SchemaID,
+			SchemaName: event.SchemaName,
 		}
 		event.NeedAddedTables = []common.Table{
 			{
-				SchemaID: event.SchemaID,
-				TableID:  event.TableInfo.ID,
+				SchemaID:   event.SchemaID,
+				SchemaName: event.SchemaName,
+				TableID:    event.TableInfo.ID,
+				TableName:  tableName,
 			},
 		}
 	case model.ActionRenameTable:
 		event.BlockedTables = &common.InfluencedTables{
 			InfluenceType: common.Normal,
 			TableIDs:      []int64{event.TableID},
+			TableNames:    []string{
+				// FIXME:
+			},
 		}
 	case model.ActionCreateView:
 		event.BlockedTables = &common.InfluencedTables{
@@ -694,6 +716,7 @@ func fillInfluencedTableInfo(
 	}
 }
 
+// TODO: add some comment to explain why we should skip some ddl
 func shouldSkipDDL(
 	event *PersistedDDLEvent,
 	databaseMap map[int64]*BasicDatabaseInfo,

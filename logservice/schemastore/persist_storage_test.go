@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -51,13 +52,13 @@ func newEmptyPersistentStorageForTest(dbPath string) *persistentStorage {
 	if err != nil {
 		log.Panic("create database fail")
 	}
-	gcTs := 0
+	gcTs := uint64(0)
 	upperBound := upperBoundMeta{
 		FinishedDDLTs: 0,
 		SchemaVersion: 0,
 		ResolvedTs:    0,
 	}
-	return loadPersistentStorageForTest(db, uint64(gcTs), upperBound)
+	return loadPersistentStorageForTest(db, gcTs, upperBound)
 }
 
 func newPersistentStorageForTest(dbPath string, gcTs uint64, initialDBInfos map[int64]*model.DBInfo) *persistentStorage {
@@ -74,7 +75,7 @@ func newPersistentStorageForTest(dbPath string, gcTs uint64, initialDBInfos map[
 		ResolvedTs:    gcTs,
 	}
 	writeUpperBoundMeta(db, upperBound)
-	return loadPersistentStorageForTest(db, uint64(gcTs), upperBound)
+	return loadPersistentStorageForTest(db, gcTs, upperBound)
 }
 
 func mockWriteKVSnapOnDisk(db *pebble.DB, snapTs uint64, dbInfos map[int64]*model.DBInfo) map[int64]*BasicTableInfo {
@@ -188,7 +189,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		tableInfo, err := store.getTableInfo(gcTs)
 		require.Nil(t, err)
 		require.Equal(t, "t1", tableInfo.Name.O)
-		require.Equal(t, tableID, int64(tableInfo.ID))
+		require.Equal(t, tableID, tableInfo.ID)
 	}
 
 	// rename table
@@ -196,11 +197,11 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionRenameTable),
-			SchemaID:      int64(schemaID),
-			TableID:       int64(tableID),
+			SchemaID:      schemaID,
+			TableID:       tableID,
 			SchemaVersion: 3000,
 			TableInfo: &model.TableInfo{
-				ID:   int64(tableID),
+				ID:   tableID,
 				Name: model.NewCIStr("t2"),
 			},
 			FinishedTs: renameVersion,
@@ -234,7 +235,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 			TableID:       tableID,
 			SchemaVersion: 3000,
 			TableInfo: &model.TableInfo{
-				ID:   int64(tableID),
+				ID:   tableID,
 				Name: model.NewCIStr("t3"),
 			},
 			FinishedTs: renameVersion2,
@@ -423,7 +424,7 @@ func TestHandleRenameTable(t *testing.T) {
 			TableID:       tableID,
 			SchemaVersion: 501,
 			TableInfo: &model.TableInfo{
-				ID:   int64(tableID),
+				ID:   tableID,
 				Name: model.NewCIStr("t1"),
 			},
 			FinishedTs: 601,
@@ -468,14 +469,15 @@ func TestFetchDDLEvents(t *testing.T) {
 
 	// create db
 	schemaID := int64(300)
+	schemaName := "test"
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionCreateSchema),
-			SchemaID:      int64(schemaID),
+			SchemaID:      schemaID,
 			SchemaVersion: 100,
 			DBInfo: &model.DBInfo{
-				ID:   int64(schemaID),
-				Name: model.NewCIStr("test"),
+				ID:   schemaID,
+				Name: model.NewCIStr(schemaName),
 			},
 			TableInfo:  nil,
 			FinishedTs: 200,
@@ -533,15 +535,107 @@ func TestFetchDDLEvents(t *testing.T) {
 		pStorage.handleSortedDDLEvents(ddlEvent)
 	}
 
+	// create another table
+	tableID3 := int64(200)
+	{
+		ddlEvent := PersistedDDLEvent{
+			Type:          byte(model.ActionCreateTable),
+			SchemaID:      schemaID,
+			TableID:       tableID3,
+			SchemaVersion: 509,
+			TableInfo: &model.TableInfo{
+				ID:   tableID,
+				Name: model.NewCIStr("t3"),
+			},
+			FinishedTs: 609,
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	// drop newly created table
+	{
+		ddlEvent := PersistedDDLEvent{
+			Type:          byte(model.ActionDropTable),
+			SchemaID:      schemaID,
+			TableID:       tableID3,
+			SchemaVersion: 511,
+			TableInfo: &model.TableInfo{
+				ID:   tableID,
+				Name: model.NewCIStr("t3"),
+			},
+			FinishedTs: 611,
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
+	// drop db
+	{
+		ddlEvent := PersistedDDLEvent{
+			Type:          byte(model.ActionDropSchema),
+			SchemaID:      schemaID,
+			SchemaVersion: 600,
+			DBInfo: &model.DBInfo{
+				ID:   schemaID,
+				Name: model.NewCIStr(schemaName),
+			},
+			TableInfo:  nil,
+			FinishedTs: 700,
+		}
+		pStorage.handleSortedDDLEvents(ddlEvent)
+	}
+
 	// fetch table ddl events
 	{
-		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, 601, 607)
+		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, 601, 700)
 		require.Nil(t, err)
 		require.Equal(t, 2, len(ddlEvents))
+		// rename table event
 		require.Equal(t, uint64(605), ddlEvents[0].FinishedTs)
+		// truncate table event
 		require.Equal(t, uint64(607), ddlEvents[1].FinishedTs)
 		require.Equal(t, "test", ddlEvents[1].SchemaName)
 		require.Equal(t, "t2", ddlEvents[1].TableName)
+		require.Equal(t, common.Normal, ddlEvents[1].NeedDroppedTables.InfluenceType)
+		require.Equal(t, schemaID, ddlEvents[1].NeedDroppedTables.SchemaID)
+		require.Equal(t, "test", ddlEvents[1].NeedDroppedTables.SchemaName)
+		require.Equal(t, 1, len(ddlEvents[1].NeedDroppedTables.TableIDs))
+		require.Equal(t, tableID, ddlEvents[1].NeedDroppedTables.TableIDs[0])
+		require.Equal(t, 1, len(ddlEvents[1].NeedDroppedTables.TableNames))
+		require.Equal(t, "t2", ddlEvents[1].NeedDroppedTables.TableNames[0])
+		require.Equal(t, 1, len(ddlEvents[1].NeedAddedTables))
+		require.Equal(t, schemaID, ddlEvents[1].NeedAddedTables[0].SchemaID)
+		require.Equal(t, "test", ddlEvents[1].NeedAddedTables[0].SchemaName)
+		require.Equal(t, tableID2, ddlEvents[1].NeedAddedTables[0].TableID)
+		require.Equal(t, "t2", ddlEvents[1].NeedAddedTables[0].TableName)
+	}
+
+	// fetch table ddl events for another table
+	{
+		// TODO: test return error if start ts is smaller than 607
+		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID2, 607, 700)
+		require.Nil(t, err)
+		require.Equal(t, 1, len(ddlEvents))
+		// drop db event
+		require.Equal(t, uint64(700), ddlEvents[0].FinishedTs)
+		require.Equal(t, common.DB, ddlEvents[0].NeedDroppedTables.InfluenceType)
+		require.Equal(t, schemaID, ddlEvents[0].NeedDroppedTables.SchemaID)
+		require.Equal(t, "test", ddlEvents[0].NeedDroppedTables.SchemaName)
+	}
+
+	// fetch table ddl events again
+	{
+		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID3, 609, 700)
+		require.Nil(t, err)
+		require.Equal(t, 1, len(ddlEvents))
+		// drop table event
+		require.Equal(t, uint64(611), ddlEvents[0].FinishedTs)
+		require.Equal(t, common.Normal, ddlEvents[0].NeedDroppedTables.InfluenceType)
+		require.Equal(t, 1, len(ddlEvents[0].NeedDroppedTables.TableIDs))
+		require.Equal(t, tableID3, ddlEvents[0].NeedDroppedTables.TableIDs[0])
+		require.Equal(t, 1, len(ddlEvents[0].NeedDroppedTables.TableNames))
+		require.Equal(t, "t3", ddlEvents[0].NeedDroppedTables.TableNames[0])
+		require.Equal(t, schemaID, ddlEvents[0].NeedDroppedTables.SchemaID)
+		require.Equal(t, "test", ddlEvents[0].NeedDroppedTables.SchemaName)
 	}
 
 	// fetch all table trigger ddl events
@@ -551,10 +645,29 @@ func TestFetchDDLEvents(t *testing.T) {
 		require.Nil(t, err)
 		tableTriggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(eventFilter, 0, 10)
 		require.Nil(t, err)
-		require.Equal(t, 3, len(tableTriggerDDLEvents))
+		require.Equal(t, 6, len(tableTriggerDDLEvents))
+		// create db event
 		require.Equal(t, uint64(200), tableTriggerDDLEvents[0].FinishedTs)
+		// create table event
 		require.Equal(t, uint64(601), tableTriggerDDLEvents[1].FinishedTs)
+		require.Equal(t, 1, len(tableTriggerDDLEvents[1].NeedAddedTables))
+		require.Equal(t, schemaID, tableTriggerDDLEvents[1].NeedAddedTables[0].SchemaID)
+		require.Equal(t, schemaName, tableTriggerDDLEvents[1].NeedAddedTables[0].SchemaName)
+		require.Equal(t, tableID, tableTriggerDDLEvents[1].NeedAddedTables[0].TableID)
+		require.Equal(t, "t1", tableTriggerDDLEvents[1].NeedAddedTables[0].TableName)
+		// rename table event
 		require.Equal(t, uint64(605), tableTriggerDDLEvents[2].FinishedTs)
+		// create table event
+		require.Equal(t, uint64(609), tableTriggerDDLEvents[3].FinishedTs)
+		// drop table event
+		require.Equal(t, uint64(611), tableTriggerDDLEvents[4].FinishedTs)
+		require.Equal(t, common.Normal, tableTriggerDDLEvents[4].NeedDroppedTables.InfluenceType)
+		require.Equal(t, schemaID, tableTriggerDDLEvents[4].NeedDroppedTables.SchemaID)
+		require.Equal(t, schemaName, tableTriggerDDLEvents[4].NeedDroppedTables.SchemaName)
+		require.Equal(t, tableID3, tableTriggerDDLEvents[4].NeedDroppedTables.TableIDs[0])
+		require.Equal(t, "t3", tableTriggerDDLEvents[4].NeedDroppedTables.TableNames[0])
+		// drop db event
+		require.Equal(t, uint64(700), tableTriggerDDLEvents[5].FinishedTs)
 	}
 
 	// fetch partial table trigger ddl events
@@ -637,7 +750,7 @@ func TestGC(t *testing.T) {
 			TableID:       tableID1,
 			SchemaVersion: 505,
 			TableInfo: &model.TableInfo{
-				ID:   int64(tableID1),
+				ID:   tableID1,
 				Name: model.NewCIStr("t1_r"),
 			},
 			FinishedTs: 605,
