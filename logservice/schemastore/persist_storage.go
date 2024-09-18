@@ -20,7 +20,6 @@ import (
 	"os"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cockroachdb/pebble"
@@ -41,8 +40,6 @@ const dataDir = "schema_store"
 //  2. incremental ddl jobs
 //  3. metadata which describes the valid data range on disk
 type persistentStorage struct {
-	gcRunning atomic.Bool
-
 	pdCli pd.Client
 
 	kvStorage kv.Storage
@@ -254,6 +251,9 @@ func (p *persistentStorage) registerTable(tableID int64, startTs uint64) error {
 	}
 
 	store.waitTableInfoInitialized()
+
+	// Note: no need to check startTs < gcTs here again because if it is true, getTableInfo will failed later.
+
 	return nil
 }
 
@@ -322,6 +322,10 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64
 }
 
 func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]common.DDLEvent, error) {
+	// get storage snap before check start < gcTs
+	storageSnap := p.db.NewSnapshot()
+	defer storageSnap.Close()
+
 	p.mu.Lock()
 	if start < p.gcTs {
 		p.mu.Unlock()
@@ -331,8 +335,6 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 
 	events := make([]common.DDLEvent, 0)
 	nextStartTs := start
-	storageSnap := p.db.NewSnapshot()
-	defer storageSnap.Close()
 	for {
 		allTargetTs := make([]uint64, 0, limit)
 		p.mu.RLock()
