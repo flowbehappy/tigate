@@ -15,10 +15,11 @@ package dispatchermanager
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
@@ -82,7 +83,7 @@ type EventDispatcherManager struct {
 	metricCreateDispatcherDuration prometheus.Observer
 	metricCheckpointTs             prometheus.Gauge
 	metricCheckpointTsLag          prometheus.Gauge
-	metricResolveTs                prometheus.Gauge
+	metricResolvedTs               prometheus.Gauge
 	metricResolvedTsLag            prometheus.Gauge
 }
 
@@ -103,7 +104,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 		metricCreateDispatcherDuration: metrics.CreateDispatcherDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCheckpointTs:             metrics.EventDispatcherManagerCheckpointTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCheckpointTsLag:          metrics.EventDispatcherManagerCheckpointTsLagGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
-		metricResolveTs:                metrics.EventDispatcherManagerResolvedTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
+		metricResolvedTs:               metrics.EventDispatcherManagerResolvedTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricResolvedTsLag:            metrics.EventDispatcherManagerResolvedTsLagGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 	}
 
@@ -125,7 +126,6 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 
 	manager.wg.Add(1)
 	go manager.CollectHeartbeatInfoWhenStatesChanged(ctx)
-	manager.updateMetrics(ctx)
 	return manager
 }
 
@@ -375,6 +375,15 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	for idx, id := range toReomveDispatcherIDs {
 		e.cleanTableEventDispatcher(id, removeDispatcherSchemaIDs[idx])
 	}
+
+	e.metricCheckpointTs.Set(float64(heartBeatInfo.Watermark.CheckpointTs))
+	e.metricResolvedTs.Set(float64(heartBeatInfo.Watermark.ResolvedTs))
+
+	phyCheckpointTs := oracle.ExtractPhysical(heartBeatInfo.Watermark.CheckpointTs)
+	phyResolvedTs := oracle.ExtractPhysical(heartBeatInfo.Watermark.ResolvedTs)
+	e.metricCheckpointTsLag.Set(float64(oracle.GetPhysical(time.Now())-phyCheckpointTs) / 1e3)
+	e.metricResolvedTsLag.Set(float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3)
+
 	return &message
 }
 
@@ -417,34 +426,6 @@ func (e *EventDispatcherManager) GetAllDispatchers(schemaID int64) []common.Disp
 		dispatcherIDs = append(dispatcherIDs, e.tableTriggerEventDispatcher.GetId())
 	}
 	return dispatcherIDs
-}
-
-func (e *EventDispatcherManager) updateMetrics(ctx context.Context) error {
-	ticker := time.NewTicker(10 * time.Second)
-	e.wg.Add(1)
-	go func() {
-		defer e.wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				minResolvedTs := uint64(0)
-				e.dispatcherMap.ForEach(func(_ common.DispatcherID, dispatcherItem *dispatcher.Dispatcher) {
-					if minResolvedTs == 0 || dispatcherItem.GetResolvedTs() < minResolvedTs {
-						minResolvedTs = dispatcherItem.GetResolvedTs()
-					}
-				})
-				if minResolvedTs == 0 {
-					continue
-				}
-				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
-				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
-				e.metricResolvedTsLag.Set(float64(lag))
-			}
-		}
-	}()
-	return nil
 }
 
 type DispatcherMap struct {

@@ -15,9 +15,10 @@ package eventcollector
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/eventpb"
@@ -113,6 +114,8 @@ func NewEventCollector(globalMemoryQuota int64, serverId node.ID) *EventCollecto
 			}
 		}
 	}()
+
+	eventCollector.updateMetrics(context.Background())
 	return &eventCollector
 }
 
@@ -189,7 +192,9 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 
 func (c *EventCollector) updateMetrics(ctx context.Context) error {
 	ticker := time.NewTicker(10 * time.Second)
+	c.wg.Add(1)
 	go func() {
+		defer c.wg.Done()
 		for {
 			select {
 			case <-ctx.Done():
