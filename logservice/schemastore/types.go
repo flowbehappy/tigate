@@ -28,14 +28,9 @@ type PersistedDDLEvent struct {
 	// CDCWriteSource indicates the source of CDC write.
 	CDCWriteSource uint64 `json:"cdc_write_source"`
 
-	// only used for drop schema
-	TablesInSchema map[int64]bool `json:"-"`
-
 	BlockedTables     *common.InfluencedTables `json:"blocked_tables"`
 	NeedDroppedTables *common.InfluencedTables `json:"need_dropped_tables"`
 	NeedAddedTables   []common.Table           `json:"need_added_tables"`
-
-	TableNameChange *common.TableNameChange `json:"table_name_change"`
 }
 
 func buildPersistedDDLEvent(job *model.Job) PersistedDDLEvent {
