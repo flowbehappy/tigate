@@ -15,9 +15,10 @@ package eventcollector
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/eventpb"
@@ -180,6 +181,7 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 				c.dispatcherEventsDynamicStream.In() <- e
 			}
 		default:
+			log.Info("received event type", zap.Any("event type", event.GetType()))
 			c.metricDispatcherReceivedKVEventCount.Inc()
 			c.dispatcherEventsDynamicStream.In() <- event
 		}

@@ -21,6 +21,8 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/flowbehappy/tigate/utils/threadpool"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 type SyncPointInfo struct {
@@ -204,6 +206,7 @@ type DispatcherEventsHandler struct {
 }
 
 func (h *DispatcherEventsHandler) Path(event common.Event) common.DispatcherID {
+	log.Info("DispatcherEventsHandler Path", zap.Any("event dispatcher id", event.GetDispatcherID()), zap.Any("event type", event.GetType()))
 	return event.GetDispatcherID()
 }
 
