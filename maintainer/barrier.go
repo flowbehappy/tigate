@@ -14,8 +14,9 @@
 package maintainer
 
 import (
-	"github.com/flowbehappy/tigate/pkg/node"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -293,7 +294,7 @@ func (b *BarrierEvent) scheduleBlockEvent() []*messaging.TargetMessage {
 		b.scheduler.AddNewTable(common.Table{
 			SchemaID: add.SchemaID,
 			TableID:  add.TableID,
-		})
+		}, b.commitTs)
 	}
 	msgList := b.scheduler.Schedule()
 	msgs = append(msgs, msgList...)

@@ -16,9 +16,10 @@ package maintainer
 import (
 	"bytes"
 	"context"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"testing"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -42,7 +43,7 @@ func TestSchedule(t *testing.T) {
 		s.AddNewTable(common.Table{
 			SchemaID: 1,
 			TableID:  int64(i),
-		})
+		}, 1)
 	}
 	msgs := s.Schedule()
 	require.Len(t, msgs, 9)
@@ -58,7 +59,7 @@ func TestMoveTask(t *testing.T) {
 	s.AddNewTable(common.Table{
 		SchemaID: 1,
 		TableID:  int64(1),
-	})
+	}, 1)
 	s.nodeTasks["a"] = map[common.DispatcherID]*scheduler.StateMachine{}
 	s.nodeTasks["b"] = map[common.DispatcherID]*scheduler.StateMachine{}
 	var (
@@ -264,7 +265,7 @@ func TestBalanceUnEvenTask(t *testing.T) {
 		s.AddNewTable(common.Table{
 			SchemaID: 1,
 			TableID:  int64(i),
-		})
+		}, 1)
 	}
 	msgs := s.Schedule()
 	require.Len(t, msgs, 4)
