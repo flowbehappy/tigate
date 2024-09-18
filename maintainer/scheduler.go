@@ -104,6 +104,16 @@ func (s *Scheduler) GetAllNodes() []node.ID {
 }
 
 func (s *Scheduler) AddNewTable(table common.Table, startTs uint64) {
+	schemaTables, ok := s.schemaTasks[table.SchemaID]
+	if ok {
+		for _, task := range schemaTables {
+			if task.Inferior.(*ReplicaSet).Span.TableID == table.TableID {
+				log.Warn("table already add, ignore",
+					zap.String("changefeed", s.changefeedID),
+					zap.Int64("table", table.TableID))
+			}
+		}
+	}
 	span := spanz.TableIDToComparableSpan(table.TableID)
 	tableSpan := &heartbeatpb.TableSpan{
 		TableID:  table.TableID,

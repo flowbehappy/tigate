@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -274,6 +276,9 @@ func (b *BarrierEvent) scheduleBlockEvent() []*messaging.TargetMessage {
 		switch b.dropDispatchers.InfluenceType {
 		case heartbeatpb.InfluenceType_DB:
 			for _, stm := range b.scheduler.GetTasksBySchemaID(b.dropDispatchers.SchemaID) {
+				log.Info(" remove table",
+					zap.String("changefeed", b.cfID),
+					zap.String("table", stm.ID.String()))
 				msg := b.scheduler.RemoveTask(stm)
 				if msg != nil {
 					msgs = append(msgs, msg)
@@ -281,6 +286,9 @@ func (b *BarrierEvent) scheduleBlockEvent() []*messaging.TargetMessage {
 			}
 		case heartbeatpb.InfluenceType_Normal:
 			for _, stm := range b.dropTasks {
+				log.Info(" remove table",
+					zap.String("changefeed", b.cfID),
+					zap.String("table", stm.ID.String()))
 				msg := b.scheduler.RemoveTask(stm)
 				if msg != nil {
 					msgs = append(msgs, msg)
@@ -291,6 +299,9 @@ func (b *BarrierEvent) scheduleBlockEvent() []*messaging.TargetMessage {
 		}
 	}
 	for _, add := range b.newTables {
+		log.Info(" add new table",
+			zap.String("changefeed", b.cfID),
+			zap.Int64("table", add.TableID))
 		b.scheduler.AddNewTable(common.Table{
 			SchemaID: add.SchemaID,
 			TableID:  add.TableID,
