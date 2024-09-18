@@ -45,11 +45,10 @@ type schemaStore struct {
 	// store ddl event and other metadata on disk, it is thread safe
 	dataStorage *persistentStorage
 
-	// TODO: remove it and update resolve ts periodically
-	eventCh chan interface{}
+	notifyCh chan interface{}
 
 	// resolved ts pending for apply
-	pendingResolveTs atomic.Uint64
+	pendingResolvedTs atomic.Uint64
 
 	// max resolvedTs of all applied ddl events
 	resolvedTs atomic.Uint64
@@ -77,11 +76,11 @@ func NewSchemaStore(
 	s := &schemaStore{
 		unsortedCache: newDDLCache(),
 		dataStorage:   dataStorage,
-		eventCh:       make(chan interface{}, 1024),
+		notifyCh:      make(chan interface{}, 4),
 		finishedDDLTs: upperBound.FinishedDDLTs,
 		schemaVersion: upperBound.SchemaVersion,
 	}
-	s.pendingResolveTs.Store(upperBound.ResolvedTs)
+	s.pendingResolvedTs.Store(upperBound.ResolvedTs)
 	s.resolvedTs.Store(upperBound.ResolvedTs)
 
 	log.Info("new schema store",
@@ -121,48 +120,54 @@ func (s *schemaStore) Close(ctx context.Context) error {
 }
 
 func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
-	ticker := time.NewTicker(20 * time.Millisecond)
+	tryUpdateResolvedTs := func() {
+		pendingTs := s.pendingResolvedTs.Load()
+		if pendingTs <= s.resolvedTs.Load() {
+			return
+		}
+		resolvedEvents := s.unsortedCache.fetchSortedDDLEventBeforeTS(pendingTs)
+		if len(resolvedEvents) != 0 {
+			log.Info("schema store begin to apply resolved ddl events",
+				zap.Uint64("resolvedTs", pendingTs),
+				zap.Int("resolvedEventsLen", len(resolvedEvents)))
+
+			validEvents := make([]PersistedDDLEvent, 0, len(resolvedEvents))
+
+			for _, event := range resolvedEvents {
+				// TODO: build persisted ddl event after filter
+				if event.Job.BinlogInfo.SchemaVersion <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTs {
+					log.Info("skip already applied ddl job",
+						zap.String("job", event.Job.Query),
+						zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+						zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
+						zap.Any("schemaVersion", s.schemaVersion),
+						zap.Uint64("finishedDDLTS", s.finishedDDLTs))
+					continue
+				}
+				validEvents = append(validEvents, buildPersistedDDLEvent(event.Job))
+				// need to update the following two members for every event to filter out later duplicate events
+				s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
+				s.finishedDDLTs = event.Job.BinlogInfo.FinishedTS
+			}
+			s.dataStorage.handleSortedDDLEvents(validEvents...)
+		}
+		// TODO: resolved ts are updated after ddl events written to disk, do we need to optimize it?
+		s.resolvedTs.Store(pendingTs)
+		s.dataStorage.updateUpperBound(upperBoundMeta{
+			FinishedDDLTs: s.finishedDDLTs,
+			SchemaVersion: s.schemaVersion,
+			ResolvedTs:    pendingTs,
+		})
+	}
+	ticker := time.NewTicker(50 * time.Millisecond)
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			pendingTs := s.pendingResolveTs.Load()
-			if pendingTs > s.resolvedTs.Load() {
-				resolvedEvents := s.unsortedCache.fetchSortedDDLEventBeforeTS(pendingTs)
-				if len(resolvedEvents) != 0 {
-					log.Info("schema store begin to apply resolved ddl events",
-						zap.Uint64("resolvedTs", pendingTs),
-						zap.Int("resolvedEventsLen", len(resolvedEvents)))
-
-					validEvents := make([]PersistedDDLEvent, 0, len(resolvedEvents))
-
-					for _, event := range resolvedEvents {
-						// TODO: build persisted ddl event after filter
-						if event.Job.BinlogInfo.SchemaVersion <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTs {
-							log.Info("skip already applied ddl job",
-								zap.String("job", event.Job.Query),
-								zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
-								zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
-								zap.Any("schemaVersion", s.schemaVersion),
-								zap.Uint64("finishedDDLTS", s.finishedDDLTs))
-							continue
-						}
-						validEvents = append(validEvents, buildPersistedDDLEvent(event.Job))
-						// need to update the following two members for every event to filter out later duplicate events
-						s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
-						s.finishedDDLTs = event.Job.BinlogInfo.FinishedTS
-					}
-					s.dataStorage.handleSortedDDLEvents(validEvents...)
-				}
-				// TODO: resolved ts are updated after ddl events written to disk, do we need to optimize it?
-				s.resolvedTs.Store(pendingTs)
-				s.dataStorage.updateUpperBound(upperBoundMeta{
-					FinishedDDLTs: s.finishedDDLTs,
-					SchemaVersion: s.schemaVersion,
-					ResolvedTs:    pendingTs,
-				})
-			}
+			tryUpdateResolvedTs()
+		case <-s.notifyCh:
+			tryUpdateResolvedTs()
 		}
 	}
 }
@@ -251,12 +256,16 @@ func (s *schemaStore) writeDDLEvent(ddlEvent DDLJobWithCommitTs) {
 
 func (s *schemaStore) advanceResolvedTs(resolvedTs uint64) {
 	// log.Info("advance resolved ts", zap.Any("resolvedTS", resolvedTs))
-	if resolvedTs < s.pendingResolveTs.Load() {
+	if resolvedTs < s.pendingResolvedTs.Load() {
 		log.Panic("resolved ts should not fallback",
-			zap.Uint64("pendingResolveTs", s.pendingResolveTs.Load()),
+			zap.Uint64("pendingResolveTs", s.pendingResolvedTs.Load()),
 			zap.Uint64("newResolvedTs", resolvedTs))
 	}
-	s.pendingResolveTs.Store(resolvedTs)
+	s.pendingResolvedTs.Store(resolvedTs)
+	select {
+	case s.notifyCh <- struct{}{}:
+	default:
+	}
 }
 
 // TODO: use notify instead of sleep
@@ -266,7 +275,7 @@ func (s *schemaStore) waitResolvedTs(tableID int64, ts uint64) {
 		if s.resolvedTs.Load() >= uint64(ts) {
 			return
 		}
-		time.Sleep(time.Millisecond * 50)
+		time.Sleep(time.Millisecond * 20)
 		if time.Since(start) > time.Second*5 {
 			log.Info("wait resolved ts slow",
 				zap.Int64("tableID", tableID),
