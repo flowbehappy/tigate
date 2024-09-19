@@ -85,13 +85,13 @@ func (s *Supervisor) Schedule(allInferiors map[scheduler.ChangefeedID]scheduler.
 }
 
 func (s *Supervisor) MarkNeedAddInferior() {
-	basciScheduler := s.schedulers[0].(*BasicScheduler)
-	basciScheduler.markNeedAddInferior()
+	basicScheduler := s.schedulers[0].(*BasicScheduler)
+	basicScheduler.markNeedAddInferior()
 }
 
 func (s *Supervisor) MarkNeedRemoveInferior() {
-	basciScheduler := s.schedulers[0].(*BasicScheduler)
-	basciScheduler.markNeedRemoveInferior()
+	basicScheduler := s.schedulers[0].(*BasicScheduler)
+	basicScheduler.markNeedRemoveInferior()
 }
 
 func (s *Supervisor) Name() string {

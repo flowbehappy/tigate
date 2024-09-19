@@ -51,8 +51,8 @@ type Supervisor struct {
 	// track all status reported by remote inferiors when bootstrap
 	initStatus map[node.ID][]scheduler.InferiorStatus
 
-	newInferior     func(id scheduler.InferiorID) scheduler.Inferior
-	newBootstrapMsg func(id node.ID) *messaging.TargetMessage
+	newInferior     scheduler.NewInferiorFn
+	newBootstrapMsg scheduler.NewBootstrapFn
 }
 
 type CaptureStatus struct {
@@ -69,7 +69,8 @@ func NewCaptureStatus(capture *node.Info) *CaptureStatus {
 }
 
 func NewSupervisor(
-	ID scheduler.InferiorID, f func(id scheduler.InferiorID) scheduler.Inferior,
+	ID scheduler.InferiorID,
+	f scheduler.NewInferiorFn,
 	newBootstrapMsg scheduler.NewBootstrapFn,
 	schedulers ...Scheduler,
 ) *Supervisor {

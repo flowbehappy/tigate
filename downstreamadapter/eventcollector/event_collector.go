@@ -95,6 +95,7 @@ func NewEventCollector(globalMemoryQuota int64, serverId node.ID) *EventCollecto
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
 
+	// wg is not `Wait`, and not controlled by the context.
 	eventCollector.wg.Add(1)
 	go func() {
 		defer eventCollector.wg.Done()

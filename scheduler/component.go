@@ -50,3 +50,5 @@ func (c ChangefeedID) String() string {
 }
 
 type NewBootstrapFn func(id node.ID) *messaging.TargetMessage
+
+type NewInferiorFn func(id InferiorID) Inferior

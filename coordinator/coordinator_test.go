@@ -31,7 +31,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/golang/mock/gomock"
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	config2 "github.com/pingcap/tiflow/pkg/config"
@@ -239,15 +238,15 @@ func TestCoordinatorScheduling(t *testing.T) {
 	}()
 
 	ctx := context.Background()
-	node := &node.Info{ID: uuid.New().String()}
+	info := node.NewInfo("", "")
 	etcdClient := mock_etcd.NewMockCDCEtcdClient(gomock.NewController(t))
 	etcdClient.EXPECT().GetGCServiceID().Return("default").AnyTimes()
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx,
-		node.ID(node.ID), 100, config.NewDefaultMessageCenterConfig()))
+		info.ID, 100, config.NewDefaultMessageCenterConfig()))
 	m := NewMaintainerManager()
 	go m.Run(ctx)
 
-	cr := NewCoordinator(node, &mockPdClient{}, pdutil.NewClock4Test(), etcdClient, 100)
+	cr := NewCoordinator(info, &mockPdClient{}, pdutil.NewClock4Test(), etcdClient, 100)
 	var metadata orchestrator.ReactorState
 
 	cfs := map[model.ChangeFeedID]*orchestrator.ChangefeedReactorState{}
@@ -280,8 +279,8 @@ func TestCoordinatorScheduling(t *testing.T) {
 	}
 	metadata = &orchestrator.GlobalReactorState{
 		Captures: map[model.CaptureID]*model.CaptureInfo{
-			node.ID: {
-				ID:            node.ID,
+			model.CaptureID(info.ID): {
+				ID:            model.CaptureID(info.ID),
 				AdvertiseAddr: "127.0.0.1:8300",
 			},
 		},
