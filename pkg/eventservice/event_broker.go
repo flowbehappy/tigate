@@ -137,7 +137,6 @@ func (c *eventBroker) sendWatermark(
 		if counter != nil {
 			counter.Inc()
 		}
-	default:
 	}
 
 }
