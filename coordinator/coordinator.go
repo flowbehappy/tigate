@@ -87,13 +87,15 @@ func NewCoordinator(capture *node.Info,
 
 	// receive messages
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
-		RegisterHandler(messaging.CoordinatorTopic, func(_ context.Context, msg *messaging.TargetMessage) error {
-			c.msgLock.Lock()
-			c.msgBuf = append(c.msgBuf, msg)
-			c.msgLock.Unlock()
-			return nil
-		})
+		RegisterHandler(messaging.CoordinatorTopic, c.recvMessages)
 	return c
+}
+
+func (c *coordinator) recvMessages(_ context.Context, msg *messaging.TargetMessage) error {
+	c.msgLock.Lock()
+	c.msgBuf = append(c.msgBuf, msg)
+	c.msgLock.Unlock()
+	return nil
 }
 
 // Tick is the entrance of the coordinator, it will be called by the etcd watcher every 50ms.
