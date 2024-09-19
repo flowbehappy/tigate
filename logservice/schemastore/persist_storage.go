@@ -943,11 +943,22 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent) common.DDLEvent {
 			InfluenceType: common.InfluenceTypeDB,
 			SchemaID:      rawEvent.SchemaID,
 		}
+		ddlEvent.TableNameChange = &common.TableNameChange{
+			DropDatabaseName: rawEvent.SchemaName,
+		}
 	case model.ActionCreateTable:
 		ddlEvent.NeedAddedTables = []common.Table{
 			{
 				SchemaID: rawEvent.SchemaID,
 				TableID:  rawEvent.TableID,
+			},
+		}
+		ddlEvent.TableNameChange = &common.TableNameChange{
+			AddName: []common.SchemaTableName{
+				{
+					SchemaName: rawEvent.SchemaName,
+					TableName:  rawEvent.TableName,
+				},
 			},
 		}
 	case model.ActionDropTable:
@@ -957,6 +968,14 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent) common.DDLEvent {
 			SchemaID:      rawEvent.SchemaID,
 		}
 		ddlEvent.NeedDroppedTables = ddlEvent.BlockedTables
+		ddlEvent.TableNameChange = &common.TableNameChange{
+			DropName: []common.SchemaTableName{
+				{
+					SchemaName: rawEvent.SchemaName,
+					TableName:  rawEvent.TableName,
+				},
+			},
+		}
 	case model.ActionTruncateTable:
 		ddlEvent.NeedDroppedTables = &common.InfluencedTables{
 			InfluenceType: common.InfluenceTypeNormal,
@@ -980,6 +999,20 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent) common.DDLEvent {
 			{
 				SchemaID: rawEvent.SchemaID,
 				TableID:  rawEvent.TableID,
+			},
+		}
+		ddlEvent.TableNameChange = &common.TableNameChange{
+			AddName: []common.SchemaTableName{
+				{
+					SchemaName: rawEvent.SchemaName,
+					TableName:  rawEvent.TableName,
+				},
+			},
+			DropName: []common.SchemaTableName{
+				{
+					SchemaName: rawEvent.PrevSchemaName,
+					TableName:  rawEvent.PrevTableName,
+				},
 			},
 		}
 	case model.ActionCreateView:

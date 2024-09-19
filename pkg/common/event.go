@@ -331,8 +331,6 @@ type SchemaTableName struct {
 
 // TableChange will record each ddl change of the table name.
 // Each TableChange is related to a ddl event
-// only Create Table / Create Tables / Drop Table / Rename Table / Rename Tables these ddl event
-// will make the table name change.
 type TableNameChange struct {
 	AddName          []SchemaTableName
 	DropName         []SchemaTableName
@@ -364,6 +362,8 @@ type DDLEvent struct {
 
 	TiDBOnly bool `json:"tidb_only"`
 
+	// only Create Table / Create Tables / Drop Table / Rename Table /
+	// Rename Tables / Drop Schema / Recover Table will make the table name change
 	TableNameChange *TableNameChange `json:"table_name_change"`
 	// 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
 	PostTxnFlushed []func() `msg:"-"`

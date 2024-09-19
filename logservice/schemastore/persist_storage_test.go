@@ -476,6 +476,10 @@ func TestHandleRenameTable(t *testing.T) {
 		require.Equal(t, tableID, ddlEvents[0].NeedDroppedTables.TableIDs[0])
 		require.Equal(t, schemaID2, ddlEvents[0].NeedAddedTables[0].SchemaID)
 		require.Equal(t, tableID, ddlEvents[0].NeedAddedTables[0].TableID)
+		require.Equal(t, "test2", ddlEvents[0].TableNameChange.AddName[0].SchemaName)
+		require.Equal(t, "t2", ddlEvents[0].TableNameChange.AddName[0].TableName)
+		require.Equal(t, "test", ddlEvents[0].TableNameChange.DropName[0].SchemaName)
+		require.Equal(t, "t1", ddlEvents[0].TableNameChange.DropName[0].TableName)
 	}
 }
 
@@ -662,6 +666,8 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 		require.Equal(t, 1, len(tableTriggerDDLEvents[1].NeedAddedTables))
 		require.Equal(t, schemaID, tableTriggerDDLEvents[1].NeedAddedTables[0].SchemaID)
 		require.Equal(t, tableID, tableTriggerDDLEvents[1].NeedAddedTables[0].TableID)
+		require.Equal(t, schemaName, tableTriggerDDLEvents[1].TableNameChange.AddName[0].SchemaName)
+		require.Equal(t, "t1", tableTriggerDDLEvents[1].TableNameChange.AddName[0].TableName)
 		// rename table event
 		require.Equal(t, uint64(605), tableTriggerDDLEvents[2].FinishedTs)
 		// create table event
@@ -671,8 +677,11 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 		require.Equal(t, common.InfluenceTypeNormal, tableTriggerDDLEvents[4].NeedDroppedTables.InfluenceType)
 		require.Equal(t, schemaID, tableTriggerDDLEvents[4].NeedDroppedTables.SchemaID)
 		require.Equal(t, tableID3, tableTriggerDDLEvents[4].NeedDroppedTables.TableIDs[0])
+		require.Equal(t, schemaName, tableTriggerDDLEvents[4].TableNameChange.DropName[0].SchemaName)
+		require.Equal(t, "t3", tableTriggerDDLEvents[4].TableNameChange.DropName[0].TableName)
 		// drop db event
 		require.Equal(t, uint64(700), tableTriggerDDLEvents[5].FinishedTs)
+		require.Equal(t, schemaName, tableTriggerDDLEvents[5].TableNameChange.DropDatabaseName)
 	}
 
 	// fetch partial table trigger ddl events
