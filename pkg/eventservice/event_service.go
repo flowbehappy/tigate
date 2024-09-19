@@ -18,7 +18,7 @@ import (
 const (
 	defaultChannelSize = 1024
 	// TODO: need to adjust the worker count
-	defaultScanWorkerCount = 8192
+	defaultScanWorkerCount = 128
 )
 
 type DispatcherInfo interface {
@@ -42,7 +42,6 @@ type eventService struct {
 	eventStore  eventstore.EventStore
 	schemaStore schemastore.SchemaStore
 	brokers     map[uint64]*eventBroker
-
 	// TODO: use a better way to cache the acceptorInfos
 	acceptorInfoCh chan DispatcherInfo
 	tz             *time.Location

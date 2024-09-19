@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/flowbehappy/tigate/utils/dynstream"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
@@ -55,6 +56,8 @@ type eventBroker struct {
 	// TODO: Make it support merge the tasks of the same table span, even if the tasks are from different dispatchers.
 	taskPool *scanTaskQueue
 
+	ds dynstream.DynamicStream[common.DispatcherID, scanTask, *eventBroker]
+
 	// scanWorkerCount is the number of the scan workers to spawn.
 	scanWorkerCount int
 
@@ -87,6 +90,13 @@ func newEventBroker(
 	ctx, cancel := context.WithCancel(ctx)
 	wg := &sync.WaitGroup{}
 
+	option := dynstream.NewOption()
+	option.MaxPendingLength = 1
+	option.DropPolicy = dynstream.DropEarly
+
+	ds := dynstream.NewDynamicStream[common.DispatcherID, scanTask, *eventBroker](&dispatcherEventsHandler{}, option)
+	ds.Start()
+
 	c := &eventBroker{
 		tidbClusterID:                          id,
 		eventStore:                             eventStore,
@@ -99,6 +109,7 @@ func newEventBroker(
 		msgSender:                              mc,
 		taskPool:                               newScanTaskPool(),
 		scanWorkerCount:                        defaultScanWorkerCount,
+		ds:                                     ds,
 		messageCh:                              make(chan wrapEvent, defaultChannelSize),
 		resolvedTsCaches:                       make(map[node.ID]*resolvedTsCache),
 		cancel:                                 cancel,
@@ -109,6 +120,7 @@ func newEventBroker(
 		metricEventServiceDispatcherResolvedTs: metrics.EventServiceResolvedTsLagGauge.WithLabelValues("dispatcher"),
 		metricScanEventDuration:                metrics.EventServiceScanDuration,
 	}
+
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
 	c.runSendMessageWorker(ctx)
@@ -160,9 +172,9 @@ func (c *eventBroker) runGenTasks(ctx context.Context) {
 			case s := <-c.notifyCh:
 				s.dispatchers.RLock()
 				for _, stat := range s.dispatchers.m {
-					c.taskPool.pushTask(&scanTask{
+					c.ds.In() <- scanTask{
 						dispatcherStat: stat,
-					})
+					}
 				}
 				s.dispatchers.RUnlock()
 			}
@@ -211,13 +223,12 @@ func (c *eventBroker) sendDDL(remoteID node.ID, e common.DDLEvent, d *dispatcher
 }
 
 // TODO: handle error properly.
-func (c *eventBroker) doScan(task *scanTask) {
+func (c *eventBroker) doScan(task scanTask) {
 	dataRange, needScan := task.dispatcherStat.getDataRange()
 	if !needScan {
 		return
 	}
 	start := time.Now()
-
 	remoteID := node.ID(task.dispatcherStat.info.GetServerID())
 	dispatcherID := task.dispatcherStat.info.GetID()
 	ddlEvents, endTs, err := c.schemaStore.FetchTableDDLEvents(dataRange.Span.TableID, dataRange.StartTs, dataRange.EndTs)
@@ -240,6 +251,8 @@ func (c *eventBroker) doScan(task *scanTask) {
 		// After all the events are sent, we send the watermark to the dispatcher.
 		c.sendWatermark(remoteID, dispatcherID, dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
 		task.dispatcherStat.watermark.Store(dataRange.EndTs)
+		// Wake up the path of the dispatcher
+		c.ds.Wake() <- task.dispatcherStat.info.GetID()
 	}()
 
 	// 1. Fastpath: the dispatcher has no new events. In such case, we don't need to scan the event store.
@@ -429,6 +442,7 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 func (c *eventBroker) close() {
 	c.cancel()
 	c.wg.Wait()
+	c.ds.Close()
 }
 
 func (c *eventBroker) onNotify(s *spanSubscription, watermark uint64) {
@@ -474,6 +488,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	)
 	c.schemaStore.RegisterTable(span.GetTableID(), info.GetStartTs())
 	eventStoreRegisterDuration := time.Since(start)
+	c.ds.AddPath(id, c)
 
 	log.Info("register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
 		zap.Any("acceptorID", id), zap.Int64("tableID", span.TableID),
@@ -631,22 +646,22 @@ type scanTask struct {
 type scanTaskQueue struct {
 	// pendingTaskQueue is used to store the tasks that are waiting to be handled by the scan workers.
 	// The length of the pendingTaskQueue is equal to the number of the scan workers.
-	pendingTaskQueue []chan *scanTask
+	pendingTaskQueue []chan scanTask
 }
 
 func newScanTaskPool() *scanTaskQueue {
 	res := &scanTaskQueue{
-		pendingTaskQueue: make([]chan *scanTask, defaultScanWorkerCount),
+		pendingTaskQueue: make([]chan scanTask, defaultScanWorkerCount),
 	}
 	for i := 0; i < defaultScanWorkerCount; i++ {
-		res.pendingTaskQueue[i] = make(chan *scanTask, defaultChannelSize)
+		res.pendingTaskQueue[i] = make(chan scanTask, defaultChannelSize)
 	}
 	return res
 }
 
 // pushTask pushes a task to the pool,
 // and merge the task if the task is overlapped with the existing tasks.
-func (p *scanTaskQueue) pushTask(task *scanTask) {
+func (p *scanTaskQueue) pushTask(task scanTask) {
 	select {
 	case p.pendingTaskQueue[task.dispatcherStat.workerIndex] <- task:
 	default:
@@ -654,7 +669,7 @@ func (p *scanTaskQueue) pushTask(task *scanTask) {
 	}
 }
 
-func (p *scanTaskQueue) popTask(chanIndex int) <-chan *scanTask {
+func (p *scanTaskQueue) popTask(chanIndex int) <-chan scanTask {
 	return p.pendingTaskQueue[chanIndex]
 }
 
