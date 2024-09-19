@@ -9,33 +9,34 @@ import (
 // TODO: use msgp
 // TODO: use msgp.Raw to do version management
 type PersistedDDLEvent struct {
-	ID   int64 `json:"id"`
-	Type byte  `json:"type"`
+	ID   int64 `msg:"id"`
+	Type byte  `msg:"type"`
 
 	// TODO: add more detailed comments about following fields
 	// SchemaID means different for different job types:
 	// - ExchangeTablePartition: db id of non-partitioned table
-	SchemaID int64 `json:"schema_id"`
+	SchemaID int64 `msg:"schema_id"`
 	// TableID means different for different job types:
 	// - ExchangeTablePartition: non-partitioned table id
 	// For truncate table, it it the table id of the newly created table
-	TableID    int64  `json:"table_id"`
-	SchemaName string `json:"schema_name"`
-	TableName  string `json:"table_name"`
+	TableID    int64  `msg:"table_id"`
+	SchemaName string `msg:"schema_name"`
+	TableName  string `msg:"table_name"`
 
-	PrevSchemaID   int64  `json:"prev_schema_id"`
-	PrevTableID    int64  `json:"prev_table_id"`
-	PrevSchemaName string `json:"prev_schema_name"`
-	PrevTableName  string `json:"prev_table_name"`
+	PrevSchemaID   int64  `msg:"prev_schema_id"`
+	PrevTableID    int64  `msg:"prev_table_id"`
+	PrevSchemaName string `msg:"prev_schema_name"`
+	PrevTableName  string `msg:"prev_table_name"`
 
-	Query         string           `json:"query"`
-	SchemaVersion int64            `json:"schema_version"`
-	DBInfo        *model.DBInfo    `json:"-"`
-	TableInfo     *model.TableInfo `json:"table_info"`
-	FinishedTs    uint64           `json:"finished_ts"`
-	BDRRole       string           `json:"bdr_role"`
+	Query          string           `msg:"query"`
+	SchemaVersion  int64            `msg:"schema_version"`
+	DBInfo         *model.DBInfo    `msg:"-"`
+	TableInfo      *model.TableInfo `msg:"-"`
+	TableInfoValue []byte           `msg:"table_info_value"`
+	FinishedTs     uint64           `msg:"finished_ts"`
+	BDRRole        string           `msg:"bdr_role"`
 	// CDCWriteSource indicates the source of CDC write.
-	CDCWriteSource uint64 `json:"cdc_write_source"`
+	CDCWriteSource uint64 `msg:"cdc_write_source"`
 }
 
 func buildPersistedDDLEventFromJob(job *model.Job) PersistedDDLEvent {
@@ -67,7 +68,7 @@ type BasicTableInfo struct {
 	InKVSnap bool
 }
 
-// msgp:ignore DDLJobWithCommitTs
+//msgp:ignore DDLJobWithCommitTs
 type DDLJobWithCommitTs struct {
 	Job *model.Job
 	// the commitTs of the rawKVEntry which contains the DDL job
