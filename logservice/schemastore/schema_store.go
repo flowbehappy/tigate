@@ -144,7 +144,7 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 						zap.Uint64("finishedDDLTS", s.finishedDDLTs))
 					continue
 				}
-				validEvents = append(validEvents, buildPersistedDDLEvent(event.Job))
+				validEvents = append(validEvents, buildPersistedDDLEventFromJob(event.Job))
 				// need to update the following two members for every event to filter out later duplicate events
 				s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
 				s.finishedDDLTs = event.Job.BinlogInfo.FinishedTS

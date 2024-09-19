@@ -595,18 +595,13 @@ func TestFetchDDLEvents(t *testing.T) {
 		require.Equal(t, uint64(607), ddlEvents[1].FinishedTs)
 		require.Equal(t, "test", ddlEvents[1].SchemaName)
 		require.Equal(t, "t2", ddlEvents[1].TableName)
-		require.Equal(t, common.Normal, ddlEvents[1].NeedDroppedTables.InfluenceType)
+		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[1].NeedDroppedTables.InfluenceType)
 		require.Equal(t, schemaID, ddlEvents[1].NeedDroppedTables.SchemaID)
-		require.Equal(t, "test", ddlEvents[1].NeedDroppedTables.SchemaName)
 		require.Equal(t, 1, len(ddlEvents[1].NeedDroppedTables.TableIDs))
 		require.Equal(t, tableID, ddlEvents[1].NeedDroppedTables.TableIDs[0])
-		require.Equal(t, 1, len(ddlEvents[1].NeedDroppedTables.TableNames))
-		require.Equal(t, "t2", ddlEvents[1].NeedDroppedTables.TableNames[0])
 		require.Equal(t, 1, len(ddlEvents[1].NeedAddedTables))
 		require.Equal(t, schemaID, ddlEvents[1].NeedAddedTables[0].SchemaID)
-		require.Equal(t, "test", ddlEvents[1].NeedAddedTables[0].SchemaName)
 		require.Equal(t, tableID2, ddlEvents[1].NeedAddedTables[0].TableID)
-		require.Equal(t, "t2", ddlEvents[1].NeedAddedTables[0].TableName)
 	}
 
 	// fetch table ddl events for another table
@@ -617,9 +612,8 @@ func TestFetchDDLEvents(t *testing.T) {
 		require.Equal(t, 1, len(ddlEvents))
 		// drop db event
 		require.Equal(t, uint64(700), ddlEvents[0].FinishedTs)
-		require.Equal(t, common.DB, ddlEvents[0].NeedDroppedTables.InfluenceType)
+		require.Equal(t, common.InfluenceTypeDB, ddlEvents[0].NeedDroppedTables.InfluenceType)
 		require.Equal(t, schemaID, ddlEvents[0].NeedDroppedTables.SchemaID)
-		require.Equal(t, "test", ddlEvents[0].NeedDroppedTables.SchemaName)
 	}
 
 	// fetch table ddl events again
@@ -629,13 +623,10 @@ func TestFetchDDLEvents(t *testing.T) {
 		require.Equal(t, 1, len(ddlEvents))
 		// drop table event
 		require.Equal(t, uint64(611), ddlEvents[0].FinishedTs)
-		require.Equal(t, common.Normal, ddlEvents[0].NeedDroppedTables.InfluenceType)
+		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].NeedDroppedTables.InfluenceType)
 		require.Equal(t, 1, len(ddlEvents[0].NeedDroppedTables.TableIDs))
 		require.Equal(t, tableID3, ddlEvents[0].NeedDroppedTables.TableIDs[0])
-		require.Equal(t, 1, len(ddlEvents[0].NeedDroppedTables.TableNames))
-		require.Equal(t, "t3", ddlEvents[0].NeedDroppedTables.TableNames[0])
 		require.Equal(t, schemaID, ddlEvents[0].NeedDroppedTables.SchemaID)
-		require.Equal(t, "test", ddlEvents[0].NeedDroppedTables.SchemaName)
 	}
 
 	// fetch all table trigger ddl events
@@ -652,20 +643,16 @@ func TestFetchDDLEvents(t *testing.T) {
 		require.Equal(t, uint64(601), tableTriggerDDLEvents[1].FinishedTs)
 		require.Equal(t, 1, len(tableTriggerDDLEvents[1].NeedAddedTables))
 		require.Equal(t, schemaID, tableTriggerDDLEvents[1].NeedAddedTables[0].SchemaID)
-		require.Equal(t, schemaName, tableTriggerDDLEvents[1].NeedAddedTables[0].SchemaName)
 		require.Equal(t, tableID, tableTriggerDDLEvents[1].NeedAddedTables[0].TableID)
-		require.Equal(t, "t1", tableTriggerDDLEvents[1].NeedAddedTables[0].TableName)
 		// rename table event
 		require.Equal(t, uint64(605), tableTriggerDDLEvents[2].FinishedTs)
 		// create table event
 		require.Equal(t, uint64(609), tableTriggerDDLEvents[3].FinishedTs)
 		// drop table event
 		require.Equal(t, uint64(611), tableTriggerDDLEvents[4].FinishedTs)
-		require.Equal(t, common.Normal, tableTriggerDDLEvents[4].NeedDroppedTables.InfluenceType)
+		require.Equal(t, common.InfluenceTypeNormal, tableTriggerDDLEvents[4].NeedDroppedTables.InfluenceType)
 		require.Equal(t, schemaID, tableTriggerDDLEvents[4].NeedDroppedTables.SchemaID)
-		require.Equal(t, schemaName, tableTriggerDDLEvents[4].NeedDroppedTables.SchemaName)
 		require.Equal(t, tableID3, tableTriggerDDLEvents[4].NeedDroppedTables.TableIDs[0])
-		require.Equal(t, "t3", tableTriggerDDLEvents[4].NeedDroppedTables.TableNames[0])
 		// drop db event
 		require.Equal(t, uint64(700), tableTriggerDDLEvents[5].FinishedTs)
 	}

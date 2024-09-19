@@ -318,12 +318,12 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64
 		rawEvent := readDDLEvent(storageSnap, ts)
 		events[i] = buildDDLEvent(&rawEvent)
 	}
-	log.Info("fetchTableDDLEvents",
-		zap.Int64("tableID", tableID),
-		zap.Uint64("start", start),
-		zap.Uint64("end", end),
-		zap.Any("history", history),
-		zap.Any("allTargetTs", allTargetTs))
+	// log.Info("fetchTableDDLEvents",
+	// 	zap.Int64("tableID", tableID),
+	// 	zap.Uint64("start", start),
+	// 	zap.Uint64("end", end),
+	// 	zap.Any("history", history),
+	// 	zap.Any("allTargetTs", allTargetTs))
 
 	return events, nil
 }
@@ -586,13 +586,13 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 
 	p.mu.Lock()
 	for i := range ddlEvents {
-		fillSchemaName(&ddlEvents[i], p.databaseMap)
-		fillInfluencedTableInfo(&ddlEvents[i], p.databaseMap, p.tableMap)
 		// even if the ddl is skipped here, it can still be written to disk.
 		// because when apply this ddl at restart, it will be skipped again.
 		if shouldSkipDDL(&ddlEvents[i], p.databaseMap, p.tableMap) {
 			continue
 		}
+
+		completePersistedDDLEvent(&ddlEvents[i], p.databaseMap, p.tableMap)
 		var err error
 		if p.tableTriggerDDLHistory, err = updateDDLHistory(
 			&ddlEvents[i],
@@ -615,31 +615,44 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 	return nil
 }
 
-func fillSchemaName(
-	event *PersistedDDLEvent,
-	databaseMap map[int64]*BasicDatabaseInfo,
-) {
-	switch model.ActionType(event.Type) {
-	case model.ActionCreateSchema,
-		model.ActionDropSchema:
-		event.SchemaName = event.DBInfo.Name.O
-	default:
-		databaseInfo, ok := databaseMap[event.SchemaID]
-		if !ok {
-			log.Panic("database not found",
-				zap.Int64("schemaID", event.SchemaID))
-		}
-		event.SchemaName = databaseInfo.Name
-	}
-}
-
-func fillInfluencedTableInfo(
+func completePersistedDDLEvent(
 	event *PersistedDDLEvent,
 	databaseMap map[int64]*BasicDatabaseInfo,
 	tableMap map[int64]*BasicTableInfo,
 ) {
+	getSchemaName := func(schemaID int64) string {
+		databaseInfo, ok := databaseMap[schemaID]
+		if !ok {
+			log.Panic("database not found",
+				zap.Int64("schemaID", schemaID))
+		}
+		return databaseInfo.Name
+	}
+	getTableName := func(tableID int64) string {
+		tableInfo, ok := tableMap[tableID]
+		if !ok {
+			log.Panic("table not found",
+				zap.Int64("tableID", tableID))
+		}
+		return tableInfo.Name
+	}
+	getSchemaID := func(tableID int64) int64 {
+		tableInfo, ok := tableMap[tableID]
+		if !ok {
+			log.Panic("table not found",
+				zap.Int64("tableID", tableID))
+		}
+		return tableInfo.SchemaID
+	}
+
 	switch model.ActionType(event.Type) {
 	case model.ActionCreateSchema,
+		model.ActionDropSchema:
+		event.SchemaName = event.DBInfo.Name.O
+	case model.ActionCreateTable:
+		event.SchemaName = getSchemaName(event.SchemaID)
+		event.TableName = event.TableInfo.Name.O
+	case model.ActionDropTable,
 		model.ActionAddColumn,
 		model.ActionDropColumn,
 		model.ActionAddIndex,
@@ -652,63 +665,23 @@ func fillInfluencedTableInfo(
 		model.ActionShardRowID,
 		model.ActionModifyTableComment,
 		model.ActionRenameIndex:
-		// ignore
-	case model.ActionDropSchema:
-		event.NeedDroppedTables = &common.InfluencedTables{
-			InfluenceType: common.DB,
-			SchemaID:      event.SchemaID,
-			SchemaName:    event.SchemaName,
-		}
-	case model.ActionCreateTable:
-		event.NeedAddedTables = []common.Table{
-			{
-				SchemaID:   event.SchemaID,
-				SchemaName: event.SchemaName,
-				TableID:    event.TableID,
-				TableName:  event.TableInfo.Name.O,
-			},
-		}
-	case model.ActionDropTable:
-		event.NeedDroppedTables = &common.InfluencedTables{
-			InfluenceType: common.Normal,
-			TableIDs:      []int64{event.TableID},
-			TableNames: []string{
-				tableMap[event.TableID].Name,
-			},
-			SchemaID:   event.SchemaID,
-			SchemaName: event.SchemaName,
-		}
+		event.SchemaName = getSchemaName(event.SchemaID)
+		event.TableName = getTableName(event.TableID)
 	case model.ActionTruncateTable:
-		tableName := tableMap[event.TableID].Name
-		event.NeedDroppedTables = &common.InfluencedTables{
-			InfluenceType: common.Normal,
-			TableIDs:      []int64{event.TableID},
-			TableNames: []string{
-				tableName,
-			},
-			SchemaID:   event.SchemaID,
-			SchemaName: event.SchemaName,
-		}
-		event.NeedAddedTables = []common.Table{
-			{
-				SchemaID:   event.SchemaID,
-				SchemaName: event.SchemaName,
-				TableID:    event.TableInfo.ID,
-				TableName:  tableName,
-			},
-		}
+		event.SchemaName = getSchemaName(event.SchemaID)
+		event.TableName = getTableName(event.TableID)
+		// TODO: different with tidb, will it be confusing?
+		event.PrevTableID = event.TableID
+		event.TableID = event.TableInfo.ID
 	case model.ActionRenameTable:
-		event.BlockedTables = &common.InfluencedTables{
-			InfluenceType: common.Normal,
-			TableIDs:      []int64{event.TableID},
-			TableNames:    []string{
-				// FIXME:
-			},
-		}
+		event.PrevSchemaID = getSchemaID(event.TableID)
+		event.PrevSchemaName = getSchemaName(event.PrevSchemaID)
+		event.PrevTableName = getTableName(event.TableID)
+		// TODO: is the following SchemaName and TableName correct?
+		event.SchemaName = getSchemaName(event.SchemaID)
+		event.TableName = event.TableInfo.Name.O
 	case model.ActionCreateView:
-		event.BlockedTables = &common.InfluencedTables{
-			InfluenceType: common.All,
-		}
+		// ignore
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", event.Type),
@@ -790,7 +763,7 @@ func updateDDLHistory(
 		addTableHistory(ddlEvent.TableID)
 	case model.ActionTruncateTable:
 		addTableHistory(ddlEvent.TableID)
-		addTableHistory(ddlEvent.TableInfo.ID)
+		addTableHistory(ddlEvent.PrevTableID)
 	case model.ActionRenameTable:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		addTableHistory(ddlEvent.TableID)
@@ -872,9 +845,8 @@ func updateDatabaseInfoAndTableInfo(
 		model.ActionRebaseAutoID:
 		// ignore
 	case model.ActionTruncateTable:
-		dropTable(event.SchemaID, event.TableID)
-		// TODO: do we need check the return value of createTable?
-		createTable(event.SchemaID, event.TableInfo.ID)
+		dropTable(event.SchemaID, event.PrevTableID)
+		createTable(event.SchemaID, event.TableID)
 	case model.ActionRenameTable:
 		oldSchemaID := tableMap[event.TableID].SchemaID
 		if oldSchemaID != event.SchemaID {
@@ -938,24 +910,87 @@ func updateRegisteredTableInfoStore(
 	return nil
 }
 
+// TODO: respect filter
 func buildDDLEvent(rawEvent *PersistedDDLEvent) common.DDLEvent {
-	event := common.DDLEvent{
+	ddlEvent := common.DDLEvent{
 		Type:       rawEvent.Type,
 		SchemaID:   rawEvent.SchemaID,
 		TableID:    rawEvent.TableID,
 		SchemaName: rawEvent.SchemaName,
+		TableName:  rawEvent.TableName,
 		Query:      rawEvent.Query,
 		TableInfo:  rawEvent.TableInfo,
 		FinishedTs: rawEvent.FinishedTs,
+		TiDBOnly:   false,
 	}
-	if rawEvent.TableInfo != nil {
-		event.TableName = rawEvent.TableInfo.Name.O
+	switch model.ActionType(rawEvent.Type) {
+	case model.ActionCreateSchema,
+		model.ActionAddColumn,
+		model.ActionDropColumn,
+		model.ActionAddIndex,
+		model.ActionDropIndex,
+		model.ActionAddForeignKey,
+		model.ActionDropForeignKey,
+		model.ActionModifyColumn,
+		model.ActionRebaseAutoID,
+		model.ActionSetDefaultValue,
+		model.ActionShardRowID,
+		model.ActionModifyTableComment,
+		model.ActionRenameIndex:
+		// ignore
+	case model.ActionDropSchema:
+		ddlEvent.NeedDroppedTables = &common.InfluencedTables{
+			InfluenceType: common.InfluenceTypeDB,
+			SchemaID:      rawEvent.SchemaID,
+		}
+	case model.ActionCreateTable:
+		ddlEvent.NeedAddedTables = []common.Table{
+			{
+				SchemaID: rawEvent.SchemaID,
+				TableID:  rawEvent.TableID,
+			},
+		}
+	case model.ActionDropTable:
+		ddlEvent.BlockedTables = &common.InfluencedTables{
+			InfluenceType: common.InfluenceTypeNormal,
+			TableIDs:      []int64{rawEvent.TableID},
+			SchemaID:      rawEvent.SchemaID,
+		}
+		ddlEvent.NeedDroppedTables = ddlEvent.BlockedTables
+	case model.ActionTruncateTable:
+		ddlEvent.NeedDroppedTables = &common.InfluencedTables{
+			InfluenceType: common.InfluenceTypeNormal,
+			TableIDs:      []int64{rawEvent.PrevTableID},
+			SchemaID:      rawEvent.SchemaID,
+		}
+		ddlEvent.NeedAddedTables = []common.Table{
+			{
+				SchemaID: rawEvent.SchemaID,
+				TableID:  rawEvent.TableID,
+			},
+		}
+	case model.ActionRenameTable:
+		ddlEvent.BlockedTables = &common.InfluencedTables{
+			InfluenceType: common.InfluenceTypeNormal,
+			TableIDs:      []int64{rawEvent.PrevTableID},
+			SchemaID:      rawEvent.PrevSchemaID,
+		}
+		ddlEvent.NeedDroppedTables = ddlEvent.BlockedTables
+		ddlEvent.NeedAddedTables = []common.Table{
+			{
+				SchemaID: rawEvent.SchemaID,
+				TableID:  rawEvent.TableID,
+			},
+		}
+	case model.ActionCreateView:
+		ddlEvent.BlockedTables = &common.InfluencedTables{
+			InfluenceType: common.InfluenceTypeAll,
+		}
+	default:
+		log.Panic("unknown ddl type",
+			zap.Any("ddlType", rawEvent.Type),
+			zap.String("DDL", rawEvent.Query))
 	}
 
-	// TODO: respect filter
-	event.BlockedTables = rawEvent.BlockedTables
-	event.NeedDroppedTables = rawEvent.NeedDroppedTables
-	event.NeedAddedTables = rawEvent.NeedAddedTables
-
-	return event
+	return ddlEvent
 }
