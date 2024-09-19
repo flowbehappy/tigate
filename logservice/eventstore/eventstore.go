@@ -130,7 +130,7 @@ type eventStore struct {
 const dataDir = "event_store"
 const dbCount = 32
 
-func NewEventStore(
+func New(
 	ctx context.Context,
 	root string,
 	pdCli pd.Client,

@@ -22,20 +22,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
-	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
-	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
-	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
-
 	"github.com/dustin/go-humanize"
-	"github.com/flowbehappy/tigate/pkg/config"
-	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tiflow/cdc/kv"
 	"github.com/pingcap/tiflow/cdc/model"
-	cdcconfig "github.com/pingcap/tiflow/pkg/config"
+	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/fsutil"
@@ -57,7 +50,7 @@ const (
 )
 
 func (c *server) prepare(ctx context.Context) error {
-	conf := cdcconfig.GetGlobalServerConfig()
+	conf := config.GetGlobalServerConfig()
 	grpcTLSOption, err := conf.Security.ToGRPCDialOption()
 	if err != nil {
 		return errors.Trace(err)
@@ -81,7 +74,7 @@ func (c *server) prepare(ctx context.Context) error {
 				MinConnectTimeout: 3 * time.Second,
 			}),
 		),
-		pd.WithForwardingOption(cdcconfig.EnablePDForwarding))
+		pd.WithForwardingOption(config.EnablePDForwarding))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -147,17 +140,11 @@ func (c *server) prepare(ctx context.Context) error {
 	// TODO: Get id from disk after restart.
 	c.info = node.NewInfo(conf.AdvertiseAddr, deployPath)
 	c.session = session
-
-	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx, c.info.ID, c.info.Epoch, config.NewDefaultMessageCenterConfig()))
-	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, c.info.ID)) // 100GB for demo
-	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(c.info.ID))
-
-	c.dispatcherManagerManager = dispatchermanagermanager.NewDispatcherManagerManager()
 	return nil
 }
 
 func (c *server) setMemoryLimit() {
-	conf := cdcconfig.GetGlobalServerConfig()
+	conf := config.GetGlobalServerConfig()
 	if conf.GcTunerMemoryThreshold > maxGcTunerMemory {
 		// If total memory is larger than 512GB, we will not set memory limit.
 		// Because the memory limit is not accurate, and it is not necessary to set memory limit.
@@ -179,7 +166,7 @@ func (c *server) setMemoryLimit() {
 
 func (c *server) initDir() error {
 	c.setUpDir()
-	conf := cdcconfig.GetGlobalServerConfig()
+	conf := config.GetGlobalServerConfig()
 	// Ensure data dir exists and read-writable.
 	diskInfo, err := checkDir(conf.DataDir)
 	if err != nil {
@@ -198,12 +185,12 @@ func (c *server) initDir() error {
 }
 
 func (c *server) setUpDir() {
-	conf := cdcconfig.GetGlobalServerConfig()
+	conf := config.GetGlobalServerConfig()
 	if conf.DataDir == "" {
 		conf.DataDir = defaultDataDir
 	}
-	conf.Sorter.SortDir = filepath.Join(conf.DataDir, cdcconfig.DefaultSortDir)
-	cdcconfig.StoreGlobalServerConfig(conf)
+	conf.Sorter.SortDir = filepath.Join(conf.DataDir, config.DefaultSortDir)
+	config.StoreGlobalServerConfig(conf)
 }
 
 // registerNodeToEtcd the server by put the server's information in etcd
@@ -224,7 +211,7 @@ func (c *server) registerNodeToEtcd(ctx context.Context) error {
 }
 
 func (c *server) newEtcdSession(ctx context.Context) (*concurrency.Session, error) {
-	cfg := cdcconfig.GetGlobalServerConfig()
+	cfg := config.GetGlobalServerConfig()
 	lease, err := c.EtcdClient.GetEtcdClient().Grant(ctx, int64(cfg.CaptureSessionTTL))
 	if err != nil {
 		return nil, errors.Trace(err)

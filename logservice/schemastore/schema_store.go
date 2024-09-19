@@ -62,7 +62,7 @@ type schemaStore struct {
 	schemaVersion int64
 }
 
-func NewSchemaStore(
+func New(
 	ctx context.Context,
 	root string,
 	pdCli pd.Client,

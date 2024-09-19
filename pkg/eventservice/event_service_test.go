@@ -29,7 +29,7 @@ func initEventService(
 	appcontext.SetService(appcontext.MessageCenter, mc)
 	appcontext.SetService(appcontext.EventStore, mockStore)
 	appcontext.SetService(appcontext.SchemaStore, newMockSchemaStore())
-	es := NewEventService()
+	es := New()
 	esImpl := es.(*eventService)
 	go func() {
 		err := esImpl.Run(ctx)
