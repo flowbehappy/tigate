@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/txnutil/gc"
@@ -59,24 +58,23 @@ type coordinator struct {
 	lastTickTime         time.Time
 	scheduledChangefeeds map[scheduler.ChangefeedID]scheduler.Inferior
 
-	gcManager  gc.Manager
-	pdClient   pd.Client
-	pdClock    pdutil.Clock
-	etcdClient etcd.CDCEtcdClient
+	gcManager gc.Manager
+	pdClient  pd.Client
+	pdClock   pdutil.Clock
 }
 
 func NewCoordinator(capture *node.Info,
 	pdClient pd.Client,
 	pdClock pdutil.Clock,
-	etcdClient etcd.CDCEtcdClient, version int64) node.Coordinator {
+	serviceID string,
+	version int64) node.Coordinator {
 	c := &coordinator{
 		version:              version,
 		nodeInfo:             capture,
 		scheduledChangefeeds: make(map[scheduler.ChangefeedID]scheduler.Inferior),
 		lastTickTime:         time.Now(),
-		gcManager:            gc.NewManager(etcdClient.GetGCServiceID(), pdClient, pdClock),
+		gcManager:            gc.NewManager(serviceID, pdClient, pdClock),
 		pdClient:             pdClient,
-		etcdClient:           etcdClient,
 		pdClock:              pdClock,
 	}
 	id := scheduler.ChangefeedID(model.DefaultChangeFeedID("coordinator"))
