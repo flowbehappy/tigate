@@ -15,6 +15,7 @@ package eventcollector
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 	"time"
 
@@ -24,7 +25,6 @@ import (
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/chann"

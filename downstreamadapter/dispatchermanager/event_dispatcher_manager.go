@@ -15,11 +15,10 @@ package dispatchermanager
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
