@@ -41,7 +41,9 @@ type eventService struct {
 	mc          messaging.MessageCenter
 	eventStore  eventstore.EventStore
 	schemaStore schemastore.SchemaStore
-	brokers     map[uint64]*eventBroker
+	// clusterID -> eventBroker
+	brokers map[uint64]*eventBroker
+
 	// TODO: use a better way to cache the acceptorInfos
 	acceptorInfoCh chan DispatcherInfo
 	tz             *time.Location

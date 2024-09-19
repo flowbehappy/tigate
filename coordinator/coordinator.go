@@ -141,7 +141,7 @@ func (c *coordinator) Tick(
 	//4. update checkpoint ts and changefeed states
 	c.saveChangefeedStatus()
 	// 5. send saved checkpoint ts to maintainer
-	c.sendSavedCheckpointTsToMaintainer(state)
+	c.sendSavedCheckpointTsToMaintainer()
 
 	c.printStatus()
 	return state, nil
@@ -416,7 +416,7 @@ func (c *coordinator) calculateGCSafepoint(state *orchestrator.GlobalReactorStat
 	return minCpts, forceUpdate
 }
 
-func (c *coordinator) sendSavedCheckpointTsToMaintainer(state *orchestrator.GlobalReactorState) {
+func (c *coordinator) sendSavedCheckpointTsToMaintainer() {
 	for key, value := range c.scheduledChangefeeds {
 		cf := value.(*changefeed)
 		if !cf.isMQSink || cf.stateMachine == nil || cf.stateMachine.Primary == "" {
