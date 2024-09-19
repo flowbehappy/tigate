@@ -181,7 +181,6 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 				c.dispatcherEventsDynamicStream.In() <- e
 			}
 		default:
-			log.Info("received event type", zap.Any("event type", event.GetType()))
 			c.metricDispatcherReceivedKVEventCount.Inc()
 			c.dispatcherEventsDynamicStream.In() <- event
 		}

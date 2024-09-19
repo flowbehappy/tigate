@@ -202,11 +202,9 @@ func (d *Dispatcher) HandleEvent(event common.Event) (block bool) {
 		d.resolvedTs.Set(event.(common.ResolvedEvent).ResolvedTs)
 		return false
 	case common.TypeDMLEvent:
-		log.Info("Handle Event With DML Event")
 		d.sink.AddDMLEvent(event.(*common.DMLEvent), d.tableProgress)
 		return false
 	case common.TypeDDLEvent:
-		log.Info("Handle Event With DDL Event")
 		event := event.(*common.DDLEvent)
 		if d.tableNameStore != nil {
 			d.tableNameStore.AddEvent(event)
