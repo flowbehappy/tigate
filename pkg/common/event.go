@@ -357,7 +357,6 @@ type DDLEvent struct {
 	// TODO: just here for compile, may be changed later
 	MultipleTableInfos []*TableInfo `json:"multiple_table_infos"`
 
-	// Just for test now
 	BlockedTables     *InfluencedTables `json:"blocked_tables"`
 	NeedDroppedTables *InfluencedTables `json:"need_dropped_tables"`
 	NeedAddedTables   []Table           `json:"need_added_tables"`
@@ -469,6 +468,10 @@ type InfluencedTables struct {
 	SchemaName    string
 }
 
+func (i *InfluencedTables) String() string {
+	return fmt.Sprintf("InfluencedTables{InfluenceType: %d, TableIDs: %v, TableNames: %v, SchemaID: %d, SchemaName: %s}", i.InfluenceType, i.TableIDs, i.TableNames, i.SchemaID, i.SchemaName)
+}
+
 func (i *InfluencedTables) ToPB() *heartbeatpb.InfluencedTables {
 	if i == nil {
 		return nil
@@ -499,4 +502,8 @@ type Table struct {
 	SchemaName string
 	TableID    int64
 	TableName  string
+}
+
+func (t Table) String() string {
+	return fmt.Sprintf("Table{SchemaID: %d, SchemaName: %s, TableID: %d, TableName: %s}", t.SchemaID, t.SchemaName, t.TableID, t.TableName)
 }
