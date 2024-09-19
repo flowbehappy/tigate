@@ -389,7 +389,7 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 	kvSnapVersion := p.gcTs
 	tableBasicInfo, ok := p.tableMap[tableID]
 	if !ok {
-		log.Panic("table not found", zap.Int64("tableID", int64(tableID)))
+		log.Panic("table not found", zap.Int64("tableID", tableID))
 	}
 	inKVSnap := tableBasicInfo.InKVSnap
 	var allDDLFinishedTs []uint64
@@ -419,7 +419,7 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 		ddlEvent := readDDLEvent(storageSnap, version)
 		// TODO: check ddlEvent type
 		// TODO: no need fill it here, schemaName should be in event
-		schemaName, err := getSchemaName(int64(ddlEvent.SchemaID))
+		schemaName, err := getSchemaName(ddlEvent.SchemaID)
 		if err != nil {
 			log.Fatal("get schema name failed", zap.Error(err))
 		}
@@ -442,7 +442,7 @@ func addTableInfoFromKVSnap(
 	if err != nil {
 		return err
 	}
-	tableInfo := common.WrapTableInfo(int64(schemaID), schemaName, uint64(kvSnapVersion), rawTableInfo)
+	tableInfo := common.WrapTableInfo(schemaID, schemaName, kvSnapVersion, rawTableInfo)
 	tableInfo.InitPreSQLs()
 	store.addInitialTableInfo(tableInfo)
 	return nil
@@ -579,21 +579,21 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 	for i := range ddlEvents {
 		fillSchemaName(&ddlEvents[i], p.databaseMap)
 		fillInfluencedTableInfo(&ddlEvents[i], p.databaseMap, p.tableMap)
-		skip, err := updateDatabaseInfoAndTableInfo(&ddlEvents[i], p.databaseMap, p.tableMap)
-		if err != nil {
-			return err
-		}
 		// even if the ddl is skipped here, it can still be written to disk.
 		// because when apply this ddl at restart, it will be skipped again.
-		if skip {
+		if shouldSkipDDL(&ddlEvents[i], p.databaseMap, p.tableMap) {
 			continue
 		}
+		var err error
 		if p.tableTriggerDDLHistory, err = updateDDLHistory(
 			&ddlEvents[i],
 			p.databaseMap,
 			p.tableMap,
 			p.tablesDDLHistory,
 			p.tableTriggerDDLHistory); err != nil {
+			return err
+		}
+		if err := updateDatabaseInfoAndTableInfo(&ddlEvents[i], p.databaseMap, p.tableMap); err != nil {
 			return err
 		}
 		if err := updateRegisteredTableInfoStore(ddlEvents[i], p.tableInfoStoreMap); err != nil {
@@ -653,8 +653,10 @@ func fillInfluencedTableInfo(
 	case model.ActionCreateTable:
 		event.NeedAddedTables = []common.Table{
 			{
-				SchemaID: event.SchemaID,
-				TableID:  event.TableID,
+				SchemaID:   event.SchemaID,
+				SchemaName: event.SchemaName,
+				TableID:    event.TableID,
+				TableName:  event.TableInfo.Name.O,
 			},
 		}
 	case model.ActionDropTable:
@@ -689,78 +691,24 @@ func fillInfluencedTableInfo(
 	}
 }
 
-func updateDatabaseInfoAndTableInfo(
+func shouldSkipDDL(
 	event *PersistedDDLEvent,
 	databaseMap map[int64]*BasicDatabaseInfo,
 	tableMap map[int64]*BasicTableInfo,
-) (bool, error) {
-	addTableToDB := func(schemaID int64, tableID int64) {
-		databaseInfo, ok := databaseMap[schemaID]
-		if !ok {
-			log.Panic("database not found.",
-				zap.String("DDL", event.Query),
-				zap.Int64("jobID", event.ID),
-				zap.Int64("schemaID", int64(schemaID)),
-				zap.Int64("tableID", int64(tableID)),
-				zap.Uint64("finishTs", event.FinishedTs),
-				zap.Int64("jobSchemaVersion", event.SchemaVersion))
-		}
-		databaseInfo.Tables[tableID] = true
-	}
-
-	removeTableFromDB := func(schemaID int64, tableID int64) {
-		databaseInfo, ok := databaseMap[schemaID]
-		if !ok {
-			log.Panic("database not found. ",
-				zap.String("DDL", event.Query),
-				zap.Int64("jobID", event.ID),
-				zap.Int64("schemaID", int64(schemaID)),
-				zap.Int64("tableID", int64(tableID)),
-				zap.Uint64("finishTs", event.FinishedTs),
-				zap.Int64("jobSchemaVersion", event.SchemaVersion))
-		}
-		delete(databaseInfo.Tables, tableID)
-	}
-
-	createTable := func(schemaID int64, tableID int64) bool {
-		if _, ok := tableMap[tableID]; ok {
-			return false
-		}
-		addTableToDB(schemaID, tableID)
-		tableMap[tableID] = &BasicTableInfo{
-			SchemaID: schemaID,
-			Name:     event.TableInfo.Name.O,
-			InKVSnap: false,
-		}
-		return true
-	}
-
-	dropTable := func(schemaID int64, tableID int64) {
-		removeTableFromDB(schemaID, tableID)
-		delete(tableMap, tableID)
-	}
-
+) bool {
 	switch model.ActionType(event.Type) {
 	case model.ActionCreateSchema:
-		if _, ok := databaseMap[int64(event.SchemaID)]; ok {
+		if _, ok := databaseMap[event.SchemaID]; ok {
 			log.Warn("database already exists. ignore DDL ",
 				zap.String("DDL", event.Query),
 				zap.Int64("jobID", event.ID),
 				zap.Int64("schemaID", event.SchemaID),
 				zap.Uint64("finishTs", event.FinishedTs),
 				zap.Int64("jobSchemaVersion", event.SchemaVersion))
-			return true, nil
+			return true
 		}
-		databaseMap[int64(event.SchemaID)] = &BasicDatabaseInfo{
-			Name:   event.SchemaName,
-			Tables: make(map[int64]bool),
-		}
-	case model.ActionDropSchema:
-		event.TablesInSchema = databaseMap[event.SchemaID].Tables
-		delete(databaseMap, event.SchemaID)
 	case model.ActionCreateTable:
-		ok := createTable(int64(event.SchemaID), int64(event.TableID))
-		if !ok {
+		if _, ok := tableMap[event.TableID]; ok {
 			log.Warn("table already exists. ignore DDL ",
 				zap.String("DDL", event.Query),
 				zap.Int64("jobID", event.ID),
@@ -768,47 +716,10 @@ func updateDatabaseInfoAndTableInfo(
 				zap.Int64("tableID", event.TableID),
 				zap.Uint64("finishTs", event.FinishedTs),
 				zap.Int64("jobSchemaVersion", event.SchemaVersion))
-			return true, nil
+			return true
 		}
-	case model.ActionDropTable:
-		dropTable(int64(event.SchemaID), int64(event.TableID))
-	case model.ActionAddColumn,
-		model.ActionDropColumn,
-		model.ActionAddIndex,
-		model.ActionDropIndex,
-		model.ActionAddForeignKey,
-		model.ActionDropForeignKey,
-		model.ActionModifyColumn,
-		model.ActionRebaseAutoID:
-		// ignore
-	case model.ActionTruncateTable:
-		dropTable(event.SchemaID, event.TableID)
-		// TODO: do we need check the return value of createTable?
-		createTable(event.SchemaID, event.TableInfo.ID)
-	case model.ActionRenameTable:
-		oldSchemaID := tableMap[event.TableID].SchemaID
-		if oldSchemaID != event.SchemaID {
-			tableMap[event.TableID].SchemaID = event.SchemaID
-			removeTableFromDB(oldSchemaID, int64(event.TableID))
-			addTableToDB(int64(event.SchemaID), int64(event.TableID))
-		}
-		tableMap[event.TableID].Name = event.TableInfo.Name.O
-	case model.ActionSetDefaultValue,
-		model.ActionShardRowID,
-		model.ActionModifyTableComment,
-		model.ActionRenameIndex,
-		model.ActionCreateView:
-		// TODO
-		// seems can be ignored
-	case model.ActionAddTablePartition:
-		// TODO
-	default:
-		log.Panic("unknown ddl type",
-			zap.Any("ddlType", event.Type),
-			zap.String("DDL", event.Query))
 	}
-
-	return false, nil
+	return false
 }
 
 func updateDDLHistory(
@@ -831,13 +742,13 @@ func updateDDLHistory(
 		}
 	case model.ActionDropSchema:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
-		for tableID := range ddlEvent.TablesInSchema {
+		for tableID := range databaseMap[ddlEvent.SchemaID].Tables {
 			addTableHistory(tableID)
 		}
 	case model.ActionCreateTable,
 		model.ActionDropTable:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
-		addTableHistory(int64(ddlEvent.TableID))
+		addTableHistory(ddlEvent.TableID)
 	case model.ActionAddColumn,
 		model.ActionDropColumn,
 		model.ActionAddIndex,
@@ -850,13 +761,13 @@ func updateDDLHistory(
 		model.ActionShardRowID,
 		model.ActionModifyTableComment,
 		model.ActionRenameIndex:
-		addTableHistory(int64(ddlEvent.TableID))
+		addTableHistory(ddlEvent.TableID)
 	case model.ActionTruncateTable:
-		addTableHistory(int64(ddlEvent.TableID))
-		addTableHistory(int64(ddlEvent.TableInfo.ID))
+		addTableHistory(ddlEvent.TableID)
+		addTableHistory(ddlEvent.TableInfo.ID)
 	case model.ActionRenameTable:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
-		addTableHistory(int64(ddlEvent.TableID))
+		addTableHistory(ddlEvent.TableID)
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", ddlEvent.Type),
@@ -864,6 +775,104 @@ func updateDDLHistory(
 	}
 
 	return tableTriggerDDLHistory, nil
+}
+
+func updateDatabaseInfoAndTableInfo(
+	event *PersistedDDLEvent,
+	databaseMap map[int64]*BasicDatabaseInfo,
+	tableMap map[int64]*BasicTableInfo,
+) error {
+	addTableToDB := func(schemaID int64, tableID int64) {
+		databaseInfo, ok := databaseMap[schemaID]
+		if !ok {
+			log.Panic("database not found.",
+				zap.String("DDL", event.Query),
+				zap.Int64("jobID", event.ID),
+				zap.Int64("schemaID", schemaID),
+				zap.Int64("tableID", tableID),
+				zap.Uint64("finishTs", event.FinishedTs),
+				zap.Int64("jobSchemaVersion", event.SchemaVersion))
+		}
+		databaseInfo.Tables[tableID] = true
+	}
+
+	removeTableFromDB := func(schemaID int64, tableID int64) {
+		databaseInfo, ok := databaseMap[schemaID]
+		if !ok {
+			log.Panic("database not found. ",
+				zap.String("DDL", event.Query),
+				zap.Int64("jobID", event.ID),
+				zap.Int64("schemaID", schemaID),
+				zap.Int64("tableID", tableID),
+				zap.Uint64("finishTs", event.FinishedTs),
+				zap.Int64("jobSchemaVersion", event.SchemaVersion))
+		}
+		delete(databaseInfo.Tables, tableID)
+	}
+
+	createTable := func(schemaID int64, tableID int64) {
+		addTableToDB(schemaID, tableID)
+		tableMap[tableID] = &BasicTableInfo{
+			SchemaID: schemaID,
+			Name:     event.TableInfo.Name.O,
+			InKVSnap: false,
+		}
+	}
+
+	dropTable := func(schemaID int64, tableID int64) {
+		removeTableFromDB(schemaID, tableID)
+		delete(tableMap, tableID)
+	}
+
+	switch model.ActionType(event.Type) {
+	case model.ActionCreateSchema:
+		databaseMap[event.SchemaID] = &BasicDatabaseInfo{
+			Name:   event.SchemaName,
+			Tables: make(map[int64]bool),
+		}
+	case model.ActionDropSchema:
+		delete(databaseMap, event.SchemaID)
+	case model.ActionCreateTable:
+		createTable(event.SchemaID, event.TableID)
+	case model.ActionDropTable:
+		dropTable(event.SchemaID, event.TableID)
+	case model.ActionAddColumn,
+		model.ActionDropColumn,
+		model.ActionAddIndex,
+		model.ActionDropIndex,
+		model.ActionAddForeignKey,
+		model.ActionDropForeignKey,
+		model.ActionModifyColumn,
+		model.ActionRebaseAutoID:
+		// ignore
+	case model.ActionTruncateTable:
+		dropTable(event.SchemaID, event.TableID)
+		// TODO: do we need check the return value of createTable?
+		createTable(event.SchemaID, event.TableInfo.ID)
+	case model.ActionRenameTable:
+		oldSchemaID := tableMap[event.TableID].SchemaID
+		if oldSchemaID != event.SchemaID {
+			tableMap[event.TableID].SchemaID = event.SchemaID
+			removeTableFromDB(oldSchemaID, event.TableID)
+			addTableToDB(event.SchemaID, event.TableID)
+		}
+		tableMap[event.TableID].Name = event.TableInfo.Name.O
+	case model.ActionSetDefaultValue,
+		model.ActionShardRowID,
+		model.ActionModifyTableComment,
+		model.ActionRenameIndex,
+		model.ActionCreateView:
+		// TODO
+		// seems can be ignored
+	case model.ActionAddTablePartition:
+		// TODO
+	default:
+		log.Panic("unknown ddl type",
+			zap.Any("ddlType", event.Type),
+			zap.String("DDL", event.Query))
+	}
+
+	return nil
 }
 
 func updateRegisteredTableInfoStore(
@@ -891,7 +900,7 @@ func updateRegisteredTableInfoStore(
 		model.ActionShardRowID,
 		model.ActionModifyTableComment,
 		model.ActionRenameIndex:
-		store, ok := tableInfoStoreMap[int64(event.TableID)]
+		store, ok := tableInfoStoreMap[event.TableID]
 		if ok {
 			store.applyDDL(event)
 		}
@@ -921,7 +930,6 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent) common.DDLEvent {
 	event.BlockedTables = rawEvent.BlockedTables
 	event.NeedDroppedTables = rawEvent.NeedDroppedTables
 	event.NeedAddedTables = rawEvent.NeedAddedTables
-	event.TableNameChange = rawEvent.TableNameChange
 
 	return event
 }

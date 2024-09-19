@@ -110,7 +110,7 @@ func readGcTs(db *pebble.DB) (uint64, error) {
 func writeGcTs(db *pebble.DB, gcTs uint64) {
 	batch := db.NewBatch()
 	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.BigEndian, uint64(gcTs))
+	err := binary.Write(buf, binary.BigEndian, gcTs)
 	if err != nil {
 		log.Fatal("marshal gc ts failed")
 	}
@@ -177,7 +177,7 @@ func loadDatabasesInKVSnap(snap *pebble.Snapshot, gcTs uint64) (map[int64]*Basic
 			Name:   dbInfo.Name.O,
 			Tables: make(map[int64]bool),
 		}
-		databaseMap[int64(dbInfo.ID)] = databaseInfo
+		databaseMap[dbInfo.ID] = databaseInfo
 	}
 
 	return databaseMap, nil
@@ -262,11 +262,7 @@ func loadAndApplyDDLHistory(
 		if err != nil {
 			log.Fatal("unmarshal ddl job failed", zap.Error(err))
 		}
-		skip, err := updateDatabaseInfoAndTableInfo(&ddlEvent, databaseMap, tableMap)
-		if err != nil {
-			log.Panic("updateDatabaseInfo error", zap.Error(err))
-		}
-		if skip {
+		if shouldSkipDDL(&ddlEvent, databaseMap, tableMap) {
 			continue
 		}
 		if tableTriggerDDLHistory, err = updateDDLHistory(
@@ -276,6 +272,9 @@ func loadAndApplyDDLHistory(
 			tablesDDLHistory,
 			tableTriggerDDLHistory); err != nil {
 			log.Panic("updateDDLHistory error", zap.Error(err))
+		}
+		if err := updateDatabaseInfoAndTableInfo(&ddlEvent, databaseMap, tableMap); err != nil {
+			log.Panic("updateDatabaseInfo error", zap.Error(err))
 		}
 	}
 
@@ -308,7 +307,7 @@ func readSchemaIDAndTableInfoFromKVSnap(snap *pebble.Snapshot, tableID int64, ve
 	if err != nil {
 		log.Fatal("unmarshal table info failed", zap.Error(err))
 	}
-	return int64(table_info_entry.SchemaID), tableInfo
+	return table_info_entry.SchemaID, tableInfo
 }
 
 func readDDLEvent(snap *pebble.Snapshot, version uint64) PersistedDDLEvent {
@@ -332,7 +331,7 @@ func readDDLEvent(snap *pebble.Snapshot, version uint64) PersistedDDLEvent {
 func writeDDLEvents(db *pebble.DB, ddlEvents ...PersistedDDLEvent) error {
 	batch := db.NewBatch()
 	for _, event := range ddlEvents {
-		ddlKey, err := ddlJobKey(uint64(event.FinishedTs))
+		ddlKey, err := ddlJobKey(event.FinishedTs)
 		if err != nil {
 			return err
 		}
@@ -352,7 +351,7 @@ func isTableRawKey(key []byte) bool {
 }
 
 func writeSchemaInfoToBatch(batch *pebble.Batch, ts uint64, info *model.DBInfo) {
-	schemaKey, err := schemaInfoKey(ts, int64(info.ID))
+	schemaKey, err := schemaInfoKey(ts, info.ID)
 	if err != nil {
 		log.Fatal("generate schema key failed", zap.Error(err))
 	}
@@ -368,7 +367,7 @@ func writeTableInfoToBatch(batch *pebble.Batch, ts uint64, schemaID int64, table
 	if err := json.Unmarshal(tableInfoValue, &tbNameInfo); err != nil {
 		log.Fatal("unmarshal table info failed", zap.Error(err))
 	}
-	tableKey, err := tableInfoKey(ts, int64(tbNameInfo.ID))
+	tableKey, err := tableInfoKey(ts, tbNameInfo.ID)
 	if err != nil {
 		log.Fatal("generate table key failed", zap.Error(err))
 	}
@@ -390,7 +389,7 @@ func writeSchemaSnapshotAndMeta(
 	tiStore kv.Storage,
 	snapTs uint64,
 ) (map[int64]*BasicDatabaseInfo, map[int64]*BasicTableInfo, error) {
-	meta := logpuller.GetSnapshotMeta(tiStore, uint64(snapTs))
+	meta := logpuller.GetSnapshotMeta(tiStore, snapTs)
 	start := time.Now()
 	dbInfos, err := meta.ListDatabases()
 	if err != nil {
@@ -407,7 +406,7 @@ func writeSchemaSnapshotAndMeta(
 			Name:   dbInfo.Name.O,
 			Tables: make(map[int64]bool),
 		}
-		databaseMap[int64(dbInfo.ID)] = databaseInfo
+		databaseMap[dbInfo.ID] = databaseInfo
 
 		batch := db.NewBatch()
 		defer batch.Close()
@@ -528,8 +527,7 @@ func loadAllPhysicalTablesInSnap(
 		if err != nil {
 			log.Fatal("unmarshal ddl job failed", zap.Error(err))
 		}
-		_, err := updateDatabaseInfoAndTableInfo(&ddlEvent, databaseMap, tableMap)
-		if err != nil {
+		if err := updateDatabaseInfoAndTableInfo(&ddlEvent, databaseMap, tableMap); err != nil {
 			log.Panic("updateDatabaseInfo error", zap.Error(err))
 		}
 	}

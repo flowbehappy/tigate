@@ -37,6 +37,8 @@ type LogPullerMultiSpan struct {
 
 	consume func(context.Context, *common.RawKVEntry) error
 
+	notifyCh chan interface{}
+
 	mu sync.Mutex
 
 	resolvedTsMap map[SubscriptionID]common.Ts
@@ -60,6 +62,7 @@ func NewLogPullerMultiSpan(
 	pullerWrapper := &LogPullerMultiSpan{
 		startTs:           startTs,
 		consume:           consume,
+		notifyCh:          make(chan interface{}, 4),
 		resolvedTsMap:     make(map[SubscriptionID]common.Ts),
 		prevResolvedTs:    0,
 		pendingResolvedTs: 0,
@@ -127,24 +130,33 @@ func (p *LogPullerMultiSpan) tryUpdatePendingResolvedTs(entry *common.RawKVEntry
 		log.Panic("should not happen")
 	}
 	p.pendingResolvedTs = currentResolvedTs
+	select {
+	case p.notifyCh <- struct{}{}:
+	default:
+	}
 }
 
 func (p *LogPullerMultiSpan) sendResolvedTsPeriodically(ctx context.Context) error {
-	ticker := time.NewTicker(10 * time.Millisecond)
+	trySendResolvedTs := func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.pendingResolvedTs > p.prevResolvedTs {
+			p.consume(ctx, &common.RawKVEntry{
+				OpType: common.OpTypeResolved,
+				CRTs:   common.Ts(p.pendingResolvedTs),
+			})
+			p.prevResolvedTs = p.pendingResolvedTs
+		}
+	}
+	ticker := time.NewTicker(50 * time.Millisecond)
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			p.mu.Lock()
-			if p.pendingResolvedTs > p.prevResolvedTs {
-				p.consume(ctx, &common.RawKVEntry{
-					OpType: common.OpTypeResolved,
-					CRTs:   common.Ts(p.pendingResolvedTs),
-				})
-				p.prevResolvedTs = p.pendingResolvedTs
-			}
-			p.mu.Unlock()
+			trySendResolvedTs()
+		case <-p.notifyCh:
+			trySendResolvedTs()
 		}
 	}
 }
