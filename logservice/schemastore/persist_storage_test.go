@@ -461,7 +461,7 @@ func TestHandleRenameTable(t *testing.T) {
 	}
 
 	{
-		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, 601, 700)
+		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, nil, 601, 700)
 		require.Nil(t, err)
 		require.Equal(t, 1, len(ddlEvents))
 		// rename table event
@@ -471,15 +471,69 @@ func TestHandleRenameTable(t *testing.T) {
 		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].BlockedTables.InfluenceType)
 		require.Equal(t, schemaID1, ddlEvents[0].BlockedTables.SchemaID)
 		require.Equal(t, tableID, ddlEvents[0].BlockedTables.TableIDs[0])
-		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].NeedDroppedTables.InfluenceType)
-		require.Equal(t, schemaID1, ddlEvents[0].NeedDroppedTables.SchemaID)
-		require.Equal(t, tableID, ddlEvents[0].NeedDroppedTables.TableIDs[0])
-		require.Equal(t, schemaID2, ddlEvents[0].NeedAddedTables[0].SchemaID)
+		require.Equal(t, ddlEvents[0].BlockedTables, ddlEvents[0].NeedDroppedTables)
+
 		require.Equal(t, tableID, ddlEvents[0].NeedAddedTables[0].TableID)
+
 		require.Equal(t, "test2", ddlEvents[0].TableNameChange.AddName[0].SchemaName)
 		require.Equal(t, "t2", ddlEvents[0].TableNameChange.AddName[0].TableName)
 		require.Equal(t, "test", ddlEvents[0].TableNameChange.DropName[0].SchemaName)
 		require.Equal(t, "t1", ddlEvents[0].TableNameChange.DropName[0].TableName)
+	}
+
+	// test filter: after rename, the table is filtered out
+	{
+		filterConfig := &config.FilterConfig{
+			Rules: []string{"test.*"},
+		}
+		tableFilter, err := filter.NewFilter(filterConfig, "", false)
+		require.Nil(t, err)
+		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, tableFilter, 601, 700)
+		require.Nil(t, err)
+		require.Equal(t, 1, len(ddlEvents))
+		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].BlockedTables.InfluenceType)
+		require.Equal(t, schemaID1, ddlEvents[0].BlockedTables.SchemaID)
+		require.Equal(t, tableID, ddlEvents[0].BlockedTables.TableIDs[0])
+		require.Equal(t, ddlEvents[0].BlockedTables, ddlEvents[0].NeedDroppedTables)
+
+		require.Nil(t, ddlEvents[0].NeedAddedTables)
+
+		require.Equal(t, 0, len(ddlEvents[0].TableNameChange.AddName))
+		require.Equal(t, "test", ddlEvents[0].TableNameChange.DropName[0].SchemaName)
+		require.Equal(t, "t1", ddlEvents[0].TableNameChange.DropName[0].TableName)
+	}
+
+	// test filter: before rename, the table is filtered out, so only table trigger can get the event
+	{
+		filterConfig := &config.FilterConfig{
+			Rules: []string{"test2.*"},
+		}
+		tableFilter, err := filter.NewFilter(filterConfig, "", false)
+		require.Nil(t, err)
+		triggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(tableFilter, 601, 10)
+		require.Nil(t, err)
+		require.Equal(t, 1, len(triggerDDLEvents))
+		require.Nil(t, triggerDDLEvents[0].BlockedTables)
+		require.Nil(t, triggerDDLEvents[0].NeedDroppedTables)
+
+		require.Equal(t, tableID, triggerDDLEvents[0].NeedAddedTables[0].TableID)
+
+		require.Equal(t, "test2", triggerDDLEvents[0].TableNameChange.AddName[0].SchemaName)
+		require.Equal(t, "t2", triggerDDLEvents[0].TableNameChange.AddName[0].TableName)
+		require.Equal(t, 0, len(triggerDDLEvents[0].TableNameChange.DropName))
+	}
+
+	// test filter: the table is always filtered out
+	{
+		// check table trigger events cannot get the event
+		filterConfig := &config.FilterConfig{
+			Rules: []string{"test3.*"},
+		}
+		tableFilter, err := filter.NewFilter(filterConfig, "", false)
+		require.Nil(t, err)
+		triggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(tableFilter, 601, 10)
+		require.Nil(t, err)
+		require.Equal(t, 0, len(triggerDDLEvents))
 	}
 }
 
@@ -608,7 +662,7 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 
 	// fetch table ddl events
 	{
-		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, 601, 700)
+		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, nil, 601, 700)
 		require.Nil(t, err)
 		require.Equal(t, 2, len(ddlEvents))
 		// rename table event
@@ -629,7 +683,7 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 	// fetch table ddl events for another table
 	{
 		// TODO: test return error if start ts is smaller than 607
-		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID2, 607, 700)
+		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID2, nil, 607, 700)
 		require.Nil(t, err)
 		require.Equal(t, 1, len(ddlEvents))
 		// drop db event
@@ -640,7 +694,7 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 
 	// fetch table ddl events again
 	{
-		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID3, 609, 700)
+		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID3, nil, 609, 700)
 		require.Nil(t, err)
 		require.Equal(t, 1, len(ddlEvents))
 		// drop table event
@@ -653,10 +707,7 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 
 	// fetch all table trigger ddl events
 	{
-		filteConfig := &config.FilterConfig{}
-		eventFilter, err := filter.NewFilter(filteConfig, "", false)
-		require.Nil(t, err)
-		tableTriggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(eventFilter, 0, 10)
+		tableTriggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(nil, 0, 10)
 		require.Nil(t, err)
 		require.Equal(t, 6, len(tableTriggerDDLEvents))
 		// create db event
@@ -686,10 +737,7 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 
 	// fetch partial table trigger ddl events
 	{
-		filteConfig := &config.FilterConfig{}
-		eventFilter, err := filter.NewFilter(filteConfig, "", false)
-		require.Nil(t, err)
-		tableTriggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(eventFilter, 0, 2)
+		tableTriggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(nil, 0, 2)
 		require.Nil(t, err)
 		require.Equal(t, 2, len(tableTriggerDDLEvents))
 		require.Equal(t, uint64(200), tableTriggerDDLEvents[0].FinishedTs)

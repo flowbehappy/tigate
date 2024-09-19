@@ -287,7 +287,9 @@ func (p *persistentStorage) getTableInfo(tableID int64, ts uint64) (*common.Tabl
 }
 
 // TODO: not all ddl in p.tablesDDLHistory should be sent to the dispatcher, verify dispatcher will set the right range
-func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64) ([]common.DDLEvent, error) {
+func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, error) {
+	// TODO: check a dispatcher from created table start ts > finish ts of create table
+	// TODO: check a dispatcher from rename table start ts > finish ts of rename table(is it possible?)
 	p.mu.RLock()
 	if start < p.gcTs {
 		p.mu.Unlock()
@@ -319,10 +321,15 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64
 	p.mu.RUnlock()
 
 	// TODO: if the first event is a create table ddl, return error?
-	events := make([]common.DDLEvent, len(allTargetTs))
-	for i, ts := range allTargetTs {
+	events := make([]common.DDLEvent, 0, len(allTargetTs))
+	for _, ts := range allTargetTs {
 		rawEvent := readDDLEvent(storageSnap, ts)
-		events[i] = buildDDLEvent(&rawEvent)
+		if tableFilter != nil &&
+			tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.SchemaName, rawEvent.TableName) &&
+			tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.PrevSchemaName, rawEvent.PrevTableName) {
+			continue
+		}
+		events = append(events, buildDDLEvent(&rawEvent, tableFilter))
 	}
 	// log.Info("fetchTableDDLEvents",
 	// 	zap.Int64("tableID", tableID),
@@ -376,14 +383,12 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 		}
 		for _, ts := range allTargetTs {
 			rawEvent := readDDLEvent(storageSnap, ts)
-			var tableName string
-			if rawEvent.TableInfo != nil {
-				tableName = rawEvent.TableInfo.Name.O
-			}
-			if tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.SchemaName, tableName) {
+			if tableFilter != nil &&
+				tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.SchemaName, rawEvent.TableName) &&
+				tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.PrevSchemaName, rawEvent.PrevTableName) {
 				continue
 			}
-			events = append(events, buildDDLEvent(&rawEvent))
+			events = append(events, buildDDLEvent(&rawEvent, tableFilter))
 		}
 		if len(events) >= limit {
 			return events, nil
@@ -916,8 +921,7 @@ func updateRegisteredTableInfoStore(
 	return nil
 }
 
-// TODO: respect filter
-func buildDDLEvent(rawEvent *PersistedDDLEvent) common.DDLEvent {
+func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) common.DDLEvent {
 	ddlEvent := common.DDLEvent{
 		Type:       rawEvent.Type,
 		SchemaID:   rawEvent.SchemaID,
@@ -995,31 +999,36 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent) common.DDLEvent {
 			},
 		}
 	case model.ActionRenameTable:
-		ddlEvent.BlockedTables = &common.InfluencedTables{
-			InfluenceType: common.InfluenceTypeNormal,
-			TableIDs:      []int64{rawEvent.TableID},
-			SchemaID:      rawEvent.PrevSchemaID,
+		ignorePrevTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.PrevSchemaName, rawEvent.PrevTableName)
+		ignoreCurrentTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.SchemaName, rawEvent.TableName)
+		var addName, dropName []common.SchemaTableName
+		if !ignorePrevTable {
+			ddlEvent.BlockedTables = &common.InfluencedTables{
+				InfluenceType: common.InfluenceTypeNormal,
+				TableIDs:      []int64{rawEvent.TableID},
+				SchemaID:      rawEvent.PrevSchemaID,
+			}
+			ddlEvent.NeedDroppedTables = ddlEvent.BlockedTables
+			dropName = append(dropName, common.SchemaTableName{
+				SchemaName: rawEvent.PrevSchemaName,
+				TableName:  rawEvent.PrevTableName,
+			})
 		}
-		ddlEvent.NeedDroppedTables = ddlEvent.BlockedTables
-		ddlEvent.NeedAddedTables = []common.Table{
-			{
-				SchemaID: rawEvent.SchemaID,
-				TableID:  rawEvent.TableID,
-			},
+		if !ignoreCurrentTable {
+			ddlEvent.NeedAddedTables = []common.Table{
+				{
+					SchemaID: rawEvent.SchemaID,
+					TableID:  rawEvent.TableID,
+				},
+			}
+			addName = append(addName, common.SchemaTableName{
+				SchemaName: rawEvent.SchemaName,
+				TableName:  rawEvent.TableName,
+			})
 		}
 		ddlEvent.TableNameChange = &common.TableNameChange{
-			AddName: []common.SchemaTableName{
-				{
-					SchemaName: rawEvent.SchemaName,
-					TableName:  rawEvent.TableName,
-				},
-			},
-			DropName: []common.SchemaTableName{
-				{
-					SchemaName: rawEvent.PrevSchemaName,
-					TableName:  rawEvent.PrevTableName,
-				},
-			},
+			AddName:  addName,
+			DropName: dropName,
 		}
 	case model.ActionCreateView:
 		ddlEvent.BlockedTables = &common.InfluencedTables{

@@ -31,7 +31,7 @@ type SchemaStore interface {
 	// FetchTableDDLEvents returns the next ddl events which finishedTs are within the range (start, end]
 	// and it returns a timestamp which means there will be no more ddl events before(<=) it
 	// TODO: add a parameter limit
-	FetchTableDDLEvents(tableID int64, start, end uint64) ([]common.DDLEvent, uint64, error)
+	FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, uint64, error)
 
 	FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]common.DDLEvent, uint64, error)
 }
@@ -191,7 +191,7 @@ func (s *schemaStore) GetTableInfo(tableID int64, ts uint64) (*common.TableInfo,
 	return s.dataStorage.getTableInfo(tableID, ts)
 }
 
-func (s *schemaStore) FetchTableDDLEvents(tableID int64, start, end uint64) ([]common.DDLEvent, uint64, error) {
+func (s *schemaStore) FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, uint64, error) {
 	currentResolvedTs := s.resolvedTs.Load()
 	if currentResolvedTs < end {
 		end = currentResolvedTs
@@ -205,7 +205,7 @@ func (s *schemaStore) FetchTableDDLEvents(tableID int64, start, end uint64) ([]c
 		zap.Int64("tableID", tableID),
 		zap.Uint64("start", start),
 		zap.Uint64("end", end))
-	events, err := s.dataStorage.fetchTableDDLEvents(tableID, start, end)
+	events, err := s.dataStorage.fetchTableDDLEvents(tableID, tableFilter, start, end)
 	if err != nil {
 		return nil, 0, err
 	}
