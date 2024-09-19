@@ -18,14 +18,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/node"
-
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/chann"
