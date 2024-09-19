@@ -214,9 +214,9 @@ func TestSchemaBlock(t *testing.T) {
 	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	sche.AddNewNode("node2")
-	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 1})
-	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 2})
-	sche.AddNewTable(common.Table{SchemaID: 2, TableID: 3})
+	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 1}, 1)
+	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 2}, 1)
+	sche.AddNewTable(common.Table{SchemaID: 2, TableID: 3}, 1)
 	var dispatcherIDs []*heartbeatpb.DispatcherID
 	var dropTables = []int64{1, 2}
 	for key, stm := range sche.Absent() {
@@ -378,9 +378,9 @@ func TestSyncPointBlock(t *testing.T) {
 	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	sche.AddNewNode("node2")
-	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 1})
-	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 2})
-	sche.AddNewTable(common.Table{SchemaID: 2, TableID: 3})
+	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 1}, 1)
+	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 2}, 1)
+	sche.AddNewTable(common.Table{SchemaID: 2, TableID: 3}, 1)
 	var dispatcherIDs []*heartbeatpb.DispatcherID
 	var dropTables = []int64{1, 2, 3}
 	for key, stm := range sche.Absent() {

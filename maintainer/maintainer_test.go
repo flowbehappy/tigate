@@ -16,7 +16,6 @@ package maintainer
 import (
 	"context"
 	"flag"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"net/http"
 	"net/http/pprof"
 	"strconv"
@@ -29,6 +28,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/config"
 	configNew "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/flowbehappy/tigate/utils/dynstream"
@@ -261,7 +261,7 @@ func TestMaintainerSchedule(t *testing.T) {
 		maintainer.scheduler.AddNewTable(common.Table{
 			SchemaID: 1,
 			TableID:  int64(id),
-		})
+		}, 10)
 	}
 	// send bootstrap message
 	maintainer.sendMessages(maintainer.bootstrapper.HandleNewNodes(

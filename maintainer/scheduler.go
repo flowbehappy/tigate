@@ -15,7 +15,6 @@ package maintainer
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"math"
 	"math/rand"
 	"sort"
@@ -25,6 +24,7 @@ import (
 	"github.com/flowbehappy/tigate/maintainer/split"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/flowbehappy/tigate/utils/heap"
@@ -44,6 +44,8 @@ type Scheduler struct {
 	nodeTasks map[node.ID]map[common.DispatcherID]*scheduler.StateMachine
 	// group the tasks by schema id
 	schemaTasks map[int64]map[common.DispatcherID]*scheduler.StateMachine
+	// tables
+	tableTasks map[int64]struct{}
 	// totalMaps holds all state maps, absent, committing, working and removing
 	totalMaps    []map[common.DispatcherID]*scheduler.StateMachine
 	bootstrapped bool
@@ -69,6 +71,7 @@ func NewScheduler(changefeedID string,
 	s := &Scheduler{
 		nodeTasks:            make(map[node.ID]map[common.DispatcherID]*scheduler.StateMachine),
 		schemaTasks:          make(map[int64]map[common.DispatcherID]*scheduler.StateMachine),
+		tableTasks:           make(map[int64]struct{}),
 		startCheckpointTs:    checkpointTs,
 		changefeedID:         changefeedID,
 		bootstrapped:         false,
@@ -102,7 +105,14 @@ func (s *Scheduler) GetAllNodes() []node.ID {
 	return nodes
 }
 
-func (s *Scheduler) AddNewTable(table common.Table) {
+func (s *Scheduler) AddNewTable(table common.Table, startTs uint64) {
+	_, ok := s.tableTasks[table.TableID]
+	if ok {
+		log.Warn("table already add, ignore",
+			zap.String("changefeed", s.changefeedID),
+			zap.Int64("table", table.TableID))
+		return
+	}
 	span := spanz.TableIDToComparableSpan(table.TableID)
 	tableSpan := &heartbeatpb.TableSpan{
 		TableID:  table.TableID,
@@ -114,7 +124,7 @@ func (s *Scheduler) AddNewTable(table common.Table) {
 		//split the whole table span base on the configuration, todo: background split table
 		tableSpans = s.splitter.SplitSpans(context.Background(), tableSpan, len(s.nodeTasks))
 	}
-	s.addNewSpans(table.SchemaID, tableSpan.TableID, tableSpans)
+	s.addNewSpans(table.SchemaID, tableSpan.TableID, tableSpans, startTs)
 }
 
 func (s *Scheduler) SetInitialTables(tables []common.Table) {
@@ -132,7 +142,7 @@ func (s *Scheduler) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb.
 	for _, table := range s.initialTables {
 		tableMap, ok := workingMap[table.TableID]
 		if !ok {
-			s.AddNewTable(table)
+			s.AddNewTable(table, s.startCheckpointTs)
 		} else {
 			span := spanz.TableIDToComparableSpan(table.TableID)
 			tableSpan := &heartbeatpb.TableSpan{
@@ -147,7 +157,7 @@ func (s *Scheduler) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb.
 			if s.spanReplicationEnabled {
 				holes := split.FindHoles(tableMap, tableSpan)
 				// todo: split the hole
-				s.addNewSpans(table.SchemaID, table.TableID, holes)
+				s.addNewSpans(table.SchemaID, table.TableID, holes, s.startCheckpointTs)
 			}
 			// delete it
 			delete(workingMap, table.TableID)
@@ -216,6 +226,7 @@ func (s *Scheduler) RemoveTask(stm *scheduler.StateMachine) *messaging.TargetMes
 			zap.String("id", id.String()))
 		delete(s.Absent(), id)
 		delete(s.schemaTasks[replica.SchemaID], id)
+		delete(s.tableTasks, replica.Span.TableID)
 		return nil
 	}
 	oldState := stm.State
@@ -539,7 +550,8 @@ func (s *Scheduler) GetTaskSizeByNodeID(id node.ID) int {
 
 func (s *Scheduler) addDDLDispatcher() {
 	ddlTableSpan := heartbeatpb.DDLSpan
-	s.addNewSpans(heartbeatpb.DDLSpanSchemaID, ddlTableSpan.TableID, []*heartbeatpb.TableSpan{ddlTableSpan})
+	s.addNewSpans(heartbeatpb.DDLSpanSchemaID, ddlTableSpan.TableID,
+		[]*heartbeatpb.TableSpan{ddlTableSpan}, s.startCheckpointTs)
 	var dispatcherID common.DispatcherID
 	for id := range s.schemaTasks[heartbeatpb.DDLSpanSchemaID] {
 		dispatcherID = id
@@ -570,7 +582,8 @@ func (s *Scheduler) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, *
 	return ddlSpanFound
 }
 
-func (s *Scheduler) addNewSpans(schemaID, tableID int64, tableSpans []*heartbeatpb.TableSpan) {
+func (s *Scheduler) addNewSpans(schemaID, tableID int64,
+	tableSpans []*heartbeatpb.TableSpan, startTs uint64) {
 	for _, newSpan := range tableSpans {
 		newTableSpan := &heartbeatpb.TableSpan{
 			TableID:  tableID,
@@ -579,7 +592,7 @@ func (s *Scheduler) addNewSpans(schemaID, tableID int64, tableSpans []*heartbeat
 		}
 		dispatcherID := common.NewDispatcherID()
 		replicaSet := NewReplicaSet(model.DefaultChangeFeedID(s.changefeedID),
-			dispatcherID, schemaID, newTableSpan, s.startCheckpointTs).(*ReplicaSet)
+			dispatcherID, schemaID, newTableSpan, startTs).(*ReplicaSet)
 		stm := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
 		s.Absent()[dispatcherID] = stm
 		schemaMap, ok := s.schemaTasks[schemaID]
@@ -588,6 +601,7 @@ func (s *Scheduler) addNewSpans(schemaID, tableID int64, tableSpans []*heartbeat
 			s.schemaTasks[schemaID] = schemaMap
 		}
 		schemaMap[dispatcherID] = stm
+		s.tableTasks[tableID] = struct{}{}
 	}
 }
 
@@ -609,6 +623,7 @@ func (s *Scheduler) tryMoveTask(dispatcherID common.DispatcherID,
 			delete(m, dispatcherID)
 		}
 		delete(s.schemaTasks[stm.Inferior.(*ReplicaSet).SchemaID], dispatcherID)
+		delete(s.tableTasks, stm.Inferior.(*ReplicaSet).Span.TableID)
 	}
 	// keep node task map is updated
 	if modifyNodeMap && oldPrimary != stm.Primary {

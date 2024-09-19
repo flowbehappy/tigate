@@ -218,10 +218,12 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 }
 
 func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e common.DDLEvent, d *dispatcherStat) {
+	e.DispatcherID = d.info.GetID()
+	ddlEvent := newWrapDDLEvent(remoteID, &e)
 	select {
 	case <-ctx.Done():
 		return
-	case c.messageCh <- newWrapDDLEvent(remoteID, &e):
+	case c.messageCh <- ddlEvent:
 		d.metricEventServiceSendDDLCount.Inc()
 	}
 }
