@@ -228,6 +228,12 @@ func (p *persistentStorage) getAllPhysicalTables(snapTs uint64, tableFilter filt
 	gcTs := p.gcTs
 	p.mu.Unlock()
 
+	start := time.Now()
+	defer func() {
+		log.Info("getAllPhysicalTables finish",
+			zap.Uint64("snapTs", snapTs),
+			zap.Any("duration", time.Since(start).Seconds()))
+	}()
 	return loadAllPhysicalTablesInSnap(storageSnap, gcTs, snapTs, tableFilter)
 }
 
