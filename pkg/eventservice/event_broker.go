@@ -41,7 +41,8 @@ type eventBroker struct {
 	// eventStore is the source of the events, eventBroker get the events from the eventStore.
 	eventStore  eventstore.EventStore
 	schemaStore schemastore.SchemaStore
-	mounter     mounter.Mounter
+	// todo: only one mounter, this may become the bottleneck affect the throughput performance
+	mounter mounter.Mounter
 	// msgSender is used to send the events to the dispatchers.
 	msgSender messaging.MessageSender
 
@@ -118,24 +119,32 @@ func newEventBroker(
 }
 
 func (c *eventBroker) sendWatermark(
+	ctx context.Context,
 	server node.ID,
 	dispatcherID common.DispatcherID,
 	watermark uint64,
 	counter prometheus.Counter,
 ) {
-	c.messageCh <- newWrapResolvedEvent(
+	resolvedEvent := newWrapResolvedEvent(
 		server,
 		common.ResolvedEvent{
 			DispatcherID: dispatcherID,
 			ResolvedTs:   watermark})
-	if counter != nil {
-		counter.Inc()
+	select {
+	case <-ctx.Done():
+		return
+	case c.messageCh <- resolvedEvent:
+		if counter != nil {
+			counter.Inc()
+		}
+	default:
 	}
+
 }
 
 func (c *eventBroker) runScanWorker(ctx context.Context) {
 	for i := 0; i < c.scanWorkerCount; i++ {
-		chIndex := i
+		taskCh := c.taskPool.popTask(i)
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
@@ -143,8 +152,8 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 				select {
 				case <-ctx.Done():
 					return
-				case task := <-c.taskPool.popTask(chIndex):
-					c.doScan(task)
+				case task := <-taskCh:
+					c.doScan(ctx, task)
 				}
 			}
 		}()
@@ -152,7 +161,9 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 }
 
 func (c *eventBroker) runGenTasks(ctx context.Context) {
+	c.wg.Add(1)
 	go func() {
+		defer c.wg.Done()
 		for {
 			select {
 			case <-ctx.Done():
@@ -160,6 +171,8 @@ func (c *eventBroker) runGenTasks(ctx context.Context) {
 			case s := <-c.notifyCh:
 				s.dispatchers.RLock()
 				for _, stat := range s.dispatchers.m {
+					// todo: it looks `scanTask` is redundant, simply put `dispatcherStat` into the channel is enough
+					// remove the `scanTask`, reduce the complexity and memory allocation here.
 					c.taskPool.pushTask(&scanTask{
 						dispatcherStat: stat,
 					})
@@ -193,10 +206,10 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 						log.Panic("get table trigger events failed", zap.Error(err))
 					}
 					for _, e := range ddlEvents {
-						c.sendDDL(remoteID, e, dispatcher)
+						c.sendDDL(ctx, remoteID, e, dispatcher)
 					}
 					// After all the events are sent, we send the watermark to the dispatcher.
-					c.sendWatermark(remoteID, dispatcher.info.GetID(), endTs, dispatcher.metricEventServiceSendResolvedTsCount)
+					c.sendWatermark(ctx, remoteID, dispatcher.info.GetID(), endTs, dispatcher.metricEventServiceSendResolvedTsCount)
 					dispatcher.watermark.Store(endTs)
 					return true
 				})
@@ -205,13 +218,17 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 	}()
 }
 
-func (c *eventBroker) sendDDL(remoteID node.ID, e common.DDLEvent, d *dispatcherStat) {
-	c.messageCh <- newWrapDDLEvent(remoteID, &e)
-	d.metricEventServiceSendDDLCount.Inc()
+func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e common.DDLEvent, d *dispatcherStat) {
+	select {
+	case <-ctx.Done():
+		return
+	case c.messageCh <- newWrapDDLEvent(remoteID, &e):
+		d.metricEventServiceSendDDLCount.Inc()
+	}
 }
 
 // TODO: handle error properly.
-func (c *eventBroker) doScan(task *scanTask) {
+func (c *eventBroker) doScan(ctx context.Context, task *scanTask) {
 	dataRange, needScan := task.dispatcherStat.getDataRange()
 	if !needScan {
 		return
@@ -235,10 +252,10 @@ func (c *eventBroker) doScan(task *scanTask) {
 	defer func() {
 		// drain the ddlEvents
 		for _, e := range ddlEvents {
-			c.sendDDL(remoteID, e, task.dispatcherStat)
+			c.sendDDL(ctx, remoteID, e, task.dispatcherStat)
 		}
 		// After all the events are sent, we send the watermark to the dispatcher.
-		c.sendWatermark(remoteID, dispatcherID, dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
+		c.sendWatermark(ctx, remoteID, dispatcherID, dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
 		task.dispatcherStat.watermark.Store(dataRange.EndTs)
 	}()
 
@@ -263,7 +280,7 @@ func (c *eventBroker) doScan(task *scanTask) {
 	sendTxn := func(t *common.DMLEvent) {
 		if t != nil {
 			for len(ddlEvents) > 0 && t.CommitTs > ddlEvents[0].FinishedTs {
-				c.sendDDL(remoteID, ddlEvents[0], task.dispatcherStat)
+				c.sendDDL(ctx, remoteID, ddlEvents[0], task.dispatcherStat)
 				ddlEvents = ddlEvents[1:]
 			}
 			c.messageCh <- newWrapTxnEvent(remoteID, t)
@@ -365,7 +382,7 @@ func (c *eventBroker) flushResolvedTs(ctx context.Context, serverID node.ID) {
 
 func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage) {
 	start := time.Now()
-	// Send the message to messageCenter. Retry if the send failed.
+	// Send the message to messageCenter. Retry if to send failed.
 	for {
 		select {
 		case <-ctx.Done():
@@ -374,6 +391,7 @@ func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage
 		}
 		// Send the message to the dispatcher.
 		err := c.msgSender.SendEvent(tMsg)
+		// todo: errors should be distinguished here, only retry if congested ?
 		if err != nil {
 			log.Debug("send message failed, retry it", zap.Error(err))
 			// Wait for a while and retry to avoid the dropped message flood.
@@ -437,9 +455,10 @@ func (c *eventBroker) onNotify(s *spanSubscription, watermark uint64) {
 }
 
 func (c *eventBroker) addDispatcher(info DispatcherInfo) {
-	filter, err := filter.NewFilter(info.GetFilterConfig(), "", false)
+	filterConfig := info.GetFilterConfig()
+	filter, err := filter.NewFilter(filterConfig, "", false)
 	if err != nil {
-		panic(err)
+		log.Panic("create filter failed", zap.Error(err), zap.Any("filterConfig", filterConfig))
 	}
 
 	defer c.metricDispatcherCount.Inc()
@@ -468,7 +487,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	c.eventStore.RegisterDispatcher(
 		id,
 		span,
-		common.Ts(info.GetStartTs()),
+		info.GetStartTs(),
 		dispatcher.spanSubscription.onNewEvent,
 		func(watermark uint64) { c.onNotify(dispatcher.spanSubscription, watermark) },
 	)
@@ -511,7 +530,7 @@ type dispatcherStat struct {
 	watermark atomic.Uint64
 	// The index of the task queue channel in the taskPool.
 	// We need to make sure the tasks of the same dispatcher are sent to the same task queue
-	// so that it will be handle by the same scan worker. To ensure all events of the dispatcher
+	// so that it will be handled by the same scan worker. To ensure all events of the dispatcher
 	// are sent in order.
 	workerIndex int
 
@@ -537,6 +556,7 @@ func newDispatcherStat(
 		metricEventServiceSendResolvedTsCount: metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "resolved_ts"),
 	}
 	dispStat.watermark.Store(startTs)
+	// todo: it looks this can be simplified to round-robin.
 	hasher := crc32.NewIEEE()
 	hasher.Write(info.GetID().Marshal())
 	dispStat.workerIndex = int(hasher.Sum32() % defaultScanWorkerCount)
@@ -559,7 +579,7 @@ func (a *dispatcherStat) getDataRange() (*common.DataRange, bool) {
 }
 
 // spanSubscription store the latest progress of the table span in the event store.
-// And it also store the dispatchers that want to listen to the events of this table span.
+// And it also stores the dispatchers that want to listen to the events of this table span.
 type spanSubscription struct {
 	span *heartbeatpb.TableSpan
 	// map dispatcherID -> dispatcherStat
