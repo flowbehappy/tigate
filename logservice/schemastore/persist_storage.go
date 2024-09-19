@@ -15,7 +15,6 @@ package schemastore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -51,7 +50,7 @@ type persistentStorage struct {
 	// the current gcTs on disk
 	gcTs uint64
 
-	upperBound upperBoundMeta
+	upperBound UpperBoundMeta
 
 	upperBoundChanged bool
 
@@ -78,12 +77,6 @@ type persistentStorage struct {
 
 	// tableID -> total registered count
 	tableRegisteredCount map[int64]int
-}
-
-type upperBoundMeta struct {
-	FinishedDDLTs uint64 `json:"finished_ddl_ts"`
-	SchemaVersion int64  `json:"schema_version"`
-	ResolvedTs    uint64 `json:"resolved_ts"`
 }
 
 func newPersistentStorage(
@@ -179,7 +172,7 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 		log.Fatal("fail to initialize from kv snapshot")
 	}
 	p.gcTs = gcTs
-	p.upperBound = upperBoundMeta{
+	p.upperBound = UpperBoundMeta{
 		FinishedDDLTs: 0,
 		SchemaVersion: 0,
 		ResolvedTs:    gcTs,
@@ -323,7 +316,7 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 	// TODO: if the first event is a create table ddl, return error?
 	events := make([]common.DDLEvent, 0, len(allTargetTs))
 	for _, ts := range allTargetTs {
-		rawEvent := readDDLEvent(storageSnap, ts)
+		rawEvent := readPersistedDDLEvent(storageSnap, ts)
 		if tableFilter != nil &&
 			tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.SchemaName, rawEvent.TableName) &&
 			tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.PrevSchemaName, rawEvent.PrevTableName) {
@@ -382,7 +375,7 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 			return events, nil
 		}
 		for _, ts := range allTargetTs {
-			rawEvent := readDDLEvent(storageSnap, ts)
+			rawEvent := readPersistedDDLEvent(storageSnap, ts)
 			if tableFilter != nil &&
 				tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.SchemaName, rawEvent.TableName) &&
 				tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.PrevSchemaName, rawEvent.PrevTableName) {
@@ -416,35 +409,14 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 	allDDLFinishedTs = append(allDDLFinishedTs, p.tablesDDLHistory[tableID]...)
 	p.mu.RUnlock()
 
-	getSchemaName := func(schemaID int64) (string, error) {
-		p.mu.RLock()
-		defer func() {
-			p.mu.RUnlock()
-		}()
-
-		databaseInfo, ok := p.databaseMap[schemaID]
-		if !ok {
-			return "", errors.New("database not found")
-		}
-		return databaseInfo.Name, nil
-	}
-
 	if inKVSnap {
-		if err := addTableInfoFromKVSnap(store, kvSnapVersion, storageSnap, getSchemaName); err != nil {
+		if err := addTableInfoFromKVSnap(store, kvSnapVersion, storageSnap); err != nil {
 			return err
 		}
 	}
 
 	for _, version := range allDDLFinishedTs {
-		ddlEvent := readDDLEvent(storageSnap, version)
-		// TODO: check ddlEvent type
-		// TODO: no need fill it here, schemaName should be in event
-		schemaName, err := getSchemaName(ddlEvent.SchemaID)
-		if err != nil {
-			log.Fatal("get schema name failed", zap.Error(err))
-		}
-		ddlEvent.SchemaName = schemaName
-
+		ddlEvent := readPersistedDDLEvent(storageSnap, version)
 		store.applyDDLFromPersistStorage(ddlEvent)
 	}
 	store.setTableInfoInitialized()
@@ -455,14 +427,8 @@ func addTableInfoFromKVSnap(
 	store *versionedTableInfoStore,
 	kvSnapVersion uint64,
 	snap *pebble.Snapshot,
-	getSchemaName func(schemaID int64) (string, error),
 ) error {
-	schemaID, rawTableInfo := readSchemaIDAndTableInfoFromKVSnap(snap, store.getTableID(), kvSnapVersion)
-	schemaName, err := getSchemaName(schemaID)
-	if err != nil {
-		return err
-	}
-	tableInfo := common.WrapTableInfo(schemaID, schemaName, kvSnapVersion, rawTableInfo)
+	tableInfo := readTableInfoInKVSnap(snap, store.getTableID(), kvSnapVersion)
 	tableInfo.InitPreSQLs()
 	store.addInitialTableInfo(tableInfo)
 	return nil
@@ -556,14 +522,14 @@ func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64, tablesInKVSna
 	}
 }
 
-func (p *persistentStorage) updateUpperBound(upperBound upperBoundMeta) {
+func (p *persistentStorage) updateUpperBound(upperBound UpperBoundMeta) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.upperBound = upperBound
 	p.upperBoundChanged = true
 }
 
-func (p *persistentStorage) getUpperBound() upperBoundMeta {
+func (p *persistentStorage) getUpperBound() UpperBoundMeta {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.upperBound
@@ -622,7 +588,7 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 	}
 	p.mu.Unlock()
 
-	writeDDLEvents(p.db, ddlEvents...)
+	writePersistedDDLEvents(p.db, ddlEvents...)
 	return nil
 }
 

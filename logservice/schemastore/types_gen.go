@@ -483,3 +483,309 @@ func (z *PersistedDDLEvent) Msgsize() (s int) {
 	s = 3 + 3 + msgp.Int64Size + 5 + msgp.ByteSize + 10 + msgp.Int64Size + 9 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.SchemaName) + 11 + msgp.StringPrefixSize + len(z.TableName) + 15 + msgp.Int64Size + 14 + msgp.Int64Size + 17 + msgp.StringPrefixSize + len(z.PrevSchemaName) + 16 + msgp.StringPrefixSize + len(z.PrevTableName) + 6 + msgp.StringPrefixSize + len(z.Query) + 15 + msgp.Int64Size + 17 + msgp.BytesPrefixSize + len(z.TableInfoValue) + 12 + msgp.Uint64Size + 9 + msgp.StringPrefixSize + len(z.BDRRole) + 17 + msgp.Uint64Size
 	return
 }
+
+// DecodeMsg implements msgp.Decodable
+func (z *PersistedTableInfoEntry) DecodeMsg(dc *msgp.Reader) (err error) {
+	var field []byte
+	_ = field
+	var zb0001 uint32
+	zb0001, err = dc.ReadMapHeader()
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	for zb0001 > 0 {
+		zb0001--
+		field, err = dc.ReadMapKeyPtr()
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		switch msgp.UnsafeString(field) {
+		case "schema_id":
+			z.SchemaID, err = dc.ReadInt64()
+			if err != nil {
+				err = msgp.WrapError(err, "SchemaID")
+				return
+			}
+		case "schema_name":
+			z.SchemaName, err = dc.ReadString()
+			if err != nil {
+				err = msgp.WrapError(err, "SchemaName")
+				return
+			}
+		case "table_info_value":
+			z.TableInfoValue, err = dc.ReadBytes(z.TableInfoValue)
+			if err != nil {
+				err = msgp.WrapError(err, "TableInfoValue")
+				return
+			}
+		default:
+			err = dc.Skip()
+			if err != nil {
+				err = msgp.WrapError(err)
+				return
+			}
+		}
+	}
+	return
+}
+
+// EncodeMsg implements msgp.Encodable
+func (z *PersistedTableInfoEntry) EncodeMsg(en *msgp.Writer) (err error) {
+	// map header, size 3
+	// write "schema_id"
+	err = en.Append(0x83, 0xa9, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x69, 0x64)
+	if err != nil {
+		return
+	}
+	err = en.WriteInt64(z.SchemaID)
+	if err != nil {
+		err = msgp.WrapError(err, "SchemaID")
+		return
+	}
+	// write "schema_name"
+	err = en.Append(0xab, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x6e, 0x61, 0x6d, 0x65)
+	if err != nil {
+		return
+	}
+	err = en.WriteString(z.SchemaName)
+	if err != nil {
+		err = msgp.WrapError(err, "SchemaName")
+		return
+	}
+	// write "table_info_value"
+	err = en.Append(0xb0, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x5f, 0x69, 0x6e, 0x66, 0x6f, 0x5f, 0x76, 0x61, 0x6c, 0x75, 0x65)
+	if err != nil {
+		return
+	}
+	err = en.WriteBytes(z.TableInfoValue)
+	if err != nil {
+		err = msgp.WrapError(err, "TableInfoValue")
+		return
+	}
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *PersistedTableInfoEntry) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// map header, size 3
+	// string "schema_id"
+	o = append(o, 0x83, 0xa9, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x69, 0x64)
+	o = msgp.AppendInt64(o, z.SchemaID)
+	// string "schema_name"
+	o = append(o, 0xab, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x6e, 0x61, 0x6d, 0x65)
+	o = msgp.AppendString(o, z.SchemaName)
+	// string "table_info_value"
+	o = append(o, 0xb0, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x5f, 0x69, 0x6e, 0x66, 0x6f, 0x5f, 0x76, 0x61, 0x6c, 0x75, 0x65)
+	o = msgp.AppendBytes(o, z.TableInfoValue)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *PersistedTableInfoEntry) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var field []byte
+	_ = field
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadMapHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	for zb0001 > 0 {
+		zb0001--
+		field, bts, err = msgp.ReadMapKeyZC(bts)
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		switch msgp.UnsafeString(field) {
+		case "schema_id":
+			z.SchemaID, bts, err = msgp.ReadInt64Bytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "SchemaID")
+				return
+			}
+		case "schema_name":
+			z.SchemaName, bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "SchemaName")
+				return
+			}
+		case "table_info_value":
+			z.TableInfoValue, bts, err = msgp.ReadBytesBytes(bts, z.TableInfoValue)
+			if err != nil {
+				err = msgp.WrapError(err, "TableInfoValue")
+				return
+			}
+		default:
+			bts, err = msgp.Skip(bts)
+			if err != nil {
+				err = msgp.WrapError(err)
+				return
+			}
+		}
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *PersistedTableInfoEntry) Msgsize() (s int) {
+	s = 1 + 10 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.SchemaName) + 17 + msgp.BytesPrefixSize + len(z.TableInfoValue)
+	return
+}
+
+// DecodeMsg implements msgp.Decodable
+func (z *UpperBoundMeta) DecodeMsg(dc *msgp.Reader) (err error) {
+	var field []byte
+	_ = field
+	var zb0001 uint32
+	zb0001, err = dc.ReadMapHeader()
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	for zb0001 > 0 {
+		zb0001--
+		field, err = dc.ReadMapKeyPtr()
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		switch msgp.UnsafeString(field) {
+		case "finished_ddl_ts":
+			z.FinishedDDLTs, err = dc.ReadUint64()
+			if err != nil {
+				err = msgp.WrapError(err, "FinishedDDLTs")
+				return
+			}
+		case "schema_version":
+			z.SchemaVersion, err = dc.ReadInt64()
+			if err != nil {
+				err = msgp.WrapError(err, "SchemaVersion")
+				return
+			}
+		case "resolved_ts":
+			z.ResolvedTs, err = dc.ReadUint64()
+			if err != nil {
+				err = msgp.WrapError(err, "ResolvedTs")
+				return
+			}
+		default:
+			err = dc.Skip()
+			if err != nil {
+				err = msgp.WrapError(err)
+				return
+			}
+		}
+	}
+	return
+}
+
+// EncodeMsg implements msgp.Encodable
+func (z UpperBoundMeta) EncodeMsg(en *msgp.Writer) (err error) {
+	// map header, size 3
+	// write "finished_ddl_ts"
+	err = en.Append(0x83, 0xaf, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x65, 0x64, 0x5f, 0x64, 0x64, 0x6c, 0x5f, 0x74, 0x73)
+	if err != nil {
+		return
+	}
+	err = en.WriteUint64(z.FinishedDDLTs)
+	if err != nil {
+		err = msgp.WrapError(err, "FinishedDDLTs")
+		return
+	}
+	// write "schema_version"
+	err = en.Append(0xae, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e)
+	if err != nil {
+		return
+	}
+	err = en.WriteInt64(z.SchemaVersion)
+	if err != nil {
+		err = msgp.WrapError(err, "SchemaVersion")
+		return
+	}
+	// write "resolved_ts"
+	err = en.Append(0xab, 0x72, 0x65, 0x73, 0x6f, 0x6c, 0x76, 0x65, 0x64, 0x5f, 0x74, 0x73)
+	if err != nil {
+		return
+	}
+	err = en.WriteUint64(z.ResolvedTs)
+	if err != nil {
+		err = msgp.WrapError(err, "ResolvedTs")
+		return
+	}
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z UpperBoundMeta) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// map header, size 3
+	// string "finished_ddl_ts"
+	o = append(o, 0x83, 0xaf, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x65, 0x64, 0x5f, 0x64, 0x64, 0x6c, 0x5f, 0x74, 0x73)
+	o = msgp.AppendUint64(o, z.FinishedDDLTs)
+	// string "schema_version"
+	o = append(o, 0xae, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e)
+	o = msgp.AppendInt64(o, z.SchemaVersion)
+	// string "resolved_ts"
+	o = append(o, 0xab, 0x72, 0x65, 0x73, 0x6f, 0x6c, 0x76, 0x65, 0x64, 0x5f, 0x74, 0x73)
+	o = msgp.AppendUint64(o, z.ResolvedTs)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *UpperBoundMeta) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var field []byte
+	_ = field
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadMapHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	for zb0001 > 0 {
+		zb0001--
+		field, bts, err = msgp.ReadMapKeyZC(bts)
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		switch msgp.UnsafeString(field) {
+		case "finished_ddl_ts":
+			z.FinishedDDLTs, bts, err = msgp.ReadUint64Bytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "FinishedDDLTs")
+				return
+			}
+		case "schema_version":
+			z.SchemaVersion, bts, err = msgp.ReadInt64Bytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "SchemaVersion")
+				return
+			}
+		case "resolved_ts":
+			z.ResolvedTs, bts, err = msgp.ReadUint64Bytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "ResolvedTs")
+				return
+			}
+		default:
+			bts, err = msgp.Skip(bts)
+			if err != nil {
+				err = msgp.WrapError(err)
+				return
+			}
+		}
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z UpperBoundMeta) Msgsize() (s int) {
+	s = 1 + 16 + msgp.Uint64Size + 15 + msgp.Int64Size + 12 + msgp.Uint64Size
+	return
+}
