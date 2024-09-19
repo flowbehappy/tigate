@@ -222,13 +222,57 @@ func (c *eventBroker) sendDDL(remoteID node.ID, e common.DDLEvent, d *dispatcher
 	d.metricEventServiceSendDDLCount.Inc()
 }
 
+func (c *eventBroker) wakeDispatcher(dispatcherID common.DispatcherID) {
+	c.ds.Wake() <- dispatcherID
+}
+
+// checkNeedScan checks if the dispatcher needs to scan the event store.
+// If the dispatcher needs to scan the event store, it returns true.
+// If the dispatcher does not need to scan the event store, it
+// 1. send the watermark to the dispatcher
+// 2. push the task to the task pool
+func (c *eventBroker) checkNeedScan(task scanTask) (bool, *common.DataRange, []common.DDLEvent) {
+	dataRange, needScan := task.dispatcherStat.getDataRange()
+	if !needScan {
+		return false, dataRange, nil
+	}
+	ddlEvents, endTs, err := c.schemaStore.FetchTableDDLEvents(dataRange.Span.TableID, dataRange.StartTs, dataRange.EndTs)
+	if err != nil {
+		log.Panic("get ddl events failed", zap.Error(err))
+	}
+	if endTs < dataRange.EndTs {
+		dataRange.EndTs = endTs
+	}
+
+	if dataRange.EndTs <= dataRange.StartTs {
+		return false, dataRange, nil
+	}
+
+	// The dispatcher has no new events. In such case, we don't need to scan the event store.
+	// We just send the watermark to the dispatcher.
+	if dataRange.StartTs >= task.dispatcherStat.spanSubscription.maxEventCommitTs.Load() {
+		remoteID := node.ID(task.dispatcherStat.info.GetServerID())
+		dispatcherID := task.dispatcherStat.info.GetID()
+		// send the watermark to the dispatcher
+		for _, e := range ddlEvents {
+			c.sendDDL(remoteID, e, task.dispatcherStat)
+		}
+		c.sendWatermark(remoteID, dispatcherID, dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
+		task.dispatcherStat.watermark.Store(dataRange.EndTs)
+		c.wakeDispatcher(dispatcherID)
+		return false, dataRange, nil
+	}
+
+	return true, dataRange, ddlEvents
+}
+
 // TODO: handle error properly.
 func (c *eventBroker) doScan(task scanTask) {
-	dataRange, needScan := task.dispatcherStat.getDataRange()
+	start := time.Now()
+	needScan, dataRange, ddlEvents := c.checkNeedScan(task)
 	if !needScan {
 		return
 	}
-	start := time.Now()
 	remoteID := node.ID(task.dispatcherStat.info.GetServerID())
 	dispatcherID := task.dispatcherStat.info.GetID()
 	ddlEvents, endTs, err := c.schemaStore.FetchTableDDLEvents(dataRange.Span.TableID, dataRange.StartTs, dataRange.EndTs)
@@ -243,23 +287,14 @@ func (c *eventBroker) doScan(task scanTask) {
 		return
 	}
 
+	// After all the events are sent, we need to
+	// drain the ddlEvents and wake up the dispatcher.
 	defer func() {
-		// drain the ddlEvents
 		for _, e := range ddlEvents {
 			c.sendDDL(remoteID, e, task.dispatcherStat)
 		}
-		// After all the events are sent, we send the watermark to the dispatcher.
-		c.sendWatermark(remoteID, dispatcherID, dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
-		task.dispatcherStat.watermark.Store(dataRange.EndTs)
-		// Wake up the path of the dispatcher
-		c.ds.Wake() <- task.dispatcherStat.info.GetID()
+		c.wakeDispatcher(dispatcherID)
 	}()
-
-	// 1. Fastpath: the dispatcher has no new events. In such case, we don't need to scan the event store.
-	// We just send the watermark to the dispatcher.
-	if dataRange.StartTs >= task.dispatcherStat.spanSubscription.maxEventCommitTs.Load() {
-		return
-	}
 
 	//2. Get event iterator from eventStore.
 	iter, err := c.eventStore.GetIterator(dispatcherID, dataRange)
@@ -272,7 +307,6 @@ func (c *eventBroker) doScan(task scanTask) {
 			task.dispatcherStat.metricSorterOutputEventCountKV.Add(float64(eventCount))
 		}
 	}()
-	// 3. Get the events from the iterator and send them to the dispatcher.
 	sendTxn := func(t *common.DMLEvent) {
 		if t != nil {
 			for len(ddlEvents) > 0 && t.CommitTs > ddlEvents[0].FinishedTs {
@@ -284,6 +318,8 @@ func (c *eventBroker) doScan(task scanTask) {
 			task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(t.Len()))
 		}
 	}
+
+	// 3. Send the events to the dispatcher.
 	var txnEvent *common.DMLEvent
 	for {
 		//Node: The first event of the txn must return isNewTxn as true.
@@ -312,7 +348,6 @@ func (c *eventBroker) doScan(task scanTask) {
 			}
 			txnEvent = common.NewDMLEvent(dispatcherID, tableID, e.StartTs, e.CRTs, tableInfo)
 		}
-
 		txnEvent.AppendRow(e, c.mounter.DecodeToChunk)
 	}
 }
