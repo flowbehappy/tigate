@@ -48,7 +48,7 @@ type Manager struct {
 	coordinatorVersion int64
 
 	selfNode    *node.Info
-	pdapi       pdutil.PDAPIClient
+	pdAPI       pdutil.PDAPIClient
 	regionCache *tikv.RegionCache
 
 	msgCh chan *messaging.TargetMessage
@@ -62,7 +62,7 @@ type Manager struct {
 // 2. manager manages maintainer lifetime
 // 3. manager report maintainer status to coordinator
 func NewMaintainerManager(selfNode *node.Info,
-	pdapi pdutil.PDAPIClient,
+	pdAPI pdutil.PDAPIClient,
 	regionCache *tikv.RegionCache) *Manager {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	m := &Manager{
@@ -71,7 +71,7 @@ func NewMaintainerManager(selfNode *node.Info,
 		selfNode:      selfNode,
 		msgCh:         make(chan *messaging.TargetMessage, 1024),
 		taskScheduler: threadpool.NewThreadPoolDefault(),
-		pdapi:         pdapi,
+		pdAPI:         pdAPI,
 		regionCache:   regionCache,
 	}
 	m.stream = dynstream.NewDynamicStream[string, *Event, *Maintainer](NewStreamHandler())
