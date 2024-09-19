@@ -1,6 +1,8 @@
 package eventservice
 
 import (
+	"context"
+
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 )
@@ -21,7 +23,8 @@ func (h *dispatcherEventsHandler) Handle(broker *eventBroker, tasks ...scanTask)
 		log.Panic("only one task is allowed")
 	}
 	task := tasks[0]
-	needScan, _, _ := broker.checkNeedScan(task)
+	ctx := context.Background()
+	needScan, _, _ := broker.checkNeedScan(ctx, task)
 	if !needScan {
 		return false
 	}
