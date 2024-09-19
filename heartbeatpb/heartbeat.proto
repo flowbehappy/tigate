@@ -151,17 +151,13 @@ message InfluencedTables {
     InfluenceType InfluenceType = 1;
     // only exist when type is normal
 	repeated int64 TableIDs  = 2; 
-	repeated string TableNames  = 3; 
     // only exist when type is DB.
-	int64 SchemaID = 4;
-    string SchemaName = 5;
+	int64 SchemaID = 3;
 }
 
 message Table {
     int64 TableID = 1;
     int64 SchemaID = 2;
-    string TableName = 3;
-    string SchemaName = 4;
 }
 
 message State {

@@ -537,10 +537,8 @@ func loadAllPhysicalTablesInSnap(
 			continue
 		}
 		tables = append(tables, common.Table{
-			SchemaID:   tableInfo.SchemaID,
-			SchemaName: databaseMap[tableInfo.SchemaID].Name,
-			TableID:    tableID,
-			TableName:  tableInfo.Name,
+			SchemaID: tableInfo.SchemaID,
+			TableID:  tableID,
 		})
 	}
 	return tables, nil
