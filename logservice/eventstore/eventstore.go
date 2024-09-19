@@ -419,7 +419,7 @@ func (e *eventStore) batchCommitAndUpdateWatermark(ctx context.Context, batchCh 
 		case batchEvent := <-batchCh:
 			// do batch commit
 			batch := batchEvent.batch
-			if !batch.Empty() {
+			if batch != nil && !batch.Empty() {
 				if err := batch.Commit(pebble.NoSync); err != nil {
 					log.Panic("failed to commit pebble batch", zap.Error(err))
 				}
@@ -449,14 +449,13 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 	ticker := time.NewTicker(batchCommitInterval / 2)
 	defer ticker.Stop()
 
-	encodeItemAndBatch := func(batch *pebble.Batch, resolvedTsBatch map[*spanState]uint64, item eventWithSpanState) {
-		if item.raw.IsResolved() {
-			resolvedTsBatch[item.state] = item.raw.CRTs
-			return
-		}
+	addEvent2Batch := func(batch *pebble.Batch, item eventWithSpanState) {
 		key := EncodeKey(uint64(item.state.span.TableID), item.raw)
 		value := item.raw.Encode()
 		compressedValue := e.encoder.EncodeAll(value, nil)
+		if batch == nil {
+			batch = db.NewBatch()
+		}
 		if err := batch.Set(key, compressedValue, pebble.NoSync); err != nil {
 			log.Panic("failed to update pebble batch", zap.Error(err))
 		}
@@ -466,13 +465,17 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 	// or the time since the last commit is larger than batchCommitInterval.
 	// Only return false when the sorter is closed.
 	doBatching := func() (*DBBatchEvent, bool) {
-		batch := db.NewBatch()
+		var batch *pebble.Batch
 		resolvedTsBatch := make(map[*spanState]uint64)
 		startToBatch := time.Now()
 		for {
 			select {
 			case item := <-inputCh:
-				encodeItemAndBatch(batch, resolvedTsBatch, item)
+				if item.raw.IsResolved() {
+					resolvedTsBatch[item.state] = item.raw.CRTs
+					continue
+				}
+				addEvent2Batch(batch, item)
 				if len(batch.Repr()) >= batchCommitSize {
 					return &DBBatchEvent{batch, resolvedTsBatch}, true
 				}
