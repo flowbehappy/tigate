@@ -347,7 +347,8 @@ type DDLEvent struct {
 	SchemaID int64 `json:"schema_id"`
 	// TableID means different for different job types:
 	// - ExchangeTablePartition: non-partitioned table id
-	TableID    int64            `json:"table_id"`
+	TableID int64 `json:"table_id"`
+	// TODO: need verify the meaning of SchemaName and TableName for different ddl
 	SchemaName string           `json:"schema_name"`
 	TableName  string           `json:"table_name"`
 	Query      string           `json:"query"`

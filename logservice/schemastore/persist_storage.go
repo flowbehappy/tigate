@@ -972,7 +972,7 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent) common.DDLEvent {
 	case model.ActionRenameTable:
 		ddlEvent.BlockedTables = &common.InfluencedTables{
 			InfluenceType: common.InfluenceTypeNormal,
-			TableIDs:      []int64{rawEvent.PrevTableID},
+			TableIDs:      []int64{rawEvent.TableID},
 			SchemaID:      rawEvent.PrevSchemaID,
 		}
 		ddlEvent.NeedDroppedTables = ddlEvent.BlockedTables

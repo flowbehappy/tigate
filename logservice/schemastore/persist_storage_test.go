@@ -438,7 +438,7 @@ func TestHandleRenameTable(t *testing.T) {
 		require.Equal(t, "t1", pStorage.tableMap[tableID].Name)
 	}
 
-	// rename table
+	// rename table to a different db
 	{
 		ddlEvent := PersistedDDLEvent{
 			Type:          byte(model.ActionRenameTable),
@@ -459,9 +459,27 @@ func TestHandleRenameTable(t *testing.T) {
 		require.Equal(t, schemaID2, pStorage.tableMap[tableID].SchemaID)
 		require.Equal(t, "t2", pStorage.tableMap[tableID].Name)
 	}
+
+	{
+		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, 601, 700)
+		require.Nil(t, err)
+		require.Equal(t, 1, len(ddlEvents))
+		// rename table event
+		require.Equal(t, uint64(605), ddlEvents[0].FinishedTs)
+		require.Equal(t, "test2", ddlEvents[0].SchemaName)
+		require.Equal(t, "t2", ddlEvents[0].TableName)
+		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].BlockedTables.InfluenceType)
+		require.Equal(t, schemaID1, ddlEvents[0].BlockedTables.SchemaID)
+		require.Equal(t, tableID, ddlEvents[0].BlockedTables.TableIDs[0])
+		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].NeedDroppedTables.InfluenceType)
+		require.Equal(t, schemaID1, ddlEvents[0].NeedDroppedTables.SchemaID)
+		require.Equal(t, tableID, ddlEvents[0].NeedDroppedTables.TableIDs[0])
+		require.Equal(t, schemaID2, ddlEvents[0].NeedAddedTables[0].SchemaID)
+		require.Equal(t, tableID, ddlEvents[0].NeedAddedTables[0].TableID)
+	}
 }
 
-func TestFetchDDLEvents(t *testing.T) {
+func TestFetchDDLEventsBasic(t *testing.T) {
 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
 	err := os.RemoveAll(dbPath)
 	require.Nil(t, err)
