@@ -61,21 +61,25 @@ type coordinator struct {
 	gcManager gc.Manager
 	pdClient  pd.Client
 	pdClock   pdutil.Clock
+
+	mc messaging.MessageCenter
 }
 
-func NewCoordinator(capture *node.Info,
+func NewCoordinator(node *node.Info,
 	pdClient pd.Client,
 	pdClock pdutil.Clock,
 	serviceID string,
 	version int64) node.Coordinator {
+	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	c := &coordinator{
 		version:              version,
-		nodeInfo:             capture,
+		nodeInfo:             node,
 		scheduledChangefeeds: make(map[scheduler.ChangefeedID]scheduler.Inferior),
 		lastTickTime:         time.Now(),
 		gcManager:            gc.NewManager(serviceID, pdClient, pdClock),
 		pdClient:             pdClient,
 		pdClock:              pdClock,
+		mc:                   mc,
 	}
 	id := scheduler.ChangefeedID(model.DefaultChangeFeedID("coordinator"))
 	c.supervisor = NewSupervisor(
@@ -86,8 +90,7 @@ func NewCoordinator(capture *node.Info,
 	)
 
 	// receive messages
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
-		RegisterHandler(messaging.CoordinatorTopic, c.recvMessages)
+	mc.RegisterHandler(messaging.CoordinatorTopic, c.recvMessages)
 	return c
 }
 
@@ -195,7 +198,7 @@ func (c *coordinator) AsyncStop() {
 
 func (c *coordinator) sendMessages(msgs []*messaging.TargetMessage) {
 	for _, msg := range msgs {
-		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(msg)
+		err := c.mc.SendCommand(msg)
 		if err != nil {
 			log.Error("failed to send coordinator request", zap.Any("msg", msg), zap.Error(err))
 			continue
