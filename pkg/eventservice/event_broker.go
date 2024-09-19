@@ -275,7 +275,6 @@ func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, *
 		}
 		c.sendWatermark(ctx, remoteID, dispatcherID, dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
 		task.dispatcherStat.watermark.Store(dataRange.EndTs)
-		c.wakeDispatcher(dispatcherID)
 		return false, dataRange, nil
 	}
 
