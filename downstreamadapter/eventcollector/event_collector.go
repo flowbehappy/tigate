@@ -48,6 +48,15 @@ func (m *DispatcherMap) Get(dispatcherId common.DispatcherID) (*dispatcher.Dispa
 	return dispatcher, ok
 }
 
+func (m *DispatcherMap) Len() int {
+	var len = 0
+	m.m.Range(func(_, _ interface{}) bool {
+		len++
+		return true
+	})
+	return len
+}
+
 func (m *DispatcherMap) Set(dispatcherId common.DispatcherID, d *dispatcher.Dispatcher) {
 	m.m.Store(dispatcherId, d)
 }
@@ -201,7 +210,9 @@ func (c *EventCollector) updateMetrics(ctx context.Context) error {
 				return
 			case <-ticker.C:
 				minResolvedTs := uint64(0)
+				count := 0
 				c.dispatcherMap.m.Range(func(key, value interface{}) bool {
+					count += 1
 					d, ok := value.(*dispatcher.Dispatcher)
 					if !ok {
 						return true
@@ -217,7 +228,7 @@ func (c *EventCollector) updateMetrics(ctx context.Context) error {
 				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
 				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
 				c.metricResolvedTsLag.Set(float64(lag))
-				log.Info("event collector resolved ts lag", zap.Int64("lag", lag), zap.Any("now", time.Now().Second()))
+				log.Info("event collector resolved ts lag", zap.Int64("lag", lag), zap.Any("now", time.Now().Second()), zap.Any("dispatcher map len", c.dispatcherMap.Len()), zap.Any("count", count))
 			}
 		}
 	}()

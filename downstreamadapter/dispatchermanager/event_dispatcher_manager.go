@@ -340,7 +340,10 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	toReomveDispatcherIDs := make([]common.DispatcherID, 0)
 	removeDispatcherSchemaIDs := make([]int64, 0)
 	heartBeatInfo := &dispatcher.HeartBeatInfo{}
+
+	count := 0
 	e.dispatcherMap.ForEach(func(id common.DispatcherID, dispatcherItem *dispatcher.Dispatcher) {
+		count += 1
 		// If the dispatcher is in removing state, we need to check if it's closed successfully.
 		// If it's closed successfully, we could clean it up.
 		// TODO: we need to consider how to deal with the checkpointTs of the removed dispatcher if the message will be discarded.
@@ -387,7 +390,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	resolvedTsLag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
 	e.metricResolvedTsLag.Set(float64(resolvedTsLag))
 
-	log.Info("dispatcher resolved ts lag", zap.Int64("lag", resolvedTsLag), zap.Any("now", time.Now().Second()))
+	log.Info("dispatcher resolved ts lag", zap.Int64("lag", resolvedTsLag), zap.Any("now", time.Now().Second()), zap.Any("dispatcher map len", e.dispatcherMap.Len()), zap.Any("count", count))
 
 	return &message
 }
