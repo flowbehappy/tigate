@@ -381,8 +381,13 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 
 	phyCheckpointTs := oracle.ExtractPhysical(heartBeatInfo.Watermark.CheckpointTs)
 	phyResolvedTs := oracle.ExtractPhysical(heartBeatInfo.Watermark.ResolvedTs)
+
 	e.metricCheckpointTsLag.Set(float64(oracle.GetPhysical(time.Now())-phyCheckpointTs) / 1e3)
-	e.metricResolvedTsLag.Set(float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3)
+
+	resolvedTsLag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
+	e.metricResolvedTsLag.Set(float64(resolvedTsLag))
+
+	log.Info("dispatcher resolved ts lag", zap.Int64("lag", resolvedTsLag), zap.Any("now", time.Now().Second()))
 
 	return &message
 }
