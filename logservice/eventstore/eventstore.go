@@ -462,7 +462,7 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 	// or the time since the last commit is larger than batchCommitInterval.
 	// Only return false when the sorter is closed.
 	doBatching := func() (*DBBatchEvent, bool) {
-		batch := db.NewBatch()
+		var batch *pebble.Batch
 		resolvedTsBatch := make(map[*spanState]uint64)
 		startToBatch := time.Now()
 		for {
@@ -471,6 +471,9 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 				if item.raw.IsResolved() {
 					resolvedTsBatch[item.state] = item.raw.CRTs
 					continue
+				}
+				if batch == nil {
+					batch = db.NewBatch()
 				}
 				addEvent2Batch(batch, item)
 				if len(batch.Repr()) >= batchCommitSize {
