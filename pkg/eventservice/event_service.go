@@ -49,10 +49,8 @@ type eventService struct {
 	tz             *time.Location
 }
 
-func NewEventService() common.SubModule {
+func New(eventStore eventstore.EventStore, schemaStore schemastore.SchemaStore) common.SubModule {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
-	eventStore := appcontext.GetService[eventstore.EventStore](appcontext.EventStore)
-	schemaStore := appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore)
 	es := &eventService{
 		mc:             mc,
 		eventStore:     eventStore,

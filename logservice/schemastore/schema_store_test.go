@@ -65,7 +65,7 @@ func TestBasicDDLJob(t *testing.T) {
 	upstream, err := upstreamManager.AddDefaultUpstream(pdEndpoints, &security.Credential{}, pdClient, etcdCli)
 	require.Nil(t, err)
 
-	schemaStore := NewSchemaStore(ctx, "/tmp/cdc", upstream.PDClient, upstream.RegionCache, upstream.PDClock, upstream.KVStorage)
+	schemaStore := New(ctx, "/tmp/cdc", upstream.PDClient, upstream.RegionCache, upstream.PDClock, upstream.KVStorage)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go schemaStore.Run(ctx)

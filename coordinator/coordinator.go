@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/txnutil/gc"
@@ -59,25 +58,28 @@ type coordinator struct {
 	lastTickTime         time.Time
 	scheduledChangefeeds map[scheduler.ChangefeedID]scheduler.Inferior
 
-	gcManager  gc.Manager
-	pdClient   pd.Client
-	pdClock    pdutil.Clock
-	etcdClient etcd.CDCEtcdClient
+	gcManager gc.Manager
+	pdClient  pd.Client
+	pdClock   pdutil.Clock
+
+	mc messaging.MessageCenter
 }
 
-func NewCoordinator(capture *node.Info,
+func New(node *node.Info,
 	pdClient pd.Client,
 	pdClock pdutil.Clock,
-	etcdClient etcd.CDCEtcdClient, version int64) node.Coordinator {
+	serviceID string,
+	version int64) node.Coordinator {
+	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	c := &coordinator{
 		version:              version,
-		nodeInfo:             capture,
+		nodeInfo:             node,
 		scheduledChangefeeds: make(map[scheduler.ChangefeedID]scheduler.Inferior),
 		lastTickTime:         time.Now(),
-		gcManager:            gc.NewManager(etcdClient.GetGCServiceID(), pdClient, pdClock),
+		gcManager:            gc.NewManager(serviceID, pdClient, pdClock),
 		pdClient:             pdClient,
-		etcdClient:           etcdClient,
 		pdClock:              pdClock,
+		mc:                   mc,
 	}
 	id := scheduler.ChangefeedID(model.DefaultChangeFeedID("coordinator"))
 	c.supervisor = NewSupervisor(
@@ -88,21 +90,22 @@ func NewCoordinator(capture *node.Info,
 	)
 
 	// receive messages
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
-		RegisterHandler(messaging.CoordinatorTopic, func(_ context.Context, msg *messaging.TargetMessage) error {
-			c.msgLock.Lock()
-			c.msgBuf = append(c.msgBuf, msg)
-			c.msgLock.Unlock()
-			return nil
-		})
+	mc.RegisterHandler(messaging.CoordinatorTopic, c.recvMessages)
 	return c
+}
+
+func (c *coordinator) recvMessages(_ context.Context, msg *messaging.TargetMessage) error {
+	c.msgLock.Lock()
+	c.msgBuf = append(c.msgBuf, msg)
+	c.msgLock.Unlock()
+	return nil
 }
 
 // Tick is the entrance of the coordinator, it will be called by the etcd watcher every 50ms.
 //  1. Handle message reported by other modules.
 //  2. Check if the node is changed:
 //     - if a new node is added, send bootstrap message to that node ,
-//     - if a node is removed, clean related state machine that binded to that node.
+//     - if a node is removed, clean related state machine that bind to that node.
 //  3. Schedule changefeeds if all node is bootstrapped.
 func (c *coordinator) Tick(
 	ctx context.Context, rawState orchestrator.ReactorState,
@@ -132,10 +135,7 @@ func (c *coordinator) Tick(
 	c.sendMessages(msgs)
 
 	// 3. schedule changefeed maintainer
-	msgs, err = c.scheduleMaintainer(state)
-	if err != nil {
-		return state, err
-	}
+	msgs = c.scheduleMaintainer(state.Changefeeds)
 	c.sendMessages(msgs)
 
 	//4. update checkpoint ts and changefeed states
@@ -195,7 +195,7 @@ func (c *coordinator) AsyncStop() {
 
 func (c *coordinator) sendMessages(msgs []*messaging.TargetMessage) {
 	for _, msg := range msgs {
-		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(msg)
+		err := c.mc.SendCommand(msg)
 		if err != nil {
 			log.Error("failed to send coordinator request", zap.Any("msg", msg), zap.Error(err))
 			continue
@@ -203,12 +203,14 @@ func (c *coordinator) sendMessages(msgs []*messaging.TargetMessage) {
 	}
 }
 
-func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState) ([]*messaging.TargetMessage, error) {
+func (c *coordinator) scheduleMaintainer(
+	changefeeds map[model.ChangeFeedID]*orchestrator.ChangefeedReactorState,
+) []*messaging.TargetMessage {
 	if !c.supervisor.CheckAllCaptureInitialized() {
-		return nil, nil
+		return nil
 	}
 	// check all changefeeds.
-	for id, cfState := range state.Changefeeds {
+	for id, cfState := range changefeeds {
 		if cfState.Info == nil {
 			continue
 		}

@@ -64,10 +64,10 @@ func (b *balanceScheduler) Schedule(
 	_ map[scheduler.ChangefeedID]scheduler.Inferior,
 	aliveCaptures map[node.ID]*CaptureStatus,
 	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
-	batchSize int,
+	maxTaskCount int,
 ) []*ScheduleTask {
-	if b.maxTaskConcurrency < batchSize {
-		batchSize = b.maxTaskConcurrency
+	if b.maxTaskConcurrency < maxTaskCount {
+		maxTaskCount = b.maxTaskConcurrency
 	}
 	if !b.forceBalance {
 		now := time.Now()
@@ -79,7 +79,7 @@ func (b *balanceScheduler) Schedule(
 	}
 
 	tasks := buildBalanceMoveTables(
-		b.random, aliveCaptures, stateMachines, batchSize)
+		b.random, aliveCaptures, stateMachines, maxTaskCount)
 	b.forceBalance = len(tasks) != 0
 	log.Info("balance scheduler generate tasks",
 		zap.Int("capture", len(aliveCaptures)),
@@ -93,10 +93,10 @@ func buildBalanceMoveTables(
 	random *rand.Rand,
 	aliveCaptures map[node.ID]*CaptureStatus,
 	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
-	maxTaskConcurrency int,
+	maxTaskCount int,
 ) []*ScheduleTask {
 	moves := newBalanceMoveTables(
-		random, aliveCaptures, stateMachines, maxTaskConcurrency)
+		random, aliveCaptures, stateMachines, maxTaskCount)
 	tasks := make([]*ScheduleTask, 0, len(moves))
 	for i := 0; i < len(moves); i++ {
 		tasks = append(tasks, &ScheduleTask{
@@ -110,7 +110,7 @@ func newBalanceMoveTables(
 	random *rand.Rand,
 	aliveCaptures map[node.ID]*CaptureStatus,
 	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
-	maxTaskLimit int,
+	maxTaskCount int,
 ) []*MoveInferior {
 	tablesPerCapture := make(map[node.ID]map[scheduler.ChangefeedID]*scheduler.StateMachine)
 	for captureID := range aliveCaptures {
@@ -189,7 +189,7 @@ func newBalanceMoveTables(
 			log.Panic("schedulerv3: rebalance meet unexpected min workload " +
 				"when try to the the target capture")
 		}
-		if idx >= maxTaskLimit {
+		if idx >= maxTaskCount {
 			// We have reached the task limit.
 			break
 		}

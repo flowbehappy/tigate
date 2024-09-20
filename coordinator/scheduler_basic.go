@@ -37,6 +37,8 @@ func NewBasicScheduler(id scheduler.ChangefeedID) *BasicScheduler {
 	return &BasicScheduler{
 		id:                    id,
 		lastForceScheduleTime: time.Now(),
+		addInferiorCache:      make([]scheduler.ChangefeedID, 0, 16),
+		removeInferiorCache:   make([]scheduler.ChangefeedID, 0, 16),
 	}
 }
 
@@ -61,7 +63,7 @@ func (b *BasicScheduler) Schedule(
 	allInferiors map[scheduler.ChangefeedID]scheduler.Inferior,
 	aliveCaptures map[node.ID]*CaptureStatus,
 	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
-	batchSize int,
+	maxTaskCount int,
 ) (tasks []*ScheduleTask) {
 	if !b.hasPendingTask() && time.Since(b.lastForceScheduleTime) > 120*time.Second {
 		b.markNeedAddInferior()
@@ -72,7 +74,6 @@ func (b *BasicScheduler) Schedule(
 	// Build remove inferior tasks.
 	if b.needRemoveInferior {
 		// The two sets are not identical. We need to build a map to find removed inferiors.
-		b.removeInferiorCache = make([]scheduler.ChangefeedID, 0, batchSize)
 		for key, _ := range stateMachines {
 			_, ok := allInferiors[key]
 			if !ok {
@@ -80,32 +81,28 @@ func (b *BasicScheduler) Schedule(
 			}
 		}
 		b.needRemoveInferior = false
-		if len(b.removeInferiorCache) > 0 {
-			log.Info("basic scheduler generate new remove inferiors cache",
-				zap.String("id", b.id.String()),
-				zap.Int("count", len(b.removeInferiorCache)))
-		}
 	}
 	if len(b.removeInferiorCache) > 0 {
-		batch := batchSize - len(tasks)
-		if batchSize > len(b.removeInferiorCache) {
-			batch = len(b.removeInferiorCache)
+		maxCount := len(b.removeInferiorCache)
+		if maxCount > maxTaskCount {
+			maxCount = maxTaskCount
 		}
-		rmInferiors := b.removeInferiorCache[:batch]
-		b.removeInferiorCache = b.removeInferiorCache[batch:]
+		rmInferiors := b.removeInferiorCache[:maxCount]
+		b.removeInferiorCache = b.removeInferiorCache[maxCount:]
 		if len(b.removeInferiorCache) == 0 {
 			// release for GC
 			b.removeInferiorCache = nil
 		}
 		tasks = append(tasks, b.newBurstRemoveInferiors(rmInferiors, stateMachines)...)
-		if len(rmInferiors) >= batchSize {
+		log.Info("basic scheduler generate new remove inferior tasks",
+			zap.String("id", b.id.String()), zap.Int("count", len(tasks)))
+		if len(tasks) >= maxTaskCount {
 			return tasks
 		}
 	}
 
 	// Build add inferior tasks.
 	if b.needAddInferior {
-		b.addInferiorCache = make([]scheduler.ChangefeedID, 0, batchSize)
 		for inf, value := range allInferiors {
 			st := value.GetStateMachine()
 			if st == nil || st.State == scheduler.SchedulerStatusAbsent {
@@ -116,24 +113,23 @@ func (b *BasicScheduler) Schedule(
 			}
 		}
 		b.needAddInferior = false
-		if len(b.addInferiorCache) > 0 {
-			log.Info("basic scheduler generate new add inferiors cache",
-				zap.String("id", b.id.String()),
-				zap.Int("count", len(b.addInferiorCache)))
-		}
 	}
 	if len(b.addInferiorCache) > 0 {
-		batch := batchSize
-		if batchSize > len(b.addInferiorCache) {
-			batch = len(b.addInferiorCache)
+		maxCount := len(b.addInferiorCache)
+		maxTaskCount -= len(tasks)
+		if maxCount > maxTaskCount {
+			maxCount = maxTaskCount
 		}
-		newInferiors := b.addInferiorCache[:batch]
-		b.addInferiorCache = b.addInferiorCache[batch:]
+		if maxCount == 0 {
+			return tasks
+		}
+
+		newInferiors := b.addInferiorCache[:maxCount]
+		b.addInferiorCache = b.addInferiorCache[maxCount:]
 		if len(b.addInferiorCache) == 0 {
 			// release for GC
 			b.addInferiorCache = nil
 		}
-
 		captureIDs := make([]node.ID, 0, len(aliveCaptures))
 		for captureID := range aliveCaptures {
 			captureIDs = append(captureIDs, captureID)
@@ -142,17 +138,16 @@ func (b *BasicScheduler) Schedule(
 			// this should never happen, if no server can be found
 			// for a cluster with n captures, n should be at least 2
 			// only n - 1 captures can be in the `stopping` at the same time.
-			log.Warn("cannot found server when add new inferior",
+			log.Warn("cannot found server when add new inferior, this should not happen",
 				zap.String("id", b.id.String()),
 				zap.Any("allCaptureStatus", aliveCaptures))
 			return tasks
 		}
-		tasks = append(tasks, b.newBurstAddInferiors(newInferiors, captureIDs)...)
-		if len(newInferiors) >= batchSize {
-			return tasks
-		}
+		addInferiorTasks := b.newBurstAddInferiors(newInferiors, captureIDs)
+		log.Info("basic scheduler generate new add inferior tasks",
+			zap.String("id", b.id.String()), zap.Int("count", len(addInferiorTasks)))
+		tasks = append(tasks, addInferiorTasks...)
 	}
-
 	return tasks
 }
 
