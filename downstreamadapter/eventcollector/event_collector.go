@@ -48,15 +48,6 @@ func (m *DispatcherMap) Get(dispatcherId common.DispatcherID) (*dispatcher.Dispa
 	return dispatcher, ok
 }
 
-func (m *DispatcherMap) Len() int {
-	var len = 0
-	m.m.Range(func(_, _ interface{}) bool {
-		len++
-		return true
-	})
-	return len
-}
-
 func (m *DispatcherMap) Set(dispatcherId common.DispatcherID, d *dispatcher.Dispatcher) {
 	m.m.Store(dispatcherId, d)
 }
@@ -211,9 +202,7 @@ func (c *EventCollector) updateMetrics(ctx context.Context) error {
 				return
 			case <-ticker.C:
 				minResolvedTs := uint64(0)
-				count := 0
 				c.dispatcherMap.m.Range(func(key, value interface{}) bool {
-					count += 1
 					d, ok := value.(*dispatcher.Dispatcher)
 					if !ok {
 						return true
