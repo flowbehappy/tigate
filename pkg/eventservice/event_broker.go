@@ -143,15 +143,20 @@ func (c *eventBroker) sendWatermark(
 		common.ResolvedEvent{
 			DispatcherID: dispatcherID,
 			ResolvedTs:   watermark})
-	select {
-	case <-ctx.Done():
-		return
-	case c.messageCh <- resolvedEvent:
-		if counter != nil {
-			counter.Inc()
+LOOP:
+	for i := 0; i < resolvedEventRetryTime; i++ {
+		select {
+		case <-ctx.Done():
+			return
+		case c.messageCh <- resolvedEvent:
+			if counter != nil {
+				counter.Inc()
+			}
+			break LOOP
+		default:
+			time.Sleep(time.Millisecond * 10)
 		}
 	}
-
 }
 
 func (c *eventBroker) runScanWorker(ctx context.Context) {
@@ -418,7 +423,6 @@ func (c *eventBroker) flushResolvedTs(ctx context.Context, serverID node.ID) {
 
 func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage) {
 	start := time.Now()
-	retryTime := 0
 	// Send the message to messageCenter. Retry if to send failed.
 	for {
 		select {
@@ -433,11 +437,6 @@ func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage
 			log.Debug("send message failed, retry it", zap.Error(err))
 			// Wait for a while and retry to avoid the dropped message flood.
 			time.Sleep(time.Millisecond * 10)
-			retryTime++
-			// We only retry resolved event for a limited times, since it is not critical.
-			if tMsg.Type == common.TypeBatchResolvedEvent && retryTime > resolvedEventRetryTime {
-				break
-			}
 			continue
 		}
 		metricEventServiceSendEventDuration.Observe(time.Since(start).Seconds())

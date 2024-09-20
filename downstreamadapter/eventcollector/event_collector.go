@@ -15,9 +15,10 @@ package eventcollector
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/eventpb"
@@ -120,7 +121,7 @@ func NewEventCollector(globalMemoryQuota int64, serverId node.ID) *EventCollecto
 // RegisterDispatcher register a dispatcher to event collector.
 // If the dispatcher is not table trigger event dispatcher, filterConfig will be nil.
 func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendEvent(&messaging.TargetMessage{
+	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(&messaging.TargetMessage{
 		To:    c.serverId, // demo 中 每个节点都有自己的 eventService
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
@@ -144,7 +145,7 @@ func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
 }
 
 func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendEvent(&messaging.TargetMessage{
+	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(&messaging.TargetMessage{
 		To:    c.serverId,
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
