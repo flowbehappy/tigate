@@ -65,7 +65,7 @@ type coordinator struct {
 	mc messaging.MessageCenter
 }
 
-func NewCoordinator(node *node.Info,
+func New(node *node.Info,
 	pdClient pd.Client,
 	pdClock pdutil.Clock,
 	serviceID string,
@@ -105,7 +105,7 @@ func (c *coordinator) recvMessages(_ context.Context, msg *messaging.TargetMessa
 //  1. Handle message reported by other modules.
 //  2. Check if the node is changed:
 //     - if a new node is added, send bootstrap message to that node ,
-//     - if a node is removed, clean related state machine that binded to that node.
+//     - if a node is removed, clean related state machine that bind to that node.
 //  3. Schedule changefeeds if all node is bootstrapped.
 func (c *coordinator) Tick(
 	ctx context.Context, rawState orchestrator.ReactorState,

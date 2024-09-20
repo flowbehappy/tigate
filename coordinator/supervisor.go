@@ -201,7 +201,8 @@ func (s *Supervisor) HandleStatus(
 ) ([]*messaging.TargetMessage, error) {
 	sentMsgs := make([]*messaging.TargetMessage, 0)
 	for _, status := range statuses {
-		stateMachine, ok := s.StateMachines[status.GetInferiorID().(scheduler.ChangefeedID)]
+		changefeedID := status.GetInferiorID().(scheduler.ChangefeedID)
+		stateMachine, ok := s.StateMachines[changefeedID]
 		if !ok {
 			log.Info("ignore status no inferior found",
 				zap.String("ID", s.ID.String()),
@@ -215,7 +216,7 @@ func (s *Supervisor) HandleStatus(
 				zap.String("ID", s.ID.String()),
 				zap.Any("from", from),
 				zap.String("inferiorID", status.GetInferiorID().String()))
-			delete(s.StateMachines, status.GetInferiorID().(scheduler.ChangefeedID))
+			delete(s.StateMachines, changefeedID)
 		}
 		if msg != nil {
 			sentMsgs = append(sentMsgs, msg)

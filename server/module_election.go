@@ -123,7 +123,7 @@ func (e *elector) campaignCoordinator(ctx context.Context) error {
 			zap.String("captureID", string(e.svr.info.ID)),
 			zap.Int64("coordinatorVersion", coordinatorVersion))
 
-		co := coordinator.NewCoordinator(e.svr.info,
+		co := coordinator.New(e.svr.info,
 			e.svr.pdClient, e.svr.PDClock, e.svr.EtcdClient.GetGCServiceID(),
 			coordinatorVersion)
 		e.svr.setCoordinator(co)

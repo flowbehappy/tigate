@@ -39,10 +39,10 @@ func (s *Supervisor) schedule(
 	allInferiors map[scheduler.ChangefeedID]scheduler.Inferior,
 	aliveCaptures map[node.ID]*CaptureStatus,
 	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
-	batchSize int,
+	maxTaskCount int,
 ) []*ScheduleTask {
 	for _, sched := range s.schedulers {
-		tasks := sched.Schedule(allInferiors, aliveCaptures, stateMachines, batchSize)
+		tasks := sched.Schedule(allInferiors, aliveCaptures, stateMachines, maxTaskCount)
 		if len(tasks) != 0 {
 			return tasks
 		}
@@ -66,8 +66,8 @@ func (s *Supervisor) Schedule(allInferiors map[scheduler.ChangefeedID]scheduler.
 		)
 		return msgs, nil
 	}
-	batchSize := s.maxTaskConcurrency - len(s.RunningTasks)
-	if batchSize <= 0 {
+	maxTaskCount := s.maxTaskConcurrency - len(s.RunningTasks)
+	if maxTaskCount <= 0 {
 		log.Warn("Skip scheduling since there are too many running task",
 			zap.String("id", s.ID.String()),
 			zap.Int("totalInferiors", len(allInferiors)),
@@ -78,7 +78,7 @@ func (s *Supervisor) Schedule(allInferiors map[scheduler.ChangefeedID]scheduler.
 		return msgs, nil
 	}
 
-	tasks := s.schedule(allInferiors, s.GetAllCaptures(), s.GetInferiors(), batchSize)
+	tasks := s.schedule(allInferiors, s.GetAllCaptures(), s.GetInferiors(), maxTaskCount)
 	msgs1, err := s.handleScheduleTasks(tasks)
 	msgs = append(msgs, msgs1...)
 	return msgs, err

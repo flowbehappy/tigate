@@ -243,7 +243,7 @@ func TestCoordinatorScheduling(t *testing.T) {
 	go m.Run(ctx)
 
 	serviceID := "default"
-	cr := NewCoordinator(info, &mockPdClient{}, pdutil.NewClock4Test(), serviceID, 100)
+	cr := New(info, &mockPdClient{}, pdutil.NewClock4Test(), serviceID, 100)
 	var metadata orchestrator.ReactorState
 
 	cfs := map[model.ChangeFeedID]*orchestrator.ChangefeedReactorState{}
