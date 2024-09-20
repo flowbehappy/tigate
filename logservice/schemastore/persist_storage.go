@@ -289,14 +289,13 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 		p.mu.Unlock()
 		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
 	}
-	log.Info("fetchTableDDLEvents phase 0",
-		zap.Int64("tableID", tableID),
-		zap.Uint64("start", start))
-	history, ok := p.tablesDDLHistory[tableID]
-	if !ok {
+	// Note: don't use `history, ok := p.tablesDDLHistory[tableID]`,
+	// because it will allocate an empty slice if tableID not exists.
+	if _, ok := p.tablesDDLHistory[tableID]; !ok {
 		p.mu.RUnlock()
 		return nil, nil
 	}
+	history := p.tablesDDLHistory[tableID]
 	index := sort.Search(len(history), func(i int) bool {
 		return history[i] > start
 	})
