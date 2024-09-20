@@ -212,6 +212,7 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 		for _, e := range m.runningErrors {
 			runningErrors = append(runningErrors, e)
 		}
+		clear(m.runningErrors)
 	}
 	var runningWarnings []*heartbeatpb.RunningError
 	if len(m.runningWarnings) > 0 {
@@ -219,6 +220,7 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 		for _, e := range m.runningWarnings {
 			runningWarnings = append(runningWarnings, e)
 		}
+		clear(m.runningWarnings)
 	}
 
 	status := &heartbeatpb.MaintainerStatus{
@@ -229,8 +231,6 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 		Warning:      runningWarnings,
 		Err:          runningErrors,
 	}
-	m.runningWarnings = make(map[node.ID]*heartbeatpb.RunningError)
-	m.runningErrors = make(map[node.ID]*heartbeatpb.RunningError)
 	return status
 }
 
