@@ -385,10 +385,12 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			currentTime := e.pdClock.CurrentTime()
-			currentPhyTs := oracle.GetPhysical(currentTime)
+			// currentTime := e.pdClock.CurrentTime()
+			// currentPhyTs := oracle.GetPhysical(currentTime)
 			e.spanStates.RLock()
 			for _, tableState := range e.spanStates.subscriptionMap {
+				currentTime := time.Now()
+				currentPhyTs := oracle.GetPhysical(currentTime)
 				resolvedTs := tableState.resolvedTs.Load()
 				resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
 				resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
