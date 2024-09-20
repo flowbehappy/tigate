@@ -284,12 +284,12 @@ func (p *persistentStorage) getTableInfo(tableID int64, ts uint64) (*common.Tabl
 func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, error) {
 	// TODO: check a dispatcher from created table start ts > finish ts of create table
 	// TODO: check a dispatcher from rename table start ts > finish ts of rename table(is it possible?)
-	p.mu.RLock()
-	if start < p.gcTs {
-		p.mu.Unlock()
-		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
-	}
 	return nil, nil
+	// p.mu.RLock()
+	// if start < p.gcTs {
+	// 	p.mu.Unlock()
+	// 	return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
+	// }
 	// fast check
 	// if len(p.tablesDDLHistory[tableID]) == 0 || start >= p.tablesDDLHistory[tableID][len(p.tablesDDLHistory[tableID])-1] {
 	// 	p.mu.RUnlock()
