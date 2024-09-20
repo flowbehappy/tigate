@@ -289,37 +289,27 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 		p.mu.Unlock()
 		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
 	}
+
+	// fast check
 	// Note: don't use `history, ok := p.tablesDDLHistory[tableID]`,
-	// because it will allocate an empty slice if tableID not exists.
-	if _, ok := p.tablesDDLHistory[tableID]; !ok {
+	// because it will allocate an empty slice `history` if tableID doesn't exist.
+	if len(p.tablesDDLHistory[tableID]) == 0 || start >= p.tablesDDLHistory[tableID][len(p.tablesDDLHistory[tableID])-1] {
 		p.mu.RUnlock()
 		return nil, nil
 	}
-	history := p.tablesDDLHistory[tableID]
-	index := sort.Search(len(history), func(i int) bool {
-		return history[i] > start
+	index := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
+		return p.tablesDDLHistory[tableID][i] > start
 	})
-	log.Info("fetchTableDDLEvents phase 1",
-		zap.Int64("tableID", tableID),
-		zap.Uint64("start", start),
-		zap.Int("historyLen", len(history)))
-	// no events to read
-	if index == len(history) {
-		p.mu.RUnlock()
-		return nil, nil
+	if index == len(p.tablesDDLHistory[tableID]) {
+		log.Panic("should not happen")
 	}
 	// copy all target ts to a new slice
 	allTargetTs := make([]uint64, 0)
-	for i := index; i < len(history); i++ {
-		if history[i] <= end {
-			allTargetTs = append(allTargetTs, history[i])
+	for i := index; i < len(p.tablesDDLHistory[tableID]); i++ {
+		if p.tablesDDLHistory[tableID][i] <= end {
+			allTargetTs = append(allTargetTs, p.tablesDDLHistory[tableID][i])
 		}
 	}
-	log.Info("fetchTableDDLEvents phase 2",
-		zap.Int64("tableID", tableID),
-		zap.Uint64("start", start),
-		zap.Int("historyLen", len(history)),
-		zap.Int("allTargetTsLen", len(allTargetTs)))
 
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
@@ -357,6 +347,11 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
 	}
 	p.mu.Unlock()
+
+	// fast check
+	if len(p.tableTriggerDDLHistory) == 0 || start >= p.tableTriggerDDLHistory[len(p.tableTriggerDDLHistory)-1] {
+		return nil, nil
+	}
 
 	events := make([]common.DDLEvent, 0)
 	nextStartTs := start
