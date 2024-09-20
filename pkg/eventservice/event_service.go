@@ -12,6 +12,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/config"
+	"github.com/pingcap/tiflow/pkg/pdutil"
 	"go.uber.org/zap"
 )
 
@@ -38,6 +39,8 @@ type DispatcherInfo interface {
 // EventService accepts the requests of pulling events.
 // The EventService is a singleton in the system.
 type eventService struct {
+	pdClock pdutil.Clock
+
 	mc          messaging.MessageCenter
 	eventStore  eventstore.EventStore
 	schemaStore schemastore.SchemaStore
@@ -49,11 +52,12 @@ type eventService struct {
 	tz             *time.Location
 }
 
-func NewEventService() common.SubModule {
+func NewEventService(pdClock pdutil.Clock) common.SubModule {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	eventStore := appcontext.GetService[eventstore.EventStore](appcontext.EventStore)
 	schemaStore := appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore)
 	es := &eventService{
+		pdClock:        pdClock,
 		mc:             mc,
 		eventStore:     eventStore,
 		schemaStore:    schemaStore,
@@ -111,7 +115,7 @@ func (s *eventService) registerDispatcher(ctx context.Context, info DispatcherIn
 	clusterID := info.GetClusterID()
 	c, ok := s.brokers[clusterID]
 	if !ok {
-		c = newEventBroker(ctx, clusterID, s.eventStore, s.schemaStore, s.mc, s.tz)
+		c = newEventBroker(ctx, clusterID, s.pdClock, s.eventStore, s.schemaStore, s.mc, s.tz)
 		s.brokers[clusterID] = c
 	}
 	c.addDispatcher(info)

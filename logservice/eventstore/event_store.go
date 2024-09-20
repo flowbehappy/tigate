@@ -379,7 +379,7 @@ func (e *eventStore) Close(ctx context.Context) error {
 }
 
 func (e *eventStore) updateMetrics(ctx context.Context) error {
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	for {
 		select {
 		case <-ctx.Done():

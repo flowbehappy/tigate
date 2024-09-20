@@ -19,6 +19,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
@@ -38,6 +39,8 @@ var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.
 type eventBroker struct {
 	// tidbClusterID is the ID of the TiDB cluster this eventStore belongs to.
 	tidbClusterID uint64
+	// used to get current pd time
+	pdClock pdutil.Clock
 	// eventStore is the source of the events, eventBroker get the events from the eventStore.
 	eventStore  eventstore.EventStore
 	schemaStore schemastore.SchemaStore
@@ -80,6 +83,7 @@ type eventBroker struct {
 func newEventBroker(
 	ctx context.Context,
 	id uint64,
+	pdClock pdutil.Clock,
 	eventStore eventstore.EventStore,
 	schemaStore schemastore.SchemaStore,
 	mc messaging.MessageSender,
@@ -90,6 +94,7 @@ func newEventBroker(
 
 	c := &eventBroker{
 		tidbClusterID:                          id,
+		pdClock:                                pdClock,
 		eventStore:                             eventStore,
 		mounter:                                mounter.NewMounter(tz),
 		schemaStore:                            schemaStore,
@@ -406,7 +411,7 @@ func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage
 
 func (c *eventBroker) updateMetrics(ctx context.Context) {
 	c.wg.Add(1)
-	ticker := time.NewTicker(time.Second * 10)
+	ticker := time.NewTicker(time.Second * 5)
 	go func() {
 		defer c.wg.Done()
 		log.Info("update metrics goroutine is started")
@@ -434,11 +439,12 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 					continue
 				}
 				phyResolvedTs := oracle.ExtractPhysical(pullerMinResolvedTs)
-				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
+				currentTime := c.pdClock.CurrentTime()
+				lag := (oracle.GetPhysical(currentTime) - phyResolvedTs) / 1e3
 				c.metricEventServicePullerResolvedTs.Set(float64(phyResolvedTs))
 				c.metricEventServiceResolvedTsLag.Set(float64(lag))
 
-				lag = (oracle.GetPhysical(time.Now()) - oracle.ExtractPhysical(dispatcherMinWaterMark)) / 1e3
+				lag = (oracle.GetPhysical(currentTime) - oracle.ExtractPhysical(dispatcherMinWaterMark)) / 1e3
 				c.metricEventServiceDispatcherResolvedTs.Set(float64(lag))
 			}
 		}

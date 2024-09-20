@@ -15,10 +15,11 @@ package server
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
@@ -135,7 +136,7 @@ func (c *server) initialize(ctx context.Context) error {
 	}
 
 	// initialize eventService, it relies on eventStore, so we need to initialize it after eventStore
-	eventService := eventservice.NewEventService()
+	eventService := eventservice.NewEventService(c.PDClock)
 	c.subModules = append(c.subModules, eventService)
 	appctx.SetService(eventService.Name(), eventService)
 
