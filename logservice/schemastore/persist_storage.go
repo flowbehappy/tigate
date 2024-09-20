@@ -266,6 +266,8 @@ func (p *persistentStorage) unregisterTable(tableID int64) error {
 			return fmt.Errorf(fmt.Sprintf("table %d not found", tableID))
 		}
 		delete(p.tableInfoStoreMap, tableID)
+		log.Info("unregister table",
+			zap.Int64("tableID", tableID))
 	}
 	return nil
 }
@@ -470,6 +472,7 @@ func (p *persistentStorage) doGc(gcTs uint64) error {
 	p.mu.Unlock()
 
 	start := time.Now()
+	// TODO: tablesInKVSnap seems too memory consuming
 	_, tablesInKVSnap, err := writeSchemaSnapshotAndMeta(p.db, p.kvStorage, gcTs)
 	if err != nil {
 		// TODO: retry
@@ -504,20 +507,20 @@ func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64, tablesInKVSna
 	}
 
 	// clean tablesDDLHistory
-	for tableID, history := range p.tablesDDLHistory {
+	for tableID := range p.tablesDDLHistory {
 		if _, ok := tablesInKVSnap[tableID]; !ok {
 			delete(p.tablesDDLHistory, tableID)
 			continue
 		}
 
-		i := sort.Search(len(history), func(i int) bool {
-			return history[i] > gcTs
+		i := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
+			return p.tablesDDLHistory[tableID][i] > gcTs
 		})
-		if i == len(history) {
+		if i == len(p.tablesDDLHistory[tableID]) {
 			delete(p.tablesDDLHistory, tableID)
 			continue
 		}
-		p.tablesDDLHistory[tableID] = history[i:]
+		p.tablesDDLHistory[tableID] = p.tablesDDLHistory[tableID][i:]
 	}
 
 	// clean tableTriggerDDLHistory
@@ -527,7 +530,11 @@ func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64, tablesInKVSna
 	p.tableTriggerDDLHistory = p.tableTriggerDDLHistory[i:]
 
 	// clean tableInfoStoreMap
-	for _, store := range p.tableInfoStoreMap {
+	for tableID, store := range p.tableInfoStoreMap {
+		if _, ok := tablesInKVSnap[tableID]; !ok {
+			delete(p.tableInfoStoreMap, tableID)
+			continue
+		}
 		store.gc(gcTs)
 	}
 }
