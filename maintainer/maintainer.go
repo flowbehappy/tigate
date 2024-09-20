@@ -16,7 +16,6 @@ package maintainer
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"math"
 	"sync"
 	"time"
@@ -30,6 +29,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/flowbehappy/tigate/utils"
@@ -183,8 +183,6 @@ func (m *Maintainer) HandleEvent(event *Event) (await bool) {
 		if err := m.onMessage(event.message); err != nil {
 			m.handleError(err)
 		}
-	case EventSchedule:
-		m.onScheduleTableSpan()
 	case EventRemove:
 		m.onRemoveMaintainer(m.cascadeRemoving)
 	case EventPeriod:
@@ -365,9 +363,6 @@ func (m *Maintainer) onNodeChanged() {
 			zap.String("id", m.id.String()))
 		m.onBootstrapDone(cachedResponse)
 	}
-	if m.bootstrapper.CheckAllNodeInitialized() {
-		m.onScheduleTableSpan()
-	}
 }
 
 func (m *Maintainer) calCheckpointTs() {
@@ -422,24 +417,6 @@ func (m *Maintainer) sendMessages(msgs []*messaging.TargetMessage) {
 				zap.Any("msg", msg), zap.Error(err))
 			continue
 		}
-	}
-}
-
-func (m *Maintainer) onScheduleTableSpan() {
-	if !m.bootstrapper.CheckAllNodeInitialized() {
-		log.Info("not all node initialized, skip schedule",
-			zap.String("changefeed", m.id.ID))
-		return
-	}
-	msg := m.scheduler.Schedule()
-	m.sendMessages(msg)
-
-	if m.scheduler.NeedSchedule() {
-		// some table span is not scheduled, schedule it later
-		SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{
-			changefeedID: m.id.ID,
-			eventType:    EventSchedule,
-		}, time.Now().Add(100*time.Millisecond))
 	}
 }
 
@@ -524,7 +501,6 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 		}
 	}
 	m.scheduler.FinishBootstrap(workingMap)
-	m.onScheduleTableSpan()
 }
 
 // initTableIDs get tables ids base on the filter and checkpoint ts
@@ -547,10 +523,6 @@ func (m *Maintainer) onNodeClosed(from node.ID, response *heartbeatpb.Maintainer
 	}
 	// check if all nodes have sent response
 	m.onRemoveMaintainer(m.cascadeRemoving)
-}
-
-func (m *Maintainer) onBalance() {
-	m.sendMessages(m.scheduler.TryBalance())
 }
 
 func (m *Maintainer) handleResendMessage() {
@@ -652,13 +624,14 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 }
 
 func (m *Maintainer) onPeriodTask() {
-	if !m.scheduler.NeedSchedule() {
+	// schedule absent tasks
+	if m.bootstrapper.CheckAllNodeInitialized() {
 		m.sendMessages(m.scheduler.Schedule())
 	}
-	m.printStatus()
+	// send scheduling messages
 	m.handleResendMessage()
+	m.printStatus()
 	m.calCheckpointTs()
-	m.onBalance()
 	SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{
 		changefeedID: m.id.ID,
 		eventType:    EventPeriod,

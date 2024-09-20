@@ -26,8 +26,6 @@ const (
 	EventInit = iota
 	// EventMessage is triggered when a grpc message received
 	EventMessage
-	// EventSchedule is triggered when manually schedule tasks
-	EventSchedule
 	// EventRemove is triggered when track the removing process, it will be triggered again if the removing is not completed
 	EventRemove
 	// EventPeriod is triggered periodically, maintainer handle some task in the loop, like resend messages
