@@ -331,8 +331,6 @@ type SchemaTableName struct {
 
 // TableChange will record each ddl change of the table name.
 // Each TableChange is related to a ddl event
-// only Create Table / Create Tables / Drop Table / Rename Table / Rename Tables these ddl event
-// will make the table name change.
 type TableNameChange struct {
 	AddName          []SchemaTableName
 	DropName         []SchemaTableName
@@ -347,7 +345,8 @@ type DDLEvent struct {
 	SchemaID int64 `json:"schema_id"`
 	// TableID means different for different job types:
 	// - ExchangeTablePartition: non-partitioned table id
-	TableID    int64            `json:"table_id"`
+	TableID int64 `json:"table_id"`
+	// TODO: need verify the meaning of SchemaName and TableName for different ddl
 	SchemaName string           `json:"schema_name"`
 	TableName  string           `json:"table_name"`
 	Query      string           `json:"query"`
@@ -357,12 +356,14 @@ type DDLEvent struct {
 	// TODO: just here for compile, may be changed later
 	MultipleTableInfos []*TableInfo `json:"multiple_table_infos"`
 
-	// Just for test now
 	BlockedTables     *InfluencedTables `json:"blocked_tables"`
 	NeedDroppedTables *InfluencedTables `json:"need_dropped_tables"`
 	NeedAddedTables   []Table           `json:"need_added_tables"`
 
-	// Deprecated
+	TiDBOnly bool `json:"tidb_only"`
+
+	// only Create Table / Create Tables / Drop Table / Rename Table /
+	// Rename Tables / Drop Schema / Recover Table will make the table name change
 	TableNameChange *TableNameChange `json:"table_name_change"`
 	// 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
 	PostTxnFlushed []func() `msg:"-"`
@@ -442,18 +443,18 @@ func (t *DDLEvent) Unmarshal(data []byte) error {
 type InfluenceType int
 
 const (
-	All InfluenceType = iota // influence all tables
-	DB                       // influence all tables in the same database
-	Normal
+	InfluenceTypeAll InfluenceType = iota // influence all tables
+	InfluenceTypeDB                       // influence all tables in the same database
+	InfluenceTypeNormal
 )
 
 func (t InfluenceType) toPB() heartbeatpb.InfluenceType {
 	switch t {
-	case All:
+	case InfluenceTypeAll:
 		return heartbeatpb.InfluenceType_All
-	case DB:
+	case InfluenceTypeDB:
 		return heartbeatpb.InfluenceType_DB
-	case Normal:
+	case InfluenceTypeNormal:
 		return heartbeatpb.InfluenceType_Normal
 	default:
 		log.Error("unknown influence type")
@@ -464,9 +465,7 @@ func (t InfluenceType) toPB() heartbeatpb.InfluenceType {
 type InfluencedTables struct {
 	InfluenceType InfluenceType
 	TableIDs      []int64
-	TableNames    []string
 	SchemaID      int64
-	SchemaName    string
 }
 
 func (i *InfluencedTables) ToPB() *heartbeatpb.InfluencedTables {
@@ -476,27 +475,21 @@ func (i *InfluencedTables) ToPB() *heartbeatpb.InfluencedTables {
 	return &heartbeatpb.InfluencedTables{
 		InfluenceType: i.InfluenceType.toPB(),
 		TableIDs:      i.TableIDs,
-		TableNames:    i.TableNames,
 		SchemaID:      i.SchemaID,
-		SchemaName:    i.SchemaName,
 	}
 }
 func ToTablesPB(tables []Table) []*heartbeatpb.Table {
 	res := make([]*heartbeatpb.Table, len(tables))
 	for i, t := range tables {
 		res[i] = &heartbeatpb.Table{
-			TableID:    t.TableID,
-			SchemaID:   t.SchemaID,
-			TableName:  t.TableName,
-			SchemaName: t.SchemaName,
+			TableID:  t.TableID,
+			SchemaID: t.SchemaID,
 		}
 	}
 	return res
 }
 
 type Table struct {
-	SchemaID   int64
-	SchemaName string
-	TableID    int64
-	TableName  string
+	SchemaID int64
+	TableID  int64
 }

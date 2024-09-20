@@ -103,7 +103,7 @@ var (
 			Subsystem: "dispatcher",
 			Name:      "received_event_lag_duration",
 			Help:      "The duration of lag between the event collector received event and the event's ts",
-			Buckets:   prometheus.DefBuckets,
+			Buckets:   LagBucket(),
 		}, []string{"type"})
 
 	EventCollectorResolvedTsLagGauge = prometheus.NewGauge(

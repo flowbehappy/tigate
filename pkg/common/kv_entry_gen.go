@@ -7,10 +7,62 @@ import (
 )
 
 // DecodeMsg implements msgp.Decodable
+func (z *CompressType) DecodeMsg(dc *msgp.Reader) (err error) {
+	{
+		var zb0001 uint32
+		zb0001, err = dc.ReadUint32()
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		(*z) = CompressType(zb0001)
+	}
+	return
+}
+
+// EncodeMsg implements msgp.Encodable
+func (z CompressType) EncodeMsg(en *msgp.Writer) (err error) {
+	err = en.WriteUint32(uint32(z))
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z CompressType) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	o = msgp.AppendUint32(o, uint32(z))
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CompressType) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	{
+		var zb0001 uint32
+		zb0001, bts, err = msgp.ReadUint32Bytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		(*z) = CompressType(zb0001)
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z CompressType) Msgsize() (s int) {
+	s = msgp.Uint32Size
+	return
+}
+
+// DecodeMsg implements msgp.Decodable
 func (z *OpType) DecodeMsg(dc *msgp.Reader) (err error) {
 	{
-		var zb0001 int
-		zb0001, err = dc.ReadInt()
+		var zb0001 uint32
+		zb0001, err = dc.ReadUint32()
 		if err != nil {
 			err = msgp.WrapError(err)
 			return
@@ -22,7 +74,7 @@ func (z *OpType) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z OpType) EncodeMsg(en *msgp.Writer) (err error) {
-	err = en.WriteInt(int(z))
+	err = en.WriteUint32(uint32(z))
 	if err != nil {
 		err = msgp.WrapError(err)
 		return
@@ -33,15 +85,15 @@ func (z OpType) EncodeMsg(en *msgp.Writer) (err error) {
 // MarshalMsg implements msgp.Marshaler
 func (z OpType) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	o = msgp.AppendInt(o, int(z))
+	o = msgp.AppendUint32(o, uint32(z))
 	return
 }
 
 // UnmarshalMsg implements msgp.Unmarshaler
 func (z *OpType) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	{
-		var zb0001 int
-		zb0001, bts, err = msgp.ReadIntBytes(bts)
+		var zb0001 uint32
+		zb0001, bts, err = msgp.ReadUint32Bytes(bts)
 		if err != nil {
 			err = msgp.WrapError(err)
 			return
@@ -54,7 +106,7 @@ func (z *OpType) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z OpType) Msgsize() (s int) {
-	s = msgp.IntSize
+	s = msgp.Uint32Size
 	return
 }
 
@@ -78,13 +130,49 @@ func (z *RawKVEntry) DecodeMsg(dc *msgp.Reader) (err error) {
 		switch msgp.UnsafeString(field) {
 		case "op_type":
 			{
-				var zb0002 int
-				zb0002, err = dc.ReadInt()
+				var zb0002 uint32
+				zb0002, err = dc.ReadUint32()
 				if err != nil {
 					err = msgp.WrapError(err, "OpType")
 					return
 				}
 				z.OpType = OpType(zb0002)
+			}
+		case "crts":
+			z.CRTs, err = dc.ReadUint64()
+			if err != nil {
+				err = msgp.WrapError(err, "CRTs")
+				return
+			}
+		case "start_ts":
+			z.StartTs, err = dc.ReadUint64()
+			if err != nil {
+				err = msgp.WrapError(err, "StartTs")
+				return
+			}
+		case "region_id":
+			z.RegionID, err = dc.ReadUint64()
+			if err != nil {
+				err = msgp.WrapError(err, "RegionID")
+				return
+			}
+		case "key_len":
+			z.KeyLen, err = dc.ReadUint32()
+			if err != nil {
+				err = msgp.WrapError(err, "KeyLen")
+				return
+			}
+		case "value_len":
+			z.ValueLen, err = dc.ReadUint32()
+			if err != nil {
+				err = msgp.WrapError(err, "ValueLen")
+				return
+			}
+		case "old_value_len":
+			z.OldValueLen, err = dc.ReadUint32()
+			if err != nil {
+				err = msgp.WrapError(err, "OldValueLen")
+				return
 			}
 		case "key":
 			z.Key, err = dc.ReadBytes(z.Key)
@@ -104,24 +192,6 @@ func (z *RawKVEntry) DecodeMsg(dc *msgp.Reader) (err error) {
 				err = msgp.WrapError(err, "OldValue")
 				return
 			}
-		case "start_ts":
-			z.StartTs, err = dc.ReadUint64()
-			if err != nil {
-				err = msgp.WrapError(err, "StartTs")
-				return
-			}
-		case "crts":
-			z.CRTs, err = dc.ReadUint64()
-			if err != nil {
-				err = msgp.WrapError(err, "CRTs")
-				return
-			}
-		case "region_id":
-			z.RegionID, err = dc.ReadUint64()
-			if err != nil {
-				err = msgp.WrapError(err, "RegionID")
-				return
-			}
 		default:
 			err = dc.Skip()
 			if err != nil {
@@ -135,15 +205,75 @@ func (z *RawKVEntry) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z *RawKVEntry) EncodeMsg(en *msgp.Writer) (err error) {
-	// map header, size 7
+	// map header, size 10
 	// write "op_type"
-	err = en.Append(0x87, 0xa7, 0x6f, 0x70, 0x5f, 0x74, 0x79, 0x70, 0x65)
+	err = en.Append(0x8a, 0xa7, 0x6f, 0x70, 0x5f, 0x74, 0x79, 0x70, 0x65)
 	if err != nil {
 		return
 	}
-	err = en.WriteInt(int(z.OpType))
+	err = en.WriteUint32(uint32(z.OpType))
 	if err != nil {
 		err = msgp.WrapError(err, "OpType")
+		return
+	}
+	// write "crts"
+	err = en.Append(0xa4, 0x63, 0x72, 0x74, 0x73)
+	if err != nil {
+		return
+	}
+	err = en.WriteUint64(z.CRTs)
+	if err != nil {
+		err = msgp.WrapError(err, "CRTs")
+		return
+	}
+	// write "start_ts"
+	err = en.Append(0xa8, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x74, 0x73)
+	if err != nil {
+		return
+	}
+	err = en.WriteUint64(z.StartTs)
+	if err != nil {
+		err = msgp.WrapError(err, "StartTs")
+		return
+	}
+	// write "region_id"
+	err = en.Append(0xa9, 0x72, 0x65, 0x67, 0x69, 0x6f, 0x6e, 0x5f, 0x69, 0x64)
+	if err != nil {
+		return
+	}
+	err = en.WriteUint64(z.RegionID)
+	if err != nil {
+		err = msgp.WrapError(err, "RegionID")
+		return
+	}
+	// write "key_len"
+	err = en.Append(0xa7, 0x6b, 0x65, 0x79, 0x5f, 0x6c, 0x65, 0x6e)
+	if err != nil {
+		return
+	}
+	err = en.WriteUint32(z.KeyLen)
+	if err != nil {
+		err = msgp.WrapError(err, "KeyLen")
+		return
+	}
+	// write "value_len"
+	err = en.Append(0xa9, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x5f, 0x6c, 0x65, 0x6e)
+	if err != nil {
+		return
+	}
+	err = en.WriteUint32(z.ValueLen)
+	if err != nil {
+		err = msgp.WrapError(err, "ValueLen")
+		return
+	}
+	// write "old_value_len"
+	err = en.Append(0xad, 0x6f, 0x6c, 0x64, 0x5f, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x5f, 0x6c, 0x65, 0x6e)
+	if err != nil {
+		return
+	}
+	err = en.WriteUint32(z.OldValueLen)
+	if err != nil {
+		err = msgp.WrapError(err, "OldValueLen")
 		return
 	}
 	// write "key"
@@ -176,46 +306,34 @@ func (z *RawKVEntry) EncodeMsg(en *msgp.Writer) (err error) {
 		err = msgp.WrapError(err, "OldValue")
 		return
 	}
-	// write "start_ts"
-	err = en.Append(0xa8, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x74, 0x73)
-	if err != nil {
-		return
-	}
-	err = en.WriteUint64(z.StartTs)
-	if err != nil {
-		err = msgp.WrapError(err, "StartTs")
-		return
-	}
-	// write "crts"
-	err = en.Append(0xa4, 0x63, 0x72, 0x74, 0x73)
-	if err != nil {
-		return
-	}
-	err = en.WriteUint64(z.CRTs)
-	if err != nil {
-		err = msgp.WrapError(err, "CRTs")
-		return
-	}
-	// write "region_id"
-	err = en.Append(0xa9, 0x72, 0x65, 0x67, 0x69, 0x6f, 0x6e, 0x5f, 0x69, 0x64)
-	if err != nil {
-		return
-	}
-	err = en.WriteUint64(z.RegionID)
-	if err != nil {
-		err = msgp.WrapError(err, "RegionID")
-		return
-	}
 	return
 }
 
 // MarshalMsg implements msgp.Marshaler
 func (z *RawKVEntry) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// map header, size 7
+	// map header, size 10
 	// string "op_type"
-	o = append(o, 0x87, 0xa7, 0x6f, 0x70, 0x5f, 0x74, 0x79, 0x70, 0x65)
-	o = msgp.AppendInt(o, int(z.OpType))
+	o = append(o, 0x8a, 0xa7, 0x6f, 0x70, 0x5f, 0x74, 0x79, 0x70, 0x65)
+	o = msgp.AppendUint32(o, uint32(z.OpType))
+	// string "crts"
+	o = append(o, 0xa4, 0x63, 0x72, 0x74, 0x73)
+	o = msgp.AppendUint64(o, z.CRTs)
+	// string "start_ts"
+	o = append(o, 0xa8, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x74, 0x73)
+	o = msgp.AppendUint64(o, z.StartTs)
+	// string "region_id"
+	o = append(o, 0xa9, 0x72, 0x65, 0x67, 0x69, 0x6f, 0x6e, 0x5f, 0x69, 0x64)
+	o = msgp.AppendUint64(o, z.RegionID)
+	// string "key_len"
+	o = append(o, 0xa7, 0x6b, 0x65, 0x79, 0x5f, 0x6c, 0x65, 0x6e)
+	o = msgp.AppendUint32(o, z.KeyLen)
+	// string "value_len"
+	o = append(o, 0xa9, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x5f, 0x6c, 0x65, 0x6e)
+	o = msgp.AppendUint32(o, z.ValueLen)
+	// string "old_value_len"
+	o = append(o, 0xad, 0x6f, 0x6c, 0x64, 0x5f, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x5f, 0x6c, 0x65, 0x6e)
+	o = msgp.AppendUint32(o, z.OldValueLen)
 	// string "key"
 	o = append(o, 0xa3, 0x6b, 0x65, 0x79)
 	o = msgp.AppendBytes(o, z.Key)
@@ -225,15 +343,6 @@ func (z *RawKVEntry) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "old_value"
 	o = append(o, 0xa9, 0x6f, 0x6c, 0x64, 0x5f, 0x76, 0x61, 0x6c, 0x75, 0x65)
 	o = msgp.AppendBytes(o, z.OldValue)
-	// string "start_ts"
-	o = append(o, 0xa8, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x74, 0x73)
-	o = msgp.AppendUint64(o, z.StartTs)
-	// string "crts"
-	o = append(o, 0xa4, 0x63, 0x72, 0x74, 0x73)
-	o = msgp.AppendUint64(o, z.CRTs)
-	// string "region_id"
-	o = append(o, 0xa9, 0x72, 0x65, 0x67, 0x69, 0x6f, 0x6e, 0x5f, 0x69, 0x64)
-	o = msgp.AppendUint64(o, z.RegionID)
 	return
 }
 
@@ -257,13 +366,49 @@ func (z *RawKVEntry) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		switch msgp.UnsafeString(field) {
 		case "op_type":
 			{
-				var zb0002 int
-				zb0002, bts, err = msgp.ReadIntBytes(bts)
+				var zb0002 uint32
+				zb0002, bts, err = msgp.ReadUint32Bytes(bts)
 				if err != nil {
 					err = msgp.WrapError(err, "OpType")
 					return
 				}
 				z.OpType = OpType(zb0002)
+			}
+		case "crts":
+			z.CRTs, bts, err = msgp.ReadUint64Bytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "CRTs")
+				return
+			}
+		case "start_ts":
+			z.StartTs, bts, err = msgp.ReadUint64Bytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "StartTs")
+				return
+			}
+		case "region_id":
+			z.RegionID, bts, err = msgp.ReadUint64Bytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "RegionID")
+				return
+			}
+		case "key_len":
+			z.KeyLen, bts, err = msgp.ReadUint32Bytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "KeyLen")
+				return
+			}
+		case "value_len":
+			z.ValueLen, bts, err = msgp.ReadUint32Bytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "ValueLen")
+				return
+			}
+		case "old_value_len":
+			z.OldValueLen, bts, err = msgp.ReadUint32Bytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "OldValueLen")
+				return
 			}
 		case "key":
 			z.Key, bts, err = msgp.ReadBytesBytes(bts, z.Key)
@@ -283,24 +428,6 @@ func (z *RawKVEntry) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				err = msgp.WrapError(err, "OldValue")
 				return
 			}
-		case "start_ts":
-			z.StartTs, bts, err = msgp.ReadUint64Bytes(bts)
-			if err != nil {
-				err = msgp.WrapError(err, "StartTs")
-				return
-			}
-		case "crts":
-			z.CRTs, bts, err = msgp.ReadUint64Bytes(bts)
-			if err != nil {
-				err = msgp.WrapError(err, "CRTs")
-				return
-			}
-		case "region_id":
-			z.RegionID, bts, err = msgp.ReadUint64Bytes(bts)
-			if err != nil {
-				err = msgp.WrapError(err, "RegionID")
-				return
-			}
 		default:
 			bts, err = msgp.Skip(bts)
 			if err != nil {
@@ -315,6 +442,6 @@ func (z *RawKVEntry) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *RawKVEntry) Msgsize() (s int) {
-	s = 1 + 8 + msgp.IntSize + 4 + msgp.BytesPrefixSize + len(z.Key) + 6 + msgp.BytesPrefixSize + len(z.Value) + 10 + msgp.BytesPrefixSize + len(z.OldValue) + 9 + msgp.Uint64Size + 5 + msgp.Uint64Size + 10 + msgp.Uint64Size
+	s = 1 + 8 + msgp.Uint32Size + 5 + msgp.Uint64Size + 9 + msgp.Uint64Size + 10 + msgp.Uint64Size + 8 + msgp.Uint32Size + 10 + msgp.Uint32Size + 14 + msgp.Uint32Size + 4 + msgp.BytesPrefixSize + len(z.Key) + 6 + msgp.BytesPrefixSize + len(z.Value) + 10 + msgp.BytesPrefixSize + len(z.OldValue)
 	return
 }
