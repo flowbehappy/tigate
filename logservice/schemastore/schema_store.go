@@ -197,6 +197,7 @@ func (s *schemaStore) FetchTableDDLEvents(tableID int64, tableFilter filter.Filt
 		end = currentResolvedTs
 	}
 	log.Debug("hh")
+	defer log.Debug("hh")
 	events, err := s.dataStorage.fetchTableDDLEvents(tableID, tableFilter, start, end)
 	if err != nil {
 		return nil, 0, err
