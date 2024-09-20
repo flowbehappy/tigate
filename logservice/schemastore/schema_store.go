@@ -31,7 +31,7 @@ type SchemaStore interface {
 	// FetchTableDDLEvents returns the next ddl events which finishedTs are within the range (start, end]
 	// and it returns a timestamp which means there will be no more ddl events before(<=) it
 	// TODO: add a parameter limit
-	FetchTableDDLEvents(tableID int64, start, end uint64) ([]common.DDLEvent, uint64, error)
+	FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, uint64, error)
 
 	FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]common.DDLEvent, uint64, error)
 }
@@ -144,7 +144,7 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 						zap.Uint64("finishedDDLTS", s.finishedDDLTs))
 					continue
 				}
-				validEvents = append(validEvents, buildPersistedDDLEvent(event.Job))
+				validEvents = append(validEvents, buildPersistedDDLEventFromJob(event.Job))
 				// need to update the following two members for every event to filter out later duplicate events
 				s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
 				s.finishedDDLTs = event.Job.BinlogInfo.FinishedTS
@@ -173,12 +173,12 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 }
 
 func (s *schemaStore) GetAllPhysicalTables(snapTs uint64, filter filter.Filter) ([]common.Table, error) {
-	s.waitResolvedTs(0, snapTs)
+	s.waitResolvedTs(0, snapTs, 10*time.Second)
 	return s.dataStorage.getAllPhysicalTables(snapTs, filter)
 }
 
 func (s *schemaStore) RegisterTable(tableID int64, startTs uint64) error {
-	s.waitResolvedTs(tableID, startTs)
+	s.waitResolvedTs(tableID, startTs, 5*time.Second)
 	return s.dataStorage.registerTable(tableID, startTs)
 }
 
@@ -187,11 +187,11 @@ func (s *schemaStore) UnregisterTable(tableID int64) error {
 }
 
 func (s *schemaStore) GetTableInfo(tableID int64, ts uint64) (*common.TableInfo, error) {
-	s.waitResolvedTs(tableID, ts)
+	s.waitResolvedTs(tableID, ts, 2*time.Second)
 	return s.dataStorage.getTableInfo(tableID, ts)
 }
 
-func (s *schemaStore) FetchTableDDLEvents(tableID int64, start, end uint64) ([]common.DDLEvent, uint64, error) {
+func (s *schemaStore) FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, uint64, error) {
 	currentResolvedTs := s.resolvedTs.Load()
 	if currentResolvedTs < end {
 		end = currentResolvedTs
@@ -205,7 +205,7 @@ func (s *schemaStore) FetchTableDDLEvents(tableID int64, start, end uint64) ([]c
 		zap.Int64("tableID", tableID),
 		zap.Uint64("start", start),
 		zap.Uint64("end", end))
-	events, err := s.dataStorage.fetchTableDDLEvents(tableID, start, end)
+	events, err := s.dataStorage.fetchTableDDLEvents(tableID, tableFilter, start, end)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -269,19 +269,21 @@ func (s *schemaStore) advanceResolvedTs(resolvedTs uint64) {
 }
 
 // TODO: use notify instead of sleep
-func (s *schemaStore) waitResolvedTs(tableID int64, ts uint64) {
+func (s *schemaStore) waitResolvedTs(tableID int64, ts uint64, logInterval time.Duration) {
 	start := time.Now()
+	lastLogTime := time.Now()
 	for {
 		if s.resolvedTs.Load() >= uint64(ts) {
 			return
 		}
-		time.Sleep(time.Millisecond * 20)
-		if time.Since(start) > time.Second*5 {
+		time.Sleep(time.Millisecond * 10)
+		if time.Since(lastLogTime) > logInterval {
 			log.Info("wait resolved ts slow",
 				zap.Int64("tableID", tableID),
 				zap.Any("ts", ts),
 				zap.Uint64("resolvedTS", s.resolvedTs.Load()),
 				zap.Any("time", time.Since(start)))
+			lastLogTime = time.Now()
 		}
 	}
 }
