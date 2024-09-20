@@ -468,10 +468,6 @@ type InfluencedTables struct {
 	SchemaID      int64
 }
 
-func (i *InfluencedTables) String() string {
-	return fmt.Sprintf("InfluencedTables{InfluenceType: %d, TableIDs: %v, TableNames: %v, SchemaID: %d, SchemaName: %s}", i.InfluenceType, i.TableIDs, i.TableNames, i.SchemaID, i.SchemaName)
-}
-
 func (i *InfluencedTables) ToPB() *heartbeatpb.InfluencedTables {
 	if i == nil {
 		return nil
@@ -496,8 +492,4 @@ func ToTablesPB(tables []Table) []*heartbeatpb.Table {
 type Table struct {
 	SchemaID int64
 	TableID  int64
-}
-
-func (t Table) String() string {
-	return fmt.Sprintf("Table{SchemaID: %d, SchemaName: %s, TableID: %d, TableName: %s}", t.SchemaID, t.SchemaName, t.TableID, t.TableName)
 }
