@@ -261,11 +261,7 @@ func (d *Dispatcher) GetTableSpan() *heartbeatpb.TableSpan {
 }
 
 func (d *Dispatcher) GetResolvedTs() uint64 {
-	value := d.resolvedTs.Get()
-	if d.tableSpan.TableID == heartbeatpb.DDLSpan.TableID {
-		log.Info("table trigger event dispatcher get resolvedTs", zap.Uint64("resolvedTs", value))
-	}
-	return value
+	return d.resolvedTs.Get()
 }
 
 func (d *Dispatcher) GetCheckpointTs() uint64 {

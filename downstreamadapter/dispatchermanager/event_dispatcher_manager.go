@@ -363,7 +363,6 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 				removeDispatcherSchemaIDs = append(removeDispatcherSchemaIDs, dispatcherItem.GetSchemaID())
 			}
 		}
-		log.Info("collect dispatcher heartbeat info", zap.Any("dispatcher id", id), zap.Any("heartBeatInfo resolvedTs ", heartBeatInfo.Watermark.ResolvedTs))
 		message.Watermark.UpdateMin(heartBeatInfo.Watermark)
 
 		if needCompleteStatus {
@@ -379,18 +378,16 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 		e.cleanTableEventDispatcher(id, removeDispatcherSchemaIDs[idx])
 	}
 
-	e.metricCheckpointTs.Set(float64(heartBeatInfo.Watermark.CheckpointTs))
-	e.metricResolvedTs.Set(float64(heartBeatInfo.Watermark.ResolvedTs))
+	e.metricCheckpointTs.Set(float64(message.Watermark.CheckpointTs))
+	e.metricResolvedTs.Set(float64(message.Watermark.ResolvedTs))
 
-	phyCheckpointTs := oracle.ExtractPhysical(heartBeatInfo.Watermark.CheckpointTs)
-	phyResolvedTs := oracle.ExtractPhysical(heartBeatInfo.Watermark.ResolvedTs)
+	phyCheckpointTs := oracle.ExtractPhysical(message.Watermark.CheckpointTs)
+	phyResolvedTs := oracle.ExtractPhysical(message.Watermark.ResolvedTs)
 
 	e.metricCheckpointTsLag.Set(float64(oracle.GetPhysical(time.Now())-phyCheckpointTs) / 1e3)
 
 	resolvedTsLag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
 	e.metricResolvedTsLag.Set(float64(resolvedTsLag))
-
-	log.Info("dispatcher resolved ts lag", zap.Int64("lag", resolvedTsLag), zap.Any("now", time.Now().Second()), zap.Any("dispatcher map len", e.dispatcherMap.Len()), zap.Any("count", count))
 
 	return &message
 }
