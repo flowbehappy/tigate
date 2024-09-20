@@ -464,8 +464,10 @@ func (t InfluenceType) toPB() heartbeatpb.InfluenceType {
 
 type InfluencedTables struct {
 	InfluenceType InfluenceType
-	TableIDs      []int64
-	SchemaID      int64
+	// only exists when InfluenceType is InfluenceTypeNormal
+	TableIDs []int64
+	// only exists when InfluenceType is InfluenceTypeDB
+	SchemaID int64
 }
 
 func (i *InfluencedTables) ToPB() *heartbeatpb.InfluencedTables {

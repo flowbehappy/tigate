@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
@@ -899,6 +900,8 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		FinishedTs: rawEvent.FinishedTs,
 		TiDBOnly:   false,
 	}
+	// TODO: remove schema id when influcence type is normal
+	// TODO: respect filter for create table / drop table and more ddls
 	switch model.ActionType(rawEvent.Type) {
 	case model.ActionCreateSchema,
 		model.ActionAddColumn,
@@ -923,6 +926,7 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 			DropDatabaseName: rawEvent.SchemaName,
 		}
 	case model.ActionCreateTable:
+		// TODO: support create partition table
 		ddlEvent.NeedAddedTables = []common.Table{
 			{
 				SchemaID: rawEvent.SchemaID,
@@ -940,10 +944,14 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 	case model.ActionDropTable:
 		ddlEvent.BlockedTables = &common.InfluencedTables{
 			InfluenceType: common.InfluenceTypeNormal,
+			TableIDs:      []int64{rawEvent.TableID, heartbeatpb.DDLSpan.TableID},
+			SchemaID:      rawEvent.SchemaID,
+		}
+		ddlEvent.NeedDroppedTables = &common.InfluencedTables{
+			InfluenceType: common.InfluenceTypeNormal,
 			TableIDs:      []int64{rawEvent.TableID},
 			SchemaID:      rawEvent.SchemaID,
 		}
-		ddlEvent.NeedDroppedTables = ddlEvent.BlockedTables
 		ddlEvent.TableNameChange = &common.TableNameChange{
 			DropName: []common.SchemaTableName{
 				{
@@ -971,10 +979,14 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		if !ignorePrevTable {
 			ddlEvent.BlockedTables = &common.InfluencedTables{
 				InfluenceType: common.InfluenceTypeNormal,
+				TableIDs:      []int64{rawEvent.TableID, heartbeatpb.DDLSpan.TableID},
+				SchemaID:      rawEvent.PrevSchemaID,
+			}
+			ddlEvent.NeedDroppedTables = &common.InfluencedTables{
+				InfluenceType: common.InfluenceTypeNormal,
 				TableIDs:      []int64{rawEvent.TableID},
 				SchemaID:      rawEvent.PrevSchemaID,
 			}
-			ddlEvent.NeedDroppedTables = ddlEvent.BlockedTables
 			dropName = append(dropName, common.SchemaTableName{
 				SchemaName: rawEvent.PrevSchemaName,
 				TableName:  rawEvent.PrevTableName,
