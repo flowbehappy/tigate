@@ -363,7 +363,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 				removeDispatcherSchemaIDs = append(removeDispatcherSchemaIDs, dispatcherItem.GetSchemaID())
 			}
 		}
-
+		log.Info("collect dispatcher heartbeat info", zap.Any("dispatcher id", id), zap.Any("heartBeatInfo resolvedTs ", heartBeatInfo.Watermark.ResolvedTs))
 		message.Watermark.UpdateMin(heartBeatInfo.Watermark)
 
 		if needCompleteStatus {

@@ -220,6 +220,8 @@ func (c *EventCollector) updateMetrics(ctx context.Context) error {
 					if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
 						minResolvedTs = d.GetResolvedTs()
 					}
+
+					log.Info("event colletor dispatcher", zap.Any("dispatcher id", d.GetId()), zap.Any("resolvedTs ", d.GetResolvedTs()))
 					return true
 				})
 				if minResolvedTs == 0 {
