@@ -252,7 +252,7 @@ func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, *
 	if !needScan {
 		return false, dataRange, nil
 	}
-	ddlEvents, endTs, err := c.schemaStore.FetchTableDDLEvents(dataRange.Span.TableID, dataRange.StartTs, dataRange.EndTs)
+	ddlEvents, endTs, err := c.schemaStore.FetchTableDDLEvents(dataRange.Span.TableID, task.dispatcherStat.filter, dataRange.StartTs, dataRange.EndTs)
 	if err != nil {
 		log.Panic("get ddl events failed", zap.Error(err))
 	}
