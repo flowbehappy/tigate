@@ -293,6 +293,12 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 		p.mu.RUnlock()
 		return nil, nil
 	}
+	// no events to read, fast return
+	if start > history[len(history)-1] {
+		p.mu.RUnlock()
+		return nil, nil
+	}
+
 	index := sort.Search(len(history), func(i int) bool {
 		return history[i] > start
 	})
