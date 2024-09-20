@@ -289,6 +289,9 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 		p.mu.Unlock()
 		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
 	}
+	log.Info("fetchTableDDLEvents phase 0",
+		zap.Int64("tableID", tableID),
+		zap.Uint64("start", start))
 	history, ok := p.tablesDDLHistory[tableID]
 	if !ok {
 		p.mu.RUnlock()
