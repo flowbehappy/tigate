@@ -395,8 +395,8 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 				watermark := tableState.minWatermark()
 				watermarkPhyTs := oracle.ExtractPhysical(watermark)
 				watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
-				metrics.EventStoreRegisterDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
-				metrics.EventStoreRegisterDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
+				metrics.EventStoreDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
+				metrics.EventStoreDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
 			}
 			e.spanStates.RUnlock()
 		}
@@ -453,9 +453,6 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 		key := EncodeKey(uint64(item.state.span.TableID), item.raw)
 		value := item.raw.Encode()
 		compressedValue := e.encoder.EncodeAll(value, nil)
-		if batch == nil {
-			batch = db.NewBatch()
-		}
 		if err := batch.Set(key, compressedValue, pebble.NoSync); err != nil {
 			log.Panic("failed to update pebble batch", zap.Error(err))
 		}
@@ -474,6 +471,9 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 				if item.raw.IsResolved() {
 					resolvedTsBatch[item.state] = item.raw.CRTs
 					continue
+				}
+				if batch == nil {
+					batch = db.NewBatch()
 				}
 				addEvent2Batch(batch, item)
 				if len(batch.Repr()) >= batchCommitSize {

@@ -120,25 +120,25 @@ func writeGcTs(db *pebble.DB, gcTs uint64) {
 	}
 }
 
-func readUpperBoundMeta(db *pebble.DB) (upperBoundMeta, error) {
+func readUpperBoundMeta(db *pebble.DB) (UpperBoundMeta, error) {
 	snap := db.NewSnapshot()
 	defer snap.Close()
 	value, closer, err := snap.Get(upperBoundKey())
 	if err != nil {
-		return upperBoundMeta{}, err
+		return UpperBoundMeta{}, err
 	}
 	defer closer.Close()
-	var meta upperBoundMeta
-	err = json.Unmarshal(value, &meta)
+	var meta UpperBoundMeta
+	_, err = meta.UnmarshalMsg(value)
 	if err != nil {
 		log.Fatal("unmarshal upper bound meta failed", zap.Error(err))
 	}
 	return meta, nil
 }
 
-func writeUpperBoundMeta(db *pebble.DB, upperBound upperBoundMeta) {
+func writeUpperBoundMeta(db *pebble.DB, upperBound UpperBoundMeta) {
 	batch := db.NewBatch()
-	value, err := json.Marshal(upperBound)
+	value, err := upperBound.MarshalMsg(nil)
 	if err != nil {
 		log.Fatal("marshal upper bound failed")
 	}
@@ -183,12 +183,6 @@ func loadDatabasesInKVSnap(snap *pebble.Snapshot, gcTs uint64) (map[int64]*Basic
 	return databaseMap, nil
 }
 
-type TableInfoEntry struct {
-	Version   int    `json:"version"`
-	SchemaID  int64  `json:"schema_id"`
-	TableInfo []byte `json:"table_info"`
-}
-
 func loadTablesInKVSnap(snap *pebble.Snapshot, gcTs uint64) (map[int64]*BasicTableInfo, error) {
 	tablesInKVSnap := make(map[int64]*BasicTableInfo)
 
@@ -209,13 +203,13 @@ func loadTablesInKVSnap(snap *pebble.Snapshot, gcTs uint64) (map[int64]*BasicTab
 	}
 	defer snapIter.Close()
 	for snapIter.First(); snapIter.Valid(); snapIter.Next() {
-		var table_info_entry TableInfoEntry
-		if err := json.Unmarshal(snapIter.Value(), &table_info_entry); err != nil {
+		var table_info_entry PersistedTableInfoEntry
+		if _, err := table_info_entry.UnmarshalMsg(snapIter.Value()); err != nil {
 			log.Fatal("unmarshal table info entry failed", zap.Error(err))
 		}
 
 		tbNameInfo := model.TableNameInfo{}
-		if err := json.Unmarshal(table_info_entry.TableInfo, &tbNameInfo); err != nil {
+		if err := json.Unmarshal(table_info_entry.TableInfoValue, &tbNameInfo); err != nil {
 			log.Fatal("unmarshal table name info failed", zap.Error(err))
 		}
 		tablesInKVSnap[tbNameInfo.ID] = &BasicTableInfo{
@@ -258,10 +252,14 @@ func loadAndApplyDDLHistory(
 	defer snapIter.Close()
 	for snapIter.First(); snapIter.Valid(); snapIter.Next() {
 		var ddlEvent PersistedDDLEvent
-		err = json.Unmarshal(snapIter.Value(), &ddlEvent)
-		if err != nil {
+		if _, err = ddlEvent.UnmarshalMsg(snapIter.Value()); err != nil {
 			log.Fatal("unmarshal ddl job failed", zap.Error(err))
 		}
+		ddlEvent.TableInfo = &model.TableInfo{}
+		if err := json.Unmarshal(ddlEvent.TableInfoValue, &ddlEvent.TableInfo); err != nil {
+			log.Fatal("unmarshal table info failed", zap.Error(err))
+		}
+
 		if shouldSkipDDL(&ddlEvent, databaseMap, tableMap) {
 			continue
 		}
@@ -281,7 +279,7 @@ func loadAndApplyDDLHistory(
 	return tablesDDLHistory, tableTriggerDDLHistory, nil
 }
 
-func readSchemaIDAndTableInfoFromKVSnap(snap *pebble.Snapshot, tableID int64, version uint64) (int64, *model.TableInfo) {
+func readTableInfoInKVSnap(snap *pebble.Snapshot, tableID int64, version uint64) *common.TableInfo {
 	targetKey, err := tableInfoKey(version, tableID)
 	if err != nil {
 		log.Fatal("generate table info failed", zap.Error(err))
@@ -292,25 +290,20 @@ func readSchemaIDAndTableInfoFromKVSnap(snap *pebble.Snapshot, tableID int64, ve
 	}
 	defer closer.Close()
 
-	var table_info_entry TableInfoEntry
-	err = json.Unmarshal(value, &table_info_entry)
-	if err != nil {
+	var table_info_entry PersistedTableInfoEntry
+	if _, err := table_info_entry.UnmarshalMsg(value); err != nil {
 		log.Fatal("unmarshal table info entry failed", zap.Error(err))
 	}
 
-	if table_info_entry.Version != 1 {
-		log.Panic("unknown table info entry version")
-	}
-
 	tableInfo := &model.TableInfo{}
-	err = json.Unmarshal(table_info_entry.TableInfo, tableInfo)
+	err = json.Unmarshal(table_info_entry.TableInfoValue, tableInfo)
 	if err != nil {
 		log.Fatal("unmarshal table info failed", zap.Error(err))
 	}
-	return table_info_entry.SchemaID, tableInfo
+	return common.WrapTableInfo(table_info_entry.SchemaID, table_info_entry.SchemaName, version, tableInfo)
 }
 
-func readDDLEvent(snap *pebble.Snapshot, version uint64) PersistedDDLEvent {
+func readPersistedDDLEvent(snap *pebble.Snapshot, version uint64) PersistedDDLEvent {
 	ddlKey, err := ddlJobKey(version)
 	if err != nil {
 		log.Fatal("generate ddl job key failed", zap.Error(err))
@@ -321,21 +314,29 @@ func readDDLEvent(snap *pebble.Snapshot, version uint64) PersistedDDLEvent {
 	}
 	defer closer.Close()
 	var ddlEvent PersistedDDLEvent
-	err = json.Unmarshal(ddlValue, &ddlEvent)
-	if err != nil {
+	if _, err := ddlEvent.UnmarshalMsg(ddlValue); err != nil {
 		log.Fatal("unmarshal ddl job failed", zap.Error(err))
+	}
+
+	ddlEvent.TableInfo = &model.TableInfo{}
+	if err := json.Unmarshal(ddlEvent.TableInfoValue, &ddlEvent.TableInfo); err != nil {
+		log.Fatal("unmarshal table info failed", zap.Error(err))
 	}
 	return ddlEvent
 }
 
-func writeDDLEvents(db *pebble.DB, ddlEvents ...PersistedDDLEvent) error {
+func writePersistedDDLEvents(db *pebble.DB, ddlEvents ...PersistedDDLEvent) error {
 	batch := db.NewBatch()
 	for _, event := range ddlEvents {
 		ddlKey, err := ddlJobKey(event.FinishedTs)
 		if err != nil {
 			return err
 		}
-		ddlValue, err := json.Marshal(event)
+		event.TableInfoValue, err = json.Marshal(event.TableInfo)
+		if err != nil {
+			return err
+		}
+		ddlValue, err := event.MarshalMsg(nil)
 		if err != nil {
 			return err
 		}
@@ -362,7 +363,7 @@ func writeSchemaInfoToBatch(batch *pebble.Batch, ts uint64, info *model.DBInfo) 
 	batch.Set(schemaKey, schemaValue, pebble.NoSync)
 }
 
-func writeTableInfoToBatch(batch *pebble.Batch, ts uint64, schemaID int64, tableInfoValue []byte) (int64, string) {
+func writeTableInfoToBatch(batch *pebble.Batch, ts uint64, dbInfo *model.DBInfo, tableInfoValue []byte) (int64, string) {
 	tbNameInfo := model.TableNameInfo{}
 	if err := json.Unmarshal(tableInfoValue, &tbNameInfo); err != nil {
 		log.Fatal("unmarshal table info failed", zap.Error(err))
@@ -371,12 +372,12 @@ func writeTableInfoToBatch(batch *pebble.Batch, ts uint64, schemaID int64, table
 	if err != nil {
 		log.Fatal("generate table key failed", zap.Error(err))
 	}
-	tableInfoEntry := TableInfoEntry{
-		Version:   1,
-		SchemaID:  schemaID,
-		TableInfo: tableInfoValue,
+	tableInfoEntry := PersistedTableInfoEntry{
+		SchemaID:       dbInfo.ID,
+		SchemaName:     dbInfo.Name.O,
+		TableInfoValue: tableInfoValue,
 	}
-	tableInfoEntryValue, err := json.Marshal(tableInfoEntry)
+	tableInfoEntryValue, err := tableInfoEntry.MarshalMsg(nil)
 	if err != nil {
 		log.Fatal("marshal table info entry failed", zap.Error(err))
 	}
@@ -421,7 +422,7 @@ func writeSchemaSnapshotAndMeta(
 			if !isTableRawKey(rawTable.Field) {
 				continue
 			}
-			tableID, tableName := writeTableInfoToBatch(batch, snapTs, dbInfo.ID, rawTable.Value)
+			tableID, tableName := writeTableInfoToBatch(batch, snapTs, dbInfo, rawTable.Value)
 			databaseInfo.Tables[tableID] = true
 			tablesInKVSnap[tableID] = &BasicTableInfo{
 				SchemaID: dbInfo.ID,
@@ -523,9 +524,12 @@ func loadAllPhysicalTablesInSnap(
 	defer snapIter.Close()
 	for snapIter.First(); snapIter.Valid(); snapIter.Next() {
 		var ddlEvent PersistedDDLEvent
-		err = json.Unmarshal(snapIter.Value(), &ddlEvent)
-		if err != nil {
+		if _, err = ddlEvent.UnmarshalMsg(snapIter.Value()); err != nil {
 			log.Fatal("unmarshal ddl job failed", zap.Error(err))
+		}
+		ddlEvent.TableInfo = &model.TableInfo{}
+		if err := json.Unmarshal(ddlEvent.TableInfoValue, &ddlEvent.TableInfo); err != nil {
+			log.Fatal("unmarshal table info failed", zap.Error(err))
 		}
 		if err := updateDatabaseInfoAndTableInfo(&ddlEvent, databaseMap, tableMap); err != nil {
 			log.Panic("updateDatabaseInfo error", zap.Error(err))
