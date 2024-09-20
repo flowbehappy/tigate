@@ -284,54 +284,53 @@ func (p *persistentStorage) getTableInfo(tableID int64, ts uint64) (*common.Tabl
 func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, error) {
 	// TODO: check a dispatcher from created table start ts > finish ts of create table
 	// TODO: check a dispatcher from rename table start ts > finish ts of rename table(is it possible?)
-	return nil, nil
-	// p.mu.RLock()
-	// if start < p.gcTs {
-	// 	p.mu.Unlock()
-	// 	return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
-	// }
+	p.mu.RLock()
+	if start < p.gcTs {
+		p.mu.Unlock()
+		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
+	}
 	// fast check
-	// if len(p.tablesDDLHistory[tableID]) == 0 || start >= p.tablesDDLHistory[tableID][len(p.tablesDDLHistory[tableID])-1] {
-	// 	p.mu.RUnlock()
-	// 	return nil, nil
-	// }
-	// index := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
-	// 	return p.tablesDDLHistory[tableID][i] > start
-	// })
-	// if index == len(p.tablesDDLHistory[tableID]) {
-	// 	log.Panic("should not happen")
-	// }
-	// // copy all target ts to a new slice
-	// allTargetTs := make([]uint64, 0)
-	// for i := index; i < len(p.tablesDDLHistory[tableID]); i++ {
-	// 	if p.tablesDDLHistory[tableID][i] <= end {
-	// 		allTargetTs = append(allTargetTs, p.tablesDDLHistory[tableID][i])
-	// 	}
-	// }
+	if len(p.tablesDDLHistory[tableID]) == 0 || start >= p.tablesDDLHistory[tableID][len(p.tablesDDLHistory[tableID])-1] {
+		p.mu.RUnlock()
+		return nil, nil
+	}
+	index := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
+		return p.tablesDDLHistory[tableID][i] > start
+	})
+	if index == len(p.tablesDDLHistory[tableID]) {
+		log.Panic("should not happen")
+	}
+	// copy all target ts to a new slice
+	allTargetTs := make([]uint64, 0)
+	for i := index; i < len(p.tablesDDLHistory[tableID]); i++ {
+		if p.tablesDDLHistory[tableID][i] <= end {
+			allTargetTs = append(allTargetTs, p.tablesDDLHistory[tableID][i])
+		}
+	}
 
-	// storageSnap := p.db.NewSnapshot()
-	// defer storageSnap.Close()
-	// p.mu.RUnlock()
+	storageSnap := p.db.NewSnapshot()
+	defer storageSnap.Close()
+	p.mu.RUnlock()
 
-	// // TODO: if the first event is a create table ddl, return error?
-	// events := make([]common.DDLEvent, 0, len(allTargetTs))
-	// for _, ts := range allTargetTs {
-	// 	rawEvent := readPersistedDDLEvent(storageSnap, ts)
-	// 	if tableFilter != nil &&
-	// 		tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.SchemaName, rawEvent.TableName) &&
-	// 		tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.PrevSchemaName, rawEvent.PrevTableName) {
-	// 		continue
-	// 	}
-	// 	events = append(events, buildDDLEvent(&rawEvent, tableFilter))
-	// }
-	// // log.Info("fetchTableDDLEvents",
-	// // 	zap.Int64("tableID", tableID),
-	// // 	zap.Uint64("start", start),
-	// // 	zap.Uint64("end", end),
-	// // 	zap.Any("history", history),
-	// // 	zap.Any("allTargetTs", allTargetTs))
+	// TODO: if the first event is a create table ddl, return error?
+	events := make([]common.DDLEvent, 0, len(allTargetTs))
+	for _, ts := range allTargetTs {
+		rawEvent := readPersistedDDLEvent(storageSnap, ts)
+		if tableFilter != nil &&
+			tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.SchemaName, rawEvent.TableName) &&
+			tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.PrevSchemaName, rawEvent.PrevTableName) {
+			continue
+		}
+		events = append(events, buildDDLEvent(&rawEvent, tableFilter))
+	}
+	// log.Info("fetchTableDDLEvents",
+	// 	zap.Int64("tableID", tableID),
+	// 	zap.Uint64("start", start),
+	// 	zap.Uint64("end", end),
+	// 	zap.Any("history", history),
+	// 	zap.Any("allTargetTs", allTargetTs))
 
-	// return events, nil
+	return events, nil
 }
 
 func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]common.DDLEvent, error) {
