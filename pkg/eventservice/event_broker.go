@@ -288,20 +288,9 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 	if !needScan {
 		return
 	}
+
 	remoteID := node.ID(task.dispatcherStat.info.GetServerID())
 	dispatcherID := task.dispatcherStat.info.GetID()
-	ddlEvents, endTs, err := c.schemaStore.FetchTableDDLEvents(dataRange.Span.TableID, task.dispatcherStat.filter, dataRange.StartTs, dataRange.EndTs)
-	if err != nil {
-		log.Panic("get ddl events failed", zap.Error(err))
-	}
-	if endTs < dataRange.EndTs {
-		dataRange.EndTs = endTs
-	}
-
-	if dataRange.EndTs <= dataRange.StartTs {
-		return
-	}
-
 	// After all the events are sent, we need to
 	// drain the ddlEvents and wake up the dispatcher.
 	defer func() {

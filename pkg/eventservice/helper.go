@@ -24,7 +24,7 @@ func (h *dispatcherEventsHandler) Handle(broker *eventBroker, tasks ...scanTask)
 		log.Panic("only one task is allowed")
 	}
 	task := tasks[0]
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*10)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*30)
 	defer cancel()
 	needScan, _, _ := broker.checkNeedScan(ctx, task)
 	if !needScan {
