@@ -28,7 +28,8 @@ import (
 )
 
 const (
-	resolvedTsCacheSize = 8192
+	resolvedTsCacheSize    = 8192
+	resolvedEventRetryTime = 3
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -247,7 +248,7 @@ func (c *eventBroker) wakeDispatcher(dispatcherID common.DispatcherID) {
 // If the dispatcher does not need to scan the event store, it
 // 1. send the watermark to the dispatcher
 // 2. push the task to the task pool
-func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, *common.DataRange, []common.DDLEvent) {
+func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, common.DataRange, []common.DDLEvent) {
 	dataRange, needScan := task.dispatcherStat.getDataRange()
 	if !needScan {
 		return false, dataRange, nil
@@ -417,6 +418,7 @@ func (c *eventBroker) flushResolvedTs(ctx context.Context, serverID node.ID) {
 
 func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage) {
 	start := time.Now()
+	retryTime := 0
 	// Send the message to messageCenter. Retry if to send failed.
 	for {
 		select {
@@ -431,6 +433,11 @@ func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage
 			log.Debug("send message failed, retry it", zap.Error(err))
 			// Wait for a while and retry to avoid the dropped message flood.
 			time.Sleep(time.Millisecond * 10)
+			retryTime++
+			// We only retry resolved event for a limited times, since it is not critical.
+			if tMsg.Type == common.TypeBatchResolvedEvent && retryTime > resolvedEventRetryTime {
+				break
+			}
 			continue
 		}
 		metricEventServiceSendEventDuration.Observe(time.Since(start).Seconds())
@@ -602,15 +609,14 @@ func newDispatcherStat(
 	return dispStat
 }
 
-func (a *dispatcherStat) getDataRange() (*common.DataRange, bool) {
-	r := &common.DataRange{
+func (a *dispatcherStat) getDataRange() (common.DataRange, bool) {
+	if a.watermark.Load() >= a.spanSubscription.watermark.Load() {
+		return common.DataRange{}, false
+	}
+	r := common.DataRange{
 		Span:    a.info.GetTableSpan(),
 		StartTs: a.watermark.Load(),
 		EndTs:   a.spanSubscription.watermark.Load(),
-	}
-	if r.StartTs >= r.EndTs {
-		// no kv events within (start, end]
-		return r, false
 	}
 	return r, true
 }
