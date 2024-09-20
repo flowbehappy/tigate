@@ -395,8 +395,8 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 				watermark := tableState.minWatermark()
 				watermarkPhyTs := oracle.ExtractPhysical(watermark)
 				watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
-				metrics.EventStoreRegisterDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
-				metrics.EventStoreRegisterDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
+				metrics.EventStoreDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
+				metrics.EventStoreDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
 			}
 			e.spanStates.RUnlock()
 		}
