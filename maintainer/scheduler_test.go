@@ -163,7 +163,7 @@ func TestBalance(t *testing.T) {
 	s.AddNewNode("node1")
 	// add new node
 	s.AddNewNode("node2")
-	msgs = s.TryBalance()
+	msgs = s.tryBalance()
 	require.Len(t, msgs, 50)
 	require.Equal(t, len(s.Removing()), 50)
 	require.Equal(t, len(s.Working()), 50)
@@ -231,7 +231,6 @@ func TestFinishBootstrap(t *testing.T) {
 			ID:           dispatcherID2,
 			State:        heartbeatpb.ComponentState_Working,
 			CheckpointTs: 10,
-			DDLStatus:    nil,
 		},
 	}, NewReplicaSet(model.ChangeFeedID{}, dispatcherID2, 1, span, 1))
 	cached := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine](heartbeatpb.LessTableSpan)
@@ -289,7 +288,7 @@ func TestBalanceUnEvenTask(t *testing.T) {
 
 	// add new node
 	s.AddNewNode("node3")
-	msgs = s.TryBalance()
+	msgs = s.tryBalance()
 	require.Len(t, msgs, 0)
 	require.Equal(t, len(s.Removing()), 0)
 	require.Equal(t, len(s.Working()), 4)
