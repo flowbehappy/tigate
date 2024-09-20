@@ -15,9 +15,10 @@ package eventcollector
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/eventpb"
@@ -78,7 +79,6 @@ type EventCollector struct {
 	metricDispatcherReceivedKVEventCount         prometheus.Counter
 	metricDispatcherReceivedResolvedTsEventCount prometheus.Counter
 	metricReceiveEventLagDuration                prometheus.Observer
-	metricResolvedTsLag                          prometheus.Gauge
 }
 
 func NewEventCollector(globalMemoryQuota int64, serverId node.ID) *EventCollector {
@@ -91,7 +91,6 @@ func NewEventCollector(globalMemoryQuota int64, serverId node.ID) *EventCollecto
 		metricDispatcherReceivedKVEventCount:         metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
 		metricReceiveEventLagDuration:                metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("Msg"),
-		metricResolvedTsLag:                          metrics.EventCollectorResolvedTsLagGauge,
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
 
@@ -114,6 +113,8 @@ func NewEventCollector(globalMemoryQuota int64, serverId node.ID) *EventCollecto
 			}
 		}
 	}()
+
+	eventCollector.updateMetrics(context.Background())
 	return &eventCollector
 }
 
@@ -189,8 +190,10 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 }
 
 func (c *EventCollector) updateMetrics(ctx context.Context) error {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
+	c.wg.Add(1)
 	go func() {
+		defer c.wg.Done()
 		for {
 			select {
 			case <-ctx.Done():
@@ -205,14 +208,14 @@ func (c *EventCollector) updateMetrics(ctx context.Context) error {
 					if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
 						minResolvedTs = d.GetResolvedTs()
 					}
+
 					return true
 				})
 				if minResolvedTs == 0 {
 					continue
 				}
 				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
-				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
-				c.metricResolvedTsLag.Set(float64(lag))
+				metrics.EventCollectorResolvedTsLagGauge.Set(float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3)
 			}
 		}
 	}()
