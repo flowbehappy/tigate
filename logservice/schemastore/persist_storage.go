@@ -476,12 +476,18 @@ func (p *persistentStorage) doGc(gcTs uint64) error {
 		log.Warn("fail to write kv snapshot during gc",
 			zap.Uint64("gcTs", gcTs))
 	}
+	log.Info("persist storage: gc finish write schema snapshot",
+		zap.Uint64("gcTs", gcTs),
+		zap.Any("duration", time.Since(start).Seconds()))
 
 	// clean data in memeory before clean data on disk
 	p.cleanObseleteDataInMemory(gcTs, tablesInKVSnap)
-	cleanObseleteData(p.db, oldGcTs, gcTs)
+	log.Info("persist storage: gc finish clean in memory data",
+		zap.Uint64("gcTs", gcTs),
+		zap.Any("duration", time.Since(start).Seconds()))
 
-	log.Info("gc finish",
+	cleanObseleteData(p.db, oldGcTs, gcTs)
+	log.Info("persist storage: gc finish",
 		zap.Uint64("gcTs", gcTs),
 		zap.Any("duration", time.Since(start).Seconds()))
 
