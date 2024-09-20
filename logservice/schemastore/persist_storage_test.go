@@ -29,7 +29,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func loadPersistentStorageForTest(db *pebble.DB, gcTs uint64, upperBound upperBoundMeta) *persistentStorage {
+func loadPersistentStorageForTest(db *pebble.DB, gcTs uint64, upperBound UpperBoundMeta) *persistentStorage {
 	p := &persistentStorage{
 		pdCli:                  nil,
 		kvStorage:              nil,
@@ -53,7 +53,7 @@ func newEmptyPersistentStorageForTest(dbPath string) *persistentStorage {
 		log.Panic("create database fail")
 	}
 	gcTs := uint64(0)
-	upperBound := upperBoundMeta{
+	upperBound := UpperBoundMeta{
 		FinishedDDLTs: 0,
 		SchemaVersion: 0,
 		ResolvedTs:    0,
@@ -69,7 +69,7 @@ func newPersistentStorageForTest(dbPath string, gcTs uint64, initialDBInfos map[
 	if len(initialDBInfos) > 0 {
 		mockWriteKVSnapOnDisk(db, gcTs, initialDBInfos)
 	}
-	upperBound := upperBoundMeta{
+	upperBound := UpperBoundMeta{
 		FinishedDDLTs: 0,
 		SchemaVersion: 0,
 		ResolvedTs:    gcTs,
@@ -94,7 +94,7 @@ func mockWriteKVSnapOnDisk(db *pebble.DB, snapTs uint64, dbInfos map[int64]*mode
 			if err != nil {
 				log.Panic("marshal table info fail", zap.Error(err))
 			}
-			writeTableInfoToBatch(batch, snapTs, dbInfo.ID, tableInfoValue)
+			writeTableInfoToBatch(batch, snapTs, dbInfo, tableInfoValue)
 		}
 	}
 	if err := batch.Commit(pebble.NoSync); err != nil {
@@ -114,7 +114,7 @@ func TestReadWriteMeta(t *testing.T) {
 
 	{
 		gcTS := uint64(1000)
-		upperBound := upperBoundMeta{
+		upperBound := UpperBoundMeta{
 			FinishedDDLTs: 3000,
 			SchemaVersion: 4000,
 			ResolvedTs:    1000,
@@ -145,7 +145,7 @@ func TestReadWriteMeta(t *testing.T) {
 
 	// update upperbound
 	{
-		upperBound := upperBoundMeta{
+		upperBound := UpperBoundMeta{
 			FinishedDDLTs: 5000,
 			SchemaVersion: 5000,
 			ResolvedTs:    1000,
@@ -210,7 +210,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		require.Nil(t, err)
 	}
 
-	upperBound := upperBoundMeta{
+	upperBound := UpperBoundMeta{
 		FinishedDDLTs: 3000,
 		SchemaVersion: 4000,
 		ResolvedTs:    2000,
@@ -821,7 +821,7 @@ func TestGC(t *testing.T) {
 	}
 
 	// write upper bound
-	newUpperBound := upperBoundMeta{
+	newUpperBound := UpperBoundMeta{
 		FinishedDDLTs: 700,
 		SchemaVersion: 509,
 		ResolvedTs:    705,

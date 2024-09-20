@@ -153,7 +153,7 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 		}
 		// TODO: resolved ts are updated after ddl events written to disk, do we need to optimize it?
 		s.resolvedTs.Store(pendingTs)
-		s.dataStorage.updateUpperBound(upperBoundMeta{
+		s.dataStorage.updateUpperBound(UpperBoundMeta{
 			FinishedDDLTs: s.finishedDDLTs,
 			SchemaVersion: s.schemaVersion,
 			ResolvedTs:    pendingTs,
