@@ -1,39 +1,45 @@
 package schemastore
 
 import (
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
 //go:generate msgp
 
-// TODO: use msgp
 // TODO: use msgp.Raw to do version management
 type PersistedDDLEvent struct {
-	ID   int64 `json:"id"`
-	Type byte  `json:"type"`
+	ID   int64 `msg:"id"`
+	Type byte  `msg:"type"`
+
+	// TODO: add more detailed comments about following fields
 	// SchemaID means different for different job types:
 	// - ExchangeTablePartition: db id of non-partitioned table
-	SchemaID int64 `json:"schema_id"`
+	SchemaID int64 `msg:"schema_id"`
 	// TableID means different for different job types:
 	// - ExchangeTablePartition: non-partitioned table id
-	TableID       int64            `json:"table_id"`
-	SchemaName    string           `json:"schema_name"`
-	Query         string           `json:"query"`
-	SchemaVersion int64            `json:"schema_version"`
-	DBInfo        *model.DBInfo    `json:"-"`
-	TableInfo     *model.TableInfo `json:"table_info"`
-	FinishedTs    uint64           `json:"finished_ts"`
-	BDRRole       string           `json:"bdr_role"`
-	// CDCWriteSource indicates the source of CDC write.
-	CDCWriteSource uint64 `json:"cdc_write_source"`
+	// For truncate table, it it the table id of the newly created table
+	TableID    int64  `msg:"table_id"`
+	SchemaName string `msg:"schema_name"`
+	TableName  string `msg:"table_name"`
 
-	BlockedTables     *common.InfluencedTables `json:"blocked_tables"`
-	NeedDroppedTables *common.InfluencedTables `json:"need_dropped_tables"`
-	NeedAddedTables   []common.Table           `json:"need_added_tables"`
+	PrevSchemaID   int64  `msg:"prev_schema_id"`
+	PrevTableID    int64  `msg:"prev_table_id"`
+	PrevSchemaName string `msg:"prev_schema_name"`
+	PrevTableName  string `msg:"prev_table_name"`
+
+	Query         string           `msg:"query"`
+	SchemaVersion int64            `msg:"schema_version"`
+	DBInfo        *model.DBInfo    `msg:"-"`
+	TableInfo     *model.TableInfo `msg:"-"`
+	// TODO: use a custom struct to store the table info?
+	TableInfoValue []byte `msg:"table_info_value"`
+	FinishedTs     uint64 `msg:"finished_ts"`
+	// TODO: do we need the following two fields?
+	BDRRole        string `msg:"bdr_role"`
+	CDCWriteSource uint64 `msg:"cdc_write_source"`
 }
 
-func buildPersistedDDLEvent(job *model.Job) PersistedDDLEvent {
+func buildPersistedDDLEventFromJob(job *model.Job) PersistedDDLEvent {
 	return PersistedDDLEvent{
 		ID:             job.ID,
 		Type:           byte(job.Type),
@@ -49,6 +55,19 @@ func buildPersistedDDLEvent(job *model.Job) PersistedDDLEvent {
 	}
 }
 
+// TODO: use msgp.Raw to do version management
+type PersistedTableInfoEntry struct {
+	SchemaID       int64  `msg:"schema_id"`
+	SchemaName     string `msg:"schema_name"`
+	TableInfoValue []byte `msg:"table_info_value"`
+}
+
+type UpperBoundMeta struct {
+	FinishedDDLTs uint64 `msg:"finished_ddl_ts"`
+	SchemaVersion int64  `msg:"schema_version"`
+	ResolvedTs    uint64 `msg:"resolved_ts"`
+}
+
 //msgp:ignore BasicDatabaseInfo
 type BasicDatabaseInfo struct {
 	Name   string
@@ -62,7 +81,7 @@ type BasicTableInfo struct {
 	InKVSnap bool
 }
 
-// msgp:ignore DDLJobWithCommitTs
+//msgp:ignore DDLJobWithCommitTs
 type DDLJobWithCommitTs struct {
 	Job *model.Job
 	// the commitTs of the rawKVEntry which contains the DDL job

@@ -15,12 +15,10 @@ package schemastore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cockroachdb/pebble"
@@ -41,8 +39,6 @@ const dataDir = "schema_store"
 //  2. incremental ddl jobs
 //  3. metadata which describes the valid data range on disk
 type persistentStorage struct {
-	gcRunning atomic.Bool
-
 	pdCli pd.Client
 
 	kvStorage kv.Storage
@@ -54,7 +50,7 @@ type persistentStorage struct {
 	// the current gcTs on disk
 	gcTs uint64
 
-	upperBound upperBoundMeta
+	upperBound UpperBoundMeta
 
 	upperBoundChanged bool
 
@@ -81,12 +77,6 @@ type persistentStorage struct {
 
 	// tableID -> total registered count
 	tableRegisteredCount map[int64]int
-}
-
-type upperBoundMeta struct {
-	FinishedDDLTs uint64 `json:"finished_ddl_ts"`
-	SchemaVersion int64  `json:"schema_version"`
-	ResolvedTs    uint64 `json:"resolved_ts"`
 }
 
 func newPersistentStorage(
@@ -182,7 +172,7 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 		log.Fatal("fail to initialize from kv snapshot")
 	}
 	p.gcTs = gcTs
-	p.upperBound = upperBoundMeta{
+	p.upperBound = UpperBoundMeta{
 		FinishedDDLTs: 0,
 		SchemaVersion: 0,
 		ResolvedTs:    gcTs,
@@ -231,6 +221,12 @@ func (p *persistentStorage) getAllPhysicalTables(snapTs uint64, tableFilter filt
 	gcTs := p.gcTs
 	p.mu.Unlock()
 
+	start := time.Now()
+	defer func() {
+		log.Info("getAllPhysicalTables finish",
+			zap.Uint64("snapTs", snapTs),
+			zap.Any("duration", time.Since(start).Seconds()))
+	}()
 	return loadAllPhysicalTablesInSnap(storageSnap, gcTs, snapTs, tableFilter)
 }
 
@@ -254,6 +250,9 @@ func (p *persistentStorage) registerTable(tableID int64, startTs uint64) error {
 	}
 
 	store.waitTableInfoInitialized()
+
+	// Note: no need to check startTs < gcTs here again because if it is true, getTableInfo will failed later.
+
 	return nil
 }
 
@@ -281,7 +280,9 @@ func (p *persistentStorage) getTableInfo(tableID int64, ts uint64) (*common.Tabl
 }
 
 // TODO: not all ddl in p.tablesDDLHistory should be sent to the dispatcher, verify dispatcher will set the right range
-func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64) ([]common.DDLEvent, error) {
+func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, error) {
+	// TODO: check a dispatcher from created table start ts > finish ts of create table
+	// TODO: check a dispatcher from rename table start ts > finish ts of rename table(is it possible?)
 	p.mu.RLock()
 	if start < p.gcTs {
 		p.mu.Unlock()
@@ -312,16 +313,32 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, start, end uint64
 	defer storageSnap.Close()
 	p.mu.RUnlock()
 
-	events := make([]common.DDLEvent, len(allTargetTs))
-	for i, ts := range allTargetTs {
-		rawEvent := readDDLEvent(storageSnap, ts)
-		events[i] = buildDDLEvent(&rawEvent)
+	// TODO: if the first event is a create table ddl, return error?
+	events := make([]common.DDLEvent, 0, len(allTargetTs))
+	for _, ts := range allTargetTs {
+		rawEvent := readPersistedDDLEvent(storageSnap, ts)
+		if tableFilter != nil &&
+			tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.SchemaName, rawEvent.TableName) &&
+			tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.PrevSchemaName, rawEvent.PrevTableName) {
+			continue
+		}
+		events = append(events, buildDDLEvent(&rawEvent, tableFilter))
 	}
+	// log.Info("fetchTableDDLEvents",
+	// 	zap.Int64("tableID", tableID),
+	// 	zap.Uint64("start", start),
+	// 	zap.Uint64("end", end),
+	// 	zap.Any("history", history),
+	// 	zap.Any("allTargetTs", allTargetTs))
 
 	return events, nil
 }
 
 func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]common.DDLEvent, error) {
+	// get storage snap before check start < gcTs
+	storageSnap := p.db.NewSnapshot()
+	defer storageSnap.Close()
+
 	p.mu.Lock()
 	if start < p.gcTs {
 		p.mu.Unlock()
@@ -331,8 +348,6 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 
 	events := make([]common.DDLEvent, 0)
 	nextStartTs := start
-	storageSnap := p.db.NewSnapshot()
-	defer storageSnap.Close()
 	for {
 		allTargetTs := make([]uint64, 0, limit)
 		p.mu.RLock()
@@ -360,15 +375,13 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 			return events, nil
 		}
 		for _, ts := range allTargetTs {
-			rawEvent := readDDLEvent(storageSnap, ts)
-			var tableName string
-			if rawEvent.TableInfo != nil {
-				tableName = rawEvent.TableInfo.Name.O
-			}
-			if tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.SchemaName, tableName) {
+			rawEvent := readPersistedDDLEvent(storageSnap, ts)
+			if tableFilter != nil &&
+				tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.SchemaName, rawEvent.TableName) &&
+				tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.PrevSchemaName, rawEvent.PrevTableName) {
 				continue
 			}
-			events = append(events, buildDDLEvent(&rawEvent))
+			events = append(events, buildDDLEvent(&rawEvent, tableFilter))
 		}
 		if len(events) >= limit {
 			return events, nil
@@ -396,35 +409,14 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 	allDDLFinishedTs = append(allDDLFinishedTs, p.tablesDDLHistory[tableID]...)
 	p.mu.RUnlock()
 
-	getSchemaName := func(schemaID int64) (string, error) {
-		p.mu.RLock()
-		defer func() {
-			p.mu.RUnlock()
-		}()
-
-		databaseInfo, ok := p.databaseMap[schemaID]
-		if !ok {
-			return "", errors.New("database not found")
-		}
-		return databaseInfo.Name, nil
-	}
-
 	if inKVSnap {
-		if err := addTableInfoFromKVSnap(store, kvSnapVersion, storageSnap, getSchemaName); err != nil {
+		if err := addTableInfoFromKVSnap(store, kvSnapVersion, storageSnap); err != nil {
 			return err
 		}
 	}
 
 	for _, version := range allDDLFinishedTs {
-		ddlEvent := readDDLEvent(storageSnap, version)
-		// TODO: check ddlEvent type
-		// TODO: no need fill it here, schemaName should be in event
-		schemaName, err := getSchemaName(ddlEvent.SchemaID)
-		if err != nil {
-			log.Fatal("get schema name failed", zap.Error(err))
-		}
-		ddlEvent.SchemaName = schemaName
-
+		ddlEvent := readPersistedDDLEvent(storageSnap, version)
 		store.applyDDLFromPersistStorage(ddlEvent)
 	}
 	store.setTableInfoInitialized()
@@ -435,14 +427,8 @@ func addTableInfoFromKVSnap(
 	store *versionedTableInfoStore,
 	kvSnapVersion uint64,
 	snap *pebble.Snapshot,
-	getSchemaName func(schemaID int64) (string, error),
 ) error {
-	schemaID, rawTableInfo := readSchemaIDAndTableInfoFromKVSnap(snap, store.getTableID(), kvSnapVersion)
-	schemaName, err := getSchemaName(schemaID)
-	if err != nil {
-		return err
-	}
-	tableInfo := common.WrapTableInfo(schemaID, schemaName, kvSnapVersion, rawTableInfo)
+	tableInfo := readTableInfoInKVSnap(snap, store.getTableID(), kvSnapVersion)
 	tableInfo.InitPreSQLs()
 	store.addInitialTableInfo(tableInfo)
 	return nil
@@ -536,14 +522,14 @@ func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64, tablesInKVSna
 	}
 }
 
-func (p *persistentStorage) updateUpperBound(upperBound upperBoundMeta) {
+func (p *persistentStorage) updateUpperBound(upperBound UpperBoundMeta) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.upperBound = upperBound
 	p.upperBoundChanged = true
 }
 
-func (p *persistentStorage) getUpperBound() upperBoundMeta {
+func (p *persistentStorage) getUpperBound() UpperBoundMeta {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.upperBound
@@ -577,13 +563,13 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 
 	p.mu.Lock()
 	for i := range ddlEvents {
-		fillSchemaName(&ddlEvents[i], p.databaseMap)
-		fillInfluencedTableInfo(&ddlEvents[i], p.databaseMap, p.tableMap)
 		// even if the ddl is skipped here, it can still be written to disk.
 		// because when apply this ddl at restart, it will be skipped again.
 		if shouldSkipDDL(&ddlEvents[i], p.databaseMap, p.tableMap) {
 			continue
 		}
+
+		completePersistedDDLEvent(&ddlEvents[i], p.databaseMap, p.tableMap)
 		var err error
 		if p.tableTriggerDDLHistory, err = updateDDLHistory(
 			&ddlEvents[i],
@@ -602,35 +588,48 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 	}
 	p.mu.Unlock()
 
-	writeDDLEvents(p.db, ddlEvents...)
+	writePersistedDDLEvents(p.db, ddlEvents...)
 	return nil
 }
 
-func fillSchemaName(
-	event *PersistedDDLEvent,
-	databaseMap map[int64]*BasicDatabaseInfo,
-) {
-	switch model.ActionType(event.Type) {
-	case model.ActionCreateSchema,
-		model.ActionDropSchema:
-		event.SchemaName = event.DBInfo.Name.O
-	default:
-		databaseInfo, ok := databaseMap[event.SchemaID]
-		if !ok {
-			log.Panic("database not found",
-				zap.Int64("schemaID", event.SchemaID))
-		}
-		event.SchemaName = databaseInfo.Name
-	}
-}
-
-func fillInfluencedTableInfo(
+func completePersistedDDLEvent(
 	event *PersistedDDLEvent,
 	databaseMap map[int64]*BasicDatabaseInfo,
 	tableMap map[int64]*BasicTableInfo,
 ) {
+	getSchemaName := func(schemaID int64) string {
+		databaseInfo, ok := databaseMap[schemaID]
+		if !ok {
+			log.Panic("database not found",
+				zap.Int64("schemaID", schemaID))
+		}
+		return databaseInfo.Name
+	}
+	getTableName := func(tableID int64) string {
+		tableInfo, ok := tableMap[tableID]
+		if !ok {
+			log.Panic("table not found",
+				zap.Int64("tableID", tableID))
+		}
+		return tableInfo.Name
+	}
+	getSchemaID := func(tableID int64) int64 {
+		tableInfo, ok := tableMap[tableID]
+		if !ok {
+			log.Panic("table not found",
+				zap.Int64("tableID", tableID))
+		}
+		return tableInfo.SchemaID
+	}
+
 	switch model.ActionType(event.Type) {
 	case model.ActionCreateSchema,
+		model.ActionDropSchema:
+		event.SchemaName = event.DBInfo.Name.O
+	case model.ActionCreateTable:
+		event.SchemaName = getSchemaName(event.SchemaID)
+		event.TableName = event.TableInfo.Name.O
+	case model.ActionDropTable,
 		model.ActionAddColumn,
 		model.ActionDropColumn,
 		model.ActionAddIndex,
@@ -643,47 +642,23 @@ func fillInfluencedTableInfo(
 		model.ActionShardRowID,
 		model.ActionModifyTableComment,
 		model.ActionRenameIndex:
-		// ignore
-	case model.ActionDropSchema:
-		event.NeedDroppedTables = &common.InfluencedTables{
-			InfluenceType: common.DB,
-			SchemaID:      event.SchemaID,
-			SchemaName:    event.SchemaName,
-		}
-	case model.ActionCreateTable:
-		event.NeedAddedTables = []common.Table{
-			{
-				SchemaID:   event.SchemaID,
-				SchemaName: event.SchemaName,
-				TableID:    event.TableID,
-				TableName:  event.TableInfo.Name.O,
-			},
-		}
-	case model.ActionDropTable:
-		event.NeedDroppedTables = &common.InfluencedTables{
-			InfluenceType: common.Normal,
-			TableIDs:      []int64{event.TableID},
-		}
+		event.SchemaName = getSchemaName(event.SchemaID)
+		event.TableName = getTableName(event.TableID)
 	case model.ActionTruncateTable:
-		event.NeedDroppedTables = &common.InfluencedTables{
-			InfluenceType: common.Normal,
-			TableIDs:      []int64{event.TableID},
-		}
-		event.NeedAddedTables = []common.Table{
-			{
-				SchemaID: event.SchemaID,
-				TableID:  event.TableInfo.ID,
-			},
-		}
+		event.SchemaName = getSchemaName(event.SchemaID)
+		event.TableName = getTableName(event.TableID)
+		// TODO: different with tidb, will it be confusing?
+		event.PrevTableID = event.TableID
+		event.TableID = event.TableInfo.ID
 	case model.ActionRenameTable:
-		event.BlockedTables = &common.InfluencedTables{
-			InfluenceType: common.Normal,
-			TableIDs:      []int64{event.TableID},
-		}
+		event.PrevSchemaID = getSchemaID(event.TableID)
+		event.PrevSchemaName = getSchemaName(event.PrevSchemaID)
+		event.PrevTableName = getTableName(event.TableID)
+		// TODO: is the following SchemaName and TableName correct?
+		event.SchemaName = getSchemaName(event.SchemaID)
+		event.TableName = event.TableInfo.Name.O
 	case model.ActionCreateView:
-		event.BlockedTables = &common.InfluencedTables{
-			InfluenceType: common.All,
-		}
+		// ignore
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", event.Type),
@@ -691,6 +666,7 @@ func fillInfluencedTableInfo(
 	}
 }
 
+// TODO: add some comment to explain why we should skip some ddl
 func shouldSkipDDL(
 	event *PersistedDDLEvent,
 	databaseMap map[int64]*BasicDatabaseInfo,
@@ -764,7 +740,7 @@ func updateDDLHistory(
 		addTableHistory(ddlEvent.TableID)
 	case model.ActionTruncateTable:
 		addTableHistory(ddlEvent.TableID)
-		addTableHistory(ddlEvent.TableInfo.ID)
+		addTableHistory(ddlEvent.PrevTableID)
 	case model.ActionRenameTable:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		addTableHistory(ddlEvent.TableID)
@@ -846,9 +822,8 @@ func updateDatabaseInfoAndTableInfo(
 		model.ActionRebaseAutoID:
 		// ignore
 	case model.ActionTruncateTable:
-		dropTable(event.SchemaID, event.TableID)
-		// TODO: do we need check the return value of createTable?
-		createTable(event.SchemaID, event.TableInfo.ID)
+		dropTable(event.SchemaID, event.PrevTableID)
+		createTable(event.SchemaID, event.TableID)
 	case model.ActionRenameTable:
 		oldSchemaID := tableMap[event.TableID].SchemaID
 		if oldSchemaID != event.SchemaID {
@@ -912,24 +887,124 @@ func updateRegisteredTableInfoStore(
 	return nil
 }
 
-func buildDDLEvent(rawEvent *PersistedDDLEvent) common.DDLEvent {
-	event := common.DDLEvent{
+func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) common.DDLEvent {
+	ddlEvent := common.DDLEvent{
 		Type:       rawEvent.Type,
 		SchemaID:   rawEvent.SchemaID,
 		TableID:    rawEvent.TableID,
 		SchemaName: rawEvent.SchemaName,
+		TableName:  rawEvent.TableName,
 		Query:      rawEvent.Query,
 		TableInfo:  rawEvent.TableInfo,
 		FinishedTs: rawEvent.FinishedTs,
+		TiDBOnly:   false,
 	}
-	if rawEvent.TableInfo != nil {
-		event.TableName = rawEvent.TableInfo.Name.O
+	switch model.ActionType(rawEvent.Type) {
+	case model.ActionCreateSchema,
+		model.ActionAddColumn,
+		model.ActionDropColumn,
+		model.ActionAddIndex,
+		model.ActionDropIndex,
+		model.ActionAddForeignKey,
+		model.ActionDropForeignKey,
+		model.ActionModifyColumn,
+		model.ActionRebaseAutoID,
+		model.ActionSetDefaultValue,
+		model.ActionShardRowID,
+		model.ActionModifyTableComment,
+		model.ActionRenameIndex:
+		// ignore
+	case model.ActionDropSchema:
+		ddlEvent.NeedDroppedTables = &common.InfluencedTables{
+			InfluenceType: common.InfluenceTypeDB,
+			SchemaID:      rawEvent.SchemaID,
+		}
+		ddlEvent.TableNameChange = &common.TableNameChange{
+			DropDatabaseName: rawEvent.SchemaName,
+		}
+	case model.ActionCreateTable:
+		ddlEvent.NeedAddedTables = []common.Table{
+			{
+				SchemaID: rawEvent.SchemaID,
+				TableID:  rawEvent.TableID,
+			},
+		}
+		ddlEvent.TableNameChange = &common.TableNameChange{
+			AddName: []common.SchemaTableName{
+				{
+					SchemaName: rawEvent.SchemaName,
+					TableName:  rawEvent.TableName,
+				},
+			},
+		}
+	case model.ActionDropTable:
+		ddlEvent.BlockedTables = &common.InfluencedTables{
+			InfluenceType: common.InfluenceTypeNormal,
+			TableIDs:      []int64{rawEvent.TableID},
+			SchemaID:      rawEvent.SchemaID,
+		}
+		ddlEvent.NeedDroppedTables = ddlEvent.BlockedTables
+		ddlEvent.TableNameChange = &common.TableNameChange{
+			DropName: []common.SchemaTableName{
+				{
+					SchemaName: rawEvent.SchemaName,
+					TableName:  rawEvent.TableName,
+				},
+			},
+		}
+	case model.ActionTruncateTable:
+		ddlEvent.NeedDroppedTables = &common.InfluencedTables{
+			InfluenceType: common.InfluenceTypeNormal,
+			TableIDs:      []int64{rawEvent.PrevTableID},
+			SchemaID:      rawEvent.SchemaID,
+		}
+		ddlEvent.NeedAddedTables = []common.Table{
+			{
+				SchemaID: rawEvent.SchemaID,
+				TableID:  rawEvent.TableID,
+			},
+		}
+	case model.ActionRenameTable:
+		ignorePrevTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.PrevSchemaName, rawEvent.PrevTableName)
+		ignoreCurrentTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.SchemaName, rawEvent.TableName)
+		var addName, dropName []common.SchemaTableName
+		if !ignorePrevTable {
+			ddlEvent.BlockedTables = &common.InfluencedTables{
+				InfluenceType: common.InfluenceTypeNormal,
+				TableIDs:      []int64{rawEvent.TableID},
+				SchemaID:      rawEvent.PrevSchemaID,
+			}
+			ddlEvent.NeedDroppedTables = ddlEvent.BlockedTables
+			dropName = append(dropName, common.SchemaTableName{
+				SchemaName: rawEvent.PrevSchemaName,
+				TableName:  rawEvent.PrevTableName,
+			})
+		}
+		if !ignoreCurrentTable {
+			ddlEvent.NeedAddedTables = []common.Table{
+				{
+					SchemaID: rawEvent.SchemaID,
+					TableID:  rawEvent.TableID,
+				},
+			}
+			addName = append(addName, common.SchemaTableName{
+				SchemaName: rawEvent.SchemaName,
+				TableName:  rawEvent.TableName,
+			})
+		}
+		ddlEvent.TableNameChange = &common.TableNameChange{
+			AddName:  addName,
+			DropName: dropName,
+		}
+	case model.ActionCreateView:
+		ddlEvent.BlockedTables = &common.InfluencedTables{
+			InfluenceType: common.InfluenceTypeAll,
+		}
+	default:
+		log.Panic("unknown ddl type",
+			zap.Any("ddlType", rawEvent.Type),
+			zap.String("DDL", rawEvent.Query))
 	}
 
-	// TODO: respect filter
-	event.BlockedTables = rawEvent.BlockedTables
-	event.NeedDroppedTables = rawEvent.NeedDroppedTables
-	event.NeedAddedTables = rawEvent.NeedAddedTables
-
-	return event
+	return ddlEvent
 }

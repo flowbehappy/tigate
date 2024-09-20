@@ -199,13 +199,9 @@ func (c *server) initDir() error {
 
 func (c *server) setUpDir() {
 	conf := cdcconfig.GetGlobalServerConfig()
-	if conf.DataDir != "" {
-		conf.Sorter.SortDir = filepath.Join(conf.DataDir, cdcconfig.DefaultSortDir)
-		cdcconfig.StoreGlobalServerConfig(conf)
-		return
+	if conf.DataDir == "" {
+		conf.DataDir = defaultDataDir
 	}
-
-	conf.DataDir = defaultDataDir
 	conf.Sorter.SortDir = filepath.Join(conf.DataDir, cdcconfig.DefaultSortDir)
 	cdcconfig.StoreGlobalServerConfig(conf)
 }
