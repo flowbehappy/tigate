@@ -453,9 +453,6 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 		key := EncodeKey(uint64(item.state.span.TableID), item.raw)
 		value := item.raw.Encode()
 		compressedValue := e.encoder.EncodeAll(value, nil)
-		if batch == nil {
-			batch = db.NewBatch()
-		}
 		if err := batch.Set(key, compressedValue, pebble.NoSync); err != nil {
 			log.Panic("failed to update pebble batch", zap.Error(err))
 		}
@@ -465,7 +462,7 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 	// or the time since the last commit is larger than batchCommitInterval.
 	// Only return false when the sorter is closed.
 	doBatching := func() (*DBBatchEvent, bool) {
-		var batch *pebble.Batch
+		batch := db.NewBatch()
 		resolvedTsBatch := make(map[*spanState]uint64)
 		startToBatch := time.Now()
 		for {
