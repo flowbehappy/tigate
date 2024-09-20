@@ -26,7 +26,7 @@ import (
 	"github.com/flowbehappy/tigate/maintainer/split"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
-	configNew "github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
@@ -52,7 +52,7 @@ import (
 // 4. handle heartbeat reported by dispatcher
 type Maintainer struct {
 	id       model.ChangeFeedID
-	config   *configNew.ChangeFeedInfo
+	config   *config.ChangeFeedInfo
 	selfNode *node.Info
 
 	stream        dynstream.DynamicStream[string, *Event, *Maintainer]
@@ -104,11 +104,11 @@ type Maintainer struct {
 
 // NewMaintainer create the maintainer for the changefeed
 func NewMaintainer(cfID model.ChangeFeedID,
-	cfg *configNew.ChangeFeedInfo,
+	cfg *config.ChangeFeedInfo,
 	selfNode *node.Info,
 	stream dynstream.DynamicStream[string, *Event, *Maintainer],
 	taskScheduler threadpool.ThreadPool,
-	pdapi pdutil.PDAPIClient,
+	pdAPI pdutil.PDAPIClient,
 	regionCache split.RegionCache,
 	checkpointTs uint64,
 ) *Maintainer {
@@ -117,7 +117,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		selfNode:        selfNode,
 		stream:          stream,
 		taskScheduler:   taskScheduler,
-		scheduler:       NewScheduler(cfID.ID, checkpointTs, pdapi, regionCache, cfg.Config.Scheduler, 10000, time.Minute),
+		scheduler:       NewScheduler(cfID.ID, checkpointTs, pdAPI, regionCache, cfg.Config.Scheduler, 10000, time.Minute),
 		mc:              appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		state:           heartbeatpb.ComponentState_Working,
 		removed:         atomic.NewBool(false),
@@ -240,7 +240,7 @@ func (m *Maintainer) initialize() error {
 		return errors.Trace(err)
 	}
 	m.scheduler.SetInitialTables(tables)
-
+	
 	log.Info("changefeed maintainer initialized",
 		zap.String("id", m.id.String()))
 	m.initialized = true
@@ -339,16 +339,18 @@ func (m *Maintainer) onCheckpointTsPersisted(msg *heartbeatpb.CheckpointTsMessag
 }
 
 func (m *Maintainer) onNodeChanged() {
+	currentNodes := m.bootstrapper.GetAllNodes()
+
 	activeNodes := m.nodeManager.GetAliveNodes()
 	var newNodes = make([]*node.Info, 0, len(activeNodes))
 	for id, n := range activeNodes {
-		if _, ok := m.bootstrapper.GetAllNodes()[id]; !ok {
+		if _, ok := currentNodes[id]; !ok {
 			newNodes = append(newNodes, n)
 			m.scheduler.AddNewNode(id)
 		}
 	}
 	var removedNodes []node.ID
-	for id, _ := range m.bootstrapper.GetAllNodes() {
+	for id, _ := range currentNodes {
 		if _, ok := activeNodes[id]; !ok {
 			removedNodes = append(removedNodes, id)
 			m.sendMessages(m.scheduler.RemoveNode(id))
@@ -619,7 +621,7 @@ func (m *Maintainer) handleError(err error) {
 // a changefeed dispatcher manager.
 func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 	cfg := m.config
-	changefeedConfig := configNew.ChangefeedConfig{
+	changefeedConfig := config.ChangefeedConfig{
 		Namespace:      cfg.Namespace,
 		ID:             cfg.ID,
 		StartTS:        cfg.StartTs,
