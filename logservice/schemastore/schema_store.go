@@ -192,24 +192,18 @@ func (s *schemaStore) GetTableInfo(tableID int64, ts uint64) (*common.TableInfo,
 }
 
 func (s *schemaStore) FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, uint64, error) {
-	currentResolvedTs := s.resolvedTs.Load()
-	if currentResolvedTs < end {
-		end = currentResolvedTs
-	}
-	// TODO: remove the following log
-	log.Debug("FetchTableDDLEvents",
-		zap.Int64("tableID", tableID),
-		zap.Uint64("start", start),
-		zap.Uint64("end", end))
-	defer log.Debug("FetchTableDDLEvents end",
-		zap.Int64("tableID", tableID),
-		zap.Uint64("start", start),
-		zap.Uint64("end", end))
-	events, err := s.dataStorage.fetchTableDDLEvents(tableID, tableFilter, start, end)
-	if err != nil {
-		return nil, 0, err
-	}
-	return events, end, nil
+
+	return nil, 0, nil
+
+	// currentResolvedTs := s.resolvedTs.Load()
+	// if currentResolvedTs < end {
+	// 	end = currentResolvedTs
+	// }
+	// events, err := s.dataStorage.fetchTableDDLEvents(tableID, tableFilter, start, end)
+	// if err != nil {
+	// 	return nil, 0, err
+	// }
+	// return events, end, nil
 }
 
 func (s *schemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]common.DDLEvent, uint64, error) {
