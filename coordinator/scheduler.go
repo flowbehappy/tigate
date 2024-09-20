@@ -30,7 +30,7 @@ type Scheduler interface {
 		allInferiors map[scheduler.ChangefeedID]scheduler.Inferior,
 		aliveCaptures map[node.ID]*CaptureStatus,
 		stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
-		batchSize int,
+		maxTaskCount int,
 	) []*ScheduleTask
 }
 
@@ -51,7 +51,7 @@ func (s *Supervisor) schedule(
 }
 
 // Schedule generates schedule tasks based on the inputs.
-func (s *Supervisor) Schedule(allInferiors map[scheduler.ChangefeedID]scheduler.Inferior) ([]*messaging.TargetMessage, error) {
+func (s *Supervisor) Schedule(allInferiors map[scheduler.ChangefeedID]scheduler.Inferior) []*messaging.TargetMessage {
 	msgs := s.checkRunningTasks()
 
 	if !s.CheckAllCaptureInitialized() {
@@ -64,7 +64,7 @@ func (s *Supervisor) Schedule(allInferiors map[scheduler.ChangefeedID]scheduler.
 			zap.Int("maxTaskConcurrency", s.maxTaskConcurrency),
 			zap.Int("runningTasks", len(s.RunningTasks)),
 		)
-		return msgs, nil
+		return msgs
 	}
 	maxTaskCount := s.maxTaskConcurrency - len(s.RunningTasks)
 	if maxTaskCount <= 0 {
@@ -75,13 +75,13 @@ func (s *Supervisor) Schedule(allInferiors map[scheduler.ChangefeedID]scheduler.
 			zap.Int("maxTaskConcurrency", s.maxTaskConcurrency),
 			zap.Int("runningTasks", len(s.RunningTasks)),
 		)
-		return msgs, nil
+		return msgs
 	}
 
 	tasks := s.schedule(allInferiors, s.GetAllCaptures(), s.GetInferiors(), maxTaskCount)
-	msgs1, err := s.handleScheduleTasks(tasks)
-	msgs = append(msgs, msgs1...)
-	return msgs, err
+	scheduleMessages := s.handleScheduleTasks(tasks)
+	msgs = append(msgs, scheduleMessages...)
+	return msgs
 }
 
 func (s *Supervisor) MarkNeedAddInferior() {

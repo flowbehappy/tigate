@@ -135,10 +135,7 @@ func (c *coordinator) Tick(
 	c.sendMessages(msgs)
 
 	// 3. schedule changefeed maintainer
-	msgs, err = c.scheduleMaintainer(state)
-	if err != nil {
-		return state, err
-	}
+	msgs = c.scheduleMaintainer(state.Changefeeds)
 	c.sendMessages(msgs)
 
 	//4. update checkpoint ts and changefeed states
@@ -206,12 +203,14 @@ func (c *coordinator) sendMessages(msgs []*messaging.TargetMessage) {
 	}
 }
 
-func (c *coordinator) scheduleMaintainer(state *orchestrator.GlobalReactorState) ([]*messaging.TargetMessage, error) {
+func (c *coordinator) scheduleMaintainer(
+	changefeeds map[model.ChangeFeedID]*orchestrator.ChangefeedReactorState,
+) []*messaging.TargetMessage {
 	if !c.supervisor.CheckAllCaptureInitialized() {
-		return nil, nil
+		return nil
 	}
 	// check all changefeeds.
-	for id, cfState := range state.Changefeeds {
+	for id, cfState := range changefeeds {
 		if cfState.Info == nil {
 			continue
 		}

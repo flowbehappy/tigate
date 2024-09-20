@@ -253,7 +253,7 @@ func (s *Supervisor) handleRemovedNodes(
 // handleScheduleTasks handles schedule tasks.
 func (s *Supervisor) handleScheduleTasks(
 	tasks []*ScheduleTask,
-) ([]*messaging.TargetMessage, error) {
+) []*messaging.TargetMessage {
 	sentMsgs := make([]*messaging.TargetMessage, 0)
 	for idx, task := range tasks {
 		// Check if accepting one more task exceeds maxTaskConcurrency.
@@ -277,18 +277,16 @@ func (s *Supervisor) handleScheduleTasks(
 
 		// Skip task if the inferior is already running a task,
 		// or the inferior has removed.
-		if _, ok := s.RunningTasks[id]; ok {
-			log.Debug("ignore task, already exists",
-				zap.String("id", s.ID.String()),
-				zap.Any("task", task))
+		if exist, ok := s.RunningTasks[id]; ok {
+			log.Debug("ignore task, since there is one task belong to the same inferior exists",
+				zap.String("id", s.ID.String()), zap.Any("exist", exist), zap.Any("task", task))
 			continue
 		}
 
 		// it's remove or move inferior task, but we can not find the state machine
 		if _, ok := s.StateMachines[id]; !ok && task.AddInferior == nil {
 			log.Info("ignore task, inferior not found",
-				zap.String("id", s.ID.String()),
-				zap.Any("task", task))
+				zap.String("id", s.ID.String()), zap.Any("task", task))
 			continue
 		}
 
@@ -300,15 +298,14 @@ func (s *Supervisor) handleScheduleTasks(
 		} else if task.MoveInferior != nil {
 			msg = s.handleMoveInferiorTask(task.MoveInferior)
 		}
-		if msg != nil {
-			sentMsgs = append(sentMsgs, msg)
+		if msg == nil {
+			continue
 		}
+		sentMsgs = append(sentMsgs, msg)
 		s.RunningTasks[id] = task
-		log.Info("add running task",
-			zap.String("supervisorID", s.ID.String()),
-			zap.Any("task", task))
+		log.Info("add running task", zap.String("supervisorID", s.ID.String()), zap.Any("task", task))
 	}
-	return sentMsgs, nil
+	return sentMsgs
 }
 
 func (s *Supervisor) handleAddInferiorTask(
