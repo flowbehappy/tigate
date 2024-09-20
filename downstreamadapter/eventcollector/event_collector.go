@@ -217,8 +217,7 @@ func (c *EventCollector) updateMetrics(ctx context.Context) error {
 					continue
 				}
 				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
-				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
-				c.metricResolvedTsLag.Set(float64(lag))
+				c.metricResolvedTsLag.Set(float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3)
 			}
 		}
 	}()
