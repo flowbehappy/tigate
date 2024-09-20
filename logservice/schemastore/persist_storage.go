@@ -297,6 +297,10 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 	index := sort.Search(len(history), func(i int) bool {
 		return history[i] > start
 	})
+	log.Info("fetchTableDDLEvents phase 1",
+		zap.Int64("tableID", tableID),
+		zap.Uint64("start", start),
+		zap.Int("historyLen", len(history)))
 	// no events to read
 	if index == len(history) {
 		p.mu.RUnlock()
@@ -309,6 +313,11 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 			allTargetTs = append(allTargetTs, history[i])
 		}
 	}
+	log.Info("fetchTableDDLEvents phase 2",
+		zap.Int64("tableID", tableID),
+		zap.Uint64("start", start),
+		zap.Int("historyLen", len(history)),
+		zap.Int("allTargetTsLen", len(allTargetTs)))
 
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
