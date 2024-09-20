@@ -79,7 +79,6 @@ type EventCollector struct {
 	metricDispatcherReceivedKVEventCount         prometheus.Counter
 	metricDispatcherReceivedResolvedTsEventCount prometheus.Counter
 	metricReceiveEventLagDuration                prometheus.Observer
-	metricResolvedTsLag                          prometheus.Gauge
 }
 
 func NewEventCollector(globalMemoryQuota int64, serverId node.ID) *EventCollector {
@@ -92,7 +91,6 @@ func NewEventCollector(globalMemoryQuota int64, serverId node.ID) *EventCollecto
 		metricDispatcherReceivedKVEventCount:         metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
 		metricReceiveEventLagDuration:                metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("Msg"),
-		metricResolvedTsLag:                          metrics.EventCollectorResolvedTsLagGauge,
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
 
@@ -217,7 +215,7 @@ func (c *EventCollector) updateMetrics(ctx context.Context) error {
 					continue
 				}
 				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
-				c.metricResolvedTsLag.Set(float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3)
+				metrics.EventCollectorResolvedTsLagGauge.Set(float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3)
 			}
 		}
 	}()
