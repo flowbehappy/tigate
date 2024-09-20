@@ -188,7 +188,8 @@ func (b *Barrier) handleStateHeartbeat(changefeedID string,
 		event, ok := b.blockedTs[blockState.BlockTs]
 		ack := &heartbeatpb.DispatcherStatus{
 			InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
-				InfluenceType: blockState.BlockTables.InfluenceType,
+				InfluenceType: heartbeatpb.InfluenceType_Normal,
+				DispatcherIDs: []*heartbeatpb.DispatcherID{dispatcherID.ToPB()},
 			},
 			Ack: &heartbeatpb.ACK{CommitTs: blockState.BlockTs}}
 		if !ok {
