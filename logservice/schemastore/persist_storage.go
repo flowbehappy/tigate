@@ -266,6 +266,8 @@ func (p *persistentStorage) unregisterTable(tableID int64) error {
 			return fmt.Errorf(fmt.Sprintf("table %d not found", tableID))
 		}
 		delete(p.tableInfoStoreMap, tableID)
+		log.Info("unregister table",
+			zap.Int64("tableID", tableID))
 	}
 	return nil
 }
@@ -289,24 +291,22 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 		p.mu.Unlock()
 		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
 	}
-	history, ok := p.tablesDDLHistory[tableID]
-	if !ok {
+	// fast check
+	if len(p.tablesDDLHistory[tableID]) == 0 || start >= p.tablesDDLHistory[tableID][len(p.tablesDDLHistory[tableID])-1] {
 		p.mu.RUnlock()
 		return nil, nil
 	}
-	index := sort.Search(len(history), func(i int) bool {
-		return history[i] > start
+	index := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
+		return p.tablesDDLHistory[tableID][i] > start
 	})
-	// no events to read
-	if index == len(history) {
-		p.mu.RUnlock()
-		return nil, nil
+	if index == len(p.tablesDDLHistory[tableID]) {
+		log.Panic("should not happen")
 	}
 	// copy all target ts to a new slice
 	allTargetTs := make([]uint64, 0)
-	for i := index; i < len(history); i++ {
-		if history[i] <= end {
-			allTargetTs = append(allTargetTs, history[i])
+	for i := index; i < len(p.tablesDDLHistory[tableID]); i++ {
+		if p.tablesDDLHistory[tableID][i] <= end {
+			allTargetTs = append(allTargetTs, p.tablesDDLHistory[tableID][i])
 		}
 	}
 
@@ -346,6 +346,11 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
 	}
 	p.mu.Unlock()
+
+	// fast check
+	if len(p.tableTriggerDDLHistory) == 0 || start >= p.tableTriggerDDLHistory[len(p.tableTriggerDDLHistory)-1] {
+		return nil, nil
+	}
 
 	events := make([]common.DDLEvent, 0)
 	nextStartTs := start
@@ -467,18 +472,25 @@ func (p *persistentStorage) doGc(gcTs uint64) error {
 	p.mu.Unlock()
 
 	start := time.Now()
+	// TODO: tablesInKVSnap seems too memory consuming
 	_, tablesInKVSnap, err := writeSchemaSnapshotAndMeta(p.db, p.kvStorage, gcTs)
 	if err != nil {
 		// TODO: retry
 		log.Warn("fail to write kv snapshot during gc",
 			zap.Uint64("gcTs", gcTs))
 	}
+	log.Info("persist storage: gc finish write schema snapshot",
+		zap.Uint64("gcTs", gcTs),
+		zap.Any("duration", time.Since(start).Seconds()))
 
 	// clean data in memeory before clean data on disk
 	p.cleanObseleteDataInMemory(gcTs, tablesInKVSnap)
-	cleanObseleteData(p.db, oldGcTs, gcTs)
+	log.Info("persist storage: gc finish clean in memory data",
+		zap.Uint64("gcTs", gcTs),
+		zap.Any("duration", time.Since(start).Seconds()))
 
-	log.Info("gc finish",
+	cleanObseleteData(p.db, oldGcTs, gcTs)
+	log.Info("persist storage: gc finish",
 		zap.Uint64("gcTs", gcTs),
 		zap.Any("duration", time.Since(start).Seconds()))
 
@@ -495,20 +507,20 @@ func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64, tablesInKVSna
 	}
 
 	// clean tablesDDLHistory
-	for tableID, history := range p.tablesDDLHistory {
+	for tableID := range p.tablesDDLHistory {
 		if _, ok := tablesInKVSnap[tableID]; !ok {
 			delete(p.tablesDDLHistory, tableID)
 			continue
 		}
 
-		i := sort.Search(len(history), func(i int) bool {
-			return history[i] > gcTs
+		i := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
+			return p.tablesDDLHistory[tableID][i] > gcTs
 		})
-		if i == len(history) {
+		if i == len(p.tablesDDLHistory[tableID]) {
 			delete(p.tablesDDLHistory, tableID)
 			continue
 		}
-		p.tablesDDLHistory[tableID] = history[i:]
+		p.tablesDDLHistory[tableID] = p.tablesDDLHistory[tableID][i:]
 	}
 
 	// clean tableTriggerDDLHistory
@@ -518,7 +530,11 @@ func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64, tablesInKVSna
 	p.tableTriggerDDLHistory = p.tableTriggerDDLHistory[i:]
 
 	// clean tableInfoStoreMap
-	for _, store := range p.tableInfoStoreMap {
+	for tableID, store := range p.tableInfoStoreMap {
+		if _, ok := tablesInKVSnap[tableID]; !ok {
+			delete(p.tableInfoStoreMap, tableID)
+			continue
+		}
 		store.gc(gcTs)
 	}
 }

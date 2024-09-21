@@ -314,7 +314,8 @@ func (s *Scheduler) Schedule() []*messaging.TargetMessage {
 		return nil
 	}
 	if !s.NeedSchedule() {
-		return nil
+		// we scheduled all absent tasks, try to balance it if needed
+		return s.tryBalance()
 	}
 	totalSize := s.batchSize - len(s.Removing()) - len(s.Commiting())
 	if totalSize <= 0 {
@@ -362,7 +363,7 @@ func (s *Scheduler) ScheduleFinished() bool {
 	return s.TaskSize() == s.GetTaskSizeByState(scheduler.SchedulerStatusWorking)
 }
 
-func (s *Scheduler) TryBalance() []*messaging.TargetMessage {
+func (s *Scheduler) tryBalance() []*messaging.TargetMessage {
 	if !s.ScheduleFinished() {
 		// not in stable schedule state, skip balance
 		return nil

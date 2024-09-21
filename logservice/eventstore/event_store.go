@@ -11,7 +11,6 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/logpuller"
-	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/logservice/txnutil"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
@@ -108,9 +107,8 @@ func (s *spanState) minWatermark() uint64 {
 type eventStore struct {
 	pdClock pdutil.Clock
 
-	schemaStore schemastore.SchemaStore
-	dbs         []*pebble.DB
-	eventChs    []chan eventWithSpanState
+	dbs      []*pebble.DB
+	eventChs []chan eventWithSpanState
 
 	puller *logpuller.LogPuller
 
@@ -132,14 +130,13 @@ type eventStore struct {
 const dataDir = "event_store"
 const dbCount = 32
 
-func NewEventStore(
+func New(
 	ctx context.Context,
 	root string,
 	pdCli pd.Client,
 	regionCache *tikv.RegionCache,
 	pdClock pdutil.Clock,
 	kvStorage kv.Storage,
-	schemaStore schemastore.SchemaStore,
 ) EventStore {
 	clientConfig := &logpuller.SubscriptionClientConfig{
 		RegionRequestWorkerPerStore:        16,
@@ -176,10 +173,9 @@ func NewEventStore(
 	}
 
 	store := &eventStore{
-		pdClock:     pdClock,
-		schemaStore: schemaStore,
-		dbs:         make([]*pebble.DB, 0, dbCount),
-		eventChs:    make([]chan eventWithSpanState, 0, dbCount),
+		pdClock:  pdClock,
+		dbs:      make([]*pebble.DB, 0, dbCount),
+		eventChs: make([]chan eventWithSpanState, 0, dbCount),
 
 		gcManager: newGCManager(),
 		encoder:   encoder,
@@ -353,8 +349,7 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange *co
 	iter.First()
 
 	return &eventStoreIter{
-		tableID:      common.TableID(span.TableID),
-		schemaStore:  e.schemaStore,
+		tableID:      span.TableID,
 		innerIter:    iter,
 		prevStartTS:  0,
 		prevCommitTS: 0,
@@ -531,7 +526,6 @@ func (e *eventStore) deleteEvents(span heartbeatpb.TableSpan, startCommitTS uint
 
 type eventStoreIter struct {
 	tableID      common.TableID
-	schemaStore  schemastore.SchemaStore
 	innerIter    *pebble.Iterator
 	prevStartTS  uint64
 	prevCommitTS uint64

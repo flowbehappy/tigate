@@ -128,13 +128,12 @@ func (v *versionedTableInfoStore) gc(gcTs uint64) {
 		return
 	}
 	if len(v.infos) == 0 {
-		log.Fatal("no table info found")
+		log.Fatal("no table info found", zap.Int64("tableID", v.tableID))
 	}
 
 	target := sort.Search(len(v.infos), func(i int) bool {
 		return v.infos[i].version > gcTs
 	})
-	// TODO: all info version is larger than gcTS seems impossible?
 	if target == 0 {
 		return
 	}
