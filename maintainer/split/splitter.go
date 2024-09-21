@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/pingcap/log"
@@ -90,7 +91,7 @@ func (s *Splitter) SplitSpans(ctx context.Context,
 }
 
 // FindHoles returns an array of Span that are not covered in the range
-func FindHoles(currentSpan utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine], totalSpan *heartbeatpb.TableSpan) []*heartbeatpb.TableSpan {
+func FindHoles(currentSpan utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]], totalSpan *heartbeatpb.TableSpan) []*heartbeatpb.TableSpan {
 	lastSpan := &heartbeatpb.TableSpan{
 		TableID:  totalSpan.TableID,
 		StartKey: totalSpan.StartKey,
@@ -98,7 +99,7 @@ func FindHoles(currentSpan utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMac
 	}
 	var holes []*heartbeatpb.TableSpan
 	// table span is sorted
-	currentSpan.Ascend(func(current *heartbeatpb.TableSpan, value *scheduler.StateMachine) bool {
+	currentSpan.Ascend(func(current *heartbeatpb.TableSpan, value *scheduler.StateMachine[common.DispatcherID]) bool {
 		ord := bytes.Compare(lastSpan.EndKey, current.StartKey)
 		if ord < 0 {
 			// Find a hole.

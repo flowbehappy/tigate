@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/stretchr/testify/require"
@@ -87,9 +88,9 @@ func TestMapFindHole(t *testing.T) {
 	}
 
 	for i, cs := range cases {
-		m := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine](heartbeatpb.LessTableSpan)
+		m := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]](heartbeatpb.LessTableSpan)
 		for _, span := range cs.spans {
-			m.ReplaceOrInsert(span, &scheduler.StateMachine{})
+			m.ReplaceOrInsert(span, &scheduler.StateMachine[common.DispatcherID]{})
 		}
 		holes := FindHoles(m, cs.rang)
 		require.Equalf(t, cs.expectedHole, holes, "case %d, %#v", i, cs)

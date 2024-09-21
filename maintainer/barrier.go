@@ -240,8 +240,8 @@ type BarrierEvent struct {
 	blockedDispatchers       *heartbeatpb.InfluencedTables
 	dropDispatchers          *heartbeatpb.InfluencedTables
 
-	blockedTasks []*scheduler.StateMachine
-	dropTasks    []*scheduler.StateMachine
+	blockedTasks []*scheduler.StateMachine[common.DispatcherID]
+	dropTasks    []*scheduler.StateMachine[common.DispatcherID]
 
 	advancedDispatchers map[common.DispatcherID]bool
 	lastResendTime      time.Time

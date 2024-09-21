@@ -14,41 +14,16 @@
 package scheduler
 
 import (
-	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
-	"github.com/pingcap/tiflow/cdc/model"
 )
 
-type Inferior interface {
-	UpdateStatus(InferiorStatus)
-	SetStateMachine(*StateMachine)
-	GetStateMachine() *StateMachine
+type Inferior[ID comparable] interface {
+	UpdateStatus(any)
 	NewAddInferiorMessage(id node.ID) *messaging.TargetMessage
 	NewRemoveInferiorMessage(id node.ID) *messaging.TargetMessage
 }
 
-type InferiorID interface {
-	Equal(t any) bool
-	String() string
-}
-
-type InferiorStatus interface {
-	GetInferiorID() InferiorID
-	GetInferiorState() heartbeatpb.ComponentState
-}
-
-type ChangefeedID model.ChangeFeedID
-
-func (c ChangefeedID) Equal(t any) bool {
-	cf := t.(ChangefeedID)
-	return c.ID == cf.ID
-}
-
-func (c ChangefeedID) String() string {
-	return c.ID
-}
-
 type NewBootstrapFn func(id node.ID) *messaging.TargetMessage
 
-type NewInferiorFn func(id InferiorID) Inferior
+type NewInferiorFn[T comparable] func(id T) Inferior[T]
