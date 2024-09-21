@@ -61,7 +61,7 @@ func (b *BasicScheduler) hasPendingTask() bool {
 }
 
 func (b *BasicScheduler) Schedule(
-	allInferiors map[common.MaintainerID]scheduler.Inferior[common.MaintainerID],
+	allInferiors map[common.MaintainerID]scheduler.Inferior,
 	aliveCaptures map[node.ID]*CaptureStatus,
 	stateMachines map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID],
 	maxTaskCount int,
@@ -165,7 +165,7 @@ func (b *BasicScheduler) newBurstAddInferiors(newInferiors []common.MaintainerID
 					ID:        infID,
 					CaptureID: target,
 				}})
-		log.Info("burst add inferior",
+		log.Info("add inferior",
 			zap.String("id", b.id.String()),
 			zap.String("inferior", infID.String()),
 			zap.Any("serverID", target))
@@ -178,7 +178,6 @@ func (b *BasicScheduler) newBurstAddInferiors(newInferiors []common.MaintainerID
 	return addInferiorTasks
 }
 
-// TODO: maybe remove task does not need captureID.
 func (b *BasicScheduler) newBurstRemoveInferiors(
 	rmInferiors []common.MaintainerID,
 	stateMachines map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID],
@@ -187,7 +186,7 @@ func (b *BasicScheduler) newBurstRemoveInferiors(
 	for _, id := range rmInferiors {
 		state, _ := stateMachines[id]
 		if state.Primary == "" {
-			log.Warn("primary or secondary not found for removed inferior,"+
+			log.Warn("primary not found for removed inferior,"+
 				"this may happen if the server shutdown",
 				zap.String("id", b.id.String()),
 				zap.Any("ID", id.String()))
@@ -195,13 +194,9 @@ func (b *BasicScheduler) newBurstRemoveInferiors(
 		}
 		removeTasks = append(removeTasks, &ScheduleTask{
 			RemoveInferior: &RemoveInferior{
-				ID:        id,
-				CaptureID: state.Primary,
+				ID: id,
 			},
 		})
-		// log.Info("burst remove inferior",
-		// 	zap.String("captureID", captureID),
-		// 	zap.Any("ID", id.String()))
 	}
 
 	if len(removeTasks) == 0 {

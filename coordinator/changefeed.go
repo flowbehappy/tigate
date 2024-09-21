@@ -16,7 +16,6 @@ package coordinator
 import (
 	"encoding/json"
 	"net/url"
-	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/node"
@@ -36,15 +35,12 @@ type ChangeFeedDB interface {
 
 // changefeed tracks the scheduled maintainer on coordinator side
 type changefeed struct {
-	ID    model.ChangeFeedID
-	State *heartbeatpb.MaintainerStatus
+	ID     model.ChangeFeedID
+	Status *heartbeatpb.MaintainerStatus
 
 	Info *model.ChangeFeedInfo
 
-	lastHeartBeat time.Time
-
-	checkpointTs uint64
-	configBytes  []byte
+	configBytes []byte
 
 	coordinator  *coordinator
 	stateMachine *scheduler.StateMachine[common.MaintainerID]
@@ -72,11 +68,10 @@ func newChangefeed(c *coordinator,
 		ID:                    cfID,
 		Info:                  info,
 		configBytes:           bytes,
-		checkpointTs:          checkpointTs,
 		lastSavedCheckpointTs: checkpointTs,
 		isMQSink:              sink.IsMQScheme(uri.Scheme),
 		// init the first status
-		State: &heartbeatpb.MaintainerStatus{
+		Status: &heartbeatpb.MaintainerStatus{
 			CheckpointTs: checkpointTs,
 			FeedState:    string(info.State),
 		},
@@ -85,17 +80,11 @@ func newChangefeed(c *coordinator,
 
 func (c *changefeed) UpdateStatus(status any) {
 	if status != nil {
-		return
+		newStatus := status.(*heartbeatpb.MaintainerStatus)
+		if newStatus.CheckpointTs > c.Status.CheckpointTs {
+			c.Status = newStatus
+		}
 	}
-	c.State = status.(*heartbeatpb.MaintainerStatus)
-	if c.State.CheckpointTs > c.checkpointTs {
-		c.checkpointTs = c.State.CheckpointTs
-	}
-	c.lastHeartBeat = time.Now()
-}
-
-type MaintainerStatus struct {
-	*heartbeatpb.MaintainerStatus
 }
 
 func (c *changefeed) NewAddInferiorMessage(server node.ID) *messaging.TargetMessage {
@@ -103,7 +92,7 @@ func (c *changefeed) NewAddInferiorMessage(server node.ID) *messaging.TargetMess
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.AddMaintainerRequest{
 			Id:           c.ID.ID,
-			CheckpointTs: c.checkpointTs,
+			CheckpointTs: c.Status.CheckpointTs,
 			Config:       c.configBytes,
 		})
 }

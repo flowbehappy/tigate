@@ -219,7 +219,7 @@ func TestStoppedWhenMoving(t *testing.T) {
 	require.Equal(t, len(s.Removing()), 0)
 	require.Equal(t, len(s.nodeTasks["node1"]), 0)
 	require.Equal(t, len(s.nodeTasks["node2"]), 1)
-	require.Equal(t, uint64(10), stm.Inferior.(*ReplicaSet).checkpointTs)
+	require.Equal(t, uint64(10), stm.Inferior.(*ReplicaSet).status.CheckpointTs)
 }
 
 func TestFinishBootstrap(t *testing.T) {

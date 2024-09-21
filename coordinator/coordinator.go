@@ -58,7 +58,7 @@ type coordinator struct {
 
 	lastSaveTime         time.Time
 	lastTickTime         time.Time
-	scheduledChangefeeds map[common.MaintainerID]scheduler.Inferior[common.MaintainerID]
+	scheduledChangefeeds map[common.MaintainerID]scheduler.Inferior
 
 	gcManager gc.Manager
 	pdClient  pd.Client
@@ -76,7 +76,7 @@ func New(node *node.Info,
 	c := &coordinator{
 		version:              version,
 		nodeInfo:             node,
-		scheduledChangefeeds: make(map[common.MaintainerID]scheduler.Inferior[common.MaintainerID]),
+		scheduledChangefeeds: make(map[common.MaintainerID]scheduler.Inferior),
 		lastTickTime:         time.Now(),
 		gcManager:            gc.NewManager(serviceID, pdClient, pdClock),
 		pdClient:             pdClient,
@@ -85,7 +85,7 @@ func New(node *node.Info,
 	}
 	id := common.CoordinatorID("coordinator")
 	c.supervisor = NewSupervisor(
-		"coordinator",
+		id,
 		c.newChangefeed, c.newBootstrapMessage,
 		NewBasicScheduler(id),
 		NewBalanceScheduler(id, time.Minute, 1000),
@@ -237,7 +237,7 @@ func (c *coordinator) newBootstrapMessage(id node.ID) *messaging.TargetMessage {
 		&heartbeatpb.CoordinatorBootstrapRequest{Version: c.version})
 }
 
-func (c *coordinator) newChangefeed(id common.MaintainerID) scheduler.Inferior[common.MaintainerID] {
+func (c *coordinator) newChangefeed(id common.MaintainerID) scheduler.Inferior {
 	cfID := model.DefaultChangeFeedID(id.String())
 	cfInfo := c.lastState.Changefeeds[cfID]
 	cf := newChangefeed(c, cfID, cfInfo.Info, cfInfo.Status.CheckpointTs)
@@ -254,16 +254,16 @@ func (c *coordinator) saveChangefeedStatus() {
 				continue
 			}
 			cf := value.(*changefeed)
-			if cf.State == nil {
+			if cf.Status == nil {
 				continue
 			}
-			if !shouldRunChangefeed(model.FeedState(cf.State.FeedState)) {
+			if !shouldRunChangefeed(model.FeedState(cf.Status.FeedState)) {
 				cfState.PatchInfo(func(info *model.ChangeFeedInfo) (*model.ChangeFeedInfo, bool, error) {
-					info.State = model.FeedState(cf.State.FeedState)
+					info.State = model.FeedState(cf.Status.FeedState)
 					return info, true, nil
 				})
 			}
-			updateStatus(cfState, cf.checkpointTs)
+			updateStatus(cfState, cf.Status.CheckpointTs)
 			saveErrorFn := func(err *heartbeatpb.RunningError) {
 				node, ok := c.lastState.Captures[err.Node]
 				addr := err.Node
@@ -284,13 +284,13 @@ func (c *coordinator) saveChangefeedStatus() {
 						return position, true, nil
 					})
 			}
-			if len(cf.State.Err) > 0 {
-				for _, err := range cf.State.Err {
+			if len(cf.Status.Err) > 0 {
+				for _, err := range cf.Status.Err {
 					saveErrorFn(err)
 				}
 			}
-			if len(cf.State.Warning) > 0 {
-				for _, err := range cf.State.Warning {
+			if len(cf.Status.Warning) > 0 {
+				for _, err := range cf.Status.Warning {
 					saveErrorFn(err)
 				}
 			}

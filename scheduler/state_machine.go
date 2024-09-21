@@ -64,7 +64,7 @@ type StateMachine[ID comparable] struct {
 	Secondary node.ID
 
 	// Inferior handles the real logic
-	Inferior Inferior[ID]
+	Inferior Inferior
 
 	lastMsgTime time.Time
 }
@@ -74,7 +74,7 @@ type StateMachine[ID comparable] struct {
 func NewStateMachine[ID comparable](
 	id ID,
 	inferiorStatus map[node.ID]any,
-	inferior Inferior[ID],
+	inferior Inferior,
 ) *StateMachine[ID] {
 	sm := &StateMachine[ID]{
 		ID:          id,
@@ -223,7 +223,7 @@ func (s *StateMachine[ID]) pollOnRemoving(
 			s.State = SchedulerStatusCommiting
 			return s.Inferior.NewAddInferiorMessage(s.Primary)
 		}
-		// keep State SchedulerStatusRemoving, and clear the primary to mark the statemachine as removed
+		// keep Status SchedulerStatusRemoving, and clear the primary to mark the statemachine as removed
 		s.Primary = ""
 	}
 	log.Warn("ignore input, unexpected  state",

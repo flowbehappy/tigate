@@ -29,32 +29,32 @@ type ReplicaSet struct {
 	ChangefeedID model.ChangeFeedID
 	status       *heartbeatpb.TableSpanStatus
 	stateMachine *scheduler.StateMachine[common.DispatcherID]
-
-	checkpointTs uint64
 }
 
 func NewReplicaSet(cfID model.ChangeFeedID,
 	id common.DispatcherID,
 	SchemaID int64,
 	span *heartbeatpb.TableSpan,
-	checkpointTs uint64) scheduler.Inferior[common.DispatcherID] {
+	checkpointTs uint64) scheduler.Inferior {
 	r := &ReplicaSet{
 		ID:           id,
 		SchemaID:     SchemaID,
 		Span:         span,
 		ChangefeedID: cfID,
-		checkpointTs: checkpointTs,
+		status: &heartbeatpb.TableSpanStatus{
+			ID:           id.ToPB(),
+			CheckpointTs: checkpointTs,
+		},
 	}
 	return r
 }
 
 func (r *ReplicaSet) UpdateStatus(status any) {
-	if status == nil {
-		return
-	}
-	newStatus := status.(*heartbeatpb.TableSpanStatus)
-	if newStatus.CheckpointTs > r.checkpointTs {
-		r.checkpointTs = newStatus.CheckpointTs
+	if status != nil {
+		newStatus := status.(*heartbeatpb.TableSpanStatus)
+		if newStatus.CheckpointTs > r.status.CheckpointTs {
+			r.status = newStatus
+		}
 	}
 }
 
@@ -70,7 +70,7 @@ func (r *ReplicaSet) NewAddInferiorMessage(server node.ID) *messaging.TargetMess
 					StartKey: r.Span.StartKey,
 					EndKey:   r.Span.EndKey,
 				},
-				StartTs: r.checkpointTs,
+				StartTs: r.status.CheckpointTs,
 			},
 			ScheduleAction: heartbeatpb.ScheduleAction_Create,
 		})
