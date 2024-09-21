@@ -187,15 +187,22 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs uint64, filter filter.Filter) 
 }
 
 func (s *schemaStore) RegisterTable(tableID int64, startTs uint64) error {
+	metrics.SchemaStoreResolvedRegisterTableGauge.Inc()
 	s.waitResolvedTs(tableID, startTs, 5*time.Second)
 	return s.dataStorage.registerTable(tableID, startTs)
 }
 
 func (s *schemaStore) UnregisterTable(tableID int64) error {
+	metrics.SchemaStoreResolvedRegisterTableGauge.Dec()
 	return s.dataStorage.unregisterTable(tableID)
 }
 
 func (s *schemaStore) GetTableInfo(tableID int64, ts uint64) (*common.TableInfo, error) {
+	metrics.SchemaStoreGetTableInfoCounter.Inc()
+	start := time.Now()
+	defer func() {
+		metrics.SchemaStoreGetTableInfoLagHist.Observe(time.Since(start).Seconds())
+	}()
 	s.waitResolvedTs(tableID, ts, 2*time.Second)
 	return s.dataStorage.getTableInfo(tableID, ts)
 }

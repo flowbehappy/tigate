@@ -23,10 +23,35 @@ var (
 			Namespace: "ticdc",
 			Subsystem: "schema_store",
 			Name:      "resolved_ts_lag",
-			Help:      "resolved ts lag of schema store in seconds",
+			Help:      "The resolved ts lag of schema store in seconds",
+		})
+	SchemaStoreResolvedRegisterTableGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "schema_store",
+			Name:      "register_table_num",
+			Help:      "The number of registered tables in schema store",
+		})
+	SchemaStoreGetTableInfoCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "ticdc",
+			Subsystem: "schema_store",
+			Name:      "get_table_info_count",
+			Help:      "The number of GetTableInfo requests",
+		})
+	SchemaStoreGetTableInfoLagHist = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "schema_store",
+			Name:      "get_table_info_lag",
+			Help:      "The lag of GetTableInfo requests",
+			Buckets:   LagBucket(),
 		})
 )
 
 func InitSchemaStoreMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(SchemaStoreResolvedTsLagGauge)
+	registry.MustRegister(SchemaStoreResolvedRegisterTableGauge)
+	registry.MustRegister(SchemaStoreGetTableInfoCounter)
+	registry.MustRegister(SchemaStoreGetTableInfoLagHist)
 }
