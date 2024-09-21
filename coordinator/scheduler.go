@@ -14,10 +14,11 @@
 package coordinator
 
 import (
-	"github.com/flowbehappy/tigate/pkg/node"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
@@ -27,18 +28,18 @@ import (
 type Scheduler interface {
 	Name() string
 	Schedule(
-		allInferiors map[scheduler.ChangefeedID]scheduler.Inferior,
+		allInferiors map[common.MaintainerID]scheduler.Inferior[common.MaintainerID],
 		aliveCaptures map[node.ID]*CaptureStatus,
-		stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
+		stateMachines map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID],
 		maxTaskCount int,
 	) []*ScheduleTask
 }
 
 // Schedule generates schedule tasks based on the inputs.
 func (s *Supervisor) schedule(
-	allInferiors map[scheduler.ChangefeedID]scheduler.Inferior,
+	allInferiors map[common.MaintainerID]scheduler.Inferior[common.MaintainerID],
 	aliveCaptures map[node.ID]*CaptureStatus,
-	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
+	stateMachines map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID],
 	maxTaskCount int,
 ) []*ScheduleTask {
 	for _, sched := range s.schedulers {
@@ -51,7 +52,7 @@ func (s *Supervisor) schedule(
 }
 
 // Schedule generates schedule tasks based on the inputs.
-func (s *Supervisor) Schedule(allInferiors map[scheduler.ChangefeedID]scheduler.Inferior) []*messaging.TargetMessage {
+func (s *Supervisor) Schedule(allInferiors map[common.MaintainerID]scheduler.Inferior[common.MaintainerID]) []*messaging.TargetMessage {
 	msgs := s.checkRunningTasks()
 
 	if !s.CheckAllCaptureInitialized() {
@@ -106,7 +107,7 @@ func (s *Supervisor) checkRunningTasks() (msgs []*messaging.TargetMessage) {
 	}
 
 	// Check if a running task is finished.
-	var toBeDeleted []scheduler.ChangefeedID
+	var toBeDeleted []common.MaintainerID
 	for id, _ := range s.RunningTasks {
 		stateMachine, ok := s.StateMachines[id]
 		if !ok || stateMachine.HasRemoved() || stateMachine.State == scheduler.SchedulerStatusWorking {

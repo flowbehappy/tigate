@@ -14,10 +14,12 @@
 package coordinator
 
 import (
-	"github.com/flowbehappy/tigate/pkg/node"
 	"time"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/errors"
@@ -35,23 +37,23 @@ const (
 )
 
 type Supervisor struct {
-	StateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine
+	StateMachines map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID]
 
-	RunningTasks       map[scheduler.ChangefeedID]*ScheduleTask
+	RunningTasks       map[common.MaintainerID]*ScheduleTask
 	maxTaskConcurrency int
 	lastScheduleTime   time.Time
 	lastResendTime     time.Time
 	schedulers         []Scheduler
 
-	ID          scheduler.InferiorID
+	ID          common.CoordinatorID
 	initialized bool
 
 	captures map[node.ID]*CaptureStatus
 
 	// track all status reported by remote inferiors when bootstrap
-	initStatus map[node.ID][]scheduler.InferiorStatus
+	initStatus map[node.ID][]*heartbeatpb.MaintainerStatus
 
-	newInferior     scheduler.NewInferiorFn
+	newInferior     scheduler.NewInferiorFn[common.MaintainerID]
 	newBootstrapMsg scheduler.NewBootstrapFn
 }
 
@@ -69,18 +71,18 @@ func NewCaptureStatus(capture *node.Info) *CaptureStatus {
 }
 
 func NewSupervisor(
-	ID scheduler.InferiorID,
-	f scheduler.NewInferiorFn,
+	ID common.CoordinatorID,
+	f scheduler.NewInferiorFn[common.MaintainerID],
 	newBootstrapMsg scheduler.NewBootstrapFn,
 	schedulers ...Scheduler,
 ) *Supervisor {
 	return &Supervisor{
 		ID:                 ID,
-		StateMachines:      make(map[scheduler.ChangefeedID]*scheduler.StateMachine),
-		RunningTasks:       make(map[scheduler.ChangefeedID]*ScheduleTask),
+		StateMachines:      make(map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID]),
+		RunningTasks:       make(map[common.MaintainerID]*ScheduleTask),
 		initialized:        false,
 		captures:           make(map[node.ID]*CaptureStatus),
-		initStatus:         make(map[node.ID][]scheduler.InferiorStatus),
+		initStatus:         make(map[node.ID][]*heartbeatpb.MaintainerStatus),
 		maxTaskConcurrency: 10000,
 		schedulers:         schedulers,
 		newInferior:        f,
@@ -93,7 +95,7 @@ func (s *Supervisor) GetAllCaptures() map[node.ID]*CaptureStatus {
 }
 
 // GetInferiors return all state machines, caller should not modify it
-func (s *Supervisor) GetInferiors() map[scheduler.ChangefeedID]*scheduler.StateMachine {
+func (s *Supervisor) GetInferiors() map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID] {
 	return s.StateMachines
 }
 
@@ -140,15 +142,15 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 	// Check if this is the first time all captures are initialized.
 	if !s.initialized && s.checkAllCaptureInitialized() {
 		log.Info("all server initialized",
-			zap.String("ID", s.ID.String()),
+			zap.Any("ID", s.ID),
 			zap.Int("captureCount", len(s.captures)))
-		statusMap := make(map[scheduler.InferiorID]map[node.ID]scheduler.InferiorStatus)
+		statusMap := make(map[common.MaintainerID]map[node.ID]any)
 		for captureID, statuses := range s.initStatus {
 			for _, status := range statuses {
-				nodeMap, ok := statusMap[status.GetInferiorID()]
+				nodeMap, ok := statusMap[common.MaintainerID(status.ChangefeedID)]
 				if !ok {
-					nodeMap = make(map[node.ID]scheduler.InferiorStatus)
-					statusMap[status.GetInferiorID()] = nodeMap
+					nodeMap = make(map[node.ID]any)
+					statusMap[common.MaintainerID(status.ChangefeedID)] = nodeMap
 				}
 				nodeMap[captureID] = status
 			}
@@ -156,7 +158,7 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 		for id, status := range statusMap {
 			statemachine := scheduler.NewStateMachine(id, status, s.newInferior(id))
 			if statemachine.State != scheduler.SchedulerStatusAbsent {
-				s.StateMachines[id.(scheduler.ChangefeedID)] = statemachine
+				s.StateMachines[id] = statemachine
 			}
 		}
 		s.initialized = true
@@ -174,7 +176,7 @@ func (s *Supervisor) HandleAliveCaptureUpdate(
 
 // UpdateCaptureStatus update the server status after receive a bootstrap message from remote
 // supervisor will cache the status if the supervisor is not initialized
-func (s *Supervisor) UpdateCaptureStatus(from node.ID, statuses []scheduler.InferiorStatus) {
+func (s *Supervisor) UpdateCaptureStatus(from node.ID, statuses []*heartbeatpb.MaintainerStatus) {
 	c, ok := s.captures[from]
 	if !ok {
 		log.Warn("server is not found",
@@ -197,11 +199,11 @@ func (s *Supervisor) UpdateCaptureStatus(from node.ID, statuses []scheduler.Infe
 
 // HandleStatus handles inferior status reported by Inferior
 func (s *Supervisor) HandleStatus(
-	from node.ID, statuses []scheduler.InferiorStatus,
+	from node.ID, statuses []*heartbeatpb.MaintainerStatus,
 ) ([]*messaging.TargetMessage, error) {
 	sentMsgs := make([]*messaging.TargetMessage, 0)
 	for _, status := range statuses {
-		changefeedID := status.GetInferiorID().(scheduler.ChangefeedID)
+		changefeedID := common.MaintainerID(status.ChangefeedID)
 		stateMachine, ok := s.StateMachines[changefeedID]
 		if !ok {
 			log.Info("ignore status no inferior found",
@@ -210,12 +212,12 @@ func (s *Supervisor) HandleStatus(
 				zap.Any("message", status))
 			continue
 		}
-		msg := stateMachine.HandleInferiorStatus(status, from)
+		msg := stateMachine.HandleInferiorStatus(status.State, status, from)
 		if stateMachine.HasRemoved() {
 			log.Info("inferior has removed",
 				zap.String("ID", s.ID.String()),
 				zap.Any("from", from),
-				zap.String("inferiorID", status.GetInferiorID().String()))
+				zap.Stringer("inferiorID", changefeedID))
 			delete(s.StateMachines, changefeedID)
 		}
 		if msg != nil {
@@ -242,7 +244,7 @@ func (s *Supervisor) handleRemovedNodes(
 					delete(s.RunningTasks, id)
 					log.Info("remove running task",
 						zap.String("stid", s.ID.String()),
-						zap.String("id", id.String()))
+						zap.Stringer("id", id))
 				}
 			}
 		}
@@ -266,7 +268,7 @@ func (s *Supervisor) handleScheduleTasks(
 			break
 		}
 
-		var id scheduler.ChangefeedID
+		var id common.MaintainerID
 		if task.AddInferior != nil {
 			id = task.AddInferior.ID
 		} else if task.RemoveInferior != nil {

@@ -15,9 +15,11 @@ package coordinator
 
 import (
 	"encoding/json"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"net/url"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
@@ -35,7 +37,7 @@ type ChangeFeedDB interface {
 // changefeed tracks the scheduled maintainer on coordinator side
 type changefeed struct {
 	ID    model.ChangeFeedID
-	State *MaintainerStatus
+	State *heartbeatpb.MaintainerStatus
 
 	Info *model.ChangeFeedInfo
 
@@ -45,7 +47,7 @@ type changefeed struct {
 	configBytes  []byte
 
 	coordinator  *coordinator
-	stateMachine *scheduler.StateMachine
+	stateMachine *scheduler.StateMachine[common.MaintainerID]
 
 	lastSavedCheckpointTs uint64
 	isMQSink              bool
@@ -74,39 +76,26 @@ func newChangefeed(c *coordinator,
 		lastSavedCheckpointTs: checkpointTs,
 		isMQSink:              sink.IsMQScheme(uri.Scheme),
 		// init the first status
-		State: &MaintainerStatus{
-			MaintainerStatus: &heartbeatpb.MaintainerStatus{
-				CheckpointTs: checkpointTs,
-				FeedState:    string(info.State),
-			},
+		State: &heartbeatpb.MaintainerStatus{
+			CheckpointTs: checkpointTs,
+			FeedState:    string(info.State),
 		},
 	}
 }
 
-func (c *changefeed) UpdateStatus(status scheduler.InferiorStatus) {
-	c.State = status.(*MaintainerStatus)
-	if c.State != nil && c.State.CheckpointTs > c.checkpointTs {
+func (c *changefeed) UpdateStatus(status any) {
+	if status != nil {
+		return
+	}
+	c.State = status.(*heartbeatpb.MaintainerStatus)
+	if c.State.CheckpointTs > c.checkpointTs {
 		c.checkpointTs = c.State.CheckpointTs
 	}
 	c.lastHeartBeat = time.Now()
 }
-func (c *changefeed) SetStateMachine(state *scheduler.StateMachine) {
-	c.stateMachine = state
-}
-
-func (c *changefeed) GetStateMachine() *scheduler.StateMachine {
-	return c.stateMachine
-}
 
 type MaintainerStatus struct {
 	*heartbeatpb.MaintainerStatus
-}
-
-func (s *MaintainerStatus) GetInferiorID() scheduler.InferiorID {
-	return scheduler.ChangefeedID(model.DefaultChangeFeedID(s.ChangefeedID))
-}
-func (s *MaintainerStatus) GetInferiorState() heartbeatpb.ComponentState {
-	return s.State
 }
 
 func (c *changefeed) NewAddInferiorMessage(server node.ID) *messaging.TargetMessage {

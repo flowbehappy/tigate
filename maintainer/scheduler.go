@@ -41,13 +41,13 @@ type Scheduler struct {
 	//  initialTables hold all tables that before scheduler bootstrapped
 	initialTables []common.Table
 	// group the tasks by nodes
-	nodeTasks map[node.ID]map[common.DispatcherID]*scheduler.StateMachine
+	nodeTasks map[node.ID]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]
 	// group the tasks by schema id
-	schemaTasks map[int64]map[common.DispatcherID]*scheduler.StateMachine
+	schemaTasks map[int64]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]
 	// tables
 	tableTasks map[int64]struct{}
 	// totalMaps holds all state maps, absent, committing, working and removing
-	totalMaps    []map[common.DispatcherID]*scheduler.StateMachine
+	totalMaps    []map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]
 	bootstrapped bool
 
 	splitter               *split.Splitter
@@ -69,8 +69,8 @@ func NewScheduler(changefeedID string,
 	config *config.ChangefeedSchedulerConfig,
 	batchSize int, balanceInterval time.Duration) *Scheduler {
 	s := &Scheduler{
-		nodeTasks:            make(map[node.ID]map[common.DispatcherID]*scheduler.StateMachine),
-		schemaTasks:          make(map[int64]map[common.DispatcherID]*scheduler.StateMachine),
+		nodeTasks:            make(map[node.ID]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]),
+		schemaTasks:          make(map[int64]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]),
 		tableTasks:           make(map[int64]struct{}),
 		startCheckpointTs:    checkpointTs,
 		changefeedID:         changefeedID,
@@ -85,15 +85,15 @@ func NewScheduler(changefeedID string,
 		s.spanReplicationEnabled = true
 	}
 	// put all maps to totalMaps
-	s.totalMaps = make([]map[common.DispatcherID]*scheduler.StateMachine, 4)
-	s.totalMaps[scheduler.SchedulerStatusAbsent] = make(map[common.DispatcherID]*scheduler.StateMachine)
-	s.totalMaps[scheduler.SchedulerStatusCommiting] = make(map[common.DispatcherID]*scheduler.StateMachine)
-	s.totalMaps[scheduler.SchedulerStatusWorking] = make(map[common.DispatcherID]*scheduler.StateMachine)
-	s.totalMaps[scheduler.SchedulerStatusRemoving] = make(map[common.DispatcherID]*scheduler.StateMachine)
+	s.totalMaps = make([]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID], 4)
+	s.totalMaps[scheduler.SchedulerStatusAbsent] = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
+	s.totalMaps[scheduler.SchedulerStatusCommiting] = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
+	s.totalMaps[scheduler.SchedulerStatusWorking] = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
+	s.totalMaps[scheduler.SchedulerStatusRemoving] = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
 	return s
 }
 
-func (s *Scheduler) GetTasksBySchemaID(schemaID int64) map[common.DispatcherID]*scheduler.StateMachine {
+func (s *Scheduler) GetTasksBySchemaID(schemaID int64) map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
 	return s.schemaTasks[schemaID]
 }
 
@@ -133,7 +133,7 @@ func (s *Scheduler) SetInitialTables(tables []common.Table) {
 
 // FinishBootstrap adds working state tasks to this scheduler directly,
 // it reported by the bootstrap response
-func (s *Scheduler) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]) {
+func (s *Scheduler) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]]) {
 	if s.bootstrapped {
 		log.Panic("already bootstrapped",
 			zap.String("changefeed", s.changefeedID),
@@ -186,8 +186,8 @@ func (s *Scheduler) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb.
 }
 
 // GetTask queries a task by dispatcherID, return nil if not found
-func (s *Scheduler) GetTask(dispatcherID common.DispatcherID) *scheduler.StateMachine {
-	var stm *scheduler.StateMachine
+func (s *Scheduler) GetTask(dispatcherID common.DispatcherID) *scheduler.StateMachine[common.DispatcherID] {
+	var stm *scheduler.StateMachine[common.DispatcherID]
 	var ok bool
 	for _, m := range s.totalMaps {
 		stm, ok = m[dispatcherID]
@@ -211,7 +211,7 @@ func (s *Scheduler) RemoveAllTasks() []*messaging.TargetMessage {
 	return msgs
 }
 
-func (s *Scheduler) RemoveTask(stm *scheduler.StateMachine) *messaging.TargetMessage {
+func (s *Scheduler) RemoveTask(stm *scheduler.StateMachine[common.DispatcherID]) *messaging.TargetMessage {
 	if stm == nil {
 		log.Warn("dispatcher is not found",
 			zap.String("cf", s.changefeedID),
@@ -232,7 +232,7 @@ func (s *Scheduler) RemoveTask(stm *scheduler.StateMachine) *messaging.TargetMes
 	oldState := stm.State
 	oldPrimary := stm.Primary
 	msg := stm.HandleRemoveInferior()
-	s.tryMoveTask(stm.ID.(common.DispatcherID), stm, oldState, oldPrimary, true)
+	s.tryMoveTask(stm.ID, stm, oldState, oldPrimary, true)
 	return msg
 }
 
@@ -241,12 +241,12 @@ func (s *Scheduler) RemoveTaskByID(dispatcherID common.DispatcherID) *messaging.
 	return s.RemoveTask(s.GetTask(dispatcherID))
 }
 
-func (s *Scheduler) GetTasksByTableIDs(tableIDs ...int64) []*scheduler.StateMachine {
+func (s *Scheduler) GetTasksByTableIDs(tableIDs ...int64) []*scheduler.StateMachine[common.DispatcherID] {
 	tableMap := make(map[int64]bool, len(tableIDs))
 	for _, tableID := range tableIDs {
 		tableMap[tableID] = true
 	}
-	var stms []*scheduler.StateMachine
+	var stms []*scheduler.StateMachine[common.DispatcherID]
 	for _, m := range s.totalMaps {
 		for _, stm := range m {
 			replica := stm.Inferior.(*ReplicaSet)
@@ -270,7 +270,7 @@ func (s *Scheduler) AddNewNode(id node.ID) {
 	log.Info("add new node",
 		zap.String("changefeed", s.changefeedID),
 		zap.Any("node", id))
-	s.nodeTasks[id] = make(map[common.DispatcherID]*scheduler.StateMachine)
+	s.nodeTasks[id] = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
 }
 
 func (s *Scheduler) RemoveNode(id node.ID) []*messaging.TargetMessage {
@@ -379,7 +379,7 @@ func (s *Scheduler) tryBalance() []*messaging.TargetMessage {
 
 func (s *Scheduler) ResendMessage() []*messaging.TargetMessage {
 	var msgs []*messaging.TargetMessage
-	resend := func(m map[common.DispatcherID]*scheduler.StateMachine) {
+	resend := func(m map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]) {
 		for _, value := range m {
 			if msg := value.HandleResend(); msg != nil {
 				msgs = append(msgs, msg)
@@ -395,10 +395,10 @@ func (s *Scheduler) balanceTables() []*messaging.TargetMessage {
 	var messages = make([]*messaging.TargetMessage, 0)
 	upperLimitPerCapture := int(math.Ceil(float64(s.TaskSize()) / float64(len(s.nodeTasks))))
 	// victims holds tables which need to be moved
-	victims := make([]*scheduler.StateMachine, 0)
+	victims := make([]*scheduler.StateMachine[common.DispatcherID], 0)
 	priorityQueue := heap.NewHeap[*Item]()
 	for nodeID, ts := range s.nodeTasks {
-		var changefeeds []*scheduler.StateMachine
+		var changefeeds []*scheduler.StateMachine[common.DispatcherID]
 		for _, value := range ts {
 			changefeeds = append(changefeeds, value)
 		}
@@ -460,7 +460,7 @@ func (s *Scheduler) balanceTables() []*messaging.TargetMessage {
 		oldPrimary := cf.Primary
 		msg := cf.HandleMoveInferior(target)
 		messages = append(messages, msg)
-		s.tryMoveTask(cf.ID.(common.DispatcherID), cf, oldState, oldPrimary, false)
+		s.tryMoveTask(cf.ID, cf, oldState, oldPrimary, false)
 		// update the task size priority queue
 		item.TaskSize++
 		priorityQueue.AddOrUpdate(item)
@@ -494,12 +494,7 @@ func (s *Scheduler) HandleStatus(from node.ID, statusList []*heartbeatpb.TableSp
 		}
 		oldState := stm.State
 		oldPrimary := stm.Primary
-		var sch scheduler.InferiorStatus = ReplicaSetStatus{
-			ID:           span,
-			State:        status.ComponentStatus,
-			CheckpointTs: status.CheckpointTs,
-		}
-		msg := stm.HandleInferiorStatus(sch, from)
+		msg := stm.HandleInferiorStatus(status.ComponentStatus, status, from)
 		if msg != nil {
 			msgs = append(msgs, msg)
 		}
@@ -516,23 +511,23 @@ func (s *Scheduler) TaskSize() int {
 	return size
 }
 
-func (s *Scheduler) Absent() map[common.DispatcherID]*scheduler.StateMachine {
+func (s *Scheduler) Absent() map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
 	return s.getTaskByState(scheduler.SchedulerStatusAbsent)
 }
 
-func (s *Scheduler) Commiting() map[common.DispatcherID]*scheduler.StateMachine {
+func (s *Scheduler) Commiting() map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
 	return s.getTaskByState(scheduler.SchedulerStatusCommiting)
 }
 
-func (s *Scheduler) Working() map[common.DispatcherID]*scheduler.StateMachine {
+func (s *Scheduler) Working() map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
 	return s.getTaskByState(scheduler.SchedulerStatusWorking)
 }
 
-func (s *Scheduler) Removing() map[common.DispatcherID]*scheduler.StateMachine {
+func (s *Scheduler) Removing() map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
 	return s.getTaskByState(scheduler.SchedulerStatusRemoving)
 }
 
-func (s *Scheduler) getTaskByState(state scheduler.SchedulerStatus) map[common.DispatcherID]*scheduler.StateMachine {
+func (s *Scheduler) getTaskByState(state scheduler.SchedulerStatus) map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
 	return s.totalMaps[state]
 }
 
@@ -562,15 +557,15 @@ func (s *Scheduler) addDDLDispatcher() {
 		zap.String("dispatcher", dispatcherID.String()))
 }
 
-func (s *Scheduler) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]) bool {
+func (s *Scheduler) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]]) bool {
 	ddlSpanFound := false
-	tableMap.Ascend(func(span *heartbeatpb.TableSpan, stm *scheduler.StateMachine) bool {
+	tableMap.Ascend(func(span *heartbeatpb.TableSpan, stm *scheduler.StateMachine[common.DispatcherID]) bool {
 		if stm.State != scheduler.SchedulerStatusWorking {
 			log.Panic("unexpected state",
 				zap.String("changefeed", s.changefeedID),
 				zap.Any("stm", stm))
 		}
-		dispatcherID := stm.ID.(common.DispatcherID)
+		dispatcherID := stm.ID
 		s.Working()[dispatcherID] = stm
 		s.nodeTasks[stm.Primary][dispatcherID] = stm
 		if span.TableID == 0 {
@@ -597,7 +592,7 @@ func (s *Scheduler) addNewSpans(schemaID, tableID int64,
 		s.Absent()[dispatcherID] = stm
 		schemaMap, ok := s.schemaTasks[schemaID]
 		if !ok {
-			schemaMap = make(map[common.DispatcherID]*scheduler.StateMachine)
+			schemaMap = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
 			s.schemaTasks[schemaID] = schemaMap
 		}
 		schemaMap[dispatcherID] = stm
@@ -607,7 +602,7 @@ func (s *Scheduler) addNewSpans(schemaID, tableID int64,
 
 // tryMoveTask moves the StateMachine to the right map and modified the node map if changed
 func (s *Scheduler) tryMoveTask(dispatcherID common.DispatcherID,
-	stm *scheduler.StateMachine,
+	stm *scheduler.StateMachine[common.DispatcherID],
 	oldSate scheduler.SchedulerStatus,
 	oldPrimary node.ID,
 	modifyNodeMap bool) {

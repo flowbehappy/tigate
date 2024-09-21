@@ -18,13 +18,14 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"net/http"
 	"net/http/pprof"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
