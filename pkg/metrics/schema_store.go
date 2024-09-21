@@ -17,15 +17,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-func InitMetrics(registry *prometheus.Registry) {
-	InitServerMetrics(registry)
-	InitSchedulerMetrics(registry)
-	InitChangefeedMetrics(registry)
-	InitDisaptcherMetrics(registry)
-	InitMessagingMetrics(registry)
-	InitSinkMetrics(registry)
-	InitPullerMetrics(registry)
-	InitEventStoreMetrics(registry)
-	InitSchemaStoreMetrics(registry)
-	InitEventServiceMetrics(registry)
+var (
+	SchemaStoreResolvedTsLagGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "schema_store",
+			Name:      "resolved_ts_lag",
+			Help:      "resolved ts lag of schema store in seconds",
+		})
+)
+
+func InitSchemaStoreMetrics(registry *prometheus.Registry) {
+	registry.MustRegister(SchemaStoreResolvedTsLagGauge)
 }

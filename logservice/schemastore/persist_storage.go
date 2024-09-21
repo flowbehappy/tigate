@@ -578,15 +578,18 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 	// TODO: ignore some ddl event
 	// TODO: check ddl events are sorted
 
-	p.mu.Lock()
 	for i := range ddlEvents {
-		// even if the ddl is skipped here, it can still be written to disk.
-		// because when apply this ddl at restart, it will be skipped again.
+		p.mu.Lock()
 		if shouldSkipDDL(&ddlEvents[i], p.databaseMap, p.tableMap) {
 			continue
 		}
 
 		completePersistedDDLEvent(&ddlEvents[i], p.databaseMap, p.tableMap)
+		p.mu.Unlock()
+
+		writePersistedDDLEvent(p.db, &ddlEvents[i])
+
+		p.mu.Lock()
 		var err error
 		if p.tableTriggerDDLHistory, err = updateDDLHistory(
 			&ddlEvents[i],
@@ -602,10 +605,9 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 		if err := updateRegisteredTableInfoStore(ddlEvents[i], p.tableInfoStoreMap); err != nil {
 			return err
 		}
+		p.mu.Unlock()
 	}
-	p.mu.Unlock()
 
-	writePersistedDDLEvents(p.db, ddlEvents...)
 	return nil
 }
 
