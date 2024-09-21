@@ -581,6 +581,7 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 	for i := range ddlEvents {
 		p.mu.Lock()
 		if shouldSkipDDL(&ddlEvents[i], p.databaseMap, p.tableMap) {
+			p.mu.Unlock()
 			continue
 		}
 
@@ -597,12 +598,15 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 			p.tableMap,
 			p.tablesDDLHistory,
 			p.tableTriggerDDLHistory); err != nil {
+			p.mu.Unlock()
 			return err
 		}
 		if err := updateDatabaseInfoAndTableInfo(&ddlEvents[i], p.databaseMap, p.tableMap); err != nil {
+			p.mu.Unlock()
 			return err
 		}
 		if err := updateRegisteredTableInfoStore(ddlEvents[i], p.tableInfoStoreMap); err != nil {
+			p.mu.Unlock()
 			return err
 		}
 		p.mu.Unlock()
