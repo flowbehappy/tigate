@@ -43,9 +43,9 @@ var (
 		prometheus.HistogramOpts{
 			Namespace: "ticdc",
 			Subsystem: "schema_store",
-			Name:      "get_table_info_lag",
-			Help:      "The lag of GetTableInfo requests",
-			Buckets:   LagBucket(),
+			Name:      "get_table_info_duration",
+			Help:      "The duration of GetTableInfo requests",
+			Buckets:   prometheus.DefBuckets,
 		})
 )
 
