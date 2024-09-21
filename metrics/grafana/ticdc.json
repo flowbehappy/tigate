@@ -3081,7 +3081,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(ticdc_schema_store_get_table_info_lag_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (le)",
+              "expr": "sum(rate(ticdc_schema_store_get_table_info_duration_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (le)",
               "format": "heatmap",
               "instant": false,
               "interval": "",
