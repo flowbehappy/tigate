@@ -325,23 +325,21 @@ func readPersistedDDLEvent(snap *pebble.Snapshot, version uint64) PersistedDDLEv
 	return ddlEvent
 }
 
-func writePersistedDDLEvents(db *pebble.DB, ddlEvents ...PersistedDDLEvent) error {
+func writePersistedDDLEvent(db *pebble.DB, ddlEvent *PersistedDDLEvent) error {
 	batch := db.NewBatch()
-	for _, event := range ddlEvents {
-		ddlKey, err := ddlJobKey(event.FinishedTs)
-		if err != nil {
-			return err
-		}
-		event.TableInfoValue, err = json.Marshal(event.TableInfo)
-		if err != nil {
-			return err
-		}
-		ddlValue, err := event.MarshalMsg(nil)
-		if err != nil {
-			return err
-		}
-		batch.Set(ddlKey, ddlValue, pebble.NoSync)
+	ddlKey, err := ddlJobKey(ddlEvent.FinishedTs)
+	if err != nil {
+		return err
 	}
+	ddlEvent.TableInfoValue, err = json.Marshal(ddlEvent.TableInfo)
+	if err != nil {
+		return err
+	}
+	ddlValue, err := ddlEvent.MarshalMsg(nil)
+	if err != nil {
+		return err
+	}
+	batch.Set(ddlKey, ddlValue, pebble.NoSync)
 	return batch.Commit(pebble.NoSync)
 }
 
