@@ -62,7 +62,7 @@ func (b *balanceScheduler) Name() string {
 }
 
 func (b *balanceScheduler) Schedule(
-	_ map[common.MaintainerID]scheduler.Inferior[common.MaintainerID],
+	_ map[common.MaintainerID]scheduler.Inferior,
 	aliveCaptures map[node.ID]*CaptureStatus,
 	stateMachines map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID],
 	maxTaskCount int,

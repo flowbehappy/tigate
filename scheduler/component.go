@@ -18,7 +18,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/node"
 )
 
-type Inferior[ID comparable] interface {
+type Inferior interface {
 	UpdateStatus(any)
 	NewAddInferiorMessage(id node.ID) *messaging.TargetMessage
 	NewRemoveInferiorMessage(id node.ID) *messaging.TargetMessage
@@ -26,4 +26,4 @@ type Inferior[ID comparable] interface {
 
 type NewBootstrapFn func(id node.ID) *messaging.TargetMessage
 
-type NewInferiorFn[T comparable] func(id T) Inferior[T]
+type NewInferiorFn[T comparable] func(id T) Inferior

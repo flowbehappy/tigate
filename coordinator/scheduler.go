@@ -28,7 +28,7 @@ import (
 type Scheduler interface {
 	Name() string
 	Schedule(
-		allInferiors map[common.MaintainerID]scheduler.Inferior[common.MaintainerID],
+		allInferiors map[common.MaintainerID]scheduler.Inferior,
 		aliveCaptures map[node.ID]*CaptureStatus,
 		stateMachines map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID],
 		maxTaskCount int,
@@ -37,7 +37,7 @@ type Scheduler interface {
 
 // Schedule generates schedule tasks based on the inputs.
 func (s *Supervisor) schedule(
-	allInferiors map[common.MaintainerID]scheduler.Inferior[common.MaintainerID],
+	allInferiors map[common.MaintainerID]scheduler.Inferior,
 	aliveCaptures map[node.ID]*CaptureStatus,
 	stateMachines map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID],
 	maxTaskCount int,
@@ -52,7 +52,7 @@ func (s *Supervisor) schedule(
 }
 
 // Schedule generates schedule tasks based on the inputs.
-func (s *Supervisor) Schedule(allInferiors map[common.MaintainerID]scheduler.Inferior[common.MaintainerID]) []*messaging.TargetMessage {
+func (s *Supervisor) Schedule(allInferiors map[common.MaintainerID]scheduler.Inferior) []*messaging.TargetMessage {
 	msgs := s.checkRunningTasks()
 
 	if !s.CheckAllCaptureInitialized() {

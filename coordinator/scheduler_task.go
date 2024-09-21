@@ -76,11 +76,9 @@ func (t AddInferior) String() string {
 
 // RemoveInferior is a schedule task for removing an inferior.
 type RemoveInferior struct {
-	ID        common.MaintainerID
-	CaptureID node.ID
+	ID common.MaintainerID
 }
 
 func (t RemoveInferior) String() string {
-	return fmt.Sprintf("RemoveInferior, ID: %s, server: %s",
-		t.ID, t.CaptureID)
+	return fmt.Sprintf("RemoveInferior, ID: %s", t.ID)
 }
