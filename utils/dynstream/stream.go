@@ -193,11 +193,14 @@ func (s *stream[P, T, D]) start(acceptedPaths []*pathInfo[P, T, D], formerStream
 }
 
 // Close the stream and wait for all goroutines to exit.
-func (s *stream[P, T, D]) close() {
+// wait is by default true, which means to wait for the goroutines to exit.
+func (s *stream[P, T, D]) close(wait ...bool) {
 	if s.hasClosed.CompareAndSwap(false, true) {
 		close(s.inChan)
 	}
-	s.handleDone.Wait()
+	if len(wait) == 0 || wait[0] {
+		s.handleDone.Wait()
+	}
 }
 
 func (s *stream[P, T, D]) addPaths(newPaths []*pathInfo[P, T, D]) {

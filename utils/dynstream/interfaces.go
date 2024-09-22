@@ -69,6 +69,7 @@ type DynamicStream[P Path, T Event, D Dest] interface {
 	// If some paths don't exist, it will return ErrorTypeNotExist errors. But the existed paths are still removed.
 	// If all paths are removed successfully, return nil.
 	RemovePaths(paths ...P) []error
+	RemovePath(path P) error
 }
 
 const DefaultSchedulerInterval = 1 * time.Second

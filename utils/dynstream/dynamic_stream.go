@@ -47,8 +47,9 @@ type addPathCmd[P Path, T Event, D Dest] struct {
 }
 
 type removePathCmd[P Path] struct {
-	paths  []P
-	errors []error
+	paths      []P
+	existPaths []P
+	errors     []error
 
 	wg sync.WaitGroup
 }
@@ -204,6 +205,10 @@ func (d *dynamicStreamImpl[P, T, D]) RemovePaths(paths ...P) []error {
 	d.cmdToSchd <- cmd
 	remove.wg.Wait()
 	return remove.errors
+}
+
+func (d *dynamicStreamImpl[P, T, D]) RemovePath(path P) error {
+	return d.RemovePaths(path)[0]
 }
 
 func (d *dynamicStreamImpl[P, T, D]) scheduler() {
@@ -565,6 +570,7 @@ Loop:
 				d.cmdToDist <- cmd
 			case typeRemovePath:
 				remove := cmd.cmd.(*removePathCmd[P])
+				remove.existPaths = make([]P, 0, len(remove.paths))
 				errors := make([]error, len(remove.paths))
 				hasError := false
 				e := NewAppErrorS(ErrorTypeNotExist)
@@ -574,6 +580,7 @@ Loop:
 						hasError = true
 						continue
 					}
+					remove.existPaths = append(remove.existPaths, p)
 					delete(globalPathMap, p)
 					errors = append(errors, nil)
 				}
@@ -654,11 +661,14 @@ func (d *dynamicStreamImpl[P, T, D]) distributor() {
 				add.wg.Done()
 			case typeRemovePath:
 				remove := cmd.cmd.(*removePathCmd[P])
-				for _, p := range remove.paths {
+				for _, p := range remove.existPaths {
 					pi, ok := pathMap[p]
 					if ok {
 						pi.removed = true
 						delete(pathMap, p)
+						pi.stream.close(false)
+					} else {
+						panic(fmt.Sprintf("Path %v doesn't exist in distributor", p))
 					}
 				}
 				remove.wg.Done()
