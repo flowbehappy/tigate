@@ -1,6 +1,7 @@
 package dynstream
 
 import (
+	"runtime"
 	"sync"
 	"time"
 )
@@ -75,9 +76,6 @@ type DynamicStream[P Path, T Event, D Dest] interface {
 const DefaultSchedulerInterval = 1 * time.Second
 const DefaultReportInterval = 500 * time.Millisecond
 
-// We don't need lots of streams because the hanle of events should be CPU-bound and should not be blocked by any waiting.
-const DefaultStreamCount = 64
-
 type DropPolicy int
 
 const (
@@ -90,7 +88,7 @@ const (
 type Option struct {
 	SchedulerInterval time.Duration // The interval of the scheduler. The scheduler is used to balance the paths between streams.
 	ReportInterval    time.Duration // The interval of reporting the status of stream, the status is used by the scheduler.
-	StreamCount       int           // The count of streams. I.e. the count of goroutines to handle events.
+	StreamCount       int           // The count of streams. I.e. the count of goroutines to handle events. By default 0, means runtime.NumCPU().
 	BatchSize         int           // The batch size of handling events. <= 1 means no batch.
 
 	// Note that if you specify MaxPendingLength and DropPolicy, the handler can implement the DropListener interface to listen to the dropped events.
@@ -105,7 +103,7 @@ func NewOption() Option {
 	return Option{
 		SchedulerInterval: DefaultSchedulerInterval,
 		ReportInterval:    DefaultReportInterval,
-		StreamCount:       DefaultStreamCount,
+		StreamCount:       0,
 		BatchSize:         1,
 		MaxPendingLength:  0,
 		DropPolicy:        DropLate,
@@ -113,6 +111,9 @@ func NewOption() Option {
 }
 
 func (o *Option) fix() {
+	if o.StreamCount == 0 {
+		o.StreamCount = runtime.NumCPU()
+	}
 	if o.BatchSize <= 0 {
 		o.BatchSize = 1
 	}
@@ -126,6 +127,5 @@ func NewDynamicStream[P Path, T Event, D Dest](handler Handler[P, T, D], option 
 	if len(option) > 0 {
 		opt = option[0]
 	}
-	opt.fix()
 	return newDynamicStreamImpl(handler, opt)
 }
