@@ -59,9 +59,9 @@ type DynamicStream[P Path, T Event, D Dest] interface {
 	// AddPaths adds the paths to the dynamic stream to receive the events.
 	// An event with a path not already added will be dropped.
 	//
-	// If some paths already exist, it will return an ErrorTypeDuplicate error. And no paths are added.
-	// If the stream is closed, it will return an ErrorTypeClosed error.
-	AddPaths(paths ...PathAndDest[P, D]) error
+	// If some paths already exist, it will return ErrorTypeDuplicate errors. But the non-existed paths are still added.
+	// If all paths are added successfully, return nil.
+	AddPaths(paths ...PathAndDest[P, D]) []error
 	AddPath(path P, dest D) error
 
 	// RemovePaths removes the paths from the dynamic stream.

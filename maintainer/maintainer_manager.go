@@ -16,9 +16,10 @@ package maintainer
 import (
 	"context"
 	"encoding/json"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	configNew "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/utils/threadpool"
@@ -216,10 +217,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 			cf = NewMaintainer(cfID, cfConfig, m.selfNode, m.stream, m.taskScheduler,
 				nil, nil,
 				req.CheckpointTs)
-			err = m.stream.AddPaths(dynstream.PathAndDest[string, *Maintainer]{
-				Path: cfID.ID,
-				Dest: cf.(*Maintainer),
-			})
+			err = m.stream.AddPath(cfID.ID, cf.(*Maintainer))
 			if err != nil {
 				log.Warn("add path to dynstream failed, coordinator will retry later",
 					zap.Error(err))

@@ -39,9 +39,9 @@ type command struct {
 }
 
 type addPathCmd[P Path, T Event, D Dest] struct {
-	paths []PathAndDest[P, D]
-	pis   []*pathInfo[P, T, D]
-	error error
+	paths  []PathAndDest[P, D]
+	pis    []*pathInfo[P, T, D]
+	errors []error
 
 	wg sync.WaitGroup
 }
@@ -179,10 +179,7 @@ func (d *dynamicStreamImpl[P, T, D]) Close() {
 	d.schdDone.Wait()
 }
 
-func (d *dynamicStreamImpl[P, T, D]) AddPaths(paths ...PathAndDest[P, D]) error {
-	if d.hasClosed.Load() {
-		return NewAppErrorS(ErrorTypeClosed)
-	}
+func (d *dynamicStreamImpl[P, T, D]) AddPaths(paths ...PathAndDest[P, D]) []error {
 	add := &addPathCmd[P, T, D]{paths: paths}
 	cmd := &command{
 		cmdType: typeAddPath,
@@ -191,11 +188,15 @@ func (d *dynamicStreamImpl[P, T, D]) AddPaths(paths ...PathAndDest[P, D]) error 
 	add.wg.Add(2) // need to wait for both scheduler and distributor
 	d.cmdToSchd <- cmd
 	add.wg.Wait()
-	return add.error
+	return add.errors
 }
 
 func (d *dynamicStreamImpl[P, T, D]) AddPath(path P, dest D) error {
-	return d.AddPaths(PathAndDest[P, D]{Path: path, Dest: dest})
+	errors := d.AddPaths(PathAndDest[P, D]{Path: path, Dest: dest})
+	if len(errors) != 0 {
+		return errors[0]
+	}
+	return nil
 }
 
 func (d *dynamicStreamImpl[P, T, D]) RemovePaths(paths ...P) []error {
@@ -546,7 +547,6 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 
 	nextSchedule := time.Now().Add(d.option.SchedulerInterval)
 	timerChan := time.After(time.Until(nextSchedule))
-Loop:
 	for {
 		select {
 		case cmd, ok := <-d.cmdToSchd:
@@ -556,30 +556,30 @@ Loop:
 			switch cmd.cmdType {
 			case typeAddPath:
 				add := cmd.cmd.(*addPathCmd[P, T, D])
-
-				// Make sure the paths don't exist already
+				add.pis = make([]*pathInfo[P, T, D], 0, len(add.paths))
+				errors := make([]error, 0, len(add.paths))
+				hasError := false
 				for _, pd := range add.paths {
 					if _, ok := globalPathMap[pd.Path]; ok {
-						add.error = NewAppErrorS(ErrorTypeDuplicate)
-						add.wg.Done()
-						add.wg.Done() // Don't neet to send to distributor
-						continue Loop
+						errors = append(errors, NewAppErrorS(ErrorTypeDuplicate))
+						hasError = true
+					} else {
+						pi := newPathInfo[P, T, D](pd.Path, pd.Dest)
+						si := nextStream()
+						pi.stream = si.stream
+						si.pathMap[pi] = struct{}{}
+						globalPathMap[pd.Path] = pi
+
+						add.pis = append(add.pis, pi)
+						errors = append(errors, nil)
 					}
 				}
 
-				pis := make([]*pathInfo[P, T, D], 0, len(add.paths))
-				for _, pd := range add.paths {
-					pi := newPathInfo[P, T, D](pd.Path, pd.Dest)
-					si := nextStream()
-					pi.stream = si.stream
-					si.pathMap[pi] = struct{}{}
-					globalPathMap[pd.Path] = pi
-
-					pis = append(pis, pi)
+				if hasError {
+					add.errors = errors
 				}
-				add.pis = pis
-
 				add.wg.Done()
+
 				d.cmdToDist <- cmd
 			case typeRemovePath:
 				remove := cmd.cmd.(*removePathCmd[P])
@@ -593,31 +593,31 @@ Loop:
 					if !ok {
 						errors = append(errors, e)
 						hasError = true
-						continue
+					} else {
+						// Here we iterate all the streams to remove the path.
+						// It is not the most efficient, but the number of streams is small.
+						// And we don't want to keep a reverse map from path to stream, as it is too complex.
+						//
+						// Note that we cannot get the stream from the pathInfo as follow. Because pathInfo.stream
+						// is updated by the distributor. And the distributor is not guaranteed to finish the update.
+						//   delete(streamInfoMap[pi.stream.id].pathMap, pi)
+						for _, si := range d.streamInfos {
+							delete(si.pathMap, pi)
+						}
+						delete(globalPathMap, p)
+
+						remove.existPaths = append(remove.existPaths, p)
+						errors = append(errors, nil)
+
+						// If it is a solo path, we don't need to remove the empty solo stream in here.
+						// The empty solo stream will be removed in the removeSoloPath rule.
 					}
-
-					// Here we iterate all the streams to remove the path.
-					// It is not the most efficient, but the number of streams is small.
-					// And we don't want to keep a reverse map from path to stream, as it is too complex.
-					//
-					// Note that we cannot get the stream from the pathInfo as follow. Because pathInfo.stream
-					// is updated by the distributor. And the distributor is not guaranteed to finish the update.
-					//   delete(streamInfoMap[pi.stream.id].pathMap, pi)
-					for _, si := range d.streamInfos {
-						delete(si.pathMap, pi)
-					}
-					delete(globalPathMap, p)
-
-					remove.existPaths = append(remove.existPaths, p)
-					errors = append(errors, nil)
-
-					// If it is a solo path, we don't need to remove the empty solo stream in here.
-					// The empty solo stream will be removed in the removeSoloPath rule.
 				}
-				remove.wg.Done()
 				if hasError {
 					remove.errors = errors
 				}
+				remove.wg.Done()
+
 				// We send the command to distributor even if some paths don't exist, to remove the existed paths in the distributor.
 				d.cmdToDist <- cmd
 			case typeReportAndSchedule:

@@ -81,24 +81,28 @@ func TestDynamicStreamAddRemovePaths(t *testing.T) {
 	handler := &simpleHandler{}
 	ds := NewDynamicStream(handler)
 	ds.Start()
-	error := ds.AddPaths([]PathAndDest[string, struct{}]{
+	errors := ds.AddPaths([]PathAndDest[string, struct{}]{
 		{"path1", struct{}{}},
 		{"path2", struct{}{}},
 		{"path3", struct{}{}},
 		{"path4", struct{}{}},
 	}...)
-	assert.Nil(t, error)
-	error = ds.AddPaths([]PathAndDest[string, struct{}]{
+	assert.Nil(t, errors)
+	errors = ds.AddPaths([]PathAndDest[string, struct{}]{
 		{"path1", struct{}{}},
-		{"path2", struct{}{}},
 		{"path3", struct{}{}},
-		{"path4", struct{}{}},
+		{"path5", struct{}{}},
 	}...)
-	appError, ok := error.(*apperror.AppError)
+	assert.Equal(t, 3, len(errors))
+	appError, ok := errors[0].(*apperror.AppError)
 	assert.True(t, ok)
 	assert.Equal(t, apperror.ErrorTypeDuplicate, appError.Type)
+	appError, ok = errors[1].(*apperror.AppError)
+	assert.True(t, ok)
+	assert.Equal(t, apperror.ErrorTypeDuplicate, appError.Type)
+	assert.Nil(t, errors[2])
 
-	errors := ds.RemovePaths("path1", "path3")
+	errors = ds.RemovePaths("path1", "path3")
 	assert.Equal(t, 0, len(errors))
 
 	errors = ds.RemovePaths("path2", "path3")
@@ -109,12 +113,6 @@ func TestDynamicStreamAddRemovePaths(t *testing.T) {
 	assert.Equal(t, apperror.ErrorTypeNotExist, appError.Type)
 
 	ds.Close()
-	error = ds.AddPaths([]PathAndDest[string, struct{}]{
-		{"path1", struct{}{}},
-	}...)
-	appError, ok = error.(*apperror.AppError)
-	assert.True(t, ok)
-	assert.Equal(t, apperror.ErrorTypeClosed, appError.Type)
 }
 
 // Note that this test is not deterministic because streams are running in separate goroutines.
