@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
@@ -471,7 +472,9 @@ func TestHandleRenameTable(t *testing.T) {
 		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].BlockedTables.InfluenceType)
 		require.Equal(t, schemaID1, ddlEvents[0].BlockedTables.SchemaID)
 		require.Equal(t, tableID, ddlEvents[0].BlockedTables.TableIDs[0])
-		require.Equal(t, ddlEvents[0].BlockedTables, ddlEvents[0].NeedDroppedTables)
+		// TODO: don't count on the order
+		require.Equal(t, heartbeatpb.DDLSpan.TableID, ddlEvents[0].BlockedTables.TableIDs[1])
+		require.Equal(t, tableID, ddlEvents[0].NeedDroppedTables.TableIDs[0])
 
 		require.Equal(t, tableID, ddlEvents[0].NeedAddedTables[0].TableID)
 
@@ -494,7 +497,9 @@ func TestHandleRenameTable(t *testing.T) {
 		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].BlockedTables.InfluenceType)
 		require.Equal(t, schemaID1, ddlEvents[0].BlockedTables.SchemaID)
 		require.Equal(t, tableID, ddlEvents[0].BlockedTables.TableIDs[0])
-		require.Equal(t, ddlEvents[0].BlockedTables, ddlEvents[0].NeedDroppedTables)
+		// TODO: don't count on the order
+		require.Equal(t, heartbeatpb.DDLSpan.TableID, ddlEvents[0].BlockedTables.TableIDs[1])
+		require.Equal(t, tableID, ddlEvents[0].NeedDroppedTables.TableIDs[0])
 
 		require.Nil(t, ddlEvents[0].NeedAddedTables)
 
@@ -730,6 +735,11 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 		require.Equal(t, tableID3, tableTriggerDDLEvents[4].NeedDroppedTables.TableIDs[0])
 		require.Equal(t, schemaName, tableTriggerDDLEvents[4].TableNameChange.DropName[0].SchemaName)
 		require.Equal(t, "t3", tableTriggerDDLEvents[4].TableNameChange.DropName[0].TableName)
+		require.Equal(t, common.InfluenceTypeNormal, tableTriggerDDLEvents[4].BlockedTables.InfluenceType)
+		require.Equal(t, 2, len(tableTriggerDDLEvents[4].BlockedTables.TableIDs))
+		require.Equal(t, tableID3, tableTriggerDDLEvents[4].BlockedTables.TableIDs[0])
+		// TODO: don't count on the order
+		require.Equal(t, heartbeatpb.DDLSpan.TableID, tableTriggerDDLEvents[4].BlockedTables.TableIDs[1])
 		// drop db event
 		require.Equal(t, uint64(700), tableTriggerDDLEvents[5].FinishedTs)
 		require.Equal(t, schemaName, tableTriggerDDLEvents[5].TableNameChange.DropDatabaseName)

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
@@ -265,6 +266,8 @@ func (p *persistentStorage) unregisterTable(tableID int64) error {
 			return fmt.Errorf(fmt.Sprintf("table %d not found", tableID))
 		}
 		delete(p.tableInfoStoreMap, tableID)
+		log.Info("unregister table",
+			zap.Int64("tableID", tableID))
 	}
 	return nil
 }
@@ -288,30 +291,22 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 		p.mu.Unlock()
 		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
 	}
-	history, ok := p.tablesDDLHistory[tableID]
-	if !ok {
+	// fast check
+	if len(p.tablesDDLHistory[tableID]) == 0 || start >= p.tablesDDLHistory[tableID][len(p.tablesDDLHistory[tableID])-1] {
 		p.mu.RUnlock()
 		return nil, nil
 	}
-	// no events to read, fast return
-	if start > history[len(history)-1] {
-		p.mu.RUnlock()
-		return nil, nil
-	}
-
-	index := sort.Search(len(history), func(i int) bool {
-		return history[i] > start
+	index := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
+		return p.tablesDDLHistory[tableID][i] > start
 	})
-	// no events to read
-	if index == len(history) {
-		p.mu.RUnlock()
-		return nil, nil
+	if index == len(p.tablesDDLHistory[tableID]) {
+		log.Panic("should not happen")
 	}
 	// copy all target ts to a new slice
 	allTargetTs := make([]uint64, 0)
-	for i := index; i < len(history); i++ {
-		if history[i] <= end {
-			allTargetTs = append(allTargetTs, history[i])
+	for i := index; i < len(p.tablesDDLHistory[tableID]); i++ {
+		if p.tablesDDLHistory[tableID][i] <= end {
+			allTargetTs = append(allTargetTs, p.tablesDDLHistory[tableID][i])
 		}
 	}
 
@@ -351,6 +346,11 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
 	}
 	p.mu.Unlock()
+
+	// fast check
+	if len(p.tableTriggerDDLHistory) == 0 || start >= p.tableTriggerDDLHistory[len(p.tableTriggerDDLHistory)-1] {
+		return nil, nil
+	}
 
 	events := make([]common.DDLEvent, 0)
 	nextStartTs := start
@@ -472,18 +472,25 @@ func (p *persistentStorage) doGc(gcTs uint64) error {
 	p.mu.Unlock()
 
 	start := time.Now()
+	// TODO: tablesInKVSnap seems too memory consuming
 	_, tablesInKVSnap, err := writeSchemaSnapshotAndMeta(p.db, p.kvStorage, gcTs)
 	if err != nil {
 		// TODO: retry
 		log.Warn("fail to write kv snapshot during gc",
 			zap.Uint64("gcTs", gcTs))
 	}
+	log.Info("persist storage: gc finish write schema snapshot",
+		zap.Uint64("gcTs", gcTs),
+		zap.Any("duration", time.Since(start).Seconds()))
 
 	// clean data in memeory before clean data on disk
 	p.cleanObseleteDataInMemory(gcTs, tablesInKVSnap)
-	cleanObseleteData(p.db, oldGcTs, gcTs)
+	log.Info("persist storage: gc finish clean in memory data",
+		zap.Uint64("gcTs", gcTs),
+		zap.Any("duration", time.Since(start).Seconds()))
 
-	log.Info("gc finish",
+	cleanObseleteData(p.db, oldGcTs, gcTs)
+	log.Info("persist storage: gc finish",
 		zap.Uint64("gcTs", gcTs),
 		zap.Any("duration", time.Since(start).Seconds()))
 
@@ -500,20 +507,20 @@ func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64, tablesInKVSna
 	}
 
 	// clean tablesDDLHistory
-	for tableID, history := range p.tablesDDLHistory {
+	for tableID := range p.tablesDDLHistory {
 		if _, ok := tablesInKVSnap[tableID]; !ok {
 			delete(p.tablesDDLHistory, tableID)
 			continue
 		}
 
-		i := sort.Search(len(history), func(i int) bool {
-			return history[i] > gcTs
+		i := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
+			return p.tablesDDLHistory[tableID][i] > gcTs
 		})
-		if i == len(history) {
+		if i == len(p.tablesDDLHistory[tableID]) {
 			delete(p.tablesDDLHistory, tableID)
 			continue
 		}
-		p.tablesDDLHistory[tableID] = history[i:]
+		p.tablesDDLHistory[tableID] = p.tablesDDLHistory[tableID][i:]
 	}
 
 	// clean tableTriggerDDLHistory
@@ -523,7 +530,11 @@ func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64, tablesInKVSna
 	p.tableTriggerDDLHistory = p.tableTriggerDDLHistory[i:]
 
 	// clean tableInfoStoreMap
-	for _, store := range p.tableInfoStoreMap {
+	for tableID, store := range p.tableInfoStoreMap {
+		if _, ok := tablesInKVSnap[tableID]; !ok {
+			delete(p.tableInfoStoreMap, tableID)
+			continue
+		}
 		store.gc(gcTs)
 	}
 }
@@ -567,15 +578,19 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 	// TODO: ignore some ddl event
 	// TODO: check ddl events are sorted
 
-	p.mu.Lock()
 	for i := range ddlEvents {
-		// even if the ddl is skipped here, it can still be written to disk.
-		// because when apply this ddl at restart, it will be skipped again.
+		p.mu.Lock()
 		if shouldSkipDDL(&ddlEvents[i], p.databaseMap, p.tableMap) {
+			p.mu.Unlock()
 			continue
 		}
 
 		completePersistedDDLEvent(&ddlEvents[i], p.databaseMap, p.tableMap)
+		p.mu.Unlock()
+
+		writePersistedDDLEvent(p.db, &ddlEvents[i])
+
+		p.mu.Lock()
 		var err error
 		if p.tableTriggerDDLHistory, err = updateDDLHistory(
 			&ddlEvents[i],
@@ -583,18 +598,20 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 			p.tableMap,
 			p.tablesDDLHistory,
 			p.tableTriggerDDLHistory); err != nil {
+			p.mu.Unlock()
 			return err
 		}
 		if err := updateDatabaseInfoAndTableInfo(&ddlEvents[i], p.databaseMap, p.tableMap); err != nil {
+			p.mu.Unlock()
 			return err
 		}
 		if err := updateRegisteredTableInfoStore(ddlEvents[i], p.tableInfoStoreMap); err != nil {
+			p.mu.Unlock()
 			return err
 		}
+		p.mu.Unlock()
 	}
-	p.mu.Unlock()
 
-	writePersistedDDLEvents(p.db, ddlEvents...)
 	return nil
 }
 
@@ -905,6 +922,8 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		FinishedTs: rawEvent.FinishedTs,
 		TiDBOnly:   false,
 	}
+	// TODO: remove schema id when influcence type is normal
+	// TODO: respect filter for create table / drop table and more ddls
 	switch model.ActionType(rawEvent.Type) {
 	case model.ActionCreateSchema,
 		model.ActionAddColumn,
@@ -929,6 +948,7 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 			DropDatabaseName: rawEvent.SchemaName,
 		}
 	case model.ActionCreateTable:
+		// TODO: support create partition table
 		ddlEvent.NeedAddedTables = []common.Table{
 			{
 				SchemaID: rawEvent.SchemaID,
@@ -946,10 +966,14 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 	case model.ActionDropTable:
 		ddlEvent.BlockedTables = &common.InfluencedTables{
 			InfluenceType: common.InfluenceTypeNormal,
+			TableIDs:      []int64{rawEvent.TableID, heartbeatpb.DDLSpan.TableID},
+			SchemaID:      rawEvent.SchemaID,
+		}
+		ddlEvent.NeedDroppedTables = &common.InfluencedTables{
+			InfluenceType: common.InfluenceTypeNormal,
 			TableIDs:      []int64{rawEvent.TableID},
 			SchemaID:      rawEvent.SchemaID,
 		}
-		ddlEvent.NeedDroppedTables = ddlEvent.BlockedTables
 		ddlEvent.TableNameChange = &common.TableNameChange{
 			DropName: []common.SchemaTableName{
 				{
@@ -977,10 +1001,14 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		if !ignorePrevTable {
 			ddlEvent.BlockedTables = &common.InfluencedTables{
 				InfluenceType: common.InfluenceTypeNormal,
+				TableIDs:      []int64{rawEvent.TableID, heartbeatpb.DDLSpan.TableID},
+				SchemaID:      rawEvent.PrevSchemaID,
+			}
+			ddlEvent.NeedDroppedTables = &common.InfluencedTables{
+				InfluenceType: common.InfluenceTypeNormal,
 				TableIDs:      []int64{rawEvent.TableID},
 				SchemaID:      rawEvent.PrevSchemaID,
 			}
-			ddlEvent.NeedDroppedTables = ddlEvent.BlockedTables
 			dropName = append(dropName, common.SchemaTableName{
 				SchemaName: rawEvent.PrevSchemaName,
 				TableName:  rawEvent.PrevTableName,

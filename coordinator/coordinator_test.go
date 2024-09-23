@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"net/http"
 	"net/http/pprof"
 	"strconv"
@@ -26,15 +25,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/node"
+
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/golang/mock/gomock"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	config2 "github.com/pingcap/tiflow/pkg/config"
-	mock_etcd "github.com/pingcap/tiflow/pkg/etcd/mock"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	pd "github.com/tikv/pd/client"
@@ -239,14 +238,13 @@ func TestCoordinatorScheduling(t *testing.T) {
 
 	ctx := context.Background()
 	info := node.NewInfo("", "")
-	etcdClient := mock_etcd.NewMockCDCEtcdClient(gomock.NewController(t))
-	etcdClient.EXPECT().GetGCServiceID().Return("default").AnyTimes()
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx,
 		info.ID, 100, config.NewDefaultMessageCenterConfig()))
 	m := NewMaintainerManager()
 	go m.Run(ctx)
 
-	cr := NewCoordinator(info, &mockPdClient{}, pdutil.NewClock4Test(), etcdClient, 100)
+	serviceID := "default"
+	cr := New(info, &mockPdClient{}, pdutil.NewClock4Test(), serviceID, 100)
 	var metadata orchestrator.ReactorState
 
 	cfs := map[model.ChangeFeedID]*orchestrator.ChangefeedReactorState{}

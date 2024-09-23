@@ -14,12 +14,13 @@
 package coordinator
 
 import (
-	"github.com/flowbehappy/tigate/pkg/node"
 	"math"
 	"math/rand"
 	"sort"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
@@ -41,11 +42,11 @@ type balanceScheduler struct {
 	forceBalance bool
 
 	maxTaskConcurrency int
-	id                 scheduler.InferiorID
+	id                 common.CoordinatorID
 }
 
 func NewBalanceScheduler(
-	id scheduler.InferiorID,
+	id common.CoordinatorID,
 	interval time.Duration,
 	concurrency int) *balanceScheduler {
 	return &balanceScheduler{
@@ -61,13 +62,13 @@ func (b *balanceScheduler) Name() string {
 }
 
 func (b *balanceScheduler) Schedule(
-	_ map[scheduler.ChangefeedID]scheduler.Inferior,
+	_ map[common.MaintainerID]scheduler.Inferior,
 	aliveCaptures map[node.ID]*CaptureStatus,
-	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
-	batchSize int,
+	stateMachines map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID],
+	maxTaskCount int,
 ) []*ScheduleTask {
-	if b.maxTaskConcurrency < batchSize {
-		batchSize = b.maxTaskConcurrency
+	if b.maxTaskConcurrency < maxTaskCount {
+		maxTaskCount = b.maxTaskConcurrency
 	}
 	if !b.forceBalance {
 		now := time.Now()
@@ -79,7 +80,7 @@ func (b *balanceScheduler) Schedule(
 	}
 
 	tasks := buildBalanceMoveTables(
-		b.random, aliveCaptures, stateMachines, batchSize)
+		b.random, aliveCaptures, stateMachines, maxTaskCount)
 	b.forceBalance = len(tasks) != 0
 	log.Info("balance scheduler generate tasks",
 		zap.Int("capture", len(aliveCaptures)),
@@ -92,11 +93,11 @@ func (b *balanceScheduler) Schedule(
 func buildBalanceMoveTables(
 	random *rand.Rand,
 	aliveCaptures map[node.ID]*CaptureStatus,
-	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
-	maxTaskConcurrency int,
+	stateMachines map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID],
+	maxTaskCount int,
 ) []*ScheduleTask {
 	moves := newBalanceMoveTables(
-		random, aliveCaptures, stateMachines, maxTaskConcurrency)
+		random, aliveCaptures, stateMachines, maxTaskCount)
 	tasks := make([]*ScheduleTask, 0, len(moves))
 	for i := 0; i < len(moves); i++ {
 		tasks = append(tasks, &ScheduleTask{
@@ -109,12 +110,12 @@ func buildBalanceMoveTables(
 func newBalanceMoveTables(
 	random *rand.Rand,
 	aliveCaptures map[node.ID]*CaptureStatus,
-	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
-	maxTaskLimit int,
+	stateMachines map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID],
+	maxTaskCount int,
 ) []*MoveInferior {
-	tablesPerCapture := make(map[node.ID]map[scheduler.ChangefeedID]*scheduler.StateMachine)
+	tablesPerCapture := make(map[node.ID]map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID])
 	for captureID := range aliveCaptures {
-		tablesPerCapture[captureID] = make(map[scheduler.ChangefeedID]*scheduler.StateMachine)
+		tablesPerCapture[captureID] = make(map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID])
 	}
 
 	for key, value := range stateMachines {
@@ -126,9 +127,9 @@ func newBalanceMoveTables(
 	// findVictim return tables which need to be moved
 	upperLimitPerCapture := int(math.Ceil(float64(len(stateMachines)) / float64(len(aliveCaptures))))
 
-	victims := make([]*scheduler.StateMachine, 0)
+	victims := make([]*scheduler.StateMachine[common.MaintainerID], 0)
 	for _, ts := range tablesPerCapture {
-		var changefeeds []*scheduler.StateMachine
+		var changefeeds []*scheduler.StateMachine[common.MaintainerID]
 		for _, value := range ts {
 			changefeeds = append(changefeeds, value)
 		}
@@ -160,7 +161,7 @@ func newBalanceMoveTables(
 				break
 			}
 			victims = append(victims, cf)
-			delete(ts, cf.ID.(scheduler.ChangefeedID))
+			delete(ts, cf.ID)
 			tableNum2Remove--
 		}
 	}
@@ -189,16 +190,16 @@ func newBalanceMoveTables(
 			log.Panic("schedulerv3: rebalance meet unexpected min workload " +
 				"when try to the the target capture")
 		}
-		if idx >= maxTaskLimit {
+		if idx >= maxTaskCount {
 			// We have reached the task limit.
 			break
 		}
 
 		moveTables = append(moveTables, &MoveInferior{
-			ID:          cf.ID.(scheduler.ChangefeedID),
+			ID:          cf.ID,
 			DestCapture: target,
 		})
-		tablesPerCapture[target][cf.ID.(scheduler.ChangefeedID)] = cf
+		tablesPerCapture[target][cf.ID] = cf
 		captureWorkload[target] = randomizeWorkload(random, len(tablesPerCapture[target]))
 	}
 

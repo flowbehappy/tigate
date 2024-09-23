@@ -8,9 +8,11 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/filter"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -37,6 +39,8 @@ type SchemaStore interface {
 }
 
 type schemaStore struct {
+	pdClock pdutil.Clock
+
 	ddlJobFetcher *ddlJobFetcher
 
 	// store unresolved ddl event in memory, it is thread safe
@@ -62,7 +66,7 @@ type schemaStore struct {
 	schemaVersion int64
 }
 
-func NewSchemaStore(
+func New(
 	ctx context.Context,
 	root string,
 	pdCli pd.Client,
@@ -74,6 +78,7 @@ func NewSchemaStore(
 	upperBound := dataStorage.getUpperBound()
 
 	s := &schemaStore{
+		pdClock:       pdClock,
 		unsortedCache: newDDLCache(),
 		dataStorage:   dataStorage,
 		notifyCh:      make(chan interface{}, 4),
@@ -153,6 +158,10 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 		}
 		// TODO: resolved ts are updated after ddl events written to disk, do we need to optimize it?
 		s.resolvedTs.Store(pendingTs)
+		currentPhyTs := oracle.GetPhysical(s.pdClock.CurrentTime())
+		resolvedPhyTs := oracle.ExtractPhysical(pendingTs)
+		resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
+		metrics.SchemaStoreResolvedTsLagGauge.Set(float64(resolvedLag))
 		s.dataStorage.updateUpperBound(UpperBoundMeta{
 			FinishedDDLTs: s.finishedDDLTs,
 			SchemaVersion: s.schemaVersion,
@@ -178,34 +187,42 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs uint64, filter filter.Filter) 
 }
 
 func (s *schemaStore) RegisterTable(tableID int64, startTs uint64) error {
+	metrics.SchemaStoreResolvedRegisterTableGauge.Inc()
 	s.waitResolvedTs(tableID, startTs, 5*time.Second)
 	return s.dataStorage.registerTable(tableID, startTs)
 }
 
 func (s *schemaStore) UnregisterTable(tableID int64) error {
+	metrics.SchemaStoreResolvedRegisterTableGauge.Dec()
 	return s.dataStorage.unregisterTable(tableID)
 }
 
 func (s *schemaStore) GetTableInfo(tableID int64, ts uint64) (*common.TableInfo, error) {
+	metrics.SchemaStoreGetTableInfoCounter.Inc()
+	start := time.Now()
+	defer func() {
+		metrics.SchemaStoreGetTableInfoLagHist.Observe(time.Since(start).Seconds())
+	}()
 	s.waitResolvedTs(tableID, ts, 2*time.Second)
 	return s.dataStorage.getTableInfo(tableID, ts)
 }
 
 func (s *schemaStore) FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, uint64, error) {
-
-	return nil, 0, nil
-
-	// currentResolvedTs := s.resolvedTs.Load()
-	// if currentResolvedTs < end {
-	// 	end = currentResolvedTs
-	// }
-	// events, err := s.dataStorage.fetchTableDDLEvents(tableID, tableFilter, start, end)
-	// if err != nil {
-	// 	return nil, 0, err
-	// }
-	// return events, end, nil
+	currentResolvedTs := s.resolvedTs.Load()
+	if currentResolvedTs <= start {
+		return nil, currentResolvedTs, nil
+	}
+	if currentResolvedTs < end {
+		end = currentResolvedTs
+	}
+	events, err := s.dataStorage.fetchTableDDLEvents(tableID, tableFilter, start, end)
+	if err != nil {
+		return nil, 0, err
+	}
+	return events, end, nil
 }
 
+// FetchTableTriggerDDLEvents returns the next ddl events which finishedTs are within the range (start, end]
 func (s *schemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]common.DDLEvent, uint64, error) {
 	if limit == 0 {
 		log.Panic("limit cannot be 0")
@@ -216,6 +233,10 @@ func (s *schemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, star
 		zap.Int("limit", limit))
 	// must get resolved ts first
 	currentResolvedTs := s.resolvedTs.Load()
+	if currentResolvedTs <= start {
+		return nil, currentResolvedTs, nil
+	}
+
 	events, err := s.dataStorage.fetchTableTriggerDDLEvents(tableFilter, start, limit)
 	if err != nil {
 		return nil, 0, err

@@ -27,32 +27,34 @@ type ReplicaSet struct {
 	SchemaID     int64
 	Span         *heartbeatpb.TableSpan
 	ChangefeedID model.ChangeFeedID
-	status       ReplicaSetStatus
-	stateMachine *scheduler.StateMachine
-
-	checkpointTs uint64
+	status       *heartbeatpb.TableSpanStatus
+	stateMachine *scheduler.StateMachine[common.DispatcherID]
 }
 
 func NewReplicaSet(cfID model.ChangeFeedID,
-	id scheduler.InferiorID,
+	id common.DispatcherID,
 	SchemaID int64,
 	span *heartbeatpb.TableSpan,
 	checkpointTs uint64) scheduler.Inferior {
 	r := &ReplicaSet{
-		ID:           id.(common.DispatcherID),
+		ID:           id,
 		SchemaID:     SchemaID,
 		Span:         span,
 		ChangefeedID: cfID,
-		checkpointTs: checkpointTs,
+		status: &heartbeatpb.TableSpanStatus{
+			ID:           id.ToPB(),
+			CheckpointTs: checkpointTs,
+		},
 	}
 	return r
 }
 
-func (r *ReplicaSet) UpdateStatus(status scheduler.InferiorStatus) {
-	newStatus := status.(ReplicaSetStatus)
-	if newStatus.CheckpointTs > r.checkpointTs {
-		r.checkpointTs = newStatus.CheckpointTs
-		r.status.CheckpointTs = newStatus.CheckpointTs
+func (r *ReplicaSet) UpdateStatus(status any) {
+	if status != nil {
+		newStatus := status.(*heartbeatpb.TableSpanStatus)
+		if newStatus.CheckpointTs > r.status.CheckpointTs {
+			r.status = newStatus
+		}
 	}
 }
 
@@ -68,7 +70,7 @@ func (r *ReplicaSet) NewAddInferiorMessage(server node.ID) *messaging.TargetMess
 					StartKey: r.Span.StartKey,
 					EndKey:   r.Span.EndKey,
 				},
-				StartTs: r.checkpointTs,
+				StartTs: r.status.CheckpointTs,
 			},
 			ScheduleAction: heartbeatpb.ScheduleAction_Create,
 		})
@@ -84,27 +86,4 @@ func (r *ReplicaSet) NewRemoveInferiorMessage(server node.ID) *messaging.TargetM
 			},
 			ScheduleAction: heartbeatpb.ScheduleAction_Remove,
 		})
-}
-
-func (r *ReplicaSet) SetStateMachine(state *scheduler.StateMachine) {
-	r.stateMachine = state
-}
-
-func (r *ReplicaSet) GetStateMachine() *scheduler.StateMachine {
-	return r.stateMachine
-}
-
-type ReplicaSetStatus struct {
-	ID           common.DispatcherID
-	State        heartbeatpb.ComponentState
-	CheckpointTs uint64
-	DDLStatus    *heartbeatpb.State
-}
-
-func (c ReplicaSetStatus) GetInferiorID() scheduler.InferiorID {
-	return scheduler.InferiorID(c.ID)
-}
-
-func (c ReplicaSetStatus) GetInferiorState() heartbeatpb.ComponentState {
-	return c.State
 }

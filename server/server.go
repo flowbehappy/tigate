@@ -15,6 +15,9 @@ package server
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
+	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"strings"
 	"sync"
@@ -40,7 +43,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/pkg/config"
+	cdcConfig "github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/etcd"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -80,7 +83,7 @@ type server struct {
 }
 
 // NewServer returns a new Server instance
-func NewServer(conf *config.ServerConfig, pdEndpoints []string) (node.Server, error) {
+func NewServer(conf *cdcConfig.ServerConfig, pdEndpoints []string) (node.Server, error) {
 	// This is to make communication between nodes possible.
 	// In other words, the nodes have to trust each other.
 	if len(conf.Security.CertAllowedCN) != 0 {
@@ -112,14 +115,23 @@ func (c *server) initialize(ctx context.Context) error {
 		log.Error("server prepare failed", zap.Any("server", c.info), zap.Error(err))
 		return errors.Trace(err)
 	}
-	conf := config.GetGlobalServerConfig()
+	conf := cdcConfig.GetGlobalServerConfig()
+
+	messageCenter := messaging.NewMessageCenter(ctx, c.info.ID, c.info.Epoch, config.NewDefaultMessageCenterConfig())
+	appcontext.SetService(appcontext.MessageCenter, messageCenter)
+
+	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, c.info.ID)) // 100GB for demo
+	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(c.info.ID))
+	c.dispatcherManagerManager = dispatchermanagermanager.NewDispatcherManagerManager()
+
 	nodeManager := watcher.NewNodeManager(c.session, c.EtcdClient)
 	nodeManager.RegisterNodeChangeHandler(
 		appcontext.MessageCenter,
 		appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).OnNodeChanges)
 
-	schemaStore := schemastore.NewSchemaStore(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage)
-
+	schemaStore := schemastore.New(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage)
+	eventStore := eventstore.New(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage)
+	eventService := eventservice.New(eventStore, schemaStore)
 	c.subModules = []common.SubModule{
 		nodeManager,
 		schemaStore,
@@ -127,18 +139,13 @@ func (c *server) initialize(ctx context.Context) error {
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener()),
 		maintainer.NewMaintainerManager(c.info, c.pdAPIClient, c.RegionCache),
-		eventstore.NewEventStore(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage, schemaStore),
+		eventStore,
+		eventService,
 	}
 	// register it into global var
 	for _, subModule := range c.subModules {
 		appctx.SetService(subModule.Name(), subModule)
 	}
-
-	// initialize eventService, it relies on eventStore, so we need to initialize it after eventStore
-	eventService := eventservice.NewEventService()
-	c.subModules = append(c.subModules, eventService)
-	appctx.SetService(eventService.Name(), eventService)
-
 	log.Info("server initialized", zap.Any("server", c.info))
 	return nil
 }
