@@ -134,14 +134,6 @@ func (c *eventBroker) sendWatermark(
 	if counter != nil {
 		counter.Inc()
 	}
-	// select {
-	// case <-ctx.Done():
-	// 	return
-	// case c.messageCh <- resolvedEvent:
-	// 	if counter != nil {
-	// 		counter.Inc()
-	// 	}
-	// }
 }
 
 func (c *eventBroker) runScanWorker(ctx context.Context) {
