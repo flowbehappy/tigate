@@ -130,15 +130,10 @@ func (c *eventBroker) sendWatermark(
 		common.ResolvedEvent{
 			DispatcherID: dispatcherID,
 			ResolvedTs:   watermark})
-	select {
-	case <-ctx.Done():
-		return
-	case c.messageCh <- resolvedEvent:
-		if counter != nil {
-			counter.Inc()
-		}
+	c.messageCh <- resolvedEvent
+	if counter != nil {
+		counter.Inc()
 	}
-
 }
 
 func (c *eventBroker) runScanWorker(ctx context.Context) {
