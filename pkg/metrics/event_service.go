@@ -78,6 +78,13 @@ var (
 			Name:      "drop_scan_task_count",
 			Help:      "The number of scan tasks dropped",
 		})
+	EventServiceDropMsgCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_service",
+			Name:      "drop_msg_count",
+			Help:      "The number of messages dropped",
+		})
 )
 
 // InitMetrics registers all metrics in this file.
@@ -89,4 +96,6 @@ func InitEventServiceMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventServiceResolvedTsLagGauge)
 	registry.MustRegister(EventServiceScanDuration)
 	registry.MustRegister(EventServiceDispatcherGuage)
+	registry.MustRegister(EventServiceDropScanTaskCount)
+	registry.MustRegister(EventServiceDropMsgCount)
 }

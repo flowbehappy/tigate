@@ -18,7 +18,7 @@ import (
 const (
 	defaultChannelSize = 2048
 	// TODO: need to adjust the worker count
-	defaultScanWorkerCount = 512
+	defaultScanWorkerCount = 8192
 )
 
 type DispatcherInfo interface {

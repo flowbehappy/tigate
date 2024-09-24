@@ -33,6 +33,7 @@ const (
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
 var metricEventBrokerDropTaskCount = metrics.EventServiceDropScanTaskCount
+var metricEventBrokerDropMsgCount = metrics.EventServiceDropMsgCount
 
 // eventBroker get event from the eventStore, and send the event to the dispatchers.
 // Every TiDB cluster has a eventBroker.
@@ -145,18 +146,18 @@ func (c *eventBroker) sendWatermark(
 		common.ResolvedEvent{
 			DispatcherID: dispatcherID,
 			ResolvedTs:   watermark})
-LOOP:
 	for i := 0; i < resolvedEventRetryTime; i++ {
 		select {
 		case c.messageCh <- resolvedEvent:
 			if counter != nil {
 				counter.Inc()
 			}
-			break LOOP
+			return
 		default:
 			time.Sleep(time.Millisecond * 10)
 		}
 	}
+	metricEventBrokerDropMsgCount.Inc()
 }
 
 func (c *eventBroker) runScanWorker(ctx context.Context) {
