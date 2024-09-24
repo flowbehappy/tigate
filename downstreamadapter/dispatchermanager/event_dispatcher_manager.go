@@ -198,7 +198,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 		return nil
 	}
 
-	dispatcher := dispatcher.NewDispatcher(e.changefeedID, id, tableSpan, e.sink, startTs, e.statusesChan, e.filter, schemaID)
+	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.filter, schemaID)
 
 	if tableSpan.Equal(heartbeatpb.DDLSpan) {
 		e.tableTriggerEventDispatcher = dispatcher
