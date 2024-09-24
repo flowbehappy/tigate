@@ -198,25 +198,20 @@ func (s *Scheduler) GetTask(dispatcherID common.DispatcherID) *scheduler.StateMa
 	return stm
 }
 
-func (s *Scheduler) RemoveAllTasks() []*messaging.TargetMessage {
-	var msgs []*messaging.TargetMessage
+func (s *Scheduler) RemoveAllTasks() {
 	for _, m := range s.totalMaps {
 		for _, stm := range m {
-			msg := s.RemoveTask(stm)
-			if msg != nil {
-				msgs = append(msgs, msg)
-			}
+			s.RemoveTask(stm)
 		}
 	}
-	return msgs
 }
 
-func (s *Scheduler) RemoveTask(stm *scheduler.StateMachine[common.DispatcherID]) *messaging.TargetMessage {
+func (s *Scheduler) RemoveTask(stm *scheduler.StateMachine[common.DispatcherID]) {
 	if stm == nil {
 		log.Warn("dispatcher is not found",
 			zap.String("cf", s.changefeedID),
 			zap.Any("dispatcherID", s.changefeedID))
-		return nil
+		return
 	}
 	if stm.State == scheduler.SchedulerStatusAbsent {
 		replica := stm.Inferior.(*ReplicaSet)
@@ -227,18 +222,12 @@ func (s *Scheduler) RemoveTask(stm *scheduler.StateMachine[common.DispatcherID])
 		delete(s.Absent(), id)
 		delete(s.schemaTasks[replica.SchemaID], id)
 		delete(s.tableTasks, replica.Span.TableID)
-		return nil
+		return
 	}
 	oldState := stm.State
 	oldPrimary := stm.Primary
-	msg := stm.HandleRemoveInferior()
+	stm.HandleRemoveInferior()
 	s.tryMoveTask(stm.ID, stm, oldState, oldPrimary, true)
-	return msg
-}
-
-// RemoveTaskByID removes task by dispatcherID
-func (s *Scheduler) RemoveTaskByID(dispatcherID common.DispatcherID) *messaging.TargetMessage {
-	return s.RemoveTask(s.GetTask(dispatcherID))
 }
 
 func (s *Scheduler) GetTasksByTableIDs(tableIDs ...int64) []*scheduler.StateMachine[common.DispatcherID] {
@@ -273,21 +262,17 @@ func (s *Scheduler) AddNewNode(id node.ID) {
 	s.nodeTasks[id] = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
 }
 
-func (s *Scheduler) RemoveNode(id node.ID) []*messaging.TargetMessage {
+func (s *Scheduler) RemoveNode(id node.ID) {
 	stmMap, ok := s.nodeTasks[id]
 	if !ok {
 		log.Info("node is maintained by scheduler, ignore",
 			zap.String("changefeed", s.changefeedID),
 			zap.Any("node", id))
-		return nil
+		return
 	}
-	var msgs []*messaging.TargetMessage
 	for key, value := range stmMap {
 		oldState := value.State
-		msg, _ := value.HandleCaptureShutdown(id)
-		if msg != nil {
-			msgs = append(msgs, msg)
-		}
+		value.HandleCaptureShutdown(id)
 		if value.Primary != "" && value.Primary != id {
 			delete(s.nodeTasks[value.Primary], key)
 		}
@@ -297,30 +282,54 @@ func (s *Scheduler) RemoveNode(id node.ID) []*messaging.TargetMessage {
 	for key, value := range s.Removing() {
 		if value.Secondary == id {
 			oldState := value.State
-			msg, _ := value.HandleCaptureShutdown(id)
-			if msg != nil {
-				msgs = append(msgs, msg)
-			}
+			value.HandleCaptureShutdown(id)
 			s.tryMoveTask(key, value, oldState, id, false)
 		}
 	}
 	delete(s.nodeTasks, id)
-	return msgs
 }
 
-func (s *Scheduler) Schedule() []*messaging.TargetMessage {
+func (s *Scheduler) Schedule() {
 	if len(s.nodeTasks) == 0 {
 		log.Warn("scheduler has no node tasks", zap.String("changeeed", s.changefeedID))
-		return nil
+		return
 	}
-	if !s.NeedSchedule() {
-		// we scheduled all absent tasks, try to balance it if needed
-		return s.tryBalance()
+	if s.NeedSchedule() {
+		s.basicSchedule()
+		return
 	}
+	// we scheduled all absent tasks, try to balance it if needed
+	s.tryBalance()
+}
+
+func (s *Scheduler) NeedSchedule() bool {
+	return s.GetTaskSizeByState(scheduler.SchedulerStatusAbsent) > 0
+}
+
+// ScheduleFinished return false if not all task are running in working state
+func (s *Scheduler) ScheduleFinished() bool {
+	return s.TaskSize() == s.GetTaskSizeByState(scheduler.SchedulerStatusWorking)
+}
+
+func (s *Scheduler) tryBalance() {
+	if !s.ScheduleFinished() {
+		// not in stable schedule state, skip balance
+		return
+	}
+	now := time.Now()
+	if now.Sub(s.lastRebalanceTime) < s.checkBalanceInterval {
+		// skip balance.
+		return
+	}
+	s.lastRebalanceTime = now
+	s.balanceTables()
+}
+
+func (s *Scheduler) basicSchedule() {
 	totalSize := s.batchSize - len(s.Removing()) - len(s.Commiting())
 	if totalSize <= 0 {
 		// too many running tasks, skip schedule
-		return nil
+		return
 	}
 	priorityQueue := heap.NewHeap[*Item]()
 	for key, m := range s.nodeTasks {
@@ -331,14 +340,10 @@ func (s *Scheduler) Schedule() []*messaging.TargetMessage {
 	}
 
 	taskSize := 0
-	var msgs = make([]*messaging.TargetMessage, 0, s.batchSize)
 	absent := s.Absent()
 	for key, value := range absent {
 		item, _ := priorityQueue.PeekTop()
-		msg := value.HandleAddInferior(item.Node)
-		if msg != nil {
-			msgs = append(msgs, msg)
-		}
+		value.HandleAddInferior(item.Node)
 
 		s.Commiting()[key] = value
 		s.nodeTasks[item.Node][key] = value
@@ -351,38 +356,17 @@ func (s *Scheduler) Schedule() []*messaging.TargetMessage {
 			break
 		}
 	}
-	return msgs
 }
 
-func (s *Scheduler) NeedSchedule() bool {
-	return s.GetTaskSizeByState(scheduler.SchedulerStatusAbsent) > 0
-}
-
-// ScheduleFinished return false if not all task are running in working state
-func (s *Scheduler) ScheduleFinished() bool {
-	return s.TaskSize() == s.GetTaskSizeByState(scheduler.SchedulerStatusWorking)
-}
-
-func (s *Scheduler) tryBalance() []*messaging.TargetMessage {
-	if !s.ScheduleFinished() {
-		// not in stable schedule state, skip balance
-		return nil
-	}
-	now := time.Now()
-	if now.Sub(s.lastRebalanceTime) < s.checkBalanceInterval {
-		// skip balance.
-		return nil
-	}
-	s.lastRebalanceTime = now
-	return s.balanceTables()
-}
-
-func (s *Scheduler) ResendMessage() []*messaging.TargetMessage {
-	var msgs []*messaging.TargetMessage
+func (s *Scheduler) GetSchedulingMessages() []*messaging.TargetMessage {
+	var msgs = make([]*messaging.TargetMessage, 0, s.batchSize)
 	resend := func(m map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]) {
 		for _, value := range m {
-			if msg := value.HandleResend(); msg != nil {
+			if msg := value.GetSchedulingMessage(); msg != nil {
 				msgs = append(msgs, msg)
+			}
+			if len(msgs) >= s.batchSize {
+				return
 			}
 		}
 	}
@@ -391,8 +375,7 @@ func (s *Scheduler) ResendMessage() []*messaging.TargetMessage {
 	return msgs
 }
 
-func (s *Scheduler) balanceTables() []*messaging.TargetMessage {
-	var messages = make([]*messaging.TargetMessage, 0)
+func (s *Scheduler) balanceTables() {
 	upperLimitPerCapture := int(math.Ceil(float64(s.TaskSize()) / float64(len(s.nodeTasks))))
 	// victims holds tables which need to be moved
 	victims := make([]*scheduler.StateMachine[common.DispatcherID], 0)
@@ -443,7 +426,7 @@ func (s *Scheduler) balanceTables() []*messaging.TargetMessage {
 		}
 	}
 	if len(victims) == 0 {
-		return nil
+		return
 	}
 
 	movedSize := 0
@@ -458,8 +441,7 @@ func (s *Scheduler) balanceTables() []*messaging.TargetMessage {
 		target := item.Node
 		oldState := cf.State
 		oldPrimary := cf.Primary
-		msg := cf.HandleMoveInferior(target)
-		messages = append(messages, msg)
+		cf.HandleMoveInferior(target)
 		s.tryMoveTask(cf.ID, cf, oldState, oldPrimary, false)
 		// update the task size priority queue
 		item.TaskSize++
@@ -470,18 +452,16 @@ func (s *Scheduler) balanceTables() []*messaging.TargetMessage {
 		zap.String("changefeed", s.changefeedID),
 		zap.Int("movedSize", movedSize),
 		zap.Int("victims", len(victims)))
-	return messages
 }
 
-func (s *Scheduler) HandleStatus(from node.ID, statusList []*heartbeatpb.TableSpanStatus) []*messaging.TargetMessage {
+func (s *Scheduler) HandleStatus(from node.ID, statusList []*heartbeatpb.TableSpanStatus) {
 	stMap, ok := s.nodeTasks[from]
 	if !ok {
 		log.Warn("no server id found, ignore",
 			zap.String("changefeed", s.changefeedID),
 			zap.Any("from", from))
-		return nil
+		return
 	}
-	var msgs = make([]*messaging.TargetMessage, 0)
 	for _, status := range statusList {
 		span := common.NewDispatcherIDFromPB(status.ID)
 		stm, ok := stMap[span]
@@ -494,13 +474,9 @@ func (s *Scheduler) HandleStatus(from node.ID, statusList []*heartbeatpb.TableSp
 		}
 		oldState := stm.State
 		oldPrimary := stm.Primary
-		msg := stm.HandleInferiorStatus(status.ComponentStatus, status, from)
-		if msg != nil {
-			msgs = append(msgs, msg)
-		}
+		stm.HandleInferiorStatus(status.ComponentStatus, status, from)
 		s.tryMoveTask(span, stm, oldState, oldPrimary, true)
 	}
-	return msgs
 }
 
 func (s *Scheduler) TaskSize() int {

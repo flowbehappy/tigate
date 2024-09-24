@@ -14,8 +14,6 @@
 package coordinator
 
 import (
-	"time"
-
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
@@ -80,8 +78,7 @@ func (s *Supervisor) Schedule(allInferiors map[common.MaintainerID]scheduler.Inf
 	}
 
 	tasks := s.schedule(allInferiors, s.GetAllCaptures(), s.GetInferiors(), maxTaskCount)
-	scheduleMessages := s.handleScheduleTasks(tasks)
-	msgs = append(msgs, scheduleMessages...)
+	s.handleScheduleTasks(tasks)
 	return msgs
 }
 
@@ -100,12 +97,6 @@ func (s *Supervisor) Name() string {
 }
 
 func (s *Supervisor) checkRunningTasks() (msgs []*messaging.TargetMessage) {
-	needResend := false
-	if time.Since(s.lastResendTime) > time.Second*2 {
-		needResend = true
-		s.lastResendTime = time.Now()
-	}
-
 	// Check if a running task is finished.
 	var toBeDeleted []common.MaintainerID
 	for id, _ := range s.RunningTasks {
@@ -117,11 +108,8 @@ func (s *Supervisor) checkRunningTasks() (msgs []*messaging.TargetMessage) {
 			toBeDeleted = append(toBeDeleted, id)
 		}
 
-		if needResend {
-			msg := stateMachine.HandleResend()
-			log.Info("resend message",
-				zap.String("state", stateMachine.State.String()),
-				zap.String("id", stateMachine.ID.String()))
+		msg := stateMachine.GetSchedulingMessage()
+		if msg != nil {
 			msgs = append(msgs, msg)
 		}
 	}

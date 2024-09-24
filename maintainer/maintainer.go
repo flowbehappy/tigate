@@ -155,7 +155,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 // it's the entrance of the Maintainer, it handles all types of Events
 // note: the EventPeriod is a special event that submitted when initializing maintainer
 // , and it will be re-submitted at the end of onPeriodTask
-func (m *Maintainer) HandleEvent(event *Event) (await bool) {
+func (m *Maintainer) HandleEvent(event *Event) bool {
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
@@ -349,7 +349,7 @@ func (m *Maintainer) onNodeChanged() {
 	for id, _ := range m.bootstrapper.GetAllNodes() {
 		if _, ok := activeNodes[id]; !ok {
 			removedNodes = append(removedNodes, id)
-			m.sendMessages(m.scheduler.RemoveNode(id))
+			m.scheduler.RemoveNode(id)
 		}
 	}
 	log.Info("maintainer node changed",
@@ -425,8 +425,7 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 	if req.Watermark != nil {
 		m.checkpointTsByCapture[msg.From] = *req.Watermark
 	}
-	msgs := m.scheduler.HandleStatus(msg.From, req.Statuses)
-	m.sendMessages(msgs)
+	m.scheduler.HandleStatus(msg.From, req.Statuses)
 	msgs, err := m.barrier.HandleStatus(msg.From, req)
 	if err != nil {
 		log.Error("handle status failed, ignore",
@@ -525,8 +524,8 @@ func (m *Maintainer) onNodeClosed(from node.ID, response *heartbeatpb.Maintainer
 }
 
 func (m *Maintainer) handleResendMessage() {
-	// resend scheduling message
-	m.sendMessages(m.scheduler.ResendMessage())
+	// send scheduling message
+	m.sendMessages(m.scheduler.GetSchedulingMessages())
 	// resend bootstrap message
 	m.sendMessages(m.bootstrapper.ResendBootstrapMessage())
 	// resend closing message
@@ -625,7 +624,7 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 func (m *Maintainer) onPeriodTask() {
 	// schedule absent tasks
 	if m.bootstrapper.CheckAllNodeInitialized() {
-		m.sendMessages(m.scheduler.Schedule())
+		m.scheduler.Schedule()
 	}
 	// send scheduling messages
 	m.handleResendMessage()

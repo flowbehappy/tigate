@@ -44,13 +44,14 @@ func TestSchedule(t *testing.T) {
 			TableID:  int64(i),
 		}, 1)
 	}
-	msgs := s.Schedule()
-	require.Len(t, msgs, 9)
+	s.Schedule()
 	require.Equal(t, len(s.Commiting()), 9)
 	require.Equal(t, len(s.Absent()), 991)
 	require.Equal(t, len(s.nodeTasks["node1"]), 3)
 	require.Equal(t, len(s.nodeTasks["node2"]), 3)
 	require.Equal(t, len(s.nodeTasks["node3"]), 3)
+	msgs := s.GetSchedulingMessages()
+	require.Len(t, msgs, 9)
 }
 
 func TestMoveTask(t *testing.T) {
@@ -89,7 +90,7 @@ func TestMoveTask(t *testing.T) {
 	require.Equal(t, 1, len(s.Working()))
 
 	//working -> removing
-	_ = stm.HandleMoveInferior("b")
+	stm.HandleMoveInferior("b")
 	stm.Primary = "a"
 	stm.Secondary = "b"
 	s.tryMoveTask(dispatcherID, stm, scheduler.SchedulerStatusWorking, "a", true)
@@ -99,7 +100,7 @@ func TestMoveTask(t *testing.T) {
 	require.Equal(t, 0, len(s.Working()))
 
 	// removing -> committing
-	_ = stm.HandleInferiorStatus(heartbeatpb.ComponentState_Stopped,
+	stm.HandleInferiorStatus(heartbeatpb.ComponentState_Stopped,
 		&heartbeatpb.TableSpanStatus{
 			ID:              dispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Stopped,
@@ -113,7 +114,7 @@ func TestMoveTask(t *testing.T) {
 	require.Equal(t, 0, len(s.Working()))
 
 	//committing -> working
-	_ = stm.HandleInferiorStatus(heartbeatpb.ComponentState_Working,
+	stm.HandleInferiorStatus(heartbeatpb.ComponentState_Working,
 		&heartbeatpb.TableSpanStatus{
 			ID:              dispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
@@ -127,11 +128,11 @@ func TestMoveTask(t *testing.T) {
 	require.Equal(t, 1, len(s.Working()))
 
 	//working -> removing
-	_ = stm.HandleRemoveInferior()
+	stm.HandleRemoveInferior()
 	s.tryMoveTask(dispatcherID, stm, scheduler.SchedulerStatusWorking, "b", true)
 
 	// removing -> removed
-	_ = stm.HandleInferiorStatus(heartbeatpb.ComponentState_Stopped,
+	stm.HandleInferiorStatus(heartbeatpb.ComponentState_Stopped,
 		&heartbeatpb.TableSpanStatus{
 			ID:              dispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Stopped,
@@ -143,6 +144,17 @@ func TestMoveTask(t *testing.T) {
 	require.Equal(t, 0, len(s.nodeTasks["b"]))
 	require.Equal(t, 0, len(s.Commiting()))
 	require.Equal(t, 0, len(s.Working()))
+}
+
+func TestRemoveAbsentTask(t *testing.T) {
+	s := NewScheduler("test", 1, nil, nil, nil, 9, time.Minute)
+	s.AddNewTable(common.Table{
+		SchemaID: 1,
+		TableID:  int64(1),
+	}, 1)
+	require.Equal(t, 1, len(s.Absent()))
+	s.RemoveAllTasks()
+	require.Equal(t, 0, len(s.Absent()))
 }
 
 func TestBalance(t *testing.T) {
@@ -158,15 +170,15 @@ func TestBalance(t *testing.T) {
 		s.Working()[dispatcherID] = stm
 		s.nodeTasks["node1"][dispatcherID] = stm
 	}
-	msgs := s.Schedule()
-	require.Len(t, msgs, 0)
+	s.Schedule()
 	require.Equal(t, len(s.Working()), 100)
 	require.Equal(t, len(s.nodeTasks["node1"]), 100)
 	//add duplicate node
 	s.AddNewNode("node1")
 	// add new node
 	s.AddNewNode("node2")
-	msgs = s.tryBalance()
+	s.tryBalance()
+	msgs := s.GetSchedulingMessages()
 	require.Len(t, msgs, 50)
 	require.Equal(t, len(s.Removing()), 50)
 	require.Equal(t, len(s.Working()), 50)
@@ -175,14 +187,14 @@ func TestBalance(t *testing.T) {
 	require.Equal(t, len(s.nodeTasks["node2"]), 0)
 
 	// remove the node2
-	msgs = s.RemoveNode("node2")
-	require.Len(t, msgs, 0)
+	s.RemoveNode("node2")
 	require.Equal(t, len(s.Removing()), 0)
 	// changed to working status
 	require.Equal(t, len(s.Working()), 100)
 	require.Equal(t, len(s.nodeTasks["node1"]), 100)
-	msgs = s.RemoveNode("node2")
-	require.Len(t, msgs, 0)
+	s.RemoveNode("node2")
+	require.Equal(t, len(s.Removing()), 0)
+	require.Equal(t, len(s.Working()), 100)
 }
 
 func TestStoppedWhenMoving(t *testing.T) {
@@ -199,7 +211,7 @@ func TestStoppedWhenMoving(t *testing.T) {
 	s.Working()[dispatcherID] = stm
 	s.nodeTasks["node1"][dispatcherID] = stm
 
-	_ = stm.HandleMoveInferior("node2")
+	stm.HandleMoveInferior("node2")
 	s.tryMoveTask(dispatcherID, stm, scheduler.SchedulerStatusWorking, "node2", true)
 	require.Equal(t, len(s.Removing()), 1)
 	// changed to working status
@@ -207,14 +219,13 @@ func TestStoppedWhenMoving(t *testing.T) {
 	require.Equal(t, len(s.nodeTasks["node1"]), 1)
 	require.Equal(t, len(s.nodeTasks["node2"]), 0)
 
-	msgs := s.HandleStatus("node1", []*heartbeatpb.TableSpanStatus{
+	s.HandleStatus("node1", []*heartbeatpb.TableSpanStatus{
 		{
 			ID:              dispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Stopped,
 			CheckpointTs:    10,
 		},
 	})
-	require.Len(t, msgs, 1)
 	require.Equal(t, len(s.Commiting()), 1)
 	require.Equal(t, len(s.Removing()), 0)
 	require.Equal(t, len(s.nodeTasks["node1"]), 0)
@@ -268,8 +279,7 @@ func TestBalanceUnEvenTask(t *testing.T) {
 			TableID:  int64(i),
 		}, 1)
 	}
-	msgs := s.Schedule()
-	require.Len(t, msgs, 4)
+	s.Schedule()
 	require.Equal(t, len(s.Commiting()), 4)
 	require.Equal(t, len(s.nodeTasks["node1"]), 2)
 	require.Equal(t, len(s.nodeTasks["node2"]), 2)
@@ -284,15 +294,14 @@ func TestBalanceUnEvenTask(t *testing.T) {
 		}
 		return nodeIds
 	}
-	_ = s.HandleStatus("node1", f(s.nodeTasks["node1"]))
-	_ = s.HandleStatus("node2", f(s.nodeTasks["node2"]))
+	s.HandleStatus("node1", f(s.nodeTasks["node1"]))
+	s.HandleStatus("node2", f(s.nodeTasks["node2"]))
 	require.Equal(t, len(s.Working()), 4)
 	require.Equal(t, len(s.Commiting()), 0)
 
 	// add new node
 	s.AddNewNode("node3")
-	msgs = s.tryBalance()
-	require.Len(t, msgs, 0)
+	s.tryBalance()
 	require.Equal(t, len(s.Removing()), 0)
 	require.Equal(t, len(s.Working()), 4)
 	//still on the primary node

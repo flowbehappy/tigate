@@ -28,7 +28,6 @@ type ReplicaSet struct {
 	Span         *heartbeatpb.TableSpan
 	ChangefeedID model.ChangeFeedID
 	status       *heartbeatpb.TableSpanStatus
-	stateMachine *scheduler.StateMachine[common.DispatcherID]
 }
 
 func NewReplicaSet(cfID model.ChangeFeedID,
