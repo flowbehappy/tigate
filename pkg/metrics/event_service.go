@@ -71,6 +71,13 @@ var (
 			Name:      "dispatcher_count",
 			Help:      "The number of dispatchers in event service",
 		}, []string{"cluster"})
+	EventServiceDropScanTaskCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_service",
+			Name:      "drop_scan_task_count",
+			Help:      "The number of scan tasks dropped",
+		})
 )
 
 // InitMetrics registers all metrics in this file.

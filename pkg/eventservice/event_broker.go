@@ -2,7 +2,6 @@ package eventservice
 
 import (
 	"context"
-	"hash/crc32"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -33,6 +32,7 @@ const (
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
+var metricEventBrokerDropTaskCount = metrics.EventServiceDropScanTaskCount
 
 // eventBroker get event from the eventStore, and send the event to the dispatchers.
 // Every TiDB cluster has a eventBroker.
@@ -60,6 +60,7 @@ type eventBroker struct {
 
 	ds dynstream.DynamicStream[common.DispatcherID, scanTask, *eventBroker]
 
+	dispatcherCount int
 	// scanWorkerCount is the number of the scan workers to spawn.
 	scanWorkerCount int
 
@@ -512,7 +513,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		spanSubscription = newSpanSubscription(span, startTs)
 		c.spans[span.TableID] = spanSubscription
 	}
-	dispatcher := newDispatcherStat(startTs, info, spanSubscription, filter)
+	dispatcher := newDispatcherStat(startTs, info, spanSubscription, filter, c.dispatcherCount)
 	if span.Equal(heartbeatpb.DDLSpan) {
 		c.tableTriggerDispatchers.Store(id, dispatcher)
 		log.Info("table trigger dispatcher register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
@@ -522,6 +523,8 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	}
 
 	c.dispatchers.Store(id, dispatcher)
+	c.dispatcherCount++
+
 	brokerRegisterDuration := time.Since(start)
 
 	start = time.Now()
@@ -585,6 +588,7 @@ type dispatcherStat struct {
 func newDispatcherStat(
 	startTs uint64, info DispatcherInfo,
 	subscription *spanSubscription, filter filter.Filter,
+	dispatcherIdx int,
 ) *dispatcherStat {
 	namespace, id := info.GetChangefeedID()
 	dispStat := &dispatcherStat{
@@ -598,10 +602,7 @@ func newDispatcherStat(
 		metricEventServiceSendResolvedTsCount: metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "resolved_ts"),
 	}
 	dispStat.watermark.Store(startTs)
-	// todo: it looks this can be simplified to round-robin.
-	hasher := crc32.NewIEEE()
-	hasher.Write(info.GetID().Marshal())
-	dispStat.workerIndex = int(hasher.Sum32() % defaultScanWorkerCount)
+	dispStat.workerIndex = int(dispatcherIdx % defaultScanWorkerCount)
 
 	subscription.addDispatcher(dispStat)
 	return dispStat
@@ -712,6 +713,7 @@ func (p *scanTaskQueue) pushTask(task scanTask) bool {
 	case p.pendingTaskQueue[task.dispatcherStat.workerIndex] <- task:
 		return true
 	default:
+		metricEventBrokerDropTaskCount.Inc()
 		// If the queue is full, we just drop the task
 		return false
 	}
