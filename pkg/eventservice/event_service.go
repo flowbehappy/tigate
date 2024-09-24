@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	defaultChannelSize = 1024
+	defaultChannelSize = 2048
 	// TODO: need to adjust the worker count
 	defaultScanWorkerCount = 1024
 )

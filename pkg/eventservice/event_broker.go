@@ -707,11 +707,13 @@ func newScanTaskPool() *scanTaskQueue {
 
 // pushTask pushes a task to the pool,
 // and merge the task if the task is overlapped with the existing tasks.
-func (p *scanTaskQueue) pushTask(task scanTask) {
+func (p *scanTaskQueue) pushTask(task scanTask) bool {
 	select {
 	case p.pendingTaskQueue[task.dispatcherStat.workerIndex] <- task:
+		return true
 	default:
 		// If the queue is full, we just drop the task
+		return false
 	}
 }
 
