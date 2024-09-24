@@ -19,6 +19,7 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -63,7 +64,10 @@ func (p *TableProgress) Add(event common.FlushableEvent) {
 	p.elemMap[ts] = elem
 	p.maxCommitTs = event.GetCommitTs()
 	event.AddPostFlushFunc(func() { p.Remove(event) })
-	event.AddPostFlushFunc(func() { p.metricSinkOutputChunkSize.Observe(float64(event.GetChunkSize())) })
+	event.AddPostFlushFunc(func() {
+		p.metricSinkOutputChunkSize.Observe(float64(event.GetChunkSize()))
+		log.Info("event chunk size", "size", event.GetChunkSize())
+	})
 }
 
 // 而且删除可以认为是批量的？但要不要做成批量可以后面再看
