@@ -132,7 +132,6 @@ func newEventBroker(
 }
 
 func (c *eventBroker) sendWatermark(
-	ctx context.Context,
 	server node.ID,
 	dispatcherID common.DispatcherID,
 	watermark uint64,
@@ -146,8 +145,6 @@ func (c *eventBroker) sendWatermark(
 LOOP:
 	for i := 0; i < resolvedEventRetryTime; i++ {
 		select {
-		case <-ctx.Done():
-			return
 		case c.messageCh <- resolvedEvent:
 			if counter != nil {
 				counter.Inc()
@@ -224,7 +221,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 						c.sendDDL(ctx, remoteID, e, dispatcher)
 					}
 					// After all the events are sent, we send the watermark to the dispatcher.
-					c.sendWatermark(ctx, remoteID, dispatcher.info.GetID(), endTs, dispatcher.metricEventServiceSendResolvedTsCount)
+					c.sendWatermark(remoteID, dispatcher.info.GetID(), endTs, dispatcher.metricEventServiceSendResolvedTsCount)
 					dispatcher.watermark.Store(endTs)
 					return true
 				})
@@ -279,7 +276,7 @@ func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, c
 		for _, e := range ddlEvents {
 			c.sendDDL(ctx, remoteID, e, task.dispatcherStat)
 		}
-		c.sendWatermark(ctx, remoteID, dispatcherID, dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
+		c.sendWatermark(remoteID, dispatcherID, dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
 		task.dispatcherStat.watermark.Store(dataRange.EndTs)
 		return false, dataRange, nil
 	}

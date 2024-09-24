@@ -168,7 +168,7 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 	log.Info("schema store initialize from kv storage begin",
 		zap.Uint64("snapTs", gcTs))
 
-	if p.databaseMap, p.tableMap, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs); err != nil {
+	if p.databaseMap, p.tableMap, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs, false); err != nil {
 		// TODO: retry
 		log.Fatal("fail to initialize from kv snapshot")
 	}
@@ -472,12 +472,12 @@ func (p *persistentStorage) doGc(gcTs uint64) error {
 	p.mu.Unlock()
 
 	start := time.Now()
-	// TODO: tablesInKVSnap seems too memory consuming
-	_, tablesInKVSnap, err := writeSchemaSnapshotAndMeta(p.db, p.kvStorage, gcTs)
+	_, tablesInKVSnap, err := writeSchemaSnapshotAndMeta(p.db, p.kvStorage, gcTs, true)
 	if err != nil {
-		// TODO: retry
 		log.Warn("fail to write kv snapshot during gc",
 			zap.Uint64("gcTs", gcTs))
+		// TODO: return err and retry?
+		return nil
 	}
 	log.Info("persist storage: gc finish write schema snapshot",
 		zap.Uint64("gcTs", gcTs),

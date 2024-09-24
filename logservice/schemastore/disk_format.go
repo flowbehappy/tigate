@@ -387,6 +387,7 @@ func writeSchemaSnapshotAndMeta(
 	db *pebble.DB,
 	tiStore kv.Storage,
 	snapTs uint64,
+	onlyTableID bool,
 ) (map[int64]*BasicDatabaseInfo, map[int64]*BasicTableInfo, error) {
 	meta := logpuller.GetSnapshotMeta(tiStore, snapTs)
 	start := time.Now()
@@ -395,18 +396,12 @@ func writeSchemaSnapshotAndMeta(
 		log.Fatal("list databases failed", zap.Error(err))
 	}
 
-	databaseMap := make(map[int64]*BasicDatabaseInfo, len(dbInfos))
+	databaseMap := make(map[int64]*BasicDatabaseInfo)
 	tablesInKVSnap := make(map[int64]*BasicTableInfo)
 	for _, dbInfo := range dbInfos {
 		if filter.IsSysSchema(dbInfo.Name.O) {
 			continue
 		}
-		databaseInfo := &BasicDatabaseInfo{
-			Name:   dbInfo.Name.O,
-			Tables: make(map[int64]bool),
-		}
-		databaseMap[dbInfo.ID] = databaseInfo
-
 		batch := db.NewBatch()
 		defer batch.Close()
 
@@ -416,17 +411,32 @@ func writeSchemaSnapshotAndMeta(
 		if err != nil {
 			log.Fatal("get tables failed", zap.Error(err))
 		}
+		var tables map[int64]bool
+		if !onlyTableID {
+			tables = make(map[int64]bool)
+		}
 		for _, rawTable := range rawTables {
 			if !isTableRawKey(rawTable.Field) {
 				continue
 			}
 			tableID, tableName := writeTableInfoToBatch(batch, snapTs, dbInfo, rawTable.Value)
-			databaseInfo.Tables[tableID] = true
-			tablesInKVSnap[tableID] = &BasicTableInfo{
-				SchemaID: dbInfo.ID,
-				Name:     tableName,
-				InKVSnap: true,
+			if !onlyTableID {
+				tablesInKVSnap[tableID] = &BasicTableInfo{
+					SchemaID: dbInfo.ID,
+					Name:     tableName,
+					InKVSnap: true,
+				}
+				tables[tableID] = true
+			} else {
+				tablesInKVSnap[tableID] = nil
 			}
+		}
+		if !onlyTableID {
+			databaseInfo := &BasicDatabaseInfo{
+				Name:   dbInfo.Name.O,
+				Tables: tables,
+			}
+			databaseMap[dbInfo.ID] = databaseInfo
 		}
 		if err := batch.Commit(pebble.NoSync); err != nil {
 			return nil, nil, err
