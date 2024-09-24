@@ -268,108 +268,101 @@
           "timeShift": null
         },
         {
-        "type": "graph",
-        "title": "Output Chunk Size of Sink",
-        "gridPos": {
-          "x": 12,
-          "y": 1,
-          "w": 12,
-          "h": 8
-        },
-        "id": 12061,
-        "targets": [
-          {
-            "expr": "histogram_quantile(0.999, sum(rate(ticdc_sink_output_chunk_size_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",namespace=~\"namespace\",changefeed=~\"$changefeed\",instance=~\"$ticdc_instance\"}[1m])) by (le,namespace,changefeed,instance))",
-            "legendFormat": "{{instance}}-rate",
-            "interval": "",
-            "exemplar": true,
-            "refId": "A",
-            "queryType": "randomWalk"
+          "aliasColors": {},
+          "dashLength": 10,
+          "datasource": "${DS_C1}",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
           },
-          {
-            "expr": "sum(rate(ticdc_sink_output_chunk_size_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",namespace=~\"namespace\",changefeed=~\"$changefeed\",instance=~\"$ticdc_instance\"}[1m])) by (namespace,changefeed,instance) / sum(rate(ticdc_sink_output_chunk_size_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",namespace=~\"namespace\",changefeed=~\"$changefeed\",instance=~\"$ticdc_instance\"}[1m])) by (namespace,changefeed,instance)",
-            "legendFormat": "{{instance}}-sum",
-            "interval": "",
-            "exemplar": true,
-            "refId": "B",
-            "hide": false
-          }
-        ],
-        "options": {
-          "alertThreshold": true
-        },
-        "fieldConfig": {
-          "defaults": {},
-          "overrides": []
-        },
-        "pluginVersion": "7.5.17",
-        "renderer": "flot",
-        "yaxes": [
-          {
-            "label": null,
-            "show": true,
-            "logBase": 1,
-            "min": null,
-            "max": null,
-            "format": "short"
+          "fill": 1,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 1
           },
-          {
-            "label": null,
+          "id": 20000,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
             "show": true,
-            "logBase": 1,
-            "min": null,
-            "max": null,
-            "format": "short"
-          }
-        ],
-        "xaxis": {
-          "show": true,
-          "mode": "time",
-          "name": null,
-          "values": [],
-          "buckets": null
-        },
-        "yaxis": {
-          "align": false,
-          "alignLevel": null
-        },
-        "lines": true,
-        "fill": 1,
-        "linewidth": 1,
-        "dashLength": 10,
-        "spaceLength": 10,
-        "pointradius": 2,
-        "legend": {
-          "show": true,
-          "values": false,
-          "min": false,
-          "max": false,
-          "current": false,
-          "total": false,
-          "avg": false
-        },
-        "nullPointMode": "null",
-        "tooltip": {
-          "value_type": "individual",
-          "shared": true,
-          "sort": 0
-        },
-        "aliasColors": {},
-        "seriesOverrides": [],
-        "thresholds": [],
-        "timeRegions": [],
-        "datasource": "${DS_C1}",
-        "fillGradient": 0,
-        "dashes": false,
-        "hiddenSeries": false,
-        "points": false,
-        "bars": false,
-        "stack": false,
-        "percentage": false,
-        "steppedLine": false,
-        "timeFrom": null,
-        "timeShift": null
-      }],
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "sum(rate(ticdc_sink_write_bytes_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", namespace=~\"$namespace\", changefeed=~\"$changefeed\",instance=~\"$ticdc_instance\"}[1m])) by (instance, type)",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "{{instance}}-{{type}}",
+              "queryType": "randomWalk",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Sink Write Bytes/s",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          },
+          "bars": false,
+          "dashes": false,
+          "fillGradient": 0,
+          "hiddenSeries": false,
+          "percentage": false,
+          "points": false,
+          "stack": false,
+          "steppedLine": false,
+          "timeFrom": null,
+          "timeShift": null
+        }],
       "title": "Throughput",
       "type": "row"
     },
