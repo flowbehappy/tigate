@@ -87,6 +87,13 @@ type streamStat[P Path, T Event, D Dest] struct {
 	mostBusyPath heap.Heap[*pathStat[P, T, D]]
 }
 
+func (s streamStat[P, T, D]) getMostBusyPaths() []*pathStat[P, T, D] {
+	if s.mostBusyPath == nil {
+		return nil
+	}
+	return s.mostBusyPath.All()
+}
+
 func tryAddPathToBusyHeap[P Path, T Event, D Dest](heap heap.Heap[*pathStat[P, T, D]], pi *pathStat[P, T, D], trackTop int) {
 	if heap.Len() < trackTop {
 		heap.AddOrUpdate(pi)

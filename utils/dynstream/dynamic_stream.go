@@ -296,7 +296,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 					continue
 				}
 				soloStreamInfos := make([]*streamInfo[P, T, D], 0)
-				for _, ps := range si.streamStat.mostBusyPath.All() {
+				for _, ps := range si.streamStat.getMostBusyPaths() {
 					if ps.busyRatio(period) < BusyPathRatio {
 						continue
 					}
@@ -452,7 +452,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 				// We would like paths to keep staying in the same stream when possible.
 				// It might create some optimization opportunities for golang runtime or the OS.
 				addedPaths := 0
-				for _, ps := range mostBusy.streamStat.mostBusyPath.All() {
+				for _, ps := range mostBusy.streamStat.getMostBusyPaths() {
 					idx := nextIdx.Next()
 					pathsChoices[idx] = append(pathsChoices[idx], ps.pathInfo)
 					if _, ok := mostBusy.pathMap[ps.pathInfo]; !ok {
@@ -462,7 +462,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 					delete(mostBusy.pathMap, ps.pathInfo)
 					addedPaths++
 				}
-				for _, ps := range leastBusy.streamStat.mostBusyPath.All() {
+				for _, ps := range leastBusy.streamStat.getMostBusyPaths() {
 					idx := nextIdx.Next()
 					pathsChoices[idx] = append(pathsChoices[idx], ps.pathInfo)
 					if _, ok := leastBusy.pathMap[ps.pathInfo]; !ok {
