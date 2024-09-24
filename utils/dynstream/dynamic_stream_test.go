@@ -200,13 +200,20 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	assert.Equal(t, 1, len(ds.streamInfos[3].pathMap)) // p5, Solo stream
 
 	wg = &sync.WaitGroup{}
+	// Stream 1
 	ds.In() <- newSimpleEventSleep("p7", wg, 8*time.Millisecond)
 	ds.In() <- newSimpleEventSleep("p10", wg, 8*time.Millisecond)
+
+	// Stream 2
+	ds.In() <- newSimpleEventSleep("p2", wg, 900*time.Microsecond)
+	ds.In() <- newSimpleEventSleep("p8", wg, 900*time.Microsecond)
+
+	// Stream 3
 	ds.In() <- newSimpleEventSleep("p9", wg, 8*time.Millisecond)
 
 	wg.Wait()
 
-	scheduleNow(createSoloPath, 8*time.Millisecond)
+	scheduleNow(createSoloPath, 10*time.Millisecond)
 
 	assert.Equal(t, 7, len(ds.streamInfos))
 	assert.Equal(t, 2, len(ds.streamInfos[0].pathMap)) // p1, p4
@@ -260,6 +267,7 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	scheduleNow(removeSoloPath, 8*time.Millisecond)
 
 	assert.Equal(t, 4, len(ds.streamInfos))
+	assert.Equal(t, 3+4+2, len(ds.streamInfos[0].pathMap)+len(ds.streamInfos[1].pathMap)+len(ds.streamInfos[2].pathMap))
 	assert.Equal(t, 1, len(ds.streamInfos[3].pathMap)) // p11, Solo stream
 
 	ds.Close()

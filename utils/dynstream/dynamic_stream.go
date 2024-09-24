@@ -339,6 +339,9 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 
 					newStreamInfos = append(newStreamInfos, newCurrentStreamInfo)
 					newSoloStreamInfos = append(newSoloStreamInfos, soloStreamInfos...)
+				} else {
+					// Although the stream is busy, none of the paths are busy, we don't need to create solo streams.
+					newStreamInfos = append(newStreamInfos, si)
 				}
 			}
 			newStreamInfos = append(newStreamInfos, d.streamInfos[d.baseStreamCount:]...)
@@ -382,6 +385,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 			}
 
 			if len(idleSoloStreamInfos) != 0 {
+				// Select the least busy stream from the basic streams, and combine the solo paths into it.
 				baseStreamInfos := make([]*streamInfo[P, T, D], 0, d.baseStreamCount)
 				baseStreamInfos = append(baseStreamInfos, d.streamInfos[:d.baseStreamCount]...)
 				sort.Sort(sortedSIs[P, T, D](baseStreamInfos))
