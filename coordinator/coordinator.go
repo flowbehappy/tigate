@@ -162,12 +162,7 @@ func (c *coordinator) handleMessages() error {
 		case messaging.TypeMaintainerHeartbeatRequest:
 			if c.supervisor.CheckAllCaptureInitialized() {
 				req := msg.Message[0].(*heartbeatpb.MaintainerHeartbeat)
-				msgs, err := c.supervisor.HandleStatus(msg.From, req.Statuses)
-				if err != nil {
-					log.Error("handle status failed", zap.Error(err))
-					return errors.Trace(err)
-				}
-				c.sendMessages(msgs)
+				c.supervisor.HandleStatus(msg.From, req.Statuses)
 			}
 		default:
 			log.Panic("unexpected message", zap.Any("message", msg))

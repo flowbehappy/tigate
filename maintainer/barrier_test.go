@@ -188,8 +188,8 @@ func TestNormalBlock(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	//two schedule messages and 1 pass action message to one node
-	require.Len(t, msgs, 3)
+	//1 pass action message to one node
+	require.Len(t, msgs, 1)
 	require.Len(t, barrier.blockedTs, 1)
 	require.Len(t, barrier.blockedDispatcher, 2)
 	msgs, err = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
@@ -344,19 +344,17 @@ func TestSchemaBlock(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	//3 schedule messages and 1 pass action message to one node
-	require.Len(t, msgs, 4)
-	for _, msg := range msgs {
-		if msg.Type == messaging.TypeHeartBeatResponse {
-			require.Equal(t, msg.Message[0].(*heartbeatpb.HeartBeatResponse).DispatcherStatuses[0].Action.Action,
-				heartbeatpb.Action_Pass)
-		}
-	}
+	// 1 pass action message to one node
+	require.Len(t, msgs, 1)
+	msg := msgs[0]
+	require.Equal(t, messaging.TypeHeartBeatResponse, msg.Type)
+	require.Equal(t, msg.Message[0].(*heartbeatpb.HeartBeatResponse).DispatcherStatuses[0].Action.Action,
+		heartbeatpb.Action_Pass)
 	require.Len(t, barrier.blockedTs, 1)
 	// the writer already advanced
 	require.Len(t, barrier.blockedDispatcher, 1)
-	require.Equal(t, 0, len(sche.Absent()))
-	require.Equal(t, 1, len(sche.Commiting()))
+	require.Equal(t, 1, len(sche.Absent()))
+	require.Equal(t, 0, len(sche.Commiting()))
 	require.Equal(t, 2, len(sche.Removing()))
 	require.Equal(t, 1, len(sche.Working()))
 	// other dispatcher advanced checkpoint ts
@@ -490,8 +488,8 @@ func TestSyncPointBlock(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	//4 schedule messages and 2 pass action message to one node
-	require.Len(t, msgs, 6)
+	// 2 pass action messages to one node
+	require.Len(t, msgs, 2)
 	require.Len(t, barrier.blockedTs, 1)
 	// the writer already advanced
 	require.Len(t, barrier.blockedDispatcher, 2)
@@ -544,9 +542,9 @@ func TestNonBlocked(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	// 1 ack and two scheduling messages
-	require.Len(t, msgs, 3)
+	// 1 ack  message
+	require.Len(t, msgs, 1)
 	require.Len(t, barrier.blockedTs, 0)
 	require.Len(t, barrier.blockedDispatcher, 0)
-	require.Len(t, barrier.scheduler.Commiting(), 2)
+	require.Len(t, barrier.scheduler.Absent(), 2)
 }

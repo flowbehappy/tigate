@@ -82,11 +82,13 @@ func (b *balanceScheduler) Schedule(
 	tasks := buildBalanceMoveTables(
 		b.random, aliveCaptures, stateMachines, maxTaskCount)
 	b.forceBalance = len(tasks) != 0
-	log.Info("balance scheduler generate tasks",
-		zap.Int("capture", len(aliveCaptures)),
-		zap.Int("statemachines", len(stateMachines)),
-		zap.String("id", b.id.String()),
-		zap.Int("task count", len(tasks)))
+	if len(tasks) > 0 {
+		log.Info("balance scheduler generate tasks",
+			zap.Int("capture", len(aliveCaptures)),
+			zap.Int("statemachines", len(stateMachines)),
+			zap.String("id", b.id.String()),
+			zap.Int("task count", len(tasks)))
+	}
 	return tasks
 }
 

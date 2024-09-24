@@ -67,6 +67,7 @@ type StateMachine[ID comparable] struct {
 	Inferior Inferior
 
 	lastMsgTime time.Time
+	removed     bool
 }
 
 // NewStateMachine build a state machine from all server reported status
@@ -79,7 +80,7 @@ func NewStateMachine[ID comparable](
 	sm := &StateMachine[ID]{
 		ID:          id,
 		Inferior:    inferior,
-		lastMsgTime: time.Now(),
+		lastMsgTime: time.Time{},
 	}
 	for captureID, status := range inferiorStatus {
 		sm.Inferior.UpdateStatus(status)
@@ -137,20 +138,19 @@ func (s *StateMachine[ID]) multiplePrimaryError(
 // HandleInferiorStatus transit state based on input and the current state.
 func (s *StateMachine[ID]) HandleInferiorStatus(
 	state heartbeatpb.ComponentState, status any, id node.ID,
-) *messaging.TargetMessage {
+) {
 	if s.Primary != id {
-		return nil
+		return
 	}
 
 	oldState := s.State
-	var msg *messaging.TargetMessage
 	switch s.State {
 	case SchedulerStatusCommiting:
 		s.pollOnCommit(state, status, id)
 	case SchedulerStatusWorking:
 		s.pollOnWorking(state, status, id)
 	case SchedulerStatusRemoving:
-		msg = s.pollOnRemoving(state, status, id)
+		s.pollOnRemoving(state, status, id)
 	default:
 		log.Panic("state unknown",
 			zap.Any("id", id),
@@ -164,7 +164,6 @@ func (s *StateMachine[ID]) HandleInferiorStatus(
 			zap.Stringer("old", oldState),
 			zap.Stringer("new", s.State))
 	}
-	return msg
 }
 
 func (s *StateMachine[ID]) pollOnCommit(
@@ -209,11 +208,11 @@ func (s *StateMachine[ID]) pollOnWorking(
 //nolint:unparam
 func (s *StateMachine[ID]) pollOnRemoving(
 	state heartbeatpb.ComponentState, status any, id node.ID,
-) *messaging.TargetMessage {
+) {
 	switch state {
 	case heartbeatpb.ComponentState_Working:
 		s.Inferior.UpdateStatus(status)
-		return nil
+		return
 	case heartbeatpb.ComponentState_Absent, heartbeatpb.ComponentState_Stopped:
 		if s.Secondary != "" {
 			// primary is stopped and reported last status
@@ -221,26 +220,26 @@ func (s *StateMachine[ID]) pollOnRemoving(
 			s.Primary = s.Secondary
 			s.Secondary = ""
 			s.State = SchedulerStatusCommiting
-			return s.Inferior.NewAddInferiorMessage(s.Primary)
+			return
 		}
-		// keep Status SchedulerStatusRemoving, and clear the primary to mark the statemachine as removed
+		// mark the statemachine as removed
+		s.removed = true
 		s.Primary = ""
 	}
 	log.Warn("ignore input, unexpected  state",
 		zap.Any("id", id),
 		zap.Any("statemachine", s.ID))
-	return nil
 }
 
 func (s *StateMachine[ID]) HandleAddInferior(
 	id node.ID,
-) *messaging.TargetMessage {
+) {
 	// Ignore add inferior if it's not in Absent state.
 	if s.State != SchedulerStatusAbsent {
 		log.Warn("add inferior is ignored",
 			zap.Any("id", id),
 			zap.Any("statemachine", s.ID))
-		return nil
+		return
 	}
 	s.Primary = id
 	oldState := s.State
@@ -251,17 +250,16 @@ func (s *StateMachine[ID]) HandleAddInferior(
 		zap.Any("statemachine", s.ID),
 		zap.Stringer("old", oldState),
 		zap.Stringer("new", s.State))
-	return s.Inferior.NewAddInferiorMessage(s.Primary)
 }
 
 func (s *StateMachine[ID]) HandleMoveInferior(
 	dest node.ID,
-) *messaging.TargetMessage {
+) {
 	// Ignore move inferior if it has been removed already.
 	if s.HasRemoved() {
 		log.Warn("move inferior is ignored",
 			zap.Any("statemachine", s.ID))
-		return nil
+		return
 	}
 	// Ignore move inferior if
 	// 1) it's not in Working state or
@@ -269,7 +267,7 @@ func (s *StateMachine[ID]) HandleMoveInferior(
 	if s.State != SchedulerStatusWorking || s.Primary == dest {
 		log.Warn("move inferior is ignored",
 			zap.Any("statemachine", s.ID))
-		return nil
+		return
 	}
 	oldState := s.State
 	s.State = SchedulerStatusRemoving
@@ -278,28 +276,43 @@ func (s *StateMachine[ID]) HandleMoveInferior(
 		zap.Stringer("new", s.State),
 		zap.Any("statemachine", s.ID),
 		zap.Stringer("old", oldState))
-	return s.Inferior.NewRemoveInferiorMessage(s.Primary)
 }
 
-func (s *StateMachine[ID]) HandleRemoveInferior() *messaging.TargetMessage {
+func (s *StateMachine[ID]) HandleRemoveInferior() {
 	// Ignore remove inferior if it has been removed already.
 	if s.HasRemoved() {
 		log.Warn("remove inferior is ignored",
 			zap.Any("statemachine", s.ID))
-		return nil
+		return
 	}
+	if s.State == SchedulerStatusAbsent {
+		log.Info("remove an absent stm",
+			zap.Any("statemachine", s.ID))
+		s.removed = true
+		// clear the node info
+		s.Primary = ""
+		s.Secondary = ""
+		return
+	}
+
 	// Ignore remove inferior if it's not in Working state.
 	if s.State == SchedulerStatusRemoving {
 		log.Warn("remove inferior is ignored",
 			zap.Any("statemachine", s.ID))
-		return nil
+		if s.Secondary != "" {
+			log.Info("secondary is not empty, set it to empty",
+				zap.String("primary", s.Primary.String()),
+				zap.String("secondary", s.Secondary.String()),
+				zap.Any("statemachine", s.ID))
+			s.Secondary = ""
+		}
+		return
 	}
 	oldState := s.State
 	s.State = SchedulerStatusRemoving
 	log.Info("state transition, remove inferior",
 		zap.Any("statemachine", s.ID),
 		zap.Stringer("old", oldState))
-	return s.Inferior.NewRemoveInferiorMessage(s.Primary)
 }
 
 // HandleCaptureShutdown handle server shutdown event.
@@ -307,12 +320,11 @@ func (s *StateMachine[ID]) HandleRemoveInferior() *messaging.TargetMessage {
 // whether s is affected by the server shutdown.
 func (s *StateMachine[ID]) HandleCaptureShutdown(
 	id node.ID,
-) (*messaging.TargetMessage, bool) {
+) bool {
 	if s.Primary != id && s.Secondary != id {
-		return nil, false
+		return false
 	}
 	oldState := s.State
-	var msg *messaging.TargetMessage
 	switch oldState {
 	case SchedulerStatusAbsent, SchedulerStatusCommiting, SchedulerStatusWorking:
 		// primary node is stopped, set to absent to reschedule
@@ -334,7 +346,6 @@ func (s *StateMachine[ID]) HandleCaptureShutdown(
 			} else {
 				// primary capture is stopped, move to secondary
 				s.State = SchedulerStatusCommiting
-				msg = s.Inferior.NewAddInferiorMessage(s.Primary)
 			}
 		}
 	}
@@ -343,16 +354,14 @@ func (s *StateMachine[ID]) HandleCaptureShutdown(
 		zap.Any("id", id),
 		zap.Stringer("old", oldState),
 		zap.Stringer("new", s.State))
-	return msg, true
+	return true
 }
 
 func (s *StateMachine[ID]) HasRemoved() bool {
-	// It has been removed successfully if it's state is Removing,
-	// and there is no server has it.
-	return s.State == SchedulerStatusRemoving && len(s.Primary) == 0 && len(s.Secondary) == 0
+	return s.removed
 }
 
-func (s *StateMachine[ID]) HandleResend() *messaging.TargetMessage {
+func (s *StateMachine[ID]) GetSchedulingMessage() *messaging.TargetMessage {
 	if s.State == SchedulerStatusWorking {
 		return nil
 	}

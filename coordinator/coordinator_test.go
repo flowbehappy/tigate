@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/pprof"
 	"strconv"
@@ -25,20 +26,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/node"
-
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/messaging/proto"
+	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	config2 "github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
 	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 type mockPdClient struct {
@@ -57,8 +63,7 @@ type mockMaintainerManager struct {
 	maintainers        sync.Map
 }
 
-func NewMaintainerManager() *mockMaintainerManager {
-	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
+func NewMaintainerManager(mc messaging.MessageCenter) *mockMaintainerManager {
 	m := &mockMaintainerManager{
 		mc:          mc,
 		maintainers: sync.Map{},
@@ -142,7 +147,7 @@ func (m *mockMaintainerManager) onCoordinatorBootstrapRequest(msg *messaging.Tar
 	m.coordinatorVersion = req.Version
 
 	response := &heartbeatpb.CoordinatorBootstrapResponse{}
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(messaging.NewSingleTargetMessage(
+	err := m.mc.SendCommand(messaging.NewSingleTargetMessage(
 		m.coordinatorID,
 		messaging.CoordinatorTopic,
 		response,
@@ -178,16 +183,15 @@ func (m *mockMaintainerManager) onDispatchMaintainerRequest(
 	} else {
 		req := msg.Message[0].(*heartbeatpb.RemoveMaintainerRequest)
 		cfID := model.DefaultChangeFeedID(req.GetId())
-		cf, ok := m.maintainers.Load(cfID)
+		_, ok := m.maintainers.Load(cfID)
 		if !ok {
 			log.Warn("ignore remove maintainer request, "+
 				"since the maintainer not found",
 				zap.String("changefeed", cfID.String()),
 				zap.Any("request", req))
-			return req.GetId()
 		}
-		cf.(*Maintainer).removing.Store(true)
-		cf.(*Maintainer).cascadeRemoving.Store(req.Cascade)
+		m.maintainers.Delete(cfID)
+		return req.GetId()
 	}
 	return ""
 }
@@ -210,10 +214,8 @@ func (m *mockMaintainerManager) sendHeartbeat() {
 }
 
 type Maintainer struct {
-	statusChanged   atomic.Bool
-	lastReportTime  time.Time
-	removing        atomic.Bool
-	cascadeRemoving atomic.Bool
+	statusChanged  atomic.Bool
+	lastReportTime time.Time
 
 	config *model.ChangeFeedInfo
 }
@@ -238,9 +240,10 @@ func TestCoordinatorScheduling(t *testing.T) {
 
 	ctx := context.Background()
 	info := node.NewInfo("", "")
-	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx,
-		info.ID, 100, config.NewDefaultMessageCenterConfig()))
-	m := NewMaintainerManager()
+	mc := messaging.NewMessageCenter(ctx,
+		info.ID, 100, config.NewDefaultMessageCenterConfig())
+	appcontext.SetService(appcontext.MessageCenter, mc)
+	m := NewMaintainerManager(mc)
 	go m.Run(ctx)
 
 	serviceID := "default"
@@ -286,6 +289,8 @@ func TestCoordinatorScheduling(t *testing.T) {
 	}
 
 	tick := time.NewTicker(time.Millisecond * 50)
+	startTime := time.Now()
+	runTime := time.Second * 10
 	var err error
 	for {
 		select {
@@ -294,8 +299,160 @@ func TestCoordinatorScheduling(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if time.Since(startTime) > runTime {
+				stms := cr.(*coordinator).supervisor.StateMachines
+				require.Equal(t, cfSize, len(stms))
+				for _, stm := range stms {
+					require.Equal(t, scheduler.SchedulerStatusWorking, int(stm.State))
+				}
+				return
+			}
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+func TestScaleNode(t *testing.T) {
+	ctx := context.Background()
+	nodeManager := watcher.NewNodeManager(nil, nil)
+	appcontext.SetService(watcher.NodeManagerName, nodeManager)
+	info := node.NewInfo("127.0.0.1:8300", "")
+	//nodeManager.GetAliveNodes()[info.ID] = info
+	mc1 := messaging.NewMessageCenter(ctx, info.ID, 0, config.NewDefaultMessageCenterConfig())
+	appcontext.SetService(appcontext.MessageCenter, mc1)
+	startMaintainerNode(ctx, info, mc1, nodeManager)
+
+	serviceID := "default"
+	cr := New(info, &mockPdClient{}, pdutil.NewClock4Test(), serviceID, 100)
+	cr.(*coordinator).supervisor.schedulers[1].(*balanceScheduler).checkBalanceInterval = time.Millisecond * 10
+	var metadata orchestrator.ReactorState
+
+	cfs := map[model.ChangeFeedID]*orchestrator.ChangefeedReactorState{}
+	cfSize := 6
+	for i := 0; i < cfSize; i++ {
+		cfID := model.DefaultChangeFeedID(fmt.Sprintf("%d", i))
+		cfs[cfID] = &orchestrator.ChangefeedReactorState{
+			ID: cfID,
+			Info: &model.ChangeFeedInfo{
+				ID:        cfID.ID,
+				Namespace: cfID.Namespace,
+				Config:    config2.GetDefaultReplicaConfig(),
+				State:     model.StateNormal,
+			},
+			Status: &model.ChangeFeedStatus{CheckpointTs: 10, MinTableBarrierTs: 10},
+		}
+	}
+	metadata = &orchestrator.GlobalReactorState{
+		Captures: map[model.CaptureID]*model.CaptureInfo{
+			model.CaptureID(info.ID): {
+				ID:            model.CaptureID(info.ID),
+				AdvertiseAddr: info.AdvertiseAddr,
+			},
+		},
+		Changefeeds: cfs,
+	}
+
+	tick := time.NewTicker(time.Millisecond * 50)
+	// run coordinator
+	go func() {
+		var err error
+		for {
+			select {
+			case <-tick.C:
+				_, err = cr.Tick(ctx, metadata)
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	time.Sleep(time.Second * 5)
+	stms := cr.(*coordinator).supervisor.StateMachines
+	require.Equal(t, cfSize, len(stms))
+
+	// add two nodes
+	info2 := node.NewInfo("127.0.0.1:8400", "")
+	mc2 := messaging.NewMessageCenter(ctx, info2.ID, 0, config.NewDefaultMessageCenterConfig())
+	startMaintainerNode(ctx, info2, mc2, nodeManager)
+	info3 := node.NewInfo("127.0.0.1:8500", "")
+	mc3 := messaging.NewMessageCenter(ctx, info3.ID, 0, config.NewDefaultMessageCenterConfig())
+	startMaintainerNode(ctx, info3, mc3, nodeManager)
+	// notify node changes
+	_, _ = nodeManager.Tick(ctx, &orchestrator.GlobalReactorState{
+		Captures: map[model.CaptureID]*model.CaptureInfo{
+			model.CaptureID(info.ID):  {ID: model.CaptureID(info.ID), AdvertiseAddr: info.AdvertiseAddr},
+			model.CaptureID(info2.ID): {ID: model.CaptureID(info2.ID), AdvertiseAddr: info2.AdvertiseAddr},
+			model.CaptureID(info3.ID): {ID: model.CaptureID(info3.ID), AdvertiseAddr: info3.AdvertiseAddr},
+		}})
+
+	metadata.(*orchestrator.GlobalReactorState).Captures[model.CaptureID(info2.ID)] = &model.CaptureInfo{
+		ID:            model.CaptureID(info2.ID),
+		AdvertiseAddr: info2.AdvertiseAddr,
+	}
+	metadata.(*orchestrator.GlobalReactorState).Captures[model.CaptureID(info3.ID)] = &model.CaptureInfo{
+		ID:            model.CaptureID(info3.ID),
+		AdvertiseAddr: info3.AdvertiseAddr,
+	}
+	time.Sleep(time.Second * 5)
+	require.Equal(t, cfSize, len(stms))
+	nodeSize := func(stms map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID], node node.ID) int {
+		size := 0
+		for _, stm := range stms {
+			if stm.Primary == node {
+				size++
+			}
+			require.Equal(t, scheduler.SchedulerStatusWorking, int(stm.State))
+		}
+		return size
+	}
+	require.Equal(t, 2, nodeSize(stms, info.ID))
+	require.Equal(t, 2, nodeSize(stms, info2.ID))
+	require.Equal(t, 2, nodeSize(stms, info3.ID))
+
+	delete(metadata.(*orchestrator.GlobalReactorState).Captures, model.CaptureID(info3.ID))
+	time.Sleep(time.Second * 5)
+	require.Equal(t, cfSize, len(stms))
+	require.Equal(t, 3, nodeSize(stms, info.ID))
+	require.Equal(t, 3, nodeSize(stms, info2.ID))
+}
+
+type maintainNode struct {
+	cancel context.CancelFunc
+	mc     messaging.MessageCenter
+}
+
+func (d *maintainNode) stop() {
+	d.mc.Close()
+	d.cancel()
+}
+
+func startMaintainerNode(ctx context.Context,
+	node *node.Info, mc messaging.MessageCenter,
+	nodeManager *watcher.NodeManager) *maintainNode {
+	nodeManager.RegisterNodeChangeHandler(node.ID, mc.OnNodeChanges)
+	ctx, cancel := context.WithCancel(ctx)
+	maintainerM := NewMaintainerManager(mc)
+	go func() {
+		var opts []grpc.ServerOption
+		grpcServer := grpc.NewServer(opts...)
+		mcs := messaging.NewMessageCenterServer(mc)
+		proto.RegisterMessageCenterServer(grpcServer, mcs)
+		lis, err := net.Listen("tcp", node.AdvertiseAddr)
+		if err != nil {
+			panic(err)
+		}
+		go func() {
+			_ = grpcServer.Serve(lis)
+		}()
+		_ = maintainerM.Run(ctx)
+		grpcServer.Stop()
+	}()
+	return &maintainNode{
+		cancel: cancel,
+		mc:     mc,
 	}
 }

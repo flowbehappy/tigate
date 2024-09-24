@@ -162,7 +162,7 @@ func (b *Barrier) handleNoStateHeartbeat(dispatcherID common.DispatcherID, check
 			// send pass action to all
 			msgs = append(msgs, event.sendPassAction()...)
 			// schedule new and removed tasks
-			msgs = append(msgs, event.scheduleBlockEvent()...)
+			event.scheduleBlockEvent()
 			event.writerDispatcherAdvanced = true
 		}
 
@@ -225,7 +225,7 @@ func (b *Barrier) handleStateHeartbeat(changefeedID string,
 			Ack: &heartbeatpb.ACK{CommitTs: blockState.BlockTs},
 		}
 		// if ack failed, dispatcher will send a heartbeat again
-		msgs = NewBlockEvent(changefeedID, b.scheduler, blockState).scheduleBlockEvent()
+		NewBlockEvent(changefeedID, b.scheduler, blockState).scheduleBlockEvent()
 	}
 	return msgs, distacherStatus, nil
 }
@@ -270,8 +270,7 @@ func NewBlockEvent(cfID string, scheduler *Scheduler,
 	return event
 }
 
-func (b *BarrierEvent) scheduleBlockEvent() []*messaging.TargetMessage {
-	var msgs []*messaging.TargetMessage
+func (b *BarrierEvent) scheduleBlockEvent() {
 	// dispatcher notify us to drop some tables, by dispatcher ID or schema ID
 	if b.dropDispatchers != nil {
 		switch b.dropDispatchers.InfluenceType {
@@ -280,23 +279,17 @@ func (b *BarrierEvent) scheduleBlockEvent() []*messaging.TargetMessage {
 				log.Info(" remove table",
 					zap.String("changefeed", b.cfID),
 					zap.String("table", stm.ID.String()))
-				msg := b.scheduler.RemoveTask(stm)
-				if msg != nil {
-					msgs = append(msgs, msg)
-				}
+				b.scheduler.RemoveTask(stm)
 			}
 		case heartbeatpb.InfluenceType_Normal:
 			for _, stm := range b.dropTasks {
 				log.Info(" remove table",
 					zap.String("changefeed", b.cfID),
 					zap.String("table", stm.ID.String()))
-				msg := b.scheduler.RemoveTask(stm)
-				if msg != nil {
-					msgs = append(msgs, msg)
-				}
+				b.scheduler.RemoveTask(stm)
 			}
 		case heartbeatpb.InfluenceType_All:
-			msgs = append(msgs, b.scheduler.RemoveAllTasks()...)
+			b.scheduler.RemoveAllTasks()
 		}
 	}
 	for _, add := range b.newTables {
@@ -308,9 +301,6 @@ func (b *BarrierEvent) scheduleBlockEvent() []*messaging.TargetMessage {
 			TableID:  add.TableID,
 		}, b.commitTs)
 	}
-	msgList := b.scheduler.Schedule()
-	msgs = append(msgs, msgList...)
-	return msgs
 }
 
 func (b *BarrierEvent) allDispatcherReported() bool {
