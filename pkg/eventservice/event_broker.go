@@ -95,6 +95,7 @@ func newEventBroker(
 	option := dynstream.NewOption()
 	option.MaxPendingLength = 1
 	option.DropPolicy = dynstream.DropEarly
+	option.StreamCount = 512
 
 	ds := dynstream.NewDynamicStream[common.DispatcherID, scanTask, *eventBroker](&dispatcherEventsHandler{}, option)
 	ds.Start()
