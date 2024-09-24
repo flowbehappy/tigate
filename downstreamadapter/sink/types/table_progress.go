@@ -18,6 +18,9 @@ import (
 	"sync"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // TableProgress 里面维护了目前 sink 中的 event ts 信息
@@ -32,6 +35,8 @@ type TableProgress struct {
 	list        *list.List
 	elemMap     map[Ts]*list.Element
 	maxCommitTs uint64
+
+	metricSinkOutputChunkSize prometheus.Observer
 }
 
 // 按 commitTs 为主，startTs 为辅排序
@@ -40,11 +45,12 @@ type Ts struct {
 	startTs  uint64
 }
 
-func NewTableProgress() *TableProgress {
+func NewTableProgress(changefeedID model.ChangeFeedID) *TableProgress {
 	tableProgress := &TableProgress{
-		list:        list.New(),
-		elemMap:     make(map[Ts]*list.Element),
-		maxCommitTs: 0,
+		list:                      list.New(),
+		elemMap:                   make(map[Ts]*list.Element),
+		maxCommitTs:               0,
+		metricSinkOutputChunkSize: metrics.SinkOutputChunkSize.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 	}
 	return tableProgress
 }
@@ -57,6 +63,9 @@ func (p *TableProgress) Add(event common.FlushableEvent) {
 	p.elemMap[ts] = elem
 	p.maxCommitTs = event.GetCommitTs()
 	event.AddPostFlushFunc(func() { p.Remove(event) })
+	event.AddPostFlushFunc(func() {
+		p.metricSinkOutputChunkSize.Observe(float64(event.GetChunkSize()))
+	})
 }
 
 // 而且删除可以认为是批量的？但要不要做成批量可以后面再看
