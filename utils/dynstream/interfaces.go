@@ -53,7 +53,9 @@ type DynamicStream[P Path, T Event, D Dest] interface {
 	// No more events can be sent to or processed by the stream after it is closed.
 	Close()
 
+	// In returns the channel to send events into the dynamic stream.
 	In() chan<- T
+	// Wake returns the channel to mark the the path as ready to process the next event.
 	Wake() chan<- P
 
 	// AddPaths adds the paths to the dynamic stream to receive the events.
