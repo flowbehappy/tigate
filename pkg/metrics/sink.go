@@ -192,6 +192,16 @@ var (
 		}, []string{"namespace", "changefeed"})
 )
 
+var (
+	SinkOutputChunkSize = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "sink",
+			Name:      "output_chunk_size",
+			Help:      "The size of output chunk (in bytes).",
+		}, []string{"namespace", "changefeed"})
+)
+
 // InitMetrics registers all metrics in this file.
 func InitSinkMetrics(registry *prometheus.Registry) {
 	// common sink metrics
@@ -200,6 +210,7 @@ func InitSinkMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(ExecDDLHistogram)
 	registry.MustRegister(LargeRowSizeHistogram)
 	registry.MustRegister(ExecutionErrorCounter)
+	registry.MustRegister(SinkOutputChunkSize)
 
 	// txn sink metrics
 	registry.MustRegister(ConflictDetectDuration)

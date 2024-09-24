@@ -143,6 +143,232 @@
         "x": 0,
         "y": 0
       },
+      "id": 19999,
+      "panels":[{
+        "type": "graph",
+        "title": "Transaction Write Size Bytes Rate and Sum",
+        "gridPos": {
+          "x": 0,
+          "y": 1,
+          "w": 12,
+          "h": 8
+        },
+        "id": 12060,
+        "targets": [
+          {
+            "expr": "rate(tidb_tikvclient_txn_write_size_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", scope=~\"general\"}[30s])",
+            "legendFormat": "{{instance}}-rate",
+            "interval": "",
+            "exemplar": true,
+            "refId": "A",
+            "queryType": "randomWalk"
+          },
+          {
+            "expr": "tidb_tikvclient_txn_write_size_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", scope=~\"general\"}",
+            "legendFormat": "{{instance}}-sum",
+            "interval": "",
+            "exemplar": true,
+            "refId": "B",
+            "hide": false
+          },
+          {
+            "expr": "sum(rate(tidb_tikvclient_txn_write_size_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\",scope=~\"general\"}[30s]))",
+            "legendFormat": "sum",
+            "interval": "",
+            "exemplar": true,
+            "refId": "C",
+            "hide": false
+          }
+        ],
+        "options": {
+          "alertThreshold": true
+        },
+        "fieldConfig": {
+          "defaults": {},
+          "overrides": []
+        },
+        "pluginVersion": "7.5.17",
+        "renderer": "flot",
+        "yaxes": [
+          {
+            "label": null,
+            "show": true,
+            "logBase": 1,
+            "min": null,
+            "max": null,
+            "format": "short"
+          },
+          {
+            "label": null,
+            "show": true,
+            "logBase": 1,
+            "min": null,
+            "max": null,
+            "format": "short"
+          }
+        ],
+        "xaxis": {
+          "show": true,
+          "mode": "time",
+          "name": null,
+          "values": [],
+          "buckets": null
+        },
+        "yaxis": {
+          "align": false,
+          "alignLevel": null
+        },
+        "lines": true,
+        "fill": 1,
+        "linewidth": 1,
+        "dashLength": 10,
+        "spaceLength": 10,
+        "pointradius": 2,
+        "legend": {
+          "show": true,
+          "values": false,
+          "min": false,
+          "max": false,
+          "current": false,
+          "total": false,
+          "avg": false
+        },
+        "nullPointMode": "null",
+        "tooltip": {
+          "value_type": "individual",
+          "shared": true,
+          "sort": 0
+        },
+        "aliasColors": {},
+        "seriesOverrides": [],
+        "thresholds": [],
+        "timeRegions": [],
+        "datasource": "${DS_C1}",
+        "fillGradient": 0,
+        "dashes": false,
+        "hiddenSeries": false,
+        "points": false,
+        "bars": false,
+        "stack": false,
+        "percentage": false,
+        "steppedLine": false,
+        "timeFrom": null,
+        "timeShift": null
+      },{
+        "type": "graph",
+        "title": "Output Chunk Size of Sink",
+        "gridPos": {
+          "x": 12,
+          "y": 1,
+          "w": 12,
+          "h": 8
+        },
+        "id": 12061,
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.999, sum(rate(ticdc_sink_output_chunk_size_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",namespace=~\"namespace\",changefeed=~\"$changefeed\",instance=~\"$ticdc_instance\"}[1m])) by (le,namespace,changefeed,instance))",
+            "legendFormat": "{{instance}}-rate",
+            "interval": "",
+            "exemplar": true,
+            "refId": "A",
+            "queryType": "randomWalk"
+          },
+          {
+            "expr": "sum(rate(ticdc_sink_output_chunk_size_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",namespace=~\"namespace\",changefeed=~\"$changefeed\",instance=~\"$ticdc_instance\"}[1m])) by (namespace,changefeed,instance) / sum(rate(ticdc_sink_output_chunk_size_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",namespace=~\"namespace\",changefeed=~\"$changefeed\",instance=~\"$ticdc_instance\"}[1m])) by (namespace,changefeed,instance)",
+            "legendFormat": "{{instance}}-sum",
+            "interval": "",
+            "exemplar": true,
+            "refId": "B",
+            "hide": false
+          }
+        ],
+        "options": {
+          "alertThreshold": true
+        },
+        "fieldConfig": {
+          "defaults": {},
+          "overrides": []
+        },
+        "pluginVersion": "7.5.17",
+        "renderer": "flot",
+        "yaxes": [
+          {
+            "label": null,
+            "show": true,
+            "logBase": 1,
+            "min": null,
+            "max": null,
+            "format": "short"
+          },
+          {
+            "label": null,
+            "show": true,
+            "logBase": 1,
+            "min": null,
+            "max": null,
+            "format": "short"
+          }
+        ],
+        "xaxis": {
+          "show": true,
+          "mode": "time",
+          "name": null,
+          "values": [],
+          "buckets": null
+        },
+        "yaxis": {
+          "align": false,
+          "alignLevel": null
+        },
+        "lines": true,
+        "fill": 1,
+        "linewidth": 1,
+        "dashLength": 10,
+        "spaceLength": 10,
+        "pointradius": 2,
+        "legend": {
+          "show": true,
+          "values": false,
+          "min": false,
+          "max": false,
+          "current": false,
+          "total": false,
+          "avg": false
+        },
+        "nullPointMode": "null",
+        "tooltip": {
+          "value_type": "individual",
+          "shared": true,
+          "sort": 0
+        },
+        "aliasColors": {},
+        "seriesOverrides": [],
+        "thresholds": [],
+        "timeRegions": [],
+        "datasource": "${DS_C1}",
+        "fillGradient": 0,
+        "dashes": false,
+        "hiddenSeries": false,
+        "points": false,
+        "bars": false,
+        "stack": false,
+        "percentage": false,
+        "steppedLine": false,
+        "timeFrom": null,
+        "timeShift": null
+      }],
+      "title": "Throughput",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "datasource": null,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 1
+      },
       "id": 12013,
       "panels": [
         {
@@ -687,7 +913,7 @@
               "exemplar": true,
               "expr": "ticdc_dispatchermanager_resolved_ts_lag{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", namesapce=~\"$namespace\", changefeed=~\"$changefeed\"}",
               "format": "time_series",
-              "hide": true,
+              "hide": false,
               "interval": "",
               "intervalFactor": 1,
               "legendFormat": "{{namespace}}-{{changefeed}}-{{instance}}-resolvedts",
@@ -954,7 +1180,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 1
+        "y": 2
       },
       "id": 10063,
       "panels": [
@@ -1193,7 +1419,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 2
+        "y": 3
       },
       "id": 10043,
       "panels": [
@@ -2094,7 +2320,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 3
+        "y": 4
       },
       "id": 12042,
       "panels": [
@@ -2414,7 +2640,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 4
+        "y": 5
       },
       "id": 12054,
       "panels": [
@@ -2744,7 +2970,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 5
+        "y": 6
       },
       "id": 12058,
       "panels": [
@@ -3128,7 +3354,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 6
+        "y": 7
       },
       "id": 397,
       "panels": [
@@ -5323,7 +5549,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 7
+        "y": 8
       },
       "id": 21,
       "panels": [
@@ -6237,7 +6463,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 8
+        "y": 9
       },
       "id": 11,
       "panels": [
@@ -7746,7 +7972,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 9
+        "y": 10
       },
       "id": 206,
       "panels": [
@@ -9238,7 +9464,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 11
       },
       "id": 608,
       "panels": [
@@ -9971,7 +10197,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 11
+        "y": 12
       },
       "id": 616,
       "panels": [
@@ -10514,7 +10740,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 12
+        "y": 13
       },
       "id": 623,
       "panels": [
@@ -12558,7 +12784,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 13
+        "y": 14
       },
       "id": 713,
       "panels": [
@@ -13013,7 +13239,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 15
       },
       "id": 528,
       "panels": [
@@ -14475,7 +14701,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 15
+        "y": 16
       },
       "id": 677,
       "panels": [
@@ -15161,7 +15387,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 16
+        "y": 17
       },
       "id": 269,
       "panels": [
@@ -16728,7 +16954,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 17
+        "y": 18
       },
       "id": 447,
       "panels": [
@@ -19046,7 +19272,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 18
+        "y": 19
       },
       "id": 266,
       "panels": [
@@ -20032,7 +20258,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 19
+        "y": 20
       },
       "id": 58,
       "panels": [
@@ -22162,7 +22388,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 20
+        "y": 21
       },
       "id": 294,
       "panels": [
@@ -22914,7 +23140,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 21
+        "y": 22
       },
       "id": 10021,
       "panels": [
@@ -23529,7 +23755,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 22
+        "y": 23
       },
       "id": 155,
       "panels": [
@@ -24086,7 +24312,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 24
       },
       "id": 10000,
       "panels": [

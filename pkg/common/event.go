@@ -31,6 +31,7 @@ type Event interface {
 	GetDispatcherID() DispatcherID
 	GetCommitTs() Ts
 	GetStartTs() Ts
+	GetChunkSize() int64
 }
 
 // FlushableEvent is an event that can be flushed to downstream by a dispatcher.
@@ -108,6 +109,10 @@ func (b *BatchResolvedEvent) Unmarshal(data []byte) error {
 	return nil
 }
 
+func (b *BatchResolvedEvent) GetChunkSize() int64 {
+	return 0
+}
+
 // ResolvedEvent represents a resolvedTs event of a dispatcher.
 type ResolvedEvent struct {
 	DispatcherID DispatcherID
@@ -148,6 +153,10 @@ func (e *ResolvedEvent) Unmarshal(data []byte) error {
 
 func (e ResolvedEvent) String() string {
 	return fmt.Sprintf("ResolvedEvent{DispatcherID: %s, ResolvedTs: %d}", e.DispatcherID, e.ResolvedTs)
+}
+
+func (e ResolvedEvent) GetChunkSize() int64 {
+	return 0
 }
 
 // DMLEvent represent a batch of DMLs of a whole or partial of a transaction.
@@ -294,6 +303,10 @@ func (t *DMLEvent) Unmarshal(data []byte) error {
 	return nil
 }
 
+func (t *DMLEvent) GetChunkSize() int64 {
+	return t.Rows.MemoryUsage()
+}
+
 type RowDelta struct {
 	PreRow  chunk.Row
 	Row     chunk.Row
@@ -438,6 +451,11 @@ func (t DDLEvent) Marshal() ([]byte, error) {
 
 func (t *DDLEvent) Unmarshal(data []byte) error {
 	return json.Unmarshal(data, t)
+}
+
+// TODO: fix it
+func (t *DDLEvent) GetChunkSize() int64 {
+	return 0
 }
 
 type InfluenceType int
