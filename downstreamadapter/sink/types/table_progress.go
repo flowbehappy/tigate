@@ -19,10 +19,8 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/zap"
 )
 
 // TableProgress 里面维护了目前 sink 中的 event ts 信息
@@ -67,7 +65,6 @@ func (p *TableProgress) Add(event common.FlushableEvent) {
 	event.AddPostFlushFunc(func() { p.Remove(event) })
 	event.AddPostFlushFunc(func() {
 		p.metricSinkOutputChunkSize.Observe(float64(event.GetChunkSize()))
-		log.Info("event chunk size", zap.Any("size", event.GetChunkSize()))
 	})
 }
 
