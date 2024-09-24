@@ -23,7 +23,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	timodel "github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
@@ -61,10 +60,9 @@ The workflow related to the dispatcher is as follows:
 */
 
 type Dispatcher struct {
-	id           common.DispatcherID
-	changefeedID timodel.ChangeFeedID
-	tableSpan    *heartbeatpb.TableSpan
-	sink         tisink.Sink
+	id        common.DispatcherID
+	tableSpan *heartbeatpb.TableSpan
+	sink      tisink.Sink
 
 	statusesChan chan *heartbeatpb.TableSpanStatus
 
@@ -92,7 +90,7 @@ type Dispatcher struct {
 	tableNameStore *TableNameStore
 }
 
-func NewDispatcher(changefeedID timodel.ChangeFeedID, id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, sink tisink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter, schemaID int64) *Dispatcher {
+func NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, sink tisink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter, schemaID int64) *Dispatcher {
 	dispatcher := &Dispatcher{
 		id:           id,
 		tableSpan:    tableSpan,
@@ -105,9 +103,8 @@ func NewDispatcher(changefeedID timodel.ChangeFeedID, id common.DispatcherID, ta
 		filter:          filter,
 		isRemoving:      atomic.Bool{},
 		ddlPendingEvent: nil,
-		tableProgress:   types.NewTableProgress(changefeedID),
+		tableProgress:   types.NewTableProgress(),
 		schemaID:        schemaID,
-		changefeedID:    changefeedID,
 	}
 
 	// only when is not mysql sink, table trigger event dispatcher need tableNameStore to store the table name
