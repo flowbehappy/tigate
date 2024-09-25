@@ -130,8 +130,8 @@
   "editable": true,
   "gnetId": null,
   "graphTooltip": 1,
-  "id": 39,
-  "iteration": 1726926776693,
+  "id": 41,
+  "iteration": 1727227246576,
   "links": [],
   "panels": [
     {
@@ -144,33 +144,37 @@
         "y": 0
       },
       "id": 19999,
-      "panels":[
+      "panels": [
         {
           "aliasColors": {},
+          "bars": false,
           "dashLength": 10,
+          "dashes": false,
           "datasource": "${DS_C1}",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
           },
           "fill": 1,
+          "fillGradient": 0,
           "gridPos": {
             "h": 8,
             "w": 12,
             "x": 0,
             "y": 1
           },
+          "hiddenSeries": false,
           "id": 18999,
           "legend": {
+            "alignAsTable": true,
             "avg": false,
             "current": false,
             "max": false,
             "min": false,
+            "rightSide": true,
             "show": true,
             "total": false,
-            "values": false,
-            "rightSide": true,
-            "alignAsTable": true
+            "values": false
           },
           "lines": true,
           "linewidth": 1,
@@ -178,8 +182,10 @@
           "options": {
             "alertThreshold": true
           },
+          "percentage": false,
           "pluginVersion": "7.5.17",
           "pointradius": 2,
+          "points": false,
           "renderer": "flot",
           "seriesOverrides": [
             {
@@ -189,22 +195,24 @@
             }
           ],
           "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(tidb_tikvclient_txn_write_size_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\",scope=~\"general\"}[30s])",
-              "legendFormat": "{{instance}}-rate",
-              "interval": "",
               "exemplar": true,
+              "expr": "rate(tidb_tikvclient_txn_write_size_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\",scope=~\"general\"}[30s])",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "{{instance}}-rate",
               "queryType": "randomWalk",
-              "refId": "A",
-              "hide": false
+              "refId": "A"
             },
             {
-              "expr": "tidb_tikvclient_txn_write_size_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", scope=~\"general\"}",
-              "legendFormat": "{{instance}}-sum",
-              "interval": "",
               "exemplar": true,
+              "expr": "tidb_tikvclient_txn_write_size_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", scope=~\"general\"}",
               "hide": false,
+              "interval": "",
+              "legendFormat": "{{instance}}-sum",
               "refId": "B"
             },
             {
@@ -217,7 +225,9 @@
             }
           ],
           "thresholds": [],
+          "timeFrom": null,
           "timeRegions": [],
+          "timeShift": null,
           "title": "Transaction Write Size Bytes Rate and Sum",
           "tooltip": {
             "shared": true,
@@ -234,54 +244,48 @@
           },
           "yaxes": [
             {
+              "$$hashKey": "object:522",
               "format": "binBps",
               "label": null,
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": true,
-              "$$hashKey": "object:522"
+              "show": true
             },
             {
+              "$$hashKey": "object:523",
               "format": "bytes",
               "label": null,
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": true,
-              "$$hashKey": "object:523"
+              "show": true
             }
           ],
           "yaxis": {
             "align": false,
             "alignLevel": null
-          },
-          "bars": false,
-          "dashes": false,
-          "fillGradient": 0,
-          "hiddenSeries": false,
-          "percentage": false,
-          "points": false,
-          "stack": false,
-          "steppedLine": false,
-          "timeFrom": null,
-          "timeShift": null
+          }
         },
         {
           "aliasColors": {},
+          "bars": false,
           "dashLength": 10,
+          "dashes": false,
           "datasource": "${DS_C1}",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
           },
           "fill": 1,
+          "fillGradient": 0,
           "gridPos": {
             "h": 8,
             "w": 12,
             "x": 12,
             "y": 1
           },
+          "hiddenSeries": false,
           "id": 20000,
           "legend": {
             "avg": false,
@@ -298,11 +302,15 @@
           "options": {
             "alertThreshold": true
           },
+          "percentage": false,
           "pluginVersion": "7.5.17",
           "pointradius": 2,
+          "points": false,
           "renderer": "flot",
           "seriesOverrides": [],
           "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
           "targets": [
             {
               "exemplar": true,
@@ -315,7 +323,9 @@
             }
           ],
           "thresholds": [],
+          "timeFrom": null,
           "timeRegions": [],
+          "timeShift": null,
           "title": "Sink Write Bytes/s",
           "tooltip": {
             "shared": true,
@@ -351,18 +361,9 @@
           "yaxis": {
             "align": false,
             "alignLevel": null
-          },
-          "bars": false,
-          "dashes": false,
-          "fillGradient": 0,
-          "hiddenSeries": false,
-          "percentage": false,
-          "points": false,
-          "stack": false,
-          "steppedLine": false,
-          "timeFrom": null,
-          "timeShift": null
-        }],
+          }
+        }
+      ],
       "title": "Throughput",
       "type": "row"
     },
@@ -401,7 +402,7 @@
             "h": 6,
             "w": 12,
             "x": 0,
-            "y": 1
+            "y": 2
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -480,7 +481,7 @@
             "h": 6,
             "w": 12,
             "x": 12,
-            "y": 1
+            "y": 2
           },
           "hiddenSeries": false,
           "id": 12029,
@@ -591,7 +592,7 @@
             "h": 6,
             "w": 12,
             "x": 0,
-            "y": 7
+            "y": 8
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -670,7 +671,7 @@
             "h": 6,
             "w": 12,
             "x": 12,
-            "y": 7
+            "y": 8
           },
           "hiddenSeries": false,
           "id": 12032,
@@ -776,7 +777,7 @@
             "h": 4,
             "w": 12,
             "x": 0,
-            "y": 13
+            "y": 14
           },
           "hiddenSeries": false,
           "id": 12026,
@@ -882,7 +883,7 @@
             "h": 4,
             "w": 12,
             "x": 12,
-            "y": 13
+            "y": 14
           },
           "hiddenSeries": false,
           "id": 12027,
@@ -988,7 +989,7 @@
             "h": 4,
             "w": 12,
             "x": 0,
-            "y": 17
+            "y": 18
           },
           "hiddenSeries": false,
           "id": 12025,
@@ -1091,7 +1092,7 @@
             "h": 4,
             "w": 12,
             "x": 12,
-            "y": 17
+            "y": 18
           },
           "hiddenSeries": false,
           "id": 12022,
@@ -2349,7 +2350,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 52
+            "y": 5
           },
           "hiddenSeries": false,
           "id": 12050,
@@ -2477,7 +2478,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 52
+            "y": 5
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -2552,7 +2553,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 60
+            "y": 13
           },
           "hiddenSeries": false,
           "id": 12048,
@@ -2614,6 +2615,7 @@
           },
           "yaxes": [
             {
+              "$$hashKey": "object:1472",
               "format": "percent",
               "label": null,
               "logBase": 1,
@@ -2622,6 +2624,7 @@
               "show": true
             },
             {
+              "$$hashKey": "object:1473",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -2667,7 +2670,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 5
+            "y": 6
           },
           "hiddenSeries": false,
           "id": 12052,
@@ -2774,7 +2777,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 5
+            "y": 6
           },
           "hiddenSeries": false,
           "id": 12056,
@@ -2882,7 +2885,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 13
+            "y": 14
           },
           "hiddenSeries": false,
           "id": 12044,
@@ -2915,7 +2918,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum (rate(ticdc_log_service_puller_event_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (instance, type)",
+              "expr": "sum(rate(ticdc_event_store_input_event_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (instance, type)",
               "format": "time_series",
               "interval": "",
               "legendFormat": "{{instance}}-{{type}}",
@@ -2952,6 +2955,307 @@
             },
             {
               "$$hashKey": "object:2117",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_C1}",
+          "description": "The number of bytes written by event store.",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 14
+          },
+          "hiddenSeries": false,
+          "id": 20002,
+          "legend": {
+            "alignAsTable": true,
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "sum(rate(ticdc_event_store_write_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (instance)",
+              "interval": "",
+              "legendFormat": "{{instance}}",
+              "queryType": "randomWalk",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Write Bytes/s",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:336",
+              "format": "binBps",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "$$hashKey": "object:337",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_C1}",
+          "description": "The number of scan requests received by event store",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 22
+          },
+          "hiddenSeries": false,
+          "id": 20004,
+          "legend": {
+            "alignAsTable": true,
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "sum(rate(ticdc_event_store_scan_requests_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (instance)",
+              "instant": false,
+              "interval": "",
+              "legendFormat": "{{instance}}",
+              "queryType": "randomWalk",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Scan Requests/s",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:716",
+              "format": "ops",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "$$hashKey": "object:717",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_C1}",
+          "description": "The number of bytes scanned by event store.",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 22
+          },
+          "hiddenSeries": false,
+          "id": 20006,
+          "legend": {
+            "alignAsTable": true,
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "sum(rate(ticdc_event_store_scan_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$ticdc_instance\"}[1m])) by (instance)",
+              "interval": "",
+              "legendFormat": "{{instance}}",
+              "queryType": "randomWalk",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Scan Bytes/s",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:796",
+              "format": "binBps",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "$$hashKey": "object:797",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -3383,7 +3687,7 @@
             "h": 4,
             "w": 12,
             "x": 0,
-            "y": 58
+            "y": 8
           },
           "hiddenSeries": false,
           "id": 398,
@@ -3486,7 +3790,7 @@
             "h": 4,
             "w": 12,
             "x": 12,
-            "y": 58
+            "y": 8
           },
           "hiddenSeries": false,
           "id": 468,
@@ -3589,7 +3893,7 @@
             "h": 4,
             "w": 12,
             "x": 0,
-            "y": 62
+            "y": 12
           },
           "hiddenSeries": false,
           "id": 469,
@@ -3694,7 +3998,7 @@
             "h": 4,
             "w": 12,
             "x": 12,
-            "y": 62
+            "y": 12
           },
           "hiddenSeries": false,
           "id": 466,
@@ -3797,7 +4101,7 @@
             "h": 4,
             "w": 12,
             "x": 0,
-            "y": 66
+            "y": 16
           },
           "hiddenSeries": false,
           "id": 479,
@@ -3901,7 +4205,7 @@
             "h": 4,
             "w": 12,
             "x": 12,
-            "y": 66
+            "y": 16
           },
           "hiddenSeries": false,
           "id": 473,
@@ -4031,7 +4335,7 @@
             "h": 4,
             "w": 12,
             "x": 0,
-            "y": 70
+            "y": 20
           },
           "hiddenSeries": false,
           "id": 486,
@@ -4143,7 +4447,7 @@
             "h": 4,
             "w": 12,
             "x": 12,
-            "y": 70
+            "y": 20
           },
           "hiddenSeries": false,
           "id": 485,
@@ -4255,7 +4559,7 @@
             "h": 4,
             "w": 12,
             "x": 0,
-            "y": 74
+            "y": 24
           },
           "hiddenSeries": false,
           "id": 401,
@@ -4364,7 +4668,7 @@
             "h": 4,
             "w": 12,
             "x": 12,
-            "y": 74
+            "y": 24
           },
           "hiddenSeries": false,
           "id": 467,
@@ -4473,7 +4777,7 @@
             "h": 4,
             "w": 12,
             "x": 0,
-            "y": 78
+            "y": 28
           },
           "hiddenSeries": false,
           "id": 407,
@@ -4581,7 +4885,7 @@
             "h": 4,
             "w": 12,
             "x": 12,
-            "y": 78
+            "y": 28
           },
           "hiddenSeries": false,
           "id": 470,
@@ -4687,7 +4991,7 @@
             "h": 4,
             "w": 12,
             "x": 0,
-            "y": 82
+            "y": 32
           },
           "hiddenSeries": false,
           "id": 471,
@@ -4796,7 +5100,7 @@
             "h": 4,
             "w": 12,
             "x": 12,
-            "y": 82
+            "y": 32
           },
           "hiddenSeries": false,
           "id": 400,
@@ -4902,7 +5206,7 @@
             "h": 4,
             "w": 12,
             "x": 0,
-            "y": 86
+            "y": 36
           },
           "hiddenSeries": false,
           "id": 433,
@@ -5007,7 +5311,7 @@
             "h": 4,
             "w": 12,
             "x": 12,
-            "y": 86
+            "y": 36
           },
           "hiddenSeries": false,
           "id": 427,
@@ -5116,7 +5420,7 @@
             "h": 4,
             "w": 12,
             "x": 0,
-            "y": 90
+            "y": 40
           },
           "hiddenSeries": false,
           "id": 399,
@@ -5221,7 +5525,7 @@
             "h": 4,
             "w": 12,
             "x": 12,
-            "y": 90
+            "y": 40
           },
           "hiddenSeries": false,
           "id": 472,
@@ -5332,7 +5636,7 @@
             "h": 4,
             "w": 12,
             "x": 0,
-            "y": 94
+            "y": 44
           },
           "hiddenSeries": false,
           "id": 727,
@@ -5452,7 +5756,7 @@
             "h": 4,
             "w": 12,
             "x": 12,
-            "y": 94
+            "y": 44
           },
           "hiddenSeries": false,
           "id": 10038,
@@ -16983,7 +17287,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 16
+            "y": 119
           },
           "hiddenSeries": false,
           "id": 15,
@@ -17118,7 +17422,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 16
+            "y": 119
           },
           "hiddenSeries": false,
           "id": 29,
@@ -17225,7 +17529,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 23
+            "y": 126
           },
           "hiddenSeries": false,
           "id": 28,
@@ -17347,7 +17651,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 23
+            "y": 126
           },
           "hiddenSeries": false,
           "id": 31,
@@ -17470,7 +17774,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 30
+            "y": 133
           },
           "hiddenSeries": false,
           "id": 188,
@@ -17574,7 +17878,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 30
+            "y": 133
           },
           "hiddenSeries": false,
           "id": 17,
@@ -17682,7 +17986,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 37
+            "y": 140
           },
           "hiddenSeries": false,
           "id": 177,
@@ -17786,7 +18090,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 37
+            "y": 140
           },
           "hiddenSeries": false,
           "id": 459,
@@ -17898,7 +18202,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 44
+            "y": 147
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -17975,7 +18279,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 44
+            "y": 147
           },
           "hiddenSeries": false,
           "id": 251,
@@ -18079,7 +18383,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 51
+            "y": 154
           },
           "hiddenSeries": false,
           "id": 453,
@@ -18185,7 +18489,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 51
+            "y": 154
           },
           "hiddenSeries": false,
           "id": 460,
@@ -18294,7 +18598,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 58
+            "y": 161
           },
           "hiddenSeries": false,
           "id": 5,
@@ -18397,7 +18701,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 58
+            "y": 161
           },
           "hiddenSeries": false,
           "id": 252,
@@ -18507,7 +18811,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 65
+            "y": 168
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -18589,7 +18893,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 65
+            "y": 168
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -18664,7 +18968,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 72
+            "y": 175
           },
           "hiddenSeries": false,
           "id": 53,
@@ -18778,7 +19082,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 72
+            "y": 175
           },
           "hiddenSeries": false,
           "id": 106,
@@ -18890,7 +19194,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 79
+            "y": 182
           },
           "hiddenSeries": false,
           "id": 705,
@@ -18988,7 +19292,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 79
+            "y": 182
           },
           "hiddenSeries": false,
           "id": 706,
@@ -19086,7 +19390,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 86
+            "y": 189
           },
           "hiddenSeries": false,
           "id": 707,
@@ -19184,7 +19488,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 86
+            "y": 189
           },
           "hiddenSeries": false,
           "id": 10039,
@@ -20286,7 +20590,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 72
+            "y": 21
           },
           "hiddenSeries": false,
           "id": 60,
@@ -20422,7 +20726,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 72
+            "y": 21
           },
           "hiddenSeries": false,
           "id": 74,
@@ -20540,7 +20844,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 79
+            "y": 28
           },
           "hiddenSeries": false,
           "id": 147,
@@ -20649,7 +20953,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 79
+            "y": 28
           },
           "hiddenSeries": false,
           "id": 194,
@@ -20823,7 +21127,7 @@
             "h": 7,
             "w": 7,
             "x": 0,
-            "y": 86
+            "y": 35
           },
           "hiddenSeries": false,
           "id": 152,
@@ -20964,7 +21268,7 @@
             "h": 7,
             "w": 5,
             "x": 7,
-            "y": 86
+            "y": 35
           },
           "hiddenSeries": false,
           "id": 153,
@@ -21072,7 +21376,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 86
+            "y": 35
           },
           "hiddenSeries": false,
           "id": 70,
@@ -21183,7 +21487,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 93
+            "y": 42
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -21260,7 +21564,7 @@
             "h": 7,
             "w": 6,
             "x": 12,
-            "y": 93
+            "y": 42
           },
           "hiddenSeries": false,
           "id": 72,
@@ -21365,7 +21669,7 @@
             "h": 7,
             "w": 6,
             "x": 18,
-            "y": 93
+            "y": 42
           },
           "hiddenSeries": false,
           "id": 140,
@@ -21487,7 +21791,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 100
+            "y": 49
           },
           "hiddenSeries": false,
           "id": 78,
@@ -21605,7 +21909,7 @@
             "h": 7,
             "w": 6,
             "x": 12,
-            "y": 100
+            "y": 49
           },
           "hiddenSeries": false,
           "id": 76,
@@ -21716,7 +22020,7 @@
             "h": 7,
             "w": 6,
             "x": 18,
-            "y": 100
+            "y": 49
           },
           "hiddenSeries": false,
           "id": 139,
@@ -21824,7 +22128,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 107
+            "y": 56
           },
           "hiddenSeries": false,
           "id": 143,
@@ -21961,7 +22265,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 107
+            "y": 56
           },
           "hiddenSeries": false,
           "id": 145,
@@ -22092,7 +22396,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 114
+            "y": 63
           },
           "hiddenSeries": false,
           "id": 141,
@@ -22206,7 +22510,7 @@
             "h": 7,
             "w": 6,
             "x": 12,
-            "y": 114
+            "y": 63
           },
           "heatmap": {},
           "hideZeroBuckets": true,
@@ -22282,7 +22586,7 @@
             "h": 7,
             "w": 6,
             "x": 18,
-            "y": 114
+            "y": 63
           },
           "hiddenSeries": false,
           "id": 142,
@@ -25962,7 +26266,7 @@
     ]
   },
   "timezone": "browser",
-  "title": "test-TiCDC",
-  "uid": "YiGL8hBZ0aaa",
-  "version": 15
+  "title": "test-TiCDC10",
+  "uid": "YiGL8hBZ0aaf",
+  "version": 1
 }
