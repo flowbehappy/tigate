@@ -212,7 +212,8 @@ func loadTablesInKVSnap(snap *pebble.Snapshot, gcTs uint64, databaseMap map[int6
 		if err := json.Unmarshal(table_info_entry.TableInfoValue, &tbNameInfo); err != nil {
 			log.Fatal("unmarshal table name info failed", zap.Error(err))
 		}
-		if _, ok := databaseMap[table_info_entry.SchemaID]; !ok {
+		databaseInfo, ok := databaseMap[table_info_entry.SchemaID]
+		if !ok {
 			log.Panic("database not found",
 				zap.Int64("schemaID", table_info_entry.SchemaID),
 				zap.String("schemaName", table_info_entry.SchemaName),
@@ -223,6 +224,8 @@ func loadTablesInKVSnap(snap *pebble.Snapshot, gcTs uint64, databaseMap map[int6
 			Name:     tbNameInfo.Name.O,
 			InKVSnap: true,
 		}
+		// TODO: add a unit test for this case
+		databaseInfo.Tables[tbNameInfo.ID] = true
 	}
 
 	return tablesInKVSnap, nil
