@@ -40,7 +40,7 @@ func NewStatistics(
 	statistics.metricExecDDLHis = ExecDDLHistogram.WithLabelValues(namespcae, changefeedID, s)
 	statistics.metricExecBatchHis = ExecBatchHistogram.WithLabelValues(namespcae, changefeedID, s)
 	statistics.metricTotalWriteBytesCnt = TotalWriteBytesCounter.WithLabelValues(namespcae, changefeedID, s)
-	statistics.metricEventSizeHis = EventSizeHistogram.WithLabelValues(namespcae, changefeedID, s)
+	statistics.metricEventSizeHis = EventSizeHistogram.WithLabelValues(namespcae, changefeedID)
 	statistics.metricExecErrCnt = ExecutionErrorCounter.WithLabelValues(namespcae, changefeedID, s)
 	statistics.metricExecDMLCnt = ExecDMLEventCounter.WithLabelValues(namespcae, changefeedID)
 	return statistics
