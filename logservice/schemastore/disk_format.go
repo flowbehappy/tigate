@@ -403,7 +403,6 @@ func writeSchemaSnapshotAndMeta(
 			continue
 		}
 		batch := db.NewBatch()
-		defer batch.Close()
 
 		writeSchemaInfoToBatch(batch, snapTs, dbInfo)
 
@@ -429,6 +428,13 @@ func writeSchemaSnapshotAndMeta(
 				tables[tableID] = true
 			} else {
 				tablesInKVSnap[tableID] = nil
+			}
+			// 8M is arbitrary, we can adjust it later
+			if batch.Len() >= 8*1024*1024 {
+				if err := batch.Commit(pebble.NoSync); err != nil {
+					return nil, nil, err
+				}
+				batch = db.NewBatch()
 			}
 		}
 		if !onlyTableID {
