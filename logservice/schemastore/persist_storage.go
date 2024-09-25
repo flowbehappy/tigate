@@ -825,6 +825,9 @@ func updateDatabaseInfoAndTableInfo(
 
 	switch model.ActionType(event.Type) {
 	case model.ActionCreateSchema:
+		log.Info("create schema",
+			zap.String("schemaName", event.SchemaName),
+			zap.Int64("schemaID", event.SchemaID))
 		databaseMap[event.SchemaID] = &BasicDatabaseInfo{
 			Name:   event.SchemaName,
 			Tables: make(map[int64]bool),
