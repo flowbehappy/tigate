@@ -26,6 +26,7 @@ func (h *dispatcherEventsHandler) Handle(broker *eventBroker, tasks ...scanTask)
 	ctx := context.Background()
 	needScan, _, _ := broker.checkNeedScan(ctx, task)
 	if !needScan {
+		task.finished()
 		return false
 	}
 	// The dispatcher has new events. We need to push the task to the task pool.

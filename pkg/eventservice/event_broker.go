@@ -34,6 +34,7 @@ const (
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
 var metricEventBrokerDropTaskCount = metrics.EventServiceDropScanTaskCount
 var metricEventBrokerDropMsgCount = metrics.EventServiceDropMsgCount
+var metricScanTaskQueueDuration = metrics.EventServiceScanTaskQueueDuration
 
 // eventBroker get event from the eventStore, and send the event to the dispatchers.
 // Every TiDB cluster has a eventBroker.
@@ -187,9 +188,7 @@ func (c *eventBroker) runGenTasks(ctx context.Context) {
 			case s := <-c.notifyCh:
 				s.dispatchers.RLock()
 				for _, stat := range s.dispatchers.m {
-					c.ds.In() <- scanTask{
-						dispatcherStat: stat,
-					}
+					c.ds.In() <- newScanTask(stat)
 				}
 				s.dispatchers.RUnlock()
 			}
@@ -288,6 +287,10 @@ func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, c
 
 // TODO: handle error properly.
 func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
+	defer func() {
+		task.finished()
+	}()
+
 	start := time.Now()
 	needScan, dataRange, ddlEvents := c.checkNeedScan(ctx, task)
 	if !needScan {
@@ -692,6 +695,18 @@ func (s *spanSubscription) onNewEvent(raw *common.RawKVEntry) {
 
 type scanTask struct {
 	dispatcherStat *dispatcherStat
+	createTime     time.Time
+}
+
+func newScanTask(dispatcherStat *dispatcherStat) scanTask {
+	return scanTask{
+		dispatcherStat: dispatcherStat,
+		createTime:     time.Now(),
+	}
+}
+
+func (t *scanTask) finished() {
+	metricScanTaskQueueDuration.Observe(float64(time.Since(t.createTime).Milliseconds()))
 }
 
 type scanTaskQueue struct {
