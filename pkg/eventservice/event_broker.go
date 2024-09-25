@@ -33,7 +33,7 @@ const (
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
 var metricEventBrokerDropTaskCount = metrics.EventServiceDropScanTaskCount
-var metricEventBrokerDropMsgCount = metrics.EventServiceDropMsgCount
+var metricEventBrokerDropResolvedTsCount = metrics.EventServiceDropResolvedTsCount
 var metricScanTaskQueueDuration = metrics.EventServiceScanTaskQueueDuration
 
 // eventBroker get event from the eventStore, and send the event to the dispatchers.
@@ -151,7 +151,7 @@ func (c *eventBroker) sendWatermark(
 			counter.Inc()
 		}
 	default:
-		metricEventBrokerDropMsgCount.Inc()
+		metricEventBrokerDropResolvedTsCount.Inc()
 	}
 }
 
@@ -283,10 +283,7 @@ func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, c
 
 // TODO: handle error properly.
 func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
-	defer func() {
-		task.finished()
-	}()
-
+	task.handle()
 	start := time.Now()
 	needScan, dataRange, ddlEvents := c.checkNeedScan(ctx, task)
 	if !needScan {
@@ -701,7 +698,7 @@ func newScanTask(dispatcherStat *dispatcherStat) scanTask {
 	}
 }
 
-func (t *scanTask) finished() {
+func (t *scanTask) handle() {
 	metricScanTaskQueueDuration.Observe(float64(time.Since(t.createTime).Milliseconds()))
 }
 
