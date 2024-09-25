@@ -232,7 +232,7 @@ func (p *persistentStorage) getAllPhysicalTables(snapTs uint64, tableFilter filt
 			zap.Uint64("snapTs", snapTs),
 			zap.Any("duration", time.Since(start).Seconds()))
 	}()
-	return loadAllPhysicalTablesInSnap(storageSnap, gcTs, snapTs, tableFilter)
+	return loadAllPhysicalTablesAtTs(storageSnap, gcTs, snapTs, tableFilter)
 }
 
 // only return when table info is initialized
