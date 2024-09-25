@@ -838,6 +838,9 @@ func updateDatabaseInfoAndTableInfo(
 			Tables: make(map[int64]bool),
 		}
 	case model.ActionDropSchema:
+		for tableID := range databaseMap[event.SchemaID].Tables {
+			dropTable(event.SchemaID, tableID)
+		}
 		delete(databaseMap, event.SchemaID)
 	case model.ActionCreateTable:
 		createTable(event.SchemaID, event.TableID)
