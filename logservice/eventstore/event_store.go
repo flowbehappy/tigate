@@ -185,7 +185,8 @@ func New(
 	// TODO: close pebble db at exit
 	for i := 0; i < dbCount; i++ {
 		db, err := pebble.Open(fmt.Sprintf("%s/%d", dbPath, i), &pebble.Options{
-			DisableWAL: true,
+			DisableWAL:   true,
+			MemTableSize: 8 << 20,
 		})
 		if err != nil {
 			log.Fatal("open db failed", zap.Error(err))
@@ -378,7 +379,7 @@ func (e *eventStore) Close(ctx context.Context) error {
 }
 
 func (e *eventStore) updateMetrics(ctx context.Context) error {
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	for {
 		select {
 		case <-ctx.Done():

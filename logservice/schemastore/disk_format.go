@@ -551,6 +551,11 @@ func loadAllPhysicalTablesInSnap(
 	}
 	tables := make([]common.Table, 0)
 	for tableID, tableInfo := range tableMap {
+		if _, ok := databaseMap[tableInfo.SchemaID]; !ok {
+			log.Panic("database not found",
+				zap.Int64("schemaID", tableInfo.SchemaID),
+				zap.String("tableName", tableInfo.Name))
+		}
 		if tableFilter != nil && tableFilter.ShouldIgnoreTable(databaseMap[tableInfo.SchemaID].Name, tableInfo.Name) {
 			continue
 		}

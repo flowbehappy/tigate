@@ -98,7 +98,9 @@ func newPersistentStorage(
 	}
 
 	// TODO: update pebble options
-	db, err := pebble.Open(dbPath, &pebble.Options{})
+	db, err := pebble.Open(dbPath, &pebble.Options{
+		DisableWAL: true,
+	})
 	if err != nil {
 		log.Fatal("open db failed", zap.Error(err))
 	}
@@ -162,7 +164,9 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 
 	var err error
 	// TODO: update pebble options
-	if p.db, err = pebble.Open(dbPath, &pebble.Options{}); err != nil {
+	if p.db, err = pebble.Open(dbPath, &pebble.Options{
+		DisableWAL: true,
+	}); err != nil {
 		log.Fatal("open db failed", zap.Error(err))
 	}
 	log.Info("schema store initialize from kv storage begin",
