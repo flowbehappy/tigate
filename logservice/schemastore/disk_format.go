@@ -219,13 +219,13 @@ func loadTablesInKVSnap(snap *pebble.Snapshot, gcTs uint64, databaseMap map[int6
 				zap.String("schemaName", table_info_entry.SchemaName),
 				zap.String("tableName", tbNameInfo.Name.O))
 		}
+		// TODO: add a unit test for this case
+		databaseInfo.Tables[tbNameInfo.ID] = true
 		tablesInKVSnap[tbNameInfo.ID] = &BasicTableInfo{
 			SchemaID: table_info_entry.SchemaID,
 			Name:     tbNameInfo.Name.O,
 			InKVSnap: true,
 		}
-		// TODO: add a unit test for this case
-		databaseInfo.Tables[tbNameInfo.ID] = true
 	}
 
 	return tablesInKVSnap, nil
