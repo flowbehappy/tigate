@@ -67,6 +67,13 @@ var (
 			Help:      "Watermark lag histogram of registered dispatchers for event store.",
 			Buckets:   LagBucket(),
 		})
+	EventStoreCompressRatio = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_store",
+			Name:      "compress_ratio",
+			Help:      "The compression ratio of the event data.",
+		})
 )
 
 func InitEventStoreMetrics(registry *prometheus.Registry) {
@@ -76,4 +83,5 @@ func InitEventStoreMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventStoreScanBytes)
 	registry.MustRegister(EventStoreDispatcherResolvedTsLagHist)
 	registry.MustRegister(EventStoreDispatcherWatermarkLagHist)
+	registry.MustRegister(EventStoreCompressRatio)
 }
