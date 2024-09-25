@@ -257,7 +257,7 @@ func (s *schemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, star
 }
 
 func (s *schemaStore) writeDDLEvent(ddlEvent DDLJobWithCommitTs) {
-	log.Debug("write ddl event",
+	log.Info("write ddl event",
 		zap.Int64("schemaID", ddlEvent.Job.SchemaID),
 		zap.Int64("tableID", ddlEvent.Job.TableID),
 		zap.Uint64("finishedTs", ddlEvent.Job.BinlogInfo.FinishedTS),
