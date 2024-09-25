@@ -39,15 +39,22 @@ var (
 			Help:      "Total number of bytes written by sink",
 		}, []string{"namespace", "changefeed", "type"}) // type is for `sinkType`
 
-	// LargeRowSizeHistogram records size of large rows.
-	LargeRowSizeHistogram = prometheus.NewHistogramVec(
+	EventSizeHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "ticdc",
 			Subsystem: "sink",
-			Name:      "large_row_size",
-			Help:      "The size of all received row changed events (in bytes).",
-			Buckets:   prometheus.ExponentialBuckets(LargeRowSizeLowBound, 2, 15), // 2K~32M
-		}, []string{"namespace", "changefeed", "type"}) // type is for `sinkType`
+			Name:      "event_size",
+			Help:      "The size of changed events (in bytes).",
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 15), // 0~32M
+		}, []string{"namespace", "changefeed"})
+
+	ExecDMLEventCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "ticdc",
+			Subsystem: "sink",
+			Name:      "dml_event_count",
+			Help:      "Total count of DML events.",
+		}, []string{"namespace", "changefeed"})
 
 	// ExecDDLHistogram records the exexution time of a DDL.
 	ExecDDLHistogram = prometheus.NewHistogramVec(
@@ -192,25 +199,15 @@ var (
 		}, []string{"namespace", "changefeed"})
 )
 
-var (
-	SinkOutputChunkSize = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "ticdc",
-			Subsystem: "sink",
-			Name:      "output_chunk_size",
-			Help:      "The size of output chunk (in bytes).",
-		}, []string{"namespace", "changefeed"})
-)
-
 // InitMetrics registers all metrics in this file.
 func InitSinkMetrics(registry *prometheus.Registry) {
 	// common sink metrics
 	registry.MustRegister(ExecBatchHistogram)
 	registry.MustRegister(TotalWriteBytesCounter)
 	registry.MustRegister(ExecDDLHistogram)
-	registry.MustRegister(LargeRowSizeHistogram)
+	registry.MustRegister(EventSizeHistogram)
 	registry.MustRegister(ExecutionErrorCounter)
-	registry.MustRegister(SinkOutputChunkSize)
+	registry.MustRegister(ExecDMLEventCounter)
 
 	// txn sink metrics
 	registry.MustRegister(ConflictDetectDuration)
