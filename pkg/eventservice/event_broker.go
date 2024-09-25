@@ -302,6 +302,11 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		for _, e := range ddlEvents {
 			c.sendDDL(ctx, remoteID, e, task.dispatcherStat)
 		}
+		// After all the events are sent, we send the watermark to the dispatcher.
+		c.sendWatermark(remoteID,
+			dispatcherID,
+			dataRange.EndTs,
+			task.dispatcherStat.metricEventServiceSendResolvedTsCount)
 		c.wakeDispatcher(dispatcherID)
 	}()
 
