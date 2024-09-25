@@ -56,7 +56,7 @@ type EventStore interface {
 
 	// TODO: ignore large txn now, so we can read all transactions of the same commit ts at one time
 	// (startCommitTS, endCommitTS]?
-	GetIterator(dispatcherID common.DispatcherID, dataRange *common.DataRange) (EventIterator, error)
+	GetIterator(dispatcherID common.DispatcherID, dataRange common.DataRange) (EventIterator, error)
 }
 
 type EventIterator interface {
@@ -325,7 +325,7 @@ func (e *eventStore) UnregisterDispatcher(
 	return nil
 }
 
-func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange *common.DataRange) (EventIterator, error) {
+func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange common.DataRange) (EventIterator, error) {
 	// do some check
 	state, ok := e.spanStates.dispatcherMap.Get(dataRange.Span)
 	dispatcher, okw := state.dispatchers[dispatcherID]

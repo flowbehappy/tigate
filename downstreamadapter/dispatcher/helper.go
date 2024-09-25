@@ -110,10 +110,13 @@ func (d *DispatcherStatusWithID) GetDispatcherID() common.DispatcherID {
 
 // DispatcherStatusHandler is used to handle the DispatcherStatus event.
 // Each dispatcher status may contain a ACK info or a dispatcher action or both.
-// If we get a ack info, we need to check whether the ack is for the current pending ddl event. If so, we can cancel the resend task.
-// If we get a dispatcher action, we need to check whether the action is for the current pending ddl event. If so, we can deal the ddl event based on the action.
+// If we get a ack info, we need to check whether the ack is for the current pending ddl event.
+// If so, we can cancel the resend task.
+// If we get a dispatcher action, we need to check whether the action is for the current pending ddl event.
+// If so, we can deal the ddl event based on the action.
 // 1. If the action is a write, we need to add the ddl event to the sink for writing to downstream(async).
-// 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and wake the dispatcherEventsHandler
+// 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and
+// wake the dispatcherEventsHandler to handle the event.
 type DispatcherStatusHandler struct {
 }
 

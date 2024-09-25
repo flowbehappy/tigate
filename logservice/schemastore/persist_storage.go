@@ -680,7 +680,8 @@ func completePersistedDDLEvent(
 		// TODO: is the following SchemaName and TableName correct?
 		event.SchemaName = getSchemaName(event.SchemaID)
 		event.TableName = event.TableInfo.Name.O
-	case model.ActionCreateView:
+	case model.ActionCreateView, model.ActionCreateTables:
+
 		// ignore
 	default:
 		log.Panic("unknown ddl type",
