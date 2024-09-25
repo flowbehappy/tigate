@@ -18,6 +18,38 @@ import (
 )
 
 var (
+	EventStoreReceivedEventCount = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_store",
+			Name:      "input_event_count",
+			Help:      "The number of events received by event store.",
+		}, []string{"type"}) // types : kv, resolved.
+
+	EventStoreWriteBytes = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_store",
+			Name:      "write_bytes",
+			Help:      "The number of bytes written by event store.",
+		})
+
+	EventStoreScanRequestsCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_store",
+			Name:      "scan_requests_count",
+			Help:      "The number of scan requests received by event store.",
+		})
+
+	EventStoreScanBytes = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_store",
+			Name:      "scan_bytes",
+			Help:      "The number of bytes scanned by event store.",
+		})
+
 	EventStoreDispatcherResolvedTsLagHist = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "ticdc",
@@ -38,6 +70,10 @@ var (
 )
 
 func InitEventStoreMetrics(registry *prometheus.Registry) {
+	registry.MustRegister(EventStoreReceivedEventCount)
+	registry.MustRegister(EventStoreWriteBytes)
+	registry.MustRegister(EventStoreScanRequestsCount)
+	registry.MustRegister(EventStoreScanBytes)
 	registry.MustRegister(EventStoreDispatcherResolvedTsLagHist)
 	registry.MustRegister(EventStoreDispatcherWatermarkLagHist)
 }

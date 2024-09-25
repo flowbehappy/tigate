@@ -348,6 +348,8 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange *co
 	}
 	iter.First()
 
+	metrics.EventStoreScanRequestsCount.Inc()
+
 	return &eventStoreIter{
 		tableID:      span.TableID,
 		innerIter:    iter,
@@ -415,9 +417,11 @@ func (e *eventStore) batchCommitAndUpdateWatermark(ctx context.Context, batchCh 
 			// do batch commit
 			batch := batchEvent.batch
 			if batch != nil && !batch.Empty() {
+				size := batch.Len()
 				if err := batch.Commit(pebble.NoSync); err != nil {
 					log.Panic("failed to commit pebble batch", zap.Error(err))
 				}
+				metrics.EventStoreWriteBytes.Add(float64(size))
 			}
 
 			// update resolved ts after commit successfully
@@ -471,7 +475,7 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 					batch = db.NewBatch()
 				}
 				addEvent2Batch(batch, item)
-				if len(batch.Repr()) >= batchCommitSize {
+				if batch.Len() >= batchCommitSize {
 					return &DBBatchEvent{batch, resolvedTsBatch}, true
 				}
 			case <-ctx.Done():
@@ -554,6 +558,7 @@ func (iter *eventStoreIter) Next() (*common.RawKVEntry, bool, error) {
 		log.Panic("failed to decompress value", zap.Error(err))
 	}
 	_, startTS, commitTS := DecodeKey(key)
+	metrics.EventStoreScanBytes.Add(float64(len(decompressedValue)))
 	rawKV := &common.RawKVEntry{}
 	rawKV.Decode(decompressedValue)
 	isNewTxn := false
