@@ -184,7 +184,9 @@ func New(
 	// TODO: update pebble options
 	// TODO: close pebble db at exit
 	for i := 0; i < dbCount; i++ {
-		db, err := pebble.Open(fmt.Sprintf("%s/%d", dbPath, i), &pebble.Options{})
+		db, err := pebble.Open(fmt.Sprintf("%s/%d", dbPath, i), &pebble.Options{
+			DisableWAL: true,
+		})
 		if err != nil {
 			log.Fatal("open db failed", zap.Error(err))
 		}
