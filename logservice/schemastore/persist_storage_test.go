@@ -386,6 +386,7 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 		pStorage.handleSortedDDLEvents(ddlEvent)
 
 		require.Equal(t, 0, len(pStorage.databaseMap))
+		require.Equal(t, 0, len(pStorage.tableMap))
 		require.Equal(t, 5, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(300), pStorage.tableTriggerDDLHistory[4])
 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
