@@ -24119,11 +24119,6 @@
               "selected": false,
               "text": "172.16.5.33:47912",
               "value": "172.16.5.33:47912"
-            },
-            "runtime_instance": {
-              "selected": false,
-              "text": "10.2.6.59:8300",
-              "value": "10.2.6.59:8300"
             }
           },
           "seriesOverrides": [
@@ -24305,11 +24300,6 @@
               "selected": false,
               "text": "172.16.5.33:47912",
               "value": "172.16.5.33:47912"
-            },
-            "runtime_instance": {
-              "selected": false,
-              "text": "10.2.6.59:8300",
-              "value": "10.2.6.59:8300"
             }
           },
           "seriesOverrides": [],
@@ -24412,11 +24402,6 @@
               "selected": false,
               "text": "172.16.5.33:47912",
               "value": "172.16.5.33:47912"
-            },
-            "runtime_instance": {
-              "selected": false,
-              "text": "10.2.6.59:8300",
-              "value": "10.2.6.59:8300"
             }
           },
           "seriesOverrides": [
@@ -24534,11 +24519,6 @@
               "selected": false,
               "text": "172.16.5.33:47912",
               "value": "172.16.5.33:47912"
-            },
-            "runtime_instance": {
-              "selected": false,
-              "text": "10.2.6.59:8300",
-              "value": "10.2.6.59:8300"
             }
           },
           "seriesOverrides": [
@@ -24632,13 +24612,6 @@
         }
       ],
       "repeat": "runtime_instance",
-      "scopedVars": {
-        "runtime_instance": {
-          "selected": false,
-          "text": "10.2.6.59:8300",
-          "value": "10.2.6.59:8300"
-        }
-      },
       "title": "Runtime $runtime_instance",
       "type": "row"
     },
