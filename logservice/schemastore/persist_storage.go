@@ -815,6 +815,9 @@ func updateDatabaseInfoAndTableInfo(
 	}
 
 	createTable := func(schemaID int64, tableID int64) {
+		log.Info("create table",
+			zap.Int64("schemaID", schemaID),
+			zap.Int64("tableID", tableID))
 		addTableToDB(schemaID, tableID)
 		tableMap[tableID] = &BasicTableInfo{
 			SchemaID: schemaID,

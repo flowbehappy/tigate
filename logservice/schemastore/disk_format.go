@@ -555,7 +555,7 @@ func loadAllPhysicalTablesInSnap(
 			log.Panic("database not found",
 				zap.Int64("schemaID", tableInfo.SchemaID),
 				zap.String("tableName", tableInfo.Name),
-				zap.Any("databaseMap", databaseMap))
+				zap.Any("databaseMapLen", len(databaseMap)))
 		}
 		if tableFilter != nil && tableFilter.ShouldIgnoreTable(databaseMap[tableInfo.SchemaID].Name, tableInfo.Name) {
 			continue
