@@ -190,7 +190,7 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 }
 
 func (c *EventCollector) updateMetrics(ctx context.Context) error {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
