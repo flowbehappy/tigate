@@ -836,7 +836,7 @@ func updateDatabaseInfoAndTableInfo(
 		}
 	case model.ActionDropSchema:
 		for tableID := range databaseMap[event.SchemaID].Tables {
-			dropTable(event.SchemaID, tableID)
+			delete(tableMap, tableID)
 		}
 		delete(databaseMap, event.SchemaID)
 	case model.ActionCreateTable:
