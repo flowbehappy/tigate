@@ -199,7 +199,7 @@ func (p *persistentStorage) initializeFromDisk() {
 		log.Fatal("load database info from disk failed")
 	}
 
-	if p.tableMap, err = loadTablesInKVSnap(storageSnap, p.gcTs); err != nil {
+	if p.tableMap, err = loadTablesInKVSnap(storageSnap, p.gcTs, p.databaseMap); err != nil {
 		log.Fatal("load tables in kv snapshot failed")
 	}
 
