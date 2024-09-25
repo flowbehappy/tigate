@@ -227,7 +227,7 @@ func (s *stream[P, T, D]) handleLoop(acceptedPaths []*pathInfo[P, T, D], formerS
 			e.pathInfo.blocking = false
 			count := e.pathInfo.pendingQueue.Length()
 			if count > 0 {
-				s.signalQueue.PushBack(eventSignal[P, T, D]{pathInfo: e.pathInfo, eventCount: count})
+				s.signalQueue.PushFront(eventSignal[P, T, D]{pathInfo: e.pathInfo, eventCount: count})
 			}
 		} else {
 			// It is a normal event
