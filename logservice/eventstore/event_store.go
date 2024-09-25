@@ -17,7 +17,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/flowbehappy/tigate/utils"
-	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/pkg/pdutil"
@@ -122,9 +121,6 @@ type eventStore struct {
 		dispatcherMap   *utils.BtreeMap[*heartbeatpb.TableSpan, *spanState]
 		subscriptionMap map[logpuller.SubscriptionID]*spanState
 	}
-
-	encoder *zstd.Encoder
-	decoder *zstd.Decoder
 }
 
 const dataDir = "event_store"
@@ -161,16 +157,6 @@ func New(
 	if err != nil {
 		log.Panic("fail to remove path")
 	}
-	// Create the zstd encoder
-	encoder, err := zstd.NewWriter(nil)
-	if err != nil {
-		log.Panic("Failed to create zstd encoder", zap.Error(err))
-	}
-
-	decoder, err := zstd.NewReader(nil)
-	if err != nil {
-		log.Panic("Failed to create zstd decoder", zap.Error(err))
-	}
 
 	store := &eventStore{
 		pdClock:  pdClock,
@@ -178,8 +164,6 @@ func New(
 		eventChs: make([]chan eventWithSpanState, 0, dbCount),
 
 		gcManager: newGCManager(),
-		encoder:   encoder,
-		decoder:   decoder,
 	}
 	// TODO: update pebble options
 	// TODO: close pebble db at exit
@@ -359,7 +343,6 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange *co
 		startTs:      dataRange.StartTs,
 		endTs:        dataRange.EndTs,
 		rowCount:     0,
-		decoder:      e.decoder,
 	}, nil
 }
 
@@ -451,8 +434,7 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 	addEvent2Batch := func(batch *pebble.Batch, item eventWithSpanState) {
 		key := EncodeKey(uint64(item.state.span.TableID), item.raw)
 		value := item.raw.Encode()
-		compressedValue := e.encoder.EncodeAll(value, nil)
-		if err := batch.Set(key, compressedValue, pebble.NoSync); err != nil {
+		if err := batch.Set(key, value, pebble.NoSync); err != nil {
 			log.Panic("failed to update pebble batch", zap.Error(err))
 		}
 	}
@@ -539,7 +521,6 @@ type eventStoreIter struct {
 	startTs  uint64
 	endTs    uint64
 	rowCount int64
-	decoder  *zstd.Decoder
 }
 
 func (iter *eventStoreIter) Next() (*common.RawKVEntry, bool, error) {
@@ -553,14 +534,10 @@ func (iter *eventStoreIter) Next() (*common.RawKVEntry, bool, error) {
 
 	key := iter.innerIter.Key()
 	value := iter.innerIter.Value()
-	decompressedValue, err := iter.decoder.DecodeAll(value, nil)
-	if err != nil {
-		log.Panic("failed to decompress value", zap.Error(err))
-	}
 	_, startTS, commitTS := DecodeKey(key)
-	metrics.EventStoreScanBytes.Add(float64(len(decompressedValue)))
+	metrics.EventStoreScanBytes.Add(float64(len(value)))
 	rawKV := &common.RawKVEntry{}
-	rawKV.Decode(decompressedValue)
+	rawKV.Decode(value)
 	isNewTxn := false
 	if iter.prevCommitTS == 0 || (startTS != iter.prevStartTS || commitTS != iter.prevCommitTS) {
 		isNewTxn = true
