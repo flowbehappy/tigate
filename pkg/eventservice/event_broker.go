@@ -58,7 +58,7 @@ type eventBroker struct {
 	tableTriggerDispatchers sync.Map
 	// taskPool is used to store the scan tasks and merge the tasks of same dispatcher.
 	// TODO: Make it support merge the tasks of the same table span, even if the tasks are from different dispatchers.
-	taskPool *scanTaskQueue
+	taskPool *scanTaskPool
 
 	ds dynstream.DynamicStream[common.DispatcherID, scanTask, *eventBroker]
 
@@ -573,11 +573,6 @@ type dispatcherStat struct {
 	spanSubscription *spanSubscription
 	// The watermark of the events that have been sent to the dispatcher.
 	watermark atomic.Uint64
-	// The index of the task queue channel in the taskPool.
-	// We need to make sure the tasks of the same dispatcher are sent to the same task queue
-	// so that it will be handled by the same scan worker. To ensure all events of the dispatcher
-	// are sent in order.
-	workerIndex int
 
 	metricSorterOutputEventCountKV        prometheus.Counter
 	metricEventServiceSendKvCount         prometheus.Counter
@@ -602,7 +597,6 @@ func newDispatcherStat(
 		metricEventServiceSendResolvedTsCount: metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "resolved_ts"),
 	}
 	dispStat.watermark.Store(startTs)
-	dispStat.workerIndex = int(dispatcherIdx % defaultScanWorkerCount)
 
 	subscription.addDispatcher(dispStat)
 	return dispStat
@@ -702,27 +696,23 @@ func (t *scanTask) handle() {
 	metricScanTaskQueueDuration.Observe(float64(time.Since(t.createTime).Milliseconds()))
 }
 
-type scanTaskQueue struct {
+type scanTaskPool struct {
 	// pendingTaskQueue is used to store the tasks that are waiting to be handled by the scan workers.
 	// The length of the pendingTaskQueue is equal to the number of the scan workers.
-	pendingTaskQueue []chan scanTask
+	pendingTaskQueue chan scanTask
 }
 
-func newScanTaskPool() *scanTaskQueue {
-	res := &scanTaskQueue{
-		pendingTaskQueue: make([]chan scanTask, defaultScanWorkerCount),
+func newScanTaskPool() *scanTaskPool {
+	return &scanTaskPool{
+		pendingTaskQueue: make(chan scanTask, defaultChannelSize),
 	}
-	for i := 0; i < defaultScanWorkerCount; i++ {
-		res.pendingTaskQueue[i] = make(chan scanTask, defaultChannelSize)
-	}
-	return res
 }
 
 // pushTask pushes a task to the pool,
 // and merge the task if the task is overlapped with the existing tasks.
-func (p *scanTaskQueue) pushTask(task scanTask) bool {
+func (p *scanTaskPool) pushTask(task scanTask) bool {
 	select {
-	case p.pendingTaskQueue[task.dispatcherStat.workerIndex] <- task:
+	case p.pendingTaskQueue <- task:
 		return true
 	default:
 		metricEventBrokerDropTaskCount.Inc()
@@ -731,8 +721,8 @@ func (p *scanTaskQueue) pushTask(task scanTask) bool {
 	}
 }
 
-func (p *scanTaskQueue) popTask(chanIndex int) <-chan scanTask {
-	return p.pendingTaskQueue[chanIndex]
+func (p *scanTaskPool) popTask(chanIndex int) <-chan scanTask {
+	return p.pendingTaskQueue
 }
 
 type wrapEvent struct {

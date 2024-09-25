@@ -29,6 +29,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+var metricEventCompressRatio = metrics.EventStoreCompressRatio
+
 type EventObserver func(raw *common.RawKVEntry)
 
 type WatermarkNotifier func(watermark uint64)
@@ -454,6 +456,8 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 		key := EncodeKey(uint64(item.state.span.TableID), item.raw)
 		value := item.raw.Encode()
 		compressedValue := e.encoder.EncodeAll(value, nil)
+		ratio := float64(len(value)) / float64(len(compressedValue))
+		metrics.EventStoreCompressRatio.Observe(ratio)
 		if err := batch.Set(key, compressedValue, pebble.NoSync); err != nil {
 			log.Panic("failed to update pebble batch", zap.Error(err))
 		}
