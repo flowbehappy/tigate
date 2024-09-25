@@ -457,7 +457,7 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 		value := item.raw.Encode()
 		compressedValue := e.encoder.EncodeAll(value, nil)
 		ratio := float64(len(value)) / float64(len(compressedValue))
-		metrics.EventStoreCompressRatio.Observe(ratio)
+		metrics.EventStoreCompressRatio.Set(ratio)
 		if err := batch.Set(key, compressedValue, pebble.NoSync); err != nil {
 			log.Panic("failed to update pebble batch", zap.Error(err))
 		}
