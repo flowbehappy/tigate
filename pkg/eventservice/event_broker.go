@@ -27,8 +27,8 @@ import (
 )
 
 const (
-	resolvedTsCacheSize    = 8192
-	resolvedEventRetryTime = 3
+	resolvedTsCacheSize = 8192
+	//resolvedEventRetryTime = 3
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -145,18 +145,14 @@ func (c *eventBroker) sendWatermark(
 		common.ResolvedEvent{
 			DispatcherID: dispatcherID,
 			ResolvedTs:   watermark})
-	for i := 0; i < resolvedEventRetryTime; i++ {
-		select {
-		case c.messageCh <- resolvedEvent:
-			if counter != nil {
-				counter.Inc()
-			}
-			return
-		default:
-			time.Sleep(time.Millisecond * 10)
+	select {
+	case c.messageCh <- resolvedEvent:
+		if counter != nil {
+			counter.Inc()
 		}
+	default:
+		metricEventBrokerDropMsgCount.Inc()
 	}
-	metricEventBrokerDropMsgCount.Inc()
 }
 
 func (c *eventBroker) runScanWorker(ctx context.Context) {
