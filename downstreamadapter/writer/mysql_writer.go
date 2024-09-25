@@ -186,6 +186,7 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *common.DDLEvent) error {
 }
 
 func (w *MysqlWriter) Flush(events []*common.DMLEvent, workerNum int) error {
+	w.statistics.ObserveRows(events)
 	dmls := w.prepareDMLs(events)
 	//log.Debug("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.Any("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values), zap.Any("startTs", dmls.startTs), zap.Any("workerNum", workerNum))
 	if dmls.rowCount == 0 {
