@@ -45,7 +45,7 @@ var (
 			Subsystem: "sink",
 			Name:      "event_size",
 			Help:      "The size of changed events (in bytes).",
-			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 15), // 0~32M
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 30), // 0~32M
 		}, []string{"namespace", "changefeed"})
 
 	ExecDMLEventCounter = prometheus.NewCounterVec(
