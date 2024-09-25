@@ -527,7 +527,7 @@ func loadAllPhysicalTablesAtTs(
 	if err != nil {
 		return nil, err
 	}
-	log.Info("load tables in kv snap",
+	log.Info("after load tables in kv snap",
 		zap.Int("tableMapLen", len(tableMap)))
 
 	// apply ddl jobs in range (gcTs, snapVersion]
@@ -560,7 +560,7 @@ func loadAllPhysicalTablesAtTs(
 			log.Panic("updateDatabaseInfo error", zap.Error(err))
 		}
 	}
-	log.Info("load tables in kv snap from ddl",
+	log.Info("after load tables from ddl",
 		zap.Int("tableMapLen", len(tableMap)))
 	tables := make([]common.Table, 0)
 	for tableID, tableInfo := range tableMap {
