@@ -52,7 +52,7 @@ type EventStore interface {
 		notifier WatermarkNotifier,
 	) error
 
-	UpdateDispatcherSendTS(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, gcTS uint64) error
+	UpdateDispatcherSendTs(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, gcTS uint64) error
 
 	UnregisterDispatcher(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) error
 
@@ -288,8 +288,8 @@ func (e *eventStore) RegisterDispatcher(
 	return nil
 }
 
-func (e *eventStore) UpdateDispatcherSendTS(
-	dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, sendTS uint64,
+func (e *eventStore) UpdateDispatcherSendTs(
+	dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, sendTs uint64,
 ) error {
 	e.spanStates.Lock()
 	defer e.spanStates.Unlock()
@@ -297,7 +297,12 @@ func (e *eventStore) UpdateDispatcherSendTS(
 		if !ok {
 			log.Panic("should not happen", zap.Any("dispatcherID", dispatcherID))
 		}
-		state.dispatchers[dispatcherID].watermark = sendTS
+		oldWatermark := state.dispatchers[dispatcherID].watermark
+		if sendTs > oldWatermark {
+			state.dispatchers[dispatcherID].watermark = sendTs
+			dbIndex := common.HashTableSpan(state.span, len(e.dbs))
+			e.gcManager.addGCItem(dbIndex, span.TableID, oldWatermark, sendTs)
+		}
 	}
 	return nil
 }
@@ -526,11 +531,10 @@ func (e *eventStore) writeEvent(subID logpuller.SubscriptionID, raw *common.RawK
 	}
 }
 
-func (e *eventStore) deleteEvents(span heartbeatpb.TableSpan, startCommitTS uint64, endCommitTS uint64) error {
-	dbIndex := common.HashTableSpan(span, len(e.dbs))
+func (e *eventStore) deleteEvents(dbIndex int, tableID int64, startCommitTS uint64, endCommitTS uint64) error {
 	db := e.dbs[dbIndex]
-	start := EncodeTsKey(uint64(span.TableID), startCommitTS)
-	end := EncodeTsKey(uint64(span.TableID), endCommitTS)
+	start := EncodeTsKey(uint64(tableID), startCommitTS)
+	end := EncodeTsKey(uint64(tableID), endCommitTS)
 
 	return db.DeleteRange(start, end, pebble.NoSync)
 }
