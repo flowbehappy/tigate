@@ -584,6 +584,11 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 
 	for i := range ddlEvents {
 		p.mu.Lock()
+		log.Info("handle resolved ddl event",
+			zap.Int64("schemaID", ddlEvents[i].SchemaID),
+			zap.Int64("tableID", ddlEvents[i].TableID),
+			zap.Uint64("finishedTs", ddlEvents[i].FinishedTs),
+			zap.String("query", ddlEvents[i].Query))
 		if shouldSkipDDL(&ddlEvents[i], p.databaseMap, p.tableMap) {
 			p.mu.Unlock()
 			continue
@@ -815,6 +820,9 @@ func updateDatabaseInfoAndTableInfo(
 	}
 
 	createTable := func(schemaID int64, tableID int64) {
+		log.Info("updateDatabaseInfoAndTableInfo create table",
+			zap.Int64("schemaID", schemaID),
+			zap.Int64("tableID", tableID))
 		addTableToDB(schemaID, tableID)
 		tableMap[tableID] = &BasicTableInfo{
 			SchemaID: schemaID,
