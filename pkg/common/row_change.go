@@ -264,7 +264,7 @@ type MQRowEvent struct {
 type RowEvent struct {
 	TableInfo      *TableInfo
 	CommitTs       uint64
-	Event          RowDelta
+	Event          RowChange
 	ColumnSelector Selector
 	Callback       func()
 }

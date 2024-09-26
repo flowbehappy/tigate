@@ -39,7 +39,7 @@ func newIndexValuePartitionGenerator(indexName string) *IndexValuePartitionGener
 	}
 }
 
-func (r *IndexValuePartitionGenerator) GeneratePartitionIndexAndKey(row *common.RowDelta,
+func (r *IndexValuePartitionGenerator) GeneratePartitionIndexAndKey(row *common.RowChange,
 	partitionNum int32,
 	tableInfo *common.TableInfo,
 	commitTs uint64,

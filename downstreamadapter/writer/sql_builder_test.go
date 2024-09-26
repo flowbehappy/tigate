@@ -100,7 +100,7 @@ var preInsertDataSQL = `insert into t values (
 	'测试', "中国", "上海", "你好,世界", 0xC4E3BAC3CAC0BDE7
 );`
 
-func getRowForTest(t testing.TB) (insert, delete, update common.RowDelta, tableInfo *common.TableInfo) {
+func getRowForTest(t testing.TB) (insert, delete, update common.RowChange, tableInfo *common.TableInfo) {
 	helper := mounter.NewEventTestHelper(t)
 	defer helper.Close()
 
@@ -122,7 +122,7 @@ func getRowForTest(t testing.TB) (insert, delete, update common.RowDelta, tableI
 	update.PreRow = insert.Row
 	update.RowType = common.RowTypeUpdate
 
-	delete = common.RowDelta{
+	delete = common.RowChange{
 		PreRow:  insert.Row,
 		RowType: common.RowTypeDelete,
 	}

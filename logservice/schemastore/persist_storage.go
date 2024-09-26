@@ -693,7 +693,9 @@ func completePersistedDDLEvent(
 		// TODO: is the following SchemaName and TableName correct?
 		event.SchemaName = getSchemaName(event.SchemaID)
 		event.TableName = event.TableInfo.Name.O
-	case model.ActionCreateView, model.ActionCreateTables:
+	case model.ActionCreateView,
+		// FIXME: support create tables
+		model.ActionCreateTables:
 
 		// ignore
 	default:

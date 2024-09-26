@@ -28,7 +28,7 @@ func newTsPartitionGenerator() *TsPartitionGenerator {
 }
 
 func (t *TsPartitionGenerator) GeneratePartitionIndexAndKey(
-	row *common.RowDelta,
+	row *common.RowChange,
 	partitionNum int32,
 	tableInfo *common.TableInfo,
 	commitTs uint64,

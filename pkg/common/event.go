@@ -31,7 +31,9 @@ type Event interface {
 	GetDispatcherID() DispatcherID
 	GetCommitTs() Ts
 	GetStartTs() Ts
-	GetChunkSize() int64
+	// GetSize returns the approximate size of the event in bytes.
+	// It's used for memory control and monitoring.
+	GetSize() int64
 }
 
 // FlushableEvent is an event that can be flushed to downstream by a dispatcher.
@@ -109,7 +111,8 @@ func (b *BatchResolvedEvent) Unmarshal(data []byte) error {
 	return nil
 }
 
-func (b *BatchResolvedEvent) GetChunkSize() int64 {
+// No one will use this method, just for implementing Event interface.
+func (b *BatchResolvedEvent) GetSize() int64 {
 	return 0
 }
 
@@ -155,7 +158,8 @@ func (e ResolvedEvent) String() string {
 	return fmt.Sprintf("ResolvedEvent{DispatcherID: %s, ResolvedTs: %d}", e.DispatcherID, e.ResolvedTs)
 }
 
-func (e ResolvedEvent) GetChunkSize() int64 {
+// No one will use this method, just for implementing Event interface.
+func (e ResolvedEvent) GetSize() int64 {
 	return 0
 }
 
@@ -170,9 +174,10 @@ type DMLEvent struct {
 	Offset int `json:"offset"`
 	len    int
 
-	TableInfo *TableInfo   `json:"table_info"`
-	Rows      *chunk.Chunk `json:"rows"`
-	RowTypes  []RowType    `json:"row_types"`
+	TableInfo       *TableInfo   `json:"table_info"`
+	Rows            *chunk.Chunk `json:"rows"`
+	RowTypes        []RowType    `json:"row_types"`
+	ApproximateSize int64        `json:"approximate_size"`
 
 	// The following fields are set and used by dispatcher.
 	ReplicatingTs  uint64   `json:"replicating_ts"`
@@ -221,6 +226,7 @@ func (t *DMLEvent) AppendRow(raw *RawKVEntry,
 		t.RowTypes = append(t.RowTypes, RowType, RowType)
 	}
 	t.len += 1
+	t.ApproximateSize += int64(len(raw.Key) + len(raw.Value) + len(raw.OldValue))
 	return nil
 }
 
@@ -250,28 +256,28 @@ func (t *DMLEvent) AddPostFlushFunc(f func()) {
 	t.PostTxnFlushed = append(t.PostTxnFlushed, f)
 }
 
-func (t *DMLEvent) GetNextRow() (RowDelta, bool) {
+func (t *DMLEvent) GetNextRow() (RowChange, bool) {
 	if t.Offset >= len(t.RowTypes) {
-		return RowDelta{}, false
+		return RowChange{}, false
 	}
 	rowType := t.RowTypes[t.Offset]
 	switch rowType {
 	case RowTypeInsert:
-		row := RowDelta{
+		row := RowChange{
 			Row:     t.Rows.GetRow(t.Offset),
 			RowType: rowType,
 		}
 		t.Offset++
 		return row, true
 	case RowTypeDelete:
-		row := RowDelta{
+		row := RowChange{
 			PreRow:  t.Rows.GetRow(t.Offset),
 			RowType: rowType,
 		}
 		t.Offset++
 		return row, true
 	case RowTypeUpdate:
-		row := RowDelta{
+		row := RowChange{
 			PreRow:  t.Rows.GetRow(t.Offset),
 			Row:     t.Rows.GetRow(t.Offset + 1),
 			RowType: rowType,
@@ -281,7 +287,7 @@ func (t *DMLEvent) GetNextRow() (RowDelta, bool) {
 	default:
 		log.Panic("TEvent.GetNextRow: invalid row type")
 	}
-	return RowDelta{}, false
+	return RowChange{}, false
 }
 
 // Len returns the number of row change events in the transaction.
@@ -303,11 +309,11 @@ func (t *DMLEvent) Unmarshal(data []byte) error {
 	return nil
 }
 
-func (t *DMLEvent) GetChunkSize() int64 {
-	return t.Rows.MemoryUsage()
+func (t *DMLEvent) GetSize() int64 {
+	return t.ApproximateSize
 }
 
-type RowDelta struct {
+type RowChange struct {
 	PreRow  chunk.Row
 	Row     chunk.Row
 	RowType RowType
@@ -454,7 +460,7 @@ func (t *DDLEvent) Unmarshal(data []byte) error {
 }
 
 // TODO: fix it
-func (t *DDLEvent) GetChunkSize() int64 {
+func (t *DDLEvent) GetSize() int64 {
 	return 0
 }
 
