@@ -198,7 +198,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		ticker := time.NewTicker(time.Millisecond * 300)
+		ticker := time.NewTicker(time.Millisecond * 50)
 		defer ticker.Stop()
 		for {
 			select {
@@ -210,7 +210,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 					startTs := dispatcher.watermark.Load()
 					remoteID := node.ID(dispatcher.info.GetServerID())
 					// TODO: maybe limit 1 is enough.
-					ddlEvents, endTs, err := c.schemaStore.FetchTableTriggerDDLEvents(dispatcher.filter, startTs, 10)
+					ddlEvents, endTs, err := c.schemaStore.FetchTableTriggerDDLEvents(dispatcher.filter, startTs, 100)
 					if err != nil {
 						log.Panic("get table trigger events failed", zap.Error(err))
 					}
