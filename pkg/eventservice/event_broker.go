@@ -198,7 +198,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		ticker := time.NewTicker(time.Millisecond * 300)
+		ticker := time.NewTicker(time.Millisecond * 50)
 		defer ticker.Stop()
 		for {
 			select {
