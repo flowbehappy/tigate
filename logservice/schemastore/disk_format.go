@@ -183,7 +183,7 @@ func loadDatabasesInKVSnap(snap *pebble.Snapshot, gcTs uint64) (map[int64]*Basic
 	return databaseMap, nil
 }
 
-func loadTablesInKVSnap(snap *pebble.Snapshot, gcTs uint64) (map[int64]*BasicTableInfo, error) {
+func loadTablesInKVSnap(snap *pebble.Snapshot, gcTs uint64, databaseMap map[int64]*BasicDatabaseInfo) (map[int64]*BasicTableInfo, error) {
 	tablesInKVSnap := make(map[int64]*BasicTableInfo)
 
 	startKey, err := tableInfoKey(gcTs, 0)
@@ -212,6 +212,15 @@ func loadTablesInKVSnap(snap *pebble.Snapshot, gcTs uint64) (map[int64]*BasicTab
 		if err := json.Unmarshal(table_info_entry.TableInfoValue, &tbNameInfo); err != nil {
 			log.Fatal("unmarshal table name info failed", zap.Error(err))
 		}
+		databaseInfo, ok := databaseMap[table_info_entry.SchemaID]
+		if !ok {
+			log.Panic("database not found",
+				zap.Int64("schemaID", table_info_entry.SchemaID),
+				zap.String("schemaName", table_info_entry.SchemaName),
+				zap.String("tableName", tbNameInfo.Name.O))
+		}
+		// TODO: add a unit test for this case
+		databaseInfo.Tables[tbNameInfo.ID] = true
 		tablesInKVSnap[tbNameInfo.ID] = &BasicTableInfo{
 			SchemaID: table_info_entry.SchemaID,
 			Name:     tbNameInfo.Name.O,
@@ -502,7 +511,7 @@ func cleanObseleteData(db *pebble.DB, oldGcTs uint64, gcTs uint64) {
 	}
 }
 
-func loadAllPhysicalTablesInSnap(
+func loadAllPhysicalTablesAtTs(
 	storageSnap *pebble.Snapshot,
 	gcTs uint64,
 	snapVersion uint64,
@@ -514,10 +523,12 @@ func loadAllPhysicalTablesInSnap(
 		return nil, err
 	}
 
-	tableMap, err := loadTablesInKVSnap(storageSnap, gcTs)
+	tableMap, err := loadTablesInKVSnap(storageSnap, gcTs, databaseMap)
 	if err != nil {
 		return nil, err
 	}
+	log.Info("after load tables in kv snap",
+		zap.Int("tableMapLen", len(tableMap)))
 
 	// apply ddl jobs in range (gcTs, snapVersion]
 	startKey, err := ddlJobKey(gcTs + 1)
@@ -549,8 +560,17 @@ func loadAllPhysicalTablesInSnap(
 			log.Panic("updateDatabaseInfo error", zap.Error(err))
 		}
 	}
+	log.Info("after load tables from ddl",
+		zap.Int("tableMapLen", len(tableMap)))
 	tables := make([]common.Table, 0)
 	for tableID, tableInfo := range tableMap {
+		if _, ok := databaseMap[tableInfo.SchemaID]; !ok {
+			log.Panic("database not found",
+				zap.Int64("schemaID", tableInfo.SchemaID),
+				zap.Int64("tableID", tableID),
+				zap.String("tableName", tableInfo.Name),
+				zap.Any("databaseMapLen", len(databaseMap)))
+		}
 		if tableFilter != nil && tableFilter.ShouldIgnoreTable(databaseMap[tableInfo.SchemaID].Name, tableInfo.Name) {
 			continue
 		}

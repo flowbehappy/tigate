@@ -211,6 +211,24 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		require.Nil(t, err)
 	}
 
+	// // create another table
+	// tableID2 := tableID + 1
+	// {
+	// 	ddlEvent := PersistedDDLEvent{
+	// 		Type:          byte(model.ActionCreateTable),
+	// 		SchemaID:      schemaID,
+	// 		TableID:       tableID,
+	// 		SchemaVersion: 3000,
+	// 		TableInfo: &model.TableInfo{
+	// 			ID:   tableID,
+	// 			Name: model.NewCIStr("t2"),
+	// 		},
+	// 		FinishedTs: renameVersion,
+	// 	}
+	// 	err = pStorage.handleSortedDDLEvents(ddlEvent)
+	// 	require.Nil(t, err)
+	// }
+
 	upperBound := UpperBoundMeta{
 		FinishedDDLTs: 3000,
 		SchemaVersion: 4000,
@@ -386,6 +404,7 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 		pStorage.handleSortedDDLEvents(ddlEvent)
 
 		require.Equal(t, 0, len(pStorage.databaseMap))
+		require.Equal(t, 0, len(pStorage.tableMap))
 		require.Equal(t, 5, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(300), pStorage.tableTriggerDDLHistory[4])
 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))

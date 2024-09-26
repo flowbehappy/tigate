@@ -98,7 +98,9 @@ func newPersistentStorage(
 	}
 
 	// TODO: update pebble options
-	db, err := pebble.Open(dbPath, &pebble.Options{})
+	db, err := pebble.Open(dbPath, &pebble.Options{
+		DisableWAL: true,
+	})
 	if err != nil {
 		log.Fatal("open db failed", zap.Error(err))
 	}
@@ -162,7 +164,9 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 
 	var err error
 	// TODO: update pebble options
-	if p.db, err = pebble.Open(dbPath, &pebble.Options{}); err != nil {
+	if p.db, err = pebble.Open(dbPath, &pebble.Options{
+		DisableWAL: true,
+	}); err != nil {
 		log.Fatal("open db failed", zap.Error(err))
 	}
 	log.Info("schema store initialize from kv storage begin",
@@ -195,7 +199,7 @@ func (p *persistentStorage) initializeFromDisk() {
 		log.Fatal("load database info from disk failed")
 	}
 
-	if p.tableMap, err = loadTablesInKVSnap(storageSnap, p.gcTs); err != nil {
+	if p.tableMap, err = loadTablesInKVSnap(storageSnap, p.gcTs, p.databaseMap); err != nil {
 		log.Fatal("load tables in kv snapshot failed")
 	}
 
@@ -226,9 +230,9 @@ func (p *persistentStorage) getAllPhysicalTables(snapTs uint64, tableFilter filt
 	defer func() {
 		log.Info("getAllPhysicalTables finish",
 			zap.Uint64("snapTs", snapTs),
-			zap.Any("duration", time.Since(start).Seconds()))
+			zap.Any("duration(s)", time.Since(start).Seconds()))
 	}()
-	return loadAllPhysicalTablesInSnap(storageSnap, gcTs, snapTs, tableFilter)
+	return loadAllPhysicalTablesAtTs(storageSnap, gcTs, snapTs, tableFilter)
 }
 
 // only return when table info is initialized
@@ -580,6 +584,11 @@ func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent
 
 	for i := range ddlEvents {
 		p.mu.Lock()
+		log.Info("handle resolved ddl event",
+			zap.Int64("schemaID", ddlEvents[i].SchemaID),
+			zap.Int64("tableID", ddlEvents[i].TableID),
+			zap.Uint64("finishedTs", ddlEvents[i].FinishedTs),
+			zap.String("query", ddlEvents[i].Query))
 		if shouldSkipDDL(&ddlEvents[i], p.databaseMap, p.tableMap) {
 			p.mu.Unlock()
 			continue
@@ -648,6 +657,10 @@ func completePersistedDDLEvent(
 	switch model.ActionType(event.Type) {
 	case model.ActionCreateSchema,
 		model.ActionDropSchema:
+		log.Info("completePersistedDDLEvent for create/drop schema",
+			zap.Any("type", event.Type),
+			zap.Int64("schemaID", event.SchemaID),
+			zap.String("schemaName", event.DBInfo.Name.O))
 		event.SchemaName = event.DBInfo.Name.O
 	case model.ActionCreateTable:
 		event.SchemaName = getSchemaName(event.SchemaID)
@@ -831,6 +844,9 @@ func updateDatabaseInfoAndTableInfo(
 			Tables: make(map[int64]bool),
 		}
 	case model.ActionDropSchema:
+		for tableID := range databaseMap[event.SchemaID].Tables {
+			delete(tableMap, tableID)
+		}
 		delete(databaseMap, event.SchemaID)
 	case model.ActionCreateTable:
 		createTable(event.SchemaID, event.TableID)

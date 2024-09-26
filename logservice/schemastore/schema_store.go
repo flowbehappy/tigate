@@ -189,6 +189,10 @@ func (s *schemaStore) GetAllPhysicalTables(snapTs uint64, filter filter.Filter) 
 func (s *schemaStore) RegisterTable(tableID int64, startTs uint64) error {
 	metrics.SchemaStoreResolvedRegisterTableGauge.Inc()
 	s.waitResolvedTs(tableID, startTs, 5*time.Second)
+	log.Info("register table",
+		zap.Int64("tableID", tableID),
+		zap.Uint64("startTs", startTs),
+		zap.Uint64("resolvedTs", s.resolvedTs.Load()))
 	return s.dataStorage.registerTable(tableID, startTs)
 }
 
