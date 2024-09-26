@@ -230,7 +230,7 @@ func (p *persistentStorage) getAllPhysicalTables(snapTs uint64, tableFilter filt
 	defer func() {
 		log.Info("getAllPhysicalTables finish",
 			zap.Uint64("snapTs", snapTs),
-			zap.Any("duration", time.Since(start).Seconds()))
+			zap.Any("duration(s)", time.Since(start).Seconds()))
 	}()
 	return loadAllPhysicalTablesAtTs(storageSnap, gcTs, snapTs, tableFilter)
 }
@@ -657,6 +657,10 @@ func completePersistedDDLEvent(
 	switch model.ActionType(event.Type) {
 	case model.ActionCreateSchema,
 		model.ActionDropSchema:
+		log.Info("completePersistedDDLEvent for create/drop schema",
+			zap.Any("type", event.Type),
+			zap.Int64("schemaID", event.SchemaID),
+			zap.String("schemaName", event.DBInfo.Name.O))
 		event.SchemaName = event.DBInfo.Name.O
 	case model.ActionCreateTable:
 		event.SchemaName = getSchemaName(event.SchemaID)
@@ -820,9 +824,6 @@ func updateDatabaseInfoAndTableInfo(
 	}
 
 	createTable := func(schemaID int64, tableID int64) {
-		log.Info("updateDatabaseInfoAndTableInfo create table",
-			zap.Int64("schemaID", schemaID),
-			zap.Int64("tableID", tableID))
 		addTableToDB(schemaID, tableID)
 		tableMap[tableID] = &BasicTableInfo{
 			SchemaID: schemaID,

@@ -211,6 +211,24 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		require.Nil(t, err)
 	}
 
+	// // create another table
+	// tableID2 := tableID + 1
+	// {
+	// 	ddlEvent := PersistedDDLEvent{
+	// 		Type:          byte(model.ActionCreateTable),
+	// 		SchemaID:      schemaID,
+	// 		TableID:       tableID,
+	// 		SchemaVersion: 3000,
+	// 		TableInfo: &model.TableInfo{
+	// 			ID:   tableID,
+	// 			Name: model.NewCIStr("t2"),
+	// 		},
+	// 		FinishedTs: renameVersion,
+	// 	}
+	// 	err = pStorage.handleSortedDDLEvents(ddlEvent)
+	// 	require.Nil(t, err)
+	// }
+
 	upperBound := UpperBoundMeta{
 		FinishedDDLTs: 3000,
 		SchemaVersion: 4000,
