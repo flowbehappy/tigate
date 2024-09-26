@@ -15,7 +15,6 @@ package maintainer
 
 import (
 	"encoding/json"
-	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -100,6 +99,7 @@ type Maintainer struct {
 	scheduledTaskGauge             prometheus.Gauge
 	runningTaskGauge               prometheus.Gauge
 	tableCountGauge                prometheus.Gauge
+	handleEventDuration            prometheus.Observer
 }
 
 // NewMaintainer create the maintainer for the changefeed
@@ -143,6 +143,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		scheduledTaskGauge:             metrics.ScheduleTaskGuage.WithLabelValues(cfID.Namespace, cfID.ID),
 		runningTaskGauge:               metrics.RunningScheduleTaskGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		tableCountGauge:                metrics.TableGauge.WithLabelValues(cfID.Namespace, cfID.ID),
+		handleEventDuration:            metrics.MaintainerHandleEventDuration.WithLabelValues(cfID.Namespace, cfID.ID),
 	}
 	m.bootstrapper = NewBootstrapper(m.id.ID, m.getNewBootstrapFn())
 	m.barrier = NewBarrier(m.scheduler)
@@ -159,12 +160,13 @@ func (m *Maintainer) HandleEvent(event *Event) bool {
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
-		if duration > time.Millisecond*500 {
+		if duration > time.Second {
 			log.Info("maintainer is too slow",
 				zap.String("id", m.id.String()),
 				zap.Int("type", event.eventType),
 				zap.Duration("duration", duration))
 		}
+		m.handleEventDuration.Observe(duration.Seconds())
 	}()
 	if m.state == heartbeatpb.ComponentState_Stopped {
 		log.Warn("maintainer is not stopped, ignore",
@@ -274,6 +276,7 @@ func (m *Maintainer) cleanupMetrics() {
 	metrics.ScheduleTaskGuage.DeleteLabelValues(m.id.Namespace, m.id.ID)
 	metrics.RunningScheduleTaskGauge.DeleteLabelValues(m.id.Namespace, m.id.ID)
 	metrics.TableGauge.DeleteLabelValues(m.id.Namespace, m.id.ID)
+	metrics.MaintainerHandleEventDuration.DeleteLabelValues(m.id.Namespace, m.id.ID)
 }
 
 func (m *Maintainer) onInit() bool {
@@ -407,7 +410,7 @@ func (m *Maintainer) updateMetrics() {
 	m.changefeedStatusGauge.Set(float64(m.state))
 }
 
-// send message to remote, todo: use a io thread pool
+// send message to remote
 func (m *Maintainer) sendMessages(msgs []*messaging.TargetMessage) {
 	for _, msg := range msgs {
 		err := m.mc.SendCommand(msg)
@@ -628,7 +631,7 @@ func (m *Maintainer) onPeriodTask() {
 	}
 	// send scheduling messages
 	m.handleResendMessage()
-	m.printStatus()
+	m.collectMetrics()
 	m.calCheckpointTs()
 	SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{
 		changefeedID: m.id.ID,
@@ -636,7 +639,7 @@ func (m *Maintainer) onPeriodTask() {
 	}, time.Now().Add(time.Millisecond*500))
 }
 
-func (m *Maintainer) printStatus() {
+func (m *Maintainer) collectMetrics() {
 	if time.Since(m.lastPrintStatusTime) > time.Second*20 {
 		tableStates := make(map[scheduler.SchedulerStatus]int)
 		total := m.scheduler.TaskSize()
@@ -650,20 +653,6 @@ func (m *Maintainer) printStatus() {
 		for state, count := range tableStates {
 			metrics.TableStateGauge.WithLabelValues(m.id.Namespace, m.id.ID, state.String()).Set(float64(count))
 		}
-
-		var taskDistribution string
-		for nodeID, _ := range m.bootstrapper.GetAllNodes() {
-			taskDistribution = fmt.Sprintf("%s, %s=%d",
-				taskDistribution, nodeID, m.scheduler.GetTaskSizeByNodeID(nodeID))
-		}
-		log.Info("table span status",
-			zap.String("distribution", taskDistribution),
-			zap.String("changefeed", m.id.ID),
-			zap.Int("total", total),
-			zap.Int("absent", tableStates[scheduler.SchedulerStatusAbsent]),
-			zap.Int("commiting", tableStates[scheduler.SchedulerStatusCommiting]),
-			zap.Int("working", tableStates[scheduler.SchedulerStatusWorking]),
-			zap.Int("removing", tableStates[scheduler.SchedulerStatusRemoving]))
 		m.lastPrintStatusTime = time.Now()
 	}
 }

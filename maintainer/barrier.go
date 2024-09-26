@@ -138,7 +138,7 @@ func (b *Barrier) handleNoStateHeartbeat(dispatcherID common.DispatcherID, check
 		event.advancedDispatchers[dispatcherID] = true
 		// all dispatcher reported heartbeat, select one to write
 		if !event.selected && event.allDispatcherReported() {
-			distacherStatus := &heartbeatpb.DispatcherStatus{
+			dispatcherStatus := &heartbeatpb.DispatcherStatus{
 				InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
 					InfluenceType: heartbeatpb.InfluenceType_Normal,
 					DispatcherIDs: []*heartbeatpb.DispatcherID{dispatcherID.ToPB()},
@@ -149,7 +149,7 @@ func (b *Barrier) handleNoStateHeartbeat(dispatcherID common.DispatcherID, check
 				}}
 			event.writerDispatcher = dispatcherID
 			event.selected = true
-			return nil, distacherStatus, nil
+			return nil, dispatcherStatus, nil
 		}
 	}
 
