@@ -50,6 +50,14 @@ var (
 			Help:      "The number of bytes scanned by event store.",
 		})
 
+	EventStoreDeleteRangeCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_store",
+			Name:      "delete_range_count",
+			Help:      "The number of delete range received by event store.",
+		})
+
 	EventStoreDispatcherResolvedTsLagHist = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "ticdc",
@@ -81,6 +89,7 @@ func InitEventStoreMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventStoreWriteBytes)
 	registry.MustRegister(EventStoreScanRequestsCount)
 	registry.MustRegister(EventStoreScanBytes)
+	registry.MustRegister(EventStoreDeleteRangeCount)
 	registry.MustRegister(EventStoreDispatcherResolvedTsLagHist)
 	registry.MustRegister(EventStoreDispatcherWatermarkLagHist)
 	registry.MustRegister(EventStoreCompressRatio)

@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/metrics"
+
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -68,6 +70,7 @@ func (d *gcManager) run(ctx context.Context, deleteDataRange deleteFunc) error {
 					return err
 				}
 			}
+			metrics.EventStoreDeleteRangeCount.Add(float64(len(ranges)))
 		}
 	}
 }
