@@ -232,7 +232,7 @@ func (s *schemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, star
 		log.Panic("limit cannot be 0")
 	}
 	// TODO: remove the following log
-	log.Debug("FetchTableTriggerDDLEvents",
+	log.Info("FetchTableTriggerDDLEvents",
 		zap.Uint64("start", start),
 		zap.Int("limit", limit))
 	// must get resolved ts first
