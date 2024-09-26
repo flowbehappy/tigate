@@ -410,19 +410,12 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 
 	p.mu.RLock()
 	kvSnapVersion := p.gcTs
-	tableBasicInfo, ok := p.tableMap[tableID]
-	if !ok {
-		log.Panic("table not found", zap.Int64("tableID", tableID))
-	}
-	inKVSnap := tableBasicInfo.InKVSnap
 	var allDDLFinishedTs []uint64
 	allDDLFinishedTs = append(allDDLFinishedTs, p.tablesDDLHistory[tableID]...)
 	p.mu.RUnlock()
 
-	if inKVSnap {
-		if err := addTableInfoFromKVSnap(store, kvSnapVersion, storageSnap); err != nil {
-			return err
-		}
+	if err := addTableInfoFromKVSnap(store, kvSnapVersion, storageSnap); err != nil {
+		return err
 	}
 
 	for _, version := range allDDLFinishedTs {
@@ -439,8 +432,10 @@ func addTableInfoFromKVSnap(
 	snap *pebble.Snapshot,
 ) error {
 	tableInfo := readTableInfoInKVSnap(snap, store.getTableID(), kvSnapVersion)
-	tableInfo.InitPreSQLs()
-	store.addInitialTableInfo(tableInfo)
+	if tableInfo != nil {
+		tableInfo.InitPreSQLs()
+		store.addInitialTableInfo(tableInfo)
+	}
 	return nil
 }
 
@@ -505,10 +500,6 @@ func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64, tablesInKVSna
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.gcTs = gcTs
-
-	for tableID := range tablesInKVSnap {
-		p.tableMap[tableID].InKVSnap = true
-	}
 
 	// clean tablesDDLHistory
 	for tableID := range p.tablesDDLHistory {
@@ -828,7 +819,6 @@ func updateDatabaseInfoAndTableInfo(
 		tableMap[tableID] = &BasicTableInfo{
 			SchemaID: schemaID,
 			Name:     event.TableInfo.Name.O,
-			InKVSnap: false,
 		}
 	}
 

@@ -89,7 +89,6 @@ func mockWriteKVSnapOnDisk(db *pebble.DB, snapTs uint64, dbInfos map[int64]*mode
 			tablesInKVSnap[tableInfo.ID] = &BasicTableInfo{
 				SchemaID: dbInfo.ID,
 				Name:     tableInfo.Name.O,
-				InKVSnap: true,
 			}
 			tableInfoValue, err := json.Marshal(tableInfo)
 			if err != nil {
@@ -211,23 +210,24 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		require.Nil(t, err)
 	}
 
-	// // create another table
-	// tableID2 := tableID + 1
-	// {
-	// 	ddlEvent := PersistedDDLEvent{
-	// 		Type:          byte(model.ActionCreateTable),
-	// 		SchemaID:      schemaID,
-	// 		TableID:       tableID,
-	// 		SchemaVersion: 3000,
-	// 		TableInfo: &model.TableInfo{
-	// 			ID:   tableID,
-	// 			Name: model.NewCIStr("t2"),
-	// 		},
-	// 		FinishedTs: renameVersion,
-	// 	}
-	// 	err = pStorage.handleSortedDDLEvents(ddlEvent)
-	// 	require.Nil(t, err)
-	// }
+	// create another table
+	tableID2 := tableID + 1
+	createVersion := renameVersion + 200
+	{
+		ddlEvent := PersistedDDLEvent{
+			Type:          byte(model.ActionCreateTable),
+			SchemaID:      schemaID,
+			TableID:       tableID2,
+			SchemaVersion: 3500,
+			TableInfo: &model.TableInfo{
+				ID:   tableID2,
+				Name: model.NewCIStr("t3"),
+			},
+			FinishedTs: createVersion,
+		}
+		err = pStorage.handleSortedDDLEvents(ddlEvent)
+		require.Nil(t, err)
+	}
 
 	upperBound := UpperBoundMeta{
 		FinishedDDLTs: 3000,
@@ -262,6 +262,16 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		tableInfo3, err := store.getTableInfo(renameVersion2)
 		require.Nil(t, err)
 		require.Equal(t, "t3", tableInfo3.Name.O)
+	}
+
+	{
+		store := newEmptyVersionedTableInfoStore(tableID2)
+		pStorage.buildVersionedTableInfoStore(store)
+		require.Equal(t, 1, len(store.infos))
+		tableInfo, err := store.getTableInfo(createVersion)
+		require.Nil(t, err)
+		require.Equal(t, "t3", tableInfo.Name.O)
+		require.Equal(t, tableID2, tableInfo.ID)
 	}
 }
 
@@ -453,7 +463,6 @@ func TestHandleRenameTable(t *testing.T) {
 		require.Equal(t, 2, len(pStorage.databaseMap))
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID1].Tables))
 		require.Equal(t, 0, len(pStorage.databaseMap[schemaID2].Tables))
-		require.Equal(t, false, pStorage.tableMap[tableID].InKVSnap)
 		require.Equal(t, schemaID1, pStorage.tableMap[tableID].SchemaID)
 		require.Equal(t, "t1", pStorage.tableMap[tableID].Name)
 	}
@@ -475,7 +484,6 @@ func TestHandleRenameTable(t *testing.T) {
 		require.Equal(t, 2, len(pStorage.databaseMap))
 		require.Equal(t, 0, len(pStorage.databaseMap[schemaID1].Tables))
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID2].Tables))
-		require.Equal(t, false, pStorage.tableMap[tableID].InKVSnap)
 		require.Equal(t, schemaID2, pStorage.tableMap[tableID].SchemaID)
 		require.Equal(t, "t2", pStorage.tableMap[tableID].Name)
 	}
@@ -883,13 +891,11 @@ func TestGC(t *testing.T) {
 
 		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
-		require.Equal(t, false, pStorage.tableMap[tableID3].InKVSnap)
 		pStorage.cleanObseleteDataInMemory(newGcTs, tablesInKVSnap)
 		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(605), pStorage.tableTriggerDDLHistory[0])
 		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
 		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID1]))
-		require.Equal(t, true, pStorage.tableMap[tableID3].InKVSnap)
 		tableInfoT1, err := pStorage.getTableInfo(tableID1, newGcTs)
 		require.Nil(t, err)
 		require.Equal(t, "t1", tableInfoT1.Name.O)
@@ -906,7 +912,6 @@ func TestGC(t *testing.T) {
 		require.Equal(t, uint64(605), pStorage.tableTriggerDDLHistory[0])
 		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
 		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID1]))
-		require.Equal(t, true, pStorage.tableMap[tableID3].InKVSnap)
 	}
 
 	// TODO: test obsolete data can be removed
