@@ -226,7 +226,7 @@ func (t *DMLEvent) AppendRow(raw *RawKVEntry,
 		t.RowTypes = append(t.RowTypes, RowType, RowType)
 	}
 	t.len += 1
-	t.ApproximateSize += int64(len(raw.Key)) + int64(len(raw.Value)) + int64(len(raw.OldValue))
+	t.ApproximateSize += int64(len(raw.Key) + len(raw.Value) + len(raw.OldValue))
 	return nil
 }
 
