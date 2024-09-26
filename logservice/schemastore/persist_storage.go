@@ -693,11 +693,10 @@ func completePersistedDDLEvent(
 		// TODO: is the following SchemaName and TableName correct?
 		event.SchemaName = getSchemaName(event.SchemaID)
 		event.TableName = event.TableInfo.Name.O
-	case model.ActionCreateView,
-		// FIXME: support create tables
-		model.ActionCreateTables:
-
+	case model.ActionCreateView:
 		// ignore
+	case model.ActionCreateTables:
+		// FIXME: support create tables
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", event.Type),
@@ -783,6 +782,8 @@ func updateDDLHistory(
 	case model.ActionRenameTable:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		addTableHistory(ddlEvent.TableID)
+	case model.ActionCreateTables:
+		// FIXME: support create tables
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", ddlEvent.Type),
@@ -883,6 +884,8 @@ func updateDatabaseInfoAndTableInfo(
 		// seems can be ignored
 	case model.ActionAddTablePartition:
 		// TODO
+	case model.ActionCreateTables:
+		// FIXME: support create tables
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", event.Type),
@@ -921,6 +924,8 @@ func updateRegisteredTableInfoStore(
 		if ok {
 			store.applyDDL(event)
 		}
+	case model.ActionCreateTables:
+		// FIXME: support create tables
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", event.Type),
@@ -1053,6 +1058,8 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		ddlEvent.BlockedTables = &common.InfluencedTables{
 			InfluenceType: common.InfluenceTypeAll,
 		}
+	case model.ActionCreateTables:
+		// FIXME: support create tables
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", rawEvent.Type),
