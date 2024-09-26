@@ -224,7 +224,6 @@ func loadTablesInKVSnap(snap *pebble.Snapshot, gcTs uint64, databaseMap map[int6
 		tablesInKVSnap[tbNameInfo.ID] = &BasicTableInfo{
 			SchemaID: table_info_entry.SchemaID,
 			Name:     tbNameInfo.Name.O,
-			InKVSnap: true,
 		}
 	}
 
@@ -294,6 +293,9 @@ func readTableInfoInKVSnap(snap *pebble.Snapshot, tableID int64, version uint64)
 		log.Fatal("generate table info failed", zap.Error(err))
 	}
 	value, closer, err := snap.Get(targetKey)
+	if err == pebble.ErrNotFound {
+		return nil
+	}
 	if err != nil {
 		log.Fatal("get table info failed", zap.Error(err))
 	}
@@ -432,7 +434,6 @@ func writeSchemaSnapshotAndMeta(
 				tablesInKVSnap[tableID] = &BasicTableInfo{
 					SchemaID: dbInfo.ID,
 					Name:     tableName,
-					InKVSnap: true,
 				}
 				tables[tableID] = true
 			} else {

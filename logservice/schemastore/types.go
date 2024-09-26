@@ -78,7 +78,6 @@ type BasicDatabaseInfo struct {
 type BasicTableInfo struct {
 	SchemaID int64
 	Name     string
-	InKVSnap bool
 }
 
 //msgp:ignore DDLJobWithCommitTs
