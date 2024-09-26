@@ -680,11 +680,11 @@ func completePersistedDDLEvent(
 		// TODO: is the following SchemaName and TableName correct?
 		event.SchemaName = getSchemaName(event.SchemaID)
 		event.TableName = event.TableInfo.Name.O
-	case model.ActionCreateView:
+	case model.ActionCreateView, model.ActionCreateTables:
 
 		// ignore
 	default:
-		log.Warn("unknown ddl type",
+		log.Panic("unknown ddl type",
 			zap.Any("ddlType", event.Type),
 			zap.String("DDL", event.Query))
 	}
@@ -769,7 +769,7 @@ func updateDDLHistory(
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		addTableHistory(ddlEvent.TableID)
 	default:
-		log.Warn("unknown ddl type",
+		log.Panic("unknown ddl type",
 			zap.Any("ddlType", ddlEvent.Type),
 			zap.String("DDL", ddlEvent.Query))
 	}
@@ -866,7 +866,7 @@ func updateDatabaseInfoAndTableInfo(
 	case model.ActionAddTablePartition:
 		// TODO
 	default:
-		log.Warn("unknown ddl type",
+		log.Panic("unknown ddl type",
 			zap.Any("ddlType", event.Type),
 			zap.String("DDL", event.Query))
 	}
@@ -904,7 +904,7 @@ func updateRegisteredTableInfoStore(
 			store.applyDDL(event)
 		}
 	default:
-		log.Warn("unknown ddl type",
+		log.Panic("unknown ddl type",
 			zap.Any("ddlType", event.Type),
 			zap.String("DDL", event.Query))
 	}
@@ -1036,7 +1036,7 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 			InfluenceType: common.InfluenceTypeAll,
 		}
 	default:
-		log.Warn("unknown ddl type",
+		log.Panic("unknown ddl type",
 			zap.Any("ddlType", rawEvent.Type),
 			zap.String("DDL", rawEvent.Query))
 	}
