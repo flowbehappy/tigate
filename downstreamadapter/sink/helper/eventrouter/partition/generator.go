@@ -24,7 +24,7 @@ import (
 type PartitionGenerator interface {
 	// GeneratePartitionIndexAndKey returns an index of partitions or a partition key for event.
 	// Concurrency Note: This method is thread-safe.
-	GeneratePartitionIndexAndKey(row *common.RowDelta, partitionNum int32, tableInfo *common.TableInfo, commitTs uint64) (int32, string, error)
+	GeneratePartitionIndexAndKey(row *common.RowChange, partitionNum int32, tableInfo *common.TableInfo, commitTs uint64) (int32, string, error)
 }
 
 func GetPartitionGenerator(rule string, scheme string, indexName string, columns []string) PartitionGenerator {

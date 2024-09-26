@@ -42,7 +42,7 @@ func newColumnsPartitionGenerator(columns []string) *ColumnsPartitionGenerator {
 	}
 }
 
-func (r *ColumnsPartitionGenerator) GeneratePartitionIndexAndKey(row *common.RowDelta, partitionNum int32, tableInfo *common.TableInfo, commitTs uint64) (int32, string, error) {
+func (r *ColumnsPartitionGenerator) GeneratePartitionIndexAndKey(row *common.RowChange, partitionNum int32, tableInfo *common.TableInfo, commitTs uint64) (int32, string, error) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 	r.hasher.Reset()

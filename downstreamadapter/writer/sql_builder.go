@@ -35,7 +35,7 @@ type preparedDMLs struct {
 // sql: `REPLACE INTO `test`.`t` VALUES (?,?,?)`
 func buildInsert(
 	tableInfo *common.TableInfo,
-	row common.RowDelta,
+	row common.RowChange,
 	safeMode bool,
 ) (string, []interface{}) {
 	args, err := getArgs(&row.Row, tableInfo)
@@ -64,7 +64,7 @@ func buildInsert(
 
 // prepareDelete builds a parametric DELETE statement as following
 // sql: `DELETE FROM `test`.`t` WHERE x = ? AND y >= ? LIMIT 1`
-func buildDelete(tableInfo *common.TableInfo, row common.RowDelta) (string, []interface{}) {
+func buildDelete(tableInfo *common.TableInfo, row common.RowChange) (string, []interface{}) {
 	var builder strings.Builder
 	quoteTable := tableInfo.TableName.QuoteString()
 	builder.WriteString("DELETE FROM ")
@@ -94,7 +94,7 @@ func buildDelete(tableInfo *common.TableInfo, row common.RowDelta) (string, []in
 	return sql, args
 }
 
-func buildUpdate(tableInfo *common.TableInfo, row common.RowDelta) (string, []interface{}) {
+func buildUpdate(tableInfo *common.TableInfo, row common.RowChange) (string, []interface{}) {
 	var builder strings.Builder
 	if tableInfo.GetPreUpdateSQL() == "" {
 		log.Panic("PreUpdateSQL should not be empty")
