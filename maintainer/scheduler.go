@@ -321,7 +321,6 @@ func (s *Scheduler) tryBalance() {
 		// skip balance.
 		return
 	}
-	s.lastRebalanceTime = now
 	s.balanceTables()
 }
 
@@ -448,7 +447,12 @@ func (s *Scheduler) balanceTables() {
 		priorityQueue.AddOrUpdate(item)
 		movedSize++
 	}
-	log.Info("balance done",
+	if movedSize >= len(victims) {
+		s.lastRebalanceTime = time.Now()
+		log.Info("balance done",
+			zap.String("changefeed", s.changefeedID))
+	}
+	log.Info("balance scheduled",
 		zap.String("changefeed", s.changefeedID),
 		zap.Int("movedSize", movedSize),
 		zap.Int("victims", len(victims)))

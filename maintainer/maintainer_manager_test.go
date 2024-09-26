@@ -16,7 +16,6 @@ package maintainer
 import (
 	"context"
 	"encoding/json"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"net"
 	"testing"
 	"time"
@@ -29,6 +28,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -69,10 +69,6 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	manager.onCoordinatorBootstrapRequest(msg)
 	go func() {
 		_ = manager.Run(ctx)
-	}()
-	dispManager := MockDispatcherManager(mc)
-	go func() {
-		_ = dispManager.Run(ctx)
 	}()
 	cfConfig := &model.ChangeFeedInfo{
 		ID:     "test",

@@ -21,12 +21,10 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/maintainer/split"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	configNew "github.com/flowbehappy/tigate/pkg/config"
-	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/node"
@@ -503,15 +501,23 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 
 // initTableIDs get tables ids base on the filter and checkpoint ts
 func (m *Maintainer) initTables() ([]common.Table, error) {
-	startTs := m.watermark.CheckpointTs
-	f, err := filter.NewFilter(m.config.Config.Filter, "", m.config.Config.ForceReplicate)
-	if err != nil {
-		return nil, errors.Cause(err)
+	var tables []common.Table
+	tableCount := 2000000
+	for i := 0; i < tableCount; i++ {
+		tables = append(tables, common.Table{
+			SchemaID: int64(i + 5),
+			TableID:  int64(i + 100),
+		})
 	}
-
-	schemaStore := appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore)
-	tables, err := schemaStore.GetAllPhysicalTables(startTs, f)
-	log.Info("get table ids", zap.Int("count", len(tables)), zap.String("changefeed", m.id.String()))
+	//startTs := m.watermark.CheckpointTs
+	//f, err := filter.NewFilter(m.config.Config.Filter, "", m.config.Config.ForceReplicate)
+	//if err != nil {
+	//	return nil, errors.Cause(err)
+	//}
+	//
+	//schemaStore := appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore)
+	//tables, err := schemaStore.GetAllPhysicalTables(startTs, f)
+	//log.Info("get table ids", zap.Int("count", len(tables)), zap.String("changefeed", m.id.String()))
 	return tables, nil
 }
 

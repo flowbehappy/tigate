@@ -206,13 +206,13 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 		e.schemaIDToDispatchers.Set(schemaID, id)
 	}
 
-	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(
-		eventcollector.RegisterInfo{
-			Dispatcher:   dispatcher,
-			StartTs:      startTs,
-			FilterConfig: toFilterConfigPB(e.config.Filter),
-		},
-	)
+	//appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(
+	//	eventcollector.RegisterInfo{
+	//		Dispatcher:   dispatcher,
+	//		StartTs:      startTs,
+	//		FilterConfig: toFilterConfigPB(e.config.Filter),
+	//	},
+	//)
 	e.dispatcherMap.Set(id, dispatcher)
 	e.GetStatusesChan() <- &heartbeatpb.TableSpanStatus{
 		ID:              id.ToPB(),

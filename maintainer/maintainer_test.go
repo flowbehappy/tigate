@@ -197,9 +197,7 @@ func (m *mockDispatcherManager) sendHeartbeat() {
 	}
 }
 
-func TestMaintainerSchedule(t *testing.T) {
-	ctx := context.Background()
-	ctx, cancel := context.WithCancel(ctx)
+func setPprof() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -207,8 +205,14 @@ func TestMaintainerSchedule(t *testing.T) {
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	go func() {
-		t.Fatal(http.ListenAndServe(":8300", mux))
+		log.Fatal("run http server failed", zap.Error(http.ListenAndServe(":8000", mux)))
 	}()
+}
+
+func TestMaintainerSchedule(t *testing.T) {
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
+	setPprof()
 
 	n := node.NewInfo("", "")
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx,
