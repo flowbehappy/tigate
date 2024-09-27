@@ -185,8 +185,6 @@ func (m *Maintainer) HandleEvent(event *Event) bool {
 		if err := m.onMessage(event.message); err != nil {
 			m.handleError(err)
 		}
-	case EventRemove:
-		m.onRemoveMaintainer(m.cascadeRemoving)
 	case EventPeriod:
 		m.onPeriodTask()
 	}
