@@ -962,7 +962,7 @@ func TestGCPersistStorage(t *testing.T) {
 
 		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
-		pStorage.cleanObseleteDataInMemory(newGcTs1)
+		pStorage.cleanObsoleteDataInMemory(newGcTs1)
 		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
 	}
@@ -990,7 +990,7 @@ func TestGCPersistStorage(t *testing.T) {
 
 		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
-		pStorage.cleanObseleteDataInMemory(newGcTs2)
+		pStorage.cleanObsoleteDataInMemory(newGcTs2)
 		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(605), pStorage.tableTriggerDDLHistory[0])
 		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
