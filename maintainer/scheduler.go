@@ -110,6 +110,7 @@ func (s *Scheduler) AddNewTable(table common.Table, startTs uint64) {
 	if ok {
 		log.Warn("table already add, ignore",
 			zap.String("changefeed", s.changefeedID),
+			zap.Int64("schema", table.SchemaID),
 			zap.Int64("table", table.TableID))
 		return
 	}
@@ -207,23 +208,6 @@ func (s *Scheduler) RemoveAllTasks() {
 }
 
 func (s *Scheduler) RemoveTask(stm *scheduler.StateMachine[common.DispatcherID]) {
-	if stm == nil {
-		log.Warn("dispatcher is not found",
-			zap.String("cf", s.changefeedID),
-			zap.Any("dispatcherID", s.changefeedID))
-		return
-	}
-	if stm.State == scheduler.SchedulerStatusAbsent {
-		replica := stm.Inferior.(*ReplicaSet)
-		id := replica.ID
-		log.Info("remove a absent task",
-			zap.String("changefeed", s.changefeedID),
-			zap.String("id", id.String()))
-		delete(s.Absent(), id)
-		delete(s.schemaTasks[replica.SchemaID], id)
-		delete(s.tableTasks, replica.Span.TableID)
-		return
-	}
 	oldState := stm.State
 	oldPrimary := stm.Primary
 	stm.HandleRemoveInferior()

@@ -429,14 +429,8 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 		m.checkpointTsByCapture[msg.From] = *req.Watermark
 	}
 	m.scheduler.HandleStatus(msg.From, req.Statuses)
-	msgs, err := m.barrier.HandleStatus(msg.From, req)
-	if err != nil {
-		log.Error("handle status failed, ignore",
-			zap.String("changefeed", m.id.ID),
-			zap.Error(err))
-		return errors.Trace(err)
-	}
-	m.sendMessages(msgs)
+	ackMsg := m.barrier.HandleStatus(msg.From, req)
+	m.sendMessages([]*messaging.TargetMessage{ackMsg})
 	if req.Warning != nil {
 		m.errLock.Lock()
 		m.runningWarnings[msg.From] = req.Warning
