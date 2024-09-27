@@ -57,8 +57,10 @@ func NewHeartBeatCollector(serverId node.ID) *HeartBeatCollector {
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.HeartbeatCollectorTopic, heartBeatCollector.RecvMessages)
 
 	heartBeatCollector.wg.Add(1)
-	go heartBeatCollector.SendHeartBeatMessages()
-
+	go func() {
+		defer heartBeatCollector.wg.Done()
+		heartBeatCollector.SendHeartBeatMessages()
+	}()
 	return &heartBeatCollector
 }
 
@@ -78,10 +80,10 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherMa
 }
 
 func (c *HeartBeatCollector) SendHeartBeatMessages() {
-	defer c.wg.Done()
+	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	for {
 		heartBeatRequestWithTargetID := c.reqQueue.Dequeue()
-		err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(
+		err := mc.SendCommand(
 			messaging.NewSingleTargetMessage(
 				heartBeatRequestWithTargetID.TargetID,
 				messaging.MaintainerManagerTopic,
