@@ -15,6 +15,7 @@ package schemastore
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 	"sync"
@@ -103,7 +104,12 @@ func (v *versionedTableInfoStore) getTableInfo(ts uint64) (*common.TableInfo, er
 	}
 
 	if ts >= v.deleteVersion {
-		return nil, errors.New("table info deleted")
+		log.Error("table info deleted",
+			zap.Any("ts", ts),
+			zap.Any("tableID", v.tableID),
+			zap.Any("infos", v.infos),
+			zap.Any("deleteVersion", v.deleteVersion))
+		return nil, fmt.Errorf("table info deleted %d", v.tableID)
 	}
 
 	target := sort.Search(len(v.infos), func(i int) bool {
