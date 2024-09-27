@@ -19,13 +19,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/node"
-
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -145,7 +144,6 @@ func (c *coordinator) Tick(
 	// 5. send saved checkpoint ts to maintainer
 	c.sendSavedCheckpointTsToMaintainer()
 
-	c.printStatus()
 	return state, nil
 }
 
@@ -423,34 +421,5 @@ func (c *coordinator) sendSavedCheckpointTsToMaintainer() {
 			c.sendMessages([]*messaging.TargetMessage{msg})
 			cf.lastSavedCheckpointTs = cfState.Status.CheckpointTs
 		}
-	}
-}
-
-func (c *coordinator) printStatus() {
-	if time.Since(c.lastCheckTime) > time.Second*10 {
-		workingTask := 0
-		absentTask := 0
-		commitTask := 0
-		removingTask := 0
-		for _, value := range c.supervisor.StateMachines {
-			switch value.State {
-			case scheduler.SchedulerStatusAbsent:
-				absentTask++
-			case scheduler.SchedulerStatusCommiting:
-				commitTask++
-			case scheduler.SchedulerStatusWorking:
-				workingTask++
-			case scheduler.SchedulerStatusRemoving:
-				removingTask++
-			}
-		}
-		log.Info("changefeed status",
-			zap.Int("absent", absentTask),
-			zap.Int("commit", commitTask),
-			zap.Int("working", workingTask),
-			zap.Int("removing", removingTask),
-			zap.Any("runningTask", len(c.supervisor.RunningTasks)),
-		)
-		c.lastCheckTime = time.Now()
 	}
 }

@@ -14,15 +14,20 @@
 package maintainer
 
 import (
+	"os"
+	"runtime/pprof"
 	"testing"
+	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestNormalBlock(t *testing.T) {
@@ -56,7 +61,7 @@ func TestNormalBlock(t *testing.T) {
 	barrier := NewBarrier(sche)
 
 	// first node block request
-	msgs, err := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
 		Statuses: []*heartbeatpb.TableSpanStatus{
 			{
@@ -74,7 +79,7 @@ func TestNormalBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 9,
+				CheckpointTs: 10,
 			},
 			{
 				ID: blockedDispatcherIDS[1],
@@ -91,17 +96,16 @@ func TestNormalBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 9,
+				CheckpointTs: 10,
 			},
 		},
 	})
-	require.NoError(t, err)
-	require.Len(t, msgs, 1)
-	resp := msgs[0].Message[0].(*heartbeatpb.HeartBeatResponse)
+	require.NotNil(t, msg)
+	resp := msg.Message[0].(*heartbeatpb.HeartBeatResponse)
 	require.Len(t, resp.DispatcherStatuses, 2)
 
 	// other node block request
-	msgs, err = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
 		Statuses: []*heartbeatpb.TableSpanStatus{
 			{
@@ -119,21 +123,19 @@ func TestNormalBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 9,
+				CheckpointTs: 10,
 			},
 		},
 	})
-	require.NoError(t, err)
-	require.Len(t, msgs, 1)
+	require.NotNil(t, msg)
 	require.Equal(t, barrier.blockedDispatcher[selectDispatcherID], barrier.blockedTs[10])
 	event := barrier.blockedTs[10]
 	require.Equal(t, uint64(10), event.commitTs)
 	require.True(t, event.writerDispatcher == selectDispatcherID)
-	require.True(t, event.advancedDispatchers[selectDispatcherID])
-	require.True(t, event.allDispatcherReported())
+	require.Nil(t, event.advancedDispatchers)
 
 	// repeated status
-	_, _ = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
 		Statuses: []*heartbeatpb.TableSpanStatus{
 			{
@@ -151,7 +153,7 @@ func TestNormalBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 9,
+				CheckpointTs: 10,
 			},
 			{
 				ID: blockedDispatcherIDS[1],
@@ -168,17 +170,16 @@ func TestNormalBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 9,
+				CheckpointTs: 10,
 			},
 		},
 	})
 	require.Equal(t, uint64(10), event.commitTs)
 	require.True(t, event.writerDispatcher == selectDispatcherID)
-	require.True(t, event.advancedDispatchers[selectDispatcherID])
-	require.True(t, event.allDispatcherReported())
+	require.Nil(t, event.advancedDispatchers)
 
 	// selected node write done
-	msgs, err = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
 		Statuses: []*heartbeatpb.TableSpanStatus{
 			{
@@ -187,12 +188,9 @@ func TestNormalBlock(t *testing.T) {
 			},
 		},
 	})
-	require.NoError(t, err)
-	//1 pass action message to one node
-	require.Len(t, msgs, 1)
 	require.Len(t, barrier.blockedTs, 1)
 	require.Len(t, barrier.blockedDispatcher, 2)
-	msgs, err = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
 		Statuses: []*heartbeatpb.TableSpanStatus{
 			{
@@ -207,7 +205,6 @@ func TestNormalBlock(t *testing.T) {
 	})
 	require.Len(t, barrier.blockedTs, 0)
 	require.Len(t, barrier.blockedDispatcher, 0)
-	require.Len(t, msgs, 0)
 }
 
 func TestSchemaBlock(t *testing.T) {
@@ -232,7 +229,7 @@ func TestSchemaBlock(t *testing.T) {
 	barrier := NewBarrier(sche)
 
 	// first dispatcher  block request
-	msgs, err := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
 		Statuses: []*heartbeatpb.TableSpanStatus{
 			{
@@ -250,19 +247,17 @@ func TestSchemaBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 9,
+				CheckpointTs: 10,
 			},
 		},
 	})
-	require.NoError(t, err)
-	// one ack message
-	require.Len(t, msgs, 1)
-	resp := msgs[0].Message[0].(*heartbeatpb.HeartBeatResponse)
+	require.NotNil(t, msg)
+	resp := msg.Message[0].(*heartbeatpb.HeartBeatResponse)
 	require.Len(t, resp.DispatcherStatuses, 1)
 	require.True(t, resp.DispatcherStatuses[0].Ack.CommitTs == 10)
 
 	// second dispatcher  block request
-	msgs, err = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
 		Statuses: []*heartbeatpb.TableSpanStatus{
 			{
@@ -280,14 +275,12 @@ func TestSchemaBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 9,
+				CheckpointTs: 10,
 			},
 		},
 	})
-	require.NoError(t, err)
-	// ack and write message
-	require.Len(t, msgs, 1)
-	resp = msgs[0].Message[0].(*heartbeatpb.HeartBeatResponse)
+	require.NotNil(t, msg)
+	resp = msg.Message[0].(*heartbeatpb.HeartBeatResponse)
 	require.Len(t, resp.DispatcherStatuses, 1)
 	require.True(t, resp.DispatcherStatuses[0].Ack.CommitTs == 10)
 	require.True(t, resp.DispatcherStatuses[0].Action.CommitTs == 10)
@@ -296,10 +289,9 @@ func TestSchemaBlock(t *testing.T) {
 	require.Equal(t, uint64(10), event.commitTs)
 	//the last one will be the writer
 	require.Equal(t, event.writerDispatcher.ToPB(), dispatcherIDs[1])
-	require.True(t, event.allDispatcherReported())
 
 	// repeated status
-	msgs, err = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
 		Statuses: []*heartbeatpb.TableSpanStatus{
 			{
@@ -317,24 +309,21 @@ func TestSchemaBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 9,
+				CheckpointTs: 10,
 			},
 		},
 	})
-	require.NoError(t, err)
 	// ack and write message
-	require.Len(t, msgs, 1)
-	resp = msgs[0].Message[0].(*heartbeatpb.HeartBeatResponse)
+	resp = msg.Message[0].(*heartbeatpb.HeartBeatResponse)
 	require.Len(t, resp.DispatcherStatuses, 1)
 	require.True(t, resp.DispatcherStatuses[0].Ack.CommitTs == 10)
 	event = barrier.blockedTs[10]
 	require.Equal(t, uint64(10), event.commitTs)
 	//the last one will be the writer
 	require.Equal(t, event.writerDispatcher.ToPB(), dispatcherIDs[1])
-	require.True(t, event.allDispatcherReported())
 
 	// selected node write done
-	msgs, err = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
 		Statuses: []*heartbeatpb.TableSpanStatus{
 			{
@@ -343,10 +332,10 @@ func TestSchemaBlock(t *testing.T) {
 			},
 		},
 	})
-	require.NoError(t, err)
 	// 1 pass action message to one node
+	msgs := barrier.Resend()
 	require.Len(t, msgs, 1)
-	msg := msgs[0]
+	msg = msgs[0]
 	require.Equal(t, messaging.TypeHeartBeatResponse, msg.Type)
 	require.Equal(t, msg.Message[0].(*heartbeatpb.HeartBeatResponse).DispatcherStatuses[0].Action.Action,
 		heartbeatpb.Action_Pass)
@@ -358,7 +347,7 @@ func TestSchemaBlock(t *testing.T) {
 	require.Equal(t, 2, len(sche.Removing()))
 	require.Equal(t, 1, len(sche.Working()))
 	// other dispatcher advanced checkpoint ts
-	msgs, err = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
 		Statuses: []*heartbeatpb.TableSpanStatus{
 			{
@@ -369,7 +358,6 @@ func TestSchemaBlock(t *testing.T) {
 	})
 	require.Len(t, barrier.blockedTs, 0)
 	require.Len(t, barrier.blockedDispatcher, 0)
-	require.Len(t, msgs, 0)
 }
 
 func TestSyncPointBlock(t *testing.T) {
@@ -394,7 +382,7 @@ func TestSyncPointBlock(t *testing.T) {
 	newSpan := &heartbeatpb.Table{TableID: 10, SchemaID: 2}
 	barrier := NewBarrier(sche)
 	// first dispatcher  block request
-	msgs, err := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
 		Statuses: []*heartbeatpb.TableSpanStatus{
 			{
@@ -412,7 +400,7 @@ func TestSyncPointBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 9,
+				CheckpointTs: 10,
 			},
 			{
 				ID: dispatcherIDs[1],
@@ -429,19 +417,17 @@ func TestSyncPointBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 9,
+				CheckpointTs: 10,
 			},
 		},
 	})
-	require.NoError(t, err)
 	// 2 ack message2
-	require.Len(t, msgs, 1)
-	resp := msgs[0].Message[0].(*heartbeatpb.HeartBeatResponse)
+	resp := msg.Message[0].(*heartbeatpb.HeartBeatResponse)
 	require.Len(t, resp.DispatcherStatuses, 2)
 	require.True(t, resp.DispatcherStatuses[0].Ack.CommitTs == 10)
 
 	// second dispatcher  block request
-	msgs, err = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
 		Statuses: []*heartbeatpb.TableSpanStatus{
 			{
@@ -459,14 +445,12 @@ func TestSyncPointBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 9,
+				CheckpointTs: 10,
 			},
 		},
 	})
-	require.NoError(t, err)
 	// ack and write message
-	require.Len(t, msgs, 1)
-	resp = msgs[0].Message[0].(*heartbeatpb.HeartBeatResponse)
+	resp = msg.Message[0].(*heartbeatpb.HeartBeatResponse)
 	require.Len(t, resp.DispatcherStatuses, 1)
 	require.True(t, resp.DispatcherStatuses[0].Ack.CommitTs == 10)
 	require.True(t, resp.DispatcherStatuses[0].Action.CommitTs == 10)
@@ -475,10 +459,9 @@ func TestSyncPointBlock(t *testing.T) {
 	require.Equal(t, uint64(10), event.commitTs)
 	//the last one will be the writer
 	require.Equal(t, event.writerDispatcher.ToPB(), dispatcherIDs[2])
-	require.True(t, event.allDispatcherReported())
 
 	// selected node write done
-	msgs, err = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
+	_ = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
 		Statuses: []*heartbeatpb.TableSpanStatus{
 			{
@@ -487,14 +470,14 @@ func TestSyncPointBlock(t *testing.T) {
 			},
 		},
 	})
-	require.NoError(t, err)
+	msgs := barrier.Resend()
 	// 2 pass action messages to one node
 	require.Len(t, msgs, 2)
 	require.Len(t, barrier.blockedTs, 1)
 	// the writer already advanced
 	require.Len(t, barrier.blockedDispatcher, 2)
 	// other dispatcher advanced checkpoint ts
-	msgs, err = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
 		Statuses: []*heartbeatpb.TableSpanStatus{
 			{
@@ -509,7 +492,6 @@ func TestSyncPointBlock(t *testing.T) {
 	})
 	require.Len(t, barrier.blockedTs, 0)
 	require.Len(t, barrier.blockedDispatcher, 0)
-	require.Len(t, msgs, 0)
 }
 
 func TestNonBlocked(t *testing.T) {
@@ -521,7 +503,7 @@ func TestNonBlocked(t *testing.T) {
 	for id := 1; id < 4; id++ {
 		blockedDispatcherIDS = append(blockedDispatcherIDS, common.NewDispatcherID().ToPB())
 	}
-	msgs, err := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
 		Statuses: []*heartbeatpb.TableSpanStatus{
 			{
@@ -541,10 +523,72 @@ func TestNonBlocked(t *testing.T) {
 			},
 		},
 	})
-	require.NoError(t, err)
 	// 1 ack  message
-	require.Len(t, msgs, 1)
+	require.NotNil(t, msg)
+	resp := msg.Message[0].(*heartbeatpb.HeartBeatResponse)
+	require.Len(t, resp.DispatcherStatuses, 1)
+	require.Equal(t, uint64(10), resp.DispatcherStatuses[0].Ack.CommitTs)
+	require.True(t, heartbeatpb.InfluenceType_Normal == resp.DispatcherStatuses[0].InfluencedDispatchers.InfluenceType)
+	require.Equal(t, resp.DispatcherStatuses[0].InfluencedDispatchers.DispatcherIDs[0], blockedDispatcherIDS[0])
 	require.Len(t, barrier.blockedTs, 0)
 	require.Len(t, barrier.blockedDispatcher, 0)
 	require.Len(t, barrier.scheduler.Absent(), 2)
+}
+
+func TestSyncPointBlockPerf(t *testing.T) {
+	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	sche.AddNewNode("node1")
+	barrier := NewBarrier(sche)
+	for id := 1; id < 1000; id++ {
+		sche.AddNewTable(common.Table{SchemaID: 1, TableID: int64(id)}, 1)
+	}
+	var dispatcherIDs []*heartbeatpb.DispatcherID
+	for key, stm := range sche.Absent() {
+		stm.Primary = "node1"
+		stm.State = scheduler.SchedulerStatusWorking
+		sche.tryMoveTask(key, stm, scheduler.SchedulerStatusAbsent, "", true)
+		dispatcherIDs = append(dispatcherIDs, key.ToPB())
+	}
+	var blockStatus []*heartbeatpb.TableSpanStatus
+	for _, id := range dispatcherIDs {
+		blockStatus = append(blockStatus, &heartbeatpb.TableSpanStatus{
+			ID: id,
+			State: &heartbeatpb.State{
+				IsBlocked: true,
+				BlockTs:   10,
+				BlockTables: &heartbeatpb.InfluencedTables{
+					InfluenceType: heartbeatpb.InfluenceType_All,
+					SchemaID:      1,
+				},
+			},
+			CheckpointTs: 9,
+		})
+	}
+
+	f, _ := os.OpenFile("cpu.profile", os.O_CREATE|os.O_RDWR, 0644)
+	defer f.Close()
+	pprof.StartCPUProfile(f)
+	defer pprof.StopCPUProfile()
+	now := time.Now()
+	msg := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+		ChangefeedID: "test",
+		Statuses:     blockStatus,
+	})
+	require.NotNil(t, msg)
+	log.Info("duration", zap.Duration("duration", time.Since(now)))
+
+	now = time.Now()
+	var passStatus []*heartbeatpb.TableSpanStatus
+	for _, id := range dispatcherIDs {
+		passStatus = append(passStatus, &heartbeatpb.TableSpanStatus{
+			ID:           id,
+			CheckpointTs: 10,
+		})
+	}
+	barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+		ChangefeedID: "test",
+		Statuses:     passStatus,
+	})
+	require.NotNil(t, msg)
+	log.Info("duration", zap.Duration("duration", time.Since(now)))
 }

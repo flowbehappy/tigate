@@ -14,13 +14,14 @@
 package maintainer
 
 import (
+	"time"
+
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
-	"time"
 )
 
 // Bootstrapper handle the logic of the maintainer startup
@@ -57,15 +58,15 @@ func NewBootstrapper(cfID string, newBootstrapMsg scheduler.NewBootstrapFn) *Boo
 func (b *Bootstrapper) HandleBootstrapResponse(
 	from node.ID,
 	msg *heartbeatpb.MaintainerBootstrapResponse) map[node.ID]*heartbeatpb.MaintainerBootstrapResponse {
-	node, ok := b.nodes[from]
+	status, ok := b.nodes[from]
 	if !ok {
 		log.Warn("node is not found, ignore",
 			zap.String("changefeed", b.changefeedID),
 			zap.Any("from", from))
 		return nil
 	}
-	node.cachedBootstrapResp = msg
-	node.state = NodeStateInitialized
+	status.cachedBootstrapResp = msg
+	status.state = NodeStateInitialized
 	return b.fistBootstrap()
 }
 
@@ -113,11 +114,11 @@ func (b *Bootstrapper) ResendBootstrapMessage() []*messaging.TargetMessage {
 	var msgs []*messaging.TargetMessage
 	if !b.CheckAllNodeInitialized() {
 		now := b.timeNowFunc()
-		for id, node := range b.nodes {
-			if node.state == NodeStateUninitialized &&
-				now.Sub(node.lastBootstrapTime) >= b.resendInterval {
+		for id, status := range b.nodes {
+			if status.state == NodeStateUninitialized &&
+				now.Sub(status.lastBootstrapTime) >= b.resendInterval {
 				msgs = append(msgs, b.newBootstrapMsg(id))
-				node.lastBootstrapTime = now
+				status.lastBootstrapTime = now
 			}
 		}
 	}
@@ -157,10 +158,10 @@ func (b *Bootstrapper) fistBootstrap() map[node.ID]*heartbeatpb.MaintainerBootst
 	if !b.bootstrapped && b.checkAllCaptureInitialized() {
 		b.bootstrapped = true
 		allCachedResp := make(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse, len(b.nodes))
-		for _, node := range b.nodes {
-			allCachedResp[node.node.ID] = node.cachedBootstrapResp
+		for _, status := range b.nodes {
+			allCachedResp[status.node.ID] = status.cachedBootstrapResp
 			// clear the cached data
-			node.cachedBootstrapResp = nil
+			status.cachedBootstrapResp = nil
 		}
 		return allCachedResp
 	}
