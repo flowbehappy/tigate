@@ -20,12 +20,8 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -159,836 +155,873 @@ func TestReadWriteMeta(t *testing.T) {
 	}
 }
 
-func TestBuildVersionedTableInfoStore(t *testing.T) {
-	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
-	err := os.RemoveAll(dbPath)
-	require.Nil(t, err)
-
-	gcTs := uint64(1000)
-	schemaID := int64(50)
-	tableID := int64(99)
-	databaseInfo := make(map[int64]*model.DBInfo)
-	databaseInfo[schemaID] = &model.DBInfo{
-		ID:   schemaID,
-		Name: model.NewCIStr("test"),
-		Tables: []*model.TableInfo{
-			{
-				ID:   tableID,
-				Name: model.NewCIStr("t1"),
-			},
-		},
-	}
-	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
-
-	require.Equal(t, 1, len(pStorage.databaseMap))
-	require.Equal(t, "test", pStorage.databaseMap[schemaID].Name)
-
-	{
-		store := newEmptyVersionedTableInfoStore(tableID)
-		pStorage.buildVersionedTableInfoStore(store)
-		tableInfo, err := store.getTableInfo(gcTs)
-		require.Nil(t, err)
-		require.Equal(t, "t1", tableInfo.Name.O)
-		require.Equal(t, tableID, tableInfo.ID)
-	}
-
-	// rename table
-	renameVersion := uint64(1500)
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionRenameTable),
-			SchemaID:      schemaID,
-			TableID:       tableID,
-			SchemaVersion: 3000,
-			TableInfo: &model.TableInfo{
-				ID:   tableID,
-				Name: model.NewCIStr("t2"),
-			},
-			FinishedTs: renameVersion,
-		}
-		err = pStorage.handleSortedDDLEvents(ddlEvent)
-		require.Nil(t, err)
-	}
-
-	// create another table
-	tableID2 := tableID + 1
-	createVersion := renameVersion + 200
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID2,
-			SchemaVersion: 3500,
-			TableInfo: &model.TableInfo{
-				ID:   tableID2,
-				Name: model.NewCIStr("t3"),
-			},
-			FinishedTs: createVersion,
-		}
-		err = pStorage.handleSortedDDLEvents(ddlEvent)
-		require.Nil(t, err)
-	}
-
-	upperBound := UpperBoundMeta{
-		FinishedDDLTs: 3000,
-		SchemaVersion: 4000,
-		ResolvedTs:    2000,
-	}
-	pStorage = loadPersistentStorageForTest(pStorage.db, gcTs, upperBound)
-	{
-		store := newEmptyVersionedTableInfoStore(tableID)
-		pStorage.buildVersionedTableInfoStore(store)
-		require.Equal(t, 2, len(store.infos))
-		tableInfo, err := store.getTableInfo(gcTs)
-		require.Nil(t, err)
-		require.Equal(t, "t1", tableInfo.Name.O)
-		require.Equal(t, tableID, tableInfo.ID)
-		tableInfo2, err := store.getTableInfo(renameVersion)
-		require.Nil(t, err)
-		require.Equal(t, "t2", tableInfo2.Name.O)
-
-		renameVersion2 := uint64(3000)
-		store.applyDDL(PersistedDDLEvent{
-			Type:          byte(model.ActionRenameTable),
-			SchemaID:      schemaID,
-			TableID:       tableID,
-			SchemaVersion: 3000,
-			TableInfo: &model.TableInfo{
-				ID:   tableID,
-				Name: model.NewCIStr("t3"),
-			},
-			FinishedTs: renameVersion2,
-		})
-		tableInfo3, err := store.getTableInfo(renameVersion2)
-		require.Nil(t, err)
-		require.Equal(t, "t3", tableInfo3.Name.O)
-	}
-
-	{
-		store := newEmptyVersionedTableInfoStore(tableID2)
-		pStorage.buildVersionedTableInfoStore(store)
-		require.Equal(t, 1, len(store.infos))
-		tableInfo, err := store.getTableInfo(createVersion)
-		require.Nil(t, err)
-		require.Equal(t, "t3", tableInfo.Name.O)
-		require.Equal(t, tableID2, tableInfo.ID)
-	}
-}
-
-func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
-	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
-	err := os.RemoveAll(dbPath)
-	require.Nil(t, err)
-	pStorage := newEmptyPersistentStorageForTest(dbPath)
-
-	// create db
-	schemaID := int64(300)
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateSchema),
-			SchemaID:      schemaID,
-			SchemaVersion: 100,
-			DBInfo: &model.DBInfo{
-				ID:   schemaID,
-				Name: model.NewCIStr("test"),
-			},
-			TableInfo:  nil,
-			FinishedTs: 200,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-
-		require.Equal(t, 1, len(pStorage.databaseMap))
-		require.Equal(t, "test", pStorage.databaseMap[schemaID].Name)
-		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
-		require.Equal(t, uint64(200), pStorage.tableTriggerDDLHistory[0])
-	}
-
-	// create a table
-	tableID := int64(100)
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID,
-			SchemaVersion: 101,
-			TableInfo: &model.TableInfo{
-				Name: model.NewCIStr("t1"),
-			},
-			FinishedTs: 201,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-
-		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
-		require.Equal(t, 1, len(pStorage.tableMap))
-		require.Equal(t, 2, len(pStorage.tableTriggerDDLHistory))
-		require.Equal(t, uint64(201), pStorage.tableTriggerDDLHistory[1])
-		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
-		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID]))
-	}
-
-	// create another table
-	tableID2 := int64(105)
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID2,
-			SchemaVersion: 103,
-			TableInfo: &model.TableInfo{
-				Name: model.NewCIStr("t2"),
-			},
-			FinishedTs: 203,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-
-		require.Equal(t, 2, len(pStorage.databaseMap[schemaID].Tables))
-		require.Equal(t, 2, len(pStorage.tableMap))
-		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
-		require.Equal(t, uint64(203), pStorage.tableTriggerDDLHistory[2])
-		require.Equal(t, 2, len(pStorage.tablesDDLHistory))
-		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID2]))
-		require.Equal(t, uint64(203), pStorage.tablesDDLHistory[tableID2][0])
-	}
-
-	// drop a table
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionDropTable),
-			SchemaID:      schemaID,
-			TableID:       tableID2,
-			SchemaVersion: 105,
-			TableInfo:     nil,
-			FinishedTs:    205,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-
-		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
-		require.Equal(t, 1, len(pStorage.tableMap))
-		require.Equal(t, 4, len(pStorage.tableTriggerDDLHistory))
-		require.Equal(t, uint64(205), pStorage.tableTriggerDDLHistory[3])
-		require.Equal(t, 2, len(pStorage.tablesDDLHistory))
-		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID]))
-		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID2]))
-		require.Equal(t, uint64(205), pStorage.tablesDDLHistory[tableID2][1])
-	}
-
-	// truncate a table
-	tableID3 := int64(112)
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionTruncateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID,
-			SchemaVersion: 107,
-			TableInfo: &model.TableInfo{
-				ID: tableID3,
-			},
-			FinishedTs: 207,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-
-		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
-		require.Equal(t, 1, len(pStorage.tableMap))
-		require.Equal(t, 4, len(pStorage.tableTriggerDDLHistory))
-		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
-		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID]))
-		require.Equal(t, uint64(207), pStorage.tablesDDLHistory[tableID][1])
-		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID3]))
-		require.Equal(t, uint64(207), pStorage.tablesDDLHistory[tableID3][0])
-	}
-
-	// drop db
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionDropSchema),
-			SchemaID:      schemaID,
-			SchemaVersion: 200,
-			DBInfo: &model.DBInfo{
-				ID:   schemaID,
-				Name: model.NewCIStr("test"),
-			},
-			TableInfo:  nil,
-			FinishedTs: 300,
-		}
-
-		pStorage.handleSortedDDLEvents(ddlEvent)
-
-		require.Equal(t, 0, len(pStorage.databaseMap))
-		require.Equal(t, 0, len(pStorage.tableMap))
-		require.Equal(t, 5, len(pStorage.tableTriggerDDLHistory))
-		require.Equal(t, uint64(300), pStorage.tableTriggerDDLHistory[4])
-		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
-		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID]))
-		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID2]))
-		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID3]))
-		require.Equal(t, uint64(300), pStorage.tablesDDLHistory[tableID3][1])
-	}
-}
-
-func TestHandleRenameTable(t *testing.T) {
-	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
-	err := os.RemoveAll(dbPath)
-	require.Nil(t, err)
-
-	gcTs := uint64(500)
-	schemaID1 := int64(300)
-	schemaID2 := int64(305)
-
-	databaseInfo := make(map[int64]*model.DBInfo)
-	databaseInfo[schemaID1] = &model.DBInfo{
-		ID:   schemaID1,
-		Name: model.NewCIStr("test"),
-	}
-	databaseInfo[schemaID2] = &model.DBInfo{
-		ID:   schemaID2,
-		Name: model.NewCIStr("test2"),
-	}
-	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
-
-	// create a table
-	tableID := int64(100)
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateTable),
-			SchemaID:      schemaID1,
-			TableID:       tableID,
-			SchemaVersion: 501,
-			TableInfo: &model.TableInfo{
-				ID:   tableID,
-				Name: model.NewCIStr("t1"),
-			},
-			FinishedTs: 601,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-		require.Equal(t, 2, len(pStorage.databaseMap))
-		require.Equal(t, 1, len(pStorage.databaseMap[schemaID1].Tables))
-		require.Equal(t, 0, len(pStorage.databaseMap[schemaID2].Tables))
-		require.Equal(t, schemaID1, pStorage.tableMap[tableID].SchemaID)
-		require.Equal(t, "t1", pStorage.tableMap[tableID].Name)
-	}
-
-	// rename table to a different db
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionRenameTable),
-			SchemaID:      schemaID2,
-			TableID:       tableID,
-			SchemaVersion: 505,
-			TableInfo: &model.TableInfo{
-				ID:   tableID,
-				Name: model.NewCIStr("t2"),
-			},
-			FinishedTs: 605,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-		require.Equal(t, 2, len(pStorage.databaseMap))
-		require.Equal(t, 0, len(pStorage.databaseMap[schemaID1].Tables))
-		require.Equal(t, 1, len(pStorage.databaseMap[schemaID2].Tables))
-		require.Equal(t, schemaID2, pStorage.tableMap[tableID].SchemaID)
-		require.Equal(t, "t2", pStorage.tableMap[tableID].Name)
-	}
-
-	{
-		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, nil, 601, 700)
-		require.Nil(t, err)
-		require.Equal(t, 1, len(ddlEvents))
-		// rename table event
-		require.Equal(t, uint64(605), ddlEvents[0].FinishedTs)
-		require.Equal(t, "test2", ddlEvents[0].SchemaName)
-		require.Equal(t, "t2", ddlEvents[0].TableName)
-		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].BlockedTables.InfluenceType)
-		require.Equal(t, schemaID1, ddlEvents[0].BlockedTables.SchemaID)
-		require.Equal(t, tableID, ddlEvents[0].BlockedTables.TableIDs[0])
-		// TODO: don't count on the order
-		require.Equal(t, heartbeatpb.DDLSpan.TableID, ddlEvents[0].BlockedTables.TableIDs[1])
-		require.Equal(t, tableID, ddlEvents[0].NeedDroppedTables.TableIDs[0])
-
-		require.Equal(t, tableID, ddlEvents[0].NeedAddedTables[0].TableID)
-
-		require.Equal(t, "test2", ddlEvents[0].TableNameChange.AddName[0].SchemaName)
-		require.Equal(t, "t2", ddlEvents[0].TableNameChange.AddName[0].TableName)
-		require.Equal(t, "test", ddlEvents[0].TableNameChange.DropName[0].SchemaName)
-		require.Equal(t, "t1", ddlEvents[0].TableNameChange.DropName[0].TableName)
-	}
-
-	// test filter: after rename, the table is filtered out
-	{
-		filterConfig := &config.FilterConfig{
-			Rules: []string{"test.*"},
-		}
-		tableFilter, err := filter.NewFilter(filterConfig, "", false)
-		require.Nil(t, err)
-		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, tableFilter, 601, 700)
-		require.Nil(t, err)
-		require.Equal(t, 1, len(ddlEvents))
-		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].BlockedTables.InfluenceType)
-		require.Equal(t, schemaID1, ddlEvents[0].BlockedTables.SchemaID)
-		require.Equal(t, tableID, ddlEvents[0].BlockedTables.TableIDs[0])
-		// TODO: don't count on the order
-		require.Equal(t, heartbeatpb.DDLSpan.TableID, ddlEvents[0].BlockedTables.TableIDs[1])
-		require.Equal(t, tableID, ddlEvents[0].NeedDroppedTables.TableIDs[0])
-
-		require.Nil(t, ddlEvents[0].NeedAddedTables)
-
-		require.Equal(t, 0, len(ddlEvents[0].TableNameChange.AddName))
-		require.Equal(t, "test", ddlEvents[0].TableNameChange.DropName[0].SchemaName)
-		require.Equal(t, "t1", ddlEvents[0].TableNameChange.DropName[0].TableName)
-	}
-
-	// test filter: before rename, the table is filtered out, so only table trigger can get the event
-	{
-		filterConfig := &config.FilterConfig{
-			Rules: []string{"test2.*"},
-		}
-		tableFilter, err := filter.NewFilter(filterConfig, "", false)
-		require.Nil(t, err)
-		triggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(tableFilter, 601, 10)
-		require.Nil(t, err)
-		require.Equal(t, 1, len(triggerDDLEvents))
-		require.Nil(t, triggerDDLEvents[0].BlockedTables)
-		require.Nil(t, triggerDDLEvents[0].NeedDroppedTables)
-
-		require.Equal(t, tableID, triggerDDLEvents[0].NeedAddedTables[0].TableID)
-
-		require.Equal(t, "test2", triggerDDLEvents[0].TableNameChange.AddName[0].SchemaName)
-		require.Equal(t, "t2", triggerDDLEvents[0].TableNameChange.AddName[0].TableName)
-		require.Equal(t, 0, len(triggerDDLEvents[0].TableNameChange.DropName))
-	}
-
-	// test filter: the table is always filtered out
-	{
-		// check table trigger events cannot get the event
-		filterConfig := &config.FilterConfig{
-			Rules: []string{"test3.*"},
-		}
-		tableFilter, err := filter.NewFilter(filterConfig, "", false)
-		require.Nil(t, err)
-		triggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(tableFilter, 601, 10)
-		require.Nil(t, err)
-		require.Equal(t, 0, len(triggerDDLEvents))
-	}
-}
-
-func TestFetchDDLEventsBasic(t *testing.T) {
-	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
-	err := os.RemoveAll(dbPath)
-	require.Nil(t, err)
-	pStorage := newEmptyPersistentStorageForTest(dbPath)
-
-	// create db
-	schemaID := int64(300)
-	schemaName := "test"
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateSchema),
-			SchemaID:      schemaID,
-			SchemaVersion: 100,
-			DBInfo: &model.DBInfo{
-				ID:   schemaID,
-				Name: model.NewCIStr(schemaName),
-			},
-			TableInfo:  nil,
-			FinishedTs: 200,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-	}
-
-	// create a table
-	tableID := int64(100)
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID,
-			SchemaVersion: 501,
-			TableInfo: &model.TableInfo{
-				ID:   tableID,
-				Name: model.NewCIStr("t1"),
-			},
-			FinishedTs: 601,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-	}
-
-	// rename table
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionRenameTable),
-			SchemaID:      schemaID,
-			TableID:       tableID,
-			SchemaVersion: 505,
-			TableInfo: &model.TableInfo{
-				ID:   tableID,
-				Name: model.NewCIStr("t2"),
-			},
-			FinishedTs: 605,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-	}
-
-	// truncate table
-	tableID2 := int64(105)
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionTruncateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID,
-			SchemaVersion: 507,
-			TableInfo: &model.TableInfo{
-				ID:   tableID2,
-				Name: model.NewCIStr("t2"),
-			},
-			FinishedTs: 607,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-	}
-
-	// create another table
-	tableID3 := int64(200)
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID3,
-			SchemaVersion: 509,
-			TableInfo: &model.TableInfo{
-				ID:   tableID,
-				Name: model.NewCIStr("t3"),
-			},
-			FinishedTs: 609,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-	}
-
-	// drop newly created table
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionDropTable),
-			SchemaID:      schemaID,
-			TableID:       tableID3,
-			SchemaVersion: 511,
-			TableInfo: &model.TableInfo{
-				ID:   tableID,
-				Name: model.NewCIStr("t3"),
-			},
-			FinishedTs: 611,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-	}
-
-	// drop db
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionDropSchema),
-			SchemaID:      schemaID,
-			SchemaVersion: 600,
-			DBInfo: &model.DBInfo{
-				ID:   schemaID,
-				Name: model.NewCIStr(schemaName),
-			},
-			TableInfo:  nil,
-			FinishedTs: 700,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-	}
-
-	// fetch table ddl events
-	{
-		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, nil, 601, 700)
-		require.Nil(t, err)
-		require.Equal(t, 2, len(ddlEvents))
-		// rename table event
-		require.Equal(t, uint64(605), ddlEvents[0].FinishedTs)
-		// truncate table event
-		require.Equal(t, uint64(607), ddlEvents[1].FinishedTs)
-		require.Equal(t, "test", ddlEvents[1].SchemaName)
-		require.Equal(t, "t2", ddlEvents[1].TableName)
-		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[1].NeedDroppedTables.InfluenceType)
-		require.Equal(t, schemaID, ddlEvents[1].NeedDroppedTables.SchemaID)
-		require.Equal(t, 1, len(ddlEvents[1].NeedDroppedTables.TableIDs))
-		require.Equal(t, tableID, ddlEvents[1].NeedDroppedTables.TableIDs[0])
-		require.Equal(t, 1, len(ddlEvents[1].NeedAddedTables))
-		require.Equal(t, schemaID, ddlEvents[1].NeedAddedTables[0].SchemaID)
-		require.Equal(t, tableID2, ddlEvents[1].NeedAddedTables[0].TableID)
-	}
-
-	// fetch table ddl events for another table
-	{
-		// TODO: test return error if start ts is smaller than 607
-		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID2, nil, 607, 700)
-		require.Nil(t, err)
-		require.Equal(t, 1, len(ddlEvents))
-		// drop db event
-		require.Equal(t, uint64(700), ddlEvents[0].FinishedTs)
-		require.Equal(t, common.InfluenceTypeDB, ddlEvents[0].NeedDroppedTables.InfluenceType)
-		require.Equal(t, schemaID, ddlEvents[0].NeedDroppedTables.SchemaID)
-	}
-
-	// fetch table ddl events again
-	{
-		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID3, nil, 609, 700)
-		require.Nil(t, err)
-		require.Equal(t, 1, len(ddlEvents))
-		// drop table event
-		require.Equal(t, uint64(611), ddlEvents[0].FinishedTs)
-		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].NeedDroppedTables.InfluenceType)
-		require.Equal(t, 1, len(ddlEvents[0].NeedDroppedTables.TableIDs))
-		require.Equal(t, tableID3, ddlEvents[0].NeedDroppedTables.TableIDs[0])
-		require.Equal(t, schemaID, ddlEvents[0].NeedDroppedTables.SchemaID)
-	}
-
-	// fetch all table trigger ddl events
-	{
-		tableTriggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(nil, 0, 10)
-		require.Nil(t, err)
-		require.Equal(t, 6, len(tableTriggerDDLEvents))
-		// create db event
-		require.Equal(t, uint64(200), tableTriggerDDLEvents[0].FinishedTs)
-		// create table event
-		require.Equal(t, uint64(601), tableTriggerDDLEvents[1].FinishedTs)
-		require.Equal(t, 1, len(tableTriggerDDLEvents[1].NeedAddedTables))
-		require.Equal(t, schemaID, tableTriggerDDLEvents[1].NeedAddedTables[0].SchemaID)
-		require.Equal(t, tableID, tableTriggerDDLEvents[1].NeedAddedTables[0].TableID)
-		require.Equal(t, schemaName, tableTriggerDDLEvents[1].TableNameChange.AddName[0].SchemaName)
-		require.Equal(t, "t1", tableTriggerDDLEvents[1].TableNameChange.AddName[0].TableName)
-		// rename table event
-		require.Equal(t, uint64(605), tableTriggerDDLEvents[2].FinishedTs)
-		// create table event
-		require.Equal(t, uint64(609), tableTriggerDDLEvents[3].FinishedTs)
-		// drop table event
-		require.Equal(t, uint64(611), tableTriggerDDLEvents[4].FinishedTs)
-		require.Equal(t, common.InfluenceTypeNormal, tableTriggerDDLEvents[4].NeedDroppedTables.InfluenceType)
-		require.Equal(t, schemaID, tableTriggerDDLEvents[4].NeedDroppedTables.SchemaID)
-		require.Equal(t, tableID3, tableTriggerDDLEvents[4].NeedDroppedTables.TableIDs[0])
-		require.Equal(t, schemaName, tableTriggerDDLEvents[4].TableNameChange.DropName[0].SchemaName)
-		require.Equal(t, "t3", tableTriggerDDLEvents[4].TableNameChange.DropName[0].TableName)
-		require.Equal(t, common.InfluenceTypeNormal, tableTriggerDDLEvents[4].BlockedTables.InfluenceType)
-		require.Equal(t, 2, len(tableTriggerDDLEvents[4].BlockedTables.TableIDs))
-		require.Equal(t, tableID3, tableTriggerDDLEvents[4].BlockedTables.TableIDs[0])
-		// TODO: don't count on the order
-		require.Equal(t, heartbeatpb.DDLSpan.TableID, tableTriggerDDLEvents[4].BlockedTables.TableIDs[1])
-		// drop db event
-		require.Equal(t, uint64(700), tableTriggerDDLEvents[5].FinishedTs)
-		require.Equal(t, schemaName, tableTriggerDDLEvents[5].TableNameChange.DropDatabaseName)
-	}
-
-	// fetch partial table trigger ddl events
-	{
-		tableTriggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(nil, 0, 2)
-		require.Nil(t, err)
-		require.Equal(t, 2, len(tableTriggerDDLEvents))
-		require.Equal(t, uint64(200), tableTriggerDDLEvents[0].FinishedTs)
-		require.Equal(t, uint64(601), tableTriggerDDLEvents[1].FinishedTs)
-	}
-
-	// TODO: test filter
-}
-
-func TestGC(t *testing.T) {
-	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
-	err := os.RemoveAll(dbPath)
-	require.Nil(t, err)
-
-	schemaID := int64(300)
-	gcTs := uint64(600)
-	tableID1 := int64(100)
-	tableID2 := int64(200)
-
-	databaseInfo := make(map[int64]*model.DBInfo)
-	databaseInfo[schemaID] = &model.DBInfo{
-		ID:   schemaID,
-		Name: model.NewCIStr("test"),
-		Tables: []*model.TableInfo{
-			{
-				ID:   tableID1,
-				Name: model.NewCIStr("t1"),
-			},
-			{
-				ID:   tableID2,
-				Name: model.NewCIStr("t2"),
-			},
-		},
-	}
-	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
-
-	// create table t3
-	tableID3 := int64(500)
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID3,
-			SchemaVersion: 501,
-			TableInfo: &model.TableInfo{
-				ID:   tableID3,
-				Name: model.NewCIStr("t3"),
-			},
-			FinishedTs: 601,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-	}
-
-	// drop table t2
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionDropTable),
-			SchemaID:      schemaID,
-			TableID:       tableID2,
-			SchemaVersion: 503,
-			TableInfo:     nil,
-			FinishedTs:    603,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-	}
-
-	// rename table t1
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionRenameTable),
-			SchemaID:      schemaID,
-			TableID:       tableID1,
-			SchemaVersion: 505,
-			TableInfo: &model.TableInfo{
-				ID:   tableID1,
-				Name: model.NewCIStr("t1_r"),
-			},
-			FinishedTs: 605,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-	}
-
-	// write upper bound
-	newUpperBound := UpperBoundMeta{
-		FinishedDDLTs: 700,
-		SchemaVersion: 509,
-		ResolvedTs:    705,
-	}
-	{
-		writeUpperBoundMeta(pStorage.db, newUpperBound)
-	}
-
-	pStorage.registerTable(tableID1, gcTs+1)
-
-	// mock gc
-	newGcTs := uint64(603)
-	{
-		databaseInfo := make(map[int64]*model.DBInfo)
-		databaseInfo[schemaID] = &model.DBInfo{
-			ID:   schemaID,
-			Name: model.NewCIStr("test"),
-			Tables: []*model.TableInfo{
-				{
-					ID:   tableID1,
-					Name: model.NewCIStr("t1"),
-				},
-				{
-					ID:   tableID3,
-					Name: model.NewCIStr("t3"),
-				},
-			},
-		}
-		tablesInKVSnap := mockWriteKVSnapOnDisk(pStorage.db, newGcTs, databaseInfo)
-
-		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
-		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
-		pStorage.cleanObseleteDataInMemory(newGcTs, tablesInKVSnap)
-		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
-		require.Equal(t, uint64(605), pStorage.tableTriggerDDLHistory[0])
-		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
-		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID1]))
-		tableInfoT1, err := pStorage.getTableInfo(tableID1, newGcTs)
-		require.Nil(t, err)
-		require.Equal(t, "t1", tableInfoT1.Name.O)
-		tableInfoT1, err = pStorage.getTableInfo(tableID1, 606)
-		require.Nil(t, err)
-		require.Equal(t, "t1_r", tableInfoT1.Name.O)
-	}
-
-	pStorage = loadPersistentStorageForTest(pStorage.db, newGcTs, newUpperBound)
-	{
-		require.Equal(t, newGcTs, pStorage.gcTs)
-		require.Equal(t, newUpperBound, pStorage.upperBound)
-		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
-		require.Equal(t, uint64(605), pStorage.tableTriggerDDLHistory[0])
-		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
-		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID1]))
-	}
-
-	// TODO: test obsolete data can be removed
-}
-
-func TestGetAllPhysicalTables(t *testing.T) {
-	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
-	err := os.RemoveAll(dbPath)
-	require.Nil(t, err)
-
-	schemaID := int64(300)
-	gcTs := uint64(600)
-	tableID1 := int64(100)
-	tableID2 := int64(200)
-
-	databaseInfo := make(map[int64]*model.DBInfo)
-	databaseInfo[schemaID] = &model.DBInfo{
-		ID:   schemaID,
-		Name: model.NewCIStr("test"),
-		Tables: []*model.TableInfo{
-			{
-				ID:   tableID1,
-				Name: model.NewCIStr("t1"),
-			},
-			{
-				ID:   tableID2,
-				Name: model.NewCIStr("t2"),
-			},
-		},
-	}
-	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
-
-	// create table t3
-	tableID3 := int64(500)
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID3,
-			SchemaVersion: 501,
-			TableInfo: &model.TableInfo{
-				ID:   tableID3,
-				Name: model.NewCIStr("t3"),
-			},
-			FinishedTs: 601,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-	}
-
-	// drop table t2
-	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionDropTable),
-			SchemaID:      schemaID,
-			TableID:       tableID2,
-			SchemaVersion: 503,
-			TableInfo:     nil,
-			FinishedTs:    603,
-		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
-	}
-
-	{
-		allPhysicalTables, err := pStorage.getAllPhysicalTables(600, nil)
-		require.Nil(t, err)
-		require.Equal(t, 2, len(allPhysicalTables))
-	}
-
-	{
-		allPhysicalTables, err := pStorage.getAllPhysicalTables(601, nil)
-		require.Nil(t, err)
-		require.Equal(t, 3, len(allPhysicalTables))
-	}
-
-	{
-		allPhysicalTables, err := pStorage.getAllPhysicalTables(603, nil)
-		require.Nil(t, err)
-		require.Equal(t, 2, len(allPhysicalTables))
-	}
-}
+// func TestBuildVersionedTableInfoStore(t *testing.T) {
+// 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+// 	err := os.RemoveAll(dbPath)
+// 	require.Nil(t, err)
+
+// 	gcTs := uint64(1000)
+// 	schemaID := int64(50)
+// 	tableID := int64(99)
+// 	databaseInfo := make(map[int64]*model.DBInfo)
+// 	databaseInfo[schemaID] = &model.DBInfo{
+// 		ID:   schemaID,
+// 		Name: model.NewCIStr("test"),
+// 		Tables: []*model.TableInfo{
+// 			{
+// 				ID:   tableID,
+// 				Name: model.NewCIStr("t1"),
+// 			},
+// 		},
+// 	}
+// 	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
+
+// 	require.Equal(t, 1, len(pStorage.databaseMap))
+// 	require.Equal(t, "test", pStorage.databaseMap[schemaID].Name)
+
+// 	{
+// 		store := newEmptyVersionedTableInfoStore(tableID)
+// 		pStorage.buildVersionedTableInfoStore(store)
+// 		tableInfo, err := store.getTableInfo(gcTs)
+// 		require.Nil(t, err)
+// 		require.Equal(t, "t1", tableInfo.Name.O)
+// 		require.Equal(t, tableID, tableInfo.ID)
+// 	}
+
+// 	// rename table
+// 	renameVersion := uint64(1500)
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionRenameTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID,
+// 			SchemaVersion: 3000,
+// 			TableInfo: &model.TableInfo{
+// 				ID:   tableID,
+// 				Name: model.NewCIStr("t2"),
+// 			},
+// 			FinishedTs: renameVersion,
+// 		}
+// 		err = pStorage.handleSortedDDLEvents(ddlEvent)
+// 		require.Nil(t, err)
+// 	}
+
+// 	// create another table
+// 	tableID2 := tableID + 1
+// 	createVersion := renameVersion + 200
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionCreateTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID2,
+// 			SchemaVersion: 3500,
+// 			TableInfo: &model.TableInfo{
+// 				ID:   tableID2,
+// 				Name: model.NewCIStr("t3"),
+// 			},
+// 			FinishedTs: createVersion,
+// 		}
+// 		err = pStorage.handleSortedDDLEvents(ddlEvent)
+// 		require.Nil(t, err)
+// 	}
+
+// 	upperBound := UpperBoundMeta{
+// 		FinishedDDLTs: 3000,
+// 		SchemaVersion: 4000,
+// 		ResolvedTs:    2000,
+// 	}
+// 	pStorage = loadPersistentStorageForTest(pStorage.db, gcTs, upperBound)
+// 	{
+// 		store := newEmptyVersionedTableInfoStore(tableID)
+// 		pStorage.buildVersionedTableInfoStore(store)
+// 		require.Equal(t, 2, len(store.infos))
+// 		tableInfo, err := store.getTableInfo(gcTs)
+// 		require.Nil(t, err)
+// 		require.Equal(t, "t1", tableInfo.Name.O)
+// 		require.Equal(t, tableID, tableInfo.ID)
+// 		tableInfo2, err := store.getTableInfo(renameVersion)
+// 		require.Nil(t, err)
+// 		require.Equal(t, "t2", tableInfo2.Name.O)
+
+// 		renameVersion2 := uint64(3000)
+// 		store.applyDDL(PersistedDDLEvent{
+// 			Type:          byte(model.ActionRenameTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID,
+// 			SchemaVersion: 3000,
+// 			TableInfo: &model.TableInfo{
+// 				ID:   tableID,
+// 				Name: model.NewCIStr("t3"),
+// 			},
+// 			FinishedTs: renameVersion2,
+// 		})
+// 		tableInfo3, err := store.getTableInfo(renameVersion2)
+// 		require.Nil(t, err)
+// 		require.Equal(t, "t3", tableInfo3.Name.O)
+// 	}
+
+// 	{
+// 		store := newEmptyVersionedTableInfoStore(tableID2)
+// 		pStorage.buildVersionedTableInfoStore(store)
+// 		require.Equal(t, 1, len(store.infos))
+// 		tableInfo, err := store.getTableInfo(createVersion)
+// 		require.Nil(t, err)
+// 		require.Equal(t, "t3", tableInfo.Name.O)
+// 		require.Equal(t, tableID2, tableInfo.ID)
+// 	}
+
+// 	// truncate table
+// 	tableID3 := tableID2 + 1
+// 	truncateVersion := createVersion + 200
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionTruncateTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID2,
+// 			SchemaVersion: 3600,
+// 			TableInfo: &model.TableInfo{
+// 				ID:   tableID3,
+// 				Name: model.NewCIStr("t4"),
+// 			},
+// 			FinishedTs: truncateVersion,
+// 		}
+// 		err = pStorage.handleSortedDDLEvents(ddlEvent)
+// 		require.Nil(t, err)
+// 	}
+
+// 	{
+// 		store := newEmptyVersionedTableInfoStore(tableID2)
+// 		pStorage.buildVersionedTableInfoStore(store)
+// 		require.Equal(t, 1, len(store.infos))
+// 		require.Equal(t, truncateVersion, store.deleteVersion)
+// 	}
+
+// 	{
+// 		store := newEmptyVersionedTableInfoStore(tableID3)
+// 		pStorage.buildVersionedTableInfoStore(store)
+// 		require.Equal(t, 1, len(store.infos))
+// 		tableInfo, err := store.getTableInfo(truncateVersion)
+// 		require.Nil(t, err)
+// 		require.Equal(t, "t4", tableInfo.Name.O)
+// 		require.Equal(t, tableID3, tableInfo.ID)
+// 	}
+
+// }
+
+// func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
+// 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+// 	err := os.RemoveAll(dbPath)
+// 	require.Nil(t, err)
+// 	pStorage := newEmptyPersistentStorageForTest(dbPath)
+
+// 	// create db
+// 	schemaID := int64(300)
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionCreateSchema),
+// 			SchemaID:      schemaID,
+// 			SchemaVersion: 100,
+// 			DBInfo: &model.DBInfo{
+// 				ID:   schemaID,
+// 				Name: model.NewCIStr("test"),
+// 			},
+// 			TableInfo:  nil,
+// 			FinishedTs: 200,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+
+// 		require.Equal(t, 1, len(pStorage.databaseMap))
+// 		require.Equal(t, "test", pStorage.databaseMap[schemaID].Name)
+// 		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
+// 		require.Equal(t, uint64(200), pStorage.tableTriggerDDLHistory[0])
+// 	}
+
+// 	// create a table
+// 	tableID := int64(100)
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionCreateTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID,
+// 			SchemaVersion: 101,
+// 			TableInfo: &model.TableInfo{
+// 				Name: model.NewCIStr("t1"),
+// 			},
+// 			FinishedTs: 201,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+
+// 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
+// 		require.Equal(t, 1, len(pStorage.tableMap))
+// 		require.Equal(t, 2, len(pStorage.tableTriggerDDLHistory))
+// 		require.Equal(t, uint64(201), pStorage.tableTriggerDDLHistory[1])
+// 		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
+// 		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID]))
+// 	}
+
+// 	// create another table
+// 	tableID2 := int64(105)
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionCreateTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID2,
+// 			SchemaVersion: 103,
+// 			TableInfo: &model.TableInfo{
+// 				Name: model.NewCIStr("t2"),
+// 			},
+// 			FinishedTs: 203,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+
+// 		require.Equal(t, 2, len(pStorage.databaseMap[schemaID].Tables))
+// 		require.Equal(t, 2, len(pStorage.tableMap))
+// 		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
+// 		require.Equal(t, uint64(203), pStorage.tableTriggerDDLHistory[2])
+// 		require.Equal(t, 2, len(pStorage.tablesDDLHistory))
+// 		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID2]))
+// 		require.Equal(t, uint64(203), pStorage.tablesDDLHistory[tableID2][0])
+// 	}
+
+// 	// drop a table
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionDropTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID2,
+// 			SchemaVersion: 105,
+// 			TableInfo:     nil,
+// 			FinishedTs:    205,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+
+// 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
+// 		require.Equal(t, 1, len(pStorage.tableMap))
+// 		require.Equal(t, 4, len(pStorage.tableTriggerDDLHistory))
+// 		require.Equal(t, uint64(205), pStorage.tableTriggerDDLHistory[3])
+// 		require.Equal(t, 2, len(pStorage.tablesDDLHistory))
+// 		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID]))
+// 		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID2]))
+// 		require.Equal(t, uint64(205), pStorage.tablesDDLHistory[tableID2][1])
+// 	}
+
+// 	// truncate a table
+// 	tableID3 := int64(112)
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionTruncateTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID,
+// 			SchemaVersion: 107,
+// 			TableInfo: &model.TableInfo{
+// 				ID: tableID3,
+// 			},
+// 			FinishedTs: 207,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+
+// 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
+// 		require.Equal(t, 1, len(pStorage.tableMap))
+// 		require.Equal(t, 4, len(pStorage.tableTriggerDDLHistory))
+// 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
+// 		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID]))
+// 		require.Equal(t, uint64(207), pStorage.tablesDDLHistory[tableID][1])
+// 		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID3]))
+// 		require.Equal(t, uint64(207), pStorage.tablesDDLHistory[tableID3][0])
+// 	}
+
+// 	// drop db
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionDropSchema),
+// 			SchemaID:      schemaID,
+// 			SchemaVersion: 200,
+// 			DBInfo: &model.DBInfo{
+// 				ID:   schemaID,
+// 				Name: model.NewCIStr("test"),
+// 			},
+// 			TableInfo:  nil,
+// 			FinishedTs: 300,
+// 		}
+
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+
+// 		require.Equal(t, 0, len(pStorage.databaseMap))
+// 		require.Equal(t, 0, len(pStorage.tableMap))
+// 		require.Equal(t, 5, len(pStorage.tableTriggerDDLHistory))
+// 		require.Equal(t, uint64(300), pStorage.tableTriggerDDLHistory[4])
+// 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
+// 		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID]))
+// 		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID2]))
+// 		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID3]))
+// 		require.Equal(t, uint64(300), pStorage.tablesDDLHistory[tableID3][1])
+// 	}
+// }
+
+// func TestHandleRenameTable(t *testing.T) {
+// 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+// 	err := os.RemoveAll(dbPath)
+// 	require.Nil(t, err)
+
+// 	gcTs := uint64(500)
+// 	schemaID1 := int64(300)
+// 	schemaID2 := int64(305)
+
+// 	databaseInfo := make(map[int64]*model.DBInfo)
+// 	databaseInfo[schemaID1] = &model.DBInfo{
+// 		ID:   schemaID1,
+// 		Name: model.NewCIStr("test"),
+// 	}
+// 	databaseInfo[schemaID2] = &model.DBInfo{
+// 		ID:   schemaID2,
+// 		Name: model.NewCIStr("test2"),
+// 	}
+// 	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
+
+// 	// create a table
+// 	tableID := int64(100)
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionCreateTable),
+// 			SchemaID:      schemaID1,
+// 			TableID:       tableID,
+// 			SchemaVersion: 501,
+// 			TableInfo: &model.TableInfo{
+// 				ID:   tableID,
+// 				Name: model.NewCIStr("t1"),
+// 			},
+// 			FinishedTs: 601,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+// 		require.Equal(t, 2, len(pStorage.databaseMap))
+// 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID1].Tables))
+// 		require.Equal(t, 0, len(pStorage.databaseMap[schemaID2].Tables))
+// 		require.Equal(t, schemaID1, pStorage.tableMap[tableID].SchemaID)
+// 		require.Equal(t, "t1", pStorage.tableMap[tableID].Name)
+// 	}
+
+// 	// rename table to a different db
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionRenameTable),
+// 			SchemaID:      schemaID2,
+// 			TableID:       tableID,
+// 			SchemaVersion: 505,
+// 			TableInfo: &model.TableInfo{
+// 				ID:   tableID,
+// 				Name: model.NewCIStr("t2"),
+// 			},
+// 			FinishedTs: 605,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+// 		require.Equal(t, 2, len(pStorage.databaseMap))
+// 		require.Equal(t, 0, len(pStorage.databaseMap[schemaID1].Tables))
+// 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID2].Tables))
+// 		require.Equal(t, schemaID2, pStorage.tableMap[tableID].SchemaID)
+// 		require.Equal(t, "t2", pStorage.tableMap[tableID].Name)
+// 	}
+
+// 	{
+// 		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, nil, 601, 700)
+// 		require.Nil(t, err)
+// 		require.Equal(t, 1, len(ddlEvents))
+// 		// rename table event
+// 		require.Equal(t, uint64(605), ddlEvents[0].FinishedTs)
+// 		require.Equal(t, "test2", ddlEvents[0].SchemaName)
+// 		require.Equal(t, "t2", ddlEvents[0].TableName)
+// 		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].BlockedTables.InfluenceType)
+// 		require.Equal(t, schemaID1, ddlEvents[0].BlockedTables.SchemaID)
+// 		require.Equal(t, tableID, ddlEvents[0].BlockedTables.TableIDs[0])
+// 		// TODO: don't count on the order
+// 		require.Equal(t, heartbeatpb.DDLSpan.TableID, ddlEvents[0].BlockedTables.TableIDs[1])
+// 		require.Equal(t, tableID, ddlEvents[0].NeedDroppedTables.TableIDs[0])
+
+// 		require.Equal(t, tableID, ddlEvents[0].NeedAddedTables[0].TableID)
+
+// 		require.Equal(t, "test2", ddlEvents[0].TableNameChange.AddName[0].SchemaName)
+// 		require.Equal(t, "t2", ddlEvents[0].TableNameChange.AddName[0].TableName)
+// 		require.Equal(t, "test", ddlEvents[0].TableNameChange.DropName[0].SchemaName)
+// 		require.Equal(t, "t1", ddlEvents[0].TableNameChange.DropName[0].TableName)
+// 	}
+
+// 	// test filter: after rename, the table is filtered out
+// 	{
+// 		filterConfig := &config.FilterConfig{
+// 			Rules: []string{"test.*"},
+// 		}
+// 		tableFilter, err := filter.NewFilter(filterConfig, "", false)
+// 		require.Nil(t, err)
+// 		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, tableFilter, 601, 700)
+// 		require.Nil(t, err)
+// 		require.Equal(t, 1, len(ddlEvents))
+// 		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].BlockedTables.InfluenceType)
+// 		require.Equal(t, schemaID1, ddlEvents[0].BlockedTables.SchemaID)
+// 		require.Equal(t, tableID, ddlEvents[0].BlockedTables.TableIDs[0])
+// 		// TODO: don't count on the order
+// 		require.Equal(t, heartbeatpb.DDLSpan.TableID, ddlEvents[0].BlockedTables.TableIDs[1])
+// 		require.Equal(t, tableID, ddlEvents[0].NeedDroppedTables.TableIDs[0])
+
+// 		require.Nil(t, ddlEvents[0].NeedAddedTables)
+
+// 		require.Equal(t, 0, len(ddlEvents[0].TableNameChange.AddName))
+// 		require.Equal(t, "test", ddlEvents[0].TableNameChange.DropName[0].SchemaName)
+// 		require.Equal(t, "t1", ddlEvents[0].TableNameChange.DropName[0].TableName)
+// 	}
+
+// 	// test filter: before rename, the table is filtered out, so only table trigger can get the event
+// 	{
+// 		filterConfig := &config.FilterConfig{
+// 			Rules: []string{"test2.*"},
+// 		}
+// 		tableFilter, err := filter.NewFilter(filterConfig, "", false)
+// 		require.Nil(t, err)
+// 		triggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(tableFilter, 601, 10)
+// 		require.Nil(t, err)
+// 		require.Equal(t, 1, len(triggerDDLEvents))
+// 		require.Nil(t, triggerDDLEvents[0].BlockedTables)
+// 		require.Nil(t, triggerDDLEvents[0].NeedDroppedTables)
+
+// 		require.Equal(t, tableID, triggerDDLEvents[0].NeedAddedTables[0].TableID)
+
+// 		require.Equal(t, "test2", triggerDDLEvents[0].TableNameChange.AddName[0].SchemaName)
+// 		require.Equal(t, "t2", triggerDDLEvents[0].TableNameChange.AddName[0].TableName)
+// 		require.Equal(t, 0, len(triggerDDLEvents[0].TableNameChange.DropName))
+// 	}
+
+// 	// test filter: the table is always filtered out
+// 	{
+// 		// check table trigger events cannot get the event
+// 		filterConfig := &config.FilterConfig{
+// 			Rules: []string{"test3.*"},
+// 		}
+// 		tableFilter, err := filter.NewFilter(filterConfig, "", false)
+// 		require.Nil(t, err)
+// 		triggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(tableFilter, 601, 10)
+// 		require.Nil(t, err)
+// 		require.Equal(t, 0, len(triggerDDLEvents))
+// 	}
+// }
+
+// func TestFetchDDLEventsBasic(t *testing.T) {
+// 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+// 	err := os.RemoveAll(dbPath)
+// 	require.Nil(t, err)
+// 	pStorage := newEmptyPersistentStorageForTest(dbPath)
+
+// 	// create db
+// 	schemaID := int64(300)
+// 	schemaName := "test"
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionCreateSchema),
+// 			SchemaID:      schemaID,
+// 			SchemaVersion: 100,
+// 			DBInfo: &model.DBInfo{
+// 				ID:   schemaID,
+// 				Name: model.NewCIStr(schemaName),
+// 			},
+// 			TableInfo:  nil,
+// 			FinishedTs: 200,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+// 	}
+
+// 	// create a table
+// 	tableID := int64(100)
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionCreateTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID,
+// 			SchemaVersion: 501,
+// 			TableInfo: &model.TableInfo{
+// 				ID:   tableID,
+// 				Name: model.NewCIStr("t1"),
+// 			},
+// 			FinishedTs: 601,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+// 	}
+
+// 	// rename table
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionRenameTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID,
+// 			SchemaVersion: 505,
+// 			TableInfo: &model.TableInfo{
+// 				ID:   tableID,
+// 				Name: model.NewCIStr("t2"),
+// 			},
+// 			FinishedTs: 605,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+// 	}
+
+// 	// truncate table
+// 	tableID2 := int64(105)
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionTruncateTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID,
+// 			SchemaVersion: 507,
+// 			TableInfo: &model.TableInfo{
+// 				ID:   tableID2,
+// 				Name: model.NewCIStr("t2"),
+// 			},
+// 			FinishedTs: 607,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+// 	}
+
+// 	// create another table
+// 	tableID3 := int64(200)
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionCreateTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID3,
+// 			SchemaVersion: 509,
+// 			TableInfo: &model.TableInfo{
+// 				ID:   tableID,
+// 				Name: model.NewCIStr("t3"),
+// 			},
+// 			FinishedTs: 609,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+// 	}
+
+// 	// drop newly created table
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionDropTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID3,
+// 			SchemaVersion: 511,
+// 			TableInfo: &model.TableInfo{
+// 				ID:   tableID,
+// 				Name: model.NewCIStr("t3"),
+// 			},
+// 			FinishedTs: 611,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+// 	}
+
+// 	// drop db
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionDropSchema),
+// 			SchemaID:      schemaID,
+// 			SchemaVersion: 600,
+// 			DBInfo: &model.DBInfo{
+// 				ID:   schemaID,
+// 				Name: model.NewCIStr(schemaName),
+// 			},
+// 			TableInfo:  nil,
+// 			FinishedTs: 700,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+// 	}
+
+// 	// fetch table ddl events
+// 	{
+// 		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, nil, 601, 700)
+// 		require.Nil(t, err)
+// 		require.Equal(t, 2, len(ddlEvents))
+// 		// rename table event
+// 		require.Equal(t, uint64(605), ddlEvents[0].FinishedTs)
+// 		// truncate table event
+// 		require.Equal(t, uint64(607), ddlEvents[1].FinishedTs)
+// 		require.Equal(t, "test", ddlEvents[1].SchemaName)
+// 		require.Equal(t, "t2", ddlEvents[1].TableName)
+// 		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[1].NeedDroppedTables.InfluenceType)
+// 		require.Equal(t, schemaID, ddlEvents[1].NeedDroppedTables.SchemaID)
+// 		require.Equal(t, 1, len(ddlEvents[1].NeedDroppedTables.TableIDs))
+// 		require.Equal(t, tableID, ddlEvents[1].NeedDroppedTables.TableIDs[0])
+// 		require.Equal(t, 1, len(ddlEvents[1].NeedAddedTables))
+// 		require.Equal(t, schemaID, ddlEvents[1].NeedAddedTables[0].SchemaID)
+// 		require.Equal(t, tableID2, ddlEvents[1].NeedAddedTables[0].TableID)
+// 	}
+
+// 	// fetch table ddl events for another table
+// 	{
+// 		// TODO: test return error if start ts is smaller than 607
+// 		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID2, nil, 607, 700)
+// 		require.Nil(t, err)
+// 		require.Equal(t, 1, len(ddlEvents))
+// 		// drop db event
+// 		require.Equal(t, uint64(700), ddlEvents[0].FinishedTs)
+// 		require.Equal(t, common.InfluenceTypeDB, ddlEvents[0].NeedDroppedTables.InfluenceType)
+// 		require.Equal(t, schemaID, ddlEvents[0].NeedDroppedTables.SchemaID)
+// 	}
+
+// 	// fetch table ddl events again
+// 	{
+// 		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID3, nil, 609, 700)
+// 		require.Nil(t, err)
+// 		require.Equal(t, 1, len(ddlEvents))
+// 		// drop table event
+// 		require.Equal(t, uint64(611), ddlEvents[0].FinishedTs)
+// 		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].NeedDroppedTables.InfluenceType)
+// 		require.Equal(t, 1, len(ddlEvents[0].NeedDroppedTables.TableIDs))
+// 		require.Equal(t, tableID3, ddlEvents[0].NeedDroppedTables.TableIDs[0])
+// 		require.Equal(t, schemaID, ddlEvents[0].NeedDroppedTables.SchemaID)
+// 	}
+
+// 	// fetch all table trigger ddl events
+// 	{
+// 		tableTriggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(nil, 0, 10)
+// 		require.Nil(t, err)
+// 		require.Equal(t, 6, len(tableTriggerDDLEvents))
+// 		// create db event
+// 		require.Equal(t, uint64(200), tableTriggerDDLEvents[0].FinishedTs)
+// 		// create table event
+// 		require.Equal(t, uint64(601), tableTriggerDDLEvents[1].FinishedTs)
+// 		require.Equal(t, 1, len(tableTriggerDDLEvents[1].NeedAddedTables))
+// 		require.Equal(t, schemaID, tableTriggerDDLEvents[1].NeedAddedTables[0].SchemaID)
+// 		require.Equal(t, tableID, tableTriggerDDLEvents[1].NeedAddedTables[0].TableID)
+// 		require.Equal(t, schemaName, tableTriggerDDLEvents[1].TableNameChange.AddName[0].SchemaName)
+// 		require.Equal(t, "t1", tableTriggerDDLEvents[1].TableNameChange.AddName[0].TableName)
+// 		// rename table event
+// 		require.Equal(t, uint64(605), tableTriggerDDLEvents[2].FinishedTs)
+// 		// create table event
+// 		require.Equal(t, uint64(609), tableTriggerDDLEvents[3].FinishedTs)
+// 		// drop table event
+// 		require.Equal(t, uint64(611), tableTriggerDDLEvents[4].FinishedTs)
+// 		require.Equal(t, common.InfluenceTypeNormal, tableTriggerDDLEvents[4].NeedDroppedTables.InfluenceType)
+// 		require.Equal(t, schemaID, tableTriggerDDLEvents[4].NeedDroppedTables.SchemaID)
+// 		require.Equal(t, tableID3, tableTriggerDDLEvents[4].NeedDroppedTables.TableIDs[0])
+// 		require.Equal(t, schemaName, tableTriggerDDLEvents[4].TableNameChange.DropName[0].SchemaName)
+// 		require.Equal(t, "t3", tableTriggerDDLEvents[4].TableNameChange.DropName[0].TableName)
+// 		require.Equal(t, common.InfluenceTypeNormal, tableTriggerDDLEvents[4].BlockedTables.InfluenceType)
+// 		require.Equal(t, 2, len(tableTriggerDDLEvents[4].BlockedTables.TableIDs))
+// 		require.Equal(t, tableID3, tableTriggerDDLEvents[4].BlockedTables.TableIDs[0])
+// 		// TODO: don't count on the order
+// 		require.Equal(t, heartbeatpb.DDLSpan.TableID, tableTriggerDDLEvents[4].BlockedTables.TableIDs[1])
+// 		// drop db event
+// 		require.Equal(t, uint64(700), tableTriggerDDLEvents[5].FinishedTs)
+// 		require.Equal(t, schemaName, tableTriggerDDLEvents[5].TableNameChange.DropDatabaseName)
+// 	}
+
+// 	// fetch partial table trigger ddl events
+// 	{
+// 		tableTriggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(nil, 0, 2)
+// 		require.Nil(t, err)
+// 		require.Equal(t, 2, len(tableTriggerDDLEvents))
+// 		require.Equal(t, uint64(200), tableTriggerDDLEvents[0].FinishedTs)
+// 		require.Equal(t, uint64(601), tableTriggerDDLEvents[1].FinishedTs)
+// 	}
+
+// 	// TODO: test filter
+// }
+
+// func TestGC(t *testing.T) {
+// 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+// 	err := os.RemoveAll(dbPath)
+// 	require.Nil(t, err)
+
+// 	schemaID := int64(300)
+// 	gcTs := uint64(600)
+// 	tableID1 := int64(100)
+// 	tableID2 := int64(200)
+
+// 	databaseInfo := make(map[int64]*model.DBInfo)
+// 	databaseInfo[schemaID] = &model.DBInfo{
+// 		ID:   schemaID,
+// 		Name: model.NewCIStr("test"),
+// 		Tables: []*model.TableInfo{
+// 			{
+// 				ID:   tableID1,
+// 				Name: model.NewCIStr("t1"),
+// 			},
+// 			{
+// 				ID:   tableID2,
+// 				Name: model.NewCIStr("t2"),
+// 			},
+// 		},
+// 	}
+// 	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
+
+// 	// create table t3
+// 	tableID3 := int64(500)
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionCreateTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID3,
+// 			SchemaVersion: 501,
+// 			TableInfo: &model.TableInfo{
+// 				ID:   tableID3,
+// 				Name: model.NewCIStr("t3"),
+// 			},
+// 			FinishedTs: 601,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+// 	}
+
+// 	// drop table t2
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionDropTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID2,
+// 			SchemaVersion: 503,
+// 			TableInfo:     nil,
+// 			FinishedTs:    603,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+// 	}
+
+// 	// rename table t1
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionRenameTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID1,
+// 			SchemaVersion: 505,
+// 			TableInfo: &model.TableInfo{
+// 				ID:   tableID1,
+// 				Name: model.NewCIStr("t1_r"),
+// 			},
+// 			FinishedTs: 605,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+// 	}
+
+// 	// write upper bound
+// 	newUpperBound := UpperBoundMeta{
+// 		FinishedDDLTs: 700,
+// 		SchemaVersion: 509,
+// 		ResolvedTs:    705,
+// 	}
+// 	{
+// 		writeUpperBoundMeta(pStorage.db, newUpperBound)
+// 	}
+
+// 	pStorage.registerTable(tableID1, gcTs+1)
+
+// 	// mock gc
+// 	newGcTs := uint64(603)
+// 	{
+// 		databaseInfo := make(map[int64]*model.DBInfo)
+// 		databaseInfo[schemaID] = &model.DBInfo{
+// 			ID:   schemaID,
+// 			Name: model.NewCIStr("test"),
+// 			Tables: []*model.TableInfo{
+// 				{
+// 					ID:   tableID1,
+// 					Name: model.NewCIStr("t1"),
+// 				},
+// 				{
+// 					ID:   tableID3,
+// 					Name: model.NewCIStr("t3"),
+// 				},
+// 			},
+// 		}
+// 		tablesInKVSnap := mockWriteKVSnapOnDisk(pStorage.db, newGcTs, databaseInfo)
+
+// 		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
+// 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
+// 		pStorage.cleanObseleteDataInMemory(newGcTs, tablesInKVSnap)
+// 		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
+// 		require.Equal(t, uint64(605), pStorage.tableTriggerDDLHistory[0])
+// 		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
+// 		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID1]))
+// 		tableInfoT1, err := pStorage.getTableInfo(tableID1, newGcTs)
+// 		require.Nil(t, err)
+// 		require.Equal(t, "t1", tableInfoT1.Name.O)
+// 		tableInfoT1, err = pStorage.getTableInfo(tableID1, 606)
+// 		require.Nil(t, err)
+// 		require.Equal(t, "t1_r", tableInfoT1.Name.O)
+// 	}
+
+// 	pStorage = loadPersistentStorageForTest(pStorage.db, newGcTs, newUpperBound)
+// 	{
+// 		require.Equal(t, newGcTs, pStorage.gcTs)
+// 		require.Equal(t, newUpperBound, pStorage.upperBound)
+// 		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
+// 		require.Equal(t, uint64(605), pStorage.tableTriggerDDLHistory[0])
+// 		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
+// 		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID1]))
+// 	}
+
+// 	// TODO: test obsolete data can be removed
+// }
+
+// func TestGetAllPhysicalTables(t *testing.T) {
+// 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+// 	err := os.RemoveAll(dbPath)
+// 	require.Nil(t, err)
+
+// 	schemaID := int64(300)
+// 	gcTs := uint64(600)
+// 	tableID1 := int64(100)
+// 	tableID2 := int64(200)
+
+// 	databaseInfo := make(map[int64]*model.DBInfo)
+// 	databaseInfo[schemaID] = &model.DBInfo{
+// 		ID:   schemaID,
+// 		Name: model.NewCIStr("test"),
+// 		Tables: []*model.TableInfo{
+// 			{
+// 				ID:   tableID1,
+// 				Name: model.NewCIStr("t1"),
+// 			},
+// 			{
+// 				ID:   tableID2,
+// 				Name: model.NewCIStr("t2"),
+// 			},
+// 		},
+// 	}
+// 	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
+
+// 	// create table t3
+// 	tableID3 := int64(500)
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionCreateTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID3,
+// 			SchemaVersion: 501,
+// 			TableInfo: &model.TableInfo{
+// 				ID:   tableID3,
+// 				Name: model.NewCIStr("t3"),
+// 			},
+// 			FinishedTs: 601,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+// 	}
+
+// 	// drop table t2
+// 	{
+// 		ddlEvent := PersistedDDLEvent{
+// 			Type:          byte(model.ActionDropTable),
+// 			SchemaID:      schemaID,
+// 			TableID:       tableID2,
+// 			SchemaVersion: 503,
+// 			TableInfo:     nil,
+// 			FinishedTs:    603,
+// 		}
+// 		pStorage.handleSortedDDLEvents(ddlEvent)
+// 	}
+
+// 	{
+// 		allPhysicalTables, err := pStorage.getAllPhysicalTables(600, nil)
+// 		require.Nil(t, err)
+// 		require.Equal(t, 2, len(allPhysicalTables))
+// 	}
+
+// 	{
+// 		allPhysicalTables, err := pStorage.getAllPhysicalTables(601, nil)
+// 		require.Nil(t, err)
+// 		require.Equal(t, 3, len(allPhysicalTables))
+// 	}
+
+// 	{
+// 		allPhysicalTables, err := pStorage.getAllPhysicalTables(603, nil)
+// 		require.Nil(t, err)
+// 		require.Equal(t, 2, len(allPhysicalTables))
+// 	}
+// }

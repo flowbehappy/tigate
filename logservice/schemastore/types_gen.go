@@ -36,28 +36,28 @@ func (z *PersistedDDLEvent) DecodeMsg(dc *msgp.Reader) (err error) {
 				err = msgp.WrapError(err, "Type")
 				return
 			}
-		case "schema_id":
-			z.SchemaID, err = dc.ReadInt64()
+		case "current_schema_id":
+			z.CurrentSchemaID, err = dc.ReadInt64()
 			if err != nil {
-				err = msgp.WrapError(err, "SchemaID")
+				err = msgp.WrapError(err, "CurrentSchemaID")
 				return
 			}
-		case "table_id":
-			z.TableID, err = dc.ReadInt64()
+		case "current_table_id":
+			z.CurrentTableID, err = dc.ReadInt64()
 			if err != nil {
-				err = msgp.WrapError(err, "TableID")
+				err = msgp.WrapError(err, "CurrentTableID")
 				return
 			}
-		case "schema_name":
-			z.SchemaName, err = dc.ReadString()
+		case "current_schema_name":
+			z.CurrentSchemaName, err = dc.ReadString()
 			if err != nil {
-				err = msgp.WrapError(err, "SchemaName")
+				err = msgp.WrapError(err, "CurrentSchemaName")
 				return
 			}
-		case "table_name":
-			z.TableName, err = dc.ReadString()
+		case "current_table_name":
+			z.CurrentTableName, err = dc.ReadString()
 			if err != nil {
-				err = msgp.WrapError(err, "TableName")
+				err = msgp.WrapError(err, "CurrentTableName")
 				return
 			}
 		case "prev_schema_id":
@@ -154,44 +154,44 @@ func (z *PersistedDDLEvent) EncodeMsg(en *msgp.Writer) (err error) {
 		err = msgp.WrapError(err, "Type")
 		return
 	}
-	// write "schema_id"
-	err = en.Append(0xa9, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x69, 0x64)
+	// write "current_schema_id"
+	err = en.Append(0xb1, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x69, 0x64)
 	if err != nil {
 		return
 	}
-	err = en.WriteInt64(z.SchemaID)
+	err = en.WriteInt64(z.CurrentSchemaID)
 	if err != nil {
-		err = msgp.WrapError(err, "SchemaID")
+		err = msgp.WrapError(err, "CurrentSchemaID")
 		return
 	}
-	// write "table_id"
-	err = en.Append(0xa8, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x5f, 0x69, 0x64)
-	if err != nil {
-		return
-	}
-	err = en.WriteInt64(z.TableID)
-	if err != nil {
-		err = msgp.WrapError(err, "TableID")
-		return
-	}
-	// write "schema_name"
-	err = en.Append(0xab, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x6e, 0x61, 0x6d, 0x65)
+	// write "current_table_id"
+	err = en.Append(0xb0, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x5f, 0x69, 0x64)
 	if err != nil {
 		return
 	}
-	err = en.WriteString(z.SchemaName)
+	err = en.WriteInt64(z.CurrentTableID)
 	if err != nil {
-		err = msgp.WrapError(err, "SchemaName")
+		err = msgp.WrapError(err, "CurrentTableID")
 		return
 	}
-	// write "table_name"
-	err = en.Append(0xaa, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x5f, 0x6e, 0x61, 0x6d, 0x65)
+	// write "current_schema_name"
+	err = en.Append(0xb3, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x6e, 0x61, 0x6d, 0x65)
 	if err != nil {
 		return
 	}
-	err = en.WriteString(z.TableName)
+	err = en.WriteString(z.CurrentSchemaName)
 	if err != nil {
-		err = msgp.WrapError(err, "TableName")
+		err = msgp.WrapError(err, "CurrentSchemaName")
+		return
+	}
+	// write "current_table_name"
+	err = en.Append(0xb2, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x5f, 0x6e, 0x61, 0x6d, 0x65)
+	if err != nil {
+		return
+	}
+	err = en.WriteString(z.CurrentTableName)
+	if err != nil {
+		err = msgp.WrapError(err, "CurrentTableName")
 		return
 	}
 	// write "prev_schema_id"
@@ -307,18 +307,18 @@ func (z *PersistedDDLEvent) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "type"
 	o = append(o, 0xa4, 0x74, 0x79, 0x70, 0x65)
 	o = msgp.AppendByte(o, z.Type)
-	// string "schema_id"
-	o = append(o, 0xa9, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x69, 0x64)
-	o = msgp.AppendInt64(o, z.SchemaID)
-	// string "table_id"
-	o = append(o, 0xa8, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x5f, 0x69, 0x64)
-	o = msgp.AppendInt64(o, z.TableID)
-	// string "schema_name"
-	o = append(o, 0xab, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x6e, 0x61, 0x6d, 0x65)
-	o = msgp.AppendString(o, z.SchemaName)
-	// string "table_name"
-	o = append(o, 0xaa, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x5f, 0x6e, 0x61, 0x6d, 0x65)
-	o = msgp.AppendString(o, z.TableName)
+	// string "current_schema_id"
+	o = append(o, 0xb1, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x69, 0x64)
+	o = msgp.AppendInt64(o, z.CurrentSchemaID)
+	// string "current_table_id"
+	o = append(o, 0xb0, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x5f, 0x69, 0x64)
+	o = msgp.AppendInt64(o, z.CurrentTableID)
+	// string "current_schema_name"
+	o = append(o, 0xb3, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x6e, 0x61, 0x6d, 0x65)
+	o = msgp.AppendString(o, z.CurrentSchemaName)
+	// string "current_table_name"
+	o = append(o, 0xb2, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x74, 0x5f, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x5f, 0x6e, 0x61, 0x6d, 0x65)
+	o = msgp.AppendString(o, z.CurrentTableName)
 	// string "prev_schema_id"
 	o = append(o, 0xae, 0x70, 0x72, 0x65, 0x76, 0x5f, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x5f, 0x69, 0x64)
 	o = msgp.AppendInt64(o, z.PrevSchemaID)
@@ -382,28 +382,28 @@ func (z *PersistedDDLEvent) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				err = msgp.WrapError(err, "Type")
 				return
 			}
-		case "schema_id":
-			z.SchemaID, bts, err = msgp.ReadInt64Bytes(bts)
+		case "current_schema_id":
+			z.CurrentSchemaID, bts, err = msgp.ReadInt64Bytes(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "SchemaID")
+				err = msgp.WrapError(err, "CurrentSchemaID")
 				return
 			}
-		case "table_id":
-			z.TableID, bts, err = msgp.ReadInt64Bytes(bts)
+		case "current_table_id":
+			z.CurrentTableID, bts, err = msgp.ReadInt64Bytes(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "TableID")
+				err = msgp.WrapError(err, "CurrentTableID")
 				return
 			}
-		case "schema_name":
-			z.SchemaName, bts, err = msgp.ReadStringBytes(bts)
+		case "current_schema_name":
+			z.CurrentSchemaName, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "SchemaName")
+				err = msgp.WrapError(err, "CurrentSchemaName")
 				return
 			}
-		case "table_name":
-			z.TableName, bts, err = msgp.ReadStringBytes(bts)
+		case "current_table_name":
+			z.CurrentTableName, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "TableName")
+				err = msgp.WrapError(err, "CurrentTableName")
 				return
 			}
 		case "prev_schema_id":
@@ -480,7 +480,7 @@ func (z *PersistedDDLEvent) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *PersistedDDLEvent) Msgsize() (s int) {
-	s = 3 + 3 + msgp.Int64Size + 5 + msgp.ByteSize + 10 + msgp.Int64Size + 9 + msgp.Int64Size + 12 + msgp.StringPrefixSize + len(z.SchemaName) + 11 + msgp.StringPrefixSize + len(z.TableName) + 15 + msgp.Int64Size + 14 + msgp.Int64Size + 17 + msgp.StringPrefixSize + len(z.PrevSchemaName) + 16 + msgp.StringPrefixSize + len(z.PrevTableName) + 6 + msgp.StringPrefixSize + len(z.Query) + 15 + msgp.Int64Size + 17 + msgp.BytesPrefixSize + len(z.TableInfoValue) + 12 + msgp.Uint64Size + 9 + msgp.StringPrefixSize + len(z.BDRRole) + 17 + msgp.Uint64Size
+	s = 3 + 3 + msgp.Int64Size + 5 + msgp.ByteSize + 18 + msgp.Int64Size + 17 + msgp.Int64Size + 20 + msgp.StringPrefixSize + len(z.CurrentSchemaName) + 19 + msgp.StringPrefixSize + len(z.CurrentTableName) + 15 + msgp.Int64Size + 14 + msgp.Int64Size + 17 + msgp.StringPrefixSize + len(z.PrevSchemaName) + 16 + msgp.StringPrefixSize + len(z.PrevTableName) + 6 + msgp.StringPrefixSize + len(z.Query) + 15 + msgp.Int64Size + 17 + msgp.BytesPrefixSize + len(z.TableInfoValue) + 12 + msgp.Uint64Size + 9 + msgp.StringPrefixSize + len(z.BDRRole) + 17 + msgp.Uint64Size
 	return
 }
 
