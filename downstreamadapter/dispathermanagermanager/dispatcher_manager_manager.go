@@ -33,19 +33,20 @@ import (
 
 // DispatcherManagerManager deal with the maintainer bootstrap message, to create or delete the event dispatcher manager
 type DispatcherManagerManager struct {
+	mc                 messaging.MessageCenter
 	dispatcherManagers map[model.ChangeFeedID]*dispatchermanager.EventDispatcherManager
 }
 
-func NewDispatcherManagerManager() *DispatcherManagerManager {
+func New() *DispatcherManagerManager {
 	m := &DispatcherManagerManager{
+		mc:                 appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		dispatcherManagers: make(map[model.ChangeFeedID]*dispatchermanager.EventDispatcherManager),
 	}
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
-		RegisterHandler(messaging.DispatcherManagerManagerTopic, m.RecvMaintainerRequest)
+	m.mc.RegisterHandler(messaging.DispatcherManagerManagerTopic, m.RecvMaintainerRequest)
 	return m
 }
 
-func (m *DispatcherManagerManager) RecvMaintainerRequest(ctx context.Context, msg *messaging.TargetMessage) error {
+func (m *DispatcherManagerManager) RecvMaintainerRequest(_ context.Context, msg *messaging.TargetMessage) error {
 	switch req := msg.Message[0].(type) {
 	case *heartbeatpb.MaintainerBootstrapRequest:
 		return m.handleAddDispatcherManager(msg.From, req)
@@ -55,6 +56,14 @@ func (m *DispatcherManagerManager) RecvMaintainerRequest(ctx context.Context, ms
 		log.Panic("unknown message type", zap.Any("message", msg.Message))
 	}
 	return nil
+}
+
+func newMaintainerManagerMessage(to node.ID, msg messaging.IOTypeT) *messaging.TargetMessage {
+	return messaging.NewSingleTargetMessage(
+		to,
+		messaging.MaintainerManagerTopic,
+		msg,
+	)
 }
 
 func (m *DispatcherManagerManager) handleAddDispatcherManager(from node.ID, maintainerBootstrapRequest *heartbeatpb.MaintainerBootstrapRequest) error {
@@ -80,12 +89,8 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from node.ID, main
 			Spans:        make([]*heartbeatpb.BootstrapTableSpan, 0),
 		}
 
-		err = appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(
-			messaging.NewSingleTargetMessage(
-				from,
-				messaging.MaintainerManagerTopic,
-				response,
-			))
+		message := newMaintainerManagerMessage(from, response)
+		err = m.mc.SendCommand(message)
 		if err != nil {
 			log.Error("failed to send maintainer bootstrap response", zap.Error(err))
 			return err
@@ -112,12 +117,9 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from node.ID, main
 			CheckpointTs:    tableEventDispatcher.GetCheckpointTs(),
 		})
 	})
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(
-		messaging.NewSingleTargetMessage(
-			from,
-			messaging.MaintainerManagerTopic,
-			response,
-		))
+
+	message := newMaintainerManagerMessage(from, response)
+	err := m.mc.SendCommand(message)
 	if err != nil {
 		log.Error("failed to send maintainer bootstrap response", zap.Error(err))
 		return err
@@ -141,13 +143,9 @@ func (m *DispatcherManagerManager) handleRemoveDispatcherManager(from node.ID, r
 		}
 		response.Success = closed
 	}
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(
-		messaging.NewSingleTargetMessage(
-			from,
-			messaging.MaintainerTopic,
-			response,
-		))
 
+	message := messaging.NewSingleTargetMessage(from, messaging.MaintainerTopic, response)
+	err := m.mc.SendCommand(message)
 	if err != nil {
 		log.Error("failed to send maintainer bootstrap response", zap.Error(err))
 		return err

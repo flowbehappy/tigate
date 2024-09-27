@@ -81,7 +81,7 @@ type EventCollector struct {
 	metricReceiveEventLagDuration                prometheus.Observer
 }
 
-func NewEventCollector(globalMemoryQuota int64, serverId node.ID) *EventCollector {
+func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventCollector {
 	eventCollector := EventCollector{
 		serverId:                                     serverId,
 		globalMemoryQuota:                            globalMemoryQuota,
@@ -113,8 +113,11 @@ func NewEventCollector(globalMemoryQuota int64, serverId node.ID) *EventCollecto
 			}
 		}
 	}()
-
-	eventCollector.updateMetrics(context.Background())
+	eventCollector.wg.Add(1)
+	go func() {
+		defer eventCollector.wg.Done()
+		eventCollector.updateMetrics(ctx)
+	}()
 	return &eventCollector
 }
 
@@ -167,7 +170,7 @@ func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
 	return nil
 }
 
-func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.TargetMessage) error {
+func (c *EventCollector) RecvEventsMessage(_ context.Context, msg *messaging.TargetMessage) error {
 	inflightDuration := time.Since(time.Unix(0, msg.CrateAt)).Milliseconds()
 	c.metricReceiveEventLagDuration.Observe(float64(inflightDuration))
 	for _, msg := range msg.Message {
@@ -189,35 +192,33 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 	return nil
 }
 
-func (c *EventCollector) updateMetrics(ctx context.Context) error {
+func (c *EventCollector) updateMetrics(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				minResolvedTs := uint64(0)
-				c.dispatcherMap.m.Range(func(key, value interface{}) bool {
-					d, ok := value.(*dispatcher.Dispatcher)
-					if !ok {
-						return true
-					}
-					if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
-						minResolvedTs = d.GetResolvedTs()
-					}
-
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			minResolvedTs := uint64(0)
+			c.dispatcherMap.m.Range(func(key, value interface{}) bool {
+				d, ok := value.(*dispatcher.Dispatcher)
+				if !ok {
 					return true
-				})
-				if minResolvedTs == 0 {
-					continue
 				}
-				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
-				metrics.EventCollectorResolvedTsLagGauge.Set(float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3)
+				if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
+					minResolvedTs = d.GetResolvedTs()
+				}
+
+				return true
+			})
+			if minResolvedTs == 0 {
+				continue
 			}
+			phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
+			metrics.EventCollectorResolvedTsLagGauge.Set(float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3)
 		}
-	}()
-	return nil
+	}
+	return
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"net/http"
 	_ "net/http/pprof"
 	"strconv"
@@ -30,7 +31,7 @@ const databaseCount = 1
 
 func initContext(serverId node.ID) {
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(context.Background(), serverId, 100, config.NewDefaultMessageCenterConfig()))
-	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, serverId)) // 100GB for demo
+	appcontext.SetService(appcontext.EventCollector, eventcollector.New(context.Background(), 100*1024*1024*1024, serverId)) // 100GB for demo
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(serverId))
 }
 

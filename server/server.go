@@ -82,8 +82,8 @@ type server struct {
 	subModules []common.SubModule
 }
 
-// NewServer returns a new Server instance
-func NewServer(conf *cdcConfig.ServerConfig, pdEndpoints []string) (node.Server, error) {
+// New returns a new Server instance
+func New(conf *cdcConfig.ServerConfig, pdEndpoints []string) (node.Server, error) {
 	// This is to make communication between nodes possible.
 	// In other words, the nodes have to trust each other.
 	if len(conf.Security.CertAllowedCN) != 0 {
@@ -115,20 +115,20 @@ func (c *server) initialize(ctx context.Context) error {
 		log.Error("server prepare failed", zap.Any("server", c.info), zap.Error(err))
 		return errors.Trace(err)
 	}
-	conf := cdcConfig.GetGlobalServerConfig()
 
 	messageCenter := messaging.NewMessageCenter(ctx, c.info.ID, c.info.Epoch, config.NewDefaultMessageCenterConfig())
 	appcontext.SetService(appcontext.MessageCenter, messageCenter)
 
-	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, c.info.ID)) // 100GB for demo
+	appcontext.SetService(appcontext.EventCollector, eventcollector.New(ctx, 100*1024*1024*1024, c.info.ID)) // 100GB for demo
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(c.info.ID))
-	c.dispatcherManagerManager = dispatchermanagermanager.NewDispatcherManagerManager()
+	c.dispatcherManagerManager = dispatchermanagermanager.New()
 
 	nodeManager := watcher.NewNodeManager(c.session, c.EtcdClient)
 	nodeManager.RegisterNodeChangeHandler(
 		appcontext.MessageCenter,
 		appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).OnNodeChanges)
 
+	conf := cdcConfig.GetGlobalServerConfig()
 	schemaStore := schemastore.New(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage)
 	eventStore := eventstore.New(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage)
 	eventService := eventservice.New(eventStore, schemaStore)
