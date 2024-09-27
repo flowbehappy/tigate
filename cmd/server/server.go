@@ -104,7 +104,7 @@ func (o *options) run(cmd *cobra.Command) error {
 
 	util.LogHTTPProxies()
 
-	svr, err := server.NewServer(o.serverConfig, o.pdEndpoints)
+	svr, err := server.New(o.serverConfig, o.pdEndpoints)
 	if err != nil {
 		log.Error("create cdc server failed", zap.Error(err))
 		return errors.Trace(err)
