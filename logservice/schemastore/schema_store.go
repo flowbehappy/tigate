@@ -28,6 +28,7 @@ type SchemaStore interface {
 
 	UnregisterTable(tableID int64) error
 
+	// return table info with largest version <= ts
 	GetTableInfo(tableID int64, ts uint64) (*common.TableInfo, error)
 
 	// FetchTableDDLEvents returns the next ddl events which finishedTs are within the range (start, end]
@@ -136,10 +137,7 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 				zap.Uint64("resolvedTs", pendingTs),
 				zap.Int("resolvedEventsLen", len(resolvedEvents)))
 
-			validEvents := make([]PersistedDDLEvent, 0, len(resolvedEvents))
-
 			for _, event := range resolvedEvents {
-				// TODO: build persisted ddl event after filter
 				if event.Job.BinlogInfo.SchemaVersion <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTs {
 					log.Info("skip already applied ddl job",
 						zap.String("job", event.Job.Query),
@@ -149,14 +147,16 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 						zap.Uint64("finishedDDLTS", s.finishedDDLTs))
 					continue
 				}
-				validEvents = append(validEvents, buildPersistedDDLEventFromJob(event.Job))
 				// need to update the following two members for every event to filter out later duplicate events
 				s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
 				s.finishedDDLTs = event.Job.BinlogInfo.FinishedTS
+
+				s.dataStorage.handleDDLJob(event.Job)
 			}
-			s.dataStorage.handleSortedDDLEvents(validEvents...)
 		}
-		// TODO: resolved ts are updated after ddl events written to disk, do we need to optimize it?
+		// When register a new table, it will load all ddl jobs from disk for the table,
+		// so we can only update resolved ts after all ddl jobs are written to disk
+		// Can we optimize it to update resolved ts more eagerly?
 		s.resolvedTs.Store(pendingTs)
 		currentPhyTs := oracle.GetPhysical(s.pdClock.CurrentTime())
 		resolvedPhyTs := oracle.ExtractPhysical(pendingTs)

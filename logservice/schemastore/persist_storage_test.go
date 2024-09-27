@@ -79,17 +79,12 @@ func newPersistentStorageForTest(dbPath string, gcTs uint64, initialDBInfos map[
 	return loadPersistentStorageForTest(db, gcTs, upperBound)
 }
 
-func mockWriteKVSnapOnDisk(db *pebble.DB, snapTs uint64, dbInfos map[int64]*model.DBInfo) map[int64]*BasicTableInfo {
+func mockWriteKVSnapOnDisk(db *pebble.DB, snapTs uint64, dbInfos map[int64]*model.DBInfo) {
 	batch := db.NewBatch()
 	defer batch.Close()
-	tablesInKVSnap := make(map[int64]*BasicTableInfo)
 	for _, dbInfo := range dbInfos {
 		writeSchemaInfoToBatch(batch, snapTs, dbInfo)
 		for _, tableInfo := range dbInfo.Tables {
-			tablesInKVSnap[tableInfo.ID] = &BasicTableInfo{
-				SchemaID: dbInfo.ID,
-				Name:     tableInfo.Name.O,
-			}
 			tableInfoValue, err := json.Marshal(tableInfo)
 			if err != nil {
 				log.Panic("marshal table info fail", zap.Error(err))
@@ -101,7 +96,6 @@ func mockWriteKVSnapOnDisk(db *pebble.DB, snapTs uint64, dbInfos map[int64]*mode
 		log.Panic("commit batch fail", zap.Error(err))
 	}
 	writeGcTs(db, snapTs)
-	return tablesInKVSnap
 }
 
 func TestReadWriteMeta(t *testing.T) {
@@ -195,18 +189,20 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 	// rename table
 	renameVersion := uint64(1500)
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionRenameTable),
-			SchemaID:      schemaID,
-			TableID:       tableID,
-			SchemaVersion: 3000,
-			TableInfo: &model.TableInfo{
-				ID:   tableID,
-				Name: model.NewCIStr("t2"),
+		job := &model.Job{
+			Type:     model.ActionRenameTable,
+			SchemaID: schemaID,
+			TableID:  tableID,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 3000,
+				TableInfo: &model.TableInfo{
+					ID:   tableID,
+					Name: model.NewCIStr("t2"),
+				},
+				FinishedTS: renameVersion,
 			},
-			FinishedTs: renameVersion,
 		}
-		err = pStorage.handleSortedDDLEvents(ddlEvent)
+		err = pStorage.handleDDLJob(job)
 		require.Nil(t, err)
 	}
 
@@ -214,18 +210,20 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 	tableID2 := tableID + 1
 	createVersion := renameVersion + 200
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID2,
-			SchemaVersion: 3500,
-			TableInfo: &model.TableInfo{
-				ID:   tableID2,
-				Name: model.NewCIStr("t3"),
+		job := &model.Job{
+			Type:     model.ActionCreateTable,
+			SchemaID: schemaID,
+			TableID:  tableID2,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 3500,
+				TableInfo: &model.TableInfo{
+					ID:   tableID2,
+					Name: model.NewCIStr("t3"),
+				},
+				FinishedTS: createVersion,
 			},
-			FinishedTs: createVersion,
 		}
-		err = pStorage.handleSortedDDLEvents(ddlEvent)
+		err = pStorage.handleDDLJob(job)
 		require.Nil(t, err)
 	}
 
@@ -249,10 +247,10 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 
 		renameVersion2 := uint64(3000)
 		store.applyDDL(PersistedDDLEvent{
-			Type:          byte(model.ActionRenameTable),
-			SchemaID:      schemaID,
-			TableID:       tableID,
-			SchemaVersion: 3000,
+			Type:            byte(model.ActionRenameTable),
+			CurrentSchemaID: schemaID,
+			CurrentTableID:  tableID,
+			SchemaVersion:   3000,
 			TableInfo: &model.TableInfo{
 				ID:   tableID,
 				Name: model.NewCIStr("t3"),
@@ -273,6 +271,44 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		require.Equal(t, "t3", tableInfo.Name.O)
 		require.Equal(t, tableID2, tableInfo.ID)
 	}
+
+	// truncate table
+	tableID3 := tableID2 + 1
+	truncateVersion := createVersion + 200
+	{
+		job := &model.Job{
+			Type:     model.ActionTruncateTable,
+			SchemaID: schemaID,
+			TableID:  tableID2,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 3600,
+				TableInfo: &model.TableInfo{
+					ID:   tableID3,
+					Name: model.NewCIStr("t4"),
+				},
+				FinishedTS: truncateVersion,
+			},
+		}
+		err = pStorage.handleDDLJob(job)
+		require.Nil(t, err)
+	}
+
+	{
+		store := newEmptyVersionedTableInfoStore(tableID2)
+		pStorage.buildVersionedTableInfoStore(store)
+		require.Equal(t, 1, len(store.infos))
+		require.Equal(t, truncateVersion, store.deleteVersion)
+	}
+
+	{
+		store := newEmptyVersionedTableInfoStore(tableID3)
+		pStorage.buildVersionedTableInfoStore(store)
+		require.Equal(t, 1, len(store.infos))
+		tableInfo, err := store.getTableInfo(truncateVersion)
+		require.Nil(t, err)
+		require.Equal(t, "t4", tableInfo.Name.O)
+		require.Equal(t, tableID3, tableInfo.ID)
+	}
 }
 
 func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
@@ -284,18 +320,20 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	// create db
 	schemaID := int64(300)
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateSchema),
-			SchemaID:      schemaID,
-			SchemaVersion: 100,
-			DBInfo: &model.DBInfo{
-				ID:   schemaID,
-				Name: model.NewCIStr("test"),
+		job := &model.Job{
+			Type:     model.ActionCreateSchema,
+			SchemaID: schemaID,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 100,
+				DBInfo: &model.DBInfo{
+					ID:   schemaID,
+					Name: model.NewCIStr("test"),
+				},
+				TableInfo:  nil,
+				FinishedTS: 200,
 			},
-			TableInfo:  nil,
-			FinishedTs: 200,
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(job)
 
 		require.Equal(t, 1, len(pStorage.databaseMap))
 		require.Equal(t, "test", pStorage.databaseMap[schemaID].Name)
@@ -306,17 +344,19 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	// create a table
 	tableID := int64(100)
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID,
-			SchemaVersion: 101,
-			TableInfo: &model.TableInfo{
-				Name: model.NewCIStr("t1"),
+		job := &model.Job{
+			Type:     model.ActionCreateTable,
+			SchemaID: schemaID,
+			TableID:  tableID,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 101,
+				TableInfo: &model.TableInfo{
+					Name: model.NewCIStr("t1"),
+				},
+				FinishedTS: 201,
 			},
-			FinishedTs: 201,
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(job)
 
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
 		require.Equal(t, 1, len(pStorage.tableMap))
@@ -329,17 +369,20 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	// create another table
 	tableID2 := int64(105)
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID2,
-			SchemaVersion: 103,
-			TableInfo: &model.TableInfo{
-				Name: model.NewCIStr("t2"),
+		job := &model.Job{
+			Type:     model.ActionCreateTable,
+			SchemaID: schemaID,
+			TableID:  tableID2,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 103,
+				TableInfo: &model.TableInfo{
+					Name: model.NewCIStr("t2"),
+				},
+
+				FinishedTS: 203,
 			},
-			FinishedTs: 203,
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(job)
 
 		require.Equal(t, 2, len(pStorage.databaseMap[schemaID].Tables))
 		require.Equal(t, 2, len(pStorage.tableMap))
@@ -352,15 +395,17 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 
 	// drop a table
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionDropTable),
-			SchemaID:      schemaID,
-			TableID:       tableID2,
-			SchemaVersion: 105,
-			TableInfo:     nil,
-			FinishedTs:    205,
+		job := &model.Job{
+			Type:     model.ActionDropTable,
+			SchemaID: schemaID,
+			TableID:  tableID2,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 105,
+				TableInfo:     nil,
+				FinishedTS:    205,
+			},
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(job)
 
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
 		require.Equal(t, 1, len(pStorage.tableMap))
@@ -375,17 +420,19 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	// truncate a table
 	tableID3 := int64(112)
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionTruncateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID,
-			SchemaVersion: 107,
-			TableInfo: &model.TableInfo{
-				ID: tableID3,
+		job := &model.Job{
+			Type:     model.ActionTruncateTable,
+			SchemaID: schemaID,
+			TableID:  tableID,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 107,
+				TableInfo: &model.TableInfo{
+					ID: tableID3,
+				},
+				FinishedTS: 207,
 			},
-			FinishedTs: 207,
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(job)
 
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
 		require.Equal(t, 1, len(pStorage.tableMap))
@@ -399,19 +446,21 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 
 	// drop db
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionDropSchema),
-			SchemaID:      schemaID,
-			SchemaVersion: 200,
-			DBInfo: &model.DBInfo{
-				ID:   schemaID,
-				Name: model.NewCIStr("test"),
+		job := &model.Job{
+			Type:     model.ActionDropSchema,
+			SchemaID: schemaID,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 200,
+				DBInfo: &model.DBInfo{
+					ID:   schemaID,
+					Name: model.NewCIStr("test"),
+				},
+				TableInfo:  nil,
+				FinishedTS: 300,
 			},
-			TableInfo:  nil,
-			FinishedTs: 300,
 		}
 
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(job)
 
 		require.Equal(t, 0, len(pStorage.databaseMap))
 		require.Equal(t, 0, len(pStorage.tableMap))
@@ -448,18 +497,20 @@ func TestHandleRenameTable(t *testing.T) {
 	// create a table
 	tableID := int64(100)
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateTable),
-			SchemaID:      schemaID1,
-			TableID:       tableID,
-			SchemaVersion: 501,
-			TableInfo: &model.TableInfo{
-				ID:   tableID,
-				Name: model.NewCIStr("t1"),
+		job := &model.Job{
+			Type:     model.ActionCreateTable,
+			SchemaID: schemaID1,
+			TableID:  tableID,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 501,
+				TableInfo: &model.TableInfo{
+					ID:   tableID,
+					Name: model.NewCIStr("t1"),
+				},
+				FinishedTS: 601,
 			},
-			FinishedTs: 601,
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(job)
 		require.Equal(t, 2, len(pStorage.databaseMap))
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID1].Tables))
 		require.Equal(t, 0, len(pStorage.databaseMap[schemaID2].Tables))
@@ -469,18 +520,20 @@ func TestHandleRenameTable(t *testing.T) {
 
 	// rename table to a different db
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionRenameTable),
-			SchemaID:      schemaID2,
-			TableID:       tableID,
-			SchemaVersion: 505,
-			TableInfo: &model.TableInfo{
-				ID:   tableID,
-				Name: model.NewCIStr("t2"),
+		job := &model.Job{
+			Type:     model.ActionRenameTable,
+			SchemaID: schemaID2,
+			TableID:  tableID,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 505,
+				TableInfo: &model.TableInfo{
+					ID:   tableID,
+					Name: model.NewCIStr("t2"),
+				},
+				FinishedTS: 605,
 			},
-			FinishedTs: 605,
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(job)
 		require.Equal(t, 2, len(pStorage.databaseMap))
 		require.Equal(t, 0, len(pStorage.databaseMap[schemaID1].Tables))
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID2].Tables))
@@ -579,117 +632,131 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 	schemaID := int64(300)
 	schemaName := "test"
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateSchema),
-			SchemaID:      schemaID,
-			SchemaVersion: 100,
-			DBInfo: &model.DBInfo{
-				ID:   schemaID,
-				Name: model.NewCIStr(schemaName),
+		ddlEvent := &model.Job{
+			Type:     model.ActionCreateSchema,
+			SchemaID: schemaID,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 100,
+				DBInfo: &model.DBInfo{
+					ID:   schemaID,
+					Name: model.NewCIStr(schemaName),
+				},
+				TableInfo:  nil,
+				FinishedTS: 200,
 			},
-			TableInfo:  nil,
-			FinishedTs: 200,
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(ddlEvent)
 	}
 
 	// create a table
 	tableID := int64(100)
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID,
-			SchemaVersion: 501,
-			TableInfo: &model.TableInfo{
-				ID:   tableID,
-				Name: model.NewCIStr("t1"),
+		ddlEvent := &model.Job{
+			Type:     model.ActionCreateTable,
+			SchemaID: schemaID,
+			TableID:  tableID,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 501,
+				TableInfo: &model.TableInfo{
+					ID:   tableID,
+					Name: model.NewCIStr("t1"),
+				},
+				FinishedTS: 601,
 			},
-			FinishedTs: 601,
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(ddlEvent)
 	}
 
 	// rename table
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionRenameTable),
-			SchemaID:      schemaID,
-			TableID:       tableID,
-			SchemaVersion: 505,
-			TableInfo: &model.TableInfo{
-				ID:   tableID,
-				Name: model.NewCIStr("t2"),
+		ddlEvent := &model.Job{
+			Type:     model.ActionRenameTable,
+			SchemaID: schemaID,
+			TableID:  tableID,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 505,
+				TableInfo: &model.TableInfo{
+					ID:   tableID,
+					Name: model.NewCIStr("t2"),
+				},
+				FinishedTS: 605,
 			},
-			FinishedTs: 605,
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(ddlEvent)
 	}
 
 	// truncate table
 	tableID2 := int64(105)
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionTruncateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID,
-			SchemaVersion: 507,
-			TableInfo: &model.TableInfo{
-				ID:   tableID2,
-				Name: model.NewCIStr("t2"),
+		ddlEvent := &model.Job{
+			Type:     model.ActionTruncateTable,
+			SchemaID: schemaID,
+			TableID:  tableID,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 507,
+				TableInfo: &model.TableInfo{
+					ID:   tableID2,
+					Name: model.NewCIStr("t2"),
+				},
+				FinishedTS: 607,
 			},
-			FinishedTs: 607,
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(ddlEvent)
 	}
 
 	// create another table
 	tableID3 := int64(200)
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID3,
-			SchemaVersion: 509,
-			TableInfo: &model.TableInfo{
-				ID:   tableID,
-				Name: model.NewCIStr("t3"),
+		ddlEvent := &model.Job{
+			Type:     model.ActionCreateTable,
+			SchemaID: schemaID,
+			TableID:  tableID3,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 509,
+				TableInfo: &model.TableInfo{
+					ID:   tableID,
+					Name: model.NewCIStr("t3"),
+				},
+				FinishedTS: 609,
 			},
-			FinishedTs: 609,
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(ddlEvent)
 	}
 
 	// drop newly created table
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionDropTable),
-			SchemaID:      schemaID,
-			TableID:       tableID3,
-			SchemaVersion: 511,
-			TableInfo: &model.TableInfo{
-				ID:   tableID,
-				Name: model.NewCIStr("t3"),
+		ddlEvent := &model.Job{
+			Type:     model.ActionDropTable,
+			SchemaID: schemaID,
+			TableID:  tableID3,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 511,
+				TableInfo: &model.TableInfo{
+					ID:   tableID,
+					Name: model.NewCIStr("t3"),
+				},
+				FinishedTS: 611,
 			},
-			FinishedTs: 611,
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(ddlEvent)
 	}
 
 	// drop db
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionDropSchema),
-			SchemaID:      schemaID,
-			SchemaVersion: 600,
-			DBInfo: &model.DBInfo{
-				ID:   schemaID,
-				Name: model.NewCIStr(schemaName),
+		ddlEvent := &model.Job{
+			Type:     model.ActionDropSchema,
+			SchemaID: schemaID,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 600,
+				DBInfo: &model.DBInfo{
+					ID:   schemaID,
+					Name: model.NewCIStr(schemaName),
+				},
+				TableInfo:  nil,
+				FinishedTS: 700,
 			},
-			TableInfo:  nil,
-			FinishedTs: 700,
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(ddlEvent)
 	}
 
 	// fetch table ddl events
@@ -784,7 +851,7 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 	// TODO: test filter
 }
 
-func TestGC(t *testing.T) {
+func TestGCPersistStorage(t *testing.T) {
 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
 	err := os.RemoveAll(dbPath)
 	require.Nil(t, err)
@@ -814,47 +881,53 @@ func TestGC(t *testing.T) {
 	// create table t3
 	tableID3 := int64(500)
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID3,
-			SchemaVersion: 501,
-			TableInfo: &model.TableInfo{
-				ID:   tableID3,
-				Name: model.NewCIStr("t3"),
+		ddlEvent := &model.Job{
+			Type:     model.ActionCreateTable,
+			SchemaID: schemaID,
+			TableID:  tableID3,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 501,
+				TableInfo: &model.TableInfo{
+					ID:   tableID3,
+					Name: model.NewCIStr("t3"),
+				},
+				FinishedTS: 602,
 			},
-			FinishedTs: 601,
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(ddlEvent)
 	}
 
 	// drop table t2
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionDropTable),
-			SchemaID:      schemaID,
-			TableID:       tableID2,
-			SchemaVersion: 503,
-			TableInfo:     nil,
-			FinishedTs:    603,
+		ddlEvent := &model.Job{
+			Type:     model.ActionDropTable,
+			SchemaID: schemaID,
+			TableID:  tableID2,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 503,
+				TableInfo:     nil,
+				FinishedTS:    603,
+			},
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(ddlEvent)
 	}
 
 	// rename table t1
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionRenameTable),
-			SchemaID:      schemaID,
-			TableID:       tableID1,
-			SchemaVersion: 505,
-			TableInfo: &model.TableInfo{
-				ID:   tableID1,
-				Name: model.NewCIStr("t1_r"),
+		ddlEvent := &model.Job{
+			Type:     model.ActionRenameTable,
+			SchemaID: schemaID,
+			TableID:  tableID1,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 505,
+				TableInfo: &model.TableInfo{
+					ID:   tableID1,
+					Name: model.NewCIStr("t1_r"),
+				},
+				FinishedTS: 605,
 			},
-			FinishedTs: 605,
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(ddlEvent)
 	}
 
 	// write upper bound
@@ -867,10 +940,36 @@ func TestGC(t *testing.T) {
 		writeUpperBoundMeta(pStorage.db, newUpperBound)
 	}
 
-	pStorage.registerTable(tableID1, gcTs+1)
-
 	// mock gc
-	newGcTs := uint64(603)
+	newGcTs1 := uint64(601)
+	{
+		databaseInfo := make(map[int64]*model.DBInfo)
+		databaseInfo[schemaID] = &model.DBInfo{
+			ID:   schemaID,
+			Name: model.NewCIStr("test"),
+			Tables: []*model.TableInfo{
+				{
+					ID:   tableID1,
+					Name: model.NewCIStr("t1"),
+				},
+				{
+					ID:   tableID2,
+					Name: model.NewCIStr("t2"),
+				},
+			},
+		}
+		mockWriteKVSnapOnDisk(pStorage.db, newGcTs1, databaseInfo)
+
+		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
+		pStorage.cleanObseleteDataInMemory(newGcTs1)
+		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
+	}
+
+	// mock gc again with a register table
+	pStorage.registerTable(tableID1, newGcTs1+1)
+	newGcTs2 := uint64(603)
 	{
 		databaseInfo := make(map[int64]*model.DBInfo)
 		databaseInfo[schemaID] = &model.DBInfo{
@@ -887,16 +986,16 @@ func TestGC(t *testing.T) {
 				},
 			},
 		}
-		tablesInKVSnap := mockWriteKVSnapOnDisk(pStorage.db, newGcTs, databaseInfo)
+		mockWriteKVSnapOnDisk(pStorage.db, newGcTs2, databaseInfo)
 
 		require.Equal(t, 3, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
-		pStorage.cleanObseleteDataInMemory(newGcTs, tablesInKVSnap)
+		pStorage.cleanObseleteDataInMemory(newGcTs2)
 		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(605), pStorage.tableTriggerDDLHistory[0])
 		require.Equal(t, 1, len(pStorage.tablesDDLHistory))
 		require.Equal(t, 1, len(pStorage.tablesDDLHistory[tableID1]))
-		tableInfoT1, err := pStorage.getTableInfo(tableID1, newGcTs)
+		tableInfoT1, err := pStorage.getTableInfo(tableID1, newGcTs2)
 		require.Nil(t, err)
 		require.Equal(t, "t1", tableInfoT1.Name.O)
 		tableInfoT1, err = pStorage.getTableInfo(tableID1, 606)
@@ -904,9 +1003,9 @@ func TestGC(t *testing.T) {
 		require.Equal(t, "t1_r", tableInfoT1.Name.O)
 	}
 
-	pStorage = loadPersistentStorageForTest(pStorage.db, newGcTs, newUpperBound)
+	pStorage = loadPersistentStorageForTest(pStorage.db, newGcTs2, newUpperBound)
 	{
-		require.Equal(t, newGcTs, pStorage.gcTs)
+		require.Equal(t, newGcTs2, pStorage.gcTs)
 		require.Equal(t, newUpperBound, pStorage.upperBound)
 		require.Equal(t, 1, len(pStorage.tableTriggerDDLHistory))
 		require.Equal(t, uint64(605), pStorage.tableTriggerDDLHistory[0])
@@ -947,31 +1046,36 @@ func TestGetAllPhysicalTables(t *testing.T) {
 	// create table t3
 	tableID3 := int64(500)
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionCreateTable),
-			SchemaID:      schemaID,
-			TableID:       tableID3,
-			SchemaVersion: 501,
-			TableInfo: &model.TableInfo{
-				ID:   tableID3,
-				Name: model.NewCIStr("t3"),
+		job := &model.Job{
+			Type:     model.ActionCreateTable,
+			SchemaID: schemaID,
+			TableID:  tableID3,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 501,
+				TableInfo: &model.TableInfo{
+					ID:   tableID3,
+					Name: model.NewCIStr("t3"),
+				},
+
+				FinishedTS: 601,
 			},
-			FinishedTs: 601,
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(job)
 	}
 
 	// drop table t2
 	{
-		ddlEvent := PersistedDDLEvent{
-			Type:          byte(model.ActionDropTable),
-			SchemaID:      schemaID,
-			TableID:       tableID2,
-			SchemaVersion: 503,
-			TableInfo:     nil,
-			FinishedTs:    603,
+		job := &model.Job{
+			Type:     model.ActionDropTable,
+			SchemaID: schemaID,
+			TableID:  tableID2,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 503,
+				TableInfo:     nil,
+				FinishedTS:    603,
+			},
 		}
-		pStorage.handleSortedDDLEvents(ddlEvent)
+		pStorage.handleDDLJob(job)
 	}
 
 	{
