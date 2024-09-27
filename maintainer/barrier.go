@@ -92,20 +92,16 @@ func (b *Barrier) handleNoStateHeartbeat(dispatcherID common.DispatcherID, check
 	}
 	// no block event send ,but reached the block point
 	if checkpointTs == event.commitTs {
-		event.advancedDispatchers[dispatcherID] = true
+		action := event.dispatcherReachedBlockTs(dispatcherID)
 		// all dispatcher reported heartbeat, select one to write
-		if !event.selected && event.allDispatcherReported() {
+		if action != nil {
 			dispatcherStatus := &heartbeatpb.DispatcherStatus{
 				InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
 					InfluenceType: heartbeatpb.InfluenceType_Normal,
-					DispatcherIDs: []*heartbeatpb.DispatcherID{dispatcherID.ToPB()},
+					DispatcherIDs: []*heartbeatpb.DispatcherID{event.writerDispatcher.ToPB()},
 				},
-				Action: &heartbeatpb.DispatcherAction{
-					Action:   heartbeatpb.Action_Write,
-					CommitTs: event.commitTs,
-				}}
-			event.writerDispatcher = dispatcherID
-			event.selected = true
+				Action: action,
+			}
 			return dispatcherStatus
 		}
 	}

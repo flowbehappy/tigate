@@ -174,7 +174,7 @@ func (b *BarrierEvent) dispatcherReachedBlockTs(dispatcherID common.DispatcherID
 		return nil
 	}
 	b.advancedDispatchers[dispatcherID] = true
-	// all dispatcher reported heartbeat, select one to write
+	// all dispatcher reported heartbeat, select the last one to write
 	if b.allDispatcherReported() {
 		b.writerDispatcher = dispatcherID
 		b.selected = true
