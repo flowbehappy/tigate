@@ -121,7 +121,7 @@ func (c *server) initialize(ctx context.Context) error {
 
 	appcontext.SetService(appcontext.EventCollector, eventcollector.New(ctx, 100*1024*1024*1024, c.info.ID)) // 100GB for demo
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(c.info.ID))
-	c.dispatcherManagerManager = dispatchermanagermanager.NewDispatcherManagerManager()
+	c.dispatcherManagerManager = dispatchermanagermanager.New()
 
 	nodeManager := watcher.NewNodeManager(c.session, c.EtcdClient)
 	nodeManager.RegisterNodeChangeHandler(

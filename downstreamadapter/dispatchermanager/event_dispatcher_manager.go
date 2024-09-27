@@ -122,10 +122,17 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 	// TODO: 这些后续需要等有第一个 table 来的时候再初始化, 对于纯空的 event dispatcher manager 不要直接创建为好
 	manager.heartBeatTask = newHeartBeatTask(manager)
 
-	manager.InitSink()
+	err = manager.InitSink()
+	if err != nil {
+		log.Error("init sink failed", zap.Error(err))
+		return nil
+	}
 
 	manager.wg.Add(1)
-	go manager.CollectHeartbeatInfoWhenStatesChanged(ctx)
+	go func() {
+		defer manager.wg.Done()
+		manager.CollectHeartbeatInfoWhenStatesChanged(ctx)
+	}()
 	return manager
 }
 
@@ -236,8 +243,6 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 // Considering collect the heartbeat info is a time-consuming operation(we need to scan all the dispatchers),
 // We will not collect the heartbeat info as soon as we receive it, but will batch it appropriately.
 func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx context.Context) {
-	defer e.wg.Done()
-
 	for {
 		statusMessage := make([]*heartbeatpb.TableSpanStatus, 0)
 		select {

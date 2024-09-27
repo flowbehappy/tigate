@@ -121,14 +121,15 @@ func (m *Manager) Name() string {
 }
 
 func (m *Manager) Run(ctx context.Context) error {
-	tick := time.NewTicker(time.Millisecond * 500)
+	ticker := time.NewTicker(time.Millisecond * 500)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case msg := <-m.msgCh:
 			m.handleMessage(msg)
-		case <-tick.C:
+		case <-ticker.C:
 			//1.  try to send heartbeat to coordinator
 			m.sendHeartbeat()
 
@@ -146,12 +147,16 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 }
 
-func (m *Manager) sendMessages(msg *heartbeatpb.MaintainerHeartbeat) {
-	target := messaging.NewSingleTargetMessage(
+func (m *Manager) newCoordinatorTopicMessage(msg messaging.IOTypeT) *messaging.TargetMessage {
+	return messaging.NewSingleTargetMessage(
 		m.coordinatorID,
 		messaging.CoordinatorTopic,
 		msg,
 	)
+}
+
+func (m *Manager) sendMessages(msg *heartbeatpb.MaintainerHeartbeat) {
+	target := m.newCoordinatorTopicMessage(msg)
 	err := m.mc.SendCommand(target)
 	if err != nil {
 		log.Warn("send command failed", zap.Error(err))
@@ -175,18 +180,15 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 
 	response := &heartbeatpb.CoordinatorBootstrapResponse{}
 	m.maintainers.Range(func(key, value interface{}) bool {
-		m := value.(*Maintainer)
-		response.Statuses = append(response.Statuses, m.GetMaintainerStatus())
-		m.statusChanged.Store(false)
-		m.lastReportTime = time.Now()
+		maintainer := value.(*Maintainer)
+		response.Statuses = append(response.Statuses, maintainer.GetMaintainerStatus())
+		maintainer.statusChanged.Store(false)
+		maintainer.lastReportTime = time.Now()
 		return true
 	})
 
-	err := m.mc.SendCommand(messaging.NewSingleTargetMessage(
-		m.coordinatorID,
-		messaging.CoordinatorTopic,
-		response,
-	))
+	msg = m.newCoordinatorTopicMessage(response)
+	err := m.mc.SendCommand(msg)
 	if err != nil {
 		log.Warn("send command failed", zap.Error(err))
 	}

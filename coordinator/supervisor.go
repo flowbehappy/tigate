@@ -183,7 +183,7 @@ func (s *Supervisor) UpdateCaptureStatus(from node.ID, statuses []*heartbeatpb.M
 			zap.Any("server", c.capture.ID),
 			zap.String("captureAddr", c.capture.AdvertiseAddr))
 	}
-	// scheduler is not initialized, is still collecting the remote server stauts
+	// scheduler is not initialized, is still collecting the remote server status
 	// cache the last one
 	if !s.initialized {
 		s.initStatus[from] = statuses
