@@ -172,7 +172,7 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 	log.Info("schema store initialize from kv storage begin",
 		zap.Uint64("snapTs", gcTs))
 
-	if p.databaseMap, p.tableMap, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs, false); err != nil {
+	if p.databaseMap, p.tableMap, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs, true); err != nil {
 		// TODO: retry
 		log.Fatal("fail to initialize from kv snapshot")
 	}
@@ -472,7 +472,7 @@ func (p *persistentStorage) doGc(gcTs uint64) error {
 	p.mu.Unlock()
 
 	start := time.Now()
-	_, tablesInKVSnap, err := writeSchemaSnapshotAndMeta(p.db, p.kvStorage, gcTs, true)
+	_, _, err := writeSchemaSnapshotAndMeta(p.db, p.kvStorage, gcTs, false)
 	if err != nil {
 		log.Warn("fail to write kv snapshot during gc",
 			zap.Uint64("gcTs", gcTs))
@@ -484,7 +484,7 @@ func (p *persistentStorage) doGc(gcTs uint64) error {
 		zap.Any("duration", time.Since(start).Seconds()))
 
 	// clean data in memeory before clean data on disk
-	p.cleanObseleteDataInMemory(gcTs, tablesInKVSnap)
+	p.cleanObseleteDataInMemory(gcTs)
 	log.Info("persist storage: gc finish clean in memory data",
 		zap.Uint64("gcTs", gcTs),
 		zap.Any("duration", time.Since(start).Seconds()))
@@ -497,26 +497,25 @@ func (p *persistentStorage) doGc(gcTs uint64) error {
 	return nil
 }
 
-func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64, tablesInKVSnap map[int64]*BasicTableInfo) {
+func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.gcTs = gcTs
 
 	// clean tablesDDLHistory
+	tablesToRemove := make(map[int64]interface{})
 	for tableID := range p.tablesDDLHistory {
-		if _, ok := tablesInKVSnap[tableID]; !ok {
-			delete(p.tablesDDLHistory, tableID)
-			continue
-		}
-
 		i := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
 			return p.tablesDDLHistory[tableID][i] > gcTs
 		})
 		if i == len(p.tablesDDLHistory[tableID]) {
-			delete(p.tablesDDLHistory, tableID)
+			tablesToRemove[tableID] = nil
 			continue
 		}
 		p.tablesDDLHistory[tableID] = p.tablesDDLHistory[tableID][i:]
+	}
+	for tableID := range tablesToRemove {
+		delete(p.tablesDDLHistory, tableID)
 	}
 
 	// clean tableTriggerDDLHistory
@@ -526,12 +525,16 @@ func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64, tablesInKVSna
 	p.tableTriggerDDLHistory = p.tableTriggerDDLHistory[i:]
 
 	// clean tableInfoStoreMap
+	// Note: tableInfoStoreMap need to keep one version before gcTs,
+	//  so it has different gc logic with tablesDDLHistory
+	tablesToRemove = make(map[int64]interface{})
 	for tableID, store := range p.tableInfoStoreMap {
-		if _, ok := tablesInKVSnap[tableID]; !ok {
-			delete(p.tableInfoStoreMap, tableID)
-			continue
+		if needRemove := store.gc(gcTs); needRemove {
+			tablesToRemove[tableID] = nil
 		}
-		store.gc(gcTs)
+	}
+	for tableID := range tablesToRemove {
+		delete(p.tableInfoStoreMap, tableID)
 	}
 }
 
@@ -659,7 +662,7 @@ func buildPersistedDDLEventFromJob(
 	switch model.ActionType(event.Type) {
 	case model.ActionCreateSchema,
 		model.ActionDropSchema:
-		log.Info("completePersistedDDLEvent for create/drop schema",
+		log.Info("buildPersistedDDLEvent for create/drop schema",
 			zap.Any("type", event.Type),
 			zap.Int64("schemaID", event.CurrentSchemaID),
 			zap.String("schemaName", event.DBInfo.Name.O))
@@ -1012,7 +1015,7 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		ddlEvent.NeedDroppedTables = &common.InfluencedTables{
 			InfluenceType: common.InfluenceTypeNormal,
 			TableIDs:      []int64{rawEvent.PrevTableID},
-			SchemaID:      rawEvent.PrevSchemaID,
+			SchemaID:      rawEvent.CurrentSchemaID,
 		}
 		ddlEvent.NeedAddedTables = []common.Table{
 			{
@@ -1027,17 +1030,17 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		if !ignorePrevTable {
 			ddlEvent.BlockedTables = &common.InfluencedTables{
 				InfluenceType: common.InfluenceTypeNormal,
-				TableIDs:      []int64{rawEvent.PrevTableID, heartbeatpb.DDLSpan.TableID},
+				TableIDs:      []int64{rawEvent.CurrentTableID, heartbeatpb.DDLSpan.TableID},
 				SchemaID:      rawEvent.PrevSchemaID,
 			}
 			ddlEvent.NeedDroppedTables = &common.InfluencedTables{
 				InfluenceType: common.InfluenceTypeNormal,
-				TableIDs:      []int64{rawEvent.PrevTableID},
+				TableIDs:      []int64{rawEvent.CurrentTableID},
 				SchemaID:      rawEvent.PrevSchemaID,
 			}
 			dropName = append(dropName, common.SchemaTableName{
-				SchemaName: rawEvent.CurrentSchemaName,
-				TableName:  rawEvent.CurrentTableName,
+				SchemaName: rawEvent.PrevSchemaName,
+				TableName:  rawEvent.PrevTableName,
 			})
 		}
 		if !ignoreCurrentTable {

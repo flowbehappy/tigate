@@ -154,7 +154,9 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 				s.dataStorage.handleDDLJob(event.Job)
 			}
 		}
-		// TODO: resolved ts are updated after ddl events written to disk, do we need to optimize it?
+		// When register a new table, it will load all ddl jobs from disk for the table,
+		// so we can only update resolved ts after all ddl jobs are written to disk
+		// Can we optimize it to update resolved ts more eagerly?
 		s.resolvedTs.Store(pendingTs)
 		currentPhyTs := oracle.GetPhysical(s.pdClock.CurrentTime())
 		resolvedPhyTs := oracle.ExtractPhysical(pendingTs)

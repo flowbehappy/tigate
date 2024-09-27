@@ -126,25 +126,33 @@ func (v *versionedTableInfoStore) getTableInfo(ts uint64) (*common.TableInfo, er
 	return v.infos[target-1].info, nil
 }
 
-// only keep one item with the largest version <= gcTS
-func (v *versionedTableInfoStore) gc(gcTs uint64) {
+// only keep one item with the largest version <= gcTS, return whether the store should be totally removed
+func (v *versionedTableInfoStore) gc(gcTs uint64) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if !v.initialized {
-		return
+		return false
 	}
 	if len(v.infos) == 0 {
 		log.Fatal("no table info found", zap.Int64("tableID", v.tableID))
+	}
+
+	if gcTs >= v.deleteVersion {
+		return true
 	}
 
 	target := sort.Search(len(v.infos), func(i int) bool {
 		return v.infos[i].version > gcTs
 	})
 	if target == 0 {
-		return
+		return false
 	}
 
 	v.infos = v.infos[target-1:]
+	if len(v.infos) == 0 {
+		log.Panic("should not happen")
+	}
+	return false
 }
 
 func assertEmpty(infos []*tableInfoItem, event PersistedDDLEvent) {

@@ -16,6 +16,7 @@ package schemastore
 import (
 	"testing"
 
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
@@ -154,6 +155,21 @@ func TestRenameTable(t *testing.T) {
 	}
 }
 
-func TestGC(t *testing.T) {
+func TestGCMultiVersionTableInfo(t *testing.T) {
+	tableID := int64(100)
+	store := newEmptyVersionedTableInfoStore(tableID)
+	store.setTableInfoInitialized()
 
+	store.infos = append(store.infos, &tableInfoItem{version: 100, info: &common.TableInfo{}})
+	store.infos = append(store.infos, &tableInfoItem{version: 200, info: &common.TableInfo{}})
+	store.infos = append(store.infos, &tableInfoItem{version: 300, info: &common.TableInfo{}})
+	store.deleteVersion = 1000
+
+	require.False(t, store.gc(200))
+	require.Equal(t, 2, len(store.infos))
+	require.False(t, store.gc(300))
+	require.Equal(t, 1, len(store.infos))
+	require.False(t, store.gc(500))
+	require.Equal(t, 1, len(store.infos))
+	require.True(t, store.gc(1000))
 }
