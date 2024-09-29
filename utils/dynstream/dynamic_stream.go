@@ -265,7 +265,6 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 	streamInfoMap := genStreamInfoMap(d.streamInfos)
 	globalPathMap := make(map[P]*pathInfo[P, T, D])
 
-	scheduleRule := NewRoundRobin(3)
 	doSchedule := func(rule ruleType, testPeriod time.Duration) {
 		// The goal of scheduler is to balance the load of the streams, with mimimum changes.
 		// First of all, we have consistent number (baseStreamCount) of basic streams, and unlimited number of solo streams.
@@ -547,8 +546,8 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 		}
 	}
 
-	nextSchedule := time.Now().Add(d.option.SchedulerInterval)
-	timerChan := time.After(time.Until(nextSchedule))
+	scheduleRule := NewRoundRobin(3)
+	ticker := time.NewTicker(d.option.SchedulerInterval)
 	for {
 		select {
 		case cmd, ok := <-d.cmdToSchd:
@@ -652,10 +651,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 				continue
 			}
 			si.streamStat = stat
-		case <-timerChan:
-			nextSchedule = time.Now().Add(d.option.SchedulerInterval)
-			timerChan = time.After(time.Until(nextSchedule))
-			
+		case <-ticker.C:
 			doSchedule(ruleType(scheduleRule.Next()), 0)
 		}
 	}
