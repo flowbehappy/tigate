@@ -80,15 +80,13 @@ func (si *streamInfo[P, T, D]) runtime() time.Duration {
 }
 
 func (si *streamInfo[P, T, D]) busyRatio(period time.Duration) float64 {
-	if si.streamStat.totalTime != 0 {
-		if period != 0 {
-			return float64(si.streamStat.totalTime) / float64(period)
-		} else {
-			return float64(si.streamStat.totalTime) / float64(si.streamStat.period)
-		}
-	} else {
+	if si.streamStat.totalTime == 0 {
 		return 0
 	}
+	if period != 0 {
+		return float64(si.streamStat.totalTime) / float64(period)
+	}
+	return float64(si.streamStat.totalTime) / float64(si.streamStat.period)
 }
 
 func (si *streamInfo[P, T, D]) period() time.Duration {
@@ -109,7 +107,7 @@ func (s sortedSIs[P, T, D]) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 //
 // A stream can handle events from multiple paths.
 // Events from the same path are only processed by one particular stream at the same time.
-// The scheduler use several strategies to balance the load of the streams, while the final balanace
+// The scheduler use several strategies to balance the load of the streams, while the final balance
 // actions are moving the paths between the streams.
 type dynamicStreamImpl[P Path, T Event, D Dest] struct {
 	trackTopPaths   int
@@ -118,7 +116,7 @@ type dynamicStreamImpl[P Path, T Event, D Dest] struct {
 	handler Handler[P, T, D]
 	option  Option
 
-	eventChan chan T // The channel to receive the incomming events by distributor
+	eventChan chan T // The channel to receive the incoming events by distributor
 	wakeChan  chan P // The channel to receive the wake signal by distributor
 
 	reportChan chan streamStat[P, T, D] // The channel to receive the report by scheduler
