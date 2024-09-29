@@ -277,8 +277,8 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 		// 3. If the most busy stream is too busy and the least busy stream is not busy, we shuffle the paths between them.
 		// We use round-robin to apply the rules to the streams.
 		// Since the number of streams is small, we don't need to worry about the performance of iterating all the streams.
-
-		if rule == createSoloPath {
+		switch rule {
+		case createSoloPath:
 			newSoloStreamInfos := make([]*streamInfo[P, T, D], 0)
 			arranges := make([]*arrangeStreamCmd[P, T, D], 0)
 			newStreamInfos := make([]*streamInfo[P, T, D], 0, len(d.streamInfos))
@@ -357,7 +357,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 					d.cmdToDist <- cmd
 				}
 			}
-		} else if rule == removeSoloPath {
+		case removeSoloPath:
 			normalSoloStreamInfos := make([]*streamInfo[P, T, D], 0, len(d.streamInfos))
 
 			idleSoloPaths := make([]*pathInfo[P, T, D], 0)
@@ -421,7 +421,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 					cmd:     arrange,
 				}
 			}
-		} else if rule == shuffleStreams {
+		case shuffleStreams:
 			arranges := make([]*arrangeStreamCmd[P, T, D], 0)
 			newStreamInfos := make([]*streamInfo[P, T, D], 0, len(d.streamInfos))
 
@@ -542,7 +542,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 					d.cmdToDist <- cmd
 				}
 			}
-		} else {
+		default:
 			panic("Unknown rule")
 		}
 	}
@@ -655,6 +655,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 		case <-timerChan:
 			nextSchedule = time.Now().Add(d.option.SchedulerInterval)
 			timerChan = time.After(time.Until(nextSchedule))
+			
 			doSchedule(ruleType(scheduleRule.Next()), 0)
 		}
 	}
