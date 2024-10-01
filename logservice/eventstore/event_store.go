@@ -141,9 +141,9 @@ func New(
 	kvStorage kv.Storage,
 ) EventStore {
 	clientConfig := &logpuller.SubscriptionClientConfig{
-		RegionRequestWorkerPerStore:        8,
+		RegionRequestWorkerPerStore:        16,
 		ChangeEventProcessorNum:            64,
-		AdvanceResolvedTsIntervalInMs:      2000,
+		AdvanceResolvedTsIntervalInMs:      600,
 		RegionIncrementalScanLimitPerStore: 100000,
 	}
 	client := logpuller.NewSubscriptionClient(
