@@ -130,6 +130,7 @@ func newEventBroker(
 	c.tickTableTriggerDispatchers(ctx)
 	c.runSendMessageWorker(ctx)
 	c.updateMetrics(ctx)
+	c.updateDispatcherSendTs(ctx)
 	c.runGenTasks(ctx)
 	return c
 }
@@ -480,6 +481,28 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 
 				lag = (oracle.GetPhysical(time.Now()) - oracle.ExtractPhysical(dispatcherMinWaterMark)) / 1e3
 				c.metricEventServiceDispatcherResolvedTs.Set(float64(lag))
+			}
+		}
+	}()
+}
+
+func (c *eventBroker) updateDispatcherSendTs(ctx context.Context) {
+	c.wg.Add(1)
+	ticker := time.NewTicker(time.Second * 5)
+	go func() {
+		defer c.wg.Done()
+		log.Info("update dispatcher send ts goroutine is started")
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				c.dispatchers.Range(func(key, value interface{}) bool {
+					dispatcher := value.(*dispatcherStat)
+					watermark := dispatcher.watermark.Load()
+					c.eventStore.UpdateDispatcherSendTs(dispatcher.info.GetID(), dispatcher.info.GetTableSpan(), watermark)
+					return true
+				})
 			}
 		}
 	}()
