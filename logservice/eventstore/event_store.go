@@ -29,10 +29,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type EventObserver func(raw *common.RawKVEntry)
-
-type WatermarkNotifier func(watermark uint64)
-
 type EventStore interface {
 	Name() string
 

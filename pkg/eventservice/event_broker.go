@@ -557,8 +557,6 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		return
 	}
 
-	c.queue.add(id)
-
 	c.dispatchers.Store(id, dispatcher)
 	c.dispatcherCount++
 
@@ -569,6 +567,9 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	c.schemaStore.RegisterTable(span.GetTableID(), info.GetStartTs())
 	eventStoreRegisterDuration := time.Since(start)
 	c.ds.AddPath(id, c)
+
+	// add last
+	c.queue.add(id)
 
 	log.Info("register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
 		zap.Any("acceptorID", id), zap.Int64("tableID", span.TableID),
@@ -584,9 +585,11 @@ func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
 		c.tableTriggerDispatchers.Delete(id)
 		return
 	}
+	// remove first
+	c.queue.remove(id)
+
 	c.eventStore.UnregisterDispatcher(id, dispatcherInfo.GetTableSpan())
 	c.schemaStore.UnregisterTable(dispatcherInfo.GetTableSpan().TableID)
-	c.queue.remove(id)
 	c.dispatchers.Delete(id)
 
 	spanSubscription := stat.(*dispatcherStat).spanSubscription
