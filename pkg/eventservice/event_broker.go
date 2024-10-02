@@ -634,21 +634,10 @@ func newDispatcherStat(
 		metricEventServiceSendResolvedTsCount: metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "resolved_ts"),
 	}
 	dispStat.watermark.Store(startTs)
+	dispStat.nextTaskStartTs.Store(startTs)
 
 	subscription.addDispatcher(dispStat)
 	return dispStat
-}
-
-func (a *dispatcherStat) getDataRange() (common.DataRange, bool) {
-	if a.watermark.Load() >= a.spanSubscription.watermark.Load() {
-		return common.DataRange{}, false
-	}
-	r := common.DataRange{
-		Span:    a.info.GetTableSpan(),
-		StartTs: a.watermark.Load(),
-		EndTs:   a.spanSubscription.watermark.Load(),
-	}
-	return r, true
 }
 
 // spanSubscription store the latest progress of the table span in the event store.
