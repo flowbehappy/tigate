@@ -290,6 +290,7 @@ func (c *eventBroker) sendResolvedTs(ctx context.Context, task scanTask) {
 	dispatcherID := task.dispatcherStat.info.GetID()
 	resolvedTs := task.dataRange.EndTs
 	c.sendWatermark(remoteID, dispatcherID, resolvedTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
+	log.Info("send resolved ts", zap.Uint64("resolvedTs", resolvedTs), zap.Any("dispatcherID", dispatcherID))
 	task.dispatcherStat.watermark.Store(resolvedTs)
 }
 
