@@ -742,6 +742,7 @@ type scanTask struct {
 
 func newScanTask(taskType scanTaskType, dataRange common.DataRange, dispatcherStat *dispatcherStat) scanTask {
 	return scanTask{
+		taskType:       taskType,
 		dataRange:      dataRange,
 		dispatcherStat: dispatcherStat,
 		createTime:     time.Now(),
