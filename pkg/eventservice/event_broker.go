@@ -132,7 +132,7 @@ func newEventBroker(
 	c.tickTableTriggerDispatchers(ctx)
 	c.runSendMessageWorker(ctx)
 	c.updateMetrics(ctx)
-	c.updateDispatcherSendTs(ctx)
+	// c.updateDispatcherSendTs(ctx)
 	c.runGenTasks(ctx)
 	return c
 }
