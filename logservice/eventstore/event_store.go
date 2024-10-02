@@ -348,7 +348,8 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 	}
 	dispatcher, okw := state.dispatchers[dispatcherID]
 	if !okw {
-		log.Panic("should not happen: cannot find dispatcher")
+		log.Panic("should not happen: cannot find dispatcher",
+			zap.Any("dispatcherID", dispatcherID))
 	}
 	if dispatcher.watermark > dataRange.StartTs {
 		log.Panic("should not happen",
