@@ -187,8 +187,8 @@ func (c *eventBroker) runGenTasks(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				// generate at most 3K tasks per 10 ms
-				for i := 0; i < 3000; i++ {
+				// generate at most 2K tasks per 10 ms
+				for i := 0; i < 2000; i++ {
 					id, ok := c.queue.next()
 					if !ok {
 						break
