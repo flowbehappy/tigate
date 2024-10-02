@@ -343,8 +343,11 @@ func (e *eventStore) GetDispatcherDMLEventState(dispatcherID common.DispatcherID
 func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange common.DataRange) (EventIterator, error) {
 	// do some check
 	state, ok := e.spanStates.dispatcherMap.Get(dataRange.Span)
+	if !ok {
+		log.Panic("should not happen: cannot find dispatcher")
+	}
 	dispatcher, okw := state.dispatchers[dispatcherID]
-	if !ok || !okw || dispatcher.watermark > dataRange.StartTs {
+	if !okw || dispatcher.watermark > dataRange.StartTs {
 		log.Panic("should not happen",
 			zap.Uint64("watermark", dispatcher.watermark),
 			zap.Uint64("startTs", dataRange.StartTs))
