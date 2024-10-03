@@ -440,8 +440,6 @@ func writeSchemaSnapshotAndMeta(
 					Name:     tableName,
 				}
 				tables[tableID] = true
-			} else {
-				tablesInKVSnap[tableID] = nil
 			}
 			// 8M is arbitrary, we can adjust it later
 			if batch.Len() >= 8*1024*1024 {

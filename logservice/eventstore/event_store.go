@@ -141,10 +141,9 @@ func New(
 	kvStorage kv.Storage,
 ) EventStore {
 	clientConfig := &logpuller.SubscriptionClientConfig{
-		RegionRequestWorkerPerStore:        16,
-		ChangeEventProcessorNum:            64,
-		AdvanceResolvedTsIntervalInMs:      600,
-		RegionIncrementalScanLimitPerStore: 100000,
+		RegionRequestWorkerPerStore:   16,
+		ChangeEventProcessorNum:       64,
+		AdvanceResolvedTsIntervalInMs: 600,
 	}
 	client := logpuller.NewSubscriptionClient(
 		logpuller.ClientIDEventStore,
@@ -300,8 +299,7 @@ func (e *eventStore) UpdateDispatcherSendTs(
 		oldWatermark := state.dispatchers[dispatcherID].watermark
 		if sendTs > oldWatermark {
 			state.dispatchers[dispatcherID].watermark = sendTs
-			dbIndex := common.HashTableSpan(state.span, len(e.dbs))
-			e.gcManager.addGCItem(dbIndex, span.TableID, oldWatermark, sendTs)
+			e.gcManager.addGCItem(state.chIndex, span.TableID, oldWatermark, sendTs)
 		}
 	}
 	return nil
@@ -394,11 +392,16 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 		case <-ticker.C:
 			currentTime := e.pdClock.CurrentTime()
 			currentPhyTs := oracle.GetPhysical(currentTime)
+			minResolvedTs := uint64(0)
 			e.spanStates.RLock()
 			for _, tableState := range e.spanStates.subscriptionMap {
 				resolvedTs := tableState.resolvedTs.Load()
+				if minResolvedTs == 0 || resolvedTs < minResolvedTs {
+					minResolvedTs = resolvedTs
+				}
 				resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
 				resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
+				// TODO: avoid the name `watermark`
 				watermark := tableState.minWatermark()
 				watermarkPhyTs := oracle.ExtractPhysical(watermark)
 				watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
@@ -406,6 +409,13 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 				metrics.EventStoreDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
 			}
 			e.spanStates.RUnlock()
+
+			if minResolvedTs == 0 {
+				continue
+			}
+			minResolvedPhyTs := oracle.ExtractPhysical(minResolvedTs)
+			maxResolvedLag := float64(currentPhyTs-minResolvedPhyTs) / 1e3
+			metrics.EventStoreMaxResolvedTsLagGauge.Set(maxResolvedLag)
 		}
 	}
 }

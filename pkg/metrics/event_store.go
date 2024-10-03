@@ -67,6 +67,14 @@ var (
 			Buckets:   LagBucket(),
 		})
 
+	EventStoreMaxResolvedTsLagGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_store",
+			Name:      "max_resolved_ts_lag",
+			Help:      "The max resolved ts lag of event store.",
+		})
+
 	EventStoreDispatcherWatermarkLagHist = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "ticdc",
@@ -75,6 +83,7 @@ var (
 			Help:      "Watermark lag histogram of registered dispatchers for event store.",
 			Buckets:   LagBucket(),
 		})
+
 	EventStoreCompressRatio = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
@@ -91,6 +100,7 @@ func InitEventStoreMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventStoreScanBytes)
 	registry.MustRegister(EventStoreDeleteRangeCount)
 	registry.MustRegister(EventStoreDispatcherResolvedTsLagHist)
+	registry.MustRegister(EventStoreMaxResolvedTsLagGauge)
 	registry.MustRegister(EventStoreDispatcherWatermarkLagHist)
 	registry.MustRegister(EventStoreCompressRatio)
 }
