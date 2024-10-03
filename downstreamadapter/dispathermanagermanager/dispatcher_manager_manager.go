@@ -16,6 +16,7 @@ package dispatchermanagermanager
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
@@ -80,7 +81,7 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from node.ID, main
 			return err
 		}
 		// TODO: 这边额外判断一下创建是否失败，创建失败的话，想一下怎么做报错处理
-		manager := dispatchermanager.NewEventDispatcherManager(cfId, cfConfig, from)
+		manager = dispatchermanager.NewEventDispatcherManager(cfId, cfConfig, from)
 		m.dispatcherManagers[cfId] = manager
 		metrics.EventDispatcherManagerGauge.WithLabelValues(cfId.Namespace, cfId.ID).Inc()
 
