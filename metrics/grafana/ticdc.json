@@ -27077,7 +27077,7 @@
     ]
   },
   "timezone": "browser",
-  "title": "${DS_C1}-TiCDC",
+  "title": "test-TiCDC",
   "uid": "YiGL8hBZ0aaa",
   "version": 1
 }
