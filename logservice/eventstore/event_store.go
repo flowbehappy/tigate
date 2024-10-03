@@ -141,10 +141,9 @@ func New(
 	kvStorage kv.Storage,
 ) EventStore {
 	clientConfig := &logpuller.SubscriptionClientConfig{
-		RegionRequestWorkerPerStore:        16,
-		ChangeEventProcessorNum:            64,
-		AdvanceResolvedTsIntervalInMs:      600,
-		RegionIncrementalScanLimitPerStore: 100000,
+		RegionRequestWorkerPerStore:   16,
+		ChangeEventProcessorNum:       64,
+		AdvanceResolvedTsIntervalInMs: 600,
 	}
 	client := logpuller.NewSubscriptionClient(
 		logpuller.ClientIDEventStore,
@@ -300,8 +299,7 @@ func (e *eventStore) UpdateDispatcherSendTs(
 		oldWatermark := state.dispatchers[dispatcherID].watermark
 		if sendTs > oldWatermark {
 			state.dispatchers[dispatcherID].watermark = sendTs
-			dbIndex := common.HashTableSpan(state.span, len(e.dbs))
-			e.gcManager.addGCItem(dbIndex, span.TableID, oldWatermark, sendTs)
+			e.gcManager.addGCItem(state.chIndex, span.TableID, oldWatermark, sendTs)
 		}
 	}
 	return nil
