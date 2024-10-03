@@ -22,6 +22,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -120,6 +121,7 @@ func (p *ddlJobFetcher) unmarshalDDL(rawKV *common.RawKVEntry) (*model.Job, erro
 		return nil, nil
 	}
 	if p.ddlTableInfo == nil && !mounter.IsLegacyFormatJob(rawKV) {
+		log.Info("DDLTableInfo is not initialized, try to init it")
 		err := p.initDDLTableInfo()
 		if err != nil {
 			return nil, errors.Trace(err)
