@@ -51,6 +51,17 @@ func newLogPullerMultiSpanForTest(spans []heartbeatpb.TableSpan, outputCh chan<-
 	)
 }
 
+func waitMultiSpanLogPullerReadyForTest(puller *LogPullerMultiSpan) {
+	// SubscriptionClient.consume is set during SubscriptionClient.run which is called in another goroutine
+	// so we need a hack to wait SubscriptionClient.consume is set
+	for {
+		if puller.innerPuller.client.consume != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestMultiplexingPullerResolvedForward(t *testing.T) {
 	ctx := context.Background()
 	outputCh := make(chan *common.RawKVEntry, 16)
@@ -69,13 +80,7 @@ func TestMultiplexingPullerResolvedForward(t *testing.T) {
 		puller.Run(ctx)
 	}()
 
-	// hack to wait SubscriptionClient.consume is set
-	for {
-		if puller.innerPuller.client.consume != nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitMultiSpanLogPullerReadyForTest(puller)
 
 	allProgress := puller.innerPuller.getAllProgresses()
 	subIDs := make([]SubscriptionID, 0, len(allProgress))
@@ -83,18 +88,28 @@ func TestMultiplexingPullerResolvedForward(t *testing.T) {
 		subIDs = append(subIDs, p.subID)
 	}
 	require.Equal(t, 2, len(subIDs))
-	for i, subID := range subIDs {
-		puller.innerPuller.client.consume(ctx, LogEvent{
-			regionFeedEvent: regionFeedEvent{
-				Val: &common.RawKVEntry{
-					OpType: common.OpTypeResolved,
-					CRTs:   uint64(1000 + i),
-				},
-			},
-			SubscriptionID: subID,
-		})
-	}
+	subID0 := subIDs[0]
+	subID1 := subIDs[1]
 
+	puller.innerPuller.client.consume(ctx, LogEvent{
+		regionFeedEvent: regionFeedEvent{
+			Val: &common.RawKVEntry{
+				OpType: common.OpTypeResolved,
+				CRTs:   uint64(1000),
+			},
+		},
+		SubscriptionID: subID0,
+	})
+	puller.innerPuller.client.consume(ctx, LogEvent{
+		regionFeedEvent: regionFeedEvent{
+			Val: &common.RawKVEntry{
+				OpType: common.OpTypeResolved,
+				CRTs:   uint64(1005),
+			},
+		},
+		SubscriptionID: subID1,
+	})
+	// check global resolved ts updated
 	select {
 	case ev := <-outputCh:
 		require.Equal(t, common.OpTypeResolved, ev.OpType)
@@ -102,6 +117,43 @@ func TestMultiplexingPullerResolvedForward(t *testing.T) {
 	case <-time.NewTimer(100 * time.Millisecond).C:
 		require.True(t, false, "must get an event")
 	}
+
+	puller.innerPuller.client.consume(ctx, LogEvent{
+		regionFeedEvent: regionFeedEvent{
+			Val: &common.RawKVEntry{
+				OpType: common.OpTypeResolved,
+				CRTs:   uint64(1002),
+			},
+		},
+		SubscriptionID: subID0,
+	})
+	// check global resolved ts updated
+	select {
+	case ev := <-outputCh:
+		require.Equal(t, common.OpTypeResolved, ev.OpType)
+		require.Equal(t, uint64(1002), ev.CRTs)
+	case <-time.NewTimer(100 * time.Millisecond).C:
+		require.True(t, false, "must get an event")
+	}
+
+	puller.innerPuller.client.consume(ctx, LogEvent{
+		regionFeedEvent: regionFeedEvent{
+			Val: &common.RawKVEntry{
+				OpType: common.OpTypeResolved,
+				CRTs:   uint64(1008),
+			},
+		},
+		SubscriptionID: subID0,
+	})
+	// check global resolved ts updated
+	select {
+	case ev := <-outputCh:
+		require.Equal(t, common.OpTypeResolved, ev.OpType)
+		require.Equal(t, uint64(1005), ev.CRTs)
+	case <-time.NewTimer(100 * time.Millisecond).C:
+		require.True(t, false, "must get an event")
+	}
+
 	cancel()
 	wg.Wait()
 }
