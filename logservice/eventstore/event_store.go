@@ -47,7 +47,7 @@ type EventStore interface {
 	RegisterDispatcher(
 		dispatcherID common.DispatcherID,
 		span *heartbeatpb.TableSpan,
-		startTS common.Ts,
+		startTS uint64,
 		observer EventObserver,
 		notifier WatermarkNotifier,
 	) error
@@ -239,7 +239,7 @@ func (e *eventStore) Run(ctx context.Context) error {
 }
 
 func (e *eventStore) RegisterDispatcher(
-	dispatcherID common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTS common.Ts,
+	dispatcherID common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTS uint64,
 	observer EventObserver, notifier WatermarkNotifier,
 ) error {
 	span := *tableSpan

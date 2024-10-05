@@ -21,6 +21,7 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/utils/heap"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"go.uber.org/zap"
@@ -29,41 +30,43 @@ import (
 
 // LogPullerMultiSpan is a simple wrapper around LogPuller.
 // It just maintain the minimum resolve ts of all spans.
-// TODO: may be we can implement it in other way(not as a xxxPuller)?
 type LogPullerMultiSpan struct {
 	innerPuller *LogPuller
 
-	startTs common.Ts
-
 	consume func(context.Context, *common.RawKVEntry) error
 
+	// used to notify the min resolved ts of all spans is updated
 	notifyCh chan interface{}
 
+	// following fields are protected by this mutex
 	mu sync.Mutex
 
-	resolvedTsMap map[SubscriptionID]common.Ts
+	resolvedTsMap map[SubscriptionID]*resolvedTsItem
 
-	prevResolvedTs common.Ts
+	resolvedTsHeap heap.Heap[*resolvedTsItem]
 
-	pendingResolvedTs common.Ts
+	// the resolved ts that have been consumed
+	prevResolvedTs uint64
+
+	// the resolved ts pending to be consumed if it is larger than `prevResolvedTs`
+	pendingResolvedTs uint64
 }
 
 func NewLogPullerMultiSpan(
 	client *SubscriptionClient,
 	pdClock pdutil.Clock,
 	spans []heartbeatpb.TableSpan,
-	startTs common.Ts,
+	startTs uint64,
 	consume func(context.Context, *common.RawKVEntry) error,
 ) *LogPullerMultiSpan {
-	// TODO: remove this when we use a priority queue to maintain the resolved ts.(just check at least one span)
-	if len(spans) != 2 {
-		log.Panic("not supported")
+	if len(spans) <= 1 {
+		log.Panic("spans should have more than 1 element")
 	}
 	pullerWrapper := &LogPullerMultiSpan{
-		startTs:           startTs,
 		consume:           consume,
 		notifyCh:          make(chan interface{}, 4),
-		resolvedTsMap:     make(map[SubscriptionID]common.Ts),
+		resolvedTsMap:     make(map[SubscriptionID]*resolvedTsItem),
+		resolvedTsHeap:    heap.NewHeap[*resolvedTsItem](),
 		prevResolvedTs:    0,
 		pendingResolvedTs: 0,
 	}
@@ -74,7 +77,7 @@ func NewLogPullerMultiSpan(
 			return nil
 		}
 		if entry.IsResolved() {
-			pullerWrapper.tryUpdatePendingResolvedTs(entry, subID)
+			pullerWrapper.tryUpdatePendingResolvedTs(subID, entry.CRTs)
 			return nil
 		}
 		return consume(ctx, entry)
@@ -82,8 +85,12 @@ func NewLogPullerMultiSpan(
 
 	pullerWrapper.innerPuller = NewLogPuller(client, pdClock, consumeWrapper)
 	for _, span := range spans {
-		subID := pullerWrapper.innerPuller.Subscribe(span, pullerWrapper.startTs)
-		pullerWrapper.resolvedTsMap[subID] = 0
+		subID := pullerWrapper.innerPuller.Subscribe(span, startTs)
+		item := &resolvedTsItem{
+			resolvedTs: 0,
+		}
+		pullerWrapper.resolvedTsMap[subID] = item
+		pullerWrapper.resolvedTsHeap.AddOrUpdate(item)
 	}
 	return pullerWrapper
 }
@@ -104,35 +111,32 @@ func (p *LogPullerMultiSpan) Close(ctx context.Context) error {
 }
 
 // return whether the global resolved ts of all spans is updated
-func (p *LogPullerMultiSpan) tryUpdatePendingResolvedTs(entry *common.RawKVEntry, subID SubscriptionID) {
+func (p *LogPullerMultiSpan) tryUpdatePendingResolvedTs(subID SubscriptionID, newResolvedTs uint64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	// FIXME: use priority queue to maintain resolved ts
-	ts, ok := p.resolvedTsMap[subID]
+	item, ok := p.resolvedTsMap[subID]
 	if !ok {
 		log.Panic("unknown zubscriptionID, should not happen",
 			zap.Uint64("subID", uint64(subID)))
 	}
-	if ts > common.Ts(entry.CRTs) {
+	if newResolvedTs < item.resolvedTs {
 		log.Panic("resolved ts should not fallback",
-			zap.Uint64("oldResolvedTs", uint64(ts)),
-			zap.Uint64("newResolvedTs", entry.CRTs))
+			zap.Uint64("newResolvedTs", newResolvedTs),
+			zap.Uint64("oldResolvedTs", item.resolvedTs))
 	}
-	p.resolvedTsMap[subID] = common.Ts(entry.CRTs)
+	item.resolvedTs = newResolvedTs
+	p.resolvedTsHeap.AddOrUpdate(item)
 
-	currentResolvedTs := common.Ts(math.MaxUint64)
-	for _, v := range p.resolvedTsMap {
-		if v < currentResolvedTs {
-			currentResolvedTs = v
-		}
-	}
-	if currentResolvedTs == math.MaxUint64 {
+	minResolvedTsItem, ok := p.resolvedTsHeap.PeekTop()
+	if !ok || minResolvedTsItem.resolvedTs == math.MaxUint64 {
 		log.Panic("should not happen")
 	}
-	p.pendingResolvedTs = currentResolvedTs
-	select {
-	case p.notifyCh <- struct{}{}:
-	default:
+	p.pendingResolvedTs = minResolvedTsItem.resolvedTs
+	if p.pendingResolvedTs > p.prevResolvedTs {
+		select {
+		case p.notifyCh <- struct{}{}:
+		default:
+		}
 	}
 }
 
@@ -140,15 +144,16 @@ func (p *LogPullerMultiSpan) sendResolvedTsPeriodically(ctx context.Context) err
 	trySendResolvedTs := func() {
 		p.mu.Lock()
 		defer p.mu.Unlock()
+		// Note: pendingResolvedTs may be 0(which means not all spans have received resolved ts) and it won't be send here
 		if p.pendingResolvedTs > p.prevResolvedTs {
 			p.consume(ctx, &common.RawKVEntry{
 				OpType: common.OpTypeResolved,
-				CRTs:   common.Ts(p.pendingResolvedTs),
+				CRTs:   p.pendingResolvedTs,
 			})
 			p.prevResolvedTs = p.pendingResolvedTs
 		}
 	}
-	ticker := time.NewTicker(50 * time.Millisecond)
+	ticker := time.NewTicker(100 * time.Millisecond)
 	for {
 		select {
 		case <-ctx.Done():
@@ -158,5 +163,24 @@ func (p *LogPullerMultiSpan) sendResolvedTsPeriodically(ctx context.Context) err
 		case <-p.notifyCh:
 			trySendResolvedTs()
 		}
+	}
+}
+
+type resolvedTsItem struct {
+	resolvedTs uint64
+	heapIndex  int
+}
+
+func (m *resolvedTsItem) SetHeapIndex(index int) { m.heapIndex = index }
+
+func (m *resolvedTsItem) GetHeapIndex() int { return m.heapIndex }
+
+func (m *resolvedTsItem) CompareTo(other *resolvedTsItem) int {
+	if m.resolvedTs > other.resolvedTs {
+		return 1
+	} else if m.resolvedTs < other.resolvedTs {
+		return -1
+	} else {
+		return 0
 	}
 }
