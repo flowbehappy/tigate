@@ -48,6 +48,7 @@ func loadPersistentStorageForTest(db *pebble.DB, gcTs uint64, upperBound UpperBo
 	return p
 }
 
+// create an empty persistent storage at dbPath
 func newEmptyPersistentStorageForTest(dbPath string) *persistentStorage {
 	db, err := pebble.Open(dbPath, &pebble.Options{})
 	if err != nil {
@@ -62,6 +63,7 @@ func newEmptyPersistentStorageForTest(dbPath string) *persistentStorage {
 	return loadPersistentStorageForTest(db, gcTs, upperBound)
 }
 
+// create a persistent storage with initial db info and table info
 func newPersistentStorageForTest(dbPath string, gcTs uint64, initialDBInfos map[int64]*model.DBInfo) *persistentStorage {
 	db, err := pebble.Open(dbPath, &pebble.Options{})
 	if err != nil {
@@ -474,6 +476,40 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	}
 }
 
+func verifyDBIsBlocked(t *testing.T, event common.DDLEvent, schemaID int64) {
+	require.Equal(t, common.InfluenceTypeDB, event.BlockedTables.InfluenceType)
+	require.Equal(t, schemaID, event.BlockedTables.SchemaID)
+}
+
+func verifyTableIsBlocked(t *testing.T, event common.DDLEvent, tableID int64) {
+	require.Equal(t, common.InfluenceTypeNormal, event.BlockedTables.InfluenceType)
+	for _, id := range event.BlockedTables.TableIDs {
+		if id == tableID {
+			return
+		}
+	}
+	require.True(t, false)
+}
+
+func verifyTableIsDropped(t *testing.T, event common.DDLEvent, tableID int64) {
+	require.Equal(t, common.InfluenceTypeNormal, event.NeedDroppedTables.InfluenceType)
+	for _, id := range event.NeedDroppedTables.TableIDs {
+		if id == tableID {
+			return
+		}
+	}
+	require.True(t, false)
+}
+
+func verifyTableIsAdded(t *testing.T, event common.DDLEvent, tableID int64, schemaID int64) {
+	for _, table := range event.NeedAddedTables {
+		if table.TableID == tableID && table.SchemaID == schemaID {
+			return
+		}
+	}
+	require.True(t, false)
+}
+
 func TestHandleRenameTable(t *testing.T) {
 	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
 	err := os.RemoveAll(dbPath)
@@ -547,21 +583,12 @@ func TestHandleRenameTable(t *testing.T) {
 		require.Equal(t, 1, len(ddlEvents))
 		// rename table event
 		require.Equal(t, uint64(605), ddlEvents[0].FinishedTs)
-		require.Equal(t, "test2", ddlEvents[0].SchemaName)
-		require.Equal(t, "t2", ddlEvents[0].TableName)
-		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].BlockedTables.InfluenceType)
-		require.Equal(t, schemaID1, ddlEvents[0].BlockedTables.SchemaID)
-		require.Equal(t, tableID, ddlEvents[0].BlockedTables.TableIDs[0])
-		// TODO: don't count on the order
-		require.Equal(t, heartbeatpb.DDLSpan.TableID, ddlEvents[0].BlockedTables.TableIDs[1])
-		require.Equal(t, tableID, ddlEvents[0].NeedDroppedTables.TableIDs[0])
+		verifyTableIsBlocked(t, ddlEvents[0], tableID)
+		verifyTableIsBlocked(t, ddlEvents[0], heartbeatpb.DDLSpan.TableID)
 
-		require.Equal(t, tableID, ddlEvents[0].NeedAddedTables[0].TableID)
-
-		require.Equal(t, "test2", ddlEvents[0].TableNameChange.AddName[0].SchemaName)
-		require.Equal(t, "t2", ddlEvents[0].TableNameChange.AddName[0].TableName)
-		require.Equal(t, "test", ddlEvents[0].TableNameChange.DropName[0].SchemaName)
-		require.Equal(t, "t1", ddlEvents[0].TableNameChange.DropName[0].TableName)
+		require.Equal(t, tableID, ddlEvents[0].UpdatedSchemas[0].TableID)
+		require.Equal(t, schemaID1, ddlEvents[0].UpdatedSchemas[0].OldSchemaID)
+		require.Equal(t, schemaID2, ddlEvents[0].UpdatedSchemas[0].NewSchemaID)
 	}
 
 	// test filter: after rename, the table is filtered out
@@ -574,12 +601,10 @@ func TestHandleRenameTable(t *testing.T) {
 		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID, tableFilter, 601, 700)
 		require.Nil(t, err)
 		require.Equal(t, 1, len(ddlEvents))
-		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].BlockedTables.InfluenceType)
-		require.Equal(t, schemaID1, ddlEvents[0].BlockedTables.SchemaID)
-		require.Equal(t, tableID, ddlEvents[0].BlockedTables.TableIDs[0])
-		// TODO: don't count on the order
-		require.Equal(t, heartbeatpb.DDLSpan.TableID, ddlEvents[0].BlockedTables.TableIDs[1])
-		require.Equal(t, tableID, ddlEvents[0].NeedDroppedTables.TableIDs[0])
+		verifyTableIsBlocked(t, ddlEvents[0], tableID)
+		verifyTableIsBlocked(t, ddlEvents[0], heartbeatpb.DDLSpan.TableID)
+
+		verifyTableIsDropped(t, ddlEvents[0], tableID)
 
 		require.Nil(t, ddlEvents[0].NeedAddedTables)
 
@@ -601,7 +626,7 @@ func TestHandleRenameTable(t *testing.T) {
 		require.Nil(t, triggerDDLEvents[0].BlockedTables)
 		require.Nil(t, triggerDDLEvents[0].NeedDroppedTables)
 
-		require.Equal(t, tableID, triggerDDLEvents[0].NeedAddedTables[0].TableID)
+		verifyTableIsAdded(t, triggerDDLEvents[0], tableID, schemaID2)
 
 		require.Equal(t, "test2", triggerDDLEvents[0].TableNameChange.AddName[0].SchemaName)
 		require.Equal(t, "t2", triggerDDLEvents[0].TableNameChange.AddName[0].TableName)

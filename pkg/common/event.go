@@ -356,6 +356,12 @@ type TableNameChange struct {
 	DropDatabaseName string
 }
 
+type SchemaIDChange struct {
+	TableID     int64
+	OldSchemaID int64
+	NewSchemaID int64
+}
+
 type DDLEvent struct {
 	DispatcherID DispatcherID `json:"dispatcher_id"`
 	Type         byte         `json:"type"`
@@ -376,14 +382,21 @@ type DDLEvent struct {
 	MultipleTableInfos []*TableInfo `json:"multiple_table_infos"`
 
 	BlockedTables     *InfluencedTables `json:"blocked_tables"`
+	UpdatedSchemas    []SchemaIDChange  `json:"updated_schemas"`
 	NeedDroppedTables *InfluencedTables `json:"need_dropped_tables"`
 	NeedAddedTables   []Table           `json:"need_added_tables"`
 
-	TiDBOnly bool `json:"tidb_only"`
-
-	// only Create Table / Create Tables / Drop Table / Rename Table /
-	// Rename Tables / Drop Schema / Recover Table will make the table name change
+	// DDLs which may change table name:
+	//   Create Table
+	//   Create Tables
+	//   Drop Table
+	//   Rename Table
+	//   Rename Tables
+	//   Drop Schema
+	//   Recover Table
 	TableNameChange *TableNameChange `json:"table_name_change"`
+
+	TiDBOnly bool `json:"tidb_only"`
 	// 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
 	PostTxnFlushed []func() `msg:"-"`
 }

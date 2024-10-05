@@ -22,7 +22,7 @@ type PersistedDDLEvent struct {
 	CurrentSchemaName string `msg:"current_schema_name"`
 	CurrentTableName  string `msg:"current_table_name"`
 
-	// The following fields are only set when the ddl job involves a prev table and the corresponding fields change
+	// The following fields are only set when the ddl job involves a prev table
 	PrevSchemaID   int64  `msg:"prev_schema_id"`
 	PrevTableID    int64  `msg:"prev_table_id"`
 	PrevSchemaName string `msg:"prev_schema_name"`

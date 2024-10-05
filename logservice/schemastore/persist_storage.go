@@ -577,7 +577,7 @@ func (p *persistentStorage) handleDDLJob(job *model.Job) error {
 	p.mu.Lock()
 
 	ddlEvent := buildPersistedDDLEventFromJob(job, p.databaseMap, p.tableMap)
-	// TODO: and some comment to explain why we need skik ddl here and why it is real rare
+	// TODO: and some comment to explain why we need skip ddl here and why it is real rare
 	if shouldSkipDDL(&ddlEvent, p.databaseMap, p.tableMap) {
 		p.mu.Unlock()
 		return nil
@@ -692,11 +692,12 @@ func buildPersistedDDLEventFromJob(
 		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
 		event.CurrentTableName = getTableName(event.PrevTableID)
 	case model.ActionRenameTable:
-		// TODO: check the following fields is set correctly
-		// schema id/schema name/table name may be changed
+		// Note: schema id/schema name/table name may be changed or not
+		// table id does not change, we use it to get the table's prev schema id/name and table name
 		event.PrevSchemaID = getSchemaID(event.CurrentTableID)
 		event.PrevSchemaName = getSchemaName(event.PrevSchemaID)
 		event.PrevTableName = getTableName(event.CurrentTableID)
+		// get the table's current schema name and table name from the ddl job
 		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
 		event.CurrentTableName = event.TableInfo.Name.O
 	case model.ActionCreateView:
@@ -1026,38 +1027,61 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 	case model.ActionRenameTable:
 		ignorePrevTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.PrevSchemaName, rawEvent.PrevTableName)
 		ignoreCurrentTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.CurrentSchemaName, rawEvent.CurrentTableName)
-		var addName, dropName []common.SchemaTableName
 		if !ignorePrevTable {
 			ddlEvent.BlockedTables = &common.InfluencedTables{
 				InfluenceType: common.InfluenceTypeNormal,
 				TableIDs:      []int64{rawEvent.CurrentTableID, heartbeatpb.DDLSpan.TableID},
 				SchemaID:      rawEvent.PrevSchemaID,
 			}
-			ddlEvent.NeedDroppedTables = &common.InfluencedTables{
-				InfluenceType: common.InfluenceTypeNormal,
-				TableIDs:      []int64{rawEvent.CurrentTableID},
-				SchemaID:      rawEvent.PrevSchemaID,
+			if !ignoreCurrentTable {
+				if rawEvent.PrevSchemaID != rawEvent.CurrentSchemaID {
+					ddlEvent.UpdatedSchemas = []common.SchemaIDChange{
+						{
+							TableID:     rawEvent.CurrentTableID,
+							OldSchemaID: rawEvent.PrevSchemaID,
+							NewSchemaID: rawEvent.CurrentSchemaID,
+						},
+					}
+				}
+			} else {
+				// the table is filtered out after rename table, we need drop the table
+				ddlEvent.NeedDroppedTables = &common.InfluencedTables{
+					InfluenceType: common.InfluenceTypeNormal,
+					TableIDs:      []int64{rawEvent.CurrentTableID},
+					SchemaID:      rawEvent.PrevSchemaID,
+				}
+				ddlEvent.TableNameChange = &common.TableNameChange{
+					DropName: []common.SchemaTableName{
+						{
+							SchemaName: rawEvent.PrevSchemaName,
+							TableName:  rawEvent.PrevTableName,
+						},
+					},
+				}
 			}
-			dropName = append(dropName, common.SchemaTableName{
-				SchemaName: rawEvent.PrevSchemaName,
-				TableName:  rawEvent.PrevTableName,
-			})
-		}
-		if !ignoreCurrentTable {
+		} else if !ignoreCurrentTable {
+			// the table is filtered out before rename table, we need add table here
 			ddlEvent.NeedAddedTables = []common.Table{
 				{
 					SchemaID: rawEvent.CurrentSchemaID,
 					TableID:  rawEvent.CurrentTableID,
 				},
 			}
-			addName = append(addName, common.SchemaTableName{
-				SchemaName: rawEvent.CurrentSchemaName,
-				TableName:  rawEvent.CurrentTableName,
-			})
-		}
-		ddlEvent.TableNameChange = &common.TableNameChange{
-			AddName:  addName,
-			DropName: dropName,
+			ddlEvent.TableNameChange = &common.TableNameChange{
+				AddName: []common.SchemaTableName{
+					{
+						SchemaName: rawEvent.CurrentSchemaName,
+						TableName:  rawEvent.CurrentTableName,
+					},
+				},
+			}
+		} else {
+			// if the table is both filtered out before and after rename table, the ddl should not be fetched
+			log.Panic("should not build a ignored rename table ddl",
+				zap.String("DDL", rawEvent.Query),
+				zap.Int64("jobID", rawEvent.ID),
+				zap.Int64("schemaID", rawEvent.CurrentSchemaID),
+				zap.Int64("tableID", rawEvent.CurrentTableID))
 		}
 	case model.ActionCreateView:
 		ddlEvent.BlockedTables = &common.InfluencedTables{
