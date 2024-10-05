@@ -943,7 +943,7 @@ func updateRegisteredTableInfoStore(
 func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) common.DDLEvent {
 	ddlEvent := common.DDLEvent{
 		Type: rawEvent.Type,
-		// TODO: whether the following fields are needed
+		// TODO: whether the following four fields are needed
 		SchemaID:   rawEvent.CurrentSchemaID,
 		TableID:    rawEvent.CurrentTableID,
 		SchemaName: rawEvent.CurrentSchemaName,
@@ -953,8 +953,6 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		FinishedTs: rawEvent.FinishedTs,
 		TiDBOnly:   false,
 	}
-	// TODO: remove schema id when influcence type is normal
-	// TODO: respect filter for create table / drop table and more ddls
 	switch model.ActionType(rawEvent.Type) {
 	case model.ActionCreateSchema,
 		model.ActionAddColumn,
@@ -998,12 +996,10 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		ddlEvent.BlockedTables = &common.InfluencedTables{
 			InfluenceType: common.InfluenceTypeNormal,
 			TableIDs:      []int64{rawEvent.CurrentTableID, heartbeatpb.DDLSpan.TableID},
-			SchemaID:      rawEvent.CurrentSchemaID,
 		}
 		ddlEvent.NeedDroppedTables = &common.InfluencedTables{
 			InfluenceType: common.InfluenceTypeNormal,
 			TableIDs:      []int64{rawEvent.CurrentTableID},
-			SchemaID:      rawEvent.CurrentSchemaID,
 		}
 		ddlEvent.TableNameChange = &common.TableNameChange{
 			DropName: []common.SchemaTableName{
@@ -1017,7 +1013,6 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		ddlEvent.NeedDroppedTables = &common.InfluencedTables{
 			InfluenceType: common.InfluenceTypeNormal,
 			TableIDs:      []int64{rawEvent.PrevTableID},
-			SchemaID:      rawEvent.CurrentSchemaID,
 		}
 		ddlEvent.NeedAddedTables = []common.Table{
 			{
@@ -1049,7 +1044,6 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 				ddlEvent.NeedDroppedTables = &common.InfluencedTables{
 					InfluenceType: common.InfluenceTypeNormal,
 					TableIDs:      []int64{rawEvent.CurrentTableID},
-					SchemaID:      rawEvent.PrevSchemaID,
 				}
 				ddlEvent.TableNameChange = &common.TableNameChange{
 					DropName: []common.SchemaTableName{

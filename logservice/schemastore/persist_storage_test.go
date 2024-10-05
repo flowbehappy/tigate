@@ -476,11 +476,6 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 	}
 }
 
-func verifyDBIsBlocked(t *testing.T, event common.DDLEvent, schemaID int64) {
-	require.Equal(t, common.InfluenceTypeDB, event.BlockedTables.InfluenceType)
-	require.Equal(t, schemaID, event.BlockedTables.SchemaID)
-}
-
 func verifyTableIsBlocked(t *testing.T, event common.DDLEvent, tableID int64) {
 	require.Equal(t, common.InfluenceTypeNormal, event.BlockedTables.InfluenceType)
 	for _, id := range event.BlockedTables.TableIDs {
@@ -796,7 +791,6 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 		require.Equal(t, "test", ddlEvents[1].SchemaName)
 		require.Equal(t, "t2", ddlEvents[1].TableName)
 		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[1].NeedDroppedTables.InfluenceType)
-		require.Equal(t, schemaID, ddlEvents[1].NeedDroppedTables.SchemaID)
 		require.Equal(t, 1, len(ddlEvents[1].NeedDroppedTables.TableIDs))
 		require.Equal(t, tableID, ddlEvents[1].NeedDroppedTables.TableIDs[0])
 		require.Equal(t, 1, len(ddlEvents[1].NeedAddedTables))
@@ -826,7 +820,6 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].NeedDroppedTables.InfluenceType)
 		require.Equal(t, 1, len(ddlEvents[0].NeedDroppedTables.TableIDs))
 		require.Equal(t, tableID3, ddlEvents[0].NeedDroppedTables.TableIDs[0])
-		require.Equal(t, schemaID, ddlEvents[0].NeedDroppedTables.SchemaID)
 	}
 
 	// fetch all table trigger ddl events
@@ -850,7 +843,6 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 		// drop table event
 		require.Equal(t, uint64(611), tableTriggerDDLEvents[4].FinishedTs)
 		require.Equal(t, common.InfluenceTypeNormal, tableTriggerDDLEvents[4].NeedDroppedTables.InfluenceType)
-		require.Equal(t, schemaID, tableTriggerDDLEvents[4].NeedDroppedTables.SchemaID)
 		require.Equal(t, tableID3, tableTriggerDDLEvents[4].NeedDroppedTables.TableIDs[0])
 		require.Equal(t, schemaName, tableTriggerDDLEvents[4].TableNameChange.DropName[0].SchemaName)
 		require.Equal(t, "t3", tableTriggerDDLEvents[4].TableNameChange.DropName[0].TableName)
