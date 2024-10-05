@@ -46,17 +46,17 @@ type LogPullerMultiSpan struct {
 	resolvedTsHeap heap.Heap[*resolvedTsItem]
 
 	// the resolved ts that have been consumed
-	prevResolvedTs common.Ts
+	prevResolvedTs uint64
 
 	// the resolved ts pending to be consumed if it is larger than `prevResolvedTs`
-	pendingResolvedTs common.Ts
+	pendingResolvedTs uint64
 }
 
 func NewLogPullerMultiSpan(
 	client *SubscriptionClient,
 	pdClock pdutil.Clock,
 	spans []heartbeatpb.TableSpan,
-	startTs common.Ts,
+	startTs uint64,
 	consume func(context.Context, *common.RawKVEntry) error,
 ) *LogPullerMultiSpan {
 	if len(spans) <= 1 {
@@ -148,7 +148,7 @@ func (p *LogPullerMultiSpan) sendResolvedTsPeriodically(ctx context.Context) err
 		if p.pendingResolvedTs > p.prevResolvedTs {
 			p.consume(ctx, &common.RawKVEntry{
 				OpType: common.OpTypeResolved,
-				CRTs:   common.Ts(p.pendingResolvedTs),
+				CRTs:   p.pendingResolvedTs,
 			})
 			p.prevResolvedTs = p.pendingResolvedTs
 		}
