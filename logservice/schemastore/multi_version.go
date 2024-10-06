@@ -270,14 +270,62 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 	case model.ActionRenameTable:
 		assertNonEmpty(v.infos, event)
 		appendTableInfo()
-
 	case model.ActionAddTablePartition:
-
+		newCreatedIDs := getCreatedIDs(event.PrevPartitions, getAllPartitionIDs(event))
+		for _, partition := range newCreatedIDs {
+			if v.tableID == partition {
+				appendTableInfo()
+				break
+			}
+		}
 	case model.ActionDropTablePartition:
-
+		droppedIDs := getDroppedIDs(event.PrevPartitions, getAllPartitionIDs(event))
+		for _, partition := range droppedIDs {
+			if v.tableID == partition {
+				v.deleteVersion = uint64(event.FinishedTs)
+				break
+			}
+		}
 	case model.ActionTruncateTablePartition:
-
+		physicalIDs := getAllPartitionIDs(event)
+		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
+		dropped := false
+		for _, partition := range droppedIDs {
+			if v.tableID == partition {
+				v.deleteVersion = uint64(event.FinishedTs)
+				dropped = true
+				break
+			}
+		}
+		if !dropped {
+			newCreatedIDs := getCreatedIDs(event.PrevPartitions, physicalIDs)
+			for _, partition := range newCreatedIDs {
+				if v.tableID == partition {
+					appendTableInfo()
+					break
+				}
+			}
+		}
 	case model.ActionReorganizePartition:
+		physicalIDs := getAllPartitionIDs(event)
+		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
+		dropped := false
+		for _, partition := range droppedIDs {
+			if v.tableID == partition {
+				v.deleteVersion = uint64(event.FinishedTs)
+				dropped = true
+				break
+			}
+		}
+		if !dropped {
+			newCreatedIDs := getCreatedIDs(event.PrevPartitions, physicalIDs)
+			for _, partition := range newCreatedIDs {
+				if v.tableID == partition {
+					appendTableInfo()
+					break
+				}
+			}
+		}
 	default:
 		log.Panic("not supported ddl type",
 			zap.Any("ddlType", event.Type),

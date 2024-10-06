@@ -718,16 +718,41 @@ func buildPersistedDDLEventFromJob(
 		model.ActionRenameIndex:
 		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
 		event.CurrentTableName = getTableName(event.CurrentTableID)
-	case model.ActionAddTablePartition:
-	case model.ActionDropTablePartition:
+	case model.ActionAddTablePartition,
+		model.ActionDropTablePartition:
+		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
+		event.CurrentTableName = getTableName(event.CurrentTableID)
+		for id := range partitionMap[event.CurrentTableID] {
+			event.PrevPartitions = append(event.PrevPartitions, id)
+		}
 	case model.ActionCreateView:
 		// ignore
 	case model.ActionTruncateTablePartition:
-
+		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
+		event.CurrentTableName = getTableName(event.CurrentTableID)
+		for id := range partitionMap[event.CurrentTableID] {
+			event.PrevPartitions = append(event.PrevPartitions, id)
+		}
 	case model.ActionExchangeTablePartition:
+		event.PrevSchemaID = event.CurrentSchemaID
+		event.PrevTableID = event.CurrentTableID
+		event.PrevSchemaName = getSchemaName(event.PrevSchemaID)
+		event.PrevTableName = getTableName(event.PrevTableID)
+		event.CurrentTableID = event.TableInfo.ID
+		event.CurrentSchemaID = getSchemaID(event.CurrentTableID)
+		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
+		event.CurrentTableName = getTableName(event.CurrentTableID)
+		for id := range partitionMap[event.CurrentTableID] {
+			event.PrevPartitions = append(event.PrevPartitions, id)
+		}
 	case model.ActionCreateTables:
 		// FIXME: support create tables
 	case model.ActionReorganizePartition:
+		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
+		event.CurrentTableName = getTableName(event.CurrentTableID)
+		for id := range partitionMap[event.CurrentTableID] {
+			event.PrevPartitions = append(event.PrevPartitions, id)
+		}
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", event.Type),
@@ -864,17 +889,32 @@ func updateDDLHistory(
 			appendTableHistory(ddlEvent.CurrentTableID)
 		}
 	case model.ActionAddTablePartition:
+		// all partitions include newly create partitions will receive this event
+		appendPartitionsHistory(getAllPartitionIDs(ddlEvent))
 	case model.ActionDropTablePartition:
+		// all partitions include dropped partitions will receive this event
+		appendPartitionsHistory(ddlEvent.PrevPartitions)
 	case model.ActionCreateView:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		for tableID := range tableMap {
 			appendTableHistory(tableID)
 		}
 	case model.ActionTruncateTablePartition:
-
+		appendPartitionsHistory(ddlEvent.PrevPartitions)
+		newCreateIDs := getCreatedIDs(ddlEvent.PrevPartitions, getAllPartitionIDs(ddlEvent))
+		appendPartitionsHistory(newCreateIDs)
 	case model.ActionExchangeTablePartition:
-
+		droppedIDs := getDroppedIDs(ddlEvent.PrevPartitions, getAllPartitionIDs(ddlEvent))
+		if len(droppedIDs) != 1 {
+			log.Panic("exchange table partition should only drop one partition",
+				zap.Int64s("droppedIDs", droppedIDs))
+		}
+		appendTableHistory(ddlEvent.PrevTableID)
+		appendPartitionsHistory(droppedIDs)
 	case model.ActionReorganizePartition:
+		appendPartitionsHistory(ddlEvent.PrevPartitions)
+		newCreateIDs := getCreatedIDs(ddlEvent.PrevPartitions, getAllPartitionIDs(ddlEvent))
+		appendPartitionsHistory(newCreateIDs)
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", ddlEvent.Type),
@@ -992,16 +1032,49 @@ func updateDatabaseInfoAndTableInfo(
 		model.ActionRenameIndex:
 		// TODO: verify can be ignored
 	case model.ActionAddTablePartition:
-		// TODO
+		newCreatedIDs := getCreatedIDs(event.PrevPartitions, getAllPartitionIDs(event))
+		for _, id := range newCreatedIDs {
+			partitionMap[event.CurrentTableID][id] = nil
+		}
 	case model.ActionDropTablePartition:
+		droppedIDs := getDroppedIDs(event.PrevPartitions, getAllPartitionIDs(event))
+		for _, id := range droppedIDs {
+			delete(partitionMap[event.CurrentTableID], id)
+		}
 	case model.ActionCreateView:
 		// ignore
 	case model.ActionTruncateTablePartition:
-
+		physicalIDs := getAllPartitionIDs(event)
+		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
+		for _, id := range droppedIDs {
+			delete(partitionMap[event.CurrentTableID], id)
+		}
+		newCreatedIDs := getCreatedIDs(event.PrevPartitions, physicalIDs)
+		for _, id := range newCreatedIDs {
+			partitionMap[event.CurrentTableID][id] = nil
+		}
 	case model.ActionExchangeTablePartition:
-
+		physicalIDs := getAllPartitionIDs(event)
+		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
+		if len(droppedIDs) != 1 {
+			log.Panic("exchange table partition should only drop one partition",
+				zap.Int64s("droppedIDs", droppedIDs))
+		}
+		targetPartitionID := droppedIDs[0]
+		dropTable(event.CurrentSchemaID, event.PrevTableID)
+		createTable(event.CurrentSchemaID, targetPartitionID)
+		delete(partitionMap[event.CurrentTableID], targetPartitionID)
+		partitionMap[event.CurrentTableID][event.PrevTableID] = nil
 	case model.ActionReorganizePartition:
-
+		physicalIDs := getAllPartitionIDs(event)
+		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
+		for _, id := range droppedIDs {
+			delete(partitionMap[event.CurrentTableID], id)
+		}
+		newCreatedIDs := getCreatedIDs(event.PrevPartitions, physicalIDs)
+		for _, id := range newCreatedIDs {
+			partitionMap[event.CurrentTableID][id] = nil
+		}
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", event.Type),
@@ -1094,23 +1167,77 @@ func updateRegisteredTableInfoStore(
 		model.ActionRenameIndex:
 		// TODO: verify can be ignored
 	case model.ActionAddTablePartition:
-		// TODO: support, like create table?
+		newCreatedIDs := getCreatedIDs(event.PrevPartitions, getAllPartitionIDs(event))
+		for _, id := range newCreatedIDs {
+			if _, ok := tableInfoStoreMap[id]; ok {
+				log.Panic("newly created partitions should not be registered",
+					zap.Int64("partitionID", id))
+			}
+		}
 	case model.ActionDropTablePartition:
-		// TODO: support
+		droppedIDs := getDroppedIDs(event.PrevPartitions, getAllPartitionIDs(event))
+		for _, id := range droppedIDs {
+			if store, ok := tableInfoStoreMap[id]; ok {
+				store.applyDDL(event)
+			}
+		}
 	case model.ActionCreateView:
 		// ignore
 	case model.ActionTruncateTablePartition:
-
+		physicalIDs := getAllPartitionIDs(event)
+		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
+		for _, id := range droppedIDs {
+			if store, ok := tableInfoStoreMap[id]; ok {
+				store.applyDDL(event)
+			}
+		}
+		newCreatedIDs := getCreatedIDs(event.PrevPartitions, physicalIDs)
+		for _, id := range newCreatedIDs {
+			if _, ok := tableInfoStoreMap[id]; ok {
+				log.Panic("newly created partitions should not be registered",
+					zap.Int64("partitionID", id))
+			}
+		}
 	case model.ActionExchangeTablePartition:
-
+		// ignore
 	case model.ActionReorganizePartition:
-
+		physicalIDs := getAllPartitionIDs(event)
+		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
+		for _, id := range droppedIDs {
+			if store, ok := tableInfoStoreMap[id]; ok {
+				store.applyDDL(event)
+			}
+		}
+		newCreatedIDs := getCreatedIDs(event.PrevPartitions, physicalIDs)
+		for _, id := range newCreatedIDs {
+			if _, ok := tableInfoStoreMap[id]; ok {
+				log.Panic("newly created partitions should not be registered",
+					zap.Int64("partitionID", id))
+			}
+		}
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", event.Type),
 			zap.String("DDL", event.Query))
 	}
 	return nil
+}
+
+func getCreatedIDs(oldIDs []int64, newIDs []int64) []int64 {
+	oldIDsMap := make(map[int64]interface{}, len(oldIDs))
+	for _, id := range oldIDs {
+		oldIDsMap[id] = nil
+	}
+	createdIDs := make([]int64, 0)
+	for _, id := range newIDs {
+		if _, ok := oldIDsMap[id]; !ok {
+			createdIDs = append(createdIDs, id)
+		}
+	}
+	return createdIDs
+}
+func getDroppedIDs(oldIDs []int64, newIDs []int64) []int64 {
+	return getCreatedIDs(newIDs, oldIDs)
 }
 
 func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) common.DDLEvent {
@@ -1125,22 +1252,6 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		TableInfo:  rawEvent.TableInfo,
 		FinishedTs: rawEvent.FinishedTs,
 		TiDBOnly:   false,
-	}
-	getCreatedIDs := func(oldIDs []int64, newIDs []int64) []int64 {
-		oldIDsMap := make(map[int64]interface{}, len(oldIDs))
-		for _, id := range oldIDs {
-			oldIDsMap[id] = nil
-		}
-		createdIDs := make([]int64, 0)
-		for _, id := range newIDs {
-			if _, ok := oldIDsMap[id]; !ok {
-				createdIDs = append(createdIDs, id)
-			}
-		}
-		return createdIDs
-	}
-	getDroppedIDs := func(oldIDs []int64, newIDs []int64) []int64 {
-		return getCreatedIDs(newIDs, oldIDs)
 	}
 
 	switch model.ActionType(rawEvent.Type) {
