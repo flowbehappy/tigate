@@ -84,7 +84,7 @@ func (v *versionedTableInfoStore) setTableInfoInitialized() {
 		// 	zap.String("query", job.Query),
 		// 	zap.Uint64("finishedTS", job.BinlogInfo.FinishedTS),
 		// 	zap.Any("infosLen", len(v.infos)))
-		v.doApplyDDL(job)
+		v.doApplyDDL(&job)
 	}
 	v.initialized = true
 	close(v.readyToRead)
@@ -155,7 +155,7 @@ func (v *versionedTableInfoStore) gc(gcTs uint64) bool {
 	return false
 }
 
-func assertEmpty(infos []*tableInfoItem, event PersistedDDLEvent) {
+func assertEmpty(infos []*tableInfoItem, event *PersistedDDLEvent) {
 	if len(infos) != 0 {
 		log.Panic("shouldn't happen",
 			zap.Any("infosLen", len(infos)),
@@ -168,7 +168,7 @@ func assertEmpty(infos []*tableInfoItem, event PersistedDDLEvent) {
 	}
 }
 
-func assertNonEmpty(infos []*tableInfoItem, event PersistedDDLEvent) {
+func assertNonEmpty(infos []*tableInfoItem, event *PersistedDDLEvent) {
 	if len(infos) == 0 {
 		log.Panic("shouldn't happen",
 			zap.Any("infos", infos),
@@ -182,7 +182,7 @@ func assertNonDeleted(v *versionedTableInfoStore) {
 	}
 }
 
-func (v *versionedTableInfoStore) applyDDLFromPersistStorage(event PersistedDDLEvent) {
+func (v *versionedTableInfoStore) applyDDLFromPersistStorage(event *PersistedDDLEvent) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.initialized {
@@ -192,21 +192,22 @@ func (v *versionedTableInfoStore) applyDDLFromPersistStorage(event PersistedDDLE
 	v.doApplyDDL(event)
 }
 
-func (v *versionedTableInfoStore) applyDDL(event PersistedDDLEvent) {
+func (v *versionedTableInfoStore) applyDDL(event *PersistedDDLEvent) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	// delete table should not receive more ddl
 	assertNonDeleted(v)
 
 	if !v.initialized {
-		v.pendingDDLs = append(v.pendingDDLs, event)
+		// The usage of the parameter `event` may outlive the function call, so we copy it.
+		v.pendingDDLs = append(v.pendingDDLs, *event)
 		return
 	}
 	v.doApplyDDL(event)
 }
 
 // lock must be hold by the caller
-func (v *versionedTableInfoStore) doApplyDDL(event PersistedDDLEvent) {
+func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 	// TODO: add a unit test
 	// TODO: whether need add schema version check
 	if len(v.infos) != 0 && event.FinishedTs <= v.infos[len(v.infos)-1].version {
@@ -216,6 +217,11 @@ func (v *versionedTableInfoStore) doApplyDDL(event PersistedDDLEvent) {
 			zap.Uint64("finishedTS", event.FinishedTs),
 			zap.Int("infosLen", len(v.infos)))
 		return
+	}
+	appendTableInfo := func() {
+		info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, event.TableInfo)
+		info.InitPreSQLs()
+		v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 	}
 
 	switch model.ActionType(event.Type) {
@@ -229,30 +235,28 @@ func (v *versionedTableInfoStore) doApplyDDL(event PersistedDDLEvent) {
 			break
 		}
 		assertEmpty(v.infos, event)
-		info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, event.TableInfo)
-		info.InitPreSQLs()
-		v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
-	case model.ActionRenameTable,
-		model.ActionAddColumn,
-		model.ActionDropColumn:
-		assertNonEmpty(v.infos, event)
-		info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, event.TableInfo)
-		info.InitPreSQLs()
-		v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
+		appendTableInfo()
 	case model.ActionDropTable:
 		v.deleteVersion = uint64(event.FinishedTs)
+	case model.ActionAddColumn,
+		model.ActionDropColumn:
+		assertNonEmpty(v.infos, event)
+		appendTableInfo()
 	case model.ActionTruncateTable:
 		if v.tableID == event.CurrentTableID {
-			info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, event.TableInfo)
-			info.InitPreSQLs()
-			v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
+			appendTableInfo()
 		} else {
 			if v.tableID != event.PrevTableID {
 				log.Panic("should not happen")
 			}
 			v.deleteVersion = uint64(event.FinishedTs)
 		}
+	case model.ActionRenameTable:
+		assertNonEmpty(v.infos, event)
+		appendTableInfo()
 	default:
-		// TODO: idenitify unexpected ddl or specify all expected ddl
+		log.Panic("not supported ddl type",
+			zap.Any("ddlType", event.Type),
+			zap.String("DDL", event.Query))
 	}
 }

@@ -28,6 +28,9 @@ type PersistedDDLEvent struct {
 	PrevSchemaName string `msg:"prev_schema_name"`
 	PrevTableName  string `msg:"prev_table_name"`
 
+	// The following fields are only set when the ddl job involves a partition table
+	PrevPartitions []int64 `msg:"prev_partitions"`
+
 	Query         string           `msg:"query"`
 	SchemaVersion int64            `msg:"schema_version"`
 	DBInfo        *model.DBInfo    `msg:"-"`
@@ -64,6 +67,8 @@ type BasicTableInfo struct {
 	SchemaID int64
 	Name     string
 }
+
+type BasicPartitionInfo map[int64]interface{}
 
 //msgp:ignore DDLJobWithCommitTs
 type DDLJobWithCommitTs struct {

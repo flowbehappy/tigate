@@ -183,8 +183,13 @@ func loadDatabasesInKVSnap(snap *pebble.Snapshot, gcTs uint64) (map[int64]*Basic
 	return databaseMap, nil
 }
 
-func loadTablesInKVSnap(snap *pebble.Snapshot, gcTs uint64, databaseMap map[int64]*BasicDatabaseInfo) (map[int64]*BasicTableInfo, error) {
+func loadTablesInKVSnap(
+	snap *pebble.Snapshot,
+	gcTs uint64,
+	databaseMap map[int64]*BasicDatabaseInfo,
+) (map[int64]*BasicTableInfo, map[int64]BasicPartitionInfo, error) {
 	tablesInKVSnap := make(map[int64]*BasicTableInfo)
+	partitionsInKVSnap := make(map[int64]BasicPartitionInfo)
 
 	startKey, err := tableInfoKey(gcTs, 0)
 	if err != nil {
@@ -208,26 +213,32 @@ func loadTablesInKVSnap(snap *pebble.Snapshot, gcTs uint64, databaseMap map[int6
 			log.Fatal("unmarshal table info entry failed", zap.Error(err))
 		}
 
-		tbNameInfo := model.TableNameInfo{}
-		if err := json.Unmarshal(table_info_entry.TableInfoValue, &tbNameInfo); err != nil {
-			log.Fatal("unmarshal table name info failed", zap.Error(err))
+		tableInfo := model.TableInfo{}
+		if err := json.Unmarshal(table_info_entry.TableInfoValue, &tableInfo); err != nil {
+			log.Fatal("unmarshal table info failed", zap.Error(err))
 		}
 		databaseInfo, ok := databaseMap[table_info_entry.SchemaID]
 		if !ok {
 			log.Panic("database not found",
 				zap.Int64("schemaID", table_info_entry.SchemaID),
 				zap.String("schemaName", table_info_entry.SchemaName),
-				zap.String("tableName", tbNameInfo.Name.O))
+				zap.String("tableName", tableInfo.Name.O))
 		}
 		// TODO: add a unit test for this case
-		databaseInfo.Tables[tbNameInfo.ID] = true
-		tablesInKVSnap[tbNameInfo.ID] = &BasicTableInfo{
+		databaseInfo.Tables[tableInfo.ID] = true
+		tablesInKVSnap[tableInfo.ID] = &BasicTableInfo{
 			SchemaID: table_info_entry.SchemaID,
-			Name:     tbNameInfo.Name.O,
+			Name:     tableInfo.Name.O,
+		}
+		if tableInfo.Partition != nil {
+			partitionInfo := make(BasicPartitionInfo)
+			for _, partition := range tableInfo.Partition.Definitions {
+				partitionInfo[partition.ID] = nil
+			}
+			partitionsInKVSnap[tableInfo.ID] = partitionInfo
 		}
 	}
-
-	return tablesInKVSnap, nil
+	return tablesInKVSnap, partitionsInKVSnap, nil
 }
 
 // load the ddl jobs in the range (gcTs, upperBound] and apply the ddl job to update database and table info
@@ -237,6 +248,7 @@ func loadAndApplyDDLHistory(
 	maxFinishedDDLTs uint64,
 	databaseMap map[int64]*BasicDatabaseInfo,
 	tableMap map[int64]*BasicTableInfo,
+	partitionMap map[int64]BasicPartitionInfo,
 ) (map[int64][]uint64, []uint64, error) {
 	tablesDDLHistory := make(map[int64][]uint64)
 	tableTriggerDDLHistory := make([]uint64, 0)
@@ -279,7 +291,7 @@ func loadAndApplyDDLHistory(
 			tableTriggerDDLHistory); err != nil {
 			log.Panic("updateDDLHistory error", zap.Error(err))
 		}
-		if err := updateDatabaseInfoAndTableInfo(&ddlEvent, databaseMap, tableMap); err != nil {
+		if err := updateDatabaseInfoAndTableInfo(&ddlEvent, databaseMap, tableMap, partitionMap); err != nil {
 			log.Panic("updateDatabaseInfo error", zap.Error(err))
 		}
 	}
@@ -526,12 +538,13 @@ func loadAllPhysicalTablesAtTs(
 		return nil, err
 	}
 
-	tableMap, err := loadTablesInKVSnap(storageSnap, gcTs, databaseMap)
+	tableMap, partitionMap, err := loadTablesInKVSnap(storageSnap, gcTs, databaseMap)
 	if err != nil {
 		return nil, err
 	}
 	log.Info("after load tables in kv snap",
-		zap.Int("tableMapLen", len(tableMap)))
+		zap.Int("tableMapLen", len(tableMap)),
+		zap.Int("partitionMapLen", len(partitionMap)))
 
 	// apply ddl jobs in range (gcTs, snapVersion]
 	startKey, err := ddlJobKey(gcTs + 1)
@@ -559,12 +572,13 @@ func loadAllPhysicalTablesAtTs(
 		if err := json.Unmarshal(ddlEvent.TableInfoValue, &ddlEvent.TableInfo); err != nil {
 			log.Fatal("unmarshal table info failed", zap.Error(err))
 		}
-		if err := updateDatabaseInfoAndTableInfo(&ddlEvent, databaseMap, tableMap); err != nil {
+		if err := updateDatabaseInfoAndTableInfo(&ddlEvent, databaseMap, tableMap, partitionMap); err != nil {
 			log.Panic("updateDatabaseInfo error", zap.Error(err))
 		}
 	}
 	log.Info("after load tables from ddl",
-		zap.Int("tableMapLen", len(tableMap)))
+		zap.Int("tableMapLen", len(tableMap)),
+		zap.Int("partitionMapLen", len(partitionMap)))
 	tables := make([]common.Table, 0)
 	for tableID, tableInfo := range tableMap {
 		if _, ok := databaseMap[tableInfo.SchemaID]; !ok {
@@ -577,10 +591,19 @@ func loadAllPhysicalTablesAtTs(
 		if tableFilter != nil && tableFilter.ShouldIgnoreTable(databaseMap[tableInfo.SchemaID].Name, tableInfo.Name) {
 			continue
 		}
-		tables = append(tables, common.Table{
-			SchemaID: tableInfo.SchemaID,
-			TableID:  tableID,
-		})
+		if partitionInfo, ok := partitionMap[tableID]; ok {
+			for partitionID := range partitionInfo {
+				tables = append(tables, common.Table{
+					SchemaID: tableInfo.SchemaID,
+					TableID:  partitionID,
+				})
+			}
+		} else {
+			tables = append(tables, common.Table{
+				SchemaID: tableInfo.SchemaID,
+				TableID:  tableID,
+			})
+		}
 	}
 	return tables, nil
 }

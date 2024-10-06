@@ -248,7 +248,7 @@ func TestBuildVersionedTableInfoStore(t *testing.T) {
 		require.Equal(t, "t2", tableInfo2.Name.O)
 
 		renameVersion2 := uint64(3000)
-		store.applyDDL(PersistedDDLEvent{
+		store.applyDDL(&PersistedDDLEvent{
 			Type:            byte(model.ActionRenameTable),
 			CurrentSchemaID: schemaID,
 			CurrentTableID:  tableID,
@@ -640,6 +640,22 @@ func TestHandleRenameTable(t *testing.T) {
 		require.Nil(t, err)
 		require.Equal(t, 0, len(triggerDDLEvents))
 	}
+}
+
+func TestNormalDDLForPartitionTable(t *testing.T) {
+
+}
+
+func TestPartitionManageDDL(t *testing.T) {
+
+}
+
+func TestCreateTables(t *testing.T) {
+
+}
+
+func TestRenameTables(t *testing.T) {
+
 }
 
 func TestFetchDDLEventsBasic(t *testing.T) {
