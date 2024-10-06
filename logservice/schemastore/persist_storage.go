@@ -1101,6 +1101,23 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		FinishedTs: rawEvent.FinishedTs,
 		TiDBOnly:   false,
 	}
+	getCreatedIDs := func(oldIDs []int64, newIDs []int64) []int64 {
+		oldIDsMap := make(map[int64]interface{}, len(oldIDs))
+		for _, id := range oldIDs {
+			oldIDsMap[id] = nil
+		}
+		createdIDs := make([]int64, 0)
+		for _, id := range newIDs {
+			if _, ok := oldIDsMap[id]; !ok {
+				createdIDs = append(createdIDs, id)
+			}
+		}
+		return createdIDs
+	}
+	getDroppedIDs := func(oldIDs []int64, newIDs []int64) []int64 {
+		return getCreatedIDs(newIDs, oldIDs)
+	}
+
 	switch model.ActionType(rawEvent.Type) {
 	case model.ActionCreateSchema:
 		// ignore
@@ -1347,19 +1364,131 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		model.ActionRenameIndex:
 		// ignore
 	case model.ActionAddTablePartition:
-
+		if len(rawEvent.PrevPartitions) > 1 {
+			ddlEvent.BlockedTables = &common.InfluencedTables{
+				InfluenceType: common.InfluenceTypeNormal,
+				TableIDs:      rawEvent.PrevPartitions,
+			}
+		}
+		physicalIDs := getAllPartitionIDs(rawEvent)
+		newCreatedIDs := getCreatedIDs(rawEvent.PrevPartitions, physicalIDs)
+		ddlEvent.NeedAddedTables = make([]common.Table, 0, len(newCreatedIDs))
+		for _, id := range newCreatedIDs {
+			ddlEvent.NeedAddedTables = append(ddlEvent.NeedAddedTables, common.Table{
+				SchemaID: rawEvent.CurrentSchemaID,
+				TableID:  id,
+			})
+		}
 	case model.ActionDropTablePartition:
-		// TODO
+		if len(rawEvent.PrevPartitions) > 1 {
+			ddlEvent.BlockedTables = &common.InfluencedTables{
+				InfluenceType: common.InfluenceTypeNormal,
+				TableIDs:      rawEvent.PrevPartitions,
+			}
+		}
+		physicalIDs := getAllPartitionIDs(rawEvent)
+		droppedIDs := getDroppedIDs(rawEvent.PrevPartitions, physicalIDs)
+		ddlEvent.NeedDroppedTables = &common.InfluencedTables{
+			InfluenceType: common.InfluenceTypeNormal,
+			TableIDs:      droppedIDs,
+		}
 	case model.ActionCreateView:
 		ddlEvent.BlockedTables = &common.InfluencedTables{
 			InfluenceType: common.InfluenceTypeAll,
 		}
 	case model.ActionTruncateTablePartition:
-		// TODO
+		if len(rawEvent.PrevPartitions) > 1 {
+			ddlEvent.BlockedTables = &common.InfluencedTables{
+				InfluenceType: common.InfluenceTypeNormal,
+				TableIDs:      rawEvent.PrevPartitions,
+			}
+		}
+		physicalIDs := getAllPartitionIDs(rawEvent)
+		newCreatedIDs := getCreatedIDs(rawEvent.PrevPartitions, physicalIDs)
+		for _, id := range newCreatedIDs {
+			ddlEvent.NeedAddedTables = append(ddlEvent.NeedAddedTables, common.Table{
+				SchemaID: rawEvent.CurrentSchemaID,
+				TableID:  id,
+			})
+		}
+		droppedIDs := getDroppedIDs(rawEvent.PrevPartitions, physicalIDs)
+		ddlEvent.NeedDroppedTables = &common.InfluencedTables{
+			InfluenceType: common.InfluenceTypeNormal,
+			TableIDs:      droppedIDs,
+		}
 	case model.ActionExchangeTablePartition:
-		// TODO
+		ignoreNormalTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.PrevSchemaName, rawEvent.PrevTableName)
+		ignorePartitionTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.CurrentSchemaName, rawEvent.CurrentTableName)
+		physicalIDs := getAllPartitionIDs(rawEvent)
+		droppedIDs := getDroppedIDs(rawEvent.PrevPartitions, physicalIDs)
+		if len(droppedIDs) != 1 {
+			log.Panic("exchange table partition should only drop one partition",
+				zap.Int64s("droppedIDs", droppedIDs))
+		}
+		targetPartitionID := droppedIDs[0]
+		if !ignoreNormalTable && !ignorePartitionTable {
+			ddlEvent.BlockedTables = &common.InfluencedTables{
+				InfluenceType: common.InfluenceTypeNormal,
+				TableIDs:      []int64{rawEvent.PrevTableID, targetPartitionID},
+			}
+			ddlEvent.UpdatedSchemas = []common.SchemaIDChange{
+				{
+					TableID:     targetPartitionID,
+					OldSchemaID: rawEvent.CurrentSchemaID,
+					NewSchemaID: rawEvent.PrevSchemaID,
+				},
+				{
+					TableID:     rawEvent.PrevTableID,
+					OldSchemaID: rawEvent.PrevSchemaID,
+					NewSchemaID: rawEvent.CurrentSchemaID,
+				},
+			}
+		} else if !ignoreNormalTable {
+			ddlEvent.NeedDroppedTables = &common.InfluencedTables{
+				InfluenceType: common.InfluenceTypeNormal,
+				TableIDs:      []int64{rawEvent.PrevTableID},
+			}
+			ddlEvent.NeedAddedTables = []common.Table{
+				{
+					SchemaID: rawEvent.PrevSchemaID,
+					TableID:  targetPartitionID,
+				},
+			}
+		} else if !ignorePartitionTable {
+			ddlEvent.NeedDroppedTables = &common.InfluencedTables{
+				InfluenceType: common.InfluenceTypeNormal,
+				TableIDs:      []int64{targetPartitionID},
+			}
+			ddlEvent.NeedAddedTables = []common.Table{
+				{
+					SchemaID: rawEvent.CurrentSchemaID,
+					TableID:  rawEvent.PrevTableID,
+				},
+			}
+		} else {
+			log.Fatal("should not happen")
+		}
 	case model.ActionReorganizePartition:
-		// TODO
+		// same as truncate partition
+		if len(rawEvent.PrevPartitions) > 1 {
+			ddlEvent.BlockedTables = &common.InfluencedTables{
+				InfluenceType: common.InfluenceTypeNormal,
+				TableIDs:      rawEvent.PrevPartitions,
+			}
+		}
+		physicalIDs := getAllPartitionIDs(rawEvent)
+		newCreatedIDs := getCreatedIDs(rawEvent.PrevPartitions, physicalIDs)
+		for _, id := range newCreatedIDs {
+			ddlEvent.NeedAddedTables = append(ddlEvent.NeedAddedTables, common.Table{
+				SchemaID: rawEvent.CurrentSchemaID,
+				TableID:  id,
+			})
+		}
+		droppedIDs := getDroppedIDs(rawEvent.PrevPartitions, physicalIDs)
+		ddlEvent.NeedDroppedTables = &common.InfluencedTables{
+			InfluenceType: common.InfluenceTypeNormal,
+			TableIDs:      droppedIDs,
+		}
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", rawEvent.Type),

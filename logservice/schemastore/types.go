@@ -11,18 +11,14 @@ type PersistedDDLEvent struct {
 	ID   int64 `msg:"id"`
 	Type byte  `msg:"type"`
 
-	// SchemaID means different for different job types:
-	// - ExchangeTablePartition: db id of non-partitioned table
-	// TableID means different for different job types:
-	// - ExchangeTablePartition: non-partitioned table id
-	// For truncate table, it it the table id of the newly created table
-
+	// for exchange partition, it is the info of the partition table
 	CurrentSchemaID   int64  `msg:"current_schema_id"`
 	CurrentTableID    int64  `msg:"current_table_id"`
 	CurrentSchemaName string `msg:"current_schema_name"`
 	CurrentTableName  string `msg:"current_table_name"`
 
 	// The following fields are only set when the ddl job involves a prev table
+	// for exchange partition, it is the info of the normal table before exchange
 	PrevSchemaID   int64  `msg:"prev_schema_id"`
 	PrevTableID    int64  `msg:"prev_table_id"`
 	PrevSchemaName string `msg:"prev_schema_name"`
