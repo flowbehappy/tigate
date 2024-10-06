@@ -1346,11 +1346,20 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		model.ActionModifyTableComment,
 		model.ActionRenameIndex:
 		// ignore
+	case model.ActionAddTablePartition:
 
+	case model.ActionDropTablePartition:
+		// TODO
 	case model.ActionCreateView:
 		ddlEvent.BlockedTables = &common.InfluencedTables{
 			InfluenceType: common.InfluenceTypeAll,
 		}
+	case model.ActionTruncateTablePartition:
+		// TODO
+	case model.ActionExchangeTablePartition:
+		// TODO
+	case model.ActionReorganizePartition:
+		// TODO
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", rawEvent.Type),

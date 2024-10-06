@@ -778,6 +778,51 @@ func TestPartitionTableDDL(t *testing.T) {
 		require.Nil(t, err)
 		require.Equal(t, 2, len(ddlEvents))
 	}
+
+	// test drop schema can clear partition info
+	{
+		pStorage.handleDDLJob(&model.Job{
+			Type:     model.ActionCreateTable,
+			SchemaID: schemaID,
+			TableID:  tableID + 1000,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 255,
+				TableInfo: &model.TableInfo{
+					ID:   tableID + 1000,
+					Name: model.NewCIStr("t100"),
+					Partition: &model.PartitionInfo{
+						Definitions: []model.PartitionDefinition{
+							{
+								ID: partitionID4 + 500,
+							},
+							{
+								ID: partitionID5 + 500,
+							},
+						},
+					},
+				},
+				FinishedTS: 355,
+			},
+		})
+		require.Less(t, 0, len(pStorage.partitionMap))
+
+		job := &model.Job{
+			Type:     model.ActionDropSchema,
+			SchemaID: schemaID,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 260,
+				DBInfo: &model.DBInfo{
+					ID:   schemaID,
+					Name: model.NewCIStr("test"),
+				},
+				TableInfo:  nil,
+				FinishedTS: 360,
+			},
+		}
+		pStorage.handleDDLJob(job)
+		require.Equal(t, 0, len(pStorage.databaseMap))
+		require.Equal(t, 0, len(pStorage.partitionMap))
+	}
 }
 
 func TestAlterBetweenPartitionTableAndNonPartitionTable(t *testing.T) {
