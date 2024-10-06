@@ -270,6 +270,14 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 	case model.ActionRenameTable:
 		assertNonEmpty(v.infos, event)
 		appendTableInfo()
+
+	case model.ActionAddTablePartition:
+
+	case model.ActionDropTablePartition:
+
+	case model.ActionTruncateTablePartition:
+
+	case model.ActionReorganizePartition:
 	default:
 		log.Panic("not supported ddl type",
 			zap.Any("ddlType", event.Type),

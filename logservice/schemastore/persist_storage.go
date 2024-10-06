@@ -718,11 +718,16 @@ func buildPersistedDDLEventFromJob(
 		model.ActionRenameIndex:
 		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
 		event.CurrentTableName = getTableName(event.CurrentTableID)
-
+	case model.ActionAddTablePartition:
+	case model.ActionDropTablePartition:
 	case model.ActionCreateView:
 		// ignore
+	case model.ActionTruncateTablePartition:
+
+	case model.ActionExchangeTablePartition:
 	case model.ActionCreateTables:
 		// FIXME: support create tables
+	case model.ActionReorganizePartition:
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", event.Type),
@@ -858,11 +863,18 @@ func updateDDLHistory(
 		} else {
 			appendTableHistory(ddlEvent.CurrentTableID)
 		}
+	case model.ActionAddTablePartition:
+	case model.ActionDropTablePartition:
 	case model.ActionCreateView:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		for tableID := range tableMap {
 			appendTableHistory(tableID)
 		}
+	case model.ActionTruncateTablePartition:
+
+	case model.ActionExchangeTablePartition:
+
+	case model.ActionReorganizePartition:
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", ddlEvent.Type),
@@ -981,8 +993,15 @@ func updateDatabaseInfoAndTableInfo(
 		// TODO: verify can be ignored
 	case model.ActionAddTablePartition:
 		// TODO
+	case model.ActionDropTablePartition:
 	case model.ActionCreateView:
 		// ignore
+	case model.ActionTruncateTablePartition:
+
+	case model.ActionExchangeTablePartition:
+
+	case model.ActionReorganizePartition:
+
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", event.Type),
@@ -1080,6 +1099,12 @@ func updateRegisteredTableInfoStore(
 		// TODO: support
 	case model.ActionCreateView:
 		// ignore
+	case model.ActionTruncateTablePartition:
+
+	case model.ActionExchangeTablePartition:
+
+	case model.ActionReorganizePartition:
+
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", event.Type),
