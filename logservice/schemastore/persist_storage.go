@@ -295,7 +295,7 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 	// TODO: check a dispatcher from rename table start ts > finish ts of rename table(is it possible?)
 	p.mu.RLock()
 	if start < p.gcTs {
-		p.mu.Unlock()
+		p.mu.RUnlock()
 		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
 	}
 	// fast check

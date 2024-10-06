@@ -243,13 +243,29 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 		assertNonEmpty(v.infos, event)
 		appendTableInfo()
 	case model.ActionTruncateTable:
-		if v.tableID == event.CurrentTableID {
-			appendTableInfo()
-		} else {
-			if v.tableID != event.PrevTableID {
-				log.Panic("should not happen")
+		if isPartitionTableEvent(event) {
+			createTable := false
+			for _, partition := range getAllPartitionIDs(event) {
+				if v.tableID == partition {
+					createTable = true
+					break
+				}
 			}
-			v.deleteVersion = uint64(event.FinishedTs)
+			if createTable {
+				log.Info("create table for truncate table")
+				appendTableInfo()
+			} else {
+				v.deleteVersion = uint64(event.FinishedTs)
+			}
+		} else {
+			if v.tableID == event.CurrentTableID {
+				appendTableInfo()
+			} else {
+				if v.tableID != event.PrevTableID {
+					log.Panic("should not happen")
+				}
+				v.deleteVersion = uint64(event.FinishedTs)
+			}
 		}
 	case model.ActionRenameTable:
 		assertNonEmpty(v.infos, event)
