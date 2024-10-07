@@ -140,6 +140,7 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 			for _, event := range resolvedEvents {
 				if event.Job.BinlogInfo.SchemaVersion <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTs {
 					log.Info("skip already applied ddl job",
+						zap.Any("type", event.Job.Type),
 						zap.String("job", event.Job.Query),
 						zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
 						zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),

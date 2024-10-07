@@ -27,7 +27,7 @@ func TestCreateTruncateAndDropTable(t *testing.T) {
 	store1.setTableInfoInitialized()
 	createVersion := uint64(300)
 	{
-		createDDLJob := PersistedDDLEvent{
+		createDDLEvent := &PersistedDDLEvent{
 			Type:              byte(model.ActionCreateTable),
 			CurrentSchemaID:   10,
 			CurrentTableID:    tableID1,
@@ -39,7 +39,7 @@ func TestCreateTruncateAndDropTable(t *testing.T) {
 			},
 			FinishedTs: createVersion,
 		}
-		store1.applyDDL(createDDLJob)
+		store1.applyDDL(createDDLEvent)
 	}
 
 	tableID2 := tableID1 + 1
@@ -47,7 +47,7 @@ func TestCreateTruncateAndDropTable(t *testing.T) {
 	store2.setTableInfoInitialized()
 	truncateVersion := createVersion + 10
 	{
-		truncateDDLJob := PersistedDDLEvent{
+		truncateDDLEvent := &PersistedDDLEvent{
 			Type:              byte(model.ActionTruncateTable),
 			CurrentSchemaID:   10,
 			CurrentTableID:    tableID2,
@@ -60,13 +60,13 @@ func TestCreateTruncateAndDropTable(t *testing.T) {
 			},
 			FinishedTs: truncateVersion,
 		}
-		store1.applyDDL(truncateDDLJob)
-		store2.applyDDL(truncateDDLJob)
+		store1.applyDDL(truncateDDLEvent)
+		store2.applyDDL(truncateDDLEvent)
 	}
 
 	dropVersion := truncateVersion + 10
 	{
-		dropDDLJob := PersistedDDLEvent{
+		dropDDLEvent := &PersistedDDLEvent{
 			Type:              byte(model.ActionDropTable),
 			CurrentSchemaID:   10,
 			CurrentTableID:    tableID2,
@@ -78,7 +78,7 @@ func TestCreateTruncateAndDropTable(t *testing.T) {
 			},
 			FinishedTs: dropVersion,
 		}
-		store2.applyDDL(dropDDLJob)
+		store2.applyDDL(dropDDLEvent)
 	}
 
 	{
@@ -106,7 +106,7 @@ func TestRenameTable(t *testing.T) {
 	createVersion := uint64(100)
 	schemaID1 := int64(10)
 	{
-		createDDLJob := PersistedDDLEvent{
+		createDDLEvent := &PersistedDDLEvent{
 			Type:              byte(model.ActionCreateTable),
 			CurrentSchemaID:   10,
 			CurrentTableID:    tableID,
@@ -118,13 +118,13 @@ func TestRenameTable(t *testing.T) {
 			},
 			FinishedTs: createVersion,
 		}
-		store.applyDDL(createDDLJob)
+		store.applyDDL(createDDLEvent)
 	}
 
 	renameVersion := createVersion + 10
 	schemaID2 := schemaID1 + 100
 	{
-		renameDDLJob := PersistedDDLEvent{
+		renameDDLEvent := &PersistedDDLEvent{
 			Type:              byte(model.ActionRenameTable),
 			CurrentSchemaID:   schemaID2,
 			CurrentTableID:    tableID,
@@ -139,7 +139,7 @@ func TestRenameTable(t *testing.T) {
 			},
 			FinishedTs: renameVersion,
 		}
-		store.applyDDL(renameDDLJob)
+		store.applyDDL(renameDDLEvent)
 	}
 
 	{

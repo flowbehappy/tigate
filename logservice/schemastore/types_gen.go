@@ -84,6 +84,25 @@ func (z *PersistedDDLEvent) DecodeMsg(dc *msgp.Reader) (err error) {
 				err = msgp.WrapError(err, "PrevTableName")
 				return
 			}
+		case "prev_partitions":
+			var zb0002 uint32
+			zb0002, err = dc.ReadArrayHeader()
+			if err != nil {
+				err = msgp.WrapError(err, "PrevPartitions")
+				return
+			}
+			if cap(z.PrevPartitions) >= int(zb0002) {
+				z.PrevPartitions = (z.PrevPartitions)[:zb0002]
+			} else {
+				z.PrevPartitions = make([]int64, zb0002)
+			}
+			for za0001 := range z.PrevPartitions {
+				z.PrevPartitions[za0001], err = dc.ReadInt64()
+				if err != nil {
+					err = msgp.WrapError(err, "PrevPartitions", za0001)
+					return
+				}
+			}
 		case "query":
 			z.Query, err = dc.ReadString()
 			if err != nil {
@@ -107,6 +126,25 @@ func (z *PersistedDDLEvent) DecodeMsg(dc *msgp.Reader) (err error) {
 			if err != nil {
 				err = msgp.WrapError(err, "FinishedTs")
 				return
+			}
+		case "multi_table_info_value":
+			var zb0003 uint32
+			zb0003, err = dc.ReadArrayHeader()
+			if err != nil {
+				err = msgp.WrapError(err, "MultipleTableInfosValue")
+				return
+			}
+			if cap(z.MultipleTableInfosValue) >= int(zb0003) {
+				z.MultipleTableInfosValue = (z.MultipleTableInfosValue)[:zb0003]
+			} else {
+				z.MultipleTableInfosValue = make([][]byte, zb0003)
+			}
+			for za0002 := range z.MultipleTableInfosValue {
+				z.MultipleTableInfosValue[za0002], err = dc.ReadBytes(z.MultipleTableInfosValue[za0002])
+				if err != nil {
+					err = msgp.WrapError(err, "MultipleTableInfosValue", za0002)
+					return
+				}
 			}
 		case "bdr_role":
 			z.BDRRole, err = dc.ReadString()
@@ -133,9 +171,9 @@ func (z *PersistedDDLEvent) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z *PersistedDDLEvent) EncodeMsg(en *msgp.Writer) (err error) {
-	// map header, size 16
+	// map header, size 18
 	// write "id"
-	err = en.Append(0xde, 0x0, 0x10, 0xa2, 0x69, 0x64)
+	err = en.Append(0xde, 0x0, 0x12, 0xa2, 0x69, 0x64)
 	if err != nil {
 		return
 	}
@@ -234,6 +272,23 @@ func (z *PersistedDDLEvent) EncodeMsg(en *msgp.Writer) (err error) {
 		err = msgp.WrapError(err, "PrevTableName")
 		return
 	}
+	// write "prev_partitions"
+	err = en.Append(0xaf, 0x70, 0x72, 0x65, 0x76, 0x5f, 0x70, 0x61, 0x72, 0x74, 0x69, 0x74, 0x69, 0x6f, 0x6e, 0x73)
+	if err != nil {
+		return
+	}
+	err = en.WriteArrayHeader(uint32(len(z.PrevPartitions)))
+	if err != nil {
+		err = msgp.WrapError(err, "PrevPartitions")
+		return
+	}
+	for za0001 := range z.PrevPartitions {
+		err = en.WriteInt64(z.PrevPartitions[za0001])
+		if err != nil {
+			err = msgp.WrapError(err, "PrevPartitions", za0001)
+			return
+		}
+	}
 	// write "query"
 	err = en.Append(0xa5, 0x71, 0x75, 0x65, 0x72, 0x79)
 	if err != nil {
@@ -274,6 +329,23 @@ func (z *PersistedDDLEvent) EncodeMsg(en *msgp.Writer) (err error) {
 		err = msgp.WrapError(err, "FinishedTs")
 		return
 	}
+	// write "multi_table_info_value"
+	err = en.Append(0xb6, 0x6d, 0x75, 0x6c, 0x74, 0x69, 0x5f, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x5f, 0x69, 0x6e, 0x66, 0x6f, 0x5f, 0x76, 0x61, 0x6c, 0x75, 0x65)
+	if err != nil {
+		return
+	}
+	err = en.WriteArrayHeader(uint32(len(z.MultipleTableInfosValue)))
+	if err != nil {
+		err = msgp.WrapError(err, "MultipleTableInfosValue")
+		return
+	}
+	for za0002 := range z.MultipleTableInfosValue {
+		err = en.WriteBytes(z.MultipleTableInfosValue[za0002])
+		if err != nil {
+			err = msgp.WrapError(err, "MultipleTableInfosValue", za0002)
+			return
+		}
+	}
 	// write "bdr_role"
 	err = en.Append(0xa8, 0x62, 0x64, 0x72, 0x5f, 0x72, 0x6f, 0x6c, 0x65)
 	if err != nil {
@@ -300,9 +372,9 @@ func (z *PersistedDDLEvent) EncodeMsg(en *msgp.Writer) (err error) {
 // MarshalMsg implements msgp.Marshaler
 func (z *PersistedDDLEvent) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// map header, size 16
+	// map header, size 18
 	// string "id"
-	o = append(o, 0xde, 0x0, 0x10, 0xa2, 0x69, 0x64)
+	o = append(o, 0xde, 0x0, 0x12, 0xa2, 0x69, 0x64)
 	o = msgp.AppendInt64(o, z.ID)
 	// string "type"
 	o = append(o, 0xa4, 0x74, 0x79, 0x70, 0x65)
@@ -331,6 +403,12 @@ func (z *PersistedDDLEvent) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "prev_table_name"
 	o = append(o, 0xaf, 0x70, 0x72, 0x65, 0x76, 0x5f, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x5f, 0x6e, 0x61, 0x6d, 0x65)
 	o = msgp.AppendString(o, z.PrevTableName)
+	// string "prev_partitions"
+	o = append(o, 0xaf, 0x70, 0x72, 0x65, 0x76, 0x5f, 0x70, 0x61, 0x72, 0x74, 0x69, 0x74, 0x69, 0x6f, 0x6e, 0x73)
+	o = msgp.AppendArrayHeader(o, uint32(len(z.PrevPartitions)))
+	for za0001 := range z.PrevPartitions {
+		o = msgp.AppendInt64(o, z.PrevPartitions[za0001])
+	}
 	// string "query"
 	o = append(o, 0xa5, 0x71, 0x75, 0x65, 0x72, 0x79)
 	o = msgp.AppendString(o, z.Query)
@@ -343,6 +421,12 @@ func (z *PersistedDDLEvent) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "finished_ts"
 	o = append(o, 0xab, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x65, 0x64, 0x5f, 0x74, 0x73)
 	o = msgp.AppendUint64(o, z.FinishedTs)
+	// string "multi_table_info_value"
+	o = append(o, 0xb6, 0x6d, 0x75, 0x6c, 0x74, 0x69, 0x5f, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x5f, 0x69, 0x6e, 0x66, 0x6f, 0x5f, 0x76, 0x61, 0x6c, 0x75, 0x65)
+	o = msgp.AppendArrayHeader(o, uint32(len(z.MultipleTableInfosValue)))
+	for za0002 := range z.MultipleTableInfosValue {
+		o = msgp.AppendBytes(o, z.MultipleTableInfosValue[za0002])
+	}
 	// string "bdr_role"
 	o = append(o, 0xa8, 0x62, 0x64, 0x72, 0x5f, 0x72, 0x6f, 0x6c, 0x65)
 	o = msgp.AppendString(o, z.BDRRole)
@@ -430,6 +514,25 @@ func (z *PersistedDDLEvent) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				err = msgp.WrapError(err, "PrevTableName")
 				return
 			}
+		case "prev_partitions":
+			var zb0002 uint32
+			zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "PrevPartitions")
+				return
+			}
+			if cap(z.PrevPartitions) >= int(zb0002) {
+				z.PrevPartitions = (z.PrevPartitions)[:zb0002]
+			} else {
+				z.PrevPartitions = make([]int64, zb0002)
+			}
+			for za0001 := range z.PrevPartitions {
+				z.PrevPartitions[za0001], bts, err = msgp.ReadInt64Bytes(bts)
+				if err != nil {
+					err = msgp.WrapError(err, "PrevPartitions", za0001)
+					return
+				}
+			}
 		case "query":
 			z.Query, bts, err = msgp.ReadStringBytes(bts)
 			if err != nil {
@@ -453,6 +556,25 @@ func (z *PersistedDDLEvent) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			if err != nil {
 				err = msgp.WrapError(err, "FinishedTs")
 				return
+			}
+		case "multi_table_info_value":
+			var zb0003 uint32
+			zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "MultipleTableInfosValue")
+				return
+			}
+			if cap(z.MultipleTableInfosValue) >= int(zb0003) {
+				z.MultipleTableInfosValue = (z.MultipleTableInfosValue)[:zb0003]
+			} else {
+				z.MultipleTableInfosValue = make([][]byte, zb0003)
+			}
+			for za0002 := range z.MultipleTableInfosValue {
+				z.MultipleTableInfosValue[za0002], bts, err = msgp.ReadBytesBytes(bts, z.MultipleTableInfosValue[za0002])
+				if err != nil {
+					err = msgp.WrapError(err, "MultipleTableInfosValue", za0002)
+					return
+				}
 			}
 		case "bdr_role":
 			z.BDRRole, bts, err = msgp.ReadStringBytes(bts)
@@ -480,7 +602,11 @@ func (z *PersistedDDLEvent) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *PersistedDDLEvent) Msgsize() (s int) {
-	s = 3 + 3 + msgp.Int64Size + 5 + msgp.ByteSize + 18 + msgp.Int64Size + 17 + msgp.Int64Size + 20 + msgp.StringPrefixSize + len(z.CurrentSchemaName) + 19 + msgp.StringPrefixSize + len(z.CurrentTableName) + 15 + msgp.Int64Size + 14 + msgp.Int64Size + 17 + msgp.StringPrefixSize + len(z.PrevSchemaName) + 16 + msgp.StringPrefixSize + len(z.PrevTableName) + 6 + msgp.StringPrefixSize + len(z.Query) + 15 + msgp.Int64Size + 17 + msgp.BytesPrefixSize + len(z.TableInfoValue) + 12 + msgp.Uint64Size + 9 + msgp.StringPrefixSize + len(z.BDRRole) + 17 + msgp.Uint64Size
+	s = 3 + 3 + msgp.Int64Size + 5 + msgp.ByteSize + 18 + msgp.Int64Size + 17 + msgp.Int64Size + 20 + msgp.StringPrefixSize + len(z.CurrentSchemaName) + 19 + msgp.StringPrefixSize + len(z.CurrentTableName) + 15 + msgp.Int64Size + 14 + msgp.Int64Size + 17 + msgp.StringPrefixSize + len(z.PrevSchemaName) + 16 + msgp.StringPrefixSize + len(z.PrevTableName) + 16 + msgp.ArrayHeaderSize + (len(z.PrevPartitions) * (msgp.Int64Size)) + 6 + msgp.StringPrefixSize + len(z.Query) + 15 + msgp.Int64Size + 17 + msgp.BytesPrefixSize + len(z.TableInfoValue) + 12 + msgp.Uint64Size + 23 + msgp.ArrayHeaderSize
+	for za0002 := range z.MultipleTableInfosValue {
+		s += msgp.BytesPrefixSize + len(z.MultipleTableInfosValue[za0002])
+	}
+	s += 9 + msgp.StringPrefixSize + len(z.BDRRole) + 17 + msgp.Uint64Size
 	return
 }
 
