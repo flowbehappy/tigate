@@ -22,6 +22,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
 )
 
 type ddlJobFetcher struct {
@@ -120,8 +122,10 @@ func (p *ddlJobFetcher) unmarshalDDL(rawKV *common.RawKVEntry) (*model.Job, erro
 		return nil, nil
 	}
 	if p.ddlTableInfo == nil && !mounter.IsLegacyFormatJob(rawKV) {
+		log.Info("begin to init ddl table info")
 		err := p.initDDLTableInfo()
 		if err != nil {
+			log.Error("init ddl table info failed", zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 	}
