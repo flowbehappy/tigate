@@ -892,7 +892,7 @@ func updateDDLHistory(
 		// all partitions include newly create partitions will receive this event
 		appendPartitionsHistory(getAllPartitionIDs(ddlEvent))
 	case model.ActionDropTablePartition:
-		// all partitions include dropped partitions will receive this event
+		// TODO: verify all partitions include dropped partitions will receive this event
 		appendPartitionsHistory(ddlEvent.PrevPartitions)
 	case model.ActionCreateView:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
