@@ -321,6 +321,16 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 			info.InitPreSQLs()
 			v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 		}
+	case model.ActionCreateTables:
+		assertEmpty(v.infos, event)
+		for _, tableInfo := range event.MultipleTableInfos {
+			if v.tableID == tableInfo.ID {
+				info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, tableInfo)
+				info.InitPreSQLs()
+				v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
+				break
+			}
+		}
 	case model.ActionReorganizePartition:
 		physicalIDs := getAllPartitionIDs(event)
 		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)

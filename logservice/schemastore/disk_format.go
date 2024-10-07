@@ -345,6 +345,17 @@ func readPersistedDDLEvent(snap *pebble.Snapshot, version uint64) PersistedDDLEv
 	if err := json.Unmarshal(ddlEvent.TableInfoValue, &ddlEvent.TableInfo); err != nil {
 		log.Fatal("unmarshal table info failed", zap.Error(err))
 	}
+	ddlEvent.TableInfoValue = nil
+
+	if len(ddlEvent.MultipleTableInfosValue) > 0 {
+		ddlEvent.MultipleTableInfos = make([]*model.TableInfo, len(ddlEvent.MultipleTableInfosValue))
+		for i := range ddlEvent.MultipleTableInfosValue {
+			if err := json.Unmarshal(ddlEvent.MultipleTableInfosValue[i], &ddlEvent.MultipleTableInfos[i]); err != nil {
+				log.Fatal("unmarshal multi table info failed", zap.Error(err))
+			}
+		}
+	}
+	ddlEvent.MultipleTableInfosValue = nil
 	return ddlEvent
 }
 
@@ -357,6 +368,15 @@ func writePersistedDDLEvent(db *pebble.DB, ddlEvent *PersistedDDLEvent) error {
 	ddlEvent.TableInfoValue, err = json.Marshal(ddlEvent.TableInfo)
 	if err != nil {
 		return err
+	}
+	if len(ddlEvent.MultipleTableInfos) > 0 {
+		ddlEvent.MultipleTableInfosValue = make([][]byte, len(ddlEvent.MultipleTableInfos))
+		for i := range ddlEvent.MultipleTableInfos {
+			ddlEvent.MultipleTableInfosValue[i], err = json.Marshal(ddlEvent.MultipleTableInfos[i])
+			if err != nil {
+				return err
+			}
+		}
 	}
 	ddlValue, err := ddlEvent.MarshalMsg(nil)
 	if err != nil {

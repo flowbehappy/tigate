@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -391,10 +392,24 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 		}
 		for _, ts := range allTargetTs {
 			rawEvent := readPersistedDDLEvent(storageSnap, ts)
-			if tableFilter != nil &&
-				tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.CurrentSchemaName, rawEvent.CurrentTableName) &&
-				tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.PrevSchemaName, rawEvent.PrevTableName) {
-				continue
+			if tableFilter != nil {
+				if rawEvent.Type == byte(model.ActionCreateTables) {
+					allFiltered := true
+					for _, tableInfo := range rawEvent.MultipleTableInfos {
+						if !tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.CurrentSchemaName, tableInfo.Name.O) {
+							allFiltered = false
+							break
+						}
+					}
+					if allFiltered {
+						continue
+					}
+				} else {
+					if tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.CurrentSchemaName, rawEvent.CurrentTableName) &&
+						tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.PrevSchemaName, rawEvent.PrevTableName) {
+						continue
+					}
+				}
 			}
 			events = append(events, buildDDLEvent(&rawEvent, tableFilter))
 		}
@@ -747,7 +762,8 @@ func buildPersistedDDLEventFromJob(
 			event.PrevPartitions = append(event.PrevPartitions, id)
 		}
 	case model.ActionCreateTables:
-		// FIXME: support create tables
+		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
+		event.MultipleTableInfos = job.BinlogInfo.MultipleTableInfos
 	case model.ActionReorganizePartition:
 		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
 		event.CurrentTableName = getTableName(event.CurrentTableID)
@@ -796,6 +812,7 @@ func shouldSkipDDL(
 		// Note: these ddls seems not useful to sync to downstream?
 		return true
 	}
+	// Note: create tables don't need to be ignore, because we won't receive it twice
 	return false
 }
 
@@ -912,6 +929,12 @@ func updateDDLHistory(
 		}
 		appendTableHistory(ddlEvent.PrevTableID)
 		appendPartitionsHistory(droppedIDs)
+	case model.ActionCreateTables:
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
+		// it won't be send to table dispatchers, just for build version store
+		for _, info := range ddlEvent.MultipleTableInfos {
+			appendTableHistory(info.ID)
+		}
 	case model.ActionReorganizePartition:
 		appendPartitionsHistory(ddlEvent.PrevPartitions)
 		newCreateIDs := getCreatedIDs(ddlEvent.PrevPartitions, getAllPartitionIDs(ddlEvent))
@@ -1066,6 +1089,14 @@ func updateDatabaseInfoAndTableInfo(
 		createTable(event.PrevSchemaID, targetPartitionID)
 		delete(partitionMap[event.CurrentTableID], targetPartitionID)
 		partitionMap[event.CurrentTableID][event.PrevTableID] = nil
+	case model.ActionCreateTables:
+		for _, info := range event.MultipleTableInfos {
+			addTableToDB(event.CurrentSchemaID, info.ID)
+			tableMap[info.ID] = &BasicTableInfo{
+				SchemaID: event.CurrentSchemaID,
+				Name:     info.Name.O,
+			}
+		}
 	case model.ActionReorganizePartition:
 		physicalIDs := getAllPartitionIDs(event)
 		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
@@ -1213,6 +1244,13 @@ func updateRegisteredTableInfoStore(
 		if store, ok := tableInfoStoreMap[event.PrevTableID]; ok {
 			store.applyDDL(event)
 		}
+	case model.ActionCreateTables:
+		for _, info := range event.MultipleTableInfos {
+			if _, ok := tableInfoStoreMap[info.ID]; ok {
+				log.Panic("newly created tables should not be registered",
+					zap.Int64("tableID", info.ID))
+			}
+		}
 	case model.ActionReorganizePartition:
 		physicalIDs := getAllPartitionIDs(event)
 		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
@@ -1261,6 +1299,7 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		TableID:    rawEvent.CurrentTableID,
 		SchemaName: rawEvent.CurrentSchemaName,
 		TableName:  rawEvent.CurrentTableName,
+
 		Query:      rawEvent.Query,
 		TableInfo:  rawEvent.TableInfo,
 		FinishedTs: rawEvent.FinishedTs,
@@ -1617,6 +1656,32 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 				},
 			}
 		} else {
+			log.Fatal("should not happen")
+		}
+	case model.ActionCreateTables:
+		ddlEvent.NeedAddedTables = make([]common.Table, 0, len(rawEvent.MultipleTableInfos))
+		addName := make([]common.SchemaTableName, 0, len(rawEvent.MultipleTableInfos))
+		querys := strings.Split(rawEvent.Query, ";")
+		resultQuerys := make([]string, 0, len(rawEvent.MultipleTableInfos))
+		for i := range rawEvent.MultipleTableInfos {
+			if tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.CurrentSchemaName, rawEvent.MultipleTableInfos[i].Name.O) {
+				continue
+			}
+			ddlEvent.NeedAddedTables = append(ddlEvent.NeedAddedTables, common.Table{
+				SchemaID: rawEvent.CurrentSchemaID,
+				TableID:  rawEvent.MultipleTableInfos[i].ID,
+			})
+			addName = append(addName, common.SchemaTableName{
+				SchemaName: rawEvent.CurrentSchemaName,
+				TableName:  rawEvent.MultipleTableInfos[i].Name.O,
+			})
+			resultQuerys = append(resultQuerys, querys[i])
+		}
+		ddlEvent.TableNameChange = &common.TableNameChange{
+			AddName: addName,
+		}
+		ddlEvent.Query = strings.Join(resultQuerys, ";")
+		if len(ddlEvent.NeedAddedTables) == 0 {
 			log.Fatal("should not happen")
 		}
 	case model.ActionReorganizePartition:

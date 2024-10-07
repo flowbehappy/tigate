@@ -1521,7 +1521,113 @@ func TestHandleRenamePartitionTable(t *testing.T) {
 }
 
 func TestCreateTables(t *testing.T) {
+	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+	err := os.RemoveAll(dbPath)
+	require.Nil(t, err)
 
+	gcTs := uint64(500)
+	schemaID := int64(300)
+
+	databaseInfo := make(map[int64]*model.DBInfo)
+	databaseInfo[schemaID] = &model.DBInfo{
+		ID:   schemaID,
+		Name: model.NewCIStr("test"),
+	}
+	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
+
+	// create tables
+	tableID1 := int64(100)
+	tableID2 := tableID1 + 100
+	tableID3 := tableID1 + 200
+	{
+		job := &model.Job{
+			Type:     model.ActionCreateTables,
+			SchemaID: schemaID,
+			Query:    "sql1;sql2;sql3",
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 501,
+				MultipleTableInfos: []*model.TableInfo{
+					{
+						ID:   tableID1,
+						Name: model.NewCIStr("t1"),
+					},
+					{
+						ID:   tableID2,
+						Name: model.NewCIStr("t2"),
+					},
+					{
+						ID:   tableID3,
+						Name: model.NewCIStr("t3"),
+					},
+				},
+				FinishedTS: 601,
+			},
+		}
+		pStorage.handleDDLJob(job)
+	}
+
+	{
+		require.Equal(t, 3, len(pStorage.databaseMap[schemaID].Tables))
+		require.Equal(t, 3, len(pStorage.tableMap))
+	}
+
+	{
+		store := newEmptyVersionedTableInfoStore(tableID1)
+		pStorage.buildVersionedTableInfoStore(store)
+		require.Equal(t, 1, len(store.infos))
+		require.Equal(t, "t1", store.infos[0].info.Name.O)
+	}
+
+	{
+		store := newEmptyVersionedTableInfoStore(tableID2)
+		pStorage.buildVersionedTableInfoStore(store)
+		require.Equal(t, 1, len(store.infos))
+		require.Equal(t, "t2", store.infos[0].info.Name.O)
+	}
+
+	{
+		store := newEmptyVersionedTableInfoStore(tableID3)
+		pStorage.buildVersionedTableInfoStore(store)
+		require.Equal(t, 1, len(store.infos))
+		require.Equal(t, "t3", store.infos[0].info.Name.O)
+	}
+
+	{
+		ddlEvents, err := pStorage.fetchTableTriggerDDLEvents(nil, 600, 601)
+		require.Nil(t, err)
+		require.Equal(t, 1, len(ddlEvents))
+
+		verifyTableIsAdded(t, ddlEvents[0], tableID1, schemaID)
+		verifyTableIsAdded(t, ddlEvents[0], tableID2, schemaID)
+		verifyTableIsAdded(t, ddlEvents[0], tableID3, schemaID)
+	}
+
+	// filter t2 and t3
+	{
+		filterConfig := &config.FilterConfig{
+			Rules: []string{"test.t1"},
+		}
+		tableFilter, err := filter.NewFilter(filterConfig, "", false)
+		require.Nil(t, err)
+		ddlEvents, err := pStorage.fetchTableTriggerDDLEvents(tableFilter, 600, 601)
+		require.Nil(t, err)
+		require.Equal(t, 1, len(ddlEvents))
+
+		verifyTableIsAdded(t, ddlEvents[0], tableID1, schemaID)
+		require.Equal(t, 1, len(ddlEvents[0].NeedAddedTables))
+	}
+
+	// all filtered out
+	{
+		filterConfig := &config.FilterConfig{
+			Rules: []string{"test2.*"},
+		}
+		tableFilter, err := filter.NewFilter(filterConfig, "", false)
+		require.Nil(t, err)
+		ddlEvents, err := pStorage.fetchTableTriggerDDLEvents(tableFilter, 600, 601)
+		require.Nil(t, err)
+		require.Equal(t, 0, len(ddlEvents))
+	}
 }
 
 func TestRenameTables(t *testing.T) {

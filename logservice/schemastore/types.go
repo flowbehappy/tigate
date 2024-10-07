@@ -34,6 +34,10 @@ type PersistedDDLEvent struct {
 	// TODO: use a custom struct to store the table info?
 	TableInfoValue []byte `msg:"table_info_value"`
 	FinishedTs     uint64 `msg:"finished_ts"`
+
+	MultipleTableInfos      []*model.TableInfo `msg:"-"`
+	MultipleTableInfosValue [][]byte           `msg:"multi_table_info_value"`
+
 	// TODO: do we need the following two fields?
 	BDRRole        string `msg:"bdr_role"`
 	CDCWriteSource uint64 `msg:"cdc_write_source"`
