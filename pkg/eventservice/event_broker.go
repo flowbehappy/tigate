@@ -19,7 +19,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/pkg/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 
@@ -52,6 +51,8 @@ type eventBroker struct {
 
 	// All the dispatchers that register to the eventBroker.
 	dispatchers sync.Map
+
+	queue *dispatcherQueue
 	// Not support split table span yet.
 	spans map[common.TableID]*spanSubscription
 	// dispatcherID -> dispatcherStat map, track all table trigger dispatchers.
@@ -109,6 +110,7 @@ func newEventBroker(
 		schemaStore:                            schemaStore,
 		notifyCh:                               make(chan *spanSubscription, defaultChannelSize*16),
 		dispatchers:                            sync.Map{},
+		queue:                                  newDispatcherQueue(),
 		tableTriggerDispatchers:                sync.Map{},
 		spans:                                  make(map[common.TableID]*spanSubscription),
 		msgSender:                              mc,
@@ -145,7 +147,8 @@ func (c *eventBroker) sendWatermark(
 		server,
 		common.ResolvedEvent{
 			DispatcherID: dispatcherID,
-			ResolvedTs:   watermark})
+			ResolvedTs:   watermark,
+		})
 	select {
 	case c.messageCh <- resolvedEvent:
 		if counter != nil {
@@ -176,18 +179,54 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 
 func (c *eventBroker) runGenTasks(ctx context.Context) {
 	c.wg.Add(1)
+	ticker := time.NewTicker(time.Millisecond * 10)
 	go func() {
 		defer c.wg.Done()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case s := <-c.notifyCh:
-				s.dispatchers.RLock()
-				for _, stat := range s.dispatchers.m {
-					c.ds.In() <- newScanTask(stat)
+			case <-ticker.C:
+				// generate at most 3K tasks per 10 ms
+				for i := 0; i < 3000; i++ {
+					id, ok := c.queue.next()
+					if !ok {
+						break
+					}
+					value, ok := c.dispatchers.Load(id)
+					if !ok {
+						// the dispatcher may be removed?
+						continue
+					}
+					state := value.(*dispatcherStat)
+					dmlState := c.eventStore.GetDispatcherDMLEventState(id, state.info.GetTableSpan())
+					ddlState := c.schemaStore.GetTableDDLEventState(state.info.GetTableSpan().TableID)
+					resolvedTs := dmlState.ResolvedTs
+					if ddlState.ResolvedTs < resolvedTs {
+						resolvedTs = ddlState.ResolvedTs
+					}
+					startTs := state.nextTaskStartTs.Load()
+					if resolvedTs <= startTs {
+						continue
+					}
+					// target range: (startTs, resolvedTs]
+					if dmlState.MaxEventCommitTs > startTs || ddlState.MaxEventCommitTs > startTs {
+						c.ds.In() <- newScanTask(scanTaskTypeData, common.DataRange{
+							ClusterID: c.tidbClusterID,
+							Span:      state.info.GetTableSpan(),
+							StartTs:   startTs,
+							EndTs:     resolvedTs,
+						}, state)
+					} else {
+						c.ds.In() <- newScanTask(scanTaskTypeResolvedTs, common.DataRange{
+							ClusterID: c.tidbClusterID,
+							Span:      state.info.GetTableSpan(),
+							StartTs:   startTs,
+							EndTs:     resolvedTs,
+						}, state)
+					}
+					state.nextTaskStartTs.Store(resolvedTs)
 				}
-				s.dispatchers.RUnlock()
 			}
 		}
 	}()
@@ -243,52 +282,30 @@ func (c *eventBroker) wakeDispatcher(dispatcherID common.DispatcherID) {
 	c.ds.Wake() <- dispatcherID
 }
 
-// checkNeedScan checks if the dispatcher needs to scan the event store.
-// If the dispatcher needs to scan the event store, it returns true.
-// If the dispatcher does not need to scan the event store, it
-// 1. send the watermark to the dispatcher
-// 2. push the task to the task pool
-func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, common.DataRange, []common.DDLEvent) {
-	dataRange, needScan := task.dispatcherStat.getDataRange()
-	if !needScan {
-		return false, dataRange, nil
+func (c *eventBroker) sendResolvedTs(ctx context.Context, task scanTask) {
+	if task.taskType != scanTaskTypeResolvedTs {
+		log.Panic("should not happen")
 	}
-	ddlEvents, endTs, err := c.schemaStore.FetchTableDDLEvents(dataRange.Span.TableID, task.dispatcherStat.filter, dataRange.StartTs, dataRange.EndTs)
-	if err != nil {
-		log.Panic("get ddl events failed", zap.Error(err))
-	}
-	if endTs < dataRange.EndTs {
-		dataRange.EndTs = endTs
-	}
-
-	if dataRange.EndTs <= dataRange.StartTs {
-		return false, dataRange, nil
-	}
-
-	// The dispatcher has no new events. In such case, we don't need to scan the event store.
-	// We just send the watermark to the dispatcher.
-	if dataRange.StartTs >= task.dispatcherStat.spanSubscription.maxEventCommitTs.Load() {
-		remoteID := node.ID(task.dispatcherStat.info.GetServerID())
-		dispatcherID := task.dispatcherStat.info.GetID()
-		// send the watermark to the dispatcher
-		for _, e := range ddlEvents {
-			c.sendDDL(ctx, remoteID, e, task.dispatcherStat)
-		}
-		c.sendWatermark(remoteID, dispatcherID, dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
-		task.dispatcherStat.watermark.Store(dataRange.EndTs)
-		return false, dataRange, nil
-	}
-
-	return true, dataRange, ddlEvents
+	remoteID := node.ID(task.dispatcherStat.info.GetServerID())
+	dispatcherID := task.dispatcherStat.info.GetID()
+	resolvedTs := task.dataRange.EndTs
+	c.sendWatermark(remoteID, dispatcherID, resolvedTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
+	task.dispatcherStat.watermark.Store(resolvedTs)
 }
 
 // TODO: handle error properly.
 func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 	task.handle()
 	start := time.Now()
-	needScan, dataRange, ddlEvents := c.checkNeedScan(ctx, task)
-	if !needScan {
-		return
+
+	dataRange := task.dataRange
+	ddlEvents, endTs, err := c.schemaStore.FetchTableDDLEvents(dataRange.Span.TableID, task.dispatcherStat.filter, dataRange.StartTs, dataRange.EndTs)
+	if err != nil {
+		log.Panic("get ddl events failed", zap.Error(err))
+	}
+	// FIXME: the endTs may not be smaller than dataRange.EndTs any more
+	if endTs < dataRange.EndTs {
+		dataRange.EndTs = endTs
 	}
 
 	remoteID := node.ID(task.dispatcherStat.info.GetServerID())
@@ -514,11 +531,6 @@ func (c *eventBroker) close() {
 	c.ds.Close()
 }
 
-func (c *eventBroker) onNotify(s *spanSubscription, watermark uint64) {
-	s.onSubscriptionWatermark(watermark)
-	c.notifyCh <- s
-}
-
 func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	filterConfig := info.GetFilterConfig()
 	filter, err := filter.NewFilter(filterConfig, "", false)
@@ -545,19 +557,15 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		return
 	}
 
+	c.queue.add(id)
+
 	c.dispatchers.Store(id, dispatcher)
 	c.dispatcherCount++
 
 	brokerRegisterDuration := time.Since(start)
 
 	start = time.Now()
-	c.eventStore.RegisterDispatcher(
-		id,
-		span,
-		info.GetStartTs(),
-		dispatcher.spanSubscription.onNewEvent,
-		func(watermark uint64) { c.onNotify(dispatcher.spanSubscription, watermark) },
-	)
+	c.eventStore.RegisterDispatcher(id, span, info.GetStartTs())
 	c.schemaStore.RegisterTable(span.GetTableID(), info.GetStartTs())
 	eventStoreRegisterDuration := time.Since(start)
 	c.ds.AddPath(id, c)
@@ -578,6 +586,7 @@ func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
 	}
 	c.eventStore.UnregisterDispatcher(id, dispatcherInfo.GetTableSpan())
 	c.schemaStore.UnregisterTable(dispatcherInfo.GetTableSpan().TableID)
+	c.queue.remove(id)
 	c.dispatchers.Delete(id)
 
 	spanSubscription := stat.(*dispatcherStat).spanSubscription
@@ -596,6 +605,8 @@ type dispatcherStat struct {
 	spanSubscription *spanSubscription
 	// The watermark of the events that have been sent to the dispatcher.
 	watermark atomic.Uint64
+
+	nextTaskStartTs atomic.Uint64
 
 	metricSorterOutputEventCountKV        prometheus.Counter
 	metricEventServiceSendKvCount         prometheus.Counter
@@ -649,19 +660,15 @@ type spanSubscription struct {
 	// The watermark of the events that have been stored in the event store.
 	watermark  atomic.Uint64
 	lastUpdate atomic.Value
-	// The commitTs of the latest kv event that has been stored in the event store.
-	maxEventCommitTs atomic.Uint64
 }
 
 func newSpanSubscription(span *heartbeatpb.TableSpan, startTs uint64) *spanSubscription {
 	s := &spanSubscription{
-		span:             span,
-		watermark:        atomic.Uint64{},
-		lastUpdate:       atomic.Value{},
-		maxEventCommitTs: atomic.Uint64{},
+		span:       span,
+		watermark:  atomic.Uint64{},
+		lastUpdate: atomic.Value{},
 	}
 	s.watermark.Store(startTs)
-	s.maxEventCommitTs.Store(startTs)
 	s.lastUpdate.Store(time.Now())
 	return s
 }
@@ -682,34 +689,67 @@ func (s *spanSubscription) removeDispatcher(id common.DispatcherID) int {
 	return len(s.dispatchers.m)
 }
 
-// onSubscriptionWatermark updates the watermark of the table span and send a notification to notify
-// that this table span has new events.
-func (s *spanSubscription) onSubscriptionWatermark(watermark uint64) {
-	if watermark < s.watermark.Load() {
-		return
-	}
-	s.watermark.Store(watermark)
-	s.lastUpdate.Store(time.Now())
+type dispatcherQueue struct {
+	sync.Mutex
+	dipatchers []common.DispatcherID
+	nextIndex  int
 }
 
-// onNewEvent is used to track whether there are new events in the event store, so that
-// we can skip some unnecessary scan tasks.
-// TODO: consider to use a better way to reduce the contention of the lock, maybe it is
-// not necessary to update the maxEventCommitTs for every event.
-func (s *spanSubscription) onNewEvent(raw *common.RawKVEntry) {
-	if raw == nil {
-		return
+func newDispatcherQueue() *dispatcherQueue {
+	return &dispatcherQueue{
+		dipatchers: make([]common.DispatcherID, 0),
+		nextIndex:  0,
 	}
-	util.MustCompareAndMonotonicIncrease(&s.maxEventCommitTs, raw.CRTs)
 }
+
+func (d *dispatcherQueue) add(id common.DispatcherID) {
+	d.Lock()
+	defer d.Unlock()
+	d.dipatchers = append(d.dipatchers, id)
+}
+
+func (d *dispatcherQueue) next() (common.DispatcherID, bool) {
+	d.Lock()
+	defer d.Unlock()
+	if len(d.dipatchers) == 0 {
+		return common.DispatcherID{}, false
+	}
+	if d.nextIndex >= len(d.dipatchers) {
+		d.nextIndex = 0
+	}
+	id := d.dipatchers[d.nextIndex]
+	d.nextIndex++
+	return id, true
+}
+
+func (d *dispatcherQueue) remove(id common.DispatcherID) {
+	d.Lock()
+	defer d.Unlock()
+	for i, v := range d.dipatchers {
+		if v == id {
+			d.dipatchers = append(d.dipatchers[:i], d.dipatchers[i+1:]...)
+			return
+		}
+	}
+}
+
+type scanTaskType int
+
+const (
+	scanTaskTypeResolvedTs scanTaskType = iota
+	scanTaskTypeData
+)
 
 type scanTask struct {
+	taskType       scanTaskType
+	dataRange      common.DataRange
 	dispatcherStat *dispatcherStat
 	createTime     time.Time
 }
 
-func newScanTask(dispatcherStat *dispatcherStat) scanTask {
+func newScanTask(taskType scanTaskType, dataRange common.DataRange, dispatcherStat *dispatcherStat) scanTask {
 	return scanTask{
+		dataRange:      dataRange,
 		dispatcherStat: dispatcherStat,
 		createTime:     time.Now(),
 	}

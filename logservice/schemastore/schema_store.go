@@ -28,6 +28,8 @@ type SchemaStore interface {
 
 	UnregisterTable(tableID int64) error
 
+	GetTableDDLEventState(tableID int64) DDLEventState
+
 	// return table info with largest version <= ts
 	GetTableInfo(tableID int64, ts uint64) (*common.TableInfo, error)
 
@@ -37,6 +39,11 @@ type SchemaStore interface {
 	FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, uint64, error)
 
 	FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]common.DDLEvent, uint64, error)
+}
+
+type DDLEventState struct {
+	ResolvedTs       uint64
+	MaxEventCommitTs uint64
 }
 
 type schemaStore struct {
@@ -212,6 +219,15 @@ func (s *schemaStore) RegisterTable(tableID int64, startTs uint64) error {
 func (s *schemaStore) UnregisterTable(tableID int64) error {
 	metrics.SchemaStoreResolvedRegisterTableGauge.Dec()
 	return s.dataStorage.unregisterTable(tableID)
+}
+
+func (s *schemaStore) GetTableDDLEventState(tableID int64) DDLEventState {
+	resolvedTs := s.resolvedTs.Load()
+	maxEventCommitTs := s.dataStorage.getMaxEventCommitTs(tableID, resolvedTs)
+	return DDLEventState{
+		ResolvedTs:       resolvedTs,
+		MaxEventCommitTs: maxEventCommitTs,
+	}
 }
 
 func (s *schemaStore) GetTableInfo(tableID int64, ts uint64) (*common.TableInfo, error) {

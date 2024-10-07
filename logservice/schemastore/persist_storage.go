@@ -291,6 +291,21 @@ func (p *persistentStorage) getTableInfo(tableID int64, ts uint64) (*common.Tabl
 	return store.getTableInfo(ts)
 }
 
+func (p *persistentStorage) getMaxEventCommitTs(tableID int64, ts uint64) uint64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if len(p.tablesDDLHistory[tableID]) == 0 {
+		return 0
+	}
+	index := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
+		return p.tablesDDLHistory[tableID][i] > ts
+	})
+	if index == 0 {
+		return 0
+	}
+	return p.tablesDDLHistory[tableID][index-1]
+}
+
 // TODO: not all ddl in p.tablesDDLHistory should be sent to the dispatcher, verify dispatcher will set the right range
 func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, error) {
 	// TODO: check a dispatcher from created table start ts > finish ts of create table

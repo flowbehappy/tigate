@@ -24,10 +24,8 @@ func (h *dispatcherEventsHandler) Handle(broker *eventBroker, tasks ...scanTask)
 	}
 	task := tasks[0]
 	ctx := context.Background()
-	needScan, _, _ := broker.checkNeedScan(ctx, task)
-	if !needScan {
-		task.handle()
-		return false
+	if task.taskType == scanTaskTypeResolvedTs {
+		broker.sendResolvedTs(ctx, task)
 	}
 	// The dispatcher has new events. We need to push the task to the task pool.
 	return broker.taskPool.pushTask(task)

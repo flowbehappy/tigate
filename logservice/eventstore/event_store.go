@@ -29,8 +29,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var metricEventCompressRatio = metrics.EventStoreCompressRatio
-
 type EventObserver func(raw *common.RawKVEntry)
 
 type WatermarkNotifier func(watermark uint64)
@@ -42,6 +40,7 @@ type EventStore interface {
 
 	Close(ctx context.Context) error
 
+<<<<<<< HEAD
 	// add a callback to be called when a new event is added to the store;
 	// but for old data this is not feasiable? may we can just return a current watermark when register
 	RegisterDispatcher(
@@ -51,14 +50,25 @@ type EventStore interface {
 		observer EventObserver,
 		notifier WatermarkNotifier,
 	) error
+=======
+	RegisterDispatcher(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, startTS common.Ts) error
+>>>>>>> 54a9123 (alpha version)
 
 	UpdateDispatcherSendTs(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, gcTS uint64) error
 
 	UnregisterDispatcher(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) error
 
+	// TODO: maybe we can remove span
+	GetDispatcherDMLEventState(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) DMLEventState
+
 	// TODO: ignore large txn now, so we can read all transactions of the same commit ts at one time
 	// (startCommitTS, endCommitTS]?
 	GetIterator(dispatcherID common.DispatcherID, dataRange common.DataRange) (EventIterator, error)
+}
+
+type DMLEventState struct {
+	ResolvedTs       uint64
+	MaxEventCommitTs uint64
 }
 
 type EventIterator interface {
@@ -74,9 +84,7 @@ type eventWithSpanState struct {
 }
 
 type spanState struct {
-	span     heartbeatpb.TableSpan
-	observer EventObserver
-	notifier WatermarkNotifier
+	span heartbeatpb.TableSpan
 
 	subID logpuller.SubscriptionID
 
@@ -85,14 +93,17 @@ type spanState struct {
 
 	// the resolveTs persisted in the store
 	resolvedTs atomic.Uint64
-	chIndex    int
+
+	chIndex int
 }
 
 // maybe it can be removed
 type dispatcherStat struct {
-	dispatcherID common.DispatcherID
-	watermark    uint64
-	startTS      uint64
+	dispatcherID     common.DispatcherID
+	watermark        uint64
+	maxEventCommitTs atomic.Uint64
+	// FIXME: remove it
+	startTS uint64
 }
 
 func (s *spanState) minWatermark() uint64 {
@@ -238,10 +249,7 @@ func (e *eventStore) Run(ctx context.Context) error {
 	return eg.Wait()
 }
 
-func (e *eventStore) RegisterDispatcher(
-	dispatcherID common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTS uint64,
-	observer EventObserver, notifier WatermarkNotifier,
-) error {
+func (e *eventStore) RegisterDispatcher(dispatcherID common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTS common.Ts) error {
 	span := *tableSpan
 	log.Info("register dispatcher",
 		zap.Any("dispatcherID", dispatcherID),
@@ -264,16 +272,14 @@ func (e *eventStore) RegisterDispatcher(
 	subID := e.puller.Subscribe(span, startTS)
 	state := &spanState{
 		span:        span,
-		observer:    observer,
 		dispatchers: make(map[common.DispatcherID]*dispatcherStat),
-		notifier:    notifier,
 		subID:       subID,
 		// TODO: support split table to multiple subSpans.
 		// maybe share data for different subSpan is meaningless.
 		chIndex: common.HashTableSpan(span, len(e.eventChs)),
 	}
 	// TODO: how to support different startTs for different dispatchers?
-	state.resolvedTs.Store(uint64(startTS))
+	state.resolvedTs.Store(startTS)
 	state.dispatchers[dispatcherID] = &dispatcherStat{
 		dispatcherID: dispatcherID,
 		startTS:      startTS,
@@ -329,6 +335,25 @@ func (e *eventStore) UnregisterDispatcher(
 		log.Info("remove a span in eventstore", zap.String("span", span.String()))
 	}
 	return nil
+}
+
+func (e *eventStore) GetDispatcherDMLEventState(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) DMLEventState {
+	// FIXME
+	e.spanStates.Lock()
+	defer e.spanStates.Unlock()
+	state, ok := e.spanStates.dispatcherMap.Get(span)
+	if !ok {
+		log.Panic("deregister an unregistered span", zap.String("span", span.String()))
+	}
+	dispatcherState, ok := state.dispatchers[dispatcherID]
+	if !ok {
+		// FIXME: check the deregister logic in event broker to make sure the panic won't happen
+		log.Panic("should not happen")
+	}
+	return DMLEventState{
+		ResolvedTs:       state.resolvedTs.Load(),
+		MaxEventCommitTs: dispatcherState.maxEventCommitTs.Load(),
+	}
 }
 
 func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange common.DataRange) (EventIterator, error) {
@@ -434,7 +459,6 @@ func (e *eventStore) batchCommitAndUpdateWatermark(ctx context.Context, batchCh 
 		case <-ctx.Done():
 			return
 		case batchEvent := <-batchCh:
-			// do batch commit
 			batch := batchEvent.batch
 			if batch != nil && !batch.Empty() {
 				size := batch.Len()
@@ -447,7 +471,6 @@ func (e *eventStore) batchCommitAndUpdateWatermark(ctx context.Context, batchCh 
 			// update resolved ts after commit successfully
 			for state, resolvedTs := range batchEvent.resolvedTsBatch {
 				state.resolvedTs.Store(resolvedTs)
-				state.notifier(resolvedTs)
 			}
 		}
 	}
@@ -530,11 +553,12 @@ func (e *eventStore) writeEvent(subID logpuller.SubscriptionID, raw *common.RawK
 		log.Panic("should not happen")
 		return
 	}
-	e.spanStates.RUnlock()
 	if !raw.IsResolved() {
-		// TODO: make sure this won't block
-		state.observer(raw)
+		for _, dispatcher := range state.dispatchers {
+			dispatcher.maxEventCommitTs.Store(raw.CRTs)
+		}
 	}
+	e.spanStates.RUnlock()
 	e.eventChs[state.chIndex] <- eventWithSpanState{
 		raw:   raw,
 		state: state,
