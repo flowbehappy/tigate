@@ -1061,8 +1061,8 @@ func updateDatabaseInfoAndTableInfo(
 				zap.Int64s("droppedIDs", droppedIDs))
 		}
 		targetPartitionID := droppedIDs[0]
-		dropTable(event.CurrentSchemaID, event.PrevTableID)
-		createTable(event.CurrentSchemaID, targetPartitionID)
+		dropTable(event.PrevSchemaID, event.PrevTableID)
+		createTable(event.PrevSchemaID, targetPartitionID)
 		delete(partitionMap[event.CurrentTableID], targetPartitionID)
 		partitionMap[event.CurrentTableID][event.PrevTableID] = nil
 	case model.ActionReorganizePartition:
@@ -1199,7 +1199,19 @@ func updateRegisteredTableInfoStore(
 			}
 		}
 	case model.ActionExchangeTablePartition:
-		// ignore
+		physicalIDs := getAllPartitionIDs(event)
+		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
+		if len(droppedIDs) != 1 {
+			log.Panic("exchange table partition should only drop one partition",
+				zap.Int64s("droppedIDs", droppedIDs))
+		}
+		targetPartitionID := droppedIDs[0]
+		if store, ok := tableInfoStoreMap[targetPartitionID]; ok {
+			store.applyDDL(event)
+		}
+		if store, ok := tableInfoStoreMap[event.PrevTableID]; ok {
+			store.applyDDL(event)
+		}
 	case model.ActionReorganizePartition:
 		physicalIDs := getAllPartitionIDs(event)
 		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
@@ -1580,6 +1592,7 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 				},
 			}
 		} else if !ignoreNormalTable {
+			// just one table, no need to block
 			ddlEvent.NeedDroppedTables = &common.InfluencedTables{
 				InfluenceType: common.InfluenceTypeNormal,
 				TableIDs:      []int64{rawEvent.PrevTableID},
@@ -1591,6 +1604,7 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 				},
 			}
 		} else if !ignorePartitionTable {
+			// just one table, no need to block
 			ddlEvent.NeedDroppedTables = &common.InfluencedTables{
 				InfluenceType: common.InfluenceTypeNormal,
 				TableIDs:      []int64{targetPartitionID},

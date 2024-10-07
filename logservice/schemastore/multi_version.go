@@ -306,6 +306,21 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 				}
 			}
 		}
+	case model.ActionExchangeTablePartition:
+		assertNonEmpty(v.infos, event)
+		lastRawTableInfo := v.infos[len(v.infos)-1].info.TableInfo.Clone()
+		// the previous normal table
+		if v.tableID == event.PrevTableID {
+			lastRawTableInfo.Name = model.NewCIStr(event.CurrentTableName)
+			info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, lastRawTableInfo)
+			info.InitPreSQLs()
+			v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
+		} else {
+			lastRawTableInfo.Name = model.NewCIStr(event.PrevTableName)
+			info := common.WrapTableInfo(event.PrevSchemaID, event.PrevSchemaName, event.FinishedTs, lastRawTableInfo)
+			info.InitPreSQLs()
+			v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
+		}
 	case model.ActionReorganizePartition:
 		physicalIDs := getAllPartitionIDs(event)
 		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)

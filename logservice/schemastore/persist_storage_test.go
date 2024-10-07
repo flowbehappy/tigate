@@ -1005,7 +1005,196 @@ func TestPartitionTableDDL(t *testing.T) {
 }
 
 func TestExchangePartitionTable(t *testing.T) {
+	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+	err := os.RemoveAll(dbPath)
+	require.Nil(t, err)
 
+	gcTs := uint64(100)
+	schemaID1 := int64(300)
+	schemaID2 := schemaID1 + 100
+	databaseInfo := make(map[int64]*model.DBInfo)
+	databaseInfo[schemaID1] = &model.DBInfo{
+		ID:   schemaID1,
+		Name: model.NewCIStr("test"),
+	}
+	databaseInfo[schemaID2] = &model.DBInfo{
+		ID:   schemaID2,
+		Name: model.NewCIStr("test2"),
+	}
+	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
+
+	// create a partition table
+	tableID := int64(100)
+	partitionID1 := tableID + 100
+	partitionID2 := tableID + 200
+	partitionID3 := tableID + 300
+	{
+		job := &model.Job{
+			Type:     model.ActionCreateTable,
+			SchemaID: schemaID1,
+			TableID:  tableID,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 101,
+				TableInfo: &model.TableInfo{
+					ID:   tableID,
+					Name: model.NewCIStr("t"),
+					Partition: &model.PartitionInfo{
+						Definitions: []model.PartitionDefinition{
+							{
+								ID: partitionID1,
+							},
+							{
+								ID: partitionID2,
+							},
+							{
+								ID: partitionID3,
+							},
+						},
+					},
+				},
+				FinishedTS: 201,
+			},
+		}
+		pStorage.handleDDLJob(job)
+	}
+
+	// create a normal table
+	tableID2 := tableID + 2000
+	{
+		job := &model.Job{
+			Type:     model.ActionCreateTable,
+			SchemaID: schemaID2,
+			TableID:  tableID2,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 103,
+				TableInfo: &model.TableInfo{
+					ID:   tableID,
+					Name: model.NewCIStr("t2"),
+				},
+				FinishedTS: 203,
+			},
+		}
+		pStorage.handleDDLJob(job)
+	}
+
+	{
+		require.Equal(t, 2, len(pStorage.tableMap))
+		require.Equal(t, 3, len(pStorage.partitionMap[tableID]))
+	}
+
+	// exchange table with partition 3
+	{
+		job := &model.Job{
+			Type:     model.ActionExchangeTablePartition,
+			SchemaID: schemaID2,
+			TableID:  tableID2,
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 105,
+				TableInfo: &model.TableInfo{
+					ID:   tableID,
+					Name: model.NewCIStr("t"),
+					Partition: &model.PartitionInfo{
+						Definitions: []model.PartitionDefinition{
+							{
+								ID: partitionID1,
+							},
+							{
+								ID: partitionID2,
+							},
+							{
+								ID: tableID2,
+							},
+						},
+					},
+				},
+				FinishedTS: 205,
+			},
+		}
+		pStorage.handleDDLJob(job)
+	}
+
+	{
+		// verify databaseMap is updated successfully
+		_, ok := pStorage.databaseMap[schemaID2].Tables[partitionID3]
+		require.True(t, ok)
+		_, ok = pStorage.databaseMap[schemaID2].Tables[tableID2]
+		require.False(t, ok)
+		// verify tableMap is updated successfully
+		require.Equal(t, 2, len(pStorage.tableMap))
+		require.Equal(t, schemaID2, pStorage.tableMap[partitionID3].SchemaID)
+		_, ok = pStorage.tableMap[tableID2]
+		require.False(t, ok)
+		// verify partitionMap is updated successfully
+		require.Equal(t, 3, len(pStorage.partitionMap[tableID]))
+		_, ok = pStorage.partitionMap[tableID][tableID2]
+		require.True(t, ok)
+		_, ok = pStorage.partitionMap[tableID][partitionID3]
+		require.False(t, ok)
+	}
+
+	// verify build table info store
+	{
+		store := newEmptyVersionedTableInfoStore(partitionID3)
+		pStorage.buildVersionedTableInfoStore(store)
+		require.Equal(t, 2, len(store.infos))
+		require.Equal(t, "t", store.infos[0].info.Name.O)
+		require.Equal(t, "t2", store.infos[1].info.Name.O)
+	}
+
+	{
+		store := newEmptyVersionedTableInfoStore(tableID2)
+		pStorage.buildVersionedTableInfoStore(store)
+		require.Equal(t, 2, len(store.infos))
+		require.Equal(t, "t2", store.infos[0].info.Name.O)
+		require.Equal(t, "t", store.infos[1].info.Name.O)
+	}
+
+	// verify ddl events are set correctly
+	{
+		ddlEvents, err := pStorage.fetchTableDDLEvents(partitionID3, nil, 201, 205)
+		require.Nil(t, err)
+		require.Equal(t, 1, len(ddlEvents))
+		verifyTableIsBlocked(t, ddlEvents[0], partitionID3)
+		verifyTableIsBlocked(t, ddlEvents[0], tableID2)
+
+		ddlEvents, err = pStorage.fetchTableDDLEvents(tableID2, nil, 203, 205)
+		require.Nil(t, err)
+		require.Equal(t, 1, len(ddlEvents))
+	}
+
+	// test filter: normal table is filtered out
+	{
+		filterConfig := &config.FilterConfig{
+			Rules: []string{"test.t"},
+		}
+		tableFilter, err := filter.NewFilter(filterConfig, "", false)
+		require.Nil(t, err)
+		ddlEvents, err := pStorage.fetchTableDDLEvents(partitionID3, tableFilter, 201, 205)
+		require.Nil(t, err)
+		require.Equal(t, 1, len(ddlEvents))
+		require.Nil(t, ddlEvents[0].BlockedTables)
+
+		verifyTableIsDropped(t, ddlEvents[0], partitionID3)
+
+		verifyTableIsAdded(t, ddlEvents[0], tableID2, schemaID1)
+	}
+
+	// test filter: partition table is filtered out
+	{
+		filterConfig := &config.FilterConfig{
+			Rules: []string{"test2.t2"},
+		}
+		tableFilter, err := filter.NewFilter(filterConfig, "", false)
+		require.Nil(t, err)
+		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID2, tableFilter, 203, 205)
+		require.Nil(t, err)
+		require.Equal(t, 1, len(ddlEvents))
+		require.Nil(t, ddlEvents[0].BlockedTables)
+
+		verifyTableIsDropped(t, ddlEvents[0], tableID2)
+
+		verifyTableIsAdded(t, ddlEvents[0], partitionID3, schemaID2)
+	}
 }
 
 func TestAlterBetweenPartitionTableAndNonPartitionTable(t *testing.T) {
