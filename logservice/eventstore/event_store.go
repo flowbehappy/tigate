@@ -36,19 +36,7 @@ type EventStore interface {
 
 	Close(ctx context.Context) error
 
-<<<<<<< HEAD
-	// add a callback to be called when a new event is added to the store;
-	// but for old data this is not feasiable? may we can just return a current watermark when register
-	RegisterDispatcher(
-		dispatcherID common.DispatcherID,
-		span *heartbeatpb.TableSpan,
-		startTS uint64,
-		observer EventObserver,
-		notifier WatermarkNotifier,
-	) error
-=======
 	RegisterDispatcher(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, startTS common.Ts) error
->>>>>>> 54a9123 (alpha version)
 
 	UpdateDispatcherSendTs(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, gcTS uint64) error
 
