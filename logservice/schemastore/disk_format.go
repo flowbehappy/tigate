@@ -279,6 +279,15 @@ func loadAndApplyDDLHistory(
 		if err := json.Unmarshal(ddlEvent.TableInfoValue, &ddlEvent.TableInfo); err != nil {
 			log.Fatal("unmarshal table info failed", zap.Error(err))
 		}
+		if len(ddlEvent.MultipleTableInfosValue) > 0 {
+			ddlEvent.MultipleTableInfos = make([]*model.TableInfo, len(ddlEvent.MultipleTableInfosValue))
+			for i := range ddlEvent.MultipleTableInfosValue {
+				if err := json.Unmarshal(ddlEvent.MultipleTableInfosValue[i], &ddlEvent.MultipleTableInfos[i]); err != nil {
+					log.Fatal("unmarshal multi table info failed", zap.Error(err))
+				}
+			}
+		}
+		ddlEvent.MultipleTableInfosValue = nil
 
 		if shouldSkipDDL(&ddlEvent, databaseMap, tableMap) {
 			continue
@@ -592,6 +601,15 @@ func loadAllPhysicalTablesAtTs(
 		if err := json.Unmarshal(ddlEvent.TableInfoValue, &ddlEvent.TableInfo); err != nil {
 			log.Fatal("unmarshal table info failed", zap.Error(err))
 		}
+		if len(ddlEvent.MultipleTableInfosValue) > 0 {
+			ddlEvent.MultipleTableInfos = make([]*model.TableInfo, len(ddlEvent.MultipleTableInfosValue))
+			for i := range ddlEvent.MultipleTableInfosValue {
+				if err := json.Unmarshal(ddlEvent.MultipleTableInfosValue[i], &ddlEvent.MultipleTableInfos[i]); err != nil {
+					log.Fatal("unmarshal multi table info failed", zap.Error(err))
+				}
+			}
+		}
+		ddlEvent.MultipleTableInfosValue = nil
 		if err := updateDatabaseInfoAndTableInfo(&ddlEvent, databaseMap, tableMap, partitionMap); err != nil {
 			log.Panic("updateDatabaseInfo error", zap.Error(err))
 		}
@@ -625,5 +643,7 @@ func loadAllPhysicalTablesAtTs(
 			})
 		}
 	}
+	log.Info("loadAllPhysicalTablesAtTs",
+		zap.Int("tableLen", len(tables)))
 	return tables, nil
 }
