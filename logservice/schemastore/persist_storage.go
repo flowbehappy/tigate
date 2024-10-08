@@ -607,6 +607,7 @@ func (p *persistentStorage) handleDDLJob(job *model.Job) error {
 		zap.Int64("schemaID", ddlEvent.CurrentSchemaID),
 		zap.Int64("tableID", ddlEvent.CurrentTableID),
 		zap.Uint64("finishedTs", ddlEvent.FinishedTs),
+		zap.Int64("schemaVersion", ddlEvent.SchemaVersion),
 		zap.String("ddlType", model.ActionType(ddlEvent.Type).String()),
 		zap.String("query", ddlEvent.Query))
 
