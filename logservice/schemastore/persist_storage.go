@@ -134,6 +134,7 @@ func newPersistentStorage(
 		gcTs:                   gcTs,
 		upperBound:             upperBound,
 		tableMap:               make(map[int64]*BasicTableInfo),
+		partitionMap:           make(map[int64]BasicPartitionInfo),
 		databaseMap:            make(map[int64]*BasicDatabaseInfo),
 		tablesDDLHistory:       make(map[int64][]uint64),
 		tableTriggerDDLHistory: make([]uint64, 0),
