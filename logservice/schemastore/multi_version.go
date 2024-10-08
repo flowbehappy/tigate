@@ -243,7 +243,7 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 		assertNonEmpty(v.infos, event)
 		appendTableInfo()
 	case model.ActionTruncateTable:
-		if isPartitionTableEvent(event) {
+		if isPartitionTable(event.TableInfo) {
 			createTable := false
 			for _, partition := range getAllPartitionIDs(event.TableInfo) {
 				if v.tableID == partition {
@@ -324,12 +324,24 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 	case model.ActionCreateTables:
 		assertEmpty(v.infos, event)
 		for _, tableInfo := range event.MultipleTableInfos {
-			if v.tableID == tableInfo.ID {
-				info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, tableInfo)
-				info.InitPreSQLs()
-				v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
-				break
+			if isPartitionTable(tableInfo) {
+				for _, partitionID := range getAllPartitionIDs(tableInfo) {
+					if v.tableID == partitionID {
+						info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, tableInfo)
+						info.InitPreSQLs()
+						v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
+						break
+					}
+				}
+			} else {
+				if v.tableID == tableInfo.ID {
+					info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, tableInfo)
+					info.InitPreSQLs()
+					v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
+					break
+				}
 			}
+
 		}
 	case model.ActionReorganizePartition:
 		physicalIDs := getAllPartitionIDs(event.TableInfo)
