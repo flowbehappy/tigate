@@ -271,24 +271,7 @@ func loadAndApplyDDLHistory(
 	}
 	defer snapIter.Close()
 	for snapIter.First(); snapIter.Valid(); snapIter.Next() {
-		var ddlEvent PersistedDDLEvent
-		if _, err = ddlEvent.UnmarshalMsg(snapIter.Value()); err != nil {
-			log.Fatal("unmarshal ddl job failed", zap.Error(err))
-		}
-		ddlEvent.TableInfo = &model.TableInfo{}
-		if err := json.Unmarshal(ddlEvent.TableInfoValue, &ddlEvent.TableInfo); err != nil {
-			log.Fatal("unmarshal table info failed", zap.Error(err))
-		}
-		if len(ddlEvent.MultipleTableInfosValue) > 0 {
-			ddlEvent.MultipleTableInfos = make([]*model.TableInfo, len(ddlEvent.MultipleTableInfosValue))
-			for i := range ddlEvent.MultipleTableInfosValue {
-				if err := json.Unmarshal(ddlEvent.MultipleTableInfosValue[i], &ddlEvent.MultipleTableInfos[i]); err != nil {
-					log.Fatal("unmarshal multi table info failed", zap.Error(err))
-				}
-			}
-		}
-		ddlEvent.MultipleTableInfosValue = nil
-
+		ddlEvent := unmarshalPersistedDDLEvent(snapIter.Value())
 		if shouldSkipDDL(&ddlEvent, databaseMap, tableMap) {
 			continue
 		}
@@ -335,18 +318,9 @@ func readTableInfoInKVSnap(snap *pebble.Snapshot, tableID int64, version uint64)
 	return common.WrapTableInfo(table_info_entry.SchemaID, table_info_entry.SchemaName, version, tableInfo)
 }
 
-func readPersistedDDLEvent(snap *pebble.Snapshot, version uint64) PersistedDDLEvent {
-	ddlKey, err := ddlJobKey(version)
-	if err != nil {
-		log.Fatal("generate ddl job key failed", zap.Error(err))
-	}
-	ddlValue, closer, err := snap.Get(ddlKey)
-	if err != nil {
-		log.Fatal("get ddl job failed", zap.Error(err))
-	}
-	defer closer.Close()
+func unmarshalPersistedDDLEvent(value []byte) PersistedDDLEvent {
 	var ddlEvent PersistedDDLEvent
-	if _, err := ddlEvent.UnmarshalMsg(ddlValue); err != nil {
+	if _, err := ddlEvent.UnmarshalMsg(value); err != nil {
 		log.Fatal("unmarshal ddl job failed", zap.Error(err))
 	}
 
@@ -366,6 +340,19 @@ func readPersistedDDLEvent(snap *pebble.Snapshot, version uint64) PersistedDDLEv
 	}
 	ddlEvent.MultipleTableInfosValue = nil
 	return ddlEvent
+}
+
+func readPersistedDDLEvent(snap *pebble.Snapshot, version uint64) PersistedDDLEvent {
+	ddlKey, err := ddlJobKey(version)
+	if err != nil {
+		log.Fatal("generate ddl job key failed", zap.Error(err))
+	}
+	ddlValue, closer, err := snap.Get(ddlKey)
+	if err != nil {
+		log.Fatal("get ddl job failed", zap.Error(err))
+	}
+	defer closer.Close()
+	return unmarshalPersistedDDLEvent(ddlValue)
 }
 
 func writePersistedDDLEvent(db *pebble.DB, ddlEvent *PersistedDDLEvent) error {
@@ -593,23 +580,7 @@ func loadAllPhysicalTablesAtTs(
 	}
 	defer snapIter.Close()
 	for snapIter.First(); snapIter.Valid(); snapIter.Next() {
-		var ddlEvent PersistedDDLEvent
-		if _, err = ddlEvent.UnmarshalMsg(snapIter.Value()); err != nil {
-			log.Fatal("unmarshal ddl job failed", zap.Error(err))
-		}
-		ddlEvent.TableInfo = &model.TableInfo{}
-		if err := json.Unmarshal(ddlEvent.TableInfoValue, &ddlEvent.TableInfo); err != nil {
-			log.Fatal("unmarshal table info failed", zap.Error(err))
-		}
-		if len(ddlEvent.MultipleTableInfosValue) > 0 {
-			ddlEvent.MultipleTableInfos = make([]*model.TableInfo, len(ddlEvent.MultipleTableInfosValue))
-			for i := range ddlEvent.MultipleTableInfosValue {
-				if err := json.Unmarshal(ddlEvent.MultipleTableInfosValue[i], &ddlEvent.MultipleTableInfos[i]); err != nil {
-					log.Fatal("unmarshal multi table info failed", zap.Error(err))
-				}
-			}
-		}
-		ddlEvent.MultipleTableInfosValue = nil
+		ddlEvent := unmarshalPersistedDDLEvent(snapIter.Value())
 		if err := updateDatabaseInfoAndTableInfo(&ddlEvent, databaseMap, tableMap, partitionMap); err != nil {
 			log.Panic("updateDatabaseInfo error", zap.Error(err))
 		}

@@ -1092,6 +1092,9 @@ func updateDatabaseInfoAndTableInfo(
 		delete(partitionMap[event.CurrentTableID], targetPartitionID)
 		partitionMap[event.CurrentTableID][event.PrevTableID] = nil
 	case model.ActionCreateTables:
+		if event.MultipleTableInfos == nil {
+			log.Panic("multiple table infos should not be nil")
+		}
 		for _, info := range event.MultipleTableInfos {
 			addTableToDB(event.CurrentSchemaID, info.ID)
 			tableMap[info.ID] = &BasicTableInfo{
