@@ -245,7 +245,7 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 	case model.ActionTruncateTable:
 		if isPartitionTableEvent(event) {
 			createTable := false
-			for _, partition := range getAllPartitionIDs(event) {
+			for _, partition := range getAllPartitionIDs(event.TableInfo) {
 				if v.tableID == partition {
 					createTable = true
 					break
@@ -271,7 +271,7 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 		assertNonEmpty(v.infos, event)
 		appendTableInfo()
 	case model.ActionAddTablePartition:
-		newCreatedIDs := getCreatedIDs(event.PrevPartitions, getAllPartitionIDs(event))
+		newCreatedIDs := getCreatedIDs(event.PrevPartitions, getAllPartitionIDs(event.TableInfo))
 		for _, partition := range newCreatedIDs {
 			if v.tableID == partition {
 				appendTableInfo()
@@ -279,7 +279,7 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 			}
 		}
 	case model.ActionDropTablePartition:
-		droppedIDs := getDroppedIDs(event.PrevPartitions, getAllPartitionIDs(event))
+		droppedIDs := getDroppedIDs(event.PrevPartitions, getAllPartitionIDs(event.TableInfo))
 		for _, partition := range droppedIDs {
 			if v.tableID == partition {
 				v.deleteVersion = uint64(event.FinishedTs)
@@ -287,7 +287,7 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 			}
 		}
 	case model.ActionTruncateTablePartition:
-		physicalIDs := getAllPartitionIDs(event)
+		physicalIDs := getAllPartitionIDs(event.TableInfo)
 		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
 		dropped := false
 		for _, partition := range droppedIDs {
@@ -332,7 +332,7 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 			}
 		}
 	case model.ActionReorganizePartition:
-		physicalIDs := getAllPartitionIDs(event)
+		physicalIDs := getAllPartitionIDs(event.TableInfo)
 		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
 		dropped := false
 		for _, partition := range droppedIDs {
