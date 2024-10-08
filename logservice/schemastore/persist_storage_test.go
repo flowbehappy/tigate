@@ -38,6 +38,7 @@ func loadPersistentStorageForTest(db *pebble.DB, gcTs uint64, upperBound UpperBo
 		gcTs:                   gcTs,
 		upperBound:             upperBound,
 		tableMap:               make(map[int64]*BasicTableInfo),
+		partitionMap:           make(map[int64]BasicPartitionInfo),
 		databaseMap:            make(map[int64]*BasicDatabaseInfo),
 		tablesDDLHistory:       make(map[int64][]uint64),
 		tableTriggerDDLHistory: make([]uint64, 0),
@@ -1630,8 +1631,176 @@ func TestCreateTables(t *testing.T) {
 	}
 }
 
-func TestRenameTables(t *testing.T) {
+func TestCreateTablesForPartitionTable(t *testing.T) {
+	dbPath := fmt.Sprintf("/tmp/testdb-%s", t.Name())
+	err := os.RemoveAll(dbPath)
+	require.Nil(t, err)
 
+	gcTs := uint64(500)
+	schemaID := int64(300)
+
+	databaseInfo := make(map[int64]*model.DBInfo)
+	databaseInfo[schemaID] = &model.DBInfo{
+		ID:   schemaID,
+		Name: model.NewCIStr("test"),
+	}
+	pStorage := newPersistentStorageForTest(dbPath, gcTs, databaseInfo)
+
+	// create tables
+	tableID1 := int64(100)
+	tableID2 := tableID1 + 100
+	tableID3 := tableID1 + 200
+	partitionID1 := tableID1 + 1000
+	partitionID2 := partitionID1 + 100
+	partitionID3 := partitionID1 + 200
+	partitionID4 := partitionID1 + 300
+	partitionID5 := partitionID1 + 400
+	partitionID6 := partitionID1 + 500
+	{
+		job := &model.Job{
+			Type:     model.ActionCreateTables,
+			SchemaID: schemaID,
+			Query:    "sql1;sql2;sql3",
+			BinlogInfo: &model.HistoryInfo{
+				SchemaVersion: 501,
+				MultipleTableInfos: []*model.TableInfo{
+					{
+						ID:   tableID1,
+						Name: model.NewCIStr("t1"),
+						Partition: &model.PartitionInfo{
+							Definitions: []model.PartitionDefinition{
+								{
+									ID: partitionID1,
+								},
+								{
+									ID: partitionID2,
+								},
+							},
+						},
+					},
+					{
+						ID:   tableID2,
+						Name: model.NewCIStr("t2"),
+						Partition: &model.PartitionInfo{
+							Definitions: []model.PartitionDefinition{
+								{
+									ID: partitionID3,
+								},
+								{
+									ID: partitionID4,
+								},
+							},
+						},
+					},
+					{
+						ID:   tableID3,
+						Name: model.NewCIStr("t3"),
+						Partition: &model.PartitionInfo{
+							Definitions: []model.PartitionDefinition{
+								{
+									ID: partitionID5,
+								},
+								{
+									ID: partitionID6,
+								},
+							},
+						},
+					},
+				},
+				FinishedTS: 601,
+			},
+		}
+		pStorage.handleDDLJob(job)
+	}
+
+	{
+		require.Equal(t, 3, len(pStorage.databaseMap[schemaID].Tables))
+		require.Equal(t, 3, len(pStorage.tableMap))
+		require.Equal(t, 3, len(pStorage.partitionMap))
+	}
+
+	{
+		store := newEmptyVersionedTableInfoStore(partitionID1)
+		pStorage.buildVersionedTableInfoStore(store)
+		require.Equal(t, 1, len(store.infos))
+		require.Equal(t, "t1", store.infos[0].info.Name.O)
+	}
+
+	{
+		store := newEmptyVersionedTableInfoStore(partitionID2)
+		pStorage.buildVersionedTableInfoStore(store)
+		require.Equal(t, 1, len(store.infos))
+		require.Equal(t, "t1", store.infos[0].info.Name.O)
+	}
+
+	{
+		store := newEmptyVersionedTableInfoStore(partitionID3)
+		pStorage.buildVersionedTableInfoStore(store)
+		require.Equal(t, 1, len(store.infos))
+		require.Equal(t, "t2", store.infos[0].info.Name.O)
+	}
+
+	{
+		store := newEmptyVersionedTableInfoStore(partitionID4)
+		pStorage.buildVersionedTableInfoStore(store)
+		require.Equal(t, 1, len(store.infos))
+		require.Equal(t, "t2", store.infos[0].info.Name.O)
+	}
+
+	{
+		store := newEmptyVersionedTableInfoStore(partitionID5)
+		pStorage.buildVersionedTableInfoStore(store)
+		require.Equal(t, 1, len(store.infos))
+		require.Equal(t, "t3", store.infos[0].info.Name.O)
+	}
+
+	{
+		store := newEmptyVersionedTableInfoStore(partitionID6)
+		pStorage.buildVersionedTableInfoStore(store)
+		require.Equal(t, 1, len(store.infos))
+		require.Equal(t, "t3", store.infos[0].info.Name.O)
+	}
+
+	{
+		ddlEvents, err := pStorage.fetchTableTriggerDDLEvents(nil, 600, 601)
+		require.Nil(t, err)
+		require.Equal(t, 1, len(ddlEvents))
+
+		verifyTableIsAdded(t, ddlEvents[0], partitionID1, schemaID)
+		verifyTableIsAdded(t, ddlEvents[0], partitionID2, schemaID)
+		verifyTableIsAdded(t, ddlEvents[0], partitionID3, schemaID)
+		verifyTableIsAdded(t, ddlEvents[0], partitionID4, schemaID)
+		verifyTableIsAdded(t, ddlEvents[0], partitionID5, schemaID)
+		verifyTableIsAdded(t, ddlEvents[0], partitionID6, schemaID)
+	}
+
+	// filter t2 and t3
+	{
+		filterConfig := &config.FilterConfig{
+			Rules: []string{"test.t1"},
+		}
+		tableFilter, err := filter.NewFilter(filterConfig, "", false)
+		require.Nil(t, err)
+		ddlEvents, err := pStorage.fetchTableTriggerDDLEvents(tableFilter, 600, 601)
+		require.Nil(t, err)
+		require.Equal(t, 1, len(ddlEvents))
+
+		verifyTableIsAdded(t, ddlEvents[0], partitionID1, schemaID)
+		verifyTableIsAdded(t, ddlEvents[0], partitionID2, schemaID)
+		require.Equal(t, 2, len(ddlEvents[0].NeedAddedTables))
+	}
+
+	// all filtered out
+	{
+		filterConfig := &config.FilterConfig{
+			Rules: []string{"test2.*"},
+		}
+		tableFilter, err := filter.NewFilter(filterConfig, "", false)
+		require.Nil(t, err)
+		ddlEvents, err := pStorage.fetchTableTriggerDDLEvents(tableFilter, 600, 601)
+		require.Nil(t, err)
+		require.Equal(t, 0, len(ddlEvents))
+	}
 }
 
 func TestFetchDDLEventsBasic(t *testing.T) {
