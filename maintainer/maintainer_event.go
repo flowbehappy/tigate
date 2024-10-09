@@ -37,7 +37,7 @@ type Event struct {
 	message      *messaging.TargetMessage
 }
 
-// SubmitScheduledEvent submits a task to scheduler pool to send a future event
+// SubmitScheduledEvent submits a task to controller pool to send a future event
 func SubmitScheduledEvent(
 	scheduler threadpool.ThreadPool,
 	stream dynstream.DynamicStream[string, *Event, *Maintainer],

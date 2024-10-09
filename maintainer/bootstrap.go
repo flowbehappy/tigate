@@ -174,7 +174,7 @@ const (
 	// NodeStateUninitialized means the server status is unknown,
 	// no bootstrap response received yet.
 	NodeStateUninitialized NodeState = 1
-	// NodeStateInitialized means scheduler has received bootstrap response.
+	// NodeStateInitialized means controller has received bootstrap response.
 	NodeStateInitialized NodeState = 2
 )
 
