@@ -603,13 +603,13 @@ func (p *persistentStorage) handleDDLJob(job *model.Job) error {
 	}
 
 	p.mu.Unlock()
-	log.Info("handle resolved ddl event",
-		zap.Int64("schemaID", ddlEvent.CurrentSchemaID),
-		zap.Int64("tableID", ddlEvent.CurrentTableID),
-		zap.Uint64("finishedTs", ddlEvent.FinishedTs),
-		zap.Int64("schemaVersion", ddlEvent.SchemaVersion),
-		zap.String("ddlType", model.ActionType(ddlEvent.Type).String()),
-		zap.String("query", ddlEvent.Query))
+	// log.Info("handle resolved ddl event",
+	// 	zap.Int64("schemaID", ddlEvent.CurrentSchemaID),
+	// 	zap.Int64("tableID", ddlEvent.CurrentTableID),
+	// 	zap.Uint64("finishedTs", ddlEvent.FinishedTs),
+	// 	zap.Int64("schemaVersion", ddlEvent.SchemaVersion),
+	// 	zap.String("ddlType", model.ActionType(ddlEvent.Type).String()),
+	// 	zap.String("query", ddlEvent.Query))
 
 	// Note: need write ddl event to disk before update ddl history,
 	// becuase other goroutines may read ddl events from disk according to ddl history
