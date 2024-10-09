@@ -29,18 +29,18 @@ import (
 // 5. maintainer send pass action to all other dispatchers. (resend logic is needed)
 // 6. maintainer wait for all dispatchers advance checkpoints, and cleanup memory
 type Barrier struct {
-	blockedTs map[uint64]*BarrierEvent
-	scheduler *Scheduler
+	blockedTs  map[uint64]*BarrierEvent
+	controller *Controller
 	// if maintainer is down, the barrier will be re-built, so we can use the dispatcher as the key
 	blockedDispatcher map[common.DispatcherID]*BarrierEvent
 }
 
 // NewBarrier create a new barrier for the changefeed
-func NewBarrier(scheduler *Scheduler) *Barrier {
+func NewBarrier(controller *Controller) *Barrier {
 	return &Barrier{
 		blockedTs:         make(map[uint64]*BarrierEvent),
 		blockedDispatcher: make(map[common.DispatcherID]*BarrierEvent),
-		scheduler:         scheduler,
+		controller:        controller,
 	}
 }
 
@@ -151,7 +151,7 @@ func (b *Barrier) handleStateHeartbeat(changefeedID string,
 		// it's not a blocked event, it must be sent by table event trigger dispatcher
 		// the ddl already synced to downstream , e.g.: create table, drop table
 		// if ack failed, dispatcher will send a heartbeat again
-		NewBlockEvent(changefeedID, b.scheduler, blockState).scheduleBlockEvent()
+		NewBlockEvent(changefeedID, b.controller, blockState).scheduleBlockEvent()
 	}
 	return dispatcherStatus
 }
@@ -161,7 +161,7 @@ func (b *Barrier) getOrInsertNewEvent(changefeedID string,
 	blockState *heartbeatpb.State) *BarrierEvent {
 	event, ok := b.blockedTs[blockState.BlockTs]
 	if !ok {
-		event = NewBlockEvent(changefeedID, b.scheduler, blockState)
+		event = NewBlockEvent(changefeedID, b.controller, blockState)
 		b.blockedTs[blockState.BlockTs] = event
 	}
 	_, ok = b.blockedDispatcher[dispatcherID]

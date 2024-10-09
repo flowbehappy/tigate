@@ -14,8 +14,6 @@
 package maintainer
 
 import (
-	"os"
-	"runtime/pprof"
 	"testing"
 	"time"
 
@@ -29,7 +27,7 @@ import (
 )
 
 func TestNormalBlock(t *testing.T) {
-	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	sche.AddNewNode("node2")
 	var blockedDispatcherIDS []*heartbeatpb.DispatcherID
@@ -199,7 +197,7 @@ func TestNormalBlock(t *testing.T) {
 }
 
 func TestSchemaBlock(t *testing.T) {
-	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	sche.AddNewNode("node2")
 	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 1}, 1)
@@ -352,7 +350,7 @@ func TestSchemaBlock(t *testing.T) {
 }
 
 func TestSyncPointBlock(t *testing.T) {
-	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	sche.AddNewNode("node2")
 	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 1}, 1)
@@ -486,7 +484,7 @@ func TestSyncPointBlock(t *testing.T) {
 }
 
 func TestNonBlocked(t *testing.T) {
-	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	barrier := NewBarrier(sche)
 
@@ -523,11 +521,11 @@ func TestNonBlocked(t *testing.T) {
 	require.Equal(t, resp.DispatcherStatuses[0].InfluencedDispatchers.DispatcherIDs[0], blockedDispatcherIDS[0])
 	require.Len(t, barrier.blockedTs, 0)
 	require.Len(t, barrier.blockedDispatcher, 0)
-	require.Len(t, barrier.scheduler.Absent(), 2)
+	require.Len(t, barrier.controller.Absent(), 2)
 }
 
 func TestSyncPointBlockPerf(t *testing.T) {
-	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	barrier := NewBarrier(sche)
 	for id := 1; id < 1000; id++ {
@@ -556,10 +554,10 @@ func TestSyncPointBlockPerf(t *testing.T) {
 		})
 	}
 
-	f, _ := os.OpenFile("cpu.profile", os.O_CREATE|os.O_RDWR, 0644)
-	defer f.Close()
-	pprof.StartCPUProfile(f)
-	defer pprof.StopCPUProfile()
+	//f, _ := os.OpenFile("cpu.profile", os.O_CREATE|os.O_RDWR, 0644)
+	//defer f.Close()
+	//pprof.StartCPUProfile(f)
+	//defer pprof.StopCPUProfile()
 	now := time.Now()
 	msg := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",

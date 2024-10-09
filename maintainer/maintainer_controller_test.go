@@ -33,7 +33,7 @@ import (
 )
 
 func TestSchedule(t *testing.T) {
-	s := NewScheduler("test", 1, nil, nil, nil, 9, time.Minute)
+	s := NewController("test", 1, nil, nil, nil, 9, time.Minute)
 	s.nodeTasks["node1"] = map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]{}
 	s.nodeTasks["node2"] = map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]{}
 	s.nodeTasks["node3"] = map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]{}
@@ -55,7 +55,7 @@ func TestSchedule(t *testing.T) {
 }
 
 func TestMoveTask(t *testing.T) {
-	s := NewScheduler("test", 1, nil, nil, nil, 9, time.Minute)
+	s := NewController("test", 1, nil, nil, nil, 9, time.Minute)
 	s.AddNewTable(common.Table{
 		SchemaID: 1,
 		TableID:  int64(1),
@@ -147,7 +147,7 @@ func TestMoveTask(t *testing.T) {
 }
 
 func TestRemoveAbsentTask(t *testing.T) {
-	s := NewScheduler("test", 1, nil, nil, nil, 9, time.Minute)
+	s := NewController("test", 1, nil, nil, nil, 9, time.Minute)
 	s.AddNewTable(common.Table{
 		SchemaID: 1,
 		TableID:  int64(1),
@@ -158,7 +158,7 @@ func TestRemoveAbsentTask(t *testing.T) {
 }
 
 func TestBalance(t *testing.T) {
-	s := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	s := NewController("test", 1, nil, nil, nil, 1000, 0)
 	s.nodeTasks["node1"] = map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]{}
 	for i := 0; i < 100; i++ {
 		span := &heartbeatpb.TableSpan{TableID: int64(i)}
@@ -198,7 +198,7 @@ func TestBalance(t *testing.T) {
 }
 
 func TestStoppedWhenMoving(t *testing.T) {
-	s := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	s := NewController("test", 1, nil, nil, nil, 1000, 0)
 	s.AddNewNode("node1")
 	s.AddNewNode("node2")
 	id := 1
@@ -234,7 +234,7 @@ func TestStoppedWhenMoving(t *testing.T) {
 }
 
 func TestFinishBootstrap(t *testing.T) {
-	s := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	s := NewController("test", 1, nil, nil, nil, 1000, 0)
 	s.AddNewNode("node1")
 	span := &heartbeatpb.TableSpan{TableID: int64(1)}
 	s.SetInitialTables([]common.Table{{TableID: 1, SchemaID: 1}})
@@ -270,7 +270,7 @@ func TestFinishBootstrap(t *testing.T) {
 
 // 4 tasks and 2 servers, then add one server, no re-balance will be triggered
 func TestBalanceUnEvenTask(t *testing.T) {
-	s := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	s := NewController("test", 1, nil, nil, nil, 1000, 0)
 	s.AddNewNode("node1")
 	s.AddNewNode("node2")
 	for i := 0; i < 4; i++ {
@@ -314,7 +314,7 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 	pdAPI := &mockPdAPI{
 		regions: make(map[int64][]pdutil.RegionInfo),
 	}
-	s := NewScheduler("test", 1,
+	s := NewController("test", 1,
 		pdAPI,
 		nil, &config2.ChangefeedSchedulerConfig{
 			EnableTableAcrossNodes: true,

@@ -24,7 +24,7 @@ import (
 )
 
 func TestScheduleEvent(t *testing.T) {
-	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewTable(common.Table{1, 1}, 1)
 	event := NewBlockEvent("test", sche, &heartbeatpb.State{
 		IsBlocked: true,
@@ -67,7 +67,7 @@ func TestScheduleEvent(t *testing.T) {
 }
 
 func TestResendAction(t *testing.T) {
-	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	sche.AddNewTable(common.Table{1, 1}, 1)
 	sche.AddNewTable(common.Table{1, 2}, 1)
@@ -162,7 +162,7 @@ func TestResendAction(t *testing.T) {
 }
 
 func TestUpdateSchemaID(t *testing.T) {
-	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	sche.AddNewTable(common.Table{1, 1}, 1)
 	require.Len(t, sche.Absent(), 1)
