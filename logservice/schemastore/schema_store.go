@@ -145,20 +145,20 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 						zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
 						zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
 						zap.Uint64("jobCommitTs", event.CommitTs),
-						zap.Any("schemaVersion", s.schemaVersion),
-						zap.Uint64("finishedDDLTS", s.finishedDDLTs))
+						zap.Any("storeSchemaVersion", s.schemaVersion),
+						zap.Uint64("storeFinishedDDLTS", s.finishedDDLTs))
 					continue
 				}
-				log.Info("handle ddl job",
-					zap.Int64("schemaID", event.Job.SchemaID),
-					zap.Int64("tableID", event.Job.TableID),
-					zap.Any("type", event.Job.Type),
-					zap.String("job", event.Job.Query),
-					zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
-					zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
-					zap.Uint64("jobCommitTs", event.CommitTs),
-					zap.Any("schemaVersion", s.schemaVersion),
-					zap.Uint64("finishedDDLTS", s.finishedDDLTs))
+				// log.Info("handle ddl job",
+				// 	zap.Int64("schemaID", event.Job.SchemaID),
+				// 	zap.Int64("tableID", event.Job.TableID),
+				// 	zap.Any("type", event.Job.Type),
+				// 	zap.String("job", event.Job.Query),
+				// 	zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+				// 	zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
+				// 	zap.Uint64("jobCommitTs", event.CommitTs),
+				// 	zap.Any("storeSchemaVersion", s.schemaVersion),
+				// 	zap.Uint64("storeFinishedDDLTS", s.finishedDDLTs))
 
 				// need to update the following two members for every event to filter out later duplicate events
 				s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
