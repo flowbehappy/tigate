@@ -160,3 +160,31 @@ func TestResendAction(t *testing.T) {
 	require.Equal(t, resp.DispatcherStatuses[0].Action.Action, heartbeatpb.Action_Pass)
 	require.Equal(t, resp.DispatcherStatuses[0].Action.CommitTs, uint64(10))
 }
+
+func TestUpdateSchemaID(t *testing.T) {
+	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	sche.AddNewNode("node1")
+	sche.AddNewTable(common.Table{1, 1}, 1)
+	require.Len(t, sche.Absent(), 1)
+	require.Len(t, sche.GetTasksBySchemaID(1), 1)
+	event := NewBlockEvent("test", sche, &heartbeatpb.State{
+		IsBlocked: true,
+		BlockTs:   10,
+		BlockTables: &heartbeatpb.InfluencedTables{
+			InfluenceType: heartbeatpb.InfluenceType_All,
+		},
+		UpdatedSchemas: []*heartbeatpb.SchemaIDChange{
+			{
+				TableID:     1,
+				OldSchemaID: 1,
+				NewSchemaID: 2,
+			},
+		}},
+	)
+	event.scheduleBlockEvent()
+	require.Len(t, sche.Absent(), 1)
+	// check the schema id and map is updated
+	require.Len(t, sche.GetTasksBySchemaID(1), 0)
+	require.Len(t, sche.GetTasksBySchemaID(2), 1)
+	require.Equal(t, sche.GetTasksByTableIDs(1)[0].Inferior.(*ReplicaSet).SchemaID, int64(2))
+}

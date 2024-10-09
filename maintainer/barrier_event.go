@@ -38,9 +38,10 @@ type BarrierEvent struct {
 	blockedDispatchers *heartbeatpb.InfluencedTables
 	dropDispatchers    *heartbeatpb.InfluencedTables
 
-	blockedTasks []*scheduler.StateMachine[common.DispatcherID]
-	dropTasks    []*scheduler.StateMachine[common.DispatcherID]
-	newTables    []*heartbeatpb.Table
+	blockedTasks   []*scheduler.StateMachine[common.DispatcherID]
+	dropTasks      []*scheduler.StateMachine[common.DispatcherID]
+	newTables      []*heartbeatpb.Table
+	schemaIDChange []*heartbeatpb.SchemaIDChange
 
 	advancedDispatchers map[common.DispatcherID]bool
 	lastResendTime      time.Time
@@ -56,6 +57,7 @@ func NewBlockEvent(cfID string, scheduler *Scheduler,
 		blockedDispatchers:  status.BlockTables,
 		newTables:           status.NeedAddedTables,
 		dropDispatchers:     status.NeedDroppedTables,
+		schemaIDChange:      status.UpdatedSchemas,
 		advancedDispatchers: make(map[common.DispatcherID]bool),
 		lastResendTime:      time.Time{},
 	}
@@ -100,6 +102,15 @@ func (b *BarrierEvent) scheduleBlockEvent() {
 			SchemaID: add.SchemaID,
 			TableID:  add.TableID,
 		}, b.commitTs)
+	}
+
+	for _, change := range b.schemaIDChange {
+		log.Info("update schema id",
+			zap.String("changefeed", b.cfID),
+			zap.Int64("newSchema", change.OldSchemaID),
+			zap.Int64("oldSchema", change.NewSchemaID),
+			zap.Int64("table", change.TableID))
+		b.scheduler.UpdateSchemaID(change.TableID, change.NewSchemaID)
 	}
 }
 
