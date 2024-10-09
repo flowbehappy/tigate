@@ -362,6 +362,21 @@ type SchemaIDChange struct {
 	NewSchemaID int64
 }
 
+func ToSchemaIDChangePB(SchemaIDChange []SchemaIDChange) []*heartbeatpb.SchemaIDChange {
+	if SchemaIDChange == nil {
+		return nil
+	}
+	res := make([]*heartbeatpb.SchemaIDChange, len(SchemaIDChange))
+	for i, c := range SchemaIDChange {
+		res[i] = &heartbeatpb.SchemaIDChange{
+			TableID:     c.TableID,
+			OldSchemaID: c.OldSchemaID,
+			NewSchemaID: c.NewSchemaID,
+		}
+	}
+	return res
+}
+
 type DDLEvent struct {
 	DispatcherID DispatcherID `json:"dispatcher_id"`
 	Type         byte         `json:"type"`
@@ -436,6 +451,10 @@ func (e *DDLEvent) GetNeedDroppedTables() *InfluencedTables {
 
 func (e *DDLEvent) GetNeedAddedTables() []Table {
 	return e.NeedAddedTables
+}
+
+func (e *DDLEvent) GetUpdatedSchemas() []SchemaIDChange {
+	return e.UpdatedSchemas
 }
 
 func (e *DDLEvent) IsSyncPointEvent() bool {

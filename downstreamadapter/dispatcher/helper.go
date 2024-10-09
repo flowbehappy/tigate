@@ -21,7 +21,61 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/flowbehappy/tigate/utils/threadpool"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
+
+type SchemaIDToDispatchers struct {
+	mutex sync.RWMutex
+	m     map[int64]map[common.DispatcherID]interface{}
+}
+
+func NewSchemaIDToDispatchers() *SchemaIDToDispatchers {
+	return &SchemaIDToDispatchers{
+		m: make(map[int64]map[common.DispatcherID]interface{}),
+	}
+}
+
+func (s *SchemaIDToDispatchers) Set(schemaID int64, dispatcherID common.DispatcherID) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if _, ok := s.m[schemaID]; !ok {
+		s.m[schemaID] = make(map[common.DispatcherID]interface{})
+	}
+	s.m[schemaID][dispatcherID] = struct{}{}
+}
+
+func (s *SchemaIDToDispatchers) Delete(schemaID int64, dispatcherID common.DispatcherID) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if _, ok := s.m[schemaID]; ok {
+		delete(s.m[schemaID], dispatcherID)
+	}
+}
+
+func (s *SchemaIDToDispatchers) Update(oldSchemaID int64, newSchemaID int64) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if _, ok := s.m[oldSchemaID]; ok {
+		s.m[newSchemaID] = s.m[oldSchemaID]
+		delete(s.m, oldSchemaID)
+	} else {
+		log.Error("schemaID not found", zap.Any("schemaID", oldSchemaID))
+	}
+}
+
+func (s *SchemaIDToDispatchers) GetDispatcherIDs(schemaID int64) []common.DispatcherID {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	if ids, ok := s.m[schemaID]; ok {
+		dispatcherIDs := make([]common.DispatcherID, 0, len(ids))
+		for id := range ids {
+			dispatcherIDs = append(dispatcherIDs, id)
+		}
+		return dispatcherIDs
+	}
+	return nil
+}
 
 type SyncPointInfo struct {
 	EnableSyncPoint   bool
@@ -179,7 +233,7 @@ func newResendTask(message *heartbeatpb.TableSpanStatus, dispatcher *Dispatcher)
 
 func (t *ResendTask) Execute() time.Time {
 	t.dispatcher.GetStatusesChan() <- t.message
-	return time.Now().Add(50 * time.Millisecond)
+	return time.Now().Add(200 * time.Millisecond)
 }
 
 func (t *ResendTask) Cancel() {
