@@ -286,6 +286,8 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 				break
 			}
 		}
+	case model.ActionCreateView:
+		// create view is add all table's ddl history, just ignore it
 	case model.ActionTruncateTablePartition:
 		physicalIDs := getAllPartitionIDs(event.TableInfo)
 		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
