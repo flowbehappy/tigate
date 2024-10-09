@@ -75,7 +75,7 @@ type EventDispatcherManager struct {
 
 	heartBeatTask *HeartBeatTask
 
-	schemaIDToDispatchers *SchemaIDToDispatchers
+	schemaIDToDispatchers *dispatcher.SchemaIDToDispatchers
 
 	tableTriggerEventDispatcher *dispatcher.Dispatcher
 
@@ -99,7 +99,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 		statusesChan:                   make(chan *heartbeatpb.TableSpanStatus, 10000),
 		cancel:                         cancel,
 		config:                         cfConfig,
-		schemaIDToDispatchers:          newSchemaIDToDispatchers(),
+		schemaIDToDispatchers:          dispatcher.NewSchemaIDToDispatchers(),
 		tableEventDispatcherCount:      metrics.TableEventDispatcherGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCreateDispatcherDuration: metrics.CreateDispatcherDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCheckpointTs:             metrics.EventDispatcherManagerCheckpointTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
@@ -205,7 +205,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 		return nil
 	}
 
-	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.filter, schemaID)
+	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.filter, schemaID, e.schemaIDToDispatchers)
 
 	if tableSpan.Equal(heartbeatpb.DDLSpan) {
 		e.tableTriggerEventDispatcher = dispatcher
@@ -397,10 +397,6 @@ func (e *EventDispatcherManager) GetDispatcherMap() *DispatcherMap {
 	return e.dispatcherMap
 }
 
-func (e *EventDispatcherManager) GetSchemaIDToDispatchers() *SchemaIDToDispatchers {
-	return e.schemaIDToDispatchers
-}
-
 func (e *EventDispatcherManager) GetMaintainerID() node.ID {
 	return e.maintainerID
 }
@@ -427,7 +423,7 @@ func (e *EventDispatcherManager) SetMaintainerID(maintainerID node.ID) {
 
 // Get all dispatchers id of the specified schemaID. Including the tableTriggerEventDispatcherID if exists.
 func (e *EventDispatcherManager) GetAllDispatchers(schemaID int64) []common.DispatcherID {
-	dispatcherIDs := e.GetSchemaIDToDispatchers().GetDispatcherIDs(schemaID)
+	dispatcherIDs := e.schemaIDToDispatchers.GetDispatcherIDs(schemaID)
 	if e.tableTriggerEventDispatcher != nil {
 		dispatcherIDs = append(dispatcherIDs, e.tableTriggerEventDispatcher.GetId())
 	}
@@ -474,45 +470,4 @@ func (d *DispatcherMap) ForEach(fn func(id common.DispatcherID, dispatcher *disp
 		fn(key.(common.DispatcherID), value.(*dispatcher.Dispatcher))
 		return true
 	})
-}
-
-type SchemaIDToDispatchers struct {
-	mutex sync.RWMutex
-	m     map[int64]map[common.DispatcherID]interface{}
-}
-
-func newSchemaIDToDispatchers() *SchemaIDToDispatchers {
-	return &SchemaIDToDispatchers{
-		m: make(map[int64]map[common.DispatcherID]interface{}),
-	}
-}
-
-func (s *SchemaIDToDispatchers) Set(schemaID int64, dispatcherID common.DispatcherID) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	if _, ok := s.m[schemaID]; !ok {
-		s.m[schemaID] = make(map[common.DispatcherID]interface{})
-	}
-	s.m[schemaID][dispatcherID] = struct{}{}
-}
-
-func (s *SchemaIDToDispatchers) Delete(schemaID int64, dispatcherID common.DispatcherID) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	if _, ok := s.m[schemaID]; ok {
-		delete(s.m[schemaID], dispatcherID)
-	}
-}
-
-func (s *SchemaIDToDispatchers) GetDispatcherIDs(schemaID int64) []common.DispatcherID {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-	if ids, ok := s.m[schemaID]; ok {
-		dispatcherIDs := make([]common.DispatcherID, 0, len(ids))
-		for id := range ids {
-			dispatcherIDs = append(dispatcherIDs, id)
-		}
-		return dispatcherIDs
-	}
-	return nil
 }

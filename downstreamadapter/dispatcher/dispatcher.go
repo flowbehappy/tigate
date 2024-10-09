@@ -84,13 +84,14 @@ type Dispatcher struct {
 	resendTask                  *ResendTask
 	checkTableProgressEmptyTask *CheckProgressEmptyTask
 
-	schemaID int64
+	schemaIDToDispatchers *SchemaIDToDispatchers
+	schemaID              int64
 
 	// only exist when the dispatcher is a table trigger event dispatcher
 	tableNameStore *TableNameStore
 }
 
-func NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, sink tisink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter, schemaID int64) *Dispatcher {
+func NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, sink tisink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter, schemaID int64, schemaIDToDispatchers *SchemaIDToDispatchers) *Dispatcher {
 	dispatcher := &Dispatcher{
 		id:           id,
 		tableSpan:    tableSpan,
@@ -98,13 +99,14 @@ func NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, sin
 		statusesChan: statusesChan,
 		//SyncPointInfo:   syncPointInfo,
 		//MemoryUsage:     NewMemoryUsage(),
-		componentStatus: newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
-		resolvedTs:      newTsWithMutex(startTs),
-		filter:          filter,
-		isRemoving:      atomic.Bool{},
-		ddlPendingEvent: nil,
-		tableProgress:   types.NewTableProgress(),
-		schemaID:        schemaID,
+		componentStatus:       newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
+		resolvedTs:            newTsWithMutex(startTs),
+		filter:                filter,
+		isRemoving:            atomic.Bool{},
+		ddlPendingEvent:       nil,
+		tableProgress:         types.NewTableProgress(),
+		schemaID:              schemaID,
+		schemaIDToDispatchers: schemaIDToDispatchers,
 	}
 
 	// only when is not mysql sink, table trigger event dispatcher need tableNameStore to store the table name
@@ -249,10 +251,35 @@ func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 				BlockTables:       d.ddlPendingEvent.GetBlockedTables().ToPB(),
 				NeedDroppedTables: d.ddlPendingEvent.GetNeedDroppedTables().ToPB(),
 				NeedAddedTables:   common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
+				UpdatedSchemas:    common.ToSchemaIDChangePB(d.ddlPendingEvent.GetUpdatedSchemas()), // only exists for rename table and rename tables
 			},
 		}
 		d.SetResendTask(newResendTask(message, d))
 		d.statusesChan <- message
+	}
+
+	// dealing with events which update schema ids
+	// Only rename table and rename tables may update schema ids(rename db1.table1 to db2.table2)
+	// Here we directly update schema id of dispatcher when we begin to handle the ddl event,
+	// but not waiting maintainer response for ready to write/pass the ddl event.
+	// Because the schemaID of each dispatcher is only use to dealing with the db-level ddl event(like drop db) or drop table.
+	// Both the rename table/rename tables, drop table and db-level ddl event will be send to the table trigger event dispatcher in order.
+	// So there won't be a related db-level ddl event is in dealing when we get update schema id events.
+	// Thus, whether to update schema id before or after current ddl event is not important.
+	// To make it easier, we choose to directly update schema id here.
+	if d.ddlPendingEvent.GetUpdatedSchemas() != nil && d.tableSpan != heartbeatpb.DDLSpan {
+		for _, schemaIDChange := range d.ddlPendingEvent.GetUpdatedSchemas() {
+			if schemaIDChange.TableID == d.tableSpan.TableID {
+				if schemaIDChange.OldSchemaID != d.schemaID {
+					log.Error("Wrong Schema ID", zap.Any("dispatcherID", d.id), zap.Any("except schemaID", schemaIDChange.OldSchemaID), zap.Any("actual schemaID", d.schemaID), zap.Any("tableSpan", d.tableSpan.String()))
+					return
+				} else {
+					d.schemaID = schemaIDChange.NewSchemaID
+					d.schemaIDToDispatchers.Update(schemaIDChange.OldSchemaID, schemaIDChange.NewSchemaID)
+					return
+				}
+			}
+		}
 	}
 }
 
@@ -304,10 +331,6 @@ func (d *Dispatcher) GetSchemaID() int64 {
 
 //func (d *Dispatcher) GetSyncPointInfo() *SyncPointInfo {
 // 	return d.syncPointInfo
-// }
-
-// func (d *Dispatcher) GetMemoryUsage() *MemoryUsage {
-// 	return d.MemoryUsage
 // }
 
 func (d *Dispatcher) Remove() {
