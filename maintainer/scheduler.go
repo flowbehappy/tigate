@@ -45,7 +45,7 @@ type Scheduler struct {
 	// group the tasks by schema id
 	schemaTasks map[int64]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]
 	// tables
-	tableTasks map[int64]struct{}
+	tableTasks map[int64]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]
 	// totalMaps holds all state maps, absent, committing, working and removing
 	totalMaps    []map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]
 	bootstrapped bool
@@ -71,7 +71,7 @@ func NewScheduler(changefeedID string,
 	s := &Scheduler{
 		nodeTasks:            make(map[node.ID]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]),
 		schemaTasks:          make(map[int64]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]),
-		tableTasks:           make(map[int64]struct{}),
+		tableTasks:           make(map[int64]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]),
 		startCheckpointTs:    checkpointTs,
 		changefeedID:         changefeedID,
 		bootstrapped:         false,
@@ -106,8 +106,8 @@ func (s *Scheduler) GetAllNodes() []node.ID {
 }
 
 func (s *Scheduler) AddNewTable(table common.Table, startTs uint64) {
-	_, ok := s.tableTasks[table.TableID]
-	if ok {
+	tables, ok := s.tableTasks[table.TableID]
+	if ok && len(tables) > 0 {
 		log.Warn("table already add, ignore",
 			zap.String("changefeed", s.changefeedID),
 			zap.Int64("schema", table.SchemaID),
@@ -215,21 +215,41 @@ func (s *Scheduler) RemoveTask(stm *scheduler.StateMachine[common.DispatcherID])
 }
 
 func (s *Scheduler) GetTasksByTableIDs(tableIDs ...int64) []*scheduler.StateMachine[common.DispatcherID] {
-	tableMap := make(map[int64]bool, len(tableIDs))
-	for _, tableID := range tableIDs {
-		tableMap[tableID] = true
-	}
 	var stms []*scheduler.StateMachine[common.DispatcherID]
-	for _, m := range s.totalMaps {
-		for _, stm := range m {
-			replica := stm.Inferior.(*ReplicaSet)
-			if !tableMap[replica.Span.TableID] {
-				continue
-			}
+	for _, tableID := range tableIDs {
+		for _, stm := range s.tableTasks[tableID] {
 			stms = append(stms, stm)
 		}
 	}
 	return stms
+}
+
+// UpdateSchemaID will update the schema id of the table, and move the task to the new schema map
+// it called when rename a table to another schema
+func (s *Scheduler) UpdateSchemaID(tableID, newSchemaID int64) {
+	for _, stm := range s.tableTasks[tableID] {
+		replicaSet := stm.Inferior.(*ReplicaSet)
+		oldSchemaID := replicaSet.SchemaID
+		// update schemaID
+		replicaSet.SchemaID = newSchemaID
+
+		//update schema map
+		schemaMap, ok := s.schemaTasks[oldSchemaID]
+		if ok {
+			delete(schemaMap, stm.ID)
+			//clear the map if empty
+			if len(schemaMap) == 0 {
+				delete(s.schemaTasks, oldSchemaID)
+			}
+		}
+		// add it to new schema map
+		newMap, ok := s.schemaTasks[newSchemaID]
+		if !ok {
+			newMap = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
+			s.schemaTasks[newSchemaID] = newMap
+		}
+		newMap[stm.ID] = stm
+	}
 }
 
 func (s *Scheduler) AddNewNode(id node.ID) {
@@ -550,13 +570,21 @@ func (s *Scheduler) addNewSpans(schemaID, tableID int64,
 			dispatcherID, schemaID, newTableSpan, startTs).(*ReplicaSet)
 		stm := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
 		s.Absent()[dispatcherID] = stm
+		// modify the schema map
 		schemaMap, ok := s.schemaTasks[schemaID]
 		if !ok {
 			schemaMap = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
 			s.schemaTasks[schemaID] = schemaMap
 		}
 		schemaMap[dispatcherID] = stm
-		s.tableTasks[tableID] = struct{}{}
+
+		// modify the table map
+		tableMap, ok := s.tableTasks[tableID]
+		if !ok {
+			tableMap = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
+			s.tableTasks[tableID] = tableMap
+		}
+		tableMap[dispatcherID] = stm
 	}
 }
 
@@ -578,7 +606,13 @@ func (s *Scheduler) tryMoveTask(dispatcherID common.DispatcherID,
 			delete(m, dispatcherID)
 		}
 		delete(s.schemaTasks[stm.Inferior.(*ReplicaSet).SchemaID], dispatcherID)
-		delete(s.tableTasks, stm.Inferior.(*ReplicaSet).Span.TableID)
+		if len(s.schemaTasks[stm.Inferior.(*ReplicaSet).SchemaID]) == 0 {
+			delete(s.schemaTasks, stm.Inferior.(*ReplicaSet).SchemaID)
+		}
+		delete(s.tableTasks[stm.Inferior.(*ReplicaSet).Span.TableID], dispatcherID)
+		if len(s.tableTasks[stm.Inferior.(*ReplicaSet).Span.TableID]) == 0 {
+			delete(s.tableTasks, stm.Inferior.(*ReplicaSet).Span.TableID)
+		}
 	}
 	// keep node task map is updated
 	if modifyNodeMap && oldPrimary != stm.Primary {

@@ -24,8 +24,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -36,22 +34,15 @@ func TestNormalBlock(t *testing.T) {
 	sche.AddNewNode("node2")
 	var blockedDispatcherIDS []*heartbeatpb.DispatcherID
 	for id := 1; id < 4; id++ {
-		span := spanz.TableIDToComparableSpan(int64(id))
-		tableSpan := &heartbeatpb.TableSpan{
-			TableID:  int64(id),
-			StartKey: span.StartKey,
-			EndKey:   span.EndKey,
-		}
-		dispatcherID := common.NewDispatcherID()
-		blockedDispatcherIDS = append(blockedDispatcherIDS, dispatcherID.ToPB())
-		replicaSet := NewReplicaSet(model.DefaultChangeFeedID("test"), dispatcherID, 1, tableSpan, 0)
-		stm := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
-		stm.State = scheduler.SchedulerStatusWorking
-		sche.Working()[dispatcherID] = stm
+		sche.AddNewTable(common.Table{1, int64(id)}, 0)
+		stm := sche.GetTasksByTableIDs(int64(id))[0]
+		blockedDispatcherIDS = append(blockedDispatcherIDS, stm.ID.ToPB())
 		stm.Primary = "node1"
-		sche.nodeTasks["node1"][dispatcherID] = stm
+		stm.State = scheduler.SchedulerStatusWorking
+		sche.tryMoveTask(stm.ID, stm, scheduler.SchedulerStatusAbsent, "", true)
 	}
 
+	// the last one is the writer
 	var selectDispatcherID = common.NewDispatcherIDFromPB(blockedDispatcherIDS[2])
 	sche.nodeTasks["node2"][selectDispatcherID] = sche.nodeTasks["node1"][selectDispatcherID]
 	dropID := sche.nodeTasks["node2"][selectDispatcherID].Inferior.(*ReplicaSet).Span.TableID
