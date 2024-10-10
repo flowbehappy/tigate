@@ -121,3 +121,16 @@ func (t *DDLEvent) Unmarshal(data []byte) error {
 func (t *DDLEvent) GetSize() int64 {
 	return 0
 }
+
+type SchemaTableName struct {
+	SchemaName string
+	TableName  string
+}
+
+// TableChange will record each ddl change of the table name.
+// Each TableChange is related to a ddl event
+type TableNameChange struct {
+	AddName          []SchemaTableName
+	DropName         []SchemaTableName
+	DropDatabaseName string
+}

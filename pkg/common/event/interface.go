@@ -26,7 +26,7 @@ type FlushableEvent interface {
 // BlockEvent is an event that may be blocked the dispatcher.
 // It could be a ddl event or a sync point event.
 type BlockEvent interface {
-	Event
+	FlushableEvent
 	GetBlockedTables() *InfluencedTables
 	GetNeedDroppedTables() *InfluencedTables
 	GetNeedAddedTables() []Table
@@ -107,19 +107,6 @@ func ToTablesPB(tables []Table) []*heartbeatpb.Table {
 type Table struct {
 	SchemaID int64
 	TableID  int64
-}
-
-type SchemaTableName struct {
-	SchemaName string
-	TableName  string
-}
-
-// TableChange will record each ddl change of the table name.
-// Each TableChange is related to a ddl event
-type TableNameChange struct {
-	AddName          []SchemaTableName
-	DropName         []SchemaTableName
-	DropDatabaseName string
 }
 
 type SchemaIDChange struct {

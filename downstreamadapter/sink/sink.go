@@ -36,8 +36,8 @@ const (
 
 type Sink interface {
 	AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress)
-	AddDDLAndSyncPointEvent(event *commonEvent.DDLEvent, tableProgress *types.TableProgress)
-	PassDDLAndSyncPointEvent(event *commonEvent.DDLEvent, tableProgress *types.TableProgress)
+	AddBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress)
+	PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress)
 	AddCheckpointTs(ts uint64, tableNames []*commonEvent.SchemaTableName)
 	// IsEmpty(tableSpan *common.TableSpan) bool
 	// AddTableSpan(tableSpan *common.TableSpan)
@@ -61,6 +61,7 @@ func NewSink(config *config.ChangefeedConfig, changefeedID model.ChangeFeedID) (
 			log.Error("create mysql sink failed", zap.Error(err))
 			return nil, err
 		}
+		cfg.SyncPointRetention = cfg.SyncPointRetention
 		return NewMysqlSink(changefeedID, 16, cfg, db), nil
 	case sink.KafkaScheme, sink.KafkaSSLScheme:
 		sink, err := NewKafkaSink(changefeedID, sinkURI, config.SinkConfig)

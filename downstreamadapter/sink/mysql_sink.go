@@ -74,11 +74,11 @@ func (s *MysqlSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *type
 	s.dmlWorker[index].GetEventChan() <- event
 }
 
-func (s *MysqlSink) PassDDLAndSyncPointEvent(event *commonEvent.DDLEvent, tableProgress *types.TableProgress) {
+func (s *MysqlSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
 	tableProgress.Pass(event)
 }
 
-func (s *MysqlSink) AddDDLAndSyncPointEvent(event *commonEvent.DDLEvent, tableProgress *types.TableProgress) {
+func (s *MysqlSink) AddBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
 	tableProgress.Add(event)
 	s.ddlWorker.GetDDLEventChan() <- event
 }

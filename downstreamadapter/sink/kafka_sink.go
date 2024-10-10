@@ -31,6 +31,7 @@ import (
 	v2 "github.com/flowbehappy/tigate/pkg/sink/kafka/v2"
 	tiutils "github.com/flowbehappy/tigate/pkg/sink/util"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/sink/ddlsink/mq/ddlproducer"
 	"github.com/pingcap/tiflow/cdc/sink/util"
@@ -157,13 +158,18 @@ func (s *KafkaSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *type
 	s.dmlWorker.GetEventChan() <- event
 }
 
-func (s *KafkaSink) PassDDLAndSyncPointEvent(event *commonEvent.DDLEvent, tableProgress *types.TableProgress) {
+func (s *KafkaSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
 	tableProgress.Pass(event)
 }
 
-func (s *KafkaSink) AddDDLAndSyncPointEvent(event *commonEvent.DDLEvent, tableProgress *types.TableProgress) {
+func (s *KafkaSink) AddBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
 	tableProgress.Add(event)
-	s.ddlWorker.GetDDLEventChan() <- event
+	switch event.(type) {
+	case *commonEvent.DDLEvent:
+		s.ddlWorker.GetDDLEventChan() <- event.(*commonEvent.DDLEvent)
+	case *commonEvent.SyncPointEvent:
+		log.Error("Kafkasink doesn't support Sync Point Event")
+	}
 }
 
 func (s *KafkaSink) AddCheckpointTs(ts uint64, tableNames []*commonEvent.SchemaTableName) {

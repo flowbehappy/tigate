@@ -209,7 +209,7 @@ func newCheckProgressEmptyTask(dispatcher *Dispatcher) *CheckProgressEmptyTask {
 
 func (t *CheckProgressEmptyTask) Execute() time.Time {
 	if t.dispatcher.tableProgress.Empty() {
-		t.dispatcher.DealWithDDLWhenProgressEmpty()
+		t.dispatcher.DealWithBlockEventWhenProgressEmpty()
 		return time.Time{}
 	}
 	return time.Now().Add(10 * time.Millisecond)

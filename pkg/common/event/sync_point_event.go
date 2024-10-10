@@ -6,6 +6,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 )
 
+// Implement Event / FlushEvent / BlockEvent interface
 type SyncPointEvent struct {
 	DispatcherID   common.DispatcherID `json:"dispatcher_id"`
 	CommitTs       uint64              `json:"commit_ts"`
@@ -43,7 +44,9 @@ func (e SyncPointEvent) Unmarshal(data []byte) error {
 }
 
 func (e *SyncPointEvent) GetBlockedTables() *InfluencedTables {
-	return nil
+	return &InfluencedTables{
+		InfluenceType: InfluenceTypeAll,
+	}
 }
 
 func (e *SyncPointEvent) GetNeedDroppedTables() *InfluencedTables {

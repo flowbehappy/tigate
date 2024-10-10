@@ -127,16 +127,17 @@ func (t *MysqlWorker) Run(ctx context.Context) {
 	}
 }
 
+// MysqlDDLWorker is use to flush the ddl event and sync point eventdownstream
 type MysqlDDLWorker struct {
 	mysqlWriter  *writer.MysqlWriter
-	ddlEventChan chan *commonEvent.DDLEvent
+	ddlEventChan chan commonEvent.BlockEvent
 	wg           sync.WaitGroup
 }
 
 func NewMysqlDDLWorker(db *sql.DB, config *writer.MysqlConfig, changefeedID model.ChangeFeedID, ctx context.Context) *MysqlDDLWorker {
 	worker := &MysqlDDLWorker{
 		mysqlWriter:  writer.NewMysqlWriter(db, config, changefeedID),
-		ddlEventChan: make(chan *commonEvent.DDLEvent, 16),
+		ddlEventChan: make(chan commonEvent.BlockEvent, 16),
 	}
 	worker.wg.Add(1)
 	go worker.Run(ctx)
@@ -150,11 +151,18 @@ func (t *MysqlDDLWorker) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case event := <-t.ddlEventChan:
-			t.mysqlWriter.FlushDDLEvent(event)
+			switch event.(type) {
+			case *commonEvent.DDLEvent:
+				t.mysqlWriter.FlushDDLEvent(event.(*commonEvent.DDLEvent))
+			case *commonEvent.SyncPointEvent:
+				t.mysqlWriter.FlushSyncPointEvent(event.(*commonEvent.SyncPointEvent))
+			default:
+				log.Error("unknown event type", zap.Any("event", event))
+			}
 		}
 	}
 }
 
-func (t *MysqlDDLWorker) GetDDLEventChan() chan *commonEvent.DDLEvent {
+func (t *MysqlDDLWorker) GetDDLEventChan() chan commonEvent.BlockEvent {
 	return t.ddlEventChan
 }
