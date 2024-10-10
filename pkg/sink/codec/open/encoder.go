@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	newcommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/errors"
@@ -33,7 +33,7 @@ type BatchEncoder struct {
 func (d *BatchEncoder) AppendRowChangedEvent(
 	ctx context.Context,
 	_ string,
-	e *common.RowEvent,
+	e *commonEvent.RowEvent,
 ) error {
 	key, value, length, err := encodeRowChangedEvent(e, d.config, false, "")
 	if err != nil {
@@ -202,7 +202,7 @@ func (d *BatchEncoder) Clean() {
 	}
 }
 
-func (d *BatchEncoder) EncodeDDLEvent(e *common.DDLEvent) (*ticommon.Message, error) {
+func (d *BatchEncoder) EncodeDDLEvent(e *commonEvent.DDLEvent) (*ticommon.Message, error) {
 	key, value, err := encodeDDLEvent(e, d.config)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -19,7 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	ticonfig "github.com/flowbehappy/tigate/pkg/config"
 	newCommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
@@ -44,7 +44,7 @@ type EncoderGroup interface {
 	Run(ctx context.Context) error
 	// AddEvents add events into the group and encode them by one of the encoders in the group.
 	// Note: The caller should make sure all events should belong to the same topic and partition.
-	AddEvents(ctx context.Context, key model.TopicPartitionKey, events ...*common.RowEvent) error
+	AddEvents(ctx context.Context, key model.TopicPartitionKey, events ...*commonEvent.RowEvent) error
 	// Output returns a channel produce futures
 	Output() <-chan *future
 }
@@ -171,7 +171,7 @@ func (g *encoderGroup) runEncoder(ctx context.Context, idx int) error {
 func (g *encoderGroup) AddEvents(
 	ctx context.Context,
 	key model.TopicPartitionKey,
-	events ...*common.RowEvent,
+	events ...*commonEvent.RowEvent,
 ) error {
 	// bootstrapWorker only not nil when the protocol is simple
 	// if g.bootstrapWorker != nil {
@@ -215,13 +215,13 @@ func (g *encoderGroup) cleanMetrics() {
 // TODO:换个名字
 type future struct {
 	Key      model.TopicPartitionKey
-	events   []*common.RowEvent
+	events   []*commonEvent.RowEvent
 	Messages []*ticommon.Message
 	done     chan struct{}
 }
 
 func newFuture(key model.TopicPartitionKey,
-	events ...*common.RowEvent,
+	events ...*commonEvent.RowEvent,
 ) *future {
 	return &future{
 		Key:    key,

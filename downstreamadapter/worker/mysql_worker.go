@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -30,7 +30,7 @@ import (
 
 // MysqlWorker is use to flush the event downstream
 type MysqlWorker struct {
-	eventChan    chan *common.DMLEvent
+	eventChan    chan *commonEvent.DMLEvent
 	mysqlWriter  *writer.MysqlWriter
 	id           int
 	changefeedID model.ChangeFeedID
@@ -44,7 +44,7 @@ func NewMysqlWorker(db *sql.DB, config *writer.MysqlConfig, id int, changefeedID
 		mysqlWriter:  writer.NewMysqlWriter(db, config, changefeedID),
 		id:           id,
 		maxRows:      maxRows,
-		eventChan:    make(chan *common.DMLEvent, 16),
+		eventChan:    make(chan *commonEvent.DMLEvent, 16),
 		changefeedID: changefeedID,
 	}
 	worker.wg.Add(1)
@@ -53,7 +53,7 @@ func NewMysqlWorker(db *sql.DB, config *writer.MysqlConfig, id int, changefeedID
 	return worker
 }
 
-func (t *MysqlWorker) GetEventChan() chan *common.DMLEvent {
+func (t *MysqlWorker) GetEventChan() chan *commonEvent.DMLEvent {
 	return t.eventChan
 }
 
@@ -71,7 +71,7 @@ func (t *MysqlWorker) Run(ctx context.Context) {
 
 	totalStart := time.Now()
 
-	events := make([]*common.DMLEvent, 0)
+	events := make([]*commonEvent.DMLEvent, 0)
 	rows := 0
 	for {
 		needFlush := false
@@ -129,14 +129,14 @@ func (t *MysqlWorker) Run(ctx context.Context) {
 
 type MysqlDDLWorker struct {
 	mysqlWriter  *writer.MysqlWriter
-	ddlEventChan chan *common.DDLEvent
+	ddlEventChan chan *commonEvent.DDLEvent
 	wg           sync.WaitGroup
 }
 
 func NewMysqlDDLWorker(db *sql.DB, config *writer.MysqlConfig, changefeedID model.ChangeFeedID, ctx context.Context) *MysqlDDLWorker {
 	worker := &MysqlDDLWorker{
 		mysqlWriter:  writer.NewMysqlWriter(db, config, changefeedID),
-		ddlEventChan: make(chan *common.DDLEvent, 16),
+		ddlEventChan: make(chan *commonEvent.DDLEvent, 16),
 	}
 	worker.wg.Add(1)
 	go worker.Run(ctx)
@@ -155,6 +155,6 @@ func (t *MysqlDDLWorker) Run(ctx context.Context) {
 	}
 }
 
-func (t *MysqlDDLWorker) GetDDLEventChan() chan *common.DDLEvent {
+func (t *MysqlDDLWorker) GetDDLEventChan() chan *commonEvent.DDLEvent {
 	return t.ddlEventChan
 }

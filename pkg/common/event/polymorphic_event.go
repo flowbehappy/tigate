@@ -11,12 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package common
+package event
 
 import (
 	"context"
 	"math"
 
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap"
@@ -39,7 +40,7 @@ type PolymorphicEvent struct {
 	CRTs     uint64
 	Resolved *ResolvedTs
 
-	RawKV *RawKVEntry
+	RawKV *common.RawKVEntry
 	Row   *RowChangedEventData
 
 	finished chan struct{}
@@ -49,14 +50,14 @@ type PolymorphicEvent struct {
 func NewEmptyPolymorphicEvent(ts uint64) *PolymorphicEvent {
 	return &PolymorphicEvent{
 		CRTs:  ts,
-		RawKV: &RawKVEntry{},
+		RawKV: &common.RawKVEntry{},
 		Row:   &RowChangedEventData{},
 	}
 }
 
 // NewPolymorphicEvent creates a new PolymorphicEvent with a raw KV.
-func NewPolymorphicEvent(rawKV *RawKVEntry) *PolymorphicEvent {
-	if rawKV.OpType == OpTypeResolved {
+func NewPolymorphicEvent(rawKV *common.RawKVEntry) *PolymorphicEvent {
+	if rawKV.OpType == common.OpTypeResolved {
 		return NewResolvedPolymorphicEvent(rawKV.RegionID, rawKV.CRTs)
 	}
 	return &PolymorphicEvent{
@@ -70,7 +71,7 @@ func NewPolymorphicEvent(rawKV *RawKVEntry) *PolymorphicEvent {
 func NewResolvedPolymorphicEvent(regionID uint64, resolvedTs uint64) *PolymorphicEvent {
 	return &PolymorphicEvent{
 		CRTs:  resolvedTs,
-		RawKV: &RawKVEntry{CRTs: resolvedTs, OpType: OpTypeResolved, RegionID: regionID},
+		RawKV: &common.RawKVEntry{CRTs: resolvedTs, OpType: common.OpTypeResolved, RegionID: regionID},
 		Row:   nil,
 	}
 }
@@ -83,7 +84,7 @@ func (e *PolymorphicEvent) RegionID() uint64 {
 // IsResolved returns true if the event is resolved. Note that this function can
 // only be called when `RawKV != nil`.
 func (e *PolymorphicEvent) IsResolved() bool {
-	return e.RawKV.OpType == OpTypeResolved
+	return e.RawKV.OpType == common.OpTypeResolved
 }
 
 // SetUpFinishedCh set up the finished chan, should be called before mounting the event.
@@ -128,7 +129,7 @@ func ComparePolymorphicEvents(i, j *PolymorphicEvent) bool {
 			return true
 		}
 
-		if i.RawKV.OpType == OpTypeDelete && j.RawKV.OpType != OpTypeDelete {
+		if i.RawKV.OpType == common.OpTypeDelete && j.RawKV.OpType != common.OpTypeDelete {
 			return true
 		}
 		// update DML

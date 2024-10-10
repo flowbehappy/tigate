@@ -16,7 +16,7 @@ package canal
 import (
 	"context"
 
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -50,7 +50,7 @@ func (d *BatchEncoder) EncodeCheckpointEvent(ts uint64) (*ticommon.Message, erro
 func (d *BatchEncoder) AppendRowChangedEvent(
 	_ context.Context,
 	_ string,
-	e *common.RowChangedEvent,
+	e *commonEvent.RowChangedEvent,
 	callback func(),
 ) error {
 	entry, err := d.entryBuilder.fromRowEvent(e, d.config.DeleteOnlyHandleKeyColumns)
@@ -69,7 +69,7 @@ func (d *BatchEncoder) AppendRowChangedEvent(
 }
 
 // EncodeDDLEvent implements the RowEventEncoder interface
-func (d *BatchEncoder) EncodeDDLEvent(e *common.DDLEvent) (*ticommon.Message, error) {
+func (d *BatchEncoder) EncodeDDLEvent(e *commonEvent.DDLEvent) (*ticommon.Message, error) {
 	// entry, err := d.entryBuilder.fromDDLEvent(e)
 	// if err != nil {
 	// 	return nil, errors.Trace(err)

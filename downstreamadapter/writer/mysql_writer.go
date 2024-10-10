@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -53,7 +54,7 @@ func NewMysqlWriter(db *sql.DB, cfg *MysqlConfig, changefeedID model.ChangeFeedI
 	}
 }
 
-func (w *MysqlWriter) FlushDDLEvent(event *common.DDLEvent) error {
+func (w *MysqlWriter) FlushDDLEvent(event *commonEvent.DDLEvent) error {
 	if event.GetDDLType() == timodel.ActionAddIndex && w.cfg.IsTiDB {
 		return w.asyncExecAddIndexDDLIfTimeout(event)
 	}
@@ -70,7 +71,7 @@ func (w *MysqlWriter) FlushDDLEvent(event *common.DDLEvent) error {
 
 }
 
-func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *common.DDLEvent) error {
+func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *commonEvent.DDLEvent) error {
 	done := make(chan error, 1)
 	// wait for 2 seconds at most
 	tick := time.NewTimer(2 * time.Second)
@@ -107,7 +108,7 @@ func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *common.DDLEvent) erro
 	}
 }
 
-func (w *MysqlWriter) execDDL(event *common.DDLEvent) error {
+func (w *MysqlWriter) execDDL(event *commonEvent.DDLEvent) error {
 	if w.cfg.DryRun {
 		log.Info("Dry run DDL", zap.String("sql", event.GetDDLQuery()))
 		return nil
@@ -161,7 +162,7 @@ func (w *MysqlWriter) execDDL(event *common.DDLEvent) error {
 	return nil
 }
 
-func (w *MysqlWriter) execDDLWithMaxRetries(event *common.DDLEvent) error {
+func (w *MysqlWriter) execDDLWithMaxRetries(event *commonEvent.DDLEvent) error {
 	return retry.Do(context.Background(), func() error {
 		err := w.statistics.RecordDDLExecution(func() error { return w.execDDL(event) })
 		if err != nil {
@@ -185,7 +186,7 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *common.DDLEvent) error {
 		retry.WithIsRetryableErr(errorutil.IsRetryableDDLError))
 }
 
-func (w *MysqlWriter) Flush(events []*common.DMLEvent, workerNum int) error {
+func (w *MysqlWriter) Flush(events []*commonEvent.DMLEvent, workerNum int) error {
 	w.statistics.ObserveRows(events)
 	dmls := w.prepareDMLs(events)
 	//log.Debug("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.Any("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values), zap.Any("startTs", dmls.startTs), zap.Any("workerNum", workerNum))
@@ -213,7 +214,7 @@ func (w *MysqlWriter) Flush(events []*common.DMLEvent, workerNum int) error {
 	return nil
 }
 
-func (w *MysqlWriter) prepareDMLs(events []*common.DMLEvent) *preparedDMLs {
+func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) *preparedDMLs {
 	// TODO: use a sync.Pool to reduce allocations.
 	startTs := make([]uint64, 0)
 	sqls := make([]string, 0)
@@ -248,7 +249,7 @@ func (w *MysqlWriter) prepareDMLs(events []*common.DMLEvent) *preparedDMLs {
 			var query string
 			var args []interface{}
 			// Update Event
-			if row.RowType == common.RowTypeUpdate {
+			if row.RowType == commonEvent.RowTypeUpdate {
 				query, args = buildUpdate(event.TableInfo, row)
 				if query != "" {
 					sqls = append(sqls, query)
@@ -258,7 +259,7 @@ func (w *MysqlWriter) prepareDMLs(events []*common.DMLEvent) *preparedDMLs {
 			}
 
 			// Delete Event
-			if row.RowType == common.RowTypeDelete {
+			if row.RowType == commonEvent.RowTypeDelete {
 				query, args = buildDelete(event.TableInfo, row)
 				if query != "" {
 					sqls = append(sqls, query)
@@ -270,7 +271,7 @@ func (w *MysqlWriter) prepareDMLs(events []*common.DMLEvent) *preparedDMLs {
 			// It will be translated directly into a
 			// INSERT(not in safe mode)
 			// or REPLACE(in safe mode) SQL.
-			if row.RowType == common.RowTypeInsert {
+			if row.RowType == commonEvent.RowTypeInsert {
 				query, args = buildInsert(event.TableInfo, row, w.cfg.SafeMode)
 				if query != "" {
 					sqls = append(sqls, query)

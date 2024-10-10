@@ -17,7 +17,7 @@ import (
 	"container/list"
 	"sync"
 
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 )
 
 // TableProgress 里面维护了目前 sink 中的 event ts 信息
@@ -49,7 +49,7 @@ func NewTableProgress() *TableProgress {
 	return tableProgress
 }
 
-func (p *TableProgress) Add(event common.FlushableEvent) {
+func (p *TableProgress) Add(event commonEvent.FlushableEvent) {
 	ts := Ts{startTs: event.GetStartTs(), commitTs: event.GetCommitTs()}
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
@@ -60,7 +60,7 @@ func (p *TableProgress) Add(event common.FlushableEvent) {
 }
 
 // 而且删除可以认为是批量的？但要不要做成批量可以后面再看
-func (p *TableProgress) Remove(event common.Event) {
+func (p *TableProgress) Remove(event commonEvent.Event) {
 	ts := Ts{startTs: event.GetStartTs(), commitTs: event.GetCommitTs()}
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
@@ -76,7 +76,7 @@ func (p *TableProgress) Empty() bool {
 	return p.list.Len() == 0
 }
 
-func (p *TableProgress) Pass(event *common.DDLEvent) {
+func (p *TableProgress) Pass(event *commonEvent.DDLEvent) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	p.maxCommitTs = event.FinishedTs

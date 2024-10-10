@@ -18,7 +18,7 @@ import (
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -35,10 +35,10 @@ const (
 )
 
 type Sink interface {
-	AddDMLEvent(event *common.DMLEvent, tableProgress *types.TableProgress)
-	AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress)
-	PassDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress)
-	AddCheckpointTs(ts uint64, tableNames []*common.SchemaTableName)
+	AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress)
+	AddDDLAndSyncPointEvent(event *commonEvent.DDLEvent, tableProgress *types.TableProgress)
+	PassDDLAndSyncPointEvent(event *commonEvent.DDLEvent, tableProgress *types.TableProgress)
+	AddCheckpointTs(ts uint64, tableNames []*commonEvent.SchemaTableName)
 	// IsEmpty(tableSpan *common.TableSpan) bool
 	// AddTableSpan(tableSpan *common.TableSpan)
 	// RemoveTableSpan(tableSpan *common.TableSpan)

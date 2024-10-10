@@ -20,7 +20,7 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/downstreamadapter/worker"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 
 	"github.com/pingcap/tiflow/cdc/model"
 )
@@ -62,7 +62,7 @@ func (s *MysqlSink) SinkType() SinkType {
 	return MysqlSinkType
 }
 
-func (s *MysqlSink) AddDMLEvent(event *common.DMLEvent, tableProgress *types.TableProgress) {
+func (s *MysqlSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress) {
 	if event.Len() == 0 {
 		return
 	}
@@ -74,15 +74,15 @@ func (s *MysqlSink) AddDMLEvent(event *common.DMLEvent, tableProgress *types.Tab
 	s.dmlWorker[index].GetEventChan() <- event
 }
 
-func (s *MysqlSink) PassDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress) {
+func (s *MysqlSink) PassDDLAndSyncPointEvent(event *commonEvent.DDLEvent, tableProgress *types.TableProgress) {
 	tableProgress.Pass(event)
 }
 
-func (s *MysqlSink) AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress) {
+func (s *MysqlSink) AddDDLAndSyncPointEvent(event *commonEvent.DDLEvent, tableProgress *types.TableProgress) {
 	tableProgress.Add(event)
 	s.ddlWorker.GetDDLEventChan() <- event
 }
 
-func (s *MysqlSink) AddCheckpointTs(ts uint64, tableNames []*common.SchemaTableName) {}
+func (s *MysqlSink) AddCheckpointTs(ts uint64, tableNames []*commonEvent.SchemaTableName) {}
 
 func (s *MysqlSink) Close() {}

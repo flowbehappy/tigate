@@ -15,11 +15,13 @@ package dispatcher
 
 import (
 	"sync/atomic"
+	"time"
 
 	tisink "github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -66,9 +68,7 @@ type Dispatcher struct {
 
 	statusesChan chan *heartbeatpb.TableSpanStatus
 
-	//SyncPointInfo *SyncPointInfo
-
-	//MemoryUsage *MemoryUsage
+	SyncPointInfo *SyncPointInfo
 
 	componentStatus *ComponentStateWithMutex
 
@@ -76,7 +76,7 @@ type Dispatcher struct {
 
 	resolvedTs *TsWithMutex // 用来记 中目前收到的 event 中收到的最大的 commitTs - 1,不代表 dispatcher 的 checkpointTs
 
-	ddlPendingEvent *common.DDLEvent
+	ddlPendingEvent *commonEvent.DDLEvent
 	isRemoving      atomic.Bool
 
 	tableProgress *types.TableProgress
@@ -91,14 +91,22 @@ type Dispatcher struct {
 	tableNameStore *TableNameStore
 }
 
-func NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, sink tisink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter, schemaID int64, schemaIDToDispatchers *SchemaIDToDispatchers) *Dispatcher {
+func NewDispatcher(
+	id common.DispatcherID,
+	tableSpan *heartbeatpb.TableSpan,
+	sink tisink.Sink,
+	startTs uint64,
+	statusesChan chan *heartbeatpb.TableSpanStatus,
+	filter filter.Filter,
+	schemaID int64,
+	schemaIDToDispatchers *SchemaIDToDispatchers,
+	syncPointInfo *SyncPointInfo) *Dispatcher {
 	dispatcher := &Dispatcher{
-		id:           id,
-		tableSpan:    tableSpan,
-		sink:         sink,
-		statusesChan: statusesChan,
-		//SyncPointInfo:   syncPointInfo,
-		//MemoryUsage:     NewMemoryUsage(),
+		id:                    id,
+		tableSpan:             tableSpan,
+		sink:                  sink,
+		statusesChan:          statusesChan,
+		SyncPointInfo:         syncPointInfo,
 		componentStatus:       newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
 		resolvedTs:            newTsWithMutex(startTs),
 		filter:                filter,
@@ -136,7 +144,7 @@ func NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, sin
 //     2.2 maintainer 通知自己可以 write 或者 pass event
 //
 // TODO:特殊处理有 add index 的逻辑
-func (d *Dispatcher) addDDLEventToSinkWhenAvailable(event *common.DDLEvent) {
+func (d *Dispatcher) addDDLEventToSinkWhenAvailable(event *commonEvent.DDLEvent) {
 	// 根据 filter 过滤 query 中不需要 send to downstream 的数据
 	// 但应当不出现整个 query 都不需要 send to downstream 的 ddl，这种 ddl 不应该发给 dispatcher
 	// TODO: ddl 影响到的 tableSpan 也在 filter 中过滤一遍
@@ -198,16 +206,16 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 	}
 }
 
-func (d *Dispatcher) HandleEvent(event common.Event) (block bool) {
+func (d *Dispatcher) HandleEvent(event commonEvent.Event) (block bool) {
 	switch event.GetType() {
-	case common.TypeResolvedEvent:
-		d.resolvedTs.Set(event.(common.ResolvedEvent).ResolvedTs)
+	case commonEvent.TypeResolvedEvent:
+		d.resolvedTs.Set(event.(commonEvent.ResolvedEvent).ResolvedTs)
 		return false
-	case common.TypeDMLEvent:
-		d.sink.AddDMLEvent(event.(*common.DMLEvent), d.tableProgress)
+	case commonEvent.TypeDMLEvent:
+		d.sink.AddDMLEvent(event.(*commonEvent.DMLEvent), d.tableProgress)
 		return false
-	case common.TypeDDLEvent:
-		event := event.(*common.DDLEvent)
+	case commonEvent.TypeDDLEvent:
+		event := event.(*commonEvent.DDLEvent)
 		if d.tableNameStore != nil {
 			d.tableNameStore.AddEvent(event)
 		}
@@ -216,6 +224,14 @@ func (d *Dispatcher) HandleEvent(event common.Event) (block bool) {
 			dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
 		})
 		d.addDDLEventToSinkWhenAvailable(event)
+		return true
+	case commonEvent.TypeSyncPointEvent:
+		event := event.(*commonEvent.SyncPointEvent)
+		event.AddPostFlushFunc(func() {
+			dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
+			dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
+		})
+		//d.addDDLEventToSinkWhenAvailable(event)
 		return true
 	}
 	log.Panic("invalid event type", zap.Any("event", event))
@@ -235,7 +251,7 @@ func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 					IsBlocked:         false,
 					BlockTs:           d.ddlPendingEvent.FinishedTs,
 					NeedDroppedTables: d.ddlPendingEvent.GetNeedDroppedTables().ToPB(),
-					NeedAddedTables:   common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
+					NeedAddedTables:   commonEvent.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
 				},
 			}
 			d.SetResendTask(newResendTask(message, d))
@@ -250,8 +266,8 @@ func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
 				BlockTs:           d.ddlPendingEvent.FinishedTs,
 				BlockTables:       d.ddlPendingEvent.GetBlockedTables().ToPB(),
 				NeedDroppedTables: d.ddlPendingEvent.GetNeedDroppedTables().ToPB(),
-				NeedAddedTables:   common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
-				UpdatedSchemas:    common.ToSchemaIDChangePB(d.ddlPendingEvent.GetUpdatedSchemas()), // only exists for rename table and rename tables
+				NeedAddedTables:   commonEvent.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
+				UpdatedSchemas:    commonEvent.ToSchemaIDChangePB(d.ddlPendingEvent.GetUpdatedSchemas()), // only exists for rename table and rename tables
 			},
 		}
 		d.SetResendTask(newResendTask(message, d))
@@ -329,9 +345,25 @@ func (d *Dispatcher) GetSchemaID() int64 {
 	return d.schemaID
 }
 
-//func (d *Dispatcher) GetSyncPointInfo() *SyncPointInfo {
-// 	return d.syncPointInfo
-// }
+func (d *Dispatcher) EnableSyncPoint() bool {
+	return d.SyncPointInfo.EnableSyncPoint
+}
+
+func (d *Dispatcher) GetSyncPointTs() uint64 {
+	if d.SyncPointInfo.EnableSyncPoint {
+		return d.SyncPointInfo.InitSyncPointTs
+	} else {
+		return 0
+	}
+}
+
+func (d *Dispatcher) GetSyncPointInterval() time.Duration {
+	if d.SyncPointInfo.EnableSyncPoint {
+		return d.SyncPointInfo.SyncPointInterval
+	} else {
+		return time.Duration(0)
+	}
+}
 
 func (d *Dispatcher) Remove() {
 	// TODO: 修改这个 dispatcher 的 status 为 removing

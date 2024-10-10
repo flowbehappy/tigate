@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tiflow/pkg/quotes"
@@ -35,7 +36,7 @@ type preparedDMLs struct {
 // sql: `REPLACE INTO `test`.`t` VALUES (?,?,?)`
 func buildInsert(
 	tableInfo *common.TableInfo,
-	row common.RowChange,
+	row commonEvent.RowChange,
 	safeMode bool,
 ) (string, []interface{}) {
 	args, err := getArgs(&row.Row, tableInfo)
@@ -64,7 +65,7 @@ func buildInsert(
 
 // prepareDelete builds a parametric DELETE statement as following
 // sql: `DELETE FROM `test`.`t` WHERE x = ? AND y >= ? LIMIT 1`
-func buildDelete(tableInfo *common.TableInfo, row common.RowChange) (string, []interface{}) {
+func buildDelete(tableInfo *common.TableInfo, row commonEvent.RowChange) (string, []interface{}) {
 	var builder strings.Builder
 	quoteTable := tableInfo.TableName.QuoteString()
 	builder.WriteString("DELETE FROM ")
@@ -94,7 +95,7 @@ func buildDelete(tableInfo *common.TableInfo, row common.RowChange) (string, []i
 	return sql, args
 }
 
-func buildUpdate(tableInfo *common.TableInfo, row common.RowChange) (string, []interface{}) {
+func buildUpdate(tableInfo *common.TableInfo, row commonEvent.RowChange) (string, []interface{}) {
 	var builder strings.Builder
 	if tableInfo.GetPreUpdateSQL() == "" {
 		log.Panic("PreUpdateSQL should not be empty")

@@ -216,6 +216,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 			if err != nil {
 				log.Panic("decode changefeed fail", zap.Error(err))
 			}
+			log.Info("new changefeed added", zap.Any("cfConfig", cfConfig))
 			cf = NewMaintainer(cfID, cfConfig, m.selfNode, m.stream, m.taskScheduler,
 				nil, nil,
 				req.CheckpointTs)

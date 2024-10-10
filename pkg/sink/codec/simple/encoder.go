@@ -16,7 +16,7 @@ package simple
 import (
 	"context"
 
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -53,7 +53,7 @@ func NewEncoder(ctx context.Context, config *ticommon.Config) (encoder.EventEnco
 }
 
 // AppendRowChangedEvent implement the RowEventEncoder interface
-func (e *Encoder) AppendRowChangedEvent(ctx context.Context, _ string, event *common.RowChangedEvent, callback func()) error {
+func (e *Encoder) AppendRowChangedEvent(ctx context.Context, _ string, event *commonEvent.RowChangedEvent, callback func()) error {
 	value, err := e.marshaller.MarshalRowChangedEvent(event, false, "")
 	if err != nil {
 		return err
@@ -148,7 +148,7 @@ func (e *Encoder) EncodeCheckpointEvent(ts uint64) (*ticommon.Message, error) {
 }
 
 // EncodeDDLEvent implement the DDLEventBatchEncoder interface
-func (e *Encoder) EncodeDDLEvent(event *common.DDLEvent) (*ticommon.Message, error) {
+func (e *Encoder) EncodeDDLEvent(event *commonEvent.DDLEvent) (*ticommon.Message, error) {
 	// value, err := e.marshaller.MarshalDDLEvent(event)
 	// if err != nil {
 	// 	return nil, err
