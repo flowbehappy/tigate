@@ -224,5 +224,4 @@ func (c *EventCollector) updateMetrics(ctx context.Context) {
 			metrics.EventCollectorResolvedTsLagGauge.Set(float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3)
 		}
 	}
-	return
 }
