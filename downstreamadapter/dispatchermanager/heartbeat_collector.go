@@ -40,7 +40,8 @@ type HeartBeatCollector struct {
 	wg   sync.WaitGroup
 	from node.ID
 
-	reqQueue *HeartbeatRequestQueue
+	reqQueue            *HeartbeatRequestQueue
+	blockStatusReqQueue *BlockStatusRequestQueue
 
 	heartBeatResponseDynamicStream          dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]
 	schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.ScheduleDispatcherRequest, *EventDispatcherManager]
@@ -51,22 +52,30 @@ func NewHeartBeatCollector(serverId node.ID) *HeartBeatCollector {
 	heartBeatCollector := HeartBeatCollector{
 		from:                                    serverId,
 		reqQueue:                                NewHeartbeatRequestQueue(),
+		blockStatusReqQueue:                     NewBlockStatusRequestQueue(),
 		heartBeatResponseDynamicStream:          GetHeartBeatResponseDynamicStream(),
 		schedulerDispatcherRequestDynamicStream: GetSchedulerDispatcherRequestDynamicStream(),
 		checkpointTsMessageDynamicStream:        GetCheckpointTsMessageDynamicStream(),
 	}
 	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.HeartbeatCollectorTopic, heartBeatCollector.RecvMessages)
 
-	heartBeatCollector.wg.Add(1)
+	heartBeatCollector.wg.Add(2)
 	go func() {
 		defer heartBeatCollector.wg.Done()
-		heartBeatCollector.SendHeartBeatMessages()
+		heartBeatCollector.sendHeartBeatMessages()
 	}()
+
+	go func() {
+		defer heartBeatCollector.wg.Done()
+		heartBeatCollector.sendBlockStatusMessages()
+	}()
+
 	return &heartBeatCollector
 }
 
 func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherManager) error {
 	m.SetHeartbeatRequestQueue(c.reqQueue)
+	m.SetBlockStatusRequestQueue(c.blockStatusReqQueue)
 	err := c.heartBeatResponseDynamicStream.AddPath(m.changefeedID, m)
 	if err != nil {
 		log.Error("heartBeatResponseDynamicStream Failed to add path", zap.Any("ChangefeedID", m.changefeedID))
@@ -80,7 +89,7 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherMa
 	return nil
 }
 
-func (c *HeartBeatCollector) SendHeartBeatMessages() {
+func (c *HeartBeatCollector) sendHeartBeatMessages() {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	for {
 		heartBeatRequestWithTargetID := c.reqQueue.Dequeue()
@@ -92,6 +101,22 @@ func (c *HeartBeatCollector) SendHeartBeatMessages() {
 			))
 		if err != nil {
 			log.Error("failed to send heartbeat request message", zap.Error(err))
+		}
+	}
+}
+
+func (c *HeartBeatCollector) sendBlockStatusMessages() {
+	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
+	for {
+		blockStatusRequestWithTargetID := c.blockStatusReqQueue.Dequeue()
+		err := mc.SendCommand(
+			messaging.NewSingleTargetMessage(
+				blockStatusRequestWithTargetID.TargetID,
+				messaging.MaintainerManagerTopic,
+				blockStatusRequestWithTargetID.Request,
+			))
+		if err != nil {
+			log.Error("failed to send block status request message", zap.Error(err))
 		}
 	}
 }

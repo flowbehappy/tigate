@@ -54,7 +54,8 @@ One EventDispatcherManager can only have one Sink.
 type EventDispatcherManager struct {
 	dispatcherMap *DispatcherMap
 
-	heartbeatRequestQueue *HeartbeatRequestQueue
+	heartbeatRequestQueue   *HeartbeatRequestQueue
+	blockStatusRequestQueue *BlockStatusRequestQueue
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -67,7 +68,11 @@ type EventDispatcherManager struct {
 
 	// statusesChan will fetch the tableSpan status that need to contains in the heartbeat info.
 	statusesChan chan *heartbeatpb.TableSpanStatus
-	filter       filter.Filter
+	// blockStatusesChan will fetch the tableSpan block status about ddl event and sync point event
+	// that need to report to maintainer
+	blockStatusesChan chan *heartbeatpb.TableSpanBlockStatus
+
+	filter filter.Filter
 
 	closing bool
 	closed  atomic.Bool
@@ -99,6 +104,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 		changefeedID:                   changefeedID,
 		maintainerID:                   maintainerID,
 		statusesChan:                   make(chan *heartbeatpb.TableSpanStatus, 10000),
+		blockStatusesChan:              make(chan *heartbeatpb.TableSpanBlockStatus, 1000),
 		cancel:                         cancel,
 		config:                         cfConfig,
 		schemaIDToDispatchers:          dispatcher.NewSchemaIDToDispatchers(),
@@ -141,6 +147,12 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 	go func() {
 		defer manager.wg.Done()
 		manager.CollectHeartbeatInfoWhenStatesChanged(ctx)
+	}()
+
+	manager.wg.Add(1)
+	go func() {
+		defer manager.wg.Done()
+		manager.CollectBlockStatusRequest(ctx)
 	}()
 	return manager
 }
@@ -222,7 +234,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 		syncPointInfo.SyncPointRetention = e.syncPointRetention
 	}
 
-	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.filter, schemaID, e.schemaIDToDispatchers, syncPointInfo)
+	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.blockStatusesChan, e.filter, schemaID, e.schemaIDToDispatchers, syncPointInfo)
 
 	if tableSpan.Equal(heartbeatpb.DDLSpan) {
 		e.tableTriggerEventDispatcher = dispatcher
@@ -238,7 +250,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 		},
 	)
 	e.dispatcherMap.Set(id, dispatcher)
-	e.GetStatusesChan() <- &heartbeatpb.TableSpanStatus{
+	e.statusesChan <- &heartbeatpb.TableSpanStatus{
 		ID:              id.ToPB(),
 		ComponentStatus: heartbeatpb.ComponentState_Working,
 	}
@@ -255,6 +267,42 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 	return dispatcher
 }
 
+func (e *EventDispatcherManager) CollectBlockStatusRequest(ctx context.Context) {
+	for {
+		blockStatusMessage := make([]*heartbeatpb.TableSpanBlockStatus, 0)
+		select {
+		case <-ctx.Done():
+			return
+		case blockStatus := <-e.blockStatusesChan:
+			blockStatusMessage = append(blockStatusMessage, blockStatus)
+
+			delay := time.NewTimer(10 * time.Millisecond)
+		loop:
+			for {
+				select {
+				case blockStatus := <-e.blockStatusesChan:
+					blockStatusMessage = append(blockStatusMessage, blockStatus)
+				case <-delay.C:
+					break loop
+				}
+			}
+
+			// Release resources promptly
+			if !delay.Stop() {
+				select {
+				case <-delay.C:
+				default:
+				}
+			}
+
+			var message heartbeatpb.BlockStatusRequest
+			message.ChangefeedID = e.changefeedID.ID
+			message.BlockStatuses = blockStatusMessage
+			e.blockStatusRequestQueue.Enqueue(&BlockStatusRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
+		}
+	}
+}
+
 // CollectHeartbeatInfoWhenStatesChanged use to collect the heartbeat info when GetTableSpanStatusesChan() get infos
 // It happenes when some dispatchers change status, such as --> working; --> stopped; --> stopping
 // Considering collect the heartbeat info is a time-consuming operation(we need to scan all the dispatchers),
@@ -265,14 +313,14 @@ func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx conte
 		select {
 		case <-ctx.Done():
 			return
-		case tableSpanStatus := <-e.GetStatusesChan():
+		case tableSpanStatus := <-e.statusesChan:
 			statusMessage = append(statusMessage, tableSpanStatus)
 
 			delay := time.NewTimer(10 * time.Millisecond)
 		loop:
 			for {
 				select {
-				case tableSpanStatus := <-e.GetStatusesChan():
+				case tableSpanStatus := <-e.statusesChan:
 					statusMessage = append(statusMessage, tableSpanStatus)
 				case <-delay.C:
 					break loop
@@ -290,7 +338,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx conte
 			var message heartbeatpb.HeartBeatRequest
 			message.ChangefeedID = e.changefeedID.ID
 			message.Statuses = statusMessage
-			e.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
+			e.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
 		}
 	}
 }
@@ -305,7 +353,7 @@ func (e *EventDispatcherManager) RemoveDispatcher(id common.DispatcherID) {
 		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RemoveDispatcher(dispatcher)
 		dispatcher.Remove()
 	} else {
-		e.GetStatusesChan() <- &heartbeatpb.TableSpanStatus{
+		e.statusesChan <- &heartbeatpb.TableSpanStatus{
 			ID:              id.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Stopped,
 		}
@@ -422,16 +470,16 @@ func (e *EventDispatcherManager) GetChangeFeedID() model.ChangeFeedID {
 	return e.changefeedID
 }
 
-func (e *EventDispatcherManager) GetHeartbeatRequestQueue() *HeartbeatRequestQueue {
-	return e.heartbeatRequestQueue
-}
-
 func (e *EventDispatcherManager) SetHeartbeatRequestQueue(heartbeatRequestQueue *HeartbeatRequestQueue) {
 	e.heartbeatRequestQueue = heartbeatRequestQueue
 }
 
-func (e *EventDispatcherManager) GetStatusesChan() chan *heartbeatpb.TableSpanStatus {
-	return e.statusesChan
+func (e *EventDispatcherManager) SetBlockStatusRequestQueue(blockStatusRequestQueue *BlockStatusRequestQueue) {
+	e.blockStatusRequestQueue = blockStatusRequestQueue
+}
+
+func (e *EventDispatcherManager) GetBlockStatuses() chan *heartbeatpb.TableSpanBlockStatus {
+	return e.blockStatusesChan
 }
 
 func (e *EventDispatcherManager) SetMaintainerID(maintainerID node.ID) {

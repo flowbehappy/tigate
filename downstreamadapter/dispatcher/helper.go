@@ -190,7 +190,7 @@ func (h *DispatcherStatusHandler) Handle(dispatcher *Dispatcher, events ...Dispa
 // CheckTableProgressEmptyTask is reponsible for checking whether the tableProgress is empty.
 // If the tableProgress is empty,
 // 1. If the event is a single table DDL, it will be added to the sink for writing to downstream(async).
-// 2. If the event is a multi-table DDL, it will generate a TableSpanStatus message with ddl info to send to maintainer.
+// 2. If the event is a multi-table DDL, it will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
 // When the tableProgress is empty, the task will finished after this execution.
 // If the tableProgress is not empty, the task will be rescheduled after 10ms.
 type CheckProgressEmptyTask struct {
@@ -215,15 +215,15 @@ func (t *CheckProgressEmptyTask) Execute() time.Time {
 	return time.Now().Add(10 * time.Millisecond)
 }
 
-// Resend Task is reponsible for resending the TableSpanStatus message with ddl info to maintainer each 50ms.
+// Resend Task is reponsible for resending the TableSpanBlockStatus message with ddl info to maintainer each 50ms.
 // The task will be cancelled when the the dispatcher received the ack message from the maintainer
 type ResendTask struct {
-	message    *heartbeatpb.TableSpanStatus
+	message    *heartbeatpb.TableSpanBlockStatus
 	dispatcher *Dispatcher
 	taskHandle *threadpool.TaskHandle
 }
 
-func newResendTask(message *heartbeatpb.TableSpanStatus, dispatcher *Dispatcher) *ResendTask {
+func newResendTask(message *heartbeatpb.TableSpanBlockStatus, dispatcher *Dispatcher) *ResendTask {
 	taskScheduler := GetDispatcherTaskScheduler()
 	t := &ResendTask{
 		message:    message,
@@ -234,7 +234,7 @@ func newResendTask(message *heartbeatpb.TableSpanStatus, dispatcher *Dispatcher)
 }
 
 func (t *ResendTask) Execute() time.Time {
-	t.dispatcher.GetStatusesChan() <- t.message
+	t.dispatcher.blockStatusesChan <- t.message
 	return time.Now().Add(200 * time.Millisecond)
 }
 
@@ -251,10 +251,10 @@ func (t *ResendTask) Cancel() {
 //     b. If the tableProgress is not empty, we will generate a CheckTableProgressEmptyTask to periodly check whether the tableProgress is empty,
 //     and then add the DDL event to the sink for writing to downstream(async).
 //  2. If it is a multi-table DDL,
-//     a. If the tableProgress is empty（previous events are flushed successfully），We will generate a TableSpanStatus message with ddl info to send to maintainer.
+//     a. If the tableProgress is empty（previous events are flushed successfully），We will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
 //     b. If the tableProgress is not empty, we will generate a CheckTableProgressEmptyTask to periodly check whether the tableProgress is empty,
-//     and then we will generate a TableSpanStatus message with ddl info to send to maintainer.
-//     for the multi-table DDL, we will also generate a ResendTask to resend the TableSpanStatus message with ddl info to maintainer each 50ms to avoid message is missing.
+//     and then we will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
+//     for the multi-table DDL, we will also generate a ResendTask to resend the TableSpanBlockStatus message with ddl info to maintainer each 50ms to avoid message is missing.
 //
 // Considering for ddl event, we always do an async write, so we need to be blocked before the ddl event flushed to downstream successfully.
 // Thus, we add a callback function to let the hander be waked when the ddl event flushed to downstream successfully.

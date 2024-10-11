@@ -33,6 +33,7 @@ const (
 	TypeScheduleDispatcherRequest
 	TypeRegisterDispatcherRequest
 	TypeCheckpointTsMessage
+	TypeBlockStatusRequest
 
 	TypeCoordinatorBootstrapRequest
 	TypeCoordinatorBootstrapResponse
@@ -64,6 +65,8 @@ func (t IOType) String() string {
 		return "HeartBeatRequest"
 	case TypeHeartBeatResponse:
 		return "HeartBeatResponse"
+	case TypeBlockStatusRequest:
+		return "BlockStatusRequest"
 	case TypeScheduleDispatcherRequest:
 		return "ScheduleDispatcherRequest"
 	case TypeCoordinatorBootstrapRequest:
@@ -208,6 +211,8 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 		m = &heartbeatpb.HeartBeatRequest{}
 	case TypeHeartBeatResponse:
 		m = &heartbeatpb.HeartBeatResponse{}
+	case TypeBlockStatusRequest:
+		m = &heartbeatpb.BlockStatusRequest{}
 	case TypeScheduleDispatcherRequest:
 		m = &heartbeatpb.ScheduleDispatcherRequest{}
 	case TypeCoordinatorBootstrapRequest:
@@ -268,6 +273,8 @@ func NewSingleTargetMessage(To node.ID, Topic string, Message IOTypeT) *TargetMe
 		ioType = TypeBatchResolvedTs
 	case *heartbeatpb.HeartBeatRequest:
 		ioType = TypeHeartBeatRequest
+	case *heartbeatpb.BlockStatusRequest:
+		ioType = TypeBlockStatusRequest
 	case *heartbeatpb.ScheduleDispatcherRequest:
 		ioType = TypeScheduleDispatcherRequest
 	case *heartbeatpb.MaintainerBootstrapRequest:
