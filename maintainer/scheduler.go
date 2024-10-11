@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package scheduler
+package maintainer
 
 import (
 	"fmt"
@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils/heap"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
@@ -45,11 +46,11 @@ func NewScheduler[T comparable](batchSize int, changefeedID string,
 }
 
 func (s *Scheduler[T]) Schedule(
-	absent map[T]*StateMachine[T],
-	commiting map[T]*StateMachine[T],
-	removing map[T]*StateMachine[T],
-	working map[T]*StateMachine[T],
-	nodeTasks map[node.ID]map[T]*StateMachine[T]) []ScheduleTask[T] {
+	absent map[T]*scheduler.StateMachine[T],
+	commiting map[T]*scheduler.StateMachine[T],
+	removing map[T]*scheduler.StateMachine[T],
+	working map[T]*scheduler.StateMachine[T],
+	nodeTasks map[node.ID]map[T]*scheduler.StateMachine[T]) []ScheduleTask[T] {
 	if len(absent) > 0 {
 		return s.basicSchedule(absent, commiting, removing, working, nodeTasks)
 	}
@@ -58,11 +59,11 @@ func (s *Scheduler[T]) Schedule(
 }
 
 func (s *Scheduler[T]) basicSchedule(
-	absent map[T]*StateMachine[T],
-	commiting map[T]*StateMachine[T],
-	removing map[T]*StateMachine[T],
-	working map[T]*StateMachine[T],
-	nodeTasks map[node.ID]map[T]*StateMachine[T]) []ScheduleTask[T] {
+	absent map[T]*scheduler.StateMachine[T],
+	commiting map[T]*scheduler.StateMachine[T],
+	removing map[T]*scheduler.StateMachine[T],
+	working map[T]*scheduler.StateMachine[T],
+	nodeTasks map[node.ID]map[T]*scheduler.StateMachine[T]) []ScheduleTask[T] {
 	totalSize := s.batchSize - len(removing) - len(commiting)
 	if totalSize <= 0 {
 		// too many running tasks, skip schedule
@@ -96,11 +97,11 @@ func (s *Scheduler[T]) basicSchedule(
 }
 
 func (s *Scheduler[T]) Balance(
-	absent map[T]*StateMachine[T],
-	commiting map[T]*StateMachine[T],
-	removing map[T]*StateMachine[T],
-	working map[T]*StateMachine[T],
-	nodeTasks map[node.ID]map[T]*StateMachine[T]) []ScheduleTask[T] {
+	absent map[T]*scheduler.StateMachine[T],
+	commiting map[T]*scheduler.StateMachine[T],
+	removing map[T]*scheduler.StateMachine[T],
+	working map[T]*scheduler.StateMachine[T],
+	nodeTasks map[node.ID]map[T]*scheduler.StateMachine[T]) []ScheduleTask[T] {
 	if time.Since(s.lastRebalanceTime) < s.checkBalanceInterval {
 		return nil
 	}
@@ -118,18 +119,18 @@ func (s *Scheduler[T]) Balance(
 }
 
 func (s *Scheduler[T]) balanceTables(
-	absent map[T]*StateMachine[T],
-	commiting map[T]*StateMachine[T],
-	removing map[T]*StateMachine[T],
-	working map[T]*StateMachine[T],
-	nodeTasks map[node.ID]map[T]*StateMachine[T]) []ScheduleTask[T] {
+	absent map[T]*scheduler.StateMachine[T],
+	commiting map[T]*scheduler.StateMachine[T],
+	removing map[T]*scheduler.StateMachine[T],
+	working map[T]*scheduler.StateMachine[T],
+	nodeTasks map[node.ID]map[T]*scheduler.StateMachine[T]) []ScheduleTask[T] {
 	upperLimitPerCapture := int(math.Ceil(float64(len(working)) / float64(len(nodeTasks))))
 	// victims holds tables which need to be moved
-	victims := make([]*StateMachine[T], 0)
+	victims := make([]*scheduler.StateMachine[T], 0)
 	scheduleTasks := make([]ScheduleTask[T], 0)
 	priorityQueue := heap.NewHeap[*Item]()
 	for nodeID, ts := range nodeTasks {
-		var stms []*StateMachine[T]
+		var stms []*scheduler.StateMachine[T]
 		for _, value := range ts {
 			stms = append(stms, value)
 		}

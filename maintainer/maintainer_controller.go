@@ -53,7 +53,7 @@ type Controller struct {
 
 	changefeedID string
 	batchSize    int
-	sche         *scheduler.Scheduler[common.DispatcherID]
+	sche         *Scheduler[common.DispatcherID]
 }
 
 func NewController(changefeedID string,
@@ -70,7 +70,7 @@ func NewController(changefeedID string,
 		changefeedID:      changefeedID,
 		batchSize:         batchSize,
 		bootstrapped:      false,
-		sche:              scheduler.NewScheduler[common.DispatcherID](batchSize, changefeedID, balanceInterval),
+		sche:              NewScheduler[common.DispatcherID](batchSize, changefeedID, balanceInterval),
 	}
 	if config != nil && config.EnableTableAcrossNodes {
 		s.splitter = split.NewSplitter(changefeedID, pdapi, regionCache, config)
