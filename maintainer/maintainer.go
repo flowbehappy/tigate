@@ -302,6 +302,8 @@ func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
 	switch msg.Type {
 	case messaging.TypeHeartBeatRequest:
 		return m.onHeartBeatRequest(msg)
+	case messaging.TypeBlockStatusRequest:
+		m.onBlockStateRequest(msg)
 	case messaging.TypeMaintainerBootstrapResponse:
 		m.onMaintainerBootstrapResponse(msg)
 	case messaging.TypeMaintainerCloseResponse:
@@ -436,8 +438,6 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 		m.checkpointTsByCapture[msg.From] = *req.Watermark
 	}
 	m.controller.HandleStatus(msg.From, req.Statuses)
-	ackMsg := m.barrier.HandleStatus(msg.From, req)
-	m.sendMessages([]*messaging.TargetMessage{ackMsg})
 	if req.Warning != nil {
 		m.errLock.Lock()
 		m.runningWarnings[msg.From] = req.Warning
@@ -449,6 +449,12 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 		m.errLock.Unlock()
 	}
 	return nil
+}
+
+func (m *Maintainer) onBlockStateRequest(msg *messaging.TargetMessage) {
+	req := msg.Message[0].(*heartbeatpb.BlockStatusRequest)
+	ackMsg := m.barrier.HandleStatus(msg.From, req)
+	m.sendMessages([]*messaging.TargetMessage{ackMsg})
 }
 
 func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage) {

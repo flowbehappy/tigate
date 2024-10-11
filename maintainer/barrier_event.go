@@ -43,6 +43,7 @@ type BarrierEvent struct {
 	dropTasks      []*scheduler.StateMachine[common.DispatcherID]
 	newTables      []*heartbeatpb.Table
 	schemaIDChange []*heartbeatpb.SchemaIDChange
+	isSyncPoint    bool
 
 	reportedDispatchers map[common.DispatcherID]bool
 	lastResendTime      time.Time
@@ -61,6 +62,7 @@ func NewBlockEvent(cfID string, scheduler *Controller,
 		schemaIDChange:      status.UpdatedSchemas,
 		reportedDispatchers: make(map[common.DispatcherID]bool),
 		lastResendTime:      time.Time{},
+		isSyncPoint:         status.IsSyncPoint,
 	}
 	if event.blockedDispatchers != nil && event.blockedDispatchers.InfluenceType == heartbeatpb.InfluenceType_Normal {
 		event.blockedTasks = event.scheduler.GetTasksByTableIDs(event.blockedDispatchers.TableIDs...)
@@ -200,8 +202,9 @@ func (be *BarrierEvent) dispatcherReachedBlockTs(dispatcherID common.DispatcherI
 			zap.Uint64("commitTs", be.commitTs),
 			zap.String("barrierType", be.blockedDispatchers.InfluenceType.String()))
 		return &heartbeatpb.DispatcherAction{
-			Action:   heartbeatpb.Action_Write,
-			CommitTs: be.commitTs,
+			Action:      heartbeatpb.Action_Write,
+			CommitTs:    be.commitTs,
+			IsSyncPoint: be.isSyncPoint,
 		}
 	}
 	return nil
@@ -231,35 +234,40 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 
 func (be *BarrierEvent) newWriterActionMessage(capture node.ID) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(capture, messaging.HeartbeatCollectorTopic,
-		&heartbeatpb.HeartBeatResponse{DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
-			{
-				Action: &heartbeatpb.DispatcherAction{
-					Action:   heartbeatpb.Action_Write,
-					CommitTs: be.commitTs,
-				},
-				InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
-					InfluenceType: heartbeatpb.InfluenceType_Normal,
-					DispatcherIDs: []*heartbeatpb.DispatcherID{
-						be.writerDispatcher.ToPB(),
+		&heartbeatpb.HeartBeatResponse{
+			ChangefeedID: be.cfID,
+			DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
+				{
+					Action: &heartbeatpb.DispatcherAction{
+						Action:   heartbeatpb.Action_Write,
+						CommitTs: be.commitTs,
+					},
+					InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
+						InfluenceType: heartbeatpb.InfluenceType_Normal,
+						DispatcherIDs: []*heartbeatpb.DispatcherID{
+							be.writerDispatcher.ToPB(),
+						},
 					},
 				},
-			},
-		}})
+			}})
 }
 
 func (be *BarrierEvent) newPassActionMessage(capture node.ID) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(capture, messaging.HeartbeatCollectorTopic,
-		&heartbeatpb.HeartBeatResponse{DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
-			{
-				Action: &heartbeatpb.DispatcherAction{
-					Action:   heartbeatpb.Action_Pass,
-					CommitTs: be.commitTs,
+		&heartbeatpb.HeartBeatResponse{
+			ChangefeedID: be.cfID,
+			DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
+				{
+					Action: &heartbeatpb.DispatcherAction{
+						Action:      heartbeatpb.Action_Pass,
+						CommitTs:    be.commitTs,
+						IsSyncPoint: be.isSyncPoint,
+					},
+					InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
+						InfluenceType:       be.blockedDispatchers.InfluenceType,
+						SchemaID:            be.blockedDispatchers.SchemaID,
+						ExcludeDispatcherId: be.writerDispatcher.ToPB(),
+					},
 				},
-				InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
-					InfluenceType:       be.blockedDispatchers.InfluenceType,
-					SchemaID:            be.blockedDispatchers.SchemaID,
-					ExcludeDispatcherId: be.writerDispatcher.ToPB(),
-				},
-			},
-		}})
+			}})
 }

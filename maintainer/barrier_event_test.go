@@ -19,13 +19,14 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/stretchr/testify/require"
 )
 
 func TestScheduleEvent(t *testing.T) {
 	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
-	sche.AddNewTable(common.Table{1, 1}, 1)
+	sche.AddNewTable(commonEvent.Table{1, 1}, 1)
 	event := NewBlockEvent("test", sche, &heartbeatpb.State{
 		IsBlocked: true,
 		BlockTs:   10,
@@ -69,8 +70,8 @@ func TestScheduleEvent(t *testing.T) {
 func TestResendAction(t *testing.T) {
 	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
-	sche.AddNewTable(common.Table{1, 1}, 1)
-	sche.AddNewTable(common.Table{1, 2}, 1)
+	sche.AddNewTable(commonEvent.Table{1, 1}, 1)
+	sche.AddNewTable(commonEvent.Table{1, 2}, 1)
 	var dispatcherIDs []common.DispatcherID
 	for key, stm := range sche.Absent() {
 		stm.Primary = "node1"
@@ -164,7 +165,7 @@ func TestResendAction(t *testing.T) {
 func TestUpdateSchemaID(t *testing.T) {
 	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
-	sche.AddNewTable(common.Table{1, 1}, 1)
+	sche.AddNewTable(commonEvent.Table{1, 1}, 1)
 	require.Len(t, sche.Absent(), 1)
 	require.Len(t, sche.GetTasksBySchemaID(1), 1)
 	event := NewBlockEvent("test", sche, &heartbeatpb.State{

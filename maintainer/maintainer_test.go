@@ -23,8 +23,8 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/config"
 	configNew "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
@@ -149,7 +149,6 @@ func (m *mockDispatcherManager) onDispatchRequest(
 		status := &heartbeatpb.TableSpanStatus{
 			ID:              request.Config.DispatcherID,
 			ComponentStatus: heartbeatpb.ComponentState_Working,
-			State:           nil,
 			CheckpointTs:    0,
 		}
 		m.dispatchers = append(m.dispatchers, status)
@@ -264,7 +263,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	}
 
 	for id := 0; id < tableSize; id++ {
-		maintainer.controller.AddNewTable(common.Table{
+		maintainer.controller.AddNewTable(commonEvent.Table{
 			SchemaID: 1,
 			TableID:  int64(id),
 		}, 10)
