@@ -17,7 +17,7 @@ import (
 	"bytes"
 	"context"
 
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 )
 
@@ -35,9 +35,9 @@ type EventEncoder interface {
 	// This event will be broadcast to all partitions to signal a global checkpoint.
 	EncodeCheckpointEvent(ts uint64) (*ticommon.Message, error)
 	// EncodeDDLEvent appends a DDL event into the batch
-	EncodeDDLEvent(e *common.DDLEvent) (*ticommon.Message, error)
+	EncodeDDLEvent(e *commonEvent.DDLEvent) (*ticommon.Message, error)
 	// AppendRowChangedEvent appends a row changed event into the batch or buffer.
-	AppendRowChangedEvent(context.Context, string, *common.RowEvent) error
+	AppendRowChangedEvent(context.Context, string, *commonEvent.RowEvent) error
 	// Build builds the batch messages from AppendRowChangedEvent and returns the messages.
 	Build() []*ticommon.Message
 	// clean the resources

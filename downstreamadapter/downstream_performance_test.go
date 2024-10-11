@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"net/http"
 	_ "net/http/pprof"
 	"strconv"
@@ -10,12 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/node"
+
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/mounter"
@@ -42,7 +44,7 @@ func pushDataIntoDispatchers(dispatcherIDSet map[common.DispatcherID]interface{}
 	var mutex sync.Mutex
 	var wg sync.WaitGroup
 	var listMutex sync.Mutex
-	eventList := make([]*common.DMLEvent, 0, totalCount*dispatcherCount)
+	eventList := make([]*commonEvent.DMLEvent, 0, totalCount*dispatcherCount)
 	for id, _ := range dispatcherIDSet {
 		wg.Add(1)
 		go func(idx int, id common.DispatcherID) {

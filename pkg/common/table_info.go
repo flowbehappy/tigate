@@ -327,6 +327,10 @@ type TableInfo struct {
 	PreSQLs                       map[string]string
 }
 
+func (ti *TableInfo) GetColumnsOffset() map[int64]int {
+	return ti.columnsOffset
+}
+
 func (ti *TableInfo) initRowColInfosWithoutVirtualCols() {
 	if ti.virtualColumnCount == 0 {
 		ti.rowColInfosWithoutVirtualCols = &ti.rowColInfos

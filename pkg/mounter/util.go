@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/log"
 	ticonfig "github.com/pingcap/tidb/pkg/config"
 	tiddl "github.com/pingcap/tidb/pkg/ddl"
@@ -167,14 +168,14 @@ func (s *EventTestHelper) DDL2Jobs(ddl string, jobCnt int) []*timodel.Job {
 // after the query executed.
 // 2. You must execute create table statement before calling this function.
 // 3. You must set the preRow of the DMLEvent by yourself, since we can not get it from TiDB.
-func (s *EventTestHelper) DML2Event(schema, table string, dml ...string) *common.DMLEvent {
+func (s *EventTestHelper) DML2Event(schema, table string, dml ...string) *commonEvent.DMLEvent {
 	key := toTableInfosKey(schema, table)
 	log.Info("dml2event", zap.String("key", key))
 	tableInfo, ok := s.tableInfos[key]
 	require.True(s.t, ok)
 	did := common.NewDispatcherID()
 	ts := tableInfo.UpdateTS
-	dmlEvent := common.NewDMLEvent(did, tableInfo.ID, ts-1, ts+1, tableInfo)
+	dmlEvent := commonEvent.NewDMLEvent(did, tableInfo.ID, ts-1, ts+1, tableInfo)
 	rawKvs := s.DML2RawKv(schema, table, dml...)
 	for _, rawKV := range rawKvs {
 		err := dmlEvent.AppendRow(rawKV, s.mounter.DecodeToChunk)

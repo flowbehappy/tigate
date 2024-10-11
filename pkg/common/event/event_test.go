@@ -11,16 +11,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package common
+package event
 
 import (
 	"testing"
 
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResolvedEvent(t *testing.T) {
-	did := NewDispatcherID()
+	did := common.NewDispatcherID()
 	e := ResolvedEvent{
 		DispatcherID: did,
 		ResolvedTs:   123,
@@ -36,8 +37,8 @@ func TestResolvedEvent(t *testing.T) {
 }
 
 func TestBatchResolvedTs(t *testing.T) {
-	did := NewDispatcherID()
-	did2 := NewDispatcherID()
+	did := common.NewDispatcherID()
+	did2 := common.NewDispatcherID()
 	e := ResolvedEvent{
 		DispatcherID: did,
 		ResolvedTs:   123,

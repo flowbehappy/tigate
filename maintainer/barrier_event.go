@@ -18,6 +18,7 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
@@ -98,7 +99,7 @@ func (be *BarrierEvent) scheduleBlockEvent() {
 			zap.String("changefeed", be.cfID),
 			zap.Int64("schema", add.SchemaID),
 			zap.Int64("table", add.TableID))
-		be.scheduler.AddNewTable(common.Table{
+		be.scheduler.AddNewTable(commonEvent.Table{
 			SchemaID: add.SchemaID,
 			TableID:  add.TableID,
 		}, be.commitTs)

@@ -67,4 +67,7 @@ message RegisterDispatcherRequest {
     string namespace = 6;
     string changefeed_id = 7;
     FilterConfig filter_config = 8;
+    bool enable_sync_point = 9;
+    uint64 sync_point_ts = 10;
+    uint64 sync_point_interval = 11;
 }

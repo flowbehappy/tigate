@@ -16,6 +16,8 @@ package dispatchermanagermanager
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
@@ -23,7 +25,6 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
-	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/log"
@@ -79,6 +80,8 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from node.ID, main
 				zap.Error(err))
 			return err
 		}
+
+		log.Info("create new dispatcher manager", zap.Any("config", cfConfig))
 		// TODO: 这边额外判断一下创建是否失败，创建失败的话，想一下怎么做报错处理
 		manager := dispatchermanager.NewEventDispatcherManager(cfId, cfConfig, from)
 		m.dispatcherManagers[cfId] = manager

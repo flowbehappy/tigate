@@ -19,6 +19,12 @@ type ChangefeedConfig struct {
 	ForceReplicate bool                 `json:"force_replicate" default:"false"`
 	Filter         *config.FilterConfig `toml:"filter" json:"filter"`
 
+	//sync point related
+	// TODO:syncPointRetention|default 可以不要吗
+	EnableSyncPoint    bool           `json:"enable_sync_point" default:"false"`
+	SyncPointInterval  *time.Duration `json:"sync_point_interval" default:"1m"`
+	SyncPointRetention *time.Duration `json:"sync_point_retention" default:"24h"`
+
 	SinkConfig *SinkConfig `json:"sink_config"`
 }
 

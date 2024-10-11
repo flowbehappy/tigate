@@ -19,6 +19,7 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
@@ -78,9 +79,10 @@ func (s *SchemaIDToDispatchers) GetDispatcherIDs(schemaID int64) []common.Dispat
 }
 
 type SyncPointInfo struct {
-	EnableSyncPoint   bool
-	SyncPointInterval time.Duration
-	NextSyncPointTs   uint64
+	EnableSyncPoint    bool
+	SyncPointInterval  time.Duration
+	InitSyncPointTs    uint64
+	SyncPointRetention time.Duration
 }
 
 type ComponentStateWithMutex struct {
@@ -207,7 +209,7 @@ func newCheckProgressEmptyTask(dispatcher *Dispatcher) *CheckProgressEmptyTask {
 
 func (t *CheckProgressEmptyTask) Execute() time.Time {
 	if t.dispatcher.tableProgress.Empty() {
-		t.dispatcher.DealWithDDLWhenProgressEmpty()
+		t.dispatcher.DealWithBlockEventWhenProgressEmpty()
 		return time.Time{}
 	}
 	return time.Now().Add(10 * time.Millisecond)
@@ -260,12 +262,12 @@ func (t *ResendTask) Cancel() {
 type DispatcherEventsHandler struct {
 }
 
-func (h *DispatcherEventsHandler) Path(event common.Event) common.DispatcherID {
+func (h *DispatcherEventsHandler) Path(event commonEvent.Event) common.DispatcherID {
 	return event.GetDispatcherID()
 }
 
 // TODO: 这个后面需要按照更大的粒度进行攒批
-func (h *DispatcherEventsHandler) Handle(dispatcher *Dispatcher, event ...common.Event) bool {
+func (h *DispatcherEventsHandler) Handle(dispatcher *Dispatcher, event ...commonEvent.Event) bool {
 	if len(event) != 1 {
 		// TODO: Handle batch events
 		panic("only one event is allowed")
@@ -289,10 +291,10 @@ func SetDispatcherTaskScheduler(taskScheduler threadpool.ThreadPool) {
 	DispatcherTaskScheduler = taskScheduler
 }
 
-var dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher]
+var dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, commonEvent.Event, *Dispatcher]
 var dispatcherEventsDynamicStreamOnce sync.Once
 
-func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher] {
+func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.DispatcherID, commonEvent.Event, *Dispatcher] {
 	if dispatcherEventsDynamicStream == nil {
 		dispatcherEventsDynamicStreamOnce.Do(func() {
 			dispatcherEventsDynamicStream = dynstream.NewDynamicStream(&DispatcherEventsHandler{})
@@ -302,7 +304,7 @@ func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.Dispatche
 	return dispatcherEventsDynamicStream
 }
 
-func SetDispatcherEventsDynamicStream(dynamicStream dynstream.DynamicStream[common.DispatcherID, common.Event, *Dispatcher]) {
+func SetDispatcherEventsDynamicStream(dynamicStream dynstream.DynamicStream[common.DispatcherID, commonEvent.Event, *Dispatcher]) {
 	dispatcherEventsDynamicStream = dynamicStream
 }
 
@@ -330,19 +332,19 @@ func SetDispatcherStatusDynamicStream(dynamicStream dynstream.DynamicStream[comm
 // TableNameStore need to update the table name info.
 type TableNameStore struct {
 	// store all the existing table which existed at the latest query ts
-	existingTables map[string]map[string]*common.SchemaTableName // databaseName -> {tableName -> SchemaTableName}
+	existingTables map[string]map[string]*commonEvent.SchemaTableName // databaseName -> {tableName -> SchemaTableName}
 	// store the change of table name from the latest query ts to now(latest event)
 	latestTableChanges *LatestTableChanges
 }
 
 func NewTableNameStore() *TableNameStore {
 	return &TableNameStore{
-		existingTables:     make(map[string]map[string]*common.SchemaTableName),
-		latestTableChanges: &LatestTableChanges{m: make(map[uint64]*common.TableNameChange)},
+		existingTables:     make(map[string]map[string]*commonEvent.SchemaTableName),
+		latestTableChanges: &LatestTableChanges{m: make(map[uint64]*commonEvent.TableNameChange)},
 	}
 }
 
-func (s *TableNameStore) AddEvent(event *common.DDLEvent) {
+func (s *TableNameStore) AddEvent(event *commonEvent.DDLEvent) {
 	if event.TableNameChange != nil {
 		s.latestTableChanges.Add(event)
 	}
@@ -350,7 +352,7 @@ func (s *TableNameStore) AddEvent(event *common.DDLEvent) {
 
 // GetAllTableNames only will be called when maintainer send message to ask dispatcher to write checkpointTs to downstream.
 // So the ts must be <= the latest received event ts of table trigger event dispatcher.
-func (s *TableNameStore) GetAllTableNames(ts uint64) []*common.SchemaTableName {
+func (s *TableNameStore) GetAllTableNames(ts uint64) []*commonEvent.SchemaTableName {
 	s.latestTableChanges.mutex.Lock()
 	if len(s.latestTableChanges.m) > 0 {
 		// update the existingTables with the latest table changes <= ts
@@ -361,7 +363,7 @@ func (s *TableNameStore) GetAllTableNames(ts uint64) []*common.SchemaTableName {
 				} else {
 					for _, addName := range tableNameChange.AddName {
 						if s.existingTables[addName.SchemaName] == nil {
-							s.existingTables[addName.SchemaName] = make(map[string]*common.SchemaTableName, 0)
+							s.existingTables[addName.SchemaName] = make(map[string]*commonEvent.SchemaTableName, 0)
 						}
 						s.existingTables[addName.SchemaName][addName.TableName] = &addName
 					}
@@ -379,7 +381,7 @@ func (s *TableNameStore) GetAllTableNames(ts uint64) []*common.SchemaTableName {
 
 	s.latestTableChanges.mutex.Unlock()
 
-	tableNames := make([]*common.SchemaTableName, 0)
+	tableNames := make([]*commonEvent.SchemaTableName, 0)
 	for _, tables := range s.existingTables {
 		for _, tableName := range tables {
 			tableNames = append(tableNames, tableName)
@@ -391,10 +393,10 @@ func (s *TableNameStore) GetAllTableNames(ts uint64) []*common.SchemaTableName {
 
 type LatestTableChanges struct {
 	mutex sync.Mutex
-	m     map[uint64]*common.TableNameChange
+	m     map[uint64]*commonEvent.TableNameChange
 }
 
-func (l *LatestTableChanges) Add(ddlEvent *common.DDLEvent) {
+func (l *LatestTableChanges) Add(ddlEvent *commonEvent.DDLEvent) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 	l.m[ddlEvent.FinishedTs] = ddlEvent.TableNameChange

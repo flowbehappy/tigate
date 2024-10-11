@@ -7,6 +7,7 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/log"
@@ -22,7 +23,7 @@ import (
 type SchemaStore interface {
 	common.SubModule
 
-	GetAllPhysicalTables(snapTs uint64, filter filter.Filter) ([]common.Table, error)
+	GetAllPhysicalTables(snapTs uint64, filter filter.Filter) ([]commonEvent.Table, error)
 
 	RegisterTable(tableID int64, startTs uint64) error
 
@@ -34,9 +35,9 @@ type SchemaStore interface {
 	// FetchTableDDLEvents returns the next ddl events which finishedTs are within the range (start, end]
 	// and it returns a timestamp which means there will be no more ddl events before(<=) it
 	// TODO: add a parameter limit
-	FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, uint64, error)
+	FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]commonEvent.DDLEvent, uint64, error)
 
-	FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]common.DDLEvent, uint64, error)
+	FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]commonEvent.DDLEvent, uint64, error)
 }
 
 type schemaStore struct {
@@ -194,7 +195,7 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 	}
 }
 
-func (s *schemaStore) GetAllPhysicalTables(snapTs uint64, filter filter.Filter) ([]common.Table, error) {
+func (s *schemaStore) GetAllPhysicalTables(snapTs uint64, filter filter.Filter) ([]commonEvent.Table, error) {
 	s.waitResolvedTs(0, snapTs, 10*time.Second)
 	return s.dataStorage.getAllPhysicalTables(snapTs, filter)
 }
@@ -224,7 +225,7 @@ func (s *schemaStore) GetTableInfo(tableID int64, ts uint64) (*common.TableInfo,
 	return s.dataStorage.getTableInfo(tableID, ts)
 }
 
-func (s *schemaStore) FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, uint64, error) {
+func (s *schemaStore) FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]commonEvent.DDLEvent, uint64, error) {
 	currentResolvedTs := s.resolvedTs.Load()
 	if currentResolvedTs <= start {
 		return nil, currentResolvedTs, nil
@@ -240,7 +241,7 @@ func (s *schemaStore) FetchTableDDLEvents(tableID int64, tableFilter filter.Filt
 }
 
 // FetchTableTriggerDDLEvents returns the next ddl events which finishedTs are within the range (start, end]
-func (s *schemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]common.DDLEvent, uint64, error) {
+func (s *schemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]commonEvent.DDLEvent, uint64, error) {
 	if limit == 0 {
 		log.Panic("limit cannot be 0")
 	}

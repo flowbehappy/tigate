@@ -17,7 +17,7 @@ import (
 	"strings"
 
 	"github.com/flowbehappy/tigate/pkg/apperror"
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/log"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	tfilter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -56,7 +56,7 @@ type Filter interface {
 	Verify(tableInfos []*model.TableInfo) error
 
 	// filter ddl event to update query and influenced table spans
-	FilterDDLEvent(ddl *common.DDLEvent) error
+	FilterDDLEvent(ddl *commonEvent.DDLEvent) error
 }
 
 // filter implements Filter.
@@ -98,7 +98,7 @@ func NewFilter(cfg *config.FilterConfig, tz string, caseSensitive bool) (Filter,
 	}, nil
 }
 
-func (f *filter) FilterDDLEvent(ddl *common.DDLEvent) error {
+func (f *filter) FilterDDLEvent(ddl *commonEvent.DDLEvent) error {
 	query := ddl.Query
 	queryList := strings.Split(query, ";")
 	if len(queryList) == 1 {

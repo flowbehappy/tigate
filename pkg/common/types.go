@@ -141,3 +141,10 @@ func (g GID) String() string {
 	buf.WriteString(strconv.FormatUint(g.high, 10))
 	return buf.String()
 }
+
+func NewGIDWithValue(low uint64, high uint64) GID {
+	return GID{
+		low:  low,
+		high: high,
+	}
+}
