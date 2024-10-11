@@ -26,6 +26,57 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestOneBlockEvent(t *testing.T) {
+	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
+	sche.AddNewNode("node1")
+	sche.AddNewTable(common.Table{1, 1}, 0)
+	stm := sche.GetTasksByTableIDs(1)[0]
+	stm.Primary = "node1"
+	stm.State = scheduler.SchedulerStatusWorking
+	sche.tryMoveTask(stm.ID, stm, scheduler.SchedulerStatusAbsent, "", true)
+	barrier := NewBarrier(sche)
+	msg := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+		ChangefeedID: "test",
+		Statuses: []*heartbeatpb.TableSpanStatus{
+			{
+				ID: stm.ID.ToPB(),
+				State: &heartbeatpb.State{
+					IsBlocked: true,
+					BlockTs:   10,
+					BlockTables: &heartbeatpb.InfluencedTables{
+						InfluenceType: heartbeatpb.InfluenceType_All,
+					},
+				},
+				CheckpointTs: 0,
+			},
+		},
+	})
+	require.NotNil(t, msg)
+	resp := msg.Message[0].(*heartbeatpb.HeartBeatResponse)
+	require.Equal(t, barrier.blockedDispatcher[stm.ID], barrier.blockedTs[10])
+	event := barrier.blockedTs[10]
+	require.Equal(t, uint64(10), event.commitTs)
+	require.True(t, event.writerDispatcher == stm.ID)
+	require.True(t, event.selected)
+	require.False(t, event.writerDispatcherAdvanced)
+	require.Nil(t, event.reportedDispatchers)
+	require.Equal(t, resp.DispatcherStatuses[0].Ack.CommitTs, uint64(10))
+	require.Equal(t, resp.DispatcherStatuses[0].Action.CommitTs, uint64(10))
+	require.Equal(t, resp.DispatcherStatuses[0].Action.Action, heartbeatpb.Action_Write)
+
+	msg = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+		ChangefeedID: "test",
+		Statuses: []*heartbeatpb.TableSpanStatus{
+			{
+				ID:           stm.ID.ToPB(),
+				CheckpointTs: 10,
+			},
+		},
+	})
+	require.Len(t, barrier.blockedTs, 0)
+	require.Len(t, barrier.blockedDispatcher, 0)
+}
+
 func TestNormalBlock(t *testing.T) {
 	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
@@ -121,7 +172,7 @@ func TestNormalBlock(t *testing.T) {
 	event := barrier.blockedTs[10]
 	require.Equal(t, uint64(10), event.commitTs)
 	require.True(t, event.writerDispatcher == selectDispatcherID)
-	require.Nil(t, event.advancedDispatchers)
+	require.Nil(t, event.reportedDispatchers)
 
 	// repeated status
 	barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
@@ -165,7 +216,7 @@ func TestNormalBlock(t *testing.T) {
 	})
 	require.Equal(t, uint64(10), event.commitTs)
 	require.True(t, event.writerDispatcher == selectDispatcherID)
-	require.Nil(t, event.advancedDispatchers)
+	require.Nil(t, event.reportedDispatchers)
 
 	// selected node write done
 	msg = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
