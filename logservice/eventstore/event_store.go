@@ -342,9 +342,6 @@ func (e *eventStore) GetDispatcherDMLEventState(dispatcherID common.DispatcherID
 
 func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange common.DataRange) (EventIterator, error) {
 	// do some check
-	log.Info("get iterator",
-		zap.Any("dispatcherID", dispatcherID),
-		zap.String("span", dataRange.Span.String()))
 	e.spanStates.RLock()
 	state, ok := e.spanStates.dispatcherMap.Get(dataRange.Span)
 	// TODO: it is possible that the dispatcher maybe unreigsitered?
