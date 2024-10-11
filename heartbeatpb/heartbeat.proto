@@ -173,6 +173,7 @@ message State {
     InfluencedTables NeedDroppedTables =4;
     repeated Table NeedAddedTables = 5;
     repeated SchemaIDChange UpdatedSchemas = 6;
+    bool IsSyncPoint = 7;
 }
 
 message TableSpanStatus {

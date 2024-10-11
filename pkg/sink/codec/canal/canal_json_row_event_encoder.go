@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/goccy/go-json"
 	"github.com/mailru/easyjson/jwriter"
@@ -81,7 +82,7 @@ func fillColumns(
 
 func newJSONMessageForDML(
 	builder *canalEntryBuilder,
-	e *common.RowChangedEvent,
+	e *commonEvent.RowChangedEvent,
 	config *ticommon.Config,
 	messageTooLarge bool,
 	claimCheckFileName string,
@@ -292,7 +293,7 @@ func newJSONMessageForDML(
 	return value, nil
 }
 
-func eventTypeString(e *common.RowChangedEvent) string {
+func eventTypeString(e *commonEvent.RowChangedEvent) string {
 	if e.IsDelete() {
 		return "DELETE"
 	}
@@ -392,7 +393,7 @@ func (c *JSONRowEventEncoder) EncodeCheckpointEvent(ts uint64) (*ticommon.Messag
 func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 	ctx context.Context,
 	_ string,
-	e *common.RowChangedEvent,
+	e *commonEvent.RowChangedEvent,
 	callback func(),
 ) error {
 	value, err := newJSONMessageForDML(c.builder, e, c.config, false, "")
@@ -476,7 +477,7 @@ func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 }
 
 func (c *JSONRowEventEncoder) newClaimCheckLocationMessage(
-	event *common.RowChangedEvent, callback func(), fileName string,
+	event *commonEvent.RowChangedEvent, callback func(), fileName string,
 ) (*ticommon.Message, error) {
 	claimCheckLocation := c.claimCheck.FileNameWithPrefix(fileName)
 	value, err := newJSONMessageForDML(c.builder, event, c.config, true, claimCheckLocation)
@@ -518,7 +519,7 @@ func (c *JSONRowEventEncoder) Build() []*ticommon.Message {
 }
 
 // EncodeDDLEvent encodes DDL events
-func (c *JSONRowEventEncoder) EncodeDDLEvent(e *common.DDLEvent) (*ticommon.Message, error) {
+func (c *JSONRowEventEncoder) EncodeDDLEvent(e *commonEvent.DDLEvent) (*ticommon.Message, error) {
 	// message := c.newJSONMessageForDDL(e)
 	// value, err := json.Marshal(message)
 	// if err != nil {

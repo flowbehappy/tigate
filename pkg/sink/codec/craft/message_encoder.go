@@ -19,6 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tiflow/cdc/model"
 )
@@ -312,7 +313,7 @@ func NewResolvedEventEncoder(allocator *SliceAllocator, ts uint64) *MessageEncod
 }
 
 // NewDDLEventEncoder creates a new encoder with given allocator and timestamp
-func NewDDLEventEncoder(allocator *SliceAllocator, ev *common.DDLEvent) *MessageEncoder {
+func NewDDLEventEncoder(allocator *SliceAllocator, ev *commonEvent.DDLEvent) *MessageEncoder {
 	// ty := uint64(ev.Type)
 	// query := ev.Query
 	// var schema, table *string

@@ -16,7 +16,7 @@ package craft
 import (
 	"context"
 
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -45,7 +45,7 @@ func (e *BatchEncoder) EncodeCheckpointEvent(ts uint64) (*ticommon.Message, erro
 func (e *BatchEncoder) AppendRowChangedEvent(
 	_ context.Context,
 	_ string,
-	ev *common.RowChangedEvent,
+	ev *commonEvent.RowChangedEvent,
 	callback func(),
 ) error {
 	rows, size := e.rowChangedBuffer.AppendRowChangedEvent(ev, e.config.DeleteOnlyHandleKeyColumns)
@@ -59,7 +59,7 @@ func (e *BatchEncoder) AppendRowChangedEvent(
 }
 
 // EncodeDDLEvent implements the RowEventEncoder interface
-func (e *BatchEncoder) EncodeDDLEvent(ev *common.DDLEvent) (*ticommon.Message, error) {
+func (e *BatchEncoder) EncodeDDLEvent(ev *commonEvent.DDLEvent) (*ticommon.Message, error) {
 	// return ticommon.NewDDLMsg(config.ProtocolCraft,
 	// 	nil, NewDDLEventEncoder(e.allocator, ev).Encode(), ev), nil
 	return nil, nil

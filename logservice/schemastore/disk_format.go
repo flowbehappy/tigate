@@ -24,6 +24,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -547,7 +548,7 @@ func loadAllPhysicalTablesAtTs(
 	gcTs uint64,
 	snapVersion uint64,
 	tableFilter filter.Filter,
-) ([]common.Table, error) {
+) ([]commonEvent.Table, error) {
 	// TODO: respect tableFilter(filter table in kv snap is easy, filter ddl jobs need more attention)
 	databaseMap, err := loadDatabasesInKVSnap(storageSnap, gcTs)
 	if err != nil {
@@ -588,7 +589,7 @@ func loadAllPhysicalTablesAtTs(
 	log.Info("after load tables from ddl",
 		zap.Int("tableMapLen", len(tableMap)),
 		zap.Int("partitionMapLen", len(partitionMap)))
-	tables := make([]common.Table, 0)
+	tables := make([]commonEvent.Table, 0)
 	for tableID, tableInfo := range tableMap {
 		if _, ok := databaseMap[tableInfo.SchemaID]; !ok {
 			log.Panic("database not found",
@@ -602,13 +603,13 @@ func loadAllPhysicalTablesAtTs(
 		}
 		if partitionInfo, ok := partitionMap[tableID]; ok {
 			for partitionID := range partitionInfo {
-				tables = append(tables, common.Table{
+				tables = append(tables, commonEvent.Table{
 					SchemaID: tableInfo.SchemaID,
 					TableID:  partitionID,
 				})
 			}
 		} else {
-			tables = append(tables, common.Table{
+			tables = append(tables, commonEvent.Table{
 				SchemaID: tableInfo.SchemaID,
 				TableID:  tableID,
 			})

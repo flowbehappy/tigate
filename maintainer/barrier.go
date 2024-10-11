@@ -23,9 +23,9 @@ import (
 // Barrier manage the block events for the changefeed
 // the block event processing logic:
 // 1. dispatcher report an event to maintainer, like ddl, sync point
-// 2. maintainer wait for all dispatchers to reach the same commit ts (all dispatchers will report the same event)
+// 2. maintainer wait for all dispatchers reporting block event (all dispatchers will report the same event)
 // 3. maintainer choose one dispatcher to write(tack an action) the event to downstream, (resend logic is needed)
-// 4. maintainer wait for the selected dispatcher advance its checkpoint ts,(means it already finished the write action), (resend logic is needed)
+// 4. maintainer wait for the selected dispatcher advance its checkpoint ts, checkpoint ts >= block ts,(means it already finished the write action), (resend logic is needed)
 // 5. maintainer send pass action to all other dispatchers. (resend logic is needed)
 // 6. maintainer wait for all dispatchers advance checkpoints, and cleanup memory
 type Barrier struct {
@@ -90,25 +90,10 @@ func (b *Barrier) handleNoStateHeartbeat(dispatcherID common.DispatcherID, check
 	if !ok {
 		return nil
 	}
-	// no block event send ,but reached the block point
-	if checkpointTs == event.commitTs {
-		action := event.dispatcherReachedBlockTs(dispatcherID)
-		// all dispatcher reported heartbeat, select one to write
-		if action != nil {
-			dispatcherStatus := &heartbeatpb.DispatcherStatus{
-				InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
-					InfluenceType: heartbeatpb.InfluenceType_Normal,
-					DispatcherIDs: []*heartbeatpb.DispatcherID{event.writerDispatcher.ToPB()},
-				},
-				Action: action,
-			}
-			return dispatcherStatus
-		}
-	}
 
 	// there is a block event and the dispatcher advanced its checkpoint ts
 	// which means we have sent pass or write action to it
-	if checkpointTs > event.commitTs {
+	if checkpointTs >= event.commitTs {
 		// the writer already synced ddl to downstream
 		if event.writerDispatcher == dispatcherID {
 			// schedule new and removed tasks
@@ -143,10 +128,8 @@ func (b *Barrier) handleStateHeartbeat(changefeedID string,
 	if blockState.IsBlocked {
 		// insert an event, or get the old one event check if the event is already tracked
 		event := b.getOrInsertNewEvent(changefeedID, dispatcherID, blockState)
-		// the dispatcher already reached the block event block ts, check whether we need to send write action
-		if status.CheckpointTs == blockState.BlockTs {
-			dispatcherStatus.Action = event.dispatcherReachedBlockTs(dispatcherID)
-		}
+		// check if all dispatchers already reported the block event, and check whether we need to send write action
+		dispatcherStatus.Action = event.dispatcherReachedBlockTs(dispatcherID)
 	} else {
 		// it's not a blocked event, it must be sent by table event trigger dispatcher
 		// the ddl already synced to downstream , e.g.: create table, drop table

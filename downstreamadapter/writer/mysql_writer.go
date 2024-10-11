@@ -17,15 +17,19 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/errorutil"
 	"github.com/pingcap/tiflow/pkg/retry"
@@ -39,21 +43,27 @@ const (
 
 // 用于给 mysql 类型的下游做 flush, 主打一个粗糙，先能跑起来再说
 type MysqlWriter struct {
-	db         *sql.DB
-	cfg        *MysqlConfig
-	statistics *metrics.Statistics
+	db                     *sql.DB
+	cfg                    *MysqlConfig
+	syncPointTableInit     bool
+	statistics             *metrics.Statistics
+	ChangefeedID           model.ChangeFeedID
+	lastCleanSyncPointTime time.Time
 }
 
 func NewMysqlWriter(db *sql.DB, cfg *MysqlConfig, changefeedID model.ChangeFeedID) *MysqlWriter {
 	statistics := metrics.NewStatistics(changefeedID, "TxnSink")
 	return &MysqlWriter{
-		db:         db,
-		cfg:        cfg,
-		statistics: statistics,
+		db:                     db,
+		cfg:                    cfg,
+		syncPointTableInit:     false,
+		ChangefeedID:           changefeedID,
+		lastCleanSyncPointTime: time.Now(),
+		statistics:             statistics,
 	}
 }
 
-func (w *MysqlWriter) FlushDDLEvent(event *common.DDLEvent) error {
+func (w *MysqlWriter) FlushDDLEvent(event *commonEvent.DDLEvent) error {
 	if event.GetDDLType() == timodel.ActionAddIndex && w.cfg.IsTiDB {
 		return w.asyncExecAddIndexDDLIfTimeout(event)
 	}
@@ -67,10 +77,179 @@ func (w *MysqlWriter) FlushDDLEvent(event *common.DDLEvent) error {
 		callback()
 	}
 	return nil
-
 }
 
-func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *common.DDLEvent) error {
+func (w *MysqlWriter) FlushSyncPointEvent(event *commonEvent.SyncPointEvent) error {
+	if !w.syncPointTableInit {
+		// create sync point table if not exist
+		err := w.CreateSyncTable(context.Background())
+		if err != nil {
+			log.Error("create sync table failed", zap.Error(err))
+			return err
+		}
+		w.syncPointTableInit = true
+	}
+	err := w.SendSyncPointEvent(event)
+	if err != nil {
+		log.Error("send syncpoint event failed", zap.Error(err))
+		return err
+	}
+	for _, callback := range event.PostTxnFlushed {
+		callback()
+	}
+	return nil
+}
+
+func (w *MysqlWriter) SendSyncPointEvent(event *commonEvent.SyncPointEvent) error {
+	ctx := context.Background()
+	tx, err := w.db.BeginTx(ctx, nil)
+	if err != nil {
+		log.Error("sync table: begin Tx fail", zap.Error(err))
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "sync table: begin Tx fail;"))
+	}
+	row := tx.QueryRow("select @@tidb_current_ts")
+	var secondaryTs string
+	err = row.Scan(&secondaryTs)
+	if err != nil {
+		log.Info("sync table: get tidb_current_ts err", zap.String("changefeed", w.ChangefeedID.String()))
+		err2 := tx.Rollback()
+		if err2 != nil {
+			log.Error("failed to write syncpoint table", zap.Error(err))
+		}
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write syncpoint table;"))
+	}
+	// insert ts map
+	var builder strings.Builder
+	builder.WriteString("insert ignore into ")
+	builder.WriteString(filter.TiCDCSystemSchema)
+	builder.WriteString(".")
+	builder.WriteString(filter.SyncPointTable)
+	builder.WriteString("(ticdc_cluster_id, changefeed, primary_ts, secondary_ts) VALUES ('")
+	builder.WriteString(config.GetGlobalServerConfig().ClusterID)
+	builder.WriteString("', '")
+	builder.WriteString(w.ChangefeedID.String())
+	builder.WriteString("', ")
+	builder.WriteString(strconv.FormatUint(event.GetCommitTs(), 10))
+	builder.WriteString(", ")
+	builder.WriteString(secondaryTs)
+	builder.WriteString(")")
+	query := builder.String()
+
+	_, err = tx.Exec(query)
+	if err != nil {
+		log.Error("failed to write syncpoint table", zap.Error(err))
+		err2 := tx.Rollback()
+		if err2 != nil {
+			log.Error("failed to write syncpoint table", zap.Error(err2))
+		}
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write syncpoint table;"))
+	}
+
+	// set global tidb_external_ts to secondary ts
+	// TiDB supports tidb_external_ts system variable since v6.4.0.
+	query = fmt.Sprintf("set global tidb_external_ts = %s", secondaryTs)
+	_, err = tx.Exec(query)
+	if err != nil {
+		if errorutil.IsSyncPointIgnoreError(err) {
+			// TODO(dongmen): to confirm if we need to log this error.
+			log.Warn("set global external ts failed, ignore this error", zap.Error(err))
+		} else {
+			err2 := tx.Rollback()
+			if err2 != nil {
+				log.Error("failed to write syncpoint table", zap.Error(err2))
+			}
+			return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write syncpoint table;"))
+		}
+	}
+
+	// clean stale ts map in downstream
+	if time.Since(w.lastCleanSyncPointTime) >= w.cfg.SyncPointRetention {
+		var builder strings.Builder
+		builder.WriteString("DELETE IGNORE FROM ")
+		builder.WriteString(filter.TiCDCSystemSchema)
+		builder.WriteString(".")
+		builder.WriteString(filter.SyncPointTable)
+		builder.WriteString(" WHERE ticdc_cluster_id = '")
+		builder.WriteString(config.GetGlobalServerConfig().ClusterID)
+		builder.WriteString("' and changefeed = '")
+		builder.WriteString(w.ChangefeedID.String())
+		builder.WriteString("' and created_at < (NOW() - INTERVAL ")
+		builder.WriteString(fmt.Sprintf("%.2f", w.cfg.SyncPointRetention.Seconds()))
+		builder.WriteString(" SECOND)")
+		query := builder.String()
+
+		_, err = tx.Exec(query)
+		if err != nil {
+			// It is ok to ignore the error, since it will not affect the correctness of the system,
+			// and no any business logic depends on this behavior, so we just log the error.
+			log.Error("failed to clean syncpoint table", zap.Error(cerror.WrapError(cerror.ErrMySQLTxnError, err)))
+		} else {
+			w.lastCleanSyncPointTime = time.Now()
+		}
+	}
+
+	err = tx.Commit()
+	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write syncpoint table;"))
+}
+
+func (w *MysqlWriter) CreateSyncTable(ctx context.Context) error {
+	database := filter.TiCDCSystemSchema
+	tx, err := w.db.BeginTx(ctx, nil)
+	if err != nil {
+		log.Error("create sync table: begin Tx fail", zap.Error(err))
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "create sync table: begin Tx fail;"))
+	}
+
+	// we try to set cdc write source for the ddl
+	if err = SetWriteSource(w.cfg, tx); err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			if errors.Cause(rbErr) != context.Canceled {
+				log.Error("Failed to rollback", zap.Error(err))
+			}
+		}
+		return err
+	}
+
+	_, err = tx.Exec("CREATE DATABASE IF NOT EXISTS " + database)
+	if err != nil {
+		errRollback := tx.Rollback()
+		if errRollback != nil {
+			log.Error("failed to create syncpoint table", zap.Error(errRollback))
+		}
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to create syncpoint table;"))
+	}
+	_, err = tx.Exec("USE " + database)
+	if err != nil {
+		errRollback := tx.Rollback()
+		if errRollback != nil {
+			log.Error("failed to create syncpoint table", zap.Error(errRollback))
+		}
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to create syncpoint table;"))
+	}
+	query := `CREATE TABLE IF NOT EXISTS %s
+	(
+		ticdc_cluster_id varchar (255),
+		changefeed varchar(255),
+		primary_ts varchar(18),
+		secondary_ts varchar(18),
+		created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		INDEX (created_at),
+		PRIMARY KEY (changefeed, primary_ts)
+	);`
+	query = fmt.Sprintf(query, filter.SyncPointTable)
+	_, err = tx.Exec(query)
+	if err != nil {
+		errRollback := tx.Rollback()
+		if errRollback != nil {
+			log.Error("failed to create syncpoint table", zap.Error(errRollback))
+		}
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to create syncpoint table;"))
+	}
+	err = tx.Commit()
+	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to create syncpoint table;"))
+}
+
+func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *commonEvent.DDLEvent) error {
 	done := make(chan error, 1)
 	// wait for 2 seconds at most
 	tick := time.NewTimer(2 * time.Second)
@@ -107,7 +286,7 @@ func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *common.DDLEvent) erro
 	}
 }
 
-func (w *MysqlWriter) execDDL(event *common.DDLEvent) error {
+func (w *MysqlWriter) execDDL(event *commonEvent.DDLEvent) error {
 	if w.cfg.DryRun {
 		log.Info("Dry run DDL", zap.String("sql", event.GetDDLQuery()))
 		return nil
@@ -161,7 +340,7 @@ func (w *MysqlWriter) execDDL(event *common.DDLEvent) error {
 	return nil
 }
 
-func (w *MysqlWriter) execDDLWithMaxRetries(event *common.DDLEvent) error {
+func (w *MysqlWriter) execDDLWithMaxRetries(event *commonEvent.DDLEvent) error {
 	return retry.Do(context.Background(), func() error {
 		err := w.statistics.RecordDDLExecution(func() error { return w.execDDL(event) })
 		if err != nil {
@@ -185,7 +364,7 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *common.DDLEvent) error {
 		retry.WithIsRetryableErr(errorutil.IsRetryableDDLError))
 }
 
-func (w *MysqlWriter) Flush(events []*common.DMLEvent, workerNum int) error {
+func (w *MysqlWriter) Flush(events []*commonEvent.DMLEvent, workerNum int) error {
 	w.statistics.ObserveRows(events)
 	dmls := w.prepareDMLs(events)
 	//log.Debug("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.Any("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values), zap.Any("startTs", dmls.startTs), zap.Any("workerNum", workerNum))
@@ -213,7 +392,7 @@ func (w *MysqlWriter) Flush(events []*common.DMLEvent, workerNum int) error {
 	return nil
 }
 
-func (w *MysqlWriter) prepareDMLs(events []*common.DMLEvent) *preparedDMLs {
+func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) *preparedDMLs {
 	// TODO: use a sync.Pool to reduce allocations.
 	startTs := make([]uint64, 0)
 	sqls := make([]string, 0)
@@ -248,7 +427,7 @@ func (w *MysqlWriter) prepareDMLs(events []*common.DMLEvent) *preparedDMLs {
 			var query string
 			var args []interface{}
 			// Update Event
-			if row.RowType == common.RowTypeUpdate {
+			if row.RowType == commonEvent.RowTypeUpdate {
 				query, args = buildUpdate(event.TableInfo, row)
 				if query != "" {
 					sqls = append(sqls, query)
@@ -258,7 +437,7 @@ func (w *MysqlWriter) prepareDMLs(events []*common.DMLEvent) *preparedDMLs {
 			}
 
 			// Delete Event
-			if row.RowType == common.RowTypeDelete {
+			if row.RowType == commonEvent.RowTypeDelete {
 				query, args = buildDelete(event.TableInfo, row)
 				if query != "" {
 					sqls = append(sqls, query)
@@ -270,7 +449,7 @@ func (w *MysqlWriter) prepareDMLs(events []*common.DMLEvent) *preparedDMLs {
 			// It will be translated directly into a
 			// INSERT(not in safe mode)
 			// or REPLACE(in safe mode) SQL.
-			if row.RowType == common.RowTypeInsert {
+			if row.RowType == commonEvent.RowTypeInsert {
 				query, args = buildInsert(event.TableInfo, row, w.cfg.SafeMode)
 				if query != "" {
 					sqls = append(sqls, query)

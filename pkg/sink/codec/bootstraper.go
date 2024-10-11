@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -108,7 +109,7 @@ func (b *bootstrapWorker) run(ctx context.Context) error {
 func (b *bootstrapWorker) addEvent(
 	ctx context.Context,
 	key model.TopicPartitionKey,
-	row *common.RowChangedEvent,
+	row *commonEvent.RowChangedEvent,
 ) error {
 	table, ok := b.activeTables.Load(row.GetTableID())
 	if !ok {
@@ -152,8 +153,8 @@ func (b *bootstrapWorker) sendBootstrapMsg(ctx context.Context, table *tableStat
 	return nil
 }
 
-func NewBootstrapDDLEvent(tableInfo *common.TableInfo) *common.DDLEvent {
-	return &common.DDLEvent{
+func NewBootstrapDDLEvent(tableInfo *common.TableInfo) *commonEvent.DDLEvent {
+	return &commonEvent.DDLEvent{
 		// StartTs:  0,
 		FinishedTs: 0,
 		// TableInfo:   tableInfo,
@@ -230,7 +231,7 @@ type tableStatistic struct {
 	tableInfo atomic.Value
 }
 
-func newTableStatistic(key model.TopicPartitionKey, row *common.RowChangedEvent) *tableStatistic {
+func newTableStatistic(key model.TopicPartitionKey, row *commonEvent.RowChangedEvent) *tableStatistic {
 	res := &tableStatistic{
 		id:    row.GetTableID(),
 		topic: key.Topic,
@@ -253,7 +254,7 @@ func (t *tableStatistic) shouldSendBootstrapMsg(
 		t.counter.Load() >= sendBootstrapMsgCountInterval
 }
 
-func (t *tableStatistic) update(row *common.RowChangedEvent, totalPartition int32) {
+func (t *tableStatistic) update(row *commonEvent.RowChangedEvent, totalPartition int32) {
 	t.counter.Add(1)
 	t.lastMsgReceivedTime.Store(time.Now())
 

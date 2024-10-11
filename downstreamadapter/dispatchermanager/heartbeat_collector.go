@@ -15,8 +15,9 @@ package dispatchermanager
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"

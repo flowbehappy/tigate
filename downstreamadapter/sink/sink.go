@@ -18,12 +18,13 @@ import (
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink"
+	"github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
 )
 
@@ -35,10 +36,10 @@ const (
 )
 
 type Sink interface {
-	AddDMLEvent(event *common.DMLEvent, tableProgress *types.TableProgress)
-	AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress)
-	PassDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress)
-	AddCheckpointTs(ts uint64, tableNames []*common.SchemaTableName)
+	AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress)
+	AddBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress)
+	PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress)
+	AddCheckpointTs(ts uint64, tableNames []*commonEvent.SchemaTableName)
 	// IsEmpty(tableSpan *common.TableSpan) bool
 	// AddTableSpan(tableSpan *common.TableSpan)
 	// RemoveTableSpan(tableSpan *common.TableSpan)
@@ -61,6 +62,7 @@ func NewSink(config *config.ChangefeedConfig, changefeedID model.ChangeFeedID) (
 			log.Error("create mysql sink failed", zap.Error(err))
 			return nil, err
 		}
+		cfg.SyncPointRetention = util.GetOrZero(config.SyncPointRetention)
 		return NewMysqlSink(changefeedID, 16, cfg, db), nil
 	case sink.KafkaScheme, sink.KafkaSSLScheme:
 		sink, err := NewKafkaSink(changefeedID, sinkURI, config.SinkConfig)

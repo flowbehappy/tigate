@@ -21,6 +21,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/maintainer/split"
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
@@ -36,7 +37,7 @@ import (
 // Controller schedules and balance tables
 type Controller struct {
 	//  initialTables hold all tables that before controller bootstrapped
-	initialTables []common.Table
+	initialTables []commonEvent.Table
 	// group the tasks by nodes
 	nodeTasks map[node.ID]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]
 	// group the tasks by schema id
@@ -153,7 +154,7 @@ func (c *Controller) GetAllNodes() []node.ID {
 	return nodes
 }
 
-func (c *Controller) AddNewTable(table common.Table, startTs uint64) {
+func (c *Controller) AddNewTable(table commonEvent.Table, startTs uint64) {
 	tables, ok := c.tableTasks[table.TableID]
 	if ok && len(tables) > 0 {
 		log.Warn("table already add, ignore",
@@ -176,7 +177,7 @@ func (c *Controller) AddNewTable(table common.Table, startTs uint64) {
 	c.addNewSpans(table.SchemaID, tableSpan.TableID, tableSpans, startTs)
 }
 
-func (c *Controller) SetInitialTables(tables []common.Table) {
+func (c *Controller) SetInitialTables(tables []commonEvent.Table) {
 	c.initialTables = tables
 }
 

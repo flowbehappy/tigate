@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	newcommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/flowbehappy/tigate/pkg/util"
@@ -19,7 +20,7 @@ import (
 	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 )
 
-func encodeRowChangedEvent(e *common.RowEvent, config *newcommon.Config, largeMessageOnlyHandleKeyColumns bool, claimCheckLocationName string) ([]byte, []byte, int, error) {
+func encodeRowChangedEvent(e *commonEvent.RowEvent, config *newcommon.Config, largeMessageOnlyHandleKeyColumns bool, claimCheckLocationName string) ([]byte, []byte, int, error) {
 	keyBuf := &bytes.Buffer{}
 	valueBuf := &bytes.Buffer{}
 	keyWriter := util.BorrowJSONWriter(keyBuf)
@@ -94,7 +95,7 @@ func encodeRowChangedEvent(e *common.RowEvent, config *newcommon.Config, largeMe
 	return key, valueCompressed, length, nil
 }
 
-func encodeDDLEvent(e *common.DDLEvent, config *newcommon.Config) ([]byte, []byte, error) {
+func encodeDDLEvent(e *commonEvent.DDLEvent, config *newcommon.Config) ([]byte, []byte, error) {
 	keyBuf := &bytes.Buffer{}
 	valueBuf := &bytes.Buffer{}
 	keyWriter := util.BorrowJSONWriter(keyBuf)

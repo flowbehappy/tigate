@@ -23,6 +23,7 @@ import (
 	"strconv"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -32,7 +33,7 @@ import (
 )
 
 // VerifyChecksum calculate the checksum value, and compare it with the expected one, return error if not identical.
-func VerifyChecksum(event *common.RowChangedEvent, db *sql.DB) error {
+func VerifyChecksum(event *commonEvent.RowChangedEvent, db *sql.DB) error {
 	// if expected is 0, it means the checksum is not enabled, so we don't need to verify it.
 	// the data maybe restored by br, and the checksum is not enabled, so no expected here.
 	if event.Checksum.Current != 0 {
