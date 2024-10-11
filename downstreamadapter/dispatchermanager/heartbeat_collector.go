@@ -40,7 +40,7 @@ type HeartBeatCollector struct {
 	wg   sync.WaitGroup
 	from node.ID
 
-	reqQueue            *HeartbeatRequestQueue
+	heartBeatReqQueue   *HeartbeatRequestQueue
 	blockStatusReqQueue *BlockStatusRequestQueue
 
 	heartBeatResponseDynamicStream          dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]
@@ -51,7 +51,7 @@ type HeartBeatCollector struct {
 func NewHeartBeatCollector(serverId node.ID) *HeartBeatCollector {
 	heartBeatCollector := HeartBeatCollector{
 		from:                                    serverId,
-		reqQueue:                                NewHeartbeatRequestQueue(),
+		heartBeatReqQueue:                       NewHeartbeatRequestQueue(),
 		blockStatusReqQueue:                     NewBlockStatusRequestQueue(),
 		heartBeatResponseDynamicStream:          GetHeartBeatResponseDynamicStream(),
 		schedulerDispatcherRequestDynamicStream: GetSchedulerDispatcherRequestDynamicStream(),
@@ -74,7 +74,7 @@ func NewHeartBeatCollector(serverId node.ID) *HeartBeatCollector {
 }
 
 func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherManager) error {
-	m.SetHeartbeatRequestQueue(c.reqQueue)
+	m.SetHeartbeatRequestQueue(c.heartBeatReqQueue)
 	m.SetBlockStatusRequestQueue(c.blockStatusReqQueue)
 	err := c.heartBeatResponseDynamicStream.AddPath(m.changefeedID, m)
 	if err != nil {
@@ -92,7 +92,7 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherMa
 func (c *HeartBeatCollector) sendHeartBeatMessages() {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	for {
-		heartBeatRequestWithTargetID := c.reqQueue.Dequeue()
+		heartBeatRequestWithTargetID := c.heartBeatReqQueue.Dequeue()
 		err := mc.SendCommand(
 			messaging.NewSingleTargetMessage(
 				heartBeatRequestWithTargetID.TargetID,
