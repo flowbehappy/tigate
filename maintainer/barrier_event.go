@@ -43,7 +43,7 @@ type BarrierEvent struct {
 	newTables      []*heartbeatpb.Table
 	schemaIDChange []*heartbeatpb.SchemaIDChange
 
-	advancedDispatchers map[common.DispatcherID]bool
+	reportedDispatchers map[common.DispatcherID]bool
 	lastResendTime      time.Time
 }
 
@@ -58,7 +58,7 @@ func NewBlockEvent(cfID string, scheduler *Controller,
 		newTables:           status.NeedAddedTables,
 		dropDispatchers:     status.NeedDroppedTables,
 		schemaIDChange:      status.UpdatedSchemas,
-		advancedDispatchers: make(map[common.DispatcherID]bool),
+		reportedDispatchers: make(map[common.DispatcherID]bool),
 		lastResendTime:      time.Time{},
 	}
 	if event.blockedDispatchers != nil && event.blockedDispatchers.InfluenceType == heartbeatpb.InfluenceType_Normal {
@@ -122,12 +122,12 @@ func (be *BarrierEvent) allDispatcherReported() bool {
 	// todo: we should check ddl dispatcher checkpoint ts here, because the size may affect by ddls?
 	switch be.blockedDispatchers.InfluenceType {
 	case heartbeatpb.InfluenceType_DB:
-		return len(be.advancedDispatchers) >=
+		return len(be.reportedDispatchers) >=
 			len(be.scheduler.GetTasksBySchemaID(be.blockedDispatchers.SchemaID))
 	case heartbeatpb.InfluenceType_All:
-		return len(be.advancedDispatchers) >= be.scheduler.TaskSize()
+		return len(be.reportedDispatchers) >= be.scheduler.TaskSize()
 	case heartbeatpb.InfluenceType_Normal:
-		return len(be.advancedDispatchers) >= len(be.blockedTasks)
+		return len(be.reportedDispatchers) >= len(be.blockedTasks)
 	}
 	return false
 }
@@ -179,18 +179,19 @@ func (be *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
 	return msgs
 }
 
-// dispatcherReachedBlockTs check if all the dispatchers reached the block ts
+// dispatcherReachedBlockTs check if all the dispatchers reported the block events,
+// if so, select one dispatcher to write, currently choose the last one
 func (be *BarrierEvent) dispatcherReachedBlockTs(dispatcherID common.DispatcherID) *heartbeatpb.DispatcherAction {
 	if be.selected {
 		return nil
 	}
-	be.advancedDispatchers[dispatcherID] = true
+	be.reportedDispatchers[dispatcherID] = true
 	// all dispatcher reported heartbeat, select the last one to write
 	if be.allDispatcherReported() {
 		be.writerDispatcher = dispatcherID
 		be.selected = true
 		// release memory
-		be.advancedDispatchers = nil
+		be.reportedDispatchers = nil
 
 		log.Info("all dispatcher reported heartbeat, select one to write",
 			zap.String("changefeed", be.cfID),
