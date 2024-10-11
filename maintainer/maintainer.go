@@ -22,6 +22,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/maintainer/split"
+	"github.com/flowbehappy/tigate/pkg/bootstrap"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
@@ -63,7 +64,7 @@ type Maintainer struct {
 	checkpointTsByCapture map[node.ID]heartbeatpb.Watermark
 
 	state        heartbeatpb.ComponentState
-	bootstrapper *Bootstrapper
+	bootstrapper *bootstrap.Bootstrapper[heartbeatpb.MaintainerBootstrapResponse]
 
 	changefeedSate model.FeedState
 
@@ -79,8 +80,8 @@ type Maintainer struct {
 	nodeChanged    *atomic.Bool
 	lastReportTime time.Time
 
-	scheduler *Scheduler
-	barrier   *Barrier
+	controller *Controller
+	barrier    *Barrier
 
 	removing        bool
 	cascadeRemoving bool
@@ -118,7 +119,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		selfNode:        selfNode,
 		stream:          stream,
 		taskScheduler:   taskScheduler,
-		scheduler:       NewScheduler(cfID.ID, checkpointTs, pdapi, regionCache, cfg.Config.Scheduler, 10000, time.Minute),
+		controller:      NewController(cfID.ID, checkpointTs, pdapi, regionCache, cfg.Config.Scheduler, 10000, time.Minute),
 		mc:              appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		state:           heartbeatpb.ComponentState_Working,
 		removed:         atomic.NewBool(false),
@@ -146,8 +147,8 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		tableCountGauge:                metrics.TableGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		handleEventDuration:            metrics.MaintainerHandleEventDuration.WithLabelValues(cfID.Namespace, cfID.ID),
 	}
-	m.bootstrapper = NewBootstrapper(m.id.ID, m.getNewBootstrapFn())
-	m.barrier = NewBarrier(m.scheduler)
+	m.bootstrapper = bootstrap.NewBootstrapper[heartbeatpb.MaintainerBootstrapResponse](m.id.ID, m.getNewBootstrapFn())
+	m.barrier = NewBarrier(m.controller)
 	log.Info("maintainer is created", zap.String("id", cfID.String()))
 	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace, cfID.ID).Inc()
 	return m
@@ -238,7 +239,7 @@ func (m *Maintainer) initialize() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	m.scheduler.SetInitialTables(tables)
+	m.controller.SetInitialTables(tables)
 
 	log.Info("changefeed maintainer initialized",
 		zap.String("id", m.id.String()))
@@ -257,7 +258,7 @@ func (m *Maintainer) initialize() error {
 	var newNodes = make([]*node.Info, 0, len(nodes))
 	for id, n := range nodes {
 		newNodes = append(newNodes, n)
-		m.scheduler.AddNewNode(id)
+		m.controller.AddNewNode(id)
 	}
 	m.sendMessages(m.bootstrapper.HandleNewNodes(newNodes))
 	// setup period event
@@ -327,7 +328,7 @@ func (m *Maintainer) onRemoveMaintainer(cascade bool) {
 }
 
 func (m *Maintainer) onCheckpointTsPersisted(msg *heartbeatpb.CheckpointTsMessage) {
-	stm := m.scheduler.GetTask(m.scheduler.ddlDispatcherID)
+	stm := m.controller.GetTask(m.controller.ddlDispatcherID)
 	if stm == nil {
 		log.Warn("ddl dispatcher is not found, can not send checkpoint message",
 			zap.String("id", m.id.String()))
@@ -344,14 +345,14 @@ func (m *Maintainer) onNodeChanged() {
 	for id, n := range activeNodes {
 		if _, ok := m.bootstrapper.GetAllNodes()[id]; !ok {
 			newNodes = append(newNodes, n)
-			m.scheduler.AddNewNode(id)
+			m.controller.AddNewNode(id)
 		}
 	}
 	var removedNodes []node.ID
 	for id, _ := range m.bootstrapper.GetAllNodes() {
 		if _, ok := activeNodes[id]; !ok {
 			removedNodes = append(removedNodes, id)
-			m.scheduler.RemoveNode(id)
+			m.controller.RemoveNode(id)
 		}
 	}
 	log.Info("maintainer node changed",
@@ -370,14 +371,14 @@ func (m *Maintainer) onNodeChanged() {
 func (m *Maintainer) calCheckpointTs() {
 	m.updateMetrics()
 	if time.Since(m.lastCheckpointTsTime) < 2*time.Second ||
-		!m.scheduler.ScheduleFinished() {
+		!m.controller.ScheduleFinished() {
 		return
 	}
 	m.lastCheckpointTsTime = time.Now()
 
 	newWatermark := heartbeatpb.NewMaxWatermark()
 	for id, _ := range m.bootstrapper.GetAllNodes() {
-		if m.scheduler.GetTaskSizeByNodeID(id) > 0 {
+		if m.controller.GetTaskSizeByNodeID(id) > 0 {
 			if _, ok := m.checkpointTsByCapture[id]; !ok {
 				log.Debug("checkpointTs can not be advanced, since missing capture heartbeat",
 					zap.String("changefeed", m.id.ID),
@@ -427,7 +428,7 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 	if req.Watermark != nil {
 		m.checkpointTsByCapture[msg.From] = *req.Watermark
 	}
-	m.scheduler.HandleStatus(msg.From, req.Statuses)
+	m.controller.HandleStatus(msg.From, req.Statuses)
 	ackMsg := m.barrier.HandleStatus(msg.From, req)
 	m.sendMessages([]*messaging.TargetMessage{ackMsg})
 	if req.Warning != nil {
@@ -447,7 +448,7 @@ func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage)
 	log.Info("received maintainer bootstrap response",
 		zap.String("changefeed", m.id.ID),
 		zap.Any("server", msg.From))
-	m.scheduler.AddNewNode(msg.From)
+	m.controller.AddNewNode(msg.From)
 	cachedResp := m.bootstrapper.HandleBootstrapResponse(msg.From, msg.Message[0].(*heartbeatpb.MaintainerBootstrapResponse))
 	m.onBootstrapDone(cachedResp)
 }
@@ -494,7 +495,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 			}
 		}
 	}
-	m.scheduler.FinishBootstrap(workingMap)
+	m.controller.FinishBootstrap(workingMap)
 }
 
 // initTableIDs get tables ids base on the filter and checkpoint ts
@@ -521,7 +522,7 @@ func (m *Maintainer) onNodeClosed(from node.ID, response *heartbeatpb.Maintainer
 
 func (m *Maintainer) handleResendMessage() {
 	// send scheduling message
-	m.sendMessages(m.scheduler.GetSchedulingMessages())
+	m.sendMessages(m.controller.GetSchedulingMessages())
 	// resend bootstrap message
 	m.sendMessages(m.bootstrapper.ResendBootstrapMessage())
 	// resend closing message
@@ -623,7 +624,7 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 func (m *Maintainer) onPeriodTask() {
 	// schedule absent tasks
 	if m.bootstrapper.CheckAllNodeInitialized() {
-		m.scheduler.Schedule()
+		m.controller.Schedule()
 	}
 	// send scheduling messages
 	m.handleResendMessage()
@@ -638,11 +639,11 @@ func (m *Maintainer) onPeriodTask() {
 func (m *Maintainer) collectMetrics() {
 	if time.Since(m.lastPrintStatusTime) > time.Second*20 {
 		tableStates := make(map[scheduler.SchedulerStatus]int)
-		total := m.scheduler.TaskSize()
-		tableStates[scheduler.SchedulerStatusWorking] = m.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusWorking)
-		tableStates[scheduler.SchedulerStatusAbsent] = m.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusAbsent)
-		tableStates[scheduler.SchedulerStatusCommiting] = m.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusCommiting)
-		tableStates[scheduler.SchedulerStatusRemoving] = m.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusRemoving)
+		total := m.controller.TaskSize()
+		tableStates[scheduler.SchedulerStatusWorking] = m.controller.GetTaskSizeByState(scheduler.SchedulerStatusWorking)
+		tableStates[scheduler.SchedulerStatusAbsent] = m.controller.GetTaskSizeByState(scheduler.SchedulerStatusAbsent)
+		tableStates[scheduler.SchedulerStatusCommiting] = m.controller.GetTaskSizeByState(scheduler.SchedulerStatusCommiting)
+		tableStates[scheduler.SchedulerStatusRemoving] = m.controller.GetTaskSizeByState(scheduler.SchedulerStatusRemoving)
 
 		m.tableCountGauge.Set(float64(total))
 		m.scheduledTaskGauge.Set(float64(total - tableStates[scheduler.SchedulerStatusAbsent]))

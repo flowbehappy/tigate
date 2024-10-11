@@ -258,7 +258,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	}
 
 	for id := 0; id < tableSize; id++ {
-		maintainer.scheduler.AddNewTable(common.Table{
+		maintainer.controller.AddNewTable(common.Table{
 			SchemaID: 1,
 			TableID:  int64(id),
 		}, 10)
@@ -278,7 +278,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	stream.Close()
 	//include a ddl dispatcher
 	require.Equal(t, tableSize+1,
-		maintainer.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
+		maintainer.controller.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
 	require.Equal(t, tableSize+1,
-		maintainer.scheduler.GetTaskSizeByNodeID(n.ID))
+		maintainer.controller.GetTaskSizeByNodeID(n.ID))
 }

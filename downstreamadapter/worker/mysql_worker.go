@@ -155,7 +155,10 @@ func (t *MysqlDDLWorker) Run(ctx context.Context) {
 			case *commonEvent.DDLEvent:
 				t.mysqlWriter.FlushDDLEvent(event.(*commonEvent.DDLEvent))
 			case *commonEvent.SyncPointEvent:
-				t.mysqlWriter.FlushSyncPointEvent(event.(*commonEvent.SyncPointEvent))
+				err := t.mysqlWriter.FlushSyncPointEvent(event.(*commonEvent.SyncPointEvent))
+				if err != nil {
+					log.Error("Failed to flush sync point event", zap.Error(err), zap.Any("event", event))
+				}
 			default:
 				log.Error("unknown event type", zap.Any("event", event))
 			}

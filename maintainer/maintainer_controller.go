@@ -37,16 +37,16 @@ import (
 	"go.uber.org/zap"
 )
 
-// Scheduler schedules and balance tables
-type Scheduler struct {
-	//  initialTables hold all tables that before scheduler bootstrapped
+// Controller schedules and balance tables
+type Controller struct {
+	//  initialTables hold all tables that before controller bootstrapped
 	initialTables []commonEvent.Table
 	// group the tasks by nodes
 	nodeTasks map[node.ID]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]
 	// group the tasks by schema id
 	schemaTasks map[int64]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]
 	// tables
-	tableTasks map[int64]struct{}
+	tableTasks map[int64]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]
 	// totalMaps holds all state maps, absent, committing, working and removing
 	totalMaps    []map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]
 	bootstrapped bool
@@ -63,16 +63,16 @@ type Scheduler struct {
 	checkBalanceInterval time.Duration
 }
 
-func NewScheduler(changefeedID string,
+func NewController(changefeedID string,
 	checkpointTs uint64,
 	pdapi pdutil.PDAPIClient,
 	regionCache split.RegionCache,
 	config *config.ChangefeedSchedulerConfig,
-	batchSize int, balanceInterval time.Duration) *Scheduler {
-	s := &Scheduler{
+	batchSize int, balanceInterval time.Duration) *Controller {
+	s := &Controller{
 		nodeTasks:            make(map[node.ID]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]),
 		schemaTasks:          make(map[int64]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]),
-		tableTasks:           make(map[int64]struct{}),
+		tableTasks:           make(map[int64]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]),
 		startCheckpointTs:    checkpointTs,
 		changefeedID:         changefeedID,
 		bootstrapped:         false,
@@ -94,23 +94,23 @@ func NewScheduler(changefeedID string,
 	return s
 }
 
-func (s *Scheduler) GetTasksBySchemaID(schemaID int64) map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
-	return s.schemaTasks[schemaID]
+func (c *Controller) GetTasksBySchemaID(schemaID int64) map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
+	return c.schemaTasks[schemaID]
 }
 
-func (s *Scheduler) GetAllNodes() []node.ID {
-	var nodes = make([]node.ID, 0, len(s.nodeTasks))
-	for id := range s.nodeTasks {
+func (c *Controller) GetAllNodes() []node.ID {
+	var nodes = make([]node.ID, 0, len(c.nodeTasks))
+	for id := range c.nodeTasks {
 		nodes = append(nodes, id)
 	}
 	return nodes
 }
 
-func (s *Scheduler) AddNewTable(table commonEvent.Table, startTs uint64) {
-	_, ok := s.tableTasks[table.TableID]
-	if ok {
+func (c *Controller) AddNewTable(table commonEvent.Table, startTs uint64) {
+	tables, ok := c.tableTasks[table.TableID]
+	if ok && len(tables) > 0 {
 		log.Warn("table already add, ignore",
-			zap.String("changefeed", s.changefeedID),
+			zap.String("changefeed", c.changefeedID),
 			zap.Int64("schema", table.SchemaID),
 			zap.Int64("table", table.TableID))
 		return
@@ -122,29 +122,29 @@ func (s *Scheduler) AddNewTable(table commonEvent.Table, startTs uint64) {
 		EndKey:   span.EndKey,
 	}
 	tableSpans := []*heartbeatpb.TableSpan{tableSpan}
-	if s.spanReplicationEnabled {
+	if c.spanReplicationEnabled {
 		//split the whole table span base on the configuration, todo: background split table
-		tableSpans = s.splitter.SplitSpans(context.Background(), tableSpan, len(s.nodeTasks))
+		tableSpans = c.splitter.SplitSpans(context.Background(), tableSpan, len(c.nodeTasks))
 	}
-	s.addNewSpans(table.SchemaID, tableSpan.TableID, tableSpans, startTs)
+	c.addNewSpans(table.SchemaID, tableSpan.TableID, tableSpans, startTs)
 }
 
-func (s *Scheduler) SetInitialTables(tables []commonEvent.Table) {
-	s.initialTables = tables
+func (c *Controller) SetInitialTables(tables []commonEvent.Table) {
+	c.initialTables = tables
 }
 
-// FinishBootstrap adds working state tasks to this scheduler directly,
+// FinishBootstrap adds working state tasks to this controller directly,
 // it reported by the bootstrap response
-func (s *Scheduler) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]]) {
-	if s.bootstrapped {
+func (c *Controller) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]]) {
+	if c.bootstrapped {
 		log.Panic("already bootstrapped",
-			zap.String("changefeed", s.changefeedID),
+			zap.String("changefeed", c.changefeedID),
 			zap.Any("workingMap", workingMap))
 	}
-	for _, table := range s.initialTables {
+	for _, table := range c.initialTables {
 		tableMap, ok := workingMap[table.TableID]
 		if !ok {
-			s.AddNewTable(table, s.startCheckpointTs)
+			c.AddNewTable(table, c.startCheckpointTs)
 		} else {
 			span := spanz.TableIDToComparableSpan(table.TableID)
 			tableSpan := &heartbeatpb.TableSpan{
@@ -153,13 +153,13 @@ func (s *Scheduler) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb.
 				EndKey:   span.EndKey,
 			}
 			log.Info("table already working in other server",
-				zap.String("changefeed", s.changefeedID),
+				zap.String("changefeed", c.changefeedID),
 				zap.Int64("tableID", table.TableID))
-			s.addWorkingSpans(tableMap)
-			if s.spanReplicationEnabled {
+			c.addWorkingSpans(tableMap)
+			if c.spanReplicationEnabled {
 				holes := split.FindHoles(tableMap, tableSpan)
 				// todo: split the hole
-				s.addNewSpans(table.SchemaID, table.TableID, holes, s.startCheckpointTs)
+				c.addNewSpans(table.SchemaID, table.TableID, holes, c.startCheckpointTs)
 			}
 			// delete it
 			delete(workingMap, table.TableID)
@@ -172,26 +172,26 @@ func (s *Scheduler) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb.
 	// ddl table is special table id (0), can be included in the bootstrap response message
 	for tableID, tableMap := range workingMap {
 		log.Info("found a tables not in initial table map",
-			zap.String("changefeed", s.changefeedID),
+			zap.String("changefeed", c.changefeedID),
 			zap.Int64("id", tableID))
-		if s.addWorkingSpans(tableMap) {
+		if c.addWorkingSpans(tableMap) {
 			ddlSpanFound = true
 		}
 	}
 
 	// add a table_event_trigger dispatcher if not found
 	if !ddlSpanFound {
-		s.addDDLDispatcher()
+		c.addDDLDispatcher()
 	}
-	s.bootstrapped = true
-	s.initialTables = nil
+	c.bootstrapped = true
+	c.initialTables = nil
 }
 
 // GetTask queries a task by dispatcherID, return nil if not found
-func (s *Scheduler) GetTask(dispatcherID common.DispatcherID) *scheduler.StateMachine[common.DispatcherID] {
+func (c *Controller) GetTask(dispatcherID common.DispatcherID) *scheduler.StateMachine[common.DispatcherID] {
 	var stm *scheduler.StateMachine[common.DispatcherID]
 	var ok bool
-	for _, m := range s.totalMaps {
+	for _, m := range c.totalMaps {
 		stm, ok = m[dispatcherID]
 		if ok {
 			break
@@ -200,58 +200,78 @@ func (s *Scheduler) GetTask(dispatcherID common.DispatcherID) *scheduler.StateMa
 	return stm
 }
 
-func (s *Scheduler) RemoveAllTasks() {
-	for _, m := range s.totalMaps {
+func (c *Controller) RemoveAllTasks() {
+	for _, m := range c.totalMaps {
 		for _, stm := range m {
-			s.RemoveTask(stm)
+			c.RemoveTask(stm)
 		}
 	}
 }
 
-func (s *Scheduler) RemoveTask(stm *scheduler.StateMachine[common.DispatcherID]) {
+func (c *Controller) RemoveTask(stm *scheduler.StateMachine[common.DispatcherID]) {
 	oldState := stm.State
 	oldPrimary := stm.Primary
 	stm.HandleRemoveInferior()
-	s.tryMoveTask(stm.ID, stm, oldState, oldPrimary, true)
+	c.tryMoveTask(stm.ID, stm, oldState, oldPrimary, true)
 }
 
-func (s *Scheduler) GetTasksByTableIDs(tableIDs ...int64) []*scheduler.StateMachine[common.DispatcherID] {
-	tableMap := make(map[int64]bool, len(tableIDs))
-	for _, tableID := range tableIDs {
-		tableMap[tableID] = true
-	}
+func (c *Controller) GetTasksByTableIDs(tableIDs ...int64) []*scheduler.StateMachine[common.DispatcherID] {
 	var stms []*scheduler.StateMachine[common.DispatcherID]
-	for _, m := range s.totalMaps {
-		for _, stm := range m {
-			replica := stm.Inferior.(*ReplicaSet)
-			if !tableMap[replica.Span.TableID] {
-				continue
-			}
+	for _, tableID := range tableIDs {
+		for _, stm := range c.tableTasks[tableID] {
 			stms = append(stms, stm)
 		}
 	}
 	return stms
 }
 
-func (s *Scheduler) AddNewNode(id node.ID) {
-	_, ok := s.nodeTasks[id]
+// UpdateSchemaID will update the schema id of the table, and move the task to the new schema map
+// it called when rename a table to another schema
+func (c *Controller) UpdateSchemaID(tableID, newSchemaID int64) {
+	for _, stm := range c.tableTasks[tableID] {
+		replicaSet := stm.Inferior.(*ReplicaSet)
+		oldSchemaID := replicaSet.SchemaID
+		// update schemaID
+		replicaSet.SchemaID = newSchemaID
+
+		//update schema map
+		schemaMap, ok := c.schemaTasks[oldSchemaID]
+		if ok {
+			delete(schemaMap, stm.ID)
+			//clear the map if empty
+			if len(schemaMap) == 0 {
+				delete(c.schemaTasks, oldSchemaID)
+			}
+		}
+		// add it to new schema map
+		newMap, ok := c.schemaTasks[newSchemaID]
+		if !ok {
+			newMap = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
+			c.schemaTasks[newSchemaID] = newMap
+		}
+		newMap[stm.ID] = stm
+	}
+}
+
+func (c *Controller) AddNewNode(id node.ID) {
+	_, ok := c.nodeTasks[id]
 	if ok {
 		log.Info("node already exists",
-			zap.String("changefeed", s.changefeedID),
+			zap.String("changefeed", c.changefeedID),
 			zap.Any("node", id))
 		return
 	}
 	log.Info("add new node",
-		zap.String("changefeed", s.changefeedID),
+		zap.String("changefeed", c.changefeedID),
 		zap.Any("node", id))
-	s.nodeTasks[id] = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
+	c.nodeTasks[id] = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
 }
 
-func (s *Scheduler) RemoveNode(id node.ID) {
-	stmMap, ok := s.nodeTasks[id]
+func (c *Controller) RemoveNode(id node.ID) {
+	stmMap, ok := c.nodeTasks[id]
 	if !ok {
-		log.Info("node is maintained by scheduler, ignore",
-			zap.String("changefeed", s.changefeedID),
+		log.Info("node is maintained by controller, ignore",
+			zap.String("changefeed", c.changefeedID),
 			zap.Any("node", id))
 		return
 	}
@@ -259,65 +279,65 @@ func (s *Scheduler) RemoveNode(id node.ID) {
 		oldState := value.State
 		value.HandleCaptureShutdown(id)
 		if value.Primary != "" && value.Primary != id {
-			delete(s.nodeTasks[value.Primary], key)
+			delete(c.nodeTasks[value.Primary], key)
 		}
-		s.tryMoveTask(key, value, oldState, id, false)
+		c.tryMoveTask(key, value, oldState, id, false)
 	}
 	// check removing map, maybe some task are moving to this node
-	for key, value := range s.Removing() {
+	for key, value := range c.Removing() {
 		if value.Secondary == id {
 			oldState := value.State
 			value.HandleCaptureShutdown(id)
-			s.tryMoveTask(key, value, oldState, id, false)
+			c.tryMoveTask(key, value, oldState, id, false)
 		}
 	}
-	delete(s.nodeTasks, id)
+	delete(c.nodeTasks, id)
 }
 
-func (s *Scheduler) Schedule() {
-	if len(s.nodeTasks) == 0 {
-		log.Warn("scheduler has no node tasks", zap.String("changeeed", s.changefeedID))
+func (c *Controller) Schedule() {
+	if len(c.nodeTasks) == 0 {
+		log.Warn("controller has no node tasks", zap.String("changeeed", c.changefeedID))
 		return
 	}
-	if s.NeedSchedule() {
-		s.basicSchedule()
+	if c.NeedSchedule() {
+		c.basicSchedule()
 		return
 	}
 	// we scheduled all absent tasks, try to balance it if needed
-	s.tryBalance()
+	c.tryBalance()
 }
 
-func (s *Scheduler) NeedSchedule() bool {
-	return s.GetTaskSizeByState(scheduler.SchedulerStatusAbsent) > 0
+func (c *Controller) NeedSchedule() bool {
+	return c.GetTaskSizeByState(scheduler.SchedulerStatusAbsent) > 0
 }
 
 // ScheduleFinished return false if not all task are running in working state
-func (s *Scheduler) ScheduleFinished() bool {
-	return s.TaskSize() == s.GetTaskSizeByState(scheduler.SchedulerStatusWorking)
+func (c *Controller) ScheduleFinished() bool {
+	return c.TaskSize() == c.GetTaskSizeByState(scheduler.SchedulerStatusWorking)
 }
 
-func (s *Scheduler) tryBalance() {
-	if !s.ScheduleFinished() {
+func (c *Controller) tryBalance() {
+	if !c.ScheduleFinished() {
 		// not in stable schedule state, skip balance
 		return
 	}
 	now := time.Now()
-	if now.Sub(s.lastRebalanceTime) < s.checkBalanceInterval {
+	if now.Sub(c.lastRebalanceTime) < c.checkBalanceInterval {
 		// skip balance.
 		return
 	}
-	s.lastRebalanceTime = now
-	s.balanceTables()
+	c.lastRebalanceTime = now
+	c.balanceTables()
 }
 
-func (s *Scheduler) basicSchedule() {
-	totalSize := s.batchSize - len(s.Removing()) - len(s.Commiting())
+func (c *Controller) basicSchedule() {
+	totalSize := c.batchSize - len(c.Removing()) - len(c.Commiting())
 	if totalSize <= 0 {
 		// too many running tasks, skip schedule
 		return
 	}
 	priorityQueue := heap.NewHeap[*Item]()
-	for key, m := range s.nodeTasks {
+	for key, m := range c.nodeTasks {
 		priorityQueue.AddOrUpdate(&Item{
 			Node:     key,
 			TaskSize: len(m),
@@ -325,13 +345,13 @@ func (s *Scheduler) basicSchedule() {
 	}
 
 	taskSize := 0
-	absent := s.Absent()
+	absent := c.Absent()
 	for key, value := range absent {
 		item, _ := priorityQueue.PeekTop()
 		value.HandleAddInferior(item.Node)
 
-		s.Commiting()[key] = value
-		s.nodeTasks[item.Node][key] = value
+		c.Commiting()[key] = value
+		c.nodeTasks[item.Node][key] = value
 		delete(absent, key)
 
 		item.TaskSize++
@@ -343,41 +363,41 @@ func (s *Scheduler) basicSchedule() {
 	}
 }
 
-func (s *Scheduler) GetSchedulingMessages() []*messaging.TargetMessage {
-	var msgs = make([]*messaging.TargetMessage, 0, s.batchSize)
+func (c *Controller) GetSchedulingMessages() []*messaging.TargetMessage {
+	var msgs = make([]*messaging.TargetMessage, 0, c.batchSize)
 	resend := func(m map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]) {
 		for _, value := range m {
 			if msg := value.GetSchedulingMessage(); msg != nil {
 				msgs = append(msgs, msg)
 			}
-			if len(msgs) >= s.batchSize {
+			if len(msgs) >= c.batchSize {
 				return
 			}
 		}
 	}
-	resend(s.Commiting())
-	resend(s.Removing())
+	resend(c.Commiting())
+	resend(c.Removing())
 	return msgs
 }
 
-func (s *Scheduler) balanceTables() {
-	upperLimitPerCapture := int(math.Ceil(float64(s.TaskSize()) / float64(len(s.nodeTasks))))
+func (c *Controller) balanceTables() {
+	upperLimitPerCapture := int(math.Ceil(float64(c.TaskSize()) / float64(len(c.nodeTasks))))
 	// victims holds tables which need to be moved
 	victims := make([]*scheduler.StateMachine[common.DispatcherID], 0)
 	priorityQueue := heap.NewHeap[*Item]()
-	for nodeID, ts := range s.nodeTasks {
+	for nodeID, ts := range c.nodeTasks {
 		var changefeeds []*scheduler.StateMachine[common.DispatcherID]
 		for _, value := range ts {
 			changefeeds = append(changefeeds, value)
 		}
-		if s.random != nil {
+		if c.random != nil {
 			// Complexity note: Shuffle has O(n), where `n` is the number of tables.
 			// Also, during a single call of `Schedule`, Shuffle can be called at most
 			// `c` times, where `c` is the number of captures (TiCDC nodes).
 			// Only called when a rebalance is triggered, which happens rarely,
 			// we do not expect a performance degradation as a result of adding
 			// the randomness.
-			s.random.Shuffle(len(changefeeds), func(i, j int) {
+			c.random.Shuffle(len(changefeeds), func(i, j int) {
 				changefeeds[i], changefeeds[j] = changefeeds[j], changefeeds[i]
 			})
 		} else {
@@ -417,7 +437,7 @@ func (s *Scheduler) balanceTables() {
 	movedSize := 0
 	// for each victim table, find the target for it
 	for idx, cf := range victims {
-		if idx >= s.batchSize {
+		if idx >= c.batchSize {
 			// We have reached the task limit.
 			break
 		}
@@ -427,23 +447,23 @@ func (s *Scheduler) balanceTables() {
 		oldState := cf.State
 		oldPrimary := cf.Primary
 		cf.HandleMoveInferior(target)
-		s.tryMoveTask(cf.ID, cf, oldState, oldPrimary, false)
+		c.tryMoveTask(cf.ID, cf, oldState, oldPrimary, false)
 		// update the task size priority queue
 		item.TaskSize++
 		priorityQueue.AddOrUpdate(item)
 		movedSize++
 	}
 	log.Info("balance done",
-		zap.String("changefeed", s.changefeedID),
+		zap.String("changefeed", c.changefeedID),
 		zap.Int("movedSize", movedSize),
 		zap.Int("victims", len(victims)))
 }
 
-func (s *Scheduler) HandleStatus(from node.ID, statusList []*heartbeatpb.TableSpanStatus) {
-	stMap, ok := s.nodeTasks[from]
+func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableSpanStatus) {
+	stMap, ok := c.nodeTasks[from]
 	if !ok {
 		log.Warn("no server id found, ignore",
-			zap.String("changefeed", s.changefeedID),
+			zap.String("changefeed", c.changefeedID),
 			zap.Any("from", from))
 		return
 	}
@@ -452,7 +472,7 @@ func (s *Scheduler) HandleStatus(from node.ID, statusList []*heartbeatpb.TableSp
 		stm, ok := stMap[span]
 		if !ok {
 			log.Warn("no statemachine id found, ignore",
-				zap.String("changefeed", s.changefeedID),
+				zap.String("changefeed", c.changefeedID),
 				zap.Any("from", from),
 				zap.String("span", span.String()))
 			continue
@@ -460,85 +480,85 @@ func (s *Scheduler) HandleStatus(from node.ID, statusList []*heartbeatpb.TableSp
 		oldState := stm.State
 		oldPrimary := stm.Primary
 		stm.HandleInferiorStatus(status.ComponentStatus, status, from)
-		s.tryMoveTask(span, stm, oldState, oldPrimary, true)
+		c.tryMoveTask(span, stm, oldState, oldPrimary, true)
 	}
 }
 
-func (s *Scheduler) TaskSize() int {
+func (c *Controller) TaskSize() int {
 	size := 0
-	for _, m := range s.totalMaps {
+	for _, m := range c.totalMaps {
 		size += len(m)
 	}
 	return size
 }
 
-func (s *Scheduler) Absent() map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
-	return s.getTaskByState(scheduler.SchedulerStatusAbsent)
+func (c *Controller) Absent() map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
+	return c.getTaskByState(scheduler.SchedulerStatusAbsent)
 }
 
-func (s *Scheduler) Commiting() map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
-	return s.getTaskByState(scheduler.SchedulerStatusCommiting)
+func (c *Controller) Commiting() map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
+	return c.getTaskByState(scheduler.SchedulerStatusCommiting)
 }
 
-func (s *Scheduler) Working() map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
-	return s.getTaskByState(scheduler.SchedulerStatusWorking)
+func (c *Controller) Working() map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
+	return c.getTaskByState(scheduler.SchedulerStatusWorking)
 }
 
-func (s *Scheduler) Removing() map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
-	return s.getTaskByState(scheduler.SchedulerStatusRemoving)
+func (c *Controller) Removing() map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
+	return c.getTaskByState(scheduler.SchedulerStatusRemoving)
 }
 
-func (s *Scheduler) getTaskByState(state scheduler.SchedulerStatus) map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
-	return s.totalMaps[state]
+func (c *Controller) getTaskByState(state scheduler.SchedulerStatus) map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
+	return c.totalMaps[state]
 }
 
-func (s *Scheduler) GetTaskSizeByState(state scheduler.SchedulerStatus) int {
-	return len(s.getTaskByState(state))
+func (c *Controller) GetTaskSizeByState(state scheduler.SchedulerStatus) int {
+	return len(c.getTaskByState(state))
 }
 
-func (s *Scheduler) GetTaskSizeByNodeID(id node.ID) int {
-	sm, ok := s.nodeTasks[id]
+func (c *Controller) GetTaskSizeByNodeID(id node.ID) int {
+	sm, ok := c.nodeTasks[id]
 	if ok {
 		return len(sm)
 	}
 	return 0
 }
 
-func (s *Scheduler) addDDLDispatcher() {
+func (c *Controller) addDDLDispatcher() {
 	ddlTableSpan := heartbeatpb.DDLSpan
-	s.addNewSpans(heartbeatpb.DDLSpanSchemaID, ddlTableSpan.TableID,
-		[]*heartbeatpb.TableSpan{ddlTableSpan}, s.startCheckpointTs)
+	c.addNewSpans(heartbeatpb.DDLSpanSchemaID, ddlTableSpan.TableID,
+		[]*heartbeatpb.TableSpan{ddlTableSpan}, c.startCheckpointTs)
 	var dispatcherID common.DispatcherID
-	for id := range s.schemaTasks[heartbeatpb.DDLSpanSchemaID] {
+	for id := range c.schemaTasks[heartbeatpb.DDLSpanSchemaID] {
 		dispatcherID = id
 	}
-	s.ddlDispatcherID = dispatcherID
+	c.ddlDispatcherID = dispatcherID
 	log.Info("create table event trigger dispatcher",
-		zap.String("changefeed", s.changefeedID),
+		zap.String("changefeed", c.changefeedID),
 		zap.String("dispatcher", dispatcherID.String()))
 }
 
-func (s *Scheduler) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]]) bool {
+func (c *Controller) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]]) bool {
 	ddlSpanFound := false
 	tableMap.Ascend(func(span *heartbeatpb.TableSpan, stm *scheduler.StateMachine[common.DispatcherID]) bool {
 		if stm.State != scheduler.SchedulerStatusWorking {
 			log.Panic("unexpected state",
-				zap.String("changefeed", s.changefeedID),
+				zap.String("changefeed", c.changefeedID),
 				zap.Any("stm", stm))
 		}
 		dispatcherID := stm.ID
-		s.Working()[dispatcherID] = stm
-		s.nodeTasks[stm.Primary][dispatcherID] = stm
+		c.Working()[dispatcherID] = stm
+		c.nodeTasks[stm.Primary][dispatcherID] = stm
 		if span.TableID == 0 {
 			ddlSpanFound = true
-			s.ddlDispatcherID = dispatcherID
+			c.ddlDispatcherID = dispatcherID
 		}
 		return true
 	})
 	return ddlSpanFound
 }
 
-func (s *Scheduler) addNewSpans(schemaID, tableID int64,
+func (c *Controller) addNewSpans(schemaID, tableID int64,
 	tableSpans []*heartbeatpb.TableSpan, startTs uint64) {
 	for _, newSpan := range tableSpans {
 		newTableSpan := &heartbeatpb.TableSpan{
@@ -547,47 +567,61 @@ func (s *Scheduler) addNewSpans(schemaID, tableID int64,
 			EndKey:   newSpan.EndKey,
 		}
 		dispatcherID := common.NewDispatcherID()
-		replicaSet := NewReplicaSet(model.DefaultChangeFeedID(s.changefeedID),
+		replicaSet := NewReplicaSet(model.DefaultChangeFeedID(c.changefeedID),
 			dispatcherID, schemaID, newTableSpan, startTs).(*ReplicaSet)
 		stm := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
-		s.Absent()[dispatcherID] = stm
-		schemaMap, ok := s.schemaTasks[schemaID]
+		c.Absent()[dispatcherID] = stm
+		// modify the schema map
+		schemaMap, ok := c.schemaTasks[schemaID]
 		if !ok {
 			schemaMap = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
-			s.schemaTasks[schemaID] = schemaMap
+			c.schemaTasks[schemaID] = schemaMap
 		}
 		schemaMap[dispatcherID] = stm
-		s.tableTasks[tableID] = struct{}{}
+
+		// modify the table map
+		tableMap, ok := c.tableTasks[tableID]
+		if !ok {
+			tableMap = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
+			c.tableTasks[tableID] = tableMap
+		}
+		tableMap[dispatcherID] = stm
 	}
 }
 
 // tryMoveTask moves the StateMachine to the right map and modified the node map if changed
-func (s *Scheduler) tryMoveTask(dispatcherID common.DispatcherID,
+func (c *Controller) tryMoveTask(dispatcherID common.DispatcherID,
 	stm *scheduler.StateMachine[common.DispatcherID],
 	oldSate scheduler.SchedulerStatus,
 	oldPrimary node.ID,
 	modifyNodeMap bool) {
 	if oldSate != stm.State {
-		delete(s.totalMaps[oldSate], dispatcherID)
-		s.totalMaps[stm.State][dispatcherID] = stm
+		delete(c.totalMaps[oldSate], dispatcherID)
+		c.totalMaps[stm.State][dispatcherID] = stm
 	}
 	// state machine is remove after state changed, remove from all maps
 	// if removed, new primary node must be empty so we also can
 	// update nodesMap if modifyNodeMap is true
 	if stm.HasRemoved() {
-		for _, m := range s.totalMaps {
+		for _, m := range c.totalMaps {
 			delete(m, dispatcherID)
 		}
-		delete(s.schemaTasks[stm.Inferior.(*ReplicaSet).SchemaID], dispatcherID)
-		delete(s.tableTasks, stm.Inferior.(*ReplicaSet).Span.TableID)
+		delete(c.schemaTasks[stm.Inferior.(*ReplicaSet).SchemaID], dispatcherID)
+		if len(c.schemaTasks[stm.Inferior.(*ReplicaSet).SchemaID]) == 0 {
+			delete(c.schemaTasks, stm.Inferior.(*ReplicaSet).SchemaID)
+		}
+		delete(c.tableTasks[stm.Inferior.(*ReplicaSet).Span.TableID], dispatcherID)
+		if len(c.tableTasks[stm.Inferior.(*ReplicaSet).Span.TableID]) == 0 {
+			delete(c.tableTasks, stm.Inferior.(*ReplicaSet).Span.TableID)
+		}
 	}
 	// keep node task map is updated
 	if modifyNodeMap && oldPrimary != stm.Primary {
-		taskMap, ok := s.nodeTasks[oldPrimary]
+		taskMap, ok := c.nodeTasks[oldPrimary]
 		if ok {
 			delete(taskMap, dispatcherID)
 		}
-		taskMap, ok = s.nodeTasks[stm.Primary]
+		taskMap, ok = c.nodeTasks[stm.Primary]
 		if ok {
 			taskMap[dispatcherID] = stm
 		}

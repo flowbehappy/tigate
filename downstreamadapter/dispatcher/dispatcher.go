@@ -175,7 +175,6 @@ func (d *Dispatcher) addBlockEventToSinkWhenAvailable(event commonEvent.BlockEve
 // 1. If the action is a write, we need to add the ddl event to the sink for writing to downstream(async).
 // 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and wake the dispatcherEventsHandler
 func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.DispatcherStatus) {
-	log.Info("HandleDispatcherStatus", zap.Any("dispatcherStatus", dispatcherStatus))
 	if d.blockPendingEvent == nil {
 		if dispatcherStatus.GetAction() != nil {
 			// 只可能出现在 event 已经推进了，但是还重复收到了 action 消息的时候，则重发包含 checkpointTs 的心跳
@@ -288,6 +287,7 @@ func (d *Dispatcher) DealWithBlockEventWhenProgressEmpty() {
 				NeedDroppedTables: d.blockPendingEvent.GetNeedDroppedTables().ToPB(),
 				NeedAddedTables:   commonEvent.ToTablesPB(d.blockPendingEvent.GetNeedAddedTables()),
 				UpdatedSchemas:    commonEvent.ToSchemaIDChangePB(d.blockPendingEvent.GetUpdatedSchemas()), // only exists for rename table and rename tables
+				IsSyncPoint:       d.blockPendingEvent.GetType() == commonEvent.TypeSyncPointEvent,
 			},
 		}
 		d.SetResendTask(newResendTask(message, d))

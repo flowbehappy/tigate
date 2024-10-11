@@ -90,7 +90,15 @@ func (w *MysqlWriter) FlushSyncPointEvent(event *commonEvent.SyncPointEvent) err
 		}
 		w.syncPointTableInit = true
 	}
-	return w.SendSyncPointEvent(event)
+	err := w.SendSyncPointEvent(event)
+	if err != nil {
+		log.Error("send syncpoint event failed", zap.Error(err))
+		return err
+	}
+	for _, callback := range event.PostTxnFlushed {
+		callback()
+	}
+	return nil
 }
 
 func (w *MysqlWriter) SendSyncPointEvent(event *commonEvent.SyncPointEvent) error {
@@ -117,11 +125,11 @@ func (w *MysqlWriter) SendSyncPointEvent(event *commonEvent.SyncPointEvent) erro
 	builder.WriteString(filter.TiCDCSystemSchema)
 	builder.WriteString(".")
 	builder.WriteString(filter.SyncPointTable)
-	builder.WriteString("(ticdc_cluster_id, changefeed, primary_ts, secondary_ts) VALUES (")
+	builder.WriteString("(ticdc_cluster_id, changefeed, primary_ts, secondary_ts) VALUES ('")
 	builder.WriteString(config.GetGlobalServerConfig().ClusterID)
-	builder.WriteString(", ")
+	builder.WriteString("', '")
 	builder.WriteString(w.ChangefeedID.String())
-	builder.WriteString(", ")
+	builder.WriteString("', ")
 	builder.WriteString(strconv.FormatUint(event.GetCommitTs(), 10))
 	builder.WriteString(", ")
 	builder.WriteString(secondaryTs)
@@ -130,6 +138,7 @@ func (w *MysqlWriter) SendSyncPointEvent(event *commonEvent.SyncPointEvent) erro
 
 	_, err = tx.Exec(query)
 	if err != nil {
+		log.Error("failed to write syncpoint table", zap.Error(err))
 		err2 := tx.Rollback()
 		if err2 != nil {
 			log.Error("failed to write syncpoint table", zap.Error(err2))

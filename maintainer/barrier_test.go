@@ -14,8 +14,6 @@
 package maintainer
 
 import (
-	"os"
-	"runtime/pprof"
 	"testing"
 	"time"
 
@@ -24,34 +22,76 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
+func TestOneBlockEvent(t *testing.T) {
+	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
+	sche.AddNewNode("node1")
+	sche.AddNewTable(common.Table{1, 1}, 0)
+	stm := sche.GetTasksByTableIDs(1)[0]
+	stm.Primary = "node1"
+	stm.State = scheduler.SchedulerStatusWorking
+	sche.tryMoveTask(stm.ID, stm, scheduler.SchedulerStatusAbsent, "", true)
+	barrier := NewBarrier(sche)
+	msg := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+		ChangefeedID: "test",
+		Statuses: []*heartbeatpb.TableSpanStatus{
+			{
+				ID: stm.ID.ToPB(),
+				State: &heartbeatpb.State{
+					IsBlocked: true,
+					BlockTs:   10,
+					BlockTables: &heartbeatpb.InfluencedTables{
+						InfluenceType: heartbeatpb.InfluenceType_All,
+					},
+				},
+				CheckpointTs: 0,
+			},
+		},
+	})
+	require.NotNil(t, msg)
+	resp := msg.Message[0].(*heartbeatpb.HeartBeatResponse)
+	require.Equal(t, barrier.blockedDispatcher[stm.ID], barrier.blockedTs[10])
+	event := barrier.blockedTs[10]
+	require.Equal(t, uint64(10), event.commitTs)
+	require.True(t, event.writerDispatcher == stm.ID)
+	require.True(t, event.selected)
+	require.False(t, event.writerDispatcherAdvanced)
+	require.Nil(t, event.reportedDispatchers)
+	require.Equal(t, resp.DispatcherStatuses[0].Ack.CommitTs, uint64(10))
+	require.Equal(t, resp.DispatcherStatuses[0].Action.CommitTs, uint64(10))
+	require.Equal(t, resp.DispatcherStatuses[0].Action.Action, heartbeatpb.Action_Write)
+
+	msg = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+		ChangefeedID: "test",
+		Statuses: []*heartbeatpb.TableSpanStatus{
+			{
+				ID:           stm.ID.ToPB(),
+				CheckpointTs: 10,
+			},
+		},
+	})
+	require.Len(t, barrier.blockedTs, 0)
+	require.Len(t, barrier.blockedDispatcher, 0)
+}
+
 func TestNormalBlock(t *testing.T) {
-	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	sche.AddNewNode("node2")
 	var blockedDispatcherIDS []*heartbeatpb.DispatcherID
 	for id := 1; id < 4; id++ {
-		span := spanz.TableIDToComparableSpan(int64(id))
-		tableSpan := &heartbeatpb.TableSpan{
-			TableID:  int64(id),
-			StartKey: span.StartKey,
-			EndKey:   span.EndKey,
-		}
-		dispatcherID := common.NewDispatcherID()
-		blockedDispatcherIDS = append(blockedDispatcherIDS, dispatcherID.ToPB())
-		replicaSet := NewReplicaSet(model.DefaultChangeFeedID("test"), dispatcherID, 1, tableSpan, 0)
-		stm := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
-		stm.State = scheduler.SchedulerStatusWorking
-		sche.Working()[dispatcherID] = stm
+		sche.AddNewTable(common.Table{1, int64(id)}, 0)
+		stm := sche.GetTasksByTableIDs(int64(id))[0]
+		blockedDispatcherIDS = append(blockedDispatcherIDS, stm.ID.ToPB())
 		stm.Primary = "node1"
-		sche.nodeTasks["node1"][dispatcherID] = stm
+		stm.State = scheduler.SchedulerStatusWorking
+		sche.tryMoveTask(stm.ID, stm, scheduler.SchedulerStatusAbsent, "", true)
 	}
 
+	// the last one is the writer
 	var selectDispatcherID = common.NewDispatcherIDFromPB(blockedDispatcherIDS[2])
 	sche.nodeTasks["node2"][selectDispatcherID] = sche.nodeTasks["node1"][selectDispatcherID]
 	dropID := sche.nodeTasks["node2"][selectDispatcherID].Inferior.(*ReplicaSet).Span.TableID
@@ -132,7 +172,7 @@ func TestNormalBlock(t *testing.T) {
 	event := barrier.blockedTs[10]
 	require.Equal(t, uint64(10), event.commitTs)
 	require.True(t, event.writerDispatcher == selectDispatcherID)
-	require.Nil(t, event.advancedDispatchers)
+	require.Nil(t, event.reportedDispatchers)
 
 	// repeated status
 	barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
@@ -176,7 +216,7 @@ func TestNormalBlock(t *testing.T) {
 	})
 	require.Equal(t, uint64(10), event.commitTs)
 	require.True(t, event.writerDispatcher == selectDispatcherID)
-	require.Nil(t, event.advancedDispatchers)
+	require.Nil(t, event.reportedDispatchers)
 
 	// selected node write done
 	msg = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
@@ -208,7 +248,7 @@ func TestNormalBlock(t *testing.T) {
 }
 
 func TestSchemaBlock(t *testing.T) {
-	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	sche.AddNewNode("node2")
 	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 1}, 1)
@@ -361,7 +401,7 @@ func TestSchemaBlock(t *testing.T) {
 }
 
 func TestSyncPointBlock(t *testing.T) {
-	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	sche.AddNewNode("node2")
 	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 1}, 1)
@@ -495,7 +535,7 @@ func TestSyncPointBlock(t *testing.T) {
 }
 
 func TestNonBlocked(t *testing.T) {
-	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	barrier := NewBarrier(sche)
 
@@ -532,11 +572,11 @@ func TestNonBlocked(t *testing.T) {
 	require.Equal(t, resp.DispatcherStatuses[0].InfluencedDispatchers.DispatcherIDs[0], blockedDispatcherIDS[0])
 	require.Len(t, barrier.blockedTs, 0)
 	require.Len(t, barrier.blockedDispatcher, 0)
-	require.Len(t, barrier.scheduler.Absent(), 2)
+	require.Len(t, barrier.controller.Absent(), 2)
 }
 
 func TestSyncPointBlockPerf(t *testing.T) {
-	sche := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	barrier := NewBarrier(sche)
 	for id := 1; id < 1000; id++ {
@@ -565,10 +605,10 @@ func TestSyncPointBlockPerf(t *testing.T) {
 		})
 	}
 
-	f, _ := os.OpenFile("cpu.profile", os.O_CREATE|os.O_RDWR, 0644)
-	defer f.Close()
-	pprof.StartCPUProfile(f)
-	defer pprof.StopCPUProfile()
+	//f, _ := os.OpenFile("cpu.profile", os.O_CREATE|os.O_RDWR, 0644)
+	//defer f.Close()
+	//pprof.StartCPUProfile(f)
+	//defer pprof.StopCPUProfile()
 	now := time.Now()
 	msg := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
 		ChangefeedID: "test",
