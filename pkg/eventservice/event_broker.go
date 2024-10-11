@@ -97,8 +97,7 @@ func newEventBroker(
 	wg := &sync.WaitGroup{}
 
 	option := dynstream.NewOption()
-	option.MaxPendingLength = 1
-	option.DropPolicy = dynstream.DropEarly
+	option.MaxPendingLength = 0
 
 	ds := dynstream.NewDynamicStream[common.DispatcherID, scanTask, *eventBroker](&dispatcherEventsHandler{}, option)
 	ds.Start()
