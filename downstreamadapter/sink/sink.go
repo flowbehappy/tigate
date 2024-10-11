@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink"
+	"github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
 )
 
@@ -61,7 +62,7 @@ func NewSink(config *config.ChangefeedConfig, changefeedID model.ChangeFeedID) (
 			log.Error("create mysql sink failed", zap.Error(err))
 			return nil, err
 		}
-		cfg.SyncPointRetention = cfg.SyncPointRetention
+		cfg.SyncPointRetention = util.GetOrZero(config.SyncPointRetention)
 		return NewMysqlSink(changefeedID, 16, cfg, db), nil
 	case sink.KafkaScheme, sink.KafkaSSLScheme:
 		sink, err := NewKafkaSink(changefeedID, sinkURI, config.SinkConfig)

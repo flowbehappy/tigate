@@ -46,7 +46,6 @@ type MysqlWriter struct {
 	db                     *sql.DB
 	cfg                    *MysqlConfig
 	syncPointTableInit     bool
-	syncPointRetention     time.Duration // 后续考虑放到 cfg 里面？
 	statistics             *metrics.Statistics
 	ChangefeedID           model.ChangeFeedID
 	lastCleanSyncPointTime time.Time

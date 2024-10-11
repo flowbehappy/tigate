@@ -287,7 +287,6 @@ func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, c
 }
 
 func (c *eventBroker) sendSyncPointEvent(server node.ID, ts uint64, dispatcherID common.DispatcherID) {
-	log.Info("send sync point event", zap.Any("ts", ts), zap.Any("dispatcherID", dispatcherID))
 	syncPointEvent := newWrapSyncPointEvent(
 		server,
 		&commonEvent.SyncPointEvent{
