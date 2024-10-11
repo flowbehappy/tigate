@@ -22,6 +22,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/maintainer/split"
+	"github.com/flowbehappy/tigate/pkg/bootstrap"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	configNew "github.com/flowbehappy/tigate/pkg/config"
@@ -62,7 +63,7 @@ type Maintainer struct {
 	checkpointTsByCapture map[node.ID]heartbeatpb.Watermark
 
 	state        heartbeatpb.ComponentState
-	bootstrapper *Bootstrapper
+	bootstrapper *bootstrap.Bootstrapper[heartbeatpb.MaintainerBootstrapResponse]
 
 	changefeedSate model.FeedState
 
@@ -145,7 +146,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		tableCountGauge:                metrics.TableGauge.WithLabelValues(cfID.Namespace, cfID.ID),
 		handleEventDuration:            metrics.MaintainerHandleEventDuration.WithLabelValues(cfID.Namespace, cfID.ID),
 	}
-	m.bootstrapper = NewBootstrapper(m.id.ID, m.getNewBootstrapFn())
+	m.bootstrapper = bootstrap.NewBootstrapper[heartbeatpb.MaintainerBootstrapResponse](m.id.ID, m.getNewBootstrapFn())
 	m.barrier = NewBarrier(m.controller)
 	log.Info("maintainer is created", zap.String("id", cfID.String()))
 	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace, cfID.ID).Inc()
