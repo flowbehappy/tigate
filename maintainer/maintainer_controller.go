@@ -15,9 +15,6 @@ package maintainer
 
 import (
 	"context"
-	"math"
-	"math/rand"
-	"sort"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -27,7 +24,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils"
-	"github.com/flowbehappy/tigate/utils/heap"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -55,11 +51,9 @@ type Controller struct {
 	startCheckpointTs      uint64
 	ddlDispatcherID        common.DispatcherID
 
-	changefeedID         string
-	batchSize            int
-	random               *rand.Rand
-	lastRebalanceTime    time.Time
-	checkBalanceInterval time.Duration
+	changefeedID string
+	batchSize    int
+	sche         *scheduler.Scheduler[common.DispatcherID]
 }
 
 func NewController(changefeedID string,
@@ -69,16 +63,14 @@ func NewController(changefeedID string,
 	config *config.ChangefeedSchedulerConfig,
 	batchSize int, balanceInterval time.Duration) *Controller {
 	s := &Controller{
-		nodeTasks:            make(map[node.ID]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]),
-		schemaTasks:          make(map[int64]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]),
-		tableTasks:           make(map[int64]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]),
-		startCheckpointTs:    checkpointTs,
-		changefeedID:         changefeedID,
-		bootstrapped:         false,
-		batchSize:            batchSize,
-		random:               rand.New(rand.NewSource(time.Now().UnixNano())),
-		checkBalanceInterval: balanceInterval,
-		lastRebalanceTime:    time.Now(),
+		nodeTasks:         make(map[node.ID]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]),
+		schemaTasks:       make(map[int64]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]),
+		tableTasks:        make(map[int64]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]),
+		startCheckpointTs: checkpointTs,
+		changefeedID:      changefeedID,
+		batchSize:         batchSize,
+		bootstrapped:      false,
+		sche:              scheduler.NewScheduler[common.DispatcherID](batchSize, changefeedID, balanceInterval),
 	}
 	if config != nil && config.EnableTableAcrossNodes {
 		s.splitter = split.NewSplitter(changefeedID, pdapi, regionCache, config)
@@ -87,9 +79,10 @@ func NewController(changefeedID string,
 	// put all maps to totalMaps
 	s.totalMaps = make([]map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID], 4)
 	s.totalMaps[scheduler.SchedulerStatusAbsent] = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
-	s.totalMaps[scheduler.SchedulerStatusCommiting] = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
 	s.totalMaps[scheduler.SchedulerStatusWorking] = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
+	// running tasks
 	s.totalMaps[scheduler.SchedulerStatusRemoving] = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
+	s.totalMaps[scheduler.SchedulerStatusCommiting] = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
 	return s
 }
 
@@ -298,12 +291,27 @@ func (c *Controller) Schedule() {
 		log.Warn("controller has no node tasks", zap.String("changeeed", c.changefeedID))
 		return
 	}
-	if c.NeedSchedule() {
-		c.basicSchedule()
-		return
+	absents := c.Absent()
+	working := c.Working()
+	commiting := c.Commiting()
+	tasks := c.sche.Schedule(absents, commiting, c.Removing(), working, c.nodeTasks)
+	for _, task := range tasks {
+		if task.AddInferior != nil {
+			value := absents[task.AddInferior.ID]
+			value.HandleAddInferior(task.AddInferior.CaptureID)
+			commiting[value.ID] = value
+			c.nodeTasks[task.AddInferior.CaptureID][value.ID] = value
+			delete(absents, value.ID)
+		} else if task.MoveInferior != nil {
+			// move should from working state
+			value := working[task.MoveInferior.ID]
+			target := task.MoveInferior.DestCapture
+			oldState := value.State
+			oldPrimary := value.Primary
+			value.HandleMoveInferior(target)
+			c.tryMoveTask(value.ID, value, oldState, oldPrimary, false)
+		}
 	}
-	// we scheduled all absent tasks, try to balance it if needed
-	c.tryBalance()
 }
 
 func (c *Controller) NeedSchedule() bool {
@@ -313,53 +321,6 @@ func (c *Controller) NeedSchedule() bool {
 // ScheduleFinished return false if not all task are running in working state
 func (c *Controller) ScheduleFinished() bool {
 	return c.TaskSize() == c.GetTaskSizeByState(scheduler.SchedulerStatusWorking)
-}
-
-func (c *Controller) tryBalance() {
-	if !c.ScheduleFinished() {
-		// not in stable schedule state, skip balance
-		return
-	}
-	now := time.Now()
-	if now.Sub(c.lastRebalanceTime) < c.checkBalanceInterval {
-		// skip balance.
-		return
-	}
-	c.lastRebalanceTime = now
-	c.balanceTables()
-}
-
-func (c *Controller) basicSchedule() {
-	totalSize := c.batchSize - len(c.Removing()) - len(c.Commiting())
-	if totalSize <= 0 {
-		// too many running tasks, skip schedule
-		return
-	}
-	priorityQueue := heap.NewHeap[*Item]()
-	for key, m := range c.nodeTasks {
-		priorityQueue.AddOrUpdate(&Item{
-			Node:     key,
-			TaskSize: len(m),
-		})
-	}
-
-	taskSize := 0
-	absent := c.Absent()
-	for key, value := range absent {
-		item, _ := priorityQueue.PeekTop()
-		value.HandleAddInferior(item.Node)
-
-		c.Commiting()[key] = value
-		c.nodeTasks[item.Node][key] = value
-		delete(absent, key)
-
-		item.TaskSize++
-		priorityQueue.AddOrUpdate(item)
-		taskSize++
-		if taskSize >= totalSize {
-			break
-		}
-	}
 }
 
 func (c *Controller) GetSchedulingMessages() []*messaging.TargetMessage {
@@ -377,85 +338,6 @@ func (c *Controller) GetSchedulingMessages() []*messaging.TargetMessage {
 	resend(c.Commiting())
 	resend(c.Removing())
 	return msgs
-}
-
-func (c *Controller) balanceTables() {
-	upperLimitPerCapture := int(math.Ceil(float64(c.TaskSize()) / float64(len(c.nodeTasks))))
-	// victims holds tables which need to be moved
-	victims := make([]*scheduler.StateMachine[common.DispatcherID], 0)
-	priorityQueue := heap.NewHeap[*Item]()
-	for nodeID, ts := range c.nodeTasks {
-		var changefeeds []*scheduler.StateMachine[common.DispatcherID]
-		for _, value := range ts {
-			changefeeds = append(changefeeds, value)
-		}
-		if c.random != nil {
-			// Complexity note: Shuffle has O(n), where `n` is the number of tables.
-			// Also, during a single call of `Schedule`, Shuffle can be called at most
-			// `c` times, where `c` is the number of captures (TiCDC nodes).
-			// Only called when a rebalance is triggered, which happens rarely,
-			// we do not expect a performance degradation as a result of adding
-			// the randomness.
-			c.random.Shuffle(len(changefeeds), func(i, j int) {
-				changefeeds[i], changefeeds[j] = changefeeds[j], changefeeds[i]
-			})
-		} else {
-			// sort the spans here so that the result is deterministic,
-			// which would aid testing and debugging.
-			sort.Slice(changefeeds, func(i, j int) bool {
-				return changefeeds[i].ID.String() < changefeeds[j].ID.String()
-			})
-		}
-
-		tableNum2Remove := len(changefeeds) - upperLimitPerCapture
-		if tableNum2Remove <= 0 {
-			priorityQueue.AddOrUpdate(&Item{
-				Node:     nodeID,
-				TaskSize: len(ts),
-			})
-			continue
-		} else {
-			priorityQueue.AddOrUpdate(&Item{
-				Node:     nodeID,
-				TaskSize: len(ts) - tableNum2Remove,
-			})
-		}
-
-		for _, cf := range changefeeds {
-			if tableNum2Remove <= 0 {
-				break
-			}
-			victims = append(victims, cf)
-			tableNum2Remove--
-		}
-	}
-	if len(victims) == 0 {
-		return
-	}
-
-	movedSize := 0
-	// for each victim table, find the target for it
-	for idx, cf := range victims {
-		if idx >= c.batchSize {
-			// We have reached the task limit.
-			break
-		}
-
-		item, _ := priorityQueue.PeekTop()
-		target := item.Node
-		oldState := cf.State
-		oldPrimary := cf.Primary
-		cf.HandleMoveInferior(target)
-		c.tryMoveTask(cf.ID, cf, oldState, oldPrimary, false)
-		// update the task size priority queue
-		item.TaskSize++
-		priorityQueue.AddOrUpdate(item)
-		movedSize++
-	}
-	log.Info("balance done",
-		zap.String("changefeed", c.changefeedID),
-		zap.Int("movedSize", movedSize),
-		zap.Int("victims", len(victims)))
 }
 
 func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableSpanStatus) {
@@ -625,22 +507,4 @@ func (c *Controller) tryMoveTask(dispatcherID common.DispatcherID,
 			taskMap[dispatcherID] = stm
 		}
 	}
-}
-
-type Item struct {
-	Node     node.ID
-	TaskSize int
-	index    int
-}
-
-func (i *Item) SetHeapIndex(idx int) {
-	i.index = idx
-}
-
-func (i *Item) GetHeapIndex() int {
-	return i.index
-}
-
-func (i *Item) CompareTo(t *Item) int {
-	return i.TaskSize - t.TaskSize
 }

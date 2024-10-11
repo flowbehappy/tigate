@@ -35,6 +35,7 @@ import (
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	cdcConfig "github.com/pingcap/tiflow/pkg/config"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -231,9 +232,14 @@ func TestMaintainerSchedule(t *testing.T) {
 	go dispatcherManager.Run(ctx)
 
 	taskScheduler := threadpool.NewThreadPoolDefault()
-	maintainer := NewMaintainer(cfID, &configNew.ChangeFeedInfo{
-		Config: configNew.GetDefaultReplicaConfig(),
-	}, n, stream, taskScheduler, nil, nil, 10)
+	maintainer := NewMaintainer(cfID,
+		&cdcConfig.SchedulerConfig{
+			CheckBalanceInterval: cdcConfig.TomlDuration(time.Minute),
+			AddTableBatchSize:    10000,
+		},
+		&configNew.ChangeFeedInfo{
+			Config: configNew.GetDefaultReplicaConfig(),
+		}, n, stream, taskScheduler, nil, nil, 10)
 	_ = stream.AddPaths(dynstream.PathAndDest[string, *Maintainer]{
 		Path: cfID.ID,
 		Dest: maintainer,
@@ -247,8 +253,8 @@ func TestMaintainerSchedule(t *testing.T) {
 	if len(argList) > 1 {
 		t.Fatal("unexpected args", argList)
 	}
-	tableSize := 100
-	sleepTime := 5
+	tableSize := 1000000
+	sleepTime := 5000000
 	if len(argList) == 1 {
 		tableSize, _ = strconv.Atoi(argList[0])
 	}

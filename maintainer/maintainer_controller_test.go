@@ -177,7 +177,7 @@ func TestBalance(t *testing.T) {
 	s.AddNewNode("node1")
 	// add new node
 	s.AddNewNode("node2")
-	s.tryBalance()
+	s.Schedule()
 	msgs := s.GetSchedulingMessages()
 	require.Len(t, msgs, 50)
 	require.Equal(t, len(s.Removing()), 50)
@@ -301,7 +301,7 @@ func TestBalanceUnEvenTask(t *testing.T) {
 
 	// add new node
 	s.AddNewNode("node3")
-	s.tryBalance()
+	s.Schedule()
 	require.Equal(t, len(s.Removing()), 0)
 	require.Equal(t, len(s.Working()), 4)
 	//still on the primary node

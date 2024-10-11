@@ -36,6 +36,7 @@ import (
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	cdcConfig "github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/prometheus/client_golang/prometheus"
@@ -104,6 +105,7 @@ type Maintainer struct {
 
 // NewMaintainer create the maintainer for the changefeed
 func NewMaintainer(cfID model.ChangeFeedID,
+	conf *cdcConfig.SchedulerConfig,
 	cfg *configNew.ChangeFeedInfo,
 	selfNode *node.Info,
 	stream dynstream.DynamicStream[string, *Event, *Maintainer],
@@ -117,7 +119,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		selfNode:        selfNode,
 		stream:          stream,
 		taskScheduler:   taskScheduler,
-		controller:      NewController(cfID.ID, checkpointTs, pdapi, regionCache, cfg.Config.Scheduler, 10000, time.Minute),
+		controller:      NewController(cfID.ID, checkpointTs, pdapi, regionCache, cfg.Config.Scheduler, conf.AddTableBatchSize, time.Duration(conf.CheckBalanceInterval)),
 		mc:              appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		state:           heartbeatpb.ComponentState_Working,
 		removed:         atomic.NewBool(false),

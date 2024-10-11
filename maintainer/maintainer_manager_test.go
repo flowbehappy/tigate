@@ -20,8 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/node"
-
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -30,6 +28,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -62,7 +61,11 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	mc.RegisterHandler(messaging.CoordinatorTopic, func(ctx context.Context, msg *messaging.TargetMessage) error {
 		return nil
 	})
-	manager := NewMaintainerManager(selfNode, nil, nil)
+	schedulerConf := &config2.SchedulerConfig{
+		AddTableBatchSize:    1000,
+		CheckBalanceInterval: 0,
+	}
+	manager := NewMaintainerManager(selfNode, schedulerConf, nil, nil)
 	msg := messaging.NewSingleTargetMessage(selfNode.ID,
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.CoordinatorBootstrapRequest{Version: 1})
@@ -111,8 +114,6 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	dn3 := startDispatcherNode(ctx, node3, mc3, nodeManager)
 	dn4 := startDispatcherNode(ctx, node4, mc4, nodeManager)
 
-	// use a small check interval
-	maintainer.controller.checkBalanceInterval = time.Millisecond * 50
 	// notify node changes
 	_, _ = nodeManager.Tick(ctx, &orchestrator.GlobalReactorState{
 		Captures: map[model.CaptureID]*model.CaptureInfo{
@@ -183,7 +184,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	mc.RegisterHandler(messaging.CoordinatorTopic, func(ctx context.Context, msg *messaging.TargetMessage) error {
 		return nil
 	})
-	manager := NewMaintainerManager(selfNode, nil, nil)
+	manager := NewMaintainerManager(selfNode, config2.GetGlobalServerConfig().Debug.Scheduler, nil, nil)
 	msg := messaging.NewSingleTargetMessage(selfNode.ID,
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.CoordinatorBootstrapRequest{Version: 1})

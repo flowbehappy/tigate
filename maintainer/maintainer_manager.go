@@ -19,19 +19,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/node"
-
-	configNew "github.com/flowbehappy/tigate/pkg/config"
-	"github.com/flowbehappy/tigate/utils/threadpool"
-	"github.com/pingcap/tiflow/pkg/pdutil"
-	"github.com/tikv/client-go/v2/tikv"
-
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	configNew "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/utils/dynstream"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	cdcConfig "github.com/pingcap/tiflow/pkg/config"
+	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -41,7 +40,8 @@ import (
 // 2. handle dispatcher command from coordinator: add or remove changefeed maintainer
 // 3. check maintainer liveness
 type Manager struct {
-	mc messaging.MessageCenter
+	mc   messaging.MessageCenter
+	conf *cdcConfig.SchedulerConfig
 
 	maintainers sync.Map
 
@@ -63,11 +63,13 @@ type Manager struct {
 // 2. manager manages maintainer lifetime
 // 3. manager report maintainer status to coordinator
 func NewMaintainerManager(selfNode *node.Info,
+	conf *cdcConfig.SchedulerConfig,
 	pdAPI pdutil.PDAPIClient,
 	regionCache *tikv.RegionCache) *Manager {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	m := &Manager{
 		mc:            mc,
+		conf:          conf,
 		maintainers:   sync.Map{},
 		selfNode:      selfNode,
 		msgCh:         make(chan *messaging.TargetMessage, 1024),
@@ -216,8 +218,8 @@ func (m *Manager) onDispatchMaintainerRequest(
 			if err != nil {
 				log.Panic("decode changefeed fail", zap.Error(err))
 			}
-			cf = NewMaintainer(cfID, cfConfig, m.selfNode, m.stream, m.taskScheduler,
-				nil, nil,
+			cf = NewMaintainer(cfID, m.conf, cfConfig, m.selfNode, m.stream, m.taskScheduler,
+				m.pdAPI, m.regionCache,
 				req.CheckpointTs)
 			err = m.stream.AddPath(cfID.ID, cf.(*Maintainer))
 			if err != nil {

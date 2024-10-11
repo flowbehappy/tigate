@@ -15,13 +15,14 @@ package server
 
 import (
 	"context"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/node"
-	"strings"
-	"sync"
-	"time"
 
 	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
