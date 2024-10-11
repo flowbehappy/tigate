@@ -28,8 +28,6 @@ const (
 	EventInit = iota
 	// EventMessage is triggered when a grpc message received
 	EventMessage
-	// EventInternalSchedule is triggered when operator need to schedule dispatchers
-	EventInternalSchedule
 	// EventPeriod is triggered periodically, maintainer handle some task in the loop, like resend messages
 	EventPeriod
 )
@@ -96,5 +94,4 @@ type ReplaceDispatcherEvent struct {
 type RemovingDispatcherEvent struct {
 	DispatcherID common.DispatcherID
 	Replace      bool
-	CallBack     func()
 }

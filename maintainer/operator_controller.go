@@ -29,6 +29,12 @@ func NewOperatorController() *OperatorController {
 	return oc
 }
 
+func (oc *OperatorController) OperatorSize() int {
+	oc.lock.RLock()
+	defer oc.lock.RUnlock()
+	return len(oc.operators)
+}
+
 func (oc *OperatorController) AddOperator(op Operator) {
 	oc.lock.Lock()
 	defer oc.lock.Unlock()

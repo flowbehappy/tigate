@@ -15,6 +15,7 @@ package maintainer
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -59,6 +60,9 @@ type Controller struct {
 	// the dispatcher is in replacing status, not removed, when the dispatcher is removed by the ddl,
 	// it should be removed from this map
 	replacing map[common.DispatcherID]struct{}
+
+	pendingTaskLock sync.RWMutex
+	pendingTasks    []*InternalScheduleDispatcherEvent
 }
 
 func NewController(changefeedID string,
@@ -91,6 +95,50 @@ func NewController(changefeedID string,
 	s.totalMaps[scheduler.SchedulerStatusRemoving] = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
 	s.totalMaps[scheduler.SchedulerStatusCommiting] = make(map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID])
 	return s
+}
+
+func (c *Controller) AddPendingTask(task *InternalScheduleDispatcherEvent) {
+	c.pendingTaskLock.Lock()
+	defer c.pendingTaskLock.Unlock()
+	c.pendingTasks = append(c.pendingTasks, task)
+}
+
+// schedulePendingDispatchers handle the dispatcher scheduling trigger by other modules
+func (c *Controller) schedulePendingDispatchers() {
+	c.pendingTaskLock.Lock()
+	defer c.pendingTaskLock.Unlock()
+	for _, event := range c.pendingTasks {
+		if event.RemovingDispatcher != nil {
+			stm := c.GetTask(event.RemovingDispatcher.DispatcherID)
+			if stm != nil {
+				c.ReplaceTask(stm)
+			} else {
+				log.Warn("dispatcher is not found",
+					zap.String("id", c.changefeedID),
+					zap.Any("dispatcher", event.RemovingDispatcher))
+			}
+		}
+
+		if event.ReplacingDispatcher != nil {
+			allFound := true
+			for _, disp := range event.ReplacingDispatcher.Removing {
+				if _, ok := c.replacing[disp]; !ok {
+					log.Warn("dispatcher is not found in replacing map",
+						zap.String("id", c.changefeedID),
+						zap.Any("dispatcher", disp))
+					allFound = false
+				}
+				delete(c.replacing, disp)
+			}
+			if allFound {
+				for _, disp := range event.ReplacingDispatcher.NewDispatcher {
+					c.addNewSpans(disp.SchemaID, disp.Span.TableID,
+						[]*heartbeatpb.TableSpan{disp.Span}, disp.CheckpointTs)
+				}
+			}
+		}
+	}
+	c.pendingTasks = nil
 }
 
 func (c *Controller) GetTasksBySchemaID(schemaID int64) map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID] {
@@ -315,6 +363,11 @@ func (c *Controller) Schedule() {
 			c.nodeTasks[task.AddInferior.CaptureID][value.ID] = value
 			delete(absents, value.ID)
 		} else if task.MoveInferior != nil {
+			op := c.oc.GetOperator(task.MoveInferior.ID)
+			if op != nil {
+				log.Info("operator is running, skip")
+				continue
+			}
 			// move should from working state
 			value := working[task.MoveInferior.ID]
 			target := task.MoveInferior.DestCapture
@@ -332,7 +385,11 @@ func (c *Controller) NeedSchedule() bool {
 
 // ScheduleFinished return false if not all task are running in working state
 func (c *Controller) ScheduleFinished() bool {
-	return c.TaskSize() == c.GetTaskSizeByState(scheduler.SchedulerStatusWorking)
+	c.pendingTaskLock.Lock()
+	defer c.pendingTaskLock.Unlock()
+	return c.TaskSize() == c.GetTaskSizeByState(scheduler.SchedulerStatusWorking) &&
+		c.oc.OperatorSize() == 0 &&
+		len(c.pendingTasks) == 0
 }
 
 func (c *Controller) GetSchedulingMessages() []*messaging.TargetMessage {
