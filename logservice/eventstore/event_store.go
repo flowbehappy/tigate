@@ -345,6 +345,7 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 	log.Info("get iterator",
 		zap.Any("dispatcherID", dispatcherID),
 		zap.String("span", dataRange.Span.String()))
+	e.spanStates.RLock()
 	state, ok := e.spanStates.dispatcherMap.Get(dataRange.Span)
 	// TODO: it is possible that the dispatcher maybe unreigsitered?
 	if !ok {
@@ -362,6 +363,7 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 	}
 	span := state.span
 	db := e.dbs[state.chIndex]
+	e.spanStates.RUnlock()
 	// TODO: respect key range in span
 	// convert endTs to inclusive: [startTs, endTs) -> (startTs, endTs]
 	start := EncodeTsKey(uint64(span.TableID), dataRange.StartTs+1, 0)
