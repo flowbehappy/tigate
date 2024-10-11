@@ -21,6 +21,7 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils"
@@ -39,7 +40,7 @@ func TestSchedule(t *testing.T) {
 	s.nodeTasks["node3"] = map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]{}
 
 	for i := 0; i < 1000; i++ {
-		s.AddNewTable(common.Table{
+		s.AddNewTable(commonEvent.Table{
 			SchemaID: 1,
 			TableID:  int64(i),
 		}, 1)
@@ -56,7 +57,7 @@ func TestSchedule(t *testing.T) {
 
 func TestMoveTask(t *testing.T) {
 	s := NewController("test", 1, nil, nil, nil, 9, time.Minute)
-	s.AddNewTable(common.Table{
+	s.AddNewTable(commonEvent.Table{
 		SchemaID: 1,
 		TableID:  int64(1),
 	}, 1)
@@ -148,7 +149,7 @@ func TestMoveTask(t *testing.T) {
 
 func TestRemoveAbsentTask(t *testing.T) {
 	s := NewController("test", 1, nil, nil, nil, 9, time.Minute)
-	s.AddNewTable(common.Table{
+	s.AddNewTable(commonEvent.Table{
 		SchemaID: 1,
 		TableID:  int64(1),
 	}, 1)
@@ -237,7 +238,7 @@ func TestFinishBootstrap(t *testing.T) {
 	s := NewController("test", 1, nil, nil, nil, 1000, 0)
 	s.AddNewNode("node1")
 	span := &heartbeatpb.TableSpan{TableID: int64(1)}
-	s.SetInitialTables([]common.Table{{TableID: 1, SchemaID: 1}})
+	s.SetInitialTables([]commonEvent.Table{{TableID: 1, SchemaID: 1}})
 
 	dispatcherID2 := common.NewDispatcherID()
 	stm2 := scheduler.NewStateMachine(dispatcherID2, map[node.ID]any{
@@ -274,7 +275,7 @@ func TestBalanceUnEvenTask(t *testing.T) {
 	s.AddNewNode("node1")
 	s.AddNewNode("node2")
 	for i := 0; i < 4; i++ {
-		s.AddNewTable(common.Table{
+		s.AddNewTable(commonEvent.Table{
 			SchemaID: 1,
 			TableID:  int64(i),
 		}, 1)
@@ -325,7 +326,7 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 	s.AddNewNode("node2")
 
 	// 1 is already split, and 2 will be split
-	s.SetInitialTables([]common.Table{
+	s.SetInitialTables([]commonEvent.Table{
 		{TableID: 1, SchemaID: 1}, {TableID: 2, SchemaID: 2},
 	})
 
