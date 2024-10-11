@@ -54,6 +54,11 @@ type Controller struct {
 	changefeedID string
 	batchSize    int
 	sche         *Scheduler[common.DispatcherID]
+	oc           *OperatorController
+
+	// the dispatcher is in replacing status, not removed, when the dispatcher is removed by the ddl,
+	// it should be removed from this map
+	replacing map[common.DispatcherID]struct{}
 }
 
 func NewController(changefeedID string,
@@ -70,7 +75,9 @@ func NewController(changefeedID string,
 		changefeedID:      changefeedID,
 		batchSize:         batchSize,
 		bootstrapped:      false,
+		replacing:         make(map[common.DispatcherID]struct{}),
 		sche:              NewScheduler[common.DispatcherID](batchSize, changefeedID, balanceInterval),
+		oc:                NewOperatorController(),
 	}
 	if config != nil && config.EnableTableAcrossNodes {
 		s.splitter = split.NewSplitter(changefeedID, pdapi, regionCache, config)
@@ -207,6 +214,11 @@ func (c *Controller) RemoveTask(stm *scheduler.StateMachine[common.DispatcherID]
 	c.tryMoveTask(stm.ID, stm, oldState, oldPrimary, true)
 }
 
+func (c *Controller) ReplaceTask(stm *scheduler.StateMachine[common.DispatcherID]) {
+	c.RemoveTask(stm)
+	c.replacing[stm.ID] = struct{}{}
+}
+
 func (c *Controller) GetTasksByTableIDs(tableIDs ...int64) []*scheduler.StateMachine[common.DispatcherID] {
 	var stms []*scheduler.StateMachine[common.DispatcherID]
 	for _, tableID := range tableIDs {
@@ -262,7 +274,7 @@ func (c *Controller) AddNewNode(id node.ID) {
 func (c *Controller) RemoveNode(id node.ID) {
 	stmMap, ok := c.nodeTasks[id]
 	if !ok {
-		log.Info("node is maintained by controller, ignore",
+		log.Info("node is not maintained by controller, ignore",
 			zap.String("changefeed", c.changefeedID),
 			zap.Any("node", id))
 		return
@@ -442,14 +454,9 @@ func (c *Controller) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, 
 func (c *Controller) addNewSpans(schemaID, tableID int64,
 	tableSpans []*heartbeatpb.TableSpan, startTs uint64) {
 	for _, newSpan := range tableSpans {
-		newTableSpan := &heartbeatpb.TableSpan{
-			TableID:  tableID,
-			StartKey: newSpan.StartKey,
-			EndKey:   newSpan.EndKey,
-		}
 		dispatcherID := common.NewDispatcherID()
 		replicaSet := NewReplicaSet(model.DefaultChangeFeedID(c.changefeedID),
-			dispatcherID, schemaID, newTableSpan, startTs).(*ReplicaSet)
+			dispatcherID, schemaID, newSpan, startTs).(*ReplicaSet)
 		stm := scheduler.NewStateMachine(dispatcherID, nil, replicaSet)
 		c.Absent()[dispatcherID] = stm
 		// modify the schema map
@@ -494,6 +501,10 @@ func (c *Controller) tryMoveTask(dispatcherID common.DispatcherID,
 		delete(c.tableTasks[stm.Inferior.(*ReplicaSet).Span.TableID], dispatcherID)
 		if len(c.tableTasks[stm.Inferior.(*ReplicaSet).Span.TableID]) == 0 {
 			delete(c.tableTasks, stm.Inferior.(*ReplicaSet).Span.TableID)
+		}
+		// really deleted, remove from replacing map and clear operator
+		if _, ok := c.replacing[dispatcherID]; !ok {
+			c.oc.RemoveOperator(dispatcherID)
 		}
 	}
 	// keep node task map is updated

@@ -189,6 +189,8 @@ func (m *Maintainer) HandleEvent(event *Event) bool {
 		}
 	case EventPeriod:
 		m.onPeriodTask()
+	case EventInternalSchedule:
+		m.onNewDispatchers(event.dispatcherEvent)
 	}
 	return false
 }
@@ -631,6 +633,42 @@ func (m *Maintainer) onPeriodTask() {
 		changefeedID: m.id.ID,
 		eventType:    EventPeriod,
 	}, time.Now().Add(time.Millisecond*500))
+}
+
+// onNewDispatchers handle the dispatcher scheduling trigger by other modules
+func (m *Maintainer) onNewDispatchers(event *InternalScheduleDispatcherEvent) {
+	if event.RemovingDispatcher != nil {
+		stm := m.controller.GetTask(event.RemovingDispatcher.DispatcherID)
+		if stm != nil {
+			m.controller.ReplaceTask(stm)
+			if event.RemovingDispatcher.CallBack != nil {
+				event.RemovingDispatcher.CallBack()
+			}
+		} else {
+			log.Warn("dispatcher is not found",
+				zap.String("id", m.id.String()),
+				zap.Any("dispatcher", event.RemovingDispatcher))
+		}
+	}
+
+	if event.ReplacingDispatcher != nil {
+		allFound := true
+		for _, disp := range event.ReplacingDispatcher.Removing {
+			if _, ok := m.controller.replacing[disp]; !ok {
+				log.Warn("dispatcher is not found in replacing map",
+					zap.String("id", m.id.String()),
+					zap.Any("dispatcher", disp))
+				allFound = false
+			}
+			delete(m.controller.replacing, disp)
+		}
+		if allFound {
+			for _, disp := range event.ReplacingDispatcher.NewDispatcher {
+				m.controller.addNewSpans(disp.SchemaID, disp.Span.TableID,
+					[]*heartbeatpb.TableSpan{disp.Span}, disp.CheckpointTs)
+			}
+		}
+	}
 }
 
 func (m *Maintainer) collectMetrics() {
