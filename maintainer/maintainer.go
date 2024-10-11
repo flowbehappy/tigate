@@ -301,7 +301,7 @@ func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
 	case messaging.TypeHeartBeatRequest:
 		return m.onHeartBeatRequest(msg)
 	case messaging.TypeBlockStatusRequest:
-
+		m.onBlockStateRequest(msg)
 	case messaging.TypeMaintainerBootstrapResponse:
 		m.onMaintainerBootstrapResponse(msg)
 	case messaging.TypeMaintainerCloseResponse:

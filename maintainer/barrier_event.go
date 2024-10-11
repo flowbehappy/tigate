@@ -234,36 +234,40 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 
 func (be *BarrierEvent) newWriterActionMessage(capture node.ID) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(capture, messaging.HeartbeatCollectorTopic,
-		&heartbeatpb.HeartBeatResponse{DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
-			{
-				Action: &heartbeatpb.DispatcherAction{
-					Action:   heartbeatpb.Action_Write,
-					CommitTs: be.commitTs,
-				},
-				InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
-					InfluenceType: heartbeatpb.InfluenceType_Normal,
-					DispatcherIDs: []*heartbeatpb.DispatcherID{
-						be.writerDispatcher.ToPB(),
+		&heartbeatpb.HeartBeatResponse{
+			ChangefeedID: be.cfID,
+			DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
+				{
+					Action: &heartbeatpb.DispatcherAction{
+						Action:   heartbeatpb.Action_Write,
+						CommitTs: be.commitTs,
+					},
+					InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
+						InfluenceType: heartbeatpb.InfluenceType_Normal,
+						DispatcherIDs: []*heartbeatpb.DispatcherID{
+							be.writerDispatcher.ToPB(),
+						},
 					},
 				},
-			},
-		}})
+			}})
 }
 
 func (be *BarrierEvent) newPassActionMessage(capture node.ID) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(capture, messaging.HeartbeatCollectorTopic,
-		&heartbeatpb.HeartBeatResponse{DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
-			{
-				Action: &heartbeatpb.DispatcherAction{
-					Action:      heartbeatpb.Action_Pass,
-					CommitTs:    be.commitTs,
-					IsSyncPoint: be.isSyncPoint,
+		&heartbeatpb.HeartBeatResponse{
+			ChangefeedID: be.cfID,
+			DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
+				{
+					Action: &heartbeatpb.DispatcherAction{
+						Action:      heartbeatpb.Action_Pass,
+						CommitTs:    be.commitTs,
+						IsSyncPoint: be.isSyncPoint,
+					},
+					InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
+						InfluenceType:       be.blockedDispatchers.InfluenceType,
+						SchemaID:            be.blockedDispatchers.SchemaID,
+						ExcludeDispatcherId: be.writerDispatcher.ToPB(),
+					},
 				},
-				InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
-					InfluenceType:       be.blockedDispatchers.InfluenceType,
-					SchemaID:            be.blockedDispatchers.SchemaID,
-					ExcludeDispatcherId: be.writerDispatcher.ToPB(),
-				},
-			},
-		}})
+			}})
 }
