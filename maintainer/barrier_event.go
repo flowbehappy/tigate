@@ -215,7 +215,7 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 		return nil
 	}
 	be.lastResendTime = time.Now()
-	// we select a dispatcher as the writer, still waiting for that dispatcher advance it's checkpoint ts
+	// we select a dispatcher as the writer, still waiting for that dispatcher advance its checkpoint ts
 	if !be.writerDispatcherAdvanced {
 		//resend write action
 		stm := be.scheduler.GetTask(be.writerDispatcher)
