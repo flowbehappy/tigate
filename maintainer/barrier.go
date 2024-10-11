@@ -44,11 +44,11 @@ func NewBarrier(controller *Controller) *Barrier {
 	}
 }
 
-// HandleStatus handle the heartbeat status from dispatcher manager
+// HandleStatus handle the block status from dispatcher manager
 func (b *Barrier) HandleStatus(from node.ID,
-	request *heartbeatpb.HeartBeatRequest) *messaging.TargetMessage {
+	request *heartbeatpb.BlockStatusRequest) *messaging.TargetMessage {
 	var dispatcherStatus []*heartbeatpb.DispatcherStatus
-	for _, status := range request.Statuses {
+	for _, status := range request.BlockStatuses {
 		resp := b.handleOneStatus(request.ChangefeedID, status)
 		if resp != nil {
 			dispatcherStatus = append(dispatcherStatus, resp)
@@ -76,45 +76,43 @@ func (b *Barrier) Resend() []*messaging.TargetMessage {
 	return msgs
 }
 
-func (b *Barrier) handleOneStatus(changefeedID string, status *heartbeatpb.TableSpanStatus) *heartbeatpb.DispatcherStatus {
+func (b *Barrier) handleOneStatus(changefeedID string, status *heartbeatpb.TableSpanBlockStatus) *heartbeatpb.DispatcherStatus {
 	dispatcherID := common.NewDispatcherIDFromPB(status.ID)
-	if status.State == nil {
-		return b.handleNoStateHeartbeat(dispatcherID, status.CheckpointTs)
+	if status.State.EventDone {
+		b.handleEventDone(dispatcherID)
+		return nil
 	}
-	return b.handleStateHeartbeat(changefeedID, dispatcherID, status)
+	return b.handleBlockState(changefeedID, dispatcherID, status)
 }
 
-func (b *Barrier) handleNoStateHeartbeat(dispatcherID common.DispatcherID, checkpointTs uint64) *heartbeatpb.DispatcherStatus {
+func (b *Barrier) handleEventDone(dispatcherID common.DispatcherID) {
 	event, ok := b.blockedDispatcher[dispatcherID]
 	// no block event found
 	if !ok {
-		return nil
+		return
 	}
 
-	// there is a block event and the dispatcher advanced its checkpoint ts
+	// there is a block event and the dispatcher write or pass action already
 	// which means we have sent pass or write action to it
-	if checkpointTs >= event.commitTs {
-		// the writer already synced ddl to downstream
-		if event.writerDispatcher == dispatcherID {
-			// schedule new and removed tasks
-			// the pass action will be sent periodically in resend logic if not acked
-			event.scheduleBlockEvent()
-			event.writerDispatcherAdvanced = true
-		}
-
-		// checkpoint ts is advanced, clear the map, so do not need to resend message anymore
-		delete(b.blockedDispatcher, dispatcherID)
-		// all blocked dispatchers are advanced checkpoint ts
-		if len(b.blockedDispatcher) == 0 {
-			delete(b.blockedTs, event.commitTs)
-		}
+	// the writer already synced ddl to downstream
+	if event.writerDispatcher == dispatcherID {
+		// schedule new and removed tasks
+		// the pass action will be sent periodically in resend logic if not acked
+		event.scheduleBlockEvent()
+		event.writerDispatcherAdvanced = true
 	}
-	return nil
+
+	// checkpoint ts is advanced, clear the map, so do not need to resend message anymore
+	delete(b.blockedDispatcher, dispatcherID)
+	// all blocked dispatchers are advanced checkpoint ts
+	if len(b.blockedDispatcher) == 0 {
+		delete(b.blockedTs, event.commitTs)
+	}
 }
 
-func (b *Barrier) handleStateHeartbeat(changefeedID string,
+func (b *Barrier) handleBlockState(changefeedID string,
 	dispatcherID common.DispatcherID,
-	status *heartbeatpb.TableSpanStatus) *heartbeatpb.DispatcherStatus {
+	status *heartbeatpb.TableSpanBlockStatus) *heartbeatpb.DispatcherStatus {
 	blockState := status.State
 	dispatcherStatus := &heartbeatpb.DispatcherStatus{
 		InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{

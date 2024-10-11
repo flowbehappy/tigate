@@ -66,7 +66,11 @@ type Dispatcher struct {
 	tableSpan *heartbeatpb.TableSpan
 	sink      tisink.Sink
 
+	// TableSpanStatus use to report checkpointTs / componentStatus to Maintainer
 	statusesChan chan *heartbeatpb.TableSpanStatus
+
+	// TableSpanBlockStatus use to report block status of ddl/sync point event to Maintainer
+	blockStatusesChan chan *heartbeatpb.TableSpanBlockStatus
 
 	SyncPointInfo *SyncPointInfo
 
@@ -97,6 +101,7 @@ func NewDispatcher(
 	sink tisink.Sink,
 	startTs uint64,
 	statusesChan chan *heartbeatpb.TableSpanStatus,
+	blockStatusesChan chan *heartbeatpb.TableSpanBlockStatus,
 	filter filter.Filter,
 	schemaID int64,
 	schemaIDToDispatchers *SchemaIDToDispatchers,
@@ -106,6 +111,7 @@ func NewDispatcher(
 		tableSpan:             tableSpan,
 		sink:                  sink,
 		statusesChan:          statusesChan,
+		blockStatusesChan:     blockStatusesChan,
 		SyncPointInfo:         syncPointInfo,
 		componentStatus:       newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
 		resolvedTs:            newTsWithMutex(startTs),
@@ -176,12 +182,18 @@ func (d *Dispatcher) addBlockEventToSinkWhenAvailable(event commonEvent.BlockEve
 // 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and wake the dispatcherEventsHandler
 func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.DispatcherStatus) {
 	if d.blockPendingEvent == nil {
+		// receive outdated status
+		// If status is about ack, ignore it.
+		// If status is about action, we need to return message show we have finished the event.
 		if dispatcherStatus.GetAction() != nil {
-			// 只可能出现在 event 已经推进了，但是还重复收到了 action 消息的时候，则重发包含 checkpointTs 的心跳
-			d.statusesChan <- &heartbeatpb.TableSpanStatus{
-				ID:              d.id.ToPB(),
-				ComponentStatus: heartbeatpb.ComponentState_Working,
-				CheckpointTs:    d.GetCheckpointTs(),
+			d.blockStatusesChan <- &heartbeatpb.TableSpanBlockStatus{
+				ID: d.id.ToPB(),
+				State: &heartbeatpb.State{
+					IsBlocked:   true,
+					BlockTs:     dispatcherStatus.GetAction().CommitTs,
+					IsSyncPoint: dispatcherStatus.GetAction().IsSyncPoint,
+					EventDone:   true,
+				},
 			}
 		}
 		return
@@ -197,11 +209,15 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 				dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
 				dispatcherEventDynamicStream.Wake() <- d.id
 			}
-			d.statusesChan <- &heartbeatpb.TableSpanStatus{
-				ID:              d.id.ToPB(),
-				ComponentStatus: heartbeatpb.ComponentState_Working,
-				CheckpointTs:    d.GetCheckpointTs(),
-			}
+		}
+		d.blockStatusesChan <- &heartbeatpb.TableSpanBlockStatus{
+			ID: d.id.ToPB(),
+			State: &heartbeatpb.State{
+				IsBlocked:   true,
+				BlockTs:     dispatcherStatus.GetAction().CommitTs,
+				IsSyncPoint: dispatcherStatus.GetAction().IsSyncPoint,
+				EventDone:   true,
+			},
 		}
 	}
 
@@ -258,28 +274,28 @@ func shouldBlock(event commonEvent.BlockEvent) bool {
 }
 
 // 1.If the event is a single table DDL, it will be added to the sink for writing to downstream(async). If the ddl leads to add new tables or drop tables, it should send heartbeat to maintainer
-// 2. If the event is a multi-table DDL / sync point Event, it will generate a TableSpanStatus message with ddl info to send to maintainer.
+// 2. If the event is a multi-table DDL / sync point Event, it will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
 func (d *Dispatcher) DealWithBlockEventWhenProgressEmpty() {
 	if !shouldBlock(d.blockPendingEvent) {
 		d.sink.AddBlockEvent(d.blockPendingEvent, d.tableProgress)
 		if d.blockPendingEvent.GetNeedAddedTables() != nil || d.blockPendingEvent.GetNeedDroppedTables() != nil {
-			message := &heartbeatpb.TableSpanStatus{
-				ID:              d.id.ToPB(),
-				ComponentStatus: heartbeatpb.ComponentState_Working,
+			message := &heartbeatpb.TableSpanBlockStatus{
+				ID: d.id.ToPB(),
 				State: &heartbeatpb.State{
 					IsBlocked:         false,
 					BlockTs:           d.blockPendingEvent.GetCommitTs(),
 					NeedDroppedTables: d.blockPendingEvent.GetNeedDroppedTables().ToPB(),
 					NeedAddedTables:   commonEvent.ToTablesPB(d.blockPendingEvent.GetNeedAddedTables()),
+					IsSyncPoint:       false, // sync point event must should block
+					EventDone:         false,
 				},
 			}
 			d.SetResendTask(newResendTask(message, d))
-			d.statusesChan <- message
+			d.blockStatusesChan <- message
 		}
 	} else {
-		message := &heartbeatpb.TableSpanStatus{
-			ID:              d.id.ToPB(),
-			ComponentStatus: heartbeatpb.ComponentState_Working,
+		message := &heartbeatpb.TableSpanBlockStatus{
+			ID: d.id.ToPB(),
 			State: &heartbeatpb.State{
 				IsBlocked:         true,
 				BlockTs:           d.blockPendingEvent.GetCommitTs(),
@@ -288,10 +304,11 @@ func (d *Dispatcher) DealWithBlockEventWhenProgressEmpty() {
 				NeedAddedTables:   commonEvent.ToTablesPB(d.blockPendingEvent.GetNeedAddedTables()),
 				UpdatedSchemas:    commonEvent.ToSchemaIDChangePB(d.blockPendingEvent.GetUpdatedSchemas()), // only exists for rename table and rename tables
 				IsSyncPoint:       d.blockPendingEvent.GetType() == commonEvent.TypeSyncPointEvent,
+				EventDone:         false,
 			},
 		}
 		d.SetResendTask(newResendTask(message, d))
-		d.statusesChan <- message
+		d.blockStatusesChan <- message
 	}
 
 	// dealing with events which update schema ids
@@ -342,10 +359,6 @@ func (d *Dispatcher) GetCheckpointTs() uint64 {
 
 func (d *Dispatcher) GetId() common.DispatcherID {
 	return d.id
-}
-
-func (d *Dispatcher) GetStatusesChan() chan *heartbeatpb.TableSpanStatus {
-	return d.statusesChan
 }
 
 func (d *Dispatcher) CancelResendTask() {

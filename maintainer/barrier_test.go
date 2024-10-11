@@ -19,6 +19,7 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
@@ -29,15 +30,15 @@ import (
 func TestOneBlockEvent(t *testing.T) {
 	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
-	sche.AddNewTable(common.Table{1, 1}, 0)
+	sche.AddNewTable(commonEvent.Table{1, 1}, 0)
 	stm := sche.GetTasksByTableIDs(1)[0]
 	stm.Primary = "node1"
 	stm.State = scheduler.SchedulerStatusWorking
 	sche.tryMoveTask(stm.ID, stm, scheduler.SchedulerStatusAbsent, "", true)
 	barrier := NewBarrier(sche)
-	msg := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: stm.ID.ToPB(),
 				State: &heartbeatpb.State{
@@ -46,8 +47,8 @@ func TestOneBlockEvent(t *testing.T) {
 					BlockTables: &heartbeatpb.InfluencedTables{
 						InfluenceType: heartbeatpb.InfluenceType_All,
 					},
+					IsSyncPoint: true,
 				},
-				CheckpointTs: 0,
 			},
 		},
 	})
@@ -63,13 +64,18 @@ func TestOneBlockEvent(t *testing.T) {
 	require.Equal(t, resp.DispatcherStatuses[0].Ack.CommitTs, uint64(10))
 	require.Equal(t, resp.DispatcherStatuses[0].Action.CommitTs, uint64(10))
 	require.Equal(t, resp.DispatcherStatuses[0].Action.Action, heartbeatpb.Action_Write)
+	require.True(t, resp.DispatcherStatuses[0].Action.IsSyncPoint)
 
-	msg = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
-				ID:           stm.ID.ToPB(),
-				CheckpointTs: 10,
+				ID: stm.ID.ToPB(),
+				State: &heartbeatpb.State{
+					IsBlocked:   true,
+					EventDone:   true,
+					IsSyncPoint: true,
+				},
 			},
 		},
 	})
@@ -83,7 +89,7 @@ func TestNormalBlock(t *testing.T) {
 	sche.AddNewNode("node2")
 	var blockedDispatcherIDS []*heartbeatpb.DispatcherID
 	for id := 1; id < 4; id++ {
-		sche.AddNewTable(common.Table{1, int64(id)}, 0)
+		sche.AddNewTable(commonEvent.Table{1, int64(id)}, 0)
 		stm := sche.GetTasksByTableIDs(int64(id))[0]
 		blockedDispatcherIDS = append(blockedDispatcherIDS, stm.ID.ToPB())
 		stm.Primary = "node1"
@@ -101,9 +107,9 @@ func TestNormalBlock(t *testing.T) {
 	barrier := NewBarrier(sche)
 
 	// first node block request
-	msg := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: blockedDispatcherIDS[0],
 				State: &heartbeatpb.State{
@@ -119,7 +125,6 @@ func TestNormalBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 10,
 			},
 			{
 				ID: blockedDispatcherIDS[1],
@@ -136,7 +141,6 @@ func TestNormalBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 10,
 			},
 		},
 	})
@@ -145,9 +149,9 @@ func TestNormalBlock(t *testing.T) {
 	require.Len(t, resp.DispatcherStatuses, 2)
 
 	// other node block request
-	msg = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node2", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: selectDispatcherID.ToPB(),
 				State: &heartbeatpb.State{
@@ -163,7 +167,6 @@ func TestNormalBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 10,
 			},
 		},
 	})
@@ -175,9 +178,9 @@ func TestNormalBlock(t *testing.T) {
 	require.Nil(t, event.reportedDispatchers)
 
 	// repeated status
-	barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: blockedDispatcherIDS[0],
 				State: &heartbeatpb.State{
@@ -193,7 +196,6 @@ func TestNormalBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 10,
 			},
 			{
 				ID: blockedDispatcherIDS[1],
@@ -210,7 +212,6 @@ func TestNormalBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 10,
 			},
 		},
 	})
@@ -219,27 +220,39 @@ func TestNormalBlock(t *testing.T) {
 	require.Nil(t, event.reportedDispatchers)
 
 	// selected node write done
-	msg = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node2", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
-				ID:           blockedDispatcherIDS[2],
-				CheckpointTs: 11,
+				ID: blockedDispatcherIDS[2],
+				State: &heartbeatpb.State{
+					IsBlocked: true,
+					BlockTs:   10,
+					EventDone: true,
+				},
 			},
 		},
 	})
 	require.Len(t, barrier.blockedTs, 1)
 	require.Len(t, barrier.blockedDispatcher, 2)
-	msg = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
-				ID:           blockedDispatcherIDS[0],
-				CheckpointTs: 19,
+				ID: blockedDispatcherIDS[0],
+				State: &heartbeatpb.State{
+					IsBlocked: true,
+					BlockTs:   10,
+					EventDone: true,
+				},
 			},
 			{
-				ID:           blockedDispatcherIDS[1],
-				CheckpointTs: 13,
+				ID: blockedDispatcherIDS[1],
+				State: &heartbeatpb.State{
+					IsBlocked: true,
+					BlockTs:   10,
+					EventDone: true,
+				},
 			},
 		},
 	})
@@ -251,9 +264,9 @@ func TestSchemaBlock(t *testing.T) {
 	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	sche.AddNewNode("node2")
-	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 1}, 1)
-	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 2}, 1)
-	sche.AddNewTable(common.Table{SchemaID: 2, TableID: 3}, 1)
+	sche.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
+	sche.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 2}, 1)
+	sche.AddNewTable(commonEvent.Table{SchemaID: 2, TableID: 3}, 1)
 	var dispatcherIDs []*heartbeatpb.DispatcherID
 	var dropTables = []int64{1, 2}
 	for key, stm := range sche.Absent() {
@@ -269,9 +282,9 @@ func TestSchemaBlock(t *testing.T) {
 	barrier := NewBarrier(sche)
 
 	// first dispatcher  block request
-	msg := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: dispatcherIDs[0],
 				State: &heartbeatpb.State{
@@ -287,7 +300,6 @@ func TestSchemaBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 10,
 			},
 		},
 	})
@@ -297,9 +309,9 @@ func TestSchemaBlock(t *testing.T) {
 	require.True(t, resp.DispatcherStatuses[0].Ack.CommitTs == 10)
 
 	// second dispatcher  block request
-	msg = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: dispatcherIDs[1],
 				State: &heartbeatpb.State{
@@ -315,7 +327,6 @@ func TestSchemaBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 10,
 			},
 		},
 	})
@@ -331,9 +342,9 @@ func TestSchemaBlock(t *testing.T) {
 	require.Equal(t, event.writerDispatcher.ToPB(), dispatcherIDs[1])
 
 	// repeated status
-	msg = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: dispatcherIDs[1],
 				State: &heartbeatpb.State{
@@ -349,7 +360,6 @@ func TestSchemaBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 10,
 			},
 		},
 	})
@@ -363,12 +373,16 @@ func TestSchemaBlock(t *testing.T) {
 	require.Equal(t, event.writerDispatcher.ToPB(), dispatcherIDs[1])
 
 	// selected node write done
-	msg = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node2", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
-				ID:           dispatcherIDs[1],
-				CheckpointTs: 11,
+				ID: dispatcherIDs[1],
+				State: &heartbeatpb.State{
+					IsBlocked: true,
+					BlockTs:   10,
+					EventDone: true,
+				},
 			},
 		},
 	})
@@ -387,12 +401,16 @@ func TestSchemaBlock(t *testing.T) {
 	require.Equal(t, 2, len(sche.Removing()))
 	require.Equal(t, 1, len(sche.Working()))
 	// other dispatcher advanced checkpoint ts
-	msg = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
-				ID:           dispatcherIDs[0],
-				CheckpointTs: 19,
+				ID: dispatcherIDs[0],
+				State: &heartbeatpb.State{
+					IsBlocked: true,
+					BlockTs:   10,
+					EventDone: true,
+				},
 			},
 		},
 	})
@@ -404,9 +422,9 @@ func TestSyncPointBlock(t *testing.T) {
 	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
 	sche.AddNewNode("node1")
 	sche.AddNewNode("node2")
-	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 1}, 1)
-	sche.AddNewTable(common.Table{SchemaID: 1, TableID: 2}, 1)
-	sche.AddNewTable(common.Table{SchemaID: 2, TableID: 3}, 1)
+	sche.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
+	sche.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 2}, 1)
+	sche.AddNewTable(commonEvent.Table{SchemaID: 2, TableID: 3}, 1)
 	var dispatcherIDs []*heartbeatpb.DispatcherID
 	var dropTables = []int64{1, 2, 3}
 	for key, stm := range sche.Absent() {
@@ -422,9 +440,9 @@ func TestSyncPointBlock(t *testing.T) {
 	newSpan := &heartbeatpb.Table{TableID: 10, SchemaID: 2}
 	barrier := NewBarrier(sche)
 	// first dispatcher  block request
-	msg := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: dispatcherIDs[0],
 				State: &heartbeatpb.State{
@@ -440,7 +458,6 @@ func TestSyncPointBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 10,
 			},
 			{
 				ID: dispatcherIDs[1],
@@ -457,7 +474,6 @@ func TestSyncPointBlock(t *testing.T) {
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
 				},
-				CheckpointTs: 10,
 			},
 		},
 	})
@@ -467,9 +483,9 @@ func TestSyncPointBlock(t *testing.T) {
 	require.True(t, resp.DispatcherStatuses[0].Ack.CommitTs == 10)
 
 	// second dispatcher  block request
-	msg = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node2", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: dispatcherIDs[2],
 				State: &heartbeatpb.State{
@@ -484,8 +500,8 @@ func TestSyncPointBlock(t *testing.T) {
 						TableIDs:      dropTables,
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
+					IsSyncPoint:     true,
 				},
-				CheckpointTs: 10,
 			},
 		},
 	})
@@ -501,12 +517,17 @@ func TestSyncPointBlock(t *testing.T) {
 	require.Equal(t, event.writerDispatcher.ToPB(), dispatcherIDs[2])
 
 	// selected node write done
-	_ = barrier.HandleStatus("node2", &heartbeatpb.HeartBeatRequest{
+	_ = barrier.HandleStatus("node2", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
-				ID:           dispatcherIDs[2],
-				CheckpointTs: 11,
+				ID: dispatcherIDs[2],
+				State: &heartbeatpb.State{
+					IsBlocked:   true,
+					BlockTs:     10,
+					EventDone:   true,
+					IsSyncPoint: false,
+				},
 			},
 		},
 	})
@@ -517,16 +538,26 @@ func TestSyncPointBlock(t *testing.T) {
 	// the writer already advanced
 	require.Len(t, barrier.blockedDispatcher, 2)
 	// other dispatcher advanced checkpoint ts
-	msg = barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
-				ID:           dispatcherIDs[0],
-				CheckpointTs: 19,
+				ID: dispatcherIDs[0],
+				State: &heartbeatpb.State{
+					IsBlocked:   true,
+					BlockTs:     10,
+					EventDone:   true,
+					IsSyncPoint: false,
+				},
 			},
 			{
-				ID:           dispatcherIDs[1],
-				CheckpointTs: 19,
+				ID: dispatcherIDs[1],
+				State: &heartbeatpb.State{
+					IsBlocked:   true,
+					BlockTs:     10,
+					EventDone:   true,
+					IsSyncPoint: false,
+				},
 			},
 		},
 	})
@@ -543,9 +574,9 @@ func TestNonBlocked(t *testing.T) {
 	for id := 1; id < 4; id++ {
 		blockedDispatcherIDS = append(blockedDispatcherIDS, common.NewDispatcherID().ToPB())
 	}
-	msg := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
+	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
-		Statuses: []*heartbeatpb.TableSpanStatus{
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: blockedDispatcherIDS[0],
 				State: &heartbeatpb.State{
@@ -559,7 +590,6 @@ func TestNonBlocked(t *testing.T) {
 						{TableID: 1, SchemaID: 1}, {TableID: 2, SchemaID: 2},
 					},
 				},
-				CheckpointTs: 9,
 			},
 		},
 	})
@@ -580,7 +610,7 @@ func TestSyncPointBlockPerf(t *testing.T) {
 	sche.AddNewNode("node1")
 	barrier := NewBarrier(sche)
 	for id := 1; id < 1000; id++ {
-		sche.AddNewTable(common.Table{SchemaID: 1, TableID: int64(id)}, 1)
+		sche.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 1)
 	}
 	var dispatcherIDs []*heartbeatpb.DispatcherID
 	for key, stm := range sche.Absent() {
@@ -589,9 +619,9 @@ func TestSyncPointBlockPerf(t *testing.T) {
 		sche.tryMoveTask(key, stm, scheduler.SchedulerStatusAbsent, "", true)
 		dispatcherIDs = append(dispatcherIDs, key.ToPB())
 	}
-	var blockStatus []*heartbeatpb.TableSpanStatus
+	var blockStatus []*heartbeatpb.TableSpanBlockStatus
 	for _, id := range dispatcherIDs {
-		blockStatus = append(blockStatus, &heartbeatpb.TableSpanStatus{
+		blockStatus = append(blockStatus, &heartbeatpb.TableSpanBlockStatus{
 			ID: id,
 			State: &heartbeatpb.State{
 				IsBlocked: true,
@@ -601,7 +631,6 @@ func TestSyncPointBlockPerf(t *testing.T) {
 					SchemaID:      1,
 				},
 			},
-			CheckpointTs: 9,
 		})
 	}
 
@@ -610,24 +639,29 @@ func TestSyncPointBlockPerf(t *testing.T) {
 	//pprof.StartCPUProfile(f)
 	//defer pprof.StopCPUProfile()
 	now := time.Now()
-	msg := barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
-		ChangefeedID: "test",
-		Statuses:     blockStatus,
+	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
+		ChangefeedID:  "test",
+		BlockStatuses: blockStatus,
 	})
 	require.NotNil(t, msg)
 	log.Info("duration", zap.Duration("duration", time.Since(now)))
 
 	now = time.Now()
-	var passStatus []*heartbeatpb.TableSpanStatus
+	var passStatus []*heartbeatpb.TableSpanBlockStatus
 	for _, id := range dispatcherIDs {
-		passStatus = append(passStatus, &heartbeatpb.TableSpanStatus{
-			ID:           id,
-			CheckpointTs: 10,
+		passStatus = append(passStatus, &heartbeatpb.TableSpanBlockStatus{
+			ID: id,
+			State: &heartbeatpb.State{
+				IsBlocked:   true,
+				BlockTs:     10,
+				IsSyncPoint: true,
+				EventDone:   true,
+			},
 		})
 	}
-	barrier.HandleStatus("node1", &heartbeatpb.HeartBeatRequest{
-		ChangefeedID: "test",
-		Statuses:     passStatus,
+	barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
+		ChangefeedID:  "test",
+		BlockStatuses: passStatus,
 	})
 	require.NotNil(t, msg)
 	log.Info("duration", zap.Duration("duration", time.Since(now)))

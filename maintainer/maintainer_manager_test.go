@@ -20,16 +20,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/node"
-
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -50,7 +50,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode
 	store := &mockSchemaStore{
 		// 3 tables and a ddl_event_trigger as a table
-		tables: []common.Table{
+		tables: []commonEvent.Table{
 			{SchemaID: 1, TableID: 1}, {SchemaID: 1, TableID: 2}, {SchemaID: 1, TableID: 3}},
 	}
 	appcontext.SetService(appcontext.SchemaStore, store)
@@ -171,7 +171,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode
 	store := &mockSchemaStore{
 		// 3 tables and a ddl_event_trigger as a table
-		tables: []common.Table{
+		tables: []commonEvent.Table{
 			{SchemaID: 1, TableID: 1}, {SchemaID: 1, TableID: 2}, {SchemaID: 1, TableID: 3}},
 	}
 	appcontext.SetService(appcontext.SchemaStore, store)
@@ -263,10 +263,10 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 
 type mockSchemaStore struct {
 	schemastore.SchemaStore
-	tables []common.Table
+	tables []commonEvent.Table
 }
 
-func (m *mockSchemaStore) GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]common.Table, error) {
+func (m *mockSchemaStore) GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]commonEvent.Table, error) {
 	return m.tables, nil
 }
 
