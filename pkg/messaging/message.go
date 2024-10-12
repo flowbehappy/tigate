@@ -2,8 +2,9 @@ package messaging
 
 import (
 	"fmt"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -134,10 +135,6 @@ func (r RegisterDispatcherRequest) GetTableSpan() *heartbeatpb.TableSpan {
 
 func (r RegisterDispatcherRequest) GetStartTs() uint64 {
 	return r.StartTs
-}
-
-func (r RegisterDispatcherRequest) IsRegister() bool {
-	return !r.Remove
 }
 
 func (r RegisterDispatcherRequest) GetChangefeedID() (namespace, id string) {

@@ -45,10 +45,9 @@ EventDispatcherManager is responsible for managing the dispatchers of a changefe
 EventDispatcherManager is working on:
 1. Collecting all the heartbeat messages from all the dispatchers to make HeartBeatRequest.
 2. Sending the HeartBeatResponse to each dispatcher.
-3. Createing the new dispatchers.
-
-One changefeed in one instance can only have one EventDispatcherManager.
-One EventDispatcherManager can only have one Sink.
+3. Create and remove dispatchers.
+One changefeed in one instance has one EventDispatcherManager.
+One EventDispatcherManager has one backend sink.
 */
 type EventDispatcherManager struct {
 	dispatcherMap *DispatcherMap

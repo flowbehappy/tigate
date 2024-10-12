@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
@@ -30,7 +31,7 @@ type DispatcherInfo interface {
 	GetServerID() string
 	GetTableSpan() *heartbeatpb.TableSpan
 	GetStartTs() uint64
-	IsRegister() bool
+	GetActionType() eventpb.ActionType
 	GetChangefeedID() (namespace, id string)
 	GetFilterConfig() *config.FilterConfig
 }
@@ -75,10 +76,17 @@ func (s *eventService) Run(ctx context.Context) error {
 			log.Info("event service exited")
 			return nil
 		case info := <-s.acceptorInfoCh:
-			if info.IsRegister() {
+			switch info.GetActionType() {
+			case eventpb.ActionType_ACTION_TYPE_REGISTER:
 				s.registerDispatcher(ctx, info)
-			} else {
+			case eventpb.ActionType_ACTION_TYPE_REMOVE:
 				s.deregisterDispatcher(info)
+			case eventpb.ActionType_ACTION_TYPE_PAUSE:
+				s.pauseDispatcher(info)
+			case eventpb.ActionType_ACTION_TYPE_RESUME:
+				s.resumeDispatcher(info)
+			default:
+				log.Panic("invalid action type", zap.Any("info", info))
 			}
 		}
 	}
@@ -122,6 +130,24 @@ func (s *eventService) deregisterDispatcher(dispatcherInfo DispatcherInfo) {
 		return
 	}
 	c.removeDispatcher(dispatcherInfo)
+}
+
+func (s *eventService) pauseDispatcher(dispatcherInfo DispatcherInfo) {
+	clusterID := dispatcherInfo.GetClusterID()
+	c, ok := s.brokers[clusterID]
+	if !ok {
+		return
+	}
+	c.pauseDispatcher(dispatcherInfo)
+}
+
+func (s *eventService) resumeDispatcher(dispatcherInfo DispatcherInfo) {
+	clusterID := dispatcherInfo.GetClusterID()
+	c, ok := s.brokers[clusterID]
+	if !ok {
+		return
+	}
+	c.resumeDispatcher(dispatcherInfo)
 }
 
 func msgToDispatcherInfo(msg *messaging.TargetMessage) []DispatcherInfo {
