@@ -53,14 +53,17 @@ func TestOneBlockEvent(t *testing.T) {
 		},
 	})
 	require.NotNil(t, msg)
+	key := eventKey{
+		blockTs:     10,
+		isSyncPoint: true,
+	}
 	resp := msg.Message[0].(*heartbeatpb.HeartBeatResponse)
-	require.Equal(t, barrier.blockedDispatcher[stm.ID], barrier.blockedTs[10])
-	event := barrier.blockedTs[10]
+	event := barrier.blockedTs[key]
 	require.Equal(t, uint64(10), event.commitTs)
 	require.True(t, event.writerDispatcher == stm.ID)
 	require.True(t, event.selected)
 	require.False(t, event.writerDispatcherAdvanced)
-	require.Nil(t, event.reportedDispatchers)
+	require.Len(t, event.reportedDispatchers, 1)
 	require.Equal(t, resp.DispatcherStatuses[0].Ack.CommitTs, uint64(10))
 	require.Equal(t, resp.DispatcherStatuses[0].Action.CommitTs, uint64(10))
 	require.Equal(t, resp.DispatcherStatuses[0].Action.Action, heartbeatpb.Action_Write)
@@ -72,6 +75,7 @@ func TestOneBlockEvent(t *testing.T) {
 			{
 				ID: stm.ID.ToPB(),
 				State: &heartbeatpb.State{
+					BlockTs:     10,
 					IsBlocked:   true,
 					EventDone:   true,
 					IsSyncPoint: true,
@@ -80,7 +84,6 @@ func TestOneBlockEvent(t *testing.T) {
 		},
 	})
 	require.Len(t, barrier.blockedTs, 0)
-	require.Len(t, barrier.blockedDispatcher, 0)
 }
 
 func TestNormalBlock(t *testing.T) {
@@ -171,11 +174,14 @@ func TestNormalBlock(t *testing.T) {
 		},
 	})
 	require.NotNil(t, msg)
-	require.Equal(t, barrier.blockedDispatcher[selectDispatcherID], barrier.blockedTs[10])
-	event := barrier.blockedTs[10]
+	key := eventKey{
+		blockTs:     10,
+		isSyncPoint: false,
+	}
+	event := barrier.blockedTs[key]
 	require.Equal(t, uint64(10), event.commitTs)
 	require.True(t, event.writerDispatcher == selectDispatcherID)
-	require.Nil(t, event.reportedDispatchers)
+	require.Len(t, event.reportedDispatchers, 3)
 
 	// repeated status
 	barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
@@ -217,7 +223,7 @@ func TestNormalBlock(t *testing.T) {
 	})
 	require.Equal(t, uint64(10), event.commitTs)
 	require.True(t, event.writerDispatcher == selectDispatcherID)
-	require.Nil(t, event.reportedDispatchers)
+	require.Len(t, event.reportedDispatchers, 3)
 
 	// selected node write done
 	msg = barrier.HandleStatus("node2", &heartbeatpb.BlockStatusRequest{
@@ -234,7 +240,7 @@ func TestNormalBlock(t *testing.T) {
 		},
 	})
 	require.Len(t, barrier.blockedTs, 1)
-	require.Len(t, barrier.blockedDispatcher, 2)
+	require.Len(t, event.reportedDispatchers, 2)
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
@@ -257,7 +263,6 @@ func TestNormalBlock(t *testing.T) {
 		},
 	})
 	require.Len(t, barrier.blockedTs, 0)
-	require.Len(t, barrier.blockedDispatcher, 0)
 }
 
 func TestSchemaBlock(t *testing.T) {
@@ -336,7 +341,8 @@ func TestSchemaBlock(t *testing.T) {
 	require.True(t, resp.DispatcherStatuses[0].Ack.CommitTs == 10)
 	require.True(t, resp.DispatcherStatuses[0].Action.CommitTs == 10)
 	require.True(t, resp.DispatcherStatuses[0].Action.Action == heartbeatpb.Action_Write)
-	event := barrier.blockedTs[10]
+	key := eventKey{blockTs: 10}
+	event := barrier.blockedTs[key]
 	require.Equal(t, uint64(10), event.commitTs)
 	//the last one will be the writer
 	require.Equal(t, event.writerDispatcher.ToPB(), dispatcherIDs[1])
@@ -367,7 +373,7 @@ func TestSchemaBlock(t *testing.T) {
 	resp = msg.Message[0].(*heartbeatpb.HeartBeatResponse)
 	require.Len(t, resp.DispatcherStatuses, 1)
 	require.True(t, resp.DispatcherStatuses[0].Ack.CommitTs == 10)
-	event = barrier.blockedTs[10]
+	event = barrier.blockedTs[key]
 	require.Equal(t, uint64(10), event.commitTs)
 	//the last one will be the writer
 	require.Equal(t, event.writerDispatcher.ToPB(), dispatcherIDs[1])
@@ -395,7 +401,7 @@ func TestSchemaBlock(t *testing.T) {
 		heartbeatpb.Action_Pass)
 	require.Len(t, barrier.blockedTs, 1)
 	// the writer already advanced
-	require.Len(t, barrier.blockedDispatcher, 1)
+	require.Len(t, event.reportedDispatchers, 1)
 	require.Equal(t, 1, len(sche.Absent()))
 	require.Equal(t, 0, len(sche.Commiting()))
 	require.Equal(t, 2, len(sche.Removing()))
@@ -415,7 +421,6 @@ func TestSchemaBlock(t *testing.T) {
 		},
 	})
 	require.Len(t, barrier.blockedTs, 0)
-	require.Len(t, barrier.blockedDispatcher, 0)
 }
 
 func TestSyncPointBlock(t *testing.T) {
@@ -457,6 +462,7 @@ func TestSyncPointBlock(t *testing.T) {
 						TableIDs:      dropTables,
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
+					IsSyncPoint:     true,
 				},
 			},
 			{
@@ -473,6 +479,7 @@ func TestSyncPointBlock(t *testing.T) {
 						TableIDs:      dropTables,
 					},
 					NeedAddedTables: []*heartbeatpb.Table{newSpan},
+					IsSyncPoint:     true,
 				},
 			},
 		},
@@ -511,7 +518,8 @@ func TestSyncPointBlock(t *testing.T) {
 	require.True(t, resp.DispatcherStatuses[0].Ack.CommitTs == 10)
 	require.True(t, resp.DispatcherStatuses[0].Action.CommitTs == 10)
 	require.True(t, resp.DispatcherStatuses[0].Action.Action == heartbeatpb.Action_Write)
-	event := barrier.blockedTs[10]
+	key := eventKey{blockTs: 10, isSyncPoint: true}
+	event := barrier.blockedTs[key]
 	require.Equal(t, uint64(10), event.commitTs)
 	//the last one will be the writer
 	require.Equal(t, event.writerDispatcher.ToPB(), dispatcherIDs[2])
@@ -526,7 +534,7 @@ func TestSyncPointBlock(t *testing.T) {
 					IsBlocked:   true,
 					BlockTs:     10,
 					EventDone:   true,
-					IsSyncPoint: false,
+					IsSyncPoint: true,
 				},
 			},
 		},
@@ -536,7 +544,7 @@ func TestSyncPointBlock(t *testing.T) {
 	require.Len(t, msgs, 2)
 	require.Len(t, barrier.blockedTs, 1)
 	// the writer already advanced
-	require.Len(t, barrier.blockedDispatcher, 2)
+	require.Len(t, event.reportedDispatchers, 2)
 	// other dispatcher advanced checkpoint ts
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
@@ -547,7 +555,7 @@ func TestSyncPointBlock(t *testing.T) {
 					IsBlocked:   true,
 					BlockTs:     10,
 					EventDone:   true,
-					IsSyncPoint: false,
+					IsSyncPoint: true,
 				},
 			},
 			{
@@ -556,13 +564,12 @@ func TestSyncPointBlock(t *testing.T) {
 					IsBlocked:   true,
 					BlockTs:     10,
 					EventDone:   true,
-					IsSyncPoint: false,
+					IsSyncPoint: true,
 				},
 			},
 		},
 	})
 	require.Len(t, barrier.blockedTs, 0)
-	require.Len(t, barrier.blockedDispatcher, 0)
 }
 
 func TestNonBlocked(t *testing.T) {
@@ -601,7 +608,6 @@ func TestNonBlocked(t *testing.T) {
 	require.True(t, heartbeatpb.InfluenceType_Normal == resp.DispatcherStatuses[0].InfluencedDispatchers.InfluenceType)
 	require.Equal(t, resp.DispatcherStatuses[0].InfluencedDispatchers.DispatcherIDs[0], blockedDispatcherIDS[0])
 	require.Len(t, barrier.blockedTs, 0)
-	require.Len(t, barrier.blockedDispatcher, 0)
 	require.Len(t, barrier.controller.Absent(), 2)
 }
 
@@ -630,6 +636,7 @@ func TestSyncPointBlockPerf(t *testing.T) {
 					InfluenceType: heartbeatpb.InfluenceType_All,
 					SchemaID:      1,
 				},
+				IsSyncPoint: true,
 			},
 		})
 	}
