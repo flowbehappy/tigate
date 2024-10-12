@@ -127,7 +127,7 @@ func (b *Barrier) handleBlockState(changefeedID string,
 				dispatcherID.ToPB(),
 			},
 		},
-		Ack: &heartbeatpb.ACK{CommitTs: blockState.BlockTs, IsSyncPoint: blockState.IsSyncPoint},
+		Ack: ackEvent(blockState.BlockTs, blockState.IsSyncPoint),
 	}
 	if blockState.IsBlocked {
 		key := getEventKey(blockState)
@@ -153,6 +153,14 @@ func (b *Barrier) getOrInsertNewEvent(changefeedID string, key eventKey,
 		b.blockedTs[key] = event
 	}
 	return event
+}
+
+// ackEvent creates an ack event
+func ackEvent(commitTs uint64, isSyncPoint bool) *heartbeatpb.ACK {
+	return &heartbeatpb.ACK{
+		CommitTs:    commitTs,
+		IsSyncPoint: isSyncPoint,
+	}
 }
 
 // getEventKey returns the key of the block event

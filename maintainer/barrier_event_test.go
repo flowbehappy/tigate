@@ -25,9 +25,9 @@ import (
 )
 
 func TestScheduleEvent(t *testing.T) {
-	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
-	sche.AddNewTable(commonEvent.Table{1, 1}, 1)
-	event := NewBlockEvent("test", sche, &heartbeatpb.State{
+	controller := NewController("test", 1, nil, nil, nil, 1000, 0)
+	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
+	event := NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked: true,
 		BlockTs:   10,
 		NeedDroppedTables: &heartbeatpb.InfluencedTables{
@@ -38,9 +38,9 @@ func TestScheduleEvent(t *testing.T) {
 	})
 	event.scheduleBlockEvent()
 	//drop table will be executed first
-	require.Len(t, sche.Absent(), 2)
+	require.Len(t, controller.Absent(), 2)
 
-	event = NewBlockEvent("test", sche, &heartbeatpb.State{
+	event = NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked: true,
 		BlockTs:   10,
 		NeedDroppedTables: &heartbeatpb.InfluencedTables{
@@ -51,9 +51,9 @@ func TestScheduleEvent(t *testing.T) {
 	})
 	event.scheduleBlockEvent()
 	//drop table will be executed first, then add the new table
-	require.Len(t, sche.Absent(), 1)
+	require.Len(t, controller.Absent(), 1)
 
-	event = NewBlockEvent("test", sche, &heartbeatpb.State{
+	event = NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked: true,
 		BlockTs:   10,
 		NeedDroppedTables: &heartbeatpb.InfluencedTables{
@@ -64,22 +64,22 @@ func TestScheduleEvent(t *testing.T) {
 	})
 	event.scheduleBlockEvent()
 	//drop table will be executed first, then add the new table
-	require.Len(t, sche.Absent(), 1)
+	require.Len(t, controller.Absent(), 1)
 }
 
 func TestResendAction(t *testing.T) {
-	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
-	sche.AddNewNode("node1")
-	sche.AddNewTable(commonEvent.Table{1, 1}, 1)
-	sche.AddNewTable(commonEvent.Table{1, 2}, 1)
+	controller := NewController("test", 1, nil, nil, nil, 1000, 0)
+	controller.AddNewNode("node1")
+	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
+	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 2}, 1)
 	var dispatcherIDs []common.DispatcherID
-	for key, stm := range sche.Absent() {
+	for key, stm := range controller.Absent() {
 		stm.Primary = "node1"
 		stm.State = scheduler.SchedulerStatusWorking
-		sche.tryMoveTask(key, stm, scheduler.SchedulerStatusAbsent, "", true)
+		controller.tryMoveTask(key, stm, scheduler.SchedulerStatusAbsent, "", true)
 		dispatcherIDs = append(dispatcherIDs, key)
 	}
-	event := NewBlockEvent("test", sche, &heartbeatpb.State{
+	event := NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked: true,
 		BlockTs:   10,
 		BlockTables: &heartbeatpb.InfluencedTables{
@@ -105,7 +105,7 @@ func TestResendAction(t *testing.T) {
 	msgs = event.resend()
 	require.Len(t, msgs, 1)
 
-	event = NewBlockEvent("test", sche, &heartbeatpb.State{
+	event = NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked: true,
 		BlockTs:   10,
 		BlockTables: &heartbeatpb.InfluencedTables{
@@ -123,7 +123,7 @@ func TestResendAction(t *testing.T) {
 	require.Equal(t, resp.DispatcherStatuses[0].InfluencedDispatchers.InfluenceType, heartbeatpb.InfluenceType_DB)
 	require.Equal(t, resp.DispatcherStatuses[0].Action.CommitTs, uint64(10))
 
-	event = NewBlockEvent("test", sche, &heartbeatpb.State{
+	event = NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked: true,
 		BlockTs:   10,
 		BlockTables: &heartbeatpb.InfluencedTables{
@@ -141,7 +141,7 @@ func TestResendAction(t *testing.T) {
 	require.Equal(t, resp.DispatcherStatuses[0].InfluencedDispatchers.InfluenceType, heartbeatpb.InfluenceType_All)
 	require.Equal(t, resp.DispatcherStatuses[0].Action.CommitTs, uint64(10))
 
-	event = NewBlockEvent("test", sche, &heartbeatpb.State{
+	event = NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked: true,
 		BlockTs:   10,
 		BlockTables: &heartbeatpb.InfluencedTables{
@@ -163,12 +163,12 @@ func TestResendAction(t *testing.T) {
 }
 
 func TestUpdateSchemaID(t *testing.T) {
-	sche := NewController("test", 1, nil, nil, nil, 1000, 0)
-	sche.AddNewNode("node1")
-	sche.AddNewTable(commonEvent.Table{1, 1}, 1)
-	require.Len(t, sche.Absent(), 1)
-	require.Len(t, sche.GetTasksBySchemaID(1), 1)
-	event := NewBlockEvent("test", sche, &heartbeatpb.State{
+	controller := NewController("test", 1, nil, nil, nil, 1000, 0)
+	controller.AddNewNode("node1")
+	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
+	require.Len(t, controller.Absent(), 1)
+	require.Len(t, controller.GetTasksBySchemaID(1), 1)
+	event := NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked: true,
 		BlockTs:   10,
 		BlockTables: &heartbeatpb.InfluencedTables{
@@ -183,9 +183,9 @@ func TestUpdateSchemaID(t *testing.T) {
 		}},
 	)
 	event.scheduleBlockEvent()
-	require.Len(t, sche.Absent(), 1)
+	require.Len(t, controller.Absent(), 1)
 	// check the schema id and map is updated
-	require.Len(t, sche.GetTasksBySchemaID(1), 0)
-	require.Len(t, sche.GetTasksBySchemaID(2), 1)
-	require.Equal(t, sche.GetTasksByTableIDs(1)[0].Inferior.(*ReplicaSet).SchemaID, int64(2))
+	require.Len(t, controller.GetTasksBySchemaID(1), 0)
+	require.Len(t, controller.GetTasksBySchemaID(2), 1)
+	require.Equal(t, controller.GetTasksByTableIDs(1)[0].Inferior.(*ReplicaSet).SchemaID, int64(2))
 }
