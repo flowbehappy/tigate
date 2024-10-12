@@ -18,8 +18,10 @@ import (
 	"sync/atomic"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/common/event"
 )
 
+// MemoryController is a struct to control the memory usage of a dispatcher manager.
 type MemoryController struct {
 	totalMemory     int64
 	availableMemory atomic.Int64
@@ -38,7 +40,7 @@ func NewMemoryController(totalMemory int64) *MemoryController {
 
 // RegisterEvent registers a DML event to the memory controller.
 // It returns false if the memory is not enough.
-func (mc *MemoryController) RegisterEvent(dispatcherID common.DispatcherID, dmlEvent *common.DMLEvent) bool {
+func (mc *MemoryController) RegisterEvent(dispatcherID common.DispatcherID, dmlEvent *event.DMLEvent) bool {
 	current := mc.availableMemory.Load()
 	if current < dmlEvent.GetSize() {
 		return false
@@ -65,6 +67,12 @@ func (mc *MemoryController) ReleaseDispatcher(dispatcherID common.DispatcherID) 
 	}
 }
 
+// AvailableMemory returns the available memory.
 func (mc *MemoryController) AvailableMemory() int64 {
 	return mc.availableMemory.Load()
+}
+
+// Available returns true if the available memory is greater than 25% of the total memory.
+func (mc *MemoryController) Available() bool {
+	return mc.availableMemory.Load() > mc.totalMemory/4
 }

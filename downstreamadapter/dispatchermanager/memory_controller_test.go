@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -19,7 +20,7 @@ func TestRegisterEvent(t *testing.T) {
 	dispatcherID := common.NewDispatcherID()
 
 	// Mock DMLEvent
-	dmlEvent := &common.DMLEvent{}
+	dmlEvent := &event.DMLEvent{}
 	dmlEvent.ApproximateSize = 500
 
 	// Test successful registration
@@ -28,7 +29,7 @@ func TestRegisterEvent(t *testing.T) {
 	assert.Equal(t, int64(500), mc.AvailableMemory())
 
 	// Test registration when memory is not enough
-	bigEvent := &common.DMLEvent{}
+	bigEvent := &event.DMLEvent{}
 	bigEvent.ApproximateSize = 600
 	success = mc.RegisterEvent(dispatcherID, bigEvent)
 	assert.False(t, success)
@@ -44,11 +45,11 @@ func TestReleaseDispatcher(t *testing.T) {
 	dispatcherID := common.NewDispatcherID()
 
 	// Register some events
-	dmlEvent1 := &common.DMLEvent{}
+	dmlEvent1 := &event.DMLEvent{}
 	dmlEvent1.ApproximateSize = 300
 	mc.RegisterEvent(dispatcherID, dmlEvent1)
 
-	dmlEvent2 := &common.DMLEvent{}
+	dmlEvent2 := &event.DMLEvent{}
 	dmlEvent2.ApproximateSize = 200
 	mc.RegisterEvent(dispatcherID, dmlEvent2)
 
@@ -77,7 +78,7 @@ func TestConcurrentOperations(t *testing.T) {
 			dispatcherID := common.NewDispatcherID()
 
 			for j := 0; j < eventsPerGoroutine; j++ {
-				dmlEvent := &common.DMLEvent{}
+				dmlEvent := &event.DMLEvent{}
 				dmlEvent.ApproximateSize = 10
 				mc.RegisterEvent(dispatcherID, dmlEvent)
 			}
