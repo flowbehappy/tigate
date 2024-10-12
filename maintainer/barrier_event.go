@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/maintainer/replica"
 	"github.com/flowbehappy/tigate/pkg/common"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/messaging"
@@ -38,8 +39,8 @@ type BarrierEvent struct {
 	blockedDispatchers *heartbeatpb.InfluencedTables
 	dropDispatchers    *heartbeatpb.InfluencedTables
 
-	blockedTasks   []*ReplicaSet
-	dropTasks      []*ReplicaSet
+	blockedTasks   []*replica.ReplicaSet
+	dropTasks      []*replica.ReplicaSet
 	newTables      []*heartbeatpb.Table
 	schemaIDChange []*heartbeatpb.SchemaIDChange
 	isSyncPoint    bool
@@ -223,7 +224,7 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 	// we select a dispatcher as the writer, still waiting for that dispatcher advance its checkpoint ts
 	if !be.writerDispatcherAdvanced {
 		//resend write action
-		stm := be.controller.GetTask(be.writerDispatcher)
+		stm, _ := be.controller.GetTask(be.writerDispatcher)
 		if stm == nil || stm.GetNodeID() == "" {
 			return nil
 		}

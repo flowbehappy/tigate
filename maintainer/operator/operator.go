@@ -11,10 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package maintainer
+package operator
 
 import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/maintainer/replica"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
@@ -42,12 +43,12 @@ type Operator interface {
 }
 
 type AddDispatcherOperator struct {
-	replicaSet *ReplicaSet
+	replicaSet *replica.ReplicaSet
 	dest       node.ID
 	finished   atomic.Bool
 }
 
-func NewAddDispatcherOperator(replicaSet *ReplicaSet, dest node.ID) *AddDispatcherOperator {
+func NewAddDispatcherOperator(replicaSet *replica.ReplicaSet, dest node.ID) *AddDispatcherOperator {
 	return &AddDispatcherOperator{
 		replicaSet: replicaSet,
 		dest:       dest,
@@ -80,11 +81,11 @@ func (m *AddDispatcherOperator) PostFinished() {
 }
 
 type RemoveDispatcherOperator struct {
-	replicaSet *ReplicaSet
+	replicaSet *replica.ReplicaSet
 	finished   atomic.Bool
 }
 
-func NewRemoveDispatcherOperator(replicaSet *ReplicaSet) *RemoveDispatcherOperator {
+func NewRemoveDispatcherOperator(replicaSet *replica.ReplicaSet) *RemoveDispatcherOperator {
 	return &RemoveDispatcherOperator{
 		replicaSet: replicaSet,
 	}
@@ -116,17 +117,19 @@ func (m *RemoveDispatcherOperator) PostFinished() {
 }
 
 type MoveDispatcherOperator struct {
-	replicaSet *ReplicaSet
+	replicaSet *replica.ReplicaSet
 	dest       node.ID
 
 	removed  atomic.Bool
 	finished atomic.Bool
+	db       *replica.ReplicaSetDB
 }
 
-func NewMoveDispatcherOperator(replicaSet *ReplicaSet, dest node.ID) *MoveDispatcherOperator {
+func NewMoveDispatcherOperator(replicaSet *replica.ReplicaSet, dest node.ID, db *replica.ReplicaSetDB) *MoveDispatcherOperator {
 	return &MoveDispatcherOperator{
 		replicaSet: replicaSet,
 		dest:       dest,
+		db:         db,
 	}
 }
 
@@ -141,6 +144,7 @@ func (m *MoveDispatcherOperator) Check(from node.ID, status *heartbeatpb.TableSp
 
 func (m *MoveDispatcherOperator) SchedulerMessage() *messaging.TargetMessage {
 	if m.removed.Load() {
+		m.db.BindReplicaSetToNode(m.replicaSet.GetNodeID(), m.dest, m.replicaSet)
 		return m.replicaSet.NewAddInferiorMessage(m.dest)
 	}
 	return m.replicaSet.NewRemoveInferiorMessage(m.replicaSet.GetNodeID())
@@ -168,16 +172,16 @@ func (m *MoveDispatcherOperator) PostFinished() {
 
 type SplitDispatcherOperator struct {
 	changefeedID string
-	replicaSet   *ReplicaSet
+	replicaSet   *replica.ReplicaSet
 	originNode   node.ID
 	schemaID     int64
-	splitSpans   []*ReplicaSet
+	splitSpans   []*replica.ReplicaSet
 	checkpointTs uint64
 	finished     atomic.Bool
 	removing     atomic.Bool
 
 	originalReplicaseRemoved atomic.Bool
-	db                       *ReplicaSetDB
+	db                       *replica.ReplicaSetDB
 }
 
 func (m *SplitDispatcherOperator) OnNodeRemove(n node.ID) {

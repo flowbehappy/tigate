@@ -18,6 +18,8 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/flowbehappy/tigate/maintainer/operator"
+	"github.com/flowbehappy/tigate/maintainer/replica"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/server/watcher"
@@ -32,14 +34,14 @@ type Scheduler struct {
 	random               *rand.Rand
 	lastRebalanceTime    time.Time
 	checkBalanceInterval time.Duration
-	oc                   *OperatorController
-	db                   *ReplicaSetDB
+	oc                   *operator.OperatorController
+	db                   *replica.ReplicaSetDB
 	nodeManager          *watcher.NodeManager
 }
 
 func NewScheduler(batchSize int, changefeedID string,
-	oc *OperatorController,
-	db *ReplicaSetDB,
+	oc *operator.OperatorController,
+	db *replica.ReplicaSetDB,
 	nodeManager *watcher.NodeManager,
 	balanceInterval time.Duration) *Scheduler {
 	return &Scheduler{
@@ -72,8 +74,12 @@ func (s *Scheduler) Execute() time.Time {
 }
 
 func (s *Scheduler) basicSchedule(
-	absent []*ReplicaSet,
+	absent []*replica.ReplicaSet,
 	nodeTasks map[node.ID]int) {
+	if len(nodeTasks) == 0 {
+		log.Warn("no node available, skip", zap.String("changefeed", s.changefeedID))
+		return
+	}
 	priorityQueue := heap.NewHeap[*Item]()
 	for key, size := range nodeTasks {
 		priorityQueue.AddOrUpdate(&Item{
@@ -86,7 +92,7 @@ func (s *Scheduler) basicSchedule(
 	for _, replicaSet := range absent {
 		item, _ := priorityQueue.PeekTop()
 		// the operator is pushed successfully
-		if s.oc.AddOperator(NewAddDispatcherOperator(replicaSet, item.Node)) {
+		if s.oc.AddOperator(operator.NewAddDispatcherOperator(replicaSet, item.Node)) {
 			// update the task size priority queue
 			item.TaskSize++
 			taskSize++
@@ -115,13 +121,19 @@ func (s *Scheduler) Balance() {
 
 func (s *Scheduler) balanceTables() {
 	workings := s.db.GetWorking()
-	nodeTasks := make(map[node.ID]map[common.DispatcherID]*ReplicaSet)
+	nodeTasks := make(map[node.ID]map[common.DispatcherID]*replica.ReplicaSet)
 	for _, cf := range workings {
 		nodeID := cf.GetNodeID()
 		if _, ok := nodeTasks[nodeID]; !ok {
-			nodeTasks[nodeID] = make(map[common.DispatcherID]*ReplicaSet)
+			nodeTasks[nodeID] = make(map[common.DispatcherID]*replica.ReplicaSet)
 		}
 		nodeTasks[nodeID][cf.ID] = cf
+	}
+	// add the absent node to the node size map
+	for nodeID, _ := range s.nodeManager.GetAliveNodes() {
+		if _, ok := nodeTasks[nodeID]; !ok {
+			nodeTasks[nodeID] = make(map[common.DispatcherID]*replica.ReplicaSet)
+		}
 	}
 
 	totalSize := 0
@@ -131,10 +143,10 @@ func (s *Scheduler) balanceTables() {
 
 	upperLimitPerCapture := int(math.Ceil(float64(totalSize) / float64(len(nodeTasks))))
 	// victims holds tables which need to be moved
-	victims := make([]*ReplicaSet, 0)
+	victims := make([]*replica.ReplicaSet, 0)
 	priorityQueue := heap.NewHeap[*Item]()
 	for nodeID, ts := range nodeTasks {
-		var stms []*ReplicaSet
+		var stms []*replica.ReplicaSet
 		for _, value := range ts {
 			stms = append(stms, value)
 		}
@@ -186,7 +198,7 @@ func (s *Scheduler) balanceTables() {
 		item, _ := priorityQueue.PeekTop()
 
 		// the operator is pushed successfully
-		if s.oc.AddOperator(NewMoveDispatcherOperator(cf, item.Node)) {
+		if s.oc.AddOperator(operator.NewMoveDispatcherOperator(cf, item.Node, s.db)) {
 			// update the task size priority queue
 			item.TaskSize++
 			movedSize++

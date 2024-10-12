@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/maintainer/operator"
+	"github.com/flowbehappy/tigate/maintainer/replica"
 	"github.com/flowbehappy/tigate/maintainer/split"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
@@ -50,8 +52,8 @@ type Controller struct {
 	changefeedID string
 	batchSize    int
 	sche         *Scheduler
-	oc           *OperatorController
-	db           *ReplicaSetDB
+	oc           *operator.OperatorController
+	db           *replica.ReplicaSetDB
 	nodeManager  *watcher.NodeManager
 
 	taskScheduler threadpool.ThreadPool
@@ -67,8 +69,8 @@ func NewController(changefeedID string,
 	config *config.ChangefeedSchedulerConfig,
 	batchSize int, balanceInterval time.Duration) *Controller {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
-	oc := NewOperatorController(mc, batchSize)
-	replicaSetDB := NewReplicaSetDB()
+	oc := operator.NewOperatorController(mc, batchSize)
+	replicaSetDB := replica.NewReplicaSetDB()
 	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
 	s := &Controller{
 		startCheckpointTs: checkpointTs,
@@ -88,7 +90,7 @@ func NewController(changefeedID string,
 	return s
 }
 
-func (c *Controller) GetTasksBySchemaID(schemaID int64) []*ReplicaSet {
+func (c *Controller) GetTasksBySchemaID(schemaID int64) []*replica.ReplicaSet {
 	return c.db.GetTasksBySchemaID(schemaID)
 }
 
@@ -198,15 +200,15 @@ func (c *Controller) Stop() {
 }
 
 // GetTask queries a task by dispatcherID, return nil if not found
-func (c *Controller) GetTask(dispatcherID common.DispatcherID) *ReplicaSet {
+func (c *Controller) GetTask(dispatcherID common.DispatcherID) (*replica.ReplicaSet, bool) {
 	return c.db.GetTaskByID(dispatcherID)
 }
 
-func (c *Controller) RemoveTask(stm *ReplicaSet) {
-	c.oc.ReplaceOperator(NewRemoveDispatcherOperator(stm))
+func (c *Controller) RemoveTask(stm *replica.ReplicaSet) {
+	c.oc.ReplaceOperator(operator.NewRemoveDispatcherOperator(stm))
 }
 
-func (c *Controller) GetTasksByTableIDs(tableIDs ...int64) []*ReplicaSet {
+func (c *Controller) GetTasksByTableIDs(tableIDs ...int64) []*replica.ReplicaSet {
 	return c.db.GetTasksByTableIDs(tableIDs...)
 }
 
@@ -228,7 +230,7 @@ func (c *Controller) ScheduleFinished() bool {
 func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableSpanStatus) {
 	for _, status := range statusList {
 		span := common.NewDispatcherIDFromPB(status.ID)
-		stm := c.GetTask(span)
+		stm, working := c.GetTask(span)
 		if stm == nil {
 			log.Warn("no span found, ignore",
 				zap.String("changefeed", c.changefeedID),
@@ -248,15 +250,13 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableS
 				zap.Stringer("node", nodeID))
 			continue
 		}
-		oldState := stm.status.ComponentStatus
 		stm.UpdateStatus(status)
-		newStatus := status.ComponentStatus
-		if newStatus != oldState {
-			if newStatus == heartbeatpb.ComponentState_Working {
+		if status.ComponentStatus == heartbeatpb.ComponentState_Working {
+			if !working {
 				c.db.MarkReplicaSetWorking(stm)
-			} else {
-				c.db.RemoveReplicaSet(stm)
 			}
+		} else {
+			c.db.RemoveReplicaSet(stm)
 		}
 	}
 }
@@ -292,7 +292,7 @@ func (c *Controller) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, 
 				zap.Any("stm", stm))
 		}
 		dispatcherID := stm.ID
-		c.db.AddWorkingSpan(stm.Inferior.(*ReplicaSet))
+		c.db.AddWorkingSpan(stm.Inferior.(*replica.ReplicaSet))
 		if span.TableID == 0 {
 			ddlSpanFound = true
 			c.ddlDispatcherID = dispatcherID
@@ -312,7 +312,7 @@ func (c *Controller) addNewSpans(schemaID int64,
 
 func (c *Controller) addNewSpan(dispatcherID common.DispatcherID, schemaID int64,
 	span *heartbeatpb.TableSpan, startTs uint64) {
-	replicaSet := NewReplicaSet(model.DefaultChangeFeedID(c.changefeedID),
-		dispatcherID, schemaID, span, startTs).(*ReplicaSet)
+	replicaSet := replica.NewReplicaSet(model.DefaultChangeFeedID(c.changefeedID),
+		dispatcherID, schemaID, span, startTs).(*replica.ReplicaSet)
 	c.db.AddAbsentReplicaSet(replicaSet)
 }

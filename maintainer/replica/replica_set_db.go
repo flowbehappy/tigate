@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package maintainer
+package replica
 
 import (
 	"sync"
@@ -30,6 +30,7 @@ type ReplicaSetDB struct {
 	tableTasks map[int64]map[common.DispatcherID]*ReplicaSet
 
 	workingMap map[common.DispatcherID]*ReplicaSet
+	scheduling map[common.DispatcherID]*ReplicaSet
 	absentMap  map[common.DispatcherID]*ReplicaSet
 
 	lock         sync.RWMutex
@@ -43,27 +44,32 @@ func NewReplicaSetDB() *ReplicaSetDB {
 		tableTasks:  make(map[int64]map[common.DispatcherID]*ReplicaSet),
 
 		workingMap: make(map[common.DispatcherID]*ReplicaSet),
+		scheduling: make(map[common.DispatcherID]*ReplicaSet),
 		absentMap:  make(map[common.DispatcherID]*ReplicaSet),
 	}
 	return db
 }
 
-func (db *ReplicaSetDB) GetTaskByID(id common.DispatcherID) *ReplicaSet {
+func (db *ReplicaSetDB) GetTaskByID(id common.DispatcherID) (*ReplicaSet, bool) {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
 	r, ok := db.workingMap[id]
 	if ok {
-		return r
+		return r, true
 	}
-	return db.absentMap[id]
+	r, ok = db.scheduling[id]
+	if ok {
+		return r, false
+	}
+	return db.absentMap[id], false
 }
 
 func (db *ReplicaSetDB) TaskSize() int {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
-	return len(db.workingMap) + len(db.absentMap)
+	return len(db.workingMap) + len(db.absentMap) + len(db.scheduling)
 }
 
 func (db *ReplicaSetDB) GetAbsentSize() int {
@@ -73,12 +79,19 @@ func (db *ReplicaSetDB) GetAbsentSize() int {
 	return len(db.absentMap)
 }
 
+func (db *ReplicaSetDB) GetWorkingSize() int {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	return len(db.workingMap)
+}
+
 func (db *ReplicaSetDB) GetWorking() []*ReplicaSet {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
 	var working = make([]*ReplicaSet, 0, len(db.workingMap))
-	for _, stm := range db.absentMap {
+	for _, stm := range db.workingMap {
 		working = append(working, stm)
 	}
 	return working
@@ -117,7 +130,7 @@ func (db *ReplicaSetDB) IsTableExists(tableID int64) bool {
 	defer db.lock.RUnlock()
 
 	tm, ok := db.tableTasks[tableID]
-	return !ok || len(tm) == 0
+	return ok && len(tm) > 0
 }
 
 func (db *ReplicaSetDB) RemoveNode(id node.ID) {
@@ -206,8 +219,10 @@ func (db *ReplicaSetDB) RemoveReplicaSet(tasks ...*ReplicaSet) {
 			zap.String("replicaSet", task.ID.String()))
 		tableID := task.Span.TableID
 		schemaID := task.GetSchemaID()
+		nodeID := task.GetNodeID()
 
 		delete(db.absentMap, task.ID)
+		delete(db.scheduling, task.ID)
 		delete(db.workingMap, task.ID)
 		delete(db.schemaTasks[schemaID], task.ID)
 		delete(db.tableTasks[tableID], task.ID)
@@ -217,7 +232,24 @@ func (db *ReplicaSetDB) RemoveReplicaSet(tasks ...*ReplicaSet) {
 		if len(db.tableTasks[tableID]) == 0 {
 			delete(db.tableTasks, tableID)
 		}
+		nodeMap := db.nodeTasks[nodeID]
+		delete(nodeMap, task.ID)
+		if len(nodeMap) == 0 {
+			delete(db.nodeTasks, nodeID)
+		}
 	}
+}
+
+func (db *ReplicaSetDB) MarkReplicaSetScheduling(task *ReplicaSet) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+	log.Info("marking replica set working",
+		zap.String("changefeed", db.changefeedID),
+		zap.String("replicaSet", task.ID.String()))
+
+	delete(db.absentMap, task.ID)
+	delete(db.workingMap, task.ID)
+	db.scheduling[task.ID] = task
 }
 
 func (db *ReplicaSetDB) MarkReplicaSetWorking(task *ReplicaSet) {
@@ -228,6 +260,7 @@ func (db *ReplicaSetDB) MarkReplicaSetWorking(task *ReplicaSet) {
 		zap.String("replicaSet", task.ID.String()))
 
 	delete(db.absentMap, task.ID)
+	delete(db.scheduling, task.ID)
 	db.workingMap[task.ID] = task
 }
 
@@ -267,7 +300,8 @@ func (db *ReplicaSetDB) BindReplicaSetToNode(old, new node.ID, task *ReplicaSet)
 
 	task.SetNodeID(new)
 	delete(db.absentMap, task.ID)
-	db.workingMap[task.ID] = task
+	delete(db.workingMap, task.ID)
+	db.scheduling[task.ID] = task
 	db.updateNodeMap(old, new, task)
 }
 

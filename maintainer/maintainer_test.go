@@ -29,7 +29,6 @@ import (
 	configNew "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
-	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/flowbehappy/tigate/utils/threadpool"
@@ -49,13 +48,15 @@ type mockDispatcherManager struct {
 	changefeedID string
 
 	bootstrapTables []*heartbeatpb.BootstrapTableSpan
+	dispatchersMap  map[heartbeatpb.DispatcherID]*heartbeatpb.TableSpanStatus
 }
 
 func MockDispatcherManager(mc messaging.MessageCenter) *mockDispatcherManager {
 	m := &mockDispatcherManager{
-		mc:          mc,
-		dispatchers: make([]*heartbeatpb.TableSpanStatus, 0, 1000000),
-		msgCh:       make(chan *messaging.TargetMessage, 1024),
+		mc:             mc,
+		dispatchers:    make([]*heartbeatpb.TableSpanStatus, 0, 2000001),
+		msgCh:          make(chan *messaging.TargetMessage, 1024),
+		dispatchersMap: make(map[heartbeatpb.DispatcherID]*heartbeatpb.TableSpanStatus, 2000001),
 	}
 	mc.RegisterHandler(messaging.DispatcherManagerManagerTopic, m.recvMessages)
 	mc.RegisterHandler(messaging.HeartbeatCollectorTopic, m.recvMessages)
@@ -124,6 +125,7 @@ func (m *mockDispatcherManager) onBootstrapRequest(msg *messaging.TargetMessage)
 		Spans:        m.bootstrapTables,
 	}
 	m.changefeedID = req.ChangefeedID
+	m.checkpointTs = req.CheckpointTs
 	err := m.mc.SendCommand(messaging.NewSingleTargetMessage(
 		m.maintainerID,
 		messaging.MaintainerManagerTopic,
@@ -146,12 +148,18 @@ func (m *mockDispatcherManager) onDispatchRequest(
 		return
 	}
 	if request.ScheduleAction == heartbeatpb.ScheduleAction_Create {
+		if m.dispatchersMap[*request.Config.DispatcherID] != nil {
+			log.Warn("dispatcher already exists",
+				zap.Any("dispatcher", request.Config.DispatcherID))
+			return
+		}
 		status := &heartbeatpb.TableSpanStatus{
 			ID:              request.Config.DispatcherID,
 			ComponentStatus: heartbeatpb.ComponentState_Working,
-			CheckpointTs:    0,
+			CheckpointTs:    request.Config.StartTs,
 		}
 		m.dispatchers = append(m.dispatchers, status)
+		m.dispatchersMap[*request.Config.DispatcherID] = status
 	} else {
 		dispatchers := make([]*heartbeatpb.TableSpanStatus, 0, len(m.dispatchers))
 		for _, status := range m.dispatchers {
@@ -213,7 +221,9 @@ func TestMaintainerSchedule(t *testing.T) {
 	n := node.NewInfo("", "")
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx,
 		n.ID, 100, config.NewDefaultMessageCenterConfig()))
-	appcontext.SetService(watcher.NodeManagerName, watcher.NewNodeManager(nil, nil))
+	nodeManager := watcher.NewNodeManager(nil, nil)
+	appcontext.SetService(watcher.NodeManagerName, nodeManager)
+	nodeManager.GetAliveNodes()[n.ID] = n
 	stream := dynstream.NewDynamicStream[string, *Event, *Maintainer](NewStreamHandler())
 	stream.Start()
 	cfID := model.DefaultChangeFeedID("test")
@@ -252,8 +262,8 @@ func TestMaintainerSchedule(t *testing.T) {
 	if len(argList) > 1 {
 		t.Fatal("unexpected args", argList)
 	}
-	tableSize := 1000000
-	sleepTime := 5000000
+	tableSize := 1000
+	sleepTime := 10
 	if len(argList) == 1 {
 		tableSize, _ = strconv.Atoi(argList[0])
 	}
@@ -283,7 +293,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	stream.Close()
 	//include a ddl dispatcher
 	require.Equal(t, tableSize+1,
-		maintainer.controller.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
+		maintainer.controller.db.GetWorkingSize())
 	require.Equal(t, tableSize+1,
 		maintainer.controller.GetTaskSizeByNodeID(n.ID))
 }

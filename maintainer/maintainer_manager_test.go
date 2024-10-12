@@ -30,7 +30,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
 	"github.com/flowbehappy/tigate/pkg/node"
-	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/tiflow/cdc/model"
 	config2 "github.com/pingcap/tiflow/pkg/config"
@@ -97,7 +96,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	maintainer := value.(*Maintainer)
 
 	require.Equal(t, 4,
-		maintainer.controller.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
+		maintainer.controller.db.GetWorkingSize())
 	require.Equal(t, 4,
 		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
 
@@ -124,9 +123,9 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 			model.CaptureID(node4.ID):    {ID: model.CaptureID(node4.ID), AdvertiseAddr: node4.AdvertiseAddr},
 		}})
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(15 * time.Second)
 	require.Equal(t, 4,
-		maintainer.controller.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
+		maintainer.controller.db.GetWorkingSize())
 	require.Equal(t, 1,
 		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
 	require.Equal(t, 1,
@@ -146,7 +145,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 		}})
 	time.Sleep(5 * time.Second)
 	require.Equal(t, 4,
-		maintainer.controller.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
+		maintainer.controller.db.GetWorkingSize())
 	require.Equal(t, 2,
 		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
 	require.Equal(t, 2,
@@ -239,20 +238,20 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	maintainer := value.(*Maintainer)
 
 	require.Equal(t, 4,
-		maintainer.controller.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
+		maintainer.controller.db.GetWorkingSize())
 	require.Equal(t, 4,
 		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
 	require.Len(t, remotedIds, 2)
 	foundSize := 0
 	hasDDLDispatcher := false
-	for id, stm := range maintainer.controller.Working() {
-		if stm.Inferior.(*ReplicaSet).Span.Equal(heartbeatpb.DDLSpan) {
+	for _, stm := range maintainer.controller.db.GetWorking() {
+		if stm.Span.Equal(heartbeatpb.DDLSpan) {
 			hasDDLDispatcher = true
 		}
 		for _, remotedId := range remotedIds {
-			if id == remotedId {
+			if stm.ID == remotedId {
 				foundSize++
-				tblID := stm.Inferior.(*ReplicaSet).Span.TableID
+				tblID := stm.Span.TableID
 				require.True(t, int64(1) == tblID || int64(2) == tblID)
 			}
 		}

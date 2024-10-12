@@ -21,6 +21,7 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
+	"github.com/flowbehappy/tigate/maintainer/replica"
 	"github.com/flowbehappy/tigate/maintainer/split"
 	"github.com/flowbehappy/tigate/pkg/bootstrap"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -335,7 +336,7 @@ func (m *Maintainer) onRemoveMaintainer(cascade bool) {
 }
 
 func (m *Maintainer) onCheckpointTsPersisted(msg *heartbeatpb.CheckpointTsMessage) {
-	stm := m.controller.GetTask(m.controller.ddlDispatcherID)
+	stm, _ := m.controller.GetTask(m.controller.ddlDispatcherID)
 	if stm == nil {
 		log.Warn("ddl dispatcher is not found, can not send checkpoint message",
 			zap.String("id", m.id.String()))
@@ -492,7 +493,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 				map[node.ID]any{
 					server: status,
 				},
-				NewReplicaSet(m.id, dispatcherID, info.SchemaID, span, info.CheckpointTs))
+				replica.NewReplicaSet(m.id, dispatcherID, info.SchemaID, span, info.CheckpointTs))
 
 			//working on remote, the state must be absent or working since it's reported by remote
 			if stm.State == scheduler.SchedulerStatusWorking {
@@ -647,11 +648,17 @@ func (m *Maintainer) onPeriodTask() {
 func (m *Maintainer) collectMetrics() {
 	if time.Since(m.lastPrintStatusTime) > time.Second*20 {
 		total := m.controller.TaskSize()
-		absent := m.controller.GetSchedulingSize()
+		scheduling := m.controller.db.GetAbsentSize()
+		working := m.controller.db.GetWorkingSize()
+		absent := m.controller.db.GetAbsentSize()
 
 		m.tableCountGauge.Set(float64(total))
-		m.scheduledTaskGauge.Set(float64(total - absent))
-		metrics.TableStateGauge.WithLabelValues(m.id.Namespace, m.id.ID, "Working").Set(float64(total - absent))
+		m.scheduledTaskGauge.Set(float64(scheduling))
+		metrics.TableStateGauge.WithLabelValues(m.id.Namespace, m.id.ID, "Absent").Set(float64(absent))
+		metrics.TableStateGauge.WithLabelValues(m.id.Namespace, m.id.ID, "Working").Set(float64(working))
 		m.lastPrintStatusTime = time.Now()
+		log.Info("maintainer status", zap.Int("total", total),
+			zap.Int("scheduling", scheduling),
+			zap.Int("working", working))
 	}
 }
