@@ -90,3 +90,11 @@ func TestConcurrentOperations(t *testing.T) {
 	wg.Wait()
 	assert.Equal(t, int64(10000), mc.AvailableMemory())
 }
+
+func TestAvailable(t *testing.T) {
+	mc := NewMemoryController(1000)
+	assert.True(t, mc.Available())
+
+	mc.availableMemory.Store(mc.totalMemory / 5)
+	assert.False(t, mc.Available())
+}

@@ -23,6 +23,7 @@ import (
 
 // MemoryController is a struct to control the memory usage of a dispatcher manager.
 type MemoryController struct {
+	// totalMemory is the total memory of the dispatcher manager in bytes.
 	totalMemory     int64
 	availableMemory atomic.Int64
 	// This is used to record the memory usage of each dispatcher.
