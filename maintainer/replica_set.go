@@ -24,10 +24,12 @@ import (
 
 type ReplicaSet struct {
 	ID           common.DispatcherID
-	SchemaID     int64
 	Span         *heartbeatpb.TableSpan
 	ChangefeedID model.ChangeFeedID
-	status       *heartbeatpb.TableSpanStatus
+
+	SchemaID int64
+	nodeID   node.ID
+	status   *heartbeatpb.TableSpanStatus
 }
 
 func NewReplicaSet(cfID model.ChangeFeedID,
@@ -51,10 +53,26 @@ func NewReplicaSet(cfID model.ChangeFeedID,
 func (r *ReplicaSet) UpdateStatus(status any) {
 	if status != nil {
 		newStatus := status.(*heartbeatpb.TableSpanStatus)
-		if newStatus.CheckpointTs > r.status.CheckpointTs {
+		if newStatus.CheckpointTs >= r.status.CheckpointTs {
 			r.status = newStatus
 		}
 	}
+}
+
+func (r *ReplicaSet) GetSchemaID() int64 {
+	return r.SchemaID
+}
+
+func (r *ReplicaSet) SetSchemaID(schemaID int64) {
+	r.SchemaID = schemaID
+}
+
+func (r *ReplicaSet) SetNodeID(n node.ID) {
+	r.nodeID = n
+}
+
+func (r *ReplicaSet) GetNodeID() node.ID {
+	return r.nodeID
 }
 
 func (r *ReplicaSet) NewAddInferiorMessage(server node.ID) *messaging.TargetMessage {

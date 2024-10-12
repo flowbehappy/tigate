@@ -14,123 +14,127 @@
 package maintainer
 
 import (
-	"fmt"
 	"math"
 	"math/rand"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/node"
-	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/flowbehappy/tigate/utils/heap"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
 
-type Scheduler[T comparable] struct {
+type Scheduler struct {
 	batchSize            int
 	changefeedID         string
 	random               *rand.Rand
 	lastRebalanceTime    time.Time
 	checkBalanceInterval time.Duration
+	oc                   *OperatorController
+	db                   *ReplicaSetDB
+	nodeManager          *watcher.NodeManager
 }
 
-func NewScheduler[T comparable](batchSize int, changefeedID string,
-	balanceInterval time.Duration) *Scheduler[T] {
-	return &Scheduler[T]{
+func NewScheduler(batchSize int, changefeedID string,
+	oc *OperatorController,
+	db *ReplicaSetDB,
+	nodeManager *watcher.NodeManager,
+	balanceInterval time.Duration) *Scheduler {
+	return &Scheduler{
 		batchSize:            batchSize,
 		random:               rand.New(rand.NewSource(time.Now().UnixNano())),
 		changefeedID:         changefeedID,
 		checkBalanceInterval: balanceInterval,
+		oc:                   oc,
+		db:                   db,
+		nodeManager:          nodeManager,
 		lastRebalanceTime:    time.Now(),
 	}
 }
 
-func (s *Scheduler[T]) Schedule(
-	absent map[T]*scheduler.StateMachine[T],
-	commiting map[T]*scheduler.StateMachine[T],
-	removing map[T]*scheduler.StateMachine[T],
-	working map[T]*scheduler.StateMachine[T],
-	nodeTasks map[node.ID]map[T]*scheduler.StateMachine[T]) []ScheduleTask[T] {
-	if len(absent) > 0 {
-		return s.basicSchedule(absent, commiting, removing, working, nodeTasks)
+// Execute periodically execute the operator
+func (s *Scheduler) Execute() time.Time {
+	if s.db.GetAbsentSize() > 0 {
+		absent, nodeSize := s.db.GetScheduleSate()
+		// add the absent node to the node size map
+		for id, _ := range s.nodeManager.GetAliveNodes() {
+			if _, ok := nodeSize[id]; !ok {
+				nodeSize[id] = 0
+			}
+		}
+		s.basicSchedule(absent, nodeSize)
+	} else {
+		s.Balance()
 	}
-	// we scheduled all absent tasks, try to balance it if needed
-	return s.Balance(absent, commiting, removing, working, nodeTasks)
+	return time.Now().Add(time.Millisecond * 500)
 }
 
-func (s *Scheduler[T]) basicSchedule(
-	absent map[T]*scheduler.StateMachine[T],
-	commiting map[T]*scheduler.StateMachine[T],
-	removing map[T]*scheduler.StateMachine[T],
-	working map[T]*scheduler.StateMachine[T],
-	nodeTasks map[node.ID]map[T]*scheduler.StateMachine[T]) []ScheduleTask[T] {
-	totalSize := s.batchSize - len(removing) - len(commiting)
-	if totalSize <= 0 {
-		// too many running tasks, skip schedule
-		return nil
-	}
-	tasks := make([]ScheduleTask[T], 0, totalSize)
+func (s *Scheduler) basicSchedule(
+	absent []*ReplicaSet,
+	nodeTasks map[node.ID]int) {
 	priorityQueue := heap.NewHeap[*Item]()
-	for key, m := range nodeTasks {
+	for key, size := range nodeTasks {
 		priorityQueue.AddOrUpdate(&Item{
 			Node:     key,
-			TaskSize: len(m),
+			TaskSize: size,
 		})
 	}
 
 	taskSize := 0
-	for key, _ := range absent {
+	for _, replicaSet := range absent {
 		item, _ := priorityQueue.PeekTop()
-		tasks = append(tasks, ScheduleTask[T]{
-			AddInferior: &AddInferior[T]{
-				ID:        key,
-				CaptureID: item.Node,
-			}})
-		item.TaskSize++
-		priorityQueue.AddOrUpdate(item)
-		taskSize++
-		if taskSize >= totalSize {
-			break
+		// the operator is pushed successfully
+		if s.oc.AddOperator(NewAddDispatcherOperator(replicaSet, item.Node)) {
+			// update the task size priority queue
+			item.TaskSize++
+			taskSize++
+			s.db.BindReplicaSetToNode("", item.Node, replicaSet)
 		}
+		priorityQueue.AddOrUpdate(item)
 	}
-	return tasks
 }
 
-func (s *Scheduler[T]) Balance(
-	absent map[T]*scheduler.StateMachine[T],
-	commiting map[T]*scheduler.StateMachine[T],
-	removing map[T]*scheduler.StateMachine[T],
-	working map[T]*scheduler.StateMachine[T],
-	nodeTasks map[node.ID]map[T]*scheduler.StateMachine[T]) []ScheduleTask[T] {
+func (s *Scheduler) Balance() {
 	if time.Since(s.lastRebalanceTime) < s.checkBalanceInterval {
-		return nil
+		return
 	}
-	if len(absent) > 0 || len(commiting) > 0 || len(removing) > 0 {
+	if s.oc.OperatorSize() > 0 {
 		// not in stable schedule state, skip balance
-		return nil
+		return
 	}
 	now := time.Now()
 	if now.Sub(s.lastRebalanceTime) < s.checkBalanceInterval {
 		// skip balance.
-		return nil
+		return
 	}
 	s.lastRebalanceTime = now
-	return s.balanceTables(absent, commiting, removing, working, nodeTasks)
+	s.balanceTables()
 }
 
-func (s *Scheduler[T]) balanceTables(
-	absent map[T]*scheduler.StateMachine[T],
-	commiting map[T]*scheduler.StateMachine[T],
-	removing map[T]*scheduler.StateMachine[T],
-	working map[T]*scheduler.StateMachine[T],
-	nodeTasks map[node.ID]map[T]*scheduler.StateMachine[T]) []ScheduleTask[T] {
-	upperLimitPerCapture := int(math.Ceil(float64(len(working)) / float64(len(nodeTasks))))
+func (s *Scheduler) balanceTables() {
+	workings := s.db.GetWorking()
+	nodeTasks := make(map[node.ID]map[common.DispatcherID]*ReplicaSet)
+	for _, cf := range workings {
+		nodeID := cf.GetNodeID()
+		if _, ok := nodeTasks[nodeID]; !ok {
+			nodeTasks[nodeID] = make(map[common.DispatcherID]*ReplicaSet)
+		}
+		nodeTasks[nodeID][cf.ID] = cf
+	}
+
+	totalSize := 0
+	for _, ts := range nodeTasks {
+		totalSize += len(ts)
+	}
+
+	upperLimitPerCapture := int(math.Ceil(float64(totalSize) / float64(len(nodeTasks))))
 	// victims holds tables which need to be moved
-	victims := make([]*scheduler.StateMachine[T], 0)
-	scheduleTasks := make([]ScheduleTask[T], 0)
+	victims := make([]*ReplicaSet, 0)
 	priorityQueue := heap.NewHeap[*Item]()
 	for nodeID, ts := range nodeTasks {
-		var stms []*scheduler.StateMachine[T]
+		var stms []*ReplicaSet
 		for _, value := range ts {
 			stms = append(stms, value)
 		}
@@ -168,7 +172,7 @@ func (s *Scheduler[T]) balanceTables(
 		}
 	}
 	if len(victims) == 0 {
-		return nil
+		return
 	}
 
 	movedSize := 0
@@ -180,22 +184,19 @@ func (s *Scheduler[T]) balanceTables(
 		}
 
 		item, _ := priorityQueue.PeekTop()
-		scheduleTasks = append(scheduleTasks, ScheduleTask[T]{
-			MoveInferior: &MoveInferior[T]{
-				ID:          cf.ID,
-				DestCapture: item.Node,
-			},
-		})
-		// update the task size priority queue
-		item.TaskSize++
+
+		// the operator is pushed successfully
+		if s.oc.AddOperator(NewMoveDispatcherOperator(cf, item.Node)) {
+			// update the task size priority queue
+			item.TaskSize++
+			movedSize++
+		}
 		priorityQueue.AddOrUpdate(item)
-		movedSize++
 	}
 	log.Info("balance done",
 		zap.String("changefeed", s.changefeedID),
 		zap.Int("movedSize", movedSize),
 		zap.Int("victims", len(victims)))
-	return scheduleTasks
 }
 
 type Item struct {
@@ -214,52 +215,4 @@ func (i *Item) GetHeapIndex() int {
 
 func (i *Item) CompareTo(t *Item) int {
 	return i.TaskSize - t.TaskSize
-}
-
-// ScheduleTask is a schedule task that wraps add/move/remove tasks.
-type ScheduleTask[T comparable] struct { //nolint:revive
-	MoveInferior *MoveInferior[T]
-	AddInferior  *AddInferior[T]
-}
-
-// Name returns the name of a schedule task.
-func (s *ScheduleTask[T]) Name() string {
-	if s.MoveInferior != nil {
-		return "moveInferior"
-	} else if s.AddInferior != nil {
-		return "addInferior"
-	}
-	return "unknown"
-}
-
-func (s *ScheduleTask[T]) String() string {
-	if s.MoveInferior != nil {
-		return s.MoveInferior.String()
-	}
-	if s.AddInferior != nil {
-		return s.AddInferior.String()
-	}
-	return ""
-}
-
-// MoveInferior is a schedule task for moving a inferior.
-type MoveInferior[T any] struct {
-	ID          T
-	DestCapture node.ID
-}
-
-func (t MoveInferior[T]) String() string {
-	return fmt.Sprintf("MoveInferior, id: %v, dest: %s",
-		t.ID, t.DestCapture)
-}
-
-// AddInferior is a schedule task for adding an inferior.
-type AddInferior[T any] struct {
-	ID        T
-	CaptureID node.ID
-}
-
-func (t AddInferior[T]) String() string {
-	return fmt.Sprintf("Add, ID: %v, server: %s",
-		t.ID, t.CaptureID)
 }

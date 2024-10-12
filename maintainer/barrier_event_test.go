@@ -25,7 +25,7 @@ import (
 )
 
 func TestScheduleEvent(t *testing.T) {
-	controller := NewController("test", 1, nil, nil, nil, 1000, 0)
+	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
 	event := NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked: true,
@@ -38,7 +38,7 @@ func TestScheduleEvent(t *testing.T) {
 	})
 	event.scheduleBlockEvent()
 	//drop table will be executed first
-	require.Len(t, controller.Absent(), 2)
+	require.Equal(t, 2, controller.GetAbsentSize())
 
 	event = NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked: true,
@@ -51,7 +51,7 @@ func TestScheduleEvent(t *testing.T) {
 	})
 	event.scheduleBlockEvent()
 	//drop table will be executed first, then add the new table
-	require.Len(t, controller.Absent(), 1)
+	require.Len(t, 1, controller.GetAbsentSize())
 
 	event = NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked: true,
@@ -64,7 +64,7 @@ func TestScheduleEvent(t *testing.T) {
 	})
 	event.scheduleBlockEvent()
 	//drop table will be executed first, then add the new table
-	require.Len(t, controller.Absent(), 1)
+	require.Len(t, 1, controller.GetAbsentSize())
 }
 
 func TestResendAction(t *testing.T) {
@@ -163,10 +163,10 @@ func TestResendAction(t *testing.T) {
 }
 
 func TestUpdateSchemaID(t *testing.T) {
-	controller := NewController("test", 1, nil, nil, nil, 1000, 0)
+	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
 	controller.AddNewNode("node1")
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
-	require.Len(t, controller.Absent(), 1)
+	require.Len(t, 1, controller.GetAbsentSize())
 	require.Len(t, controller.GetTasksBySchemaID(1), 1)
 	event := NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked: true,
@@ -183,9 +183,9 @@ func TestUpdateSchemaID(t *testing.T) {
 		}},
 	)
 	event.scheduleBlockEvent()
-	require.Len(t, controller.Absent(), 1)
+	require.Len(t, 1, controller.GetAbsentSize())
 	// check the schema id and map is updated
 	require.Len(t, controller.GetTasksBySchemaID(1), 0)
 	require.Len(t, controller.GetTasksBySchemaID(2), 1)
-	require.Equal(t, controller.GetTasksByTableIDs(1)[0].Inferior.(*ReplicaSet).SchemaID, int64(2))
+	require.Equal(t, controller.GetTasksByTableIDs(1)[0].GetSchemaID(), int64(2))
 }
