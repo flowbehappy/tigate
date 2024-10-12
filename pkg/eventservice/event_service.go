@@ -34,6 +34,11 @@ type DispatcherInfo interface {
 	GetActionType() eventpb.ActionType
 	GetChangefeedID() (namespace, id string)
 	GetFilterConfig() *config.FilterConfig
+
+	// sync point related
+	SyncPointEnabled() bool
+	GetSyncPointTs() uint64
+	GetSyncPointInterval() time.Duration
 }
 
 // EventService accepts the requests of pulling events.

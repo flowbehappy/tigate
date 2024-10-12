@@ -48,3 +48,30 @@ func (q *HeartbeatRequestQueue) Dequeue() *HeartBeatRequestWithTargetID {
 func (q *HeartbeatRequestQueue) Close() {
 	close(q.queue)
 }
+
+type BlockStatusRequestWithTargetID struct {
+	TargetID node.ID
+	Request  *heartbeatpb.BlockStatusRequest
+}
+
+type BlockStatusRequestQueue struct {
+	queue chan *BlockStatusRequestWithTargetID
+}
+
+func NewBlockStatusRequestQueue() *BlockStatusRequestQueue {
+	return &BlockStatusRequestQueue{
+		queue: make(chan *BlockStatusRequestWithTargetID, 10000),
+	}
+}
+
+func (q *BlockStatusRequestQueue) Enqueue(request *BlockStatusRequestWithTargetID) {
+	q.queue <- request
+}
+
+func (q *BlockStatusRequestQueue) Dequeue() *BlockStatusRequestWithTargetID {
+	return <-q.queue
+}
+
+func (q *BlockStatusRequestQueue) Close() {
+	close(q.queue)
+}

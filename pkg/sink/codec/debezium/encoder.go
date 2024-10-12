@@ -18,7 +18,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -44,7 +44,7 @@ func (d *BatchEncoder) EncodeCheckpointEvent(ts uint64) (*ticommon.Message, erro
 func (d *BatchEncoder) AppendRowChangedEvent(
 	_ context.Context,
 	_ string,
-	e *common.RowChangedEvent,
+	e *commonEvent.RowChangedEvent,
 	callback func(),
 ) error {
 	valueBuf := bytes.Buffer{}
@@ -79,7 +79,7 @@ func (d *BatchEncoder) AppendRowChangedEvent(
 
 // EncodeDDLEvent implements the RowEventEncoder interface
 // DDL message unresolved tso
-func (d *BatchEncoder) EncodeDDLEvent(e *common.DDLEvent) (*ticommon.Message, error) {
+func (d *BatchEncoder) EncodeDDLEvent(e *commonEvent.DDLEvent) (*ticommon.Message, error) {
 	// Schema Change Events are currently not supported.
 	return nil, nil
 }

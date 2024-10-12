@@ -18,6 +18,7 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
@@ -30,7 +31,7 @@ import (
 type BarrierEvent struct {
 	cfID                     string
 	commitTs                 uint64
-	scheduler                *Controller
+	controller               *Controller
 	selected                 bool
 	writerDispatcher         common.DispatcherID
 	writerDispatcherAdvanced bool
@@ -42,15 +43,16 @@ type BarrierEvent struct {
 	dropTasks      []*scheduler.StateMachine[common.DispatcherID]
 	newTables      []*heartbeatpb.Table
 	schemaIDChange []*heartbeatpb.SchemaIDChange
+	isSyncPoint    bool
 
-	advancedDispatchers map[common.DispatcherID]bool
+	reportedDispatchers map[common.DispatcherID]struct{}
 	lastResendTime      time.Time
 }
 
-func NewBlockEvent(cfID string, scheduler *Controller,
+func NewBlockEvent(cfID string, controller *Controller,
 	status *heartbeatpb.State) *BarrierEvent {
 	event := &BarrierEvent{
-		scheduler:           scheduler,
+		controller:          controller,
 		selected:            false,
 		cfID:                cfID,
 		commitTs:            status.BlockTs,
@@ -58,14 +60,15 @@ func NewBlockEvent(cfID string, scheduler *Controller,
 		newTables:           status.NeedAddedTables,
 		dropDispatchers:     status.NeedDroppedTables,
 		schemaIDChange:      status.UpdatedSchemas,
-		advancedDispatchers: make(map[common.DispatcherID]bool),
+		reportedDispatchers: make(map[common.DispatcherID]struct{}),
 		lastResendTime:      time.Time{},
+		isSyncPoint:         status.IsSyncPoint,
 	}
 	if event.blockedDispatchers != nil && event.blockedDispatchers.InfluenceType == heartbeatpb.InfluenceType_Normal {
-		event.blockedTasks = event.scheduler.GetTasksByTableIDs(event.blockedDispatchers.TableIDs...)
+		event.blockedTasks = event.controller.GetTasksByTableIDs(event.blockedDispatchers.TableIDs...)
 	}
 	if event.dropDispatchers != nil && event.dropDispatchers.InfluenceType == heartbeatpb.InfluenceType_Normal {
-		event.dropTasks = event.scheduler.GetTasksByTableIDs(event.dropDispatchers.TableIDs...)
+		event.dropTasks = event.controller.GetTasksByTableIDs(event.dropDispatchers.TableIDs...)
 	}
 	return event
 }
@@ -75,22 +78,22 @@ func (be *BarrierEvent) scheduleBlockEvent() {
 	if be.dropDispatchers != nil {
 		switch be.dropDispatchers.InfluenceType {
 		case heartbeatpb.InfluenceType_DB:
-			for _, stm := range be.scheduler.GetTasksBySchemaID(be.dropDispatchers.SchemaID) {
+			for _, stm := range be.controller.GetTasksBySchemaID(be.dropDispatchers.SchemaID) {
 				log.Info(" remove table",
 					zap.String("changefeed", be.cfID),
 					zap.String("table", stm.ID.String()))
-				be.scheduler.RemoveTask(stm)
+				be.controller.RemoveTask(stm)
 			}
 		case heartbeatpb.InfluenceType_Normal:
 			for _, stm := range be.dropTasks {
 				log.Info(" remove table",
 					zap.String("changefeed", be.cfID),
 					zap.String("table", stm.ID.String()))
-				be.scheduler.RemoveTask(stm)
+				be.controller.RemoveTask(stm)
 			}
 		case heartbeatpb.InfluenceType_All:
 			log.Info("remove all tables by barrier", zap.String("changefeed", be.cfID))
-			be.scheduler.RemoveAllTasks()
+			be.controller.RemoveAllTasks()
 		}
 	}
 	for _, add := range be.newTables {
@@ -98,7 +101,7 @@ func (be *BarrierEvent) scheduleBlockEvent() {
 			zap.String("changefeed", be.cfID),
 			zap.Int64("schema", add.SchemaID),
 			zap.Int64("table", add.TableID))
-		be.scheduler.AddNewTable(common.Table{
+		be.controller.AddNewTable(commonEvent.Table{
 			SchemaID: add.SchemaID,
 			TableID:  add.TableID,
 		}, be.commitTs)
@@ -110,8 +113,16 @@ func (be *BarrierEvent) scheduleBlockEvent() {
 			zap.Int64("newSchema", change.OldSchemaID),
 			zap.Int64("oldSchema", change.NewSchemaID),
 			zap.Int64("table", change.TableID))
-		be.scheduler.UpdateSchemaID(change.TableID, change.NewSchemaID)
+		be.controller.UpdateSchemaID(change.TableID, change.NewSchemaID)
 	}
+}
+
+func (be *BarrierEvent) markDispatcherEventDone(id common.DispatcherID) {
+	delete(be.reportedDispatchers, id)
+}
+
+func (be *BarrierEvent) allDispatcherDone() bool {
+	return len(be.reportedDispatchers) == 0
 }
 
 func (be *BarrierEvent) allDispatcherReported() bool {
@@ -122,12 +133,12 @@ func (be *BarrierEvent) allDispatcherReported() bool {
 	// todo: we should check ddl dispatcher checkpoint ts here, because the size may affect by ddls?
 	switch be.blockedDispatchers.InfluenceType {
 	case heartbeatpb.InfluenceType_DB:
-		return len(be.advancedDispatchers) >=
-			len(be.scheduler.GetTasksBySchemaID(be.blockedDispatchers.SchemaID))
+		return len(be.reportedDispatchers) >=
+			len(be.controller.GetTasksBySchemaID(be.blockedDispatchers.SchemaID))
 	case heartbeatpb.InfluenceType_All:
-		return len(be.advancedDispatchers) >= be.scheduler.TaskSize()
+		return len(be.reportedDispatchers) >= be.controller.TaskSize()
 	case heartbeatpb.InfluenceType_Normal:
-		return len(be.advancedDispatchers) >= len(be.blockedTasks)
+		return len(be.reportedDispatchers) >= len(be.blockedTasks)
 	}
 	return false
 }
@@ -139,7 +150,7 @@ func (be *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
 	msgMap := make(map[node.ID]*messaging.TargetMessage)
 	switch be.blockedDispatchers.InfluenceType {
 	case heartbeatpb.InfluenceType_DB:
-		for _, stm := range be.scheduler.GetTasksBySchemaID(be.blockedDispatchers.SchemaID) {
+		for _, stm := range be.controller.GetTasksBySchemaID(be.blockedDispatchers.SchemaID) {
 			if stm.Primary == "" {
 				continue
 			}
@@ -149,7 +160,7 @@ func (be *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
 			}
 		}
 	case heartbeatpb.InfluenceType_All:
-		for _, n := range be.scheduler.GetAllNodes() {
+		for _, n := range be.controller.GetAllNodes() {
 			msgMap[n] = be.newPassActionMessage(n)
 		}
 	case heartbeatpb.InfluenceType_Normal:
@@ -179,28 +190,24 @@ func (be *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
 	return msgs
 }
 
-// dispatcherReachedBlockTs check if all the dispatchers reached the block ts
+// dispatcherReachedBlockTs check if all the dispatchers reported the block events,
+// if so, select one dispatcher to write, currently choose the last one
 func (be *BarrierEvent) dispatcherReachedBlockTs(dispatcherID common.DispatcherID) *heartbeatpb.DispatcherAction {
 	if be.selected {
 		return nil
 	}
-	be.advancedDispatchers[dispatcherID] = true
+	be.reportedDispatchers[dispatcherID] = struct{}{}
 	// all dispatcher reported heartbeat, select the last one to write
 	if be.allDispatcherReported() {
 		be.writerDispatcher = dispatcherID
 		be.selected = true
-		// release memory
-		be.advancedDispatchers = nil
 
 		log.Info("all dispatcher reported heartbeat, select one to write",
 			zap.String("changefeed", be.cfID),
 			zap.String("dispatcher", dispatcherID.String()),
 			zap.Uint64("commitTs", be.commitTs),
 			zap.String("barrierType", be.blockedDispatchers.InfluenceType.String()))
-		return &heartbeatpb.DispatcherAction{
-			Action:   heartbeatpb.Action_Write,
-			CommitTs: be.commitTs,
-		}
+		return be.action(heartbeatpb.Action_Write)
 	}
 	return nil
 }
@@ -214,10 +221,10 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 		return nil
 	}
 	be.lastResendTime = time.Now()
-	// we select a dispatcher as the writer, still waiting for that dispatcher advance it's checkpoint ts
+	// we select a dispatcher as the writer, still waiting for that dispatcher advance its checkpoint ts
 	if !be.writerDispatcherAdvanced {
 		//resend write action
-		stm := be.scheduler.GetTask(be.writerDispatcher)
+		stm := be.controller.GetTask(be.writerDispatcher)
 		if stm == nil || stm.Primary == "" {
 			return nil
 		}
@@ -229,35 +236,41 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 
 func (be *BarrierEvent) newWriterActionMessage(capture node.ID) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(capture, messaging.HeartbeatCollectorTopic,
-		&heartbeatpb.HeartBeatResponse{DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
-			{
-				Action: &heartbeatpb.DispatcherAction{
-					Action:   heartbeatpb.Action_Write,
-					CommitTs: be.commitTs,
-				},
-				InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
-					InfluenceType: heartbeatpb.InfluenceType_Normal,
-					DispatcherIDs: []*heartbeatpb.DispatcherID{
-						be.writerDispatcher.ToPB(),
+		&heartbeatpb.HeartBeatResponse{
+			ChangefeedID: be.cfID,
+			DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
+				{
+					Action: be.action(heartbeatpb.Action_Write),
+					InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
+						InfluenceType: heartbeatpb.InfluenceType_Normal,
+						DispatcherIDs: []*heartbeatpb.DispatcherID{
+							be.writerDispatcher.ToPB(),
+						},
 					},
 				},
-			},
-		}})
+			}})
 }
 
 func (be *BarrierEvent) newPassActionMessage(capture node.ID) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(capture, messaging.HeartbeatCollectorTopic,
-		&heartbeatpb.HeartBeatResponse{DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
-			{
-				Action: &heartbeatpb.DispatcherAction{
-					Action:   heartbeatpb.Action_Pass,
-					CommitTs: be.commitTs,
+		&heartbeatpb.HeartBeatResponse{
+			ChangefeedID: be.cfID,
+			DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
+				{
+					Action: be.action(heartbeatpb.Action_Pass),
+					InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
+						InfluenceType:       be.blockedDispatchers.InfluenceType,
+						SchemaID:            be.blockedDispatchers.SchemaID,
+						ExcludeDispatcherId: be.writerDispatcher.ToPB(),
+					},
 				},
-				InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
-					InfluenceType:       be.blockedDispatchers.InfluenceType,
-					SchemaID:            be.blockedDispatchers.SchemaID,
-					ExcludeDispatcherId: be.writerDispatcher.ToPB(),
-				},
-			},
-		}})
+			}})
+}
+
+func (be *BarrierEvent) action(action heartbeatpb.Action) *heartbeatpb.DispatcherAction {
+	return &heartbeatpb.DispatcherAction{
+		Action:      action,
+		CommitTs:    be.commitTs,
+		IsSyncPoint: be.isSyncPoint,
+	}
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/bootstrap"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	configNew "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
@@ -299,6 +300,8 @@ func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
 	switch msg.Type {
 	case messaging.TypeHeartBeatRequest:
 		return m.onHeartBeatRequest(msg)
+	case messaging.TypeBlockStatusRequest:
+		m.onBlockStateRequest(msg)
 	case messaging.TypeMaintainerBootstrapResponse:
 		m.onMaintainerBootstrapResponse(msg)
 	case messaging.TypeMaintainerCloseResponse:
@@ -428,8 +431,6 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 		m.checkpointTsByCapture[msg.From] = *req.Watermark
 	}
 	m.controller.HandleStatus(msg.From, req.Statuses)
-	ackMsg := m.barrier.HandleStatus(msg.From, req)
-	m.sendMessages([]*messaging.TargetMessage{ackMsg})
 	if req.Warning != nil {
 		m.errLock.Lock()
 		m.runningWarnings[msg.From] = req.Warning
@@ -441,6 +442,12 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 		m.errLock.Unlock()
 	}
 	return nil
+}
+
+func (m *Maintainer) onBlockStateRequest(msg *messaging.TargetMessage) {
+	req := msg.Message[0].(*heartbeatpb.BlockStatusRequest)
+	ackMsg := m.barrier.HandleStatus(msg.From, req)
+	m.sendMessages([]*messaging.TargetMessage{ackMsg})
 }
 
 func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage) {
@@ -498,7 +505,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 }
 
 // initTableIDs get tables ids base on the filter and checkpoint ts
-func (m *Maintainer) initTables() ([]common.Table, error) {
+func (m *Maintainer) initTables() ([]commonEvent.Table, error) {
 	startTs := m.watermark.CheckpointTs
 	f, err := filter.NewFilter(m.config.Config.Filter, "", m.config.Config.ForceReplicate)
 	if err != nil {
@@ -586,14 +593,17 @@ func (m *Maintainer) handleError(err error) {
 func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 	cfg := m.config
 	changefeedConfig := configNew.ChangefeedConfig{
-		Namespace:      cfg.Namespace,
-		ID:             cfg.ID,
-		StartTS:        cfg.StartTs,
-		TargetTS:       cfg.TargetTs,
-		SinkURI:        cfg.SinkURI,
-		ForceReplicate: cfg.Config.ForceReplicate,
-		SinkConfig:     cfg.Config.Sink,
-		Filter:         cfg.Config.Filter,
+		Namespace:          cfg.Namespace,
+		ID:                 cfg.ID,
+		StartTS:            cfg.StartTs,
+		TargetTS:           cfg.TargetTs,
+		SinkURI:            cfg.SinkURI,
+		ForceReplicate:     cfg.Config.ForceReplicate,
+		SinkConfig:         cfg.Config.Sink,
+		Filter:             cfg.Config.Filter,
+		EnableSyncPoint:    *cfg.Config.EnableSyncPoint,
+		SyncPointInterval:  cfg.Config.SyncPointInterval,
+		SyncPointRetention: cfg.Config.SyncPointRetention,
 		// other fileds are not necessary for maintainer
 	}
 	// cfgBytes only holds necessary fields to initialize a changefeed dispatcher.

@@ -10,6 +10,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/log"
 	bf "github.com/pingcap/tiflow/pkg/binlog-filter"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -25,12 +26,14 @@ const (
 	TypeDMLEvent
 	TypeDDLEvent
 	TypeBatchResolvedTs
+	TypeSyncPointEvent
 
 	TypeHeartBeatRequest
 	TypeHeartBeatResponse
 	TypeScheduleDispatcherRequest
 	TypeRegisterDispatcherRequest
 	TypeCheckpointTsMessage
+	TypeBlockStatusRequest
 
 	TypeCoordinatorBootstrapRequest
 	TypeCoordinatorBootstrapResponse
@@ -54,12 +57,16 @@ func (t IOType) String() string {
 		return "DMLEvent"
 	case TypeDDLEvent:
 		return "DDLEvent"
+	case TypeSyncPointEvent:
+		return "SyncPointEvent"
 	case TypeBatchResolvedTs:
 		return "BatchResolvedTs"
 	case TypeHeartBeatRequest:
 		return "HeartBeatRequest"
 	case TypeHeartBeatResponse:
 		return "HeartBeatResponse"
+	case TypeBlockStatusRequest:
+		return "BlockStatusRequest"
 	case TypeScheduleDispatcherRequest:
 		return "ScheduleDispatcherRequest"
 	case TypeCoordinatorBootstrapRequest:
@@ -168,6 +175,18 @@ func (r RegisterDispatcherRequest) GetFilterConfig() *config.FilterConfig {
 	return filterCfg
 }
 
+func (r RegisterDispatcherRequest) SyncPointEnabled() bool {
+	return r.EnableSyncPoint
+}
+
+func (r RegisterDispatcherRequest) GetSyncPointTs() uint64 {
+	return r.SyncPointTs
+}
+
+func (r RegisterDispatcherRequest) GetSyncPointInterval() time.Duration {
+	return time.Duration(r.SyncPointInterval) * time.Second
+}
+
 type IOTypeT interface {
 	Unmarshal(data []byte) error
 	Marshal() (data []byte, err error)
@@ -177,15 +196,19 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 	var m IOTypeT
 	switch ioType {
 	case TypeDMLEvent:
-		m = &common.DMLEvent{}
+		m = &commonEvent.DMLEvent{}
 	case TypeDDLEvent:
-		m = &common.DDLEvent{}
+		m = &commonEvent.DDLEvent{}
+	case TypeSyncPointEvent:
+		m = &commonEvent.SyncPointEvent{}
 	case TypeBatchResolvedTs:
-		m = &common.BatchResolvedEvent{}
+		m = &commonEvent.BatchResolvedEvent{}
 	case TypeHeartBeatRequest:
 		m = &heartbeatpb.HeartBeatRequest{}
 	case TypeHeartBeatResponse:
 		m = &heartbeatpb.HeartBeatResponse{}
+	case TypeBlockStatusRequest:
+		m = &heartbeatpb.BlockStatusRequest{}
 	case TypeScheduleDispatcherRequest:
 		m = &heartbeatpb.ScheduleDispatcherRequest{}
 	case TypeCoordinatorBootstrapRequest:
@@ -236,14 +259,18 @@ type TargetMessage struct {
 func NewSingleTargetMessage(To node.ID, Topic string, Message IOTypeT) *TargetMessage {
 	var ioType IOType
 	switch Message.(type) {
-	case *common.DMLEvent:
+	case *commonEvent.DMLEvent:
 		ioType = TypeDMLEvent
-	case *common.DDLEvent:
+	case *commonEvent.DDLEvent:
 		ioType = TypeDDLEvent
-	case *common.BatchResolvedEvent:
+	case *commonEvent.SyncPointEvent:
+		ioType = TypeSyncPointEvent
+	case *commonEvent.BatchResolvedEvent:
 		ioType = TypeBatchResolvedTs
 	case *heartbeatpb.HeartBeatRequest:
 		ioType = TypeHeartBeatRequest
+	case *heartbeatpb.BlockStatusRequest:
+		ioType = TypeBlockStatusRequest
 	case *heartbeatpb.ScheduleDispatcherRequest:
 		ioType = TypeScheduleDispatcherRequest
 	case *heartbeatpb.MaintainerBootstrapRequest:

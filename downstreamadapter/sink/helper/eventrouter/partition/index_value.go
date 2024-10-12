@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
@@ -39,7 +40,7 @@ func newIndexValuePartitionGenerator(indexName string) *IndexValuePartitionGener
 	}
 }
 
-func (r *IndexValuePartitionGenerator) GeneratePartitionIndexAndKey(row *common.RowChange,
+func (r *IndexValuePartitionGenerator) GeneratePartitionIndexAndKey(row *commonEvent.RowChange,
 	partitionNum int32,
 	tableInfo *common.TableInfo,
 	commitTs uint64,

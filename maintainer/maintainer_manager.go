@@ -107,6 +107,9 @@ func (m *Manager) RecvMessages(ctx context.Context, msg *messaging.TargetMessage
 	case messaging.TypeHeartBeatRequest:
 		req := msg.Message[0].(*heartbeatpb.HeartBeatRequest)
 		return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
+	case messaging.TypeBlockStatusRequest:
+		req := msg.Message[0].(*heartbeatpb.BlockStatusRequest)
+		return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
 	case messaging.TypeCheckpointTsMessage:
 		req := msg.Message[0].(*heartbeatpb.CheckpointTsMessage)
 		return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
@@ -216,6 +219,7 @@ func (m *Manager) onDispatchMaintainerRequest(
 			if err != nil {
 				log.Panic("decode changefeed fail", zap.Error(err))
 			}
+			log.Info("new changefeed added", zap.Any("cfConfig", cfConfig))
 			cf = NewMaintainer(cfID, cfConfig, m.selfNode, m.stream, m.taskScheduler,
 				nil, nil,
 				req.CheckpointTs)

@@ -24,6 +24,7 @@ import (
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/utils/dynstream"
@@ -73,7 +74,7 @@ type EventCollector struct {
 	globalMemoryQuota int64
 	wg                sync.WaitGroup
 
-	dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, common.Event, *dispatcher.Dispatcher]
+	dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, commonEvent.Event, *dispatcher.Dispatcher]
 
 	registerMessageChan                          *chann.DrainableChann[RegisterInfo] // for temp
 	metricDispatcherReceivedKVEventCount         prometheus.Counter
@@ -129,12 +130,15 @@ func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
 		Message: []messaging.IOTypeT{&messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
-			DispatcherId: info.Dispatcher.GetId().ToPB(),
-			TableSpan:    info.Dispatcher.GetTableSpan(),
-			ActionType:   eventpb.ActionType_ACTION_TYPE_REGISTER,
-			StartTs:      info.StartTs,
-			ServerId:     c.serverId.String(),
-			FilterConfig: info.FilterConfig,
+			DispatcherId:      info.Dispatcher.GetId().ToPB(),
+			TableSpan:         info.Dispatcher.GetTableSpan(),
+			ActionType:        eventpb.ActionType_ACTION_TYPE_REGISTER,
+			StartTs:           info.StartTs,
+			ServerId:          c.serverId.String(),
+			FilterConfig:      info.FilterConfig,
+			EnableSyncPoint:   info.Dispatcher.EnableSyncPoint(),
+			SyncPointTs:       info.Dispatcher.GetSyncPointTs(),
+			SyncPointInterval: uint64(info.Dispatcher.GetSyncPointInterval().Seconds()),
 		}}},
 	})
 	if err != nil {
@@ -174,13 +178,13 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, msg *messaging.Tar
 	inflightDuration := time.Since(time.Unix(0, msg.CrateAt)).Milliseconds()
 	c.metricReceiveEventLagDuration.Observe(float64(inflightDuration))
 	for _, msg := range msg.Message {
-		event, ok := msg.(common.Event)
+		event, ok := msg.(commonEvent.Event)
 		if !ok {
 			log.Panic("invalid message type", zap.Any("msg", msg))
 		}
 		switch event.GetType() {
-		case common.TypeBatchResolvedEvent:
-			for _, e := range event.(*common.BatchResolvedEvent).Events {
+		case commonEvent.TypeBatchResolvedEvent:
+			for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
 				c.metricDispatcherReceivedResolvedTsEventCount.Inc()
 				c.dispatcherEventsDynamicStream.In() <- e
 			}
@@ -220,5 +224,4 @@ func (c *EventCollector) updateMetrics(ctx context.Context) {
 			metrics.EventCollectorResolvedTsLagGauge.Set(float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3)
 		}
 	}
-	return
 }

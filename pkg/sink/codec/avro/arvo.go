@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/linkedin/goavro/v2"
 	"github.com/pingcap/errors"
@@ -75,7 +76,7 @@ type avroEncodeResult struct {
 	header []byte
 }
 
-func (a *BatchEncoder) encodeKey(ctx context.Context, topic string, e *common.RowChangedEvent) ([]byte, error) {
+func (a *BatchEncoder) encodeKey(ctx context.Context, topic string, e *commonEvent.RowChangedEvent) ([]byte, error) {
 	cols, colInfos := e.HandleKeyColInfos()
 	// result may be nil if the event has no handle key columns, this may happen in the force replicate mode.
 	// todo: disallow force replicate mode if using the avro.
@@ -159,7 +160,7 @@ func (a *BatchEncoder) getKeySchemaCodec(
 	return avroCodec, header, nil
 }
 
-func (a *BatchEncoder) encodeValue(ctx context.Context, topic string, e *common.RowChangedEvent) ([]byte, error) {
+func (a *BatchEncoder) encodeValue(ctx context.Context, topic string, e *commonEvent.RowChangedEvent) ([]byte, error) {
 	if e.IsDelete() {
 		return nil, nil
 	}
@@ -208,7 +209,7 @@ func (a *BatchEncoder) encodeValue(ctx context.Context, topic string, e *common.
 func (a *BatchEncoder) AppendRowChangedEvent(
 	ctx context.Context,
 	topic string,
-	e *common.RowChangedEvent,
+	e *commonEvent.RowChangedEvent,
 	callback func(),
 ) error {
 	topic = sanitizeTopic(topic)
@@ -278,7 +279,7 @@ type ddlEvent struct {
 
 // EncodeDDLEvent only encode DDL event if the watermark event is enabled
 // it's only used for the testing purpose.
-func (a *BatchEncoder) EncodeDDLEvent(e *common.DDLEvent) (*ticommon.Message, error) {
+func (a *BatchEncoder) EncodeDDLEvent(e *commonEvent.DDLEvent) (*ticommon.Message, error) {
 	// if a.config.EnableTiDBExtension && a.config.AvroEnableWatermark {
 	// 	buf := new(bytes.Buffer)
 	// 	_ = binary.Write(buf, binary.BigEndian, ddlByte)
@@ -315,7 +316,7 @@ const (
 	updateOperation = "u"
 )
 
-func getOperation(e *common.RowChangedEvent) string {
+func getOperation(e *commonEvent.RowChangedEvent) string {
 	if e.IsInsert() {
 		return insertOperation
 	} else if e.IsUpdate() {
@@ -326,7 +327,7 @@ func getOperation(e *common.RowChangedEvent) string {
 
 func (a *BatchEncoder) nativeValueWithExtension(
 	native map[string]interface{},
-	e *common.RowChangedEvent,
+	e *commonEvent.RowChangedEvent,
 ) map[string]interface{} {
 	native[tidbOp] = getOperation(e)
 	native[tidbCommitTs] = int64(e.CommitTs)

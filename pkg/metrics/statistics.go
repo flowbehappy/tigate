@@ -16,10 +16,10 @@ package metrics
 import (
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/tiflow/cdc/model"
 	cdcconfig "github.com/pingcap/tiflow/pkg/config"
 
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -68,7 +68,7 @@ type Statistics struct {
 }
 
 // ObserveRows stats all received `RowChangedEvent`s.
-func (b *Statistics) ObserveRows(events []*common.DMLEvent) {
+func (b *Statistics) ObserveRows(events []*commonEvent.DMLEvent) {
 	for _, event := range events {
 		b.metricEventSizeHis.Observe(float64(event.Rows.MemoryUsage()))
 		b.metricExecDMLCnt.Inc()
