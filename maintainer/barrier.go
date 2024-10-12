@@ -23,24 +23,29 @@ import (
 // Barrier manage the block events for the changefeed
 // the block event processing logic:
 // 1. dispatcher report an event to maintainer, like ddl, sync point
-// 2. maintainer wait for all dispatchers reporting block event (all dispatchers will report the same event)
+// 2. maintainer wait for all dispatchers reporting block event (all dispatchers must report the same event)
 // 3. maintainer choose one dispatcher to write(tack an action) the event to downstream, (resend logic is needed)
-// 4. maintainer wait for the selected dispatcher advance its checkpoint ts, checkpoint ts >= block ts,(means it already finished the write action), (resend logic is needed)
+// 4. maintainer wait for the selected dispatcher reporting event(write) done message (resend logic is needed)
 // 5. maintainer send pass action to all other dispatchers. (resend logic is needed)
-// 6. maintainer wait for all dispatchers advance checkpoints, and cleanup memory
+// 6. maintainer wait for all dispatchers reporting event(pass) done message
+// 7. maintainer clear the event
 type Barrier struct {
-	blockedTs  map[uint64]*BarrierEvent
+	blockedTs  map[eventKey]*BarrierEvent
 	controller *Controller
-	// if maintainer is down, the barrier will be re-built, so we can use the dispatcher as the key
-	blockedDispatcher map[common.DispatcherID]*BarrierEvent
+}
+
+// eventKey is the key of the block event,
+// the ddl and sync point are identified by the blockTs and isSyncPoint since they can share the same blockTs
+type eventKey struct {
+	blockTs     uint64
+	isSyncPoint bool
 }
 
 // NewBarrier create a new barrier for the changefeed
 func NewBarrier(controller *Controller) *Barrier {
 	return &Barrier{
-		blockedTs:         make(map[uint64]*BarrierEvent),
-		blockedDispatcher: make(map[common.DispatcherID]*BarrierEvent),
-		controller:        controller,
+		blockedTs:  make(map[eventKey]*BarrierEvent),
+		controller: controller,
 	}
 }
 
@@ -79,14 +84,15 @@ func (b *Barrier) Resend() []*messaging.TargetMessage {
 func (b *Barrier) handleOneStatus(changefeedID string, status *heartbeatpb.TableSpanBlockStatus) *heartbeatpb.DispatcherStatus {
 	dispatcherID := common.NewDispatcherIDFromPB(status.ID)
 	if status.State.EventDone {
-		b.handleEventDone(dispatcherID)
+		b.handleEventDone(dispatcherID, status)
 		return nil
 	}
 	return b.handleBlockState(changefeedID, dispatcherID, status)
 }
 
-func (b *Barrier) handleEventDone(dispatcherID common.DispatcherID) {
-	event, ok := b.blockedDispatcher[dispatcherID]
+func (b *Barrier) handleEventDone(dispatcherID common.DispatcherID, status *heartbeatpb.TableSpanBlockStatus) {
+	key := getEventKey(status.State)
+	event, ok := b.blockedTs[key]
 	// no block event found
 	if !ok {
 		return
@@ -103,10 +109,10 @@ func (b *Barrier) handleEventDone(dispatcherID common.DispatcherID) {
 	}
 
 	// checkpoint ts is advanced, clear the map, so do not need to resend message anymore
-	delete(b.blockedDispatcher, dispatcherID)
-	// all blocked dispatchers are advanced checkpoint ts
-	if len(b.blockedDispatcher) == 0 {
-		delete(b.blockedTs, event.commitTs)
+	event.markDispatcherEventDone(dispatcherID)
+	// all blocked dispatchers are reported event done, we can clean up the event
+	if event.allDispatcherDone() {
+		delete(b.blockedTs, key)
 	}
 }
 
@@ -121,33 +127,38 @@ func (b *Barrier) handleBlockState(changefeedID string,
 				dispatcherID.ToPB(),
 			},
 		},
-		Ack: &heartbeatpb.ACK{CommitTs: blockState.BlockTs},
+		Ack: &heartbeatpb.ACK{CommitTs: blockState.BlockTs, IsSyncPoint: blockState.IsSyncPoint},
 	}
 	if blockState.IsBlocked {
+		key := getEventKey(blockState)
 		// insert an event, or get the old one event check if the event is already tracked
-		event := b.getOrInsertNewEvent(changefeedID, dispatcherID, blockState)
+		event := b.getOrInsertNewEvent(changefeedID, key, blockState)
 		// check if all dispatchers already reported the block event, and check whether we need to send write action
 		dispatcherStatus.Action = event.dispatcherReachedBlockTs(dispatcherID)
 	} else {
 		// it's not a blocked event, it must be sent by table event trigger dispatcher
-		// the ddl already synced to downstream , e.g.: create table, drop table
-		// if ack failed, dispatcher will send a heartbeat again
+		// and the ddl already synced to downstream , e.g.: create table, drop table
+		// if ack failed, dispatcher will send a heartbeat again, so we do not need to care about resend message here
 		NewBlockEvent(changefeedID, b.controller, blockState).scheduleBlockEvent()
 	}
 	return dispatcherStatus
 }
 
-func (b *Barrier) getOrInsertNewEvent(changefeedID string,
-	dispatcherID common.DispatcherID,
+// getOrInsertNewEvent get the block event from the map, if not found, create a new one
+func (b *Barrier) getOrInsertNewEvent(changefeedID string, key eventKey,
 	blockState *heartbeatpb.State) *BarrierEvent {
-	event, ok := b.blockedTs[blockState.BlockTs]
+	event, ok := b.blockedTs[key]
 	if !ok {
 		event = NewBlockEvent(changefeedID, b.controller, blockState)
-		b.blockedTs[blockState.BlockTs] = event
-	}
-	_, ok = b.blockedDispatcher[dispatcherID]
-	if !ok {
-		b.blockedDispatcher[dispatcherID] = event
+		b.blockedTs[key] = event
 	}
 	return event
+}
+
+// getEventKey returns the key of the block event
+func getEventKey(blockState *heartbeatpb.State) eventKey {
+	return eventKey{
+		blockTs:     blockState.BlockTs,
+		isSyncPoint: blockState.IsSyncPoint,
+	}
 }

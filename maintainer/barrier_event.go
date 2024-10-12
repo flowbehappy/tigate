@@ -45,7 +45,7 @@ type BarrierEvent struct {
 	schemaIDChange []*heartbeatpb.SchemaIDChange
 	isSyncPoint    bool
 
-	reportedDispatchers map[common.DispatcherID]bool
+	reportedDispatchers map[common.DispatcherID]struct{}
 	lastResendTime      time.Time
 }
 
@@ -60,7 +60,7 @@ func NewBlockEvent(cfID string, scheduler *Controller,
 		newTables:           status.NeedAddedTables,
 		dropDispatchers:     status.NeedDroppedTables,
 		schemaIDChange:      status.UpdatedSchemas,
-		reportedDispatchers: make(map[common.DispatcherID]bool),
+		reportedDispatchers: make(map[common.DispatcherID]struct{}),
 		lastResendTime:      time.Time{},
 		isSyncPoint:         status.IsSyncPoint,
 	}
@@ -115,6 +115,14 @@ func (be *BarrierEvent) scheduleBlockEvent() {
 			zap.Int64("table", change.TableID))
 		be.scheduler.UpdateSchemaID(change.TableID, change.NewSchemaID)
 	}
+}
+
+func (be *BarrierEvent) markDispatcherEventDone(id common.DispatcherID) {
+	delete(be.reportedDispatchers, id)
+}
+
+func (be *BarrierEvent) allDispatcherDone() bool {
+	return len(be.reportedDispatchers) == 0
 }
 
 func (be *BarrierEvent) allDispatcherReported() bool {
@@ -188,13 +196,11 @@ func (be *BarrierEvent) dispatcherReachedBlockTs(dispatcherID common.DispatcherI
 	if be.selected {
 		return nil
 	}
-	be.reportedDispatchers[dispatcherID] = true
+	be.reportedDispatchers[dispatcherID] = struct{}{}
 	// all dispatcher reported heartbeat, select the last one to write
 	if be.allDispatcherReported() {
 		be.writerDispatcher = dispatcherID
 		be.selected = true
-		// release memory
-		be.reportedDispatchers = nil
 
 		log.Info("all dispatcher reported heartbeat, select one to write",
 			zap.String("changefeed", be.cfID),
