@@ -144,10 +144,6 @@ func (r RegisterDispatcherRequest) GetStartTs() uint64 {
 	return r.StartTs
 }
 
-func (r RegisterDispatcherRequest) IsRegister() bool {
-	return !r.Remove
-}
-
 func (r RegisterDispatcherRequest) GetChangefeedID() (namespace, id string) {
 	return r.Namespace, r.ChangefeedId
 }

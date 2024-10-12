@@ -132,7 +132,7 @@ func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
 		Message: []messaging.IOTypeT{&messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
 			DispatcherId:      info.Dispatcher.GetId().ToPB(),
 			TableSpan:         info.Dispatcher.GetTableSpan(),
-			Remove:            false,
+			ActionType:        eventpb.ActionType_ACTION_TYPE_REGISTER,
 			StartTs:           info.StartTs,
 			ServerId:          c.serverId.String(),
 			FilterConfig:      info.FilterConfig,
@@ -158,7 +158,7 @@ func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
 		Type:  messaging.TypeRegisterDispatcherRequest,
 		Message: []messaging.IOTypeT{&messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
 			DispatcherId: d.GetId().ToPB(),
-			Remove:       true,
+			ActionType:   eventpb.ActionType_ACTION_TYPE_REMOVE,
 			ServerId:     c.serverId.String(),
 			TableSpan:    d.GetTableSpan(),
 		}}}})

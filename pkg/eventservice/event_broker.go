@@ -29,7 +29,6 @@ import (
 
 const (
 	resolvedTsCacheSize = 8192
-	//resolvedEventRetryTime = 3
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -104,22 +103,23 @@ func newEventBroker(
 	ds.Start()
 
 	c := &eventBroker{
-		tidbClusterID:                          id,
-		eventStore:                             eventStore,
-		mounter:                                mounter.NewMounter(tz),
-		schemaStore:                            schemaStore,
-		notifyCh:                               make(chan *spanSubscription, defaultChannelSize*16),
-		dispatchers:                            sync.Map{},
-		tableTriggerDispatchers:                sync.Map{},
-		spans:                                  make(map[common.TableID]*spanSubscription),
-		msgSender:                              mc,
-		taskPool:                               newScanTaskPool(),
-		scanWorkerCount:                        defaultScanWorkerCount,
-		ds:                                     ds,
-		messageCh:                              make(chan wrapEvent, defaultChannelSize),
-		resolvedTsCaches:                       make(map[node.ID]*resolvedTsCache),
-		cancel:                                 cancel,
-		wg:                                     wg,
+		tidbClusterID:           id,
+		eventStore:              eventStore,
+		mounter:                 mounter.NewMounter(tz),
+		schemaStore:             schemaStore,
+		notifyCh:                make(chan *spanSubscription, defaultChannelSize*16),
+		dispatchers:             sync.Map{},
+		tableTriggerDispatchers: sync.Map{},
+		spans:                   make(map[common.TableID]*spanSubscription),
+		msgSender:               mc,
+		taskPool:                newScanTaskPool(),
+		scanWorkerCount:         defaultScanWorkerCount,
+		ds:                      ds,
+		messageCh:               make(chan wrapEvent, defaultChannelSize),
+		resolvedTsCaches:        make(map[node.ID]*resolvedTsCache),
+		cancel:                  cancel,
+		wg:                      wg,
+
 		metricDispatcherCount:                  metrics.EventServiceDispatcherGuage.WithLabelValues(strconv.FormatUint(id, 10)),
 		metricEventServicePullerResolvedTs:     metrics.EventServiceResolvedTsGauge,
 		metricEventServiceResolvedTsLag:        metrics.EventServiceResolvedTsLagGauge.WithLabelValues("puller"),
@@ -188,7 +188,10 @@ func (c *eventBroker) runGenTasks(ctx context.Context) {
 			case s := <-c.notifyCh:
 				s.dispatchers.RLock()
 				for _, stat := range s.dispatchers.m {
-					c.ds.In() <- newScanTask(stat)
+					// Only send the task to the dispatcher that is running.
+					if stat.isRunning.Load() {
+						c.ds.In() <- newScanTask(stat)
+					}
 				}
 				s.dispatchers.RUnlock()
 			}
@@ -512,7 +515,7 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 
 func (c *eventBroker) updateDispatcherSendTs(ctx context.Context) {
 	c.wg.Add(1)
-	ticker := time.NewTicker(time.Second * 5)
+	ticker := time.NewTicker(time.Second * 10)
 	go func() {
 		defer c.wg.Done()
 		log.Info("update dispatcher send ts goroutine is started")
@@ -612,6 +615,25 @@ func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
 	log.Info("deregister acceptor", zap.Uint64("clusterID", c.tidbClusterID), zap.Any("acceptorID", id))
 }
 
+func (c *eventBroker) pauseDispatcher(dispatcherInfo DispatcherInfo) {
+	stat, ok := c.dispatchers.Load(dispatcherInfo.GetID())
+	if !ok {
+		return
+	}
+	stat.(*dispatcherStat).isRunning.Store(false)
+}
+
+func (c *eventBroker) resumeDispatcher(dispatcherInfo DispatcherInfo) {
+	stat, ok := c.dispatchers.Load(dispatcherInfo.GetID())
+	if !ok {
+		return
+	}
+	dispStat := stat.(*dispatcherStat)
+	// Reset the watermark to the startTs of the dispatcherInfo.
+	dispStat.watermark.Store(dispStat.info.GetStartTs())
+	dispStat.isRunning.Store(true)
+}
+
 // Store the progress of the dispatcher, and the incremental events stats.
 // Those information will be used to decide when will the worker start to handle the push task of this dispatcher.
 type dispatcherStat struct {
@@ -620,6 +642,7 @@ type dispatcherStat struct {
 	spanSubscription *spanSubscription
 	// The watermark of the events that have been sent to the dispatcher.
 	watermark atomic.Uint64
+	isRunning atomic.Bool
 
 	// syncpoint related
 	enableSyncPoint   bool
@@ -639,10 +662,9 @@ func newDispatcherStat(
 ) *dispatcherStat {
 	namespace, id := info.GetChangefeedID()
 	dispStat := &dispatcherStat{
-		info:             info,
-		filter:           filter,
-		spanSubscription: subscription,
-
+		info:                                  info,
+		filter:                                filter,
+		spanSubscription:                      subscription,
 		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(namespace, id, "kv"),
 		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "kv"),
 		metricEventServiceSendDDLCount:        metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "ddl"),
@@ -655,7 +677,7 @@ func newDispatcherStat(
 	}
 
 	dispStat.watermark.Store(startTs)
-
+	dispStat.isRunning.Store(true)
 	subscription.addDispatcher(dispStat)
 	return dispStat
 }
