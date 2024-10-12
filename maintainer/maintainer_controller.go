@@ -60,9 +60,8 @@ type Controller struct {
 
 	// the dispatcher is in replacing status, not removed, when the dispatcher is removed by the ddl,
 	// it should be removed from this map
-	replacing map[common.DispatcherID]struct{}
-
 	pendingTaskLock sync.RWMutex
+	replacing       map[common.DispatcherID]struct{}
 	pendingTasks    []*InternalScheduleDispatcherEvent
 }
 
@@ -98,10 +97,18 @@ func NewController(changefeedID string,
 	return s
 }
 
-func (c *Controller) AddPendingTask(task *InternalScheduleDispatcherEvent) {
+func (c *Controller) MarkRePlacing(id common.DispatcherID) {
 	c.pendingTaskLock.Lock()
 	defer c.pendingTaskLock.Unlock()
-	c.pendingTasks = append(c.pendingTasks, task)
+	c.replacing[id] = struct{}{}
+}
+
+func (c *Controller) PreAddPendingTask(task *InternalScheduleDispatcherEvent) common.DispatcherID {
+	return c.ddlDispatcherID
+}
+
+func (c *Controller) MarkPendingTask(task *InternalScheduleDispatcherEvent) common.DispatcherID {
+	return c.ddlDispatcherID
 }
 
 // schedulePendingDispatchers handle the dispatcher scheduling trigger by other modules

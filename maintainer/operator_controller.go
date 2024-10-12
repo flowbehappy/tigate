@@ -44,13 +44,7 @@ func (oc *OperatorController) AddOperator(op Operator) {
 func (oc *OperatorController) RemoveOperator(id common.DispatcherID) {
 	oc.lock.Lock()
 	defer oc.lock.Unlock()
-	op, ok := oc.operators[id]
-	if ok {
-		for _, rop := range op.RelatedOperator() {
-			delete(oc.operators, rop.ID())
-		}
-		delete(oc.operators, id)
-	}
+	delete(oc.operators, id)
 }
 
 func (oc *OperatorController) GetOperator(id common.DispatcherID) Operator {

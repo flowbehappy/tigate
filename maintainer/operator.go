@@ -27,6 +27,8 @@ import (
 type Operator interface {
 	// ID returns the dispatcher ID
 	ID() common.DispatcherID
+	// PreStart is called before the operator is started
+	PreStart()
 	// Check checks when the new status comes, returns true if the operator is finished
 	Check(from node.ID, status *heartbeatpb.TableSpanStatus)
 	// Cancel is called when the operator is canceled
@@ -35,12 +37,16 @@ type Operator interface {
 	IsFinished() bool
 	// PostFinished is called after the operator is finished and before remove from the task tracker
 	PostFinished()
-	// RelatedOperator returns the related operator
-	RelatedOperator() map[common.DispatcherID]Operator
 	// SchedulerMessage returns the message to be sent to the scheduler
 	SchedulerMessage() *messaging.TargetMessage
 	// OnNodeRemove is called when node offline
 	OnNodeRemove(node.ID)
+}
+
+var mc = &Controller{}
+
+type RemoveDispatcherOperator struct {
+	id common.DispatcherID
 }
 
 type AddDispatcherOperator struct {
@@ -76,14 +82,13 @@ type MoveDispatcherOperator struct {
 	finished atomic.Bool
 }
 
-func (m *MoveDispatcherOperator) Check(from node.ID, status *heartbeatpb.TableSpanStatus) bool {
+func (m *MoveDispatcherOperator) Check(from node.ID, status *heartbeatpb.TableSpanStatus) {
 	if from == m.dest && status.ComponentStatus == heartbeatpb.ComponentState_Working {
-		return true
+		m.finished.Store(true)
 	}
 	if from == m.origin && status.ComponentStatus != heartbeatpb.ComponentState_Working {
 		m.removed = true
 	}
-	return false
 }
 
 func (m *MoveDispatcherOperator) SchedulerMessage() *messaging.TargetMessage {
@@ -161,11 +166,9 @@ func (m *SplitDispatcherOperator) SchedulerMessage() *messaging.TargetMessage {
 				m.sendIntervalMessage(
 					&Event{
 						changefeedID: m.changefeedID,
-						eventType:    EventInternalSchedule,
 						dispatcherEvent: &InternalScheduleDispatcherEvent{
 							RemovingDispatcher: &RemovingDispatcherEvent{
 								DispatcherID: m.OriginID,
-								CallBack:     m.onRemoveCalled,
 							},
 						},
 					})
@@ -186,7 +189,6 @@ func (m *SplitDispatcherOperator) PostFinished() {
 	m.sendIntervalMessage(
 		&Event{
 			changefeedID: m.changefeedID,
-			eventType:    EventInternalSchedule,
 			dispatcherEvent: &InternalScheduleDispatcherEvent{
 				ReplacingDispatcher: &ReplaceDispatcherEvent{
 					Removing:      []common.DispatcherID{m.OriginID},
