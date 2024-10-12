@@ -58,12 +58,20 @@ message EventFeed {
     TableInfo table_info = 5; // 包含 table 相关信息，包括表名，主键，列名等
 }
 
+enum ActionType {
+    ACTION_TYPE_UNSPECIFIED = 0;
+    ACTION_TYPE_REGISTER = 1;
+    ACTION_TYPE_REMOVE = 2;
+    ACTION_TYPE_PAUSE = 3;
+    ACTION_TYPE_RESUME = 4;
+}
+
 message RegisterDispatcherRequest {
     heartbeatpb.DispatcherID dispatcher_id = 1;
     heartbeatpb.TableSpan table_span = 2;
     uint64 start_ts = 3;
     string server_id = 4;
-    bool remove = 5; // 要移除的时候设为 true
+    ActionType action_type = 5;
     string namespace = 6;
     string changefeed_id = 7;
     FilterConfig filter_config = 8;
