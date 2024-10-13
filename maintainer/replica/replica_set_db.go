@@ -202,6 +202,10 @@ func (db *ReplicaSetDB) RemoveNode(id node.ID) {
 	}
 	// move to absent node
 	for key, value := range stmMap {
+		log.Info("move replica set to absent",
+			zap.String("changefeed", db.changefeedID),
+			zap.String("node", id.String()),
+			zap.String("replicaSet", key.String()))
 		db.absentMap[key] = value
 		value.SetNodeID("")
 	}
@@ -258,9 +262,14 @@ func (db *ReplicaSetDB) AddAbsentReplicaSet(tasks ...*ReplicaSet) {
 func (db *ReplicaSetDB) AddWorkingSpan(task *ReplicaSet) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
+	nodeID := task.GetNodeID()
+
+	log.Info("add an working replica set",
+		zap.String("changefeed", db.changefeedID),
+		zap.String("nodeID", nodeID.String()),
+		zap.String("replicaSet", task.ID.String()))
 
 	db.workingMap[task.ID] = task
-	nodeID := task.GetNodeID()
 	db.updateNodeMap("", nodeID, task)
 	db.addToSchemaAndTableMap(task)
 }
@@ -355,6 +364,11 @@ func (db *ReplicaSetDB) UpdateSchemaID(tableID, newSchemaID int64) {
 func (db *ReplicaSetDB) BindReplicaSetToNode(old, new node.ID, task *ReplicaSet) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
+	log.Info("bind replica set to node",
+		zap.String("changefeed", db.changefeedID),
+		zap.String("replicaSet", task.ID.String()),
+		zap.String("oldNode", old.String()),
+		zap.String("node", new.String()))
 
 	task.SetNodeID(new)
 	delete(db.absentMap, task.ID)

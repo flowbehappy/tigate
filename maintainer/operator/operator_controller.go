@@ -21,6 +21,8 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 type OperatorController struct {
@@ -53,8 +55,11 @@ func (oc *OperatorController) AddOperator(op Operator) bool {
 	defer oc.lock.Unlock()
 
 	if _, ok := oc.operators[op.ID()]; ok {
+		log.Info("add operator failed",
+			zap.String("operator", op.String()))
 		return false
 	}
+	log.Info("add operator to waiting queue", zap.String("operator", op.String()))
 	oc.operators[op.ID()] = op
 	heap.Push(&oc.opNotifierQueue, &operatorWithTime{op: op, time: time.Time{}})
 	return true
@@ -97,12 +102,6 @@ func (oc *OperatorController) Execute() time.Time {
 			continue
 		}
 
-		if r.IsFinished() {
-			oc.lock.Lock()
-			r.PostFinished()
-			delete(oc.operators, r.ID())
-			oc.lock.Unlock()
-		}
 		msg := r.SchedulerMessage()
 		if msg != nil {
 			_ = oc.mc.SendCommand(msg)
@@ -127,6 +126,14 @@ func (oc *OperatorController) pollQueueingOperator() (Operator, bool) {
 	opID := item.op.ID()
 	op, ok := oc.operators[opID]
 	if !ok || op == nil {
+		return nil, true
+	}
+	if op.IsFinished() {
+		op.PostFinished()
+		delete(oc.operators, opID)
+		log.Info("operator finished",
+			zap.String("operator", opID.String()),
+			zap.String("operator", op.String()))
 		return nil, true
 	}
 	now := time.Now()

@@ -14,12 +14,15 @@
 package replica
 
 import (
+	"encoding/hex"
+
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
-	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"go.uber.org/zap"
 )
 
 type ReplicaSet struct {
@@ -36,7 +39,7 @@ func NewReplicaSet(cfID model.ChangeFeedID,
 	id common.DispatcherID,
 	SchemaID int64,
 	span *heartbeatpb.TableSpan,
-	checkpointTs uint64) scheduler.Inferior {
+	checkpointTs uint64) *ReplicaSet {
 	r := &ReplicaSet{
 		ID:           id,
 		SchemaID:     SchemaID,
@@ -47,6 +50,42 @@ func NewReplicaSet(cfID model.ChangeFeedID,
 			CheckpointTs: checkpointTs,
 		},
 	}
+	log.Info("new replica set created",
+		zap.String("changefeed id", cfID.ID),
+		zap.String("id", id.String()),
+		zap.Int64("schema id", SchemaID),
+		zap.Int64("table id", span.TableID),
+		zap.String("start", hex.EncodeToString(span.StartKey)),
+		zap.String("end", hex.EncodeToString(span.EndKey)))
+	return r
+}
+
+func NewWorkingReplicaSet(
+	cfID model.ChangeFeedID,
+	id common.DispatcherID,
+	SchemaID int64,
+	span *heartbeatpb.TableSpan,
+	status *heartbeatpb.TableSpanStatus,
+	nodeID node.ID,
+) *ReplicaSet {
+	r := &ReplicaSet{
+		ID:           id,
+		SchemaID:     SchemaID,
+		Span:         span,
+		ChangefeedID: cfID,
+		nodeID:       nodeID,
+		status:       status,
+	}
+	log.Info("new working replica set created",
+		zap.String("changefeed id", cfID.ID),
+		zap.String("id", id.String()),
+		zap.String("node id", nodeID.String()),
+		zap.Uint64("checkpoint ts", status.CheckpointTs),
+		zap.String("component status", status.ComponentStatus.String()),
+		zap.Int64("schema id", SchemaID),
+		zap.Int64("table id", span.TableID),
+		zap.String("start", hex.EncodeToString(span.StartKey)),
+		zap.String("end", hex.EncodeToString(span.EndKey)))
 	return r
 }
 

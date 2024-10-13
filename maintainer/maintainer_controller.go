@@ -26,7 +26,6 @@ import (
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
-	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/flowbehappy/tigate/utils/threadpool"
@@ -135,7 +134,7 @@ func (c *Controller) SetInitialTables(tables []commonEvent.Table) {
 
 // FinishBootstrap adds working state tasks to this controller directly,
 // it reported by the bootstrap response
-func (c *Controller) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]]) {
+func (c *Controller) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.ReplicaSet]) {
 	if c.bootstrapped {
 		log.Panic("already bootstrapped",
 			zap.String("changefeed", c.changefeedID),
@@ -297,16 +296,11 @@ func (c *Controller) addDDLDispatcher() {
 		zap.String("dispatcher", c.ddlDispatcherID.String()))
 }
 
-func (c *Controller) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]]) bool {
+func (c *Controller) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, *replica.ReplicaSet]) bool {
 	ddlSpanFound := false
-	tableMap.Ascend(func(span *heartbeatpb.TableSpan, stm *scheduler.StateMachine[common.DispatcherID]) bool {
-		if stm.State != scheduler.SchedulerStatusWorking {
-			log.Panic("unexpected state",
-				zap.String("changefeed", c.changefeedID),
-				zap.Any("stm", stm))
-		}
+	tableMap.Ascend(func(span *heartbeatpb.TableSpan, stm *replica.ReplicaSet) bool {
 		dispatcherID := stm.ID
-		c.db.AddWorkingSpan(stm.Inferior.(*replica.ReplicaSet))
+		c.db.AddWorkingSpan(stm)
 		if span.TableID == 0 {
 			ddlSpanFound = true
 			c.ddlDispatcherID = dispatcherID
@@ -327,6 +321,6 @@ func (c *Controller) addNewSpans(schemaID int64,
 func (c *Controller) addNewSpan(dispatcherID common.DispatcherID, schemaID int64,
 	span *heartbeatpb.TableSpan, startTs uint64) {
 	replicaSet := replica.NewReplicaSet(model.DefaultChangeFeedID(c.changefeedID),
-		dispatcherID, schemaID, span, startTs).(*replica.ReplicaSet)
+		dispatcherID, schemaID, span, startTs)
 	c.db.AddAbsentReplicaSet(replicaSet)
 }

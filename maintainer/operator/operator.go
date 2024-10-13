@@ -14,6 +14,8 @@
 package operator
 
 import (
+	"fmt"
+
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/maintainer/replica"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -40,6 +42,8 @@ type Operator interface {
 	OnNodeRemove(node.ID)
 	// OnTaskRemoved is called when the task is removed by ddl
 	OnTaskRemoved()
+	// String returns the string representation of the operator
+	String() string
 }
 
 type AddDispatcherOperator struct {
@@ -79,6 +83,10 @@ func (m *AddDispatcherOperator) PostFinished() {
 		zap.String("replicaSet", m.replicaSet.ID.String()),
 		zap.String("changefeed", m.replicaSet.ChangefeedID.String()))
 }
+func (m *AddDispatcherOperator) String() string {
+	return fmt.Sprintf("add dispatcher operator: %s, dest:%s ",
+		m.replicaSet.ID, m.dest)
+}
 
 type RemoveDispatcherOperator struct {
 	replicaSet *replica.ReplicaSet
@@ -114,6 +122,10 @@ func (m *RemoveDispatcherOperator) PostFinished() {
 	log.Info("remove dispatcher operator finished",
 		zap.String("replicaSet", m.replicaSet.ID.String()),
 		zap.String("changefeed", m.replicaSet.ChangefeedID.String()))
+}
+func (m *RemoveDispatcherOperator) String() string {
+	return fmt.Sprintf("remove dispatcher operator: %s",
+		m.replicaSet.ID)
 }
 
 type MoveDispatcherOperator struct {
@@ -169,6 +181,10 @@ func (m *MoveDispatcherOperator) PostFinished() {
 		zap.String("replicaSet", m.replicaSet.ID.String()),
 		zap.String("changefeed", m.replicaSet.ChangefeedID.String()))
 }
+func (m *MoveDispatcherOperator) String() string {
+	return fmt.Sprintf("move dispatcher operator: %s, dest:%s ",
+		m.replicaSet.ID, m.dest)
+}
 
 type SplitDispatcherOperator struct {
 	changefeedID string
@@ -219,5 +235,12 @@ func (m *SplitDispatcherOperator) PostFinished() {
 	if m.originalReplicaseRemoved.Load() {
 		return
 	}
+	// todo set checkpoint ts
 	m.db.AddAbsentReplicaSet(m.splitSpans...)
+}
+
+func (m *SplitDispatcherOperator) String() string {
+	// todo add split region span
+	return fmt.Sprintf("move dispatcher operator: %s, dest:%v ",
+		m.replicaSet.ID, m.splitSpans)
 }

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/config"
@@ -41,6 +42,7 @@ import (
 
 type mockDispatcherManager struct {
 	mc           messaging.MessageCenter
+	self         node.ID
 	dispatchers  []*heartbeatpb.TableSpanStatus
 	msgCh        chan *messaging.TargetMessage
 	maintainerID node.ID
@@ -51,12 +53,13 @@ type mockDispatcherManager struct {
 	dispatchersMap  map[heartbeatpb.DispatcherID]*heartbeatpb.TableSpanStatus
 }
 
-func MockDispatcherManager(mc messaging.MessageCenter) *mockDispatcherManager {
+func MockDispatcherManager(mc messaging.MessageCenter, self node.ID) *mockDispatcherManager {
 	m := &mockDispatcherManager{
 		mc:             mc,
 		dispatchers:    make([]*heartbeatpb.TableSpanStatus, 0, 2000001),
 		msgCh:          make(chan *messaging.TargetMessage, 1024),
 		dispatchersMap: make(map[heartbeatpb.DispatcherID]*heartbeatpb.TableSpanStatus, 2000001),
+		self:           self,
 	}
 	mc.RegisterHandler(messaging.DispatcherManagerManagerTopic, m.recvMessages)
 	mc.RegisterHandler(messaging.HeartbeatCollectorTopic, m.recvMessages)
@@ -150,7 +153,9 @@ func (m *mockDispatcherManager) onDispatchRequest(
 	if request.ScheduleAction == heartbeatpb.ScheduleAction_Create {
 		if m.dispatchersMap[*request.Config.DispatcherID] != nil {
 			log.Warn("dispatcher already exists",
-				zap.Any("dispatcher", request.Config.DispatcherID))
+				zap.String("from", msg.From.String()),
+				zap.String("self", m.self.String()),
+				zap.String("dispatcher", common.NewDispatcherIDFromPB(request.Config.DispatcherID).String()))
 			return
 		}
 		status := &heartbeatpb.TableSpanStatus{
@@ -162,6 +167,7 @@ func (m *mockDispatcherManager) onDispatchRequest(
 		m.dispatchersMap[*request.Config.DispatcherID] = status
 	} else {
 		dispatchers := make([]*heartbeatpb.TableSpanStatus, 0, len(m.dispatchers))
+		delete(m.dispatchersMap, *request.Config.DispatcherID)
 		for _, status := range m.dispatchers {
 			if status.ID.High != request.Config.DispatcherID.High || status.ID.Low != request.Config.DispatcherID.Low {
 				dispatchers = append(dispatchers, status)
@@ -237,7 +243,7 @@ func TestMaintainerSchedule(t *testing.T) {
 			}
 			return nil
 		})
-	dispatcherManager := MockDispatcherManager(mc)
+	dispatcherManager := MockDispatcherManager(mc, n.ID)
 	go dispatcherManager.Run(ctx)
 
 	taskScheduler := threadpool.NewThreadPoolDefault()

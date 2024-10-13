@@ -475,7 +475,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 	log.Info("all nodes have sent bootstrap response",
 		zap.String("changefeed", m.id.ID),
 		zap.Int("size", len(cachedResp)))
-	workingMap := make(map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]])
+	workingMap := make(map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.ReplicaSet])
 	for server, bootstrapMsg := range cachedResp {
 		log.Info("received bootstrap response",
 			zap.String("changefeed", m.id.ID),
@@ -489,25 +489,15 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 				CheckpointTs:    info.CheckpointTs,
 			}
 			span := info.Span
-			stm := scheduler.NewStateMachine(dispatcherID,
-				map[node.ID]any{
-					server: status,
-				},
-				replica.NewReplicaSet(m.id, dispatcherID, info.SchemaID, span, info.CheckpointTs))
 
 			//working on remote, the state must be absent or working since it's reported by remote
-			if stm.State == scheduler.SchedulerStatusWorking {
-				tableMap, ok := workingMap[span.TableID]
-				if !ok {
-					tableMap = utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]](heartbeatpb.LessTableSpan)
-					workingMap[span.TableID] = tableMap
-				}
-				tableMap.ReplaceOrInsert(span, stm)
-			} else if stm.State != scheduler.SchedulerStatusAbsent {
-				log.Panic("unexpected state",
-					zap.String("id", m.id.ID),
-					zap.Any("state", stm.State))
+			stm := replica.NewWorkingReplicaSet(m.id, dispatcherID, info.SchemaID, span, status, server)
+			tableMap, ok := workingMap[span.TableID]
+			if !ok {
+				tableMap = utils.NewBtreeMap[*heartbeatpb.TableSpan, *replica.ReplicaSet](heartbeatpb.LessTableSpan)
+				workingMap[span.TableID] = tableMap
 			}
+			tableMap.ReplaceOrInsert(span, stm)
 		}
 	}
 	m.controller.FinishBootstrap(workingMap)

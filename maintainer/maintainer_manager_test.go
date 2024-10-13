@@ -74,7 +74,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	go func() {
 		_ = manager.Run(ctx)
 	}()
-	dispManager := MockDispatcherManager(mc)
+	dispManager := MockDispatcherManager(mc, selfNode.ID)
 	go func() {
 		_ = dispManager.Run(ctx)
 	}()
@@ -193,7 +193,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	go func() {
 		_ = manager.Run(ctx)
 	}()
-	dispManager := MockDispatcherManager(mc)
+	dispManager := MockDispatcherManager(mc, selfNode.ID)
 	// table1 and table 2 will be reported by remote
 	var remotedIds []common.DispatcherID
 	for i := 1; i < 3; i++ {
@@ -272,8 +272,9 @@ func (m *mockSchemaStore) GetAllPhysicalTables(snapTs common.Ts, filter filter.F
 }
 
 type dispatcherNode struct {
-	cancel context.CancelFunc
-	mc     messaging.MessageCenter
+	cancel            context.CancelFunc
+	mc                messaging.MessageCenter
+	dispatcherManager *mockDispatcherManager
 }
 
 func (d *dispatcherNode) stop() {
@@ -285,7 +286,7 @@ func startDispatcherNode(ctx context.Context,
 	node *node.Info, mc messaging.MessageCenter, nodeManager *watcher.NodeManager) *dispatcherNode {
 	nodeManager.RegisterNodeChangeHandler(node.ID, mc.OnNodeChanges)
 	ctx, cancel := context.WithCancel(ctx)
-	dispManager := MockDispatcherManager(mc)
+	dispManager := MockDispatcherManager(mc, node.ID)
 	go func() {
 		var opts []grpc.ServerOption
 		grpcServer := grpc.NewServer(opts...)
@@ -302,7 +303,8 @@ func startDispatcherNode(ctx context.Context,
 		grpcServer.Stop()
 	}()
 	return &dispatcherNode{
-		cancel: cancel,
-		mc:     mc,
+		cancel:            cancel,
+		mc:                mc,
+		dispatcherManager: dispManager,
 	}
 }
