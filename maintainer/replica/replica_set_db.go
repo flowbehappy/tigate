@@ -153,13 +153,17 @@ func (db *ReplicaSetDB) GetWorking() []*ReplicaSet {
 	return working
 }
 
-func (db *ReplicaSetDB) GetScheduleSate() ([]*ReplicaSet, map[node.ID]int) {
+func (db *ReplicaSetDB) GetScheduleSate(absent []*ReplicaSet, maxSize int) ([]*ReplicaSet, map[node.ID]int) {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
-	var absent = make([]*ReplicaSet, 0, len(db.absentMap))
+	size := 0
 	for _, stm := range db.absentMap {
 		absent = append(absent, stm)
+		size++
+		if size >= maxSize {
+			break
+		}
 	}
 	var workingState = make(map[node.ID]int, len(db.nodeTasks))
 	for nodeID, stmMap := range db.nodeTasks {

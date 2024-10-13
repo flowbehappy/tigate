@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/maintainer/replica"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
@@ -76,7 +77,7 @@ func TestResendAction(t *testing.T) {
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 2}, 1)
 	var dispatcherIDs []common.DispatcherID
-	absents, _ := controller.db.GetScheduleSate()
+	absents, _ := controller.db.GetScheduleSate(make([]*replica.ReplicaSet, 0), 100)
 	for _, stm := range absents {
 		controller.db.BindReplicaSetToNode("", "node1", stm)
 		controller.db.MarkReplicaSetWorking(stm)

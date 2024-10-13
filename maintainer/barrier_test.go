@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/maintainer/replica"
 	"github.com/flowbehappy/tigate/pkg/common"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/messaging"
@@ -283,7 +284,7 @@ func TestSchemaBlock(t *testing.T) {
 	controller.AddNewTable(commonEvent.Table{SchemaID: 2, TableID: 3}, 1)
 	var dispatcherIDs []*heartbeatpb.DispatcherID
 	var dropTables = []int64{1, 2}
-	absents, _ := controller.db.GetScheduleSate()
+	absents, _ := controller.db.GetScheduleSate(make([]*replica.ReplicaSet, 0), 100)
 	for _, stm := range absents {
 		if stm.SchemaID == 1 {
 			dispatcherIDs = append(dispatcherIDs, stm.ID.ToPB())
@@ -445,7 +446,7 @@ func TestSyncPointBlock(t *testing.T) {
 	controller.AddNewTable(commonEvent.Table{SchemaID: 2, TableID: 3}, 1)
 	var dispatcherIDs []*heartbeatpb.DispatcherID
 	var dropTables = []int64{1, 2, 3}
-	absents, _ := controller.db.GetScheduleSate()
+	absents, _ := controller.db.GetScheduleSate(make([]*replica.ReplicaSet, 0), 10000)
 	for _, stm := range absents {
 		dispatcherIDs = append(dispatcherIDs, stm.ID.ToPB())
 		controller.db.BindReplicaSetToNode("", "node1", stm)
@@ -632,7 +633,7 @@ func TestSyncPointBlockPerf(t *testing.T) {
 		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 1)
 	}
 	var dispatcherIDs []*heartbeatpb.DispatcherID
-	absent, _ := controller.db.GetScheduleSate()
+	absent, _ := controller.db.GetScheduleSate(make([]*replica.ReplicaSet, 0), 10000)
 	for _, stm := range absent {
 		controller.db.BindReplicaSetToNode("", "node1", stm)
 		controller.db.MarkReplicaSetWorking(stm)

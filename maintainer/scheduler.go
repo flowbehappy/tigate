@@ -37,9 +37,12 @@ type Scheduler struct {
 	oc                   *operator.OperatorController
 	db                   *replica.ReplicaSetDB
 	nodeManager          *watcher.NodeManager
+
+	absent []*replica.ReplicaSet
 }
 
-func NewScheduler(batchSize int, changefeedID string,
+func NewScheduler(changefeedID string,
+	batchSize int,
 	oc *operator.OperatorController,
 	db *replica.ReplicaSetDB,
 	nodeManager *watcher.NodeManager,
@@ -53,20 +56,30 @@ func NewScheduler(batchSize int, changefeedID string,
 		db:                   db,
 		nodeManager:          nodeManager,
 		lastRebalanceTime:    time.Now(),
+		absent:               make([]*replica.ReplicaSet, 0, batchSize),
 	}
 }
 
 // Execute periodically execute the operator
 func (s *Scheduler) Execute() time.Time {
 	if s.db.GetAbsentSize() > 0 {
-		absent, nodeSize := s.db.GetScheduleSate()
+		availableSize := s.batchSize - s.oc.OperatorSize()
+		if availableSize <= 0 {
+			return time.Now().Add(time.Millisecond * 500)
+		}
+		// too many running operators, skip
+		if availableSize < s.batchSize/2 {
+			return time.Now().Add(time.Millisecond * 100)
+		}
+		absent, nodeSize := s.db.GetScheduleSate(s.absent, availableSize)
 		// add the absent node to the node size map
 		for id, _ := range s.nodeManager.GetAliveNodes() {
 			if _, ok := nodeSize[id]; !ok {
 				nodeSize[id] = 0
 			}
 		}
-		s.basicSchedule(absent, nodeSize)
+		s.basicSchedule(availableSize, absent, nodeSize)
+		s.absent = absent[:0]
 	} else {
 		s.Balance()
 	}
@@ -74,6 +87,7 @@ func (s *Scheduler) Execute() time.Time {
 }
 
 func (s *Scheduler) basicSchedule(
+	availableSize int,
 	absent []*replica.ReplicaSet,
 	nodeTasks map[node.ID]int) {
 	if len(nodeTasks) == 0 {
@@ -97,6 +111,9 @@ func (s *Scheduler) basicSchedule(
 			item.TaskSize++
 			taskSize++
 			s.db.BindReplicaSetToNode("", item.Node, replicaSet)
+		}
+		if taskSize >= availableSize {
+			break
 		}
 		priorityQueue.AddOrUpdate(item)
 	}
