@@ -40,7 +40,6 @@ type BarrierEvent struct {
 	dropDispatchers    *heartbeatpb.InfluencedTables
 
 	blockedTasks   []*replica.ReplicaSet
-	dropTasks      []*replica.ReplicaSet
 	newTables      []*heartbeatpb.Table
 	schemaIDChange []*heartbeatpb.SchemaIDChange
 	isSyncPoint    bool
@@ -67,9 +66,6 @@ func NewBlockEvent(cfID string, controller *Controller,
 	if event.blockedDispatchers != nil && event.blockedDispatchers.InfluenceType == heartbeatpb.InfluenceType_Normal {
 		event.blockedTasks = event.controller.GetTasksByTableIDs(event.blockedDispatchers.TableIDs...)
 	}
-	if event.dropDispatchers != nil && event.dropDispatchers.InfluenceType == heartbeatpb.InfluenceType_Normal {
-		event.dropTasks = event.controller.GetTasksByTableIDs(event.dropDispatchers.TableIDs...)
-	}
 	return event
 }
 
@@ -78,25 +74,27 @@ func (be *BarrierEvent) scheduleBlockEvent() {
 	if be.dropDispatchers != nil {
 		switch be.dropDispatchers.InfluenceType {
 		case heartbeatpb.InfluenceType_DB:
-			for _, stm := range be.controller.GetTasksBySchemaID(be.dropDispatchers.SchemaID) {
-				log.Info(" remove table",
-					zap.String("changefeed", be.cfID),
-					zap.String("table", stm.ID.String()))
-				be.controller.RemoveTask(stm)
-			}
+			be.controller.RemoveTasksBySchemaID(be.dropDispatchers.SchemaID)
+			log.Info(" remove table",
+				zap.String("changefeed", be.cfID),
+				zap.Uint64("commitTs", be.commitTs),
+				zap.Int64("schema", be.dropDispatchers.SchemaID))
 		case heartbeatpb.InfluenceType_Normal:
-			for _, stm := range be.dropTasks {
-				log.Info(" remove table",
-					zap.String("changefeed", be.cfID),
-					zap.String("table", stm.ID.String()))
-				be.controller.RemoveTask(stm)
-			}
+			be.controller.RemoveTasksByTableIDs(be.dropDispatchers.TableIDs...)
+			log.Info(" remove table",
+				zap.String("changefeed", be.cfID),
+				zap.Uint64("commitTs", be.commitTs),
+				zap.Int64s("table", be.dropDispatchers.TableIDs))
 		case heartbeatpb.InfluenceType_All:
-			log.Panic("remove all tables by barrier is not supported", zap.String("changefeed", be.cfID))
+			be.controller.RemoveAllTasks()
+			log.Info("remove all tables by barrier",
+				zap.Uint64("commitTs", be.commitTs),
+				zap.String("changefeed", be.cfID))
 		}
 	}
 	for _, add := range be.newTables {
 		log.Info(" add new table",
+			zap.Uint64("commitTs", be.commitTs),
 			zap.String("changefeed", be.cfID),
 			zap.Int64("schema", add.SchemaID),
 			zap.Int64("table", add.TableID))
@@ -109,6 +107,7 @@ func (be *BarrierEvent) scheduleBlockEvent() {
 	for _, change := range be.schemaIDChange {
 		log.Info("update schema id",
 			zap.String("changefeed", be.cfID),
+			zap.Uint64("commitTs", be.commitTs),
 			zap.Int64("newSchema", change.OldSchemaID),
 			zap.Int64("oldSchema", change.NewSchemaID),
 			zap.Int64("table", change.TableID))

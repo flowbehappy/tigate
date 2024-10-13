@@ -204,8 +204,22 @@ func (c *Controller) GetTask(dispatcherID common.DispatcherID) (*replica.Replica
 	return c.db.GetTaskByID(dispatcherID)
 }
 
-func (c *Controller) RemoveTask(stm *replica.ReplicaSet) {
-	c.oc.ReplaceOperator(operator.NewRemoveDispatcherOperator(stm))
+func (c *Controller) RemoveAllTasks() {
+	for _, replicaSet := range c.db.TryRemoveAll() {
+		c.oc.ReplaceOperator(operator.NewRemoveDispatcherOperator(replicaSet))
+	}
+}
+
+func (c *Controller) RemoveTasksBySchemaID(schemaID int64) {
+	for _, replicaSet := range c.db.TryRemoveBySchemaID(schemaID) {
+		c.oc.ReplaceOperator(operator.NewRemoveDispatcherOperator(replicaSet))
+	}
+}
+
+func (c *Controller) RemoveTasksByTableIDs(tables ...int64) {
+	for _, replicaSet := range c.db.TryRemoveByTableIDs(tables...) {
+		c.oc.ReplaceOperator(operator.NewRemoveDispatcherOperator(replicaSet))
+	}
 }
 
 func (c *Controller) GetTasksByTableIDs(tableIDs ...int64) []*replica.ReplicaSet {

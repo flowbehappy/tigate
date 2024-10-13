@@ -72,6 +72,62 @@ func (db *ReplicaSetDB) TaskSize() int {
 	return len(db.workingMap) + len(db.absentMap) + len(db.scheduling)
 }
 
+// TryRemoveAll removes non-scheduled tasks from the db and return the scheduled tasks
+func (db *ReplicaSetDB) TryRemoveAll() []*ReplicaSet {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	for _, stm := range db.absentMap {
+		db.removeReplicaSetUnLock(stm)
+	}
+	var tasks = make([]*ReplicaSet, 0, len(db.workingMap)+len(db.absentMap)+len(db.scheduling))
+	addMapToList := func(m map[common.DispatcherID]*ReplicaSet) {
+		for _, stm := range m {
+			db.markReplicaSetScheduling(stm)
+			tasks = append(tasks, stm)
+		}
+	}
+	addMapToList(db.workingMap)
+	addMapToList(db.scheduling)
+	return tasks
+}
+
+// TryRemoveByTableIDs removes non-scheduled tasks from the db and return the scheduled tasks
+func (db *ReplicaSetDB) TryRemoveByTableIDs(tableIDs ...int64) []*ReplicaSet {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	var tasks = make([]*ReplicaSet, 0)
+	for _, tblID := range tableIDs {
+		for _, stm := range db.tableTasks[tblID] {
+			if stm.GetNodeID() == "" {
+				db.removeReplicaSetUnLock(stm)
+			} else {
+				db.markReplicaSetScheduling(stm)
+				tasks = append(tasks, stm)
+			}
+		}
+	}
+	return tasks
+}
+
+// TryRemoveBySchemaID removes non-scheduled tasks from the db and return the scheduled tasks
+func (db *ReplicaSetDB) TryRemoveBySchemaID(schemaID int64) []*ReplicaSet {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	var tasks = make([]*ReplicaSet, 0)
+	for _, stm := range db.schemaTasks[schemaID] {
+		if stm.GetNodeID() == "" {
+			db.removeReplicaSetUnLock(stm)
+		} else {
+			db.markReplicaSetScheduling(stm)
+			tasks = append(tasks, stm)
+		}
+	}
+	return tasks
+}
+
 func (db *ReplicaSetDB) GetAbsentSize() int {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
@@ -212,10 +268,14 @@ func (db *ReplicaSetDB) AddWorkingSpan(task *ReplicaSet) {
 func (db *ReplicaSetDB) RemoveReplicaSet(tasks ...*ReplicaSet) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
+	db.removeReplicaSetUnLock(tasks...)
+}
 
+func (db *ReplicaSetDB) removeReplicaSetUnLock(tasks ...*ReplicaSet) {
 	for _, task := range tasks {
 		log.Info("remove replica set",
 			zap.String("changefeed", db.changefeedID),
+			zap.Int64("table", task.Span.TableID),
 			zap.String("replicaSet", task.ID.String()))
 		tableID := task.Span.TableID
 		schemaID := task.GetSchemaID()
@@ -240,10 +300,8 @@ func (db *ReplicaSetDB) RemoveReplicaSet(tasks ...*ReplicaSet) {
 	}
 }
 
-func (db *ReplicaSetDB) MarkReplicaSetScheduling(task *ReplicaSet) {
-	db.lock.Lock()
-	defer db.lock.Unlock()
-	log.Info("marking replica set working",
+func (db *ReplicaSetDB) markReplicaSetScheduling(task *ReplicaSet) {
+	log.Info("marking replica set scheduling",
 		zap.String("changefeed", db.changefeedID),
 		zap.String("replicaSet", task.ID.String()))
 
