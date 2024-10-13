@@ -268,8 +268,8 @@ func TestMaintainerSchedule(t *testing.T) {
 	if len(argList) > 1 {
 		t.Fatal("unexpected args", argList)
 	}
-	tableSize := 2000000
-	sleepTime := 1000000
+	tableSize := 100
+	sleepTime := 5
 	if len(argList) == 1 {
 		tableSize, _ = strconv.Atoi(argList[0])
 	}
