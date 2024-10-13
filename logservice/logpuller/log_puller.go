@@ -120,18 +120,13 @@ func (p *LogPuller) Run(ctx context.Context) (err error) {
 			return nil
 		}
 
-		if e.Val == nil {
-			log.Info("meet empty event")
-			return nil
-		}
-
 		if e.Val.IsResolved() {
 			p.CounterResolved.Inc()
 		} else {
 			p.CounterKv.Inc()
 		}
 
-		if err := progress.consume.f(ctx, e.Val, e.SubscriptionID); err != nil {
+		if err := progress.consume.f(ctx, &e.Val, e.SubscriptionID); err != nil {
 			log.Info("consume error", zap.Error(err))
 			return errors.Trace(err)
 		}
