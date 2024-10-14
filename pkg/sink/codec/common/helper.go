@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/errors"
@@ -78,7 +78,7 @@ func MustQueryTimezone(ctx context.Context, db *sql.DB) string {
 }
 
 func queryRowChecksum(
-	ctx context.Context, db *sql.DB, event *common.RowChangedEvent,
+	ctx context.Context, db *sql.DB, event *commonEvent.RowChangedEvent,
 ) error {
 	var (
 		schema   = event.TableInfo.GetSchemaName()

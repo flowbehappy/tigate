@@ -15,11 +15,14 @@ package dispatcher
 
 import (
 	"sync/atomic"
+	"time"
 
 	tisink "github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
+	"github.com/flowbehappy/tigate/downstreamadapter/syncpoint"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -64,11 +67,13 @@ type Dispatcher struct {
 	tableSpan *heartbeatpb.TableSpan
 	sink      tisink.Sink
 
+	// TableSpanStatus use to report checkpointTs / componentStatus to Maintainer
 	statusesChan chan *heartbeatpb.TableSpanStatus
 
-	//SyncPointInfo *SyncPointInfo
+	// TableSpanBlockStatus use to report block status of ddl/sync point event to Maintainer
+	blockStatusesChan chan *heartbeatpb.TableSpanBlockStatus
 
-	//MemoryUsage *MemoryUsage
+	SyncPointInfo *syncpoint.SyncPointInfo
 
 	componentStatus *ComponentStateWithMutex
 
@@ -76,35 +81,47 @@ type Dispatcher struct {
 
 	resolvedTs *TsWithMutex // 用来记 中目前收到的 event 中收到的最大的 commitTs - 1,不代表 dispatcher 的 checkpointTs
 
-	ddlPendingEvent *common.DDLEvent
-	isRemoving      atomic.Bool
+	blockPendingEvent commonEvent.BlockEvent
+	isRemoving        atomic.Bool
 
 	tableProgress *types.TableProgress
 
 	resendTask                  *ResendTask
 	checkTableProgressEmptyTask *CheckProgressEmptyTask
 
-	schemaID int64
+	schemaIDToDispatchers *SchemaIDToDispatchers
+	schemaID              int64
 
 	// only exist when the dispatcher is a table trigger event dispatcher
 	tableNameStore *TableNameStore
 }
 
-func NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, sink tisink.Sink, startTs uint64, statusesChan chan *heartbeatpb.TableSpanStatus, filter filter.Filter, schemaID int64) *Dispatcher {
+func NewDispatcher(
+	id common.DispatcherID,
+	tableSpan *heartbeatpb.TableSpan,
+	sink tisink.Sink,
+	startTs uint64,
+	statusesChan chan *heartbeatpb.TableSpanStatus,
+	blockStatusesChan chan *heartbeatpb.TableSpanBlockStatus,
+	filter filter.Filter,
+	schemaID int64,
+	schemaIDToDispatchers *SchemaIDToDispatchers,
+	syncPointInfo *syncpoint.SyncPointInfo) *Dispatcher {
 	dispatcher := &Dispatcher{
-		id:           id,
-		tableSpan:    tableSpan,
-		sink:         sink,
-		statusesChan: statusesChan,
-		//SyncPointInfo:   syncPointInfo,
-		//MemoryUsage:     NewMemoryUsage(),
-		componentStatus: newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
-		resolvedTs:      newTsWithMutex(startTs),
-		filter:          filter,
-		isRemoving:      atomic.Bool{},
-		ddlPendingEvent: nil,
-		tableProgress:   types.NewTableProgress(),
-		schemaID:        schemaID,
+		id:                    id,
+		tableSpan:             tableSpan,
+		sink:                  sink,
+		statusesChan:          statusesChan,
+		blockStatusesChan:     blockStatusesChan,
+		SyncPointInfo:         syncPointInfo,
+		componentStatus:       newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
+		resolvedTs:            newTsWithMutex(startTs),
+		filter:                filter,
+		isRemoving:            atomic.Bool{},
+		blockPendingEvent:     nil,
+		tableProgress:         types.NewTableProgress(),
+		schemaID:              schemaID,
+		schemaIDToDispatchers: schemaIDToDispatchers,
 	}
 
 	// only when is not mysql sink, table trigger event dispatcher need tableNameStore to store the table name
@@ -134,21 +151,26 @@ func NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, sin
 //     2.2 maintainer 通知自己可以 write 或者 pass event
 //
 // TODO:特殊处理有 add index 的逻辑
-func (d *Dispatcher) addDDLEventToSinkWhenAvailable(event *common.DDLEvent) {
+// Block Event including ddl Event and Sync Point Event
+func (d *Dispatcher) addBlockEventToSinkWhenAvailable(event commonEvent.BlockEvent) {
 	// 根据 filter 过滤 query 中不需要 send to downstream 的数据
 	// 但应当不出现整个 query 都不需要 send to downstream 的 ddl，这种 ddl 不应该发给 dispatcher
 	// TODO: ddl 影响到的 tableSpan 也在 filter 中过滤一遍
-	err := d.filter.FilterDDLEvent(event)
-	if err != nil {
-		log.Error("filter ddl query failed", zap.Error(err))
-		// 这里怎么处理更合适呢？有错然后反上去让 changefeed 报错
-		return
+	if event.GetType() == commonEvent.TypeDDLEvent {
+		ddlEvent := event.(*commonEvent.DDLEvent)
+		// TODO:看一下这种写法有没有问题，加个测试后面
+		err := d.filter.FilterDDLEvent(ddlEvent)
+		if err != nil {
+			log.Error("filter ddl query failed", zap.Error(err))
+			// 这里怎么处理更合适呢？有错然后反上去让 changefeed 报错
+			return
+		}
 	}
 
-	d.ddlPendingEvent = event
+	d.blockPendingEvent = event
 
 	if d.tableProgress.Empty() {
-		d.DealWithDDLWhenProgressEmpty()
+		d.DealWithBlockEventWhenProgressEmpty()
 	} else {
 		d.checkTableProgressEmptyTask = newCheckProgressEmptyTask(d)
 	}
@@ -160,13 +182,19 @@ func (d *Dispatcher) addDDLEventToSinkWhenAvailable(event *common.DDLEvent) {
 // 1. If the action is a write, we need to add the ddl event to the sink for writing to downstream(async).
 // 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and wake the dispatcherEventsHandler
 func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.DispatcherStatus) {
-	if d.ddlPendingEvent == nil {
+	if d.blockPendingEvent == nil {
+		// receive outdated status
+		// If status is about ack, ignore it.
+		// If status is about action, we need to return message show we have finished the event.
 		if dispatcherStatus.GetAction() != nil {
-			// 只可能出现在 event 已经推进了，但是还重复收到了 action 消息的时候，则重发包含 checkpointTs 的心跳
-			d.statusesChan <- &heartbeatpb.TableSpanStatus{
-				ID:              d.id.ToPB(),
-				ComponentStatus: heartbeatpb.ComponentState_Working,
-				CheckpointTs:    d.GetCheckpointTs(),
+			d.blockStatusesChan <- &heartbeatpb.TableSpanBlockStatus{
+				ID: d.id.ToPB(),
+				State: &heartbeatpb.State{
+					IsBlocked:   true,
+					BlockTs:     dispatcherStatus.GetAction().CommitTs,
+					IsSyncPoint: dispatcherStatus.GetAction().IsSyncPoint,
+					EventDone:   true,
+				},
 			}
 		}
 		return
@@ -174,38 +202,42 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 
 	action := dispatcherStatus.GetAction()
 	if action != nil {
-		if action.CommitTs == d.ddlPendingEvent.FinishedTs {
+		if action.CommitTs == d.blockPendingEvent.GetCommitTs() {
 			if action.Action == heartbeatpb.Action_Write {
-				d.sink.AddDDLAndSyncPointEvent(d.ddlPendingEvent, d.tableProgress)
+				d.sink.AddBlockEvent(d.blockPendingEvent, d.tableProgress)
 			} else {
-				d.sink.PassDDLAndSyncPointEvent(d.ddlPendingEvent, d.tableProgress)
+				d.sink.PassBlockEvent(d.blockPendingEvent, d.tableProgress)
 				dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
 				dispatcherEventDynamicStream.Wake() <- d.id
 			}
-			d.statusesChan <- &heartbeatpb.TableSpanStatus{
-				ID:              d.id.ToPB(),
-				ComponentStatus: heartbeatpb.ComponentState_Working,
-				CheckpointTs:    d.GetCheckpointTs(),
-			}
+		}
+		d.blockStatusesChan <- &heartbeatpb.TableSpanBlockStatus{
+			ID: d.id.ToPB(),
+			State: &heartbeatpb.State{
+				IsBlocked:   true,
+				BlockTs:     dispatcherStatus.GetAction().CommitTs,
+				IsSyncPoint: dispatcherStatus.GetAction().IsSyncPoint,
+				EventDone:   true,
+			},
 		}
 	}
 
 	ack := dispatcherStatus.GetAck()
-	if ack != nil && ack.CommitTs == d.ddlPendingEvent.FinishedTs {
+	if ack != nil && ack.CommitTs == d.blockPendingEvent.GetCommitTs() {
 		d.CancelResendTask()
 	}
 }
 
-func (d *Dispatcher) HandleEvent(event common.Event) (block bool) {
+func (d *Dispatcher) HandleEvent(event commonEvent.Event) (block bool) {
 	switch event.GetType() {
-	case common.TypeResolvedEvent:
-		d.resolvedTs.Set(event.(common.ResolvedEvent).ResolvedTs)
+	case commonEvent.TypeResolvedEvent:
+		d.resolvedTs.Set(event.(commonEvent.ResolvedEvent).ResolvedTs)
 		return false
-	case common.TypeDMLEvent:
-		d.sink.AddDMLEvent(event.(*common.DMLEvent), d.tableProgress)
+	case commonEvent.TypeDMLEvent:
+		d.sink.AddDMLEvent(event.(*commonEvent.DMLEvent), d.tableProgress)
 		return false
-	case common.TypeDDLEvent:
-		event := event.(*common.DDLEvent)
+	case commonEvent.TypeDDLEvent:
+		event := event.(*commonEvent.DDLEvent)
 		if d.tableNameStore != nil {
 			d.tableNameStore.AddEvent(event)
 		}
@@ -213,46 +245,95 @@ func (d *Dispatcher) HandleEvent(event common.Event) (block bool) {
 			dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
 			dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
 		})
-		d.addDDLEventToSinkWhenAvailable(event)
+		d.addBlockEventToSinkWhenAvailable(event)
 		return true
+	case commonEvent.TypeSyncPointEvent:
+		event := event.(*commonEvent.SyncPointEvent)
+		event.AddPostFlushFunc(func() {
+			dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
+			dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
+		})
+		d.addBlockEventToSinkWhenAvailable(event)
+		return true
+	default:
+		log.Error("invalid event type", zap.Any("event Type", event.GetType()))
 	}
-	log.Panic("invalid event type", zap.Any("event", event))
+	return false
+}
+
+func shouldBlock(event commonEvent.BlockEvent) bool {
+	switch event.GetType() {
+	case commonEvent.TypeDDLEvent:
+		ddlEvent := event.(*commonEvent.DDLEvent)
+		return filter.ShouldBlock(model.ActionType(ddlEvent.Type))
+	case commonEvent.TypeSyncPointEvent:
+		return true
+	default:
+		log.Error("invalid event type", zap.Any("event Type", event.GetType()))
+	}
 	return false
 }
 
 // 1.If the event is a single table DDL, it will be added to the sink for writing to downstream(async). If the ddl leads to add new tables or drop tables, it should send heartbeat to maintainer
-// 2. If the event is a multi-table DDL, it will generate a TableSpanStatus message with ddl info to send to maintainer.
-func (d *Dispatcher) DealWithDDLWhenProgressEmpty() {
-	if !filter.ShouldBlock(model.ActionType(d.ddlPendingEvent.Type)) {
-		d.sink.AddDDLAndSyncPointEvent(d.ddlPendingEvent, d.tableProgress)
-		if d.ddlPendingEvent.GetNeedAddedTables() != nil || d.ddlPendingEvent.GetNeedDroppedTables() != nil {
-			message := &heartbeatpb.TableSpanStatus{
-				ID:              d.id.ToPB(),
-				ComponentStatus: heartbeatpb.ComponentState_Working,
+// 2. If the event is a multi-table DDL / sync point Event, it will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
+func (d *Dispatcher) DealWithBlockEventWhenProgressEmpty() {
+	if !shouldBlock(d.blockPendingEvent) {
+		d.sink.AddBlockEvent(d.blockPendingEvent, d.tableProgress)
+		if d.blockPendingEvent.GetNeedAddedTables() != nil || d.blockPendingEvent.GetNeedDroppedTables() != nil {
+			message := &heartbeatpb.TableSpanBlockStatus{
+				ID: d.id.ToPB(),
 				State: &heartbeatpb.State{
 					IsBlocked:         false,
-					BlockTs:           d.ddlPendingEvent.FinishedTs,
-					NeedDroppedTables: d.ddlPendingEvent.GetNeedDroppedTables().ToPB(),
-					NeedAddedTables:   common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
+					BlockTs:           d.blockPendingEvent.GetCommitTs(),
+					NeedDroppedTables: d.blockPendingEvent.GetNeedDroppedTables().ToPB(),
+					NeedAddedTables:   commonEvent.ToTablesPB(d.blockPendingEvent.GetNeedAddedTables()),
+					IsSyncPoint:       false, // sync point event must should block
+					EventDone:         false,
 				},
 			}
 			d.SetResendTask(newResendTask(message, d))
-			d.statusesChan <- message
+			d.blockStatusesChan <- message
 		}
 	} else {
-		message := &heartbeatpb.TableSpanStatus{
-			ID:              d.id.ToPB(),
-			ComponentStatus: heartbeatpb.ComponentState_Working,
+		message := &heartbeatpb.TableSpanBlockStatus{
+			ID: d.id.ToPB(),
 			State: &heartbeatpb.State{
 				IsBlocked:         true,
-				BlockTs:           d.ddlPendingEvent.FinishedTs,
-				BlockTables:       d.ddlPendingEvent.GetBlockedTables().ToPB(),
-				NeedDroppedTables: d.ddlPendingEvent.GetNeedDroppedTables().ToPB(),
-				NeedAddedTables:   common.ToTablesPB(d.ddlPendingEvent.GetNeedAddedTables()),
+				BlockTs:           d.blockPendingEvent.GetCommitTs(),
+				BlockTables:       d.blockPendingEvent.GetBlockedTables().ToPB(),
+				NeedDroppedTables: d.blockPendingEvent.GetNeedDroppedTables().ToPB(),
+				NeedAddedTables:   commonEvent.ToTablesPB(d.blockPendingEvent.GetNeedAddedTables()),
+				UpdatedSchemas:    commonEvent.ToSchemaIDChangePB(d.blockPendingEvent.GetUpdatedSchemas()), // only exists for rename table and rename tables
+				IsSyncPoint:       d.blockPendingEvent.GetType() == commonEvent.TypeSyncPointEvent,
+				EventDone:         false,
 			},
 		}
 		d.SetResendTask(newResendTask(message, d))
-		d.statusesChan <- message
+		d.blockStatusesChan <- message
+	}
+
+	// dealing with events which update schema ids
+	// Only rename table and rename tables may update schema ids(rename db1.table1 to db2.table2)
+	// Here we directly update schema id of dispatcher when we begin to handle the ddl event,
+	// but not waiting maintainer response for ready to write/pass the ddl event.
+	// Because the schemaID of each dispatcher is only use to dealing with the db-level ddl event(like drop db) or drop table.
+	// Both the rename table/rename tables, drop table and db-level ddl event will be send to the table trigger event dispatcher in order.
+	// So there won't be a related db-level ddl event is in dealing when we get update schema id events.
+	// Thus, whether to update schema id before or after current ddl event is not important.
+	// To make it easier, we choose to directly update schema id here.
+	if d.blockPendingEvent.GetUpdatedSchemas() != nil && d.tableSpan != heartbeatpb.DDLSpan {
+		for _, schemaIDChange := range d.blockPendingEvent.GetUpdatedSchemas() {
+			if schemaIDChange.TableID == d.tableSpan.TableID {
+				if schemaIDChange.OldSchemaID != d.schemaID {
+					log.Error("Wrong Schema ID", zap.Any("dispatcherID", d.id), zap.Any("except schemaID", schemaIDChange.OldSchemaID), zap.Any("actual schemaID", d.schemaID), zap.Any("tableSpan", d.tableSpan.String()))
+					return
+				} else {
+					d.schemaID = schemaIDChange.NewSchemaID
+					d.schemaIDToDispatchers.Update(schemaIDChange.OldSchemaID, schemaIDChange.NewSchemaID)
+					return
+				}
+			}
+		}
 	}
 }
 
@@ -281,10 +362,6 @@ func (d *Dispatcher) GetId() common.DispatcherID {
 	return d.id
 }
 
-func (d *Dispatcher) GetStatusesChan() chan *heartbeatpb.TableSpanStatus {
-	return d.statusesChan
-}
-
 func (d *Dispatcher) CancelResendTask() {
 	if d.resendTask != nil {
 		d.resendTask.Cancel()
@@ -302,13 +379,25 @@ func (d *Dispatcher) GetSchemaID() int64 {
 	return d.schemaID
 }
 
-//func (d *Dispatcher) GetSyncPointInfo() *SyncPointInfo {
-// 	return d.syncPointInfo
-// }
+func (d *Dispatcher) EnableSyncPoint() bool {
+	return d.SyncPointInfo.EnableSyncPoint
+}
 
-// func (d *Dispatcher) GetMemoryUsage() *MemoryUsage {
-// 	return d.MemoryUsage
-// }
+func (d *Dispatcher) GetSyncPointTs() uint64 {
+	if d.SyncPointInfo.EnableSyncPoint {
+		return d.SyncPointInfo.InitSyncPointTs
+	} else {
+		return 0
+	}
+}
+
+func (d *Dispatcher) GetSyncPointInterval() time.Duration {
+	if d.SyncPointInfo.EnableSyncPoint {
+		return d.SyncPointInfo.SyncPointConfig.SyncPointInterval
+	} else {
+		return time.Duration(0)
+	}
+}
 
 func (d *Dispatcher) Remove() {
 	// TODO: 修改这个 dispatcher 的 status 为 removing

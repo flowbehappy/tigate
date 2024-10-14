@@ -16,21 +16,20 @@ package maintainer
 import (
 	"context"
 	"encoding/json"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/config"
-	"github.com/flowbehappy/tigate/utils/threadpool"
-	"github.com/pingcap/tiflow/pkg/pdutil"
-	"github.com/tikv/client-go/v2/tikv"
-
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/utils/dynstream"
+	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -108,6 +107,9 @@ func (m *Manager) recvMessages(ctx context.Context, msg *messaging.TargetMessage
 	case messaging.TypeHeartBeatRequest:
 		req := msg.Message[0].(*heartbeatpb.HeartBeatRequest)
 		return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
+	case messaging.TypeBlockStatusRequest:
+		req := msg.Message[0].(*heartbeatpb.BlockStatusRequest)
+		return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
 	case messaging.TypeCheckpointTsMessage:
 		req := msg.Message[0].(*heartbeatpb.CheckpointTsMessage)
 		return m.dispatcherMaintainerMessage(ctx, req.ChangefeedID, msg)
@@ -122,14 +124,15 @@ func (m *Manager) Name() string {
 }
 
 func (m *Manager) Run(ctx context.Context) error {
-	tick := time.NewTicker(time.Millisecond * 500)
+	ticker := time.NewTicker(time.Millisecond * 500)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case msg := <-m.msgCh:
 			m.handleMessage(msg)
-		case <-tick.C:
+		case <-ticker.C:
 			//1.  try to send heartbeat to coordinator
 			m.sendHeartbeat()
 
@@ -147,12 +150,16 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 }
 
-func (m *Manager) sendMessages(msg *heartbeatpb.MaintainerHeartbeat) {
-	target := messaging.NewSingleTargetMessage(
+func (m *Manager) newCoordinatorTopicMessage(msg messaging.IOTypeT) *messaging.TargetMessage {
+	return messaging.NewSingleTargetMessage(
 		m.coordinatorID,
 		messaging.CoordinatorTopic,
 		msg,
 	)
+}
+
+func (m *Manager) sendMessages(msg *heartbeatpb.MaintainerHeartbeat) {
+	target := m.newCoordinatorTopicMessage(msg)
 	err := m.mc.SendCommand(target)
 	if err != nil {
 		log.Warn("send command failed", zap.Error(err))
@@ -177,18 +184,15 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 
 	response := &heartbeatpb.CoordinatorBootstrapResponse{}
 	m.maintainers.Range(func(key, value interface{}) bool {
-		m := value.(*Maintainer)
-		response.Statuses = append(response.Statuses, m.GetMaintainerStatus())
-		m.statusChanged.Store(false)
-		m.lastReportTime = time.Now()
+		maintainer := value.(*Maintainer)
+		response.Statuses = append(response.Statuses, maintainer.GetMaintainerStatus())
+		maintainer.statusChanged.Store(false)
+		maintainer.lastReportTime = time.Now()
 		return true
 	})
 
-	err := m.mc.SendCommand(messaging.NewSingleTargetMessage(
-		m.coordinatorID,
-		messaging.CoordinatorTopic,
-		response,
-	))
+	msg = m.newCoordinatorTopicMessage(response)
+	err := m.mc.SendCommand(msg)
 	if err != nil {
 		log.Warn("send command failed", zap.Error(err))
 	}
@@ -211,13 +215,9 @@ func (m *Manager) onAddMaintainerRequest(req *heartbeatpb.AddMaintainerRequest) 
 	cf = NewMaintainer(cfID, cfConfig, m.selfNode, m.stream, m.taskScheduler,
 		nil, nil,
 		req.CheckpointTs)
-	err = m.stream.AddPaths(dynstream.PathAndDest[string, *Maintainer]{
-		Path: cfID.ID,
-		Dest: cf.(*Maintainer),
-	})
+	err = m.stream.AddPath(cfID.ID, cf.(*Maintainer))
 	if err != nil {
-		log.Warn("add path to dynstream failed, coordinator will retry later",
-			zap.Error(err))
+		log.Warn("add path to dynstream failed, coordinator will retry later", zap.Error(err))
 		return
 	}
 	m.maintainers.Store(cfID, cf)

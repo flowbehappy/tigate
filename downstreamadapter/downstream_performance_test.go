@@ -9,12 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/node"
+
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/mounter"
@@ -30,7 +33,7 @@ const databaseCount = 1
 
 func initContext(serverId node.ID) {
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(context.Background(), serverId, 100, config.NewDefaultMessageCenterConfig()))
-	appcontext.SetService(appcontext.EventCollector, eventcollector.NewEventCollector(100*1024*1024*1024, serverId)) // 100GB for demo
+	appcontext.SetService(appcontext.EventCollector, eventcollector.New(context.Background(), 100*1024*1024*1024, serverId)) // 100GB for demo
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(serverId))
 }
 
@@ -41,7 +44,7 @@ func pushDataIntoDispatchers(dispatcherIDSet map[common.DispatcherID]interface{}
 	var mutex sync.Mutex
 	var wg sync.WaitGroup
 	var listMutex sync.Mutex
-	eventList := make([]*common.DMLEvent, 0, totalCount*dispatcherCount)
+	eventList := make([]*commonEvent.DMLEvent, 0, totalCount*dispatcherCount)
 	for id, _ := range dispatcherIDSet {
 		wg.Add(1)
 		go func(idx int, id common.DispatcherID) {

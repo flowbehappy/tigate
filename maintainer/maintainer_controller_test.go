@@ -21,6 +21,7 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/utils"
@@ -33,37 +34,38 @@ import (
 )
 
 func TestSchedule(t *testing.T) {
-	s := NewScheduler("test", 1, nil, nil, nil, 9, time.Minute)
-	s.nodeTasks["node1"] = map[common.DispatcherID]*scheduler.StateMachine{}
-	s.nodeTasks["node2"] = map[common.DispatcherID]*scheduler.StateMachine{}
-	s.nodeTasks["node3"] = map[common.DispatcherID]*scheduler.StateMachine{}
+	s := NewController("test", 1, nil, nil, nil, 9, time.Minute)
+	s.nodeTasks["node1"] = map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]{}
+	s.nodeTasks["node2"] = map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]{}
+	s.nodeTasks["node3"] = map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]{}
 
 	for i := 0; i < 1000; i++ {
-		s.AddNewTable(common.Table{
+		s.AddNewTable(commonEvent.Table{
 			SchemaID: 1,
 			TableID:  int64(i),
 		}, 1)
 	}
-	msgs := s.Schedule()
-	require.Len(t, msgs, 9)
+	s.Schedule()
 	require.Equal(t, len(s.Commiting()), 9)
 	require.Equal(t, len(s.Absent()), 991)
 	require.Equal(t, len(s.nodeTasks["node1"]), 3)
 	require.Equal(t, len(s.nodeTasks["node2"]), 3)
 	require.Equal(t, len(s.nodeTasks["node3"]), 3)
+	msgs := s.GetSchedulingMessages()
+	require.Len(t, msgs, 9)
 }
 
 func TestMoveTask(t *testing.T) {
-	s := NewScheduler("test", 1, nil, nil, nil, 9, time.Minute)
-	s.AddNewTable(common.Table{
+	s := NewController("test", 1, nil, nil, nil, 9, time.Minute)
+	s.AddNewTable(commonEvent.Table{
 		SchemaID: 1,
 		TableID:  int64(1),
 	}, 1)
-	s.nodeTasks["a"] = map[common.DispatcherID]*scheduler.StateMachine{}
-	s.nodeTasks["b"] = map[common.DispatcherID]*scheduler.StateMachine{}
+	s.nodeTasks["a"] = map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]{}
+	s.nodeTasks["b"] = map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]{}
 	var (
 		dispatcherID common.DispatcherID
-		stm          *scheduler.StateMachine
+		stm          *scheduler.StateMachine[common.DispatcherID]
 	)
 	for id, m := range s.Absent() {
 		dispatcherID = id
@@ -89,7 +91,7 @@ func TestMoveTask(t *testing.T) {
 	require.Equal(t, 1, len(s.Working()))
 
 	//working -> removing
-	_ = stm.HandleMoveInferior("b")
+	stm.HandleMoveInferior("b")
 	stm.Primary = "a"
 	stm.Secondary = "b"
 	s.tryMoveTask(dispatcherID, stm, scheduler.SchedulerStatusWorking, "a", true)
@@ -99,11 +101,12 @@ func TestMoveTask(t *testing.T) {
 	require.Equal(t, 0, len(s.Working()))
 
 	// removing -> committing
-	_ = stm.HandleInferiorStatus(ReplicaSetStatus{
-		ID:           dispatcherID,
-		State:        heartbeatpb.ComponentState_Stopped,
-		CheckpointTs: 10,
-	}, "a")
+	stm.HandleInferiorStatus(heartbeatpb.ComponentState_Stopped,
+		&heartbeatpb.TableSpanStatus{
+			ID:              dispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Stopped,
+			CheckpointTs:    10,
+		}, "a")
 	s.tryMoveTask(dispatcherID, stm, scheduler.SchedulerStatusRemoving, "a", true)
 	require.Equal(t, 0, len(s.Absent()))
 	require.Equal(t, 0, len(s.nodeTasks["a"]))
@@ -112,11 +115,12 @@ func TestMoveTask(t *testing.T) {
 	require.Equal(t, 0, len(s.Working()))
 
 	//committing -> working
-	_ = stm.HandleInferiorStatus(ReplicaSetStatus{
-		ID:           dispatcherID,
-		State:        heartbeatpb.ComponentState_Working,
-		CheckpointTs: 10,
-	}, "b")
+	stm.HandleInferiorStatus(heartbeatpb.ComponentState_Working,
+		&heartbeatpb.TableSpanStatus{
+			ID:              dispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    10,
+		}, "b")
 	s.tryMoveTask(dispatcherID, stm, scheduler.SchedulerStatusCommiting, "a", true)
 	require.Equal(t, 0, len(s.Absent()))
 	require.Equal(t, 0, len(s.nodeTasks["a"]))
@@ -125,15 +129,16 @@ func TestMoveTask(t *testing.T) {
 	require.Equal(t, 1, len(s.Working()))
 
 	//working -> removing
-	_ = stm.HandleRemoveInferior()
+	stm.HandleRemoveInferior()
 	s.tryMoveTask(dispatcherID, stm, scheduler.SchedulerStatusWorking, "b", true)
 
 	// removing -> removed
-	_ = stm.HandleInferiorStatus(ReplicaSetStatus{
-		ID:           dispatcherID,
-		State:        heartbeatpb.ComponentState_Stopped,
-		CheckpointTs: 10,
-	}, "b")
+	stm.HandleInferiorStatus(heartbeatpb.ComponentState_Stopped,
+		&heartbeatpb.TableSpanStatus{
+			ID:              dispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Stopped,
+			CheckpointTs:    10,
+		}, "b")
 	s.tryMoveTask(dispatcherID, stm, scheduler.SchedulerStatusWorking, "b", true)
 	require.Equal(t, 0, len(s.Absent()))
 	require.Equal(t, 0, len(s.nodeTasks["a"]))
@@ -142,9 +147,20 @@ func TestMoveTask(t *testing.T) {
 	require.Equal(t, 0, len(s.Working()))
 }
 
+func TestRemoveAbsentTask(t *testing.T) {
+	s := NewController("test", 1, nil, nil, nil, 9, time.Minute)
+	s.AddNewTable(commonEvent.Table{
+		SchemaID: 1,
+		TableID:  int64(1),
+	}, 1)
+	require.Equal(t, 1, len(s.Absent()))
+	s.RemoveAllTasks()
+	require.Equal(t, 0, len(s.Absent()))
+}
+
 func TestBalance(t *testing.T) {
-	s := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
-	s.nodeTasks["node1"] = map[common.DispatcherID]*scheduler.StateMachine{}
+	s := NewController("test", 1, nil, nil, nil, 1000, 0)
+	s.nodeTasks["node1"] = map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]{}
 	for i := 0; i < 100; i++ {
 		span := &heartbeatpb.TableSpan{TableID: int64(i)}
 		dispatcherID := common.NewDispatcherID()
@@ -155,15 +171,15 @@ func TestBalance(t *testing.T) {
 		s.Working()[dispatcherID] = stm
 		s.nodeTasks["node1"][dispatcherID] = stm
 	}
-	msgs := s.Schedule()
-	require.Len(t, msgs, 0)
+	s.Schedule()
 	require.Equal(t, len(s.Working()), 100)
 	require.Equal(t, len(s.nodeTasks["node1"]), 100)
 	//add duplicate node
 	s.AddNewNode("node1")
 	// add new node
 	s.AddNewNode("node2")
-	msgs = s.TryBalance()
+	s.tryBalance()
+	msgs := s.GetSchedulingMessages()
 	require.Len(t, msgs, 50)
 	require.Equal(t, len(s.Removing()), 50)
 	require.Equal(t, len(s.Working()), 50)
@@ -172,18 +188,18 @@ func TestBalance(t *testing.T) {
 	require.Equal(t, len(s.nodeTasks["node2"]), 0)
 
 	// remove the node2
-	msgs = s.RemoveNode("node2")
-	require.Len(t, msgs, 0)
+	s.RemoveNode("node2")
 	require.Equal(t, len(s.Removing()), 0)
 	// changed to working status
 	require.Equal(t, len(s.Working()), 100)
 	require.Equal(t, len(s.nodeTasks["node1"]), 100)
-	msgs = s.RemoveNode("node2")
-	require.Len(t, msgs, 0)
+	s.RemoveNode("node2")
+	require.Equal(t, len(s.Removing()), 0)
+	require.Equal(t, len(s.Working()), 100)
 }
 
 func TestStoppedWhenMoving(t *testing.T) {
-	s := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	s := NewController("test", 1, nil, nil, nil, 1000, 0)
 	s.AddNewNode("node1")
 	s.AddNewNode("node2")
 	id := 1
@@ -196,7 +212,7 @@ func TestStoppedWhenMoving(t *testing.T) {
 	s.Working()[dispatcherID] = stm
 	s.nodeTasks["node1"][dispatcherID] = stm
 
-	_ = stm.HandleMoveInferior("node2")
+	stm.HandleMoveInferior("node2")
 	s.tryMoveTask(dispatcherID, stm, scheduler.SchedulerStatusWorking, "node2", true)
 	require.Equal(t, len(s.Removing()), 1)
 	// changed to working status
@@ -204,40 +220,38 @@ func TestStoppedWhenMoving(t *testing.T) {
 	require.Equal(t, len(s.nodeTasks["node1"]), 1)
 	require.Equal(t, len(s.nodeTasks["node2"]), 0)
 
-	msgs := s.HandleStatus("node1", []*heartbeatpb.TableSpanStatus{
+	s.HandleStatus("node1", []*heartbeatpb.TableSpanStatus{
 		{
 			ID:              dispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Stopped,
 			CheckpointTs:    10,
 		},
 	})
-	require.Len(t, msgs, 1)
 	require.Equal(t, len(s.Commiting()), 1)
 	require.Equal(t, len(s.Removing()), 0)
 	require.Equal(t, len(s.nodeTasks["node1"]), 0)
 	require.Equal(t, len(s.nodeTasks["node2"]), 1)
-	require.Equal(t, uint64(10), stm.Inferior.(*ReplicaSet).checkpointTs)
+	require.Equal(t, uint64(10), stm.Inferior.(*ReplicaSet).status.CheckpointTs)
 }
 
 func TestFinishBootstrap(t *testing.T) {
-	s := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	s := NewController("test", 1, nil, nil, nil, 1000, 0)
 	s.AddNewNode("node1")
 	span := &heartbeatpb.TableSpan{TableID: int64(1)}
-	s.SetInitialTables([]common.Table{{TableID: 1, SchemaID: 1}})
+	s.SetInitialTables([]commonEvent.Table{{TableID: 1, SchemaID: 1}})
 
 	dispatcherID2 := common.NewDispatcherID()
-	stm2 := scheduler.NewStateMachine(dispatcherID2, map[node.ID]scheduler.InferiorStatus{
-		"node1": ReplicaSetStatus{
-			ID:           dispatcherID2,
-			State:        heartbeatpb.ComponentState_Working,
-			CheckpointTs: 10,
-			DDLStatus:    nil,
+	stm2 := scheduler.NewStateMachine(dispatcherID2, map[node.ID]any{
+		"node1": &heartbeatpb.TableSpanStatus{
+			ID:              dispatcherID2.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    10,
 		},
 	}, NewReplicaSet(model.ChangeFeedID{}, dispatcherID2, 1, span, 1))
-	cached := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine](heartbeatpb.LessTableSpan)
+	cached := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]](heartbeatpb.LessTableSpan)
 	cached.ReplaceOrInsert(span, stm2)
 	require.False(t, s.bootstrapped)
-	s.FinishBootstrap(map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]{
+	s.FinishBootstrap(map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]]{
 		1: cached,
 	})
 	require.True(t, s.bootstrapped)
@@ -251,27 +265,26 @@ func TestFinishBootstrap(t *testing.T) {
 	require.Equal(t, stm2, s.Working()[dispatcherID2])
 	require.Nil(t, s.initialTables)
 	require.Panics(t, func() {
-		s.FinishBootstrap(map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]{})
+		s.FinishBootstrap(map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]]{})
 	})
 }
 
 // 4 tasks and 2 servers, then add one server, no re-balance will be triggered
 func TestBalanceUnEvenTask(t *testing.T) {
-	s := NewScheduler("test", 1, nil, nil, nil, 1000, 0)
+	s := NewController("test", 1, nil, nil, nil, 1000, 0)
 	s.AddNewNode("node1")
 	s.AddNewNode("node2")
 	for i := 0; i < 4; i++ {
-		s.AddNewTable(common.Table{
+		s.AddNewTable(commonEvent.Table{
 			SchemaID: 1,
 			TableID:  int64(i),
 		}, 1)
 	}
-	msgs := s.Schedule()
-	require.Len(t, msgs, 4)
+	s.Schedule()
 	require.Equal(t, len(s.Commiting()), 4)
 	require.Equal(t, len(s.nodeTasks["node1"]), 2)
 	require.Equal(t, len(s.nodeTasks["node2"]), 2)
-	f := func(m map[common.DispatcherID]*scheduler.StateMachine) []*heartbeatpb.TableSpanStatus {
+	f := func(m map[common.DispatcherID]*scheduler.StateMachine[common.DispatcherID]) []*heartbeatpb.TableSpanStatus {
 		var nodeIds []*heartbeatpb.TableSpanStatus
 		for id, _ := range m {
 			nodeIds = append(nodeIds, &heartbeatpb.TableSpanStatus{
@@ -282,15 +295,14 @@ func TestBalanceUnEvenTask(t *testing.T) {
 		}
 		return nodeIds
 	}
-	_ = s.HandleStatus("node1", f(s.nodeTasks["node1"]))
-	_ = s.HandleStatus("node2", f(s.nodeTasks["node2"]))
+	s.HandleStatus("node1", f(s.nodeTasks["node1"]))
+	s.HandleStatus("node2", f(s.nodeTasks["node2"]))
 	require.Equal(t, len(s.Working()), 4)
 	require.Equal(t, len(s.Commiting()), 0)
 
 	// add new node
 	s.AddNewNode("node3")
-	msgs = s.TryBalance()
-	require.Len(t, msgs, 0)
+	s.tryBalance()
 	require.Equal(t, len(s.Removing()), 0)
 	require.Equal(t, len(s.Working()), 4)
 	//still on the primary node
@@ -303,7 +315,7 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 	pdAPI := &mockPdAPI{
 		regions: make(map[int64][]pdutil.RegionInfo),
 	}
-	s := NewScheduler("test", 1,
+	s := NewController("test", 1,
 		pdAPI,
 		nil, &config2.ChangefeedSchedulerConfig{
 			EnableTableAcrossNodes: true,
@@ -314,7 +326,7 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 	s.AddNewNode("node2")
 
 	// 1 is already split, and 2 will be split
-	s.SetInitialTables([]common.Table{
+	s.SetInitialTables([]commonEvent.Table{
 		{TableID: 1, SchemaID: 1}, {TableID: 2, SchemaID: 2},
 	})
 
@@ -335,32 +347,32 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 		{TableID: 1, StartKey: appendNew(totalSpan.StartKey, 'a'), EndKey: appendNew(totalSpan.StartKey, 'b')}, // 1 region // 1 region
 		{TableID: 1, StartKey: appendNew(totalSpan.StartKey, 'b'), EndKey: appendNew(totalSpan.StartKey, 'c')},
 	}
-	cached := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine](heartbeatpb.LessTableSpan)
+	cached := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]](heartbeatpb.LessTableSpan)
 	for _, span := range reportedSpans {
 		dispatcherID1 := common.NewDispatcherID()
-		stm1 := scheduler.NewStateMachine(dispatcherID1, map[node.ID]scheduler.InferiorStatus{
-			"node1": ReplicaSetStatus{
-				ID:           dispatcherID1,
-				State:        heartbeatpb.ComponentState_Working,
-				CheckpointTs: 10,
+		stm1 := scheduler.NewStateMachine(dispatcherID1, map[node.ID]any{
+			"node1": &heartbeatpb.TableSpanStatus{
+				ID:              dispatcherID1.ToPB(),
+				ComponentStatus: heartbeatpb.ComponentState_Working,
+				CheckpointTs:    10,
 			},
 		}, NewReplicaSet(model.ChangeFeedID{}, dispatcherID1, 1, span, 1))
 		cached.ReplaceOrInsert(span, stm1)
 	}
 
 	ddlDispatcherID := common.NewDispatcherID()
-	ddlStm := scheduler.NewStateMachine(ddlDispatcherID, map[node.ID]scheduler.InferiorStatus{
-		"node1": ReplicaSetStatus{
-			ID:           ddlDispatcherID,
-			State:        heartbeatpb.ComponentState_Working,
-			CheckpointTs: 10,
+	ddlStm := scheduler.NewStateMachine(ddlDispatcherID, map[node.ID]any{
+		"node1": &heartbeatpb.TableSpanStatus{
+			ID:              ddlDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    10,
 		},
 	}, NewReplicaSet(model.ChangeFeedID{}, ddlDispatcherID, heartbeatpb.DDLSpanSchemaID, heartbeatpb.DDLSpan, 1))
-	ddlCache := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine](heartbeatpb.LessTableSpan)
+	ddlCache := utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]](heartbeatpb.LessTableSpan)
 	ddlCache.ReplaceOrInsert(heartbeatpb.DDLSpan, ddlStm)
 
 	require.False(t, s.bootstrapped)
-	s.FinishBootstrap(map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine]{
+	s.FinishBootstrap(map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]]{
 		0: ddlCache,
 		1: cached,
 	})

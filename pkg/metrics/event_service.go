@@ -71,6 +71,28 @@ var (
 			Name:      "dispatcher_count",
 			Help:      "The number of dispatchers in event service",
 		}, []string{"cluster"})
+	EventServiceDropScanTaskCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_service",
+			Name:      "drop_scan_task_count",
+			Help:      "The number of scan tasks dropped",
+		})
+	EventServiceDropResolvedTsCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_service",
+			Name:      "drop_resolved_ts_count",
+			Help:      "The number of resolved ts dropped",
+		})
+	EventServiceScanTaskQueueDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_service",
+			Name:      "scan_task_queue_duration",
+			Help:      "The duration of a scan task being queued",
+			Buckets:   prometheus.DefBuckets,
+		})
 )
 
 // InitMetrics registers all metrics in this file.
@@ -82,4 +104,7 @@ func InitEventServiceMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventServiceResolvedTsLagGauge)
 	registry.MustRegister(EventServiceScanDuration)
 	registry.MustRegister(EventServiceDispatcherGuage)
+	registry.MustRegister(EventServiceDropScanTaskCount)
+	registry.MustRegister(EventServiceDropResolvedTsCount)
+	registry.MustRegister(EventServiceScanTaskQueueDuration)
 }

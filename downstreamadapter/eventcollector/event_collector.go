@@ -24,6 +24,7 @@ import (
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/utils/dynstream"
@@ -73,7 +74,7 @@ type EventCollector struct {
 	globalMemoryQuota int64
 	wg                sync.WaitGroup
 
-	dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, common.Event, *dispatcher.Dispatcher]
+	dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, commonEvent.Event, *dispatcher.Dispatcher]
 
 	registerMessageChan                          *chann.DrainableChann[RegisterInfo] // for temp
 	metricDispatcherReceivedKVEventCount         prometheus.Counter
@@ -81,7 +82,7 @@ type EventCollector struct {
 	metricReceiveEventLagDuration                prometheus.Observer
 }
 
-func NewEventCollector(globalMemoryQuota int64, serverId node.ID) *EventCollector {
+func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventCollector {
 	eventCollector := EventCollector{
 		serverId:                                     serverId,
 		globalMemoryQuota:                            globalMemoryQuota,
@@ -113,25 +114,31 @@ func NewEventCollector(globalMemoryQuota int64, serverId node.ID) *EventCollecto
 			}
 		}
 	}()
-
-	eventCollector.updateMetrics(context.Background())
+	eventCollector.wg.Add(1)
+	go func() {
+		defer eventCollector.wg.Done()
+		eventCollector.updateMetrics(ctx)
+	}()
 	return &eventCollector
 }
 
 // RegisterDispatcher register a dispatcher to event collector.
 // If the dispatcher is not table trigger event dispatcher, filterConfig will be nil.
 func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendEvent(&messaging.TargetMessage{
+	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(&messaging.TargetMessage{
 		To:    c.serverId, // demo 中 每个节点都有自己的 eventService
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
 		Message: []messaging.IOTypeT{&messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
-			DispatcherId: info.Dispatcher.GetId().ToPB(),
-			TableSpan:    info.Dispatcher.GetTableSpan(),
-			Remove:       false,
-			StartTs:      info.StartTs,
-			ServerId:     c.serverId.String(),
-			FilterConfig: info.FilterConfig,
+			DispatcherId:      info.Dispatcher.GetId().ToPB(),
+			TableSpan:         info.Dispatcher.GetTableSpan(),
+			ActionType:        eventpb.ActionType_ACTION_TYPE_REGISTER,
+			StartTs:           info.StartTs,
+			ServerId:          c.serverId.String(),
+			FilterConfig:      info.FilterConfig,
+			EnableSyncPoint:   info.Dispatcher.EnableSyncPoint(),
+			SyncPointTs:       info.Dispatcher.GetSyncPointTs(),
+			SyncPointInterval: uint64(info.Dispatcher.GetSyncPointInterval().Seconds()),
 		}}},
 	})
 	if err != nil {
@@ -145,13 +152,13 @@ func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
 }
 
 func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendEvent(&messaging.TargetMessage{
+	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(&messaging.TargetMessage{
 		To:    c.serverId,
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
 		Message: []messaging.IOTypeT{&messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
 			DispatcherId: d.GetId().ToPB(),
-			Remove:       true,
+			ActionType:   eventpb.ActionType_ACTION_TYPE_REMOVE,
 			ServerId:     c.serverId.String(),
 			TableSpan:    d.GetTableSpan(),
 		}}}})
@@ -167,17 +174,17 @@ func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
 	return nil
 }
 
-func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.TargetMessage) error {
+func (c *EventCollector) RecvEventsMessage(_ context.Context, msg *messaging.TargetMessage) error {
 	inflightDuration := time.Since(time.Unix(0, msg.CrateAt)).Milliseconds()
 	c.metricReceiveEventLagDuration.Observe(float64(inflightDuration))
 	for _, msg := range msg.Message {
-		event, ok := msg.(common.Event)
+		event, ok := msg.(commonEvent.Event)
 		if !ok {
 			log.Panic("invalid message type", zap.Any("msg", msg))
 		}
 		switch event.GetType() {
-		case common.TypeBatchResolvedEvent:
-			for _, e := range event.(*common.BatchResolvedEvent).Events {
+		case commonEvent.TypeBatchResolvedEvent:
+			for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
 				c.metricDispatcherReceivedResolvedTsEventCount.Inc()
 				c.dispatcherEventsDynamicStream.In() <- e
 			}
@@ -189,35 +196,32 @@ func (c *EventCollector) RecvEventsMessage(ctx context.Context, msg *messaging.T
 	return nil
 }
 
-func (c *EventCollector) updateMetrics(ctx context.Context) error {
-	ticker := time.NewTicker(1 * time.Second)
+func (c *EventCollector) updateMetrics(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				minResolvedTs := uint64(0)
-				c.dispatcherMap.m.Range(func(key, value interface{}) bool {
-					d, ok := value.(*dispatcher.Dispatcher)
-					if !ok {
-						return true
-					}
-					if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
-						minResolvedTs = d.GetResolvedTs()
-					}
-
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			minResolvedTs := uint64(0)
+			c.dispatcherMap.m.Range(func(key, value interface{}) bool {
+				d, ok := value.(*dispatcher.Dispatcher)
+				if !ok {
 					return true
-				})
-				if minResolvedTs == 0 {
-					continue
 				}
-				phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
-				metrics.EventCollectorResolvedTsLagGauge.Set(float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3)
+				if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
+					minResolvedTs = d.GetResolvedTs()
+				}
+
+				return true
+			})
+			if minResolvedTs == 0 {
+				continue
 			}
+			phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
+			metrics.EventCollectorResolvedTsLagGauge.Set(float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3)
 		}
-	}()
-	return nil
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
@@ -16,9 +17,9 @@ import (
 )
 
 const (
-	defaultChannelSize = 1024
+	defaultChannelSize = 2048
 	// TODO: need to adjust the worker count
-	defaultScanWorkerCount = 8192
+	defaultScanWorkerCount = 512
 )
 
 type DispatcherInfo interface {
@@ -30,9 +31,14 @@ type DispatcherInfo interface {
 	GetServerID() string
 	GetTableSpan() *heartbeatpb.TableSpan
 	GetStartTs() uint64
-	IsRegister() bool
+	GetActionType() eventpb.ActionType
 	GetChangefeedID() (namespace, id string)
 	GetFilterConfig() *config.FilterConfig
+
+	// sync point related
+	SyncPointEnabled() bool
+	GetSyncPointTs() uint64
+	GetSyncPointInterval() time.Duration
 }
 
 // EventService accepts the requests of pulling events.
@@ -75,10 +81,17 @@ func (s *eventService) Run(ctx context.Context) error {
 			log.Info("event service exited")
 			return nil
 		case info := <-s.acceptorInfoCh:
-			if info.IsRegister() {
+			switch info.GetActionType() {
+			case eventpb.ActionType_ACTION_TYPE_REGISTER:
 				s.registerDispatcher(ctx, info)
-			} else {
+			case eventpb.ActionType_ACTION_TYPE_REMOVE:
 				s.deregisterDispatcher(info)
+			case eventpb.ActionType_ACTION_TYPE_PAUSE:
+				s.pauseDispatcher(info)
+			case eventpb.ActionType_ACTION_TYPE_RESUME:
+				s.resumeDispatcher(info)
+			default:
+				log.Panic("invalid action type", zap.Any("info", info))
 			}
 		}
 	}
@@ -122,6 +135,24 @@ func (s *eventService) deregisterDispatcher(dispatcherInfo DispatcherInfo) {
 		return
 	}
 	c.removeDispatcher(dispatcherInfo)
+}
+
+func (s *eventService) pauseDispatcher(dispatcherInfo DispatcherInfo) {
+	clusterID := dispatcherInfo.GetClusterID()
+	c, ok := s.brokers[clusterID]
+	if !ok {
+		return
+	}
+	c.pauseDispatcher(dispatcherInfo)
+}
+
+func (s *eventService) resumeDispatcher(dispatcherInfo DispatcherInfo) {
+	clusterID := dispatcherInfo.GetClusterID()
+	c, ok := s.brokers[clusterID]
+	if !ok {
+		return
+	}
+	c.resumeDispatcher(dispatcherInfo)
 }
 
 func msgToDispatcherInfo(msg *messaging.TargetMessage) []DispatcherInfo {

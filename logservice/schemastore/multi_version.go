@@ -15,6 +15,7 @@ package schemastore
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 	"sync"
@@ -83,7 +84,7 @@ func (v *versionedTableInfoStore) setTableInfoInitialized() {
 		// 	zap.String("query", job.Query),
 		// 	zap.Uint64("finishedTS", job.BinlogInfo.FinishedTS),
 		// 	zap.Any("infosLen", len(v.infos)))
-		v.doApplyDDL(job)
+		v.doApplyDDL(&job)
 	}
 	v.initialized = true
 	close(v.readyToRead)
@@ -103,7 +104,12 @@ func (v *versionedTableInfoStore) getTableInfo(ts uint64) (*common.TableInfo, er
 	}
 
 	if ts >= v.deleteVersion {
-		return nil, errors.New("table info deleted")
+		log.Error("table info deleted",
+			zap.Any("ts", ts),
+			zap.Any("tableID", v.tableID),
+			zap.Any("infos", v.infos),
+			zap.Any("deleteVersion", v.deleteVersion))
+		return nil, fmt.Errorf("table info deleted %d", v.tableID)
 	}
 
 	target := sort.Search(len(v.infos), func(i int) bool {
@@ -120,42 +126,49 @@ func (v *versionedTableInfoStore) getTableInfo(ts uint64) (*common.TableInfo, er
 	return v.infos[target-1].info, nil
 }
 
-// only keep one item with the largest version <= gcTS
-func (v *versionedTableInfoStore) gc(gcTs uint64) {
+// only keep one item with the largest version <= gcTS, return whether the store should be totally removed
+func (v *versionedTableInfoStore) gc(gcTs uint64) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if !v.initialized {
-		return
+		return false
 	}
 	if len(v.infos) == 0 {
-		log.Fatal("no table info found")
+		log.Fatal("no table info found", zap.Int64("tableID", v.tableID))
+	}
+
+	if gcTs >= v.deleteVersion {
+		return true
 	}
 
 	target := sort.Search(len(v.infos), func(i int) bool {
 		return v.infos[i].version > gcTs
 	})
-	// TODO: all info version is larger than gcTS seems impossible?
 	if target == 0 {
-		return
+		return false
 	}
 
 	v.infos = v.infos[target-1:]
+	if len(v.infos) == 0 {
+		log.Panic("should not happen")
+	}
+	return false
 }
 
-func assertEmpty(infos []*tableInfoItem, event PersistedDDLEvent) {
+func assertEmpty(infos []*tableInfoItem, event *PersistedDDLEvent) {
 	if len(infos) != 0 {
 		log.Panic("shouldn't happen",
 			zap.Any("infosLen", len(infos)),
 			zap.Any("lastVersion", infos[len(infos)-1].version),
 			zap.Any("lastTableInfoVersion", infos[len(infos)-1].info.Version),
 			zap.String("query", event.Query),
-			zap.Int64("tableID", event.TableID),
+			zap.Int64("tableID", event.CurrentTableID),
 			zap.Uint64("finishedTs", event.FinishedTs),
 			zap.Int64("schemaVersion", event.SchemaVersion))
 	}
 }
 
-func assertNonEmpty(infos []*tableInfoItem, event PersistedDDLEvent) {
+func assertNonEmpty(infos []*tableInfoItem, event *PersistedDDLEvent) {
 	if len(infos) == 0 {
 		log.Panic("shouldn't happen",
 			zap.Any("infos", infos),
@@ -169,7 +182,7 @@ func assertNonDeleted(v *versionedTableInfoStore) {
 	}
 }
 
-func (v *versionedTableInfoStore) applyDDLFromPersistStorage(event PersistedDDLEvent) {
+func (v *versionedTableInfoStore) applyDDLFromPersistStorage(event *PersistedDDLEvent) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.initialized {
@@ -179,36 +192,36 @@ func (v *versionedTableInfoStore) applyDDLFromPersistStorage(event PersistedDDLE
 	v.doApplyDDL(event)
 }
 
-func (v *versionedTableInfoStore) applyDDL(event PersistedDDLEvent) {
+func (v *versionedTableInfoStore) applyDDL(event *PersistedDDLEvent) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	// delete table should not receive more ddl
 	assertNonDeleted(v)
 
 	if !v.initialized {
-		v.pendingDDLs = append(v.pendingDDLs, event)
+		// The usage of the parameter `event` may outlive the function call, so we copy it.
+		v.pendingDDLs = append(v.pendingDDLs, *event)
 		return
 	}
 	v.doApplyDDL(event)
 }
 
 // lock must be hold by the caller
-// TODO: filter old ddl: there may be some pending ddls which is also written to disk and applied to table info store already
-func (v *versionedTableInfoStore) doApplyDDL(event PersistedDDLEvent) {
-	if len(v.infos) != 0 && uint64(event.FinishedTs) <= v.infos[len(v.infos)-1].version {
-		log.Panic("ddl job finished ts should be monotonically increasing")
+func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
+	// TODO: add a unit test
+	// TODO: whether need add schema version check
+	if len(v.infos) != 0 && event.FinishedTs <= v.infos[len(v.infos)-1].version {
+		log.Warn("already applied ddl, ignore it.",
+			zap.Int64("tableID", v.tableID),
+			zap.String("query", event.Query),
+			zap.Uint64("finishedTS", event.FinishedTs),
+			zap.Int("infosLen", len(v.infos)))
+		return
 	}
-	if len(v.infos) > 0 {
-		// TODO: FinishedTS is not enough, need schema version. But currently there should be no duplicate ddl,
-		// so the following check is useless
-		if uint64(event.FinishedTs) <= v.infos[len(v.infos)-1].version {
-			log.Info("ignore job",
-				zap.Int64("tableID", int64(v.tableID)),
-				zap.String("query", event.Query),
-				zap.Uint64("finishedTS", event.FinishedTs),
-				zap.Any("infosLen", len(v.infos)))
-			return
-		}
+	appendTableInfo := func() {
+		info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, event.TableInfo)
+		info.InitPreSQLs()
+		v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 	}
 
 	switch model.ActionType(event.Type) {
@@ -222,19 +235,139 @@ func (v *versionedTableInfoStore) doApplyDDL(event PersistedDDLEvent) {
 			break
 		}
 		assertEmpty(v.infos, event)
-		info := common.WrapTableInfo(event.SchemaID, event.SchemaName, event.FinishedTs, event.TableInfo)
-		info.InitPreSQLs()
-		v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
-	case model.ActionRenameTable,
-		model.ActionAddColumn,
+		appendTableInfo()
+	case model.ActionDropTable:
+		v.deleteVersion = uint64(event.FinishedTs)
+	case model.ActionAddColumn,
 		model.ActionDropColumn:
 		assertNonEmpty(v.infos, event)
-		info := common.WrapTableInfo(event.SchemaID, event.SchemaName, event.FinishedTs, event.TableInfo)
-		info.InitPreSQLs()
-		v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
-	case model.ActionDropTable, model.ActionTruncateTable:
-		v.deleteVersion = uint64(event.FinishedTs)
+		appendTableInfo()
+	case model.ActionTruncateTable:
+		if isPartitionTable(event.TableInfo) {
+			createTable := false
+			for _, partition := range getAllPartitionIDs(event.TableInfo) {
+				if v.tableID == partition {
+					createTable = true
+					break
+				}
+			}
+			if createTable {
+				log.Info("create table for truncate table")
+				appendTableInfo()
+			} else {
+				v.deleteVersion = uint64(event.FinishedTs)
+			}
+		} else {
+			if v.tableID == event.CurrentTableID {
+				appendTableInfo()
+			} else {
+				if v.tableID != event.PrevTableID {
+					log.Panic("should not happen")
+				}
+				v.deleteVersion = uint64(event.FinishedTs)
+			}
+		}
+	case model.ActionRenameTable:
+		assertNonEmpty(v.infos, event)
+		appendTableInfo()
+	case model.ActionAddTablePartition:
+		newCreatedIDs := getCreatedIDs(event.PrevPartitions, getAllPartitionIDs(event.TableInfo))
+		for _, partition := range newCreatedIDs {
+			if v.tableID == partition {
+				appendTableInfo()
+				break
+			}
+		}
+	case model.ActionDropTablePartition:
+		droppedIDs := getDroppedIDs(event.PrevPartitions, getAllPartitionIDs(event.TableInfo))
+		for _, partition := range droppedIDs {
+			if v.tableID == partition {
+				v.deleteVersion = uint64(event.FinishedTs)
+				break
+			}
+		}
+	case model.ActionCreateView:
+		// create view is add to all table's ddl history, so it will be read when build store, just ignore it
+	case model.ActionTruncateTablePartition:
+		physicalIDs := getAllPartitionIDs(event.TableInfo)
+		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
+		dropped := false
+		for _, partition := range droppedIDs {
+			if v.tableID == partition {
+				v.deleteVersion = uint64(event.FinishedTs)
+				dropped = true
+				break
+			}
+		}
+		if !dropped {
+			newCreatedIDs := getCreatedIDs(event.PrevPartitions, physicalIDs)
+			for _, partition := range newCreatedIDs {
+				if v.tableID == partition {
+					appendTableInfo()
+					break
+				}
+			}
+		}
+	case model.ActionExchangeTablePartition:
+		assertNonEmpty(v.infos, event)
+		lastRawTableInfo := v.infos[len(v.infos)-1].info.TableInfo.Clone()
+		// the previous normal table
+		if v.tableID == event.PrevTableID {
+			lastRawTableInfo.Name = model.NewCIStr(event.CurrentTableName)
+			info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, lastRawTableInfo)
+			info.InitPreSQLs()
+			v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
+		} else {
+			lastRawTableInfo.Name = model.NewCIStr(event.PrevTableName)
+			info := common.WrapTableInfo(event.PrevSchemaID, event.PrevSchemaName, event.FinishedTs, lastRawTableInfo)
+			info.InitPreSQLs()
+			v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
+		}
+	case model.ActionCreateTables:
+		assertEmpty(v.infos, event)
+		for _, tableInfo := range event.MultipleTableInfos {
+			if isPartitionTable(tableInfo) {
+				for _, partitionID := range getAllPartitionIDs(tableInfo) {
+					if v.tableID == partitionID {
+						info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, tableInfo)
+						info.InitPreSQLs()
+						v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
+						break
+					}
+				}
+			} else {
+				if v.tableID == tableInfo.ID {
+					info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, tableInfo)
+					info.InitPreSQLs()
+					v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
+					break
+				}
+			}
+
+		}
+	case model.ActionReorganizePartition:
+		physicalIDs := getAllPartitionIDs(event.TableInfo)
+		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
+		dropped := false
+		for _, partition := range droppedIDs {
+			if v.tableID == partition {
+				v.deleteVersion = uint64(event.FinishedTs)
+				dropped = true
+				break
+			}
+		}
+		if !dropped {
+			newCreatedIDs := getCreatedIDs(event.PrevPartitions, physicalIDs)
+			for _, partition := range newCreatedIDs {
+				if v.tableID == partition {
+					appendTableInfo()
+					break
+				}
+			}
+		}
 	default:
-		// TODO: idenitify unexpected ddl or specify all expected ddl
+		log.Panic("not supported ddl type",
+			zap.Any("ddlType", event.Type),
+			zap.String("DDL", event.Query))
 	}
 }

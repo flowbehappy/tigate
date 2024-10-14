@@ -16,7 +16,6 @@ package maintainer
 import (
 	"context"
 	"encoding/json"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"net"
 	"testing"
 	"time"
@@ -25,10 +24,12 @@ import (
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -49,7 +50,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode
 	store := &mockSchemaStore{
 		// 3 tables and a ddl_event_trigger as a table
-		tables: []common.Table{
+		tables: []commonEvent.Table{
 			{SchemaID: 1, TableID: 1}, {SchemaID: 1, TableID: 2}, {SchemaID: 1, TableID: 3}},
 	}
 	appcontext.SetService(appcontext.SchemaStore, store)
@@ -92,9 +93,9 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	maintainer := value.(*Maintainer)
 
 	require.Equal(t, 4,
-		maintainer.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
+		maintainer.controller.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
 	require.Equal(t, 4,
-		maintainer.scheduler.GetTaskSizeByNodeID(selfNode.ID))
+		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
 
 	// add 2 new node
 	node2 := node.NewInfo("127.0.0.1:8400", "")
@@ -111,7 +112,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	dn4 := startDispatcherNode(ctx, node4, mc4, nodeManager)
 
 	// use a small check interval
-	maintainer.scheduler.checkBalanceInterval = time.Millisecond * 50
+	maintainer.controller.checkBalanceInterval = time.Millisecond * 50
 	// notify node changes
 	_, _ = nodeManager.Tick(ctx, &orchestrator.GlobalReactorState{
 		Captures: map[model.CaptureID]*model.CaptureInfo{
@@ -123,15 +124,15 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 
 	time.Sleep(5 * time.Second)
 	require.Equal(t, 4,
-		maintainer.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
+		maintainer.controller.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
 	require.Equal(t, 1,
-		maintainer.scheduler.GetTaskSizeByNodeID(selfNode.ID))
+		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
 	require.Equal(t, 1,
-		maintainer.scheduler.GetTaskSizeByNodeID(node2.ID))
+		maintainer.controller.GetTaskSizeByNodeID(node2.ID))
 	require.Equal(t, 1,
-		maintainer.scheduler.GetTaskSizeByNodeID(node3.ID))
+		maintainer.controller.GetTaskSizeByNodeID(node3.ID))
 	require.Equal(t, 1,
-		maintainer.scheduler.GetTaskSizeByNodeID(node4.ID))
+		maintainer.controller.GetTaskSizeByNodeID(node4.ID))
 
 	// remove 2 nodes
 	dn3.stop()
@@ -143,11 +144,11 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 		}})
 	time.Sleep(5 * time.Second)
 	require.Equal(t, 4,
-		maintainer.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
+		maintainer.controller.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
 	require.Equal(t, 2,
-		maintainer.scheduler.GetTaskSizeByNodeID(selfNode.ID))
+		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
 	require.Equal(t, 2,
-		maintainer.scheduler.GetTaskSizeByNodeID(node2.ID))
+		maintainer.controller.GetTaskSizeByNodeID(node2.ID))
 
 	//close maintainer
 	err = mc.SendCommand(messaging.NewSingleTargetMessage(selfNode.ID, messaging.MaintainerManagerTopic,
@@ -170,7 +171,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode
 	store := &mockSchemaStore{
 		// 3 tables and a ddl_event_trigger as a table
-		tables: []common.Table{
+		tables: []commonEvent.Table{
 			{SchemaID: 1, TableID: 1}, {SchemaID: 1, TableID: 2}, {SchemaID: 1, TableID: 3}},
 	}
 	appcontext.SetService(appcontext.SchemaStore, store)
@@ -236,13 +237,13 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	maintainer := value.(*Maintainer)
 
 	require.Equal(t, 4,
-		maintainer.scheduler.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
+		maintainer.controller.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
 	require.Equal(t, 4,
-		maintainer.scheduler.GetTaskSizeByNodeID(selfNode.ID))
+		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
 	require.Len(t, remotedIds, 2)
 	foundSize := 0
 	hasDDLDispatcher := false
-	for id, stm := range maintainer.scheduler.Working() {
+	for id, stm := range maintainer.controller.Working() {
 		if stm.Inferior.(*ReplicaSet).Span.Equal(heartbeatpb.DDLSpan) {
 			hasDDLDispatcher = true
 		}
@@ -262,10 +263,10 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 
 type mockSchemaStore struct {
 	schemastore.SchemaStore
-	tables []common.Table
+	tables []commonEvent.Table
 }
 
-func (m *mockSchemaStore) GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]common.Table, error) {
+func (m *mockSchemaStore) GetAllPhysicalTables(snapTs common.Ts, filter filter.Filter) ([]commonEvent.Table, error) {
 	return m.tables, nil
 }
 

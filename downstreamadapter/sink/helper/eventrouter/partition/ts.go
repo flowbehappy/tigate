@@ -17,6 +17,7 @@ import (
 	"strconv"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 )
 
 // TsDispatcher is a partition dispatcher which dispatch events based on ts.
@@ -28,7 +29,7 @@ func newTsPartitionGenerator() *TsPartitionGenerator {
 }
 
 func (t *TsPartitionGenerator) GeneratePartitionIndexAndKey(
-	row *common.RowDelta,
+	row *commonEvent.RowChange,
 	partitionNum int32,
 	tableInfo *common.TableInfo,
 	commitTs uint64,

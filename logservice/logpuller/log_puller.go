@@ -154,7 +154,7 @@ func (p *LogPuller) Close(ctx context.Context) error {
 
 func (p *LogPuller) Subscribe(
 	span heartbeatpb.TableSpan,
-	startTs common.Ts,
+	startTs uint64,
 ) SubscriptionID {
 	p.subscriptions.Lock()
 
@@ -181,7 +181,7 @@ func (p *LogPuller) Subscribe(
 	p.subscriptions.spanProgressMap[subID] = progress
 	p.subscriptions.Unlock()
 
-	p.client.Subscribe(subID, span, uint64(startTs))
+	p.client.Subscribe(subID, span, startTs)
 	return subID
 }
 

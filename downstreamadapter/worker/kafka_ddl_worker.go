@@ -7,7 +7,7 @@ import (
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/topicmanager"
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/errors"
@@ -20,7 +20,7 @@ import (
 
 type CheckpointInfo struct {
 	Ts         uint64
-	TableNames []*common.SchemaTableName
+	TableNames []*commonEvent.SchemaTableName
 }
 
 // worker will send messages to the DML producer on a batch basis.
@@ -29,7 +29,7 @@ type KafkaDDLWorker struct {
 	changeFeedID model.ChangeFeedID
 	// protocol indicates the protocol used by this sink.
 	protocol           config.Protocol
-	ddlEventChan       chan *common.DDLEvent
+	ddlEventChan       chan *commonEvent.DDLEvent
 	checkpointInfoChan chan *CheckpointInfo
 	// ticker used to force flush the batched messages when the interval is reached.
 	ticker *time.Ticker
@@ -86,7 +86,7 @@ func NewKafkaDDLWorker(
 		ctx:           ctx,
 		changeFeedID:  id,
 		protocol:      protocol,
-		ddlEventChan:  make(chan *common.DDLEvent, 16),
+		ddlEventChan:  make(chan *commonEvent.DDLEvent, 16),
 		ticker:        time.NewTicker(batchInterval),
 		encoder:       encoder,
 		producer:      producer,
@@ -103,7 +103,7 @@ func NewKafkaDDLWorker(
 	return w
 }
 
-func (w *KafkaDDLWorker) GetDDLEventChan() chan<- *common.DDLEvent {
+func (w *KafkaDDLWorker) GetDDLEventChan() chan<- *commonEvent.DDLEvent {
 	return w.ddlEventChan
 }
 

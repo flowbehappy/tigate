@@ -14,31 +14,32 @@
 package coordinator
 
 import (
-	"github.com/flowbehappy/tigate/pkg/node"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
 
 type BasicScheduler struct {
-	id                    scheduler.InferiorID
+	id                    common.CoordinatorID
 	lastForceScheduleTime time.Time
 
 	needAddInferior  bool
-	addInferiorCache []scheduler.ChangefeedID
+	addInferiorCache []common.MaintainerID
 
 	needRemoveInferior  bool
-	removeInferiorCache []scheduler.ChangefeedID
+	removeInferiorCache []common.MaintainerID
 }
 
-func NewBasicScheduler(id scheduler.ChangefeedID) *BasicScheduler {
+func NewBasicScheduler(id common.CoordinatorID) *BasicScheduler {
 	return &BasicScheduler{
 		id:                    id,
 		lastForceScheduleTime: time.Now(),
-		addInferiorCache:      make([]scheduler.ChangefeedID, 0, 16),
-		removeInferiorCache:   make([]scheduler.ChangefeedID, 0, 16),
+		addInferiorCache:      make([]common.MaintainerID, 0, 16),
+		removeInferiorCache:   make([]common.MaintainerID, 0, 16),
 	}
 }
 
@@ -60,9 +61,9 @@ func (b *BasicScheduler) hasPendingTask() bool {
 }
 
 func (b *BasicScheduler) Schedule(
-	allInferiors map[scheduler.ChangefeedID]scheduler.Inferior,
+	allInferiors map[common.MaintainerID]scheduler.Inferior,
 	aliveCaptures map[node.ID]*CaptureStatus,
-	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
+	stateMachines map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID],
 	maxTaskCount int,
 ) (tasks []*ScheduleTask) {
 	if !b.hasPendingTask() && time.Since(b.lastForceScheduleTime) > 120*time.Second {
@@ -103,8 +104,8 @@ func (b *BasicScheduler) Schedule(
 
 	// Build add inferior tasks.
 	if b.needAddInferior {
-		for inf, value := range allInferiors {
-			st := value.GetStateMachine()
+		for inf, _ := range allInferiors {
+			st := stateMachines[inf]
 			if st == nil || st.State == scheduler.SchedulerStatusAbsent {
 				// add case 1: schedule a new inferior
 				// add case 2: reschedule an absent inferior. Currently, we only reschedule each 2 minutes.
@@ -152,7 +153,7 @@ func (b *BasicScheduler) Schedule(
 }
 
 // newBurstAddInferiors add each new inferior to captures in a round-robin way.
-func (b *BasicScheduler) newBurstAddInferiors(newInferiors []scheduler.ChangefeedID, captureIDs []node.ID,
+func (b *BasicScheduler) newBurstAddInferiors(newInferiors []common.MaintainerID, captureIDs []node.ID,
 ) []*ScheduleTask {
 	idx := 0
 	addInferiorTasks := make([]*ScheduleTask, 0, len(newInferiors))
@@ -164,7 +165,7 @@ func (b *BasicScheduler) newBurstAddInferiors(newInferiors []scheduler.Changefee
 					ID:        infID,
 					CaptureID: target,
 				}})
-		log.Info("burst add inferior",
+		log.Info("add inferior",
 			zap.String("id", b.id.String()),
 			zap.String("inferior", infID.String()),
 			zap.Any("serverID", target))
@@ -177,16 +178,15 @@ func (b *BasicScheduler) newBurstAddInferiors(newInferiors []scheduler.Changefee
 	return addInferiorTasks
 }
 
-// TODO: maybe remove task does not need captureID.
 func (b *BasicScheduler) newBurstRemoveInferiors(
-	rmInferiors []scheduler.ChangefeedID,
-	stateMachines map[scheduler.ChangefeedID]*scheduler.StateMachine,
+	rmInferiors []common.MaintainerID,
+	stateMachines map[common.MaintainerID]*scheduler.StateMachine[common.MaintainerID],
 ) []*ScheduleTask {
 	removeTasks := make([]*ScheduleTask, 0, len(rmInferiors))
 	for _, id := range rmInferiors {
 		state, _ := stateMachines[id]
 		if state.Primary == "" {
-			log.Warn("primary or secondary not found for removed inferior,"+
+			log.Warn("primary not found for removed inferior,"+
 				"this may happen if the server shutdown",
 				zap.String("id", b.id.String()),
 				zap.Any("ID", id.String()))
@@ -194,13 +194,9 @@ func (b *BasicScheduler) newBurstRemoveInferiors(
 		}
 		removeTasks = append(removeTasks, &ScheduleTask{
 			RemoveInferior: &RemoveInferior{
-				ID:        id,
-				CaptureID: state.Primary,
+				ID: id,
 			},
 		})
-		// log.Info("burst remove inferior",
-		// 	zap.String("captureID", captureID),
-		// 	zap.Any("ID", id.String()))
 	}
 
 	if len(removeTasks) == 0 {

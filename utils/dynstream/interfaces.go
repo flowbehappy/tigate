@@ -1,6 +1,7 @@
 package dynstream
 
 import (
+	"runtime"
 	"sync"
 	"time"
 )
@@ -52,15 +53,17 @@ type DynamicStream[P Path, T Event, D Dest] interface {
 	// No more events can be sent to or processed by the stream after it is closed.
 	Close()
 
+	// In returns the channel to send events into the dynamic stream.
 	In() chan<- T
+	// Wake returns the channel to mark the the path as ready to process the next event.
 	Wake() chan<- P
 
 	// AddPaths adds the paths to the dynamic stream to receive the events.
 	// An event with a path not already added will be dropped.
 	//
-	// If some paths already exist, it will return an ErrorTypeDuplicate error. And no paths are added.
-	// If the stream is closed, it will return an ErrorTypeClosed error.
-	AddPaths(paths ...PathAndDest[P, D]) error
+	// If some paths already exist, it will return ErrorTypeDuplicate errors. But the non-existed paths are still added.
+	// If all paths are added successfully, return nil.
+	AddPaths(paths ...PathAndDest[P, D]) []error
 	AddPath(path P, dest D) error
 
 	// RemovePaths removes the paths from the dynamic stream.
@@ -69,13 +72,11 @@ type DynamicStream[P Path, T Event, D Dest] interface {
 	// If some paths don't exist, it will return ErrorTypeNotExist errors. But the existed paths are still removed.
 	// If all paths are removed successfully, return nil.
 	RemovePaths(paths ...P) []error
+	RemovePath(path P) error
 }
 
 const DefaultSchedulerInterval = 1 * time.Second
 const DefaultReportInterval = 500 * time.Millisecond
-
-// We don't need lots of streams because the hanle of events should be CPU-bound and should not be blocked by any waiting.
-const DefaultStreamCount = 64
 
 type DropPolicy int
 
@@ -89,7 +90,7 @@ const (
 type Option struct {
 	SchedulerInterval time.Duration // The interval of the scheduler. The scheduler is used to balance the paths between streams.
 	ReportInterval    time.Duration // The interval of reporting the status of stream, the status is used by the scheduler.
-	StreamCount       int           // The count of streams. I.e. the count of goroutines to handle events.
+	StreamCount       int           // The count of streams. I.e. the count of goroutines to handle events. By default 0, means runtime.NumCPU().
 	BatchSize         int           // The batch size of handling events. <= 1 means no batch.
 
 	// Note that if you specify MaxPendingLength and DropPolicy, the handler can implement the DropListener interface to listen to the dropped events.
@@ -104,7 +105,7 @@ func NewOption() Option {
 	return Option{
 		SchedulerInterval: DefaultSchedulerInterval,
 		ReportInterval:    DefaultReportInterval,
-		StreamCount:       DefaultStreamCount,
+		StreamCount:       0,
 		BatchSize:         1,
 		MaxPendingLength:  0,
 		DropPolicy:        DropLate,
@@ -112,6 +113,9 @@ func NewOption() Option {
 }
 
 func (o *Option) fix() {
+	if o.StreamCount == 0 {
+		o.StreamCount = runtime.NumCPU()
+	}
 	if o.BatchSize <= 0 {
 		o.BatchSize = 1
 	}
@@ -125,6 +129,5 @@ func NewDynamicStream[P Path, T Event, D Dest](handler Handler[P, T, D], option 
 	if len(option) > 0 {
 		opt = option[0]
 	}
-	opt.fix()
 	return newDynamicStreamImpl(handler, opt)
 }

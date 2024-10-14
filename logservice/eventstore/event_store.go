@@ -29,6 +29,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+var metricEventCompressRatio = metrics.EventStoreCompressRatio
+
 type EventObserver func(raw *common.RawKVEntry)
 
 type WatermarkNotifier func(watermark uint64)
@@ -45,18 +47,18 @@ type EventStore interface {
 	RegisterDispatcher(
 		dispatcherID common.DispatcherID,
 		span *heartbeatpb.TableSpan,
-		startTS common.Ts,
+		startTS uint64,
 		observer EventObserver,
 		notifier WatermarkNotifier,
 	) error
 
-	UpdateDispatcherSendTS(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, gcTS uint64) error
+	UpdateDispatcherSendTs(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, gcTS uint64) error
 
 	UnregisterDispatcher(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) error
 
 	// TODO: ignore large txn now, so we can read all transactions of the same commit ts at one time
 	// (startCommitTS, endCommitTS]?
-	GetIterator(dispatcherID common.DispatcherID, dataRange *common.DataRange) (EventIterator, error)
+	GetIterator(dispatcherID common.DispatcherID, dataRange common.DataRange) (EventIterator, error)
 }
 
 type EventIterator interface {
@@ -139,10 +141,9 @@ func New(
 	kvStorage kv.Storage,
 ) EventStore {
 	clientConfig := &logpuller.SubscriptionClientConfig{
-		RegionRequestWorkerPerStore:        16,
-		ChangeEventProcessorNum:            64,
-		AdvanceResolvedTsIntervalInMs:      600,
-		RegionIncrementalScanLimitPerStore: 100000,
+		RegionRequestWorkerPerStore:   16,
+		ChangeEventProcessorNum:       64,
+		AdvanceResolvedTsIntervalInMs: 600,
 	}
 	client := logpuller.NewSubscriptionClient(
 		logpuller.ClientIDEventStore,
@@ -184,7 +185,10 @@ func New(
 	// TODO: update pebble options
 	// TODO: close pebble db at exit
 	for i := 0; i < dbCount; i++ {
-		db, err := pebble.Open(fmt.Sprintf("%s/%d", dbPath, i), &pebble.Options{})
+		db, err := pebble.Open(fmt.Sprintf("%s/%d", dbPath, i), &pebble.Options{
+			DisableWAL:   true,
+			MemTableSize: 8 << 20,
+		})
 		if err != nil {
 			log.Fatal("open db failed", zap.Error(err))
 		}
@@ -235,7 +239,7 @@ func (e *eventStore) Run(ctx context.Context) error {
 }
 
 func (e *eventStore) RegisterDispatcher(
-	dispatcherID common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTS common.Ts,
+	dispatcherID common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTS uint64,
 	observer EventObserver, notifier WatermarkNotifier,
 ) error {
 	span := *tableSpan
@@ -283,8 +287,8 @@ func (e *eventStore) RegisterDispatcher(
 	return nil
 }
 
-func (e *eventStore) UpdateDispatcherSendTS(
-	dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, sendTS uint64,
+func (e *eventStore) UpdateDispatcherSendTs(
+	dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, sendTs uint64,
 ) error {
 	e.spanStates.Lock()
 	defer e.spanStates.Unlock()
@@ -292,7 +296,11 @@ func (e *eventStore) UpdateDispatcherSendTS(
 		if !ok {
 			log.Panic("should not happen", zap.Any("dispatcherID", dispatcherID))
 		}
-		state.dispatchers[dispatcherID].watermark = sendTS
+		oldWatermark := state.dispatchers[dispatcherID].watermark
+		if sendTs > oldWatermark {
+			state.dispatchers[dispatcherID].watermark = sendTs
+			e.gcManager.addGCItem(state.chIndex, span.TableID, oldWatermark, sendTs)
+		}
 	}
 	return nil
 }
@@ -323,7 +331,7 @@ func (e *eventStore) UnregisterDispatcher(
 	return nil
 }
 
-func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange *common.DataRange) (EventIterator, error) {
+func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange common.DataRange) (EventIterator, error) {
 	// do some check
 	state, ok := e.spanStates.dispatcherMap.Get(dataRange.Span)
 	dispatcher, okw := state.dispatchers[dispatcherID]
@@ -347,6 +355,8 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange *co
 		return nil, err
 	}
 	iter.First()
+
+	metrics.EventStoreScanRequestsCount.Inc()
 
 	return &eventStoreIter{
 		tableID:      span.TableID,
@@ -374,7 +384,7 @@ func (e *eventStore) Close(ctx context.Context) error {
 }
 
 func (e *eventStore) updateMetrics(ctx context.Context) error {
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	for {
 		select {
 		case <-ctx.Done():
@@ -382,11 +392,16 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 		case <-ticker.C:
 			currentTime := e.pdClock.CurrentTime()
 			currentPhyTs := oracle.GetPhysical(currentTime)
+			minResolvedTs := uint64(0)
 			e.spanStates.RLock()
 			for _, tableState := range e.spanStates.subscriptionMap {
 				resolvedTs := tableState.resolvedTs.Load()
+				if minResolvedTs == 0 || resolvedTs < minResolvedTs {
+					minResolvedTs = resolvedTs
+				}
 				resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
 				resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
+				// TODO: avoid the name `watermark`
 				watermark := tableState.minWatermark()
 				watermarkPhyTs := oracle.ExtractPhysical(watermark)
 				watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
@@ -394,6 +409,13 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 				metrics.EventStoreDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
 			}
 			e.spanStates.RUnlock()
+
+			if minResolvedTs == 0 {
+				continue
+			}
+			minResolvedPhyTs := oracle.ExtractPhysical(minResolvedTs)
+			maxResolvedLag := float64(currentPhyTs-minResolvedPhyTs) / 1e3
+			metrics.EventStoreMaxResolvedTsLagGauge.Set(maxResolvedLag)
 		}
 	}
 }
@@ -415,9 +437,11 @@ func (e *eventStore) batchCommitAndUpdateWatermark(ctx context.Context, batchCh 
 			// do batch commit
 			batch := batchEvent.batch
 			if batch != nil && !batch.Empty() {
+				size := batch.Len()
 				if err := batch.Commit(pebble.NoSync); err != nil {
 					log.Panic("failed to commit pebble batch", zap.Error(err))
 				}
+				metrics.EventStoreWriteBytes.Add(float64(size))
 			}
 
 			// update resolved ts after commit successfully
@@ -448,6 +472,8 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 		key := EncodeKey(uint64(item.state.span.TableID), item.raw)
 		value := item.raw.Encode()
 		compressedValue := e.encoder.EncodeAll(value, nil)
+		ratio := float64(len(value)) / float64(len(compressedValue))
+		metrics.EventStoreCompressRatio.Set(ratio)
 		if err := batch.Set(key, compressedValue, pebble.NoSync); err != nil {
 			log.Panic("failed to update pebble batch", zap.Error(err))
 		}
@@ -471,7 +497,7 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 					batch = db.NewBatch()
 				}
 				addEvent2Batch(batch, item)
-				if len(batch.Repr()) >= batchCommitSize {
+				if batch.Len() >= batchCommitSize {
 					return &DBBatchEvent{batch, resolvedTsBatch}, true
 				}
 			case <-ctx.Done():
@@ -515,11 +541,10 @@ func (e *eventStore) writeEvent(subID logpuller.SubscriptionID, raw *common.RawK
 	}
 }
 
-func (e *eventStore) deleteEvents(span heartbeatpb.TableSpan, startCommitTS uint64, endCommitTS uint64) error {
-	dbIndex := common.HashTableSpan(span, len(e.dbs))
+func (e *eventStore) deleteEvents(dbIndex int, tableID int64, startCommitTS uint64, endCommitTS uint64) error {
 	db := e.dbs[dbIndex]
-	start := EncodeTsKey(uint64(span.TableID), startCommitTS)
-	end := EncodeTsKey(uint64(span.TableID), endCommitTS)
+	start := EncodeTsKey(uint64(tableID), startCommitTS)
+	end := EncodeTsKey(uint64(tableID), endCommitTS)
 
 	return db.DeleteRange(start, end, pebble.NoSync)
 }
@@ -554,6 +579,7 @@ func (iter *eventStoreIter) Next() (*common.RawKVEntry, bool, error) {
 		log.Panic("failed to decompress value", zap.Error(err))
 	}
 	_, startTS, commitTS := DecodeKey(key)
+	metrics.EventStoreScanBytes.Add(float64(len(decompressedValue)))
 	rawKV := &common.RawKVEntry{}
 	rawKV.Decode(decompressedValue)
 	isNewTxn := false

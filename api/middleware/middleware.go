@@ -15,13 +15,15 @@ package middleware
 
 import (
 	"bufio"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/gin-gonic/gin"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/cdc/api"
+	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/httputil"
 	"go.uber.org/zap"
@@ -38,6 +40,27 @@ const (
 
 // ClientVersionHeader is the header name of client version
 const ClientVersionHeader = "X-client-version"
+
+// ErrorHandleMiddleware puts the error into response
+func ErrorHandleMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+		// because we will return immediately after an error occurs in http_handler
+		// there wil be only one error in c.Errors
+		lastError := c.Errors.Last()
+		if lastError != nil {
+			err := lastError.Err
+			// put the error into response
+			if api.IsHTTPBadRequestError(err) {
+				c.IndentedJSON(http.StatusBadRequest, model.NewHTTPError(err))
+			} else {
+				c.IndentedJSON(http.StatusInternalServerError, model.NewHTTPError(err))
+			}
+			c.Abort()
+			return
+		}
+	}
+}
 
 // LogMiddleware logs the api requests
 func LogMiddleware() gin.HandlerFunc {

@@ -87,6 +87,13 @@ type streamStat[P Path, T Event, D Dest] struct {
 	mostBusyPath heap.Heap[*pathStat[P, T, D]]
 }
 
+func (s streamStat[P, T, D]) getMostBusyPaths() []*pathStat[P, T, D] {
+	if s.mostBusyPath == nil {
+		return nil
+	}
+	return s.mostBusyPath.All()
+}
+
 func tryAddPathToBusyHeap[P Path, T Event, D Dest](heap heap.Heap[*pathStat[P, T, D]], pi *pathStat[P, T, D], trackTop int) {
 	if heap.Len() < trackTop {
 		heap.AddOrUpdate(pi)
@@ -193,11 +200,14 @@ func (s *stream[P, T, D]) start(acceptedPaths []*pathInfo[P, T, D], formerStream
 }
 
 // Close the stream and wait for all goroutines to exit.
-func (s *stream[P, T, D]) close() {
+// wait is by default true, which means to wait for the goroutines to exit.
+func (s *stream[P, T, D]) close(wait ...bool) {
 	if s.hasClosed.CompareAndSwap(false, true) {
 		close(s.inChan)
 	}
-	s.handleDone.Wait()
+	if len(wait) == 0 || wait[0] {
+		s.handleDone.Wait()
+	}
 }
 
 func (s *stream[P, T, D]) addPaths(newPaths []*pathInfo[P, T, D]) {
@@ -217,7 +227,7 @@ func (s *stream[P, T, D]) handleLoop(acceptedPaths []*pathInfo[P, T, D], formerS
 			e.pathInfo.blocking = false
 			count := e.pathInfo.pendingQueue.Length()
 			if count > 0 {
-				s.signalQueue.PushBack(eventSignal[P, T, D]{pathInfo: e.pathInfo, eventCount: count})
+				s.signalQueue.PushFront(eventSignal[P, T, D]{pathInfo: e.pathInfo, eventCount: count})
 			}
 		} else {
 			// It is a normal event

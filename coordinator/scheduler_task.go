@@ -15,9 +15,9 @@ package coordinator
 
 import (
 	"fmt"
-	"github.com/flowbehappy/tigate/pkg/node"
 
-	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/node"
 )
 
 // ScheduleTask is a schedule task that wraps add/move/remove inferior tasks.
@@ -54,33 +54,31 @@ func (s *ScheduleTask) String() string {
 
 // MoveInferior is a schedule task for moving a inferior.
 type MoveInferior struct {
-	ID          scheduler.ChangefeedID
+	ID          common.MaintainerID
 	DestCapture node.ID
 }
 
 func (t MoveInferior) String() string {
 	return fmt.Sprintf("MoveInferior, span: %s, dest: %s",
-		t.ID.String(), t.DestCapture)
+		t.ID, t.DestCapture)
 }
 
 // AddInferior is a schedule task for adding an inferior.
 type AddInferior struct {
-	ID        scheduler.ChangefeedID
+	ID        common.MaintainerID
 	CaptureID node.ID
 }
 
 func (t AddInferior) String() string {
 	return fmt.Sprintf("AddInferior, span: %s, server: %s",
-		t.ID.String(), t.CaptureID)
+		t.ID, t.CaptureID)
 }
 
 // RemoveInferior is a schedule task for removing an inferior.
 type RemoveInferior struct {
-	ID        scheduler.ChangefeedID
-	CaptureID node.ID
+	ID common.MaintainerID
 }
 
 func (t RemoveInferior) String() string {
-	return fmt.Sprintf("RemoveInferior, ID: %s, server: %s",
-		t.ID.String(), t.CaptureID)
+	return fmt.Sprintf("RemoveInferior, ID: %s", t.ID)
 }

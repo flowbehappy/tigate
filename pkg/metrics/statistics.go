@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tiflow/cdc/model"
 	cdcconfig "github.com/pingcap/tiflow/pkg/config"
 
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -39,8 +40,9 @@ func NewStatistics(
 	statistics.metricExecDDLHis = ExecDDLHistogram.WithLabelValues(namespcae, changefeedID, s)
 	statistics.metricExecBatchHis = ExecBatchHistogram.WithLabelValues(namespcae, changefeedID, s)
 	statistics.metricTotalWriteBytesCnt = TotalWriteBytesCounter.WithLabelValues(namespcae, changefeedID, s)
-	statistics.metricRowSizeHis = LargeRowSizeHistogram.WithLabelValues(namespcae, changefeedID, s)
+	statistics.metricEventSizeHis = EventSizeHistogram.WithLabelValues(namespcae, changefeedID)
 	statistics.metricExecErrCnt = ExecutionErrorCounter.WithLabelValues(namespcae, changefeedID, s)
+	statistics.metricExecDMLCnt = ExecDMLEventCounter.WithLabelValues(namespcae, changefeedID)
 	return statistics
 }
 
@@ -58,19 +60,18 @@ type Statistics struct {
 	// Counter for total bytes of DML.
 	metricTotalWriteBytesCnt prometheus.Counter
 	// Histogram for Row size.
-	metricRowSizeHis prometheus.Observer
+	metricEventSizeHis prometheus.Observer
 	// Counter for sink error.
 	metricExecErrCnt prometheus.Counter
+
+	metricExecDMLCnt prometheus.Counter
 }
 
 // ObserveRows stats all received `RowChangedEvent`s.
-func (b *Statistics) ObserveRows(rows ...*model.RowChangedEvent) {
-	for _, row := range rows {
-		// only track row with data size larger than `rowSizeLowBound` to reduce
-		// the overhead of calling `Observe` method.
-		if row.ApproximateDataSize >= LargeRowSizeLowBound {
-			b.metricRowSizeHis.Observe(float64(row.ApproximateDataSize))
-		}
+func (b *Statistics) ObserveRows(events []*commonEvent.DMLEvent) {
+	for _, event := range events {
+		b.metricEventSizeHis.Observe(float64(event.Rows.MemoryUsage()))
+		b.metricExecDMLCnt.Inc()
 	}
 }
 
@@ -101,7 +102,8 @@ func (b *Statistics) RecordDDLExecution(executor func() error) error {
 func (b *Statistics) Close() {
 	ExecDDLHistogram.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
 	ExecBatchHistogram.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
-	LargeRowSizeHistogram.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
+	EventSizeHistogram.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
 	ExecutionErrorCounter.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
 	TotalWriteBytesCounter.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
+	ExecDMLEventCounter.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
 }

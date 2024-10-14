@@ -85,13 +85,16 @@ func TestStreamBasic(t *testing.T) {
 		defer statWait.Done()
 
 		// Wait for 3 rounds
-		stop := time.NewTimer(option.ReportInterval*3 + option.ReportInterval/2)
+		// stop := time.NewTimer(option.ReportInterval*3 + option.ReportInterval/2)
 		for {
+			if len(stats) == 3*2 {
+				return
+			}
 			select {
 			case stat := <-reportChan:
 				stats = append(stats, stat)
-			case <-stop.C:
-				return
+				// case <-stop.C:
+				// 	return
 			}
 		}
 	}()

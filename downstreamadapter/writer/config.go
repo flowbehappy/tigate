@@ -94,6 +94,9 @@ type MysqlConfig struct {
 	CachePrepStmts  bool
 	// DryRun is used to enable dry-run mode. In dry-run mode, the writer will not write data to the downstream.
 	DryRun bool
+
+	// sync point
+	SyncPointRetention time.Duration
 }
 
 // NewConfig returns the default mysql backend config.

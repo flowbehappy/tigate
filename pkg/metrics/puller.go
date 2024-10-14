@@ -21,14 +21,6 @@ import (
 var (
 	grpcMetrics = grpc_prometheus.NewClientMetrics()
 
-	EventStoreReceivedEventCount = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "ticdc",
-			Subsystem: "log_service",
-			Name:      "puller_event_count",
-			Help:      "The number of events received by event store.",
-		}, []string{"type"}) // types : kv, resolved.
-
 	EventFeedErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "ticdc",
@@ -116,7 +108,6 @@ func InitPullerMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(grpcMetrics)
 	registry.MustRegister(RegionWorkerProcessDuration)
 	registry.MustRegister(RegionWorkerTotalDuration)
-	registry.MustRegister(EventStoreReceivedEventCount)
 	registry.MustRegister(EventFeedErrorCounter)
 	registry.MustRegister(BatchResolvedEventSize)
 

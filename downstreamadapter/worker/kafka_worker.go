@@ -23,6 +23,7 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/topicmanager"
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/sink/codec"
 	"github.com/pingcap/errors"
@@ -48,8 +49,8 @@ type KafkaWorker struct {
 	// protocol indicates the protocol used by this sink.
 	protocol config.Protocol
 
-	eventChan chan *common.DMLEvent
-	rowChan   chan *common.MQRowEvent
+	eventChan chan *commonEvent.DMLEvent
+	rowChan   chan *commonEvent.MQRowEvent
 	// ticker used to force flush the batched messages when the interval is reached.
 	ticker *time.Ticker
 
@@ -86,8 +87,8 @@ func NewKafkaWorker(
 	w := &KafkaWorker{
 		changeFeedID:   id,
 		protocol:       protocol,
-		eventChan:      make(chan *common.DMLEvent, 32),
-		rowChan:        make(chan *common.MQRowEvent, 32),
+		eventChan:      make(chan *commonEvent.DMLEvent, 32),
+		rowChan:        make(chan *commonEvent.MQRowEvent, 32),
 		ticker:         time.NewTicker(batchInterval),
 		encoderGroup:   encoderGroup,
 		columnSelector: columnSelector,
@@ -158,14 +159,14 @@ func (w *KafkaWorker) calculateKeyPartitions(ctx context.Context) {
 					return
 				}
 
-				w.rowChan <- &common.MQRowEvent{
+				w.rowChan <- &commonEvent.MQRowEvent{
 					Key: model.TopicPartitionKey{
 						Topic:          topic,
 						Partition:      index,
 						PartitionKey:   key,
 						TotalPartition: partitionNum,
 					},
-					RowEvent: common.RowEvent{
+					RowEvent: commonEvent.RowEvent{
 						TableInfo:      event.TableInfo,
 						CommitTs:       event.CommitTs,
 						Event:          row,
@@ -178,7 +179,7 @@ func (w *KafkaWorker) calculateKeyPartitions(ctx context.Context) {
 	}
 }
 
-func (w *KafkaWorker) GetEventChan() chan<- *common.DMLEvent {
+func (w *KafkaWorker) GetEventChan() chan<- *commonEvent.DMLEvent {
 	return w.eventChan
 }
 
@@ -222,7 +223,7 @@ func (w *KafkaWorker) batchEncodeRun(ctx context.Context) (retErr error) {
 		metrics.WorkerBatchSize.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
 	}()
 
-	msgsBuf := make([]*common.MQRowEvent, batchSize)
+	msgsBuf := make([]*commonEvent.MQRowEvent, batchSize)
 	for {
 		start := time.Now()
 		msgCount, err := w.batch(ctx, msgsBuf, batchInterval)
@@ -250,7 +251,7 @@ func (w *KafkaWorker) batchEncodeRun(ctx context.Context) (retErr error) {
 // batch collects a batch of messages from w.msgChan into buffer.
 // It returns the number of messages collected.
 // Note: It will block until at least one message is received.
-func (w *KafkaWorker) batch(ctx context.Context, buffer []*common.MQRowEvent, flushInterval time.Duration) (int, error) {
+func (w *KafkaWorker) batch(ctx context.Context, buffer []*commonEvent.MQRowEvent, flushInterval time.Duration) (int, error) {
 	msgCount := 0
 	maxBatchSize := len(buffer)
 	// We need to receive at least one message or be interrupted,
@@ -294,11 +295,11 @@ func (w *KafkaWorker) batch(ctx context.Context, buffer []*common.MQRowEvent, fl
 }
 
 // group groups messages by its key.
-func (w *KafkaWorker) group(msgs []*common.MQRowEvent) map[model.TopicPartitionKey][]*common.RowEvent {
-	groupedMsgs := make(map[model.TopicPartitionKey][]*common.RowEvent)
+func (w *KafkaWorker) group(msgs []*commonEvent.MQRowEvent) map[model.TopicPartitionKey][]*commonEvent.RowEvent {
+	groupedMsgs := make(map[model.TopicPartitionKey][]*commonEvent.RowEvent)
 	for _, msg := range msgs {
 		if _, ok := groupedMsgs[msg.Key]; !ok {
-			groupedMsgs[msg.Key] = make([]*common.RowEvent, 0)
+			groupedMsgs[msg.Key] = make([]*commonEvent.RowEvent, 0)
 		}
 		groupedMsgs[msg.Key] = append(groupedMsgs[msg.Key], &msg.RowEvent)
 	}

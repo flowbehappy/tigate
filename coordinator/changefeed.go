@@ -15,9 +15,10 @@ package coordinator
 
 import (
 	"encoding/json"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"net/url"
-	"time"
+
+	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
@@ -34,18 +35,15 @@ type ChangeFeedDB interface {
 
 // changefeed tracks the scheduled maintainer on coordinator side
 type changefeed struct {
-	ID    model.ChangeFeedID
-	State *MaintainerStatus
+	ID     model.ChangeFeedID
+	Status *heartbeatpb.MaintainerStatus
 
 	Info *model.ChangeFeedInfo
 
-	lastHeartBeat time.Time
-
-	checkpointTs uint64
-	configBytes  []byte
+	configBytes []byte
 
 	coordinator  *coordinator
-	stateMachine *scheduler.StateMachine
+	stateMachine *scheduler.StateMachine[common.MaintainerID]
 
 	lastSavedCheckpointTs uint64
 	isMQSink              bool
@@ -70,43 +68,23 @@ func newChangefeed(c *coordinator,
 		ID:                    cfID,
 		Info:                  info,
 		configBytes:           bytes,
-		checkpointTs:          checkpointTs,
 		lastSavedCheckpointTs: checkpointTs,
 		isMQSink:              sink.IsMQScheme(uri.Scheme),
 		// init the first status
-		State: &MaintainerStatus{
-			MaintainerStatus: &heartbeatpb.MaintainerStatus{
-				CheckpointTs: checkpointTs,
-				FeedState:    string(info.State),
-			},
+		Status: &heartbeatpb.MaintainerStatus{
+			CheckpointTs: checkpointTs,
+			FeedState:    string(info.State),
 		},
 	}
 }
 
-func (c *changefeed) UpdateStatus(status scheduler.InferiorStatus) {
-	c.State = status.(*MaintainerStatus)
-	if c.State != nil && c.State.CheckpointTs > c.checkpointTs {
-		c.checkpointTs = c.State.CheckpointTs
+func (c *changefeed) UpdateStatus(status any) {
+	if status != nil {
+		newStatus := status.(*heartbeatpb.MaintainerStatus)
+		if newStatus.CheckpointTs > c.Status.CheckpointTs {
+			c.Status = newStatus
+		}
 	}
-	c.lastHeartBeat = time.Now()
-}
-func (c *changefeed) SetStateMachine(state *scheduler.StateMachine) {
-	c.stateMachine = state
-}
-
-func (c *changefeed) GetStateMachine() *scheduler.StateMachine {
-	return c.stateMachine
-}
-
-type MaintainerStatus struct {
-	*heartbeatpb.MaintainerStatus
-}
-
-func (s *MaintainerStatus) GetInferiorID() scheduler.InferiorID {
-	return scheduler.ChangefeedID(model.DefaultChangeFeedID(s.ChangefeedID))
-}
-func (s *MaintainerStatus) GetInferiorState() heartbeatpb.ComponentState {
-	return s.State
 }
 
 func (c *changefeed) NewAddInferiorMessage(server node.ID) *messaging.TargetMessage {
@@ -114,7 +92,7 @@ func (c *changefeed) NewAddInferiorMessage(server node.ID) *messaging.TargetMess
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.AddMaintainerRequest{
 			Id:           c.ID.ID,
-			CheckpointTs: c.checkpointTs,
+			CheckpointTs: c.Status.CheckpointTs,
 			Config:       c.configBytes,
 		})
 }

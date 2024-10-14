@@ -46,7 +46,7 @@ func (t *HeartBeatTask) Execute() time.Time {
 	t.counter = (t.counter + 1) % 10
 	needCompleteStatus := t.counter == 0
 	message := t.manager.CollectHeartbeatInfo(needCompleteStatus)
-	t.manager.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: t.manager.GetMaintainerID(), Request: message})
+	t.manager.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: t.manager.GetMaintainerID(), Request: message})
 	return time.Now().Add(time.Second * 1)
 }
 

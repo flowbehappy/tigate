@@ -1,8 +1,9 @@
-package common
+package event
 
 import (
 	"unsafe"
 
+	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -48,7 +49,7 @@ type RowChangedEventData struct {
 	// In general, we always use the physical ID to represent a table, but we
 	// record the logical ID from the DDL event(job.BinlogInfo.TableInfo).
 	// So be careful when using the TableInfo.
-	TableInfo *TableInfo
+	TableInfo *common.TableInfo
 
 	Columns    []*ColumnData
 	PreColumns []*ColumnData
@@ -77,10 +78,10 @@ type RowChangedEvent struct {
 	// In general, we always use the physical ID to represent a table, but we
 	// record the logical ID from the DDL event(job.BinlogInfo.TableInfo).
 	// So be careful when using the TableInfo.
-	TableInfo *TableInfo `msg:"-"`
+	TableInfo *common.TableInfo `msg:"-"`
 
-	Columns    []*Column `msg:"columns"`
-	PreColumns []*Column `msg:"pre-columns"`
+	Columns    []*common.Column `msg:"columns"`
+	PreColumns []*common.Column `msg:"pre-columns"`
 
 	// ReplicatingTs is ts when a table starts replicating events to downstream.
 	ReplicatingTs uint64 `msg:"replicating-ts"`
@@ -95,27 +96,13 @@ func (r *RowChangedEvent) GetTableID() int64 {
 	return r.PhysicalTableID
 }
 
-// Column represents a column value and its schema info
-type Column struct {
-	Name      string         `msg:"name"`
-	Type      byte           `msg:"type"`
-	Charset   string         `msg:"charset"`
-	Collation string         `msg:"collation"`
-	Flag      ColumnFlagType `msg:"flag"`   // FIXME
-	Value     interface{}    `msg:"column"` // FIXME: this is incorrect in some cases
-	Default   interface{}    `msg:"-"`
-
-	// ApproximateBytes is approximate bytes consumed by the column.
-	ApproximateBytes int `msg:"-"`
-}
-
 // GetColumns returns the columns of the event
-func (r *RowChangedEvent) GetColumns() []*Column {
+func (r *RowChangedEvent) GetColumns() []*common.Column {
 	return r.Columns
 }
 
 // GetPreColumns returns the pre columns of the event
-func (r *RowChangedEvent) GetPreColumns() []*Column {
+func (r *RowChangedEvent) GetPreColumns() []*common.Column {
 	return r.PreColumns
 }
 
@@ -138,11 +125,11 @@ func (r *RowChangedEvent) ApproximateBytes() int {
 	return size
 }
 
-func ColumnDatas2Columns(cols []*timodel.ColumnData, tableInfo *TableInfo) []*Column {
+func ColumnDatas2Columns(cols []*timodel.ColumnData, tableInfo *common.TableInfo) []*common.Column {
 	if cols == nil {
 		return nil
 	}
-	columns := make([]*Column, len(cols))
+	columns := make([]*common.Column, len(cols))
 	for i, colData := range cols {
 		if colData == nil {
 			log.Warn("meet nil column data, should not happened in production env",
@@ -155,23 +142,23 @@ func ColumnDatas2Columns(cols []*timodel.ColumnData, tableInfo *TableInfo) []*Co
 	return columns
 }
 
-func columnData2Column(col *timodel.ColumnData, tableInfo *TableInfo) *Column {
+func columnData2Column(col *timodel.ColumnData, tableInfo *common.TableInfo) *common.Column {
 	colID := col.ColumnID
-	offset, ok := tableInfo.columnsOffset[colID]
+	offset, ok := tableInfo.GetColumnsOffset()[colID]
 	if !ok {
 		log.Warn("invalid column id",
 			zap.Int64("columnID", colID),
 			zap.Any("tableInfo", tableInfo))
 	}
 	colInfo := tableInfo.Columns[offset]
-	return &Column{
+	return &common.Column{
 		Name:      colInfo.Name.O,
 		Type:      colInfo.GetType(),
 		Charset:   colInfo.GetCharset(),
 		Collation: colInfo.GetCollate(),
 		Flag:      *tableInfo.ColumnsFlag[colID],
 		Value:     col.Value,
-		Default:   GetColumnDefaultValue(colInfo),
+		Default:   common.GetColumnDefaultValue(colInfo),
 	}
 }
 
@@ -191,11 +178,11 @@ func (r *RowChangedEvent) IsUpdate() bool {
 }
 
 // HandleKeyColInfos returns the column(s) and colInfo(s) corresponding to the handle key(s)
-func (r *RowChangedEvent) HandleKeyColInfos() ([]*Column, []rowcodec.ColInfo) {
-	pkeyCols := make([]*Column, 0)
+func (r *RowChangedEvent) HandleKeyColInfos() ([]*common.Column, []rowcodec.ColInfo) {
+	pkeyCols := make([]*common.Column, 0)
 	pkeyColInfos := make([]rowcodec.ColInfo, 0)
 
-	var cols []*Column
+	var cols []*common.Column
 	if r.IsDelete() {
 		cols = r.PreColumns
 	} else {
@@ -219,7 +206,7 @@ func (r *RowChangedEvent) HandleKeyColInfos() ([]*Column, []rowcodec.ColInfo) {
 func (r *RowChangedEvent) PrimaryKeyColumnNames() []string {
 	var result []string
 
-	var cols []*Column
+	var cols []*common.Column
 	if r.IsDelete() {
 		cols = r.PreColumns
 	} else {
@@ -236,7 +223,7 @@ func (r *RowChangedEvent) PrimaryKeyColumnNames() []string {
 }
 
 // GetHandleAndUniqueIndexOffsets4Test is used to get the offsets of handle columns and other unique index columns in test
-func GetHandleAndUniqueIndexOffsets4Test(cols []*Column) [][]int {
+func GetHandleAndUniqueIndexOffsets4Test(cols []*common.Column) [][]int {
 	result := make([][]int, 0)
 	handleColumns := make([]int, 0)
 	for i, col := range cols {
@@ -262,10 +249,10 @@ type MQRowEvent struct {
 }
 
 type RowEvent struct {
-	TableInfo      *TableInfo
+	TableInfo      *common.TableInfo
 	CommitTs       uint64
-	Event          RowDelta
-	ColumnSelector Selector
+	Event          RowChange
+	ColumnSelector common.Selector
 	Callback       func()
 }
 

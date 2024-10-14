@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/tiflow/pkg/hash"
 )
 
@@ -35,7 +36,7 @@ func newTablePartitionGenerator() *TablePartitionGenerator {
 
 // GeneratePartitionIndexAndKey returns the target partition to which a row changed event should be dispatched.
 func (t *TablePartitionGenerator) GeneratePartitionIndexAndKey(
-	row *common.RowDelta,
+	row *commonEvent.RowChange,
 	partitionNum int32,
 	tableInfo *common.TableInfo,
 	commitTs uint64,

@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -304,7 +304,7 @@ func CreateMysqlDBConn(dsnStr string) (*sql.DB, error) {
 	return db, nil
 }
 
-func needSwitchDB(event *common.DDLEvent) bool {
+func needSwitchDB(event *commonEvent.DDLEvent) bool {
 	if len(event.GetDDLSchemaName()) == 0 {
 		return false
 	}

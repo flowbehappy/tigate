@@ -7,10 +7,13 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/filter"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -20,23 +23,26 @@ import (
 type SchemaStore interface {
 	common.SubModule
 
-	GetAllPhysicalTables(snapTs uint64, filter filter.Filter) ([]common.Table, error)
+	GetAllPhysicalTables(snapTs uint64, filter filter.Filter) ([]commonEvent.Table, error)
 
 	RegisterTable(tableID int64, startTs uint64) error
 
 	UnregisterTable(tableID int64) error
 
+	// return table info with largest version <= ts
 	GetTableInfo(tableID int64, ts uint64) (*common.TableInfo, error)
 
 	// FetchTableDDLEvents returns the next ddl events which finishedTs are within the range (start, end]
 	// and it returns a timestamp which means there will be no more ddl events before(<=) it
 	// TODO: add a parameter limit
-	FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, uint64, error)
+	FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]commonEvent.DDLEvent, uint64, error)
 
-	FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]common.DDLEvent, uint64, error)
+	FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]commonEvent.DDLEvent, uint64, error)
 }
 
 type schemaStore struct {
+	pdClock pdutil.Clock
+
 	ddlJobFetcher *ddlJobFetcher
 
 	// store unresolved ddl event in memory, it is thread safe
@@ -74,6 +80,7 @@ func New(
 	upperBound := dataStorage.getUpperBound()
 
 	s := &schemaStore{
+		pdClock:       pdClock,
 		unsortedCache: newDDLCache(),
 		dataStorage:   dataStorage,
 		notifyCh:      make(chan interface{}, 4),
@@ -131,28 +138,44 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 				zap.Uint64("resolvedTs", pendingTs),
 				zap.Int("resolvedEventsLen", len(resolvedEvents)))
 
-			validEvents := make([]PersistedDDLEvent, 0, len(resolvedEvents))
-
 			for _, event := range resolvedEvents {
-				// TODO: build persisted ddl event after filter
 				if event.Job.BinlogInfo.SchemaVersion <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTs {
-					log.Info("skip already applied ddl job",
-						zap.String("job", event.Job.Query),
-						zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
-						zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
-						zap.Any("schemaVersion", s.schemaVersion),
-						zap.Uint64("finishedDDLTS", s.finishedDDLTs))
+					// log.Info("skip already applied ddl job",
+					// 	zap.Any("type", event.Job.Type),
+					// 	zap.String("job", event.Job.Query),
+					// 	zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+					// 	zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
+					// 	zap.Uint64("jobCommitTs", event.CommitTs),
+					// 	zap.Any("storeSchemaVersion", s.schemaVersion),
+					// 	zap.Uint64("storeFinishedDDLTS", s.finishedDDLTs))
 					continue
 				}
-				validEvents = append(validEvents, buildPersistedDDLEventFromJob(event.Job))
+				// log.Info("handle ddl job",
+				// 	zap.Int64("schemaID", event.Job.SchemaID),
+				// 	zap.Int64("tableID", event.Job.TableID),
+				// 	zap.Any("type", event.Job.Type),
+				// 	zap.String("job", event.Job.Query),
+				// 	zap.Int64("jobSchemaVersion", event.Job.BinlogInfo.SchemaVersion),
+				// 	zap.Uint64("jobFinishTs", event.Job.BinlogInfo.FinishedTS),
+				// 	zap.Uint64("jobCommitTs", event.CommitTs),
+				// 	zap.Any("storeSchemaVersion", s.schemaVersion),
+				// 	zap.Uint64("storeFinishedDDLTS", s.finishedDDLTs))
+
 				// need to update the following two members for every event to filter out later duplicate events
 				s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
 				s.finishedDDLTs = event.Job.BinlogInfo.FinishedTS
+
+				s.dataStorage.handleDDLJob(event.Job)
 			}
-			s.dataStorage.handleSortedDDLEvents(validEvents...)
 		}
-		// TODO: resolved ts are updated after ddl events written to disk, do we need to optimize it?
+		// When register a new table, it will load all ddl jobs from disk for the table,
+		// so we can only update resolved ts after all ddl jobs are written to disk
+		// Can we optimize it to update resolved ts more eagerly?
 		s.resolvedTs.Store(pendingTs)
+		currentPhyTs := oracle.GetPhysical(s.pdClock.CurrentTime())
+		resolvedPhyTs := oracle.ExtractPhysical(pendingTs)
+		resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
+		metrics.SchemaStoreResolvedTsLagGauge.Set(float64(resolvedLag))
 		s.dataStorage.updateUpperBound(UpperBoundMeta{
 			FinishedDDLTs: s.finishedDDLTs,
 			SchemaVersion: s.schemaVersion,
@@ -172,39 +195,44 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 	}
 }
 
-func (s *schemaStore) GetAllPhysicalTables(snapTs uint64, filter filter.Filter) ([]common.Table, error) {
+func (s *schemaStore) GetAllPhysicalTables(snapTs uint64, filter filter.Filter) ([]commonEvent.Table, error) {
 	s.waitResolvedTs(0, snapTs, 10*time.Second)
 	return s.dataStorage.getAllPhysicalTables(snapTs, filter)
 }
 
 func (s *schemaStore) RegisterTable(tableID int64, startTs uint64) error {
+	metrics.SchemaStoreResolvedRegisterTableGauge.Inc()
 	s.waitResolvedTs(tableID, startTs, 5*time.Second)
+	log.Info("register table",
+		zap.Int64("tableID", tableID),
+		zap.Uint64("startTs", startTs),
+		zap.Uint64("resolvedTs", s.resolvedTs.Load()))
 	return s.dataStorage.registerTable(tableID, startTs)
 }
 
 func (s *schemaStore) UnregisterTable(tableID int64) error {
+	metrics.SchemaStoreResolvedRegisterTableGauge.Dec()
 	return s.dataStorage.unregisterTable(tableID)
 }
 
 func (s *schemaStore) GetTableInfo(tableID int64, ts uint64) (*common.TableInfo, error) {
+	metrics.SchemaStoreGetTableInfoCounter.Inc()
+	start := time.Now()
+	defer func() {
+		metrics.SchemaStoreGetTableInfoLagHist.Observe(time.Since(start).Seconds())
+	}()
 	s.waitResolvedTs(tableID, ts, 2*time.Second)
 	return s.dataStorage.getTableInfo(tableID, ts)
 }
 
-func (s *schemaStore) FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, uint64, error) {
+func (s *schemaStore) FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]commonEvent.DDLEvent, uint64, error) {
 	currentResolvedTs := s.resolvedTs.Load()
+	if currentResolvedTs <= start {
+		return nil, currentResolvedTs, nil
+	}
 	if currentResolvedTs < end {
 		end = currentResolvedTs
 	}
-	// TODO: remove the following log
-	log.Debug("FetchTableDDLEvents",
-		zap.Int64("tableID", tableID),
-		zap.Uint64("start", start),
-		zap.Uint64("end", end))
-	defer log.Debug("FetchTableDDLEvents end",
-		zap.Int64("tableID", tableID),
-		zap.Uint64("start", start),
-		zap.Uint64("end", end))
 	events, err := s.dataStorage.fetchTableDDLEvents(tableID, tableFilter, start, end)
 	if err != nil {
 		return nil, 0, err
@@ -212,7 +240,8 @@ func (s *schemaStore) FetchTableDDLEvents(tableID int64, tableFilter filter.Filt
 	return events, end, nil
 }
 
-func (s *schemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]common.DDLEvent, uint64, error) {
+// FetchTableTriggerDDLEvents returns the next ddl events which finishedTs are within the range (start, end]
+func (s *schemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]commonEvent.DDLEvent, uint64, error) {
 	if limit == 0 {
 		log.Panic("limit cannot be 0")
 	}
@@ -222,6 +251,10 @@ func (s *schemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, star
 		zap.Int("limit", limit))
 	// must get resolved ts first
 	currentResolvedTs := s.resolvedTs.Load()
+	if currentResolvedTs <= start {
+		return nil, currentResolvedTs, nil
+	}
+
 	events, err := s.dataStorage.fetchTableTriggerDDLEvents(tableFilter, start, limit)
 	if err != nil {
 		return nil, 0, err

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/zeebo/assert"
 )
 
@@ -45,6 +46,7 @@ func (h *simpleHandler) Handle(dest struct{}, events ...*simpleEvent) (await boo
 func TestDynamicStreamBasic(t *testing.T) {
 	handler := &simpleHandler{}
 	option := NewOption()
+	option.StreamCount = 1
 	option.BatchSize = 2
 	ds := NewDynamicStream(handler, option)
 	ds.Start()
@@ -66,7 +68,49 @@ func TestDynamicStreamBasic(t *testing.T) {
 
 	wg.Wait()
 
-	ds.RemovePaths("path1", "path2", "path3", "path4")
+	ds.RemovePaths("path1", "path2", "path3")
+
+	wg = &sync.WaitGroup{}
+	ds.In() <- newSimpleEvent("path4", wg)
+	wg.Wait()
+
+	ds.Close()
+}
+
+func TestDynamicStreamAddRemovePaths(t *testing.T) {
+	handler := &simpleHandler{}
+	ds := NewDynamicStream(handler)
+	ds.Start()
+	errors := ds.AddPaths([]PathAndDest[string, struct{}]{
+		{"path1", struct{}{}},
+		{"path2", struct{}{}},
+		{"path3", struct{}{}},
+		{"path4", struct{}{}},
+	}...)
+	assert.Nil(t, errors)
+	errors = ds.AddPaths([]PathAndDest[string, struct{}]{
+		{"path1", struct{}{}},
+		{"path3", struct{}{}},
+		{"path5", struct{}{}},
+	}...)
+	assert.Equal(t, 3, len(errors))
+	appError, ok := errors[0].(*apperror.AppError)
+	assert.True(t, ok)
+	assert.Equal(t, apperror.ErrorTypeDuplicate, appError.Type)
+	appError, ok = errors[1].(*apperror.AppError)
+	assert.True(t, ok)
+	assert.Equal(t, apperror.ErrorTypeDuplicate, appError.Type)
+	assert.Nil(t, errors[2])
+
+	errors = ds.RemovePaths("path1", "path3")
+	assert.Equal(t, 0, len(errors))
+
+	errors = ds.RemovePaths("path2", "path3")
+	assert.Equal(t, 2, len(errors))
+	assert.Nil(t, errors[0])
+	appError, ok = errors[1].(*apperror.AppError)
+	assert.True(t, ok)
+	assert.Equal(t, apperror.ErrorTypeNotExist, appError.Type)
 
 	ds.Close()
 }
@@ -85,7 +129,7 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	scheduleNow := func(rule ruleType, period time.Duration) {
 		r := &reportAndScheduleCmd{rule: rule, period: period}
 		r.wg.Add(1)
-		ds.cmdToSchd <- &cmd{cmdType: typeReportAndSchedule, cmd: r}
+		ds.cmdToSchd <- &command{cmdType: typeReportAndSchedule, cmd: r}
 		r.wg.Wait()
 	}
 
@@ -156,13 +200,20 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	assert.Equal(t, 1, len(ds.streamInfos[3].pathMap)) // p5, Solo stream
 
 	wg = &sync.WaitGroup{}
+	// Stream 1
 	ds.In() <- newSimpleEventSleep("p7", wg, 8*time.Millisecond)
 	ds.In() <- newSimpleEventSleep("p10", wg, 8*time.Millisecond)
+
+	// Stream 2
+	ds.In() <- newSimpleEventSleep("p2", wg, 900*time.Microsecond)
+	ds.In() <- newSimpleEventSleep("p8", wg, 900*time.Microsecond)
+
+	// Stream 3
 	ds.In() <- newSimpleEventSleep("p9", wg, 8*time.Millisecond)
 
 	wg.Wait()
 
-	scheduleNow(createSoloPath, 8*time.Millisecond)
+	scheduleNow(createSoloPath, 10*time.Millisecond)
 
 	assert.Equal(t, 7, len(ds.streamInfos))
 	assert.Equal(t, 2, len(ds.streamInfos[0].pathMap)) // p1, p4
@@ -194,6 +245,31 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	assert.Equal(t, 4, len(ds.streamInfos[1].pathMap))
 	assert.Equal(t, 2, len(ds.streamInfos[2].pathMap))
 
+	ds.AddPath("p11", struct{}{})
+	wg = &sync.WaitGroup{}
+	ds.In() <- newSimpleEventSleep("p10", wg, 8*time.Millisecond)
+	ds.In() <- newSimpleEventSleep("p11", wg, 8*time.Millisecond)
+	wg.Wait()
+
+	scheduleNow(createSoloPath, 8*time.Millisecond)
+
+	assert.Equal(t, 5, len(ds.streamInfos))
+	assert.Equal(t, 1, len(ds.streamInfos[3].pathMap)) // p10, Solo stream
+	assert.Equal(t, 1, len(ds.streamInfos[4].pathMap)) // p11, Solo stream
+
+	ds.RemovePath("p10")
+	wg = &sync.WaitGroup{}
+	ds.In() <- newSimpleEventSleep("p10", wg, 8*time.Millisecond) // This event is dropped by DS
+	ds.In() <- newSimpleEventSleep("p11", wg, 8*time.Millisecond)
+	wg.Done() // Manually finish the first event
+	wg.Wait()
+
+	scheduleNow(removeSoloPath, 8*time.Millisecond)
+
+	assert.Equal(t, 4, len(ds.streamInfos))
+	assert.Equal(t, 3+4+2, len(ds.streamInfos[0].pathMap)+len(ds.streamInfos[1].pathMap)+len(ds.streamInfos[2].pathMap))
+	assert.Equal(t, 1, len(ds.streamInfos[3].pathMap)) // p11, Solo stream
+
 	ds.Close()
 }
 
@@ -218,7 +294,7 @@ func TestDynamicStreamRemovePath(t *testing.T) {
 	option.SchedulerInterval = 1 * time.Hour
 	option.ReportInterval = 1 * time.Hour
 	option.StreamCount = 3
-	ds := newDynamicStreamImpl(handler, option)
+	ds := NewDynamicStream(handler, option)
 	handler.ds = ds
 
 	ds.Start()
@@ -271,7 +347,7 @@ func TestDynamicStreamDrop(t *testing.T) {
 		option.handleWait.Add(1)
 
 		handler := &incEventHandler{}
-		ds := newDynamicStreamImpl(handler, option)
+		ds := NewDynamicStream(handler, option)
 		ds.Start()
 
 		ds.AddPath("p1", struct{}{})

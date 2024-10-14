@@ -15,15 +15,16 @@ package coordinator
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -56,7 +57,7 @@ type coordinator struct {
 
 	lastSaveTime         time.Time
 	lastTickTime         time.Time
-	scheduledChangefeeds map[scheduler.ChangefeedID]scheduler.Inferior
+	scheduledChangefeeds map[common.MaintainerID]scheduler.Inferior
 
 	gcManager gc.Manager
 	pdClient  pd.Client
@@ -74,14 +75,14 @@ func New(node *node.Info,
 	c := &coordinator{
 		version:              version,
 		nodeInfo:             node,
-		scheduledChangefeeds: make(map[scheduler.ChangefeedID]scheduler.Inferior),
+		scheduledChangefeeds: make(map[common.MaintainerID]scheduler.Inferior),
 		lastTickTime:         time.Now(),
 		gcManager:            gc.NewManager(serviceID, pdClient, pdClock),
 		pdClient:             pdClient,
 		pdClock:              pdClock,
 		mc:                   mc,
 	}
-	id := scheduler.ChangefeedID(model.DefaultChangeFeedID("coordinator"))
+	id := common.CoordinatorID("coordinator")
 	c.supervisor = NewSupervisor(
 		id,
 		c.newChangefeed, c.newBootstrapMessage,
@@ -143,7 +144,6 @@ func (c *coordinator) Tick(
 	// 5. send saved checkpoint ts to maintainer
 	c.sendSavedCheckpointTsToMaintainer()
 
-	c.printStatus()
 	return state, nil
 }
 
@@ -156,24 +156,11 @@ func (c *coordinator) handleMessages() error {
 		switch msg.Type {
 		case messaging.TypeCoordinatorBootstrapResponse:
 			req := msg.Message[0].(*heartbeatpb.CoordinatorBootstrapResponse)
-			var statues = make([]scheduler.InferiorStatus, 0, len(req.Statuses))
-			for _, status := range req.Statuses {
-				statues = append(statues, &MaintainerStatus{status})
-			}
-			c.supervisor.UpdateCaptureStatus(msg.From, statues)
+			c.supervisor.UpdateCaptureStatus(msg.From, req.Statuses)
 		case messaging.TypeMaintainerHeartbeatRequest:
 			if c.supervisor.CheckAllCaptureInitialized() {
 				req := msg.Message[0].(*heartbeatpb.MaintainerHeartbeat)
-				var statues = make([]scheduler.InferiorStatus, 0, len(req.Statuses))
-				for _, status := range req.Statuses {
-					statues = append(statues, &MaintainerStatus{status})
-				}
-				msgs, err := c.supervisor.HandleStatus(msg.From, statues)
-				if err != nil {
-					log.Error("handle status failed", zap.Error(err))
-					return errors.Trace(err)
-				}
-				c.sendMessages(msgs)
+				c.supervisor.HandleStatus(msg.From, req.Statuses)
 			}
 		default:
 			log.Panic("unexpected message", zap.Any("message", msg))
@@ -221,13 +208,13 @@ func (c *coordinator) scheduleMaintainer(
 		}
 		if shouldRunChangefeed(cfState.Info.State) {
 			// todo use real changefeed instance here
-			_, ok := c.scheduledChangefeeds[scheduler.ChangefeedID(id)]
+			_, ok := c.scheduledChangefeeds[common.MaintainerID(id.ID)]
 			if !ok {
-				c.scheduledChangefeeds[scheduler.ChangefeedID(id)] = &changefeed{}
+				c.scheduledChangefeeds[common.MaintainerID(id.ID)] = &changefeed{}
 			}
 		} else {
 			// changefeed is stopped
-			delete(c.scheduledChangefeeds, scheduler.ChangefeedID(id))
+			delete(c.scheduledChangefeeds, common.MaintainerID(id.ID))
 		}
 	}
 	c.supervisor.MarkNeedAddInferior()
@@ -243,33 +230,33 @@ func (c *coordinator) newBootstrapMessage(id node.ID) *messaging.TargetMessage {
 		&heartbeatpb.CoordinatorBootstrapRequest{Version: c.version})
 }
 
-func (c *coordinator) newChangefeed(id scheduler.InferiorID) scheduler.Inferior {
-	cfID := model.ChangeFeedID(id.(scheduler.ChangefeedID))
+func (c *coordinator) newChangefeed(id common.MaintainerID) scheduler.Inferior {
+	cfID := model.DefaultChangeFeedID(id.String())
 	cfInfo := c.lastState.Changefeeds[cfID]
 	cf := newChangefeed(c, cfID, cfInfo.Info, cfInfo.Status.CheckpointTs)
-	c.scheduledChangefeeds[scheduler.ChangefeedID(cfInfo.ID)] = cf
+	c.scheduledChangefeeds[id] = cf
 	return cf
 }
 
 func (c *coordinator) saveChangefeedStatus() {
 	if time.Since(c.lastSaveTime) > time.Millisecond*500 {
 		for key, value := range c.scheduledChangefeeds {
-			id := model.ChangeFeedID(key)
+			id := model.DefaultChangeFeedID(key.String())
 			cfState, ok := c.lastState.Changefeeds[id]
 			if !ok {
 				continue
 			}
 			cf := value.(*changefeed)
-			if cf.State == nil {
+			if cf.Status == nil {
 				continue
 			}
-			if !shouldRunChangefeed(model.FeedState(cf.State.FeedState)) {
+			if !shouldRunChangefeed(model.FeedState(cf.Status.FeedState)) {
 				cfState.PatchInfo(func(info *model.ChangeFeedInfo) (*model.ChangeFeedInfo, bool, error) {
-					info.State = model.FeedState(cf.State.FeedState)
+					info.State = model.FeedState(cf.Status.FeedState)
 					return info, true, nil
 				})
 			}
-			updateStatus(cfState, cf.checkpointTs)
+			updateStatus(cfState, cf.Status.CheckpointTs)
 			saveErrorFn := func(err *heartbeatpb.RunningError) {
 				node, ok := c.lastState.Captures[err.Node]
 				addr := err.Node
@@ -290,13 +277,13 @@ func (c *coordinator) saveChangefeedStatus() {
 						return position, true, nil
 					})
 			}
-			if len(cf.State.Err) > 0 {
-				for _, err := range cf.State.Err {
+			if len(cf.Status.Err) > 0 {
+				for _, err := range cf.Status.Err {
 					saveErrorFn(err)
 				}
 			}
-			if len(cf.State.Warning) > 0 {
-				for _, err := range cf.State.Warning {
+			if len(cf.Status.Warning) > 0 {
+				for _, err := range cf.Status.Warning {
 					saveErrorFn(err)
 				}
 			}
@@ -405,7 +392,7 @@ func (c *coordinator) calculateGCSafepoint(state *orchestrator.GlobalReactorStat
 			minCpts = checkpointTs
 		}
 		// Force update when adding a new changefeed.
-		_, exist := c.scheduledChangefeeds[scheduler.ChangefeedID(changefeedID)]
+		_, exist := c.scheduledChangefeeds[common.MaintainerID(changefeedID.ID)]
 		if !exist {
 			forceUpdate = true
 		}
@@ -424,7 +411,7 @@ func (c *coordinator) sendSavedCheckpointTsToMaintainer() {
 		if !cf.isMQSink || cf.stateMachine == nil || cf.stateMachine.Primary == "" {
 			continue
 		}
-		id := model.ChangeFeedID(key)
+		id := model.DefaultChangeFeedID(key.String())
 		cfState, ok := c.lastState.Changefeeds[id]
 		if !ok || cfState.Status == nil {
 			continue
@@ -434,34 +421,5 @@ func (c *coordinator) sendSavedCheckpointTsToMaintainer() {
 			c.sendMessages([]*messaging.TargetMessage{msg})
 			cf.lastSavedCheckpointTs = cfState.Status.CheckpointTs
 		}
-	}
-}
-
-func (c *coordinator) printStatus() {
-	if time.Since(c.lastCheckTime) > time.Second*10 {
-		workingTask := 0
-		absentTask := 0
-		commitTask := 0
-		removingTask := 0
-		for _, value := range c.supervisor.StateMachines {
-			switch value.State {
-			case scheduler.SchedulerStatusAbsent:
-				absentTask++
-			case scheduler.SchedulerStatusCommiting:
-				commitTask++
-			case scheduler.SchedulerStatusWorking:
-				workingTask++
-			case scheduler.SchedulerStatusRemoving:
-				removingTask++
-			}
-		}
-		log.Info("changefeed status",
-			zap.Int("absent", absentTask),
-			zap.Int("commit", commitTask),
-			zap.Int("working", workingTask),
-			zap.Int("removing", removingTask),
-			zap.Any("runningTask", len(c.supervisor.RunningTasks)),
-		)
-		c.lastCheckTime = time.Now()
 	}
 }

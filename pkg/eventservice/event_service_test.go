@@ -3,10 +3,11 @@ package eventservice
 import (
 	"context"
 	"database/sql"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"sort"
 	"testing"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -14,6 +15,7 @@ import (
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/mounter"
@@ -84,16 +86,16 @@ func TestEventServiceBasic(t *testing.T) {
 		for _, m := range msg.Message {
 			msgCnt++
 			switch e := m.(type) {
-			case *common.DMLEvent:
+			case *commonEvent.DMLEvent:
 				require.NotNil(t, msg)
 				require.Equal(t, "event-collector", msg.Topic)
 				require.Equal(t, len(kvEvents), e.Len())
 				require.Equal(t, kvEvents[0].CRTs, e.CommitTs)
-			case *common.DDLEvent:
+			case *commonEvent.DDLEvent:
 				require.NotNil(t, msg)
 				require.Equal(t, "event-collector", msg.Topic)
 				require.Equal(t, ddlEvent.FinishedTs, e.FinishedTs)
-			case *common.BatchResolvedEvent:
+			case *commonEvent.BatchResolvedEvent:
 				require.NotNil(t, msg)
 				log.Info("received watermark", zap.Uint64("ts", e.Events[0].ResolvedTs))
 			}
@@ -291,7 +293,7 @@ var _ schemastore.SchemaStore = &mockSchemaStore{}
 
 type mockSchemaStore struct {
 	schemastore.SchemaStore
-	DDLEvents map[common.TableID][]common.DDLEvent
+	DDLEvents map[common.TableID][]commonEvent.DDLEvent
 	TableInfo map[common.TableID][]*common.TableInfo
 
 	dispatchers map[common.DispatcherID]common.TableID
@@ -300,14 +302,14 @@ type mockSchemaStore struct {
 
 func newMockSchemaStore() *mockSchemaStore {
 	return &mockSchemaStore{
-		DDLEvents:   make(map[common.TableID][]common.DDLEvent),
+		DDLEvents:   make(map[common.TableID][]commonEvent.DDLEvent),
 		TableInfo:   make(map[common.TableID][]*common.TableInfo),
 		dispatchers: make(map[common.DispatcherID]common.TableID),
 		resolvedTs:  0,
 	}
 }
 
-func (m *mockSchemaStore) AppendDDLEvent(id common.TableID, ddls ...common.DDLEvent) {
+func (m *mockSchemaStore) AppendDDLEvent(id common.TableID, ddls ...commonEvent.DDLEvent) {
 	for _, ddl := range ddls {
 		m.DDLEvents[id] = append(m.DDLEvents[id], ddl)
 		job := ddl.Job
@@ -341,7 +343,7 @@ func (m *mockSchemaStore) UnregisterDispatcher(dispatcherID common.DispatcherID)
 }
 
 // GetNextDDLEvents returns the next ddl event which finishedTs is within the range (start, end]
-func (m *mockSchemaStore) GetNextDDLEvents(id common.TableID, start, end common.Ts) ([]common.DDLEvent, common.Ts, error) {
+func (m *mockSchemaStore) GetNextDDLEvents(id common.TableID, start, end common.Ts) ([]commonEvent.DDLEvent, common.Ts, error) {
 	events := m.DDLEvents[id]
 	if len(events) == 0 {
 		return nil, end, nil
@@ -359,6 +361,6 @@ func (m *mockSchemaStore) GetNextDDLEvents(id common.TableID, start, end common.
 	return events[l:r], end, nil
 }
 
-func (m *mockSchemaStore) GetNextTableTriggerEvents(f filter.Filter, start common.Ts, limit int) ([]common.DDLEvent, common.Ts, error) {
+func (m *mockSchemaStore) GetNextTableTriggerEvents(f filter.Filter, start common.Ts, limit int) ([]commonEvent.DDLEvent, common.Ts, error) {
 	return nil, m.resolvedTs, nil
 }

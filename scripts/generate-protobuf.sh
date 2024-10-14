@@ -26,9 +26,6 @@ PROTOC="$TOOLS_BIN_DIR/protoc"
 GO="$TOOLS_BIN_DIR/protoc-gen-go"
 GO_GRPC="$TOOLS_BIN_DIR/protoc-gen-go-grpc"
 GOGO_FASTER=$TOOLS_BIN_DIR/protoc-gen-gogofaster
-GRPC_GATEWAY=$TOOLS_BIN_DIR/protoc-gen-grpc-gateway
-GRPC_GATEWAY_V2=$TOOLS_BIN_DIR/protoc-gen-grpc-gateway-v2
-OPENAPIV2=$TOOLS_BIN_DIR/protoc-gen-openapiv2
 
 function generate() {
 	local out_dir=$1
@@ -46,7 +43,7 @@ function generate() {
 		--gogofaster_out=$gogo_option:$out_dir $proto_file
 }
 
-for tool in $PROTOC $GO $GO_GRPC $GOGO_FASTER $GRPC_GATEWAY $GRPC_GATEWAY_V2 $OPENAPIV2; do
+for tool in $PROTOC $GO $GO_GRPC $GOGO_FASTER; do
 	if [ ! -x $tool ]; then
 		echo "$tool does not exist, please run 'make $tool' first."
 		exit 1

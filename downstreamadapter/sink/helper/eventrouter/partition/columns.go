@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
@@ -42,7 +43,7 @@ func newColumnsPartitionGenerator(columns []string) *ColumnsPartitionGenerator {
 	}
 }
 
-func (r *ColumnsPartitionGenerator) GeneratePartitionIndexAndKey(row *common.RowDelta, partitionNum int32, tableInfo *common.TableInfo, commitTs uint64) (int32, string, error) {
+func (r *ColumnsPartitionGenerator) GeneratePartitionIndexAndKey(row *commonEvent.RowChange, partitionNum int32, tableInfo *common.TableInfo, commitTs uint64) (int32, string, error) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 	r.hasher.Reset()

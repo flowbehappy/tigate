@@ -29,12 +29,14 @@ enum Action {
 }
 
 message DispatcherAction {
-    Action action = 2;
-    uint64 CommitTs = 3; // DDLCommitTs
+    Action action = 1;
+    uint64 CommitTs = 2; // DDLCommitTs
+    bool IsSyncPoint = 3; // sync point Event and ddl Event could have the same CommitTs, so we need to distinguish them.
 }
 
 message ACK {
     uint64 CommitTs = 1; // DDLCommitTs
+    bool IsSyncPoint = 2; // sync point Event and ddl Event could have the same CommitTs, so we need to distinguish them.
 }
 
 message InfluencedDispatchers {
@@ -160,19 +162,37 @@ message Table {
     int64 SchemaID = 2;
 }
 
+message SchemaIDChange {
+    int64 TableID = 1;
+    int64 OldSchemaID = 2;
+    int64 NewSchemaID = 3;
+}
+
 message State {
     bool IsBlocked      = 1;
     uint64 BlockTs         = 2;
     InfluencedTables BlockTables = 3;
     InfluencedTables NeedDroppedTables =4;
     repeated Table NeedAddedTables = 5;
+    repeated SchemaIDChange UpdatedSchemas = 6;
+    bool IsSyncPoint = 7;
+    bool eventDone = 8; // means whether the event is passed / write downstream
+}
+
+message TableSpanBlockStatus {
+    DispatcherID ID = 1; // for which dispatcher
+    State state = 2;
 }
 
 message TableSpanStatus {
     DispatcherID ID = 1; // for which dispatcher
     ComponentState component_status = 2;
-    State state = 3;
-    uint64 checkpoint_ts = 4;
+    uint64 checkpoint_ts = 3;
+}
+
+message BlockStatusRequest {
+    string changefeedID = 1;
+    repeated TableSpanBlockStatus blockStatuses = 2;
 }
 
 enum ComponentState {

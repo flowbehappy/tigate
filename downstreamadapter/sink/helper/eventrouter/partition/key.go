@@ -13,7 +13,10 @@
 
 package partition
 
-import "github.com/flowbehappy/tigate/pkg/common"
+import (
+	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+)
 
 type KeyPartitionGenerator struct {
 	partitionKey string
@@ -25,7 +28,7 @@ func newKeyPartitionGenerator(partitionKey string) *KeyPartitionGenerator {
 	}
 }
 
-func (t *KeyPartitionGenerator) GeneratePartitionIndexAndKey(row *common.RowDelta,
+func (t *KeyPartitionGenerator) GeneratePartitionIndexAndKey(row *commonEvent.RowChange,
 	partitionNum int32,
 	tableInfo *common.TableInfo,
 	commitTs uint64,

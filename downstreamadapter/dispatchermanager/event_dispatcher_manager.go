@@ -29,6 +29,7 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+	"github.com/flowbehappy/tigate/downstreamadapter/syncpoint"
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -37,6 +38,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/tiflow/cdc/model"
 	cfg "github.com/pingcap/tiflow/pkg/config"
+	"github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
 )
 
@@ -45,15 +47,15 @@ EventDispatcherManager is responsible for managing the dispatchers of a changefe
 EventDispatcherManager is working on:
 1. Collecting all the heartbeat messages from all the dispatchers to make HeartBeatRequest.
 2. Sending the HeartBeatResponse to each dispatcher.
-3. Createing the new dispatchers.
-
-One changefeed in one instance can only have one EventDispatcherManager.
-One EventDispatcherManager can only have one Sink.
+3. Create and remove dispatchers.
+One changefeed in one instance has one EventDispatcherManager.
+One EventDispatcherManager has one backend sink.
 */
 type EventDispatcherManager struct {
 	dispatcherMap *DispatcherMap
 
-	heartbeatRequestQueue *HeartbeatRequestQueue
+	heartbeatRequestQueue   *HeartbeatRequestQueue
+	blockStatusRequestQueue *BlockStatusRequestQueue
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -61,23 +63,29 @@ type EventDispatcherManager struct {
 	changefeedID model.ChangeFeedID
 	config       *config.ChangefeedConfig
 
-	sink sink.Sink
-	// enableSyncPoint       bool
-	// syncPointInterval     time.Duration
+	sink         sink.Sink
 	maintainerID node.ID
 
 	// statusesChan will fetch the tableSpan status that need to contains in the heartbeat info.
 	statusesChan chan *heartbeatpb.TableSpanStatus
-	filter       filter.Filter
+	// blockStatusesChan will fetch the tableSpan block status about ddl event and sync point event
+	// that need to report to maintainer
+	blockStatusesChan chan *heartbeatpb.TableSpanBlockStatus
+
+	filter filter.Filter
 
 	closing bool
 	closed  atomic.Bool
 
 	heartBeatTask *HeartBeatTask
 
-	schemaIDToDispatchers *SchemaIDToDispatchers
+	schemaIDToDispatchers *dispatcher.SchemaIDToDispatchers
 
 	tableTriggerEventDispatcher *dispatcher.Dispatcher
+
+	// only not nil when enable sync point
+	// TODO: changefeed update config
+	syncPointConfig *syncpoint.SyncPointConfig
 
 	tableEventDispatcherCount      prometheus.Gauge
 	metricCreateDispatcherDuration prometheus.Observer
@@ -92,20 +100,28 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 	maintainerID node.ID) *EventDispatcherManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := &EventDispatcherManager{
-		dispatcherMap: newDispatcherMap(),
-		changefeedID:  changefeedID,
-		//enableSyncPoint:       false,
+		dispatcherMap:                  newDispatcherMap(),
+		changefeedID:                   changefeedID,
 		maintainerID:                   maintainerID,
 		statusesChan:                   make(chan *heartbeatpb.TableSpanStatus, 10000),
+		blockStatusesChan:              make(chan *heartbeatpb.TableSpanBlockStatus, 1000),
 		cancel:                         cancel,
 		config:                         cfConfig,
-		schemaIDToDispatchers:          newSchemaIDToDispatchers(),
+		schemaIDToDispatchers:          dispatcher.NewSchemaIDToDispatchers(),
 		tableEventDispatcherCount:      metrics.TableEventDispatcherGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCreateDispatcherDuration: metrics.CreateDispatcherDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCheckpointTs:             metrics.EventDispatcherManagerCheckpointTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCheckpointTsLag:          metrics.EventDispatcherManagerCheckpointTsLagGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricResolvedTs:               metrics.EventDispatcherManagerResolvedTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricResolvedTsLag:            metrics.EventDispatcherManagerResolvedTsLagGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
+	}
+
+	if cfConfig.EnableSyncPoint {
+		// TODO:确认一下参数设置的地方会检查正确性，这里不需要再次检查了
+		manager.syncPointConfig = &syncpoint.SyncPointConfig{
+			SyncPointInterval:  util.GetOrZero(cfConfig.SyncPointInterval),
+			SyncPointRetention: util.GetOrZero(cfConfig.SyncPointRetention),
+		}
 	}
 
 	// TODO: 最后去更新一下 filter 的内部 NewFilter 函数，现在是在套壳适配
@@ -122,10 +138,23 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 	// TODO: 这些后续需要等有第一个 table 来的时候再初始化, 对于纯空的 event dispatcher manager 不要直接创建为好
 	manager.heartBeatTask = newHeartBeatTask(manager)
 
-	manager.InitSink()
+	err = manager.InitSink()
+	if err != nil {
+		log.Error("init sink failed", zap.Error(err))
+		return nil
+	}
 
 	manager.wg.Add(1)
-	go manager.CollectHeartbeatInfoWhenStatesChanged(ctx)
+	go func() {
+		defer manager.wg.Done()
+		manager.CollectHeartbeatInfoWhenStatesChanged(ctx)
+	}()
+
+	manager.wg.Add(1)
+	go func() {
+		defer manager.wg.Done()
+		manager.CollectBlockStatusRequest(ctx)
+	}()
 	return manager
 }
 
@@ -181,16 +210,6 @@ func (e *EventDispatcherManager) close() {
 	log.Info("event dispatcher manager closed", zap.Stringer("changefeedID", e.changefeedID))
 }
 
-/*
-func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) uint64 {
-	k := oracle.GetTimeFromTS(startTs).Sub(time.Unix(0, 0)) / syncPointInterval
-	if oracle.GetTimeFromTS(startTs).Sub(time.Unix(0, 0))%syncPointInterval != 0 || oracle.ExtractLogical(startTs) != 0 {
-		k += 1
-	}
-	return oracle.GoTimeToTS(time.Unix(0, 0).Add(k * syncPointInterval))
-}
-*/
-
 func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTs uint64, schemaID int64) *dispatcher.Dispatcher {
 	start := time.Now()
 	if _, ok := e.dispatcherMap.Get(id); ok {
@@ -198,7 +217,17 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 		return nil
 	}
 
-	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.filter, schemaID)
+	syncPointInfo := syncpoint.SyncPointInfo{
+		SyncPointConfig: e.syncPointConfig,
+		EnableSyncPoint: false,
+	}
+
+	if e.syncPointConfig != nil {
+		syncPointInfo.EnableSyncPoint = true
+		syncPointInfo.InitSyncPointTs = syncpoint.CalculateStartSyncPointTs(startTs, e.syncPointConfig.SyncPointInterval)
+	}
+
+	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.blockStatusesChan, e.filter, schemaID, e.schemaIDToDispatchers, &syncPointInfo)
 
 	if tableSpan.Equal(heartbeatpb.DDLSpan) {
 		e.tableTriggerEventDispatcher = dispatcher
@@ -214,7 +243,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 		},
 	)
 	e.dispatcherMap.Set(id, dispatcher)
-	e.GetStatusesChan() <- &heartbeatpb.TableSpanStatus{
+	e.statusesChan <- &heartbeatpb.TableSpanStatus{
 		ID:              id.ToPB(),
 		ComponentStatus: heartbeatpb.ComponentState_Working,
 	}
@@ -231,26 +260,60 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 	return dispatcher
 }
 
+func (e *EventDispatcherManager) CollectBlockStatusRequest(ctx context.Context) {
+	for {
+		blockStatusMessage := make([]*heartbeatpb.TableSpanBlockStatus, 0)
+		select {
+		case <-ctx.Done():
+			return
+		case blockStatus := <-e.blockStatusesChan:
+			blockStatusMessage = append(blockStatusMessage, blockStatus)
+
+			delay := time.NewTimer(10 * time.Millisecond)
+		loop:
+			for {
+				select {
+				case blockStatus := <-e.blockStatusesChan:
+					blockStatusMessage = append(blockStatusMessage, blockStatus)
+				case <-delay.C:
+					break loop
+				}
+			}
+
+			// Release resources promptly
+			if !delay.Stop() {
+				select {
+				case <-delay.C:
+				default:
+				}
+			}
+
+			var message heartbeatpb.BlockStatusRequest
+			message.ChangefeedID = e.changefeedID.ID
+			message.BlockStatuses = blockStatusMessage
+			e.blockStatusRequestQueue.Enqueue(&BlockStatusRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
+		}
+	}
+}
+
 // CollectHeartbeatInfoWhenStatesChanged use to collect the heartbeat info when GetTableSpanStatusesChan() get infos
 // It happenes when some dispatchers change status, such as --> working; --> stopped; --> stopping
 // Considering collect the heartbeat info is a time-consuming operation(we need to scan all the dispatchers),
 // We will not collect the heartbeat info as soon as we receive it, but will batch it appropriately.
 func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx context.Context) {
-	defer e.wg.Done()
-
 	for {
 		statusMessage := make([]*heartbeatpb.TableSpanStatus, 0)
 		select {
 		case <-ctx.Done():
 			return
-		case tableSpanStatus := <-e.GetStatusesChan():
+		case tableSpanStatus := <-e.statusesChan:
 			statusMessage = append(statusMessage, tableSpanStatus)
 
 			delay := time.NewTimer(10 * time.Millisecond)
 		loop:
 			for {
 				select {
-				case tableSpanStatus := <-e.GetStatusesChan():
+				case tableSpanStatus := <-e.statusesChan:
 					statusMessage = append(statusMessage, tableSpanStatus)
 				case <-delay.C:
 					break loop
@@ -268,7 +331,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx conte
 			var message heartbeatpb.HeartBeatRequest
 			message.ChangefeedID = e.changefeedID.ID
 			message.Statuses = statusMessage
-			e.GetHeartbeatRequestQueue().Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
+			e.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
 		}
 	}
 }
@@ -283,7 +346,7 @@ func (e *EventDispatcherManager) RemoveDispatcher(id common.DispatcherID) {
 		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RemoveDispatcher(dispatcher)
 		dispatcher.Remove()
 	} else {
-		e.GetStatusesChan() <- &heartbeatpb.TableSpanStatus{
+		e.statusesChan <- &heartbeatpb.TableSpanStatus{
 			ID:              id.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Stopped,
 		}
@@ -392,10 +455,6 @@ func (e *EventDispatcherManager) GetDispatcherMap() *DispatcherMap {
 	return e.dispatcherMap
 }
 
-func (e *EventDispatcherManager) GetSchemaIDToDispatchers() *SchemaIDToDispatchers {
-	return e.schemaIDToDispatchers
-}
-
 func (e *EventDispatcherManager) GetMaintainerID() node.ID {
 	return e.maintainerID
 }
@@ -404,16 +463,16 @@ func (e *EventDispatcherManager) GetChangeFeedID() model.ChangeFeedID {
 	return e.changefeedID
 }
 
-func (e *EventDispatcherManager) GetHeartbeatRequestQueue() *HeartbeatRequestQueue {
-	return e.heartbeatRequestQueue
-}
-
 func (e *EventDispatcherManager) SetHeartbeatRequestQueue(heartbeatRequestQueue *HeartbeatRequestQueue) {
 	e.heartbeatRequestQueue = heartbeatRequestQueue
 }
 
-func (e *EventDispatcherManager) GetStatusesChan() chan *heartbeatpb.TableSpanStatus {
-	return e.statusesChan
+func (e *EventDispatcherManager) SetBlockStatusRequestQueue(blockStatusRequestQueue *BlockStatusRequestQueue) {
+	e.blockStatusRequestQueue = blockStatusRequestQueue
+}
+
+func (e *EventDispatcherManager) GetBlockStatuses() chan *heartbeatpb.TableSpanBlockStatus {
+	return e.blockStatusesChan
 }
 
 func (e *EventDispatcherManager) SetMaintainerID(maintainerID node.ID) {
@@ -422,7 +481,7 @@ func (e *EventDispatcherManager) SetMaintainerID(maintainerID node.ID) {
 
 // Get all dispatchers id of the specified schemaID. Including the tableTriggerEventDispatcherID if exists.
 func (e *EventDispatcherManager) GetAllDispatchers(schemaID int64) []common.DispatcherID {
-	dispatcherIDs := e.GetSchemaIDToDispatchers().GetDispatcherIDs(schemaID)
+	dispatcherIDs := e.schemaIDToDispatchers.GetDispatcherIDs(schemaID)
 	if e.tableTriggerEventDispatcher != nil {
 		dispatcherIDs = append(dispatcherIDs, e.tableTriggerEventDispatcher.GetId())
 	}
@@ -469,45 +528,4 @@ func (d *DispatcherMap) ForEach(fn func(id common.DispatcherID, dispatcher *disp
 		fn(key.(common.DispatcherID), value.(*dispatcher.Dispatcher))
 		return true
 	})
-}
-
-type SchemaIDToDispatchers struct {
-	mutex sync.RWMutex
-	m     map[int64]map[common.DispatcherID]interface{}
-}
-
-func newSchemaIDToDispatchers() *SchemaIDToDispatchers {
-	return &SchemaIDToDispatchers{
-		m: make(map[int64]map[common.DispatcherID]interface{}),
-	}
-}
-
-func (s *SchemaIDToDispatchers) Set(schemaID int64, dispatcherID common.DispatcherID) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	if _, ok := s.m[schemaID]; !ok {
-		s.m[schemaID] = make(map[common.DispatcherID]interface{})
-	}
-	s.m[schemaID][dispatcherID] = struct{}{}
-}
-
-func (s *SchemaIDToDispatchers) Delete(schemaID int64, dispatcherID common.DispatcherID) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	if _, ok := s.m[schemaID]; ok {
-		delete(s.m[schemaID], dispatcherID)
-	}
-}
-
-func (s *SchemaIDToDispatchers) GetDispatcherIDs(schemaID int64) []common.DispatcherID {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-	if ids, ok := s.m[schemaID]; ok {
-		dispatcherIDs := make([]common.DispatcherID, 0, len(ids))
-		for id := range ids {
-			dispatcherIDs = append(dispatcherIDs, id)
-		}
-		return dispatcherIDs
-	}
-	return nil
 }

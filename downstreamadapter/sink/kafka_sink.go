@@ -23,6 +23,7 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/worker"
 	"github.com/flowbehappy/tigate/downstreamadapter/worker/dmlproducer"
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	ticonfig "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/sink/codec"
@@ -30,6 +31,7 @@ import (
 	v2 "github.com/flowbehappy/tigate/pkg/sink/kafka/v2"
 	tiutils "github.com/flowbehappy/tigate/pkg/sink/util"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/sink/ddlsink/mq/ddlproducer"
 	"github.com/pingcap/tiflow/cdc/sink/util"
@@ -148,7 +150,7 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, sinkConfig 
 	}, nil
 }
 
-func (s *KafkaSink) AddDMLEvent(event *common.DMLEvent, tableProgress *types.TableProgress) {
+func (s *KafkaSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress) {
 	if event.Len() == 0 {
 		return
 	}
@@ -156,16 +158,21 @@ func (s *KafkaSink) AddDMLEvent(event *common.DMLEvent, tableProgress *types.Tab
 	s.dmlWorker.GetEventChan() <- event
 }
 
-func (s *KafkaSink) PassDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress) {
+func (s *KafkaSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
 	tableProgress.Pass(event)
 }
 
-func (s *KafkaSink) AddDDLAndSyncPointEvent(event *common.DDLEvent, tableProgress *types.TableProgress) {
+func (s *KafkaSink) AddBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
 	tableProgress.Add(event)
-	s.ddlWorker.GetDDLEventChan() <- event
+	switch event.(type) {
+	case *commonEvent.DDLEvent:
+		s.ddlWorker.GetDDLEventChan() <- event.(*commonEvent.DDLEvent)
+	case *commonEvent.SyncPointEvent:
+		log.Error("Kafkasink doesn't support Sync Point Event")
+	}
 }
 
-func (s *KafkaSink) AddCheckpointTs(ts uint64, tableNames []*common.SchemaTableName) {
+func (s *KafkaSink) AddCheckpointTs(ts uint64, tableNames []*commonEvent.SchemaTableName) {
 	s.ddlWorker.GetCheckpointInfoChan() <- &worker.CheckpointInfo{Ts: ts, TableNames: tableNames}
 }
 

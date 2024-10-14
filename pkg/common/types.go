@@ -15,6 +15,14 @@ var DefaultEndian = binary.LittleEndian
 type Ts = uint64
 type TableID = int64
 
+type CoordinatorID string
+
+func (id CoordinatorID) String() string { return string(id) }
+
+type MaintainerID string
+
+func (m MaintainerID) String() string { return string(m) }
+
 type DispatcherID GID
 
 func NewDispatcherID() DispatcherID {
@@ -132,4 +140,11 @@ func (g GID) String() string {
 	buf.WriteString(strconv.FormatUint(g.low, 10))
 	buf.WriteString(strconv.FormatUint(g.high, 10))
 	return buf.String()
+}
+
+func NewGIDWithValue(low uint64, high uint64) GID {
+	return GID{
+		low:  low,
+		high: high,
+	}
 }

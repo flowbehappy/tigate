@@ -11,12 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package maintainer
+package bootstrap
 
 import (
-	"github.com/flowbehappy/tigate/pkg/node"
 	"testing"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/messaging"
@@ -24,7 +25,7 @@ import (
 )
 
 func TestHandleBootstrapResponse(t *testing.T) {
-	b := NewBootstrapper("test", func(id node.ID) *messaging.TargetMessage {
+	b := NewBootstrapper[heartbeatpb.MaintainerBootstrapResponse]("test", func(id node.ID) *messaging.TargetMessage {
 		return &messaging.TargetMessage{}
 	})
 	msgs := b.HandleNewNodes([]*node.Info{{ID: "ab"}, {ID: "cd"}})
@@ -60,7 +61,7 @@ func TestHandleBootstrapResponse(t *testing.T) {
 }
 
 func TestAddNewNode(t *testing.T) {
-	b := NewBootstrapper("test", func(id node.ID) *messaging.TargetMessage {
+	b := NewBootstrapper[heartbeatpb.MaintainerBootstrapResponse]("test", func(id node.ID) *messaging.TargetMessage {
 		return &messaging.TargetMessage{}
 	})
 	msgs := b.HandleNewNodes([]*node.Info{{ID: "ab"}})
@@ -75,7 +76,7 @@ func TestAddNewNode(t *testing.T) {
 }
 
 func TestHandleRemoveNodes(t *testing.T) {
-	b := NewBootstrapper("test", func(id node.ID) *messaging.TargetMessage {
+	b := NewBootstrapper[heartbeatpb.MaintainerBootstrapResponse]("test", func(id node.ID) *messaging.TargetMessage {
 		return &messaging.TargetMessage{}
 	})
 	msgs := b.HandleNewNodes([]*node.Info{{ID: "ab"}, {ID: "cd"}})
@@ -96,7 +97,7 @@ func TestHandleRemoveNodes(t *testing.T) {
 }
 
 func TestResendBootstrapMessage(t *testing.T) {
-	b := NewBootstrapper("test", func(id node.ID) *messaging.TargetMessage {
+	b := NewBootstrapper[heartbeatpb.MaintainerBootstrapResponse]("test", func(id node.ID) *messaging.TargetMessage {
 		return &messaging.TargetMessage{
 			To: id,
 		}
@@ -119,7 +120,7 @@ func TestResendBootstrapMessage(t *testing.T) {
 }
 
 func TestCheckAllNodeInitialized(t *testing.T) {
-	b := NewBootstrapper("test", func(id node.ID) *messaging.TargetMessage {
+	b := NewBootstrapper[heartbeatpb.MaintainerBootstrapResponse]("test", func(id node.ID) *messaging.TargetMessage {
 		return &messaging.TargetMessage{}
 	})
 	msgs := b.HandleNewNodes([]*node.Info{{ID: "ab"}})
@@ -135,7 +136,7 @@ func TestCheckAllNodeInitialized(t *testing.T) {
 }
 
 func TestGetAllNodes(t *testing.T) {
-	b := NewBootstrapper("test", func(id node.ID) *messaging.TargetMessage {
+	b := NewBootstrapper[heartbeatpb.MaintainerBootstrapResponse]("test", func(id node.ID) *messaging.TargetMessage {
 		return &messaging.TargetMessage{}
 	})
 	b.HandleNewNodes([]*node.Info{{ID: "ab"}, {ID: "cd"}})

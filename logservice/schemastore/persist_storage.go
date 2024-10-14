@@ -18,12 +18,14 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -56,6 +58,8 @@ type persistentStorage struct {
 	upperBoundChanged bool
 
 	tableMap map[int64]*BasicTableInfo
+
+	partitionMap map[int64]BasicPartitionInfo
 
 	// schemaID -> database info
 	// it contains all databases and deleted databases
@@ -98,7 +102,9 @@ func newPersistentStorage(
 	}
 
 	// TODO: update pebble options
-	db, err := pebble.Open(dbPath, &pebble.Options{})
+	db, err := pebble.Open(dbPath, &pebble.Options{
+		DisableWAL: true,
+	})
 	if err != nil {
 		log.Fatal("open db failed", zap.Error(err))
 	}
@@ -129,6 +135,7 @@ func newPersistentStorage(
 		gcTs:                   gcTs,
 		upperBound:             upperBound,
 		tableMap:               make(map[int64]*BasicTableInfo),
+		partitionMap:           make(map[int64]BasicPartitionInfo),
 		databaseMap:            make(map[int64]*BasicDatabaseInfo),
 		tablesDDLHistory:       make(map[int64][]uint64),
 		tableTriggerDDLHistory: make([]uint64, 0),
@@ -162,13 +169,15 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 
 	var err error
 	// TODO: update pebble options
-	if p.db, err = pebble.Open(dbPath, &pebble.Options{}); err != nil {
+	if p.db, err = pebble.Open(dbPath, &pebble.Options{
+		DisableWAL: true,
+	}); err != nil {
 		log.Fatal("open db failed", zap.Error(err))
 	}
 	log.Info("schema store initialize from kv storage begin",
 		zap.Uint64("snapTs", gcTs))
 
-	if p.databaseMap, p.tableMap, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs); err != nil {
+	if p.databaseMap, p.tableMap, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs, true); err != nil {
 		// TODO: retry
 		log.Fatal("fail to initialize from kv snapshot")
 	}
@@ -185,7 +194,7 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 }
 
 func (p *persistentStorage) initializeFromDisk() {
-	cleanObseleteData(p.db, 0, p.gcTs)
+	cleanObsoleteData(p.db, 0, p.gcTs)
 
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
@@ -195,7 +204,7 @@ func (p *persistentStorage) initializeFromDisk() {
 		log.Fatal("load database info from disk failed")
 	}
 
-	if p.tableMap, err = loadTablesInKVSnap(storageSnap, p.gcTs); err != nil {
+	if p.tableMap, p.partitionMap, err = loadTablesInKVSnap(storageSnap, p.gcTs, p.databaseMap); err != nil {
 		log.Fatal("load tables in kv snapshot failed")
 	}
 
@@ -204,14 +213,15 @@ func (p *persistentStorage) initializeFromDisk() {
 		p.gcTs,
 		p.upperBound.FinishedDDLTs,
 		p.databaseMap,
-		p.tableMap); err != nil {
+		p.tableMap,
+		p.partitionMap); err != nil {
 		log.Fatal("fail to initialize from disk")
 	}
 }
 
 // getAllPhysicalTables returns all physical tables in the snapshot
 // caller must ensure current resolve ts is larger than snapTs
-func (p *persistentStorage) getAllPhysicalTables(snapTs uint64, tableFilter filter.Filter) ([]common.Table, error) {
+func (p *persistentStorage) getAllPhysicalTables(snapTs uint64, tableFilter filter.Filter) ([]commonEvent.Table, error) {
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
 
@@ -226,9 +236,9 @@ func (p *persistentStorage) getAllPhysicalTables(snapTs uint64, tableFilter filt
 	defer func() {
 		log.Info("getAllPhysicalTables finish",
 			zap.Uint64("snapTs", snapTs),
-			zap.Any("duration", time.Since(start).Seconds()))
+			zap.Any("duration(s)", time.Since(start).Seconds()))
 	}()
-	return loadAllPhysicalTablesInSnap(storageSnap, gcTs, snapTs, tableFilter)
+	return loadAllPhysicalTablesAtTs(storageSnap, gcTs, snapTs, tableFilter)
 }
 
 // only return when table info is initialized
@@ -266,6 +276,8 @@ func (p *persistentStorage) unregisterTable(tableID int64) error {
 			return fmt.Errorf(fmt.Sprintf("table %d not found", tableID))
 		}
 		delete(p.tableInfoStoreMap, tableID)
+		log.Info("unregister table",
+			zap.Int64("tableID", tableID))
 	}
 	return nil
 }
@@ -281,26 +293,25 @@ func (p *persistentStorage) getTableInfo(tableID int64, ts uint64) (*common.Tabl
 }
 
 // TODO: not all ddl in p.tablesDDLHistory should be sent to the dispatcher, verify dispatcher will set the right range
-func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]common.DDLEvent, error) {
+func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]commonEvent.DDLEvent, error) {
 	// TODO: check a dispatcher from created table start ts > finish ts of create table
 	// TODO: check a dispatcher from rename table start ts > finish ts of rename table(is it possible?)
 	p.mu.RLock()
 	if start < p.gcTs {
-		p.mu.Unlock()
+		p.mu.RUnlock()
 		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
 	}
-	history, ok := p.tablesDDLHistory[tableID]
-	if !ok {
+	// fast check
+	history := p.tablesDDLHistory[tableID]
+	if len(history) == 0 || start >= history[len(history)-1] {
 		p.mu.RUnlock()
 		return nil, nil
 	}
 	index := sort.Search(len(history), func(i int) bool {
 		return history[i] > start
 	})
-	// no events to read
 	if index == len(history) {
-		p.mu.RUnlock()
-		return nil, nil
+		log.Panic("should not happen")
 	}
 	// copy all target ts to a new slice
 	allTargetTs := make([]uint64, 0)
@@ -315,11 +326,12 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 	p.mu.RUnlock()
 
 	// TODO: if the first event is a create table ddl, return error?
-	events := make([]common.DDLEvent, 0, len(allTargetTs))
+	events := make([]commonEvent.DDLEvent, 0, len(allTargetTs))
 	for _, ts := range allTargetTs {
 		rawEvent := readPersistedDDLEvent(storageSnap, ts)
+		// TODO: if ExtraSchemaName and other fields are empty, does it cause any problem?
 		if tableFilter != nil &&
-			tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.SchemaName, rawEvent.TableName) &&
+			tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.CurrentSchemaName, rawEvent.CurrentTableName) &&
 			tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.PrevSchemaName, rawEvent.PrevTableName) {
 			continue
 		}
@@ -335,7 +347,7 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 	return events, nil
 }
 
-func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]common.DDLEvent, error) {
+func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]commonEvent.DDLEvent, error) {
 	// get storage snap before check start < gcTs
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
@@ -347,7 +359,12 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 	}
 	p.mu.Unlock()
 
-	events := make([]common.DDLEvent, 0)
+	// fast check
+	if len(p.tableTriggerDDLHistory) == 0 || start >= p.tableTriggerDDLHistory[len(p.tableTriggerDDLHistory)-1] {
+		return nil, nil
+	}
+
+	events := make([]commonEvent.DDLEvent, 0)
 	nextStartTs := start
 	for {
 		allTargetTs := make([]uint64, 0, limit)
@@ -377,10 +394,24 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 		}
 		for _, ts := range allTargetTs {
 			rawEvent := readPersistedDDLEvent(storageSnap, ts)
-			if tableFilter != nil &&
-				tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.SchemaName, rawEvent.TableName) &&
-				tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.PrevSchemaName, rawEvent.PrevTableName) {
-				continue
+			if tableFilter != nil {
+				if rawEvent.Type == byte(model.ActionCreateTables) {
+					allFiltered := true
+					for _, tableInfo := range rawEvent.MultipleTableInfos {
+						if !tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.CurrentSchemaName, tableInfo.Name.O) {
+							allFiltered = false
+							break
+						}
+					}
+					if allFiltered {
+						continue
+					}
+				} else {
+					if tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.CurrentSchemaName, rawEvent.CurrentTableName) &&
+						tableFilter.ShouldDiscardDDL(model.ActionType(rawEvent.Type), rawEvent.PrevSchemaName, rawEvent.PrevTableName) {
+						continue
+					}
+				}
 			}
 			events = append(events, buildDDLEvent(&rawEvent, tableFilter))
 		}
@@ -401,24 +432,17 @@ func (p *persistentStorage) buildVersionedTableInfoStore(
 
 	p.mu.RLock()
 	kvSnapVersion := p.gcTs
-	tableBasicInfo, ok := p.tableMap[tableID]
-	if !ok {
-		log.Panic("table not found", zap.Int64("tableID", tableID))
-	}
-	inKVSnap := tableBasicInfo.InKVSnap
 	var allDDLFinishedTs []uint64
 	allDDLFinishedTs = append(allDDLFinishedTs, p.tablesDDLHistory[tableID]...)
 	p.mu.RUnlock()
 
-	if inKVSnap {
-		if err := addTableInfoFromKVSnap(store, kvSnapVersion, storageSnap); err != nil {
-			return err
-		}
+	if err := addTableInfoFromKVSnap(store, kvSnapVersion, storageSnap); err != nil {
+		return err
 	}
 
 	for _, version := range allDDLFinishedTs {
 		ddlEvent := readPersistedDDLEvent(storageSnap, version)
-		store.applyDDLFromPersistStorage(ddlEvent)
+		store.applyDDLFromPersistStorage(&ddlEvent)
 	}
 	store.setTableInfoInitialized()
 	return nil
@@ -430,8 +454,10 @@ func addTableInfoFromKVSnap(
 	snap *pebble.Snapshot,
 ) error {
 	tableInfo := readTableInfoInKVSnap(snap, store.getTableID(), kvSnapVersion)
-	tableInfo.InitPreSQLs()
-	store.addInitialTableInfo(tableInfo)
+	if tableInfo != nil {
+		tableInfo.InitPreSQLs()
+		store.addInitialTableInfo(tableInfo)
+	}
 	return nil
 }
 
@@ -467,48 +493,50 @@ func (p *persistentStorage) doGc(gcTs uint64) error {
 	p.mu.Unlock()
 
 	start := time.Now()
-	_, tablesInKVSnap, err := writeSchemaSnapshotAndMeta(p.db, p.kvStorage, gcTs)
+	_, _, err := writeSchemaSnapshotAndMeta(p.db, p.kvStorage, gcTs, false)
 	if err != nil {
-		// TODO: retry
 		log.Warn("fail to write kv snapshot during gc",
 			zap.Uint64("gcTs", gcTs))
+		// TODO: return err and retry?
+		return nil
 	}
+	log.Info("gc finish write schema snapshot",
+		zap.Uint64("gcTs", gcTs),
+		zap.Any("duration", time.Since(start)))
 
-	// clean data in memeory before clean data on disk
-	p.cleanObseleteDataInMemory(gcTs, tablesInKVSnap)
-	cleanObseleteData(p.db, oldGcTs, gcTs)
+	// clean data in memory before clean data on disk
+	p.cleanObsoleteDataInMemory(gcTs)
+	log.Info("gc finish clean in memory data",
+		zap.Uint64("gcTs", gcTs),
+		zap.Any("duration", time.Since(start)))
 
+	cleanObsoleteData(p.db, oldGcTs, gcTs)
 	log.Info("gc finish",
 		zap.Uint64("gcTs", gcTs),
-		zap.Any("duration", time.Since(start).Seconds()))
+		zap.Any("duration", time.Since(start)))
 
 	return nil
 }
 
-func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64, tablesInKVSnap map[int64]*BasicTableInfo) {
+func (p *persistentStorage) cleanObsoleteDataInMemory(gcTs uint64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.gcTs = gcTs
 
-	for tableID := range tablesInKVSnap {
-		p.tableMap[tableID].InKVSnap = true
-	}
-
 	// clean tablesDDLHistory
-	for tableID, history := range p.tablesDDLHistory {
-		if _, ok := tablesInKVSnap[tableID]; !ok {
-			delete(p.tablesDDLHistory, tableID)
-			continue
-		}
-
-		i := sort.Search(len(history), func(i int) bool {
-			return history[i] > gcTs
+	tablesToRemove := make(map[int64]interface{})
+	for tableID := range p.tablesDDLHistory {
+		i := sort.Search(len(p.tablesDDLHistory[tableID]), func(i int) bool {
+			return p.tablesDDLHistory[tableID][i] > gcTs
 		})
-		if i == len(history) {
-			delete(p.tablesDDLHistory, tableID)
+		if i == len(p.tablesDDLHistory[tableID]) {
+			tablesToRemove[tableID] = nil
 			continue
 		}
-		p.tablesDDLHistory[tableID] = history[i:]
+		p.tablesDDLHistory[tableID] = p.tablesDDLHistory[tableID][i:]
+	}
+	for tableID := range tablesToRemove {
+		delete(p.tablesDDLHistory, tableID)
 	}
 
 	// clean tableTriggerDDLHistory
@@ -518,8 +546,16 @@ func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64, tablesInKVSna
 	p.tableTriggerDDLHistory = p.tableTriggerDDLHistory[i:]
 
 	// clean tableInfoStoreMap
-	for _, store := range p.tableInfoStoreMap {
-		store.gc(gcTs)
+	// Note: tableInfoStoreMap need to keep one version before gcTs,
+	//  so it has different gc logic with tablesDDLHistory
+	tablesToRemove = make(map[int64]interface{})
+	for tableID, store := range p.tableInfoStoreMap {
+		if needRemove := store.gc(gcTs); needRemove {
+			tablesToRemove[tableID] = nil
+		}
+	}
+	for tableID := range tablesToRemove {
+		delete(p.tableInfoStoreMap, tableID)
 	}
 }
 
@@ -558,46 +594,60 @@ func (p *persistentStorage) persistUpperBoundPeriodically(ctx context.Context) e
 	}
 }
 
-func (p *persistentStorage) handleSortedDDLEvents(ddlEvents ...PersistedDDLEvent) error {
-	// TODO: ignore some ddl event
-	// TODO: check ddl events are sorted
+func (p *persistentStorage) handleDDLJob(job *model.Job) error {
+	p.mu.Lock()
+
+	ddlEvent := buildPersistedDDLEventFromJob(job, p.databaseMap, p.tableMap, p.partitionMap)
+	if shouldSkipDDL(&ddlEvent, p.databaseMap, p.tableMap) {
+		p.mu.Unlock()
+		return nil
+	}
+
+	p.mu.Unlock()
+	// log.Info("handle resolved ddl event",
+	// 	zap.Int64("schemaID", ddlEvent.CurrentSchemaID),
+	// 	zap.Int64("tableID", ddlEvent.CurrentTableID),
+	// 	zap.Uint64("finishedTs", ddlEvent.FinishedTs),
+	// 	zap.Int64("schemaVersion", ddlEvent.SchemaVersion),
+	// 	zap.String("ddlType", model.ActionType(ddlEvent.Type).String()),
+	// 	zap.String("query", ddlEvent.Query))
+
+	// Note: need write ddl event to disk before update ddl history,
+	// becuase other goroutines may read ddl events from disk according to ddl history
+	writePersistedDDLEvent(p.db, &ddlEvent)
 
 	p.mu.Lock()
-	for i := range ddlEvents {
-		// even if the ddl is skipped here, it can still be written to disk.
-		// because when apply this ddl at restart, it will be skipped again.
-		if shouldSkipDDL(&ddlEvents[i], p.databaseMap, p.tableMap) {
-			continue
-		}
-
-		completePersistedDDLEvent(&ddlEvents[i], p.databaseMap, p.tableMap)
-		var err error
-		if p.tableTriggerDDLHistory, err = updateDDLHistory(
-			&ddlEvents[i],
-			p.databaseMap,
-			p.tableMap,
-			p.tablesDDLHistory,
-			p.tableTriggerDDLHistory); err != nil {
-			return err
-		}
-		if err := updateDatabaseInfoAndTableInfo(&ddlEvents[i], p.databaseMap, p.tableMap); err != nil {
-			return err
-		}
-		if err := updateRegisteredTableInfoStore(ddlEvents[i], p.tableInfoStoreMap); err != nil {
-			return err
-		}
+	var err error
+	// Note: `updateDDLHistory` must be before `updateDatabaseInfoAndTableInfo`,
+	// because `updateDDLHistory` will refer to the info in databaseMap and tableMap,
+	// and `updateDatabaseInfoAndTableInfo` may delete some info from databaseMap and tableMap
+	if p.tableTriggerDDLHistory, err = updateDDLHistory(
+		&ddlEvent,
+		p.databaseMap,
+		p.tableMap,
+		p.tablesDDLHistory,
+		p.tableTriggerDDLHistory); err != nil {
+		p.mu.Unlock()
+		return err
+	}
+	if err := updateDatabaseInfoAndTableInfo(&ddlEvent, p.databaseMap, p.tableMap, p.partitionMap); err != nil {
+		p.mu.Unlock()
+		return err
+	}
+	if err := updateRegisteredTableInfoStore(&ddlEvent, p.tableInfoStoreMap); err != nil {
+		p.mu.Unlock()
+		return err
 	}
 	p.mu.Unlock()
-
-	writePersistedDDLEvents(p.db, ddlEvents...)
 	return nil
 }
 
-func completePersistedDDLEvent(
-	event *PersistedDDLEvent,
+func buildPersistedDDLEventFromJob(
+	job *model.Job,
 	databaseMap map[int64]*BasicDatabaseInfo,
 	tableMap map[int64]*BasicTableInfo,
-) {
+	partitionMap map[int64]BasicPartitionInfo,
+) PersistedDDLEvent {
 	getSchemaName := func(schemaID int64) string {
 		databaseInfo, ok := databaseMap[schemaID]
 		if !ok {
@@ -623,80 +673,163 @@ func completePersistedDDLEvent(
 		return tableInfo.SchemaID
 	}
 
+	event := PersistedDDLEvent{
+		ID:              job.ID,
+		Type:            byte(job.Type),
+		CurrentSchemaID: job.SchemaID,
+		CurrentTableID:  job.TableID,
+		Query:           job.Query,
+		SchemaVersion:   job.BinlogInfo.SchemaVersion,
+		DBInfo:          job.BinlogInfo.DBInfo,
+		TableInfo:       job.BinlogInfo.TableInfo,
+		FinishedTs:      job.BinlogInfo.FinishedTS,
+		BDRRole:         job.BDRRole,
+		CDCWriteSource:  job.CDCWriteSource,
+	}
+
 	switch model.ActionType(event.Type) {
 	case model.ActionCreateSchema,
 		model.ActionDropSchema:
-		event.SchemaName = event.DBInfo.Name.O
+		log.Info("buildPersistedDDLEvent for create/drop schema",
+			zap.Any("type", event.Type),
+			zap.Int64("schemaID", event.CurrentSchemaID),
+			zap.String("schemaName", event.DBInfo.Name.O))
+		event.CurrentSchemaName = event.DBInfo.Name.O
 	case model.ActionCreateTable:
-		event.SchemaName = getSchemaName(event.SchemaID)
-		event.TableName = event.TableInfo.Name.O
+		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
+		event.CurrentTableName = event.TableInfo.Name.O
 	case model.ActionDropTable,
 		model.ActionAddColumn,
 		model.ActionDropColumn,
 		model.ActionAddIndex,
 		model.ActionDropIndex,
 		model.ActionAddForeignKey,
-		model.ActionDropForeignKey,
-		model.ActionModifyColumn,
-		model.ActionRebaseAutoID,
-		model.ActionSetDefaultValue,
+		model.ActionDropForeignKey:
+		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
+		event.CurrentTableName = getTableName(event.CurrentTableID)
+	case model.ActionTruncateTable:
+		// only table id change after truncate
+		event.PrevTableID = event.CurrentTableID
+		event.CurrentTableID = event.TableInfo.ID
+		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
+		event.CurrentTableName = getTableName(event.PrevTableID)
+		if isPartitionTable(event.TableInfo) {
+			for id := range partitionMap[event.PrevTableID] {
+				event.PrevPartitions = append(event.PrevPartitions, id)
+			}
+		}
+	case model.ActionModifyColumn,
+		model.ActionRebaseAutoID:
+		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
+		event.CurrentTableName = getTableName(event.CurrentTableID)
+	case model.ActionRenameTable:
+		// Note: schema id/schema name/table name may be changed or not
+		// table id does not change, we use it to get the table's prev schema id/name and table name
+		event.PrevSchemaID = getSchemaID(event.CurrentTableID)
+		event.PrevSchemaName = getSchemaName(event.PrevSchemaID)
+		event.PrevTableName = getTableName(event.CurrentTableID)
+		// get the table's current schema name and table name from the ddl job
+		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
+		event.CurrentTableName = event.TableInfo.Name.O
+	case model.ActionSetDefaultValue,
 		model.ActionShardRowID,
 		model.ActionModifyTableComment,
 		model.ActionRenameIndex:
-		event.SchemaName = getSchemaName(event.SchemaID)
-		event.TableName = getTableName(event.TableID)
-	case model.ActionTruncateTable:
-		event.SchemaName = getSchemaName(event.SchemaID)
-		event.TableName = getTableName(event.TableID)
-		// TODO: different with tidb, will it be confusing?
-		event.PrevTableID = event.TableID
-		event.TableID = event.TableInfo.ID
-	case model.ActionRenameTable:
-		event.PrevSchemaID = getSchemaID(event.TableID)
-		event.PrevSchemaName = getSchemaName(event.PrevSchemaID)
-		event.PrevTableName = getTableName(event.TableID)
-		// TODO: is the following SchemaName and TableName correct?
-		event.SchemaName = getSchemaName(event.SchemaID)
-		event.TableName = event.TableInfo.Name.O
+		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
+		event.CurrentTableName = getTableName(event.CurrentTableID)
+	case model.ActionAddTablePartition,
+		model.ActionDropTablePartition:
+		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
+		event.CurrentTableName = getTableName(event.CurrentTableID)
+		for id := range partitionMap[event.CurrentTableID] {
+			event.PrevPartitions = append(event.PrevPartitions, id)
+		}
 	case model.ActionCreateView:
 		// ignore
+	case model.ActionTruncateTablePartition:
+		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
+		event.CurrentTableName = getTableName(event.CurrentTableID)
+		for id := range partitionMap[event.CurrentTableID] {
+			event.PrevPartitions = append(event.PrevPartitions, id)
+		}
+	case model.ActionExchangeTablePartition:
+		event.PrevSchemaID = event.CurrentSchemaID
+		event.PrevTableID = event.CurrentTableID
+		event.PrevSchemaName = getSchemaName(event.PrevSchemaID)
+		event.PrevTableName = getTableName(event.PrevTableID)
+		event.CurrentTableID = event.TableInfo.ID
+		event.CurrentSchemaID = getSchemaID(event.CurrentTableID)
+		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
+		event.CurrentTableName = getTableName(event.CurrentTableID)
+		for id := range partitionMap[event.CurrentTableID] {
+			event.PrevPartitions = append(event.PrevPartitions, id)
+		}
+	case model.ActionCreateTables:
+		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
+		event.MultipleTableInfos = job.BinlogInfo.MultipleTableInfos
+	case model.ActionReorganizePartition:
+		event.CurrentSchemaName = getSchemaName(event.CurrentSchemaID)
+		event.CurrentTableName = getTableName(event.CurrentTableID)
+		for id := range partitionMap[event.CurrentTableID] {
+			event.PrevPartitions = append(event.PrevPartitions, id)
+		}
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", event.Type),
 			zap.String("DDL", event.Query))
 	}
+	return event
 }
 
-// TODO: add some comment to explain why we should skip some ddl
 func shouldSkipDDL(
 	event *PersistedDDLEvent,
 	databaseMap map[int64]*BasicDatabaseInfo,
 	tableMap map[int64]*BasicTableInfo,
 ) bool {
 	switch model.ActionType(event.Type) {
+	// TODO: add some comment to explain why and when we should skip ActionCreateSchema/ActionCreateTable
 	case model.ActionCreateSchema:
-		if _, ok := databaseMap[event.SchemaID]; ok {
+		if _, ok := databaseMap[event.CurrentSchemaID]; ok {
 			log.Warn("database already exists. ignore DDL ",
 				zap.String("DDL", event.Query),
 				zap.Int64("jobID", event.ID),
-				zap.Int64("schemaID", event.SchemaID),
+				zap.Int64("schemaID", event.CurrentSchemaID),
 				zap.Uint64("finishTs", event.FinishedTs),
 				zap.Int64("jobSchemaVersion", event.SchemaVersion))
 			return true
 		}
 	case model.ActionCreateTable:
-		if _, ok := tableMap[event.TableID]; ok {
+		// Note: partition table's logical table id is also in tableMap
+		if _, ok := tableMap[event.CurrentTableID]; ok {
 			log.Warn("table already exists. ignore DDL ",
 				zap.String("DDL", event.Query),
 				zap.Int64("jobID", event.ID),
-				zap.Int64("schemaID", event.SchemaID),
-				zap.Int64("tableID", event.TableID),
+				zap.Int64("schemaID", event.CurrentSchemaID),
+				zap.Int64("tableID", event.CurrentTableID),
 				zap.Uint64("finishTs", event.FinishedTs),
 				zap.Int64("jobSchemaVersion", event.SchemaVersion))
 			return true
 		}
+	case model.ActionAlterTableAttributes,
+		model.ActionAlterTablePartitionAttributes:
+		// Note: these ddls seems not useful to sync to downstream?
+		return true
 	}
+	// Note: create tables don't need to be ignore, because we won't receive it twice
 	return false
+}
+
+func isPartitionTable(tableInfo *model.TableInfo) bool {
+	// tableInfo may only be nil in unit test
+	return tableInfo != nil && tableInfo.Partition != nil
+}
+
+func getAllPartitionIDs(tableInfo *model.TableInfo) []int64 {
+	physicalIDs := make([]int64, 0, len(tableInfo.Partition.Definitions))
+	for _, partition := range tableInfo.Partition.Definitions {
+		physicalIDs = append(physicalIDs, partition.ID)
+	}
+	return physicalIDs
 }
 
 func updateDDLHistory(
@@ -706,45 +839,114 @@ func updateDDLHistory(
 	tablesDDLHistory map[int64][]uint64,
 	tableTriggerDDLHistory []uint64,
 ) ([]uint64, error) {
-	addTableHistory := func(tableID int64) {
+	appendTableHistory := func(tableID int64) {
 		tablesDDLHistory[tableID] = append(tablesDDLHistory[tableID], ddlEvent.FinishedTs)
+	}
+	appendPartitionsHistory := func(partitionIDs []int64) {
+		for _, partitionID := range partitionIDs {
+			tablesDDLHistory[partitionID] = append(tablesDDLHistory[partitionID], ddlEvent.FinishedTs)
+		}
 	}
 
 	switch model.ActionType(ddlEvent.Type) {
-	case model.ActionCreateSchema,
-		model.ActionCreateView:
+	case model.ActionCreateSchema:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
-		for tableID := range tableMap {
-			addTableHistory(tableID)
-		}
 	case model.ActionDropSchema:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
-		for tableID := range databaseMap[ddlEvent.SchemaID].Tables {
-			addTableHistory(tableID)
+		for tableID := range databaseMap[ddlEvent.CurrentSchemaID].Tables {
+			appendTableHistory(tableID)
 		}
 	case model.ActionCreateTable,
 		model.ActionDropTable:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
-		addTableHistory(ddlEvent.TableID)
+		// Note: for create table, this ddl event will not be sent to table dispatchers.
+		// add it to ddl history is just for building table info store.
+		if isPartitionTable(ddlEvent.TableInfo) {
+			// for partition table, we only care the ddl history of physical table ids.
+			appendPartitionsHistory(getAllPartitionIDs(ddlEvent.TableInfo))
+		} else {
+			appendTableHistory(ddlEvent.CurrentTableID)
+		}
 	case model.ActionAddColumn,
 		model.ActionDropColumn,
 		model.ActionAddIndex,
 		model.ActionDropIndex,
 		model.ActionAddForeignKey,
-		model.ActionDropForeignKey,
-		model.ActionModifyColumn,
-		model.ActionRebaseAutoID,
-		model.ActionSetDefaultValue,
+		model.ActionDropForeignKey:
+		if isPartitionTable(ddlEvent.TableInfo) {
+			appendPartitionsHistory(getAllPartitionIDs(ddlEvent.TableInfo))
+		} else {
+			appendTableHistory(ddlEvent.CurrentTableID)
+		}
+	case model.ActionTruncateTable:
+		if isPartitionTable(ddlEvent.TableInfo) {
+			appendPartitionsHistory(getAllPartitionIDs(ddlEvent.TableInfo))
+			appendPartitionsHistory(ddlEvent.PrevPartitions)
+		} else {
+			appendTableHistory(ddlEvent.CurrentTableID)
+			appendTableHistory(ddlEvent.PrevTableID)
+		}
+	case model.ActionModifyColumn,
+		model.ActionRebaseAutoID:
+		if isPartitionTable(ddlEvent.TableInfo) {
+			appendPartitionsHistory(getAllPartitionIDs(ddlEvent.TableInfo))
+		} else {
+			appendTableHistory(ddlEvent.CurrentTableID)
+		}
+	case model.ActionRenameTable:
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
+		if isPartitionTable(ddlEvent.TableInfo) {
+			appendPartitionsHistory(getAllPartitionIDs(ddlEvent.TableInfo))
+		} else {
+			appendTableHistory(ddlEvent.CurrentTableID)
+		}
+	case model.ActionSetDefaultValue,
 		model.ActionShardRowID,
 		model.ActionModifyTableComment,
 		model.ActionRenameIndex:
-		addTableHistory(ddlEvent.TableID)
-	case model.ActionTruncateTable:
-		addTableHistory(ddlEvent.TableID)
-		addTableHistory(ddlEvent.PrevTableID)
-	case model.ActionRenameTable:
+		if isPartitionTable(ddlEvent.TableInfo) {
+			appendPartitionsHistory(getAllPartitionIDs(ddlEvent.TableInfo))
+		} else {
+			appendTableHistory(ddlEvent.CurrentTableID)
+		}
+	case model.ActionAddTablePartition:
+		// all partitions include newly create partitions will receive this event
+		appendPartitionsHistory(getAllPartitionIDs(ddlEvent.TableInfo))
+	case model.ActionDropTablePartition:
+		// TODO: verify all partitions include dropped partitions will receive this event
+		appendPartitionsHistory(ddlEvent.PrevPartitions)
+	case model.ActionCreateView:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
-		addTableHistory(ddlEvent.TableID)
+		for tableID := range tableMap {
+			appendTableHistory(tableID)
+		}
+	case model.ActionTruncateTablePartition:
+		appendPartitionsHistory(ddlEvent.PrevPartitions)
+		newCreateIDs := getCreatedIDs(ddlEvent.PrevPartitions, getAllPartitionIDs(ddlEvent.TableInfo))
+		appendPartitionsHistory(newCreateIDs)
+	case model.ActionExchangeTablePartition:
+		droppedIDs := getDroppedIDs(ddlEvent.PrevPartitions, getAllPartitionIDs(ddlEvent.TableInfo))
+		if len(droppedIDs) != 1 {
+			log.Panic("exchange table partition should only drop one partition",
+				zap.Int64s("droppedIDs", droppedIDs))
+		}
+		appendTableHistory(ddlEvent.PrevTableID)
+		appendPartitionsHistory(droppedIDs)
+	case model.ActionCreateTables:
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
+		// it won't be send to table dispatchers, just for build version store
+		for _, info := range ddlEvent.MultipleTableInfos {
+			if isPartitionTable(info) {
+				// for partition table, we only care the ddl history of physical table ids.
+				appendPartitionsHistory(getAllPartitionIDs(info))
+			} else {
+				appendTableHistory(info.ID)
+			}
+		}
+	case model.ActionReorganizePartition:
+		appendPartitionsHistory(ddlEvent.PrevPartitions)
+		newCreateIDs := getCreatedIDs(ddlEvent.PrevPartitions, getAllPartitionIDs(ddlEvent.TableInfo))
+		appendPartitionsHistory(newCreateIDs)
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", ddlEvent.Type),
@@ -758,6 +960,7 @@ func updateDatabaseInfoAndTableInfo(
 	event *PersistedDDLEvent,
 	databaseMap map[int64]*BasicDatabaseInfo,
 	tableMap map[int64]*BasicTableInfo,
+	partitionMap map[int64]BasicPartitionInfo,
 ) error {
 	addTableToDB := func(schemaID int64, tableID int64) {
 		databaseInfo, ok := databaseMap[schemaID]
@@ -792,7 +995,6 @@ func updateDatabaseInfoAndTableInfo(
 		tableMap[tableID] = &BasicTableInfo{
 			SchemaID: schemaID,
 			Name:     event.TableInfo.Name.O,
-			InKVSnap: false,
 		}
 	}
 
@@ -803,45 +1005,127 @@ func updateDatabaseInfoAndTableInfo(
 
 	switch model.ActionType(event.Type) {
 	case model.ActionCreateSchema:
-		databaseMap[event.SchemaID] = &BasicDatabaseInfo{
-			Name:   event.SchemaName,
+		databaseMap[event.CurrentSchemaID] = &BasicDatabaseInfo{
+			Name:   event.CurrentSchemaName,
 			Tables: make(map[int64]bool),
 		}
 	case model.ActionDropSchema:
-		delete(databaseMap, event.SchemaID)
+		for tableID := range databaseMap[event.CurrentSchemaID].Tables {
+			delete(tableMap, tableID)
+			// TODO: test it
+			delete(partitionMap, tableID)
+		}
+		delete(databaseMap, event.CurrentSchemaID)
 	case model.ActionCreateTable:
-		createTable(event.SchemaID, event.TableID)
+		createTable(event.CurrentSchemaID, event.CurrentTableID)
+		if isPartitionTable(event.TableInfo) {
+			partitionInfo := make(BasicPartitionInfo)
+			for _, id := range getAllPartitionIDs(event.TableInfo) {
+				partitionInfo[id] = nil
+			}
+			partitionMap[event.CurrentTableID] = partitionInfo
+		}
 	case model.ActionDropTable:
-		dropTable(event.SchemaID, event.TableID)
+		dropTable(event.CurrentSchemaID, event.CurrentTableID)
+		if isPartitionTable(event.TableInfo) {
+			delete(partitionMap, event.CurrentTableID)
+		}
 	case model.ActionAddColumn,
 		model.ActionDropColumn,
 		model.ActionAddIndex,
 		model.ActionDropIndex,
 		model.ActionAddForeignKey,
-		model.ActionDropForeignKey,
-		model.ActionModifyColumn,
-		model.ActionRebaseAutoID:
+		model.ActionDropForeignKey:
 		// ignore
 	case model.ActionTruncateTable:
-		dropTable(event.SchemaID, event.PrevTableID)
-		createTable(event.SchemaID, event.TableID)
-	case model.ActionRenameTable:
-		oldSchemaID := tableMap[event.TableID].SchemaID
-		if oldSchemaID != event.SchemaID {
-			tableMap[event.TableID].SchemaID = event.SchemaID
-			removeTableFromDB(oldSchemaID, event.TableID)
-			addTableToDB(event.SchemaID, event.TableID)
+		dropTable(event.CurrentSchemaID, event.PrevTableID)
+		createTable(event.CurrentSchemaID, event.CurrentTableID)
+		if isPartitionTable(event.TableInfo) {
+			delete(partitionMap, event.PrevTableID)
+			partitionInfo := make(BasicPartitionInfo)
+			for _, id := range getAllPartitionIDs(event.TableInfo) {
+				partitionInfo[id] = nil
+			}
+			partitionMap[event.CurrentTableID] = partitionInfo
 		}
-		tableMap[event.TableID].Name = event.TableInfo.Name.O
+	case model.ActionModifyColumn,
+		model.ActionRebaseAutoID:
+		// ignore
+	case model.ActionRenameTable:
+		if event.PrevSchemaID != event.CurrentSchemaID {
+			tableMap[event.CurrentTableID].SchemaID = event.CurrentSchemaID
+			removeTableFromDB(event.PrevSchemaID, event.CurrentTableID)
+			addTableToDB(event.CurrentSchemaID, event.CurrentTableID)
+		}
+		tableMap[event.CurrentTableID].Name = event.CurrentTableName
 	case model.ActionSetDefaultValue,
 		model.ActionShardRowID,
 		model.ActionModifyTableComment,
-		model.ActionRenameIndex,
-		model.ActionCreateView:
-		// TODO
-		// seems can be ignored
+		model.ActionRenameIndex:
+		// TODO: verify can be ignored
 	case model.ActionAddTablePartition:
-		// TODO
+		newCreatedIDs := getCreatedIDs(event.PrevPartitions, getAllPartitionIDs(event.TableInfo))
+		for _, id := range newCreatedIDs {
+			partitionMap[event.CurrentTableID][id] = nil
+		}
+	case model.ActionDropTablePartition:
+		droppedIDs := getDroppedIDs(event.PrevPartitions, getAllPartitionIDs(event.TableInfo))
+		for _, id := range droppedIDs {
+			delete(partitionMap[event.CurrentTableID], id)
+		}
+	case model.ActionCreateView:
+		// ignore
+	case model.ActionTruncateTablePartition:
+		physicalIDs := getAllPartitionIDs(event.TableInfo)
+		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
+		for _, id := range droppedIDs {
+			delete(partitionMap[event.CurrentTableID], id)
+		}
+		newCreatedIDs := getCreatedIDs(event.PrevPartitions, physicalIDs)
+		for _, id := range newCreatedIDs {
+			partitionMap[event.CurrentTableID][id] = nil
+		}
+	case model.ActionExchangeTablePartition:
+		physicalIDs := getAllPartitionIDs(event.TableInfo)
+		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
+		if len(droppedIDs) != 1 {
+			log.Panic("exchange table partition should only drop one partition",
+				zap.Int64s("droppedIDs", droppedIDs))
+		}
+		targetPartitionID := droppedIDs[0]
+		dropTable(event.PrevSchemaID, event.PrevTableID)
+		createTable(event.PrevSchemaID, targetPartitionID)
+		delete(partitionMap[event.CurrentTableID], targetPartitionID)
+		partitionMap[event.CurrentTableID][event.PrevTableID] = nil
+	case model.ActionCreateTables:
+		if event.MultipleTableInfos == nil {
+			log.Panic("multiple table infos should not be nil")
+		}
+		for _, info := range event.MultipleTableInfos {
+			addTableToDB(event.CurrentSchemaID, info.ID)
+			tableMap[info.ID] = &BasicTableInfo{
+				SchemaID: event.CurrentSchemaID,
+				Name:     info.Name.O,
+			}
+			if isPartitionTable(info) {
+				partitionInfo := make(BasicPartitionInfo)
+				for _, id := range getAllPartitionIDs(info) {
+					partitionInfo[id] = nil
+				}
+				partitionMap[info.ID] = partitionInfo
+			}
+		}
+
+	case model.ActionReorganizePartition:
+		physicalIDs := getAllPartitionIDs(event.TableInfo)
+		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
+		for _, id := range droppedIDs {
+			delete(partitionMap[event.CurrentTableID], id)
+		}
+		newCreatedIDs := getCreatedIDs(event.PrevPartitions, physicalIDs)
+		for _, id := range newCreatedIDs {
+			partitionMap[event.CurrentTableID][id] = nil
+		}
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", event.Type),
@@ -852,33 +1136,164 @@ func updateDatabaseInfoAndTableInfo(
 }
 
 func updateRegisteredTableInfoStore(
-	event PersistedDDLEvent,
+	event *PersistedDDLEvent,
 	tableInfoStoreMap map[int64]*versionedTableInfoStore,
 ) error {
+	tryApplyDDLToStore := func() {
+		if isPartitionTable(event.TableInfo) {
+			allPhysicalIDs := getAllPartitionIDs(event.TableInfo)
+			for _, id := range allPhysicalIDs {
+				if store, ok := tableInfoStoreMap[id]; ok {
+					store.applyDDL(event)
+				}
+			}
+		} else {
+			if store, ok := tableInfoStoreMap[event.CurrentTableID]; ok {
+				store.applyDDL(event)
+			}
+		}
+	}
+
 	switch model.ActionType(event.Type) {
 	case model.ActionCreateSchema,
-		model.ActionDropSchema,
-		model.ActionCreateTable,
-		model.ActionAddIndex,
-		model.ActionDropIndex,
-		model.ActionAddForeignKey,
-		model.ActionDropForeignKey,
-		model.ActionRenameTable,
-		model.ActionCreateView:
+		model.ActionDropSchema:
 		// ignore
+	case model.ActionCreateTable:
+		if isPartitionTable(event.TableInfo) {
+			allPhysicalIDs := getAllPartitionIDs(event.TableInfo)
+			for _, id := range allPhysicalIDs {
+				if _, ok := tableInfoStoreMap[event.CurrentTableID]; ok {
+					log.Panic("newly created tables should not be registered",
+						zap.Int64("tableID", id))
+				}
+			}
+		} else {
+			if _, ok := tableInfoStoreMap[event.CurrentTableID]; ok {
+				log.Panic("newly created tables should not be registered",
+					zap.Int64("tableID", event.CurrentTableID))
+			}
+		}
 	case model.ActionDropTable,
 		model.ActionAddColumn,
-		model.ActionDropColumn,
-		model.ActionTruncateTable,
-		model.ActionModifyColumn,
-		model.ActionRebaseAutoID,
-		model.ActionSetDefaultValue,
-		model.ActionShardRowID,
+		model.ActionDropColumn:
+		tryApplyDDLToStore()
+	case model.ActionAddIndex,
+		model.ActionDropIndex,
+		model.ActionAddForeignKey,
+		model.ActionDropForeignKey:
+		// ignore
+	case model.ActionTruncateTable:
+		if isPartitionTable(event.TableInfo) {
+			for _, id := range event.PrevPartitions {
+				if store, ok := tableInfoStoreMap[id]; ok {
+					store.applyDDL(event)
+				}
+			}
+			allPhysicalIDs := getAllPartitionIDs(event.TableInfo)
+			for _, id := range allPhysicalIDs {
+				if _, ok := tableInfoStoreMap[id]; ok {
+					log.Panic("newly created tables should not be registered",
+						zap.Int64("tableID", event.CurrentTableID))
+				}
+			}
+		} else {
+			if store, ok := tableInfoStoreMap[event.PrevTableID]; ok {
+				store.applyDDL(event)
+			}
+			if _, ok := tableInfoStoreMap[event.CurrentTableID]; ok {
+				log.Panic("newly created tables should not be registered",
+					zap.Int64("tableID", event.CurrentTableID))
+			}
+		}
+	case model.ActionModifyColumn:
+		tryApplyDDLToStore()
+	case model.ActionRebaseAutoID:
+		// TODO: verify can be ignored
+	case model.ActionRenameTable:
+		// ignore
+	case model.ActionSetDefaultValue:
+		tryApplyDDLToStore()
+	case model.ActionShardRowID,
 		model.ActionModifyTableComment,
 		model.ActionRenameIndex:
-		store, ok := tableInfoStoreMap[event.TableID]
-		if ok {
+		// TODO: verify can be ignored
+	case model.ActionAddTablePartition:
+		newCreatedIDs := getCreatedIDs(event.PrevPartitions, getAllPartitionIDs(event.TableInfo))
+		for _, id := range newCreatedIDs {
+			if _, ok := tableInfoStoreMap[id]; ok {
+				log.Panic("newly created partitions should not be registered",
+					zap.Int64("partitionID", id))
+			}
+		}
+	case model.ActionDropTablePartition:
+		droppedIDs := getDroppedIDs(event.PrevPartitions, getAllPartitionIDs(event.TableInfo))
+		for _, id := range droppedIDs {
+			if store, ok := tableInfoStoreMap[id]; ok {
+				store.applyDDL(event)
+			}
+		}
+	case model.ActionCreateView:
+		// ignore
+	case model.ActionTruncateTablePartition:
+		physicalIDs := getAllPartitionIDs(event.TableInfo)
+		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
+		for _, id := range droppedIDs {
+			if store, ok := tableInfoStoreMap[id]; ok {
+				store.applyDDL(event)
+			}
+		}
+		newCreatedIDs := getCreatedIDs(event.PrevPartitions, physicalIDs)
+		for _, id := range newCreatedIDs {
+			if _, ok := tableInfoStoreMap[id]; ok {
+				log.Panic("newly created partitions should not be registered",
+					zap.Int64("partitionID", id))
+			}
+		}
+	case model.ActionExchangeTablePartition:
+		physicalIDs := getAllPartitionIDs(event.TableInfo)
+		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
+		if len(droppedIDs) != 1 {
+			log.Panic("exchange table partition should only drop one partition",
+				zap.Int64s("droppedIDs", droppedIDs))
+		}
+		targetPartitionID := droppedIDs[0]
+		if store, ok := tableInfoStoreMap[targetPartitionID]; ok {
 			store.applyDDL(event)
+		}
+		if store, ok := tableInfoStoreMap[event.PrevTableID]; ok {
+			store.applyDDL(event)
+		}
+	case model.ActionCreateTables:
+		for _, info := range event.MultipleTableInfos {
+			if isPartitionTable(info) {
+				for _, id := range getAllPartitionIDs(info) {
+					if _, ok := tableInfoStoreMap[id]; ok {
+						log.Panic("newly created tables should not be registered",
+							zap.Int64("tableID", id))
+					}
+				}
+			} else {
+				if _, ok := tableInfoStoreMap[info.ID]; ok {
+					log.Panic("newly created tables should not be registered",
+						zap.Int64("tableID", info.ID))
+				}
+			}
+
+		}
+	case model.ActionReorganizePartition:
+		physicalIDs := getAllPartitionIDs(event.TableInfo)
+		droppedIDs := getDroppedIDs(event.PrevPartitions, physicalIDs)
+		for _, id := range droppedIDs {
+			if store, ok := tableInfoStoreMap[id]; ok {
+				store.applyDDL(event)
+			}
+		}
+		newCreatedIDs := getCreatedIDs(event.PrevPartitions, physicalIDs)
+		for _, id := range newCreatedIDs {
+			if _, ok := tableInfoStoreMap[id]; ok {
+				log.Panic("newly created partitions should not be registered",
+					zap.Int64("partitionID", id))
+			}
 		}
 	default:
 		log.Panic("unknown ddl type",
@@ -888,135 +1303,463 @@ func updateRegisteredTableInfoStore(
 	return nil
 }
 
-func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) common.DDLEvent {
-	ddlEvent := common.DDLEvent{
-		Type:       rawEvent.Type,
-		SchemaID:   rawEvent.SchemaID,
-		TableID:    rawEvent.TableID,
-		SchemaName: rawEvent.SchemaName,
-		TableName:  rawEvent.TableName,
+func getCreatedIDs(oldIDs []int64, newIDs []int64) []int64 {
+	oldIDsMap := make(map[int64]interface{}, len(oldIDs))
+	for _, id := range oldIDs {
+		oldIDsMap[id] = nil
+	}
+	createdIDs := make([]int64, 0)
+	for _, id := range newIDs {
+		if _, ok := oldIDsMap[id]; !ok {
+			createdIDs = append(createdIDs, id)
+		}
+	}
+	return createdIDs
+}
+func getDroppedIDs(oldIDs []int64, newIDs []int64) []int64 {
+	return getCreatedIDs(newIDs, oldIDs)
+}
+
+func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commonEvent.DDLEvent {
+	ddlEvent := commonEvent.DDLEvent{
+		Type: rawEvent.Type,
+		// TODO: whether the following four fields are needed
+		SchemaID:   rawEvent.CurrentSchemaID,
+		TableID:    rawEvent.CurrentTableID,
+		SchemaName: rawEvent.CurrentSchemaName,
+		TableName:  rawEvent.CurrentTableName,
+
 		Query:      rawEvent.Query,
 		TableInfo:  rawEvent.TableInfo,
 		FinishedTs: rawEvent.FinishedTs,
 		TiDBOnly:   false,
 	}
-	// TODO: remove schema id when influcence type is normal
-	// TODO: respect filter for create table / drop table and more ddls
+
 	switch model.ActionType(rawEvent.Type) {
-	case model.ActionCreateSchema,
-		model.ActionAddColumn,
-		model.ActionDropColumn,
-		model.ActionAddIndex,
-		model.ActionDropIndex,
-		model.ActionAddForeignKey,
-		model.ActionDropForeignKey,
-		model.ActionModifyColumn,
-		model.ActionRebaseAutoID,
-		model.ActionSetDefaultValue,
-		model.ActionShardRowID,
-		model.ActionModifyTableComment,
-		model.ActionRenameIndex:
+	case model.ActionCreateSchema:
 		// ignore
 	case model.ActionDropSchema:
-		ddlEvent.NeedDroppedTables = &common.InfluencedTables{
-			InfluenceType: common.InfluenceTypeDB,
-			SchemaID:      rawEvent.SchemaID,
+		ddlEvent.NeedDroppedTables = &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeDB,
+			SchemaID:      rawEvent.CurrentSchemaID,
 		}
-		ddlEvent.TableNameChange = &common.TableNameChange{
-			DropDatabaseName: rawEvent.SchemaName,
+		ddlEvent.TableNameChange = &commonEvent.TableNameChange{
+			DropDatabaseName: rawEvent.CurrentSchemaName,
 		}
 	case model.ActionCreateTable:
-		// TODO: support create partition table
-		ddlEvent.NeedAddedTables = []common.Table{
-			{
-				SchemaID: rawEvent.SchemaID,
-				TableID:  rawEvent.TableID,
-			},
-		}
-		ddlEvent.TableNameChange = &common.TableNameChange{
-			AddName: []common.SchemaTableName{
+		if isPartitionTable(rawEvent.TableInfo) {
+			physicalIDs := getAllPartitionIDs(rawEvent.TableInfo)
+			ddlEvent.NeedAddedTables = make([]commonEvent.Table, 0, len(physicalIDs))
+			for _, id := range physicalIDs {
+				ddlEvent.NeedAddedTables = append(ddlEvent.NeedAddedTables, commonEvent.Table{
+					SchemaID: rawEvent.CurrentSchemaID,
+					TableID:  id,
+				})
+			}
+		} else {
+			ddlEvent.NeedAddedTables = []commonEvent.Table{
 				{
-					SchemaName: rawEvent.SchemaName,
-					TableName:  rawEvent.TableName,
+					SchemaID: rawEvent.CurrentSchemaID,
+					TableID:  rawEvent.CurrentTableID,
+				},
+			}
+		}
+		ddlEvent.TableNameChange = &commonEvent.TableNameChange{
+			AddName: []commonEvent.SchemaTableName{
+				{
+					SchemaName: rawEvent.CurrentSchemaName,
+					TableName:  rawEvent.CurrentTableName,
 				},
 			},
 		}
 	case model.ActionDropTable:
-		ddlEvent.BlockedTables = &common.InfluencedTables{
-			InfluenceType: common.InfluenceTypeNormal,
-			TableIDs:      []int64{rawEvent.TableID, heartbeatpb.DDLSpan.TableID},
-			SchemaID:      rawEvent.SchemaID,
+		if isPartitionTable(rawEvent.TableInfo) {
+			allPhysicalTableIDs := getAllPartitionIDs(rawEvent.TableInfo)
+			allPhysicalTableIDsAndDDLSpanID := make([]int64, 0, len(rawEvent.TableInfo.Partition.Definitions)+1)
+			allPhysicalTableIDsAndDDLSpanID = append(allPhysicalTableIDsAndDDLSpanID, allPhysicalTableIDs...)
+			allPhysicalTableIDsAndDDLSpanID = append(allPhysicalTableIDsAndDDLSpanID, heartbeatpb.DDLSpan.TableID)
+			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      allPhysicalTableIDsAndDDLSpanID,
+			}
+			ddlEvent.NeedDroppedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      allPhysicalTableIDs,
+			}
+		} else {
+			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      []int64{rawEvent.CurrentTableID, heartbeatpb.DDLSpan.TableID},
+			}
+			ddlEvent.NeedDroppedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      []int64{rawEvent.CurrentTableID},
+			}
 		}
-		ddlEvent.NeedDroppedTables = &common.InfluencedTables{
-			InfluenceType: common.InfluenceTypeNormal,
-			TableIDs:      []int64{rawEvent.TableID},
-			SchemaID:      rawEvent.SchemaID,
-		}
-		ddlEvent.TableNameChange = &common.TableNameChange{
-			DropName: []common.SchemaTableName{
+		ddlEvent.TableNameChange = &commonEvent.TableNameChange{
+			DropName: []commonEvent.SchemaTableName{
 				{
-					SchemaName: rawEvent.SchemaName,
-					TableName:  rawEvent.TableName,
+					SchemaName: rawEvent.CurrentSchemaName,
+					TableName:  rawEvent.CurrentTableName,
 				},
 			},
 		}
+	case model.ActionAddColumn,
+		model.ActionDropColumn,
+		model.ActionAddIndex,
+		model.ActionDropIndex,
+		model.ActionAddForeignKey,
+		model.ActionDropForeignKey:
+		// ignore
 	case model.ActionTruncateTable:
-		ddlEvent.NeedDroppedTables = &common.InfluencedTables{
-			InfluenceType: common.InfluenceTypeNormal,
-			TableIDs:      []int64{rawEvent.PrevTableID},
-			SchemaID:      rawEvent.SchemaID,
+		if isPartitionTable(rawEvent.TableInfo) {
+			if len(rawEvent.PrevPartitions) > 1 {
+				// if more than one partitions, we need block them
+				ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+					InfluenceType: commonEvent.InfluenceTypeNormal,
+					TableIDs:      rawEvent.PrevPartitions,
+				}
+			}
+			// Note: for truncate table, prev partitions must all be dropped.
+			ddlEvent.NeedDroppedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      rawEvent.PrevPartitions,
+			}
+			physicalIDs := getAllPartitionIDs(rawEvent.TableInfo)
+			ddlEvent.NeedAddedTables = make([]commonEvent.Table, 0, len(physicalIDs))
+			for _, id := range physicalIDs {
+				ddlEvent.NeedAddedTables = append(ddlEvent.NeedAddedTables, commonEvent.Table{
+					SchemaID: rawEvent.CurrentSchemaID,
+					TableID:  id,
+				})
+			}
+		} else {
+			ddlEvent.NeedDroppedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      []int64{rawEvent.PrevTableID},
+			}
+			ddlEvent.NeedAddedTables = []commonEvent.Table{
+				{
+					SchemaID: rawEvent.CurrentSchemaID,
+					TableID:  rawEvent.CurrentTableID,
+				},
+			}
 		}
-		ddlEvent.NeedAddedTables = []common.Table{
-			{
-				SchemaID: rawEvent.SchemaID,
-				TableID:  rawEvent.TableID,
-			},
-		}
+	case model.ActionModifyColumn,
+		model.ActionRebaseAutoID:
+		// ignore
 	case model.ActionRenameTable:
 		ignorePrevTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.PrevSchemaName, rawEvent.PrevTableName)
-		ignoreCurrentTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.SchemaName, rawEvent.TableName)
-		var addName, dropName []common.SchemaTableName
-		if !ignorePrevTable {
-			ddlEvent.BlockedTables = &common.InfluencedTables{
-				InfluenceType: common.InfluenceTypeNormal,
-				TableIDs:      []int64{rawEvent.TableID, heartbeatpb.DDLSpan.TableID},
-				SchemaID:      rawEvent.PrevSchemaID,
+		ignoreCurrentTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.CurrentSchemaName, rawEvent.CurrentTableName)
+		if isPartitionTable(rawEvent.TableInfo) {
+			allPhysicalIDs := getAllPartitionIDs(rawEvent.TableInfo)
+			if !ignorePrevTable {
+				allPhysicalIDsAndDDLSpanID := make([]int64, 0, len(allPhysicalIDs)+1)
+				allPhysicalIDsAndDDLSpanID = append(allPhysicalIDsAndDDLSpanID, allPhysicalIDs...)
+				allPhysicalIDsAndDDLSpanID = append(allPhysicalIDsAndDDLSpanID, heartbeatpb.DDLSpan.TableID)
+				ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+					InfluenceType: commonEvent.InfluenceTypeNormal,
+					TableIDs:      allPhysicalIDsAndDDLSpanID,
+				}
+				if !ignoreCurrentTable {
+					// check whether schema change
+					if rawEvent.PrevSchemaID != rawEvent.CurrentSchemaID {
+						ddlEvent.UpdatedSchemas = make([]commonEvent.SchemaIDChange, 0, len(allPhysicalIDs))
+						for _, id := range allPhysicalIDs {
+							ddlEvent.UpdatedSchemas = append(ddlEvent.UpdatedSchemas, commonEvent.SchemaIDChange{
+								TableID:     id,
+								OldSchemaID: rawEvent.PrevSchemaID,
+								NewSchemaID: rawEvent.CurrentSchemaID,
+							})
+						}
+					}
+				} else {
+					// the table is filtered out after rename table, we need drop the table
+					ddlEvent.NeedDroppedTables = &commonEvent.InfluencedTables{
+						InfluenceType: commonEvent.InfluenceTypeNormal,
+						TableIDs:      allPhysicalIDs,
+					}
+					ddlEvent.TableNameChange = &commonEvent.TableNameChange{
+						DropName: []commonEvent.SchemaTableName{
+							{
+								SchemaName: rawEvent.PrevSchemaName,
+								TableName:  rawEvent.PrevTableName,
+							},
+						},
+					}
+				}
+			} else if !ignoreCurrentTable {
+				// the table is filtered out before rename table, we need add table here
+				ddlEvent.NeedAddedTables = []commonEvent.Table{
+					{
+						SchemaID: rawEvent.CurrentSchemaID,
+						TableID:  rawEvent.CurrentTableID,
+					},
+				}
+				ddlEvent.NeedAddedTables = make([]commonEvent.Table, 0, len(allPhysicalIDs))
+				for _, id := range allPhysicalIDs {
+					ddlEvent.NeedAddedTables = append(ddlEvent.NeedAddedTables, commonEvent.Table{
+						SchemaID: rawEvent.CurrentSchemaID,
+						TableID:  id,
+					})
+				}
+				ddlEvent.TableNameChange = &commonEvent.TableNameChange{
+					AddName: []commonEvent.SchemaTableName{
+						{
+							SchemaName: rawEvent.CurrentSchemaName,
+							TableName:  rawEvent.CurrentTableName,
+						},
+					},
+				}
+			} else {
+				// if the table is both filtered out before and after rename table, the ddl should not be fetched
+				log.Panic("should not build a ignored rename table ddl",
+					zap.String("DDL", rawEvent.Query),
+					zap.Int64("jobID", rawEvent.ID),
+					zap.Int64("schemaID", rawEvent.CurrentSchemaID),
+					zap.Int64("tableID", rawEvent.CurrentTableID))
 			}
-			ddlEvent.NeedDroppedTables = &common.InfluencedTables{
-				InfluenceType: common.InfluenceTypeNormal,
-				TableIDs:      []int64{rawEvent.TableID},
-				SchemaID:      rawEvent.PrevSchemaID,
+		} else {
+			if !ignorePrevTable {
+				ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+					InfluenceType: commonEvent.InfluenceTypeNormal,
+					TableIDs:      []int64{rawEvent.CurrentTableID, heartbeatpb.DDLSpan.TableID},
+				}
+				if !ignoreCurrentTable {
+					if rawEvent.PrevSchemaID != rawEvent.CurrentSchemaID {
+						ddlEvent.UpdatedSchemas = []commonEvent.SchemaIDChange{
+							{
+								TableID:     rawEvent.CurrentTableID,
+								OldSchemaID: rawEvent.PrevSchemaID,
+								NewSchemaID: rawEvent.CurrentSchemaID,
+							},
+						}
+					}
+				} else {
+					// the table is filtered out after rename table, we need drop the table
+					ddlEvent.NeedDroppedTables = &commonEvent.InfluencedTables{
+						InfluenceType: commonEvent.InfluenceTypeNormal,
+						TableIDs:      []int64{rawEvent.CurrentTableID},
+					}
+					ddlEvent.TableNameChange = &commonEvent.TableNameChange{
+						DropName: []commonEvent.SchemaTableName{
+							{
+								SchemaName: rawEvent.PrevSchemaName,
+								TableName:  rawEvent.PrevTableName,
+							},
+						},
+					}
+				}
+			} else if !ignoreCurrentTable {
+				// the table is filtered out before rename table, we need add table here
+				ddlEvent.NeedAddedTables = []commonEvent.Table{
+					{
+						SchemaID: rawEvent.CurrentSchemaID,
+						TableID:  rawEvent.CurrentTableID,
+					},
+				}
+				ddlEvent.TableNameChange = &commonEvent.TableNameChange{
+					AddName: []commonEvent.SchemaTableName{
+						{
+							SchemaName: rawEvent.CurrentSchemaName,
+							TableName:  rawEvent.CurrentTableName,
+						},
+					},
+				}
+			} else {
+				// if the table is both filtered out before and after rename table, the ddl should not be fetched
+				log.Panic("should not build a ignored rename table ddl",
+					zap.String("DDL", rawEvent.Query),
+					zap.Int64("jobID", rawEvent.ID),
+					zap.Int64("schemaID", rawEvent.CurrentSchemaID),
+					zap.Int64("tableID", rawEvent.CurrentTableID))
 			}
-			dropName = append(dropName, common.SchemaTableName{
-				SchemaName: rawEvent.PrevSchemaName,
-				TableName:  rawEvent.PrevTableName,
+		}
+	case model.ActionSetDefaultValue,
+		model.ActionShardRowID,
+		model.ActionModifyTableComment,
+		model.ActionRenameIndex:
+		// ignore
+	case model.ActionAddTablePartition:
+		if len(rawEvent.PrevPartitions) > 1 {
+			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      rawEvent.PrevPartitions,
+			}
+		}
+		physicalIDs := getAllPartitionIDs(rawEvent.TableInfo)
+		newCreatedIDs := getCreatedIDs(rawEvent.PrevPartitions, physicalIDs)
+		ddlEvent.NeedAddedTables = make([]commonEvent.Table, 0, len(newCreatedIDs))
+		for _, id := range newCreatedIDs {
+			ddlEvent.NeedAddedTables = append(ddlEvent.NeedAddedTables, commonEvent.Table{
+				SchemaID: rawEvent.CurrentSchemaID,
+				TableID:  id,
 			})
 		}
-		if !ignoreCurrentTable {
-			ddlEvent.NeedAddedTables = []common.Table{
-				{
-					SchemaID: rawEvent.SchemaID,
-					TableID:  rawEvent.TableID,
-				},
+	case model.ActionDropTablePartition:
+		if len(rawEvent.PrevPartitions) > 1 {
+			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      rawEvent.PrevPartitions,
 			}
-			addName = append(addName, common.SchemaTableName{
-				SchemaName: rawEvent.SchemaName,
-				TableName:  rawEvent.TableName,
-			})
 		}
-		ddlEvent.TableNameChange = &common.TableNameChange{
-			AddName:  addName,
-			DropName: dropName,
+		physicalIDs := getAllPartitionIDs(rawEvent.TableInfo)
+		droppedIDs := getDroppedIDs(rawEvent.PrevPartitions, physicalIDs)
+		ddlEvent.NeedDroppedTables = &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      droppedIDs,
 		}
 	case model.ActionCreateView:
-		ddlEvent.BlockedTables = &common.InfluencedTables{
-			InfluenceType: common.InfluenceTypeAll,
+		ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeAll,
+		}
+	case model.ActionTruncateTablePartition:
+		if len(rawEvent.PrevPartitions) > 1 {
+			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      rawEvent.PrevPartitions,
+			}
+		}
+		physicalIDs := getAllPartitionIDs(rawEvent.TableInfo)
+		newCreatedIDs := getCreatedIDs(rawEvent.PrevPartitions, physicalIDs)
+		for _, id := range newCreatedIDs {
+			ddlEvent.NeedAddedTables = append(ddlEvent.NeedAddedTables, commonEvent.Table{
+				SchemaID: rawEvent.CurrentSchemaID,
+				TableID:  id,
+			})
+		}
+		droppedIDs := getDroppedIDs(rawEvent.PrevPartitions, physicalIDs)
+		ddlEvent.NeedDroppedTables = &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      droppedIDs,
+		}
+	case model.ActionExchangeTablePartition:
+		ignoreNormalTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.PrevSchemaName, rawEvent.PrevTableName)
+		ignorePartitionTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.CurrentSchemaName, rawEvent.CurrentTableName)
+		physicalIDs := getAllPartitionIDs(rawEvent.TableInfo)
+		droppedIDs := getDroppedIDs(rawEvent.PrevPartitions, physicalIDs)
+		if len(droppedIDs) != 1 {
+			log.Panic("exchange table partition should only drop one partition",
+				zap.Int64s("droppedIDs", droppedIDs))
+		}
+		targetPartitionID := droppedIDs[0]
+		if !ignoreNormalTable && !ignorePartitionTable {
+			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      []int64{rawEvent.PrevTableID, targetPartitionID},
+			}
+			ddlEvent.UpdatedSchemas = []commonEvent.SchemaIDChange{
+				{
+					TableID:     targetPartitionID,
+					OldSchemaID: rawEvent.CurrentSchemaID,
+					NewSchemaID: rawEvent.PrevSchemaID,
+				},
+				{
+					TableID:     rawEvent.PrevTableID,
+					OldSchemaID: rawEvent.PrevSchemaID,
+					NewSchemaID: rawEvent.CurrentSchemaID,
+				},
+			}
+		} else if !ignoreNormalTable {
+			// just one table, no need to block
+			ddlEvent.NeedDroppedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      []int64{rawEvent.PrevTableID},
+			}
+			ddlEvent.NeedAddedTables = []commonEvent.Table{
+				{
+					SchemaID: rawEvent.PrevSchemaID,
+					TableID:  targetPartitionID,
+				},
+			}
+		} else if !ignorePartitionTable {
+			// just one table, no need to block
+			ddlEvent.NeedDroppedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      []int64{targetPartitionID},
+			}
+			ddlEvent.NeedAddedTables = []commonEvent.Table{
+				{
+					SchemaID: rawEvent.CurrentSchemaID,
+					TableID:  rawEvent.PrevTableID,
+				},
+			}
+		} else {
+			log.Fatal("should not happen")
+		}
+	case model.ActionCreateTables:
+		physicalTableCount := 0
+		logicalTableCount := 0
+		for _, info := range rawEvent.MultipleTableInfos {
+			if tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.CurrentSchemaName, info.Name.O) {
+				continue
+			}
+			logicalTableCount += 1
+			if isPartitionTable(info) {
+				physicalTableCount += len(info.Partition.Definitions)
+			} else {
+				physicalTableCount += 1
+			}
+		}
+		querys := strings.Split(rawEvent.Query, ";")
+		ddlEvent.NeedAddedTables = make([]commonEvent.Table, 0, physicalTableCount)
+		addName := make([]commonEvent.SchemaTableName, 0, logicalTableCount)
+		resultQuerys := make([]string, 0, logicalTableCount)
+		for i, info := range rawEvent.MultipleTableInfos {
+			if tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.CurrentSchemaName, info.Name.O) {
+				continue
+			}
+			if isPartitionTable(info) {
+				for _, partitionID := range getAllPartitionIDs(info) {
+					ddlEvent.NeedAddedTables = append(ddlEvent.NeedAddedTables, commonEvent.Table{
+						SchemaID: rawEvent.CurrentSchemaID,
+						TableID:  partitionID,
+					})
+				}
+			} else {
+				ddlEvent.NeedAddedTables = append(ddlEvent.NeedAddedTables, commonEvent.Table{
+					SchemaID: rawEvent.CurrentSchemaID,
+					TableID:  info.ID,
+				})
+			}
+			addName = append(addName, commonEvent.SchemaTableName{
+				SchemaName: rawEvent.CurrentSchemaName,
+				TableName:  info.Name.O,
+			})
+			resultQuerys = append(resultQuerys, querys[i])
+		}
+		ddlEvent.TableNameChange = &commonEvent.TableNameChange{
+			AddName: addName,
+		}
+		ddlEvent.Query = strings.Join(resultQuerys, ";")
+		if len(ddlEvent.NeedAddedTables) == 0 {
+			log.Fatal("should not happen")
+		}
+	case model.ActionReorganizePartition:
+		// same as truncate partition
+		if len(rawEvent.PrevPartitions) > 1 {
+			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      rawEvent.PrevPartitions,
+			}
+		}
+		physicalIDs := getAllPartitionIDs(rawEvent.TableInfo)
+		newCreatedIDs := getCreatedIDs(rawEvent.PrevPartitions, physicalIDs)
+		for _, id := range newCreatedIDs {
+			ddlEvent.NeedAddedTables = append(ddlEvent.NeedAddedTables, commonEvent.Table{
+				SchemaID: rawEvent.CurrentSchemaID,
+				TableID:  id,
+			})
+		}
+		droppedIDs := getDroppedIDs(rawEvent.PrevPartitions, physicalIDs)
+		ddlEvent.NeedDroppedTables = &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      droppedIDs,
 		}
 	default:
 		log.Panic("unknown ddl type",
 			zap.Any("ddlType", rawEvent.Type),
 			zap.String("DDL", rawEvent.Query))
 	}
-
 	return ddlEvent
 }
