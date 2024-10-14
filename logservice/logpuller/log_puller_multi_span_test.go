@@ -92,16 +92,20 @@ func TestMultiplexingPullerResolvedForward(t *testing.T) {
 	subID1 := subIDs[1]
 
 	puller.innerPuller.client.consume(ctx, LogEvent{
-		Val: common.RawKVEntry{
-			OpType: common.OpTypeResolved,
-			CRTs:   uint64(1000),
+		regionFeedEvent: regionFeedEvent{
+			Val: &common.RawKVEntry{
+				OpType: common.OpTypeResolved,
+				CRTs:   uint64(1000),
+			},
 		},
 		SubscriptionID: subID0,
 	})
 	puller.innerPuller.client.consume(ctx, LogEvent{
-		Val: common.RawKVEntry{
-			OpType: common.OpTypeResolved,
-			CRTs:   uint64(1005),
+		regionFeedEvent: regionFeedEvent{
+			Val: &common.RawKVEntry{
+				OpType: common.OpTypeResolved,
+				CRTs:   uint64(1005),
+			},
 		},
 		SubscriptionID: subID1,
 	})
@@ -115,9 +119,11 @@ func TestMultiplexingPullerResolvedForward(t *testing.T) {
 	}
 
 	puller.innerPuller.client.consume(ctx, LogEvent{
-		Val: common.RawKVEntry{
-			OpType: common.OpTypeResolved,
-			CRTs:   uint64(1002),
+		regionFeedEvent: regionFeedEvent{
+			Val: &common.RawKVEntry{
+				OpType: common.OpTypeResolved,
+				CRTs:   uint64(1002),
+			},
 		},
 		SubscriptionID: subID0,
 	})
@@ -131,9 +137,11 @@ func TestMultiplexingPullerResolvedForward(t *testing.T) {
 	}
 
 	puller.innerPuller.client.consume(ctx, LogEvent{
-		Val: common.RawKVEntry{
-			OpType: common.OpTypeResolved,
-			CRTs:   uint64(1008),
+		regionFeedEvent: regionFeedEvent{
+			Val: &common.RawKVEntry{
+				OpType: common.OpTypeResolved,
+				CRTs:   uint64(1008),
+			},
 		},
 		SubscriptionID: subID0,
 	})

@@ -236,8 +236,8 @@ func TestSubscriptionWithFailedTiKV(t *testing.T) {
 	// it should auto switch to other stores and fetch events finally.
 	select {
 	case event := <-consumeCh:
-		require.Equal(t, common.OpTypeResolved, event.Val.OpType)
-		require.Equal(t, ts, event.Val.CRTs)
+		require.Equal(t, common.OpTypeResolved, event.regionFeedEvent.Val.OpType)
+		require.Equal(t, ts, event.regionFeedEvent.Val.CRTs)
 	case <-time.After(5 * time.Second):
 		require.True(t, false, "reconnection not succeed in 5 second")
 	}
@@ -252,8 +252,8 @@ func TestSubscriptionWithFailedTiKV(t *testing.T) {
 	// it should auto switch to other stores and fetch events finally.
 	select {
 	case event := <-consumeCh:
-		require.Equal(t, common.OpTypeResolved, event.Val.OpType)
-		require.Equal(t, ts, event.Val.CRTs)
+		require.Equal(t, common.OpTypeResolved, event.regionFeedEvent.Val.OpType)
+		require.Equal(t, ts, event.regionFeedEvent.Val.CRTs)
 	case <-time.After(5 * time.Second):
 		require.True(t, false, "reconnection not succeed in 5 second")
 	}

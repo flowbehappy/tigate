@@ -73,16 +73,25 @@ var subscriptionIDGen atomic.Uint64
 // It is used as `RequestId` in region requests to remote store.
 type SubscriptionID uint64
 
+// regionFeedEvent from the kv layer.
+type regionFeedEvent struct {
+	// TODO: every resolve ts event may allocate a common.RawKVEntry, is it memory consuming?
+	Val *common.RawKVEntry
+
+	// Additional debug info, not used
+	RegionID uint64
+}
+
 // LogEvent wrap a region event with subscriptionID to indicate which subscription it belongs to.
 type LogEvent struct {
-	Val common.RawKVEntry
+	regionFeedEvent
 	SubscriptionID
 }
 
-func newLogEvent(val common.RawKVEntry, span *subscribedSpan) LogEvent {
+func newLogEvent(e regionFeedEvent, span *subscribedSpan) LogEvent {
 	return LogEvent{
-		Val:            val,
-		SubscriptionID: span.subID,
+		regionFeedEvent: e,
+		SubscriptionID:  span.subID,
 	}
 }
 
@@ -172,7 +181,7 @@ type SubscriptionClient struct {
 	// rangeTaskCh is used to receive range tasks.
 	// The tasks will be handled in `handleRangeTask` goroutine.
 	rangeTaskCh chan rangeTask
-	// regionCh is used to receive region tasks which have been locked in rangeLock.
+	// regionCh is used to receive region tasks have been locked in rangeLock.
 	// The region will be handled in `handleRegions` goroutine.
 	regionCh chan regionInfo
 	// resolveLockTaskCh is used to receive resolve lock tasks.

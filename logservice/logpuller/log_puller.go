@@ -123,6 +123,11 @@ func (p *LogPuller) Run(ctx context.Context) (err error) {
 			return nil
 		}
 
+		if e.Val == nil {
+			log.Info("meet empty event")
+			return nil
+		}
+
 		if e.Val.IsResolved() {
 			p.CounterResolved.Inc()
 		} else {
