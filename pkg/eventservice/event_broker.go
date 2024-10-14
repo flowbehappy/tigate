@@ -19,6 +19,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/pkg/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 
@@ -260,7 +261,7 @@ func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, c
 	if !needScan {
 		return false, dataRange
 	}
-	dmlState := c.eventStore.GetDispatcherDMLEventState(task.dispatcherStat.info.GetID(), task.dispatcherStat.info.GetTableSpan())
+	// dmlState := c.eventStore.GetDispatcherDMLEventState(task.dispatcherStat.info.GetID(), task.dispatcherStat.info.GetTableSpan())
 	ddlState := c.schemaStore.GetTableDDLEventState(task.dispatcherStat.info.GetTableSpan().TableID)
 	// no need to check dmlState.ResolvedTs, because scanTask has already consider it, it is currently just a redundant info.
 	if ddlState.ResolvedTs < dataRange.EndTs {
@@ -273,7 +274,7 @@ func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, c
 
 	// The dispatcher has no new events. In such case, we don't need to scan the event store.
 	// We just send the watermark to the dispatcher.
-	if dataRange.StartTs >= dmlState.MaxEventCommitTs && dataRange.StartTs >= ddlState.MaxEventCommitTs {
+	if dataRange.StartTs >= task.dispatcherStat.spanSubscription.maxEventCommitTs.Load() && dataRange.StartTs >= ddlState.MaxEventCommitTs {
 		remoteID := node.ID(task.dispatcherStat.info.GetServerID())
 		c.sendWatermark(remoteID, task.dispatcherStat, dataRange.EndTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
 		task.dispatcherStat.watermark.Store(dataRange.EndTs)
@@ -582,6 +583,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		id,
 		span,
 		info.GetStartTs(),
+		dispatcher.spanSubscription.onNewCommitTs,
 		func(watermark uint64) { c.onNotify(dispatcher.spanSubscription, watermark) },
 	)
 	c.schemaStore.RegisterTable(span.GetTableID(), info.GetStartTs())
@@ -705,15 +707,19 @@ type spanSubscription struct {
 	// The watermark of the events that have been stored in the event store.
 	watermark  atomic.Uint64
 	lastUpdate atomic.Value
+	// The commitTs of the latest kv event that has been stored in the event store.
+	maxEventCommitTs atomic.Uint64
 }
 
 func newSpanSubscription(span *heartbeatpb.TableSpan, startTs uint64) *spanSubscription {
 	s := &spanSubscription{
-		span:       span,
-		watermark:  atomic.Uint64{},
-		lastUpdate: atomic.Value{},
+		span:             span,
+		watermark:        atomic.Uint64{},
+		lastUpdate:       atomic.Value{},
+		maxEventCommitTs: atomic.Uint64{},
 	}
 	s.watermark.Store(startTs)
+	s.maxEventCommitTs.Store(startTs)
 	s.lastUpdate.Store(time.Now())
 	return s
 }
@@ -742,6 +748,14 @@ func (s *spanSubscription) onSubscriptionWatermark(watermark uint64) {
 	}
 	s.watermark.Store(watermark)
 	s.lastUpdate.Store(time.Now())
+}
+
+// onNewCommitTs is used to track whether there are new events in the event store, so that
+// we can skip some unnecessary scan tasks.
+// TODO: consider to use a better way to reduce the contention of the lock, maybe it is
+// not necessary to update the maxEventCommitTs for every event.
+func (s *spanSubscription) onNewCommitTs(commitTs uint64) {
+	util.MustCompareAndMonotonicIncrease(&s.maxEventCommitTs, commitTs)
 }
 
 type scanTask struct {

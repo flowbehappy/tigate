@@ -29,9 +29,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var metricEventCompressRatio = metrics.EventStoreCompressRatio
-
-type EventObserver func(raw *common.RawKVEntry)
+type EventObserver func(commitTs uint64)
 
 type WatermarkNotifier func(watermark uint64)
 
@@ -48,6 +46,7 @@ type EventStore interface {
 		dispatcherID common.DispatcherID,
 		span *heartbeatpb.TableSpan,
 		startTS uint64,
+		observer EventObserver,
 		notifier WatermarkNotifier,
 	) error
 
@@ -56,7 +55,8 @@ type EventStore interface {
 	UnregisterDispatcher(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) error
 
 	// TODO: maybe we can remove span
-	GetDispatcherDMLEventState(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) DMLEventState
+	// Currently not used, when we can get dispatcher just be dispatcherID, we can try use it again.
+	// GetDispatcherDMLEventState(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) DMLEventState
 
 	// TODO: ignore large txn now, so we can read all transactions of the same commit ts at one time
 	// (startCommitTS, endCommitTS]?
@@ -92,6 +92,7 @@ type eventWithState struct {
 
 type spanState struct {
 	span     heartbeatpb.TableSpan
+	observer EventObserver
 	notifier WatermarkNotifier
 
 	subID logpuller.SubscriptionID
@@ -99,7 +100,7 @@ type spanState struct {
 	// data before this watermark won't be needed
 	dispatchers map[common.DispatcherID]*dispatcherStat
 
-	maxEventCommitTs atomic.Uint64
+	// maxEventCommitTs atomic.Uint64
 
 	// the resolveTs persisted in the store
 	resolvedTs atomic.Uint64
@@ -317,6 +318,7 @@ func (e *eventStore) RegisterDispatcher(
 	dispatcherID common.DispatcherID,
 	tableSpan *heartbeatpb.TableSpan,
 	startTs uint64,
+	observer EventObserver,
 	notifier WatermarkNotifier,
 ) error {
 	span := *tableSpan
@@ -345,6 +347,7 @@ func (e *eventStore) RegisterDispatcher(
 	})
 	state := &spanState{
 		span:        span,
+		observer:    observer,
 		dispatchers: make(map[common.DispatcherID]*dispatcherStat),
 		notifier:    notifier,
 		subID:       subID,
@@ -420,8 +423,8 @@ func (e *eventStore) GetDispatcherDMLEventState(dispatcherID common.DispatcherID
 		log.Panic("deregister an unregistered span", zap.String("span", span.String()))
 	}
 	return DMLEventState{
-		ResolvedTs:       state.resolvedTs.Load(),
-		MaxEventCommitTs: state.maxEventCommitTs.Load(),
+		ResolvedTs: state.resolvedTs.Load(),
+		// MaxEventCommitTs: state.maxEventCommitTs.Load(),
 	}
 }
 
@@ -549,8 +552,9 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 					e.spanStates.RUnlock()
 					continue
 				}
+				state.observer(maxEventCommitTs)
 				e.spanStates.RUnlock()
-				state.maxEventCommitTs.Store(maxEventCommitTs)
+				// state.maxEventCommitTs.Store(maxEventCommitTs)
 			}
 
 			// update resolved ts after commit successfully
