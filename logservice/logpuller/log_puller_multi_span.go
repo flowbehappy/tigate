@@ -33,7 +33,7 @@ import (
 type LogPullerMultiSpan struct {
 	innerPuller *LogPuller
 
-	consume func(context.Context, *common.RawKVEntry) error
+	consume func(context.Context, common.RawKVEntry) error
 
 	// used to notify the min resolved ts of all spans is updated
 	notifyCh chan interface{}
@@ -57,7 +57,7 @@ func NewLogPullerMultiSpan(
 	pdClock pdutil.Clock,
 	spans []heartbeatpb.TableSpan,
 	startTs uint64,
-	consume func(context.Context, *common.RawKVEntry) error,
+	consume func(context.Context, common.RawKVEntry) error,
 ) *LogPullerMultiSpan {
 	if len(spans) <= 1 {
 		log.Panic("spans should have more than 1 element")
@@ -72,10 +72,7 @@ func NewLogPullerMultiSpan(
 	}
 
 	// consumeWrapper may be called concurrently
-	consumeWrapper := func(ctx context.Context, entry *common.RawKVEntry, subID SubscriptionID) error {
-		if entry == nil {
-			return nil
-		}
+	consumeWrapper := func(ctx context.Context, entry common.RawKVEntry, subID SubscriptionID, _ interface{}) error {
 		if entry.IsResolved() {
 			pullerWrapper.tryUpdatePendingResolvedTs(subID, entry.CRTs)
 			return nil
@@ -85,7 +82,7 @@ func NewLogPullerMultiSpan(
 
 	pullerWrapper.innerPuller = NewLogPuller(client, pdClock, consumeWrapper)
 	for _, span := range spans {
-		subID := pullerWrapper.innerPuller.Subscribe(span, startTs)
+		subID := pullerWrapper.innerPuller.Subscribe(span, startTs, nil)
 		item := &resolvedTsItem{
 			resolvedTs: 0,
 		}
@@ -146,7 +143,7 @@ func (p *LogPullerMultiSpan) sendResolvedTsPeriodically(ctx context.Context) err
 		defer p.mu.Unlock()
 		// Note: pendingResolvedTs may be 0(which means not all spans have received resolved ts) and it won't be send here
 		if p.pendingResolvedTs > p.prevResolvedTs {
-			p.consume(ctx, &common.RawKVEntry{
+			p.consume(ctx, common.RawKVEntry{
 				OpType: common.OpTypeResolved,
 				CRTs:   p.pendingResolvedTs,
 			})

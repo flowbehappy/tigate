@@ -24,7 +24,7 @@ func (h *dispatcherEventsHandler) Handle(broker *eventBroker, tasks ...scanTask)
 	}
 	task := tasks[0]
 	ctx := context.Background()
-	needScan, _, _ := broker.checkNeedScan(ctx, task)
+	needScan, _ := broker.checkNeedScan(ctx, task)
 	if !needScan {
 		task.handle()
 		return false

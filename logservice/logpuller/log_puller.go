@@ -47,12 +47,14 @@ type spanProgress struct {
 	resolvedTsUpdated atomic.Int64
 	resolvedTs        atomic.Uint64
 
+	extraData interface{}
+
 	consume struct {
 		// This lock is used to prevent the table progress from being
 		// removed while consuming events.
 		sync.RWMutex
 		removed bool
-		f       func(context.Context, *common.RawKVEntry, SubscriptionID) error
+		f       func(context.Context, common.RawKVEntry, SubscriptionID) error
 	}
 }
 
@@ -74,7 +76,7 @@ func (p *spanProgress) resolveLock(currentTime time.Time) {
 type LogPuller struct {
 	client  *SubscriptionClient
 	pdClock pdutil.Clock
-	consume func(context.Context, *common.RawKVEntry, SubscriptionID) error
+	consume func(context.Context, common.RawKVEntry, SubscriptionID, interface{}) error
 
 	subscriptions struct {
 		sync.RWMutex
@@ -89,7 +91,7 @@ type LogPuller struct {
 func NewLogPuller(
 	client *SubscriptionClient,
 	pdClock pdutil.Clock,
-	consume func(context.Context, *common.RawKVEntry, SubscriptionID) error,
+	consume func(context.Context, common.RawKVEntry, SubscriptionID, interface{}) error,
 ) *LogPuller {
 	puller := &LogPuller{
 		client:  client,
@@ -126,7 +128,7 @@ func (p *LogPuller) Run(ctx context.Context) (err error) {
 			p.CounterKv.Inc()
 		}
 
-		if err := progress.consume.f(ctx, &e.Val, e.SubscriptionID); err != nil {
+		if err := progress.consume.f(ctx, e.Val, e.SubscriptionID); err != nil {
 			log.Info("consume error", zap.Error(err))
 			return errors.Trace(err)
 		}
@@ -150,25 +152,27 @@ func (p *LogPuller) Close(ctx context.Context) error {
 func (p *LogPuller) Subscribe(
 	span heartbeatpb.TableSpan,
 	startTs uint64,
+	extraData interface{},
 ) SubscriptionID {
 	p.subscriptions.Lock()
 
 	subID := p.client.AllocSubscriptionID()
 
 	progress := &spanProgress{
-		span:  span,
-		subID: subID,
+		span:      span,
+		subID:     subID,
+		extraData: extraData,
 	}
 
 	progress.consume.f = func(
 		ctx context.Context,
-		raw *common.RawKVEntry,
+		raw common.RawKVEntry,
 		subID SubscriptionID,
 	) error {
 		progress.consume.RLock()
 		defer progress.consume.RUnlock()
 		if !progress.consume.removed {
-			return p.consume(ctx, raw, subID)
+			return p.consume(ctx, raw, subID, progress.extraData)
 		}
 		return nil
 	}

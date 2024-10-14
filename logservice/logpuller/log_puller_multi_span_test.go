@@ -26,14 +26,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newLogPullerMultiSpanForTest(spans []heartbeatpb.TableSpan, outputCh chan<- *common.RawKVEntry) *LogPullerMultiSpan {
+func newLogPullerMultiSpanForTest(spans []heartbeatpb.TableSpan, outputCh chan<- common.RawKVEntry) *LogPullerMultiSpan {
 	clientConfig := &SubscriptionClientConfig{
 		RegionRequestWorkerPerStore:   1,
 		ChangeEventProcessorNum:       2,
 		AdvanceResolvedTsIntervalInMs: 1,
 	}
 	client := NewSubscriptionClient(ClientIDTest, clientConfig, nil, nil, nil, nil, &security.Credential{})
-	consume := func(ctx context.Context, e *common.RawKVEntry) error {
+	consume := func(ctx context.Context, e common.RawKVEntry) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -64,7 +64,7 @@ func waitMultiSpanLogPullerReadyForTest(puller *LogPullerMultiSpan) {
 
 func TestMultiplexingPullerResolvedForward(t *testing.T) {
 	ctx := context.Background()
-	outputCh := make(chan *common.RawKVEntry, 16)
+	outputCh := make(chan common.RawKVEntry, 16)
 	rawSpan1 := common.ToSpan([]byte("t_a"), []byte("t_e"))
 	rawSpan1.TableID = 100
 	rawSpan2 := common.ToSpan([]byte("t_f"), []byte("t_z"))
