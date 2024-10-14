@@ -65,7 +65,7 @@ func (c *NodeManager) Name() string {
 
 // Tick is triggered by the server update events
 func (c *NodeManager) Tick(
-	ctx context.Context,
+	_ context.Context,
 	raw orchestrator.ReactorState,
 ) (orchestrator.ReactorState, error) {
 	state := raw.(*orchestrator.GlobalReactorState)
@@ -122,6 +122,6 @@ func (c *NodeManager) RegisterNodeChangeHandler(name node.ID, handler NodeChange
 	c.nodeChangeHandlers.m[name] = handler
 }
 
-func (c *NodeManager) Close(ctx context.Context) error {
+func (c *NodeManager) Close(_ context.Context) error {
 	return nil
 }
