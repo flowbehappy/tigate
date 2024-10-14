@@ -26,7 +26,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
-	configNew "github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
@@ -53,7 +53,7 @@ import (
 // 4. handle heartbeat reported by dispatcher
 type Maintainer struct {
 	id       model.ChangeFeedID
-	config   *configNew.ChangeFeedInfo
+	config   *config.ChangeFeedInfo
 	selfNode *node.Info
 
 	stream        dynstream.DynamicStream[string, *Event, *Maintainer]
@@ -106,11 +106,11 @@ type Maintainer struct {
 
 // NewMaintainer create the maintainer for the changefeed
 func NewMaintainer(cfID model.ChangeFeedID,
-	cfg *configNew.ChangeFeedInfo,
+	cfg *config.ChangeFeedInfo,
 	selfNode *node.Info,
 	stream dynstream.DynamicStream[string, *Event, *Maintainer],
 	taskScheduler threadpool.ThreadPool,
-	pdapi pdutil.PDAPIClient,
+	pdAPI pdutil.PDAPIClient,
 	regionCache split.RegionCache,
 	checkpointTs uint64,
 ) *Maintainer {
@@ -119,7 +119,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		selfNode:        selfNode,
 		stream:          stream,
 		taskScheduler:   taskScheduler,
-		controller:      NewController(cfID.ID, checkpointTs, pdapi, regionCache, cfg.Config.Scheduler, 10000, time.Minute),
+		controller:      NewController(cfID.ID, checkpointTs, pdAPI, regionCache, cfg.Config.Scheduler, 10000, time.Minute),
 		mc:              appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		state:           heartbeatpb.ComponentState_Working,
 		removed:         atomic.NewBool(false),
@@ -212,6 +212,7 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 		for _, e := range m.runningErrors {
 			runningErrors = append(runningErrors, e)
 		}
+		clear(m.runningErrors)
 	}
 	var runningWarnings []*heartbeatpb.RunningError
 	if len(m.runningWarnings) > 0 {
@@ -219,6 +220,7 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 		for _, e := range m.runningWarnings {
 			runningWarnings = append(runningWarnings, e)
 		}
+		clear(m.runningWarnings)
 	}
 
 	status := &heartbeatpb.MaintainerStatus{
@@ -229,8 +231,6 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 		Warning:      runningWarnings,
 		Err:          runningErrors,
 	}
-	m.runningWarnings = make(map[node.ID]*heartbeatpb.RunningError)
-	m.runningErrors = make(map[node.ID]*heartbeatpb.RunningError)
 	return status
 }
 
@@ -342,16 +342,18 @@ func (m *Maintainer) onCheckpointTsPersisted(msg *heartbeatpb.CheckpointTsMessag
 }
 
 func (m *Maintainer) onNodeChanged() {
+	currentNodes := m.bootstrapper.GetAllNodes()
+
 	activeNodes := m.nodeManager.GetAliveNodes()
 	var newNodes = make([]*node.Info, 0, len(activeNodes))
 	for id, n := range activeNodes {
-		if _, ok := m.bootstrapper.GetAllNodes()[id]; !ok {
+		if _, ok := currentNodes[id]; !ok {
 			newNodes = append(newNodes, n)
 			m.controller.AddNewNode(id)
 		}
 	}
 	var removedNodes []node.ID
-	for id, _ := range m.bootstrapper.GetAllNodes() {
+	for id, _ := range currentNodes {
 		if _, ok := activeNodes[id]; !ok {
 			removedNodes = append(removedNodes, id)
 			m.controller.RemoveNode(id)
@@ -592,7 +594,7 @@ func (m *Maintainer) handleError(err error) {
 // a changefeed dispatcher manager.
 func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 	cfg := m.config
-	changefeedConfig := configNew.ChangefeedConfig{
+	changefeedConfig := config.ChangefeedConfig{
 		Namespace:          cfg.Namespace,
 		ID:                 cfg.ID,
 		StartTS:            cfg.StartTs,
