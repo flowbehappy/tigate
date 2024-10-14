@@ -56,6 +56,7 @@ type EventStore interface {
 
 	// TODO: maybe we can remove span
 	// Currently not used, when we can get dispatcher just be dispatcherID, we can try use it again.
+	// Because find by span is really time consuming, and will make latency more high.
 	// GetDispatcherDMLEventState(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) DMLEventState
 
 	// TODO: ignore large txn now, so we can read all transactions of the same commit ts at one time
@@ -552,8 +553,8 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 					e.spanStates.RUnlock()
 					continue
 				}
-				state.observer(maxEventCommitTs)
 				e.spanStates.RUnlock()
+				state.observer(maxEventCommitTs)
 				// state.maxEventCommitTs.Store(maxEventCommitTs)
 			}
 

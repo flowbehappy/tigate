@@ -261,9 +261,7 @@ func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, c
 	if !needScan {
 		return false, dataRange
 	}
-	// dmlState := c.eventStore.GetDispatcherDMLEventState(task.dispatcherStat.info.GetID(), task.dispatcherStat.info.GetTableSpan())
 	ddlState := c.schemaStore.GetTableDDLEventState(task.dispatcherStat.info.GetTableSpan().TableID)
-	// no need to check dmlState.ResolvedTs, because scanTask has already consider it, it is currently just a redundant info.
 	if ddlState.ResolvedTs < dataRange.EndTs {
 		dataRange.EndTs = ddlState.ResolvedTs
 	}
