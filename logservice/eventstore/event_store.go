@@ -528,7 +528,7 @@ const (
 
 // handleEvents fetch events from puller and write them to pebble db
 func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-chan eventWithState) {
-	batchCh := make(chan *DBBatchEvent, 512) // 512 is an arbitrary number
+	batchCh := make(chan *DBBatchEvent, 10240)
 
 	// consume batch events
 	e.wg.Add(1)
