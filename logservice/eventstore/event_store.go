@@ -596,11 +596,12 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 		for item := range inputCh {
 			if item.eventType == eventTypeBatchSignal {
 				if time.Since(startToBatch) >= batchCommitInterval {
-					return &DBBatchEvent{batch, maxEventCommitTsMap, resolvedTsMap}
+					if batch != nil || len(resolvedTsMap) > 0 {
+						return &DBBatchEvent{batch, maxEventCommitTsMap, resolvedTsMap}
+					}
 				}
 				continue
 			}
-			// find span state
 
 			if item.raw.IsResolved() {
 				resolvedTsMap[item.subID] = item.raw.CRTs
