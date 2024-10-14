@@ -23,25 +23,27 @@ import (
 )
 
 type ReplicaSetDB struct {
-	nodeTasks map[node.ID]map[common.DispatcherID]*ReplicaSet
+	changefeedID string
+	nodeTasks    map[node.ID]map[common.DispatcherID]*ReplicaSet
 	// group the tasks by schema id
 	schemaTasks map[int64]map[common.DispatcherID]*ReplicaSet
-	// tables
+	// group the tasks by table id
 	tableTasks map[int64]map[common.DispatcherID]*ReplicaSet
 
+	// maps that maintained base on the task scheduling status
 	workingMap map[common.DispatcherID]*ReplicaSet
 	scheduling map[common.DispatcherID]*ReplicaSet
 	absentMap  map[common.DispatcherID]*ReplicaSet
 
-	lock         sync.RWMutex
-	changefeedID string
+	lock sync.RWMutex
 }
 
-func NewReplicaSetDB() *ReplicaSetDB {
+func NewReplicaSetDB(changefeedID string) *ReplicaSetDB {
 	db := &ReplicaSetDB{
-		nodeTasks:   make(map[node.ID]map[common.DispatcherID]*ReplicaSet),
-		schemaTasks: make(map[int64]map[common.DispatcherID]*ReplicaSet),
-		tableTasks:  make(map[int64]map[common.DispatcherID]*ReplicaSet),
+		changefeedID: changefeedID,
+		nodeTasks:    make(map[node.ID]map[common.DispatcherID]*ReplicaSet),
+		schemaTasks:  make(map[int64]map[common.DispatcherID]*ReplicaSet),
+		tableTasks:   make(map[int64]map[common.DispatcherID]*ReplicaSet),
 
 		workingMap: make(map[common.DispatcherID]*ReplicaSet),
 		scheduling: make(map[common.DispatcherID]*ReplicaSet),
@@ -50,19 +52,19 @@ func NewReplicaSetDB() *ReplicaSetDB {
 	return db
 }
 
-func (db *ReplicaSetDB) GetTaskByID(id common.DispatcherID) (*ReplicaSet, bool) {
+func (db *ReplicaSetDB) GetTaskByID(id common.DispatcherID) *ReplicaSet {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
 	r, ok := db.workingMap[id]
 	if ok {
-		return r, true
+		return r
 	}
 	r, ok = db.scheduling[id]
 	if ok {
-		return r, false
+		return r
 	}
-	return db.absentMap[id], false
+	return db.absentMap[id]
 }
 
 func (db *ReplicaSetDB) TaskSize() int {
@@ -83,7 +85,6 @@ func (db *ReplicaSetDB) TryRemoveAll() []*ReplicaSet {
 	var tasks = make([]*ReplicaSet, 0, len(db.workingMap)+len(db.absentMap)+len(db.scheduling))
 	addMapToList := func(m map[common.DispatcherID]*ReplicaSet) {
 		for _, stm := range m {
-			db.markReplicaSetScheduling(stm)
 			tasks = append(tasks, stm)
 		}
 	}
@@ -103,7 +104,6 @@ func (db *ReplicaSetDB) TryRemoveByTableIDs(tableIDs ...int64) []*ReplicaSet {
 			if stm.GetNodeID() == "" {
 				db.removeReplicaSetUnLock(stm)
 			} else {
-				db.markReplicaSetScheduling(stm)
 				tasks = append(tasks, stm)
 			}
 		}
@@ -121,7 +121,6 @@ func (db *ReplicaSetDB) TryRemoveBySchemaID(schemaID int64) []*ReplicaSet {
 		if stm.GetNodeID() == "" {
 			db.removeReplicaSetUnLock(stm)
 		} else {
-			db.markReplicaSetScheduling(stm)
 			tasks = append(tasks, stm)
 		}
 	}
@@ -313,7 +312,10 @@ func (db *ReplicaSetDB) removeReplicaSetUnLock(tasks ...*ReplicaSet) {
 	}
 }
 
-func (db *ReplicaSetDB) markReplicaSetScheduling(task *ReplicaSet) {
+func (db *ReplicaSetDB) MarkReplicaSetScheduling(task *ReplicaSet) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
 	log.Info("marking replica set scheduling",
 		zap.String("changefeed", db.changefeedID),
 		zap.String("replicaSet", task.ID.String()))
@@ -405,8 +407,8 @@ func (db *ReplicaSetDB) updateNodeMap(old, new node.ID, task *ReplicaSet) {
 	//clear from the old node
 	if old != "" {
 		oldMap, ok := db.nodeTasks[old]
-		if !ok {
-			delete(db.nodeTasks, old)
+		if ok {
+			delete(oldMap, task.ID)
 			if len(oldMap) == 0 {
 				delete(db.nodeTasks, old)
 			}

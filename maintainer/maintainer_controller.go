@@ -43,6 +43,11 @@ type Controller struct {
 	initialTables []commonEvent.Table
 	bootstrapped  bool
 
+	sche        *Scheduler
+	oc          *operator.Controller
+	db          *replica.ReplicaSetDB
+	nodeManager *watcher.NodeManager
+
 	splitter               *split.Splitter
 	spanReplicationEnabled bool
 	startCheckpointTs      uint64
@@ -50,10 +55,6 @@ type Controller struct {
 
 	changefeedID string
 	batchSize    int
-	sche         *Scheduler
-	oc           *operator.OperatorController
-	db           *replica.ReplicaSetDB
-	nodeManager  *watcher.NodeManager
 
 	taskScheduler threadpool.ThreadPool
 	ocHandle      *threadpool.TaskHandle
@@ -68,8 +69,8 @@ func NewController(changefeedID string,
 	config *config.ChangefeedSchedulerConfig,
 	batchSize int, balanceInterval time.Duration) *Controller {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
-	oc := operator.NewOperatorController(mc, batchSize)
-	replicaSetDB := replica.NewReplicaSetDB()
+	oc := operator.NewOperatorController(changefeedID, mc, batchSize)
+	replicaSetDB := replica.NewReplicaSetDB(changefeedID)
 	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
 	s := &Controller{
 		startCheckpointTs: checkpointTs,
@@ -199,25 +200,25 @@ func (c *Controller) Stop() {
 }
 
 // GetTask queries a task by dispatcherID, return nil if not found
-func (c *Controller) GetTask(dispatcherID common.DispatcherID) (*replica.ReplicaSet, bool) {
+func (c *Controller) GetTask(dispatcherID common.DispatcherID) *replica.ReplicaSet {
 	return c.db.GetTaskByID(dispatcherID)
 }
 
 func (c *Controller) RemoveAllTasks() {
 	for _, replicaSet := range c.db.TryRemoveAll() {
-		c.oc.ReplaceOperator(operator.NewRemoveDispatcherOperator(replicaSet))
+		c.oc.ReplaceOperator(operator.NewRemoveDispatcherOperator(c.db, replicaSet))
 	}
 }
 
 func (c *Controller) RemoveTasksBySchemaID(schemaID int64) {
 	for _, replicaSet := range c.db.TryRemoveBySchemaID(schemaID) {
-		c.oc.ReplaceOperator(operator.NewRemoveDispatcherOperator(replicaSet))
+		c.oc.ReplaceOperator(operator.NewRemoveDispatcherOperator(c.db, replicaSet))
 	}
 }
 
 func (c *Controller) RemoveTasksByTableIDs(tables ...int64) {
 	for _, replicaSet := range c.db.TryRemoveByTableIDs(tables...) {
-		c.oc.ReplaceOperator(operator.NewRemoveDispatcherOperator(replicaSet))
+		c.oc.ReplaceOperator(operator.NewRemoveDispatcherOperator(c.db, replicaSet))
 	}
 }
 
@@ -243,7 +244,7 @@ func (c *Controller) ScheduleFinished() bool {
 func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableSpanStatus) {
 	for _, status := range statusList {
 		span := common.NewDispatcherIDFromPB(status.ID)
-		stm, working := c.GetTask(span)
+		stm := c.GetTask(span)
 		if stm == nil {
 			log.Warn("no span found, ignore",
 				zap.String("changefeed", c.changefeedID),
@@ -264,13 +265,6 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableS
 			continue
 		}
 		stm.UpdateStatus(status)
-		if status.ComponentStatus == heartbeatpb.ComponentState_Working {
-			if !working {
-				c.db.MarkReplicaSetWorking(stm)
-			}
-		} else {
-			c.db.RemoveReplicaSet(stm)
-		}
 	}
 }
 

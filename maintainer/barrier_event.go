@@ -223,7 +223,7 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 	// we select a dispatcher as the writer, still waiting for that dispatcher advance its checkpoint ts
 	if !be.writerDispatcherAdvanced {
 		//resend write action
-		stm, _ := be.controller.GetTask(be.writerDispatcher)
+		stm := be.controller.GetTask(be.writerDispatcher)
 		if stm == nil || stm.GetNodeID() == "" {
 			return nil
 		}

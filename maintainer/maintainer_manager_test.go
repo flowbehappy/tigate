@@ -123,7 +123,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 			model.CaptureID(node4.ID):    {ID: model.CaptureID(node4.ID), AdvertiseAddr: node4.AdvertiseAddr},
 		}})
 
-	time.Sleep(15 * time.Second)
+	time.Sleep(5 * time.Second)
 	require.Equal(t, 4,
 		maintainer.controller.db.GetWorkingSize())
 	require.Equal(t, 1,

@@ -54,9 +54,11 @@ import (
 // 3. send changefeed status to coordinator
 // 4. handle heartbeat reported by dispatcher
 type Maintainer struct {
-	id       model.ChangeFeedID
-	config   *configNew.ChangeFeedInfo
-	selfNode *node.Info
+	id         model.ChangeFeedID
+	config     *configNew.ChangeFeedInfo
+	selfNode   *node.Info
+	controller *Controller
+	barrier    *Barrier
 
 	stream        dynstream.DynamicStream[string, *Event, *Maintainer]
 	taskScheduler threadpool.ThreadPool
@@ -81,9 +83,6 @@ type Maintainer struct {
 	statusChanged  *atomic.Bool
 	nodeChanged    *atomic.Bool
 	lastReportTime time.Time
-
-	controller *Controller
-	barrier    *Barrier
 
 	removing        bool
 	cascadeRemoving bool
@@ -336,7 +335,7 @@ func (m *Maintainer) onRemoveMaintainer(cascade bool) {
 }
 
 func (m *Maintainer) onCheckpointTsPersisted(msg *heartbeatpb.CheckpointTsMessage) {
-	stm, _ := m.controller.GetTask(m.controller.ddlDispatcherID)
+	stm := m.controller.GetTask(m.controller.ddlDispatcherID)
 	if stm == nil {
 		log.Warn("ddl dispatcher is not found, can not send checkpoint message",
 			zap.String("id", m.id.String()))

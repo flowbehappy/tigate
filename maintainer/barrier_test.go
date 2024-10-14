@@ -107,7 +107,7 @@ func TestNormalBlock(t *testing.T) {
 
 	// the last one is the writer
 	var selectDispatcherID = common.NewDispatcherIDFromPB(blockedDispatcherIDS[2])
-	selectedRep, _ := controller.db.GetTaskByID(selectDispatcherID)
+	selectedRep := controller.GetTask(selectDispatcherID)
 	controller.db.BindReplicaSetToNode("node1", "node2", selectedRep)
 	dropID := selectedRep.Span.TableID
 
@@ -414,7 +414,16 @@ func TestSchemaBlock(t *testing.T) {
 	require.Len(t, event.reportedDispatchers, 1)
 	require.Equal(t, 1, controller.db.GetAbsentSize())
 	require.Equal(t, 2, controller.oc.OperatorSize())
+	// two dispatcher and moved to operator queue, operator will be removed after ack
+	require.Equal(t, 3, controller.db.GetWorkingSize())
+	for _, task := range controller.db.GetWorking() {
+		op := controller.oc.GetOperator(task.ID)
+		if op != nil {
+			op.PostFinished()
+		}
+	}
 	require.Equal(t, 1, controller.db.GetWorkingSize())
+
 	// other dispatcher advanced checkpoint ts
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
@@ -453,7 +462,7 @@ func TestSyncPointBlock(t *testing.T) {
 		controller.db.MarkReplicaSetWorking(stm)
 	}
 	var selectDispatcherID = common.NewDispatcherIDFromPB(dispatcherIDs[2])
-	selectedRep, _ := controller.db.GetTaskByID(selectDispatcherID)
+	selectedRep := controller.GetTask(selectDispatcherID)
 	controller.db.BindReplicaSetToNode("node1", "node2", selectedRep)
 
 	newSpan := &heartbeatpb.Table{TableID: 10, SchemaID: 2}

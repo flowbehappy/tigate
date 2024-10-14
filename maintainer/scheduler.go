@@ -34,7 +34,7 @@ type Scheduler struct {
 	random               *rand.Rand
 	lastRebalanceTime    time.Time
 	checkBalanceInterval time.Duration
-	oc                   *operator.OperatorController
+	oc                   *operator.Controller
 	db                   *replica.ReplicaSetDB
 	nodeManager          *watcher.NodeManager
 
@@ -43,7 +43,7 @@ type Scheduler struct {
 
 func NewScheduler(changefeedID string,
 	batchSize int,
-	oc *operator.OperatorController,
+	oc *operator.Controller,
 	db *replica.ReplicaSetDB,
 	nodeManager *watcher.NodeManager,
 	balanceInterval time.Duration) *Scheduler {
@@ -106,11 +106,10 @@ func (s *Scheduler) basicSchedule(
 	for _, replicaSet := range absent {
 		item, _ := priorityQueue.PeekTop()
 		// the operator is pushed successfully
-		if s.oc.AddOperator(operator.NewAddDispatcherOperator(replicaSet, item.Node)) {
+		if s.oc.AddOperator(operator.NewAddDispatcherOperator(s.db, replicaSet, item.Node)) {
 			// update the task size priority queue
 			item.TaskSize++
 			taskSize++
-			s.db.BindReplicaSetToNode("", item.Node, replicaSet)
 		}
 		if taskSize >= availableSize {
 			break
@@ -215,7 +214,7 @@ func (s *Scheduler) balanceTables() {
 		item, _ := priorityQueue.PeekTop()
 
 		// the operator is pushed successfully
-		if s.oc.AddOperator(operator.NewMoveDispatcherOperator(cf, item.Node, s.db)) {
+		if s.oc.AddOperator(operator.NewMoveDispatcherOperator(s.db, cf, cf.GetNodeID(), item.Node)) {
 			// update the task size priority queue
 			item.TaskSize++
 			movedSize++
