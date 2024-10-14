@@ -497,7 +497,7 @@ func writeSchemaSnapshotAndMeta(
 	return databaseMap, tablesInKVSnap, nil
 }
 
-func cleanObseleteData(db *pebble.DB, oldGcTs uint64, gcTs uint64) {
+func cleanObsoleteData(db *pebble.DB, oldGcTs uint64, gcTs uint64) {
 	batch := db.NewBatch()
 	defer batch.Close()
 
@@ -539,7 +539,7 @@ func cleanObseleteData(db *pebble.DB, oldGcTs uint64, gcTs uint64) {
 	}
 
 	if err := batch.Commit(pebble.NoSync); err != nil {
-		log.Fatal("clean obselete data failed", zap.Error(err))
+		log.Fatal("clean obsolete data failed", zap.Error(err))
 	}
 }
 

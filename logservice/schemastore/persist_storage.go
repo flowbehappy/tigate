@@ -194,7 +194,7 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 }
 
 func (p *persistentStorage) initializeFromDisk() {
-	cleanObseleteData(p.db, 0, p.gcTs)
+	cleanObsoleteData(p.db, 0, p.gcTs)
 
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
@@ -500,25 +500,25 @@ func (p *persistentStorage) doGc(gcTs uint64) error {
 		// TODO: return err and retry?
 		return nil
 	}
-	log.Info("persist storage: gc finish write schema snapshot",
+	log.Info("gc finish write schema snapshot",
 		zap.Uint64("gcTs", gcTs),
-		zap.Any("duration", time.Since(start).Seconds()))
+		zap.Any("duration", time.Since(start)))
 
-	// clean data in memeory before clean data on disk
-	p.cleanObseleteDataInMemory(gcTs)
-	log.Info("persist storage: gc finish clean in memory data",
+	// clean data in memory before clean data on disk
+	p.cleanObsoleteDataInMemory(gcTs)
+	log.Info("gc finish clean in memory data",
 		zap.Uint64("gcTs", gcTs),
-		zap.Any("duration", time.Since(start).Seconds()))
+		zap.Any("duration", time.Since(start)))
 
-	cleanObseleteData(p.db, oldGcTs, gcTs)
-	log.Info("persist storage: gc finish",
+	cleanObsoleteData(p.db, oldGcTs, gcTs)
+	log.Info("gc finish",
 		zap.Uint64("gcTs", gcTs),
-		zap.Any("duration", time.Since(start).Seconds()))
+		zap.Any("duration", time.Since(start)))
 
 	return nil
 }
 
-func (p *persistentStorage) cleanObseleteDataInMemory(gcTs uint64) {
+func (p *persistentStorage) cleanObsoleteDataInMemory(gcTs uint64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.gcTs = gcTs
