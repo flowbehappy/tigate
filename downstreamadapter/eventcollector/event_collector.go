@@ -72,6 +72,7 @@ type EventCollector struct {
 	serverId          node.ID
 	dispatcherMap     *DispatcherMap
 	globalMemoryQuota int64
+	mc                messaging.MessageCenter
 	wg                sync.WaitGroup
 
 	dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, commonEvent.Event, *dispatcher.Dispatcher]
@@ -84,16 +85,17 @@ type EventCollector struct {
 
 func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventCollector {
 	eventCollector := EventCollector{
-		serverId:                                     serverId,
-		globalMemoryQuota:                            globalMemoryQuota,
-		dispatcherMap:                                &DispatcherMap{},
-		dispatcherEventsDynamicStream:                dispatcher.GetDispatcherEventsDynamicStream(),
-		registerMessageChan:                          chann.NewAutoDrainChann[RegisterInfo](),
-		metricDispatcherReceivedKVEventCount:         metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
+		serverId:                             serverId,
+		globalMemoryQuota:                    globalMemoryQuota,
+		dispatcherMap:                        &DispatcherMap{},
+		dispatcherEventsDynamicStream:        dispatcher.GetDispatcherEventsDynamicStream(),
+		registerMessageChan:                  chann.NewAutoDrainChann[RegisterInfo](),
+		mc:                                   appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
+		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
 		metricReceiveEventLagDuration:                metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("Msg"),
 	}
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
+	eventCollector.mc.RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
 
 	// wg is not `Wait`, and not controlled by the context.
 	eventCollector.wg.Add(1)
@@ -125,7 +127,7 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 // RegisterDispatcher register a dispatcher to event collector.
 // If the dispatcher is not table trigger event dispatcher, filterConfig will be nil.
 func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(&messaging.TargetMessage{
+	err := c.mc.SendCommand(&messaging.TargetMessage{
 		To:    c.serverId, // demo 中 每个节点都有自己的 eventService
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
@@ -152,7 +154,7 @@ func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
 }
 
 func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
-	err := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).SendCommand(&messaging.TargetMessage{
+	err := c.mc.SendCommand(&messaging.TargetMessage{
 		To:    c.serverId,
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
@@ -175,7 +177,7 @@ func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
 }
 
 func (c *EventCollector) RecvEventsMessage(_ context.Context, msg *messaging.TargetMessage) error {
-	inflightDuration := time.Since(time.Unix(0, msg.CrateAt)).Milliseconds()
+	inflightDuration := time.Since(time.Unix(0, msg.CreateAt)).Milliseconds()
 	c.metricReceiveEventLagDuration.Observe(float64(inflightDuration))
 	for _, msg := range msg.Message {
 		event, ok := msg.(commonEvent.Event)

@@ -252,7 +252,7 @@ type TargetMessage struct {
 	Topic    string
 	Type     IOType
 	Message  []IOTypeT
-	CrateAt  int64
+	CreateAt int64
 }
 
 // NewSingleTargetMessage creates a new TargetMessage to be sent to a target server, with a single message.
@@ -304,11 +304,11 @@ func NewSingleTargetMessage(To node.ID, Topic string, Message IOTypeT) *TargetMe
 	}
 
 	return &TargetMessage{
-		To:      To,
-		Type:    ioType,
-		Topic:   Topic,
-		Message: []IOTypeT{Message},
-		CrateAt: time.Now().UnixMilli(),
+		To:       To,
+		Type:     ioType,
+		Topic:    Topic,
+		Message:  []IOTypeT{Message},
+		CreateAt: time.Now().UnixMilli(),
 	}
 }
 
@@ -316,11 +316,11 @@ func NewSingleTargetMessage(To node.ID, Topic string, Message IOTypeT) *TargetMe
 // All messages in the batch should have the same type and topic.
 func NewBatchTargetMessage(To node.ID, Topic string, Type IOType, Messages []IOTypeT) *TargetMessage {
 	return &TargetMessage{
-		To:      To,
-		Type:    Type,
-		Topic:   Topic,
-		Message: Messages,
-		CrateAt: time.Now().UnixMilli(),
+		To:       To,
+		Type:     Type,
+		Topic:    Topic,
+		Message:  Messages,
+		CreateAt: time.Now().UnixMilli(),
 	}
 }
 
