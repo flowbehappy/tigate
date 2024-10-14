@@ -28,13 +28,14 @@ import (
 )
 
 type Controller struct {
-	lock         sync.RWMutex
-	db           *replica.ReplicationDB
-	operators    map[common.DispatcherID]Operator
-	runningQueue operatorQueue
-	batchSize    int
-	mc           messaging.MessageCenter
-	changefeedID string
+	changefeedID  string
+	replicationDB *replica.ReplicationDB
+	operators     map[common.DispatcherID]Operator
+	runningQueue  operatorQueue
+	batchSize     int
+	messageCenter messaging.MessageCenter
+
+	lock sync.RWMutex
 }
 
 func NewOperatorController(changefeedID string,
@@ -42,12 +43,12 @@ func NewOperatorController(changefeedID string,
 	db *replica.ReplicationDB,
 	batchSize int) *Controller {
 	oc := &Controller{
-		changefeedID: changefeedID,
-		operators:    make(map[common.DispatcherID]Operator),
-		runningQueue: make(operatorQueue, 0),
-		mc:           mc,
-		batchSize:    batchSize,
-		db:           db,
+		changefeedID:  changefeedID,
+		operators:     make(map[common.DispatcherID]Operator),
+		runningQueue:  make(operatorQueue, 0),
+		messageCenter: mc,
+		batchSize:     batchSize,
+		replicationDB: db,
 	}
 	return oc
 }
@@ -70,7 +71,7 @@ func (oc *Controller) Execute() time.Time {
 		oc.lock.RUnlock()
 
 		if msg != nil {
-			_ = oc.mc.SendCommand(msg)
+			_ = oc.messageCenter.SendCommand(msg)
 		}
 		executedItem++
 		if executedItem >= oc.batchSize {
@@ -79,6 +80,8 @@ func (oc *Controller) Execute() time.Time {
 	}
 }
 
+// ReplicaSetRemoved if the replica set is removed,
+// the controller will remove the operator. add a new operator to the controller.
 func (oc *Controller) ReplicaSetRemoved(op *RemoveDispatcherOperator) {
 	oc.lock.Lock()
 	defer oc.lock.Unlock()
@@ -105,6 +108,13 @@ func (oc *Controller) AddOperator(op Operator) bool {
 			zap.String("operator", op.String()))
 		return false
 	}
+	span := oc.replicationDB.GetTaskByID(op.ID())
+	if span == nil {
+		log.Warn("span not found",
+			zap.String("changefeed", oc.changefeedID),
+			zap.String("operator", op.String()))
+		return false
+	}
 	log.Info("add operator to running queue",
 		zap.String("changefeed", oc.changefeedID),
 		zap.String("operator", op.String()))
@@ -112,12 +122,6 @@ func (oc *Controller) AddOperator(op Operator) bool {
 	op.Start()
 	heap.Push(&oc.runningQueue, &operatorWithTime{op: op, time: time.Now()})
 	return true
-}
-
-func (oc *Controller) GetOperator(id common.DispatcherID) Operator {
-	oc.lock.RLock()
-	defer oc.lock.RUnlock()
-	return oc.operators[id]
 }
 
 func (oc *Controller) UpdateOperatorStatus(id common.DispatcherID, from node.ID, status *heartbeatpb.TableSpanStatus) {
@@ -130,14 +134,17 @@ func (oc *Controller) UpdateOperatorStatus(id common.DispatcherID, from node.ID,
 	}
 }
 
+// OnNodeRemoved is called when a node is offline,
+// the controller will mark all spans on the node as absent if no operator is handling it,
+// then the controller will notify all operators.
 func (oc *Controller) OnNodeRemoved(n node.ID) {
 	oc.lock.RLock()
 	defer oc.lock.RUnlock()
 
-	for _, span := range oc.db.GetTaskByNodeID(n) {
+	for _, span := range oc.replicationDB.GetTaskByNodeID(n) {
 		_, ok := oc.operators[span.ID]
 		if !ok {
-			oc.db.MarkSpanAbsent(span)
+			oc.replicationDB.MarkSpanAbsent(span)
 		}
 	}
 	for _, op := range oc.operators {
@@ -145,6 +152,14 @@ func (oc *Controller) OnNodeRemoved(n node.ID) {
 	}
 }
 
+// GetOperator returns the operator by id.
+func (oc *Controller) GetOperator(id common.DispatcherID) Operator {
+	oc.lock.RLock()
+	defer oc.lock.RUnlock()
+	return oc.operators[id]
+}
+
+// OperatorSize returns the number of operators in the controller.
 func (oc *Controller) OperatorSize() int {
 	oc.lock.RLock()
 	defer oc.lock.RUnlock()

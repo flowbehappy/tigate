@@ -304,7 +304,7 @@ func (m *Maintainer) onInit() bool {
 func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
 	switch msg.Type {
 	case messaging.TypeHeartBeatRequest:
-		return m.onHeartBeatRequest(msg)
+		m.onHeartBeatRequest(msg)
 	case messaging.TypeBlockStatusRequest:
 		m.onBlockStateRequest(msg)
 	case messaging.TypeMaintainerBootstrapResponse:
@@ -436,7 +436,7 @@ func (m *Maintainer) sendMessages(msgs []*messaging.TargetMessage) {
 	}
 }
 
-func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
+func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) {
 	req := msg.Message[0].(*heartbeatpb.HeartBeatRequest)
 	if req.Watermark != nil {
 		m.checkpointTsByCapture[msg.From] = *req.Watermark
@@ -452,7 +452,6 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) error {
 		m.runningErrors[msg.From] = req.Err
 		m.errLock.Unlock()
 	}
-	return nil
 }
 
 func (m *Maintainer) onBlockStateRequest(msg *messaging.TargetMessage) {
@@ -639,9 +638,9 @@ func (m *Maintainer) onPeriodTask() {
 func (m *Maintainer) collectMetrics() {
 	if time.Since(m.lastPrintStatusTime) > time.Second*20 {
 		total := m.controller.TaskSize()
-		scheduling := m.controller.db.GetAbsentSize()
-		working := m.controller.db.GetReplicatingSize()
-		absent := m.controller.db.GetAbsentSize()
+		scheduling := m.controller.replicationDB.GetAbsentSize()
+		working := m.controller.replicationDB.GetReplicatingSize()
+		absent := m.controller.replicationDB.GetAbsentSize()
 
 		m.tableCountGauge.Set(float64(total))
 		m.scheduledTaskGauge.Set(float64(scheduling))

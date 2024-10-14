@@ -33,7 +33,7 @@ type SpanReplication struct {
 	Span         *heartbeatpb.TableSpan
 	ChangefeedID model.ChangeFeedID
 
-	SchemaID int64
+	schemaID int64
 	nodeID   node.ID
 	status   *heartbeatpb.TableSpanStatus
 }
@@ -45,7 +45,7 @@ func NewReplicaSet(cfID model.ChangeFeedID,
 	checkpointTs uint64) *SpanReplication {
 	r := &SpanReplication{
 		ID:           id,
-		SchemaID:     SchemaID,
+		schemaID:     SchemaID,
 		Span:         span,
 		ChangefeedID: cfID,
 		status: &heartbeatpb.TableSpanStatus{
@@ -73,7 +73,7 @@ func NewWorkingReplicaSet(
 ) *SpanReplication {
 	r := &SpanReplication{
 		ID:           id,
-		SchemaID:     SchemaID,
+		schemaID:     SchemaID,
 		Span:         span,
 		ChangefeedID: cfID,
 		nodeID:       nodeID,
@@ -102,11 +102,11 @@ func (r *SpanReplication) UpdateStatus(status any) {
 }
 
 func (r *SpanReplication) GetSchemaID() int64 {
-	return r.SchemaID
+	return r.schemaID
 }
 
 func (r *SpanReplication) SetSchemaID(schemaID int64) {
-	r.SchemaID = schemaID
+	r.schemaID = schemaID
 }
 
 func (r *SpanReplication) SetNodeID(n node.ID) {
