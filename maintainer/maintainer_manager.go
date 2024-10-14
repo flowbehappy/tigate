@@ -21,7 +21,7 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
-	configNew "github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/utils/dynstream"
@@ -43,6 +43,7 @@ type Manager struct {
 	mc   messaging.MessageCenter
 	conf *cdcConfig.SchedulerConfig
 
+	// changefeedID -> maintainer
 	maintainers sync.Map
 
 	coordinatorID      node.ID
@@ -65,7 +66,8 @@ type Manager struct {
 func NewMaintainerManager(selfNode *node.Info,
 	conf *cdcConfig.SchedulerConfig,
 	pdAPI pdutil.PDAPIClient,
-	regionCache *tikv.RegionCache) *Manager {
+	regionCache *tikv.RegionCache,
+) *Manager {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	m := &Manager{
 		mc:            mc,
@@ -79,7 +81,7 @@ func NewMaintainerManager(selfNode *node.Info,
 	}
 	m.stream = dynstream.NewDynamicStream[string, *Event, *Maintainer](NewStreamHandler())
 	m.stream.Start()
-	mc.RegisterHandler(messaging.MaintainerManagerTopic, m.RecvMessages)
+	mc.RegisterHandler(messaging.MaintainerManagerTopic, m.recvMessages)
 
 	mc.RegisterHandler(messaging.MaintainerTopic,
 		func(ctx context.Context, msg *messaging.TargetMessage) error {
@@ -89,7 +91,7 @@ func NewMaintainerManager(selfNode *node.Info,
 	return m
 }
 
-func (m *Manager) RecvMessages(ctx context.Context, msg *messaging.TargetMessage) error {
+func (m *Manager) recvMessages(ctx context.Context, msg *messaging.TargetMessage) error {
 	switch msg.Type {
 	// receive message from coordinator
 	case messaging.TypeAddMaintainerRequest, messaging.TypeRemoveMaintainerRequest:
@@ -177,6 +179,7 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 	req := msg.Message[0].(*heartbeatpb.CoordinatorBootstrapRequest)
 	if m.coordinatorVersion > req.Version {
 		log.Warn("ignore invalid coordinator version",
+			zap.Int64("coordinatorVersion", m.coordinatorVersion),
 			zap.Int64("version", req.Version))
 		return
 	}
@@ -201,58 +204,71 @@ func (m *Manager) onCoordinatorBootstrapRequest(msg *messaging.TargetMessage) {
 		zap.Int64("version", m.coordinatorVersion))
 }
 
+func (m *Manager) onAddMaintainerRequest(req *heartbeatpb.AddMaintainerRequest) {
+	cfID := model.DefaultChangeFeedID(req.GetId())
+	cf, ok := m.maintainers.Load(cfID)
+	if ok {
+		return
+	}
+
+	cfConfig := &config.ChangeFeedInfo{}
+	err := json.Unmarshal(req.Config, cfConfig)
+	if err != nil {
+		log.Panic("decode changefeed fail", zap.Error(err))
+	}
+	cf = NewMaintainer(cfID, m.conf, cfConfig, m.selfNode, m.stream, m.taskScheduler,
+		m.pdAPI, m.regionCache,
+		req.CheckpointTs)
+	err = m.stream.AddPath(cfID.ID, cf.(*Maintainer))
+	if err != nil {
+		log.Warn("add path to dynstream failed, coordinator will retry later", zap.Error(err))
+		return
+	}
+	m.maintainers.Store(cfID, cf)
+	m.stream.In() <- &Event{changefeedID: cfID.ID, eventType: EventInit}
+}
+
+func (m *Manager) onRemoveMaintainerRequest(msg *messaging.TargetMessage) *heartbeatpb.MaintainerStatus {
+	req := msg.Message[0].(*heartbeatpb.RemoveMaintainerRequest)
+	cfID := model.DefaultChangeFeedID(req.GetId())
+	_, ok := m.maintainers.Load(cfID)
+	if !ok {
+		log.Warn("ignore remove maintainer request, "+
+			"since the maintainer not found",
+			zap.String("changefeed", cfID.String()),
+			zap.Any("request", req))
+		return &heartbeatpb.MaintainerStatus{
+			ChangefeedID: req.GetId(),
+			State:        heartbeatpb.ComponentState_Absent,
+		}
+	}
+	m.stream.In() <- &Event{
+		changefeedID: cfID.ID,
+		eventType:    EventMessage,
+		message:      msg,
+	}
+	return nil
+}
+
 func (m *Manager) onDispatchMaintainerRequest(
 	msg *messaging.TargetMessage,
-) string {
+) *heartbeatpb.MaintainerStatus {
 	if m.coordinatorID != msg.From {
 		log.Warn("ignore invalid coordinator id",
 			zap.Any("request", msg),
-			zap.Any("coordinator", msg.From))
-		return ""
+			zap.Any("coordinatorID", m.coordinatorID),
+			zap.Any("from", msg.From))
+		return nil
 	}
 	switch msg.Type {
 	case messaging.TypeAddMaintainerRequest:
 		req := msg.Message[0].(*heartbeatpb.AddMaintainerRequest)
-		cfID := model.DefaultChangeFeedID(req.GetId())
-		cf, ok := m.maintainers.Load(cfID)
-		if !ok {
-			cfConfig := &configNew.ChangeFeedInfo{}
-			err := json.Unmarshal(req.Config, cfConfig)
-			if err != nil {
-				log.Panic("decode changefeed fail", zap.Error(err))
-			}
-			log.Info("new changefeed added", zap.Any("cfConfig", cfConfig))
-			cf = NewMaintainer(cfID, m.conf, cfConfig, m.selfNode, m.stream, m.taskScheduler,
-				m.pdAPI, m.regionCache,
-				req.CheckpointTs)
-			err = m.stream.AddPath(cfID.ID, cf.(*Maintainer))
-			if err != nil {
-				log.Warn("add path to dynstream failed, coordinator will retry later",
-					zap.Error(err))
-				return ""
-			}
-			m.maintainers.Store(cfID, cf)
-			m.stream.In() <- &Event{changefeedID: cfID.ID, eventType: EventInit}
-		}
+		m.onAddMaintainerRequest(req)
 	case messaging.TypeRemoveMaintainerRequest:
-		req := msg.Message[0].(*heartbeatpb.RemoveMaintainerRequest)
-		cfID := model.DefaultChangeFeedID(req.GetId())
-		_, ok := m.maintainers.Load(cfID)
-		if !ok {
-			log.Warn("ignore remove maintainer request, "+
-				"since the maintainer not found",
-				zap.String("changefeed", cfID.String()),
-				zap.Any("request", req))
-			return req.GetId()
-		}
-		m.stream.In() <- &Event{
-			changefeedID: cfID.ID,
-			eventType:    EventMessage,
-			message:      msg,
-		}
+		return m.onRemoveMaintainerRequest(msg)
 	default:
 	}
-	return ""
+	return nil
 }
 
 func (m *Manager) sendHeartbeat() {
@@ -280,17 +296,14 @@ func (m *Manager) handleMessage(msg *messaging.TargetMessage) {
 		m.onCoordinatorBootstrapRequest(msg)
 	case messaging.TypeAddMaintainerRequest, messaging.TypeRemoveMaintainerRequest:
 		if m.coordinatorVersion > 0 {
-			absent := m.onDispatchMaintainerRequest(msg)
-			response := &heartbeatpb.MaintainerHeartbeat{}
-			if absent != "" {
-				response.Statuses = append(response.Statuses, &heartbeatpb.MaintainerStatus{
-					ChangefeedID: absent,
-					State:        heartbeatpb.ComponentState_Absent,
-				})
+			status := m.onDispatchMaintainerRequest(msg)
+			if status == nil {
+				return
 			}
-			if len(response.Statuses) != 0 {
-				m.sendMessages(response)
+			response := &heartbeatpb.MaintainerHeartbeat{
+				Statuses: []*heartbeatpb.MaintainerStatus{status},
 			}
+			m.sendMessages(response)
 		}
 	default:
 	}

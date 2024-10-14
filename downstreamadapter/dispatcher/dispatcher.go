@@ -19,6 +19,7 @@ import (
 
 	tisink "github.com/flowbehappy/tigate/downstreamadapter/sink"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
+	"github.com/flowbehappy/tigate/downstreamadapter/syncpoint"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
@@ -72,7 +73,7 @@ type Dispatcher struct {
 	// TableSpanBlockStatus use to report block status of ddl/sync point event to Maintainer
 	blockStatusesChan chan *heartbeatpb.TableSpanBlockStatus
 
-	SyncPointInfo *SyncPointInfo
+	SyncPointInfo *syncpoint.SyncPointInfo
 
 	componentStatus *ComponentStateWithMutex
 
@@ -105,7 +106,7 @@ func NewDispatcher(
 	filter filter.Filter,
 	schemaID int64,
 	schemaIDToDispatchers *SchemaIDToDispatchers,
-	syncPointInfo *SyncPointInfo) *Dispatcher {
+	syncPointInfo *syncpoint.SyncPointInfo) *Dispatcher {
 	dispatcher := &Dispatcher{
 		id:                    id,
 		tableSpan:             tableSpan,
@@ -392,7 +393,7 @@ func (d *Dispatcher) GetSyncPointTs() uint64 {
 
 func (d *Dispatcher) GetSyncPointInterval() time.Duration {
 	if d.SyncPointInfo.EnableSyncPoint {
-		return d.SyncPointInfo.SyncPointInterval
+		return d.SyncPointInfo.SyncPointConfig.SyncPointInterval
 	} else {
 		return time.Duration(0)
 	}

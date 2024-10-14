@@ -80,15 +80,13 @@ func (si *streamInfo[P, T, D]) runtime() time.Duration {
 }
 
 func (si *streamInfo[P, T, D]) busyRatio(period time.Duration) float64 {
-	if si.streamStat.totalTime != 0 {
-		if period != 0 {
-			return float64(si.streamStat.totalTime) / float64(period)
-		} else {
-			return float64(si.streamStat.totalTime) / float64(si.streamStat.period)
-		}
-	} else {
+	if si.streamStat.totalTime == 0 {
 		return 0
 	}
+	if period != 0 {
+		return float64(si.streamStat.totalTime) / float64(period)
+	}
+	return float64(si.streamStat.totalTime) / float64(si.streamStat.period)
 }
 
 func (si *streamInfo[P, T, D]) period() time.Duration {
@@ -109,7 +107,7 @@ func (s sortedSIs[P, T, D]) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 //
 // A stream can handle events from multiple paths.
 // Events from the same path are only processed by one particular stream at the same time.
-// The scheduler use several strategies to balance the load of the streams, while the final balanace
+// The scheduler use several strategies to balance the load of the streams, while the final balance
 // actions are moving the paths between the streams.
 type dynamicStreamImpl[P Path, T Event, D Dest] struct {
 	trackTopPaths   int
@@ -118,7 +116,7 @@ type dynamicStreamImpl[P Path, T Event, D Dest] struct {
 	handler Handler[P, T, D]
 	option  Option
 
-	eventChan chan T // The channel to receive the incomming events by distributor
+	eventChan chan T // The channel to receive the incoming events by distributor
 	wakeChan  chan P // The channel to receive the wake signal by distributor
 
 	reportChan chan streamStat[P, T, D] // The channel to receive the report by scheduler
@@ -267,7 +265,6 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 	streamInfoMap := genStreamInfoMap(d.streamInfos)
 	globalPathMap := make(map[P]*pathInfo[P, T, D])
 
-	scheduleRule := NewRoundRobin(3)
 	doSchedule := func(rule ruleType, testPeriod time.Duration) {
 		// The goal of scheduler is to balance the load of the streams, with mimimum changes.
 		// First of all, we have consistent number (baseStreamCount) of basic streams, and unlimited number of solo streams.
@@ -279,8 +276,8 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 		// 3. If the most busy stream is too busy and the least busy stream is not busy, we shuffle the paths between them.
 		// We use round-robin to apply the rules to the streams.
 		// Since the number of streams is small, we don't need to worry about the performance of iterating all the streams.
-
-		if rule == createSoloPath {
+		switch rule {
+		case createSoloPath:
 			newSoloStreamInfos := make([]*streamInfo[P, T, D], 0)
 			arranges := make([]*arrangeStreamCmd[P, T, D], 0)
 			newStreamInfos := make([]*streamInfo[P, T, D], 0, len(d.streamInfos))
@@ -359,7 +356,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 					d.cmdToDist <- cmd
 				}
 			}
-		} else if rule == removeSoloPath {
+		case removeSoloPath:
 			normalSoloStreamInfos := make([]*streamInfo[P, T, D], 0, len(d.streamInfos))
 
 			idleSoloPaths := make([]*pathInfo[P, T, D], 0)
@@ -423,7 +420,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 					cmd:     arrange,
 				}
 			}
-		} else if rule == shuffleStreams {
+		case shuffleStreams:
 			arranges := make([]*arrangeStreamCmd[P, T, D], 0)
 			newStreamInfos := make([]*streamInfo[P, T, D], 0, len(d.streamInfos))
 
@@ -544,13 +541,13 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 					d.cmdToDist <- cmd
 				}
 			}
-		} else {
+		default:
 			panic("Unknown rule")
 		}
 	}
 
-	nextSchedule := time.Now().Add(d.option.SchedulerInterval)
-	timerChan := time.After(time.Until(nextSchedule))
+	scheduleRule := NewRoundRobin(3)
+	ticker := time.NewTicker(d.option.SchedulerInterval)
 	for {
 		select {
 		case cmd, ok := <-d.cmdToSchd:
@@ -654,9 +651,7 @@ func (d *dynamicStreamImpl[P, T, D]) scheduler() {
 				continue
 			}
 			si.streamStat = stat
-		case <-timerChan:
-			nextSchedule = time.Now().Add(d.option.SchedulerInterval)
-			timerChan = time.After(time.Until(nextSchedule))
+		case <-ticker.C:
 			doSchedule(ruleType(scheduleRule.Next()), 0)
 		}
 	}

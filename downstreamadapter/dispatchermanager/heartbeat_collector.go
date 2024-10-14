@@ -46,6 +46,8 @@ type HeartBeatCollector struct {
 	heartBeatResponseDynamicStream          dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]
 	schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.ScheduleDispatcherRequest, *EventDispatcherManager]
 	checkpointTsMessageDynamicStream        dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.CheckpointTsMessage, *EventDispatcherManager]
+
+	mc messaging.MessageCenter
 }
 
 func NewHeartBeatCollector(serverId node.ID) *HeartBeatCollector {
@@ -56,8 +58,9 @@ func NewHeartBeatCollector(serverId node.ID) *HeartBeatCollector {
 		heartBeatResponseDynamicStream:          GetHeartBeatResponseDynamicStream(),
 		schedulerDispatcherRequestDynamicStream: GetSchedulerDispatcherRequestDynamicStream(),
 		checkpointTsMessageDynamicStream:        GetCheckpointTsMessageDynamicStream(),
+		mc:                                      appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 	}
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).RegisterHandler(messaging.HeartbeatCollectorTopic, heartBeatCollector.RecvMessages)
+	heartBeatCollector.mc.RegisterHandler(messaging.HeartbeatCollectorTopic, heartBeatCollector.RecvMessages)
 
 	heartBeatCollector.wg.Add(2)
 	go func() {
@@ -90,10 +93,9 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherMa
 }
 
 func (c *HeartBeatCollector) sendHeartBeatMessages() {
-	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	for {
 		heartBeatRequestWithTargetID := c.heartBeatReqQueue.Dequeue()
-		err := mc.SendCommand(
+		err := c.mc.SendCommand(
 			messaging.NewSingleTargetMessage(
 				heartBeatRequestWithTargetID.TargetID,
 				messaging.MaintainerManagerTopic,
@@ -106,10 +108,9 @@ func (c *HeartBeatCollector) sendHeartBeatMessages() {
 }
 
 func (c *HeartBeatCollector) sendBlockStatusMessages() {
-	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	for {
 		blockStatusRequestWithTargetID := c.blockStatusReqQueue.Dequeue()
-		err := mc.SendCommand(
+		err := c.mc.SendCommand(
 			messaging.NewSingleTargetMessage(
 				blockStatusRequestWithTargetID.TargetID,
 				messaging.MaintainerManagerTopic,
@@ -121,7 +122,7 @@ func (c *HeartBeatCollector) sendBlockStatusMessages() {
 	}
 }
 
-func (c *HeartBeatCollector) RecvMessages(ctx context.Context, msg *messaging.TargetMessage) error {
+func (c *HeartBeatCollector) RecvMessages(_ context.Context, msg *messaging.TargetMessage) error {
 	switch msg.Type {
 	case messaging.TypeHeartBeatResponse:
 		heartbeatResponse := msg.Message[0].(*heartbeatpb.HeartBeatResponse)
@@ -142,8 +143,7 @@ func (c *HeartBeatCollector) RecvMessages(ctx context.Context, msg *messaging.Ta
 }
 
 func (c *HeartBeatCollector) Close() {
-	appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).
-		DeRegisterHandler(messaging.HeartbeatCollectorTopic)
+	c.mc.DeRegisterHandler(messaging.HeartbeatCollectorTopic)
 }
 
 type SchedulerDispatcherRequestHandler struct {
@@ -165,10 +165,13 @@ func (h *SchedulerDispatcherRequestHandler) Handle(eventDispatcherManager *Event
 	}
 	scheduleAction := scheduleDispatcherRequest.ScheduleAction
 	config := scheduleDispatcherRequest.Config
-	if scheduleAction == heartbeatpb.ScheduleAction_Create {
-		eventDispatcherManager.NewDispatcher(common.NewDispatcherIDFromPB(config.DispatcherID), config.Span, config.StartTs, config.SchemaID)
-	} else if scheduleAction == heartbeatpb.ScheduleAction_Remove {
-		eventDispatcherManager.RemoveDispatcher(common.NewDispatcherIDFromPB(config.DispatcherID))
+
+	dispatcherID := common.NewDispatcherIDFromPB(config.DispatcherID)
+	switch scheduleAction {
+	case heartbeatpb.ScheduleAction_Create:
+		eventDispatcherManager.NewDispatcher(dispatcherID, config.Span, config.StartTs, config.SchemaID)
+	case heartbeatpb.ScheduleAction_Remove:
+		eventDispatcherManager.RemoveDispatcher(dispatcherID)
 	}
 	return false
 }
@@ -194,11 +197,12 @@ func (h *HeartBeatResponseHandler) Handle(eventDispatcherManager *EventDispatche
 	dispatcherStatuses := heartbeatResponse.GetDispatcherStatuses()
 	for _, dispatcherStatus := range dispatcherStatuses {
 		influencedDispatchersType := dispatcherStatus.InfluencedDispatchers.InfluenceType
-		if influencedDispatchersType == heartbeatpb.InfluenceType_Normal {
+		switch influencedDispatchersType {
+		case heartbeatpb.InfluenceType_Normal:
 			for _, dispatcherID := range dispatcherStatus.InfluencedDispatchers.DispatcherIDs {
 				h.dispatcherStatusDynamicStream.In() <- dispatcher.NewDispatcherStatusWithID(dispatcherStatus, common.NewDispatcherIDFromPB(dispatcherID))
 			}
-		} else if influencedDispatchersType == heartbeatpb.InfluenceType_DB {
+		case heartbeatpb.InfluenceType_DB:
 			schemaID := dispatcherStatus.InfluencedDispatchers.SchemaID
 			excludeDispatcherID := common.NewDispatcherIDFromPB(dispatcherStatus.InfluencedDispatchers.ExcludeDispatcherId)
 			dispatcherIds := eventDispatcherManager.GetAllDispatchers(schemaID)
@@ -207,7 +211,7 @@ func (h *HeartBeatResponseHandler) Handle(eventDispatcherManager *EventDispatche
 					h.dispatcherStatusDynamicStream.In() <- dispatcher.NewDispatcherStatusWithID(dispatcherStatus, id)
 				}
 			}
-		} else if influencedDispatchersType == heartbeatpb.InfluenceType_All {
+		case heartbeatpb.InfluenceType_All:
 			excludeDispatcherID := common.NewDispatcherIDFromPB(dispatcherStatus.InfluencedDispatchers.ExcludeDispatcherId)
 			eventDispatcherManager.GetDispatcherMap().ForEach(func(id common.DispatcherID, _ *dispatcher.Dispatcher) {
 				if id != excludeDispatcherID {
@@ -216,7 +220,6 @@ func (h *HeartBeatResponseHandler) Handle(eventDispatcherManager *EventDispatche
 			})
 		}
 	}
-
 	return false
 }
 

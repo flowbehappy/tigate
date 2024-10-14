@@ -29,6 +29,7 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink"
+	"github.com/flowbehappy/tigate/downstreamadapter/syncpoint"
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -82,9 +83,9 @@ type EventDispatcherManager struct {
 
 	tableTriggerEventDispatcher *dispatcher.Dispatcher
 
-	enableSyncPoint    bool
-	syncPointInterval  time.Duration
-	syncPointRetention time.Duration
+	// only not nil when enable sync point
+	// TODO: changefeed update config
+	syncPointConfig *syncpoint.SyncPointConfig
 
 	tableEventDispatcherCount      prometheus.Gauge
 	metricCreateDispatcherDuration prometheus.Observer
@@ -107,7 +108,6 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 		cancel:                         cancel,
 		config:                         cfConfig,
 		schemaIDToDispatchers:          dispatcher.NewSchemaIDToDispatchers(),
-		enableSyncPoint:                cfConfig.EnableSyncPoint,
 		tableEventDispatcherCount:      metrics.TableEventDispatcherGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCreateDispatcherDuration: metrics.CreateDispatcherDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 		metricCheckpointTs:             metrics.EventDispatcherManagerCheckpointTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
@@ -116,10 +116,12 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 		metricResolvedTsLag:            metrics.EventDispatcherManagerResolvedTsLagGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 	}
 
-	if manager.enableSyncPoint {
+	if cfConfig.EnableSyncPoint {
 		// TODO:确认一下参数设置的地方会检查正确性，这里不需要再次检查了
-		manager.syncPointInterval = util.GetOrZero(cfConfig.SyncPointInterval)
-		manager.syncPointRetention = util.GetOrZero(cfConfig.SyncPointRetention)
+		manager.syncPointConfig = &syncpoint.SyncPointConfig{
+			SyncPointInterval:  util.GetOrZero(cfConfig.SyncPointInterval),
+			SyncPointRetention: util.GetOrZero(cfConfig.SyncPointRetention),
+		}
 	}
 
 	// TODO: 最后去更新一下 filter 的内部 NewFilter 函数，现在是在套壳适配
@@ -208,14 +210,6 @@ func (e *EventDispatcherManager) close() {
 	log.Info("event dispatcher manager closed", zap.Stringer("changefeedID", e.changefeedID))
 }
 
-func calculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) uint64 {
-	k := oracle.GetTimeFromTS(startTs).Sub(time.Unix(0, 0)) / syncPointInterval
-	if oracle.GetTimeFromTS(startTs).Sub(time.Unix(0, 0))%syncPointInterval != 0 || oracle.ExtractLogical(startTs) != 0 {
-		k += 1
-	}
-	return oracle.GoTimeToTS(time.Unix(0, 0).Add(k * syncPointInterval))
-}
-
 func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTs uint64, schemaID int64) *dispatcher.Dispatcher {
 	start := time.Now()
 	if _, ok := e.dispatcherMap.Get(id); ok {
@@ -223,17 +217,17 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 		return nil
 	}
 
-	syncPointInfo := &dispatcher.SyncPointInfo{
-		EnableSyncPoint: e.enableSyncPoint,
+	syncPointInfo := syncpoint.SyncPointInfo{
+		SyncPointConfig: e.syncPointConfig,
+		EnableSyncPoint: false,
 	}
 
-	if e.enableSyncPoint {
-		syncPointInfo.InitSyncPointTs = calculateStartSyncPointTs(startTs, e.syncPointInterval)
-		syncPointInfo.SyncPointInterval = e.syncPointInterval
-		syncPointInfo.SyncPointRetention = e.syncPointRetention
+	if e.syncPointConfig != nil {
+		syncPointInfo.EnableSyncPoint = true
+		syncPointInfo.InitSyncPointTs = syncpoint.CalculateStartSyncPointTs(startTs, e.syncPointConfig.SyncPointInterval)
 	}
 
-	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.blockStatusesChan, e.filter, schemaID, e.schemaIDToDispatchers, syncPointInfo)
+	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.blockStatusesChan, e.filter, schemaID, e.schemaIDToDispatchers, &syncPointInfo)
 
 	if tableSpan.Equal(heartbeatpb.DDLSpan) {
 		e.tableTriggerEventDispatcher = dispatcher
