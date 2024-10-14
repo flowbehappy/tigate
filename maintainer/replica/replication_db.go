@@ -362,7 +362,7 @@ func (db *ReplicationDB) UpdateSchemaID(tableID, newSchemaID int64) {
 	defer db.lock.Unlock()
 
 	for _, replicaSet := range db.tableTasks[tableID] {
-		oldSchemaID := replicaSet.SchemaID
+		oldSchemaID := replicaSet.GetSchemaID()
 		// update schemaID
 		replicaSet.SetSchemaID(newSchemaID)
 

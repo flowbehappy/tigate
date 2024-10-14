@@ -299,7 +299,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	stream.Close()
 	//include a ddl dispatcher
 	require.Equal(t, tableSize+1,
-		maintainer.controller.db.GetReplicatingSize())
+		maintainer.controller.replicationDB.GetReplicatingSize())
 	require.Equal(t, tableSize+1,
 		maintainer.controller.GetTaskSizeByNodeID(n.ID))
 }

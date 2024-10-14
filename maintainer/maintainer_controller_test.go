@@ -51,14 +51,14 @@ func TestSchedule(t *testing.T) {
 			TableID:  int64(i),
 		}, 1)
 	}
-	controller.sche.Execute()
-	require.Equal(t, 9, controller.oc.OperatorSize())
-	for _, span := range controller.db.GetTasksBySchemaID(1) {
-		if op := controller.oc.GetOperator(span.ID); op != nil {
+	controller.spanScheduler.Execute()
+	require.Equal(t, 9, controller.operatorController.OperatorSize())
+	for _, span := range controller.replicationDB.GetTasksBySchemaID(1) {
+		if op := controller.operatorController.GetOperator(span.ID); op != nil {
 			op.Start()
 		}
 	}
-	require.Equal(t, 991, controller.db.GetAbsentSize())
+	require.Equal(t, 991, controller.replicationDB.GetAbsentSize())
 	require.Equal(t, 3, controller.GetTaskSizeByNodeID("node1"))
 	require.Equal(t, 3, controller.GetTaskSizeByNodeID("node2"))
 	require.Equal(t, 3, controller.GetTaskSizeByNodeID("node3"))
@@ -71,9 +71,9 @@ func TestRemoveAbsentTask(t *testing.T) {
 		SchemaID: 1,
 		TableID:  int64(1),
 	}, 1)
-	require.Equal(t, 1, controller.db.GetAbsentSize())
+	require.Equal(t, 1, controller.replicationDB.GetAbsentSize())
 	controller.RemoveAllTasks()
-	require.Equal(t, 0, controller.db.GetAbsentSize())
+	require.Equal(t, 0, controller.replicationDB.GetAbsentSize())
 }
 
 func TestBalance(t *testing.T) {
@@ -86,34 +86,34 @@ func TestBalance(t *testing.T) {
 		dispatcherID := common.NewDispatcherID()
 		spanReplica := replica.NewReplicaSet(model.ChangeFeedID{}, dispatcherID, 1, span, 1)
 		spanReplica.SetNodeID("node1")
-		s.db.AddReplicatingSpan(spanReplica)
+		s.replicationDB.AddReplicatingSpan(spanReplica)
 	}
-	s.sche.Execute()
-	require.Equal(t, 0, s.oc.OperatorSize())
-	require.Equal(t, 100, s.db.GetReplicatingSize())
-	require.Equal(t, 100, s.db.GetTaskSizeByNodeID("node1"))
+	s.spanScheduler.Execute()
+	require.Equal(t, 0, s.operatorController.OperatorSize())
+	require.Equal(t, 100, s.replicationDB.GetReplicatingSize())
+	require.Equal(t, 100, s.replicationDB.GetTaskSizeByNodeID("node1"))
 
 	// add new node
 	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
-	s.sche.Execute()
-	require.Equal(t, 50, s.oc.OperatorSize())
-	require.Equal(t, 50, s.db.GetSchedulingSize())
-	require.Equal(t, 50, s.db.GetReplicatingSize())
-	for _, span := range s.db.GetTasksBySchemaID(1) {
-		if op := s.oc.GetOperator(span.ID); op != nil {
+	s.spanScheduler.Execute()
+	require.Equal(t, 50, s.operatorController.OperatorSize())
+	require.Equal(t, 50, s.replicationDB.GetSchedulingSize())
+	require.Equal(t, 50, s.replicationDB.GetReplicatingSize())
+	for _, span := range s.replicationDB.GetTasksBySchemaID(1) {
+		if op := s.operatorController.GetOperator(span.ID); op != nil {
 			_, ok := op.(*operator.MoveDispatcherOperator)
 			require.True(t, ok)
 		}
 	}
 	//still on the primary node
-	require.Equal(t, 100, s.db.GetTaskSizeByNodeID("node1"))
-	require.Equal(t, 0, s.db.GetTaskSizeByNodeID("node2"))
+	require.Equal(t, 100, s.replicationDB.GetTaskSizeByNodeID("node1"))
+	require.Equal(t, 0, s.replicationDB.GetTaskSizeByNodeID("node2"))
 
 	// remove the node2
 	delete(nodeManager.GetAliveNodes(), "node2")
 	s.RemoveNode("node2")
-	for _, span := range s.db.GetTasksBySchemaID(1) {
-		if op := s.oc.GetOperator(span.ID); op != nil {
+	for _, span := range s.replicationDB.GetTasksBySchemaID(1) {
+		if op := s.operatorController.GetOperator(span.ID); op != nil {
 			msg := op.Schedule()
 			require.NotNil(t, msg)
 			require.Equal(t, "node1", msg.To.String())
@@ -130,8 +130,8 @@ func TestBalance(t *testing.T) {
 
 	require.Equal(t, 0, s.GetSchedulingSize())
 	// changed to working status
-	require.Equal(t, 100, s.db.GetReplicatingSize())
-	require.Equal(t, 100, s.db.GetTaskSizeByNodeID("node1"))
+	require.Equal(t, 100, s.replicationDB.GetReplicatingSize())
+	require.Equal(t, 100, s.replicationDB.GetTaskSizeByNodeID("node1"))
 }
 
 func TestStoppedWhenMoving(t *testing.T) {
@@ -143,26 +143,26 @@ func TestStoppedWhenMoving(t *testing.T) {
 		dispatcherID := common.NewDispatcherID()
 		spanReplica := replica.NewReplicaSet(model.ChangeFeedID{}, dispatcherID, 1, span, 1)
 		spanReplica.SetNodeID("node1")
-		s.db.AddReplicatingSpan(spanReplica)
+		s.replicationDB.AddReplicatingSpan(spanReplica)
 	}
-	require.Equal(t, 2, s.db.GetReplicatingSize())
-	require.Equal(t, 2, s.db.GetTaskSizeByNodeID("node1"))
+	require.Equal(t, 2, s.replicationDB.GetReplicatingSize())
+	require.Equal(t, 2, s.replicationDB.GetTaskSizeByNodeID("node1"))
 	// add new node
 	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
-	s.sche.Execute()
-	require.Equal(t, 1, s.oc.OperatorSize())
-	require.Equal(t, 1, s.db.GetSchedulingSize())
-	require.Equal(t, 1, s.db.GetReplicatingSize())
-	require.Equal(t, 2, s.db.GetTaskSizeByNodeID("node1"))
-	require.Equal(t, 0, s.db.GetTaskSizeByNodeID("node2"))
+	s.spanScheduler.Execute()
+	require.Equal(t, 1, s.operatorController.OperatorSize())
+	require.Equal(t, 1, s.replicationDB.GetSchedulingSize())
+	require.Equal(t, 1, s.replicationDB.GetReplicatingSize())
+	require.Equal(t, 2, s.replicationDB.GetTaskSizeByNodeID("node1"))
+	require.Equal(t, 0, s.replicationDB.GetTaskSizeByNodeID("node2"))
 
 	s.RemoveNode("node2")
 	s.RemoveNode("node1")
 	require.Equal(t, 0, s.GetSchedulingSize())
 	// changed to absent status
-	require.Equal(t, 2, s.db.GetAbsentSize())
-	require.Equal(t, 0, s.db.GetTaskSizeByNodeID("node1"))
-	require.Equal(t, 0, s.db.GetTaskSizeByNodeID("node2"))
+	require.Equal(t, 2, s.replicationDB.GetAbsentSize())
+	require.Equal(t, 0, s.replicationDB.GetTaskSizeByNodeID("node1"))
+	require.Equal(t, 0, s.replicationDB.GetTaskSizeByNodeID("node2"))
 }
 
 func TestFinishBootstrap(t *testing.T) {
@@ -185,10 +185,10 @@ func TestFinishBootstrap(t *testing.T) {
 		1: cached,
 	})
 	require.True(t, s.bootstrapped)
-	require.Equal(t, 1, s.db.GetTaskSizeByNodeID("node1"))
-	require.Equal(t, 1, s.db.GetReplicatingSize())
+	require.Equal(t, 1, s.replicationDB.GetTaskSizeByNodeID("node1"))
+	require.Equal(t, 1, s.replicationDB.GetReplicatingSize())
 	// ddl dispatcher
-	absents, _ := s.db.GetScheduleSate(nil, 100)
+	absents, _ := s.replicationDB.GetScheduleSate(nil, 100)
 	found := false
 	for _, absent := range absents {
 		if absent.ID == s.ddlDispatcherID {
@@ -196,8 +196,8 @@ func TestFinishBootstrap(t *testing.T) {
 		}
 	}
 	require.True(t, found)
-	require.Equal(t, 0, s.db.GetSchedulingSize())
-	replicating := s.db.GetReplicating()
+	require.Equal(t, 0, s.replicationDB.GetSchedulingSize())
+	replicating := s.replicationDB.GetReplicating()
 	found = false
 	for _, r := range replicating {
 		if r.ID == dispatcherID2 {
@@ -222,12 +222,12 @@ func TestBalanceUnEvenTask(t *testing.T) {
 		span := &heartbeatpb.TableSpan{TableID: int64(i)}
 		dispatcherID := common.NewDispatcherID()
 		spanReplica := replica.NewReplicaSet(model.ChangeFeedID{}, dispatcherID, 1, span, 1)
-		s.db.AddAbsentReplicaSet(spanReplica)
+		s.replicationDB.AddAbsentReplicaSet(spanReplica)
 	}
-	s.sche.Execute()
+	s.spanScheduler.Execute()
 
-	for _, span := range s.db.GetTasksBySchemaID(1) {
-		if op := s.oc.GetOperator(span.ID); op != nil {
+	for _, span := range s.replicationDB.GetTasksBySchemaID(1) {
+		if op := s.operatorController.GetOperator(span.ID); op != nil {
 			msg := op.Schedule()
 			require.NotNil(t, msg)
 			req := msg.Message[0].(*heartbeatpb.ScheduleDispatcherRequest)
@@ -240,17 +240,17 @@ func TestBalanceUnEvenTask(t *testing.T) {
 			op.PostFinish()
 		}
 	}
-	require.Equal(t, 4, s.db.GetReplicatingSize())
-	require.Equal(t, 0, s.db.GetSchedulingSize())
-	require.Equal(t, 4, s.oc.OperatorSize())
-	s.oc.Execute()
-	require.Equal(t, 0, s.oc.OperatorSize())
+	require.Equal(t, 4, s.replicationDB.GetReplicatingSize())
+	require.Equal(t, 0, s.replicationDB.GetSchedulingSize())
+	require.Equal(t, 4, s.operatorController.OperatorSize())
+	s.operatorController.Execute()
+	require.Equal(t, 0, s.operatorController.OperatorSize())
 
 	// add new node
 	nodeManager.GetAliveNodes()["node3"] = &node.Info{ID: "node3"}
-	s.sche.Execute()
-	require.Equal(t, 4, s.db.GetReplicatingSize())
-	require.Equal(t, 0, s.oc.OperatorSize())
+	s.spanScheduler.Execute()
+	require.Equal(t, 4, s.replicationDB.GetReplicatingSize())
+	require.Equal(t, 0, s.operatorController.OperatorSize())
 	//still on the primary node
 	require.Equal(t, 2, s.GetTaskSizeByNodeID("node1"))
 	require.Equal(t, 2, s.GetTaskSizeByNodeID("node2"))
@@ -327,9 +327,9 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 	//total 9 regions,
 	// table 1: 2 holes will be inserted to absent
 	// table 2: split to 4 spans, will be inserted to absent
-	require.Equal(t, 6, s.db.GetAbsentSize())
+	require.Equal(t, 6, s.replicationDB.GetAbsentSize())
 	// table 1 has two working span,  plus a working ddl span
-	require.Equal(t, 3, s.db.GetReplicatingSize())
+	require.Equal(t, 3, s.replicationDB.GetReplicatingSize())
 	require.True(t, s.bootstrapped)
 }
 

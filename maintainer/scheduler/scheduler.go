@@ -37,10 +37,11 @@ type Scheduler struct {
 	random               *rand.Rand
 	lastRebalanceTime    time.Time
 	checkBalanceInterval time.Duration
-	oc                   *operator.Controller
-	db                   *replica.ReplicationDB
+	operatorController   *operator.Controller
+	replicationDB        *replica.ReplicationDB
 	nodeManager          *watcher.NodeManager
 
+	// buffer for the absent spans
 	absent []*replica.SpanReplication
 }
 
@@ -55,8 +56,8 @@ func NewScheduler(changefeedID string,
 		random:               rand.New(rand.NewSource(time.Now().UnixNano())),
 		changefeedID:         changefeedID,
 		checkBalanceInterval: balanceInterval,
-		oc:                   oc,
-		db:                   db,
+		operatorController:   oc,
+		replicationDB:        db,
 		nodeManager:          nodeManager,
 		lastRebalanceTime:    time.Now(),
 		absent:               make([]*replica.SpanReplication, 0, batchSize),
@@ -65,8 +66,8 @@ func NewScheduler(changefeedID string,
 
 // Execute periodically execute the operator
 func (s *Scheduler) Execute() time.Time {
-	if s.db.GetAbsentSize() > 0 {
-		availableSize := s.batchSize - s.oc.OperatorSize()
+	if s.replicationDB.GetAbsentSize() > 0 {
+		availableSize := s.batchSize - s.operatorController.OperatorSize()
 		if availableSize <= 0 {
 			return time.Now().Add(time.Millisecond * 500)
 		}
@@ -74,8 +75,9 @@ func (s *Scheduler) Execute() time.Time {
 		if availableSize < s.batchSize/2 {
 			return time.Now().Add(time.Millisecond * 100)
 		}
-		absent, nodeSize := s.db.GetScheduleSate(s.absent, availableSize)
+		absent, nodeSize := s.replicationDB.GetScheduleSate(s.absent, availableSize)
 		// add the absent node to the node size map
+		// todo: use the bootstrap nodes
 		for id, _ := range s.nodeManager.GetAliveNodes() {
 			if _, ok := nodeSize[id]; !ok {
 				nodeSize[id] = 0
@@ -110,7 +112,7 @@ func (s *Scheduler) basicSchedule(
 	for _, replicaSet := range absent {
 		item, _ := priorityQueue.PeekTop()
 		// the operator is pushed successfully
-		if s.oc.AddOperator(operator.NewAddDispatcherOperator(s.db, replicaSet, item.Node)) {
+		if s.operatorController.AddOperator(operator.NewAddDispatcherOperator(s.replicationDB, replicaSet, item.Node)) {
 			// update the task size priority queue
 			item.Load++
 			taskSize++
@@ -127,7 +129,7 @@ func (s *Scheduler) balance() {
 	if time.Since(s.lastRebalanceTime) < s.checkBalanceInterval {
 		return
 	}
-	if s.oc.OperatorSize() > 0 {
+	if s.operatorController.OperatorSize() > 0 {
 		// not in stable schedule state, skip balance
 		return
 	}
@@ -141,9 +143,9 @@ func (s *Scheduler) balance() {
 }
 
 func (s *Scheduler) balanceTables() {
-	workings := s.db.GetReplicating()
+	replicating := s.replicationDB.GetReplicating()
 	nodeTasks := make(map[node.ID]map[common.DispatcherID]*replica.SpanReplication)
-	for _, cf := range workings {
+	for _, cf := range replicating {
 		nodeID := cf.GetNodeID()
 		if _, ok := nodeTasks[nodeID]; !ok {
 			nodeTasks[nodeID] = make(map[common.DispatcherID]*replica.SpanReplication)
@@ -219,7 +221,7 @@ func (s *Scheduler) balanceTables() {
 		item, _ := priorityQueue.PeekTop()
 
 		// the operator is pushed successfully
-		if s.oc.AddOperator(operator.NewMoveDispatcherOperator(s.db, cf, cf.GetNodeID(), item.Node)) {
+		if s.operatorController.AddOperator(operator.NewMoveDispatcherOperator(s.replicationDB, cf, cf.GetNodeID(), item.Node)) {
 			// update the task size priority queue
 			item.Load++
 			movedSize++
