@@ -30,7 +30,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
 	"github.com/flowbehappy/tigate/pkg/node"
-	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/tiflow/cdc/model"
 	config2 "github.com/pingcap/tiflow/pkg/config"
@@ -62,7 +61,11 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	mc.RegisterHandler(messaging.CoordinatorTopic, func(ctx context.Context, msg *messaging.TargetMessage) error {
 		return nil
 	})
-	manager := NewMaintainerManager(selfNode, nil, nil)
+	schedulerConf := &config2.SchedulerConfig{
+		AddTableBatchSize:    1000,
+		CheckBalanceInterval: 0,
+	}
+	manager := NewMaintainerManager(selfNode, schedulerConf, nil, nil)
 	msg := messaging.NewSingleTargetMessage(selfNode.ID,
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.CoordinatorBootstrapRequest{Version: 1})
@@ -71,7 +74,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	go func() {
 		_ = manager.Run(ctx)
 	}()
-	dispManager := MockDispatcherManager(mc)
+	dispManager := MockDispatcherManager(mc, selfNode.ID)
 	go func() {
 		_ = dispManager.Run(ctx)
 	}()
@@ -93,7 +96,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	maintainer := value.(*Maintainer)
 
 	require.Equal(t, 4,
-		maintainer.controller.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
+		maintainer.controller.db.GetReplicatingSize())
 	require.Equal(t, 4,
 		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
 
@@ -111,8 +114,6 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	dn3 := startDispatcherNode(ctx, node3, mc3, nodeManager)
 	dn4 := startDispatcherNode(ctx, node4, mc4, nodeManager)
 
-	// use a small check interval
-	maintainer.controller.checkBalanceInterval = time.Millisecond * 50
 	// notify node changes
 	_, _ = nodeManager.Tick(ctx, &orchestrator.GlobalReactorState{
 		Captures: map[model.CaptureID]*model.CaptureInfo{
@@ -124,7 +125,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 
 	time.Sleep(5 * time.Second)
 	require.Equal(t, 4,
-		maintainer.controller.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
+		maintainer.controller.db.GetReplicatingSize())
 	require.Equal(t, 1,
 		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
 	require.Equal(t, 1,
@@ -144,7 +145,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 		}})
 	time.Sleep(5 * time.Second)
 	require.Equal(t, 4,
-		maintainer.controller.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
+		maintainer.controller.db.GetReplicatingSize())
 	require.Equal(t, 2,
 		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
 	require.Equal(t, 2,
@@ -183,7 +184,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	mc.RegisterHandler(messaging.CoordinatorTopic, func(ctx context.Context, msg *messaging.TargetMessage) error {
 		return nil
 	})
-	manager := NewMaintainerManager(selfNode, nil, nil)
+	manager := NewMaintainerManager(selfNode, config2.GetGlobalServerConfig().Debug.Scheduler, nil, nil)
 	msg := messaging.NewSingleTargetMessage(selfNode.ID,
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.CoordinatorBootstrapRequest{Version: 1})
@@ -192,7 +193,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	go func() {
 		_ = manager.Run(ctx)
 	}()
-	dispManager := MockDispatcherManager(mc)
+	dispManager := MockDispatcherManager(mc, selfNode.ID)
 	// table1 and table 2 will be reported by remote
 	var remotedIds []common.DispatcherID
 	for i := 1; i < 3; i++ {
@@ -237,20 +238,20 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	maintainer := value.(*Maintainer)
 
 	require.Equal(t, 4,
-		maintainer.controller.GetTaskSizeByState(scheduler.SchedulerStatusWorking))
+		maintainer.controller.db.GetReplicatingSize())
 	require.Equal(t, 4,
 		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
 	require.Len(t, remotedIds, 2)
 	foundSize := 0
 	hasDDLDispatcher := false
-	for id, stm := range maintainer.controller.Working() {
-		if stm.Inferior.(*ReplicaSet).Span.Equal(heartbeatpb.DDLSpan) {
+	for _, stm := range maintainer.controller.db.GetReplicating() {
+		if stm.Span.Equal(heartbeatpb.DDLSpan) {
 			hasDDLDispatcher = true
 		}
 		for _, remotedId := range remotedIds {
-			if id == remotedId {
+			if stm.ID == remotedId {
 				foundSize++
-				tblID := stm.Inferior.(*ReplicaSet).Span.TableID
+				tblID := stm.Span.TableID
 				require.True(t, int64(1) == tblID || int64(2) == tblID)
 			}
 		}
@@ -271,8 +272,9 @@ func (m *mockSchemaStore) GetAllPhysicalTables(snapTs common.Ts, filter filter.F
 }
 
 type dispatcherNode struct {
-	cancel context.CancelFunc
-	mc     messaging.MessageCenter
+	cancel            context.CancelFunc
+	mc                messaging.MessageCenter
+	dispatcherManager *mockDispatcherManager
 }
 
 func (d *dispatcherNode) stop() {
@@ -284,7 +286,7 @@ func startDispatcherNode(ctx context.Context,
 	node *node.Info, mc messaging.MessageCenter, nodeManager *watcher.NodeManager) *dispatcherNode {
 	nodeManager.RegisterNodeChangeHandler(node.ID, mc.OnNodeChanges)
 	ctx, cancel := context.WithCancel(ctx)
-	dispManager := MockDispatcherManager(mc)
+	dispManager := MockDispatcherManager(mc, node.ID)
 	go func() {
 		var opts []grpc.ServerOption
 		grpcServer := grpc.NewServer(opts...)
@@ -301,7 +303,8 @@ func startDispatcherNode(ctx context.Context,
 		grpcServer.Stop()
 	}()
 	return &dispatcherNode{
-		cancel: cancel,
-		mc:     mc,
+		cancel:            cancel,
+		mc:                mc,
+		dispatcherManager: dispManager,
 	}
 }

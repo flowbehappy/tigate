@@ -14,31 +14,35 @@
 package maintainer
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/maintainer/replica"
 	"github.com/flowbehappy/tigate/pkg/common"
+	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
-	"github.com/flowbehappy/tigate/scheduler"
+	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/stretchr/testify/require"
 )
 
 func TestScheduleEvent(t *testing.T) {
-	controller := NewController("test", 1, nil, nil, nil, 1000, 0)
+	setNodeManagerAndMessageCenter()
+	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
 	event := NewBlockEvent("test", controller, &heartbeatpb.State{
-		IsBlocked: true,
-		BlockTs:   10,
-		NeedDroppedTables: &heartbeatpb.InfluencedTables{
-			InfluenceType: heartbeatpb.InfluenceType_All,
-			SchemaID:      1,
-		},
-		NeedAddedTables: []*heartbeatpb.Table{{2, 1}, {3, 1}},
+		IsBlocked:         true,
+		BlockTs:           10,
+		NeedDroppedTables: &heartbeatpb.InfluencedTables{InfluenceType: heartbeatpb.InfluenceType_All},
+		NeedAddedTables:   []*heartbeatpb.Table{{2, 1}, {3, 1}},
 	})
 	event.scheduleBlockEvent()
 	//drop table will be executed first
-	require.Len(t, controller.Absent(), 2)
+	require.Equal(t, 2, controller.db.GetAbsentSize())
 
 	event = NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked: true,
@@ -51,7 +55,7 @@ func TestScheduleEvent(t *testing.T) {
 	})
 	event.scheduleBlockEvent()
 	//drop table will be executed first, then add the new table
-	require.Len(t, controller.Absent(), 1)
+	require.Equal(t, 1, controller.db.GetAbsentSize())
 
 	event = NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked: true,
@@ -64,20 +68,22 @@ func TestScheduleEvent(t *testing.T) {
 	})
 	event.scheduleBlockEvent()
 	//drop table will be executed first, then add the new table
-	require.Len(t, controller.Absent(), 1)
+	require.Equal(t, 1, controller.db.GetAbsentSize())
 }
 
 func TestResendAction(t *testing.T) {
-	controller := NewController("test", 1, nil, nil, nil, 1000, 0)
-	controller.AddNewNode("node1")
+	nodeManager := setNodeManagerAndMessageCenter()
+	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
+
+	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 2}, 1)
 	var dispatcherIDs []common.DispatcherID
-	for key, stm := range controller.Absent() {
-		stm.Primary = "node1"
-		stm.State = scheduler.SchedulerStatusWorking
-		controller.tryMoveTask(key, stm, scheduler.SchedulerStatusAbsent, "", true)
-		dispatcherIDs = append(dispatcherIDs, key)
+	absents, _ := controller.db.GetScheduleSate(make([]*replica.SpanReplication, 0), 100)
+	for _, stm := range absents {
+		controller.db.BindSpanToNode("", "node1", stm)
+		controller.db.MarkSpanReplicating(stm)
+		dispatcherIDs = append(dispatcherIDs, stm.ID)
 	}
 	event := NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked: true,
@@ -163,10 +169,10 @@ func TestResendAction(t *testing.T) {
 }
 
 func TestUpdateSchemaID(t *testing.T) {
-	controller := NewController("test", 1, nil, nil, nil, 1000, 0)
-	controller.AddNewNode("node1")
+	setNodeManagerAndMessageCenter()
+	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
-	require.Len(t, controller.Absent(), 1)
+	require.Equal(t, 1, controller.db.GetAbsentSize())
 	require.Len(t, controller.GetTasksBySchemaID(1), 1)
 	event := NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked: true,
@@ -183,9 +189,18 @@ func TestUpdateSchemaID(t *testing.T) {
 		}},
 	)
 	event.scheduleBlockEvent()
-	require.Len(t, controller.Absent(), 1)
+	require.Equal(t, 1, controller.db.GetAbsentSize())
 	// check the schema id and map is updated
 	require.Len(t, controller.GetTasksBySchemaID(1), 0)
 	require.Len(t, controller.GetTasksBySchemaID(2), 1)
-	require.Equal(t, controller.GetTasksByTableIDs(1)[0].Inferior.(*ReplicaSet).SchemaID, int64(2))
+	require.Equal(t, controller.GetTasksByTableIDs(1)[0].GetSchemaID(), int64(2))
+}
+
+func setNodeManagerAndMessageCenter() *watcher.NodeManager {
+	n := node.NewInfo("", "")
+	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(context.Background(),
+		n.ID, 100, config.NewDefaultMessageCenterConfig()))
+	nodeManager := watcher.NewNodeManager(nil, nil)
+	appcontext.SetService(watcher.NodeManagerName, nodeManager)
+	return nodeManager
 }

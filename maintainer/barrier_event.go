@@ -17,11 +17,11 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/maintainer/replica"
 	"github.com/flowbehappy/tigate/pkg/common"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
-	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -39,8 +39,7 @@ type BarrierEvent struct {
 	blockedDispatchers *heartbeatpb.InfluencedTables
 	dropDispatchers    *heartbeatpb.InfluencedTables
 
-	blockedTasks   []*scheduler.StateMachine[common.DispatcherID]
-	dropTasks      []*scheduler.StateMachine[common.DispatcherID]
+	blockedTasks   []*replica.SpanReplication
 	newTables      []*heartbeatpb.Table
 	schemaIDChange []*heartbeatpb.SchemaIDChange
 	isSyncPoint    bool
@@ -67,9 +66,6 @@ func NewBlockEvent(cfID string, controller *Controller,
 	if event.blockedDispatchers != nil && event.blockedDispatchers.InfluenceType == heartbeatpb.InfluenceType_Normal {
 		event.blockedTasks = event.controller.GetTasksByTableIDs(event.blockedDispatchers.TableIDs...)
 	}
-	if event.dropDispatchers != nil && event.dropDispatchers.InfluenceType == heartbeatpb.InfluenceType_Normal {
-		event.dropTasks = event.controller.GetTasksByTableIDs(event.dropDispatchers.TableIDs...)
-	}
 	return event
 }
 
@@ -78,26 +74,27 @@ func (be *BarrierEvent) scheduleBlockEvent() {
 	if be.dropDispatchers != nil {
 		switch be.dropDispatchers.InfluenceType {
 		case heartbeatpb.InfluenceType_DB:
-			for _, stm := range be.controller.GetTasksBySchemaID(be.dropDispatchers.SchemaID) {
-				log.Info(" remove table",
-					zap.String("changefeed", be.cfID),
-					zap.String("table", stm.ID.String()))
-				be.controller.RemoveTask(stm)
-			}
+			be.controller.RemoveTasksBySchemaID(be.dropDispatchers.SchemaID)
+			log.Info(" remove table",
+				zap.String("changefeed", be.cfID),
+				zap.Uint64("commitTs", be.commitTs),
+				zap.Int64("schema", be.dropDispatchers.SchemaID))
 		case heartbeatpb.InfluenceType_Normal:
-			for _, stm := range be.dropTasks {
-				log.Info(" remove table",
-					zap.String("changefeed", be.cfID),
-					zap.String("table", stm.ID.String()))
-				be.controller.RemoveTask(stm)
-			}
+			be.controller.RemoveTasksByTableIDs(be.dropDispatchers.TableIDs...)
+			log.Info(" remove table",
+				zap.String("changefeed", be.cfID),
+				zap.Uint64("commitTs", be.commitTs),
+				zap.Int64s("table", be.dropDispatchers.TableIDs))
 		case heartbeatpb.InfluenceType_All:
-			log.Info("remove all tables by barrier", zap.String("changefeed", be.cfID))
 			be.controller.RemoveAllTasks()
+			log.Info("remove all tables by barrier",
+				zap.Uint64("commitTs", be.commitTs),
+				zap.String("changefeed", be.cfID))
 		}
 	}
 	for _, add := range be.newTables {
 		log.Info(" add new table",
+			zap.Uint64("commitTs", be.commitTs),
 			zap.String("changefeed", be.cfID),
 			zap.Int64("schema", add.SchemaID),
 			zap.Int64("table", add.TableID))
@@ -110,6 +107,7 @@ func (be *BarrierEvent) scheduleBlockEvent() {
 	for _, change := range be.schemaIDChange {
 		log.Info("update schema id",
 			zap.String("changefeed", be.cfID),
+			zap.Uint64("commitTs", be.commitTs),
 			zap.Int64("newSchema", change.OldSchemaID),
 			zap.Int64("oldSchema", change.NewSchemaID),
 			zap.Int64("table", change.TableID))
@@ -134,7 +132,7 @@ func (be *BarrierEvent) allDispatcherReported() bool {
 	switch be.blockedDispatchers.InfluenceType {
 	case heartbeatpb.InfluenceType_DB:
 		return len(be.reportedDispatchers) >=
-			len(be.controller.GetTasksBySchemaID(be.blockedDispatchers.SchemaID))
+			be.controller.GetTaskSizeBySchemaID(be.blockedDispatchers.SchemaID)
 	case heartbeatpb.InfluenceType_All:
 		return len(be.reportedDispatchers) >= be.controller.TaskSize()
 	case heartbeatpb.InfluenceType_Normal:
@@ -151,12 +149,13 @@ func (be *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
 	switch be.blockedDispatchers.InfluenceType {
 	case heartbeatpb.InfluenceType_DB:
 		for _, stm := range be.controller.GetTasksBySchemaID(be.blockedDispatchers.SchemaID) {
-			if stm.Primary == "" {
+			nodeID := stm.GetNodeID()
+			if nodeID == "" {
 				continue
 			}
-			_, ok := msgMap[stm.Primary]
+			_, ok := msgMap[nodeID]
 			if !ok {
-				msgMap[stm.Primary] = be.newPassActionMessage(stm.Primary)
+				msgMap[nodeID] = be.newPassActionMessage(nodeID)
 			}
 		}
 	case heartbeatpb.InfluenceType_All:
@@ -166,18 +165,18 @@ func (be *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
 	case heartbeatpb.InfluenceType_Normal:
 		// send pass action
 		for _, stm := range be.blockedTasks {
-			if stm == nil || stm.Primary == "" {
+			if stm == nil {
 				continue
 			}
-			replica := stm.Inferior.(*ReplicaSet)
-			dispatcherID := replica.ID
+			nodeID := stm.GetNodeID()
+			dispatcherID := stm.ID
 			if dispatcherID == be.writerDispatcher {
 				continue
 			}
-			msg, ok := msgMap[stm.Primary]
+			msg, ok := msgMap[nodeID]
 			if !ok {
-				msg = be.newPassActionMessage(stm.Primary)
-				msgMap[stm.Primary] = msg
+				msg = be.newPassActionMessage(nodeID)
+				msgMap[nodeID] = msg
 			}
 			influencedDispatchers := msg.Message[0].(*heartbeatpb.HeartBeatResponse).DispatcherStatuses[0].InfluencedDispatchers
 			influencedDispatchers.DispatcherIDs = append(influencedDispatchers.DispatcherIDs, dispatcherID.ToPB())
@@ -225,10 +224,10 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 	if !be.writerDispatcherAdvanced {
 		//resend write action
 		stm := be.controller.GetTask(be.writerDispatcher)
-		if stm == nil || stm.Primary == "" {
+		if stm == nil || stm.GetNodeID() == "" {
 			return nil
 		}
-		return []*messaging.TargetMessage{be.newWriterActionMessage(stm.Primary)}
+		return []*messaging.TargetMessage{be.newWriterActionMessage(stm.GetNodeID())}
 	}
 	// the writer dispatcher is advanced, resend pass action
 	return be.sendPassAction()

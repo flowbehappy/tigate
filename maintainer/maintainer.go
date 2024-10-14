@@ -21,6 +21,7 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
+	"github.com/flowbehappy/tigate/maintainer/replica"
 	"github.com/flowbehappy/tigate/maintainer/split"
 	"github.com/flowbehappy/tigate/pkg/bootstrap"
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -38,6 +39,7 @@ import (
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	cdcConfig "github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/prometheus/client_golang/prometheus"
@@ -52,9 +54,11 @@ import (
 // 3. send changefeed status to coordinator
 // 4. handle heartbeat reported by dispatcher
 type Maintainer struct {
-	id       model.ChangeFeedID
-	config   *config.ChangeFeedInfo
-	selfNode *node.Info
+	id         model.ChangeFeedID
+	config     *config.ChangeFeedInfo
+	selfNode   *node.Info
+	controller *Controller
+	barrier    *Barrier
 
 	stream        dynstream.DynamicStream[string, *Event, *Maintainer]
 	taskScheduler threadpool.ThreadPool
@@ -80,9 +84,6 @@ type Maintainer struct {
 	nodeChanged    *atomic.Bool
 	lastReportTime time.Time
 
-	controller *Controller
-	barrier    *Barrier
-
 	removing        bool
 	cascadeRemoving bool
 
@@ -106,6 +107,7 @@ type Maintainer struct {
 
 // NewMaintainer create the maintainer for the changefeed
 func NewMaintainer(cfID model.ChangeFeedID,
+	conf *cdcConfig.SchedulerConfig,
 	cfg *config.ChangeFeedInfo,
 	selfNode *node.Info,
 	stream dynstream.DynamicStream[string, *Event, *Maintainer],
@@ -114,16 +116,19 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	regionCache split.RegionCache,
 	checkpointTs uint64,
 ) *Maintainer {
+	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
+	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
 	m := &Maintainer{
-		id:              cfID,
-		selfNode:        selfNode,
-		stream:          stream,
-		taskScheduler:   taskScheduler,
-		controller:      NewController(cfID.ID, checkpointTs, pdAPI, regionCache, cfg.Config.Scheduler, 10000, time.Minute),
-		mc:              appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
+		id:            cfID,
+		selfNode:      selfNode,
+		stream:        stream,
+		taskScheduler: taskScheduler,
+		controller: NewController(cfID.ID, checkpointTs, pdAPI, regionCache, taskScheduler,
+			cfg.Config.Scheduler, conf.AddTableBatchSize, time.Duration(conf.CheckBalanceInterval)),
+		mc:              mc,
 		state:           heartbeatpb.ComponentState_Working,
 		removed:         atomic.NewBool(false),
-		nodeManager:     appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName),
+		nodeManager:     nodeManager,
 		nodesClosed:     make(map[node.ID]struct{}),
 		statusChanged:   atomic.NewBool(true),
 		nodeChanged:     atomic.NewBool(false),
@@ -196,6 +201,7 @@ func (m *Maintainer) HandleEvent(event *Event) bool {
 // Close cleanup resources
 func (m *Maintainer) Close() {
 	m.cleanupMetrics()
+	m.controller.Stop()
 	log.Info("changefeed maintainer closed",
 		zap.String("id", m.id.String()),
 		zap.Bool("removed", m.removed.Load()),
@@ -256,9 +262,8 @@ func (m *Maintainer) initialize() error {
 	log.Info("changefeed bootstrap initial nodes",
 		zap.Int("nodes", len(nodes)))
 	var newNodes = make([]*node.Info, 0, len(nodes))
-	for id, n := range nodes {
+	for _, n := range nodes {
 		newNodes = append(newNodes, n)
-		m.controller.AddNewNode(id)
 	}
 	m.sendMessages(m.bootstrapper.HandleNewNodes(newNodes))
 	// setup period event
@@ -337,7 +342,7 @@ func (m *Maintainer) onCheckpointTsPersisted(msg *heartbeatpb.CheckpointTsMessag
 		return
 	}
 	m.sendMessages([]*messaging.TargetMessage{
-		messaging.NewSingleTargetMessage(stm.Primary, messaging.HeartbeatCollectorTopic, msg),
+		messaging.NewSingleTargetMessage(stm.GetNodeID(), messaging.HeartbeatCollectorTopic, msg),
 	})
 }
 
@@ -349,7 +354,6 @@ func (m *Maintainer) onNodeChanged() {
 	for id, n := range activeNodes {
 		if _, ok := currentNodes[id]; !ok {
 			newNodes = append(newNodes, n)
-			m.controller.AddNewNode(id)
 		}
 	}
 	var removedNodes []node.ID
@@ -374,6 +378,11 @@ func (m *Maintainer) onNodeChanged() {
 
 func (m *Maintainer) calCheckpointTs() {
 	m.updateMetrics()
+	// make sure there is no task running
+	// the dispatcher changing come from:
+	// 1. node change
+	// 2. ddl
+	// 3. interval scheduling, like balance, split
 	if time.Since(m.lastCheckpointTsTime) < 2*time.Second ||
 		!m.controller.ScheduleFinished() {
 		return
@@ -456,7 +465,6 @@ func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage)
 	log.Info("received maintainer bootstrap response",
 		zap.String("changefeed", m.id.ID),
 		zap.Any("server", msg.From))
-	m.controller.AddNewNode(msg.From)
 	cachedResp := m.bootstrapper.HandleBootstrapResponse(msg.From, msg.Message[0].(*heartbeatpb.MaintainerBootstrapResponse))
 	m.onBootstrapDone(cachedResp)
 }
@@ -468,7 +476,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 	log.Info("all nodes have sent bootstrap response",
 		zap.String("changefeed", m.id.ID),
 		zap.Int("size", len(cachedResp)))
-	workingMap := make(map[int64]utils.Map[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]])
+	workingMap := make(map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication])
 	for server, bootstrapMsg := range cachedResp {
 		log.Info("received bootstrap response",
 			zap.String("changefeed", m.id.ID),
@@ -482,25 +490,15 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 				CheckpointTs:    info.CheckpointTs,
 			}
 			span := info.Span
-			stm := scheduler.NewStateMachine(dispatcherID,
-				map[node.ID]any{
-					server: status,
-				},
-				NewReplicaSet(m.id, dispatcherID, info.SchemaID, span, info.CheckpointTs))
 
 			//working on remote, the state must be absent or working since it's reported by remote
-			if stm.State == scheduler.SchedulerStatusWorking {
-				tableMap, ok := workingMap[span.TableID]
-				if !ok {
-					tableMap = utils.NewBtreeMap[*heartbeatpb.TableSpan, *scheduler.StateMachine[common.DispatcherID]](heartbeatpb.LessTableSpan)
-					workingMap[span.TableID] = tableMap
-				}
-				tableMap.ReplaceOrInsert(span, stm)
-			} else if stm.State != scheduler.SchedulerStatusAbsent {
-				log.Panic("unexpected state",
-					zap.String("id", m.id.ID),
-					zap.Any("state", stm.State))
+			stm := replica.NewWorkingReplicaSet(m.id, dispatcherID, info.SchemaID, span, status, server)
+			tableMap, ok := workingMap[span.TableID]
+			if !ok {
+				tableMap = utils.NewBtreeMap[*heartbeatpb.TableSpan, *replica.SpanReplication](heartbeatpb.LessTableSpan)
+				workingMap[span.TableID] = tableMap
 			}
+			tableMap.ReplaceOrInsert(span, stm)
 		}
 	}
 	m.controller.FinishBootstrap(workingMap)
@@ -529,8 +527,6 @@ func (m *Maintainer) onNodeClosed(from node.ID, response *heartbeatpb.Maintainer
 }
 
 func (m *Maintainer) handleResendMessage() {
-	// send scheduling message
-	m.sendMessages(m.controller.GetSchedulingMessages())
 	// resend bootstrap message
 	m.sendMessages(m.bootstrapper.ResendBootstrapMessage())
 	// resend closing message
@@ -630,10 +626,6 @@ func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
 }
 
 func (m *Maintainer) onPeriodTask() {
-	// schedule absent tasks
-	if m.bootstrapper.CheckAllNodeInitialized() {
-		m.controller.Schedule()
-	}
 	// send scheduling messages
 	m.handleResendMessage()
 	m.collectMetrics()
@@ -646,18 +638,18 @@ func (m *Maintainer) onPeriodTask() {
 
 func (m *Maintainer) collectMetrics() {
 	if time.Since(m.lastPrintStatusTime) > time.Second*20 {
-		tableStates := make(map[scheduler.SchedulerStatus]int)
 		total := m.controller.TaskSize()
-		tableStates[scheduler.SchedulerStatusWorking] = m.controller.GetTaskSizeByState(scheduler.SchedulerStatusWorking)
-		tableStates[scheduler.SchedulerStatusAbsent] = m.controller.GetTaskSizeByState(scheduler.SchedulerStatusAbsent)
-		tableStates[scheduler.SchedulerStatusCommiting] = m.controller.GetTaskSizeByState(scheduler.SchedulerStatusCommiting)
-		tableStates[scheduler.SchedulerStatusRemoving] = m.controller.GetTaskSizeByState(scheduler.SchedulerStatusRemoving)
+		scheduling := m.controller.db.GetAbsentSize()
+		working := m.controller.db.GetReplicatingSize()
+		absent := m.controller.db.GetAbsentSize()
 
 		m.tableCountGauge.Set(float64(total))
-		m.scheduledTaskGauge.Set(float64(total - tableStates[scheduler.SchedulerStatusAbsent]))
-		for state, count := range tableStates {
-			metrics.TableStateGauge.WithLabelValues(m.id.Namespace, m.id.ID, state.String()).Set(float64(count))
-		}
+		m.scheduledTaskGauge.Set(float64(scheduling))
+		metrics.TableStateGauge.WithLabelValues(m.id.Namespace, m.id.ID, "Absent").Set(float64(absent))
+		metrics.TableStateGauge.WithLabelValues(m.id.Namespace, m.id.ID, "Working").Set(float64(working))
 		m.lastPrintStatusTime = time.Now()
+		log.Info("maintainer status", zap.Int("total", total),
+			zap.Int("scheduling", scheduling),
+			zap.Int("working", working))
 	}
 }

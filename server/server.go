@@ -15,36 +15,34 @@ package server
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
-	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
-	"github.com/flowbehappy/tigate/pkg/config"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
 	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
+	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/maintainer"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
-	"github.com/flowbehappy/tigate/pkg/eventservice"
-	"github.com/flowbehappy/tigate/server/watcher"
-	"github.com/pingcap/tiflow/pkg/tcpserver"
-
 	appctx "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/eventservice"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/kv"
-	cerror "github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/pdutil"
-	"github.com/tikv/client-go/v2/tikv"
-
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/cdc/model"
 	cdcConfig "github.com/pingcap/tiflow/pkg/config"
+	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/etcd"
+	"github.com/pingcap/tiflow/pkg/pdutil"
+	"github.com/pingcap/tiflow/pkg/tcpserver"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
@@ -138,7 +136,7 @@ func (c *server) initialize(ctx context.Context) error {
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener()),
-		maintainer.NewMaintainerManager(c.info, c.pdAPIClient, c.RegionCache),
+		maintainer.NewMaintainerManager(c.info, conf.Debug.Scheduler, c.pdAPIClient, c.RegionCache),
 		eventStore,
 		eventService,
 	}
