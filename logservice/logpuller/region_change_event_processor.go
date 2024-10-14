@@ -319,20 +319,24 @@ func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resol
 		state.updateResolvedTs(batch.ts)
 	}
 
-	table := batch.regions[0].region.subscribedSpan
+	span := batch.regions[0].region.subscribedSpan
 	now := time.Now().UnixMilli()
-	lastAdvance := table.lastAdvanceTime.Load()
-	if now-lastAdvance > int64(w.client.config.AdvanceResolvedTsIntervalInMs) && table.lastAdvanceTime.CompareAndSwap(lastAdvance, now) {
-		ts := table.rangeLock.ResolvedTs()
-		// TODO: only send ts when ts is larger than previous ts
-		if ts > table.startTs {
+	lastAdvance := span.lastAdvanceTime.Load()
+	if now-lastAdvance > int64(w.client.config.AdvanceResolvedTsIntervalInMs) && span.lastAdvanceTime.CompareAndSwap(lastAdvance, now) {
+		ts := span.rangeLock.ResolvedTs()
+		lastResovedTs := span.lastResolvedTs.Load()
+		if ts > lastResovedTs {
 			e := newLogEvent(&common.RawKVEntry{
 				OpType: common.OpTypeResolved,
 				CRTs:   ts,
-			}, table)
+			}, span)
 			if err := w.client.consume(ctx, e); err != nil {
 				return
 			}
+		} else if ts < lastResovedTs {
+			log.Panic("The resolvedTs must be greater than the last resolvedTs",
+				zap.Uint64("resolvedTs", ts),
+				zap.Uint64("lastResolvedTs", lastResovedTs))
 		}
 	}
 }

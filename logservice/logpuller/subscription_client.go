@@ -131,6 +131,9 @@ type subscribedSpan struct {
 	staleLocksTargetTs atomic.Uint64
 
 	lastAdvanceTime atomic.Int64
+
+	// The resolvedTs of the span.
+	lastResolvedTs atomic.Uint64
 }
 
 type SubscriptionClientConfig struct {
