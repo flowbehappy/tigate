@@ -25,7 +25,10 @@ import (
 	"go.uber.org/zap"
 )
 
-type ReplicaSet struct {
+// SpanReplication is responsible for a table span replication status
+// It is used to manage the replication status of a table span,
+// the status is updated by the heartbeat collector
+type SpanReplication struct {
 	ID           common.DispatcherID
 	Span         *heartbeatpb.TableSpan
 	ChangefeedID model.ChangeFeedID
@@ -39,8 +42,8 @@ func NewReplicaSet(cfID model.ChangeFeedID,
 	id common.DispatcherID,
 	SchemaID int64,
 	span *heartbeatpb.TableSpan,
-	checkpointTs uint64) *ReplicaSet {
-	r := &ReplicaSet{
+	checkpointTs uint64) *SpanReplication {
+	r := &SpanReplication{
 		ID:           id,
 		SchemaID:     SchemaID,
 		Span:         span,
@@ -67,8 +70,8 @@ func NewWorkingReplicaSet(
 	span *heartbeatpb.TableSpan,
 	status *heartbeatpb.TableSpanStatus,
 	nodeID node.ID,
-) *ReplicaSet {
-	r := &ReplicaSet{
+) *SpanReplication {
+	r := &SpanReplication{
 		ID:           id,
 		SchemaID:     SchemaID,
 		Span:         span,
@@ -89,7 +92,7 @@ func NewWorkingReplicaSet(
 	return r
 }
 
-func (r *ReplicaSet) UpdateStatus(status any) {
+func (r *SpanReplication) UpdateStatus(status any) {
 	if status != nil {
 		newStatus := status.(*heartbeatpb.TableSpanStatus)
 		if newStatus.CheckpointTs >= r.status.CheckpointTs {
@@ -98,23 +101,23 @@ func (r *ReplicaSet) UpdateStatus(status any) {
 	}
 }
 
-func (r *ReplicaSet) GetSchemaID() int64 {
+func (r *SpanReplication) GetSchemaID() int64 {
 	return r.SchemaID
 }
 
-func (r *ReplicaSet) SetSchemaID(schemaID int64) {
+func (r *SpanReplication) SetSchemaID(schemaID int64) {
 	r.SchemaID = schemaID
 }
 
-func (r *ReplicaSet) SetNodeID(n node.ID) {
+func (r *SpanReplication) SetNodeID(n node.ID) {
 	r.nodeID = n
 }
 
-func (r *ReplicaSet) GetNodeID() node.ID {
+func (r *SpanReplication) GetNodeID() node.ID {
 	return r.nodeID
 }
 
-func (r *ReplicaSet) NewAddInferiorMessage(server node.ID) *messaging.TargetMessage {
+func (r *SpanReplication) NewAddInferiorMessage(server node.ID) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(server,
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{
@@ -132,7 +135,7 @@ func (r *ReplicaSet) NewAddInferiorMessage(server node.ID) *messaging.TargetMess
 		})
 }
 
-func (r *ReplicaSet) NewRemoveInferiorMessage(server node.ID) *messaging.TargetMessage {
+func (r *SpanReplication) NewRemoveInferiorMessage(server node.ID) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(server,
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{

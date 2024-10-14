@@ -96,7 +96,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	maintainer := value.(*Maintainer)
 
 	require.Equal(t, 4,
-		maintainer.controller.db.GetWorkingSize())
+		maintainer.controller.db.GetReplicatingSize())
 	require.Equal(t, 4,
 		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
 
@@ -125,7 +125,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 
 	time.Sleep(5 * time.Second)
 	require.Equal(t, 4,
-		maintainer.controller.db.GetWorkingSize())
+		maintainer.controller.db.GetReplicatingSize())
 	require.Equal(t, 1,
 		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
 	require.Equal(t, 1,
@@ -145,7 +145,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 		}})
 	time.Sleep(5 * time.Second)
 	require.Equal(t, 4,
-		maintainer.controller.db.GetWorkingSize())
+		maintainer.controller.db.GetReplicatingSize())
 	require.Equal(t, 2,
 		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
 	require.Equal(t, 2,
@@ -238,13 +238,13 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	maintainer := value.(*Maintainer)
 
 	require.Equal(t, 4,
-		maintainer.controller.db.GetWorkingSize())
+		maintainer.controller.db.GetReplicatingSize())
 	require.Equal(t, 4,
 		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
 	require.Len(t, remotedIds, 2)
 	foundSize := 0
 	hasDDLDispatcher := false
-	for _, stm := range maintainer.controller.db.GetWorking() {
+	for _, stm := range maintainer.controller.db.GetReplicating() {
 		if stm.Span.Equal(heartbeatpb.DDLSpan) {
 			hasDDLDispatcher = true
 		}

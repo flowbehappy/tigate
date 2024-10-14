@@ -77,10 +77,10 @@ func TestResendAction(t *testing.T) {
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 2}, 1)
 	var dispatcherIDs []common.DispatcherID
-	absents, _ := controller.db.GetScheduleSate(make([]*replica.ReplicaSet, 0), 100)
+	absents, _ := controller.db.GetScheduleSate(make([]*replica.SpanReplication, 0), 100)
 	for _, stm := range absents {
-		controller.db.BindReplicaSetToNode("", "node1", stm)
-		controller.db.MarkReplicaSetWorking(stm)
+		controller.db.BindSpanToNode("", "node1", stm)
+		controller.db.MarkSpanReplicating(stm)
 		dispatcherIDs = append(dispatcherIDs, stm.ID)
 	}
 	event := NewBlockEvent("test", controller, &heartbeatpb.State{

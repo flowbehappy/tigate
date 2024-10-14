@@ -35,16 +35,16 @@ type Scheduler struct {
 	lastRebalanceTime    time.Time
 	checkBalanceInterval time.Duration
 	oc                   *operator.Controller
-	db                   *replica.ReplicaSetDB
+	db                   *replica.ReplicationDB
 	nodeManager          *watcher.NodeManager
 
-	absent []*replica.ReplicaSet
+	absent []*replica.SpanReplication
 }
 
 func NewScheduler(changefeedID string,
 	batchSize int,
 	oc *operator.Controller,
-	db *replica.ReplicaSetDB,
+	db *replica.ReplicationDB,
 	nodeManager *watcher.NodeManager,
 	balanceInterval time.Duration) *Scheduler {
 	return &Scheduler{
@@ -56,7 +56,7 @@ func NewScheduler(changefeedID string,
 		db:                   db,
 		nodeManager:          nodeManager,
 		lastRebalanceTime:    time.Now(),
-		absent:               make([]*replica.ReplicaSet, 0, batchSize),
+		absent:               make([]*replica.SpanReplication, 0, batchSize),
 	}
 }
 
@@ -88,7 +88,7 @@ func (s *Scheduler) Execute() time.Time {
 
 func (s *Scheduler) basicSchedule(
 	availableSize int,
-	absent []*replica.ReplicaSet,
+	absent []*replica.SpanReplication,
 	nodeTasks map[node.ID]int) {
 	if len(nodeTasks) == 0 {
 		log.Warn("no node available, skip", zap.String("changefeed", s.changefeedID))
@@ -136,19 +136,19 @@ func (s *Scheduler) Balance() {
 }
 
 func (s *Scheduler) balanceTables() {
-	workings := s.db.GetWorking()
-	nodeTasks := make(map[node.ID]map[common.DispatcherID]*replica.ReplicaSet)
+	workings := s.db.GetReplicating()
+	nodeTasks := make(map[node.ID]map[common.DispatcherID]*replica.SpanReplication)
 	for _, cf := range workings {
 		nodeID := cf.GetNodeID()
 		if _, ok := nodeTasks[nodeID]; !ok {
-			nodeTasks[nodeID] = make(map[common.DispatcherID]*replica.ReplicaSet)
+			nodeTasks[nodeID] = make(map[common.DispatcherID]*replica.SpanReplication)
 		}
 		nodeTasks[nodeID][cf.ID] = cf
 	}
 	// add the absent node to the node size map
 	for nodeID, _ := range s.nodeManager.GetAliveNodes() {
 		if _, ok := nodeTasks[nodeID]; !ok {
-			nodeTasks[nodeID] = make(map[common.DispatcherID]*replica.ReplicaSet)
+			nodeTasks[nodeID] = make(map[common.DispatcherID]*replica.SpanReplication)
 		}
 	}
 
@@ -159,10 +159,10 @@ func (s *Scheduler) balanceTables() {
 
 	upperLimitPerCapture := int(math.Ceil(float64(totalSize) / float64(len(nodeTasks))))
 	// victims holds tables which need to be moved
-	victims := make([]*replica.ReplicaSet, 0)
+	victims := make([]*replica.SpanReplication, 0)
 	priorityQueue := heap.NewHeap[*Item]()
 	for nodeID, ts := range nodeTasks {
-		var stms []*replica.ReplicaSet
+		var stms []*replica.SpanReplication
 		for _, value := range ts {
 			stms = append(stms, value)
 		}

@@ -26,19 +26,20 @@ import (
 	"go.uber.org/zap"
 )
 
+// MoveDispatcherOperator is an operator to move a table span to the destination dispatcher
 type MoveDispatcherOperator struct {
-	replicaSet *replica.ReplicaSet
+	replicaSet *replica.SpanReplication
 	origin     node.ID
 	dest       node.ID
 
-	removed  atomic.Bool
-	finished atomic.Bool
-	bind     atomic.Bool
+	originRemoved atomic.Bool
+	finished      atomic.Bool
+	bind          atomic.Bool
 
-	db *replica.ReplicaSetDB
+	db *replica.ReplicationDB
 }
 
-func NewMoveDispatcherOperator(db *replica.ReplicaSetDB, replicaSet *replica.ReplicaSet, origin, dest node.ID) *MoveDispatcherOperator {
+func NewMoveDispatcherOperator(db *replica.ReplicationDB, replicaSet *replica.SpanReplication, origin, dest node.ID) *MoveDispatcherOperator {
 	return &MoveDispatcherOperator{
 		replicaSet: replicaSet,
 		origin:     origin,
@@ -51,17 +52,17 @@ func (m *MoveDispatcherOperator) Check(from node.ID, status *heartbeatpb.TableSp
 	if from == m.origin && status.ComponentStatus != heartbeatpb.ComponentState_Working {
 		log.Info("replica set removed from origin node",
 			zap.String("replicaSet", m.replicaSet.ID.String()))
-		m.removed.Store(true)
+		m.originRemoved.Store(true)
 	}
-	if m.removed.Load() && from == m.dest && status.ComponentStatus == heartbeatpb.ComponentState_Working {
+	if m.originRemoved.Load() && from == m.dest && status.ComponentStatus == heartbeatpb.ComponentState_Working {
 		m.finished.Store(true)
 	}
 }
 
 func (m *MoveDispatcherOperator) Schedule() *messaging.TargetMessage {
-	if m.removed.Load() {
+	if m.originRemoved.Load() {
 		if !m.bind.Load() {
-			m.db.BindReplicaSetToNode(m.origin, m.dest, m.replicaSet)
+			m.db.BindSpanToNode(m.origin, m.dest, m.replicaSet)
 			m.bind.Store(true)
 		}
 		return m.replicaSet.NewAddInferiorMessage(m.dest)
@@ -73,11 +74,11 @@ func (m *MoveDispatcherOperator) OnNodeRemove(n node.ID) {
 	// the replicaset is removed from the origin node
 	// and the secondary node offline, we mark the operator finished
 	// then replica set will be scheduled again
-	if m.removed.Load() && n == m.dest {
+	if m.originRemoved.Load() && n == m.dest {
 		m.finished.Store(true)
 	}
-	if n == m.replicaSet.GetNodeID() {
-		m.removed.Store(true)
+	if n == m.origin {
+		m.originRemoved.Store(true)
 	}
 }
 
@@ -94,19 +95,19 @@ func (m *MoveDispatcherOperator) OnTaskRemoved() {
 		zap.String("replicaSet", m.replicaSet.ID.String()),
 		zap.String("changefeed", m.replicaSet.ChangefeedID.String()))
 	m.finished.Store(true)
-	m.removed.Store(true)
+	m.originRemoved.Store(true)
 }
 
 func (m *MoveDispatcherOperator) Start() {
-	m.db.MarkReplicaSetScheduling(m.replicaSet)
+	m.db.MarkSpanScheduling(m.replicaSet)
 }
 
 func (m *MoveDispatcherOperator) PostFinished() {
-	if m.removed.Load() {
+	if m.originRemoved.Load() {
 		log.Info("move dispatcher operator finished",
 			zap.String("replicaSet", m.replicaSet.ID.String()),
 			zap.String("changefeed", m.replicaSet.ChangefeedID.String()))
-		m.db.MarkReplicaSetWorking(m.replicaSet)
+		m.db.MarkSpanReplicating(m.replicaSet)
 	}
 }
 

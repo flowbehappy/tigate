@@ -39,7 +39,7 @@ type BarrierEvent struct {
 	blockedDispatchers *heartbeatpb.InfluencedTables
 	dropDispatchers    *heartbeatpb.InfluencedTables
 
-	blockedTasks   []*replica.ReplicaSet
+	blockedTasks   []*replica.SpanReplication
 	newTables      []*heartbeatpb.Table
 	schemaIDChange []*heartbeatpb.SchemaIDChange
 	isSyncPoint    bool

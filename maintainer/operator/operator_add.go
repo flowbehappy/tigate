@@ -26,16 +26,18 @@ import (
 	"go.uber.org/zap"
 )
 
+// AddDispatcherOperator is an operator to schedule a table span to a dispatcher
 type AddDispatcherOperator struct {
-	replicaSet *replica.ReplicaSet
+	replicaSet *replica.SpanReplication
 	dest       node.ID
 	finished   atomic.Bool
-	db         *replica.ReplicaSetDB
+	removed    atomic.Bool
+	db         *replica.ReplicationDB
 }
 
 func NewAddDispatcherOperator(
-	db *replica.ReplicaSetDB,
-	replicaSet *replica.ReplicaSet,
+	db *replica.ReplicationDB,
+	replicaSet *replica.SpanReplication,
 	dest node.ID) *AddDispatcherOperator {
 	return &AddDispatcherOperator{
 		replicaSet: replicaSet,
@@ -51,6 +53,9 @@ func (m *AddDispatcherOperator) Check(from node.ID, status *heartbeatpb.TableSpa
 }
 
 func (m *AddDispatcherOperator) Schedule() *messaging.TargetMessage {
+	if m.finished.Load() || m.removed.Load() {
+		return nil
+	}
 	return m.replicaSet.NewAddInferiorMessage(m.dest)
 }
 
@@ -58,6 +63,7 @@ func (m *AddDispatcherOperator) Schedule() *messaging.TargetMessage {
 func (m *AddDispatcherOperator) OnNodeRemove(n node.ID) {
 	if n == m.dest {
 		m.finished.Store(true)
+		m.removed.Store(true)
 	}
 }
 
@@ -71,17 +77,20 @@ func (m *AddDispatcherOperator) IsFinished() bool {
 
 func (m *AddDispatcherOperator) OnTaskRemoved() {
 	m.finished.Store(true)
+	m.removed.Store(true)
 }
 
 func (m *AddDispatcherOperator) Start() {
-	m.db.BindReplicaSetToNode("", m.dest, m.replicaSet)
+	m.db.BindSpanToNode("", m.dest, m.replicaSet)
 }
 
 func (m *AddDispatcherOperator) PostFinished() {
 	log.Info("add dispatcher operator finished",
 		zap.String("replicaSet", m.replicaSet.ID.String()),
 		zap.String("changefeed", m.replicaSet.ChangefeedID.String()))
-	m.db.MarkReplicaSetWorking(m.replicaSet)
+	if !m.removed.Load() {
+		m.db.MarkSpanReplicating(m.replicaSet)
+	}
 }
 
 func (m *AddDispatcherOperator) String() string {

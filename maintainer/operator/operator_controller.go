@@ -34,7 +34,9 @@ type Controller struct {
 	changefeedID string
 }
 
-func NewOperatorController(changefeedID string, mc messaging.MessageCenter, batchSize int) *Controller {
+func NewOperatorController(changefeedID string,
+	mc messaging.MessageCenter,
+	batchSize int) *Controller {
 	oc := &Controller{
 		changefeedID: changefeedID,
 		operators:    make(map[common.DispatcherID]Operator),
@@ -69,10 +71,19 @@ func (oc *Controller) Execute() time.Time {
 	}
 }
 
-func (oc *Controller) OperatorSize() int {
-	oc.lock.RLock()
-	defer oc.lock.RUnlock()
-	return len(oc.operators)
+func (oc *Controller) ReplicaSetRemoved(op *RemoveDispatcherOperator) {
+	oc.lock.Lock()
+	defer oc.lock.Unlock()
+
+	if old, ok := oc.operators[op.ID()]; ok {
+		log.Info("replica set is removed , replace the old one",
+			zap.String("changefeed", oc.changefeedID),
+			zap.String("replicaset", op.ID().String()),
+			zap.String("operator", op.String()))
+		old.OnTaskRemoved()
+		delete(oc.operators, op.ID())
+	}
+	oc.operators[op.ID()] = op
 }
 
 // AddOperator adds an operator to the controller, if the operator already exists, return false.
@@ -95,17 +106,6 @@ func (oc *Controller) AddOperator(op Operator) bool {
 	return true
 }
 
-func (oc *Controller) ReplaceOperator(op Operator) {
-	oc.lock.Lock()
-	defer oc.lock.Unlock()
-
-	if old, ok := oc.operators[op.ID()]; ok {
-		old.OnTaskRemoved()
-		delete(oc.operators, op.ID())
-	}
-	oc.operators[op.ID()] = op
-}
-
 func (oc *Controller) GetOperator(id common.DispatcherID) Operator {
 	oc.lock.RLock()
 	defer oc.lock.RUnlock()
@@ -118,6 +118,12 @@ func (oc *Controller) OnNodeRemoved(n node.ID) {
 	for _, op := range oc.operators {
 		op.OnNodeRemove(n)
 	}
+}
+
+func (oc *Controller) OperatorSize() int {
+	oc.lock.RLock()
+	defer oc.lock.RUnlock()
+	return len(oc.operators)
 }
 
 // pollQueueingOperator returns the operator need to be executed,

@@ -90,7 +90,7 @@ func (s *Splitter) SplitSpans(ctx context.Context,
 }
 
 // FindHoles returns an array of Span that are not covered in the range
-func FindHoles(currentSpan utils.Map[*heartbeatpb.TableSpan, *replica.ReplicaSet], totalSpan *heartbeatpb.TableSpan) []*heartbeatpb.TableSpan {
+func FindHoles(currentSpan utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication], totalSpan *heartbeatpb.TableSpan) []*heartbeatpb.TableSpan {
 	lastSpan := &heartbeatpb.TableSpan{
 		TableID:  totalSpan.TableID,
 		StartKey: totalSpan.StartKey,
@@ -98,7 +98,7 @@ func FindHoles(currentSpan utils.Map[*heartbeatpb.TableSpan, *replica.ReplicaSet
 	}
 	var holes []*heartbeatpb.TableSpan
 	// table span is sorted
-	currentSpan.Ascend(func(current *heartbeatpb.TableSpan, _ *replica.ReplicaSet) bool {
+	currentSpan.Ascend(func(current *heartbeatpb.TableSpan, _ *replica.SpanReplication) bool {
 		ord := bytes.Compare(lastSpan.EndKey, current.StartKey)
 		if ord < 0 {
 			// Find a hole.

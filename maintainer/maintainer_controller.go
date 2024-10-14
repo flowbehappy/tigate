@@ -45,7 +45,7 @@ type Controller struct {
 
 	sche        *Scheduler
 	oc          *operator.Controller
-	db          *replica.ReplicaSetDB
+	db          *replica.ReplicationDB
 	nodeManager *watcher.NodeManager
 
 	splitter               *split.Splitter
@@ -90,7 +90,7 @@ func NewController(changefeedID string,
 	return s
 }
 
-func (c *Controller) GetTasksBySchemaID(schemaID int64) []*replica.ReplicaSet {
+func (c *Controller) GetTasksBySchemaID(schemaID int64) []*replica.SpanReplication {
 	return c.db.GetTasksBySchemaID(schemaID)
 }
 
@@ -135,7 +135,7 @@ func (c *Controller) SetInitialTables(tables []commonEvent.Table) {
 
 // FinishBootstrap adds working state tasks to this controller directly,
 // it reported by the bootstrap response
-func (c *Controller) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.ReplicaSet]) {
+func (c *Controller) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication]) {
 	if c.bootstrapped {
 		log.Panic("already bootstrapped",
 			zap.String("changefeed", c.changefeedID),
@@ -200,29 +200,29 @@ func (c *Controller) Stop() {
 }
 
 // GetTask queries a task by dispatcherID, return nil if not found
-func (c *Controller) GetTask(dispatcherID common.DispatcherID) *replica.ReplicaSet {
+func (c *Controller) GetTask(dispatcherID common.DispatcherID) *replica.SpanReplication {
 	return c.db.GetTaskByID(dispatcherID)
 }
 
 func (c *Controller) RemoveAllTasks() {
 	for _, replicaSet := range c.db.TryRemoveAll() {
-		c.oc.ReplaceOperator(operator.NewRemoveDispatcherOperator(c.db, replicaSet))
+		c.oc.ReplicaSetRemoved(operator.NewRemoveDispatcherOperator(c.db, replicaSet))
 	}
 }
 
 func (c *Controller) RemoveTasksBySchemaID(schemaID int64) {
 	for _, replicaSet := range c.db.TryRemoveBySchemaID(schemaID) {
-		c.oc.ReplaceOperator(operator.NewRemoveDispatcherOperator(c.db, replicaSet))
+		c.oc.ReplicaSetRemoved(operator.NewRemoveDispatcherOperator(c.db, replicaSet))
 	}
 }
 
 func (c *Controller) RemoveTasksByTableIDs(tables ...int64) {
 	for _, replicaSet := range c.db.TryRemoveByTableIDs(tables...) {
-		c.oc.ReplaceOperator(operator.NewRemoveDispatcherOperator(c.db, replicaSet))
+		c.oc.ReplicaSetRemoved(operator.NewRemoveDispatcherOperator(c.db, replicaSet))
 	}
 }
 
-func (c *Controller) GetTasksByTableIDs(tableIDs ...int64) []*replica.ReplicaSet {
+func (c *Controller) GetTasksByTableIDs(tableIDs ...int64) []*replica.SpanReplication {
 	return c.db.GetTasksByTableIDs(tableIDs...)
 }
 
@@ -234,6 +234,7 @@ func (c *Controller) UpdateSchemaID(tableID, newSchemaID int64) {
 
 func (c *Controller) RemoveNode(id node.ID) {
 	c.db.RemoveNode(id)
+	c.oc.OnNodeRemoved(id)
 }
 
 // ScheduleFinished return false if not all task are running in working state
@@ -290,11 +291,11 @@ func (c *Controller) addDDLDispatcher() {
 		zap.String("dispatcher", c.ddlDispatcherID.String()))
 }
 
-func (c *Controller) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, *replica.ReplicaSet]) bool {
+func (c *Controller) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication]) bool {
 	ddlSpanFound := false
-	tableMap.Ascend(func(span *heartbeatpb.TableSpan, stm *replica.ReplicaSet) bool {
+	tableMap.Ascend(func(span *heartbeatpb.TableSpan, stm *replica.SpanReplication) bool {
 		dispatcherID := stm.ID
-		c.db.AddWorkingSpan(stm)
+		c.db.AddReplicatingSpan(stm)
 		if span.TableID == 0 {
 			ddlSpanFound = true
 			c.ddlDispatcherID = dispatcherID

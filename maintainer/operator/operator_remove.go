@@ -26,13 +26,15 @@ import (
 	"go.uber.org/zap"
 )
 
+// RemoveDispatcherOperator is an operator to remove a table span from a dispatcher
+// and remove it from the replication db
 type RemoveDispatcherOperator struct {
-	replicaSet *replica.ReplicaSet
+	replicaSet *replica.SpanReplication
 	finished   atomic.Bool
-	db         *replica.ReplicaSetDB
+	db         *replica.ReplicationDB
 }
 
-func NewRemoveDispatcherOperator(db *replica.ReplicaSetDB, replicaSet *replica.ReplicaSet) *RemoveDispatcherOperator {
+func NewRemoveDispatcherOperator(db *replica.ReplicationDB, replicaSet *replica.SpanReplication) *RemoveDispatcherOperator {
 	return &RemoveDispatcherOperator{
 		replicaSet: replicaSet,
 		db:         db,
@@ -55,12 +57,21 @@ func (m *RemoveDispatcherOperator) OnNodeRemove(n node.ID) {
 		m.finished.Store(true)
 	}
 }
-func (m *RemoveDispatcherOperator) ID() common.DispatcherID { return m.replicaSet.ID }
-func (m *RemoveDispatcherOperator) IsFinished() bool        { return m.finished.Load() }
-func (m *RemoveDispatcherOperator) OnTaskRemoved()          { m.finished.Store(true) }
+
+func (m *RemoveDispatcherOperator) ID() common.DispatcherID {
+	return m.replicaSet.ID
+}
+
+func (m *RemoveDispatcherOperator) IsFinished() bool {
+	return m.finished.Load()
+}
+
+func (m *RemoveDispatcherOperator) OnTaskRemoved() {
+	m.finished.Store(true)
+}
 
 func (m *RemoveDispatcherOperator) Start() {
-	m.db.MarkReplicaSetScheduling(m.replicaSet)
+	m.db.MarkSpanScheduling(m.replicaSet)
 }
 
 func (m *RemoveDispatcherOperator) PostFinished() {

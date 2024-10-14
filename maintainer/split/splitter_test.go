@@ -87,9 +87,9 @@ func TestMapFindHole(t *testing.T) {
 	}
 
 	for i, cs := range cases {
-		m := utils.NewBtreeMap[*heartbeatpb.TableSpan, *replica.ReplicaSet](heartbeatpb.LessTableSpan)
+		m := utils.NewBtreeMap[*heartbeatpb.TableSpan, *replica.SpanReplication](heartbeatpb.LessTableSpan)
 		for _, span := range cs.spans {
-			m.ReplaceOrInsert(span, &replica.ReplicaSet{})
+			m.ReplaceOrInsert(span, &replica.SpanReplication{})
 		}
 		holes := FindHoles(m, cs.rang)
 		require.Equalf(t, cs.expectedHole, holes, "case %d, %#v", i, cs)

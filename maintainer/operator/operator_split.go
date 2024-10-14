@@ -24,17 +24,19 @@ import (
 	"github.com/flowbehappy/tigate/pkg/node"
 )
 
+// SplitDispatcherOperator is an operator to remove a table span from a dispatcher
+// and then added some new spans to the replication db
 type SplitDispatcherOperator struct {
-	replicaSet   *replica.ReplicaSet
+	replicaSet   *replica.SpanReplication
 	originNode   node.ID
 	schemaID     int64
-	splitSpans   []*replica.ReplicaSet
+	splitSpans   []*replica.SpanReplication
 	checkpointTs uint64
 	finished     atomic.Bool
 	removing     atomic.Bool
 
 	originalReplicaseRemoved atomic.Bool
-	db                       *replica.ReplicaSetDB
+	db                       *replica.ReplicationDB
 }
 
 func (m *SplitDispatcherOperator) OnNodeRemove(n node.ID) {

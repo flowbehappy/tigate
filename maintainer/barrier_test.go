@@ -33,8 +33,8 @@ func TestOneBlockEvent(t *testing.T) {
 	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 0)
 	stm := controller.GetTasksByTableIDs(1)[0]
-	controller.db.BindReplicaSetToNode("", "node1", stm)
-	controller.db.MarkReplicaSetWorking(stm)
+	controller.db.BindSpanToNode("", "node1", stm)
+	controller.db.MarkSpanReplicating(stm)
 	barrier := NewBarrier(controller)
 	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
@@ -101,14 +101,14 @@ func TestNormalBlock(t *testing.T) {
 		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 0)
 		stm := controller.GetTasksByTableIDs(int64(id))[0]
 		blockedDispatcherIDS = append(blockedDispatcherIDS, stm.ID.ToPB())
-		controller.db.BindReplicaSetToNode("", "node1", stm)
-		controller.db.MarkReplicaSetWorking(stm)
+		controller.db.BindSpanToNode("", "node1", stm)
+		controller.db.MarkSpanReplicating(stm)
 	}
 
 	// the last one is the writer
 	var selectDispatcherID = common.NewDispatcherIDFromPB(blockedDispatcherIDS[2])
 	selectedRep := controller.GetTask(selectDispatcherID)
-	controller.db.BindReplicaSetToNode("node1", "node2", selectedRep)
+	controller.db.BindSpanToNode("node1", "node2", selectedRep)
 	dropID := selectedRep.Span.TableID
 
 	newSpan := &heartbeatpb.Table{TableID: 10, SchemaID: 1}
@@ -284,13 +284,13 @@ func TestSchemaBlock(t *testing.T) {
 	controller.AddNewTable(commonEvent.Table{SchemaID: 2, TableID: 3}, 1)
 	var dispatcherIDs []*heartbeatpb.DispatcherID
 	var dropTables = []int64{1, 2}
-	absents, _ := controller.db.GetScheduleSate(make([]*replica.ReplicaSet, 0), 100)
+	absents, _ := controller.db.GetScheduleSate(make([]*replica.SpanReplication, 0), 100)
 	for _, stm := range absents {
 		if stm.SchemaID == 1 {
 			dispatcherIDs = append(dispatcherIDs, stm.ID.ToPB())
 		}
-		controller.db.BindReplicaSetToNode("", "node1", stm)
-		controller.db.MarkReplicaSetWorking(stm)
+		controller.db.BindSpanToNode("", "node1", stm)
+		controller.db.MarkSpanReplicating(stm)
 	}
 
 	newTable := &heartbeatpb.Table{TableID: 10, SchemaID: 2}
@@ -415,14 +415,14 @@ func TestSchemaBlock(t *testing.T) {
 	require.Equal(t, 1, controller.db.GetAbsentSize())
 	require.Equal(t, 2, controller.oc.OperatorSize())
 	// two dispatcher and moved to operator queue, operator will be removed after ack
-	require.Equal(t, 3, controller.db.GetWorkingSize())
-	for _, task := range controller.db.GetWorking() {
+	require.Equal(t, 3, controller.db.GetReplicatingSize())
+	for _, task := range controller.db.GetReplicating() {
 		op := controller.oc.GetOperator(task.ID)
 		if op != nil {
 			op.PostFinished()
 		}
 	}
-	require.Equal(t, 1, controller.db.GetWorkingSize())
+	require.Equal(t, 1, controller.db.GetReplicatingSize())
 
 	// other dispatcher advanced checkpoint ts
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
@@ -455,15 +455,15 @@ func TestSyncPointBlock(t *testing.T) {
 	controller.AddNewTable(commonEvent.Table{SchemaID: 2, TableID: 3}, 1)
 	var dispatcherIDs []*heartbeatpb.DispatcherID
 	var dropTables = []int64{1, 2, 3}
-	absents, _ := controller.db.GetScheduleSate(make([]*replica.ReplicaSet, 0), 10000)
+	absents, _ := controller.db.GetScheduleSate(make([]*replica.SpanReplication, 0), 10000)
 	for _, stm := range absents {
 		dispatcherIDs = append(dispatcherIDs, stm.ID.ToPB())
-		controller.db.BindReplicaSetToNode("", "node1", stm)
-		controller.db.MarkReplicaSetWorking(stm)
+		controller.db.BindSpanToNode("", "node1", stm)
+		controller.db.MarkSpanReplicating(stm)
 	}
 	var selectDispatcherID = common.NewDispatcherIDFromPB(dispatcherIDs[2])
 	selectedRep := controller.GetTask(selectDispatcherID)
-	controller.db.BindReplicaSetToNode("node1", "node2", selectedRep)
+	controller.db.BindSpanToNode("node1", "node2", selectedRep)
 
 	newSpan := &heartbeatpb.Table{TableID: 10, SchemaID: 2}
 	barrier := NewBarrier(controller)
@@ -642,10 +642,10 @@ func TestSyncPointBlockPerf(t *testing.T) {
 		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 1)
 	}
 	var dispatcherIDs []*heartbeatpb.DispatcherID
-	absent, _ := controller.db.GetScheduleSate(make([]*replica.ReplicaSet, 0), 10000)
+	absent, _ := controller.db.GetScheduleSate(make([]*replica.SpanReplication, 0), 10000)
 	for _, stm := range absent {
-		controller.db.BindReplicaSetToNode("", "node1", stm)
-		controller.db.MarkReplicaSetWorking(stm)
+		controller.db.BindSpanToNode("", "node1", stm)
+		controller.db.MarkSpanReplicating(stm)
 		dispatcherIDs = append(dispatcherIDs, stm.ID.ToPB())
 	}
 	var blockStatus []*heartbeatpb.TableSpanBlockStatus

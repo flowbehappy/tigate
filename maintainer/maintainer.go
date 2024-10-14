@@ -474,7 +474,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 	log.Info("all nodes have sent bootstrap response",
 		zap.String("changefeed", m.id.ID),
 		zap.Int("size", len(cachedResp)))
-	workingMap := make(map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.ReplicaSet])
+	workingMap := make(map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication])
 	for server, bootstrapMsg := range cachedResp {
 		log.Info("received bootstrap response",
 			zap.String("changefeed", m.id.ID),
@@ -493,7 +493,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 			stm := replica.NewWorkingReplicaSet(m.id, dispatcherID, info.SchemaID, span, status, server)
 			tableMap, ok := workingMap[span.TableID]
 			if !ok {
-				tableMap = utils.NewBtreeMap[*heartbeatpb.TableSpan, *replica.ReplicaSet](heartbeatpb.LessTableSpan)
+				tableMap = utils.NewBtreeMap[*heartbeatpb.TableSpan, *replica.SpanReplication](heartbeatpb.LessTableSpan)
 				workingMap[span.TableID] = tableMap
 			}
 			tableMap.ReplaceOrInsert(span, stm)
@@ -638,7 +638,7 @@ func (m *Maintainer) collectMetrics() {
 	if time.Since(m.lastPrintStatusTime) > time.Second*20 {
 		total := m.controller.TaskSize()
 		scheduling := m.controller.db.GetAbsentSize()
-		working := m.controller.db.GetWorkingSize()
+		working := m.controller.db.GetReplicatingSize()
 		absent := m.controller.db.GetAbsentSize()
 
 		m.tableCountGauge.Set(float64(total))
