@@ -78,13 +78,6 @@ func (s *SchemaIDToDispatchers) GetDispatcherIDs(schemaID int64) []common.Dispat
 	return nil
 }
 
-type SyncPointInfo struct {
-	EnableSyncPoint    bool
-	SyncPointInterval  time.Duration
-	InitSyncPointTs    uint64
-	SyncPointRetention time.Duration
-}
-
 type ComponentStateWithMutex struct {
 	mutex           sync.Mutex
 	componentStatus heartbeatpb.ComponentState
