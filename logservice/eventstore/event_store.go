@@ -86,7 +86,7 @@ const (
 
 type eventWithState struct {
 	eventType
-	raw     common.RawKVEntry
+	raw     *common.RawKVEntry
 	subID   logpuller.SubscriptionID
 	tableID int64
 }
@@ -251,7 +251,7 @@ func New(
 		}(i)
 	}
 
-	consume := func(ctx context.Context, raw common.RawKVEntry, subID logpuller.SubscriptionID, extraData interface{}) error {
+	consume := func(ctx context.Context, raw *common.RawKVEntry, subID logpuller.SubscriptionID, extraData interface{}) error {
 		store.writeEvent(subID, raw, extraData)
 		return nil
 	}
@@ -576,7 +576,7 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 	}()
 
 	addEvent2Batch := func(batch *pebble.Batch, item eventWithState) {
-		key := EncodeKey(uint64(item.tableID), &item.raw)
+		key := EncodeKey(uint64(item.tableID), item.raw)
 		value := item.raw.Encode()
 		compressedValue := e.encoder.EncodeAll(value, nil)
 		ratio := float64(len(value)) / float64(len(compressedValue))
@@ -655,7 +655,7 @@ func (e *eventStore) sendBatchSignalPeriodically(ctx context.Context, inputCh ch
 	}
 }
 
-func (e *eventStore) writeEvent(subID logpuller.SubscriptionID, raw common.RawKVEntry, tag interface{}) {
+func (e *eventStore) writeEvent(subID logpuller.SubscriptionID, raw *common.RawKVEntry, tag interface{}) {
 	subTag := tag.(subscriptionTag)
 	e.eventChs[subTag.chIndex] <- eventWithState{
 		eventType: eventTypeNormal,

@@ -159,9 +159,9 @@ func (w *changeEventProcessor) processEvent(ctx context.Context, event statefulE
 // NOTE: context.Canceled won't be treated as an error.
 func (w *changeEventProcessor) handleEventEntry(ctx context.Context, x *cdcpb.Event_Entries_, state *regionFeedState) error {
 	startTs := state.region.subscribedSpan.startTs
-	emit := func(assembled regionFeedEvent) error {
+	emit := func(val *common.RawKVEntry) error {
 		// TODO: add a metric to indicate whether the event is sent successfully.
-		e := newLogEvent(assembled, state.region.subscribedSpan)
+		e := newLogEvent(val, state.region.subscribedSpan)
 		return w.client.consume(ctx, e)
 	}
 	tableID := state.region.subscribedSpan.span.TableID
@@ -177,7 +177,7 @@ func (w *changeEventProcessor) doHandle(
 	x *cdcpb.Event_Entries_,
 	startTs uint64,
 	state *regionFeedState,
-	emit func(assembled regionFeedEvent) error,
+	emit func(val *common.RawKVEntry) error,
 	tableID common.TableID,
 ) error {
 	regionID, _, _ := state.getRegionMeta()
@@ -269,7 +269,7 @@ func (w *changeEventProcessor) doHandle(
 	return nil
 }
 
-func (w *changeEventProcessor) assembleRowEvent(regionID uint64, entry *cdcpb.Event_Row) (regionFeedEvent, error) {
+func (w *changeEventProcessor) assembleRowEvent(regionID uint64, entry *cdcpb.Event_Row) (*common.RawKVEntry, error) {
 	var opType common.OpType
 	switch entry.GetOpType() {
 	case cdcpb.Event_Row_DELETE:
@@ -277,22 +277,17 @@ func (w *changeEventProcessor) assembleRowEvent(regionID uint64, entry *cdcpb.Ev
 	case cdcpb.Event_Row_PUT:
 		opType = common.OpTypePut
 	default:
-		return regionFeedEvent{}, cerror.ErrUnknownKVEventType.GenWithStackByArgs(entry.GetOpType(), entry)
+		return &common.RawKVEntry{}, cerror.ErrUnknownKVEventType.GenWithStackByArgs(entry.GetOpType(), entry)
 	}
-
-	return regionFeedEvent{
+	return &common.RawKVEntry{
+		OpType:   opType,
+		Key:      entry.Key,
+		Value:    entry.GetValue(),
+		StartTs:  entry.StartTs,
+		CRTs:     entry.CommitTs,
 		RegionID: regionID,
-		Val: &common.RawKVEntry{
-			OpType:   opType,
-			Key:      entry.Key,
-			Value:    entry.GetValue(),
-			StartTs:  entry.StartTs,
-			CRTs:     entry.CommitTs,
-			RegionID: regionID,
-			OldValue: entry.GetOldValue(),
-		},
+		OldValue: entry.GetOldValue(),
 	}, nil
-
 }
 
 func (w *changeEventProcessor) handleResolvedTs(ctx context.Context, batch resolvedTsBatch) {
@@ -331,13 +326,10 @@ func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resol
 		ts := table.rangeLock.ResolvedTs()
 		// TODO: only send ts when ts is larger than previous ts
 		if ts > table.startTs {
-			revent := regionFeedEvent{
-				Val: &common.RawKVEntry{
-					OpType: common.OpTypeResolved,
-					CRTs:   ts,
-				},
-			}
-			e := newLogEvent(revent, table)
+			e := newLogEvent(&common.RawKVEntry{
+				OpType: common.OpTypeResolved,
+				CRTs:   ts,
+			}, table)
 			if err := w.client.consume(ctx, e); err != nil {
 				return
 			}

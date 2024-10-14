@@ -55,7 +55,7 @@ type spanProgress struct {
 		// removed while consuming events.
 		sync.RWMutex
 		removed bool
-		f       func(context.Context, common.RawKVEntry, SubscriptionID) error
+		f       func(context.Context, *common.RawKVEntry, SubscriptionID) error
 	}
 }
 
@@ -77,7 +77,7 @@ func (p *spanProgress) resolveLock(currentTime time.Time) {
 type LogPuller struct {
 	client  *SubscriptionClient
 	pdClock pdutil.Clock
-	consume func(context.Context, common.RawKVEntry, SubscriptionID, interface{}) error
+	consume func(context.Context, *common.RawKVEntry, SubscriptionID, interface{}) error
 
 	subscriptions struct {
 		sync.RWMutex
@@ -92,7 +92,7 @@ type LogPuller struct {
 func NewLogPuller(
 	client *SubscriptionClient,
 	pdClock pdutil.Clock,
-	consume func(context.Context, common.RawKVEntry, SubscriptionID, interface{}) error,
+	consume func(context.Context, *common.RawKVEntry, SubscriptionID, interface{}) error,
 ) *LogPuller {
 	puller := &LogPuller{
 		client:  client,
@@ -172,7 +172,7 @@ func (p *LogPuller) Subscribe(
 
 	progress.consume.f = func(
 		ctx context.Context,
-		raw common.RawKVEntry,
+		raw *common.RawKVEntry,
 		subID SubscriptionID,
 	) error {
 		progress.consume.RLock()

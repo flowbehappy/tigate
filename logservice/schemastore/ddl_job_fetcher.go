@@ -90,13 +90,13 @@ func (p *ddlJobFetcher) close(ctx context.Context) error {
 	return p.puller.Close(ctx)
 }
 
-func (p *ddlJobFetcher) input(ctx context.Context, rawEvent common.RawKVEntry) error {
+func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) error {
 	if rawEvent.IsResolved() {
 		p.advanceResolvedTs(uint64(rawEvent.CRTs))
 		return nil
 	}
 
-	job, err := p.unmarshalDDL(&rawEvent)
+	job, err := p.unmarshalDDL(rawEvent)
 	if err != nil {
 		return errors.Trace(err)
 	}
