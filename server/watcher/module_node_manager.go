@@ -15,12 +15,13 @@ package watcher
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/pkg/node"
-	"github.com/pingcap/tiflow/cdc/model"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
@@ -36,7 +37,7 @@ type NodeChangeHandler func(map[node.ID]*node.Info)
 type NodeManager struct {
 	session    *concurrency.Session
 	etcdClient etcd.CDCEtcdClient
-	nodes      map[node.ID]*node.Info
+	nodes      atomic.Pointer[map[node.ID]*node.Info]
 
 	nodeChangeHandlers struct {
 		sync.RWMutex
@@ -48,15 +49,16 @@ func NewNodeManager(
 	session *concurrency.Session,
 	etcdClient etcd.CDCEtcdClient,
 ) *NodeManager {
-	return &NodeManager{
+	m := &NodeManager{
 		session:    session,
 		etcdClient: etcdClient,
-		nodes:      make(map[node.ID]*node.Info),
 		nodeChangeHandlers: struct {
 			sync.RWMutex
 			m map[node.ID]NodeChangeHandler
 		}{m: make(map[node.ID]NodeChangeHandler)},
 	}
+	m.nodes.Store(&map[node.ID]*node.Info{})
+	return m
 }
 
 func (c *NodeManager) Name() string {
@@ -73,22 +75,23 @@ func (c *NodeManager) Tick(
 	changed := false
 	allNodes := make(map[node.ID]*node.Info, len(state.Captures))
 
-	for _, node := range c.nodes {
-		if _, exist := state.Captures[model.CaptureID(node.ID)]; !exist {
+	oldMap := *c.nodes.Load()
+	for _, info := range oldMap {
+		if _, exist := state.Captures[model.CaptureID(info.ID)]; !exist {
 			changed = true
 		}
 	}
 
 	for _, capture := range state.Captures {
-		if _, exist := c.nodes[node.ID(capture.ID)]; !exist {
+		if _, exist := oldMap[node.ID(capture.ID)]; !exist {
 			changed = true
 		}
 		allNodes[node.ID(capture.ID)] = node.CaptureInfoToNodeInfo(capture)
 	}
-	c.nodes = allNodes
+	c.nodes.Store(&allNodes)
 	if changed {
 		log.Info("server change detected")
-		// handle node change event
+		// handle info change event
 		c.nodeChangeHandlers.RLock()
 		defer c.nodeChangeHandlers.RUnlock()
 		for _, handler := range c.nodeChangeHandlers.m {
@@ -100,7 +103,7 @@ func (c *NodeManager) Tick(
 
 // GetAliveNodes get all alive captures, the caller mustn't modify the returned map
 func (c *NodeManager) GetAliveNodes() map[node.ID]*node.Info {
-	return c.nodes
+	return *c.nodes.Load()
 }
 
 func (c *NodeManager) Run(ctx context.Context) error {
