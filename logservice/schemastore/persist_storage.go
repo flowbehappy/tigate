@@ -292,6 +292,7 @@ func (p *persistentStorage) getTableInfo(tableID int64, ts uint64) (*common.Tabl
 	return store.getTableInfo(ts)
 }
 
+// TODO: this may consider some shouldn't be send ddl, like create table, does it matter?
 func (p *persistentStorage) getMaxEventCommitTs(tableID int64, ts uint64) uint64 {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

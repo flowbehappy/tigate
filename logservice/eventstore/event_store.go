@@ -166,7 +166,7 @@ func New(
 ) EventStore {
 	clientConfig := &logpuller.SubscriptionClientConfig{
 		RegionRequestWorkerPerStore:   16,
-		ChangeEventProcessorNum:       32,
+		ChangeEventProcessorNum:       64,
 		AdvanceResolvedTsIntervalInMs: 600,
 	}
 	client := logpuller.NewSubscriptionClient(
