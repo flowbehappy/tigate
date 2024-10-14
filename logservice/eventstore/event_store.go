@@ -412,21 +412,17 @@ func (e *eventStore) UnregisterDispatcher(
 }
 
 func (e *eventStore) GetDispatcherDMLEventState(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) DMLEventState {
-	return DMLEventState{
-		ResolvedTs:       0,
-		MaxEventCommitTs: 0,
-	}
 	// FIXME
-	// e.spanStates.Lock()
-	// defer e.spanStates.Unlock()
-	// state, ok := e.spanStates.dispatcherMap.Get(span)
-	// if !ok {
-	// 	log.Panic("deregister an unregistered span", zap.String("span", span.String()))
-	// }
-	// return DMLEventState{
-	// 	ResolvedTs:       state.resolvedTs.Load(),
-	// 	MaxEventCommitTs: state.maxEventCommitTs.Load(),
-	// }
+	e.spanStates.Lock()
+	defer e.spanStates.Unlock()
+	state, ok := e.spanStates.dispatcherMap.Get(span)
+	if !ok {
+		log.Panic("deregister an unregistered span", zap.String("span", span.String()))
+	}
+	return DMLEventState{
+		ResolvedTs:       state.resolvedTs.Load(),
+		MaxEventCommitTs: state.maxEventCommitTs.Load(),
+	}
 }
 
 func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange common.DataRange) (EventIterator, error) {
