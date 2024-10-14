@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/maintainer/replica"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
@@ -27,6 +29,7 @@ import (
 
 type Controller struct {
 	lock         sync.RWMutex
+	db           *replica.ReplicationDB
 	operators    map[common.DispatcherID]Operator
 	runningQueue operatorQueue
 	batchSize    int
@@ -36,6 +39,7 @@ type Controller struct {
 
 func NewOperatorController(changefeedID string,
 	mc messaging.MessageCenter,
+	db *replica.ReplicationDB,
 	batchSize int) *Controller {
 	oc := &Controller{
 		changefeedID: changefeedID,
@@ -43,6 +47,7 @@ func NewOperatorController(changefeedID string,
 		runningQueue: make(operatorQueue, 0),
 		mc:           mc,
 		batchSize:    batchSize,
+		db:           db,
 	}
 	return oc
 }
@@ -60,7 +65,10 @@ func (oc *Controller) Execute() time.Time {
 			continue
 		}
 
+		oc.lock.RLock()
 		msg := r.Schedule()
+		oc.lock.RUnlock()
+
 		if msg != nil {
 			_ = oc.mc.SendCommand(msg)
 		}
@@ -112,9 +120,26 @@ func (oc *Controller) GetOperator(id common.DispatcherID) Operator {
 	return oc.operators[id]
 }
 
+func (oc *Controller) UpdateOperatorStatus(id common.DispatcherID, from node.ID, status *heartbeatpb.TableSpanStatus) {
+	oc.lock.RLock()
+	defer oc.lock.RUnlock()
+
+	op, ok := oc.operators[id]
+	if ok {
+		op.Check(from, status)
+	}
+}
+
 func (oc *Controller) OnNodeRemoved(n node.ID) {
 	oc.lock.RLock()
 	defer oc.lock.RUnlock()
+
+	for _, span := range oc.db.GetTaskByNodeID(n) {
+		_, ok := oc.operators[span.ID]
+		if !ok {
+			oc.db.MarkSpanAbsent(span)
+		}
+	}
 	for _, op := range oc.operators {
 		op.OnNodeRemove(n)
 	}
@@ -138,9 +163,9 @@ func (oc *Controller) pollQueueingOperator() (Operator, bool) {
 	item := heap.Pop(&oc.runningQueue).(*operatorWithTime)
 	op := item.op
 	opID := item.op.ID()
-	// always call the PostFinished method to ensure the operator is cleaned up by itself.
+	// always call the PostFinish method to ensure the operator is cleaned up by itself.
 	if op.IsFinished() {
-		op.PostFinished()
+		op.PostFinish()
 		delete(oc.operators, opID)
 		log.Info("operator finished",
 			zap.String("changefeed", oc.changefeedID),

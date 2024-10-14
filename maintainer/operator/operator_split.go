@@ -70,7 +70,7 @@ func (m *SplitDispatcherOperator) OnTaskRemoved() {
 	m.originalReplicaseRemoved.Store(true)
 }
 
-func (m *SplitDispatcherOperator) PostFinished() {
+func (m *SplitDispatcherOperator) PostFinish() {
 	if m.originalReplicaseRemoved.Load() {
 		return
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/maintainer/operator"
 	"github.com/flowbehappy/tigate/maintainer/replica"
+	"github.com/flowbehappy/tigate/maintainer/scheduler"
 	"github.com/flowbehappy/tigate/maintainer/split"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
@@ -43,9 +44,10 @@ type Controller struct {
 	initialTables []commonEvent.Table
 	bootstrapped  bool
 
-	sche        *Scheduler
+	sche        *scheduler.Scheduler
 	oc          *operator.Controller
 	db          *replica.ReplicationDB
+	mc          messaging.MessageCenter
 	nodeManager *watcher.NodeManager
 
 	splitter               *split.Splitter
@@ -69,16 +71,17 @@ func NewController(changefeedID string,
 	config *config.ChangefeedSchedulerConfig,
 	batchSize int, balanceInterval time.Duration) *Controller {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
-	oc := operator.NewOperatorController(changefeedID, mc, batchSize)
 	replicaSetDB := replica.NewReplicaSetDB(changefeedID)
+	oc := operator.NewOperatorController(changefeedID, mc, replicaSetDB, batchSize)
 	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
 	s := &Controller{
 		startCheckpointTs: checkpointTs,
 		changefeedID:      changefeedID,
 		batchSize:         batchSize,
 		bootstrapped:      false,
-		sche:              NewScheduler(changefeedID, batchSize, oc, replicaSetDB, nodeManager, balanceInterval),
+		sche:              scheduler.NewScheduler(changefeedID, batchSize, oc, replicaSetDB, nodeManager, balanceInterval),
 		oc:                oc,
+		mc:                mc,
 		db:                replicaSetDB,
 		nodeManager:       nodeManager,
 		taskScheduler:     taskScheduler,
@@ -233,7 +236,6 @@ func (c *Controller) UpdateSchemaID(tableID, newSchemaID int64) {
 }
 
 func (c *Controller) RemoveNode(id node.ID) {
-	c.db.RemoveNode(id)
 	c.oc.OnNodeRemoved(id)
 }
 
@@ -244,21 +246,24 @@ func (c *Controller) ScheduleFinished() bool {
 
 func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableSpanStatus) {
 	for _, status := range statusList {
-		span := common.NewDispatcherIDFromPB(status.ID)
-		stm := c.GetTask(span)
+		dispatcherID := common.NewDispatcherIDFromPB(status.ID)
+		stm := c.GetTask(dispatcherID)
 		if stm == nil {
 			log.Warn("no span found, ignore",
 				zap.String("changefeed", c.changefeedID),
-				zap.Any("from", from),
-				zap.String("span", span.String()))
+				zap.String("from", from.String()),
+				zap.Any("status", status),
+				zap.String("span", dispatcherID.String()))
+			if status.ComponentStatus == heartbeatpb.ComponentState_Working {
+				// if the span is not found, and the status is working, we need to remove it from dispatcher
+				_ = c.mc.SendCommand(replica.NewRemoveInferiorMessage(from, c.changefeedID, status.ID))
+			}
 			continue
 		}
-		op := c.oc.GetOperator(span)
-		if op != nil {
-			op.Check(from, status)
-		}
+		c.oc.UpdateOperatorStatus(dispatcherID, from, status)
 		nodeID := stm.GetNodeID()
 		if nodeID != from {
+			// todo: handle the case that the node id is mismatch
 			log.Warn("node id not match",
 				zap.String("changefeed", c.changefeedID),
 				zap.Any("from", from),
@@ -274,7 +279,7 @@ func (c *Controller) TaskSize() int {
 }
 
 func (c *Controller) GetSchedulingSize() int {
-	return c.oc.OperatorSize()
+	return c.db.GetSchedulingSize()
 }
 
 func (c *Controller) GetTaskSizeByNodeID(id node.ID) int {

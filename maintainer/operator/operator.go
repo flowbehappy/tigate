@@ -21,7 +21,7 @@ import (
 )
 
 // Operator is the interface for the maintainer schedule dispatchers
-// operator thread run Start -> Schedule -> PostFinished
+// operator thread run Start -> Schedule -> PostFinish
 // Check, OnNodeRemove and OnTaskRemoved is called by the maintainer thread when the dispatcher reported a new status
 type Operator interface {
 	// ID returns the dispatcher ID
@@ -32,12 +32,13 @@ type Operator interface {
 	Schedule() *messaging.TargetMessage
 	// IsFinished returns true if the operator is finished
 	IsFinished() bool
-	// PostFinished is called after the operator is finished and before remove from the task tracker
+	// PostFinish is called after the operator is finished and before remove from the task tracker
+	// it is called with the lock of the operator controller
 	// this is used to:
 	// 1. do some cleanup work
 	// 2. update the replica set and replica set db status
 	// 3. revert some modifies if the operator is canceled
-	PostFinished()
+	PostFinish()
 	// Check checks when the new status comes, returns true if the operator is finished
 	// It is called by when the dispatcher reported a new status
 	Check(from node.ID, status *heartbeatpb.TableSpanStatus)

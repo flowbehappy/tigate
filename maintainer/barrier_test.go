@@ -419,7 +419,7 @@ func TestSchemaBlock(t *testing.T) {
 	for _, task := range controller.db.GetReplicating() {
 		op := controller.oc.GetOperator(task.ID)
 		if op != nil {
-			op.PostFinished()
+			op.PostFinish()
 		}
 	}
 	require.Equal(t, 1, controller.db.GetReplicatingSize())

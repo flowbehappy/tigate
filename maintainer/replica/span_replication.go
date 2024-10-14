@@ -136,12 +136,16 @@ func (r *SpanReplication) NewAddInferiorMessage(server node.ID) *messaging.Targe
 }
 
 func (r *SpanReplication) NewRemoveInferiorMessage(server node.ID) *messaging.TargetMessage {
+	return NewRemoveInferiorMessage(server, r.ChangefeedID.ID, r.ID.ToPB())
+}
+
+func NewRemoveInferiorMessage(server node.ID, cfID string, dispatcherID *heartbeatpb.DispatcherID) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(server,
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{
-			ChangefeedID: r.ChangefeedID.ID,
+			ChangefeedID: cfID,
 			Config: &heartbeatpb.DispatcherConfig{
-				DispatcherID: r.ID.ToPB(),
+				DispatcherID: dispatcherID,
 			},
 			ScheduleAction: heartbeatpb.ScheduleAction_Remove,
 		})

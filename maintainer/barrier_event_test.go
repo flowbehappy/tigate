@@ -72,7 +72,9 @@ func TestScheduleEvent(t *testing.T) {
 }
 
 func TestResendAction(t *testing.T) {
-	setNodeManagerAndMessageCenter()
+	nodeManager := setNodeManagerAndMessageCenter()
+	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
+
 	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 2}, 1)
@@ -200,6 +202,5 @@ func setNodeManagerAndMessageCenter() *watcher.NodeManager {
 		n.ID, 100, config.NewDefaultMessageCenterConfig()))
 	nodeManager := watcher.NewNodeManager(nil, nil)
 	appcontext.SetService(watcher.NodeManagerName, nodeManager)
-	nodeManager.GetAliveNodes()[n.ID] = n
 	return nodeManager
 }

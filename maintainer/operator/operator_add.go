@@ -84,7 +84,7 @@ func (m *AddDispatcherOperator) Start() {
 	m.db.BindSpanToNode("", m.dest, m.replicaSet)
 }
 
-func (m *AddDispatcherOperator) PostFinished() {
+func (m *AddDispatcherOperator) PostFinish() {
 	log.Info("add dispatcher operator finished",
 		zap.String("replicaSet", m.replicaSet.ID.String()),
 		zap.String("changefeed", m.replicaSet.ChangefeedID.String()))

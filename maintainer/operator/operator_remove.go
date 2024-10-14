@@ -74,7 +74,7 @@ func (m *RemoveDispatcherOperator) Start() {
 	m.db.MarkSpanScheduling(m.replicaSet)
 }
 
-func (m *RemoveDispatcherOperator) PostFinished() {
+func (m *RemoveDispatcherOperator) PostFinish() {
 	log.Info("remove dispatcher operator finished",
 		zap.String("replicaSet", m.replicaSet.ID.String()),
 		zap.String("changefeed", m.replicaSet.ChangefeedID.String()))

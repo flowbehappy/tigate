@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package maintainer
+package scheduler
 
 import (
 	"math"
@@ -28,6 +28,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// Scheduler generates operators for the spans, and push them to the operator controller
+// it generates add operator for the absent spans, and move operator for the unbalanced replicating spans
+// currently, it only supports balance the spans by size
 type Scheduler struct {
 	batchSize            int
 	changefeedID         string
@@ -81,11 +84,12 @@ func (s *Scheduler) Execute() time.Time {
 		s.basicSchedule(availableSize, absent, nodeSize)
 		s.absent = absent[:0]
 	} else {
-		s.Balance()
+		s.balance()
 	}
 	return time.Now().Add(time.Millisecond * 500)
 }
 
+// basicSchedule schedule the absent spans to the nodes base on the task size of each node
 func (s *Scheduler) basicSchedule(
 	availableSize int,
 	absent []*replica.SpanReplication,
@@ -97,8 +101,8 @@ func (s *Scheduler) basicSchedule(
 	priorityQueue := heap.NewHeap[*Item]()
 	for key, size := range nodeTasks {
 		priorityQueue.AddOrUpdate(&Item{
-			Node:     key,
-			TaskSize: size,
+			Node: key,
+			Load: size,
 		})
 	}
 
@@ -108,7 +112,7 @@ func (s *Scheduler) basicSchedule(
 		// the operator is pushed successfully
 		if s.oc.AddOperator(operator.NewAddDispatcherOperator(s.db, replicaSet, item.Node)) {
 			// update the task size priority queue
-			item.TaskSize++
+			item.Load++
 			taskSize++
 		}
 		if taskSize >= availableSize {
@@ -118,7 +122,8 @@ func (s *Scheduler) basicSchedule(
 	}
 }
 
-func (s *Scheduler) Balance() {
+// balance balances the spans by size
+func (s *Scheduler) balance() {
 	if time.Since(s.lastRebalanceTime) < s.checkBalanceInterval {
 		return
 	}
@@ -180,14 +185,14 @@ func (s *Scheduler) balanceTables() {
 		tableNum2Remove := len(stms) - upperLimitPerCapture
 		if tableNum2Remove <= 0 {
 			priorityQueue.AddOrUpdate(&Item{
-				Node:     nodeID,
-				TaskSize: len(ts),
+				Node: nodeID,
+				Load: len(ts),
 			})
 			continue
 		} else {
 			priorityQueue.AddOrUpdate(&Item{
-				Node:     nodeID,
-				TaskSize: len(ts) - tableNum2Remove,
+				Node: nodeID,
+				Load: len(ts) - tableNum2Remove,
 			})
 		}
 
@@ -216,7 +221,7 @@ func (s *Scheduler) balanceTables() {
 		// the operator is pushed successfully
 		if s.oc.AddOperator(operator.NewMoveDispatcherOperator(s.db, cf, cf.GetNodeID(), item.Node)) {
 			// update the task size priority queue
-			item.TaskSize++
+			item.Load++
 			movedSize++
 		}
 		priorityQueue.AddOrUpdate(item)
@@ -225,22 +230,4 @@ func (s *Scheduler) balanceTables() {
 		zap.String("changefeed", s.changefeedID),
 		zap.Int("movedSize", movedSize),
 		zap.Int("victims", len(victims)))
-}
-
-type Item struct {
-	Node     node.ID
-	TaskSize int
-	index    int
-}
-
-func (i *Item) SetHeapIndex(idx int) {
-	i.index = idx
-}
-
-func (i *Item) GetHeapIndex() int {
-	return i.index
-}
-
-func (i *Item) CompareTo(t *Item) int {
-	return i.TaskSize - t.TaskSize
 }
