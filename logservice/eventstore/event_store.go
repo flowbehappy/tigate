@@ -217,8 +217,8 @@ func New(
 		// 	l.IndexBlockSize = 256 << 10 // 256 KB
 		// 	l.FilterPolicy = bloom.FilterPolicy(10)
 		// 	l.FilterType = pebble.TableFilter
-		// 	l.TargetFileSize = 8 << 20             // 8 MB
-		// 	l.Compression = pebble.ZstdCompression // TODO: choose the right compression
+		// 	l.TargetFileSize = 8 << 20 // 8 MB
+		// 	// 	l.Compression = pebble.ZstdCompression // TODO: choose the right compression
 		// 	l.EnsureDefaults()
 		// }
 		db, err := pebble.Open(fmt.Sprintf("%s/%d", dbPath, i), opts)
@@ -412,17 +412,21 @@ func (e *eventStore) UnregisterDispatcher(
 }
 
 func (e *eventStore) GetDispatcherDMLEventState(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) DMLEventState {
-	// FIXME
-	e.spanStates.Lock()
-	defer e.spanStates.Unlock()
-	state, ok := e.spanStates.dispatcherMap.Get(span)
-	if !ok {
-		log.Panic("deregister an unregistered span", zap.String("span", span.String()))
-	}
 	return DMLEventState{
-		ResolvedTs:       state.resolvedTs.Load(),
-		MaxEventCommitTs: state.maxEventCommitTs.Load(),
+		ResolvedTs:       0,
+		MaxEventCommitTs: 0,
 	}
+	// FIXME
+	// e.spanStates.Lock()
+	// defer e.spanStates.Unlock()
+	// state, ok := e.spanStates.dispatcherMap.Get(span)
+	// if !ok {
+	// 	log.Panic("deregister an unregistered span", zap.String("span", span.String()))
+	// }
+	// return DMLEventState{
+	// 	ResolvedTs:       state.resolvedTs.Load(),
+	// 	MaxEventCommitTs: state.maxEventCommitTs.Load(),
+	// }
 }
 
 func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange common.DataRange) (EventIterator, error) {
