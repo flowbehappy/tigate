@@ -47,7 +47,8 @@ type spanProgress struct {
 	resolvedTsUpdated atomic.Int64
 	resolvedTs        atomic.Uint64
 
-	extraData interface{}
+	// tag is supplied at subscription time and is passed to the consume function.
+	tag interface{}
 
 	consume struct {
 		// This lock is used to prevent the table progress from being
@@ -152,16 +153,16 @@ func (p *LogPuller) Close(ctx context.Context) error {
 func (p *LogPuller) Subscribe(
 	span heartbeatpb.TableSpan,
 	startTs uint64,
-	extraData interface{},
+	tag interface{},
 ) SubscriptionID {
 	p.subscriptions.Lock()
 
 	subID := p.client.AllocSubscriptionID()
 
 	progress := &spanProgress{
-		span:      span,
-		subID:     subID,
-		extraData: extraData,
+		span:  span,
+		subID: subID,
+		tag:   tag,
 	}
 
 	progress.consume.f = func(
@@ -172,7 +173,7 @@ func (p *LogPuller) Subscribe(
 		progress.consume.RLock()
 		defer progress.consume.RUnlock()
 		if !progress.consume.removed {
-			return p.consume(ctx, raw, subID, progress.extraData)
+			return p.consume(ctx, raw, subID, progress.tag)
 		}
 		return nil
 	}

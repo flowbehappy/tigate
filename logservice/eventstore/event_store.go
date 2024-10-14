@@ -308,7 +308,7 @@ func (e *eventStore) Close(ctx context.Context) error {
 	return nil
 }
 
-type subscriptionExtraData struct {
+type subscriptionTag struct {
 	chIndex int
 	tableID int64
 }
@@ -339,7 +339,7 @@ func (e *eventStore) RegisterDispatcher(
 	e.spanStates.Unlock()
 	log.Info("add a span in eventstore", zap.String("span", span.String()))
 	chIndex := common.HashTableSpan(span, len(e.eventChs))
-	subID := e.puller.Subscribe(span, startTs, subscriptionExtraData{
+	subID := e.puller.Subscribe(span, startTs, subscriptionTag{
 		chIndex: chIndex,
 		tableID: tableSpan.TableID,
 	})
@@ -650,13 +650,13 @@ func (e *eventStore) sendBatchSignalPeriodically(ctx context.Context, inputCh ch
 	}
 }
 
-func (e *eventStore) writeEvent(subID logpuller.SubscriptionID, raw common.RawKVEntry, extraData interface{}) {
-	subExtraData := extraData.(subscriptionExtraData)
-	e.eventChs[subExtraData.chIndex] <- eventWithState{
+func (e *eventStore) writeEvent(subID logpuller.SubscriptionID, raw common.RawKVEntry, tag interface{}) {
+	subTag := tag.(subscriptionTag)
+	e.eventChs[subTag.chIndex] <- eventWithState{
 		eventType: eventTypeNormal,
 		raw:       raw,
 		subID:     subID,
-		tableID:   subExtraData.tableID,
+		tableID:   subTag.tableID,
 	}
 }
 
