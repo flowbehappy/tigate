@@ -223,9 +223,11 @@ func NewDispatcherEvent(event commonEvent.Event) *DispatcherEvent {
 	}
 	switch event.GetType() {
 	case commonEvent.TypeResolvedEvent:
+		dispatcherEvent.isBatchable = true
 	case commonEvent.TypeDMLEvent:
 		dispatcherEvent.isBatchable = true
 	case commonEvent.TypeDDLEvent:
+		dispatcherEvent.isBatchable = false
 	case commonEvent.TypeSyncPointEvent:
 		dispatcherEvent.isBatchable = false
 	default:
@@ -240,7 +242,7 @@ var dispatcherEventsDynamicStreamOnce sync.Once
 func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.DispatcherID, DispatcherEvent, *Dispatcher] {
 	if dispatcherEventsDynamicStream == nil {
 		dispatcherEventsDynamicStreamOnce.Do(func() {
-			dispatcherEventsDynamicStream = dynstream.NewDynamicStream(&DispatcherEventsHandler{})
+			dispatcherEventsDynamicStream = dynstream.NewDynamicStream(&DispatcherEventsHandler{}, dynstream.NewOptionWithBatchSize(128))
 			dispatcherEventsDynamicStream.Start()
 		})
 	}

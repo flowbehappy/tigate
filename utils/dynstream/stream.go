@@ -344,19 +344,19 @@ Loop:
 						// which is possible when the path is removed or recovered from blocked.
 						break
 					}
-					// If the event is non-batchable, we should handle it singly.
-					// The non-batchable event should be the only event in a batch.
-					if !e.IsBatchable() {
+
+					if e.IsBatchable() {
+						signal.pathInfo.pendingQueue.PopFront()
+						eventBuf = append(eventBuf, e)
+					} else {
+						// If the event is non-batchable, we should handle it singly.
+						// The non-batchable event should be the only event in a batch.
 						if i == 0 {
 							eventBuf = append(eventBuf, e)
 							signal.pathInfo.pendingQueue.PopFront()
-							break
-						} else {
-							break
 						}
+						break
 					}
-					signal.pathInfo.pendingQueue.PopFront()
-					eventBuf = append(eventBuf, e)
 				}
 
 				actualCount := len(eventBuf)

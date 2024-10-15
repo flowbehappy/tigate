@@ -116,6 +116,12 @@ func NewOption() Option {
 	}
 }
 
+func NewOptionWithBatchSize(batchSize int) Option {
+	opt := NewOption()
+	opt.BatchSize = batchSize
+	return opt
+}
+
 func (o *Option) fix() {
 	if o.StreamCount == 0 {
 		o.StreamCount = runtime.NumCPU()
