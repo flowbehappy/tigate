@@ -217,8 +217,8 @@ func (d DispatcherEvent) IsBatchable() bool {
 	return d.isBatchable
 }
 
-func NewDispatcherEvent(event commonEvent.Event) *DispatcherEvent {
-	dispatcherEvent := &DispatcherEvent{
+func NewDispatcherEvent(event commonEvent.Event) DispatcherEvent {
+	dispatcherEvent := DispatcherEvent{
 		Event: event,
 	}
 	switch event.GetType() {

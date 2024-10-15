@@ -78,8 +78,8 @@ func (r SchedulerDispatcherRequest) IsBatchable() bool {
 	return true
 }
 
-func NewSchedulerDispatcherRequest(req *heartbeatpb.ScheduleDispatcherRequest) *SchedulerDispatcherRequest {
-	return &SchedulerDispatcherRequest{req}
+func NewSchedulerDispatcherRequest(req *heartbeatpb.ScheduleDispatcherRequest) SchedulerDispatcherRequest {
+	return SchedulerDispatcherRequest{req}
 }
 
 var schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[model.ChangeFeedID, SchedulerDispatcherRequest, *EventDispatcherManager]
@@ -107,8 +107,8 @@ func (r HeartBeatResponse) IsBatchable() bool {
 	return true
 }
 
-func NewHeartBeatResponse(resp *heartbeatpb.HeartBeatResponse) *HeartBeatResponse {
-	return &HeartBeatResponse{resp}
+func NewHeartBeatResponse(resp *heartbeatpb.HeartBeatResponse) HeartBeatResponse {
+	return HeartBeatResponse{resp}
 }
 
 var heartBeatResponseDynamicStream dynstream.DynamicStream[model.ChangeFeedID, HeartBeatResponse, *EventDispatcherManager]
@@ -136,8 +136,8 @@ func (r CheckpointTsMessage) IsBatchable() bool {
 	return true
 }
 
-func NewCheckpointTsMessage(msg *heartbeatpb.CheckpointTsMessage) *CheckpointTsMessage {
-	return &CheckpointTsMessage{msg}
+func NewCheckpointTsMessage(msg *heartbeatpb.CheckpointTsMessage) CheckpointTsMessage {
+	return CheckpointTsMessage{msg}
 }
 
 var checkpointTsMessageDynamicStream dynstream.DynamicStream[model.ChangeFeedID, CheckpointTsMessage, *EventDispatcherManager]

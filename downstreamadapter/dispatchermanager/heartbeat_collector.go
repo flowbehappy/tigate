@@ -127,15 +127,15 @@ func (c *HeartBeatCollector) RecvMessages(_ context.Context, msg *messaging.Targ
 	case messaging.TypeHeartBeatResponse:
 		heartbeatResponse := msg.Message[0].(*heartbeatpb.HeartBeatResponse)
 		heartBeatResponseDynamicStream := GetHeartBeatResponseDynamicStream()
-		heartBeatResponseDynamicStream.In() <- *NewHeartBeatResponse(heartbeatResponse)
+		heartBeatResponseDynamicStream.In() <- NewHeartBeatResponse(heartbeatResponse)
 	case messaging.TypeScheduleDispatcherRequest:
 		schedulerDispatcherRequest := msg.Message[0].(*heartbeatpb.ScheduleDispatcherRequest)
-		c.schedulerDispatcherRequestDynamicStream.In() <- *NewSchedulerDispatcherRequest(schedulerDispatcherRequest)
+		c.schedulerDispatcherRequestDynamicStream.In() <- NewSchedulerDispatcherRequest(schedulerDispatcherRequest)
 		// TODO: check metrics
 		metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", schedulerDispatcherRequest.ChangefeedID, "receive").Inc()
 	case messaging.TypeCheckpointTsMessage:
 		checkpointTsMessage := msg.Message[0].(*heartbeatpb.CheckpointTsMessage)
-		c.checkpointTsMessageDynamicStream.In() <- *NewCheckpointTsMessage(checkpointTsMessage)
+		c.checkpointTsMessageDynamicStream.In() <- NewCheckpointTsMessage(checkpointTsMessage)
 	default:
 		log.Panic("unknown message type", zap.Any("message", msg.Message))
 	}

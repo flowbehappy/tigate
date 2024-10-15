@@ -188,11 +188,11 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, msg *messaging.Tar
 		case commonEvent.TypeBatchResolvedEvent:
 			for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
 				c.metricDispatcherReceivedResolvedTsEventCount.Inc()
-				c.dispatcherEventsDynamicStream.In() <- *dispatcher.NewDispatcherEvent(e)
+				c.dispatcherEventsDynamicStream.In() <- dispatcher.NewDispatcherEvent(e)
 			}
 		default:
 			c.metricDispatcherReceivedKVEventCount.Inc()
-			c.dispatcherEventsDynamicStream.In() <- *dispatcher.NewDispatcherEvent(event)
+			c.dispatcherEventsDynamicStream.In() <- dispatcher.NewDispatcherEvent(event)
 		}
 	}
 	return nil
