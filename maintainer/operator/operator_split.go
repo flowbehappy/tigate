@@ -83,6 +83,6 @@ func (m *SplitDispatcherOperator) Start() {
 
 func (m *SplitDispatcherOperator) String() string {
 	// todo add split region span
-	return fmt.Sprintf("move dispatcher operator: %s, dest:%v ",
+	return fmt.Sprintf("move dispatcher operator: %s, splitSpans:%v",
 		m.replicaSet.ID, m.splitSpans)
 }

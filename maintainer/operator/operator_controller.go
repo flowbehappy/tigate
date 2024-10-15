@@ -126,7 +126,7 @@ func (oc *Controller) AddOperator(op Operator) bool {
 	}
 	span := oc.replicationDB.GetTaskByID(op.ID())
 	if span == nil {
-		log.Warn("span not found",
+		log.Warn("add operator failed, span not found",
 			zap.String("changefeed", oc.changefeedID),
 			zap.String("operator", op.String()))
 		return false
