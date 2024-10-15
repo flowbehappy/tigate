@@ -25,11 +25,13 @@ import (
 // ReplicationDB is an in memory data struct that maintains the replication spans
 type ReplicationDB struct {
 	changefeedID string
-	nodeTasks    map[node.ID]map[common.DispatcherID]*SpanReplication
-	// group the spans by schema id
+	// allTasks maintains all the span tasks
+	allTasks map[common.DispatcherID]*SpanReplication
+
+	// group the tasks by the node id， schema id, and table id for fast access
+	nodeTasks   map[node.ID]map[common.DispatcherID]*SpanReplication
 	schemaTasks map[int64]map[common.DispatcherID]*SpanReplication
-	// group the spans by table id
-	tableTasks map[int64]map[common.DispatcherID]*SpanReplication
+	tableTasks  map[int64]map[common.DispatcherID]*SpanReplication
 
 	// maps that maintained base on the span scheduling status
 	replicating map[common.DispatcherID]*SpanReplication
@@ -48,6 +50,7 @@ func NewReplicaSetDB(changefeedID string) *ReplicationDB {
 		schemaTasks:  make(map[int64]map[common.DispatcherID]*SpanReplication),
 		tableTasks:   make(map[int64]map[common.DispatcherID]*SpanReplication),
 
+		allTasks:    make(map[common.DispatcherID]*SpanReplication),
 		replicating: make(map[common.DispatcherID]*SpanReplication),
 		scheduling:  make(map[common.DispatcherID]*SpanReplication),
 		absent:      make(map[common.DispatcherID]*SpanReplication),
@@ -60,7 +63,7 @@ func (db *ReplicationDB) GetTaskByID(id common.DispatcherID) *SpanReplication {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
-	return db.getTaskByIDUnLock(id)
+	return db.allTasks[id]
 }
 
 // TaskSize returns the total task size in the db, it includes replicating, scheduling and absent tasks
@@ -68,7 +71,7 @@ func (db *ReplicationDB) TaskSize() int {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
-	return len(db.replicating) + len(db.absent) + len(db.scheduling)
+	return len(db.allTasks)
 }
 
 // TryRemoveAll removes non-scheduled tasks from the db and return the scheduled tasks
@@ -76,6 +79,7 @@ func (db *ReplicationDB) TryRemoveAll() []*SpanReplication {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
+	// remove the absent task directly
 	for _, stm := range db.absent {
 		db.removeSpanUnLock(stm)
 	}
@@ -249,7 +253,7 @@ func (db *ReplicationDB) GetTasksBySchemaID(schemaID int64) []*SpanReplication {
 	if !ok {
 		return nil
 	}
-	var replicaSets []*SpanReplication = make([]*SpanReplication, 0, len(sm))
+	var replicaSets = make([]*SpanReplication, 0, len(sm))
 	for _, v := range sm {
 		replicaSets = append(replicaSets, v)
 	}
@@ -283,8 +287,10 @@ func (db *ReplicationDB) ReplaceReplicaSet(olds []*SpanReplication, news []*Span
 
 	// first check if all the old replica set exists, if not, return false
 	for _, old := range olds {
-		dbItem := db.getTaskByIDUnLock(old.ID)
-		if dbItem == nil {
+		if _, ok := db.allTasks[old.ID]; !ok {
+			log.Warn("old replica set not found, skip",
+				zap.String("changefeed", db.changefeedID),
+				zap.String("span", old.ID.String()))
 			return false
 		}
 	}
@@ -306,6 +312,7 @@ func (db *ReplicationDB) AddReplicatingSpan(task *SpanReplication) {
 		zap.String("nodeID", nodeID.String()),
 		zap.String("span", task.ID.String()))
 
+	db.allTasks[task.ID] = task
 	db.replicating[task.ID] = task
 	db.updateNodeMap("", nodeID, task)
 	db.addToSchemaAndTableMap(task)
@@ -411,46 +418,13 @@ func (db *ReplicationDB) BindSpanToNode(old, new node.ID, task *SpanReplication)
 	db.updateNodeMap(old, new, task)
 }
 
-// GetTaskByID returns the replica set by the id, it will search the replicating, scheduling and absent map
-func (db *ReplicationDB) getTaskByIDUnLock(id common.DispatcherID) *SpanReplication {
-	r, ok := db.replicating[id]
-	if ok {
-		return r
-	}
-	r, ok = db.scheduling[id]
-	if ok {
-		return r
-	}
-	return db.absent[id]
-}
-
 // addAbsentReplicaSetUnLock adds the replica set to the absent map
 func (db *ReplicationDB) addAbsentReplicaSetUnLock(tasks ...*SpanReplication) {
 	for _, task := range tasks {
+		db.allTasks[task.ID] = task
 		db.absent[task.ID] = task
 		db.addToSchemaAndTableMap(task)
 	}
-}
-
-// addToSchemaAndTableMap adds the task to the schema and table map
-func (db *ReplicationDB) addToSchemaAndTableMap(task *SpanReplication) {
-	tableID := task.Span.TableID
-	schemaID := task.GetSchemaID()
-	// modify the schema map
-	schemaMap, ok := db.schemaTasks[schemaID]
-	if !ok {
-		schemaMap = make(map[common.DispatcherID]*SpanReplication)
-		db.schemaTasks[schemaID] = schemaMap
-	}
-	schemaMap[task.ID] = task
-
-	// modify the table map
-	tableMap, ok := db.tableTasks[tableID]
-	if !ok {
-		tableMap = make(map[common.DispatcherID]*SpanReplication)
-		db.tableTasks[tableID] = tableMap
-	}
-	tableMap[task.ID] = task
 }
 
 // removeSpanUnLock removes the replica set from the db without lock
@@ -480,7 +454,29 @@ func (db *ReplicationDB) removeSpanUnLock(spans ...*SpanReplication) {
 		if len(nodeMap) == 0 {
 			delete(db.nodeTasks, nodeID)
 		}
+		delete(db.allTasks, span.ID)
 	}
+}
+
+// addToSchemaAndTableMap adds the task to the schema and table map
+func (db *ReplicationDB) addToSchemaAndTableMap(task *SpanReplication) {
+	tableID := task.Span.TableID
+	schemaID := task.GetSchemaID()
+	// modify the schema map
+	schemaMap, ok := db.schemaTasks[schemaID]
+	if !ok {
+		schemaMap = make(map[common.DispatcherID]*SpanReplication)
+		db.schemaTasks[schemaID] = schemaMap
+	}
+	schemaMap[task.ID] = task
+
+	// modify the table map
+	tableMap, ok := db.tableTasks[tableID]
+	if !ok {
+		tableMap = make(map[common.DispatcherID]*SpanReplication)
+		db.tableTasks[tableID] = tableMap
+	}
+	tableMap[task.ID] = task
 }
 
 // updateNodeMap updates the node map, it will remove the task from the old node and add it to the new node
