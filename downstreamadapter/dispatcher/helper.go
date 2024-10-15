@@ -184,19 +184,19 @@ func SetDispatcherTaskScheduler(taskScheduler threadpool.ThreadPool) {
 // If the event is a DML event, it will be added to the sink for writing to downstream.
 // If the event is a resolved TS event, it will be update the resolvedTs of the dispatcher.
 // If the event is a DDL event,
-//  1. If it is a single table DDL,
-//     a. If the tableProgress is empty（previous events are flushed successfully），it will be added to the sink for writing to downstream(async).
-//     b. If the tableProgress is not empty, we will generate a CheckTableProgressEmptyTask to periodly check whether the tableProgress is empty,
-//     and then add the DDL event to the sink for writing to downstream(async).
-//  2. If it is a multi-table DDL,
-//     a. If the tableProgress is empty（previous events are flushed successfully），We will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
-//     b. If the tableProgress is not empty, we will generate a CheckTableProgressEmptyTask to periodly check whether the tableProgress is empty,
-//     and then we will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
-//     for the multi-table DDL, we will also generate a ResendTask to resend the TableSpanBlockStatus message with ddl info to maintainer each 50ms to avoid message is missing.
+//  1. If it is a single table DDL, it will be added to the sink for writing to downstream(async).
+//  2. If it is a multi-table DDL, We will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
+//     for the multi-table DDL, we will also generate a ResendTask to resend the TableSpanBlockStatus message with ddl info
+//     to maintainer each 200ms to avoid message is missing.
 //
-// Considering for ddl event, we always do an async write, so we need to be blocked before the ddl event flushed to downstream successfully.
-// Thus, we add a callback function to let the hander be waked when the ddl event flushed to downstream successfully.
-
+// If the event is a Sync Point event, we deal it as a multi-table DDL event.
+//
+// We can handle multi events in batch if there only dml events and resovledTs events.
+// For DDL event and Sync Point Event, we should handle them singlely.
+// Thus, if a event is DDL event or Sync Point Event, we will only get one event at once.
+// Otherwise, we can get a batch events.
+// We always return block = true for Handle() except we only receive the resolvedTs events.
+// So we only will reach next Handle() when previous events are all push downstream successfully.
 type DispatcherEventsHandler struct {
 }
 
