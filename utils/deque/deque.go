@@ -9,7 +9,7 @@ type Deque[T any] struct {
 	blockLen int
 	maxLen   int
 
-	freeBlock []T // A free block to avoid frequent memory allocation.
+	freeBlock []T // A free block to reduce frequent memory allocation.
 
 	blocks *list.List[[]T]
 	length int
@@ -261,4 +261,89 @@ func (it *BackwardIter[T]) Next() (T, bool) {
 	}
 
 	return item, true
+}
+
+type ForwardBlockIter[T any] struct {
+	blocks *list.List[[]T]
+	length int
+
+	front int
+	back  int
+}
+
+func (d *Deque[T]) ForwardBlockIterator() *ForwardBlockIter[T] {
+	copyBlocks := list.NewList[[]T]()
+	for e := d.blocks.Front(); e != nil; e = e.Next() {
+		copyBlocks.PushBack(e.Value)
+	}
+	return &ForwardBlockIter[T]{
+		blocks: copyBlocks,
+		length: d.length,
+		front:  d.front,
+		back:   d.back,
+	}
+}
+
+func (it *ForwardBlockIter[T]) Next() ([]T, bool) {
+	if it.length == 0 {
+		return nil, false
+	}
+
+	block := it.blocks.Front().Value
+	start := it.front
+	end := len(block)
+	if it.blocks.Len() == 1 {
+		end = it.back + 1
+	}
+
+	res := block[start:end]
+
+	it.blocks.Remove(it.blocks.Front())
+	it.length -= len(res)
+	it.front = 0
+
+	return res, true
+}
+
+type BackwardBlockIter[T any] struct {
+	blocks *list.List[[]T]
+	length int
+
+	front int
+	back  int
+}
+
+func (d *Deque[T]) BackwardBlockIterator() *BackwardBlockIter[T] {
+	copyBlocks := list.NewList[[]T]()
+	for e := d.blocks.Front(); e != nil; e = e.Next() {
+		copyBlocks.PushBack(e.Value)
+	}
+
+	return &BackwardBlockIter[T]{
+		blocks: copyBlocks,
+		length: d.length,
+		front:  d.front,
+		back:   d.back,
+	}
+}
+
+func (it *BackwardBlockIter[T]) Next() ([]T, bool) {
+	if it.length == 0 {
+		return nil, false
+	}
+
+	block := it.blocks.Back().Value
+	start := 0
+	end := it.back + 1
+	if it.blocks.Len() == 1 {
+		start = it.front
+	}
+
+	res := block[start:end]
+
+	it.blocks.Remove(it.blocks.Back())
+	it.length -= len(res)
+	it.back = len(block) - 1
+
+	return res, true
 }

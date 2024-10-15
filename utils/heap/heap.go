@@ -18,14 +18,11 @@ type Heap[T Item[T]] interface {
 // The item interface for the heap.
 // The heap index is used to indicate the position of the item in the heap. To make the initialization of a item easier,
 // heap index value 0 means it's not in the heap.
-// CompareTo is used to decide the items' order. The heap will be a min heap if the return value is decided by the natural order.
+// LessThan is used to decide the items' order. The heap will be a min heap if the return value is decided by the natural order.
 type Item[T any] interface {
 	SetHeapIndex(int)
 	GetHeapIndex() int
-	// Return negative value if this item is smaller than the other item,
-	// 0 if they are equal,
-	// positive value if this item is larger than the other item.
-	CompareTo(T) int
+	LessThan(T) bool
 }
 
 type heapImp[T Item[T]] struct {
@@ -43,7 +40,7 @@ func NewHeap[T Item[T]]() Heap[T] {
 
 func (h heapImp[T]) Len() int { return len(h.items) }
 func (h heapImp[T]) Less(i, j int) bool {
-	return h.items[i].CompareTo(h.items[j]) < 0
+	return h.items[i].LessThan(h.items[j])
 }
 func (h heapImp[T]) Swap(i, j int) {
 	h.items[i], h.items[j] = h.items[j], h.items[i]
