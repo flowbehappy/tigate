@@ -70,3 +70,7 @@ func (e *SyncPointEvent) PostFlush() {
 func (e *SyncPointEvent) AddPostFlushFunc(f func()) {
 	e.PostTxnFlushed = append(e.PostTxnFlushed, f)
 }
+
+func (e *SyncPointEvent) PushFrontFlushFunc(f func()) {
+	e.PostTxnFlushed = append([]func(){f}, e.PostTxnFlushed...)
+}

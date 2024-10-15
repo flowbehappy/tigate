@@ -338,13 +338,25 @@ Loop:
 				handleCount := min(signal.eventCount, s.option.BatchSize)
 
 				for i := 0; i < handleCount; i++ {
-					e, ok := signal.pathInfo.pendingQueue.PopFront()
+					e, ok := signal.pathInfo.pendingQueue.Front()
 					if !ok {
 						// The signal could contain more events than the pendingQueue,
 						// which is possible when the path is removed or recovered from blocked.
 						break
 					}
-					eventBuf = append(eventBuf, e)
+
+					if e.IsBatchable() {
+						signal.pathInfo.pendingQueue.PopFront()
+						eventBuf = append(eventBuf, e)
+					} else {
+						// If the event is non-batchable, we should handle it singly.
+						// The non-batchable event should be the only event in a batch.
+						if i == 0 {
+							eventBuf = append(eventBuf, e)
+							signal.pathInfo.pendingQueue.PopFront()
+						}
+						break
+					}
 				}
 
 				actualCount := len(eventBuf)

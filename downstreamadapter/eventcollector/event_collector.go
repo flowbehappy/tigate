@@ -75,7 +75,7 @@ type EventCollector struct {
 	mc                messaging.MessageCenter
 	wg                sync.WaitGroup
 
-	dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, commonEvent.Event, *dispatcher.Dispatcher]
+	dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DispatcherEvent, *dispatcher.Dispatcher]
 
 	registerMessageChan                          *chann.DrainableChann[RegisterInfo] // for temp
 	metricDispatcherReceivedKVEventCount         prometheus.Counter
@@ -188,11 +188,11 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, msg *messaging.Tar
 		case commonEvent.TypeBatchResolvedEvent:
 			for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
 				c.metricDispatcherReceivedResolvedTsEventCount.Inc()
-				c.dispatcherEventsDynamicStream.In() <- e
+				c.dispatcherEventsDynamicStream.In() <- *dispatcher.NewDispatcherEvent(e)
 			}
 		default:
 			c.metricDispatcherReceivedKVEventCount.Inc()
-			c.dispatcherEventsDynamicStream.In() <- event
+			c.dispatcherEventsDynamicStream.In() <- *dispatcher.NewDispatcherEvent(event)
 		}
 	}
 	return nil

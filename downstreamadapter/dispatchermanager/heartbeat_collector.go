@@ -43,9 +43,9 @@ type HeartBeatCollector struct {
 	heartBeatReqQueue   *HeartbeatRequestQueue
 	blockStatusReqQueue *BlockStatusRequestQueue
 
-	heartBeatResponseDynamicStream          dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]
-	schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.ScheduleDispatcherRequest, *EventDispatcherManager]
-	checkpointTsMessageDynamicStream        dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.CheckpointTsMessage, *EventDispatcherManager]
+	heartBeatResponseDynamicStream          dynstream.DynamicStream[model.ChangeFeedID, HeartBeatResponse, *EventDispatcherManager]
+	schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[model.ChangeFeedID, SchedulerDispatcherRequest, *EventDispatcherManager]
+	checkpointTsMessageDynamicStream        dynstream.DynamicStream[model.ChangeFeedID, CheckpointTsMessage, *EventDispatcherManager]
 
 	mc messaging.MessageCenter
 }
@@ -127,15 +127,15 @@ func (c *HeartBeatCollector) RecvMessages(_ context.Context, msg *messaging.Targ
 	case messaging.TypeHeartBeatResponse:
 		heartbeatResponse := msg.Message[0].(*heartbeatpb.HeartBeatResponse)
 		heartBeatResponseDynamicStream := GetHeartBeatResponseDynamicStream()
-		heartBeatResponseDynamicStream.In() <- heartbeatResponse
+		heartBeatResponseDynamicStream.In() <- *NewHeartBeatResponse(heartbeatResponse)
 	case messaging.TypeScheduleDispatcherRequest:
-		scheduleDispatcherRequest := msg.Message[0].(*heartbeatpb.ScheduleDispatcherRequest)
-		c.schedulerDispatcherRequestDynamicStream.In() <- scheduleDispatcherRequest
+		schedulerDispatcherRequest := msg.Message[0].(*heartbeatpb.ScheduleDispatcherRequest)
+		c.schedulerDispatcherRequestDynamicStream.In() <- *NewSchedulerDispatcherRequest(schedulerDispatcherRequest)
 		// TODO: check metrics
-		metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", scheduleDispatcherRequest.ChangefeedID, "receive").Inc()
+		metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", schedulerDispatcherRequest.ChangefeedID, "receive").Inc()
 	case messaging.TypeCheckpointTsMessage:
 		checkpointTsMessage := msg.Message[0].(*heartbeatpb.CheckpointTsMessage)
-		c.checkpointTsMessageDynamicStream.In() <- checkpointTsMessage
+		c.checkpointTsMessageDynamicStream.In() <- *NewCheckpointTsMessage(checkpointTsMessage)
 	default:
 		log.Panic("unknown message type", zap.Any("message", msg.Message))
 	}
@@ -149,17 +149,17 @@ func (c *HeartBeatCollector) Close() {
 type SchedulerDispatcherRequestHandler struct {
 }
 
-func (h *SchedulerDispatcherRequestHandler) Path(scheduleDispatcherRequest *heartbeatpb.ScheduleDispatcherRequest) model.ChangeFeedID {
+func (h *SchedulerDispatcherRequestHandler) Path(scheduleDispatcherRequest SchedulerDispatcherRequest) model.ChangeFeedID {
 	return model.DefaultChangeFeedID(scheduleDispatcherRequest.ChangefeedID)
 }
 
-func (h *SchedulerDispatcherRequestHandler) Handle(eventDispatcherManager *EventDispatcherManager, reqs ...*heartbeatpb.ScheduleDispatcherRequest) bool {
+func (h *SchedulerDispatcherRequestHandler) Handle(eventDispatcherManager *EventDispatcherManager, reqs ...SchedulerDispatcherRequest) bool {
 	if len(reqs) != 1 {
 		// TODO: Support batch
 		panic("invalid request count")
 	}
 	scheduleDispatcherRequest := reqs[0]
-	if scheduleDispatcherRequest == nil {
+	if scheduleDispatcherRequest.ScheduleDispatcherRequest == nil {
 		log.Warn("scheduleDispatcherRequest is nil, skip")
 		return false
 	}
@@ -184,11 +184,11 @@ func NewHeartBeatResponseHandler() HeartBeatResponseHandler {
 	return HeartBeatResponseHandler{dispatcherStatusDynamicStream: dispatcher.GetDispatcherStatusDynamicStream()}
 }
 
-func (h *HeartBeatResponseHandler) Path(HeartbeatResponse *heartbeatpb.HeartBeatResponse) model.ChangeFeedID {
+func (h *HeartBeatResponseHandler) Path(HeartbeatResponse HeartBeatResponse) model.ChangeFeedID {
 	return model.DefaultChangeFeedID(HeartbeatResponse.ChangefeedID)
 }
 
-func (h *HeartBeatResponseHandler) Handle(eventDispatcherManager *EventDispatcherManager, resps ...*heartbeatpb.HeartBeatResponse) bool {
+func (h *HeartBeatResponseHandler) Handle(eventDispatcherManager *EventDispatcherManager, resps ...HeartBeatResponse) bool {
 	if len(resps) != 1 {
 		// TODO: Support batch
 		panic("invalid response count")
@@ -229,11 +229,11 @@ func NewCheckpointTsMessageHandler() CheckpointTsMessageHandler {
 	return CheckpointTsMessageHandler{}
 }
 
-func (h *CheckpointTsMessageHandler) Path(checkpointTsMessage *heartbeatpb.CheckpointTsMessage) model.ChangeFeedID {
+func (h *CheckpointTsMessageHandler) Path(checkpointTsMessage CheckpointTsMessage) model.ChangeFeedID {
 	return model.DefaultChangeFeedID(checkpointTsMessage.ChangefeedID)
 }
 
-func (h *CheckpointTsMessageHandler) Handle(eventDispatcherManager *EventDispatcherManager, messages ...*heartbeatpb.CheckpointTsMessage) bool {
+func (h *CheckpointTsMessageHandler) Handle(eventDispatcherManager *EventDispatcherManager, messages ...CheckpointTsMessage) bool {
 	if len(messages) != 1 {
 		// TODO: Support batch
 		panic("invalid message count")

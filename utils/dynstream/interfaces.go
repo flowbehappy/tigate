@@ -10,7 +10,11 @@ import (
 type Path comparable
 
 // An event belongs to a path.
-type Event any
+type Event interface {
+	// returns true if the event could be batched with other events,
+	// returns false which means the event should be called handled singly
+	IsBatchable() bool
+}
 
 // A destination is the place where the event is sent to.
 type Dest any
@@ -110,6 +114,12 @@ func NewOption() Option {
 		MaxPendingLength:  0,
 		DropPolicy:        DropLate,
 	}
+}
+
+func NewOptionWithBatchSize(batchSize int) Option {
+	opt := NewOption()
+	opt.BatchSize = batchSize
+	return opt
 }
 
 func (o *Option) fix() {
