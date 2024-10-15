@@ -868,12 +868,12 @@ func (e *errCache) dispatch(ctx context.Context) error {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	sendToErrCh := func() {
 		e.Lock()
-		defer e.Unlock()
 		if len(e.cache) == 0 {
 			return
 		}
 		errInfo := e.cache[0]
 		e.cache = e.cache[1:]
+		e.Unlock()
 		e.errCh <- errInfo
 	}
 	for {
