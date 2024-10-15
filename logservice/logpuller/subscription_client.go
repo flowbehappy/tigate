@@ -869,6 +869,7 @@ func (e *errCache) dispatch(ctx context.Context) error {
 	sendToErrCh := func() {
 		e.Lock()
 		if len(e.cache) == 0 {
+			e.Unlock()
 			return
 		}
 		errInfo := e.cache[0]
