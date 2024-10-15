@@ -84,14 +84,14 @@ type regionFeedEvent struct {
 
 // LogEvent wrap a region event with subscriptionID to indicate which subscription it belongs to.
 type LogEvent struct {
-	regionFeedEvent
+	Val *common.RawKVEntry
 	SubscriptionID
 }
 
-func newLogEvent(e regionFeedEvent, span *subscribedSpan) LogEvent {
+func newLogEvent(val *common.RawKVEntry, span *subscribedSpan) LogEvent {
 	return LogEvent{
-		regionFeedEvent: e,
-		SubscriptionID:  span.subID,
+		Val:            val,
+		SubscriptionID: span.subID,
 	}
 }
 
@@ -868,12 +868,12 @@ func (e *errCache) dispatch(ctx context.Context) error {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	sendToErrCh := func() {
 		e.Lock()
-		defer e.Unlock()
 		if len(e.cache) == 0 {
 			return
 		}
 		errInfo := e.cache[0]
 		e.cache = e.cache[1:]
+		e.Unlock()
 		e.errCh <- errInfo
 	}
 	for {

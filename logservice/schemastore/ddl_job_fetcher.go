@@ -91,10 +91,6 @@ func (p *ddlJobFetcher) close(ctx context.Context) error {
 }
 
 func (p *ddlJobFetcher) input(ctx context.Context, rawEvent *common.RawKVEntry) error {
-	if rawEvent == nil {
-		return nil
-	}
-
 	if rawEvent.IsResolved() {
 		p.advanceResolvedTs(uint64(rawEvent.CRTs))
 		return nil

@@ -32,12 +32,20 @@ type SchemaStore interface {
 	// return table info with largest version <= ts
 	GetTableInfo(tableID int64, ts uint64) (*common.TableInfo, error)
 
+	// TODO: how to respect tableFilter
+	GetTableDDLEventState(tableID int64) DDLEventState
+
 	// FetchTableDDLEvents returns the next ddl events which finishedTs are within the range (start, end]
-	// and it returns a timestamp which means there will be no more ddl events before(<=) it
+	// The caller must ensure end <= current resolvedTs
 	// TODO: add a parameter limit
-	FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]commonEvent.DDLEvent, uint64, error)
+	FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]commonEvent.DDLEvent, error)
 
 	FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]commonEvent.DDLEvent, uint64, error)
+}
+
+type DDLEventState struct {
+	ResolvedTs       uint64
+	MaxEventCommitTs uint64
 }
 
 type schemaStore struct {
@@ -225,19 +233,27 @@ func (s *schemaStore) GetTableInfo(tableID int64, ts uint64) (*common.TableInfo,
 	return s.dataStorage.getTableInfo(tableID, ts)
 }
 
-func (s *schemaStore) FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]commonEvent.DDLEvent, uint64, error) {
-	currentResolvedTs := s.resolvedTs.Load()
-	if currentResolvedTs <= start {
-		return nil, currentResolvedTs, nil
+func (s *schemaStore) GetTableDDLEventState(tableID int64) DDLEventState {
+	resolvedTs := s.resolvedTs.Load()
+	maxEventCommitTs := s.dataStorage.getMaxEventCommitTs(tableID, resolvedTs)
+	return DDLEventState{
+		ResolvedTs:       resolvedTs,
+		MaxEventCommitTs: maxEventCommitTs,
 	}
-	if currentResolvedTs < end {
-		end = currentResolvedTs
+}
+
+func (s *schemaStore) FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]commonEvent.DDLEvent, error) {
+	currentResolvedTs := s.resolvedTs.Load()
+	if end > currentResolvedTs {
+		log.Panic("end should not be greater than current resolved ts",
+			zap.Uint64("end", end),
+			zap.Uint64("currentResolvedTs", currentResolvedTs))
 	}
 	events, err := s.dataStorage.fetchTableDDLEvents(tableID, tableFilter, start, end)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
-	return events, end, nil
+	return events, nil
 }
 
 // FetchTableTriggerDDLEvents returns the next ddl events which finishedTs are within the range (start, end]

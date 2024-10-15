@@ -29,9 +29,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var metricEventCompressRatio = metrics.EventStoreCompressRatio
-
-type EventObserver func(raw *common.RawKVEntry)
+type EventObserver func(commitTs uint64)
 
 type WatermarkNotifier func(watermark uint64)
 
@@ -56,9 +54,19 @@ type EventStore interface {
 
 	UnregisterDispatcher(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) error
 
+	// TODO: maybe we can remove span
+	// Currently not used, when we can get dispatcher just be dispatcherID, we can try use it again.
+	// Because find by span is really time consuming, and will make latency more high.
+	// GetDispatcherDMLEventState(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) DMLEventState
+
 	// TODO: ignore large txn now, so we can read all transactions of the same commit ts at one time
 	// (startCommitTS, endCommitTS]?
 	GetIterator(dispatcherID common.DispatcherID, dataRange common.DataRange) (EventIterator, error)
+}
+
+type DMLEventState struct {
+	ResolvedTs       uint64
+	MaxEventCommitTs uint64
 }
 
 type EventIterator interface {
@@ -68,9 +76,19 @@ type EventIterator interface {
 	Close() (eventCnt int64, err error)
 }
 
-type eventWithSpanState struct {
-	raw   *common.RawKVEntry
-	state *spanState
+type eventType int
+
+// TODO: better name
+const (
+	eventTypeBatchSignal eventType = iota
+	eventTypeNormal
+)
+
+type eventWithState struct {
+	eventType
+	raw     *common.RawKVEntry
+	subID   logpuller.SubscriptionID
+	tableID int64
 }
 
 type spanState struct {
@@ -82,6 +100,8 @@ type spanState struct {
 
 	// data before this watermark won't be needed
 	dispatchers map[common.DispatcherID]*dispatcherStat
+
+	// maxEventCommitTs atomic.Uint64
 
 	// the resolveTs persisted in the store
 	resolvedTs atomic.Uint64
@@ -110,11 +130,15 @@ type eventStore struct {
 	pdClock pdutil.Clock
 
 	dbs      []*pebble.DB
-	eventChs []chan eventWithSpanState
+	eventChs []chan eventWithState
 
 	puller *logpuller.LogPuller
 
 	gcManager *gcManager
+
+	closed atomic.Bool
+
+	wgBatchSignal sync.WaitGroup
 
 	// To manage background goroutines.
 	wg sync.WaitGroup
@@ -176,38 +200,59 @@ func New(
 	store := &eventStore{
 		pdClock:  pdClock,
 		dbs:      make([]*pebble.DB, 0, dbCount),
-		eventChs: make([]chan eventWithSpanState, 0, dbCount),
+		eventChs: make([]chan eventWithState, 0, dbCount),
 
 		gcManager: newGCManager(),
 		encoder:   encoder,
 		decoder:   decoder,
 	}
 	// TODO: update pebble options
-	// TODO: close pebble db at exit
 	for i := 0; i < dbCount; i++ {
-		db, err := pebble.Open(fmt.Sprintf("%s/%d", dbPath, i), &pebble.Options{
+		opts := &pebble.Options{
 			DisableWAL:   true,
 			MemTableSize: 8 << 20,
-		})
+		}
+		// opts.Levels = make([]pebble.LevelOptions, 7)
+		// for i := 0; i < len(opts.Levels); i++ {
+		// 	l := &opts.Levels[i]
+		// 	l.BlockSize = 64 << 10       // 64 KB
+		// 	l.IndexBlockSize = 256 << 10 // 256 KB
+		// 	l.FilterPolicy = bloom.FilterPolicy(10)
+		// 	l.FilterType = pebble.TableFilter
+		// 	l.TargetFileSize = 8 << 20 // 8 MB
+		// 	// 	l.Compression = pebble.ZstdCompression // TODO: choose the right compression
+		// 	l.EnsureDefaults()
+		// }
+		db, err := pebble.Open(fmt.Sprintf("%s/%d", dbPath, i), opts)
 		if err != nil {
 			log.Fatal("open db failed", zap.Error(err))
 		}
 		store.dbs = append(store.dbs, db)
-		store.eventChs = append(store.eventChs, make(chan eventWithSpanState, 1024))
+		store.eventChs = append(store.eventChs, make(chan eventWithState, 8192))
 	}
 	store.spanStates.dispatcherMap = utils.NewBtreeMap[*heartbeatpb.TableSpan, *spanState](heartbeatpb.LessTableSpan)
 	store.spanStates.subscriptionMap = make(map[logpuller.SubscriptionID]*spanState)
 
+	// start background goroutines to handle events from puller
 	for i := range store.dbs {
+		// send batch signal periodically
+		eventCh := store.eventChs[i]
+		store.wgBatchSignal.Add(1)
+		go func() {
+			defer store.wgBatchSignal.Done()
+			store.sendBatchSignalPeriodically(ctx, eventCh)
+		}()
+
+		db := store.dbs[i]
+		store.wg.Add(1)
 		go func(index int) {
-			store.handleEvents(ctx, store.dbs[index], store.eventChs[index])
+			defer store.wg.Done()
+			store.handleEvents(ctx, db, eventCh)
 		}(i)
 	}
 
-	consume := func(ctx context.Context, raw *common.RawKVEntry, subID logpuller.SubscriptionID) error {
-		if raw != nil {
-			store.writeEvent(subID, raw)
-		}
+	consume := func(ctx context.Context, raw *common.RawKVEntry, subID logpuller.SubscriptionID, extraData interface{}) error {
+		store.writeEvent(subID, raw, extraData)
 		return nil
 	}
 	puller := logpuller.NewLogPuller(client, pdClock, consume)
@@ -227,6 +272,7 @@ func (e *eventStore) Run(ctx context.Context) error {
 		return e.puller.Run(ctx)
 	})
 
+	// TODO: manage gcManager exit
 	eg.Go(func() error {
 		return e.gcManager.run(ctx, e.deleteEvents)
 	})
@@ -238,22 +284,56 @@ func (e *eventStore) Run(ctx context.Context) error {
 	return eg.Wait()
 }
 
+func (e *eventStore) Close(ctx context.Context) error {
+	// notify and wait the background routine for sending batch signal to exit
+	e.closed.Store(true)
+	e.wgBatchSignal.Wait()
+
+	if err := e.puller.Close(ctx); err != nil {
+		log.Error("failed to close log puller", zap.Error(err))
+	}
+
+	// now we can be sure that e.eventChs won't be used
+
+	// notify and wait background goroutines for writing events to exit before cloase pebble db
+	for _, ch := range e.eventChs {
+		close(ch)
+	}
+	// TODO: wait gc manager, because it may also write data to pebble db
+	e.wg.Wait()
+
+	for _, db := range e.dbs {
+		if err := db.Close(); err != nil {
+			log.Error("failed to close pebble db", zap.Error(err))
+		}
+	}
+	return nil
+}
+
+type subscriptionTag struct {
+	chIndex int
+	tableID int64
+}
+
 func (e *eventStore) RegisterDispatcher(
-	dispatcherID common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTS uint64,
-	observer EventObserver, notifier WatermarkNotifier,
+	dispatcherID common.DispatcherID,
+	tableSpan *heartbeatpb.TableSpan,
+	startTs uint64,
+	observer EventObserver,
+	notifier WatermarkNotifier,
 ) error {
 	span := *tableSpan
 	log.Info("register dispatcher",
 		zap.Any("dispatcherID", dispatcherID),
 		zap.String("span", tableSpan.String()),
-		zap.Uint64("startTS", startTS))
+		zap.Uint64("startTS", startTs))
 
 	e.spanStates.Lock()
 	if state, ok := e.spanStates.dispatcherMap.Get(&span); ok {
 		state.dispatchers[dispatcherID] = &dispatcherStat{
 			dispatcherID: dispatcherID,
-			startTS:      startTS,
-			watermark:    startTS,
+			startTS:      startTs,
+			watermark:    startTs,
 		}
 		e.spanStates.Unlock()
 		return nil
@@ -261,7 +341,11 @@ func (e *eventStore) RegisterDispatcher(
 
 	e.spanStates.Unlock()
 	log.Info("add a span in eventstore", zap.String("span", span.String()))
-	subID := e.puller.Subscribe(span, startTS)
+	chIndex := common.HashTableSpan(span, len(e.eventChs))
+	subID := e.puller.Subscribe(span, startTs, subscriptionTag{
+		chIndex: chIndex,
+		tableID: tableSpan.TableID,
+	})
 	state := &spanState{
 		span:        span,
 		observer:    observer,
@@ -270,14 +354,14 @@ func (e *eventStore) RegisterDispatcher(
 		subID:       subID,
 		// TODO: support split table to multiple subSpans.
 		// maybe share data for different subSpan is meaningless.
-		chIndex: common.HashTableSpan(span, len(e.eventChs)),
+		chIndex: chIndex,
 	}
 	// TODO: how to support different startTs for different dispatchers?
-	state.resolvedTs.Store(uint64(startTS))
+	state.resolvedTs.Store(uint64(startTs))
 	state.dispatchers[dispatcherID] = &dispatcherStat{
 		dispatcherID: dispatcherID,
-		startTS:      startTS,
-		watermark:    startTS,
+		startTS:      startTs,
+		watermark:    startTs,
 	}
 
 	e.spanStates.Lock()
@@ -331,17 +415,38 @@ func (e *eventStore) UnregisterDispatcher(
 	return nil
 }
 
+func (e *eventStore) GetDispatcherDMLEventState(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) DMLEventState {
+	// FIXME
+	e.spanStates.Lock()
+	defer e.spanStates.Unlock()
+	state, ok := e.spanStates.dispatcherMap.Get(span)
+	if !ok {
+		log.Panic("deregister an unregistered span", zap.String("span", span.String()))
+	}
+	return DMLEventState{
+		ResolvedTs: state.resolvedTs.Load(),
+		// MaxEventCommitTs: state.maxEventCommitTs.Load(),
+	}
+}
+
 func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange common.DataRange) (EventIterator, error) {
 	// do some check
+	e.spanStates.RLock()
 	state, ok := e.spanStates.dispatcherMap.Get(dataRange.Span)
+	if !ok {
+		log.Panic("should not happen: cannot find span", zap.String("span", dataRange.Span.String()))
+	}
 	dispatcher, okw := state.dispatchers[dispatcherID]
-	if !ok || !okw || dispatcher.watermark > dataRange.StartTs {
+	if !okw || dispatcher.watermark > dataRange.StartTs {
 		log.Panic("should not happen",
+			zap.Any("dispatcherID", dispatcherID),
 			zap.Uint64("watermark", dispatcher.watermark),
 			zap.Uint64("startTs", dataRange.StartTs))
 	}
 	span := state.span
 	db := e.dbs[state.chIndex]
+	e.spanStates.RUnlock()
+
 	// TODO: respect key range in span
 	// convert endTs to inclusive: [startTs, endTs) -> (startTs, endTs]
 	start := EncodeTsKey(uint64(span.TableID), dataRange.StartTs+1, 0)
@@ -369,18 +474,6 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 		rowCount:     0,
 		decoder:      e.decoder,
 	}, nil
-}
-
-func (e *eventStore) Close(ctx context.Context) error {
-	if err := e.puller.Close(ctx); err != nil {
-		log.Error("failed to close log puller", zap.Error(err))
-	}
-	for _, db := range e.dbs {
-		if err := db.Close(); err != nil {
-			log.Error("failed to close pebble db", zap.Error(err))
-		}
-	}
-	return nil
 }
 
 func (e *eventStore) updateMetrics(ctx context.Context) error {
@@ -423,18 +516,25 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 type DBBatchEvent struct {
 	batch *pebble.Batch
 
-	resolvedTsBatch map[*spanState]uint64
+	maxEventCommitTsMap map[logpuller.SubscriptionID]uint64
+
+	resolvedTsMap map[logpuller.SubscriptionID]uint64
 }
 
-func (e *eventStore) batchCommitAndUpdateWatermark(ctx context.Context, batchCh chan *DBBatchEvent) {
+const (
+	batchCommitSize     int = 16 * 1024 * 1024
+	batchCommitInterval     = 20 * time.Millisecond
+)
+
+// handleEvents fetch events from puller and write them to pebble db
+func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-chan eventWithState) {
+	batchCh := make(chan *DBBatchEvent, 10240)
+
+	// consume batch events
 	e.wg.Add(1)
-	defer e.wg.Done()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case batchEvent := <-batchCh:
-			// do batch commit
+	go func() {
+		defer e.wg.Done()
+		for batchEvent := range batchCh {
 			batch := batchEvent.batch
 			if batch != nil && !batch.Empty() {
 				size := batch.Len()
@@ -444,32 +544,39 @@ func (e *eventStore) batchCommitAndUpdateWatermark(ctx context.Context, batchCh 
 				metrics.EventStoreWriteBytes.Add(float64(size))
 			}
 
+			for subID, maxEventCommitTs := range batchEvent.maxEventCommitTsMap {
+				e.spanStates.RLock()
+				state, ok := e.spanStates.subscriptionMap[subID]
+				if !ok {
+					// the dispatcher is removed?
+					log.Warn("unknown subscriptionID", zap.Uint64("subID", uint64(subID)))
+					e.spanStates.RUnlock()
+					continue
+				}
+				e.spanStates.RUnlock()
+				state.observer(maxEventCommitTs)
+				// state.maxEventCommitTs.Store(maxEventCommitTs)
+			}
+
 			// update resolved ts after commit successfully
-			for state, resolvedTs := range batchEvent.resolvedTsBatch {
+			for subID, resolvedTs := range batchEvent.resolvedTsMap {
+				e.spanStates.RLock()
+				state, ok := e.spanStates.subscriptionMap[subID]
+				if !ok {
+					// the dispatcher is removed?
+					log.Warn("unknown subscriptionID", zap.Uint64("subID", uint64(subID)))
+					e.spanStates.RUnlock()
+					continue
+				}
+				e.spanStates.RUnlock()
 				state.resolvedTs.Store(resolvedTs)
 				state.notifier(resolvedTs)
 			}
 		}
-	}
-}
+	}()
 
-const (
-	batchCommitSize     int = 16 * 1024 * 1024
-	batchCommitInterval     = 20 * time.Millisecond
-)
-
-func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-chan eventWithSpanState) {
-	e.wg.Add(1)
-	defer e.wg.Done()
-	// 8 is an arbitrary number
-	batchCh := make(chan *DBBatchEvent, 8)
-	go e.batchCommitAndUpdateWatermark(ctx, batchCh)
-
-	ticker := time.NewTicker(batchCommitInterval / 2)
-	defer ticker.Stop()
-
-	addEvent2Batch := func(batch *pebble.Batch, item eventWithSpanState) {
-		key := EncodeKey(uint64(item.state.span.TableID), item.raw)
+	addEvent2Batch := func(batch *pebble.Batch, item eventWithState) {
+		key := EncodeKey(uint64(item.tableID), item.raw)
 		value := item.raw.Encode()
 		compressedValue := e.encoder.EncodeAll(value, nil)
 		ratio := float64(len(value)) / float64(len(compressedValue))
@@ -479,65 +586,83 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 		}
 	}
 
-	// Batch item and commit until batch size is larger than batchCommitSize,
-	// or the time since the last commit is larger than batchCommitInterval.
-	// Only return false when the sorter is closed.
-	doBatching := func() (*DBBatchEvent, bool) {
+	// fetch events from channel and return a batch when the batch is full or timeout
+	doBatching := func() *DBBatchEvent {
 		var batch *pebble.Batch
-		resolvedTsBatch := make(map[*spanState]uint64)
+		resolvedTsMap := make(map[logpuller.SubscriptionID]uint64)
+		maxEventCommitTsMap := make(map[logpuller.SubscriptionID]uint64)
 		startToBatch := time.Now()
-		for {
-			select {
-			case item := <-inputCh:
-				if item.raw.IsResolved() {
-					resolvedTsBatch[item.state] = item.raw.CRTs
-					continue
+		// Note: don't use select here for performance
+		for item := range inputCh {
+			if item.eventType == eventTypeBatchSignal {
+				if time.Since(startToBatch) >= batchCommitInterval {
+					if batch != nil || len(resolvedTsMap) > 0 {
+						return &DBBatchEvent{batch, maxEventCommitTsMap, resolvedTsMap}
+					}
 				}
+				continue
+			}
+
+			if item.raw.IsResolved() {
+				resolvedTsMap[item.subID] = item.raw.CRTs
+				continue
+			} else {
 				if batch == nil {
 					batch = db.NewBatch()
 				}
+				if item.raw.CRTs > maxEventCommitTsMap[item.subID] {
+					maxEventCommitTsMap[item.subID] = item.raw.CRTs
+				}
 				addEvent2Batch(batch, item)
 				if batch.Len() >= batchCommitSize {
-					return &DBBatchEvent{batch, resolvedTsBatch}, true
-				}
-			case <-ctx.Done():
-				return nil, false
-			case <-ticker.C:
-				if time.Since(startToBatch) >= batchCommitInterval {
-					return &DBBatchEvent{batch, resolvedTsBatch}, true
+					return &DBBatchEvent{batch, maxEventCommitTsMap, resolvedTsMap}
 				}
 			}
 		}
+		return nil
 	}
 
 	for {
-		batchEvent, ok := doBatching()
-		if !ok {
+		batchEvent := doBatching()
+		if batchEvent == nil {
+			// notify batch goroutine to exit
+			close(batchCh)
 			return
 		}
 		select {
 		case <-ctx.Done():
+			// notify batch goroutine to exit
+			close(batchCh)
 			return
 		case batchCh <- batchEvent:
 		}
 	}
 }
 
-func (e *eventStore) writeEvent(subID logpuller.SubscriptionID, raw *common.RawKVEntry) {
-	e.spanStates.RLock()
-	state, ok := e.spanStates.subscriptionMap[subID]
-	if !ok {
-		log.Panic("should not happen")
-		return
+// TODO: maybe we can remove it and just rely on resolved ts? Do it after we know how to share
+func (e *eventStore) sendBatchSignalPeriodically(ctx context.Context, inputCh chan eventWithState) {
+	ticker := time.NewTicker(batchCommitInterval / 2)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if e.closed.Load() {
+				return
+			}
+			inputCh <- eventWithState{eventType: eventTypeBatchSignal}
+		}
 	}
-	e.spanStates.RUnlock()
-	if !raw.IsResolved() {
-		// TODO: make sure this won't block
-		state.observer(raw)
-	}
-	e.eventChs[state.chIndex] <- eventWithSpanState{
-		raw:   raw,
-		state: state,
+}
+
+func (e *eventStore) writeEvent(subID logpuller.SubscriptionID, raw *common.RawKVEntry, tag interface{}) {
+	subTag := tag.(subscriptionTag)
+	e.eventChs[subTag.chIndex] <- eventWithState{
+		eventType: eventTypeNormal,
+		raw:       raw,
+		subID:     subID,
+		tableID:   subTag.tableID,
 	}
 }
 
