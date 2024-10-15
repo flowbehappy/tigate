@@ -48,11 +48,17 @@ import (
 	"go.uber.org/zap"
 )
 
-// Maintainer is response for handle changefeed replication tasks, Maintainer should:
-// 1. schedules tables to ticdc watcher
+// Maintainer is response for handle changefeed replication tasksMaintainer should:
+// 1. schedules tables to dispatcher manager
 // 2. calculate changefeed checkpoint ts
 // 3. send changefeed status to coordinator
 // 4. handle heartbeat reported by dispatcher
+// there are four threads in maintainer:
+// 1. controller thread , handled in dynstream, it handles the main logic of the maintainer, like barrier, heartbeat
+// 2. scheduler thread, handled in threadpool, it schedules the tables to dispatcher manager
+// 3. operator controller thread, handled in threadpool, it runs the operators
+// 4. checker controller, handled in threadpool, it runs the checkers to dynamically adjust the schedule
+// all threads are read/write information from/to the ReplicationDB
 type Maintainer struct {
 	id         model.ChangeFeedID
 	config     *config.ChangeFeedInfo

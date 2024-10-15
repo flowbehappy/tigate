@@ -39,6 +39,7 @@ import (
 )
 
 // Controller schedules and balance tables
+// there are 3 main components in the controller, scheduler, ReplicationDB and operator controller
 type Controller struct {
 	//  initialTables hold all tables that before controller bootstrapped
 	initialTables []commonEvent.Table
@@ -91,6 +92,37 @@ func NewController(changefeedID string,
 		s.spanReplicationEnabled = true
 	}
 	return s
+}
+
+// HandleStatus handle the status report from the node
+func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableSpanStatus) {
+	for _, status := range statusList {
+		dispatcherID := common.NewDispatcherIDFromPB(status.ID)
+		stm := c.GetTask(dispatcherID)
+		if stm == nil {
+			log.Warn("no span found, ignore",
+				zap.String("changefeed", c.changefeedID),
+				zap.String("from", from.String()),
+				zap.Any("status", status),
+				zap.String("span", dispatcherID.String()))
+			if status.ComponentStatus == heartbeatpb.ComponentState_Working {
+				// if the span is not found, and the status is working, we need to remove it from dispatcher
+				_ = c.messageCenter.SendCommand(replica.NewRemoveInferiorMessage(from, c.changefeedID, status.ID))
+			}
+			continue
+		}
+		c.operatorController.UpdateOperatorStatus(dispatcherID, from, status)
+		nodeID := stm.GetNodeID()
+		if nodeID != from {
+			// todo: handle the case that the node id is mismatch
+			log.Warn("node id not match",
+				zap.String("changefeed", c.changefeedID),
+				zap.Any("from", from),
+				zap.Stringer("node", nodeID))
+			continue
+		}
+		stm.UpdateStatus(status)
+	}
 }
 
 func (c *Controller) GetTasksBySchemaID(schemaID int64) []*replica.SpanReplication {
@@ -207,25 +239,22 @@ func (c *Controller) GetTask(dispatcherID common.DispatcherID) *replica.SpanRepl
 	return c.replicationDB.GetTaskByID(dispatcherID)
 }
 
-// RemoveAllTasks remove all tasks, todo: move these 3 methods to the operator controller
+// RemoveAllTasks remove all tasks
 func (c *Controller) RemoveAllTasks() {
-	for _, replicaSet := range c.replicationDB.TryRemoveAll() {
-		c.operatorController.ReplicaSetRemoved(operator.NewRemoveDispatcherOperator(c.replicationDB, replicaSet))
-	}
+	c.operatorController.RemoveAllTasks()
 }
 
+// RemoveTasksBySchemaID remove all tasks by schema id
 func (c *Controller) RemoveTasksBySchemaID(schemaID int64) {
-	for _, replicaSet := range c.replicationDB.TryRemoveBySchemaID(schemaID) {
-		c.operatorController.ReplicaSetRemoved(operator.NewRemoveDispatcherOperator(c.replicationDB, replicaSet))
-	}
+	c.operatorController.RemoveTasksBySchemaID(schemaID)
 }
 
+// RemoveTasksByTableIDs remove all tasks by table id
 func (c *Controller) RemoveTasksByTableIDs(tables ...int64) {
-	for _, replicaSet := range c.replicationDB.TryRemoveByTableIDs(tables...) {
-		c.operatorController.ReplicaSetRemoved(operator.NewRemoveDispatcherOperator(c.replicationDB, replicaSet))
-	}
+	c.operatorController.RemoveTasksByTableIDs(tables...)
 }
 
+// GetTasksByTableIDs get all tasks by table id
 func (c *Controller) GetTasksByTableIDs(tableIDs ...int64) []*replica.SpanReplication {
 	return c.replicationDB.GetTasksByTableIDs(tableIDs...)
 }
@@ -236,6 +265,7 @@ func (c *Controller) UpdateSchemaID(tableID, newSchemaID int64) {
 	c.replicationDB.UpdateSchemaID(tableID, newSchemaID)
 }
 
+// RemoveNode is called when a node is removed
 func (c *Controller) RemoveNode(id node.ID) {
 	c.operatorController.OnNodeRemoved(id)
 }
@@ -243,36 +273,6 @@ func (c *Controller) RemoveNode(id node.ID) {
 // ScheduleFinished return false if not all task are running in working state
 func (c *Controller) ScheduleFinished() bool {
 	return c.replicationDB.GetAbsentSize() == 0 && c.operatorController.OperatorSize() == 0
-}
-
-func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableSpanStatus) {
-	for _, status := range statusList {
-		dispatcherID := common.NewDispatcherIDFromPB(status.ID)
-		stm := c.GetTask(dispatcherID)
-		if stm == nil {
-			log.Warn("no span found, ignore",
-				zap.String("changefeed", c.changefeedID),
-				zap.String("from", from.String()),
-				zap.Any("status", status),
-				zap.String("span", dispatcherID.String()))
-			if status.ComponentStatus == heartbeatpb.ComponentState_Working {
-				// if the span is not found, and the status is working, we need to remove it from dispatcher
-				_ = c.messageCenter.SendCommand(replica.NewRemoveInferiorMessage(from, c.changefeedID, status.ID))
-			}
-			continue
-		}
-		c.operatorController.UpdateOperatorStatus(dispatcherID, from, status)
-		nodeID := stm.GetNodeID()
-		if nodeID != from {
-			// todo: handle the case that the node id is mismatch
-			log.Warn("node id not match",
-				zap.String("changefeed", c.changefeedID),
-				zap.Any("from", from),
-				zap.Stringer("node", nodeID))
-			continue
-		}
-		stm.UpdateStatus(status)
-	}
 }
 
 func (c *Controller) TaskSize() int {

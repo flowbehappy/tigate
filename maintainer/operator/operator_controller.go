@@ -27,6 +27,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// Controller is the operator controller, it manages all operators.
+// And the Controller is responsible for the execution of the operator.
 type Controller struct {
 	changefeedID  string
 	replicationDB *replica.ReplicationDB
@@ -80,21 +82,35 @@ func (oc *Controller) Execute() time.Time {
 	}
 }
 
-// ReplicaSetRemoved if the replica set is removed,
-// the controller will remove the operator. add a new operator to the controller.
-func (oc *Controller) ReplicaSetRemoved(op *RemoveDispatcherOperator) {
+// RemoveAllTasks remove all tasks, and notify all operators to stop.
+// it is only called by the barrier when the changefeed is stopped.
+func (oc *Controller) RemoveAllTasks() {
 	oc.lock.Lock()
 	defer oc.lock.Unlock()
 
-	if old, ok := oc.operators[op.ID()]; ok {
-		log.Info("replica set is removed , replace the old one",
-			zap.String("changefeed", oc.changefeedID),
-			zap.String("replicaset", op.ID().String()),
-			zap.String("operator", op.String()))
-		old.OnTaskRemoved()
-		delete(oc.operators, op.ID())
+	for _, replicaSet := range oc.replicationDB.TryRemoveAll() {
+		oc.removeReplicaSet(NewRemoveDispatcherOperator(oc.replicationDB, replicaSet))
 	}
-	oc.operators[op.ID()] = op
+}
+
+// RemoveTasksBySchemaID remove all tasks by schema id.
+// it is only by the barrier when the schema is dropped by ddl
+func (oc *Controller) RemoveTasksBySchemaID(schemaID int64) {
+	oc.lock.Lock()
+	defer oc.lock.Unlock()
+	for _, replicaSet := range oc.replicationDB.TryRemoveBySchemaID(schemaID) {
+		oc.removeReplicaSet(NewRemoveDispatcherOperator(oc.replicationDB, replicaSet))
+	}
+}
+
+// RemoveTasksByTableIDs remove all tasks by table ids.
+// it is only called by the barrier when the table is dropped by ddl
+func (oc *Controller) RemoveTasksByTableIDs(tables ...int64) {
+	oc.lock.Lock()
+	defer oc.lock.Unlock()
+	for _, replicaSet := range oc.replicationDB.TryRemoveByTableIDs(tables...) {
+		oc.removeReplicaSet(NewRemoveDispatcherOperator(oc.replicationDB, replicaSet))
+	}
 }
 
 // AddOperator adds an operator to the controller, if the operator already exists, return false.
@@ -197,4 +213,18 @@ func (oc *Controller) pollQueueingOperator() (Operator, bool) {
 	item.time = time.Now().Add(time.Millisecond * 500)
 	heap.Push(&oc.runningQueue, item)
 	return op, true
+}
+
+// ReplicaSetRemoved if the replica set is removed,
+// the controller will remove the operator. add a new operator to the controller.
+func (oc *Controller) removeReplicaSet(op *RemoveDispatcherOperator) {
+	if old, ok := oc.operators[op.ID()]; ok {
+		log.Info("replica set is removed , replace the old one",
+			zap.String("changefeed", oc.changefeedID),
+			zap.String("replicaset", op.ID().String()),
+			zap.String("operator", op.String()))
+		old.OnTaskRemoved()
+		delete(oc.operators, op.ID())
+	}
+	oc.operators[op.ID()] = op
 }
