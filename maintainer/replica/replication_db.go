@@ -60,15 +60,7 @@ func (db *ReplicationDB) GetTaskByID(id common.DispatcherID) *SpanReplication {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
-	r, ok := db.replicating[id]
-	if ok {
-		return r
-	}
-	r, ok = db.scheduling[id]
-	if ok {
-		return r
-	}
-	return db.absent[id]
+	return db.getTaskByIDUnLock(id)
 }
 
 // TaskSize returns the total task size in the db, it includes replicating, scheduling and absent tasks
@@ -281,10 +273,26 @@ func (db *ReplicationDB) AddAbsentReplicaSet(tasks ...*SpanReplication) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	for _, task := range tasks {
-		db.absent[task.ID] = task
-		db.addToSchemaAndTableMap(task)
+	db.addAbsentReplicaSetUnLock(tasks...)
+}
+
+// ReplaceReplicaSet replaces the old replica set with the new replica set
+func (db *ReplicationDB) ReplaceReplicaSet(olds []*SpanReplication, news []*SpanReplication) bool {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	// first check if all the old replica set exists, if not, return false
+	for _, old := range olds {
+		dbItem := db.getTaskByIDUnLock(old.ID)
+		if dbItem == nil {
+			return false
+		}
 	}
+
+	// remove and insert the new replica set
+	db.removeSpanUnLock(olds...)
+	db.addAbsentReplicaSetUnLock(news...)
+	return true
 }
 
 // AddReplicatingSpan adds a replicating the replicating map, that means the task is already scheduled to a dispatcher
@@ -401,6 +409,27 @@ func (db *ReplicationDB) BindSpanToNode(old, new node.ID, task *SpanReplication)
 	delete(db.replicating, task.ID)
 	db.scheduling[task.ID] = task
 	db.updateNodeMap(old, new, task)
+}
+
+// GetTaskByID returns the replica set by the id, it will search the replicating, scheduling and absent map
+func (db *ReplicationDB) getTaskByIDUnLock(id common.DispatcherID) *SpanReplication {
+	r, ok := db.replicating[id]
+	if ok {
+		return r
+	}
+	r, ok = db.scheduling[id]
+	if ok {
+		return r
+	}
+	return db.absent[id]
+}
+
+// addAbsentReplicaSetUnLock adds the replica set to the absent map
+func (db *ReplicationDB) addAbsentReplicaSetUnLock(tasks ...*SpanReplication) {
+	for _, task := range tasks {
+		db.absent[task.ID] = task
+		db.addToSchemaAndTableMap(task)
+	}
 }
 
 // addToSchemaAndTableMap adds the task to the schema and table map

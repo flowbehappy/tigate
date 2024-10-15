@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/maintainer/checker"
 	"github.com/flowbehappy/tigate/maintainer/operator"
 	"github.com/flowbehappy/tigate/maintainer/replica"
 	"github.com/flowbehappy/tigate/maintainer/scheduler"
@@ -47,6 +48,7 @@ type Controller struct {
 
 	spanScheduler      *scheduler.Scheduler
 	operatorController *operator.Controller
+	checkController    *checker.Controller
 	replicationDB      *replica.ReplicationDB
 	messageCenter      messaging.MessageCenter
 	nodeManager        *watcher.NodeManager
@@ -62,6 +64,7 @@ type Controller struct {
 	taskScheduler            threadpool.ThreadPool
 	operatorControllerHandle *threadpool.TaskHandle
 	schedulerHandle          *threadpool.TaskHandle
+	checkerHandle            *threadpool.TaskHandle
 }
 
 func NewController(changefeedID string,
@@ -91,6 +94,7 @@ func NewController(changefeedID string,
 		s.splitter = split.NewSplitter(changefeedID, pdapi, regionCache, config)
 		s.spanReplicationEnabled = true
 	}
+	s.checkController = checker.NewController(changefeedID, s.splitter, oc, replicaSetDB, nodeManager)
 	return s
 }
 
@@ -221,6 +225,7 @@ func (c *Controller) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb
 	// start operator and scheduler
 	c.operatorControllerHandle = c.taskScheduler.Submit(c.spanScheduler, time.Now())
 	c.schedulerHandle = c.taskScheduler.Submit(c.operatorController, time.Now())
+	c.checkerHandle = c.taskScheduler.Submit(c.checkController, time.Now().Add(time.Second*120))
 	c.bootstrapped = true
 	c.initialTables = nil
 }
@@ -231,6 +236,9 @@ func (c *Controller) Stop() {
 	}
 	if c.schedulerHandle != nil {
 		c.schedulerHandle.Cancel()
+	}
+	if c.checkerHandle != nil {
+		c.checkerHandle.Cancel()
 	}
 }
 

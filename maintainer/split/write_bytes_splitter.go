@@ -61,7 +61,7 @@ func (m *writeSplitter) split(
 		return nil
 	}
 	regions, err := m.pdAPIClient.ScanRegions(ctx, tablepb.Span{
-		TableID:  int64(span.TableID),
+		TableID:  span.TableID,
 		StartKey: span.StartKey,
 		EndKey:   span.EndKey,
 	})
