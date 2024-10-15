@@ -222,13 +222,9 @@ func NewDispatcherEvent(event commonEvent.Event) *DispatcherEvent {
 		Event: event,
 	}
 	switch event.GetType() {
-	case commonEvent.TypeResolvedEvent:
+	case commonEvent.TypeResolvedEvent, commonEvent.TypeDMLEvent:
 		dispatcherEvent.isBatchable = true
-	case commonEvent.TypeDMLEvent:
-		dispatcherEvent.isBatchable = true
-	case commonEvent.TypeDDLEvent:
-		dispatcherEvent.isBatchable = false
-	case commonEvent.TypeSyncPointEvent:
+	case commonEvent.TypeDDLEvent, commonEvent.TypeSyncPointEvent:
 		dispatcherEvent.isBatchable = false
 	default:
 		log.Error("unknown event type", zap.Int("type", int(event.GetType())))
