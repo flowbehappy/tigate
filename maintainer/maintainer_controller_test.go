@@ -16,6 +16,7 @@ package maintainer
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -333,6 +334,63 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 	require.True(t, s.bootstrapped)
 }
 
+func TestDynamicSplitTableBasic(t *testing.T) {
+	pdAPI := &mockPdAPI{
+		regions: make(map[int64][]pdutil.RegionInfo),
+	}
+	nodeManager := setNodeManagerAndMessageCenter()
+	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
+	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
+	s := NewController("test", 1,
+		pdAPI,
+		nil, nil, &config2.ChangefeedSchedulerConfig{
+			EnableTableAcrossNodes: true,
+			RegionThreshold:        0,
+			WriteKeyThreshold:      1,
+		}, 1000, 0)
+	s.taskScheduler = &mockThreadPool{}
+
+	totalSpan := spanz.TableIDToComparableSpan(1)
+	for i := 1; i <= 2; i++ {
+		span := &heartbeatpb.TableSpan{TableID: int64(i), StartKey: totalSpan.StartKey, EndKey: totalSpan.EndKey}
+		dispatcherID := common.NewDispatcherID()
+		spanReplica := replica.NewReplicaSet(model.ChangeFeedID{}, dispatcherID, 1, span, 1)
+		spanReplica.SetNodeID(node.ID(fmt.Sprintf("node%d", i)))
+		s.replicationDB.AddReplicatingSpan(spanReplica)
+	}
+	pdAPI.regions[1] = []pdutil.RegionInfo{
+		pdutil.NewTestRegionInfo(1, totalSpan.StartKey, appendNew(totalSpan.StartKey, 'a'), uint64(1)),
+		pdutil.NewTestRegionInfo(2, appendNew(totalSpan.StartKey, 'a'), appendNew(totalSpan.StartKey, 'b'), uint64(1)),
+		pdutil.NewTestRegionInfo(3, appendNew(totalSpan.StartKey, 'b'), appendNew(totalSpan.StartKey, 'c'), uint64(1)),
+		pdutil.NewTestRegionInfo(4, appendNew(totalSpan.StartKey, 'c'), totalSpan.EndKey, uint64(1)),
+	}
+	pdAPI.regions[2] = []pdutil.RegionInfo{
+		pdutil.NewTestRegionInfo(5, totalSpan.StartKey, appendNew(totalSpan.StartKey, 'a'), uint64(1)),
+		pdutil.NewTestRegionInfo(6, appendNew(totalSpan.StartKey, 'a'), appendNew(totalSpan.StartKey, 'b'), uint64(1)),
+		pdutil.NewTestRegionInfo(7, appendNew(totalSpan.StartKey, 'b'), totalSpan.EndKey, uint64(1)),
+	}
+	replicas := s.replicationDB.GetReplicating()
+	require.Equal(t, 2, s.replicationDB.GetReplicatingSize())
+	s.checkController.Execute()
+	require.Equal(t, 2, s.replicationDB.GetSchedulingSize())
+	require.Equal(t, 2, s.operatorController.OperatorSize())
+	for _, task := range replicas {
+		op := s.operatorController.GetOperator(task.ID)
+		op.Schedule()
+		op.Check("node1", &heartbeatpb.TableSpanStatus{
+			ID:              op.ID().ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Stopped,
+			CheckpointTs:    10,
+		})
+		op.PostFinish()
+	}
+
+	//total 7 regions,
+	// table 1: split to 4 spans, will be inserted to absent
+	// table 2: split to 3 spans, will be inserted to absent
+	require.Equal(t, 7, s.replicationDB.GetAbsentSize())
+}
+
 func appendNew(origin []byte, c byte) []byte {
 	nb := bytes.Clone(origin)
 	return append(nb, c)
@@ -351,6 +409,6 @@ type mockThreadPool struct {
 	threadpool.ThreadPool
 }
 
-func (m *mockThreadPool) Submit(task threadpool.Task, next time.Time) *threadpool.TaskHandle {
+func (m *mockThreadPool) Submit(_ threadpool.Task, _ time.Time) *threadpool.TaskHandle {
 	return nil
 }

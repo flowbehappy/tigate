@@ -143,6 +143,7 @@ func (s *Scheduler) balance() {
 }
 
 func (s *Scheduler) balanceTables() {
+	// todo: use node size to check if we really need to balance first, otherwise we will waste memory there
 	replicating := s.replicationDB.GetReplicating()
 	nodeTasks := make(map[node.ID]map[common.DispatcherID]*replica.SpanReplication)
 	for _, cf := range replicating {

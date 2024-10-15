@@ -37,7 +37,8 @@ type Controller struct {
 	batchSize     int
 	messageCenter messaging.MessageCenter
 
-	lock sync.RWMutex
+	paused bool
+	lock   sync.RWMutex
 }
 
 func NewOperatorController(changefeedID string,
@@ -69,6 +70,10 @@ func (oc *Controller) Execute() time.Time {
 		}
 
 		oc.lock.RLock()
+		if oc.paused {
+			oc.lock.RUnlock()
+			return time.Now().Add(time.Millisecond * 200)
+		}
 		msg := r.Schedule()
 		oc.lock.RUnlock()
 
@@ -111,6 +116,20 @@ func (oc *Controller) RemoveTasksByTableIDs(tables ...int64) {
 	for _, replicaSet := range oc.replicationDB.TryRemoveByTableIDs(tables...) {
 		oc.removeReplicaSet(NewRemoveDispatcherOperator(oc.replicationDB, replicaSet))
 	}
+}
+
+// Pause pauses the controller, all operators will be paused.
+func (oc *Controller) Pause() {
+	oc.lock.Lock()
+	defer oc.lock.Unlock()
+	oc.paused = true
+}
+
+// Resume resumes the controller, all operators will be resumed.
+func (oc *Controller) Resume() {
+	oc.lock.Lock()
+	defer oc.lock.Unlock()
+	oc.paused = false
 }
 
 // AddOperator adds an operator to the controller, if the operator already exists, return false.
@@ -188,7 +207,7 @@ func (oc *Controller) OperatorSize() int {
 func (oc *Controller) pollQueueingOperator() (Operator, bool) {
 	oc.lock.Lock()
 	defer oc.lock.Unlock()
-	if oc.runningQueue.Len() == 0 {
+	if oc.paused || oc.runningQueue.Len() == 0 {
 		return nil, false
 	}
 	item := heap.Pop(&oc.runningQueue).(*operatorWithTime)

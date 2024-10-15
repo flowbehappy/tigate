@@ -39,8 +39,7 @@ type MoveDispatcherOperator struct {
 
 	noPostFinishNeed bool
 
-	state int
-	lck   sync.Mutex
+	lck sync.Mutex
 }
 
 func NewMoveDispatcherOperator(db *replica.ReplicationDB, replicaSet *replica.SpanReplication, origin, dest node.ID) *MoveDispatcherOperator {
