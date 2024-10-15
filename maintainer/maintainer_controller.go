@@ -642,6 +642,6 @@ func (i *Item) GetHeapIndex() int {
 	return i.index
 }
 
-func (i *Item) CompareTo(t *Item) int {
-	return i.TaskSize - t.TaskSize
+func (i *Item) LessThan(t *Item) bool {
+	return i.TaskSize < t.TaskSize
 }

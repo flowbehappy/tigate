@@ -14,7 +14,7 @@ type mockItem struct {
 
 func (m *mockItem) SetHeapIndex(index int)        { m.heapIndex = index }
 func (m *mockItem) GetHeapIndex() int             { return m.heapIndex }
-func (m *mockItem) CompareTo(other *mockItem) int { return m.value - other.value }
+func (m *mockItem) LessThan(other *mockItem) bool { return m.value < other.value }
 
 func TestHeap(t *testing.T) {
 	h := NewHeap[*mockItem]()

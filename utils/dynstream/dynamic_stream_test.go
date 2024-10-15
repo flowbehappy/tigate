@@ -123,7 +123,10 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	option.SchedulerInterval = 1 * time.Hour
 	option.ReportInterval = 1 * time.Hour
 	option.StreamCount = 3
-	ds := newDynamicStreamImpl(handler, option)
+	optE := OptionEnhanced[any, string, *simpleEvent, struct{}, any]{
+		Option: option,
+	}
+	ds := newDynamicStreamImpl(handler, optE)
 	ds.Start()
 
 	scheduleNow := func(rule ruleType, period time.Duration) {

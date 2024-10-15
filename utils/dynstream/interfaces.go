@@ -4,10 +4,21 @@ import (
 	"runtime"
 	"sync"
 	"time"
+
+	"golang.org/x/exp/constraints"
 )
 
 // The path interface. A path is a unique identifier of a destination.
 type Path comparable
+
+// A path can only belong to an area. An area is a group of paths.
+type Area comparable
+
+// The timestamp an event carries.
+// Normally, events with smaller timestamps are processed first amoung the same Area, but it is not guaranteed.
+// In a path, events come earlier should have smaller timestamps. DynamicStream will not check the
+// order of the timestamps, it is the handler's responsibility to handle the events in the correct order.
+type Timestamp constraints.Ordered
 
 // An event belongs to a path.
 type Event any
@@ -28,7 +39,16 @@ type Handler[P Path, T Event, D Dest] interface {
 	Handle(dest D, events ...T) (await bool)
 }
 
-type DropListener[P Path, T Event, D Dest] interface {
+type AreaGetter[A Area, P Path, T Event] interface {
+	PathArea(path P) A
+}
+
+type TimestampGetter[T Event, TS Timestamp] interface {
+	// Get the timestamp of the event. This method is called once for each event.
+	Timestamp(event T) TS
+}
+
+type DropListener[T Event, D Dest] interface {
 	// OnDrop is called when an event is dropped.
 	OnDrop(dest D, event T)
 }
@@ -101,6 +121,14 @@ type Option struct {
 	handleWait *sync.WaitGroup // For testing. Don't handle events until this wait group is done.
 }
 
+// TODO: Add comments.
+type OptionEnhanced[A Area, P Path, T Event, D Dest, TS Timestamp] struct {
+	Option
+	AreaGetter      AreaGetter[A, P, T]
+	TimestampGetter TimestampGetter[T, TS]
+	DropListener    DropListener[T, D]
+}
+
 func NewOption() Option {
 	return Option{
 		SchedulerInterval: DefaultSchedulerInterval,
@@ -129,5 +157,13 @@ func NewDynamicStream[P Path, T Event, D Dest](handler Handler[P, T, D], option 
 	if len(option) > 0 {
 		opt = option[0]
 	}
-	return newDynamicStreamImpl(handler, opt)
+	optE := OptionEnhanced[int8, P, T, D, int8]{
+		Option: opt,
+	}
+	return newDynamicStreamImpl(handler, optE)
+}
+
+// Use this function if you want to use the enhanced option.
+func NewDynamicStreamEnhanced[A Area, P Path, T Event, D Dest, TS Timestamp](handler Handler[P, T, D], option OptionEnhanced[A, P, T, D, TS]) DynamicStream[P, T, D] {
+	return newDynamicStreamImpl(handler, option)
 }
