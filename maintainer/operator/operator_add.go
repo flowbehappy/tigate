@@ -94,6 +94,6 @@ func (m *AddDispatcherOperator) PostFinish() {
 }
 
 func (m *AddDispatcherOperator) String() string {
-	return fmt.Sprintf("add dispatcher operator: %s, dest:%s ",
+	return fmt.Sprintf("add dispatcher operator: %s, dest:%s",
 		m.replicaSet.ID, m.dest)
 }

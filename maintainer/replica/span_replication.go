@@ -92,9 +92,8 @@ func NewWorkingReplicaSet(
 	return r
 }
 
-func (r *SpanReplication) UpdateStatus(status any) {
-	if status != nil {
-		newStatus := status.(*heartbeatpb.TableSpanStatus)
+func (r *SpanReplication) UpdateStatus(newStatus *heartbeatpb.TableSpanStatus) {
+	if newStatus != nil {
 		if newStatus.CheckpointTs >= r.status.CheckpointTs {
 			r.status = newStatus
 		}
@@ -124,12 +123,8 @@ func (r *SpanReplication) NewAddInferiorMessage(server node.ID) *messaging.Targe
 			ChangefeedID: r.ChangefeedID.ID,
 			Config: &heartbeatpb.DispatcherConfig{
 				DispatcherID: r.ID.ToPB(),
-				Span: &heartbeatpb.TableSpan{
-					TableID:  r.Span.TableID,
-					StartKey: r.Span.StartKey,
-					EndKey:   r.Span.EndKey,
-				},
-				StartTs: r.status.CheckpointTs,
+				Span:         r.Span,
+				StartTs:      r.status.CheckpointTs,
 			},
 			ScheduleAction: heartbeatpb.ScheduleAction_Create,
 		})
