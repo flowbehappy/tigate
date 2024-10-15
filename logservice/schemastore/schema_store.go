@@ -137,6 +137,13 @@ func (s *schemaStore) Close(ctx context.Context) error {
 func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 	tryUpdateResolvedTs := func() {
 		pendingTs := s.pendingResolvedTs.Load()
+		defer func() {
+			currentPhyTs := oracle.GetPhysical(s.pdClock.CurrentTime())
+			resolvedPhyTs := oracle.ExtractPhysical(pendingTs)
+			resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
+			metrics.SchemaStoreResolvedTsLagGauge.Set(float64(resolvedLag))
+		}()
+
 		if pendingTs <= s.resolvedTs.Load() {
 			return
 		}
@@ -180,10 +187,6 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 		// so we can only update resolved ts after all ddl jobs are written to disk
 		// Can we optimize it to update resolved ts more eagerly?
 		s.resolvedTs.Store(pendingTs)
-		currentPhyTs := oracle.GetPhysical(s.pdClock.CurrentTime())
-		resolvedPhyTs := oracle.ExtractPhysical(pendingTs)
-		resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
-		metrics.SchemaStoreResolvedTsLagGauge.Set(float64(resolvedLag))
 		s.dataStorage.updateUpperBound(UpperBoundMeta{
 			FinishedDDLTs: s.finishedDDLTs,
 			SchemaVersion: s.schemaVersion,
