@@ -56,7 +56,7 @@ func (p *TableProgress) Add(event commonEvent.FlushableEvent) {
 	elem := p.list.PushBack(ts)
 	p.elemMap[ts] = elem
 	p.maxCommitTs = event.GetCommitTs()
-	event.AddPostFlushFunc(func() { p.Remove(event) })
+	event.PushFrontFlushFunc(func() { p.Remove(event) })
 }
 
 // 而且删除可以认为是批量的？但要不要做成批量可以后面再看

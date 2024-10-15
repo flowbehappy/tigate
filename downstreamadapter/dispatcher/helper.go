@@ -137,77 +137,6 @@ type HeartBeatInfo struct {
 	IsRemoving      bool
 }
 
-type DispatcherStatusWithID struct {
-	id     common.DispatcherID
-	status *heartbeatpb.DispatcherStatus
-}
-
-func NewDispatcherStatusWithID(dispatcherStatus *heartbeatpb.DispatcherStatus, dispatcherID common.DispatcherID) DispatcherStatusWithID {
-	return DispatcherStatusWithID{
-		status: dispatcherStatus,
-		id:     dispatcherID,
-	}
-}
-
-func (d *DispatcherStatusWithID) GetDispatcherStatus() *heartbeatpb.DispatcherStatus {
-	return d.status
-}
-
-func (d *DispatcherStatusWithID) GetDispatcherID() common.DispatcherID {
-	return d.id
-}
-
-// DispatcherStatusHandler is used to handle the DispatcherStatus event.
-// Each dispatcher status may contain a ACK info or a dispatcher action or both.
-// If we get a ack info, we need to check whether the ack is for the current pending ddl event.
-// If so, we can cancel the resend task.
-// If we get a dispatcher action, we need to check whether the action is for the current pending ddl event.
-// If so, we can deal the ddl event based on the action.
-// 1. If the action is a write, we need to add the ddl event to the sink for writing to downstream(async).
-// 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and
-// wake the dispatcherEventsHandler to handle the event.
-type DispatcherStatusHandler struct {
-}
-
-func (h *DispatcherStatusHandler) Path(event DispatcherStatusWithID) common.DispatcherID {
-	return event.GetDispatcherID()
-}
-
-func (h *DispatcherStatusHandler) Handle(dispatcher *Dispatcher, events ...DispatcherStatusWithID) (await bool) {
-	for _, event := range events {
-		dispatcher.HandleDispatcherStatus(event.GetDispatcherStatus())
-	}
-	return false
-}
-
-// CheckTableProgressEmptyTask is reponsible for checking whether the tableProgress is empty.
-// If the tableProgress is empty,
-// 1. If the event is a single table DDL, it will be added to the sink for writing to downstream(async).
-// 2. If the event is a multi-table DDL, it will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
-// When the tableProgress is empty, the task will finished after this execution.
-// If the tableProgress is not empty, the task will be rescheduled after 10ms.
-type CheckProgressEmptyTask struct {
-	dispatcher *Dispatcher
-	taskHandle *threadpool.TaskHandle
-}
-
-func newCheckProgressEmptyTask(dispatcher *Dispatcher) *CheckProgressEmptyTask {
-	taskScheduler := GetDispatcherTaskScheduler()
-	t := &CheckProgressEmptyTask{
-		dispatcher: dispatcher,
-	}
-	t.taskHandle = taskScheduler.Submit(t, time.Now().Add(10*time.Millisecond))
-	return t
-}
-
-func (t *CheckProgressEmptyTask) Execute() time.Time {
-	if t.dispatcher.tableProgress.Empty() {
-		t.dispatcher.DealWithBlockEventWhenProgressEmpty()
-		return time.Time{}
-	}
-	return time.Now().Add(10 * time.Millisecond)
-}
-
 // Resend Task is reponsible for resending the TableSpanBlockStatus message with ddl info to maintainer each 50ms.
 // The task will be cancelled when the the dispatcher received the ack message from the maintainer
 type ResendTask struct {
@@ -235,6 +164,22 @@ func (t *ResendTask) Cancel() {
 	t.taskHandle.Cancel()
 }
 
+var DispatcherTaskScheduler threadpool.ThreadPool
+var dispatcherTaskSchedulerOnce sync.Once
+
+func GetDispatcherTaskScheduler() threadpool.ThreadPool {
+	if DispatcherTaskScheduler == nil {
+		dispatcherTaskSchedulerOnce.Do(func() {
+			DispatcherTaskScheduler = threadpool.NewThreadPoolDefault()
+		})
+	}
+	return DispatcherTaskScheduler
+}
+
+func SetDispatcherTaskScheduler(taskScheduler threadpool.ThreadPool) {
+	DispatcherTaskScheduler = taskScheduler
+}
+
 // DispatcherEventsHandler is used to dispatcher the events received.
 // If the event is a DML event, it will be added to the sink for writing to downstream.
 // If the event is a resolved TS event, it will be update the resolvedTs of the dispatcher.
@@ -255,39 +200,44 @@ func (t *ResendTask) Cancel() {
 type DispatcherEventsHandler struct {
 }
 
-func (h *DispatcherEventsHandler) Path(event commonEvent.Event) common.DispatcherID {
+func (h *DispatcherEventsHandler) Path(event DispatcherEvent) common.DispatcherID {
 	return event.GetDispatcherID()
 }
 
-// TODO: 这个后面需要按照更大的粒度进行攒批
-func (h *DispatcherEventsHandler) Handle(dispatcher *Dispatcher, event ...commonEvent.Event) bool {
-	if len(event) != 1 {
-		// TODO: Handle batch events
-		panic("only one event is allowed")
+func (h *DispatcherEventsHandler) Handle(dispatcher *Dispatcher, events ...DispatcherEvent) bool {
+	return dispatcher.HandleEvents(events)
+}
+
+type DispatcherEvent struct {
+	commonEvent.Event
+	isBatchable bool
+}
+
+func (d DispatcherEvent) IsBatchable() bool {
+	return d.isBatchable
+}
+
+func NewDispatcherEvent(event commonEvent.Event) *DispatcherEvent {
+	dispatcherEvent := &DispatcherEvent{
+		Event: event,
 	}
-	return dispatcher.HandleEvent(event[0])
-}
-
-var DispatcherTaskScheduler threadpool.ThreadPool
-var dispatcherTaskSchedulerOnce sync.Once
-
-func GetDispatcherTaskScheduler() threadpool.ThreadPool {
-	if DispatcherTaskScheduler == nil {
-		dispatcherTaskSchedulerOnce.Do(func() {
-			DispatcherTaskScheduler = threadpool.NewThreadPoolDefault()
-		})
+	switch event.GetType() {
+	case commonEvent.TypeResolvedEvent:
+	case commonEvent.TypeDMLEvent:
+		dispatcherEvent.isBatchable = true
+	case commonEvent.TypeDDLEvent:
+	case commonEvent.TypeSyncPointEvent:
+		dispatcherEvent.isBatchable = false
+	default:
+		log.Error("unknown event type", zap.Int("type", int(event.GetType())))
 	}
-	return DispatcherTaskScheduler
+	return dispatcherEvent
 }
 
-func SetDispatcherTaskScheduler(taskScheduler threadpool.ThreadPool) {
-	DispatcherTaskScheduler = taskScheduler
-}
-
-var dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, commonEvent.Event, *Dispatcher]
+var dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, DispatcherEvent, *Dispatcher]
 var dispatcherEventsDynamicStreamOnce sync.Once
 
-func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.DispatcherID, commonEvent.Event, *Dispatcher] {
+func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.DispatcherID, DispatcherEvent, *Dispatcher] {
 	if dispatcherEventsDynamicStream == nil {
 		dispatcherEventsDynamicStreamOnce.Do(func() {
 			dispatcherEventsDynamicStream = dynstream.NewDynamicStream(&DispatcherEventsHandler{})
@@ -297,8 +247,55 @@ func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.Dispatche
 	return dispatcherEventsDynamicStream
 }
 
-func SetDispatcherEventsDynamicStream(dynamicStream dynstream.DynamicStream[common.DispatcherID, commonEvent.Event, *Dispatcher]) {
+func SetDispatcherEventsDynamicStream(dynamicStream dynstream.DynamicStream[common.DispatcherID, DispatcherEvent, *Dispatcher]) {
 	dispatcherEventsDynamicStream = dynamicStream
+}
+
+type DispatcherStatusWithID struct {
+	id     common.DispatcherID
+	status *heartbeatpb.DispatcherStatus
+}
+
+func NewDispatcherStatusWithID(dispatcherStatus *heartbeatpb.DispatcherStatus, dispatcherID common.DispatcherID) DispatcherStatusWithID {
+	return DispatcherStatusWithID{
+		status: dispatcherStatus,
+		id:     dispatcherID,
+	}
+}
+
+func (d *DispatcherStatusWithID) GetDispatcherStatus() *heartbeatpb.DispatcherStatus {
+	return d.status
+}
+
+func (d *DispatcherStatusWithID) GetDispatcherID() common.DispatcherID {
+	return d.id
+}
+
+func (d DispatcherStatusWithID) IsBatchable() bool {
+	return true
+}
+
+// DispatcherStatusHandler is used to handle the DispatcherStatus event.
+// Each dispatcher status may contain a ACK info or a dispatcher action or both.
+// If we get a ack info, we need to check whether the ack is for the current pending ddl event.
+// If so, we can cancel the resend task.
+// If we get a dispatcher action, we need to check whether the action is for the current pending ddl event.
+// If so, we can deal the ddl event based on the action.
+// 1. If the action is a write, we need to add the ddl event to the sink for writing to downstream(async).
+// 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and
+// wake the dispatcherEventsHandler to handle the event.
+type DispatcherStatusHandler struct {
+}
+
+func (h *DispatcherStatusHandler) Path(event DispatcherStatusWithID) common.DispatcherID {
+	return event.GetDispatcherID()
+}
+
+func (h *DispatcherStatusHandler) Handle(dispatcher *Dispatcher, events ...DispatcherStatusWithID) (await bool) {
+	for _, event := range events {
+		dispatcher.HandleDispatcherStatus(event.GetDispatcherStatus())
+	}
+	return false
 }
 
 var dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithID, *Dispatcher]

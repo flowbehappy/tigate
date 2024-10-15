@@ -70,10 +70,22 @@ func SetHeartBeatTaskScheduler(taskScheduler threadpool.ThreadPool) {
 	heartBeatTaskScheduler = taskScheduler
 }
 
-var schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.ScheduleDispatcherRequest, *EventDispatcherManager]
+type SchedulerDispatcherRequest struct {
+	*heartbeatpb.ScheduleDispatcherRequest
+}
+
+func (r SchedulerDispatcherRequest) IsBatchable() bool {
+	return true
+}
+
+func NewSchedulerDispatcherRequest(req *heartbeatpb.ScheduleDispatcherRequest) *SchedulerDispatcherRequest {
+	return &SchedulerDispatcherRequest{req}
+}
+
+var schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[model.ChangeFeedID, SchedulerDispatcherRequest, *EventDispatcherManager]
 var schedulerDispatcherRequestDynamicStreamOnce sync.Once
 
-func GetSchedulerDispatcherRequestDynamicStream() dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.ScheduleDispatcherRequest, *EventDispatcherManager] {
+func GetSchedulerDispatcherRequestDynamicStream() dynstream.DynamicStream[model.ChangeFeedID, SchedulerDispatcherRequest, *EventDispatcherManager] {
 	if schedulerDispatcherRequestDynamicStream == nil {
 		schedulerDispatcherRequestDynamicStreamOnce.Do(func() {
 			schedulerDispatcherRequestDynamicStream = dynstream.NewDynamicStream(&SchedulerDispatcherRequestHandler{})
@@ -83,14 +95,26 @@ func GetSchedulerDispatcherRequestDynamicStream() dynstream.DynamicStream[model.
 	return schedulerDispatcherRequestDynamicStream
 }
 
-func SetSchedulerDispatcherRequestDynamicStream(dynamicStream dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.ScheduleDispatcherRequest, *EventDispatcherManager]) {
+func SetSchedulerDispatcherRequestDynamicStream(dynamicStream dynstream.DynamicStream[model.ChangeFeedID, SchedulerDispatcherRequest, *EventDispatcherManager]) {
 	schedulerDispatcherRequestDynamicStream = dynamicStream
 }
 
-var heartBeatResponseDynamicStream dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]
+type HeartBeatResponse struct {
+	*heartbeatpb.HeartBeatResponse
+}
+
+func (r HeartBeatResponse) IsBatchable() bool {
+	return true
+}
+
+func NewHeartBeatResponse(resp *heartbeatpb.HeartBeatResponse) *HeartBeatResponse {
+	return &HeartBeatResponse{resp}
+}
+
+var heartBeatResponseDynamicStream dynstream.DynamicStream[model.ChangeFeedID, HeartBeatResponse, *EventDispatcherManager]
 var heartBeatResponseDynamicStreamOnce sync.Once
 
-func GetHeartBeatResponseDynamicStream() dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager] {
+func GetHeartBeatResponseDynamicStream() dynstream.DynamicStream[model.ChangeFeedID, HeartBeatResponse, *EventDispatcherManager] {
 	if heartBeatResponseDynamicStream == nil {
 		heartBeatResponseDynamicStreamOnce.Do(func() {
 			heartBeatResponseDynamicStream = dynstream.NewDynamicStream(&HeartBeatResponseHandler{dispatcher.GetDispatcherStatusDynamicStream()})
@@ -100,14 +124,26 @@ func GetHeartBeatResponseDynamicStream() dynstream.DynamicStream[model.ChangeFee
 	return heartBeatResponseDynamicStream
 }
 
-func SetHeartBeatResponseDynamicStream(dynamicStream dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.HeartBeatResponse, *EventDispatcherManager]) {
+func SetHeartBeatResponseDynamicStream(dynamicStream dynstream.DynamicStream[model.ChangeFeedID, HeartBeatResponse, *EventDispatcherManager]) {
 	heartBeatResponseDynamicStream = dynamicStream
 }
 
-var checkpointTsMessageDynamicStream dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.CheckpointTsMessage, *EventDispatcherManager]
+type CheckpointTsMessage struct {
+	*heartbeatpb.CheckpointTsMessage
+}
+
+func (r CheckpointTsMessage) IsBatchable() bool {
+	return true
+}
+
+func NewCheckpointTsMessage(msg *heartbeatpb.CheckpointTsMessage) *CheckpointTsMessage {
+	return &CheckpointTsMessage{msg}
+}
+
+var checkpointTsMessageDynamicStream dynstream.DynamicStream[model.ChangeFeedID, CheckpointTsMessage, *EventDispatcherManager]
 var checkpointTsMessageDynamicStreamOnce sync.Once
 
-func GetCheckpointTsMessageDynamicStream() dynstream.DynamicStream[model.ChangeFeedID, *heartbeatpb.CheckpointTsMessage, *EventDispatcherManager] {
+func GetCheckpointTsMessageDynamicStream() dynstream.DynamicStream[model.ChangeFeedID, CheckpointTsMessage, *EventDispatcherManager] {
 	if checkpointTsMessageDynamicStream == nil {
 		checkpointTsMessageDynamicStreamOnce.Do(func() {
 			checkpointTsMessageDynamicStream = dynstream.NewDynamicStream(&CheckpointTsMessageHandler{})

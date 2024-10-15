@@ -96,6 +96,10 @@ func (t *DMLEvent) PostFlush() {
 	}
 }
 
+func (t *DMLEvent) PushFrontFlushFunc(f func()) {
+	t.PostTxnFlushed = append([]func(){f}, t.PostTxnFlushed...)
+}
+
 func (t *DMLEvent) AddPostFlushFunc(f func()) {
 	t.PostTxnFlushed = append(t.PostTxnFlushed, f)
 }

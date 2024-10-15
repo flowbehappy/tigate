@@ -40,6 +40,10 @@ type Event struct {
 	dispatcherEvent *InternalScheduleDispatcherEvent
 }
 
+func (e Event) IsBatchable() bool {
+	return true
+}
+
 // SubmitScheduledEvent submits a task to controller pool to send a future event
 func SubmitScheduledEvent(
 	scheduler threadpool.ThreadPool,

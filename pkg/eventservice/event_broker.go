@@ -776,6 +776,10 @@ func (t *scanTask) handle() {
 	metricScanTaskQueueDuration.Observe(float64(time.Since(t.createTime).Milliseconds()))
 }
 
+func (t scanTask) IsBatchable() bool {
+	return true
+}
+
 type scanTaskPool struct {
 	// pendingTaskQueue is used to store the tasks that are waiting to be handled by the scan workers.
 	// The length of the pendingTaskQueue is equal to the number of the scan workers.

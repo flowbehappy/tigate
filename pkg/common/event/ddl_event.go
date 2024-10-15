@@ -73,6 +73,10 @@ func (d *DDLEvent) AddPostFlushFunc(f func()) {
 	d.PostTxnFlushed = append(d.PostTxnFlushed, f)
 }
 
+func (d *DDLEvent) PushFrontFlushFunc(f func()) {
+	d.PostTxnFlushed = append([]func(){f}, d.PostTxnFlushed...)
+}
+
 func (e *DDLEvent) GetBlockedTables() *InfluencedTables {
 	return e.BlockedTables
 }
