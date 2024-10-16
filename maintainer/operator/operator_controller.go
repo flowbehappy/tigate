@@ -81,6 +81,9 @@ func (oc *Controller) Execute() time.Time {
 
 		if msg != nil {
 			_ = oc.messageCenter.SendCommand(msg)
+			log.Info("send command to dispatcher",
+				zap.String("changefeed", oc.changefeedID),
+				zap.String("operator", r.ID().String()))
 		}
 		executedItem++
 		if executedItem >= oc.batchSize {
