@@ -34,7 +34,7 @@ type MoveDispatcherOperator struct {
 	dest       node.ID
 
 	originNodeStopped bool
-	finishing         bool
+	finished          bool
 	bind              bool
 
 	noPostFinishNeed bool
@@ -61,7 +61,10 @@ func (m *MoveDispatcherOperator) Check(from node.ID, status *heartbeatpb.TableSp
 		m.originNodeStopped = true
 	}
 	if m.originNodeStopped && from == m.dest && status.ComponentStatus == heartbeatpb.ComponentState_Working {
-		m.finishing = true
+		log.Info("replica set added to dest node",
+			zap.String("dest", m.dest.String()),
+			zap.String("replicaSet", m.replicaSet.ID.String()))
+		m.finished = true
 	}
 }
 
@@ -86,6 +89,9 @@ func (m *MoveDispatcherOperator) OnNodeRemove(n node.ID) {
 	if n == m.dest {
 		// the origin node is finished, we must mark the span as absent to reschedule it again
 		if m.originNodeStopped {
+			log.Info("dest node is stopped, mark span absent",
+				zap.String("replicaSet", m.replicaSet.ID.String()),
+				zap.String("dest", m.dest.String()))
 			m.db.MarkSpanAbsent(m.replicaSet)
 			m.noPostFinishNeed = true
 			return
@@ -103,6 +109,9 @@ func (m *MoveDispatcherOperator) OnNodeRemove(n node.ID) {
 		m.originNodeStopped = true
 	}
 	if n == m.origin {
+		log.Info("origin node is stopped",
+			zap.String("origin", m.origin.String()),
+			zap.String("replicaSet", m.replicaSet.ID.String()))
 		m.originNodeStopped = true
 	}
 }
@@ -115,7 +124,7 @@ func (m *MoveDispatcherOperator) IsFinished() bool {
 	m.lck.Lock()
 	defer m.lck.Unlock()
 
-	return m.finishing || m.noPostFinishNeed
+	return m.finished || m.noPostFinishNeed
 }
 
 func (m *MoveDispatcherOperator) OnTaskRemoved() {

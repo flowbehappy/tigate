@@ -24,6 +24,8 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 // SplitDispatcherOperator is an operator to remove a table span from a dispatcher
@@ -75,6 +77,8 @@ func (m *SplitDispatcherOperator) OnNodeRemove(n node.ID) {
 	defer m.lck.Unlock()
 
 	if n == m.originNode {
+		log.Info("origin node is removed",
+			zap.String("replicaSet", m.replicaSet.ID.String()))
 		m.finished.Store(true)
 	}
 }
@@ -95,6 +99,9 @@ func (m *SplitDispatcherOperator) Check(from node.ID, status *heartbeatpb.TableS
 		if status.CheckpointTs > m.checkpointTs {
 			m.checkpointTs = status.CheckpointTs
 		}
+		log.Info("replica set removed from origin node",
+			zap.Uint64("checkpointTs", m.checkpointTs),
+			zap.String("replicaSet", m.replicaSet.ID.String()))
 		m.finished.Store(true)
 	}
 }
@@ -108,6 +115,7 @@ func (m *SplitDispatcherOperator) OnTaskRemoved() {
 	m.lck.Lock()
 	defer m.lck.Unlock()
 
+	log.Info("task removed", zap.String("replicaSet", m.replicaSet.ID.String()))
 	m.taskRemoved.Store(true)
 	m.finished.Store(true)
 }
