@@ -14,7 +14,6 @@
 package maintainer
 
 import (
-	"bytes"
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -23,7 +22,6 @@ import (
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
-	"github.com/google/btree"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"go.uber.org/zap"
@@ -307,55 +305,4 @@ func (be *BarrierEvent) action(action heartbeatpb.Action) *heartbeatpb.Dispatche
 		CommitTs:    be.commitTs,
 		IsSyncPoint: be.isSyncPoint,
 	}
-}
-
-type rangeCoverChecker struct {
-	startKey      []byte
-	endKey        []byte
-	rangeCoverMap *btree.BTreeG[*rangeEntry]
-}
-
-func newSpanCoverChecker(startKey, endKey []byte) *rangeCoverChecker {
-	return &rangeCoverChecker{
-		startKey:      startKey,
-		endKey:        endKey,
-		rangeCoverMap: btree.NewG[*rangeEntry](16, rangeEntryLess),
-	}
-}
-
-type rangeEntry struct {
-	startKey []byte
-	endKey   []byte
-}
-
-func rangeEntryLess(a, b *rangeEntry) bool {
-	return bytes.Compare(a.startKey, b.startKey) < 0
-}
-
-func (r *rangeCoverChecker) addRange(startKey, endKey []byte) {
-	item := &rangeEntry{
-		startKey: startKey,
-		endKey:   endKey,
-	}
-	oldItem, ok := r.rangeCoverMap.Get(item)
-	if ok {
-		// the old range is covered by the new range, replace the old range
-		if bytes.Compare(oldItem.endKey, endKey) < 0 {
-			oldItem.endKey = endKey
-		}
-	} else {
-		r.rangeCoverMap.ReplaceOrInsert(item)
-	}
-}
-
-func (r *rangeCoverChecker) hasHole() bool {
-	var lastEndKey []byte
-	r.rangeCoverMap.Ascend(func(i *rangeEntry) bool {
-		if lastEndKey != nil && bytes.Compare(lastEndKey, i.startKey) < 0 {
-			return false
-		}
-		lastEndKey = i.endKey
-		return true
-	})
-	return lastEndKey == nil || bytes.Compare(lastEndKey, r.endKey) < 0
 }
