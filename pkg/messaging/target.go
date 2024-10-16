@@ -3,10 +3,11 @@ package messaging
 import (
 	"context"
 	"fmt"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -41,9 +42,6 @@ type remoteMessageTarget struct {
 	messageCenterID    node.ID
 	messageCenterEpoch uint64
 
-	// The next message sendSequence number.
-	sendSequence atomic.Uint64
-
 	targetEpoch atomic.Value
 	targetId    node.ID
 	targetAddr  string
@@ -54,7 +52,6 @@ type remoteMessageTarget struct {
 
 	// For receiving events and commands
 	conn              *grpc.ClientConn
-	receivedSequence  atomic.Uint64
 	eventRecvStream   grpcReceiver
 	commandRecvStream grpcReceiver
 
@@ -90,6 +87,10 @@ type remoteMessageTarget struct {
 	receivedFailedErrorCounter     prometheus.Counter
 	connectionNotfoundErrorCounter prometheus.Counter
 	connectionFailedErrorCounter   prometheus.Counter
+}
+
+func (s *remoteMessageTarget) isReadyToSend() bool {
+	return s.eventSender.ready.Load() && s.commandSender.ready.Load()
 }
 
 func (s *remoteMessageTarget) Epoch() uint64 {
@@ -328,10 +329,6 @@ func (s *remoteMessageTarget) runSendMessages(sendCtx context.Context, stream gr
 		case <-sendCtx.Done():
 			return sendCtx.Err()
 		case message := <-sendChan:
-			log.Debug("Send message to remote",
-				zap.Any("messageCenterID", s.messageCenterID),
-				zap.Any("remote", s.targetId),
-				zap.Stringer("message", message))
 			if err := stream.Send(message); err != nil {
 				log.Error("Error when sending message to remote",
 					zap.Error(err),
@@ -407,7 +404,6 @@ func (s *remoteMessageTarget) newMessage(msg ...*TargetMessage) *proto.Message {
 		To:      string(s.targetId),
 		Epoch:   uint64(s.messageCenterEpoch),
 		Topic:   string(msg[0].Topic),
-		Seqnum:  s.sendSequence.Add(1),
 		Type:    int32(msg[0].Type),
 		Payload: msgBytes,
 	}

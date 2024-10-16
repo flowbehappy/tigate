@@ -3,8 +3,9 @@ package messaging
 import (
 	"context"
 	"fmt"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"sync"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/config"
@@ -33,6 +34,7 @@ type MessageSender interface {
 	// TODO: Make these methods support timeout later.
 	SendEvent(msg *TargetMessage) error
 	SendCommand(cmd *TargetMessage) error
+	IsReadyToSend(target node.ID) bool
 }
 
 // MessageReceiver is the interface to receive messages from other targets.
@@ -122,7 +124,7 @@ func (mc *messageCenter) OnNodeChanges(activeNode map[node.ID]*node.Info) {
 	allTarget := make(map[node.ID]bool)
 	allTarget[mc.id] = true
 	mc.remoteTargets.RLock()
-	for id, _ := range mc.remoteTargets.m {
+	for id := range mc.remoteTargets.m {
 		allTarget[id] = true
 	}
 	mc.remoteTargets.RUnlock()
@@ -132,7 +134,7 @@ func (mc *messageCenter) OnNodeChanges(activeNode map[node.ID]*node.Info) {
 			mc.addTarget(node.ID, node.Epoch, node.AdvertiseAddr)
 		}
 	}
-	for id, _ := range allTarget {
+	for id := range allTarget {
 		if _, ok := activeNode[id]; !ok {
 			mc.removeTarget(id)
 		}
@@ -162,6 +164,16 @@ func (mc *messageCenter) removeTarget(id node.ID) {
 	}
 }
 
+func (mc *messageCenter) IsReadyToSend(targetID node.ID) bool {
+	mc.remoteTargets.RLock()
+	defer mc.remoteTargets.RUnlock()
+	target, ok := mc.remoteTargets.m[targetID]
+	if !ok {
+		return false
+	}
+	return target.isReadyToSend()
+}
+
 func (mc *messageCenter) SendEvent(msg *TargetMessage) error {
 	if msg == nil {
 		return nil
@@ -175,6 +187,13 @@ func (mc *messageCenter) SendEvent(msg *TargetMessage) error {
 	target, ok := mc.remoteTargets.m[msg.To]
 	mc.remoteTargets.RUnlock()
 	if !ok {
+		// If target not found, there are two cases:
+		// 1. The target is not been discovered yet.
+		// 2. The target is removed.
+		// The caller should handle the error correctly.
+		// For example, if the target is not been discovered yet, the caller can retry later.
+		// If the target is removed, the caller must remove the objects that was sending
+		// message to this target to avoid blocking.
 		return apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %s not found", msg.To)}
 	}
 	return target.sendEvent(msg)
@@ -227,30 +246,46 @@ func (mc *messageCenter) Close() {
 func (mc *messageCenter) touchRemoteTarget(id node.ID, epoch uint64, addr string) *remoteMessageTarget {
 	mc.remoteTargets.Lock()
 	defer mc.remoteTargets.Unlock()
-	if target, ok := mc.remoteTargets.m[id]; ok {
-		if target.Epoch() >= epoch {
-			log.Info("Remote target already exists", zap.Stringer("id", id))
-			return target
-		}
 
-		if target.targetAddr == addr {
-			log.Info("Remote target already exists, but the epoch is old, update the epoch", zap.Stringer("id", id))
-			target.targetEpoch.Store(epoch)
-			return target
-		}
-
-		log.Info("Remote target epoch and addr changed, close it and create a new one",
-			zap.Stringer("id", id),
-			zap.Any("oldEpoch", target.Epoch()),
-			zap.Any("newEpoch", epoch),
-			zap.Any("oldAddr", target.targetAddr),
-			zap.Any("newAddr", addr))
-		target.close()
-		delete(mc.remoteTargets.m, id)
+	target, ok := mc.remoteTargets.m[id]
+	if !ok {
+		// If the target is not found, create a new one.
+		target = newRemoteMessageTarget(
+			mc.id, id, mc.epoch,
+			epoch, addr, mc.receiveEventCh,
+			mc.receiveCmdCh, mc.cfg)
+		mc.remoteTargets.m[id] = target
+		return target
 	}
-	rt := newRemoteMessageTarget(mc.id, id, mc.epoch, epoch, addr, mc.receiveEventCh, mc.receiveCmdCh, mc.cfg)
-	mc.remoteTargets.m[id] = rt
-	return rt
+
+	// If the target already exists and the epoch is not old, return the target.
+	if target.Epoch() >= epoch {
+		log.Info("Remote target already exists", zap.Stringer("id", id))
+		return target
+	}
+
+	// If the target is old and the address is the same, update its epoch.
+	if target.targetAddr == addr {
+		log.Info("Remote target already exists, but the epoch is old, update the epoch", zap.Stringer("id", id))
+		target.targetEpoch.Store(epoch)
+		return target
+	}
+
+	// If the target is old and the address is different, close the old target and create a new one.
+	log.Info("Remote target changed, creating a new one",
+		zap.Stringer("id", id),
+		zap.Any("oldEpoch", target.Epoch()),
+		zap.Any("newEpoch", epoch),
+		zap.Any("oldAddr", target.targetAddr),
+		zap.Any("newAddr", addr))
+	target.close()
+	newTarget := newRemoteMessageTarget(
+		mc.id, id, mc.epoch,
+		epoch, addr, mc.receiveEventCh,
+		mc.receiveCmdCh, mc.cfg)
+	mc.remoteTargets.m[id] = newTarget
+	return newTarget
+
 }
 
 // grpcServer implements the gRPC `service MessageCenter` defined in the proto file
@@ -271,7 +306,6 @@ func (s *grpcServer) SendEvents(msg *proto.Message, stream proto.MessageCenter_S
 	metricsStreamGauge.Inc()
 	defer metricsStreamGauge.Dec()
 	return s.handleConnect(msg, stream, true)
-	//return s.handleClientConnect(stream, true)
 }
 
 // SendCommands implements the gRPC service MessageCenter.SendCommands
@@ -279,7 +313,6 @@ func (s *grpcServer) SendCommands(msg *proto.Message, stream proto.MessageCenter
 	metricsStreamGauge := metrics.MessagingStreamGauge.WithLabelValues(msg.GetFrom())
 	metricsStreamGauge.Inc()
 	return s.handleConnect(msg, stream, false)
-	//return s.handleClientConnect(stream, false)
 }
 
 func (s *grpcServer) id() node.ID {
@@ -301,25 +334,29 @@ func (s *grpcServer) handleConnect(msg *proto.Message, stream grpcSender, isEven
 	s.messageCenter.remoteTargets.RLock()
 	remoteTarget, ok := s.messageCenter.remoteTargets.m[targetId]
 	s.messageCenter.remoteTargets.RUnlock()
-	if ok {
-		log.Info("Start to sent message to remote target",
-			zap.Any("messageCenterID", s.messageCenter.id),
-			zap.String("remote", msg.From),
-			zap.Bool("isEvent", isEvent))
-		// The handshake message's epoch should be the same as the target's epoch.
-		if uint64(msg.Epoch) != remoteTarget.Epoch() {
-			err := apperror.AppError{Type: apperror.ErrorTypeEpochMismatch, Reason: fmt.Sprintf("Target %s epoch mismatch, expect %d, got %d", targetId, remoteTarget.Epoch(), msg.Epoch)}
-			log.Error("Epoch mismatch", zap.Error(err))
-			return err
-		}
-		if isEvent {
-			return remoteTarget.runEventSendStream(stream)
-		} else {
-			return remoteTarget.runCommandSendStream(stream)
-		}
-	} else {
+
+	if !ok {
 		log.Info("Remote target not found", zap.Any("messageCenter", s.messageCenter.id), zap.Any("remote", targetId))
 		err := &apperror.AppError{Type: apperror.ErrorTypeTargetNotFound, Reason: fmt.Sprintf("Target %s not found", targetId)}
 		return err
 	}
+
+	// The handshake message's epoch should be the same as the target's epoch.
+	if uint64(msg.Epoch) != remoteTarget.Epoch() {
+		err := apperror.AppError{Type: apperror.ErrorTypeEpochMismatch, Reason: fmt.Sprintf("Target %s epoch mismatch, expect %d, got %d", targetId, remoteTarget.Epoch(), msg.Epoch)}
+		log.Error("Epoch mismatch", zap.Error(err))
+		return err
+	}
+
+	log.Info("Start to sent message to remote target",
+		zap.Any("messageCenterID", s.messageCenter.id),
+		zap.String("remote", msg.From),
+		zap.Bool("isEvent", isEvent))
+
+	if isEvent {
+		return remoteTarget.runEventSendStream(stream)
+	} else {
+		return remoteTarget.runCommandSendStream(stream)
+	}
+
 }

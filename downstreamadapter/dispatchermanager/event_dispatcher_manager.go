@@ -213,7 +213,6 @@ func (e *EventDispatcherManager) close() {
 func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTs uint64, schemaID int64) *dispatcher.Dispatcher {
 	start := time.Now()
 	if _, ok := e.dispatcherMap.Get(id); ok {
-		log.Debug("table span already exists", zap.Any("tableSpan", tableSpan))
 		return nil
 	}
 
@@ -297,7 +296,7 @@ func (e *EventDispatcherManager) CollectBlockStatusRequest(ctx context.Context) 
 }
 
 // CollectHeartbeatInfoWhenStatesChanged use to collect the heartbeat info when GetTableSpanStatusesChan() get infos
-// It happenes when some dispatchers change status, such as --> working; --> stopped; --> stopping
+// It happens when some dispatchers change status, such as --> working; --> stopped; --> stopping
 // Considering collect the heartbeat info is a time-consuming operation(we need to scan all the dispatchers),
 // We will not collect the heartbeat info as soon as we receive it, but will batch it appropriately.
 func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx context.Context) {

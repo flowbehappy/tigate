@@ -1,8 +1,9 @@
 package messaging
 
 import (
-	"github.com/flowbehappy/tigate/pkg/node"
 	"testing"
+
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/log"
@@ -24,21 +25,15 @@ func TestRemoteTargetNewMessage(t *testing.T) {
 	defer rt.close()
 
 	msg := &TargetMessage{
-		Type:     TypeMessageHandShake,
-		Epoch:    rt.messageCenterEpoch,
-		Sequence: rt.sendSequence.Load(),
+		Type:  TypeMessageHandShake,
+		Epoch: rt.messageCenterEpoch,
 	}
 	msg1 := rt.newMessage(msg)
 	require.Equal(t, TypeMessageHandShake, IOType(msg1.Type))
 	require.Equal(t, rt.messageCenterEpoch, uint64(msg1.Epoch))
-	require.Equal(t, uint64(1), rt.sendSequence.Load())
-	require.Equal(t, rt.sendSequence.Load(), msg1.Seqnum)
 
-	// Test the second message's sequence number is increased by 1.
 	msg2 := rt.newMessage(msg)
 	log.Info("msg2", zap.Any("msg2", msg2))
 	require.Equal(t, TypeMessageHandShake, IOType(msg2.Type))
 	require.Equal(t, rt.messageCenterEpoch, uint64(msg2.Epoch))
-	require.Equal(t, uint64(2), rt.sendSequence.Load())
-	require.Equal(t, rt.sendSequence.Load(), msg2.Seqnum)
 }
