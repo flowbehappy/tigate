@@ -85,3 +85,7 @@ func (m *RemoveDispatcherOperator) String() string {
 	return fmt.Sprintf("remove dispatcher operator: %s",
 		m.replicaSet.ID)
 }
+
+func (m *RemoveDispatcherOperator) Type() string {
+	return "remove"
+}

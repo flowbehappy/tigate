@@ -135,3 +135,7 @@ func (m *SplitDispatcherOperator) String() string {
 	return fmt.Sprintf("move dispatcher operator: %s, splitSpans:%s",
 		m.replicaSet.ID, m.splitSpanInfo)
 }
+
+func (m *SplitDispatcherOperator) Type() string {
+	return "split"
+}

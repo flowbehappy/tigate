@@ -24,8 +24,36 @@ var (
 			Help:      "Bucketed histogram of maintainer handle event time (s).",
 			Buckets:   prometheus.ExponentialBuckets(0.01 /* 10 ms */, 2, 18),
 		}, []string{"namespace", "changefeed"})
+
+	CreatedOperatorCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "maintainer",
+			Name:      "operator_created_count",
+			Help:      "number of created operators",
+		}, []string{"namespace", "changefeed", "type"})
+
+	FinishedOperatorCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "maintainer",
+			Name:      "operator_finished_count",
+			Help:      "number of finished operators",
+		}, []string{"namespace", "changefeed", "type"})
+
+	OperatorDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "maintainer",
+			Name:      "finish_operators_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) of finished operator.",
+			Buckets:   []float64{0.5, 1, 2, 4, 8, 16, 20, 40, 60, 90, 120, 180, 240, 300, 480, 600, 720, 900, 1200, 1800, 3600},
+		}, []string{"namespace", "changefeed", "type"})
 )
 
 func InitMaintainerMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(MaintainerHandleEventDuration)
+	registry.MustRegister(CreatedOperatorCount)
+	registry.MustRegister(FinishedOperatorCount)
+	registry.MustRegister(OperatorDuration)
 }

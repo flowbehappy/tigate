@@ -29,6 +29,8 @@ import (
 	"github.com/flowbehappy/tigate/pkg/config"
 	configNew "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/metrics"
+	_ "github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/flowbehappy/tigate/utils/dynstream"
@@ -36,6 +38,8 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	cdcConfig "github.com/pingcap/tiflow/pkg/config"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -215,11 +219,15 @@ func TestMaintainerSchedule(t *testing.T) {
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
 	mux := http.NewServeMux()
+	registry := prometheus.NewRegistry()
+	metrics.InitMetrics(registry)
+	prometheus.DefaultGatherer = registry
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
 	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	mux.Handle("/metrics", promhttp.Handler())
 	go func() {
 		t.Fatal(http.ListenAndServe(":8300", mux))
 	}()
@@ -268,8 +276,8 @@ func TestMaintainerSchedule(t *testing.T) {
 	if len(argList) > 1 {
 		t.Fatal("unexpected args", argList)
 	}
-	tableSize := 100
-	sleepTime := 5
+	tableSize := 1000000
+	sleepTime := 50000
 	if len(argList) == 1 {
 		tableSize, _ = strconv.Atoi(argList[0])
 	}
