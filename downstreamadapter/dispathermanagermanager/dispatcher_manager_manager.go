@@ -82,14 +82,25 @@ func (m *DispatcherManagerManager) handleAddDispatcherManager(from node.ID, main
 		}
 
 		log.Info("create new dispatcher manager", zap.Any("config", cfConfig))
-		// TODO: 这边额外判断一下创建是否失败，创建失败的话，想一下怎么做报错处理
-		manager := dispatchermanager.NewEventDispatcherManager(cfId, cfConfig, from)
-		m.dispatcherManagers[cfId] = manager
-		metrics.EventDispatcherManagerGauge.WithLabelValues(cfId.Namespace, cfId.ID).Inc()
+		manager, err := dispatchermanager.NewEventDispatcherManager(cfId, cfConfig, from)
+		var response *heartbeatpb.MaintainerBootstrapResponse
+		if err != nil {
+			log.Error("failed to create new dispatcher manager", zap.Error(err), zap.Any("ChangefeedID", cfId))
+			// TODO: deal with the repsonse in maintainer, and turn to changefeed error state
+			response = &heartbeatpb.MaintainerBootstrapResponse{
+				ChangefeedID: maintainerBootstrapRequest.ChangefeedID,
+				Err: &heartbeatpb.RunningError{
+					Message: err.Error(),
+				},
+			}
+		} else {
+			m.dispatcherManagers[cfId] = manager
+			metrics.EventDispatcherManagerGauge.WithLabelValues(cfId.Namespace, cfId.ID).Inc()
 
-		response := &heartbeatpb.MaintainerBootstrapResponse{
-			ChangefeedID: maintainerBootstrapRequest.ChangefeedID,
-			Spans:        make([]*heartbeatpb.BootstrapTableSpan, 0),
+			response = &heartbeatpb.MaintainerBootstrapResponse{
+				ChangefeedID: maintainerBootstrapRequest.ChangefeedID,
+				Spans:        make([]*heartbeatpb.BootstrapTableSpan, 0),
+			}
 		}
 
 		message := newMaintainerManagerMessage(from, response)

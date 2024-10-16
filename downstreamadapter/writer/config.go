@@ -133,18 +133,15 @@ func NewMysqlConfigAndDB(sinkURI *url.URL) (*MysqlConfig, *sql.DB, error) {
 	cfg := NewMysqlConfig()
 	err := cfg.Apply(sinkURI)
 	if err != nil {
-		log.Error("Apply sinkURI failed", zap.Error(err))
 		return nil, nil, err
 	}
 	dsnStr, err := GenerateDSN(cfg)
 	if err != nil {
-		log.Error("GenerateDSN failed", zap.Error(err))
 		return nil, nil, err
 	}
 
 	db, err := CreateMysqlDBConn(dsnStr)
 	if err != nil {
-		log.Error("CreateMysqlDBConn failed", zap.Error(err))
 		return nil, nil, err
 	}
 

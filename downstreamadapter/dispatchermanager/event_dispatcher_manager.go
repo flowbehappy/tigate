@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/pkg/filter"
@@ -97,7 +98,7 @@ type EventDispatcherManager struct {
 
 func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 	cfConfig *config.ChangefeedConfig,
-	maintainerID node.ID) *EventDispatcherManager {
+	maintainerID node.ID) (*EventDispatcherManager, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := &EventDispatcherManager{
 		dispatcherMap:                  newDispatcherMap(),
@@ -116,6 +117,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 		metricResolvedTsLag:            metrics.EventDispatcherManagerResolvedTsLagGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
 	}
 
+	// Set Sync Point Config
 	if cfConfig.EnableSyncPoint {
 		// TODO:确认一下参数设置的地方会检查正确性，这里不需要再次检查了
 		manager.syncPointConfig = &syncpoint.SyncPointConfig{
@@ -124,44 +126,45 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 		}
 	}
 
+	// Set Filter
 	// TODO: 最后去更新一下 filter 的内部 NewFilter 函数，现在是在套壳适配
 	replicaConfig := cfg.ReplicaConfig{Filter: cfConfig.Filter}
 	filter, err := filter.NewFilter(replicaConfig.Filter, cfConfig.TimeZone, replicaConfig.CaseSensitive)
 	if err != nil {
-		log.Error("create filter failed", zap.Error(err))
-		return nil
+		return nil, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("create filter failed")
 	}
 	manager.filter = filter
 
-	appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(manager)
-
-	// TODO: 这些后续需要等有第一个 table 来的时候再初始化, 对于纯空的 event dispatcher manager 不要直接创建为好
-	manager.heartBeatTask = newHeartBeatTask(manager)
-
 	err = manager.InitSink()
 	if err != nil {
-		log.Error("init sink failed", zap.Error(err))
-		return nil
+		return nil, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("event dispatcher manager init sink failed")
 	}
 
+	// Register Event Dispatcher Manager in HeartBeatCollector, which is reponsible for communication with the maintainer.
+	err = appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(manager)
+	if err != nil {
+		return nil, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("register event dispatcher manager failed")
+	}
+
+	// collector heart beat info from all dispatchers
 	manager.wg.Add(1)
 	go func() {
 		defer manager.wg.Done()
 		manager.CollectHeartbeatInfoWhenStatesChanged(ctx)
 	}()
 
+	// collector block status from all dispatchers
 	manager.wg.Add(1)
 	go func() {
 		defer manager.wg.Done()
 		manager.CollectBlockStatusRequest(ctx)
 	}()
-	return manager
+	return manager, nil
 }
 
 func (e *EventDispatcherManager) InitSink() error {
 	sink, err := sink.NewSink(e.config, e.changefeedID)
 	if err != nil {
-		log.Error("create sink failed", zap.Error(err))
 		return err
 	}
 	e.sink = sink
@@ -228,6 +231,11 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 	}
 
 	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.blockStatusesChan, e.filter, schemaID, e.schemaIDToDispatchers, &syncPointInfo)
+
+	// lazy create heartBeatTask when event dispatcher manager has dispatchers
+	if e.heartBeatTask == nil {
+		e.heartBeatTask = newHeartBeatTask(e)
+	}
 
 	if tableSpan.Equal(heartbeatpb.DDLSpan) {
 		e.tableTriggerEventDispatcher = dispatcher

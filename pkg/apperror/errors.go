@@ -1,6 +1,10 @@
 package apperror
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/pingcap/errors"
+)
 
 type ErrorType int
 
@@ -27,6 +31,8 @@ const (
 	ErrorTypeMessageSendFailed    ErrorType = 206
 	ErrorTypeTargetNotFound       ErrorType = 207
 	ErrorTypeInvalidMessage       ErrorType = 208
+
+	//ErrorTypeCreateEventDispatcherManagerFailed ErrorType = 300
 
 	ErrorInvalidDDLEvent ErrorType = 301
 )
@@ -100,3 +106,11 @@ func (e AppError) GetType() ErrorType {
 func (e AppError) Equal(err AppError) bool {
 	return e.Type == err.Type
 }
+
+var (
+	// kv related errors
+	ErrCreateEventDispatcherManagerFailed = errors.Normalize(
+		"Create Event Dispatcher Manager Failed, %s",
+		errors.RFCCodeText("CDC:ErrCreateEventDispatcherManagerFailed"),
+	)
+)

@@ -20,12 +20,10 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/config"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink"
 	"github.com/pingcap/tiflow/pkg/util"
-	"go.uber.org/zap"
 )
 
 type SinkType int
@@ -59,7 +57,6 @@ func NewSink(config *config.ChangefeedConfig, changefeedID model.ChangeFeedID) (
 	case sink.MySQLScheme, sink.MySQLSSLScheme, sink.TiDBScheme, sink.TiDBSSLScheme:
 		cfg, db, err := writer.NewMysqlConfigAndDB(sinkURI)
 		if err != nil {
-			log.Error("create mysql sink failed", zap.Error(err))
 			return nil, err
 		}
 		cfg.SyncPointRetention = util.GetOrZero(config.SyncPointRetention)
@@ -67,7 +64,6 @@ func NewSink(config *config.ChangefeedConfig, changefeedID model.ChangeFeedID) (
 	case sink.KafkaScheme, sink.KafkaSSLScheme:
 		sink, err := NewKafkaSink(changefeedID, sinkURI, config.SinkConfig)
 		if err != nil {
-			log.Error("create kafka sink failed", zap.Error(err))
 			return nil, err
 		}
 		return sink, nil
