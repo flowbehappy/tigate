@@ -63,7 +63,7 @@ func TestOneBlockEvent(t *testing.T) {
 	require.True(t, event.writerDispatcher == stm.ID)
 	require.True(t, event.selected)
 	require.False(t, event.writerDispatcherAdvanced)
-	require.Len(t, event.reportedDispatchers, 1)
+	require.Len(t, event.reportedRange, 1)
 	require.Equal(t, resp.DispatcherStatuses[0].Ack.CommitTs, uint64(10))
 	require.Equal(t, resp.DispatcherStatuses[0].Action.CommitTs, uint64(10))
 	require.Equal(t, resp.DispatcherStatuses[0].Action.Action, heartbeatpb.Action_Write)
@@ -186,7 +186,8 @@ func TestNormalBlock(t *testing.T) {
 	event := barrier.blockedTs[key]
 	require.Equal(t, uint64(10), event.commitTs)
 	require.True(t, event.writerDispatcher == selectDispatcherID)
-	require.Len(t, event.reportedDispatchers, 3)
+	// all dispatcher reported, the reported status is reset
+	require.Equal(t, 0, getReportedDispatchers(event))
 
 	// repeated status
 	barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
@@ -228,7 +229,8 @@ func TestNormalBlock(t *testing.T) {
 	})
 	require.Equal(t, uint64(10), event.commitTs)
 	require.True(t, event.writerDispatcher == selectDispatcherID)
-	require.Len(t, event.reportedDispatchers, 3)
+	// the reported status is ignored
+	require.Equal(t, 0, getReportedDispatchers(event))
 
 	// selected node write done
 	msg = barrier.HandleStatus("node2", &heartbeatpb.BlockStatusRequest{
@@ -245,7 +247,7 @@ func TestNormalBlock(t *testing.T) {
 		},
 	})
 	require.Len(t, barrier.blockedTs, 1)
-	require.Len(t, event.reportedDispatchers, 2)
+	require.Equal(t, 1, getReportedDispatchers(event))
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
@@ -267,6 +269,7 @@ func TestNormalBlock(t *testing.T) {
 			},
 		},
 	})
+	require.Equal(t, 3, getReportedDispatchers(event))
 	require.Len(t, barrier.blockedTs, 0)
 }
 
@@ -411,19 +414,7 @@ func TestSchemaBlock(t *testing.T) {
 		heartbeatpb.Action_Pass)
 	require.Len(t, barrier.blockedTs, 1)
 	// the writer already advanced
-	require.Len(t, event.reportedDispatchers, 1)
-	require.Equal(t, 1, controller.replicationDB.GetAbsentSize())
-	require.Equal(t, 2, controller.operatorController.OperatorSize())
-	// two dispatcher and moved to operator queue, operator will be removed after ack
-	require.Equal(t, 3, controller.replicationDB.GetReplicatingSize())
-	for _, task := range controller.replicationDB.GetReplicating() {
-		op := controller.operatorController.GetOperator(task.ID)
-		if op != nil {
-			op.PostFinish()
-		}
-	}
-	require.Equal(t, 1, controller.replicationDB.GetReplicatingSize())
-
+	require.Equal(t, 1, getReportedDispatchers(event))
 	// other dispatcher advanced checkpoint ts
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
@@ -439,6 +430,18 @@ func TestSchemaBlock(t *testing.T) {
 		},
 	})
 	require.Len(t, barrier.blockedTs, 0)
+
+	require.Equal(t, 1, controller.replicationDB.GetAbsentSize())
+	require.Equal(t, 2, controller.operatorController.OperatorSize())
+	// two dispatcher and moved to operator queue, operator will be removed after ack
+	require.Equal(t, 3, controller.replicationDB.GetReplicatingSize())
+	for _, task := range controller.replicationDB.GetReplicating() {
+		op := controller.operatorController.GetOperator(task.ID)
+		if op != nil {
+			op.PostFinish()
+		}
+	}
+	require.Equal(t, 1, controller.replicationDB.GetReplicatingSize())
 }
 
 func TestSyncPointBlock(t *testing.T) {
@@ -567,7 +570,7 @@ func TestSyncPointBlock(t *testing.T) {
 	require.Len(t, msgs, 2)
 	require.Len(t, barrier.blockedTs, 1)
 	// the writer already advanced
-	require.Len(t, event.reportedDispatchers, 2)
+	require.Equal(t, 1, getReportedDispatchers(event))
 	// other dispatcher advanced checkpoint ts
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
@@ -695,4 +698,14 @@ func TestSyncPointBlockPerf(t *testing.T) {
 	})
 	require.NotNil(t, msg)
 	log.Info("duration", zap.Duration("duration", time.Since(now)))
+}
+
+func getReportedDispatchers(event *BarrierEvent) int {
+	count := 0
+	for _, v := range event.reportedRange {
+		if v.IsFullyCovered() {
+			count++
+		}
+	}
+	return count
 }

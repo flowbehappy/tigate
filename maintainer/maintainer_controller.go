@@ -267,6 +267,11 @@ func (c *Controller) GetTasksByTableIDs(tableIDs ...int64) []*replica.SpanReplic
 	return c.replicationDB.GetTasksByTableIDs(tableIDs...)
 }
 
+// GetAllTasks get all tasks
+func (c *Controller) GetAllTasks() []*replica.SpanReplication {
+	return c.replicationDB.GetAllTasks()
+}
+
 // UpdateSchemaID will update the schema id of the table, and move the task to the new schema map
 // it called when rename a table to another schema
 func (c *Controller) UpdateSchemaID(tableID, newSchemaID int64) {

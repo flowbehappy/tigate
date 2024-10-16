@@ -102,16 +102,16 @@ func (b *Barrier) handleEventDone(dispatcherID common.DispatcherID, status *hear
 	// which means we have sent pass or write action to it
 	// the writer already synced ddl to downstream
 	if event.writerDispatcher == dispatcherID {
-		// schedule new and removed tasks
 		// the pass action will be sent periodically in resend logic if not acked
-		event.scheduleBlockEvent()
 		event.writerDispatcherAdvanced = true
 	}
 
 	// checkpoint ts is advanced, clear the map, so do not need to resend message anymore
 	event.markDispatcherEventDone(dispatcherID)
-	// all blocked dispatchers are reported event done, we can clean up the event
+	// all blocked dispatchers are reported event done, we can schedule event and clean up the event
 	if event.allDispatcherDone() {
+		// schedule the event after all dispatchers reported event done
+		event.scheduleBlockEvent()
 		delete(b.blockedTs, key)
 	}
 }
