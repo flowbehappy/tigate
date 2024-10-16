@@ -232,6 +232,18 @@ func (db *ReplicationDB) GetTaskByNodeID(id node.ID) []*SpanReplication {
 	return stms
 }
 
+// GetTaskSizePerNode returns the size of the task per node
+func (db *ReplicationDB) GetTaskSizePerNode() map[node.ID]int {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	sizeMap := make(map[node.ID]int, len(db.nodeTasks))
+	for nodeID, stmMap := range db.nodeTasks {
+		sizeMap[nodeID] = len(stmMap)
+	}
+	return sizeMap
+}
+
 // GetTaskSizeBySchemaID returns the size of the task by the schema id
 func (db *ReplicationDB) GetTaskSizeBySchemaID(schemaID int64) int {
 	db.lock.RLock()
