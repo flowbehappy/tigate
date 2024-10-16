@@ -138,12 +138,18 @@ func (s *Scheduler) balance() {
 		// skip balance.
 		return
 	}
-	s.lastRebalanceTime = now
+
+	// check the balance status
+	moveSize := checkBalanceStatus(s.replicationDB.GetTaskSizePerNode(), s.nodeManager.GetAliveNodes())
+	if moveSize <= 0 {
+		// fast check the balance status, no need to do the balance,skip
+		return
+	}
 	s.balanceTables()
+	s.lastRebalanceTime = now
 }
 
 func (s *Scheduler) balanceTables() {
-	// todo: use node size to check if we really need to balance first, otherwise we will waste memory there
 	replicating := s.replicationDB.GetReplicating()
 	nodeTasks := make(map[node.ID]map[common.DispatcherID]*replica.SpanReplication)
 	for _, cf := range replicating {
@@ -233,4 +239,29 @@ func (s *Scheduler) balanceTables() {
 		zap.String("changefeed", s.changefeedID),
 		zap.Int("movedSize", movedSize),
 		zap.Int("victims", len(victims)))
+}
+
+// checkBalanceStatus checks the dispatcher scheduling balance status
+// returns the table size need to be moved
+func checkBalanceStatus(nodeTaskSize map[node.ID]int, allNodes map[node.ID]*node.Info) int {
+	// add the absent node to the node size map
+	for nodeID, _ := range allNodes {
+		if _, ok := nodeTaskSize[nodeID]; !ok {
+			nodeTaskSize[nodeID] = 0
+		}
+	}
+	totalSize := 0
+	for _, ts := range nodeTaskSize {
+		totalSize += ts
+	}
+	upperLimitPerCapture := int(math.Ceil(float64(totalSize) / float64(len(nodeTaskSize))))
+	// tables need to be moved
+	moveSize := 0
+	for _, ts := range nodeTaskSize {
+		tableNum2Remove := ts - upperLimitPerCapture
+		if tableNum2Remove > 0 {
+			moveSize += tableNum2Remove
+		}
+	}
+	return moveSize
 }
