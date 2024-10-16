@@ -47,7 +47,10 @@ func NewAddDispatcherOperator(
 }
 
 func (m *AddDispatcherOperator) Check(from node.ID, status *heartbeatpb.TableSpanStatus) {
-	if from == m.dest && status.ComponentStatus == heartbeatpb.ComponentState_Working {
+	if !m.finished.Load() && from == m.dest && status.ComponentStatus == heartbeatpb.ComponentState_Working {
+		log.Info("dispatcher report working status",
+			zap.String("changefeed", m.replicaSet.ChangefeedID.String()),
+			zap.String("replicaSet", m.replicaSet.ID.String()))
 		m.finished.Store(true)
 	}
 }

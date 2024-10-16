@@ -247,6 +247,8 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 }
 
 func (m *Maintainer) initialize() error {
+	log.Info("start to initialize changefeed maintainer",
+		zap.String("id", m.id.String()))
 	tables, err := m.initTables()
 	if err != nil {
 		return errors.Trace(err)
