@@ -84,7 +84,7 @@ func (oc *Controller) Execute() time.Time {
 		}
 		executedItem++
 		if executedItem >= oc.batchSize {
-			return time.Now().Add(time.Millisecond * 50)
+			return time.Now().Add(time.Millisecond * 5)
 		}
 	}
 }
@@ -234,7 +234,7 @@ func (oc *Controller) pollQueueingOperator() (Operator, bool) {
 		return nil, false
 	}
 	// pushes with new notify time.
-	item.time = time.Now().Add(time.Millisecond * 500)
+	item.time = time.Now().Add(time.Millisecond * 50)
 	heap.Push(&oc.runningQueue, item)
 	return op, true
 }
