@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/utils/dynstream"
 
@@ -317,6 +318,11 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 	}
 
 	remoteID := node.ID(task.dispatcherStat.info.GetServerID())
+	// If the target is not ready to send, we don't need to scan the event store.
+	// To avoid the useless scan task.
+	if !c.msgSender.IsReadyToSend(remoteID) {
+		return
+	}
 	dispatcherID := task.dispatcherStat.info.GetID()
 	// After all the events are sent, we need to
 	// drain the ddlEvents and wake up the dispatcher.
@@ -450,6 +456,9 @@ func (c *eventBroker) flushResolvedTs(ctx context.Context, serverID node.ID) {
 
 func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage) {
 	start := time.Now()
+	otherRetryInterval := time.Millisecond * 100
+	otherRetryLimit := 10
+	congestedRetryInterval := time.Millisecond * 10
 	// Send the message to messageCenter. Retry if to send failed.
 	for {
 		select {
@@ -459,15 +468,29 @@ func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage
 		}
 		// Send the message to the dispatcher.
 		err := c.msgSender.SendEvent(tMsg)
-		// todo: errors should be distinguished here, only retry if congested ?
+
 		if err != nil {
-			log.Debug("send message failed, retry it", zap.Error(err))
-			// Wait for a while and retry to avoid the dropped message flood.
-			time.Sleep(time.Millisecond * 10)
-			continue
+			appErr, ok := err.(*apperror.AppError)
+			if ok && appErr.Type == apperror.ErrorTypeMessageCongested {
+				log.Debug("send message failed since the message is congested, retry it laster", zap.Error(err))
+				// Wait for a while and retry to avoid the dropped message flood.
+				time.Sleep(congestedRetryInterval)
+				continue
+			} else {
+				// Only retry limit time, the dispatcher will send reset message if it finds events are not continuous.
+				// Let's consider the following scenario:
+				// 1. The remote target is remove permanently, so the message can't be sent.
+				// If we retry indefinitely, we would block here.
+				time.Sleep(otherRetryInterval)
+				otherRetryLimit--
+				if otherRetryLimit <= 0 {
+					log.Debug("send message failed after retry limit", zap.Error(err))
+					return
+				}
+			}
 		}
 		metricEventServiceSendEventDuration.Observe(time.Since(start).Seconds())
-		break
+		return
 	}
 }
 

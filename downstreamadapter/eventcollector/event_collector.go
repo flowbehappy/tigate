@@ -128,7 +128,7 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 // If the dispatcher is not table trigger event dispatcher, filterConfig will be nil.
 func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
 	err := c.mc.SendCommand(&messaging.TargetMessage{
-		To:    c.serverId, // demo 中 每个节点都有自己的 eventService
+		To:    c.serverId, // TODO: This has to be adjust, the target serviceID should be contain in registerInfo.
 		Topic: messaging.EventServiceTopic,
 		Type:  messaging.TypeRegisterDispatcherRequest,
 		Message: []messaging.IOTypeT{&messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
@@ -144,7 +144,7 @@ func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
 		}}},
 	})
 	if err != nil {
-		log.Error("failed to send register dispatcher request message", zap.Error(err))
+		log.Error("failed to send register dispatcher request message, retry later", zap.Error(err))
 		c.registerMessageChan.In() <- info
 		return err
 	}
