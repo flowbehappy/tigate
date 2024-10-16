@@ -198,6 +198,18 @@ func (db *ReplicationDB) GetTasksByTableIDs(tableIDs ...int64) []*SpanReplicatio
 	return stms
 }
 
+// GetAllTasks returns all the spans in the db
+func (db *ReplicationDB) GetAllTasks() []*SpanReplication {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	var stms = make([]*SpanReplication, 0, len(db.allTasks))
+	for _, stm := range db.allTasks {
+		stms = append(stms, stm)
+	}
+	return stms
+}
+
 // IsTableExists checks if the table exists in the db
 func (db *ReplicationDB) IsTableExists(tableID int64) bool {
 	db.lock.RLock()
