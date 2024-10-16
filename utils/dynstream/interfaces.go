@@ -4,8 +4,6 @@ import (
 	"runtime"
 	"sync"
 	"time"
-
-	"golang.org/x/exp/constraints"
 )
 
 // The path interface. A path is a unique identifier of a destination.
@@ -18,7 +16,11 @@ type Area comparable
 // Normally, events with smaller timestamps are processed first amoung the same Area, but it is not guaranteed.
 // In a path, events come earlier should have smaller timestamps. DynamicStream will not check the
 // order of the timestamps, it is the handler's responsibility to handle the events in the correct order.
-type Timestamp constraints.Ordered
+type Timestamp uint64
+
+// The type of the event. The type is used to group the events for the handler to process.
+// Events with different types will not be processed in a group by the handler.
+type Type int
 
 // An event belongs to a path.
 type Event any
@@ -43,9 +45,14 @@ type AreaGetter[A Area, P Path, T Event] interface {
 	PathArea(path P) A
 }
 
-type TimestampGetter[T Event, TS Timestamp] interface {
+type TimestampGetter[T Event] interface {
 	// Get the timestamp of the event. This method is called once for each event.
-	Timestamp(event T) TS
+	Timestamp(event T) Timestamp
+}
+
+type TypeGetter[T Event] interface {
+	// Get the timestamp of the event. This method is called once for each event.
+	Type(event T) Type
 }
 
 type DropListener[T Event, D Dest] interface {
@@ -122,11 +129,15 @@ type Option struct {
 }
 
 // TODO: Add comments.
-type OptionEnhanced[A Area, P Path, T Event, D Dest, TS Timestamp] struct {
+type OptionEnhanced[A Area, P Path, T Event, D Dest] struct {
 	Option
-	AreaGetter      AreaGetter[A, P, T]
-	TimestampGetter TimestampGetter[T, TS]
-	DropListener    DropListener[T, D]
+	// Areas are zero if not set.
+	AreaGetter AreaGetter[A, P, T]
+	// By default use the queue time as timestamp if not set.
+	TimestampGetter TimestampGetter[T]
+	// Types are zero if not set.
+	TypeGetter   TypeGetter[T]
+	DropListener DropListener[T, D]
 }
 
 func NewOption() Option {
@@ -137,6 +148,12 @@ func NewOption() Option {
 		BatchSize:         1,
 		MaxPendingLength:  0,
 		DropPolicy:        DropLate,
+	}
+}
+
+func NewOptionEnhanced[A Area, P Path, T Event, D Dest]() OptionEnhanced[A, P, T, D] {
+	return OptionEnhanced[A, P, T, D]{
+		Option: NewOption(),
 	}
 }
 
@@ -157,13 +174,13 @@ func NewDynamicStream[P Path, T Event, D Dest](handler Handler[P, T, D], option 
 	if len(option) > 0 {
 		opt = option[0]
 	}
-	optE := OptionEnhanced[int8, P, T, D, int8]{
+	optE := OptionEnhanced[int, P, T, D]{
 		Option: opt,
 	}
 	return newDynamicStreamImpl(handler, optE)
 }
 
 // Use this function if you want to use the enhanced option.
-func NewDynamicStreamEnhanced[A Area, P Path, T Event, D Dest, TS Timestamp](handler Handler[P, T, D], option OptionEnhanced[A, P, T, D, TS]) DynamicStream[P, T, D] {
+func NewDynamicStreamEnhanced[A Area, P Path, T Event, D Dest](handler Handler[P, T, D], option OptionEnhanced[A, P, T, D]) DynamicStream[P, T, D] {
 	return newDynamicStreamImpl(handler, option)
 }

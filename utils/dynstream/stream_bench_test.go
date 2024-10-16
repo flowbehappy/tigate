@@ -31,11 +31,11 @@ func (h *incHandler) Handle(dest D, events ...*inc) (await bool) {
 
 func runStream(eventCount int, times int) {
 	handler := &incHandler{}
-	reportChan := make(chan streamStat[string, *inc, D], 100)
+	reportChan := make(chan streamStat[int, string, *inc, D], 100)
 
-	pi := newPathInfo[string, *inc, D]("p1", D{})
-	stream := newStream[string, *inc, D](1 /*id*/, handler, reportChan, 10, NewOption())
-	stream.start([]*pathInfo[string, *inc, D]{pi})
+	pi := newPathInfo[int, string, *inc, D](0, "p1", D{})
+	stream := newStream[int, string, *inc, D](1 /*id*/, handler, reportChan, 10, NewOptionEnhanced[int, string, *inc, D]())
+	stream.start([]*pathInfo[int, string, *inc, D]{pi})
 
 	go func() {
 		// Drain the report channel. To avoid the report channel blocking.
@@ -48,7 +48,7 @@ func runStream(eventCount int, times int) {
 
 	done.Add(eventCount)
 	for i := 0; i < eventCount; i++ {
-		stream.in() <- eventWrap[string, *inc, D]{event: &inc{times: times, n: total, done: done}, pathInfo: pi}
+		stream.in() <- eventWrap[int, string, *inc, D]{event: &inc{times: times, n: total, done: done}, pathInfo: pi}
 	}
 
 	done.Wait()

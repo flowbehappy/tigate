@@ -118,12 +118,14 @@ func TestDynamicStreamAddRemovePaths(t *testing.T) {
 // Note that this test is not deterministic because streams are running in separate goroutines.
 // Maybe we should disable it in the test.
 func TestDynamicStreamSchedule(t *testing.T) {
+	// t.Skip("Skipping TestDynamicStreamSchedule because it is not deterministic due to streams running in separate goroutines")
+
 	handler := &simpleHandler{}
 	option := NewOption()
 	option.SchedulerInterval = 1 * time.Hour
 	option.ReportInterval = 1 * time.Hour
 	option.StreamCount = 3
-	optE := OptionEnhanced[any, string, *simpleEvent, struct{}, any]{
+	optE := OptionEnhanced[any, string, *simpleEvent, struct{}]{
 		Option: option,
 	}
 	ds := newDynamicStreamImpl(handler, optE)
