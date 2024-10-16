@@ -115,16 +115,3 @@ func BenchmarkSLoop100000x100(b *testing.B) {
 		runLoop(100000, 100)
 	}
 }
-
-/*
-goos: darwin
-goarch: amd64
-pkg: github.com/flowbehappy/tigate/utils/dynstream
-cpu: Intel(R) Core(TM) i5-8500 CPU @ 3.00GHz
-BenchmarkSStream1000x1-6                     	    1842	    687181 ns/op	  309550 B/op	    6098 allocs/op
-BenchmarkSStream1000x100-6                   	    1192	   1076355 ns/op	  309529 B/op	    6097 allocs/op
-BenchmarkSStream100000x100-6                 	      12	 104457546 ns/op	30560586 B/op	  606404 allocs/op
-BenchmarkSLoop1000x1-6                       	   17620	     68181 ns/op	     264 B/op	       5 allocs/op
-BenchmarkSLoop1000x100-6                     	    2115	    566871 ns/op	     263 B/op	       4 allocs/op
-BenchmarkSLoop100000x100-6                   	      20	  56798304 ns/op	     264 B/op	       5 allocs/op
-*/

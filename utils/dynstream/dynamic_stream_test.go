@@ -347,12 +347,12 @@ func (h *incEventHandler) Handle(dest struct{}, events ...incEvent) (await bool)
 }
 
 func TestDynamicStreamDrop(t *testing.T) {
-	check := func(option Option) int64 {
+	check := func(option OptionEnhanced[int, string, incEvent, struct{}]) int64 {
 		option.handleWait = &sync.WaitGroup{}
 		option.handleWait.Add(1)
 
 		handler := &incEventHandler{}
-		ds := NewDynamicStream(handler, option)
+		ds := NewDynamicStreamEnhanced(handler, option)
 		ds.Start()
 
 		ds.AddPath("p1", struct{}{})
@@ -373,7 +373,8 @@ func TestDynamicStreamDrop(t *testing.T) {
 		return total.Load()
 	}
 
-	option := NewOption()
+	option := NewOptionEnhanced[int, string, incEvent, struct{}]()
+	option.DropListener = &incEventHandler{}
 
 	{
 		assert.Equal(t, 9, check(option))
