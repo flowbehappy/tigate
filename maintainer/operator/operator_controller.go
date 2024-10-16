@@ -65,7 +65,7 @@ func (oc *Controller) Execute() time.Time {
 	for {
 		r, next := oc.pollQueueingOperator()
 		if !next {
-			return time.Now().Add(time.Millisecond * 50)
+			return time.Now().Add(time.Millisecond * 200)
 		}
 		if r == nil {
 			continue

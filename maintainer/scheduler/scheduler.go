@@ -73,7 +73,7 @@ func (s *Scheduler) Execute() time.Time {
 		}
 		// too many running operators, skip
 		if availableSize < s.batchSize/2 {
-			return time.Now().Add(time.Millisecond * 500)
+			return time.Now().Add(time.Millisecond * 100)
 		}
 		absent, nodeSize := s.replicationDB.GetScheduleSate(s.absent, availableSize)
 		// add the absent node to the node size map
