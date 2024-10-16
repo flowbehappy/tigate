@@ -69,11 +69,11 @@ func (s *Scheduler) Execute() time.Time {
 	if s.replicationDB.GetAbsentSize() > 0 {
 		availableSize := s.batchSize - s.operatorController.OperatorSize()
 		if availableSize <= 0 {
-			return time.Now().Add(time.Millisecond * 500)
+			return time.Now().Add(time.Millisecond * 50)
 		}
 		// too many running operators, skip
 		if availableSize < s.batchSize/2 {
-			return time.Now().Add(time.Millisecond * 100)
+			return time.Now().Add(time.Millisecond * 50)
 		}
 		absent, nodeSize := s.replicationDB.GetScheduleSate(s.absent, availableSize)
 		// add the absent node to the node size map
@@ -88,7 +88,7 @@ func (s *Scheduler) Execute() time.Time {
 	} else {
 		s.balance()
 	}
-	return time.Now().Add(time.Millisecond * 500)
+	return time.Now().Add(time.Millisecond * 50)
 }
 
 // basicSchedule schedule the absent spans to the nodes base on the task size of each node
