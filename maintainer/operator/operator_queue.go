@@ -19,8 +19,9 @@ import (
 )
 
 type operatorWithTime struct {
-	op   Operator
-	time time.Time
+	op          Operator
+	time        time.Time
+	enqueueTime time.Time
 }
 
 type operatorQueue []*operatorWithTime

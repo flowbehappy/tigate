@@ -22,8 +22,10 @@ import (
 	"github.com/flowbehappy/tigate/maintainer/replica"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
@@ -155,7 +157,8 @@ func (oc *Controller) AddOperator(op Operator) bool {
 		zap.String("operator", op.String()))
 	oc.operators[op.ID()] = op
 	op.Start()
-	heap.Push(&oc.runningQueue, &operatorWithTime{op: op, time: time.Now()})
+	heap.Push(&oc.runningQueue, &operatorWithTime{op: op, time: time.Now(), enqueueTime: time.Now()})
+	metrics.CreatedOperatorCount.WithLabelValues(model.DefaultNamespace, oc.changefeedID, op.Type()).Inc()
 	return true
 }
 
@@ -217,6 +220,8 @@ func (oc *Controller) pollQueueingOperator() (Operator, bool) {
 	if op.IsFinished() {
 		op.PostFinish()
 		delete(oc.operators, opID)
+		metrics.FinishedOperatorCount.WithLabelValues(model.DefaultNamespace, oc.changefeedID, op.Type()).Inc()
+		metrics.OperatorDuration.WithLabelValues(model.DefaultNamespace, oc.changefeedID, op.Type()).Observe(time.Since(item.enqueueTime).Seconds())
 		log.Info("operator finished",
 			zap.String("changefeed", oc.changefeedID),
 			zap.String("operator", opID.String()),

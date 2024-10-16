@@ -156,3 +156,7 @@ func (m *MoveDispatcherOperator) String() string {
 	return fmt.Sprintf("move dispatcher operator: %s, origin:%s, dest:%s",
 		m.replicaSet.ID, m.origin, m.dest)
 }
+
+func (m *MoveDispatcherOperator) Type() string {
+	return "move"
+}

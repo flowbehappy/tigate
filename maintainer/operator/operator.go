@@ -26,6 +26,8 @@ import (
 type Operator interface {
 	// ID returns the dispatcher ID
 	ID() common.DispatcherID
+	// Type returns the operator type
+	Type() string
 	// Start is called when the operator is added to the operator executing queue
 	Start()
 	// Schedule schedules this operator returns the message to be sent to the dispatcher
