@@ -44,7 +44,7 @@ type BarrierEvent struct {
 	schemaIDChange     []*heartbeatpb.SchemaIDChange
 	isSyncPoint        bool
 	// if the split table is enable for this changefeeed, if not we can use table id to check coverage
-	splitTableEnabled bool
+	dynamicSplitEnabled bool
 
 	// rangeChecker is used to check if all the dispatchers reported the block events
 	rangeChecker   range_checker.RangeChecker
@@ -52,49 +52,77 @@ type BarrierEvent struct {
 }
 
 func NewBlockEvent(cfID string, controller *Controller,
-	status *heartbeatpb.State, splitTableEnabled bool) *BarrierEvent {
+	status *heartbeatpb.State, dynamicSplitEnabled bool) *BarrierEvent {
 	event := &BarrierEvent{
-		controller:         controller,
-		selected:           false,
-		cfID:               cfID,
-		commitTs:           status.BlockTs,
-		blockedDispatchers: status.BlockTables,
-		newTables:          status.NeedAddedTables,
-		dropDispatchers:    status.NeedDroppedTables,
-		schemaIDChange:     status.UpdatedSchemas,
-		lastResendTime:     time.Time{},
-		isSyncPoint:        status.IsSyncPoint,
-		splitTableEnabled:  splitTableEnabled,
+		controller:          controller,
+		selected:            false,
+		cfID:                cfID,
+		commitTs:            status.BlockTs,
+		blockedDispatchers:  status.BlockTables,
+		newTables:           status.NeedAddedTables,
+		dropDispatchers:     status.NeedDroppedTables,
+		schemaIDChange:      status.UpdatedSchemas,
+		lastResendTime:      time.Time{},
+		isSyncPoint:         status.IsSyncPoint,
+		dynamicSplitEnabled: dynamicSplitEnabled,
 	}
 	if status.BlockTables != nil {
-		var tbls []int64
 		switch status.BlockTables.InfluenceType {
 		case heartbeatpb.InfluenceType_Normal:
-			tbls = status.BlockTables.TableIDs
+			if dynamicSplitEnabled {
+				event.rangeChecker = range_checker.NewTableSpanRangeChecker(status.BlockTables.TableIDs)
+			} else {
+				event.rangeChecker = range_checker.NewTableCountChecker(len(status.BlockTables.TableIDs))
+			}
 			event.blockedTasks = controller.GetTasksByTableIDs(status.BlockTables.TableIDs...)
 		case heartbeatpb.InfluenceType_DB:
-			reps := controller.GetTasksBySchemaID(status.BlockTables.SchemaID)
-			tbls = make([]int64, 0, len(reps))
-			for _, rep := range reps {
-				tbls = append(tbls, rep.Span.TableID)
+			if dynamicSplitEnabled {
+				reps := controller.GetTasksBySchemaID(status.BlockTables.SchemaID)
+				tbls := make([]int64, 0, len(reps))
+				for _, rep := range reps {
+					tbls = append(tbls, rep.Span.TableID)
+				}
+				event.rangeChecker = range_checker.NewTableSpanRangeChecker(tbls)
+			} else {
+				event.rangeChecker = range_checker.NewTableCountChecker(
+					controller.GetTaskSizeBySchemaID(status.BlockTables.SchemaID))
 			}
 		case heartbeatpb.InfluenceType_All:
-			reps := controller.GetAllTasks()
-			tbls = make([]int64, 0, len(reps))
-			for _, rep := range reps {
-				tbls = append(tbls, rep.Span.TableID)
+			if dynamicSplitEnabled {
+				reps := controller.GetAllTasks()
+				tbls := make([]int64, 0, len(reps))
+				for _, rep := range reps {
+					tbls = append(tbls, rep.Span.TableID)
+				}
+				event.rangeChecker = range_checker.NewTableSpanRangeChecker(tbls)
+			} else {
+				event.rangeChecker = range_checker.NewTableCountChecker(controller.TaskSize())
 			}
 		}
-		event.setRangeChecker(tbls)
 	}
 	return event
 }
 
-func (be *BarrierEvent) setRangeChecker(tbls []int64) {
-	if be.splitTableEnabled {
-		be.rangeChecker = range_checker.NewTableSpanRangeChecker(tbls)
-	} else {
-		be.rangeChecker = range_checker.NewTableIDRangeChecker(tbls)
+// onAllDispatcherReportedBlockEvent is called when all dispatcher reported the block event
+// it will select a dispatcher as the writer, reset the range checker ,and move the event to the selected state
+// returns the dispatcher status to the dispatcher manager
+func (be *BarrierEvent) onAllDispatcherReportedBlockEvent(dispatcherID *heartbeatpb.DispatcherID) *heartbeatpb.DispatcherStatus {
+	// reset ranger checkers
+	be.rangeChecker.Reset()
+	be.selected = true
+	// select the last one as the writer
+	be.writerDispatcher = common.NewDispatcherIDFromPB(dispatcherID)
+	log.Info("all dispatcher reported heartbeat, select one to write",
+		zap.String("changefeed", be.cfID),
+		zap.String("dispatcher", be.writerDispatcher.String()),
+		zap.Uint64("commitTs", be.commitTs),
+		zap.String("barrierType", be.blockedDispatchers.InfluenceType.String()))
+	return &heartbeatpb.DispatcherStatus{
+		InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
+			InfluenceType: heartbeatpb.InfluenceType_Normal,
+			DispatcherIDs: []*heartbeatpb.DispatcherID{be.writerDispatcher.ToPB()},
+		},
+		Action: be.action(heartbeatpb.Action_Write),
 	}
 }
 
@@ -210,29 +238,6 @@ func (be *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
 	return msgs
 }
 
-// dispatcherReachedBlockTs check if all the dispatchers reported the block events,
-// if so, select one dispatcher to write, currently choose the last one
-func (be *BarrierEvent) dispatcherReachedBlockTs(dispatcherID common.DispatcherID) *heartbeatpb.DispatcherAction {
-	if be.selected {
-		return nil
-	}
-	be.markDispatcherEventDone(dispatcherID)
-	// all dispatcher reported heartbeat, select the last one to write
-	if be.allDispatcherReported() {
-		be.writerDispatcher = dispatcherID
-		be.selected = true
-		// reset ranger checkers
-		be.rangeChecker.Reset()
-		log.Info("all dispatcher reported heartbeat, select one to write",
-			zap.String("changefeed", be.cfID),
-			zap.String("dispatcher", dispatcherID.String()),
-			zap.Uint64("commitTs", be.commitTs),
-			zap.String("barrierType", be.blockedDispatchers.InfluenceType.String()))
-		return be.action(heartbeatpb.Action_Write)
-	}
-	return nil
-}
-
 func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 	if time.Since(be.lastResendTime) < time.Second {
 		return nil
@@ -247,6 +252,7 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 		//resend write action
 		stm := be.controller.GetTask(be.writerDispatcher)
 		if stm == nil || stm.GetNodeID() == "" {
+			// todo: select a new writer
 			return nil
 		}
 		return []*messaging.TargetMessage{be.newWriterActionMessage(stm.GetNodeID())}

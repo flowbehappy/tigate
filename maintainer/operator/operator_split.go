@@ -31,16 +31,14 @@ import (
 // SplitDispatcherOperator is an operator to remove a table span from a dispatcher
 // and then added some new spans to the replication db
 type SplitDispatcherOperator struct {
-	db           *replica.ReplicationDB
-	replicaSet   *replica.SpanReplication
-	originNode   node.ID
-	splitSpans   []*heartbeatpb.TableSpan
-	checkpointTs uint64
-
-	finished    atomic.Bool
-	taskRemoved atomic.Bool
-
+	db            *replica.ReplicationDB
+	replicaSet    *replica.SpanReplication
+	originNode    node.ID
+	splitSpans    []*heartbeatpb.TableSpan
+	checkpointTs  uint64
 	splitSpanInfo string
+
+	finished atomic.Bool
 
 	lck sync.Mutex
 }
@@ -116,7 +114,6 @@ func (m *SplitDispatcherOperator) OnTaskRemoved() {
 	defer m.lck.Unlock()
 
 	log.Info("task removed", zap.String("replicaSet", m.replicaSet.ID.String()))
-	m.taskRemoved.Store(true)
 	m.finished.Store(true)
 }
 
@@ -124,19 +121,8 @@ func (m *SplitDispatcherOperator) PostFinish() {
 	m.lck.Lock()
 	defer m.lck.Unlock()
 
-	if m.taskRemoved.Load() {
-		return
-	}
-	var newSpan []*replica.SpanReplication
-	for _, span := range m.splitSpans {
-		newSpan = append(newSpan,
-			replica.NewReplicaSet(
-				m.replicaSet.ChangefeedID,
-				common.NewDispatcherID(),
-				m.replicaSet.GetSchemaID(),
-				span, m.checkpointTs))
-	}
-	m.db.ReplaceReplicaSet([]*replica.SpanReplication{m.replicaSet}, newSpan)
+	m.db.ReplaceReplicaSet(m.replicaSet, m.splitSpans, m.checkpointTs)
+	log.Info("split dispatcher operator finished", zap.String("id", m.replicaSet.ID.String()))
 }
 
 func (m *SplitDispatcherOperator) String() string {

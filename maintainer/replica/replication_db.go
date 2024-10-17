@@ -16,6 +16,7 @@ package replica
 import (
 	"sync"
 
+	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/pingcap/log"
@@ -44,17 +45,8 @@ type ReplicationDB struct {
 
 // NewReplicaSetDB creates a new ReplicationDB and initializes the maps
 func NewReplicaSetDB(changefeedID string) *ReplicationDB {
-	db := &ReplicationDB{
-		changefeedID: changefeedID,
-		nodeTasks:    make(map[node.ID]map[common.DispatcherID]*SpanReplication),
-		schemaTasks:  make(map[int64]map[common.DispatcherID]*SpanReplication),
-		tableTasks:   make(map[int64]map[common.DispatcherID]*SpanReplication),
-
-		allTasks:    make(map[common.DispatcherID]*SpanReplication),
-		replicating: make(map[common.DispatcherID]*SpanReplication),
-		scheduling:  make(map[common.DispatcherID]*SpanReplication),
-		absent:      make(map[common.DispatcherID]*SpanReplication),
-	}
+	db := &ReplicationDB{changefeedID: changefeedID}
+	db.reset()
 	return db
 }
 
@@ -79,7 +71,7 @@ func (db *ReplicationDB) TryRemoveAll() []*SpanReplication {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	var tasks = make([]*SpanReplication, 0, len(db.replicating)+len(db.absent)+len(db.scheduling))
+	var tasks = make([]*SpanReplication, 0, len(db.replicating)+len(db.scheduling))
 	addMapToList := func(m map[common.DispatcherID]*SpanReplication) {
 		for _, stm := range m {
 			tasks = append(tasks, stm)
@@ -87,14 +79,7 @@ func (db *ReplicationDB) TryRemoveAll() []*SpanReplication {
 	}
 	addMapToList(db.replicating)
 	addMapToList(db.scheduling)
-
-	db.nodeTasks = make(map[node.ID]map[common.DispatcherID]*SpanReplication)
-	db.schemaTasks = make(map[int64]map[common.DispatcherID]*SpanReplication)
-	db.tableTasks = make(map[int64]map[common.DispatcherID]*SpanReplication)
-	db.allTasks = make(map[common.DispatcherID]*SpanReplication)
-	db.replicating = make(map[common.DispatcherID]*SpanReplication)
-	db.scheduling = make(map[common.DispatcherID]*SpanReplication)
-	db.absent = make(map[common.DispatcherID]*SpanReplication)
+	db.reset()
 	return tasks
 }
 
@@ -306,23 +291,31 @@ func (db *ReplicationDB) AddAbsentReplicaSet(tasks ...*SpanReplication) {
 	db.addAbsentReplicaSetUnLock(tasks...)
 }
 
-// ReplaceReplicaSet replaces the old replica set with the new replica set
-func (db *ReplicationDB) ReplaceReplicaSet(olds []*SpanReplication, news []*SpanReplication) bool {
+// ReplaceReplicaSet replaces the old replica set with the new spans
+func (db *ReplicationDB) ReplaceReplicaSet(old *SpanReplication, newSpans []*heartbeatpb.TableSpan, checkpointTs uint64) bool {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	// first check if all the old replica set exists, if not, return false
-	for _, old := range olds {
-		if _, ok := db.allTasks[old.ID]; !ok {
-			log.Warn("old replica set not found, skip",
-				zap.String("changefeed", db.changefeedID),
-				zap.String("span", old.ID.String()))
-			return false
-		}
+	// first check  the old replica set exists, if not, return false
+	if _, ok := db.allTasks[old.ID]; !ok {
+		log.Warn("old replica set not found, skip",
+			zap.String("changefeed", db.changefeedID),
+			zap.String("span", old.ID.String()))
+		return false
+	}
+
+	var news []*SpanReplication
+	for _, span := range newSpans {
+		news = append(news,
+			NewReplicaSet(
+				old.ChangefeedID,
+				common.NewDispatcherID(),
+				old.GetSchemaID(),
+				span, checkpointTs))
 	}
 
 	// remove and insert the new replica set
-	db.removeSpanUnLock(olds...)
+	db.removeSpanUnLock(old)
 	db.addAbsentReplicaSetUnLock(news...)
 	return true
 }
@@ -342,13 +335,6 @@ func (db *ReplicationDB) AddReplicatingSpan(task *SpanReplication) {
 	db.replicating[task.ID] = task
 	db.updateNodeMap("", nodeID, task)
 	db.addToSchemaAndTableMap(task)
-}
-
-// RemoveReplicaSet removes the replica set from the db
-func (db *ReplicationDB) RemoveReplicaSet(tasks ...*SpanReplication) {
-	db.lock.Lock()
-	defer db.lock.Unlock()
-	db.removeSpanUnLock(tasks...)
 }
 
 // MarkSpanAbsent move the span to the absent status
@@ -526,4 +512,15 @@ func (db *ReplicationDB) updateNodeMap(old, new node.ID, task *SpanReplication) 
 		}
 		newMap[task.ID] = task
 	}
+}
+
+// initMaps rest the maps of ReplicationDB
+func (db *ReplicationDB) reset() {
+	db.nodeTasks = make(map[node.ID]map[common.DispatcherID]*SpanReplication)
+	db.schemaTasks = make(map[int64]map[common.DispatcherID]*SpanReplication)
+	db.tableTasks = make(map[int64]map[common.DispatcherID]*SpanReplication)
+	db.allTasks = make(map[common.DispatcherID]*SpanReplication)
+	db.replicating = make(map[common.DispatcherID]*SpanReplication)
+	db.scheduling = make(map[common.DispatcherID]*SpanReplication)
+	db.absent = make(map[common.DispatcherID]*SpanReplication)
 }

@@ -170,7 +170,7 @@ func (s *StateMachine[ID]) pollOnCommit(
 	state heartbeatpb.ComponentState, status any, id node.ID,
 ) {
 	switch state {
-	case heartbeatpb.ComponentState_Stopped, heartbeatpb.ComponentState_Absent:
+	case heartbeatpb.ComponentState_Stopped:
 		s.Inferior.UpdateStatus(status)
 		s.Primary = ""
 		// primary is stopped and there is no secondary, transit to Absent.
@@ -194,7 +194,7 @@ func (s *StateMachine[ID]) pollOnWorking(
 	switch state {
 	case heartbeatpb.ComponentState_Working:
 		s.Inferior.UpdateStatus(status)
-	case heartbeatpb.ComponentState_Absent, heartbeatpb.ComponentState_Stopped:
+	case heartbeatpb.ComponentState_Stopped:
 		s.Inferior.UpdateStatus(status)
 		s.Primary = ""
 		s.State = SchedulerStatusAbsent
@@ -213,7 +213,7 @@ func (s *StateMachine[ID]) pollOnRemoving(
 	case heartbeatpb.ComponentState_Working:
 		s.Inferior.UpdateStatus(status)
 		return
-	case heartbeatpb.ComponentState_Absent, heartbeatpb.ComponentState_Stopped:
+	case heartbeatpb.ComponentState_Stopped:
 		if s.Secondary != "" {
 			// primary is stopped and reported last status
 			s.Inferior.UpdateStatus(status)

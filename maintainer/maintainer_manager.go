@@ -239,7 +239,7 @@ func (m *Manager) onRemoveMaintainerRequest(msg *messaging.TargetMessage) *heart
 			zap.Any("request", req))
 		return &heartbeatpb.MaintainerStatus{
 			ChangefeedID: req.GetId(),
-			State:        heartbeatpb.ComponentState_Absent,
+			State:        heartbeatpb.ComponentState_Stopped,
 		}
 	}
 	m.stream.In() <- &Event{
