@@ -20,61 +20,39 @@ import (
 )
 
 func TestNewTableIDRangeChecker(t *testing.T) {
-	// Test if NewTableIDRangeChecker initializes the object correctly with provided table IDs
-	tables := []int64{1, 2, 3}
-	rc := NewTableIDRangeChecker(tables)
+	rc := NewTableCountChecker(3)
 	require.NotNil(t, rc)
-	require.Len(t, rc.tables, 3)
-
-	// Check that the provided table IDs are correctly set
-	for _, tableID := range tables {
-		require.Contains(t, rc.tables, tableID)
-	}
+	require.Len(t, rc.reportedMap, 0)
+	require.Equal(t, 3, rc.needCount)
 }
 
 func TestAddSubRange(t *testing.T) {
-	// Test the AddSubRange function
-	rc := NewTableIDRangeChecker([]int64{1, 2, 3})
-	require.Len(t, rc.tables, 3)
-	// Add a table ID that exists in the tables map
+	rc := NewTableCountChecker(3)
+	require.Len(t, rc.reportedMap, 0)
 	rc.AddSubRange(1, nil, nil)
-	require.True(t, rc.tables[1])
-	require.False(t, rc.tables[2])
-	// Initially, none of the table IDs are reported, should return false
+	require.Len(t, rc.reportedMap, 1)
+	_, ok := rc.reportedMap[1]
+	require.True(t, ok)
 	require.False(t, rc.IsFullyCovered())
 }
 
 func TestIsFullyCovered(t *testing.T) {
-	// Test the IsFullyCovered function
-	rc := NewTableIDRangeChecker([]int64{1, 2, 3})
-
-	// Initially, none of the table IDs are reported, should return false
+	rc := NewTableCountChecker(3)
 	require.False(t, rc.IsFullyCovered())
-
-	// Report one table ID, should still return false
 	rc.AddSubRange(1, nil, nil)
 	require.False(t, rc.IsFullyCovered())
-
-	// Report all table IDs, should return true
 	rc.AddSubRange(2, nil, nil)
 	rc.AddSubRange(3, nil, nil)
 	require.True(t, rc.IsFullyCovered())
 }
 
 func TestReset(t *testing.T) {
-	// Test the Reset function
-	rc := NewTableIDRangeChecker([]int64{1, 2, 3})
-
-	// Add a table ID to reportedTables
+	rc := NewTableCountChecker(3)
 	rc.AddSubRange(1, nil, nil)
 	rc.AddSubRange(2, nil, nil)
 	rc.AddSubRange(3, nil, nil)
 	require.True(t, rc.IsFullyCovered())
-
-	// Call Reset, should clear reportedTables
 	rc.Reset()
-
-	// Ensure tables map remains unaffected
-	require.Len(t, rc.tables, 3)
+	require.Len(t, rc.reportedMap, 0)
 	require.False(t, rc.IsFullyCovered())
 }

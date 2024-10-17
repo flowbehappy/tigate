@@ -63,10 +63,11 @@ func TestOneBlockEvent(t *testing.T) {
 	require.True(t, event.writerDispatcher == stm.ID)
 	require.True(t, event.selected)
 	require.False(t, event.writerDispatcherAdvanced)
+	require.Len(t, resp.DispatcherStatuses, 2)
 	require.Equal(t, resp.DispatcherStatuses[0].Ack.CommitTs, uint64(10))
-	require.Equal(t, resp.DispatcherStatuses[0].Action.CommitTs, uint64(10))
-	require.Equal(t, resp.DispatcherStatuses[0].Action.Action, heartbeatpb.Action_Write)
-	require.True(t, resp.DispatcherStatuses[0].Action.IsSyncPoint)
+	require.Equal(t, resp.DispatcherStatuses[1].Action.CommitTs, uint64(10))
+	require.Equal(t, resp.DispatcherStatuses[1].Action.Action, heartbeatpb.Action_Write)
+	require.True(t, resp.DispatcherStatuses[1].Action.IsSyncPoint)
 
 	// test resend action and syncpoint is set
 	msgs := event.resend()
@@ -88,8 +89,30 @@ func TestOneBlockEvent(t *testing.T) {
 			},
 		},
 	})
-	require.Nil(t, msg)
+	require.NotNil(t, msg)
+	resp = msg.Message[0].(*heartbeatpb.HeartBeatResponse)
+	require.Equal(t, resp.DispatcherStatuses[0].Ack.CommitTs, uint64(10))
 	require.Len(t, barrier.blockedTs, 0)
+
+	//send event done again
+	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
+		ChangefeedID: "test",
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
+			{
+				ID: stm.ID.ToPB(),
+				State: &heartbeatpb.State{
+					BlockTs:     10,
+					IsBlocked:   true,
+					EventDone:   true,
+					IsSyncPoint: true,
+				},
+			},
+		},
+	})
+	require.Len(t, barrier.blockedTs, 0)
+	// no event if found, no message will be sent
+	require.NotNil(t, msg)
+	require.Equal(t, resp.DispatcherStatuses[0].Ack.CommitTs, uint64(10))
 }
 
 func TestNormalBlock(t *testing.T) {
@@ -111,7 +134,7 @@ func TestNormalBlock(t *testing.T) {
 	dropID := selectedRep.Span.TableID
 
 	newSpan := &heartbeatpb.Table{TableID: 10, SchemaID: 1}
-	barrier := NewBarrier(controller, true)
+	barrier := NewBarrier(controller, false)
 
 	// first node block request
 	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
@@ -153,7 +176,9 @@ func TestNormalBlock(t *testing.T) {
 	})
 	require.NotNil(t, msg)
 	resp := msg.Message[0].(*heartbeatpb.HeartBeatResponse)
-	require.Len(t, resp.DispatcherStatuses, 2)
+	require.Len(t, resp.DispatcherStatuses, 1)
+	require.True(t, resp.DispatcherStatuses[0].Ack.CommitTs == 10)
+	require.Len(t, resp.DispatcherStatuses[0].InfluencedDispatchers.DispatcherIDs, 2)
 
 	// other node block request
 	msg = barrier.HandleStatus("node2", &heartbeatpb.BlockStatusRequest{
@@ -345,10 +370,10 @@ func TestSchemaBlock(t *testing.T) {
 	})
 	require.NotNil(t, msg)
 	resp = msg.Message[0].(*heartbeatpb.HeartBeatResponse)
-	require.Len(t, resp.DispatcherStatuses, 1)
+	require.Len(t, resp.DispatcherStatuses, 2)
 	require.True(t, resp.DispatcherStatuses[0].Ack.CommitTs == 10)
-	require.True(t, resp.DispatcherStatuses[0].Action.CommitTs == 10)
-	require.True(t, resp.DispatcherStatuses[0].Action.Action == heartbeatpb.Action_Write)
+	require.True(t, resp.DispatcherStatuses[1].Action.CommitTs == 10)
+	require.True(t, resp.DispatcherStatuses[1].Action.Action == heartbeatpb.Action_Write)
 	key := eventKey{blockTs: 10}
 	event := barrier.blockedTs[key]
 	require.Equal(t, uint64(10), event.commitTs)
@@ -505,7 +530,8 @@ func TestSyncPointBlock(t *testing.T) {
 	})
 	// 2 ack message2
 	resp := msg.Message[0].(*heartbeatpb.HeartBeatResponse)
-	require.Len(t, resp.DispatcherStatuses, 2)
+	require.Len(t, resp.DispatcherStatuses, 1)
+	require.Len(t, resp.DispatcherStatuses[0].InfluencedDispatchers.DispatcherIDs, 2)
 	require.True(t, resp.DispatcherStatuses[0].Ack.CommitTs == 10)
 
 	// second dispatcher  block request
@@ -533,10 +559,10 @@ func TestSyncPointBlock(t *testing.T) {
 	})
 	// ack and write message
 	resp = msg.Message[0].(*heartbeatpb.HeartBeatResponse)
-	require.Len(t, resp.DispatcherStatuses, 1)
+	require.Len(t, resp.DispatcherStatuses, 2)
 	require.True(t, resp.DispatcherStatuses[0].Ack.CommitTs == 10)
-	require.True(t, resp.DispatcherStatuses[0].Action.CommitTs == 10)
-	require.True(t, resp.DispatcherStatuses[0].Action.Action == heartbeatpb.Action_Write)
+	require.True(t, resp.DispatcherStatuses[1].Action.CommitTs == 10)
+	require.True(t, resp.DispatcherStatuses[1].Action.Action == heartbeatpb.Action_Write)
 	key := eventKey{blockTs: 10, isSyncPoint: true}
 	event := barrier.blockedTs[key]
 	require.Equal(t, uint64(10), event.commitTs)

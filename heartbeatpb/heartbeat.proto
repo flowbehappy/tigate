@@ -197,10 +197,8 @@ message BlockStatusRequest {
 }
 
 enum ComponentState {
-    Unknown = 0;
-    Absent = 1;
-    Working = 2;
-    Stopped = 3;
+    Working = 0;
+    Stopped = 1;
 }
 
 message RunningError {

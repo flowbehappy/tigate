@@ -15,38 +15,30 @@ package range_checker
 
 // TableIDRangeChecker is used to check if all table IDs are covered.
 type TableIDRangeChecker struct {
-	tables map[int64]bool
+	needCount   int
+	reportedMap map[int64]struct{}
 }
 
-// NewTableIDRangeChecker creates a new TableIDRangeChecker.
-func NewTableIDRangeChecker(tables []int64) *TableIDRangeChecker {
+// NewTableCountChecker creates a new TableIDRangeChecker.
+func NewTableCountChecker(tables int) *TableIDRangeChecker {
 	tc := &TableIDRangeChecker{
-		tables: make(map[int64]bool, len(tables)),
-	}
-	for _, tableID := range tables {
-		tc.tables[tableID] = false
+		needCount:   tables,
+		reportedMap: make(map[int64]struct{}, tables),
 	}
 	return tc
 }
 
 // AddSubRange adds table id to the range checker.
 func (rc *TableIDRangeChecker) AddSubRange(tableID int64, _, _ []byte) {
-	rc.tables[tableID] = true
+	rc.reportedMap[tableID] = struct{}{}
 }
 
 // IsFullyCovered checks if all table IDs are covered.
 func (rc *TableIDRangeChecker) IsFullyCovered() bool {
-	for _, covered := range rc.tables {
-		if !covered {
-			return false
-		}
-	}
-	return true
+	return len(rc.reportedMap) == rc.needCount
 }
 
 // Reset resets the reported tables.
 func (rc *TableIDRangeChecker) Reset() {
-	for key, _ := range rc.tables {
-		rc.tables[key] = false
-	}
+	rc.reportedMap = make(map[int64]struct{}, rc.needCount)
 }

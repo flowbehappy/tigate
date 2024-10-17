@@ -80,7 +80,6 @@ func (m *RemoveDispatcherOperator) PostFinish() {
 	log.Info("remove dispatcher operator finished",
 		zap.String("replicaSet", m.replicaSet.ID.String()),
 		zap.String("changefeed", m.replicaSet.ChangefeedID.String()))
-	m.db.RemoveReplicaSet(m.replicaSet)
 }
 
 func (m *RemoveDispatcherOperator) String() string {
