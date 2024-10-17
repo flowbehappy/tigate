@@ -66,12 +66,15 @@ type Dispatcher struct {
 	id        common.DispatcherID
 	tableSpan *heartbeatpb.TableSpan
 	sink      tisink.Sink
+	// lastEventSeq is the sequence number of the last received DML/DDL event.
+	// It is used to ensure the order of events.
+	lastEventSeq atomic.Uint64
 
-	// TableSpanStatus use to report checkpointTs / componentStatus to Maintainer
-	statusesChan chan *heartbeatpb.TableSpanStatus
-
-	// TableSpanBlockStatus use to report block status of ddl/sync point event to Maintainer
+	// blockStatusesChan use to report block status of ddl/sync point event to Maintainer
 	blockStatusesChan chan *heartbeatpb.TableSpanBlockStatus
+
+	// dispatcherStatusChan is used to report the status of the dispatcher to the dispatcherManager
+	dispatcherActionChan chan common.DispatcherAction
 
 	SyncPointInfo *syncpoint.SyncPointInfo
 
@@ -100,7 +103,7 @@ func NewDispatcher(
 	tableSpan *heartbeatpb.TableSpan,
 	sink tisink.Sink,
 	startTs uint64,
-	statusesChan chan *heartbeatpb.TableSpanStatus,
+	dispatcherActionChan chan common.DispatcherAction,
 	blockStatusesChan chan *heartbeatpb.TableSpanBlockStatus,
 	filter filter.Filter,
 	schemaID int64,
@@ -110,8 +113,8 @@ func NewDispatcher(
 		id:                    id,
 		tableSpan:             tableSpan,
 		sink:                  sink,
-		statusesChan:          statusesChan,
 		blockStatusesChan:     blockStatusesChan,
+		dispatcherActionChan:  dispatcherActionChan,
 		SyncPointInfo:         syncPointInfo,
 		componentStatus:       newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
 		resolvedTs:            newTsWithMutex(startTs),
@@ -211,6 +214,24 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 		case commonEvent.TypeDMLEvent:
 			onlyResolvedTs = false
 			event := event.(*commonEvent.DMLEvent)
+
+			// check if the event is stale
+			if event.CommitTs < d.resolvedTs.Get() {
+				log.Warn("received a stale event", zap.Any("event", event), zap.Any("dispatcher", d.id))
+				return false
+			}
+
+			// check if the event is out of order
+			if event.Seq != d.lastEventSeq.Load()+1 {
+				log.Warn("received a out-of-order event", zap.Any("event", event), zap.Any("dispatcher", d.id))
+				// TODO: handle the out-of-order event
+				// Reset the dispatcher.
+				return false
+			}
+
+			// Update the last event sequence number.
+			d.lastEventSeq.Store(event.Seq)
+
 			event.AddPostFlushFunc(func() {
 				// Considering dml event in sink may be write to downstream not in order,
 				// thus, we use tableProgress.Empty() to ensure these events are flushed to downstream completely
@@ -235,6 +256,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 				dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
 				dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
 			})
+			d.lastEventSeq.Store(event.Seq)
 			d.dealWithBlockEvent(event)
 		case commonEvent.TypeSyncPointEvent:
 			if len(dispatcherEvents) != 1 {
@@ -415,6 +437,13 @@ func (d *Dispatcher) Remove() {
 			log.Error("remove dispatcher from dynamic stream failed", zap.Error(err))
 		}
 	}
+}
+
+// Reset is used to reset the dispatcher when the event is out-of-order.
+// It remove the dispatcher from all dynamic streams, and send a message to
+// the dispatcherManager to reset it.
+func (d *Dispatcher) Reset() {
+	d.Remove()
 }
 
 func (d *Dispatcher) TryClose() (w heartbeatpb.Watermark, ok bool) {

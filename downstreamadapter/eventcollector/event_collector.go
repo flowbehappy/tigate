@@ -18,9 +18,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/pkg/node"
 
-	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
 	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
@@ -57,15 +57,24 @@ func (m *DispatcherMap) Delete(dispatcherId common.DispatcherID) {
 	m.m.Delete(dispatcherId)
 }
 
-type RegisterInfo struct {
+type DispatcherRequest struct {
 	Dispatcher   *dispatcher.Dispatcher
+	ActionType   eventpb.ActionType
 	StartTs      uint64
 	FilterConfig *eventpb.FilterConfig
 }
 
+const (
+	eventServiceTopic         = messaging.EventServiceTopic
+	eventCollectorTopic       = messaging.EventCollectorTopic
+	typeRegisterDispatcherReq = messaging.TypeRegisterDispatcherRequest
+)
+
 /*
-EventCollector is responsible for collecting the events from event service and dispatching them to different dispatchers.
-Besides, EventCollector also generate SyncPoint Event for dispatchers when necessary.
+EventCollector is the relay between EventService and DispatcherManager, responsible for:
+1. Send dispatcher request to EventService.
+2. Collect the events from EvenService and dispatch them to different dispatchers.
+3. Generate SyncPoint Event for dispatchers when necessary.
 EventCollector is an instance-level component.
 */
 type EventCollector struct {
@@ -75,9 +84,14 @@ type EventCollector struct {
 	mc                messaging.MessageCenter
 	wg                sync.WaitGroup
 
-	dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DispatcherEvent, *dispatcher.Dispatcher]
+	// dispatcherRequestChan is used cached dispatcher request when some error occurs.
+	dispatcherRequestChan *chann.DrainableChann[DispatcherRequest]
 
-	registerMessageChan                          *chann.DrainableChann[RegisterInfo] // for temp
+	// ds is the dynamicStream for dispatcher events.
+	// All the events from event service will be sent to ds to handle.
+	// ds will dispatch the events to different dispatchers according to the dispatcherID.
+	ds dynstream.DynamicStream[common.DispatcherID, dispatcher.DispatcherEvent, *dispatcher.Dispatcher]
+
 	metricDispatcherReceivedKVEventCount         prometheus.Counter
 	metricDispatcherReceivedResolvedTsEventCount prometheus.Counter
 	metricReceiveEventLagDuration                prometheus.Observer
@@ -88,8 +102,8 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 		serverId:                             serverId,
 		globalMemoryQuota:                    globalMemoryQuota,
 		dispatcherMap:                        &DispatcherMap{},
-		dispatcherEventsDynamicStream:        dispatcher.GetDispatcherEventsDynamicStream(),
-		registerMessageChan:                  chann.NewAutoDrainChann[RegisterInfo](),
+		ds:                                   dispatcher.GetDispatcherEventsDynamicStream(),
+		dispatcherRequestChan:                chann.NewAutoDrainChann[DispatcherRequest](),
 		mc:                                   appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
@@ -101,20 +115,7 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 	eventCollector.wg.Add(1)
 	go func() {
 		defer eventCollector.wg.Done()
-		for {
-			registerInfo := <-eventCollector.registerMessageChan.Out()
-			var err error
-			if registerInfo.StartTs > 0 {
-				err = eventCollector.RegisterDispatcher(registerInfo)
-			} else {
-				err = eventCollector.RemoveDispatcher(registerInfo.Dispatcher)
-			}
-			if err != nil {
-				// Wait for a while to avoid sending too many requests, since the
-				// event service may be busy.
-				time.Sleep(10 * time.Millisecond)
-			}
-		}
+		eventCollector.processDispatcherRequests()
 	}()
 	eventCollector.wg.Add(1)
 	go func() {
@@ -124,58 +125,62 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 	return &eventCollector
 }
 
-// RegisterDispatcher register a dispatcher to event collector.
-// If the dispatcher is not table trigger event dispatcher, filterConfig will be nil.
-func (c *EventCollector) RegisterDispatcher(info RegisterInfo) error {
-	err := c.mc.SendCommand(&messaging.TargetMessage{
-		To:    c.serverId, // TODO: This has to be adjust, the target serviceID should be contain in registerInfo.
-		Topic: messaging.EventServiceTopic,
-		Type:  messaging.TypeRegisterDispatcherRequest,
-		Message: []messaging.IOTypeT{&messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
-			DispatcherId:      info.Dispatcher.GetId().ToPB(),
-			TableSpan:         info.Dispatcher.GetTableSpan(),
-			ActionType:        eventpb.ActionType_ACTION_TYPE_REGISTER,
-			StartTs:           info.StartTs,
-			ServerId:          c.serverId.String(),
-			FilterConfig:      info.FilterConfig,
-			EnableSyncPoint:   info.Dispatcher.EnableSyncPoint(),
-			SyncPointTs:       info.Dispatcher.GetSyncPointTs(),
-			SyncPointInterval: uint64(info.Dispatcher.GetSyncPointInterval().Seconds()),
-		}}},
-	})
-	if err != nil {
-		log.Error("failed to send register dispatcher request message, retry later", zap.Error(err))
-		c.registerMessageChan.In() <- info
-		return err
-	}
-	c.dispatcherMap.Set(info.Dispatcher.GetId(), info.Dispatcher)
-	metrics.EventCollectorRegisteredDispatcherCount.Inc()
-	return nil
-}
-
-func (c *EventCollector) RemoveDispatcher(d *dispatcher.Dispatcher) error {
-	err := c.mc.SendCommand(&messaging.TargetMessage{
-		To:    c.serverId,
-		Topic: messaging.EventServiceTopic,
-		Type:  messaging.TypeRegisterDispatcherRequest,
-		Message: []messaging.IOTypeT{&messaging.RegisterDispatcherRequest{RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
-			DispatcherId: d.GetId().ToPB(),
-			ActionType:   eventpb.ActionType_ACTION_TYPE_REMOVE,
-			ServerId:     c.serverId.String(),
-			TableSpan:    d.GetTableSpan(),
-		}}}})
-	if err != nil {
-		log.Error("failed to send register dispatcher request message", zap.Error(err))
-		c.registerMessageChan.In() <- RegisterInfo{
-			Dispatcher: d,
-			StartTs:    0,
+func (c *EventCollector) processDispatcherRequests() {
+	defer c.wg.Done()
+	for req := range c.dispatcherRequestChan.Out() {
+		if err := c.SendDispatcherRequest(req); err != nil {
+			log.Error("failed to process dispatcher action", zap.Error(err))
 		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func (c *EventCollector) SendDispatcherRequest(req DispatcherRequest) error {
+	message := &messaging.RegisterDispatcherRequest{
+		RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
+			DispatcherId: req.Dispatcher.GetId().ToPB(),
+			ActionType:   req.ActionType,
+			// FIXME: It can be another server id in the future.
+			ServerId:  c.serverId.String(),
+			TableSpan: req.Dispatcher.GetTableSpan(),
+			StartTs:   req.StartTs,
+		},
+	}
+
+	// If the action type is register, we need fill all config related fields.
+	if req.ActionType == eventpb.ActionType_ACTION_TYPE_REGISTER {
+		message.RegisterDispatcherRequest.FilterConfig = req.FilterConfig
+		message.RegisterDispatcherRequest.EnableSyncPoint = req.Dispatcher.EnableSyncPoint()
+		message.RegisterDispatcherRequest.SyncPointTs = req.Dispatcher.GetSyncPointTs()
+		message.RegisterDispatcherRequest.SyncPointInterval = uint64(req.Dispatcher.GetSyncPointInterval().Seconds())
+	}
+
+	err := c.mc.SendCommand(&messaging.TargetMessage{
+		To:      c.serverId,
+		Topic:   eventServiceTopic,
+		Type:    typeRegisterDispatcherReq,
+		Message: []messaging.IOTypeT{message},
+	})
+
+	if err != nil {
+		log.Error("failed to send dispatcher request message to event service, try again later", zap.Error(err))
+		// Put the request back to the channel for later retry.
+		c.dispatcherRequestChan.In() <- req
 		return err
 	}
-	c.dispatcherMap.Delete(d.GetId())
+
+	// If the action type is register or remove, we need to update the dispatcher map.
+	if req.ActionType == eventpb.ActionType_ACTION_TYPE_REGISTER {
+		c.dispatcherMap.Set(req.Dispatcher.GetId(), req.Dispatcher)
+		metrics.EventCollectorRegisteredDispatcherCount.Inc()
+	} else if req.ActionType == eventpb.ActionType_ACTION_TYPE_REMOVE {
+		c.dispatcherMap.Delete(req.Dispatcher.GetId())
+	}
+
 	return nil
 }
 
+// RecvEventsMessage is the handler for the events message from EventService.
 func (c *EventCollector) RecvEventsMessage(_ context.Context, msg *messaging.TargetMessage) error {
 	inflightDuration := time.Since(time.Unix(0, msg.CreateAt)).Milliseconds()
 	c.metricReceiveEventLagDuration.Observe(float64(inflightDuration))
@@ -188,11 +193,11 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, msg *messaging.Tar
 		case commonEvent.TypeBatchResolvedEvent:
 			for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
 				c.metricDispatcherReceivedResolvedTsEventCount.Inc()
-				c.dispatcherEventsDynamicStream.In() <- dispatcher.NewDispatcherEvent(e)
+				c.ds.In() <- dispatcher.NewDispatcherEvent(e)
 			}
 		default:
 			c.metricDispatcherReceivedKVEventCount.Inc()
-			c.dispatcherEventsDynamicStream.In() <- dispatcher.NewDispatcherEvent(event)
+			c.ds.In() <- dispatcher.NewDispatcherEvent(event)
 		}
 	}
 	return nil
@@ -201,29 +206,32 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, msg *messaging.Tar
 func (c *EventCollector) updateMetrics(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-	c.wg.Add(1)
+	defer c.wg.Done()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			minResolvedTs := uint64(0)
-			c.dispatcherMap.m.Range(func(key, value interface{}) bool {
-				d, ok := value.(*dispatcher.Dispatcher)
-				if !ok {
-					return true
-				}
-				if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
-					minResolvedTs = d.GetResolvedTs()
-				}
-
-				return true
-			})
-			if minResolvedTs == 0 {
-				continue
-			}
-			phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
-			metrics.EventCollectorResolvedTsLagGauge.Set(float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3)
+			c.updateResolvedTsMetric()
 		}
+	}
+}
+
+func (c *EventCollector) updateResolvedTsMetric() {
+	var minResolvedTs uint64
+	c.dispatcherMap.m.Range(func(_, value interface{}) bool {
+		if d, ok := value.(*dispatcher.Dispatcher); ok {
+			if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
+				minResolvedTs = d.GetResolvedTs()
+			}
+		}
+		return true
+	})
+
+	if minResolvedTs > 0 {
+		phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
+		lagMs := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
+		metrics.EventCollectorResolvedTsLagGauge.Set(lagMs)
 	}
 }

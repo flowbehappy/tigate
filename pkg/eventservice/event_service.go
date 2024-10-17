@@ -90,6 +90,8 @@ func (s *eventService) Run(ctx context.Context) error {
 				s.pauseDispatcher(info)
 			case eventpb.ActionType_ACTION_TYPE_RESUME:
 				s.resumeDispatcher(info)
+			case eventpb.ActionType_ACTION_TYPE_RESET:
+				s.resetDispatcher(info)
 			default:
 				log.Panic("invalid action type", zap.Any("info", info))
 			}
@@ -153,6 +155,15 @@ func (s *eventService) resumeDispatcher(dispatcherInfo DispatcherInfo) {
 		return
 	}
 	c.resumeDispatcher(dispatcherInfo)
+}
+
+func (s *eventService) resetDispatcher(dispatcherInfo DispatcherInfo) {
+	clusterID := dispatcherInfo.GetClusterID()
+	c, ok := s.brokers[clusterID]
+	if !ok {
+		return
+	}
+	c.resetDispatcher(dispatcherInfo)
 }
 
 func msgToDispatcherInfo(msg *messaging.TargetMessage) []DispatcherInfo {

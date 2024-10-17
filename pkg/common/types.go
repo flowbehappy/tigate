@@ -3,6 +3,7 @@ package common
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"strconv"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
@@ -147,4 +148,34 @@ func NewGIDWithValue(low uint64, high uint64) GID {
 		low:  low,
 		high: high,
 	}
+}
+
+type Action uint8
+
+func (a Action) String() string {
+	switch a {
+	case ActionPause:
+		return "pause"
+	case ActionResume:
+		return "resume"
+	case ActionReset:
+		return "reset"
+	default:
+		return "unknown"
+	}
+}
+
+const (
+	ActionPause  Action = 0
+	ActionResume Action = 1
+	ActionReset  Action = 2
+)
+
+type DispatcherAction struct {
+	DispatcherID DispatcherID
+	Action       Action
+}
+
+func (a DispatcherAction) String() string {
+	return fmt.Sprintf("dispatcherID: %s, action: %s", a.DispatcherID, a.Action.String())
 }
