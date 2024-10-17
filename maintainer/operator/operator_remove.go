@@ -42,7 +42,10 @@ func NewRemoveDispatcherOperator(db *replica.ReplicationDB, replicaSet *replica.
 }
 
 func (m *RemoveDispatcherOperator) Check(from node.ID, status *heartbeatpb.TableSpanStatus) {
-	if from == m.replicaSet.GetNodeID() && status.ComponentStatus == heartbeatpb.ComponentState_Working {
+	if !m.finished.Load() && from == m.replicaSet.GetNodeID() &&
+		status.ComponentStatus != heartbeatpb.ComponentState_Working {
+		log.Info("dispatcher report non-working status",
+			zap.String("replicaSet", m.replicaSet.ID.String()))
 		m.finished.Store(true)
 	}
 }
@@ -82,8 +85,8 @@ func (m *RemoveDispatcherOperator) PostFinish() {
 }
 
 func (m *RemoveDispatcherOperator) String() string {
-	return fmt.Sprintf("remove dispatcher operator: %s",
-		m.replicaSet.ID)
+	return fmt.Sprintf("remove dispatcher operator: %s, dest %s",
+		m.replicaSet.ID, m.replicaSet.GetNodeID())
 }
 
 func (m *RemoveDispatcherOperator) Type() string {

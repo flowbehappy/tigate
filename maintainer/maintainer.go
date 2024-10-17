@@ -247,6 +247,9 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 }
 
 func (m *Maintainer) initialize() error {
+	start := time.Now()
+	log.Info("start to initialize changefeed maintainer",
+		zap.String("id", m.id.String()))
 	tables, err := m.initTables()
 	if err != nil {
 		return errors.Trace(err)
@@ -254,7 +257,8 @@ func (m *Maintainer) initialize() error {
 	m.controller.SetInitialTables(tables)
 
 	log.Info("changefeed maintainer initialized",
-		zap.String("id", m.id.String()))
+		zap.String("id", m.id.String()),
+		zap.Duration("duration", time.Since(start)))
 	m.initialized = true
 	m.state = heartbeatpb.ComponentState_Working
 	m.statusChanged.Store(true)

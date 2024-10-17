@@ -62,17 +62,30 @@ func (m *DispatcherOrchestrator) RecvMaintainerRequest(_ context.Context, msg *m
 func (m *DispatcherOrchestrator) handleAddDispatcherManager(from node.ID, req *heartbeatpb.MaintainerBootstrapRequest) error {
 	cfId := model.DefaultChangeFeedID(req.ChangefeedID)
 	manager, exists := m.dispatcherManagers[cfId]
-
 	if !exists {
 		cfConfig := &config.ChangefeedConfig{}
 		if err := json.Unmarshal(req.Config, cfConfig); err != nil {
 			log.Panic("failed to unmarshal changefeed config", zap.String("changefeed id", req.ChangefeedID), zap.Error(err))
 			return err
 		}
-		manager = dispatchermanager.NewEventDispatcherManager(cfId, cfConfig, from)
+		manager, err := dispatchermanager.NewEventDispatcherManager(cfId, cfConfig, from)
+		// Fast return the error to maintainer.
+		if err != nil {
+			log.Error("failed to create new dispatcher manager", zap.Error(err), zap.Any("ChangefeedID", cfId))
+			// TODO: deal with the repsonse in maintainer, and turn to changefeed error state
+			response := &heartbeatpb.MaintainerBootstrapResponse{
+				ChangefeedID: req.ChangefeedID,
+				Err: &heartbeatpb.RunningError{
+					Message: err.Error(),
+				},
+			}
+			return m.sendResponse(from, messaging.MaintainerManagerTopic, response)
+		}
 		m.dispatcherManagers[cfId] = manager
 		metrics.EventDispatcherManagerGauge.WithLabelValues(cfId.Namespace, cfId.ID).Inc()
-	} else if manager.GetMaintainerID() != from {
+	}
+
+	if manager.GetMaintainerID() != from {
 		manager.SetMaintainerID(from)
 	}
 

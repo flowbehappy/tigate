@@ -124,6 +124,7 @@ message MaintainerBootstrapRequest {
 message MaintainerBootstrapResponse {
     string changefeedID = 1;
     repeated BootstrapTableSpan spans = 2;
+    RunningError err = 3;
 }
 
 message BootstrapTableSpan {
