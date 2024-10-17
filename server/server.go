@@ -65,7 +65,7 @@ type server struct {
 	coordinatorMu sync.Mutex
 	coordinator   node.Coordinator
 
-	dispatcherManagerManager *dispatchermanagermanager.DispatcherManagerManager
+	dispatcherOrchestrator *dispatchermanagermanager.DispatcherOrchestrator
 
 	// session keeps alive between the server and etcd
 	session *concurrency.Session
@@ -119,7 +119,7 @@ func (c *server) initialize(ctx context.Context) error {
 
 	appcontext.SetService(appcontext.EventCollector, eventcollector.New(ctx, 100*1024*1024*1024, c.info.ID)) // 100GB for demo
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(c.info.ID))
-	c.dispatcherManagerManager = dispatchermanagermanager.New()
+	c.dispatcherOrchestrator = dispatchermanagermanager.New()
 
 	nodeManager := watcher.NewNodeManager(c.session, c.EtcdClient)
 	nodeManager.RegisterNodeChangeHandler(
