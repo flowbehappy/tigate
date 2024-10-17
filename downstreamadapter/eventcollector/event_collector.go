@@ -35,28 +35,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type DispatcherMap struct {
-	// dispatcher_id --> dispatcher
-	m sync.Map
-}
-
-func (m *DispatcherMap) Get(dispatcherId common.DispatcherID) (*dispatcher.Dispatcher, bool) {
-	d, ok := m.m.Load(dispatcherId)
-	if !ok {
-		return nil, false
-	}
-	dispatcher, ok := d.(*dispatcher.Dispatcher)
-	return dispatcher, ok
-}
-
-func (m *DispatcherMap) Set(dispatcherId common.DispatcherID, d *dispatcher.Dispatcher) {
-	m.m.Store(dispatcherId, d)
-}
-
-func (m *DispatcherMap) Delete(dispatcherId common.DispatcherID) {
-	m.m.Delete(dispatcherId)
-}
-
 type DispatcherRequest struct {
 	Dispatcher   *dispatcher.Dispatcher
 	ActionType   eventpb.ActionType
@@ -79,7 +57,7 @@ EventCollector is an instance-level component.
 */
 type EventCollector struct {
 	serverId          node.ID
-	dispatcherMap     *DispatcherMap
+	dispatcherMap     sync.Map
 	globalMemoryQuota int64
 	mc                messaging.MessageCenter
 	wg                sync.WaitGroup
@@ -101,7 +79,7 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 	eventCollector := EventCollector{
 		serverId:                             serverId,
 		globalMemoryQuota:                    globalMemoryQuota,
-		dispatcherMap:                        &DispatcherMap{},
+		dispatcherMap:                        sync.Map{},
 		ds:                                   dispatcher.GetDispatcherEventsDynamicStream(),
 		dispatcherRequestChan:                chann.NewAutoDrainChann[DispatcherRequest](),
 		mc:                                   appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
@@ -171,7 +149,7 @@ func (c *EventCollector) SendDispatcherRequest(req DispatcherRequest) error {
 
 	// If the action type is register or remove, we need to update the dispatcher map.
 	if req.ActionType == eventpb.ActionType_ACTION_TYPE_REGISTER {
-		c.dispatcherMap.Set(req.Dispatcher.GetId(), req.Dispatcher)
+		c.dispatcherMap.Store(req.Dispatcher.GetId(), req.Dispatcher)
 		metrics.EventCollectorRegisteredDispatcherCount.Inc()
 	} else if req.ActionType == eventpb.ActionType_ACTION_TYPE_REMOVE {
 		c.dispatcherMap.Delete(req.Dispatcher.GetId())
@@ -220,7 +198,7 @@ func (c *EventCollector) updateMetrics(ctx context.Context) {
 
 func (c *EventCollector) updateResolvedTsMetric() {
 	var minResolvedTs uint64
-	c.dispatcherMap.m.Range(func(_, value interface{}) bool {
+	c.dispatcherMap.Range(func(_, value interface{}) bool {
 		if d, ok := value.(*dispatcher.Dispatcher); ok {
 			if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
 				minResolvedTs = d.GetResolvedTs()
