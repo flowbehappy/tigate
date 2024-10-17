@@ -11,23 +11,66 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package maintainer
+package range_checker
 
 import (
 	"bytes"
 
 	"github.com/google/btree"
+	"github.com/pingcap/tiflow/pkg/spanz"
 )
 
-// RangeChecker is used to check if all ranges cover the start and end byte slices.
-type RangeChecker struct {
+// TableSpanRangeChecker is used to check if all ranges cover the start and end byte slices.
+type TableSpanRangeChecker struct {
+	tableSpans map[int64]*SpanCoverageChecker
+}
+
+// NewTableSpanRangeChecker creates a new TableSpanRangeChecker with given start and end.
+func NewTableSpanRangeChecker(tables []int64) *TableSpanRangeChecker {
+	sc := &TableSpanRangeChecker{
+		tableSpans: make(map[int64]*SpanCoverageChecker),
+	}
+	for _, table := range tables {
+		span := spanz.TableIDToComparableSpan(table)
+		sc.tableSpans[table] = NewTableSpanCoverageChecker(span.StartKey, span.EndKey)
+	}
+	return sc
+}
+
+// AddSubRange adds a sub-range to the range checker.
+func (rc *TableSpanRangeChecker) AddSubRange(tableID int64, newStart, newEnd []byte) {
+	if span, ok := rc.tableSpans[tableID]; ok {
+		span.AddSubRange(newStart, newEnd)
+	}
+}
+
+// IsFullyCovered checks if the entire range from start to end is covered.
+func (rc *TableSpanRangeChecker) IsFullyCovered() bool {
+	for _, span := range rc.tableSpans {
+		if !span.IsFullyCovered() {
+			return false
+		}
+	}
+	return true
+}
+
+// Reset resets the range checker reported sub spans
+func (rc *TableSpanRangeChecker) Reset() {
+	for _, span := range rc.tableSpans {
+		span.Reset()
+	}
+}
+
+// SpanCoverageChecker use the span coverage checker to check if the entire range from start to end is covered.
+// only sub span can be added to the checker.
+type SpanCoverageChecker struct {
 	start, end []byte
 	tree       *btree.BTreeG[*RangeNode]
 }
 
-// NewRangeChecker creates a new RangeChecker with given start and end.
-func NewRangeChecker(start, end []byte) *RangeChecker {
-	return &RangeChecker{
+// NewTableSpanCoverageChecker creates a new NewTableSpanCoverageChecker with given start and end.
+func NewTableSpanCoverageChecker(start, end []byte) *SpanCoverageChecker {
+	return &SpanCoverageChecker{
 		start: start,
 		end:   end,
 		tree:  btree.NewG[*RangeNode](4, rangeLockEntryLess),
@@ -35,7 +78,7 @@ func NewRangeChecker(start, end []byte) *RangeChecker {
 }
 
 // AddSubRange adds a sub-range to the range checker.
-func (rc *RangeChecker) AddSubRange(newStart, newEnd []byte) {
+func (rc *SpanCoverageChecker) AddSubRange(newStart, newEnd []byte) {
 	// Iterate through the B-tree to find overlapping or adjacent ranges
 	var toDelete []*RangeNode
 
@@ -83,7 +126,7 @@ func (rc *RangeChecker) AddSubRange(newStart, newEnd []byte) {
 }
 
 // IsFullyCovered checks if the entire range from start to end is covered.
-func (rc *RangeChecker) IsFullyCovered() bool {
+func (rc *SpanCoverageChecker) IsFullyCovered() bool {
 	if rc.tree.Len() == 0 {
 		return false
 	}
@@ -104,7 +147,8 @@ func (rc *RangeChecker) IsFullyCovered() bool {
 	return bytes.Equal(currentStart, rc.end)
 }
 
-func (rc *RangeChecker) Reset() {
+// Reset resets the range checker reported sub spans
+func (rc *SpanCoverageChecker) Reset() {
 	rc.tree = btree.NewG[*RangeNode](4, rangeLockEntryLess)
 }
 
