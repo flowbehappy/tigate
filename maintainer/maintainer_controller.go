@@ -102,6 +102,7 @@ func NewController(changefeedID string,
 func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableSpanStatus) {
 	for _, status := range statusList {
 		dispatcherID := common.NewDispatcherIDFromPB(status.ID)
+		c.operatorController.UpdateOperatorStatus(dispatcherID, from, status)
 		stm := c.GetTask(dispatcherID)
 		if stm == nil {
 			log.Warn("no span found, ignore",
@@ -115,7 +116,6 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableS
 			}
 			continue
 		}
-		c.operatorController.UpdateOperatorStatus(dispatcherID, from, status)
 		nodeID := stm.GetNodeID()
 		if nodeID != from {
 			// todo: handle the case that the node id is mismatch

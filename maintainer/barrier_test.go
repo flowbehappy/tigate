@@ -427,7 +427,7 @@ func TestSchemaBlock(t *testing.T) {
 	require.Equal(t, 1, controller.replicationDB.GetAbsentSize())
 	require.Equal(t, 2, controller.operatorController.OperatorSize())
 	// two dispatcher and moved to operator queue, operator will be removed after ack
-	require.Equal(t, 3, controller.replicationDB.GetReplicatingSize())
+	require.Equal(t, 1, controller.replicationDB.GetReplicatingSize())
 	for _, task := range controller.replicationDB.GetReplicating() {
 		op := controller.operatorController.GetOperator(task.ID)
 		if op != nil {
