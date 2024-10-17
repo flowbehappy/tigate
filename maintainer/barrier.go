@@ -178,6 +178,9 @@ func (b *Barrier) checkEvent(be *BarrierEvent,
 		return nil
 	}
 	if be.selected {
+		log.Info("the all dispatchers reported event done, remove event and schedule it",
+			zap.String("changefeed", be.cfID),
+			zap.Uint64("committs", be.commitTs))
 		// already selected a dispatcher to write, now all dispatchers reported the block event
 		delete(b.blockedTs, getEventKey(be.commitTs, be.isSyncPoint))
 		be.scheduleBlockEvent()
