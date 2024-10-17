@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/dispatchermanager"
-	dispatchermanagermanager "github.com/flowbehappy/tigate/downstreamadapter/dispathermanagermanager"
+	"github.com/flowbehappy/tigate/downstreamadapter/dispatcherorchestrator"
 	"github.com/flowbehappy/tigate/downstreamadapter/eventcollector"
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
@@ -65,7 +65,7 @@ type server struct {
 	coordinatorMu sync.Mutex
 	coordinator   node.Coordinator
 
-	dispatcherOrchestrator *dispatchermanagermanager.DispatcherOrchestrator
+	dispatcherOrchestrator *dispatcherorchestrator.DispatcherOrchestrator
 
 	// session keeps alive between the server and etcd
 	session *concurrency.Session
@@ -119,7 +119,7 @@ func (c *server) initialize(ctx context.Context) error {
 
 	appcontext.SetService(appcontext.EventCollector, eventcollector.New(ctx, 100*1024*1024*1024, c.info.ID)) // 100GB for demo
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(c.info.ID))
-	c.dispatcherOrchestrator = dispatchermanagermanager.New()
+	c.dispatcherOrchestrator = dispatcherorchestrator.New()
 
 	nodeManager := watcher.NewNodeManager(c.session, c.EtcdClient)
 	nodeManager.RegisterNodeChangeHandler(
