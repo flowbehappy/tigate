@@ -72,6 +72,8 @@ type EventDispatcherManager struct {
 	// blockStatusesChan will fetch the tableSpan block status about ddl event and sync point event
 	// that need to report to maintainer
 	blockStatusesChan chan *heartbeatpb.TableSpanBlockStatus
+	// dispatcherActionChan
+	dispatcherActionChan chan common.DispatcherAction
 
 	filter filter.Filter
 
@@ -229,7 +231,10 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 		syncPointInfo.InitSyncPointTs = syncpoint.CalculateStartSyncPointTs(startTs, e.syncPointConfig.SyncPointInterval)
 	}
 
-	dispatcher := dispatcher.NewDispatcher(id, tableSpan, e.sink, startTs, e.statusesChan, e.blockStatusesChan, e.filter, schemaID, e.schemaIDToDispatchers, &syncPointInfo)
+	dispatcher := dispatcher.NewDispatcher(
+		id, tableSpan, e.sink,
+		startTs, e.dispatcherActionChan, e.blockStatusesChan,
+		e.filter, schemaID, e.schemaIDToDispatchers, &syncPointInfo)
 
 	// lazy create heartBeatTask when event dispatcher manager has dispatchers
 	if e.heartBeatTask == nil {
@@ -242,10 +247,11 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 		e.schemaIDToDispatchers.Set(schemaID, id)
 	}
 
-	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RegisterDispatcher(
-		eventcollector.RegisterInfo{
+	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).SendDispatcherRequest(
+		eventcollector.DispatcherRequest{
 			Dispatcher:   dispatcher,
 			StartTs:      startTs,
+			ActionType:   eventpb.ActionType_ACTION_TYPE_REGISTER,
 			FilterConfig: toFilterConfigPB(e.config.Filter),
 		},
 	)
@@ -343,14 +349,56 @@ func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx conte
 	}
 }
 
+// CollectDispatcherAction is used to collect the dispatcher action from the dispatcher action channel.
+// The action could be pause, resume, reset.
+func (e *EventDispatcherManager) CollectDispatcherAction(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case a := <-e.dispatcherActionChan:
+			d, ok := e.dispatcherMap.Get(a.DispatcherID)
+			if !ok {
+				continue
+			}
+			var req eventcollector.DispatcherRequest
+			switch a.Action {
+			case common.ActionPause:
+				// Get eventCollector
+				req = eventcollector.DispatcherRequest{
+					Dispatcher: d,
+					ActionType: eventpb.ActionType_ACTION_TYPE_PAUSE,
+				}
+			case common.ActionResume:
+				req = eventcollector.DispatcherRequest{
+					Dispatcher: d,
+					ActionType: eventpb.ActionType_ACTION_TYPE_PAUSE,
+				}
+				// Get eventCollector
+			case common.ActionReset:
+				req = eventcollector.DispatcherRequest{
+					Dispatcher: d,
+					ActionType: eventpb.ActionType_ACTION_TYPE_PAUSE,
+				}
+			default:
+				log.Panic("unknown action type", zap.Any("action", a))
+			}
+			appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).SendDispatcherRequest(req)
+		}
+	}
+}
+
 func (e *EventDispatcherManager) RemoveDispatcher(id common.DispatcherID) {
 	dispatcher, ok := e.dispatcherMap.Get(id)
-
 	if ok {
 		if dispatcher.GetRemovingStatus() {
 			return
 		}
-		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).RemoveDispatcher(dispatcher)
+		req := eventcollector.DispatcherRequest{
+			Dispatcher: dispatcher,
+			ActionType: eventpb.ActionType_ACTION_TYPE_REMOVE,
+		}
+		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).SendDispatcherRequest(req)
 		dispatcher.Remove()
 	} else {
 		e.statusesChan <- &heartbeatpb.TableSpanStatus{

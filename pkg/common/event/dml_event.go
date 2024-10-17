@@ -13,6 +13,8 @@ type DMLEvent struct {
 	PhysicalTableID int64               `json:"physical_table_id"`
 	StartTs         uint64              `json:"start_ts"`
 	CommitTs        uint64              `json:"commit_ts"`
+	// The seq of the event. It is set by event service.
+	Seq uint64 `json:"seq"`
 
 	// Offset is the offset of the current row in the transaction.
 	Offset int `json:"offset"`

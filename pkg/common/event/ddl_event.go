@@ -23,7 +23,8 @@ type DDLEvent struct {
 	Query      string           `json:"query"`
 	TableInfo  *model.TableInfo `json:"table_info"`
 	FinishedTs uint64           `json:"finished_ts"`
-
+	// The seq of the event. It is set by event service.
+	Seq uint64 `json:"seq"`
 	// TODO: just here for compile, may be changed later
 	MultipleTableInfos []*common.TableInfo `json:"multiple_table_infos"`
 

@@ -237,8 +237,8 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 
 func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e commonEvent.DDLEvent, d *dispatcherStat) {
 	c.emitSyncPointEventIfNeeded(e.FinishedTs, d, remoteID)
-
 	e.DispatcherID = d.info.GetID()
+	e.Seq = d.seq.Add(1)
 	ddlEvent := newWrapDDLEvent(remoteID, &e)
 	select {
 	case <-ctx.Done():
@@ -349,21 +349,23 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 			task.dispatcherStat.metricSorterOutputEventCountKV.Add(float64(eventCount))
 		}
 	}()
-	sendTxn := func(t *commonEvent.DMLEvent) {
-		if t != nil {
-			for len(ddlEvents) > 0 && t.CommitTs > ddlEvents[0].FinishedTs {
+
+	sendDML := func(dml *commonEvent.DMLEvent) {
+		if dml != nil {
+			for len(ddlEvents) > 0 && dml.CommitTs > ddlEvents[0].FinishedTs {
 				c.sendDDL(ctx, remoteID, ddlEvents[0], task.dispatcherStat)
 				ddlEvents = ddlEvents[1:]
 			}
-			c.emitSyncPointEventIfNeeded(t.CommitTs, task.dispatcherStat, remoteID)
-			c.messageCh <- newWrapTxnEvent(remoteID, t)
-			task.dispatcherStat.watermark.Store(t.CommitTs)
-			task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(t.Len()))
+			dml.Seq = task.dispatcherStat.seq.Add(1)
+			c.emitSyncPointEventIfNeeded(dml.CommitTs, task.dispatcherStat, remoteID)
+			c.messageCh <- newWrapTxnEvent(remoteID, dml)
+			task.dispatcherStat.watermark.Store(dml.CommitTs)
+			task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(dml.Len()))
 		}
 	}
 
 	// 3. Send the events to the dispatcher.
-	var txnEvent *commonEvent.DMLEvent
+	var dml *commonEvent.DMLEvent
 	for {
 		//Node: The first event of the txn must return isNewTxn as true.
 		e, isNewTxn, err := iter.Next()
@@ -371,8 +373,8 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 			log.Panic("read events failed", zap.Error(err))
 		}
 		if e == nil {
-			// Send the last txnEvent to the dispatcher.
-			sendTxn(txnEvent)
+			// Send the last dml to the dispatcher.
+			sendDML(dml)
 			c.metricScanEventDuration.Observe(time.Since(start).Seconds())
 			return
 		}
@@ -382,16 +384,16 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 			log.Panic("should never Happen", zap.Uint64("commitTs", e.CRTs), zap.Uint64("watermark", task.dispatcherStat.watermark.Load()))
 		}
 		if isNewTxn {
-			sendTxn(txnEvent)
+			sendDML(dml)
 			tableID := task.dispatcherStat.info.GetTableSpan().TableID
 			tableInfo, err := c.schemaStore.GetTableInfo(tableID, e.CRTs-1)
 			if err != nil {
 				// FIXME handle the error
 				log.Panic("get table info failed", zap.Error(err))
 			}
-			txnEvent = commonEvent.NewDMLEvent(dispatcherID, tableID, e.StartTs, e.CRTs, tableInfo)
+			dml = commonEvent.NewDMLEvent(dispatcherID, tableID, e.StartTs, e.CRTs, tableInfo)
 		}
-		txnEvent.AppendRow(e, c.mounter.DecodeToChunk)
+		dml.AppendRow(e, c.mounter.DecodeToChunk)
 	}
 }
 
@@ -456,8 +458,6 @@ func (c *eventBroker) flushResolvedTs(ctx context.Context, serverID node.ID) {
 
 func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage) {
 	start := time.Now()
-	otherRetryInterval := time.Millisecond * 100
-	otherRetryLimit := 10
 	congestedRetryInterval := time.Millisecond * 10
 	// Send the message to messageCenter. Retry if to send failed.
 	for {
@@ -468,7 +468,6 @@ func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage
 		}
 		// Send the message to the dispatcher.
 		err := c.msgSender.SendEvent(tMsg)
-
 		if err != nil {
 			appErr, ok := err.(*apperror.AppError)
 			if ok && appErr.Type == apperror.ErrorTypeMessageCongested {
@@ -477,16 +476,11 @@ func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage
 				time.Sleep(congestedRetryInterval)
 				continue
 			} else {
-				// Only retry limit time, the dispatcher will send reset message if it finds events are not continuous.
-				// Let's consider the following scenario:
-				// 1. The remote target is remove permanently, so the message can't be sent.
-				// If we retry indefinitely, we would block here.
-				time.Sleep(otherRetryInterval)
-				otherRetryLimit--
-				if otherRetryLimit <= 0 {
-					log.Debug("send message failed after retry limit", zap.Error(err))
-					return
-				}
+				// Drop the message, and return.
+				// If the dispatcher finds the events are not continuous, it will send a reset message.
+				// And the broker will send the missed events to the dispatcher again.
+				log.Debug("send message failed", zap.Error(err))
+				return
 			}
 		}
 		metricEventServiceSendEventDuration.Observe(time.Since(start).Seconds())
@@ -656,6 +650,18 @@ func (c *eventBroker) resumeDispatcher(dispatcherInfo DispatcherInfo) {
 	dispStat.isRunning.Store(true)
 }
 
+func (c *eventBroker) resetDispatcher(dispatcherInfo DispatcherInfo) {
+	stat, ok := c.dispatchers.Load(dispatcherInfo.GetID())
+	if !ok {
+		return
+	}
+	dispStat := stat.(*dispatcherStat)
+	dispStat.watermark.Store(dispStat.info.GetStartTs())
+	// Reset the seq to 0, so that the next event will be sent with seq 1.
+	dispStat.seq.Store(0)
+	dispStat.isRunning.Store(true)
+}
+
 // Store the progress of the dispatcher, and the incremental events stats.
 // Those information will be used to decide when will the worker start to handle the push task of this dispatcher.
 type dispatcherStat struct {
@@ -664,6 +670,10 @@ type dispatcherStat struct {
 	spanSubscription *spanSubscription
 	// The watermark of the events that have been sent to the dispatcher.
 	watermark atomic.Uint64
+	// The seq of the events that have been sent to the dispatcher.
+	// It start from 1, and increase by 1 for each event.
+	// If the dispatcher is reset, the seq will be set to 1.
+	seq       atomic.Uint64
 	isRunning atomic.Bool
 
 	// syncpoint related

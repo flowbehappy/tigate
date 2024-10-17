@@ -64,6 +64,7 @@ enum ActionType {
     ACTION_TYPE_REMOVE = 2;
     ACTION_TYPE_PAUSE = 3;
     ACTION_TYPE_RESUME = 4;
+    ACTION_TYPE_RESET = 5;
 }
 
 message RegisterDispatcherRequest {
