@@ -15,6 +15,7 @@ package maintainer
 
 import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/maintainer/range_checker"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
@@ -104,17 +105,20 @@ func (b *Barrier) Resend() []*messaging.TargetMessage {
 func (b *Barrier) handleOneStatus(changefeedID string, status *heartbeatpb.TableSpanBlockStatus) *BarrierEvent {
 	dispatcherID := common.NewDispatcherIDFromPB(status.ID)
 	if status.State.EventDone {
-		return b.handleEventDone(dispatcherID, status)
+		return b.handleEventDone(changefeedID, dispatcherID, status)
 	}
 	return b.handleBlockState(changefeedID, dispatcherID, status)
 }
 
-func (b *Barrier) handleEventDone(dispatcherID common.DispatcherID, status *heartbeatpb.TableSpanBlockStatus) *BarrierEvent {
+func (b *Barrier) handleEventDone(changefeedID string, dispatcherID common.DispatcherID, status *heartbeatpb.TableSpanBlockStatus) *BarrierEvent {
 	key := getEventKey(status.State.BlockTs, status.State.IsSyncPoint)
 	event, ok := b.blockedTs[key]
-	// no block event found
 	if !ok {
-		return nil
+		// no block event found
+		be := NewBlockEvent(changefeedID, b.controller, status.State, b.splitTableEnabled)
+		// the event is a fake event, the dispatcher will not send the block event
+		be.rangeChecker = range_checker.NewBoolRangeChecker(false)
+		return be
 	}
 
 	// there is a block event and the dispatcher write or pass action already
@@ -156,7 +160,8 @@ func (b *Barrier) handleBlockState(changefeedID string,
 	// if ack failed, dispatcher will send a heartbeat again, so we do not need to care about resend message here
 	event := NewBlockEvent(changefeedID, b.controller, blockState, b.splitTableEnabled)
 	// mark the event as selected, so we do not need to wait for all dispatchers to report the event
-	// and the allDispatcherReported always return true since the status.BlockTables is nil
+	// and make the rangeChecker always return true
+	event.rangeChecker = range_checker.NewBoolRangeChecker(true)
 	event.selected = true
 	return event
 }

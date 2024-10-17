@@ -93,6 +93,26 @@ func TestOneBlockEvent(t *testing.T) {
 	resp = msg.Message[0].(*heartbeatpb.HeartBeatResponse)
 	require.Equal(t, resp.DispatcherStatuses[0].Ack.CommitTs, uint64(10))
 	require.Len(t, barrier.blockedTs, 0)
+
+	//send event done again
+	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
+		ChangefeedID: "test",
+		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
+			{
+				ID: stm.ID.ToPB(),
+				State: &heartbeatpb.State{
+					BlockTs:     10,
+					IsBlocked:   true,
+					EventDone:   true,
+					IsSyncPoint: true,
+				},
+			},
+		},
+	})
+	require.Len(t, barrier.blockedTs, 0)
+	// no event if found, no message will be sent
+	require.NotNil(t, msg)
+	require.Equal(t, resp.DispatcherStatuses[0].Ack.CommitTs, uint64(10))
 }
 
 func TestNormalBlock(t *testing.T) {

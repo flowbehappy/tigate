@@ -184,9 +184,6 @@ func (be *BarrierEvent) markDispatcherEventDone(dispatcherID common.DispatcherID
 }
 
 func (be *BarrierEvent) allDispatcherReported() bool {
-	if be.blockedDispatchers == nil {
-		return true
-	}
 	return be.rangeChecker.IsFullyCovered()
 }
 
