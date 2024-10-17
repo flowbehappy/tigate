@@ -30,8 +30,9 @@ import (
 // 6. maintainer wait for all dispatchers reporting event(pass) done message
 // 7. maintainer clear the event
 type Barrier struct {
-	blockedTs  map[eventKey]*BarrierEvent
-	controller *Controller
+	blockedTs         map[eventKey]*BarrierEvent
+	controller        *Controller
+	splitTableEnabled bool
 }
 
 // eventKey is the key of the block event,
@@ -42,10 +43,11 @@ type eventKey struct {
 }
 
 // NewBarrier create a new barrier for the changefeed
-func NewBarrier(controller *Controller) *Barrier {
+func NewBarrier(controller *Controller, splitTableEnabled bool) *Barrier {
 	return &Barrier{
-		blockedTs:  make(map[eventKey]*BarrierEvent),
-		controller: controller,
+		blockedTs:         make(map[eventKey]*BarrierEvent),
+		controller:        controller,
+		splitTableEnabled: splitTableEnabled,
 	}
 }
 
@@ -109,7 +111,7 @@ func (b *Barrier) handleEventDone(dispatcherID common.DispatcherID, status *hear
 	// checkpoint ts is advanced, clear the map, so do not need to resend message anymore
 	event.markDispatcherEventDone(dispatcherID)
 	// all blocked dispatchers are reported event done, we can schedule event and clean up the event
-	if event.allDispatcherDone() {
+	if event.allDispatcherReported() {
 		// schedule the event after all dispatchers reported event done
 		event.scheduleBlockEvent()
 		delete(b.blockedTs, key)
@@ -139,7 +141,7 @@ func (b *Barrier) handleBlockState(changefeedID string,
 		// it's not a blocked event, it must be sent by table event trigger dispatcher
 		// and the ddl already synced to downstream , e.g.: create table, drop table
 		// if ack failed, dispatcher will send a heartbeat again, so we do not need to care about resend message here
-		NewBlockEvent(changefeedID, b.controller, blockState).scheduleBlockEvent()
+		NewBlockEvent(changefeedID, b.controller, blockState, b.splitTableEnabled).scheduleBlockEvent()
 	}
 	return dispatcherStatus
 }
@@ -149,7 +151,7 @@ func (b *Barrier) getOrInsertNewEvent(changefeedID string, key eventKey,
 	blockState *heartbeatpb.State) *BarrierEvent {
 	event, ok := b.blockedTs[key]
 	if !ok {
-		event = NewBlockEvent(changefeedID, b.controller, blockState)
+		event = NewBlockEvent(changefeedID, b.controller, blockState, b.splitTableEnabled)
 		b.blockedTs[key] = event
 	}
 	return event

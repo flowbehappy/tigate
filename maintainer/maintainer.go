@@ -159,7 +159,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		handleEventDuration:            metrics.MaintainerHandleEventDuration.WithLabelValues(cfID.Namespace, cfID.ID),
 	}
 	m.bootstrapper = bootstrap.NewBootstrapper[heartbeatpb.MaintainerBootstrapResponse](m.id.ID, m.getNewBootstrapFn())
-	m.barrier = NewBarrier(m.controller)
+	m.barrier = NewBarrier(m.controller, cfg.Config.Scheduler.EnableTableAcrossNodes)
 	log.Info("maintainer is created", zap.String("id", cfID.String()))
 	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace, cfID.ID).Inc()
 	return m

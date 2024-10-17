@@ -79,10 +79,6 @@ func (db *ReplicationDB) TryRemoveAll() []*SpanReplication {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	// remove the absent task directly
-	for _, stm := range db.absent {
-		db.removeSpanUnLock(stm)
-	}
 	var tasks = make([]*SpanReplication, 0, len(db.replicating)+len(db.absent)+len(db.scheduling))
 	addMapToList := func(m map[common.DispatcherID]*SpanReplication) {
 		for _, stm := range m {
@@ -91,6 +87,14 @@ func (db *ReplicationDB) TryRemoveAll() []*SpanReplication {
 	}
 	addMapToList(db.replicating)
 	addMapToList(db.scheduling)
+
+	db.nodeTasks = make(map[node.ID]map[common.DispatcherID]*SpanReplication)
+	db.schemaTasks = make(map[int64]map[common.DispatcherID]*SpanReplication)
+	db.tableTasks = make(map[int64]map[common.DispatcherID]*SpanReplication)
+	db.allTasks = make(map[common.DispatcherID]*SpanReplication)
+	db.replicating = make(map[common.DispatcherID]*SpanReplication)
+	db.scheduling = make(map[common.DispatcherID]*SpanReplication)
+	db.absent = make(map[common.DispatcherID]*SpanReplication)
 	return tasks
 }
 
@@ -102,9 +106,8 @@ func (db *ReplicationDB) TryRemoveByTableIDs(tableIDs ...int64) []*SpanReplicati
 	var tasks = make([]*SpanReplication, 0)
 	for _, tblID := range tableIDs {
 		for _, stm := range db.tableTasks[tblID] {
-			if stm.GetNodeID() == "" {
-				db.removeSpanUnLock(stm)
-			} else {
+			db.removeSpanUnLock(stm)
+			if stm.GetNodeID() != "" {
 				tasks = append(tasks, stm)
 			}
 		}
@@ -119,9 +122,8 @@ func (db *ReplicationDB) TryRemoveBySchemaID(schemaID int64) []*SpanReplication 
 
 	var tasks = make([]*SpanReplication, 0)
 	for _, stm := range db.schemaTasks[schemaID] {
-		if stm.GetNodeID() == "" {
-			db.removeSpanUnLock(stm)
-		} else {
+		db.removeSpanUnLock(stm)
+		if stm.GetNodeID() != "" {
 			tasks = append(tasks, stm)
 		}
 	}

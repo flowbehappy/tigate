@@ -17,13 +17,13 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/maintainer/range_checker"
 	"github.com/flowbehappy/tigate/maintainer/replica"
 	"github.com/flowbehappy/tigate/pkg/common"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/pkg/spanz"
 	"go.uber.org/zap"
 )
 
@@ -43,13 +43,16 @@ type BarrierEvent struct {
 	newTables          []*heartbeatpb.Table
 	schemaIDChange     []*heartbeatpb.SchemaIDChange
 	isSyncPoint        bool
+	// if the split table is enable for this changefeeed, if not we can use table id to check coverage
+	splitTableEnabled bool
 
-	reportedRange  map[int64]*RangeChecker
+	// rangeChecker is used to check if all the dispatchers reported the block events
+	rangeChecker   range_checker.RangeChecker
 	lastResendTime time.Time
 }
 
 func NewBlockEvent(cfID string, controller *Controller,
-	status *heartbeatpb.State) *BarrierEvent {
+	status *heartbeatpb.State, splitTableEnabled bool) *BarrierEvent {
 	event := &BarrierEvent{
 		controller:         controller,
 		selected:           false,
@@ -59,35 +62,39 @@ func NewBlockEvent(cfID string, controller *Controller,
 		newTables:          status.NeedAddedTables,
 		dropDispatchers:    status.NeedDroppedTables,
 		schemaIDChange:     status.UpdatedSchemas,
-		reportedRange:      make(map[int64]*RangeChecker),
 		lastResendTime:     time.Time{},
 		isSyncPoint:        status.IsSyncPoint,
+		splitTableEnabled:  splitTableEnabled,
 	}
 	if status.BlockTables != nil {
+		var tbls []int64
 		switch status.BlockTables.InfluenceType {
 		case heartbeatpb.InfluenceType_Normal:
-			event.addRangeCheckers(status.BlockTables.TableIDs...)
+			tbls = status.BlockTables.TableIDs
 			event.blockedTasks = controller.GetTasksByTableIDs(status.BlockTables.TableIDs...)
-		// todo: we should query the schema id and all tasks from the schema storage
 		case heartbeatpb.InfluenceType_DB:
-			for _, rep := range controller.GetTasksBySchemaID(status.BlockTables.SchemaID) {
-				event.addRangeCheckers(rep.Span.TableID)
+			reps := controller.GetTasksBySchemaID(status.BlockTables.SchemaID)
+			tbls = make([]int64, 0, len(reps))
+			for _, rep := range reps {
+				tbls = append(tbls, rep.Span.TableID)
 			}
 		case heartbeatpb.InfluenceType_All:
-			for _, rep := range controller.GetAllTasks() {
-				event.addRangeCheckers(rep.Span.TableID)
+			reps := controller.GetAllTasks()
+			tbls = make([]int64, 0, len(reps))
+			for _, rep := range reps {
+				tbls = append(tbls, rep.Span.TableID)
 			}
 		}
+		event.setRangeChecker(tbls)
 	}
 	return event
 }
 
-func (be *BarrierEvent) addRangeCheckers(tbls ...int64) {
-	for _, tbl := range tbls {
-		if _, ok := be.reportedRange[tbl]; !ok {
-			span := spanz.TableIDToComparableSpan(tbl)
-			be.reportedRange[tbl] = NewRangeChecker(span.StartKey, span.EndKey)
-		}
+func (be *BarrierEvent) setRangeChecker(tbls []int64) {
+	if be.splitTableEnabled {
+		be.rangeChecker = range_checker.NewTableSpanRangeChecker(tbls)
+	} else {
+		be.rangeChecker = range_checker.NewTableIDRangeChecker(tbls)
 	}
 }
 
@@ -145,30 +152,14 @@ func (be *BarrierEvent) markDispatcherEventDone(dispatcherID common.DispatcherID
 			zap.String("dispatcher", dispatcherID.String()))
 		return
 	}
-	rangeChecker, ok := be.reportedRange[replicaSpan.Span.TableID]
-	if !ok {
-		log.Warn("dispatcher not in the block list, ignore",
-			zap.String("changefeed", be.cfID),
-			zap.String("dispatcher", dispatcherID.String()))
-		return
-	}
-	rangeChecker.AddSubRange(replicaSpan.Span.StartKey, replicaSpan.Span.EndKey)
-}
-
-func (be *BarrierEvent) allDispatcherDone() bool {
-	return be.allDispatcherReported()
+	be.rangeChecker.AddSubRange(replicaSpan.Span.TableID, replicaSpan.Span.StartKey, replicaSpan.Span.EndKey)
 }
 
 func (be *BarrierEvent) allDispatcherReported() bool {
 	if be.blockedDispatchers == nil {
 		return true
 	}
-	for _, checker := range be.reportedRange {
-		if !checker.IsFullyCovered() {
-			return false
-		}
-	}
-	return true
+	return be.rangeChecker.IsFullyCovered()
 }
 
 func (be *BarrierEvent) sendPassAction() []*messaging.TargetMessage {
@@ -231,9 +222,7 @@ func (be *BarrierEvent) dispatcherReachedBlockTs(dispatcherID common.DispatcherI
 		be.writerDispatcher = dispatcherID
 		be.selected = true
 		// reset ranger checkers
-		for _, checker := range be.reportedRange {
-			checker.Reset()
-		}
+		be.rangeChecker.Reset()
 		log.Info("all dispatcher reported heartbeat, select one to write",
 			zap.String("changefeed", be.cfID),
 			zap.String("dispatcher", dispatcherID.String()),

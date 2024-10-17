@@ -35,7 +35,7 @@ func TestOneBlockEvent(t *testing.T) {
 	stm := controller.GetTasksByTableIDs(1)[0]
 	controller.replicationDB.BindSpanToNode("", "node1", stm)
 	controller.replicationDB.MarkSpanReplicating(stm)
-	barrier := NewBarrier(controller)
+	barrier := NewBarrier(controller, false)
 	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
@@ -63,7 +63,6 @@ func TestOneBlockEvent(t *testing.T) {
 	require.True(t, event.writerDispatcher == stm.ID)
 	require.True(t, event.selected)
 	require.False(t, event.writerDispatcherAdvanced)
-	require.Len(t, event.reportedRange, 1)
 	require.Equal(t, resp.DispatcherStatuses[0].Ack.CommitTs, uint64(10))
 	require.Equal(t, resp.DispatcherStatuses[0].Action.CommitTs, uint64(10))
 	require.Equal(t, resp.DispatcherStatuses[0].Action.Action, heartbeatpb.Action_Write)
@@ -112,7 +111,7 @@ func TestNormalBlock(t *testing.T) {
 	dropID := selectedRep.Span.TableID
 
 	newSpan := &heartbeatpb.Table{TableID: 10, SchemaID: 1}
-	barrier := NewBarrier(controller)
+	barrier := NewBarrier(controller, true)
 
 	// first node block request
 	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
@@ -187,7 +186,7 @@ func TestNormalBlock(t *testing.T) {
 	require.Equal(t, uint64(10), event.commitTs)
 	require.True(t, event.writerDispatcher == selectDispatcherID)
 	// all dispatcher reported, the reported status is reset
-	require.Equal(t, 0, getReportedDispatchers(event))
+	require.False(t, event.rangeChecker.IsFullyCovered())
 
 	// repeated status
 	barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
@@ -229,8 +228,6 @@ func TestNormalBlock(t *testing.T) {
 	})
 	require.Equal(t, uint64(10), event.commitTs)
 	require.True(t, event.writerDispatcher == selectDispatcherID)
-	// the reported status is ignored
-	require.Equal(t, 0, getReportedDispatchers(event))
 
 	// selected node write done
 	msg = barrier.HandleStatus("node2", &heartbeatpb.BlockStatusRequest{
@@ -247,7 +244,6 @@ func TestNormalBlock(t *testing.T) {
 		},
 	})
 	require.Len(t, barrier.blockedTs, 1)
-	require.Equal(t, 1, getReportedDispatchers(event))
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
@@ -269,7 +265,6 @@ func TestNormalBlock(t *testing.T) {
 			},
 		},
 	})
-	require.Equal(t, 3, getReportedDispatchers(event))
 	require.Len(t, barrier.blockedTs, 0)
 }
 
@@ -297,7 +292,7 @@ func TestSchemaBlock(t *testing.T) {
 	}
 
 	newTable := &heartbeatpb.Table{TableID: 10, SchemaID: 2}
-	barrier := NewBarrier(controller)
+	barrier := NewBarrier(controller, true)
 
 	// first dispatcher  block request
 	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
@@ -413,8 +408,6 @@ func TestSchemaBlock(t *testing.T) {
 	require.Equal(t, msg.Message[0].(*heartbeatpb.HeartBeatResponse).DispatcherStatuses[0].Action.Action,
 		heartbeatpb.Action_Pass)
 	require.Len(t, barrier.blockedTs, 1)
-	// the writer already advanced
-	require.Equal(t, 1, getReportedDispatchers(event))
 	// other dispatcher advanced checkpoint ts
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
@@ -434,7 +427,7 @@ func TestSchemaBlock(t *testing.T) {
 	require.Equal(t, 1, controller.replicationDB.GetAbsentSize())
 	require.Equal(t, 2, controller.operatorController.OperatorSize())
 	// two dispatcher and moved to operator queue, operator will be removed after ack
-	require.Equal(t, 3, controller.replicationDB.GetReplicatingSize())
+	require.Equal(t, 1, controller.replicationDB.GetReplicatingSize())
 	for _, task := range controller.replicationDB.GetReplicating() {
 		op := controller.operatorController.GetOperator(task.ID)
 		if op != nil {
@@ -469,7 +462,7 @@ func TestSyncPointBlock(t *testing.T) {
 	controller.replicationDB.BindSpanToNode("node1", "node2", selectedRep)
 
 	newSpan := &heartbeatpb.Table{TableID: 10, SchemaID: 2}
-	barrier := NewBarrier(controller)
+	barrier := NewBarrier(controller, true)
 	// first dispatcher  block request
 	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
@@ -569,8 +562,6 @@ func TestSyncPointBlock(t *testing.T) {
 	// 2 pass action messages to one node
 	require.Len(t, msgs, 2)
 	require.Len(t, barrier.blockedTs, 1)
-	// the writer already advanced
-	require.Equal(t, 1, getReportedDispatchers(event))
 	// other dispatcher advanced checkpoint ts
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
 		ChangefeedID: "test",
@@ -601,7 +592,7 @@ func TestSyncPointBlock(t *testing.T) {
 func TestNonBlocked(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
-	barrier := NewBarrier(controller)
+	barrier := NewBarrier(controller, false)
 
 	var blockedDispatcherIDS []*heartbeatpb.DispatcherID
 	for id := 1; id < 4; id++ {
@@ -640,7 +631,7 @@ func TestNonBlocked(t *testing.T) {
 func TestSyncPointBlockPerf(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
-	barrier := NewBarrier(controller)
+	barrier := NewBarrier(controller, true)
 	for id := 1; id < 1000; id++ {
 		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 1)
 	}
@@ -698,14 +689,4 @@ func TestSyncPointBlockPerf(t *testing.T) {
 	})
 	require.NotNil(t, msg)
 	log.Info("duration", zap.Duration("duration", time.Since(now)))
-}
-
-func getReportedDispatchers(event *BarrierEvent) int {
-	count := 0
-	for _, v := range event.reportedRange {
-		if v.IsFullyCovered() {
-			count++
-		}
-	}
-	return count
 }

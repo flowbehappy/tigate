@@ -74,7 +74,6 @@ func (m *RemoveDispatcherOperator) OnTaskRemoved() {
 }
 
 func (m *RemoveDispatcherOperator) Start() {
-	m.db.MarkSpanScheduling(m.replicaSet)
 }
 
 func (m *RemoveDispatcherOperator) PostFinish() {
