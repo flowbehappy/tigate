@@ -70,7 +70,7 @@ func NewBlockEvent(cfID string, controller *Controller,
 		var tbls []int64
 		switch status.BlockTables.InfluenceType {
 		case heartbeatpb.InfluenceType_Normal:
-			event.setRangeCheckers(status.BlockTables.TableIDs)
+			tbls = status.BlockTables.TableIDs
 			event.blockedTasks = controller.GetTasksByTableIDs(status.BlockTables.TableIDs...)
 		case heartbeatpb.InfluenceType_DB:
 			reps := controller.GetTasksBySchemaID(status.BlockTables.SchemaID)
@@ -85,12 +85,12 @@ func NewBlockEvent(cfID string, controller *Controller,
 				tbls = append(tbls, rep.Span.TableID)
 			}
 		}
-		event.setRangeCheckers(status.BlockTables.TableIDs)
+		event.setRangeChecker(tbls)
 	}
 	return event
 }
 
-func (be *BarrierEvent) setRangeCheckers(tbls []int64) {
+func (be *BarrierEvent) setRangeChecker(tbls []int64) {
 	if be.splitTableEnabled {
 		be.rangeChecker = range_checker.NewTableSpanRangeChecker(tbls)
 	} else {
