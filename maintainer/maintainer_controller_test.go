@@ -189,7 +189,7 @@ func TestFinishBootstrap(t *testing.T) {
 	require.Equal(t, 1, s.replicationDB.GetTaskSizeByNodeID("node1"))
 	require.Equal(t, 1, s.replicationDB.GetReplicatingSize())
 	// ddl dispatcher
-	absents, _ := s.replicationDB.GetScheduleSate(nil, 100)
+	absents := s.replicationDB.GetAbsent(nil, 100)
 	found := false
 	for _, absent := range absents {
 		if absent.ID == s.ddlDispatcherID {
