@@ -41,7 +41,7 @@ type DDLEvent struct {
 	//   Rename Tables
 	//   Drop Schema
 	//   Recover Table
-	TableNameChange *TableNameChange `json:"table_name_change"`
+	TableChange *TableChange `json:"table_change"`
 
 	TiDBOnly bool `json:"tidb_only"`
 	// 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
@@ -127,15 +127,22 @@ func (t *DDLEvent) GetSize() int64 {
 	return 0
 }
 
-type SchemaTableName struct {
+type SchemaTableInfo struct {
 	SchemaName string
 	TableName  string
+	TableID    int64
+	SchemaID   int64
+}
+
+type DB struct {
+	SchemaID   int64
+	SchemaName string
 }
 
 // TableChange will record each ddl change of the table name.
 // Each TableChange is related to a ddl event
-type TableNameChange struct {
-	AddName          []SchemaTableName
-	DropName         []SchemaTableName
-	DropDatabaseName string
+type TableChange struct {
+	AddTable     []SchemaTableInfo
+	DropTable    []SchemaTableInfo
+	DropDatabase *DB
 }

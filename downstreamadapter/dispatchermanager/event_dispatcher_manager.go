@@ -137,7 +137,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 	}
 	manager.filter = filter
 
-	err = manager.InitSink()
+	err = manager.InitSink(ctx)
 	if err != nil {
 		return nil, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("event dispatcher manager init sink failed")
 	}
@@ -164,8 +164,8 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 	return manager, nil
 }
 
-func (e *EventDispatcherManager) InitSink() error {
-	sink, err := sink.NewSink(e.config, e.changefeedID)
+func (e *EventDispatcherManager) InitSink(ctx context.Context) error {
+	sink, err := sink.NewSink(ctx, e.config, e.changefeedID)
 	if err != nil {
 		return err
 	}

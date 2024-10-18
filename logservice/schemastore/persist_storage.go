@@ -1359,8 +1359,11 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 			InfluenceType: commonEvent.InfluenceTypeDB,
 			SchemaID:      rawEvent.CurrentSchemaID,
 		}
-		ddlEvent.TableNameChange = &commonEvent.TableNameChange{
-			DropDatabaseName: rawEvent.CurrentSchemaName,
+		ddlEvent.TableChange = &commonEvent.TableChange{
+			DropDatabase: &commonEvent.DB{
+				SchemaID:   rawEvent.CurrentSchemaID,
+				SchemaName: rawEvent.CurrentSchemaName,
+			},
 		}
 	case model.ActionCreateTable:
 		if isPartitionTable(rawEvent.TableInfo) {
@@ -1380,11 +1383,13 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 				},
 			}
 		}
-		ddlEvent.TableNameChange = &commonEvent.TableNameChange{
-			AddName: []commonEvent.SchemaTableName{
+		ddlEvent.TableChange = &commonEvent.TableChange{
+			AddTable: []commonEvent.SchemaTableInfo{
 				{
 					SchemaName: rawEvent.CurrentSchemaName,
 					TableName:  rawEvent.CurrentTableName,
+					TableID:    rawEvent.CurrentTableID,
+					SchemaID:   rawEvent.CurrentSchemaID,
 				},
 			},
 		}
@@ -1412,11 +1417,13 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 				TableIDs:      []int64{rawEvent.CurrentTableID},
 			}
 		}
-		ddlEvent.TableNameChange = &commonEvent.TableNameChange{
-			DropName: []commonEvent.SchemaTableName{
+		ddlEvent.TableChange = &commonEvent.TableChange{
+			DropTable: []commonEvent.SchemaTableInfo{
 				{
 					SchemaName: rawEvent.CurrentSchemaName,
 					TableName:  rawEvent.CurrentTableName,
+					TableID:    rawEvent.CurrentTableID,
+					SchemaID:   rawEvent.CurrentSchemaID,
 				},
 			},
 		}
@@ -1495,11 +1502,13 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 						InfluenceType: commonEvent.InfluenceTypeNormal,
 						TableIDs:      allPhysicalIDs,
 					}
-					ddlEvent.TableNameChange = &commonEvent.TableNameChange{
-						DropName: []commonEvent.SchemaTableName{
+					ddlEvent.TableChange = &commonEvent.TableChange{
+						DropTable: []commonEvent.SchemaTableInfo{
 							{
 								SchemaName: rawEvent.PrevSchemaName,
 								TableName:  rawEvent.PrevTableName,
+								TableID:    rawEvent.PrevTableID,
+								SchemaID:   rawEvent.PrevSchemaID,
 							},
 						},
 					}
@@ -1519,11 +1528,13 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 						TableID:  id,
 					})
 				}
-				ddlEvent.TableNameChange = &commonEvent.TableNameChange{
-					AddName: []commonEvent.SchemaTableName{
+				ddlEvent.TableChange = &commonEvent.TableChange{
+					AddTable: []commonEvent.SchemaTableInfo{
 						{
 							SchemaName: rawEvent.CurrentSchemaName,
 							TableName:  rawEvent.CurrentTableName,
+							SchemaID:   rawEvent.CurrentSchemaID,
+							TableID:    rawEvent.CurrentTableID,
 						},
 					},
 				}
@@ -1557,11 +1568,13 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 						InfluenceType: commonEvent.InfluenceTypeNormal,
 						TableIDs:      []int64{rawEvent.CurrentTableID},
 					}
-					ddlEvent.TableNameChange = &commonEvent.TableNameChange{
-						DropName: []commonEvent.SchemaTableName{
+					ddlEvent.TableChange = &commonEvent.TableChange{
+						DropTable: []commonEvent.SchemaTableInfo{
 							{
 								SchemaName: rawEvent.PrevSchemaName,
 								TableName:  rawEvent.PrevTableName,
+								SchemaID:   rawEvent.PrevSchemaID,
+								TableID:    rawEvent.PrevTableID,
 							},
 						},
 					}
@@ -1574,11 +1587,13 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 						TableID:  rawEvent.CurrentTableID,
 					},
 				}
-				ddlEvent.TableNameChange = &commonEvent.TableNameChange{
-					AddName: []commonEvent.SchemaTableName{
+				ddlEvent.TableChange = &commonEvent.TableChange{
+					AddTable: []commonEvent.SchemaTableInfo{
 						{
 							SchemaName: rawEvent.CurrentSchemaName,
 							TableName:  rawEvent.CurrentTableName,
+							TableID:    rawEvent.CurrentTableID,
+							SchemaID:   rawEvent.CurrentSchemaID,
 						},
 					},
 				}
@@ -1719,7 +1734,7 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		}
 		querys := strings.Split(rawEvent.Query, ";")
 		ddlEvent.NeedAddedTables = make([]commonEvent.Table, 0, physicalTableCount)
-		addName := make([]commonEvent.SchemaTableName, 0, logicalTableCount)
+		addTable := make([]commonEvent.SchemaTableInfo, 0, logicalTableCount)
 		resultQuerys := make([]string, 0, logicalTableCount)
 		for i, info := range rawEvent.MultipleTableInfos {
 			if tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.CurrentSchemaName, info.Name.O) {
@@ -1738,14 +1753,16 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 					TableID:  info.ID,
 				})
 			}
-			addName = append(addName, commonEvent.SchemaTableName{
+			addTable = append(addTable, commonEvent.SchemaTableInfo{
 				SchemaName: rawEvent.CurrentSchemaName,
 				TableName:  info.Name.O,
+				TableID:    info.ID,
+				SchemaID:   rawEvent.CurrentSchemaID,
 			})
 			resultQuerys = append(resultQuerys, querys[i])
 		}
-		ddlEvent.TableNameChange = &commonEvent.TableNameChange{
-			AddName: addName,
+		ddlEvent.TableChange = &commonEvent.TableChange{
+			AddTable: addTable,
 		}
 		ddlEvent.Query = strings.Join(resultQuerys, ";")
 		if len(ddlEvent.NeedAddedTables) == 0 {

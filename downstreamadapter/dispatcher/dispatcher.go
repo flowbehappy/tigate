@@ -24,6 +24,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/filter"
+	"github.com/flowbehappy/tigate/pkg/sink/util"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
@@ -95,7 +96,7 @@ type Dispatcher struct {
 	schemaID              int64
 
 	// only exist when the dispatcher is a table trigger event dispatcher
-	tableNameStore *TableNameStore
+	tableSchemaStore *util.TableSchemaStore
 }
 
 func NewDispatcher(
@@ -126,10 +127,10 @@ func NewDispatcher(
 		schemaIDToDispatchers: schemaIDToDispatchers,
 	}
 
-	// only when is not mysql sink, table trigger event dispatcher need tableNameStore to store the table name
+	// only when is not mysql sink, table trigger event dispatcher need tableSchemaStore to store the table name
 	// in order to calculate all the topics when sending checkpointTs to downstream
 	if tableSpan.Equal(heartbeatpb.DDLSpan) && dispatcher.sink.SinkType() != tisink.MysqlSinkType {
-		dispatcher.tableNameStore = NewTableNameStore()
+		dispatcher.tableSchemaStore = util.NewTableSchemaStore()
 	}
 
 	dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
@@ -249,8 +250,8 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 			onlyResolvedTs = false
 
 			event := event.(*commonEvent.DDLEvent)
-			if d.tableNameStore != nil {
-				d.tableNameStore.AddEvent(event)
+			if d.tableSchemaStore != nil {
+				d.tableSchemaStore.AddEvent(event)
 			}
 			event.AddPostFlushFunc(func() {
 				dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
@@ -481,11 +482,5 @@ func (d *Dispatcher) CollectDispatcherHeartBeatInfo(h *HeartBeatInfo) {
 }
 
 func (d *Dispatcher) HandleCheckpointTs(checkpointTs uint64) {
-	if d.tableNameStore == nil {
-		log.Error("Should not HandleCheckpointTs for table trigger event dispatcher without tableNameStore")
-		return
-	}
-
-	tableNames := d.tableNameStore.GetAllTableNames(checkpointTs)
-	d.sink.AddCheckpointTs(checkpointTs, tableNames)
+	d.sink.AddCheckpointTs(checkpointTs)
 }

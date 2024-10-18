@@ -11,9 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package writer
+package mysql
 
 import (
+	"context"
 	"database/sql"
 	"net/url"
 	"time"
@@ -127,7 +128,7 @@ func (c *MysqlConfig) Apply(sinkURI *url.URL) error {
 	return nil
 }
 
-func NewMysqlConfigAndDB(sinkURI *url.URL) (*MysqlConfig, *sql.DB, error) {
+func NewMysqlConfigAndDB(ctx context.Context, sinkURI *url.URL) (*MysqlConfig, *sql.DB, error) {
 	log.Info("create db connection", zap.String("sinkURI", sinkURI.String()))
 	// create db connection
 	cfg := NewMysqlConfig()
@@ -145,16 +146,12 @@ func NewMysqlConfigAndDB(sinkURI *url.URL) (*MysqlConfig, *sql.DB, error) {
 		return nil, nil, err
 	}
 
-	// cfg.IsTiDB, err = CheckIsTiDB(db)
-	// if err != nil {
-	// 	log.Error("CheckIsTiDB failed", zap.Error(err))
-	// 	return nil, nil, err
-	// }
+	cfg.IsTiDB = CheckIsTiDB(ctx, db)
 
-	// cfg.IsWriteSourceExisted, err = CheckIfBDRModeIsSupported(db)
-	// if err != nil {
-	// 	log.Error("CheckIfBDRModeIsSupported failed", zap.Error(err))
-	// 	return nil, nil, err
-	// }
+	cfg.IsWriteSourceExisted, err = CheckIfBDRModeIsSupported(ctx, db)
+	if err != nil {
+		return nil, nil, err
+	}
+	// TODO：param setting
 	return cfg, db, nil
 }

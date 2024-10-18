@@ -14,12 +14,14 @@
 package sink
 
 import (
+	"context"
 	"net/url"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
-	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/sink/mysql"
+	sinkutil "github.com/flowbehappy/tigate/pkg/sink/util"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink"
@@ -37,17 +39,13 @@ type Sink interface {
 	AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress)
 	AddBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress)
 	PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress)
-	AddCheckpointTs(ts uint64, tableNames []*commonEvent.SchemaTableName)
-	// IsEmpty(tableSpan *common.TableSpan) bool
-	// AddTableSpan(tableSpan *common.TableSpan)
-	// RemoveTableSpan(tableSpan *common.TableSpan)
-	// StopTableSpan(tableSpan *common.TableSpan)
-	// GetCheckpointTs(tableSpan *common.TableSpan) (uint64, bool)
+	AddCheckpointTs(ts uint64)
+	SetTableSchemaStore(tableSchemaStore *sinkutil.TableSchemaStore)
 	Close()
 	SinkType() SinkType
 }
 
-func NewSink(config *config.ChangefeedConfig, changefeedID model.ChangeFeedID) (Sink, error) {
+func NewSink(ctx context.Context, config *config.ChangefeedConfig, changefeedID model.ChangeFeedID) (Sink, error) {
 	sinkURI, err := url.Parse(config.SinkURI)
 	if err != nil {
 		return nil, cerror.WrapError(cerror.ErrSinkURIInvalid, err)
@@ -55,7 +53,7 @@ func NewSink(config *config.ChangefeedConfig, changefeedID model.ChangeFeedID) (
 	scheme := sink.GetScheme(sinkURI)
 	switch scheme {
 	case sink.MySQLScheme, sink.MySQLSSLScheme, sink.TiDBScheme, sink.TiDBSSLScheme:
-		cfg, db, err := writer.NewMysqlConfigAndDB(sinkURI)
+		cfg, db, err := mysql.NewMysqlConfigAndDB(ctx, sinkURI)
 		if err != nil {
 			return nil, err
 		}
