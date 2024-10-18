@@ -202,30 +202,17 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 // We ensure we only will receive one event when it's ddl event or sync point event by IsBatchable() function.
 // When we handle events, we don't have any previous events still in sink.
 func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block bool) {
-	// Only return false when all events are resolvedTs Event.
-	block = false
 
-	// Check if the dispatcher is ready.
+	// If the dispatcher is not ready, try to find handshake event to make the dispatcher ready.
 	if !d.isReady.Load() {
-		for _, dispatcherEvent := range dispatcherEvents {
-			event := dispatcherEvent.Event
-			if event.GetType() == commonEvent.TypeHandshakeEvent {
-				if event.GetCommitTs() == d.startTs.Load() {
-					if event.GetSeq() != d.lastEventSeq.Add(1) {
-						log.Panic("Receive handshake event, but seq is not the next one", zap.Any("event", event), zap.Stringer("dispatcher", d.id), zap.Uint64("lastEventSeq", d.lastEventSeq.Load()))
-					}
-					d.isReady.Store(true)
-					log.Info("Receive handshake event, dispatcher is ready to handle events", zap.Any("dispatcher", d.id))
-					return false
-				} else {
-					log.Warn("Handshake event commit ts not equal to dispatcher resolved ts", zap.Any("event", event), zap.Stringer("dispatcher", d.id), zap.Uint64("resolvedTs", d.resolvedTs.Get()), zap.Uint64("commitTs", event.GetCommitTs()))
-				}
-			}
-			// Drop other events if dispatcher is not ready
-			continue
+		if !d.checkHandshakeEvents(dispatcherEvents) {
+			return false
 		}
 	}
 
+	// Only return false when all events are resolvedTs Event.
+	block = false
+	// Dispatcher is ready, handle the events
 	for _, dispatcherEvent := range dispatcherEvents {
 		// Pre-check, make sure the event is not stale or out-of-order
 		event := dispatcherEvent.Event
@@ -295,6 +282,34 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 		}
 	}
 	return block
+}
+
+func (d *Dispatcher) checkHandshakeEvents(dispatcherEvents []DispatcherEvent) bool {
+	for _, dispatcherEvent := range dispatcherEvents {
+		event := dispatcherEvent.Event
+		if event.GetType() == commonEvent.TypeHandshakeEvent {
+			if event.GetCommitTs() == d.startTs.Load() {
+				if event.GetSeq() != d.lastEventSeq.Add(1) {
+					log.Panic("Receive handshake event, but seq is not the next one",
+						zap.Any("event", event),
+						zap.Stringer("dispatcher", d.id),
+						zap.Uint64("lastEventSeq", d.lastEventSeq.Load()))
+				}
+				d.isReady.Store(true)
+				log.Info("Receive handshake event, dispatcher is ready to handle events",
+					zap.Any("dispatcher", d.id))
+				return true
+			} else {
+				log.Warn("Handshake event commit ts not equal to dispatcher resolved ts",
+					zap.Any("event", event),
+					zap.Stringer("dispatcher", d.id),
+					zap.Uint64("resolvedTs", d.resolvedTs.Get()),
+					zap.Uint64("commitTs", event.GetCommitTs()))
+			}
+		}
+		// Drop other events if dispatcher is not ready
+	}
+	return false
 }
 
 func shouldBlock(event commonEvent.BlockEvent) bool {

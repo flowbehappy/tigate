@@ -255,10 +255,10 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 }
 
 func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e commonEvent.DDLEvent, d *dispatcherStat) {
-	log.Info("send ddl event to dispatcher", zap.Stringer("dispatcher", d.info.GetID()), zap.String("query", e.Query), zap.Int64("table", e.TableID), zap.Uint64("commitTs", e.FinishedTs), zap.Uint64("seq", e.Seq))
 	c.emitSyncPointEventIfNeeded(e.FinishedTs, d, remoteID)
 	e.DispatcherID = d.info.GetID()
 	e.Seq = d.seq.Add(1)
+	log.Info("send ddl event to dispatcher", zap.Stringer("dispatcher", d.info.GetID()), zap.String("query", e.Query), zap.Int64("table", e.TableID), zap.Uint64("commitTs", e.FinishedTs), zap.Uint64("seq", e.Seq))
 	ddlEvent := newWrapDDLEvent(remoteID, &e)
 	select {
 	case <-ctx.Done():
