@@ -36,22 +36,20 @@ const (
 type command struct {
 	cmdType cmdType
 	cmd     interface{}
+
+	wg *sync.WaitGroup
 }
 
 type addPathCmd[A Area, P Path, T Event, D Dest] struct {
 	paths  []PathAndDest[P, D]
 	pis    []*pathInfo[A, P, T, D]
 	errors []error
-
-	wg sync.WaitGroup
 }
 
 type removePathCmd[P Path] struct {
 	paths      []P
 	existPaths []P
 	errors     []error
-
-	wg sync.WaitGroup
 }
 
 type arrangeStreamCmd[A Area, P Path, T Event, D Dest] struct {
@@ -64,7 +62,6 @@ type arrangeStreamCmd[A Area, P Path, T Event, D Dest] struct {
 type reportAndScheduleCmd struct {
 	rule   ruleType
 	period time.Duration
-	wg     sync.WaitGroup
 }
 
 // Use to store the statistics of a stream
@@ -187,10 +184,12 @@ func (d *dynamicStreamImpl[A, P, T, D]) AddPaths(paths ...PathAndDest[P, D]) []e
 	cmd := &command{
 		cmdType: typeAddPath,
 		cmd:     add,
+		wg:      &sync.WaitGroup{},
 	}
-	add.wg.Add(2) // need to wait for both scheduler and distributor
+
+	cmd.wg.Add(2) // need to wait for both scheduler and distributor
 	d.cmdToSchd <- cmd
-	add.wg.Wait()
+	cmd.wg.Wait()
 	return add.errors
 }
 
@@ -207,10 +206,12 @@ func (d *dynamicStreamImpl[A, P, T, D]) RemovePaths(paths ...P) []error {
 	cmd := &command{
 		cmdType: typeRemovePath,
 		cmd:     remove,
+		wg:      &sync.WaitGroup{},
 	}
-	remove.wg.Add(2) // need to wait for both scheduler and distributor
+
+	cmd.wg.Add(2) // need to wait for both scheduler and distributor
 	d.cmdToSchd <- cmd
-	remove.wg.Wait()
+	cmd.wg.Wait()
 	return remove.errors
 }
 
@@ -220,6 +221,19 @@ func (d *dynamicStreamImpl[A, P, T, D]) RemovePath(path P) error {
 		return errs[0]
 	}
 	return nil
+}
+
+// Make the scheduler to balance immediately. Only used for test.
+func (d *dynamicStreamImpl[A, P, T, D]) reportAndSchedule(rule ruleType, period time.Duration) {
+	rs := &reportAndScheduleCmd{rule: rule, period: period}
+	cmd := &command{
+		cmdType: typeReportAndSchedule,
+		cmd:     rs,
+		wg:      &sync.WaitGroup{},
+	}
+	cmd.wg.Add(2)
+	d.cmdToSchd <- cmd
+	cmd.wg.Wait()
 }
 
 func (d *dynamicStreamImpl[A, P, T, D]) scheduler() {
@@ -271,7 +285,7 @@ func (d *dynamicStreamImpl[A, P, T, D]) scheduler() {
 	globalPathMap := make(map[P]*pathInfo[A, P, T, D])
 
 	scheduleRule := NewRoundRobin(3)
-	doSchedule := func(rule ruleType, testPeriod time.Duration) {
+	doSchedule := func(rule ruleType, testPeriod time.Duration, wg *sync.WaitGroup) {
 		// The goal of scheduler is to balance the load of the streams, with mimimum changes.
 		// First of all, we have consistent number (baseStreamCount) of basic streams, and unlimited number of solo streams.
 		// They are all in the d.streamInfos. The first baseStreamCount streams are the basic streams, and the rest are solo streams.
@@ -354,12 +368,15 @@ func (d *dynamicStreamImpl[A, P, T, D]) scheduler() {
 				d.streamInfos = newStreamInfos
 				streamInfoMap = genStreamInfoMap(newStreamInfos)
 
-				for _, arrange := range arranges {
-					cmd := &command{
-						cmdType: typeArrangeStream,
-						cmd:     arrange,
-					}
-					d.cmdToDist <- cmd
+				cmd := &command{
+					cmdType: typeArrangeStream,
+					cmd:     arranges,
+					wg:      wg,
+				}
+				d.cmdToDist <- cmd
+			} else {
+				if wg != nil {
+					wg.Done()
 				}
 			}
 		} else if rule == removeSoloPath {
@@ -423,7 +440,12 @@ func (d *dynamicStreamImpl[A, P, T, D]) scheduler() {
 
 				d.cmdToDist <- &command{
 					cmdType: typeArrangeStream,
-					cmd:     arrange,
+					cmd:     []*arrangeStreamCmd[A, P, T, D]{arrange},
+					wg:      wg,
+				}
+			} else {
+				if wg != nil {
+					wg.Done()
 				}
 			}
 		} else if rule == shuffleStreams {
@@ -539,12 +561,15 @@ func (d *dynamicStreamImpl[A, P, T, D]) scheduler() {
 				d.streamInfos = newStreamInfos
 				streamInfoMap = genStreamInfoMap(newStreamInfos)
 
-				for _, arrange := range arranges {
-					cmd := &command{
-						cmdType: typeArrangeStream,
-						cmd:     arrange,
-					}
-					d.cmdToDist <- cmd
+				cmd := &command{
+					cmdType: typeArrangeStream,
+					cmd:     arranges,
+					wg:      wg,
+				}
+				d.cmdToDist <- cmd
+			} else {
+				if wg != nil {
+					wg.Done()
 				}
 			}
 		} else {
@@ -589,7 +614,7 @@ func (d *dynamicStreamImpl[A, P, T, D]) scheduler() {
 				if hasError {
 					add.errors = errors
 				}
-				add.wg.Done()
+				cmd.wg.Done()
 
 				d.cmdToDist <- cmd
 			case typeRemovePath:
@@ -627,7 +652,7 @@ func (d *dynamicStreamImpl[A, P, T, D]) scheduler() {
 				if hasError {
 					remove.errors = errors
 				}
-				remove.wg.Done()
+				cmd.wg.Done()
 
 				// We send the command to distributor even if some paths don't exist, to remove the existed paths in the distributor.
 				d.cmdToDist <- cmd
@@ -650,8 +675,8 @@ func (d *dynamicStreamImpl[A, P, T, D]) scheduler() {
 					si.streamStat = stat
 				}
 				// Do the schedule
-				doSchedule(reportAndSchedule.rule, reportAndSchedule.period)
-				reportAndSchedule.wg.Done()
+				doSchedule(reportAndSchedule.rule, reportAndSchedule.period, cmd.wg)
+				cmd.wg.Done()
 			default:
 				panic("Unknown command type")
 			}
@@ -665,7 +690,7 @@ func (d *dynamicStreamImpl[A, P, T, D]) scheduler() {
 		case <-timerChan:
 			nextSchedule = time.Now().Add(d.option.SchedulerInterval)
 			timerChan = time.After(time.Until(nextSchedule))
-			doSchedule(ruleType(scheduleRule.Next()), 0)
+			doSchedule(ruleType(scheduleRule.Next()), 0, nil)
 		}
 	}
 }
@@ -693,8 +718,12 @@ func (d *dynamicStreamImpl[A, P, T, D]) distributor() {
 					e.timestamp = (Timestamp)(e.queueTime.Sub(d.startTime))
 				}
 				pi.stream.in() <- e
+			} else {
+				// Otherwise, drop the event
+				if d.option.DropListener != nil {
+					d.option.DropListener.OnDrop(e)
+				}
 			}
-			// Otherwise, drop the event
 		case p := <-d.wakeChan:
 			if pi, ok := pathMap[p]; ok {
 				pi.stream.in() <- eventWrap[A, P, T, D]{wake: true, pathInfo: pi}
@@ -712,9 +741,10 @@ func (d *dynamicStreamImpl[A, P, T, D]) distributor() {
 						panic(fmt.Sprintf("Path %v already exists in distributor", pi.path))
 					}
 					pathMap[pi.path] = pi
-					pi.stream.addPath(pi)
+					// Note that we don't need to add the path to the stream here.
+					// Because a path will be added to a stream automatically when the first event is received.
 				}
-				add.wg.Done()
+				cmd.wg.Done()
 			case typeRemovePath:
 				remove := cmd.cmd.(*removePathCmd[P])
 				for _, p := range remove.existPaths {
@@ -722,27 +752,32 @@ func (d *dynamicStreamImpl[A, P, T, D]) distributor() {
 					if ok {
 						pi.removed = true
 						delete(pathMap, p)
-						pi.stream.removePath(pi)
+						// Send an empty event to the stream to notify the stream to remove the path
+						pi.stream.in() <- eventWrap[A, P, T, D]{wake: false, pathInfo: pi}
 						// Don't close the stream here. The stream is processing other paths.
 					} else {
 						panic(fmt.Sprintf("Path %v doesn't exist in distributor", p))
 					}
 				}
-				remove.wg.Done()
+				cmd.wg.Done()
 			case typeArrangeStream:
-				arrange := cmd.cmd.(*arrangeStreamCmd[A, P, T, D])
-				for i, paths := range arrange.newStreamPaths {
-					newStream := arrange.newStreams[i]
-					for _, pi := range paths {
-						if _, ok := pathMap[pi.path]; !ok {
-							panic(fmt.Sprintf("Path %v doesn't exist in distributor", pi.path))
+				arranges := cmd.cmd.([]*arrangeStreamCmd[A, P, T, D])
+				for _, arrange := range arranges {
+					for i, paths := range arrange.newStreamPaths {
+						newStream := arrange.newStreams[i]
+						for _, pi := range paths {
+							if _, ok := pathMap[pi.path]; !ok {
+								panic(fmt.Sprintf("Path %v doesn't exist in distributor", pi.path))
+							}
+							pi.stream = newStream
 						}
-						pi.stream.removePath(pi)
-						newStream.addPath(pi)
+						// Streams must be started and closed in the distributor.
+						// Otherwise, the distributor will send the events to the closed streams.
+						newStream.start(paths, arrange.oldStreams...)
 					}
-					// Streams must be started and closed in the distributor.
-					// Otherwise, the distributor will send the events to the closed streams.
-					newStream.start(paths, arrange.oldStreams...)
+				}
+				if cmd.wg != nil {
+					cmd.wg.Done()
 				}
 			default:
 				panic("Unknown command type")

@@ -46,9 +46,12 @@ type pathInfo[A Area, P Path, T Event, D Dest] struct {
 	path P
 	dest D
 
-	// Stream level area info.
+	// Stream level area info. This field is only use in pendingQueue.
+	// Each stream has its own areaInfo map, after a path is assigned to a stream, the areaInfo is set.
 	areaInfo *areaInfo[A, P, T, D]
-	stream   *stream[A, P, T, D]
+
+	// The current stream this path belongs to.
+	stream *stream[A, P, T, D]
 	// This field is used to mark the path as removed, so that the handle goroutine can ignore it.
 	// Note that we should not need to use a atomic.Bool here, because this field is set by the RemovePaths method,
 	// and we use sync.WaitGroup to wait for finish. So if RemovePaths is called in the handle goroutine, it should be
@@ -87,12 +90,12 @@ func (pi *pathInfo[A, P, T, D]) appendEvent(e eventWrap[A, P, T, D], option *Opt
 		switch option.DropPolicy {
 		case DropLate:
 			if option.DropListener != nil {
-				option.DropListener.OnDrop(e.pathInfo.dest, e.event)
+				option.DropListener.OnDrop(e.event)
 			}
 		case DropEarly:
 			dropped, _ := pi.pendingQueue.PopFront()
 			if option.DropListener != nil {
-				option.DropListener.OnDrop(e.pathInfo.dest, dropped.event)
+				option.DropListener.OnDrop(dropped.event)
 			}
 			e.pathInfo.pendingQueue.PushBack(e)
 		}
@@ -211,21 +214,11 @@ func newStream[A Area, P Path, T Event, D Dest](
 	return s
 }
 
-func (s *stream[A, P, T, D]) addPath(pi *pathInfo[A, P, T, D]) {
-	pi.stream = s
-	s.pendingQueue.addPath(pi)
-}
-
-func (s *stream[A, P, T, D]) removePath(pi *pathInfo[A, P, T, D]) {
-	pi.stream = nil
-	s.pendingQueue.removePath(pi)
-}
-
 func (s *stream[A, P, T, D]) in() chan eventWrap[A, P, T, D] {
 	return s.inChan
 }
 
-// Close the former streams and start the handleLoop and reportStatLoop.
+// Close the former streams, add the paths to the stream, and start the handleLoop and reportStatLoop.
 func (s *stream[A, P, T, D]) start(acceptedPaths []*pathInfo[A, P, T, D], formerStreams ...*stream[A, P, T, D]) {
 	if s.hasClosed.Load() {
 		panic("The stream has been closed.")
@@ -254,6 +247,8 @@ func (s *stream[A, P, T, D]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D], f
 		if e.wake {
 			e.pathInfo.blocking = false
 			s.pendingQueue.wakePath(e.pathInfo)
+		} else if e.pathInfo.removed {
+			s.pendingQueue.removePath(e.pathInfo)
 		} else {
 			s.pendingQueue.appendEvent(e)
 		}
@@ -307,7 +302,7 @@ func (s *stream[A, P, T, D]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D], f
 		}
 		close(s.donChan)
 
-		// Move remaing events in the inChan to pendingQueue.
+		// Move remaining events in the inChan to pendingQueue.
 		for e := range s.inChan {
 			pushToPendingQueue(e)
 		}
@@ -326,7 +321,7 @@ func (s *stream[A, P, T, D]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D], f
 	// We initialize the pathMap here to avoid blocking the main goroutine.
 	// As there could be many paths, and the initialization could be time-consuming.
 	for _, p := range acceptedPaths {
-		s.addPath(p)
+		s.pendingQueue.addPath(p)
 	}
 
 	drainPending := false
@@ -408,7 +403,8 @@ Loop:
 				// 	s.signalQueue.PopFront()
 				// }
 
-				eventBuf, path := s.pendingQueue.popEvents(eventBuf)
+				var path *pathInfo[A, P, T, D]
+				eventBuf, path = s.pendingQueue.popEvents(eventBuf)
 				if len(eventBuf) == 0 {
 					drainPending = true
 					continue Loop
@@ -423,7 +419,7 @@ Loop:
 				}
 
 				// clean up the eventBuf
-				for i, _ := range eventBuf {
+				for i := range eventBuf {
 					eventBuf[i] = zeroT
 				}
 				eventBuf = eventBuf[:0]

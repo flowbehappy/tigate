@@ -9,6 +9,10 @@ import (
 // The path node order by timestamp.
 type tsPathNode[A Area, P Path, T Event, D Dest] pathInfo[A, P, T, D]
 
+func (n *tsPathNode[A, P, T, D]) c(index int) {
+	(*pathInfo[A, P, T, D])(n).tsHeapIndex = index
+}
+
 func (n *tsPathNode[A, P, T, D]) SetHeapIndex(index int) {
 	(*pathInfo[A, P, T, D])(n).tsHeapIndex = index
 }
@@ -92,10 +96,10 @@ func newPendingQueue[A Area, P Path, T Event, D Dest](option OptionEnhanced[A, P
 	}
 }
 
-func (q *pendingQueue[A, P, T, D]) updateHeapAfterUpdatePath(path *pathInfo[A, P, T, D], remove bool) {
+func (q *pendingQueue[A, P, T, D]) updateHeapAfterUpdatePath(path *pathInfo[A, P, T, D]) {
 	area := path.areaInfo
 
-	if remove || path.pendingQueue.Length() == 0 {
+	if path.removed || path.blocking || path.pendingQueue.Length() == 0 {
 		// Remove the path from heap
 		area.tsHeap.Remove((*tsPathNode[A, P, T, D])(path))
 		area.qtHeap.Remove((*qtPathNode[A, P, T, D])(path))
@@ -125,30 +129,42 @@ func (q *pendingQueue[A, P, T, D]) addPath(path *pathInfo[A, P, T, D]) {
 
 	area.pathCount++
 	path.areaInfo = area
+	path.qtHeapIndex = 0
+	path.tsHeapIndex = 0
 
-	q.updateHeapAfterUpdatePath(path, false)
+	q.pendingLength += path.pendingQueue.Length()
+	q.updateHeapAfterUpdatePath(path)
 }
 
 func (q *pendingQueue[A, P, T, D]) removePath(path *pathInfo[A, P, T, D]) {
 	area := path.areaInfo
+	if area == nil {
+		return
+	}
 	area.pathCount--
 
 	if area.pathCount == 0 {
 		delete(q.areaMap, area.area)
 	}
 
-	q.updateHeapAfterUpdatePath(path, true)
+	q.pendingLength -= path.pendingQueue.Length()
+	q.updateHeapAfterUpdatePath(path)
 	path.areaInfo = nil
 }
 
 func (q *pendingQueue[A, P, T, D]) appendEvent(event eventWrap[A, P, T, D]) {
-	pi := event.pathInfo
-	inc := pi.appendEvent(event, &q.option)
+	path := event.pathInfo
+	if path.areaInfo == nil {
+		// A newly added path sends the first event.
+		q.addPath(path)
+	}
+
+	inc := path.appendEvent(event, &q.option)
 	if inc {
 		q.pendingLength++
 	}
 
-	q.updateHeapAfterUpdatePath(pi, false)
+	q.updateHeapAfterUpdatePath(path)
 }
 
 func (q *pendingQueue[A, P, T, D]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, D]) {
@@ -156,39 +172,45 @@ func (q *pendingQueue[A, P, T, D]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, D
 	if batchSize == 0 {
 		batchSize = 1
 	}
-	area, ok := q.areaHeap.PeekTop()
-	if !ok {
-		return buf[:0], nil
-	}
-	top, ok := area.tsHeap.PeekTop()
-	if !ok {
-		panic("top is nil")
-	}
-	path := (*pathInfo[A, P, T, D])(top)
-	var eType Type = 0
-	for i := 0; i < batchSize; i++ {
-		front, ok := path.pendingQueue.FrontRef()
-		if !ok || (eType != 0 && eType != front.eType) {
-			break
+	for {
+		area, ok := q.areaHeap.PeekTop()
+		if !ok {
+			return buf[:0], nil
 		}
-		eType = front.eType
-		buf = append(buf, front.event)
-		path.pendingQueue.PopFront()
-	}
-	if len(buf) == 0 {
-		panic("empty buf")
-	}
+		top, ok := area.tsHeap.PeekTop()
+		if !ok {
+			panic("top is nil")
+		}
+		path := (*pathInfo[A, P, T, D])(top)
+		if path.removed {
+			q.updateHeapAfterUpdatePath(path)
+			continue
+		} else {
+			var eType Type = 0
+			for i := 0; i < batchSize; i++ {
+				front, ok := path.pendingQueue.FrontRef()
+				if !ok || (eType != 0 && eType != front.eType) {
+					break
+				}
+				eType = front.eType
+				buf = append(buf, front.event)
+				path.pendingQueue.PopFront()
+			}
+			if len(buf) == 0 {
+				panic("empty buf")
+			}
 
-	q.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D])(path), false)
-	q.pendingLength -= len(buf)
-
-	return buf, path
+			q.pendingLength -= len(buf)
+			q.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D])(path))
+			return buf, path
+		}
+	}
 }
 
 func (q *pendingQueue[A, P, T, D]) blockPath(path *pathInfo[A, P, T, D]) {
-	q.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D])(path), true)
+	q.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D])(path))
 }
 
 func (q *pendingQueue[A, P, T, D]) wakePath(path *pathInfo[A, P, T, D]) {
-	q.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D])(path), false)
+	q.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D])(path))
 }

@@ -26,21 +26,35 @@ func newSimpleEventSleep(path string, wg *sync.WaitGroup, sleep time.Duration) *
 	return &simpleEvent{path: path, sleep: sleep, wg: wg}
 }
 
-type simpleHandler struct{}
+type simpleHandler struct {
+	t *testing.T
+}
 
 func (h *simpleHandler) Path(event *simpleEvent) string {
 	return event.path
 }
 func (h *simpleHandler) Handle(dest struct{}, events ...*simpleEvent) (await bool) {
 	for _, event := range events {
+		if h.t != nil {
+			h.t.Log("Before Handle ", event.path)
+		}
 		if event.sleep > 0 {
 			time.Sleep(event.sleep)
 		}
 		if event.wg != nil {
 			event.wg.Done()
 		}
+		if h.t != nil {
+			h.t.Log("After Handle ", event.path)
+		}
 	}
 	return false
+}
+
+func (h *simpleHandler) OnDrop(event *simpleEvent) {
+	if h.t != nil {
+		h.t.Log("OnDrop ", event.path)
+	}
 }
 
 func TestDynamicStreamBasic(t *testing.T) {
@@ -120,23 +134,19 @@ func TestDynamicStreamAddRemovePaths(t *testing.T) {
 func TestDynamicStreamSchedule(t *testing.T) {
 	// t.Skip("Skipping TestDynamicStreamSchedule because it is not deterministic due to streams running in separate goroutines")
 
-	handler := &simpleHandler{}
+	handler := &simpleHandler{
+		t: t,
+	}
 	option := NewOption()
 	option.SchedulerInterval = 1 * time.Hour
 	option.ReportInterval = 1 * time.Hour
 	option.StreamCount = 3
 	optE := OptionEnhanced[any, string, *simpleEvent, struct{}]{
-		Option: option,
+		Option:       option,
+		DropListener: handler,
 	}
 	ds := newDynamicStreamImpl(handler, optE)
 	ds.Start()
-
-	scheduleNow := func(rule ruleType, period time.Duration) {
-		r := &reportAndScheduleCmd{rule: rule, period: period}
-		r.wg.Add(1)
-		ds.cmdToSchd <- &command{cmdType: typeReportAndSchedule, cmd: r}
-		r.wg.Wait()
-	}
 
 	ds.AddPaths([]PathAndDest[string, struct{}]{
 		{"p1", struct{}{}},
@@ -145,6 +155,8 @@ func TestDynamicStreamSchedule(t *testing.T) {
 		{"p4", struct{}{}},
 		{"p5", struct{}{}},
 	}...)
+
+	t.Log("=====1 ")
 
 	assert.Equal(t, 3, len(ds.streamInfos))
 	assert.Equal(t, 2, len(ds.streamInfos[0].pathMap)) // p1, p4 round-robin, the first stream has 2 paths
@@ -159,7 +171,9 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	ds.In() <- newSimpleEventSleep("p5", wg, 8*time.Millisecond)
 	wg.Wait()
 
-	scheduleNow(createSoloPath, 8*time.Millisecond)
+	t.Log("=====2 ")
+
+	ds.reportAndSchedule(createSoloPath, 8*time.Millisecond)
 
 	// path4 and path5 are very busy, so they should become solo streams
 	assert.Equal(t, 5, len(ds.streamInfos))
@@ -169,16 +183,23 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	assert.Equal(t, 1, len(ds.streamInfos[3].pathMap)) // p4, Solo stream
 	assert.Equal(t, 1, len(ds.streamInfos[4].pathMap)) // p5, Solo stream
 
+	t.Log("=====3 ")
+
 	wg = &sync.WaitGroup{}
 	ds.In() <- newSimpleEvent("p1", wg)
 	ds.In() <- newSimpleEvent("p2", wg)
 	ds.In() <- newSimpleEvent("p3", wg)
 	ds.In() <- newSimpleEvent("p4", wg)
+	// ds.In() <- newSimpleEvent("p5", wg)
 	ds.In() <- newSimpleEventSleep("p5", wg, 8*time.Millisecond)
 
 	wg.Wait()
 
-	scheduleNow(removeSoloPath, 8*time.Millisecond)
+	t.Log("=====4 ")
+
+	ds.reportAndSchedule(removeSoloPath, 8*time.Millisecond)
+
+	t.Log("=====5 ")
 
 	// path4 is idle now, so it should be moved back to the the first stream
 	// path5 is still busy, it remains in a solo stream
@@ -196,7 +217,8 @@ func TestDynamicStreamSchedule(t *testing.T) {
 		{"p10", struct{}{}},
 	}...)
 
-	scheduleNow(shuffleStreams, 8*time.Millisecond)
+	ds.reportAndSchedule(shuffleStreams, 8*time.Millisecond)
+	t.Log("=====6 ")
 
 	assert.Equal(t, 4, len(ds.streamInfos))
 	assert.Equal(t, 4, len(ds.streamInfos[0].pathMap)) // p1, p4, p7, p10
@@ -209,6 +231,8 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	ds.In() <- newSimpleEventSleep("p7", wg, 8*time.Millisecond)
 	ds.In() <- newSimpleEventSleep("p10", wg, 8*time.Millisecond)
 
+	t.Log("=====7 ")
+
 	// Stream 2
 	ds.In() <- newSimpleEventSleep("p2", wg, 900*time.Microsecond)
 	ds.In() <- newSimpleEventSleep("p8", wg, 900*time.Microsecond)
@@ -218,7 +242,8 @@ func TestDynamicStreamSchedule(t *testing.T) {
 
 	wg.Wait()
 
-	scheduleNow(createSoloPath, 10*time.Millisecond)
+	ds.reportAndSchedule(createSoloPath, 10*time.Millisecond)
+	t.Log("=====8 ")
 
 	assert.Equal(t, 7, len(ds.streamInfos))
 	assert.Equal(t, 2, len(ds.streamInfos[0].pathMap)) // p1, p4
@@ -230,7 +255,10 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	assert.Equal(t, 1, len(ds.streamInfos[6].pathMap)) // p9, Solo stream
 
 	// Do nothing, and all paths are idle
-	scheduleNow(removeSoloPath, 0)
+	ds.reportAndSchedule(removeSoloPath, 0)
+
+	t.Log("=====9 ")
+
 	assert.Equal(t, 3, len(ds.streamInfos))
 	assert.Equal(t, 6, len(ds.streamInfos[0].pathMap)) // p1, p4, p5, p7, p10, p9
 	assert.Equal(t, 2, len(ds.streamInfos[1].pathMap)) // p2, p8
@@ -244,7 +272,9 @@ func TestDynamicStreamSchedule(t *testing.T) {
 
 	wg.Wait()
 
-	scheduleNow(shuffleStreams, 8*time.Millisecond)
+	t.Log("=====10 ")
+
+	ds.reportAndSchedule(shuffleStreams, 8*time.Millisecond)
 	assert.Equal(t, 3, len(ds.streamInfos))
 	assert.Equal(t, 4, len(ds.streamInfos[0].pathMap)) // the paths are shuffled, we can't predict the exact paths anymore
 	assert.Equal(t, 4, len(ds.streamInfos[1].pathMap))
@@ -256,7 +286,8 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	ds.In() <- newSimpleEventSleep("p11", wg, 8*time.Millisecond)
 	wg.Wait()
 
-	scheduleNow(createSoloPath, 8*time.Millisecond)
+	ds.reportAndSchedule(createSoloPath, 8*time.Millisecond)
+	t.Log("=====11 ")
 
 	assert.Equal(t, 5, len(ds.streamInfos))
 	assert.Equal(t, 1, len(ds.streamInfos[3].pathMap)) // p10, Solo stream
@@ -269,7 +300,9 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	wg.Done() // Manually finish the first event
 	wg.Wait()
 
-	scheduleNow(removeSoloPath, 8*time.Millisecond)
+	t.Log("=====12 ")
+
+	ds.reportAndSchedule(removeSoloPath, 8*time.Millisecond)
 
 	assert.Equal(t, 4, len(ds.streamInfos))
 	assert.Equal(t, 3+4+2, len(ds.streamInfos[0].pathMap)+len(ds.streamInfos[1].pathMap)+len(ds.streamInfos[2].pathMap))
@@ -331,7 +364,7 @@ type incEvent struct {
 
 type incEventHandler struct{}
 
-func (h *incEventHandler) OnDrop(dest struct{}, event incEvent) {
+func (h *incEventHandler) OnDrop(event incEvent) {
 	event.wg.Done()
 }
 
@@ -397,4 +430,66 @@ func TestDynamicStreamDrop(t *testing.T) {
 		option.DropPolicy = DropEarly
 		assert.Equal(t, 8, check(option)) // 3 + 5
 	}
+}
+
+type testOrder struct {
+	path      string
+	id        int
+	timestamp Timestamp
+
+	wg *sync.WaitGroup
+}
+
+type testOrderHandler struct {
+	res []int
+}
+
+func (h *testOrderHandler) Path(event *testOrder) string {
+	return event.path
+}
+func (h *testOrderHandler) Handle(dest struct{}, events ...*testOrder) (await bool) {
+	for _, event := range events {
+		h.res = append(h.res, event.id)
+		event.wg.Done()
+	}
+	return false
+}
+
+func (h *testOrderHandler) Timestamp(event *testOrder) Timestamp {
+	return event.timestamp
+}
+
+func TestDynamicStreamOrder(t *testing.T) {
+	handler := &testOrderHandler{}
+	option := NewOptionEnhanced[int, string, *testOrder, struct{}]()
+	option.SchedulerInterval = 1 * time.Hour
+	option.ReportInterval = 1 * time.Hour
+	option.StreamCount = 1
+	option.TimestampGetter = handler
+
+	hwg := &sync.WaitGroup{}
+	option.handleWait = hwg
+	hwg.Add(1)
+
+	ds := NewDynamicStreamEnhanced(handler, option)
+	ds.Start()
+
+	ds.AddPath("p1", struct{}{})
+	ds.AddPath("p2", struct{}{})
+	ds.AddPath("p3", struct{}{})
+
+	wg := &sync.WaitGroup{}
+	wg.Add(6)
+	ds.In() <- &testOrder{path: "p1", id: 1, timestamp: 1, wg: wg}
+	ds.In() <- &testOrder{path: "p2", id: 2, timestamp: 3, wg: wg}
+	ds.In() <- &testOrder{path: "p3", id: 3, timestamp: 6, wg: wg}
+
+	ds.In() <- &testOrder{path: "p1", id: 4, timestamp: 2, wg: wg}
+	ds.In() <- &testOrder{path: "p2", id: 5, timestamp: 4, wg: wg}
+	ds.In() <- &testOrder{path: "p3", id: 6, timestamp: 5, wg: wg}
+
+	hwg.Done()
+	wg.Wait()
+
+	assert.Equal(t, []int{1, 4, 2, 5, 3, 6}, handler.res)
 }

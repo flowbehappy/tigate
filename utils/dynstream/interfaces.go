@@ -55,9 +55,9 @@ type TypeGetter[T Event] interface {
 	Type(event T) Type
 }
 
-type DropListener[T Event, D Dest] interface {
-	// OnDrop is called when an event is dropped.
-	OnDrop(dest D, event T)
+type DropListener[T Event] interface {
+	// OnDrop is called when an event is dropped. Could be caused by the DropPolicy or cannot find the path.
+	OnDrop(event T)
 }
 
 type PathAndDest[P Path, D Dest] struct {
@@ -120,24 +120,25 @@ type Option struct {
 	StreamCount       int           // The count of streams. I.e. the count of goroutines to handle events. By default 0, means runtime.NumCPU().
 	BatchSize         int           // The batch size of handling events. <= 1 means no batch.
 
-	// Note that if you specify MaxPendingLength and DropPolicy, the handler can implement the DropListener interface to listen to the dropped events.
-	// Otherwise the events will be dropped silently.
-	MaxPendingLength int        // The max pending length of a path. <= 0 means no limit.
-	DropPolicy       DropPolicy // The drop policy of the events of a path when the pending length is greater than MaxPendingLength.
-
 	handleWait *sync.WaitGroup // For testing. Don't handle events until this wait group is done.
 }
 
 // TODO: Add comments.
 type OptionEnhanced[A Area, P Path, T Event, D Dest] struct {
 	Option
+
+	// Note that if you specify MaxPendingLength and DropPolicy
+	// Otherwise the events will be dropped silently.
+	MaxPendingLength int        // The max pending length of a path. <= 0 means no limit.
+	DropPolicy       DropPolicy // The drop policy of the events of a path when the pending length is greater than MaxPendingLength.
+
 	// Areas are zero if not set.
 	AreaGetter AreaGetter[A, P, T]
 	// By default use the queue time as timestamp if not set.
 	TimestampGetter TimestampGetter[T]
 	// Types are zero if not set.
 	TypeGetter   TypeGetter[T]
-	DropListener DropListener[T, D]
+	DropListener DropListener[T]
 }
 
 func NewOption() Option {
@@ -146,18 +147,18 @@ func NewOption() Option {
 		ReportInterval:    DefaultReportInterval,
 		StreamCount:       0,
 		BatchSize:         1,
-		MaxPendingLength:  0,
-		DropPolicy:        DropLate,
 	}
 }
 
 func NewOptionEnhanced[A Area, P Path, T Event, D Dest]() OptionEnhanced[A, P, T, D] {
 	return OptionEnhanced[A, P, T, D]{
-		Option: NewOption(),
+		Option:           NewOption(),
+		MaxPendingLength: 0,
+		DropPolicy:       DropLate,
 	}
 }
 
-func (o *Option) fix() {
+func (o *OptionEnhanced[A, P, T, D]) fix() {
 	if o.StreamCount == 0 {
 		o.StreamCount = runtime.NumCPU()
 	}
