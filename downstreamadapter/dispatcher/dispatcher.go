@@ -205,10 +205,9 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 	// Only return false when all events are resolvedTs Event.
 	block = false
 
-	leftIndex := 0
 	// Check if the dispatcher is ready.
 	if !d.isReady.Load() {
-		for i, dispatcherEvent := range dispatcherEvents {
+		for _, dispatcherEvent := range dispatcherEvents {
 			event := dispatcherEvent.Event
 			if event.GetType() == commonEvent.TypeHandshakeEvent {
 				if event.GetCommitTs() == d.startTs.Load() {
@@ -217,8 +216,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 					}
 					d.isReady.Store(true)
 					log.Info("Receive handshake event, dispatcher is ready to handle events", zap.Any("dispatcher", d.id))
-					leftIndex = i
-					break
+					return false
 				} else {
 					log.Warn("Handshake event commit ts not equal to dispatcher resolved ts", zap.Any("event", event), zap.Stringer("dispatcher", d.id), zap.Uint64("resolvedTs", d.resolvedTs.Get()), zap.Uint64("commitTs", event.GetCommitTs()))
 				}
@@ -228,16 +226,14 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 		}
 	}
 
-	// Handle the remaining events
-	dispatcherEvents = dispatcherEvents[leftIndex:]
 	for _, dispatcherEvent := range dispatcherEvents {
 		// Pre-check, make sure the event is not stale or out-of-order
 		event := dispatcherEvent.Event
+		if event.GetCommitTs() < d.resolvedTs.Get() {
+			log.Panic("Received a stale event, it should never happen", zap.Any("event", event), zap.Any("dispatcher", d.id))
+		}
 		if event.GetType() == commonEvent.TypeDMLEvent ||
 			event.GetType() == commonEvent.TypeDDLEvent {
-			if event.GetCommitTs() < d.resolvedTs.Get() {
-				log.Panic("Received a stale event, it should never happen", zap.Any("event", event), zap.Any("dispatcher", d.id))
-			}
 			if event.GetSeq() != d.lastEventSeq.Add(1) {
 				log.Warn("Received a out-of-order event, reset the dispatcher", zap.Any("event", event), zap.Any("dispatcher", d.id))
 				d.reset()
@@ -268,6 +264,12 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 			}
 			block = true
 			event := event.(*commonEvent.DDLEvent)
+			log.Info("dispatcher receive ddl event",
+				zap.Stringer("dispatcher", d.id),
+				zap.String("query", event.Query),
+				zap.Int64("table", event.TableID),
+				zap.Uint64("commitTs", event.GetCommitTs()),
+				zap.Uint64("seq", event.GetSeq()))
 			if d.tableNameStore != nil {
 				d.tableNameStore.AddEvent(event)
 			}

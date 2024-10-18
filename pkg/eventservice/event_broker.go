@@ -214,7 +214,26 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 				return
 			case <-ticker.C:
 				c.tableTriggerDispatchers.Range(func(key, value interface{}) bool {
+
 					dispatcherStat := value.(*dispatcherStat)
+					if !dispatcherStat.isInitialized.Load() {
+						e := &commonEvent.HandshakeEvent{
+							DispatcherID: dispatcherStat.info.GetID(),
+							ResolvedTs:   dispatcherStat.startTs.Load(),
+							Seq:          dispatcherStat.seq.Add(1),
+						}
+						wrapE := wrapEvent{
+							serverID: node.ID(dispatcherStat.info.GetServerID()),
+							e:        e,
+							msgType:  commonEvent.TypeHandshakeEvent,
+							postSendFunc: func() {
+								dispatcherStat.isInitialized.Store(true)
+							},
+						}
+						c.messageCh <- wrapE
+						return true
+					}
+
 					startTs := dispatcherStat.watermark.Load()
 					remoteID := node.ID(dispatcherStat.info.GetServerID())
 					// TODO: maybe limit 1 is enough.
@@ -236,6 +255,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 }
 
 func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e commonEvent.DDLEvent, d *dispatcherStat) {
+	log.Info("send ddl event to dispatcher", zap.Stringer("dispatcher", d.info.GetID()), zap.String("query", e.Query), zap.Int64("table", e.TableID), zap.Uint64("commitTs", e.FinishedTs), zap.Uint64("seq", e.Seq))
 	c.emitSyncPointEventIfNeeded(e.FinishedTs, d, remoteID)
 	e.DispatcherID = d.info.GetID()
 	e.Seq = d.seq.Add(1)
@@ -299,6 +319,7 @@ func (c *eventBroker) checkAndInitDispatcher(ctx context.Context, task scanTask)
 		msgType: commonEvent.TypeHandshakeEvent,
 		postSendFunc: func() {
 			task.dispatcherStat.isInitialized.Store(true)
+			log.Info("handshake event sent to dispatcher", zap.Stringer("dispatcher", task.dispatcherStat.info.GetID()))
 		},
 	}
 	c.messageCh <- wrapE
