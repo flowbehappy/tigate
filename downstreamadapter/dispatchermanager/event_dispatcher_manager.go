@@ -231,7 +231,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 		syncPointInfo.InitSyncPointTs = syncpoint.CalculateStartSyncPointTs(startTs, e.syncPointConfig.SyncPointInterval)
 	}
 
-	dispatcher := dispatcher.NewDispatcher(
+	d := dispatcher.NewDispatcher(
 		id, tableSpan, e.sink,
 		startTs, e.dispatcherActionChan, e.blockStatusesChan,
 		e.filter, schemaID, e.schemaIDToDispatchers, &syncPointInfo)
@@ -242,20 +242,21 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 	}
 
 	if tableSpan.Equal(heartbeatpb.DDLSpan) {
-		e.tableTriggerEventDispatcher = dispatcher
+		e.tableTriggerEventDispatcher = d
 	} else {
 		e.schemaIDToDispatchers.Set(schemaID, id)
 	}
 
 	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).SendDispatcherRequest(
 		eventcollector.DispatcherRequest{
-			Dispatcher:   dispatcher,
-			StartTs:      startTs,
+			Dispatcher:   d,
+			StartTs:      d.GetStartTs(),
 			ActionType:   eventpb.ActionType_ACTION_TYPE_REGISTER,
 			FilterConfig: toFilterConfigPB(e.config.Filter),
 		},
 	)
-	e.dispatcherMap.Set(id, dispatcher)
+
+	e.dispatcherMap.Set(id, d)
 	e.statusesChan <- &heartbeatpb.TableSpanStatus{
 		ID:              id.ToPB(),
 		ComponentStatus: heartbeatpb.ComponentState_Working,
@@ -270,7 +271,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 		zap.Int64("cost(ns)", time.Since(start).Nanoseconds()), zap.Time("start", start))
 	e.metricCreateDispatcherDuration.Observe(float64(time.Since(start).Seconds()))
 
-	return dispatcher
+	return d
 }
 
 func (e *EventDispatcherManager) CollectBlockStatusRequest(ctx context.Context) {
@@ -378,6 +379,7 @@ func (e *EventDispatcherManager) CollectDispatcherAction(ctx context.Context) {
 			case common.ActionReset:
 				req = eventcollector.DispatcherRequest{
 					Dispatcher: d,
+					StartTs:    d.GetStartTs(),
 					ActionType: eventpb.ActionType_ACTION_TYPE_PAUSE,
 				}
 			default:

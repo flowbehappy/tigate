@@ -27,7 +27,7 @@ const (
 	TypeDDLEvent
 	TypeBatchResolvedTs
 	TypeSyncPointEvent
-
+	TypeHandshakeEvent
 	TypeHeartBeatRequest
 	TypeHeartBeatResponse
 	TypeScheduleDispatcherRequest
@@ -61,6 +61,8 @@ func (t IOType) String() string {
 		return "SyncPointEvent"
 	case TypeBatchResolvedTs:
 		return "BatchResolvedTs"
+	case TypeHandshakeEvent:
+		return "HandshakeEvent"
 	case TypeHeartBeatRequest:
 		return "HeartBeatRequest"
 	case TypeHeartBeatResponse:
@@ -203,6 +205,8 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 		m = &commonEvent.SyncPointEvent{}
 	case TypeBatchResolvedTs:
 		m = &commonEvent.BatchResolvedEvent{}
+	case TypeHandshakeEvent:
+		m = &commonEvent.HandshakeEvent{}
 	case TypeHeartBeatRequest:
 		m = &heartbeatpb.HeartBeatRequest{}
 	case TypeHeartBeatResponse:
@@ -267,6 +271,8 @@ func NewSingleTargetMessage(To node.ID, Topic string, Message IOTypeT) *TargetMe
 		ioType = TypeSyncPointEvent
 	case *commonEvent.BatchResolvedEvent:
 		ioType = TypeBatchResolvedTs
+	case *commonEvent.HandshakeEvent:
+		ioType = TypeHandshakeEvent
 	case *heartbeatpb.HeartBeatRequest:
 		ioType = TypeHeartBeatRequest
 	case *heartbeatpb.BlockStatusRequest:

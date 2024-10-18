@@ -68,14 +68,16 @@ func (w *MysqlWriter) FlushDDLEvent(event *commonEvent.DDLEvent) error {
 		return w.asyncExecAddIndexDDLIfTimeout(event)
 	}
 	err := w.execDDLWithMaxRetries(event)
+	// FIXME: consider whether we need to execute the callbacks when the ddl is failed
+	for _, callback := range event.PostTxnFlushed {
+		callback()
+	}
+
 	if err != nil {
 		log.Error("exec ddl failed", zap.Error(err))
 		return err
 	}
 
-	for _, callback := range event.PostTxnFlushed {
-		callback()
-	}
 	return nil
 }
 

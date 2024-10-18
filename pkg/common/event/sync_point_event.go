@@ -38,6 +38,11 @@ func (e SyncPointEvent) Marshal() ([]byte, error) {
 	return json.Marshal(e)
 }
 
+func (e SyncPointEvent) GetSeq() uint64 {
+	// It's a fake seq.
+	return 0
+}
+
 func (e SyncPointEvent) Unmarshal(data []byte) error {
 	// TODO: optimize it
 	return json.Unmarshal(data, e)

@@ -151,10 +151,15 @@ func (t *MysqlDDLWorker) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case event := <-t.ddlEventChan:
-			switch event.(type) {
-			case *commonEvent.DDLEvent:
-				t.mysqlWriter.FlushDDLEvent(event.(*commonEvent.DDLEvent))
-			case *commonEvent.SyncPointEvent:
+
+			switch event.GetType() {
+			case commonEvent.TypeDDLEvent:
+				err := t.mysqlWriter.FlushDDLEvent(event.(*commonEvent.DDLEvent))
+				if err != nil {
+					// FIXME: handle the error
+					log.Error("Failed to flush ddl event", zap.Error(err), zap.Any("event", event))
+				}
+			case commonEvent.TypeSyncPointEvent:
 				err := t.mysqlWriter.FlushSyncPointEvent(event.(*commonEvent.SyncPointEvent))
 				if err != nil {
 					log.Error("Failed to flush sync point event", zap.Error(err), zap.Any("event", event))
