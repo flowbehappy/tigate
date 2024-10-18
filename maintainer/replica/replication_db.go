@@ -208,8 +208,8 @@ func (db *ReplicationDB) IsTableExists(tableID int64) bool {
 
 // GetTaskByNodeID returns all the tasks that are maintained by the node
 func (db *ReplicationDB) GetTaskByNodeID(id node.ID) []*SpanReplication {
-	db.lock.Lock()
-	defer db.lock.Unlock()
+	db.lock.RLock()
+	defer db.lock.RUnlock()
 
 	stmMap, ok := db.nodeTasks[id]
 	if !ok {
@@ -219,13 +219,7 @@ func (db *ReplicationDB) GetTaskByNodeID(id node.ID) []*SpanReplication {
 		return nil
 	}
 	var stms = make([]*SpanReplication, 0, len(stmMap))
-	// move to absent node
-	for key, value := range stmMap {
-		log.Info("move span to absent",
-			zap.String("changefeed", db.changefeedID),
-			zap.String("node", id.String()),
-			zap.String("span", key.String()))
-		db.absent[key] = value
+	for _, value := range stmMap {
 		stms = append(stms, value)
 	}
 	return stms

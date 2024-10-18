@@ -11,23 +11,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metrics
+package scheduler
 
-import (
-	"github.com/prometheus/client_golang/prometheus"
-)
+import "github.com/flowbehappy/tigate/pkg/node"
 
-func InitMetrics(registry *prometheus.Registry) {
-	InitServerMetrics(registry)
-	InitSchedulerMetrics(registry)
-	InitChangefeedMetrics(registry)
-	InitDisaptcherMetrics(registry)
-	InitMessagingMetrics(registry)
-	InitSinkMetrics(registry)
-	InitPullerMetrics(registry)
-	InitEventStoreMetrics(registry)
-	InitSchemaStoreMetrics(registry)
-	InitEventServiceMetrics(registry)
-	InitMaintainerMetrics(registry)
-	InitCoordinatorMetrics(registry)
+// Item is an item in the priority queue, use the Load field as the priority
+type Item struct {
+	Node  node.ID
+	Load  int
+	index int
+}
+
+func (i *Item) SetHeapIndex(idx int) {
+	i.index = idx
+}
+
+func (i *Item) GetHeapIndex() int {
+	return i.index
+}
+
+func (i *Item) CompareTo(t *Item) int {
+	return i.Load - t.Load
 }
