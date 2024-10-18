@@ -75,7 +75,8 @@ func (s *Scheduler) Execute() time.Time {
 		if availableSize < s.batchSize/2 {
 			return time.Now().Add(time.Millisecond * 100)
 		}
-		absent, nodeSize := s.replicationDB.GetScheduleSate(s.absent, availableSize)
+		absent := s.replicationDB.GetAbsent(s.absent, availableSize)
+		nodeSize := s.replicationDB.GetTaskSizePerNode()
 		// add the absent node to the node size map
 		// todo: use the bootstrap nodes
 		for id, _ := range s.nodeManager.GetAliveNodes() {
