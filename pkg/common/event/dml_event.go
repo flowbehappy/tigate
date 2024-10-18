@@ -98,6 +98,10 @@ func (t *DMLEvent) PostFlush() {
 	}
 }
 
+func (t *DMLEvent) GetSeq() uint64 {
+	return t.Seq
+}
+
 func (t *DMLEvent) PushFrontFlushFunc(f func()) {
 	t.PostTxnFlushed = append([]func(){f}, t.PostTxnFlushed...)
 }

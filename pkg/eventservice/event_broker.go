@@ -258,6 +258,8 @@ func (c *eventBroker) wakeDispatcher(dispatcherID common.DispatcherID) {
 // 1. send the watermark to the dispatcher
 // 2. push the task to the task pool
 func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, common.DataRange) {
+	c.checkAndInitDispatcher(ctx, task)
+
 	dataRange, needScan := task.dispatcherStat.getDataRange()
 	if !needScan {
 		return false, dataRange
@@ -281,6 +283,25 @@ func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, c
 	}
 
 	return true, dataRange
+}
+
+func (c *eventBroker) checkAndInitDispatcher(ctx context.Context, task scanTask) {
+	if task.dispatcherStat.isInitialized.Load() {
+		return
+	}
+	wrapE := wrapEvent{
+		serverID: node.ID(task.dispatcherStat.info.GetServerID()),
+		e: &commonEvent.HandshakeEvent{
+			DispatcherID: task.dispatcherStat.info.GetID(),
+			ResolvedTs:   task.dispatcherStat.watermark.Load(),
+			Seq:          task.dispatcherStat.seq.Add(1),
+		},
+		msgType: commonEvent.TypeHandshakeEvent,
+		postSendFunc: func() {
+			task.dispatcherStat.isInitialized.Store(true)
+		},
+	}
+	c.messageCh <- wrapE
 }
 
 func (c *eventBroker) sendSyncPointEvent(server node.ID, ts uint64, dispatcherID common.DispatcherID) {
@@ -420,7 +441,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 					messaging.EventCollectorTopic,
 					m.e)
 				c.flushResolvedTs(ctx, m.serverID)
-				c.sendMsg(ctx, tMsg)
+				c.sendMsg(ctx, tMsg, m.postSendFunc)
 			case <-flushResolvedTsTicker.C:
 				for serverID := range c.resolvedTsCaches {
 					c.flushResolvedTs(ctx, serverID)
@@ -453,10 +474,10 @@ func (c *eventBroker) flushResolvedTs(ctx context.Context, serverID node.ID) {
 		serverID,
 		messaging.EventCollectorTopic,
 		msg)
-	c.sendMsg(ctx, tMsg)
+	c.sendMsg(ctx, tMsg, nil)
 }
 
-func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage) {
+func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage, postSendMsg func()) {
 	start := time.Now()
 	congestedRetryInterval := time.Millisecond * 10
 	// Send the message to messageCenter. Retry if to send failed.
@@ -482,6 +503,9 @@ func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage
 				log.Debug("send message failed", zap.Error(err))
 				return
 			}
+		}
+		if postSendMsg != nil {
+			postSendMsg()
 		}
 		metricEventServiceSendEventDuration.Observe(time.Since(start).Seconds())
 		return
@@ -659,7 +683,9 @@ func (c *eventBroker) resetDispatcher(dispatcherInfo DispatcherInfo) {
 	dispStat.watermark.Store(dispStat.info.GetStartTs())
 	// Reset the seq to 0, so that the next event will be sent with seq 1.
 	dispStat.seq.Store(0)
+	dispStat.startTs.Store(dispStat.info.GetStartTs())
 	dispStat.isRunning.Store(true)
+	dispStat.isInitialized.Store(false)
 }
 
 // Store the progress of the dispatcher, and the incremental events stats.
@@ -668,13 +694,22 @@ type dispatcherStat struct {
 	info             DispatcherInfo
 	filter           filter.Filter
 	spanSubscription *spanSubscription
+	startTs          atomic.Uint64
 	// The watermark of the events that have been sent to the dispatcher.
 	watermark atomic.Uint64
 	// The seq of the events that have been sent to the dispatcher.
 	// It start from 1, and increase by 1 for each event.
 	// If the dispatcher is reset, the seq will be set to 1.
-	seq       atomic.Uint64
+	seq atomic.Uint64
+
+	// isRunning is used to indicate whether the dispatcher is running.
+	// It will be set to false, after it receives the pause event from the dispatcher.
+	// It will be set to true, after it receives the resume/reset event from the dispatcher.
 	isRunning atomic.Bool
+	// isInitialized is used to indicate whether the dispatcher is initialized.
+	// It will be set to true, after it sends the handshake event to the dispatcher.
+	// It will be set to false, after it receives the reset event from the dispatcher.
+	isInitialized atomic.Bool
 
 	// syncpoint related
 	enableSyncPoint   bool
@@ -707,7 +742,7 @@ func newDispatcherStat(
 		dispStat.nextSyncPoint = info.GetSyncPointTs()
 		dispStat.syncPointInterval = info.GetSyncPointInterval()
 	}
-
+	dispStat.startTs.Store(startTs)
 	dispStat.watermark.Store(startTs)
 	dispStat.isRunning.Store(true)
 	subscription.addDispatcher(dispStat)
@@ -842,6 +877,8 @@ type wrapEvent struct {
 	serverID node.ID
 	e        messaging.IOTypeT
 	msgType  int
+	// postSendFunc should be called after the message is sent to message center
+	postSendFunc func()
 }
 
 func newWrapTxnEvent(serverID node.ID, e *commonEvent.DMLEvent) wrapEvent {
