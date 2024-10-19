@@ -141,7 +141,7 @@ func (c *EventCollector) SendDispatcherRequest(req DispatcherRequest) error {
 	})
 
 	if err != nil {
-		log.Error("failed to send dispatcher request message to event service, try again later", zap.Error(err))
+		log.Info("failed to send dispatcher request message to event service, try again later", zap.Error(err))
 		// Put the request back to the channel for later retry.
 		c.dispatcherRequestChan.In() <- req
 		return err

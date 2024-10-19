@@ -70,6 +70,10 @@ func (d *DDLEvent) PostFlush() {
 	}
 }
 
+func (d *DDLEvent) GetSeq() uint64 {
+	return d.Seq
+}
+
 func (d *DDLEvent) AddPostFlushFunc(f func()) {
 	d.PostTxnFlushed = append(d.PostTxnFlushed, f)
 }

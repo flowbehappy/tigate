@@ -1393,8 +1393,8 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 			}
 			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
 				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      []int64{heartbeatpb.DDLSpan.TableID},
 			}
-			ddlEvent.BlockedTables.TableIDs = append(ddlEvent.BlockedTables.TableIDs, rawEvent.CurrentTableID)
 		}
 		ddlEvent.TableChange = &commonEvent.TableChange{
 			AddTable: []commonEvent.SchemaTableInfo{

@@ -79,6 +79,7 @@ func (w *MysqlWriter) FlushDDLEvent(event *commonEvent.DDLEvent) error {
 		return w.asyncExecAddIndexDDLIfTimeout(event) // todo flush checkpointTs
 	}
 	err := w.execDDLWithMaxRetries(event)
+
 	if err != nil {
 		log.Error("exec ddl failed", zap.Error(err))
 		return err
@@ -92,7 +93,10 @@ func (w *MysqlWriter) FlushDDLEvent(event *commonEvent.DDLEvent) error {
 	// before new checkpointTs will report to maintainer. Therefore, when the table checkpointTs is forward,
 	// we can ensure the ddl and ddl ts are both flushed downstream successfully.
 	// Thus, when restarting, and we can't find a record for one table, it means the table is dropped.
-	w.FlushDDLTs(event)
+	err = w.FlushDDLTs(event)
+	if err != nil {
+		return err
+	}
 
 	for _, callback := range event.PostTxnFlushed {
 		callback()
@@ -112,6 +116,7 @@ func (w *MysqlWriter) FlushDDLTs(event *commonEvent.DDLEvent) error {
 
 	err := w.SendDDLTs(event)
 	if err != nil {
+		log.Error("send ddl ts failed", zap.Error(err))
 		return err
 	}
 	return nil
@@ -231,6 +236,7 @@ func (w *MysqlWriter) SendSyncPointEvent(event *commonEvent.SyncPointEvent) erro
 }
 
 func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
+	log.Info("Send DDL TS")
 	ctx := context.Background()
 	tx, err := w.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -269,12 +275,11 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 			ids := w.tableSchemaStore.GetAllTableIds()
 			dropTableIds = append(dropTableIds, ids...)
 		}
+	}
 
-		addTables := event.GetNeedAddedTables()
-		for _, table := range addTables {
-			tableIds = append(tableIds, table.TableID)
-		}
-
+	addTables := event.GetNeedAddedTables()
+	for _, table := range addTables {
+		tableIds = append(tableIds, table.TableID)
 	}
 
 	// generate query
@@ -291,19 +296,19 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 		builder.WriteString(ticdcClusterID)
 		builder.WriteString("', '")
 		builder.WriteString(changefeedID)
-		builder.WriteString("', ")
+		builder.WriteString("', '")
 		builder.WriteString(ddlTs)
-		builder.WriteString(", ")
+		builder.WriteString("', ")
 		builder.WriteString(strconv.FormatInt(tableId, 10))
 		builder.WriteString(")")
 		if idx < len(tableIds)-1 {
 			builder.WriteString(", ")
 		}
 	}
-	builder.WriteString(" ON DUPLICATE KEY UPDATE ddl_ts=VALUES(ddl_ts), created_at=CURRENT_TIMESTAMP")
+	builder.WriteString(" ON DUPLICATE KEY UPDATE ddl_ts=VALUES(ddl_ts), created_at=CURRENT_TIMESTAMP;")
 
 	query := builder.String()
-
+	log.Info("query is", zap.Any("query", query))
 	_, err = tx.Exec(query)
 	if err != nil {
 		log.Error("failed to write ddl ts table", zap.Error(err))
@@ -349,7 +354,9 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 			return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to delete ddl ts item;"))
 		}
 	}
-	return nil
+
+	err = tx.Commit()
+	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write ddl ts table;"))
 
 }
 

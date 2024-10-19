@@ -62,13 +62,14 @@ func (m *DispatcherOrchestrator) RecvMaintainerRequest(_ context.Context, msg *m
 func (m *DispatcherOrchestrator) handleAddDispatcherManager(from node.ID, req *heartbeatpb.MaintainerBootstrapRequest) error {
 	cfId := model.DefaultChangeFeedID(req.ChangefeedID)
 	manager, exists := m.dispatcherManagers[cfId]
+	var err error
 	if !exists {
 		cfConfig := &config.ChangefeedConfig{}
 		if err := json.Unmarshal(req.Config, cfConfig); err != nil {
 			log.Panic("failed to unmarshal changefeed config", zap.String("changefeed id", req.ChangefeedID), zap.Error(err))
 			return err
 		}
-		manager, err := dispatchermanager.NewEventDispatcherManager(cfId, cfConfig, from)
+		manager, err = dispatchermanager.NewEventDispatcherManager(cfId, cfConfig, from)
 		// Fast return the error to maintainer.
 		if err != nil {
 			log.Error("failed to create new dispatcher manager", zap.Error(err), zap.Any("ChangefeedID", cfId))
