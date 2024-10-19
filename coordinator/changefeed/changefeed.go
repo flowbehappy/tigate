@@ -57,7 +57,7 @@ func NewChangefeed(cfID model.ChangeFeedID,
 		configBytes:           bytes,
 		lastSavedCheckpointTs: checkpointTs,
 		isMQSink:              sink.IsMQScheme(uri.Scheme),
-		// init the first status
+		// init the first Status
 		Status: &heartbeatpb.MaintainerStatus{
 			CheckpointTs: checkpointTs,
 			FeedState:    string(info.State),
@@ -93,12 +93,7 @@ func (c *Changefeed) NewAddInferiorMessage(server node.ID) *messaging.TargetMess
 }
 
 func (c *Changefeed) NewRemoveInferiorMessage(server node.ID, caseCade bool) *messaging.TargetMessage {
-	return messaging.NewSingleTargetMessage(server,
-		messaging.MaintainerManagerTopic,
-		&heartbeatpb.RemoveMaintainerRequest{
-			Id:      c.ID.ID,
-			Cascade: caseCade,
-		})
+	return NewRemoveInferiorMessage(c.ID.ID, server, caseCade)
 }
 
 func (c *Changefeed) NewCheckpointTsMessage(ts uint64) *messaging.TargetMessage {
@@ -107,5 +102,14 @@ func (c *Changefeed) NewCheckpointTsMessage(ts uint64) *messaging.TargetMessage 
 		&heartbeatpb.CheckpointTsMessage{
 			ChangefeedID: c.ID.ID,
 			CheckpointTs: ts,
+		})
+}
+
+func NewRemoveInferiorMessage(id string, server node.ID, caseCade bool) *messaging.TargetMessage {
+	return messaging.NewSingleTargetMessage(server,
+		messaging.MaintainerManagerTopic,
+		&heartbeatpb.RemoveMaintainerRequest{
+			Id:      id,
+			Cascade: caseCade,
 		})
 }

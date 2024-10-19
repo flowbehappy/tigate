@@ -99,7 +99,7 @@ func (m *mockMaintainerManager) handleMessage(msg *messaging.TargetMessage) {
 			if absent != "" {
 				response.Statuses = append(response.Statuses, &heartbeatpb.MaintainerStatus{
 					ChangefeedID: absent,
-					State:        heartbeatpb.ComponentState_Absent,
+					State:        heartbeatpb.ComponentState_Stopped,
 				})
 			}
 			if len(response.Statuses) != 0 {

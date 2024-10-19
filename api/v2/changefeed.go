@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/flowbehappy/tigate/version"
@@ -163,21 +162,20 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 			return
 		}
 	}()
-	upstreamInfo := &model.UpstreamInfo{
-		ID:            info.UpstreamID,
-		PDEndpoints:   strings.Join(cfg.PDAddrs, ","),
-		KeyPath:       cfg.KeyPath,
-		CertPath:      cfg.CertPath,
-		CAPath:        cfg.CAPath,
-		CertAllowedCN: cfg.CertAllowedCN,
-	}
 
-	err = h.server.GetEtcdClient().CreateChangefeedInfo(ctx, upstreamInfo, info)
+	co, err := h.server.GetCoordinator()
 	if err != nil {
 		needRemoveGCSafePoint = true
 		_ = c.Error(err)
 		return
 	}
+	err = co.CreateChangefeed(ctx, info)
+	if err != nil {
+		needRemoveGCSafePoint = true
+		_ = c.Error(err)
+		return
+	}
+
 	log.Info("Create changefeed successfully!",
 		zap.String("id", info.ID),
 		zap.String("changefeed", info.String()))

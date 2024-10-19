@@ -42,22 +42,46 @@ func NewChangefeedDB() *ChangefeedDB {
 	return db
 }
 
+// AddAbsentChangefeed adds the changefeed to the absent map
+func (db *ChangefeedDB) AddAbsentChangefeed(tasks ...*Changefeed) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	db.addAbsentChangefeedUnLock(tasks...)
+}
+
+// AddReplicatingSpan adds a replicating the replicating map, that means the task is already scheduled to a dispatcher
+func (db *ChangefeedDB) AddReplicatingSpan(task *Changefeed) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	nodeID := task.GetNodeID()
+
+	log.Info("add an replicating span",
+		zap.String("nodeID", nodeID.String()),
+		zap.String("changefeed", task.ID.String()))
+
+	db.changefeeds[task.ID] = task
+	db.replicating[task.ID] = task
+	db.updateNodeMap("", nodeID, task)
+}
+
 func (db *ChangefeedDB) GetAbsentSize() int {
-	db.lock.RUnlock()
+	db.lock.RLock()
 	defer db.lock.RUnlock()
 
 	return len(db.absent)
 }
 
 func (db *ChangefeedDB) GetReplicatingSize() int {
-	db.lock.RUnlock()
+	db.lock.RLock()
 	defer db.lock.RUnlock()
 
 	return len(db.replicating)
 }
 
 func (db *ChangefeedDB) GetReplicating() []*Changefeed {
-	db.lock.RUnlock()
+	db.lock.RLock()
 	defer db.lock.RUnlock()
 
 	cfs := make([]*Changefeed, 0, len(db.replicating))
@@ -141,7 +165,7 @@ func (db *ChangefeedDB) GetByNodeID(id node.ID) []*Changefeed {
 	return stms
 }
 
-// MarkSpanAbsent move the span to the absent status
+// MarkSpanAbsent move the span to the absent Status
 func (db *ChangefeedDB) MarkSpanAbsent(span *Changefeed) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -191,5 +215,13 @@ func (db *ChangefeedDB) updateNodeMap(old, new node.ID, task *Changefeed) {
 			db.nodeTasks[new] = newMap
 		}
 		newMap[task.ID] = task
+	}
+}
+
+// addAbsentChangefeedUnLock adds the replica set to the absent map
+func (db *ChangefeedDB) addAbsentChangefeedUnLock(tasks ...*Changefeed) {
+	for _, task := range tasks {
+		db.changefeeds[task.ID] = task
+		db.absent[task.ID] = task
 	}
 }
