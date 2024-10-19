@@ -430,14 +430,6 @@ func (d *Dispatcher) Remove() {
 			log.Error("remove dispatcher from dynamic stream failed", zap.Error(err))
 		}
 	}
-
-	dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
-	errs = dispatcherStatusDynamicStream.RemovePaths(d.id)
-	for _, err := range errs {
-		if err != nil {
-			log.Error("remove dispatcher from dynamic stream failed", zap.Error(err))
-		}
-	}
 }
 
 // Reset is used to reset the dispatcher when the event is out-of-order.
@@ -451,10 +443,19 @@ func (d *Dispatcher) TryClose() (w heartbeatpb.Watermark, ok bool) {
 	// removing 后每次收集心跳的时候，call TryClose, 来判断是否能关掉 dispatcher 了（sink.isEmpty)
 	// 如果不能关掉，返回 0， false; 可以关掉的话，就返回 checkpointTs, true -- 这个要对齐过（startTs 和 checkpointTs 的关系）
 	if d.tableProgress.Empty() {
+		// We should not close dispatcher status when removing,
+		//otherwise it may have some corner case with maintainer communication
+		// TODO:感觉有点难说，后面 double check一下再
+		dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
+		errs := dispatcherStatusDynamicStream.RemovePaths(d.id)
+		for _, err := range errs {
+			if err != nil {
+				log.Error("remove dispatcher from dynamic stream failed", zap.Error(err))
+			}
+		}
 		w.CheckpointTs = d.GetCheckpointTs()
 		w.ResolvedTs = d.GetResolvedTs()
 
-		//d.MemoryUsage.Clear()
 		d.componentStatus.Set(heartbeatpb.ComponentState_Stopped)
 		return w, true
 	}
