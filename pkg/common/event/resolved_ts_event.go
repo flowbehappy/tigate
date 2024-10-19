@@ -31,6 +31,11 @@ func (b BatchResolvedEvent) GetStartTs() common.Ts {
 	return 0
 }
 
+func (b *BatchResolvedEvent) GetSeq() uint64 {
+	// It's a fake seq.
+	return 0
+}
+
 func (b *BatchResolvedEvent) Marshal() ([]byte, error) {
 	buf := make([]byte, 0, len(b.Events)*24)
 	for _, e := range b.Events {
@@ -83,6 +88,10 @@ func (e ResolvedEvent) GetCommitTs() common.Ts {
 
 func (e ResolvedEvent) GetStartTs() common.Ts {
 	return e.ResolvedTs
+}
+
+func (e ResolvedEvent) GetSeq() uint64 {
+	return 0
 }
 
 func (e ResolvedEvent) Marshal() ([]byte, error) {

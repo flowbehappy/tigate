@@ -8,6 +8,7 @@ import (
 
 type Event interface {
 	GetType() int
+	GetSeq() uint64
 	GetDispatcherID() common.DispatcherID
 	GetCommitTs() common.Ts
 	GetStartTs() common.Ts
@@ -49,6 +50,8 @@ const (
 	TypeBatchResolvedEvent
 	// SyncPointEvent is the event type of a sync point.
 	TypeSyncPointEvent
+	// HandshakeEvent is the event type of a handshake.
+	TypeHandshakeEvent
 )
 
 // fakeDispatcherID is a fake dispatcherID for batch resolvedTs.

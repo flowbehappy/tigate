@@ -66,6 +66,8 @@ type Dispatcher struct {
 	id        common.DispatcherID
 	tableSpan *heartbeatpb.TableSpan
 	sink      tisink.Sink
+	// startTs is the start timestamp of the dispatcher
+	startTs atomic.Uint64
 	// lastEventSeq is the sequence number of the last received DML/DDL event.
 	// It is used to ensure the order of events.
 	lastEventSeq atomic.Uint64
@@ -96,6 +98,10 @@ type Dispatcher struct {
 
 	// only exist when the dispatcher is a table trigger event dispatcher
 	tableNameStore *TableNameStore
+
+	// isReady is used to indicate whether the dispatcher is ready.
+	// If false, the dispatcher will drop the event it received.
+	isReady atomic.Bool
 }
 
 func NewDispatcher(
@@ -125,6 +131,7 @@ func NewDispatcher(
 		schemaID:              schemaID,
 		schemaIDToDispatchers: schemaIDToDispatchers,
 	}
+	dispatcher.startTs.Store(startTs)
 
 	// only when is not mysql sink, table trigger event dispatcher need tableNameStore to store the table name
 	// in order to calculate all the topics when sending checkpointTs to downstream
@@ -132,17 +139,7 @@ func NewDispatcher(
 		dispatcher.tableNameStore = NewTableNameStore()
 	}
 
-	dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
-	err := dispatcherStatusDynamicStream.AddPath(dispatcher.id, dispatcher)
-	if err != nil {
-		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
-	}
-
-	dispatcherEventsDynamicStream := GetDispatcherEventsDynamicStream()
-	err = dispatcherEventsDynamicStream.AddPath(dispatcher.id, dispatcher)
-	if err != nil {
-		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
-	}
+	dispatcher.AddToDynamicStream()
 
 	return dispatcher
 }
@@ -205,33 +202,39 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 // We ensure we only will receive one event when it's ddl event or sync point event by IsBatchable() function.
 // When we handle events, we don't have any previous events still in sink.
 func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block bool) {
-	onlyResolvedTs := true
+
+	// If the dispatcher is not ready, try to find handshake event to make the dispatcher ready.
+	if !d.isReady.Load() {
+		if !d.checkHandshakeEvents(dispatcherEvents) {
+			return false
+		}
+	}
+
+	// Only return false when all events are resolvedTs Event.
+	block = false
+	// Dispatcher is ready, handle the events
 	for _, dispatcherEvent := range dispatcherEvents {
+		// Pre-check, make sure the event is not stale or out-of-order
 		event := dispatcherEvent.Event
+		if event.GetCommitTs() < d.resolvedTs.Get() {
+			log.Panic("Received a stale event, it should never happen", zap.Any("event", event), zap.Any("dispatcher", d.id))
+		}
+		if event.GetType() == commonEvent.TypeDMLEvent ||
+			event.GetType() == commonEvent.TypeDDLEvent {
+			if event.GetSeq() != d.lastEventSeq.Add(1) {
+				log.Warn("Received a out-of-order event, reset the dispatcher", zap.Any("event", event), zap.Any("dispatcher", d.id))
+				d.reset()
+				return false
+			}
+		}
+
 		switch event.GetType() {
 		case commonEvent.TypeResolvedEvent:
 			d.resolvedTs.Set(event.(commonEvent.ResolvedEvent).ResolvedTs)
 		case commonEvent.TypeDMLEvent:
-			onlyResolvedTs = false
+			block = true
 			event := event.(*commonEvent.DMLEvent)
-
-			// check if the event is stale
-			if event.CommitTs < d.resolvedTs.Get() {
-				log.Warn("received a stale event", zap.Any("event", event), zap.Any("dispatcher", d.id))
-				return false
-			}
-
-			// check if the event is out of order
-			if event.Seq != d.lastEventSeq.Load()+1 {
-				log.Warn("received a out-of-order event", zap.Any("event", event), zap.Any("dispatcher", d.id))
-				// TODO: handle the out-of-order event
-				// Reset the dispatcher.
-				return false
-			}
-
 			// Update the last event sequence number.
-			d.lastEventSeq.Store(event.Seq)
-
 			event.AddPostFlushFunc(func() {
 				// Considering dml event in sink may be write to downstream not in order,
 				// thus, we use tableProgress.Empty() to ensure these events are flushed to downstream completely
@@ -244,37 +247,76 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 			d.sink.AddDMLEvent(event, d.tableProgress)
 		case commonEvent.TypeDDLEvent:
 			if len(dispatcherEvents) != 1 {
-				log.Error("ddl event should only be singly handled", zap.Any("dispatcherID", d.id))
+				log.Panic("ddl event should only be singly handled", zap.Any("dispatcherID", d.id))
 			}
-			onlyResolvedTs = false
-
+			block = true
 			event := event.(*commonEvent.DDLEvent)
+			log.Info("dispatcher receive ddl event",
+				zap.Stringer("dispatcher", d.id),
+				zap.String("query", event.Query),
+				zap.Int64("table", event.TableID),
+				zap.Uint64("commitTs", event.GetCommitTs()),
+				zap.Uint64("seq", event.GetSeq()))
 			if d.tableNameStore != nil {
 				d.tableNameStore.AddEvent(event)
 			}
+
 			event.AddPostFlushFunc(func() {
 				dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
 				dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
 			})
-			d.lastEventSeq.Store(event.Seq)
 			d.dealWithBlockEvent(event)
 		case commonEvent.TypeSyncPointEvent:
 			if len(dispatcherEvents) != 1 {
-				log.Error("sync point event should only be singly handled", zap.Any("dispatcherID", d.id))
+				log.Panic("sync point event should only be singly handled", zap.Any("dispatcherID", d.id))
 			}
-			onlyResolvedTs = false
+			block = true
 			event := event.(*commonEvent.SyncPointEvent)
 			event.AddPostFlushFunc(func() {
 				dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
 				dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
 			})
 			d.dealWithBlockEvent(event)
+		case commonEvent.TypeHandshakeEvent:
+			log.Info("Receive handshake event", zap.Any("event", event), zap.Stringer("dispatcher", d.id))
+			d.checkHandshakeEvents(dispatcherEvents)
 		default:
-			log.Error("invalid event type", zap.Any("event Type", event.GetType()))
-			return false
+			log.Panic("Unexpected event type", zap.Any("event Type", event.GetType()), zap.Stringer("dispatcher", d.id), zap.Uint64("commitTs", event.GetCommitTs()))
 		}
 	}
-	return !onlyResolvedTs
+	return block
+}
+
+func (d *Dispatcher) checkHandshakeEvents(dispatcherEvents []DispatcherEvent) bool {
+	if d.isReady.Load() {
+		log.Warn("Dispatcher is already ready, handshake event is unexpected, FIX ME!", zap.Stringer("dispatcher", d.id))
+		return false
+	}
+	for _, dispatcherEvent := range dispatcherEvents {
+		event := dispatcherEvent.Event
+		if event.GetType() == commonEvent.TypeHandshakeEvent {
+			if event.GetCommitTs() == d.startTs.Load() {
+				if event.GetSeq() != d.lastEventSeq.Add(1) {
+					log.Panic("Receive handshake event, but seq is not the next one",
+						zap.Any("event", event),
+						zap.Stringer("dispatcher", d.id),
+						zap.Uint64("lastEventSeq", d.lastEventSeq.Load()))
+				}
+				d.isReady.Store(true)
+				log.Info("Receive handshake event, dispatcher is ready to handle events",
+					zap.Any("dispatcher", d.id))
+				return true
+			} else {
+				log.Warn("Handshake event commit ts not equal to dispatcher resolved ts",
+					zap.Any("event", event),
+					zap.Stringer("dispatcher", d.id),
+					zap.Uint64("resolvedTs", d.resolvedTs.Get()),
+					zap.Uint64("commitTs", event.GetCommitTs()))
+			}
+		}
+		// Drop other events if dispatcher is not ready
+	}
+	return false
 }
 
 func shouldBlock(event commonEvent.BlockEvent) bool {
@@ -288,6 +330,20 @@ func shouldBlock(event commonEvent.BlockEvent) bool {
 		log.Error("invalid event type", zap.Any("event Type", event.GetType()))
 	}
 	return false
+}
+
+func (d *Dispatcher) reset() {
+	if !d.isReady.Load() {
+		return
+	}
+	d.isReady.Store(false)
+	d.lastEventSeq.Store(0)
+	// Reset startTs to the checkpointTs
+	d.startTs.Store(d.GetCheckpointTs())
+	d.dispatcherActionChan <- common.DispatcherAction{
+		DispatcherID: d.id,
+		Action:       common.ActionReset,
+	}
 }
 
 // 1.If the event is a single table DDL, it will be added to the sink for writing to downstream(async). If the ddl leads to add new tables or drop tables, it should send heartbeat to maintainer
@@ -358,6 +414,10 @@ func (d *Dispatcher) GetTableSpan() *heartbeatpb.TableSpan {
 	return d.tableSpan
 }
 
+func (d *Dispatcher) GetStartTs() uint64 {
+	return d.startTs.Load()
+}
+
 func (d *Dispatcher) GetResolvedTs() uint64 {
 	return d.resolvedTs.Get()
 }
@@ -417,33 +477,33 @@ func (d *Dispatcher) GetSyncPointInterval() time.Duration {
 }
 
 func (d *Dispatcher) Remove() {
-	// TODO: 修改这个 dispatcher 的 status 为 removing
 	log.Info("table event dispatcher component status changed to stopping", zap.String("table", d.tableSpan.String()))
 	d.isRemoving.Store(true)
-
 	dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
-	errs := dispatcherEventDynamicStream.RemovePaths(d.id)
-
-	for _, err := range errs {
-		if err != nil {
-			log.Error("remove dispatcher from dynamic stream failed", zap.Error(err))
-		}
+	err := dispatcherEventDynamicStream.RemovePath(d.id)
+	if err != nil {
+		log.Error("remove dispatcher from dynamic stream failed", zap.Error(err))
 	}
 
 	dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
-	errs = dispatcherStatusDynamicStream.RemovePaths(d.id)
-	for _, err := range errs {
-		if err != nil {
-			log.Error("remove dispatcher from dynamic stream failed", zap.Error(err))
-		}
+	err = dispatcherStatusDynamicStream.RemovePath(d.id)
+	if err != nil {
+		log.Error("remove dispatcher from dynamic stream failed", zap.Error(err))
 	}
 }
 
-// Reset is used to reset the dispatcher when the event is out-of-order.
-// It remove the dispatcher from all dynamic streams, and send a message to
-// the dispatcherManager to reset it.
-func (d *Dispatcher) Reset() {
-	d.Remove()
+func (d *Dispatcher) AddToDynamicStream() {
+	dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
+	err := dispatcherEventDynamicStream.AddPath(d.id, d)
+	if err != nil {
+		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
+	}
+
+	dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
+	err = dispatcherStatusDynamicStream.AddPath(d.id, d)
+	if err != nil {
+		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
+	}
 }
 
 func (d *Dispatcher) TryClose() (w heartbeatpb.Watermark, ok bool) {
