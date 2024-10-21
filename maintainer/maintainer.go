@@ -182,7 +182,7 @@ func (m *Maintainer) HandleEvent(event *Event) bool {
 		m.handleEventDuration.Observe(duration.Seconds())
 	}()
 	if m.state == heartbeatpb.ComponentState_Stopped {
-		log.Warn("maintainer is not stopped, ignore",
+		log.Warn("maintainer is stopped, ignore",
 			zap.String("changefeed", m.id.String()))
 		return false
 	}
@@ -195,9 +195,7 @@ func (m *Maintainer) HandleEvent(event *Event) bool {
 	case EventInit:
 		return m.onInit()
 	case EventMessage:
-		if err := m.onMessage(event.message); err != nil {
-			m.handleError(err)
-		}
+		m.onMessage(event.message)
 	case EventPeriod:
 		m.onPeriodTask()
 	}
@@ -311,7 +309,7 @@ func (m *Maintainer) onInit() bool {
 	return true
 }
 
-func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
+func (m *Maintainer) onMessage(msg *messaging.TargetMessage) {
 	switch msg.Type {
 	case messaging.TypeHeartBeatRequest:
 		m.onHeartBeatRequest(msg)
@@ -330,7 +328,6 @@ func (m *Maintainer) onMessage(msg *messaging.TargetMessage) error {
 			zap.String("changefeed", m.id.ID),
 			zap.String("type", msg.Type.String()))
 	}
-	return nil
 }
 
 func (m *Maintainer) onRemoveMaintainer(cascade bool) {
@@ -648,7 +645,7 @@ func (m *Maintainer) onPeriodTask() {
 func (m *Maintainer) collectMetrics() {
 	if time.Since(m.lastPrintStatusTime) > time.Second*20 {
 		total := m.controller.TaskSize()
-		scheduling := m.controller.replicationDB.GetAbsentSize()
+		scheduling := m.controller.replicationDB.GetSchedulingSize()
 		working := m.controller.replicationDB.GetReplicatingSize()
 		absent := m.controller.replicationDB.GetAbsentSize()
 
@@ -657,7 +654,9 @@ func (m *Maintainer) collectMetrics() {
 		metrics.TableStateGauge.WithLabelValues(m.id.Namespace, m.id.ID, "Absent").Set(float64(absent))
 		metrics.TableStateGauge.WithLabelValues(m.id.Namespace, m.id.ID, "Working").Set(float64(working))
 		m.lastPrintStatusTime = time.Now()
-		log.Info("maintainer status", zap.Int("total", total),
+		log.Info("maintainer status",
+			zap.String("changefeed", m.id.ID),
+			zap.Int("total", total),
 			zap.Int("scheduling", scheduling),
 			zap.Int("working", working))
 	}

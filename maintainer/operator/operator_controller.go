@@ -136,13 +136,7 @@ func (oc *Controller) AddOperator(op Operator) bool {
 			zap.String("operator", op.String()))
 		return false
 	}
-	log.Info("add operator to running queue",
-		zap.String("changefeed", oc.changefeedID),
-		zap.String("operator", op.String()))
-	oc.operators[op.ID()] = op
-	op.Start()
-	heap.Push(&oc.runningQueue, &operatorWithTime{op: op, time: time.Now(), enqueueTime: time.Now()})
-	metrics.CreatedOperatorCount.WithLabelValues(model.DefaultNamespace, oc.changefeedID, op.Type()).Inc()
+	oc.pushOperator(op)
 	return true
 }
 
@@ -234,5 +228,16 @@ func (oc *Controller) removeReplicaSet(op *RemoveDispatcherOperator) {
 		old.OnTaskRemoved()
 		delete(oc.operators, op.ID())
 	}
+	oc.pushOperator(op)
+}
+
+// pushOperator add an operator to the controller queue.
+func (oc *Controller) pushOperator(op Operator) {
+	log.Info("add operator to running queue",
+		zap.String("changefeed", oc.changefeedID),
+		zap.String("operator", op.String()))
 	oc.operators[op.ID()] = op
+	op.Start()
+	heap.Push(&oc.runningQueue, &operatorWithTime{op: op, time: time.Now(), enqueueTime: time.Now()})
+	metrics.CreatedOperatorCount.WithLabelValues(model.DefaultNamespace, oc.changefeedID, op.Type()).Inc()
 }
