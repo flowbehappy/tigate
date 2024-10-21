@@ -104,16 +104,18 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableS
 		dispatcherID := common.NewDispatcherIDFromPB(status.ID)
 		c.operatorController.UpdateOperatorStatus(dispatcherID, from, status)
 		stm := c.GetTask(dispatcherID)
-		// it's normal case when the span is not found in replication db
-		// the span is removed from replication db first, so here we only check if the span status is working or not
-		if stm == nil && status.ComponentStatus == heartbeatpb.ComponentState_Working {
-			log.Warn("no span found, remove it",
-				zap.String("changefeed", c.changefeedID),
-				zap.String("from", from.String()),
-				zap.Any("status", status),
-				zap.String("span", dispatcherID.String()))
-			// if the span is not found, and the status is working, we need to remove it from dispatcher
-			_ = c.messageCenter.SendCommand(replica.NewRemoveInferiorMessage(from, c.changefeedID, status.ID))
+		if stm == nil {
+			// it's normal case when the span is not found in replication db
+			// the span is removed from replication db first, so here we only check if the span status is working or not
+			if status.ComponentStatus == heartbeatpb.ComponentState_Working {
+				log.Warn("no span found, remove it",
+					zap.String("changefeed", c.changefeedID),
+					zap.String("from", from.String()),
+					zap.Any("status", status),
+					zap.String("span", dispatcherID.String()))
+				// if the span is not found, and the status is working, we need to remove it from dispatcher
+				_ = c.messageCenter.SendCommand(replica.NewRemoveInferiorMessage(from, c.changefeedID, status.ID))
+			}
 			continue
 		}
 		nodeID := stm.GetNodeID()

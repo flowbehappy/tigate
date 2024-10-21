@@ -74,6 +74,8 @@ func (m *RemoveDispatcherOperator) OnTaskRemoved() {
 }
 
 func (m *RemoveDispatcherOperator) Start() {
+	log.Info("start remove dispatcher operator",
+		zap.String("replicaSet", m.replicaSet.ID.String()))
 }
 
 func (m *RemoveDispatcherOperator) PostFinish() {
