@@ -182,3 +182,7 @@ func (s *KafkaSink) SetTableSchemaStore(tableSchemaStore *sinkutil.TableSchemaSt
 }
 func (s *KafkaSink) Close() {
 }
+
+func (s *KafkaSink) CheckStartTs(tableId int64, startTs uint64) (uint64, error) {
+	return startTs, nil
+}

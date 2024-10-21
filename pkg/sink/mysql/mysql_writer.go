@@ -360,6 +360,66 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 
 }
 
+// If no ddl-ts-v1 table, or no this row, then return 0; otherwise, return the ddl-ts value
+func (w *MysqlWriter) CheckStartTs(tableID int64, startTs uint64) (uint64, error) {
+	ctx := context.Background()
+	tx, err := w.db.BeginTx(ctx, nil)
+
+	if err != nil {
+		log.Error("select ddl ts table: begin Tx fail", zap.Error(err))
+		return 0, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "select ddl ts table: begin Tx fail;"))
+	}
+
+	changefeedID := w.ChangefeedID.String()
+	ticdcClusterID := config.GetGlobalServerConfig().ClusterID
+
+	var builder strings.Builder
+	builder.WriteString("SELECT ddl_ts FROM ")
+	builder.WriteString(filter.TiCDCSystemSchema)
+	builder.WriteString(".")
+	builder.WriteString(filter.DDLTsTable)
+	builder.WriteString(" WHERE (ticdc_cluster_id, changefeed, table_id) IN (")
+
+	builder.WriteString("('")
+	builder.WriteString(ticdcClusterID)
+	builder.WriteString("', '")
+	builder.WriteString(changefeedID)
+	builder.WriteString("', ")
+	builder.WriteString(strconv.FormatInt(tableID, 10))
+	builder.WriteString(")")
+	builder.WriteString(")")
+	query := builder.String()
+
+	rows, err := tx.Query(query)
+	if err != nil {
+		if errorutil.IsTableNotExistsErr(err) {
+			// If this table is not existed, this means the table is first being synced
+			log.Info("table not found in ddl ts table", zap.Int64("tableID", tableID), zap.Error(err))
+			return 0, nil
+		}
+		log.Error("failed to check ddl ts table", zap.Error(err))
+		err2 := tx.Rollback()
+		if err2 != nil {
+			log.Error("failed to check ddl ts table", zap.Error(err2))
+		}
+		return 0, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to check ddl ts table;"))
+	}
+
+	var ddlTs uint64
+	defer rows.Close()
+	if rows.Next() {
+		err := rows.Scan(&ddlTs)
+		if err != nil {
+			return 0, err
+		}
+		log.Info("ddlTs is ", zap.Any("ddlTs", zap.Any("ddlts", ddlTs)))
+		return ddlTs, nil
+	} else {
+		// does't have this field
+		return 0, nil
+	}
+}
+
 func (w *MysqlWriter) isDDLExecuted(tableID int64, ddlTs uint64) (bool, error) {
 	ctx := context.Background()
 	tx, err := w.db.BeginTx(ctx, nil)

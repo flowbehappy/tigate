@@ -176,6 +176,14 @@ func (t *MysqlDDLWorker) Run(ctx context.Context) {
 	}
 }
 
+func (t *MysqlDDLWorker) CheckStartTs(tableId int64, startTs uint64) (uint64, error) {
+	ddlTs, err := t.mysqlWriter.CheckStartTs(tableId, startTs)
+	if err != nil {
+		return 0, err
+	}
+	return max(ddlTs+1, startTs), nil
+}
+
 func (t *MysqlDDLWorker) GetDDLEventChan() chan commonEvent.BlockEvent {
 	return t.ddlEventChan
 }
