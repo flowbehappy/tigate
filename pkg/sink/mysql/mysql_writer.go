@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package writer
+package mysql
 
 import (
 	"context"
@@ -25,6 +25,7 @@ import (
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/flowbehappy/tigate/pkg/sink/util"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -43,12 +44,17 @@ const (
 
 // 用于给 mysql 类型的下游做 flush, 主打一个粗糙，先能跑起来再说
 type MysqlWriter struct {
-	db                     *sql.DB
-	cfg                    *MysqlConfig
+	db           *sql.DB
+	cfg          *MysqlConfig
+	ChangefeedID model.ChangeFeedID
+
 	syncPointTableInit     bool
-	statistics             *metrics.Statistics
-	ChangefeedID           model.ChangeFeedID
 	lastCleanSyncPointTime time.Time
+
+	ddlTsTableInit   bool
+	tableSchemaStore *util.TableSchemaStore
+
+	statistics *metrics.Statistics
 }
 
 func NewMysqlWriter(db *sql.DB, cfg *MysqlConfig, changefeedID model.ChangeFeedID) *MysqlWriter {
@@ -59,25 +65,60 @@ func NewMysqlWriter(db *sql.DB, cfg *MysqlConfig, changefeedID model.ChangeFeedI
 		syncPointTableInit:     false,
 		ChangefeedID:           changefeedID,
 		lastCleanSyncPointTime: time.Now(),
+		ddlTsTableInit:         false,
 		statistics:             statistics,
 	}
 }
 
+func (w *MysqlWriter) SetTableSchemaStore(tableSchemaStore *util.TableSchemaStore) {
+	w.tableSchemaStore = tableSchemaStore
+}
+
 func (w *MysqlWriter) FlushDDLEvent(event *commonEvent.DDLEvent) error {
 	if event.GetDDLType() == timodel.ActionAddIndex && w.cfg.IsTiDB {
-		return w.asyncExecAddIndexDDLIfTimeout(event)
+		return w.asyncExecAddIndexDDLIfTimeout(event) // todo flush checkpointTs
 	}
 	err := w.execDDLWithMaxRetries(event)
-	// FIXME: consider whether we need to execute the callbacks when the ddl is failed
-	for _, callback := range event.PostTxnFlushed {
-		callback()
-	}
 
 	if err != nil {
 		log.Error("exec ddl failed", zap.Error(err))
 		return err
 	}
 
+	// We need to record ddl' ts after each ddl for each table in the downstream when sink is mysql-compatible.
+	// Only in this way, when the node restart, we can continue sync data from the last ddl ts at least.
+	// Otherwise, after restarting, we may sync old data in new schema, which will leading to data loss.
+
+	// We make Flush ddl ts before callback(), in order to make sure the ddl ts is flushed
+	// before new checkpointTs will report to maintainer. Therefore, when the table checkpointTs is forward,
+	// we can ensure the ddl and ddl ts are both flushed downstream successfully.
+	// Thus, when restarting, and we can't find a record for one table, it means the table is dropped.
+	err = w.FlushDDLTs(event)
+	if err != nil {
+		return err
+	}
+
+	for _, callback := range event.PostTxnFlushed {
+		callback()
+	}
+	return nil
+}
+
+func (w *MysqlWriter) FlushDDLTs(event *commonEvent.DDLEvent) error {
+	if !w.ddlTsTableInit {
+		// create checkpoint ts table if not exist
+		err := w.CreateDDLTsTable(context.Background())
+		if err != nil {
+			return err
+		}
+		w.ddlTsTableInit = true
+	}
+
+	err := w.SendDDLTs(event)
+	if err != nil {
+		log.Error("send ddl ts failed", zap.Error(err))
+		return err
+	}
 	return nil
 }
 
@@ -194,40 +235,199 @@ func (w *MysqlWriter) SendSyncPointEvent(event *commonEvent.SyncPointEvent) erro
 	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write syncpoint table;"))
 }
 
-func (w *MysqlWriter) CreateSyncTable(ctx context.Context) error {
-	database := filter.TiCDCSystemSchema
+func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
+	log.Info("Send DDL TS")
+	ctx := context.Background()
 	tx, err := w.db.BeginTx(ctx, nil)
 	if err != nil {
-		log.Error("create sync table: begin Tx fail", zap.Error(err))
-		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "create sync table: begin Tx fail;"))
+		log.Error("ddl ts table: begin Tx fail", zap.Error(err))
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "ddl ts table: begin Tx fail;"))
 	}
 
-	// we try to set cdc write source for the ddl
-	if err = SetWriteSource(w.cfg, tx); err != nil {
-		if rbErr := tx.Rollback(); rbErr != nil {
-			if errors.Cause(rbErr) != context.Canceled {
-				log.Error("Failed to rollback", zap.Error(err))
+	changefeedID := w.ChangefeedID.String()
+	ticdcClusterID := config.GetGlobalServerConfig().ClusterID
+	ddlTs := strconv.FormatUint(event.GetCommitTs(), 10)
+	var tableIds []int64
+	var dropTableIds []int64
+
+	relatedTables := event.GetBlockedTables()
+
+	switch relatedTables.InfluenceType {
+	case commonEvent.InfluenceTypeNormal:
+		tableIds = append(tableIds, relatedTables.TableIDs...)
+	case commonEvent.InfluenceTypeDB:
+		ids := w.tableSchemaStore.GetTableIdsByDB(relatedTables.SchemaID)
+		tableIds = append(tableIds, ids...)
+	case commonEvent.InfluenceTypeAll:
+		ids := w.tableSchemaStore.GetAllTableIds()
+		tableIds = append(tableIds, ids...)
+	}
+
+	dropTables := event.GetNeedDroppedTables()
+	if dropTables != nil {
+		switch dropTables.InfluenceType {
+		case commonEvent.InfluenceTypeNormal:
+			dropTableIds = append(dropTableIds, dropTables.TableIDs...)
+		case commonEvent.InfluenceTypeDB:
+			ids := w.tableSchemaStore.GetTableIdsByDB(dropTables.SchemaID)
+			dropTableIds = append(dropTableIds, ids...)
+		case commonEvent.InfluenceTypeAll:
+			ids := w.tableSchemaStore.GetAllTableIds()
+			dropTableIds = append(dropTableIds, ids...)
+		}
+	}
+
+	addTables := event.GetNeedAddedTables()
+	for _, table := range addTables {
+		tableIds = append(tableIds, table.TableID)
+	}
+
+	// generate query
+	//INSERT INTO `tidb_cdc`.`ddl_ts` (ticdc_cluster_id, changefeed, ddl_ts, table_id) values(...) ON DUPLICATE KEY UPDATE ddl_ts=VALUES(ddl_ts), created_at=CURRENT_TIMESTAMP;
+	var builder strings.Builder
+	builder.WriteString("INSERT INTO ")
+	builder.WriteString(filter.TiCDCSystemSchema)
+	builder.WriteString(".")
+	builder.WriteString(filter.DDLTsTable)
+	builder.WriteString("(ticdc_cluster_id, changefeed, ddl_ts, table_id) VALUES ")
+
+	for idx, tableId := range tableIds {
+		builder.WriteString("('")
+		builder.WriteString(ticdcClusterID)
+		builder.WriteString("', '")
+		builder.WriteString(changefeedID)
+		builder.WriteString("', '")
+		builder.WriteString(ddlTs)
+		builder.WriteString("', ")
+		builder.WriteString(strconv.FormatInt(tableId, 10))
+		builder.WriteString(")")
+		if idx < len(tableIds)-1 {
+			builder.WriteString(", ")
+		}
+	}
+	builder.WriteString(" ON DUPLICATE KEY UPDATE ddl_ts=VALUES(ddl_ts), created_at=CURRENT_TIMESTAMP;")
+
+	query := builder.String()
+	log.Info("query is", zap.Any("query", query))
+	_, err = tx.Exec(query)
+	if err != nil {
+		log.Error("failed to write ddl ts table", zap.Error(err))
+		err2 := tx.Rollback()
+		if err2 != nil {
+			log.Error("failed to write ddl ts table", zap.Error(err2))
+		}
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write ddl ts table;"))
+	}
+
+	if len(dropTableIds) > 0 {
+		// drop item for this tableid
+		var builder strings.Builder
+		builder.WriteString("DELETE FROM ")
+		builder.WriteString(filter.TiCDCSystemSchema)
+		builder.WriteString(".")
+		builder.WriteString(filter.DDLTsTable)
+		builder.WriteString(" WHERE (ticdc_cluster_id, changefeed, table_id) IN (")
+
+		for idx, tableId := range dropTableIds {
+			builder.WriteString("('")
+			builder.WriteString(ticdcClusterID)
+			builder.WriteString("', '")
+			builder.WriteString(changefeedID)
+			builder.WriteString("', ")
+			builder.WriteString(strconv.FormatInt(tableId, 10))
+			builder.WriteString(")")
+			if idx < len(dropTableIds)-1 {
+				builder.WriteString(", ")
 			}
 		}
-		return err
+
+		builder.WriteString(")")
+		query := builder.String()
+
+		_, err = tx.Exec(query)
+		if err != nil {
+			log.Error("failed to delete ddl ts item ", zap.Error(err))
+			err2 := tx.Rollback()
+			if err2 != nil {
+				log.Error("failed to delete ddl ts item", zap.Error(err2))
+			}
+			return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to delete ddl ts item;"))
+		}
 	}
 
-	_, err = tx.Exec("CREATE DATABASE IF NOT EXISTS " + database)
+	err = tx.Commit()
+	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write ddl ts table;"))
+
+}
+
+func (w *MysqlWriter) isDDLExecuted(tableID int64, ddlTs uint64) (bool, error) {
+	ctx := context.Background()
+	tx, err := w.db.BeginTx(ctx, nil)
 	if err != nil {
-		errRollback := tx.Rollback()
-		if errRollback != nil {
-			log.Error("failed to create syncpoint table", zap.Error(errRollback))
-		}
-		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to create syncpoint table;"))
+		log.Error("ddl ts table: begin Tx fail", zap.Error(err))
+		return false, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "ddl ts table: begin Tx fail;"))
 	}
-	_, err = tx.Exec("USE " + database)
+
+	changefeedID := w.ChangefeedID.String()
+	ticdcClusterID := config.GetGlobalServerConfig().ClusterID
+
+	// select * from xx where (ticdc_cluster_id, changefeed, table_id, ddl_ts) in (("xx","xx",x,x));
+	var builder strings.Builder
+	builder.WriteString("SELECT * FROM ")
+	builder.WriteString(filter.TiCDCSystemSchema)
+	builder.WriteString(".")
+	builder.WriteString(filter.DDLTsTable)
+	builder.WriteString(" WHERE (ticdc_cluster_id, changefeed, table_id, ddl_ts) IN (")
+
+	builder.WriteString("('")
+	builder.WriteString(ticdcClusterID)
+	builder.WriteString("', '")
+	builder.WriteString(changefeedID)
+	builder.WriteString("', ")
+	builder.WriteString(strconv.FormatInt(tableID, 10))
+	builder.WriteString(", ")
+	builder.WriteString(strconv.FormatUint(ddlTs, 10))
+	builder.WriteString(")")
+	builder.WriteString(")")
+	query := builder.String()
+
+	rows, err := tx.Query(query)
+	defer rows.Close()
 	if err != nil {
-		errRollback := tx.Rollback()
-		if errRollback != nil {
-			log.Error("failed to create syncpoint table", zap.Error(errRollback))
+		log.Error("failed to check ddl ts table", zap.Error(err))
+		err2 := tx.Rollback()
+		if err2 != nil {
+			log.Error("failed to check ddl ts table", zap.Error(err2))
 		}
-		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to create syncpoint table;"))
+		return false, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to check ddl ts table;"))
 	}
+
+	if rows.Next() {
+		return true, nil
+	}
+	return false, nil
+
+}
+
+func (w *MysqlWriter) CreateDDLTsTable(ctx context.Context) error {
+	database := filter.TiCDCSystemSchema
+	query := `CREATE TABLE IF NOT EXISTS %s
+	(
+		ticdc_cluster_id varchar (255),
+		changefeed varchar(255),
+		ddl_ts varchar(18),
+		table_id bigint(21),
+		created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		INDEX (ticdc_cluster_id, changefeed, table_id),
+		PRIMARY KEY (ticdc_cluster_id, changefeed, table_id)
+	);`
+	query = fmt.Sprintf(query, filter.DDLTsTable)
+
+	return w.CreateTable(ctx, database, filter.DDLTsTable, query)
+}
+
+func (w *MysqlWriter) CreateSyncTable(ctx context.Context) error {
+	database := filter.TiCDCSystemSchema
 	query := `CREATE TABLE IF NOT EXISTS %s
 	(
 		ticdc_cluster_id varchar (255),
@@ -239,16 +439,7 @@ func (w *MysqlWriter) CreateSyncTable(ctx context.Context) error {
 		PRIMARY KEY (changefeed, primary_ts)
 	);`
 	query = fmt.Sprintf(query, filter.SyncPointTable)
-	_, err = tx.Exec(query)
-	if err != nil {
-		errRollback := tx.Rollback()
-		if errRollback != nil {
-			log.Error("failed to create syncpoint table", zap.Error(errRollback))
-		}
-		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to create syncpoint table;"))
-	}
-	err = tx.Commit()
-	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to create syncpoint table;"))
+	return w.CreateTable(ctx, database, filter.SyncPointTable, query)
 }
 
 func (w *MysqlWriter) asyncExecAddIndexDDLIfTimeout(event *commonEvent.DDLEvent) error {
@@ -292,6 +483,20 @@ func (w *MysqlWriter) execDDL(event *commonEvent.DDLEvent) error {
 	if w.cfg.DryRun {
 		log.Info("Dry run DDL", zap.String("sql", event.GetDDLQuery()))
 		return nil
+	}
+
+	// exchange partition is not Idempotent, so we need to check ddl_ts_table whether the ddl is executed before.
+	if timodel.ActionType(event.Type) == timodel.ActionExchangeTablePartition {
+		tableID := event.BlockedTables.TableIDs[0]
+		ddlTs := event.GetCommitTs()
+		flag, err := w.isDDLExecuted(tableID, ddlTs)
+		if err != nil {
+			return nil
+		}
+		if flag {
+			log.Info("Skip Already Executed DDL", zap.String("sql", event.GetDDLQuery()))
+			return nil
+		}
 	}
 
 	shouldSwitchDB := needSwitchDB(event)
@@ -571,4 +776,49 @@ func (w *MysqlWriter) multiStmtExecute(
 		return err
 	}
 	return nil
+}
+
+func (w *MysqlWriter) CreateTable(ctx context.Context, dbName string, tableName string, createTableQuery string) error {
+	tx, err := w.db.BeginTx(ctx, nil)
+	if err != nil {
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("create %s table: begin Tx fail;", tableName)))
+	}
+
+	// we try to set cdc write source for the ddl
+	if err = SetWriteSource(w.cfg, tx); err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			if errors.Cause(rbErr) != context.Canceled {
+				log.Error("Failed to rollback", zap.Error(err))
+			}
+		}
+		return err
+	}
+
+	_, err = tx.Exec("CREATE DATABASE IF NOT EXISTS " + dbName)
+	if err != nil {
+		errRollback := tx.Rollback()
+		if errRollback != nil {
+			log.Error("failed to create table", zap.Any("tableName", tableName), zap.Error(errRollback))
+		}
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("failed to create % table;", tableName)))
+	}
+	_, err = tx.Exec("USE " + dbName)
+	if err != nil {
+		errRollback := tx.Rollback()
+		if errRollback != nil {
+			log.Error("failed to create table", zap.Any("tableName", tableName), zap.Error(errRollback))
+		}
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("create %s table: begin Tx fail;", tableName)))
+	}
+
+	_, err = tx.Exec(createTableQuery)
+	if err != nil {
+		errRollback := tx.Rollback()
+		if errRollback != nil {
+			log.Error("failed to create table", zap.Any("tableName", tableName), zap.Error(errRollback))
+		}
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("create %s table: begin Tx fail;", tableName)))
+	}
+	err = tx.Commit()
+	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("create %s table: begin Tx fail;", tableName)))
 }

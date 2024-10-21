@@ -10,6 +10,7 @@ import (
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
+	"github.com/flowbehappy/tigate/pkg/sink/util"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -18,19 +19,14 @@ import (
 	"go.uber.org/zap"
 )
 
-type CheckpointInfo struct {
-	Ts         uint64
-	TableNames []*commonEvent.SchemaTableName
-}
-
 // worker will send messages to the DML producer on a batch basis.
 type KafkaDDLWorker struct {
 	// changeFeedID indicates this sink belongs to which processor(changefeed).
 	changeFeedID model.ChangeFeedID
 	// protocol indicates the protocol used by this sink.
-	protocol           config.Protocol
-	ddlEventChan       chan *commonEvent.DDLEvent
-	checkpointInfoChan chan *CheckpointInfo
+	protocol         config.Protocol
+	ddlEventChan     chan *commonEvent.DDLEvent
+	checkpointTsChan chan uint64
 	// ticker used to force flush the batched messages when the interval is reached.
 	ticker *time.Ticker
 
@@ -43,6 +39,8 @@ type KafkaDDLWorker struct {
 
 	// producer is used to send the messages to the Kafka broker.
 	producer ddlproducer.DDLProducer
+
+	tableSchemaStore *util.TableSchemaStore
 
 	statistics    *metrics.Statistics
 	partitionRule DDLDispatchRule
@@ -107,8 +105,12 @@ func (w *KafkaDDLWorker) GetDDLEventChan() chan<- *commonEvent.DDLEvent {
 	return w.ddlEventChan
 }
 
-func (w *KafkaDDLWorker) GetCheckpointInfoChan() chan<- *CheckpointInfo {
-	return w.checkpointInfoChan
+func (w *KafkaDDLWorker) GetCheckpointTsChan() chan<- uint64 {
+	return w.checkpointTsChan
+}
+
+func (w *KafkaDDLWorker) SetTableSchemaStore(tableSchemaStore *util.TableSchemaStore) {
+	w.tableSchemaStore = tableSchemaStore
 }
 
 func (w *KafkaDDLWorker) encodeAndSendDDLEvents() error {
@@ -177,7 +179,7 @@ func (w *KafkaDDLWorker) encodeAndSendCheckpointEvents() error {
 		select {
 		case <-w.ctx.Done():
 			return errors.Trace(w.ctx.Err())
-		case checkpointInfo, ok := <-w.checkpointInfoChan:
+		case ts, ok := <-w.checkpointTsChan:
 			if !ok {
 				log.Warn("MQ sink flush worker channel closed",
 					zap.String("namespace", w.changeFeedID.Namespace),
@@ -185,8 +187,8 @@ func (w *KafkaDDLWorker) encodeAndSendCheckpointEvents() error {
 				return nil
 			}
 			start := time.Now()
-			ts := checkpointInfo.Ts
-			tableNames := checkpointInfo.TableNames
+
+			tableNames := w.tableSchemaStore.GetAllTableNames(ts)
 			msg, err := w.encoder.EncodeCheckpointEvent(ts)
 			if err != nil {
 				return errors.Trace(err)

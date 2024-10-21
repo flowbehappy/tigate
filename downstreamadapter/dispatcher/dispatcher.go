@@ -24,8 +24,8 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/filter"
+	"github.com/flowbehappy/tigate/pkg/sink/util"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
@@ -97,7 +97,7 @@ type Dispatcher struct {
 	schemaID              int64
 
 	// only exist when the dispatcher is a table trigger event dispatcher
-	tableNameStore *TableNameStore
+	tableSchemaStore *util.TableSchemaStore
 
 	// isReady is used to indicate whether the dispatcher is ready.
 	// If false, the dispatcher will drop the event it received.
@@ -133,10 +133,10 @@ func NewDispatcher(
 	}
 	dispatcher.startTs.Store(startTs)
 
-	// only when is not mysql sink, table trigger event dispatcher need tableNameStore to store the table name
+	// only when is not mysql sink, table trigger event dispatcher need tableSchemaStore to store the table name
 	// in order to calculate all the topics when sending checkpointTs to downstream
 	if tableSpan.Equal(heartbeatpb.DDLSpan) && dispatcher.sink.SinkType() != tisink.MysqlSinkType {
-		dispatcher.tableNameStore = NewTableNameStore()
+		dispatcher.tableSchemaStore = util.NewTableSchemaStore()
 	}
 
 	dispatcher.AddToDynamicStream()
@@ -148,7 +148,7 @@ func NewDispatcher(
 // If we get a ack info, we need to check whether the ack is for the current pending ddl event. If so, we can cancel the resend task.
 // If we get a dispatcher action, we need to check whether the action is for the current pending ddl event. If so, we can deal the ddl event based on the action.
 // 1. If the action is a write, we need to add the ddl event to the sink for writing to downstream(async).
-// 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and wake the dispatcherEventsHandler
+// 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and wake the dispatcherEventHandler
 func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.DispatcherStatus) {
 	if d.blockPendingEvent == nil {
 		// receive outdated status
@@ -258,8 +258,8 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 				zap.Int64("table", event.TableID),
 				zap.Uint64("commitTs", event.GetCommitTs()),
 				zap.Uint64("seq", event.GetSeq()))
-			if d.tableNameStore != nil {
-				d.tableNameStore.AddEvent(event)
+			if d.tableSchemaStore != nil {
+				d.tableSchemaStore.AddEvent(event)
 			}
 
 			event.AddPostFlushFunc(func() {
@@ -332,7 +332,19 @@ func shouldBlock(event commonEvent.BlockEvent) bool {
 	switch event.GetType() {
 	case commonEvent.TypeDDLEvent:
 		ddlEvent := event.(*commonEvent.DDLEvent)
-		return filter.ShouldBlock(model.ActionType(ddlEvent.Type))
+		if ddlEvent.BlockedTables != nil {
+			switch ddlEvent.GetBlockedTables().InfluenceType {
+			case commonEvent.InfluenceTypeNormal:
+				if len(ddlEvent.GetBlockedTables().TableIDs) != 0 {
+					return true
+				} else {
+					return false
+				}
+			case commonEvent.InfluenceTypeDB, commonEvent.InfluenceTypeAll:
+				return true
+			}
+		}
+		return false
 	case commonEvent.TypeSyncPointEvent:
 		return true
 	default:
@@ -377,6 +389,7 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 			d.blockStatusesChan <- message
 		}
 	} else {
+		log.Info("Send block event to maintainer")
 		message := &heartbeatpb.TableSpanBlockStatus{
 			ID: d.id.ToPB(),
 			State: &heartbeatpb.State{
@@ -522,7 +535,6 @@ func (d *Dispatcher) TryClose() (w heartbeatpb.Watermark, ok bool) {
 		w.CheckpointTs = d.GetCheckpointTs()
 		w.ResolvedTs = d.GetResolvedTs()
 
-		//d.MemoryUsage.Clear()
 		d.componentStatus.Set(heartbeatpb.ComponentState_Stopped)
 		return w, true
 	}
@@ -550,11 +562,5 @@ func (d *Dispatcher) CollectDispatcherHeartBeatInfo(h *HeartBeatInfo) {
 }
 
 func (d *Dispatcher) HandleCheckpointTs(checkpointTs uint64) {
-	if d.tableNameStore == nil {
-		log.Error("Should not HandleCheckpointTs for table trigger event dispatcher without tableNameStore")
-		return
-	}
-
-	tableNames := d.tableNameStore.GetAllTableNames(checkpointTs)
-	d.sink.AddCheckpointTs(checkpointTs, tableNames)
+	d.sink.AddCheckpointTs(checkpointTs)
 }

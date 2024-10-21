@@ -29,6 +29,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/sink/codec"
 	"github.com/flowbehappy/tigate/pkg/sink/kafka"
 	v2 "github.com/flowbehappy/tigate/pkg/sink/kafka/v2"
+	sinkutil "github.com/flowbehappy/tigate/pkg/sink/util"
 	tiutils "github.com/flowbehappy/tigate/pkg/sink/util"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -172,9 +173,12 @@ func (s *KafkaSink) AddBlockEvent(event commonEvent.BlockEvent, tableProgress *t
 	}
 }
 
-func (s *KafkaSink) AddCheckpointTs(ts uint64, tableNames []*commonEvent.SchemaTableName) {
-	s.ddlWorker.GetCheckpointInfoChan() <- &worker.CheckpointInfo{Ts: ts, TableNames: tableNames}
+func (s *KafkaSink) AddCheckpointTs(ts uint64) {
+	s.ddlWorker.GetCheckpointTsChan() <- ts
 }
 
+func (s *KafkaSink) SetTableSchemaStore(tableSchemaStore *sinkutil.TableSchemaStore) {
+	s.ddlWorker.SetTableSchemaStore(tableSchemaStore)
+}
 func (s *KafkaSink) Close() {
 }

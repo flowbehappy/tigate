@@ -20,9 +20,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/flowbehappy/tigate/pkg/sink/mysql"
+	"github.com/flowbehappy/tigate/pkg/sink/util"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -31,7 +32,7 @@ import (
 // MysqlWorker is use to flush the event downstream
 type MysqlWorker struct {
 	eventChan    chan *commonEvent.DMLEvent
-	mysqlWriter  *writer.MysqlWriter
+	mysqlWriter  *mysql.MysqlWriter
 	id           int
 	changefeedID model.ChangeFeedID
 
@@ -39,9 +40,9 @@ type MysqlWorker struct {
 	maxRows int
 }
 
-func NewMysqlWorker(db *sql.DB, config *writer.MysqlConfig, id int, changefeedID model.ChangeFeedID, ctx context.Context, maxRows int) *MysqlWorker {
+func NewMysqlWorker(db *sql.DB, config *mysql.MysqlConfig, id int, changefeedID model.ChangeFeedID, ctx context.Context, maxRows int) *MysqlWorker {
 	worker := &MysqlWorker{
-		mysqlWriter:  writer.NewMysqlWriter(db, config, changefeedID),
+		mysqlWriter:  mysql.NewMysqlWriter(db, config, changefeedID),
 		id:           id,
 		maxRows:      maxRows,
 		eventChan:    make(chan *commonEvent.DMLEvent, 16),
@@ -129,19 +130,23 @@ func (t *MysqlWorker) Run(ctx context.Context) {
 
 // MysqlDDLWorker is use to flush the ddl event and sync point eventdownstream
 type MysqlDDLWorker struct {
-	mysqlWriter  *writer.MysqlWriter
+	mysqlWriter  *mysql.MysqlWriter
 	ddlEventChan chan commonEvent.BlockEvent
 	wg           sync.WaitGroup
 }
 
-func NewMysqlDDLWorker(db *sql.DB, config *writer.MysqlConfig, changefeedID model.ChangeFeedID, ctx context.Context) *MysqlDDLWorker {
+func NewMysqlDDLWorker(db *sql.DB, config *mysql.MysqlConfig, changefeedID model.ChangeFeedID, ctx context.Context) *MysqlDDLWorker {
 	worker := &MysqlDDLWorker{
-		mysqlWriter:  writer.NewMysqlWriter(db, config, changefeedID),
+		mysqlWriter:  mysql.NewMysqlWriter(db, config, changefeedID),
 		ddlEventChan: make(chan commonEvent.BlockEvent, 16),
 	}
 	worker.wg.Add(1)
 	go worker.Run(ctx)
 	return worker
+}
+
+func (t *MysqlDDLWorker) SetTableSchemaStore(tableSchemaStore *util.TableSchemaStore) {
+	t.mysqlWriter.SetTableSchemaStore(tableSchemaStore)
 }
 
 func (t *MysqlDDLWorker) Run(ctx context.Context) {

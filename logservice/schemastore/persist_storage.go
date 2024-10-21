@@ -1355,6 +1355,10 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 	case model.ActionCreateSchema:
 		// ignore
 	case model.ActionDropSchema:
+		ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeDB,
+			SchemaID:      rawEvent.CurrentSchemaID,
+		}
 		ddlEvent.NeedDroppedTables = &commonEvent.InfluencedTables{
 			InfluenceType: commonEvent.InfluenceTypeDB,
 			SchemaID:      rawEvent.CurrentSchemaID,
@@ -1366,18 +1370,27 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		if isPartitionTable(rawEvent.TableInfo) {
 			physicalIDs := getAllPartitionIDs(rawEvent.TableInfo)
 			ddlEvent.NeedAddedTables = make([]commonEvent.Table, 0, len(physicalIDs))
+			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      physicalIDs,
+			}
 			for _, id := range physicalIDs {
 				ddlEvent.NeedAddedTables = append(ddlEvent.NeedAddedTables, commonEvent.Table{
 					SchemaID: rawEvent.CurrentSchemaID,
 					TableID:  id,
 				})
 			}
+			ddlEvent.BlockedTables.TableIDs = append(ddlEvent.BlockedTables.TableIDs, heartbeatpb.DDLSpan.TableID)
 		} else {
 			ddlEvent.NeedAddedTables = []commonEvent.Table{
 				{
 					SchemaID: rawEvent.CurrentSchemaID,
 					TableID:  rawEvent.CurrentTableID,
 				},
+			}
+			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      []int64{heartbeatpb.DDLSpan.TableID},
 			}
 		}
 		ddlEvent.TableNameChange = &commonEvent.TableNameChange{
@@ -1436,6 +1449,7 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 					TableIDs:      rawEvent.PrevPartitions,
 				}
 			}
+			ddlEvent.BlockedTables.TableIDs = append(ddlEvent.BlockedTables.TableIDs, heartbeatpb.DDLSpan.TableID)
 			// Note: for truncate table, prev partitions must all be dropped.
 			ddlEvent.NeedDroppedTables = &commonEvent.InfluencedTables{
 				InfluenceType: commonEvent.InfluenceTypeNormal,
@@ -1459,6 +1473,10 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 					SchemaID: rawEvent.CurrentSchemaID,
 					TableID:  rawEvent.CurrentTableID,
 				},
+			}
+			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      []int64{rawEvent.CurrentTableID, heartbeatpb.DDLSpan.TableID},
 			}
 		}
 	case model.ActionModifyColumn,
