@@ -29,13 +29,19 @@ func (h *incHandler) Handle(dest D, events ...*inc) (await bool) {
 	return false
 }
 
+func (h *incHandler) GetSize(event *inc) int            { return 0 }
+func (h *incHandler) GetArea(path string) int           { return 0 }
+func (h *incHandler) GetTimestamp(event *inc) Timestamp { return 0 }
+func (h *incHandler) GetType(event *inc) EventType      { return 0 }
+func (h *incHandler) OnDrop(event *inc)                 {}
+
 func runStream(eventCount int, times int) {
 	handler := &incHandler{}
-	reportChan := make(chan streamStat[int, string, *inc, D], 100)
+	reportChan := make(chan streamStat[int, string, *inc, D, *incHandler], 100)
 
-	pi := newPathInfo[int, string, *inc, D](0, "p1", D{})
-	stream := newStream[int, string, *inc, D](1 /*id*/, handler, reportChan, 10, NewOptionEnhanced[int, string, *inc, D]())
-	stream.start([]*pathInfo[int, string, *inc, D]{pi})
+	pi := newPathInfo[int, string, *inc, D, *incHandler](0, "p1", D{})
+	stream := newStream[int, string, *inc, D](1 /*id*/, handler, reportChan, 10, NewOption())
+	stream.start([]*pathInfo[int, string, *inc, D, *incHandler]{pi})
 
 	go func() {
 		// Drain the report channel. To avoid the report channel blocking.
@@ -48,7 +54,7 @@ func runStream(eventCount int, times int) {
 
 	done.Add(eventCount)
 	for i := 0; i < eventCount; i++ {
-		stream.in() <- eventWrap[int, string, *inc, D]{event: &inc{times: times, n: total, done: done}, pathInfo: pi}
+		stream.in() <- eventWrap[int, string, *inc, D, *incHandler]{event: &inc{times: times, n: total, done: done}, pathInfo: pi}
 	}
 
 	done.Wait()

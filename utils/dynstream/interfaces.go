@@ -10,17 +10,14 @@ import (
 type Path comparable
 
 // A path can only belong to an area. An area is a group of paths.
+// Area is normally a GID
 type Area comparable
 
-// The timestamp an event carries.
+// The timestamp an event carries. E.g. the commit TS of a DML.
 // Normally, events with smaller timestamps are processed first amoung the same Area, but it is not guaranteed.
 // In a path, events come earlier should have smaller timestamps. DynamicStream will not check the
 // order of the timestamps, it is the handler's responsibility to handle the events in the correct order.
 type Timestamp uint64
-
-// The type of the event. The type is used to group the events for the handler to process.
-// Events with different types will not be processed in a group by the handler.
-type Type int
 
 // An event belongs to a path.
 type Event any
@@ -28,8 +25,22 @@ type Event any
 // A destination is the place where the event is sent to.
 type Dest any
 
+// The type of the event. The type is used to group the events for the handler to process.
+// Events with different types will not be processed in a group by the handler.
+type EventType int
+
+const (
+	// Events are sent repeatedly, and don't carry any data except indicating something happens.
+	// DynamicStream could drop the eary come repeated signals to reduce the load. E.g. the resolved TS.
+	RepeatedSignal EventType = iota
+	// E.g. the DMLs
+	DataType1
+	// E.g. the DDLs
+	DataType2
+)
+
 // The handler interface. The handler processes the event.
-type Handler[P Path, T Event, D Dest] interface {
+type Handler[A Area, P Path, T Event, D Dest] interface {
 	// Get the path of the event. This method is called once for each event.
 	Path(event T) P
 	// Handle processes the event.
@@ -39,24 +50,25 @@ type Handler[P Path, T Event, D Dest] interface {
 	// until a wake signal is sent to DynamicStream's Wake channel.
 	// The len(events) is guaranteed to be greater than 0.
 	Handle(dest D, events ...T) (await bool)
-}
 
-type AreaGetter[A Area, P Path, T Event] interface {
-	PathArea(path P) A
-}
+	// The methods below are optional.
 
-type TimestampGetter[T Event] interface {
+	// Get the size of the event. This method is called once for each event.
+	// Return 0 by default implementation, if the size is not used.
+	GetSize(event T) int
+	// Get the area of the path. This method is called once for each path.
+	// Return zero by default implementation. I.e. all paths are in the default area.
+	GetArea(path P) A
 	// Get the timestamp of the event. This method is called once for each event.
-	Timestamp(event T) Timestamp
-}
-
-type TypeGetter[T Event] interface {
+	// Events are processed in the order of the timestamps.
+	// Return zero by default implementation. In this case, the events are processed
+	// in the order of the arrival.
+	GetTimestamp(event T) Timestamp
 	// Get the timestamp of the event. This method is called once for each event.
-	Type(event T) Type
-}
-
-type DropListener[T Event] interface {
+	// Return zero by default implementation. I.e. all events are in the same type.
+	GetType(event T) EventType
 	// OnDrop is called when an event is dropped. Could be caused by the DropPolicy or cannot find the path.
+	// Do nothing by default implementation.
 	OnDrop(event T)
 }
 
@@ -72,7 +84,7 @@ Dynamic stream is a stream that can process events with from different paths con
 
 We assume that the handler is CPU-bound and should not be blocked by any waiting. Otherwise, events from other paths will be blocked.
 */
-type DynamicStream[P Path, T Event, D Dest] interface {
+type DynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] interface {
 	// Start starts the dynamic stream.
 	// It should be called before any other methods.
 	Start()
@@ -118,27 +130,12 @@ type Option struct {
 	SchedulerInterval time.Duration // The interval of the scheduler. The scheduler is used to balance the paths between streams.
 	ReportInterval    time.Duration // The interval of reporting the status of stream, the status is used by the scheduler.
 	StreamCount       int           // The count of streams. I.e. the count of goroutines to handle events. By default 0, means runtime.NumCPU().
-	BatchSize         int           // The batch size of handling events. <= 1 means no batch.
+	BatchCount        int           // The batch size of handling events. <= 1 means no batch.
 
-	handleWait *sync.WaitGroup // For testing. Don't handle events until this wait group is done.
-}
-
-// TODO: Add comments.
-type OptionEnhanced[A Area, P Path, T Event, D Dest] struct {
-	Option
-
-	// Note that if you specify MaxPendingLength and DropPolicy
-	// Otherwise the events will be dropped silently.
 	MaxPendingLength int        // The max pending length of a path. <= 0 means no limit.
 	DropPolicy       DropPolicy // The drop policy of the events of a path when the pending length is greater than MaxPendingLength.
 
-	// Areas are zero if not set.
-	AreaGetter AreaGetter[A, P, T]
-	// By default use the queue time as timestamp if not set.
-	TimestampGetter TimestampGetter[T]
-	// Types are zero if not set.
-	TypeGetter   TypeGetter[T]
-	DropListener DropListener[T]
+	handleWait *sync.WaitGroup // For testing. Don't handle events until this wait group is done.
 }
 
 func NewOption() Option {
@@ -146,42 +143,26 @@ func NewOption() Option {
 		SchedulerInterval: DefaultSchedulerInterval,
 		ReportInterval:    DefaultReportInterval,
 		StreamCount:       0,
-		BatchSize:         1,
+		BatchCount:        1,
 	}
 }
 
-func NewOptionEnhanced[A Area, P Path, T Event, D Dest]() OptionEnhanced[A, P, T, D] {
-	return OptionEnhanced[A, P, T, D]{
-		Option:           NewOption(),
-		MaxPendingLength: 0,
-		DropPolicy:       DropLate,
-	}
-}
-
-func (o *OptionEnhanced[A, P, T, D]) fix() {
+func (o *Option) fix() {
 	if o.StreamCount == 0 {
 		o.StreamCount = runtime.NumCPU()
 	}
-	if o.BatchSize <= 0 {
-		o.BatchSize = 1
+	if o.BatchCount <= 0 {
+		o.BatchCount = 1
 	}
 	if o.MaxPendingLength < 0 {
 		o.MaxPendingLength = 0
 	}
 }
 
-func NewDynamicStream[P Path, T Event, D Dest](handler Handler[P, T, D], option ...Option) DynamicStream[P, T, D] {
+func NewDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](handler H, option ...Option) DynamicStream[A, P, T, D, H] {
 	opt := NewOption()
 	if len(option) > 0 {
 		opt = option[0]
 	}
-	optE := OptionEnhanced[int, P, T, D]{
-		Option: opt,
-	}
-	return newDynamicStreamImpl(handler, optE)
-}
-
-// Use this function if you want to use the enhanced option.
-func NewDynamicStreamEnhanced[A Area, P Path, T Event, D Dest](handler Handler[P, T, D], option OptionEnhanced[A, P, T, D]) DynamicStream[P, T, D] {
-	return newDynamicStreamImpl(handler, option)
+	return newDynamicStreamImpl(handler, opt)
 }

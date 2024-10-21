@@ -51,6 +51,11 @@ func (h *simpleHandler) Handle(dest struct{}, events ...*simpleEvent) (await boo
 	return false
 }
 
+func (h *simpleHandler) GetSize(event *simpleEvent) int            { return 0 }
+func (h *simpleHandler) GetArea(path string) int                   { return 0 }
+func (h *simpleHandler) GetTimestamp(event *simpleEvent) Timestamp { return 0 }
+func (h *simpleHandler) GetType(event *simpleEvent) EventType      { return 0 }
+
 func (h *simpleHandler) OnDrop(event *simpleEvent) {
 	if h.t != nil {
 		h.t.Log("OnDrop ", event.path)
@@ -61,7 +66,7 @@ func TestDynamicStreamBasic(t *testing.T) {
 	handler := &simpleHandler{}
 	option := NewOption()
 	option.StreamCount = 1
-	option.BatchSize = 2
+	option.BatchCount = 2
 	ds := NewDynamicStream(handler, option)
 	ds.Start()
 
@@ -141,11 +146,7 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	option.SchedulerInterval = 1 * time.Hour
 	option.ReportInterval = 1 * time.Hour
 	option.StreamCount = 3
-	optE := OptionEnhanced[any, string, *simpleEvent, struct{}]{
-		Option:       option,
-		DropListener: handler,
-	}
-	ds := newDynamicStreamImpl(handler, optE)
+	ds := newDynamicStreamImpl(handler, option)
 	ds.Start()
 
 	ds.AddPaths([]PathAndDest[string, struct{}]{
@@ -312,7 +313,7 @@ func TestDynamicStreamSchedule(t *testing.T) {
 }
 
 type removePathHandler struct {
-	ds DynamicStream[string, *simpleEvent, struct{}]
+	ds DynamicStream[int, string, *simpleEvent, struct{}, *removePathHandler]
 }
 
 func (h *removePathHandler) Path(event *simpleEvent) string {
@@ -325,6 +326,12 @@ func (h *removePathHandler) Handle(dest struct{}, events ...*simpleEvent) (await
 	event.wg.Done()
 	return false
 }
+
+func (h *removePathHandler) GetSize(event *simpleEvent) int            { return 0 }
+func (h *removePathHandler) GetArea(path string) int                   { return 0 }
+func (h *removePathHandler) GetTimestamp(event *simpleEvent) Timestamp { return 0 }
+func (h *removePathHandler) GetType(event *simpleEvent) EventType      { return 0 }
+func (h *removePathHandler) OnDrop(event *simpleEvent)                 {}
 
 func TestDynamicStreamRemovePath(t *testing.T) {
 	handler := &removePathHandler{}
@@ -379,13 +386,18 @@ func (h *incEventHandler) Handle(dest struct{}, events ...incEvent) (await bool)
 	return false
 }
 
+func (h *incEventHandler) GetSize(event incEvent) int            { return 0 }
+func (h *incEventHandler) GetArea(path string) int               { return 0 }
+func (h *incEventHandler) GetTimestamp(event incEvent) Timestamp { return 0 }
+func (h *incEventHandler) GetType(event incEvent) EventType      { return 0 }
+
 func TestDynamicStreamDrop(t *testing.T) {
-	check := func(option OptionEnhanced[int, string, incEvent, struct{}]) int64 {
+	check := func(option Option) int64 {
 		option.handleWait = &sync.WaitGroup{}
 		option.handleWait.Add(1)
 
 		handler := &incEventHandler{}
-		ds := NewDynamicStreamEnhanced(handler, option)
+		ds := NewDynamicStream(handler, option)
 		ds.Start()
 
 		ds.AddPath("p1", struct{}{})
@@ -406,8 +418,7 @@ func TestDynamicStreamDrop(t *testing.T) {
 		return total.Load()
 	}
 
-	option := NewOptionEnhanced[int, string, incEvent, struct{}]()
-	option.DropListener = &incEventHandler{}
+	option := NewOption()
 
 	{
 		assert.Equal(t, 9, check(option))
@@ -455,23 +466,24 @@ func (h *testOrderHandler) Handle(dest struct{}, events ...*testOrder) (await bo
 	return false
 }
 
-func (h *testOrderHandler) Timestamp(event *testOrder) Timestamp {
-	return event.timestamp
-}
+func (h *testOrderHandler) GetArea(path string) int                 { return 0 }
+func (h *testOrderHandler) GetSize(event *testOrder) int            { return 0 }
+func (h *testOrderHandler) GetTimestamp(event *testOrder) Timestamp { return event.timestamp }
+func (h *testOrderHandler) GetType(event *testOrder) EventType      { return 0 }
+func (h *testOrderHandler) OnDrop(event *testOrder)                 {}
 
 func TestDynamicStreamOrder(t *testing.T) {
 	handler := &testOrderHandler{}
-	option := NewOptionEnhanced[int, string, *testOrder, struct{}]()
+	option := NewOption()
 	option.SchedulerInterval = 1 * time.Hour
 	option.ReportInterval = 1 * time.Hour
 	option.StreamCount = 1
-	option.TimestampGetter = handler
 
 	hwg := &sync.WaitGroup{}
 	option.handleWait = hwg
 	hwg.Add(1)
 
-	ds := NewDynamicStreamEnhanced(handler, option)
+	ds := NewDynamicStream(handler, option)
 	ds.Start()
 
 	ds.AddPath("p1", struct{}{})
@@ -488,6 +500,7 @@ func TestDynamicStreamOrder(t *testing.T) {
 	ds.In() <- &testOrder{path: "p2", id: 5, timestamp: 4, wg: wg}
 	ds.In() <- &testOrder{path: "p3", id: 6, timestamp: 5, wg: wg}
 
+	time.Sleep(10 * time.Millisecond) // Make sure all the events are in the pending queue
 	hwg.Done()
 	wg.Wait()
 
