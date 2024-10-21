@@ -326,7 +326,7 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 		builder.WriteString(filter.TiCDCSystemSchema)
 		builder.WriteString(".")
 		builder.WriteString(filter.DDLTsTable)
-		builder.WriteString(" WHERE (ticdc_cluster_id, changefeed, table_id) IN ")
+		builder.WriteString(" WHERE (ticdc_cluster_id, changefeed, table_id) IN (")
 
 		for idx, tableId := range dropTableIds {
 			builder.WriteString("('")

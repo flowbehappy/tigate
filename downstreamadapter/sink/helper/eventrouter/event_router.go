@@ -108,7 +108,7 @@ func (s *EventRouter) GetTopicForDDL(ddl *commonEvent.DDLEvent) string {
 
 // GetActiveTopics returns a list of the corresponding topics
 // for the tables that are actively synchronized.
-func (s *EventRouter) GetActiveTopics(activeTables []*commonEvent.SchemaTableInfo) []string {
+func (s *EventRouter) GetActiveTopics(activeTables []*commonEvent.SchemaTableName) []string {
 	topics := make([]string, 0)
 	topicsMap := make(map[string]bool, len(activeTables))
 	for _, tableName := range activeTables {
