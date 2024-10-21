@@ -30,38 +30,6 @@ type ColumnData struct {
 	ApproximateBytes int
 }
 
-// TODO: remove it
-//
-//msgp:ignore RowChangedEventData
-type RowChangedEventData struct {
-	StartTs  uint64
-	CommitTs uint64
-
-	PhysicalTableID int64
-
-	// NOTICE: We probably store the logical ID inside TableInfo's TableName,
-	// not the physical ID.
-	// For normal table, there is only one ID, which is the physical ID.
-	// AKA TIDB_TABLE_ID.
-	// For partitioned table, there are two kinds of ID:
-	// 1. TIDB_PARTITION_ID is the physical ID of the partition.
-	// 2. TIDB_TABLE_ID is the logical ID of the table.
-	// In general, we always use the physical ID to represent a table, but we
-	// record the logical ID from the DDL event(job.BinlogInfo.TableInfo).
-	// So be careful when using the TableInfo.
-	TableInfo *common.TableInfo
-
-	Columns    []*ColumnData
-	PreColumns []*ColumnData
-
-	// ApproximateDataSize is the approximate size of protobuf binary
-	// representation of this event.
-	ApproximateDataSize int64
-
-	// ReplicatingTs is ts when a table starts replicating events to downstream.
-	ReplicatingTs uint64
-}
-
 type RowChangedEvent struct {
 	PhysicalTableID int64
 

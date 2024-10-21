@@ -9,7 +9,8 @@ import (
 )
 
 type BatchResolvedEvent struct {
-	Events []ResolvedEvent
+	Version int
+	Events  []ResolvedEvent
 }
 
 func (b BatchResolvedEvent) GetType() int {
@@ -70,6 +71,7 @@ func (b *BatchResolvedEvent) GetSize() int64 {
 
 // ResolvedEvent represents a resolvedTs event of a dispatcher.
 type ResolvedEvent struct {
+	Version      int
 	DispatcherID common.DispatcherID
 	ResolvedTs   common.Ts
 }
