@@ -76,16 +76,19 @@ func NewBlockEvent(cfID string, controller *Controller,
 			}
 			event.blockedTasks = controller.GetTasksByTableIDs(status.BlockTables.TableIDs...)
 		case heartbeatpb.InfluenceType_DB:
+			// add table trigger event dispatcher for InfluenceType_DB:
 			if dynamicSplitEnabled {
 				reps := controller.GetTasksBySchemaID(status.BlockTables.SchemaID)
 				tbls := make([]int64, 0, len(reps))
 				for _, rep := range reps {
 					tbls = append(tbls, rep.Span.TableID)
 				}
+
+				tbls = append(tbls, heartbeatpb.DDLSpan.TableID)
 				event.rangeChecker = range_checker.NewTableSpanRangeChecker(tbls)
 			} else {
 				event.rangeChecker = range_checker.NewTableCountChecker(
-					controller.GetTaskSizeBySchemaID(status.BlockTables.SchemaID))
+					controller.GetTaskSizeBySchemaID(status.BlockTables.SchemaID) + 1 /*table trigger event dispatcher*/)
 			}
 		case heartbeatpb.InfluenceType_All:
 			if dynamicSplitEnabled {
@@ -94,6 +97,7 @@ func NewBlockEvent(cfID string, controller *Controller,
 				for _, rep := range reps {
 					tbls = append(tbls, rep.Span.TableID)
 				}
+				tbls = append(tbls, heartbeatpb.DDLSpan.TableID)
 				event.rangeChecker = range_checker.NewTableSpanRangeChecker(tbls)
 			} else {
 				event.rangeChecker = range_checker.NewTableCountChecker(controller.TaskSize())
@@ -106,12 +110,21 @@ func NewBlockEvent(cfID string, controller *Controller,
 // onAllDispatcherReportedBlockEvent is called when all dispatcher reported the block event
 // it will select a dispatcher as the writer, reset the range checker ,and move the event to the selected state
 // returns the dispatcher status to the dispatcher manager
-func (be *BarrierEvent) onAllDispatcherReportedBlockEvent(dispatcherID *heartbeatpb.DispatcherID) *heartbeatpb.DispatcherStatus {
+func (be *BarrierEvent) onAllDispatcherReportedBlockEvent(dispatchers []*heartbeatpb.DispatcherID) *heartbeatpb.DispatcherStatus {
+	var dispatcher common.DispatcherID
+	switch be.blockedDispatchers.InfluenceType {
+	case heartbeatpb.InfluenceType_DB, heartbeatpb.InfluenceType_All:
+		// for all and db type, we always use the table trigger event dispatcher as the writer
+		dispatcher = be.controller.ddlDispatcherID
+	default:
+		// select the last one as the writer
+		dispatcher = common.NewDispatcherIDFromPB(dispatchers[len(dispatchers)-1])
+	}
+
 	// reset ranger checkers
 	be.rangeChecker.Reset()
 	be.selected = true
-	// select the last one as the writer
-	be.writerDispatcher = common.NewDispatcherIDFromPB(dispatcherID)
+	be.writerDispatcher = dispatcher
 	log.Info("all dispatcher reported heartbeat, select one to write",
 		zap.String("changefeed", be.cfID),
 		zap.String("dispatcher", be.writerDispatcher.String()),

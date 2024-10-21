@@ -191,7 +191,7 @@ func (b *Barrier) checkEvent(be *BarrierEvent,
 		be.scheduleBlockEvent()
 		return nil
 	}
-	return be.onAllDispatcherReportedBlockEvent(dispatchers[len(dispatchers)-1])
+	return be.onAllDispatcherReportedBlockEvent(dispatchers)
 }
 
 // ackEvent creates an ack event
