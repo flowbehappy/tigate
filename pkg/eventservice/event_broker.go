@@ -214,7 +214,6 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 				return
 			case <-ticker.C:
 				c.tableTriggerDispatchers.Range(func(key, value interface{}) bool {
-
 					dispatcherStat := value.(*dispatcherStat)
 					if !dispatcherStat.isInitialized.Load() {
 						e := &commonEvent.HandshakeEvent{
@@ -244,9 +243,11 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 					for _, e := range ddlEvents {
 						c.sendDDL(ctx, remoteID, e, dispatcherStat)
 					}
-					// After all the events are sent, we send the watermark to the dispatcher.
-					c.sendWatermark(remoteID, dispatcherStat, endTs, dispatcherStat.metricEventServiceSendResolvedTsCount)
-					dispatcherStat.watermark.Store(endTs)
+					if endTs > startTs {
+						// After all the events are sent, we send the watermark to the dispatcher.
+						c.sendWatermark(remoteID, dispatcherStat, endTs, dispatcherStat.metricEventServiceSendResolvedTsCount)
+						dispatcherStat.watermark.Store(endTs)
+					}
 					return true
 				})
 			}
@@ -274,9 +275,7 @@ func (c *eventBroker) wakeDispatcher(dispatcherID common.DispatcherID) {
 
 // checkNeedScan checks if the dispatcher needs to scan the event store.
 // If the dispatcher needs to scan the event store, it returns true.
-// If the dispatcher does not need to scan the event store, it
-// 1. send the watermark to the dispatcher
-// 2. push the task to the task pool
+// If the dispatcher does not need to scan the event store, it send the watermark to the dispatcher
 func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, common.DataRange) {
 	c.checkAndInitDispatcher(ctx, task)
 
@@ -348,6 +347,17 @@ func (c *eventBroker) emitSyncPointEventIfNeeded(ts uint64, d *dispatcherStat, r
 func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 	task.handle()
 	start := time.Now()
+	remoteID := node.ID(task.dispatcherStat.info.GetServerID())
+	dispatcherID := task.dispatcherStat.info.GetID()
+
+	defer c.wakeDispatcher(dispatcherID)
+	// If the target is not ready to send, we don't need to scan the event store.
+	// To avoid the useless scan task.
+	if !c.msgSender.IsReadyToSend(remoteID) {
+		log.Info("The remote target is not ready, skip scan", zap.Stringer("dispatcher", task.dispatcherStat.info.GetID()), zap.Stringer("remote", remoteID))
+		return
+	}
+
 	needScan, dataRange := c.checkNeedScan(ctx, task)
 	if !needScan {
 		return
@@ -359,13 +369,6 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		log.Panic("get ddl events failed", zap.Error(err))
 	}
 
-	remoteID := node.ID(task.dispatcherStat.info.GetServerID())
-	// If the target is not ready to send, we don't need to scan the event store.
-	// To avoid the useless scan task.
-	if !c.msgSender.IsReadyToSend(remoteID) {
-		return
-	}
-	dispatcherID := task.dispatcherStat.info.GetID()
 	// After all the events are sent, we need to
 	// drain the ddlEvents and wake up the dispatcher.
 	defer func() {
@@ -377,7 +380,6 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 			task.dispatcherStat,
 			dataRange.EndTs,
 			task.dispatcherStat.metricEventServiceSendResolvedTsCount)
-		c.wakeDispatcher(dispatcherID)
 	}()
 
 	//2. Get event iterator from eventStore.
@@ -393,17 +395,19 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 	}()
 
 	sendDML := func(dml *commonEvent.DMLEvent) {
-		if dml != nil {
-			for len(ddlEvents) > 0 && dml.CommitTs > ddlEvents[0].FinishedTs {
-				c.sendDDL(ctx, remoteID, ddlEvents[0], task.dispatcherStat)
-				ddlEvents = ddlEvents[1:]
-			}
-			dml.Seq = task.dispatcherStat.seq.Add(1)
-			c.emitSyncPointEventIfNeeded(dml.CommitTs, task.dispatcherStat, remoteID)
-			c.messageCh <- newWrapTxnEvent(remoteID, dml)
-			task.dispatcherStat.watermark.Store(dml.CommitTs)
-			task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(dml.Len()))
+		if dml == nil {
+			return
 		}
+
+		for len(ddlEvents) > 0 && dml.CommitTs > ddlEvents[0].FinishedTs {
+			c.sendDDL(ctx, remoteID, ddlEvents[0], task.dispatcherStat)
+			ddlEvents = ddlEvents[1:]
+		}
+		dml.Seq = task.dispatcherStat.seq.Add(1)
+		c.emitSyncPointEventIfNeeded(dml.CommitTs, task.dispatcherStat, remoteID)
+		c.messageCh <- newWrapDMLEvent(remoteID, dml)
+		task.dispatcherStat.watermark.Store(dml.CommitTs)
+		task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(dml.Len()))
 	}
 
 	// 3. Send the events to the dispatcher.
@@ -521,7 +525,6 @@ func (c *eventBroker) sendMsg(ctx context.Context, tMsg *messaging.TargetMessage
 				// Drop the message, and return.
 				// If the dispatcher finds the events are not continuous, it will send a reset message.
 				// And the broker will send the missed events to the dispatcher again.
-				log.Debug("send message failed", zap.Error(err))
 				return
 			}
 		}
@@ -902,7 +905,7 @@ type wrapEvent struct {
 	postSendFunc func()
 }
 
-func newWrapTxnEvent(serverID node.ID, e *commonEvent.DMLEvent) wrapEvent {
+func newWrapDMLEvent(serverID node.ID, e *commonEvent.DMLEvent) wrapEvent {
 	return wrapEvent{
 		serverID: serverID,
 		e:        e,

@@ -146,6 +146,8 @@ func (m *Manager) Run(ctx context.Context) error {
 				if cf.removed.Load() {
 					cf.Close()
 					m.maintainers.Delete(key)
+					log.Info("maintainer removed, remove it from dynamic stream",
+						zap.String("changefeed", cf.id.String()))
 					m.stream.RemovePaths(cf.id.ID)
 				}
 				return true
@@ -242,6 +244,8 @@ func (m *Manager) onRemoveMaintainerRequest(msg *messaging.TargetMessage) *heart
 			State:        heartbeatpb.ComponentState_Stopped,
 		}
 	}
+	log.Info("received remove maintainer request",
+		zap.String("changefeed", cfID.String()))
 	m.stream.In() <- &Event{
 		changefeedID: cfID.ID,
 		eventType:    EventMessage,

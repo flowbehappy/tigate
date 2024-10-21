@@ -39,7 +39,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-// scale out/in close
+// scale out/in close, add/remove tables
 func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
@@ -143,6 +143,33 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 			model.CaptureID(selfNode.ID): {ID: model.CaptureID(selfNode.ID), AdvertiseAddr: selfNode.AdvertiseAddr},
 			model.CaptureID(node2.ID):    {ID: model.CaptureID(node2.ID), AdvertiseAddr: node2.AdvertiseAddr},
 		}})
+	time.Sleep(5 * time.Second)
+	require.Equal(t, 4,
+		maintainer.controller.replicationDB.GetReplicatingSize())
+	require.Equal(t, 2,
+		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
+	require.Equal(t, 2,
+		maintainer.controller.GetTaskSizeByNodeID(node2.ID))
+
+	// remove 2 tables
+	maintainer.controller.RemoveTasksByTableIDs(2, 3)
+	time.Sleep(5 * time.Second)
+	require.Equal(t, 2,
+		maintainer.controller.replicationDB.GetReplicatingSize())
+	require.Equal(t, 1,
+		maintainer.controller.GetTaskSizeByNodeID(selfNode.ID))
+	require.Equal(t, 1,
+		maintainer.controller.GetTaskSizeByNodeID(node2.ID))
+
+	// add 2 tables
+	maintainer.controller.AddNewTable(commonEvent.Table{
+		SchemaID: 1,
+		TableID:  4,
+	}, 3)
+	maintainer.controller.AddNewTable(commonEvent.Table{
+		SchemaID: 1,
+		TableID:  5,
+	}, 3)
 	time.Sleep(5 * time.Second)
 	require.Equal(t, 4,
 		maintainer.controller.replicationDB.GetReplicatingSize())
