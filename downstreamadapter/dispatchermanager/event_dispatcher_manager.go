@@ -504,6 +504,8 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 		}
 	})
 
+	log.Info("heartbeat info collected", zap.Any("checkpointTs", message.Watermark.CheckpointTs))
+
 	for idx, id := range toReomveDispatcherIDs {
 		e.cleanTableEventDispatcher(id, removeDispatcherSchemaIDs[idx])
 	}

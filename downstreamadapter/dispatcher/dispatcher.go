@@ -550,9 +550,6 @@ func (d *Dispatcher) GetRemovingStatus() bool {
 }
 
 func (d *Dispatcher) CollectDispatcherHeartBeatInfo(h *HeartBeatInfo) {
-	// use checkpointTs to release memory usage
-	//d.GetMemoryUsage().Release(checkpointTs)
-
 	h.Watermark.CheckpointTs = d.GetCheckpointTs()
 	h.Watermark.ResolvedTs = d.GetResolvedTs()
 	h.Id = d.GetId()
