@@ -74,6 +74,22 @@ type coordinator struct {
 	controller    *Controller
 }
 
+func (c *coordinator) RemoveChangefeed(ctx context.Context, id model.ChangeFeedID) (uint64, error) {
+	return c.controller.RemoveChangefeed(ctx, id)
+}
+
+func (c *coordinator) PauseChangefeed(ctx context.Context, id model.ChangeFeedID) error {
+	return c.controller.PauseChangefeed(ctx, id)
+}
+
+func (c *coordinator) ResumeChangefeed(ctx context.Context, id model.ChangeFeedID, newCheckpointTs uint64) error {
+	return c.controller.ResumeChangefeed(ctx, id, newCheckpointTs)
+}
+
+func (c *coordinator) UpdateChangefeed(ctx context.Context, change *model.ChangeFeedInfo) error {
+	return c.controller.UpdateChangefeed(ctx, change)
+}
+
 func New(node *node.Info,
 	pdClient pd.Client,
 	pdClock pdutil.Clock,

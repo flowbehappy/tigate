@@ -51,6 +51,9 @@ func NewChangefeed(cfID model.ChangeFeedID,
 		log.Panic("unable to marshal changefeed config",
 			zap.Error(err))
 	}
+	log.Info("changefeed instance created",
+		zap.String("id", cfID.String()),
+		zap.String("state", string(info.State)))
 	return &Changefeed{
 		ID:                    cfID,
 		Info:                  info,

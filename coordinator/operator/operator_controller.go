@@ -72,8 +72,8 @@ func (oc *Controller) Execute() time.Time {
 
 		if msg != nil {
 			_ = oc.messageCenter.SendCommand(msg)
-			log.Info("send command to dispatcher",
-				zap.String("operator", r.ID().String()))
+			log.Info("send command to maintainer",
+				zap.String("operator", r.String()))
 		}
 		executedItem++
 		if executedItem >= oc.batchSize {
@@ -98,13 +98,36 @@ func (oc *Controller) AddOperator(op Operator) bool {
 			zap.String("operator", op.String()))
 		return false
 	}
-	log.Info("add operator to running queue",
-		zap.String("operator", op.String()))
-	oc.operators[op.ID()] = op
-	op.Start()
-	heap.Push(&oc.runningQueue, &operatorWithTime{op: op, time: time.Now(), enqueueTime: time.Now()})
-	metrics.CoordinatorCreatedOperatorCount.WithLabelValues(op.Type()).Inc()
+	oc.pushOperator(op)
 	return true
+}
+
+// StopChangefeed stop changefeed when the changefeed is stopped/removed.
+// if remove is true, it will remove the changefeed from the chagnefeed DB
+// if remove is false, it only marks as the changefeed stooped in changefeed DB, so we will not schedule the changefeed again
+func (oc *Controller) StopChangefeed(cfID model.ChangeFeedID, remove bool) {
+	oc.lock.Lock()
+	defer oc.lock.Unlock()
+
+	var cf *changefeed.Changefeed
+	if remove {
+		cf = oc.changefeedDB.RemoveByChangefeedID(cfID)
+	} else {
+		cf = oc.changefeedDB.StopByChangefeedID(cfID)
+	}
+	if cf == nil {
+		log.Info("changefeed is not scheduled")
+		return
+	}
+	if old, ok := oc.operators[cfID]; ok {
+		log.Info("changefeed is stopped , replace the old one",
+			zap.String("changefeed", cfID.ID),
+			zap.String("operator", old.String()))
+		old.OnTaskRemoved()
+		delete(oc.operators, old.ID())
+	}
+	op := NewRemoveChangefeedOperator(cf)
+	oc.pushOperator(op)
 }
 
 func (oc *Controller) UpdateOperatorStatus(id model.ChangeFeedID, from node.ID,
@@ -182,4 +205,14 @@ func (oc *Controller) pollQueueingOperator() (Operator, bool) {
 	item.time = time.Now().Add(time.Millisecond * 500)
 	heap.Push(&oc.runningQueue, item)
 	return op, true
+}
+
+// pushOperator add an operator to the controller queue.
+func (oc *Controller) pushOperator(op Operator) {
+	log.Info("add operator to running queue",
+		zap.String("operator", op.String()))
+	oc.operators[op.ID()] = op
+	op.Start()
+	heap.Push(&oc.runningQueue, &operatorWithTime{op: op, time: time.Now(), enqueueTime: time.Now()})
+	metrics.CoordinatorCreatedOperatorCount.WithLabelValues(op.Type()).Inc()
 }

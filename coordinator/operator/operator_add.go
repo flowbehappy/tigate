@@ -48,7 +48,7 @@ func NewAddDispatcherOperator(
 
 func (m *AddChangefeedOperator) Check(from node.ID, status *heartbeatpb.MaintainerStatus) {
 	if !m.finished.Load() && from == m.dest && status.State == heartbeatpb.ComponentState_Working {
-		log.Info("dispatcher report working status",
+		log.Info("maintainer report working status",
 			zap.String("changefeed", m.cf.ID.String()))
 		m.finished.Store(true)
 	}

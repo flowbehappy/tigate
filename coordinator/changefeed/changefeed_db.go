@@ -24,11 +24,14 @@ import (
 
 type ChangefeedDB struct {
 	changefeeds map[model.ChangeFeedID]*Changefeed
+
 	nodeTasks   map[node.ID]map[model.ChangeFeedID]*Changefeed
 	absent      map[model.ChangeFeedID]*Changefeed
 	scheduling  map[model.ChangeFeedID]*Changefeed
 	replicating map[model.ChangeFeedID]*Changefeed
-	lock        sync.RWMutex
+
+	stopped map[model.ChangeFeedID]*Changefeed
+	lock    sync.RWMutex
 }
 
 func NewChangefeedDB() *ChangefeedDB {
@@ -38,6 +41,7 @@ func NewChangefeedDB() *ChangefeedDB {
 		absent:      make(map[model.ChangeFeedID]*Changefeed),
 		scheduling:  make(map[model.ChangeFeedID]*Changefeed),
 		replicating: make(map[model.ChangeFeedID]*Changefeed),
+		stopped:     make(map[model.ChangeFeedID]*Changefeed),
 	}
 	return db
 }
@@ -48,6 +52,15 @@ func (db *ChangefeedDB) AddAbsentChangefeed(tasks ...*Changefeed) {
 	defer db.lock.Unlock()
 
 	db.addAbsentChangefeedUnLock(tasks...)
+}
+
+// AddStoppedChangefeed adds the changefeed to the stop map
+func (db *ChangefeedDB) AddStoppedChangefeed(task *Changefeed) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	db.changefeeds[task.ID] = task
+	db.stopped[task.ID] = task
 }
 
 // AddReplicatingSpan adds a replicating the replicating map, that means the task is already scheduled to a dispatcher
@@ -64,6 +77,44 @@ func (db *ChangefeedDB) AddReplicatingSpan(task *Changefeed) {
 	db.changefeeds[task.ID] = task
 	db.replicating[task.ID] = task
 	db.updateNodeMap("", nodeID, task)
+}
+
+// RemoveByChangefeedID removes task from the db, if the changefeed is scheduled, it will return the task
+func (db *ChangefeedDB) RemoveByChangefeedID(cfID model.ChangeFeedID) *Changefeed {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	cf, ok := db.changefeeds[cfID]
+	if ok {
+		delete(db.changefeeds, cfID)
+		db.removeChangefeedUnLock(cf)
+		if cf.GetNodeID() == "" {
+			log.Info("changefeed is not scheduled, delete directly")
+		}
+		return cf
+	}
+	return nil
+}
+
+// StopByChangefeedID moves task from to stopped map, if the changefeed is scheduled, it will return the task
+func (db *ChangefeedDB) StopByChangefeedID(cfID model.ChangeFeedID) *Changefeed {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	cf, ok := db.changefeeds[cfID]
+	if ok {
+		delete(db.changefeeds, cfID)
+		db.removeChangefeedUnLock(cf)
+		// push bash to stopped
+		db.changefeeds[cfID] = cf
+		db.stopped[cfID] = cf
+
+		if cf.GetNodeID() == "" {
+			log.Info("changefeed is not scheduled, delete directly")
+		}
+		return cf
+	}
+	return nil
 }
 
 func (db *ChangefeedDB) GetAbsentSize() int {
@@ -148,6 +199,19 @@ func (db *ChangefeedDB) GetByID(id model.ChangeFeedID) *Changefeed {
 	return db.changefeeds[id]
 }
 
+// Resume moves a changefeed to the absent map, and waiting for scheduling
+func (db *ChangefeedDB) Resume(id model.ChangeFeedID) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	cf := db.changefeeds[id]
+	if cf != nil {
+		delete(db.stopped, id)
+		db.absent[id] = cf
+		log.Info("resume changefeed", zap.String("changefeed", id.String()))
+	}
+}
+
 func (db *ChangefeedDB) GetByNodeID(id node.ID) []*Changefeed {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
@@ -224,4 +288,21 @@ func (db *ChangefeedDB) addAbsentChangefeedUnLock(tasks ...*Changefeed) {
 		db.changefeeds[task.ID] = task
 		db.absent[task.ID] = task
 	}
+}
+
+// removeSpanUnLock removes the changefeed from the db without lock
+func (db *ChangefeedDB) removeChangefeedUnLock(cf *Changefeed) {
+	log.Info("remove changefeed",
+		zap.String("changefeed", cf.ID.String()))
+	nodeID := cf.GetNodeID()
+
+	delete(db.absent, cf.ID)
+	delete(db.scheduling, cf.ID)
+	delete(db.replicating, cf.ID)
+	nodeMap := db.nodeTasks[nodeID]
+	delete(nodeMap, cf.ID)
+	if len(nodeMap) == 0 {
+		delete(db.nodeTasks, nodeID)
+	}
+	delete(db.changefeeds, cf.ID)
 }

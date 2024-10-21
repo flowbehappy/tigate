@@ -36,7 +36,7 @@ type Coordinator interface {
 	// PauseChangefeed pauses a changefeed
 	PauseChangefeed(ctx context.Context, id model.ChangeFeedID) error
 	// ResumeChangefeed resumes a changefeed
-	ResumeChangefeed(ctx context.Context, id model.ChangeFeedID) error
+	ResumeChangefeed(ctx context.Context, id model.ChangeFeedID, newCheckpointTs uint64) error
 	// UpdateChangefeed updates a changefeed
-	UpdateChangefeed(ctx context.Context, id model.ChangeFeedID, change *model.ChangeFeedInfo) error
+	UpdateChangefeed(ctx context.Context, change *model.ChangeFeedInfo) error
 }

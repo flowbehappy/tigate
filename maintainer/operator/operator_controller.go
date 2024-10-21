@@ -223,8 +223,8 @@ func (oc *Controller) removeReplicaSet(op *RemoveDispatcherOperator) {
 	if old, ok := oc.operators[op.ID()]; ok {
 		log.Info("replica set is removed , replace the old one",
 			zap.String("changefeed", oc.changefeedID),
-			zap.String("replicaset", op.ID().String()),
-			zap.String("operator", op.String()))
+			zap.String("replicaset", old.ID().String()),
+			zap.String("operator", old.String()))
 		old.OnTaskRemoved()
 		delete(oc.operators, op.ID())
 	}

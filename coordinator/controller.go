@@ -141,7 +141,7 @@ func (c *Controller) CreateChangefeed(ctx context.Context, info *model.ChangeFee
 	}
 	op := c.operatorController.GetOperator(id)
 	if op != nil {
-		return errors.New("changefeed is removing")
+		return errors.New("changefeed is in scheduling")
 	}
 	_, err := c.backend.CreateChangefeed(ctx, info)
 	if err != nil {
@@ -245,7 +245,7 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.Mainta
 		c.operatorController.UpdateOperatorStatus(cfID, from, status)
 		cf := c.GetTask(cfID)
 		if cf == nil {
-			log.Warn("no span found, ignore",
+			log.Warn("no changgefeed found, ignore",
 				zap.String("changefeed", status.ChangefeedID),
 				zap.String("from", from.String()),
 				zap.Any("status", status))
@@ -280,7 +280,11 @@ func (c *Controller) FinishBootstrap(workingMap map[model.ChangeFeedID]remoteMai
 		rm, ok := workingMap[cfID]
 		if !ok {
 			cf := changefeed.NewChangefeed(cfID, cfMeta.Info, cfMeta.Status.CheckpointTs)
-			c.replicationDB.AddAbsentChangefeed(cf)
+			if shouldRunChangefeed(cf.Info.State) {
+				c.replicationDB.AddAbsentChangefeed(cf)
+			} else {
+				c.replicationDB.AddStoppedChangefeed(cf)
+			}
 		} else {
 			log.Info("maintainer already working in other server",
 				zap.String("changefeed", id))
@@ -313,6 +317,55 @@ func (c *Controller) Stop() {
 	if c.schedulerHandle != nil {
 		c.schedulerHandle.Cancel()
 	}
+}
+
+func (c *Controller) RemoveChangefeed(ctx context.Context, id model.ChangeFeedID) (uint64, error) {
+	cf := c.replicationDB.GetByID(id)
+	if cf == nil {
+		return 0, errors.New("changefeed not found")
+	}
+	err := c.backend.DeleteChangefeed(ctx, id)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	c.operatorController.StopChangefeed(id, true)
+	return cf.Status.CheckpointTs, nil
+}
+
+func (c *Controller) PauseChangefeed(ctx context.Context, id model.ChangeFeedID) error {
+	cf := c.replicationDB.GetByID(id)
+	if cf == nil {
+		return errors.New("changefeed not found")
+	}
+	if err := c.backend.PauseChangefeed(ctx, id); err != nil {
+		return errors.Trace(err)
+	}
+	c.operatorController.StopChangefeed(id, false)
+	return nil
+}
+
+func (c *Controller) ResumeChangefeed(ctx context.Context, id model.ChangeFeedID, newCheckpointTs uint64) error {
+	cf := c.replicationDB.GetByID(id)
+	if cf == nil {
+		return errors.New("changefeed not found")
+	}
+	if err := c.backend.ResumeChangefeed(ctx, id, newCheckpointTs); err != nil {
+		return errors.Trace(err)
+	}
+	c.replicationDB.Resume(id)
+	return nil
+}
+
+func (c *Controller) UpdateChangefeed(ctx context.Context, change *model.ChangeFeedInfo) error {
+	id := model.ChangeFeedID{
+		Namespace: change.Namespace,
+		ID:        change.ID,
+	}
+	cf := c.replicationDB.GetByID(id)
+	if cf == nil {
+		return errors.New("changefeed not found")
+	}
+	return c.backend.UpdateChangefeed(ctx, change)
 }
 
 // GetTask queries a task by dispatcherID, return nil if not found
