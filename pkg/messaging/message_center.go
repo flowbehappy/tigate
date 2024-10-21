@@ -165,6 +165,9 @@ func (mc *messageCenter) removeTarget(id node.ID) {
 }
 
 func (mc *messageCenter) IsReadyToSend(targetID node.ID) bool {
+	if targetID == mc.id {
+		return true
+	}
 	mc.remoteTargets.RLock()
 	defer mc.remoteTargets.RUnlock()
 	target, ok := mc.remoteTargets.m[targetID]
