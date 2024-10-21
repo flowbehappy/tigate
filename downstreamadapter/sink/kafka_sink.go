@@ -167,6 +167,13 @@ func (s *KafkaSink) AddBlockEvent(event commonEvent.BlockEvent, tableProgress *t
 	tableProgress.Add(event)
 	switch event.(type) {
 	case *commonEvent.DDLEvent:
+		if event.(*commonEvent.DDLEvent).TiDBOnly {
+			// run callback directly and return
+			for _, cb := range event.(*commonEvent.DDLEvent).PostTxnFlushed {
+				cb()
+			}
+			return
+		}
 		s.ddlWorker.GetDDLEventChan() <- event.(*commonEvent.DDLEvent)
 	case *commonEvent.SyncPointEvent:
 		log.Error("Kafkasink doesn't support Sync Point Event")
