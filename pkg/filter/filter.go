@@ -27,8 +27,10 @@ import (
 )
 
 const (
-	// SyncPointTable is the tale name use to write ts-map when sync-point is enable.
+	// SyncPointTable is the table name use to write ts-map when sync-point is enable.
 	SyncPointTable = "syncpoint_v1"
+	// DDLTsTable is the table name use to write ddl commitTs for each table when downstream is mysql-class
+	DDLTsTable = "ddl_ts_v1"
 
 	// TiCDCSystemSchema is the schema only use by TiCDC.
 	TiCDCSystemSchema = "tidb_cdc"

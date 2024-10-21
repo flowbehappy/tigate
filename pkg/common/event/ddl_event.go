@@ -136,8 +136,13 @@ type SchemaTableName struct {
 	TableName  string
 }
 
-// TableChange will record each ddl change of the table name.
-// Each TableChange is related to a ddl event
+type DB struct {
+	SchemaID   int64
+	SchemaName string
+}
+
+// TableNameChange will record each ddl change of the table name.
+// Each TableNameChange is related to a ddl event
 type TableNameChange struct {
 	AddName          []SchemaTableName
 	DropName         []SchemaTableName

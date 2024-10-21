@@ -19,8 +19,9 @@ import (
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/downstreamadapter/worker"
-	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	"github.com/flowbehappy/tigate/pkg/sink/mysql"
+	"github.com/flowbehappy/tigate/pkg/sink/util"
 
 	"github.com/pingcap/tiflow/cdc/model"
 )
@@ -42,7 +43,7 @@ type MysqlSink struct {
 }
 
 // event dispatcher manager 初始化的时候创建 mysqlSink 对象
-func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *writer.MysqlConfig, db *sql.DB) *MysqlSink {
+func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *mysql.MysqlConfig, db *sql.DB) *MysqlSink {
 	ctx := context.Background()
 	mysqlSink := MysqlSink{
 		changefeedID: changefeedID,
@@ -60,6 +61,10 @@ func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *writer.
 
 func (s *MysqlSink) SinkType() SinkType {
 	return MysqlSinkType
+}
+
+func (s *MysqlSink) SetTableSchemaStore(tableSchemaStore *util.TableSchemaStore) {
+	s.ddlWorker.SetTableSchemaStore(tableSchemaStore)
 }
 
 func (s *MysqlSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress) {
@@ -83,6 +88,6 @@ func (s *MysqlSink) AddBlockEvent(event commonEvent.BlockEvent, tableProgress *t
 	s.ddlWorker.GetDDLEventChan() <- event
 }
 
-func (s *MysqlSink) AddCheckpointTs(ts uint64, tableNames []*commonEvent.SchemaTableName) {}
+func (s *MysqlSink) AddCheckpointTs(ts uint64) {}
 
 func (s *MysqlSink) Close() {}

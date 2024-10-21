@@ -18,6 +18,8 @@ import (
 	bf "github.com/pingcap/tiflow/pkg/binlog-filter"
 )
 
+//TODO: clean this file
+
 // ddlWhiteListMap is a map of all DDL types that can be applied to cdc's schema storage.
 var ddlWhiteListMap = map[timodel.ActionType]bf.EventType{
 	// schema related DDLs
