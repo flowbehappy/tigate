@@ -49,23 +49,6 @@ func BenchmarkRawKVEntry_MarshalUnmarshal(b *testing.B) {
 	}
 }
 
-// BenchmarkRawKVEntry_Msgp-10    	 1293561	       945.7 ns/op	    7048 B/op	       4 allocs/op
-func BenchmarkRawKVEntry_Msgp(b *testing.B) {
-	entry := getRawKVEntry()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		encoded, err := entry.MarshalMsg(nil)
-		if err != nil {
-			b.Fatalf("Failed to marshal: %v", err)
-		}
-		decodedEntry := &RawKVEntry{}
-		_, err = decodedEntry.UnmarshalMsg(encoded)
-		if err != nil {
-			b.Fatalf("Failed to unmarshal: %v", err)
-		}
-	}
-}
-
 // BenchmarkRawKVEntry_EncodeDecode-10    	 2949572	       389.0 ns/op	    3456 B/op	       1 allocs/op
 func BenchmarkRawKVEntry_EncodeDecode(b *testing.B) {
 	entry := getRawKVEntry()

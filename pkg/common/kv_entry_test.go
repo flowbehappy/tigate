@@ -75,11 +75,8 @@ func TestRawKVEntryEncodeDecode_ResolvedOperation(t *testing.T) {
 func TestCompareEncodedSize(t *testing.T) {
 	entry := getRawKVEntry()
 	encoded := entry.Encode()
-	msgpEncoded, err := entry.MarshalMsg(nil)
-	require.NoError(t, err)
 	jsonEncoded, err := json.Marshal(entry)
 	require.NoError(t, err)
 
-	require.Less(t, len(encoded), len(msgpEncoded))
 	require.Less(t, len(encoded), len(jsonEncoded))
 }
