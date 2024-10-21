@@ -156,7 +156,6 @@ func (t *MysqlDDLWorker) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case event := <-t.ddlEventChan:
-
 			switch event.GetType() {
 			case commonEvent.TypeDDLEvent:
 				err := t.mysqlWriter.FlushDDLEvent(event.(*commonEvent.DDLEvent))
