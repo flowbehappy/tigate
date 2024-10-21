@@ -331,7 +331,6 @@ func (h *OpenAPIV2) deleteChangefeed(c *gin.Context) {
 			changefeedID.ID))
 		return
 	}
-
 	etcdCli := h.server.GetEtcdClient()
 	cfInfo, err := etcdCli.GetChangeFeedInfo(ctx, changefeedID)
 	if err != nil {
@@ -342,27 +341,12 @@ func (h *OpenAPIV2) deleteChangefeed(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-
-	status, _, err := etcdCli.GetChangeFeedStatus(ctx, changefeedID)
+	coordinator, err := h.server.GetCoordinator()
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
-
-	infoKey := etcd.GetEtcdKeyChangeFeedInfo(etcdCli.GetClusterID(), changefeedID)
-	jobKey := etcd.GetEtcdKeyJob(etcdCli.GetClusterID(), changefeedID)
-
-	opsThen := []clientv3.Op{}
-	opsThen = append(opsThen, clientv3.OpDelete(infoKey))
-	opsThen = append(opsThen, clientv3.OpDelete(jobKey))
-
-	resp, err := etcdCli.GetEtcdClient().Txn(ctx, []clientv3.Cmp{}, opsThen, []clientv3.Op{})
-	if !resp.Succeeded {
-		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("delete changefeed %s", changefeedID))
-		_ = c.Error(err)
-		return
-	}
-
+	checkpointTs, err := coordinator.RemoveChangefeed(ctx, changefeedID)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -373,7 +357,7 @@ func (h *OpenAPIV2) deleteChangefeed(c *gin.Context) {
 		SinkURI      string `json:"sink_uri"`
 	}{
 		ChangeFeedID: changefeedID.ID,
-		CheckpointTs: status.CheckpointTs,
+		CheckpointTs: checkpointTs,
 		SinkURI:      cfInfo.SinkURI,
 	})
 }
@@ -417,31 +401,13 @@ func (h *OpenAPIV2) pauseChangefeed(c *gin.Context) {
 			changefeedID.ID))
 		return
 	}
-	detail := &model.ChangeFeedInfo{}
-	err = detail.Unmarshal(resp.Kvs[0].Value)
+	coordinator, err := h.server.GetCoordinator()
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
-	detail.State = model.StateStopped
-	newStr, err := detail.Marshal()
+	err = coordinator.PauseChangefeed(ctx, changefeedID)
 	if err != nil {
-		_ = c.Error(err)
-		return
-	}
-
-	opsThen := []clientv3.Op{}
-	opsThen = append(opsThen, clientv3.OpPut(infoKey, newStr))
-
-	putResp, err := etcdCli.GetEtcdClient().Txn(ctx, []clientv3.Cmp{
-		clientv3.Compare(clientv3.ModRevision(infoKey), "=", resp.Kvs[0].ModRevision),
-	}, opsThen, []clientv3.Op{})
-	if err != nil {
-		_ = c.Error(err)
-		return
-	}
-	if !putResp.Succeeded {
-		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("pause changefeed %s", changefeedID))
 		_ = c.Error(err)
 		return
 	}
