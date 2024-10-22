@@ -14,11 +14,6 @@ const (
 	defaultRowCount = 1
 )
 
-const (
-	// defaultRowCount is the start row count of a transaction.
-	defaultRowCount = 1
-)
-
 // DMLEvent represent a batch of DMLs of a whole or partial of a transaction.
 type DMLEvent struct {
 	// Version is the version of the DMLEvent struct.
