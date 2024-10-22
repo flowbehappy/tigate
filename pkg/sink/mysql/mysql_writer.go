@@ -78,11 +78,14 @@ func (w *MysqlWriter) FlushDDLEvent(event *commonEvent.DDLEvent) error {
 	if event.GetDDLType() == timodel.ActionAddIndex && w.cfg.IsTiDB {
 		return w.asyncExecAddIndexDDLIfTimeout(event) // todo flush checkpointTs
 	}
-	err := w.execDDLWithMaxRetries(event)
 
-	if err != nil {
-		log.Error("exec ddl failed", zap.Error(err))
-		return err
+	if !(event.TiDBOnly && !w.cfg.IsTiDB) {
+		err := w.execDDLWithMaxRetries(event)
+
+		if err != nil {
+			log.Error("exec ddl failed", zap.Error(err))
+			return err
+		}
 	}
 
 	// We need to record ddl' ts after each ddl for each table in the downstream when sink is mysql-compatible.
@@ -93,7 +96,7 @@ func (w *MysqlWriter) FlushDDLEvent(event *commonEvent.DDLEvent) error {
 	// before new checkpointTs will report to maintainer. Therefore, when the table checkpointTs is forward,
 	// we can ensure the ddl and ddl ts are both flushed downstream successfully.
 	// Thus, when restarting, and we can't find a record for one table, it means the table is dropped.
-	err = w.FlushDDLTs(event)
+	err := w.FlushDDLTs(event)
 	if err != nil {
 		return err
 	}

@@ -7,6 +7,7 @@ import (
 )
 
 type HandshakeEvent struct {
+	Version      int                 `json:"version"`
 	DispatcherID common.DispatcherID `json:"dispatcher_id"`
 	ResolvedTs   uint64              `json:"resolved_ts"`
 	Seq          uint64              `json:"seq"`

@@ -10,6 +10,7 @@ import (
 )
 
 type DDLEvent struct {
+	Version      int                 `json:"version"`
 	DispatcherID common.DispatcherID `json:"dispatcher_id"`
 	Type         byte                `json:"type"`
 	// SchemaID means different for different job types:

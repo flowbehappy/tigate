@@ -36,10 +36,6 @@ type BlockEvent interface {
 }
 
 const (
-	txnRowCount = 2
-)
-
-const (
 	// TEvent is the event type of a transaction.
 	TypeDMLEvent = iota
 	// DDLEvent is the event type of a DDL.

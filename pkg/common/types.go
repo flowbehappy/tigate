@@ -8,7 +8,6 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/google/uuid"
-	"github.com/tinylib/msgp/msgp"
 )
 
 var DefaultEndian = binary.LittleEndian
@@ -46,28 +45,8 @@ func (d DispatcherID) String() string {
 	return GID(d).String()
 }
 
-func (d *DispatcherID) Msgsize() int {
+func (d *DispatcherID) MsgSize() int {
 	return 16
-}
-
-func (d DispatcherID) MarshalMsg(b []byte) ([]byte, error) {
-	return msgp.AppendBytes(b, GID(d).Marshal()), nil
-}
-
-func (d *DispatcherID) UnmarshalMsg(b []byte) ([]byte, error) {
-	var tmp []byte
-	var err error
-	tmp, b, err = msgp.ReadBytesBytes(b, tmp)
-	if err != nil {
-		return nil, err
-	}
-
-	err = d.Unmarshal(tmp)
-	if err != nil {
-		return nil, err
-	}
-
-	return b, nil
 }
 
 func (d *DispatcherID) Unmarshal(b []byte) error {
@@ -79,20 +58,6 @@ func (d *DispatcherID) Unmarshal(b []byte) error {
 
 func (d DispatcherID) Marshal() []byte {
 	return GID(d).Marshal()
-}
-
-func (d DispatcherID) EncodeMsg(en *msgp.Writer) error {
-	return en.WriteBytes(GID(d).Marshal())
-}
-
-func (d *DispatcherID) DecodeMsg(dc *msgp.Reader) error {
-	var tmp []byte
-	tmp, err := dc.ReadBytes(tmp)
-	if err != nil {
-		return err
-	}
-	err = d.Unmarshal(tmp)
-	return err
 }
 
 func (d DispatcherID) Equal(inferior any) bool {
