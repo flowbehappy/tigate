@@ -81,7 +81,7 @@ func (t *MysqlWorker) Run(ctx context.Context) {
 			return
 		case txnEvent := <-t.eventChan:
 			events = append(events, txnEvent)
-			rows += txnEvent.Len()
+			rows += int(txnEvent.Len())
 			if rows > t.maxRows {
 				needFlush = true
 			}
@@ -92,7 +92,7 @@ func (t *MysqlWorker) Run(ctx context.Context) {
 					case txnEvent := <-t.eventChan:
 						workerHandledRows.Add(float64(txnEvent.Len()))
 						events = append(events, txnEvent)
-						rows += txnEvent.Len()
+						rows += int(txnEvent.Len())
 						if rows > t.maxRows {
 							needFlush = true
 						}
