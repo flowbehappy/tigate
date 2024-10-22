@@ -57,16 +57,21 @@ type pathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	// and we use sync.WaitGroup to wait for finish. So if RemovePaths is called in the handle goroutine, it should be
 	// guaranteed to see the memory change of this field.
 	removed bool
+	// The path is blocked by the handler.
+	blocking bool
 
+	// The pending events of the path.
 	pendingQueue *deque.Deque[eventWrap[A, P, T, D, H]]
-	blocking     bool
+	// The total size of pending events.
+	pendingSize int
 
 	reportRound int64
 	pathStat    *pathStat[A, P, T, D, H]
 
 	// The indexes in the pending queue heap.
-	tsHeapIndex int // timestamp heap index
-	qtHeapIndex int // queue time heap index
+	tsHeapIndex   int // timestamp heap index
+	qtHeapIndex   int // queue time heap index
+	sizeHeapIndex int // global area heap index
 }
 
 func newPathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](area A, path P, dest D) *pathInfo[A, P, T, D, H] {

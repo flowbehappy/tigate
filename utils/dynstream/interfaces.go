@@ -30,13 +30,14 @@ type Dest any
 type EventType int
 
 const (
-	// Events are sent repeatedly, and don't carry any data except indicating something happens.
-	// DynamicStream could drop the eary come repeated signals to reduce the load. E.g. the resolved TS.
-	RepeatedSignal EventType = iota
-	// E.g. the DMLs
-	DataType1
-	// E.g. the DDLs
+	// E.g. a DML
+	DataType1 EventType = iota
+	// E.g. a DDL
 	DataType2
+	// Events are sent repeatedly, and don't carry any data except indicating something happens.
+	// DynamicStream could drop the eary come repeated signals to reduce the load.
+	// E.g. a resolved TS.
+	RepeatedSignal
 )
 
 // The handler interface. The handler processes the event.

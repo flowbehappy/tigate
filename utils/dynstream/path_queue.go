@@ -9,10 +9,6 @@ import (
 // The path node order by timestamp.
 type tsPathNode[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] pathInfo[A, P, T, D, H]
 
-func (n *tsPathNode[A, P, T, D, H]) c(index int) {
-	(*pathInfo[A, P, T, D, H])(n).tsHeapIndex = index
-}
-
 func (n *tsPathNode[A, P, T, D, H]) SetHeapIndex(index int) {
 	(*pathInfo[A, P, T, D, H])(n).tsHeapIndex = index
 }
