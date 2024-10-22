@@ -15,15 +15,17 @@ package sink
 
 import (
 	"context"
-	"database/sql"
+	"net/url"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	"github.com/flowbehappy/tigate/downstreamadapter/worker"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/sink/mysql"
 	"github.com/flowbehappy/tigate/pkg/sink/util"
 
 	"github.com/pingcap/tiflow/cdc/model"
+	utils "github.com/pingcap/tiflow/pkg/util"
 )
 
 const (
@@ -42,8 +44,8 @@ type MysqlSink struct {
 	workerCount int
 }
 
-// event dispatcher manager 初始化的时候创建 mysqlSink 对象
-func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *mysql.MysqlConfig, db *sql.DB) *MysqlSink {
+// func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *mysql.MysqlConfig, db *sql.DB) *MysqlSink {
+func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, config *config.ChangefeedConfig, sinkURI *url.URL) (*MysqlSink, error) {
 	ctx := context.Background()
 	mysqlSink := MysqlSink{
 		changefeedID: changefeedID,
@@ -51,12 +53,18 @@ func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *mysql.M
 		workerCount:  workerCount,
 	}
 
+	cfg, db, err := mysql.NewMysqlConfigAndDB(ctx, changefeedID, sinkURI)
+	if err != nil {
+		return nil, err
+	}
+	cfg.SyncPointRetention = utils.GetOrZero(config.SyncPointRetention)
+
 	for i := 0; i < workerCount; i++ {
-		mysqlSink.dmlWorker[i] = worker.NewMysqlWorker(db, cfg, i, mysqlSink.changefeedID, ctx, cfg.MaxTxnRow)
+		mysqlSink.dmlWorker[i] = worker.NewMysqlWorker(db, cfg, i, mysqlSink.changefeedID, ctx)
 	}
 	mysqlSink.ddlWorker = worker.NewMysqlDDLWorker(db, cfg, mysqlSink.changefeedID, ctx)
 
-	return &mysqlSink
+	return &mysqlSink, nil
 }
 
 func (s *MysqlSink) SinkType() SinkType {

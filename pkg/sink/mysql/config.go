@@ -16,12 +16,17 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"math"
 	"net/url"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
+	pmysql "github.com/pingcap/tiflow/pkg/sink/mysql"
 	"go.uber.org/zap"
 )
 
@@ -67,6 +72,9 @@ const (
 
 	// defaultcachePrepStmts is the default value of cachePrepStmts
 	defaultCachePrepStmts = true
+
+	// To limit memory usage for prepared statements.
+	prepStmtCacheSize int = 16 * 1024
 )
 
 type MysqlConfig struct {
@@ -98,6 +106,10 @@ type MysqlConfig struct {
 
 	// sync point
 	SyncPointRetention time.Duration
+
+	// implement stmtCache to improve performance, especially when the downstream is TiDB
+	stmtCache        *lru.Cache
+	maxAllowedPacket int64
 }
 
 // NewConfig returns the default mysql backend config.
@@ -128,10 +140,11 @@ func (c *MysqlConfig) Apply(sinkURI *url.URL) error {
 	return nil
 }
 
-func NewMysqlConfigAndDB(ctx context.Context, sinkURI *url.URL) (*MysqlConfig, *sql.DB, error) {
+func NewMysqlConfigAndDB(ctx context.Context, changefeedID model.ChangeFeedID, sinkURI *url.URL) (*MysqlConfig, *sql.DB, error) {
 	log.Info("create db connection", zap.String("sinkURI", sinkURI.String()))
 	// create db connection
 	cfg := NewMysqlConfig()
+	// TODO: apply replica Config
 	err := cfg.Apply(sinkURI)
 	if err != nil {
 		return nil, nil, err
@@ -152,6 +165,63 @@ func NewMysqlConfigAndDB(ctx context.Context, sinkURI *url.URL) (*MysqlConfig, *
 	if err != nil {
 		return nil, nil, err
 	}
-	// TODO：param setting
+
+	// By default, cache-prep-stmts=true, an LRU cache is used for prepared statements,
+	// two connections are required to process a transaction.
+	// The first connection is held in the tx variable, which is used to manage the transaction.
+	// The second connection is requested through a call to s.db.Prepare
+	// in case of a cache miss for the statement query.
+	// The connection pool for CDC is configured with a static size, equal to the number of workers.
+	// CDC may hang at the "Get Connection" call is due to the limited size of the connection pool.
+	// When the connection pool is small,
+	// the chance of all connections being active at the same time increases,
+	// leading to exhaustion of available connections and a hang at the "Get Connection" call.
+	// This issue is less likely to occur when the connection pool is larger,
+	// as there are more connections available for use.
+	// Adding an extra connection to the connection pool solves the connection exhaustion issue.
+	db.SetMaxIdleConns(cfg.WorkerCount + 1)
+	db.SetMaxOpenConns(cfg.WorkerCount + 1)
+
+	// Inherit the default value of the prepared statement cache from the SinkURI Options
+	cachePrepStmts := cfg.CachePrepStmts
+	if cachePrepStmts {
+		// query the size of the prepared statement cache on serverside
+		maxPreparedStmtCount, err := pmysql.QueryMaxPreparedStmtCount(ctx, db)
+		if err != nil {
+			return nil, nil, err
+		}
+		if maxPreparedStmtCount == -1 {
+			// NOTE: seems TiDB doesn't follow MySQL's specification.
+			maxPreparedStmtCount = math.MaxInt
+		}
+		// if maxPreparedStmtCount == 0,
+		// it means that the prepared statement cache is disabled on serverside.
+		// if maxPreparedStmtCount/(cfg.WorkerCount+1) == 0, for each single connection,
+		// it means that the prepared statement cache is disabled on clientsize.
+		// Because each connection can not hold at lease one prepared statement.
+		if maxPreparedStmtCount == 0 || maxPreparedStmtCount/(cfg.WorkerCount+1) == 0 {
+			cachePrepStmts = false
+		}
+	}
+
+	if cachePrepStmts {
+		cfg.stmtCache, err = lru.NewWithEvict(prepStmtCacheSize, func(key, value interface{}) {
+			stmt := value.(*sql.Stmt)
+			stmt.Close()
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	cfg.CachePrepStmts = cachePrepStmts
+
+	cfg.maxAllowedPacket, err = pmysql.QueryMaxAllowedPacket(ctx, db)
+	if err != nil {
+		log.Warn("failed to query max_allowed_packet, use default value",
+			zap.String("changefeed", changefeedID.String()),
+			zap.Error(err))
+		cfg.maxAllowedPacket = int64(variable.DefMaxAllowedPacket)
+	}
 	return cfg, db, nil
 }

@@ -40,11 +40,11 @@ type MysqlWorker struct {
 	maxRows int
 }
 
-func NewMysqlWorker(db *sql.DB, config *mysql.MysqlConfig, id int, changefeedID model.ChangeFeedID, ctx context.Context, maxRows int) *MysqlWorker {
+func NewMysqlWorker(db *sql.DB, config *mysql.MysqlConfig, id int, changefeedID model.ChangeFeedID, ctx context.Context) *MysqlWorker {
 	worker := &MysqlWorker{
 		mysqlWriter:  mysql.NewMysqlWriter(db, config, changefeedID),
 		id:           id,
-		maxRows:      maxRows,
+		maxRows:      config.MaxTxnRow,
 		eventChan:    make(chan *commonEvent.DMLEvent, 16),
 		changefeedID: changefeedID,
 	}
