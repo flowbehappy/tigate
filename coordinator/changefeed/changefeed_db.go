@@ -90,6 +90,7 @@ func (db *ChangefeedDB) RemoveByChangefeedID(cfID model.ChangeFeedID) *Changefee
 		db.removeChangefeedUnLock(cf)
 		if cf.GetNodeID() == "" {
 			log.Info("changefeed is not scheduled, delete directly")
+			return nil
 		}
 		return cf
 	}
@@ -142,12 +143,12 @@ func (db *ChangefeedDB) GetReplicating() []*Changefeed {
 	return cfs
 }
 
-// BindSpanToNode binds the span to the node, it will remove the task from the old node and add it to the new node
+// BindChangefeedToNode binds the changefeed to the node, it will remove the task from the old node and add it to the new node
 // ,and it also marks the task as scheduling
-func (db *ChangefeedDB) BindSpanToNode(old, new node.ID, task *Changefeed) {
+func (db *ChangefeedDB) BindChangefeedToNode(old, new node.ID, task *Changefeed) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
-	log.Info("bind span to node",
+	log.Info("bind changefeed to node",
 		zap.String("changefeed", task.ID.String()),
 		zap.String("oldNode", old.String()),
 		zap.String("node", new.String()))
@@ -299,6 +300,7 @@ func (db *ChangefeedDB) removeChangefeedUnLock(cf *Changefeed) {
 	delete(db.absent, cf.ID)
 	delete(db.scheduling, cf.ID)
 	delete(db.replicating, cf.ID)
+	delete(db.stopped, cf.ID)
 	nodeMap := db.nodeTasks[nodeID]
 	delete(nodeMap, cf.ID)
 	if len(nodeMap) == 0 {

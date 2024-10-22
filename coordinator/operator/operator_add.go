@@ -83,7 +83,7 @@ func (m *AddChangefeedOperator) OnTaskRemoved() {
 }
 
 func (m *AddChangefeedOperator) Start() {
-	m.db.BindSpanToNode("", m.dest, m.cf)
+	m.db.BindChangefeedToNode("", m.dest, m.cf)
 }
 
 func (m *AddChangefeedOperator) PostFinish() {

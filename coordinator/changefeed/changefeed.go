@@ -68,6 +68,7 @@ func NewChangefeed(cfID model.ChangeFeedID,
 	}
 }
 
+// SetNodeID set the node id of the changefeed, todo: make it thread-safe
 func (c *Changefeed) SetNodeID(n node.ID) {
 	c.nodeID = n
 }

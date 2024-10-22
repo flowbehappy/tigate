@@ -75,7 +75,7 @@ func (m *MoveMaintainerOperator) Schedule() *messaging.TargetMessage {
 
 	if m.originNodeStopped {
 		if !m.bind {
-			m.db.BindSpanToNode(m.origin, m.dest, m.changefeed)
+			m.db.BindChangefeedToNode(m.origin, m.dest, m.changefeed)
 			m.bind = true
 		}
 		return m.changefeed.NewAddInferiorMessage(m.dest)
@@ -105,7 +105,7 @@ func (m *MoveMaintainerOperator) OnNodeRemove(n node.ID) {
 		// here we translate the move to an add operation, so we need to swap the origin and dest
 		// we need to reset the origin node finished flag
 		m.dest = m.origin
-		m.db.BindSpanToNode(m.dest, m.origin, m.changefeed)
+		m.db.BindChangefeedToNode(m.dest, m.origin, m.changefeed)
 		m.bind = true
 		m.originNodeStopped = true
 	}

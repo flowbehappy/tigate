@@ -76,6 +76,7 @@ func (m *RemoveChangefeedOperator) Start() {
 }
 
 func (m *RemoveChangefeedOperator) PostFinish() {
+	m.cf.SetNodeID("")
 	log.Info("remove maintainer operator finished",
 		zap.String("changefeed", m.cf.ID.String()))
 }
