@@ -895,6 +895,7 @@ func updateDDLHistory(
 			appendTableHistory(ddlEvent.CurrentTableID)
 		}
 	case model.ActionTruncateTable:
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		if isPartitionTable(ddlEvent.TableInfo) {
 			appendPartitionsHistory(getAllPartitionIDs(ddlEvent.TableInfo))
 			appendPartitionsHistory(ddlEvent.PrevPartitions)
@@ -926,10 +927,11 @@ func updateDDLHistory(
 			appendTableHistory(ddlEvent.CurrentTableID)
 		}
 	case model.ActionAddTablePartition:
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		// all partitions include newly create partitions will receive this event
 		appendPartitionsHistory(getAllPartitionIDs(ddlEvent.TableInfo))
 	case model.ActionDropTablePartition:
-		// TODO: verify all partitions include dropped partitions will receive this event
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		appendPartitionsHistory(ddlEvent.PrevPartitions)
 	case model.ActionCreateView:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
@@ -937,10 +939,12 @@ func updateDDLHistory(
 			appendTableHistory(tableID)
 		}
 	case model.ActionTruncateTablePartition:
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		appendPartitionsHistory(ddlEvent.PrevPartitions)
 		newCreateIDs := getCreatedIDs(ddlEvent.PrevPartitions, getAllPartitionIDs(ddlEvent.TableInfo))
 		appendPartitionsHistory(newCreateIDs)
 	case model.ActionExchangeTablePartition:
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		droppedIDs := getDroppedIDs(ddlEvent.PrevPartitions, getAllPartitionIDs(ddlEvent.TableInfo))
 		if len(droppedIDs) != 1 {
 			log.Panic("exchange table partition should only drop one partition",
@@ -960,6 +964,7 @@ func updateDDLHistory(
 			}
 		}
 	case model.ActionReorganizePartition:
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		appendPartitionsHistory(ddlEvent.PrevPartitions)
 		newCreateIDs := getCreatedIDs(ddlEvent.PrevPartitions, getAllPartitionIDs(ddlEvent.TableInfo))
 		appendPartitionsHistory(newCreateIDs)

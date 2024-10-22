@@ -21,7 +21,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -556,7 +556,8 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 
 		require.Equal(t, 1, len(pStorage.databaseMap[schemaID].Tables))
 		require.Equal(t, 1, len(pStorage.tableMap))
-		require.Equal(t, 4, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, 5, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, uint64(207), pStorage.tableTriggerDDLHistory[4])
 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
 		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID]))
 		require.Equal(t, uint64(207), pStorage.tablesDDLHistory[tableID][1])
@@ -584,8 +585,8 @@ func TestHandleCreateDropSchemaTableDDL(t *testing.T) {
 
 		require.Equal(t, 0, len(pStorage.databaseMap))
 		require.Equal(t, 0, len(pStorage.tableMap))
-		require.Equal(t, 5, len(pStorage.tableTriggerDDLHistory))
-		require.Equal(t, uint64(300), pStorage.tableTriggerDDLHistory[4])
+		require.Equal(t, 6, len(pStorage.tableTriggerDDLHistory))
+		require.Equal(t, uint64(300), pStorage.tableTriggerDDLHistory[5])
 		require.Equal(t, 3, len(pStorage.tablesDDLHistory))
 		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID]))
 		require.Equal(t, 2, len(pStorage.tablesDDLHistory[tableID2]))
@@ -858,19 +859,24 @@ func TestPartitionTableDDL(t *testing.T) {
 	{
 		ddlEvents, err := pStorage.fetchTableTriggerDDLEvents(nil, 200, 300)
 		require.Nil(t, err)
-		require.Equal(t, 2, len(ddlEvents))
+		require.Equal(t, 6, len(ddlEvents))
 		// create table event
 		verifyTableIsAdded(t, ddlEvents[0], partitionID1, schemaID)
 		verifyTableIsAdded(t, ddlEvents[0], partitionID2, schemaID)
 		verifyTableIsAdded(t, ddlEvents[0], partitionID3, schemaID)
 
+		require.Equal(t, uint64(207), ddlEvents[1].FinishedTs)
+		require.Equal(t, uint64(209), ddlEvents[2].FinishedTs)
+		require.Equal(t, uint64(211), ddlEvents[3].FinishedTs)
+		require.Equal(t, uint64(213), ddlEvents[4].FinishedTs)
+
 		// drop table event
-		verifyTableIsBlocked(t, ddlEvents[1], partitionID6)
-		verifyTableIsBlocked(t, ddlEvents[1], partitionID7)
-		verifyTableIsBlocked(t, ddlEvents[1], partitionID8)
-		verifyTableIsDropped(t, ddlEvents[1], partitionID6)
-		verifyTableIsDropped(t, ddlEvents[1], partitionID7)
-		verifyTableIsDropped(t, ddlEvents[1], partitionID8)
+		verifyTableIsBlocked(t, ddlEvents[5], partitionID6)
+		verifyTableIsBlocked(t, ddlEvents[5], partitionID7)
+		verifyTableIsBlocked(t, ddlEvents[5], partitionID8)
+		verifyTableIsDropped(t, ddlEvents[5], partitionID6)
+		verifyTableIsDropped(t, ddlEvents[5], partitionID7)
+		verifyTableIsDropped(t, ddlEvents[5], partitionID8)
 	}
 
 	// partition 1, 2, 3 should be same
@@ -1202,8 +1208,8 @@ func TestAlterBetweenPartitionTableAndNonPartitionTable(t *testing.T) {
 
 }
 
-func verifyTableIsBlocked(t *testing.T, event common.DDLEvent, tableID int64) {
-	require.Equal(t, common.InfluenceTypeNormal, event.BlockedTables.InfluenceType)
+func verifyTableIsBlocked(t *testing.T, event commonEvent.DDLEvent, tableID int64) {
+	require.Equal(t, commonEvent.InfluenceTypeNormal, event.BlockedTables.InfluenceType)
 	for _, id := range event.BlockedTables.TableIDs {
 		if id == tableID {
 			return
@@ -1216,8 +1222,8 @@ func verifyTableIsBlocked(t *testing.T, event common.DDLEvent, tableID int64) {
 	require.True(t, false)
 }
 
-func verifyTableIsDropped(t *testing.T, event common.DDLEvent, tableID int64) {
-	require.Equal(t, common.InfluenceTypeNormal, event.NeedDroppedTables.InfluenceType)
+func verifyTableIsDropped(t *testing.T, event commonEvent.DDLEvent, tableID int64) {
+	require.Equal(t, commonEvent.InfluenceTypeNormal, event.NeedDroppedTables.InfluenceType)
 	for _, id := range event.NeedDroppedTables.TableIDs {
 		if id == tableID {
 			return
@@ -1226,7 +1232,7 @@ func verifyTableIsDropped(t *testing.T, event common.DDLEvent, tableID int64) {
 	require.True(t, false)
 }
 
-func verifyTableIsAdded(t *testing.T, event common.DDLEvent, tableID int64, schemaID int64) {
+func verifyTableIsAdded(t *testing.T, event commonEvent.DDLEvent, tableID int64, schemaID int64) {
 	for _, table := range event.NeedAddedTables {
 		if table.TableID == tableID && table.SchemaID == schemaID {
 			return
@@ -1951,12 +1957,8 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 		require.Equal(t, uint64(607), ddlEvents[1].FinishedTs)
 		require.Equal(t, "test", ddlEvents[1].SchemaName)
 		require.Equal(t, "t2", ddlEvents[1].TableName)
-		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[1].NeedDroppedTables.InfluenceType)
-		require.Equal(t, 1, len(ddlEvents[1].NeedDroppedTables.TableIDs))
-		require.Equal(t, tableID, ddlEvents[1].NeedDroppedTables.TableIDs[0])
-		require.Equal(t, 1, len(ddlEvents[1].NeedAddedTables))
-		require.Equal(t, schemaID, ddlEvents[1].NeedAddedTables[0].SchemaID)
-		require.Equal(t, tableID2, ddlEvents[1].NeedAddedTables[0].TableID)
+		verifyTableIsDropped(t, ddlEvents[1], tableID)
+		verifyTableIsAdded(t, ddlEvents[1], tableID2, schemaID)
 	}
 
 	// fetch table ddl events for another table
@@ -1967,7 +1969,7 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 		require.Equal(t, 1, len(ddlEvents))
 		// drop db event
 		require.Equal(t, uint64(700), ddlEvents[0].FinishedTs)
-		require.Equal(t, common.InfluenceTypeDB, ddlEvents[0].NeedDroppedTables.InfluenceType)
+		require.Equal(t, commonEvent.InfluenceTypeDB, ddlEvents[0].NeedDroppedTables.InfluenceType)
 		require.Equal(t, schemaID, ddlEvents[0].NeedDroppedTables.SchemaID)
 	}
 
@@ -1978,16 +1980,15 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 		require.Equal(t, 1, len(ddlEvents))
 		// drop table event
 		require.Equal(t, uint64(611), ddlEvents[0].FinishedTs)
-		require.Equal(t, common.InfluenceTypeNormal, ddlEvents[0].NeedDroppedTables.InfluenceType)
-		require.Equal(t, 1, len(ddlEvents[0].NeedDroppedTables.TableIDs))
-		require.Equal(t, tableID3, ddlEvents[0].NeedDroppedTables.TableIDs[0])
+		require.Equal(t, commonEvent.InfluenceTypeNormal, ddlEvents[0].NeedDroppedTables.InfluenceType)
+		verifyTableIsDropped(t, ddlEvents[0], tableID3)
 	}
 
 	// fetch all table trigger ddl events
 	{
 		tableTriggerDDLEvents, err := pStorage.fetchTableTriggerDDLEvents(nil, 0, 10)
 		require.Nil(t, err)
-		require.Equal(t, 6, len(tableTriggerDDLEvents))
+		require.Equal(t, 7, len(tableTriggerDDLEvents))
 		// create db event
 		require.Equal(t, uint64(200), tableTriggerDDLEvents[0].FinishedTs)
 		// create table event
@@ -1999,22 +2000,23 @@ func TestFetchDDLEventsBasic(t *testing.T) {
 		require.Equal(t, "t1", tableTriggerDDLEvents[1].TableNameChange.AddName[0].TableName)
 		// rename table event
 		require.Equal(t, uint64(605), tableTriggerDDLEvents[2].FinishedTs)
+		// truncate table event
+		require.Equal(t, uint64(607), tableTriggerDDLEvents[3].FinishedTs)
+		verifyTableIsDropped(t, tableTriggerDDLEvents[3], tableID)
+		verifyTableIsAdded(t, tableTriggerDDLEvents[3], tableID2, schemaID)
 		// create table event
-		require.Equal(t, uint64(609), tableTriggerDDLEvents[3].FinishedTs)
+		require.Equal(t, uint64(609), tableTriggerDDLEvents[4].FinishedTs)
+		verifyTableIsAdded(t, tableTriggerDDLEvents[4], tableID3, schemaID)
 		// drop table event
-		require.Equal(t, uint64(611), tableTriggerDDLEvents[4].FinishedTs)
-		require.Equal(t, common.InfluenceTypeNormal, tableTriggerDDLEvents[4].NeedDroppedTables.InfluenceType)
-		require.Equal(t, tableID3, tableTriggerDDLEvents[4].NeedDroppedTables.TableIDs[0])
-		require.Equal(t, schemaName, tableTriggerDDLEvents[4].TableNameChange.DropName[0].SchemaName)
-		require.Equal(t, "t3", tableTriggerDDLEvents[4].TableNameChange.DropName[0].TableName)
-		require.Equal(t, common.InfluenceTypeNormal, tableTriggerDDLEvents[4].BlockedTables.InfluenceType)
-		require.Equal(t, 2, len(tableTriggerDDLEvents[4].BlockedTables.TableIDs))
-		require.Equal(t, tableID3, tableTriggerDDLEvents[4].BlockedTables.TableIDs[0])
-		// TODO: don't count on the order
-		require.Equal(t, heartbeatpb.DDLSpan.TableID, tableTriggerDDLEvents[4].BlockedTables.TableIDs[1])
+		require.Equal(t, uint64(611), tableTriggerDDLEvents[5].FinishedTs)
+		verifyTableIsDropped(t, tableTriggerDDLEvents[5], tableID3)
+		require.Equal(t, schemaName, tableTriggerDDLEvents[5].TableNameChange.DropName[0].SchemaName)
+		require.Equal(t, "t3", tableTriggerDDLEvents[5].TableNameChange.DropName[0].TableName)
+		verifyTableIsBlocked(t, tableTriggerDDLEvents[5], tableID3)
+		verifyTableIsBlocked(t, tableTriggerDDLEvents[5], heartbeatpb.DDLSpan.TableID)
 		// drop db event
-		require.Equal(t, uint64(700), tableTriggerDDLEvents[5].FinishedTs)
-		require.Equal(t, schemaName, tableTriggerDDLEvents[5].TableNameChange.DropDatabaseName)
+		require.Equal(t, uint64(700), tableTriggerDDLEvents[6].FinishedTs)
+		require.Equal(t, schemaName, tableTriggerDDLEvents[6].TableNameChange.DropDatabaseName)
 	}
 
 	// fetch partial table trigger ddl events
