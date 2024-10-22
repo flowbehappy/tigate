@@ -205,6 +205,11 @@ func (e *EventDispatcherManager) close() {
 	}
 
 	e.heartBeatTask.Cancel()
+	err := appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RemoveEventDispatcherManager(e)
+	if err != nil {
+		log.Error("remove event dispatcher manager from heartbeat collector failed", zap.Error(err))
+		return
+	}
 
 	e.sink.Close()
 	metrics.CreateDispatcherDuration.DeleteLabelValues(e.changefeedID.Namespace, e.changefeedID.ID)
