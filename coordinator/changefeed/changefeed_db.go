@@ -14,6 +14,7 @@
 package changefeed
 
 import (
+	"math"
 	"sync"
 
 	"github.com/flowbehappy/tigate/pkg/node"
@@ -37,6 +38,7 @@ type ChangefeedDB struct {
 func NewChangefeedDB() *ChangefeedDB {
 	db := &ChangefeedDB{
 		changefeeds: make(map[model.ChangeFeedID]*Changefeed),
+
 		nodeTasks:   make(map[node.ID]map[model.ChangeFeedID]*Changefeed),
 		absent:      make(map[model.ChangeFeedID]*Changefeed),
 		scheduling:  make(map[model.ChangeFeedID]*Changefeed),
@@ -258,6 +260,40 @@ func (db *ChangefeedDB) MarkSpanScheduling(span *Changefeed) {
 	delete(db.absent, span.ID)
 	delete(db.replicating, span.ID)
 	db.scheduling[span.ID] = span
+}
+
+// CalculateGCSafepoint calculates the minimum checkpointTs of all changefeeds that replicating the upstream TiDB cluster.
+func (db *ChangefeedDB) CalculateGCSafepoint() uint64 {
+	var minCpts uint64 = math.MaxUint64
+
+	for _, cf := range db.changefeeds {
+		if cf.Info == nil || !cf.Info.NeedBlockGC() {
+			continue
+		}
+		checkpointTs := cf.GetLastSavedCheckPointTs()
+		if minCpts > checkpointTs {
+			minCpts = checkpointTs
+		}
+	}
+	return minCpts
+}
+
+// ReplaceStoppedChangefeed updates the stopped changefeed
+func (db *ChangefeedDB) ReplaceStoppedChangefeed(cf *model.ChangeFeedInfo) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	id := model.ChangeFeedID{
+		Namespace: cf.Namespace,
+		ID:        cf.ID,
+	}
+	oldCf := db.stopped[id]
+	if oldCf == nil {
+		log.Warn("changefeed is not stopped, can not be updated", zap.String("changefeed", id.String()))
+		return
+	}
+	newCf := NewChangefeed(id, cf, oldCf.GetLastSavedCheckPointTs())
+	db.stopped[id] = newCf
 }
 
 // updateNodeMap updates the node map, it will remove the task from the old node and add it to the new node

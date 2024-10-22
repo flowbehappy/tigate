@@ -57,10 +57,13 @@ type Controller struct {
 	operatorControllerHandle *threadpool.TaskHandle
 	schedulerHandle          *threadpool.TaskHandle
 	backend                  *changefeed.EtcdBackend
+
+	updatedChangefeedCh chan map[model.ChangeFeedID]*changefeed.Changefeed
 }
 
 func NewController(
 	version int64,
+	updatedChangefeedCh chan map[model.ChangeFeedID]*changefeed.Changefeed,
 	backend *changefeed.EtcdBackend,
 	taskScheduler threadpool.ThreadPool,
 	batchSize int, balanceInterval time.Duration) *Controller {
@@ -70,17 +73,18 @@ func NewController(
 	oc := operator.NewOperatorController(mc, changefeedDB, batchSize)
 	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
 	c := &Controller{
-		version:            version,
-		batchSize:          batchSize,
-		bootstrapped:       false,
-		cfScheduller:       scheduler.NewScheduler(batchSize, oc, changefeedDB, nodeManager, balanceInterval),
-		operatorController: oc,
-		messageCenter:      mc,
-		replicationDB:      changefeedDB,
-		nodeManager:        nodeManager,
-		taskScheduler:      taskScheduler,
-		backend:            backend,
-		nodeChanged:        atomic.NewBool(false),
+		version:             version,
+		batchSize:           batchSize,
+		bootstrapped:        false,
+		cfScheduller:        scheduler.NewScheduler(batchSize, oc, changefeedDB, nodeManager, balanceInterval),
+		operatorController:  oc,
+		messageCenter:       mc,
+		replicationDB:       changefeedDB,
+		nodeManager:         nodeManager,
+		taskScheduler:       taskScheduler,
+		backend:             backend,
+		nodeChanged:         atomic.NewBool(false),
+		updatedChangefeedCh: updatedChangefeedCh,
 	}
 	c.bootstrapper = bootstrap.NewBootstrapper[heartbeatpb.CoordinatorBootstrapResponse]("coordinator", c.newBootstrapMessage)
 	cfs, err := c.backend.LoadAllChangefeeds(context.Background())
@@ -240,6 +244,7 @@ func (c *Controller) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Coordin
 
 // HandleStatus handle the status report from the node
 func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.MaintainerStatus) {
+	cfs := make(map[model.ChangeFeedID]*changefeed.Changefeed, len(statusList))
 	for _, status := range statusList {
 		cfID := model.DefaultChangeFeedID(status.ChangefeedID)
 		c.operatorController.UpdateOperatorStatus(cfID, from, status)
@@ -265,6 +270,11 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.Mainta
 			continue
 		}
 		cf.UpdateStatus(status)
+		cfs[cfID] = cf
+	}
+	select {
+	case c.updatedChangefeedCh <- cfs:
+	default:
 	}
 }
 
@@ -365,7 +375,11 @@ func (c *Controller) UpdateChangefeed(ctx context.Context, change *model.ChangeF
 	if cf == nil {
 		return errors.New("changefeed not found")
 	}
-	return c.backend.UpdateChangefeed(ctx, change)
+	if err := c.backend.UpdateChangefeed(ctx, change); err != nil {
+		return errors.Trace(err)
+	}
+	c.replicationDB.ReplaceStoppedChangefeed(change)
+	return nil
 }
 
 // GetTask queries a task by dispatcherID, return nil if not found

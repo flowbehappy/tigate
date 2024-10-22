@@ -240,9 +240,9 @@ func (b *EtcdBackend) ResumeChangefeed(ctx context.Context,
 	return nil
 }
 
-func (b *EtcdBackend) UpdateChangefeedStatus(ctx context.Context, metas []*Meta) error {
+func (b *EtcdBackend) UpdateChangefeedCheckpointTs(ctx context.Context, cps map[model.ChangeFeedID]uint64) error {
 	opsThen := make([]clientv3.Op, 0, 128)
-	tmpMetas := make([]*Meta, 0, 128)
+	batchSize := 0
 
 	txnFunc := func() error {
 		putResp, err := b.etcdClient.GetEtcdClient().Txn(ctx, []clientv3.Cmp{}, opsThen, []clientv3.Op{})
@@ -255,23 +255,24 @@ func (b *EtcdBackend) UpdateChangefeedStatus(ctx context.Context, metas []*Meta)
 		}
 		return err
 	}
-	for _, meta := range metas {
-		jobValue, err := meta.Status.Marshal()
+	for cfID, checkpointTs := range cps {
+		status := &model.ChangeFeedStatus{CheckpointTs: checkpointTs}
+		jobValue, err := status.Marshal()
 		if err != nil {
 			return errors.Trace(err)
 		}
-		jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), model.DefaultChangeFeedID(meta.Info.ID))
+		jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), cfID)
 		opsThen = append(opsThen, clientv3.OpPut(jobKey, jobValue))
-		tmpMetas = append(tmpMetas, meta)
-		if len(tmpMetas) >= 128 {
+		batchSize++
+		if batchSize >= 128 {
 			if err := txnFunc(); err != nil {
 				return errors.Trace(err)
 			}
 			opsThen = opsThen[:0]
-			tmpMetas = tmpMetas[:0]
+			batchSize = 0
 		}
 	}
-	if len(tmpMetas) > 0 {
+	if batchSize > 0 {
 		if err := txnFunc(); err != nil {
 			return errors.Trace(err)
 		}

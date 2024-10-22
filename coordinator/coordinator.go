@@ -67,22 +67,8 @@ type coordinator struct {
 	stream        dynstream.DynamicStream[string, *Event, *Controller]
 	taskScheduler threadpool.ThreadPool
 	controller    *Controller
-}
 
-func (c *coordinator) RemoveChangefeed(ctx context.Context, id model.ChangeFeedID) (uint64, error) {
-	return c.controller.RemoveChangefeed(ctx, id)
-}
-
-func (c *coordinator) PauseChangefeed(ctx context.Context, id model.ChangeFeedID) error {
-	return c.controller.PauseChangefeed(ctx, id)
-}
-
-func (c *coordinator) ResumeChangefeed(ctx context.Context, id model.ChangeFeedID, newCheckpointTs uint64) error {
-	return c.controller.ResumeChangefeed(ctx, id, newCheckpointTs)
-}
-
-func (c *coordinator) UpdateChangefeed(ctx context.Context, change *model.ChangeFeedInfo) error {
-	return c.controller.UpdateChangefeed(ctx, change)
+	updatedChangefeedCh chan map[model.ChangeFeedID]*changefeed.Changefeed
 }
 
 func New(node *node.Info,
@@ -100,13 +86,14 @@ func New(node *node.Info,
 		pdClient:             pdClient,
 		pdClock:              pdClock,
 		mc:                   mc,
+		updatedChangefeedCh:  make(chan map[model.ChangeFeedID]*changefeed.Changefeed, 1024),
 	}
 	c.stream = dynstream.NewDynamicStream[string, *Event, *Controller](NewStreamHandler())
 	c.stream.Start()
 	c.taskScheduler = threadpool.NewThreadPoolDefault()
 
 	backend := changefeed.NewEtcdBackend(etcdClient)
-	ctl := NewController(c.version, backend, c.taskScheduler, 1000, time.Minute)
+	ctl := NewController(c.version, c.updatedChangefeedCh, backend, c.taskScheduler, 1000, time.Minute)
 	c.controller = ctl
 	if err := c.stream.AddPath("coordinator", ctl); err != nil {
 		log.Panic("failed to add path",
@@ -135,15 +122,53 @@ func (c *coordinator) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-gcTick.C:
-			//if err := c.updateGCSafepoint(ctx); err != nil {
-			//	log.Warn("update gc safepoint failed",
-			//		zap.Error(err))
-			//}
+			if err := c.updateGCSafepoint(ctx); err != nil {
+				log.Warn("update gc safepoint failed",
+					zap.Error(err))
+			}
 			now := time.Now()
 			metrics.CoordinatorCounter.Add(float64(now.Sub(c.lastTickTime)) / float64(time.Second))
 			c.lastTickTime = now
+		case cfs := <-c.updatedChangefeedCh:
+			statusMap := make(map[model.ChangeFeedID]uint64)
+			for _, upCf := range cfs {
+				if upCf.GetLastSavedCheckPointTs() < upCf.Status.CheckpointTs {
+					statusMap[upCf.ID] = upCf.Status.CheckpointTs
+				}
+			}
+			err := c.controller.backend.UpdateChangefeedCheckpointTs(ctx, statusMap)
+			if err != nil {
+				log.Error("failed to update checkpointTs", zap.Error(err))
+				return errors.Trace(err)
+			}
+			// update the last saved checkpoint ts and send checkpointTs to maintainer
+			for id, cp := range statusMap {
+				if cf, ok := cfs[id]; ok {
+					cf.SetLastSavedCheckPointTs(cp)
+					if cf.IsMQSink {
+						msg := cf.NewCheckpointTsMessage(cf.GetLastSavedCheckPointTs())
+						c.sendMessages([]*messaging.TargetMessage{msg})
+					}
+				}
+			}
 		}
 	}
+}
+
+func (c *coordinator) RemoveChangefeed(ctx context.Context, id model.ChangeFeedID) (uint64, error) {
+	return c.controller.RemoveChangefeed(ctx, id)
+}
+
+func (c *coordinator) PauseChangefeed(ctx context.Context, id model.ChangeFeedID) error {
+	return c.controller.PauseChangefeed(ctx, id)
+}
+
+func (c *coordinator) ResumeChangefeed(ctx context.Context, id model.ChangeFeedID, newCheckpointTs uint64) error {
+	return c.controller.ResumeChangefeed(ctx, id, newCheckpointTs)
+}
+
+func (c *coordinator) UpdateChangefeed(ctx context.Context, change *model.ChangeFeedInfo) error {
+	return c.controller.UpdateChangefeed(ctx, change)
 }
 
 func shouldRunChangefeed(state model.FeedState) bool {
@@ -171,38 +196,6 @@ func (c *coordinator) sendMessages(msgs []*messaging.TargetMessage) {
 	}
 }
 
-//func (c *coordinator) scheduleMaintainer(
-//	changefeeds map[model.ChangeFeedID]*orchestrator.ChangefeedReactorState,
-//) []*messaging.TargetMessage {
-//	if !c.supervisor.CheckAllCaptureInitialized() {
-//		return nil
-//	}
-//	// check all changefeeds.
-//	for id, cfState := range changefeeds {
-//		if cfState.Info == nil {
-//			continue
-//		}
-//		if !preflightCheck(cfState) {
-//			log.Error("precheck failed ignored",
-//				zap.String("id", id.String()))
-//			continue
-//		}
-//		if shouldRunChangefeed(cfState.Info.State) {
-//			// todo use real changefeed instance here
-//			_, ok := c.scheduledChangefeeds[common.MaintainerID(id.ID)]
-//			if !ok {
-//				c.scheduledChangefeeds[common.MaintainerID(id.ID)] = &changefeed{}
-//			}
-//		} else {
-//			// changefeed is stopped
-//			delete(c.scheduledChangefeeds, common.MaintainerID(id.ID))
-//		}
-//	}
-//	c.supervisor.MarkNeedAddInferior()
-//	c.supervisor.MarkNeedRemoveInferior()
-//	return c.supervisor.Schedule(c.scheduledChangefeeds)
-//}
-
 func (c *coordinator) newBootstrapMessage(id node.ID) *messaging.TargetMessage {
 	log.Info("send coordinator bootstrap request", zap.Any("to", id))
 	return messaging.NewSingleTargetMessage(
@@ -211,90 +204,20 @@ func (c *coordinator) newBootstrapMessage(id node.ID) *messaging.TargetMessage {
 		&heartbeatpb.CoordinatorBootstrapRequest{Version: c.version})
 }
 
-//func (c *coordinator) saveChangefeedStatus() {
-//	if time.Since(c.lastSaveTime) > time.Millisecond*500 {
-//		for key, value := range c.scheduledChangefeeds {
-//			id := model.DefaultChangeFeedID(key.String())
-//			cfState, ok := c.lastState.Changefeeds[id]
-//			if !ok {
-//				continue
-//			}
-//			cf := value.(*changefeed)
-//			if cf.Status == nil {
-//				continue
-//			}
-//			if !shouldRunChangefeed(model.FeedState(cf.Status.FeedState)) {
-//				cfState.PatchInfo(func(info *model.ChangeFeedInfo) (*model.ChangeFeedInfo, bool, error) {
-//					info.State = model.FeedState(cf.Status.FeedState)
-//					return info, true, nil
-//				})
-//			}
-//			updateStatus(cfState, cf.Status.CheckpointTs)
-//			saveErrorFn := func(err *heartbeatpb.RunningError) {
-//				node, ok := c.lastState.Captures[err.Node]
-//				addr := err.Node
-//				if ok {
-//					addr = node.AdvertiseAddr
-//				}
-//				cfState.PatchTaskPosition(err.Node,
-//					func(position *model.TaskPosition) (*model.TaskPosition, bool, error) {
-//						if position == nil {
-//							position = &model.TaskPosition{}
-//						}
-//						position.Error = &model.RunningError{
-//							//Time:    err.Time, //todo: save time
-//							Addr:    addr,
-//							Code:    err.Code,
-//							Message: err.Message,
-//						}
-//						return position, true, nil
-//					})
-//			}
-//			if len(cf.Status.Err) > 0 {
-//				for _, err := range cf.Status.Err {
-//					saveErrorFn(err)
-//				}
-//			}
-//			if len(cf.Status.Warning) > 0 {
-//				for _, err := range cf.Status.Warning {
-//					saveErrorFn(err)
-//				}
-//			}
-//		}
-//		c.lastSaveTime = time.Now()
-//	}
-//}
-
-func updateStatus(
-	changefeed *orchestrator.ChangefeedReactorState,
-	checkpointTs uint64,
-) {
-	if checkpointTs == 0 || changefeed == nil {
-		return
-	}
-	changefeed.PatchStatus(
-		func(status *model.ChangeFeedStatus) (*model.ChangeFeedStatus, bool, error) {
-			changed := false
-			if status == nil {
-				return nil, false, nil
-			}
-			if status.CheckpointTs != checkpointTs {
-				status.CheckpointTs = checkpointTs
-				changed = true
-			}
-			return status, changed, nil
-		})
-}
-
 func (c *coordinator) updateGCSafepoint(
 	ctx context.Context,
 ) error {
-	minCheckpointTs, forceUpdate := c.calculateGCSafepoint(nil)
+	minCheckpointTs := c.controller.replicationDB.CalculateGCSafepoint()
+	// check if the upstream has a changefeed, if not we should update the gc safepoint
+	if minCheckpointTs == math.MaxUint64 {
+		ts := c.pdClock.CurrentTime()
+		minCheckpointTs = oracle.GoTimeToTS(ts)
+	}
 	// When the changefeed starts up, CDC will do a snapshot read at
 	// (checkpointTs - 1) from TiKV, so (checkpointTs - 1) should be an upper
 	// bound for the GC safepoint.
 	gcSafepointUpperBound := minCheckpointTs - 1
-	err := c.gcManager.TryUpdateGCSafePoint(ctx, gcSafepointUpperBound, forceUpdate)
+	err := c.gcManager.TryUpdateGCSafePoint(ctx, gcSafepointUpperBound, false)
 	return errors.Trace(err)
 }
 
@@ -329,22 +252,3 @@ func (c *coordinator) calculateGCSafepoint(state *orchestrator.GlobalReactorStat
 	}
 	return minCpts, forceUpdate
 }
-
-//func (c *coordinator) sendSavedCheckpointTsToMaintainer() {
-//	for key, value := range c.scheduledChangefeeds {
-//		cf := value.(*changefeed)
-//		if !cf.isMQSink || cf.stateMachine == nil || cf.stateMachine.Primary == "" {
-//			continue
-//		}
-//		id := model.DefaultChangeFeedID(key.String())
-//		cfState, ok := c.lastState.Changefeeds[id]
-//		if !ok || cfState.Status == nil {
-//			continue
-//		}
-//		if cf.lastSavedCheckpointTs < cfState.Status.CheckpointTs {
-//			msg := cf.NewCheckpointTsMessage(cfState.Status.CheckpointTs)
-//			c.sendMessages([]*messaging.TargetMessage{msg})
-//			cf.lastSavedCheckpointTs = cfState.Status.CheckpointTs
-//		}
-//	}
-//}

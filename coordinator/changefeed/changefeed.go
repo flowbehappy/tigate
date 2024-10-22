@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/sink"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -30,12 +31,12 @@ type Changefeed struct {
 	ID       model.ChangeFeedID
 	Status   *heartbeatpb.MaintainerStatus
 	Info     *model.ChangeFeedInfo
-	isMQSink bool
+	IsMQSink bool
 
 	nodeID      node.ID
 	configBytes []byte
 
-	lastSavedCheckpointTs uint64
+	lastSavedCheckpointTs *atomic.Uint64
 }
 
 func NewChangefeed(cfID model.ChangeFeedID,
@@ -58,8 +59,8 @@ func NewChangefeed(cfID model.ChangeFeedID,
 		ID:                    cfID,
 		Info:                  info,
 		configBytes:           bytes,
-		lastSavedCheckpointTs: checkpointTs,
-		isMQSink:              sink.IsMQScheme(uri.Scheme),
+		lastSavedCheckpointTs: atomic.NewUint64(checkpointTs),
+		IsMQSink:              sink.IsMQScheme(uri.Scheme),
 		// init the first Status
 		Status: &heartbeatpb.MaintainerStatus{
 			CheckpointTs: checkpointTs,
@@ -84,6 +85,14 @@ func (c *Changefeed) UpdateStatus(status any) {
 			c.Status = newStatus
 		}
 	}
+}
+
+func (c *Changefeed) SetLastSavedCheckPointTs(ts uint64) {
+	c.lastSavedCheckpointTs.Store(ts)
+}
+
+func (c *Changefeed) GetLastSavedCheckPointTs() uint64 {
+	return c.lastSavedCheckpointTs.Load()
 }
 
 func (c *Changefeed) NewAddInferiorMessage(server node.ID) *messaging.TargetMessage {
