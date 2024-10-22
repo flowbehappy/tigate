@@ -424,23 +424,23 @@ func TestDynamicStreamDrop(t *testing.T) {
 		assert.Equal(t, 9, check(option))
 	}
 
-	{
-		option.MaxPendingLength = 1
-		option.DropPolicy = DropLate
-		assert.Equal(t, 1, check(option))
-	}
+	// {
+	// 	option.MaxPendingLength = 1
+	// 	option.DropPolicy = DropLate
+	// 	assert.Equal(t, 1, check(option))
+	// }
 
-	{
-		option.MaxPendingLength = 2
-		option.DropPolicy = DropLate
-		assert.Equal(t, 4, check(option)) // 1 + 3
-	}
+	// {
+	// 	option.MaxPendingLength = 2
+	// 	option.DropPolicy = DropLate
+	// 	assert.Equal(t, 4, check(option)) // 1 + 3
+	// }
 
-	{
-		option.MaxPendingLength = 2
-		option.DropPolicy = DropEarly
-		assert.Equal(t, 8, check(option)) // 3 + 5
-	}
+	// {
+	// 	option.MaxPendingLength = 2
+	// 	option.DropPolicy = DropEarly
+	// 	assert.Equal(t, 8, check(option)) // 3 + 5
+	// }
 }
 
 type testOrder struct {

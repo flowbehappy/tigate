@@ -298,3 +298,12 @@ func TestStreamManyEvents(t *testing.T) {
 	assert.Equal(t, 1, stat.id)
 	assert.Equal(t, total, stat.count)
 }
+
+func TestAA(t *testing.T) {
+	f1 := 0.9
+	f2 := 1.0
+
+	a := 100
+	assert.Equal(t, 90, int(float64(a)*f1))
+	assert.Equal(t, 100, int(float64(a)*f2))
+}

@@ -10,10 +10,10 @@ import (
 type tsPathNode[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] pathInfo[A, P, T, D, H]
 
 func (n *tsPathNode[A, P, T, D, H]) SetHeapIndex(index int) {
-	(*pathInfo[A, P, T, D, H])(n).tsHeapIndex = index
+	(*pathInfo[A, P, T, D, H])(n).timestampHeapIndex = index
 }
 func (n *tsPathNode[A, P, T, D, H]) GetHeapIndex() int {
-	return (*pathInfo[A, P, T, D, H])(n).tsHeapIndex
+	return (*pathInfo[A, P, T, D, H])(n).timestampHeapIndex
 }
 
 func (n *tsPathNode[A, P, T, D, H]) LessThan(other *tsPathNode[A, P, T, D, H]) bool {
@@ -28,10 +28,10 @@ func (n *tsPathNode[A, P, T, D, H]) LessThan(other *tsPathNode[A, P, T, D, H]) b
 type qtPathNode[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] pathInfo[A, P, T, D, H]
 
 func (n *qtPathNode[A, P, T, D, H]) SetHeapIndex(index int) {
-	(*pathInfo[A, P, T, D, H])(n).qtHeapIndex = index
+	(*pathInfo[A, P, T, D, H])(n).queueTimeHeapIndex = index
 }
 func (n *qtPathNode[A, P, T, D, H]) GetHeapIndex() int {
-	return (*pathInfo[A, P, T, D, H])(n).qtHeapIndex
+	return (*pathInfo[A, P, T, D, H])(n).queueTimeHeapIndex
 }
 func (n *qtPathNode[A, P, T, D, H]) LessThan(other *qtPathNode[A, P, T, D, H]) bool {
 	q1 := (*pathInfo[A, P, T, D, H])(n).pendingQueue
@@ -43,35 +43,35 @@ func (n *qtPathNode[A, P, T, D, H]) LessThan(other *qtPathNode[A, P, T, D, H]) b
 
 // A area info contains the path nodes of the area in a stream.
 // Note that the instance is stream level, not global level.
-type areaInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
+type streamAreaInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	area A
 
 	// The path bound to the area info instance.
-	// Since tsHeap and qtHeap only store the paths who has pending events,
+	// Since timestampHeap and queueTimeHeap only store the paths who has pending events,
 	// the pathCount could be larger than the length of the heaps.
 	pathCount int
 
-	tsHeap heap.Heap[*tsPathNode[A, P, T, D, H]]
-	qtHeap heap.Heap[*qtPathNode[A, P, T, D, H]]
+	timestampHeap heap.Heap[*tsPathNode[A, P, T, D, H]]
+	queueTimeHeap heap.Heap[*qtPathNode[A, P, T, D, H]]
 
-	qtHeapIndex int
+	queueTimeHeapIndex int
 }
 
-func (a *areaInfo[A, P, T, D, H]) minQueueTime() time.Time {
-	top, _ := a.qtHeap.PeekTop()
+func (a *streamAreaInfo[A, P, T, D, H]) minQueueTime() time.Time {
+	top, _ := a.queueTimeHeap.PeekTop()
 	front, _ := top.pendingQueue.FrontRef()
 	return front.queueTime
 }
 
-func (a *areaInfo[A, P, T, D, H]) SetHeapIndex(index int) {
-	a.qtHeapIndex = index
+func (a *streamAreaInfo[A, P, T, D, H]) SetHeapIndex(index int) {
+	a.queueTimeHeapIndex = index
 }
 
-func (a *areaInfo[A, P, T, D, H]) GetHeapIndex() int {
-	return a.qtHeapIndex
+func (a *streamAreaInfo[A, P, T, D, H]) GetHeapIndex() int {
+	return a.queueTimeHeapIndex
 }
 
-func (a *areaInfo[A, P, T, D, H]) LessThan(other *areaInfo[A, P, T, D, H]) bool {
+func (a *streamAreaInfo[A, P, T, D, H]) LessThan(other *streamAreaInfo[A, P, T, D, H]) bool {
 	return a.minQueueTime().Before(other.minQueueTime())
 }
 
@@ -79,8 +79,8 @@ type pathQueue[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	option  Option
 	handler H
 
-	areaMap  map[A]*areaInfo[A, P, T, D, H]
-	areaHeap heap.Heap[*areaInfo[A, P, T, D, H]]
+	areaMap  map[A]*streamAreaInfo[A, P, T, D, H]
+	areaHeap heap.Heap[*streamAreaInfo[A, P, T, D, H]]
 
 	totalPendingLength int
 }
@@ -88,27 +88,27 @@ type pathQueue[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 func newPathQueue[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](option Option, handler H) pathQueue[A, P, T, D, H] {
 	return pathQueue[A, P, T, D, H]{
 		option:   option,
-		areaMap:  make(map[A]*areaInfo[A, P, T, D, H]),
-		areaHeap: heap.NewHeap[*areaInfo[A, P, T, D, H]](),
+		areaMap:  make(map[A]*streamAreaInfo[A, P, T, D, H]),
+		areaHeap: heap.NewHeap[*streamAreaInfo[A, P, T, D, H]](),
 	}
 }
 
 func (q *pathQueue[A, P, T, D, H]) updateHeapAfterUpdatePath(path *pathInfo[A, P, T, D, H]) {
-	area := path.areaInfo
+	area := path.streamAreaInfo
 
 	if path.removed || path.blocking || path.pendingQueue.Length() == 0 {
 		// Remove the path from heap
-		area.tsHeap.Remove((*tsPathNode[A, P, T, D, H])(path))
-		area.qtHeap.Remove((*qtPathNode[A, P, T, D, H])(path))
+		area.timestampHeap.Remove((*tsPathNode[A, P, T, D, H])(path))
+		area.queueTimeHeap.Remove((*qtPathNode[A, P, T, D, H])(path))
 
-		if area.qtHeap.Len() == 0 {
+		if area.queueTimeHeap.Len() == 0 {
 			q.areaHeap.Remove(area)
 		} else {
 			q.areaHeap.AddOrUpdate(area)
 		}
 	} else {
-		area.tsHeap.AddOrUpdate((*tsPathNode[A, P, T, D, H])(path))
-		area.qtHeap.AddOrUpdate((*qtPathNode[A, P, T, D, H])(path))
+		area.timestampHeap.AddOrUpdate((*tsPathNode[A, P, T, D, H])(path))
+		area.queueTimeHeap.AddOrUpdate((*qtPathNode[A, P, T, D, H])(path))
 		q.areaHeap.AddOrUpdate(area)
 	}
 }
@@ -116,25 +116,25 @@ func (q *pathQueue[A, P, T, D, H]) updateHeapAfterUpdatePath(path *pathInfo[A, P
 func (q *pathQueue[A, P, T, D, H]) addPath(path *pathInfo[A, P, T, D, H]) {
 	area, ok := q.areaMap[path.area]
 	if !ok {
-		area = &areaInfo[A, P, T, D, H]{
-			area:   path.area,
-			tsHeap: heap.NewHeap[*tsPathNode[A, P, T, D, H]](),
-			qtHeap: heap.NewHeap[*qtPathNode[A, P, T, D, H]](),
+		area = &streamAreaInfo[A, P, T, D, H]{
+			area:          path.area,
+			timestampHeap: heap.NewHeap[*tsPathNode[A, P, T, D, H]](),
+			queueTimeHeap: heap.NewHeap[*qtPathNode[A, P, T, D, H]](),
 		}
 		q.areaMap[path.area] = area
 	}
 
 	area.pathCount++
-	path.areaInfo = area
-	path.qtHeapIndex = 0
-	path.tsHeapIndex = 0
+	path.streamAreaInfo = area
+	path.queueTimeHeapIndex = 0
+	path.timestampHeapIndex = 0
 
 	q.totalPendingLength += path.pendingQueue.Length()
 	q.updateHeapAfterUpdatePath(path)
 }
 
 func (q *pathQueue[A, P, T, D, H]) removePath(path *pathInfo[A, P, T, D, H]) {
-	area := path.areaInfo
+	area := path.streamAreaInfo
 	if area == nil {
 		return
 	}
@@ -146,28 +146,14 @@ func (q *pathQueue[A, P, T, D, H]) removePath(path *pathInfo[A, P, T, D, H]) {
 
 	q.totalPendingLength -= path.pendingQueue.Length()
 	q.updateHeapAfterUpdatePath(path)
-	path.areaInfo = nil
+	path.streamAreaInfo = nil
 }
 
 func (q *pathQueue[A, P, T, D, H]) appendEvent(event eventWrap[A, P, T, D, H]) {
 	path := event.pathInfo
-	if path.areaInfo == nil {
+	if path.streamAreaInfo == nil {
 		// A newly added path sends the first event.
 		q.addPath(path)
-	}
-
-	if q.option.MaxPendingLength > 0 && path.pendingQueue.Length() >= q.option.MaxPendingLength {
-		switch q.option.DropPolicy {
-		case DropLate:
-			q.handler.OnDrop(event.event)
-		case DropEarly:
-			dropped, _ := path.pendingQueue.PopFront()
-			q.handler.OnDrop(dropped.event)
-			event.pathInfo.pendingQueue.PushBack(event)
-		}
-	} else {
-		event.pathInfo.pendingQueue.PushBack(event)
-		q.totalPendingLength++
 	}
 
 	q.updateHeapAfterUpdatePath(path)
@@ -183,7 +169,7 @@ func (q *pathQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, D
 		if !ok {
 			return buf[:0], nil
 		}
-		top, ok := area.tsHeap.PeekTop()
+		top, ok := area.timestampHeap.PeekTop()
 		if !ok {
 			panic("top is nil")
 		}

@@ -38,17 +38,15 @@ func (p *pathStat[A, P, T, D, H]) LessThan(o *pathStat[A, P, T, D, H]) bool {
 	return p.totalTime < o.totalTime
 }
 
+// pathInfo contains the status of a path.
+// Note that although this struct is used by multiple goroutines, it doesn't need synchronization because
+// different fields are either immutable or accessed by different goroutines.
+// We use one struct to store them together to avoid mapping by path in different places in many times,
+// and to avoid the overhead of creating a new struct.
 type pathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
-	// Note that although this struct is used by multiple goroutines, it doesn't need synchronization because
-	// different fields are either immutable or accessed by different goroutines.
-	// We use one struct to store them together to avoid mapping by path in different places in many times.
 	area A
 	path P
 	dest D
-
-	// Stream level area info. This field is only use in pendingQueue.
-	// Each stream has its own areaInfo map, after a path is assigned to a stream, the areaInfo is set.
-	areaInfo *areaInfo[A, P, T, D, H]
 
 	// The current stream this path belongs to.
 	stream *stream[A, P, T, D, H]
@@ -62,16 +60,24 @@ type pathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 
 	// The pending events of the path.
 	pendingQueue *deque.Deque[eventWrap[A, P, T, D, H]]
-	// The total size of pending events.
-	pendingSize int
 
+	// Fields used by the reportStatLoop.
 	reportRound int64
 	pathStat    *pathStat[A, P, T, D, H]
 
-	// The indexes in the pending queue heap.
-	tsHeapIndex   int // timestamp heap index
-	qtHeapIndex   int // queue time heap index
-	sizeHeapIndex int // global area heap index
+	// Fields only use by the pathQueue.
+	// Stream level area info.
+	// Each stream has its own areaInfo map, after a path is assigned to a stream, the areaInfo is set.
+	streamAreaInfo     *streamAreaInfo[A, P, T, D, H]
+	timestampHeapIndex int // timestamp heap index
+	queueTimeHeapIndex int // queue time heap index
+
+	// Fields only used by the memory control.
+	globalAreaStat       *globalAreaStat[A, P, T, D, H]
+	pendingSize          int       // The total size of pending events
+	sizeHeapIndex        int       // The index in the size heap
+	paused               bool      // The path is paused to send events.
+	lastSendFeedbackTime time.Time // The last time sending feedbacks to upstream
 }
 
 func newPathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](area A, path P, dest D) *pathInfo[A, P, T, D, H] {
@@ -127,7 +133,9 @@ type eventWrap[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 
 	pathInfo *pathInfo[A, P, T, D, H]
 
+	paused    bool
 	eventType EventType
+	size      int
 	timestamp Timestamp
 	queueTime time.Time
 }
@@ -164,8 +172,6 @@ type stream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	donChan chan doneInfo[A, P, T, D, H] // The channel to receive the done events.
 
 	reportNow chan struct{} // For test, make the reportStatLoop to report immediately.
-
-	// pendingLen int // The total pending event count of all paths
 
 	reportChan    chan streamStat[A, P, T, D, H]
 	trackTopPaths int

@@ -115,8 +115,11 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 	handler H
 	option  Option
 
-	eventChan chan T // The channel to receive the incomming events by distributor
-	wakeChan  chan P // The channel to receive the wake signal by distributor
+	memoryControl *memoryControl[A, P, T, D, H]
+
+	eventChan    chan T                 // The channel to receive the incomming events by distributor
+	wakeChan     chan P                 // The channel to receive the wake signal by distributor
+	feedbackChan chan Feedback[A, P, D] // The channel to receive the feedback by outside listener
 
 	reportChan chan streamStat[A, P, T, D, H] // The channel to receive the report by scheduler
 	cmdToSchd  chan *command                  // Send the commands to the scheduler
@@ -139,15 +142,16 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 	option Option,
 ) *dynamicStreamImpl[A, P, T, D, H] {
 	option.fix()
-	return &dynamicStreamImpl[A, P, T, D, H]{
+	ds := &dynamicStreamImpl[A, P, T, D, H]{
 		handler: handler,
 		option:  option,
 
 		trackTopPaths:   TrackTopPaths,
 		baseStreamCount: option.StreamCount,
 
-		eventChan:  make(chan T, 1024),
-		wakeChan:   make(chan P, 64),
+		eventChan: make(chan T, 1024),
+		wakeChan:  make(chan P, 1024),
+
 		reportChan: make(chan streamStat[A, P, T, D, H], 64),
 		cmdToSchd:  make(chan *command, 64),
 		cmdToDist:  make(chan *command, option.StreamCount),
@@ -155,6 +159,11 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 		streamInfos: make([]*streamInfo[A, P, T, D, H], 0, option.StreamCount),
 		startTime:   time.Now(),
 	}
+	if option.EnableMemoryControl {
+		ds.feedbackChan = make(chan Feedback[A, P, D], 1024)
+		ds.memoryControl = newMemoryControl[A, P, T, D, H](ds.feedbackChan)
+	}
+	return ds
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) In() chan<- T {
@@ -163,6 +172,10 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) In() chan<- T {
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Wake() chan<- P {
 	return d.wakeChan
+}
+
+func (d *dynamicStreamImpl[A, P, T, D, H]) Feedback() <-chan Feedback[A, P, D] {
+	return d.feedbackChan
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Start() {
@@ -221,6 +234,13 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) RemovePath(path P) error {
 		return errs[0]
 	}
 	return nil
+}
+
+func (d *dynamicStreamImpl[A, P, T, D, H]) SetAreaSettings(area A, settings AreaSettings) {
+}
+
+func (d *dynamicStreamImpl[A, P, T, D, H]) RemoveAreaSettings(area A) bool {
+	return false
 }
 
 // Make the scheduler to balance immediately. Only used for test.
@@ -704,7 +724,9 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 				e := eventWrap[A, P, T, D, H]{
 					event:     e,
 					pathInfo:  pi,
+					paused:    d.handler.IsPaused(e),
 					eventType: d.handler.GetType(e),
+					size:      d.handler.GetSize(e),
 					timestamp: d.handler.GetTimestamp(e),
 					queueTime: time.Now(),
 				}

@@ -4,6 +4,7 @@ import (
 	"runtime"
 	"sync"
 	"time"
+	"unsafe"
 )
 
 // The path interface. A path is a unique identifier of a destination.
@@ -36,6 +37,10 @@ const (
 	DataType2
 	// Events are sent repeatedly, and don't carry any data except indicating something happens.
 	// DynamicStream could drop the eary come repeated signals to reduce the load.
+	// Note that even when a path is paused (stop sending data events), the repeated signal events
+	// should be kept sending periodically. DynamicStream sends feedbacks based on the pause status
+	// to control the memory usage of a path and an area. The size of the repeated signal events
+	// should be small enough and all be the same.
 	// E.g. a resolved TS.
 	RepeatedSignal
 )
@@ -68,6 +73,9 @@ type Handler[A Area, P Path, T Event, D Dest] interface {
 	// Get the timestamp of the event. This method is called once for each event.
 	// Return zero by default implementation. I.e. all events are in the same type.
 	GetType(event T) EventType
+	// Returns the pause status from the upstream status.
+	// DynamicStream sends feedbacks if the pause status of upstream is not equals to the local status.
+	IsPaused(event T) bool
 	// OnDrop is called when an event is dropped. Could be caused by the DropPolicy or cannot find the path.
 	// Do nothing by default implementation.
 	OnDrop(event T)
@@ -97,6 +105,9 @@ type DynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] inter
 	In() chan<- T
 	// Wake returns the channel to mark the the path as ready to process the next event.
 	Wake() chan<- P
+	// Feedback returns the channel to receive the feedbacks for the listener.
+	// Return nil if Option.EnableMemoryControl is false.
+	Feedback() <-chan Feedback[A, P, D]
 
 	// AddPaths adds the paths to the dynamic stream to receive the events.
 	// An event with a path not already added will be dropped.
@@ -113,28 +124,26 @@ type DynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] inter
 	// If all paths are removed successfully, return nil.
 	RemovePaths(paths ...P) []error
 	RemovePath(path P) error
+
+	// SetAreaSettings sets the settings of the area. An area uses the default settings if it is not set.
+	// This method can be called at any time.
+	SetAreaSettings(area A, settings AreaSettings)
+	// Remove the settings of the area.
+	// You should remove the settings after all paths in the area are removed. Otherwise, the settings will be leaked.
+	RemoveAreaSettings(area A) bool
 }
 
 const DefaultSchedulerInterval = 1 * time.Second
 const DefaultReportInterval = 500 * time.Millisecond
 
-type DropPolicy int
-
-const (
-	// Drop the late come events of the path.
-	DropLate DropPolicy = 0
-	// Drop the early come events of the path.
-	DropEarly DropPolicy = 1
-)
-
 type Option struct {
 	SchedulerInterval time.Duration // The interval of the scheduler. The scheduler is used to balance the paths between streams.
 	ReportInterval    time.Duration // The interval of reporting the status of stream, the status is used by the scheduler.
-	StreamCount       int           // The count of streams. I.e. the count of goroutines to handle events. By default 0, means runtime.NumCPU().
-	BatchCount        int           // The batch size of handling events. <= 1 means no batch.
 
-	MaxPendingLength int        // The max pending length of a path. <= 0 means no limit.
-	DropPolicy       DropPolicy // The drop policy of the events of a path when the pending length is greater than MaxPendingLength.
+	StreamCount int // The count of streams. I.e. the count of goroutines to handle events. By default 0, means runtime.NumCPU().
+	BatchCount  int // The batch size of handling events. <= 1 means no batch. By default 1.
+
+	EnableMemoryControl bool // Enable the memory control. By default false.
 
 	handleWait *sync.WaitGroup // For testing. Don't handle events until this wait group is done.
 }
@@ -155,12 +164,26 @@ func (o *Option) fix() {
 	if o.BatchCount <= 0 {
 		o.BatchCount = 1
 	}
-	if o.MaxPendingLength < 0 {
-		o.MaxPendingLength = 0
-	}
+}
+
+type AreaSettings struct {
+	MaxPendingSize   int           // The max memory usage of the pending events of the area. <= 0 means no limit.
+	FeedbackInterval time.Duration // The interval of sending feedbacks to the upstream. <= 0 means no feedback.
+}
+
+type Feedback[A Area, P Path, D Dest] struct {
+	Area A
+	Path P
+	Dest D
+
+	Pause bool // Pause or resume the path.
 }
 
 func NewDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](handler H, option ...Option) DynamicStream[A, P, T, D, H] {
+	if unsafe.Sizeof(int(0)) != 8 {
+		// We need int to be int64, because we use int as the data size everywhere.
+		panic("int is not int64")
+	}
 	opt := NewOption()
 	if len(option) > 0 {
 		opt = option[0]
