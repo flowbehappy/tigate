@@ -28,7 +28,7 @@ func TestResolvedEvent(t *testing.T) {
 	}
 	data, err := e.Marshal()
 	require.NoError(t, err)
-	require.Len(t, data, 24)
+	require.Len(t, data, 1+8+16)
 
 	var e2 ResolvedEvent
 	err = e2.Unmarshal(data)
@@ -53,7 +53,7 @@ func TestBatchResolvedTs(t *testing.T) {
 	}
 	data, err := b.Marshal()
 	require.NoError(t, err)
-	require.Len(t, data, 48)
+	require.Len(t, data, int(e.GetSize())*2)
 
 	var b2 BatchResolvedEvent
 	err = b2.Unmarshal(data)

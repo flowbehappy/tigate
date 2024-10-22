@@ -216,11 +216,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 				c.tableTriggerDispatchers.Range(func(key, value interface{}) bool {
 					dispatcherStat := value.(*dispatcherStat)
 					if !dispatcherStat.isInitialized.Load() {
-						e := &commonEvent.HandshakeEvent{
-							DispatcherID: dispatcherStat.info.GetID(),
-							ResolvedTs:   dispatcherStat.startTs.Load(),
-							Seq:          dispatcherStat.seq.Add(1),
-						}
+						e := commonEvent.NewHandshakeEvent(dispatcherStat.info.GetID(), dispatcherStat.startTs.Load(), dispatcherStat.seq.Add(1))
 						wrapE := wrapEvent{
 							serverID: node.ID(dispatcherStat.info.GetServerID()),
 							e:        e,
@@ -310,12 +306,8 @@ func (c *eventBroker) checkAndInitDispatcher(ctx context.Context, task scanTask)
 	}
 	wrapE := wrapEvent{
 		serverID: node.ID(task.dispatcherStat.info.GetServerID()),
-		e: &commonEvent.HandshakeEvent{
-			DispatcherID: task.dispatcherStat.info.GetID(),
-			ResolvedTs:   task.dispatcherStat.watermark.Load(),
-			Seq:          task.dispatcherStat.seq.Add(1),
-		},
-		msgType: commonEvent.TypeHandshakeEvent,
+		e:        commonEvent.NewHandshakeEvent(task.dispatcherStat.info.GetID(), task.dispatcherStat.watermark.Load(), task.dispatcherStat.seq.Add(1)),
+		msgType:  commonEvent.TypeHandshakeEvent,
 		postSendFunc: func() {
 			task.dispatcherStat.isInitialized.Store(true)
 			log.Info("handshake event sent to dispatcher", zap.Stringer("dispatcher", task.dispatcherStat.info.GetID()))
