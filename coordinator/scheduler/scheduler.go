@@ -28,16 +28,16 @@ import (
 	"go.uber.org/zap"
 )
 
-// Scheduler generates operators for the spans, and push them to the operator controller
-// it generates add operator for the absent spans, and move operator for the unbalanced replicating spans
-// currently, it only supports balance the spans by size
+// Scheduler generates operators for the maintainers, and push them to the operator controller
+// it generates add operator for the absent maintainers, and move operator for the unbalanced replicating maintainer
+// currently, it only supports balance the maintainers by size
 type Scheduler struct {
 	batchSize            int
 	random               *rand.Rand
 	lastRebalanceTime    time.Time
 	checkBalanceInterval time.Duration
 	operatorController   *operator.Controller
-	replicationDB        *changefeed.ChangefeedDB
+	changefeedDB         *changefeed.ChangefeedDB
 	nodeManager          *watcher.NodeManager
 
 	// buffer for the un-scheduled changefeed
@@ -55,7 +55,7 @@ func NewScheduler(
 		random:               rand.New(rand.NewSource(time.Now().UnixNano())),
 		checkBalanceInterval: balanceInterval,
 		operatorController:   oc,
-		replicationDB:        db,
+		changefeedDB:         db,
 		nodeManager:          nodeManager,
 		lastRebalanceTime:    time.Now(),
 		absent:               make([]*changefeed.Changefeed, 0, batchSize),
@@ -64,7 +64,7 @@ func NewScheduler(
 
 // Execute periodically execute the operator
 func (s *Scheduler) Execute() time.Time {
-	if s.replicationDB.GetAbsentSize() > 0 {
+	if s.changefeedDB.GetAbsentSize() > 0 {
 		availableSize := s.batchSize - s.operatorController.OperatorSize()
 		if availableSize <= 0 {
 			return time.Now().Add(time.Millisecond * 500)
@@ -73,7 +73,7 @@ func (s *Scheduler) Execute() time.Time {
 		if availableSize < s.batchSize/2 {
 			return time.Now().Add(time.Millisecond * 100)
 		}
-		absent, nodeSize := s.replicationDB.GetScheduleSate(s.absent, availableSize)
+		absent, nodeSize := s.changefeedDB.GetScheduleSate(s.absent, availableSize)
 		// add the absent node to the node size map
 		// todo: use the bootstrap nodes
 		for id, _ := range s.nodeManager.GetAliveNodes() {
@@ -89,7 +89,7 @@ func (s *Scheduler) Execute() time.Time {
 	return time.Now().Add(time.Millisecond * 500)
 }
 
-// basicSchedule schedule the absent spans to the nodes base on the task size of each node
+// basicSchedule schedule the absent maintainers to the nodes base on the task size of each node
 func (s *Scheduler) basicSchedule(
 	availableSize int,
 	absent []*changefeed.Changefeed,
@@ -107,10 +107,10 @@ func (s *Scheduler) basicSchedule(
 	}
 
 	taskSize := 0
-	for _, replicaSet := range absent {
+	for _, cf := range absent {
 		item, _ := priorityQueue.PeekTop()
 		// the operator is pushed successfully
-		if s.operatorController.AddOperator(operator.NewAddDispatcherOperator(s.replicationDB, replicaSet, item.Node)) {
+		if s.operatorController.AddOperator(operator.NewAddMaintainerOperator(s.changefeedDB, cf, item.Node)) {
 			// update the task size priority queue
 			item.Load++
 			taskSize++
@@ -122,12 +122,33 @@ func (s *Scheduler) basicSchedule(
 	}
 }
 
-// balance balances the spans by size
+// balance balances the maintainers by size
 func (s *Scheduler) balance() {
+	if time.Since(s.lastRebalanceTime) < s.checkBalanceInterval {
+		return
+	}
+	if s.operatorController.OperatorSize() > 0 {
+		// not in stable schedule state, skip balance
+		return
+	}
+	now := time.Now()
+	if now.Sub(s.lastRebalanceTime) < s.checkBalanceInterval {
+		// skip balance.
+		return
+	}
+
+	// check the balance status
+	moveSize := checkBalanceStatus(s.changefeedDB.GetTaskSizePerNode(), s.nodeManager.GetAliveNodes())
+	if moveSize <= 0 {
+		// fast check the balance status, no need to do the balance,skip
+		return
+	}
+	s.balanceTables()
+	s.lastRebalanceTime = now
 }
 
 func (s *Scheduler) balanceTables() {
-	replicating := s.replicationDB.GetReplicating()
+	replicating := s.changefeedDB.GetReplicating()
 	nodeTasks := make(map[node.ID]map[model.ChangeFeedID]*changefeed.Changefeed)
 	for _, cf := range replicating {
 		nodeID := cf.GetNodeID()
@@ -205,7 +226,7 @@ func (s *Scheduler) balanceTables() {
 		item, _ := priorityQueue.PeekTop()
 
 		// the operator is pushed successfully
-		if s.operatorController.AddOperator(operator.NewMoveMaintainerOperator(s.replicationDB, cf, cf.GetNodeID(), item.Node)) {
+		if s.operatorController.AddOperator(operator.NewMoveMaintainerOperator(s.changefeedDB, cf, cf.GetNodeID(), item.Node)) {
 			// update the task size priority queue
 			item.Load++
 			movedSize++
@@ -217,7 +238,7 @@ func (s *Scheduler) balanceTables() {
 		zap.Int("victims", len(victims)))
 }
 
-// checkBalanceStatus checks the dispatcher scheduling balance status
+// checkBalanceStatus checks the maintainer scheduling balance status
 // returns the table size need to be moved
 func checkBalanceStatus(nodeTaskSize map[node.ID]int,
 	allNodes map[node.ID]*node.Info) int {

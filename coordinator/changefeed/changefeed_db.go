@@ -23,6 +23,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// ChangefeedDB is an in memory data struct that maintains all changefeeds
 type ChangefeedDB struct {
 	changefeeds map[model.ChangeFeedID]*Changefeed
 
@@ -31,6 +32,7 @@ type ChangefeedDB struct {
 	scheduling  map[model.ChangeFeedID]*Changefeed
 	replicating map[model.ChangeFeedID]*Changefeed
 
+	// stopped changefeeds that failed, stopped or finished
 	stopped map[model.ChangeFeedID]*Changefeed
 	lock    sync.RWMutex
 }
@@ -65,14 +67,14 @@ func (db *ChangefeedDB) AddStoppedChangefeed(task *Changefeed) {
 	db.stopped[task.ID] = task
 }
 
-// AddReplicatingSpan adds a replicating the replicating map, that means the task is already scheduled to a dispatcher
-func (db *ChangefeedDB) AddReplicatingSpan(task *Changefeed) {
+// AddReplicatingMaintainer adds a replicating the replicating map, that means the task is already scheduled to a maintainer
+func (db *ChangefeedDB) AddReplicatingMaintainer(task *Changefeed) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
 	nodeID := task.GetNodeID()
 
-	log.Info("add an replicating span",
+	log.Info("add an replicating maintainer",
 		zap.String("nodeID", nodeID.String()),
 		zap.String("changefeed", task.ID.String()))
 
@@ -120,6 +122,30 @@ func (db *ChangefeedDB) StopByChangefeedID(cfID model.ChangeFeedID) *Changefeed 
 	return nil
 }
 
+// GetSize returns the size of the all chagnefeeds
+func (db *ChangefeedDB) GetSize() int {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	return len(db.changefeeds)
+}
+
+// GetSchedulingSize returns the size of the schedulling changefeeds
+func (db *ChangefeedDB) GetSchedulingSize() int {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	return len(db.scheduling)
+}
+
+// GetStoppedSize returns the size of the stopped changefeeds
+func (db *ChangefeedDB) GetStoppedSize() int {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	return len(db.stopped)
+}
+
 func (db *ChangefeedDB) GetAbsentSize() int {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
@@ -145,6 +171,18 @@ func (db *ChangefeedDB) GetReplicating() []*Changefeed {
 	return cfs
 }
 
+// GetTaskSizePerNode returns the size of the task per node
+func (db *ChangefeedDB) GetTaskSizePerNode() map[node.ID]int {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	sizeMap := make(map[node.ID]int, len(db.nodeTasks))
+	for nodeID, stmMap := range db.nodeTasks {
+		sizeMap[nodeID] = len(stmMap)
+	}
+	return sizeMap
+}
+
 // BindChangefeedToNode binds the changefeed to the node, it will remove the task from the old node and add it to the new node
 // ,and it also marks the task as scheduling
 func (db *ChangefeedDB) BindChangefeedToNode(old, new node.ID, task *Changefeed) {
@@ -162,8 +200,8 @@ func (db *ChangefeedDB) BindChangefeedToNode(old, new node.ID, task *Changefeed)
 	db.updateNodeMap(old, new, task)
 }
 
-// MarkSpanReplicating move the span to the replicating map
-func (db *ChangefeedDB) MarkSpanReplicating(task *Changefeed) {
+// MarkMaintainerReplicating move the maintainer to the replicating map
+func (db *ChangefeedDB) MarkMaintainerReplicating(task *Changefeed) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -175,7 +213,7 @@ func (db *ChangefeedDB) MarkSpanReplicating(task *Changefeed) {
 	db.replicating[task.ID] = task
 }
 
-// GetScheduleSate returns the absent spans and the working state of each node
+// GetScheduleSate returns the absent maintainers and the working state of each node
 func (db *ChangefeedDB) GetScheduleSate(absent []*Changefeed, maxSize int) ([]*Changefeed, map[node.ID]int) {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
@@ -232,34 +270,34 @@ func (db *ChangefeedDB) GetByNodeID(id node.ID) []*Changefeed {
 	return stms
 }
 
-// MarkSpanAbsent move the span to the absent Status
-func (db *ChangefeedDB) MarkSpanAbsent(span *Changefeed) {
+// MarkMaintainerAbsent move the maintainer to the absent Status
+func (db *ChangefeedDB) MarkMaintainerAbsent(cf *Changefeed) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	log.Info("marking span absent",
-		zap.String("span", span.ID.String()),
-		zap.String("node", span.GetNodeID().String()))
+	log.Info("marking changefeed absent",
+		zap.String("changefeed", cf.ID.String()),
+		zap.String("node", cf.GetNodeID().String()))
 
-	delete(db.scheduling, span.ID)
-	delete(db.replicating, span.ID)
-	db.absent[span.ID] = span
-	originNodeID := span.GetNodeID()
-	span.SetNodeID("")
-	db.updateNodeMap(originNodeID, "", span)
+	delete(db.scheduling, cf.ID)
+	delete(db.replicating, cf.ID)
+	db.absent[cf.ID] = cf
+	originNodeID := cf.GetNodeID()
+	cf.SetNodeID("")
+	db.updateNodeMap(originNodeID, "", cf)
 }
 
-// MarkSpanScheduling move the span to the scheduling map
-func (db *ChangefeedDB) MarkSpanScheduling(span *Changefeed) {
+// MarkMaintainerScheduling move the maintainer to the scheduling map
+func (db *ChangefeedDB) MarkMaintainerScheduling(cf *Changefeed) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
 	log.Info("marking changefeed scheduling",
-		zap.String("ChangefeedDB", span.ID.String()))
+		zap.String("ChangefeedDB", cf.ID.String()))
 
-	delete(db.absent, span.ID)
-	delete(db.replicating, span.ID)
-	db.scheduling[span.ID] = span
+	delete(db.absent, cf.ID)
+	delete(db.replicating, cf.ID)
+	db.scheduling[cf.ID] = cf
 }
 
 // CalculateGCSafepoint calculates the minimum checkpointTs of all changefeeds that replicating the upstream TiDB cluster.
@@ -327,7 +365,7 @@ func (db *ChangefeedDB) addAbsentChangefeedUnLock(tasks ...*Changefeed) {
 	}
 }
 
-// removeSpanUnLock removes the changefeed from the db without lock
+// removeChangefeedUnLock removes the changefeed from the db without lock
 func (db *ChangefeedDB) removeChangefeedUnLock(cf *Changefeed) {
 	log.Info("remove changefeed",
 		zap.String("changefeed", cf.ID.String()))

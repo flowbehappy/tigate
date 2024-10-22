@@ -13,11 +13,15 @@
 
 package coordinator
 
-import "github.com/flowbehappy/tigate/pkg/messaging"
+import (
+	"github.com/flowbehappy/tigate/pkg/messaging"
+)
 
 const (
 	// EventMessage is triggered when a grpc message received
 	EventMessage = iota
+	// EventPeriod is triggered periodically, coordinator handle some task in the loop, like resend messages
+	EventPeriod
 )
 
 type Event struct {
@@ -29,7 +33,7 @@ func (e Event) IsBatchable() bool {
 	return true
 }
 
-// StreamHandler implements the dynstream Handler, no real logic, just forward event to the maintainer
+// StreamHandler implements the dynstream Handler, no real logic, just forward event
 type StreamHandler struct {
 }
 

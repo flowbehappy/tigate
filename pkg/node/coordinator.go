@@ -20,8 +20,8 @@ import (
 )
 
 // Coordinator is the master of the ticdc cluster,
-// 1. schedules changefeed maintainer to ticdc watcher
-// 2. save changefeed checkpoint ts to etcd
+// 1. schedules changefeed maintainer to ticdc node
+// 2. save changefeed checkpoint ts to meta store backend
 // 3. send checkpoint to downstream
 // 4. manager gc safe point
 // 5. response for open API call
@@ -29,6 +29,7 @@ type Coordinator interface {
 	AsyncStop()
 	// Run handles messages
 	Run(ctx context.Context) error
+
 	// CreateChangefeed creates a new changefeed
 	CreateChangefeed(ctx context.Context, info *model.ChangeFeedInfo) error
 	// RemoveChangefeed gets a changefeed

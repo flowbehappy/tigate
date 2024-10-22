@@ -26,8 +26,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// AddChangefeedOperator is an operator to schedule a table span to a dispatcher
-type AddChangefeedOperator struct {
+// AddMaintainerOperator is an operator to schedule a maintainer to a node
+type AddMaintainerOperator struct {
 	cf       *changefeed.Changefeed
 	dest     node.ID
 	finished atomic.Bool
@@ -35,18 +35,18 @@ type AddChangefeedOperator struct {
 	db       *changefeed.ChangefeedDB
 }
 
-func NewAddDispatcherOperator(
+func NewAddMaintainerOperator(
 	db *changefeed.ChangefeedDB,
-	replicaSet *changefeed.Changefeed,
-	dest node.ID) *AddChangefeedOperator {
-	return &AddChangefeedOperator{
-		cf:   replicaSet,
+	cf *changefeed.Changefeed,
+	dest node.ID) *AddMaintainerOperator {
+	return &AddMaintainerOperator{
+		cf:   cf,
 		dest: dest,
 		db:   db,
 	}
 }
 
-func (m *AddChangefeedOperator) Check(from node.ID, status *heartbeatpb.MaintainerStatus) {
+func (m *AddMaintainerOperator) Check(from node.ID, status *heartbeatpb.MaintainerStatus) {
 	if !m.finished.Load() && from == m.dest && status.State == heartbeatpb.ComponentState_Working {
 		log.Info("maintainer report working status",
 			zap.String("changefeed", m.cf.ID.String()))
@@ -54,49 +54,49 @@ func (m *AddChangefeedOperator) Check(from node.ID, status *heartbeatpb.Maintain
 	}
 }
 
-func (m *AddChangefeedOperator) Schedule() *messaging.TargetMessage {
+func (m *AddMaintainerOperator) Schedule() *messaging.TargetMessage {
 	if m.finished.Load() || m.removed.Load() {
 		return nil
 	}
-	return m.cf.NewAddInferiorMessage(m.dest)
+	return m.cf.NewAddMaintainerMessage(m.dest)
 }
 
-// OnNodeRemove is called when node offline, and the replicaset must already move to absent status and will be scheduled again
-func (m *AddChangefeedOperator) OnNodeRemove(n node.ID) {
+// OnNodeRemove is called when node offline, and the maintainer must already move to absent status and will be scheduled again
+func (m *AddMaintainerOperator) OnNodeRemove(n node.ID) {
 	if n == m.dest {
 		m.finished.Store(true)
 		m.removed.Store(true)
 	}
 }
 
-func (m *AddChangefeedOperator) ID() model.ChangeFeedID {
+func (m *AddMaintainerOperator) ID() model.ChangeFeedID {
 	return m.cf.ID
 }
 
-func (m *AddChangefeedOperator) IsFinished() bool {
+func (m *AddMaintainerOperator) IsFinished() bool {
 	return m.finished.Load()
 }
 
-func (m *AddChangefeedOperator) OnTaskRemoved() {
+func (m *AddMaintainerOperator) OnTaskRemoved() {
 	m.finished.Store(true)
 	m.removed.Store(true)
 }
 
-func (m *AddChangefeedOperator) Start() {
+func (m *AddMaintainerOperator) Start() {
 	m.db.BindChangefeedToNode("", m.dest, m.cf)
 }
 
-func (m *AddChangefeedOperator) PostFinish() {
+func (m *AddMaintainerOperator) PostFinish() {
 	if !m.removed.Load() {
-		m.db.MarkSpanReplicating(m.cf)
+		m.db.MarkMaintainerReplicating(m.cf)
 	}
 }
 
-func (m *AddChangefeedOperator) String() string {
-	return fmt.Sprintf("add dispatcher operator: %s, dest:%s",
+func (m *AddMaintainerOperator) String() string {
+	return fmt.Sprintf("add maintainer operator: %s, dest:%s",
 		m.cf.ID, m.dest)
 }
 
-func (m *AddChangefeedOperator) Type() string {
+func (m *AddMaintainerOperator) Type() string {
 	return "add"
 }

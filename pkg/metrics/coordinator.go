@@ -40,10 +40,19 @@ var (
 			Help:      "Bucketed histogram of processing time (s) of finished operator.",
 			Buckets:   []float64{0.5, 1, 2, 4, 8, 16, 20, 40, 60, 90, 120, 180, 240, 300, 480, 600, 720, 900, 1200, 1800, 3600},
 		}, []string{"type"})
+
+	ChangefeedStateGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "coordinator",
+			Name:      "changefeed_state",
+			Help:      "The total number of changefeed in different replication states",
+		}, []string{"state"})
 )
 
 func InitCoordinatorMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(CoordinatorCreatedOperatorCount)
 	registry.MustRegister(CoordinatorFinishedOperatorCount)
 	registry.MustRegister(CoordinatorOperatorDuration)
+	registry.MustRegister(ChangefeedStateGauge)
 }

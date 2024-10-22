@@ -26,7 +26,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// MoveMaintainerOperator is an operator to move a table span to the destination dispatcher
+// MoveMaintainerOperator is an operator to move a maintainer to the destination node
 type MoveMaintainerOperator struct {
 	changefeed *changefeed.Changefeed
 	db         *changefeed.ChangefeedDB
@@ -78,9 +78,9 @@ func (m *MoveMaintainerOperator) Schedule() *messaging.TargetMessage {
 			m.db.BindChangefeedToNode(m.origin, m.dest, m.changefeed)
 			m.bind = true
 		}
-		return m.changefeed.NewAddInferiorMessage(m.dest)
+		return m.changefeed.NewAddMaintainerMessage(m.dest)
 	}
-	return m.changefeed.NewRemoveInferiorMessage(m.origin, false)
+	return m.changefeed.NewRemoveMaintainerMessage(m.origin, false)
 }
 
 func (m *MoveMaintainerOperator) OnNodeRemove(n node.ID) {
@@ -88,12 +88,12 @@ func (m *MoveMaintainerOperator) OnNodeRemove(n node.ID) {
 	defer m.lck.Unlock()
 
 	if n == m.dest {
-		// the origin node is finished, we must mark the span as absent to reschedule it again
+		// the origin node is finished, we must mark the maintainer as absent to reschedule it again
 		if m.originNodeStopped {
 			log.Info("dest node is stopped, mark changefeed absent",
 				zap.String("changefeed", m.changefeed.ID.String()),
 				zap.String("dest", m.dest.String()))
-			m.db.MarkSpanAbsent(m.changefeed)
+			m.db.MarkMaintainerAbsent(m.changefeed)
 			m.noPostFinishNeed = true
 			return
 		}
@@ -132,7 +132,7 @@ func (m *MoveMaintainerOperator) OnTaskRemoved() {
 	m.lck.Lock()
 	defer m.lck.Unlock()
 
-	log.Info("replicaset is removed, mark move changefeed operator finished",
+	log.Info("changefeed is removed, mark move changefeed operator finished",
 		zap.String("changefeed", m.changefeed.ID.String()))
 	m.noPostFinishNeed = true
 }
@@ -141,7 +141,7 @@ func (m *MoveMaintainerOperator) Start() {
 	m.lck.Lock()
 	defer m.lck.Unlock()
 
-	m.db.MarkSpanScheduling(m.changefeed)
+	m.db.MarkMaintainerScheduling(m.changefeed)
 }
 
 func (m *MoveMaintainerOperator) PostFinish() {
@@ -154,14 +154,14 @@ func (m *MoveMaintainerOperator) PostFinish() {
 
 	log.Info("move changefeed operator finished",
 		zap.String("changefeed", m.changefeed.ID.String()))
-	m.db.MarkSpanReplicating(m.changefeed)
+	m.db.MarkMaintainerReplicating(m.changefeed)
 }
 
 func (m *MoveMaintainerOperator) String() string {
 	m.lck.Lock()
 	defer m.lck.Unlock()
 
-	return fmt.Sprintf("move dispatcher operator: %s, origin:%s, dest:%s",
+	return fmt.Sprintf("move maintainer operator: %s, origin:%s, dest:%s",
 		m.changefeed.ID, m.origin, m.dest)
 }
 

@@ -92,9 +92,9 @@ func (oc *Controller) AddOperator(op Operator) bool {
 			zap.String("operator", op.String()))
 		return false
 	}
-	span := oc.changefeedDB.GetByID(op.ID())
-	if span == nil {
-		log.Warn("add operator failed, span not found",
+	cf := oc.changefeedDB.GetByID(op.ID())
+	if cf == nil {
+		log.Warn("add operator failed, changefeed not found",
 			zap.String("operator", op.String()))
 		return false
 	}
@@ -142,16 +142,16 @@ func (oc *Controller) UpdateOperatorStatus(id model.ChangeFeedID, from node.ID,
 }
 
 // OnNodeRemoved is called when a node is offline,
-// the controller will mark all spans on the node as absent if no operator is handling it,
+// the controller will mark all maintainers on the node as absent if no operator is handling it,
 // then the controller will notify all operators.
 func (oc *Controller) OnNodeRemoved(n node.ID) {
 	oc.lock.RLock()
 	defer oc.lock.RUnlock()
 
-	for _, span := range oc.changefeedDB.GetByNodeID(n) {
-		_, ok := oc.operators[span.ID]
+	for _, cf := range oc.changefeedDB.GetByNodeID(n) {
+		_, ok := oc.operators[cf.ID]
 		if !ok {
-			oc.changefeedDB.MarkSpanAbsent(span)
+			oc.changefeedDB.MarkMaintainerAbsent(cf)
 		}
 	}
 	for _, op := range oc.operators {

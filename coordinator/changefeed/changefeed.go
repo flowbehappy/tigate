@@ -27,6 +27,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// Changefeed is a memory present for changefeed info and status
 type Changefeed struct {
 	ID       model.ChangeFeedID
 	Status   *heartbeatpb.MaintainerStatus
@@ -39,6 +40,7 @@ type Changefeed struct {
 	lastSavedCheckpointTs *atomic.Uint64
 }
 
+// NewChangefeed creates a new changefeed instance
 func NewChangefeed(cfID model.ChangeFeedID,
 	info *model.ChangeFeedInfo,
 	checkpointTs uint64) *Changefeed {
@@ -95,7 +97,7 @@ func (c *Changefeed) GetLastSavedCheckPointTs() uint64 {
 	return c.lastSavedCheckpointTs.Load()
 }
 
-func (c *Changefeed) NewAddInferiorMessage(server node.ID) *messaging.TargetMessage {
+func (c *Changefeed) NewAddMaintainerMessage(server node.ID) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(server,
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.AddMaintainerRequest{
@@ -105,8 +107,8 @@ func (c *Changefeed) NewAddInferiorMessage(server node.ID) *messaging.TargetMess
 		})
 }
 
-func (c *Changefeed) NewRemoveInferiorMessage(server node.ID, caseCade bool) *messaging.TargetMessage {
-	return NewRemoveInferiorMessage(c.ID.ID, server, caseCade)
+func (c *Changefeed) NewRemoveMaintainerMessage(server node.ID, caseCade bool) *messaging.TargetMessage {
+	return RemoveMaintainerMessage(c.ID.ID, server, caseCade)
 }
 
 func (c *Changefeed) NewCheckpointTsMessage(ts uint64) *messaging.TargetMessage {
@@ -118,7 +120,7 @@ func (c *Changefeed) NewCheckpointTsMessage(ts uint64) *messaging.TargetMessage 
 		})
 }
 
-func NewRemoveInferiorMessage(id string, server node.ID, caseCade bool) *messaging.TargetMessage {
+func RemoveMaintainerMessage(id string, server node.ID, caseCade bool) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(server,
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.RemoveMaintainerRequest{

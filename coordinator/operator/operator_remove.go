@@ -26,7 +26,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// RemoveChangefeedOperator is an operator to remove a changefeed from a dispatcher
+// RemoveChangefeedOperator is an operator to remove a maintainer from a node
 type RemoveChangefeedOperator struct {
 	cf       *changefeed.Changefeed
 	finished atomic.Bool
@@ -48,10 +48,10 @@ func (m *RemoveChangefeedOperator) Check(from node.ID, status *heartbeatpb.Maint
 }
 
 func (m *RemoveChangefeedOperator) Schedule() *messaging.TargetMessage {
-	return m.cf.NewRemoveInferiorMessage(m.cf.GetNodeID(), true)
+	return m.cf.NewRemoveMaintainerMessage(m.cf.GetNodeID(), true)
 }
 
-// OnNodeRemove is called when node offline, and the replicaset must already move to absent status and will be scheduled again
+// OnNodeRemove is called when node offline, and the maintainer must already move to absent status and will be scheduled again
 func (m *RemoveChangefeedOperator) OnNodeRemove(n node.ID) {
 	if n == m.cf.GetNodeID() {
 		m.finished.Store(true)

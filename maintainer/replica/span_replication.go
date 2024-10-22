@@ -116,7 +116,7 @@ func (r *SpanReplication) GetNodeID() node.ID {
 	return r.nodeID
 }
 
-func (r *SpanReplication) NewAddInferiorMessage(server node.ID) *messaging.TargetMessage {
+func (r *SpanReplication) NewAddDispatcherMessage(server node.ID) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(server,
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{
@@ -130,11 +130,11 @@ func (r *SpanReplication) NewAddInferiorMessage(server node.ID) *messaging.Targe
 		})
 }
 
-func (r *SpanReplication) NewRemoveInferiorMessage(server node.ID) *messaging.TargetMessage {
-	return NewRemoveInferiorMessage(server, r.ChangefeedID.ID, r.ID.ToPB())
+func (r *SpanReplication) NewRemoveDispatcherMessage(server node.ID) *messaging.TargetMessage {
+	return NewRemoveDispatcherMessage(server, r.ChangefeedID.ID, r.ID.ToPB())
 }
 
-func NewRemoveInferiorMessage(server node.ID, cfID string, dispatcherID *heartbeatpb.DispatcherID) *messaging.TargetMessage {
+func NewRemoveDispatcherMessage(server node.ID, cfID string, dispatcherID *heartbeatpb.DispatcherID) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(server,
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{

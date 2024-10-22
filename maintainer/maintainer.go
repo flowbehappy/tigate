@@ -32,7 +32,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/node"
-	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/flowbehappy/tigate/utils/dynstream"
@@ -594,7 +593,7 @@ func (m *Maintainer) handleError(err error) {
 
 // getNewBootstrapFn returns a function that creates a new bootstrap message to initialize
 // a changefeed dispatcher manager.
-func (m *Maintainer) getNewBootstrapFn() scheduler.NewBootstrapFn {
+func (m *Maintainer) getNewBootstrapFn() bootstrap.NewBootstrapMessageFn {
 	cfg := m.config
 	changefeedConfig := config.ChangefeedConfig{
 		Namespace:          cfg.Namespace,

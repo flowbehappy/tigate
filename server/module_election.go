@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/coordinator"
+	"github.com/flowbehappy/tigate/coordinator/changefeed"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -113,8 +114,9 @@ func (e *elector) campaignCoordinator(ctx context.Context) error {
 			zap.Int64("coordinatorVersion", coordinatorVersion))
 
 		co := coordinator.New(e.svr.info,
-			e.svr.pdClient, e.svr.PDClock, e.svr.EtcdClient,
-			coordinatorVersion)
+			e.svr.pdClient, e.svr.PDClock, changefeed.NewEtcdBackend(e.svr.EtcdClient),
+			e.svr.EtcdClient.GetClusterID(),
+			coordinatorVersion, 10000, time.Minute)
 		e.svr.setCoordinator(co)
 		err = co.Run(ctx)
 		e.svr.coordinator.AsyncStop()

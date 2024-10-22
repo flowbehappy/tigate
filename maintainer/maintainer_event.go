@@ -16,8 +16,6 @@ package maintainer
 import (
 	"time"
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/flowbehappy/tigate/utils/threadpool"
@@ -34,10 +32,9 @@ const (
 
 // Event identify the Event that maintainer will handle in event-driven loop
 type Event struct {
-	changefeedID    string
-	eventType       int
-	message         *messaging.TargetMessage
-	dispatcherEvent *InternalScheduleDispatcherEvent
+	changefeedID string
+	eventType    int
+	message      *messaging.TargetMessage
 }
 
 func (e Event) IsBatchable() bool {
@@ -76,26 +73,4 @@ func (m *StreamHandler) Handle(dest *Maintainer, events ...*Event) (await bool) 
 	}
 	event := events[0]
 	return dest.HandleEvent(event)
-}
-
-type InternalScheduleDispatcherEvent struct {
-	RemovingDispatcher  *RemovingDispatcherEvent
-	ReplacingDispatcher *ReplaceDispatcherEvent
-}
-
-type NewDispatcher struct {
-	SchemaID     int64
-	Span         *heartbeatpb.TableSpan
-	CheckpointTs uint64
-}
-
-type ReplaceDispatcherEvent struct {
-	Removing      []common.DispatcherID
-	NewDispatcher []NewDispatcher
-}
-
-// RemovingDispatcherEvent is the event to remove dispatcher, the
-type RemovingDispatcherEvent struct {
-	DispatcherID common.DispatcherID
-	Replace      bool
 }

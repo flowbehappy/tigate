@@ -18,7 +18,6 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
-	"github.com/flowbehappy/tigate/scheduler"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -34,7 +33,7 @@ type Bootstrapper[T any] struct {
 	bootstrapped bool
 
 	nodes           map[node.ID]*NodeStatus[T]
-	newBootstrapMsg scheduler.NewBootstrapFn
+	newBootstrapMsg NewBootstrapMessageFn
 
 	// for ut test
 	timeNowFunc    func() time.Time
@@ -42,7 +41,7 @@ type Bootstrapper[T any] struct {
 }
 
 // NewBootstrapper create a new bootstrap for a changefeed maintainer
-func NewBootstrapper[T any](id string, newBootstrapMsg scheduler.NewBootstrapFn) *Bootstrapper[T] {
+func NewBootstrapper[T any](id string, newBootstrapMsg NewBootstrapMessageFn) *Bootstrapper[T] {
 	return &Bootstrapper[T]{
 		id:              id,
 		nodes:           make(map[node.ID]*NodeStatus[T]),
@@ -192,3 +191,5 @@ type NodeStatus[T any] struct {
 	cachedBootstrapResp *T
 	lastBootstrapTime   time.Time
 }
+
+type NewBootstrapMessageFn func(id node.ID) *messaging.TargetMessage

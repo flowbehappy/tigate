@@ -28,10 +28,12 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// EtcdBackend is the changefeed meta store using etcd as the storage
 type EtcdBackend struct {
 	etcdClient etcd.CDCEtcdClient
 }
 
+// NewEtcdBackend creates a EtcdBackend
 func NewEtcdBackend(etcdClient etcd.CDCEtcdClient) *EtcdBackend {
 	b := &EtcdBackend{
 		etcdClient: etcdClient,
@@ -39,12 +41,7 @@ func NewEtcdBackend(etcdClient etcd.CDCEtcdClient) *EtcdBackend {
 	return b
 }
 
-type Meta struct {
-	Info   *model.ChangeFeedInfo
-	Status *model.ChangeFeedStatus
-}
-
-func (b *EtcdBackend) LoadAllChangefeeds(ctx context.Context) (map[string]*Meta, error) {
+func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[model.ChangeFeedID]*ChangefeedMetaWrapper, error) {
 	changefeedPrefix := etcd.NamespacedPrefix(b.etcdClient.GetClusterID(), model.DefaultNamespace) + "/changefeed"
 
 	resp, err := b.etcdClient.GetEtcdClient().Get(ctx, changefeedPrefix, clientv3.WithPrefix())
@@ -52,13 +49,14 @@ func (b *EtcdBackend) LoadAllChangefeeds(ctx context.Context) (map[string]*Meta,
 		return nil, errors.Trace(err)
 	}
 
-	cfMap := make(map[string]*Meta)
+	cfMap := make(map[model.ChangeFeedID]*ChangefeedMetaWrapper)
 	for _, kv := range resp.Kvs {
 		key := string(kv.Key)
-		cfID, isStatus := extractKeySuffix(key)
+		ns, cf, isStatus := extractKeySuffix(key)
+		cfID := model.ChangeFeedID{Namespace: ns, ID: cf}
 		meta, ok := cfMap[cfID]
 		if !ok {
-			meta = &Meta{}
+			meta = &ChangefeedMetaWrapper{}
 			cfMap[cfID] = meta
 		}
 		if isStatus {
@@ -85,7 +83,7 @@ func (b *EtcdBackend) LoadAllChangefeeds(ctx context.Context) (map[string]*Meta,
 	for id, meta := range cfMap {
 		if meta.Info == nil {
 			log.Warn("failed to load change feed Info, ignore",
-				zap.String("id", id))
+				zap.String("id", id.String()))
 			delete(cfMap, id)
 			continue
 		}
@@ -102,8 +100,7 @@ func (b *EtcdBackend) LoadAllChangefeeds(ctx context.Context) (map[string]*Meta,
 				delete(cfMap, id)
 				continue
 			}
-			_, err = b.etcdClient.GetEtcdClient().Put(ctx, etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(),
-				model.DefaultChangeFeedID(id)), string(data))
+			_, err = b.etcdClient.GetEtcdClient().Put(ctx, etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), id), string(data))
 			if err != nil {
 				log.Warn("failed to save change feed Status, ignore", zap.Error(err))
 				delete(cfMap, id)
@@ -116,12 +113,12 @@ func (b *EtcdBackend) LoadAllChangefeeds(ctx context.Context) (map[string]*Meta,
 }
 
 func (b *EtcdBackend) CreateChangefeed(ctx context.Context,
-	info *model.ChangeFeedInfo) (*Meta, error) {
+	info *model.ChangeFeedInfo) error {
 	changefeedID := model.DefaultChangeFeedID(info.ID)
 	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), changefeedID)
 	infoValue, err := info.Marshal()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	status := &model.ChangeFeedStatus{
 		CheckpointTs:      info.StartTs,
@@ -130,7 +127,7 @@ func (b *EtcdBackend) CreateChangefeed(ctx context.Context,
 	}
 	jobValue, err := status.Marshal()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), changefeedID)
 
@@ -140,16 +137,13 @@ func (b *EtcdBackend) CreateChangefeed(ctx context.Context,
 
 	resp, err := b.etcdClient.GetEtcdClient().Txn(ctx, []clientv3.Cmp{}, opsThen, []clientv3.Op{})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	if !resp.Succeeded {
-		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("delete changefeed %s", changefeedID))
-		return nil, errors.Trace(err)
+		err = errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("delete changefeed %s", changefeedID))
+		return errors.Trace(err)
 	}
-	return &Meta{
-		Info:   info,
-		Status: status,
-	}, nil
+	return nil
 }
 
 func (b *EtcdBackend) UpdateChangefeed(ctx context.Context, info *model.ChangeFeedInfo) error {
@@ -283,9 +277,9 @@ func (b *EtcdBackend) UpdateChangefeedCheckpointTs(ctx context.Context, cps map[
 // extractKeySuffix extracts the suffix of an etcd key, such as extracting
 // "6a6c6dd290bc8732" from /tidb/cdc/cluster/namespace/changefeed/info/6a6c6dd290bc8732
 // or from /tidb/cdc/cluster/namespace/changefeed/status/6a6c6dd290bc8732
-func extractKeySuffix(key string) (string, bool) {
+func extractKeySuffix(key string) (string, string, bool) {
 	subs := strings.Split(key, "/")
-	return subs[len(subs)-1], subs[len(subs)-2] == "status"
+	return subs[len(subs)-4], subs[len(subs)-1], subs[len(subs)-2] == "status"
 }
 
 func logEtcdOps(ops []clientv3.Op, committed bool) {
