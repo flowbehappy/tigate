@@ -45,7 +45,7 @@ func (d DispatcherID) String() string {
 	return GID(d).String()
 }
 
-func (d *DispatcherID) MsgSize() int {
+func (d *DispatcherID) GetSize() int {
 	return 16
 }
 

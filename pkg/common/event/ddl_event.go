@@ -10,7 +10,8 @@ import (
 )
 
 type DDLEvent struct {
-	Version      int                 `json:"version"`
+	// Version is the version of the DDLEvent struct.
+	Version      byte                `json:"version"`
 	DispatcherID common.DispatcherID `json:"dispatcher_id"`
 	Type         byte                `json:"type"`
 	// SchemaID means different for different job types:
@@ -46,7 +47,7 @@ type DDLEvent struct {
 
 	TiDBOnly bool `json:"tidb_only"`
 	// 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
-	PostTxnFlushed []func() `msg:"-"`
+	PostTxnFlushed []func() `json:"-"`
 }
 
 func (d *DDLEvent) GetType() int {
@@ -127,7 +128,7 @@ func (t *DDLEvent) Unmarshal(data []byte) error {
 	return json.Unmarshal(data, t)
 }
 
-// TODO: fix it
+// FIXME: not implemented
 func (t *DDLEvent) GetSize() int64 {
 	return 0
 }

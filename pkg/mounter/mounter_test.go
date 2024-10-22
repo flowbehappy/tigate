@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/common/event"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -473,7 +474,7 @@ func TestTimezoneDefaultValue(t *testing.T) {
 	require.NotNil(t, dmlEvent)
 	row, ok := dmlEvent.GetNextRow()
 	require.True(t, ok)
-	require.Equal(t, common.RowTypeInsert, row.RowType)
+	require.Equal(t, event.RowTypeInsert, row.RowType)
 	require.Equal(t, int64(1), row.Row.GetInt64(0))
 	require.Equal(t, "2023-02-09 13:00:00", row.Row.GetTime(1).String())
 }
@@ -566,7 +567,7 @@ func TestAllTypes(t *testing.T) {
 
 	row, ok := event.GetNextRow()
 	require.True(t, ok)
-	require.Equal(t, common.RowTypeInsert, row.RowType)
+	require.Equal(t, event.RowTypeInsert, row.RowType)
 	require.Equal(t, int64(2), row.Row.GetInt64(0))
 	require.Equal(t, int64(1), row.Row.GetInt64(1))
 
@@ -660,7 +661,7 @@ func TestNullColumn(t *testing.T) {
 
 	row, ok := dmlEvent.GetNextRow()
 	require.True(t, ok)
-	require.Equal(t, common.RowTypeInsert, row.RowType)
+	require.Equal(t, event.RowTypeInsert, row.RowType)
 
 	tableInfo := helper.GetTableInfo(job)
 	require.NotNil(t, tableInfo)
@@ -707,7 +708,7 @@ func TestBinary(t *testing.T) {
 
 	row, ok := dmlEvent.GetNextRow()
 	require.True(t, ok)
-	require.Equal(t, common.RowTypeInsert, row.RowType)
+	require.Equal(t, event.RowTypeInsert, row.RowType)
 	tableInfo := helper.GetTableInfo(job)
 	v, err := common.FormatColVal(&row.Row, tableInfo.Columns[0], 0)
 	require.NoError(t, err)
