@@ -54,11 +54,6 @@ type coordinator struct {
 	// for log print
 	lastCheckTime time.Time
 
-	// scheduling fields
-	supervisor *Supervisor
-
-	lastState *orchestrator.GlobalReactorState
-
 	lastSaveTime         time.Time
 	lastTickTime         time.Time
 	scheduledChangefeeds map[common.MaintainerID]scheduler.Inferior
