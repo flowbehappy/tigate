@@ -92,6 +92,20 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherMa
 	return nil
 }
 
+func (c *HeartBeatCollector) RemoveEventDispatcherManager(m *EventDispatcherManager) error {
+	err := c.heartBeatResponseDynamicStream.RemovePath(m.changefeedID)
+	if err != nil {
+		log.Error("heartBeatResponseDynamicStream Failed to remove path", zap.Any("ChangefeedID", m.changefeedID))
+		return err
+	}
+	err = c.schedulerDispatcherRequestDynamicStream.RemovePath(m.changefeedID)
+	if err != nil {
+		log.Error("schedulerDispatcherRequestDynamicStream Failed to remove path", zap.Any("ChangefeedID", m.changefeedID))
+		return err
+	}
+	return nil
+}
+
 func (c *HeartBeatCollector) sendHeartBeatMessages() {
 	for {
 		heartBeatRequestWithTargetID := c.heartBeatReqQueue.Dequeue()
