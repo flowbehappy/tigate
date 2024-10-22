@@ -13,17 +13,23 @@
 
 package scheduler
 
-import (
-	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/pkg/node"
-)
+import "github.com/flowbehappy/tigate/pkg/node"
 
-type Inferior interface {
-	UpdateStatus(any)
-	NewAddInferiorMessage(id node.ID) *messaging.TargetMessage
-	NewRemoveInferiorMessage(id node.ID) *messaging.TargetMessage
+// Item is an item in the priority queue, use the Load field as the priority
+type Item struct {
+	Node  node.ID
+	Load  int
+	index int
 }
 
-type NewBootstrapFn func(id node.ID) *messaging.TargetMessage
+func (i *Item) SetHeapIndex(idx int) {
+	i.index = idx
+}
 
-type NewInferiorFn[T comparable] func(id T) Inferior
+func (i *Item) GetHeapIndex() int {
+	return i.index
+}
+
+func (i *Item) CompareTo(t *Item) int {
+	return i.Load - t.Load
+}

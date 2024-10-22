@@ -105,7 +105,7 @@ func (m *SplitDispatcherOperator) Check(from node.ID, status *heartbeatpb.TableS
 }
 
 func (m *SplitDispatcherOperator) Schedule() *messaging.TargetMessage {
-	return m.replicaSet.NewRemoveInferiorMessage(m.originNode)
+	return m.replicaSet.NewRemoveDispatcherMessage(m.originNode)
 }
 
 // OnTaskRemoved is called when the task is removed by ddl

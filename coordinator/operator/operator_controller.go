@@ -18,9 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/coordinator/changefeed"
 	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/maintainer/replica"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/node"
@@ -32,9 +31,8 @@ import (
 // Controller is the operator controller, it manages all operators.
 // And the Controller is responsible for the execution of the operator.
 type Controller struct {
-	changefeedID  string
-	replicationDB *replica.ReplicationDB
-	operators     map[common.DispatcherID]Operator
+	changefeedDB  *changefeed.ChangefeedDB
+	operators     map[model.ChangeFeedID]Operator
 	runningQueue  operatorQueue
 	batchSize     int
 	messageCenter messaging.MessageCenter
@@ -42,17 +40,15 @@ type Controller struct {
 	lock sync.RWMutex
 }
 
-func NewOperatorController(changefeedID string,
-	mc messaging.MessageCenter,
-	db *replica.ReplicationDB,
+func NewOperatorController(mc messaging.MessageCenter,
+	db *changefeed.ChangefeedDB,
 	batchSize int) *Controller {
 	oc := &Controller{
-		changefeedID:  changefeedID,
-		operators:     make(map[common.DispatcherID]Operator),
+		operators:     make(map[model.ChangeFeedID]Operator),
 		runningQueue:  make(operatorQueue, 0),
 		messageCenter: mc,
 		batchSize:     batchSize,
-		replicationDB: db,
+		changefeedDB:  db,
 	}
 	return oc
 }
@@ -76,45 +72,13 @@ func (oc *Controller) Execute() time.Time {
 
 		if msg != nil {
 			_ = oc.messageCenter.SendCommand(msg)
-			log.Info("send command to dispatcher",
-				zap.String("changefeed", oc.changefeedID),
+			log.Info("send command to maintainer",
 				zap.String("operator", r.String()))
 		}
 		executedItem++
 		if executedItem >= oc.batchSize {
 			return time.Now().Add(time.Millisecond * 50)
 		}
-	}
-}
-
-// RemoveAllTasks remove all tasks, and notify all operators to stop.
-// it is only called by the barrier when the changefeed is stopped.
-func (oc *Controller) RemoveAllTasks() {
-	oc.lock.Lock()
-	defer oc.lock.Unlock()
-
-	for _, replicaSet := range oc.replicationDB.TryRemoveAll() {
-		oc.removeReplicaSet(NewRemoveDispatcherOperator(oc.replicationDB, replicaSet))
-	}
-}
-
-// RemoveTasksBySchemaID remove all tasks by schema id.
-// it is only by the barrier when the schema is dropped by ddl
-func (oc *Controller) RemoveTasksBySchemaID(schemaID int64) {
-	oc.lock.Lock()
-	defer oc.lock.Unlock()
-	for _, replicaSet := range oc.replicationDB.TryRemoveBySchemaID(schemaID) {
-		oc.removeReplicaSet(NewRemoveDispatcherOperator(oc.replicationDB, replicaSet))
-	}
-}
-
-// RemoveTasksByTableIDs remove all tasks by table ids.
-// it is only called by the barrier when the table is dropped by ddl
-func (oc *Controller) RemoveTasksByTableIDs(tables ...int64) {
-	oc.lock.Lock()
-	defer oc.lock.Unlock()
-	for _, replicaSet := range oc.replicationDB.TryRemoveByTableIDs(tables...) {
-		oc.removeReplicaSet(NewRemoveDispatcherOperator(oc.replicationDB, replicaSet))
 	}
 }
 
@@ -125,14 +89,12 @@ func (oc *Controller) AddOperator(op Operator) bool {
 
 	if _, ok := oc.operators[op.ID()]; ok {
 		log.Info("add operator failed, operator already exists",
-			zap.String("changefeed", oc.changefeedID),
 			zap.String("operator", op.String()))
 		return false
 	}
-	span := oc.replicationDB.GetTaskByID(op.ID())
-	if span == nil {
-		log.Warn("add operator failed, span not found",
-			zap.String("changefeed", oc.changefeedID),
+	cf := oc.changefeedDB.GetByID(op.ID())
+	if cf == nil {
+		log.Warn("add operator failed, changefeed not found",
 			zap.String("operator", op.String()))
 		return false
 	}
@@ -140,7 +102,36 @@ func (oc *Controller) AddOperator(op Operator) bool {
 	return true
 }
 
-func (oc *Controller) UpdateOperatorStatus(id common.DispatcherID, from node.ID, status *heartbeatpb.TableSpanStatus) {
+// StopChangefeed stop changefeed when the changefeed is stopped/removed.
+// if remove is true, it will remove the changefeed from the chagnefeed DB
+// if remove is false, it only marks as the changefeed stooped in changefeed DB, so we will not schedule the changefeed again
+func (oc *Controller) StopChangefeed(cfID model.ChangeFeedID, remove bool) {
+	oc.lock.Lock()
+	defer oc.lock.Unlock()
+
+	var cf *changefeed.Changefeed
+	if remove {
+		cf = oc.changefeedDB.RemoveByChangefeedID(cfID)
+	} else {
+		cf = oc.changefeedDB.StopByChangefeedID(cfID)
+	}
+	if cf == nil {
+		log.Info("changefeed is not scheduled")
+		return
+	}
+	if old, ok := oc.operators[cfID]; ok {
+		log.Info("changefeed is stopped , replace the old one",
+			zap.String("changefeed", cfID.ID),
+			zap.String("operator", old.String()))
+		old.OnTaskRemoved()
+		delete(oc.operators, old.ID())
+	}
+	op := NewRemoveChangefeedOperator(cf)
+	oc.pushOperator(op)
+}
+
+func (oc *Controller) UpdateOperatorStatus(id model.ChangeFeedID, from node.ID,
+	status *heartbeatpb.MaintainerStatus) {
 	oc.lock.RLock()
 	defer oc.lock.RUnlock()
 
@@ -151,16 +142,16 @@ func (oc *Controller) UpdateOperatorStatus(id common.DispatcherID, from node.ID,
 }
 
 // OnNodeRemoved is called when a node is offline,
-// the controller will mark all spans on the node as absent if no operator is handling it,
+// the controller will mark all maintainers on the node as absent if no operator is handling it,
 // then the controller will notify all operators.
 func (oc *Controller) OnNodeRemoved(n node.ID) {
 	oc.lock.RLock()
 	defer oc.lock.RUnlock()
 
-	for _, span := range oc.replicationDB.GetTaskByNodeID(n) {
-		_, ok := oc.operators[span.ID]
+	for _, cf := range oc.changefeedDB.GetByNodeID(n) {
+		_, ok := oc.operators[cf.ID]
 		if !ok {
-			oc.replicationDB.MarkSpanAbsent(span)
+			oc.changefeedDB.MarkMaintainerAbsent(cf)
 		}
 	}
 	for _, op := range oc.operators {
@@ -169,7 +160,7 @@ func (oc *Controller) OnNodeRemoved(n node.ID) {
 }
 
 // GetOperator returns the operator by id.
-func (oc *Controller) GetOperator(id common.DispatcherID) Operator {
+func (oc *Controller) GetOperator(id model.ChangeFeedID) Operator {
 	oc.lock.RLock()
 	defer oc.lock.RUnlock()
 	return oc.operators[id]
@@ -198,10 +189,9 @@ func (oc *Controller) pollQueueingOperator() (Operator, bool) {
 	if op.IsFinished() {
 		op.PostFinish()
 		delete(oc.operators, opID)
-		metrics.FinishedOperatorCount.WithLabelValues(model.DefaultNamespace, oc.changefeedID, op.Type()).Inc()
-		metrics.OperatorDuration.WithLabelValues(model.DefaultNamespace, oc.changefeedID, op.Type()).Observe(time.Since(item.enqueueTime).Seconds())
+		metrics.CoordinatorFinishedOperatorCount.WithLabelValues(op.Type()).Inc()
+		metrics.CoordinatorOperatorDuration.WithLabelValues(op.Type()).Observe(time.Since(item.enqueueTime).Seconds())
 		log.Info("operator finished",
-			zap.String("changefeed", oc.changefeedID),
 			zap.String("operator", opID.String()),
 			zap.String("operator", op.String()))
 		return nil, true
@@ -217,27 +207,12 @@ func (oc *Controller) pollQueueingOperator() (Operator, bool) {
 	return op, true
 }
 
-// ReplicaSetRemoved if the replica set is removed,
-// the controller will remove the operator. add a new operator to the controller.
-func (oc *Controller) removeReplicaSet(op *RemoveDispatcherOperator) {
-	if old, ok := oc.operators[op.ID()]; ok {
-		log.Info("replica set is removed , replace the old one",
-			zap.String("changefeed", oc.changefeedID),
-			zap.String("replicaset", old.ID().String()),
-			zap.String("operator", old.String()))
-		old.OnTaskRemoved()
-		delete(oc.operators, op.ID())
-	}
-	oc.pushOperator(op)
-}
-
 // pushOperator add an operator to the controller queue.
 func (oc *Controller) pushOperator(op Operator) {
 	log.Info("add operator to running queue",
-		zap.String("changefeed", oc.changefeedID),
 		zap.String("operator", op.String()))
 	oc.operators[op.ID()] = op
 	op.Start()
 	heap.Push(&oc.runningQueue, &operatorWithTime{op: op, time: time.Now(), enqueueTime: time.Now()})
-	metrics.CreatedOperatorCount.WithLabelValues(model.DefaultNamespace, oc.changefeedID, op.Type()).Inc()
+	metrics.CoordinatorCreatedOperatorCount.WithLabelValues(op.Type()).Inc()
 }

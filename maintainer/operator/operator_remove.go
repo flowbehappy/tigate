@@ -51,7 +51,7 @@ func (m *RemoveDispatcherOperator) Check(from node.ID, status *heartbeatpb.Table
 }
 
 func (m *RemoveDispatcherOperator) Schedule() *messaging.TargetMessage {
-	return m.replicaSet.NewRemoveInferiorMessage(m.replicaSet.GetNodeID())
+	return m.replicaSet.NewRemoveDispatcherMessage(m.replicaSet.GetNodeID())
 }
 
 // OnNodeRemove is called when node offline, and the replicaset must already move to absent status and will be scheduled again

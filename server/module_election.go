@@ -18,19 +18,16 @@ import (
 	"time"
 
 	"github.com/flowbehappy/tigate/coordinator"
+	"github.com/flowbehappy/tigate/coordinator/changefeed"
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/etcd"
-	"github.com/pingcap/tiflow/pkg/orchestrator"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.etcd.io/etcd/server/v3/mvcc"
 )
@@ -58,13 +55,6 @@ func (e *elector) Name() string {
 }
 
 func (e *elector) campaignCoordinator(ctx context.Context) error {
-	cfg := config.GetGlobalServerConfig()
-	// In most failure cases, we don't return error directly, just run another
-	// campaign loop. We treat campaign loop as a special background routine.
-	ownerFlushInterval := time.Duration(cfg.OwnerFlushInterval)
-	failpoint.Inject("ownerFlushIntervalInject", func(val failpoint.Value) {
-		ownerFlushInterval = time.Millisecond * time.Duration(val.(int))
-	})
 	// Limit the frequency of elections to avoid putting too much pressure on the etcd server
 	rl := rate.NewLimiter(rate.Every(time.Second), 1 /* burst */)
 	for {
@@ -124,21 +114,11 @@ func (e *elector) campaignCoordinator(ctx context.Context) error {
 			zap.Int64("coordinatorVersion", coordinatorVersion))
 
 		co := coordinator.New(e.svr.info,
-			e.svr.pdClient, e.svr.PDClock, e.svr.EtcdClient.GetGCServiceID(),
-			coordinatorVersion)
+			e.svr.pdClient, e.svr.PDClock, changefeed.NewEtcdBackend(e.svr.EtcdClient),
+			e.svr.EtcdClient.GetClusterID(),
+			coordinatorVersion, 10000, time.Minute)
 		e.svr.setCoordinator(co)
-
-		// watcher changefeed changes
-		watcher := watcher.NewEtcdWatcher(e.svr.EtcdClient,
-			e.svr.session,
-			// changefeed info key prefix
-			etcd.BaseKey(e.svr.EtcdClient.GetClusterID()),
-			"coordinator")
-
-		err = watcher.RunEtcdWorker(ctx, co.(orchestrator.Reactor),
-			orchestrator.NewGlobalState(e.svr.EtcdClient.GetClusterID(),
-				cfg.CaptureSessionTTL),
-			ownerFlushInterval)
+		err = co.Run(ctx)
 		e.svr.coordinator.AsyncStop()
 		e.svr.setCoordinator(nil)
 

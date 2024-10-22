@@ -15,10 +15,8 @@ package v2
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/flowbehappy/tigate/version"
@@ -36,7 +34,6 @@ import (
 	"github.com/pingcap/tiflow/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -163,21 +160,20 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 			return
 		}
 	}()
-	upstreamInfo := &model.UpstreamInfo{
-		ID:            info.UpstreamID,
-		PDEndpoints:   strings.Join(cfg.PDAddrs, ","),
-		KeyPath:       cfg.KeyPath,
-		CertPath:      cfg.CertPath,
-		CAPath:        cfg.CAPath,
-		CertAllowedCN: cfg.CertAllowedCN,
-	}
 
-	err = h.server.GetEtcdClient().CreateChangefeedInfo(ctx, upstreamInfo, info)
+	co, err := h.server.GetCoordinator()
 	if err != nil {
 		needRemoveGCSafePoint = true
 		_ = c.Error(err)
 		return
 	}
+	err = co.CreateChangefeed(ctx, info)
+	if err != nil {
+		needRemoveGCSafePoint = true
+		_ = c.Error(err)
+		return
+	}
+
 	log.Info("Create changefeed successfully!",
 		zap.String("id", info.ID),
 		zap.String("changefeed", info.String()))
@@ -333,7 +329,6 @@ func (h *OpenAPIV2) deleteChangefeed(c *gin.Context) {
 			changefeedID.ID))
 		return
 	}
-
 	etcdCli := h.server.GetEtcdClient()
 	cfInfo, err := etcdCli.GetChangeFeedInfo(ctx, changefeedID)
 	if err != nil {
@@ -344,27 +339,12 @@ func (h *OpenAPIV2) deleteChangefeed(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-
-	status, _, err := etcdCli.GetChangeFeedStatus(ctx, changefeedID)
+	coordinator, err := h.server.GetCoordinator()
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
-
-	infoKey := etcd.GetEtcdKeyChangeFeedInfo(etcdCli.GetClusterID(), changefeedID)
-	jobKey := etcd.GetEtcdKeyJob(etcdCli.GetClusterID(), changefeedID)
-
-	opsThen := []clientv3.Op{}
-	opsThen = append(opsThen, clientv3.OpDelete(infoKey))
-	opsThen = append(opsThen, clientv3.OpDelete(jobKey))
-
-	resp, err := etcdCli.GetEtcdClient().Txn(ctx, []clientv3.Cmp{}, opsThen, []clientv3.Op{})
-	if !resp.Succeeded {
-		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("delete changefeed %s", changefeedID))
-		_ = c.Error(err)
-		return
-	}
-
+	checkpointTs, err := coordinator.RemoveChangefeed(ctx, changefeedID)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -375,7 +355,7 @@ func (h *OpenAPIV2) deleteChangefeed(c *gin.Context) {
 		SinkURI      string `json:"sink_uri"`
 	}{
 		ChangeFeedID: changefeedID.ID,
-		CheckpointTs: status.CheckpointTs,
+		CheckpointTs: checkpointTs,
 		SinkURI:      cfInfo.SinkURI,
 	})
 }
@@ -419,31 +399,13 @@ func (h *OpenAPIV2) pauseChangefeed(c *gin.Context) {
 			changefeedID.ID))
 		return
 	}
-	detail := &model.ChangeFeedInfo{}
-	err = detail.Unmarshal(resp.Kvs[0].Value)
+	coordinator, err := h.server.GetCoordinator()
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
-	detail.State = model.StateStopped
-	newStr, err := detail.Marshal()
+	err = coordinator.PauseChangefeed(ctx, changefeedID)
 	if err != nil {
-		_ = c.Error(err)
-		return
-	}
-
-	opsThen := []clientv3.Op{}
-	opsThen = append(opsThen, clientv3.OpPut(infoKey, newStr))
-
-	putResp, err := etcdCli.GetEtcdClient().Txn(ctx, []clientv3.Cmp{
-		clientv3.Compare(clientv3.ModRevision(infoKey), "=", resp.Kvs[0].ModRevision),
-	}, opsThen, []clientv3.Op{})
-	if err != nil {
-		_ = c.Error(err)
-		return
-	}
-	if !putResp.Succeeded {
-		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("pause changefeed %s", changefeedID))
 		_ = c.Error(err)
 		return
 	}
@@ -538,30 +500,16 @@ func (h *OpenAPIV2) resumeChangefeed(c *gin.Context) {
 			return
 		}
 	}()
-
-	detail.State = model.StateNormal
-	newStr, err := detail.Marshal()
+	coordinator, err := h.server.GetCoordinator()
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
-
-	opsThen := []clientv3.Op{}
-	opsThen = append(opsThen, clientv3.OpPut(infoKey, newStr))
-
-	putResp, err := etcdCli.GetEtcdClient().Txn(ctx, []clientv3.Cmp{
-		clientv3.Compare(clientv3.ModRevision(infoKey), "=", resp.Kvs[0].ModRevision),
-	}, opsThen, []clientv3.Op{})
+	err = coordinator.ResumeChangefeed(ctx, changefeedID, newCheckpointTs)
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
-	if !putResp.Succeeded {
-		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("pause changefeed %s", changefeedID))
-		_ = c.Error(err)
-		return
-	}
-
 	c.JSON(http.StatusOK, &cdcapi.EmptyResponse{})
 }
 
@@ -658,9 +606,13 @@ func (h *OpenAPIV2) updateChangefeed(c *gin.Context) {
 		return
 	}
 
-	err = etcdCli.UpdateChangefeedAndUpstream(ctx, nil, oldCfInfo)
+	coordinator, err := h.server.GetCoordinator()
 	if err != nil {
-		_ = c.Error(errors.Trace(err))
+		_ = c.Error(err)
+		return
+	}
+	if err := coordinator.UpdateChangefeed(ctx, oldCfInfo); err != nil {
+		_ = c.Error(err)
 		return
 	}
 	c.JSON(http.StatusOK, toAPIModel(oldCfInfo, status.CheckpointTs, status.CheckpointTs, nil))
