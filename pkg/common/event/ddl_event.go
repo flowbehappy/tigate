@@ -9,10 +9,14 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	DDLEventVersion = 0
+)
+
 type DDLEvent struct {
 	// Version is the version of the DDLEvent struct.
 	Version      byte                `json:"version"`
-	DispatcherID common.DispatcherID `json:"dispatcher_id"`
+	DispatcherID common.DispatcherID `json:"-"`
 	Type         byte                `json:"type"`
 	// SchemaID means different for different job types:
 	// - ExchangeTablePartition: db id of non-partitioned table
@@ -120,12 +124,22 @@ func (e *DDLEvent) GetDDLType() model.ActionType {
 }
 
 func (t DDLEvent) Marshal() ([]byte, error) {
-	// TODO: optimize it
-	return json.Marshal(t)
+	data, err := json.Marshal(t)
+	if err != nil {
+		return nil, err
+	}
+	dispatcherIDData := t.DispatcherID.Marshal()
+	data = append(data, dispatcherIDData...)
+	return data, nil
 }
 
 func (t *DDLEvent) Unmarshal(data []byte) error {
-	return json.Unmarshal(data, t)
+	dispatcherIDData := data[len(data)-16:]
+	err := t.DispatcherID.Unmarshal(dispatcherIDData)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data[:len(data)-16], t)
 }
 
 // FIXME: not implemented

@@ -12,6 +12,8 @@ import (
 const (
 	// defaultRowCount is the start row count of a transaction.
 	defaultRowCount = 1
+	// DMLEventVersion is the version of the DMLEvent struct.
+	DMLEventVersion = 0
 )
 
 // DMLEvent represent a batch of DMLs of a whole or partial of a transaction.
@@ -57,7 +59,7 @@ func NewDMLEvent(
 	// FIXME: check if chk isFull in the future
 	chk := chunk.NewChunkWithCapacity(tableInfo.GetFieldSlice(), defaultRowCount)
 	return &DMLEvent{
-		Version:         0,
+		Version:         DMLEventVersion,
 		DispatcherID:    dispatcherID,
 		PhysicalTableID: tableID,
 		StartTs:         startTs,
@@ -214,10 +216,8 @@ func (t *DMLEvent) encodeV0() ([]byte, error) {
 
 	// DispatcherID
 	dispatcherIDBytes := t.DispatcherID.Marshal()
-	for i := 0; i < len(dispatcherIDBytes); i++ {
-		buf[offset] = dispatcherIDBytes[i]
-		offset++
-	}
+	copy(buf[offset:], dispatcherIDBytes)
+	offset += len(dispatcherIDBytes)
 
 	// PhysicalTableID
 	binary.LittleEndian.PutUint64(buf[offset:], uint64(t.PhysicalTableID))
