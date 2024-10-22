@@ -10,9 +10,8 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	pevent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/pingcap/log"
 	tconfig "github.com/pingcap/tiflow/pkg/config"
 	"github.com/stretchr/testify/require"
@@ -33,7 +32,6 @@ func TestNewDispatcherStat(t *testing.T) {
 	require.Equal(t, startTs, stat.watermark.Load())
 	require.NotNil(t, stat.spanSubscription)
 	require.Equal(t, startTs, stat.spanSubscription.watermark.Load())
-	require.NotEmpty(t, stat.workerIndex)
 	require.Nil(t, stat.filter)
 }
 
@@ -59,9 +57,7 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 			g.Add(1)
 			go func() {
 				defer g.Done()
-				stat.spanSubscription.onNewEvent(&common.RawKVEntry{
-					CRTs: ts,
-				})
+				stat.spanSubscription.onSubscriptionWatermark(ts)
 			}()
 		}
 		g.Wait()
@@ -112,7 +108,7 @@ func TestResolvedTsCache(t *testing.T) {
 	require.Equal(t, 10, rc.limit)
 
 	// Case 1: insert a new resolved ts
-	rc.add(commonEvent.ResolvedEvent{
+	rc.add(pevent.ResolvedEvent{
 		DispatcherID: common.NewDispatcherID(),
 		ResolvedTs:   100,
 	})
@@ -123,7 +119,7 @@ func TestResolvedTsCache(t *testing.T) {
 	// Case 2: add more resolved ts until full
 	i := 1
 	for !rc.isFull() {
-		rc.add(commonEvent.ResolvedEvent{
+		rc.add(pevent.ResolvedEvent{
 			DispatcherID: common.NewDispatcherID(),
 			ResolvedTs:   uint64(100 + i),
 		})
@@ -143,7 +139,7 @@ func TestResolvedTsCache(t *testing.T) {
 	require.False(t, rc.isFull())
 }
 
-func genEvents(helper *mounter.EventTestHelper, t *testing.T, ddl string, dmls ...string) (commonEvent.DDLEvent, []*common.RawKVEntry) {
+func genEvents(helper *mounter.EventTestHelper, t *testing.T, ddl string, dmls ...string) (pevent.DDLEvent, []*common.RawKVEntry) {
 	job := helper.DDL2Job(ddl)
 	schema := job.SchemaName
 	table := job.TableName
@@ -152,7 +148,7 @@ func genEvents(helper *mounter.EventTestHelper, t *testing.T, ddl string, dmls .
 		require.Equal(t, job.BinlogInfo.TableInfo.UpdateTS-1, e.StartTs)
 		require.Equal(t, job.BinlogInfo.TableInfo.UpdateTS+1, e.CRTs)
 	}
-	return commonEvent.DDLEvent{
+	return pevent.DDLEvent{
 		FinishedTs: job.BinlogInfo.TableInfo.UpdateTS,
 		Job:        job,
 	}, kvEvents1
@@ -198,12 +194,12 @@ func TestSendEvents(t *testing.T) {
 			t        int // type
 			commitTs common.Ts
 		}{
-			{t: commonEvent.TypeDDLEvent, commitTs: ddlEvent.FinishedTs},
-			{t: commonEvent.TypeDMLEvent, commitTs: kvEvents[0].CRTs},
-			{t: commonEvent.TypeDDLEvent, commitTs: ddlEvent1.FinishedTs},
-			{t: commonEvent.TypeDDLEvent, commitTs: ddlEvent2.FinishedTs},
-			{t: commonEvent.TypeDMLEvent, commitTs: kvEvents2[0].CRTs},
-			{t: commonEvent.TypeBatchResolvedEvent, commitTs: common.Ts(0)},
+			{t: pevent.TypeDDLEvent, commitTs: ddlEvent.FinishedTs},
+			{t: pevent.TypeDMLEvent, commitTs: kvEvents[0].CRTs},
+			{t: pevent.TypeDDLEvent, commitTs: ddlEvent1.FinishedTs},
+			{t: pevent.TypeDDLEvent, commitTs: ddlEvent2.FinishedTs},
+			{t: pevent.TypeDMLEvent, commitTs: kvEvents2[0].CRTs},
+			{t: pevent.TypeBatchResolvedEvent, commitTs: common.Ts(0)},
 		}
 		cnt := 0
 		for {
@@ -212,7 +208,7 @@ func TestSendEvents(t *testing.T) {
 				return
 			case msgs := <-msgCh:
 				for _, msg := range msgs.Message {
-					event, ok := msg.(commonEvent.Event)
+					event, ok := msg.(pevent.Event)
 					require.True(t, ok)
 					fmt.Printf("cnt: %d -> %+v\n", cnt, event)
 					require.Equal(t, expected[cnt].t, event.GetType(), "cnt: %d, e: %+v", cnt, event)

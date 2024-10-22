@@ -14,8 +14,8 @@ import (
 	"github.com/flowbehappy/tigate/logservice/txnutil"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/log"
@@ -468,7 +468,7 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 		innerIter:    iter,
 		prevStartTS:  0,
 		prevCommitTS: 0,
-		iterMounter:  mounter.NewMounter(time.Local), // FIXME
+		iterMounter:  event.NewMounter(time.Local), // FIXME
 		startTs:      dataRange.StartTs,
 		endTs:        dataRange.EndTs,
 		rowCount:     0,
@@ -679,7 +679,7 @@ type eventStoreIter struct {
 	innerIter    *pebble.Iterator
 	prevStartTS  uint64
 	prevCommitTS uint64
-	iterMounter  mounter.Mounter
+	iterMounter  event.Mounter
 
 	// for debug
 	startTs  uint64

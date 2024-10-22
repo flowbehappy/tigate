@@ -15,10 +15,10 @@ import (
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/util"
 	"github.com/prometheus/client_golang/prometheus"
@@ -47,7 +47,7 @@ type eventBroker struct {
 	eventStore  eventstore.EventStore
 	schemaStore schemastore.SchemaStore
 	// todo: only one mounter, this may become the bottleneck affect the throughput performance
-	mounter mounter.Mounter
+	mounter event.Mounter
 	// msgSender is used to send the events to the dispatchers.
 	msgSender messaging.MessageSender
 
@@ -106,7 +106,7 @@ func newEventBroker(
 	c := &eventBroker{
 		tidbClusterID:           id,
 		eventStore:              eventStore,
-		mounter:                 mounter.NewMounter(tz),
+		mounter:                 event.NewMounter(tz),
 		schemaStore:             schemaStore,
 		notifyCh:                make(chan *spanSubscription, defaultChannelSize*16),
 		dispatchers:             sync.Map{},

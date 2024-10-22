@@ -172,7 +172,14 @@ func (t DMLEvent) Marshal() ([]byte, error) {
 	return t.encode()
 }
 
+// Unmarshal the DMLEvent from the given data.
+// Please make sure the TableInfo of the DMLEvent is set before unmarshal.
 func (t *DMLEvent) Unmarshal(data []byte) error {
+	// Rows
+	if t.TableInfo == nil {
+		log.Panic("TableInfo must not nil")
+		return nil
+	}
 	return t.decode(data)
 }
 
@@ -235,10 +242,7 @@ func (t *DMLEvent) encodeV0() ([]byte, error) {
 		buf[offset] = byte(rowType)
 		offset++
 	}
-	// Rows
-	if t.TableInfo == nil {
-		log.Panic("TableInfo must not be nil when encoding DMLEvent")
-	}
+
 	encoder := chunk.NewCodec(t.TableInfo.GetFieldSlice())
 	data := encoder.Encode(t.Rows)
 
