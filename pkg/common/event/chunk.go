@@ -1,4 +1,4 @@
-package mounter
+package event
 
 import (
 	"fmt"

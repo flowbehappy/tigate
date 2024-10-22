@@ -615,7 +615,7 @@ func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) *preparedDMLs 
 			continue
 		}
 		// For metrics and logging.
-		rowCount += event.Len()
+		rowCount += int(event.Len())
 		approximateSize += event.GetSize()
 		if len(startTs) == 0 || startTs[len(startTs)-1] != event.StartTs {
 			startTs = append(startTs, event.StartTs)

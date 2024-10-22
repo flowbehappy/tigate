@@ -1,10 +1,12 @@
 package event
 
 import (
-	"log"
+	"encoding/binary"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"go.uber.org/zap"
 )
 
 const (
@@ -14,8 +16,8 @@ const (
 
 // DMLEvent represent a batch of DMLs of a whole or partial of a transaction.
 type DMLEvent struct {
-	// Version is the version of the DMLEvent.
-	Version         int                 `json:"version"`
+	// Version is the version of the DMLEvent struct.
+	Version         byte                `json:"version"`
 	DispatcherID    common.DispatcherID `json:"dispatcher_id"`
 	PhysicalTableID int64               `json:"physical_table_id"`
 	StartTs         uint64              `json:"start_ts"`
@@ -23,18 +25,15 @@ type DMLEvent struct {
 	// The seq of the event. It is set by event service.
 	Seq uint64 `json:"seq"`
 	// Length is the number of rows in the transaction.
-	Length int `json:"length"`
+	Length int32 `json:"length"`
 	// RowTypes is the types of every row in the transaction.
 	// len(RowTypes) == Length
-	RowTypes []RowType `json:"row_types"`
 	// ApproximateSize is the approximate size of all rows in the transaction.
-	ApproximateSize int64 `json:"approximate_size"`
+	ApproximateSize int64     `json:"approximate_size"`
+	RowTypes        []RowType `json:"row_types"`
 	// Rows is the rows of the transaction.
 	Rows *chunk.Chunk `json:"rows"`
 
-	// offset is the offset of the current row in the transaction.
-	// It is internal field, not exported. So it doesn't need to be marshalled.
-	offset int `json:"-"`
 	// TableInfo is the table info of the transaction.
 	// If the DMLEvent is send from a remote eventService, the TableInfo is nil.
 	TableInfo *common.TableInfo `json:"table_info"`
@@ -42,7 +41,11 @@ type DMLEvent struct {
 	ReplicatingTs uint64 `json:"replicating_ts"`
 	// PostTxnFlushed is the functions to be executed after the transaction is flushed.
 	// It is set and used by dispatcher.
-	PostTxnFlushed []func() `msg:"-"`
+	PostTxnFlushed []func() `json:"-"`
+
+	// offset is the offset of the current row in the transaction.
+	// It is internal field, not exported. So it doesn't need to be marshalled.
+	offset int `json:"-"`
 }
 
 func NewDMLEvent(
@@ -161,25 +164,131 @@ func (t *DMLEvent) GetNextRow() (RowChange, bool) {
 
 // Len returns the number of row change events in the transaction.
 // Note: An update event is counted as 1 row.
-func (t *DMLEvent) Len() int {
+func (t *DMLEvent) Len() int32 {
 	return t.Length
 }
 
 func (t DMLEvent) Marshal() ([]byte, error) {
-	// TODO
-	log.Panic("TEvent.Marshal: not implemented")
-	buf := make([]byte, 0)
-	return buf, nil
+	return t.encode()
 }
 
+// Unmarshal the DMLEvent from the given data.
+// Please make sure the TableInfo of the DMLEvent is set before unmarshal.
 func (t *DMLEvent) Unmarshal(data []byte) error {
-	//TODO
-	log.Panic("TEvent.Unmarshal: not implemented")
-	return nil
+	// Rows
+	if t.TableInfo == nil {
+		log.Panic("TableInfo must not nil")
+		return nil
+	}
+	return t.decode(data)
 }
 
 func (t *DMLEvent) GetSize() int64 {
 	return t.ApproximateSize
+}
+
+func (t *DMLEvent) encode() ([]byte, error) {
+	if t.Version != 0 {
+		log.Panic("DMLEvent: Only version 0 is supported right now", zap.Uint8("version", t.Version))
+		return nil, nil
+	}
+	return t.encodeV0()
+}
+
+func (t *DMLEvent) encodeV0() ([]byte, error) {
+	if t.Version != 0 {
+		log.Panic("DMLEvent: invalid version, expect 0, got ", zap.Uint8("version", t.Version))
+		return nil, nil
+	}
+	// Calculate the total size needed for the encoded data
+	size := 1 + t.DispatcherID.GetSize() + 5*8 + 4 + int(t.Length)
+
+	// Allocate a buffer with the calculated size
+	buf := make([]byte, size)
+	offset := 0
+
+	// Encode all fields
+	// Version
+	buf[offset] = t.Version
+	offset += 1
+
+	// DispatcherID
+	dispatcherIDBytes := t.DispatcherID.Marshal()
+	for i := 0; i < len(dispatcherIDBytes); i++ {
+		buf[offset] = dispatcherIDBytes[i]
+		offset++
+	}
+
+	// PhysicalTableID
+	binary.LittleEndian.PutUint64(buf[offset:], uint64(t.PhysicalTableID))
+	offset += 8
+	// StartTs
+	binary.LittleEndian.PutUint64(buf[offset:], t.StartTs)
+	offset += 8
+	// CommitTs
+	binary.LittleEndian.PutUint64(buf[offset:], t.CommitTs)
+	offset += 8
+	// Seq
+	binary.LittleEndian.PutUint64(buf[offset:], t.Seq)
+	offset += 8
+	// Length
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(t.Length))
+	offset += 4
+	// ApproximateSize
+	binary.LittleEndian.PutUint64(buf[offset:], uint64(t.ApproximateSize))
+	offset += 8
+	// RowTypes
+	for _, rowType := range t.RowTypes {
+		buf[offset] = byte(rowType)
+		offset++
+	}
+
+	encoder := chunk.NewCodec(t.TableInfo.GetFieldSlice())
+	data := encoder.Encode(t.Rows)
+
+	// Append the encoded data to the buffer
+	result := append(buf, data...)
+
+	return result, nil
+}
+
+func (t *DMLEvent) decode(data []byte) error {
+	t.Version = data[0]
+	if t.Version != 0 {
+		log.Panic("DMLEvent: Only version 0 is supported right now", zap.Uint8("version", t.Version))
+		return nil
+	}
+	return t.decodeV0(data)
+}
+
+func (t *DMLEvent) decodeV0(data []byte) error {
+	if t.Version != 0 {
+		log.Panic("DMLEvent: invalid version, expect 0, got ", zap.Uint8("version", t.Version))
+		return nil
+	}
+	offset := 1
+	t.DispatcherID.Unmarshal(data[offset:])
+	offset += t.DispatcherID.GetSize()
+	t.PhysicalTableID = int64(binary.LittleEndian.Uint64(data[offset:]))
+	offset += 8
+	t.StartTs = binary.LittleEndian.Uint64(data[offset:])
+	offset += 8
+	t.CommitTs = binary.LittleEndian.Uint64(data[offset:])
+	offset += 8
+	t.Seq = binary.LittleEndian.Uint64(data[offset:])
+	offset += 8
+	t.Length = int32(binary.LittleEndian.Uint32(data[offset:]))
+	offset += 4
+	t.ApproximateSize = int64(binary.LittleEndian.Uint64(data[offset:]))
+	offset += 8
+	t.RowTypes = make([]RowType, t.Length)
+	for i := 0; i < int(t.Length); i++ {
+		t.RowTypes[i] = RowType(data[offset])
+		offset++
+	}
+	decoder := chunk.NewCodec(t.TableInfo.GetFieldSlice())
+	t.Rows, _ = decoder.Decode(data[offset:])
+	return nil
 }
 
 type RowChange struct {
@@ -188,7 +297,7 @@ type RowChange struct {
 	RowType RowType
 }
 
-type RowType int
+type RowType byte
 
 const (
 	// RowTypeDelete represents a delete row.

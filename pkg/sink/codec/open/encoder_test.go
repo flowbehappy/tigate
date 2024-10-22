@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/mounter"
+	pevent "github.com/flowbehappy/tigate/pkg/common/event"
 	newcommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/log"
@@ -40,7 +40,7 @@ func TestEncoderOneMessage(t *testing.T) {
 	batchEncoder, err := NewBatchEncoder(ctx, config)
 	require.NoError(t, err)
 
-	helper := mounter.NewEventTestHelper(t)
+	helper := pevent.NewEventTestHelper(t)
 	defer helper.Close()
 	helper.Tk().MustExec("use test")
 
@@ -54,7 +54,7 @@ func TestEncoderOneMessage(t *testing.T) {
 
 	count := 0
 
-	insertRowEvent := &common.RowEvent{
+	insertRowEvent := &pevent.RowEvent{
 		TableInfo:      tableInfo,
 		CommitTs:       1,
 		Event:          insertRow,
@@ -90,7 +90,7 @@ func TestEncoderMultipleMessage(t *testing.T) {
 	batchEncoder, err := NewBatchEncoder(ctx, config)
 	require.NoError(t, err)
 
-	helper := mounter.NewEventTestHelper(t)
+	helper := pevent.NewEventTestHelper(t)
 	defer helper.Close()
 	helper.Tk().MustExec("use test")
 
@@ -107,7 +107,7 @@ func TestEncoderMultipleMessage(t *testing.T) {
 			break
 		}
 
-		insertRowEvent := &common.RowEvent{
+		insertRowEvent := &pevent.RowEvent{
 			TableInfo:      tableInfo,
 			CommitTs:       1,
 			Event:          insertRow,
@@ -162,7 +162,7 @@ func TestLargeMessage(t *testing.T) {
 	batchEncoder, err := NewBatchEncoder(ctx, config)
 	require.NoError(t, err)
 
-	helper := mounter.NewEventTestHelper(t)
+	helper := pevent.NewEventTestHelper(t)
 	defer helper.Close()
 	helper.Tk().MustExec("use test")
 
@@ -176,7 +176,7 @@ func TestLargeMessage(t *testing.T) {
 
 	count := 0
 
-	insertRowEvent := &common.RowEvent{
+	insertRowEvent := &pevent.RowEvent{
 		TableInfo:      tableInfo,
 		CommitTs:       1,
 		Event:          insertRow,
@@ -195,7 +195,7 @@ func TestLargeMessageWithHandle(t *testing.T) {
 	batchEncoder, err := NewBatchEncoder(ctx, config)
 	require.NoError(t, err)
 
-	helper := mounter.NewEventTestHelper(t)
+	helper := pevent.NewEventTestHelper(t)
 	defer helper.Close()
 	helper.Tk().MustExec("use test")
 
@@ -207,7 +207,7 @@ func TestLargeMessageWithHandle(t *testing.T) {
 	insertRow, ok := dmlEvent.GetNextRow()
 	require.True(t, ok)
 
-	insertRowEvent := &common.RowEvent{
+	insertRowEvent := &pevent.RowEvent{
 		TableInfo:      tableInfo,
 		CommitTs:       1,
 		Event:          insertRow,
@@ -239,7 +239,7 @@ func TestLargeMessageWithoutHandle(t *testing.T) {
 	batchEncoder, err := NewBatchEncoder(ctx, config)
 	require.NoError(t, err)
 
-	helper := mounter.NewEventTestHelper(t)
+	helper := pevent.NewEventTestHelper(t)
 	defer helper.Close()
 	helper.Tk().MustExec("use test")
 
@@ -251,7 +251,7 @@ func TestLargeMessageWithoutHandle(t *testing.T) {
 	insertRow, ok := dmlEvent.GetNextRow()
 	require.True(t, ok)
 
-	insertRowEvent := &common.RowEvent{
+	insertRowEvent := &pevent.RowEvent{
 		TableInfo:      tableInfo,
 		CommitTs:       1,
 		Event:          insertRow,

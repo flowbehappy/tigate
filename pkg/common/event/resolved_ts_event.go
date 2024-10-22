@@ -9,7 +9,8 @@ import (
 )
 
 type BatchResolvedEvent struct {
-	Version int
+	// Version is the version of the BatchResolvedEvent struct.
+	Version byte
 	Events  []ResolvedEvent
 }
 
@@ -71,7 +72,8 @@ func (b *BatchResolvedEvent) GetSize() int64 {
 
 // ResolvedEvent represents a resolvedTs event of a dispatcher.
 type ResolvedEvent struct {
-	Version      int
+	// Version is the version of the ResolvedEvent struct.
+	Version      byte
 	DispatcherID common.DispatcherID
 	ResolvedTs   common.Ts
 }
