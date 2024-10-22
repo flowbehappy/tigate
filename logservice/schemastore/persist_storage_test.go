@@ -1179,7 +1179,8 @@ func TestExchangePartitionTable(t *testing.T) {
 		ddlEvents, err := pStorage.fetchTableDDLEvents(partitionID3, tableFilter, 201, 205)
 		require.Nil(t, err)
 		require.Equal(t, 1, len(ddlEvents))
-		require.Nil(t, ddlEvents[0].BlockedTables)
+		verifyTableIsBlocked(t, ddlEvents[0], partitionID3)
+		verifyTableIsBlocked(t, ddlEvents[0], heartbeatpb.DDLSpan.TableID)
 
 		verifyTableIsDropped(t, ddlEvents[0], partitionID3)
 
@@ -1196,7 +1197,8 @@ func TestExchangePartitionTable(t *testing.T) {
 		ddlEvents, err := pStorage.fetchTableDDLEvents(tableID2, tableFilter, 203, 205)
 		require.Nil(t, err)
 		require.Equal(t, 1, len(ddlEvents))
-		require.Nil(t, ddlEvents[0].BlockedTables)
+		verifyTableIsBlocked(t, ddlEvents[0], tableID2)
+		verifyTableIsBlocked(t, ddlEvents[0], heartbeatpb.DDLSpan.TableID)
 
 		verifyTableIsDropped(t, ddlEvents[0], tableID2)
 
