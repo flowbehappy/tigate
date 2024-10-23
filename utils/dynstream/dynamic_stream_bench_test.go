@@ -1,6 +1,7 @@
 package dynstream
 
 import (
+	"fmt"
 	"math"
 	"runtime"
 	"sync"
@@ -24,7 +25,7 @@ func (h *intEventHandler) Handle(dest D, events ...intEvent) (await bool) {
 	for i := 0; i < h.times; i++ {
 		h.inc.Add(1)
 	}
-	// h.wg.Done()
+	h.wg.Done()
 	return false
 }
 
@@ -140,9 +141,9 @@ func BenchmarkDSDynamicSt1000x1000x100(b *testing.B) {
 		runDynamicStream(ds, 1000, 1000)
 		wg.Wait()
 
-		// if inc.Load() != int64(1000*1000*100) {
-		// 	panic(fmt.Sprintf("total: %d, expected: %d", inc.Load(), 1000*1000*100))
-		// }
+		if inc.Load() != int64(1000*1000*100) {
+			panic(fmt.Sprintf("total: %d, expected: %d", inc.Load(), 1000*1000*100))
+		}
 	}
 
 	ds.Close()
@@ -158,9 +159,9 @@ func BenchmarkDSDynamicSt1000000x20x50(b *testing.B) {
 		runDynamicStream(ds, 1000000, 20)
 		wg.Wait()
 
-		// if inc.Load() != int64(1000000*20*50) {
-		// 	panic(fmt.Sprintf("total: %d, expected: %d", inc.Load(), 1000000*20*50))
-		// }
+		if inc.Load() != int64(1000000*20*50) {
+			panic(fmt.Sprintf("total: %d, expected: %d", inc.Load(), 1000000*20*50))
+		}
 	}
 
 	ds.Close()
@@ -176,9 +177,9 @@ func BenchmarkDSGoroutine1000x1000x100(b *testing.B) {
 		runGoroutine(chans, 1000, 1000, handler)
 		wg.Wait()
 
-		// if inc.Load() != int64(1000*1000*100) {
-		// 	panic(fmt.Sprintf("total: %d, expected: %d", inc.Load(), 1000*1000*100))
-		// }
+		if inc.Load() != int64(1000*1000*100) {
+			panic(fmt.Sprintf("total: %d, expected: %d", inc.Load(), 1000*1000*100))
+		}
 	}
 
 	for _, c := range chans {
@@ -196,9 +197,9 @@ func BenchmarkDSGoroutine1000000x20x50(b *testing.B) {
 		runGoroutine(chans, 1000000, 20, handler)
 		wg.Wait()
 
-		// if inc.Load() != int64(1000000*20*50) {
-		// 	panic(fmt.Sprintf("total: %d, expected: %d", inc.Load(), 1000000*20*50))
-		// }
+		if inc.Load() != int64(1000000*20*50) {
+			panic(fmt.Sprintf("total: %d, expected: %d", inc.Load(), 1000000*20*50))
+		}
 	}
 
 	for _, c := range chans {
