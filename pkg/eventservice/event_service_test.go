@@ -45,70 +45,6 @@ func initEventService(
 	return esImpl
 }
 
-func TestEventServiceBasic(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	mockStore := newMockEventStore()
-	mc := &mockMessageCenter{
-		messageCh: make(chan *messaging.TargetMessage, 100),
-	}
-	esImpl := initEventService(ctx, t, mc, mockStore)
-	defer esImpl.Close(ctx)
-
-	dispatcherInfo := newMockDispatcherInfo(common.NewDispatcherID(), 1, eventpb.ActionType_ACTION_TYPE_REGISTER)
-	// register acceptor
-	esImpl.dispatcherInfo <- dispatcherInfo
-	// wait for eventService to process the dispatcherInfo
-	time.Sleep(time.Second * 2)
-
-	require.Equal(t, 1, len(esImpl.brokers))
-	require.NotNil(t, esImpl.brokers[dispatcherInfo.GetClusterID()])
-
-	// add events to logpuller
-	helper := pevent.NewEventTestHelper(t)
-	defer helper.Close()
-	ddlEvent, kvEvents := genEvents(helper, t, `create table test.t(id int primary key, c char(50))`, []string{
-		`insert into test.t(id,c) values (0, "c0")`,
-		`insert into test.t(id,c) values (1, "c1")`,
-		`insert into test.t(id,c) values (2, "c2")`,
-	}...)
-	require.NotNil(t, kvEvents)
-
-	sourceSpanStat, ok := mockStore.spans[dispatcherInfo.span.TableID]
-	require.True(t, ok)
-
-	sourceSpanStat.update(kvEvents[0].CRTs, kvEvents...)
-	schemastore := esImpl.schemaStore.(*mockSchemaStore)
-	schemastore.AppendDDLEvent(dispatcherInfo.span.TableID, ddlEvent)
-
-	// receive events from msg center
-	msgCnt := 0
-	for {
-		msg := <-mc.messageCh
-		for _, m := range msg.Message {
-			msgCnt++
-			switch e := m.(type) {
-			case *commonEvent.DMLEvent:
-				require.NotNil(t, msg)
-				require.Equal(t, "event-collector", msg.Topic)
-				require.Equal(t, len(kvEvents), e.Len())
-				require.Equal(t, kvEvents[0].CRTs, e.CommitTs)
-			case *commonEvent.DDLEvent:
-				require.NotNil(t, msg)
-				require.Equal(t, "event-collector", msg.Topic)
-				require.Equal(t, ddlEvent.FinishedTs, e.FinishedTs)
-			case *commonEvent.BatchResolvedEvent:
-				require.NotNil(t, msg)
-				log.Info("received watermark", zap.Uint64("ts", e.Events[0].ResolvedTs))
-			}
-		}
-		if msgCnt == 3 {
-			break
-		}
-	}
-}
-
 func newTestMockDB(t *testing.T) (db *sql.DB, mock sqlmock.Sqlmock) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
 	require.Nil(t, err)
@@ -246,54 +182,6 @@ func (iter *mockEventIterator) Next() (*common.RawKVEntry, bool, error) {
 
 func (m *mockEventIterator) Close() (int64, error) {
 	return 0, nil
-}
-
-// This test is to test the mockEventIterator works as expected.
-func TestMockEventIterator(t *testing.T) {
-	iter := &mockEventIterator{
-		events: make([]*common.RawKVEntry, 0),
-	}
-
-	// Case 1: empty iterator
-	row, isNewTxn, err := iter.Next()
-	require.Nil(t, err)
-	require.False(t, isNewTxn)
-	require.Nil(t, row)
-
-	// Case 2: iterator with 2 txns that has 2 rows
-	row1 := &common.RawKVEntry{
-		StartTs: 1,
-		CRTs:    5,
-	}
-	row2 := &common.RawKVEntry{
-		StartTs: 2,
-		CRTs:    5,
-	}
-
-	iter.events = append(iter.events, row1, row1)
-	iter.events = append(iter.events, row2, row2)
-
-	// txn-1, row-1
-	row, isNewTxn, err = iter.Next()
-	require.Nil(t, err)
-	require.True(t, isNewTxn)
-	require.NotNil(t, row)
-	// txn-1, row-2
-	row, isNewTxn, err = iter.Next()
-	require.Nil(t, err)
-	require.False(t, isNewTxn)
-	require.NotNil(t, row)
-
-	// txn-2, row1
-	row, isNewTxn, err = iter.Next()
-	require.Nil(t, err)
-	require.True(t, isNewTxn)
-	require.NotNil(t, row)
-	// txn2, row2
-	row, isNewTxn, err = iter.Next()
-	require.Nil(t, err)
-	require.False(t, isNewTxn)
-	require.NotNil(t, row)
 }
 
 var _ schemastore.SchemaStore = &mockSchemaStore{}
@@ -499,4 +387,116 @@ func genEvents(helper *pevent.EventTestHelper, t *testing.T, ddl string, dmls ..
 		Query:      ddl,
 		TableInfo:  common.WrapTableInfo(job.SchemaID, job.SchemaName, job.BinlogInfo.TableInfo),
 	}, kvEvents1
+}
+
+// This test is to test the mockEventIterator works as expected.
+func TestMockEventIterator(t *testing.T) {
+	iter := &mockEventIterator{
+		events: make([]*common.RawKVEntry, 0),
+	}
+
+	// Case 1: empty iterator
+	row, isNewTxn, err := iter.Next()
+	require.Nil(t, err)
+	require.False(t, isNewTxn)
+	require.Nil(t, row)
+
+	// Case 2: iterator with 2 txns that has 2 rows
+	row1 := &common.RawKVEntry{
+		StartTs: 1,
+		CRTs:    5,
+	}
+	row2 := &common.RawKVEntry{
+		StartTs: 2,
+		CRTs:    5,
+	}
+
+	iter.events = append(iter.events, row1, row1)
+	iter.events = append(iter.events, row2, row2)
+
+	// txn-1, row-1
+	row, isNewTxn, err = iter.Next()
+	require.Nil(t, err)
+	require.True(t, isNewTxn)
+	require.NotNil(t, row)
+	// txn-1, row-2
+	row, isNewTxn, err = iter.Next()
+	require.Nil(t, err)
+	require.False(t, isNewTxn)
+	require.NotNil(t, row)
+
+	// txn-2, row1
+	row, isNewTxn, err = iter.Next()
+	require.Nil(t, err)
+	require.True(t, isNewTxn)
+	require.NotNil(t, row)
+	// txn2, row2
+	row, isNewTxn, err = iter.Next()
+	require.Nil(t, err)
+	require.False(t, isNewTxn)
+	require.NotNil(t, row)
+}
+
+func TestEventServiceBasic(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mockStore := newMockEventStore()
+	mc := &mockMessageCenter{
+		messageCh: make(chan *messaging.TargetMessage, 100),
+	}
+	esImpl := initEventService(ctx, t, mc, mockStore)
+	defer esImpl.Close(ctx)
+
+	dispatcherInfo := newMockDispatcherInfo(common.NewDispatcherID(), 1, eventpb.ActionType_ACTION_TYPE_REGISTER)
+	// register acceptor
+	esImpl.dispatcherInfo <- dispatcherInfo
+	// wait for eventService to process the dispatcherInfo
+	time.Sleep(time.Second * 2)
+
+	require.Equal(t, 1, len(esImpl.brokers))
+	require.NotNil(t, esImpl.brokers[dispatcherInfo.GetClusterID()])
+
+	// add events to logpuller
+	helper := pevent.NewEventTestHelper(t)
+	defer helper.Close()
+	ddlEvent, kvEvents := genEvents(helper, t, `create table test.t(id int primary key, c char(50))`, []string{
+		`insert into test.t(id,c) values (0, "c0")`,
+		`insert into test.t(id,c) values (1, "c1")`,
+		`insert into test.t(id,c) values (2, "c2")`,
+	}...)
+	require.NotNil(t, kvEvents)
+
+	sourceSpanStat, ok := mockStore.spans[dispatcherInfo.span.TableID]
+	require.True(t, ok)
+
+	sourceSpanStat.update(kvEvents[0].CRTs, kvEvents...)
+	schemastore := esImpl.schemaStore.(*mockSchemaStore)
+	schemastore.AppendDDLEvent(dispatcherInfo.span.TableID, ddlEvent)
+
+	// receive events from msg center
+	msgCnt := 0
+	for {
+		msg := <-mc.messageCh
+		for _, m := range msg.Message {
+			msgCnt++
+			switch e := m.(type) {
+			case *commonEvent.DMLEvent:
+				require.NotNil(t, msg)
+				require.Equal(t, "event-collector", msg.Topic)
+				require.Equal(t, len(kvEvents), e.Len())
+				require.Equal(t, kvEvents[0].CRTs, e.CommitTs)
+			case *commonEvent.DDLEvent:
+				require.NotNil(t, msg)
+				require.Equal(t, "event-collector", msg.Topic)
+				require.Equal(t, ddlEvent.FinishedTs, e.FinishedTs)
+			case *commonEvent.BatchResolvedEvent:
+				require.NotNil(t, msg)
+				log.Info("received watermark", zap.Uint64("ts", e.Events[0].ResolvedTs))
+			}
+		}
+		if msgCnt == 3 {
+			break
+		}
+	}
 }
