@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/cdc/model"
-	cdcConfig "github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/pdutil"
@@ -81,7 +80,7 @@ type server struct {
 }
 
 // New returns a new Server instance
-func New(conf *cdcConfig.ServerConfig, pdEndpoints []string) (node.Server, error) {
+func New(conf *config.ServerConfig, pdEndpoints []string) (node.Server, error) {
 	// This is to make communication between nodes possible.
 	// In other words, the nodes have to trust each other.
 	if len(conf.Security.CertAllowedCN) != 0 {
@@ -126,7 +125,7 @@ func (c *server) initialize(ctx context.Context) error {
 		appcontext.MessageCenter,
 		appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter).OnNodeChanges)
 
-	conf := cdcConfig.GetGlobalServerConfig()
+	conf := config.GetGlobalServerConfig()
 	schemaStore := schemastore.New(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage)
 	eventStore := eventstore.New(ctx, conf.DataDir, c.pdClient, c.RegionCache, c.PDClock, c.KVStorage)
 	eventService := eventservice.New(eventStore, schemaStore)
