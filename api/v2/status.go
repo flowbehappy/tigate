@@ -19,7 +19,6 @@ import (
 
 	"github.com/flowbehappy/tigate/version"
 	"github.com/gin-gonic/gin"
-	"github.com/pingcap/tiflow/cdc/model"
 )
 
 // serverStatus Get the status information of a TiCDC node
@@ -40,14 +39,14 @@ func (h *OpenAPIV2) serverStatus(c *gin.Context) {
 		return
 	}
 	etcdClient := h.server.GetEtcdClient()
-	status := model.ServerStatus{
+	status := ServerStatus{
 		Version:   version.ReleaseVersion,
 		GitHash:   version.GitHash,
 		Pid:       os.Getpid(),
 		ID:        string(info.ID),
 		ClusterID: etcdClient.GetClusterID(),
 		IsOwner:   h.server.IsCoordinator(),
-		Liveness:  h.server.Liveness(),
+		Liveness:  Liveness(h.server.Liveness()),
 	}
 	c.IndentedJSON(http.StatusOK, status)
 }

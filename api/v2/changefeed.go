@@ -24,7 +24,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/api"
-	cdcapi "github.com/pingcap/tiflow/cdc/api/v2"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/owner"
 	"github.com/pingcap/tiflow/pkg/errors"
@@ -51,7 +50,7 @@ import (
 // @Router	/api/v2/changefeeds [post]
 func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 	ctx := c.Request.Context()
-	cfg := &cdcapi.ChangefeedConfig{ReplicaConfig: cdcapi.GetDefaultReplicaConfig()}
+	cfg := &ChangefeedConfig{ReplicaConfig: GetDefaultReplicaConfig()}
 
 	if err := c.BindJSON(&cfg); err != nil {
 		_ = c.Error(errors.WrapError(errors.ErrAPIInvalidParam, err))
@@ -199,7 +198,7 @@ func (h *OpenAPIV2) listChangeFeeds(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	commonInfos := make([]cdcapi.ChangefeedCommonInfo, 0, len(changefeeds))
+	commonInfos := make([]ChangefeedCommonInfo, 0, len(changefeeds))
 	for id, changefeed := range changefeeds {
 		status, _, err := h.server.GetEtcdClient().GetChangeFeedStatus(c, id)
 		if err != nil {
@@ -211,7 +210,7 @@ func (h *OpenAPIV2) listChangeFeeds(c *gin.Context) {
 		} else {
 			runningErr = changefeed.Warning
 		}
-		commonInfos = append(commonInfos, cdcapi.ChangefeedCommonInfo{
+		commonInfos = append(commonInfos, ChangefeedCommonInfo{
 			UpstreamID:     changefeed.UpstreamID,
 			Namespace:      changefeed.Namespace,
 			ID:             changefeed.ID,
@@ -221,7 +220,7 @@ func (h *OpenAPIV2) listChangeFeeds(c *gin.Context) {
 			RunningError:   runningErr,
 		})
 	}
-	resp := &cdcapi.ListResponse[cdcapi.ChangefeedCommonInfo]{
+	resp := &ListResponse[ChangefeedCommonInfo]{
 		Total: len(commonInfos),
 		Items: commonInfos,
 	}
@@ -230,7 +229,7 @@ func (h *OpenAPIV2) listChangeFeeds(c *gin.Context) {
 
 // verifyTable verify table, return ineligibleTables and EligibleTables.
 func (h *OpenAPIV2) verifyTable(c *gin.Context) {
-	tables := &cdcapi.Tables{}
+	tables := &Tables{}
 	c.JSON(http.StatusOK, tables)
 }
 
@@ -271,13 +270,13 @@ func toAPIModel(
 	resolvedTs uint64,
 	checkpointTs uint64,
 	taskStatus []model.CaptureTaskStatus,
-) *cdcapi.ChangeFeedInfo {
-	var runningError *cdcapi.RunningError
+) *ChangeFeedInfo {
+	var runningError *RunningError
 
 	// if the state is normal, we shall not return the error info
 	// because changefeed will is retrying. errors will confuse the users
 	if info.State != model.StateNormal && info.Error != nil {
-		runningError = &cdcapi.RunningError{
+		runningError = &RunningError{
 			Addr:    info.Error.Addr,
 			Code:    info.Error.Code,
 			Message: info.Error.Message,
@@ -289,7 +288,7 @@ func toAPIModel(
 		log.Error("failed to mask sink URI", zap.Error(err))
 	}
 
-	apiInfoModel := &cdcapi.ChangeFeedInfo{
+	apiInfoModel := &ChangeFeedInfo{
 		UpstreamID:     info.UpstreamID,
 		Namespace:      info.Namespace,
 		ID:             info.ID,
@@ -298,7 +297,7 @@ func toAPIModel(
 		StartTs:        info.StartTs,
 		TargetTs:       info.TargetTs,
 		AdminJobType:   info.AdminJobType,
-		Config:         cdcapi.ToAPIReplicaConfig(info.Config),
+		Config:         ToAPIReplicaConfig(info.Config),
 		State:          info.State,
 		Error:          runningError,
 		CreatorVersion: info.CreatorVersion,
@@ -409,7 +408,7 @@ func (h *OpenAPIV2) pauseChangefeed(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	c.JSON(http.StatusOK, &cdcapi.EmptyResponse{})
+	c.JSON(http.StatusOK, &EmptyResponse{})
 }
 
 // resumeChangefeed handles resume changefeed request.
@@ -439,7 +438,7 @@ func (h *OpenAPIV2) resumeChangefeed(c *gin.Context) {
 		return
 	}
 
-	cfg := new(cdcapi.ResumeChangefeedConfig)
+	cfg := new(ResumeChangefeedConfig)
 	if err := c.BindJSON(&cfg); err != nil {
 		_ = c.Error(errors.WrapError(errors.ErrAPIInvalidParam, err))
 		return
@@ -510,7 +509,7 @@ func (h *OpenAPIV2) resumeChangefeed(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	c.JSON(http.StatusOK, &cdcapi.EmptyResponse{})
+	c.JSON(http.StatusOK, &EmptyResponse{})
 }
 
 // updateChangefeed handles update changefeed request,
@@ -576,7 +575,7 @@ func (h *OpenAPIV2) updateChangefeed(c *gin.Context) {
 		return
 	}
 
-	updateCfConfig := &cdcapi.ChangefeedConfig{}
+	updateCfConfig := &ChangefeedConfig{}
 	if err = c.BindJSON(updateCfConfig); err != nil {
 		_ = c.Error(errors.WrapError(errors.ErrAPIInvalidParam, err))
 		return
