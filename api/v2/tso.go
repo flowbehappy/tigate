@@ -17,13 +17,12 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	cdcapi "github.com/pingcap/tiflow/cdc/api/v2"
 )
 
 // QueryTso request and returns a TSO from PD
 func (h *OpenAPIV2) QueryTso(c *gin.Context) {
 	ctx := c.Request.Context()
-	resp := &cdcapi.Tso{}
+	resp := &Tso{}
 	client := h.server.GetPdClient()
 	timestamp, logicalTime, err := client.GetTS(ctx)
 	if err != nil {
