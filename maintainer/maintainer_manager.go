@@ -28,7 +28,6 @@ import (
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
-	cdcConfig "github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -41,7 +40,7 @@ import (
 // 3. check maintainer liveness
 type Manager struct {
 	mc   messaging.MessageCenter
-	conf *cdcConfig.SchedulerConfig
+	conf *config.SchedulerConfig
 
 	// changefeedID -> maintainer
 	maintainers sync.Map
@@ -64,7 +63,7 @@ type Manager struct {
 // 2. manager manages maintainer lifetime
 // 3. manager report maintainer status to coordinator
 func NewMaintainerManager(selfNode *node.Info,
-	conf *cdcConfig.SchedulerConfig,
+	conf *config.SchedulerConfig,
 	pdAPI pdutil.PDAPIClient,
 	regionCache *tikv.RegionCache,
 ) *Manager {

@@ -15,17 +15,18 @@ package server
 
 import (
 	"context"
-	"github.com/flowbehappy/tigate/pkg/logger"
-	"github.com/pingcap/log"
 	"os"
 	"strings"
+
+	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/logger"
+	"github.com/pingcap/log"
 
 	"github.com/fatih/color"
 	"github.com/flowbehappy/tigate/server"
 	"github.com/flowbehappy/tigate/version"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tiflow/pkg/cmd/util"
-	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/security"
 	cdcversion "github.com/pingcap/tiflow/pkg/version"
