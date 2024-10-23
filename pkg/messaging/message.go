@@ -21,7 +21,6 @@ type IOType int32
 
 const (
 	TypeInvalid IOType = iota
-	TypeBytes
 	// LogService related
 	TypeDMLEvent
 	TypeDDLEvent
@@ -51,8 +50,6 @@ const (
 
 func (t IOType) String() string {
 	switch t {
-	case TypeBytes:
-		return "Bytes"
 	case TypeDMLEvent:
 		return "DMLEvent"
 	case TypeDDLEvent:
@@ -100,14 +97,6 @@ func (t IOType) String() string {
 	default:
 	}
 	return "Unknown"
-}
-
-type Bytes []byte
-
-func (b *Bytes) Marshal() ([]byte, error) { return *b, nil }
-func (b *Bytes) Unmarshal(data []byte) error {
-	*b = data
-	return nil
 }
 
 type RegisterDispatcherRequest struct {

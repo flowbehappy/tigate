@@ -1342,6 +1342,11 @@ func getDroppedIDs(oldIDs []int64, newIDs []int64) []int64 {
 }
 
 func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commonEvent.DDLEvent {
+	wrapTableInfo := common.WrapTableInfo(
+		rawEvent.CurrentSchemaID,
+		rawEvent.CurrentSchemaName,
+		rawEvent.TableInfo)
+
 	ddlEvent := commonEvent.DDLEvent{
 		Type: rawEvent.Type,
 		// TODO: whether the following four fields are needed
@@ -1351,7 +1356,7 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		TableName:  rawEvent.CurrentTableName,
 
 		Query:      rawEvent.Query,
-		TableInfo:  rawEvent.TableInfo,
+		TableInfo:  wrapTableInfo,
 		FinishedTs: rawEvent.FinishedTs,
 		TiDBOnly:   false,
 	}

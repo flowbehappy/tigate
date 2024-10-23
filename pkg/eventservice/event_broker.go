@@ -63,7 +63,6 @@ type eventBroker struct {
 
 	ds dynstream.DynamicStream[common.DispatcherID, scanTask, *eventBroker]
 
-	dispatcherCount int
 	// scanWorkerCount is the number of the scan workers to spawn.
 	scanWorkerCount int
 
@@ -134,6 +133,7 @@ func newEventBroker(
 	c.updateMetrics(ctx)
 	c.updateDispatcherSendTs(ctx)
 	c.runGenTasks(ctx)
+	log.Info("new event broker created", zap.Uint64("id", id))
 	return c
 }
 
@@ -619,7 +619,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		spanSubscription = newSpanSubscription(span, startTs)
 		c.spans[span.TableID] = spanSubscription
 	}
-	dispatcher := newDispatcherStat(startTs, info, spanSubscription, filter, c.dispatcherCount)
+	dispatcher := newDispatcherStat(startTs, info, spanSubscription, filter)
 	if span.Equal(heartbeatpb.DDLSpan) {
 		c.tableTriggerDispatchers.Store(id, dispatcher)
 		log.Info("table trigger dispatcher register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
@@ -629,19 +629,25 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	}
 
 	c.dispatchers.Store(id, dispatcher)
-	c.dispatcherCount++
 
 	brokerRegisterDuration := time.Since(start)
 
 	start = time.Now()
-	c.eventStore.RegisterDispatcher(
+	err = c.eventStore.RegisterDispatcher(
 		id,
 		span,
 		info.GetStartTs(),
 		dispatcher.spanSubscription.onNewCommitTs,
 		func(watermark uint64) { c.onNotify(dispatcher.spanSubscription, watermark) },
 	)
-	c.schemaStore.RegisterTable(span.GetTableID(), info.GetStartTs())
+	if err != nil {
+		log.Panic("register dispatcher to eventStore failed", zap.Error(err), zap.Any("dispatcherInfo", info))
+	}
+
+	err = c.schemaStore.RegisterTable(span.GetTableID(), info.GetStartTs())
+	if err != nil {
+		log.Panic("register table to schemaStore failed", zap.Error(err), zap.Int64("tableID", span.TableID), zap.Uint64("startTs", info.GetStartTs()))
+	}
 	eventStoreRegisterDuration := time.Since(start)
 	c.ds.AddPath(id, c)
 
@@ -741,7 +747,6 @@ type dispatcherStat struct {
 func newDispatcherStat(
 	startTs uint64, info DispatcherInfo,
 	subscription *spanSubscription, filter filter.Filter,
-	dispatcherIdx int,
 ) *dispatcherStat {
 	namespace, id := info.GetChangefeedID()
 	dispStat := &dispatcherStat{

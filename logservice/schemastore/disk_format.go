@@ -316,7 +316,7 @@ func readTableInfoInKVSnap(snap *pebble.Snapshot, tableID int64, version uint64)
 	if err != nil {
 		log.Fatal("unmarshal table info failed", zap.Error(err))
 	}
-	return common.WrapTableInfo(table_info_entry.SchemaID, table_info_entry.SchemaName, version, tableInfo)
+	return common.WrapTableInfo(table_info_entry.SchemaID, table_info_entry.SchemaName, tableInfo)
 }
 
 func unmarshalPersistedDDLEvent(value []byte) PersistedDDLEvent {

@@ -23,10 +23,9 @@ func TestDMLEvent(t *testing.T) {
 
 	reverseEvent := &DMLEvent{}
 	// Set the TableInfo before unmarshal, it is used in Unmarshal.
-	reverseEvent.TableInfo = dmlEvent.TableInfo
 	err = reverseEvent.Unmarshal(data)
 	require.NoError(t, err)
-
+	reverseEvent.AssembleRows(dmlEvent.TableInfo)
 	// Compare the content of the two event's rows.
 	require.Equal(t, dmlEvent.Rows.ToString(dmlEvent.TableInfo.GetFieldSlice()), reverseEvent.Rows.ToString(dmlEvent.TableInfo.GetFieldSlice()))
 	for i := 0; i < dmlEvent.Rows.NumRows(); i++ {
@@ -56,10 +55,9 @@ func TestEncodeAndDecodeV0(t *testing.T) {
 
 	reverseEvent := &DMLEvent{}
 	// Set the TableInfo before decode, it is used in decode.
-	reverseEvent.TableInfo = dmlEvent.TableInfo
 	err = reverseEvent.decodeV0(data)
 	require.NoError(t, err)
-
+	reverseEvent.AssembleRows(dmlEvent.TableInfo)
 	require.Equal(t, dmlEvent.Rows.ToString(dmlEvent.TableInfo.GetFieldSlice()), reverseEvent.Rows.ToString(dmlEvent.TableInfo.GetFieldSlice()))
 	for i := 0; i < dmlEvent.Rows.NumRows(); i++ {
 		for j := 0; j < dmlEvent.Rows.NumCols(); j++ {

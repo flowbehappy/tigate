@@ -23,12 +23,12 @@ type DDLEvent struct {
 	SchemaID int64 `json:"schema_id"`
 	// TableID means different for different job types:
 	// - ExchangeTablePartition: non-partitioned table id
-	TableID    int64            `json:"table_id"`
-	SchemaName string           `json:"schema_name"`
-	TableName  string           `json:"table_name"`
-	Query      string           `json:"query"`
-	TableInfo  *model.TableInfo `json:"table_info"`
-	FinishedTs uint64           `json:"finished_ts"`
+	TableID    int64             `json:"table_id"`
+	SchemaName string            `json:"schema_name"`
+	TableName  string            `json:"table_name"`
+	Query      string            `json:"query"`
+	TableInfo  *common.TableInfo `json:"table_info"`
+	FinishedTs uint64            `json:"finished_ts"`
 	// The seq of the event. It is set by event service.
 	Seq uint64 `json:"seq"`
 	// TODO: just here for compile, may be changed later
