@@ -643,17 +643,11 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	if err != nil {
 		log.Panic("register dispatcher to eventStore failed", zap.Error(err), zap.Any("dispatcherInfo", info))
 	}
-	if c.schemaStore == nil {
-		log.Panic("fizz schemaStore is nil, skip register table")
-	}
-	span.GetTableID()
-	info.GetStartTs()
-	log.Info("fizz register table to schemaStore", zap.Int64("tableID", span.TableID), zap.Uint64("startTs", info.GetStartTs()))
+
 	err = c.schemaStore.RegisterTable(span.GetTableID(), info.GetStartTs())
 	if err != nil {
 		log.Panic("register table to schemaStore failed", zap.Error(err), zap.Int64("tableID", span.TableID), zap.Uint64("startTs", info.GetStartTs()))
 	}
-	log.Info("fizz register table to schemaStore done")
 	eventStoreRegisterDuration := time.Since(start)
 	c.ds.AddPath(id, c)
 

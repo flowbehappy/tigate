@@ -43,13 +43,11 @@ func (r *router) runDispatch(ctx context.Context, wg *sync.WaitGroup, out <-chan
 				log.Info("router: close, since context done")
 				return
 			case msg := <-out:
-				log.Info("fizz router received message", zap.Any("msg", msg), zap.Any("topic", msg.Topic))
 				r.mu.RLock()
 				handler, ok := r.handlers[msg.Topic]
 				r.mu.RUnlock()
 				if !ok {
-					// todo: is this possible to happens ?
-					log.Info("fizz no handler for message", zap.Any("msg", msg))
+					log.Debug("no handler for message, drop it", zap.Any("msg", msg))
 					continue
 				}
 				err := handler(ctx, msg)

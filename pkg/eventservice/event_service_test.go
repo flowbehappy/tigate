@@ -299,21 +299,30 @@ func TestMockEventIterator(t *testing.T) {
 var _ schemastore.SchemaStore = &mockSchemaStore{}
 
 type mockSchemaStore struct {
-	schemastore.SchemaStore
 	DDLEvents map[common.TableID][]commonEvent.DDLEvent
 	TableInfo map[common.TableID][]*common.TableInfo
 
-	dispatchers map[common.DispatcherID]common.TableID
-	resolvedTs  uint64
+	resolvedTs uint64
 }
 
 func newMockSchemaStore() *mockSchemaStore {
 	return &mockSchemaStore{
-		DDLEvents:   make(map[common.TableID][]commonEvent.DDLEvent),
-		TableInfo:   make(map[common.TableID][]*common.TableInfo),
-		dispatchers: make(map[common.DispatcherID]common.TableID),
-		resolvedTs:  0,
+		DDLEvents:  make(map[common.TableID][]commonEvent.DDLEvent),
+		TableInfo:  make(map[common.TableID][]*common.TableInfo),
+		resolvedTs: 0,
 	}
+}
+
+func (m *mockSchemaStore) Name() string {
+	return "mockSchemaStore"
+}
+
+func (m *mockSchemaStore) Run(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockSchemaStore) Close(ctx context.Context) error {
+	return nil
 }
 
 func (m *mockSchemaStore) AppendDDLEvent(id common.TableID, ddls ...commonEvent.DDLEvent) {
@@ -331,40 +340,51 @@ func (m *mockSchemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*c
 	return infos[idx-1], nil
 }
 
-func (m *mockSchemaStore) RegisterDispatcher(
-	dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan,
-	startTS common.Ts, filter filter.Filter,
+func (m *mockSchemaStore) GetAllPhysicalTables(snapTs uint64, filter filter.Filter) ([]commonEvent.Table, error) {
+	return nil, nil
+}
+
+func (m *mockSchemaStore) GetTableDDLEventState(tableID int64) schemastore.DDLEventState {
+	return schemastore.DDLEventState{
+		ResolvedTs:       m.resolvedTs,
+		MaxEventCommitTs: m.resolvedTs,
+	}
+}
+
+func (m *mockSchemaStore) RegisterTable(
+	tableID int64,
+	startTS common.Ts,
 ) error {
-	m.dispatchers[dispatcherID] = common.TableID(span.TableID)
+
 	return nil
 }
 
-func (m *mockSchemaStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
-	delete(m.dispatchers, dispatcherID)
+func (m *mockSchemaStore) UnregisterTable(tableID int64) error {
 	return nil
 }
 
 // GetNextDDLEvents returns the next ddl event which finishedTs is within the range (start, end]
-func (m *mockSchemaStore) GetNextDDLEvents(id common.TableID, start, end common.Ts) ([]commonEvent.DDLEvent, common.Ts, error) {
-	events := m.DDLEvents[id]
+func (m *mockSchemaStore) FetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]commonEvent.DDLEvent, error) {
+
+	events := m.DDLEvents[tableID]
 	if len(events) == 0 {
-		return nil, end, nil
+		return nil, nil
 	}
 	l := sort.Search(len(events), func(i int) bool {
 		return events[i].FinishedTs > start
 	})
 	if l == len(events) {
-		return nil, end, nil
+		return nil, nil
 	}
 	r := sort.Search(len(events), func(i int) bool {
 		return events[i].FinishedTs > end
 	})
-	m.DDLEvents[id] = events[r:]
-	return events[l:r], end, nil
+	m.DDLEvents[tableID] = events[r:]
+	return events[l:r], nil
 }
 
-func (m *mockSchemaStore) GetNextTableTriggerEvents(f filter.Filter, start common.Ts, limit int) ([]commonEvent.DDLEvent, common.Ts, error) {
-	return nil, m.resolvedTs, nil
+func (m *mockSchemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]commonEvent.DDLEvent, uint64, error) {
+	return nil, 0, nil
 }
 
 type mockSpanStats struct {
