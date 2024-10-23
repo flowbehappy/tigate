@@ -33,6 +33,7 @@ func (h *incHandler) GetSize(event *inc) int            { return 0 }
 func (h *incHandler) GetArea(path string) int           { return 0 }
 func (h *incHandler) GetTimestamp(event *inc) Timestamp { return 0 }
 func (h *incHandler) GetType(event *inc) EventType      { return 0 }
+func (h *incHandler) IsPaused(event *inc) bool          { return false }
 func (h *incHandler) OnDrop(event *inc)                 {}
 
 func runStream(eventCount int, times int) {

@@ -73,6 +73,10 @@ type pathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	queueTimeHeapIndex int
 	sizeHeapIndex      int
 
+	// Those values below are used to compare in the heap.
+	frontTimestamp Timestamp // The timestamp of the front event.
+	frontQueueTime time.Time // The queue time of the front event.
+
 	areaMemStat *areaMemStat[A, P, T, D, H]
 
 	pendingSize          int  // The total size of pending events

@@ -137,7 +137,7 @@ type memControl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	areaStatMap map[A]*areaMemStat[A, P, T, D, H]
 }
 
-func newMemoryControl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]]() *memControl[A, P, T, D, H] {
+func newMemControl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]]() *memControl[A, P, T, D, H] {
 	return &memControl[A, P, T, D, H]{
 		areaStatMap: make(map[A]*areaMemStat[A, P, T, D, H]),
 	}

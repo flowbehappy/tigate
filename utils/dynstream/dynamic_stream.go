@@ -117,7 +117,7 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 	handler H
 	option  Option
 
-	memoryControl *memoryControl[A, P, T, D, H]
+	memControl *memControl[A, P, T, D, H]
 
 	eventChan    chan T                 // The channel to receive the incomming events by distributor
 	wakeChan     chan P                 // The channel to receive the wake signal by distributor
@@ -163,7 +163,7 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 	}
 	if option.EnableMemoryControl {
 		ds.feedbackChan = make(chan Feedback[A, P, D], 1024)
-		ds.memoryControl = newMemoryControl[A, P, T, D, H]()
+		ds.memControl = newMemControl[A, P, T, D, H]()
 	}
 	return ds
 }
@@ -246,8 +246,8 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) RemovePath(path P) error {
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) SetAreaSettings(area A, settings AreaSettings) {
-	if d.memoryControl != nil {
-		d.memoryControl.setAreaSettings(area, settings)
+	if d.memControl != nil {
+		d.memControl.setAreaSettings(area, settings)
 	}
 }
 
@@ -281,7 +281,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 
 	createStream := func() *stream[A, P, T, D, H] {
 		nextStreamId++
-		return newStream[A, P, T, D, H](nextStreamId, d.handler, d.reportChan, d.trackTopPaths, d.option, d.memoryControl)
+		return newStream[A, P, T, D, H](nextStreamId, d.handler, d.reportChan, d.trackTopPaths, d.option)
 	}
 	nextStream := func() *streamInfo[A, P, T, D, H] {
 		// We use round-robin to assign the paths to the streams
@@ -763,8 +763,8 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 						panic(fmt.Sprintf("Path %v already exists in distributor", pi.path))
 					}
 					pathMap[pi.path] = pi
-					if d.memoryControl != nil {
-						d.memoryControl.addPathToArea(pi, add.settings, d.feedbackChan)
+					if d.memControl != nil {
+						d.memControl.addPathToArea(pi, add.settings, d.feedbackChan)
 					}
 					// Note that we don't need to add the path to the stream here.
 					// Because a path will be added to a stream automatically when the first event is received.
@@ -782,7 +782,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 						// We cannot remove the path from the memory control here, because the stream is updating the memory control with the path.
 
 						// Send an empty event to the stream to notify the stream to remove the path
-						pi.stream.in() <- eventWrap[A, P, T, D, H]{wake: false, pathInfo: pi}
+						pi.stream.in() <- eventWrap[A, P, T, D, H]{pathInfo: pi}
 						// Don't close the stream here. The stream is processing other paths.
 					} else {
 						panic(fmt.Sprintf("Path %v doesn't exist in distributor", p))

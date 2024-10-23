@@ -68,6 +68,7 @@ func (h *mockHandler) GetSize(event *mockEvent) int            { return 0 }
 func (h *mockHandler) GetArea(path string) int                 { return 0 }
 func (h *mockHandler) GetTimestamp(event *mockEvent) Timestamp { return 0 }
 func (h *mockHandler) GetType(event *mockEvent) EventType      { return 0 }
+func (h *mockHandler) IsPaused(event *mockEvent) bool          { return false }
 func (h *mockHandler) OnDrop(event *mockEvent)                 {}
 
 type Inc struct {

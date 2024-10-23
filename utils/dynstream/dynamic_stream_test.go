@@ -55,6 +55,7 @@ func (h *simpleHandler) GetSize(event *simpleEvent) int            { return 0 }
 func (h *simpleHandler) GetArea(path string) int                   { return 0 }
 func (h *simpleHandler) GetTimestamp(event *simpleEvent) Timestamp { return 0 }
 func (h *simpleHandler) GetType(event *simpleEvent) EventType      { return 0 }
+func (h *simpleHandler) IsPaused(event *simpleEvent) bool          { return false }
 
 func (h *simpleHandler) OnDrop(event *simpleEvent) {
 	if h.t != nil {
@@ -70,12 +71,10 @@ func TestDynamicStreamBasic(t *testing.T) {
 	ds := NewDynamicStream(handler, option)
 	ds.Start()
 
-	ds.AddPaths([]PathAndDest[string, struct{}]{
-		{"path1", struct{}{}},
-		{"path2", struct{}{}},
-		{"path3", struct{}{}},
-		{"path4", struct{}{}},
-	}...)
+	ds.AddPath("path1", struct{}{})
+	ds.AddPath("path2", struct{}{})
+	ds.AddPath("path3", struct{}{})
+	ds.AddPath("path4", struct{}{})
 
 	wg := &sync.WaitGroup{}
 	ds.In() <- newSimpleEvent("path1", wg)
@@ -87,7 +86,9 @@ func TestDynamicStreamBasic(t *testing.T) {
 
 	wg.Wait()
 
-	ds.RemovePaths("path1", "path2", "path3")
+	ds.RemovePath("path1")
+	ds.RemovePath("path2")
+	ds.RemovePath("path3")
 
 	wg = &sync.WaitGroup{}
 	ds.In() <- newSimpleEvent("path4", wg)
@@ -100,34 +101,29 @@ func TestDynamicStreamAddRemovePaths(t *testing.T) {
 	handler := &simpleHandler{}
 	ds := NewDynamicStream(handler)
 	ds.Start()
-	errors := ds.AddPaths([]PathAndDest[string, struct{}]{
-		{"path1", struct{}{}},
-		{"path2", struct{}{}},
-		{"path3", struct{}{}},
-		{"path4", struct{}{}},
-	}...)
-	assert.Nil(t, errors)
-	errors = ds.AddPaths([]PathAndDest[string, struct{}]{
-		{"path1", struct{}{}},
-		{"path3", struct{}{}},
-		{"path5", struct{}{}},
-	}...)
-	assert.Equal(t, 3, len(errors))
-	appError, ok := errors[0].(*apperror.AppError)
+
+	err := ds.AddPath("path1", struct{}{})
+	assert.Nil(t, err)
+	err = ds.AddPath("path2", struct{}{})
+	assert.Nil(t, err)
+	err = ds.AddPath("path3", struct{}{})
+	assert.Nil(t, err)
+	err = ds.AddPath("path4", struct{}{})
+	assert.Nil(t, err)
+
+	appError, ok := ds.AddPath("path1", struct{}{}).(*apperror.AppError)
 	assert.True(t, ok)
 	assert.Equal(t, apperror.ErrorTypeDuplicate, appError.Type)
-	appError, ok = errors[1].(*apperror.AppError)
+	appError, ok = ds.AddPath("path2", struct{}{}).(*apperror.AppError)
 	assert.True(t, ok)
 	assert.Equal(t, apperror.ErrorTypeDuplicate, appError.Type)
-	assert.Nil(t, errors[2])
+	assert.Nil(t, ds.AddPath("path5", struct{}{}))
 
-	errors = ds.RemovePaths("path1", "path3")
-	assert.Equal(t, 0, len(errors))
+	assert.Nil(t, ds.RemovePath("path1"))
+	assert.Nil(t, ds.RemovePath("path3"))
 
-	errors = ds.RemovePaths("path2", "path3")
-	assert.Equal(t, 2, len(errors))
-	assert.Nil(t, errors[0])
-	appError, ok = errors[1].(*apperror.AppError)
+	assert.Nil(t, ds.RemovePath("path2"))
+	appError, ok = ds.RemovePath("path3").(*apperror.AppError)
 	assert.True(t, ok)
 	assert.Equal(t, apperror.ErrorTypeNotExist, appError.Type)
 
@@ -149,13 +145,11 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	ds := newDynamicStreamImpl(handler, option)
 	ds.Start()
 
-	ds.AddPaths([]PathAndDest[string, struct{}]{
-		{"p1", struct{}{}},
-		{"p2", struct{}{}},
-		{"p3", struct{}{}},
-		{"p4", struct{}{}},
-		{"p5", struct{}{}},
-	}...)
+	ds.AddPath("p1", struct{}{})
+	ds.AddPath("p2", struct{}{})
+	ds.AddPath("p3", struct{}{})
+	ds.AddPath("p4", struct{}{})
+	ds.AddPath("p5", struct{}{})
 
 	t.Log("=====1 ")
 
@@ -210,13 +204,11 @@ func TestDynamicStreamSchedule(t *testing.T) {
 	assert.Equal(t, 1, len(ds.streamInfos[2].pathMap)) // p3
 	assert.Equal(t, 1, len(ds.streamInfos[3].pathMap)) // p5, Solo stream
 
-	ds.AddPaths([]PathAndDest[string, struct{}]{
-		{"p6", struct{}{}},
-		{"p7", struct{}{}},
-		{"p8", struct{}{}},
-		{"p9", struct{}{}},
-		{"p10", struct{}{}},
-	}...)
+	ds.AddPath("p6", struct{}{})
+	ds.AddPath("p7", struct{}{})
+	ds.AddPath("p8", struct{}{})
+	ds.AddPath("p9", struct{}{})
+	ds.AddPath("p10", struct{}{})
 
 	ds.reportAndSchedule(shuffleStreams, 8*time.Millisecond)
 	t.Log("=====6 ")
@@ -322,7 +314,7 @@ func (h *removePathHandler) Path(event *simpleEvent) string {
 
 func (h *removePathHandler) Handle(dest struct{}, events ...*simpleEvent) (await bool) {
 	event := events[0]
-	h.ds.RemovePaths(event.path)
+	h.ds.RemovePath(event.path)
 	event.wg.Done()
 	return false
 }
@@ -331,6 +323,7 @@ func (h *removePathHandler) GetSize(event *simpleEvent) int            { return 
 func (h *removePathHandler) GetArea(path string) int                   { return 0 }
 func (h *removePathHandler) GetTimestamp(event *simpleEvent) Timestamp { return 0 }
 func (h *removePathHandler) GetType(event *simpleEvent) EventType      { return 0 }
+func (h *removePathHandler) IsPaused(event *simpleEvent) bool          { return false }
 func (h *removePathHandler) OnDrop(event *simpleEvent)                 {}
 
 func TestDynamicStreamRemovePath(t *testing.T) {
@@ -344,9 +337,8 @@ func TestDynamicStreamRemovePath(t *testing.T) {
 
 	ds.Start()
 
-	ds.AddPaths([]PathAndDest[string, struct{}]{
-		{"p1", struct{}{}},
-		{"p2", struct{}{}}}...)
+	ds.AddPath("p1", struct{}{})
+	ds.AddPath("p2", struct{}{})
 
 	wg := &sync.WaitGroup{}
 	wg.Add(1) // Only one event is processed
@@ -390,6 +382,7 @@ func (h *incEventHandler) GetSize(event incEvent) int            { return 0 }
 func (h *incEventHandler) GetArea(path string) int               { return 0 }
 func (h *incEventHandler) GetTimestamp(event incEvent) Timestamp { return 0 }
 func (h *incEventHandler) GetType(event incEvent) EventType      { return 0 }
+func (h *incEventHandler) IsPaused(event incEvent) bool          { return false }
 
 func TestDynamicStreamDrop(t *testing.T) {
 	check := func(option Option) int64 {
@@ -470,6 +463,7 @@ func (h *testOrderHandler) GetArea(path string) int                 { return 0 }
 func (h *testOrderHandler) GetSize(event *testOrder) int            { return 0 }
 func (h *testOrderHandler) GetTimestamp(event *testOrder) Timestamp { return event.timestamp }
 func (h *testOrderHandler) GetType(event *testOrder) EventType      { return 0 }
+func (h *testOrderHandler) IsPaused(event *testOrder) bool          { return false }
 func (h *testOrderHandler) OnDrop(event *testOrder)                 {}
 
 func TestDynamicStreamOrder(t *testing.T) {

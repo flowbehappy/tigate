@@ -33,6 +33,7 @@ func (h *intEventHandler) GetSize(event intEvent) int            { return 0 }
 func (h *intEventHandler) GetArea(path int) int                  { return 0 }
 func (h *intEventHandler) GetTimestamp(event intEvent) Timestamp { return 0 }
 func (h *intEventHandler) GetType(event intEvent) EventType      { return 0 }
+func (h *intEventHandler) IsPaused(event intEvent) bool          { return false }
 func (h *intEventHandler) OnDrop(event intEvent)                 {}
 
 func prepareDynamicStream(pathCount int, eventCount int, times int) (DynamicStream[int, int, intEvent, D, *intEventHandler], *atomic.Int64, *sync.WaitGroup) {
@@ -49,7 +50,7 @@ func prepareDynamicStream(pathCount int, eventCount int, times int) (DynamicStre
 	ds.Start()
 
 	for i := 0; i < pathCount; i++ {
-		ds.AddPaths(PathAndDest[int, D]{Path: i, Dest: D{}})
+		ds.AddPath(i, D{})
 	}
 
 	return ds, inc, wg
