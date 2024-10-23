@@ -41,6 +41,8 @@ type command struct {
 }
 
 type addPathCmd[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
+	settings AreaSettings
+
 	paths  []PathAndDest[P, D]
 	pis    []*pathInfo[A, P, T, D, H]
 	errors []error
@@ -161,7 +163,7 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 	}
 	if option.EnableMemoryControl {
 		ds.feedbackChan = make(chan Feedback[A, P, D], 1024)
-		ds.memoryControl = newMemoryControl[A, P, T, D, H](ds.feedbackChan)
+		ds.memoryControl = newMemoryControl[A, P, T, D, H]()
 	}
 	return ds
 }
@@ -192,8 +194,11 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) Close() {
 	d.schdDone.Wait()
 }
 
-func (d *dynamicStreamImpl[A, P, T, D, H]) AddPaths(paths ...PathAndDest[P, D]) []error {
-	add := &addPathCmd[A, P, T, D, H]{paths: paths}
+func (d *dynamicStreamImpl[A, P, T, D, H]) addPaths(settings AreaSettings, paths ...PathAndDest[P, D]) []error {
+	add := &addPathCmd[A, P, T, D, H]{
+		settings: AreaSettings{},
+		paths:    paths,
+	}
 	cmd := &command{
 		cmdType: typeAddPath,
 		cmd:     add,
@@ -206,15 +211,19 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) AddPaths(paths ...PathAndDest[P, D]) 
 	return add.errors
 }
 
-func (d *dynamicStreamImpl[A, P, T, D, H]) AddPath(path P, dest D) error {
-	errors := d.AddPaths(PathAndDest[P, D]{Path: path, Dest: dest})
+func (d *dynamicStreamImpl[A, P, T, D, H]) AddPath(path P, dest D, settings ...AreaSettings) error {
+	s := NewAreaSettings()
+	if len(settings) != 0 {
+		s = settings[0]
+	}
+	errors := d.addPaths(s, PathAndDest[P, D]{Path: path, Dest: dest})
 	if len(errors) != 0 {
 		return errors[0]
 	}
 	return nil
 }
 
-func (d *dynamicStreamImpl[A, P, T, D, H]) RemovePaths(paths ...P) []error {
+func (d *dynamicStreamImpl[A, P, T, D, H]) removePaths(paths ...P) []error {
 	remove := &removePathCmd[P]{paths: paths}
 	cmd := &command{
 		cmdType: typeRemovePath,
@@ -229,7 +238,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) RemovePaths(paths ...P) []error {
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) RemovePath(path P) error {
-	errs := d.RemovePaths(path)
+	errs := d.removePaths(path)
 	if len(errs) != 0 {
 		return errs[0]
 	}
@@ -237,10 +246,9 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) RemovePath(path P) error {
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) SetAreaSettings(area A, settings AreaSettings) {
-}
-
-func (d *dynamicStreamImpl[A, P, T, D, H]) RemoveAreaSettings(area A) bool {
-	return false
+	if d.memoryControl != nil {
+		d.memoryControl.setAreaSettings(area, settings)
+	}
 }
 
 // Make the scheduler to balance immediately. Only used for test.
@@ -273,7 +281,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 
 	createStream := func() *stream[A, P, T, D, H] {
 		nextStreamId++
-		return newStream[A, P, T, D, H](nextStreamId, d.handler, d.reportChan, d.trackTopPaths, d.option)
+		return newStream[A, P, T, D, H](nextStreamId, d.handler, d.reportChan, d.trackTopPaths, d.option, d.memoryControl)
 	}
 	nextStream := func() *streamInfo[A, P, T, D, H] {
 		// We use round-robin to assign the paths to the streams
@@ -726,7 +734,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 					pathInfo:  pi,
 					paused:    d.handler.IsPaused(e),
 					eventType: d.handler.GetType(e),
-					size:      d.handler.GetSize(e),
+					eventSize: d.handler.GetSize(e),
 					timestamp: d.handler.GetTimestamp(e),
 					queueTime: time.Now(),
 				}
@@ -755,6 +763,9 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 						panic(fmt.Sprintf("Path %v already exists in distributor", pi.path))
 					}
 					pathMap[pi.path] = pi
+					if d.memoryControl != nil {
+						d.memoryControl.addPathToArea(pi, add.settings, d.feedbackChan)
+					}
 					// Note that we don't need to add the path to the stream here.
 					// Because a path will be added to a stream automatically when the first event is received.
 				}
@@ -766,6 +777,10 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 					if ok {
 						pi.removed = true
 						delete(pathMap, p)
+
+						// The removal of the path from the memory control is done in the stream where the path belongs to.
+						// We cannot remove the path from the memory control here, because the stream is updating the memory control with the path.
+
 						// Send an empty event to the stream to notify the stream to remove the path
 						pi.stream.in() <- eventWrap[A, P, T, D, H]{wake: false, pathInfo: pi}
 						// Don't close the stream here. The stream is processing other paths.

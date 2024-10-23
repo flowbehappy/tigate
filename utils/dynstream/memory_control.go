@@ -6,8 +6,6 @@ import (
 
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
-
-	"github.com/flowbehappy/tigate/utils/heap"
 )
 
 // If the memory usage of an area exceeds the threshold, the top N paths with the largest pending size will be paused.
@@ -23,67 +21,23 @@ func findPausePathRatio(ratio float64) float64 {
 	return 0
 }
 
-type pathSizeStat[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] pathInfo[A, P, T, D, H]
-
-func (p *pathSizeStat[A, P, T, D, H]) SetHeapIndex(index int) {
-	(*pathInfo[A, P, T, D, H])(p).sizeHeapIndex = index
-}
-
-func (p *pathSizeStat[A, P, T, D, H]) GetHeapIndex() int {
-	return (*pathInfo[A, P, T, D, H])(p).sizeHeapIndex
-}
-
-func (p *pathSizeStat[A, P, T, D, H]) LessThan(other *pathSizeStat[A, P, T, D, H]) bool {
-	// The heap is in descending order.
-	return p.pendingSize > other.pendingSize
-}
-
-// AreaStat is used to store the statistics of an area.
+// areaMemStat is used to store the memory statistics of an area.
 // It is a global level struct, not stream level.
-type globalAreaStat[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
-	area      A
-	pathCount int
+type areaMemStat[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
+	area       A
+	memControl *memControl[A, P, T, D, H]
 
-	mutex sync.Mutex
+	settings     AreaSettings
+	feedbackChan chan<- Feedback[A, P, D]
 
-	pathSizeHeap     heap.Heap[*pathSizeStat[A, P, T, D, H]]
+	pathCount        int
 	totalPendingSize atomic.Int64
-	pausePathRatio   float64
-
-	settings AreaSettings
 }
 
-func (as *globalAreaStat[A, P, T, D, H]) addPathToArea(path *pathInfo[A, P, T, D, H]) {
-	as.mutex.Lock()
-	defer as.mutex.Unlock()
-
-	path.globalAreaStat = as
-	as.pathCount++
-	as.pathSizeHeap.AddOrUpdate((*pathSizeStat[A, P, T, D, H])(path))
-}
-
-// Return true if the area is empty.
-func (as *globalAreaStat[A, P, T, D, H]) removePathFromArea(path *pathInfo[A, P, T, D, H]) bool {
-	as.mutex.Lock()
-	defer as.mutex.Unlock()
-
-	as.pathSizeHeap.Remove((*pathSizeStat[A, P, T, D, H])(path))
-	as.pathCount--
-	path.globalAreaStat = nil
-	return as.pathCount == 0
-}
-
-func (as *globalAreaStat[A, P, T, D, H]) appendEvent(area A, path *pathInfo[A, P, T, D, H], event eventWrap[A, P, T, D, H], handler H) {
-	if event.eventType != RepeatedSignal &&
-		as.settings.MaxPendingSize > 0 &&
-		int(as.totalPendingSize.Load())+event.size > as.settings.MaxPendingSize {
-		// Drop the event after the pending size exceeds the limit.
-		// Note that we don't drop the repeated signal. Because the repeated signal is small
-		// and it is important for the handler to push the other events forward.
-		handler.OnDrop(event.event)
-		return
-	}
-
+// This method is called by streams' handleLoop concurrently.
+// Although the method is called concurrently, we don't need a mutex here. Because we only change totalPendingSize,
+// which is an atomic variable. Although the settings could be updated concurrently, we don't really care about the accuracy.
+func (as *areaMemStat[A, P, T, D, H]) appendEvent(path *pathInfo[A, P, T, D, H], event eventWrap[A, P, T, D, H], handler H, pathQueue *pathQueue[A, P, T, D, H]) {
 	replaced := false
 	if event.eventType == RepeatedSignal {
 		front, ok := path.pendingQueue.FrontRef()
@@ -95,119 +49,145 @@ func (as *globalAreaStat[A, P, T, D, H]) appendEvent(area A, path *pathInfo[A, P
 		}
 	}
 
-	oldPaused := path.paused
-	pathShouldPause := false
-	{
-		m.mutex.Lock()
-		defer m.mutex.Unlock()
-
-		if !replaced {
+	if !replaced {
+		if event.eventType != RepeatedSignal &&
+			int(as.totalPendingSize.Load())+event.eventSize > as.settings.MaxPendingSize {
+			// Drop the event after the pending size exceeds the limit.
+			// Note that we don't drop the repeated signal. Because the repeated signal is small
+			// and most of the time it will just replace the previous one.
+			// And repeated signal is important for the handler to push the other events forward.
+			handler.OnDrop(event.event)
+		} else {
+			// Add the event to the pending queue.
 			path.pendingQueue.PushBack(event)
-			path.pendingSize += event.size
-			curSize := int(as.totalPendingSize.Add(int64(event.size)))
 
-			as.pathSizeHeap.AddOrUpdate((*pathSizeStat[A, P, T, D, H])(path))
-			as.pausePathRatio = findPausePathRatio(float64(curSize) / float64(as.settings.MaxPendingSize))
+			// Update the pending size.
+			path.pendingSize += event.eventSize
+			as.totalPendingSize.Add(int64(event.eventSize))
+
+			// Update the heaps after adding the event in the queue.
+			// Including the pathSizeHeap
+			pathQueue.updateHeapAfterUpdatePath(path)
 		}
-
-		stopMaxIndex := int(float64(as.pathSizeHeap.Len()) * as.pausePathRatio)
-		// In a heap, although the index of an element in the underlying array is not strictly indicating the order,
-		// it is still roughly correct. We don't need to be very precise here.
-		// The heap is a max heap, so the elements with larger size are in the front.
-		pathShouldPause = path.sizeHeapIndex < stopMaxIndex
 	}
 
-	path.paused = pathShouldPause
+	pendingSize := int(as.totalPendingSize.Load())
+	pausePathRatio := findPausePathRatio(float64(pendingSize) / float64(as.settings.MaxPendingSize))
+
+	heapLength := path.streamAreaInfo.pathSizeHeap.Len()
+	stopMaxIndex := int(float64(heapLength) * pausePathRatio)
+	// In a heap, although the index of an element in the underlying array is not strictly indicating the order,
+	// it is still roughly correct. We don't need to be very precise here.
+	// The heap is a max heap, so the elements with larger size are in the front.
+	shoudlPausePath := false
+	if path.sizeHeapIndex == 0 {
+		// The path is not in the heap.
+		// It should be paused only if all the paths in the heap should be paused.
+		shoudlPausePath = pausePathRatio == 1.0
+	} else {
+		shoudlPausePath = (path.sizeHeapIndex - 1) < stopMaxIndex
+	}
+
+	prevPaused := path.paused
+	path.paused = shoudlPausePath
+
+	sendFeedback := func(pause bool) {
+		select {
+		case as.feedbackChan <- Feedback[A, P, D]{
+			Area:  path.area,
+			Path:  path.path,
+			Dest:  path.dest,
+			Pause: pause,
+		}:
+		default:
+			log.Warn("Feedback channel is full, drop the feedbacks",
+				zap.Any("area", path.area),
+				zap.Any("path", path.path),
+				zap.Bool("pause", pause))
+		}
+		path.lastSendFeedbackTime = event.queueTime
+	}
 
 	if as.settings.FeedbackInterval != 0 {
-		if (!oldPaused && path.paused) ||
-			(event.paused != path.paused && event.queueTime.Sub(path.lastSendFeedbackTime) >= as.settings.FeedbackInterval) {
-			// If is just paused, send feedback immediately.
-			// Otherwise, send feedback after the feedback interval.
-			select {
-			case m.feedbackCh <- Feedback[A, P, D]{
-				Area:  path.area,
-				Path:  path.path,
-				Dest:  path.dest,
-				Pause: path.paused,
-			}:
-			default:
-				log.Warn("Feedback channel is full, drop the feedbacks",
-					zap.Any("area", path.area),
-					zap.Any("path", path.path),
-					zap.Bool("pause", path.paused))
+		if !prevPaused && shoudlPausePath {
+			// Pause should be done immediately. And send pause feedback immediately no matter what the upstream is paused or not.
+			path.paused = true
+			path.lastSwitchPausedTime = event.queueTime
+			sendFeedback(true)
+		} else {
+			if prevPaused != shoudlPausePath && event.queueTime.Sub(path.lastSwitchPausedTime) >= as.settings.FeedbackInterval {
+				// Only switch pause after the switch interval (equals to feedback interval).
+				path.paused = shoudlPausePath
+				path.lastSwitchPausedTime = event.queueTime
 			}
-			path.lastSendFeedbackTime = event.queueTime
+			if event.paused != path.paused && event.queueTime.Sub(path.lastSendFeedbackTime) >= as.settings.FeedbackInterval {
+				// Only send feedback after the feedback interval.
+				sendFeedback(path.paused)
+			}
 		}
 	}
 }
 
-// A memoryControl is used to control the memory usage of the dynamic stream.
+// A memControl is used to control the memory usage of the dynamic stream.
 // It is a global level struct, not stream level.
-type memoryControl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
+type memControl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	// Since this struct is global level, different streams may access it concurrently.
-	// The operations on the areaStatMap should be protected by the mutex.
 	mutex sync.Mutex
 
-	areaStatMap map[A]*globalAreaStat[A, P, T, D, H]
-	feedbackCh  chan<- Feedback[A, P, D]
+	areaStatMap map[A]*areaMemStat[A, P, T, D, H]
 }
 
-func newMemoryControl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](feedbackCh chan<- Feedback[A, P, D]) *memoryControl[A, P, T, D, H] {
-	return &memoryControl[A, P, T, D, H]{
-		areaStatMap: make(map[A]*globalAreaStat[A, P, T, D, H]),
-		feedbackCh:  feedbackCh,
+func newMemoryControl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]]() *memControl[A, P, T, D, H] {
+	return &memControl[A, P, T, D, H]{
+		areaStatMap: make(map[A]*areaMemStat[A, P, T, D, H]),
 	}
 }
 
-func (m *memoryControl[A, P, T, D, H]) getAndCreateAreaStat(area A) *globalAreaStat[A, P, T, D, H] {
+func (m *memControl[A, P, T, D, H]) setAreaSettings(area A, settings AreaSettings) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	as, ok := m.areaStatMap[area]
+
+	// Update the settings
+	if as, ok := m.areaStatMap[area]; ok {
+		as.settings = settings
+	}
+}
+
+func (m *memControl[A, P, T, D, H]) addPathToArea(path *pathInfo[A, P, T, D, H], settings AreaSettings, feedbackChan chan<- Feedback[A, P, D]) {
+	if settings.MaxPendingSize == 0 {
+		log.Panic("AreaSettings.MaxPendingSize should not be 0")
+	}
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	area, ok := m.areaStatMap[path.area]
 	if !ok {
-		as = &globalAreaStat[A, P, T, D, H]{
-			area:         area,
-			pathSizeHeap: heap.NewHeap[*pathSizeStat[A, P, T, D, H]](),
+		area = &areaMemStat[A, P, T, D, H]{
+			area:         path.area,
+			memControl:   m,
+			settings:     settings,
+			feedbackChan: feedbackChan,
 		}
-		m.areaStatMap[area] = as
+		m.areaStatMap[path.area] = area
 	}
-	return as
-}
 
-func (m *memoryControl[A, P, T, D, H]) setAreaSettings(area A, settings AreaSettings) {
-	as := m.getAndCreateAreaStat(area)
-	as.settings = settings
-}
+	path.areaMemStat = area
+	area.pathCount++
 
-func (m *memoryControl[A, P, T, D, H]) getAreaSettings(area A) AreaSettings {
-	as := m.getAndCreateAreaStat(area)
-	return as.settings
-}
-
-func (m *memoryControl[A, P, T, D, H]) ensurePathInArea(path *pathInfo[A, P, T, D, H]) {
-	if path.globalAreaStat == nil {
-		if path.pendingQueue.Length() > 0 {
-			panic("pending events before setting area stat")
-		}
-		as := m.getAndCreateAreaStat(path.area)
-		as.addPathToArea(path)
-	}
+	// Update the settings
+	area.settings = settings
 }
 
 // This mehotd is called after the path is removed.
-func (m *memoryControl[A, P, T, D, H]) removePathFromArea(path *pathInfo[A, P, T, D, H]) {
-	if path.globalAreaStat == nil {
-		return
-	}
-	as := path.globalAreaStat
-	if as.removePathFromArea(path) {
-		m.mutex.Lock()
-		defer m.mutex.Unlock()
-		delete(m.areaStatMap, as.area)
-	}
-}
+func (m *memControl[A, P, T, D, H]) removePathFromArea(path *pathInfo[A, P, T, D, H]) {
+	area := path.areaMemStat
+	area.totalPendingSize.Add(int64(-path.pendingSize))
 
-func (m *memoryControl[A, P, T, D, H]) appendEvent(area A, path *pathInfo[A, P, T, D, H], event eventWrap[A, P, T, D, H], handler H) {
-	m.ensurePathInArea(path)
-	path.globalAreaStat.appendEvent(area, path, event, handler)
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	area.pathCount--
+	if area.pathCount == 0 {
+		delete(m.areaStatMap, area.area)
+	}
 }

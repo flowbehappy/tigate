@@ -69,15 +69,16 @@ type pathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	// Stream level area info.
 	// Each stream has its own areaInfo map, after a path is assigned to a stream, the areaInfo is set.
 	streamAreaInfo     *streamAreaInfo[A, P, T, D, H]
-	timestampHeapIndex int // timestamp heap index
-	queueTimeHeapIndex int // queue time heap index
+	timestampHeapIndex int
+	queueTimeHeapIndex int
+	sizeHeapIndex      int
 
-	// Fields only used by the memory control.
-	globalAreaStat       *globalAreaStat[A, P, T, D, H]
-	pendingSize          int       // The total size of pending events
-	sizeHeapIndex        int       // The index in the size heap
-	paused               bool      // The path is paused to send events.
-	lastSendFeedbackTime time.Time // The last time sending feedbacks to upstream
+	areaMemStat *areaMemStat[A, P, T, D, H]
+
+	pendingSize          int  // The total size of pending events
+	paused               bool // The path is paused to send events.
+	lastSwitchPausedTime time.Time
+	lastSendFeedbackTime time.Time
 }
 
 func newPathInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](area A, path P, dest D) *pathInfo[A, P, T, D, H] {
@@ -134,8 +135,8 @@ type eventWrap[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	pathInfo *pathInfo[A, P, T, D, H]
 
 	paused    bool
+	eventSize int
 	eventType EventType
-	size      int
 	timestamp Timestamp
 	queueTime time.Time
 }
@@ -168,8 +169,7 @@ type stream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 
 	inChan    chan eventWrap[A, P, T, D, H] // The buffer channel to receive the events.
 	pathQueue pathQueue[A, P, T, D, H]      // The queue to store the pending events.
-	// signalQueue *deque.Deque[eventSignal[A, P, T, D, H]] // The queue to store the event signals.
-	donChan chan doneInfo[A, P, T, D, H] // The channel to receive the done events.
+	donChan   chan doneInfo[A, P, T, D, H]  // The channel to receive the done events.
 
 	reportNow chan struct{} // For test, make the reportStatLoop to report immediately.
 

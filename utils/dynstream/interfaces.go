@@ -109,32 +109,25 @@ type DynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] inter
 	// Return nil if Option.EnableMemoryControl is false.
 	Feedback() <-chan Feedback[A, P, D]
 
-	// AddPaths adds the paths to the dynamic stream to receive the events.
-	// An event with a path not already added will be dropped.
-	//
-	// If some paths already exist, it will return ErrorTypeDuplicate errors. But the non-existed paths are still added.
-	// If all paths are added successfully, return nil.
-	AddPaths(paths ...PathAndDest[P, D]) []error
-	AddPath(path P, dest D) error
+	// AddPaths add the path to the dynamic stream to receive the events.
+	// An event of a path not already added will be dropped.
+	// Return ErrorTypeDuplicate if the path already exists.
+	AddPath(path P, dest D, area ...AreaSettings) error
 
-	// RemovePaths removes the paths from the dynamic stream.
-	// After this call return, future events with the paths will be dropped, including events which are already in the stream.
-	//
-	// If some paths don't exist, it will return ErrorTypeNotExist errors. But the existed paths are still removed.
-	// If all paths are removed successfully, return nil.
-	RemovePaths(paths ...P) []error
+	// RemovePath removes the path from the dynamic stream.
+	// After this call return, future events with the path will be dropped, including events which are already in the stream.
+	// If the path doesn't exist, it will return ErrorTypeNotExist.
 	RemovePath(path P) error
 
 	// SetAreaSettings sets the settings of the area. An area uses the default settings if it is not set.
 	// This method can be called at any time.
 	SetAreaSettings(area A, settings AreaSettings)
-	// Remove the settings of the area.
-	// You should remove the settings after all paths in the area are removed. Otherwise, the settings will be leaked.
-	RemoveAreaSettings(area A) bool
 }
 
 const DefaultSchedulerInterval = 1 * time.Second
 const DefaultReportInterval = 500 * time.Millisecond
+const DefaultMaxPendingSize = 128 * (1 << 20) // 128 MB
+const DefaultFeedbackInterval = 1000 * time.Millisecond
 
 type Option struct {
 	SchedulerInterval time.Duration // The interval of the scheduler. The scheduler is used to balance the paths between streams.
@@ -167,8 +160,15 @@ func (o *Option) fix() {
 }
 
 type AreaSettings struct {
-	MaxPendingSize   int           // The max memory usage of the pending events of the area. <= 0 means no limit.
-	FeedbackInterval time.Duration // The interval of sending feedbacks to the upstream. <= 0 means no feedback.
+	MaxPendingSize   int           // The max memory usage of the pending events of the area. Must be larger than 0. By default 128 MB.
+	FeedbackInterval time.Duration // The interval of sending feedbacks to the upstream. <= 0 means no feedback. By default 1 second.
+}
+
+func NewAreaSettings() AreaSettings {
+	return AreaSettings{
+		MaxPendingSize:   DefaultMaxPendingSize,
+		FeedbackInterval: DefaultFeedbackInterval,
+	}
 }
 
 type Feedback[A Area, P Path, D Dest] struct {
