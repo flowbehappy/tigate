@@ -194,6 +194,7 @@ func newPersistentStorage(
 }
 
 func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.Storage, gcTs uint64) {
+	now := time.Now()
 	if err := os.RemoveAll(dbPath); err != nil {
 		log.Fatal("fail to remove path in initializeFromKVStorage")
 	}
@@ -216,7 +217,8 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 	writeUpperBoundMeta(p.db, p.upperBound)
 	log.Info("schema store initialize from kv storage done",
 		zap.Int("databaseMapLen", len(p.databaseMap)),
-		zap.Int("tableMapLen", len(p.tableMap)))
+		zap.Int("tableMapLen", len(p.tableMap)),
+		zap.Any("duration(s)", time.Since(now).Seconds()))
 }
 
 func (p *persistentStorage) initializeFromDisk() {
