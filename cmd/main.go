@@ -21,6 +21,7 @@ import (
 	"github.com/flowbehappy/tigate/cmd/version"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/log"
+	tiflowCmd "github.com/pingcap/tiflow/pkg/cmd"
 	"github.com/pingcap/tiflow/pkg/cmd/util"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -76,7 +77,7 @@ func main() {
 	if newarch || isNewArchEnabledByConfig(serverConfigFilePath) {
 		addNewArchCommandTo(cmd)
 	} else {
-		// TODO: add tiflow commands
+		tiflowCmd.AddTiCDCCommandTo(cmd)
 	}
 
 	if err := cmd.Execute(); err != nil {
