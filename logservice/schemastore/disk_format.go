@@ -442,10 +442,13 @@ func writeSchemaSnapshotAndMeta(
 		databaseMap = make(map[int64]*BasicDatabaseInfo)
 		tablesInKVSnap = make(map[int64]*BasicTableInfo)
 	}
+	log.Info("write schema snapshot begin")
 	for _, dbInfo := range dbInfos {
 		if filter.IsSysSchema(dbInfo.Name.O) {
 			continue
 		}
+		log.Info("write schema snapshot",
+			zap.String("database", dbInfo.Name.O))
 		batch := db.NewBatch()
 
 		writeSchemaInfoToBatch(batch, snapTs, dbInfo)
