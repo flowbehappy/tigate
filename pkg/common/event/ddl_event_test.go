@@ -24,7 +24,7 @@ func TestDDLEvent(t *testing.T) {
 		SchemaName:   ddlJob.SchemaName,
 		TableName:    ddlJob.TableName,
 		Query:        ddlJob.Query,
-		TableInfo:    ddlJob.BinlogInfo.TableInfo,
+		TableInfo:    common.WrapTableInfo(ddlJob.SchemaID, ddlJob.SchemaName, ddlJob.BinlogInfo.TableInfo),
 		FinishedTs:   ddlJob.BinlogInfo.FinishedTS,
 	}
 

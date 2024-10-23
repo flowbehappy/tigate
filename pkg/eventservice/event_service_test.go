@@ -55,7 +55,7 @@ func TestEventServiceBasic(t *testing.T) {
 	esImpl := initEventService(ctx, t, mc, mockStore)
 	defer esImpl.Close(ctx)
 
-	acceptorInfo := newMockAcceptorInfo(common.NewDispatcherID(), 1)
+	acceptorInfo := newMockAcceptorInfo(common.NewDispatcherID(), 1, eventpb.ActionType_ACTION_TYPE_REGISTER)
 	// register acceptor
 	esImpl.acceptorInfoCh <- acceptorInfo
 	// wait for eventService to process the acceptorInfo
@@ -318,11 +318,7 @@ func newMockSchemaStore() *mockSchemaStore {
 func (m *mockSchemaStore) AppendDDLEvent(id common.TableID, ddls ...commonEvent.DDLEvent) {
 	for _, ddl := range ddls {
 		m.DDLEvents[id] = append(m.DDLEvents[id], ddl)
-		m.TableInfo[id] = append(m.TableInfo[id], common.WrapTableInfo(
-			ddl.TableID,
-			ddl.SchemaName,
-			ddl.FinishedTs,
-			ddl.TableInfo))
+		m.TableInfo[id] = append(m.TableInfo[id], ddl.TableInfo)
 	}
 }
 
@@ -480,6 +476,6 @@ func genEvents(helper *pevent.EventTestHelper, t *testing.T, ddl string, dmls ..
 		SchemaName: job.SchemaName,
 		TableName:  job.TableName,
 		Query:      ddl,
-		TableInfo:  job.BinlogInfo.TableInfo,
+		TableInfo:  common.WrapTableInfo(job.SchemaID, job.SchemaName, job.BinlogInfo.TableInfo),
 	}, kvEvents1
 }

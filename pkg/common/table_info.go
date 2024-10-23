@@ -275,8 +275,6 @@ type TableInfo struct {
 	// record the logical ID from the DDL event(job.BinlogInfo.TableInfo).
 	// So be careful when using the TableInfo.
 	TableName TableName `json:"table_name"`
-	// Version record the tso of create the table info.
-	Version uint64 `json:"version"`
 	// ColumnID -> offset in model.TableInfo.Columns
 	ColumnsOffset map[int64]int `json:"columns_offset"`
 	// Column name -> ColumnID
@@ -667,7 +665,7 @@ func (ti *TableInfo) IsIndexUniqueAndNotNull(indexInfo *model.IndexInfo) bool {
 
 // Clone clones the TableInfo
 func (ti *TableInfo) Clone() *TableInfo {
-	new_info := WrapTableInfo(ti.SchemaID, ti.TableName.Schema, ti.Version, ti.TableInfo.Clone())
+	new_info := WrapTableInfo(ti.SchemaID, ti.TableName.Schema, ti.TableInfo.Clone())
 	new_info.InitPreSQLs()
 	return new_info
 }
@@ -738,7 +736,7 @@ func (ti *TableInfo) GetPrimaryKeyColumnNames() []string {
 }
 
 // WrapTableInfo creates a TableInfo from a model.TableInfo
-func WrapTableInfo(schemaID int64, schemaName string, version uint64, info *model.TableInfo) *TableInfo {
+func WrapTableInfo(schemaID int64, schemaName string, info *model.TableInfo) *TableInfo {
 	ti := &TableInfo{
 		TableInfo: info,
 		SchemaID:  schemaID,
@@ -749,7 +747,6 @@ func WrapTableInfo(schemaID int64, schemaName string, version uint64, info *mode
 			IsPartition: info.GetPartitionInfo() != nil,
 		},
 		HasUniqueColumn:  false,
-		Version:          version,
 		ColumnsOffset:    make(map[int64]int, len(info.Columns)),
 		NameToColID:      make(map[string]int64, len(info.Columns)),
 		RowColumnsOffset: make(map[int64]int, len(info.Columns)),
@@ -861,7 +858,7 @@ func BuildTableInfoWithPKNames4Test(schemaName, tableName string, columns []*Col
 // The main use cases of this function it to build TableInfo from redo log and in tests.
 func BuildTableInfo(schemaName, tableName string, columns []*Column, indexColumns [][]int) *TableInfo {
 	tidbTableInfo := BuildTiDBTableInfo(tableName, columns, indexColumns)
-	info := WrapTableInfo(100 /* not used */, schemaName, 1000 /* not used */, tidbTableInfo)
+	info := WrapTableInfo(100 /* not used */, schemaName, tidbTableInfo)
 	info.InitPreSQLs()
 	return info
 }
