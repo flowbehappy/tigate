@@ -63,7 +63,6 @@ type eventBroker struct {
 
 	ds dynstream.DynamicStream[common.DispatcherID, scanTask, *eventBroker]
 
-	dispatcherCount int
 	// scanWorkerCount is the number of the scan workers to spawn.
 	scanWorkerCount int
 
@@ -134,6 +133,7 @@ func newEventBroker(
 	c.updateMetrics(ctx)
 	c.updateDispatcherSendTs(ctx)
 	c.runGenTasks(ctx)
+	log.Info("new event broker created", zap.Uint64("id", id))
 	return c
 }
 
@@ -633,14 +633,27 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	brokerRegisterDuration := time.Since(start)
 
 	start = time.Now()
-	c.eventStore.RegisterDispatcher(
+	err = c.eventStore.RegisterDispatcher(
 		id,
 		span,
 		info.GetStartTs(),
 		dispatcher.spanSubscription.onNewCommitTs,
 		func(watermark uint64) { c.onNotify(dispatcher.spanSubscription, watermark) },
 	)
-	c.schemaStore.RegisterTable(span.GetTableID(), info.GetStartTs())
+	if err != nil {
+		log.Panic("register dispatcher to eventStore failed", zap.Error(err), zap.Any("dispatcherInfo", info))
+	}
+	if c.schemaStore == nil {
+		log.Panic("fizz schemaStore is nil, skip register table")
+	}
+	span.GetTableID()
+	info.GetStartTs()
+	log.Info("fizz register table to schemaStore", zap.Int64("tableID", span.TableID), zap.Uint64("startTs", info.GetStartTs()))
+	err = c.schemaStore.RegisterTable(span.GetTableID(), info.GetStartTs())
+	if err != nil {
+		log.Panic("register table to schemaStore failed", zap.Error(err), zap.Int64("tableID", span.TableID), zap.Uint64("startTs", info.GetStartTs()))
+	}
+	log.Info("fizz register table to schemaStore done")
 	eventStoreRegisterDuration := time.Since(start)
 	c.ds.AddPath(id, c)
 

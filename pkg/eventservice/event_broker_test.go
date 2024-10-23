@@ -213,7 +213,7 @@ func TestSendEvents(t *testing.T) {
 
 	// Register the dispatcher
 	tableID := ddlEvent.TableID
-	info := newMockAcceptorInfo(common.NewDispatcherID(), tableID, eventpb.ActionType_ACTION_TYPE_REGISTER)
+	info := newMockDispatcherInfo(common.NewDispatcherID(), tableID, eventpb.ActionType_ACTION_TYPE_REGISTER)
 	s.addDispatcher(info)
 	_, ok := s.spans[tableID]
 	require.True(t, ok)

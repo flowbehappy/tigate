@@ -21,10 +21,10 @@ func newRouter() *router {
 	}
 }
 
-func (r *router) registerHandler(msgType string, handler MessageHandler) {
+func (r *router) registerHandler(topic string, handler MessageHandler) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.handlers[msgType] = handler
+	r.handlers[topic] = handler
 }
 
 func (r *router) deRegisterHandler(topic string) {
@@ -43,12 +43,13 @@ func (r *router) runDispatch(ctx context.Context, wg *sync.WaitGroup, out <-chan
 				log.Info("router: close, since context done")
 				return
 			case msg := <-out:
+				log.Info("fizz router received message", zap.Any("msg", msg), zap.Any("topic", msg.Topic))
 				r.mu.RLock()
 				handler, ok := r.handlers[msg.Topic]
 				r.mu.RUnlock()
 				if !ok {
 					// todo: is this possible to happens ?
-					log.Debug("no handler for message", zap.Any("msg", msg))
+					log.Info("fizz no handler for message", zap.Any("msg", msg))
 					continue
 				}
 				err := handler(ctx, msg)

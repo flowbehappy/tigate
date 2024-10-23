@@ -54,7 +54,7 @@ func TestEventServiceOneMillionTable(t *testing.T) {
 	dispatchers := make([]DispatcherInfo, 0, tableNum)
 	// register 1000,000 tables
 	for i := 0; i < tableNum; i++ {
-		acceptorInfo := newMockAcceptorInfo(common.NewDispatcherID(), int64(i), eventpb.ActionType_ACTION_TYPE_REGISTER)
+		acceptorInfo := newMockDispatcherInfo(common.NewDispatcherID(), int64(i), eventpb.ActionType_ACTION_TYPE_REGISTER)
 		dispatchers = append(dispatchers, acceptorInfo)
 		esImpl.registerDispatcher(ctx, acceptorInfo)
 	}

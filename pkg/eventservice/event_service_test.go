@@ -30,10 +30,11 @@ func initEventService(
 	ctx context.Context, t *testing.T,
 	mc messaging.MessageCenter, mockStore eventstore.EventStore,
 ) *eventService {
+	mockSchemaStore := newMockSchemaStore()
 	appcontext.SetService(appcontext.MessageCenter, mc)
 	appcontext.SetService(appcontext.EventStore, mockStore)
-	appcontext.SetService(appcontext.SchemaStore, newMockSchemaStore())
-	es := New(mockStore, newMockSchemaStore())
+	appcontext.SetService(appcontext.SchemaStore, mockSchemaStore)
+	es := New(mockStore, mockSchemaStore)
 	esImpl := es.(*eventService)
 	go func() {
 		err := esImpl.Run(ctx)
@@ -55,14 +56,14 @@ func TestEventServiceBasic(t *testing.T) {
 	esImpl := initEventService(ctx, t, mc, mockStore)
 	defer esImpl.Close(ctx)
 
-	acceptorInfo := newMockAcceptorInfo(common.NewDispatcherID(), 1, eventpb.ActionType_ACTION_TYPE_REGISTER)
+	dispatcherInfo := newMockDispatcherInfo(common.NewDispatcherID(), 1, eventpb.ActionType_ACTION_TYPE_REGISTER)
 	// register acceptor
-	esImpl.acceptorInfoCh <- acceptorInfo
-	// wait for eventService to process the acceptorInfo
+	esImpl.dispatcherInfo <- dispatcherInfo
+	// wait for eventService to process the dispatcherInfo
 	time.Sleep(time.Second * 2)
 
 	require.Equal(t, 1, len(esImpl.brokers))
-	require.NotNil(t, esImpl.brokers[acceptorInfo.GetClusterID()])
+	require.NotNil(t, esImpl.brokers[dispatcherInfo.GetClusterID()])
 
 	// add events to logpuller
 	helper := pevent.NewEventTestHelper(t)
@@ -74,12 +75,12 @@ func TestEventServiceBasic(t *testing.T) {
 	}...)
 	require.NotNil(t, kvEvents)
 
-	sourceSpanStat, ok := mockStore.spans[acceptorInfo.span.TableID]
+	sourceSpanStat, ok := mockStore.spans[dispatcherInfo.span.TableID]
 	require.True(t, ok)
 
 	sourceSpanStat.update(kvEvents[0].CRTs, kvEvents...)
 	schemastore := esImpl.schemaStore.(*mockSchemaStore)
-	schemastore.AppendDDLEvent(acceptorInfo.span.TableID, ddlEvent)
+	schemastore.AppendDDLEvent(dispatcherInfo.span.TableID, ddlEvent)
 
 	// receive events from msg center
 	msgCnt := 0
@@ -394,7 +395,7 @@ type mockDispatcherInfo struct {
 	actionType eventpb.ActionType
 }
 
-func newMockAcceptorInfo(dispatcherID common.DispatcherID, tableID int64, actionType eventpb.ActionType) *mockDispatcherInfo {
+func newMockDispatcherInfo(dispatcherID common.DispatcherID, tableID int64, actionType eventpb.ActionType) *mockDispatcherInfo {
 	return &mockDispatcherInfo{
 		clusterID: 1,
 		serverID:  "server1",

@@ -329,6 +329,7 @@ func (s *remoteMessageTarget) runSendMessages(sendCtx context.Context, stream gr
 		case <-sendCtx.Done():
 			return sendCtx.Err()
 		case message := <-sendChan:
+			log.Info("fizz, send message", zap.Any("message", message))
 			if err := stream.Send(message); err != nil {
 				log.Error("Error when sending message to remote",
 					zap.Error(err),
@@ -363,6 +364,7 @@ func (s *remoteMessageTarget) runReceiveMessages(stream grpcReceiver, receiveCh 
 				log.Info("Received handshake message", zap.Any("messageCenterID", s.messageCenterID), zap.Any("remote", s.targetId))
 				continue
 			}
+			log.Info("fizz received message", zap.Any("message", message))
 			targetMsg := &TargetMessage{
 				From:     node.ID(message.From),
 				To:       node.ID(message.To),
