@@ -110,7 +110,7 @@ func openDB(dbPath string) *pebble.DB {
 		l.FilterPolicy = bloom.FilterPolicy(10)
 		l.FilterType = pebble.TableFilter
 		l.TargetFileSize = 8 << 20 // 8 MB
-		l.Compression = pebble.ZstdCompression
+		l.Compression = pebble.SnappyCompression
 		l.EnsureDefaults()
 	}
 	db, err := pebble.Open(dbPath, opts)
