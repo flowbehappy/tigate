@@ -735,6 +735,12 @@ func (ti *TableInfo) GetPrimaryKeyColumnNames() []string {
 	return result
 }
 
+// GetVersion returns the version of the table info
+// It is the last TSO when the table schema was changed
+func (ti *TableInfo) GetVersion() uint64 {
+	return ti.TableInfo.UpdateTS
+}
+
 // WrapTableInfo creates a TableInfo from a model.TableInfo
 func WrapTableInfo(schemaID int64, schemaName string, info *model.TableInfo) *TableInfo {
 	ti := &TableInfo{
