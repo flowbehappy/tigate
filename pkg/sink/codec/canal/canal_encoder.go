@@ -17,6 +17,7 @@ import (
 	"context"
 
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -36,7 +37,7 @@ type BatchEncoder struct {
 	packet       *canal.Packet
 	entryBuilder *canalEntryBuilder
 
-	config *ticommon.Config
+	config *common.Config
 }
 
 // EncodeCheckpointEvent implements the RowEventEncoder interface
@@ -48,10 +49,9 @@ func (d *BatchEncoder) EncodeCheckpointEvent(ts uint64) (*ticommon.Message, erro
 
 // AppendRowChangedEvent implements the RowEventEncoder interface
 func (d *BatchEncoder) AppendRowChangedEvent(
-	_ context.Context,
+	ctx context.Context,
 	_ string,
-	e *commonEvent.RowChangedEvent,
-	callback func(),
+	e *commonEvent.RowEvent,
 ) error {
 	entry, err := d.entryBuilder.fromRowEvent(e, d.config.DeleteOnlyHandleKeyColumns)
 	if err != nil {
@@ -62,8 +62,8 @@ func (d *BatchEncoder) AppendRowChangedEvent(
 		return cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
 	}
 	d.messages.Messages = append(d.messages.Messages, b)
-	if callback != nil {
-		d.callbackBuf = append(d.callbackBuf, callback)
+	if e.Callback != nil {
+		d.callbackBuf = append(d.callbackBuf, e.Callback)
 	}
 	return nil
 }
@@ -162,7 +162,7 @@ func (d *BatchEncoder) resetPacket() {
 func (d *BatchEncoder) Clean() {}
 
 // newBatchEncoder creates a new canalBatchEncoder.
-func NewBatchEncoder(config *ticommon.Config) (encoder.EventEncoder, error) {
+func NewBatchEncoder(config *common.Config) (encoder.EventEncoder, error) {
 	encoder := &BatchEncoder{
 		messages:     &canal.Messages{},
 		callbackBuf:  make([]func(), 0),

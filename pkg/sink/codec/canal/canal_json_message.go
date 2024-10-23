@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/log"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -155,7 +156,7 @@ func (c *canalJSONMessageWithTiDBExtension) getCommitTs() uint64 {
 	return c.Extensions.CommitTs
 }
 
-func canalJSONMessage2RowChange(msg canalJSONMessageInterface) (*common.RowChangedEvent, error) {
+func canalJSONMessage2RowChange(msg canalJSONMessageInterface) (*commonEvent.RowEvent, error) {
 	result := new(common.RowChangedEvent)
 	result.CommitTs = msg.getCommitTs()
 	mysqlType := msg.getMySQLType()

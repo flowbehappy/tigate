@@ -20,15 +20,17 @@ import (
 	"strconv"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	ticommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/internal"
 	"github.com/golang/protobuf/proto" // nolint:staticcheck
 	"github.com/pingcap/errors"
 	mm "github.com/pingcap/tidb/pkg/parser/model"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
-	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 	"github.com/pingcap/tiflow/pkg/sink/codec/utils"
 	canal "github.com/pingcap/tiflow/proto/canal"
 	"golang.org/x/text/encoding"
@@ -78,64 +80,171 @@ func (b *canalEntryBuilder) buildHeader(commitTs uint64, schema string, table st
 	return h
 }
 
-// In the official canal-json implementation, value were extracted from binlog buffer.
-// see https://github.com/alibaba/canal/blob/b54bea5e3337c9597c427a53071d214ff04628d1/dbsync/src/main/java/com/taobao/tddl/dbsync/binlog/event/RowsLogBuffer.java#L276-L1147
-// all value will be represented in string type
-// see https://github.com/alibaba/canal/blob/b54bea5e3337c9597c427a53071d214ff04628d1/parse/src/main/java/com/alibaba/otter/canal/parse/inbound/mysql/dbsync/LogEventConvert.java#L760-L855
-func (b *canalEntryBuilder) formatValue(value interface{}, isBinary bool) (result string, err error) {
-	// value would be nil, if no value insert for the column.
-	if value == nil {
-		return "", nil
-	}
+func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, flag *common.ColumnFlagType) (string, internal.JavaSQLType, error) {
+	colType := columnInfo.GetType()
 
-	switch v := value.(type) {
-	case int64:
-		result = strconv.FormatInt(v, 10)
-	case uint64:
-		result = strconv.FormatUint(v, 10)
-	case float32:
-		result = strconv.FormatFloat(float64(v), 'f', -1, 32)
-	case float64:
-		result = strconv.FormatFloat(v, 'f', -1, 64)
-	case string:
-		result = v
-	case []byte:
-		// see https://github.com/alibaba/canal/blob/9f6021cf36f78cc8ac853dcf37a1769f359b868b/parse/src/main/java/com/alibaba/otter/canal/parse/inbound/mysql/dbsync/LogEventConvert.java#L801
-		if isBinary {
-			decoded, err := b.bytesDecoder.Bytes(v)
-			if err != nil {
-				return "", err
-			}
-			result = string(decoded)
+	var value string
+	var javaType internal.JavaSQLType
+
+	switch colType {
+	case mysql.TypeBit:
+		javaType = internal.JavaSQLTypeBIT
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		if d.IsNull() {
+			value = ""
 		} else {
-			result = string(v)
+			dp := &d
+			// Encode bits as integers to avoid pingcap/tidb#10988 (which also affects MySQL itself)
+			value = dp.GetMysqlBit().String()
 		}
+	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		if flag.IsBinary() {
+			javaType = internal.JavaSQLTypeBLOB
+		} else {
+			javaType = internal.JavaSQLTypeCLOB
+		}
+		value = row.GetBytes(idx).String()
+	case mysql.TypeVarchar, mysql.TypeVarString:
+		if flag.IsBinary() {
+			javaType = internal.JavaSQLTypeBLOB
+		} else {
+			javaType = internal.JavaSQLTypeVARCHAR
+		}
+		value = row.GetBytes(idx) // TODO:do test for binary case
+	case mysql.TypeString:
+		if flag.IsBinary() {
+			javaType = internal.JavaSQLTypeBLOB
+		}
+		javaType = internal.JavaSQLTypeCHAR
+		value = row.GetBytes(idx) // TODO:do test for binary case
+	case mysql.TypeEnum:
+		javaType = internal.JavaSQLTypeINTEGER
+		enumValue := row.GetEnum(idx).Value
+		if enumValue == 0 { // 测一下 enum 这种 case 到底是 "0" 还是 ""
+			value = ""
+		} else {
+			value = fmt.Sprintf("%d", enumValue)
+		}
+	case mysql.TypeSet:
+		javaType = internal.JavaSQLTypeBIT
+		bitValue := row.GetEnum(idx).Value
+		if bitValue == 0 { // 测一下 enum 这种 case 到底是 "0" 还是 ""
+			value = ""
+		} else {
+			value = fmt.Sprintf("%d", bitValue)
+		}
+	case mysql.TypeDate, mysql.TypeNewDate:
+		javaType = internal.JavaSQLTypeDATE
+		timeValue := row.GetTime(idx)
+		if timeValue.IsZero() {
+			value = ""
+		} else {
+			value = timeValue.String()
+		}
+	case mysql.TypeDatetime, mysql.TypeTimestamp:
+		javaType = internal.JavaSQLTypeTIMESTAMP
+		timeValue := row.GetTime(idx)
+		if timeValue.IsZero() {
+			value = ""
+		} else {
+			value = timeValue.String()
+		}
+	case mysql.TypeDuration:
+		javaType = internal.JavaSQLTypeTIME
+		durationValue := row.GetDuration(idx, 0)
+		if durationValue.ToNumber().IsZero() {
+			value = ""
+		} else {
+			value = durationValue.String()
+		}
+	case mysql.TypeJSON:
+		javaType = internal.JavaSQLTypeVARCHAR
+		jsonValue := row.GetJSON(idx)
+		if jsonValue.IsZero() {
+			value = ""
+		} else {
+			value = jsonValue.String()
+		}
+	case mysql.TypeNewDecimal:
+		javaType = internal.JavaSQLTypeDECIMAL
+		decimalValue := row.GetMyDecimal(idx)
+		if decimalValue.IsZero() {
+			value = ""
+		} else {
+			value = decimalValue.String()
+		}
+	case mysql.TypeTiny:
+		javaType = internal.JavaSQLTypeTINYINT
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		uintValue := d.GetUInt64()
+		value = strconv.FormatUint(uintValue, 10)
+	case mysql.TypeShort:
+		javaType = internal.JavaSQLTypeSMALLINT
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		uintValue := d.GetUInt64()
+		value = strconv.FormatUint(uintValue, 10)
+	case mysql.TypeLong:
+		javaType = internal.JavaSQLTypeINTEGER
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		uintValue := d.GetUInt64()
+		value = strconv.FormatUint(uintValue, 10)
+	case mysql.TypeFloat:
+		javaType = internal.JavaSQLTypeREAL
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		floatValue := d.GetFloat32()
+		value = strconv.FormatFloat(float64(floatValue), 'f', -1, 32)
+	case mysql.TypeDouble:
+		javaType = internal.JavaSQLTypeDOUBLE
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		floatValue := d.GetFloat64()
+		value = strconv.FormatFloat(floatValue, 'f', -1, 64)
+	case mysql.TypeNull:
+		javaType = internal.JavaSQLTypeNULL
+		value = ""
+	case mysql.TypeLonglong:
+		javaType = internal.JavaSQLTypeBIGINT
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		uintValue := d.GetUInt64()
+		value = strconv.FormatUint(uintValue, 10)
+	case mysql.TypeInt24:
+		javaType = internal.JavaSQLTypeINTEGER
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		uintValue := d.GetUInt64()
+		value = strconv.FormatUint(uintValue, 10)
+	case mysql.TypeYear:
+		javaType = internal.JavaSQLTypeVARCHAR
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		yearValue := d.GetInt64()
+		value = strconv.FormatInt(yearValue, 10)
 	default:
-		result = fmt.Sprintf("%v", v)
+		javaType = internal.JavaSQLTypeVARCHAR
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		// NOTICE: GetValue() may return some types that go sql not support, which will cause sink DML fail
+		// Make specified convert upper if you need
+		// Go sql support type ref to: https://github.com/golang/go/blob/go1.17.4/src/database/sql/driver/types.go#L236
+		value = d.GetValue().String()
 	}
-	return result, nil
+	return value, javaType, nil
 }
 
 // build the Column in the canal RowData
 // see https://github.com/alibaba/canal/blob/b54bea5e3337c9597c427a53071d214ff04628d1/parse/src/main/java/com/alibaba/otter/canal/parse/inbound/mysql/dbsync/LogEventConvert.java#L756-L872
-func (b *canalEntryBuilder) buildColumn(c *common.Column, columnInfo *timodel.ColumnInfo, updated bool) (*canal.Column, error) {
+func (b *canalEntryBuilder) buildColumn(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, tableInfo *common.TableInfo, updated bool) (*canal.Column, error) {
 	mysqlType := utils.GetMySQLType(columnInfo, b.config.ContentCompatible)
-	javaType, err := getJavaSQLType(c.Value, c.Type, c.Flag)
-	if err != nil {
-		return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
-	}
 
-	value, err := b.formatValue(c.Value, c.Flag.IsBinary())
+	flag := tableInfo.ColumnsFlag[columnInfo.ID]
+
+	value, javaType, err := formatColumnValue(row, idx, columnInfo, flag)
 	if err != nil {
 		return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
 	}
 
 	canalColumn := &canal.Column{
 		SqlType:       int32(javaType),
-		Name:          c.Name,
-		IsKey:         c.Flag.IsPrimaryKey(),
+		Name:          columnInfo.Name.O,
+		IsKey:         flag.IsPrimaryKey(),
 		Updated:       updated,
-		IsNullPresent: &canal.Column_IsNull{IsNull: c.Value == nil},
+		IsNullPresent: &canal.Column_IsNull{IsNull: row.IsNull(idx)},
 		Value:         value,
 		MysqlType:     mysqlType,
 	}
@@ -143,44 +252,48 @@ func (b *canalEntryBuilder) buildColumn(c *common.Column, columnInfo *timodel.Co
 }
 
 // build the RowData of a canal entry
-func (b *canalEntryBuilder) buildRowData(e *common.RowChangedEvent, onlyHandleKeyColumns bool) (*canal.RowData, error) {
+func (b *canalEntryBuilder) buildRowData(e *commonEvent.RowEvent, onlyHandleKeyColumns bool) (*canal.RowData, error) {
 	var columns []*canal.Column
-	colInfos := e.TableInfo.GetColInfosForRowChangedEvent()
-	for idx, column := range e.GetColumns() {
-		if column == nil {
-			continue
+
+	// build after columns
+	flag := false // flag to check if any column is written
+
+	colInfo := e.TableInfo.Columns
+	for idx, col := range colInfo {
+		if e.ColumnSelector.Select(col) {
+			flag = true
+			column, err := b.buildColumn(e.GetRows(), idx, col, e.TableInfo, !e.IsDelete())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			columns = append(columns, column)
 		}
-		columnInfo, ok := e.TableInfo.GetColumnInfo(colInfos[idx].ID)
-		if !ok {
-			return nil, cerror.ErrCanalEncodeFailed.GenWithStack(
-				"column info not found for column id: %d", colInfos[idx].ID)
-		}
-		c, err := b.buildColumn(column, columnInfo, !e.IsDelete())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		columns = append(columns, c)
+
+	}
+	if !flag {
+		return nil, cerror.ErrOpenProtocolCodecInvalidData.GenWithStack("not found handle key columns for the delete event")
 	}
 
-	onlyHandleKeyColumns = onlyHandleKeyColumns && e.IsDelete()
+	// build before columns
 	var preColumns []*canal.Column
-	for idx, column := range e.GetPreColumns() {
-		if column == nil {
-			continue
+	flag = false
+	onlyHandleKeyColumns = onlyHandleKeyColumns && e.IsDelete()
+	for idx, col := range colInfo {
+		if e.ColumnSelector.Select(col) {
+			if onlyHandleKeyColumns && !e.TableInfo.ColumnsFlag[col.ID].IsHandleKey() {
+				continue
+			}
+			flag = true
+			column, err := b.buildColumn(e.GetPreRows(), idx, col, e.TableInfo, !e.IsDelete())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			preColumns = append(preColumns, column)
 		}
-		if onlyHandleKeyColumns && !column.Flag.IsHandleKey() {
-			continue
-		}
-		columnInfo, ok := e.TableInfo.GetColumnInfo(colInfos[idx].ID)
-		if !ok {
-			return nil, cerror.ErrCanalEncodeFailed.GenWithStack(
-				"column info not found for column id: %d", colInfos[idx].ID)
-		}
-		c, err := b.buildColumn(column, columnInfo, !e.IsDelete())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		preColumns = append(preColumns, c)
+
+	}
+	if !flag {
+		return nil, cerror.ErrOpenProtocolCodecInvalidData.GenWithStack("not found handle key columns for the delete event")
 	}
 
 	rowData := &canal.RowData{}
@@ -190,7 +303,7 @@ func (b *canalEntryBuilder) buildRowData(e *common.RowChangedEvent, onlyHandleKe
 }
 
 // fromRowEvent builds canal entry from cdc RowChangedEvent
-func (b *canalEntryBuilder) fromRowEvent(e *common.RowChangedEvent, onlyHandleKeyColumns bool) (*canal.Entry, error) {
+func (b *canalEntryBuilder) fromRowEvent(e *commonEvent.RowEvent, onlyHandleKeyColumns bool) (*canal.Entry, error) {
 	eventType := convertRowEventType(e)
 	header := b.buildHeader(e.CommitTs, e.TableInfo.GetSchemaName(), e.TableInfo.GetTableName(), eventType, 1)
 	isDdl := isCanalDDL(eventType) // false
@@ -249,11 +362,11 @@ func convertToCanalTs(commitTs uint64) int64 {
 }
 
 // get the canal EventType according to the RowChangedEvent
-func convertRowEventType(e *common.RowChangedEvent) canal.EventType {
+func convertRowEventType(e *commonEvent.RowEvent) canal.EventType {
 	if e.IsDelete() {
 		return canal.EventType_DELETE
 	}
-	if len(e.PreColumns) == 0 {
+	if e.IsInsert() {
 		return canal.EventType_INSERT
 	}
 	return canal.EventType_UPDATE
