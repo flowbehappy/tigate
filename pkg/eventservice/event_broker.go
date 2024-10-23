@@ -619,7 +619,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		spanSubscription = newSpanSubscription(span, startTs)
 		c.spans[span.TableID] = spanSubscription
 	}
-	dispatcher := newDispatcherStat(startTs, info, spanSubscription, filter, c.dispatcherCount)
+	dispatcher := newDispatcherStat(startTs, info, spanSubscription, filter)
 	if span.Equal(heartbeatpb.DDLSpan) {
 		c.tableTriggerDispatchers.Store(id, dispatcher)
 		log.Info("table trigger dispatcher register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
@@ -629,7 +629,6 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	}
 
 	c.dispatchers.Store(id, dispatcher)
-	c.dispatcherCount++
 
 	brokerRegisterDuration := time.Since(start)
 
@@ -741,7 +740,6 @@ type dispatcherStat struct {
 func newDispatcherStat(
 	startTs uint64, info DispatcherInfo,
 	subscription *spanSubscription, filter filter.Filter,
-	dispatcherIdx int,
 ) *dispatcherStat {
 	namespace, id := info.GetChangefeedID()
 	dispStat := &dispatcherStat{
