@@ -21,9 +21,9 @@ import (
 	"google.golang.org/grpc"
 )
 
-var epoch = uint64(1)
+var mockEpoch = uint64(1)
 
-func newMessageCenterForTest(t *testing.T) (*messageCenter, string, func()) {
+func NewMessageCenterForTest(t *testing.T) (*messageCenter, string, func()) {
 	port := freeport.GetPort()
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	lis, err := net.Listen("tcp", addr)
@@ -35,8 +35,8 @@ func newMessageCenterForTest(t *testing.T) (*messageCenter, string, func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	mcConfig := config.NewDefaultMessageCenterConfig()
 	id := node.NewID()
-	mc := NewMessageCenter(ctx, id, epoch, mcConfig)
-	epoch++
+	mc := NewMessageCenter(ctx, id, mockEpoch, mcConfig)
+	mockEpoch++
 	mcs := NewMessageCenterServer(mc)
 	proto.RegisterMessageCenterServer(grpcServer, mcs)
 
@@ -54,10 +54,11 @@ func newMessageCenterForTest(t *testing.T) (*messageCenter, string, func()) {
 	}
 	return mc, string(addr), stop
 }
+
 func setupMessageCenters(t *testing.T) (*messageCenter, *messageCenter, *messageCenter, func()) {
-	mc1, mc1Addr, mc1Stop := newMessageCenterForTest(t)
-	mc2, mc2Addr, mc2Stop := newMessageCenterForTest(t)
-	mc3, mc3Addr, mc3Stop := newMessageCenterForTest(t)
+	mc1, mc1Addr, mc1Stop := NewMessageCenterForTest(t)
+	mc2, mc2Addr, mc2Stop := NewMessageCenterForTest(t)
+	mc3, mc3Addr, mc3Stop := NewMessageCenterForTest(t)
 
 	mc1.addTarget(mc2.id, mc2.epoch, mc2Addr)
 	mc1.addTarget(mc3.id, mc3.epoch, mc3Addr)

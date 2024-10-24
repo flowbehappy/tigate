@@ -272,8 +272,8 @@ func (c *eventBroker) wakeDispatcher(dispatcherID common.DispatcherID) {
 // checkNeedScan checks if the dispatcher needs to scan the event store.
 // If the dispatcher needs to scan the event store, it returns true.
 // If the dispatcher does not need to scan the event store, it send the watermark to the dispatcher
-func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, common.DataRange) {
-	c.checkAndInitDispatcher(ctx, task)
+func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
+	c.checkAndInitDispatcher(task)
 
 	dataRange, needScan := task.dispatcherStat.getDataRange()
 	if !needScan {
@@ -300,7 +300,7 @@ func (c *eventBroker) checkNeedScan(ctx context.Context, task scanTask) (bool, c
 	return true, dataRange
 }
 
-func (c *eventBroker) checkAndInitDispatcher(ctx context.Context, task scanTask) {
+func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 	if task.dispatcherStat.isInitialized.Load() {
 		return
 	}
@@ -350,7 +350,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		return
 	}
 
-	needScan, dataRange := c.checkNeedScan(ctx, task)
+	needScan, dataRange := c.checkNeedScan(task)
 	if !needScan {
 		return
 	}

@@ -3,7 +3,10 @@ package eventservice
 import (
 	"context"
 	"database/sql"
+	"math"
 	"sort"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -95,12 +98,14 @@ var _ eventstore.EventStore = &mockEventStore{}
 
 // mockEventStore is a mock implementation of the EventStore interface
 type mockEventStore struct {
-	spans map[common.TableID]*mockSpanStats
+	resolvedTsUpdateInterval time.Duration
+	spansMap                 sync.Map
 }
 
-func newMockEventStore() *mockEventStore {
+func newMockEventStore(resolvedTsUpdateInterval int) *mockEventStore {
 	return &mockEventStore{
-		spans: make(map[common.TableID]*mockSpanStats),
+		resolvedTsUpdateInterval: time.Millisecond * time.Duration(resolvedTsUpdateInterval),
+		spansMap:                 sync.Map{},
 	}
 }
 
@@ -109,6 +114,22 @@ func (m *mockEventStore) Name() string {
 }
 
 func (m *mockEventStore) Run(ctx context.Context) error {
+	// Loop all spans and notify the watermarkNotifier.
+	ticker := time.NewTicker(time.Millisecond * 100)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				m.spansMap.Range(func(key, value any) bool {
+					spanStats := value.(*mockSpanStats)
+					spanStats.watermarkNotifier(spanStats.watermark.Load() + 1)
+					return true
+				})
+			}
+		}
+	}()
 	return nil
 }
 
@@ -128,13 +149,16 @@ func (m *mockEventStore) GetIterator(dispatcherID common.DispatcherID, dataRange
 	iter := &mockEventIterator{
 		events: make([]*common.RawKVEntry, 0),
 	}
-
-	for _, e := range m.spans[dataRange.Span.TableID].pendingEvents {
+	v, ok := m.spansMap.Load(dataRange.Span.TableID)
+	if !ok {
+		return nil, nil
+	}
+	spanStats := v.(*mockSpanStats)
+	for _, e := range spanStats.pendingEvents {
 		if e.CRTs > dataRange.StartTs && e.CRTs <= dataRange.EndTs {
 			iter.events = append(iter.events, e)
 		}
 	}
-
 	return iter, nil
 }
 
@@ -146,13 +170,14 @@ func (m *mockEventStore) RegisterDispatcher(
 	notifier eventstore.WatermarkNotifier,
 ) error {
 	log.Info("subscribe table span", zap.Any("span", span), zap.Uint64("startTs", uint64(startTS)))
-	m.spans[span.TableID] = &mockSpanStats{
+	spanStats := &mockSpanStats{
 		startTs:           uint64(startTS),
-		watermark:         uint64(startTS),
 		watermarkNotifier: notifier,
 		eventObserver:     observer,
 		pendingEvents:     make([]*common.RawKVEntry, 0),
 	}
+	spanStats.watermark.Store(uint64(startTS))
+	m.spansMap.Store(span.TableID, spanStats)
 	return nil
 }
 
@@ -197,7 +222,7 @@ func newMockSchemaStore() *mockSchemaStore {
 	return &mockSchemaStore{
 		DDLEvents:  make(map[common.TableID][]commonEvent.DDLEvent),
 		TableInfo:  make(map[common.TableID][]*common.TableInfo),
-		resolvedTs: 0,
+		resolvedTs: math.MaxUint64,
 	}
 }
 
@@ -277,7 +302,7 @@ func (m *mockSchemaStore) FetchTableTriggerDDLEvents(tableFilter filter.Filter, 
 
 type mockSpanStats struct {
 	startTs           uint64
-	watermark         uint64
+	watermark         atomic.Uint64
 	pendingEvents     []*common.RawKVEntry
 	eventObserver     func(watermark uint64)
 	watermarkNotifier func(watermark uint64)
@@ -285,7 +310,7 @@ type mockSpanStats struct {
 
 func (m *mockSpanStats) update(watermark uint64, events ...*common.RawKVEntry) {
 	m.pendingEvents = append(m.pendingEvents, events...)
-	m.watermark = watermark
+	m.watermark.Store(watermark)
 	for _, e := range events {
 		m.eventObserver(e.CRTs)
 	}
@@ -373,8 +398,8 @@ func genEvents(helper *pevent.EventTestHelper, t *testing.T, ddl string, dmls ..
 	job := helper.DDL2Job(ddl)
 	schema := job.SchemaName
 	table := job.TableName
-	kvEvents1 := helper.DML2RawKv(schema, table, dmls...)
-	for _, e := range kvEvents1 {
+	kvEvents := helper.DML2RawKv(schema, table, dmls...)
+	for _, e := range kvEvents {
 		require.Equal(t, job.BinlogInfo.TableInfo.UpdateTS-1, e.StartTs)
 		require.Equal(t, job.BinlogInfo.TableInfo.UpdateTS+1, e.CRTs)
 	}
@@ -386,7 +411,7 @@ func genEvents(helper *pevent.EventTestHelper, t *testing.T, ddl string, dmls ..
 		TableName:  job.TableName,
 		Query:      ddl,
 		TableInfo:  common.WrapTableInfo(job.SchemaID, job.SchemaName, job.BinlogInfo.TableInfo),
-	}, kvEvents1
+	}, kvEvents
 }
 
 // This test is to test the mockEventIterator works as expected.
@@ -441,7 +466,9 @@ func TestEventServiceBasic(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	mockStore := newMockEventStore()
+	mockStore := newMockEventStore(100)
+	mockStore.Run(ctx)
+
 	mc := &mockMessageCenter{
 		messageCh: make(chan *messaging.TargetMessage, 100),
 	}
@@ -457,7 +484,7 @@ func TestEventServiceBasic(t *testing.T) {
 	require.Equal(t, 1, len(esImpl.brokers))
 	require.NotNil(t, esImpl.brokers[dispatcherInfo.GetClusterID()])
 
-	// add events to logpuller
+	// add events to eventStore
 	helper := pevent.NewEventTestHelper(t)
 	defer helper.Close()
 	ddlEvent, kvEvents := genEvents(helper, t, `create table test.t(id int primary key, c char(50))`, []string{
@@ -466,10 +493,11 @@ func TestEventServiceBasic(t *testing.T) {
 		`insert into test.t(id,c) values (2, "c2")`,
 	}...)
 	require.NotNil(t, kvEvents)
-
-	sourceSpanStat, ok := mockStore.spans[dispatcherInfo.span.TableID]
+	v, ok := mockStore.spansMap.Load(dispatcherInfo.span.TableID)
 	require.True(t, ok)
 
+	sourceSpanStat := v.(*mockSpanStats)
+	// add events to eventStore
 	sourceSpanStat.update(kvEvents[0].CRTs, kvEvents...)
 	schemastore := esImpl.schemaStore.(*mockSchemaStore)
 	schemastore.AppendDDLEvent(dispatcherInfo.span.TableID, ddlEvent)
@@ -481,22 +509,34 @@ func TestEventServiceBasic(t *testing.T) {
 		for _, m := range msg.Message {
 			msgCnt++
 			switch e := m.(type) {
+			case *commonEvent.HandshakeEvent:
+				require.NotNil(t, msg)
+				require.Equal(t, "event-collector", msg.Topic)
+				require.Equal(t, dispatcherInfo.id, e.DispatcherID)
+				require.Equal(t, dispatcherInfo.startTs, e.GetStartTs())
+				require.Equal(t, uint64(1), e.Seq)
+				log.Info("receive handshake event", zap.Any("event", e))
 			case *commonEvent.DMLEvent:
 				require.NotNil(t, msg)
 				require.Equal(t, "event-collector", msg.Topic)
 				require.Equal(t, len(kvEvents), e.Len())
 				require.Equal(t, kvEvents[0].CRTs, e.CommitTs)
+				require.Equal(t, uint64(2), e.Seq)
+				log.Info("receive dml event", zap.Any("event", e))
 			case *commonEvent.DDLEvent:
 				require.NotNil(t, msg)
 				require.Equal(t, "event-collector", msg.Topic)
 				require.Equal(t, ddlEvent.FinishedTs, e.FinishedTs)
+				require.Equal(t, uint64(3), e.Seq)
+				log.Info("receive ddl event", zap.Any("event", e))
 			case *commonEvent.BatchResolvedEvent:
 				require.NotNil(t, msg)
-				log.Info("received watermark", zap.Uint64("ts", e.Events[0].ResolvedTs))
+				log.Info("receive watermark", zap.Uint64("ts", e.Events[0].ResolvedTs))
 			}
 		}
-		if msgCnt == 3 {
+		if msgCnt == 4 {
 			break
 		}
 	}
+
 }
