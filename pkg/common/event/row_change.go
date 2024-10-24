@@ -243,3 +243,20 @@ func (e *RowEvent) GetRows() *chunk.Row {
 func (e *RowEvent) GetPreRows() *chunk.Row {
 	return &e.Event.PreRow
 }
+
+// PrimaryKeyColumnNames return all primary key's name
+// TODO: need a test for delete / insert / update event
+// 但理论上应该没区别，没有 ddl 没有发生 schema 变化的
+func (e *RowEvent) PrimaryKeyColumnNames() []string {
+	var result []string
+
+	result = make([]string, 0)
+	tableInfo := e.TableInfo
+	columns := e.TableInfo.Columns
+	for _, col := range columns {
+		if col != nil && tableInfo.ForceGetColumnFlagType(col.ID).IsPrimaryKey() {
+			result = append(result, tableInfo.ForceGetColumnName(col.ID))
+		}
+	}
+	return result
+}
