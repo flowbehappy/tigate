@@ -3,7 +3,6 @@ package eventservice
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -37,7 +36,6 @@ func TestNewDispatcherStat(t *testing.T) {
 
 func TestDispatcherStatUpdateWatermark(t *testing.T) {
 	startTs := uint64(123)
-	wg := &sync.WaitGroup{}
 	info := &mockDispatcherInfo{
 		id:        common.NewDispatcherID(),
 		clusterID: 1,
@@ -47,50 +45,26 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 	spanSubscription := newSpanSubscription(info.GetTableSpan(), startTs)
 	stat := newDispatcherStat(startTs, info, spanSubscription, nil)
 
-	sendNewEvent := func(maxTs uint64) {
-		g := &sync.WaitGroup{}
-		for i := 0; i < 64; i++ {
-			ts := rand.Uint64() % maxTs
-			if i == 10 {
-				ts = maxTs
-			}
-			g.Add(1)
-			go func() {
-				defer g.Done()
-				stat.spanSubscription.onSubscriptionWatermark(ts)
-			}()
-		}
-		g.Wait()
-	}
-
 	// Case 1: no new events, only watermark change
 	stat.spanSubscription.onSubscriptionWatermark(456)
 	require.Equal(t, uint64(456), stat.spanSubscription.watermark.Load())
 	log.Info("pass TestDispatcherStatUpdateWatermark case 1")
 
 	// Case 2: new events, and watermark increase
-	sendNewEvent(startTs)
 	stat.spanSubscription.onSubscriptionWatermark(789)
+	stat.spanSubscription.onNewCommitTs(360)
+	require.Equal(t, uint64(360), stat.spanSubscription.maxEventCommitTs.Load())
 	require.Equal(t, uint64(789), stat.spanSubscription.watermark.Load())
-	require.Equal(t, startTs, stat.spanSubscription.maxEventCommitTs.Load())
 	log.Info("pass TestDispatcherStatUpdateWatermark case 2")
 
 	// Case 3: new events, and watermark decrease
-	// watermark should not decrease and no notification
-	sendNewEvent(360)
-	done := make(chan struct{})
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		stat.spanSubscription.onSubscriptionWatermark(456)
-		close(done)
-	}()
-	<-done
+	// watermark should not decrease
+	stat.spanSubscription.onSubscriptionWatermark(456)
+	stat.spanSubscription.onNewCommitTs(800)
 	require.Equal(t, uint64(789), stat.spanSubscription.watermark.Load())
-	require.Equal(t, uint64(360), stat.spanSubscription.maxEventCommitTs.Load())
+	require.Equal(t, uint64(800), stat.spanSubscription.maxEventCommitTs.Load())
 	log.Info("pass TestDispatcherStatUpdateWatermark case 3")
 
-	wg.Wait()
 }
 
 func newTableSpan(tableID int64, start, end string) *heartbeatpb.TableSpan {
@@ -167,7 +141,7 @@ func TestSendEvents(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	eventStore := newMockEventStore()
+	eventStore := newMockEventStore(100)
 	schemaStore := newMockSchemaStore()
 	msgCh := make(chan *messaging.TargetMessage, 1024)
 	mc := &mockMessageCenter{messageCh: msgCh}
@@ -220,8 +194,9 @@ func TestSendEvents(t *testing.T) {
 
 	schemaStore.AppendDDLEvent(tableID, ddlEvent, ddlEvent1, ddlEvent2)
 
-	span, ok := eventStore.spans[tableID]
+	v, ok := eventStore.spansMap.Load(tableID)
 	require.True(t, ok)
+	span := v.(*mockSpanStats)
 	span.update(ddlEvent2.FinishedTs+1, append(kvEvents, kvEvents2...)...)
 
 	wg.Wait()

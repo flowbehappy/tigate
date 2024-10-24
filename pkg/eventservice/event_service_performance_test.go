@@ -25,7 +25,7 @@ func TestEventServiceOneMillionTable(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	wg := &sync.WaitGroup{}
-	mockStore := newMockEventStore()
+	mockStore := newMockEventStore(100)
 	tableNum := 100_0000
 	sendRound := 10
 	mc := &mockMessageCenter{
@@ -73,11 +73,12 @@ func TestEventServiceOneMillionTable(t *testing.T) {
 			<-ticker.C
 			sendStart := time.Now()
 			for _, dispatcher := range dispatchers {
-				sub, ok := mockStore.spans[dispatcher.GetTableSpan().TableID]
+				v, ok := mockStore.spansMap.Load(dispatcher.GetTableSpan().TableID)
 				if !ok {
 					continue
 				}
-				sub.update(sub.watermark + 1)
+				spanStats := v.(*mockSpanStats)
+				spanStats.update(spanStats.watermark.Load()+1, nil)
 			}
 			log.Info("send resolvedTs events for 1 million tables", zap.Duration("cost", time.Since(sendStart)), zap.Any("round", round))
 			round++
