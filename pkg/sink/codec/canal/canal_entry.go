@@ -29,7 +29,6 @@ import (
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink/codec/utils"
 	canal "github.com/pingcap/tiflow/proto/canal"
@@ -91,7 +90,7 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 		javaType = internal.JavaSQLTypeBIT
 		d := row.GetDatum(idx, &columnInfo.FieldType)
 		if d.IsNull() {
-			value = ""
+			value = "null"
 		} else {
 			dp := &d
 			// Encode bits as integers to avoid pingcap/tidb#10988 (which also affects MySQL itself)
@@ -103,33 +102,33 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 		} else {
 			javaType = internal.JavaSQLTypeCLOB
 		}
-		value = row.GetBytes(idx).String()
+		value = string(row.GetBytes(idx))
 	case mysql.TypeVarchar, mysql.TypeVarString:
 		if flag.IsBinary() {
 			javaType = internal.JavaSQLTypeBLOB
 		} else {
 			javaType = internal.JavaSQLTypeVARCHAR
 		}
-		value = row.GetBytes(idx) // TODO:do test for binary case
+		value = string(row.GetBytes(idx)) // TODO:do test for binary case
 	case mysql.TypeString:
 		if flag.IsBinary() {
 			javaType = internal.JavaSQLTypeBLOB
 		}
 		javaType = internal.JavaSQLTypeCHAR
-		value = row.GetBytes(idx) // TODO:do test for binary case
+		value = string(row.GetBytes(idx)) // TODO:do test for binary case
 	case mysql.TypeEnum:
 		javaType = internal.JavaSQLTypeINTEGER
 		enumValue := row.GetEnum(idx).Value
 		if enumValue == 0 { // 测一下 enum 这种 case 到底是 "0" 还是 ""
-			value = ""
+			value = "null"
 		} else {
 			value = fmt.Sprintf("%d", enumValue)
 		}
 	case mysql.TypeSet:
 		javaType = internal.JavaSQLTypeBIT
 		bitValue := row.GetEnum(idx).Value
-		if bitValue == 0 { // 测一下 enum 这种 case 到底是 "0" 还是 ""
-			value = ""
+		if bitValue == 0 { // 测一下 enum 这种 case 到底是 "0" 还是 "null"
+			value = "null"
 		} else {
 			value = fmt.Sprintf("%d", bitValue)
 		}
@@ -137,7 +136,7 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 		javaType = internal.JavaSQLTypeDATE
 		timeValue := row.GetTime(idx)
 		if timeValue.IsZero() {
-			value = ""
+			value = "null"
 		} else {
 			value = timeValue.String()
 		}
@@ -145,7 +144,7 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 		javaType = internal.JavaSQLTypeTIMESTAMP
 		timeValue := row.GetTime(idx)
 		if timeValue.IsZero() {
-			value = ""
+			value = "null"
 		} else {
 			value = timeValue.String()
 		}
@@ -153,7 +152,7 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 		javaType = internal.JavaSQLTypeTIME
 		durationValue := row.GetDuration(idx, 0)
 		if durationValue.ToNumber().IsZero() {
-			value = ""
+			value = "null"
 		} else {
 			value = durationValue.String()
 		}
@@ -161,7 +160,7 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 		javaType = internal.JavaSQLTypeVARCHAR
 		jsonValue := row.GetJSON(idx)
 		if jsonValue.IsZero() {
-			value = ""
+			value = "null"
 		} else {
 			value = jsonValue.String()
 		}
@@ -169,24 +168,24 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 		javaType = internal.JavaSQLTypeDECIMAL
 		decimalValue := row.GetMyDecimal(idx)
 		if decimalValue.IsZero() {
-			value = ""
+			value = "null"
 		} else {
 			value = decimalValue.String()
 		}
 	case mysql.TypeTiny:
 		javaType = internal.JavaSQLTypeTINYINT
 		d := row.GetDatum(idx, &columnInfo.FieldType)
-		uintValue := d.GetUInt64()
+		uintValue := d.GetUint64()
 		value = strconv.FormatUint(uintValue, 10)
 	case mysql.TypeShort:
 		javaType = internal.JavaSQLTypeSMALLINT
 		d := row.GetDatum(idx, &columnInfo.FieldType)
-		uintValue := d.GetUInt64()
+		uintValue := d.GetUint64()
 		value = strconv.FormatUint(uintValue, 10)
 	case mysql.TypeLong:
 		javaType = internal.JavaSQLTypeINTEGER
 		d := row.GetDatum(idx, &columnInfo.FieldType)
-		uintValue := d.GetUInt64()
+		uintValue := d.GetUint64()
 		value = strconv.FormatUint(uintValue, 10)
 	case mysql.TypeFloat:
 		javaType = internal.JavaSQLTypeREAL
@@ -200,16 +199,16 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 		value = strconv.FormatFloat(floatValue, 'f', -1, 64)
 	case mysql.TypeNull:
 		javaType = internal.JavaSQLTypeNULL
-		value = ""
+		value = "null"
 	case mysql.TypeLonglong:
 		javaType = internal.JavaSQLTypeBIGINT
 		d := row.GetDatum(idx, &columnInfo.FieldType)
-		uintValue := d.GetUInt64()
+		uintValue := d.GetUint64()
 		value = strconv.FormatUint(uintValue, 10)
 	case mysql.TypeInt24:
 		javaType = internal.JavaSQLTypeINTEGER
 		d := row.GetDatum(idx, &columnInfo.FieldType)
-		uintValue := d.GetUInt64()
+		uintValue := d.GetUint64()
 		value = strconv.FormatUint(uintValue, 10)
 	case mysql.TypeYear:
 		javaType = internal.JavaSQLTypeVARCHAR
@@ -222,7 +221,7 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 		// NOTICE: GetValue() may return some types that go sql not support, which will cause sink DML fail
 		// Make specified convert upper if you need
 		// Go sql support type ref to: https://github.com/golang/go/blob/go1.17.4/src/database/sql/driver/types.go#L236
-		value = d.GetValue().String()
+		value = fmt.Sprintf("%v", d.GetValue())
 	}
 	return value, javaType, nil
 }
@@ -331,16 +330,16 @@ func (b *canalEntryBuilder) fromRowEvent(e *commonEvent.RowEvent, onlyHandleKeyC
 }
 
 // fromDDLEvent builds canal entry from cdc DDLEvent
-func (b *canalEntryBuilder) fromDDLEvent(e *model.DDLEvent) (*canal.Entry, error) {
+func (b *canalEntryBuilder) fromDDLEvent(e *commonEvent.DDLEvent) (*canal.Entry, error) {
 	eventType := convertDdlEventType(e)
-	header := b.buildHeader(e.CommitTs, e.TableInfo.TableName.Schema, e.TableInfo.TableName.Table, eventType, -1)
+	header := b.buildHeader(e.GetCommitTs(), e.SchemaName, e.TableName, eventType, -1)
 	isDdl := isCanalDDL(eventType)
 	rc := &canal.RowChange{
 		EventTypePresent: &canal.RowChange_EventType{EventType: eventType},
 		IsDdlPresent:     &canal.RowChange_IsDdl{IsDdl: isDdl},
 		Sql:              e.Query,
 		RowDatas:         nil,
-		DdlSchemaName:    e.TableInfo.TableName.Schema,
+		DdlSchemaName:    e.SchemaName,
 	}
 	rcBytes, err := proto.Marshal(rc)
 	if err != nil {
@@ -373,9 +372,9 @@ func convertRowEventType(e *commonEvent.RowEvent) canal.EventType {
 }
 
 // get the canal EventType according to the DDLEvent
-func convertDdlEventType(e *model.DDLEvent) canal.EventType {
+func convertDdlEventType(e *commonEvent.DDLEvent) canal.EventType {
 	// see https://github.com/alibaba/canal/blob/d53bfd7ee76f8fe6eb581049d64b07d4fcdd692d/parse/src/main/java/com/alibaba/otter/canal/parse/inbound/mysql/ddl/DruidDdlParser.java#L59-L178
-	switch e.Type {
+	switch mm.ActionType(e.Type) {
 	case mm.ActionCreateSchema, mm.ActionDropSchema, mm.ActionShardRowID, mm.ActionCreateView,
 		mm.ActionDropView, mm.ActionRecoverTable, mm.ActionModifySchemaCharsetAndCollate,
 		mm.ActionLockTable, mm.ActionUnlockTable, mm.ActionRepairTable, mm.ActionSetTiFlashReplica,

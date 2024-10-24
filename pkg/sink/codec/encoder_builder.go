@@ -15,12 +15,10 @@ func NewEventEncoder(ctx context.Context, cfg *common.Config) (encoder.EventEnco
 	switch cfg.Protocol {
 	case config.ProtocolDefault, config.ProtocolOpen:
 		return open.NewBatchEncoder(ctx, cfg)
-	case config.ProtocolCanal:
-		return canal.NewBatchEncoder(cfg)
 	// case config.ProtocolAvro:
 	// 	return avro.NewAvroEncoder(ctx, cfg)
-	// case config.ProtocolCanalJSON:
-	// 	return canal.NewJSONRowEventEncoder(ctx, cfg)
+	case config.ProtocolCanalJSON:
+		return canal.NewJSONRowEventEncoder(ctx, cfg)
 	// case config.ProtocolCraft:
 	// 	return craft.NewBatchEncoder(cfg), nil
 	// case config.ProtocolDebezium:

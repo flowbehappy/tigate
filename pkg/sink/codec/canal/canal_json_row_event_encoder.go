@@ -19,7 +19,9 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	newcommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/internal"
 	"github.com/goccy/go-json"
 	"github.com/mailru/easyjson/jwriter"
 	"github.com/pingcap/errors"
@@ -34,27 +36,22 @@ import (
 )
 
 func fillColumns(
-	columns []*common.Column,
-	onlyOutputUpdatedColumn bool,
+	valueMap map[int64]string,
+	tableInfo *common.TableInfo,
 	onlyHandleKeyColumn bool,
-	newColumnMap map[string]*common.Column,
 	out *jwriter.Writer,
-	builder *canalEntryBuilder,
 ) error {
-	if len(columns) == 0 {
+	if len(tableInfo.Columns) == 0 {
 		out.RawString("null")
 		return nil
 	}
 	out.RawByte('[')
 	out.RawByte('{')
 	isFirst := true
-	for _, col := range columns {
+	for _, col := range tableInfo.Columns {
 		if col != nil {
-			// column equal, do not output it
-			if onlyOutputUpdatedColumn && shouldIgnoreColumn(col, newColumnMap) {
-				continue
-			}
-			if onlyHandleKeyColumn && !col.Flag.IsHandleKey() {
+			colID := col.ID
+			if onlyHandleKeyColumn && !tableInfo.ColumnsFlag[colID].IsHandleKey() {
 				continue
 			}
 			if isFirst {
@@ -62,17 +59,49 @@ func fillColumns(
 			} else {
 				out.RawByte(',')
 			}
-			value, err := builder.formatValue(col.Value, col.Flag.IsBinary())
-			if err != nil {
-				return cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
-			}
-			out.String(col.Name)
+			out.String(col.Name.O)
 			out.RawByte(':')
-			if col.Value == nil {
-				out.RawString("null")
-			} else {
-				out.String(value)
+			out.String(valueMap[colID])
+		}
+	}
+	out.RawByte('}')
+	out.RawByte(']')
+	return nil
+}
+
+func fillUpdateColumns(
+	newValueMap map[int64]string,
+	oldValueMap map[int64]string,
+	tableInfo *common.TableInfo,
+	onlyHandleKeyColumn bool,
+	onlyOutputUpdatedColumn bool,
+	out *jwriter.Writer,
+) error {
+	if len(tableInfo.Columns) == 0 {
+		out.RawString("null")
+		return nil
+	}
+	out.RawByte('[')
+	out.RawByte('{')
+	isFirst := true
+	for _, col := range tableInfo.Columns {
+		if col != nil {
+			colID := col.ID
+			// column equal, do not output it
+			if onlyOutputUpdatedColumn && newValueMap[colID] == oldValueMap[colID] {
+				continue
 			}
+			if onlyHandleKeyColumn && !tableInfo.ColumnsFlag[colID].IsHandleKey() {
+				continue
+			}
+			if isFirst {
+				isFirst = false
+			} else {
+				out.RawByte(',')
+			}
+			out.String(col.Name.O)
+			out.RawByte(':')
+			out.String(oldValueMap[colID])
 		}
 	}
 	out.RawByte('}')
@@ -82,8 +111,8 @@ func fillColumns(
 
 func newJSONMessageForDML(
 	builder *canalEntryBuilder,
-	e *commonEvent.RowChangedEvent,
-	config *ticommon.Config,
+	e *commonEvent.RowEvent,
+	config *newcommon.Config,
 	messageTooLarge bool,
 	claimCheckFileName string,
 ) ([]byte, error) {
@@ -94,7 +123,18 @@ func newJSONMessageForDML(
 		onlyHandleKey = true
 	}
 
-	mysqlTypeMap := make(map[string]string, len(e.Columns))
+	columnLen := 0
+	for _, col := range e.TableInfo.Columns {
+		if e.ColumnSelector.Select(col) {
+			columnLen += 1
+		}
+	}
+	if columnLen == 0 {
+		return nil, cerror.ErrOpenProtocolCodecInvalidData.GenWithStack("not found invlaid columns for the event")
+	}
+
+	mysqlTypeMap := make(map[string]string, columnLen)
+	// TODO: use util.JsonWriter
 	out := &jwriter.Writer{}
 	out.RawByte('{')
 	{
@@ -154,22 +194,36 @@ func newJSONMessageForDML(
 		out.RawString(prefix)
 		out.String("")
 	}
-	{
-		columns := e.PreColumns
-		if !isDelete {
-			columns = e.Columns
+
+	valueMap := make(map[int64]string, 0)                  // colId -> value
+	javaTypeMap := make(map[int64]internal.JavaSQLType, 0) // colId -> javaType
+
+	// tmd 什么垃圾写法，给我改了
+	row := e.GetRows()
+	if e.IsDelete() {
+		row = e.GetPreRows()
+	}
+	for idx, col := range e.TableInfo.Columns {
+		flag := e.TableInfo.ColumnsFlag[col.ID]
+		value, javaType, err := formatColumnValue(row, idx, col, flag)
+		if err != nil {
+			return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
 		}
+		valueMap[col.ID] = value
+		javaTypeMap[col.ID] = javaType
+	}
+
+	{
 		const prefix string = ",\"sqlType\":"
 		out.RawString(prefix)
 		emptyColumn := true
 		tableInfo := e.TableInfo
-		for _, col := range columns {
+		columnInfos := tableInfo.Columns
+		for _, col := range columnInfos {
 			if col != nil {
-				colFlag := col.Flag
-				colID := tableInfo.ForceGetColumnIDByName(col.Name)
-				columnInfo := tableInfo.ForceGetColumnInfo(colID)
-				colType := col.Type
-				colName := col.Name
+				colID := col.ID
+				colFlag := tableInfo.ColumnsFlag[colID]
+				colName := col.Name.O
 				if onlyHandleKey && !colFlag.IsHandleKey() {
 					continue
 				}
@@ -179,14 +233,11 @@ func newJSONMessageForDML(
 				} else {
 					out.RawByte(',')
 				}
-				javaType, err := getJavaSQLType(col.Value, colType, colFlag)
-				if err != nil {
-					return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
-				}
+
 				out.String(colName)
 				out.RawByte(':')
-				out.Int32(int32(javaType))
-				mysqlTypeMap[colName] = utils.GetMySQLType(columnInfo, config.ContentCompatible)
+				out.Int32(int32(javaTypeMap[colID]))
+				mysqlTypeMap[colName] = utils.GetMySQLType(col, config.ContentCompatible)
 			}
 		}
 		if emptyColumn {
@@ -220,41 +271,35 @@ func newJSONMessageForDML(
 	if e.IsDelete() {
 		out.RawString(",\"old\":null")
 		out.RawString(",\"data\":")
-		if err := fillColumns(
-			e.GetPreColumns(),
-			false, onlyHandleKey, nil, out, builder,
-		); err != nil {
+		if err := fillColumns(valueMap, e.TableInfo, onlyHandleKey, out); err != nil {
 			return nil, err
 		}
 	} else if e.IsInsert() {
 		out.RawString(",\"old\":null")
 		out.RawString(",\"data\":")
-		if err := fillColumns(
-			e.GetColumns(),
-			false, onlyHandleKey, nil, out, builder,
-		); err != nil {
+		if err := fillColumns(valueMap, e.TableInfo, onlyHandleKey, out); err != nil {
 			return nil, err
 		}
 	} else if e.IsUpdate() {
-		var newColsMap map[string]*common.Column
-		if config.OnlyOutputUpdatedColumns {
-			newColsMap = make(map[string]*common.Column, len(e.Columns))
-			for _, col := range e.GetColumns() {
-				newColsMap[col.Name] = col
-			}
-		}
 		out.RawString(",\"old\":")
-		if err := fillColumns(
-			e.GetPreColumns(),
-			config.OnlyOutputUpdatedColumns, onlyHandleKey, newColsMap, out, builder,
-		); err != nil {
+
+		oldValueMap := make(map[int64]string, 0) // colId -> value
+		preRow := e.GetPreRows()
+		for idx, col := range e.TableInfo.Columns {
+			flag := e.TableInfo.ColumnsFlag[col.ID]
+			value, _, err := formatColumnValue(preRow, idx, col, flag)
+			if err != nil {
+				return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
+			}
+			oldValueMap[col.ID] = value
+		}
+
+		if err := fillUpdateColumns(valueMap, oldValueMap, e.TableInfo, onlyHandleKey,
+			config.OnlyOutputUpdatedColumns, out); err != nil {
 			return nil, err
 		}
 		out.RawString(",\"data\":")
-		if err := fillColumns(
-			e.GetColumns(),
-			false, onlyHandleKey, nil, out, builder,
-		); err != nil {
+		if err := fillColumns(valueMap, e.TableInfo, onlyHandleKey, out); err != nil {
 			return nil, err
 		}
 	} else {
@@ -293,11 +338,11 @@ func newJSONMessageForDML(
 	return value, nil
 }
 
-func eventTypeString(e *commonEvent.RowChangedEvent) string {
+func eventTypeString(e *commonEvent.RowEvent) string {
 	if e.IsDelete() {
 		return "DELETE"
 	}
-	if len(e.PreColumns) == 0 {
+	if e.IsInsert() {
 		return "INSERT"
 	}
 	return "UPDATE"
@@ -310,11 +355,11 @@ type JSONRowEventEncoder struct {
 
 	claimCheck *claimcheck.ClaimCheck
 
-	config *ticommon.Config
+	config *newcommon.Config
 }
 
 // newJSONRowEventEncoder creates a new JSONRowEventEncoder
-func NewJSONRowEventEncoder(ctx context.Context, config *ticommon.Config) (encoder.EventEncoder, error) {
+func NewJSONRowEventEncoder(ctx context.Context, config *newcommon.Config) (encoder.EventEncoder, error) {
 	claimCheck, err := claimcheck.New(ctx, config.LargeMessageHandle, config.ChangefeedID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -330,14 +375,14 @@ func NewJSONRowEventEncoder(ctx context.Context, config *ticommon.Config) (encod
 	}, nil
 }
 
-func (c *JSONRowEventEncoder) newJSONMessageForDDL(e *model.DDLEvent) canalJSONMessageInterface {
+func (c *JSONRowEventEncoder) newJSONMessageForDDL(e *commonEvent.DDLEvent) canalJSONMessageInterface {
 	msg := &JSONMessage{
 		ID:            0, // ignored by both Canal Adapter and Flink
-		Schema:        e.TableInfo.TableName.Schema,
-		Table:         e.TableInfo.TableName.Table,
+		Schema:        e.SchemaName,
+		Table:         e.TableName,
 		IsDDL:         true,
 		EventType:     convertDdlEventType(e).String(),
-		ExecutionTime: convertToCanalTs(e.CommitTs),
+		ExecutionTime: convertToCanalTs(e.GetCommitTs()),
 		BuildTime:     time.Now().UnixMilli(), // timestamp
 		Query:         e.Query,
 	}
@@ -348,7 +393,7 @@ func (c *JSONRowEventEncoder) newJSONMessageForDDL(e *model.DDLEvent) canalJSONM
 
 	return &canalJSONMessageWithTiDBExtension{
 		JSONMessage: msg,
-		Extensions:  &tidbExtension{CommitTs: e.CommitTs},
+		Extensions:  &tidbExtension{CommitTs: e.GetCommitTs()},
 	}
 }
 
@@ -393,8 +438,7 @@ func (c *JSONRowEventEncoder) EncodeCheckpointEvent(ts uint64) (*ticommon.Messag
 func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 	ctx context.Context,
 	_ string,
-	e *commonEvent.RowChangedEvent,
-	callback func(),
+	e *commonEvent.RowEvent,
 ) error {
 	value, err := newJSONMessageForDML(c.builder, e, c.config, false, "")
 	if err != nil {
@@ -415,7 +459,7 @@ func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 		Table:    e.TableInfo.GetTableNamePtr(),
 		Type:     model.MessageTypeRow,
 		Protocol: config.ProtocolCanalJSON,
-		Callback: callback,
+		Callback: e.Callback,
 	}
 	m.IncRowsCount()
 
@@ -465,7 +509,7 @@ func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 				return errors.Trace(err)
 			}
 
-			m, err = c.newClaimCheckLocationMessage(e, callback, claimCheckFileName)
+			m, err = c.newClaimCheckLocationMessage(e, claimCheckFileName)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -477,7 +521,7 @@ func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 }
 
 func (c *JSONRowEventEncoder) newClaimCheckLocationMessage(
-	event *commonEvent.RowChangedEvent, callback func(), fileName string,
+	event *commonEvent.RowEvent, fileName string,
 ) (*ticommon.Message, error) {
 	claimCheckLocation := c.claimCheck.FileNameWithPrefix(fileName)
 	value, err := newJSONMessageForDML(c.builder, event, c.config, true, claimCheckLocation)
@@ -493,7 +537,7 @@ func (c *JSONRowEventEncoder) newClaimCheckLocationMessage(
 	}
 
 	result := ticommon.NewMsg(config.ProtocolCanalJSON, nil, value, 0, model.MessageTypeRow, nil, nil)
-	result.Callback = callback
+	result.Callback = event.Callback
 	result.IncRowsCount()
 
 	length := result.Length()
@@ -520,40 +564,30 @@ func (c *JSONRowEventEncoder) Build() []*ticommon.Message {
 
 // EncodeDDLEvent encodes DDL events
 func (c *JSONRowEventEncoder) EncodeDDLEvent(e *commonEvent.DDLEvent) (*ticommon.Message, error) {
-	// message := c.newJSONMessageForDDL(e)
-	// value, err := json.Marshal(message)
-	// if err != nil {
-	// 	return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
-	// }
-	// value, err = ticommon.Compress(
-	// 	c.config.ChangefeedID, c.config.LargeMessageHandle.LargeMessageHandleCompression, value,
-	// )
-	// if err != nil {
-	// 	return nil, errors.Trace(err)
-	// }
-	// return ticommon.NewDDLMsg(config.ProtocolCanalJSON, nil, value, e), nil
-	return nil, nil
+	message := c.newJSONMessageForDDL(e)
+	value, err := json.Marshal(message)
+	if err != nil {
+		return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
+	}
+	value, err = ticommon.Compress(
+		c.config.ChangefeedID, c.config.LargeMessageHandle.LargeMessageHandleCompression, value,
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return &ticommon.Message{
+		Key:      nil,
+		Value:    value,
+		Type:     model.MessageTypeDDL,
+		Protocol: config.ProtocolCanalJSON,
+		Table:    &e.TableName,
+		Schema:   &e.SchemaName,
+	}, nil
 }
 
 func (b *JSONRowEventEncoder) Clean() {
 	if b.claimCheck != nil {
 		b.claimCheck.CleanMetrics()
 	}
-}
-
-func shouldIgnoreColumn(col *common.Column,
-	newColumnMap map[string]*common.Column,
-) bool {
-	newCol, ok := newColumnMap[col.Name]
-	if ok && newCol != nil {
-		// sql type is not equal
-		if newCol.Type != col.Type {
-			return false
-		}
-		// value equal
-		if encoder.IsColumnValueEqual(newCol.Value, col.Value) {
-			return true
-		}
-	}
-	return false
 }
