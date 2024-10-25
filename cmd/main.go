@@ -66,7 +66,7 @@ func main() {
 	cmd.SetErr(os.Stderr)
 
 	newarch := false
-	cmd.PersistentFlags().BoolVar(&newarch, "newarch", false, "Run the new architecture of TiCDC (experimental feature)")
+	cmd.PersistentFlags().BoolVarP(&newarch, "newarch", "x", false, "Run the new architecture of TiCDC (experimental feature)")
 	var serverConfigFilePath string
 	cmd.PersistentFlags().StringVar(&serverConfigFilePath, "config", "", "Path of the configuration file")
 	cmd.PersistentFlags().Lookup("config").Hidden = true
