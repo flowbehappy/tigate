@@ -19,7 +19,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/apperror"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/log"
-	timodel "github.com/pingcap/tidb/pkg/parser/model"
+	timodel "github.com/pingcap/tidb/pkg/meta/model"
 	tfilter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
