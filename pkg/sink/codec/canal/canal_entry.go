@@ -379,7 +379,7 @@ func convertDdlEventType(e *commonEvent.DDLEvent) canal.EventType {
 		mm.ActionDropView, mm.ActionRecoverTable, mm.ActionModifySchemaCharsetAndCollate,
 		mm.ActionLockTable, mm.ActionUnlockTable, mm.ActionRepairTable, mm.ActionSetTiFlashReplica,
 		mm.ActionUpdateTiFlashReplicaStatus, mm.ActionCreateSequence, mm.ActionAlterSequence,
-		mm.ActionDropSequence, mm.ActionModifyTableAutoIdCache, mm.ActionRebaseAutoRandomBase:
+		mm.ActionDropSequence, mm.ActionModifyTableAutoIDCache, mm.ActionRebaseAutoRandomBase:
 		return canal.EventType_QUERY
 	case mm.ActionCreateTable:
 		return canal.EventType_CREATE
