@@ -66,7 +66,7 @@ func main() {
 	cmd.SetErr(os.Stderr)
 
 	newarch := false
-	cmd.PersistentFlags().BoolVar(&newarch, "experimental", false, "Run TiGate (experimental feature)")
+	cmd.PersistentFlags().BoolVar(&newarch, "newarch", false, "Run the new architecture of TiCDC (experimental feature)")
 	var serverConfigFilePath string
 	cmd.PersistentFlags().StringVar(&serverConfigFilePath, "config", "", "Path of the configuration file")
 	cmd.PersistentFlags().Lookup("config").Hidden = true
@@ -75,8 +75,10 @@ func main() {
 	cmd.ParseFlags(os.Args[1:])
 
 	if newarch || isNewArchEnabledByConfig(serverConfigFilePath) {
+		cmd.Println("=== Command to ticdc(new arch).")
 		addNewArchCommandTo(cmd)
 	} else {
+		cmd.Println("=== Command to ticdc(tiflow).")
 		tiflowCmd.AddTiCDCCommandTo(cmd)
 	}
 
