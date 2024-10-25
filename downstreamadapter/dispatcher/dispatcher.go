@@ -230,7 +230,6 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 				return false
 			}
 		}
-
 		switch event.GetType() {
 		case commonEvent.TypeResolvedEvent:
 			d.resolvedTs.Set(event.(commonEvent.ResolvedEvent).ResolvedTs)
@@ -266,7 +265,6 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 			if d.tableSchemaStore != nil {
 				d.tableSchemaStore.AddEvent(event)
 			}
-
 			event.AddPostFlushFunc(func() {
 				dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
 				dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
@@ -459,7 +457,8 @@ func (d *Dispatcher) GetResolvedTs() uint64 {
 func (d *Dispatcher) GetCheckpointTs() uint64 {
 	checkpointTs, isEmpty := d.tableProgress.GetCheckpointTs()
 	if checkpointTs == 0 {
-		// 说明从没有数据写到过 sink，则选择用 resolveTs 作为 checkpointTs
+		// This means the dispatcher has never send events to the sink,
+		// so we use resolvedTs as checkpointTs
 		return d.GetResolvedTs()
 	}
 
