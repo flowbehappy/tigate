@@ -15,7 +15,6 @@ import (
 	"github.com/flowbehappy/tigate/logservice/eventstore"
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
@@ -24,7 +23,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	pevent "github.com/flowbehappy/tigate/pkg/common/event"
 	"go.uber.org/zap"
 )
 
@@ -47,7 +46,7 @@ type eventBroker struct {
 	eventStore  eventstore.EventStore
 	schemaStore schemastore.SchemaStore
 	// todo: only one mounter, this may become the bottleneck affect the throughput performance
-	mounter event.Mounter
+	mounter pevent.Mounter
 	// msgSender is used to send the events to the dispatchers.
 	msgSender messaging.MessageSender
 
@@ -105,7 +104,7 @@ func newEventBroker(
 	c := &eventBroker{
 		tidbClusterID:           id,
 		eventStore:              eventStore,
-		mounter:                 event.NewMounter(tz),
+		mounter:                 pevent.NewMounter(tz),
 		schemaStore:             schemaStore,
 		notifyCh:                make(chan *spanSubscription, defaultChannelSize*16),
 		dispatchers:             sync.Map{},
@@ -147,7 +146,7 @@ func (c *eventBroker) sendWatermark(
 
 	resolvedEvent := newWrapResolvedEvent(
 		server,
-		commonEvent.ResolvedEvent{
+		pevent.ResolvedEvent{
 			DispatcherID: d.info.GetID(),
 			ResolvedTs:   watermark})
 	select {
@@ -162,7 +161,7 @@ func (c *eventBroker) sendWatermark(
 
 func (c *eventBroker) runScanWorker(ctx context.Context) {
 	for i := 0; i < c.scanWorkerCount; i++ {
-		taskCh := c.taskPool.popTask(i)
+		taskCh := c.taskPool.popTask()
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
@@ -216,11 +215,15 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 				c.tableTriggerDispatchers.Range(func(key, value interface{}) bool {
 					dispatcherStat := value.(*dispatcherStat)
 					if !dispatcherStat.isInitialized.Load() {
-						e := commonEvent.NewHandshakeEvent(dispatcherStat.info.GetID(), dispatcherStat.startTs.Load(), dispatcherStat.seq.Add(1))
+						e := pevent.NewHandshakeEvent(
+							dispatcherStat.info.GetID(),
+							dispatcherStat.startTs.Load(),
+							dispatcherStat.seq.Add(1),
+							nil)
 						wrapE := wrapEvent{
 							serverID: node.ID(dispatcherStat.info.GetServerID()),
 							e:        e,
-							msgType:  commonEvent.TypeHandshakeEvent,
+							msgType:  pevent.TypeHandshakeEvent,
 							postSendFunc: func() {
 								dispatcherStat.isInitialized.Store(true)
 							},
@@ -251,7 +254,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 	}()
 }
 
-func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e commonEvent.DDLEvent, d *dispatcherStat) {
+func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e pevent.DDLEvent, d *dispatcherStat) {
 	c.emitSyncPointEventIfNeeded(e.FinishedTs, d, remoteID)
 	e.DispatcherID = d.info.GetID()
 	e.Seq = d.seq.Add(1)
@@ -306,8 +309,12 @@ func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 	}
 	wrapE := wrapEvent{
 		serverID: node.ID(task.dispatcherStat.info.GetServerID()),
-		e:        commonEvent.NewHandshakeEvent(task.dispatcherStat.info.GetID(), task.dispatcherStat.watermark.Load(), task.dispatcherStat.seq.Add(1)),
-		msgType:  commonEvent.TypeHandshakeEvent,
+		e: pevent.NewHandshakeEvent(
+			task.dispatcherStat.info.GetID(),
+			task.dispatcherStat.watermark.Load(),
+			task.dispatcherStat.seq.Add(1),
+			task.dispatcherStat.startTableInfo.Load()),
+		msgType: pevent.TypeHandshakeEvent,
 		postSendFunc: func() {
 			task.dispatcherStat.isInitialized.Store(true)
 			log.Info("handshake event sent to dispatcher", zap.Stringer("dispatcher", task.dispatcherStat.info.GetID()))
@@ -319,7 +326,7 @@ func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 func (c *eventBroker) sendSyncPointEvent(server node.ID, ts uint64, dispatcherID common.DispatcherID) {
 	syncPointEvent := newWrapSyncPointEvent(
 		server,
-		&commonEvent.SyncPointEvent{
+		&pevent.SyncPointEvent{
 			DispatcherID: dispatcherID,
 			CommitTs:     ts})
 	c.messageCh <- syncPointEvent
@@ -386,7 +393,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		}
 	}()
 
-	sendDML := func(dml *commonEvent.DMLEvent) {
+	sendDML := func(dml *pevent.DMLEvent) {
 		if dml == nil {
 			return
 		}
@@ -403,7 +410,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 	}
 
 	// 3. Send the events to the dispatcher.
-	var dml *commonEvent.DMLEvent
+	var dml *pevent.DMLEvent
 	for {
 		//Node: The first event of the txn must return isNewTxn as true.
 		e, isNewTxn, err := iter.Next()
@@ -429,7 +436,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 				// FIXME handle the error
 				log.Panic("get table info failed", zap.Error(err))
 			}
-			dml = commonEvent.NewDMLEvent(dispatcherID, tableID, e.StartTs, e.CRTs, tableInfo)
+			dml = pevent.NewDMLEvent(dispatcherID, tableID, e.StartTs, e.CRTs, tableInfo)
 		}
 		dml.AppendRow(e, c.mounter.DecodeToChunk)
 	}
@@ -447,7 +454,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case m := <-c.messageCh:
-				if m.msgType == commonEvent.TypeResolvedEvent {
+				if m.msgType == pevent.TypeResolvedEvent {
 					// The message is a watermark, we need to cache it, and send it to the dispatcher
 					// when the dispatcher is registered.
 					c.handleResolvedTs(ctx, m)
@@ -474,7 +481,7 @@ func (c *eventBroker) handleResolvedTs(ctx context.Context, m wrapEvent) {
 		cache = newResolvedTsCache(resolvedTsCacheSize)
 		c.resolvedTsCaches[m.serverID] = cache
 	}
-	cache.add(*m.e.(*commonEvent.ResolvedEvent))
+	cache.add(*m.e.(*pevent.ResolvedEvent))
 	if cache.isFull() {
 		c.flushResolvedTs(ctx, m.serverID)
 	}
@@ -485,7 +492,7 @@ func (c *eventBroker) flushResolvedTs(ctx context.Context, serverID node.ID) {
 	if !ok || cache.len == 0 {
 		return
 	}
-	msg := &commonEvent.BatchResolvedEvent{}
+	msg := &pevent.BatchResolvedEvent{}
 	msg.Events = append(msg.Events, cache.getAll()...)
 	tMsg := messaging.NewSingleTargetMessage(
 		serverID,
@@ -648,6 +655,11 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	if err != nil {
 		log.Panic("register table to schemaStore failed", zap.Error(err), zap.Int64("tableID", span.TableID), zap.Uint64("startTs", info.GetStartTs()))
 	}
+	tableInfo, err := c.schemaStore.GetTableInfo(span.GetTableID(), info.GetStartTs())
+	if err != nil {
+		log.Panic("get table info from schemaStore failed", zap.Error(err), zap.Int64("tableID", span.TableID), zap.Uint64("startTs", info.GetStartTs()))
+	}
+	dispatcher.updateTableInfo(tableInfo)
 	eventStoreRegisterDuration := time.Since(start)
 	c.ds.AddPath(id, c)
 
@@ -702,6 +714,11 @@ func (c *eventBroker) resetDispatcher(dispatcherInfo DispatcherInfo) {
 		return
 	}
 	dispStat := stat.(*dispatcherStat)
+	tableInfo, err := c.schemaStore.GetTableInfo(dispStat.info.GetTableSpan().TableID, dispStat.info.GetStartTs())
+	if err != nil {
+		log.Panic("get table info from schemaStore failed", zap.Error(err), zap.Int64("tableID", dispStat.info.GetTableSpan().TableID), zap.Uint64("startTs", dispStat.info.GetStartTs()))
+	}
+	dispStat.updateTableInfo(tableInfo)
 	dispStat.watermark.Store(dispStat.info.GetStartTs())
 	// Reset the seq to 0, so that the next event will be sent with seq 1.
 	dispStat.seq.Store(0)
@@ -713,7 +730,9 @@ func (c *eventBroker) resetDispatcher(dispatcherInfo DispatcherInfo) {
 // Store the progress of the dispatcher, and the incremental events stats.
 // Those information will be used to decide when will the worker start to handle the push task of this dispatcher.
 type dispatcherStat struct {
-	info             DispatcherInfo
+	info DispatcherInfo
+	// startTableInfo is the table info of the dispatcher when it is registered or reset.
+	startTableInfo   atomic.Pointer[common.TableInfo]
 	filter           filter.Filter
 	spanSubscription *spanSubscription
 	startTs          atomic.Uint64
@@ -768,6 +787,10 @@ func newDispatcherStat(
 	dispStat.isRunning.Store(true)
 	subscription.addDispatcher(dispStat)
 	return dispStat
+}
+
+func (a *dispatcherStat) updateTableInfo(tableInfo *common.TableInfo) {
+	a.startTableInfo.Store(tableInfo)
 }
 
 func (a *dispatcherStat) getDataRange() (common.DataRange, bool) {
@@ -890,7 +913,7 @@ func (p *scanTaskPool) pushTask(task scanTask) bool {
 	}
 }
 
-func (p *scanTaskPool) popTask(chanIndex int) <-chan scanTask {
+func (p *scanTaskPool) popTask() <-chan scanTask {
 	return p.pendingTaskQueue
 }
 
@@ -902,35 +925,35 @@ type wrapEvent struct {
 	postSendFunc func()
 }
 
-func newWrapDMLEvent(serverID node.ID, e *commonEvent.DMLEvent) wrapEvent {
+func newWrapDMLEvent(serverID node.ID, e *pevent.DMLEvent) wrapEvent {
 	return wrapEvent{
 		serverID: serverID,
 		e:        e,
-		msgType:  commonEvent.TypeDMLEvent,
+		msgType:  pevent.TypeDMLEvent,
 	}
 }
 
-func newWrapResolvedEvent(serverID node.ID, e commonEvent.ResolvedEvent) wrapEvent {
+func newWrapResolvedEvent(serverID node.ID, e pevent.ResolvedEvent) wrapEvent {
 	return wrapEvent{
 		serverID: serverID,
 		e:        &e,
-		msgType:  commonEvent.TypeResolvedEvent,
+		msgType:  pevent.TypeResolvedEvent,
 	}
 }
 
-func newWrapDDLEvent(serverID node.ID, e *commonEvent.DDLEvent) wrapEvent {
+func newWrapDDLEvent(serverID node.ID, e *pevent.DDLEvent) wrapEvent {
 	return wrapEvent{
 		serverID: serverID,
 		e:        e,
-		msgType:  commonEvent.TypeDDLEvent,
+		msgType:  pevent.TypeDDLEvent,
 	}
 }
 
-func newWrapSyncPointEvent(serverID node.ID, e *commonEvent.SyncPointEvent) wrapEvent {
+func newWrapSyncPointEvent(serverID node.ID, e *pevent.SyncPointEvent) wrapEvent {
 	return wrapEvent{
 		serverID: serverID,
 		e:        e,
-		msgType:  commonEvent.TypeSyncPointEvent,
+		msgType:  pevent.TypeSyncPointEvent,
 	}
 }
 
@@ -938,7 +961,7 @@ func newWrapSyncPointEvent(serverID node.ID, e *commonEvent.SyncPointEvent) wrap
 // We use it instead of a primitive slice to reduce the allocation
 // of the memory and reduce the GC pressure.
 type resolvedTsCache struct {
-	cache []commonEvent.ResolvedEvent
+	cache []pevent.ResolvedEvent
 	// len is the number of the events in the cache.
 	len int
 	// limit is the max number of the events that the cache can store.
@@ -947,12 +970,12 @@ type resolvedTsCache struct {
 
 func newResolvedTsCache(limit int) *resolvedTsCache {
 	return &resolvedTsCache{
-		cache: make([]commonEvent.ResolvedEvent, limit),
+		cache: make([]pevent.ResolvedEvent, limit),
 		limit: limit,
 	}
 }
 
-func (c *resolvedTsCache) add(e commonEvent.ResolvedEvent) {
+func (c *resolvedTsCache) add(e pevent.ResolvedEvent) {
 	c.cache[c.len] = e
 	c.len++
 }
@@ -961,7 +984,7 @@ func (c *resolvedTsCache) isFull() bool {
 	return c.len >= c.limit
 }
 
-func (c *resolvedTsCache) getAll() []commonEvent.ResolvedEvent {
+func (c *resolvedTsCache) getAll() []pevent.ResolvedEvent {
 	res := c.cache[:c.len]
 	c.reset()
 	return res

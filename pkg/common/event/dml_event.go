@@ -19,11 +19,12 @@ const (
 // DMLEvent represent a batch of DMLs of a whole or partial of a transaction.
 type DMLEvent struct {
 	// Version is the version of the DMLEvent struct.
-	Version         byte                `json:"version"`
-	DispatcherID    common.DispatcherID `json:"dispatcher_id"`
-	PhysicalTableID int64               `json:"physical_table_id"`
-	StartTs         uint64              `json:"start_ts"`
-	CommitTs        uint64              `json:"commit_ts"`
+	Version          byte                `json:"version"`
+	DispatcherID     common.DispatcherID `json:"dispatcher_id"`
+	PhysicalTableID  int64               `json:"physical_table_id"`
+	StartTs          uint64              `json:"start_ts"`
+	CommitTs         uint64              `json:"commit_ts"`
+	TableInfoVersion uint64              `json:"table_info_version"`
 	// The seq of the event. It is set by event service.
 	Seq uint64 `json:"seq"`
 	// Length is the number of rows in the transaction.
@@ -63,14 +64,15 @@ func NewDMLEvent(
 	// FIXME: check if chk isFull in the future
 	chk := chunk.NewChunkWithCapacity(tableInfo.GetFieldSlice(), defaultRowCount)
 	return &DMLEvent{
-		Version:         DMLEventVersion,
-		DispatcherID:    dispatcherID,
-		PhysicalTableID: tableID,
-		StartTs:         startTs,
-		CommitTs:        commitTs,
-		TableInfo:       tableInfo,
-		Rows:            chk,
-		RowTypes:        make([]RowType, 0, 1),
+		Version:          DMLEventVersion,
+		DispatcherID:     dispatcherID,
+		PhysicalTableID:  tableID,
+		StartTs:          startTs,
+		CommitTs:         commitTs,
+		TableInfoVersion: tableInfo.UpdateTS,
+		TableInfo:        tableInfo,
+		Rows:             chk,
+		RowTypes:         make([]RowType, 0, 1),
 	}
 }
 
@@ -202,7 +204,7 @@ func (t *DMLEvent) encodeV0() ([]byte, error) {
 		return nil, nil
 	}
 	// Calculate the total size needed for the encoded data
-	size := 1 + t.DispatcherID.GetSize() + 5*8 + 4 + int(t.Length)
+	size := 1 + t.DispatcherID.GetSize() + 6*8 + 4 + int(t.Length)
 
 	// Allocate a buffer with the calculated size
 	buf := make([]byte, size)
@@ -226,6 +228,9 @@ func (t *DMLEvent) encodeV0() ([]byte, error) {
 	offset += 8
 	// CommitTs
 	binary.LittleEndian.PutUint64(buf[offset:], t.CommitTs)
+	offset += 8
+	// TableInfoVersion
+	binary.LittleEndian.PutUint64(buf[offset:], t.TableInfoVersion)
 	offset += 8
 	// Seq
 	binary.LittleEndian.PutUint64(buf[offset:], t.Seq)
@@ -274,6 +279,8 @@ func (t *DMLEvent) decodeV0(data []byte) error {
 	offset += 8
 	t.CommitTs = binary.LittleEndian.Uint64(data[offset:])
 	offset += 8
+	t.TableInfoVersion = binary.LittleEndian.Uint64(data[offset:])
+	offset += 8
 	t.Seq = binary.LittleEndian.Uint64(data[offset:])
 	offset += 8
 	t.Length = int32(binary.LittleEndian.Uint32(data[offset:]))
@@ -302,6 +309,10 @@ func (t *DMLEvent) AssembleRows(tableInfo *common.TableInfo) error {
 	}
 	if len(t.RawRows) == 0 {
 		log.Panic("DMLEvent: RawRows is empty")
+		return nil
+	}
+	if t.TableInfoVersion != tableInfo.UpdateTS {
+		log.Panic("DMLEvent: TableInfoVersion mismatch", zap.Uint64("expect", t.TableInfoVersion), zap.Uint64("got", tableInfo.UpdateTS))
 		return nil
 	}
 	decoder := chunk.NewCodec(tableInfo.GetFieldSlice())
