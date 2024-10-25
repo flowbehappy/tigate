@@ -8,10 +8,18 @@ import (
 )
 
 func TestHandshakeEvent(t *testing.T) {
-	e := NewHandshakeEvent(common.NewDispatcherID(), 456, 789)
+	helper := NewEventTestHelper(t)
+	defer helper.Close()
+
+	helper.Tk().MustExec("use test")
+	_ = helper.DDL2Job(createTableSQL)
+
+	dmlEvent := helper.DML2Event("test", "t", insertDataSQL)
+	require.NotNil(t, dmlEvent)
+
+	e := NewHandshakeEvent(common.NewDispatcherID(), 456, 789, dmlEvent.TableInfo)
 	data, err := e.Marshal()
 	require.NoError(t, err)
-	require.Len(t, data, 1+8+8+16)
 
 	e2 := &HandshakeEvent{}
 	err = e2.Unmarshal(data)
