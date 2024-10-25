@@ -110,17 +110,17 @@ type streamStat[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 
 	pendingLen int
 
-	mostBusyPath heap.Heap[*pathStat[A, P, T, D, H]]
+	mostBusyPath *heap.Heap[*pathStat[A, P, T, D, H]]
 }
 
 func (s streamStat[A, P, T, D, H]) getMostBusyPaths() []*pathStat[A, P, T, D, H] {
-	if s.mostBusyPath == nil {
+	if s.mostBusyPath.IsEmpty() {
 		return nil
 	}
 	return s.mostBusyPath.All()
 }
 
-func tryAddPathToBusyHeap[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](heap heap.Heap[*pathStat[A, P, T, D, H]], pi *pathStat[A, P, T, D, H], trackTop int) {
+func tryAddPathToBusyHeap[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](heap *heap.Heap[*pathStat[A, P, T, D, H]], pi *pathStat[A, P, T, D, H], trackTop int) {
 	if heap.Len() < trackTop {
 		heap.AddOrUpdate(pi)
 	} else if top, _ := heap.PeekTop(); top.LessThan(pi) {

@@ -65,9 +65,9 @@ func (h *mockHandler) Handle(dest any, events ...*mockEvent) (await bool) {
 }
 
 func (h *mockHandler) GetSize(event *mockEvent) int            { return 0 }
-func (h *mockHandler) GetArea(path string) int                 { return 0 }
+func (h *mockHandler) GetArea(path string, dest any) int       { return 0 }
 func (h *mockHandler) GetTimestamp(event *mockEvent) Timestamp { return 0 }
-func (h *mockHandler) GetType(event *mockEvent) EventType      { return 0 }
+func (h *mockHandler) GetType(event *mockEvent) EventType      { return DefaultEventType }
 func (h *mockHandler) IsPaused(event *mockEvent) bool          { return false }
 func (h *mockHandler) OnDrop(event *mockEvent)                 {}
 
@@ -183,7 +183,7 @@ Loop:
 	s3.in() <- event10
 
 	eventDone.Wait()
-	s3.close()
+	s3.close(true)
 	close(reportChan)
 
 	assert.Equal(t, int64(1+2+3+4+5+6+7+8+9+10), incr.Load())

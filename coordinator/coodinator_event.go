@@ -15,6 +15,7 @@ package coordinator
 
 import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/flowbehappy/tigate/utils/dynstream"
 )
 
 const (
@@ -27,10 +28,6 @@ const (
 type Event struct {
 	eventType int
 	message   *messaging.TargetMessage
-}
-
-func (e Event) IsBatchable() bool {
-	return true
 }
 
 // StreamHandler implements the dynstream Handler, no real logic, just forward event
@@ -53,3 +50,10 @@ func (m *StreamHandler) Handle(dest *Controller, events ...*Event) bool {
 	event := events[0]
 	return dest.HandleEvent(event)
 }
+
+func (m *StreamHandler) GetSize(event *Event) int                      { return 0 }
+func (m *StreamHandler) GetArea(path string, dest *Controller) int     { return 0 }
+func (m *StreamHandler) GetTimestamp(event *Event) dynstream.Timestamp { return 0 }
+func (m *StreamHandler) GetType(event *Event) dynstream.EventType      { return dynstream.DefaultEventType }
+func (m *StreamHandler) IsPaused(event *Event) bool                    { return false }
+func (m *StreamHandler) OnDrop(event *Event)                           {}

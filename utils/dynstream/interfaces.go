@@ -21,32 +21,33 @@ type Area comparable
 type Timestamp uint64
 
 // An event belongs to a path.
-type Event interface {
-	// returns true if the event could be batched with other events,
-	// returns false which means the event should be called handled singly
-	IsBatchable() bool
-}
+type Event any
 
 // A destination is the place where the event is sent to.
 type Dest any
 
-// The type of the event. The type is used to group the events for the handler to process.
-// Events with different types will not be processed in a group by the handler.
-type EventType int
+type EventType struct {
+	// The group of the event. It is used to group the events for the handler to process.
+	// Events with different types will not be processed in a group by the handler.
+	DataGroup int
+	Property  Property
+}
+
+var DefaultEventType = EventType{}
+
+type Property int
 
 const (
-	// E.g. a DML
-	DataType1 EventType = iota
-	// E.g. a DDL
-	DataType2
 	// Events are sent repeatedly, and don't carry any data except indicating something happens.
-	// DynamicStream could drop the eary come repeated signals to reduce the load.
+	// DynamicStream drops the eary come repeated signals to reduce the load.
 	// Note that even when a path is paused (stop sending data events), the repeated signal events
 	// should be kept sending periodically. DynamicStream sends feedbacks based on the pause status
 	// to control the memory usage of a path and an area. The size of the repeated signal events
 	// should be small enough and all be the same.
 	// E.g. a resolved TS.
-	RepeatedSignal
+	RepeatedSignal = 1
+	// Events can only be processed one by one.
+	NotBatchable = 2
 )
 
 // The handler interface. The handler processes the event.
@@ -66,21 +67,31 @@ type Handler[A Area, P Path, T Event, D Dest] interface {
 	// Get the size of the event. This method is called once for each event.
 	// You should return all the memory usage of the event, including the size of the event itself and the size of the data it carries.
 	// Return 0 by default implementation, if the size is not used.
+	//
+	// Used by the memory control.
 	GetSize(event T) int
+	// Returns the pause status from the upstream status.
+	// DynamicStream sends feedbacks if the pause status of upstream is not equals to the local status.
+	//
+	// Used by the memory control, to decide whether we should send feedbacks to the upstream.
+	IsPaused(event T) bool
 	// Get the area of the path. This method is called once for each path.
 	// Return zero by default implementation. I.e. all paths are in the default area.
-	GetArea(path P) A
+	//
+	// Used in deciding the handle priority of the events from different areas.
+	GetArea(path P, dest D) A
 	// Get the timestamp of the event. This method is called once for each event.
 	// Events are processed in the order of the timestamps.
 	// Return zero by default implementation. In this case, the events are processed
 	// in the order of the arrival.
+	//
+	// Used in deciding the handle priority of the events from different paths in the same area.
 	GetTimestamp(event T) Timestamp
 	// Get the timestamp of the event. This method is called once for each event.
 	// Return zero by default implementation. I.e. all events are in the same type.
+	//
+	// Only the events with the same type are processed in a group.
 	GetType(event T) EventType
-	// Returns the pause status from the upstream status.
-	// DynamicStream sends feedbacks if the pause status of upstream is not equals to the local status.
-	IsPaused(event T) bool
 	// OnDrop is called when an event is dropped. Could be caused by the memory control or cannot find the path.
 	// Note that dropping RepeatedSignal events will not cause OnDrop to be called.
 	// Do nothing by default implementation.
@@ -154,12 +165,6 @@ func NewOption() Option {
 		StreamCount:       0,
 		BatchCount:        1,
 	}
-}
-
-func NewOptionWithBatchSize(batchSize int) Option {
-	opt := NewOption()
-	opt.BatchSize = batchSize
-	return opt
 }
 
 func (o *Option) fix() {

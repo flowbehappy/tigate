@@ -76,9 +76,9 @@ type streamAreaInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] stru
 	// the pathCount could be larger than the length of the heaps.
 	pathCount int
 
-	timestampHeap heap.Heap[*timestampPathNode[A, P, T, D, H]]
-	queueTimeHeap heap.Heap[*queuePathNode[A, P, T, D, H]]
-	pathSizeHeap  heap.Heap[*pathSizeStat[A, P, T, D, H]]
+	timestampHeap *heap.Heap[*timestampPathNode[A, P, T, D, H]]
+	queueTimeHeap *heap.Heap[*queuePathNode[A, P, T, D, H]]
+	pathSizeHeap  *heap.Heap[*pathSizeStat[A, P, T, D, H]]
 
 	queueTimeHeapIndex int
 }
@@ -106,7 +106,7 @@ type eventQueue[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	handler H
 
 	areaMap             map[A]*streamAreaInfo[A, P, T, D, H]
-	eventQueueTimeQueue heap.Heap[*streamAreaInfo[A, P, T, D, H]]
+	eventQueueTimeQueue *heap.Heap[*streamAreaInfo[A, P, T, D, H]]
 
 	totalPendingLength int
 }
@@ -193,11 +193,27 @@ func (q *eventQueue[A, P, T, D, H]) appendEvent(event eventWrap[A, P, T, D, H]) 
 	}
 
 	if path.areaMemStat != nil {
+		// If memory control is enabled, use the memory control to append the event.
 		path.areaMemStat.appendEvent(path, event, q.handler, q)
 		// updateHeapAfterUpdatePath is called already in areaMemStat.appendEvent
 	} else {
-		path.pendingQueue.PushBack(event)
-		q.updateHeapAfterUpdatePath(path)
+		// Shortcut when memory control is disabled.
+		replaced := false
+		if event.eventType.Property == RepeatedSignal {
+			front, ok := path.pendingQueue.FrontRef()
+			if ok && front.eventType.Property == RepeatedSignal {
+				// Replace the repeated signal.
+				// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
+				*front = event
+				replaced = true
+				q.updateHeapAfterUpdatePath(path)
+			}
+		}
+		if !replaced {
+			path.pendingQueue.PushBack(event)
+			q.updateHeapAfterUpdatePath(path)
+			q.totalPendingLength++
+		}
 	}
 }
 
@@ -221,16 +237,21 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 			q.updateHeapAfterUpdatePath(path)
 			continue
 		} else {
-			var eType EventType = 0
+			group := DefaultEventType.DataGroup
 			for i := 0; i < batchSize; i++ {
 				front, ok := path.pendingQueue.FrontRef()
-				if !ok || (eType != 0 && eType != front.eventType) {
+				if !ok || (group != DefaultEventType.DataGroup && group != front.eventType.DataGroup) {
 					break
 				}
-				eType = front.eventType
+				group = front.eventType.DataGroup
 				buf = append(buf, front.event)
+
 				path.pendingQueue.PopFront()
 				path.pendingSize -= front.eventSize
+
+				if front.eventType.Property == NotBatchable {
+					break
+				}
 			}
 			if len(buf) == 0 {
 				panic("empty buf")

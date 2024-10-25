@@ -30,9 +30,9 @@ func (h *intEventHandler) Handle(dest D, events ...intEvent) (await bool) {
 }
 
 func (h *intEventHandler) GetSize(event intEvent) int            { return 0 }
-func (h *intEventHandler) GetArea(path int) int                  { return 0 }
+func (h *intEventHandler) GetArea(path int, dest D) int          { return 0 }
 func (h *intEventHandler) GetTimestamp(event intEvent) Timestamp { return 0 }
-func (h *intEventHandler) GetType(event intEvent) EventType      { return 0 }
+func (h *intEventHandler) GetType(event intEvent) EventType      { return DefaultEventType }
 func (h *intEventHandler) IsPaused(event intEvent) bool          { return false }
 func (h *intEventHandler) OnDrop(event intEvent)                 {}
 

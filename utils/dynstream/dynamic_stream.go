@@ -637,7 +637,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 						errors = append(errors, NewAppErrorS(ErrorTypeDuplicate))
 						hasError = true
 					} else {
-						area := d.handler.GetArea(pd.Path)
+						area := d.handler.GetArea(pd.Path, pd.Dest)
 						pi := newPathInfo[A, P, T, D, H](area, pd.Path, pd.Dest)
 						si := nextStream()
 						pi.stream = si.stream
@@ -756,7 +756,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 				pi.stream.in() <- e
 			} else {
 				// Otherwise, drop the event
-				if eventType != RepeatedSignal {
+				if eventType.Property != RepeatedSignal {
 					d.handler.OnDrop(e)
 				}
 			}

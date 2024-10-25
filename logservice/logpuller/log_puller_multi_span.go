@@ -43,7 +43,7 @@ type LogPullerMultiSpan struct {
 
 	resolvedTsMap map[SubscriptionID]*resolvedTsItem
 
-	resolvedTsHeap heap.Heap[*resolvedTsItem]
+	resolvedTsHeap *heap.Heap[*resolvedTsItem]
 
 	// the resolved ts that have been consumed
 	prevResolvedTs uint64

@@ -61,7 +61,7 @@ type eventBroker struct {
 	// TODO: Make it support merge the tasks of the same table span, even if the tasks are from different dispatchers.
 	taskPool *scanTaskPool
 
-	ds dynstream.DynamicStream[common.DispatcherID, scanTask, *eventBroker]
+	ds dynstream.DynamicStream[int, common.DispatcherID, scanTask, *eventBroker, *dispatcherEventsHandler]
 
 	// scanWorkerCount is the number of the scan workers to spawn.
 	scanWorkerCount int
@@ -96,10 +96,10 @@ func newEventBroker(
 	wg := &sync.WaitGroup{}
 
 	option := dynstream.NewOption()
-	option.MaxPendingLength = 1
-	option.DropPolicy = dynstream.DropEarly
+	// option.MaxPendingLength = 1
+	// option.DropPolicy = dynstream.DropEarly
 
-	ds := dynstream.NewDynamicStream[common.DispatcherID, scanTask, *eventBroker](&dispatcherEventsHandler{}, option)
+	ds := dynstream.NewDynamicStream(&dispatcherEventsHandler{}, option)
 	ds.Start()
 
 	c := &eventBroker{
@@ -649,7 +649,7 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		log.Panic("register table to schemaStore failed", zap.Error(err), zap.Int64("tableID", span.TableID), zap.Uint64("startTs", info.GetStartTs()))
 	}
 	eventStoreRegisterDuration := time.Since(start)
-	c.ds.AddPath(id, c)
+	c.ds.AddPath(id, c, dynstream.AreaSettings{})
 
 	log.Info("register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
 		zap.Any("acceptorID", id), zap.Int64("tableID", span.TableID),

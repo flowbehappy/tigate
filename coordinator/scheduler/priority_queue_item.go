@@ -30,6 +30,6 @@ func (i *Item) GetHeapIndex() int {
 	return i.index
 }
 
-func (i *Item) CompareTo(t *Item) int {
-	return i.Load - t.Load
+func (i *Item) LessThan(t *Item) bool {
+	return i.Load < t.Load
 }

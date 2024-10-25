@@ -52,9 +52,9 @@ func (h *simpleHandler) Handle(dest struct{}, events ...*simpleEvent) (await boo
 }
 
 func (h *simpleHandler) GetSize(event *simpleEvent) int            { return 0 }
-func (h *simpleHandler) GetArea(path string) int                   { return 0 }
+func (h *simpleHandler) GetArea(path string, dest struct{}) int    { return 0 }
 func (h *simpleHandler) GetTimestamp(event *simpleEvent) Timestamp { return 0 }
-func (h *simpleHandler) GetType(event *simpleEvent) EventType      { return 0 }
+func (h *simpleHandler) GetType(event *simpleEvent) EventType      { return DefaultEventType }
 func (h *simpleHandler) IsPaused(event *simpleEvent) bool          { return false }
 
 func (h *simpleHandler) OnDrop(event *simpleEvent) {
@@ -320,9 +320,9 @@ func (h *removePathHandler) Handle(dest struct{}, events ...*simpleEvent) (await
 }
 
 func (h *removePathHandler) GetSize(event *simpleEvent) int            { return 0 }
-func (h *removePathHandler) GetArea(path string) int                   { return 0 }
+func (h *removePathHandler) GetArea(path string, dest struct{}) int    { return 0 }
 func (h *removePathHandler) GetTimestamp(event *simpleEvent) Timestamp { return 0 }
-func (h *removePathHandler) GetType(event *simpleEvent) EventType      { return 0 }
+func (h *removePathHandler) GetType(event *simpleEvent) EventType      { return DefaultEventType }
 func (h *removePathHandler) IsPaused(event *simpleEvent) bool          { return false }
 func (h *removePathHandler) OnDrop(event *simpleEvent)                 {}
 
@@ -383,11 +383,11 @@ func (h *incEventHandler) Handle(dest struct{}, events ...incEvent) (await bool)
 	return false
 }
 
-func (h *incEventHandler) GetSize(event incEvent) int            { return 0 }
-func (h *incEventHandler) GetArea(path string) int               { return 0 }
-func (h *incEventHandler) GetTimestamp(event incEvent) Timestamp { return 0 }
-func (h *incEventHandler) GetType(event incEvent) EventType      { return 0 }
-func (h *incEventHandler) IsPaused(event incEvent) bool          { return false }
+func (h *incEventHandler) GetSize(event incEvent) int             { return 0 }
+func (h *incEventHandler) GetArea(path string, dest struct{}) int { return 0 }
+func (h *incEventHandler) GetTimestamp(event incEvent) Timestamp  { return 0 }
+func (h *incEventHandler) GetType(event incEvent) EventType       { return DefaultEventType }
+func (h *incEventHandler) IsPaused(event incEvent) bool           { return false }
 
 type incDS DynamicStream[int, string, incEvent, struct{}, *incEventHandler]
 
@@ -489,10 +489,10 @@ func (h *testOrderHandler) Handle(dest struct{}, events ...*testOrder) (await bo
 	return false
 }
 
-func (h *testOrderHandler) GetArea(path string) int                 { return 0 }
+func (h *testOrderHandler) GetArea(path string, dest struct{}) int  { return 0 }
 func (h *testOrderHandler) GetSize(event *testOrder) int            { return 0 }
 func (h *testOrderHandler) GetTimestamp(event *testOrder) Timestamp { return event.timestamp }
-func (h *testOrderHandler) GetType(event *testOrder) EventType      { return 0 }
+func (h *testOrderHandler) GetType(event *testOrder) EventType      { return DefaultEventType }
 func (h *testOrderHandler) IsPaused(event *testOrder) bool          { return false }
 func (h *testOrderHandler) OnDrop(event *testOrder)                 {}
 
