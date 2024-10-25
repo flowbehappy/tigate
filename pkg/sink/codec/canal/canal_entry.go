@@ -16,7 +16,6 @@ package canal
 import (
 	"fmt"
 	"math"
-	"reflect"
 	"strconv"
 
 	"github.com/flowbehappy/tigate/pkg/common"
@@ -176,16 +175,33 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 		javaType = internal.JavaSQLTypeTINYINT
 		d := row.GetDatum(idx, &columnInfo.FieldType)
 		uintValue := d.GetUint64()
+		if uintValue > math.MaxInt8 {
+			javaType = internal.JavaSQLTypeSMALLINT
+		}
 		value = strconv.FormatUint(uintValue, 10)
 	case mysql.TypeShort:
 		javaType = internal.JavaSQLTypeSMALLINT
 		d := row.GetDatum(idx, &columnInfo.FieldType)
 		uintValue := d.GetUint64()
+		if uintValue > math.MaxInt16 {
+			javaType = internal.JavaSQLTypeINTEGER
+		}
 		value = strconv.FormatUint(uintValue, 10)
 	case mysql.TypeLong:
 		javaType = internal.JavaSQLTypeINTEGER
 		d := row.GetDatum(idx, &columnInfo.FieldType)
 		uintValue := d.GetUint64()
+		if uintValue > math.MaxInt32 {
+			javaType = internal.JavaSQLTypeBIGINT
+		}
+		value = strconv.FormatUint(uintValue, 10)
+	case mysql.TypeLonglong:
+		javaType = internal.JavaSQLTypeBIGINT
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		uintValue := d.GetUint64()
+		if uintValue > math.MaxInt64 {
+			javaType = internal.JavaSQLTypeDECIMAL
+		}
 		value = strconv.FormatUint(uintValue, 10)
 	case mysql.TypeFloat:
 		javaType = internal.JavaSQLTypeREAL
@@ -200,11 +216,6 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 	case mysql.TypeNull:
 		javaType = internal.JavaSQLTypeNULL
 		value = "null"
-	case mysql.TypeLonglong:
-		javaType = internal.JavaSQLTypeBIGINT
-		d := row.GetDatum(idx, &columnInfo.FieldType)
-		uintValue := d.GetUint64()
-		value = strconv.FormatUint(uintValue, 10)
 	case mysql.TypeInt24:
 		javaType = internal.JavaSQLTypeINTEGER
 		d := row.GetDatum(idx, &columnInfo.FieldType)
@@ -420,69 +431,4 @@ func isCanalDDL(t canal.EventType) bool {
 		return true
 	}
 	return false
-}
-
-func getJavaSQLType(value interface{}, tp byte, flag common.ColumnFlagType) (result internal.JavaSQLType, err error) {
-	javaType := internal.MySQLType2JavaType(tp, flag.IsBinary())
-	// flag `isUnsigned` only for `numerical` and `bit`, `year` data type.
-	if !flag.IsUnsigned() {
-		return javaType, nil
-	}
-
-	switch tp {
-	// for year, to `int64`, others to `uint64`.
-	// no need to promote type for `year` and `bit`
-	case mysql.TypeYear, mysql.TypeBit:
-		return javaType, nil
-	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
-		return javaType, nil
-	}
-
-	// for **unsigned** integral types, type would be `uint64` or `string`. see reference:
-	// https://github.com/pingcap/tiflow/blob/1e3dd155049417e3fd7bf9b0a0c7b08723b33791/cdc/entry/mounter.go#L501
-	// https://github.com/pingcap/tidb/blob/6495a5a116a016a3e077d181b8c8ad81f76ac31b/types/datum.go#L423-L455
-	if value == nil {
-		return javaType, nil
-	}
-	var number uint64
-	switch v := value.(type) {
-	case uint64:
-		number = v
-	case string:
-		a, err := strconv.ParseUint(v, 10, 64)
-		if err != nil {
-			return javaType, err
-		}
-		number = a
-	default:
-		return javaType, errors.Errorf("unexpected type for unsigned value: %+v, tp: %+v", reflect.TypeOf(v), tp)
-	}
-
-	// Some special cases handled in canal
-	// see https://github.com/alibaba/canal/blob/d53bfd7ee76f8fe6eb581049d64b07d4fcdd692d/parse/src/main/java/com/alibaba/otter/canal/parse/inbound/mysql/dbsync/LogEventConvert.java#L733
-	// For unsigned type, promote by the following rule:
-	// TinyInt,  1byte, [-128, 127], [0, 255], if a > 127
-	// SmallInt, 2byte, [-32768, 32767], [0, 65535], if a > 32767
-	// Int,      4byte, [-2147483648, 2147483647], [0, 4294967295], if a > 2147483647
-	// BigInt,   8byte, [-2<<63, 2 << 63 - 1], [0, 2 << 64 - 1], if a > 2 << 63 - 1
-	switch tp {
-	case mysql.TypeTiny:
-		if number > math.MaxInt8 {
-			javaType = internal.JavaSQLTypeSMALLINT
-		}
-	case mysql.TypeShort:
-		if number > math.MaxInt16 {
-			javaType = internal.JavaSQLTypeINTEGER
-		}
-	case mysql.TypeLong:
-		if number > math.MaxInt32 {
-			javaType = internal.JavaSQLTypeBIGINT
-		}
-	case mysql.TypeLonglong:
-		if number > math.MaxInt64 {
-			javaType = internal.JavaSQLTypeDECIMAL
-		}
-	}
-
-	return javaType, nil
 }
