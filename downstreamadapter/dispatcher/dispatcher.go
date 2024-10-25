@@ -318,7 +318,6 @@ func (d *Dispatcher) checkHandshakeEvents(dispatcherEvents []DispatcherEvent) (b
 			d.tableInfo.Store(handshake.TableInfo)
 			d.isReady.Store(true)
 			log.Info("Receive handshake event, dispatcher is ready to handle events",
-				zap.Int64("tableID", handshake.TableInfo.ID),
 				zap.Any("dispatcher", d.id),
 				zap.Uint64("commitTs", handshake.GetCommitTs()),
 			)
