@@ -20,7 +20,7 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/errors"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 )

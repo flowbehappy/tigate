@@ -10,8 +10,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	timodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -114,13 +113,13 @@ func (m *mounter) rawKVToChunkV1(value []byte, tableInfo *common.TableInfo, chk 
 	return nil
 }
 
-func tryDecodeFromHandle(tblInfo *timodel.TableInfo, schemaColIdx int, col *timodel.ColumnInfo, handle kv.Handle, chk *chunk.Chunk,
+func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *model.ColumnInfo, handle kv.Handle, chk *chunk.Chunk,
 	decoder *codec.Decoder, pkCols []int64, prefixColIDs []int64) (bool, error) {
 	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.FieldType.GetFlag()) {
 		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
-	if col.ID == timodel.ExtraHandleID {
+	if col.ID == model.ExtraHandleID {
 		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
