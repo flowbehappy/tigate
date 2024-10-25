@@ -5,7 +5,7 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"go.uber.org/zap"
 )
 
