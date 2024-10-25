@@ -44,7 +44,7 @@ func (e Event) IsBatchable() bool {
 // SubmitScheduledEvent submits a task to controller pool to send a future event
 func SubmitScheduledEvent(
 	scheduler threadpool.ThreadPool,
-	stream dynstream.DynamicStream[string, *Event, *Maintainer],
+	stream dynstream.DynamicStream[int, string, *Event, *Maintainer, *StreamHandler],
 	event *Event,
 	scheduleTime time.Time) {
 	task := func() time.Time {
@@ -74,3 +74,10 @@ func (m *StreamHandler) Handle(dest *Maintainer, events ...*Event) (await bool) 
 	event := events[0]
 	return dest.HandleEvent(event)
 }
+
+func (m *StreamHandler) GetSize(event *Event) int                      { return 0 }
+func (m *StreamHandler) GetArea(path string, dest *Maintainer) int     { return 0 }
+func (m *StreamHandler) GetTimestamp(event *Event) dynstream.Timestamp { return 0 }
+func (m *StreamHandler) GetType(event *Event) dynstream.EventType      { return dynstream.DefaultEventType }
+func (m *StreamHandler) IsPaused(event *Event) bool                    { return false }
+func (m *StreamHandler) OnDrop(event *Event)                           {}

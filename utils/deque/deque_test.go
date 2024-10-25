@@ -77,3 +77,40 @@ func TestDeque(t *testing.T) {
 		assert.Equal(t, []int{2, 3, 4, 5, 6}, items)
 	}
 }
+
+func TestDequeBlockIt(t *testing.T) {
+	deque := NewDeque[int](2, 0)
+	// [x, 1] [2, x]
+	deque.PushBack(1)
+	deque.PushBack(2)
+
+	f := deque.ForwardBlockIterator()
+	block, ok := f.Next()
+	assert.True(t, ok)
+	assert.Equal(t, 1, len(block))
+	assert.Equal(t, 1, block[0])
+
+	block, ok = f.Next()
+	assert.True(t, ok)
+	assert.Equal(t, 1, len(block))
+	assert.Equal(t, 2, block[0])
+
+	block, ok = f.Next()
+	assert.False(t, ok)
+	assert.Equal(t, 0, len(block))
+
+	b := deque.BackwardBlockIterator()
+	block, ok = b.Next()
+	assert.True(t, ok)
+	assert.Equal(t, 1, len(block))
+	assert.Equal(t, 2, block[0])
+
+	block, ok = b.Next()
+	assert.True(t, ok)
+	assert.Equal(t, 1, len(block))
+	assert.Equal(t, 1, block[0])
+
+	block, ok = b.Next()
+	assert.False(t, ok)
+	assert.Equal(t, 0, len(block))
+}

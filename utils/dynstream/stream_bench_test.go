@@ -29,13 +29,20 @@ func (h *incHandler) Handle(dest D, events ...*inc) (await bool) {
 	return false
 }
 
+func (h *incHandler) GetSize(event *inc) int            { return 0 }
+func (h *incHandler) GetArea(path string, dest D) int   { return 0 }
+func (h *incHandler) GetTimestamp(event *inc) Timestamp { return 0 }
+func (h *incHandler) GetType(event *inc) EventType      { return DefaultEventType }
+func (h *incHandler) IsPaused(event *inc) bool          { return false }
+func (h *incHandler) OnDrop(event *inc)                 {}
+
 func runStream(eventCount int, times int) {
 	handler := &incHandler{}
-	reportChan := make(chan streamStat[string, *inc, D], 100)
+	reportChan := make(chan streamStat[int, string, *inc, D, *incHandler], 100)
 
-	pi := newPathInfo[string, *inc, D]("p1", D{})
-	stream := newStream[string, *inc, D](1 /*id*/, handler, reportChan, 10, NewOption())
-	stream.start([]*pathInfo[string, *inc, D]{pi})
+	pi := newPathInfo[int, string, *inc, D, *incHandler](0, "p1", D{})
+	stream := newStream[int, string, *inc, D](1 /*id*/, handler, reportChan, 10, NewOption())
+	stream.start([]*pathInfo[int, string, *inc, D, *incHandler]{pi})
 
 	go func() {
 		// Drain the report channel. To avoid the report channel blocking.
@@ -48,7 +55,7 @@ func runStream(eventCount int, times int) {
 
 	done.Add(eventCount)
 	for i := 0; i < eventCount; i++ {
-		stream.in() <- eventWrap[string, *inc, D]{event: &inc{times: times, n: total, done: done}, pathInfo: pi}
+		stream.in() <- eventWrap[int, string, *inc, D, *incHandler]{event: &inc{times: times, n: total, done: done}, pathInfo: pi}
 	}
 
 	done.Wait()
@@ -115,16 +122,3 @@ func BenchmarkSLoop100000x100(b *testing.B) {
 		runLoop(100000, 100)
 	}
 }
-
-/*
-goos: darwin
-goarch: amd64
-pkg: github.com/flowbehappy/tigate/utils/dynstream
-cpu: Intel(R) Core(TM) i5-8500 CPU @ 3.00GHz
-BenchmarkSStream1000x1-6                     	    1842	    687181 ns/op	  309550 B/op	    6098 allocs/op
-BenchmarkSStream1000x100-6                   	    1192	   1076355 ns/op	  309529 B/op	    6097 allocs/op
-BenchmarkSStream100000x100-6                 	      12	 104457546 ns/op	30560586 B/op	  606404 allocs/op
-BenchmarkSLoop1000x1-6                       	   17620	     68181 ns/op	     264 B/op	       5 allocs/op
-BenchmarkSLoop1000x100-6                     	    2115	    566871 ns/op	     263 B/op	       4 allocs/op
-BenchmarkSLoop100000x100-6                   	      20	  56798304 ns/op	     264 B/op	       5 allocs/op
-*/

@@ -43,7 +43,7 @@ type LogPullerMultiSpan struct {
 
 	resolvedTsMap map[SubscriptionID]*resolvedTsItem
 
-	resolvedTsHeap heap.Heap[*resolvedTsItem]
+	resolvedTsHeap *heap.Heap[*resolvedTsItem]
 
 	// the resolved ts that have been consumed
 	prevResolvedTs uint64
@@ -172,12 +172,6 @@ func (m *resolvedTsItem) SetHeapIndex(index int) { m.heapIndex = index }
 
 func (m *resolvedTsItem) GetHeapIndex() int { return m.heapIndex }
 
-func (m *resolvedTsItem) CompareTo(other *resolvedTsItem) int {
-	if m.resolvedTs > other.resolvedTs {
-		return 1
-	} else if m.resolvedTs < other.resolvedTs {
-		return -1
-	} else {
-		return 0
-	}
+func (m *resolvedTsItem) LessThan(other *resolvedTsItem) bool {
+	return m.resolvedTs < other.resolvedTs
 }

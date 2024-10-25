@@ -29,7 +29,14 @@ func (h *intEventHandler) Handle(dest D, events ...intEvent) (await bool) {
 	return false
 }
 
-func prepareDynamicStream(pathCount int, eventCount int, times int) (DynamicStream[int, intEvent, D], *atomic.Int64, *sync.WaitGroup) {
+func (h *intEventHandler) GetSize(event intEvent) int            { return 0 }
+func (h *intEventHandler) GetArea(path int, dest D) int          { return 0 }
+func (h *intEventHandler) GetTimestamp(event intEvent) Timestamp { return 0 }
+func (h *intEventHandler) GetType(event intEvent) EventType      { return DefaultEventType }
+func (h *intEventHandler) IsPaused(event intEvent) bool          { return false }
+func (h *intEventHandler) OnDrop(event intEvent)                 {}
+
+func prepareDynamicStream(pathCount int, eventCount int, times int) (DynamicStream[int, int, intEvent, D, *intEventHandler], *atomic.Int64, *sync.WaitGroup) {
 	wg := &sync.WaitGroup{}
 	wg.Add(eventCount * pathCount)
 	inc := &atomic.Int64{}
@@ -43,13 +50,13 @@ func prepareDynamicStream(pathCount int, eventCount int, times int) (DynamicStre
 	ds.Start()
 
 	for i := 0; i < pathCount; i++ {
-		ds.AddPaths(PathAndDest[int, D]{Path: i, Dest: D{}})
+		ds.AddPath(i, D{})
 	}
 
 	return ds, inc, wg
 }
 
-func runDynamicStream(ds DynamicStream[int, intEvent, D], pathCount int, eventCount int) {
+func runDynamicStream(ds DynamicStream[int, int, intEvent, D, *intEventHandler], pathCount int, eventCount int) {
 	cpuCount := runtime.NumCPU()
 	step := int(math.Ceil(float64(pathCount) / float64(cpuCount)))
 	for s := 0; s < cpuCount; s++ {
@@ -63,17 +70,9 @@ func runDynamicStream(ds DynamicStream[int, intEvent, D], pathCount int, eventCo
 			}
 		}(from, to, eventCount)
 	}
-
-	// for p := 0; p < pathCount; p++ {
-	// 	go func(path int) {
-	// 		for i := 0; i < eventCount; i++ {
-	// 			ds.In() <- intEvent(path)
-	// 		}
-	// 	}(p)
-	// }
 }
 
-func prepareGoroutine(pathCount int, eventCount int, times int) ([]chan intEvent, *intEventHandler, *atomic.Int64, *sync.WaitGroup) {
+func prepareGoroutine(pathCount int, eventCount int, times int) ([]chan intEvent, *atomic.Int64, *sync.WaitGroup) {
 	wg := &sync.WaitGroup{}
 	wg.Add(eventCount * pathCount)
 	inc := &atomic.Int64{}
@@ -89,10 +88,18 @@ func prepareGoroutine(pathCount int, eventCount int, times int) ([]chan intEvent
 		chans[i] = make(chan intEvent, 64)
 	}
 
-	return chans, handler, inc, wg
+	for i := 0; i < pathCount; i++ {
+		go func(ch chan intEvent) {
+			for e := range ch {
+				handler.Handle(D{}, e)
+			}
+		}(chans[i])
+	}
+
+	return chans, inc, wg
 }
 
-func runGoroutine(chans []chan intEvent, pathCount int, eventCount int, handler *intEventHandler) {
+func runGoroutine(chans []chan intEvent, pathCount int, eventCount int) {
 	cpuCount := runtime.NumCPU()
 	step := int(math.Ceil(float64(pathCount) / float64(cpuCount)))
 	for s := 0; s < cpuCount; s++ {
@@ -108,28 +115,19 @@ func runGoroutine(chans []chan intEvent, pathCount int, eventCount int, handler 
 	}
 
 	// for i := 0; i < pathCount; i++ {
-	// 	go func(ch chan intEvent, path int) {
-	// 		for i := 0; i < eventCount; i++ {
-	// 			ch <- intEvent(path)
+	// 	go func(ch chan intEvent) {
+	// 		for e := range ch {
+	// 			handler.Handle(D{}, e)
 	// 		}
-	// 	}(chans[i], i)
+	// 	}(chans[i])
 	// }
-
-	for i := 0; i < pathCount; i++ {
-		go func(ch chan intEvent) {
-			for e := range ch {
-				handler.Handle(D{}, e)
-			}
-		}(chans[i])
-	}
 }
 
 func BenchmarkDSDynamicSt1000x1000x100(b *testing.B) {
-	ds, inc, wg := prepareDynamicStream(1000, 1000, 100)
-
-	b.ResetTimer()
-
 	for k := 0; k < b.N; k++ {
+		ds, inc, wg := prepareDynamicStream(1000, 1000, 100)
+
+		b.ResetTimer()
 		inc.Store(0)
 		runDynamicStream(ds, 1000, 1000)
 		wg.Wait()
@@ -137,17 +135,16 @@ func BenchmarkDSDynamicSt1000x1000x100(b *testing.B) {
 		if inc.Load() != int64(1000*1000*100) {
 			panic(fmt.Sprintf("total: %d, expected: %d", inc.Load(), 1000*1000*100))
 		}
-	}
+		ds.Close()
 
-	ds.Close()
+	}
 }
 
 func BenchmarkDSDynamicSt1000000x20x50(b *testing.B) {
-	ds, inc, wg := prepareDynamicStream(1000000, 20, 50)
-
-	b.ResetTimer()
 
 	for k := 0; k < b.N; k++ {
+		ds, inc, wg := prepareDynamicStream(1000000, 20, 50)
+		b.ResetTimer()
 		inc.Store(0)
 		runDynamicStream(ds, 1000000, 20)
 		wg.Wait()
@@ -155,47 +152,42 @@ func BenchmarkDSDynamicSt1000000x20x50(b *testing.B) {
 		if inc.Load() != int64(1000000*20*50) {
 			panic(fmt.Sprintf("total: %d, expected: %d", inc.Load(), 1000000*20*50))
 		}
+		ds.Close()
 	}
-
-	ds.Close()
 }
 
 func BenchmarkDSGoroutine1000x1000x100(b *testing.B) {
-	chans, handler, inc, wg := prepareGoroutine(1000, 1000, 100)
-
-	b.ResetTimer()
-
 	for k := 0; k < b.N; k++ {
+		chans, inc, wg := prepareGoroutine(1000, 1000, 100)
+		b.ResetTimer()
+
 		inc.Store(0)
-		runGoroutine(chans, 1000, 1000, handler)
+		runGoroutine(chans, 1000, 100)
 		wg.Wait()
 
 		if inc.Load() != int64(1000*1000*100) {
 			panic(fmt.Sprintf("total: %d, expected: %d", inc.Load(), 1000*1000*100))
 		}
-	}
-
-	for _, c := range chans {
-		close(c)
+		for _, c := range chans {
+			close(c)
+		}
 	}
 }
 
 func BenchmarkDSGoroutine1000000x20x50(b *testing.B) {
-	chans, handler, inc, wg := prepareGoroutine(1000000, 20, 50)
-
-	b.ResetTimer()
-
 	for k := 0; k < b.N; k++ {
+		chans, inc, wg := prepareGoroutine(1000000, 20, 50)
+
+		b.ResetTimer()
 		inc.Store(0)
-		runGoroutine(chans, 1000000, 20, handler)
+		runGoroutine(chans, 1000000, 20)
 		wg.Wait()
 
 		if inc.Load() != int64(1000000*20*50) {
 			panic(fmt.Sprintf("total: %d, expected: %d", inc.Load(), 1000000*20*50))
 		}
-	}
-
-	for _, c := range chans {
-		close(c)
+		for _, c := range chans {
+			close(c)
+		}
 	}
 }

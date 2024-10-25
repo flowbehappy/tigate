@@ -68,7 +68,7 @@ type EventCollector struct {
 	// ds is the dynamicStream for dispatcher events.
 	// All the events from event service will be sent to ds to handle.
 	// ds will dispatch the events to different dispatchers according to the dispatcherID.
-	ds dynstream.DynamicStream[common.DispatcherID, dispatcher.DispatcherEvent, *dispatcher.Dispatcher]
+	ds dynstream.DynamicStream[int, common.DispatcherID, dispatcher.DispatcherEvent, *dispatcher.Dispatcher, *dispatcher.DispatcherEventsHandler]
 
 	metricDispatcherReceivedKVEventCount         prometheus.Counter
 	metricDispatcherReceivedResolvedTsEventCount prometheus.Counter

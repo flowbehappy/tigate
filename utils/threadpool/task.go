@@ -83,4 +83,4 @@ type scheduledTask struct {
 
 func (m *scheduledTask) SetHeapIndex(index int)             { m.heapIndex = index }
 func (m *scheduledTask) GetHeapIndex() int                  { return m.heapIndex }
-func (m *scheduledTask) CompareTo(other *scheduledTask) int { return int(m.time.Sub(other.time)) }
+func (m *scheduledTask) LessThan(other *scheduledTask) bool { return m.time.Before(other.time) }

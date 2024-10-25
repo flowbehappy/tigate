@@ -201,7 +201,8 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 // HandleEvents can batch handle events about resolvedTs Event and DML Event.
 // While for DDLEvent and SyncPointEvent, they should be handled singly,
 // because they are block events.
-// We ensure we only will receive one event when it's ddl event or sync point event by IsBatchable() function.
+// We ensure we only will receive one event when it's ddl event or sync point event
+// by setting them with different event types in DispatcherEventsHandler.GetType
 // When we handle events, we don't have any previous events still in sink.
 func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block bool) {
 	// If the dispatcher is not ready, try to find handshake event to make the dispatcher ready.

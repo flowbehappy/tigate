@@ -44,7 +44,7 @@ type coordinator struct {
 	lastTickTime time.Time
 
 	mc            messaging.MessageCenter
-	stream        dynstream.DynamicStream[string, *Event, *Controller]
+	stream        dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler]
 	taskScheduler threadpool.ThreadPool
 	controller    *Controller
 
@@ -74,7 +74,7 @@ func New(node *node.Info,
 		mc:                  mc,
 		updatedChangefeedCh: make(chan map[model.ChangeFeedID]*changefeed.Changefeed, 1024),
 	}
-	c.stream = dynstream.NewDynamicStream[string, *Event, *Controller](NewStreamHandler())
+	c.stream = dynstream.NewDynamicStream[int, string, *Event, *Controller, *StreamHandler](NewStreamHandler())
 	c.stream.Start()
 	c.taskScheduler = threadpool.NewThreadPoolDefault()
 

@@ -55,7 +55,7 @@ type Controller struct {
 
 	bootstrapper *bootstrap.Bootstrapper[heartbeatpb.CoordinatorBootstrapResponse]
 
-	stream                   dynstream.DynamicStream[string, *Event, *Controller]
+	stream                   dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler]
 	taskScheduler            threadpool.ThreadPool
 	operatorControllerHandle *threadpool.TaskHandle
 	schedulerHandle          *threadpool.TaskHandle
@@ -70,7 +70,7 @@ func NewController(
 	version int64,
 	updatedChangefeedCh chan map[model.ChangeFeedID]*changefeed.Changefeed,
 	backend changefeed.Backend,
-	stream dynstream.DynamicStream[string, *Event, *Controller],
+	stream dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler],
 	taskScheduler threadpool.ThreadPool,
 	batchSize int, balanceInterval time.Duration) *Controller {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
@@ -416,7 +416,7 @@ func (c *Controller) RemoveNode(id node.ID) {
 // submitScheduledEvent submits a task to controller pool to send a future event
 func submitScheduledEvent(
 	scheduler threadpool.ThreadPool,
-	stream dynstream.DynamicStream[string, *Event, *Controller],
+	stream dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler],
 	event *Event,
 	scheduleTime time.Time) {
 	task := func() time.Time {
