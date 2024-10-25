@@ -361,5 +361,4 @@ func (s *grpcServer) handleConnect(msg *proto.Message, stream grpcSender, isEven
 	} else {
 		return remoteTarget.runCommandSendStream(stream)
 	}
-
 }

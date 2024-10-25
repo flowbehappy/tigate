@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/bloom"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
@@ -84,6 +85,41 @@ type persistentStorage struct {
 	tableRegisteredCount map[int64]int
 }
 
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true
+	}
+	if os.IsNotExist(err) {
+		return false
+	}
+	log.Fatal("check path failed", zap.Error(err))
+	return true
+}
+
+func openDB(dbPath string) *pebble.DB {
+	opts := &pebble.Options{
+		DisableWAL:   true,
+		MemTableSize: 8 << 20,
+	}
+	opts.Levels = make([]pebble.LevelOptions, 7)
+	for i := 0; i < len(opts.Levels); i++ {
+		l := &opts.Levels[i]
+		l.BlockSize = 64 << 10       // 64 KB
+		l.IndexBlockSize = 256 << 10 // 256 KB
+		l.FilterPolicy = bloom.FilterPolicy(10)
+		l.FilterType = pebble.TableFilter
+		l.TargetFileSize = 8 << 20 // 8 MB
+		l.Compression = pebble.SnappyCompression
+		l.EnsureDefaults()
+	}
+	db, err := pebble.Open(dbPath, opts)
+	if err != nil {
+		log.Fatal("open db failed", zap.Error(err))
+	}
+	return db
+}
+
 func newPersistentStorage(
 	ctx context.Context,
 	root string,
@@ -96,44 +132,14 @@ func newPersistentStorage(
 	}
 
 	dbPath := fmt.Sprintf("%s/%s", root, dataDir)
-	// FIXME: avoid remove
+	// FIXME: currently we don't try to reuse data at restart, when we need, just remove the following line
 	if err := os.RemoveAll(dbPath); err != nil {
 		log.Panic("fail to remove path")
 	}
 
-	// TODO: update pebble options
-	db, err := pebble.Open(dbPath, &pebble.Options{
-		DisableWAL: true,
-	})
-	if err != nil {
-		log.Fatal("open db failed", zap.Error(err))
-	}
-
-	// check whether the data on disk is reusable
-	isDataReusable := true
-	gcTs, err := readGcTs(db)
-	// TODO: distiguish non-exist key with other io errors
-	if err != nil {
-		isDataReusable = false
-	}
-	if gcSafePoint < gcTs {
-		log.Panic("gc safe point should never go back")
-	}
-	upperBound, err := readUpperBoundMeta(db)
-	if err != nil {
-		isDataReusable = false
-	}
-	if gcSafePoint >= upperBound.ResolvedTs {
-		isDataReusable = false
-	}
-
-	// initialize persistent storage
 	dataStorage := &persistentStorage{
 		pdCli:                  pdCli,
 		kvStorage:              storage,
-		db:                     db,
-		gcTs:                   gcTs,
-		upperBound:             upperBound,
 		tableMap:               make(map[int64]*BasicTableInfo),
 		partitionMap:           make(map[int64]BasicPartitionInfo),
 		databaseMap:            make(map[int64]*BasicDatabaseInfo),
@@ -142,11 +148,37 @@ func newPersistentStorage(
 		tableInfoStoreMap:      make(map[int64]*versionedTableInfoStore),
 		tableRegisteredCount:   make(map[int64]int),
 	}
-	if isDataReusable {
-		dataStorage.initializeFromDisk()
-	} else {
-		db.Close()
-		dataStorage.db = nil
+
+	isDataReusable := false
+	if exists(dbPath) {
+		isDataReusable = true
+		db := openDB(dbPath)
+		// check whether the data on disk is reusable
+		gcTs, err := readGcTs(db)
+		if err != nil {
+			isDataReusable = false
+		}
+		if gcSafePoint < gcTs {
+			log.Panic("gc safe point should never go back")
+		}
+		upperBound, err := readUpperBoundMeta(db)
+		if err != nil {
+			isDataReusable = false
+		}
+		if gcSafePoint >= upperBound.ResolvedTs {
+			isDataReusable = false
+		}
+
+		if isDataReusable {
+			dataStorage.db = db
+			dataStorage.gcTs = gcTs
+			dataStorage.upperBound = upperBound
+			dataStorage.initializeFromDisk()
+		} else {
+			db.Close()
+		}
+	}
+	if !isDataReusable {
 		dataStorage.initializeFromKVStorage(dbPath, storage, gcSafePoint)
 	}
 
@@ -162,21 +194,16 @@ func newPersistentStorage(
 }
 
 func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.Storage, gcTs uint64) {
-	// TODO: avoid recreate db if the path is empty at start
+	now := time.Now()
 	if err := os.RemoveAll(dbPath); err != nil {
-		log.Panic("fail to remove path")
+		log.Fatal("fail to remove path in initializeFromKVStorage")
 	}
+	p.db = openDB(dbPath)
 
-	var err error
-	// TODO: update pebble options
-	if p.db, err = pebble.Open(dbPath, &pebble.Options{
-		DisableWAL: true,
-	}); err != nil {
-		log.Fatal("open db failed", zap.Error(err))
-	}
 	log.Info("schema store initialize from kv storage begin",
 		zap.Uint64("snapTs", gcTs))
 
+	var err error
 	if p.databaseMap, p.tableMap, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs, true); err != nil {
 		// TODO: retry
 		log.Fatal("fail to initialize from kv snapshot")
@@ -190,7 +217,8 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 	writeUpperBoundMeta(p.db, p.upperBound)
 	log.Info("schema store initialize from kv storage done",
 		zap.Int("databaseMapLen", len(p.databaseMap)),
-		zap.Int("tableMapLen", len(p.tableMap)))
+		zap.Int("tableMapLen", len(p.tableMap)),
+		zap.Any("duration(s)", time.Since(now).Seconds()))
 }
 
 func (p *persistentStorage) initializeFromDisk() {
@@ -1342,6 +1370,11 @@ func getDroppedIDs(oldIDs []int64, newIDs []int64) []int64 {
 }
 
 func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commonEvent.DDLEvent {
+	wrapTableInfo := common.WrapTableInfo(
+		rawEvent.CurrentSchemaID,
+		rawEvent.CurrentSchemaName,
+		rawEvent.TableInfo)
+
 	ddlEvent := commonEvent.DDLEvent{
 		Type: rawEvent.Type,
 		// TODO: whether the following four fields are needed
@@ -1351,7 +1384,7 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		TableName:  rawEvent.CurrentTableName,
 
 		Query:      rawEvent.Query,
-		TableInfo:  rawEvent.TableInfo,
+		TableInfo:  wrapTableInfo,
 		FinishedTs: rawEvent.FinishedTs,
 		TiDBOnly:   false,
 	}

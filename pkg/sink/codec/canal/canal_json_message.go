@@ -155,55 +155,55 @@ func (c *canalJSONMessageWithTiDBExtension) getCommitTs() uint64 {
 	return c.Extensions.CommitTs
 }
 
-func canalJSONMessage2RowChange(msg canalJSONMessageInterface) (*common.RowChangedEvent, error) {
-	result := new(common.RowChangedEvent)
-	result.CommitTs = msg.getCommitTs()
-	mysqlType := msg.getMySQLType()
-	var err error
-	if msg.eventType() == canal.EventType_DELETE {
-		// for `DELETE` event, `data` contain the old data, set it as the `PreColumns`
-		preCols, err := canalJSONColumnMap2RowChangeColumns(msg.getData(), mysqlType)
-		result.TableInfo = common.BuildTableInfoWithPKNames4Test(*msg.getSchema(), *msg.getTable(), preCols, msg.pkNameSet())
-		result.PreColumns = preCols
-		return result, err
-	}
+// func canalJSONMessage2RowChange(msg canalJSONMessageInterface) (*commonEvent.RowEvent, error) {
+// 	result := new(common.RowChangedEvent)
+// 	result.CommitTs = msg.getCommitTs()
+// 	mysqlType := msg.getMySQLType()
+// 	var err error
+// 	if msg.eventType() == canal.EventType_DELETE {
+// 		// for `DELETE` event, `data` contain the old data, set it as the `PreColumns`
+// 		preCols, err := canalJSONColumnMap2RowChangeColumns(msg.getData(), mysqlType)
+// 		result.TableInfo = common.BuildTableInfoWithPKNames4Test(*msg.getSchema(), *msg.getTable(), preCols, msg.pkNameSet())
+// 		result.PreColumns = preCols
+// 		return result, err
+// 	}
 
-	// for `INSERT` and `UPDATE`, `data` contain fresh data, set it as the `Columns`
-	cols, err := canalJSONColumnMap2RowChangeColumns(msg.getData(), mysqlType)
-	result.TableInfo = common.BuildTableInfoWithPKNames4Test(*msg.getSchema(), *msg.getTable(), cols, msg.pkNameSet())
-	result.Columns = cols
-	if err != nil {
-		return nil, err
-	}
+// 	// for `INSERT` and `UPDATE`, `data` contain fresh data, set it as the `Columns`
+// 	cols, err := canalJSONColumnMap2RowChangeColumns(msg.getData(), mysqlType)
+// 	result.TableInfo = common.BuildTableInfoWithPKNames4Test(*msg.getSchema(), *msg.getTable(), cols, msg.pkNameSet())
+// 	result.Columns = cols
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	// for `UPDATE`, `old` contain old data, set it as the `PreColumns`
-	if msg.eventType() == canal.EventType_UPDATE {
-		preCols, err := canalJSONColumnMap2RowChangeColumns(msg.getOld(), mysqlType)
-		if len(preCols) < len(cols) {
-			newPreCols := make([]*common.Column, 0, len(preCols))
-			j := 0
-			// Columns are ordered by name
-			for _, col := range cols {
-				if j < len(preCols) && col.Name == preCols[j].Name {
-					newPreCols = append(newPreCols, preCols[j])
-					j += 1
-				} else {
-					newPreCols = append(newPreCols, col)
-				}
-			}
-			preCols = newPreCols
-		}
-		if len(preCols) != len(cols) {
-			log.Panic("column count mismatch", zap.Any("preCols", preCols), zap.Any("cols", cols))
-		}
-		result.PreColumns = preCols
-		if err != nil {
-			return nil, err
-		}
-	}
+// 	// for `UPDATE`, `old` contain old data, set it as the `PreColumns`
+// 	if msg.eventType() == canal.EventType_UPDATE {
+// 		preCols, err := canalJSONColumnMap2RowChangeColumns(msg.getOld(), mysqlType)
+// 		if len(preCols) < len(cols) {
+// 			newPreCols := make([]*common.Column, 0, len(preCols))
+// 			j := 0
+// 			// Columns are ordered by name
+// 			for _, col := range cols {
+// 				if j < len(preCols) && col.Name == preCols[j].Name {
+// 					newPreCols = append(newPreCols, preCols[j])
+// 					j += 1
+// 				} else {
+// 					newPreCols = append(newPreCols, col)
+// 				}
+// 			}
+// 			preCols = newPreCols
+// 		}
+// 		if len(preCols) != len(cols) {
+// 			log.Panic("column count mismatch", zap.Any("preCols", preCols), zap.Any("cols", cols))
+// 		}
+// 		result.PreColumns = preCols
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 	}
 
-	return result, nil
-}
+// 	return result, nil
+// }
 
 func canalJSONColumnMap2RowChangeColumns(cols map[string]interface{}, mysqlType map[string]string) ([]*common.Column, error) {
 	result := make([]*common.Column, 0, len(cols))

@@ -14,7 +14,7 @@
 package cli
 
 import (
-	"github.com/pingcap/tiflow/pkg/cmd/factory"
+	"github.com/flowbehappy/tigate/cmd/factory"
 	"github.com/pingcap/tiflow/pkg/cmd/util"
 	"github.com/pingcap/tiflow/pkg/logutil"
 	"github.com/spf13/cobra"
@@ -53,6 +53,7 @@ func NewCmdCli() *cobra.Command {
 
 	// Add subcommands.
 	cmds.AddCommand(newCmdChangefeed(f))
+	cmds.AddCommand(newCmdCapture(f))
 	cmds.AddCommand(newCmdTso(f))
 
 	return cmds

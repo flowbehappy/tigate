@@ -35,6 +35,11 @@ type DMLEvent struct {
 	RowTypes        []RowType `json:"row_types"`
 	// Rows is the rows of the transaction.
 	Rows *chunk.Chunk `json:"rows"`
+	// RawRows is the raw bytes of the rows.
+	// When the DMLEvent is received from a remote eventService, the Rows is nil.
+	// All the data is stored in RawRows.
+	// The receiver needs to call DecodeRawRows function to decode the RawRows into Rows.
+	RawRows []byte `json:"raw_rows"`
 
 	// TableInfo is the table info of the transaction.
 	// If the DMLEvent is send from a remote eventService, the TableInfo is nil.
@@ -44,7 +49,6 @@ type DMLEvent struct {
 	// PostTxnFlushed is the functions to be executed after the transaction is flushed.
 	// It is set and used by dispatcher.
 	PostTxnFlushed []func() `json:"-"`
-
 	// offset is the offset of the current row in the transaction.
 	// It is internal field, not exported. So it doesn't need to be marshalled.
 	offset int `json:"-"`
@@ -177,11 +181,6 @@ func (t DMLEvent) Marshal() ([]byte, error) {
 // Unmarshal the DMLEvent from the given data.
 // Please make sure the TableInfo of the DMLEvent is set before unmarshal.
 func (t *DMLEvent) Unmarshal(data []byte) error {
-	// Rows
-	if t.TableInfo == nil {
-		log.Panic("TableInfo must not nil")
-		return nil
-	}
 	return t.decode(data)
 }
 
@@ -286,8 +285,29 @@ func (t *DMLEvent) decodeV0(data []byte) error {
 		t.RowTypes[i] = RowType(data[offset])
 		offset++
 	}
-	decoder := chunk.NewCodec(t.TableInfo.GetFieldSlice())
-	t.Rows, _ = decoder.Decode(data[offset:])
+	t.RawRows = data[offset:]
+	return nil
+}
+
+// AssembleRows assembles the Rows from the RawRows.
+// It also sets the TableInfo and clears the RawRows.
+func (t *DMLEvent) AssembleRows(tableInfo *common.TableInfo) error {
+	// t.Rows is already set, no need to assemble again
+	if t.Rows != nil {
+		return nil
+	}
+	if tableInfo == nil {
+		log.Panic("DMLEvent: TableInfo is nil")
+		return nil
+	}
+	if len(t.RawRows) == 0 {
+		log.Panic("DMLEvent: RawRows is empty")
+		return nil
+	}
+	decoder := chunk.NewCodec(tableInfo.GetFieldSlice())
+	t.Rows, _ = decoder.Decode(t.RawRows)
+	t.TableInfo = tableInfo
+	t.RawRows = nil
 	return nil
 }
 

@@ -163,7 +163,7 @@ func (p *ddlJobFetcher) initDDLTableInfo() error {
 	}
 
 	p.ddlTableInfo = &event.DDLTableInfo{}
-	p.ddlTableInfo.DDLJobTable = common.WrapTableInfo(db.ID, db.Name.L, 0, tableInfo)
+	p.ddlTableInfo.DDLJobTable = common.WrapTableInfo(db.ID, db.Name.L, tableInfo)
 	p.ddlTableInfo.JobMetaColumnIDinJobTable = col.ID
 
 	// for tidb_ddl_history
@@ -177,7 +177,7 @@ func (p *ddlJobFetcher) initDDLTableInfo() error {
 		return errors.Trace(err)
 	}
 
-	p.ddlTableInfo.DDLHistoryTable = common.WrapTableInfo(db.ID, db.Name.L, 0, historyTableInfo)
+	p.ddlTableInfo.DDLHistoryTable = common.WrapTableInfo(db.ID, db.Name.L, historyTableInfo)
 	p.ddlTableInfo.JobMetaColumnIDinHistoryTable = historyTableCol.ID
 
 	return nil

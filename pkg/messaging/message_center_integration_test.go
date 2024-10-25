@@ -3,11 +3,14 @@ package messaging
 import (
 	"context"
 	"fmt"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"net"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/flowbehappy/tigate/pkg/common/event"
+	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging/proto"
@@ -18,9 +21,9 @@ import (
 	"google.golang.org/grpc"
 )
 
-var epoch = uint64(1)
+var mockEpoch = uint64(1)
 
-func newMessageCenterForTest(t *testing.T, timeout time.Duration) (*messageCenter, string, func()) {
+func NewMessageCenterForTest(t *testing.T) (*messageCenter, string, func()) {
 	port := freeport.GetPort()
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	lis, err := net.Listen("tcp", addr)
@@ -30,11 +33,10 @@ func newMessageCenterForTest(t *testing.T, timeout time.Duration) (*messageCente
 	grpcServer := grpc.NewServer(opts...)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	mcConfig := config.NewDefaultMessageCenterConfig()
 	id := node.NewID()
-	mc := NewMessageCenter(ctx, id, epoch, mcConfig)
-	epoch++
+	mc := NewMessageCenter(ctx, id, mockEpoch, mcConfig)
+	mockEpoch++
 	mcs := NewMessageCenterServer(mc)
 	proto.RegisterMessageCenterServer(grpcServer, mcs)
 
@@ -45,94 +47,134 @@ func newMessageCenterForTest(t *testing.T, timeout time.Duration) (*messageCente
 		_ = grpcServer.Serve(lis)
 	}()
 
-	timeoutCh := time.After(timeout)
 	stop := func() {
-		<-timeoutCh
-		log.Info("Server has been running for timeout duration, force to stop it",
-			zap.String("addr", addr),
-			zap.Duration("timeout", timeout))
 		grpcServer.Stop()
+		cancel()
 		wg.Wait()
 	}
 	return mc, string(addr), stop
 }
 
-func TestMessageCenterBasic(t *testing.T) {
-	mc1, mc1Addr, mc1Stop := newMessageCenterForTest(t, time.Second*5)
-	mc2, mc2Addr, mc2Stop := newMessageCenterForTest(t, time.Second*5)
-	mc3, mc3Addr, mc3Stop := newMessageCenterForTest(t, time.Second*5)
-	defer mc1Stop()
-	defer mc2Stop()
-	defer mc3Stop()
-	topic1 := string("test1")
-	topic2 := string("test2")
-	topic3 := string("test3")
+func setupMessageCenters(t *testing.T) (*messageCenter, *messageCenter, *messageCenter, func()) {
+	mc1, mc1Addr, mc1Stop := NewMessageCenterForTest(t)
+	mc2, mc2Addr, mc2Stop := NewMessageCenterForTest(t)
+	mc3, mc3Addr, mc3Stop := NewMessageCenterForTest(t)
 
 	mc1.addTarget(mc2.id, mc2.epoch, mc2Addr)
 	mc1.addTarget(mc3.id, mc3.epoch, mc3Addr)
-	ch1 := make(chan *TargetMessage, 1)
-	h1 := func(ctx context.Context, msg *TargetMessage) error {
-		ch1 <- msg
-		log.Info("mc1 received message", zap.Any("msg", msg))
-		return nil
-	}
-	mc1.RegisterHandler(topic1, h1)
-
 	mc2.addTarget(mc1.id, mc1.epoch, mc1Addr)
 	mc2.addTarget(mc3.id, mc3.epoch, mc3Addr)
-	ch2 := make(chan *TargetMessage, 1)
-	h2 := func(ctx context.Context, msg *TargetMessage) error {
-		ch2 <- msg
-		log.Info("mc2 received message", zap.Any("msg", msg))
-		return nil
-	}
-	mc2.RegisterHandler(topic2, h2)
-
 	mc3.addTarget(mc1.id, mc1.epoch, mc1Addr)
 	mc3.addTarget(mc2.id, mc2.epoch, mc2Addr)
 
-	//Case1: Send a message from mc1 to mc1, local message.
-	msgBytes := []byte{1, 2, 3, 4}
-	msg := Bytes(msgBytes)
-	targetMsg := NewSingleTargetMessage(mc1.id, topic1, &msg)
-	err := mc1.SendEvent(targetMsg)
-	require.NoError(t, err)
-	receivedMsg := <-ch1
-	require.Equal(t, targetMsg.To, receivedMsg.To)
-	require.Equal(t, mc1.id, receivedMsg.From)
-	require.Equal(t, targetMsg.Type, receivedMsg.Type)
-	require.Equal(t, targetMsg.Message, receivedMsg.Message)
-	log.Info("Pass test 1: send and receive local message", zap.Any("receivedMsg", receivedMsg))
-
-	//Case2: Send a message from mc1 to mc2, remote message.
-	msgBytes = []byte{5, 6, 7, 8}
-	msg = Bytes(msgBytes)
-	targetMsg = NewSingleTargetMessage(mc2.id, topic2, &msg)
-	mc1.SendEvent(targetMsg)
-	receivedMsg = <-ch2
-	require.Equal(t, targetMsg.To, receivedMsg.To)
-	require.Equal(t, mc1.id, receivedMsg.From)
-	require.Equal(t, targetMsg.Type, receivedMsg.Type)
-	require.Equal(t, targetMsg.Message, receivedMsg.Message)
-	log.Info("Pass test 2: send and receive remote message", zap.Any("receivedMsg", receivedMsg))
-
-	//Case3: Send a message from mc2 to mc3, remote message.
-	ch3 := make(chan *TargetMessage, 1)
-	h3 := func(ctx context.Context, msg *TargetMessage) error {
-		ch3 <- msg
-		log.Info("mc3 received message", zap.Any("msg", msg))
-		return nil
+	cleanup := func() {
+		mc1Stop()
+		mc2Stop()
+		mc3Stop()
 	}
-	mc3.RegisterHandler(topic3, h3)
 
-	msgBytes = []byte{9, 10, 11, 12}
-	msg = Bytes(msgBytes)
-	targetMsg = NewSingleTargetMessage(mc3.id, topic3, &msg)
-	mc2.SendEvent(targetMsg)
-	receivedMsg = <-ch3
+	return mc1, mc2, mc3, cleanup
+}
+
+func registerHandler(mc *messageCenter, topic string) chan *TargetMessage {
+	ch := make(chan *TargetMessage, 1)
+	mc.RegisterHandler(topic, func(ctx context.Context, msg *TargetMessage) error {
+		ch <- msg
+		log.Info(fmt.Sprintf("%s received message", mc.id), zap.Any("msg", msg))
+		return nil
+	})
+	return ch
+}
+
+func waitForTargetsReady(mc *messageCenter) {
+	// wait for all targets to be ready
+	time.Sleep(time.Second)
+	for {
+		allReady := true
+		for _, target := range mc.remoteTargets.m {
+			if !target.isReadyToSend() {
+				log.Info("target is not ready, retry it later", zap.String("target", target.targetId.String()))
+				allReady = false
+				break
+			}
+		}
+		if allReady {
+			log.Info("All targets are ready")
+			return
+		}
+		time.Sleep(time.Millisecond * 100)
+	}
+}
+
+func sendAndReceiveMessage(t *testing.T, sender *messageCenter, receiver *messageCenter, topic string, event *commonEvent.DMLEvent) {
+	targetMsg := NewSingleTargetMessage(receiver.id, topic, event)
+	ch := make(chan *TargetMessage, 1)
+	receiver.RegisterHandler(topic, func(ctx context.Context, msg *TargetMessage) error {
+		ch <- msg
+		return nil
+	})
+
+	timeoutCh := time.After(30 * time.Second)
+	for {
+		err := sender.SendEvent(targetMsg)
+		require.NoError(t, err)
+		select {
+		case receivedMsg := <-ch:
+			validateReceivedMessage(t, targetMsg, receivedMsg, sender.id, event)
+			return
+		case <-timeoutCh:
+			t.Fatal("Timeout when sending message")
+		default:
+			log.Info("waiting for message, retry to send it later")
+			time.Sleep(time.Millisecond * 100)
+		}
+	}
+}
+
+func validateReceivedMessage(t *testing.T, targetMsg *TargetMessage, receivedMsg *TargetMessage, senderID node.ID, event *commonEvent.DMLEvent) {
 	require.Equal(t, targetMsg.To, receivedMsg.To)
-	require.Equal(t, mc2.id, receivedMsg.From)
+	require.Equal(t, senderID, receivedMsg.From)
 	require.Equal(t, targetMsg.Type, receivedMsg.Type)
-	require.Equal(t, targetMsg.Message, receivedMsg.Message)
-	log.Info("Pass test 3: send and receive remote message", zap.Any("receivedMsg", receivedMsg))
+	receivedEvent := receivedMsg.Message[0].(*commonEvent.DMLEvent)
+	receivedEvent.AssembleRows(event.TableInfo)
+	require.Equal(t, event.Rows.ToString(event.TableInfo.GetFieldSlice()), receivedEvent.Rows.ToString(event.TableInfo.GetFieldSlice()))
+}
+
+func TestMessageCenterBasic(t *testing.T) {
+	mc1, mc2, mc3, cleanup := setupMessageCenters(t)
+	defer cleanup()
+
+	helper := event.NewEventTestHelper(t)
+	defer helper.Close()
+
+	helper.Tk().MustExec("use test")
+	_ = helper.DDL2Job("create table t1(id int primary key, a int, b int, c int)")
+	dml1 := helper.DML2Event("test", "t1", "insert into t1 values (1, 1, 1, 1)")
+	dml2 := helper.DML2Event("test", "t1", "insert into t1 values (2, 2, 2, 2)")
+	dml3 := helper.DML2Event("test", "t1", "insert into t1 values (3, 3, 3, 3)")
+
+	topic1 := "topic1"
+	topic2 := "topic2"
+	topic3 := "topic3"
+
+	registerHandler(mc1, topic1)
+	registerHandler(mc2, topic2)
+	registerHandler(mc3, topic3)
+
+	time.Sleep(time.Second)
+	waitForTargetsReady(mc1)
+	waitForTargetsReady(mc2)
+	waitForTargetsReady(mc3)
+
+	// Case 1: Send a message from mc1 to mc1 (local message)
+	sendAndReceiveMessage(t, mc1, mc1, topic1, dml1)
+	log.Info("Pass test 1: send and receive local message")
+
+	// Case 2: Send a message from mc1 to mc2 (remote message)
+	sendAndReceiveMessage(t, mc1, mc2, topic2, dml2)
+	log.Info("Pass test 2: send and receive remote message")
+
+	// Case 3: Send a message from mc2 to mc3 (remote message)
+	sendAndReceiveMessage(t, mc2, mc3, topic3, dml3)
+	log.Info("Pass test 3: send and receive remote message")
 }
