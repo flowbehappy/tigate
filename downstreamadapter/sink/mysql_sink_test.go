@@ -19,7 +19,6 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
-	"github.com/flowbehappy/tigate/downstreamadapter/writer"
 	"github.com/flowbehappy/tigate/pkg/common"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tiflow/cdc/model"
