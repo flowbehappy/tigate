@@ -110,6 +110,7 @@ func (db *ChangefeedDB) StopByChangefeedID(cfID model.ChangeFeedID) *Changefeed 
 	if ok {
 		delete(db.changefeeds, cfID)
 		db.removeChangefeedUnLock(cf)
+		cf.Info.State = model.StateStopped
 		// push bash to stopped
 		db.changefeeds[cfID] = cf
 		db.stopped[cfID] = cf
@@ -259,6 +260,7 @@ func (db *ChangefeedDB) Resume(id model.ChangeFeedID) {
 
 	cf := db.changefeeds[id]
 	if cf != nil {
+		cf.Info.State = model.StateNormal
 		delete(db.stopped, id)
 		db.absent[id] = cf
 		log.Info("resume changefeed", zap.String("changefeed", id.String()))
