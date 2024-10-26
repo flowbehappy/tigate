@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -401,6 +402,25 @@ func (c *Controller) UpdateChangefeed(ctx context.Context, change *model.ChangeF
 	}
 	c.changefeedDB.ReplaceStoppedChangefeed(change)
 	return nil
+}
+
+func (c *Controller) ListChangefeeds(ctx context.Context) ([]*model.ChangeFeedInfo, []*model.ChangeFeedStatus, error) {
+	cfs := c.changefeedDB.GetAllChangefeeds()
+	infos := make([]*model.ChangeFeedInfo, 0, len(cfs))
+	statuses := make([]*model.ChangeFeedStatus, 0, len(cfs))
+	for _, cf := range cfs {
+		infos = append(infos, cf.Info)
+		statuses = append(statuses, &model.ChangeFeedStatus{CheckpointTs: cf.Status.CheckpointTs})
+	}
+	return infos, statuses, nil
+}
+
+func (c *Controller) GetChangefeed(ctx context.Context, id model.ChangeFeedID) (*model.ChangeFeedInfo, *model.ChangeFeedStatus, error) {
+	cf := c.changefeedDB.GetByID(id)
+	if cf == nil {
+		return nil, nil, cerror.ErrChangeFeedNotExists.GenWithStackByArgs(id.ID)
+	}
+	return cf.Info, &model.ChangeFeedStatus{CheckpointTs: cf.Status.CheckpointTs}, nil
 }
 
 // GetTask queries a task by channgefeed ID, return nil if not found

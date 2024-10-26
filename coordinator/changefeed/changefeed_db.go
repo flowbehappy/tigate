@@ -160,6 +160,18 @@ func (db *ChangefeedDB) GetReplicatingSize() int {
 	return len(db.replicating)
 }
 
+// GetAllChangefeeds returns all changefeeds
+func (db *ChangefeedDB) GetAllChangefeeds() []*Changefeed {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	cfs := make([]*Changefeed, 0, len(db.changefeeds))
+	for _, cf := range db.changefeeds {
+		cfs = append(cfs, cf)
+	}
+	return cfs
+}
+
 func (db *ChangefeedDB) GetReplicating() []*Changefeed {
 	db.lock.RLock()
 	defer db.lock.RUnlock()

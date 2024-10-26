@@ -15,12 +15,13 @@ package node
 
 import (
 	"encoding/json"
+	"time"
+
 	"github.com/flowbehappy/tigate/version"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
-	"time"
 )
 
 type ID string

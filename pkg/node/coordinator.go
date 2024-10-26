@@ -29,7 +29,10 @@ type Coordinator interface {
 	AsyncStop()
 	// Run handles messages
 	Run(ctx context.Context) error
-
+	// ListChangefeeds returns all changefeeds
+	ListChangefeeds(ctx context.Context) ([]*model.ChangeFeedInfo, []*model.ChangeFeedStatus, error)
+	// GetChangefeed returns a changefeed
+	GetChangefeed(ctx context.Context, id model.ChangeFeedID) (*model.ChangeFeedInfo, *model.ChangeFeedStatus, error)
 	// CreateChangefeed creates a new changefeed
 	CreateChangefeed(ctx context.Context, info *model.ChangeFeedInfo) error
 	// RemoveChangefeed gets a changefeed
