@@ -141,6 +141,10 @@ func (c *coordinator) Run(ctx context.Context) error {
 	}
 }
 
+func (c *coordinator) CreateChangefeed(ctx context.Context, info *model.ChangeFeedInfo) error {
+	return c.controller.CreateChangefeed(ctx, info)
+}
+
 func (c *coordinator) RemoveChangefeed(ctx context.Context, id model.ChangeFeedID) (uint64, error) {
 	return c.controller.RemoveChangefeed(ctx, id)
 }
@@ -157,6 +161,14 @@ func (c *coordinator) UpdateChangefeed(ctx context.Context, change *model.Change
 	return c.controller.UpdateChangefeed(ctx, change)
 }
 
+func (c *coordinator) ListChangefeeds(ctx context.Context) ([]*model.ChangeFeedInfo, []*model.ChangeFeedStatus, error) {
+	return c.controller.ListChangefeeds(ctx)
+}
+
+func (c *coordinator) GetChangefeed(ctx context.Context, id model.ChangeFeedID) (*model.ChangeFeedInfo, *model.ChangeFeedStatus, error) {
+	return c.controller.GetChangefeed(ctx, id)
+}
+
 func shouldRunChangefeed(state model.FeedState) bool {
 	switch state {
 	case model.StateStopped, model.StateFailed, model.StateFinished:
@@ -166,10 +178,6 @@ func shouldRunChangefeed(state model.FeedState) bool {
 }
 
 func (c *coordinator) AsyncStop() {
-}
-
-func (c *coordinator) CreateChangefeed(ctx context.Context, info *model.ChangeFeedInfo) error {
-	return c.controller.CreateChangefeed(ctx, info)
 }
 
 func (c *coordinator) sendMessages(msgs []*messaging.TargetMessage) {
