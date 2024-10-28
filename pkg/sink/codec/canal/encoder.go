@@ -33,8 +33,11 @@ import (
 	"github.com/pingcap/tiflow/pkg/sink/codec/utils"
 	"github.com/pingcap/tiflow/pkg/sink/kafka/claimcheck"
 	"go.uber.org/zap"
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/charmap"
 )
 
+// TODO: we need to reorg this code later, including use util.jsonWriter and other unreasonable code
 func fillColumns(
 	valueMap map[int64]string,
 	tableInfo *common.TableInfo,
@@ -61,7 +64,11 @@ func fillColumns(
 			}
 			out.String(col.Name.O)
 			out.RawByte(':')
-			out.String(valueMap[colID])
+			if valueMap[colID] == "null" {
+				out.RawString("null")
+			} else {
+				out.String(valueMap[colID])
+			}
 		}
 	}
 	out.RawByte('}')
@@ -101,7 +108,11 @@ func fillUpdateColumns(
 			}
 			out.String(col.Name.O)
 			out.RawByte(':')
-			out.String(oldValueMap[colID])
+			if oldValueMap[colID] == "null" {
+				out.RawString("null")
+			} else {
+				out.String(oldValueMap[colID])
+			}
 		}
 	}
 	out.RawByte('}')
@@ -110,11 +121,11 @@ func fillUpdateColumns(
 }
 
 func newJSONMessageForDML(
-	builder *canalEntryBuilder,
 	e *commonEvent.RowEvent,
 	config *newcommon.Config,
 	messageTooLarge bool,
 	claimCheckFileName string,
+	bytesDecoder *encoding.Decoder,
 ) ([]byte, error) {
 	isDelete := e.IsDelete()
 
@@ -198,21 +209,19 @@ func newJSONMessageForDML(
 	valueMap := make(map[int64]string, 0)                  // colId -> value
 	javaTypeMap := make(map[int64]internal.JavaSQLType, 0) // colId -> javaType
 
-	// tmd 什么垃圾写法，给我改了
 	row := e.GetRows()
 	if e.IsDelete() {
 		row = e.GetPreRows()
 	}
 	for idx, col := range e.TableInfo.Columns {
 		flag := e.TableInfo.ColumnsFlag[col.ID]
-		value, javaType, err := formatColumnValue(row, idx, col, flag)
+		value, javaType, err := formatColumnValue(row, idx, col, flag, bytesDecoder)
 		if err != nil {
 			return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
 		}
 		valueMap[col.ID] = value
 		javaTypeMap[col.ID] = javaType
 	}
-
 	{
 		const prefix string = ",\"sqlType\":"
 		out.RawString(prefix)
@@ -287,7 +296,7 @@ func newJSONMessageForDML(
 		preRow := e.GetPreRows()
 		for idx, col := range e.TableInfo.Columns {
 			flag := e.TableInfo.ColumnsFlag[col.ID]
-			value, _, err := formatColumnValue(preRow, idx, col, flag)
+			value, _, err := formatColumnValue(preRow, idx, col, flag, bytesDecoder)
 			if err != nil {
 				return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
 			}
@@ -350,8 +359,8 @@ func eventTypeString(e *commonEvent.RowEvent) string {
 
 // JSONRowEventEncoder encodes row event in JSON format
 type JSONRowEventEncoder struct {
-	builder  *canalEntryBuilder
-	messages []*ticommon.Message
+	messages     []*ticommon.Message
+	bytesDecoder *encoding.Decoder
 
 	claimCheck *claimcheck.ClaimCheck
 
@@ -368,10 +377,10 @@ func NewJSONRowEventEncoder(ctx context.Context, config *newcommon.Config) (enco
 		return nil, errors.Trace(err)
 	}
 	return &JSONRowEventEncoder{
-		builder:    newCanalEntryBuilder(config),
-		messages:   make([]*ticommon.Message, 0, 1),
-		config:     config,
-		claimCheck: claimCheck,
+		messages:     make([]*ticommon.Message, 0, 1),
+		bytesDecoder: charmap.ISO8859_1.NewDecoder(),
+		config:       config,
+		claimCheck:   claimCheck,
 	}, nil
 }
 
@@ -440,7 +449,7 @@ func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 	_ string,
 	e *commonEvent.RowEvent,
 ) error {
-	value, err := newJSONMessageForDML(c.builder, e, c.config, false, "")
+	value, err := newJSONMessageForDML(e, c.config, false, "", c.bytesDecoder)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -475,7 +484,7 @@ func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 		}
 
 		if c.config.LargeMessageHandle.HandleKeyOnly() {
-			value, err = newJSONMessageForDML(c.builder, e, c.config, true, "")
+			value, err = newJSONMessageForDML(e, c.config, true, "", c.bytesDecoder)
 			if err != nil {
 				return cerror.ErrMessageTooLarge.GenWithStackByArgs()
 			}
@@ -524,7 +533,7 @@ func (c *JSONRowEventEncoder) newClaimCheckLocationMessage(
 	event *commonEvent.RowEvent, fileName string,
 ) (*ticommon.Message, error) {
 	claimCheckLocation := c.claimCheck.FileNameWithPrefix(fileName)
-	value, err := newJSONMessageForDML(c.builder, event, c.config, true, claimCheckLocation)
+	value, err := newJSONMessageForDML(event, c.config, true, claimCheckLocation, c.bytesDecoder)
 	if err != nil {
 		return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
 	}

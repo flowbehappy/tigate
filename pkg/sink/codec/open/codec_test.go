@@ -197,8 +197,10 @@ func TestDDLEvent(t *testing.T) {
 
 	protocolConfig := newcommon.NewConfig(config.ProtocolOpen)
 	ddlEvent := &pevent.DDLEvent{
-		Job:      job,
-		CommitTS: 1,
+		Query:      job.Query,
+		SchemaName: job.SchemaName,
+		TableName:  job.TableName,
+		FinishedTs: 1,
 	}
 
 	key, value, err := encodeDDLEvent(ddlEvent, protocolConfig)
