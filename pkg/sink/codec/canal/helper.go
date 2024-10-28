@@ -20,63 +20,13 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
-	ticommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
-	"github.com/flowbehappy/tigate/pkg/sink/codec/internal"
-	"github.com/golang/protobuf/proto" // nolint:staticcheck
-	"github.com/pingcap/errors"
+	"github.com/flowbehappy/tigate/pkg/sink/codec/internal" // nolint:staticcheck
 	mm "github.com/pingcap/tidb/pkg/parser/model"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	cerror "github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/sink/codec/utils"
 	canal "github.com/pingcap/tiflow/proto/canal"
-	"golang.org/x/text/encoding"
-	"golang.org/x/text/encoding/charmap"
 )
-
-// compatible with canal-1.1.4
-// https://github.com/alibaba/canal/tree/canal-1.1.4
-const (
-	CanalPacketVersion   int32  = 1
-	CanalProtocolVersion int32  = 1
-	CanalServerEncode    string = "UTF-8"
-)
-
-type canalEntryBuilder struct {
-	bytesDecoder *encoding.Decoder // default charset is ISO-8859-1
-	config       *ticommon.Config
-}
-
-// newCanalEntryBuilder creates a new canalEntryBuilder
-func newCanalEntryBuilder(config *ticommon.Config) *canalEntryBuilder {
-	return &canalEntryBuilder{
-		bytesDecoder: charmap.ISO8859_1.NewDecoder(),
-		config:       config,
-	}
-}
-
-// build the header of a canal entry
-func (b *canalEntryBuilder) buildHeader(commitTs uint64, schema string, table string, eventType canal.EventType, rowCount int) *canal.Header {
-	t := convertToCanalTs(commitTs)
-	h := &canal.Header{
-		VersionPresent:    &canal.Header_Version{Version: CanalProtocolVersion},
-		ServerenCode:      CanalServerEncode,
-		ExecuteTime:       t,
-		SourceTypePresent: &canal.Header_SourceType{SourceType: canal.Type_MYSQL},
-		SchemaName:        schema,
-		TableName:         table,
-		EventTypePresent:  &canal.Header_EventType{EventType: eventType},
-	}
-	if rowCount > 0 {
-		p := &canal.Pair{
-			Key:   "rowsCount",
-			Value: strconv.Itoa(rowCount),
-		}
-		h.Props = append(h.Props, p)
-	}
-	return h
-}
 
 func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, flag *common.ColumnFlagType) (string, internal.JavaSQLType, error) {
 	colType := columnInfo.GetType()
@@ -237,149 +187,9 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 	return value, javaType, nil
 }
 
-// build the Column in the canal RowData
-// see https://github.com/alibaba/canal/blob/b54bea5e3337c9597c427a53071d214ff04628d1/parse/src/main/java/com/alibaba/otter/canal/parse/inbound/mysql/dbsync/LogEventConvert.java#L756-L872
-func (b *canalEntryBuilder) buildColumn(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, tableInfo *common.TableInfo, updated bool) (*canal.Column, error) {
-	mysqlType := utils.GetMySQLType(columnInfo, b.config.ContentCompatible)
-
-	flag := tableInfo.ColumnsFlag[columnInfo.ID]
-
-	value, javaType, err := formatColumnValue(row, idx, columnInfo, flag)
-	if err != nil {
-		return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
-	}
-
-	canalColumn := &canal.Column{
-		SqlType:       int32(javaType),
-		Name:          columnInfo.Name.O,
-		IsKey:         flag.IsPrimaryKey(),
-		Updated:       updated,
-		IsNullPresent: &canal.Column_IsNull{IsNull: row.IsNull(idx)},
-		Value:         value,
-		MysqlType:     mysqlType,
-	}
-	return canalColumn, nil
-}
-
-// build the RowData of a canal entry
-func (b *canalEntryBuilder) buildRowData(e *commonEvent.RowEvent, onlyHandleKeyColumns bool) (*canal.RowData, error) {
-	var columns []*canal.Column
-
-	// build after columns
-	flag := false // flag to check if any column is written
-
-	colInfo := e.TableInfo.Columns
-	for idx, col := range colInfo {
-		if e.ColumnSelector.Select(col) {
-			flag = true
-			column, err := b.buildColumn(e.GetRows(), idx, col, e.TableInfo, !e.IsDelete())
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			columns = append(columns, column)
-		}
-
-	}
-	if !flag {
-		return nil, cerror.ErrOpenProtocolCodecInvalidData.GenWithStack("not found handle key columns for the delete event")
-	}
-
-	// build before columns
-	var preColumns []*canal.Column
-	flag = false
-	onlyHandleKeyColumns = onlyHandleKeyColumns && e.IsDelete()
-	for idx, col := range colInfo {
-		if e.ColumnSelector.Select(col) {
-			if onlyHandleKeyColumns && !e.TableInfo.ColumnsFlag[col.ID].IsHandleKey() {
-				continue
-			}
-			flag = true
-			column, err := b.buildColumn(e.GetPreRows(), idx, col, e.TableInfo, !e.IsDelete())
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			preColumns = append(preColumns, column)
-		}
-
-	}
-	if !flag {
-		return nil, cerror.ErrOpenProtocolCodecInvalidData.GenWithStack("not found handle key columns for the delete event")
-	}
-
-	rowData := &canal.RowData{}
-	rowData.BeforeColumns = preColumns
-	rowData.AfterColumns = columns
-	return rowData, nil
-}
-
-// fromRowEvent builds canal entry from cdc RowChangedEvent
-func (b *canalEntryBuilder) fromRowEvent(e *commonEvent.RowEvent, onlyHandleKeyColumns bool) (*canal.Entry, error) {
-	eventType := convertRowEventType(e)
-	header := b.buildHeader(e.CommitTs, e.TableInfo.GetSchemaName(), e.TableInfo.GetTableName(), eventType, 1)
-	isDdl := isCanalDDL(eventType) // false
-	rowData, err := b.buildRowData(e, onlyHandleKeyColumns)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	rc := &canal.RowChange{
-		EventTypePresent: &canal.RowChange_EventType{EventType: eventType},
-		IsDdlPresent:     &canal.RowChange_IsDdl{IsDdl: isDdl},
-		RowDatas:         []*canal.RowData{rowData},
-	}
-	rcBytes, err := proto.Marshal(rc)
-	if err != nil {
-		return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
-	}
-
-	// build entry
-	entry := &canal.Entry{
-		Header:           header,
-		EntryTypePresent: &canal.Entry_EntryType{EntryType: canal.EntryType_ROWDATA},
-		StoreValue:       rcBytes,
-	}
-	return entry, nil
-}
-
-// fromDDLEvent builds canal entry from cdc DDLEvent
-func (b *canalEntryBuilder) fromDDLEvent(e *commonEvent.DDLEvent) (*canal.Entry, error) {
-	eventType := convertDdlEventType(e)
-	header := b.buildHeader(e.GetCommitTs(), e.SchemaName, e.TableName, eventType, -1)
-	isDdl := isCanalDDL(eventType)
-	rc := &canal.RowChange{
-		EventTypePresent: &canal.RowChange_EventType{EventType: eventType},
-		IsDdlPresent:     &canal.RowChange_IsDdl{IsDdl: isDdl},
-		Sql:              e.Query,
-		RowDatas:         nil,
-		DdlSchemaName:    e.SchemaName,
-	}
-	rcBytes, err := proto.Marshal(rc)
-	if err != nil {
-		return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
-	}
-
-	// build entry
-	entry := &canal.Entry{
-		Header:           header,
-		EntryTypePresent: &canal.Entry_EntryType{EntryType: canal.EntryType_ROWDATA},
-		StoreValue:       rcBytes,
-	}
-	return entry, nil
-}
-
 // convert ts in tidb to timestamp(in ms) in canal
 func convertToCanalTs(commitTs uint64) int64 {
 	return int64(commitTs >> 18)
-}
-
-// get the canal EventType according to the RowChangedEvent
-func convertRowEventType(e *commonEvent.RowEvent) canal.EventType {
-	if e.IsDelete() {
-		return canal.EventType_DELETE
-	}
-	if e.IsInsert() {
-		return canal.EventType_INSERT
-	}
-	return canal.EventType_UPDATE
 }
 
 // get the canal EventType according to the DDLEvent
@@ -415,20 +225,4 @@ func convertDdlEventType(e *commonEvent.DDLEvent) canal.EventType {
 	default:
 		return canal.EventType_QUERY
 	}
-}
-
-func isCanalDDL(t canal.EventType) bool {
-	// see https://github.com/alibaba/canal/blob/b54bea5e3337c9597c427a53071d214ff04628d1/parse/src/main/java/com/alibaba/otter/canal/parse/inbound/mysql/dbsync/LogEventConvert.java#L297
-	switch t {
-	case canal.EventType_CREATE,
-		canal.EventType_RENAME,
-		canal.EventType_CINDEX,
-		canal.EventType_DINDEX,
-		canal.EventType_ALTER,
-		canal.EventType_ERASE,
-		canal.EventType_TRUNCATE,
-		canal.EventType_QUERY:
-		return true
-	}
-	return false
 }

@@ -110,7 +110,6 @@ func fillUpdateColumns(
 }
 
 func newJSONMessageForDML(
-	builder *canalEntryBuilder,
 	e *commonEvent.RowEvent,
 	config *newcommon.Config,
 	messageTooLarge bool,
@@ -198,7 +197,6 @@ func newJSONMessageForDML(
 	valueMap := make(map[int64]string, 0)                  // colId -> value
 	javaTypeMap := make(map[int64]internal.JavaSQLType, 0) // colId -> javaType
 
-	// tmd 什么垃圾写法，给我改了
 	row := e.GetRows()
 	if e.IsDelete() {
 		row = e.GetPreRows()
@@ -238,6 +236,7 @@ func newJSONMessageForDML(
 				out.RawByte(':')
 				out.Int32(int32(javaTypeMap[colID]))
 				mysqlTypeMap[colName] = utils.GetMySQLType(col, config.ContentCompatible)
+				log.Info("column info", zap.Any("columnInfo", col), zap.Any("col.ID", col.ID), zap.Any("sqlType", mysqlTypeMap[colName]))
 			}
 		}
 		if emptyColumn {
@@ -350,7 +349,6 @@ func eventTypeString(e *commonEvent.RowEvent) string {
 
 // JSONRowEventEncoder encodes row event in JSON format
 type JSONRowEventEncoder struct {
-	builder  *canalEntryBuilder
 	messages []*ticommon.Message
 
 	claimCheck *claimcheck.ClaimCheck
@@ -368,7 +366,6 @@ func NewJSONRowEventEncoder(ctx context.Context, config *newcommon.Config) (enco
 		return nil, errors.Trace(err)
 	}
 	return &JSONRowEventEncoder{
-		builder:    newCanalEntryBuilder(config),
 		messages:   make([]*ticommon.Message, 0, 1),
 		config:     config,
 		claimCheck: claimCheck,
@@ -440,7 +437,7 @@ func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 	_ string,
 	e *commonEvent.RowEvent,
 ) error {
-	value, err := newJSONMessageForDML(c.builder, e, c.config, false, "")
+	value, err := newJSONMessageForDML(e, c.config, false, "")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -475,7 +472,7 @@ func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 		}
 
 		if c.config.LargeMessageHandle.HandleKeyOnly() {
-			value, err = newJSONMessageForDML(c.builder, e, c.config, true, "")
+			value, err = newJSONMessageForDML(e, c.config, true, "")
 			if err != nil {
 				return cerror.ErrMessageTooLarge.GenWithStackByArgs()
 			}
@@ -524,7 +521,7 @@ func (c *JSONRowEventEncoder) newClaimCheckLocationMessage(
 	event *commonEvent.RowEvent, fileName string,
 ) (*ticommon.Message, error) {
 	claimCheckLocation := c.claimCheck.FileNameWithPrefix(fileName)
-	value, err := newJSONMessageForDML(c.builder, event, c.config, true, claimCheckLocation)
+	value, err := newJSONMessageForDML(event, c.config, true, claimCheckLocation)
 	if err != nil {
 		return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
 	}
