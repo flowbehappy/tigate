@@ -9,7 +9,6 @@ import (
 	newcommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/text/encoding/charmap"
 )
 
 // basic type
@@ -20,7 +19,7 @@ import (
 // ddl
 // checkpointTs
 
-func TestBasicType(t *testing.T) {
+func TestAllTypes(t *testing.T) {
 	helper := pevent.NewEventTestHelper(t)
 	defer helper.Close()
 
@@ -79,7 +78,7 @@ func TestBasicType(t *testing.T) {
 		Callback:       func() {}}
 
 	protocolConfig := newcommon.NewConfig(config.ProtocolCanalJSON)
-	value, err := newJSONMessageForDML(rowEvent, protocolConfig, false, "", charmap.ISO8859_1.NewDecoder())
+	value, err := newJSONMessageForDML(rowEvent, protocolConfig, false, "")
 	require.NoError(t, err)
 
 	var message JSONMessage
@@ -110,4 +109,71 @@ func TestBasicType(t *testing.T) {
 	newValue, err := json.Marshal(message.Data)
 	require.NoError(t, err)
 	require.Equal(t, `[{"a":"1","aa":"测试","ab":null,"ac":"\u0001\u0002\u0003\u0004\u0005\u0006\u0007\u0008\t\n","ad":null,"ae":"81","af":null,"ag":"{\"key1\": \"value1\"}","ah":null,"ai":"129012.12","aj":null,"ak":"1","al":null,"am":"2","an":null,"ao":"5rWL6K+VdGV4dA==","ap":null,"aq":"PNG\r\n\u001a\n","ar":null,"as1":"5rWL6K+VdGV4dA==","at":null,"au":"ID3\u0003\u0000\u0000\u0000\u0000","av":null,"aw":"5rWL6K+VdGV4dA==","ax":null,"ay":"PK\u0003\u0004\u0014\u0000\u0000\u0000\u0008\u0000","az":null,"b":null,"ba":"5rWL6K+VdGV4dA==","bb":null,"bc":"%PDF-1.4","bd":null,"be":"Alice","bf":null,"bg":"\u0001\u0002\u0003\u0004\u0005\u0006\u0007\u0008\t\n","bh":null,"c":"1","d":null,"e":"-1","f":null,"g":"123","h":null,"i":"153.123","j":null,"k":"153.123","l":null,"m":"1973-12-30 15:30:00","n":null,"o":"123","p":null,"q":"123","r":null,"s":"2000-01-01","t":null,"u":"23:59:59","v":null,"w":"2015-12-20 23:58:58","x":null,"y":"1970","z":null}]`, string(newValue))
+}
+
+func TestGeneralDMLEvent(t *testing.T) {
+	// EnableTiDBExtension
+	{
+		helper := pevent.NewEventTestHelper(t)
+		defer helper.Close()
+
+		helper.Tk().MustExec("use test")
+		job := helper.DDL2Job(`create table test.t(
+			a tinyint primary key, b tinyint)`)
+
+		dmlEvent := helper.DML2Event("test", "t", `insert into test.t(a)`)
+		require.NotNil(t, dmlEvent)
+		row, ok := dmlEvent.GetNextRow()
+		require.True(t, ok)
+		tableInfo := helper.GetTableInfo(job)
+
+		rowEvent := &pevent.RowEvent{
+			TableInfo:      tableInfo,
+			CommitTs:       1,
+			Event:          row,
+			ColumnSelector: common.NewDefaultColumnSelector(),
+			Callback:       func() {}}
+
+		protocolConfig := newcommon.NewConfig(config.ProtocolCanalJSON)
+		protocolConfig.EnableTiDBExtension = true
+		value, err := newJSONMessageForDML(rowEvent, protocolConfig, false, "")
+		require.NoError(t, err)
+
+		var message canalJSONMessageWithTiDBExtension
+
+		err = json.Unmarshal(value, &message)
+		require.NoError(t, err)
+
+		require.Equal(t, int64(0), message.ID)
+		require.Equal(t, "test", message.Schema)
+		require.Equal(t, "t", message.Table)
+		require.Equal(t, []string{"a"}, message.PKNames)
+		require.Equal(t, false, message.IsDDL)
+		require.Equal(t, "INSERT", message.EventType)
+		require.Equal(t, "", message.Query)
+
+		sqlValue, err := json.Marshal(message.SQLType)
+		require.NoError(t, err)
+		require.Equal(t, `{"a":-6,"b":-6}`, string(sqlValue))
+
+		mysqlValue, err := json.Marshal(message.MySQLType)
+		require.NoError(t, err)
+		require.Equal(t, `{"a":"tinyint","b":"tinyint"}`, string(mysqlValue))
+
+		oldValue, err := json.Marshal(message.Old)
+		require.NoError(t, err)
+		require.Equal(t, "null", string(oldValue))
+
+		newValue, err := json.Marshal(message.Data)
+		require.NoError(t, err)
+		require.Equal(t, `[{"a":"1","b":null}]`, string(newValue))
+
+		require.Equal(t, message.ExecutionTime, message.Extensions.CommitTs)
+		require.Equal(t, false, message.Extensions.OnlyHandleKey)
+		require.Equal(t, "", message.Extensions.ClaimCheckLocation)
+	}
+	// multi pk
+	// message large
+	// message large + handle only
+	// message large + claim
 }
