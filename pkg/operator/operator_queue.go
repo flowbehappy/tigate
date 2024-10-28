@@ -18,30 +18,30 @@ import (
 	"time"
 )
 
-type operatorWithTime struct {
-	op          Operator
-	time        time.Time
-	enqueueTime time.Time
+type OperatorWithTime[T comparable, S any] struct {
+	OP          Operator[T, S]
+	Time        time.Time
+	EnqueueTime time.Time
 }
 
-type operatorQueue []*operatorWithTime
+type OperatorQueue[T comparable, S any] []*OperatorWithTime[T, S]
 
-func (opn operatorQueue) Len() int { return len(opn) }
+func (opn OperatorQueue[T, S]) Len() int { return len(opn) }
 
-func (opn operatorQueue) Less(i, j int) bool {
-	return opn[i].time.Before(opn[j].time)
+func (opn OperatorQueue[T, S]) Less(i, j int) bool {
+	return opn[i].Time.Before(opn[j].Time)
 }
 
-func (opn operatorQueue) Swap(i, j int) {
+func (opn OperatorQueue[T, S]) Swap(i, j int) {
 	opn[i], opn[j] = opn[j], opn[i]
 }
 
-func (opn *operatorQueue) Push(x interface{}) {
-	item := x.(*operatorWithTime)
+func (opn *OperatorQueue[T, S]) Push(x interface{}) {
+	item := x.(*OperatorWithTime[T, S])
 	*opn = append(*opn, item)
 }
 
-func (opn *operatorQueue) Pop() interface{} {
+func (opn *OperatorQueue[T, S]) Pop() interface{} {
 	old := *opn
 	n := len(old)
 	if n == 0 {

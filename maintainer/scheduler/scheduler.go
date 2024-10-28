@@ -22,6 +22,7 @@ import (
 	"github.com/flowbehappy/tigate/maintainer/replica"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/flowbehappy/tigate/pkg/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/flowbehappy/tigate/utils/heap"
 	"github.com/pingcap/log"
@@ -101,9 +102,9 @@ func (s *Scheduler) basicSchedule(
 		log.Warn("no node available, skip", zap.String("changefeed", s.changefeedID))
 		return
 	}
-	priorityQueue := heap.NewHeap[*Item]()
+	priorityQueue := heap.NewHeap[*scheduler.Item]()
 	for key, size := range nodeTasks {
-		priorityQueue.AddOrUpdate(&Item{
+		priorityQueue.AddOrUpdate(&scheduler.Item{
 			Node: key,
 			Load: size,
 		})
@@ -141,7 +142,7 @@ func (s *Scheduler) balance() {
 	}
 
 	// check the balance status
-	moveSize := checkBalanceStatus(s.replicationDB.GetTaskSizePerNode(), s.nodeManager.GetAliveNodes())
+	moveSize := scheduler.CheckBalanceStatus(s.replicationDB.GetTaskSizePerNode(), s.nodeManager.GetAliveNodes())
 	if moveSize <= 0 {
 		// fast check the balance status, no need to do the balance,skip
 		return
@@ -175,7 +176,7 @@ func (s *Scheduler) balanceTables() {
 	upperLimitPerCapture := int(math.Ceil(float64(totalSize) / float64(len(nodeTasks))))
 	// victims holds tables which need to be moved
 	victims := make([]*replica.SpanReplication, 0)
-	priorityQueue := heap.NewHeap[*Item]()
+	priorityQueue := heap.NewHeap[*scheduler.Item]()
 	for nodeID, ts := range nodeTasks {
 		var stms []*replica.SpanReplication
 		for _, value := range ts {
@@ -194,13 +195,13 @@ func (s *Scheduler) balanceTables() {
 
 		tableNum2Remove := len(stms) - upperLimitPerCapture
 		if tableNum2Remove <= 0 {
-			priorityQueue.AddOrUpdate(&Item{
+			priorityQueue.AddOrUpdate(&scheduler.Item{
 				Node: nodeID,
 				Load: len(ts),
 			})
 			continue
 		} else {
-			priorityQueue.AddOrUpdate(&Item{
+			priorityQueue.AddOrUpdate(&scheduler.Item{
 				Node: nodeID,
 				Load: len(ts) - tableNum2Remove,
 			})
@@ -240,29 +241,4 @@ func (s *Scheduler) balanceTables() {
 		zap.String("changefeed", s.changefeedID),
 		zap.Int("movedSize", movedSize),
 		zap.Int("victims", len(victims)))
-}
-
-// checkBalanceStatus checks the dispatcher scheduling balance status
-// returns the table size need to be moved
-func checkBalanceStatus(nodeTaskSize map[node.ID]int, allNodes map[node.ID]*node.Info) int {
-	// add the absent node to the node size map
-	for nodeID, _ := range allNodes {
-		if _, ok := nodeTaskSize[nodeID]; !ok {
-			nodeTaskSize[nodeID] = 0
-		}
-	}
-	totalSize := 0
-	for _, ts := range nodeTaskSize {
-		totalSize += ts
-	}
-	upperLimitPerCapture := int(math.Ceil(float64(totalSize) / float64(len(nodeTaskSize))))
-	// tables need to be moved
-	moveSize := 0
-	for _, ts := range nodeTaskSize {
-		tableNum2Remove := ts - upperLimitPerCapture
-		if tableNum2Remove > 0 {
-			moveSize += tableNum2Remove
-		}
-	}
-	return moveSize
 }
