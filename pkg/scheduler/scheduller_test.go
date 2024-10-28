@@ -22,7 +22,7 @@ import (
 
 func TestCheckBalanceStatus(t *testing.T) {
 	// 4 tasks assigned 2 servers,and an empty server
-	require.Equal(t, 0, checkBalanceStatus(map[node.ID]int{
+	require.Equal(t, 0, CheckBalanceStatus(map[node.ID]int{
 		"node1": 2,
 		"node2": 2,
 	}, map[node.ID]*node.Info{
@@ -31,7 +31,7 @@ func TestCheckBalanceStatus(t *testing.T) {
 		"node3": {ID: "node3"},
 	}))
 
-	require.Equal(t, 1, checkBalanceStatus(map[node.ID]int{
+	require.Equal(t, 1, CheckBalanceStatus(map[node.ID]int{
 		"node1": 2,
 		"node2": 0,
 	}, map[node.ID]*node.Info{
