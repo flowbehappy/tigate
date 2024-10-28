@@ -321,8 +321,7 @@ func (c *Controller) FinishBootstrap(workingMap map[model.ChangeFeedID]remoteMai
 			log.Info("maintainer already working in other server",
 				zap.String("changefeed", cfID.String()))
 			cf := changefeed.NewChangefeed(cfID, cfMeta.Info, rm.status.CheckpointTs)
-			cf.SetNodeID(rm.nodeID)
-			c.changefeedDB.AddAbsentChangefeed(cf)
+			c.changefeedDB.AddReplicatingMaintainer(cf, rm.nodeID)
 			// delete it
 			delete(workingMap, cfID)
 		}
@@ -361,7 +360,7 @@ func (c *Controller) RemoveChangefeed(ctx context.Context, id model.ChangeFeedID
 		return 0, errors.Trace(err)
 	}
 	c.operatorController.StopChangefeed(id, true)
-	return cf.Status.CheckpointTs, nil
+	return cf.GetStatus().CheckpointTs, nil
 }
 
 func (c *Controller) PauseChangefeed(ctx context.Context, id model.ChangeFeedID) error {
@@ -410,7 +409,7 @@ func (c *Controller) ListChangefeeds(ctx context.Context) ([]*model.ChangeFeedIn
 	statuses := make([]*model.ChangeFeedStatus, 0, len(cfs))
 	for _, cf := range cfs {
 		infos = append(infos, cf.Info)
-		statuses = append(statuses, &model.ChangeFeedStatus{CheckpointTs: cf.Status.CheckpointTs})
+		statuses = append(statuses, &model.ChangeFeedStatus{CheckpointTs: cf.GetStatus().CheckpointTs})
 	}
 	return infos, statuses, nil
 }
@@ -420,7 +419,7 @@ func (c *Controller) GetChangefeed(ctx context.Context, id model.ChangeFeedID) (
 	if cf == nil {
 		return nil, nil, cerror.ErrChangeFeedNotExists.GenWithStackByArgs(id.ID)
 	}
-	return cf.Info, &model.ChangeFeedStatus{CheckpointTs: cf.Status.CheckpointTs}, nil
+	return cf.Info, &model.ChangeFeedStatus{CheckpointTs: cf.GetStatus().CheckpointTs}, nil
 }
 
 // GetTask queries a task by channgefeed ID, return nil if not found

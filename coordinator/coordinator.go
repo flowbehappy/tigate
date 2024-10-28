@@ -118,8 +118,9 @@ func (c *coordinator) Run(ctx context.Context) error {
 		case cfs := <-c.updatedChangefeedCh:
 			statusMap := make(map[model.ChangeFeedID]uint64)
 			for _, upCf := range cfs {
-				if upCf.GetLastSavedCheckPointTs() < upCf.Status.CheckpointTs {
-					statusMap[upCf.ID] = upCf.Status.CheckpointTs
+				reportedCheckpointTs := upCf.GetStatus().CheckpointTs
+				if upCf.GetLastSavedCheckPointTs() < reportedCheckpointTs {
+					statusMap[upCf.ID] = reportedCheckpointTs
 				}
 			}
 			err := c.controller.backend.UpdateChangefeedCheckpointTs(ctx, statusMap)
