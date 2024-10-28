@@ -14,7 +14,6 @@
 package scheduler
 
 import (
-	"math"
 	"math/rand"
 	"time"
 
@@ -23,10 +22,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/flowbehappy/tigate/pkg/scheduler"
 	"github.com/flowbehappy/tigate/server/watcher"
-	"github.com/flowbehappy/tigate/utils/heap"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
-	"go.uber.org/zap"
 )
 
 // Scheduler generates operators for the maintainers, and push them to the operator controller
@@ -82,45 +77,15 @@ func (s *Scheduler) Execute() time.Time {
 				nodeSize[id] = 0
 			}
 		}
-		s.basicSchedule(availableSize, absent, nodeSize)
+		scheduler.BasicSchedule(availableSize, absent, nodeSize, func(cf *changefeed.Changefeed, nodeID node.ID) bool {
+			return s.operatorController.AddOperator(operator.NewAddMaintainerOperator(s.changefeedDB, cf, nodeID))
+		})
+
 		s.absent = absent[:0]
 	} else {
 		s.balance()
 	}
 	return time.Now().Add(time.Millisecond * 500)
-}
-
-// basicSchedule schedule the absent maintainers to the nodes base on the task size of each node
-func (s *Scheduler) basicSchedule(
-	availableSize int,
-	absent []*changefeed.Changefeed,
-	nodeTasks map[node.ID]int) {
-	if len(nodeTasks) == 0 {
-		log.Warn("no node available, skip")
-		return
-	}
-	priorityQueue := heap.NewHeap[*scheduler.Item]()
-	for key, size := range nodeTasks {
-		priorityQueue.AddOrUpdate(&scheduler.Item{
-			Node: key,
-			Load: size,
-		})
-	}
-
-	taskSize := 0
-	for _, cf := range absent {
-		item, _ := priorityQueue.PeekTop()
-		// the operator is pushed successfully
-		if s.operatorController.AddOperator(operator.NewAddMaintainerOperator(s.changefeedDB, cf, item.Node)) {
-			// update the task size priority queue
-			item.Load++
-			taskSize++
-		}
-		if taskSize >= availableSize {
-			break
-		}
-		priorityQueue.AddOrUpdate(item)
-	}
 }
 
 // balance balances the maintainers by size
@@ -144,97 +109,10 @@ func (s *Scheduler) balance() {
 		// fast check the balance status, no need to do the balance,skip
 		return
 	}
-	s.balanceTables()
-	s.lastRebalanceTime = now
-}
-
-func (s *Scheduler) balanceTables() {
-	replicating := s.changefeedDB.GetReplicating()
-	nodeTasks := make(map[node.ID]map[model.ChangeFeedID]*changefeed.Changefeed)
-	for _, cf := range replicating {
-		nodeID := cf.GetNodeID()
-		if _, ok := nodeTasks[nodeID]; !ok {
-			nodeTasks[nodeID] = make(map[model.ChangeFeedID]*changefeed.Changefeed)
-		}
-		nodeTasks[nodeID][cf.ID] = cf
-	}
-	// add the absent node to the node size map
-	for nodeID, _ := range s.nodeManager.GetAliveNodes() {
-		if _, ok := nodeTasks[nodeID]; !ok {
-			nodeTasks[nodeID] = make(map[model.ChangeFeedID]*changefeed.Changefeed)
-		}
-	}
-
-	totalSize := 0
-	for _, ts := range nodeTasks {
-		totalSize += len(ts)
-	}
-
-	upperLimitPerCapture := int(math.Ceil(float64(totalSize) / float64(len(nodeTasks))))
-	// victims holds tables which need to be moved
-	victims := make([]*changefeed.Changefeed, 0)
-	priorityQueue := heap.NewHeap[*scheduler.Item]()
-	for nodeID, ts := range nodeTasks {
-		var stms []*changefeed.Changefeed
-		for _, value := range ts {
-			stms = append(stms, value)
-		}
-
-		// Complexity note: Shuffle has O(n), where `n` is the number of tables.
-		// Also, during a single call of `Schedule`, Shuffle can be called at most
-		// `c` times, where `c` is the number of captures (TiCDC nodes).
-		// Only called when a rebalance is triggered, which happens rarely,
-		// we do not expect a performance degradation as a result of adding
-		// the randomness.
-		s.random.Shuffle(len(stms), func(i, j int) {
-			stms[i], stms[j] = stms[j], stms[i]
+	// balance changefeeds among the active nodes
+	scheduler.Balance(s.batchSize, s.random, s.nodeManager.GetAliveNodes(), s.changefeedDB.GetReplicating(),
+		func(cf *changefeed.Changefeed, nodeID node.ID) bool {
+			return s.operatorController.AddOperator(operator.NewMoveMaintainerOperator(s.changefeedDB, cf, cf.GetNodeID(), nodeID))
 		})
-
-		tableNum2Remove := len(stms) - upperLimitPerCapture
-		if tableNum2Remove <= 0 {
-			priorityQueue.AddOrUpdate(&scheduler.Item{
-				Node: nodeID,
-				Load: len(ts),
-			})
-			continue
-		} else {
-			priorityQueue.AddOrUpdate(&scheduler.Item{
-				Node: nodeID,
-				Load: len(ts) - tableNum2Remove,
-			})
-		}
-
-		for _, cf := range stms {
-			if tableNum2Remove <= 0 {
-				break
-			}
-			victims = append(victims, cf)
-			tableNum2Remove--
-		}
-	}
-	if len(victims) == 0 {
-		return
-	}
-
-	movedSize := 0
-	// for each victim table, find the target for it
-	for idx, cf := range victims {
-		if idx >= s.batchSize {
-			// We have reached the task limit.
-			break
-		}
-
-		item, _ := priorityQueue.PeekTop()
-
-		// the operator is pushed successfully
-		if s.operatorController.AddOperator(operator.NewMoveMaintainerOperator(s.changefeedDB, cf, cf.GetNodeID(), item.Node)) {
-			// update the task size priority queue
-			item.Load++
-			movedSize++
-		}
-		priorityQueue.AddOrUpdate(item)
-	}
-	log.Info("balance done",
-		zap.Int("movedSize", movedSize),
-		zap.Int("victims", len(victims)))
+	s.lastRebalanceTime = now
 }

@@ -61,7 +61,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	mc.RegisterHandler(messaging.CoordinatorTopic, func(ctx context.Context, msg *messaging.TargetMessage) error {
 		return nil
 	})
-	schedulerConf := &config2.SchedulerConfig{
+	schedulerConf := &config.SchedulerConfig{
 		AddTableBatchSize:    1000,
 		CheckBalanceInterval: 0,
 	}
@@ -211,7 +211,7 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	mc.RegisterHandler(messaging.CoordinatorTopic, func(ctx context.Context, msg *messaging.TargetMessage) error {
 		return nil
 	})
-	manager := NewMaintainerManager(selfNode, config2.GetGlobalServerConfig().Debug.Scheduler, nil, nil)
+	manager := NewMaintainerManager(selfNode, config.GetGlobalServerConfig().Debug.Scheduler, nil, nil)
 	msg := messaging.NewSingleTargetMessage(selfNode.ID,
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.CoordinatorBootstrapRequest{Version: 1})

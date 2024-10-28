@@ -37,7 +37,6 @@ import (
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
-	cdcConfig "github.com/pingcap/tiflow/pkg/config"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/require"
@@ -238,7 +237,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	nodeManager := watcher.NewNodeManager(nil, nil)
 	appcontext.SetService(watcher.NodeManagerName, nodeManager)
 	nodeManager.GetAliveNodes()[n.ID] = n
-	stream := dynstream.NewDynamicStream[string, *Event, *Maintainer](NewStreamHandler())
+	stream := dynstream.NewDynamicStream(NewStreamHandler())
 	stream.Start()
 	cfID := model.DefaultChangeFeedID("test")
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
@@ -256,17 +255,14 @@ func TestMaintainerSchedule(t *testing.T) {
 
 	taskScheduler := threadpool.NewThreadPoolDefault()
 	maintainer := NewMaintainer(cfID,
-		&cdcConfig.SchedulerConfig{
-			CheckBalanceInterval: cdcConfig.TomlDuration(time.Minute),
+		&configNew.SchedulerConfig{
+			CheckBalanceInterval: configNew.TomlDuration(time.Minute),
 			AddTableBatchSize:    10000,
 		},
 		&configNew.ChangeFeedInfo{
 			Config: configNew.GetDefaultReplicaConfig(),
 		}, n, stream, taskScheduler, nil, nil, 10)
-	_ = stream.AddPaths(dynstream.PathAndDest[string, *Maintainer]{
-		Path: cfID.ID,
-		Dest: maintainer,
-	})
+	_ = stream.AddPath(cfID.ID, maintainer)
 
 	if !flag.Parsed() {
 		flag.Parse()
@@ -276,8 +272,8 @@ func TestMaintainerSchedule(t *testing.T) {
 	if len(argList) > 1 {
 		t.Fatal("unexpected args", argList)
 	}
-	tableSize := 100
-	sleepTime := 5
+	tableSize := 1000000
+	sleepTime := 50000
 	if len(argList) == 1 {
 		tableSize, _ = strconv.Atoi(argList[0])
 	}
