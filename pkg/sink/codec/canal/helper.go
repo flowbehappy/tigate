@@ -21,8 +21,8 @@ import (
 	"github.com/flowbehappy/tigate/pkg/common"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/internal" // nolint:staticcheck
-	mm "github.com/pingcap/tidb/pkg/parser/model"
-	timodel "github.com/pingcap/tidb/pkg/parser/model"
+	mm "github.com/pingcap/tidb/pkg/meta/model"
+	timodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -294,7 +294,7 @@ func convertDdlEventType(e *commonEvent.DDLEvent) canal.EventType {
 		mm.ActionDropView, mm.ActionRecoverTable, mm.ActionModifySchemaCharsetAndCollate,
 		mm.ActionLockTable, mm.ActionUnlockTable, mm.ActionRepairTable, mm.ActionSetTiFlashReplica,
 		mm.ActionUpdateTiFlashReplicaStatus, mm.ActionCreateSequence, mm.ActionAlterSequence,
-		mm.ActionDropSequence, mm.ActionModifyTableAutoIdCache, mm.ActionRebaseAutoRandomBase:
+		mm.ActionDropSequence, mm.ActionModifyTableAutoIDCache, mm.ActionRebaseAutoRandomBase:
 		return canal.EventType_QUERY
 	case mm.ActionCreateTable:
 		return canal.EventType_CREATE

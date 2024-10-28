@@ -68,12 +68,11 @@ func (db *ChangefeedDB) AddStoppedChangefeed(task *Changefeed) {
 }
 
 // AddReplicatingMaintainer adds a replicating the replicating map, that means the task is already scheduled to a maintainer
-func (db *ChangefeedDB) AddReplicatingMaintainer(task *Changefeed) {
+func (db *ChangefeedDB) AddReplicatingMaintainer(task *Changefeed, nodeID node.ID) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	nodeID := task.GetNodeID()
-
+	task.setNodeID(nodeID)
 	log.Info("add an replicating maintainer",
 		zap.String("nodeID", nodeID.String()),
 		zap.String("changefeed", task.ID.String()))
@@ -83,8 +82,11 @@ func (db *ChangefeedDB) AddReplicatingMaintainer(task *Changefeed) {
 	db.updateNodeMap("", nodeID, task)
 }
 
-// RemoveByChangefeedID removes task from the db, if the changefeed is scheduled, it will return the task
-func (db *ChangefeedDB) RemoveByChangefeedID(cfID model.ChangeFeedID) *Changefeed {
+// StopByChangefeedID stop a changefeed by the changefeed id
+// if remove is true, it will remove the changefeed from the chagnefeed DB
+// if remove is false, moves task to stopped map
+// if the changefeed is scheduled, it will return the scheduled node
+func (db *ChangefeedDB) StopByChangefeedID(cfID model.ChangeFeedID, remove bool) node.ID {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -92,34 +94,23 @@ func (db *ChangefeedDB) RemoveByChangefeedID(cfID model.ChangeFeedID) *Changefee
 	if ok {
 		delete(db.changefeeds, cfID)
 		db.removeChangefeedUnLock(cf)
+
+		if !remove {
+			cf.Info.State = model.StateStopped
+			// push bash to stopped
+			db.changefeeds[cfID] = cf
+			db.stopped[cfID] = cf
+		}
+
+		nodeID := cf.GetNodeID()
 		if cf.GetNodeID() == "" {
 			log.Info("changefeed is not scheduled, delete directly")
-			return nil
+			return ""
 		}
-		return cf
+		cf.setNodeID("")
+		return nodeID
 	}
-	return nil
-}
-
-// StopByChangefeedID moves task from to stopped map, if the changefeed is scheduled, it will return the task
-func (db *ChangefeedDB) StopByChangefeedID(cfID model.ChangeFeedID) *Changefeed {
-	db.lock.Lock()
-	defer db.lock.Unlock()
-
-	cf, ok := db.changefeeds[cfID]
-	if ok {
-		delete(db.changefeeds, cfID)
-		db.removeChangefeedUnLock(cf)
-		// push bash to stopped
-		db.changefeeds[cfID] = cf
-		db.stopped[cfID] = cf
-
-		if cf.GetNodeID() == "" {
-			log.Info("changefeed is not scheduled, delete directly")
-		}
-		return cf
-	}
-	return nil
+	return ""
 }
 
 // GetSize returns the size of the all chagnefeeds
@@ -160,6 +151,18 @@ func (db *ChangefeedDB) GetReplicatingSize() int {
 	return len(db.replicating)
 }
 
+// GetAllChangefeeds returns all changefeeds
+func (db *ChangefeedDB) GetAllChangefeeds() []*Changefeed {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	cfs := make([]*Changefeed, 0, len(db.changefeeds))
+	for _, cf := range db.changefeeds {
+		cfs = append(cfs, cf)
+	}
+	return cfs
+}
+
 func (db *ChangefeedDB) GetReplicating() []*Changefeed {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
@@ -193,7 +196,7 @@ func (db *ChangefeedDB) BindChangefeedToNode(old, new node.ID, task *Changefeed)
 		zap.String("oldNode", old.String()),
 		zap.String("node", new.String()))
 
-	task.SetNodeID(new)
+	task.setNodeID(new)
 	delete(db.absent, task.ID)
 	delete(db.replicating, task.ID)
 	db.scheduling[task.ID] = task
@@ -247,6 +250,7 @@ func (db *ChangefeedDB) Resume(id model.ChangeFeedID) {
 
 	cf := db.changefeeds[id]
 	if cf != nil {
+		cf.Info.State = model.StateNormal
 		delete(db.stopped, id)
 		db.absent[id] = cf
 		log.Info("resume changefeed", zap.String("changefeed", id.String()))
@@ -283,7 +287,7 @@ func (db *ChangefeedDB) MarkMaintainerAbsent(cf *Changefeed) {
 	delete(db.replicating, cf.ID)
 	db.absent[cf.ID] = cf
 	originNodeID := cf.GetNodeID()
-	cf.SetNodeID("")
+	cf.setNodeID("")
 	db.updateNodeMap(originNodeID, "", cf)
 }
 
@@ -330,7 +334,7 @@ func (db *ChangefeedDB) ReplaceStoppedChangefeed(cf *model.ChangeFeedInfo) {
 		log.Warn("changefeed is not stopped, can not be updated", zap.String("changefeed", id.String()))
 		return
 	}
-	newCf := NewChangefeed(id, cf, oldCf.GetLastSavedCheckPointTs())
+	newCf := NewChangefeed(id, cf, oldCf.GetStatus().CheckpointTs)
 	db.stopped[id] = newCf
 }
 

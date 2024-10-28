@@ -44,7 +44,7 @@ type coordinator struct {
 	lastTickTime time.Time
 
 	mc            messaging.MessageCenter
-	stream        dynstream.DynamicStream[string, *Event, *Controller]
+	stream        dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler]
 	taskScheduler threadpool.ThreadPool
 	controller    *Controller
 
@@ -74,7 +74,7 @@ func New(node *node.Info,
 		mc:                  mc,
 		updatedChangefeedCh: make(chan map[model.ChangeFeedID]*changefeed.Changefeed, 1024),
 	}
-	c.stream = dynstream.NewDynamicStream[string, *Event, *Controller](NewStreamHandler())
+	c.stream = dynstream.NewDynamicStream[int, string, *Event, *Controller, *StreamHandler](NewStreamHandler())
 	c.stream.Start()
 	c.taskScheduler = threadpool.NewThreadPoolDefault()
 
@@ -118,8 +118,9 @@ func (c *coordinator) Run(ctx context.Context) error {
 		case cfs := <-c.updatedChangefeedCh:
 			statusMap := make(map[model.ChangeFeedID]uint64)
 			for _, upCf := range cfs {
-				if upCf.GetLastSavedCheckPointTs() < upCf.Status.CheckpointTs {
-					statusMap[upCf.ID] = upCf.Status.CheckpointTs
+				reportedCheckpointTs := upCf.GetStatus().CheckpointTs
+				if upCf.GetLastSavedCheckPointTs() < reportedCheckpointTs {
+					statusMap[upCf.ID] = reportedCheckpointTs
 				}
 			}
 			err := c.controller.backend.UpdateChangefeedCheckpointTs(ctx, statusMap)
@@ -141,6 +142,10 @@ func (c *coordinator) Run(ctx context.Context) error {
 	}
 }
 
+func (c *coordinator) CreateChangefeed(ctx context.Context, info *model.ChangeFeedInfo) error {
+	return c.controller.CreateChangefeed(ctx, info)
+}
+
 func (c *coordinator) RemoveChangefeed(ctx context.Context, id model.ChangeFeedID) (uint64, error) {
 	return c.controller.RemoveChangefeed(ctx, id)
 }
@@ -157,6 +162,14 @@ func (c *coordinator) UpdateChangefeed(ctx context.Context, change *model.Change
 	return c.controller.UpdateChangefeed(ctx, change)
 }
 
+func (c *coordinator) ListChangefeeds(ctx context.Context) ([]*model.ChangeFeedInfo, []*model.ChangeFeedStatus, error) {
+	return c.controller.ListChangefeeds(ctx)
+}
+
+func (c *coordinator) GetChangefeed(ctx context.Context, id model.ChangeFeedID) (*model.ChangeFeedInfo, *model.ChangeFeedStatus, error) {
+	return c.controller.GetChangefeed(ctx, id)
+}
+
 func shouldRunChangefeed(state model.FeedState) bool {
 	switch state {
 	case model.StateStopped, model.StateFailed, model.StateFinished:
@@ -166,10 +179,6 @@ func shouldRunChangefeed(state model.FeedState) bool {
 }
 
 func (c *coordinator) AsyncStop() {
-}
-
-func (c *coordinator) CreateChangefeed(ctx context.Context, info *model.ChangeFeedInfo) error {
-	return c.controller.CreateChangefeed(ctx, info)
 }
 
 func (c *coordinator) sendMessages(msgs []*messaging.TargetMessage) {

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
+	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -55,7 +56,7 @@ type Controller struct {
 
 	bootstrapper *bootstrap.Bootstrapper[heartbeatpb.CoordinatorBootstrapResponse]
 
-	stream                   dynstream.DynamicStream[string, *Event, *Controller]
+	stream                   dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler]
 	taskScheduler            threadpool.ThreadPool
 	operatorControllerHandle *threadpool.TaskHandle
 	schedulerHandle          *threadpool.TaskHandle
@@ -70,7 +71,7 @@ func NewController(
 	version int64,
 	updatedChangefeedCh chan map[model.ChangeFeedID]*changefeed.Changefeed,
 	backend changefeed.Backend,
-	stream dynstream.DynamicStream[string, *Event, *Controller],
+	stream dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler],
 	taskScheduler threadpool.ThreadPool,
 	batchSize int, balanceInterval time.Duration) *Controller {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
@@ -320,8 +321,7 @@ func (c *Controller) FinishBootstrap(workingMap map[model.ChangeFeedID]remoteMai
 			log.Info("maintainer already working in other server",
 				zap.String("changefeed", cfID.String()))
 			cf := changefeed.NewChangefeed(cfID, cfMeta.Info, rm.status.CheckpointTs)
-			cf.SetNodeID(rm.nodeID)
-			c.changefeedDB.AddAbsentChangefeed(cf)
+			c.changefeedDB.AddReplicatingMaintainer(cf, rm.nodeID)
 			// delete it
 			delete(workingMap, cfID)
 		}
@@ -360,7 +360,7 @@ func (c *Controller) RemoveChangefeed(ctx context.Context, id model.ChangeFeedID
 		return 0, errors.Trace(err)
 	}
 	c.operatorController.StopChangefeed(id, true)
-	return cf.Status.CheckpointTs, nil
+	return cf.GetStatus().CheckpointTs, nil
 }
 
 func (c *Controller) PauseChangefeed(ctx context.Context, id model.ChangeFeedID) error {
@@ -403,6 +403,25 @@ func (c *Controller) UpdateChangefeed(ctx context.Context, change *model.ChangeF
 	return nil
 }
 
+func (c *Controller) ListChangefeeds(ctx context.Context) ([]*model.ChangeFeedInfo, []*model.ChangeFeedStatus, error) {
+	cfs := c.changefeedDB.GetAllChangefeeds()
+	infos := make([]*model.ChangeFeedInfo, 0, len(cfs))
+	statuses := make([]*model.ChangeFeedStatus, 0, len(cfs))
+	for _, cf := range cfs {
+		infos = append(infos, cf.Info)
+		statuses = append(statuses, &model.ChangeFeedStatus{CheckpointTs: cf.GetStatus().CheckpointTs})
+	}
+	return infos, statuses, nil
+}
+
+func (c *Controller) GetChangefeed(ctx context.Context, id model.ChangeFeedID) (*model.ChangeFeedInfo, *model.ChangeFeedStatus, error) {
+	cf := c.changefeedDB.GetByID(id)
+	if cf == nil {
+		return nil, nil, cerror.ErrChangeFeedNotExists.GenWithStackByArgs(id.ID)
+	}
+	return cf.Info, &model.ChangeFeedStatus{CheckpointTs: cf.GetStatus().CheckpointTs}, nil
+}
+
 // GetTask queries a task by channgefeed ID, return nil if not found
 func (c *Controller) GetTask(id model.ChangeFeedID) *changefeed.Changefeed {
 	return c.changefeedDB.GetByID(id)
@@ -416,7 +435,7 @@ func (c *Controller) RemoveNode(id node.ID) {
 // submitScheduledEvent submits a task to controller pool to send a future event
 func submitScheduledEvent(
 	scheduler threadpool.ThreadPool,
-	stream dynstream.DynamicStream[string, *Event, *Controller],
+	stream dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler],
 	event *Event,
 	scheduleTime time.Time) {
 	task := func() time.Time {

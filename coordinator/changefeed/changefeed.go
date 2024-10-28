@@ -30,14 +30,16 @@ import (
 // Changefeed is a memory present for changefeed info and status
 type Changefeed struct {
 	ID       model.ChangeFeedID
-	Status   *heartbeatpb.MaintainerStatus
 	Info     *model.ChangeFeedInfo
 	IsMQSink bool
 
 	nodeID      node.ID
 	configBytes []byte
 
+	// it's saved to the backend db
 	lastSavedCheckpointTs *atomic.Uint64
+	// the heartbeatpb.MaintainerStatus is read only
+	status *atomic.Pointer[heartbeatpb.MaintainerStatus]
 }
 
 // NewChangefeed creates a new changefeed instance
@@ -56,6 +58,7 @@ func NewChangefeed(cfID model.ChangeFeedID,
 	}
 	log.Info("changefeed instance created",
 		zap.String("id", cfID.String()),
+		zap.Uint64("checkpointTs", checkpointTs),
 		zap.String("state", string(info.State)))
 	return &Changefeed{
 		ID:                    cfID,
@@ -64,15 +67,16 @@ func NewChangefeed(cfID model.ChangeFeedID,
 		lastSavedCheckpointTs: atomic.NewUint64(checkpointTs),
 		IsMQSink:              sink.IsMQScheme(uri.Scheme),
 		// init the first Status
-		Status: &heartbeatpb.MaintainerStatus{
-			CheckpointTs: checkpointTs,
-			FeedState:    string(info.State),
-		},
+		status: atomic.NewPointer[heartbeatpb.MaintainerStatus](
+			&heartbeatpb.MaintainerStatus{
+				CheckpointTs: checkpointTs,
+				FeedState:    string(info.State),
+			}),
 	}
 }
 
-// SetNodeID set the node id of the changefeed, todo: make it thread-safe
-func (c *Changefeed) SetNodeID(n node.ID) {
+// setNodeID set the node id of the changefeed
+func (c *Changefeed) setNodeID(n node.ID) {
 	c.nodeID = n
 }
 
@@ -80,13 +84,15 @@ func (c *Changefeed) GetNodeID() node.ID {
 	return c.nodeID
 }
 
-func (c *Changefeed) UpdateStatus(status any) {
-	if status != nil {
-		newStatus := status.(*heartbeatpb.MaintainerStatus)
-		if newStatus.CheckpointTs > c.Status.CheckpointTs {
-			c.Status = newStatus
-		}
+func (c *Changefeed) UpdateStatus(newStatus *heartbeatpb.MaintainerStatus) {
+	old := c.status.Load()
+	if newStatus != nil && newStatus.CheckpointTs >= old.CheckpointTs {
+		c.status.Store(newStatus)
 	}
+}
+
+func (c *Changefeed) GetStatus() *heartbeatpb.MaintainerStatus {
+	return c.status.Load()
 }
 
 func (c *Changefeed) SetLastSavedCheckPointTs(ts uint64) {
@@ -102,7 +108,7 @@ func (c *Changefeed) NewAddMaintainerMessage(server node.ID) *messaging.TargetMe
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.AddMaintainerRequest{
 			Id:           c.ID.ID,
-			CheckpointTs: c.Status.CheckpointTs,
+			CheckpointTs: c.GetStatus().CheckpointTs,
 			Config:       c.configBytes,
 		})
 }

@@ -54,7 +54,7 @@ type Manager struct {
 
 	msgCh chan *messaging.TargetMessage
 
-	stream        dynstream.DynamicStream[string, *Event, *Maintainer]
+	stream        dynstream.DynamicStream[int, string, *Event, *Maintainer, *StreamHandler]
 	taskScheduler threadpool.ThreadPool
 }
 
@@ -78,7 +78,7 @@ func NewMaintainerManager(selfNode *node.Info,
 		pdAPI:         pdAPI,
 		regionCache:   regionCache,
 	}
-	m.stream = dynstream.NewDynamicStream[string, *Event, *Maintainer](NewStreamHandler())
+	m.stream = dynstream.NewDynamicStream(NewStreamHandler())
 	m.stream.Start()
 	mc.RegisterHandler(messaging.MaintainerManagerTopic, m.recvMessages)
 
@@ -147,7 +147,7 @@ func (m *Manager) Run(ctx context.Context) error {
 					m.maintainers.Delete(key)
 					log.Info("maintainer removed, remove it from dynamic stream",
 						zap.String("changefeed", cf.id.String()))
-					m.stream.RemovePaths(cf.id.ID)
+					m.stream.RemovePath(cf.id.ID)
 				}
 				return true
 			})

@@ -30,7 +30,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )

@@ -2,6 +2,7 @@ package event
 
 import (
 	"encoding/binary"
+	"encoding/json"
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
@@ -18,14 +19,16 @@ type HandshakeEvent struct {
 	ResolvedTs   uint64              `json:"resolved_ts"`
 	Seq          uint64              `json:"seq"`
 	DispatcherID common.DispatcherID `json:"-"`
+	TableInfo    *common.TableInfo   `json:"table_info"`
 }
 
-func NewHandshakeEvent(dispatcherID common.DispatcherID, resolvedTs common.Ts, seq uint64) *HandshakeEvent {
+func NewHandshakeEvent(dispatcherID common.DispatcherID, resolvedTs common.Ts, seq uint64, tableInfo *common.TableInfo) *HandshakeEvent {
 	return &HandshakeEvent{
 		Version:      HandshakeEventVersion,
 		ResolvedTs:   uint64(resolvedTs),
 		Seq:          seq,
 		DispatcherID: dispatcherID,
+		TableInfo:    tableInfo,
 	}
 }
 
@@ -56,6 +59,7 @@ func (e *HandshakeEvent) GetStartTs() common.Ts {
 
 // GetSize returns the approximate size of the event in bytes
 func (e *HandshakeEvent) GetSize() int64 {
+	// All fields size except tableInfo
 	return int64(1 + 8 + 8 + 16)
 }
 
@@ -83,7 +87,11 @@ func (e *HandshakeEvent) decode(data []byte) error {
 }
 
 func (e HandshakeEvent) encodeV0() ([]byte, error) {
-	data := make([]byte, e.GetSize())
+	tableInfoData, err := json.Marshal(e.TableInfo)
+	if err != nil {
+		return nil, err
+	}
+	data := make([]byte, e.GetSize()+int64(len(tableInfoData)))
 	offset := 0
 	data[offset] = e.Version
 	offset += 1
@@ -92,6 +100,8 @@ func (e HandshakeEvent) encodeV0() ([]byte, error) {
 	binary.BigEndian.PutUint64(data[offset:], e.Seq)
 	offset += 8
 	copy(data[offset:], e.DispatcherID.Marshal())
+	offset += e.DispatcherID.GetSize()
+	copy(data[offset:], tableInfoData)
 	return data, nil
 }
 
@@ -104,5 +114,7 @@ func (e *HandshakeEvent) decodeV0(data []byte) error {
 	e.Seq = binary.BigEndian.Uint64(data[offset:])
 	offset += 8
 	dispatcherIDData := data[offset:]
-	return e.DispatcherID.Unmarshal(dispatcherIDData)
+	e.DispatcherID.Unmarshal(dispatcherIDData)
+	offset += e.DispatcherID.GetSize()
+	return json.Unmarshal(data[offset:], &e.TableInfo)
 }

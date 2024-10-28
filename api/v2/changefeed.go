@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/owner"
 	"github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/etcd"
 	"github.com/pingcap/tiflow/pkg/filter"
 	"github.com/pingcap/tiflow/pkg/txnutil/gc"
 	"github.com/pingcap/tiflow/pkg/util"
@@ -193,17 +192,19 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 // @Failure 500 {object} model.HTTPError
 // @Router /api/v2/changefeeds [get]
 func (h *OpenAPIV2) listChangeFeeds(c *gin.Context) {
-	changefeeds, err := h.server.GetEtcdClient().GetAllChangeFeedInfo(c)
+	co, err := h.server.GetCoordinator()
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	changefeeds, statuses, err := co.ListChangefeeds(c)
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
 	commonInfos := make([]ChangefeedCommonInfo, 0, len(changefeeds))
-	for id, changefeed := range changefeeds {
-		status, _, err := h.server.GetEtcdClient().GetChangeFeedStatus(c, id)
-		if err != nil {
-			log.Warn("failed to load status", zap.String("id", id.String()), zap.Error(err))
-		}
+	for idx, changefeed := range changefeeds {
+		status := statuses[idx]
 		var runningErr *model.RunningError
 		if changefeed.Error != nil {
 			runningErr = changefeed.Error
@@ -245,15 +246,13 @@ func (h *OpenAPIV2) verifyTable(c *gin.Context) {
 // @Failure 500,400 {object} model.HTTPError
 // @Router /api/v2/changefeeds/{changefeed_id} [get]
 func (h *OpenAPIV2) getChangeFeed(c *gin.Context) {
-	ctx := c.Request.Context()
 	changefeedID := model.ChangeFeedID{Namespace: model.DefaultNamespace, ID: c.Param(api.APIOpVarChangefeedID)}
-	cfInfo, err := h.server.GetEtcdClient().GetChangeFeedInfo(ctx, changefeedID)
+	co, err := h.server.GetCoordinator()
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
-
-	status, _, err := h.server.GetEtcdClient().GetChangeFeedStatus(ctx, changefeedID)
+	cfInfo, status, err := co.GetChangefeed(c, changefeedID)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -328,18 +327,17 @@ func (h *OpenAPIV2) deleteChangefeed(c *gin.Context) {
 			changefeedID.ID))
 		return
 	}
-	etcdCli := h.server.GetEtcdClient()
-	cfInfo, err := etcdCli.GetChangeFeedInfo(ctx, changefeedID)
+	coordinator, err := h.server.GetCoordinator()
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	cfInfo, _, err := coordinator.GetChangefeed(c, changefeedID)
 	if err != nil {
 		if errors.ErrChangeFeedNotExists.Equal(err) {
 			c.JSON(http.StatusOK, nil)
 			return
 		}
-		_ = c.Error(err)
-		return
-	}
-	coordinator, err := h.server.GetCoordinator()
-	if err != nil {
 		_ = c.Error(err)
 		return
 	}
@@ -386,19 +384,12 @@ func (h *OpenAPIV2) pauseChangefeed(c *gin.Context) {
 		return
 	}
 
-	etcdCli := h.server.GetEtcdClient()
-	infoKey := etcd.GetEtcdKeyChangeFeedInfo(etcdCli.GetClusterID(), changefeedID)
-	resp, err := etcdCli.GetEtcdClient().Get(ctx, infoKey)
+	coordinator, err := h.server.GetCoordinator()
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
-	if resp.Count == 0 {
-		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("changefeed: %s not found",
-			changefeedID.ID))
-		return
-	}
-	coordinator, err := h.server.GetCoordinator()
+	_, _, err = coordinator.GetChangefeed(c, changefeedID)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -443,26 +434,12 @@ func (h *OpenAPIV2) resumeChangefeed(c *gin.Context) {
 		_ = c.Error(errors.WrapError(errors.ErrAPIInvalidParam, err))
 		return
 	}
-	etcdCli := h.server.GetEtcdClient()
-	infoKey := etcd.GetEtcdKeyChangeFeedInfo(etcdCli.GetClusterID(), changefeedID)
-	resp, err := etcdCli.GetEtcdClient().Get(ctx, infoKey)
+	coordinator, err := h.server.GetCoordinator()
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
-	if resp.Count == 0 {
-		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("changefeed: %s not found",
-			changefeedID.ID))
-		return
-	}
-	detail := &model.ChangeFeedInfo{}
-	err = detail.Unmarshal(resp.Kvs[0].Value)
-	if err != nil {
-		_ = c.Error(err)
-		return
-	}
-
-	status, _, err := etcdCli.GetChangeFeedStatus(ctx, changefeedID)
+	_, status, err := coordinator.GetChangefeed(c, changefeedID)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -477,7 +454,7 @@ func (h *OpenAPIV2) resumeChangefeed(c *gin.Context) {
 	if err := verifyResumeChangefeedConfig(
 		ctx,
 		h.server.GetPdClient(),
-		etcdCli.GetEnsureGCServiceID(gc.EnsureGCServiceResuming),
+		h.server.GetEtcdClient().GetEnsureGCServiceID(gc.EnsureGCServiceResuming),
 		changefeedID,
 		newCheckpointTs); err != nil {
 		_ = c.Error(err)
@@ -491,7 +468,7 @@ func (h *OpenAPIV2) resumeChangefeed(c *gin.Context) {
 		err := gc.UndoEnsureChangefeedStartTsSafety(
 			ctx,
 			h.server.GetPdClient(),
-			etcdCli.GetEnsureGCServiceID(gc.EnsureGCServiceResuming),
+			h.server.GetEtcdClient().GetEnsureGCServiceID(gc.EnsureGCServiceResuming),
 			changefeedID,
 		)
 		if err != nil {
@@ -499,11 +476,6 @@ func (h *OpenAPIV2) resumeChangefeed(c *gin.Context) {
 			return
 		}
 	}()
-	coordinator, err := h.server.GetCoordinator()
-	if err != nil {
-		_ = c.Error(err)
-		return
-	}
 	err = coordinator.ResumeChangefeed(ctx, changefeedID, newCheckpointTs)
 	if err != nil {
 		_ = c.Error(err)
@@ -538,21 +510,12 @@ func (h *OpenAPIV2) updateChangefeed(c *gin.Context) {
 			changefeedID.ID))
 		return
 	}
-
-	etcdCli := h.server.GetEtcdClient()
-	infoKey := etcd.GetEtcdKeyChangeFeedInfo(etcdCli.GetClusterID(), changefeedID)
-	resp, err := etcdCli.GetEtcdClient().Get(ctx, infoKey)
+	coordinator, err := h.server.GetCoordinator()
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
-	if resp.Count == 0 {
-		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("changefeed: %s not found",
-			changefeedID.ID))
-		return
-	}
-	oldCfInfo := &model.ChangeFeedInfo{}
-	err = oldCfInfo.Unmarshal(resp.Kvs[0].Value)
+	oldCfInfo, status, err := coordinator.GetChangefeed(c, changefeedID)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -566,12 +529,6 @@ func (h *OpenAPIV2) updateChangefeed(c *gin.Context) {
 				"can only update changefeed config when it is stopped or failed",
 			),
 		)
-		return
-	}
-
-	status, _, err := etcdCli.GetChangeFeedStatus(ctx, changefeedID)
-	if err != nil {
-		_ = c.Error(err)
 		return
 	}
 
@@ -602,12 +559,6 @@ func (h *OpenAPIV2) updateChangefeed(c *gin.Context) {
 	if err != nil {
 		_ = c.Error(errors.ErrChangefeedUpdateRefused.
 			GenWithStackByArgs(errors.Cause(err).Error()))
-		return
-	}
-
-	coordinator, err := h.server.GetCoordinator()
-	if err != nil {
-		_ = c.Error(err)
 		return
 	}
 	if err := coordinator.UpdateChangefeed(ctx, oldCfInfo); err != nil {

@@ -64,7 +64,7 @@ type Maintainer struct {
 	controller *Controller
 	barrier    *Barrier
 
-	stream        dynstream.DynamicStream[string, *Event, *Maintainer]
+	stream        dynstream.DynamicStream[int, string, *Event, *Maintainer, *StreamHandler]
 	taskScheduler threadpool.ThreadPool
 	mc            messaging.MessageCenter
 
@@ -114,7 +114,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 	conf *config.SchedulerConfig,
 	cfg *config.ChangeFeedInfo,
 	selfNode *node.Info,
-	stream dynstream.DynamicStream[string, *Event, *Maintainer],
+	stream dynstream.DynamicStream[int, string, *Event, *Maintainer, *StreamHandler],
 	taskScheduler threadpool.ThreadPool,
 	pdAPI pdutil.PDAPIClient,
 	regionCache split.RegionCache,

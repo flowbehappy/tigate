@@ -23,6 +23,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/flowbehappy/tigate/pkg/operator"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
@@ -32,8 +33,8 @@ import (
 // And the Controller is responsible for the execution of the operator.
 type Controller struct {
 	changefeedDB  *changefeed.ChangefeedDB
-	operators     map[model.ChangeFeedID]Operator
-	runningQueue  operatorQueue
+	operators     map[model.ChangeFeedID]operator.Operator[model.ChangeFeedID, *heartbeatpb.MaintainerStatus]
+	runningQueue  operator.OperatorQueue[model.ChangeFeedID, *heartbeatpb.MaintainerStatus]
 	batchSize     int
 	messageCenter messaging.MessageCenter
 
@@ -44,8 +45,8 @@ func NewOperatorController(mc messaging.MessageCenter,
 	db *changefeed.ChangefeedDB,
 	batchSize int) *Controller {
 	oc := &Controller{
-		operators:     make(map[model.ChangeFeedID]Operator),
-		runningQueue:  make(operatorQueue, 0),
+		operators:     make(map[model.ChangeFeedID]operator.Operator[model.ChangeFeedID, *heartbeatpb.MaintainerStatus]),
+		runningQueue:  make(operator.OperatorQueue[model.ChangeFeedID, *heartbeatpb.MaintainerStatus], 0),
 		messageCenter: mc,
 		batchSize:     batchSize,
 		changefeedDB:  db,
@@ -83,7 +84,7 @@ func (oc *Controller) Execute() time.Time {
 }
 
 // AddOperator adds an operator to the controller, if the operator already exists, return false.
-func (oc *Controller) AddOperator(op Operator) bool {
+func (oc *Controller) AddOperator(op operator.Operator[model.ChangeFeedID, *heartbeatpb.MaintainerStatus]) bool {
 	oc.lock.Lock()
 	defer oc.lock.Unlock()
 
@@ -109,13 +110,8 @@ func (oc *Controller) StopChangefeed(cfID model.ChangeFeedID, remove bool) {
 	oc.lock.Lock()
 	defer oc.lock.Unlock()
 
-	var cf *changefeed.Changefeed
-	if remove {
-		cf = oc.changefeedDB.RemoveByChangefeedID(cfID)
-	} else {
-		cf = oc.changefeedDB.StopByChangefeedID(cfID)
-	}
-	if cf == nil {
+	var scheduledNode = oc.changefeedDB.StopByChangefeedID(cfID, remove)
+	if scheduledNode == "" {
 		log.Info("changefeed is not scheduled")
 		return
 	}
@@ -126,7 +122,7 @@ func (oc *Controller) StopChangefeed(cfID model.ChangeFeedID, remove bool) {
 		old.OnTaskRemoved()
 		delete(oc.operators, old.ID())
 	}
-	op := NewRemoveChangefeedOperator(cf)
+	op := NewRemoveChangefeedOperator(cfID, scheduledNode)
 	oc.pushOperator(op)
 }
 
@@ -160,7 +156,7 @@ func (oc *Controller) OnNodeRemoved(n node.ID) {
 }
 
 // GetOperator returns the operator by id.
-func (oc *Controller) GetOperator(id model.ChangeFeedID) Operator {
+func (oc *Controller) GetOperator(id model.ChangeFeedID) operator.Operator[model.ChangeFeedID, *heartbeatpb.MaintainerStatus] {
 	oc.lock.RLock()
 	defer oc.lock.RUnlock()
 	return oc.operators[id]
@@ -176,43 +172,43 @@ func (oc *Controller) OperatorSize() int {
 // pollQueueingOperator returns the operator need to be executed,
 // "next" is true to indicate that it may exist in next attempt,
 // and false is the end for the poll.
-func (oc *Controller) pollQueueingOperator() (Operator, bool) {
+func (oc *Controller) pollQueueingOperator() (operator.Operator[model.ChangeFeedID, *heartbeatpb.MaintainerStatus], bool) {
 	oc.lock.Lock()
 	defer oc.lock.Unlock()
 	if oc.runningQueue.Len() == 0 {
 		return nil, false
 	}
-	item := heap.Pop(&oc.runningQueue).(*operatorWithTime)
-	op := item.op
-	opID := item.op.ID()
+	item := heap.Pop(&oc.runningQueue).(*operator.OperatorWithTime[model.ChangeFeedID, *heartbeatpb.MaintainerStatus])
+	op := item.OP
+	opID := item.OP.ID()
 	// always call the PostFinish method to ensure the operator is cleaned up by itself.
 	if op.IsFinished() {
 		op.PostFinish()
 		delete(oc.operators, opID)
 		metrics.CoordinatorFinishedOperatorCount.WithLabelValues(op.Type()).Inc()
-		metrics.CoordinatorOperatorDuration.WithLabelValues(op.Type()).Observe(time.Since(item.enqueueTime).Seconds())
+		metrics.CoordinatorOperatorDuration.WithLabelValues(op.Type()).Observe(time.Since(item.EnqueueTime).Seconds())
 		log.Info("operator finished",
 			zap.String("operator", opID.String()),
 			zap.String("operator", op.String()))
 		return nil, true
 	}
 	now := time.Now()
-	if now.Before(item.time) {
+	if now.Before(item.Time) {
 		heap.Push(&oc.runningQueue, item)
 		return nil, false
 	}
 	// pushes with new notify time.
-	item.time = time.Now().Add(time.Millisecond * 500)
+	item.Time = time.Now().Add(time.Millisecond * 500)
 	heap.Push(&oc.runningQueue, item)
 	return op, true
 }
 
 // pushOperator add an operator to the controller queue.
-func (oc *Controller) pushOperator(op Operator) {
+func (oc *Controller) pushOperator(op operator.Operator[model.ChangeFeedID, *heartbeatpb.MaintainerStatus]) {
 	log.Info("add operator to running queue",
 		zap.String("operator", op.String()))
 	oc.operators[op.ID()] = op
 	op.Start()
-	heap.Push(&oc.runningQueue, &operatorWithTime{op: op, time: time.Now(), enqueueTime: time.Now()})
+	heap.Push(&oc.runningQueue, &operator.OperatorWithTime[model.ChangeFeedID, *heartbeatpb.MaintainerStatus]{OP: op, Time: time.Now(), EnqueueTime: time.Now()})
 	metrics.CoordinatorCreatedOperatorCount.WithLabelValues(op.Type()).Inc()
 }

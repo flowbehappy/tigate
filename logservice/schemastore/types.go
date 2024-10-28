@@ -1,7 +1,7 @@
 package schemastore
 
 import (
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 //go:generate msgp
