@@ -14,23 +14,21 @@
 package operator
 
 import (
-	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
 )
 
-// Operator is the interface for the maintainer schedule dispatchers
+// Operator is the interface for the coordinator schedule maintainer
 // operator thread run Start -> Schedule -> PostFinish
-// Check, OnNodeRemove and OnTaskRemoved is called by the maintainer thread when the dispatcher reported a new status
-type Operator interface {
-	// ID returns the dispatcher ID
-	ID() common.DispatcherID
+// Check, OnNodeRemove and OnTaskRemoved is called by the other thread when some event is triggered
+type Operator[T comparable, S any] interface {
+	// ID returns the ID
+	ID() T
 	// Type returns the operator type
 	Type() string
 	// Start is called when the operator is added to the operator executing queue
 	Start()
-	// Schedule schedules this operator returns the message to be sent to the dispatcher
+	// Schedule schedules this operator returns the message to be sent to the remote node
 	Schedule() *messaging.TargetMessage
 	// IsFinished returns true if the operator is finished
 	IsFinished() bool
@@ -38,15 +36,15 @@ type Operator interface {
 	// it is called with the lock of the operator controller
 	// this is used to:
 	// 1. do some cleanup work
-	// 2. update the replica set and replica set db status
+	// 2. update the task and related status
 	// 3. revert some modifies if the operator is canceled
 	PostFinish()
 	// Check checks when the new status comes, returns true if the operator is finished
-	// It is called by when the dispatcher reported a new status
-	Check(from node.ID, status *heartbeatpb.TableSpanStatus)
+	// It is called by when the node reported a new status
+	Check(from node.ID, status S)
 	// OnNodeRemove is called when node offline
 	OnNodeRemove(node.ID)
-	// OnTaskRemoved is called when the task is removed by ddl
+	// OnTaskRemoved is called when the task is removed
 	OnTaskRemoved()
 	// String returns the string representation of the operator
 	String() string
