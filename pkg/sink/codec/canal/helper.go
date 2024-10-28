@@ -24,11 +24,13 @@ import (
 	mm "github.com/pingcap/tidb/pkg/parser/model"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	canal "github.com/pingcap/tiflow/proto/canal"
+	"golang.org/x/text/encoding"
 )
 
-func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, flag *common.ColumnFlagType) (string, internal.JavaSQLType, error) {
+func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, flag *common.ColumnFlagType, bytesDecoder *encoding.Decoder) (string, internal.JavaSQLType, error) {
 	colType := columnInfo.GetType()
 
 	var value string
@@ -41,34 +43,59 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 		if d.IsNull() {
 			value = "null"
 		} else {
-			dp := &d
-			// Encode bits as integers to avoid pingcap/tidb#10988 (which also affects MySQL itself)
-			value = dp.GetMysqlBit().String()
+			uintValue, err := d.GetMysqlBit().ToInt(types.DefaultStmtNoWarningContext)
+			if err != nil {
+				return "", 0, err
+			}
+			value = strconv.FormatUint(uintValue, 10)
 		}
 	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		bytesValue := row.GetBytes(idx)
 		if flag.IsBinary() {
 			javaType = internal.JavaSQLTypeBLOB
 		} else {
 			javaType = internal.JavaSQLTypeCLOB
 		}
-		value = string(row.GetBytes(idx))
+		if string(bytesValue) == "" {
+			value = "null"
+			break
+		}
+
+		if flag.IsBinary() {
+			javaType = internal.JavaSQLTypeBLOB
+			decoded, err := bytesDecoder.Bytes(bytesValue)
+			if err != nil {
+				return "", 0, err
+			}
+			value = string(decoded)
+		} else {
+			javaType = internal.JavaSQLTypeCLOB
+			value = string(bytesValue)
+		}
 	case mysql.TypeVarchar, mysql.TypeVarString:
 		if flag.IsBinary() {
 			javaType = internal.JavaSQLTypeBLOB
 		} else {
 			javaType = internal.JavaSQLTypeVARCHAR
 		}
-		value = string(row.GetBytes(idx)) // TODO:do test for binary case
+		value = string(row.GetBytes(idx))
+		if value == "" {
+			value = "null"
+		}
 	case mysql.TypeString:
 		if flag.IsBinary() {
 			javaType = internal.JavaSQLTypeBLOB
+		} else {
+			javaType = internal.JavaSQLTypeCHAR
 		}
-		javaType = internal.JavaSQLTypeCHAR
-		value = string(row.GetBytes(idx)) // TODO:do test for binary case
+		value = string(row.GetBytes(idx))
+		if value == "" {
+			value = "null"
+		}
 	case mysql.TypeEnum:
 		javaType = internal.JavaSQLTypeINTEGER
 		enumValue := row.GetEnum(idx).Value
-		if enumValue == 0 { // 测一下 enum 这种 case 到底是 "0" 还是 ""
+		if enumValue == 0 {
 			value = "null"
 		} else {
 			value = fmt.Sprintf("%d", enumValue)
@@ -76,7 +103,7 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 	case mysql.TypeSet:
 		javaType = internal.JavaSQLTypeBIT
 		bitValue := row.GetEnum(idx).Value
-		if bitValue == 0 { // 测一下 enum 这种 case 到底是 "0" 还是 "null"
+		if bitValue == 0 {
 			value = "null"
 		} else {
 			value = fmt.Sprintf("%d", bitValue)
@@ -107,11 +134,16 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 		}
 	case mysql.TypeJSON:
 		javaType = internal.JavaSQLTypeVARCHAR
-		jsonValue := row.GetJSON(idx)
-		if jsonValue.IsZero() {
+		// json needs null check before, otherwise it will panic.
+		if row.IsNull(idx) {
 			value = "null"
 		} else {
-			value = jsonValue.String()
+			jsonValue := row.GetJSON(idx)
+			if jsonValue.IsZero() {
+				value = "null"
+			} else {
+				value = jsonValue.String()
+			}
 		}
 	case mysql.TypeNewDecimal:
 		javaType = internal.JavaSQLTypeDECIMAL
@@ -121,68 +153,130 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 		} else {
 			value = decimalValue.String()
 		}
-	case mysql.TypeTiny:
-		javaType = internal.JavaSQLTypeTINYINT
-		d := row.GetDatum(idx, &columnInfo.FieldType)
-		uintValue := d.GetUint64()
-		if uintValue > math.MaxInt8 {
-			javaType = internal.JavaSQLTypeSMALLINT
-		}
-		value = strconv.FormatUint(uintValue, 10)
-	case mysql.TypeShort:
-		javaType = internal.JavaSQLTypeSMALLINT
-		d := row.GetDatum(idx, &columnInfo.FieldType)
-		uintValue := d.GetUint64()
-		if uintValue > math.MaxInt16 {
-			javaType = internal.JavaSQLTypeINTEGER
-		}
-		value = strconv.FormatUint(uintValue, 10)
-	case mysql.TypeLong:
-		javaType = internal.JavaSQLTypeINTEGER
-		d := row.GetDatum(idx, &columnInfo.FieldType)
-		uintValue := d.GetUint64()
-		if uintValue > math.MaxInt32 {
-			javaType = internal.JavaSQLTypeBIGINT
-		}
-		value = strconv.FormatUint(uintValue, 10)
-	case mysql.TypeLonglong:
-		javaType = internal.JavaSQLTypeBIGINT
-		d := row.GetDatum(idx, &columnInfo.FieldType)
-		uintValue := d.GetUint64()
-		if uintValue > math.MaxInt64 {
-			javaType = internal.JavaSQLTypeDECIMAL
-		}
-		value = strconv.FormatUint(uintValue, 10)
-	case mysql.TypeFloat:
-		javaType = internal.JavaSQLTypeREAL
-		d := row.GetDatum(idx, &columnInfo.FieldType)
-		floatValue := d.GetFloat32()
-		value = strconv.FormatFloat(float64(floatValue), 'f', -1, 32)
-	case mysql.TypeDouble:
-		javaType = internal.JavaSQLTypeDOUBLE
-		d := row.GetDatum(idx, &columnInfo.FieldType)
-		floatValue := d.GetFloat64()
-		value = strconv.FormatFloat(floatValue, 'f', -1, 64)
-	case mysql.TypeNull:
-		javaType = internal.JavaSQLTypeNULL
-		value = "null"
 	case mysql.TypeInt24:
 		javaType = internal.JavaSQLTypeINTEGER
 		d := row.GetDatum(idx, &columnInfo.FieldType)
-		uintValue := d.GetUint64()
-		value = strconv.FormatUint(uintValue, 10)
+		if d.IsNull() {
+			value = "null"
+		} else {
+			if flag.IsUnsigned() {
+				uintValue := d.GetUint64()
+				value = strconv.FormatUint(uintValue, 10)
+			} else {
+				intValue := d.GetInt64()
+				value = strconv.FormatInt(intValue, 10)
+			}
+		}
+	case mysql.TypeTiny:
+		javaType = internal.JavaSQLTypeTINYINT
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		if d.IsNull() {
+			value = "null"
+		} else {
+			if flag.IsUnsigned() {
+				uintValue := d.GetUint64()
+				if uintValue > math.MaxInt8 {
+					javaType = internal.JavaSQLTypeSMALLINT
+				}
+				value = strconv.FormatUint(uintValue, 10)
+			} else {
+				intValue := d.GetInt64()
+				value = strconv.FormatInt(intValue, 10)
+			}
+		}
+	case mysql.TypeShort:
+		javaType = internal.JavaSQLTypeSMALLINT
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		if d.IsNull() {
+			value = "null"
+		} else {
+			if flag.IsUnsigned() {
+				uintValue := d.GetUint64()
+				if uintValue > math.MaxInt16 {
+					javaType = internal.JavaSQLTypeINTEGER
+				}
+				value = strconv.FormatUint(uintValue, 10)
+			} else {
+				intValue := d.GetInt64()
+				value = strconv.FormatInt(intValue, 10)
+			}
+		}
+	case mysql.TypeLong:
+		javaType = internal.JavaSQLTypeINTEGER
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		if d.IsNull() {
+			value = "null"
+		} else {
+			if flag.IsUnsigned() {
+				uintValue := d.GetUint64()
+				if uintValue > math.MaxInt32 {
+					javaType = internal.JavaSQLTypeBIGINT
+				}
+				value = strconv.FormatUint(uintValue, 10)
+			} else {
+				intValue := d.GetInt64()
+				value = strconv.FormatInt(intValue, 10)
+			}
+		}
+	case mysql.TypeLonglong:
+		javaType = internal.JavaSQLTypeBIGINT
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		if d.IsNull() {
+			value = "null"
+		} else {
+			if flag.IsUnsigned() {
+				uintValue := d.GetUint64()
+				if uintValue > math.MaxInt64 {
+					javaType = internal.JavaSQLTypeDECIMAL
+				}
+				value = strconv.FormatUint(uintValue, 10)
+			} else {
+				intValue := d.GetInt64()
+				value = strconv.FormatInt(intValue, 10)
+			}
+		}
+	case mysql.TypeFloat:
+		javaType = internal.JavaSQLTypeREAL
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		if d.IsNull() {
+			value = "null"
+		} else {
+			floatValue := d.GetFloat32()
+			value = strconv.FormatFloat(float64(floatValue), 'f', -1, 32)
+		}
+	case mysql.TypeDouble:
+		javaType = internal.JavaSQLTypeDOUBLE
+		d := row.GetDatum(idx, &columnInfo.FieldType)
+		if d.IsNull() {
+			value = "null"
+		} else {
+			floatValue := d.GetFloat64()
+			value = strconv.FormatFloat(floatValue, 'f', -1, 64)
+		}
+	// case mysql.TypeNull:
+	// 	javaType = internal.JavaSQLTypeNULL
+	// 	value = "null"
 	case mysql.TypeYear:
 		javaType = internal.JavaSQLTypeVARCHAR
 		d := row.GetDatum(idx, &columnInfo.FieldType)
-		yearValue := d.GetInt64()
-		value = strconv.FormatInt(yearValue, 10)
+		if d.IsNull() {
+			value = "null"
+		} else {
+			yearValue := d.GetInt64()
+			value = strconv.FormatInt(yearValue, 10)
+		}
+
 	default:
 		javaType = internal.JavaSQLTypeVARCHAR
 		d := row.GetDatum(idx, &columnInfo.FieldType)
-		// NOTICE: GetValue() may return some types that go sql not support, which will cause sink DML fail
-		// Make specified convert upper if you need
-		// Go sql support type ref to: https://github.com/golang/go/blob/go1.17.4/src/database/sql/driver/types.go#L236
-		value = fmt.Sprintf("%v", d.GetValue())
+		if d.IsNull() {
+			value = "null"
+		} else {
+			// NOTICE: GetValue() may return some types that go sql not support, which will cause sink DML fail
+			// Make specified convert upper if you need
+			// Go sql support type ref to: https://github.com/golang/go/blob/go1.17.4/src/database/sql/driver/types.go#L236
+			value = fmt.Sprintf("%v", d.GetValue())
+		}
 	}
 	return value, javaType, nil
 }
