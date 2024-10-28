@@ -28,38 +28,40 @@ import (
 
 // RemoveChangefeedOperator is an operator to remove a maintainer from a node
 type RemoveChangefeedOperator struct {
-	cf       *changefeed.Changefeed
+	cfID     model.ChangeFeedID
+	nodeID   node.ID
 	finished atomic.Bool
 }
 
-func NewRemoveChangefeedOperator(cf *changefeed.Changefeed) *RemoveChangefeedOperator {
+func NewRemoveChangefeedOperator(cfID model.ChangeFeedID, nodeID node.ID) *RemoveChangefeedOperator {
 	return &RemoveChangefeedOperator{
-		cf: cf,
+		cfID:   cfID,
+		nodeID: nodeID,
 	}
 }
 
 func (m *RemoveChangefeedOperator) Check(from node.ID, status *heartbeatpb.MaintainerStatus) {
-	if !m.finished.Load() && from == m.cf.GetNodeID() &&
+	if !m.finished.Load() && from == m.nodeID &&
 		status.State != heartbeatpb.ComponentState_Working {
 		log.Info("maintainer report non-working status",
-			zap.String("maintainer", m.cf.ID.String()))
+			zap.String("maintainer", m.cfID.String()))
 		m.finished.Store(true)
 	}
 }
 
 func (m *RemoveChangefeedOperator) Schedule() *messaging.TargetMessage {
-	return m.cf.NewRemoveMaintainerMessage(m.cf.GetNodeID(), true)
+	return changefeed.RemoveMaintainerMessage(m.cfID.ID, m.nodeID, true)
 }
 
 // OnNodeRemove is called when node offline, and the maintainer must already move to absent status and will be scheduled again
 func (m *RemoveChangefeedOperator) OnNodeRemove(n node.ID) {
-	if n == m.cf.GetNodeID() {
+	if n == m.nodeID {
 		m.finished.Store(true)
 	}
 }
 
 func (m *RemoveChangefeedOperator) ID() model.ChangeFeedID {
-	return m.cf.ID
+	return m.cfID
 }
 
 func (m *RemoveChangefeedOperator) IsFinished() bool {
@@ -72,18 +74,17 @@ func (m *RemoveChangefeedOperator) OnTaskRemoved() {
 
 func (m *RemoveChangefeedOperator) Start() {
 	log.Info("start remove maintainer operator",
-		zap.String("changefeed", m.cf.ID.String()))
+		zap.String("changefeed", m.cfID.String()))
 }
 
 func (m *RemoveChangefeedOperator) PostFinish() {
-	m.cf.SetNodeID("")
 	log.Info("remove maintainer operator finished",
-		zap.String("changefeed", m.cf.ID.String()))
+		zap.String("changefeed", m.cfID.String()))
 }
 
 func (m *RemoveChangefeedOperator) String() string {
 	return fmt.Sprintf("remove maintainer operator: %s, dest %s",
-		m.cf.ID, m.cf.GetNodeID())
+		m.cfID, m.nodeID)
 }
 
 func (m *RemoveChangefeedOperator) Type() string {

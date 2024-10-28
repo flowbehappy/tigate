@@ -391,10 +391,6 @@ func (h *OpenAPIV2) pauseChangefeed(c *gin.Context) {
 	}
 	_, _, err = coordinator.GetChangefeed(c, changefeedID)
 	if err != nil {
-		if errors.ErrChangeFeedNotExists.Equal(err) {
-			c.JSON(http.StatusOK, nil)
-			return
-		}
 		_ = c.Error(err)
 		return
 	}

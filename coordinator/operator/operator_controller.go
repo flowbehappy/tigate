@@ -109,13 +109,8 @@ func (oc *Controller) StopChangefeed(cfID model.ChangeFeedID, remove bool) {
 	oc.lock.Lock()
 	defer oc.lock.Unlock()
 
-	var cf *changefeed.Changefeed
-	if remove {
-		cf = oc.changefeedDB.RemoveByChangefeedID(cfID)
-	} else {
-		cf = oc.changefeedDB.StopByChangefeedID(cfID)
-	}
-	if cf == nil {
+	var scheduledNode = oc.changefeedDB.StopByChangefeedID(cfID, remove)
+	if scheduledNode == "" {
 		log.Info("changefeed is not scheduled")
 		return
 	}
@@ -126,7 +121,7 @@ func (oc *Controller) StopChangefeed(cfID model.ChangeFeedID, remove bool) {
 		old.OnTaskRemoved()
 		delete(oc.operators, old.ID())
 	}
-	op := NewRemoveChangefeedOperator(cf)
+	op := NewRemoveChangefeedOperator(cfID, scheduledNode)
 	oc.pushOperator(op)
 }
 
