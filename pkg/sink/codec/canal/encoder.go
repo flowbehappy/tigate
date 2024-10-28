@@ -37,6 +37,7 @@ import (
 	"golang.org/x/text/encoding/charmap"
 )
 
+// TODO: we need to reorg this code later, including use util.jsonWriter and other unreasonable code
 func fillColumns(
 	valueMap map[int64]string,
 	tableInfo *common.TableInfo,
