@@ -63,13 +63,14 @@ func (m *DispatcherOrchestrator) handleAddDispatcherManager(from node.ID, req *h
 	cfId := model.DefaultChangeFeedID(req.ChangefeedID)
 	manager, exists := m.dispatcherManagers[cfId]
 	var err error
+	var startTs uint64
 	if !exists {
 		cfConfig := &config.ChangefeedConfig{}
 		if err := json.Unmarshal(req.Config, cfConfig); err != nil {
 			log.Panic("failed to unmarshal changefeed config", zap.String("changefeed id", req.ChangefeedID), zap.Error(err))
 			return err
 		}
-		manager, err = dispatchermanager.NewEventDispatcherManager(cfId, cfConfig, from)
+		manager, startTs, err = dispatchermanager.NewEventDispatcherManager(cfId, cfConfig, req.TableTriggerEventDispatcherId, req.StartTs, from)
 		// Fast return the error to maintainer.
 		if err != nil {
 			log.Error("failed to create new dispatcher manager", zap.Error(err), zap.Any("ChangefeedID", cfId))
@@ -90,7 +91,7 @@ func (m *DispatcherOrchestrator) handleAddDispatcherManager(from node.ID, req *h
 		manager.SetMaintainerID(from)
 	}
 
-	response := createBootstrapResponse(req.ChangefeedID, manager)
+	response := createBootstrapResponse(req.ChangefeedID, manager, startTs)
 	return m.sendResponse(from, messaging.MaintainerManagerTopic, response)
 }
 
@@ -111,10 +112,14 @@ func (m *DispatcherOrchestrator) handleRemoveDispatcherManager(from node.ID, req
 	return m.sendResponse(from, messaging.MaintainerTopic, response)
 }
 
-func createBootstrapResponse(changefeedID string, manager *dispatchermanager.EventDispatcherManager) *heartbeatpb.MaintainerBootstrapResponse {
+func createBootstrapResponse(changefeedID string, manager *dispatchermanager.EventDispatcherManager, startTs uint64) *heartbeatpb.MaintainerBootstrapResponse {
 	response := &heartbeatpb.MaintainerBootstrapResponse{
 		ChangefeedID: changefeedID,
 		Spans:        make([]*heartbeatpb.BootstrapTableSpan, 0, manager.GetDispatcherMap().Len()),
+	}
+
+	if startTs != 0 {
+		response.CheckpointTs = startTs
 	}
 
 	manager.GetDispatcherMap().ForEach(func(id common.DispatcherID, d *dispatcher.Dispatcher) {
