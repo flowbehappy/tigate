@@ -198,6 +198,7 @@ func TestDDLEvent(t *testing.T) {
 	protocolConfig := newcommon.NewConfig(config.ProtocolOpen)
 	ddlEvent := &pevent.DDLEvent{
 		Query:      job.Query,
+		Type:       byte(job.Type),
 		SchemaName: job.SchemaName,
 		TableName:  job.TableName,
 		FinishedTs: 1,

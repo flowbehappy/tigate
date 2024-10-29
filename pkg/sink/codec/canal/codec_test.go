@@ -1,26 +1,28 @@
 package canal
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	pevent "github.com/flowbehappy/tigate/pkg/common/event"
+	newconfig "github.com/flowbehappy/tigate/pkg/config"
 	newcommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
+	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
+	ticonfig "github.com/pingcap/tiflow/pkg/config"
+	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/text/encoding/charmap"
 )
 
-// basic type
-// large message
 // insert
 // update(with only update column)
 // delete
 // ddl
 // checkpointTs
 
-func TestBasicType(t *testing.T) {
+func TestAllTypes(t *testing.T) {
 	helper := pevent.NewEventTestHelper(t)
 	defer helper.Close()
 
@@ -79,7 +81,7 @@ func TestBasicType(t *testing.T) {
 		Callback:       func() {}}
 
 	protocolConfig := newcommon.NewConfig(config.ProtocolCanalJSON)
-	value, err := newJSONMessageForDML(rowEvent, protocolConfig, false, "", charmap.ISO8859_1.NewDecoder())
+	value, err := newJSONMessageForDML(rowEvent, protocolConfig, false, "")
 	require.NoError(t, err)
 
 	var message JSONMessage
@@ -109,5 +111,359 @@ func TestBasicType(t *testing.T) {
 
 	newValue, err := json.Marshal(message.Data)
 	require.NoError(t, err)
-	require.Equal(t, `[{"a":"1","aa":"测试","ab":null,"ac":"\u0001\u0002\u0003\u0004\u0005\u0006\u0007\u0008\t\n","ad":null,"ae":"81","af":null,"ag":"{\"key1\": \"value1\"}","ah":null,"ai":"129012.12","aj":null,"ak":"1","al":null,"am":"2","an":null,"ao":"5rWL6K+VdGV4dA==","ap":null,"aq":"PNG\r\n\u001a\n","ar":null,"as1":"5rWL6K+VdGV4dA==","at":null,"au":"ID3\u0003\u0000\u0000\u0000\u0000","av":null,"aw":"5rWL6K+VdGV4dA==","ax":null,"ay":"PK\u0003\u0004\u0014\u0000\u0000\u0000\u0008\u0000","az":null,"b":null,"ba":"5rWL6K+VdGV4dA==","bb":null,"bc":"%PDF-1.4","bd":null,"be":"Alice","bf":null,"bg":"\u0001\u0002\u0003\u0004\u0005\u0006\u0007\u0008\t\n","bh":null,"c":"1","d":null,"e":"-1","f":null,"g":"123","h":null,"i":"153.123","j":null,"k":"153.123","l":null,"m":"1973-12-30 15:30:00","n":null,"o":"123","p":null,"q":"123","r":null,"s":"2000-01-01","t":null,"u":"23:59:59","v":null,"w":"2015-12-20 23:58:58","x":null,"y":"1970","z":null}]`, string(newValue))
+	require.Equal(t, `[{"a":"1","aa":"测试","ab":null,"ac":"\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n","ad":null,"ae":"81","af":null,"ag":"{\"key1\": \"value1\"}","ah":null,"ai":"129012.12","aj":null,"ak":"1","al":null,"am":"2","an":null,"ao":"5rWL6K+VdGV4dA==","ap":null,"aq":"PNG\r\n\u001a\n","ar":null,"as1":"5rWL6K+VdGV4dA==","at":null,"au":"ID3\u0003\u0000\u0000\u0000\u0000","av":null,"aw":"5rWL6K+VdGV4dA==","ax":null,"ay":"PK\u0003\u0004\u0014\u0000\u0000\u0000\b\u0000","az":null,"b":null,"ba":"5rWL6K+VdGV4dA==","bb":null,"bc":"%PDF-1.4","bd":null,"be":"Alice","bf":null,"bg":"\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n","bh":null,"c":"1","d":null,"e":"-1","f":null,"g":"123","h":null,"i":"153.123","j":null,"k":"153.123","l":null,"m":"1973-12-30 15:30:00","n":null,"o":"123","p":null,"q":"123","r":null,"s":"2000-01-01","t":null,"u":"23:59:59","v":null,"w":"2015-12-20 23:58:58","x":null,"y":"1970","z":null}]`, string(newValue))
+}
+
+func TestGeneralDMLEvent(t *testing.T) {
+	// columnSelector
+	{
+		helper := pevent.NewEventTestHelper(t)
+		defer helper.Close()
+
+		helper.Tk().MustExec("use test")
+		job := helper.DDL2Job(`create table test.t(a tinyint primary key, b tinyint)`)
+
+		dmlEvent := helper.DML2Event("test", "t", `insert into test.t(a) values (1)`)
+		require.NotNil(t, dmlEvent)
+		row, ok := dmlEvent.GetNextRow()
+		require.True(t, ok)
+		tableInfo := helper.GetTableInfo(job)
+
+		replicaConfig := newconfig.GetDefaultReplicaConfig()
+		replicaConfig.Sink.ColumnSelectors = []*newconfig.ColumnSelector{
+			{
+				Matcher: []string{"test.*"},
+				Columns: []string{"a"},
+			},
+		}
+		selectors, err := common.NewColumnSelectors(replicaConfig.Sink)
+		require.NoError(t, err)
+
+		rowEvent := &pevent.RowEvent{
+			TableInfo:      tableInfo,
+			CommitTs:       1,
+			Event:          row,
+			ColumnSelector: selectors.GetSelector("test", "t"),
+			Callback:       func() {}}
+
+		protocolConfig := newcommon.NewConfig(config.ProtocolCanalJSON)
+		value, err := newJSONMessageForDML(rowEvent, protocolConfig, false, "")
+		require.NoError(t, err)
+
+		var message JSONMessage
+
+		err = json.Unmarshal(value, &message)
+		require.NoError(t, err)
+
+		require.Equal(t, int64(0), message.ID)
+		require.Equal(t, "test", message.Schema)
+		require.Equal(t, "t", message.Table)
+		require.Equal(t, []string{"a"}, message.PKNames)
+		require.Equal(t, false, message.IsDDL)
+		require.Equal(t, "INSERT", message.EventType)
+		require.Equal(t, "", message.Query)
+
+		sqlValue, err := json.Marshal(message.SQLType)
+		require.NoError(t, err)
+		require.Equal(t, `{"a":-6}`, string(sqlValue))
+
+		mysqlValue, err := json.Marshal(message.MySQLType)
+		require.NoError(t, err)
+		require.Equal(t, `{"a":"tinyint"}`, string(mysqlValue))
+
+		oldValue, err := json.Marshal(message.Old)
+		require.NoError(t, err)
+		require.Equal(t, "null", string(oldValue))
+
+		newValue, err := json.Marshal(message.Data)
+		require.NoError(t, err)
+		require.Equal(t, `[{"a":"1"}]`, string(newValue))
+	}
+	// EnableTiDBExtension
+	{
+		helper := pevent.NewEventTestHelper(t)
+		defer helper.Close()
+
+		helper.Tk().MustExec("use test")
+		job := helper.DDL2Job(`create table test.t(a tinyint primary key, b tinyint)`)
+
+		dmlEvent := helper.DML2Event("test", "t", `insert into test.t(a) values (1)`)
+		require.NotNil(t, dmlEvent)
+		row, ok := dmlEvent.GetNextRow()
+		require.True(t, ok)
+		tableInfo := helper.GetTableInfo(job)
+
+		rowEvent := &pevent.RowEvent{
+			TableInfo:      tableInfo,
+			CommitTs:       1,
+			Event:          row,
+			ColumnSelector: common.NewDefaultColumnSelector(),
+			Callback:       func() {}}
+
+		protocolConfig := newcommon.NewConfig(config.ProtocolCanalJSON)
+		protocolConfig.EnableTiDBExtension = true
+		value, err := newJSONMessageForDML(rowEvent, protocolConfig, false, "")
+		require.NoError(t, err)
+
+		var message canalJSONMessageWithTiDBExtension
+
+		err = json.Unmarshal(value, &message)
+		require.NoError(t, err)
+
+		require.Equal(t, int64(0), message.ID)
+		require.Equal(t, "test", message.Schema)
+		require.Equal(t, "t", message.Table)
+		require.Equal(t, []string{"a"}, message.PKNames)
+		require.Equal(t, false, message.IsDDL)
+		require.Equal(t, "INSERT", message.EventType)
+		require.Equal(t, "", message.Query)
+
+		sqlValue, err := json.Marshal(message.SQLType)
+		require.NoError(t, err)
+		require.Equal(t, `{"a":-6,"b":-6}`, string(sqlValue))
+
+		mysqlValue, err := json.Marshal(message.MySQLType)
+		require.NoError(t, err)
+		require.Equal(t, `{"a":"tinyint","b":"tinyint"}`, string(mysqlValue))
+
+		oldValue, err := json.Marshal(message.Old)
+		require.NoError(t, err)
+		require.Equal(t, "null", string(oldValue))
+
+		newValue, err := json.Marshal(message.Data)
+		require.NoError(t, err)
+		require.Equal(t, `[{"a":"1","b":null}]`, string(newValue))
+
+		require.Equal(t, uint64(1), message.Extensions.CommitTs)
+		require.Equal(t, false, message.Extensions.OnlyHandleKey)
+		require.Equal(t, "", message.Extensions.ClaimCheckLocation)
+	}
+	// multi pk
+	{
+		helper := pevent.NewEventTestHelper(t)
+		defer helper.Close()
+
+		helper.Tk().MustExec("use test")
+		job := helper.DDL2Job(`create table test.t(a tinyint, c int, b tinyint, PRIMARY KEY (a, b))`)
+
+		dmlEvent := helper.DML2Event("test", "t", `insert into test.t values (1,2,3)`)
+		require.NotNil(t, dmlEvent)
+		row, ok := dmlEvent.GetNextRow()
+		require.True(t, ok)
+		tableInfo := helper.GetTableInfo(job)
+
+		rowEvent := &pevent.RowEvent{
+			TableInfo:      tableInfo,
+			CommitTs:       1,
+			Event:          row,
+			ColumnSelector: common.NewDefaultColumnSelector(),
+			Callback:       func() {}}
+
+		protocolConfig := newcommon.NewConfig(config.ProtocolCanalJSON)
+		value, err := newJSONMessageForDML(rowEvent, protocolConfig, false, "")
+		require.NoError(t, err)
+
+		var message JSONMessage
+
+		err = json.Unmarshal(value, &message)
+		require.NoError(t, err)
+
+		require.Equal(t, []string{"a", "b"}, message.PKNames)
+
+		sqlValue, err := json.Marshal(message.SQLType)
+		require.NoError(t, err)
+		require.Equal(t, `{"a":-6,"b":-6,"c":4}`, string(sqlValue))
+
+		mysqlValue, err := json.Marshal(message.MySQLType)
+		require.NoError(t, err)
+		require.Equal(t, `{"a":"tinyint","b":"tinyint","c":"int"}`, string(mysqlValue))
+
+		oldValue, err := json.Marshal(message.Old)
+		require.NoError(t, err)
+		require.Equal(t, "null", string(oldValue))
+
+		newValue, err := json.Marshal(message.Data)
+		require.NoError(t, err)
+		require.Equal(t, `[{"a":"1","b":"3","c":"2"}]`, string(newValue))
+	}
+	// message large
+	{
+		helper := pevent.NewEventTestHelper(t)
+		defer helper.Close()
+
+		helper.Tk().MustExec("use test")
+		job := helper.DDL2Job(`create table test.t(
+			a tinyint primary key, b tinyint,
+			c bool, d bool,
+			e smallint, f smallint,
+			g int, h int,
+			i float, j float,
+			k double, l double,
+			m timestamp, n timestamp,
+			o bigint, p bigint,
+			q mediumint, r mediumint,
+			s date, t date,
+			u time, v time,
+			w datetime, x datetime,
+			y year, z year,
+			aa varchar(10), ab varchar(10),
+			ac varbinary(10), ad varbinary(10),
+			ae bit(10), af bit(10),
+			ag json, ah json,
+			ai decimal(10,2), aj decimal(10,2),
+			ak enum('a','b','c'), al enum('a','b','c'),
+			am set('a','b','c'), an set('a','b','c'),
+			ao tinytext, ap tinytext,
+			aq tinyblob, ar tinyblob,
+			as1 mediumtext, at mediumtext,
+			au mediumblob, av mediumblob,
+			aw longtext, ax longtext,
+			ay longblob, az longblob,
+			ba text, bb text,
+			bc blob, bd blob,
+			be char(10), bf char(10),
+			bg binary(10), bh binary(10))`)
+
+		dmlEvent := helper.DML2Event("test", "t", `insert into test.t(
+			a,c,e,g,i,k,m,o,q,s,u,w,y,aa,ac,ae,ag,ai,ak,am,ao,aq,as1,au,aw,ay,ba,bc,be,bg) values (
+				1, true, -1, 123, 153.123,153.123,
+				"1973-12-30 15:30:00",123,123,"2000-01-01","23:59:59",
+				"2015-12-20 23:58:58",1970,"测试",0x0102030405060708090A,81,
+				'{"key1": "value1"}', 129012.12, 'a', 'b', "5rWL6K+VdGV4dA==",
+				0x89504E470D0A1A0A,"5rWL6K+VdGV4dA==",0x4944330300000000,
+				"5rWL6K+VdGV4dA==",0x504B0304140000000800,"5rWL6K+VdGV4dA==",
+				0x255044462D312E34,"Alice",0x0102030405060708090A)`)
+		require.NotNil(t, dmlEvent)
+		row, ok := dmlEvent.GetNextRow()
+		require.True(t, ok)
+		tableInfo := helper.GetTableInfo(job)
+
+		rowEvent := &pevent.RowEvent{
+			TableInfo:      tableInfo,
+			CommitTs:       1,
+			Event:          row,
+			ColumnSelector: common.NewDefaultColumnSelector(),
+			Callback:       func() {}}
+
+		protocolConfig := newcommon.NewConfig(config.ProtocolCanalJSON)
+		protocolConfig = protocolConfig.WithMaxMessageBytes(300)
+		protocolConfig.EnableTiDBExtension = true
+		encoder, err := NewJSONRowEventEncoder(context.Background(), protocolConfig)
+		require.NoError(t, err)
+		err = encoder.AppendRowChangedEvent(context.Background(), "", rowEvent)
+		require.ErrorIs(t, err, cerror.ErrMessageTooLarge)
+	}
+	// message large + handle only
+	{
+		helper := pevent.NewEventTestHelper(t)
+		defer helper.Close()
+
+		helper.Tk().MustExec("use test")
+		job := helper.DDL2Job(`create table test.t(
+			a tinyint primary key, b tinyint,
+			c bool, d bool,
+			e smallint, f smallint,
+			g int, h int,
+			i float, j float,
+			k double, l double,
+			m timestamp, n timestamp,
+			o bigint, p bigint,
+			q mediumint, r mediumint,
+			s date, t date,
+			u time, v time,
+			w datetime, x datetime,
+			y year, z year,
+			aa varchar(10), ab varchar(10),
+			ac varbinary(10), ad varbinary(10),
+			ae bit(10), af bit(10),
+			ag json, ah json,
+			ai decimal(10,2), aj decimal(10,2),
+			ak enum('a','b','c'), al enum('a','b','c'),
+			am set('a','b','c'), an set('a','b','c'),
+			ao tinytext, ap tinytext,
+			aq tinyblob, ar tinyblob,
+			as1 mediumtext, at mediumtext,
+			au mediumblob, av mediumblob,
+			aw longtext, ax longtext,
+			ay longblob, az longblob,
+			ba text, bb text,
+			bc blob, bd blob,
+			be char(10), bf char(10),
+			bg binary(10), bh binary(10))`)
+
+		dmlEvent := helper.DML2Event("test", "t", `insert into test.t(
+			a,c,e,g,i,k,m,o,q,s,u,w,y,aa,ac,ae,ag,ai,ak,am,ao,aq,as1,au,aw,ay,ba,bc,be,bg) values (
+				1, true, -1, 123, 153.123,153.123,
+				"1973-12-30 15:30:00",123,123,"2000-01-01","23:59:59",
+				"2015-12-20 23:58:58",1970,"测试",0x0102030405060708090A,81,
+				'{"key1": "value1"}', 129012.12, 'a', 'b', "5rWL6K+VdGV4dA==",
+				0x89504E470D0A1A0A,"5rWL6K+VdGV4dA==",0x4944330300000000,
+				"5rWL6K+VdGV4dA==",0x504B0304140000000800,"5rWL6K+VdGV4dA==",
+				0x255044462D312E34,"Alice",0x0102030405060708090A)`)
+		require.NotNil(t, dmlEvent)
+		row, ok := dmlEvent.GetNextRow()
+		require.True(t, ok)
+		tableInfo := helper.GetTableInfo(job)
+
+		rowEvent := &pevent.RowEvent{
+			TableInfo:      tableInfo,
+			CommitTs:       1,
+			Event:          row,
+			ColumnSelector: common.NewDefaultColumnSelector(),
+			Callback:       func() {}}
+
+		protocolConfig := newcommon.NewConfig(config.ProtocolCanalJSON)
+		protocolConfig = protocolConfig.WithMaxMessageBytes(300)
+		protocolConfig.LargeMessageHandle.LargeMessageHandleOption = ticonfig.LargeMessageHandleOptionHandleKeyOnly
+		protocolConfig.EnableTiDBExtension = true
+		encoder, err := NewJSONRowEventEncoder(context.Background(), protocolConfig)
+		require.NoError(t, err)
+		err = encoder.AppendRowChangedEvent(context.Background(), "", rowEvent)
+		require.NoError(t, err)
+
+		messages := encoder.Build()
+		require.Equal(t, 1, len(messages))
+		require.Equal(t, uint64(1), messages[0].Ts)
+		require.Equal(t, "test", *messages[0].Schema)
+		require.Equal(t, "t", *messages[0].Table)
+		require.Equal(t, model.MessageTypeRow, messages[0].Type)
+		require.NotNil(t, messages[0].Callback)
+
+		value := messages[0].Value
+		var message canalJSONMessageWithTiDBExtension
+
+		err = json.Unmarshal(value, &message)
+		require.NoError(t, err)
+
+		sqlValue, err := json.Marshal(message.SQLType)
+		require.NoError(t, err)
+		require.Equal(t, `{"a":-6}`, string(sqlValue))
+
+		mysqlValue, err := json.Marshal(message.MySQLType)
+		require.NoError(t, err)
+		require.Equal(t, `{"a":"tinyint"}`, string(mysqlValue))
+
+		oldValue, err := json.Marshal(message.Old)
+		require.NoError(t, err)
+		require.Equal(t, "null", string(oldValue))
+
+		newValue, err := json.Marshal(message.Data)
+		require.NoError(t, err)
+		require.Equal(t, `[{"a":"1"}]`, string(newValue))
+
+		require.Equal(t, true, message.Extensions.OnlyHandleKey)
+	}
+}
+
+// insert / update / delete
+func TestDMLTypeEvent(t *testing.T) {
+
+}
+
+// ddl
+func TestDDLTypeEvent(t *testing.T) {
+}
+
+// checkpointTs
+func TestCheckpointTs(t *testing.T) {
 }
