@@ -226,6 +226,16 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 		return nil
 	}
 
+	// If downstream is mysql-class, we need to check whether startTs we should actually use as the begin startTs
+	// NewDispatcher may called after the node is crashed or dispatcher is scheduled.
+	// When downstream is mysql-class, we could check ddl-ts table in downstream, what is the ddl-ts of this tableID,
+	// and choose max(ddl-ts, startTs) as the begin startTs.
+	startTs, err := e.sink.CheckStartTs(tableSpan.TableID, startTs)
+	if err != nil {
+		log.Error("check start ts failed", zap.Error(err))
+		return nil
+	}
+
 	syncPointInfo := syncpoint.SyncPointInfo{
 		SyncPointConfig: e.syncPointConfig,
 		EnableSyncPoint: false,
@@ -273,6 +283,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 	log.Info("new dispatcher created",
 		zap.String("ID", id.String()),
 		zap.Any("tableSpan", tableSpan),
+		zap.Any("startTs", startTs),
 		zap.Int64("cost(ns)", time.Since(start).Nanoseconds()), zap.Time("start", start))
 	e.metricCreateDispatcherDuration.Observe(float64(time.Since(start).Seconds()))
 

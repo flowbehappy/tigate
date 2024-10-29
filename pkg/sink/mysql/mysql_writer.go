@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/common"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/filter"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/errorutil"
 	"github.com/pingcap/tiflow/pkg/retry"
 	pmysql "github.com/pingcap/tiflow/pkg/sink/mysql"
 	"go.uber.org/zap"
@@ -209,7 +209,7 @@ func (w *MysqlWriter) SendSyncPointEvent(event *commonEvent.SyncPointEvent) erro
 	query = fmt.Sprintf("set global tidb_external_ts = %s", secondaryTs)
 	_, err = tx.Exec(query)
 	if err != nil {
-		if errorutil.IsSyncPointIgnoreError(err) {
+		if apperror.IsSyncPointIgnoreError(err) {
 			// TODO(dongmen): to confirm if we need to log this error.
 			log.Warn("set global external ts failed, ignore this error", zap.Error(err))
 		} else {
@@ -373,6 +373,65 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 	err = tx.Commit()
 	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write ddl ts table;"))
 
+}
+
+// If no ddl-ts-v1 table, or no this row, then return 0; otherwise, return the ddl-ts value
+func (w *MysqlWriter) CheckStartTs(tableID int64, startTs uint64) (uint64, error) {
+	ctx := context.Background()
+	tx, err := w.db.BeginTx(ctx, nil)
+
+	if err != nil {
+		log.Error("select ddl ts table: begin Tx fail", zap.Error(err))
+		return 0, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "select ddl ts table: begin Tx fail;"))
+	}
+
+	changefeedID := w.ChangefeedID.String()
+	ticdcClusterID := config.GetGlobalServerConfig().ClusterID
+
+	var builder strings.Builder
+	builder.WriteString("SELECT ddl_ts FROM ")
+	builder.WriteString(filter.TiCDCSystemSchema)
+	builder.WriteString(".")
+	builder.WriteString(filter.DDLTsTable)
+	builder.WriteString(" WHERE (ticdc_cluster_id, changefeed, table_id) IN (")
+
+	builder.WriteString("('")
+	builder.WriteString(ticdcClusterID)
+	builder.WriteString("', '")
+	builder.WriteString(changefeedID)
+	builder.WriteString("', ")
+	builder.WriteString(strconv.FormatInt(tableID, 10))
+	builder.WriteString(")")
+	builder.WriteString(")")
+	query := builder.String()
+
+	rows, err := tx.Query(query)
+	if err != nil {
+		if apperror.IsTableNotExistsErr(err) {
+			// If this table is not existed, this means the table is first being synced
+			log.Info("table not found in ddl ts table", zap.Int64("tableID", tableID), zap.Error(err))
+			return 0, nil
+		}
+		log.Error("failed to check ddl ts table", zap.Error(err))
+		err2 := tx.Rollback()
+		if err2 != nil {
+			log.Error("failed to check ddl ts table", zap.Error(err2))
+		}
+		return 0, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to check ddl ts table;"))
+	}
+
+	var ddlTs uint64
+	defer rows.Close()
+	if rows.Next() {
+		err := rows.Scan(&ddlTs)
+		if err != nil {
+			return 0, err
+		}
+		return ddlTs, nil
+	} else {
+		// does't have this field
+		return 0, nil
+	}
 }
 
 func (w *MysqlWriter) isDDLExecuted(tableID int64, ddlTs uint64) (bool, error) {
@@ -566,7 +625,7 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *commonEvent.DDLEvent) error {
 	return retry.Do(context.Background(), func() error {
 		err := w.statistics.RecordDDLExecution(func() error { return w.execDDL(event) })
 		if err != nil {
-			if errorutil.IsIgnorableMySQLDDLError(err) {
+			if apperror.IsIgnorableMySQLDDLError(err) {
 				// NOTE: don't change the log, some tests depend on it.
 				log.Info("Execute DDL failed, but error can be ignored",
 					zap.String("ddl", event.Query),
@@ -583,7 +642,7 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *commonEvent.DDLEvent) error {
 	}, retry.WithBackoffBaseDelay(pmysql.BackoffBaseDelay.Milliseconds()),
 		retry.WithBackoffMaxDelay(pmysql.BackoffMaxDelay.Milliseconds()),
 		retry.WithMaxTries(defaultDDLMaxRetry),
-		retry.WithIsRetryableErr(errorutil.IsRetryableDDLError))
+		retry.WithIsRetryableErr(apperror.IsRetryableDDLError))
 }
 
 func (w *MysqlWriter) Flush(events []*commonEvent.DMLEvent, workerNum int) error {
