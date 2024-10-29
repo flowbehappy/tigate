@@ -19,12 +19,14 @@ import (
 
 	"github.com/flowbehappy/tigate/coordinator"
 	"github.com/flowbehappy/tigate/coordinator/changefeed"
+	logcoordinator "github.com/flowbehappy/tigate/logservice/coordinator"
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/etcd"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 
 	"github.com/pingcap/errors"
@@ -33,21 +35,30 @@ import (
 )
 
 type elector struct {
+	// election used for coordinator
 	election *concurrency.Election
-	svr      *server
+	// election used for log coordinator
+	logElection *concurrency.Election
+	svr         *server
 }
 
 func NewElector(server *server) common.SubModule {
 	election := concurrency.NewElection(server.session,
 		etcd.CaptureOwnerKey(server.EtcdClient.GetClusterID()))
+	logElection := concurrency.NewElection(server.session,
+		LogCoordinatorKey(server.EtcdClient.GetClusterID()))
 	return &elector{
-		svr:      server,
-		election: election,
+		election:    election,
+		logElection: logElection,
+		svr:         server,
 	}
 }
 
 func (e *elector) Run(ctx context.Context) error {
-	return e.campaignCoordinator(ctx)
+	g, ctx := errgroup.WithContext(ctx)
+	g.Go(func() error { return e.campaignCoordinator(ctx) })
+	g.Go(func() error { return e.campaignLogCoordinator(ctx) })
+	return g.Wait()
 }
 
 func (e *elector) Name() string {
@@ -158,6 +169,81 @@ func (e *elector) campaignCoordinator(ctx context.Context) error {
 	}
 }
 
+func (e *elector) campaignLogCoordinator(ctx context.Context) error {
+	// Limit the frequency of elections to avoid putting too much pressure on the etcd server
+	rl := rate.NewLimiter(rate.Every(time.Second), 1 /* burst */)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+		err := rl.Wait(ctx)
+		if err != nil {
+			if errors.Cause(err) == context.Canceled {
+				return nil
+			}
+			return errors.Trace(err)
+		}
+		// Before campaign check liveness
+		if e.svr.liveness.Load() == model.LivenessCaptureStopping {
+			log.Info("do not campaign log coordinator, liveness is stopping",
+				zap.Any("captureID", e.svr.info.ID))
+			return nil
+		}
+		// Campaign to be the log coordinator, it blocks until it been elected.
+		if err := e.logElection.Campaign(ctx, string(e.svr.info.ID)); err != nil {
+			rootErr := errors.Cause(err)
+			if rootErr == context.Canceled {
+				return nil
+			} else if rootErr == mvcc.ErrCompacted || isErrCompacted(rootErr) {
+				log.Warn("campaign log coordinator failed due to etcd revision "+
+					"has been compacted, retry later",
+					zap.Error(err))
+				continue
+			}
+			log.Warn("campaign log coordinator failed",
+				zap.String("captureID", string(e.svr.info.ID)),
+				zap.Error(err))
+			return cerror.ErrCaptureSuicide.GenWithStackByArgs()
+		}
+		// After campaign check liveness again.
+		// It is possible it becomes the coordinator right after receiving SIGTERM.
+		if e.svr.liveness.Load() == model.LivenessCaptureStopping {
+			// If the server is stopping, resign actively.
+			log.Info("resign log coordinator actively, liveness is stopping")
+			if resignErr := e.resign(ctx); resignErr != nil {
+				log.Warn("resign log coordinator actively failed",
+					zap.String("captureID", string(e.svr.info.ID)),
+					zap.Error(resignErr))
+				return errors.Trace(err)
+			}
+			return nil
+		}
+
+		// FIXME: get log coordinator version from etcd and add it to log
+
+		log.Info("campaign log coordinator successfully",
+			zap.String("captureID", string(e.svr.info.ID)))
+
+		co := logcoordinator.New()
+		if err := co.Run(ctx); err != nil {
+			if !cerror.ErrNotOwner.Equal(err) {
+				if resignErr := e.resignLogCoordinaotr(); resignErr != nil {
+					return errors.Trace(resignErr)
+				}
+			}
+			log.Warn("run log coordinator exited with error",
+				zap.String("captureID", string(e.svr.info.ID)),
+				zap.Error(err))
+			return errors.Trace(err)
+		}
+
+		log.Info("log coordinator resigned successfully",
+			zap.String("captureID", string(e.svr.info.ID)))
+	}
+}
+
 func (e *elector) Close(_ context.Context) error {
 	return nil
 }
@@ -169,4 +255,35 @@ func (e *elector) resign(ctx context.Context) error {
 	}
 	return cerror.WrapError(cerror.ErrCaptureResignOwner,
 		e.election.Resign(ctx))
+}
+
+// resign lets the log coordinator start a new election.
+func (e *elector) resignLogCoordinaotr() error {
+	if e.logElection == nil {
+		return nil
+	}
+	// use a new context to prevent the context from being cancelled.
+	resignCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if resignErr := e.logElection.Resign(resignCtx); resignErr != nil {
+		if errors.Cause(resignErr) != context.DeadlineExceeded {
+			log.Info("log coordinator resign failed",
+				zap.String("captureID", string(e.svr.info.ID)),
+				zap.Error(resignErr))
+			cancel()
+			return errors.Trace(resignErr)
+		}
+
+		log.Warn("log coordinator resign timeout",
+			zap.String("captureID", string(e.svr.info.ID)),
+			zap.Error(resignErr))
+	}
+	cancel()
+	return nil
+}
+
+// FIXME: move the following code to the right package
+var metaPrefix = "/__cdc_meta__"
+
+func LogCoordinatorKey(clusterID string) string {
+	return etcd.BaseKey(clusterID) + metaPrefix + "/log_coordinator"
 }

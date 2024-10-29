@@ -27,10 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	canal "github.com/pingcap/tiflow/proto/canal"
-	"golang.org/x/text/encoding"
 )
 
-func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, flag *common.ColumnFlagType, bytesDecoder *encoding.Decoder) (string, internal.JavaSQLType, error) {
+func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, flag *common.ColumnFlagType) (string, internal.JavaSQLType, error) {
 	colType := columnInfo.GetType()
 
 	var value string

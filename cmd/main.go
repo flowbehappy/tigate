@@ -19,7 +19,12 @@ import (
 	"github.com/flowbehappy/tigate/cmd/cli"
 	"github.com/flowbehappy/tigate/cmd/server"
 	"github.com/flowbehappy/tigate/cmd/version"
+	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/pingcap/log"
+	tiflowCmd "github.com/pingcap/tiflow/pkg/cmd"
+	"github.com/pingcap/tiflow/pkg/cmd/util"
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 )
 
 // NewCmd creates the root command.
@@ -34,6 +39,25 @@ func NewCmd() *cobra.Command {
 	}
 }
 
+func addNewArchCommandTo(cmd *cobra.Command) {
+	cmd.AddCommand(server.NewCmdServer())
+	cmd.AddCommand(cli.NewCmdCli())
+	cmd.AddCommand(version.NewCmdVersion())
+}
+
+func isNewArchEnabledByConfig(serverConfigFilePath string) bool {
+	cfg := config.GetDefaultServerConfig()
+	if len(serverConfigFilePath) > 0 {
+		// strict decode config file, but ignore debug item
+		if err := util.StrictDecodeFile(serverConfigFilePath, "TiCDC server", cfg, config.DebugConfigurationItem); err != nil {
+			log.Error("failed to parse server configuration, please check the config file for errors and try again.", zap.Error(err))
+			return false
+		}
+	}
+
+	return cfg.Newarch
+}
+
 // Run runs the root command.
 func main() {
 	cmd := NewCmd()
@@ -41,9 +65,22 @@ func main() {
 	cmd.SetOut(os.Stdout)
 	cmd.SetErr(os.Stderr)
 
-	cmd.AddCommand(server.NewCmdServer())
-	cmd.AddCommand(cli.NewCmdCli())
-	cmd.AddCommand(version.NewCmdVersion())
+	newarch := false
+	cmd.PersistentFlags().BoolVarP(&newarch, "newarch", "x", false, "Run the new architecture of TiCDC (experimental feature)")
+	var serverConfigFilePath string
+	cmd.PersistentFlags().StringVar(&serverConfigFilePath, "config", "", "Path of the configuration file")
+	cmd.PersistentFlags().Lookup("config").Hidden = true
+
+	// The command-line flags are parsed in advance to check whether to launch the new architecture.
+	cmd.ParseFlags(os.Args[1:])
+
+	if newarch || isNewArchEnabledByConfig(serverConfigFilePath) {
+		cmd.Println("=== Command to ticdc(new arch).")
+		addNewArchCommandTo(cmd)
+	} else {
+		cmd.Println("=== Command to ticdc(tiflow).")
+		tiflowCmd.AddTiCDCCommandTo(cmd)
+	}
 
 	if err := cmd.Execute(); err != nil {
 		cmd.PrintErrln(err)

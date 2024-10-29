@@ -37,12 +37,17 @@ import (
 	"golang.org/x/text/encoding/charmap"
 )
 
+var (
+	bytesDecoder = charmap.ISO8859_1.NewDecoder()
+)
+
 // TODO: we need to reorg this code later, including use util.jsonWriter and other unreasonable code
 func fillColumns(
 	valueMap map[int64]string,
 	tableInfo *common.TableInfo,
 	onlyHandleKeyColumn bool,
 	out *jwriter.Writer,
+	columnSelector common.Selector,
 ) error {
 	if len(tableInfo.Columns) == 0 {
 		out.RawString("null")
@@ -52,6 +57,9 @@ func fillColumns(
 	out.RawByte('{')
 	isFirst := true
 	for _, col := range tableInfo.Columns {
+		if !columnSelector.Select(col) {
+			continue
+		}
 		if col != nil {
 			colID := col.ID
 			if onlyHandleKeyColumn && !tableInfo.ColumnsFlag[colID].IsHandleKey() {
@@ -125,7 +133,6 @@ func newJSONMessageForDML(
 	config *newcommon.Config,
 	messageTooLarge bool,
 	claimCheckFileName string,
-	bytesDecoder *encoding.Decoder,
 ) ([]byte, error) {
 	isDelete := e.IsDelete()
 
@@ -214,8 +221,11 @@ func newJSONMessageForDML(
 		row = e.GetPreRows()
 	}
 	for idx, col := range e.TableInfo.Columns {
+		if !e.ColumnSelector.Select(col) {
+			continue
+		}
 		flag := e.TableInfo.ColumnsFlag[col.ID]
-		value, javaType, err := formatColumnValue(row, idx, col, flag, bytesDecoder)
+		value, javaType, err := formatColumnValue(row, idx, col, flag)
 		if err != nil {
 			return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
 		}
@@ -229,7 +239,7 @@ func newJSONMessageForDML(
 		tableInfo := e.TableInfo
 		columnInfos := tableInfo.Columns
 		for _, col := range columnInfos {
-			if col != nil {
+			if col != nil && e.ColumnSelector.Select(col) {
 				colID := col.ID
 				colFlag := tableInfo.ColumnsFlag[colID]
 				colName := col.Name.O
@@ -280,13 +290,13 @@ func newJSONMessageForDML(
 	if e.IsDelete() {
 		out.RawString(",\"old\":null")
 		out.RawString(",\"data\":")
-		if err := fillColumns(valueMap, e.TableInfo, onlyHandleKey, out); err != nil {
+		if err := fillColumns(valueMap, e.TableInfo, onlyHandleKey, out, e.ColumnSelector); err != nil {
 			return nil, err
 		}
 	} else if e.IsInsert() {
 		out.RawString(",\"old\":null")
 		out.RawString(",\"data\":")
-		if err := fillColumns(valueMap, e.TableInfo, onlyHandleKey, out); err != nil {
+		if err := fillColumns(valueMap, e.TableInfo, onlyHandleKey, out, e.ColumnSelector); err != nil {
 			return nil, err
 		}
 	} else if e.IsUpdate() {
@@ -295,8 +305,11 @@ func newJSONMessageForDML(
 		oldValueMap := make(map[int64]string, 0) // colId -> value
 		preRow := e.GetPreRows()
 		for idx, col := range e.TableInfo.Columns {
+			if !e.ColumnSelector.Select(col) {
+				continue
+			}
 			flag := e.TableInfo.ColumnsFlag[col.ID]
-			value, _, err := formatColumnValue(preRow, idx, col, flag, bytesDecoder)
+			value, _, err := formatColumnValue(preRow, idx, col, flag)
 			if err != nil {
 				return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
 			}
@@ -308,7 +321,7 @@ func newJSONMessageForDML(
 			return nil, err
 		}
 		out.RawString(",\"data\":")
-		if err := fillColumns(valueMap, e.TableInfo, onlyHandleKey, out); err != nil {
+		if err := fillColumns(valueMap, e.TableInfo, onlyHandleKey, out, e.ColumnSelector); err != nil {
 			return nil, err
 		}
 	} else {
@@ -449,7 +462,7 @@ func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 	_ string,
 	e *commonEvent.RowEvent,
 ) error {
-	value, err := newJSONMessageForDML(e, c.config, false, "", c.bytesDecoder)
+	value, err := newJSONMessageForDML(e, c.config, false, "")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -484,7 +497,8 @@ func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 		}
 
 		if c.config.LargeMessageHandle.HandleKeyOnly() {
-			value, err = newJSONMessageForDML(e, c.config, true, "", c.bytesDecoder)
+			log.Info("hyy into handle key only")
+			value, err = newJSONMessageForDML(e, c.config, true, "")
 			if err != nil {
 				return cerror.ErrMessageTooLarge.GenWithStackByArgs()
 			}
@@ -498,6 +512,7 @@ func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 			m.Value = value
 			length := m.Length()
 			if length > c.config.MaxMessageBytes {
+				log.Info("hyy also large", zap.Any("length", length))
 				log.Error("Single message is still too large for canal-json only encode handle-key columns",
 					zap.Int("maxMessageBytes", c.config.MaxMessageBytes),
 					zap.Int("originLength", originLength),
@@ -533,7 +548,7 @@ func (c *JSONRowEventEncoder) newClaimCheckLocationMessage(
 	event *commonEvent.RowEvent, fileName string,
 ) (*ticommon.Message, error) {
 	claimCheckLocation := c.claimCheck.FileNameWithPrefix(fileName)
-	value, err := newJSONMessageForDML(event, c.config, true, claimCheckLocation, c.bytesDecoder)
+	value, err := newJSONMessageForDML(event, c.config, true, claimCheckLocation)
 	if err != nil {
 		return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
 	}

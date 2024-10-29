@@ -3,6 +3,7 @@ FAIL_ON_STDOUT := awk '{ print } END { if (NR > 0) { exit 1  }  }'
 CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(CURDIR)/bin:$(CURDIR)/tools/bin:$(path_to_add):$(PATH)
+TIFLOW_CDC_PKG := github.com/pingcap/tiflow
 CDC_PKG := github.com/flowbehappy/tigate
 # DBUS_SESSION_BUS_ADDRESS pulsar client use dbus to detect the connection status,
 # but it will not exit when the connection is closed.
@@ -73,6 +74,12 @@ LDFLAGS += -X "$(CDC_PKG)/version.GitHash=$(GITHASH)"
 LDFLAGS += -X "$(CDC_PKG)/version.GitBranch=$(GITBRANCH)"
 LDFLAGS += -X "$(CDC_PKG)/version.GoVersion=$(GOVERSION)"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/parser/mysql.TiDBReleaseVersion=$(RELEASE_VERSION)"
+
+# For Tiflow CDC
+LDFLAGS += -X "$(TIFLOW_CDC_PKG)/pkg/version.ReleaseVersion=v8.4.0-alpha-44-gdd2d54ad4"
+LDFLAGS += -X "$(TIFLOW_CDC_PKG)/pkg/version.GitHash=dd2d54ad4c196606d038da6686462cbfe1109894"
+LDFLAGS += -X "$(TIFLOW_CDC_PKG)/pkg/version.GitBranch=master"
+LDFLAGS += -X "$(TIFLOW_CDC_PKG)/pkg/version.BuildTS=$(BUILDTS)"
 
 CONSUMER_BUILD_FLAG=
 ifeq ("${IS_ALPINE}", "1")

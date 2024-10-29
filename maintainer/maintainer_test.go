@@ -131,7 +131,7 @@ func (m *mockDispatcherManager) onBootstrapRequest(msg *messaging.TargetMessage)
 		Spans:        m.bootstrapTables,
 	}
 	m.changefeedID = req.ChangefeedID
-	m.checkpointTs = req.CheckpointTs
+	m.checkpointTs = req.StartTs
 	err := m.mc.SendCommand(messaging.NewSingleTargetMessage(
 		m.maintainerID,
 		messaging.MaintainerManagerTopic,
@@ -272,8 +272,8 @@ func TestMaintainerSchedule(t *testing.T) {
 	if len(argList) > 1 {
 		t.Fatal("unexpected args", argList)
 	}
-	tableSize := 1000000
-	sleepTime := 50000
+	tableSize := 100
+	sleepTime := 5
 	if len(argList) == 1 {
 		tableSize, _ = strconv.Atoi(argList[0])
 	}

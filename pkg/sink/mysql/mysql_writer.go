@@ -851,7 +851,7 @@ func (w *MysqlWriter) CreateTable(ctx context.Context, dbName string, tableName 
 		if errRollback != nil {
 			log.Error("failed to create table", zap.Any("tableName", tableName), zap.Error(errRollback))
 		}
-		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("failed to create % table;", tableName)))
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("failed to create %s table;", tableName)))
 	}
 	_, err = tx.Exec("USE " + dbName)
 	if err != nil {
