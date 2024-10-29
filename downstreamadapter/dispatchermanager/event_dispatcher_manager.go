@@ -98,9 +98,13 @@ type EventDispatcherManager struct {
 	metricResolvedTsLag            prometheus.Gauge
 }
 
+// return actual startTs of the table trigger event dispatcher
+// when the table trigger event dispatcher is in this event dispatcher manager
 func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 	cfConfig *config.ChangefeedConfig,
-	maintainerID node.ID) (*EventDispatcherManager, error) {
+	tableTriggerEventDispatcherID *heartbeatpb.DispatcherID,
+	startTs uint64,
+	maintainerID node.ID) (*EventDispatcherManager, uint64, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := &EventDispatcherManager{
 		dispatcherMap:                  newDispatcherMap(),
@@ -133,19 +137,19 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 	replicaConfig := cfg.ReplicaConfig{Filter: cfConfig.Filter}
 	filter, err := filter.NewFilter(replicaConfig.Filter, cfConfig.TimeZone, replicaConfig.CaseSensitive)
 	if err != nil {
-		return nil, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("create filter failed")
+		return nil, 0, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("create filter failed")
 	}
 	manager.filter = filter
 
 	err = manager.InitSink(ctx)
 	if err != nil {
-		return nil, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("event dispatcher manager init sink failed")
+		return nil, 0, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("event dispatcher manager init sink failed")
 	}
 
 	// Register Event Dispatcher Manager in HeartBeatCollector, which is reponsible for communication with the maintainer.
 	err = appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(manager)
 	if err != nil {
-		return nil, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("register event dispatcher manager failed")
+		return nil, 0, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("register event dispatcher manager failed")
 	}
 
 	// collector heart beat info from all dispatchers
@@ -161,7 +165,14 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 		defer manager.wg.Done()
 		manager.CollectBlockStatusRequest(ctx)
 	}()
-	return manager, nil
+
+	// create tableTriggerEventDispatcher if it is not nil
+	if tableTriggerEventDispatcherID != nil {
+		manager.NewDispatcher(common.NewDispatcherIDFromPB(tableTriggerEventDispatcherID), heartbeatpb.DDLSpan, startTs, 0)
+		return manager, manager.tableTriggerEventDispatcher.GetStartTs(), nil
+	}
+
+	return manager, 0, nil
 }
 
 func (e *EventDispatcherManager) InitSink(ctx context.Context) error {
