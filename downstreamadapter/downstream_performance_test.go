@@ -20,7 +20,6 @@ import (
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	ticonfig "github.com/pingcap/tiflow/pkg/config"
@@ -37,7 +36,7 @@ func initContext(serverId node.ID) {
 	appcontext.SetService(appcontext.HeartbeatCollector, dispatchermanager.NewHeartBeatCollector(serverId))
 }
 
-func pushDataIntoDispatchers(dispatcherIDSet map[common.DispatcherID]interface{}, helper *mounter.EventTestHelper) {
+func pushDataIntoDispatchers(dispatcherIDSet map[common.DispatcherID]interface{}, helper *commonEvent.EventTestHelper) {
 	// 因为开了 dryrun，所以不用避免冲突，随便写'
 	dispatcherEventsDynamicStream := dispatcher.GetDispatcherEventsDynamicStream()
 	idx := 0
@@ -74,7 +73,9 @@ func pushDataIntoDispatchers(dispatcherIDSet map[common.DispatcherID]interface{}
 	wg.Wait()
 	log.Warn("begin to push data into dispatchers")
 	for _, event := range eventList {
-		dispatcherEventsDynamicStream.In() <- event
+		dispatcherEventsDynamicStream.In() <- dispatcher.DispatcherEvent{
+			Event: event,
+		}
 	}
 	log.Warn("end to push data into dispatchers")
 }
@@ -89,7 +90,7 @@ func TestDownstream(t *testing.T) {
 	serverId := node.ID("test")
 	initContext(serverId)
 
-	helper := mounter.NewEventTestHelper(t)
+	helper := commonEvent.NewEventTestHelper(t)
 	defer helper.Close()
 
 	helper.Tk().MustExec("use test")
@@ -112,7 +113,10 @@ func TestDownstream(t *testing.T) {
 			},
 		}
 		changefeedID := model.DefaultChangeFeedID("test" + strconv.Itoa(db_index))
-		eventDispatcherManager := dispatchermanager.NewEventDispatcherManager(changefeedID, &changefeedConfig, serverId)
+		eventDispatcherManager, err := dispatchermanager.NewEventDispatcherManager(changefeedID, &changefeedConfig, serverId)
+		if err != nil {
+			t.Fatal(err)
+		}
 		managerMap[db_index] = eventDispatcherManager
 
 		for i := 0; i < dispatcherCount; i++ {

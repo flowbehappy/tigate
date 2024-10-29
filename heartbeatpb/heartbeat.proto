@@ -113,18 +113,27 @@ message AddMaintainerRequest  {
 message RemoveMaintainerRequest  {
     string id = 1;
     bool cascade = 2;
+    bool removed = 3;
 }
 
 message MaintainerBootstrapRequest {
     string changefeedID = 1;
     bytes config = 2;
-    uint64 checkpoint_ts = 3;
+    uint64 start_ts = 3;
+    DispatcherID table_trigger_event_dispatcher_id = 4;
 }
 
 message MaintainerBootstrapResponse {
     string changefeedID = 1;
     repeated BootstrapTableSpan spans = 2;
     RunningError err = 3;
+    uint64 checkpoint_ts = 4;
+}
+
+enum BlockStage {
+    WAITING = 0;
+    WRITING = 1;
+    DONE = 2;
 }
 
 message BootstrapTableSpan {
@@ -133,10 +142,13 @@ message BootstrapTableSpan {
     TableSpan span = 3;
     ComponentState component_status = 4;
     uint64 checkpoint_ts = 5;
+    State block_state = 6;
+    BlockStage  block_stage = 7;
 }
 
 message MaintainerCloseRequest {
     string changefeedID = 1;
+    bool removed = 2;
 }
 
 message MaintainerCloseResponse {
@@ -153,7 +165,7 @@ enum InfluenceType {
 message InfluencedTables {
     InfluenceType InfluenceType = 1;
     // only exist when type is normal
-	repeated int64 TableIDs  = 2; 
+	repeated int64 TableIDs  = 2;
     // only exist when type is DB.
 	int64 SchemaID = 3;
 }

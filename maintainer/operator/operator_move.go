@@ -77,9 +77,9 @@ func (m *MoveDispatcherOperator) Schedule() *messaging.TargetMessage {
 			m.db.BindSpanToNode(m.origin, m.dest, m.replicaSet)
 			m.bind = true
 		}
-		return m.replicaSet.NewAddInferiorMessage(m.dest)
+		return m.replicaSet.NewAddDispatcherMessage(m.dest)
 	}
-	return m.replicaSet.NewRemoveInferiorMessage(m.origin)
+	return m.replicaSet.NewRemoveDispatcherMessage(m.origin)
 }
 
 func (m *MoveDispatcherOperator) OnNodeRemove(n node.ID) {

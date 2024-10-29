@@ -27,7 +27,7 @@ import (
 type ReplicationDB struct {
 	// for log ID
 	changefeedID string
-	// allTasks maintains all the span tasks
+	// allTasks maintains all the span tasks, it included the table trigger
 	allTasks map[common.DispatcherID]*SpanReplication
 
 	// group the tasks by the node id， schema id, and table id for fast access

@@ -14,7 +14,6 @@
 package decoder
 
 import (
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/tiflow/cdc/model"
 )
 
@@ -34,7 +33,7 @@ type RowEventDecoder interface {
 	// NextResolvedEvent returns the next resolved event if exists
 	NextResolvedEvent() (uint64, error)
 	// NextRowChangedEvent returns the next row changed event if exists
-	NextRowChangedEvent() (*common.RowChangedEvent, error)
+	// NextRowChangedEvent() (*common.RowChangedEvent, error)
 	// NextDDLEvent returns the next DDL event if exists
 	NextDDLEvent() (*model.DDLEvent, error)
 }

@@ -22,7 +22,8 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
@@ -219,7 +220,7 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 		return
 	}
 	appendTableInfo := func() {
-		info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, event.TableInfo)
+		info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.TableInfo)
 		info.InitPreSQLs()
 		v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 	}
@@ -313,13 +314,13 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 		lastRawTableInfo := v.infos[len(v.infos)-1].info.TableInfo.Clone()
 		// the previous normal table
 		if v.tableID == event.PrevTableID {
-			lastRawTableInfo.Name = model.NewCIStr(event.CurrentTableName)
-			info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, lastRawTableInfo)
+			lastRawTableInfo.Name = pmodel.NewCIStr(event.CurrentTableName)
+			info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, lastRawTableInfo)
 			info.InitPreSQLs()
 			v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 		} else {
-			lastRawTableInfo.Name = model.NewCIStr(event.PrevTableName)
-			info := common.WrapTableInfo(event.PrevSchemaID, event.PrevSchemaName, event.FinishedTs, lastRawTableInfo)
+			lastRawTableInfo.Name = pmodel.NewCIStr(event.PrevTableName)
+			info := common.WrapTableInfo(event.PrevSchemaID, event.PrevSchemaName, lastRawTableInfo)
 			info.InitPreSQLs()
 			v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 		}
@@ -329,7 +330,7 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 			if isPartitionTable(tableInfo) {
 				for _, partitionID := range getAllPartitionIDs(tableInfo) {
 					if v.tableID == partitionID {
-						info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, tableInfo)
+						info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, tableInfo)
 						info.InitPreSQLs()
 						v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 						break
@@ -337,7 +338,7 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 				}
 			} else {
 				if v.tableID == tableInfo.ID {
-					info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, event.FinishedTs, tableInfo)
+					info := common.WrapTableInfo(event.CurrentSchemaID, event.CurrentSchemaName, tableInfo)
 					info.InitPreSQLs()
 					v.infos = append(v.infos, &tableInfoItem{version: uint64(event.FinishedTs), info: info})
 					break

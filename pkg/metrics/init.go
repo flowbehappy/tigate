@@ -29,4 +29,5 @@ func InitMetrics(registry *prometheus.Registry) {
 	InitSchemaStoreMetrics(registry)
 	InitEventServiceMetrics(registry)
 	InitMaintainerMetrics(registry)
+	InitCoordinatorMetrics(registry)
 }

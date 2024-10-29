@@ -20,12 +20,12 @@ import (
 	"github.com/flowbehappy/tigate/logservice/logpuller"
 	"github.com/flowbehappy/tigate/logservice/txnutil"
 	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/mounter"
+	"github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/pdutil"
@@ -42,7 +42,7 @@ type ddlJobFetcher struct {
 	advanceResolvedTs func(resolvedTS uint64)
 
 	// ddlTableInfo is initialized when receive the first concurrent DDL job.
-	ddlTableInfo *mounter.DDLTableInfo
+	ddlTableInfo *event.DDLTableInfo
 	// kvStorage is used to init `ddlTableInfo`
 	kvStorage kv.Storage
 }
@@ -117,7 +117,7 @@ func (p *ddlJobFetcher) unmarshalDDL(rawKV *common.RawKVEntry) (*model.Job, erro
 	if rawKV.OpType != common.OpTypePut {
 		return nil, nil
 	}
-	if p.ddlTableInfo == nil && !mounter.IsLegacyFormatJob(rawKV) {
+	if p.ddlTableInfo == nil && !event.IsLegacyFormatJob(rawKV) {
 		log.Info("begin to init ddl table info")
 		err := p.initDDLTableInfo()
 		if err != nil {
@@ -126,7 +126,7 @@ func (p *ddlJobFetcher) unmarshalDDL(rawKV *common.RawKVEntry) (*model.Job, erro
 		}
 	}
 
-	return mounter.ParseDDLJob(rawKV, p.ddlTableInfo)
+	return event.ParseDDLJob(rawKV, p.ddlTableInfo)
 }
 
 func (p *ddlJobFetcher) initDDLTableInfo() error {
@@ -162,8 +162,8 @@ func (p *ddlJobFetcher) initDDLTableInfo() error {
 		return errors.Trace(err)
 	}
 
-	p.ddlTableInfo = &mounter.DDLTableInfo{}
-	p.ddlTableInfo.DDLJobTable = common.WrapTableInfo(db.ID, db.Name.L, 0, tableInfo)
+	p.ddlTableInfo = &event.DDLTableInfo{}
+	p.ddlTableInfo.DDLJobTable = common.WrapTableInfo(db.ID, db.Name.L, tableInfo)
 	p.ddlTableInfo.JobMetaColumnIDinJobTable = col.ID
 
 	// for tidb_ddl_history
@@ -177,7 +177,7 @@ func (p *ddlJobFetcher) initDDLTableInfo() error {
 		return errors.Trace(err)
 	}
 
-	p.ddlTableInfo.DDLHistoryTable = common.WrapTableInfo(db.ID, db.Name.L, 0, historyTableInfo)
+	p.ddlTableInfo.DDLHistoryTable = common.WrapTableInfo(db.ID, db.Name.L, historyTableInfo)
 	p.ddlTableInfo.JobMetaColumnIDinHistoryTable = historyTableCol.ID
 
 	return nil

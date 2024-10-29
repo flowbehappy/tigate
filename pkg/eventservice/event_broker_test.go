@@ -3,18 +3,16 @@ package eventservice
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/flowbehappy/tigate/eventpb"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	pevent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/pingcap/log"
-	tconfig "github.com/pingcap/tiflow/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,13 +31,11 @@ func TestNewDispatcherStat(t *testing.T) {
 	require.Equal(t, startTs, stat.watermark.Load())
 	require.NotNil(t, stat.spanSubscription)
 	require.Equal(t, startTs, stat.spanSubscription.watermark.Load())
-	require.NotEmpty(t, stat.workerIndex)
 	require.Nil(t, stat.filter)
 }
 
 func TestDispatcherStatUpdateWatermark(t *testing.T) {
 	startTs := uint64(123)
-	wg := &sync.WaitGroup{}
 	info := &mockDispatcherInfo{
 		id:        common.NewDispatcherID(),
 		clusterID: 1,
@@ -49,52 +45,26 @@ func TestDispatcherStatUpdateWatermark(t *testing.T) {
 	spanSubscription := newSpanSubscription(info.GetTableSpan(), startTs)
 	stat := newDispatcherStat(startTs, info, spanSubscription, nil)
 
-	sendNewEvent := func(maxTs uint64) {
-		g := &sync.WaitGroup{}
-		for i := 0; i < 64; i++ {
-			ts := rand.Uint64() % maxTs
-			if i == 10 {
-				ts = maxTs
-			}
-			g.Add(1)
-			go func() {
-				defer g.Done()
-				stat.spanSubscription.onNewEvent(&common.RawKVEntry{
-					CRTs: ts,
-				})
-			}()
-		}
-		g.Wait()
-	}
-
 	// Case 1: no new events, only watermark change
 	stat.spanSubscription.onSubscriptionWatermark(456)
 	require.Equal(t, uint64(456), stat.spanSubscription.watermark.Load())
 	log.Info("pass TestDispatcherStatUpdateWatermark case 1")
 
 	// Case 2: new events, and watermark increase
-	sendNewEvent(startTs)
 	stat.spanSubscription.onSubscriptionWatermark(789)
+	stat.spanSubscription.onNewCommitTs(360)
+	require.Equal(t, uint64(360), stat.spanSubscription.maxEventCommitTs.Load())
 	require.Equal(t, uint64(789), stat.spanSubscription.watermark.Load())
-	require.Equal(t, startTs, stat.spanSubscription.maxEventCommitTs.Load())
 	log.Info("pass TestDispatcherStatUpdateWatermark case 2")
 
 	// Case 3: new events, and watermark decrease
-	// watermark should not decrease and no notification
-	sendNewEvent(360)
-	done := make(chan struct{})
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		stat.spanSubscription.onSubscriptionWatermark(456)
-		close(done)
-	}()
-	<-done
+	// watermark should not decrease
+	stat.spanSubscription.onSubscriptionWatermark(456)
+	stat.spanSubscription.onNewCommitTs(800)
 	require.Equal(t, uint64(789), stat.spanSubscription.watermark.Load())
-	require.Equal(t, uint64(360), stat.spanSubscription.maxEventCommitTs.Load())
+	require.Equal(t, uint64(800), stat.spanSubscription.maxEventCommitTs.Load())
 	log.Info("pass TestDispatcherStatUpdateWatermark case 3")
 
-	wg.Wait()
 }
 
 func newTableSpan(tableID int64, start, end string) *heartbeatpb.TableSpan {
@@ -112,7 +82,7 @@ func TestResolvedTsCache(t *testing.T) {
 	require.Equal(t, 10, rc.limit)
 
 	// Case 1: insert a new resolved ts
-	rc.add(commonEvent.ResolvedEvent{
+	rc.add(pevent.ResolvedEvent{
 		DispatcherID: common.NewDispatcherID(),
 		ResolvedTs:   100,
 	})
@@ -123,7 +93,7 @@ func TestResolvedTsCache(t *testing.T) {
 	// Case 2: add more resolved ts until full
 	i := 1
 	for !rc.isFull() {
-		rc.add(commonEvent.ResolvedEvent{
+		rc.add(pevent.ResolvedEvent{
 			DispatcherID: common.NewDispatcherID(),
 			ResolvedTs:   uint64(100 + i),
 		})
@@ -143,23 +113,8 @@ func TestResolvedTsCache(t *testing.T) {
 	require.False(t, rc.isFull())
 }
 
-func genEvents(helper *mounter.EventTestHelper, t *testing.T, ddl string, dmls ...string) (commonEvent.DDLEvent, []*common.RawKVEntry) {
-	job := helper.DDL2Job(ddl)
-	schema := job.SchemaName
-	table := job.TableName
-	kvEvents1 := helper.DML2RawKv(schema, table, dmls...)
-	for _, e := range kvEvents1 {
-		require.Equal(t, job.BinlogInfo.TableInfo.UpdateTS-1, e.StartTs)
-		require.Equal(t, job.BinlogInfo.TableInfo.UpdateTS+1, e.CRTs)
-	}
-	return commonEvent.DDLEvent{
-		FinishedTs: job.BinlogInfo.TableInfo.UpdateTS,
-		Job:        job,
-	}, kvEvents1
-}
-
 func TestSendEvents(t *testing.T) {
-	helper := mounter.NewEventTestHelper(t)
+	helper := pevent.NewEventTestHelper(t)
 	defer helper.Close()
 
 	helper.Tk().MustExec("use test")
@@ -186,7 +141,7 @@ func TestSendEvents(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	eventStore := newMockEventStore()
+	eventStore := newMockEventStore(100)
 	schemaStore := newMockSchemaStore()
 	msgCh := make(chan *messaging.TargetMessage, 1024)
 	mc := &mockMessageCenter{messageCh: msgCh}
@@ -198,12 +153,12 @@ func TestSendEvents(t *testing.T) {
 			t        int // type
 			commitTs common.Ts
 		}{
-			{t: commonEvent.TypeDDLEvent, commitTs: ddlEvent.FinishedTs},
-			{t: commonEvent.TypeDMLEvent, commitTs: kvEvents[0].CRTs},
-			{t: commonEvent.TypeDDLEvent, commitTs: ddlEvent1.FinishedTs},
-			{t: commonEvent.TypeDDLEvent, commitTs: ddlEvent2.FinishedTs},
-			{t: commonEvent.TypeDMLEvent, commitTs: kvEvents2[0].CRTs},
-			{t: commonEvent.TypeBatchResolvedEvent, commitTs: common.Ts(0)},
+			{t: pevent.TypeDDLEvent, commitTs: ddlEvent.FinishedTs},
+			{t: pevent.TypeDMLEvent, commitTs: kvEvents[0].CRTs},
+			{t: pevent.TypeDDLEvent, commitTs: ddlEvent1.FinishedTs},
+			{t: pevent.TypeDDLEvent, commitTs: ddlEvent2.FinishedTs},
+			{t: pevent.TypeDMLEvent, commitTs: kvEvents2[0].CRTs},
+			{t: pevent.TypeBatchResolvedEvent, commitTs: common.Ts(0)},
 		}
 		cnt := 0
 		for {
@@ -212,7 +167,7 @@ func TestSendEvents(t *testing.T) {
 				return
 			case msgs := <-msgCh:
 				for _, msg := range msgs.Message {
-					event, ok := msg.(commonEvent.Event)
+					event, ok := msg.(pevent.Event)
 					require.True(t, ok)
 					fmt.Printf("cnt: %d -> %+v\n", cnt, event)
 					require.Equal(t, expected[cnt].t, event.GetType(), "cnt: %d, e: %+v", cnt, event)
@@ -232,98 +187,17 @@ func TestSendEvents(t *testing.T) {
 
 	// Register the dispatcher
 	tableID := ddlEvent.TableID
-	info := newMockAcceptorInfo(common.NewDispatcherID(), tableID)
+	info := newMockDispatcherInfo(common.NewDispatcherID(), tableID, eventpb.ActionType_ACTION_TYPE_REGISTER)
 	s.addDispatcher(info)
 	_, ok := s.spans[tableID]
 	require.True(t, ok)
 
 	schemaStore.AppendDDLEvent(tableID, ddlEvent, ddlEvent1, ddlEvent2)
 
-	span, ok := eventStore.spans[tableID]
+	v, ok := eventStore.spansMap.Load(tableID)
 	require.True(t, ok)
+	span := v.(*mockSpanStats)
 	span.update(ddlEvent2.FinishedTs+1, append(kvEvents, kvEvents2...)...)
 
 	wg.Wait()
-}
-
-// mockDispatcherInfo is a mock implementation of the AcceptorInfo interface
-type mockDispatcherInfo struct {
-	clusterID  uint64
-	serverID   string
-	id         common.DispatcherID
-	topic      string
-	span       *heartbeatpb.TableSpan
-	startTs    uint64
-	isRegister bool
-}
-
-func newMockAcceptorInfo(dispatcherID common.DispatcherID, tableID int64) *mockDispatcherInfo {
-	return &mockDispatcherInfo{
-		clusterID: 1,
-		serverID:  "server1",
-		id:        dispatcherID,
-		topic:     "topic1",
-		span: &heartbeatpb.TableSpan{
-			TableID:  tableID,
-			StartKey: []byte("a"),
-			EndKey:   []byte("z"),
-		},
-		startTs:    1,
-		isRegister: true,
-	}
-}
-
-func (m *mockDispatcherInfo) GetID() common.DispatcherID {
-	return m.id
-}
-
-func (m *mockDispatcherInfo) GetClusterID() uint64 {
-	return m.clusterID
-}
-
-func (m *mockDispatcherInfo) GetTopic() string {
-	return m.topic
-}
-
-func (m *mockDispatcherInfo) GetServerID() string {
-	return m.serverID
-}
-
-func (m *mockDispatcherInfo) GetTableSpan() *heartbeatpb.TableSpan {
-	return m.span
-}
-
-func (m *mockDispatcherInfo) GetStartTs() uint64 {
-	return m.startTs
-}
-
-func (m *mockDispatcherInfo) IsRegister() bool {
-	return m.isRegister
-}
-
-func (m *mockDispatcherInfo) GetChangefeedID() (namespace, id string) {
-	return "default", "test"
-}
-
-func (m *mockDispatcherInfo) GetFilterConfig() *tconfig.FilterConfig {
-	return &tconfig.FilterConfig{
-		Rules: []string{"*.*"},
-	}
-}
-
-type mockSpanStats struct {
-	startTs       uint64
-	watermark     uint64
-	pendingEvents []*common.RawKVEntry
-	onUpdate      func(watermark uint64)
-	onEvent       func(event *common.RawKVEntry)
-}
-
-func (m *mockSpanStats) update(watermark uint64, events ...*common.RawKVEntry) {
-	m.pendingEvents = append(m.pendingEvents, events...)
-	m.watermark = watermark
-	for _, e := range events {
-		m.onEvent(e)
-	}
-	m.onUpdate(watermark)
 }

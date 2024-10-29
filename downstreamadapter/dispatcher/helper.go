@@ -208,44 +208,48 @@ func (h *DispatcherEventsHandler) Handle(dispatcher *Dispatcher, events ...Dispa
 	return dispatcher.HandleEvents(events)
 }
 
-type DispatcherEvent struct {
-	commonEvent.Event
-	isBatchable bool
+func (h *DispatcherEventsHandler) GetType(event DispatcherEvent) dynstream.EventType {
+	switch event.GetType() {
+	case commonEvent.TypeResolvedEvent, commonEvent.TypeDMLEvent:
+		return dynstream.EventType{DataGroup: event.GetType(), Property: 0}
+	case commonEvent.TypeDDLEvent, commonEvent.TypeSyncPointEvent, commonEvent.TypeHandshakeEvent:
+		return dynstream.EventType{DataGroup: event.GetType(), Property: dynstream.NotBatchable}
+	default:
+		log.Panic("unknown event type", zap.Int("type", int(event.GetType())))
+	}
+	return dynstream.DefaultEventType
 }
 
-func (d DispatcherEvent) IsBatchable() bool {
-	return d.isBatchable
+func (h *DispatcherEventsHandler) GetSize(event DispatcherEvent) int                      { return 0 }
+func (h *DispatcherEventsHandler) IsPaused(event DispatcherEvent) bool                    { return false }
+func (h *DispatcherEventsHandler) GetArea(path common.DispatcherID, dest *Dispatcher) int { return 0 }
+func (h *DispatcherEventsHandler) GetTimestamp(event DispatcherEvent) dynstream.Timestamp { return 0 }
+func (h *DispatcherEventsHandler) OnDrop(event DispatcherEvent)                           {}
+
+type DispatcherEvent struct {
+	commonEvent.Event
 }
 
 func NewDispatcherEvent(event commonEvent.Event) DispatcherEvent {
-	dispatcherEvent := DispatcherEvent{
+	return DispatcherEvent{
 		Event: event,
 	}
-	switch event.GetType() {
-	case commonEvent.TypeResolvedEvent, commonEvent.TypeDMLEvent:
-		dispatcherEvent.isBatchable = true
-	case commonEvent.TypeDDLEvent, commonEvent.TypeSyncPointEvent, commonEvent.TypeHandshakeEvent:
-		dispatcherEvent.isBatchable = false
-	default:
-		log.Error("unknown event type", zap.Int("type", int(event.GetType())))
-	}
-	return dispatcherEvent
 }
 
-var dispatcherEventsDynamicStream dynstream.DynamicStream[common.DispatcherID, DispatcherEvent, *Dispatcher]
+var dispatcherEventsDynamicStream dynstream.DynamicStream[int, common.DispatcherID, DispatcherEvent, *Dispatcher, *DispatcherEventsHandler]
 var dispatcherEventsDynamicStreamOnce sync.Once
 
-func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[common.DispatcherID, DispatcherEvent, *Dispatcher] {
+func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[int, common.DispatcherID, DispatcherEvent, *Dispatcher, *DispatcherEventsHandler] {
 	if dispatcherEventsDynamicStream == nil {
 		dispatcherEventsDynamicStreamOnce.Do(func() {
-			dispatcherEventsDynamicStream = dynstream.NewDynamicStream(&DispatcherEventsHandler{}, dynstream.NewOptionWithBatchSize(128))
+			dispatcherEventsDynamicStream = dynstream.NewDynamicStream(&DispatcherEventsHandler{}, dynstream.NewOption())
 			dispatcherEventsDynamicStream.Start()
 		})
 	}
 	return dispatcherEventsDynamicStream
 }
 
-func SetDispatcherEventsDynamicStream(dynamicStream dynstream.DynamicStream[common.DispatcherID, DispatcherEvent, *Dispatcher]) {
+func SetDispatcherEventsDynamicStream(dynamicStream dynstream.DynamicStream[int, common.DispatcherID, DispatcherEvent, *Dispatcher, *DispatcherEventsHandler]) {
 	dispatcherEventsDynamicStream = dynamicStream
 }
 
@@ -267,10 +271,6 @@ func (d *DispatcherStatusWithID) GetDispatcherStatus() *heartbeatpb.DispatcherSt
 
 func (d *DispatcherStatusWithID) GetDispatcherID() common.DispatcherID {
 	return d.id
-}
-
-func (d DispatcherStatusWithID) IsBatchable() bool {
-	return true
 }
 
 // DispatcherStatusHandler is used to handle the DispatcherStatus event.
@@ -296,10 +296,21 @@ func (h *DispatcherStatusHandler) Handle(dispatcher *Dispatcher, events ...Dispa
 	return false
 }
 
-var dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithID, *Dispatcher]
+func (h *DispatcherStatusHandler) GetSize(event DispatcherStatusWithID) int               { return 0 }
+func (h *DispatcherStatusHandler) IsPaused(event DispatcherStatusWithID) bool             { return false }
+func (h *DispatcherStatusHandler) GetArea(path common.DispatcherID, dest *Dispatcher) int { return 0 }
+func (h *DispatcherStatusHandler) GetTimestamp(event DispatcherStatusWithID) dynstream.Timestamp {
+	return 0
+}
+func (h *DispatcherStatusHandler) GetType(event DispatcherStatusWithID) dynstream.EventType {
+	return dynstream.DefaultEventType
+}
+func (h *DispatcherStatusHandler) OnDrop(event DispatcherStatusWithID) {}
+
+var dispatcherStatusDynamicStream dynstream.DynamicStream[int, common.DispatcherID, DispatcherStatusWithID, *Dispatcher, *DispatcherStatusHandler]
 var dispatcherStatusDynamicStreamOnce sync.Once
 
-func GetDispatcherStatusDynamicStream() dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithID, *Dispatcher] {
+func GetDispatcherStatusDynamicStream() dynstream.DynamicStream[int, common.DispatcherID, DispatcherStatusWithID, *Dispatcher, *DispatcherStatusHandler] {
 	if dispatcherStatusDynamicStream == nil {
 		dispatcherStatusDynamicStreamOnce.Do(func() {
 			dispatcherStatusDynamicStream = dynstream.NewDynamicStream(&DispatcherStatusHandler{})
@@ -309,6 +320,6 @@ func GetDispatcherStatusDynamicStream() dynstream.DynamicStream[common.Dispatche
 	return dispatcherStatusDynamicStream
 }
 
-func SetDispatcherStatusDynamicStream(dynamicStream dynstream.DynamicStream[common.DispatcherID, DispatcherStatusWithID, *Dispatcher]) {
+func SetDispatcherStatusDynamicStream(dynamicStream dynstream.DynamicStream[int, common.DispatcherID, DispatcherStatusWithID, *Dispatcher, *DispatcherStatusHandler]) {
 	dispatcherStatusDynamicStream = dynamicStream
 }

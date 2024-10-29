@@ -18,10 +18,10 @@ import (
 	"strconv"
 	"strings"
 
-	v2 "github.com/pingcap/tiflow/cdc/api/v2"
-	apiv2client "github.com/pingcap/tiflow/pkg/api/v2"
+	v2 "github.com/flowbehappy/tigate/api/v2"
+	"github.com/flowbehappy/tigate/cmd/factory"
+	apiv2client "github.com/flowbehappy/tigate/pkg/api/v2"
 	cmdcontext "github.com/pingcap/tiflow/pkg/cmd/context"
-	"github.com/pingcap/tiflow/pkg/cmd/factory"
 	"github.com/pingcap/tiflow/pkg/cmd/util"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/spf13/cobra"

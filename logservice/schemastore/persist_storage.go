@@ -23,13 +23,14 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/bloom"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/common"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -84,6 +85,41 @@ type persistentStorage struct {
 	tableRegisteredCount map[int64]int
 }
 
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true
+	}
+	if os.IsNotExist(err) {
+		return false
+	}
+	log.Fatal("check path failed", zap.Error(err))
+	return true
+}
+
+func openDB(dbPath string) *pebble.DB {
+	opts := &pebble.Options{
+		DisableWAL:   true,
+		MemTableSize: 8 << 20,
+	}
+	opts.Levels = make([]pebble.LevelOptions, 7)
+	for i := 0; i < len(opts.Levels); i++ {
+		l := &opts.Levels[i]
+		l.BlockSize = 64 << 10       // 64 KB
+		l.IndexBlockSize = 256 << 10 // 256 KB
+		l.FilterPolicy = bloom.FilterPolicy(10)
+		l.FilterType = pebble.TableFilter
+		l.TargetFileSize = 8 << 20 // 8 MB
+		l.Compression = pebble.SnappyCompression
+		l.EnsureDefaults()
+	}
+	db, err := pebble.Open(dbPath, opts)
+	if err != nil {
+		log.Fatal("open db failed", zap.Error(err))
+	}
+	return db
+}
+
 func newPersistentStorage(
 	ctx context.Context,
 	root string,
@@ -96,44 +132,14 @@ func newPersistentStorage(
 	}
 
 	dbPath := fmt.Sprintf("%s/%s", root, dataDir)
-	// FIXME: avoid remove
+	// FIXME: currently we don't try to reuse data at restart, when we need, just remove the following line
 	if err := os.RemoveAll(dbPath); err != nil {
 		log.Panic("fail to remove path")
 	}
 
-	// TODO: update pebble options
-	db, err := pebble.Open(dbPath, &pebble.Options{
-		DisableWAL: true,
-	})
-	if err != nil {
-		log.Fatal("open db failed", zap.Error(err))
-	}
-
-	// check whether the data on disk is reusable
-	isDataReusable := true
-	gcTs, err := readGcTs(db)
-	// TODO: distiguish non-exist key with other io errors
-	if err != nil {
-		isDataReusable = false
-	}
-	if gcSafePoint < gcTs {
-		log.Panic("gc safe point should never go back")
-	}
-	upperBound, err := readUpperBoundMeta(db)
-	if err != nil {
-		isDataReusable = false
-	}
-	if gcSafePoint >= upperBound.ResolvedTs {
-		isDataReusable = false
-	}
-
-	// initialize persistent storage
 	dataStorage := &persistentStorage{
 		pdCli:                  pdCli,
 		kvStorage:              storage,
-		db:                     db,
-		gcTs:                   gcTs,
-		upperBound:             upperBound,
 		tableMap:               make(map[int64]*BasicTableInfo),
 		partitionMap:           make(map[int64]BasicPartitionInfo),
 		databaseMap:            make(map[int64]*BasicDatabaseInfo),
@@ -142,11 +148,37 @@ func newPersistentStorage(
 		tableInfoStoreMap:      make(map[int64]*versionedTableInfoStore),
 		tableRegisteredCount:   make(map[int64]int),
 	}
-	if isDataReusable {
-		dataStorage.initializeFromDisk()
-	} else {
-		db.Close()
-		dataStorage.db = nil
+
+	isDataReusable := false
+	if exists(dbPath) {
+		isDataReusable = true
+		db := openDB(dbPath)
+		// check whether the data on disk is reusable
+		gcTs, err := readGcTs(db)
+		if err != nil {
+			isDataReusable = false
+		}
+		if gcSafePoint < gcTs {
+			log.Panic("gc safe point should never go back")
+		}
+		upperBound, err := readUpperBoundMeta(db)
+		if err != nil {
+			isDataReusable = false
+		}
+		if gcSafePoint >= upperBound.ResolvedTs {
+			isDataReusable = false
+		}
+
+		if isDataReusable {
+			dataStorage.db = db
+			dataStorage.gcTs = gcTs
+			dataStorage.upperBound = upperBound
+			dataStorage.initializeFromDisk()
+		} else {
+			db.Close()
+		}
+	}
+	if !isDataReusable {
 		dataStorage.initializeFromKVStorage(dbPath, storage, gcSafePoint)
 	}
 
@@ -162,21 +194,16 @@ func newPersistentStorage(
 }
 
 func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.Storage, gcTs uint64) {
-	// TODO: avoid recreate db if the path is empty at start
+	now := time.Now()
 	if err := os.RemoveAll(dbPath); err != nil {
-		log.Panic("fail to remove path")
+		log.Fatal("fail to remove path in initializeFromKVStorage")
 	}
+	p.db = openDB(dbPath)
 
-	var err error
-	// TODO: update pebble options
-	if p.db, err = pebble.Open(dbPath, &pebble.Options{
-		DisableWAL: true,
-	}); err != nil {
-		log.Fatal("open db failed", zap.Error(err))
-	}
 	log.Info("schema store initialize from kv storage begin",
 		zap.Uint64("snapTs", gcTs))
 
+	var err error
 	if p.databaseMap, p.tableMap, err = writeSchemaSnapshotAndMeta(p.db, storage, gcTs, true); err != nil {
 		// TODO: retry
 		log.Fatal("fail to initialize from kv snapshot")
@@ -190,7 +217,8 @@ func (p *persistentStorage) initializeFromKVStorage(dbPath string, storage kv.St
 	writeUpperBoundMeta(p.db, p.upperBound)
 	log.Info("schema store initialize from kv storage done",
 		zap.Int("databaseMapLen", len(p.databaseMap)),
-		zap.Int("tableMapLen", len(p.tableMap)))
+		zap.Int("tableMapLen", len(p.tableMap)),
+		zap.Any("duration(s)", time.Since(now).Seconds()))
 }
 
 func (p *persistentStorage) initializeFromDisk() {
@@ -895,6 +923,7 @@ func updateDDLHistory(
 			appendTableHistory(ddlEvent.CurrentTableID)
 		}
 	case model.ActionTruncateTable:
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		if isPartitionTable(ddlEvent.TableInfo) {
 			appendPartitionsHistory(getAllPartitionIDs(ddlEvent.TableInfo))
 			appendPartitionsHistory(ddlEvent.PrevPartitions)
@@ -926,10 +955,11 @@ func updateDDLHistory(
 			appendTableHistory(ddlEvent.CurrentTableID)
 		}
 	case model.ActionAddTablePartition:
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		// all partitions include newly create partitions will receive this event
 		appendPartitionsHistory(getAllPartitionIDs(ddlEvent.TableInfo))
 	case model.ActionDropTablePartition:
-		// TODO: verify all partitions include dropped partitions will receive this event
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		appendPartitionsHistory(ddlEvent.PrevPartitions)
 	case model.ActionCreateView:
 		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
@@ -937,10 +967,12 @@ func updateDDLHistory(
 			appendTableHistory(tableID)
 		}
 	case model.ActionTruncateTablePartition:
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		appendPartitionsHistory(ddlEvent.PrevPartitions)
 		newCreateIDs := getCreatedIDs(ddlEvent.PrevPartitions, getAllPartitionIDs(ddlEvent.TableInfo))
 		appendPartitionsHistory(newCreateIDs)
 	case model.ActionExchangeTablePartition:
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		droppedIDs := getDroppedIDs(ddlEvent.PrevPartitions, getAllPartitionIDs(ddlEvent.TableInfo))
 		if len(droppedIDs) != 1 {
 			log.Panic("exchange table partition should only drop one partition",
@@ -960,6 +992,7 @@ func updateDDLHistory(
 			}
 		}
 	case model.ActionReorganizePartition:
+		tableTriggerDDLHistory = append(tableTriggerDDLHistory, ddlEvent.FinishedTs)
 		appendPartitionsHistory(ddlEvent.PrevPartitions)
 		newCreateIDs := getCreatedIDs(ddlEvent.PrevPartitions, getAllPartitionIDs(ddlEvent.TableInfo))
 		appendPartitionsHistory(newCreateIDs)
@@ -1337,6 +1370,11 @@ func getDroppedIDs(oldIDs []int64, newIDs []int64) []int64 {
 }
 
 func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commonEvent.DDLEvent {
+	wrapTableInfo := common.WrapTableInfo(
+		rawEvent.CurrentSchemaID,
+		rawEvent.CurrentSchemaName,
+		rawEvent.TableInfo)
+
 	ddlEvent := commonEvent.DDLEvent{
 		Type: rawEvent.Type,
 		// TODO: whether the following four fields are needed
@@ -1346,14 +1384,17 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		TableName:  rawEvent.CurrentTableName,
 
 		Query:      rawEvent.Query,
-		TableInfo:  rawEvent.TableInfo,
+		TableInfo:  wrapTableInfo,
 		FinishedTs: rawEvent.FinishedTs,
 		TiDBOnly:   false,
 	}
 
 	switch model.ActionType(rawEvent.Type) {
 	case model.ActionCreateSchema:
-		// ignore
+		ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      []int64{heartbeatpb.DDLSpan.TableID},
+		}
 	case model.ActionDropSchema:
 		ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
 			InfluenceType: commonEvent.InfluenceTypeDB,
@@ -1367,13 +1408,13 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 			DropDatabaseName: rawEvent.CurrentSchemaName,
 		}
 	case model.ActionCreateTable:
+		ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      []int64{heartbeatpb.DDLSpan.TableID},
+		}
 		if isPartitionTable(rawEvent.TableInfo) {
 			physicalIDs := getAllPartitionIDs(rawEvent.TableInfo)
 			ddlEvent.NeedAddedTables = make([]commonEvent.Table, 0, len(physicalIDs))
-			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
-				InfluenceType: commonEvent.InfluenceTypeNormal,
-				TableIDs:      physicalIDs,
-			}
 			for _, id := range physicalIDs {
 				ddlEvent.NeedAddedTables = append(ddlEvent.NeedAddedTables, commonEvent.Table{
 					SchemaID: rawEvent.CurrentSchemaID,
@@ -1387,10 +1428,6 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 					SchemaID: rawEvent.CurrentSchemaID,
 					TableID:  rawEvent.CurrentTableID,
 				},
-			}
-			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
-				InfluenceType: commonEvent.InfluenceTypeNormal,
-				TableIDs:      []int64{heartbeatpb.DDLSpan.TableID},
 			}
 		}
 		ddlEvent.TableNameChange = &commonEvent.TableNameChange{
@@ -1439,15 +1476,18 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		model.ActionDropIndex,
 		model.ActionAddForeignKey,
 		model.ActionDropForeignKey:
-		// ignore
+		ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      []int64{rawEvent.CurrentTableID},
+		}
 	case model.ActionTruncateTable:
 		if isPartitionTable(rawEvent.TableInfo) {
-			if len(rawEvent.PrevPartitions) > 1 {
-				// if more than one partitions, we need block them
-				ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
-					InfluenceType: commonEvent.InfluenceTypeNormal,
-					TableIDs:      rawEvent.PrevPartitions,
-				}
+			prevPartitionsAndDDLSpanID := make([]int64, 0, len(rawEvent.PrevPartitions)+1)
+			prevPartitionsAndDDLSpanID = append(prevPartitionsAndDDLSpanID, rawEvent.PrevPartitions...)
+			prevPartitionsAndDDLSpanID = append(prevPartitionsAndDDLSpanID, heartbeatpb.DDLSpan.TableID)
+			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      prevPartitionsAndDDLSpanID,
 			}
 			ddlEvent.BlockedTables.TableIDs = append(ddlEvent.BlockedTables.TableIDs, heartbeatpb.DDLSpan.TableID)
 			// Note: for truncate table, prev partitions must all be dropped.
@@ -1481,7 +1521,10 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		}
 	case model.ActionModifyColumn,
 		model.ActionRebaseAutoID:
-		// ignore
+		ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      []int64{rawEvent.CurrentTableID},
+		}
 	case model.ActionRenameTable:
 		ignorePrevTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.PrevSchemaName, rawEvent.PrevTableName)
 		ignoreCurrentTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.CurrentSchemaName, rawEvent.CurrentTableName)
@@ -1613,13 +1656,17 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		model.ActionShardRowID,
 		model.ActionModifyTableComment,
 		model.ActionRenameIndex:
-		// ignore
+		ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      []int64{rawEvent.CurrentTableID},
+		}
 	case model.ActionAddTablePartition:
-		if len(rawEvent.PrevPartitions) > 1 {
-			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
-				InfluenceType: commonEvent.InfluenceTypeNormal,
-				TableIDs:      rawEvent.PrevPartitions,
-			}
+		prevPartitionsAndDDLSpanID := make([]int64, 0, len(rawEvent.PrevPartitions)+1)
+		prevPartitionsAndDDLSpanID = append(prevPartitionsAndDDLSpanID, rawEvent.PrevPartitions...)
+		prevPartitionsAndDDLSpanID = append(prevPartitionsAndDDLSpanID, heartbeatpb.DDLSpan.TableID)
+		ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      prevPartitionsAndDDLSpanID,
 		}
 		physicalIDs := getAllPartitionIDs(rawEvent.TableInfo)
 		newCreatedIDs := getCreatedIDs(rawEvent.PrevPartitions, physicalIDs)
@@ -1631,11 +1678,12 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 			})
 		}
 	case model.ActionDropTablePartition:
-		if len(rawEvent.PrevPartitions) > 1 {
-			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
-				InfluenceType: commonEvent.InfluenceTypeNormal,
-				TableIDs:      rawEvent.PrevPartitions,
-			}
+		prevPartitionsAndDDLSpanID := make([]int64, 0, len(rawEvent.PrevPartitions)+1)
+		prevPartitionsAndDDLSpanID = append(prevPartitionsAndDDLSpanID, rawEvent.PrevPartitions...)
+		prevPartitionsAndDDLSpanID = append(prevPartitionsAndDDLSpanID, heartbeatpb.DDLSpan.TableID)
+		ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      prevPartitionsAndDDLSpanID,
 		}
 		physicalIDs := getAllPartitionIDs(rawEvent.TableInfo)
 		droppedIDs := getDroppedIDs(rawEvent.PrevPartitions, physicalIDs)
@@ -1648,11 +1696,12 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 			InfluenceType: commonEvent.InfluenceTypeAll,
 		}
 	case model.ActionTruncateTablePartition:
-		if len(rawEvent.PrevPartitions) > 1 {
-			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
-				InfluenceType: commonEvent.InfluenceTypeNormal,
-				TableIDs:      rawEvent.PrevPartitions,
-			}
+		prevPartitionsAndDDLSpanID := make([]int64, 0, len(rawEvent.PrevPartitions)+1)
+		prevPartitionsAndDDLSpanID = append(prevPartitionsAndDDLSpanID, rawEvent.PrevPartitions...)
+		prevPartitionsAndDDLSpanID = append(prevPartitionsAndDDLSpanID, heartbeatpb.DDLSpan.TableID)
+		ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      prevPartitionsAndDDLSpanID,
 		}
 		physicalIDs := getAllPartitionIDs(rawEvent.TableInfo)
 		newCreatedIDs := getCreatedIDs(rawEvent.PrevPartitions, physicalIDs)
@@ -1680,7 +1729,7 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		if !ignoreNormalTable && !ignorePartitionTable {
 			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
 				InfluenceType: commonEvent.InfluenceTypeNormal,
-				TableIDs:      []int64{rawEvent.PrevTableID, targetPartitionID},
+				TableIDs:      []int64{rawEvent.PrevTableID, targetPartitionID, heartbeatpb.DDLSpan.TableID},
 			}
 			ddlEvent.UpdatedSchemas = []commonEvent.SchemaIDChange{
 				{
@@ -1695,7 +1744,10 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 				},
 			}
 		} else if !ignoreNormalTable {
-			// just one table, no need to block
+			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      []int64{rawEvent.PrevTableID, heartbeatpb.DDLSpan.TableID},
+			}
 			ddlEvent.NeedDroppedTables = &commonEvent.InfluencedTables{
 				InfluenceType: commonEvent.InfluenceTypeNormal,
 				TableIDs:      []int64{rawEvent.PrevTableID},
@@ -1707,7 +1759,10 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 				},
 			}
 		} else if !ignorePartitionTable {
-			// just one table, no need to block
+			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+				InfluenceType: commonEvent.InfluenceTypeNormal,
+				TableIDs:      []int64{targetPartitionID, heartbeatpb.DDLSpan.TableID},
+			}
 			ddlEvent.NeedDroppedTables = &commonEvent.InfluencedTables{
 				InfluenceType: commonEvent.InfluenceTypeNormal,
 				TableIDs:      []int64{targetPartitionID},
@@ -1722,6 +1777,10 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 			log.Fatal("should not happen")
 		}
 	case model.ActionCreateTables:
+		ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      []int64{heartbeatpb.DDLSpan.TableID},
+		}
 		physicalTableCount := 0
 		logicalTableCount := 0
 		for _, info := range rawEvent.MultipleTableInfos {
@@ -1771,11 +1830,12 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 		}
 	case model.ActionReorganizePartition:
 		// same as truncate partition
-		if len(rawEvent.PrevPartitions) > 1 {
-			ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
-				InfluenceType: commonEvent.InfluenceTypeNormal,
-				TableIDs:      rawEvent.PrevPartitions,
-			}
+		prevPartitionsAndDDLSpanID := make([]int64, 0, len(rawEvent.PrevPartitions)+1)
+		prevPartitionsAndDDLSpanID = append(prevPartitionsAndDDLSpanID, rawEvent.PrevPartitions...)
+		prevPartitionsAndDDLSpanID = append(prevPartitionsAndDDLSpanID, heartbeatpb.DDLSpan.TableID)
+		ddlEvent.BlockedTables = &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      prevPartitionsAndDDLSpanID,
 		}
 		physicalIDs := getAllPartitionIDs(rawEvent.TableInfo)
 		newCreatedIDs := getCreatedIDs(rawEvent.PrevPartitions, physicalIDs)

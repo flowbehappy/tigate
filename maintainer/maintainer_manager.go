@@ -28,7 +28,6 @@ import (
 	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
-	cdcConfig "github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -41,7 +40,7 @@ import (
 // 3. check maintainer liveness
 type Manager struct {
 	mc   messaging.MessageCenter
-	conf *cdcConfig.SchedulerConfig
+	conf *config.SchedulerConfig
 
 	// changefeedID -> maintainer
 	maintainers sync.Map
@@ -55,7 +54,7 @@ type Manager struct {
 
 	msgCh chan *messaging.TargetMessage
 
-	stream        dynstream.DynamicStream[string, *Event, *Maintainer]
+	stream        dynstream.DynamicStream[int, string, *Event, *Maintainer, *StreamHandler]
 	taskScheduler threadpool.ThreadPool
 }
 
@@ -64,7 +63,7 @@ type Manager struct {
 // 2. manager manages maintainer lifetime
 // 3. manager report maintainer status to coordinator
 func NewMaintainerManager(selfNode *node.Info,
-	conf *cdcConfig.SchedulerConfig,
+	conf *config.SchedulerConfig,
 	pdAPI pdutil.PDAPIClient,
 	regionCache *tikv.RegionCache,
 ) *Manager {
@@ -79,7 +78,7 @@ func NewMaintainerManager(selfNode *node.Info,
 		pdAPI:         pdAPI,
 		regionCache:   regionCache,
 	}
-	m.stream = dynstream.NewDynamicStream[string, *Event, *Maintainer](NewStreamHandler())
+	m.stream = dynstream.NewDynamicStream(NewStreamHandler())
 	m.stream.Start()
 	mc.RegisterHandler(messaging.MaintainerManagerTopic, m.recvMessages)
 
@@ -148,7 +147,7 @@ func (m *Manager) Run(ctx context.Context) error {
 					m.maintainers.Delete(key)
 					log.Info("maintainer removed, remove it from dynamic stream",
 						zap.String("changefeed", cf.id.String()))
-					m.stream.RemovePaths(cf.id.ID)
+					m.stream.RemovePath(cf.id.ID)
 				}
 				return true
 			})

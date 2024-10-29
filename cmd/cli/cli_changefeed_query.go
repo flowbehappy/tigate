@@ -16,11 +16,11 @@ package cli
 import (
 	"context"
 
+	v2 "github.com/flowbehappy/tigate/api/v2"
+	"github.com/flowbehappy/tigate/cmd/factory"
+	apiv2client "github.com/flowbehappy/tigate/pkg/api/v2"
 	"github.com/pingcap/errors"
-	v2 "github.com/pingcap/tiflow/cdc/api/v2"
 	"github.com/pingcap/tiflow/cdc/model"
-	apiv2client "github.com/pingcap/tiflow/pkg/api/v2"
-	"github.com/pingcap/tiflow/pkg/cmd/factory"
 	"github.com/pingcap/tiflow/pkg/cmd/util"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/spf13/cobra"

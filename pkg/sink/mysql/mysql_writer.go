@@ -26,9 +26,10 @@ import (
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/sink/util"
+	lru "github.com/hashicorp/golang-lru"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	timodel "github.com/pingcap/tidb/pkg/parser/model"
+	timodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
@@ -40,6 +41,9 @@ import (
 
 const (
 	defaultDDLMaxRetry uint64 = 20
+
+	// networkDriftDuration is used to construct a context timeout for database operations.
+	networkDriftDuration = 5 * time.Second
 )
 
 // 用于给 mysql 类型的下游做 flush, 主打一个粗糙，先能跑起来再说
@@ -54,6 +58,12 @@ type MysqlWriter struct {
 	ddlTsTableInit   bool
 	tableSchemaStore *util.TableSchemaStore
 
+	// implement stmtCache to improve performance, especially when the downstream is TiDB
+	stmtCache *lru.Cache
+	// Indicate if the CachePrepStmts should be enabled or not
+	cachePrepStmts   bool
+	maxAllowedPacket int64
+
 	statistics *metrics.Statistics
 }
 
@@ -66,6 +76,9 @@ func NewMysqlWriter(db *sql.DB, cfg *MysqlConfig, changefeedID model.ChangeFeedI
 		ChangefeedID:           changefeedID,
 		lastCleanSyncPointTime: time.Now(),
 		ddlTsTableInit:         false,
+		cachePrepStmts:         cfg.CachePrepStmts,
+		maxAllowedPacket:       cfg.maxAllowedPacket,
+		stmtCache:              cfg.stmtCache,
 		statistics:             statistics,
 	}
 }
@@ -78,11 +91,14 @@ func (w *MysqlWriter) FlushDDLEvent(event *commonEvent.DDLEvent) error {
 	if event.GetDDLType() == timodel.ActionAddIndex && w.cfg.IsTiDB {
 		return w.asyncExecAddIndexDDLIfTimeout(event) // todo flush checkpointTs
 	}
-	err := w.execDDLWithMaxRetries(event)
 
-	if err != nil {
-		log.Error("exec ddl failed", zap.Error(err))
-		return err
+	if !(event.TiDBOnly && !w.cfg.IsTiDB) {
+		err := w.execDDLWithMaxRetries(event)
+
+		if err != nil {
+			log.Error("exec ddl failed", zap.Error(err))
+			return err
+		}
 	}
 
 	// We need to record ddl' ts after each ddl for each table in the downstream when sink is mysql-compatible.
@@ -93,7 +109,7 @@ func (w *MysqlWriter) FlushDDLEvent(event *commonEvent.DDLEvent) error {
 	// before new checkpointTs will report to maintainer. Therefore, when the table checkpointTs is forward,
 	// we can ensure the ddl and ddl ts are both flushed downstream successfully.
 	// Thus, when restarting, and we can't find a record for one table, it means the table is dropped.
-	err = w.FlushDDLTs(event)
+	err := w.FlushDDLTs(event)
 	if err != nil {
 		return err
 	}
@@ -236,7 +252,6 @@ func (w *MysqlWriter) SendSyncPointEvent(event *commonEvent.SyncPointEvent) erro
 }
 
 func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
-	log.Info("Send DDL TS")
 	ctx := context.Background()
 	tx, err := w.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -452,7 +467,6 @@ func (w *MysqlWriter) isDDLExecuted(tableID int64, ddlTs uint64) (bool, error) {
 	query := builder.String()
 
 	rows, err := tx.Query(query)
-	defer rows.Close()
 	if err != nil {
 		log.Error("failed to check ddl ts table", zap.Error(err))
 		err2 := tx.Rollback()
@@ -462,6 +476,7 @@ func (w *MysqlWriter) isDDLExecuted(tableID int64, ddlTs uint64) (bool, error) {
 		return false, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to check ddl ts table;"))
 	}
 
+	defer rows.Close()
 	if rows.Next() {
 		return true, nil
 	}
@@ -672,7 +687,7 @@ func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) *preparedDMLs 
 			continue
 		}
 		// For metrics and logging.
-		rowCount += event.Len()
+		rowCount += int(event.Len())
 		approximateSize += event.GetSize()
 		if len(startTs) == 0 || startTs[len(startTs)-1] != event.StartTs {
 			startTs = append(startTs, event.StartTs)
@@ -742,6 +757,14 @@ func (w *MysqlWriter) execDMLWithMaxRetries(dmls *preparedDMLs) error {
 			zap.Any("values", dmls.values))
 		return cerror.ErrUnexpected.FastGenByArgs("unexpected number of sqls and values")
 	}
+
+	// approximateSize is multiplied by 2 because in extreme circustumas, every
+	// byte in dmls can be escaped and adds one byte.
+	fallbackToSeqWay := dmls.approximateSize*2 > w.maxAllowedPacket
+
+	writeTimeout, _ := time.ParseDuration(w.cfg.WriteTimeout)
+	writeTimeout += networkDriftDuration
+
 	ctx := context.Background()
 	tryExec := func() (int, int64, error) {
 		tx, err := w.db.BeginTx(ctx, nil)
@@ -763,9 +786,17 @@ func (w *MysqlWriter) execDMLWithMaxRetries(dmls *preparedDMLs) error {
 			return 0, 0, err
 		}
 
-		err = w.multiStmtExecute(ctx, dmls, tx, 20*time.Second)
-		if err != nil {
-			return 0, 0, err
+		if !fallbackToSeqWay {
+			err = w.multiStmtExecute(ctx, dmls, tx, writeTimeout)
+			if err != nil {
+				fallbackToSeqWay = true
+				return 0, 0, err
+			}
+		} else {
+			err = w.sequenceExecute(ctx, dmls, tx, writeTimeout)
+			if err != nil {
+				return 0, 0, err
+			}
 		}
 
 		if err = tx.Commit(); err != nil {
@@ -794,17 +825,37 @@ func (w *MysqlWriter) sequenceExecute(
 		log.Debug("exec row", zap.String("sql", query), zap.Any("args", args))
 		ctx, cancelFunc := context.WithTimeout(ctx, writeTimeout)
 
-		_, err := tx.ExecContext(ctx, query, args...)
+		var prepStmt *sql.Stmt
+		if w.cachePrepStmts {
+			if stmt, ok := w.stmtCache.Get(query); ok {
+				prepStmt = stmt.(*sql.Stmt)
+			} else if stmt, err := w.db.Prepare(query); err == nil {
+				prepStmt = stmt
+				w.stmtCache.Add(query, stmt)
+			} else {
+				// Generally it means the downstream database doesn't allow
+				// too many preapred statements. So clean some of them.
+				w.stmtCache.RemoveOldest()
+			}
+		}
 
-		if err != nil {
-			log.Error("ExecContext", zap.Error(err), zap.Any("dmls", dmls))
+		var execError error
+		if prepStmt == nil {
+			_, execError = tx.ExecContext(ctx, query, args...)
+		} else {
+			//nolint:sqlclosecheck
+			_, execError = tx.Stmt(prepStmt).ExecContext(ctx, args...)
+		}
+
+		if execError != nil {
+			log.Error("ExecContext", zap.Error(execError), zap.Any("dmls", dmls))
 			if rbErr := tx.Rollback(); rbErr != nil {
 				if errors.Cause(rbErr) != context.Canceled {
 					log.Warn("failed to rollback txn", zap.Error(rbErr))
 				}
 			}
 			cancelFunc()
-			return err
+			return execError
 		}
 		cancelFunc()
 	}
@@ -823,7 +874,7 @@ func (w *MysqlWriter) multiStmtExecute(
 
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
-	//start := time.Now()
+
 	_, err := tx.ExecContext(ctx, multiStmtSQL, multiStmtArgs...)
 	if err != nil {
 		log.Error("ExecContext", zap.Error(err), zap.Any("multiStmtSQL", multiStmtSQL), zap.Any("multiStmtArgs", multiStmtArgs))
@@ -860,7 +911,7 @@ func (w *MysqlWriter) CreateTable(ctx context.Context, dbName string, tableName 
 		if errRollback != nil {
 			log.Error("failed to create table", zap.Any("tableName", tableName), zap.Error(errRollback))
 		}
-		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("failed to create % table;", tableName)))
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("failed to create %s table;", tableName)))
 	}
 	_, err = tx.Exec("USE " + dbName)
 	if err != nil {

@@ -14,7 +14,7 @@
 package filter
 
 import (
-	timodel "github.com/pingcap/tidb/pkg/parser/model"
+	timodel "github.com/pingcap/tidb/pkg/meta/model"
 	bf "github.com/pingcap/tiflow/pkg/binlog-filter"
 )
 

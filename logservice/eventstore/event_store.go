@@ -14,8 +14,8 @@ import (
 	"github.com/flowbehappy/tigate/logservice/txnutil"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/flowbehappy/tigate/pkg/mounter"
 	"github.com/flowbehappy/tigate/utils"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/log"
@@ -296,8 +296,8 @@ func (e *eventStore) Close(ctx context.Context) error {
 	// now we can be sure that e.eventChs won't be used
 
 	// notify and wait background goroutines for writing events to exit before cloase pebble db
-	for _, ch := range e.eventChs {
-		close(ch)
+	for i := range e.eventChs {
+		close(e.eventChs[i])
 	}
 	// TODO: wait gc manager, because it may also write data to pebble db
 	e.wg.Wait()
@@ -468,7 +468,7 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 		innerIter:    iter,
 		prevStartTS:  0,
 		prevCommitTS: 0,
-		iterMounter:  mounter.NewMounter(time.Local), // FIXME
+		iterMounter:  event.NewMounter(time.Local), // FIXME
 		startTs:      dataRange.StartTs,
 		endTs:        dataRange.EndTs,
 		rowCount:     0,
@@ -640,7 +640,7 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 }
 
 // TODO: maybe we can remove it and just rely on resolved ts? Do it after we know how to share
-func (e *eventStore) sendBatchSignalPeriodically(ctx context.Context, inputCh chan eventWithState) {
+func (e *eventStore) sendBatchSignalPeriodically(ctx context.Context, inputCh chan<- eventWithState) {
 	ticker := time.NewTicker(batchCommitInterval / 2)
 	defer ticker.Stop()
 	for {
@@ -679,7 +679,7 @@ type eventStoreIter struct {
 	innerIter    *pebble.Iterator
 	prevStartTS  uint64
 	prevCommitTS uint64
-	iterMounter  mounter.Mounter
+	iterMounter  event.Mounter
 
 	// for debug
 	startTs  uint64

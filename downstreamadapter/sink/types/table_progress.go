@@ -20,75 +20,89 @@ import (
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 )
 
-// TableProgress 里面维护了目前 sink 中的 event ts 信息
-// TableProgress 对外提供查询当前 table checkpointTs 的能力
-// TableProgress 对外提供当前 table 是否有 event 在等待被 flush 的能力--用于判断 ddl 是否达到下推条件
+// TableProgress maintains event timestamp information in the sink.
+// It provides the ability to:
+// - Query the current table checkpoint timestamp
+// - Check if there are any events waiting to be flushed (used to determine DDL push conditions)
 //
-// 本质是要频繁的删除随机数据，插入递增数据，查询最小值，后面自己可以实现一个红黑树吧，或者其他结构，先用 list 苟一苟
-// 需要加个测试保证插入数据不会出现 commitTs 倒退的问题
-// thread safe
+// Implementation note: This structure frequently deletes random data, inserts
+// increasing data, and queries the minimum value. In the future, consider
+// implementing a red-black tree or another more efficient data structure.
+// Currently using a list as a temporary solution.
+//
+// TODO: Add a test to ensure that inserted data doesn't have decreasing commitTs.
+//
+// This struct is thread-safe.
 type TableProgress struct {
-	mutex       sync.Mutex
+	rwMutex     sync.RWMutex
 	list        *list.List
 	elemMap     map[Ts]*list.Element
 	maxCommitTs uint64
 }
 
-// 按 commitTs 为主，startTs 为辅排序
+// Ts represents a timestamp pair, used for sorting primarily by commitTs and secondarily by startTs.
 type Ts struct {
 	commitTs uint64
 	startTs  uint64
 }
 
+// NewTableProgress creates and initializes a new TableProgress instance.
 func NewTableProgress() *TableProgress {
-	tableProgress := &TableProgress{
+	return &TableProgress{
 		list:        list.New(),
 		elemMap:     make(map[Ts]*list.Element),
 		maxCommitTs: 0,
 	}
-	return tableProgress
 }
 
+// Add inserts a new event into the TableProgress.
 func (p *TableProgress) Add(event commonEvent.FlushableEvent) {
 	ts := Ts{startTs: event.GetStartTs(), commitTs: event.GetCommitTs()}
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
+	p.rwMutex.Lock()
+	defer p.rwMutex.Unlock()
 	elem := p.list.PushBack(ts)
 	p.elemMap[ts] = elem
 	p.maxCommitTs = event.GetCommitTs()
 	event.PushFrontFlushFunc(func() { p.Remove(event) })
 }
 
-// 而且删除可以认为是批量的？但要不要做成批量可以后面再看
+// Remove deletes an event from the TableProgress.
+// Note: Consider implementing batch removal in the future if needed.
 func (p *TableProgress) Remove(event commonEvent.Event) {
 	ts := Ts{startTs: event.GetStartTs(), commitTs: event.GetCommitTs()}
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
+	p.rwMutex.Lock()
+	defer p.rwMutex.Unlock()
 	if elem, ok := p.elemMap[ts]; ok {
 		p.list.Remove(elem)
 		delete(p.elemMap, ts)
 	}
 }
 
+// Empty checks if the TableProgress is empty.
 func (p *TableProgress) Empty() bool {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
+	p.rwMutex.RLock()
+	defer p.rwMutex.RUnlock()
 	return p.list.Len() == 0
 }
 
+// Pass updates the maxCommitTs with the given event's commit timestamp.
 func (p *TableProgress) Pass(event commonEvent.BlockEvent) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
+	p.rwMutex.Lock()
+	defer p.rwMutex.Unlock()
 	p.maxCommitTs = event.GetCommitTs()
 }
 
-// 返回当前 tableSpan 中最大的 checkpointTs，也就是最大的 ts，并且 <= ts 之前的数据都已经成功写下去了
-// 1. 假设目前 sink 还有没 flush 下去的 event，就拿最小的这个 event的 commitTs。
-// 2. 反之，则选择收到过 event 中 commitTs 最大的那个。
-// 并且返回目前 是不是为空的状态，如果是空的话，resolvedTs 大于 checkpointTs，则用 resolvedTs 作为真的 checkpointTs
+// GetCheckpointTs returns the current checkpoint timestamp for the table span.
+// It returns:
+// 1. The commitTs of the earliest unflushed event minus 1, if there are unflushed events.
+// 2. The highest commitTs seen minus 1, if there are no unflushed events.
+// 3. 0, if no events have been processed yet.
+//
+// It also returns a boolean indicating whether the TableProgress is empty.
+// If empty and resolvedTs > checkpointTs, use resolvedTs as the actual checkpointTs.
 func (p *TableProgress) GetCheckpointTs() (uint64, bool) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
+	p.rwMutex.RLock()
+	defer p.rwMutex.RUnlock()
 
 	if p.list.Len() == 0 {
 		if p.maxCommitTs == 0 {

@@ -40,11 +40,11 @@ type MysqlWorker struct {
 	maxRows int
 }
 
-func NewMysqlWorker(db *sql.DB, config *mysql.MysqlConfig, id int, changefeedID model.ChangeFeedID, ctx context.Context, maxRows int) *MysqlWorker {
+func NewMysqlWorker(db *sql.DB, config *mysql.MysqlConfig, id int, changefeedID model.ChangeFeedID, ctx context.Context) *MysqlWorker {
 	worker := &MysqlWorker{
 		mysqlWriter:  mysql.NewMysqlWriter(db, config, changefeedID),
 		id:           id,
-		maxRows:      maxRows,
+		maxRows:      config.MaxTxnRow,
 		eventChan:    make(chan *commonEvent.DMLEvent, 16),
 		changefeedID: changefeedID,
 	}
@@ -81,7 +81,7 @@ func (t *MysqlWorker) Run(ctx context.Context) {
 			return
 		case txnEvent := <-t.eventChan:
 			events = append(events, txnEvent)
-			rows += txnEvent.Len()
+			rows += int(txnEvent.Len())
 			if rows > t.maxRows {
 				needFlush = true
 			}
@@ -92,7 +92,7 @@ func (t *MysqlWorker) Run(ctx context.Context) {
 					case txnEvent := <-t.eventChan:
 						workerHandledRows.Add(float64(txnEvent.Len()))
 						events = append(events, txnEvent)
-						rows += txnEvent.Len()
+						rows += int(txnEvent.Len())
 						if rows > t.maxRows {
 							needFlush = true
 						}
@@ -156,7 +156,6 @@ func (t *MysqlDDLWorker) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case event := <-t.ddlEventChan:
-
 			switch event.GetType() {
 			case commonEvent.TypeDDLEvent:
 				err := t.mysqlWriter.FlushDDLEvent(event.(*commonEvent.DDLEvent))

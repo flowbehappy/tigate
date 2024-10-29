@@ -51,7 +51,7 @@ type eventService struct {
 	brokers map[uint64]*eventBroker
 
 	// TODO: use a better way to cache the acceptorInfos
-	acceptorInfoCh chan DispatcherInfo
+	dispatcherInfo chan DispatcherInfo
 	tz             *time.Location
 }
 
@@ -62,7 +62,7 @@ func New(eventStore eventstore.EventStore, schemaStore schemastore.SchemaStore) 
 		eventStore:     eventStore,
 		schemaStore:    schemaStore,
 		brokers:        make(map[uint64]*eventBroker),
-		acceptorInfoCh: make(chan DispatcherInfo, defaultChannelSize*16),
+		dispatcherInfo: make(chan DispatcherInfo, defaultChannelSize*16),
 		tz:             time.Local, // FIXME use the timezone from the config
 	}
 	es.mc.RegisterHandler(messaging.EventServiceTopic, es.handleMessage)
@@ -80,7 +80,7 @@ func (s *eventService) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			log.Info("event service exited")
 			return nil
-		case info := <-s.acceptorInfoCh:
+		case info := <-s.dispatcherInfo:
 			switch info.GetActionType() {
 			case eventpb.ActionType_ACTION_TYPE_REGISTER:
 				s.registerDispatcher(ctx, info)
@@ -114,7 +114,7 @@ func (s *eventService) handleMessage(ctx context.Context, msg *messaging.TargetM
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case s.acceptorInfoCh <- info:
+		case s.dispatcherInfo <- info:
 		}
 	}
 	return nil

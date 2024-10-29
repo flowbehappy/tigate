@@ -5,24 +5,30 @@ import (
 
 	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"go.uber.org/zap"
 )
 
+const (
+	DDLEventVersion = 0
+)
+
 type DDLEvent struct {
-	DispatcherID common.DispatcherID `json:"dispatcher_id"`
+	// Version is the version of the DDLEvent struct.
+	Version      byte                `json:"version"`
+	DispatcherID common.DispatcherID `json:"-"`
 	Type         byte                `json:"type"`
 	// SchemaID means different for different job types:
 	// - ExchangeTablePartition: db id of non-partitioned table
 	SchemaID int64 `json:"schema_id"`
 	// TableID means different for different job types:
 	// - ExchangeTablePartition: non-partitioned table id
-	TableID    int64            `json:"table_id"`
-	SchemaName string           `json:"schema_name"`
-	TableName  string           `json:"table_name"`
-	Query      string           `json:"query"`
-	TableInfo  *model.TableInfo `json:"table_info"`
-	FinishedTs uint64           `json:"finished_ts"`
+	TableID    int64             `json:"table_id"`
+	SchemaName string            `json:"schema_name"`
+	TableName  string            `json:"table_name"`
+	Query      string            `json:"query"`
+	TableInfo  *common.TableInfo `json:"table_info"`
+	FinishedTs uint64            `json:"finished_ts"`
 	// The seq of the event. It is set by event service.
 	Seq uint64 `json:"seq"`
 	// TODO: just here for compile, may be changed later
@@ -45,7 +51,7 @@ type DDLEvent struct {
 
 	TiDBOnly bool `json:"tidb_only"`
 	// 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
-	PostTxnFlushed []func() `msg:"-"`
+	PostTxnFlushed []func() `json:"-"`
 }
 
 func (d *DDLEvent) GetType() int {
@@ -118,15 +124,25 @@ func (e *DDLEvent) GetDDLType() model.ActionType {
 }
 
 func (t DDLEvent) Marshal() ([]byte, error) {
-	// TODO: optimize it
-	return json.Marshal(t)
+	data, err := json.Marshal(t)
+	if err != nil {
+		return nil, err
+	}
+	dispatcherIDData := t.DispatcherID.Marshal()
+	data = append(data, dispatcherIDData...)
+	return data, nil
 }
 
 func (t *DDLEvent) Unmarshal(data []byte) error {
-	return json.Unmarshal(data, t)
+	dispatcherIDData := data[len(data)-16:]
+	err := t.DispatcherID.Unmarshal(dispatcherIDData)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data[:len(data)-16], t)
 }
 
-// TODO: fix it
+// FIXME: not implemented
 func (t *DDLEvent) GetSize() int64 {
 	return 0
 }

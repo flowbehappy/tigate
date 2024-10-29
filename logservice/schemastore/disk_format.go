@@ -28,7 +28,7 @@ import (
 	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"go.uber.org/zap"
 )
 
@@ -316,7 +316,7 @@ func readTableInfoInKVSnap(snap *pebble.Snapshot, tableID int64, version uint64)
 	if err != nil {
 		log.Fatal("unmarshal table info failed", zap.Error(err))
 	}
-	return common.WrapTableInfo(table_info_entry.SchemaID, table_info_entry.SchemaName, version, tableInfo)
+	return common.WrapTableInfo(table_info_entry.SchemaID, table_info_entry.SchemaName, tableInfo)
 }
 
 func unmarshalPersistedDDLEvent(value []byte) PersistedDDLEvent {

@@ -26,7 +26,7 @@ type taskAndTime struct {
 }
 
 type priorityQueue struct {
-	taskHeap heap.Heap[*scheduledTask]
+	taskHeap *heap.Heap[*scheduledTask]
 	mutex    sync.Mutex
 }
 

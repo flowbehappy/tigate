@@ -43,9 +43,9 @@ type HeartBeatCollector struct {
 	heartBeatReqQueue   *HeartbeatRequestQueue
 	blockStatusReqQueue *BlockStatusRequestQueue
 
-	heartBeatResponseDynamicStream          dynstream.DynamicStream[model.ChangeFeedID, HeartBeatResponse, *EventDispatcherManager]
-	schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[model.ChangeFeedID, SchedulerDispatcherRequest, *EventDispatcherManager]
-	checkpointTsMessageDynamicStream        dynstream.DynamicStream[model.ChangeFeedID, CheckpointTsMessage, *EventDispatcherManager]
+	heartBeatResponseDynamicStream          dynstream.DynamicStream[int, model.ChangeFeedID, HeartBeatResponse, *EventDispatcherManager, *HeartBeatResponseHandler]
+	schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[int, model.ChangeFeedID, SchedulerDispatcherRequest, *EventDispatcherManager, *SchedulerDispatcherRequestHandler]
+	checkpointTsMessageDynamicStream        dynstream.DynamicStream[int, model.ChangeFeedID, CheckpointTsMessage, *EventDispatcherManager, *CheckpointTsMessageHandler]
 
 	mc messaging.MessageCenter
 }
@@ -87,6 +87,20 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherMa
 	err = c.schedulerDispatcherRequestDynamicStream.AddPath(m.changefeedID, m)
 	if err != nil {
 		log.Error("schedulerDispatcherRequestDynamicStream Failed to add path", zap.Any("ChangefeedID", m.changefeedID))
+		return err
+	}
+	return nil
+}
+
+func (c *HeartBeatCollector) RemoveEventDispatcherManager(m *EventDispatcherManager) error {
+	err := c.heartBeatResponseDynamicStream.RemovePath(m.changefeedID)
+	if err != nil {
+		log.Error("heartBeatResponseDynamicStream Failed to remove path", zap.Any("ChangefeedID", m.changefeedID))
+		return err
+	}
+	err = c.schedulerDispatcherRequestDynamicStream.RemovePath(m.changefeedID)
+	if err != nil {
+		log.Error("schedulerDispatcherRequestDynamicStream Failed to remove path", zap.Any("ChangefeedID", m.changefeedID))
 		return err
 	}
 	return nil
@@ -176,8 +190,23 @@ func (h *SchedulerDispatcherRequestHandler) Handle(eventDispatcherManager *Event
 	return false
 }
 
+func (h *SchedulerDispatcherRequestHandler) GetSize(event SchedulerDispatcherRequest) int { return 0 }
+func (h *SchedulerDispatcherRequestHandler) IsPaused(event SchedulerDispatcherRequest) bool {
+	return false
+}
+func (h *SchedulerDispatcherRequestHandler) GetArea(path model.ChangeFeedID, dest *EventDispatcherManager) int {
+	return 0
+}
+func (h *SchedulerDispatcherRequestHandler) GetTimestamp(event SchedulerDispatcherRequest) dynstream.Timestamp {
+	return 0
+}
+func (h *SchedulerDispatcherRequestHandler) GetType(event SchedulerDispatcherRequest) dynstream.EventType {
+	return dynstream.DefaultEventType
+}
+func (h *SchedulerDispatcherRequestHandler) OnDrop(event SchedulerDispatcherRequest) {}
+
 type HeartBeatResponseHandler struct {
-	dispatcherStatusDynamicStream dynstream.DynamicStream[common.DispatcherID, dispatcher.DispatcherStatusWithID, *dispatcher.Dispatcher]
+	dispatcherStatusDynamicStream dynstream.DynamicStream[int, common.DispatcherID, dispatcher.DispatcherStatusWithID, *dispatcher.Dispatcher, *dispatcher.DispatcherStatusHandler]
 }
 
 func NewHeartBeatResponseHandler() HeartBeatResponseHandler {
@@ -223,6 +252,19 @@ func (h *HeartBeatResponseHandler) Handle(eventDispatcherManager *EventDispatche
 	return false
 }
 
+func (h *HeartBeatResponseHandler) GetSize(event HeartBeatResponse) int   { return 0 }
+func (h *HeartBeatResponseHandler) IsPaused(event HeartBeatResponse) bool { return false }
+func (h *HeartBeatResponseHandler) GetArea(path model.ChangeFeedID, dest *EventDispatcherManager) int {
+	return 0
+}
+func (h *HeartBeatResponseHandler) GetTimestamp(event HeartBeatResponse) dynstream.Timestamp {
+	return 0
+}
+func (h *HeartBeatResponseHandler) GetType(event HeartBeatResponse) dynstream.EventType {
+	return dynstream.DefaultEventType
+}
+func (h *HeartBeatResponseHandler) OnDrop(event HeartBeatResponse) {}
+
 type CheckpointTsMessageHandler struct{}
 
 func NewCheckpointTsMessageHandler() CheckpointTsMessageHandler {
@@ -245,3 +287,16 @@ func (h *CheckpointTsMessageHandler) Handle(eventDispatcherManager *EventDispatc
 	}
 	return false
 }
+
+func (h *CheckpointTsMessageHandler) GetSize(event CheckpointTsMessage) int   { return 0 }
+func (h *CheckpointTsMessageHandler) IsPaused(event CheckpointTsMessage) bool { return false }
+func (h *CheckpointTsMessageHandler) GetArea(path model.ChangeFeedID, dest *EventDispatcherManager) int {
+	return 0
+}
+func (h *CheckpointTsMessageHandler) GetTimestamp(event CheckpointTsMessage) dynstream.Timestamp {
+	return 0
+}
+func (h *CheckpointTsMessageHandler) GetType(event CheckpointTsMessage) dynstream.EventType {
+	return dynstream.DefaultEventType
+}
+func (h *CheckpointTsMessageHandler) OnDrop(event CheckpointTsMessage) {}

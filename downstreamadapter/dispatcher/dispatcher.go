@@ -63,7 +63,9 @@ The workflow related to the dispatcher is as follows:
 */
 
 type Dispatcher struct {
-	id        common.DispatcherID
+	id common.DispatcherID
+	// tableInfo is the latest table info of the dispatcher
+	tableInfo atomic.Pointer[common.TableInfo]
 	tableSpan *heartbeatpb.TableSpan
 	sink      tisink.Sink
 	// startTs is the start timestamp of the dispatcher
@@ -199,7 +201,8 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 // HandleEvents can batch handle events about resolvedTs Event and DML Event.
 // While for DDLEvent and SyncPointEvent, they should be handled singly,
 // because they are block events.
-// We ensure we only will receive one event when it's ddl event or sync point event by IsBatchable() function.
+// We ensure we only will receive one event when it's ddl event or sync point event
+// by setting them with different event types in DispatcherEventsHandler.GetType
 // When we handle events, we don't have any previous events still in sink.
 func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block bool) {
 	// If the dispatcher is not ready, try to find handshake event to make the dispatcher ready.
@@ -228,15 +231,15 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 				return false
 			}
 		}
-
 		switch event.GetType() {
 		case commonEvent.TypeResolvedEvent:
 			d.resolvedTs.Set(event.(commonEvent.ResolvedEvent).ResolvedTs)
 		case commonEvent.TypeDMLEvent:
 			block = true
-			event := event.(*commonEvent.DMLEvent)
+			dml := event.(*commonEvent.DMLEvent)
+			dml.AssembleRows(d.tableInfo.Load())
 			// Update the last event sequence number.
-			event.AddPostFlushFunc(func() {
+			dml.AddPostFlushFunc(func() {
 				// Considering dml event in sink may be write to downstream not in order,
 				// thus, we use tableProgress.Empty() to ensure these events are flushed to downstream completely
 				// and wake dynamic stream to handle the next events.
@@ -245,13 +248,15 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 					dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
 				}
 			})
-			d.sink.AddDMLEvent(event, d.tableProgress)
+			d.sink.AddDMLEvent(dml, d.tableProgress)
 		case commonEvent.TypeDDLEvent:
 			if len(dispatcherEvents) != 1 {
 				log.Panic("ddl event should only be singly handled", zap.Any("dispatcherID", d.id))
 			}
 			block = true
 			event := event.(*commonEvent.DDLEvent)
+			// Update the table info of the dispatcher, when it receive ddl event.
+			d.tableInfo.Store(event.TableInfo)
 			log.Info("dispatcher receive ddl event",
 				zap.Stringer("dispatcher", d.id),
 				zap.String("query", event.Query),
@@ -261,7 +266,6 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 			if d.tableSchemaStore != nil {
 				d.tableSchemaStore.AddEvent(event)
 			}
-
 			event.AddPostFlushFunc(func() {
 				dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
 				dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
@@ -301,17 +305,23 @@ func (d *Dispatcher) checkHandshakeEvents(dispatcherEvents []DispatcherEvent) (b
 			// Drop other events if dispatcher is not ready
 			continue
 		}
-
-		if event.GetCommitTs() == d.startTs.Load() {
-			if event.GetSeq() != d.lastEventSeq.Add(1) {
+		handshake, ok := event.(*commonEvent.HandshakeEvent)
+		if !ok {
+			log.Panic("cast handshake event failed", zap.Any("event Type", event.GetType()), zap.Stringer("dispatcher", d.id), zap.Uint64("commitTs", event.GetCommitTs()))
+		}
+		if handshake.GetCommitTs() == d.startTs.Load() {
+			if handshake.GetSeq() != d.lastEventSeq.Add(1) {
 				log.Panic("Receive handshake event, but seq is not the next one",
-					zap.Any("event", event),
+					zap.Any("event", handshake),
 					zap.Stringer("dispatcher", d.id),
 					zap.Uint64("lastEventSeq", d.lastEventSeq.Load()))
 			}
+			d.tableInfo.Store(handshake.TableInfo)
 			d.isReady.Store(true)
 			log.Info("Receive handshake event, dispatcher is ready to handle events",
-				zap.Any("dispatcher", d.id))
+				zap.Any("dispatcher", d.id),
+				zap.Uint64("commitTs", handshake.GetCommitTs()),
+			)
 			return true, dispatcherEvents[i+1:]
 		} else {
 			log.Warn("Handshake event commitTs not equal to dispatcher startTs, ignore it",
@@ -447,7 +457,8 @@ func (d *Dispatcher) GetResolvedTs() uint64 {
 func (d *Dispatcher) GetCheckpointTs() uint64 {
 	checkpointTs, isEmpty := d.tableProgress.GetCheckpointTs()
 	if checkpointTs == 0 {
-		// 说明从没有数据写到过 sink，则选择用 resolveTs 作为 checkpointTs
+		// This means the dispatcher has never send events to the sink,
+		// so we use resolvedTs as checkpointTs
 		return d.GetResolvedTs()
 	}
 

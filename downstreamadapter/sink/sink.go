@@ -20,12 +20,10 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/config"
-	"github.com/flowbehappy/tigate/pkg/sink/mysql"
 	sinkutil "github.com/flowbehappy/tigate/pkg/sink/util"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink"
-	"github.com/pingcap/tiflow/pkg/util"
 )
 
 type SinkType int
@@ -54,12 +52,7 @@ func NewSink(ctx context.Context, config *config.ChangefeedConfig, changefeedID 
 	scheme := sink.GetScheme(sinkURI)
 	switch scheme {
 	case sink.MySQLScheme, sink.MySQLSSLScheme, sink.TiDBScheme, sink.TiDBSSLScheme:
-		cfg, db, err := mysql.NewMysqlConfigAndDB(ctx, sinkURI)
-		if err != nil {
-			return nil, err
-		}
-		cfg.SyncPointRetention = util.GetOrZero(config.SyncPointRetention)
-		return NewMysqlSink(changefeedID, 16, cfg, db), nil
+		return NewMysqlSink(changefeedID, 16, config, sinkURI)
 	case sink.KafkaScheme, sink.KafkaSSLScheme:
 		sink, err := NewKafkaSink(changefeedID, sinkURI, config.SinkConfig)
 		if err != nil {

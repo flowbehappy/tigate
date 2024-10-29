@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/flowbehappy/tigate/pkg/common"
+	pevent "github.com/flowbehappy/tigate/pkg/common/event"
 	ticonfig "github.com/flowbehappy/tigate/pkg/config"
-	"github.com/flowbehappy/tigate/pkg/mounter"
 	newcommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tiflow/pkg/config"
@@ -21,7 +21,7 @@ import (
 // Timestamp, Timestamp(null), BigInt, BigInt(null), MediumInt, MediumInt(null), Date, Date(null), Time, Time(null), Datetime, Datetime(null), Year, Year(null),
 // Varchar, Varchar(null), VarBinary, VarBinary(null), Bit, Bit(null), Json, Json(null), Decimal, Decimal(null), Enum, Enum(null), Set, Set(null), TinyText, TinyText(null), TinyBlob, TinyBlob(null), MediumText, MediumText(null), MediumBlob, MediumBlob(null),LongText, LongText(null),LongBlob, LongBlob(null), Text, Text(null), Blob, Blob(null), char, char(null), binary, binary(null)
 func TestBasicType(t *testing.T) {
-	helper := mounter.NewEventTestHelper(t)
+	helper := pevent.NewEventTestHelper(t)
 	defer helper.Close()
 
 	helper.Tk().MustExec("use test")
@@ -33,7 +33,7 @@ func TestBasicType(t *testing.T) {
 	require.True(t, ok)
 	tableInfo := helper.GetTableInfo(job)
 
-	rowEvent := &common.RowEvent{
+	rowEvent := &pevent.RowEvent{
 		TableInfo:      tableInfo,
 		CommitTs:       1,
 		Event:          row,
@@ -49,7 +49,7 @@ func TestBasicType(t *testing.T) {
 
 // Including insert / update / delete
 func TestDMLEvent(t *testing.T) {
-	helper := mounter.NewEventTestHelper(t)
+	helper := pevent.NewEventTestHelper(t)
 	defer helper.Close()
 
 	helper.Tk().MustExec("use test")
@@ -65,7 +65,7 @@ func TestDMLEvent(t *testing.T) {
 	insertRow, ok := dmlEvent.GetNextRow()
 	require.True(t, ok)
 
-	insertRowEvent := &common.RowEvent{
+	insertRowEvent := &pevent.RowEvent{
 		TableInfo:      tableInfo,
 		CommitTs:       1,
 		Event:          insertRow,
@@ -86,7 +86,7 @@ func TestDMLEvent(t *testing.T) {
 	updateRow.PreRow = insertRow.Row
 	require.True(t, ok)
 
-	updateRowEvent := &common.RowEvent{
+	updateRowEvent := &pevent.RowEvent{
 		TableInfo:      tableInfo,
 		CommitTs:       2,
 		Event:          updateRow,
@@ -106,7 +106,7 @@ func TestDMLEvent(t *testing.T) {
 		deleteRow.Row = chunk.Row{}
 		require.True(t, ok)
 
-		updateRowEvent := &common.RowEvent{
+		updateRowEvent := &pevent.RowEvent{
 			TableInfo:      tableInfo,
 			CommitTs:       3,
 			Event:          deleteRow,
@@ -123,7 +123,7 @@ func TestDMLEvent(t *testing.T) {
 }
 
 func TestOnlyOutputUpdatedEvent(t *testing.T) {
-	helper := mounter.NewEventTestHelper(t)
+	helper := pevent.NewEventTestHelper(t)
 	defer helper.Close()
 
 	helper.Tk().MustExec("use test")
@@ -141,7 +141,7 @@ func TestOnlyOutputUpdatedEvent(t *testing.T) {
 		row, _ := eventNew.GetNextRow()
 		row.PreRow = preRow.Row
 
-		updateRowEvent := &common.RowEvent{
+		updateRowEvent := &pevent.RowEvent{
 			TableInfo:      tableInfo,
 			CommitTs:       1,
 			Event:          row,
@@ -157,7 +157,7 @@ func TestOnlyOutputUpdatedEvent(t *testing.T) {
 }
 
 func TestHandleOnlyEvent(t *testing.T) {
-	helper := mounter.NewEventTestHelper(t)
+	helper := pevent.NewEventTestHelper(t)
 	defer helper.Close()
 
 	helper.Tk().MustExec("use test")
@@ -173,7 +173,7 @@ func TestHandleOnlyEvent(t *testing.T) {
 	insertRow, ok := dmlEvent.GetNextRow()
 	require.True(t, ok)
 
-	insertRowEvent := &common.RowEvent{
+	insertRowEvent := &pevent.RowEvent{
 		TableInfo:      tableInfo,
 		CommitTs:       1,
 		Event:          insertRow,
@@ -188,7 +188,7 @@ func TestHandleOnlyEvent(t *testing.T) {
 }
 
 func TestDDLEvent(t *testing.T) {
-	helper := mounter.NewEventTestHelper(t)
+	helper := pevent.NewEventTestHelper(t)
 	defer helper.Close()
 
 	helper.Tk().MustExec("use test")
@@ -196,10 +196,12 @@ func TestDDLEvent(t *testing.T) {
 	job := helper.DDL2Job(`create table test.t(a tinyint primary key, b int)`)
 
 	protocolConfig := newcommon.NewConfig(config.ProtocolOpen)
-
-	ddlEvent := &common.DDLEvent{
-		Job:      job,
-		CommitTS: 1,
+	ddlEvent := &pevent.DDLEvent{
+		Query:      job.Query,
+		Type:       byte(job.Type),
+		SchemaName: job.SchemaName,
+		TableName:  job.TableName,
+		FinishedTs: 1,
 	}
 
 	key, value, err := encodeDDLEvent(ddlEvent, protocolConfig)
@@ -220,7 +222,7 @@ func TestResolvedTsEvent(t *testing.T) {
 }
 
 func TestEncodeWithColumnSelector(t *testing.T) {
-	helper := mounter.NewEventTestHelper(t)
+	helper := pevent.NewEventTestHelper(t)
 	defer helper.Close()
 	helper.Tk().MustExec("use test")
 
@@ -245,7 +247,7 @@ func TestEncodeWithColumnSelector(t *testing.T) {
 	insertRow, ok := dmlEvent.GetNextRow()
 	require.True(t, ok)
 
-	insertRowEvent := &common.RowEvent{
+	insertRowEvent := &pevent.RowEvent{
 		TableInfo:      tableInfo,
 		CommitTs:       1,
 		Event:          insertRow,

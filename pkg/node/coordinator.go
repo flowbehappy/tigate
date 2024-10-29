@@ -16,17 +16,31 @@ package node
 import (
 	"context"
 
-	"github.com/pingcap/tiflow/pkg/orchestrator"
+	"github.com/pingcap/tiflow/cdc/model"
 )
 
 // Coordinator is the master of the ticdc cluster,
-// 1. schedules changefeed maintainer to ticdc watcher
-// 2. save changefeed checkpoint ts to etcd
+// 1. schedules changefeed maintainer to ticdc node
+// 2. save changefeed checkpoint ts to meta store backend
 // 3. send checkpoint to downstream
 // 4. manager gc safe point
 // 5. response for open API call
 type Coordinator interface {
 	AsyncStop()
-	// Tick handles messages
-	Tick(ctx context.Context, metadata orchestrator.ReactorState) (orchestrator.ReactorState, error)
+	// Run handles messages
+	Run(ctx context.Context) error
+	// ListChangefeeds returns all changefeeds
+	ListChangefeeds(ctx context.Context) ([]*model.ChangeFeedInfo, []*model.ChangeFeedStatus, error)
+	// GetChangefeed returns a changefeed
+	GetChangefeed(ctx context.Context, id model.ChangeFeedID) (*model.ChangeFeedInfo, *model.ChangeFeedStatus, error)
+	// CreateChangefeed creates a new changefeed
+	CreateChangefeed(ctx context.Context, info *model.ChangeFeedInfo) error
+	// RemoveChangefeed gets a changefeed
+	RemoveChangefeed(ctx context.Context, id model.ChangeFeedID) (uint64, error)
+	// PauseChangefeed pauses a changefeed
+	PauseChangefeed(ctx context.Context, id model.ChangeFeedID) error
+	// ResumeChangefeed resumes a changefeed
+	ResumeChangefeed(ctx context.Context, id model.ChangeFeedID, newCheckpointTs uint64) error
+	// UpdateChangefeed updates a changefeed
+	UpdateChangefeed(ctx context.Context, change *model.ChangeFeedInfo) error
 }
