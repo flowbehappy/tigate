@@ -230,13 +230,11 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 	// NewDispatcher may called after the node is crashed or dispatcher is scheduled.
 	// When downstream is mysql-class, we could check ddl-ts table in downstream, what is the ddl-ts of this tableID,
 	// and choose max(ddl-ts, startTs) as the begin startTs.
-	oldStartTs := startTs
 	startTs, err := e.sink.CheckStartTs(tableSpan.TableID, startTs)
 	if err != nil {
 		log.Error("check start ts failed", zap.Error(err))
 		return nil
 	}
-	log.Info("new dispatcher start ts is ", zap.Any("oldStartTs", oldStartTs), zap.Any("startTs", startTs), zap.Any("tableId", tableSpan.TableID))
 
 	syncPointInfo := syncpoint.SyncPointInfo{
 		SyncPointConfig: e.syncPointConfig,
@@ -285,6 +283,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 	log.Info("new dispatcher created",
 		zap.String("ID", id.String()),
 		zap.Any("tableSpan", tableSpan),
+		zap.Any("startTs", startTs),
 		zap.Int64("cost(ns)", time.Since(start).Nanoseconds()), zap.Time("start", start))
 	e.metricCreateDispatcherDuration.Observe(float64(time.Since(start).Seconds()))
 
@@ -508,8 +507,6 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 			})
 		}
 	})
-
-	log.Info("heartbeat info collected", zap.Any("checkpointTs", message.Watermark.CheckpointTs))
 
 	for idx, id := range toReomveDispatcherIDs {
 		e.cleanTableEventDispatcher(id, removeDispatcherSchemaIDs[idx])

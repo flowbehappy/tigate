@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/apperror"
 	"github.com/flowbehappy/tigate/pkg/common"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/filter"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/errorutil"
 	"github.com/pingcap/tiflow/pkg/retry"
 	pmysql "github.com/pingcap/tiflow/pkg/sink/mysql"
 	"go.uber.org/zap"
@@ -209,7 +209,7 @@ func (w *MysqlWriter) SendSyncPointEvent(event *commonEvent.SyncPointEvent) erro
 	query = fmt.Sprintf("set global tidb_external_ts = %s", secondaryTs)
 	_, err = tx.Exec(query)
 	if err != nil {
-		if errorutil.IsSyncPointIgnoreError(err) {
+		if apperror.IsSyncPointIgnoreError(err) {
 			// TODO(dongmen): to confirm if we need to log this error.
 			log.Warn("set global external ts failed, ignore this error", zap.Error(err))
 		} else {
@@ -407,7 +407,7 @@ func (w *MysqlWriter) CheckStartTs(tableID int64, startTs uint64) (uint64, error
 
 	rows, err := tx.Query(query)
 	if err != nil {
-		if errorutil.IsTableNotExistsErr(err) {
+		if apperror.IsTableNotExistsErr(err) {
 			// If this table is not existed, this means the table is first being synced
 			log.Info("table not found in ddl ts table", zap.Int64("tableID", tableID), zap.Error(err))
 			return 0, nil
@@ -427,7 +427,6 @@ func (w *MysqlWriter) CheckStartTs(tableID int64, startTs uint64) (uint64, error
 		if err != nil {
 			return 0, err
 		}
-		log.Info("ddlTs is ", zap.Any("ddlTs", zap.Any("ddlts", ddlTs)))
 		return ddlTs, nil
 	} else {
 		// does't have this field
@@ -626,7 +625,7 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *commonEvent.DDLEvent) error {
 	return retry.Do(context.Background(), func() error {
 		err := w.statistics.RecordDDLExecution(func() error { return w.execDDL(event) })
 		if err != nil {
-			if errorutil.IsIgnorableMySQLDDLError(err) {
+			if apperror.IsIgnorableMySQLDDLError(err) {
 				// NOTE: don't change the log, some tests depend on it.
 				log.Info("Execute DDL failed, but error can be ignored",
 					zap.String("ddl", event.Query),
@@ -643,7 +642,7 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *commonEvent.DDLEvent) error {
 	}, retry.WithBackoffBaseDelay(pmysql.BackoffBaseDelay.Milliseconds()),
 		retry.WithBackoffMaxDelay(pmysql.BackoffMaxDelay.Milliseconds()),
 		retry.WithMaxTries(defaultDDLMaxRetry),
-		retry.WithIsRetryableErr(errorutil.IsRetryableDDLError))
+		retry.WithIsRetryableErr(apperror.IsRetryableDDLError))
 }
 
 func (w *MysqlWriter) Flush(events []*commonEvent.DMLEvent, workerNum int) error {
