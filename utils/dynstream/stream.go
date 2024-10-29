@@ -104,9 +104,11 @@ func (pi *pathInfo[A, P, T, D, H]) resetStat() {
 type streamStat[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	id int
 
-	period    time.Duration
-	totalTime time.Duration
-	count     int
+	// Time elapsed since the last statistics report
+	elapsedTime time.Duration
+	// Total CPU time spent processing events
+	processingTime time.Duration
+	count          int
 
 	pendingLen int
 
@@ -148,17 +150,9 @@ type eventWrap[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	queueTime time.Time
 }
 
-func (e eventWrap[A, P, T, D, H]) isZero() bool {
-	return e.pathInfo == nil
-}
-
 type doneInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	pathInfo   *pathInfo[A, P, T, D, H]
 	handleTime time.Duration
-}
-
-func (d doneInfo[A, P, T, D, H]) isZero() bool {
-	return d.pathInfo == nil
 }
 
 // A stream uses two goroutines
@@ -264,7 +258,6 @@ func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D,
 	}()
 
 	// Close and wait for the former streams.
-	// Fizz: 这是在干啥？为什么要关闭？
 	for _, stream := range formerStreams {
 		stream.close()
 		// We don't need to explicitly remove the paths from the pendingQueue.
@@ -304,23 +297,16 @@ Loop:
 				// The stream is closed.
 				return
 			}
-			// Fizz: 没找到 isZero 可能为 false 的情况，稍后问问。
-			if !e.isZero() {
-				pushToPendingQueue(e)
-				eventQueueEmpty = false
-			}
+			pushToPendingQueue(e)
+			eventQueueEmpty = false
 		} else {
 			select {
 			case e, ok := <-s.inChan:
 				if !ok {
-					// The stream is closed.
 					return
 				}
-				// batch get events from the inChan.
-				if !e.isZero() {
-					pushToPendingQueue(e)
-					eventQueueEmpty = false
-				}
+				pushToPendingQueue(e)
+				eventQueueEmpty = false
 			default:
 				eventBuf, path = s.eventQueue.popEvents(eventBuf)
 				if len(eventBuf) == 0 {
@@ -385,15 +371,16 @@ func (s *stream[A, P, T, D, H]) reportStatLoop() {
 			// If the reportChan is full, we just drop the report.
 			// It could happen when the scheduler is closing or too busy.
 		case s.reportChan <- streamStat[A, P, T, D, H]{
-			id:           s.id,
-			period:       time.Since(lastReportTime),
-			totalTime:    totalTime,
-			count:        handleCount,
-			pendingLen:   s.eventQueue.totalPendingLength, // It is not very accurate, because this value is updated by the handle goroutine.
-			mostBusyPath: mostBusyPaths,
+			id:             s.id,
+			elapsedTime:    time.Since(lastReportTime),
+			processingTime: totalTime,
+			count:          handleCount,
+			pendingLen:     s.eventQueue.totalPendingLength, // It is not very accurate, because this value is updated by the handle goroutine.
+			mostBusyPath:   mostBusyPaths,
 		}:
+			// Only reset the statistics when the report is sent successfully.
+			resetStatistics()
 		}
-		resetStatistics()
 	}
 
 	for {

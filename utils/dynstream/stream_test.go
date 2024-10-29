@@ -9,10 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-const (
-	timeFormat = "2006-01-02 15:04:05.000"
-)
-
 type mockWork interface {
 	Do()
 }
@@ -97,12 +93,10 @@ func TestStreamBasic(t *testing.T) {
 			if len(stats) == 3*2 {
 				return
 			}
-			select {
-			case stat := <-reportChan:
-				stats = append(stats, stat)
-				// case <-stop.C:
-				// 	return
-			}
+			stat := <-reportChan
+			stats = append(stats, stat)
+			// case <-stop.C:
+			// 	return
 		}
 	}()
 

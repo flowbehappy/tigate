@@ -77,21 +77,21 @@ type streamInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 }
 
 func (si *streamInfo[A, P, T, D, H]) runtime() time.Duration {
-	return si.streamStat.totalTime
+	return si.streamStat.processingTime
 }
 
 func (si *streamInfo[A, P, T, D, H]) busyRatio(period time.Duration) float64 {
-	if si.streamStat.totalTime == 0 {
+	if si.streamStat.processingTime == 0 {
 		return 0
 	}
 	if period != 0 {
-		return float64(si.streamStat.totalTime) / float64(period)
+		return float64(si.streamStat.processingTime) / float64(period)
 	}
-	return float64(si.streamStat.totalTime) / float64(si.streamStat.period)
+	return float64(si.streamStat.processingTime) / float64(si.streamStat.elapsedTime)
 }
 
 func (si *streamInfo[A, P, T, D, H]) period() time.Duration {
-	return si.streamStat.period
+	return si.streamStat.elapsedTime
 }
 
 type sortedSIs[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] []*streamInfo[A, P, T, D, H]
