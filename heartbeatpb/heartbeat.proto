@@ -113,6 +113,7 @@ message AddMaintainerRequest  {
 message RemoveMaintainerRequest  {
     string id = 1;
     bool cascade = 2;
+    bool removed = 3;
 }
 
 message MaintainerBootstrapRequest {
@@ -137,6 +138,7 @@ message BootstrapTableSpan {
 
 message MaintainerCloseRequest {
     string changefeedID = 1;
+    bool removed = 2;
 }
 
 message MaintainerCloseResponse {

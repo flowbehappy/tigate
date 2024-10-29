@@ -122,7 +122,7 @@ func (oc *Controller) StopChangefeed(cfID model.ChangeFeedID, remove bool) {
 		old.OnTaskRemoved()
 		delete(oc.operators, old.ID())
 	}
-	op := NewRemoveChangefeedOperator(cfID, scheduledNode)
+	op := NewRemoveChangefeedOperator(cfID, scheduledNode, remove)
 	oc.pushOperator(op)
 }
 
