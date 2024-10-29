@@ -14,42 +14,25 @@ const (
 	typeInsert
 )
 
-// DecodeKey decodes a key to tableID, startTs, CRTs.
-func DecodeKey(key []byte) (tableID uint64, startTs, CRTs uint64) {
-	// tableID, CRTs, startTs, Key, Put/Delete
-	// table ID
-	tableID = binary.BigEndian.Uint64(key[4:])
-	// CRTs
-	CRTs = binary.BigEndian.Uint64(key[12:])
-	if len(key) >= 28 {
-		// startTs
-		startTs = binary.BigEndian.Uint64(key[20:])
-	}
-	return
-}
-
-// DecodeCRTs decodes CRTs from the given key.
-func DecodeCRTs(key []byte) uint64 {
-	return binary.BigEndian.Uint64(key[12:])
-}
-
-// EncodeTsKey encodes tableID, CRTs and StartTs.
+// EncodeKeyPrefix encodes uniqueID, tableID, CRTs and StartTs.
 // StartTs is optional.
-func EncodeTsKey(tableID uint64, CRTs uint64, startTs ...uint64) []byte {
-	var buf []byte
-	if len(startTs) == 0 {
-		// tableID, CRTs.
-		buf = make([]byte, 0, 8+8)
-	} else if len(startTs) == 1 {
-		// tableID, CRTs and startTs.
-		buf = make([]byte, 0, 8+8+8)
-	} else {
-		log.Panic("EncodeTsKey retrieve one startTs at most")
+// The result should be a prefix of normal key. (TODO: add a unit test)
+func EncodeKeyPrefix(uniqueID uint64, tableID int64, CRTs uint64, startTs ...uint64) []byte {
+	if len(startTs) > 1 {
+		log.Panic("startTs should be at most one")
 	}
-
+	// uniqueID, tableID, CRTs.
+	keySize := 8 + 8 + 8
+	if len(startTs) > 0 {
+		keySize += 8
+	}
+	buf := make([]byte, 0, keySize)
 	uint64Buf := [8]byte{}
+	// uniqueID
+	binary.BigEndian.PutUint64(uint64Buf[:], uniqueID)
+	buf = append(buf, uint64Buf[:]...)
 	// tableID
-	binary.BigEndian.PutUint64(uint64Buf[:], tableID)
+	binary.BigEndian.PutUint64(uint64Buf[:], uint64(tableID))
 	buf = append(buf, uint64Buf[:]...)
 	// CRTs
 	binary.BigEndian.PutUint64(uint64Buf[:], CRTs)
@@ -63,17 +46,20 @@ func EncodeTsKey(tableID uint64, CRTs uint64, startTs ...uint64) []byte {
 }
 
 // EncodeKey encodes a key according to event.
-// Format: tableID, CRTs, startTs, delete/update/insert, Key.
-func EncodeKey(tableID uint64, event *common.RawKVEntry) []byte {
+// Format: uniqueID, tableID, CRTs, startTs, delete/update/insert, Key.
+func EncodeKey(uniqueID uint64, tableID int64, event *common.RawKVEntry) []byte {
 	if event == nil {
 		log.Panic("rawkv must not be nil", zap.Any("event", event))
 	}
-	// tableID, CRTs, startTs, Put/Delete, Key
-	length := 8 + 8 + 8 + 2 + len(event.Key)
+	// uniqueID, tableID, CRTs, startTs, Put/Delete, Key
+	length := 8 + 8 + 8 + 8 + 2 + len(event.Key)
 	buf := make([]byte, 0, length)
 	uint64Buf := [8]byte{}
+	// unique ID
+	binary.BigEndian.PutUint64(uint64Buf[:], uniqueID)
+	buf = append(buf, uint64Buf[:]...)
 	// table ID
-	binary.BigEndian.PutUint64(uint64Buf[:], tableID)
+	binary.BigEndian.PutUint64(uint64Buf[:], uint64(tableID))
 	buf = append(buf, uint64Buf[:]...)
 	// CRTs
 	binary.BigEndian.PutUint64(uint64Buf[:], event.CRTs)
