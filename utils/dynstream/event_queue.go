@@ -199,9 +199,9 @@ func (q *eventQueue[A, P, T, D, H]) appendEvent(event eventWrap[A, P, T, D, H]) 
 	} else {
 		// Shortcut when memory control is disabled.
 		replaced := false
-		if event.eventType.Property == RepeatedSignal {
+		if event.eventType.Property == PeriodicSignal {
 			front, ok := path.pendingQueue.FrontRef()
-			if ok && front.eventType.Property == RepeatedSignal {
+			if ok && front.eventType.Property == PeriodicSignal {
 				// Replace the repeated signal.
 				// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
 				*front = event
@@ -249,7 +249,7 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 				path.pendingQueue.PopFront()
 				path.pendingSize -= front.eventSize
 
-				if front.eventType.Property == NotBatchable {
+				if front.eventType.Property == NonBatchable {
 					break
 				}
 			}

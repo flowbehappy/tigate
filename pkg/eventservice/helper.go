@@ -33,8 +33,8 @@ func (h *dispatcherEventsHandler) Handle(broker *eventBroker, tasks ...scanTask)
 
 func (h *dispatcherEventsHandler) GetType(event scanTask) dynstream.EventType {
 	// scanTask is only a signal to trigger the scan.
-	// We make it a RepeatedSignal to make the new scan task squeeze out the old one.
-	return dynstream.EventType{DataGroup: 0, Property: dynstream.RepeatedSignal}
+	// We make it a PeriodicSignal to make the new scan task squeeze out the old one.
+	return dynstream.EventType{DataGroup: 0, Property: dynstream.PeriodicSignal}
 }
 
 func (h *dispatcherEventsHandler) GetSize(event scanTask) int                              { return 0 }

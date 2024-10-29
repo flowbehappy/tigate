@@ -114,18 +114,18 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 	trackTopPaths   int
 	baseStreamCount int
 
-	handler H
+	handler H // handler of the dynamic stream, all the events are finally passed to the handler
 	option  Option
 
 	memControl *memControl[A, P, T, D, H]
 
 	eventChan    chan T                 // The channel to receive the incoming events by distributor
 	wakeChan     chan P                 // The channel to receive the wake signal by distributor
-	feedbackChan chan Feedback[A, P, D] // The channel to receive the feedback by outside listener
+	feedbackChan chan Feedback[A, P, D] // The channel to report the feedback to outside listener
 
 	reportChan chan streamStat[A, P, T, D, H] // The channel to receive the report by scheduler
-	cmdToSchd  chan *command                  // Send the commands to the scheduler
-	cmdToDist  chan *command                  // Send the commands to the distributor
+	cmdToSched chan *command                  // The channel to send the commands to the scheduler
+	cmdToDist  chan *command                  // The channel to send the commands to the distributor
 
 	// The streams to handle the events. Only used in the scheduler.
 	// We put it here mainly to make the tests easier.
@@ -133,8 +133,8 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 
 	hasClosed atomic.Bool
 
-	schdDone sync.WaitGroup
-	distDone sync.WaitGroup
+	schedWg sync.WaitGroup
+	distWg  sync.WaitGroup
 
 	eventExtraSize int
 	startTime      time.Time
@@ -163,7 +163,7 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 		wakeChan:  make(chan P, 1024),
 
 		reportChan: make(chan streamStat[A, P, T, D, H], 64),
-		cmdToSchd:  make(chan *command, 64),
+		cmdToSched: make(chan *command, 64),
 		cmdToDist:  make(chan *command, option.StreamCount),
 
 		streamInfos:    make([]*streamInfo[A, P, T, D, H], 0, option.StreamCount),
@@ -190,20 +190,20 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) Feedback() <-chan Feedback[A, P, D] {
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Start() {
-	d.schdDone.Add(1)
+	d.schedWg.Add(1)
 	go d.scheduler()
-	d.distDone.Add(1)
+	d.distWg.Add(1)
 	go d.distributor()
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Close() {
 	if d.hasClosed.CompareAndSwap(false, true) {
-		close(d.cmdToSchd)
+		close(d.cmdToSched)
 		if d.feedbackChan != nil {
 			close(d.feedbackChan)
 		}
 	}
-	d.schdDone.Wait()
+	d.schedWg.Wait()
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) addPaths(settings AreaSettings, paths ...PathAndDest[P, D]) []error {
@@ -219,7 +219,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) addPaths(settings AreaSettings, paths
 	}
 
 	cmd.wg.Add(2) // need to wait for both scheduler and distributor
-	d.cmdToSchd <- cmd
+	d.cmdToSched <- cmd
 	cmd.wg.Wait()
 	return add.errors
 }
@@ -245,7 +245,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) removePaths(paths ...P) []error {
 	}
 
 	cmd.wg.Add(2) // need to wait for both scheduler and distributor
-	d.cmdToSchd <- cmd
+	d.cmdToSched <- cmd
 	cmd.wg.Wait()
 	return remove.errors
 }
@@ -274,20 +274,20 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) reportAndSchedule(rule ruleType, peri
 		wg:      &sync.WaitGroup{},
 	}
 	cmd.wg.Add(2)
-	d.cmdToSchd <- cmd
+	d.cmdToSched <- cmd
 	cmd.wg.Wait()
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 	defer func() {
 		close(d.cmdToDist)
-		d.distDone.Wait()
+		d.distWg.Wait()
 
 		for _, si := range d.streamInfos {
 			si.stream.close()
 		}
 
-		d.schdDone.Done()
+		d.schedWg.Done()
 	}()
 
 	nextStreamId := 0
@@ -295,7 +295,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 
 	createStream := func() *stream[A, P, T, D, H] {
 		nextStreamId++
-		return newStream[A, P, T, D, H](nextStreamId, d.handler, d.reportChan, d.trackTopPaths, d.option)
+		return newStream(nextStreamId, d.handler, d.reportChan, d.trackTopPaths, d.option)
 	}
 	nextStream := func() *streamInfo[A, P, T, D, H] {
 		// We use round-robin to assign the paths to the streams
@@ -622,7 +622,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 	ticker := time.NewTicker(d.option.SchedulerInterval)
 	for {
 		select {
-		case cmd, ok := <-d.cmdToSchd:
+		case cmd, ok := <-d.cmdToSched:
 			if !ok {
 				return
 			}
@@ -732,7 +732,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
-	defer d.distDone.Done()
+	defer d.distWg.Done()
 
 	pathMap := make(map[P]*pathInfo[A, P, T, D, H])
 
@@ -756,7 +756,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 				pi.stream.in() <- e
 			} else {
 				// Otherwise, drop the event
-				if eventType.Property != RepeatedSignal {
+				if eventType.Property != PeriodicSignal {
 					d.handler.OnDrop(e)
 				}
 			}

@@ -210,10 +210,12 @@ func (h *DispatcherEventsHandler) Handle(dispatcher *Dispatcher, events ...Dispa
 
 func (h *DispatcherEventsHandler) GetType(event DispatcherEvent) dynstream.EventType {
 	switch event.GetType() {
-	case commonEvent.TypeResolvedEvent, commonEvent.TypeDMLEvent:
-		return dynstream.EventType{DataGroup: event.GetType(), Property: 0}
+	case commonEvent.TypeResolvedEvent:
+		return dynstream.EventType{DataGroup: event.GetType(), Property: dynstream.PeriodicSignal}
+	case commonEvent.TypeDMLEvent:
+		return dynstream.EventType{DataGroup: event.GetType(), Property: dynstream.BatchableData}
 	case commonEvent.TypeDDLEvent, commonEvent.TypeSyncPointEvent, commonEvent.TypeHandshakeEvent:
-		return dynstream.EventType{DataGroup: event.GetType(), Property: dynstream.NotBatchable}
+		return dynstream.EventType{DataGroup: event.GetType(), Property: dynstream.NonBatchable}
 	default:
 		log.Panic("unknown event type", zap.Int("type", int(event.GetType())))
 	}

@@ -15,7 +15,7 @@ type Path comparable
 type Area comparable
 
 // The timestamp an event carries. E.g. the commit TS of a DML.
-// Normally, events with smaller timestamps are processed first amoung the same Area, but it is not guaranteed.
+// Normally, events with smaller timestamps are processed first among the same Area, but it is not guaranteed.
 // In a path, events come earlier should have smaller timestamps. DynamicStream will not check the
 // order of the timestamps, it is the handler's responsibility to handle the events in the correct order.
 type Timestamp uint64
@@ -28,26 +28,30 @@ type Dest any
 
 type EventType struct {
 	// The group of the event. It is used to group the events for the handler to process.
-	// Events with different types will not be processed in a group by the handler.
+	// Events with different groups will not be processed in a group by the handler.
 	DataGroup int
 	Property  Property
 }
 
 var DefaultEventType = EventType{}
 
+// The property of the event, it is used to how dynamic stream handles the event.
 type Property int
 
 const (
-	// Events are sent repeatedly, and don't carry any data except indicating something happens.
-	// DynamicStream drops the eary come repeated signals to reduce the load.
-	// Note that even when a path is paused (stop sending data events), the repeated signal events
-	// should be kept sending periodically. DynamicStream sends feedbacks based on the pause status
-	// to control the memory usage of a path and an area. The size of the repeated signal events
-	// should be small enough and all be the same.
-	// E.g. a resolved TS.
-	RepeatedSignal = 1
-	// Events can only be processed one by one.
-	NotBatchable = 2
+	// BatchableData - Events that can be processed in batches
+	// These events carry data and can be batched together for better performance
+	BatchableData Property = iota
+	// PeriodicSignal - Periodic signal events
+	// 1. Contains no actual data, only indicates occurrence of an event
+	// 2. System drops early duplicate signals to reduce load
+	// 3. Must continue sending even when path is paused (for memory control)
+	// 4. Should be small and consistent in size
+	// Example: resolvedTs
+	PeriodicSignal
+	// NonBatchable - Events that must be processed individually
+	// These events require sequential, one-by-one processing
+	NonBatchable
 )
 
 // The handler interface. The handler processes the event.
@@ -93,7 +97,7 @@ type Handler[A Area, P Path, T Event, D Dest] interface {
 	// Only the events with the same type are processed in a group.
 	GetType(event T) EventType
 	// OnDrop is called when an event is dropped. Could be caused by the memory control or cannot find the path.
-	// Note that dropping RepeatedSignal events will not cause OnDrop to be called.
+	// Note that dropping PeriodicSignal events will not cause OnDrop to be called.
 	// Do nothing by default implementation.
 	OnDrop(event T)
 }
