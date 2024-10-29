@@ -9,18 +9,17 @@ import (
 	pevent "github.com/flowbehappy/tigate/pkg/common/event"
 	newconfig "github.com/flowbehappy/tigate/pkg/config"
 	newcommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	ticonfig "github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
-// insert
-// update(with only update column)
-// delete
-// ddl
-// checkpointTs
+// TODO: claim check
 
 func TestAllTypes(t *testing.T) {
 	helper := pevent.NewEventTestHelper(t)
@@ -455,15 +454,304 @@ func TestGeneralDMLEvent(t *testing.T) {
 	}
 }
 
-// insert / update / delete
+// insert / update(with only updated or not) / delete
 func TestDMLTypeEvent(t *testing.T) {
+	helper := pevent.NewEventTestHelper(t)
+	defer helper.Close()
 
+	helper.Tk().MustExec("use test")
+	job := helper.DDL2Job(`create table test.t(a tinyint primary key, b tinyint)`)
+
+	protocolConfig := newcommon.NewConfig(config.ProtocolCanalJSON)
+	encoder, err := NewJSONRowEventEncoder(context.Background(), protocolConfig)
+	require.NoError(t, err)
+	tableInfo := helper.GetTableInfo(job)
+
+	// insert event
+
+	dmlEvent := helper.DML2Event("test", "t", `insert into test.t(a,b) values (1,3)`)
+	require.NotNil(t, dmlEvent)
+	insertRow, ok := dmlEvent.GetNextRow()
+	require.True(t, ok)
+
+	log.Info("insertRow", zap.Any("row", insertRow), zap.Any("preRow", insertRow.PreRow.IsEmpty()), zap.Any("Row", insertRow.Row.IsEmpty()))
+
+	rowEvent := &pevent.RowEvent{
+		TableInfo:      tableInfo,
+		CommitTs:       1,
+		Event:          insertRow,
+		ColumnSelector: common.NewDefaultColumnSelector(),
+		Callback:       func() {}}
+
+	err = encoder.AppendRowChangedEvent(context.Background(), "", rowEvent)
+	require.NoError(t, err)
+
+	messages := encoder.Build()
+	require.Equal(t, 1, len(messages))
+	require.Equal(t, uint64(1), messages[0].Ts)
+	require.Equal(t, "test", *messages[0].Schema)
+	require.Equal(t, "t", *messages[0].Table)
+	require.Equal(t, model.MessageTypeRow, messages[0].Type)
+
+	var value JSONMessage
+
+	err = json.Unmarshal(messages[0].Value, &value)
+	require.NoError(t, err)
+
+	require.Equal(t, int64(0), value.ID)
+	require.Equal(t, "test", value.Schema)
+	require.Equal(t, "t", value.Table)
+	require.Equal(t, []string{"a"}, value.PKNames)
+	require.Equal(t, false, value.IsDDL)
+	require.Equal(t, "INSERT", value.EventType)
+	require.Equal(t, "", value.Query)
+
+	sqlValue, err := json.Marshal(value.SQLType)
+	require.NoError(t, err)
+	require.Equal(t, `{"a":-6,"b":-6}`, string(sqlValue))
+
+	mysqlValue, err := json.Marshal(value.MySQLType)
+	require.NoError(t, err)
+	require.Equal(t, `{"a":"tinyint","b":"tinyint"}`, string(mysqlValue))
+
+	oldValue, err := json.Marshal(value.Old)
+	require.NoError(t, err)
+	require.Equal(t, "null", string(oldValue))
+
+	newValue, err := json.Marshal(value.Data)
+	require.NoError(t, err)
+	require.Equal(t, `[{"a":"1","b":"3"}]`, string(newValue))
+
+	// update
+	dmlEvent = helper.DML2Event("test", "t", `update test.t set b = 2 where a = 1`)
+	require.NotNil(t, dmlEvent)
+	updateRow, ok := dmlEvent.GetNextRow()
+	require.True(t, ok)
+	updateRow.PreRow = insertRow.Row
+
+	updateRowEvent := &pevent.RowEvent{
+		TableInfo:      tableInfo,
+		CommitTs:       2,
+		Event:          updateRow,
+		ColumnSelector: common.NewDefaultColumnSelector(),
+		Callback:       func() {}}
+
+	err = encoder.AppendRowChangedEvent(context.Background(), "", updateRowEvent)
+	require.NoError(t, err)
+
+	messages = encoder.Build()
+	require.Equal(t, 1, len(messages))
+	require.Equal(t, uint64(2), messages[0].Ts)
+	require.Equal(t, "test", *messages[0].Schema)
+	require.Equal(t, "t", *messages[0].Table)
+	require.Equal(t, model.MessageTypeRow, messages[0].Type)
+
+	err = json.Unmarshal(messages[0].Value, &value)
+	require.NoError(t, err)
+
+	require.Equal(t, int64(0), value.ID)
+	require.Equal(t, "test", value.Schema)
+	require.Equal(t, "t", value.Table)
+	require.Equal(t, []string{"a"}, value.PKNames)
+	require.Equal(t, false, value.IsDDL)
+	require.Equal(t, "UPDATE", value.EventType)
+	require.Equal(t, "", value.Query)
+
+	sqlValue, err = json.Marshal(value.SQLType)
+	require.NoError(t, err)
+	require.Equal(t, `{"a":-6,"b":-6}`, string(sqlValue))
+
+	mysqlValue, err = json.Marshal(value.MySQLType)
+	require.NoError(t, err)
+	require.Equal(t, `{"a":"tinyint","b":"tinyint"}`, string(mysqlValue))
+
+	oldValue, err = json.Marshal(value.Old)
+	require.NoError(t, err)
+	require.Equal(t, `[{"a":"1","b":"3"}]`, string(oldValue))
+
+	newValue, err = json.Marshal(value.Data)
+	require.NoError(t, err)
+	require.Equal(t, `[{"a":"1","b":"2"}]`, string(newValue))
+
+	// delete
+	deleteRow := updateRow
+	deleteRow.PreRow = updateRow.Row
+	deleteRow.Row = chunk.Row{}
+
+	deleteRowEvent := &pevent.RowEvent{
+		TableInfo:      tableInfo,
+		CommitTs:       3,
+		Event:          deleteRow,
+		ColumnSelector: common.NewDefaultColumnSelector(),
+		Callback:       func() {}}
+
+	err = encoder.AppendRowChangedEvent(context.Background(), "", deleteRowEvent)
+	require.NoError(t, err)
+
+	messages = encoder.Build()
+	require.Equal(t, 1, len(messages))
+	require.Equal(t, uint64(3), messages[0].Ts)
+	require.Equal(t, "test", *messages[0].Schema)
+	require.Equal(t, "t", *messages[0].Table)
+	require.Equal(t, model.MessageTypeRow, messages[0].Type)
+
+	err = json.Unmarshal(messages[0].Value, &value)
+	require.NoError(t, err)
+
+	require.Equal(t, int64(0), value.ID)
+	require.Equal(t, "test", value.Schema)
+	require.Equal(t, "t", value.Table)
+	require.Equal(t, []string{"a"}, value.PKNames)
+	require.Equal(t, false, value.IsDDL)
+	require.Equal(t, "DELETE", value.EventType)
+	require.Equal(t, "", value.Query)
+
+	sqlValue, err = json.Marshal(value.SQLType)
+	require.NoError(t, err)
+	require.Equal(t, `{"a":-6,"b":-6}`, string(sqlValue))
+
+	mysqlValue, err = json.Marshal(value.MySQLType)
+	require.NoError(t, err)
+	require.Equal(t, `{"a":"tinyint","b":"tinyint"}`, string(mysqlValue))
+
+	oldValue, err = json.Marshal(value.Old)
+	require.NoError(t, err)
+	require.Equal(t, "null", string(oldValue))
+
+	newValue, err = json.Marshal(value.Data)
+	require.NoError(t, err)
+	require.Equal(t, `[{"a":"1","b":"2"}]`, string(newValue))
+
+	// update with only updated columns
+	protocolConfig.OnlyOutputUpdatedColumns = true
+	encoder, err = NewJSONRowEventEncoder(context.Background(), protocolConfig)
+	require.NoError(t, err)
+
+	err = encoder.AppendRowChangedEvent(context.Background(), "", updateRowEvent)
+	require.NoError(t, err)
+
+	messages = encoder.Build()
+	require.Equal(t, 1, len(messages))
+	require.Equal(t, uint64(2), messages[0].Ts)
+	require.Equal(t, "test", *messages[0].Schema)
+	require.Equal(t, "t", *messages[0].Table)
+	require.Equal(t, model.MessageTypeRow, messages[0].Type)
+
+	err = json.Unmarshal(messages[0].Value, &value)
+	require.NoError(t, err)
+
+	require.Equal(t, int64(0), value.ID)
+	require.Equal(t, "test", value.Schema)
+	require.Equal(t, "t", value.Table)
+	require.Equal(t, []string{"a"}, value.PKNames)
+	require.Equal(t, false, value.IsDDL)
+	require.Equal(t, "UPDATE", value.EventType)
+	require.Equal(t, "", value.Query)
+
+	sqlValue, err = json.Marshal(value.SQLType)
+	require.NoError(t, err)
+	require.Equal(t, `{"a":-6,"b":-6}`, string(sqlValue))
+
+	mysqlValue, err = json.Marshal(value.MySQLType)
+	require.NoError(t, err)
+	require.Equal(t, `{"a":"tinyint","b":"tinyint"}`, string(mysqlValue))
+
+	oldValue, err = json.Marshal(value.Old)
+	require.NoError(t, err)
+	require.Equal(t, `[{"b":"3"}]`, string(oldValue))
+
+	newValue, err = json.Marshal(value.Data)
+	require.NoError(t, err)
+	require.Equal(t, `[{"a":"1","b":"2"}]`, string(newValue))
 }
 
 // ddl
 func TestDDLTypeEvent(t *testing.T) {
+	helper := pevent.NewEventTestHelper(t)
+	defer helper.Close()
+
+	helper.Tk().MustExec("use test")
+
+	job := helper.DDL2Job(`create table test.t(a tinyint primary key, b int)`)
+
+	protocolConfig := newcommon.NewConfig(config.ProtocolCanalJSON)
+	encoder, err := NewJSONRowEventEncoder(context.Background(), protocolConfig)
+	require.NoError(t, err)
+
+	ddlEvent := &pevent.DDLEvent{
+		Query:      job.Query,
+		Type:       byte(job.Type),
+		SchemaName: job.SchemaName,
+		TableName:  job.TableName,
+		FinishedTs: 1,
+	}
+
+	message, err := encoder.EncodeDDLEvent(ddlEvent)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), message.Ts)
+	require.Equal(t, "test", *message.Schema)
+	require.Equal(t, "t", *message.Table)
+	require.Equal(t, model.MessageTypeDDL, message.Type)
+
+	var value JSONMessage
+	err = json.Unmarshal(message.Value, &value)
+	require.NoError(t, err)
+
+	require.Equal(t, int64(0), value.ID)
+	require.Equal(t, "test", value.Schema)
+	require.Equal(t, "t", value.Table)
+	require.Equal(t, true, value.IsDDL)
+	require.Equal(t, "CREATE", value.EventType)
+	require.Equal(t, 1>>18, value.ExecutionTime)
+	require.Equal(t, job.Query, value.Query)
+
+	// extension tidb
+	protocolConfig.EnableTiDBExtension = true
+	encoder, err = NewJSONRowEventEncoder(context.Background(), protocolConfig)
+	require.NoError(t, err)
+
+	message, err = encoder.EncodeDDLEvent(ddlEvent)
+	require.NoError(t, err)
+
+	var extensionValue canalJSONMessageWithTiDBExtension
+	err = json.Unmarshal(message.Value, &extensionValue)
+	require.NoError(t, err)
+
+	require.Equal(t, uint64(1), extensionValue.Extensions.CommitTs)
 }
 
 // checkpointTs
 func TestCheckpointTs(t *testing.T) {
+	helper := pevent.NewEventTestHelper(t)
+	defer helper.Close()
+
+	protocolConfig := newcommon.NewConfig(config.ProtocolCanalJSON)
+	encoder, err := NewJSONRowEventEncoder(context.Background(), protocolConfig)
+	require.NoError(t, err)
+
+	message, err := encoder.EncodeCheckpointEvent(1)
+	require.NoError(t, err)
+	require.Nil(t, message)
+
+	// with extension
+	protocolConfig.EnableTiDBExtension = true
+	encoder, err = NewJSONRowEventEncoder(context.Background(), protocolConfig)
+	require.NoError(t, err)
+	message, err = encoder.EncodeCheckpointEvent(1)
+	require.NoError(t, err)
+
+	require.Equal(t, config.ProtocolCanalJSON, message.Protocol)
+	require.Nil(t, message.Schema)
+	require.Nil(t, message.Table)
+	require.Equal(t, uint64(1), message.Ts)
+
+	var value canalJSONMessageWithTiDBExtension
+	err = json.Unmarshal(message.Value, &value)
+	require.NoError(t, err)
+
+	require.Equal(t, 0, value.ID)
+	require.Equal(t, false, value.IsDDL)
+	require.Equal(t, tidbWaterMarkType, value.EventType)
+	require.Equal(t, 1>>18, value.ExecutionTime)
+	require.Equal(t, 1, value.Extensions.WatermarkTs)
 }
