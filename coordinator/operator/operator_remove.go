@@ -30,13 +30,15 @@ import (
 type RemoveChangefeedOperator struct {
 	cfID     model.ChangeFeedID
 	nodeID   node.ID
+	removed  bool
 	finished atomic.Bool
 }
 
-func NewRemoveChangefeedOperator(cfID model.ChangeFeedID, nodeID node.ID) *RemoveChangefeedOperator {
+func NewRemoveChangefeedOperator(cfID model.ChangeFeedID, nodeID node.ID, removed bool) *RemoveChangefeedOperator {
 	return &RemoveChangefeedOperator{
-		cfID:   cfID,
-		nodeID: nodeID,
+		cfID:    cfID,
+		nodeID:  nodeID,
+		removed: removed,
 	}
 }
 
@@ -50,7 +52,7 @@ func (m *RemoveChangefeedOperator) Check(from node.ID, status *heartbeatpb.Maint
 }
 
 func (m *RemoveChangefeedOperator) Schedule() *messaging.TargetMessage {
-	return changefeed.RemoveMaintainerMessage(m.cfID.ID, m.nodeID, true)
+	return changefeed.RemoveMaintainerMessage(m.cfID.ID, m.nodeID, true, m.removed)
 }
 
 // OnNodeRemove is called when node offline, and the maintainer must already move to absent status and will be scheduled again

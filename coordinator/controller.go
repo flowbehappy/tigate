@@ -279,7 +279,7 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.Mainta
 				zap.Any("status", status))
 			if status.State == heartbeatpb.ComponentState_Working {
 				// if the changefeed is not found, and the status is working, we need to remove it from maintainer
-				_ = c.messageCenter.SendCommand(changefeed.RemoveMaintainerMessage(status.ChangefeedID, from, true))
+				_ = c.messageCenter.SendCommand(changefeed.RemoveMaintainerMessage(status.ChangefeedID, from, true, true))
 			}
 			continue
 		}
@@ -331,7 +331,7 @@ func (c *Controller) FinishBootstrap(workingMap map[model.ChangeFeedID]remoteMai
 			zap.String("changefeed", id.ID),
 			zap.String("node", rm.nodeID.String()),
 		)
-		_ = c.messageCenter.SendCommand(changefeed.RemoveMaintainerMessage(id.ID, rm.nodeID, true))
+		_ = c.messageCenter.SendCommand(changefeed.RemoveMaintainerMessage(id.ID, rm.nodeID, true, true))
 	}
 
 	// start operator and scheduler
