@@ -180,7 +180,7 @@ func (t *MysqlDDLWorker) CheckStartTs(tableId int64, startTs uint64) (uint64, er
 	if err != nil {
 		return 0, err
 	}
-	return max(ddlTs+1, startTs), nil
+	return max(ddlTs, startTs), nil
 }
 
 func (t *MysqlDDLWorker) GetDDLEventChan() chan commonEvent.BlockEvent {
