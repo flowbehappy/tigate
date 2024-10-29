@@ -12,8 +12,9 @@ import (
 )
 
 type gcRangeItem struct {
-	dbIndex int
-	tableID int64
+	dbIndex     int
+	uniqueKeyID uint64
+	tableID     int64
 	// TODO: startCommitTS may be not needed now(just use 0 for every delete range maybe ok),
 	// but after split table range, it may be essential?
 	startCommitTS uint64
@@ -29,14 +30,16 @@ func newGCManager() *gcManager {
 	return &gcManager{}
 }
 
-func (d *gcManager) addGCItem(dbIndex int, tableID int64, startCommitTS uint64, endCommitTS uint64) {
+// add an item to delete the data in range (startTS, endTS] for `tableID` with `uniqueID`.
+func (d *gcManager) addGCItem(dbIndex int, uniqueKeyID uint64, tableID int64, startTS uint64, endTS uint64) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.ranges = append(d.ranges, gcRangeItem{
 		dbIndex:       dbIndex,
+		uniqueKeyID:   uniqueKeyID,
 		tableID:       tableID,
-		startCommitTS: startCommitTS,
-		endCommitTS:   endCommitTS,
+		startCommitTS: startTS,
+		endCommitTS:   endTS,
 	})
 }
 
@@ -48,7 +51,7 @@ func (d *gcManager) fetchAllGCItems() []gcRangeItem {
 	return ranges
 }
 
-type deleteFunc func(dbIndex int, tableID int64, startCommitTS uint64, endCommitTS uint64) error
+type deleteFunc func(dbIndex int, uniqueKeyID uint64, tableID int64, startCommitTS uint64, endCommitTS uint64) error
 
 func (d *gcManager) run(ctx context.Context, deleteDataRange deleteFunc) error {
 	ticker := time.NewTicker(20 * time.Millisecond)
@@ -63,7 +66,7 @@ func (d *gcManager) run(ctx context.Context, deleteDataRange deleteFunc) error {
 			}
 			for _, r := range ranges {
 				// TODO: delete in batch?
-				err := deleteDataRange(r.dbIndex, r.tableID, r.startCommitTS, r.endCommitTS)
+				err := deleteDataRange(r.dbIndex, r.uniqueKeyID, r.tableID, r.startCommitTS, r.endCommitTS)
 				if err != nil {
 					// TODO: add the data range back?
 					log.Fatal("delete fail", zap.Error(err))
