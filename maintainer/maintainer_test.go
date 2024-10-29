@@ -131,7 +131,7 @@ func (m *mockDispatcherManager) onBootstrapRequest(msg *messaging.TargetMessage)
 		Spans:        m.bootstrapTables,
 	}
 	m.changefeedID = req.ChangefeedID
-	m.checkpointTs = req.CheckpointTs
+	m.checkpointTs = req.StartTs
 	err := m.mc.SendCommand(messaging.NewSingleTargetMessage(
 		m.maintainerID,
 		messaging.MaintainerManagerTopic,
