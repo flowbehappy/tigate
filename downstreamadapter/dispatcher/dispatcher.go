@@ -351,7 +351,7 @@ func shouldBlock(event commonEvent.BlockEvent) bool {
 		if ddlEvent.BlockedTables != nil {
 			switch ddlEvent.GetBlockedTables().InfluenceType {
 			case commonEvent.InfluenceTypeNormal:
-				if len(ddlEvent.GetBlockedTables().TableIDs) != 0 {
+				if len(ddlEvent.GetBlockedTables().TableIDs) > 1 {
 					return true
 				} else {
 					return false
@@ -389,7 +389,7 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 	if !shouldBlock(event) {
 		d.sink.AddBlockEvent(event, d.tableProgress)
 		if event.GetNeedAddedTables() != nil || event.GetNeedDroppedTables() != nil {
-			d.blockStatus.setBlockEvent(event, heartbeatpb.BlockStage_DONE)
+			d.blockStatus.setBlockEvent(event, heartbeatpb.BlockStage_NONE)
 			message := &heartbeatpb.TableSpanBlockStatus{
 				ID: d.id.ToPB(),
 				State: &heartbeatpb.State{
@@ -398,7 +398,7 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 					NeedDroppedTables: event.GetNeedDroppedTables().ToPB(),
 					NeedAddedTables:   commonEvent.ToTablesPB(event.GetNeedAddedTables()),
 					IsSyncPoint:       false, // sync point event must should block
-					Stage:             heartbeatpb.BlockStage_DONE,
+					Stage:             heartbeatpb.BlockStage_NONE,
 				},
 			}
 			d.SetResendTask(newResendTask(message, d))
@@ -411,6 +411,7 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 			State: &heartbeatpb.State{
 				IsBlocked:         true,
 				BlockTs:           event.GetCommitTs(),
+				BlockTables:       event.GetBlockedTables().ToPB(),
 				NeedDroppedTables: event.GetNeedDroppedTables().ToPB(),
 				NeedAddedTables:   commonEvent.ToTablesPB(event.GetNeedAddedTables()),
 				UpdatedSchemas:    commonEvent.ToSchemaIDChangePB(event.GetUpdatedSchemas()), // only exists for rename table and rename tables
@@ -582,6 +583,7 @@ func (d *Dispatcher) GetBlockStatus() *heartbeatpb.State {
 	return &heartbeatpb.State{
 		IsBlocked:         true,
 		BlockTs:           pendingEvent.GetCommitTs(),
+		BlockTables:       pendingEvent.GetBlockedTables().ToPB(),
 		NeedDroppedTables: pendingEvent.GetNeedDroppedTables().ToPB(),
 		NeedAddedTables:   commonEvent.ToTablesPB(pendingEvent.GetNeedAddedTables()),
 		UpdatedSchemas:    commonEvent.ToSchemaIDChangePB(pendingEvent.GetUpdatedSchemas()), // only exists for rename table and rename tables

@@ -138,9 +138,10 @@ message MaintainerBootstrapResponse {
 }
 
 enum BlockStage {
-    WAITING = 0;
-    WRITING = 1;
-    DONE = 2;
+    NONE = 0;
+    WAITING = 1;
+    WRITING = 2;
+    DONE = 3;
 }
 
 message BootstrapTableSpan {

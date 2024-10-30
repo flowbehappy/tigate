@@ -37,6 +37,7 @@ func (b *BlockStauts) clear() {
 	defer b.mutex.Unlock()
 
 	b.blockPendingEvent = nil
+	b.blockStage = heartbeatpb.BlockStage_NONE
 }
 
 func (b *BlockStauts) setBlockEvent(event commonEvent.BlockEvent, blockStage heartbeatpb.BlockStage) {
@@ -195,8 +196,9 @@ func (t *ResendTask) Execute() time.Time {
 }
 
 func (t *ResendTask) Cancel() {
-	if t.dispatcher.blockStatus.blockStage == heartbeatpb.BlockStage_DONE {
-		t.dispatcher.blockStatus.blockPendingEvent = nil
+	_, blockStage := t.dispatcher.blockStatus.getEventAndStage()
+	if blockStage == heartbeatpb.BlockStage_NONE {
+		t.dispatcher.blockStatus.clear()
 	}
 	t.taskHandle.Cancel()
 }
