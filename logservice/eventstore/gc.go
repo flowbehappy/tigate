@@ -17,8 +17,8 @@ type gcRangeItem struct {
 	tableID     int64
 	// TODO: startCommitTS may be not needed now(just use 0 for every delete range maybe ok),
 	// but after split table range, it may be essential?
-	startCommitTS uint64
-	endCommitTS   uint64
+	startTs uint64
+	endTs   uint64
 }
 
 type gcManager struct {
@@ -35,11 +35,11 @@ func (d *gcManager) addGCItem(dbIndex int, uniqueKeyID uint64, tableID int64, st
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.ranges = append(d.ranges, gcRangeItem{
-		dbIndex:       dbIndex,
-		uniqueKeyID:   uniqueKeyID,
-		tableID:       tableID,
-		startCommitTS: startTS,
-		endCommitTS:   endTS,
+		dbIndex:     dbIndex,
+		uniqueKeyID: uniqueKeyID,
+		tableID:     tableID,
+		startTs:     startTS,
+		endTs:       endTS,
 	})
 }
 
@@ -66,7 +66,7 @@ func (d *gcManager) run(ctx context.Context, deleteDataRange deleteFunc) error {
 			}
 			for _, r := range ranges {
 				// TODO: delete in batch?
-				err := deleteDataRange(r.dbIndex, r.uniqueKeyID, r.tableID, r.startCommitTS, r.endCommitTS)
+				err := deleteDataRange(r.dbIndex, r.uniqueKeyID, r.tableID, r.startTs, r.endTs)
 				if err != nil {
 					// TODO: add the data range back?
 					log.Fatal("delete fail", zap.Error(err))
