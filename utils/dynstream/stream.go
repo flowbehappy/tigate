@@ -269,17 +269,20 @@ func (s *stream[A, P, T, D, H]) handleLoop(acceptedPaths []*pathInfo[A, P, T, D,
 		s.eventQueue.addPath(p)
 	}
 
-	// Declare variables eventQueueEmpty and path here to avoid repeated allocation.
-	eventQueueEmpty := false
-	eventBuf := make([]T, 0, s.option.BatchCount)
-	var zeroT T
-	cleanUpEventBuf := func() {
-		for i := range eventBuf {
-			eventBuf[i] = zeroT
+	// Variables below will be used in the Loop below.
+	// Declared here to avoid repeated allocation.
+	var (
+		eventQueueEmpty = false
+		eventBuf        = make([]T, 0, s.option.BatchCount)
+		zeroT           T
+		cleanUpEventBuf = func() {
+			for i := range eventBuf {
+				eventBuf[i] = zeroT
+			}
+			eventBuf = eventBuf[:0]
 		}
-		eventBuf = eventBuf[:0]
-	}
-	var path *pathInfo[A, P, T, D, H]
+		path *pathInfo[A, P, T, D, H]
+	)
 
 	// For testing. Don't handle events until this wait group is done.
 	if s.option.handleWait != nil {
@@ -319,7 +322,6 @@ Loop:
 				if path.blocking {
 					s.eventQueue.blockPath(path)
 				}
-				// clean up the eventBuf
 				cleanUpEventBuf()
 			}
 		}

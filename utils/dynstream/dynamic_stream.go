@@ -720,7 +720,8 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 				}
 				pi.stream.in() <- e
 			} else {
-				// Otherwise, drop the event
+				// Otherwise, drop the event. If the event is not a periodic signal,
+				// we should notify the handler that the event is dropped.
 				if eventType.Property != PeriodicSignal {
 					d.handler.OnDrop(e)
 				}
