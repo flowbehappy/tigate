@@ -505,7 +505,7 @@ func (e *eventStore) batchAndWriteEvents(ctx context.Context, db *pebble.DB, inp
 				if !ok {
 					// the dispatcher is removed?
 					log.Warn("unknown subscriptionID", zap.Uint64("subID", uint64(subID)))
-					e.dispatcherStates.RLock()
+					e.dispatcherStates.RUnlock()
 					continue
 				}
 				stat := e.dispatcherStates.m[dispatcherID]
@@ -520,11 +520,11 @@ func (e *eventStore) batchAndWriteEvents(ctx context.Context, db *pebble.DB, inp
 				if !ok {
 					// the dispatcher is removed?
 					log.Warn("unknown subscriptionID", zap.Uint64("subID", uint64(subID)))
-					e.dispatcherStates.RLock()
+					e.dispatcherStates.RUnlock()
 					continue
 				}
 				stat := e.dispatcherStates.m[dispatcherID]
-				e.dispatcherStates.RLock()
+				e.dispatcherStates.RUnlock()
 				stat.resolvedTs.Store(resolvedTs)
 				stat.notifier(resolvedTs)
 			}
