@@ -153,7 +153,8 @@ func NewDispatcher(
 // 1. If the action is a write, we need to add the ddl event to the sink for writing to downstream(async).
 // 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and wake the dispatcherEventHandler
 func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.DispatcherStatus) {
-	if d.blockStatus.blockPendingEvent == nil {
+	pendingEvent, _ := d.blockStatus.getEventAndStage()
+	if pendingEvent == nil {
 		// receive outdated status
 		// If status is about ack, ignore it.
 		// If status is about action, we need to return message show we have finished the event.
@@ -173,12 +174,12 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 
 	action := dispatcherStatus.GetAction()
 	if action != nil {
-		if action.CommitTs == d.blockStatus.blockPendingEvent.GetCommitTs() {
+		if action.CommitTs == pendingEvent.GetCommitTs() {
 			d.blockStatus.updateBlockStage(heartbeatpb.BlockStage_WRITING)
 			if action.Action == heartbeatpb.Action_Write {
-				d.sink.AddBlockEvent(d.blockStatus.blockPendingEvent, d.tableProgress)
+				d.sink.AddBlockEvent(pendingEvent, d.tableProgress)
 			} else {
-				d.sink.PassBlockEvent(d.blockStatus.blockPendingEvent, d.tableProgress)
+				d.sink.PassBlockEvent(pendingEvent, d.tableProgress)
 				dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
 				dispatcherEventDynamicStream.Wake() <- d.id
 			}
@@ -198,7 +199,7 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 	}
 
 	ack := dispatcherStatus.GetAck()
-	if ack != nil && ack.CommitTs == d.blockStatus.blockPendingEvent.GetCommitTs() {
+	if ack != nil && ack.CommitTs == pendingEvent.GetCommitTs() {
 		d.CancelResendTask()
 	}
 }
@@ -385,17 +386,18 @@ func (d *Dispatcher) reset() {
 // 1.If the event is a single table DDL, it will be added to the sink for writing to downstream(async). If the ddl leads to add new tables or drop tables, it should send heartbeat to maintainer
 // 2. If the event is a multi-table DDL / sync point Event, it will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
 func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
-	if !shouldBlock(d.blockStatus.blockPendingEvent) {
-		d.sink.AddBlockEvent(d.blockStatus.blockPendingEvent, d.tableProgress)
-		if d.blockStatus.blockPendingEvent.GetNeedAddedTables() != nil || d.blockStatus.blockPendingEvent.GetNeedDroppedTables() != nil {
+	pendingEvent, _ := d.blockStatus.getEventAndStage()
+	if !shouldBlock(pendingEvent) {
+		d.sink.AddBlockEvent(pendingEvent, d.tableProgress)
+		if pendingEvent.GetNeedAddedTables() != nil || pendingEvent.GetNeedDroppedTables() != nil {
 			d.blockStatus.setBlockEvent(event, heartbeatpb.BlockStage_DONE)
 			message := &heartbeatpb.TableSpanBlockStatus{
 				ID: d.id.ToPB(),
 				State: &heartbeatpb.State{
 					IsBlocked:         false,
-					BlockTs:           d.blockStatus.blockPendingEvent.GetCommitTs(),
-					NeedDroppedTables: d.blockStatus.blockPendingEvent.GetNeedDroppedTables().ToPB(),
-					NeedAddedTables:   commonEvent.ToTablesPB(d.blockStatus.blockPendingEvent.GetNeedAddedTables()),
+					BlockTs:           pendingEvent.GetCommitTs(),
+					NeedDroppedTables: pendingEvent.GetNeedDroppedTables().ToPB(),
+					NeedAddedTables:   commonEvent.ToTablesPB(pendingEvent.GetNeedAddedTables()),
 					IsSyncPoint:       false, // sync point event must should block
 					Stage:             heartbeatpb.BlockStage_DONE,
 				},
@@ -409,11 +411,11 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 			ID: d.id.ToPB(),
 			State: &heartbeatpb.State{
 				IsBlocked:         true,
-				BlockTs:           d.blockStatus.blockPendingEvent.GetCommitTs(),
-				NeedDroppedTables: d.blockStatus.blockPendingEvent.GetNeedDroppedTables().ToPB(),
-				NeedAddedTables:   commonEvent.ToTablesPB(d.blockStatus.blockPendingEvent.GetNeedAddedTables()),
-				UpdatedSchemas:    commonEvent.ToSchemaIDChangePB(d.blockStatus.blockPendingEvent.GetUpdatedSchemas()), // only exists for rename table and rename tables
-				IsSyncPoint:       d.blockStatus.blockPendingEvent.GetType() == commonEvent.TypeSyncPointEvent,         // sync point event must should block
+				BlockTs:           pendingEvent.GetCommitTs(),
+				NeedDroppedTables: pendingEvent.GetNeedDroppedTables().ToPB(),
+				NeedAddedTables:   commonEvent.ToTablesPB(pendingEvent.GetNeedAddedTables()),
+				UpdatedSchemas:    commonEvent.ToSchemaIDChangePB(pendingEvent.GetUpdatedSchemas()), // only exists for rename table and rename tables
+				IsSyncPoint:       pendingEvent.GetType() == commonEvent.TypeSyncPointEvent,         // sync point event must should block
 				Stage:             heartbeatpb.BlockStage_WAITING,
 			},
 		}
@@ -430,8 +432,8 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 	// So there won't be a related db-level ddl event is in dealing when we get update schema id events.
 	// Thus, whether to update schema id before or after current ddl event is not important.
 	// To make it easier, we choose to directly update schema id here.
-	if d.blockStatus.blockPendingEvent.GetUpdatedSchemas() != nil && d.tableSpan != heartbeatpb.DDLSpan {
-		for _, schemaIDChange := range d.blockStatus.blockPendingEvent.GetUpdatedSchemas() {
+	if pendingEvent.GetUpdatedSchemas() != nil && d.tableSpan != heartbeatpb.DDLSpan {
+		for _, schemaIDChange := range pendingEvent.GetUpdatedSchemas() {
 			if schemaIDChange.TableID == d.tableSpan.TableID {
 				if schemaIDChange.OldSchemaID != d.schemaID {
 					log.Error("Wrong Schema ID", zap.Any("dispatcherID", d.id), zap.Any("except schemaID", schemaIDChange.OldSchemaID), zap.Any("actual schemaID", d.schemaID), zap.Any("tableSpan", d.tableSpan.String()))
