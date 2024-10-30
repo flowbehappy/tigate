@@ -46,7 +46,7 @@ type EventStore interface {
 
 	UnregisterDispatcher(dispatcherID common.DispatcherID) error
 
-	UpdateDispatcherSendTs(dispatcherID common.DispatcherID, gcTS uint64) error
+	UpdateDispatcherSendTs(dispatcherID common.DispatcherID, sendTs uint64) error
 
 	GetDispatcherDMLEventState(dispatcherID common.DispatcherID) DMLEventState
 
@@ -461,6 +461,7 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 			if minResolvedTs == 0 {
 				continue
 			}
+			log.Info("update metrics", zap.Uint64("minResolvedTs", minResolvedTs))
 			minResolvedPhyTs := oracle.ExtractPhysical(minResolvedTs)
 			maxResolvedLag := float64(currentPhyTs-minResolvedPhyTs) / 1e3
 			metrics.EventStoreMaxResolvedTsLagGauge.Set(maxResolvedLag)
