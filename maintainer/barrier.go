@@ -104,7 +104,7 @@ func (b *Barrier) Resend() []*messaging.TargetMessage {
 
 func (b *Barrier) handleOneStatus(changefeedID string, status *heartbeatpb.TableSpanBlockStatus) *BarrierEvent {
 	dispatcherID := common.NewDispatcherIDFromPB(status.ID)
-	if status.State.EventDone {
+	if status.State.Stage == heartbeatpb.BlockStage_DONE {
 		return b.handleEventDone(changefeedID, dispatcherID, status)
 	}
 	return b.handleBlockState(changefeedID, dispatcherID, status)
