@@ -155,6 +155,7 @@ message BootstrapTableSpan {
 
 message MaintainerCloseRequest {
     string changefeedID = 1;
+    // true when remove changefeed, false when pause the changefeed.
     bool removed = 2;
 }
 
@@ -218,6 +219,7 @@ message BlockStatusRequest {
 enum ComponentState {
     Working = 0;
     Stopped = 1;
+    Removed = 2;
 }
 
 message RunningError {

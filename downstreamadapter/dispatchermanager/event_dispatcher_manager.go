@@ -184,15 +184,15 @@ func (e *EventDispatcherManager) InitSink(ctx context.Context) error {
 	return nil
 }
 
-func (e *EventDispatcherManager) TryClose() bool {
+func (e *EventDispatcherManager) TryClose(remove bool) bool {
 	if !e.closing {
 		e.closing = true
-		go e.close()
+		go e.close(remove)
 	}
 	return e.closed.Load()
 }
 
-func (e *EventDispatcherManager) close() {
+func (e *EventDispatcherManager) close(remove bool) {
 	log.Info("closing event dispatcher manager", zap.Stringer("changefeedID", e.changefeedID))
 	e.cancel()
 	e.wg.Wait()
@@ -222,7 +222,12 @@ func (e *EventDispatcherManager) close() {
 		return
 	}
 
-	e.sink.Close()
+	err = e.sink.Close()
+	if err != nil {
+		log.Error("close sink failed", zap.Error(err))
+		return
+	}
+
 	metrics.CreateDispatcherDuration.DeleteLabelValues(e.changefeedID.Namespace, e.changefeedID.ID)
 	metrics.EventDispatcherManagerCheckpointTsGauge.DeleteLabelValues(e.changefeedID.Namespace, e.changefeedID.ID)
 	metrics.EventDispatcherManagerResolvedTsGauge.DeleteLabelValues(e.changefeedID.Namespace, e.changefeedID.ID)
@@ -241,9 +246,19 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 	// NewDispatcher may called after the node is crashed or dispatcher is scheduled.
 	// When downstream is mysql-class, we could check ddl-ts table in downstream, what is the ddl-ts of this tableID,
 	// and choose max(ddl-ts, startTs) as the begin startTs.
-	startTs, err := e.sink.CheckStartTs(tableSpan.TableID, startTs)
+	newStartTs, err := e.sink.CheckStartTs(tableSpan.TableID, startTs)
 	if err != nil {
 		log.Error("check start ts failed", zap.Error(err))
+		return nil
+	}
+
+	// this table is dropped, skip it and return removed status to maintainer
+	if newStartTs == -1 {
+		e.statusesChan <- &heartbeatpb.TableSpanStatus{
+			ID:              id.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Removed,
+		}
+		log.Info("this table is dropped, skip it and return removed status to maintainer")
 		return nil
 	}
 
@@ -294,7 +309,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 	log.Info("new dispatcher created",
 		zap.String("ID", id.String()),
 		zap.Any("tableSpan", tableSpan),
-		zap.Any("startTs", startTs),
+		zap.Any("startTs", newStartTs),
 		zap.Int64("cost(ns)", time.Since(start).Nanoseconds()), zap.Time("start", start))
 	e.metricCreateDispatcherDuration.Observe(float64(time.Since(start).Seconds()))
 
