@@ -573,7 +573,7 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 
 func (c *eventBroker) updateDispatcherSendTs(ctx context.Context) {
 	c.wg.Add(1)
-	ticker := time.NewTicker(time.Second * 10)
+	ticker := time.NewTicker(time.Second * 120)
 	go func() {
 		defer c.wg.Done()
 		log.Info("update dispatcher send ts goroutine is started")
@@ -585,6 +585,7 @@ func (c *eventBroker) updateDispatcherSendTs(ctx context.Context) {
 				c.dispatchers.Range(func(key, value interface{}) bool {
 					dispatcher := value.(*dispatcherStat)
 					watermark := dispatcher.watermark.Load()
+					// FIXME: this is currently not correct
 					c.eventStore.UpdateDispatcherSendTs(dispatcher.info.GetID(), watermark)
 					return true
 				})
@@ -769,6 +770,7 @@ func newDispatcherStat(
 		dispStat.syncPointInterval = info.GetSyncPointInterval()
 	}
 	dispStat.startTs.Store(startTs)
+	dispStat.resolvedTs.Store(startTs)
 	dispStat.watermark.Store(startTs)
 	dispStat.isRunning.Store(true)
 	return dispStat

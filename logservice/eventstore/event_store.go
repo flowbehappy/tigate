@@ -335,6 +335,7 @@ func (e *eventStore) RegisterDispatcher(
 	}
 	stat.checkpointTs.Store(startTs)
 	stat.maxEventCommitTs.Store(startTs)
+	stat.resolvedTs.Store(startTs)
 	e.dispatcherStates.m[dispatcherID] = stat
 	e.dispatcherStates.n[subID] = dispatcherID
 	return nil
@@ -461,7 +462,6 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 			if minResolvedTs == 0 {
 				continue
 			}
-			log.Info("update metrics", zap.Uint64("minResolvedTs", minResolvedTs))
 			minResolvedPhyTs := oracle.ExtractPhysical(minResolvedTs)
 			maxResolvedLag := float64(currentPhyTs-minResolvedPhyTs) / 1e3
 			metrics.EventStoreMaxResolvedTsLagGauge.Set(maxResolvedLag)
