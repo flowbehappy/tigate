@@ -129,6 +129,7 @@ func createBootstrapResponse(changefeedID string, manager *dispatchermanager.Eve
 			Span:            d.GetTableSpan(),
 			ComponentStatus: d.GetComponentStatus(),
 			CheckpointTs:    d.GetCheckpointTs(),
+			BlockState:      d.GetBlockStatus(),
 		})
 	})
 

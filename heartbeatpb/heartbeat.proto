@@ -138,9 +138,10 @@ message MaintainerBootstrapResponse {
 }
 
 enum BlockStage {
-    WAITING = 0;
-    WRITING = 1;
-    DONE = 2;
+    NONE = 0;
+    WAITING = 1;
+    WRITING = 2;
+    DONE = 3;
 }
 
 message BootstrapTableSpan {
@@ -150,7 +151,6 @@ message BootstrapTableSpan {
     ComponentState component_status = 4;
     uint64 checkpoint_ts = 5;
     State block_state = 6;
-    BlockStage  block_stage = 7;
 }
 
 message MaintainerCloseRequest {
@@ -196,7 +196,7 @@ message State {
     repeated Table NeedAddedTables = 5;
     repeated SchemaIDChange UpdatedSchemas = 6;
     bool IsSyncPoint = 7;
-    bool eventDone = 8; // means whether the event is passed / write downstream
+    BlockStage stage = 8; // means whether the block is waiting / writing / done
 }
 
 message TableSpanBlockStatus {
