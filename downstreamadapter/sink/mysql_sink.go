@@ -102,6 +102,9 @@ func (s *MysqlSink) CheckStartTs(tableId int64, startTs uint64) (int64, error) {
 	return s.ddlWorker.CheckStartTs(tableId, startTs)
 }
 
-func (s *MysqlSink) Close() error {
-	return s.ddlWorker.RemoveDDLTsItem()
+func (s *MysqlSink) Close(removeDDLTsItem bool) error {
+	if removeDDLTsItem {
+		return s.ddlWorker.RemoveDDLTsItem()
+	}
+	return nil
 }

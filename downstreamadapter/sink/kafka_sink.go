@@ -187,7 +187,7 @@ func (s *KafkaSink) AddCheckpointTs(ts uint64) {
 func (s *KafkaSink) SetTableSchemaStore(tableSchemaStore *sinkutil.TableSchemaStore) {
 	s.ddlWorker.SetTableSchemaStore(tableSchemaStore)
 }
-func (s *KafkaSink) Close() error {
+func (s *KafkaSink) Close(removeDDLTsItem bool) error {
 	return nil
 }
 

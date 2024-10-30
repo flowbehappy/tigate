@@ -222,7 +222,7 @@ func (e *EventDispatcherManager) close(remove bool) {
 		return
 	}
 
-	err = e.sink.Close()
+	err = e.sink.Close(remove)
 	if err != nil {
 		log.Error("close sink failed", zap.Error(err))
 		return
