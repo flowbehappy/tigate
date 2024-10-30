@@ -39,8 +39,8 @@ type Sink interface {
 	PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress)
 	AddCheckpointTs(ts uint64)
 	SetTableSchemaStore(tableSchemaStore *sinkutil.TableSchemaStore)
-	CheckStartTs(tableId int64, startTs uint64) (uint64, error)
-	Close()
+	CheckStartTs(tableId int64, startTs uint64) (int64, error)
+	Close(removeDDLTsItem bool) error
 	SinkType() SinkType
 }
 

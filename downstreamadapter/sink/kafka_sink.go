@@ -187,9 +187,10 @@ func (s *KafkaSink) AddCheckpointTs(ts uint64) {
 func (s *KafkaSink) SetTableSchemaStore(tableSchemaStore *sinkutil.TableSchemaStore) {
 	s.ddlWorker.SetTableSchemaStore(tableSchemaStore)
 }
-func (s *KafkaSink) Close() {
+func (s *KafkaSink) Close(removeDDLTsItem bool) error {
+	return nil
 }
 
-func (s *KafkaSink) CheckStartTs(tableId int64, startTs uint64) (uint64, error) {
-	return startTs, nil
+func (s *KafkaSink) CheckStartTs(tableId int64, startTs uint64) (int64, error) {
+	return int64(startTs), nil
 }

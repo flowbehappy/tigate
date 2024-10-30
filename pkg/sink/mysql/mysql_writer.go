@@ -375,8 +375,11 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 
 }
 
-// If no ddl-ts-v1 table, or no this row, then return 0; otherwise, return the ddl-ts value
-func (w *MysqlWriter) CheckStartTs(tableID int64, startTs uint64) (uint64, error) {
+// If no ddl-ts-v1 table, return 0; -- means the downstream is new
+// If have ddl-ts-v1 table, but no row for the changefeed with tableID = 0, return 0; -- means the changefeed is new.
+// if have row for the changefeed with tableID = 0, but no this row, return -1; -- means the table is dropped.(we won't check startTs for a table before it created)
+// otherwise, return the ddl-ts value
+func (w *MysqlWriter) CheckStartTs(tableID int64, startTs uint64) (int64, error) {
 	ctx := context.Background()
 	tx, err := w.db.BeginTx(ctx, nil)
 
@@ -420,7 +423,7 @@ func (w *MysqlWriter) CheckStartTs(tableID int64, startTs uint64) (uint64, error
 		return 0, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to check ddl ts table;"))
 	}
 
-	var ddlTs uint64
+	var ddlTs int64
 	defer rows.Close()
 	if rows.Next() {
 		err := rows.Scan(&ddlTs)
@@ -430,8 +433,86 @@ func (w *MysqlWriter) CheckStartTs(tableID int64, startTs uint64) (uint64, error
 		return ddlTs, nil
 	} else {
 		// does't have this field
-		return 0, nil
+		// check whether have row for tableID = 0(table trigger event dispatcher)
+		// If changefeed has tables, it must have row for tableID = 0;
+
+		var builder strings.Builder
+		builder.WriteString("SELECT ddl_ts FROM ")
+		builder.WriteString(filter.TiCDCSystemSchema)
+		builder.WriteString(".")
+		builder.WriteString(filter.DDLTsTable)
+		builder.WriteString(" WHERE (ticdc_cluster_id, changefeed, table_id) IN (")
+
+		builder.WriteString("('")
+		builder.WriteString(ticdcClusterID)
+		builder.WriteString("', '")
+		builder.WriteString(changefeedID)
+		builder.WriteString("', ")
+		builder.WriteString(strconv.FormatInt(0, 10))
+		builder.WriteString(")")
+		builder.WriteString(")")
+		query := builder.String()
+
+		rows, err := tx.Query(query)
+		if err != nil {
+			log.Error("failed to check ddl ts table", zap.Error(err))
+			err2 := tx.Rollback()
+			if err2 != nil {
+				log.Error("failed to check ddl ts table", zap.Error(err2))
+			}
+			return 0, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to check ddl ts table;"))
+		}
+
+		defer rows.Close()
+		if rows.Next() {
+			// means has record for tableID = 0, but not for this table
+			return -1, nil
+		} else {
+			// no record for tableID = 0, means the changefeed is new.
+			return 0, nil
+		}
 	}
+}
+
+func (w *MysqlWriter) RemoveDDLTsItem() error {
+	ctx := context.Background()
+	tx, err := w.db.BeginTx(ctx, nil)
+
+	if err != nil {
+		log.Error("select ddl ts table: begin Tx fail", zap.Error(err))
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "select ddl ts table: begin Tx fail;"))
+	}
+
+	changefeedID := w.ChangefeedID.String()
+	ticdcClusterID := config.GetGlobalServerConfig().ClusterID
+
+	var builder strings.Builder
+	builder.WriteString("DELETE FROM ")
+	builder.WriteString(filter.TiCDCSystemSchema)
+	builder.WriteString(".")
+	builder.WriteString(filter.DDLTsTable)
+	builder.WriteString(" WHERE (ticdc_cluster_id, changefeed) IN (")
+
+	builder.WriteString("('")
+	builder.WriteString(ticdcClusterID)
+	builder.WriteString("', '")
+	builder.WriteString(changefeedID)
+	builder.WriteString("')")
+	builder.WriteString(")")
+	query := builder.String()
+
+	_, err = tx.Exec(query)
+	if err != nil {
+		log.Error("failed to delete ddl ts item ", zap.Error(err))
+		err2 := tx.Rollback()
+		if err2 != nil {
+			log.Error("failed to delete ddl ts item", zap.Error(err2))
+		}
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to delete ddl ts item;"))
+	}
+
+	err = tx.Commit()
+	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to delete ddl ts item;"))
 }
 
 func (w *MysqlWriter) isDDLExecuted(tableID int64, ddlTs uint64) (bool, error) {

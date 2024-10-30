@@ -98,8 +98,13 @@ func (s *MysqlSink) AddBlockEvent(event commonEvent.BlockEvent, tableProgress *t
 
 func (s *MysqlSink) AddCheckpointTs(ts uint64) {}
 
-func (s *MysqlSink) CheckStartTs(tableId int64, startTs uint64) (uint64, error) {
+func (s *MysqlSink) CheckStartTs(tableId int64, startTs uint64) (int64, error) {
 	return s.ddlWorker.CheckStartTs(tableId, startTs)
 }
 
-func (s *MysqlSink) Close() {}
+func (s *MysqlSink) Close(removeDDLTsItem bool) error {
+	if removeDDLTsItem {
+		return s.ddlWorker.RemoveDDLTsItem()
+	}
+	return nil
+}
