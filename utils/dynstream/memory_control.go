@@ -39,9 +39,9 @@ type areaMemStat[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct 
 // which is an atomic variable. Although the settings could be updated concurrently, we don't really care about the accuracy.
 func (as *areaMemStat[A, P, T, D, H]) appendEvent(path *pathInfo[A, P, T, D, H], event eventWrap[A, P, T, D, H], handler H, eventQueue *eventQueue[A, P, T, D, H]) {
 	replaced := false
-	if event.eventType.Property == RepeatedSignal {
+	if event.eventType.Property == PeriodicSignal {
 		front, ok := path.pendingQueue.FrontRef()
-		if ok && front.eventType.Property == RepeatedSignal {
+		if ok && front.eventType.Property == PeriodicSignal {
 			// Replace the repeated signal.
 			// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
 			*front = event
@@ -59,13 +59,13 @@ func (as *areaMemStat[A, P, T, D, H]) appendEvent(path *pathInfo[A, P, T, D, H],
 		if path.pendingQueue.Length() != 0 {
 			dropped = true
 			// Drop the event after the pending size exceeds the limit.
-			if event.eventType.Property != RepeatedSignal {
+			if event.eventType.Property != PeriodicSignal {
 				handler.OnDrop(event.event)
 			}
 		} else if top, ok := path.streamAreaInfo.timestampHeap.PeekTop(); ok && event.timestamp > top.frontTimestamp {
 			dropped = true
 			// Drop the event after the pending size exceeds the limit.
-			if event.eventType.Property != RepeatedSignal {
+			if event.eventType.Property != PeriodicSignal {
 				handler.OnDrop(event.event)
 			}
 		}

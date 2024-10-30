@@ -45,15 +45,14 @@ type command struct {
 type addPathCmd[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	settings AreaSettings
 
-	paths  []PathAndDest[P, D]
-	pis    []*pathInfo[A, P, T, D, H]
-	errors []error
+	path PathAndDest[P, D]
+	pi   *pathInfo[A, P, T, D, H]
+	err  error
 }
 
 type removePathCmd[P Path] struct {
-	paths      []P
-	existPaths []P
-	errors     []error
+	path P
+	err  error
 }
 
 type arrangeStreamCmd[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
@@ -77,21 +76,21 @@ type streamInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 }
 
 func (si *streamInfo[A, P, T, D, H]) runtime() time.Duration {
-	return si.streamStat.totalTime
+	return si.streamStat.processingTime
 }
 
 func (si *streamInfo[A, P, T, D, H]) busyRatio(period time.Duration) float64 {
-	if si.streamStat.totalTime == 0 {
+	if si.streamStat.processingTime == 0 {
 		return 0
 	}
 	if period != 0 {
-		return float64(si.streamStat.totalTime) / float64(period)
+		return float64(si.streamStat.processingTime) / float64(period)
 	}
-	return float64(si.streamStat.totalTime) / float64(si.streamStat.period)
+	return float64(si.streamStat.processingTime) / float64(si.streamStat.elapsedTime)
 }
 
 func (si *streamInfo[A, P, T, D, H]) period() time.Duration {
-	return si.streamStat.period
+	return si.streamStat.elapsedTime
 }
 
 type sortedSIs[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] []*streamInfo[A, P, T, D, H]
@@ -114,18 +113,18 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 	trackTopPaths   int
 	baseStreamCount int
 
-	handler H
+	handler H // handler of the dynamic stream, all the events are finally passed to the handler
 	option  Option
 
 	memControl *memControl[A, P, T, D, H]
 
 	eventChan    chan T                 // The channel to receive the incoming events by distributor
 	wakeChan     chan P                 // The channel to receive the wake signal by distributor
-	feedbackChan chan Feedback[A, P, D] // The channel to receive the feedback by outside listener
+	feedbackChan chan Feedback[A, P, D] // The channel to report the feedback to outside listener
 
 	reportChan chan streamStat[A, P, T, D, H] // The channel to receive the report by scheduler
-	cmdToSchd  chan *command                  // Send the commands to the scheduler
-	cmdToDist  chan *command                  // Send the commands to the distributor
+	cmdToSched chan *command                  // The channel to send the commands to the scheduler
+	cmdToDist  chan *command                  // The channel to send the commands to the distributor
 
 	// The streams to handle the events. Only used in the scheduler.
 	// We put it here mainly to make the tests easier.
@@ -133,8 +132,8 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 
 	hasClosed atomic.Bool
 
-	schdDone sync.WaitGroup
-	distDone sync.WaitGroup
+	schedWg sync.WaitGroup
+	distWg  sync.WaitGroup
 
 	eventExtraSize int
 	startTime      time.Time
@@ -163,7 +162,7 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 		wakeChan:  make(chan P, 1024),
 
 		reportChan: make(chan streamStat[A, P, T, D, H], 64),
-		cmdToSchd:  make(chan *command, 64),
+		cmdToSched: make(chan *command, 64),
 		cmdToDist:  make(chan *command, option.StreamCount),
 
 		streamInfos:    make([]*streamInfo[A, P, T, D, H], 0, option.StreamCount),
@@ -190,27 +189,27 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) Feedback() <-chan Feedback[A, P, D] {
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Start() {
-	d.schdDone.Add(1)
+	d.schedWg.Add(1)
 	go d.scheduler()
-	d.distDone.Add(1)
+	d.distWg.Add(1)
 	go d.distributor()
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) Close() {
 	if d.hasClosed.CompareAndSwap(false, true) {
-		close(d.cmdToSchd)
+		close(d.cmdToSched)
 		if d.feedbackChan != nil {
 			close(d.feedbackChan)
 		}
 	}
-	d.schdDone.Wait()
+	d.schedWg.Wait()
 }
 
-func (d *dynamicStreamImpl[A, P, T, D, H]) addPaths(settings AreaSettings, paths ...PathAndDest[P, D]) []error {
+func (d *dynamicStreamImpl[A, P, T, D, H]) addPath(settings AreaSettings, path PathAndDest[P, D]) error {
 	settings.fix()
 	add := &addPathCmd[A, P, T, D, H]{
 		settings: settings,
-		paths:    paths,
+		path:     path,
 	}
 	cmd := &command{
 		cmdType: typeAddPath,
@@ -218,10 +217,10 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) addPaths(settings AreaSettings, paths
 		wg:      &sync.WaitGroup{},
 	}
 
-	cmd.wg.Add(2) // need to wait for both scheduler and distributor
-	d.cmdToSchd <- cmd
+	cmd.wg.Add(2) // need to wait for both scheduler and distributor to finish the command
+	d.cmdToSched <- cmd
 	cmd.wg.Wait()
-	return add.errors
+	return add.err
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) AddPath(path P, dest D, settings ...AreaSettings) error {
@@ -229,15 +228,11 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) AddPath(path P, dest D, settings ...A
 	if len(settings) != 0 {
 		s = settings[0]
 	}
-	errors := d.addPaths(s, PathAndDest[P, D]{Path: path, Dest: dest})
-	if len(errors) != 0 {
-		return errors[0]
-	}
-	return nil
+	return d.addPath(s, PathAndDest[P, D]{Path: path, Dest: dest})
 }
 
-func (d *dynamicStreamImpl[A, P, T, D, H]) removePaths(paths ...P) []error {
-	remove := &removePathCmd[P]{paths: paths}
+func (d *dynamicStreamImpl[A, P, T, D, H]) removePath(path P) error {
+	remove := &removePathCmd[P]{path: path}
 	cmd := &command{
 		cmdType: typeRemovePath,
 		cmd:     remove,
@@ -245,17 +240,13 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) removePaths(paths ...P) []error {
 	}
 
 	cmd.wg.Add(2) // need to wait for both scheduler and distributor
-	d.cmdToSchd <- cmd
+	d.cmdToSched <- cmd
 	cmd.wg.Wait()
-	return remove.errors
+	return remove.err
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) RemovePath(path P) error {
-	errs := d.removePaths(path)
-	if len(errs) != 0 {
-		return errs[0]
-	}
-	return nil
+	return d.removePath(path)
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) SetAreaSettings(area A, settings AreaSettings) {
@@ -274,20 +265,20 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) reportAndSchedule(rule ruleType, peri
 		wg:      &sync.WaitGroup{},
 	}
 	cmd.wg.Add(2)
-	d.cmdToSchd <- cmd
+	d.cmdToSched <- cmd
 	cmd.wg.Wait()
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 	defer func() {
 		close(d.cmdToDist)
-		d.distDone.Wait()
+		d.distWg.Wait()
 
 		for _, si := range d.streamInfos {
 			si.stream.close()
 		}
 
-		d.schdDone.Done()
+		d.schedWg.Done()
 	}()
 
 	nextStreamId := 0
@@ -295,15 +286,16 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 
 	createStream := func() *stream[A, P, T, D, H] {
 		nextStreamId++
-		return newStream[A, P, T, D, H](nextStreamId, d.handler, d.reportChan, d.trackTopPaths, d.option)
+		return newStream(nextStreamId, d.handler, d.reportChan, d.trackTopPaths, d.option)
 	}
 	nextStream := func() *streamInfo[A, P, T, D, H] {
 		// We use round-robin to assign the paths to the streams
 		s := d.streamInfos[nextStreamIndex.Next()]
 		return s
 	}
+
 	genStreamInfoMap := func(sis []*streamInfo[A, P, T, D, H]) map[int]*streamInfo[A, P, T, D, H] {
-		m := make(map[int]*streamInfo[A, P, T, D, H], len(d.streamInfos))
+		m := make(map[int]*streamInfo[A, P, T, D, H], len(sis))
 		for _, si := range sis {
 			m[si.stream.id] = si
 		}
@@ -327,7 +319,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 	globalPathMap := make(map[P]*pathInfo[A, P, T, D, H])
 
 	doSchedule := func(rule ruleType, testPeriod time.Duration, wg *sync.WaitGroup) {
-		// The goal of scheduler is to balance the load of the streams, with mimimum changes.
+		// The goal of scheduler is to balance the load of the streams, with minimum changes.
 		// First of all, we have consistent number (baseStreamCount) of basic streams, and unlimited number of solo streams.
 		// They are all in the d.streamInfos. The first baseStreamCount streams are the basic streams, and the rest are solo streams.
 		// When a path is added, it is assigned to a basic stream with round-robin strategy. It could be imbalance, but we balance it
@@ -622,82 +614,55 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 	ticker := time.NewTicker(d.option.SchedulerInterval)
 	for {
 		select {
-		case cmd, ok := <-d.cmdToSchd:
+		case cmd, ok := <-d.cmdToSched:
 			if !ok {
 				return
 			}
 			switch cmd.cmdType {
 			case typeAddPath:
 				add := cmd.cmd.(*addPathCmd[A, P, T, D, H])
-				add.pis = make([]*pathInfo[A, P, T, D, H], 0, len(add.paths))
-				errors := make([]error, 0, len(add.paths))
-				hasError := false
-				for _, pd := range add.paths {
-					if _, ok := globalPathMap[pd.Path]; ok {
-						errors = append(errors, NewAppErrorS(ErrorTypeDuplicate))
-						hasError = true
-					} else {
-						area := d.handler.GetArea(pd.Path, pd.Dest)
-						pi := newPathInfo[A, P, T, D, H](area, pd.Path, pd.Dest)
-						si := nextStream()
-						pi.stream = si.stream
-						si.pathMap[pi] = struct{}{}
-						globalPathMap[pd.Path] = pi
-
-						add.pis = append(add.pis, pi)
-						errors = append(errors, nil)
-					}
-				}
-
-				if hasError {
-					add.errors = errors
+				path := add.path.Path
+				if _, ok := globalPathMap[path]; ok {
+					add.err = NewAppErrorS(ErrorTypeDuplicate)
+				} else {
+					area := d.handler.GetArea(path, add.path.Dest)
+					pi := newPathInfo[A, P, T, D, H](area, path, add.path.Dest)
+					si := nextStream()
+					pi.stream = si.stream
+					si.pathMap[pi] = struct{}{}
+					globalPathMap[path] = pi
+					add.pi = pi
 				}
 				cmd.wg.Done()
-
 				d.cmdToDist <- cmd
 			case typeRemovePath:
 				remove := cmd.cmd.(*removePathCmd[P])
-				remove.existPaths = make([]P, 0, len(remove.paths))
-				errors := make([]error, 0, len(remove.paths))
-				hasError := false
-				e := NewAppErrorS(ErrorTypeNotExist)
-
-				for _, p := range remove.paths {
-					pi, ok := globalPathMap[p]
-					if !ok {
-						errors = append(errors, e)
-						hasError = true
-					} else {
-						// Here we iterate all the streams to remove the path.
-						// It is not the most efficient, but the number of streams is small.
-						// And we don't want to keep a reverse map from path to stream, as it is too complex.
-						//
-						// Note that we cannot get the stream from the pathInfo as follow. Because pathInfo.stream
-						// is updated by the distributor. And the distributor is not guaranteed to finish the update.
-						//   delete(streamInfoMap[pi.stream.id].pathMap, pi)
-						for _, si := range d.streamInfos {
-							delete(si.pathMap, pi)
-						}
-						delete(globalPathMap, p)
-
-						remove.existPaths = append(remove.existPaths, p)
-						errors = append(errors, nil)
-
-						// If it is a solo path, we don't need to remove the empty solo stream in here.
-						// The empty solo stream will be removed in the removeSoloPath rule.
+				path := remove.path
+				err := NewAppErrorS(ErrorTypeNotExist)
+				pi, ok := globalPathMap[path]
+				if !ok {
+					remove.err = err
+				} else {
+					// Here we iterate all the streams to remove the path.
+					// It is not the most efficient, but the number of streams is small.
+					// And we don't want to keep a reverse map from path to stream, as it is too complex.
+					//
+					// Note that we cannot get the stream from the pathInfo as follow. Because pathInfo.stream
+					// is updated by the distributor. And the distributor is not guaranteed to finish the update.
+					//   delete(streamInfoMap[pi.stream.id].pathMap, pi)
+					for _, si := range d.streamInfos {
+						delete(si.pathMap, pi)
 					}
-				}
-				if hasError {
-					remove.errors = errors
+					delete(globalPathMap, path)
+					// If it is a solo path, we don't need to remove the empty solo stream in here.
+					// The empty solo stream will be removed in the removeSoloPath rule.
 				}
 				cmd.wg.Done()
-
 				// We send the command to distributor even if some paths don't exist, to remove the existed paths in the distributor.
 				d.cmdToDist <- cmd
 			case typeReportAndSchedule:
 				// Make all the streams to report the statistics and do the schedule
 				// Only used by tests
-
 				reportAndSchedule := cmd.cmd.(*reportAndScheduleCmd)
 				for _, si := range d.streamInfos {
 					si.stream.reportNow <- struct{}{}
@@ -732,7 +697,7 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
-	defer d.distDone.Done()
+	defer d.distWg.Done()
 
 	pathMap := make(map[P]*pathInfo[A, P, T, D, H])
 
@@ -755,8 +720,9 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 				}
 				pi.stream.in() <- e
 			} else {
-				// Otherwise, drop the event
-				if eventType.Property != RepeatedSignal {
+				// Otherwise, drop the event. If the event is not a periodic signal,
+				// we should notify the handler that the event is dropped.
+				if eventType.Property != PeriodicSignal {
 					d.handler.OnDrop(e)
 				}
 			}
@@ -772,34 +738,36 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) distributor() {
 			switch cmd.cmdType {
 			case typeAddPath:
 				add := cmd.cmd.(*addPathCmd[A, P, T, D, H])
-				for _, pi := range add.pis {
-					if _, ok := pathMap[pi.path]; ok {
-						panic(fmt.Sprintf("Path %v already exists in distributor", pi.path))
+				// We don't need to add the path in distributor if there was an error
+				// occurred in the scheduler.
+				if add.err == nil {
+					path := add.pi.path
+					if _, ok := pathMap[path]; ok {
+						panic(fmt.Sprintf("Path %v already exists in distributor", path))
 					}
-					pathMap[pi.path] = pi
+					pathMap[path] = add.pi
 					if d.memControl != nil {
-						d.memControl.addPathToArea(pi, add.settings, d.feedbackChan)
+						d.memControl.addPathToArea(add.pi, add.settings, d.feedbackChan)
 					}
-					// Note that we don't need to add the path to the stream here.
-					// Because a path will be added to a stream automatically when the first event is received.
 				}
 				cmd.wg.Done()
 			case typeRemovePath:
 				remove := cmd.cmd.(*removePathCmd[P])
-				for _, p := range remove.existPaths {
-					pi, ok := pathMap[p]
+				// We don't need to remove the path in distributor if there was an error
+				// occurred in the scheduler.
+				if remove.err == nil {
+					path := remove.path
+					pi, ok := pathMap[path]
 					if ok {
 						pi.removed = true
-						delete(pathMap, p)
-
+						delete(pathMap, path)
 						// The removal of the path from the memory control is done in the stream where the path belongs to.
 						// We cannot remove the path from the memory control here, because the stream is updating the memory control with the path.
-
 						// Send an empty event to the stream to notify the stream to remove the path
 						pi.stream.in() <- eventWrap[A, P, T, D, H]{pathInfo: pi}
 						// Don't close the stream here. The stream is processing other paths.
 					} else {
-						panic(fmt.Sprintf("Path %v doesn't exist in distributor", p))
+						panic(fmt.Sprintf("Path %v doesn't exist in distributor", path))
 					}
 				}
 				cmd.wg.Done()

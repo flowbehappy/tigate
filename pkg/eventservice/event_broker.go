@@ -312,9 +312,9 @@ func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 		msgType: pevent.TypeHandshakeEvent,
 		postSendFunc: func() {
 			task.dispatcherStat.isInitialized.Store(true)
-			log.Info("handshake event sent to dispatcher", zap.Stringer("dispatcher", task.dispatcherStat.info.GetID()))
 		},
 	}
+	log.Info("send handshake event to dispatcher", zap.Uint64("seq", wrapE.e.(*pevent.HandshakeEvent).Seq), zap.Stringer("dispatcher", task.dispatcherStat.info.GetID()))
 	c.messageCh <- wrapE
 }
 

@@ -250,6 +250,9 @@ func (m *mockSchemaStore) GetTableInfo(tableID common.TableID, ts common.Ts) (*c
 	idx := sort.Search(len(infos), func(i int) bool {
 		return infos[i].UpdateTS > uint64(ts)
 	})
+	if idx == 0 {
+		return nil, nil
+	}
 	return infos[idx-1], nil
 }
 

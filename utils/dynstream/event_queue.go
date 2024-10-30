@@ -6,7 +6,7 @@ import (
 	"github.com/flowbehappy/tigate/utils/heap"
 )
 
-// The path node order by timestamp.
+// timestampPathNode is order by timestamp.
 type timestampPathNode[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] pathInfo[A, P, T, D, H]
 
 func (n *timestampPathNode[A, P, T, D, H]) updateFrontTimestamp() {
@@ -19,17 +19,17 @@ func (n *timestampPathNode[A, P, T, D, H]) updateFrontTimestamp() {
 }
 
 func (n *timestampPathNode[A, P, T, D, H]) SetHeapIndex(index int) {
-	(*pathInfo[A, P, T, D, H])(n).timestampHeapIndex = index
+	n.timestampHeapIndex = index
 }
 func (n *timestampPathNode[A, P, T, D, H]) GetHeapIndex() int {
-	return (*pathInfo[A, P, T, D, H])(n).timestampHeapIndex
+	return n.timestampHeapIndex
 }
 
 func (n *timestampPathNode[A, P, T, D, H]) LessThan(other *timestampPathNode[A, P, T, D, H]) bool {
 	return n.frontTimestamp < other.frontTimestamp
 }
 
-// The path node order by queue time.
+// queuePathNode is order by queue time.
 type queuePathNode[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] pathInfo[A, P, T, D, H]
 
 func (n *queuePathNode[A, P, T, D, H]) updateFrontQueueTime() {
@@ -42,23 +42,24 @@ func (n *queuePathNode[A, P, T, D, H]) updateFrontQueueTime() {
 }
 
 func (n *queuePathNode[A, P, T, D, H]) SetHeapIndex(index int) {
-	(*pathInfo[A, P, T, D, H])(n).queueTimeHeapIndex = index
+	n.queueTimeHeapIndex = index
 }
 func (n *queuePathNode[A, P, T, D, H]) GetHeapIndex() int {
-	return (*pathInfo[A, P, T, D, H])(n).queueTimeHeapIndex
+	return n.queueTimeHeapIndex
 }
 func (n *queuePathNode[A, P, T, D, H]) LessThan(other *queuePathNode[A, P, T, D, H]) bool {
 	return n.frontQueueTime.Before(other.frontQueueTime)
 }
 
+// pathSizeStat is order by pending size.
 type pathSizeStat[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] pathInfo[A, P, T, D, H]
 
 func (p *pathSizeStat[A, P, T, D, H]) SetHeapIndex(index int) {
-	(*pathInfo[A, P, T, D, H])(p).sizeHeapIndex = index
+	p.sizeHeapIndex = index
 }
 
 func (p *pathSizeStat[A, P, T, D, H]) GetHeapIndex() int {
-	return (*pathInfo[A, P, T, D, H])(p).sizeHeapIndex
+	return p.sizeHeapIndex
 }
 
 func (p *pathSizeStat[A, P, T, D, H]) LessThan(other *pathSizeStat[A, P, T, D, H]) bool {
@@ -116,6 +117,7 @@ func newEventQueue[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](optio
 		option:              option,
 		areaMap:             make(map[A]*streamAreaInfo[A, P, T, D, H]),
 		eventQueueTimeQueue: heap.NewHeap[*streamAreaInfo[A, P, T, D, H]](),
+		handler:             handler,
 	}
 }
 
@@ -199,9 +201,9 @@ func (q *eventQueue[A, P, T, D, H]) appendEvent(event eventWrap[A, P, T, D, H]) 
 	} else {
 		// Shortcut when memory control is disabled.
 		replaced := false
-		if event.eventType.Property == RepeatedSignal {
+		if event.eventType.Property == PeriodicSignal {
 			front, ok := path.pendingQueue.FrontRef()
-			if ok && front.eventType.Property == RepeatedSignal {
+			if ok && front.eventType.Property == PeriodicSignal {
 				// Replace the repeated signal.
 				// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
 				*front = event
@@ -249,7 +251,7 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 				path.pendingQueue.PopFront()
 				path.pendingSize -= front.eventSize
 
-				if front.eventType.Property == NotBatchable {
+				if front.eventType.Property == NonBatchable {
 					break
 				}
 			}
@@ -265,9 +267,9 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 }
 
 func (q *eventQueue[A, P, T, D, H]) blockPath(path *pathInfo[A, P, T, D, H]) {
-	q.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D, H])(path))
+	q.updateHeapAfterUpdatePath(path)
 }
 
 func (q *eventQueue[A, P, T, D, H]) wakePath(path *pathInfo[A, P, T, D, H]) {
-	q.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D, H])(path))
+	q.updateHeapAfterUpdatePath(path)
 }
