@@ -88,7 +88,6 @@ type Dispatcher struct {
 
 	resolvedTs *TsWithMutex // 用来记 中目前收到的 event 中收到的最大的 commitTs - 1,不代表 dispatcher 的 checkpointTs
 
-	//blockPendingEvent commonEvent.BlockEvent
 	blockStatus BlockStauts
 
 	isRemoving atomic.Bool
@@ -106,11 +105,6 @@ type Dispatcher struct {
 	// isReady is used to indicate whether the dispatcher is ready.
 	// If false, the dispatcher will drop the event it received.
 	isReady atomic.Bool
-}
-
-type BlockStauts struct {
-	blockPendingEvent commonEvent.BlockEvent
-	state             *heartbeatpb.State
 }
 
 func NewDispatcher(
@@ -135,7 +129,7 @@ func NewDispatcher(
 		resolvedTs:            newTsWithMutex(startTs),
 		filter:                filter,
 		isRemoving:            atomic.Bool{},
-		blockPendingEvent:     nil,
+		blockStatus:           BlockStauts{blockPendingEvent: nil},
 		tableProgress:         types.NewTableProgress(),
 		schemaID:              schemaID,
 		schemaIDToDispatchers: schemaIDToDispatchers,
@@ -170,7 +164,7 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 					IsBlocked:   true,
 					BlockTs:     dispatcherStatus.GetAction().CommitTs,
 					IsSyncPoint: dispatcherStatus.GetAction().IsSyncPoint,
-					EventDone:   true,
+					Stage:       heartbeatpb.BlockStage_DONE,
 				},
 			}
 		}
@@ -179,28 +173,32 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 
 	action := dispatcherStatus.GetAction()
 	if action != nil {
-		if action.CommitTs == d.blockPendingEvent.GetCommitTs() {
+		if action.CommitTs == d.blockStatus.blockPendingEvent.GetCommitTs() {
+			d.blockStatus.updateBlockStage(heartbeatpb.BlockStage_WRITING)
 			if action.Action == heartbeatpb.Action_Write {
-				d.sink.AddBlockEvent(d.blockPendingEvent, d.tableProgress)
+				d.sink.AddBlockEvent(d.blockStatus.blockPendingEvent, d.tableProgress)
 			} else {
-				d.sink.PassBlockEvent(d.blockPendingEvent, d.tableProgress)
+				d.sink.PassBlockEvent(d.blockStatus.blockPendingEvent, d.tableProgress)
 				dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
 				dispatcherEventDynamicStream.Wake() <- d.id
 			}
 		}
+
 		d.blockStatusesChan <- &heartbeatpb.TableSpanBlockStatus{
 			ID: d.id.ToPB(),
 			State: &heartbeatpb.State{
 				IsBlocked:   true,
 				BlockTs:     dispatcherStatus.GetAction().CommitTs,
 				IsSyncPoint: dispatcherStatus.GetAction().IsSyncPoint,
-				EventDone:   true,
+				Stage:       heartbeatpb.BlockStage_DONE,
 			},
 		}
+
+		d.blockStatus.clear()
 	}
 
 	ack := dispatcherStatus.GetAck()
-	if ack != nil && ack.CommitTs == d.blockPendingEvent.GetCommitTs() {
+	if ack != nil && ack.CommitTs == d.blockStatus.blockPendingEvent.GetCommitTs() {
 		d.CancelResendTask()
 	}
 }
@@ -387,37 +385,36 @@ func (d *Dispatcher) reset() {
 // 1.If the event is a single table DDL, it will be added to the sink for writing to downstream(async). If the ddl leads to add new tables or drop tables, it should send heartbeat to maintainer
 // 2. If the event is a multi-table DDL / sync point Event, it will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
 func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
-	d.blockPendingEvent = event
-	if !shouldBlock(d.blockPendingEvent) {
-		d.sink.AddBlockEvent(d.blockPendingEvent, d.tableProgress)
-		if d.blockPendingEvent.GetNeedAddedTables() != nil || d.blockPendingEvent.GetNeedDroppedTables() != nil {
+	if !shouldBlock(d.blockStatus.blockPendingEvent) {
+		d.sink.AddBlockEvent(d.blockStatus.blockPendingEvent, d.tableProgress)
+		if d.blockStatus.blockPendingEvent.GetNeedAddedTables() != nil || d.blockStatus.blockPendingEvent.GetNeedDroppedTables() != nil {
+			d.blockStatus.setBlockEvent(event, heartbeatpb.BlockStage_DONE)
 			message := &heartbeatpb.TableSpanBlockStatus{
 				ID: d.id.ToPB(),
 				State: &heartbeatpb.State{
 					IsBlocked:         false,
-					BlockTs:           d.blockPendingEvent.GetCommitTs(),
-					NeedDroppedTables: d.blockPendingEvent.GetNeedDroppedTables().ToPB(),
-					NeedAddedTables:   commonEvent.ToTablesPB(d.blockPendingEvent.GetNeedAddedTables()),
+					BlockTs:           d.blockStatus.blockPendingEvent.GetCommitTs(),
+					NeedDroppedTables: d.blockStatus.blockPendingEvent.GetNeedDroppedTables().ToPB(),
+					NeedAddedTables:   commonEvent.ToTablesPB(d.blockStatus.blockPendingEvent.GetNeedAddedTables()),
 					IsSyncPoint:       false, // sync point event must should block
-					EventDone:         false,
+					Stage:             heartbeatpb.BlockStage_DONE,
 				},
 			}
 			d.SetResendTask(newResendTask(message, d))
 			d.blockStatusesChan <- message
 		}
 	} else {
-		log.Info("Send block event to maintainer")
+		d.blockStatus.setBlockEvent(event, heartbeatpb.BlockStage_WAITING)
 		message := &heartbeatpb.TableSpanBlockStatus{
 			ID: d.id.ToPB(),
 			State: &heartbeatpb.State{
 				IsBlocked:         true,
-				BlockTs:           d.blockPendingEvent.GetCommitTs(),
-				BlockTables:       d.blockPendingEvent.GetBlockedTables().ToPB(),
-				NeedDroppedTables: d.blockPendingEvent.GetNeedDroppedTables().ToPB(),
-				NeedAddedTables:   commonEvent.ToTablesPB(d.blockPendingEvent.GetNeedAddedTables()),
-				UpdatedSchemas:    commonEvent.ToSchemaIDChangePB(d.blockPendingEvent.GetUpdatedSchemas()), // only exists for rename table and rename tables
-				IsSyncPoint:       d.blockPendingEvent.GetType() == commonEvent.TypeSyncPointEvent,
-				EventDone:         false,
+				BlockTs:           d.blockStatus.blockPendingEvent.GetCommitTs(),
+				NeedDroppedTables: d.blockStatus.blockPendingEvent.GetNeedDroppedTables().ToPB(),
+				NeedAddedTables:   commonEvent.ToTablesPB(d.blockStatus.blockPendingEvent.GetNeedAddedTables()),
+				UpdatedSchemas:    commonEvent.ToSchemaIDChangePB(d.blockStatus.blockPendingEvent.GetUpdatedSchemas()), // only exists for rename table and rename tables
+				IsSyncPoint:       d.blockStatus.blockPendingEvent.GetType() == commonEvent.TypeSyncPointEvent,         // sync point event must should block
+				Stage:             heartbeatpb.BlockStage_WAITING,
 			},
 		}
 		d.SetResendTask(newResendTask(message, d))
@@ -433,8 +430,8 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 	// So there won't be a related db-level ddl event is in dealing when we get update schema id events.
 	// Thus, whether to update schema id before or after current ddl event is not important.
 	// To make it easier, we choose to directly update schema id here.
-	if d.blockPendingEvent.GetUpdatedSchemas() != nil && d.tableSpan != heartbeatpb.DDLSpan {
-		for _, schemaIDChange := range d.blockPendingEvent.GetUpdatedSchemas() {
+	if d.blockStatus.blockPendingEvent.GetUpdatedSchemas() != nil && d.tableSpan != heartbeatpb.DDLSpan {
+		for _, schemaIDChange := range d.blockStatus.blockPendingEvent.GetUpdatedSchemas() {
 			if schemaIDChange.TableID == d.tableSpan.TableID {
 				if schemaIDChange.OldSchemaID != d.schemaID {
 					log.Error("Wrong Schema ID", zap.Any("dispatcherID", d.id), zap.Any("except schemaID", schemaIDChange.OldSchemaID), zap.Any("actual schemaID", d.schemaID), zap.Any("tableSpan", d.tableSpan.String()))
@@ -565,6 +562,31 @@ func (d *Dispatcher) GetComponentStatus() heartbeatpb.ComponentState {
 
 func (d *Dispatcher) GetRemovingStatus() bool {
 	return d.isRemoving.Load()
+}
+
+func (d *Dispatcher) GetBlockStatus() *heartbeatpb.State {
+	pendingEvent, blockStage := d.blockStatus.getEventAndStage()
+
+	if pendingEvent == nil || !shouldBlock(pendingEvent) {
+		return nil
+	}
+
+	// we only need to report the block status of these block ddls when maintainer is restarted.
+	// For the non-block but with needDroppedTables and needAddTables ddls,
+	// we don't need to report it when maintainer is restarted, because:
+	// 1. the ddl not block other dispatchers
+	// 2. maintainer can get current available tables based on table trigger event dispatcher's startTs,
+	//    so don't need to do extra add and drop actions.
+
+	return &heartbeatpb.State{
+		IsBlocked:         true,
+		BlockTs:           pendingEvent.GetCommitTs(),
+		NeedDroppedTables: pendingEvent.GetNeedDroppedTables().ToPB(),
+		NeedAddedTables:   commonEvent.ToTablesPB(pendingEvent.GetNeedAddedTables()),
+		UpdatedSchemas:    commonEvent.ToSchemaIDChangePB(pendingEvent.GetUpdatedSchemas()), // only exists for rename table and rename tables
+		IsSyncPoint:       pendingEvent.GetType() == commonEvent.TypeSyncPointEvent,         // sync point event must should block
+		Stage:             blockStage,
+	}
 }
 
 func (d *Dispatcher) CollectDispatcherHeartBeatInfo(h *HeartBeatInfo) {

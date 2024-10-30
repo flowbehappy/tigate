@@ -26,6 +26,40 @@ import (
 	"go.uber.org/zap"
 )
 
+type BlockStauts struct {
+	mutex             sync.Mutex
+	blockPendingEvent commonEvent.BlockEvent
+	blockStage        heartbeatpb.BlockStage
+}
+
+func (b *BlockStauts) clear() {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	b.blockPendingEvent = nil
+}
+
+func (b *BlockStauts) setBlockEvent(event commonEvent.BlockEvent, blockStage heartbeatpb.BlockStage) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	b.blockPendingEvent = event
+	b.blockStage = blockStage
+}
+
+func (b *BlockStauts) updateBlockStage(blockStage heartbeatpb.BlockStage) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	b.blockStage = blockStage
+}
+
+func (b *BlockStauts) getEventAndStage() (commonEvent.BlockEvent, heartbeatpb.BlockStage) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	return b.blockPendingEvent, b.blockStage
+}
+
 type SchemaIDToDispatchers struct {
 	mutex sync.RWMutex
 	m     map[int64]map[common.DispatcherID]interface{}
@@ -161,6 +195,9 @@ func (t *ResendTask) Execute() time.Time {
 }
 
 func (t *ResendTask) Cancel() {
+	if t.dispatcher.blockStatus.blockStage == heartbeatpb.BlockStage_DONE {
+		t.dispatcher.blockStatus.blockPendingEvent = nil
+	}
 	t.taskHandle.Cancel()
 }
 
