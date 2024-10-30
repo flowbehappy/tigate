@@ -85,7 +85,7 @@ func (m *SpanHashMap[T]) Range(iterator ItemIterator[T]) {
 }
 
 // HashTableSpan hashes the given span to a slot offset.
-func HashTableSpan(span heartbeatpb.TableSpan, slots int) int {
+func HashTableSpan(span *heartbeatpb.TableSpan, slots int) int {
 	b := make([]byte, 8+len(span.StartKey))
 	binary.LittleEndian.PutUint64(b[0:8], uint64(span.TableID))
 	copy(b[8:], span.StartKey)

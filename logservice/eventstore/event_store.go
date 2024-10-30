@@ -16,7 +16,6 @@ import (
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
 	"github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/flowbehappy/tigate/utils"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -29,9 +28,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type EventObserver func(commitTs uint64)
-
-type WatermarkNotifier func(watermark uint64)
+type ResolvedTsNotifier func(watermark uint64)
 
 type EventStore interface {
 	Name() string
@@ -40,32 +37,25 @@ type EventStore interface {
 
 	Close(ctx context.Context) error
 
-	// add a callback to be called when a new event is added to the store;
-	// but for old data this is not feasiable? may we can just return a current watermark when register
 	RegisterDispatcher(
 		dispatcherID common.DispatcherID,
 		span *heartbeatpb.TableSpan,
 		startTS uint64,
-		observer EventObserver,
-		notifier WatermarkNotifier,
+		notifier ResolvedTsNotifier,
 	) error
 
-	UpdateDispatcherSendTs(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, gcTS uint64) error
+	UnregisterDispatcher(dispatcherID common.DispatcherID) error
 
-	UnregisterDispatcher(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) error
+	UpdateDispatcherSendTs(dispatcherID common.DispatcherID, sendTs uint64) error
 
-	// TODO: maybe we can remove span
-	// Currently not used, when we can get dispatcher just be dispatcherID, we can try use it again.
-	// Because find by span is really time consuming, and will make latency more high.
-	// GetDispatcherDMLEventState(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) DMLEventState
+	GetDispatcherDMLEventState(dispatcherID common.DispatcherID) DMLEventState
 
-	// TODO: ignore large txn now, so we can read all transactions of the same commit ts at one time
-	// (startCommitTS, endCommitTS]?
+	// return an iterator which scan the data in ts range (dataRange.StartTs, dataRange.EndTs]
 	GetIterator(dispatcherID common.DispatcherID, dataRange common.DataRange) (EventIterator, error)
 }
 
 type DMLEventState struct {
-	ResolvedTs       uint64
+	// ResolvedTs       uint64
 	MaxEventCommitTs uint64
 }
 
@@ -86,44 +76,37 @@ const (
 
 type eventWithState struct {
 	eventType
-	raw     *common.RawKVEntry
-	subID   logpuller.SubscriptionID
-	tableID int64
+	raw      *common.RawKVEntry
+	subID    logpuller.SubscriptionID
+	tableID  int64
+	uniqueID uint64
 }
 
-type spanState struct {
-	span     heartbeatpb.TableSpan
-	observer EventObserver
-	notifier WatermarkNotifier
+var uniqueIDGen uint64 = 0
+
+func genUniqueID() uint64 {
+	return atomic.AddUint64(&uniqueIDGen, 1)
+}
+
+type dispatcherStat struct {
+	dispatcherID common.DispatcherID
+	// called when new resolved ts event come
+	notifier ResolvedTsNotifier
 
 	subID logpuller.SubscriptionID
 
-	// data before this watermark won't be needed
-	dispatchers map[common.DispatcherID]*dispatcherStat
-
-	// maxEventCommitTs atomic.Uint64
-
+	tableID int64
+	// an id encode in the event key of this dispatcher
+	// used to seperate data between dispatchers with overlapping spans
+	uniqueKeyID uint64
+	// the max ts of events which is not needed by this dispatcher
+	checkpointTs atomic.Uint64
+	// the max commit ts of dml event in the store
+	maxEventCommitTs atomic.Uint64
 	// the resolveTs persisted in the store
+	// just used in metrics now. maybe can be removed in the future.
 	resolvedTs atomic.Uint64
 	chIndex    int
-}
-
-// maybe it can be removed
-type dispatcherStat struct {
-	dispatcherID common.DispatcherID
-	watermark    uint64
-	startTS      uint64
-}
-
-func (s *spanState) minWatermark() uint64 {
-	minWatermark := uint64(0)
-	for _, d := range s.dispatchers {
-		wm := d.watermark
-		if minWatermark == 0 || wm < minWatermark {
-			minWatermark = wm
-		}
-	}
-	return minWatermark
 }
 
 type eventStore struct {
@@ -143,10 +126,10 @@ type eventStore struct {
 	// To manage background goroutines.
 	wg sync.WaitGroup
 
-	spanStates struct {
+	dispatcherStates struct {
 		sync.RWMutex
-		dispatcherMap   *utils.BtreeMap[*heartbeatpb.TableSpan, *spanState]
-		subscriptionMap map[logpuller.SubscriptionID]*spanState
+		m map[common.DispatcherID]*dispatcherStat
+		n map[logpuller.SubscriptionID]common.DispatcherID
 	}
 
 	encoder *zstd.Encoder
@@ -230,8 +213,8 @@ func New(
 		store.dbs = append(store.dbs, db)
 		store.eventChs = append(store.eventChs, make(chan eventWithState, 8192))
 	}
-	store.spanStates.dispatcherMap = utils.NewBtreeMap[*heartbeatpb.TableSpan, *spanState](heartbeatpb.LessTableSpan)
-	store.spanStates.subscriptionMap = make(map[logpuller.SubscriptionID]*spanState)
+	store.dispatcherStates.m = make(map[common.DispatcherID]*dispatcherStat)
+	store.dispatcherStates.n = make(map[logpuller.SubscriptionID]common.DispatcherID)
 
 	// start background goroutines to handle events from puller
 	for i := range store.dbs {
@@ -247,12 +230,12 @@ func New(
 		store.wg.Add(1)
 		go func(index int) {
 			defer store.wg.Done()
-			store.handleEvents(ctx, db, eventCh)
+			store.batchAndWriteEvents(ctx, db, eventCh)
 		}(i)
 	}
 
 	consume := func(ctx context.Context, raw *common.RawKVEntry, subID logpuller.SubscriptionID, extraData interface{}) error {
-		store.writeEvent(subID, raw, extraData)
+		store.consumeEvent(subID, raw, extraData)
 		return nil
 	}
 	puller := logpuller.NewLogPuller(client, pdClock, consume)
@@ -311,147 +294,119 @@ func (e *eventStore) Close(ctx context.Context) error {
 }
 
 type subscriptionTag struct {
-	chIndex int
-	tableID int64
+	chIndex     int
+	tableID     int64
+	uniqueKeyID uint64
 }
 
 func (e *eventStore) RegisterDispatcher(
 	dispatcherID common.DispatcherID,
 	tableSpan *heartbeatpb.TableSpan,
 	startTs uint64,
-	observer EventObserver,
-	notifier WatermarkNotifier,
+	notifier ResolvedTsNotifier,
 ) error {
-	span := *tableSpan
 	log.Info("register dispatcher",
 		zap.Any("dispatcherID", dispatcherID),
 		zap.String("span", tableSpan.String()),
-		zap.Uint64("startTS", startTs))
+		zap.Uint64("startTs", startTs))
 
-	e.spanStates.Lock()
-	if state, ok := e.spanStates.dispatcherMap.Get(&span); ok {
-		state.dispatchers[dispatcherID] = &dispatcherStat{
-			dispatcherID: dispatcherID,
-			startTS:      startTs,
-			watermark:    startTs,
-		}
-		e.spanStates.Unlock()
+	chIndex := common.HashTableSpan(tableSpan, len(e.eventChs))
+	uniqueKeyID := genUniqueID()
+	// Note: don'w hold any lock when call Subscribe
+	subID := e.puller.Subscribe(*tableSpan, startTs, subscriptionTag{
+		chIndex:     chIndex,
+		tableID:     tableSpan.TableID,
+		uniqueKeyID: uniqueKeyID,
+	})
+
+	// initialize dispatcherStat
+	// TODO: if puller event come before we initialize dispatcherStat,
+	// maxEventCommitTs may not be updated correctly and cause data loss.(lost resolved ts is harmless)
+	// To fix it, we need to alloc subID and initialize dispatcherStat before puller may send events.
+	// That is allocate subID in a separate method.
+	e.dispatcherStates.Lock()
+	defer e.dispatcherStates.Unlock()
+	stat := &dispatcherStat{
+		dispatcherID: dispatcherID,
+		notifier:     notifier,
+		tableID:      tableSpan.TableID,
+		uniqueKeyID:  uniqueKeyID,
+		chIndex:      chIndex,
+	}
+	stat.checkpointTs.Store(startTs)
+	stat.maxEventCommitTs.Store(startTs)
+	stat.resolvedTs.Store(startTs)
+	e.dispatcherStates.m[dispatcherID] = stat
+	e.dispatcherStates.n[subID] = dispatcherID
+	return nil
+}
+
+func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
+	log.Info("unregister dispatcher", zap.Stringer("dispatcherID", dispatcherID))
+	e.dispatcherStates.Lock()
+	defer e.dispatcherStates.Unlock()
+	stat, ok := e.dispatcherStates.m[dispatcherID]
+	if !ok {
 		return nil
 	}
+	subID := stat.subID
+	delete(e.dispatcherStates.m, dispatcherID)
+	delete(e.dispatcherStates.n, subID)
 
-	e.spanStates.Unlock()
-	log.Info("add a span in eventstore", zap.String("span", span.String()))
-	chIndex := common.HashTableSpan(span, len(e.eventChs))
-	subID := e.puller.Subscribe(span, startTs, subscriptionTag{
-		chIndex: chIndex,
-		tableID: tableSpan.TableID,
-	})
-	state := &spanState{
-		span:        span,
-		observer:    observer,
-		dispatchers: make(map[common.DispatcherID]*dispatcherStat),
-		notifier:    notifier,
-		subID:       subID,
-		// TODO: support split table to multiple subSpans.
-		// maybe share data for different subSpan is meaningless.
-		chIndex: chIndex,
-	}
-	// TODO: how to support different startTs for different dispatchers?
-	state.resolvedTs.Store(uint64(startTs))
-	state.dispatchers[dispatcherID] = &dispatcherStat{
-		dispatcherID: dispatcherID,
-		startTS:      startTs,
-		watermark:    startTs,
-	}
-
-	e.spanStates.Lock()
-	defer e.spanStates.Unlock()
-	e.spanStates.dispatcherMap.ReplaceOrInsert(&span, state)
-	e.spanStates.subscriptionMap[subID] = state
+	// TODO: do we need unlock before puller.Unsubscribe?
+	e.puller.Unsubscribe(subID)
 	return nil
 }
 
 func (e *eventStore) UpdateDispatcherSendTs(
-	dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan, sendTs uint64,
+	dispatcherID common.DispatcherID,
+	sendTs uint64,
 ) error {
-	e.spanStates.Lock()
-	defer e.spanStates.Unlock()
-	if state, ok := e.spanStates.dispatcherMap.Get(span); ok {
-		if !ok {
-			log.Panic("should not happen", zap.Any("dispatcherID", dispatcherID))
-		}
-		oldWatermark := state.dispatchers[dispatcherID].watermark
-		if sendTs > oldWatermark {
-			state.dispatchers[dispatcherID].watermark = sendTs
-			e.gcManager.addGCItem(state.chIndex, span.TableID, oldWatermark, sendTs)
+	e.dispatcherStates.RLock()
+	defer e.dispatcherStates.RUnlock()
+	if stat, ok := e.dispatcherStates.m[dispatcherID]; ok {
+		oldSendTs := stat.checkpointTs.Load()
+		if sendTs > oldSendTs {
+			stat.checkpointTs.Store(sendTs)
+			e.gcManager.addGCItem(stat.chIndex, stat.uniqueKeyID, stat.tableID, oldSendTs, sendTs)
 		}
 	}
 	return nil
 }
 
-func (e *eventStore) UnregisterDispatcher(
-	dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan,
-) error {
-	log.Info("unregister dispatcher", zap.Stringer("dispatcherID", dispatcherID))
-	e.spanStates.Lock()
-	defer e.spanStates.Unlock()
-	state, ok := e.spanStates.dispatcherMap.Get(span)
+func (e *eventStore) GetDispatcherDMLEventState(dispatcherID common.DispatcherID) DMLEventState {
+	e.dispatcherStates.RLock()
+	defer e.dispatcherStates.RUnlock()
+	stat, ok := e.dispatcherStates.m[dispatcherID]
 	if !ok {
-		log.Panic("deregister an unregistered span", zap.String("span", span.String()))
-	}
-	if _, ok := state.dispatchers[dispatcherID]; ok {
-		delete(state.dispatchers, dispatcherID)
-	} else {
-		log.Panic("deregister an unregistered dispatcher", zap.Stringer("dispatcherID", dispatcherID))
+		log.Panic("fail to find dispatcher", zap.Any("dispatcherID", dispatcherID))
 	}
 
-	if len(state.dispatchers) == 0 {
-		// TODO: do we need unlock before puller.Unsubscribe?
-		e.puller.Unsubscribe(state.subID)
-		e.spanStates.dispatcherMap.Delete(span)
-		delete(e.spanStates.subscriptionMap, state.subID)
-		log.Info("remove a span in eventstore", zap.String("span", span.String()))
-	}
-	return nil
-}
-
-func (e *eventStore) GetDispatcherDMLEventState(dispatcherID common.DispatcherID, span *heartbeatpb.TableSpan) DMLEventState {
-	// FIXME
-	e.spanStates.Lock()
-	defer e.spanStates.Unlock()
-	state, ok := e.spanStates.dispatcherMap.Get(span)
-	if !ok {
-		log.Panic("deregister an unregistered span", zap.String("span", span.String()))
-	}
 	return DMLEventState{
-		ResolvedTs: state.resolvedTs.Load(),
-		// MaxEventCommitTs: state.maxEventCommitTs.Load(),
+		// ResolvedTs:       stat.resolvedTs.Load(),
+		MaxEventCommitTs: stat.maxEventCommitTs.Load(),
 	}
 }
 
 func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange common.DataRange) (EventIterator, error) {
-	// do some check
-	e.spanStates.RLock()
-	state, ok := e.spanStates.dispatcherMap.Get(dataRange.Span)
+	e.dispatcherStates.RLock()
+	stat, ok := e.dispatcherStates.m[dispatcherID]
 	if !ok {
-		log.Panic("should not happen: cannot find span", zap.String("span", dataRange.Span.String()))
+		log.Panic("fail to find dispatcher", zap.Any("dispatcherID", dispatcherID))
 	}
-	dispatcher, okw := state.dispatchers[dispatcherID]
-	if !okw || dispatcher.watermark > dataRange.StartTs {
+	if dataRange.StartTs < stat.checkpointTs.Load() {
 		log.Panic("should not happen",
 			zap.Any("dispatcherID", dispatcherID),
-			zap.Uint64("watermark", dispatcher.watermark),
+			zap.Uint64("checkpointTs", stat.checkpointTs.Load()),
 			zap.Uint64("startTs", dataRange.StartTs))
 	}
-	span := state.span
-	db := e.dbs[state.chIndex]
-	e.spanStates.RUnlock()
+	db := e.dbs[stat.chIndex]
+	e.dispatcherStates.RUnlock()
 
-	// TODO: respect key range in span
-	// convert endTs to inclusive: [startTs, endTs) -> (startTs, endTs]
-	start := EncodeTsKey(uint64(span.TableID), dataRange.StartTs+1, 0)
-	end := EncodeTsKey(uint64(span.TableID), dataRange.EndTs+1, 0)
-	// TODO: use TableFilter/UseL6Filters in IterOptions
+	// convert range before pass it to pebble: (startTs, endTs] is equal to [startTs + 1, endTs + 1)
+	start := EncodeKeyPrefix(stat.uniqueKeyID, stat.tableID, dataRange.StartTs+1)
+	end := EncodeKeyPrefix(stat.uniqueKeyID, stat.tableID, dataRange.EndTs+1)
+	// TODO: optimize read performance
 	iter, err := db.NewIter(&pebble.IterOptions{
 		LowerBound: start,
 		UpperBound: end,
@@ -464,10 +419,10 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 	metrics.EventStoreScanRequestsCount.Inc()
 
 	return &eventStoreIter{
-		tableID:      span.TableID,
+		tableID:      stat.tableID,
 		innerIter:    iter,
-		prevStartTS:  0,
-		prevCommitTS: 0,
+		prevStartTs:  0,
+		prevCommitTs: 0,
 		iterMounter:  event.NewMounter(time.Local), // FIXME
 		startTs:      dataRange.StartTs,
 		endTs:        dataRange.EndTs,
@@ -486,22 +441,23 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 			currentTime := e.pdClock.CurrentTime()
 			currentPhyTs := oracle.GetPhysical(currentTime)
 			minResolvedTs := uint64(0)
-			e.spanStates.RLock()
-			for _, tableState := range e.spanStates.subscriptionMap {
-				resolvedTs := tableState.resolvedTs.Load()
+			e.dispatcherStates.RLock()
+			for _, stat := range e.dispatcherStates.m {
+				// resolved ts lag
+				resolvedTs := stat.resolvedTs.Load()
+				resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
+				resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
+				metrics.EventStoreDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
 				if minResolvedTs == 0 || resolvedTs < minResolvedTs {
 					minResolvedTs = resolvedTs
 				}
-				resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
-				resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
-				// TODO: avoid the name `watermark`
-				watermark := tableState.minWatermark()
-				watermarkPhyTs := oracle.ExtractPhysical(watermark)
+				// checkpoint ts lag
+				checkpointTs := stat.checkpointTs.Load()
+				watermarkPhyTs := oracle.ExtractPhysical(checkpointTs)
 				watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
-				metrics.EventStoreDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
 				metrics.EventStoreDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
 			}
-			e.spanStates.RUnlock()
+			e.dispatcherStates.RUnlock()
 
 			if minResolvedTs == 0 {
 				continue
@@ -527,7 +483,7 @@ const (
 )
 
 // handleEvents fetch events from puller and write them to pebble db
-func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-chan eventWithState) {
+func (e *eventStore) batchAndWriteEvents(ctx context.Context, db *pebble.DB, inputCh <-chan eventWithState) {
 	batchCh := make(chan *DBBatchEvent, 10240)
 
 	// consume batch events
@@ -545,38 +501,39 @@ func (e *eventStore) handleEvents(ctx context.Context, db *pebble.DB, inputCh <-
 			}
 
 			for subID, maxEventCommitTs := range batchEvent.maxEventCommitTsMap {
-				e.spanStates.RLock()
-				state, ok := e.spanStates.subscriptionMap[subID]
+				e.dispatcherStates.RLock()
+				dispatcherID, ok := e.dispatcherStates.n[subID]
 				if !ok {
 					// the dispatcher is removed?
 					log.Warn("unknown subscriptionID", zap.Uint64("subID", uint64(subID)))
-					e.spanStates.RUnlock()
+					e.dispatcherStates.RUnlock()
 					continue
 				}
-				e.spanStates.RUnlock()
-				state.observer(maxEventCommitTs)
-				// state.maxEventCommitTs.Store(maxEventCommitTs)
+				stat := e.dispatcherStates.m[dispatcherID]
+				e.dispatcherStates.RUnlock()
+				stat.maxEventCommitTs.Store(maxEventCommitTs)
 			}
 
 			// update resolved ts after commit successfully
 			for subID, resolvedTs := range batchEvent.resolvedTsMap {
-				e.spanStates.RLock()
-				state, ok := e.spanStates.subscriptionMap[subID]
+				e.dispatcherStates.RLock()
+				dispatcherID, ok := e.dispatcherStates.n[subID]
 				if !ok {
 					// the dispatcher is removed?
 					log.Warn("unknown subscriptionID", zap.Uint64("subID", uint64(subID)))
-					e.spanStates.RUnlock()
+					e.dispatcherStates.RUnlock()
 					continue
 				}
-				e.spanStates.RUnlock()
-				state.resolvedTs.Store(resolvedTs)
-				state.notifier(resolvedTs)
+				stat := e.dispatcherStates.m[dispatcherID]
+				e.dispatcherStates.RUnlock()
+				stat.resolvedTs.Store(resolvedTs)
+				stat.notifier(resolvedTs)
 			}
 		}
 	}()
 
 	addEvent2Batch := func(batch *pebble.Batch, item eventWithState) {
-		key := EncodeKey(uint64(item.tableID), item.raw)
+		key := EncodeKey(item.uniqueID, item.tableID, item.raw)
 		value := item.raw.Encode()
 		compressedValue := e.encoder.EncodeAll(value, nil)
 		ratio := float64(len(value)) / float64(len(compressedValue))
@@ -656,20 +613,21 @@ func (e *eventStore) sendBatchSignalPeriodically(ctx context.Context, inputCh ch
 	}
 }
 
-func (e *eventStore) writeEvent(subID logpuller.SubscriptionID, raw *common.RawKVEntry, tag interface{}) {
+func (e *eventStore) consumeEvent(subID logpuller.SubscriptionID, raw *common.RawKVEntry, tag interface{}) {
 	subTag := tag.(subscriptionTag)
 	e.eventChs[subTag.chIndex] <- eventWithState{
 		eventType: eventTypeNormal,
 		raw:       raw,
 		subID:     subID,
 		tableID:   subTag.tableID,
+		uniqueID:  subTag.uniqueKeyID,
 	}
 }
 
-func (e *eventStore) deleteEvents(dbIndex int, tableID int64, startCommitTS uint64, endCommitTS uint64) error {
+func (e *eventStore) deleteEvents(dbIndex int, uniqueKeyID uint64, tableID int64, startTs uint64, endTs uint64) error {
 	db := e.dbs[dbIndex]
-	start := EncodeTsKey(uint64(tableID), startCommitTS)
-	end := EncodeTsKey(uint64(tableID), endCommitTS)
+	start := EncodeKeyPrefix(uniqueKeyID, tableID, startTs)
+	end := EncodeKeyPrefix(uniqueKeyID, tableID, endTs)
 
 	return db.DeleteRange(start, end, pebble.NoSync)
 }
@@ -677,8 +635,8 @@ func (e *eventStore) deleteEvents(dbIndex int, tableID int64, startCommitTS uint
 type eventStoreIter struct {
 	tableID      common.TableID
 	innerIter    *pebble.Iterator
-	prevStartTS  uint64
-	prevCommitTS uint64
+	prevStartTs  uint64
+	prevCommitTs uint64
 	iterMounter  event.Mounter
 
 	// for debug
@@ -697,22 +655,20 @@ func (iter *eventStoreIter) Next() (*common.RawKVEntry, bool, error) {
 		return nil, false, nil
 	}
 
-	key := iter.innerIter.Key()
 	value := iter.innerIter.Value()
 	decompressedValue, err := iter.decoder.DecodeAll(value, nil)
 	if err != nil {
 		log.Panic("failed to decompress value", zap.Error(err))
 	}
-	_, startTS, commitTS := DecodeKey(key)
 	metrics.EventStoreScanBytes.Add(float64(len(decompressedValue)))
 	rawKV := &common.RawKVEntry{}
 	rawKV.Decode(decompressedValue)
 	isNewTxn := false
-	if iter.prevCommitTS == 0 || (startTS != iter.prevStartTS || commitTS != iter.prevCommitTS) {
+	if iter.prevCommitTs == 0 || (rawKV.StartTs != iter.prevStartTs || rawKV.CRTs != iter.prevCommitTs) {
 		isNewTxn = true
 	}
-	iter.prevCommitTS = commitTS
-	iter.prevStartTS = startTS
+	iter.prevCommitTs = rawKV.CRTs
+	iter.prevStartTs = rawKV.StartTs
 	iter.rowCount++
 	iter.innerIter.Next()
 	return rawKV, isNewTxn, nil
