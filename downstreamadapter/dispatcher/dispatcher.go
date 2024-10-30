@@ -88,8 +88,10 @@ type Dispatcher struct {
 
 	resolvedTs *TsWithMutex // 用来记 中目前收到的 event 中收到的最大的 commitTs - 1,不代表 dispatcher 的 checkpointTs
 
-	blockPendingEvent commonEvent.BlockEvent
-	isRemoving        atomic.Bool
+	//blockPendingEvent commonEvent.BlockEvent
+	blockStatus BlockStauts
+
+	isRemoving atomic.Bool
 
 	tableProgress *types.TableProgress
 
@@ -104,6 +106,11 @@ type Dispatcher struct {
 	// isReady is used to indicate whether the dispatcher is ready.
 	// If false, the dispatcher will drop the event it received.
 	isReady atomic.Bool
+}
+
+type BlockStauts struct {
+	blockPendingEvent commonEvent.BlockEvent
+	state             *heartbeatpb.State
 }
 
 func NewDispatcher(
@@ -152,7 +159,7 @@ func NewDispatcher(
 // 1. If the action is a write, we need to add the ddl event to the sink for writing to downstream(async).
 // 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and wake the dispatcherEventHandler
 func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.DispatcherStatus) {
-	if d.blockPendingEvent == nil {
+	if d.blockStatus.blockPendingEvent == nil {
 		// receive outdated status
 		// If status is about ack, ignore it.
 		// If status is about action, we need to return message show we have finished the event.
