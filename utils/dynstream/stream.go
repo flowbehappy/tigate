@@ -134,9 +134,8 @@ func tryAddPathToBusyHeap[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 	}
 }
 
-// Only contains one kind of event:
-// 1. event
-// 2. wake = true
+// eventWrap contains the event and the path info.
+// It can be a event or a wake signal.
 type eventWrap[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	event T
 	wake  bool
