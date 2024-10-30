@@ -5,4 +5,5 @@ tools/include
 
 .vscode
 .idea
-.log
+*.log
+.DS_Store
