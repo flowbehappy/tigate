@@ -66,11 +66,9 @@ func (as *areaMemStat[A, P, T, D, H]) appendEvent(
 	eventQueue *eventQueue[A, P, T, D, H],
 ) {
 	replaced := false
-	isPeriodicSignal := event.eventType.Property == PeriodicSignal
-
-	if isPeriodicSignal {
+	if isPeriodicSignal(event) {
 		front, ok := path.pendingQueue.FrontRef()
-		if ok && front.eventType.Property == PeriodicSignal {
+		if ok && isPeriodicSignal(*front) {
 			// Replace the repeated signal.
 			// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
 			*front = event
@@ -79,44 +77,74 @@ func (as *areaMemStat[A, P, T, D, H]) appendEvent(
 		}
 	}
 
-	dropped := false
-	// Fixme: If the event is not belong to the smallest timestamp path,
-	// And if there are other path's pending size is larger, we should drop the event of the largest pending size path.
-	if !replaced && int(as.totalPendingSize.Load())+event.eventSize > as.settings.MaxPendingSize {
-		// Drop the event if the total pending size exceeds the limit, and
-		// 1. The path has pending events, or
-		// 2. The event's timestamp is not the smallest among all the paths in the area.
-		// The second point is important. Because other paths maybe just waiting for this event to process before moving forward.
-		if path.pendingQueue.Length() != 0 {
-			dropped = true
-			// Drop the event after the pending size exceeds the limit.
-			if !isPeriodicSignal {
-				handler.OnDrop(event.event)
-			}
-		} else if top, ok := path.streamAreaInfo.timestampHeap.PeekTop(); ok && event.timestamp > top.frontTimestamp {
-			dropped = true
-			// Drop the event after the pending size exceeds the limit.
-			if !isPeriodicSignal {
-				handler.OnDrop(event.event)
-			}
-		}
-	}
-
-	// Append the event.
-	if !replaced && !dropped {
+	if !replaced && !as.shouldDropEvent(path, event, handler, eventQueue) {
 		// Add the event to the pending queue.
 		path.pendingQueue.PushBack(event)
-
 		// Update the pending size.
 		path.pendingSize += event.eventSize
 		as.totalPendingSize.Add(int64(event.eventSize))
-
 		// Update the heaps after adding the event in the queue.
 		eventQueue.updateHeapAfterUpdatePath(path)
 		eventQueue.totalPendingLength++
 	}
 
 	as.updatePathPauseState(path, event)
+}
+
+func (as *areaMemStat[A, P, T, D, H]) shouldDropEvent(
+	path *pathInfo[A, P, T, D, H],
+	event eventWrap[A, P, T, D, H],
+	handler H,
+	eventQueue *eventQueue[A, P, T, D, H],
+) bool {
+	exceedMaxPendingSize := func() bool {
+		return int(as.totalPendingSize.Load())+event.eventSize > as.settings.MaxPendingSize
+	}
+
+	// If the pending size does not exceed the max allowed size, or the path has no events, no need to drop the event.
+	if !exceedMaxPendingSize() || path.pendingQueue.Length() == 0 {
+		return false
+	}
+
+	// If the timestamp of the event is not the smallest among all the paths in the area, drop it.
+	top, ok := path.streamAreaInfo.timestampHeap.PeekTop()
+	if !ok {
+		log.Panic("timestampHeap is empty, but exceedMaxPendingSize, it should not happen",
+			zap.Any("area", as.area),
+			zap.Any("path", path.path))
+	}
+	// If event's timestamp is not the smallest among all the paths in the area, drop it.
+	if event.timestamp > top.frontTimestamp {
+		if !isPeriodicSignal(event) {
+			handler.OnDrop(event.event)
+		}
+		return true
+	}
+
+	// Drop the events of the largest pending size path to find a place for the new event.
+LOOP:
+	for exceedMaxPendingSize() {
+		longestPath, ok := path.streamAreaInfo.pathSizeHeap.PeekTop()
+		if !ok {
+			log.Panic("pathSizeHeap is empty, but exceedMaxPendingSize, it should not happen",
+				zap.Any("area", as.area), zap.Any("path", path.path))
+		}
+		for longestPath.pendingQueue.Length() != 0 {
+			back, _ := longestPath.pendingQueue.PopBack()
+			if !isPeriodicSignal(back) {
+				handler.OnDrop(back.event)
+			}
+			longestPath.pendingSize -= back.eventSize
+			as.totalPendingSize.Add(int64(-back.eventSize))
+			eventQueue.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D, H])(longestPath))
+			eventQueue.totalPendingLength--
+			if !exceedMaxPendingSize() {
+				break LOOP
+			}
+		}
+	}
+
+	return false
 }
 
 // updatePathPauseState determines the pause state of a path and sends feedback to handler if the state is changed.
@@ -253,4 +281,8 @@ func (m *memControl[A, P, T, D, H]) removePathFromArea(path *pathInfo[A, P, T, D
 	if area.pathCount == 0 {
 		delete(m.areaStatMap, area.area)
 	}
+}
+
+func isPeriodicSignal[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](event eventWrap[A, P, T, D, H]) bool {
+	return event.eventType.Property == PeriodicSignal
 }
