@@ -16,6 +16,7 @@ package changefeed
 import (
 	"context"
 
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/tiflow/cdc/model"
 )
 
@@ -24,9 +25,9 @@ type Backend interface {
 	// GetAllChangefeeds returns all changefeeds from the backend db, include stopped and failed changefeeds
 	GetAllChangefeeds(ctx context.Context) (map[model.ChangeFeedID]*ChangefeedMetaWrapper, error)
 	// CreateChangefeed saves changefeed info and status to db
-	CreateChangefeed(ctx context.Context, info *model.ChangeFeedInfo) error
+	CreateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error
 	// UpdateChangefeed updates changefeed info  to db
-	UpdateChangefeed(ctx context.Context, info *model.ChangeFeedInfo) error
+	UpdateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error
 	// PauseChangefeed persists the pause status to db for a changefeed
 	PauseChangefeed(ctx context.Context, id model.ChangeFeedID) error
 	// DeleteChangefeed removes all related info of a changefeed from db
@@ -39,6 +40,6 @@ type Backend interface {
 
 // ChangefeedMetaWrapper is a wrapper for the changefeed load from the DB
 type ChangefeedMetaWrapper struct {
-	Info   *model.ChangeFeedInfo
+	Info   *config.ChangeFeedInfo
 	Status *model.ChangeFeedStatus
 }

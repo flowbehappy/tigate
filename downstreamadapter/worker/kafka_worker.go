@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/config"
 	"go.uber.org/atomic"
 
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/sink/dmlsink/mq/dmlproducer"
-	"github.com/pingcap/tiflow/pkg/config"
 	"go.uber.org/zap"
 )
 

@@ -18,13 +18,12 @@ import (
 	"net/url"
 	"time"
 
-	ticonfig "github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/imdario/mergo"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
@@ -55,7 +54,7 @@ type Config struct {
 	AvroConfluentSchemaRegistry    string
 	AvroDecimalHandlingMode        string
 	AvroBigintUnsignedHandlingMode string
-	AvroGlueSchemaRegistry         *ticonfig.GlueSchemaRegistryConfig
+	AvroGlueSchemaRegistry         *config.GlueSchemaRegistryConfig
 	// EnableWatermarkEvent set to true, avro encode DDL and checkpoint event
 	// and send to the downstream kafka, they cannot be consumed by the confluent official consumer
 	// and would cause error, so this is only used for ticdc internal testing purpose, should not be
@@ -175,7 +174,7 @@ type urlConfig struct {
 }
 
 // Apply fill the Config
-func (c *Config) Apply(sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig) error {
+func (c *Config) Apply(sinkURI *url.URL, sinkConfig *config.SinkConfig) error {
 	req := &http.Request{URL: sinkURI}
 	var err error
 	urlParameter := &urlConfig{}
@@ -238,11 +237,6 @@ func (c *Config) Apply(sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig) error 
 		if sinkConfig.KafkaConfig != nil && sinkConfig.KafkaConfig.LargeMessageHandle != nil {
 			c.LargeMessageHandle = sinkConfig.KafkaConfig.LargeMessageHandle
 		}
-		if !c.LargeMessageHandle.Disabled() && sinkConfig.ForceReplicate {
-			return cerror.ErrCodecInvalidConfig.GenWithStack(
-				`force-replicate must be disabled, when the large message handle is enabled, large message handle: "%s"`,
-				c.LargeMessageHandle.LargeMessageHandleOption)
-		}
 		if sinkConfig.OpenProtocol != nil {
 			c.OpenOutputOldValue = sinkConfig.OpenProtocol.OutputOldValue
 		}
@@ -292,7 +286,7 @@ func (c *Config) Apply(sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig) error 
 }
 
 func mergeConfig(
-	sinkConfig *ticonfig.SinkConfig,
+	sinkConfig *config.SinkConfig,
 	urlParameters *urlConfig,
 ) (*urlConfig, error) {
 	dest := &urlConfig{}

@@ -52,10 +52,10 @@ var defaultReplicaConfig = &ReplicaConfig{
 	SyncPointInterval:  util.AddressOf(10 * time.Minute),
 	SyncPointRetention: util.AddressOf(24 * time.Hour),
 	BDRMode:            util.AddressOf(false),
-	Filter: &config.FilterConfig{
+	Filter: &FilterConfig{
 		Rules: []string{"*.*"},
 	},
-	Mounter: &config.MounterConfig{
+	Mounter: &MounterConfig{
 		WorkerNum: 16,
 	},
 	Sink: &SinkConfig{
@@ -83,7 +83,7 @@ var defaultReplicaConfig = &ReplicaConfig{
 		OpenProtocol:                     &OpenProtocolConfig{OutputOldValue: true},
 		Debezium:                         &DebeziumConfig{OutputOldValue: true},
 	},
-	Consistent: &config.ConsistentConfig{
+	Consistent: &ConsistentConfig{
 		Level:                 "none",
 		MaxLogSize:            redo.DefaultMaxLogSize,
 		FlushIntervalInMs:     redo.DefaultFlushIntervalInMs,
@@ -93,11 +93,11 @@ var defaultReplicaConfig = &ReplicaConfig{
 		Storage:               "",
 		UseFileBackend:        false,
 		Compression:           "",
-		MemoryUsage: &config.ConsistentMemoryUsage{
+		MemoryUsage: &ConsistentMemoryUsage{
 			MemoryQuotaPercentage: 50,
 		},
 	},
-	Scheduler: &config.ChangefeedSchedulerConfig{
+	Scheduler: &ChangefeedSchedulerConfig{
 		EnableTableAcrossNodes: false,
 		RegionThreshold:        100_000,
 		WriteKeyThreshold:      0,
@@ -107,7 +107,7 @@ var defaultReplicaConfig = &ReplicaConfig{
 		CorruptionHandleLevel: integrity.CorruptionHandleLevelWarn,
 	},
 	ChangefeedErrorStuckDuration: util.AddressOf(time.Minute * 30),
-	SyncedStatus:                 &config.SyncedStatusConfig{SyncedCheckInterval: 5 * 60, CheckpointInterval: 15},
+	SyncedStatus:                 &SyncedStatusConfig{SyncedCheckInterval: 5 * 60, CheckpointInterval: 15},
 }
 
 // GetDefaultReplicaConfig returns the default replica config.
@@ -149,18 +149,18 @@ type replicaConfig struct {
 	// SyncPointInterval is only available when the downstream is DB.
 	SyncPointInterval *time.Duration `toml:"sync-point-interval" json:"sync-point-interval,omitempty"`
 	// SyncPointRetention is only available when the downstream is DB.
-	SyncPointRetention *time.Duration        `toml:"sync-point-retention" json:"sync-point-retention,omitempty"`
-	Filter             *config.FilterConfig  `toml:"filter" json:"filter"`
-	Mounter            *config.MounterConfig `toml:"mounter" json:"mounter"`
-	Sink               *SinkConfig           `toml:"sink" json:"sink"`
+	SyncPointRetention *time.Duration `toml:"sync-point-retention" json:"sync-point-retention,omitempty"`
+	Filter             *FilterConfig  `toml:"filter" json:"filter,omitempty"`
+	Mounter            *MounterConfig `toml:"mounter" json:"mounter,omitempty"`
+	Sink               *SinkConfig    `toml:"sink" json:"sink,omitempty"`
 	// Consistent is only available for DB downstream with redo feature enabled.
-	Consistent *config.ConsistentConfig `toml:"consistent" json:"consistent,omitempty"`
+	Consistent *ConsistentConfig `toml:"consistent" json:"consistent,omitempty"`
 	// Scheduler is the configuration for scheduler.
-	Scheduler *config.ChangefeedSchedulerConfig `toml:"scheduler" json:"scheduler"`
+	Scheduler *ChangefeedSchedulerConfig `toml:"scheduler" json:"scheduler,omitempty"`
 	// Integrity is only available when the downstream is MQ.
-	Integrity                    *integrity.Config          `toml:"integrity" json:"integrity"`
-	ChangefeedErrorStuckDuration *time.Duration             `toml:"changefeed-error-stuck-duration" json:"changefeed-error-stuck-duration,omitempty"`
-	SyncedStatus                 *config.SyncedStatusConfig `toml:"synced-status" json:"synced-status,omitempty"`
+	Integrity                    *integrity.Config   `toml:"integrity" json:"integrity"`
+	ChangefeedErrorStuckDuration *time.Duration      `toml:"changefeed-error-stuck-duration" json:"changefeed-error-stuck-duration,omitempty"`
+	SyncedStatus                 *SyncedStatusConfig `toml:"synced-status" json:"synced-status,omitempty"`
 
 	// Deprecated: we don't use this field since v8.0.0.
 	SQLMode string `toml:"sql-mode" json:"sql-mode"`
@@ -332,11 +332,6 @@ func (c *ReplicaConfig) FixScheduler(inheritV66 bool) {
 	if c.Scheduler == nil {
 		c.Scheduler = defaultReplicaConfig.Clone().Scheduler
 		return
-	}
-	if inheritV66 && c.Scheduler.RegionPerSpan != 0 {
-		c.Scheduler.EnableTableAcrossNodes = true
-		c.Scheduler.RegionThreshold = c.Scheduler.RegionPerSpan
-		c.Scheduler.RegionPerSpan = 0
 	}
 }
 

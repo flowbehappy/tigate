@@ -17,6 +17,7 @@ import (
 	"context"
 	"net/url"
 
+	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/topicmanager"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/sink/ddlsink/mq/ddlproducer"
-	"github.com/pingcap/tiflow/cdc/sink/util"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink"
 	utils "github.com/pingcap/tiflow/pkg/util"
@@ -54,12 +54,12 @@ func (s *KafkaSink) SinkType() SinkType {
 
 func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig) (*KafkaSink, error) {
 	ctx := context.Background()
-	topic, err := util.GetTopic(sinkURI)
+	topic, err := helper.GetTopic(sinkURI)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	scheme := sink.GetScheme(sinkURI)
-	protocol, err := util.GetProtocol(utils.GetOrZero(sinkConfig.Protocol))
+	protocol, err := helper.GetProtocol(utils.GetOrZero(sinkConfig.Protocol))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

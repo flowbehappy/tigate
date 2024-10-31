@@ -11,14 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/errors"
-
-	ticonfig "github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/imdario/mergo"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/security"
 	tikafka "github.com/pingcap/tiflow/pkg/sink/kafka"
@@ -212,7 +210,7 @@ func (o *Options) SetPartitionNum(realPartitionCount int32) error {
 
 // Apply the sinkURI to update Options
 func (o *Options) Apply(changefeedID model.ChangeFeedID,
-	sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig,
+	sinkURI *url.URL, sinkConfig *config.SinkConfig,
 ) error {
 	o.BrokerEndpoints = strings.Split(sinkURI.Host, ",")
 
@@ -312,7 +310,7 @@ func (o *Options) Apply(changefeedID model.ChangeFeedID,
 }
 
 func mergeConfig(
-	sinkConfig *ticonfig.SinkConfig,
+	sinkConfig *config.SinkConfig,
 	urlParameters *urlConfig,
 ) (*urlConfig, error) {
 	dest := &urlConfig{}
@@ -399,7 +397,7 @@ func (o *Options) applyTLS(params *urlConfig) error {
 	return nil
 }
 
-func (o *Options) applySASL(urlParameter *urlConfig, sinkConfig *ticonfig.SinkConfig) error {
+func (o *Options) applySASL(urlParameter *urlConfig, sinkConfig *config.SinkConfig) error {
 	if urlParameter.SASLUser != nil && *urlParameter.SASLUser != "" {
 		o.SASL.SASLUser = *urlParameter.SASLUser
 	}

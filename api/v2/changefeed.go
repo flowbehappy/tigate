@@ -19,6 +19,8 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/filter"
 	"github.com/flowbehappy/tigate/version"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -27,7 +29,6 @@ import (
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/owner"
 	"github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/filter"
 	"github.com/pingcap/tiflow/pkg/txnutil/gc"
 	"github.com/pingcap/tiflow/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
@@ -128,7 +129,7 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 	}
 
 	pdClient := h.server.GetPdClient()
-	info := &model.ChangeFeedInfo{
+	info := &config.ChangeFeedInfo{
 		UpstreamID:     pdClient.GetClusterID(ctx),
 		Namespace:      cfg.Namespace,
 		ID:             cfg.ID,
@@ -265,7 +266,7 @@ func (h *OpenAPIV2) getChangeFeed(c *gin.Context) {
 }
 
 func toAPIModel(
-	info *model.ChangeFeedInfo,
+	info *config.ChangeFeedInfo,
 	resolvedTs uint64,
 	checkpointTs uint64,
 	taskStatus []model.CaptureTaskStatus,
@@ -555,7 +556,7 @@ func (h *OpenAPIV2) updateChangefeed(c *gin.Context) {
 	}
 
 	// verify changefeed filter
-	_, err = filter.NewFilter(oldCfInfo.Config, "")
+	_, err = filter.NewFilter(oldCfInfo.Config.Filter, "", oldCfInfo.Config.CaseSensitive)
 	if err != nil {
 		_ = c.Error(errors.ErrChangefeedUpdateRefused.
 			GenWithStackByArgs(errors.Cause(err).Error()))

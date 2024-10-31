@@ -38,7 +38,6 @@ import (
 	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/tiflow/cdc/model"
-	cfg "github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
 )
@@ -134,7 +133,7 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 
 	// Set Filter
 	// TODO: 最后去更新一下 filter 的内部 NewFilter 函数，现在是在套壳适配
-	replicaConfig := cfg.ReplicaConfig{Filter: cfConfig.Filter}
+	replicaConfig := config.ReplicaConfig{Filter: cfConfig.Filter}
 	filter, err := filter.NewFilter(replicaConfig.Filter, cfConfig.TimeZone, replicaConfig.CaseSensitive)
 	if err != nil {
 		return nil, 0, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("create filter failed")
@@ -463,7 +462,7 @@ func (e *EventDispatcherManager) cleanTableEventDispatcher(id common.DispatcherI
 	log.Info("table event dispatcher completely stopped, and delete it from event dispatcher manager", zap.Any("dispatcher id", id))
 }
 
-func toFilterConfigPB(filter *cfg.FilterConfig) *eventpb.FilterConfig {
+func toFilterConfigPB(filter *config.FilterConfig) *eventpb.FilterConfig {
 	filterConfig := &eventpb.FilterConfig{
 		Rules:            filter.Rules,
 		IgnoreTxnStartTs: filter.IgnoreTxnStartTs,

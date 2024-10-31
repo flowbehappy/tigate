@@ -21,6 +21,7 @@ import (
 	"github.com/flowbehappy/tigate/coordinator/changefeed"
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/node"
@@ -142,7 +143,7 @@ func (c *coordinator) Run(ctx context.Context) error {
 	}
 }
 
-func (c *coordinator) CreateChangefeed(ctx context.Context, info *model.ChangeFeedInfo) error {
+func (c *coordinator) CreateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error {
 	return c.controller.CreateChangefeed(ctx, info)
 }
 
@@ -158,15 +159,15 @@ func (c *coordinator) ResumeChangefeed(ctx context.Context, id model.ChangeFeedI
 	return c.controller.ResumeChangefeed(ctx, id, newCheckpointTs)
 }
 
-func (c *coordinator) UpdateChangefeed(ctx context.Context, change *model.ChangeFeedInfo) error {
+func (c *coordinator) UpdateChangefeed(ctx context.Context, change *config.ChangeFeedInfo) error {
 	return c.controller.UpdateChangefeed(ctx, change)
 }
 
-func (c *coordinator) ListChangefeeds(ctx context.Context) ([]*model.ChangeFeedInfo, []*model.ChangeFeedStatus, error) {
+func (c *coordinator) ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedInfo, []*model.ChangeFeedStatus, error) {
 	return c.controller.ListChangefeeds(ctx)
 }
 
-func (c *coordinator) GetChangefeed(ctx context.Context, id model.ChangeFeedID) (*model.ChangeFeedInfo, *model.ChangeFeedStatus, error) {
+func (c *coordinator) GetChangefeed(ctx context.Context, id model.ChangeFeedID) (*config.ChangeFeedInfo, *model.ChangeFeedStatus, error) {
 	return c.controller.GetChangefeed(ctx, id)
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/node"
 
 	"github.com/flowbehappy/tigate/eventpb"
@@ -13,7 +14,6 @@ import (
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/log"
 	bf "github.com/pingcap/tiflow/pkg/binlog-filter"
-	"github.com/pingcap/tiflow/pkg/config"
 	"go.uber.org/zap"
 )
 
