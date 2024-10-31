@@ -15,6 +15,7 @@ package main
 
 import (
 	"os"
+	"strings"
 
 	"github.com/flowbehappy/tigate/cmd/cli"
 	"github.com/flowbehappy/tigate/cmd/server"
@@ -58,6 +59,43 @@ func isNewArchEnabledByConfig(serverConfigFilePath string) bool {
 	return cfg.Newarch
 }
 
+// Utility to remove a flag from os.Args
+func removeFlagFromArgs(flag string) []string {
+	result := []string{os.Args[0]} // keep the command name
+	for i := 1; i < len(os.Args); i++ {
+		if os.Args[i] != flag {
+			result = append(result, os.Args[i])
+		}
+	}
+	return result
+}
+
+func parseConfigFlagFromOSArgs() string {
+	var serverConfigFilePath string
+	for i, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "--config=") {
+			serverConfigFilePath = strings.SplitN(arg, "=", 2)[1]
+		} else if arg == "--config" && i+2 < len(os.Args) {
+			serverConfigFilePath = os.Args[i+2]
+		}
+	}
+	return serverConfigFilePath
+}
+
+func parseNewarchFlagFromOSArgs() bool {
+	newarch := false
+	for _, arg := range os.Args[1:] {
+		if arg == "--newarch" {
+			newarch = true
+			os.Args = removeFlagFromArgs("--newarch")
+		} else if arg == "-x" {
+			newarch = true
+			os.Args = removeFlagFromArgs("-x")
+		}
+	}
+	return newarch
+}
+
 // Run runs the root command.
 func main() {
 	cmd := NewCmd()
@@ -66,13 +104,13 @@ func main() {
 	cmd.SetErr(os.Stderr)
 
 	newarch := false
-	cmd.PersistentFlags().BoolVarP(&newarch, "newarch", "x", false, "Run the new architecture of TiCDC (experimental feature)")
 	var serverConfigFilePath string
-	cmd.PersistentFlags().StringVar(&serverConfigFilePath, "config", "", "Path of the configuration file")
-	cmd.PersistentFlags().Lookup("config").Hidden = true
-
-	// The command-line flags are parsed in advance to check whether to launch the new architecture.
+	cmd.PersistentFlags().BoolVarP(&newarch, "newarch", "x", false, "Run the new architecture of TiCDC (experimental feature)")
 	cmd.ParseFlags(os.Args[1:])
+
+	// Double check to aviod some corner cases
+	serverConfigFilePath = parseConfigFlagFromOSArgs()
+	newarch = parseNewarchFlagFromOSArgs()
 
 	if newarch || isNewArchEnabledByConfig(serverConfigFilePath) {
 		cmd.Println("=== Command to ticdc(new arch).")
