@@ -132,6 +132,13 @@ func NewMaintainer(cfID model.ChangeFeedID,
 ) *Maintainer {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    checkpointTs,
+		}, selfNode.ID)
 	m := &Maintainer{
 		id:                cfID,
 		selfNode:          selfNode,
@@ -139,7 +146,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		taskScheduler:     taskScheduler,
 		startCheckpointTs: checkpointTs,
 		controller: NewController(cfID.ID, checkpointTs, pdAPI, regionCache, taskScheduler,
-			cfg.Config.Scheduler, conf.AddTableBatchSize, time.Duration(conf.CheckBalanceInterval)),
+			cfg.Config.Scheduler, ddlSpan, conf.AddTableBatchSize, time.Duration(conf.CheckBalanceInterval)),
 		mc:              mc,
 		state:           heartbeatpb.ComponentState_Working,
 		removed:         atomic.NewBool(false),
@@ -150,7 +157,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		cascadeRemoving: false,
 		config:          cfg,
 
-		tableTriggerEventDispatcherID: common.NewDispatcherID(),
+		tableTriggerEventDispatcherID: tableTriggerEventDispatcherID,
 
 		watermark: &heartbeatpb.Watermark{
 			CheckpointTs: checkpointTs,
@@ -356,14 +363,9 @@ func (m *Maintainer) onRemoveMaintainer(cascade, changefeedRemoved bool) {
 }
 
 func (m *Maintainer) onCheckpointTsPersisted(msg *heartbeatpb.CheckpointTsMessage) {
-	stm := m.controller.GetTask(m.controller.ddlDispatcherID)
-	if stm == nil {
-		log.Warn("ddl dispatcher is not found, can not send checkpoint message",
-			zap.String("id", m.id.String()))
-		return
-	}
+	// the table trigger dispatcher is on the same node with maintainer, and it will send the water marker to downstream
 	m.sendMessages([]*messaging.TargetMessage{
-		messaging.NewSingleTargetMessage(stm.GetNodeID(), messaging.HeartbeatCollectorTopic, msg),
+		messaging.NewSingleTargetMessage(m.selfNode.ID, messaging.HeartbeatCollectorTopic, msg),
 	})
 }
 
@@ -504,6 +506,14 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 			zap.Int("size", len(bootstrapMsg.Spans)))
 		for _, info := range bootstrapMsg.Spans {
 			dispatcherID := common.NewDispatcherIDFromPB(info.ID)
+			if dispatcherID == m.tableTriggerEventDispatcherID {
+				log.Info(
+					"skip table trigger event dispatcher",
+					zap.String("changefeed", m.id.ID),
+					zap.String("dispatcher", dispatcherID.String()),
+					zap.String("server", server.String()))
+				continue
+			}
 			status := &heartbeatpb.TableSpanStatus{
 				ComponentStatus: info.ComponentStatus,
 				ID:              info.ID,
@@ -633,9 +643,18 @@ func (m *Maintainer) getNewBootstrapFn() bootstrap.NewBootstrapMessageFn {
 			zap.Error(err))
 	}
 	return func(id node.ID) *messaging.TargetMessage {
+		var ddlDispatcherID *heartbeatpb.DispatcherID
+		// only send dispatcher id to dispatcher manager on the same node
+		if id == m.selfNode.ID {
+			ddlDispatcherID = m.tableTriggerEventDispatcherID.ToPB()
+			log.Info("create table event trigger dispatcher", zap.String("changefeed", m.id.String()),
+				zap.String("server", id.String()),
+				zap.String("dispatcher id", ddlDispatcherID.String()))
+		}
 		log.Info("send maintainer bootstrap message",
 			zap.String("changefeed", m.id.String()),
-			zap.Any("server", id))
+			zap.String("server", id.String()),
+		)
 		return messaging.NewSingleTargetMessage(
 			id,
 			messaging.DispatcherManagerManagerTopic,
@@ -643,7 +662,7 @@ func (m *Maintainer) getNewBootstrapFn() bootstrap.NewBootstrapMessageFn {
 				ChangefeedID:                  m.id.ID,
 				Config:                        cfgBytes,
 				StartTs:                       cfg.StartTs,
-				TableTriggerEventDispatcherId: m.tableTriggerEventDispatcherID.ToPB(),
+				TableTriggerEventDispatcherId: ddlDispatcherID,
 			})
 	}
 }
