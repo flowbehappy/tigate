@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 	"github.com/tikv/client-go/v2/oracle"

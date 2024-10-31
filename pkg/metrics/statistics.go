@@ -16,8 +16,8 @@ package metrics
 import (
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/tiflow/cdc/model"
-	cdcconfig "github.com/pingcap/tiflow/pkg/config"
 
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/prometheus/client_golang/prometheus"
@@ -30,7 +30,7 @@ func NewStatistics(
 ) *Statistics {
 	statistics := &Statistics{
 		sinkType:     sinkType,
-		captureAddr:  cdcconfig.GetGlobalServerConfig().AdvertiseAddr,
+		captureAddr:  config.GetGlobalServerConfig().AdvertiseAddr,
 		changefeedID: changefeed,
 	}
 

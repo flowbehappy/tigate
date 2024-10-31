@@ -22,6 +22,7 @@ import (
 	newcommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/internal"
+	"github.com/flowbehappy/tigate/pkg/sink/kafka/claimcheck"
 	"github.com/goccy/go-json"
 	"github.com/mailru/easyjson/jwriter"
 	"github.com/pingcap/errors"
@@ -31,7 +32,6 @@ import (
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 	"github.com/pingcap/tiflow/pkg/sink/codec/utils"
-	"github.com/pingcap/tiflow/pkg/sink/kafka/claimcheck"
 	"go.uber.org/zap"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
@@ -383,9 +383,6 @@ type JSONRowEventEncoder struct {
 // newJSONRowEventEncoder creates a new JSONRowEventEncoder
 func NewJSONRowEventEncoder(ctx context.Context, config *newcommon.Config) (encoder.EventEncoder, error) {
 	claimCheck, err := claimcheck.New(ctx, config.LargeMessageHandle, config.ChangefeedID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

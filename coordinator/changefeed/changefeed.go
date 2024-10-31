@@ -18,6 +18,7 @@ import (
 	"net/url"
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/pingcap/log"
@@ -30,7 +31,7 @@ import (
 // Changefeed is a memory present for changefeed info and status
 type Changefeed struct {
 	ID       model.ChangeFeedID
-	Info     *model.ChangeFeedInfo
+	Info     *config.ChangeFeedInfo
 	IsMQSink bool
 
 	nodeID      node.ID
@@ -44,7 +45,7 @@ type Changefeed struct {
 
 // NewChangefeed creates a new changefeed instance
 func NewChangefeed(cfID model.ChangeFeedID,
-	info *model.ChangeFeedInfo,
+	info *config.ChangeFeedInfo,
 	checkpointTs uint64) *Changefeed {
 	uri, err := url.Parse(info.SinkURI)
 	if err != nil {

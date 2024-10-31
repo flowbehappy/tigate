@@ -18,8 +18,8 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/tikv/client-go/v2/oracle"
 )
 

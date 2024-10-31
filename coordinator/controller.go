@@ -23,6 +23,7 @@ import (
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/flowbehappy/tigate/pkg/bootstrap"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/node"
@@ -148,7 +149,7 @@ func (c *Controller) HandleEvent(event *Event) bool {
 	return false
 }
 
-func (c *Controller) CreateChangefeed(ctx context.Context, info *model.ChangeFeedInfo) error {
+func (c *Controller) CreateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error {
 	if !c.bootstrapped {
 		return errors.New("not initialized, wait a moment")
 	}
@@ -387,7 +388,7 @@ func (c *Controller) ResumeChangefeed(ctx context.Context, id model.ChangeFeedID
 	return nil
 }
 
-func (c *Controller) UpdateChangefeed(ctx context.Context, change *model.ChangeFeedInfo) error {
+func (c *Controller) UpdateChangefeed(ctx context.Context, change *config.ChangeFeedInfo) error {
 	id := model.ChangeFeedID{
 		Namespace: change.Namespace,
 		ID:        change.ID,
@@ -403,9 +404,9 @@ func (c *Controller) UpdateChangefeed(ctx context.Context, change *model.ChangeF
 	return nil
 }
 
-func (c *Controller) ListChangefeeds(ctx context.Context) ([]*model.ChangeFeedInfo, []*model.ChangeFeedStatus, error) {
+func (c *Controller) ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedInfo, []*model.ChangeFeedStatus, error) {
 	cfs := c.changefeedDB.GetAllChangefeeds()
-	infos := make([]*model.ChangeFeedInfo, 0, len(cfs))
+	infos := make([]*config.ChangeFeedInfo, 0, len(cfs))
 	statuses := make([]*model.ChangeFeedStatus, 0, len(cfs))
 	for _, cf := range cfs {
 		infos = append(infos, cf.Info)
@@ -414,7 +415,7 @@ func (c *Controller) ListChangefeeds(ctx context.Context) ([]*model.ChangeFeedIn
 	return infos, statuses, nil
 }
 
-func (c *Controller) GetChangefeed(ctx context.Context, id model.ChangeFeedID) (*model.ChangeFeedInfo, *model.ChangeFeedStatus, error) {
+func (c *Controller) GetChangefeed(ctx context.Context, id model.ChangeFeedID) (*config.ChangeFeedInfo, *model.ChangeFeedStatus, error) {
 	cf := c.changefeedDB.GetByID(id)
 	if cf == nil {
 		return nil, nil, cerror.ErrChangeFeedNotExists.GenWithStackByArgs(id.ID)

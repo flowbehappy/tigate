@@ -16,6 +16,7 @@ package node
 import (
 	"context"
 
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/tiflow/cdc/model"
 )
 
@@ -30,11 +31,11 @@ type Coordinator interface {
 	// Run handles messages
 	Run(ctx context.Context) error
 	// ListChangefeeds returns all changefeeds
-	ListChangefeeds(ctx context.Context) ([]*model.ChangeFeedInfo, []*model.ChangeFeedStatus, error)
+	ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedInfo, []*model.ChangeFeedStatus, error)
 	// GetChangefeed returns a changefeed
-	GetChangefeed(ctx context.Context, id model.ChangeFeedID) (*model.ChangeFeedInfo, *model.ChangeFeedStatus, error)
+	GetChangefeed(ctx context.Context, id model.ChangeFeedID) (*config.ChangeFeedInfo, *model.ChangeFeedStatus, error)
 	// CreateChangefeed creates a new changefeed
-	CreateChangefeed(ctx context.Context, info *model.ChangeFeedInfo) error
+	CreateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error
 	// RemoveChangefeed gets a changefeed
 	RemoveChangefeed(ctx context.Context, id model.ChangeFeedID) (uint64, error)
 	// PauseChangefeed pauses a changefeed
@@ -42,5 +43,5 @@ type Coordinator interface {
 	// ResumeChangefeed resumes a changefeed
 	ResumeChangefeed(ctx context.Context, id model.ChangeFeedID, newCheckpointTs uint64) error
 	// UpdateChangefeed updates a changefeed
-	UpdateChangefeed(ctx context.Context, change *model.ChangeFeedInfo) error
+	UpdateChangefeed(ctx context.Context, change *config.ChangeFeedInfo) error
 }

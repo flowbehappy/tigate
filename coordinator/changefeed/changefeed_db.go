@@ -17,6 +17,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -321,7 +322,7 @@ func (db *ChangefeedDB) CalculateGCSafepoint() uint64 {
 }
 
 // ReplaceStoppedChangefeed updates the stopped changefeed
-func (db *ChangefeedDB) ReplaceStoppedChangefeed(cf *model.ChangeFeedInfo) {
+func (db *ChangefeedDB) ReplaceStoppedChangefeed(cf *config.ChangeFeedInfo) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 

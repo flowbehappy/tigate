@@ -8,6 +8,7 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter"
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/topicmanager"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/flowbehappy/tigate/pkg/sink/util"
@@ -15,7 +16,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/sink/ddlsink/mq/ddlproducer"
-	"github.com/pingcap/tiflow/pkg/config"
 	"go.uber.org/zap"
 )
 

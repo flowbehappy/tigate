@@ -10,9 +10,9 @@ import (
 	"github.com/flowbehappy/tigate/logservice/schemastore"
 	"github.com/flowbehappy/tigate/pkg/common"
 	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/pkg/config"
 	"go.uber.org/zap"
 )
 

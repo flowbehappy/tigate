@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
@@ -69,7 +70,7 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[model.ChangeFe
 			}
 			meta.Status = status
 		} else {
-			detail := &model.ChangeFeedInfo{}
+			detail := &config.ChangeFeedInfo{}
 			err = detail.Unmarshal(kv.Value)
 			if err != nil {
 				log.Warn("failed to unmarshal change feed Info, ignore",
@@ -113,7 +114,7 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[model.ChangeFe
 }
 
 func (b *EtcdBackend) CreateChangefeed(ctx context.Context,
-	info *model.ChangeFeedInfo) error {
+	info *config.ChangeFeedInfo) error {
 	changefeedID := model.DefaultChangeFeedID(info.ID)
 	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), changefeedID)
 	infoValue, err := info.Marshal()
@@ -146,7 +147,7 @@ func (b *EtcdBackend) CreateChangefeed(ctx context.Context,
 	return nil
 }
 
-func (b *EtcdBackend) UpdateChangefeed(ctx context.Context, info *model.ChangeFeedInfo) error {
+func (b *EtcdBackend) UpdateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error {
 	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), model.DefaultChangeFeedID(info.ID))
 	newStr, err := info.Marshal()
 	if err != nil {

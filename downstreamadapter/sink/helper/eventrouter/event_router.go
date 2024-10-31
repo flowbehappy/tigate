@@ -18,10 +18,9 @@ import (
 	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter/topic"
 	"github.com/flowbehappy/tigate/pkg/common"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
-	ticonfig "github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/log"
 	tableFilter "github.com/pingcap/tidb/pkg/util/table-filter"
-	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 )
 
@@ -39,11 +38,11 @@ type EventRouter struct {
 }
 
 // NewEventRouter creates a new EventRouter.
-func NewEventRouter(sinkConfig *ticonfig.SinkConfig, protocol config.Protocol, defaultTopic, scheme string) (*EventRouter, error) {
+func NewEventRouter(sinkConfig *config.SinkConfig, protocol config.Protocol, defaultTopic, scheme string) (*EventRouter, error) {
 	// If an event does not match any dispatching rules in the config file,
 	// it will be dispatched by the default partition dispatcher and
 	// static topic dispatcher because it matches *.* rule.
-	ruleConfigs := append(sinkConfig.DispatchRules, &ticonfig.DispatchRule{
+	ruleConfigs := append(sinkConfig.DispatchRules, &config.DispatchRule{
 		Matcher:       []string{"*.*"},
 		PartitionRule: "default",
 		TopicRule:     "",

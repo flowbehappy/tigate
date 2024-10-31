@@ -6,11 +6,11 @@ import (
 
 	"github.com/flowbehappy/tigate/heartbeatpb"
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	"github.com/flowbehappy/tigate/pkg/config"
 	ticonfig "github.com/flowbehappy/tigate/pkg/config"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/util"
 )

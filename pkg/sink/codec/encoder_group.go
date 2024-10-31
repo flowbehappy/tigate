@@ -20,13 +20,12 @@ import (
 	"time"
 
 	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
-	ticonfig "github.com/flowbehappy/tigate/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/config"
 	newCommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/pkg/config"
 	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 	"github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
@@ -68,7 +67,7 @@ type encoderGroup struct {
 // NewEncoderGroup creates a new EncoderGroup instance
 func NewEncoderGroup(
 	ctx context.Context,
-	cfg *ticonfig.SinkConfig,
+	cfg *config.SinkConfig,
 	encoderConfig *newCommon.Config,
 	changefeedID model.ChangeFeedID,
 ) *encoderGroup {

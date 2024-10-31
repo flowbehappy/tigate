@@ -1,7 +1,7 @@
 package topic
 
 import (
-	"github.com/pingcap/tiflow/pkg/config"
+	"github.com/flowbehappy/tigate/pkg/config"
 )
 
 type TopicGeneratorType int
