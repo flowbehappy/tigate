@@ -40,14 +40,18 @@ type ReplicationDB struct {
 	scheduling  map[common.DispatcherID]*SpanReplication
 	absent      map[common.DispatcherID]*SpanReplication
 
+	ddlSpan *SpanReplication
+
 	// LOCK protects the above maps
 	lock sync.RWMutex
 }
 
 // NewReplicaSetDB creates a new ReplicationDB and initializes the maps
-func NewReplicaSetDB(changefeedID string) *ReplicationDB {
-	db := &ReplicationDB{changefeedID: changefeedID}
+func NewReplicaSetDB(changefeedID string, ddlSpan *SpanReplication) *ReplicationDB {
+	db := &ReplicationDB{changefeedID: changefeedID, ddlSpan: ddlSpan}
 	db.reset()
+	// we don't need to schedule the ddl span, but added it to the allTasks map, so we can query it by id
+	db.allTasks[ddlSpan.ID] = ddlSpan
 	return db
 }
 
@@ -64,7 +68,8 @@ func (db *ReplicationDB) TaskSize() int {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
-	return len(db.allTasks)
+	// the ddl span is a special span, we don't need to schedule it
+	return len(db.allTasks) - 1
 }
 
 // TryRemoveAll removes non-scheduled tasks from the db and return the scheduled tasks
@@ -82,6 +87,8 @@ func (db *ReplicationDB) TryRemoveAll() []*SpanReplication {
 	addMapToList(db.replicating)
 	addMapToList(db.scheduling)
 	db.reset()
+	// add table trigger event dispatcher back to the map
+	db.allTasks[db.ddlSpan.ID] = db.ddlSpan
 	return tasks
 }
 

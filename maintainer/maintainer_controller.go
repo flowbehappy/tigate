@@ -73,9 +73,10 @@ func NewController(changefeedID string,
 	regionCache split.RegionCache,
 	taskScheduler threadpool.ThreadPool,
 	config *config.ChangefeedSchedulerConfig,
+	ddlSpan *replica.SpanReplication,
 	batchSize int, balanceInterval time.Duration) *Controller {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
-	replicaSetDB := replica.NewReplicaSetDB(changefeedID)
+	replicaSetDB := replica.NewReplicaSetDB(changefeedID, ddlSpan)
 	oc := operator.NewOperatorController(changefeedID, mc, replicaSetDB, batchSize)
 	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
 	s := &Controller{
@@ -83,6 +84,7 @@ func NewController(changefeedID string,
 		changefeedID:       changefeedID,
 		batchSize:          batchSize,
 		bootstrapped:       false,
+		ddlDispatcherID:    ddlSpan.ID,
 		spanScheduler:      scheduler.NewScheduler(changefeedID, batchSize, oc, replicaSetDB, nodeManager, balanceInterval),
 		operatorController: oc,
 		messageCenter:      mc,
@@ -206,7 +208,6 @@ func (c *Controller) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb
 			delete(workingMap, table.TableID)
 		}
 	}
-	ddlSpanFound := false
 	// tables that not included in init table map we get from tikv at checkpoint ts
 	// that can happen if a table is created after checkpoint ts
 	// the initial table map only contains real physical tables,
@@ -215,15 +216,9 @@ func (c *Controller) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb
 		log.Info("found a tables not in initial table map",
 			zap.String("changefeed", c.changefeedID),
 			zap.Int64("id", tableID))
-		if c.addWorkingSpans(tableMap) {
-			ddlSpanFound = true
-		}
+		c.addWorkingSpans(tableMap)
 	}
 
-	// add a table_event_trigger dispatcher if not found
-	if !ddlSpanFound {
-		c.addDDLDispatcher()
-	}
 	// start operator and scheduler
 	c.operatorControllerHandle = c.taskScheduler.Submit(c.spanScheduler, time.Now())
 	c.schedulerHandle = c.taskScheduler.Submit(c.operatorController, time.Now())
@@ -302,28 +297,11 @@ func (c *Controller) GetTaskSizeByNodeID(id node.ID) int {
 	return c.replicationDB.GetTaskSizeByNodeID(id)
 }
 
-func (c *Controller) addDDLDispatcher() {
-	ddlTableSpan := heartbeatpb.DDLSpan
-	c.ddlDispatcherID = common.NewDispatcherID()
-	c.addNewSpan(c.ddlDispatcherID, heartbeatpb.DDLSpanSchemaID,
-		ddlTableSpan, c.startCheckpointTs)
-	log.Info("create table event trigger dispatcher",
-		zap.String("changefeed", c.changefeedID),
-		zap.String("dispatcher", c.ddlDispatcherID.String()))
-}
-
-func (c *Controller) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication]) bool {
-	ddlSpanFound := false
+func (c *Controller) addWorkingSpans(tableMap utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication]) {
 	tableMap.Ascend(func(span *heartbeatpb.TableSpan, stm *replica.SpanReplication) bool {
-		dispatcherID := stm.ID
 		c.replicationDB.AddReplicatingSpan(stm)
-		if span.TableID == 0 {
-			ddlSpanFound = true
-			c.ddlDispatcherID = dispatcherID
-		}
 		return true
 	})
-	return ddlSpanFound
 }
 
 func (c *Controller) addNewSpans(schemaID int64,
