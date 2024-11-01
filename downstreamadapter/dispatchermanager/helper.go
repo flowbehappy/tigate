@@ -16,10 +16,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/downstreamadapter/dispatcher"
-	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/utils/dynstream"
-	"github.com/flowbehappy/tigate/utils/threadpool"
+	"github.com/pingcap/ticdc/downstreamadapter/dispatcher"
+	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/utils/dynstream"
+	"github.com/pingcap/ticdc/utils/threadpool"
 	"github.com/pingcap/tiflow/cdc/model"
 )
 

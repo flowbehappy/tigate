@@ -16,10 +16,10 @@ package metrics
 import (
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/tiflow/cdc/model"
 
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

@@ -16,13 +16,13 @@ package schemastore
 import (
 	"context"
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/logservice/logpuller"
-	"github.com/flowbehappy/tigate/logservice/txnutil"
-	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/logservice/logpuller"
+	"github.com/pingcap/ticdc/logservice/txnutil"
+	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"

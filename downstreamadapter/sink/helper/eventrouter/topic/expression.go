@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink"
 )

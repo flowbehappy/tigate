@@ -17,9 +17,9 @@ import (
 	"strings"
 	"time"
 
-	apiv2client "github.com/flowbehappy/tigate/pkg/api/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	apiv2client "github.com/pingcap/ticdc/pkg/api/v2"
 	cmdconetxt "github.com/pingcap/tiflow/pkg/cmd/context"
 	"github.com/pingcap/tiflow/pkg/cmd/util"
 	cerror "github.com/pingcap/tiflow/pkg/errors"

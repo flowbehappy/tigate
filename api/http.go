@@ -14,11 +14,12 @@
 package api
 
 import (
-	"github.com/flowbehappy/tigate/pkg/node"
 	"net/http/pprof"
 
-	v2 "github.com/flowbehappy/tigate/api/v2"
+	"github.com/pingcap/ticdc/pkg/node"
+
 	"github.com/gin-gonic/gin"
+	v2 "github.com/pingcap/ticdc/api/v2"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )

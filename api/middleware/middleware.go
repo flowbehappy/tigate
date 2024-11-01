@@ -19,10 +19,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/config"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/gin-gonic/gin"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/config"
+	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/tiflow/cdc/api"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/httputil"

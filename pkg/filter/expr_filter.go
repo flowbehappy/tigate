@@ -17,9 +17,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/sessionctx"

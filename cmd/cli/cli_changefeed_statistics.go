@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"time"
 
-	v2 "github.com/flowbehappy/tigate/api/v2"
-	"github.com/flowbehappy/tigate/cmd/factory"
-	apiv2client "github.com/flowbehappy/tigate/pkg/api/v2"
+	v2 "github.com/pingcap/ticdc/api/v2"
+	"github.com/pingcap/ticdc/cmd/factory"
+	apiv2client "github.com/pingcap/ticdc/pkg/api/v2"
 	cmdcontext "github.com/pingcap/tiflow/pkg/cmd/context"
 	"github.com/pingcap/tiflow/pkg/cmd/util"
 	"github.com/spf13/cobra"

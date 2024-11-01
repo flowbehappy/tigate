@@ -16,8 +16,8 @@ package partition
 import (
 	"strconv"
 
-	"github.com/flowbehappy/tigate/pkg/common"
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/common"
+	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 )
 
 // TsDispatcher is a partition dispatcher which dispatch events based on ts.

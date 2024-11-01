@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/pingcap/ticdc/pkg/metrics"
 
 	"github.com/pingcap/log"
 	"go.uber.org/zap"

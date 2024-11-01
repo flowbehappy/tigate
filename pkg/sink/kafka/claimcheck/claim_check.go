@@ -19,9 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"

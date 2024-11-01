@@ -14,7 +14,7 @@
 package server
 
 import (
-	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

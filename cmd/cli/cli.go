@@ -14,7 +14,7 @@
 package cli
 
 import (
-	"github.com/flowbehappy/tigate/cmd/factory"
+	"github.com/pingcap/ticdc/cmd/factory"
 	"github.com/pingcap/tiflow/pkg/cmd/util"
 	"github.com/pingcap/tiflow/pkg/logutil"
 	"github.com/spf13/cobra"

@@ -17,7 +17,7 @@ import (
 	"container/list"
 	"sync"
 
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 )
 
 // TableProgress maintains event timestamp information in the sink.

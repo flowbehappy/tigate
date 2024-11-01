@@ -16,7 +16,7 @@ package common
 import (
 	"bytes"
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"

@@ -18,11 +18,11 @@ import (
 	"sync"
 	"time"
 
-	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
-	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/pkg/node"
-	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/pingcap/log"
+	appcontext "github.com/pingcap/ticdc/pkg/common/context"
+	"github.com/pingcap/ticdc/pkg/messaging"
+	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/server/watcher"
 	"go.uber.org/zap"
 )
 

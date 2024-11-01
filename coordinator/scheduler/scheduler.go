@@ -17,11 +17,11 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/flowbehappy/tigate/coordinator/changefeed"
-	"github.com/flowbehappy/tigate/coordinator/operator"
-	"github.com/flowbehappy/tigate/pkg/node"
-	"github.com/flowbehappy/tigate/pkg/scheduler"
-	"github.com/flowbehappy/tigate/server/watcher"
+	"github.com/pingcap/ticdc/coordinator/changefeed"
+	"github.com/pingcap/ticdc/coordinator/operator"
+	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/pkg/scheduler"
+	"github.com/pingcap/ticdc/server/watcher"
 )
 
 // Scheduler generates operators for the maintainers, and push them to the operator controller

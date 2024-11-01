@@ -17,12 +17,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
-	"github.com/flowbehappy/tigate/utils/dynstream"
-	"github.com/flowbehappy/tigate/utils/threadpool"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/common"
+	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/utils/dynstream"
+	"github.com/pingcap/ticdc/utils/threadpool"
 	"go.uber.org/zap"
 )
 

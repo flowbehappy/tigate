@@ -17,15 +17,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	tisink "github.com/flowbehappy/tigate/downstreamadapter/sink"
-	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
-	"github.com/flowbehappy/tigate/downstreamadapter/syncpoint"
-	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
-	"github.com/flowbehappy/tigate/pkg/filter"
-	"github.com/flowbehappy/tigate/pkg/sink/util"
 	"github.com/pingcap/log"
+	tisink "github.com/pingcap/ticdc/downstreamadapter/sink"
+	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
+	"github.com/pingcap/ticdc/downstreamadapter/syncpoint"
+	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/common"
+	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/filter"
+	"github.com/pingcap/ticdc/pkg/sink/util"
 	"go.uber.org/zap"
 )
 

@@ -20,8 +20,8 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"

@@ -8,8 +8,8 @@ import (
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 
-	"github.com/flowbehappy/tigate/utils/deque"
-	"github.com/flowbehappy/tigate/utils/heap"
+	"github.com/pingcap/ticdc/utils/deque"
+	"github.com/pingcap/ticdc/utils/heap"
 )
 
 var nextReportRound = atomic.Int64{}

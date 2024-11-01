@@ -17,11 +17,11 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/flowbehappy/tigate/maintainer/operator"
-	"github.com/flowbehappy/tigate/maintainer/replica"
-	"github.com/flowbehappy/tigate/pkg/node"
-	"github.com/flowbehappy/tigate/pkg/scheduler"
-	"github.com/flowbehappy/tigate/server/watcher"
+	"github.com/pingcap/ticdc/maintainer/operator"
+	"github.com/pingcap/ticdc/maintainer/replica"
+	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/pkg/scheduler"
+	"github.com/pingcap/ticdc/server/watcher"
 )
 
 // Scheduler generates operators for the spans, and push them to the operator controller

@@ -16,10 +16,10 @@ package checker
 import (
 	"time"
 
-	"github.com/flowbehappy/tigate/maintainer/operator"
-	"github.com/flowbehappy/tigate/maintainer/replica"
-	"github.com/flowbehappy/tigate/maintainer/split"
-	"github.com/flowbehappy/tigate/server/watcher"
+	"github.com/pingcap/ticdc/maintainer/operator"
+	"github.com/pingcap/ticdc/maintainer/replica"
+	"github.com/pingcap/ticdc/maintainer/split"
+	"github.com/pingcap/ticdc/server/watcher"
 )
 
 // Controller is the controller of all checkers, it will periodically execute all checkers

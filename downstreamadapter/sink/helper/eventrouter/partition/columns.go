@@ -17,9 +17,9 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/flowbehappy/tigate/pkg/common"
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/common"
+	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/hash"

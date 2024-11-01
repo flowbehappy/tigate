@@ -17,8 +17,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/tiflow/cdc/model"
 	bf "github.com/pingcap/tiflow/pkg/binlog-filter"
 	cerror "github.com/pingcap/tiflow/pkg/errors"

@@ -14,7 +14,7 @@
 package conflictdetector
 
 import (
-	"github.com/flowbehappy/tigate/utils/threadpool"
+	"github.com/pingcap/ticdc/utils/threadpool"
 )
 
 // 每个 conflict detector 对应一个 notifyTask

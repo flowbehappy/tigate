@@ -21,8 +21,8 @@ import (
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
-	apiv2client "github.com/flowbehappy/tigate/pkg/api/v2"
 	"github.com/pingcap/log"
+	apiv2client "github.com/pingcap/ticdc/pkg/api/v2"
 	"github.com/pingcap/tiflow/pkg/cmd/util"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/etcd"

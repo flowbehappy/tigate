@@ -16,9 +16,9 @@ package maintainer
 import (
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/utils/dynstream"
-	"github.com/flowbehappy/tigate/utils/threadpool"
+	"github.com/pingcap/ticdc/pkg/messaging"
+	"github.com/pingcap/ticdc/utils/dynstream"
+	"github.com/pingcap/ticdc/utils/threadpool"
 )
 
 const (

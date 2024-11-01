@@ -22,10 +22,10 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/flowbehappy/tigate/pkg/common"
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/common"
+	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	timodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tiflow/pkg/util"

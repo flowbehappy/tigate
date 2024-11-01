@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/pingcap/ticdc/pkg/common"
 
 	"github.com/benbjohnson/clock"
 	"github.com/pingcap/log"

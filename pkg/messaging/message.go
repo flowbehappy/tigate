@@ -4,15 +4,15 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/config"
-	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/pingcap/ticdc/pkg/config"
+	"github.com/pingcap/ticdc/pkg/node"
 
-	"github.com/flowbehappy/tigate/eventpb"
-	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/apperror"
-	"github.com/flowbehappy/tigate/pkg/common"
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/eventpb"
+	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/apperror"
+	"github.com/pingcap/ticdc/pkg/common"
+	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	bf "github.com/pingcap/tiflow/pkg/binlog-filter"
 	"go.uber.org/zap"
 )

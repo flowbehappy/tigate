@@ -20,11 +20,11 @@ import (
 	"sync"
 	"time"
 
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
-	"github.com/flowbehappy/tigate/pkg/metrics"
-	"github.com/flowbehappy/tigate/pkg/sink/mysql"
-	"github.com/flowbehappy/tigate/pkg/sink/util"
 	"github.com/pingcap/log"
+	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/metrics"
+	"github.com/pingcap/ticdc/pkg/sink/mysql"
+	"github.com/pingcap/ticdc/pkg/sink/util"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )

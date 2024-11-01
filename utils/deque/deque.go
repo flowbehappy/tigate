@@ -1,7 +1,7 @@
 package deque
 
 import (
-	"github.com/flowbehappy/tigate/utils/list"
+	"github.com/pingcap/ticdc/utils/list"
 )
 
 // A deque implemented by a doubly linked list of fixed-size blocks.

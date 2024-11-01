@@ -16,10 +16,10 @@ package filter
 import (
 	"strings"
 
-	"github.com/flowbehappy/tigate/pkg/apperror"
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
-	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/apperror"
+	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/config"
 	timodel "github.com/pingcap/tidb/pkg/meta/model"
 	tfilter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/pingcap/tiflow/cdc/model"

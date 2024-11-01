@@ -16,9 +16,9 @@ package v2
 import (
 	"net/http"
 
-	appcontext "github.com/flowbehappy/tigate/pkg/common/context"
-	"github.com/flowbehappy/tigate/server/watcher"
 	"github.com/gin-gonic/gin"
+	appcontext "github.com/pingcap/ticdc/pkg/common/context"
+	"github.com/pingcap/ticdc/server/watcher"
 )
 
 // listCaptures lists all captures

@@ -18,8 +18,8 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/flowbehappy/tigate/pkg/common"
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/common"
+	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tiflow/cdc/model"
 )

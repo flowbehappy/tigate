@@ -18,8 +18,8 @@ import (
 	"context"
 	"time"
 
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
-	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
+	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/sink/codec/encoder"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/errors"

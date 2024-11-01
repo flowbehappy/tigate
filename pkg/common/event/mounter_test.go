@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/pingcap/ticdc/pkg/common"
 	timodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"

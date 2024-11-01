@@ -14,7 +14,7 @@
 package version
 
 import (
-	"github.com/flowbehappy/tigate/version"
+	"github.com/pingcap/ticdc/version"
 	"github.com/spf13/cobra"
 )
 

@@ -14,9 +14,9 @@
 package checker
 
 import (
-	"github.com/flowbehappy/tigate/maintainer/operator"
-	"github.com/flowbehappy/tigate/maintainer/replica"
-	"github.com/flowbehappy/tigate/server/watcher"
+	"github.com/pingcap/ticdc/maintainer/operator"
+	"github.com/pingcap/ticdc/maintainer/replica"
+	"github.com/pingcap/ticdc/server/watcher"
 )
 
 // BalanceChecker is used to check the balance status of all spans among all nodes

@@ -1,4 +1,4 @@
-module github.com/flowbehappy/tigate
+module github.com/pingcap/ticdc
 
 go 1.23
 

@@ -17,8 +17,8 @@ import (
 	_ "embed"
 	"encoding/json"
 
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/linkedin/goavro/v2"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
 	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"

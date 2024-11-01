@@ -18,11 +18,11 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/imdario/mergo"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/util"

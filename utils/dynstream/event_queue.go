@@ -3,7 +3,7 @@ package dynstream
 import (
 	"time"
 
-	"github.com/flowbehappy/tigate/utils/heap"
+	"github.com/pingcap/ticdc/utils/heap"
 )
 
 // timestampPathNode is order by timestamp.

@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/stretchr/testify/require"
 )
