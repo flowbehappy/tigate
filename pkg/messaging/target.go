@@ -7,17 +7,17 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/pingcap/ticdc/pkg/node"
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/flowbehappy/tigate/pkg/metrics"
+	"github.com/pingcap/ticdc/pkg/metrics"
 
-	. "github.com/flowbehappy/tigate/pkg/apperror"
-	"github.com/flowbehappy/tigate/pkg/config"
-	"github.com/flowbehappy/tigate/pkg/messaging/proto"
-	"github.com/flowbehappy/tigate/utils/conn"
 	"github.com/pingcap/log"
+	. "github.com/pingcap/ticdc/pkg/apperror"
+	"github.com/pingcap/ticdc/pkg/config"
+	"github.com/pingcap/ticdc/pkg/messaging/proto"
+	"github.com/pingcap/ticdc/utils/conn"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/security"
 	"go.uber.org/zap"

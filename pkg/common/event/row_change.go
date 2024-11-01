@@ -3,8 +3,8 @@ package event
 import (
 	"unsafe"
 
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	timodel "github.com/pingcap/tiflow/cdc/model"

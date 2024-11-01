@@ -4,7 +4,7 @@ CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(CURDIR)/bin:$(CURDIR)/tools/bin:$(path_to_add):$(PATH)
 TIFLOW_CDC_PKG := github.com/pingcap/tiflow
-CDC_PKG := github.com/flowbehappy/tigate
+CDC_PKG := github.com/pingcap/ticdc
 # DBUS_SESSION_BUS_ADDRESS pulsar client use dbus to detect the connection status,
 # but it will not exit when the connection is closed.
 # I try to use leak_helper to detect goroutine leak,but it does not work.

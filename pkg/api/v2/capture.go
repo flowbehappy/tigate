@@ -16,8 +16,8 @@ package v2
 import (
 	"context"
 
-	"github.com/flowbehappy/tigate/api/v2"
-	"github.com/flowbehappy/tigate/pkg/api/internal/rest"
+	v2 "github.com/pingcap/ticdc/api/v2"
+	"github.com/pingcap/ticdc/pkg/api/internal/rest"
 )
 
 // CapturesGetter has a method to return a CaptureInterface.

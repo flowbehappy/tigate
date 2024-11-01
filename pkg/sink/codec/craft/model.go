@@ -14,8 +14,8 @@
 package craft
 
 import (
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 )

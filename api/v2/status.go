@@ -17,8 +17,8 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/flowbehappy/tigate/version"
 	"github.com/gin-gonic/gin"
+	"github.com/pingcap/ticdc/version"
 )
 
 // serverStatus Get the status information of a TiCDC node

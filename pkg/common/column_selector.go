@@ -14,7 +14,7 @@
 package common
 
 import (
-	ticonfig "github.com/flowbehappy/tigate/pkg/config"
+	ticonfig "github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/pingcap/tiflow/pkg/errors"

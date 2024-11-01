@@ -16,9 +16,9 @@ package regionlock
 import (
 	"sort"
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/common"
 )
 
 // CheckRegionsLeftCover checks whether the regions cover the left part of given span

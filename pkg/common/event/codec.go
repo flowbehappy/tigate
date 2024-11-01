@@ -17,8 +17,8 @@ import (
 	"bytes"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"

@@ -14,8 +14,8 @@
 package dispatchermanager
 
 import (
-	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/node"
 )
 
 /*

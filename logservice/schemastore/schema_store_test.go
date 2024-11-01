@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowbehappy/tigate/logservice/upstream"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/logservice/upstream"
 	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"

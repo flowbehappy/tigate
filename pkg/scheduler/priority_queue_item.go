@@ -13,7 +13,7 @@
 
 package scheduler
 
-import "github.com/flowbehappy/tigate/pkg/node"
+import "github.com/pingcap/ticdc/pkg/node"
 
 // Item is an item in the priority queue, use the Load field as the priority
 type Item struct {

@@ -17,9 +17,9 @@ import (
 	"math"
 	"sync"
 
-	"github.com/flowbehappy/tigate/pkg/config"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/config"
+	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )

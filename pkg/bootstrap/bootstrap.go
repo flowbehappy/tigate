@@ -16,9 +16,9 @@ package bootstrap
 import (
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/messaging"
+	"github.com/pingcap/ticdc/pkg/node"
 	"go.uber.org/zap"
 )
 

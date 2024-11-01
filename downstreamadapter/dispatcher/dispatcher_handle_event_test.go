@@ -4,14 +4,14 @@ import (
 	"sync/atomic"
 	"testing"
 
-	psink "github.com/flowbehappy/tigate/downstreamadapter/sink"
-	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
-	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
-	sinkutil "github.com/flowbehappy/tigate/pkg/sink/util"
+	psink "github.com/pingcap/ticdc/downstreamadapter/sink"
+	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
+	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/common"
+	sinkutil "github.com/pingcap/ticdc/pkg/sink/util"
 	timodel "github.com/pingcap/tidb/pkg/parser/model"
 
-	pevent "github.com/flowbehappy/tigate/pkg/common/event"
+	pevent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/stretchr/testify/require"
 )
 

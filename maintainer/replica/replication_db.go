@@ -16,10 +16,10 @@ package replica
 import (
 	"sync"
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/node"
 	"go.uber.org/zap"
 )
 
@@ -381,6 +381,24 @@ func (db *ReplicationDB) MarkSpanReplicating(span *SpanReplication) {
 	delete(db.absent, span.ID)
 	delete(db.scheduling, span.ID)
 	db.replicating[span.ID] = span
+}
+
+// ForceRemove remove the span from the db
+func (db *ReplicationDB) ForceRemove(id common.DispatcherID) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+	span, ok := db.allTasks[id]
+	if !ok {
+		log.Warn("span not found, ignore remove action",
+			zap.String("changefeed", db.changefeedID),
+			zap.String("span", id.String()))
+		return
+	}
+
+	log.Info("remove span",
+		zap.String("changefeed", db.changefeedID),
+		zap.String("span", id.String()))
+	db.removeSpanUnLock(span)
 }
 
 // UpdateSchemaID will update the schema id of the table, and move the task to the new schema map

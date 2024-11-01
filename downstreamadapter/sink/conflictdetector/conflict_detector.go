@@ -16,10 +16,10 @@ package conflictdetector
 import (
 	"sync"
 
-	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
-	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/utils/chann"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
+	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/utils/chann"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )

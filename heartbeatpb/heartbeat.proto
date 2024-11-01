@@ -1,7 +1,7 @@
 syntax = "proto3";
 package heartbeatpb;
 
-option go_package = "github.com/flowbehappy/tigate/heartbeatpb";
+option go_package = "github.com/pingcap/ticdc/heartbeatpb";
 
 message TableSpan {
     int64 TableID   = 1;

@@ -21,9 +21,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/common"
-	commonNew "github.com/flowbehappy/tigate/pkg/sink/codec/common"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/common"
+	commonNew "github.com/pingcap/ticdc/pkg/sink/codec/common"
 	timodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"

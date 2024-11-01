@@ -3,7 +3,7 @@ package event
 import (
 	"encoding/json"
 
-	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/pingcap/ticdc/pkg/common"
 )
 
 // Implement Event / FlushEvent / BlockEvent interface

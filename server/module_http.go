@@ -19,10 +19,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/flowbehappy/tigate/api"
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/api"
+	"github.com/pingcap/ticdc/pkg/common"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	clogutil "github.com/pingcap/tiflow/pkg/logutil"
 	"go.uber.org/zap"

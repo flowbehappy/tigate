@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/pingcap/ticdc/pkg/node"
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/pkg/messaging"
+	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/stretchr/testify/require"
 )
 

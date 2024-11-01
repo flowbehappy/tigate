@@ -6,7 +6,7 @@ package eventpb
 import (
 	encoding_binary "encoding/binary"
 	fmt "fmt"
-	heartbeatpb "github.com/flowbehappy/tigate/heartbeatpb"
+	heartbeatpb "github.com/pingcap/ticdc/heartbeatpb"
 	proto "github.com/gogo/protobuf/proto"
 	io "io"
 	math "math"

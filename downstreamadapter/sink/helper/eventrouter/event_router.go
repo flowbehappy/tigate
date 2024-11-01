@@ -14,12 +14,12 @@
 package eventrouter
 
 import (
-	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter/partition"
-	"github.com/flowbehappy/tigate/downstreamadapter/sink/helper/eventrouter/topic"
-	"github.com/flowbehappy/tigate/pkg/common"
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
-	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/downstreamadapter/sink/helper/eventrouter/partition"
+	"github.com/pingcap/ticdc/downstreamadapter/sink/helper/eventrouter/topic"
+	"github.com/pingcap/ticdc/pkg/common"
+	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/config"
 	tableFilter "github.com/pingcap/tidb/pkg/util/table-filter"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 )

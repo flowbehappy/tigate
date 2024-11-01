@@ -19,11 +19,11 @@ import (
 	"strings"
 	"time"
 
-	pkafka "github.com/flowbehappy/tigate/pkg/sink/kafka"
 	"github.com/jcmturner/gokrb5/v8/client"
 	"github.com/jcmturner/gokrb5/v8/config"
 	"github.com/jcmturner/gokrb5/v8/keytab"
 	"github.com/pingcap/log"
+	pkafka "github.com/pingcap/ticdc/pkg/sink/kafka"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/security"

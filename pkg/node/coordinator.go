@@ -16,7 +16,7 @@ package node
 import (
 	"context"
 
-	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/tiflow/cdc/model"
 )
 

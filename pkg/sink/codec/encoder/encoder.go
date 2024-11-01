@@ -17,7 +17,7 @@ import (
 	"bytes"
 	"context"
 
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
+	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 )
 

@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowbehappy/tigate/eventpb"
-	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/messaging"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/eventpb"
+	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/messaging"
 	"go.uber.org/zap"
 )
 

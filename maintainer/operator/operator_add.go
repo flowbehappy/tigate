@@ -16,12 +16,12 @@ package operator
 import (
 	"fmt"
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
-	"github.com/flowbehappy/tigate/maintainer/replica"
-	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/maintainer/replica"
+	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/messaging"
+	"github.com/pingcap/ticdc/pkg/node"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -47,11 +47,24 @@ func NewAddDispatcherOperator(
 }
 
 func (m *AddDispatcherOperator) Check(from node.ID, status *heartbeatpb.TableSpanStatus) {
-	if !m.finished.Load() && from == m.dest && status.ComponentStatus == heartbeatpb.ComponentState_Working {
-		log.Info("dispatcher report working status",
-			zap.String("changefeed", m.replicaSet.ChangefeedID.String()),
-			zap.String("replicaSet", m.replicaSet.ID.String()))
-		m.finished.Store(true)
+	if !m.finished.Load() && from == m.dest {
+		switch status.ComponentStatus {
+		case heartbeatpb.ComponentState_Working:
+			log.Info("dispatcher report working status",
+				zap.String("changefeed", m.replicaSet.ChangefeedID.String()),
+				zap.String("replicaSet", m.replicaSet.ID.String()))
+			m.finished.Store(true)
+		case heartbeatpb.ComponentState_Removed:
+			log.Info("dispatcher report removed status",
+				zap.String("changefeed", m.replicaSet.ChangefeedID.String()),
+				zap.String("replicaSet", m.replicaSet.ID.String()))
+			m.finished.Store(true)
+			m.removed.Store(true)
+		case heartbeatpb.ComponentState_Stopped:
+			log.Warn("dispatcher report unexpected stopped status, ignore",
+				zap.String("changefeed", m.replicaSet.ChangefeedID.String()),
+				zap.String("replicaSet", m.replicaSet.ID.String()))
+		}
 	}
 }
 
@@ -88,8 +101,10 @@ func (m *AddDispatcherOperator) Start() {
 }
 
 func (m *AddDispatcherOperator) PostFinish() {
-	if !m.removed.Load() {
+	if m.removed.Load() {
 		m.db.MarkSpanReplicating(m.replicaSet)
+	} else {
+		m.db.ForceRemove(m.replicaSet.ID)
 	}
 }
 

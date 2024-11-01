@@ -18,8 +18,8 @@ import (
 	"context"
 	"math"
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"

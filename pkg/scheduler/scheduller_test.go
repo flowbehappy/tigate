@@ -16,7 +16,7 @@ package scheduler
 import (
 	"testing"
 
-	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/stretchr/testify/require"
 )
 

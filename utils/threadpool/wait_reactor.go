@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowbehappy/tigate/utils/heap"
+	"github.com/pingcap/ticdc/utils/heap"
 )
 
 type taskAndTime struct {
