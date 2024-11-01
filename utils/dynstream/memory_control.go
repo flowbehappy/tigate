@@ -118,6 +118,11 @@ func (as *areaMemStat[A, P, T, D, H]) shouldDropEvent(
 
 	// If the pending size does not exceed the max allowed size, or the path has no events, no need to drop the event.
 	if !exceedMaxPendingSize() || path.pendingQueue.Length() == 0 {
+		log.Info("no need to drop event",
+			zap.Any("timestamp", event.timestamp),
+			zap.Any("area", as.area),
+			zap.Any("path", path.path),
+			zap.Int("pendingSize", int(as.totalPendingSize.Load())))
 		return false
 	}
 
@@ -130,6 +135,7 @@ func (as *areaMemStat[A, P, T, D, H]) shouldDropEvent(
 	}
 	// If event's timestamp is not the smallest among all the paths in the area, drop it.
 	if event.timestamp > top.frontTimestamp {
+
 		if !isPeriodicSignal(event) {
 			handler.OnDrop(event.event)
 		}
@@ -139,6 +145,7 @@ func (as *areaMemStat[A, P, T, D, H]) shouldDropEvent(
 	// Drop the events of the largest pending size path to find a place for the new event.
 LOOP:
 	for exceedMaxPendingSize() {
+
 		longestPath, ok := path.streamAreaInfo.pathSizeHeap.PeekTop()
 		if !ok {
 			log.Panic("pathSizeHeap is empty, but exceedMaxPendingSize, it should not happen",
@@ -146,6 +153,7 @@ LOOP:
 		}
 		// If the longest path is the same as the current path, drop the event and return.
 		if longestPath.path == path.path {
+
 			if !isPeriodicSignal(event) {
 				handler.OnDrop(event.event)
 			}
@@ -226,14 +234,6 @@ func (as *areaMemStat[A, P, T, D, H]) shouldPausePath(path *pathInfo[A, P, T, D,
 
 	heapLength := path.streamAreaInfo.pathSizeHeap.Len()
 	stopMaxIndex := int(float64(heapLength) * pausePathRatio)
-	log.Info("shouldPausePath",
-		zap.Any("area", as.area),
-		zap.Any("path", path.path),
-		zap.Int("heapLength", heapLength),
-		zap.Float64("memoryUsageRatio", memoryUsageRatio),
-		zap.Float64("pausePathRatio", pausePathRatio),
-		zap.Int("stopMaxIndex", stopMaxIndex))
-
 	// Although heap indices don't guarantee exact ordering,
 	// they provide a good approximation for our use case.
 	// Since we're using a max heap, larger elements are closer to the root (index 0).
@@ -279,6 +279,7 @@ func (m *memControl[A, P, T, D, H]) addPathToArea(path *pathInfo[A, P, T, D, H],
 
 	area, ok := m.areaStatMap[path.area]
 	if !ok {
+
 		area = newAreaMemStat(path.area, m, settings, feedbackChan)
 		m.areaStatMap[path.area] = area
 	}

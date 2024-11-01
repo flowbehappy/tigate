@@ -35,7 +35,9 @@ func newMockEvent(id int, path string, sleep time.Duration, work mockWork, start
 	return e
 }
 
-type mockHandler struct{}
+type mockHandler struct {
+	droppedEvents []*mockEvent
+}
 
 func (h *mockHandler) Path(event *mockEvent) string {
 	return event.path
@@ -67,7 +69,14 @@ func (h *mockHandler) GetArea(path string, dest any) int       { return 0 }
 func (h *mockHandler) GetTimestamp(event *mockEvent) Timestamp { return 0 }
 func (h *mockHandler) GetType(event *mockEvent) EventType      { return DefaultEventType }
 func (h *mockHandler) IsPaused(event *mockEvent) bool          { return false }
-func (h *mockHandler) OnDrop(event *mockEvent)                 {}
+func (h *mockHandler) OnDrop(event *mockEvent) {
+	h.droppedEvents = append(h.droppedEvents, event)
+}
+func (h *mockHandler) drainDroppedEvents() []*mockEvent {
+	events := h.droppedEvents
+	h.droppedEvents = nil
+	return events
+}
 
 type Inc struct {
 	num int64

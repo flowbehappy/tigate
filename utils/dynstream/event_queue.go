@@ -64,7 +64,7 @@ func (p *pathSizeStat[A, P, T, D, H]) GetHeapIndex() int {
 }
 
 func (p *pathSizeStat[A, P, T, D, H]) LessThan(other *pathSizeStat[A, P, T, D, H]) bool {
-	// The heap is in descending order.
+	// pathSizeHeap should be in descending order. That say the node with the largest pending size is the top.
 	return p.pendingSize > other.pendingSize
 }
 
