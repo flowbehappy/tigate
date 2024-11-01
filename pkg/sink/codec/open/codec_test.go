@@ -3,10 +3,10 @@ package open
 import (
 	"testing"
 
-	"github.com/flowbehappy/tigate/pkg/common"
-	pevent "github.com/flowbehappy/tigate/pkg/common/event"
-	ticonfig "github.com/flowbehappy/tigate/pkg/config"
-	newcommon "github.com/flowbehappy/tigate/pkg/sink/codec/common"
+	"github.com/pingcap/ticdc/pkg/common"
+	pevent "github.com/pingcap/ticdc/pkg/common/event"
+	ticonfig "github.com/pingcap/ticdc/pkg/config"
+	newcommon "github.com/pingcap/ticdc/pkg/sink/codec/common"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tiflow/pkg/config"
 	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"

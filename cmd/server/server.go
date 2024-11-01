@@ -18,14 +18,14 @@ import (
 	"os"
 	"strings"
 
-	"github.com/flowbehappy/tigate/pkg/config"
-	"github.com/flowbehappy/tigate/pkg/logger"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/config"
+	"github.com/pingcap/ticdc/pkg/logger"
 
 	"github.com/fatih/color"
-	"github.com/flowbehappy/tigate/server"
-	"github.com/flowbehappy/tigate/version"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/ticdc/server"
+	"github.com/pingcap/ticdc/version"
 	"github.com/pingcap/tiflow/pkg/cmd/util"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/security"

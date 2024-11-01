@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/pingcap/tiflow/pkg/config"

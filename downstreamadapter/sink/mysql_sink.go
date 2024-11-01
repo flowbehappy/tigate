@@ -17,12 +17,12 @@ import (
 	"context"
 	"net/url"
 
-	"github.com/flowbehappy/tigate/downstreamadapter/sink/types"
-	"github.com/flowbehappy/tigate/downstreamadapter/worker"
-	commonEvent "github.com/flowbehappy/tigate/pkg/common/event"
-	"github.com/flowbehappy/tigate/pkg/config"
-	"github.com/flowbehappy/tigate/pkg/sink/mysql"
-	"github.com/flowbehappy/tigate/pkg/sink/util"
+	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
+	"github.com/pingcap/ticdc/downstreamadapter/worker"
+	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/config"
+	"github.com/pingcap/ticdc/pkg/sink/mysql"
+	"github.com/pingcap/ticdc/pkg/sink/util"
 
 	"github.com/pingcap/tiflow/cdc/model"
 	utils "github.com/pingcap/tiflow/pkg/util"

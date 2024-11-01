@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/google/uuid"
+	"github.com/pingcap/ticdc/heartbeatpb"
 )
 
 var DefaultEndian = binary.LittleEndian

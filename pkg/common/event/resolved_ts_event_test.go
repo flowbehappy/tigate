@@ -16,7 +16,7 @@ package event
 import (
 	"testing"
 
-	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/stretchr/testify/require"
 )
 

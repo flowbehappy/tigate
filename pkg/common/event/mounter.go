@@ -20,8 +20,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/flowbehappy/tigate/pkg/common"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"

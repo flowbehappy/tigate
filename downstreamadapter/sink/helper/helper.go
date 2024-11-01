@@ -17,7 +17,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/flowbehappy/tigate/pkg/config"
+	"github.com/pingcap/ticdc/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 )
 

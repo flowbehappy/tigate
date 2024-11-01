@@ -14,8 +14,8 @@
 package operator
 
 import (
-	"github.com/flowbehappy/tigate/pkg/messaging"
-	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/pingcap/ticdc/pkg/messaging"
+	"github.com/pingcap/ticdc/pkg/node"
 )
 
 // Operator is the interface for the coordinator schedule maintainer

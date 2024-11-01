@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/metrics"
 	"github.com/pingcap/kvproto/pkg/cdcpb"
+	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/tiflow/pkg/security"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"

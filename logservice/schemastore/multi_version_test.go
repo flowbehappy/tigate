@@ -16,7 +16,7 @@ package schemastore
 import (
 	"testing"
 
-	"github.com/flowbehappy/tigate/pkg/common"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/stretchr/testify/require"
 )

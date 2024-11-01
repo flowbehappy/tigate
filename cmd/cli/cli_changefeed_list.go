@@ -16,8 +16,8 @@ package cli
 import (
 	"time"
 
-	"github.com/flowbehappy/tigate/cmd/factory"
-	v2 "github.com/flowbehappy/tigate/pkg/api/v2"
+	"github.com/pingcap/ticdc/cmd/factory"
+	v2 "github.com/pingcap/ticdc/pkg/api/v2"
 	"github.com/pingcap/tiflow/cdc/api/owner"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/cmd/context"

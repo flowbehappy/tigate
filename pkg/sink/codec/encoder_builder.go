@@ -3,11 +3,11 @@ package codec
 import (
 	"context"
 
-	"github.com/flowbehappy/tigate/pkg/config"
-	"github.com/flowbehappy/tigate/pkg/sink/codec/canal"
-	"github.com/flowbehappy/tigate/pkg/sink/codec/common"
-	"github.com/flowbehappy/tigate/pkg/sink/codec/encoder"
-	"github.com/flowbehappy/tigate/pkg/sink/codec/open"
+	"github.com/pingcap/ticdc/pkg/config"
+	"github.com/pingcap/ticdc/pkg/sink/codec/canal"
+	"github.com/pingcap/ticdc/pkg/sink/codec/common"
+	"github.com/pingcap/ticdc/pkg/sink/codec/encoder"
+	"github.com/pingcap/ticdc/pkg/sink/codec/open"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 )
 

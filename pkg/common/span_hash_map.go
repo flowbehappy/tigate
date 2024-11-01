@@ -18,8 +18,8 @@ import (
 	"reflect"
 	"unsafe"
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/tiflow/pkg/util/seahash"
 	"go.uber.org/zap"
 )

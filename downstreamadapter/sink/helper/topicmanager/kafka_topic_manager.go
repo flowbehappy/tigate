@@ -19,9 +19,9 @@ import (
 	"sync"
 	"time"
 
-	tikafka "github.com/flowbehappy/tigate/pkg/sink/kafka"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	tikafka "github.com/pingcap/ticdc/pkg/sink/kafka"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/retry"

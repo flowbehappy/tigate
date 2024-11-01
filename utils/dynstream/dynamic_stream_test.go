@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowbehappy/tigate/pkg/apperror"
+	"github.com/pingcap/ticdc/pkg/apperror"
 	"github.com/zeebo/assert"
 )
 

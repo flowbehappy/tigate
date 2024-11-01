@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/etcd"

@@ -1,9 +1,9 @@
 package eventservice
 
 import (
-	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/utils/dynstream"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/utils/dynstream"
 )
 
 type dispatcherEventsHandler struct {

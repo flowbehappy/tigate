@@ -9,8 +9,8 @@ import (
 	"time"
 	"unsafe"
 
-	. "github.com/flowbehappy/tigate/pkg/apperror"
-	. "github.com/flowbehappy/tigate/utils"
+	. "github.com/pingcap/ticdc/pkg/apperror"
+	. "github.com/pingcap/ticdc/utils"
 )
 
 const TrackTopPaths = 16

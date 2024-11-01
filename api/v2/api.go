@@ -14,9 +14,9 @@
 package v2
 
 import (
-	"github.com/flowbehappy/tigate/api/middleware"
-	"github.com/flowbehappy/tigate/pkg/node"
 	"github.com/gin-gonic/gin"
+	"github.com/pingcap/ticdc/api/middleware"
+	"github.com/pingcap/ticdc/pkg/node"
 )
 
 // OpenAPIV2 provides CDC v2 APIs

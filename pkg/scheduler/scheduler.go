@@ -17,9 +17,9 @@ import (
 	"math"
 	"math/rand"
 
-	"github.com/flowbehappy/tigate/pkg/node"
-	"github.com/flowbehappy/tigate/utils/heap"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/utils/heap"
 	"go.uber.org/zap"
 )
 

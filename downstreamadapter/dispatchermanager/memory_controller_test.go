@@ -4,8 +4,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/flowbehappy/tigate/pkg/common"
-	"github.com/flowbehappy/tigate/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/stretchr/testify/assert"
 )
 

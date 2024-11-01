@@ -3,10 +3,10 @@ package messaging
 import (
 	"testing"
 
-	"github.com/flowbehappy/tigate/pkg/node"
+	"github.com/pingcap/ticdc/pkg/node"
 
-	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )

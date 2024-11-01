@@ -16,11 +16,11 @@ package main
 import (
 	"os"
 
-	"github.com/flowbehappy/tigate/cmd/cli"
-	"github.com/flowbehappy/tigate/cmd/server"
-	"github.com/flowbehappy/tigate/cmd/version"
-	"github.com/flowbehappy/tigate/pkg/config"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/cmd/cli"
+	"github.com/pingcap/ticdc/cmd/server"
+	"github.com/pingcap/ticdc/cmd/version"
+	"github.com/pingcap/ticdc/pkg/config"
 	tiflowCmd "github.com/pingcap/tiflow/pkg/cmd"
 	"github.com/pingcap/tiflow/pkg/cmd/util"
 	"github.com/spf13/cobra"

@@ -16,8 +16,8 @@ package regionlock
 import (
 	"testing"
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/stretchr/testify/require"
 )
 

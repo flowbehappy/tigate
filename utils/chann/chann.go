@@ -3,7 +3,7 @@ package chann
 import (
 	"sync/atomic"
 
-	"github.com/flowbehappy/tigate/utils/deque"
+	"github.com/pingcap/ticdc/utils/deque"
 )
 
 // Opt represents an option to configure the created channel. The current possible

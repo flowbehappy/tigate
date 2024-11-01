@@ -17,9 +17,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/flowbehappy/tigate/version"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/ticdc/version"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 )

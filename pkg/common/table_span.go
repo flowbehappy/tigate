@@ -16,7 +16,7 @@ package common
 import (
 	"fmt"
 
-	"github.com/flowbehappy/tigate/heartbeatpb"
+	"github.com/pingcap/ticdc/heartbeatpb"
 )
 
 type DataRange struct {
