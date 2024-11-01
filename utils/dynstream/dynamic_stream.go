@@ -206,7 +206,6 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) Close() {
 }
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) addPath(settings AreaSettings, path PathAndDest[P, D]) error {
-	settings.fix()
 	add := &addPathCmd[A, P, T, D, H]{
 		settings: settings,
 		path:     path,
@@ -251,7 +250,6 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) RemovePath(path P) error {
 
 func (d *dynamicStreamImpl[A, P, T, D, H]) SetAreaSettings(area A, settings AreaSettings) {
 	if d.memControl != nil {
-		settings.fix()
 		d.memControl.setAreaSettings(area, settings)
 	}
 }
