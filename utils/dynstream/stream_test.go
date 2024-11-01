@@ -51,7 +51,9 @@ func (h *mockHandler) Handle(dest any, events ...*mockEvent) (await bool) {
 		time.Sleep(event.sleep)
 	}
 
-	event.work.Do()
+	if event.work != nil {
+		event.work.Do()
+	}
 
 	if event.done != nil {
 		event.done.Done()

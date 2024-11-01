@@ -21,6 +21,7 @@ func (n *timestampPathNode[A, P, T, D, H]) updateFrontTimestamp() {
 func (n *timestampPathNode[A, P, T, D, H]) SetHeapIndex(index int) {
 	n.timestampHeapIndex = index
 }
+
 func (n *timestampPathNode[A, P, T, D, H]) GetHeapIndex() int {
 	return n.timestampHeapIndex
 }
@@ -193,29 +194,29 @@ func (q *eventQueue[A, P, T, D, H]) appendEvent(event eventWrap[A, P, T, D, H]) 
 		// A newly added path sends the first event.
 		q.addPath(path)
 	}
-
+	// If memory control is enabled, use the memory control to append the event.
 	if path.areaMemStat != nil {
-		// If memory control is enabled, use the memory control to append the event.
 		path.areaMemStat.appendEvent(path, event, q.handler, q)
 		// updateHeapAfterUpdatePath is called already in areaMemStat.appendEvent
-	} else {
-		// Shortcut when memory control is disabled.
-		replaced := false
-		if event.eventType.Property == PeriodicSignal {
-			front, ok := path.pendingQueue.FrontRef()
-			if ok && front.eventType.Property == PeriodicSignal {
-				// Replace the repeated signal.
-				// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
-				*front = event
-				replaced = true
-				q.updateHeapAfterUpdatePath(path)
-			}
-		}
-		if !replaced {
-			path.pendingQueue.PushBack(event)
+		return
+	}
+
+	// Shortcut when memory control is disabled.
+	replaced := false
+	if event.eventType.Property == PeriodicSignal {
+		back, ok := path.pendingQueue.BackRef()
+		if ok && back.eventType.Property == PeriodicSignal {
+			// Replace the repeated signal.
+			// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
+			*back = event
+			replaced = true
 			q.updateHeapAfterUpdatePath(path)
-			q.totalPendingLength++
 		}
+	}
+	if !replaced {
+		path.pendingQueue.PushBack(event)
+		q.updateHeapAfterUpdatePath(path)
+		q.totalPendingLength++
 	}
 }
 

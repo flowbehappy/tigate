@@ -56,6 +56,21 @@ type areaMemStat[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct 
 	totalPendingSize atomic.Int64
 }
 
+func newAreaMemStat[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
+	area A,
+	memoryControl *memControl[A, P, T, D, H],
+	settings AreaSettings,
+	feedbackChan chan<- Feedback[A, P, D],
+) *areaMemStat[A, P, T, D, H] {
+	settings.fix()
+	return &areaMemStat[A, P, T, D, H]{
+		area:         area,
+		memControl:   memoryControl,
+		settings:     settings,
+		feedbackChan: feedbackChan,
+	}
+}
+
 // This method is called by streams' handleLoop concurrently.
 // Although the method is called concurrently, we don't need a mutex here. Because we only change totalPendingSize,
 // which is an atomic variable. Although the settings could be updated concurrently, we don't really care about the accuracy.
@@ -67,11 +82,11 @@ func (as *areaMemStat[A, P, T, D, H]) appendEvent(
 ) {
 	replaced := false
 	if isPeriodicSignal(event) {
-		front, ok := path.pendingQueue.FrontRef()
-		if ok && isPeriodicSignal(*front) {
+		back, ok := path.pendingQueue.BackRef()
+		if ok && isPeriodicSignal(*back) {
 			// Replace the repeated signal.
 			// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
-			*front = event
+			*back = event
 			replaced = true
 			eventQueue.updateHeapAfterUpdatePath(path)
 		}
@@ -128,6 +143,13 @@ LOOP:
 		if !ok {
 			log.Panic("pathSizeHeap is empty, but exceedMaxPendingSize, it should not happen",
 				zap.Any("area", as.area), zap.Any("path", path.path))
+		}
+		// If the longest path is the same as the current path, drop the event and return.
+		if longestPath.path == path.path {
+			if !isPeriodicSignal(event) {
+				handler.OnDrop(event.event)
+			}
+			return true
 		}
 		for longestPath.pendingQueue.Length() != 0 {
 			back, _ := longestPath.pendingQueue.PopBack()
@@ -204,6 +226,13 @@ func (as *areaMemStat[A, P, T, D, H]) shouldPausePath(path *pathInfo[A, P, T, D,
 
 	heapLength := path.streamAreaInfo.pathSizeHeap.Len()
 	stopMaxIndex := int(float64(heapLength) * pausePathRatio)
+	log.Info("shouldPausePath",
+		zap.Any("area", as.area),
+		zap.Any("path", path.path),
+		zap.Int("heapLength", heapLength),
+		zap.Float64("memoryUsageRatio", memoryUsageRatio),
+		zap.Float64("pausePathRatio", pausePathRatio),
+		zap.Int("stopMaxIndex", stopMaxIndex))
 
 	// Although heap indices don't guarantee exact ordering,
 	// they provide a good approximation for our use case.
@@ -237,28 +266,20 @@ func newMemControl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]]() *me
 func (m *memControl[A, P, T, D, H]) setAreaSettings(area A, settings AreaSettings) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-
 	// Update the settings
 	if as, ok := m.areaStatMap[area]; ok {
+		settings.fix()
 		as.settings = settings
 	}
 }
 
 func (m *memControl[A, P, T, D, H]) addPathToArea(path *pathInfo[A, P, T, D, H], settings AreaSettings, feedbackChan chan<- Feedback[A, P, D]) {
-	if settings.MaxPendingSize == 0 {
-		log.Panic("AreaSettings.MaxPendingSize should not be 0")
-	}
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
 	area, ok := m.areaStatMap[path.area]
 	if !ok {
-		area = &areaMemStat[A, P, T, D, H]{
-			area:         path.area,
-			memControl:   m,
-			settings:     settings,
-			feedbackChan: feedbackChan,
-		}
+		area = newAreaMemStat(path.area, m, settings, feedbackChan)
 		m.areaStatMap[path.area] = area
 	}
 
@@ -269,7 +290,7 @@ func (m *memControl[A, P, T, D, H]) addPathToArea(path *pathInfo[A, P, T, D, H],
 	area.settings = settings
 }
 
-// This mehotd is called after the path is removed.
+// This method is called after the path is removed.
 func (m *memControl[A, P, T, D, H]) removePathFromArea(path *pathInfo[A, P, T, D, H]) {
 	area := path.areaMemStat
 	area.totalPendingSize.Add(int64(-path.pendingSize))
