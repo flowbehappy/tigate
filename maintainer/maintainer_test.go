@@ -129,6 +129,7 @@ func (m *mockDispatcherManager) onBootstrapRequest(msg *messaging.TargetMessage)
 	response := &heartbeatpb.MaintainerBootstrapResponse{
 		ChangefeedID: req.ChangefeedID,
 		Spans:        m.bootstrapTables,
+		CheckpointTs: req.StartTs,
 	}
 	m.changefeedID = req.ChangefeedID
 	m.checkpointTs = req.StartTs
@@ -231,6 +232,34 @@ func TestMaintainerSchedule(t *testing.T) {
 		t.Fatal(http.ListenAndServe(":8300", mux))
 	}()
 
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+
+	argList := flag.Args()
+	if len(argList) > 1 {
+		t.Fatal("unexpected args", argList)
+	}
+	tableSize := 100
+	sleepTime := 5
+	if len(argList) == 1 {
+		tableSize, _ = strconv.Atoi(argList[0])
+	}
+	if len(argList) == 2 {
+		tableSize, _ = strconv.Atoi(argList[0])
+		sleepTime, _ = strconv.Atoi(argList[1])
+	}
+
+	var tables = make([]commonEvent.Table, 0, tableSize)
+	for id := 0; id < tableSize; id++ {
+		tables = append(tables, commonEvent.Table{
+			SchemaID: 1,
+			TableID:  int64(id),
+		})
+	}
+	schemaStore := &mockSchemaStore{tables: tables}
+	appcontext.SetService(appcontext.SchemaStore, schemaStore)
+
 	n := node.NewInfo("", "")
 	appcontext.SetService(appcontext.MessageCenter, messaging.NewMessageCenter(ctx,
 		n.ID, 100, config.NewDefaultMessageCenterConfig()))
@@ -264,30 +293,6 @@ func TestMaintainerSchedule(t *testing.T) {
 		}, n, stream, taskScheduler, nil, nil, 10)
 	_ = stream.AddPath(cfID.ID, maintainer)
 
-	if !flag.Parsed() {
-		flag.Parse()
-	}
-
-	argList := flag.Args()
-	if len(argList) > 1 {
-		t.Fatal("unexpected args", argList)
-	}
-	tableSize := 100
-	sleepTime := 5
-	if len(argList) == 1 {
-		tableSize, _ = strconv.Atoi(argList[0])
-	}
-	if len(argList) == 2 {
-		tableSize, _ = strconv.Atoi(argList[0])
-		sleepTime, _ = strconv.Atoi(argList[1])
-	}
-
-	for id := 0; id < tableSize; id++ {
-		maintainer.controller.AddNewTable(commonEvent.Table{
-			SchemaID: 1,
-			TableID:  int64(id),
-		}, 10)
-	}
 	// send bootstrap message
 	maintainer.sendMessages(maintainer.bootstrapper.HandleNewNodes(
 		[]*node.Info{n},
@@ -301,9 +306,8 @@ func TestMaintainerSchedule(t *testing.T) {
 
 	cancel()
 	stream.Close()
-	//include a ddl dispatcher
-	require.Equal(t, tableSize+1,
+	require.Equal(t, tableSize,
 		maintainer.controller.replicationDB.GetReplicatingSize())
-	require.Equal(t, tableSize+1,
+	require.Equal(t, tableSize,
 		maintainer.controller.GetTaskSizeByNodeID(n.ID))
 }

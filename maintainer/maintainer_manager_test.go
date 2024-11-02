@@ -48,9 +48,10 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	appcontext.SetService(watcher.NodeManagerName, nodeManager)
 	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode
 	store := &mockSchemaStore{
-		// 3 tables and a ddl_event_trigger as a table
+		// 4 tables
 		tables: []commonEvent.Table{
-			{SchemaID: 1, TableID: 1}, {SchemaID: 1, TableID: 2}, {SchemaID: 1, TableID: 3}},
+			{SchemaID: 1, TableID: 1}, {SchemaID: 1, TableID: 2},
+			{SchemaID: 1, TableID: 3}, {SchemaID: 1, TableID: 4}},
 	}
 	appcontext.SetService(appcontext.SchemaStore, store)
 	mc := messaging.NewMessageCenter(ctx, selfNode.ID, 0, config.NewDefaultMessageCenterConfig())
