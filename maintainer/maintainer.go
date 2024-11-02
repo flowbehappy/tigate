@@ -606,7 +606,7 @@ func (m *Maintainer) getNewBootstrapFn() bootstrap.NewBootstrapMessageFn {
 			&heartbeatpb.MaintainerBootstrapRequest{
 				ChangefeedID:                  m.id.ID,
 				Config:                        cfgBytes,
-				StartTs:                       cfg.StartTs,
+				StartTs:                       m.startCheckpointTs,
 				TableTriggerEventDispatcherId: ddlDispatcherID,
 			})
 	}

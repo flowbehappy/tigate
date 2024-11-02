@@ -27,12 +27,20 @@ import (
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/server/watcher"
+	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/stretchr/testify/require"
 )
 
 func TestScheduleEvent(t *testing.T) {
 	setNodeManagerAndMessageCenter()
-	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "test1")
+	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
 	event := NewBlockEvent("test", controller, &heartbeatpb.State{
 		IsBlocked:         true,
@@ -74,8 +82,14 @@ func TestScheduleEvent(t *testing.T) {
 func TestResendAction(t *testing.T) {
 	nodeManager := setNodeManagerAndMessageCenter()
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
-
-	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "node1")
+	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 2}, 1)
 	var dispatcherIDs []common.DispatcherID
@@ -170,7 +184,14 @@ func TestResendAction(t *testing.T) {
 
 func TestUpdateSchemaID(t *testing.T) {
 	setNodeManagerAndMessageCenter()
-	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "node1")
+	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
 	require.Equal(t, 1, controller.replicationDB.GetAbsentSize())
 	require.Len(t, controller.GetTasksBySchemaID(1), 1)

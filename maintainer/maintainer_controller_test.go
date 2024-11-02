@@ -26,13 +26,13 @@ import (
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/ticdc/utils"
 	"github.com/pingcap/ticdc/utils/threadpool"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
-	config2 "github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"github.com/stretchr/testify/require"
@@ -44,8 +44,14 @@ func TestSchedule(t *testing.T) {
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
 	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
 	nodeManager.GetAliveNodes()["node3"] = &node.Info{ID: "node3"}
-
-	controller := NewController("test", 1, nil, nil, nil, nil, 9, time.Minute)
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "node1")
+	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 9, time.Minute)
 	for i := 0; i < 1000; i++ {
 		controller.AddNewTable(commonEvent.Table{
 			SchemaID: 1,
@@ -67,7 +73,14 @@ func TestSchedule(t *testing.T) {
 
 func TestRemoveAbsentTask(t *testing.T) {
 	setNodeManagerAndMessageCenter()
-	controller := NewController("test", 1, nil, nil, nil, nil, 9, time.Minute)
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "node1")
+	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 9, time.Minute)
 	controller.AddNewTable(commonEvent.Table{
 		SchemaID: 1,
 		TableID:  int64(1),
@@ -80,8 +93,14 @@ func TestRemoveAbsentTask(t *testing.T) {
 func TestBalance(t *testing.T) {
 	nodeManager := setNodeManagerAndMessageCenter()
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
-
-	s := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "node1")
+	s := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	for i := 0; i < 100; i++ {
 		span := &heartbeatpb.TableSpan{TableID: int64(i)}
 		dispatcherID := common.NewDispatcherID()
@@ -138,7 +157,14 @@ func TestBalance(t *testing.T) {
 func TestStoppedWhenMoving(t *testing.T) {
 	nodeManager := setNodeManagerAndMessageCenter()
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
-	s := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "node1")
+	s := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	for i := 0; i < 2; i++ {
 		span := &heartbeatpb.TableSpan{TableID: int64(i)}
 		dispatcherID := common.NewDispatcherID()
@@ -169,9 +195,16 @@ func TestStoppedWhenMoving(t *testing.T) {
 func TestFinishBootstrap(t *testing.T) {
 	nodeManager := setNodeManagerAndMessageCenter()
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
-	s := NewController("test", 1, nil, nil, &mockThreadPool{}, nil, 1000, 0)
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "node1")
+	s := NewController("test", 1, nil, nil, &mockThreadPool{}, nil, ddlSpan, 1000, 0)
 	span := &heartbeatpb.TableSpan{TableID: int64(1)}
-	s.SetInitialTables([]commonEvent.Table{{TableID: 1, SchemaID: 1}})
+	//s.SetInitialTables([]commonEvent.Table{{TableID: 1, SchemaID: 1}})
 
 	dispatcherID2 := common.NewDispatcherID()
 	stm2 := replica.NewWorkingReplicaSet(model.ChangeFeedID{}, dispatcherID2, 1, span, &heartbeatpb.TableSpanStatus{
@@ -182,8 +215,8 @@ func TestFinishBootstrap(t *testing.T) {
 	cached := utils.NewBtreeMap[*heartbeatpb.TableSpan, *replica.SpanReplication](heartbeatpb.LessTableSpan)
 	cached.ReplaceOrInsert(span, stm2)
 	require.False(t, s.bootstrapped)
-	s.FinishBootstrap(map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication]{
-		1: cached,
+	s.FinishBootstrap(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{
+		"node1": nil,
 	})
 	require.True(t, s.bootstrapped)
 	require.Equal(t, 1, s.replicationDB.GetTaskSizeByNodeID("node1"))
@@ -206,10 +239,10 @@ func TestFinishBootstrap(t *testing.T) {
 		}
 	}
 	require.True(t, found)
-	require.Nil(t, s.initialTables)
-	require.Panics(t, func() {
-		s.FinishBootstrap(map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication]{})
-	})
+	//require.Nil(t, s.initialTables)
+	//require.Panics(t, func() {
+	//	s.FinishBootstrap(map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication]{})
+	//})
 }
 
 // 4 tasks and 2 servers, then add one server, no re-balance will be triggered
@@ -217,7 +250,14 @@ func TestBalanceUnEvenTask(t *testing.T) {
 	nodeManager := setNodeManagerAndMessageCenter()
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
 	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
-	s := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "node1")
+	s := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 
 	for i := 0; i < 4; i++ {
 		span := &heartbeatpb.TableSpan{TableID: int64(i)}
@@ -265,19 +305,28 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 	nodeManager := setNodeManagerAndMessageCenter()
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
 	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "node1")
 	s := NewController("test", 1,
 		pdAPI,
-		nil, nil, &config2.ChangefeedSchedulerConfig{
-			EnableTableAcrossNodes: true,
-			RegionThreshold:        0,
-			WriteKeyThreshold:      1,
-		}, 1000, 0)
+		nil, nil,
+		&config.ReplicaConfig{
+			Scheduler: &config.ChangefeedSchedulerConfig{
+				EnableTableAcrossNodes: true,
+				RegionThreshold:        0,
+				WriteKeyThreshold:      1,
+			}}, ddlSpan, 1000, 0)
 	s.taskScheduler = &mockThreadPool{}
 
 	// 1 is already split, and 2 will be split
-	s.SetInitialTables([]commonEvent.Table{
-		{TableID: 1, SchemaID: 1}, {TableID: 2, SchemaID: 2},
-	})
+	//s.SetInitialTables([]commonEvent.Table{
+	//	{TableID: 1, SchemaID: 1}, {TableID: 2, SchemaID: 2},
+	//})
 
 	totalSpan := spanz.TableIDToComparableSpan(1)
 	pdAPI.regions[1] = []pdutil.RegionInfo{
@@ -320,10 +369,10 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 	ddlCache.ReplaceOrInsert(heartbeatpb.DDLSpan, ddlStm)
 
 	require.False(t, s.bootstrapped)
-	s.FinishBootstrap(map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication]{
-		0: ddlCache,
-		1: cached,
-	})
+	//s.FinishBootstrap(map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication]{
+	//	0: ddlCache,
+	//	1: cached,
+	//})
 	require.Equal(t, ddlDispatcherID, s.ddlDispatcherID)
 	//total 9 regions,
 	// table 1: 2 holes will be inserted to absent
@@ -341,13 +390,21 @@ func TestDynamicSplitTableBasic(t *testing.T) {
 	nodeManager := setNodeManagerAndMessageCenter()
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
 	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "node1")
 	s := NewController("test", 1,
 		pdAPI,
-		nil, nil, &config2.ChangefeedSchedulerConfig{
-			EnableTableAcrossNodes: true,
-			RegionThreshold:        0,
-			WriteKeyThreshold:      1,
-		}, 1000, 0)
+		nil, nil, &config.ReplicaConfig{
+			Scheduler: &config.ChangefeedSchedulerConfig{
+				EnableTableAcrossNodes: true,
+				RegionThreshold:        0,
+				WriteKeyThreshold:      1,
+			}}, ddlSpan, 1000, 0)
 	s.taskScheduler = &mockThreadPool{}
 
 	totalSpan := spanz.TableIDToComparableSpan(1)

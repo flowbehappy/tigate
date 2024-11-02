@@ -24,13 +24,21 @@ import (
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
 func TestOneBlockEvent(t *testing.T) {
 	setNodeManagerAndMessageCenter()
-	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "node1")
+	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 0)
 	stm := controller.GetTasksByTableIDs(1)[0]
 	controller.replicationDB.BindSpanToNode("", "node1", stm)
@@ -97,7 +105,7 @@ func TestOneBlockEvent(t *testing.T) {
 				State: &heartbeatpb.State{
 					BlockTs:     10,
 					IsBlocked:   true,
-					EventDone:   true,
+					Stage:       heartbeatpb.BlockStage_DONE,
 					IsSyncPoint: true,
 				},
 			},
@@ -106,7 +114,7 @@ func TestOneBlockEvent(t *testing.T) {
 				State: &heartbeatpb.State{
 					BlockTs:     10,
 					IsBlocked:   true,
-					EventDone:   true,
+					Stage:       heartbeatpb.BlockStage_DONE,
 					IsSyncPoint: true,
 				},
 			},
@@ -126,7 +134,7 @@ func TestOneBlockEvent(t *testing.T) {
 				State: &heartbeatpb.State{
 					BlockTs:     10,
 					IsBlocked:   true,
-					EventDone:   true,
+					Stage:       heartbeatpb.BlockStage_DONE,
 					IsSyncPoint: true,
 				},
 			},
@@ -135,7 +143,7 @@ func TestOneBlockEvent(t *testing.T) {
 				State: &heartbeatpb.State{
 					BlockTs:     10,
 					IsBlocked:   true,
-					EventDone:   true,
+					Stage:       heartbeatpb.BlockStage_DONE,
 					IsSyncPoint: true,
 				},
 			},
@@ -149,7 +157,14 @@ func TestOneBlockEvent(t *testing.T) {
 
 func TestNormalBlock(t *testing.T) {
 	setNodeManagerAndMessageCenter()
-	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "node1")
+	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	var blockedDispatcherIDS []*heartbeatpb.DispatcherID
 	for id := 1; id < 4; id++ {
 		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 0)
@@ -295,7 +310,7 @@ func TestNormalBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					EventDone: true,
+					Stage:     heartbeatpb.BlockStage_DONE,
 				},
 			},
 		},
@@ -309,7 +324,7 @@ func TestNormalBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					EventDone: true,
+					Stage:     heartbeatpb.BlockStage_DONE,
 				},
 			},
 			{
@@ -317,7 +332,7 @@ func TestNormalBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					EventDone: true,
+					Stage:     heartbeatpb.BlockStage_DONE,
 				},
 			},
 		},
@@ -333,7 +348,14 @@ func TestSchemaBlock(t *testing.T) {
 	}
 	nmap["node1"] = &node.Info{ID: "node1"}
 	nmap["node2"] = &node.Info{ID: "node2"}
-	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "node1")
+	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	// add the ddl dispatcher
 	setDllDispatcher(controller, "node1")
 
@@ -471,7 +493,7 @@ func TestSchemaBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					EventDone: true,
+					Stage:     heartbeatpb.BlockStage_DONE,
 				},
 			},
 		},
@@ -493,7 +515,7 @@ func TestSchemaBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					EventDone: true,
+					Stage:     heartbeatpb.BlockStage_DONE,
 				},
 			},
 			{
@@ -501,7 +523,7 @@ func TestSchemaBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked: true,
 					BlockTs:   10,
-					EventDone: true,
+					Stage:     heartbeatpb.BlockStage_DONE,
 				},
 			},
 		},
@@ -529,7 +551,14 @@ func TestSyncPointBlock(t *testing.T) {
 	}
 	nmap["node1"] = &node.Info{ID: "node1"}
 	nmap["node2"] = &node.Info{ID: "node2"}
-	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "node1")
+	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	setDllDispatcher(controller, "node1")
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 2}, 1)
@@ -655,7 +684,7 @@ func TestSyncPointBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked:   true,
 					BlockTs:     10,
-					EventDone:   true,
+					Stage:       heartbeatpb.BlockStage_DONE,
 					IsSyncPoint: true,
 				},
 			},
@@ -674,7 +703,7 @@ func TestSyncPointBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked:   true,
 					BlockTs:     10,
-					EventDone:   true,
+					Stage:       heartbeatpb.BlockStage_DONE,
 					IsSyncPoint: true,
 				},
 			},
@@ -683,7 +712,7 @@ func TestSyncPointBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked:   true,
 					BlockTs:     10,
-					EventDone:   true,
+					Stage:       heartbeatpb.BlockStage_DONE,
 					IsSyncPoint: true,
 				},
 			},
@@ -692,7 +721,7 @@ func TestSyncPointBlock(t *testing.T) {
 				State: &heartbeatpb.State{
 					IsBlocked:   true,
 					BlockTs:     10,
-					EventDone:   true,
+					Stage:       heartbeatpb.BlockStage_DONE,
 					IsSyncPoint: true,
 				},
 			},
@@ -703,7 +732,14 @@ func TestSyncPointBlock(t *testing.T) {
 
 func TestNonBlocked(t *testing.T) {
 	setNodeManagerAndMessageCenter()
-	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "node1")
+	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	barrier := NewBarrier(controller, false)
 
 	var blockedDispatcherIDS []*heartbeatpb.DispatcherID
@@ -742,7 +778,14 @@ func TestNonBlocked(t *testing.T) {
 
 func TestSyncPointBlockPerf(t *testing.T) {
 	setNodeManagerAndMessageCenter()
-	controller := NewController("test", 1, nil, nil, nil, nil, 1000, 0)
+	tableTriggerEventDispatcherID := common.NewDispatcherID()
+	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
+			ID:              tableTriggerEventDispatcherID.ToPB(),
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    1,
+		}, "node1")
+	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	barrier := NewBarrier(controller, true)
 	for id := 1; id < 1000; id++ {
 		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 1)
@@ -791,7 +834,7 @@ func TestSyncPointBlockPerf(t *testing.T) {
 				IsBlocked:   true,
 				BlockTs:     10,
 				IsSyncPoint: true,
-				EventDone:   true,
+				Stage:       heartbeatpb.BlockStage_DONE,
 			},
 		})
 	}
