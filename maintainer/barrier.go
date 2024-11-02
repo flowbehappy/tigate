@@ -92,6 +92,39 @@ func (b *Barrier) HandleStatus(from node.ID,
 		})
 }
 
+// HandleBootstrapResponse rebuild the block event from the bootstrap response
+func (b *Barrier) HandleBootstrapResponse(bootstrapRespMap map[node.ID]*heartbeatpb.MaintainerBootstrapResponse) {
+	for _, resp := range bootstrapRespMap {
+		for _, span := range resp.Spans {
+			// we only care about the WAITING, WRITING and DONE stage
+			if span.BlockState != nil && span.BlockState.Stage != heartbeatpb.BlockStage_NONE {
+				blockState := span.BlockState
+				key := getEventKey(blockState.BlockTs, blockState.IsSyncPoint)
+				event, ok := b.blockedTs[key]
+				if !ok {
+					event = NewBlockEvent(resp.ChangefeedID, b.controller, blockState, b.splitTableEnabled)
+					b.blockedTs[key] = event
+				}
+				switch blockState.Stage {
+				case heartbeatpb.BlockStage_WAITING:
+					// it's the dispatcher's responsibility to resend the block event
+					event.markDispatcherEventDone(common.NewDispatcherIDFromPB(span.ID))
+				case heartbeatpb.BlockStage_WRITING:
+					// it's in writing stage, must be the writer dispatcher
+					// it's the maintainer's responsibility to resend the write action
+					event.selected = true
+					event.writerDispatcher = common.NewDispatcherIDFromPB(span.ID)
+				case heartbeatpb.BlockStage_DONE:
+					// it's the maintainer's responsibility to resend the pass action
+					event.selected = true
+					event.writerDispatcherAdvanced = true
+					event.markDispatcherEventDone(common.NewDispatcherIDFromPB(span.ID))
+				}
+			}
+		}
+	}
+}
+
 // Resend resends the message to the dispatcher manger, the pass action is handle here
 func (b *Barrier) Resend() []*messaging.TargetMessage {
 	var msgs []*messaging.TargetMessage
