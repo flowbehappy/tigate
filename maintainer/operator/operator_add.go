@@ -101,7 +101,7 @@ func (m *AddDispatcherOperator) Start() {
 }
 
 func (m *AddDispatcherOperator) PostFinish() {
-	if m.removed.Load() {
+	if !m.removed.Load() {
 		m.db.MarkSpanReplicating(m.replicaSet)
 	} else {
 		m.db.ForceRemove(m.replicaSet.ID)

@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/logservice/schemastore"
 	"github.com/pingcap/ticdc/maintainer/checker"
 	"github.com/pingcap/ticdc/maintainer/operator"
 	"github.com/pingcap/ticdc/maintainer/replica"
@@ -28,12 +29,14 @@ import (
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/config"
+	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/ticdc/utils"
 	"github.com/pingcap/ticdc/utils/threadpool"
 	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"go.uber.org/zap"
@@ -42,9 +45,7 @@ import (
 // Controller schedules and balance tables
 // there are 3 main components in the controller, scheduler, ReplicationDB and operator controller
 type Controller struct {
-	//  initialTables hold all tables that before controller bootstrapped
-	initialTables []commonEvent.Table
-	bootstrapped  bool
+	bootstrapped bool
 
 	spanScheduler      *scheduler.Scheduler
 	operatorController *operator.Controller
@@ -57,6 +58,8 @@ type Controller struct {
 	spanReplicationEnabled bool
 	startCheckpointTs      uint64
 	ddlDispatcherID        common.DispatcherID
+
+	cfConfig *config.ReplicaConfig
 
 	changefeedID string
 	batchSize    int
@@ -72,7 +75,7 @@ func NewController(changefeedID string,
 	pdapi pdutil.PDAPIClient,
 	regionCache split.RegionCache,
 	taskScheduler threadpool.ThreadPool,
-	config *config.ChangefeedSchedulerConfig,
+	cfConfig *config.ReplicaConfig,
 	ddlSpan *replica.SpanReplication,
 	batchSize int, balanceInterval time.Duration) *Controller {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
@@ -91,9 +94,10 @@ func NewController(changefeedID string,
 		replicationDB:      replicaSetDB,
 		nodeManager:        nodeManager,
 		taskScheduler:      taskScheduler,
+		cfConfig:           cfConfig,
 	}
-	if config != nil && config.EnableTableAcrossNodes {
-		s.splitter = split.NewSplitter(changefeedID, pdapi, regionCache, config)
+	if cfConfig != nil && cfConfig.Scheduler.EnableTableAcrossNodes {
+		s.splitter = split.NewSplitter(changefeedID, pdapi, regionCache, cfConfig.Scheduler)
 		s.spanReplicationEnabled = true
 	}
 	s.checkController = checker.NewController(changefeedID, s.splitter, oc, replicaSetDB, nodeManager)
@@ -172,19 +176,74 @@ func (c *Controller) AddNewTable(table commonEvent.Table, startTs uint64) {
 	c.addNewSpans(table.SchemaID, tableSpans, startTs)
 }
 
-func (c *Controller) SetInitialTables(tables []commonEvent.Table) {
-	c.initialTables = tables
-}
-
 // FinishBootstrap adds working state tasks to this controller directly,
 // it reported by the bootstrap response
-func (c *Controller) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication]) {
+func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.MaintainerBootstrapResponse) (*Barrier, error) {
 	if c.bootstrapped {
 		log.Panic("already bootstrapped",
 			zap.String("changefeed", c.changefeedID),
-			zap.Any("workingMap", workingMap))
+			zap.Any("workingMap", cachedResp))
 	}
-	for _, table := range c.initialTables {
+
+	log.Info("all nodes have sent bootstrap response",
+		zap.String("changefeed", c.changefeedID),
+		zap.Int("size", len(cachedResp)))
+
+	// 1. get the real start ts from the table trigger event dispatcher
+	startTs := uint64(0)
+	for _, resp := range cachedResp {
+		if resp.CheckpointTs > startTs {
+			startTs = resp.CheckpointTs
+		}
+	}
+	if startTs == 0 {
+		log.Panic("cant not found the start ts from the bootstrap response",
+			zap.String("changefeed", c.changefeedID))
+	}
+	// 2. load tables from schema store using the start ts
+	tables, err := c.loadTables(startTs)
+	if err != nil {
+		log.Error("load table from scheme store failed",
+			zap.String("changefeed", c.changefeedID),
+			zap.Error(err))
+		return nil, errors.Trace(err)
+	}
+
+	workingMap := make(map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication])
+	for server, bootstrapMsg := range cachedResp {
+		log.Info("received bootstrap response",
+			zap.String("changefeed", c.changefeedID),
+			zap.Any("server", server),
+			zap.Int("size", len(bootstrapMsg.Spans)))
+		for _, info := range bootstrapMsg.Spans {
+			dispatcherID := common.NewDispatcherIDFromPB(info.ID)
+			if dispatcherID == c.ddlDispatcherID {
+				log.Info(
+					"skip table trigger event dispatcher",
+					zap.String("changefeed", c.changefeedID),
+					zap.String("dispatcher", dispatcherID.String()),
+					zap.String("server", server.String()))
+				continue
+			}
+			status := &heartbeatpb.TableSpanStatus{
+				ComponentStatus: info.ComponentStatus,
+				ID:              info.ID,
+				CheckpointTs:    info.CheckpointTs,
+			}
+			span := info.Span
+
+			//working on remote, the state must be absent or working since it's reported by remote
+			stm := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID(c.changefeedID), dispatcherID, info.SchemaID, span, status, server)
+			tableMap, ok := workingMap[span.TableID]
+			if !ok {
+				tableMap = utils.NewBtreeMap[*heartbeatpb.TableSpan, *replica.SpanReplication](heartbeatpb.LessTableSpan)
+				workingMap[span.TableID] = tableMap
+			}
+			tableMap.ReplaceOrInsert(span, stm)
+		}
+	}
+
+	for _, table := range tables {
 		tableMap, ok := workingMap[table.TableID]
 		if !ok {
 			c.AddNewTable(table, c.startCheckpointTs)
@@ -219,12 +278,16 @@ func (c *Controller) FinishBootstrap(workingMap map[int64]utils.Map[*heartbeatpb
 		c.addWorkingSpans(tableMap)
 	}
 
+	// rebuild barrier status
+	barrier := NewBarrier(c, c.cfConfig.Scheduler.EnableTableAcrossNodes)
+	barrier.HandleBootstrapResponse(cachedResp)
+
 	// start operator and scheduler
 	c.operatorControllerHandle = c.taskScheduler.Submit(c.spanScheduler, time.Now())
 	c.schedulerHandle = c.taskScheduler.Submit(c.operatorController, time.Now())
 	c.checkerHandle = c.taskScheduler.Submit(c.checkController, time.Now().Add(time.Second*120))
 	c.bootstrapped = true
-	c.initialTables = nil
+	return barrier, nil
 }
 
 func (c *Controller) Stop() {
@@ -317,4 +380,17 @@ func (c *Controller) addNewSpan(dispatcherID common.DispatcherID, schemaID int64
 	replicaSet := replica.NewReplicaSet(model.DefaultChangeFeedID(c.changefeedID),
 		dispatcherID, schemaID, span, startTs)
 	c.replicationDB.AddAbsentReplicaSet(replicaSet)
+}
+
+func (c *Controller) loadTables(startTs uint64) ([]commonEvent.Table, error) {
+	// todo: do we need to set timezone here?
+	f, err := filter.NewFilter(c.cfConfig.Filter, "", c.cfConfig.ForceReplicate)
+	if err != nil {
+		return nil, errors.Cause(err)
+	}
+
+	schemaStore := appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore)
+	tables, err := schemaStore.GetAllPhysicalTables(startTs, f)
+	log.Info("get table ids", zap.Int("count", len(tables)), zap.String("changefeed", c.changefeedID))
+	return tables, err
 }
