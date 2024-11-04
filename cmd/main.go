@@ -110,7 +110,7 @@ func main() {
 
 	// Double check to aviod some corner cases
 	serverConfigFilePath = parseConfigFlagFromOSArgs()
-	newarch = parseNewarchFlagFromOSArgs()
+	newarch = parseNewarchFlagFromOSArgs() || (os.Getenv("NEWARCH") == "true")
 
 	if newarch || isNewArchEnabledByConfig(serverConfigFilePath) {
 		cmd.Println("=== Command to ticdc(new arch).")
