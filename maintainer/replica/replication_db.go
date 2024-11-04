@@ -50,8 +50,7 @@ type ReplicationDB struct {
 func NewReplicaSetDB(changefeedID string, ddlSpan *SpanReplication) *ReplicationDB {
 	db := &ReplicationDB{changefeedID: changefeedID, ddlSpan: ddlSpan}
 	db.reset()
-	// we don't need to schedule the ddl span, but added it to the allTasks map, so we can query it by id
-	db.allTasks[ddlSpan.ID] = ddlSpan
+	db.putDDLDispatcher(db.ddlSpan)
 	return db
 }
 
@@ -69,7 +68,7 @@ func (db *ReplicationDB) TaskSize() int {
 	defer db.lock.RUnlock()
 
 	// the ddl span is a special span, we don't need to schedule it
-	return len(db.allTasks) - 1
+	return len(db.allTasks)
 }
 
 // TryRemoveAll removes non-scheduled tasks from the db and return the scheduled tasks
@@ -87,8 +86,7 @@ func (db *ReplicationDB) TryRemoveAll() []*SpanReplication {
 	addMapToList(db.replicating)
 	addMapToList(db.scheduling)
 	db.reset()
-	// add table trigger event dispatcher back to the map
-	db.allTasks[db.ddlSpan.ID] = db.ddlSpan
+	db.putDDLDispatcher(db.ddlSpan)
 	return tasks
 }
 
@@ -543,4 +541,13 @@ func (db *ReplicationDB) reset() {
 	db.replicating = make(map[common.DispatcherID]*SpanReplication)
 	db.scheduling = make(map[common.DispatcherID]*SpanReplication)
 	db.absent = make(map[common.DispatcherID]*SpanReplication)
+}
+
+// putDDLDispatcher
+func (db *ReplicationDB) putDDLDispatcher(ddlSpan *SpanReplication) {
+	// we don't need to schedule the ddl span, but added it to the allTasks map, so we can query it by id
+	db.allTasks[ddlSpan.ID] = ddlSpan
+	db.tableTasks[ddlSpan.Span.TableID] = map[common.DispatcherID]*SpanReplication{
+		ddlSpan.ID: ddlSpan,
+	}
 }

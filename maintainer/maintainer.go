@@ -625,7 +625,8 @@ func (m *Maintainer) onPeriodTask() {
 
 func (m *Maintainer) collectMetrics() {
 	if time.Since(m.lastPrintStatusTime) > time.Second*20 {
-		total := m.controller.TaskSize()
+		// exclude the table trigger
+		total := m.controller.TaskSize() - 1
 		scheduling := m.controller.replicationDB.GetSchedulingSize()
 		working := m.controller.replicationDB.GetReplicatingSize()
 		absent := m.controller.replicationDB.GetAbsentSize()
