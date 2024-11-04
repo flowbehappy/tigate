@@ -68,7 +68,7 @@ func (p *pathSizeStat[A, P, T, D, H]) LessThan(other *pathSizeStat[A, P, T, D, H
 	return p.pendingSize > other.pendingSize
 }
 
-// A area info contains the path nodes of the area in a stream.
+// An area info contains the path nodes of the area in a stream.
 // Note that the instance is stream level, not global level.
 type streamAreaInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	area A
