@@ -214,12 +214,6 @@ func (be *BarrierEvent) markDispatcherEventDone(dispatcherID common.DispatcherID
 			zap.String("dispatcher", dispatcherID.String()))
 		return
 	}
-	if replicaSpan.Span == nil {
-		log.Info("replicaSpan.Span is nil")
-	}
-	if be.rangeChecker == nil {
-		log.Info("be.rangeChecker is nil")
-	}
 	be.rangeChecker.AddSubRange(replicaSpan.Span.TableID, replicaSpan.Span.StartKey, replicaSpan.Span.EndKey)
 }
 
