@@ -251,7 +251,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	}
 
 	var tables = make([]commonEvent.Table, 0, tableSize)
-	for id := 0; id < tableSize; id++ {
+	for id := 1; id <= tableSize; id++ {
 		tables = append(tables, commonEvent.Table{
 			SchemaID: 1,
 			TableID:  int64(id),

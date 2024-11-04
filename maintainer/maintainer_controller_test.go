@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/server/watcher"
-	"github.com/pingcap/ticdc/utils"
 	"github.com/pingcap/ticdc/utils/threadpool"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
@@ -65,7 +64,7 @@ func TestSchedule(t *testing.T) {
 			op.Start()
 		}
 	}
-	require.Equal(t, 991, controller.replicationDB.GetAbsentSize())
+	require.Equal(t, 990, controller.replicationDB.GetAbsentSize())
 	require.Equal(t, 3, controller.GetTaskSizeByNodeID("node1"))
 	require.Equal(t, 3, controller.GetTaskSizeByNodeID("node2"))
 	require.Equal(t, 3, controller.GetTaskSizeByNodeID("node3"))
@@ -202,47 +201,38 @@ func TestFinishBootstrap(t *testing.T) {
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	s := NewController("test", 1, nil, nil, &mockThreadPool{}, nil, ddlSpan, 1000, 0)
+	s := NewController("test", 1, nil, nil, &mockThreadPool{},
+		config.GetDefaultReplicaConfig(), ddlSpan, 1000, 0)
 	span := &heartbeatpb.TableSpan{TableID: int64(1)}
-	//s.SetInitialTables([]commonEvent.Table{{TableID: 1, SchemaID: 1}})
-
+	schemaStore := &mockSchemaStore{tables: []commonEvent.Table{{TableID: 1, SchemaID: 1}}}
+	appcontext.SetService(appcontext.SchemaStore, schemaStore)
 	dispatcherID2 := common.NewDispatcherID()
-	stm2 := replica.NewWorkingReplicaSet(model.ChangeFeedID{}, dispatcherID2, 1, span, &heartbeatpb.TableSpanStatus{
-		ID:              dispatcherID2.ToPB(),
-		ComponentStatus: heartbeatpb.ComponentState_Working,
-		CheckpointTs:    10,
-	}, "node1")
-	cached := utils.NewBtreeMap[*heartbeatpb.TableSpan, *replica.SpanReplication](heartbeatpb.LessTableSpan)
-	cached.ReplaceOrInsert(span, stm2)
 	require.False(t, s.bootstrapped)
-	s.FinishBootstrap(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{
-		"node1": nil,
+	barrier, err := s.FinishBootstrap(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{
+		"node1": {
+			ChangefeedID: "test",
+			Spans: []*heartbeatpb.BootstrapTableSpan{
+				{
+					ID:              dispatcherID2.ToPB(),
+					SchemaID:        1,
+					Span:            span,
+					ComponentStatus: heartbeatpb.ComponentState_Working,
+					CheckpointTs:    10,
+				},
+			},
+			CheckpointTs: 10,
+		},
 	})
+	require.Nil(t, err)
+	require.NotNil(t, barrier)
 	require.True(t, s.bootstrapped)
 	require.Equal(t, 1, s.replicationDB.GetTaskSizeByNodeID("node1"))
 	require.Equal(t, 1, s.replicationDB.GetReplicatingSize())
-	// ddl dispatcher
-	absents := s.replicationDB.GetAbsent(nil, 100)
-	found := false
-	for _, absent := range absents {
-		if absent.ID == s.ddlDispatcherID {
-			found = true
-		}
-	}
-	require.True(t, found)
 	require.Equal(t, 0, s.replicationDB.GetSchedulingSize())
-	replicating := s.replicationDB.GetReplicating()
-	found = false
-	for _, r := range replicating {
-		if r.ID == dispatcherID2 {
-			found = true
-		}
-	}
-	require.True(t, found)
-	//require.Nil(t, s.initialTables)
-	//require.Panics(t, func() {
-	//	s.FinishBootstrap(map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication]{})
-	//})
+	require.NotNil(t, s.replicationDB.GetTaskByID(dispatcherID2))
+	require.Panics(t, func() {
+		_, _ = s.FinishBootstrap(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{})
+	})
 }
 
 // 4 tasks and 2 servers, then add one server, no re-balance will be triggered
@@ -312,21 +302,17 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
+	defaultConfig := config.GetDefaultReplicaConfig().Clone()
+	defaultConfig.Scheduler = &config.ChangefeedSchedulerConfig{
+		EnableTableAcrossNodes: true,
+		RegionThreshold:        0,
+		WriteKeyThreshold:      1,
+	}
 	s := NewController("test", 1,
-		pdAPI,
-		nil, nil,
-		&config.ReplicaConfig{
-			Scheduler: &config.ChangefeedSchedulerConfig{
-				EnableTableAcrossNodes: true,
-				RegionThreshold:        0,
-				WriteKeyThreshold:      1,
-			}}, ddlSpan, 1000, 0)
+		pdAPI, nil, nil, defaultConfig, ddlSpan, 1000, 0)
 	s.taskScheduler = &mockThreadPool{}
-
-	// 1 is already split, and 2 will be split
-	//s.SetInitialTables([]commonEvent.Table{
-	//	{TableID: 1, SchemaID: 1}, {TableID: 2, SchemaID: 2},
-	//})
+	schemaStore := &mockSchemaStore{tables: []commonEvent.Table{{TableID: 1, SchemaID: 1}, {TableID: 2, SchemaID: 2}}}
+	appcontext.SetService(appcontext.SchemaStore, schemaStore)
 
 	totalSpan := spanz.TableIDToComparableSpan(1)
 	pdAPI.regions[1] = []pdutil.RegionInfo{
@@ -341,45 +327,39 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 		pdutil.NewTestRegionInfo(4, []byte("c"), []byte("d"), uint64(1)),
 		pdutil.NewTestRegionInfo(5, []byte("e"), []byte("f"), uint64(1)),
 	}
-	reportedSpans := []*heartbeatpb.TableSpan{
-		{TableID: 1, StartKey: appendNew(totalSpan.StartKey, 'a'), EndKey: appendNew(totalSpan.StartKey, 'b')}, // 1 region // 1 region
-		{TableID: 1, StartKey: appendNew(totalSpan.StartKey, 'b'), EndKey: appendNew(totalSpan.StartKey, 'c')},
-	}
-	cached := utils.NewBtreeMap[*heartbeatpb.TableSpan, *replica.SpanReplication](heartbeatpb.LessTableSpan)
-	for _, span := range reportedSpans {
-		dispatcherID1 := common.NewDispatcherID()
-		stm1 := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"),
-			dispatcherID1, 1, span,
-			&heartbeatpb.TableSpanStatus{
-				ID:              dispatcherID1.ToPB(),
-				ComponentStatus: heartbeatpb.ComponentState_Working,
-				CheckpointTs:    10,
-			}, "node1")
-		cached.ReplaceOrInsert(span, stm1)
-	}
-
-	ddlDispatcherID := common.NewDispatcherID()
-	ddlStm := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), ddlDispatcherID,
-		heartbeatpb.DDLSpanSchemaID, heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
-			ID:              ddlDispatcherID.ToPB(),
+	reportedSpans := []*heartbeatpb.BootstrapTableSpan{
+		{
+			ID:              common.NewDispatcherID().ToPB(),
+			SchemaID:        1,
+			Span:            &heartbeatpb.TableSpan{TableID: 1, StartKey: appendNew(totalSpan.StartKey, 'a'), EndKey: appendNew(totalSpan.StartKey, 'b')}, // 1 region // 1 region,
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    10,
-		}, "node1")
-	ddlCache := utils.NewBtreeMap[*heartbeatpb.TableSpan, *replica.SpanReplication](heartbeatpb.LessTableSpan)
-	ddlCache.ReplaceOrInsert(heartbeatpb.DDLSpan, ddlStm)
-
+		},
+		{
+			ID:              common.NewDispatcherID().ToPB(),
+			SchemaID:        1,
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+			CheckpointTs:    10,
+			Span:            &heartbeatpb.TableSpan{TableID: 1, StartKey: appendNew(totalSpan.StartKey, 'b'), EndKey: appendNew(totalSpan.StartKey, 'c')},
+		},
+	}
 	require.False(t, s.bootstrapped)
-	//s.FinishBootstrap(map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication]{
-	//	0: ddlCache,
-	//	1: cached,
-	//})
-	require.Equal(t, ddlDispatcherID, s.ddlDispatcherID)
-	//total 9 regions,
+
+	barrier, err := s.FinishBootstrap(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{
+		"node1": {
+			ChangefeedID: "test",
+			Spans:        reportedSpans,
+			CheckpointTs: 10,
+		}},
+	)
+	require.Nil(t, err)
+	require.NotNil(t, barrier)
+	//total 8 regions,
 	// table 1: 2 holes will be inserted to absent
 	// table 2: split to 4 spans, will be inserted to absent
 	require.Equal(t, 6, s.replicationDB.GetAbsentSize())
-	// table 1 has two working span,  plus a working ddl span
-	require.Equal(t, 3, s.replicationDB.GetReplicatingSize())
+	// table 1 has two working span
+	require.Equal(t, 2, s.replicationDB.GetReplicatingSize())
 	require.True(t, s.bootstrapped)
 }
 
