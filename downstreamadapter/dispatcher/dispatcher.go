@@ -24,8 +24,10 @@ import (
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/pingcap/ticdc/pkg/sink/util"
+	"github.com/pingcap/ticdc/utils/dynstream"
 	"go.uber.org/zap"
 )
 
@@ -63,7 +65,8 @@ The workflow related to the dispatcher is as follows:
 */
 
 type Dispatcher struct {
-	id common.DispatcherID
+	changefeedID string
+	id           common.DispatcherID
 	// tableInfo is the latest table info of the dispatcher
 	tableInfo atomic.Pointer[common.TableInfo]
 	tableSpan *heartbeatpb.TableSpan
@@ -88,7 +91,7 @@ type Dispatcher struct {
 
 	resolvedTs *TsWithMutex // 用来记 中目前收到的 event 中收到的最大的 commitTs - 1,不代表 dispatcher 的 checkpointTs
 
-	blockStatus BlockStauts
+	blockStatus BlockStatus
 
 	isRemoving atomic.Bool
 
@@ -108,6 +111,7 @@ type Dispatcher struct {
 }
 
 func NewDispatcher(
+	changefeedID string,
 	id common.DispatcherID,
 	tableSpan *heartbeatpb.TableSpan,
 	sink tisink.Sink,
@@ -119,6 +123,7 @@ func NewDispatcher(
 	schemaIDToDispatchers *SchemaIDToDispatchers,
 	syncPointInfo *syncpoint.SyncPointInfo) *Dispatcher {
 	dispatcher := &Dispatcher{
+		changefeedID:          changefeedID,
 		id:                    id,
 		tableSpan:             tableSpan,
 		sink:                  sink,
@@ -129,7 +134,7 @@ func NewDispatcher(
 		resolvedTs:            newTsWithMutex(startTs),
 		filter:                filter,
 		isRemoving:            atomic.Bool{},
-		blockStatus:           BlockStauts{blockPendingEvent: nil},
+		blockStatus:           BlockStatus{blockPendingEvent: nil},
 		tableProgress:         types.NewTableProgress(),
 		schemaID:              schemaID,
 		schemaIDToDispatchers: schemaIDToDispatchers,
@@ -142,7 +147,7 @@ func NewDispatcher(
 		dispatcher.tableSchemaStore = util.NewTableSchemaStore()
 	}
 
-	dispatcher.AddToDynamicStream()
+	dispatcher.addToDynamicStream()
 
 	return dispatcher
 }
@@ -180,7 +185,7 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 				d.sink.AddBlockEvent(pendingEvent, d.tableProgress)
 			} else {
 				d.sink.PassBlockEvent(pendingEvent, d.tableProgress)
-				dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
+				dispatcherEventDynamicStream := GetEventsDynamicStream()
 				dispatcherEventDynamicStream.Wake() <- d.id
 			}
 		}
@@ -250,7 +255,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 				// thus, we use tableProgress.Empty() to ensure these events are flushed to downstream completely
 				// and wake dynamic stream to handle the next events.
 				if d.tableProgress.Empty() {
-					dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
+					dispatcherEventDynamicStream := GetEventsDynamicStream()
 					dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
 				}
 			})
@@ -273,7 +278,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 				d.tableSchemaStore.AddEvent(event)
 			}
 			event.AddPostFlushFunc(func() {
-				dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
+				dispatcherEventDynamicStream := GetEventsDynamicStream()
 				dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
 			})
 			d.dealWithBlockEvent(event)
@@ -284,7 +289,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 			block = true
 			event := event.(*commonEvent.SyncPointEvent)
 			event.AddPostFlushFunc(func() {
-				dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
+				dispatcherEventDynamicStream := GetEventsDynamicStream()
 				dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
 			})
 			d.dealWithBlockEvent(event)
@@ -518,7 +523,7 @@ func (d *Dispatcher) GetSyncPointInterval() time.Duration {
 func (d *Dispatcher) Remove() {
 	log.Info("table event dispatcher component status changed to stopping", zap.String("table", d.tableSpan.String()))
 	d.isRemoving.Store(true)
-	dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
+	dispatcherEventDynamicStream := GetEventsDynamicStream()
 	err := dispatcherEventDynamicStream.RemovePath(d.id)
 	if err != nil {
 		log.Error("remove dispatcher from dynamic stream failed", zap.Error(err))
@@ -531,9 +536,14 @@ func (d *Dispatcher) Remove() {
 	}
 }
 
-func (d *Dispatcher) AddToDynamicStream() {
-	dispatcherEventDynamicStream := GetDispatcherEventsDynamicStream()
-	err := dispatcherEventDynamicStream.AddPath(d.id, d)
+// addToDynamicStream add self to dynamic stream
+func (d *Dispatcher) addToDynamicStream() {
+	dispatcherEventDynamicStream := GetEventsDynamicStream()
+	areaSetting := dynstream.NewAreaSettings()
+	// FixMe: Pass memory quota from changefeed config to dispatcherManager, and then to dispatcher
+	// Make it configurable
+	areaSetting.MaxPendingSize = config.DefaultChangefeedMemoryQuota
+	err := dispatcherEventDynamicStream.AddPath(d.id, d, areaSetting)
 	if err != nil {
 		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
 	}

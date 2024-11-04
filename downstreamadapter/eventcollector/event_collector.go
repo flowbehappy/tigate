@@ -68,7 +68,7 @@ type EventCollector struct {
 	// ds is the dynamicStream for dispatcher events.
 	// All the events from event service will be sent to ds to handle.
 	// ds will dispatch the events to different dispatchers according to the dispatcherID.
-	ds dynstream.DynamicStream[int, common.DispatcherID, dispatcher.DispatcherEvent, *dispatcher.Dispatcher, *dispatcher.DispatcherEventsHandler]
+	ds dynstream.DynamicStream[string, common.DispatcherID, dispatcher.DispatcherEvent, *dispatcher.Dispatcher, *dispatcher.EventsHandler]
 
 	metricDispatcherReceivedKVEventCount         prometheus.Counter
 	metricDispatcherReceivedResolvedTsEventCount prometheus.Counter
@@ -80,7 +80,7 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 		serverId:                             serverId,
 		globalMemoryQuota:                    globalMemoryQuota,
 		dispatcherMap:                        sync.Map{},
-		ds:                                   dispatcher.GetDispatcherEventsDynamicStream(),
+		ds:                                   dispatcher.GetEventsDynamicStream(),
 		dispatcherRequestChan:                chann.NewAutoDrainChann[DispatcherRequest](),
 		mc:                                   appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),

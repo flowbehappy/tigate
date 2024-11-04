@@ -252,6 +252,11 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 				path.pendingQueue.PopFront()
 				path.pendingSize -= front.eventSize
 
+				// Reduce the total pending size of the area.
+				if path.areaMemStat != nil {
+					path.areaMemStat.totalPendingSize.Add(-int64(front.eventSize))
+				}
+
 				if front.eventType.Property == NonBatchable {
 					break
 				}

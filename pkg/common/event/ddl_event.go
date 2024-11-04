@@ -31,6 +31,8 @@ type DDLEvent struct {
 	FinishedTs uint64            `json:"finished_ts"`
 	// The seq of the event. It is set by event service.
 	Seq uint64 `json:"seq"`
+	// State is the state of sender when sending this event.
+	State EventSenderState `json:"state"`
 	// TODO: just here for compile, may be changed later
 	MultipleTableInfos []*common.TableInfo `json:"multiple_table_infos"`
 
@@ -52,6 +54,8 @@ type DDLEvent struct {
 	TiDBOnly bool `json:"tidb_only"`
 	// 用于在event flush 后执行，后续兼容不同下游的时候要看是不是要拆下去
 	PostTxnFlushed []func() `json:"-"`
+	// eventSize is the size of the event in bytes. It is set when it's unmarshaled.
+	eventSize int64 `json:"-"`
 }
 
 func (d *DDLEvent) GetType() int {
@@ -130,10 +134,12 @@ func (t DDLEvent) Marshal() ([]byte, error) {
 	}
 	dispatcherIDData := t.DispatcherID.Marshal()
 	data = append(data, dispatcherIDData...)
+
 	return data, nil
 }
 
 func (t *DDLEvent) Unmarshal(data []byte) error {
+	t.eventSize = int64(len(data))
 	dispatcherIDData := data[len(data)-16:]
 	err := t.DispatcherID.Unmarshal(dispatcherIDData)
 	if err != nil {
@@ -142,9 +148,12 @@ func (t *DDLEvent) Unmarshal(data []byte) error {
 	return json.Unmarshal(data[:len(data)-16], t)
 }
 
-// FIXME: not implemented
 func (t *DDLEvent) GetSize() int64 {
-	return 0
+	return t.eventSize
+}
+
+func (t *DDLEvent) IsPaused() bool {
+	return t.State.IsPaused()
 }
 
 type SchemaTableName struct {
