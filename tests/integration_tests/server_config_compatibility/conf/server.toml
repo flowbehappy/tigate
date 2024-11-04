@@ -1,0 +1,6 @@
+[debug]
+# Ensure sure removed configarations are not used.
+# TiCDC should ignore the removed configuration silently.
+enable-pull-based-sink = true
+enable-db-sorter = true
+enable-new-sink = true

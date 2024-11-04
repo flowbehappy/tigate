@@ -1,5 +1,7 @@
 FAIL_ON_STDOUT := awk '{ print } END { if (NR > 0) { exit 1  }  }'
 
+PROJECT=ticdc
+
 CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(CURDIR)/bin:$(CURDIR)/tools/bin:$(path_to_add):$(PATH)
@@ -42,6 +44,8 @@ else ifeq (${OS}, "darwin")
 	CGO := 1
 	SED_IN_PLACE += -i ''
 endif
+
+GOTEST := CGO_ENABLED=1 $(GO) test -p 3 --race --tags=intest
 
 BUILD_FLAG =
 GOEXPERIMENT=
@@ -87,6 +91,14 @@ ifeq ("${IS_ALPINE}", "1")
 endif
 GOBUILD  := $(GOEXPERIMENT) CGO_ENABLED=$(CGO) $(GO) build $(BUILD_FLAG) -trimpath $(GOVENDORFLAG)
 
+PACKAGE_LIST := go list ./... | grep -vE 'vendor|proto|ticdc/tests|integration|testing_utils|pb|pbmock|ticdc/bin'
+PACKAGES := $$($(PACKAGE_LIST))
+
+FAILPOINT_DIR := $$(for p in $(PACKAGES); do echo $${p\#"github.com/pingcap/$(PROJECT)/"}|grep -v "github.com/pingcap/$(PROJECT)"; done)
+FAILPOINT := tools/bin/failpoint-ctl
+FAILPOINT_ENABLE  := $$(echo $(FAILPOINT_DIR) | xargs $(FAILPOINT) enable >/dev/null)
+FAILPOINT_DISABLE := $$(echo $(FAILPOINT_DIR) | xargs $(FAILPOINT) disable >/dev/null)
+
 tools/bin/protoc:
 	@echo "download protoc"
 	./scripts/download-protoc.sh
@@ -101,3 +113,27 @@ generate-protobuf:
 
 cdc:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/cdc ./cmd
+
+integration_test_build: check_failpoint_ctl 
+	# $(FAILPOINT_ENABLE)
+	$(GOTEST) -ldflags '$(LDFLAGS)' -c -cover -covermode=atomic \
+		-coverpkg=github.com/pingcap/ticdc/... \
+		-o bin/cdc.test github.com/pingcap/ticdc/cmd \
+	|| { $(FAILPOINT_DISABLE); echo "Failed to build cdc.test"; exit 1; }
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/cdc ./cmd/main.go \
+	|| { $(FAILPOINT_DISABLE); exit 1; }
+	# $(FAILPOINT_DISABLE)
+
+failpoint-enable: check_failpoint_ctl
+	$(FAILPOINT_ENABLE)
+
+failpoint-disable: check_failpoint_ctl
+	$(FAILPOINT_DISABLE)
+
+check_failpoint_ctl: 
+	@which tools/bin/failpoint-ctl || (echo "failpoint-ctl not found in ${PATH}"; exit 1) 
+
+integration_test: integration_test_mysql
+
+integration_test_mysql:
+	tests/integration_tests/run.sh mysql "$(CASE)" "$(NEWARCH)" "$(START_AT)"
