@@ -137,6 +137,17 @@ func (b *Barrier) Resend() []*messaging.TargetMessage {
 
 func (b *Barrier) handleOneStatus(changefeedID string, status *heartbeatpb.TableSpanBlockStatus) *BarrierEvent {
 	dispatcherID := common.NewDispatcherIDFromPB(status.ID)
+
+	// when a span send a block event, its checkpint must reached status.State.BlockTs - 1,
+	// so here we forward the span's checkpoint ts to status.State.BlockTs - 1
+	span := b.controller.GetTask(dispatcherID)
+	if span != nil {
+		span.UpdateStatus(&heartbeatpb.TableSpanStatus{
+			ID:              status.ID,
+			CheckpointTs:    status.State.BlockTs - 1,
+			ComponentStatus: heartbeatpb.ComponentState_Working,
+		})
+	}
 	if status.State.Stage == heartbeatpb.BlockStage_DONE {
 		return b.handleEventDone(changefeedID, dispatcherID, status)
 	}

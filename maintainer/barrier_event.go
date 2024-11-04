@@ -119,10 +119,27 @@ func (be *BarrierEvent) onAllDispatcherReportedBlockEvent(dispatchers []*heartbe
 	switch be.blockedDispatchers.InfluenceType {
 	case heartbeatpb.InfluenceType_DB, heartbeatpb.InfluenceType_All:
 		// for all and db type, we always use the table trigger event dispatcher as the writer
+		log.Info("use table trigger event as the writer dispatcher",
+			zap.String("changefeed", be.cfID),
+			zap.String("dispatcher", be.controller.ddlDispatcherID.String()),
+			zap.Uint64("commitTs", be.commitTs))
 		dispatcher = be.controller.ddlDispatcherID
 	default:
 		// select the last one as the writer
-		dispatcher = common.NewDispatcherIDFromPB(dispatchers[len(dispatchers)-1])
+		// or the table trigger event dispatcher if it's one of the blocked dispatcher
+		tableTriggerEventDispatcherID := be.controller.ddlDispatcherID.ToPB()
+		selected := dispatchers[len(dispatchers)-1]
+		for _, blockedDispatcher := range dispatchers {
+			if blockedDispatcher == tableTriggerEventDispatcherID {
+				selected = blockedDispatcher
+				log.Info("use table trigger event as the writer dispatcher",
+					zap.String("changefeed", be.cfID),
+					zap.String("dispatcher", selected.String()),
+					zap.Uint64("commitTs", be.commitTs))
+				break
+			}
+		}
+		dispatcher = common.NewDispatcherIDFromPB(selected)
 	}
 
 	// reset ranger checkers
