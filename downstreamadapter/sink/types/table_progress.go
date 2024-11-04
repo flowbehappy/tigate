@@ -16,19 +16,18 @@ package types
 import (
 	"container/list"
 	"sync"
+	"time"
 
+	"github.com/pingcap/log"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
+	"go.uber.org/zap"
 )
 
 // TableProgress maintains event timestamp information in the sink.
 // It provides the ability to:
 // - Query the current table checkpoint timestamp
-// - Check if there are any events waiting to be flushed (used to determine DDL push conditions)
-//
-// Implementation note: This structure frequently deletes random data, inserts
-// increasing data, and queries the minimum value. In the future, consider
-// implementing a red-black tree or another more efficient data structure.
-// Currently using a list as a temporary solution.
+// - Check if there are any events waiting to be flushed
+// - Query event size flushed per second
 //
 // TODO: Add a test to ensure that inserted data doesn't have decreasing commitTs.
 //
@@ -38,6 +37,12 @@ type TableProgress struct {
 	list        *list.List
 	elemMap     map[Ts]*list.Element
 	maxCommitTs uint64
+
+	// cumulate dml event size for a period of time,
+	// it will be cleared after once query
+	cumulateEventSize int64
+	// it used to calculate the sum-dml-event-size/s for each dispatcher
+	lastQueryTime time.Time
 }
 
 // Ts represents a timestamp pair, used for sorting primarily by commitTs and secondarily by startTs.
@@ -49,9 +54,11 @@ type Ts struct {
 // NewTableProgress creates and initializes a new TableProgress instance.
 func NewTableProgress() *TableProgress {
 	return &TableProgress{
-		list:        list.New(),
-		elemMap:     make(map[Ts]*list.Element),
-		maxCommitTs: 0,
+		list:              list.New(),
+		elemMap:           make(map[Ts]*list.Element),
+		maxCommitTs:       0,
+		cumulateEventSize: 0,
+		lastQueryTime:     time.Now(),
 	}
 }
 
@@ -63,7 +70,9 @@ func (p *TableProgress) Add(event commonEvent.FlushableEvent) {
 	elem := p.list.PushBack(ts)
 	p.elemMap[ts] = elem
 	p.maxCommitTs = event.GetCommitTs()
-	event.PushFrontFlushFunc(func() { p.Remove(event) })
+	event.PushFrontFlushFunc(func() {
+		p.Remove(event)
+	})
 }
 
 // Remove deletes an event from the TableProgress.
@@ -72,10 +81,12 @@ func (p *TableProgress) Remove(event commonEvent.Event) {
 	ts := Ts{startTs: event.GetStartTs(), commitTs: event.GetCommitTs()}
 	p.rwMutex.Lock()
 	defer p.rwMutex.Unlock()
+
 	if elem, ok := p.elemMap[ts]; ok {
 		p.list.Remove(elem)
 		delete(p.elemMap, ts)
 	}
+	p.cumulateEventSize += event.GetSize()
 }
 
 // Empty checks if the TableProgress is empty.
@@ -111,4 +122,18 @@ func (p *TableProgress) GetCheckpointTs() (uint64, bool) {
 		return p.maxCommitTs - 1, true
 	}
 	return p.list.Front().Value.(Ts).commitTs - 1, false
+}
+
+// GetEventSizePerSecond returns the sum-dml-event-size/s between the last query time and now.
+// Besides, it clears the cumulateEventSize and update lastQueryTime to prepare for the next query.
+func (p *TableProgress) GetEventSizePerSecond() float32 {
+	p.rwMutex.RLock()
+	defer p.rwMutex.RUnlock()
+
+	eventSizePerSecond := float32(p.cumulateEventSize) / float32(time.Since(p.lastQueryTime).Seconds())
+	p.cumulateEventSize = 0
+	p.lastQueryTime = time.Now()
+
+	log.Info("GetEventSizePerSecond", zap.Any("eventSizePerSecond", eventSizePerSecond))
+	return eventSizePerSecond
 }

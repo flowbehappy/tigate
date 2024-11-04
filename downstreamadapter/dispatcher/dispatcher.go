@@ -595,6 +595,7 @@ func (d *Dispatcher) GetBlockStatus() *heartbeatpb.State {
 func (d *Dispatcher) CollectDispatcherHeartBeatInfo(h *HeartBeatInfo) {
 	h.Watermark.CheckpointTs = d.GetCheckpointTs()
 	h.Watermark.ResolvedTs = d.GetResolvedTs()
+	h.EventSizePerSecond = d.tableProgress.GetEventSizePerSecond()
 	h.Id = d.GetId()
 	h.ComponentStatus = d.GetComponentStatus()
 	h.TableSpan = d.GetTableSpan()
