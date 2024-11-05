@@ -68,7 +68,7 @@ func GetEtcdKeyChangeFeedList(clusterID, namespace string) string {
 // GetEtcdKeyChangeFeedInfo returns the key of a changefeed config
 func GetEtcdKeyChangeFeedInfo(clusterID string, changefeedID common.ChangeFeedIDRepresentation) string {
 	return fmt.Sprintf("%s/%s", GetEtcdKeyChangeFeedList(clusterID,
-		changefeedID.Namespace()), changefeedID.Name())
+		changefeedID.Namespace), changefeedID.Name)
 }
 
 // GetEtcdKeyTaskPosition returns the key of a task position
@@ -87,7 +87,7 @@ func GetEtcdKeyCaptureInfo(clusterID, id string) string {
 
 // GetEtcdKeyJob returns the key for a job status
 func GetEtcdKeyJob(clusterID string, changeFeedID common.ChangeFeedIDRepresentation) string {
-	return ChangefeedStatusKeyPrefix(clusterID, changeFeedID.Namespace()) + "/" + changeFeedID.Name()
+	return ChangefeedStatusKeyPrefix(clusterID, changeFeedID.Namespace) + "/" + changeFeedID.Name
 }
 
 // MigrateBackupKey is the key of backup data during a migration.
@@ -319,7 +319,7 @@ func (c *CDCEtcdClientImpl) GetChangeFeedInfo(ctx context.Context,
 func (c *CDCEtcdClientImpl) DeleteChangeFeedInfo(ctx context.Context,
 	id common.ChangeFeedID,
 ) error {
-	key := GetEtcdKeyChangeFeedInfo(c.ClusterID, id.Representation())
+	key := GetEtcdKeyChangeFeedInfo(c.ClusterID, id.Representation)
 	_, err := c.Client.Delete(ctx, key)
 	return errors.WrapError(errors.ErrPDEtcdAPIError, err)
 }
@@ -328,7 +328,7 @@ func (c *CDCEtcdClientImpl) DeleteChangeFeedInfo(ctx context.Context,
 func (c *CDCEtcdClientImpl) GetChangeFeedStatus(ctx context.Context,
 	id common.ChangeFeedID,
 ) (*model.ChangeFeedStatus, int64, error) {
-	key := GetEtcdKeyJob(c.ClusterID, id.Representation())
+	key := GetEtcdKeyJob(c.ClusterID, id.Representation)
 	resp, err := c.Client.Get(ctx, key)
 	if err != nil {
 		return nil, 0, errors.WrapError(errors.ErrPDEtcdAPIError, err)
@@ -518,8 +518,8 @@ func (c *CDCEtcdClientImpl) saveChangefeedAndUpstreamInfo(
 	}
 	if !resp.Succeeded {
 		log.Warn(fmt.Sprintf("unexpected etcd transaction failure, operation: %s", operation),
-			zap.String("namespace", changeFeedID.Namespace()),
-			zap.String("changefeed", changeFeedID.Name()))
+			zap.String("namespace", changeFeedID.Namespace),
+			zap.String("changefeed", changeFeedID.Name))
 		errMsg := fmt.Sprintf("%s changefeed %s", operation, changeFeedID)
 		return errors.ErrMetaOpFailed.GenWithStackByArgs(errMsg)
 	}
@@ -532,7 +532,7 @@ func (c *CDCEtcdClientImpl) SaveChangeFeedInfo(ctx context.Context,
 	info *model.ChangeFeedInfo,
 	changeFeedID common.ChangeFeedID,
 ) error {
-	key := GetEtcdKeyChangeFeedInfo(c.ClusterID, changeFeedID.Representation())
+	key := GetEtcdKeyChangeFeedInfo(c.ClusterID, changeFeedID.Representation)
 	value, err := info.Marshal()
 	if err != nil {
 		return errors.Trace(err)

@@ -83,7 +83,7 @@ func (db *ChangefeedDB) AddReplicatingMaintainer(task *Changefeed, nodeID node.I
 
 	db.changefeeds[task.ID] = task
 	db.replicating[task.ID] = task
-	db.changefeedRepresentations[task.ID.Representation()] = task.ID
+	db.changefeedRepresentations[task.ID.Representation] = task.ID
 	db.updateNodeMap("", nodeID, task)
 }
 
@@ -372,6 +372,7 @@ func (db *ChangefeedDB) updateNodeMap(old, new node.ID, task *Changefeed) {
 // addAbsentChangefeedUnLock adds the replica set to the absent map
 func (db *ChangefeedDB) addAbsentChangefeedUnLock(tasks ...*Changefeed) {
 	for _, task := range tasks {
+		db.changefeedRepresentations[task.ID.Representation] = task.ID
 		db.changefeeds[task.ID] = task
 		db.absent[task.ID] = task
 	}

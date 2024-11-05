@@ -64,6 +64,7 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[common.ChangeF
 					zap.String("key", key), zap.Error(err))
 				continue
 			}
+			log.Info("hyy", zap.Any("get status", status), zap.Any("cf", cf), zap.Any("ns", ns))
 			statusMap[common.NewChangeFeedIDRepresentation(cf, ns)] = status
 		} else {
 			detail := &config.ChangeFeedInfo{}
@@ -76,10 +77,11 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[common.ChangeF
 			cfMap[detail.ChangefeedID] = &ChangefeedMetaWrapper{
 				Info: detail,
 			}
+			log.Info("hyy", zap.Any("get info", detail), zap.Any("changefeedID", detail.ChangefeedID))
 		}
 	}
 	for id, wrapper := range cfMap {
-		wrapper.Status = statusMap[id.Representation()]
+		wrapper.Status = statusMap[id.Representation]
 	}
 
 	// check the invalid cf without Info, add a new Status
@@ -103,7 +105,7 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[common.ChangeF
 				delete(cfMap, id)
 				continue
 			}
-			_, err = b.etcdClient.GetEtcdClient().Put(ctx, etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), id.Representation()), string(data))
+			_, err = b.etcdClient.GetEtcdClient().Put(ctx, etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), id.Representation), string(data))
 			if err != nil {
 				log.Warn("failed to save change feed Status, ignore", zap.Error(err))
 				delete(cfMap, id)
@@ -112,12 +114,18 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[common.ChangeF
 			meta.Status = status
 		}
 	}
+
+	for id, _ := range cfMap {
+		log.Info("hyy loaded changefeed",
+			zap.String("id", id.String()))
+	}
+
 	return cfMap, nil
 }
 
 func (b *EtcdBackend) CreateChangefeed(ctx context.Context,
 	info *config.ChangeFeedInfo) error {
-	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), info.ChangefeedID.Representation())
+	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), info.ChangefeedID.Representation)
 	infoValue, err := info.Marshal()
 	if err != nil {
 		return errors.Trace(err)
@@ -131,7 +139,7 @@ func (b *EtcdBackend) CreateChangefeed(ctx context.Context,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), info.ChangefeedID.Representation())
+	jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), info.ChangefeedID.Representation)
 
 	opsThen := []clientv3.Op{}
 	opsThen = append(opsThen, clientv3.OpPut(infoKey, infoValue))
@@ -149,7 +157,7 @@ func (b *EtcdBackend) CreateChangefeed(ctx context.Context,
 }
 
 func (b *EtcdBackend) UpdateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error {
-	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), info.ChangefeedID.Representation())
+	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), info.ChangefeedID.Representation)
 	newStr, err := info.Marshal()
 	if err != nil {
 		return errors.Trace(err)
@@ -170,7 +178,7 @@ func (b *EtcdBackend) UpdateChangefeed(ctx context.Context, info *config.ChangeF
 }
 
 func (b *EtcdBackend) PauseChangefeed(ctx context.Context, id common.ChangeFeedID) error {
-	info, err := b.etcdClient.GetChangeFeedInfo(ctx, id.Representation())
+	info, err := b.etcdClient.GetChangeFeedInfo(ctx, id.Representation)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -180,8 +188,8 @@ func (b *EtcdBackend) PauseChangefeed(ctx context.Context, id common.ChangeFeedI
 
 func (b *EtcdBackend) DeleteChangefeed(ctx context.Context,
 	changefeedID common.ChangeFeedID) error {
-	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), changefeedID.Representation())
-	jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), changefeedID.Representation())
+	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), changefeedID.Representation)
+	jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), changefeedID.Representation)
 	opsThen := []clientv3.Op{}
 	opsThen = append(opsThen, clientv3.OpDelete(infoKey))
 	opsThen = append(opsThen, clientv3.OpDelete(jobKey))
@@ -198,7 +206,7 @@ func (b *EtcdBackend) DeleteChangefeed(ctx context.Context,
 
 func (b *EtcdBackend) ResumeChangefeed(ctx context.Context,
 	id common.ChangeFeedID, newCheckpointTs uint64) error {
-	info, err := b.etcdClient.GetChangeFeedInfo(ctx, id.Representation())
+	info, err := b.etcdClient.GetChangeFeedInfo(ctx, id.Representation)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -207,7 +215,7 @@ func (b *EtcdBackend) ResumeChangefeed(ctx context.Context,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), id.Representation())
+	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), id.Representation)
 	opsThen := []clientv3.Op{
 		clientv3.OpPut(infoKey, newStr),
 	}
@@ -221,7 +229,7 @@ func (b *EtcdBackend) ResumeChangefeed(ctx context.Context,
 		if err != nil {
 			return errors.Trace(err)
 		}
-		jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), id.Representation())
+		jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), id.Representation)
 		opsThen = append(opsThen, clientv3.OpPut(jobKey, jobValue))
 	}
 
@@ -257,7 +265,7 @@ func (b *EtcdBackend) UpdateChangefeedCheckpointTs(ctx context.Context, cps map[
 		if err != nil {
 			return errors.Trace(err)
 		}
-		jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), cfID.Representation())
+		jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), cfID.Representation)
 		opsThen = append(opsThen, clientv3.OpPut(jobKey, jobValue))
 		batchSize++
 		if batchSize >= 128 {

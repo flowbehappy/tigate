@@ -414,7 +414,7 @@ func (c *Controller) ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedI
 func (c *Controller) GetChangefeed(ctx context.Context, idRepresentation common.ChangeFeedIDRepresentation) (*config.ChangeFeedInfo, *model.ChangeFeedStatus, error) {
 	cf := c.changefeedDB.GetByIDRepresentation(idRepresentation)
 	if cf == nil {
-		return nil, nil, cerror.ErrChangeFeedNotExists.GenWithStackByArgs(idRepresentation.Name())
+		return nil, nil, cerror.ErrChangeFeedNotExists.GenWithStackByArgs(idRepresentation.Name)
 	}
 	return cf.Info, &model.ChangeFeedStatus{CheckpointTs: cf.GetStatus().CheckpointTs}, nil
 }

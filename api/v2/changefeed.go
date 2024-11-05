@@ -323,9 +323,9 @@ func toAPIModel(
 func (h *OpenAPIV2) deleteChangefeed(c *gin.Context) {
 	ctx := c.Request.Context()
 	changefeedIDRepresentation := common.NewChangeFeedIDRepresentation(c.Param(api.APIOpVarChangefeedID), model.DefaultNamespace)
-	if err := model.ValidateChangefeedID(changefeedIDRepresentation.Name()); err != nil {
+	if err := model.ValidateChangefeedID(changefeedIDRepresentation.Name); err != nil {
 		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
-			changefeedIDRepresentation.Name()))
+			changefeedIDRepresentation.Name))
 		return
 	}
 	coordinator, err := h.server.GetCoordinator()
@@ -373,14 +373,14 @@ func (h *OpenAPIV2) deleteChangefeed(c *gin.Context) {
 func (h *OpenAPIV2) pauseChangefeed(c *gin.Context) {
 	ctx := c.Request.Context()
 	changefeedIDRepresentation := common.NewChangeFeedIDRepresentation(c.Param(api.APIOpVarChangefeedID), model.DefaultNamespace)
-	if err := model.ValidateChangefeedID(changefeedIDRepresentation.Name()); err != nil {
+	if err := model.ValidateChangefeedID(changefeedIDRepresentation.Name); err != nil {
 		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
-			changefeedIDRepresentation.Name()))
+			changefeedIDRepresentation.Name))
 		return
 	}
-	if err := model.ValidateChangefeedID(changefeedIDRepresentation.Name()); err != nil {
+	if err := model.ValidateChangefeedID(changefeedIDRepresentation.Name); err != nil {
 		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
-			changefeedIDRepresentation.Name()))
+			changefeedIDRepresentation.Name))
 		return
 	}
 
@@ -418,14 +418,14 @@ func (h *OpenAPIV2) pauseChangefeed(c *gin.Context) {
 func (h *OpenAPIV2) resumeChangefeed(c *gin.Context) {
 	ctx := c.Request.Context()
 	changefeedIDReprestatition := common.NewChangeFeedIDRepresentation(c.Param(api.APIOpVarChangefeedID), model.DefaultNamespace)
-	if err := model.ValidateChangefeedID(changefeedIDReprestatition.Name()); err != nil {
+	if err := model.ValidateChangefeedID(changefeedIDReprestatition.Name); err != nil {
 		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
-			changefeedIDReprestatition.Name()))
+			changefeedIDReprestatition.Name))
 		return
 	}
-	if err := model.ValidateChangefeedID(changefeedIDReprestatition.Name()); err != nil {
+	if err := model.ValidateChangefeedID(changefeedIDReprestatition.Name); err != nil {
 		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
-			changefeedIDReprestatition.Name()))
+			changefeedIDReprestatition.Name))
 		return
 	}
 
@@ -505,9 +505,9 @@ func (h *OpenAPIV2) updateChangefeed(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	changefeedIDRepresentation := common.NewChangeFeedIDRepresentation(c.Param(api.APIOpVarChangefeedID), model.DefaultNamespace)
-	if err := model.ValidateChangefeedID(changefeedIDRepresentation.Name()); err != nil {
+	if err := model.ValidateChangefeedID(changefeedIDRepresentation.Name); err != nil {
 		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
-			changefeedIDRepresentation.Name()))
+			changefeedIDRepresentation.Name))
 		return
 	}
 	coordinator, err := h.server.GetCoordinator()
