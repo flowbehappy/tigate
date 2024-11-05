@@ -20,9 +20,9 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/maintainer/replica"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/utils"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -55,17 +55,16 @@ type splitter interface {
 
 type Splitter struct {
 	splitters    []splitter
-	changefeedID model.ChangeFeedID
+	changefeedID common.ChangeFeedID
 }
 
 // NewSplitter returns a Splitter.
 func NewSplitter(
-	cf string,
+	changefeedID common.ChangeFeedID,
 	pdapi pdutil.PDAPIClient,
 	regionCache RegionCache,
 	config *config.ChangefeedSchedulerConfig,
 ) *Splitter {
-	changefeedID := model.DefaultChangeFeedID(cf)
 	return &Splitter{
 		changefeedID: changefeedID,
 		splitters: []splitter{

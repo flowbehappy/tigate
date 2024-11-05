@@ -1,6 +1,7 @@
 package dynstream
 
 import (
+	"fmt"
 	"runtime"
 	"sync"
 	"time"
@@ -33,6 +34,10 @@ type EventType struct {
 	Property  Property
 }
 
+func (t EventType) String() string {
+	return fmt.Sprintf("EventType{DataGroup: %d, Property: %s}", t.DataGroup, t.Property.String())
+}
+
 var DefaultEventType = EventType{}
 
 // The property of the event, it is used to how dynamic stream handles the event.
@@ -53,6 +58,19 @@ const (
 	// These events require sequential, one-by-one processing
 	NonBatchable
 )
+
+func (p Property) String() string {
+	switch p {
+	case BatchableData:
+		return "BatchableData"
+	case PeriodicSignal:
+		return "PeriodicSignal"
+	case NonBatchable:
+		return "NonBatchable"
+	default:
+		return fmt.Sprintf("Unknown Property: %d", p)
+	}
+}
 
 // The handler interface. The handler processes the event.
 type Handler[A Area, P Path, T Event, D Dest] interface {
@@ -207,6 +225,10 @@ type Feedback[A Area, P Path, D Dest] struct {
 	Dest D
 
 	Pause bool // Pause or resume the path.
+}
+
+func (f *Feedback[A, P, D]) String() string {
+	return fmt.Sprintf("DynamicStream Feedback{Area: %v, Path: %v, Pause: %v}", f.Area, f.Path, f.Pause)
 }
 
 func NewDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](handler H, option ...Option) DynamicStream[A, P, T, D, H] {

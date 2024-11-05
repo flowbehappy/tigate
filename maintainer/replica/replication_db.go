@@ -26,7 +26,7 @@ import (
 // ReplicationDB is an in memory data struct that maintains the replication spans
 type ReplicationDB struct {
 	// for log ID
-	changefeedID string
+	changefeedID common.ChangeFeedID
 	// allTasks maintains all the span tasks, it included the table trigger
 	allTasks map[common.DispatcherID]*SpanReplication
 
@@ -47,7 +47,7 @@ type ReplicationDB struct {
 }
 
 // NewReplicaSetDB creates a new ReplicationDB and initializes the maps
-func NewReplicaSetDB(changefeedID string, ddlSpan *SpanReplication) *ReplicationDB {
+func NewReplicaSetDB(changefeedID common.ChangeFeedID, ddlSpan *SpanReplication) *ReplicationDB {
 	db := &ReplicationDB{changefeedID: changefeedID, ddlSpan: ddlSpan}
 	db.reset()
 	db.putDDLDispatcher(db.ddlSpan)
@@ -219,7 +219,7 @@ func (db *ReplicationDB) GetTaskByNodeID(id node.ID) []*SpanReplication {
 	stmMap, ok := db.nodeTasks[id]
 	if !ok {
 		log.Info("node is not maintained by controller, ignore",
-			zap.String("changefeed", db.changefeedID),
+			zap.String("changefeed", db.changefeedID.Name()),
 			zap.Stringer("node", id))
 		return nil
 	}
@@ -298,7 +298,7 @@ func (db *ReplicationDB) ReplaceReplicaSet(old *SpanReplication, newSpans []*hea
 	// first check  the old replica set exists, if not, return false
 	if _, ok := db.allTasks[old.ID]; !ok {
 		log.Warn("old replica set not found, skip",
-			zap.String("changefeed", db.changefeedID),
+			zap.String("changefeed", db.changefeedID.Name()),
 			zap.String("span", old.ID.String()))
 		return false
 	}
@@ -326,7 +326,7 @@ func (db *ReplicationDB) AddReplicatingSpan(task *SpanReplication) {
 	nodeID := task.GetNodeID()
 
 	log.Info("add an replicating span",
-		zap.String("changefeed", db.changefeedID),
+		zap.String("changefeed", db.changefeedID.Name()),
 		zap.String("nodeID", nodeID.String()),
 		zap.String("span", task.ID.String()))
 
@@ -342,7 +342,7 @@ func (db *ReplicationDB) MarkSpanAbsent(span *SpanReplication) {
 	defer db.lock.Unlock()
 
 	log.Info("marking span absent",
-		zap.String("changefeed", db.changefeedID),
+		zap.String("changefeed", db.changefeedID.Name()),
 		zap.String("span", span.ID.String()),
 		zap.String("node", span.GetNodeID().String()))
 
@@ -360,7 +360,7 @@ func (db *ReplicationDB) MarkSpanScheduling(span *SpanReplication) {
 	defer db.lock.Unlock()
 
 	log.Info("marking span scheduling",
-		zap.String("changefeed", db.changefeedID),
+		zap.String("changefeed", db.changefeedID.Name()),
 		zap.String("span", span.ID.String()))
 
 	delete(db.absent, span.ID)
@@ -373,7 +373,7 @@ func (db *ReplicationDB) MarkSpanReplicating(span *SpanReplication) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 	log.Info("marking span replicating",
-		zap.String("changefeed", db.changefeedID),
+		zap.String("changefeed", db.changefeedID.Name()),
 		zap.String("span", span.ID.String()))
 
 	delete(db.absent, span.ID)
@@ -388,13 +388,13 @@ func (db *ReplicationDB) ForceRemove(id common.DispatcherID) {
 	span, ok := db.allTasks[id]
 	if !ok {
 		log.Warn("span not found, ignore remove action",
-			zap.String("changefeed", db.changefeedID),
+			zap.String("changefeed", db.changefeedID.Name()),
 			zap.String("span", id.String()))
 		return
 	}
 
 	log.Info("remove span",
-		zap.String("changefeed", db.changefeedID),
+		zap.String("changefeed", db.changefeedID.Name()),
 		zap.String("span", id.String()))
 	db.removeSpanUnLock(span)
 }
@@ -436,7 +436,7 @@ func (db *ReplicationDB) BindSpanToNode(old, new node.ID, task *SpanReplication)
 	defer db.lock.Unlock()
 
 	log.Info("bind span to node",
-		zap.String("changefeed", db.changefeedID),
+		zap.String("changefeed", db.changefeedID.Name()),
 		zap.String("span", task.ID.String()),
 		zap.String("oldNode", old.String()),
 		zap.String("node", new.String()))
@@ -461,7 +461,7 @@ func (db *ReplicationDB) addAbsentReplicaSetUnLock(tasks ...*SpanReplication) {
 func (db *ReplicationDB) removeSpanUnLock(spans ...*SpanReplication) {
 	for _, span := range spans {
 		log.Info("remove span",
-			zap.String("changefeed", db.changefeedID),
+			zap.String("changefeed", db.changefeedID.Name()),
 			zap.Int64("table", span.Span.TableID),
 			zap.String("span", span.ID.String()))
 		tableID := span.Span.TableID

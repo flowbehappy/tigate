@@ -49,7 +49,7 @@ type areaMemStat[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct 
 	// Reverse reference to the memControl this area belongs to.
 	memControl *memControl[A, P, T, D, H]
 
-	settings     AreaSettings
+	settings     atomic.Pointer[AreaSettings]
 	feedbackChan chan<- Feedback[A, P, D]
 
 	pathCount        int
@@ -63,12 +63,13 @@ func newAreaMemStat[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
 	feedbackChan chan<- Feedback[A, P, D],
 ) *areaMemStat[A, P, T, D, H] {
 	settings.fix()
-	return &areaMemStat[A, P, T, D, H]{
+	res := &areaMemStat[A, P, T, D, H]{
 		area:         area,
 		memControl:   memoryControl,
-		settings:     settings,
 		feedbackChan: feedbackChan,
 	}
+	res.settings.Store(&settings)
+	return res
 }
 
 // This method is called by streams' handleLoop concurrently.
@@ -83,6 +84,7 @@ func (as *areaMemStat[A, P, T, D, H]) appendEvent(
 	replaced := false
 	if isPeriodicSignal(event) {
 		back, ok := path.pendingQueue.BackRef()
+
 		if ok && isPeriodicSignal(*back) {
 			// Replace the repeated signal.
 			// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
@@ -100,7 +102,7 @@ func (as *areaMemStat[A, P, T, D, H]) appendEvent(
 		as.totalPendingSize.Add(int64(event.eventSize))
 		// Update the heaps after adding the event in the queue.
 		eventQueue.updateHeapAfterUpdatePath(path)
-		eventQueue.totalPendingLength++
+		eventQueue.totalPendingLength.Add(1)
 	}
 
 	as.updatePathPauseState(path, event)
@@ -113,16 +115,11 @@ func (as *areaMemStat[A, P, T, D, H]) shouldDropEvent(
 	eventQueue *eventQueue[A, P, T, D, H],
 ) bool {
 	exceedMaxPendingSize := func() bool {
-		return int(as.totalPendingSize.Load())+event.eventSize > as.settings.MaxPendingSize
+		return int(as.totalPendingSize.Load())+event.eventSize > as.settings.Load().MaxPendingSize
 	}
 
 	// If the pending size does not exceed the max allowed size, or the path has no events, no need to drop the event.
 	if !exceedMaxPendingSize() || path.pendingQueue.Length() == 0 {
-		log.Info("no need to drop event",
-			zap.Any("timestamp", event.timestamp),
-			zap.Any("area", as.area),
-			zap.Any("path", path.path),
-			zap.Int("pendingSize", int(as.totalPendingSize.Load())))
 		return false
 	}
 
@@ -135,7 +132,6 @@ func (as *areaMemStat[A, P, T, D, H]) shouldDropEvent(
 	}
 	// If event's timestamp is not the smallest among all the paths in the area, drop it.
 	if event.timestamp > top.frontTimestamp {
-
 		if !isPeriodicSignal(event) {
 			handler.OnDrop(event.event)
 		}
@@ -145,7 +141,6 @@ func (as *areaMemStat[A, P, T, D, H]) shouldDropEvent(
 	// Drop the events of the largest pending size path to find a place for the new event.
 LOOP:
 	for exceedMaxPendingSize() {
-
 		longestPath, ok := path.streamAreaInfo.pathSizeHeap.PeekTop()
 		if !ok {
 			log.Panic("pathSizeHeap is empty, but exceedMaxPendingSize, it should not happen",
@@ -167,7 +162,7 @@ LOOP:
 			longestPath.pendingSize -= back.eventSize
 			as.totalPendingSize.Add(int64(-back.eventSize))
 			eventQueue.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D, H])(longestPath))
-			eventQueue.totalPendingLength--
+			eventQueue.totalPendingLength.Add(-1)
 			if !exceedMaxPendingSize() {
 				break LOOP
 			}
@@ -213,13 +208,13 @@ func (as *areaMemStat[A, P, T, D, H]) updatePathPauseState(path *pathInfo[A, P, 
 	}
 
 	// Otherwise, only switch pause state after the switch interval (equals to feedback interval).
-	if prevPaused != shouldPause && currentTime.Sub(path.lastSwitchPausedTime) >= as.settings.FeedbackInterval {
+	if prevPaused != shouldPause && currentTime.Sub(path.lastSwitchPausedTime) >= as.settings.Load().FeedbackInterval {
 		path.paused = shouldPause
 		path.lastSwitchPausedTime = currentTime
 	}
 
 	// If the path's pause state is different from the event's pause state, send feedback after the feedback interval.
-	if event.paused != path.paused && currentTime.Sub(path.lastSendFeedbackTime) >= as.settings.FeedbackInterval {
+	if event.paused != path.paused && currentTime.Sub(path.lastSendFeedbackTime) >= as.settings.Load().FeedbackInterval {
 		sendFeedback(path.paused)
 	}
 }
@@ -229,7 +224,7 @@ func (as *areaMemStat[A, P, T, D, H]) updatePathPauseState(path *pathInfo[A, P, 
 // 2. If the path is not in the heap, it should be paused only if all the paths in the heap should be paused.
 // 3. If the path is in the heap, it should be paused if its index in the heap is smaller than the stopMaxIndex.
 func (as *areaMemStat[A, P, T, D, H]) shouldPausePath(path *pathInfo[A, P, T, D, H]) bool {
-	memoryUsageRatio := float64(as.totalPendingSize.Load()) / float64(as.settings.MaxPendingSize)
+	memoryUsageRatio := float64(as.totalPendingSize.Load()) / float64(as.settings.Load().MaxPendingSize)
 	pausePathRatio := findPausePathRatio(memoryUsageRatio)
 
 	heapLength := path.streamAreaInfo.pathSizeHeap.Len()
@@ -269,7 +264,7 @@ func (m *memControl[A, P, T, D, H]) setAreaSettings(area A, settings AreaSetting
 	// Update the settings
 	if as, ok := m.areaStatMap[area]; ok {
 		settings.fix()
-		as.settings = settings
+		as.settings.Store(&settings)
 	}
 }
 
@@ -288,7 +283,7 @@ func (m *memControl[A, P, T, D, H]) addPathToArea(path *pathInfo[A, P, T, D, H],
 	area.pathCount++
 
 	// Update the settings
-	area.settings = settings
+	area.settings.Store(&settings)
 }
 
 // This method is called after the path is removed.

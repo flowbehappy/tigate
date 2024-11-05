@@ -141,11 +141,12 @@ func (c *eventBroker) sendWatermark(
 ) {
 	c.emitSyncPointEventIfNeeded(watermark, d, server)
 
+	re := pevent.NewResolvedEvent(watermark, d.info.GetID())
 	resolvedEvent := newWrapResolvedEvent(
 		server,
-		pevent.ResolvedEvent{
-			DispatcherID: d.info.GetID(),
-			ResolvedTs:   watermark})
+		re,
+		d.getEventSenderState())
+
 	select {
 	case c.messageCh <- resolvedEvent:
 		if counter != nil {
@@ -183,10 +184,7 @@ func (c *eventBroker) runGenTasks(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case stat := <-c.notifyCh:
-				// Only send the task to the dispatcher that is running.
-				if stat.isRunning.Load() {
-					c.ds.In() <- newScanTask(stat)
-				}
+				c.ds.In() <- newScanTask(stat)
 			}
 		}
 	}()
@@ -252,7 +250,7 @@ func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e pevent.DD
 	e.DispatcherID = d.info.GetID()
 	e.Seq = d.seq.Add(1)
 	log.Info("send ddl event to dispatcher", zap.Stringer("dispatcher", d.info.GetID()), zap.String("query", e.Query), zap.Int64("table", e.TableID), zap.Uint64("commitTs", e.FinishedTs), zap.Uint64("seq", e.Seq))
-	ddlEvent := newWrapDDLEvent(remoteID, &e)
+	ddlEvent := newWrapDDLEvent(remoteID, &e, d.getEventSenderState())
 	select {
 	case <-ctx.Done():
 		return
@@ -295,6 +293,16 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 		return false, dataRange
 	}
 
+	// Only scan when the dispatcher is running.
+	if !task.dispatcherStat.isRunning.Load() {
+		// If the dispatcher is not running, we also need to send the watermark to the dispatcher.
+		// And the resolvedTs should be the last sent watermark.
+		resolvedTs := task.dispatcherStat.watermark.Load()
+		remoteID := node.ID(task.dispatcherStat.info.GetServerID())
+		c.sendWatermark(remoteID, task.dispatcherStat, resolvedTs, task.dispatcherStat.metricEventServiceSendResolvedTsCount)
+		return false, dataRange
+	}
+
 	return true, dataRange
 }
 
@@ -318,21 +326,19 @@ func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 	c.messageCh <- wrapE
 }
 
-func (c *eventBroker) sendSyncPointEvent(server node.ID, ts uint64, dispatcherID common.DispatcherID) {
-	syncPointEvent := newWrapSyncPointEvent(
-		server,
-		&pevent.SyncPointEvent{
-			DispatcherID: dispatcherID,
-			CommitTs:     ts})
-	c.messageCh <- syncPointEvent
-}
-
 // emitSyncPointEventIfNeeded emits a sync point event if the current ts is greater than the next sync point, and updates the next sync point.
 // We need call this function every time we send a event(whether dml/ddl/resolvedTs),
 // thus to ensure the sync point event is in correct order for each dispatcher.
 func (c *eventBroker) emitSyncPointEventIfNeeded(ts uint64, d *dispatcherStat, remoteID node.ID) {
 	if d.enableSyncPoint && ts > d.nextSyncPoint {
-		c.sendSyncPointEvent(remoteID, d.nextSyncPoint, d.info.GetID())
+		// Send the sync point event.
+		syncPointEvent := newWrapSyncPointEvent(
+			remoteID,
+			&pevent.SyncPointEvent{
+				DispatcherID: d.info.GetID(),
+				CommitTs:     ts},
+			d.getEventSenderState())
+		c.messageCh <- syncPointEvent
 		d.nextSyncPoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(d.nextSyncPoint).Add(d.syncPointInterval))
 	}
 }
@@ -369,6 +375,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		for _, e := range ddlEvents {
 			c.sendDDL(ctx, remoteID, e, task.dispatcherStat)
 		}
+		task.dispatcherStat.watermark.Store(dataRange.EndTs)
 		// After all the events are sent, we send the watermark to the dispatcher.
 		c.sendWatermark(remoteID,
 			task.dispatcherStat,
@@ -399,8 +406,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		}
 		dml.Seq = task.dispatcherStat.seq.Add(1)
 		c.emitSyncPointEventIfNeeded(dml.CommitTs, task.dispatcherStat, remoteID)
-		c.messageCh <- newWrapDMLEvent(remoteID, dml)
-		task.dispatcherStat.watermark.Store(dml.CommitTs)
+		c.messageCh <- newWrapDMLEvent(remoteID, dml, task.dispatcherStat.getEventSenderState())
 		task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(dml.Len()))
 	}
 
@@ -606,6 +612,17 @@ func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64) {
 	}
 }
 
+func (c *eventBroker) getDispatcher(id common.DispatcherID) (*dispatcherStat, bool) {
+	stat, ok := c.dispatchers.Load(id)
+	if !ok {
+		stat, ok = c.tableTriggerDispatchers.Load(id)
+	}
+	if !ok {
+		return nil, false
+	}
+	return stat.(*dispatcherStat), true
+}
+
 func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	filterConfig := info.GetFilterConfig()
 	filter, err := filter.NewFilter(filterConfig, "", false)
@@ -670,46 +687,43 @@ func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
 	c.eventStore.UnregisterDispatcher(id)
 	c.schemaStore.UnregisterTable(dispatcherInfo.GetTableSpan().TableID)
 	c.dispatchers.Delete(id)
-
 	log.Info("deregister acceptor", zap.Uint64("clusterID", c.tidbClusterID), zap.Any("acceptorID", id))
 }
 
 func (c *eventBroker) pauseDispatcher(dispatcherInfo DispatcherInfo) {
-	stat, ok := c.dispatchers.Load(dispatcherInfo.GetID())
+	stat, ok := c.getDispatcher(dispatcherInfo.GetID())
 	if !ok {
 		return
 	}
-	stat.(*dispatcherStat).isRunning.Store(false)
+	stat.isRunning.Store(false)
 }
 
 func (c *eventBroker) resumeDispatcher(dispatcherInfo DispatcherInfo) {
-	stat, ok := c.dispatchers.Load(dispatcherInfo.GetID())
+	stat, ok := c.getDispatcher(dispatcherInfo.GetID())
 	if !ok {
 		return
 	}
-	dispStat := stat.(*dispatcherStat)
 	// Reset the watermark to the startTs of the dispatcherInfo.
-	dispStat.watermark.Store(dispStat.info.GetStartTs())
-	dispStat.isRunning.Store(true)
+	stat.watermark.Store(stat.info.GetStartTs())
+	stat.isRunning.Store(true)
 }
 
 func (c *eventBroker) resetDispatcher(dispatcherInfo DispatcherInfo) {
-	stat, ok := c.dispatchers.Load(dispatcherInfo.GetID())
+	stat, ok := c.getDispatcher(dispatcherInfo.GetID())
 	if !ok {
 		return
 	}
-	dispStat := stat.(*dispatcherStat)
-	tableInfo, err := c.schemaStore.GetTableInfo(dispStat.info.GetTableSpan().TableID, dispStat.info.GetStartTs())
+	tableInfo, err := c.schemaStore.GetTableInfo(stat.info.GetTableSpan().TableID, stat.info.GetStartTs())
 	if err != nil {
-		log.Panic("get table info from schemaStore failed", zap.Error(err), zap.Int64("tableID", dispStat.info.GetTableSpan().TableID), zap.Uint64("startTs", dispStat.info.GetStartTs()))
+		log.Panic("get table info from schemaStore failed", zap.Error(err), zap.Int64("tableID", stat.info.GetTableSpan().TableID), zap.Uint64("startTs", stat.info.GetStartTs()))
 	}
-	dispStat.updateTableInfo(tableInfo)
-	dispStat.watermark.Store(dispStat.info.GetStartTs())
+	stat.updateTableInfo(tableInfo)
+	stat.watermark.Store(stat.info.GetStartTs())
 	// Reset the seq to 0, so that the next event will be sent with seq 1.
-	dispStat.seq.Store(0)
-	dispStat.startTs.Store(dispStat.info.GetStartTs())
-	dispStat.isRunning.Store(true)
-	dispStat.isInitialized.Store(false)
+	stat.seq.Store(0)
+	stat.startTs.Store(stat.info.GetStartTs())
+	stat.isRunning.Store(true)
+	stat.isInitialized.Store(false)
 }
 
 // Store the progress of the dispatcher, and the incremental events stats.
@@ -774,6 +788,13 @@ func newDispatcherStat(
 	dispStat.watermark.Store(startTs)
 	dispStat.isRunning.Store(true)
 	return dispStat
+}
+
+func (a *dispatcherStat) getEventSenderState() pevent.EventSenderState {
+	if a.isRunning.Load() {
+		return pevent.EventSenderStateNormal
+	}
+	return pevent.EventSenderStatePaused
 }
 
 func (a *dispatcherStat) updateTableInfo(tableInfo *common.TableInfo) {
@@ -858,7 +879,8 @@ type wrapEvent struct {
 	postSendFunc func()
 }
 
-func newWrapDMLEvent(serverID node.ID, e *pevent.DMLEvent) wrapEvent {
+func newWrapDMLEvent(serverID node.ID, e *pevent.DMLEvent, state pevent.EventSenderState) wrapEvent {
+	e.State = state
 	return wrapEvent{
 		serverID: serverID,
 		e:        e,
@@ -866,7 +888,8 @@ func newWrapDMLEvent(serverID node.ID, e *pevent.DMLEvent) wrapEvent {
 	}
 }
 
-func newWrapResolvedEvent(serverID node.ID, e pevent.ResolvedEvent) wrapEvent {
+func newWrapResolvedEvent(serverID node.ID, e pevent.ResolvedEvent, state pevent.EventSenderState) wrapEvent {
+	e.State = state
 	return wrapEvent{
 		serverID: serverID,
 		e:        &e,
@@ -874,7 +897,8 @@ func newWrapResolvedEvent(serverID node.ID, e pevent.ResolvedEvent) wrapEvent {
 	}
 }
 
-func newWrapDDLEvent(serverID node.ID, e *pevent.DDLEvent) wrapEvent {
+func newWrapDDLEvent(serverID node.ID, e *pevent.DDLEvent, state pevent.EventSenderState) wrapEvent {
+	e.State = state
 	return wrapEvent{
 		serverID: serverID,
 		e:        e,
@@ -882,7 +906,8 @@ func newWrapDDLEvent(serverID node.ID, e *pevent.DDLEvent) wrapEvent {
 	}
 }
 
-func newWrapSyncPointEvent(serverID node.ID, e *pevent.SyncPointEvent) wrapEvent {
+func newWrapSyncPointEvent(serverID node.ID, e *pevent.SyncPointEvent, state pevent.EventSenderState) wrapEvent {
+	e.State = state
 	return wrapEvent{
 		serverID: serverID,
 		e:        e,

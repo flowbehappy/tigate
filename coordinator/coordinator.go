@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/coordinator/changefeed"
 	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/messaging"
@@ -53,7 +54,7 @@ type coordinator struct {
 	pdClient  pd.Client
 	pdClock   pdutil.Clock
 
-	updatedChangefeedCh chan map[model.ChangeFeedID]*changefeed.Changefeed
+	updatedChangefeedCh chan map[common.ChangeFeedID]*changefeed.Changefeed
 }
 
 func New(node *node.Info,
@@ -73,7 +74,7 @@ func New(node *node.Info,
 		pdClient:            pdClient,
 		pdClock:             pdClock,
 		mc:                  mc,
-		updatedChangefeedCh: make(chan map[model.ChangeFeedID]*changefeed.Changefeed, 1024),
+		updatedChangefeedCh: make(chan map[common.ChangeFeedID]*changefeed.Changefeed, 1024),
 	}
 	c.stream = dynstream.NewDynamicStream[int, string, *Event, *Controller, *StreamHandler](NewStreamHandler())
 	c.stream.Start()
@@ -124,8 +125,8 @@ func (c *coordinator) Run(ctx context.Context) error {
 	}
 }
 
-func (c *coordinator) saveCheckpointTs(ctx context.Context, cfs map[model.ChangeFeedID]*changefeed.Changefeed) error {
-	statusMap := make(map[model.ChangeFeedID]uint64)
+func (c *coordinator) saveCheckpointTs(ctx context.Context, cfs map[common.ChangeFeedID]*changefeed.Changefeed) error {
+	statusMap := make(map[common.ChangeFeedID]uint64)
 	for _, upCf := range cfs {
 		reportedCheckpointTs := upCf.GetStatus().CheckpointTs
 		if upCf.GetLastSavedCheckPointTs() < reportedCheckpointTs {
@@ -159,15 +160,15 @@ func (c *coordinator) CreateChangefeed(ctx context.Context, info *config.ChangeF
 	return c.controller.CreateChangefeed(ctx, info)
 }
 
-func (c *coordinator) RemoveChangefeed(ctx context.Context, id model.ChangeFeedID) (uint64, error) {
+func (c *coordinator) RemoveChangefeed(ctx context.Context, id common.ChangeFeedID) (uint64, error) {
 	return c.controller.RemoveChangefeed(ctx, id)
 }
 
-func (c *coordinator) PauseChangefeed(ctx context.Context, id model.ChangeFeedID) error {
+func (c *coordinator) PauseChangefeed(ctx context.Context, id common.ChangeFeedID) error {
 	return c.controller.PauseChangefeed(ctx, id)
 }
 
-func (c *coordinator) ResumeChangefeed(ctx context.Context, id model.ChangeFeedID, newCheckpointTs uint64) error {
+func (c *coordinator) ResumeChangefeed(ctx context.Context, id common.ChangeFeedID, newCheckpointTs uint64) error {
 	return c.controller.ResumeChangefeed(ctx, id, newCheckpointTs)
 }
 
@@ -179,8 +180,8 @@ func (c *coordinator) ListChangefeeds(ctx context.Context) ([]*config.ChangeFeed
 	return c.controller.ListChangefeeds(ctx)
 }
 
-func (c *coordinator) GetChangefeed(ctx context.Context, id model.ChangeFeedID) (*config.ChangeFeedInfo, *config.ChangeFeedStatus, error) {
-	return c.controller.GetChangefeed(ctx, id)
+func (c *coordinator) GetChangefeed(ctx context.Context, changefeedDisplayName common.ChangeFeedDisplayName) (*config.ChangeFeedInfo, *config.ChangeFeedStatus, error) {
+	return c.controller.GetChangefeed(ctx, changefeedDisplayName)
 }
 
 func shouldRunChangefeed(state model.FeedState) bool {

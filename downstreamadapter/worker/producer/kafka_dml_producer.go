@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dmlproducer
+package producer
 
 import (
 	"context"
@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
+	commonType "github.com/pingcap/ticdc/pkg/common"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink/codec/common"
 	"github.com/pingcap/tiflow/pkg/sink/kafka"
@@ -29,7 +29,7 @@ import (
 // kafkaDMLProducer is used to send messages to kafka.
 type KafkaDMLProducer struct {
 	// id indicates which processor (changefeed) this sink belongs to.
-	id model.ChangeFeedID
+	id commonType.ChangeFeedID
 	// asyncProducer is used to send messages to kafka asynchronously.
 	asyncProducer kafka.AsyncProducer
 	// metricsCollector is used to report metrics.
@@ -47,13 +47,15 @@ type KafkaDMLProducer struct {
 // NewKafkaDMLProducer creates a new kafka producer.
 func NewKafkaDMLProducer(
 	ctx context.Context,
-	changefeedID model.ChangeFeedID,
+	changefeedID commonType.ChangeFeedID,
 	asyncProducer kafka.AsyncProducer,
 	metricsCollector kafka.MetricsCollector,
 ) *KafkaDMLProducer {
+	namespace := changefeedID.Namespace()
+	changefeedName := changefeedID.Name()
 	log.Info("Starting kafka DML producer ...",
-		zap.String("namespace", changefeedID.Namespace),
-		zap.String("changefeed", changefeedID.ID))
+		zap.String("namespace", namespace),
+		zap.String("changefeed", changefeedName))
 
 	ctx, cancel := context.WithCancel(ctx)
 	k := &KafkaDMLProducer{
@@ -79,8 +81,8 @@ func NewKafkaDMLProducer(
 			// 		zap.Error(err))
 			default:
 				log.Error("Error channel is full in kafka DML producer",
-					zap.String("namespace", k.id.Namespace),
-					zap.String("changefeed", k.id.ID),
+					zap.String("namespace", namespace),
+					zap.String("changefeed", changefeedName),
 					zap.Error(err))
 			}
 		}
@@ -114,8 +116,8 @@ func (k *KafkaDMLProducer) Close() {
 		// We need to guard against double closing the clients,
 		// which could lead to panic.
 		log.Warn("Kafka DML producer already closed",
-			zap.String("namespace", k.id.Namespace),
-			zap.String("changefeed", k.id.ID))
+			zap.String("namespace", k.id.Namespace()),
+			zap.String("changefeed", k.id.Name()))
 		return
 	}
 	if k.cancel != nil {

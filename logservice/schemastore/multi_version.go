@@ -344,7 +344,6 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 					break
 				}
 			}
-
 		}
 	case model.ActionReorganizePartition:
 		physicalIDs := getAllPartitionIDs(event.TableInfo)

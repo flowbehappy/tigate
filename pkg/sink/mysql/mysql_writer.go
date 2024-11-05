@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/sink/util"
 	timodel "github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/retry"
@@ -50,7 +49,7 @@ const (
 type MysqlWriter struct {
 	db           *sql.DB
 	cfg          *MysqlConfig
-	ChangefeedID model.ChangeFeedID
+	ChangefeedID common.ChangeFeedID
 
 	syncPointTableInit     bool
 	lastCleanSyncPointTime time.Time
@@ -67,7 +66,7 @@ type MysqlWriter struct {
 	statistics *metrics.Statistics
 }
 
-func NewMysqlWriter(db *sql.DB, cfg *MysqlConfig, changefeedID model.ChangeFeedID) *MysqlWriter {
+func NewMysqlWriter(db *sql.DB, cfg *MysqlConfig, changefeedID common.ChangeFeedID) *MysqlWriter {
 	statistics := metrics.NewStatistics(changefeedID, "TxnSink")
 	return &MysqlWriter{
 		db:                     db,
@@ -271,6 +270,9 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 	case commonEvent.InfluenceTypeNormal:
 		tableIds = append(tableIds, relatedTables.TableIDs...)
 	case commonEvent.InfluenceTypeDB:
+		if w.tableSchemaStore == nil {
+			log.Panic("table schema store is nil")
+		}
 		ids := w.tableSchemaStore.GetTableIdsByDB(relatedTables.SchemaID)
 		tableIds = append(tableIds, ids...)
 	case commonEvent.InfluenceTypeAll:
@@ -768,7 +770,7 @@ func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) *preparedDMLs 
 		}
 		// For metrics and logging.
 		rowCount += int(event.Len())
-		approximateSize += event.GetSize()
+		approximateSize += event.GetRowsSize()
 		if len(startTs) == 0 || startTs[len(startTs)-1] != event.StartTs {
 			startTs = append(startTs, event.StartTs)
 		}

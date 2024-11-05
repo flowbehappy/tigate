@@ -22,8 +22,8 @@ import (
 
 	lru "github.com/hashicorp/golang-lru"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/config"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	pmysql "github.com/pingcap/tiflow/pkg/sink/mysql"
@@ -140,7 +140,7 @@ func (c *MysqlConfig) Apply(sinkURI *url.URL) error {
 	return nil
 }
 
-func NewMysqlConfigAndDB(ctx context.Context, changefeedID model.ChangeFeedID, sinkURI *url.URL) (*MysqlConfig, *sql.DB, error) {
+func NewMysqlConfigAndDB(ctx context.Context, changefeedID common.ChangeFeedID, sinkURI *url.URL) (*MysqlConfig, *sql.DB, error) {
 	log.Info("create db connection", zap.String("sinkURI", sinkURI.String()))
 	// create db connection
 	cfg := NewMysqlConfig()

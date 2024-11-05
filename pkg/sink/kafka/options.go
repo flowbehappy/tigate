@@ -15,8 +15,8 @@ import (
 	"github.com/imdario/mergo"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
-	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/security"
 	tikafka "github.com/pingcap/tiflow/pkg/sink/kafka"
@@ -209,7 +209,7 @@ func (o *Options) SetPartitionNum(realPartitionCount int32) error {
 }
 
 // Apply the sinkURI to update Options
-func (o *Options) Apply(changefeedID model.ChangeFeedID,
+func (o *Options) Apply(changefeedID common.ChangeFeedID,
 	sinkURI *url.URL, sinkConfig *config.SinkConfig,
 ) error {
 	o.BrokerEndpoints = strings.Split(sinkURI.Host, ",")
@@ -537,7 +537,7 @@ var (
 
 // NewKafkaClientID generates kafka client id
 func NewKafkaClientID(captureAddr string,
-	changefeedID model.ChangeFeedID,
+	changefeedID common.ChangeFeedID,
 	configuredClientID string,
 ) (clientID string, err error) {
 	if configuredClientID != "" {

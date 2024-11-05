@@ -20,10 +20,11 @@ import (
 	"strings"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
+	"github.com/pingcap/ticdc/pkg/etcd"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/etcd"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -42,7 +43,7 @@ func NewEtcdBackend(etcdClient etcd.CDCEtcdClient) *EtcdBackend {
 	return b
 }
 
-func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[model.ChangeFeedID]*ChangefeedMetaWrapper, error) {
+func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[common.ChangeFeedID]*ChangefeedMetaWrapper, error) {
 	changefeedPrefix := etcd.NamespacedPrefix(b.etcdClient.GetClusterID(), model.DefaultNamespace) + "/changefeed"
 
 	resp, err := b.etcdClient.GetEtcdClient().Get(ctx, changefeedPrefix, clientv3.WithPrefix())
@@ -50,16 +51,11 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[model.ChangeFe
 		return nil, errors.Trace(err)
 	}
 
-	cfMap := make(map[model.ChangeFeedID]*ChangefeedMetaWrapper)
+	statusMap := make(map[common.ChangeFeedDisplayName]*config.ChangeFeedStatus)
+	cfMap := make(map[common.ChangeFeedID]*ChangefeedMetaWrapper)
 	for _, kv := range resp.Kvs {
 		key := string(kv.Key)
 		ns, cf, isStatus := extractKeySuffix(key)
-		cfID := model.ChangeFeedID{Namespace: ns, ID: cf}
-		meta, ok := cfMap[cfID]
-		if !ok {
-			meta = &ChangefeedMetaWrapper{}
-			cfMap[cfID] = meta
-		}
 		if isStatus {
 			status := &config.ChangeFeedStatus{}
 			err = status.Unmarshal(kv.Value)
@@ -68,7 +64,8 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[model.ChangeFe
 					zap.String("key", key), zap.Error(err))
 				continue
 			}
-			meta.Status = status
+			log.Info("hyy", zap.Any("get status", status), zap.Any("cf", cf), zap.Any("ns", ns))
+			statusMap[common.NewChangeFeedDisplayName(cf, ns)] = status
 		} else {
 			detail := &config.ChangeFeedInfo{}
 			err = detail.Unmarshal(kv.Value)
@@ -77,9 +74,16 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[model.ChangeFe
 					zap.String("key", key), zap.Error(err))
 				continue
 			}
-			meta.Info = detail
+			cfMap[detail.ChangefeedID] = &ChangefeedMetaWrapper{
+				Info: detail,
+			}
+			log.Info("hyy", zap.Any("get info", detail), zap.Any("changefeedID", detail.ChangefeedID))
 		}
 	}
+	for id, wrapper := range cfMap {
+		wrapper.Status = statusMap[id.DisplayName]
+	}
+
 	// check the invalid cf without Info, add a new Status
 	for id, meta := range cfMap {
 		if meta.Info == nil {
@@ -100,7 +104,7 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[model.ChangeFe
 				delete(cfMap, id)
 				continue
 			}
-			_, err = b.etcdClient.GetEtcdClient().Put(ctx, etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), id), string(data))
+			_, err = b.etcdClient.GetEtcdClient().Put(ctx, etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), id.DisplayName), string(data))
 			if err != nil {
 				log.Warn("failed to save change feed Status, ignore", zap.Error(err))
 				delete(cfMap, id)
@@ -109,13 +113,18 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[model.ChangeFe
 			meta.Status = status
 		}
 	}
+
+	for id, _ := range cfMap {
+		log.Info("hyy loaded changefeed",
+			zap.String("id", id.String()))
+	}
+
 	return cfMap, nil
 }
 
 func (b *EtcdBackend) CreateChangefeed(ctx context.Context,
 	info *config.ChangeFeedInfo) error {
-	changefeedID := model.DefaultChangeFeedID(info.ID)
-	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), changefeedID)
+	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), info.ChangefeedID.DisplayName)
 	infoValue, err := info.Marshal()
 	if err != nil {
 		return errors.Trace(err)
@@ -129,7 +138,7 @@ func (b *EtcdBackend) CreateChangefeed(ctx context.Context,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), changefeedID)
+	jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), info.ChangefeedID.DisplayName)
 
 	opsThen := []clientv3.Op{}
 	opsThen = append(opsThen, clientv3.OpPut(infoKey, infoValue))
@@ -140,14 +149,14 @@ func (b *EtcdBackend) CreateChangefeed(ctx context.Context,
 		return errors.Trace(err)
 	}
 	if !resp.Succeeded {
-		err = errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("delete changefeed %s", changefeedID))
+		err = errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("delete changefeed %s", info.ChangefeedID.Name()))
 		return errors.Trace(err)
 	}
 	return nil
 }
 
 func (b *EtcdBackend) UpdateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error {
-	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), model.DefaultChangeFeedID(info.ID))
+	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), info.ChangefeedID.DisplayName)
 	newStr, err := info.Marshal()
 	if err != nil {
 		return errors.Trace(err)
@@ -161,14 +170,14 @@ func (b *EtcdBackend) UpdateChangefeed(ctx context.Context, info *config.ChangeF
 		return errors.Trace(err)
 	}
 	if !putResp.Succeeded {
-		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("pause changefeed %s", info.ID))
+		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("pause changefeed %s", info.ChangefeedID.Name()))
 		return errors.Trace(err)
 	}
 	return nil
 }
 
-func (b *EtcdBackend) PauseChangefeed(ctx context.Context, id model.ChangeFeedID) error {
-	info, err := b.etcdClient.GetChangeFeedInfo(ctx, id)
+func (b *EtcdBackend) PauseChangefeed(ctx context.Context, id common.ChangeFeedID) error {
+	info, err := b.etcdClient.GetChangeFeedInfo(ctx, id.DisplayName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -177,9 +186,9 @@ func (b *EtcdBackend) PauseChangefeed(ctx context.Context, id model.ChangeFeedID
 }
 
 func (b *EtcdBackend) DeleteChangefeed(ctx context.Context,
-	changefeedID model.ChangeFeedID) error {
-	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), changefeedID)
-	jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), changefeedID)
+	changefeedID common.ChangeFeedID) error {
+	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), changefeedID.DisplayName)
+	jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), changefeedID.DisplayName)
 	opsThen := []clientv3.Op{}
 	opsThen = append(opsThen, clientv3.OpDelete(infoKey))
 	opsThen = append(opsThen, clientv3.OpDelete(jobKey))
@@ -188,15 +197,15 @@ func (b *EtcdBackend) DeleteChangefeed(ctx context.Context,
 		return errors.Trace(err)
 	}
 	if !resp.Succeeded {
-		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("delete changefeed %s", changefeedID))
+		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("delete changefeed %s", changefeedID.Name()))
 		return errors.Trace(err)
 	}
 	return nil
 }
 
 func (b *EtcdBackend) ResumeChangefeed(ctx context.Context,
-	id model.ChangeFeedID, newCheckpointTs uint64) error {
-	info, err := b.etcdClient.GetChangeFeedInfo(ctx, id)
+	id common.ChangeFeedID, newCheckpointTs uint64) error {
+	info, err := b.etcdClient.GetChangeFeedInfo(ctx, id.DisplayName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -205,7 +214,7 @@ func (b *EtcdBackend) ResumeChangefeed(ctx context.Context,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), id)
+	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), id.DisplayName)
 	opsThen := []clientv3.Op{
 		clientv3.OpPut(infoKey, newStr),
 	}
@@ -219,7 +228,7 @@ func (b *EtcdBackend) ResumeChangefeed(ctx context.Context,
 		if err != nil {
 			return errors.Trace(err)
 		}
-		jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), id)
+		jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), id.DisplayName)
 		opsThen = append(opsThen, clientv3.OpPut(jobKey, jobValue))
 	}
 
@@ -234,7 +243,7 @@ func (b *EtcdBackend) ResumeChangefeed(ctx context.Context,
 	return nil
 }
 
-func (b *EtcdBackend) UpdateChangefeedCheckpointTs(ctx context.Context, cps map[model.ChangeFeedID]uint64) error {
+func (b *EtcdBackend) UpdateChangefeedCheckpointTs(ctx context.Context, cps map[common.ChangeFeedID]uint64) error {
 	opsThen := make([]clientv3.Op, 0, 128)
 	batchSize := 0
 
@@ -255,7 +264,7 @@ func (b *EtcdBackend) UpdateChangefeedCheckpointTs(ctx context.Context, cps map[
 		if err != nil {
 			return errors.Trace(err)
 		}
-		jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), cfID)
+		jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), cfID.DisplayName)
 		opsThen = append(opsThen, clientv3.OpPut(jobKey, jobValue))
 		batchSize++
 		if batchSize >= 128 {

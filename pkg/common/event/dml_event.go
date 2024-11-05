@@ -27,6 +27,8 @@ type DMLEvent struct {
 	TableInfoVersion uint64              `json:"table_info_version"`
 	// The seq of the event. It is set by event service.
 	Seq uint64 `json:"seq"`
+	// State is the state of sender when sending this event.
+	State EventSenderState `json:"state"`
 	// Length is the number of rows in the transaction.
 	Length int32 `json:"length"`
 	// RowTypes is the types of every row in the transaction.
@@ -50,6 +52,9 @@ type DMLEvent struct {
 	// PostTxnFlushed is the functions to be executed after the transaction is flushed.
 	// It is set and used by dispatcher.
 	PostTxnFlushed []func() `json:"-"`
+
+	// eventSize is the size of the event in bytes. It is set when it's unmarshaled.
+	eventSize int64 `json:"-"`
 	// offset is the offset of the current row in the transaction.
 	// It is internal field, not exported. So it doesn't need to be marshalled.
 	offset int `json:"-"`
@@ -183,11 +188,22 @@ func (t DMLEvent) Marshal() ([]byte, error) {
 // Unmarshal the DMLEvent from the given data.
 // Please make sure the TableInfo of the DMLEvent is set before unmarshal.
 func (t *DMLEvent) Unmarshal(data []byte) error {
+	t.eventSize = int64(len(data))
 	return t.decode(data)
 }
 
+// GetSize returns the size of the event in bytes, including all fields.
 func (t *DMLEvent) GetSize() int64 {
+	return t.eventSize
+}
+
+// GetRowsSize returns the approximate size of the rows in the transaction.
+func (t *DMLEvent) GetRowsSize() int64 {
 	return t.ApproximateSize
+}
+
+func (t *DMLEvent) IsPaused() bool {
+	return t.State.IsPaused()
 }
 
 func (t *DMLEvent) encode() ([]byte, error) {
@@ -204,7 +220,7 @@ func (t *DMLEvent) encodeV0() ([]byte, error) {
 		return nil, nil
 	}
 	// Calculate the total size needed for the encoded data
-	size := 1 + t.DispatcherID.GetSize() + 6*8 + 4 + int(t.Length)
+	size := 1 + t.DispatcherID.GetSize() + 6*8 + 4 + t.State.GetSize() + int(t.Length)
 
 	// Allocate a buffer with the calculated size
 	buf := make([]byte, size)
@@ -235,6 +251,9 @@ func (t *DMLEvent) encodeV0() ([]byte, error) {
 	// Seq
 	binary.LittleEndian.PutUint64(buf[offset:], t.Seq)
 	offset += 8
+	// State
+	copy(buf[offset:], t.State.encode())
+	offset += t.State.GetSize()
 	// Length
 	binary.LittleEndian.PutUint32(buf[offset:], uint32(t.Length))
 	offset += 4
@@ -283,6 +302,8 @@ func (t *DMLEvent) decodeV0(data []byte) error {
 	offset += 8
 	t.Seq = binary.LittleEndian.Uint64(data[offset:])
 	offset += 8
+	t.State.decode(data[offset:])
+	offset += t.State.GetSize()
 	t.Length = int32(binary.LittleEndian.Uint32(data[offset:]))
 	offset += 4
 	t.ApproximateSize = int64(binary.LittleEndian.Uint64(data[offset:]))
@@ -312,7 +333,7 @@ func (t *DMLEvent) AssembleRows(tableInfo *common.TableInfo) error {
 		return nil
 	}
 	if t.TableInfoVersion != tableInfo.UpdateTS {
-		log.Panic("DMLEvent: TableInfoVersion mismatch", zap.Uint64("expect", t.TableInfoVersion), zap.Uint64("got", tableInfo.UpdateTS))
+		log.Panic("DMLEvent: TableInfoVersion mismatch", zap.Uint64("dmlEventTableInfoVersion", t.TableInfoVersion), zap.Uint64("tableInfoVersion", tableInfo.UpdateTS))
 		return nil
 	}
 	decoder := chunk.NewCodec(tableInfo.GetFieldSlice())

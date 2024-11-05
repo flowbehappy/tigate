@@ -105,7 +105,7 @@ func (b *Barrier) HandleBootstrapResponse(bootstrapRespMap map[node.ID]*heartbea
 			key := getEventKey(blockState.BlockTs, blockState.IsSyncPoint)
 			event, ok := b.blockedTs[key]
 			if !ok {
-				event = NewBlockEvent(resp.ChangefeedID, b.controller, blockState, b.splitTableEnabled)
+				event = NewBlockEvent(common.NewChangefeedIDFromPB(resp.ChangefeedID), b.controller, blockState, b.splitTableEnabled)
 				b.blockedTs[key] = event
 			}
 			switch blockState.Stage {
@@ -136,7 +136,8 @@ func (b *Barrier) Resend() []*messaging.TargetMessage {
 	return msgs
 }
 
-func (b *Barrier) handleOneStatus(changefeedID string, status *heartbeatpb.TableSpanBlockStatus) *BarrierEvent {
+func (b *Barrier) handleOneStatus(changefeedID *heartbeatpb.ChangefeedID, status *heartbeatpb.TableSpanBlockStatus) *BarrierEvent {
+	cfID := common.NewChangefeedIDFromPB(changefeedID)
 	dispatcherID := common.NewDispatcherIDFromPB(status.ID)
 
 	// when a span send a block event, its checkpint must reached status.State.BlockTs - 1,
@@ -150,12 +151,12 @@ func (b *Barrier) handleOneStatus(changefeedID string, status *heartbeatpb.Table
 		})
 	}
 	if status.State.Stage == heartbeatpb.BlockStage_DONE {
-		return b.handleEventDone(changefeedID, dispatcherID, status)
+		return b.handleEventDone(cfID, dispatcherID, status)
 	}
-	return b.handleBlockState(changefeedID, dispatcherID, status)
+	return b.handleBlockState(cfID, dispatcherID, status)
 }
 
-func (b *Barrier) handleEventDone(changefeedID string, dispatcherID common.DispatcherID, status *heartbeatpb.TableSpanBlockStatus) *BarrierEvent {
+func (b *Barrier) handleEventDone(changefeedID common.ChangeFeedID, dispatcherID common.DispatcherID, status *heartbeatpb.TableSpanBlockStatus) *BarrierEvent {
 	key := getEventKey(status.State.BlockTs, status.State.IsSyncPoint)
 	event, ok := b.blockedTs[key]
 	if !ok {
@@ -179,7 +180,7 @@ func (b *Barrier) handleEventDone(changefeedID string, dispatcherID common.Dispa
 	return event
 }
 
-func (b *Barrier) handleBlockState(changefeedID string,
+func (b *Barrier) handleBlockState(changefeedID common.ChangeFeedID,
 	dispatcherID common.DispatcherID,
 	status *heartbeatpb.TableSpanBlockStatus) *BarrierEvent {
 	blockState := status.State
@@ -190,7 +191,7 @@ func (b *Barrier) handleBlockState(changefeedID string,
 		if event.selected {
 			// the event already in the selected state, ignore the block event just sent ack
 			log.Warn("the block event already selected, ignore the block event",
-				zap.String("changefeed", changefeedID),
+				zap.String("changefeed", changefeedID.Name()),
 				zap.String("dispatcher", dispatcherID.String()),
 				zap.Uint64("commitTs", blockState.BlockTs),
 			)
@@ -212,7 +213,7 @@ func (b *Barrier) handleBlockState(changefeedID string,
 }
 
 // getOrInsertNewEvent get the block event from the map, if not found, create a new one
-func (b *Barrier) getOrInsertNewEvent(changefeedID string, key eventKey,
+func (b *Barrier) getOrInsertNewEvent(changefeedID common.ChangeFeedID, key eventKey,
 	blockState *heartbeatpb.State) *BarrierEvent {
 	event, ok := b.blockedTs[key]
 	if !ok {
@@ -229,7 +230,7 @@ func (b *Barrier) checkEvent(be *BarrierEvent,
 	}
 	if be.selected {
 		log.Info("the all dispatchers reported event done, remove event and schedule it",
-			zap.String("changefeed", be.cfID),
+			zap.String("changefeed", be.cfID.Name()),
 			zap.Uint64("committs", be.commitTs))
 		// already selected a dispatcher to write, now all dispatchers reported the block event
 		delete(b.blockedTs, getEventKey(be.commitTs, be.isSyncPoint))

@@ -16,8 +16,8 @@ package node
 import (
 	"context"
 
+	"github.com/pingcap/ticdc/pkg/etcd"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/pkg/etcd"
 	pd "github.com/tikv/pd/client"
 )
 

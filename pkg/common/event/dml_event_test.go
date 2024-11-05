@@ -16,6 +16,7 @@ func TestDMLEvent(t *testing.T) {
 	require.NotNil(t, ddlJob)
 
 	dmlEvent := helper.DML2Event("test", "t", insertDataSQL)
+	dmlEvent.State = EventSenderStatePaused
 	require.NotNil(t, dmlEvent)
 
 	data, err := dmlEvent.Marshal()
@@ -33,9 +34,13 @@ func TestDMLEvent(t *testing.T) {
 			require.Equal(t, dmlEvent.Rows.GetRow(i).GetRaw(j), reverseEvent.Rows.GetRow(i).GetRaw(j))
 		}
 	}
+
+	require.True(t, reverseEvent.IsPaused())
+
 	// Compare the remaining content of the two events.
 	dmlEvent.Rows = nil
 	reverseEvent.Rows = nil
+	reverseEvent.eventSize = 0
 	require.Equal(t, dmlEvent, reverseEvent)
 }
 
@@ -65,8 +70,11 @@ func TestEncodeAndDecodeV0(t *testing.T) {
 		}
 	}
 
+	require.False(t, reverseEvent.IsPaused())
+
 	// Compare the remaining content of the two events.
 	dmlEvent.Rows = nil
 	reverseEvent.Rows = nil
+	reverseEvent.eventSize = 0
 	require.Equal(t, dmlEvent, reverseEvent)
 }

@@ -45,6 +45,10 @@ type DDLTableInfo struct {
 
 // Mounter is used to parse SQL events from KV events
 type Mounter interface {
+	// DecodeToChunk decodes the raw KV entry to a chunk, it returns the number of rows decoded.
+	// If the rawKV is a delete event, it will only decode the old value.
+	// If the rawKV is an insert event, it will only decode the value.
+	// If the rawKV is an update event, it will decode both the value and the old value.
 	DecodeToChunk(rawKV *common.RawKVEntry, tableInfo *common.TableInfo, chk *chunk.Chunk) (int, error)
 }
 

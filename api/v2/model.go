@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/tiflow/cdc/model"
 	bf "github.com/pingcap/tiflow/pkg/binlog-filter"
@@ -94,8 +95,7 @@ type PDConfig struct {
 // ChangefeedCommonInfo holds some common usage information of a changefeed
 type ChangefeedCommonInfo struct {
 	UpstreamID     uint64              `json:"upstream_id"`
-	Namespace      string              `json:"namespace"`
-	ID             string              `json:"id"`
+	ChangefeedID   common.ChangeFeedID `json:"changefeed_id"`
 	FeedState      model.FeedState     `json:"state"`
 	CheckpointTSO  uint64              `json:"checkpoint_tso"`
 	CheckpointTime model.JSONTime      `json:"checkpoint_time"`
@@ -1067,11 +1067,10 @@ type ResolveLockReq struct {
 
 // ChangeFeedInfo describes the detail of a ChangeFeed
 type ChangeFeedInfo struct {
-	UpstreamID uint64    `json:"upstream_id,omitempty"`
-	Namespace  string    `json:"namespace,omitempty"`
-	ID         string    `json:"id,omitempty"`
-	SinkURI    string    `json:"sink_uri,omitempty"`
-	CreateTime time.Time `json:"create_time"`
+	UpstreamID   uint64              `json:"upstream_id,omitempty"`
+	ChangefeedID common.ChangeFeedID `json:"changefeed_id,omitempty"`
+	SinkURI      string              `json:"sink_uri,omitempty"`
+	CreateTime   time.Time           `json:"create_time"`
 	// Start sync at this commit ts if `StartTs` is specify or using the CreateTime of changefeed.
 	StartTs uint64 `json:"start_ts,omitempty"`
 	// The ChangeFeed will exits until sync to timestamp TargetTs

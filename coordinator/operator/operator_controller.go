@@ -21,11 +21,11 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/coordinator/changefeed"
 	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/pkg/operator"
-	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
@@ -33,8 +33,8 @@ import (
 // And the Controller is responsible for the execution of the operator.
 type Controller struct {
 	changefeedDB  *changefeed.ChangefeedDB
-	operators     map[model.ChangeFeedID]operator.Operator[model.ChangeFeedID, *heartbeatpb.MaintainerStatus]
-	runningQueue  operator.OperatorQueue[model.ChangeFeedID, *heartbeatpb.MaintainerStatus]
+	operators     map[common.ChangeFeedID]operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]
+	runningQueue  operator.OperatorQueue[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]
 	batchSize     int
 	messageCenter messaging.MessageCenter
 	selfNode      *node.Info
@@ -47,8 +47,8 @@ func NewOperatorController(mc messaging.MessageCenter,
 	db *changefeed.ChangefeedDB,
 	batchSize int) *Controller {
 	oc := &Controller{
-		operators:     make(map[model.ChangeFeedID]operator.Operator[model.ChangeFeedID, *heartbeatpb.MaintainerStatus]),
-		runningQueue:  make(operator.OperatorQueue[model.ChangeFeedID, *heartbeatpb.MaintainerStatus], 0),
+		operators:     make(map[common.ChangeFeedID]operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]),
+		runningQueue:  make(operator.OperatorQueue[common.ChangeFeedID, *heartbeatpb.MaintainerStatus], 0),
 		messageCenter: mc,
 		batchSize:     batchSize,
 		changefeedDB:  db,
@@ -87,7 +87,7 @@ func (oc *Controller) Execute() time.Time {
 }
 
 // AddOperator adds an operator to the controller, if the operator already exists, return false.
-func (oc *Controller) AddOperator(op operator.Operator[model.ChangeFeedID, *heartbeatpb.MaintainerStatus]) bool {
+func (oc *Controller) AddOperator(op operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]) bool {
 	oc.lock.Lock()
 	defer oc.lock.Unlock()
 
@@ -109,7 +109,7 @@ func (oc *Controller) AddOperator(op operator.Operator[model.ChangeFeedID, *hear
 // StopChangefeed stop changefeed when the changefeed is stopped/removed.
 // if remove is true, it will remove the changefeed from the chagnefeed DB
 // if remove is false, it only marks as the changefeed stooped in changefeed DB, so we will not schedule the changefeed again
-func (oc *Controller) StopChangefeed(cfID model.ChangeFeedID, remove bool) {
+func (oc *Controller) StopChangefeed(cfID common.ChangeFeedID, remove bool) {
 	oc.lock.Lock()
 	defer oc.lock.Unlock()
 
@@ -120,7 +120,7 @@ func (oc *Controller) StopChangefeed(cfID model.ChangeFeedID, remove bool) {
 	}
 	if old, ok := oc.operators[cfID]; ok {
 		log.Info("changefeed is stopped , replace the old one",
-			zap.String("changefeed", cfID.ID),
+			zap.String("changefeed", cfID.Name()),
 			zap.String("operator", old.String()))
 		old.OnTaskRemoved()
 		delete(oc.operators, old.ID())
@@ -129,7 +129,7 @@ func (oc *Controller) StopChangefeed(cfID model.ChangeFeedID, remove bool) {
 	oc.pushOperator(op)
 }
 
-func (oc *Controller) UpdateOperatorStatus(id model.ChangeFeedID, from node.ID,
+func (oc *Controller) UpdateOperatorStatus(id common.ChangeFeedID, from node.ID,
 	status *heartbeatpb.MaintainerStatus) {
 	oc.lock.RLock()
 	defer oc.lock.RUnlock()
@@ -159,7 +159,7 @@ func (oc *Controller) OnNodeRemoved(n node.ID) {
 }
 
 // GetOperator returns the operator by id.
-func (oc *Controller) GetOperator(id model.ChangeFeedID) operator.Operator[model.ChangeFeedID, *heartbeatpb.MaintainerStatus] {
+func (oc *Controller) GetOperator(id common.ChangeFeedID) operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus] {
 	oc.lock.RLock()
 	defer oc.lock.RUnlock()
 	return oc.operators[id]
@@ -175,13 +175,13 @@ func (oc *Controller) OperatorSize() int {
 // pollQueueingOperator returns the operator need to be executed,
 // "next" is true to indicate that it may exist in next attempt,
 // and false is the end for the poll.
-func (oc *Controller) pollQueueingOperator() (operator.Operator[model.ChangeFeedID, *heartbeatpb.MaintainerStatus], bool) {
+func (oc *Controller) pollQueueingOperator() (operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus], bool) {
 	oc.lock.Lock()
 	defer oc.lock.Unlock()
 	if oc.runningQueue.Len() == 0 {
 		return nil, false
 	}
-	item := heap.Pop(&oc.runningQueue).(*operator.OperatorWithTime[model.ChangeFeedID, *heartbeatpb.MaintainerStatus])
+	item := heap.Pop(&oc.runningQueue).(*operator.OperatorWithTime[common.ChangeFeedID, *heartbeatpb.MaintainerStatus])
 	op := item.OP
 	opID := item.OP.ID()
 	// always call the PostFinish method to ensure the operator is cleaned up by itself.
@@ -207,11 +207,11 @@ func (oc *Controller) pollQueueingOperator() (operator.Operator[model.ChangeFeed
 }
 
 // pushOperator add an operator to the controller queue.
-func (oc *Controller) pushOperator(op operator.Operator[model.ChangeFeedID, *heartbeatpb.MaintainerStatus]) {
+func (oc *Controller) pushOperator(op operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]) {
 	log.Info("add operator to running queue",
 		zap.String("operator", op.String()))
 	oc.operators[op.ID()] = op
 	op.Start()
-	heap.Push(&oc.runningQueue, &operator.OperatorWithTime[model.ChangeFeedID, *heartbeatpb.MaintainerStatus]{OP: op, Time: time.Now(), EnqueueTime: time.Now()})
+	heap.Push(&oc.runningQueue, &operator.OperatorWithTime[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]{OP: op, Time: time.Now(), EnqueueTime: time.Now()})
 	metrics.CoordinatorCreatedOperatorCount.WithLabelValues(op.Type()).Inc()
 }

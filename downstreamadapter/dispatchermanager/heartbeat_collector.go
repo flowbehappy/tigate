@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/utils/dynstream"
-	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
@@ -43,9 +42,9 @@ type HeartBeatCollector struct {
 	heartBeatReqQueue   *HeartbeatRequestQueue
 	blockStatusReqQueue *BlockStatusRequestQueue
 
-	heartBeatResponseDynamicStream          dynstream.DynamicStream[int, model.ChangeFeedID, HeartBeatResponse, *EventDispatcherManager, *HeartBeatResponseHandler]
-	schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[int, model.ChangeFeedID, SchedulerDispatcherRequest, *EventDispatcherManager, *SchedulerDispatcherRequestHandler]
-	checkpointTsMessageDynamicStream        dynstream.DynamicStream[int, model.ChangeFeedID, CheckpointTsMessage, *EventDispatcherManager, *CheckpointTsMessageHandler]
+	heartBeatResponseDynamicStream          dynstream.DynamicStream[int, common.ChangeFeedID, HeartBeatResponse, *EventDispatcherManager, *HeartBeatResponseHandler]
+	schedulerDispatcherRequestDynamicStream dynstream.DynamicStream[int, common.ChangeFeedID, SchedulerDispatcherRequest, *EventDispatcherManager, *SchedulerDispatcherRequestHandler]
+	checkpointTsMessageDynamicStream        dynstream.DynamicStream[int, common.ChangeFeedID, CheckpointTsMessage, *EventDispatcherManager, *CheckpointTsMessageHandler]
 
 	mc messaging.MessageCenter
 }
@@ -146,7 +145,7 @@ func (c *HeartBeatCollector) RecvMessages(_ context.Context, msg *messaging.Targ
 		schedulerDispatcherRequest := msg.Message[0].(*heartbeatpb.ScheduleDispatcherRequest)
 		c.schedulerDispatcherRequestDynamicStream.In() <- NewSchedulerDispatcherRequest(schedulerDispatcherRequest)
 		// TODO: check metrics
-		metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", schedulerDispatcherRequest.ChangefeedID, "receive").Inc()
+		metrics.HandleDispatcherRequsetCounter.WithLabelValues("default", schedulerDispatcherRequest.ChangefeedID.Name, "receive").Inc()
 	case messaging.TypeCheckpointTsMessage:
 		checkpointTsMessage := msg.Message[0].(*heartbeatpb.CheckpointTsMessage)
 		c.checkpointTsMessageDynamicStream.In() <- NewCheckpointTsMessage(checkpointTsMessage)
@@ -163,8 +162,8 @@ func (c *HeartBeatCollector) Close() {
 type SchedulerDispatcherRequestHandler struct {
 }
 
-func (h *SchedulerDispatcherRequestHandler) Path(scheduleDispatcherRequest SchedulerDispatcherRequest) model.ChangeFeedID {
-	return model.DefaultChangeFeedID(scheduleDispatcherRequest.ChangefeedID)
+func (h *SchedulerDispatcherRequestHandler) Path(scheduleDispatcherRequest SchedulerDispatcherRequest) common.ChangeFeedID {
+	return common.NewChangefeedIDFromPB(scheduleDispatcherRequest.ChangefeedID)
 }
 
 func (h *SchedulerDispatcherRequestHandler) Handle(eventDispatcherManager *EventDispatcherManager, reqs ...SchedulerDispatcherRequest) bool {
@@ -194,7 +193,7 @@ func (h *SchedulerDispatcherRequestHandler) GetSize(event SchedulerDispatcherReq
 func (h *SchedulerDispatcherRequestHandler) IsPaused(event SchedulerDispatcherRequest) bool {
 	return false
 }
-func (h *SchedulerDispatcherRequestHandler) GetArea(path model.ChangeFeedID, dest *EventDispatcherManager) int {
+func (h *SchedulerDispatcherRequestHandler) GetArea(path common.ChangeFeedID, dest *EventDispatcherManager) int {
 	return 0
 }
 func (h *SchedulerDispatcherRequestHandler) GetTimestamp(event SchedulerDispatcherRequest) dynstream.Timestamp {
@@ -213,8 +212,8 @@ func NewHeartBeatResponseHandler() HeartBeatResponseHandler {
 	return HeartBeatResponseHandler{dispatcherStatusDynamicStream: dispatcher.GetDispatcherStatusDynamicStream()}
 }
 
-func (h *HeartBeatResponseHandler) Path(HeartbeatResponse HeartBeatResponse) model.ChangeFeedID {
-	return model.DefaultChangeFeedID(HeartbeatResponse.ChangefeedID)
+func (h *HeartBeatResponseHandler) Path(HeartbeatResponse HeartBeatResponse) common.ChangeFeedID {
+	return common.NewChangefeedIDFromPB(HeartbeatResponse.ChangefeedID)
 }
 
 func (h *HeartBeatResponseHandler) Handle(eventDispatcherManager *EventDispatcherManager, resps ...HeartBeatResponse) bool {
@@ -254,7 +253,7 @@ func (h *HeartBeatResponseHandler) Handle(eventDispatcherManager *EventDispatche
 
 func (h *HeartBeatResponseHandler) GetSize(event HeartBeatResponse) int   { return 0 }
 func (h *HeartBeatResponseHandler) IsPaused(event HeartBeatResponse) bool { return false }
-func (h *HeartBeatResponseHandler) GetArea(path model.ChangeFeedID, dest *EventDispatcherManager) int {
+func (h *HeartBeatResponseHandler) GetArea(path common.ChangeFeedID, dest *EventDispatcherManager) int {
 	return 0
 }
 func (h *HeartBeatResponseHandler) GetTimestamp(event HeartBeatResponse) dynstream.Timestamp {
@@ -271,8 +270,8 @@ func NewCheckpointTsMessageHandler() CheckpointTsMessageHandler {
 	return CheckpointTsMessageHandler{}
 }
 
-func (h *CheckpointTsMessageHandler) Path(checkpointTsMessage CheckpointTsMessage) model.ChangeFeedID {
-	return model.DefaultChangeFeedID(checkpointTsMessage.ChangefeedID)
+func (h *CheckpointTsMessageHandler) Path(checkpointTsMessage CheckpointTsMessage) common.ChangeFeedID {
+	return common.NewChangefeedIDFromPB(checkpointTsMessage.ChangefeedID)
 }
 
 func (h *CheckpointTsMessageHandler) Handle(eventDispatcherManager *EventDispatcherManager, messages ...CheckpointTsMessage) bool {
@@ -290,7 +289,7 @@ func (h *CheckpointTsMessageHandler) Handle(eventDispatcherManager *EventDispatc
 
 func (h *CheckpointTsMessageHandler) GetSize(event CheckpointTsMessage) int   { return 0 }
 func (h *CheckpointTsMessageHandler) IsPaused(event CheckpointTsMessage) bool { return false }
-func (h *CheckpointTsMessageHandler) GetArea(path model.ChangeFeedID, dest *EventDispatcherManager) int {
+func (h *CheckpointTsMessageHandler) GetArea(path common.ChangeFeedID, dest *EventDispatcherManager) int {
 	return 0
 }
 func (h *CheckpointTsMessageHandler) GetTimestamp(event CheckpointTsMessage) dynstream.Timestamp {

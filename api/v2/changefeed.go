@@ -20,16 +20,16 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/filter"
+	"github.com/pingcap/ticdc/pkg/txnutil/gc"
 	"github.com/pingcap/ticdc/version"
 	"github.com/pingcap/tiflow/cdc/api"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/owner"
 	"github.com/pingcap/tiflow/pkg/errors"
-	"github.com/pingcap/tiflow/pkg/txnutil/gc"
 	"github.com/pingcap/tiflow/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -64,11 +64,14 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 		return
 	}
 
-	// verify changefeedID
+	var changefeedID common.ChangeFeedID
 	if cfg.ID == "" {
-		cfg.ID = uuid.New().String()
+		changefeedID = common.NewChangefeedID()
+	} else {
+		changefeedID = common.NewChangeFeedIDWithName(cfg.ID)
 	}
-	if err := model.ValidateChangefeedID(cfg.ID); err != nil {
+	// verify changefeedID
+	if err := model.ValidateChangefeedID(changefeedID.Name()); err != nil {
 		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack(
 			"invalid changefeed_id: %s", cfg.ID))
 		return
@@ -97,7 +100,7 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 		ctx,
 		h.server.GetPdClient(),
 		h.server.GetEtcdClient().GetEnsureGCServiceID(gc.EnsureGCServiceCreating),
-		model.ChangeFeedID{Namespace: cfg.Namespace, ID: cfg.ID},
+		changefeedID,
 		ensureTTL, cfg.StartTs); err != nil {
 		if !errors.ErrStartTsBeforeGC.Equal(err) {
 			_ = c.Error(errors.ErrPDEtcdAPIError.Wrap(err))
@@ -131,8 +134,7 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 	pdClient := h.server.GetPdClient()
 	info := &config.ChangeFeedInfo{
 		UpstreamID:     pdClient.GetClusterID(ctx),
-		Namespace:      cfg.Namespace,
-		ID:             cfg.ID,
+		ChangefeedID:   changefeedID,
 		SinkURI:        cfg.SinkURI,
 		CreateTime:     time.Now(),
 		StartTs:        cfg.StartTs,
@@ -152,7 +154,7 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 			ctx,
 			pdClient,
 			h.server.GetEtcdClient().GetEnsureGCServiceID(gc.EnsureGCServiceCreating),
-			model.ChangeFeedID{Namespace: cfg.Namespace, ID: cfg.ID},
+			changefeedID,
 		)
 		if err != nil {
 			_ = c.Error(err)
@@ -174,7 +176,7 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 	}
 
 	log.Info("Create changefeed successfully!",
-		zap.String("id", info.ID),
+		zap.String("id", info.ChangefeedID.Name()),
 		zap.String("changefeed", info.String()))
 	c.JSON(http.StatusOK, toAPIModel(info,
 		info.StartTs, info.StartTs,
@@ -214,8 +216,7 @@ func (h *OpenAPIV2) listChangeFeeds(c *gin.Context) {
 		}
 		commonInfos = append(commonInfos, ChangefeedCommonInfo{
 			UpstreamID:     changefeed.UpstreamID,
-			Namespace:      changefeed.Namespace,
-			ID:             changefeed.ID,
+			ChangefeedID:   changefeed.ChangefeedID,
 			FeedState:      changefeed.State,
 			CheckpointTSO:  status.CheckpointTs,
 			CheckpointTime: model.JSONTime(oracle.GetTimeFromTS(status.CheckpointTs)),
@@ -247,13 +248,13 @@ func (h *OpenAPIV2) verifyTable(c *gin.Context) {
 // @Failure 500,400 {object} model.HTTPError
 // @Router /api/v2/changefeeds/{changefeed_id} [get]
 func (h *OpenAPIV2) getChangeFeed(c *gin.Context) {
-	changefeedID := model.ChangeFeedID{Namespace: model.DefaultNamespace, ID: c.Param(api.APIOpVarChangefeedID)}
+	changefeedDisplayName := common.NewChangeFeedDisplayName(c.Param(api.APIOpVarChangefeedID), model.DefaultNamespace)
 	co, err := h.server.GetCoordinator()
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
-	cfInfo, status, err := co.GetChangefeed(c, changefeedID)
+	cfInfo, status, err := co.GetChangefeed(c, changefeedDisplayName)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -290,8 +291,7 @@ func toAPIModel(
 
 	apiInfoModel := &ChangeFeedInfo{
 		UpstreamID:     info.UpstreamID,
-		Namespace:      info.Namespace,
-		ID:             info.ID,
+		ChangefeedID:   info.ChangefeedID,
 		SinkURI:        sinkURI,
 		CreateTime:     info.CreateTime,
 		StartTs:        info.StartTs,
@@ -322,10 +322,10 @@ func toAPIModel(
 // @Router	/api/v2/changefeeds/{changefeed_id} [delete]
 func (h *OpenAPIV2) deleteChangefeed(c *gin.Context) {
 	ctx := c.Request.Context()
-	changefeedID := model.ChangeFeedID{Namespace: model.DefaultNamespace, ID: c.Param(api.APIOpVarChangefeedID)}
-	if err := model.ValidateChangefeedID(changefeedID.ID); err != nil {
+	changefeedDisplayName := common.NewChangeFeedDisplayName(c.Param(api.APIOpVarChangefeedID), model.DefaultNamespace)
+	if err := model.ValidateChangefeedID(changefeedDisplayName.Name); err != nil {
 		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
-			changefeedID.ID))
+			changefeedDisplayName.Name))
 		return
 	}
 	coordinator, err := h.server.GetCoordinator()
@@ -333,7 +333,7 @@ func (h *OpenAPIV2) deleteChangefeed(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	cfInfo, _, err := coordinator.GetChangefeed(c, changefeedID)
+	cfInfo, _, err := coordinator.GetChangefeed(c, changefeedDisplayName)
 	if err != nil {
 		if errors.ErrChangeFeedNotExists.Equal(err) {
 			c.JSON(http.StatusOK, nil)
@@ -342,7 +342,7 @@ func (h *OpenAPIV2) deleteChangefeed(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	checkpointTs, err := coordinator.RemoveChangefeed(ctx, changefeedID)
+	checkpointTs, err := coordinator.RemoveChangefeed(ctx, cfInfo.ChangefeedID)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -352,7 +352,7 @@ func (h *OpenAPIV2) deleteChangefeed(c *gin.Context) {
 		CheckpointTs uint64 `json:"checkpoint_ts"`
 		SinkURI      string `json:"sink_uri"`
 	}{
-		ChangeFeedID: changefeedID.ID,
+		ChangeFeedID: cfInfo.ChangefeedID.Name(),
 		CheckpointTs: checkpointTs,
 		SinkURI:      cfInfo.SinkURI,
 	})
@@ -372,16 +372,15 @@ func (h *OpenAPIV2) deleteChangefeed(c *gin.Context) {
 // @Router /api/v2/changefeeds/{changefeed_id}/pause [post]
 func (h *OpenAPIV2) pauseChangefeed(c *gin.Context) {
 	ctx := c.Request.Context()
-
-	changefeedID := model.ChangeFeedID{Namespace: model.DefaultNamespace, ID: c.Param(api.APIOpVarChangefeedID)}
-	if err := model.ValidateChangefeedID(changefeedID.ID); err != nil {
+	changefeedDisplayName := common.NewChangeFeedDisplayName(c.Param(api.APIOpVarChangefeedID), model.DefaultNamespace)
+	if err := model.ValidateChangefeedID(changefeedDisplayName.Name); err != nil {
 		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
-			changefeedID.ID))
+			changefeedDisplayName.Name))
 		return
 	}
-	if err := model.ValidateChangefeedID(changefeedID.ID); err != nil {
+	if err := model.ValidateChangefeedID(changefeedDisplayName.Name); err != nil {
 		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
-			changefeedID.ID))
+			changefeedDisplayName.Name))
 		return
 	}
 
@@ -390,12 +389,12 @@ func (h *OpenAPIV2) pauseChangefeed(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	_, _, err = coordinator.GetChangefeed(c, changefeedID)
+	cfInfo, _, err := coordinator.GetChangefeed(c, changefeedDisplayName)
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
-	err = coordinator.PauseChangefeed(ctx, changefeedID)
+	err = coordinator.PauseChangefeed(ctx, cfInfo.ChangefeedID)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -418,15 +417,15 @@ func (h *OpenAPIV2) pauseChangefeed(c *gin.Context) {
 // @Router	/api/v2/changefeeds/{changefeed_id}/resume [post]
 func (h *OpenAPIV2) resumeChangefeed(c *gin.Context) {
 	ctx := c.Request.Context()
-	changefeedID := model.ChangeFeedID{Namespace: model.DefaultNamespace, ID: c.Param(api.APIOpVarChangefeedID)}
-	if err := model.ValidateChangefeedID(changefeedID.ID); err != nil {
+	changefeedDisplayName := common.NewChangeFeedDisplayName(c.Param(api.APIOpVarChangefeedID), model.DefaultNamespace)
+	if err := model.ValidateChangefeedID(changefeedDisplayName.Name); err != nil {
 		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
-			changefeedID.ID))
+			changefeedDisplayName.Name))
 		return
 	}
-	if err := model.ValidateChangefeedID(changefeedID.ID); err != nil {
+	if err := model.ValidateChangefeedID(changefeedDisplayName.Name); err != nil {
 		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
-			changefeedID.ID))
+			changefeedDisplayName.Name))
 		return
 	}
 
@@ -440,7 +439,7 @@ func (h *OpenAPIV2) resumeChangefeed(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	_, status, err := coordinator.GetChangefeed(c, changefeedID)
+	cfInfo, status, err := coordinator.GetChangefeed(c, changefeedDisplayName)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -456,7 +455,7 @@ func (h *OpenAPIV2) resumeChangefeed(c *gin.Context) {
 		ctx,
 		h.server.GetPdClient(),
 		h.server.GetEtcdClient().GetEnsureGCServiceID(gc.EnsureGCServiceResuming),
-		changefeedID,
+		cfInfo.ChangefeedID,
 		newCheckpointTs); err != nil {
 		_ = c.Error(err)
 		return
@@ -470,14 +469,14 @@ func (h *OpenAPIV2) resumeChangefeed(c *gin.Context) {
 			ctx,
 			h.server.GetPdClient(),
 			h.server.GetEtcdClient().GetEnsureGCServiceID(gc.EnsureGCServiceResuming),
-			changefeedID,
+			cfInfo.ChangefeedID,
 		)
 		if err != nil {
 			_ = c.Error(err)
 			return
 		}
 	}()
-	err = coordinator.ResumeChangefeed(ctx, changefeedID, newCheckpointTs)
+	err = coordinator.ResumeChangefeed(ctx, cfInfo.ChangefeedID, newCheckpointTs)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -505,10 +504,10 @@ func (h *OpenAPIV2) resumeChangefeed(c *gin.Context) {
 func (h *OpenAPIV2) updateChangefeed(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	changefeedID := model.ChangeFeedID{Namespace: model.DefaultNamespace, ID: c.Param(api.APIOpVarChangefeedID)}
-	if err := model.ValidateChangefeedID(changefeedID.ID); err != nil {
+	changefeedDisplayName := common.NewChangeFeedDisplayName(c.Param(api.APIOpVarChangefeedID), model.DefaultNamespace)
+	if err := model.ValidateChangefeedID(changefeedDisplayName.Name); err != nil {
 		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
-			changefeedID.ID))
+			changefeedDisplayName.Name))
 		return
 	}
 	coordinator, err := h.server.GetCoordinator()
@@ -516,7 +515,7 @@ func (h *OpenAPIV2) updateChangefeed(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	oldCfInfo, status, err := coordinator.GetChangefeed(c, changefeedID)
+	oldCfInfo, status, err := coordinator.GetChangefeed(c, changefeedDisplayName)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -577,7 +576,7 @@ func verifyResumeChangefeedConfig(
 	ctx context.Context,
 	pdClient pd.Client,
 	gcServiceID string,
-	changefeedID model.ChangeFeedID,
+	changefeedID common.ChangeFeedID,
 	overrideCheckpointTs uint64,
 ) error {
 	if overrideCheckpointTs == 0 {

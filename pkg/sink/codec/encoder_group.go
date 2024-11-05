@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/config"
 	newCommon "github.com/pingcap/ticdc/pkg/sink/codec/common"
@@ -49,7 +50,7 @@ type EncoderGroup interface {
 }
 
 type encoderGroup struct {
-	changefeedID model.ChangeFeedID
+	changefeedID common.ChangeFeedID
 
 	// concurrency is the number of encoder pipelines to run
 	concurrency int
@@ -69,7 +70,7 @@ func NewEncoderGroup(
 	ctx context.Context,
 	cfg *config.SinkConfig,
 	encoderConfig *newCommon.Config,
-	changefeedID model.ChangeFeedID,
+	changefeedID common.ChangeFeedID,
 ) *encoderGroup {
 	concurrency := util.GetOrZero(cfg.EncoderConcurrency)
 	if concurrency <= 0 {
@@ -121,8 +122,8 @@ func (g *encoderGroup) Run(ctx context.Context) error {
 	defer func() {
 		g.cleanMetrics()
 		log.Info("encoder group exited",
-			zap.String("namespace", g.changefeedID.Namespace),
-			zap.String("changefeed", g.changefeedID.ID))
+			zap.String("namespace", g.changefeedID.Namespace()),
+			zap.String("changefeed", g.changefeedID.Name()))
 	}()
 	eg, ctx := errgroup.WithContext(ctx)
 	for i := 0; i < g.concurrency; i++ {
@@ -144,7 +145,7 @@ func (g *encoderGroup) Run(ctx context.Context) error {
 func (g *encoderGroup) runEncoder(ctx context.Context, idx int) error {
 	inputCh := g.inputCh[idx]
 	metric := encoderGroupInputChanSizeGauge.
-		WithLabelValues(g.changefeedID.Namespace, g.changefeedID.ID, strconv.Itoa(idx))
+		WithLabelValues(g.changefeedID.Namespace(), g.changefeedID.Name(), strconv.Itoa(idx))
 	ticker := time.NewTicker(defaultMetricInterval)
 	defer ticker.Stop()
 	for {
@@ -202,11 +203,11 @@ func (g *encoderGroup) Output() <-chan *future {
 }
 
 func (g *encoderGroup) cleanMetrics() {
-	encoderGroupInputChanSizeGauge.DeleteLabelValues(g.changefeedID.Namespace, g.changefeedID.ID)
+	encoderGroupInputChanSizeGauge.DeleteLabelValues(g.changefeedID.Namespace(), g.changefeedID.Name())
 	for _, encoder := range g.rowEventEncoders {
 		encoder.Clean()
 	}
-	ticommon.CleanMetrics(g.changefeedID)
+	newCommon.CleanMetrics(g.changefeedID)
 }
 
 // future is a wrapper of the result of encoding events

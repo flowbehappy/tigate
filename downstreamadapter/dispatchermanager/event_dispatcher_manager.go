@@ -37,7 +37,6 @@ import (
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/metrics"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
 )
@@ -60,7 +59,7 @@ type EventDispatcherManager struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	changefeedID model.ChangeFeedID
+	changefeedID common.ChangeFeedID
 	config       *config.ChangefeedConfig
 
 	sink         sink.Sink
@@ -99,7 +98,7 @@ type EventDispatcherManager struct {
 
 // return actual startTs of the table trigger event dispatcher
 // when the table trigger event dispatcher is in this event dispatcher manager
-func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
+func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 	cfConfig *config.ChangefeedConfig,
 	tableTriggerEventDispatcherID *heartbeatpb.DispatcherID,
 	startTs uint64,
@@ -114,12 +113,12 @@ func NewEventDispatcherManager(changefeedID model.ChangeFeedID,
 		cancel:                         cancel,
 		config:                         cfConfig,
 		schemaIDToDispatchers:          dispatcher.NewSchemaIDToDispatchers(),
-		tableEventDispatcherCount:      metrics.TableEventDispatcherGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
-		metricCreateDispatcherDuration: metrics.CreateDispatcherDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
-		metricCheckpointTs:             metrics.EventDispatcherManagerCheckpointTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
-		metricCheckpointTsLag:          metrics.EventDispatcherManagerCheckpointTsLagGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
-		metricResolvedTs:               metrics.EventDispatcherManagerResolvedTsGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
-		metricResolvedTsLag:            metrics.EventDispatcherManagerResolvedTsLagGauge.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
+		tableEventDispatcherCount:      metrics.TableEventDispatcherGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
+		metricCreateDispatcherDuration: metrics.CreateDispatcherDuration.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
+		metricCheckpointTs:             metrics.EventDispatcherManagerCheckpointTsGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
+		metricCheckpointTsLag:          metrics.EventDispatcherManagerCheckpointTsLagGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
+		metricResolvedTs:               metrics.EventDispatcherManagerResolvedTsGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
+		metricResolvedTsLag:            metrics.EventDispatcherManagerResolvedTsLagGauge.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
 	}
 
 	// Set Sync Point Config
@@ -227,9 +226,9 @@ func (e *EventDispatcherManager) close(remove bool) {
 		return
 	}
 
-	metrics.CreateDispatcherDuration.DeleteLabelValues(e.changefeedID.Namespace, e.changefeedID.ID)
-	metrics.EventDispatcherManagerCheckpointTsGauge.DeleteLabelValues(e.changefeedID.Namespace, e.changefeedID.ID)
-	metrics.EventDispatcherManagerResolvedTsGauge.DeleteLabelValues(e.changefeedID.Namespace, e.changefeedID.ID)
+	metrics.CreateDispatcherDuration.DeleteLabelValues(e.changefeedID.Namespace(), e.changefeedID.Name())
+	metrics.EventDispatcherManagerCheckpointTsGauge.DeleteLabelValues(e.changefeedID.Namespace(), e.changefeedID.Name())
+	metrics.EventDispatcherManagerResolvedTsGauge.DeleteLabelValues(e.changefeedID.Namespace(), e.changefeedID.Name())
 
 	e.closed.Store(true)
 	log.Info("event dispatcher manager closed", zap.Stringer("changefeedID", e.changefeedID))
@@ -272,6 +271,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 	}
 
 	d := dispatcher.NewDispatcher(
+		e.changefeedID.String(),
 		id, tableSpan, e.sink,
 		startTs, e.dispatcherActionChan, e.blockStatusesChan,
 		e.filter, schemaID, e.schemaIDToDispatchers, &syncPointInfo)
@@ -344,7 +344,7 @@ func (e *EventDispatcherManager) CollectBlockStatusRequest(ctx context.Context) 
 			}
 
 			var message heartbeatpb.BlockStatusRequest
-			message.ChangefeedID = e.changefeedID.ID
+			message.ChangefeedID = e.changefeedID.ToPB()
 			message.BlockStatuses = blockStatusMessage
 			e.blockStatusRequestQueue.Enqueue(&BlockStatusRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
 		}
@@ -384,7 +384,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfoWhenStatesChanged(ctx conte
 			}
 
 			var message heartbeatpb.HeartBeatRequest
-			message.ChangefeedID = e.changefeedID.ID
+			message.ChangefeedID = e.changefeedID.ToPB()
 			message.Statuses = statusMessage
 			e.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
 		}
@@ -493,7 +493,7 @@ func toFilterConfigPB(filter *config.FilterConfig) *eventpb.FilterConfig {
 // otherwise, it will only calculate the min checkpointTs to cutoff the message size.
 func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *heartbeatpb.HeartBeatRequest {
 	message := heartbeatpb.HeartBeatRequest{
-		ChangefeedID:    e.changefeedID.ID,
+		ChangefeedID:    e.changefeedID.ToPB(),
 		CompeleteStatus: needCompleteStatus,
 		Watermark:       heartbeatpb.NewMaxWatermark(),
 	}
@@ -558,7 +558,7 @@ func (e *EventDispatcherManager) GetMaintainerID() node.ID {
 	return e.maintainerID
 }
 
-func (e *EventDispatcherManager) GetChangeFeedID() model.ChangeFeedID {
+func (e *EventDispatcherManager) GetChangeFeedID() common.ChangeFeedID {
 	return e.changefeedID
 }
 

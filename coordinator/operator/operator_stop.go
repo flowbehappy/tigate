@@ -19,23 +19,23 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/coordinator/changefeed"
 	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
-	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
 // StopChangefeedOperator is an operator to remove a maintainer from a node
 type StopChangefeedOperator struct {
-	cfID            model.ChangeFeedID
+	cfID            common.ChangeFeedID
 	nodeID          node.ID
 	removed         bool
 	finished        atomic.Bool
 	coordinatorNode *node.Info
 }
 
-func NewStopChangefeedOperator(cfID model.ChangeFeedID,
+func NewStopChangefeedOperator(cfID common.ChangeFeedID,
 	nodeID node.ID,
 	coordinatorNode *node.Info,
 	removed bool) *StopChangefeedOperator {
@@ -56,7 +56,7 @@ func (m *StopChangefeedOperator) Check(_ node.ID, status *heartbeatpb.Maintainer
 }
 
 func (m *StopChangefeedOperator) Schedule() *messaging.TargetMessage {
-	return changefeed.RemoveMaintainerMessage(m.cfID.ID, m.nodeID, true, m.removed)
+	return changefeed.RemoveMaintainerMessage(m.cfID, m.nodeID, true, m.removed)
 }
 
 // OnNodeRemove is called when node offline, and the maintainer must already move to absent status and will be scheduled again
@@ -69,7 +69,7 @@ func (m *StopChangefeedOperator) OnNodeRemove(n node.ID) {
 	}
 }
 
-func (m *StopChangefeedOperator) ID() model.ChangeFeedID {
+func (m *StopChangefeedOperator) ID() common.ChangeFeedID {
 	return m.cfID
 }
 

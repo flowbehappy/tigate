@@ -18,6 +18,7 @@ type HandshakeEvent struct {
 	Version      byte                `json:"version"`
 	ResolvedTs   uint64              `json:"resolved_ts"`
 	Seq          uint64              `json:"seq"`
+	State        EventSenderState    `json:"state"`
 	DispatcherID common.DispatcherID `json:"-"`
 	TableInfo    *common.TableInfo   `json:"table_info"`
 }
@@ -60,7 +61,11 @@ func (e *HandshakeEvent) GetStartTs() common.Ts {
 // GetSize returns the approximate size of the event in bytes
 func (e *HandshakeEvent) GetSize() int64 {
 	// All fields size except tableInfo
-	return int64(1 + 8 + 8 + 16)
+	return int64(1 + 8 + 8 + e.State.GetSize() + e.DispatcherID.GetSize())
+}
+
+func (e *HandshakeEvent) IsPaused() bool {
+	return e.State.IsPaused()
 }
 
 func (e HandshakeEvent) Marshal() ([]byte, error) {
@@ -99,6 +104,8 @@ func (e HandshakeEvent) encodeV0() ([]byte, error) {
 	offset += 8
 	binary.BigEndian.PutUint64(data[offset:], e.Seq)
 	offset += 8
+	copy(data[offset:], e.State.encode())
+	offset += e.State.GetSize()
 	copy(data[offset:], e.DispatcherID.Marshal())
 	offset += e.DispatcherID.GetSize()
 	copy(data[offset:], tableInfoData)
@@ -113,6 +120,8 @@ func (e *HandshakeEvent) decodeV0(data []byte) error {
 	offset += 8
 	e.Seq = binary.BigEndian.Uint64(data[offset:])
 	offset += 8
+	e.State.decode(data[offset:])
+	offset += e.State.GetSize()
 	dispatcherIDData := data[offset:]
 	e.DispatcherID.Unmarshal(dispatcherIDData)
 	offset += e.DispatcherID.GetSize()

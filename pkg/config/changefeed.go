@@ -8,6 +8,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink"
@@ -18,11 +19,10 @@ import (
 )
 
 type ChangefeedConfig struct {
-	Namespace string `json:"namespace"`
-	ID        string `json:"changefeed_id"`
-	StartTS   uint64 `json:"start_ts"`
-	TargetTS  uint64 `json:"target_ts"`
-	SinkURI   string `json:"sink_uri"`
+	ChangefeedID common.ChangeFeedID `json:"changefeed_id"`
+	StartTS      uint64              `json:"start_ts"`
+	TargetTS     uint64              `json:"target_ts"`
+	SinkURI      string              `json:"sink_uri"`
 	// timezone used when checking sink uri
 	TimeZone string `json:"timezone" default:"system"`
 	// if true, force to replicate some ineligible tables
@@ -34,17 +34,16 @@ type ChangefeedConfig struct {
 	EnableSyncPoint    bool           `json:"enable_sync_point" default:"false"`
 	SyncPointInterval  *time.Duration `json:"sync_point_interval" default:"1m"`
 	SyncPointRetention *time.Duration `json:"sync_point_retention" default:"24h"`
-
-	SinkConfig *SinkConfig `json:"sink_config"`
+	MemoryQuota        uint64         `toml:"memory-quota" json:"memory-quota"`
+	SinkConfig         *SinkConfig    `json:"sink_config"`
 }
 
 // ChangeFeedInfo describes the detail of a ChangeFeed
 type ChangeFeedInfo struct {
-	UpstreamID uint64    `json:"upstream-id"`
-	Namespace  string    `json:"namespace"`
-	ID         string    `json:"changefeed-id"`
-	SinkURI    string    `json:"sink-uri"`
-	CreateTime time.Time `json:"create-time"`
+	UpstreamID   uint64              `json:"upstream-id"`
+	ChangefeedID common.ChangeFeedID `json:"changefeed-id"`
+	SinkURI      string              `json:"sink-uri"`
+	CreateTime   time.Time           `json:"create-time"`
 	// Start sync at this commit ts if `StartTs` is specify or using the CreateTime of changefeed.
 	StartTs uint64 `json:"start-ts"`
 	// The ChangeFeed will exits until sync to timestamp TargetTs
@@ -244,8 +243,8 @@ func (info *ChangeFeedInfo) RmUnusedFields() {
 
 func (info *ChangeFeedInfo) rmMQOnlyFields() {
 	log.Info("since the downstream is not a MQ, remove MQ only fields",
-		zap.String("namespace", info.Namespace),
-		zap.String("changefeed", info.ID))
+		zap.String("namespace", info.ChangefeedID.Namespace()),
+		zap.String("changefeed", info.ChangefeedID.Name()))
 	info.Config.Sink.DispatchRules = nil
 	info.Config.Sink.SchemaRegistry = nil
 	info.Config.Sink.EncoderConcurrency = nil

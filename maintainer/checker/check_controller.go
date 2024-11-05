@@ -19,13 +19,14 @@ import (
 	"github.com/pingcap/ticdc/maintainer/operator"
 	"github.com/pingcap/ticdc/maintainer/replica"
 	"github.com/pingcap/ticdc/maintainer/split"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/server/watcher"
 )
 
 // Controller is the controller of all checkers, it will periodically execute all checkers
 type Controller struct {
 	batchSize          int
-	changefeedID       string
+	changefeedID       common.ChangeFeedID
 	operatorController *operator.Controller
 	replicationDB      *replica.ReplicationDB
 	nodeManager        *watcher.NodeManager
@@ -35,7 +36,7 @@ type Controller struct {
 	checkedIndex    int
 }
 
-func NewController(changefeedID string,
+func NewController(changefeedID common.ChangeFeedID,
 	splitter *split.Splitter,
 	oc *operator.Controller,
 	db *replica.ReplicationDB,

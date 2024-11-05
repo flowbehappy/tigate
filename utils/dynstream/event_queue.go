@@ -1,6 +1,7 @@
 package dynstream
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/ticdc/utils/heap"
@@ -68,7 +69,7 @@ func (p *pathSizeStat[A, P, T, D, H]) LessThan(other *pathSizeStat[A, P, T, D, H
 	return p.pendingSize > other.pendingSize
 }
 
-// A area info contains the path nodes of the area in a stream.
+// An area info contains the path nodes of the area in a stream.
 // Note that the instance is stream level, not global level.
 type streamAreaInfo[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	area A
@@ -110,7 +111,7 @@ type eventQueue[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 	areaMap             map[A]*streamAreaInfo[A, P, T, D, H]
 	eventQueueTimeQueue *heap.Heap[*streamAreaInfo[A, P, T, D, H]]
 
-	totalPendingLength int
+	totalPendingLength atomic.Int64
 }
 
 func newEventQueue[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](option Option, handler H) eventQueue[A, P, T, D, H] {
@@ -124,7 +125,11 @@ func newEventQueue[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](optio
 
 func (q *eventQueue[A, P, T, D, H]) updateHeapAfterUpdatePath(path *pathInfo[A, P, T, D, H]) {
 	area := path.streamAreaInfo
-
+	// If the path is remove but the stream still receives its event,
+	// the streamAreaInfo is nil.
+	if area == nil {
+		return
+	}
 	if path.removed || path.blocking || path.pendingQueue.Length() == 0 {
 		// Remove the path from heap
 		area.timestampHeap.Remove((*timestampPathNode[A, P, T, D, H])(path))
@@ -161,13 +166,12 @@ func (q *eventQueue[A, P, T, D, H]) addPath(path *pathInfo[A, P, T, D, H]) {
 	}
 
 	area.pathCount++
-
 	path.streamAreaInfo = area
 	path.queueTimeHeapIndex = 0
 	path.timestampHeapIndex = 0
 	path.sizeHeapIndex = 0
 
-	q.totalPendingLength += path.pendingQueue.Length()
+	q.totalPendingLength.Add(int64(path.pendingQueue.Length()))
 	q.updateHeapAfterUpdatePath(path)
 }
 
@@ -179,7 +183,7 @@ func (q *eventQueue[A, P, T, D, H]) removePath(path *pathInfo[A, P, T, D, H]) {
 			delete(q.areaMap, area.area)
 		}
 
-		q.totalPendingLength -= path.pendingQueue.Length()
+		q.totalPendingLength.Add(-int64(path.pendingQueue.Length()))
 		q.updateHeapAfterUpdatePath(path)
 		path.streamAreaInfo = nil
 	}
@@ -216,7 +220,7 @@ func (q *eventQueue[A, P, T, D, H]) appendEvent(event eventWrap[A, P, T, D, H]) 
 	if !replaced {
 		path.pendingQueue.PushBack(event)
 		q.updateHeapAfterUpdatePath(path)
-		q.totalPendingLength++
+		q.totalPendingLength.Add(1)
 	}
 }
 
@@ -242,15 +246,19 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 		} else {
 			group := DefaultEventType.DataGroup
 			for i := 0; i < batchSize; i++ {
-				front, ok := path.pendingQueue.FrontRef()
+				front, ok := path.pendingQueue.PopFront()
 				if !ok || (group != DefaultEventType.DataGroup && group != front.eventType.DataGroup) {
 					break
 				}
 				group = front.eventType.DataGroup
 				buf = append(buf, front.event)
-
-				path.pendingQueue.PopFront()
 				path.pendingSize -= front.eventSize
+				q.totalPendingLength.Add(-1)
+
+				// Reduce the total pending size of the area.
+				if path.areaMemStat != nil {
+					path.areaMemStat.totalPendingSize.Add(-int64(front.eventSize))
+				}
 
 				if front.eventType.Property == NonBatchable {
 					break
@@ -260,7 +268,6 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 				panic("empty buf")
 			}
 
-			q.totalPendingLength -= len(buf)
 			q.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D, H])(path))
 			return buf, path
 		}

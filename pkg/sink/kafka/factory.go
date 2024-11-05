@@ -20,7 +20,7 @@ import (
 	"github.com/IBM/sarama"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
+	commonType "github.com/pingcap/ticdc/pkg/common"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink/codec/common"
 	tikafka "github.com/pingcap/tiflow/pkg/sink/kafka"
@@ -41,7 +41,7 @@ type Factory interface {
 }
 
 // FactoryCreator defines the type of factory creator.
-type FactoryCreator func(*Options, model.ChangeFeedID) (Factory, error)
+type FactoryCreator func(*Options, commonType.ChangeFeedID) (Factory, error)
 
 // SyncProducer is the kafka sync producer
 type SyncProducer interface {
@@ -84,7 +84,7 @@ type SyncProducer interface {
 // }
 
 type saramaSyncProducer struct {
-	id       model.ChangeFeedID
+	id       commonType.ChangeFeedID
 	client   sarama.Client
 	producer sarama.SyncProducer
 }
@@ -131,28 +131,28 @@ func (p *saramaSyncProducer) Close() {
 		start := time.Now()
 		if err := p.client.Close(); err != nil {
 			log.Warn("Close Kafka DDL client with error",
-				zap.String("namespace", p.id.Namespace),
-				zap.String("changefeed", p.id.ID),
+				zap.String("namespace", p.id.Namespace()),
+				zap.String("changefeed", p.id.Name()),
 				zap.Duration("duration", time.Since(start)),
 				zap.Error(err))
 		} else {
 			log.Info("Kafka DDL client closed",
-				zap.String("namespace", p.id.Namespace),
-				zap.String("changefeed", p.id.ID),
+				zap.String("namespace", p.id.Namespace()),
+				zap.String("changefeed", p.id.Name()),
 				zap.Duration("duration", time.Since(start)))
 		}
 		start = time.Now()
 		err := p.producer.Close()
 		if err != nil {
 			log.Error("Close Kafka DDL producer with error",
-				zap.String("namespace", p.id.Namespace),
-				zap.String("changefeed", p.id.ID),
+				zap.String("namespace", p.id.Namespace()),
+				zap.String("changefeed", p.id.Name()),
 				zap.Duration("duration", time.Since(start)),
 				zap.Error(err))
 		} else {
 			log.Info("Kafka DDL producer closed",
-				zap.String("namespace", p.id.Namespace),
-				zap.String("changefeed", p.id.ID),
+				zap.String("namespace", p.id.Namespace()),
+				zap.String("changefeed", p.id.Name()),
 				zap.Duration("duration", time.Since(start)))
 		}
 	}()
@@ -161,7 +161,7 @@ func (p *saramaSyncProducer) Close() {
 type saramaAsyncProducer struct {
 	client       sarama.Client
 	producer     sarama.AsyncProducer
-	changefeedID model.ChangeFeedID
+	changefeedID commonType.ChangeFeedID
 	failpointCh  chan error
 }
 
@@ -188,28 +188,28 @@ func (p *saramaAsyncProducer) Close() {
 		start := time.Now()
 		if err := p.client.Close(); err != nil {
 			log.Warn("Close kafka async producer client error",
-				zap.String("namespace", p.changefeedID.Namespace),
-				zap.String("changefeed", p.changefeedID.ID),
+				zap.String("namespace", p.changefeedID.Namespace()),
+				zap.String("changefeed", p.changefeedID.Name()),
 				zap.Duration("duration", time.Since(start)),
 				zap.Error(err))
 		} else {
 			log.Info("Close kafka async producer client success",
-				zap.String("namespace", p.changefeedID.Namespace),
-				zap.String("changefeed", p.changefeedID.ID),
+				zap.String("namespace", p.changefeedID.Namespace()),
+				zap.String("changefeed", p.changefeedID.Name()),
 				zap.Duration("duration", time.Since(start)))
 		}
 
 		start = time.Now()
 		if err := p.producer.Close(); err != nil {
 			log.Warn("Close kafka async producer error",
-				zap.String("namespace", p.changefeedID.Namespace),
-				zap.String("changefeed", p.changefeedID.ID),
+				zap.String("namespace", p.changefeedID.Namespace()),
+				zap.String("changefeed", p.changefeedID.Name()),
 				zap.Duration("duration", time.Since(start)),
 				zap.Error(err))
 		} else {
 			log.Info("Close kafka async producer success",
-				zap.String("namespace", p.changefeedID.Namespace),
-				zap.String("changefeed", p.changefeedID.ID),
+				zap.String("namespace", p.changefeedID.Namespace()),
+				zap.String("changefeed", p.changefeedID.Name()),
 				zap.Duration("duration", time.Since(start)))
 		}
 	}()
@@ -222,13 +222,13 @@ func (p *saramaAsyncProducer) AsyncRunCallback(
 		select {
 		case <-ctx.Done():
 			log.Info("async producer exit since context is done",
-				zap.String("namespace", p.changefeedID.Namespace),
-				zap.String("changefeed", p.changefeedID.ID))
+				zap.String("namespace", p.changefeedID.Namespace()),
+				zap.String("changefeed", p.changefeedID.Name()))
 			return errors.Trace(ctx.Err())
 		case err := <-p.failpointCh:
 			log.Warn("Receive from failpoint chan in kafka DML producer",
-				zap.String("namespace", p.changefeedID.Namespace),
-				zap.String("changefeed", p.changefeedID.ID),
+				zap.String("namespace", p.changefeedID.Namespace()),
+				zap.String("changefeed", p.changefeedID.Name()),
 				zap.Error(err))
 			return errors.Trace(err)
 		case ack := <-p.producer.Successes():

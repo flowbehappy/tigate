@@ -316,6 +316,19 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 	streamInfoMap := genStreamInfoMap(d.streamInfos)
 	globalPathMap := make(map[P]*pathInfo[A, P, T, D, H])
 
+	// return whether the path info exists
+	// used to filter stale path state info reported from stream
+	checkAndDeletePathFromStream := func(si *streamInfo[A, P, T, D, H], pi *pathInfo[A, P, T, D, H]) bool {
+		if _, ok := globalPathMap[pi.path]; !ok {
+			return false
+		}
+		if _, ok := si.pathMap[pi]; !ok {
+			panic("The path should exist in the stream")
+		}
+		delete(si.pathMap, pi)
+		return true
+	}
+
 	doSchedule := func(rule ruleType, testPeriod time.Duration, wg *sync.WaitGroup) {
 		// The goal of scheduler is to balance the load of the streams, with minimum changes.
 		// First of all, we have consistent number (baseStreamCount) of basic streams, and unlimited number of solo streams.
@@ -348,16 +361,14 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 					if ps.busyRatio(period) < BusyPathRatio {
 						continue
 					}
+					if !checkAndDeletePathFromStream(si, ps.pathInfo) {
+						continue
+					}
 					soloStream := createStream()
 					soloStreamInfo := &streamInfo[A, P, T, D, H]{
 						stream:  soloStream,
 						pathMap: map[*pathInfo[A, P, T, D, H]]struct{}{ps.pathInfo: {}},
 					}
-
-					if _, ok := si.pathMap[ps.pathInfo]; !ok {
-						panic("The path should exist in the stream")
-					}
-					delete(si.pathMap, ps.pathInfo)
 
 					soloStreamInfos = append(soloStreamInfos, soloStreamInfo)
 				}
@@ -509,23 +520,21 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 				// It might create some optimization opportunities for golang runtime or the OS.
 				addedPaths := 0
 				for _, ps := range mostBusy.streamStat.getMostBusyPaths() {
+					// To make the following shuffle easier
+					if !checkAndDeletePathFromStream(mostBusy, ps.pathInfo) {
+						continue
+					}
 					idx := nextIdx.Next()
 					pathsChoices[idx] = append(pathsChoices[idx], ps.pathInfo)
-					if _, ok := mostBusy.pathMap[ps.pathInfo]; !ok {
-						panic("The path should exist in the stream")
-					}
-					// To make the following shuffle easier
-					delete(mostBusy.pathMap, ps.pathInfo)
 					addedPaths++
 				}
 				for _, ps := range leastBusy.streamStat.getMostBusyPaths() {
+					// To make the following shuffle easier
+					if !checkAndDeletePathFromStream(leastBusy, ps.pathInfo) {
+						continue
+					}
 					idx := nextIdx.Next()
 					pathsChoices[idx] = append(pathsChoices[idx], ps.pathInfo)
-					if _, ok := leastBusy.pathMap[ps.pathInfo]; !ok {
-						panic("The path should exist in the stream")
-					}
-					// To make the following shuffle easier
-					delete(leastBusy.pathMap, ps.pathInfo)
 					addedPaths++
 				}
 

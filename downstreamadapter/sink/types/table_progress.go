@@ -18,9 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/log"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
-	"go.uber.org/zap"
 )
 
 // TableProgress maintains event timestamp information in the sink.
@@ -134,6 +132,5 @@ func (p *TableProgress) GetEventSizePerSecond() float32 {
 	p.cumulateEventSize = 0
 	p.lastQueryTime = time.Now()
 
-	log.Info("GetEventSizePerSecond", zap.Any("eventSizePerSecond", eventSizePerSecond))
 	return eventSizePerSecond
 }

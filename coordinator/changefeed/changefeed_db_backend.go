@@ -16,26 +16,26 @@ package changefeed
 import (
 	"context"
 
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
-	"github.com/pingcap/tiflow/cdc/model"
 )
 
 // Backend is the metastore for the changefeed
 type Backend interface {
 	// GetAllChangefeeds returns all changefeeds from the backend db, include stopped and failed changefeeds
-	GetAllChangefeeds(ctx context.Context) (map[model.ChangeFeedID]*ChangefeedMetaWrapper, error)
+	GetAllChangefeeds(ctx context.Context) (map[common.ChangeFeedID]*ChangefeedMetaWrapper, error)
 	// CreateChangefeed saves changefeed info and status to db
 	CreateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error
 	// UpdateChangefeed updates changefeed info  to db
 	UpdateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error
 	// PauseChangefeed persists the pause status to db for a changefeed
-	PauseChangefeed(ctx context.Context, id model.ChangeFeedID) error
+	PauseChangefeed(ctx context.Context, id common.ChangeFeedID) error
 	// DeleteChangefeed removes all related info of a changefeed from db
-	DeleteChangefeed(ctx context.Context, id model.ChangeFeedID) error
+	DeleteChangefeed(ctx context.Context, id common.ChangeFeedID) error
 	// ResumeChangefeed persists the resumed status to db for a changefeed
-	ResumeChangefeed(ctx context.Context, id model.ChangeFeedID, newCheckpointTs uint64) error
+	ResumeChangefeed(ctx context.Context, id common.ChangeFeedID, newCheckpointTs uint64) error
 	// UpdateChangefeedCheckpointTs persists the checkpoints for changefeeds
-	UpdateChangefeedCheckpointTs(ctx context.Context, cps map[model.ChangeFeedID]uint64) error
+	UpdateChangefeedCheckpointTs(ctx context.Context, cps map[common.ChangeFeedID]uint64) error
 }
 
 // ChangefeedMetaWrapper is a wrapper for the changefeed load from the DB

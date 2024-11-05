@@ -39,7 +39,7 @@ const (
 // bootstrapWorker is used to send bootstrap message to the MQ sink worker.
 // It will be only used in simple protocol.
 type bootstrapWorker struct {
-	changefeedID                model.ChangeFeedID
+	changefeedID                common.ChangeFeedID
 	activeTables                sync.Map
 	rowEventEncoder             encoder.EventEncoder
 	sendBootstrapInterval       time.Duration
@@ -52,7 +52,7 @@ type bootstrapWorker struct {
 
 // newBootstrapWorker creates a new bootstrapWorker instance
 func newBootstrapWorker(
-	changefeedID model.ChangeFeedID,
+	changefeedID common.ChangeFeedID,
 	outCh chan<- *future,
 	rowEventEncoder encoder.EventEncoder,
 	sendBootstrapInterval int64,

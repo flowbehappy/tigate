@@ -6,18 +6,18 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
+	commonType "github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/config"
 	ticonfig "github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/sink/codec/common"
-	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/util"
 )
 
 // GetEncoderConfig returns the encoder config and validates the config.
 func GetEncoderConfig(
-	changefeedID model.ChangeFeedID,
+	changefeedID commonType.ChangeFeedID,
 	sinkURI *url.URL,
 	protocol config.Protocol,
 	sinkConfig *ticonfig.SinkConfig,
