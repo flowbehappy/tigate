@@ -80,7 +80,7 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 		serverId:                             serverId,
 		globalMemoryQuota:                    globalMemoryQuota,
 		dispatcherMap:                        sync.Map{},
-		ds:                                   dispatcher.GetEventsDynamicStream(),
+		ds:                                   dispatcher.GetEventDynamicStream(),
 		dispatcherRequestChan:                chann.NewAutoDrainChann[DispatcherRequest](),
 		mc:                                   appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
@@ -89,11 +89,17 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 	}
 	eventCollector.mc.RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
 
+	eventCollector.wg.Add(1)
+	go func() {
+		defer eventCollector.wg.Done()
+		eventCollector.processFeedback(ctx)
+	}()
+
 	// wg is not `Wait`, and not controlled by the context.
 	eventCollector.wg.Add(1)
 	go func() {
 		defer eventCollector.wg.Done()
-		eventCollector.processDispatcherRequests()
+		eventCollector.processDispatcherRequests(ctx)
 	}()
 	eventCollector.wg.Add(1)
 	go func() {
@@ -103,13 +109,42 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 	return &eventCollector
 }
 
-func (c *EventCollector) processDispatcherRequests() {
+func (c *EventCollector) processFeedback(ctx context.Context) {
 	defer c.wg.Done()
-	for req := range c.dispatcherRequestChan.Out() {
-		if err := c.SendDispatcherRequest(req); err != nil {
-			log.Error("failed to process dispatcher action", zap.Error(err))
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case feedback := <-c.ds.Feedback():
+			log.Info("fizz received feedback", zap.String("feedback", feedback.String()))
+			if feedback.Pause {
+				c.dispatcherRequestChan.In() <- DispatcherRequest{
+					Dispatcher: feedback.Dest,
+					ActionType: eventpb.ActionType_ACTION_TYPE_PAUSE,
+				}
+			} else {
+				c.dispatcherRequestChan.In() <- DispatcherRequest{
+					Dispatcher: feedback.Dest,
+					ActionType: eventpb.ActionType_ACTION_TYPE_RESUME,
+				}
+			}
 		}
-		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func (c *EventCollector) processDispatcherRequests(ctx context.Context) {
+	defer c.wg.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case req := <-c.dispatcherRequestChan.Out():
+			if err := c.SendDispatcherRequest(req); err != nil {
+				log.Error("failed to process dispatcher action", zap.Error(err))
+			}
+			// Sleep a short time to avoid too many requests in a short time.
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 }
 

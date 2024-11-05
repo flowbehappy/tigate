@@ -89,7 +89,7 @@ type Dispatcher struct {
 
 	filter filter.Filter
 
-	resolvedTs *TsWithMutex // 用来记 中目前收到的 event 中收到的最大的 commitTs - 1,不代表 dispatcher 的 checkpointTs
+	resolvedTs *TsWithMutex // The largest commitTs - 1 of the events received by the dispatcher.
 
 	blockStatus BlockStatus
 
@@ -105,7 +105,8 @@ type Dispatcher struct {
 	// only exist when the dispatcher is a table trigger event dispatcher
 	tableSchemaStore *util.TableSchemaStore
 
-	// isReady is used to indicate whether the dispatcher is ready.
+	// isReady is used to indicate whether the dispatcher is ready to handle events.
+	// Dispatcher will be ready when it receives the handshake event from eventService.
 	// If false, the dispatcher will drop the event it received.
 	isReady atomic.Bool
 }
@@ -185,7 +186,7 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 				d.sink.AddBlockEvent(pendingEvent, d.tableProgress)
 			} else {
 				d.sink.PassBlockEvent(pendingEvent, d.tableProgress)
-				dispatcherEventDynamicStream := GetEventsDynamicStream()
+				dispatcherEventDynamicStream := GetEventDynamicStream()
 				dispatcherEventDynamicStream.Wake() <- d.id
 			}
 		}
@@ -205,7 +206,7 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 
 	ack := dispatcherStatus.GetAck()
 	if ack != nil && ack.CommitTs == pendingEvent.GetCommitTs() {
-		d.CancelResendTask()
+		d.cancelResendTask()
 	}
 }
 
@@ -249,13 +250,12 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 			block = true
 			dml := event.(*commonEvent.DMLEvent)
 			dml.AssembleRows(d.tableInfo.Load())
-			// Update the last event sequence number.
 			dml.AddPostFlushFunc(func() {
 				// Considering dml event in sink may be write to downstream not in order,
 				// thus, we use tableProgress.Empty() to ensure these events are flushed to downstream completely
 				// and wake dynamic stream to handle the next events.
 				if d.tableProgress.Empty() {
-					dispatcherEventDynamicStream := GetEventsDynamicStream()
+					dispatcherEventDynamicStream := GetEventDynamicStream()
 					dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
 				}
 			})
@@ -278,7 +278,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 				d.tableSchemaStore.AddEvent(event)
 			}
 			event.AddPostFlushFunc(func() {
-				dispatcherEventDynamicStream := GetEventsDynamicStream()
+				dispatcherEventDynamicStream := GetEventDynamicStream()
 				dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
 			})
 			d.dealWithBlockEvent(event)
@@ -289,7 +289,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 			block = true
 			event := event.(*commonEvent.SyncPointEvent)
 			event.AddPostFlushFunc(func() {
-				dispatcherEventDynamicStream := GetEventsDynamicStream()
+				dispatcherEventDynamicStream := GetEventDynamicStream()
 				dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
 			})
 			d.dealWithBlockEvent(event)
@@ -483,7 +483,7 @@ func (d *Dispatcher) GetId() common.DispatcherID {
 	return d.id
 }
 
-func (d *Dispatcher) CancelResendTask() {
+func (d *Dispatcher) cancelResendTask() {
 	if d.resendTask != nil {
 		d.resendTask.Cancel()
 		d.resendTask = nil
@@ -523,7 +523,7 @@ func (d *Dispatcher) GetSyncPointInterval() time.Duration {
 func (d *Dispatcher) Remove() {
 	log.Info("table event dispatcher component status changed to stopping", zap.String("table", d.tableSpan.String()))
 	d.isRemoving.Store(true)
-	dispatcherEventDynamicStream := GetEventsDynamicStream()
+	dispatcherEventDynamicStream := GetEventDynamicStream()
 	err := dispatcherEventDynamicStream.RemovePath(d.id)
 	if err != nil {
 		log.Error("remove dispatcher from dynamic stream failed", zap.Error(err))
@@ -538,7 +538,7 @@ func (d *Dispatcher) Remove() {
 
 // addToDynamicStream add self to dynamic stream
 func (d *Dispatcher) addToDynamicStream() {
-	dispatcherEventDynamicStream := GetEventsDynamicStream()
+	dispatcherEventDynamicStream := GetEventDynamicStream()
 	areaSetting := dynstream.NewAreaSettings()
 	// FixMe: Pass memory quota from changefeed config to dispatcherManager, and then to dispatcher
 	// Make it configurable

@@ -1,6 +1,7 @@
 package dynstream
 
 import (
+	"fmt"
 	"runtime"
 	"sync"
 	"time"
@@ -207,6 +208,10 @@ type Feedback[A Area, P Path, D Dest] struct {
 	Dest D
 
 	Pause bool // Pause or resume the path.
+}
+
+func (f *Feedback[A, P, D]) String() string {
+	return fmt.Sprintf("DynamicStream Feedback{Area: %v, Path: %v, Pause: %v}", f.Area, f.Path, f.Pause)
 }
 
 func NewDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](handler H, option ...Option) DynamicStream[A, P, T, D, H] {

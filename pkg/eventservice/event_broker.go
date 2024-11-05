@@ -669,11 +669,11 @@ func (c *eventBroker) removeDispatcher(dispatcherInfo DispatcherInfo) {
 	c.eventStore.UnregisterDispatcher(id)
 	c.schemaStore.UnregisterTable(dispatcherInfo.GetTableSpan().TableID)
 	c.dispatchers.Delete(id)
-
 	log.Info("deregister acceptor", zap.Uint64("clusterID", c.tidbClusterID), zap.Any("acceptorID", id))
 }
 
 func (c *eventBroker) pauseDispatcher(dispatcherInfo DispatcherInfo) {
+	log.Info("pause dispatcher", zap.Any("dispatcherID", dispatcherInfo.GetID()))
 	stat, ok := c.dispatchers.Load(dispatcherInfo.GetID())
 	if !ok {
 		return
@@ -682,6 +682,7 @@ func (c *eventBroker) pauseDispatcher(dispatcherInfo DispatcherInfo) {
 }
 
 func (c *eventBroker) resumeDispatcher(dispatcherInfo DispatcherInfo) {
+	log.Info("resume dispatcher", zap.Any("dispatcherID", dispatcherInfo.GetID()))
 	stat, ok := c.dispatchers.Load(dispatcherInfo.GetID())
 	if !ok {
 		return
