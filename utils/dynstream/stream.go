@@ -376,7 +376,7 @@ func (s *stream[A, P, T, D, H]) reportStatLoop() {
 			elapsedTime:    time.Since(lastReportTime),
 			processingTime: totalTime,
 			count:          handleCount,
-			pendingLen:     s.eventQueue.totalPendingLength, // It is not very accurate, because this value is updated by the handle goroutine.
+			pendingLen:     int(s.eventQueue.totalPendingLength.Load()), // It is not very accurate, because this value is updated by the handle goroutine.
 			mostBusyPath:   mostBusyPaths,
 		}:
 			// Only reset the statistics when the report is sent successfully.

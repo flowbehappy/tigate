@@ -128,7 +128,7 @@ func TestAreaMemStatAppendEvent(t *testing.T) {
 	// 4. Change the settings, enlarge the max pending size
 	settings.MaxPendingSize = 100
 	mc.setAreaSettings(path1.area, settings)
-	require.Equal(t, 100, path1.areaMemStat.settings.MaxPendingSize)
+	require.Equal(t, 100, path1.areaMemStat.settings.Load().MaxPendingSize)
 	// 5. Add a normal event, and it should be accepted,
 	//  because the total pending size is less than the max pending size
 	normalEvent3 := eventWrap[int, string, *mockEvent, any, *mockHandler]{
@@ -162,7 +162,7 @@ func TestAreaMemStatAppendEvent(t *testing.T) {
 	require.Equal(t, settings.MaxPendingSize, int(path2.areaMemStat.totalPendingSize.Load()))
 	require.Equal(t, 2, path2.areaMemStat.pathCount)
 	// There are 4 events in the eventQueue, [normalEvent1, periodicEvent2, normalEvent3, largeEvent]
-	require.Equal(t, 4, eventQueue.totalPendingLength)
+	require.Equal(t, int64(4), eventQueue.totalPendingLength.Load())
 	// The new path should be paused, because the pending size is reach the max pending size
 	require.True(t, path2.paused)
 
@@ -184,7 +184,7 @@ func TestAreaMemStatAppendEvent(t *testing.T) {
 	droppedEvents := handler.drainDroppedEvents()
 	require.Equal(t, 1, len(droppedEvents))
 	require.Equal(t, largeEvent.event, droppedEvents[0])
-	require.Equal(t, 4, eventQueue.totalPendingLength)
+	require.Equal(t, int64(4), eventQueue.totalPendingLength.Load())
 
 	// 8. Add a signal event to path2, and it should be accepted, and its state should be resumed
 	periodicEvent3 := eventWrap[int, string, *mockEvent, any, *mockHandler]{
@@ -195,7 +195,7 @@ func TestAreaMemStatAppendEvent(t *testing.T) {
 	}
 	path2.areaMemStat.appendEvent(path2, periodicEvent3, handler, &eventQueue)
 	require.Equal(t, 1, path2.pendingQueue.Length())
-	require.Equal(t, 5, eventQueue.totalPendingLength)
+	require.Equal(t, int64(5), eventQueue.totalPendingLength.Load())
 	require.False(t, path2.paused)
 }
 
@@ -252,7 +252,7 @@ func TestSetAreaSettings(t *testing.T) {
 	}
 	feedbackChan := make(chan Feedback[int, string, any], 10)
 	mc.addPathToArea(path, initialSettings, feedbackChan)
-	require.Equal(t, initialSettings, path.areaMemStat.settings)
+	require.Equal(t, initialSettings, *path.areaMemStat.settings.Load())
 
 	// Case 2: Set the new settings.
 	newSettings := AreaSettings{
@@ -260,7 +260,7 @@ func TestSetAreaSettings(t *testing.T) {
 		FeedbackInterval: 2 * time.Second,
 	}
 	mc.setAreaSettings(path.area, newSettings)
-	require.Equal(t, newSettings, path.areaMemStat.settings)
+	require.Equal(t, newSettings, *path.areaMemStat.settings.Load())
 
 	// Case 3: Set a invalid settings.
 	invalidSettings := AreaSettings{
@@ -268,9 +268,9 @@ func TestSetAreaSettings(t *testing.T) {
 		FeedbackInterval: 0,
 	}
 	mc.setAreaSettings(path.area, invalidSettings)
-	require.NotEqual(t, invalidSettings, path.areaMemStat.settings)
-	require.Equal(t, DefaultFeedbackInterval, path.areaMemStat.settings.FeedbackInterval)
-	require.Equal(t, DefaultMaxPendingSize, path.areaMemStat.settings.MaxPendingSize)
+	require.NotEqual(t, invalidSettings, *path.areaMemStat.settings.Load())
+	require.Equal(t, DefaultFeedbackInterval, path.areaMemStat.settings.Load().FeedbackInterval)
+	require.Equal(t, DefaultMaxPendingSize, path.areaMemStat.settings.Load().MaxPendingSize)
 }
 
 func TestIsPeriodicSignal(t *testing.T) {
