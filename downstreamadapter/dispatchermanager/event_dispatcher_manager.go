@@ -527,9 +527,10 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 
 		if needCompleteStatus {
 			message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
-				ID:              id.ToPB(),
-				ComponentStatus: heartBeatInfo.ComponentStatus,
-				CheckpointTs:    heartBeatInfo.Watermark.CheckpointTs,
+				ID:                 id.ToPB(),
+				ComponentStatus:    heartBeatInfo.ComponentStatus,
+				CheckpointTs:       heartBeatInfo.Watermark.CheckpointTs,
+				EventSizePerSecond: heartBeatInfo.EventSizePerSecond,
 			})
 		}
 	})

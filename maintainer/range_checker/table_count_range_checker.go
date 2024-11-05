@@ -35,7 +35,7 @@ func (rc *TableIDRangeChecker) AddSubRange(tableID int64, _, _ []byte) {
 
 // IsFullyCovered checks if all table IDs are covered.
 func (rc *TableIDRangeChecker) IsFullyCovered() bool {
-	return len(rc.reportedMap) == rc.needCount
+	return len(rc.reportedMap) >= rc.needCount
 }
 
 // Reset resets the reported tables.

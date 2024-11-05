@@ -209,6 +209,7 @@ message TableSpanStatus {
     DispatcherID ID = 1; // for which dispatcher
     ComponentState component_status = 2;
     uint64 checkpoint_ts = 3;
+    float event_size_per_second = 4;
 }
 
 message BlockStatusRequest {
