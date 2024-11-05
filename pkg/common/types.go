@@ -79,8 +79,8 @@ func (d DispatcherID) Less(t any) bool {
 type SchemaID int64
 
 type GID struct {
-	Low  uint64 `json:"Low"`
-	High uint64 `json:"High"`
+	Low  uint64 `json:"low"`
+	High uint64 `json:"high"`
 }
 
 func (g GID) IsZero() bool {
@@ -199,6 +199,13 @@ func NewChangeFeedIDWithName(name string) ChangeFeedID {
 			Name:      name,
 			Namespace: DefaultNamespace,
 		},
+	}
+}
+
+func NewChangeFeedIDWithDisplayName(name ChangeFeedDisplayName) ChangeFeedID {
+	return ChangeFeedID{
+		Id:          NewGID(),
+		DisplayName: name,
 	}
 }
 

@@ -42,10 +42,8 @@ import (
 // Controller schedules and balance changefeeds
 // there are 3 main components in the controller, scheduler, ChangefeedDB and operator controller
 type Controller struct {
-	//  initailChangefeeds hold all tables that before controller bootstrapped
-	initailChangefeeds map[common.ChangeFeedID]*changefeed.ChangefeedMetaWrapper
-	bootstrapped       bool
-	version            int64
+	bootstrapped bool
+	version      int64
 
 	nodeChanged *atomic.Bool
 
@@ -98,11 +96,6 @@ func NewController(
 		lastPrintStatusTime: time.Now(),
 	}
 	c.bootstrapper = bootstrap.NewBootstrapper[heartbeatpb.CoordinatorBootstrapResponse]("coordinator", c.newBootstrapMessage)
-	cfs, err := c.backend.GetAllChangefeeds(context.Background())
-	if err != nil {
-		log.Panic("load all changefeeds failed", zap.Error(err))
-	}
-	c.initailChangefeeds = cfs
 	// init bootstrapper nodes
 	nodes := c.nodeManager.GetAliveNodes()
 	// detect the capture changes
@@ -154,7 +147,7 @@ func (c *Controller) CreateChangefeed(ctx context.Context, info *config.ChangeFe
 	if !c.bootstrapped {
 		return errors.New("not initialized, wait a moment")
 	}
-	old := c.changefeedDB.GetByID(info.ChangefeedID)
+	old := c.changefeedDB.GetByChangefeedDisplayName(info.ChangefeedID.DisplayName)
 	if old != nil {
 		return errors.New("changefeed already exists")
 	}
@@ -309,7 +302,12 @@ func (c *Controller) FinishBootstrap(workingMap map[common.ChangeFeedID]remoteMa
 		log.Panic("already bootstrapped",
 			zap.Any("workingMap", workingMap))
 	}
-	for cfID, cfMeta := range c.initailChangefeeds {
+	cfs, err := c.backend.GetAllChangefeeds(context.Background())
+	if err != nil {
+		log.Panic("load all changefeeds failed", zap.Error(err))
+	}
+	log.Info("load all changefeeds", zap.Int("size", len(cfs)))
+	for cfID, cfMeta := range cfs {
 		rm, ok := workingMap[cfID]
 		if !ok {
 			cf := changefeed.NewChangefeed(cfID, cfMeta.Info, cfMeta.Status.CheckpointTs)
@@ -339,7 +337,6 @@ func (c *Controller) FinishBootstrap(workingMap map[common.ChangeFeedID]remoteMa
 	c.operatorControllerHandle = c.taskScheduler.Submit(c.cfScheduller, time.Now())
 	c.schedulerHandle = c.taskScheduler.Submit(c.operatorController, time.Now())
 	c.bootstrapped = true
-	c.initailChangefeeds = nil
 }
 
 func (c *Controller) Stop() {

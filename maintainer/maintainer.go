@@ -577,6 +577,7 @@ func (m *Maintainer) getNewBootstrapFn() bootstrap.NewBootstrapMessageFn {
 		EnableSyncPoint:    *cfg.Config.EnableSyncPoint,
 		SyncPointInterval:  cfg.Config.SyncPointInterval,
 		SyncPointRetention: cfg.Config.SyncPointRetention,
+		MemoryQuota:        cfg.Config.MemoryQuota,
 		// other fields are not necessary for maintainer
 	}
 	// cfgBytes only holds necessary fields to initialize a changefeed dispatcher.

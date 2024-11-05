@@ -28,7 +28,7 @@ type ChangefeedConfig struct {
 	// if true, force to replicate some ineligible tables
 	ForceReplicate bool          `json:"force_replicate" default:"false"`
 	Filter         *FilterConfig `toml:"filter" json:"filter"`
-
+	MemoryQuota    uint64        `toml:"memory-quota" json:"memory-quota"`
 	//sync point related
 	// TODO:syncPointRetention|default 可以不要吗
 	EnableSyncPoint    bool           `json:"enable_sync_point" default:"false"`
@@ -40,8 +40,8 @@ type ChangefeedConfig struct {
 
 // ChangeFeedInfo describes the detail of a ChangeFeed
 type ChangeFeedInfo struct {
+	ChangefeedID common.ChangeFeedID `json:"id"`
 	UpstreamID   uint64              `json:"upstream-id"`
-	ChangefeedID common.ChangeFeedID `json:"changefeed-id"`
 	SinkURI      string              `json:"sink-uri"`
 	CreateTime   time.Time           `json:"create-time"`
 	// Start sync at this commit ts if `StartTs` is specify or using the CreateTime of changefeed.
