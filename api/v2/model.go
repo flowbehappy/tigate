@@ -94,10 +94,8 @@ type PDConfig struct {
 
 // ChangefeedCommonInfo holds some common usage information of a changefeed
 type ChangefeedCommonInfo struct {
-	UpstreamID   uint64              `json:"upstream_id"`
-	ChangefeedID common.ChangeFeedID `json:"changefeed_id"`
-	// Namespace      string              `json:"namespace"`
-	// ID             string              `json:"id"`
+	UpstreamID     uint64              `json:"upstream_id"`
+	ChangefeedID   common.ChangeFeedID `json:"changefeed_id"`
 	FeedState      model.FeedState     `json:"state"`
 	CheckpointTSO  uint64              `json:"checkpoint_tso"`
 	CheckpointTime model.JSONTime      `json:"checkpoint_time"`

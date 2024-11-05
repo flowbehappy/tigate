@@ -40,9 +40,7 @@ type ChangefeedConfig struct {
 
 // ChangeFeedInfo describes the detail of a ChangeFeed
 type ChangeFeedInfo struct {
-	UpstreamID uint64 `json:"upstream-id"`
-	// Namespace    string              `json:"namespace"`
-	// ID           string              `json:"changefeed-id"`
+	UpstreamID   uint64              `json:"upstream-id"`
 	ChangefeedID common.ChangeFeedID `json:"changefeed-id"`
 	SinkURI      string              `json:"sink-uri"`
 	CreateTime   time.Time           `json:"create-time"`
