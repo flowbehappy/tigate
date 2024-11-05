@@ -26,13 +26,13 @@ import (
 	"go.uber.org/zap"
 )
 
-type BlockStauts struct {
+type BlockStatus struct {
 	mutex             sync.Mutex
 	blockPendingEvent commonEvent.BlockEvent
 	blockStage        heartbeatpb.BlockStage
 }
 
-func (b *BlockStauts) clear() {
+func (b *BlockStatus) clear() {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
@@ -40,7 +40,7 @@ func (b *BlockStauts) clear() {
 	b.blockStage = heartbeatpb.BlockStage_NONE
 }
 
-func (b *BlockStauts) setBlockEvent(event commonEvent.BlockEvent, blockStage heartbeatpb.BlockStage) {
+func (b *BlockStatus) setBlockEvent(event commonEvent.BlockEvent, blockStage heartbeatpb.BlockStage) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
@@ -48,13 +48,13 @@ func (b *BlockStauts) setBlockEvent(event commonEvent.BlockEvent, blockStage hea
 	b.blockStage = blockStage
 }
 
-func (b *BlockStauts) updateBlockStage(blockStage heartbeatpb.BlockStage) {
+func (b *BlockStatus) updateBlockStage(blockStage heartbeatpb.BlockStage) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 	b.blockStage = blockStage
 }
 
-func (b *BlockStauts) getEventAndStage() (commonEvent.BlockEvent, heartbeatpb.BlockStage) {
+func (b *BlockStatus) getEventAndStage() (commonEvent.BlockEvent, heartbeatpb.BlockStage) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
@@ -220,7 +220,7 @@ func SetDispatcherTaskScheduler(taskScheduler threadpool.ThreadPool) {
 	DispatcherTaskScheduler = taskScheduler
 }
 
-// DispatcherEventsHandler is used to dispatcher the events received.
+// EventsHandler is used to dispatcher the events received.
 // If the event is a DML event, it will be added to the sink for writing to downstream.
 // If the event is a resolved TS event, it will be update the resolvedTs of the dispatcher.
 // If the event is a DDL event,
@@ -237,18 +237,18 @@ func SetDispatcherTaskScheduler(taskScheduler threadpool.ThreadPool) {
 // Otherwise, we can get a batch events.
 // We always return block = true for Handle() except we only receive the resolvedTs events.
 // So we only will reach next Handle() when previous events are all push downstream successfully.
-type DispatcherEventsHandler struct {
+type EventsHandler struct {
 }
 
-func (h *DispatcherEventsHandler) Path(event DispatcherEvent) common.DispatcherID {
+func (h *EventsHandler) Path(event DispatcherEvent) common.DispatcherID {
 	return event.GetDispatcherID()
 }
 
-func (h *DispatcherEventsHandler) Handle(dispatcher *Dispatcher, events ...DispatcherEvent) bool {
+func (h *EventsHandler) Handle(dispatcher *Dispatcher, events ...DispatcherEvent) bool {
 	return dispatcher.HandleEvents(events)
 }
 
-func (h *DispatcherEventsHandler) GetType(event DispatcherEvent) dynstream.EventType {
+func (h *EventsHandler) GetType(event DispatcherEvent) dynstream.EventType {
 	switch event.GetType() {
 	case commonEvent.TypeResolvedEvent:
 		return dynstream.EventType{DataGroup: event.GetType(), Property: dynstream.PeriodicSignal}
@@ -262,11 +262,15 @@ func (h *DispatcherEventsHandler) GetType(event DispatcherEvent) dynstream.Event
 	return dynstream.DefaultEventType
 }
 
-func (h *DispatcherEventsHandler) GetSize(event DispatcherEvent) int                      { return 0 }
-func (h *DispatcherEventsHandler) IsPaused(event DispatcherEvent) bool                    { return false }
-func (h *DispatcherEventsHandler) GetArea(path common.DispatcherID, dest *Dispatcher) int { return 0 }
-func (h *DispatcherEventsHandler) GetTimestamp(event DispatcherEvent) dynstream.Timestamp { return 0 }
-func (h *DispatcherEventsHandler) OnDrop(event DispatcherEvent)                           {}
+func (h *EventsHandler) GetSize(event DispatcherEvent) int   { return int(event.GetSize()) }
+func (h *EventsHandler) IsPaused(event DispatcherEvent) bool { return event.IsPaused() }
+func (h *EventsHandler) GetArea(path common.DispatcherID, dest *Dispatcher) string {
+	return dest.changefeedID
+}
+func (h *EventsHandler) GetTimestamp(event DispatcherEvent) dynstream.Timestamp {
+	return dynstream.Timestamp(event.GetCommitTs())
+}
+func (h *EventsHandler) OnDrop(event DispatcherEvent) {}
 
 type DispatcherEvent struct {
 	commonEvent.Event
@@ -278,21 +282,21 @@ func NewDispatcherEvent(event commonEvent.Event) DispatcherEvent {
 	}
 }
 
-var dispatcherEventsDynamicStream dynstream.DynamicStream[int, common.DispatcherID, DispatcherEvent, *Dispatcher, *DispatcherEventsHandler]
-var dispatcherEventsDynamicStreamOnce sync.Once
+// eventsDynamicStream is used to process the events received by eventCollector.
+var eventsDynamicStream dynstream.DynamicStream[string, common.DispatcherID, DispatcherEvent, *Dispatcher, *EventsHandler]
+var eventsDynamicStreamOnce sync.Once
 
-func GetDispatcherEventsDynamicStream() dynstream.DynamicStream[int, common.DispatcherID, DispatcherEvent, *Dispatcher, *DispatcherEventsHandler] {
-	if dispatcherEventsDynamicStream == nil {
-		dispatcherEventsDynamicStreamOnce.Do(func() {
-			dispatcherEventsDynamicStream = dynstream.NewDynamicStream(&DispatcherEventsHandler{}, dynstream.NewOption())
-			dispatcherEventsDynamicStream.Start()
+func GetEventsDynamicStream() dynstream.DynamicStream[string, common.DispatcherID, DispatcherEvent, *Dispatcher, *EventsHandler] {
+	if eventsDynamicStream == nil {
+		eventsDynamicStreamOnce.Do(func() {
+			option := dynstream.NewOption()
+			// Enable memory control for dispatcher events dynamic stream.
+			option.EnableMemoryControl = true
+			eventsDynamicStream = dynstream.NewDynamicStream(&EventsHandler{}, option)
+			eventsDynamicStream.Start()
 		})
 	}
-	return dispatcherEventsDynamicStream
-}
-
-func SetDispatcherEventsDynamicStream(dynamicStream dynstream.DynamicStream[int, common.DispatcherID, DispatcherEvent, *Dispatcher, *DispatcherEventsHandler]) {
-	dispatcherEventsDynamicStream = dynamicStream
+	return eventsDynamicStream
 }
 
 type DispatcherStatusWithID struct {
