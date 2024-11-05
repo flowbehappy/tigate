@@ -125,7 +125,11 @@ func newEventQueue[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](optio
 
 func (q *eventQueue[A, P, T, D, H]) updateHeapAfterUpdatePath(path *pathInfo[A, P, T, D, H]) {
 	area := path.streamAreaInfo
-
+	// If the path is remove but the stream still receives its event,
+	// the streamAreaInfo is nil.
+	if area == nil {
+		return
+	}
 	if path.removed || path.blocking || path.pendingQueue.Length() == 0 {
 		// Remove the path from heap
 		area.timestampHeap.Remove((*timestampPathNode[A, P, T, D, H])(path))
@@ -162,7 +166,6 @@ func (q *eventQueue[A, P, T, D, H]) addPath(path *pathInfo[A, P, T, D, H]) {
 	}
 
 	area.pathCount++
-
 	path.streamAreaInfo = area
 	path.queueTimeHeapIndex = 0
 	path.timestampHeapIndex = 0
@@ -243,15 +246,14 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 		} else {
 			group := DefaultEventType.DataGroup
 			for i := 0; i < batchSize; i++ {
-				front, ok := path.pendingQueue.FrontRef()
+				front, ok := path.pendingQueue.PopFront()
 				if !ok || (group != DefaultEventType.DataGroup && group != front.eventType.DataGroup) {
 					break
 				}
 				group = front.eventType.DataGroup
 				buf = append(buf, front.event)
-
-				path.pendingQueue.PopFront()
 				path.pendingSize -= front.eventSize
+				q.totalPendingLength.Add(-1)
 
 				// Reduce the total pending size of the area.
 				if path.areaMemStat != nil {
@@ -266,7 +268,6 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 				panic("empty buf")
 			}
 
-			q.totalPendingLength.Add(-int64(len(buf)))
 			q.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D, H])(path))
 			return buf, path
 		}

@@ -9,7 +9,7 @@ import (
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	sinkutil "github.com/pingcap/ticdc/pkg/sink/util"
-	timodel "github.com/pingcap/tidb/pkg/parser/model"
+	timodel "github.com/pingcap/tidb/pkg/meta/model"
 
 	pevent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/stretchr/testify/require"
@@ -42,11 +42,16 @@ func (s *mockSink) AddCheckpointTs(ts uint64) {
 func (s *mockSink) SetTableSchemaStore(tableSchemaStore *sinkutil.TableSchemaStore) {
 }
 
-func (s *mockSink) Close() {
+func (s *mockSink) Close(bool) error {
+	return nil
 }
 
 func (s *mockSink) SinkType() psink.SinkType {
 	return psink.MysqlSinkType
+}
+
+func (s *mockSink) CheckStartTs(startTs int64, checkpointTs uint64) (int64, error) {
+	return startTs, nil
 }
 
 func (s *mockSink) flushDMLs() {
@@ -105,6 +110,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	schemaIDToDispatchers := NewSchemaIDToDispatchers()
 	startTs := common.Ts(0)
 	dispatcher := NewDispatcher(
+		"test",
 		dispatcherID,
 		tableSpan,
 		sink,
@@ -174,23 +180,32 @@ func TestDispatcherHandleEvents(t *testing.T) {
 			InfluenceType: pevent.InfluenceTypeNormal,
 			TableIDs:      []int64{tableInfo.ID},
 		},
+		NeedAddedTables: []pevent.Table{
+			{
+				SchemaID: tableInfo.SchemaID,
+				TableID:  tableInfo.ID,
+			},
+		},
 	}
 	dispatcherEvent = NewDispatcherEvent(ddlEvent)
 	dispatcher.HandleEvents([]DispatcherEvent{dispatcherEvent})
-	require.Equal(t, dispatcher.blockPendingEvent, ddlEvent)
-	require.Equal(t, 0, len(sink.blockEvents))
+	require.Equal(t, ddlEvent, dispatcher.blockStatus.blockPendingEvent)
+	require.Equal(t, 1, len(sink.blockEvents))
 
-	// 6. Dispatcher is ready, handle action event, ddl event will be sent to sink
+	// 6. Dispatcher is ready, handle action event
 	actionEvent := &heartbeatpb.DispatcherStatus{
+		InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
+			InfluenceType: heartbeatpb.InfluenceType_Normal,
+			DispatcherIDs: []*heartbeatpb.DispatcherID{dispatcherID.ToPB()},
+		},
 		Action: &heartbeatpb.DispatcherAction{
 			Action:      heartbeatpb.Action_Write,
 			CommitTs:    ddlEvent.FinishedTs,
 			IsSyncPoint: false,
 		},
 	}
+
 	dispatcher.HandleDispatcherStatus(actionEvent)
-	require.Equal(t, 1, len(sink.blockEvents))
-	require.Equal(t, ddlEvent, sink.blockEvents[0])
 	sink.flushBlockEvents()
 	require.Equal(t, dispatcher.GetCheckpointTs(), ddlEvent.FinishedTs-1)
 }
