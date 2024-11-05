@@ -14,6 +14,7 @@
 package operator
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/log"
@@ -33,17 +34,20 @@ type StopChangefeedOperator struct {
 	removed         bool
 	finished        atomic.Bool
 	coordinatorNode *node.Info
+	backend         changefeed.Backend
 }
 
 func NewStopChangefeedOperator(cfID common.ChangeFeedID,
 	nodeID node.ID,
 	coordinatorNode *node.Info,
+	backend changefeed.Backend,
 	removed bool) *StopChangefeedOperator {
 	return &StopChangefeedOperator{
 		cfID:            cfID,
 		nodeID:          nodeID,
 		removed:         removed,
 		coordinatorNode: coordinatorNode,
+		backend:         backend,
 	}
 }
 
@@ -87,8 +91,14 @@ func (m *StopChangefeedOperator) Start() {
 }
 
 func (m *StopChangefeedOperator) PostFinish() {
-	log.Info("remove maintainer operator finished",
+	log.Info("stop maintainer operator finished",
 		zap.String("changefeed", m.cfID.String()))
+	if m.removed {
+		if err := m.backend.DeleteChangefeed(context.Background(), m.cfID); err != nil {
+			log.Warn("failed to delete changefeed",
+				zap.String("changefeed", m.cfID.String()), zap.Error(err))
+		}
+	}
 }
 
 func (m *StopChangefeedOperator) String() string {

@@ -245,10 +245,7 @@ func (m *Manager) onRemoveMaintainerRequest(msg *messaging.TargetMessage) *heart
 			}
 		}
 		// it's cascade remove, we should remove the dispatcher from all node
-		cf := NewMaintainer(cfID, m.conf, &config.ChangeFeedInfo{
-			Config: config.GetDefaultReplicaConfig(),
-		}, m.selfNode, m.stream, m.taskScheduler,
-			m.pdAPI, m.regionCache, 0)
+		cf := NewMaintainerForRemove(cfID, m.selfNode, m.stream, m.taskScheduler)
 		err := m.stream.AddPath(cfID.Name(), cf)
 		if err != nil {
 			log.Warn("add path to dynstream failed, coordinator will retry later", zap.Error(err))

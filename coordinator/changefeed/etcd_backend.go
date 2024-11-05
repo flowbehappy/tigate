@@ -243,6 +243,31 @@ func (b *EtcdBackend) ResumeChangefeed(ctx context.Context,
 	return nil
 }
 
+func (b *EtcdBackend) MarkChangefeedRemoving(ctx context.Context, id common.ChangeFeedID) error {
+	status, modVersion, err := b.etcdClient.GetChangeFeedStatus(ctx, id)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	status.IsRemoving = true
+	jobValue, err := status.Marshal()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), id.DisplayName)
+	putResp, err := b.etcdClient.GetEtcdClient().Txn(ctx,
+		[]clientv3.Cmp{clientv3.Compare(clientv3.ModRevision(jobKey), "=", modVersion)},
+		[]clientv3.Op{clientv3.OpPut(jobKey, jobValue)},
+		[]clientv3.Op{})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !putResp.Succeeded {
+		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("mark changefeed removing %s", id.DisplayName))
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func (b *EtcdBackend) UpdateChangefeedCheckpointTs(ctx context.Context, cps map[common.ChangeFeedID]uint64) error {
 	opsThen := make([]clientv3.Op, 0, 128)
 	batchSize := 0
