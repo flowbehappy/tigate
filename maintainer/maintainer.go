@@ -227,7 +227,6 @@ func (m *Maintainer) Close() {
 }
 
 func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
-	// todo: fix data race here
 	m.errLock.Lock()
 	defer m.errLock.Unlock()
 	var runningErrors []*heartbeatpb.RunningError
@@ -499,12 +498,13 @@ func (m *Maintainer) onNodeClosed(from node.ID, response *heartbeatpb.Maintainer
 }
 
 func (m *Maintainer) handleResendMessage() {
-	// resend bootstrap message
-	m.sendMessages(m.bootstrapper.ResendBootstrapMessage())
 	// resend closing message
 	if m.removing {
 		m.sendMaintainerCloseRequestToAllNode()
+		return
 	}
+	// resend bootstrap message
+	m.sendMessages(m.bootstrapper.ResendBootstrapMessage())
 	if !m.bootstrapped {
 		return
 	}

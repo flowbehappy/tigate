@@ -440,3 +440,24 @@ func (info *ChangeFeedInfo) fixMemoryQuota() {
 func (info *ChangeFeedInfo) fixScheduler(inheritV66 bool) {
 	info.Config.FixScheduler(inheritV66)
 }
+
+// ChangeFeedStatus stores information about a ChangeFeed
+// It is stored in etcd.
+type ChangeFeedStatus struct {
+	CheckpointTs uint64 `json:"checkpoint-ts"`
+	// IsRemoving indicates whether the changefeed is being removed.
+	IsRemoving bool `json:"is-removing"`
+}
+
+// Marshal returns json encoded string of ChangeFeedStatus, only contains necessary fields stored in storage
+func (status *ChangeFeedStatus) Marshal() (string, error) {
+	data, err := json.Marshal(status)
+	return string(data), cerror.WrapError(cerror.ErrMarshalFailed, err)
+}
+
+// Unmarshal unmarshals into *ChangeFeedStatus from json marshal byte slice
+func (status *ChangeFeedStatus) Unmarshal(data []byte) error {
+	err := json.Unmarshal(data, status)
+	return errors.Annotatef(
+		cerror.WrapError(cerror.ErrUnmarshalFailed, err), "Unmarshal data: %v", data)
+}

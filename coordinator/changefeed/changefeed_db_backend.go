@@ -41,5 +41,5 @@ type Backend interface {
 // ChangefeedMetaWrapper is a wrapper for the changefeed load from the DB
 type ChangefeedMetaWrapper struct {
 	Info   *config.ChangeFeedInfo
-	Status *model.ChangeFeedStatus
+	Status *config.ChangeFeedStatus
 }

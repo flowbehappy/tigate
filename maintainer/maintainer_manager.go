@@ -234,14 +234,27 @@ func (m *Manager) onRemoveMaintainerRequest(msg *messaging.TargetMessage) *heart
 	cfID := model.DefaultChangeFeedID(req.GetId())
 	_, ok := m.maintainers.Load(cfID)
 	if !ok {
-		log.Warn("ignore remove maintainer request, "+
-			"since the maintainer not found",
-			zap.String("changefeed", cfID.String()),
-			zap.Any("request", req))
-		return &heartbeatpb.MaintainerStatus{
-			ChangefeedID: req.GetId(),
-			State:        heartbeatpb.ComponentState_Stopped,
+		if !req.Cascade {
+			log.Warn("ignore remove maintainer request, "+
+				"since the maintainer not found",
+				zap.String("changefeed", cfID.String()),
+				zap.Any("request", req))
+			return &heartbeatpb.MaintainerStatus{
+				ChangefeedID: req.GetId(),
+				State:        heartbeatpb.ComponentState_Stopped,
+			}
 		}
+		// it's cascade remove, we should remove the dispatcher from all node
+		cf := NewMaintainer(cfID, m.conf, &config.ChangeFeedInfo{
+			Config: config.GetDefaultReplicaConfig(),
+		}, m.selfNode, m.stream, m.taskScheduler,
+			m.pdAPI, m.regionCache, 0)
+		err := m.stream.AddPath(cfID.ID, cf)
+		if err != nil {
+			log.Warn("add path to dynstream failed, coordinator will retry later", zap.Error(err))
+			return nil
+		}
+		m.maintainers.Store(cfID, cf)
 	}
 	log.Info("received remove maintainer request",
 		zap.String("changefeed", cfID.String()))

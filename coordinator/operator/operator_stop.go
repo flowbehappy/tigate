@@ -26,69 +26,76 @@ import (
 	"go.uber.org/zap"
 )
 
-// RemoveChangefeedOperator is an operator to remove a maintainer from a node
-type RemoveChangefeedOperator struct {
-	cfID     model.ChangeFeedID
-	nodeID   node.ID
-	removed  bool
-	finished atomic.Bool
+// StopChangefeedOperator is an operator to remove a maintainer from a node
+type StopChangefeedOperator struct {
+	cfID            model.ChangeFeedID
+	nodeID          node.ID
+	removed         bool
+	finished        atomic.Bool
+	coordinatorNode *node.Info
 }
 
-func NewRemoveChangefeedOperator(cfID model.ChangeFeedID, nodeID node.ID, removed bool) *RemoveChangefeedOperator {
-	return &RemoveChangefeedOperator{
-		cfID:    cfID,
-		nodeID:  nodeID,
-		removed: removed,
+func NewStopChangefeedOperator(cfID model.ChangeFeedID,
+	nodeID node.ID,
+	coordinatorNode *node.Info,
+	removed bool) *StopChangefeedOperator {
+	return &StopChangefeedOperator{
+		cfID:            cfID,
+		nodeID:          nodeID,
+		removed:         removed,
+		coordinatorNode: coordinatorNode,
 	}
 }
 
-func (m *RemoveChangefeedOperator) Check(from node.ID, status *heartbeatpb.MaintainerStatus) {
-	if !m.finished.Load() && from == m.nodeID &&
-		status.State != heartbeatpb.ComponentState_Working {
+func (m *StopChangefeedOperator) Check(_ node.ID, status *heartbeatpb.MaintainerStatus) {
+	if !m.finished.Load() && status.State != heartbeatpb.ComponentState_Working {
 		log.Info("maintainer report non-working status",
 			zap.String("maintainer", m.cfID.String()))
 		m.finished.Store(true)
 	}
 }
 
-func (m *RemoveChangefeedOperator) Schedule() *messaging.TargetMessage {
+func (m *StopChangefeedOperator) Schedule() *messaging.TargetMessage {
 	return changefeed.RemoveMaintainerMessage(m.cfID.ID, m.nodeID, true, m.removed)
 }
 
 // OnNodeRemove is called when node offline, and the maintainer must already move to absent status and will be scheduled again
-func (m *RemoveChangefeedOperator) OnNodeRemove(n node.ID) {
+func (m *StopChangefeedOperator) OnNodeRemove(n node.ID) {
 	if n == m.nodeID {
-		m.finished.Store(true)
+		log.Info("node is stopped during stop maintainer, schedule stop command to coordinator node",
+			zap.String("changefeed", m.cfID.String()),
+			zap.String("node", n.String()))
+		m.nodeID = m.coordinatorNode.ID
 	}
 }
 
-func (m *RemoveChangefeedOperator) ID() model.ChangeFeedID {
+func (m *StopChangefeedOperator) ID() model.ChangeFeedID {
 	return m.cfID
 }
 
-func (m *RemoveChangefeedOperator) IsFinished() bool {
+func (m *StopChangefeedOperator) IsFinished() bool {
 	return m.finished.Load()
 }
 
-func (m *RemoveChangefeedOperator) OnTaskRemoved() {
+func (m *StopChangefeedOperator) OnTaskRemoved() {
 	m.finished.Store(true)
 }
 
-func (m *RemoveChangefeedOperator) Start() {
+func (m *StopChangefeedOperator) Start() {
 	log.Info("start remove maintainer operator",
 		zap.String("changefeed", m.cfID.String()))
 }
 
-func (m *RemoveChangefeedOperator) PostFinish() {
+func (m *StopChangefeedOperator) PostFinish() {
 	log.Info("remove maintainer operator finished",
 		zap.String("changefeed", m.cfID.String()))
 }
 
-func (m *RemoveChangefeedOperator) String() string {
+func (m *StopChangefeedOperator) String() string {
 	return fmt.Sprintf("remove maintainer operator: %s, dest %s",
 		m.cfID, m.nodeID)
 }
 
-func (m *RemoveChangefeedOperator) Type() string {
+func (m *StopChangefeedOperator) Type() string {
 	return "remove"
 }

@@ -31,9 +31,9 @@ type Coordinator interface {
 	// Run handles messages
 	Run(ctx context.Context) error
 	// ListChangefeeds returns all changefeeds
-	ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedInfo, []*model.ChangeFeedStatus, error)
+	ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedInfo, []*config.ChangeFeedStatus, error)
 	// GetChangefeed returns a changefeed
-	GetChangefeed(ctx context.Context, id model.ChangeFeedID) (*config.ChangeFeedInfo, *model.ChangeFeedStatus, error)
+	GetChangefeed(ctx context.Context, id model.ChangeFeedID) (*config.ChangeFeedInfo, *config.ChangeFeedStatus, error)
 	// CreateChangefeed creates a new changefeed
 	CreateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error
 	// RemoveChangefeed gets a changefeed

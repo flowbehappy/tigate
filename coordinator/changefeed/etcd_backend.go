@@ -61,7 +61,7 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[model.ChangeFe
 			cfMap[cfID] = meta
 		}
 		if isStatus {
-			status := &model.ChangeFeedStatus{}
+			status := &config.ChangeFeedStatus{}
 			err = status.Unmarshal(kv.Value)
 			if err != nil {
 				log.Warn("failed to unmarshal change feed Status, ignore",
@@ -90,10 +90,9 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[model.ChangeFe
 		}
 		if meta.Status == nil {
 			log.Warn("failed to load change feed Status, add a new one")
-			status := &model.ChangeFeedStatus{
-				CheckpointTs:      meta.Info.StartTs,
-				MinTableBarrierTs: meta.Info.StartTs,
-				AdminJobType:      model.AdminNone,
+			status := &config.ChangeFeedStatus{
+				CheckpointTs: meta.Info.StartTs,
+				IsRemoving:   false,
 			}
 			data, err := json.Marshal(status)
 			if err != nil {

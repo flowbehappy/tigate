@@ -37,11 +37,13 @@ type Controller struct {
 	runningQueue  operator.OperatorQueue[model.ChangeFeedID, *heartbeatpb.MaintainerStatus]
 	batchSize     int
 	messageCenter messaging.MessageCenter
+	selfNode      *node.Info
 
 	lock sync.RWMutex
 }
 
 func NewOperatorController(mc messaging.MessageCenter,
+	selfNode *node.Info,
 	db *changefeed.ChangefeedDB,
 	batchSize int) *Controller {
 	oc := &Controller{
@@ -50,6 +52,7 @@ func NewOperatorController(mc messaging.MessageCenter,
 		messageCenter: mc,
 		batchSize:     batchSize,
 		changefeedDB:  db,
+		selfNode:      selfNode,
 	}
 	return oc
 }
@@ -122,7 +125,7 @@ func (oc *Controller) StopChangefeed(cfID model.ChangeFeedID, remove bool) {
 		old.OnTaskRemoved()
 		delete(oc.operators, old.ID())
 	}
-	op := NewRemoveChangefeedOperator(cfID, scheduledNode, remove)
+	op := NewStopChangefeedOperator(cfID, scheduledNode, oc.selfNode, remove)
 	oc.pushOperator(op)
 }
 
