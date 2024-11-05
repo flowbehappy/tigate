@@ -271,7 +271,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 	}
 
 	d := dispatcher.NewDispatcher(
-		e.changefeedID.String(),
+		e.changefeedID,
 		id, tableSpan, e.sink,
 		startTs, e.dispatcherActionChan, e.blockStatusesChan,
 		e.filter, schemaID, e.schemaIDToDispatchers, &syncPointInfo)
