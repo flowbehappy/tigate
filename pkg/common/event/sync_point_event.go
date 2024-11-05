@@ -8,6 +8,8 @@ import (
 
 // Implement Event / FlushEvent / BlockEvent interface
 type SyncPointEvent struct {
+	// State is the state of sender when sending this event.
+	State          EventSenderState    `json:"state"`
 	DispatcherID   common.DispatcherID `json:"dispatcher_id"`
 	CommitTs       uint64              `json:"commit_ts"`
 	PostTxnFlushed []func()            `msg:"-"`
@@ -30,7 +32,11 @@ func (e *SyncPointEvent) GetStartTs() common.Ts {
 }
 
 func (e *SyncPointEvent) GetSize() int64 {
-	return 0
+	return int64(e.State.GetSize() + e.DispatcherID.GetSize() + 8)
+}
+
+func (e *SyncPointEvent) IsPaused() bool {
+	return e.State.IsPaused()
 }
 
 func (e SyncPointEvent) Marshal() ([]byte, error) {
@@ -43,7 +49,7 @@ func (e SyncPointEvent) GetSeq() uint64 {
 	return 0
 }
 
-func (e SyncPointEvent) Unmarshal(data []byte) error {
+func (e *SyncPointEvent) Unmarshal(data []byte) error {
 	// TODO: optimize it
 	return json.Unmarshal(data, e)
 }

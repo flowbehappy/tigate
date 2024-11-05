@@ -33,6 +33,7 @@ func TestDDLEvent(t *testing.T) {
 
 	reverseEvent := &DDLEvent{}
 	err = reverseEvent.Unmarshal(data)
+	reverseEvent.eventSize = 0
 	require.Nil(t, err)
 	require.Equal(t, ddlEvent, reverseEvent)
 }

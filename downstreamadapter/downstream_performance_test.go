@@ -38,7 +38,7 @@ func initContext(serverId node.ID) {
 
 func pushDataIntoDispatchers(dispatcherIDSet map[common.DispatcherID]interface{}, helper *commonEvent.EventTestHelper) {
 	// 因为开了 dryrun，所以不用避免冲突，随便写'
-	dispatcherEventsDynamicStream := dispatcher.GetDispatcherEventsDynamicStream()
+	dispatcherEventsDynamicStream := dispatcher.GetEventsDynamicStream()
 	idx := 0
 	var mutex sync.Mutex
 	var wg sync.WaitGroup

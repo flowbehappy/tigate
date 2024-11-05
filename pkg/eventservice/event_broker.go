@@ -141,11 +141,12 @@ func (c *eventBroker) sendWatermark(
 ) {
 	c.emitSyncPointEventIfNeeded(watermark, d, server)
 
+	re := pevent.NewResolvedEvent(watermark, d.info.GetID())
 	resolvedEvent := newWrapResolvedEvent(
 		server,
-		pevent.ResolvedEvent{
-			DispatcherID: d.info.GetID(),
-			ResolvedTs:   watermark})
+		re,
+		d.getEventSenderState())
+
 	select {
 	case c.messageCh <- resolvedEvent:
 		if counter != nil {
@@ -252,7 +253,7 @@ func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e pevent.DD
 	e.DispatcherID = d.info.GetID()
 	e.Seq = d.seq.Add(1)
 	log.Info("send ddl event to dispatcher", zap.Stringer("dispatcher", d.info.GetID()), zap.String("query", e.Query), zap.Int64("table", e.TableID), zap.Uint64("commitTs", e.FinishedTs), zap.Uint64("seq", e.Seq))
-	ddlEvent := newWrapDDLEvent(remoteID, &e)
+	ddlEvent := newWrapDDLEvent(remoteID, &e, d.getEventSenderState())
 	select {
 	case <-ctx.Done():
 		return
@@ -318,21 +319,19 @@ func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 	c.messageCh <- wrapE
 }
 
-func (c *eventBroker) sendSyncPointEvent(server node.ID, ts uint64, dispatcherID common.DispatcherID) {
-	syncPointEvent := newWrapSyncPointEvent(
-		server,
-		&pevent.SyncPointEvent{
-			DispatcherID: dispatcherID,
-			CommitTs:     ts})
-	c.messageCh <- syncPointEvent
-}
-
 // emitSyncPointEventIfNeeded emits a sync point event if the current ts is greater than the next sync point, and updates the next sync point.
 // We need call this function every time we send a event(whether dml/ddl/resolvedTs),
 // thus to ensure the sync point event is in correct order for each dispatcher.
 func (c *eventBroker) emitSyncPointEventIfNeeded(ts uint64, d *dispatcherStat, remoteID node.ID) {
 	if d.enableSyncPoint && ts > d.nextSyncPoint {
-		c.sendSyncPointEvent(remoteID, d.nextSyncPoint, d.info.GetID())
+		// Send the sync point event.
+		syncPointEvent := newWrapSyncPointEvent(
+			remoteID,
+			&pevent.SyncPointEvent{
+				DispatcherID: d.info.GetID(),
+				CommitTs:     ts},
+			d.getEventSenderState())
+		c.messageCh <- syncPointEvent
 		d.nextSyncPoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(d.nextSyncPoint).Add(d.syncPointInterval))
 	}
 }
@@ -399,7 +398,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		}
 		dml.Seq = task.dispatcherStat.seq.Add(1)
 		c.emitSyncPointEventIfNeeded(dml.CommitTs, task.dispatcherStat, remoteID)
-		c.messageCh <- newWrapDMLEvent(remoteID, dml)
+		c.messageCh <- newWrapDMLEvent(remoteID, dml, task.dispatcherStat.getEventSenderState())
 		task.dispatcherStat.watermark.Store(dml.CommitTs)
 		task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(dml.Len()))
 	}
@@ -776,6 +775,13 @@ func newDispatcherStat(
 	return dispStat
 }
 
+func (a *dispatcherStat) getEventSenderState() pevent.EventSenderState {
+	if a.isRunning.Load() {
+		return pevent.EventSenderStateNormal
+	}
+	return pevent.EventSenderStatePaused
+}
+
 func (a *dispatcherStat) updateTableInfo(tableInfo *common.TableInfo) {
 	a.startTableInfo.Store(tableInfo)
 }
@@ -858,7 +864,8 @@ type wrapEvent struct {
 	postSendFunc func()
 }
 
-func newWrapDMLEvent(serverID node.ID, e *pevent.DMLEvent) wrapEvent {
+func newWrapDMLEvent(serverID node.ID, e *pevent.DMLEvent, state pevent.EventSenderState) wrapEvent {
+	e.State = state
 	return wrapEvent{
 		serverID: serverID,
 		e:        e,
@@ -866,7 +873,8 @@ func newWrapDMLEvent(serverID node.ID, e *pevent.DMLEvent) wrapEvent {
 	}
 }
 
-func newWrapResolvedEvent(serverID node.ID, e pevent.ResolvedEvent) wrapEvent {
+func newWrapResolvedEvent(serverID node.ID, e pevent.ResolvedEvent, state pevent.EventSenderState) wrapEvent {
+	e.State = state
 	return wrapEvent{
 		serverID: serverID,
 		e:        &e,
@@ -874,7 +882,8 @@ func newWrapResolvedEvent(serverID node.ID, e pevent.ResolvedEvent) wrapEvent {
 	}
 }
 
-func newWrapDDLEvent(serverID node.ID, e *pevent.DDLEvent) wrapEvent {
+func newWrapDDLEvent(serverID node.ID, e *pevent.DDLEvent, state pevent.EventSenderState) wrapEvent {
+	e.State = state
 	return wrapEvent{
 		serverID: serverID,
 		e:        e,
@@ -882,7 +891,8 @@ func newWrapDDLEvent(serverID node.ID, e *pevent.DDLEvent) wrapEvent {
 	}
 }
 
-func newWrapSyncPointEvent(serverID node.ID, e *pevent.SyncPointEvent) wrapEvent {
+func newWrapSyncPointEvent(serverID node.ID, e *pevent.SyncPointEvent, state pevent.EventSenderState) wrapEvent {
+	e.State = state
 	return wrapEvent{
 		serverID: serverID,
 		e:        e,

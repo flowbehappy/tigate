@@ -442,7 +442,7 @@ func TestDynamicStreamDrop(t *testing.T) {
 
 		addPath := func(ds incDS) {
 			_ds = ds
-			ds.AddPath("p1", struct{}{}, AreaSettings{MaxPendingSize: 1})
+			ds.AddPath("p1", struct{}{}, AreaSettings{MaxPendingSize: 1, FeedbackInterval: 1 * time.Second})
 		}
 		addEvent := func(ds incDS, wg *sync.WaitGroup) {
 			ds.In() <- newIncEvent("p1", total, 1, wg)
@@ -452,17 +452,17 @@ func TestDynamicStreamDrop(t *testing.T) {
 		check(option, addPath, addEvent)
 		assert.Equal(t, 1, total.Load())
 
-		feeds := make([]Feedback[int, string, struct{}], 0)
+		feedbacks := make([]Feedback[int, string, struct{}], 0)
 		for {
-			feed, ok := <-_ds.Feedback()
+			feedback, ok := <-_ds.Feedback()
 			if !ok {
 				break
 			}
-			feeds = append(feeds, feed)
+			feedbacks = append(feedbacks, feedback)
 		}
-		assert.Equal(t, 1, len(feeds))
-		assert.Equal(t, "p1", feeds[0].Path)
-		assert.True(t, feeds[0].Pause)
+		assert.Equal(t, 1, len(feedbacks))
+		assert.Equal(t, "p1", feedbacks[0].Path)
+		assert.True(t, feedbacks[0].Pause)
 	}
 }
 

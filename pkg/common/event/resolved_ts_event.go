@@ -74,17 +74,35 @@ func (b *BatchResolvedEvent) GetSize() int64 {
 	return 0
 }
 
-// ResolvedEvent represents a resolvedTs event of a dispatcher.
-type ResolvedEvent struct {
-	// Version is the version of the ResolvedEvent struct.
-	Version      byte
-	ResolvedTs   common.Ts
-	DispatcherID common.DispatcherID
+// No one will use this method, just for implementing Event interface.
+func (b *BatchResolvedEvent) IsPaused() bool {
+	return false
 }
 
 const (
 	ResolvedEventVersion = 0
 )
+
+// ResolvedEvent represents a resolvedTs event of a dispatcher.
+type ResolvedEvent struct {
+	// Version is the version of the ResolvedEvent struct.
+	Version    byte
+	ResolvedTs common.Ts
+	// State is the state of sender when sending this event.
+	State        EventSenderState
+	DispatcherID common.DispatcherID
+}
+
+func NewResolvedEvent(
+	resolvedTs common.Ts,
+	dispatcherID common.DispatcherID) ResolvedEvent {
+	return ResolvedEvent{
+		Version:      ResolvedEventVersion,
+		ResolvedTs:   resolvedTs,
+		State:        EventSenderStateNormal,
+		DispatcherID: dispatcherID,
+	}
+}
 
 func (e ResolvedEvent) GetType() int {
 	return TypeResolvedEvent
@@ -139,6 +157,8 @@ func (e ResolvedEvent) encodeV0() ([]byte, error) {
 	offset += 1
 	binary.BigEndian.PutUint64(data[offset:], uint64(e.ResolvedTs))
 	offset += 8
+	copy(data[offset:], e.State.encode())
+	offset += e.State.GetSize()
 	copy(data[offset:], e.DispatcherID.Marshal())
 	return data, nil
 }
@@ -150,6 +170,8 @@ func (e *ResolvedEvent) decodeV0(data []byte) error {
 	offset := 1 // Skip version byte
 	e.ResolvedTs = common.Ts(binary.BigEndian.Uint64(data[offset:]))
 	offset += 8
+	e.State.decode(data[offset:])
+	offset += e.State.GetSize()
 	return e.DispatcherID.Unmarshal(data[offset:])
 }
 
@@ -159,5 +181,9 @@ func (e ResolvedEvent) String() string {
 
 // Update GetSize method to reflect the new structure
 func (e ResolvedEvent) GetSize() int64 {
-	return int64(1 + 8 + 16) // Version(1) + ResolvedTs(8) + DispatcherID(16)
+	return int64(1 + 8 + e.State.GetSize() + e.DispatcherID.GetSize()) // Version(1) + ResolvedTs(8) + State(1) + DispatcherID(16)
+}
+
+func (e ResolvedEvent) IsPaused() bool {
+	return e.State.IsPaused()
 }
