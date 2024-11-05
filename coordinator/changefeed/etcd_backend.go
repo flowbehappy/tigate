@@ -73,9 +73,23 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[common.ChangeF
 					zap.String("key", key), zap.Error(err))
 				continue
 			}
-			cfMap[detail.ChangefeedID] = &ChangefeedMetaWrapper{
-				Info: detail,
+			// we can not load the changefeed name from the value, it must an old version info
+			if detail.ChangefeedID.Name() == "" {
+				log.Warn("load a old version change feed Info, migrate it to new version",
+					zap.String("key", key))
+				detail.ChangefeedID = common.NewChangeFeedIDWithDisplayName(common.ChangeFeedDisplayName{
+					Name:      cf,
+					Namespace: ns,
+				})
+				if data, err := detail.Marshal(); err != nil {
+					log.Warn("failed to marshal change feed Info, ignore",
+						zap.Error(err))
+				} else {
+					_, _ = b.etcdClient.GetEtcdClient().Put(ctx, key, data)
+				}
 			}
+
+			cfMap[detail.ChangefeedID] = &ChangefeedMetaWrapper{Info: detail}
 		}
 	}
 	for id, wrapper := range cfMap {

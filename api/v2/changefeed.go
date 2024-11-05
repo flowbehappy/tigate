@@ -79,6 +79,13 @@ func (h *OpenAPIV2) createChangefeed(c *gin.Context) {
 	if cfg.Namespace == "" {
 		cfg.Namespace = model.DefaultNamespace
 	}
+	changefeedID.DisplayName.Namespace = cfg.Namespace
+	// verify changefeed namespace
+	if err := model.ValidateNamespace(changefeedID.Namespace()); err != nil {
+		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack(
+			"invalid namespace: %s", cfg.ID))
+		return
+	}
 
 	ts, logical, err := h.server.GetPdClient().GetTS(ctx)
 	if err != nil {
