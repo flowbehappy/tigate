@@ -485,6 +485,7 @@ func (m *Maintainer) onBootstrapDone(cachedResp map[node.ID]*heartbeatpb.Maintai
 	barrier, err := m.controller.FinishBootstrap(cachedResp)
 	if err != nil {
 		m.handleError(err)
+		return
 	}
 	m.barrier = barrier
 	m.bootstrapped = true
@@ -505,11 +506,10 @@ func (m *Maintainer) handleResendMessage() {
 	if m.removing {
 		m.sendMaintainerCloseRequestToAllNode()
 	}
-	if !m.bootstrapped {
-		return
+	if m.barrier != nil {
+		// resend barrier ack messages
+		m.sendMessages(m.barrier.Resend())
 	}
-	// resend barrier ack messages
-	m.sendMessages(m.barrier.Resend())
 }
 
 func (m *Maintainer) tryCloseChangefeed() bool {
