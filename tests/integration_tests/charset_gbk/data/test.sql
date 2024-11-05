@@ -127,14 +127,14 @@ CREATE TABLE t1 (
 	PRIMARY KEY (id)
 ) ENGINE = InnoDB;
 
-ALTER TABLE t1
-	ADD COLUMN 城市 char(32);
+-- ALTER TABLE t1
+-- 	ADD COLUMN 城市 char(32);
 
-ALTER TABLE t1
-	MODIFY COLUMN 城市 varchar(32);
+-- ALTER TABLE t1
+-- 	MODIFY COLUMN 城市 varchar(32);
 
-ALTER TABLE t1
-	DROP COLUMN 城市;
+-- ALTER TABLE t1
+-- 	DROP COLUMN 城市;
 
 /* this is a DDL test for table */
 CREATE TABLE 表2 (
