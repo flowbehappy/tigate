@@ -177,7 +177,6 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 		}
 		return
 	}
-
 	action := dispatcherStatus.GetAction()
 	if action != nil {
 		if action.CommitTs == pendingEvent.GetCommitTs() {
@@ -388,7 +387,8 @@ func (d *Dispatcher) reset() {
 	}
 }
 
-// 1.If the event is a single table DDL, it will be added to the sink for writing to downstream(async). If the ddl leads to add new tables or drop tables, it should send heartbeat to maintainer
+// 1.If the event is a single table DDL, it will be added to the sink for writing to downstream(async).
+// If the ddl leads to add new tables or drop tables, it should send heartbeat to maintainer
 // 2. If the event is a multi-table DDL / sync point Event, it will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
 func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 	if !shouldBlock(event) {

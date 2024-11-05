@@ -180,22 +180,32 @@ func TestDispatcherHandleEvents(t *testing.T) {
 			InfluenceType: pevent.InfluenceTypeNormal,
 			TableIDs:      []int64{tableInfo.ID},
 		},
+		NeedAddedTables: []pevent.Table{
+			{
+				SchemaID: tableInfo.SchemaID,
+				TableID:  tableInfo.ID,
+			},
+		},
 	}
 	dispatcherEvent = NewDispatcherEvent(ddlEvent)
 	dispatcher.HandleEvents([]DispatcherEvent{dispatcherEvent})
-	require.Equal(t, 0, len(sink.blockEvents))
+	require.Equal(t, ddlEvent, dispatcher.blockStatus.blockPendingEvent)
+	require.Equal(t, 1, len(sink.blockEvents))
 
-	// 6. Dispatcher is ready, handle action event, ddl event will be sent to sink
+	// 6. Dispatcher is ready, handle action event
 	actionEvent := &heartbeatpb.DispatcherStatus{
+		InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
+			InfluenceType: heartbeatpb.InfluenceType_Normal,
+			DispatcherIDs: []*heartbeatpb.DispatcherID{dispatcherID.ToPB()},
+		},
 		Action: &heartbeatpb.DispatcherAction{
 			Action:      heartbeatpb.Action_Write,
 			CommitTs:    ddlEvent.FinishedTs,
 			IsSyncPoint: false,
 		},
 	}
+
 	dispatcher.HandleDispatcherStatus(actionEvent)
-	require.Equal(t, 1, len(sink.blockEvents))
-	require.Equal(t, ddlEvent, sink.blockEvents[0])
 	sink.flushBlockEvents()
 	require.Equal(t, dispatcher.GetCheckpointTs(), ddlEvent.FinishedTs-1)
 }

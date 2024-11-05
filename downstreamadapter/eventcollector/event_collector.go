@@ -116,7 +116,6 @@ func (c *EventCollector) processFeedback(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case feedback := <-c.ds.Feedback():
-			log.Info("fizz received feedback", zap.String("feedback", feedback.String()))
 			if feedback.Pause {
 				c.dispatcherRequestChan.In() <- DispatcherRequest{
 					Dispatcher: feedback.Dest,
