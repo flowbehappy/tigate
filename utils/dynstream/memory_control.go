@@ -84,6 +84,7 @@ func (as *areaMemStat[A, P, T, D, H]) appendEvent(
 	replaced := false
 	if isPeriodicSignal(event) {
 		back, ok := path.pendingQueue.BackRef()
+
 		if ok && isPeriodicSignal(*back) {
 			// Replace the repeated signal.
 			// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
@@ -131,7 +132,6 @@ func (as *areaMemStat[A, P, T, D, H]) shouldDropEvent(
 	}
 	// If event's timestamp is not the smallest among all the paths in the area, drop it.
 	if event.timestamp > top.frontTimestamp {
-
 		if !isPeriodicSignal(event) {
 			handler.OnDrop(event.event)
 		}
@@ -141,7 +141,6 @@ func (as *areaMemStat[A, P, T, D, H]) shouldDropEvent(
 	// Drop the events of the largest pending size path to find a place for the new event.
 LOOP:
 	for exceedMaxPendingSize() {
-
 		longestPath, ok := path.streamAreaInfo.pathSizeHeap.PeekTop()
 		if !ok {
 			log.Panic("pathSizeHeap is empty, but exceedMaxPendingSize, it should not happen",

@@ -91,7 +91,6 @@ func TestAreaMemStatAppendEvent(t *testing.T) {
 	require.Equal(t, 2, path1.pendingQueue.Length())
 	back, _ := path1.pendingQueue.BackRef()
 	require.Equal(t, periodicEvent.timestamp, back.timestamp)
-
 	periodicEvent2 := eventWrap[int, string, *mockEvent, any, *mockHandler]{
 		event:     &mockEvent{id: 3, path: "test-path"},
 		timestamp: 3,

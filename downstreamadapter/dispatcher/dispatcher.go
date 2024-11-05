@@ -547,7 +547,6 @@ func (d *Dispatcher) addToDynamicStream() {
 	if err != nil {
 		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
 	}
-
 	dispatcherStatusDynamicStream := GetDispatcherStatusDynamicStream()
 	err = dispatcherStatusDynamicStream.AddPath(d.id, d)
 	if err != nil {

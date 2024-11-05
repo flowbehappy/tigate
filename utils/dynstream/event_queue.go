@@ -246,14 +246,12 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 		} else {
 			group := DefaultEventType.DataGroup
 			for i := 0; i < batchSize; i++ {
-				front, ok := path.pendingQueue.FrontRef()
+				front, ok := path.pendingQueue.PopFront()
 				if !ok || (group != DefaultEventType.DataGroup && group != front.eventType.DataGroup) {
 					break
 				}
 				group = front.eventType.DataGroup
 				buf = append(buf, front.event)
-
-				path.pendingQueue.PopFront()
 				path.pendingSize -= front.eventSize
 				q.totalPendingLength.Add(-1)
 

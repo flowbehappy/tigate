@@ -291,6 +291,7 @@ func GetEventDynamicStream() dynstream.DynamicStream[string, common.DispatcherID
 		eventDynamicStreamOnce.Do(func() {
 			option := dynstream.NewOption()
 			// Enable memory control for dispatcher events dynamic stream.
+			log.Info("New EventDynamicStream, memory control is enabled")
 			option.EnableMemoryControl = true
 			eventDynamicStream = dynstream.NewDynamicStream(&EventsHandler{}, option)
 			eventDynamicStream.Start()
