@@ -375,6 +375,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		for _, e := range ddlEvents {
 			c.sendDDL(ctx, remoteID, e, task.dispatcherStat)
 		}
+		task.dispatcherStat.watermark.Store(dataRange.EndTs)
 		// After all the events are sent, we send the watermark to the dispatcher.
 		c.sendWatermark(remoteID,
 			task.dispatcherStat,
@@ -406,7 +407,6 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		dml.Seq = task.dispatcherStat.seq.Add(1)
 		c.emitSyncPointEventIfNeeded(dml.CommitTs, task.dispatcherStat, remoteID)
 		c.messageCh <- newWrapDMLEvent(remoteID, dml, task.dispatcherStat.getEventSenderState())
-		task.dispatcherStat.watermark.Store(dml.CommitTs)
 		task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(dml.Len()))
 	}
 

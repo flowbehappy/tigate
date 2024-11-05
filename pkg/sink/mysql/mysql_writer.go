@@ -270,6 +270,9 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 	case commonEvent.InfluenceTypeNormal:
 		tableIds = append(tableIds, relatedTables.TableIDs...)
 	case commonEvent.InfluenceTypeDB:
+		if w.tableSchemaStore == nil {
+			log.Panic("table schema store is nil")
+		}
 		ids := w.tableSchemaStore.GetTableIdsByDB(relatedTables.SchemaID)
 		tableIds = append(tableIds, ids...)
 	case commonEvent.InfluenceTypeAll:
