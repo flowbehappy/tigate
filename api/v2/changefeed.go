@@ -417,15 +417,15 @@ func (h *OpenAPIV2) pauseChangefeed(c *gin.Context) {
 // @Router	/api/v2/changefeeds/{changefeed_id}/resume [post]
 func (h *OpenAPIV2) resumeChangefeed(c *gin.Context) {
 	ctx := c.Request.Context()
-	changefeedIDReprestatition := common.NewChangeFeedDisplayName(c.Param(api.APIOpVarChangefeedID), model.DefaultNamespace)
-	if err := model.ValidateChangefeedID(changefeedIDReprestatition.Name); err != nil {
+	changefeedDisplayName := common.NewChangeFeedDisplayName(c.Param(api.APIOpVarChangefeedID), model.DefaultNamespace)
+	if err := model.ValidateChangefeedID(changefeedDisplayName.Name); err != nil {
 		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
-			changefeedIDReprestatition.Name))
+			changefeedDisplayName.Name))
 		return
 	}
-	if err := model.ValidateChangefeedID(changefeedIDReprestatition.Name); err != nil {
+	if err := model.ValidateChangefeedID(changefeedDisplayName.Name); err != nil {
 		_ = c.Error(errors.ErrAPIInvalidParam.GenWithStack("invalid changefeed_id: %s",
-			changefeedIDReprestatition.Name))
+			changefeedDisplayName.Name))
 		return
 	}
 
@@ -439,7 +439,7 @@ func (h *OpenAPIV2) resumeChangefeed(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	cfInfo, status, err := coordinator.GetChangefeed(c, changefeedIDReprestatition)
+	cfInfo, status, err := coordinator.GetChangefeed(c, changefeedDisplayName)
 	if err != nil {
 		_ = c.Error(err)
 		return
