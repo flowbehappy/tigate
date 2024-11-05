@@ -168,8 +168,8 @@ func (c *coordinator) ListChangefeeds(ctx context.Context) ([]*config.ChangeFeed
 	return c.controller.ListChangefeeds(ctx)
 }
 
-func (c *coordinator) GetChangefeed(ctx context.Context, idRepresentation common.ChangeFeedIDRepresentation) (*config.ChangeFeedInfo, *model.ChangeFeedStatus, error) {
-	return c.controller.GetChangefeed(ctx, idRepresentation)
+func (c *coordinator) GetChangefeed(ctx context.Context, changefeedDisplayName common.ChangeFeedDisplayName) (*config.ChangeFeedInfo, *model.ChangeFeedStatus, error) {
+	return c.controller.GetChangefeed(ctx, changefeedDisplayName)
 }
 
 func shouldRunChangefeed(state model.FeedState) bool {

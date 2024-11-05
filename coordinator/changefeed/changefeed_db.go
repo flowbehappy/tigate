@@ -27,8 +27,8 @@ import (
 
 // ChangefeedDB is an in memory data struct that maintains all changefeeds
 type ChangefeedDB struct {
-	changefeeds               map[common.ChangeFeedID]*Changefeed
-	changefeedRepresentations map[common.ChangeFeedIDRepresentation]common.ChangeFeedID
+	changefeeds            map[common.ChangeFeedID]*Changefeed
+	changefeedDisplayNames map[common.ChangeFeedDisplayName]common.ChangeFeedID
 
 	nodeTasks   map[node.ID]map[common.ChangeFeedID]*Changefeed
 	absent      map[common.ChangeFeedID]*Changefeed
@@ -42,8 +42,8 @@ type ChangefeedDB struct {
 
 func NewChangefeedDB() *ChangefeedDB {
 	db := &ChangefeedDB{
-		changefeeds:               make(map[common.ChangeFeedID]*Changefeed),
-		changefeedRepresentations: make(map[common.ChangeFeedIDRepresentation]common.ChangeFeedID),
+		changefeeds:            make(map[common.ChangeFeedID]*Changefeed),
+		changefeedDisplayNames: make(map[common.ChangeFeedDisplayName]common.ChangeFeedID),
 
 		nodeTasks:   make(map[node.ID]map[common.ChangeFeedID]*Changefeed),
 		absent:      make(map[common.ChangeFeedID]*Changefeed),
@@ -83,7 +83,7 @@ func (db *ChangefeedDB) AddReplicatingMaintainer(task *Changefeed, nodeID node.I
 
 	db.changefeeds[task.ID] = task
 	db.replicating[task.ID] = task
-	db.changefeedRepresentations[task.ID.Representation] = task.ID
+	db.changefeedDisplayNames[task.ID.DisplayName] = task.ID
 	db.updateNodeMap("", nodeID, task)
 }
 
@@ -248,11 +248,11 @@ func (db *ChangefeedDB) GetByID(id common.ChangeFeedID) *Changefeed {
 	return db.changefeeds[id]
 }
 
-func (db *ChangefeedDB) GetByIDRepresentation(id common.ChangeFeedIDRepresentation) *Changefeed {
+func (db *ChangefeedDB) GetByChangefeedDisplayName(displayName common.ChangeFeedDisplayName) *Changefeed {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
-	return db.changefeeds[db.changefeedRepresentations[id]]
+	return db.changefeeds[db.changefeedDisplayNames[displayName]]
 }
 
 // Resume moves a changefeed to the absent map, and waiting for scheduling
@@ -372,7 +372,7 @@ func (db *ChangefeedDB) updateNodeMap(old, new node.ID, task *Changefeed) {
 // addAbsentChangefeedUnLock adds the replica set to the absent map
 func (db *ChangefeedDB) addAbsentChangefeedUnLock(tasks ...*Changefeed) {
 	for _, task := range tasks {
-		db.changefeedRepresentations[task.ID.Representation] = task.ID
+		db.changefeedDisplayNames[task.ID.DisplayName] = task.ID
 		db.changefeeds[task.ID] = task
 		db.absent[task.ID] = task
 	}

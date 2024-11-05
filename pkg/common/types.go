@@ -151,39 +151,41 @@ func (a DispatcherAction) String() string {
 	return fmt.Sprintf("dispatcherID: %s, action: %s", a.DispatcherID, a.Action.String())
 }
 
-// 太长了，想个好的
-type ChangeFeedIDRepresentation struct {
+// ChangeFeedDisplayName represents the user-friendly name and namespace of a changefeed.
+// This structure is used for external queries and display purposes.
+type ChangeFeedDisplayName struct {
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
 }
 
-func NewChangeFeedIDRepresentation(name string, namespace string) ChangeFeedIDRepresentation {
-	return ChangeFeedIDRepresentation{
+func NewChangeFeedDisplayName(name string, namespace string) ChangeFeedDisplayName {
+	return ChangeFeedDisplayName{
 		Name:      name,
 		Namespace: namespace,
 	}
 }
 
-func (r ChangeFeedIDRepresentation) String() string {
+func (r ChangeFeedDisplayName) String() string {
 	return r.Namespace + "/" + r.Name
 }
 
-// 重新写一下，主要表示 representation 用来外界查询时候，id 用于内部传递，保证性能
 // ChangefeedID is the unique identifier of a changefeed.
-// It can be specified the name of changefeedID, but the core id for internal use is a GID.
-// The name is just for user-friendly display.
+// GID is the inner unique identifier of a changefeed.
+// we can use Id to represent the changefeedID in performance-critical scenarios.
+// DisplayName is the user-friendly expression of a changefeed.
+// ChangefeedID can be specified the name of changefeedID.
 // If the name is not specified, it will be the id in string format.
 // We ensure whether the id or the representation is both unique in the cluster.
 type ChangeFeedID struct {
-	Id             GID                        `json:"id"`
-	Representation ChangeFeedIDRepresentation `json:"representation"`
+	Id          GID                   `json:"id"`
+	DisplayName ChangeFeedDisplayName `json:"display"`
 }
 
 func NewChangefeedID() ChangeFeedID {
 	cfID := ChangeFeedID{
 		Id: NewGID(),
 	}
-	cfID.Representation = ChangeFeedIDRepresentation{
+	cfID.DisplayName = ChangeFeedDisplayName{
 		Name:      cfID.Id.String(),
 		Namespace: DefaultNamespace,
 	}
@@ -193,7 +195,7 @@ func NewChangefeedID() ChangeFeedID {
 func NewChangeFeedIDWithName(name string) ChangeFeedID {
 	return ChangeFeedID{
 		Id: NewGID(),
-		Representation: ChangeFeedIDRepresentation{
+		DisplayName: ChangeFeedDisplayName{
 			Name:      name,
 			Namespace: DefaultNamespace,
 		},
@@ -201,15 +203,15 @@ func NewChangeFeedIDWithName(name string) ChangeFeedID {
 }
 
 func (cfID ChangeFeedID) String() string {
-	return fmt.Sprintf("changefeedID representation: %s, id: %s", cfID.Representation.String(), cfID.Id.String())
+	return fmt.Sprintf("changefeedID representation: %s, id: %s", cfID.DisplayName.String(), cfID.Id.String())
 }
 
 func (cfID ChangeFeedID) Name() string {
-	return cfID.Representation.Name
+	return cfID.DisplayName.Name
 }
 
 func (cfID ChangeFeedID) Namespace() string {
-	return cfID.Representation.Namespace
+	return cfID.DisplayName.Namespace
 }
 
 func (cfID ChangeFeedID) ID() GID {
@@ -222,7 +224,7 @@ func NewChangefeedIDFromPB(pb *heartbeatpb.ChangefeedID) ChangeFeedID {
 			Low:  pb.Low,
 			High: pb.High,
 		},
-		Representation: ChangeFeedIDRepresentation{
+		DisplayName: ChangeFeedDisplayName{
 			Name:      pb.Name,
 			Namespace: pb.Namespace,
 		},

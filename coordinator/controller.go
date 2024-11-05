@@ -411,10 +411,10 @@ func (c *Controller) ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedI
 	return infos, statuses, nil
 }
 
-func (c *Controller) GetChangefeed(ctx context.Context, idRepresentation common.ChangeFeedIDRepresentation) (*config.ChangeFeedInfo, *model.ChangeFeedStatus, error) {
-	cf := c.changefeedDB.GetByIDRepresentation(idRepresentation)
+func (c *Controller) GetChangefeed(ctx context.Context, changefeedDisplayName common.ChangeFeedDisplayName) (*config.ChangeFeedInfo, *model.ChangeFeedStatus, error) {
+	cf := c.changefeedDB.GetByChangefeedDisplayName(changefeedDisplayName)
 	if cf == nil {
-		return nil, nil, cerror.ErrChangeFeedNotExists.GenWithStackByArgs(idRepresentation.Name)
+		return nil, nil, cerror.ErrChangeFeedNotExists.GenWithStackByArgs(changefeedDisplayName.Name)
 	}
 	return cf.Info, &model.ChangeFeedStatus{CheckpointTs: cf.GetStatus().CheckpointTs}, nil
 }
