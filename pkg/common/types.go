@@ -151,7 +151,6 @@ func (a DispatcherAction) String() string {
 	return fmt.Sprintf("dispatcherID: %s, action: %s", a.DispatcherID, a.Action.String())
 }
 
-// 太长了，想个好的
 type ChangeFeedIDRepresentation struct {
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
@@ -168,10 +167,11 @@ func (r ChangeFeedIDRepresentation) String() string {
 	return r.Namespace + "/" + r.Name
 }
 
-// 重新写一下，主要表示 representation 用来外界查询时候，id 用于内部传递，保证性能
 // ChangefeedID is the unique identifier of a changefeed.
-// It can be specified the name of changefeedID, but the core id for internal use is a GID.
-// The name is just for user-friendly display.
+// GID is the inner unique identifier of a changefeed.
+// we can use Id to represent the changefeedID in performance-critical scenarios.
+// Representation is the user-friendly expression of a changefeed.
+// ChangefeedID can be specified the name of changefeedID.
 // If the name is not specified, it will be the id in string format.
 // We ensure whether the id or the representation is both unique in the cluster.
 type ChangeFeedID struct {
