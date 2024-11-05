@@ -264,8 +264,8 @@ func (h *EventsHandler) GetType(event DispatcherEvent) dynstream.EventType {
 
 func (h *EventsHandler) GetSize(event DispatcherEvent) int   { return int(event.GetSize()) }
 func (h *EventsHandler) IsPaused(event DispatcherEvent) bool { return event.IsPaused() }
-func (h *EventsHandler) GetArea(path common.DispatcherID, dest *Dispatcher) string {
-	return dest.changefeedID
+func (h *EventsHandler) GetArea(path common.DispatcherID, dest *Dispatcher) common.GID {
+	return dest.changefeedID.ID()
 }
 func (h *EventsHandler) GetTimestamp(event DispatcherEvent) dynstream.Timestamp {
 	return dynstream.Timestamp(event.GetCommitTs())
@@ -283,10 +283,10 @@ func NewDispatcherEvent(event commonEvent.Event) DispatcherEvent {
 }
 
 // eventsDynamicStream is used to process the events received by eventCollector.
-var eventsDynamicStream dynstream.DynamicStream[string, common.DispatcherID, DispatcherEvent, *Dispatcher, *EventsHandler]
+var eventsDynamicStream dynstream.DynamicStream[common.GID, common.DispatcherID, DispatcherEvent, *Dispatcher, *EventsHandler]
 var eventsDynamicStreamOnce sync.Once
 
-func GetEventsDynamicStream() dynstream.DynamicStream[string, common.DispatcherID, DispatcherEvent, *Dispatcher, *EventsHandler] {
+func GetEventsDynamicStream() dynstream.DynamicStream[common.GID, common.DispatcherID, DispatcherEvent, *Dispatcher, *EventsHandler] {
 	if eventsDynamicStream == nil {
 		eventsDynamicStreamOnce.Do(func() {
 			option := dynstream.NewOption()
@@ -342,10 +342,17 @@ func (h *DispatcherStatusHandler) Handle(dispatcher *Dispatcher, events ...Dispa
 	return false
 }
 
-func (h *DispatcherStatusHandler) GetSize(event DispatcherStatusWithID) int               { return 0 }
-func (h *DispatcherStatusHandler) IsPaused(event DispatcherStatusWithID) bool             { return false }
-func (h *DispatcherStatusHandler) GetArea(path common.DispatcherID, dest *Dispatcher) int { return 0 }
+func (h *DispatcherStatusHandler) GetSize(event DispatcherStatusWithID) int   { return 0 }
+func (h *DispatcherStatusHandler) IsPaused(event DispatcherStatusWithID) bool { return false }
+func (h *DispatcherStatusHandler) GetArea(path common.DispatcherID, dest *Dispatcher) common.GID {
+	return dest.changefeedID.ID()
+}
 func (h *DispatcherStatusHandler) GetTimestamp(event DispatcherStatusWithID) dynstream.Timestamp {
+	if event.GetDispatcherStatus().Action != nil {
+		return dynstream.Timestamp(event.GetDispatcherStatus().Action.CommitTs)
+	} else if event.GetDispatcherStatus().Ack != nil {
+		return dynstream.Timestamp(event.GetDispatcherStatus().Ack.CommitTs)
+	}
 	return 0
 }
 func (h *DispatcherStatusHandler) GetType(event DispatcherStatusWithID) dynstream.EventType {
@@ -353,10 +360,10 @@ func (h *DispatcherStatusHandler) GetType(event DispatcherStatusWithID) dynstrea
 }
 func (h *DispatcherStatusHandler) OnDrop(event DispatcherStatusWithID) {}
 
-var dispatcherStatusDynamicStream dynstream.DynamicStream[int, common.DispatcherID, DispatcherStatusWithID, *Dispatcher, *DispatcherStatusHandler]
+var dispatcherStatusDynamicStream dynstream.DynamicStream[common.GID, common.DispatcherID, DispatcherStatusWithID, *Dispatcher, *DispatcherStatusHandler]
 var dispatcherStatusDynamicStreamOnce sync.Once
 
-func GetDispatcherStatusDynamicStream() dynstream.DynamicStream[int, common.DispatcherID, DispatcherStatusWithID, *Dispatcher, *DispatcherStatusHandler] {
+func GetDispatcherStatusDynamicStream() dynstream.DynamicStream[common.GID, common.DispatcherID, DispatcherStatusWithID, *Dispatcher, *DispatcherStatusHandler] {
 	if dispatcherStatusDynamicStream == nil {
 		dispatcherStatusDynamicStreamOnce.Do(func() {
 			dispatcherStatusDynamicStream = dynstream.NewDynamicStream(&DispatcherStatusHandler{})
@@ -366,6 +373,6 @@ func GetDispatcherStatusDynamicStream() dynstream.DynamicStream[int, common.Disp
 	return dispatcherStatusDynamicStream
 }
 
-func SetDispatcherStatusDynamicStream(dynamicStream dynstream.DynamicStream[int, common.DispatcherID, DispatcherStatusWithID, *Dispatcher, *DispatcherStatusHandler]) {
+func SetDispatcherStatusDynamicStream(dynamicStream dynstream.DynamicStream[common.GID, common.DispatcherID, DispatcherStatusWithID, *Dispatcher, *DispatcherStatusHandler]) {
 	dispatcherStatusDynamicStream = dynamicStream
 }
