@@ -77,7 +77,7 @@ func NewController(
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	changefeedDB := changefeed.NewChangefeedDB()
 
-	oc := operator.NewOperatorController(mc, selfNode, changefeedDB, batchSize)
+	oc := operator.NewOperatorController(mc, selfNode, changefeedDB, backend, batchSize)
 	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
 	c := &Controller{
 		version:             version,
@@ -353,7 +353,7 @@ func (c *Controller) RemoveChangefeed(ctx context.Context, id common.ChangeFeedI
 	if cf == nil {
 		return 0, errors.New("changefeed not found")
 	}
-	err := c.backend.DeleteChangefeed(ctx, id)
+	err := c.backend.MarkChangefeedRemoving(ctx, id)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

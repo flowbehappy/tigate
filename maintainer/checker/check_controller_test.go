@@ -17,11 +17,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/stretchr/testify/require"
 )
 
 func TestControllerExecute(t *testing.T) {
-	ctl := NewController("test", nil, nil, nil, nil)
+	ctl := NewController(common.NewChangeFeedIDWithName("test"), nil, nil, nil, nil)
 	require.Equal(t, 2, len(ctl.checkers))
 	ctl.maxTimePerRound = time.Hour
 	ctl.Execute()

@@ -32,6 +32,8 @@ type Backend interface {
 	PauseChangefeed(ctx context.Context, id common.ChangeFeedID) error
 	// DeleteChangefeed removes all related info of a changefeed from db
 	DeleteChangefeed(ctx context.Context, id common.ChangeFeedID) error
+	// MarkChangefeedRemoving persists the removing status to db for a changefeed
+	MarkChangefeedRemoving(ctx context.Context, id common.ChangeFeedID) error
 	// ResumeChangefeed persists the resumed status to db for a changefeed
 	ResumeChangefeed(ctx context.Context, id common.ChangeFeedID, newCheckpointTs uint64) error
 	// UpdateChangefeedCheckpointTs persists the checkpoints for changefeeds
