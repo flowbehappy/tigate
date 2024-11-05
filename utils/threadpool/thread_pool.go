@@ -39,7 +39,7 @@ func (t *threadPoolImpl) Submit(task Task, next time.Time) *TaskHandle {
 		task: task,
 	}
 	t.reactor.newTaskChan <- taskAndTime{st, next}
-	return &TaskHandle{st, t}
+	return &TaskHandle{st}
 }
 
 func (t *threadPoolImpl) SubmitFunc(task FuncTask, next time.Time) *TaskHandle {
@@ -55,10 +55,6 @@ func (t *threadPoolImpl) Stop() {
 	t.reactor.wg.Wait()
 }
 
-func (t *threadPoolImpl) cancel(st *scheduledTask) {
-	t.reactor.newTaskChan <- taskAndTime{st, time.Time{}}
-}
-
 func (t *threadPoolImpl) executeTasks() {
 	defer t.wg.Done()
 
@@ -68,7 +64,7 @@ func (t *threadPoolImpl) executeTasks() {
 			return
 		case task := <-t.pendingTaskChan:
 			// Canceled task will not be executed and dropped.
-			if !task.time.IsZero() {
+			if !task.isCanceled() {
 				next := task.task.Execute()
 				if !next.IsZero() {
 					t.reactor.newTaskChan <- taskAndTime{task, next}
