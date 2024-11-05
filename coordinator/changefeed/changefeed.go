@@ -19,10 +19,10 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/sink"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -30,7 +30,7 @@ import (
 
 // Changefeed is a memory present for changefeed info and status
 type Changefeed struct {
-	ID       model.ChangeFeedID
+	ID       common.ChangeFeedID
 	Info     *config.ChangeFeedInfo
 	IsMQSink bool
 
@@ -44,7 +44,7 @@ type Changefeed struct {
 }
 
 // NewChangefeed creates a new changefeed instance
-func NewChangefeed(cfID model.ChangeFeedID,
+func NewChangefeed(cfID common.ChangeFeedID,
 	info *config.ChangeFeedInfo,
 	checkpointTs uint64) *Changefeed {
 	uri, err := url.Parse(info.SinkURI)
@@ -108,31 +108,31 @@ func (c *Changefeed) NewAddMaintainerMessage(server node.ID) *messaging.TargetMe
 	return messaging.NewSingleTargetMessage(server,
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.AddMaintainerRequest{
-			Id:           c.ID.ID,
+			Id:           c.ID.ToPB(),
 			CheckpointTs: c.GetStatus().CheckpointTs,
 			Config:       c.configBytes,
 		})
 }
 
 func (c *Changefeed) NewRemoveMaintainerMessage(server node.ID, caseCade, removed bool) *messaging.TargetMessage {
-	return RemoveMaintainerMessage(c.ID.ID, server, caseCade, removed)
+	return RemoveMaintainerMessage(c.ID, server, caseCade, removed)
 }
 
 func (c *Changefeed) NewCheckpointTsMessage(ts uint64) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(c.nodeID,
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.CheckpointTsMessage{
-			ChangefeedID: c.ID.ID,
+			ChangefeedID: c.ID.ToPB(),
 			CheckpointTs: ts,
 		})
 }
 
-func RemoveMaintainerMessage(id string, server node.ID, caseCade bool, removed bool) *messaging.TargetMessage {
+func RemoveMaintainerMessage(id common.ChangeFeedID, server node.ID, caseCade bool, removed bool) *messaging.TargetMessage {
 	caseCade = caseCade || removed
 	return messaging.NewSingleTargetMessage(server,
 		messaging.MaintainerManagerTopic,
 		&heartbeatpb.RemoveMaintainerRequest{
-			Id:      id,
+			Id:      id.ToPB(),
 			Cascade: caseCade,
 			Removed: removed,
 		})

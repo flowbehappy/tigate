@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
-	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
@@ -31,14 +30,14 @@ import (
 type SpanReplication struct {
 	ID           common.DispatcherID
 	Span         *heartbeatpb.TableSpan
-	ChangefeedID model.ChangeFeedID
+	ChangefeedID common.ChangeFeedID
 
 	schemaID int64
 	nodeID   node.ID
 	status   *heartbeatpb.TableSpanStatus
 }
 
-func NewReplicaSet(cfID model.ChangeFeedID,
+func NewReplicaSet(cfID common.ChangeFeedID,
 	id common.DispatcherID,
 	SchemaID int64,
 	span *heartbeatpb.TableSpan,
@@ -54,7 +53,7 @@ func NewReplicaSet(cfID model.ChangeFeedID,
 		},
 	}
 	log.Info("new replica set created",
-		zap.String("changefeed id", cfID.ID),
+		zap.String("changefeed id", cfID.Name()),
 		zap.String("id", id.String()),
 		zap.Int64("schema id", SchemaID),
 		zap.Int64("table id", span.TableID),
@@ -64,7 +63,7 @@ func NewReplicaSet(cfID model.ChangeFeedID,
 }
 
 func NewWorkingReplicaSet(
-	cfID model.ChangeFeedID,
+	cfID common.ChangeFeedID,
 	id common.DispatcherID,
 	SchemaID int64,
 	span *heartbeatpb.TableSpan,
@@ -80,7 +79,7 @@ func NewWorkingReplicaSet(
 		status:       status,
 	}
 	log.Info("new working replica set created",
-		zap.String("changefeed id", cfID.ID),
+		zap.String("changefeed id", cfID.Name()),
 		zap.String("id", id.String()),
 		zap.String("node id", nodeID.String()),
 		zap.Uint64("checkpoint ts", status.CheckpointTs),
@@ -120,7 +119,7 @@ func (r *SpanReplication) NewAddDispatcherMessage(server node.ID) *messaging.Tar
 	return messaging.NewSingleTargetMessage(server,
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{
-			ChangefeedID: r.ChangefeedID.ID,
+			ChangefeedID: r.ChangefeedID.ToPB(),
 			Config: &heartbeatpb.DispatcherConfig{
 				DispatcherID: r.ID.ToPB(),
 				Span:         r.Span,
@@ -131,14 +130,14 @@ func (r *SpanReplication) NewAddDispatcherMessage(server node.ID) *messaging.Tar
 }
 
 func (r *SpanReplication) NewRemoveDispatcherMessage(server node.ID) *messaging.TargetMessage {
-	return NewRemoveDispatcherMessage(server, r.ChangefeedID.ID, r.ID.ToPB())
+	return NewRemoveDispatcherMessage(server, r.ChangefeedID, r.ID.ToPB())
 }
 
-func NewRemoveDispatcherMessage(server node.ID, cfID string, dispatcherID *heartbeatpb.DispatcherID) *messaging.TargetMessage {
+func NewRemoveDispatcherMessage(server node.ID, cfID common.ChangeFeedID, dispatcherID *heartbeatpb.DispatcherID) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(server,
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{
-			ChangefeedID: cfID,
+			ChangefeedID: cfID.ToPB(),
 			Config: &heartbeatpb.DispatcherConfig{
 				DispatcherID: dispatcherID,
 			},

@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/ticdc/maintainer/operator"
 	"github.com/pingcap/ticdc/maintainer/replica"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/pkg/scheduler"
 	"github.com/pingcap/ticdc/server/watcher"
@@ -29,7 +30,7 @@ import (
 // currently, it only supports balance the spans by size
 type Scheduler struct {
 	batchSize            int
-	changefeedID         string
+	changefeedID         common.ChangeFeedID
 	random               *rand.Rand
 	lastRebalanceTime    time.Time
 	checkBalanceInterval time.Duration
@@ -41,7 +42,7 @@ type Scheduler struct {
 	absent []*replica.SpanReplication
 }
 
-func NewScheduler(changefeedID string,
+func NewScheduler(changefeedID common.ChangeFeedID,
 	batchSize int,
 	oc *operator.Controller,
 	db *replica.ReplicationDB,

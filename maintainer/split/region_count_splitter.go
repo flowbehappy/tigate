@@ -20,19 +20,19 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
-	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
 type regionCountSplitter struct {
-	changefeedID    model.ChangeFeedID
+	changefeedID    common.ChangeFeedID
 	regionCache     RegionCache
 	regionThreshold int
 }
 
 func newRegionCountSplitter(
-	changefeedID model.ChangeFeedID, regionCache RegionCache, regionThreshold int,
+	changefeedID common.ChangeFeedID, regionCache RegionCache, regionThreshold int,
 ) *regionCountSplitter {
 	return &regionCountSplitter{
 		changefeedID:    changefeedID,
@@ -48,14 +48,14 @@ func (m *regionCountSplitter) split(
 	regions, err := m.regionCache.ListRegionIDsInKeyRange(bo, span.StartKey, span.EndKey)
 	if err != nil {
 		log.Warn("list regions failed, skip split span",
-			zap.String("changefeed", m.changefeedID.ID),
+			zap.String("changefeed", m.changefeedID.Name()),
 			zap.String("span", span.String()),
 			zap.Error(err))
 		return []*heartbeatpb.TableSpan{span}
 	}
 	if len(regions) <= m.regionThreshold || captureNum == 0 {
 		log.Info("skip split span by region count",
-			zap.String("changefeed", m.changefeedID.ID),
+			zap.String("changefeed", m.changefeedID.Name()),
 			zap.String("span", span.String()),
 			zap.Int("totalCaptures", captureNum),
 			zap.Int("regionCount", len(regions)),
@@ -73,8 +73,8 @@ func (m *regionCountSplitter) split(
 		startRegion, err := m.regionCache.LocateRegionByID(bo, regions[start])
 		if err != nil {
 			log.Warn("schedulerv3: get regions failed, skip split span",
-				zap.String("namespace", m.changefeedID.Namespace),
-				zap.String("changefeed", m.changefeedID.ID),
+				zap.String("namespace", m.changefeedID.Namespace()),
+				zap.String("changefeed", m.changefeedID.Name()),
 				zap.String("span", span.String()),
 				zap.Error(err))
 			return []*heartbeatpb.TableSpan{span}
@@ -82,8 +82,8 @@ func (m *regionCountSplitter) split(
 		endRegion, err := m.regionCache.LocateRegionByID(bo, regions[end-1])
 		if err != nil {
 			log.Warn("schedulerv3: get regions failed, skip split span",
-				zap.String("namespace", m.changefeedID.Namespace),
-				zap.String("changefeed", m.changefeedID.ID),
+				zap.String("namespace", m.changefeedID.Namespace()),
+				zap.String("changefeed", m.changefeedID.Name()),
 				zap.String("span", span.String()),
 				zap.Error(err))
 			return []*heartbeatpb.TableSpan{span}
@@ -91,8 +91,8 @@ func (m *regionCountSplitter) split(
 		if len(spans) > 0 &&
 			bytes.Compare(spans[len(spans)-1].EndKey, startRegion.StartKey) > 0 {
 			log.Warn("schedulerv3: list region out of order detected",
-				zap.String("namespace", m.changefeedID.Namespace),
-				zap.String("changefeed", m.changefeedID.ID),
+				zap.String("namespace", m.changefeedID.Namespace()),
+				zap.String("changefeed", m.changefeedID.Name()),
 				zap.String("span", span.String()),
 				zap.Stringer("lastSpan", spans[len(spans)-1]),
 				zap.Stringer("region", startRegion))
@@ -120,7 +120,7 @@ func (m *regionCountSplitter) split(
 	spans[0].StartKey = span.StartKey
 	spans[len(spans)-1].EndKey = span.EndKey
 	log.Info("split span by region count",
-		zap.String("changefeed", m.changefeedID.ID),
+		zap.String("changefeed", m.changefeedID.Name()),
 		zap.String("span", span.String()),
 		zap.Int("spans", len(spans)),
 		zap.Int("totalCaptures", captureNum),

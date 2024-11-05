@@ -14,13 +14,13 @@
 package common
 
 import (
-	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tiflow/pkg/compression"
 	"github.com/pingcap/tiflow/pkg/errors"
 )
 
 // Compress the given data by the given compression, also record the compression ratio metric.
-func Compress(changefeedID model.ChangeFeedID, cc string, data []byte) ([]byte, error) {
+func Compress(changefeedID common.ChangeFeedID, cc string, data []byte) ([]byte, error) {
 	oldSize := len(data)
 	compressed, err := compression.Encode(cc, data)
 	if err != nil {
@@ -30,7 +30,7 @@ func Compress(changefeedID model.ChangeFeedID, cc string, data []byte) ([]byte, 
 	newSize := len(compressed)
 	ratio := float64(oldSize) / float64(newSize) * 100
 
-	compressionRatio.WithLabelValues(changefeedID.Namespace, changefeedID.ID).Observe(ratio)
+	compressionRatio.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()).Observe(ratio)
 
 	return compressed, nil
 }

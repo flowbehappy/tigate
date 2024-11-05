@@ -20,9 +20,9 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/coordinator/changefeed"
 	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
-	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
@@ -117,7 +117,7 @@ func (m *MoveMaintainerOperator) OnNodeRemove(n node.ID) {
 	}
 }
 
-func (m *MoveMaintainerOperator) ID() model.ChangeFeedID {
+func (m *MoveMaintainerOperator) ID() common.ChangeFeedID {
 	return m.changefeed.ID
 }
 

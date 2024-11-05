@@ -23,8 +23,8 @@ import (
 	"github.com/jcmturner/gokrb5/v8/config"
 	"github.com/jcmturner/gokrb5/v8/keytab"
 	"github.com/pingcap/log"
+	commonType "github.com/pingcap/ticdc/pkg/common"
 	pkafka "github.com/pingcap/ticdc/pkg/sink/kafka"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/security"
 	"github.com/pingcap/tiflow/pkg/sink/codec/common"
@@ -43,7 +43,7 @@ type factory struct {
 	// it's shared by the admin client and producers to keep the cache the same to make
 	// sure that the newly created topics can be found by the both.
 	transport    *kafka.Transport
-	changefeedID model.ChangeFeedID
+	changefeedID commonType.ChangeFeedID
 	options      *pkafka.Options
 
 	writer *kafka.Writer
@@ -52,7 +52,7 @@ type factory struct {
 // NewFactory returns a factory implemented based on kafka-go
 func NewFactory(
 	options *pkafka.Options,
-	changefeedID model.ChangeFeedID,
+	changefeedID commonType.ChangeFeedID,
 ) (pkafka.Factory, error) {
 	transport, err := newTransport(options)
 	if err != nil {
@@ -193,13 +193,13 @@ func (f *factory) newWriter(async bool) *kafka.Writer {
 		w.Compression = kafka.Zstd
 	default:
 		log.Warn("Unsupported compression algorithm",
-			zap.String("namespace", f.changefeedID.Namespace),
-			zap.String("changefeed", f.changefeedID.ID),
+			zap.String("namespace", f.changefeedID.Namespace()),
+			zap.String("changefeed", f.changefeedID.Name()),
 			zap.String("compression", f.options.Compression))
 	}
 	log.Info("Kafka producer uses "+f.options.Compression+" compression algorithm",
-		zap.String("namespace", f.changefeedID.Namespace),
-		zap.String("changefeed", f.changefeedID.ID))
+		zap.String("namespace", f.changefeedID.Namespace()),
+		zap.String("changefeed", f.changefeedID.Name()))
 	return w
 }
 
@@ -244,8 +244,8 @@ func (f *factory) AsyncProducer(
 			case aw.errorsChan <- err:
 			default:
 				log.Warn("async writer report error failed, since the err channel is full",
-					zap.String("namespace", aw.changefeedID.Namespace),
-					zap.String("changefeed", aw.changefeedID.ID),
+					zap.String("namespace", aw.changefeedID.Namespace()),
+					zap.String("changefeed", aw.changefeedID.Name()),
 					zap.Error(err))
 			}
 			return
@@ -267,11 +267,11 @@ func (f *factory) MetricsCollector(
 	role util.Role,
 	adminClient tikafka.ClusterAdminClient,
 ) tikafka.MetricsCollector {
-	return tiv2.NewMetricsCollector(f.changefeedID, role, f.writer)
+	return NewMetricsCollector(f.changefeedID, role, f.writer)
 }
 
 type syncWriter struct {
-	changefeedID model.ChangeFeedID
+	changefeedID commonType.ChangeFeedID
 	w            tiv2.Writer
 }
 
@@ -310,26 +310,26 @@ func (s *syncWriter) SendMessages(ctx context.Context, topic string, partitionNu
 // You must call this before calling Close on the underlying client.
 func (s *syncWriter) Close() {
 	log.Info("kafka sync producer start closing",
-		zap.String("namespace", s.changefeedID.Namespace),
-		zap.String("changefeed", s.changefeedID.ID))
+		zap.String("namespace", s.changefeedID.Namespace()),
+		zap.String("changefeed", s.changefeedID.Name()))
 	start := time.Now()
 	if err := s.w.Close(); err != nil {
 		log.Warn("Close kafka sync producer failed",
-			zap.String("namespace", s.changefeedID.Namespace),
-			zap.String("changefeed", s.changefeedID.ID),
+			zap.String("namespace", s.changefeedID.Namespace()),
+			zap.String("changefeed", s.changefeedID.Name()),
 			zap.Duration("duration", time.Since(start)),
 			zap.Error(err))
 	} else {
 		log.Info("Close kafka sync producer success",
-			zap.String("namespace", s.changefeedID.Namespace),
-			zap.String("changefeed", s.changefeedID.ID),
+			zap.String("namespace", s.changefeedID.Namespace()),
+			zap.String("changefeed", s.changefeedID.Name()),
 			zap.Duration("duration", time.Since(start)))
 	}
 }
 
 type asyncWriter struct {
 	w            tiv2.Writer
-	changefeedID model.ChangeFeedID
+	changefeedID commonType.ChangeFeedID
 	failpointCh  chan error
 	errorsChan   chan error
 }
@@ -341,20 +341,20 @@ type asyncWriter struct {
 // Close on the underlying client.
 func (a *asyncWriter) Close() {
 	log.Info("kafka async producer start closing",
-		zap.String("namespace", a.changefeedID.Namespace),
-		zap.String("changefeed", a.changefeedID.ID))
+		zap.String("namespace", a.changefeedID.Namespace()),
+		zap.String("changefeed", a.changefeedID.Name()))
 	go func() {
 		start := time.Now()
 		if err := a.w.Close(); err != nil {
 			log.Warn("Close kafka async producer failed",
-				zap.String("namespace", a.changefeedID.Namespace),
-				zap.String("changefeed", a.changefeedID.ID),
+				zap.String("namespace", a.changefeedID.Namespace()),
+				zap.String("changefeed", a.changefeedID.Name()),
 				zap.Duration("duration", time.Since(start)),
 				zap.Error(err))
 		} else {
 			log.Info("Close kafka async producer success",
-				zap.String("namespace", a.changefeedID.Namespace),
-				zap.String("changefeed", a.changefeedID.ID),
+				zap.String("namespace", a.changefeedID.Namespace()),
+				zap.String("changefeed", a.changefeedID.Name()),
 				zap.Duration("duration", time.Since(start)))
 		}
 	}()
@@ -386,8 +386,8 @@ func (a *asyncWriter) AsyncRunCallback(ctx context.Context) error {
 		return errors.Trace(ctx.Err())
 	case err := <-a.failpointCh:
 		log.Warn("Receive from failpoint chan in kafka producer",
-			zap.String("namespace", a.changefeedID.Namespace),
-			zap.String("changefeed", a.changefeedID.ID),
+			zap.String("namespace", a.changefeedID.Namespace()),
+			zap.String("changefeed", a.changefeedID.Name()),
 			zap.Error(err))
 		return errors.Trace(err)
 	case err := <-a.errorsChan:

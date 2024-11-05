@@ -21,9 +21,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
+	commonType "github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink/codec/common"
 	"github.com/pingcap/tiflow/pkg/util"
@@ -40,7 +40,7 @@ type ClaimCheck struct {
 	storage  storage.ExternalStorage
 	rawValue bool
 
-	changefeedID model.ChangeFeedID
+	changefeedID commonType.ChangeFeedID
 	// metricSendMessageDuration tracks the time duration
 	// cost on send messages to the claim check external storage.
 	metricSendMessageDuration prometheus.Observer
@@ -48,22 +48,22 @@ type ClaimCheck struct {
 }
 
 // New return a new ClaimCheck.
-func New(ctx context.Context, config *config.LargeMessageHandleConfig, changefeedID model.ChangeFeedID) (*ClaimCheck, error) {
+func New(ctx context.Context, config *config.LargeMessageHandleConfig, changefeedID commonType.ChangeFeedID) (*ClaimCheck, error) {
 	if !config.EnableClaimCheck() {
 		return nil, nil
 	}
 
 	log.Info("claim check enabled, start create the external storage",
-		zap.String("namespace", changefeedID.Namespace),
-		zap.String("changefeed", changefeedID.ID),
+		zap.String("namespace", changefeedID.Namespace()),
+		zap.String("changefeed", changefeedID.Name()),
 		zap.String("storageURI", util.MaskSensitiveDataInURI(config.ClaimCheckStorageURI)))
 
 	start := time.Now()
 	externalStorage, err := util.GetExternalStorageWithTimeout(ctx, config.ClaimCheckStorageURI, defaultTimeout)
 	if err != nil {
 		log.Error("create external storage failed",
-			zap.String("namespace", changefeedID.Namespace),
-			zap.String("changefeed", changefeedID.ID),
+			zap.String("namespace", changefeedID.Namespace()),
+			zap.String("changefeed", changefeedID.Name()),
 			zap.String("storageURI", util.MaskSensitiveDataInURI(config.ClaimCheckStorageURI)),
 			zap.Duration("duration", time.Since(start)),
 			zap.Error(err))
@@ -71,8 +71,8 @@ func New(ctx context.Context, config *config.LargeMessageHandleConfig, changefee
 	}
 
 	log.Info("claim-check create the external storage success",
-		zap.String("namespace", changefeedID.Namespace),
-		zap.String("changefeed", changefeedID.ID),
+		zap.String("namespace", changefeedID.Namespace()),
+		zap.String("changefeed", changefeedID.Name()),
 		zap.String("storageURI", util.MaskSensitiveDataInURI(config.ClaimCheckStorageURI)),
 		zap.Duration("duration", time.Since(start)))
 
@@ -80,8 +80,8 @@ func New(ctx context.Context, config *config.LargeMessageHandleConfig, changefee
 		changefeedID:              changefeedID,
 		storage:                   externalStorage,
 		rawValue:                  config.ClaimCheckRawValue,
-		metricSendMessageDuration: claimCheckSendMessageDuration.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
-		metricSendMessageCount:    claimCheckSendMessageCount.WithLabelValues(changefeedID.Namespace, changefeedID.ID),
+		metricSendMessageDuration: claimCheckSendMessageDuration.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
+		metricSendMessageCount:    claimCheckSendMessageCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name()),
 	}, nil
 }
 
@@ -114,8 +114,8 @@ func (c *ClaimCheck) FileNameWithPrefix(fileName string) string {
 
 // CleanMetrics the claim check by clean up the metrics.
 func (c *ClaimCheck) CleanMetrics() {
-	claimCheckSendMessageDuration.DeleteLabelValues(c.changefeedID.Namespace, c.changefeedID.ID)
-	claimCheckSendMessageCount.DeleteLabelValues(c.changefeedID.Namespace, c.changefeedID.ID)
+	claimCheckSendMessageDuration.DeleteLabelValues(c.changefeedID.Namespace(), c.changefeedID.Name())
+	claimCheckSendMessageCount.DeleteLabelValues(c.changefeedID.Namespace(), c.changefeedID.Name())
 }
 
 // NewFileName return the file name for the message which is delivered to the external storage system.

@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -26,27 +27,29 @@ import (
 
 // ChangefeedDB is an in memory data struct that maintains all changefeeds
 type ChangefeedDB struct {
-	changefeeds map[model.ChangeFeedID]*Changefeed
+	changefeeds               map[common.ChangeFeedID]*Changefeed
+	changefeedRepresentations map[common.ChangeFeedIDRepresentation]common.ChangeFeedID
 
-	nodeTasks   map[node.ID]map[model.ChangeFeedID]*Changefeed
-	absent      map[model.ChangeFeedID]*Changefeed
-	scheduling  map[model.ChangeFeedID]*Changefeed
-	replicating map[model.ChangeFeedID]*Changefeed
+	nodeTasks   map[node.ID]map[common.ChangeFeedID]*Changefeed
+	absent      map[common.ChangeFeedID]*Changefeed
+	scheduling  map[common.ChangeFeedID]*Changefeed
+	replicating map[common.ChangeFeedID]*Changefeed
 
 	// stopped changefeeds that failed, stopped or finished
-	stopped map[model.ChangeFeedID]*Changefeed
+	stopped map[common.ChangeFeedID]*Changefeed
 	lock    sync.RWMutex
 }
 
 func NewChangefeedDB() *ChangefeedDB {
 	db := &ChangefeedDB{
-		changefeeds: make(map[model.ChangeFeedID]*Changefeed),
+		changefeeds:               make(map[common.ChangeFeedID]*Changefeed),
+		changefeedRepresentations: make(map[common.ChangeFeedIDRepresentation]common.ChangeFeedID),
 
-		nodeTasks:   make(map[node.ID]map[model.ChangeFeedID]*Changefeed),
-		absent:      make(map[model.ChangeFeedID]*Changefeed),
-		scheduling:  make(map[model.ChangeFeedID]*Changefeed),
-		replicating: make(map[model.ChangeFeedID]*Changefeed),
-		stopped:     make(map[model.ChangeFeedID]*Changefeed),
+		nodeTasks:   make(map[node.ID]map[common.ChangeFeedID]*Changefeed),
+		absent:      make(map[common.ChangeFeedID]*Changefeed),
+		scheduling:  make(map[common.ChangeFeedID]*Changefeed),
+		replicating: make(map[common.ChangeFeedID]*Changefeed),
+		stopped:     make(map[common.ChangeFeedID]*Changefeed),
 	}
 	return db
 }
@@ -80,6 +83,7 @@ func (db *ChangefeedDB) AddReplicatingMaintainer(task *Changefeed, nodeID node.I
 
 	db.changefeeds[task.ID] = task
 	db.replicating[task.ID] = task
+	db.changefeedRepresentations[task.ID.Representation] = task.ID
 	db.updateNodeMap("", nodeID, task)
 }
 
@@ -87,7 +91,7 @@ func (db *ChangefeedDB) AddReplicatingMaintainer(task *Changefeed, nodeID node.I
 // if remove is true, it will remove the changefeed from the chagnefeed DB
 // if remove is false, moves task to stopped map
 // if the changefeed is scheduled, it will return the scheduled node
-func (db *ChangefeedDB) StopByChangefeedID(cfID model.ChangeFeedID, remove bool) node.ID {
+func (db *ChangefeedDB) StopByChangefeedID(cfID common.ChangeFeedID, remove bool) node.ID {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -237,15 +241,22 @@ func (db *ChangefeedDB) GetScheduleSate(absent []*Changefeed, maxSize int) ([]*C
 	return absent, workingState
 }
 
-func (db *ChangefeedDB) GetByID(id model.ChangeFeedID) *Changefeed {
+func (db *ChangefeedDB) GetByID(id common.ChangeFeedID) *Changefeed {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
 	return db.changefeeds[id]
 }
 
+func (db *ChangefeedDB) GetByIDRepresentation(id common.ChangeFeedIDRepresentation) *Changefeed {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	return db.changefeeds[db.changefeedRepresentations[id]]
+}
+
 // Resume moves a changefeed to the absent map, and waiting for scheduling
-func (db *ChangefeedDB) Resume(id model.ChangeFeedID) {
+func (db *ChangefeedDB) Resume(id common.ChangeFeedID) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -326,17 +337,13 @@ func (db *ChangefeedDB) ReplaceStoppedChangefeed(cf *config.ChangeFeedInfo) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	id := model.ChangeFeedID{
-		Namespace: cf.Namespace,
-		ID:        cf.ID,
-	}
-	oldCf := db.stopped[id]
+	oldCf := db.stopped[cf.ChangefeedID]
 	if oldCf == nil {
-		log.Warn("changefeed is not stopped, can not be updated", zap.String("changefeed", id.String()))
+		log.Warn("changefeed is not stopped, can not be updated", zap.String("changefeed", cf.ChangefeedID.String()))
 		return
 	}
-	newCf := NewChangefeed(id, cf, oldCf.GetStatus().CheckpointTs)
-	db.stopped[id] = newCf
+	newCf := NewChangefeed(cf.ChangefeedID, cf, oldCf.GetStatus().CheckpointTs)
+	db.stopped[cf.ChangefeedID] = newCf
 }
 
 // updateNodeMap updates the node map, it will remove the task from the old node and add it to the new node
@@ -355,7 +362,7 @@ func (db *ChangefeedDB) updateNodeMap(old, new node.ID, task *Changefeed) {
 	if new != "" {
 		newMap, ok := db.nodeTasks[new]
 		if !ok {
-			newMap = make(map[model.ChangeFeedID]*Changefeed)
+			newMap = make(map[common.ChangeFeedID]*Changefeed)
 			db.nodeTasks[new] = newMap
 		}
 		newMap[task.ID] = task
@@ -365,6 +372,7 @@ func (db *ChangefeedDB) updateNodeMap(old, new node.ID, task *Changefeed) {
 // addAbsentChangefeedUnLock adds the replica set to the absent map
 func (db *ChangefeedDB) addAbsentChangefeedUnLock(tasks ...*Changefeed) {
 	for _, task := range tasks {
+		db.changefeedRepresentations[task.ID.Representation] = task.ID
 		db.changefeeds[task.ID] = task
 		db.absent[task.ID] = task
 	}

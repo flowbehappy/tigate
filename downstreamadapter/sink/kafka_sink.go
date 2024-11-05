@@ -24,25 +24,23 @@ import (
 	"github.com/pingcap/ticdc/downstreamadapter/sink/helper/topicmanager"
 	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
 	"github.com/pingcap/ticdc/downstreamadapter/worker"
-	"github.com/pingcap/ticdc/downstreamadapter/worker/dmlproducer"
+	"github.com/pingcap/ticdc/downstreamadapter/worker/producer"
 	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/common/columnselector"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	ticonfig "github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/sink/codec"
 	"github.com/pingcap/ticdc/pkg/sink/kafka"
 	v2 "github.com/pingcap/ticdc/pkg/sink/kafka/v2"
-	sinkutil "github.com/pingcap/ticdc/pkg/sink/util"
-	tiutils "github.com/pingcap/ticdc/pkg/sink/util"
-	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/cdc/sink/ddlsink/mq/ddlproducer"
+	"github.com/pingcap/ticdc/pkg/sink/util"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink"
 	utils "github.com/pingcap/tiflow/pkg/util"
 )
 
 type KafkaSink struct {
-	changefeedID model.ChangeFeedID
+	changefeedID common.ChangeFeedID
 
 	dmlWorker *worker.KafkaWorker
 	ddlWorker *worker.KafkaDDLWorker
@@ -52,7 +50,7 @@ func (s *KafkaSink) SinkType() SinkType {
 	return KafkaSinkType
 }
 
-func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig) (*KafkaSink, error) {
+func NewKafkaSink(changefeedID common.ChangeFeedID, sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig) (*KafkaSink, error) {
 	ctx := context.Background()
 	topic, err := helper.GetTopic(sinkURI)
 	if err != nil {
@@ -109,12 +107,12 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, sinkConfig 
 		return nil, errors.Trace(err)
 	}
 
-	columnSelector, err := common.NewColumnSelectors(sinkConfig)
+	columnSelector, err := columnselector.NewColumnSelectors(sinkConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	encoderConfig, err := tiutils.GetEncoderConfig(changefeedID, sinkURI, protocol, sinkConfig, options.MaxMessageBytes)
+	encoderConfig, err := util.GetEncoderConfig(changefeedID, sinkURI, protocol, sinkConfig, options.MaxMessageBytes)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -126,7 +124,7 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, sinkConfig 
 	}
 
 	metricsCollector := factory.MetricsCollector(utils.RoleProcessor, adminClient)
-	dmlProducer := dmlproducer.NewKafkaDMLProducer(ctx, changefeedID, asyncProducer, metricsCollector)
+	dmlProducer := producer.NewKafkaDMLProducer(ctx, changefeedID, asyncProducer, metricsCollector)
 	encoderGroup := codec.NewEncoderGroup(ctx, sinkConfig, encoderConfig, changefeedID)
 
 	statistics := metrics.NewStatistics(changefeedID, "KafkaSink")
@@ -141,7 +139,7 @@ func NewKafkaSink(changefeedID model.ChangeFeedID, sinkURI *url.URL, sinkConfig 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ddlProducer := ddlproducer.NewKafkaDDLProducer(ctx, changefeedID, syncProducer)
+	ddlProducer := producer.NewKafkaDDLProducer(ctx, changefeedID, syncProducer)
 	ddlWorker := worker.NewKafkaDDLWorker(changefeedID, protocol, ddlProducer, encoder, eventRouter, topicManager, statistics)
 
 	return &KafkaSink{
@@ -184,7 +182,7 @@ func (s *KafkaSink) AddCheckpointTs(ts uint64) {
 	s.ddlWorker.GetCheckpointTsChan() <- ts
 }
 
-func (s *KafkaSink) SetTableSchemaStore(tableSchemaStore *sinkutil.TableSchemaStore) {
+func (s *KafkaSink) SetTableSchemaStore(tableSchemaStore *util.TableSchemaStore) {
 	s.ddlWorker.SetTableSchemaStore(tableSchemaStore)
 }
 func (s *KafkaSink) Close(removeDDLTsItem bool) error {

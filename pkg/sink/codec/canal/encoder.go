@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/common/columnselector"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	newcommon "github.com/pingcap/ticdc/pkg/sink/codec/common"
 	"github.com/pingcap/ticdc/pkg/sink/codec/encoder"
@@ -47,7 +48,7 @@ func fillColumns(
 	tableInfo *common.TableInfo,
 	onlyHandleKeyColumn bool,
 	out *jwriter.Writer,
-	columnSelector common.Selector,
+	columnSelector columnselector.Selector,
 ) error {
 	if len(tableInfo.Columns) == 0 {
 		out.RawString("null")
@@ -443,7 +444,7 @@ func (c *JSONRowEventEncoder) EncodeCheckpointEvent(ts uint64) (*ticommon.Messag
 		return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
 	}
 
-	value, err = ticommon.Compress(
+	value, err = newcommon.Compress(
 		c.config.ChangefeedID, c.config.LargeMessageHandle.LargeMessageHandleCompression, value,
 	)
 	if err != nil {
@@ -464,7 +465,7 @@ func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 		return errors.Trace(err)
 	}
 
-	value, err = ticommon.Compress(
+	value, err = newcommon.Compress(
 		c.config.ChangefeedID, c.config.LargeMessageHandle.LargeMessageHandleCompression, value,
 	)
 	if err != nil {
@@ -499,7 +500,7 @@ func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 			if err != nil {
 				return cerror.ErrMessageTooLarge.GenWithStackByArgs()
 			}
-			value, err = ticommon.Compress(
+			value, err = newcommon.Compress(
 				c.config.ChangefeedID, c.config.LargeMessageHandle.LargeMessageHandleCompression, value,
 			)
 			if err != nil {
@@ -550,7 +551,7 @@ func (c *JSONRowEventEncoder) newClaimCheckLocationMessage(
 		return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
 	}
 
-	value, err = ticommon.Compress(
+	value, err = newcommon.Compress(
 		c.config.ChangefeedID, c.config.LargeMessageHandle.LargeMessageHandleCompression, value,
 	)
 	if err != nil {
@@ -590,7 +591,7 @@ func (c *JSONRowEventEncoder) EncodeDDLEvent(e *commonEvent.DDLEvent) (*ticommon
 	if err != nil {
 		return nil, cerror.WrapError(cerror.ErrCanalEncodeFailed, err)
 	}
-	value, err = ticommon.Compress(
+	value, err = newcommon.Compress(
 		c.config.ChangefeedID, c.config.LargeMessageHandle.LargeMessageHandleCompression, value,
 	)
 	if err != nil {

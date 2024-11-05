@@ -10,6 +10,12 @@ import (
 	"github.com/pingcap/ticdc/heartbeatpb"
 )
 
+const (
+	// DefaultNamespace is the default namespace value,
+	// all the old changefeed will be put into default namespace
+	DefaultNamespace = "default"
+)
+
 var DefaultEndian = binary.LittleEndian
 
 type Ts = uint64
@@ -30,14 +36,14 @@ func NewDispatcherID() DispatcherID {
 }
 
 func NewDispatcherIDFromPB(pb *heartbeatpb.DispatcherID) DispatcherID {
-	d := DispatcherID{low: pb.Low, high: pb.High}
+	d := DispatcherID{Low: pb.Low, High: pb.High}
 	return d
 }
 
 func (d DispatcherID) ToPB() *heartbeatpb.DispatcherID {
 	return &heartbeatpb.DispatcherID{
-		Low:  d.low,
-		High: d.high,
+		Low:  d.Low,
+		High: d.High,
 	}
 }
 
@@ -62,56 +68,56 @@ func (d DispatcherID) Marshal() []byte {
 
 func (d DispatcherID) Equal(inferior any) bool {
 	tbl := inferior.(DispatcherID)
-	return d.low == tbl.low && d.high == tbl.high
+	return d.Low == tbl.Low && d.High == tbl.High
 }
 
 func (d DispatcherID) Less(t any) bool {
 	cf := t.(DispatcherID)
-	return d.low < cf.low || d.low == cf.low && d.high < cf.high
+	return d.Low < cf.Low || d.Low == cf.Low && d.High < cf.High
 }
 
 type SchemaID int64
 
 type GID struct {
-	low  uint64
-	high uint64
+	Low  uint64 `json:"Low"`
+	High uint64 `json:"High"`
 }
 
 func (g GID) IsZero() bool {
-	return g.low == 0 && g.high == 0
+	return g.Low == 0 && g.High == 0
 }
 
 func (g GID) Marshal() []byte {
 	b := make([]byte, 16)
-	binary.LittleEndian.PutUint64(b[0:8], g.low)
-	binary.LittleEndian.PutUint64(b[8:16], g.high)
+	binary.LittleEndian.PutUint64(b[0:8], g.Low)
+	binary.LittleEndian.PutUint64(b[8:16], g.High)
 	return b
 }
 
 func (g *GID) Unmarshal(b []byte) {
-	g.low = binary.LittleEndian.Uint64(b[0:8])
-	g.high = binary.LittleEndian.Uint64(b[8:16])
+	g.Low = binary.LittleEndian.Uint64(b[0:8])
+	g.High = binary.LittleEndian.Uint64(b[8:16])
 }
 
 func NewGID() GID {
 	uuid := uuid.New()
 	return GID{
-		low:  binary.LittleEndian.Uint64(uuid[0:8]),
-		high: binary.LittleEndian.Uint64(uuid[8:16]),
+		Low:  binary.LittleEndian.Uint64(uuid[0:8]),
+		High: binary.LittleEndian.Uint64(uuid[8:16]),
 	}
 }
 
 func (g GID) String() string {
 	var buf bytes.Buffer
-	buf.WriteString(strconv.FormatUint(g.low, 10))
-	buf.WriteString(strconv.FormatUint(g.high, 10))
+	buf.WriteString(strconv.FormatUint(g.Low, 10))
+	buf.WriteString(strconv.FormatUint(g.High, 10))
 	return buf.String()
 }
 
-func NewGIDWithValue(low uint64, high uint64) GID {
+func NewGIDWithValue(Low uint64, High uint64) GID {
 	return GID{
-		low:  low,
-		high: high,
+		Low:  Low,
+		High: High,
 	}
 }
 
@@ -143,4 +149,92 @@ type DispatcherAction struct {
 
 func (a DispatcherAction) String() string {
 	return fmt.Sprintf("dispatcherID: %s, action: %s", a.DispatcherID, a.Action.String())
+}
+
+// 太长了，想个好的
+type ChangeFeedIDRepresentation struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+func NewChangeFeedIDRepresentation(name string, namespace string) ChangeFeedIDRepresentation {
+	return ChangeFeedIDRepresentation{
+		Name:      name,
+		Namespace: namespace,
+	}
+}
+
+func (r ChangeFeedIDRepresentation) String() string {
+	return r.Namespace + "/" + r.Name
+}
+
+// 重新写一下，主要表示 representation 用来外界查询时候，id 用于内部传递，保证性能
+// ChangefeedID is the unique identifier of a changefeed.
+// It can be specified the name of changefeedID, but the core id for internal use is a GID.
+// The name is just for user-friendly display.
+// If the name is not specified, it will be the id in string format.
+// We ensure whether the id or the representation is both unique in the cluster.
+type ChangeFeedID struct {
+	Id             GID                        `json:"id"`
+	Representation ChangeFeedIDRepresentation `json:"representation"`
+}
+
+func NewChangefeedID() ChangeFeedID {
+	cfID := ChangeFeedID{
+		Id: NewGID(),
+	}
+	cfID.Representation = ChangeFeedIDRepresentation{
+		Name:      cfID.Id.String(),
+		Namespace: DefaultNamespace,
+	}
+	return cfID
+}
+
+func NewChangeFeedIDWithName(name string) ChangeFeedID {
+	return ChangeFeedID{
+		Id: NewGID(),
+		Representation: ChangeFeedIDRepresentation{
+			Name:      name,
+			Namespace: DefaultNamespace,
+		},
+	}
+}
+
+func (cfID ChangeFeedID) String() string {
+	return fmt.Sprintf("changefeedID representation: %s, id: %s", cfID.Representation.String(), cfID.Id.String())
+}
+
+func (cfID ChangeFeedID) Name() string {
+	return cfID.Representation.Name
+}
+
+func (cfID ChangeFeedID) Namespace() string {
+	return cfID.Representation.Namespace
+}
+
+func (cfID ChangeFeedID) ID() GID {
+	return cfID.Id
+}
+
+func NewChangefeedIDFromPB(pb *heartbeatpb.ChangefeedID) ChangeFeedID {
+	d := ChangeFeedID{
+		Id: GID{
+			Low:  pb.Low,
+			High: pb.High,
+		},
+		Representation: ChangeFeedIDRepresentation{
+			Name:      pb.Name,
+			Namespace: pb.Namespace,
+		},
+	}
+	return d
+}
+
+func (c ChangeFeedID) ToPB() *heartbeatpb.ChangefeedID {
+	return &heartbeatpb.ChangefeedID{
+		Low:       c.Id.Low,
+		High:      c.Id.High,
+		Name:      c.Name(),
+		Namespace: c.Namespace(),
+	}
 }

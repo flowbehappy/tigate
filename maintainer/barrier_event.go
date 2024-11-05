@@ -30,7 +30,7 @@ import (
 // BarrierEvent is a barrier event that reported by dispatchers, note is a block multiple dispatchers
 // all of these dispatchers should report the same event
 type BarrierEvent struct {
-	cfID                     string
+	cfID                     common.ChangeFeedID
 	commitTs                 uint64
 	controller               *Controller
 	selected                 bool
@@ -51,7 +51,7 @@ type BarrierEvent struct {
 	lastResendTime time.Time
 }
 
-func NewBlockEvent(cfID string, controller *Controller,
+func NewBlockEvent(cfID common.ChangeFeedID, controller *Controller,
 	status *heartbeatpb.State, dynamicSplitEnabled bool) *BarrierEvent {
 	event := &BarrierEvent{
 		controller:          controller,
@@ -105,7 +105,7 @@ func NewBlockEvent(cfID string, controller *Controller,
 		}
 	}
 	log.Info("new block event is created",
-		zap.String("changefeedID", cfID),
+		zap.String("changefeedID", cfID.Name()),
 		zap.Uint64("block-ts", event.commitTs),
 		zap.Bool("sync-point", event.isSyncPoint))
 	return event
@@ -120,7 +120,7 @@ func (be *BarrierEvent) onAllDispatcherReportedBlockEvent(dispatchers []*heartbe
 	case heartbeatpb.InfluenceType_DB, heartbeatpb.InfluenceType_All:
 		// for all and db type, we always use the table trigger event dispatcher as the writer
 		log.Info("use table trigger event as the writer dispatcher",
-			zap.String("changefeed", be.cfID),
+			zap.String("changefeed", be.cfID.Name()),
 			zap.String("dispatcher", be.controller.ddlDispatcherID.String()),
 			zap.Uint64("commitTs", be.commitTs))
 		dispatcher = be.controller.ddlDispatcherID
@@ -133,7 +133,7 @@ func (be *BarrierEvent) onAllDispatcherReportedBlockEvent(dispatchers []*heartbe
 			if blockedDispatcher == tableTriggerEventDispatcherID {
 				selected = blockedDispatcher
 				log.Info("use table trigger event as the writer dispatcher",
-					zap.String("changefeed", be.cfID),
+					zap.String("changefeed", be.cfID.Name()),
 					zap.String("dispatcher", selected.String()),
 					zap.Uint64("commitTs", be.commitTs))
 				break
@@ -147,7 +147,7 @@ func (be *BarrierEvent) onAllDispatcherReportedBlockEvent(dispatchers []*heartbe
 	be.selected = true
 	be.writerDispatcher = dispatcher
 	log.Info("all dispatcher reported heartbeat, select one to write",
-		zap.String("changefeed", be.cfID),
+		zap.String("changefeed", be.cfID.Name()),
 		zap.String("dispatcher", be.writerDispatcher.String()),
 		zap.Uint64("commitTs", be.commitTs),
 		zap.String("barrierType", be.blockedDispatchers.InfluenceType.String()))
@@ -167,26 +167,26 @@ func (be *BarrierEvent) scheduleBlockEvent() {
 		case heartbeatpb.InfluenceType_DB:
 			be.controller.RemoveTasksBySchemaID(be.dropDispatchers.SchemaID)
 			log.Info(" remove table",
-				zap.String("changefeed", be.cfID),
+				zap.String("changefeed", be.cfID.Name()),
 				zap.Uint64("commitTs", be.commitTs),
 				zap.Int64("schema", be.dropDispatchers.SchemaID))
 		case heartbeatpb.InfluenceType_Normal:
 			be.controller.RemoveTasksByTableIDs(be.dropDispatchers.TableIDs...)
 			log.Info(" remove table",
-				zap.String("changefeed", be.cfID),
+				zap.String("changefeed", be.cfID.Name()),
 				zap.Uint64("commitTs", be.commitTs),
 				zap.Int64s("table", be.dropDispatchers.TableIDs))
 		case heartbeatpb.InfluenceType_All:
 			be.controller.RemoveAllTasks()
 			log.Info("remove all tables by barrier",
 				zap.Uint64("commitTs", be.commitTs),
-				zap.String("changefeed", be.cfID))
+				zap.String("changefeed", be.cfID.Name()))
 		}
 	}
 	for _, add := range be.newTables {
 		log.Info(" add new table",
 			zap.Uint64("commitTs", be.commitTs),
-			zap.String("changefeed", be.cfID),
+			zap.String("changefeed", be.cfID.Name()),
 			zap.Int64("schema", add.SchemaID),
 			zap.Int64("table", add.TableID))
 		be.controller.AddNewTable(commonEvent.Table{
@@ -197,7 +197,7 @@ func (be *BarrierEvent) scheduleBlockEvent() {
 
 	for _, change := range be.schemaIDChange {
 		log.Info("update schema id",
-			zap.String("changefeed", be.cfID),
+			zap.String("changefeed", be.cfID.Name()),
 			zap.Uint64("commitTs", be.commitTs),
 			zap.Int64("newSchema", change.OldSchemaID),
 			zap.Int64("oldSchema", change.NewSchemaID),
@@ -210,7 +210,7 @@ func (be *BarrierEvent) markDispatcherEventDone(dispatcherID common.DispatcherID
 	replicaSpan := be.controller.GetTask(dispatcherID)
 	if replicaSpan == nil {
 		log.Warn("dispatcher not found, ignore",
-			zap.String("changefeed", be.cfID),
+			zap.String("changefeed", be.cfID.Name()),
 			zap.String("dispatcher", dispatcherID.String()))
 		return
 	}
@@ -295,7 +295,7 @@ func (be *BarrierEvent) resend() []*messaging.TargetMessage {
 func (be *BarrierEvent) newWriterActionMessage(capture node.ID) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(capture, messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.HeartBeatResponse{
-			ChangefeedID: be.cfID,
+			ChangefeedID: be.cfID.ToPB(),
 			DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
 				{
 					Action: be.action(heartbeatpb.Action_Write),
@@ -312,7 +312,7 @@ func (be *BarrierEvent) newWriterActionMessage(capture node.ID) *messaging.Targe
 func (be *BarrierEvent) newPassActionMessage(capture node.ID) *messaging.TargetMessage {
 	return messaging.NewSingleTargetMessage(capture, messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.HeartBeatResponse{
-			ChangefeedID: be.cfID,
+			ChangefeedID: be.cfID.ToPB(),
 			DispatcherStatuses: []*heartbeatpb.DispatcherStatus{
 				{
 					Action: be.action(heartbeatpb.Action_Pass),

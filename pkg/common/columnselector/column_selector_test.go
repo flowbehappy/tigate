@@ -1,4 +1,4 @@
-package common
+package columnselector
 
 // import (
 // 	"testing"

@@ -10,7 +10,7 @@ message TableSpan {
 }
 
 message HeartBeatRequest {
-    string changefeedID = 1;
+    ChangefeedID changefeedID = 1;
     Watermark watermark = 2;
     repeated TableSpanStatus statuses = 3;
     bool compeleteStatus = 4; // 是否包含了所有的 table status
@@ -56,12 +56,12 @@ message DispatcherStatus {
 }
 
 message HeartBeatResponse {
-    string changefeedID = 1;
+    ChangefeedID changefeedID = 1;
     repeated DispatcherStatus dispatcherStatuses = 2;
 }
 
 message CheckpointTsMessage {
-    string changefeedID = 1;
+    ChangefeedID changefeedID = 1;
     uint64 checkpointTs = 2;
 }
 
@@ -78,7 +78,7 @@ message DispatcherConfig {
 }
 
 message ScheduleDispatcherRequest {
-    string changefeedID = 1;
+    ChangefeedID changefeedID = 1;
     DispatcherConfig config = 2;
     ScheduleAction scheduleAction = 3;
 }
@@ -88,7 +88,7 @@ message MaintainerHeartbeat {
 }
 
 message MaintainerStatus {
-    string changefeedID = 1;
+    ChangefeedID changefeedID = 1;
     string feed_state = 2;
     ComponentState state = 3;
     uint64 checkpoint_ts = 4;
@@ -105,26 +105,26 @@ message CoordinatorBootstrapResponse {
 }
 
 message AddMaintainerRequest  {
-    string id = 1;
+    ChangefeedID id = 1;
     bytes config = 2;
     uint64 checkpoint_ts = 3;
 }
 
 message RemoveMaintainerRequest  {
-    string id = 1;
+    ChangefeedID id = 1;
     bool cascade = 2;
     bool removed = 3;
 }
 
 message MaintainerBootstrapRequest {
-    string changefeedID = 1;
+    ChangefeedID changefeedID = 1;
     bytes config = 2;
     uint64 start_ts = 3;
     DispatcherID table_trigger_event_dispatcher_id = 4;
 }
 
 message MaintainerBootstrapResponse {
-    string changefeedID = 1;
+    ChangefeedID changefeedID = 1;
     repeated BootstrapTableSpan spans = 2;
     RunningError err = 3;
     // when the table trigger event dispatcher is created in this node,
@@ -154,13 +154,13 @@ message BootstrapTableSpan {
 }
 
 message MaintainerCloseRequest {
-    string changefeedID = 1;
+    ChangefeedID changefeedID = 1;
     // true when remove changefeed, false when pause the changefeed.
     bool removed = 2;
 }
 
 message MaintainerCloseResponse {
-    string changefeedID = 1;
+    ChangefeedID changefeedID = 1;
     bool success = 2;
 }
 
@@ -213,7 +213,7 @@ message TableSpanStatus {
 }
 
 message BlockStatusRequest {
-    string changefeedID = 1;
+    ChangefeedID changefeedID = 1;
     repeated TableSpanBlockStatus blockStatuses = 2;
 }
 
@@ -233,4 +233,11 @@ message RunningError {
 message DispatcherID {
     uint64 high = 1;
     uint64 low = 2;
+}
+
+message ChangefeedID {
+    uint64 high = 1;
+    uint64 low = 2;
+    string name = 3;
+    string namespace = 4;
 }

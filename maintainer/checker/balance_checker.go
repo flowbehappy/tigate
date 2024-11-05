@@ -16,19 +16,20 @@ package checker
 import (
 	"github.com/pingcap/ticdc/maintainer/operator"
 	"github.com/pingcap/ticdc/maintainer/replica"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/server/watcher"
 )
 
 // BalanceChecker is used to check the balance status of all spans among all nodes
 type BalanceChecker struct {
-	changefeedID       string
+	changefeedID       common.ChangeFeedID
 	operatorController *operator.Controller
 	replicationDB      *replica.ReplicationDB
 	nodeManager        *watcher.NodeManager
 }
 
 func NewBalanceChecker(
-	changefeedID string,
+	changefeedID common.ChangeFeedID,
 	oc *operator.Controller,
 	db *replica.ReplicationDB,
 	nodeManager *watcher.NodeManager) *BalanceChecker {

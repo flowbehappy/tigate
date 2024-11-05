@@ -19,7 +19,7 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tiflow/pkg/errors"
 	tikafka "github.com/pingcap/tiflow/pkg/sink/kafka"
 	"github.com/pingcap/tiflow/pkg/util"
@@ -28,7 +28,7 @@ import (
 )
 
 type saramaFactory struct {
-	changefeedID model.ChangeFeedID
+	changefeedID common.ChangeFeedID
 	option       *Options
 
 	registry metrics.Registry
@@ -37,7 +37,7 @@ type saramaFactory struct {
 // NewSaramaFactory constructs a Factory with sarama implementation.
 func NewSaramaFactory(
 	o *Options,
-	changefeedID model.ChangeFeedID,
+	changefeedID common.ChangeFeedID,
 ) (Factory, error) {
 	return &saramaFactory{
 		changefeedID: changefeedID,
@@ -140,6 +140,6 @@ func (f *saramaFactory) MetricsCollector(
 	role util.Role,
 	adminClient tikafka.ClusterAdminClient,
 ) tikafka.MetricsCollector {
-	return tikafka.NewSaramaMetricsCollector(
+	return NewSaramaMetricsCollector(
 		f.changefeedID, role, adminClient, f.registry)
 }

@@ -16,8 +16,8 @@ package metrics
 import (
 	"time"
 
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
-	"github.com/pingcap/tiflow/cdc/model"
 
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/prometheus/client_golang/prometheus"
@@ -25,7 +25,7 @@ import (
 
 // NewStatistics creates a statistics
 func NewStatistics(
-	changefeed model.ChangeFeedID,
+	changefeed common.ChangeFeedID,
 	sinkType string,
 ) *Statistics {
 	statistics := &Statistics{
@@ -34,8 +34,8 @@ func NewStatistics(
 		changefeedID: changefeed,
 	}
 
-	namespcae := statistics.changefeedID.Namespace
-	changefeedID := statistics.changefeedID.ID
+	namespcae := statistics.changefeedID.Namespace()
+	changefeedID := statistics.changefeedID.Name()
 	s := sinkType
 	statistics.metricExecDDLHis = ExecDDLHistogram.WithLabelValues(namespcae, changefeedID, s)
 	statistics.metricExecBatchHis = ExecBatchHistogram.WithLabelValues(namespcae, changefeedID, s)
@@ -51,7 +51,7 @@ func NewStatistics(
 type Statistics struct {
 	sinkType     string
 	captureAddr  string
-	changefeedID model.ChangeFeedID
+	changefeedID common.ChangeFeedID
 
 	// Histogram for DDL Executing duration.
 	metricExecDDLHis prometheus.Observer
@@ -100,10 +100,12 @@ func (b *Statistics) RecordDDLExecution(executor func() error) error {
 
 // Close release some internal resources.
 func (b *Statistics) Close() {
-	ExecDDLHistogram.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
-	ExecBatchHistogram.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
-	EventSizeHistogram.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
-	ExecutionErrorCounter.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
-	TotalWriteBytesCounter.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
-	ExecDMLEventCounter.DeleteLabelValues(b.changefeedID.Namespace, b.changefeedID.ID)
+	namespace := b.changefeedID.Namespace()
+	changefeedID := b.changefeedID.Name()
+	ExecDDLHistogram.DeleteLabelValues(namespace, changefeedID)
+	ExecBatchHistogram.DeleteLabelValues(namespace, changefeedID)
+	EventSizeHistogram.DeleteLabelValues(namespace, changefeedID)
+	ExecutionErrorCounter.DeleteLabelValues(namespace, changefeedID)
+	TotalWriteBytesCounter.DeleteLabelValues(namespace, changefeedID)
+	ExecDMLEventCounter.DeleteLabelValues(namespace, changefeedID)
 }
