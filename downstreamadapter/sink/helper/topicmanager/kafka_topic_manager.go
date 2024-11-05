@@ -21,8 +21,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/common"
 	tikafka "github.com/pingcap/ticdc/pkg/sink/kafka"
-	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/retry"
 	"github.com/pingcap/tiflow/pkg/sink/kafka"
@@ -39,7 +39,7 @@ const (
 
 // kafkaTopicManager is a manager for kafka topics.
 type kafkaTopicManager struct {
-	changefeedID model.ChangeFeedID
+	changefeedID common.ChangeFeedID
 
 	defaultTopic string
 
@@ -58,7 +58,7 @@ type kafkaTopicManager struct {
 // GetTopicManagerAndTryCreateTopic returns the topic manager and try to create the topic.
 func GetTopicManagerAndTryCreateTopic(
 	ctx context.Context,
-	changefeedID model.ChangeFeedID,
+	changefeedID common.ChangeFeedID,
 	topic string,
 	topicCfg *tikafka.AutoCreateTopicConfig,
 	adminClient kafka.ClusterAdminClient,
@@ -78,7 +78,7 @@ func GetTopicManagerAndTryCreateTopic(
 func newKafkaTopicManager(
 	ctx context.Context,
 	defaultTopic string,
-	changefeedID model.ChangeFeedID,
+	changefeedID common.ChangeFeedID,
 	admin kafka.ClusterAdminClient,
 	cfg *tikafka.AutoCreateTopicConfig,
 ) *kafkaTopicManager {
@@ -121,8 +121,8 @@ func (m *kafkaTopicManager) backgroundRefreshMeta(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			log.Info("Background refresh Kafka metadata goroutine exit.",
-				zap.String("namespace", m.changefeedID.Namespace),
-				zap.String("changefeed", m.changefeedID.ID),
+				zap.String("namespace", m.changefeedID.Namespace()),
+				zap.String("changefeed", m.changefeedID.Name()),
 			)
 			return
 		case <-m.metaRefreshTicker.C:
@@ -144,8 +144,8 @@ func (m *kafkaTopicManager) tryUpdatePartitionsAndLogging(topic string, partitio
 			m.topics.Store(topic, partitions)
 			log.Info(
 				"update topic partition number",
-				zap.String("namespace", m.changefeedID.Namespace),
-				zap.String("changefeed", m.changefeedID.ID),
+				zap.String("namespace", m.changefeedID.Namespace()),
+				zap.String("changefeed", m.changefeedID.Name()),
 				zap.String("topic", topic),
 				zap.Int32("oldPartitionNumber", oldPartitions.(int32)),
 				zap.Int32("newPartitionNumber", partitions),
@@ -155,8 +155,8 @@ func (m *kafkaTopicManager) tryUpdatePartitionsAndLogging(topic string, partitio
 		m.topics.Store(topic, partitions)
 		log.Info(
 			"store topic partition number",
-			zap.String("namespace", m.changefeedID.Namespace),
-			zap.String("changefeed", m.changefeedID.ID),
+			zap.String("namespace", m.changefeedID.Namespace()),
+			zap.String("changefeed", m.changefeedID.Name()),
 			zap.String("topic", topic),
 			zap.Int32("partitionNumber", partitions),
 		)
@@ -181,8 +181,8 @@ func (m *kafkaTopicManager) fetchAllTopicsPartitionsNum(
 	if err != nil {
 		log.Warn(
 			"Kafka admin client describe topics failed",
-			zap.String("namespace", m.changefeedID.Namespace),
-			zap.String("changefeed", m.changefeedID.ID),
+			zap.String("namespace", m.changefeedID.Namespace()),
+			zap.String("changefeed", m.changefeedID.Name()),
 			zap.Error(err),
 			zap.Duration("duration", time.Since(start)),
 		)
@@ -200,8 +200,8 @@ func (m *kafkaTopicManager) fetchAllTopicsPartitionsNum(
 
 	log.Info(
 		"Kafka admin client describe topics success",
-		zap.String("namespace", m.changefeedID.Namespace),
-		zap.String("changefeed", m.changefeedID.ID),
+		zap.String("namespace", m.changefeedID.Namespace()),
+		zap.String("changefeed", m.changefeedID.Name()),
 		zap.Duration("duration", time.Since(start)))
 
 	return numPartitions, nil
@@ -224,16 +224,16 @@ func (m *kafkaTopicManager) waitUntilTopicVisible(
 		meta, err := m.admin.GetTopicsMeta(ctx, topics, false)
 		if err != nil {
 			log.Warn(" topic not found, retry it",
-				zap.String("namespace", m.changefeedID.Namespace),
-				zap.String("changefeed", m.changefeedID.ID),
+				zap.String("namespace", m.changefeedID.Namespace()),
+				zap.String("changefeed", m.changefeedID.Name()),
 				zap.Error(err),
 				zap.Duration("duration", time.Since(start)),
 			)
 			return err
 		}
 		log.Info("topic found",
-			zap.String("namespace", m.changefeedID.Namespace),
-			zap.String("changefeed", m.changefeedID.ID),
+			zap.String("namespace", m.changefeedID.Namespace()),
+			zap.String("changefeed", m.changefeedID.Name()),
 			zap.String("topic", topicName),
 			zap.Int32("partitionNumber", meta[topicName].NumPartitions),
 			zap.Duration("duration", time.Since(start)))
@@ -267,8 +267,8 @@ func (m *kafkaTopicManager) createTopic(
 	if err != nil {
 		log.Error(
 			"Kafka admin client create the topic failed",
-			zap.String("namespace", m.changefeedID.Namespace),
-			zap.String("changefeed", m.changefeedID.ID),
+			zap.String("namespace", m.changefeedID.Namespace()),
+			zap.String("changefeed", m.changefeedID.Name()),
 			zap.String("topic", topicName),
 			zap.Int32("partitionNumber", m.cfg.PartitionNum),
 			zap.Int16("replicationFactor", m.cfg.ReplicationFactor),
@@ -280,8 +280,8 @@ func (m *kafkaTopicManager) createTopic(
 
 	log.Info(
 		"Kafka admin client create the topic success",
-		zap.String("namespace", m.changefeedID.Namespace),
-		zap.String("changefeed", m.changefeedID.ID),
+		zap.String("namespace", m.changefeedID.Namespace()),
+		zap.String("changefeed", m.changefeedID.Name()),
 		zap.String("topic", topicName),
 		zap.Int32("partitionNumber", m.cfg.PartitionNum),
 		zap.Int16("replicationFactor", m.cfg.ReplicationFactor),

@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/common/columnselector"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	newcommon "github.com/pingcap/ticdc/pkg/sink/codec/common"
 	"github.com/pingcap/ticdc/pkg/sink/codec/encoder"
@@ -81,7 +82,7 @@ func encodeRowChangedEvent(e *commonEvent.RowEvent, config *newcommon.Config, la
 	key := keyBuf.Bytes()
 	value := valueBuf.Bytes()
 
-	valueCompressed, err := ticommon.Compress(
+	valueCompressed, err := newcommon.Compress(
 		config.ChangefeedID, config.LargeMessageHandle.LargeMessageHandleCompression, value,
 	)
 	if err != nil {
@@ -116,7 +117,7 @@ func encodeDDLEvent(e *commonEvent.DDLEvent, config *newcommon.Config) ([]byte, 
 	util.ReturnJSONWriter(keyWriter)
 	util.ReturnJSONWriter(valueWriter)
 
-	value, err := ticommon.Compress(
+	value, err := newcommon.Compress(
 		config.ChangefeedID, config.LargeMessageHandle.LargeMessageHandleCompression, valueBuf.Bytes(),
 	)
 	if err != nil {
@@ -278,7 +279,7 @@ func writeColumnFieldValues(
 	jWriter *util.JSONWriter,
 	row *chunk.Row,
 	tableInfo *common.TableInfo,
-	selector common.Selector,
+	selector columnselector.Selector,
 	onlyHandleKeyColumns bool,
 ) error {
 	flag := false // flag to check if any column is written
@@ -308,7 +309,7 @@ func writeUpdatedColumnFieldValues(
 	preRow *chunk.Row,
 	row *chunk.Row,
 	tableInfo *common.TableInfo,
-	selector common.Selector,
+	selector columnselector.Selector,
 	onlyHandleKeyColumns bool,
 ) {
 	// we don't need check here whether after column selector there still exists handle key column

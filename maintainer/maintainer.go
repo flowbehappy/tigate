@@ -54,7 +54,7 @@ import (
 // 4. checker controller, handled in threadpool, it runs the checkers to dynamically adjust the schedule
 // all threads are read/write information from/to the ReplicationDB
 type Maintainer struct {
-	id         model.ChangeFeedID
+	id         common.ChangeFeedID
 	config     *config.ChangeFeedInfo
 	selfNode   *node.Info
 	controller *Controller
@@ -116,7 +116,7 @@ type Maintainer struct {
 }
 
 // NewMaintainer create the maintainer for the changefeed
-func NewMaintainer(cfID model.ChangeFeedID,
+func NewMaintainer(cfID common.ChangeFeedID,
 	conf *config.SchedulerConfig,
 	cfg *config.ChangeFeedInfo,
 	selfNode *node.Info,
@@ -141,7 +141,7 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		stream:            stream,
 		taskScheduler:     taskScheduler,
 		startCheckpointTs: checkpointTs,
-		controller: NewController(cfID.ID, checkpointTs, pdAPI, regionCache, taskScheduler,
+		controller: NewController(cfID, checkpointTs, pdAPI, regionCache, taskScheduler,
 			cfg.Config, ddlSpan, conf.AddTableBatchSize, time.Duration(conf.CheckBalanceInterval)),
 		mc:              mc,
 		state:           heartbeatpb.ComponentState_Working,
@@ -163,19 +163,19 @@ func NewMaintainer(cfID model.ChangeFeedID,
 		runningErrors:         map[node.ID]*heartbeatpb.RunningError{},
 		runningWarnings:       map[node.ID]*heartbeatpb.RunningError{},
 
-		changefeedCheckpointTsGauge:    metrics.ChangefeedCheckpointTsGauge.WithLabelValues(cfID.Namespace, cfID.ID),
-		changefeedCheckpointTsLagGauge: metrics.ChangefeedCheckpointTsLagGauge.WithLabelValues(cfID.Namespace, cfID.ID),
-		changefeedResolvedTsGauge:      metrics.ChangefeedResolvedTsGauge.WithLabelValues(cfID.Namespace, cfID.ID),
-		changefeedResolvedTsLagGauge:   metrics.ChangefeedResolvedTsLagGauge.WithLabelValues(cfID.Namespace, cfID.ID),
-		changefeedStatusGauge:          metrics.ChangefeedStatusGauge.WithLabelValues(cfID.Namespace, cfID.ID),
-		scheduledTaskGauge:             metrics.ScheduleTaskGuage.WithLabelValues(cfID.Namespace, cfID.ID),
-		runningTaskGauge:               metrics.RunningScheduleTaskGauge.WithLabelValues(cfID.Namespace, cfID.ID),
-		tableCountGauge:                metrics.TableGauge.WithLabelValues(cfID.Namespace, cfID.ID),
-		handleEventDuration:            metrics.MaintainerHandleEventDuration.WithLabelValues(cfID.Namespace, cfID.ID),
+		changefeedCheckpointTsGauge:    metrics.ChangefeedCheckpointTsGauge.WithLabelValues(cfID.Namespace(), cfID.Name()),
+		changefeedCheckpointTsLagGauge: metrics.ChangefeedCheckpointTsLagGauge.WithLabelValues(cfID.Namespace(), cfID.Name()),
+		changefeedResolvedTsGauge:      metrics.ChangefeedResolvedTsGauge.WithLabelValues(cfID.Namespace(), cfID.Name()),
+		changefeedResolvedTsLagGauge:   metrics.ChangefeedResolvedTsLagGauge.WithLabelValues(cfID.Namespace(), cfID.Name()),
+		changefeedStatusGauge:          metrics.ChangefeedStatusGauge.WithLabelValues(cfID.Namespace(), cfID.Name()),
+		scheduledTaskGauge:             metrics.ScheduleTaskGuage.WithLabelValues(cfID.Namespace(), cfID.Name()),
+		runningTaskGauge:               metrics.RunningScheduleTaskGauge.WithLabelValues(cfID.Namespace(), cfID.Name()),
+		tableCountGauge:                metrics.TableGauge.WithLabelValues(cfID.Namespace(), cfID.Name()),
+		handleEventDuration:            metrics.MaintainerHandleEventDuration.WithLabelValues(cfID.Namespace(), cfID.Name()),
 	}
-	m.bootstrapper = bootstrap.NewBootstrapper[heartbeatpb.MaintainerBootstrapResponse](m.id.ID, m.getNewBootstrapFn())
+	m.bootstrapper = bootstrap.NewBootstrapper[heartbeatpb.MaintainerBootstrapResponse](m.id.Name(), m.getNewBootstrapFn())
 	log.Info("maintainer is created", zap.String("id", cfID.String()))
-	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace, cfID.ID).Inc()
+	metrics.MaintainerGauge.WithLabelValues(cfID.Namespace(), cfID.Name()).Inc()
 	return m
 }
 
@@ -248,7 +248,7 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 	}
 
 	status := &heartbeatpb.MaintainerStatus{
-		ChangefeedID: m.id.ID,
+		ChangefeedID: m.id.ToPB(),
 		FeedState:    string(m.changefeedSate),
 		State:        m.state,
 		CheckpointTs: m.watermark.CheckpointTs,
@@ -264,7 +264,7 @@ func (m *Maintainer) initialize() error {
 		zap.String("id", m.id.String()))
 
 	// detect the capture changes
-	m.nodeManager.RegisterNodeChangeHandler(node.ID("maintainer-"+m.id.ID), func(allNodes map[node.ID]*node.Info) {
+	m.nodeManager.RegisterNodeChangeHandler(node.ID("maintainer-"+m.id.Name()), func(allNodes map[node.ID]*node.Info) {
 		m.nodeChanged.Store(true)
 	})
 	// init bootstrapper nodes
@@ -278,7 +278,7 @@ func (m *Maintainer) initialize() error {
 	m.sendMessages(m.bootstrapper.HandleNewNodes(newNodes))
 	// setup period event
 	SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{
-		changefeedID: m.id.ID,
+		changefeedID: m.id.Name(),
 		eventType:    EventPeriod,
 	}, time.Now().Add(time.Millisecond*500))
 	log.Info("changefeed maintainer initialized",
@@ -290,13 +290,13 @@ func (m *Maintainer) initialize() error {
 }
 
 func (m *Maintainer) cleanupMetrics() {
-	metrics.ChangefeedCheckpointTsGauge.DeleteLabelValues(m.id.Namespace, m.id.ID)
-	metrics.ChangefeedCheckpointTsLagGauge.DeleteLabelValues(m.id.Namespace, m.id.ID)
-	metrics.ChangefeedStatusGauge.DeleteLabelValues(m.id.Namespace, m.id.ID)
-	metrics.ScheduleTaskGuage.DeleteLabelValues(m.id.Namespace, m.id.ID)
-	metrics.RunningScheduleTaskGauge.DeleteLabelValues(m.id.Namespace, m.id.ID)
-	metrics.TableGauge.DeleteLabelValues(m.id.Namespace, m.id.ID)
-	metrics.MaintainerHandleEventDuration.DeleteLabelValues(m.id.Namespace, m.id.ID)
+	metrics.ChangefeedCheckpointTsGauge.DeleteLabelValues(m.id.Namespace(), m.id.Name())
+	metrics.ChangefeedCheckpointTsLagGauge.DeleteLabelValues(m.id.Namespace(), m.id.Name())
+	metrics.ChangefeedStatusGauge.DeleteLabelValues(m.id.Namespace(), m.id.Name())
+	metrics.ScheduleTaskGuage.DeleteLabelValues(m.id.Namespace(), m.id.Name())
+	metrics.RunningScheduleTaskGauge.DeleteLabelValues(m.id.Namespace(), m.id.Name())
+	metrics.TableGauge.DeleteLabelValues(m.id.Namespace(), m.id.Name())
+	metrics.MaintainerHandleEventDuration.DeleteLabelValues(m.id.Namespace(), m.id.Name())
 }
 
 func (m *Maintainer) onInit() bool {
@@ -324,7 +324,7 @@ func (m *Maintainer) onMessage(msg *messaging.TargetMessage) {
 		m.onCheckpointTsPersisted(msg.Message[0].(*heartbeatpb.CheckpointTsMessage))
 	default:
 		log.Panic("unexpected message type",
-			zap.String("changefeed", m.id.ID),
+			zap.String("changefeed", m.id.Name()),
 			zap.String("type", msg.Type.String()))
 	}
 }
@@ -337,7 +337,7 @@ func (m *Maintainer) onRemoveMaintainer(cascade, changefeedRemoved bool) {
 	if closed {
 		m.removed.Store(true)
 		m.state = heartbeatpb.ComponentState_Stopped
-		metrics.MaintainerGauge.WithLabelValues(m.id.Namespace, m.id.ID).Dec()
+		metrics.MaintainerGauge.WithLabelValues(m.id.Namespace(), m.id.Name()).Dec()
 	}
 }
 
@@ -396,7 +396,7 @@ func (m *Maintainer) calCheckpointTs() {
 		if m.controller.GetTaskSizeByNodeID(id) > 0 {
 			if _, ok := m.checkpointTsByCapture[id]; !ok {
 				log.Debug("checkpointTs can not be advanced, since missing capture heartbeat",
-					zap.String("changefeed", m.id.ID),
+					zap.String("changefeed", m.id.Name()),
 					zap.Any("node", id))
 				return
 			}
@@ -431,7 +431,7 @@ func (m *Maintainer) sendMessages(msgs []*messaging.TargetMessage) {
 		err := m.mc.SendCommand(msg)
 		if err != nil {
 			log.Debug("failed to send maintainer request",
-				zap.String("changefeed", m.id.ID),
+				zap.String("changefeed", m.id.Name()),
 				zap.Any("msg", msg), zap.Error(err))
 			continue
 		}
@@ -472,7 +472,7 @@ func (m *Maintainer) onBlockStateRequest(msg *messaging.TargetMessage) {
 
 func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage) {
 	log.Info("received maintainer bootstrap response",
-		zap.String("changefeed", m.id.ID),
+		zap.String("changefeed", m.id.Name()),
 		zap.Any("server", msg.From))
 	cachedResp := m.bootstrapper.HandleBootstrapResponse(msg.From, msg.Message[0].(*heartbeatpb.MaintainerBootstrapResponse))
 	m.onBootstrapDone(cachedResp)
@@ -530,7 +530,7 @@ func (m *Maintainer) sendMaintainerCloseRequestToAllNode() bool {
 				n,
 				messaging.DispatcherManagerManagerTopic,
 				&heartbeatpb.MaintainerCloseRequest{
-					ChangefeedID: m.id.ID,
+					ChangefeedID: m.id.ToPB(),
 					Removed:      m.changefeedRemoved,
 				}))
 		}
@@ -544,7 +544,7 @@ func (m *Maintainer) sendMaintainerCloseRequestToAllNode() bool {
 // todo: stop maintainer immediately?
 func (m *Maintainer) handleError(err error) {
 	log.Error("an error occurred in Owner",
-		zap.String("changefeed", m.id.ID), zap.Error(err))
+		zap.String("changefeed", m.id.Name()), zap.Error(err))
 	var code string
 	if rfcCode, ok := errors.RFCCode(err); ok {
 		code = string(rfcCode)
@@ -567,8 +567,7 @@ func (m *Maintainer) handleError(err error) {
 func (m *Maintainer) getNewBootstrapFn() bootstrap.NewBootstrapMessageFn {
 	cfg := m.config
 	changefeedConfig := config.ChangefeedConfig{
-		Namespace:          cfg.Namespace,
-		ID:                 cfg.ID,
+		ChangefeedID:       cfg.ChangefeedID,
 		StartTS:            cfg.StartTs,
 		TargetTS:           cfg.TargetTs,
 		SinkURI:            cfg.SinkURI,
@@ -584,7 +583,7 @@ func (m *Maintainer) getNewBootstrapFn() bootstrap.NewBootstrapMessageFn {
 	cfgBytes, err := json.Marshal(changefeedConfig)
 	if err != nil {
 		log.Panic("marshal changefeed config failed",
-			zap.String("changefeed", m.id.ID),
+			zap.String("changefeed", m.id.Name()),
 			zap.Error(err))
 	}
 	return func(id node.ID) *messaging.TargetMessage {
@@ -604,7 +603,7 @@ func (m *Maintainer) getNewBootstrapFn() bootstrap.NewBootstrapMessageFn {
 			id,
 			messaging.DispatcherManagerManagerTopic,
 			&heartbeatpb.MaintainerBootstrapRequest{
-				ChangefeedID:                  m.id.ID,
+				ChangefeedID:                  m.id.ToPB(),
 				Config:                        cfgBytes,
 				StartTs:                       m.startCheckpointTs,
 				TableTriggerEventDispatcherId: ddlDispatcherID,
@@ -618,7 +617,7 @@ func (m *Maintainer) onPeriodTask() {
 	m.collectMetrics()
 	m.calCheckpointTs()
 	SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{
-		changefeedID: m.id.ID,
+		changefeedID: m.id.Name(),
 		eventType:    EventPeriod,
 	}, time.Now().Add(time.Millisecond*500))
 }
@@ -633,11 +632,11 @@ func (m *Maintainer) collectMetrics() {
 
 		m.tableCountGauge.Set(float64(total))
 		m.scheduledTaskGauge.Set(float64(scheduling))
-		metrics.TableStateGauge.WithLabelValues(m.id.Namespace, m.id.ID, "Absent").Set(float64(absent))
-		metrics.TableStateGauge.WithLabelValues(m.id.Namespace, m.id.ID, "Working").Set(float64(working))
+		metrics.TableStateGauge.WithLabelValues(m.id.Namespace(), m.id.Name(), "Absent").Set(float64(absent))
+		metrics.TableStateGauge.WithLabelValues(m.id.Namespace(), m.id.Name(), "Working").Set(float64(working))
 		m.lastPrintStatusTime = time.Now()
 		log.Info("maintainer status",
-			zap.String("changefeed", m.id.ID),
+			zap.String("changefeed", m.id.Name()),
 			zap.Int("total", total),
 			zap.Int("scheduling", scheduling),
 			zap.Int("working", working))

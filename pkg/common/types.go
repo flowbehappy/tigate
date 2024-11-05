@@ -10,6 +10,12 @@ import (
 	"github.com/pingcap/ticdc/heartbeatpb"
 )
 
+const (
+	// DefaultNamespace is the default namespace value,
+	// all the old changefeed will be put into default namespace
+	DefaultNamespace = "default"
+)
+
 var DefaultEndian = binary.LittleEndian
 
 type Ts = uint64
@@ -143,4 +149,104 @@ type DispatcherAction struct {
 
 func (a DispatcherAction) String() string {
 	return fmt.Sprintf("dispatcherID: %s, action: %s", a.DispatcherID, a.Action.String())
+}
+
+// 太长了，想个好的
+type ChangeFeedIDRepresentation struct {
+	name      string
+	namespace string
+}
+
+func NewChangeFeedIDRepresentation(name string, namespace string) ChangeFeedIDRepresentation {
+	return ChangeFeedIDRepresentation{
+		name:      name,
+		namespace: namespace,
+	}
+}
+
+func (r ChangeFeedIDRepresentation) Name() string {
+	return r.name
+}
+
+func (r ChangeFeedIDRepresentation) Namespace() string {
+	return r.namespace
+}
+
+func (r ChangeFeedIDRepresentation) String() string {
+	return r.namespace + "./" + r.name
+}
+
+// 重新写一下，主要表示 representation 用来外界查询时候，id 用于内部传递，保证性能
+// ChangefeedID is the unique identifier of a changefeed.
+// It can be specified the name of changefeedID, but the core id for internal use is a GID.
+// The name is just for user-friendly display.
+// If the name is not specified, it will be the id in string format.
+// We ensure whether the id or the representation is both unique in the cluster.
+type ChangeFeedID struct {
+	id             GID
+	representation ChangeFeedIDRepresentation
+}
+
+func NewChangefeedID() ChangeFeedID {
+	cfID := ChangeFeedID{
+		id: NewGID(),
+	}
+	cfID.representation = ChangeFeedIDRepresentation{
+		name:      cfID.id.String(),
+		namespace: DefaultNamespace,
+	}
+	return cfID
+}
+
+func NewChangeFeedIDWithName(name string) ChangeFeedID {
+	return ChangeFeedID{
+		id: NewGID(),
+		representation: ChangeFeedIDRepresentation{
+			name:      name,
+			namespace: DefaultNamespace,
+		},
+	}
+}
+
+func (cfID ChangeFeedID) String() string {
+	return cfID.representation.String()
+}
+
+func (cfID ChangeFeedID) Name() string {
+	return cfID.representation.Name()
+}
+
+func (cfID ChangeFeedID) Namespace() string {
+	return cfID.representation.Namespace()
+}
+
+func (cfID ChangeFeedID) ID() GID {
+	return cfID.id
+}
+
+func (cfID ChangeFeedID) Representation() ChangeFeedIDRepresentation {
+	return cfID.representation
+}
+
+func NewChangefeedIDFromPB(pb *heartbeatpb.ChangefeedID) ChangeFeedID {
+	d := ChangeFeedID{
+		id: GID{
+			low:  pb.Low,
+			high: pb.High,
+		},
+		representation: ChangeFeedIDRepresentation{
+			name:      pb.Name,
+			namespace: pb.Namespace,
+		},
+	}
+	return d
+}
+
+func (c ChangeFeedID) ToPB() *heartbeatpb.ChangefeedID {
+	return &heartbeatpb.ChangefeedID{
+		Low:       c.id.low,
+		High:      c.id.high,
+		Name:      c.Name(),
+		Namespace: c.Namespace(),
+	}
 }

@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/ticdc/utils"
 	"github.com/pingcap/ticdc/utils/threadpool"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/spanz"
@@ -61,7 +60,7 @@ type Controller struct {
 
 	cfConfig *config.ReplicaConfig
 
-	changefeedID string
+	changefeedID common.ChangeFeedID
 	batchSize    int
 
 	taskScheduler            threadpool.ThreadPool
@@ -70,7 +69,7 @@ type Controller struct {
 	checkerHandle            *threadpool.TaskHandle
 }
 
-func NewController(changefeedID string,
+func NewController(changefeedID common.ChangeFeedID,
 	checkpointTs uint64,
 	pdapi pdutil.PDAPIClient,
 	regionCache split.RegionCache,
@@ -115,7 +114,7 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableS
 			// the span is removed from replication db first, so here we only check if the span status is working or not
 			if status.ComponentStatus == heartbeatpb.ComponentState_Working {
 				log.Warn("no span found, remove it",
-					zap.String("changefeed", c.changefeedID),
+					zap.String("changefeed", c.changefeedID.Name()),
 					zap.String("from", from.String()),
 					zap.Any("status", status),
 					zap.String("span", dispatcherID.String()))
@@ -128,7 +127,7 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableS
 		if nodeID != from {
 			// todo: handle the case that the node id is mismatch
 			log.Warn("node id not match",
-				zap.String("changefeed", c.changefeedID),
+				zap.String("changefeed", c.changefeedID.Name()),
 				zap.Any("from", from),
 				zap.Stringer("node", nodeID))
 			continue
@@ -157,7 +156,7 @@ func (c *Controller) GetAllNodes() []node.ID {
 func (c *Controller) AddNewTable(table commonEvent.Table, startTs uint64) {
 	if c.replicationDB.IsTableExists(table.TableID) {
 		log.Warn("table already add, ignore",
-			zap.String("changefeed", c.changefeedID),
+			zap.String("changefeed", c.changefeedID.Name()),
 			zap.Int64("schema", table.SchemaID),
 			zap.Int64("table", table.TableID))
 		return
@@ -181,12 +180,12 @@ func (c *Controller) AddNewTable(table commonEvent.Table, startTs uint64) {
 func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.MaintainerBootstrapResponse) (*Barrier, error) {
 	if c.bootstrapped {
 		log.Panic("already bootstrapped",
-			zap.String("changefeed", c.changefeedID),
+			zap.String("changefeed", c.changefeedID.Name()),
 			zap.Any("workingMap", cachedResp))
 	}
 
 	log.Info("all nodes have sent bootstrap response",
-		zap.String("changefeed", c.changefeedID),
+		zap.String("changefeed", c.changefeedID.Name()),
 		zap.Int("size", len(cachedResp)))
 
 	// 1. get the real start ts from the table trigger event dispatcher
@@ -198,13 +197,13 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 	}
 	if startTs == 0 {
 		log.Panic("cant not found the start ts from the bootstrap response",
-			zap.String("changefeed", c.changefeedID))
+			zap.String("changefeed", c.changefeedID.Name()))
 	}
 	// 2. load tables from schema store using the start ts
 	tables, err := c.loadTables(startTs)
 	if err != nil {
 		log.Error("load table from scheme store failed",
-			zap.String("changefeed", c.changefeedID),
+			zap.String("changefeed", c.changefeedID.Name()),
 			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
@@ -212,7 +211,7 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 	workingMap := make(map[int64]utils.Map[*heartbeatpb.TableSpan, *replica.SpanReplication])
 	for server, bootstrapMsg := range cachedResp {
 		log.Info("received bootstrap response",
-			zap.String("changefeed", c.changefeedID),
+			zap.String("changefeed", c.changefeedID.Name()),
 			zap.Any("server", server),
 			zap.Int("size", len(bootstrapMsg.Spans)))
 		for _, info := range bootstrapMsg.Spans {
@@ -220,7 +219,7 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 			if dispatcherID == c.ddlDispatcherID {
 				log.Info(
 					"skip table trigger event dispatcher",
-					zap.String("changefeed", c.changefeedID),
+					zap.String("changefeed", c.changefeedID.Name()),
 					zap.String("dispatcher", dispatcherID.String()),
 					zap.String("server", server.String()))
 				continue
@@ -233,7 +232,7 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 			span := info.Span
 
 			//working on remote, the state must be absent or working since it's reported by remote
-			stm := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID(c.changefeedID), dispatcherID, info.SchemaID, span, status, server)
+			stm := replica.NewWorkingReplicaSet(c.changefeedID, dispatcherID, info.SchemaID, span, status, server)
 			tableMap, ok := workingMap[span.TableID]
 			if !ok {
 				tableMap = utils.NewBtreeMap[*heartbeatpb.TableSpan, *replica.SpanReplication](heartbeatpb.LessTableSpan)
@@ -255,7 +254,7 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 				EndKey:   span.EndKey,
 			}
 			log.Info("table already working in other server",
-				zap.String("changefeed", c.changefeedID),
+				zap.String("changefeed", c.changefeedID.Name()),
 				zap.Int64("tableID", table.TableID))
 			c.addWorkingSpans(tableMap)
 			if c.spanReplicationEnabled {
@@ -273,7 +272,7 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 	// ddl table is special table id (0), can be included in the bootstrap response message
 	for tableID, tableMap := range workingMap {
 		log.Info("found a tables not in initial table map",
-			zap.String("changefeed", c.changefeedID),
+			zap.String("changefeed", c.changefeedID.Name()),
 			zap.Int64("id", tableID))
 		c.addWorkingSpans(tableMap)
 	}
@@ -377,7 +376,7 @@ func (c *Controller) addNewSpans(schemaID int64,
 
 func (c *Controller) addNewSpan(dispatcherID common.DispatcherID, schemaID int64,
 	span *heartbeatpb.TableSpan, startTs uint64) {
-	replicaSet := replica.NewReplicaSet(model.DefaultChangeFeedID(c.changefeedID),
+	replicaSet := replica.NewReplicaSet(c.changefeedID,
 		dispatcherID, schemaID, span, startTs)
 	c.replicationDB.AddAbsentReplicaSet(replicaSet)
 }
@@ -391,6 +390,6 @@ func (c *Controller) loadTables(startTs uint64) ([]commonEvent.Table, error) {
 
 	schemaStore := appcontext.GetService[schemastore.SchemaStore](appcontext.SchemaStore)
 	tables, err := schemaStore.GetAllPhysicalTables(startTs, f)
-	log.Info("get table ids", zap.Int("count", len(tables)), zap.String("changefeed", c.changefeedID))
+	log.Info("get table ids", zap.Int("count", len(tables)), zap.String("changefeed", c.changefeedID.Name()))
 	return tables, err
 }

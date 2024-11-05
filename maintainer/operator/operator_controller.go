@@ -33,7 +33,7 @@ import (
 // Controller is the operator controller, it manages all operators.
 // And the Controller is responsible for the execution of the operator.
 type Controller struct {
-	changefeedID  string
+	changefeedID  common.ChangeFeedID
 	replicationDB *replica.ReplicationDB
 	operators     map[common.DispatcherID]operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus]
 	runningQueue  operator.OperatorQueue[common.DispatcherID, *heartbeatpb.TableSpanStatus]
@@ -43,7 +43,7 @@ type Controller struct {
 	lock sync.RWMutex
 }
 
-func NewOperatorController(changefeedID string,
+func NewOperatorController(changefeedID common.ChangeFeedID,
 	mc messaging.MessageCenter,
 	db *replica.ReplicationDB,
 	batchSize int) *Controller {
@@ -78,7 +78,7 @@ func (oc *Controller) Execute() time.Time {
 		if msg != nil {
 			_ = oc.messageCenter.SendCommand(msg)
 			log.Info("send command to dispatcher",
-				zap.String("changefeed", oc.changefeedID),
+				zap.String("changefeed", oc.changefeedID.Name()),
 				zap.String("operator", r.String()))
 		}
 		executedItem++
@@ -126,14 +126,14 @@ func (oc *Controller) AddOperator(op operator.Operator[common.DispatcherID, *hea
 
 	if _, ok := oc.operators[op.ID()]; ok {
 		log.Info("add operator failed, operator already exists",
-			zap.String("changefeed", oc.changefeedID),
+			zap.String("changefeed", oc.changefeedID.Name()),
 			zap.String("operator", op.String()))
 		return false
 	}
 	span := oc.replicationDB.GetTaskByID(op.ID())
 	if span == nil {
 		log.Warn("add operator failed, span not found",
-			zap.String("changefeed", oc.changefeedID),
+			zap.String("changefeed", oc.changefeedID.Name()),
 			zap.String("operator", op.String()))
 		return false
 	}
@@ -199,10 +199,10 @@ func (oc *Controller) pollQueueingOperator() (operator.Operator[common.Dispatche
 	if op.IsFinished() {
 		op.PostFinish()
 		delete(oc.operators, opID)
-		metrics.FinishedOperatorCount.WithLabelValues(model.DefaultNamespace, oc.changefeedID, op.Type()).Inc()
-		metrics.OperatorDuration.WithLabelValues(model.DefaultNamespace, oc.changefeedID, op.Type()).Observe(time.Since(item.EnqueueTime).Seconds())
+		metrics.FinishedOperatorCount.WithLabelValues(model.DefaultNamespace, oc.changefeedID.Name(), op.Type()).Inc()
+		metrics.OperatorDuration.WithLabelValues(model.DefaultNamespace, oc.changefeedID.Name(), op.Type()).Observe(time.Since(item.EnqueueTime).Seconds())
 		log.Info("operator finished",
-			zap.String("changefeed", oc.changefeedID),
+			zap.String("changefeed", oc.changefeedID.Name()),
 			zap.String("operator", opID.String()),
 			zap.String("operator", op.String()))
 		return nil, true
@@ -223,7 +223,7 @@ func (oc *Controller) pollQueueingOperator() (operator.Operator[common.Dispatche
 func (oc *Controller) removeReplicaSet(op *RemoveDispatcherOperator) {
 	if old, ok := oc.operators[op.ID()]; ok {
 		log.Info("replica set is removed , replace the old one",
-			zap.String("changefeed", oc.changefeedID),
+			zap.String("changefeed", oc.changefeedID.Name()),
 			zap.String("replicaset", old.ID().String()),
 			zap.String("operator", old.String()))
 		old.OnTaskRemoved()
@@ -235,10 +235,10 @@ func (oc *Controller) removeReplicaSet(op *RemoveDispatcherOperator) {
 // pushOperator add an operator to the controller queue.
 func (oc *Controller) pushOperator(op operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus]) {
 	log.Info("add operator to running queue",
-		zap.String("changefeed", oc.changefeedID),
+		zap.String("changefeed", oc.changefeedID.Name()),
 		zap.String("operator", op.String()))
 	oc.operators[op.ID()] = op
 	op.Start()
 	heap.Push(&oc.runningQueue, &operator.OperatorWithTime[common.DispatcherID, *heartbeatpb.TableSpanStatus]{OP: op, Time: time.Now(), EnqueueTime: time.Now()})
-	metrics.CreatedOperatorCount.WithLabelValues(model.DefaultNamespace, oc.changefeedID, op.Type()).Inc()
+	metrics.CreatedOperatorCount.WithLabelValues(model.DefaultNamespace, oc.changefeedID.Name(), op.Type()).Inc()
 }

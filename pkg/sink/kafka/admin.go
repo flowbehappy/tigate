@@ -21,14 +21,14 @@ import (
 	"github.com/IBM/sarama"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/ticdc/pkg/common"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	tikafka "github.com/pingcap/tiflow/pkg/sink/kafka"
 	"go.uber.org/zap"
 )
 
 type saramaAdminClient struct {
-	changefeed model.ChangeFeedID
+	changefeed common.ChangeFeedID
 
 	client sarama.Client
 	admin  sarama.ClusterAdmin
@@ -74,8 +74,8 @@ func (a *saramaAdminClient) GetBrokerConfig(
 	}
 
 	log.Warn("Kafka config item not found",
-		zap.String("namespace", a.changefeed.Namespace),
-		zap.String("changefeed", a.changefeed.ID),
+		zap.String("namespace", a.changefeed.Namespace()),
+		zap.String("changefeed", a.changefeed.Name()),
 		zap.String("configName", configName))
 	return "", cerror.ErrKafkaConfigNotFound.GenWithStack(
 		"cannot find the `%s` from the broker's configuration", configName)
@@ -99,8 +99,8 @@ func (a *saramaAdminClient) GetTopicConfig(
 	for _, entry := range configEntries {
 		if entry.Name == configName {
 			log.Info("Kafka config item found",
-				zap.String("namespace", a.changefeed.Namespace),
-				zap.String("changefeed", a.changefeed.ID),
+				zap.String("namespace", a.changefeed.Namespace()),
+				zap.String("changefeed", a.changefeed.Name()),
 				zap.String("configName", configName),
 				zap.String("configValue", entry.Value))
 			return entry.Value, nil
@@ -108,8 +108,8 @@ func (a *saramaAdminClient) GetTopicConfig(
 	}
 
 	log.Warn("Kafka config item not found",
-		zap.String("namespace", a.changefeed.Namespace),
-		zap.String("changefeed", a.changefeed.ID),
+		zap.String("namespace", a.changefeed.Namespace()),
+		zap.String("changefeed", a.changefeed.Name()),
 		zap.String("configName", configName))
 	return "", cerror.ErrKafkaConfigNotFound.GenWithStack(
 		"cannot find the `%s` from the topic's configuration", configName)
@@ -131,8 +131,8 @@ func (a *saramaAdminClient) GetTopicsMeta(
 				return nil, meta.Err
 			}
 			log.Warn("fetch topic meta failed",
-				zap.String("namespace", a.changefeed.Namespace),
-				zap.String("changefeed", a.changefeed.ID),
+				zap.String("namespace", a.changefeed.Namespace()),
+				zap.String("changefeed", a.changefeed.Name()),
 				zap.String("topic", meta.Name),
 				zap.Error(meta.Err))
 			continue
@@ -179,8 +179,8 @@ func (a *saramaAdminClient) CreateTopic(
 func (a *saramaAdminClient) Close() {
 	if err := a.admin.Close(); err != nil {
 		log.Warn("close admin client meet error",
-			zap.String("namespace", a.changefeed.Namespace),
-			zap.String("changefeed", a.changefeed.ID),
+			zap.String("namespace", a.changefeed.Namespace()),
+			zap.String("changefeed", a.changefeed.Name()),
 			zap.Error(err))
 	}
 }

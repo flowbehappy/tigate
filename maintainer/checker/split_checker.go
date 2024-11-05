@@ -21,13 +21,14 @@ import (
 	"github.com/pingcap/ticdc/maintainer/operator"
 	"github.com/pingcap/ticdc/maintainer/replica"
 	"github.com/pingcap/ticdc/maintainer/split"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/server/watcher"
 	"go.uber.org/zap"
 )
 
 // SplitChecker is used to check the split status of all spans
 type SplitChecker struct {
-	changefeedID string
+	changefeedID common.ChangeFeedID
 	splitter     *split.Splitter
 	opController *operator.Controller
 	db           *replica.ReplicationDB
@@ -42,7 +43,7 @@ type SplitChecker struct {
 }
 
 func NewSplitChecker(
-	changefeedID string,
+	changefeedID common.ChangeFeedID,
 	splitter *split.Splitter,
 	opController *operator.Controller,
 	db *replica.ReplicationDB,
@@ -83,7 +84,7 @@ func (s *SplitChecker) Check() {
 		spans := s.splitter.SplitSpans(context.Background(), span.Span, len(s.nodeManager.GetAliveNodes()))
 		if len(spans) > 1 {
 			log.Info("split span",
-				zap.String("changefeed", s.changefeedID),
+				zap.String("changefeed", s.changefeedID.Name()),
 				zap.String("span", span.ID.String()),
 				zap.Int("span szie", len(spans)))
 			s.opController.AddOperator(operator.NewSplitDispatcherOperator(s.db, span, span.GetNodeID(), spans))

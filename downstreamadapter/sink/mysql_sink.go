@@ -19,12 +19,12 @@ import (
 
 	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
 	"github.com/pingcap/ticdc/downstreamadapter/worker"
+	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/sink/mysql"
 	"github.com/pingcap/ticdc/pkg/sink/util"
 
-	"github.com/pingcap/tiflow/cdc/model"
 	utils "github.com/pingcap/tiflow/pkg/util"
 )
 
@@ -37,15 +37,15 @@ const (
 // 一个 event dispatcher manager 对应一个 mysqlSink
 // 实现 Sink 的接口
 type MysqlSink struct {
-	changefeedID model.ChangeFeedID
+	changefeedID common.ChangeFeedID
 
 	ddlWorker   *worker.MysqlDDLWorker
 	dmlWorker   []*worker.MysqlWorker
 	workerCount int
 }
 
-// func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, cfg *mysql.MysqlConfig, db *sql.DB) *MysqlSink {
-func NewMysqlSink(changefeedID model.ChangeFeedID, workerCount int, config *config.ChangefeedConfig, sinkURI *url.URL) (*MysqlSink, error) {
+// func NewMysqlSink(changefeedID common.ChangeFeedID, workerCount int, cfg *mysql.MysqlConfig, db *sql.DB) *MysqlSink {
+func NewMysqlSink(changefeedID common.ChangeFeedID, workerCount int, config *config.ChangefeedConfig, sinkURI *url.URL) (*MysqlSink, error) {
 	ctx := context.Background()
 	mysqlSink := MysqlSink{
 		changefeedID: changefeedID,

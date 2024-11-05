@@ -16,6 +16,7 @@ package node
 import (
 	"context"
 
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/tiflow/cdc/model"
 )
@@ -33,15 +34,15 @@ type Coordinator interface {
 	// ListChangefeeds returns all changefeeds
 	ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedInfo, []*model.ChangeFeedStatus, error)
 	// GetChangefeed returns a changefeed
-	GetChangefeed(ctx context.Context, id model.ChangeFeedID) (*config.ChangeFeedInfo, *model.ChangeFeedStatus, error)
+	GetChangefeed(ctx context.Context, idRepresentation common.ChangeFeedIDRepresentation) (*config.ChangeFeedInfo, *model.ChangeFeedStatus, error)
 	// CreateChangefeed creates a new changefeed
 	CreateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error
 	// RemoveChangefeed gets a changefeed
-	RemoveChangefeed(ctx context.Context, id model.ChangeFeedID) (uint64, error)
+	RemoveChangefeed(ctx context.Context, id common.ChangeFeedID) (uint64, error)
 	// PauseChangefeed pauses a changefeed
-	PauseChangefeed(ctx context.Context, id model.ChangeFeedID) error
+	PauseChangefeed(ctx context.Context, id common.ChangeFeedID) error
 	// ResumeChangefeed resumes a changefeed
-	ResumeChangefeed(ctx context.Context, id model.ChangeFeedID, newCheckpointTs uint64) error
+	ResumeChangefeed(ctx context.Context, id common.ChangeFeedID, newCheckpointTs uint64) error
 	// UpdateChangefeed updates a changefeed
 	UpdateChangefeed(ctx context.Context, change *config.ChangeFeedInfo) error
 }

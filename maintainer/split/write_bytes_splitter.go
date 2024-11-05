@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
-	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"go.uber.org/zap"
@@ -28,7 +28,7 @@ import (
 const regionWrittenKeyBase = 1
 
 type writeSplitter struct {
-	changefeedID      model.ChangeFeedID
+	changefeedID      common.ChangeFeedID
 	pdAPIClient       pdutil.PDAPIClient
 	writeKeyThreshold int
 }
@@ -41,7 +41,7 @@ type splitRegionsInfo struct {
 }
 
 func newWriteSplitter(
-	changefeedID model.ChangeFeedID,
+	changefeedID common.ChangeFeedID,
 	pdAPIClient pdutil.PDAPIClient,
 	writeKeyThreshold int,
 ) *writeSplitter {
@@ -68,8 +68,8 @@ func (m *writeSplitter) split(
 	if err != nil {
 		// Skip split.
 		log.Warn("scan regions failed, skip split span",
-			zap.String("namespace", m.changefeedID.Namespace),
-			zap.String("changefeed", m.changefeedID.ID),
+			zap.String("namespace", m.changefeedID.Namespace()),
+			zap.String("changefeed", m.changefeedID.Name()),
 			zap.String("span", span.String()),
 			zap.Error(err))
 		return []*heartbeatpb.TableSpan{span}
@@ -79,8 +79,8 @@ func (m *writeSplitter) split(
 	if spansNum <= 1 {
 		log.Warn("only one capture and the regions number less than"+
 			" the maxSpanRegionLimit, skip split span",
-			zap.String("namespace", m.changefeedID.Namespace),
-			zap.String("changefeed", m.changefeedID.ID),
+			zap.String("namespace", m.changefeedID.Namespace()),
+			zap.String("changefeed", m.changefeedID.Name()),
 			zap.String("span", span.String()),
 			zap.Error(err))
 		return []*heartbeatpb.TableSpan{span}
@@ -88,8 +88,8 @@ func (m *writeSplitter) split(
 
 	splitInfo := m.splitRegionsByWrittenKeysV1(span.TableID, regions, spansNum)
 	log.Info("split span by written keys",
-		zap.String("namespace", m.changefeedID.Namespace),
-		zap.String("changefeed", m.changefeedID.ID),
+		zap.String("namespace", m.changefeedID.Namespace()),
+		zap.String("changefeed", m.changefeedID.Name()),
 		zap.String("span", span.String()),
 		zap.Ints("perSpanRegionCounts", splitInfo.RegionCounts),
 		zap.Uint64s("weights", splitInfo.Weights),

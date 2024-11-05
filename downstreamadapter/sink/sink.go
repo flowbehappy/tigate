@@ -18,10 +18,10 @@ import (
 	"net/url"
 
 	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
+	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/config"
 	sinkutil "github.com/pingcap/ticdc/pkg/sink/util"
-	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink"
 )
@@ -44,7 +44,7 @@ type Sink interface {
 	SinkType() SinkType
 }
 
-func NewSink(ctx context.Context, config *config.ChangefeedConfig, changefeedID model.ChangeFeedID) (Sink, error) {
+func NewSink(ctx context.Context, config *config.ChangefeedConfig, changefeedID common.ChangeFeedID) (Sink, error) {
 	sinkURI, err := url.Parse(config.SinkURI)
 	if err != nil {
 		return nil, cerror.WrapError(cerror.ErrSinkURIInvalid, err)

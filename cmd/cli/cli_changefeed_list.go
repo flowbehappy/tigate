@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/ticdc/cmd/factory"
 	v2 "github.com/pingcap/ticdc/pkg/api/v2"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tiflow/cdc/api/owner"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/cmd/context"
@@ -29,9 +30,8 @@ const timeFormat = "2006-01-02 15:04:05.000"
 
 // changefeedCommonInfo holds some common used information of a changefeed.
 type changefeedCommonInfo struct {
-	ID        string                `json:"id"`
-	Namespace string                `json:"namespace"`
-	Summary   *owner.ChangefeedResp `json:"summary"`
+	ChangefeedID common.ChangeFeedID   `json:"changefeed_id"`
+	Summary      *owner.ChangefeedResp `json:"summary"`
 }
 
 // listChangefeedOptions defines flags for the `cli changefeed list` command.
@@ -82,8 +82,7 @@ func (o *listChangefeedOptions) run(cmd *cobra.Command) error {
 			}
 		}
 		cfci := &changefeedCommonInfo{
-			ID:        cf.ID,
-			Namespace: cf.Namespace,
+			ChangefeedID: cf.ChangefeedID,
 			Summary: &owner.ChangefeedResp{
 				FeedState:    string(cf.FeedState),
 				TSO:          cf.CheckpointTSO,

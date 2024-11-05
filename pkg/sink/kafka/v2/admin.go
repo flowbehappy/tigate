@@ -18,7 +18,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tiflow/pkg/errors"
 	pkafka "github.com/pingcap/tiflow/pkg/sink/kafka"
 	"github.com/segmentio/kafka-go"
@@ -27,13 +27,13 @@ import (
 
 type admin struct {
 	client       Client
-	changefeedID model.ChangeFeedID
+	changefeedID common.ChangeFeedID
 }
 
 func newClusterAdminClient(
 	endpoints []string,
 	transport *kafka.Transport,
-	changefeedID model.ChangeFeedID,
+	changefeedID common.ChangeFeedID,
 ) pkafka.ClusterAdminClient {
 	client := newClient(endpoints, transport)
 	return &admin{
@@ -139,8 +139,8 @@ func (a *admin) GetTopicConfig(ctx context.Context, topicName string, configName
 	for _, entry := range resp.Resources[0].ConfigEntries {
 		if entry.ConfigName == configName {
 			log.Info("Kafka config item found",
-				zap.String("namespace", a.changefeedID.Namespace),
-				zap.String("changefeed", a.changefeedID.ID),
+				zap.String("namespace", a.changefeedID.Namespace()),
+				zap.String("changefeed", a.changefeedID.Name()),
 				zap.String("configName", configName),
 				zap.String("configValue", entry.ConfigValue))
 			return entry.ConfigValue, nil
@@ -232,8 +232,8 @@ func (a *admin) CreateTopic(
 
 func (a *admin) Close() {
 	log.Info("admin client start closing",
-		zap.String("namespace", a.changefeedID.Namespace),
-		zap.String("changefeed", a.changefeedID.ID))
+		zap.String("namespace", a.changefeedID.Namespace()),
+		zap.String("changefeed", a.changefeedID.Name()))
 	client, ok := a.client.(*kafka.Client)
 	if !ok {
 		return
@@ -250,19 +250,19 @@ func (a *admin) Close() {
 
 	transport.CloseIdleConnections()
 	log.Info("admin client close idle connections",
-		zap.String("namespace", a.changefeedID.Namespace),
-		zap.String("changefeed", a.changefeedID.ID))
+		zap.String("namespace", a.changefeedID.Namespace()),
+		zap.String("changefeed", a.changefeedID.Name()))
 
 	if transport.SASL != nil {
 		m, ok := transport.SASL.(mechanism)
 		if ok && m.client != nil {
 			m.client.Destroy()
 			log.Info("destroy sasl sessions",
-				zap.String("namespace", a.changefeedID.Namespace),
-				zap.String("changefeed", a.changefeedID.ID))
+				zap.String("namespace", a.changefeedID.Namespace()),
+				zap.String("changefeed", a.changefeedID.Name()))
 		}
 	}
 	log.Info("kafka admin client is fully closed",
-		zap.String("namespace", a.changefeedID.Namespace),
-		zap.String("changefeed", a.changefeedID.ID))
+		zap.String("namespace", a.changefeedID.Namespace()),
+		zap.String("changefeed", a.changefeedID.Name()))
 }

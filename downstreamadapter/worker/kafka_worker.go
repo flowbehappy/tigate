@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/ticdc/downstreamadapter/sink/helper/eventrouter"
 	"github.com/pingcap/ticdc/downstreamadapter/sink/helper/topicmanager"
 	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/common/columnselector"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/sink/codec"
@@ -45,7 +46,7 @@ const (
 // worker will send messages to the DML producer on a batch basis.
 type KafkaWorker struct {
 	// changeFeedID indicates this sink belongs to which processor(changefeed).
-	changeFeedID model.ChangeFeedID
+	changeFeedID common.ChangeFeedID
 	// protocol indicates the protocol used by this sink.
 	protocol config.Protocol
 
@@ -54,7 +55,7 @@ type KafkaWorker struct {
 	// ticker used to force flush the batched messages when the interval is reached.
 	ticker *time.Ticker
 
-	columnSelector *common.ColumnSelectors
+	columnSelector *columnselector.ColumnSelectors
 	// eventRouter used to route events to the right topic and partition.
 	eventRouter *eventrouter.EventRouter
 	// topicManager used to manage topics.
@@ -74,11 +75,11 @@ type KafkaWorker struct {
 
 // newWorker creates a new flush worker.
 func NewKafkaWorker(
-	id model.ChangeFeedID,
+	id common.ChangeFeedID,
 	protocol config.Protocol,
 	producer dmlproducer.DMLProducer,
 	encoderGroup codec.EncoderGroup,
-	columnSelector *common.ColumnSelectors,
+	columnSelector *columnselector.ColumnSelectors,
 	eventRouter *eventrouter.EventRouter,
 	topicManager topicmanager.TopicManager,
 	statistics *metrics.Statistics,
@@ -186,8 +187,8 @@ func (w *KafkaWorker) GetEventChan() chan<- *commonEvent.DMLEvent {
 // nonBatchEncodeRun add events to the encoder group immediately.
 func (w *KafkaWorker) nonBatchEncodeRun(ctx context.Context) error {
 	log.Info("MQ sink non batch worker started",
-		zap.String("namespace", w.changeFeedID.Namespace),
-		zap.String("changefeed", w.changeFeedID.ID),
+		zap.String("namespace", w.changeFeedID.Namespace()),
+		zap.String("changefeed", w.changeFeedID.Name()),
 		zap.String("protocol", w.protocol.String()),
 	)
 	for {
@@ -197,8 +198,8 @@ func (w *KafkaWorker) nonBatchEncodeRun(ctx context.Context) error {
 		case event, ok := <-w.rowChan:
 			if !ok {
 				log.Warn("MQ sink flush worker channel closed",
-					zap.String("namespace", w.changeFeedID.Namespace),
-					zap.String("changefeed", w.changeFeedID.ID))
+					zap.String("namespace", w.changeFeedID.Namespace()),
+					zap.String("changefeed", w.changeFeedID.Name()))
 				return nil
 			}
 			if err := w.encoderGroup.AddEvents(ctx, event.Key, &event.RowEvent); err != nil {
@@ -211,16 +212,16 @@ func (w *KafkaWorker) nonBatchEncodeRun(ctx context.Context) error {
 // batchEncodeRun collect messages into batch and add them to the encoder group.
 func (w *KafkaWorker) batchEncodeRun(ctx context.Context) (retErr error) {
 	log.Info("MQ sink batch worker started",
-		zap.String("namespace", w.changeFeedID.Namespace),
-		zap.String("changefeed", w.changeFeedID.ID),
+		zap.String("namespace", w.changeFeedID.Namespace()),
+		zap.String("changefeed", w.changeFeedID.Name()),
 		zap.String("protocol", w.protocol.String()),
 	)
 
-	metricBatchDuration := metrics.WorkerBatchDuration.WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
-	metricBatchSize := metrics.WorkerBatchSize.WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+	metricBatchDuration := metrics.WorkerBatchDuration.WithLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
+	metricBatchSize := metrics.WorkerBatchSize.WithLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
 	defer func() {
-		metrics.WorkerBatchDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
-		metrics.WorkerBatchSize.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+		metrics.WorkerBatchDuration.DeleteLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
+		metrics.WorkerBatchSize.DeleteLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
 	}()
 
 	msgsBuf := make([]*commonEvent.MQRowEvent, batchSize)
@@ -308,8 +309,8 @@ func (w *KafkaWorker) group(msgs []*commonEvent.MQRowEvent) map[model.TopicParti
 
 func (w *KafkaWorker) sendMessages(ctx context.Context) error {
 	defer w.wg.Done()
-	metricSendMessageDuration := metrics.WorkerSendMessageDuration.WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
-	defer metrics.WorkerSendMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+	metricSendMessageDuration := metrics.WorkerSendMessageDuration.WithLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
+	defer metrics.WorkerSendMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
 
 	var err error
 	outCh := w.encoderGroup.Output()
@@ -320,8 +321,8 @@ func (w *KafkaWorker) sendMessages(ctx context.Context) error {
 		case future, ok := <-outCh:
 			if !ok {
 				log.Warn("MQ sink encoder's output channel closed",
-					zap.String("namespace", w.changeFeedID.Namespace),
-					zap.String("changefeed", w.changeFeedID.ID))
+					zap.String("namespace", w.changeFeedID.Namespace()),
+					zap.String("changefeed", w.changeFeedID.Name()))
 				return nil
 			}
 			if err = future.Ready(ctx); err != nil {

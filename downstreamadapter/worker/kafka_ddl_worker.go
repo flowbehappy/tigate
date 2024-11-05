@@ -9,12 +9,12 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/downstreamadapter/sink/helper/eventrouter"
 	"github.com/pingcap/ticdc/downstreamadapter/sink/helper/topicmanager"
+	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/sink/codec/encoder"
 	"github.com/pingcap/ticdc/pkg/sink/util"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/sink/ddlsink/mq/ddlproducer"
 	"go.uber.org/zap"
 )
@@ -22,7 +22,7 @@ import (
 // worker will send messages to the DML producer on a batch basis.
 type KafkaDDLWorker struct {
 	// changeFeedID indicates this sink belongs to which processor(changefeed).
-	changeFeedID model.ChangeFeedID
+	changeFeedID common.ChangeFeedID
 	// protocol indicates the protocol used by this sink.
 	protocol         config.Protocol
 	ddlEventChan     chan *commonEvent.DDLEvent
@@ -71,7 +71,7 @@ func getDDLDispatchRule(protocol config.Protocol) DDLDispatchRule {
 
 // newWorker creates a new flush worker.
 func NewKafkaDDLWorker(
-	id model.ChangeFeedID,
+	id common.ChangeFeedID,
 	protocol config.Protocol,
 	producer ddlproducer.DDLProducer,
 	encoder encoder.EventEncoder,
@@ -122,15 +122,15 @@ func (w *KafkaDDLWorker) encodeAndSendDDLEvents() error {
 		case event, ok := <-w.ddlEventChan:
 			if !ok {
 				log.Warn("MQ sink flush worker channel closed",
-					zap.String("namespace", w.changeFeedID.Namespace),
-					zap.String("changefeed", w.changeFeedID.ID))
+					zap.String("namespace", w.changeFeedID.Namespace()),
+					zap.String("changefeed", w.changeFeedID.Name()))
 				return nil
 			}
 			message, err := w.encoder.EncodeDDLEvent(event)
 			if err != nil {
 				log.Error("Failed to encode ddl event",
-					zap.String("namespace", w.changeFeedID.Namespace),
-					zap.String("changefeed", w.changeFeedID.ID),
+					zap.String("namespace", w.changeFeedID.Namespace()),
+					zap.String("changefeed", w.changeFeedID.Name()),
 					zap.Error(err))
 				continue
 			}
@@ -154,8 +154,8 @@ func (w *KafkaDDLWorker) encodeAndSendDDLEvents() error {
 
 			if err != nil {
 				log.Error("Failed to RecordDDLExecution",
-					zap.String("namespace", w.changeFeedID.Namespace),
-					zap.String("changefeed", w.changeFeedID.ID),
+					zap.String("namespace", w.changeFeedID.Namespace()),
+					zap.String("changefeed", w.changeFeedID.Name()),
 					zap.Error(err))
 				continue
 			}
@@ -167,12 +167,12 @@ func (w *KafkaDDLWorker) encodeAndSendDDLEvents() error {
 func (w *KafkaDDLWorker) encodeAndSendCheckpointEvents() error {
 	defer w.wg.Done()
 
-	checkpointTsMessageDuration := metrics.CheckpointTsMessageDuration.WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
-	checkpointTsMessageCount := metrics.CheckpointTsMessageCount.WithLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+	checkpointTsMessageDuration := metrics.CheckpointTsMessageDuration.WithLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
+	checkpointTsMessageCount := metrics.CheckpointTsMessageCount.WithLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
 
 	defer func() {
-		metrics.CheckpointTsMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
-		metrics.CheckpointTsMessageCount.DeleteLabelValues(w.changeFeedID.Namespace, w.changeFeedID.ID)
+		metrics.CheckpointTsMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
+		metrics.CheckpointTsMessageCount.DeleteLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
 	}()
 
 	for {
@@ -182,8 +182,8 @@ func (w *KafkaDDLWorker) encodeAndSendCheckpointEvents() error {
 		case ts, ok := <-w.checkpointTsChan:
 			if !ok {
 				log.Warn("MQ sink flush worker channel closed",
-					zap.String("namespace", w.changeFeedID.Namespace),
-					zap.String("changefeed", w.changeFeedID.ID))
+					zap.String("namespace", w.changeFeedID.Namespace()),
+					zap.String("changefeed", w.changeFeedID.Name()))
 				return nil
 			}
 			start := time.Now()

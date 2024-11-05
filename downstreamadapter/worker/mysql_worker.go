@@ -21,11 +21,11 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/sink/mysql"
 	"github.com/pingcap/ticdc/pkg/sink/util"
-	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
@@ -34,13 +34,13 @@ type MysqlWorker struct {
 	eventChan    chan *commonEvent.DMLEvent
 	mysqlWriter  *mysql.MysqlWriter
 	id           int
-	changefeedID model.ChangeFeedID
+	changefeedID common.ChangeFeedID
 
 	wg      sync.WaitGroup
 	maxRows int
 }
 
-func NewMysqlWorker(db *sql.DB, config *mysql.MysqlConfig, id int, changefeedID model.ChangeFeedID, ctx context.Context) *MysqlWorker {
+func NewMysqlWorker(db *sql.DB, config *mysql.MysqlConfig, id int, changefeedID common.ChangeFeedID, ctx context.Context) *MysqlWorker {
 	worker := &MysqlWorker{
 		mysqlWriter:  mysql.NewMysqlWriter(db, config, changefeedID),
 		id:           id,
@@ -60,14 +60,14 @@ func (t *MysqlWorker) GetEventChan() chan *commonEvent.DMLEvent {
 
 func (t *MysqlWorker) Run(ctx context.Context) {
 	defer t.wg.Done()
-	workerFlushDuration := metrics.WorkerFlushDuration.WithLabelValues(t.changefeedID.Namespace, t.changefeedID.ID, strconv.Itoa(t.id))
-	workerTotalDuration := metrics.WorkerTotalDuration.WithLabelValues(t.changefeedID.Namespace, t.changefeedID.ID, strconv.Itoa(t.id))
-	workerHandledRows := metrics.WorkerHandledRows.WithLabelValues(t.changefeedID.Namespace, t.changefeedID.ID, strconv.Itoa(t.id))
+	workerFlushDuration := metrics.WorkerFlushDuration.WithLabelValues(t.changefeedID.Namespace(), t.changefeedID.Name(), strconv.Itoa(t.id))
+	workerTotalDuration := metrics.WorkerTotalDuration.WithLabelValues(t.changefeedID.Namespace(), t.changefeedID.Name(), strconv.Itoa(t.id))
+	workerHandledRows := metrics.WorkerHandledRows.WithLabelValues(t.changefeedID.Namespace(), t.changefeedID.Name(), strconv.Itoa(t.id))
 
 	defer func() {
-		metrics.WorkerFlushDuration.DeleteLabelValues(t.changefeedID.Namespace, t.changefeedID.ID, strconv.Itoa(t.id))
-		metrics.WorkerTotalDuration.DeleteLabelValues(t.changefeedID.Namespace, t.changefeedID.ID, strconv.Itoa(t.id))
-		metrics.WorkerHandledRows.DeleteLabelValues(t.changefeedID.Namespace, t.changefeedID.ID, strconv.Itoa(t.id))
+		metrics.WorkerFlushDuration.DeleteLabelValues(t.changefeedID.Namespace(), t.changefeedID.Name(), strconv.Itoa(t.id))
+		metrics.WorkerTotalDuration.DeleteLabelValues(t.changefeedID.Namespace(), t.changefeedID.Name(), strconv.Itoa(t.id))
+		metrics.WorkerHandledRows.DeleteLabelValues(t.changefeedID.Namespace(), t.changefeedID.Name(), strconv.Itoa(t.id))
 	}()
 
 	totalStart := time.Now()
@@ -135,7 +135,7 @@ type MysqlDDLWorker struct {
 	wg           sync.WaitGroup
 }
 
-func NewMysqlDDLWorker(db *sql.DB, config *mysql.MysqlConfig, changefeedID model.ChangeFeedID, ctx context.Context) *MysqlDDLWorker {
+func NewMysqlDDLWorker(db *sql.DB, config *mysql.MysqlConfig, changefeedID common.ChangeFeedID, ctx context.Context) *MysqlDDLWorker {
 	worker := &MysqlDDLWorker{
 		mysqlWriter:  mysql.NewMysqlWriter(db, config, changefeedID),
 		ddlEventChan: make(chan commonEvent.BlockEvent, 16),

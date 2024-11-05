@@ -14,7 +14,7 @@
 package common
 
 import (
-	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -33,6 +33,6 @@ func InitMetrics(registry *prometheus.Registry) {
 }
 
 // CleanMetrics remove metrics belong to the given changefeed.
-func CleanMetrics(changefeedID model.ChangeFeedID) {
-	compressionRatio.DeleteLabelValues(changefeedID.Namespace, changefeedID.ID)
+func CleanMetrics(changefeedID common.ChangeFeedID) {
+	compressionRatio.DeleteLabelValues(changefeedID.Namespace(), changefeedID.Name())
 }
