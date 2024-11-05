@@ -64,7 +64,6 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[common.ChangeF
 					zap.String("key", key), zap.Error(err))
 				continue
 			}
-			log.Info("hyy", zap.Any("get status", status), zap.Any("cf", cf), zap.Any("ns", ns))
 			statusMap[common.NewChangeFeedDisplayName(cf, ns)] = status
 		} else {
 			detail := &config.ChangeFeedInfo{}
@@ -91,7 +90,6 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[common.ChangeF
 			}
 
 			cfMap[detail.ChangefeedID] = &ChangefeedMetaWrapper{Info: detail}
-			log.Info("hyy", zap.Any("get info", detail), zap.Any("changefeedID", detail.ChangefeedID))
 		}
 	}
 	for id, wrapper := range cfMap {
@@ -127,11 +125,6 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[common.ChangeF
 			}
 			meta.Status = status
 		}
-	}
-
-	for id, _ := range cfMap {
-		log.Info("hyy loaded changefeed",
-			zap.String("id", id.String()))
 	}
 
 	return cfMap, nil

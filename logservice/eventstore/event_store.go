@@ -329,6 +329,7 @@ func (e *eventStore) RegisterDispatcher(
 	stat := &dispatcherStat{
 		dispatcherID: dispatcherID,
 		notifier:     notifier,
+		subID:        subID,
 		tableID:      tableSpan.TableID,
 		uniqueKeyID:  uniqueKeyID,
 		chIndex:      chIndex,
