@@ -226,13 +226,13 @@ const (
 
 func getAllDDLSpan() []heartbeatpb.TableSpan {
 	spans := make([]heartbeatpb.TableSpan, 0, 2)
-	start, end := common.GetTableRange(JobTableID)
-	spans = append(spans, heartbeatpb.TableSpan{
-		TableID:  JobTableID,
-		StartKey: common.ToComparableKey(start),
-		EndKey:   common.ToComparableKey(end),
-	})
-	start, end = common.GetTableRange(JobHistoryID)
+	// start, end := common.GetTableRange(JobTableID)
+	// spans = append(spans, heartbeatpb.TableSpan{
+	// 	TableID:  JobTableID,
+	// 	StartKey: common.ToComparableKey(start),
+	// 	EndKey:   common.ToComparableKey(end),
+	// })
+	start, end := common.GetTableRange(JobHistoryID)
 	spans = append(spans, heartbeatpb.TableSpan{
 		TableID:  JobHistoryID,
 		StartKey: common.ToComparableKey(start),

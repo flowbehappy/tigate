@@ -59,9 +59,9 @@ func NewLogPullerMultiSpan(
 	startTs uint64,
 	consume func(context.Context, *common.RawKVEntry) error,
 ) *LogPullerMultiSpan {
-	if len(spans) <= 1 {
-		log.Panic("spans should have more than 1 element")
-	}
+	// if len(spans) <= 1 {
+	// 	log.Panic("spans should have more than 1 element")
+	// }
 	pullerWrapper := &LogPullerMultiSpan{
 		consume:           consume,
 		notifyCh:          make(chan interface{}, 4),
