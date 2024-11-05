@@ -15,6 +15,7 @@ package threadpool
 
 import (
 	"runtime"
+	"sync/atomic"
 	"time"
 )
 
@@ -49,10 +50,9 @@ type FuncTask func() time.Time
 
 type TaskHandle struct {
 	st *scheduledTask
-	ts *threadPoolImpl
 }
 
-func (h *TaskHandle) Cancel() { h.ts.cancel(h.st) }
+func (h *TaskHandle) Cancel() { h.st.cancel() }
 
 type ThreadPool interface {
 	Submit(task Task, next time.Time) *TaskHandle
@@ -75,11 +75,15 @@ type funcTaskImpl struct {
 func (t *funcTaskImpl) Execute() time.Time { return t.f() }
 
 type scheduledTask struct {
-	task Task
-	time time.Time // Next disired execution time. time.Time{} means the task is done.
+	task     Task
+	time     time.Time // Next disired execution time. time.Time{} means the task is done.
+	canceled atomic.Bool
 
 	heapIndex int // The index of the task in the heap.
 }
+
+func (m *scheduledTask) cancel()          { m.canceled.Store(true) }
+func (m *scheduledTask) isCanceled() bool { return m.canceled.Load() }
 
 func (m *scheduledTask) SetHeapIndex(index int)             { m.heapIndex = index }
 func (m *scheduledTask) GetHeapIndex() int                  { return m.heapIndex }

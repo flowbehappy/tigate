@@ -413,7 +413,7 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 	for {
 		allTargetTs := make([]uint64, 0, limit)
 		p.mu.RLock()
-		// log.Info("fetchTableTriggerDDLEvents",
+		// log.Debug("fetchTableTriggerDDLEvents in persistentStorage",
 		// 	zap.Any("start", start),
 		// 	zap.Int("limit", limit),
 		// 	zap.Any("tableTriggerDDLHistory", p.tableTriggerDDLHistory))
@@ -1370,10 +1370,13 @@ func getDroppedIDs(oldIDs []int64, newIDs []int64) []int64 {
 }
 
 func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commonEvent.DDLEvent {
-	wrapTableInfo := common.WrapTableInfo(
-		rawEvent.CurrentSchemaID,
-		rawEvent.CurrentSchemaName,
-		rawEvent.TableInfo)
+	var wrapTableInfo *common.TableInfo
+	if rawEvent.TableInfo != nil {
+		wrapTableInfo = common.WrapTableInfo(
+			rawEvent.CurrentSchemaID,
+			rawEvent.CurrentSchemaName,
+			rawEvent.TableInfo)
+	}
 
 	ddlEvent := commonEvent.DDLEvent{
 		Type: rawEvent.Type,

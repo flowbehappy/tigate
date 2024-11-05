@@ -37,9 +37,11 @@ func RegisterOpenAPIV2Routes(router *gin.Engine, api OpenAPIV2) {
 	v2.Use(middleware.ErrorHandleMiddleware())
 
 	v2.GET("status", api.serverStatus)
-	// For compatibility with the old API,
+	// For compatibility with the old API.
 	// TiDB Operator relies on this API to determine whether the TiCDC node is healthy.
 	router.GET("/status", api.serverStatus)
+	// Intergration test relies on this API to determine whether the TiCDC node is healthy.
+	router.GET("/debug/info", gin.WrapF(api.handleDebugInfo))
 
 	coordinatorMiddleware := middleware.ForwardToCoordinatorMiddleware(api.server)
 

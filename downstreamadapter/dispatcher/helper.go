@@ -282,21 +282,22 @@ func NewDispatcherEvent(event commonEvent.Event) DispatcherEvent {
 	}
 }
 
-// eventsDynamicStream is used to process the events received by eventCollector.
-var eventsDynamicStream dynstream.DynamicStream[common.GID, common.DispatcherID, DispatcherEvent, *Dispatcher, *EventsHandler]
-var eventsDynamicStreamOnce sync.Once
+// eventDynamicStream is used to process the events received by eventCollector.
+var eventDynamicStream dynstream.DynamicStream[common.GID, common.DispatcherID, DispatcherEvent, *Dispatcher, *EventsHandler]
+var eventDynamicStreamOnce sync.Once
 
-func GetEventsDynamicStream() dynstream.DynamicStream[common.GID, common.DispatcherID, DispatcherEvent, *Dispatcher, *EventsHandler] {
-	if eventsDynamicStream == nil {
-		eventsDynamicStreamOnce.Do(func() {
+func GetEventDynamicStream() dynstream.DynamicStream[common.GID, common.DispatcherID, DispatcherEvent, *Dispatcher, *EventsHandler] {
+	if eventDynamicStream == nil {
+		eventDynamicStreamOnce.Do(func() {
 			option := dynstream.NewOption()
 			// Enable memory control for dispatcher events dynamic stream.
+			log.Info("New EventDynamicStream, memory control is enabled")
 			option.EnableMemoryControl = true
-			eventsDynamicStream = dynstream.NewDynamicStream(&EventsHandler{}, option)
-			eventsDynamicStream.Start()
+			eventDynamicStream = dynstream.NewDynamicStream(&EventsHandler{}, option)
+			eventDynamicStream.Start()
 		})
 	}
-	return eventsDynamicStream
+	return eventDynamicStream
 }
 
 type DispatcherStatusWithID struct {

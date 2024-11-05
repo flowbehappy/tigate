@@ -333,7 +333,7 @@ func (t *DMLEvent) AssembleRows(tableInfo *common.TableInfo) error {
 		return nil
 	}
 	if t.TableInfoVersion != tableInfo.UpdateTS {
-		log.Panic("DMLEvent: TableInfoVersion mismatch", zap.Uint64("expect", t.TableInfoVersion), zap.Uint64("got", tableInfo.UpdateTS))
+		log.Panic("DMLEvent: TableInfoVersion mismatch", zap.Uint64("dmlEventTableInfoVersion", t.TableInfoVersion), zap.Uint64("tableInfoVersion", tableInfo.UpdateTS))
 		return nil
 	}
 	decoder := chunk.NewCodec(tableInfo.GetFieldSlice())
