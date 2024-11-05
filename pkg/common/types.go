@@ -172,7 +172,7 @@ func (r ChangeFeedDisplayName) String() string {
 // ChangefeedID is the unique identifier of a changefeed.
 // GID is the inner unique identifier of a changefeed.
 // we can use Id to represent the changefeedID in performance-critical scenarios.
-// Representation is the user-friendly expression of a changefeed.
+// DisplayName is the user-friendly expression of a changefeed.
 // ChangefeedID can be specified the name of changefeedID.
 // If the name is not specified, it will be the id in string format.
 // We ensure whether the id or the representation is both unique in the cluster.
