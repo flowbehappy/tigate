@@ -542,7 +542,7 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 			e.dispatcherStates.RLock()
 			for _, subscriptionStat := range e.dispatcherStates.n {
 				// resolved ts lag
-				resolvedTs := subscriptionStat.resolvedTs
+				resolvedTs := atomic.LoadUint64(&subscriptionStat.resolvedTs)
 				resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
 				resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
 				metrics.EventStoreDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
@@ -616,7 +616,7 @@ func (e *eventStore) batchAndWriteEvents(ctx context.Context, db *pebble.DB, inp
 					log.Warn("unknown subscriptionID", zap.Uint64("subID", uint64(subID)))
 					continue
 				}
-				subscriptionStat.resolvedTs = resolvedTs
+				atomic.StoreUint64(&subscriptionStat.resolvedTs, resolvedTs)
 				for dispatcherID := range subscriptionStat.ids {
 					dispatcherStat := e.dispatcherStates.m[dispatcherID]
 					dispatcherStat.notifier(resolvedTs)
