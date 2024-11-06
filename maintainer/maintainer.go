@@ -179,6 +179,38 @@ func NewMaintainer(cfID common.ChangeFeedID,
 	return m
 }
 
+func NewMaintainerForRemove(cfID common.ChangeFeedID,
+	selfNode *node.Info,
+	stream dynstream.DynamicStream[int, string, *Event, *Maintainer, *StreamHandler],
+	taskScheduler threadpool.ThreadPool) *Maintainer {
+	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
+	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
+	m := &Maintainer{
+		id:                    cfID,
+		selfNode:              selfNode,
+		stream:                stream,
+		taskScheduler:         taskScheduler,
+		mc:                    mc,
+		state:                 heartbeatpb.ComponentState_Working,
+		removed:               atomic.NewBool(false),
+		nodeManager:           nodeManager,
+		nodesClosed:           make(map[node.ID]struct{}),
+		statusChanged:         atomic.NewBool(true),
+		nodeChanged:           atomic.NewBool(false),
+		cascadeRemoving:       true,
+		checkpointTsByCapture: make(map[node.ID]heartbeatpb.Watermark),
+		runningErrors:         map[node.ID]*heartbeatpb.RunningError{},
+		runningWarnings:       map[node.ID]*heartbeatpb.RunningError{},
+	}
+	// setup period event
+	SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{
+		changefeedID: m.id.Name(),
+		eventType:    EventPeriod,
+	}, time.Now().Add(time.Millisecond*500))
+	log.Info("maintainer is created for remove", zap.String("id", cfID.String()))
+	return m
+}
+
 // HandleEvent implements the event-driven process mode
 // it's the entrance of the Maintainer, it handles all types of Events
 // note: the EventPeriod is a special event that submitted when initializing maintainer
@@ -227,7 +259,6 @@ func (m *Maintainer) Close() {
 }
 
 func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
-	// todo: fix data race here
 	m.errLock.Lock()
 	defer m.errLock.Unlock()
 	var runningErrors []*heartbeatpb.RunningError
@@ -379,13 +410,16 @@ func (m *Maintainer) onNodeChanged() {
 }
 
 func (m *Maintainer) calCheckpointTs() {
+	if !m.bootstrapped {
+		return
+	}
 	m.updateMetrics()
 	// make sure there is no task running
 	// the dispatcher changing come from:
 	// 1. node change
 	// 2. ddl
 	// 3. interval scheduling, like balance, split
-	if !m.bootstrapped || time.Since(m.lastCheckpointTsTime) < 2*time.Second ||
+	if time.Since(m.lastCheckpointTsTime) < 2*time.Second ||
 		!m.controller.ScheduleFinished() {
 		return
 	}
@@ -500,12 +534,13 @@ func (m *Maintainer) onNodeClosed(from node.ID, response *heartbeatpb.Maintainer
 }
 
 func (m *Maintainer) handleResendMessage() {
-	// resend bootstrap message
-	m.sendMessages(m.bootstrapper.ResendBootstrapMessage())
 	// resend closing message
 	if m.removing {
 		m.sendMaintainerCloseRequestToAllNode()
+		return
 	}
+	// resend bootstrap message
+	m.sendMessages(m.bootstrapper.ResendBootstrapMessage())
 	if m.barrier != nil {
 		// resend barrier ack messages
 		m.sendMessages(m.barrier.Resend())
@@ -624,6 +659,9 @@ func (m *Maintainer) onPeriodTask() {
 }
 
 func (m *Maintainer) collectMetrics() {
+	if !m.bootstrapped {
+		return
+	}
 	if time.Since(m.lastPrintStatusTime) > time.Second*20 {
 		// exclude the table trigger
 		total := m.controller.TaskSize() - 1

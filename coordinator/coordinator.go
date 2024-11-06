@@ -80,7 +80,7 @@ func New(node *node.Info,
 	c.stream.Start()
 	c.taskScheduler = threadpool.NewThreadPoolDefault()
 
-	ctl := NewController(c.version, c.updatedChangefeedCh, backend, c.stream, c.taskScheduler, batchSize, balanceCheckInterval)
+	ctl := NewController(c.version, c.nodeInfo, c.updatedChangefeedCh, backend, c.stream, c.taskScheduler, batchSize, balanceCheckInterval)
 	c.controller = ctl
 	if err := c.stream.AddPath("coordinator", ctl); err != nil {
 		log.Panic("failed to add path",
@@ -118,30 +118,42 @@ func (c *coordinator) Run(ctx context.Context) error {
 			metrics.CoordinatorCounter.Add(float64(now.Sub(c.lastTickTime)) / float64(time.Second))
 			c.lastTickTime = now
 		case cfs := <-c.updatedChangefeedCh:
-			statusMap := make(map[common.ChangeFeedID]uint64)
-			for _, upCf := range cfs {
-				reportedCheckpointTs := upCf.GetStatus().CheckpointTs
-				if upCf.GetLastSavedCheckPointTs() < reportedCheckpointTs {
-					statusMap[upCf.ID] = reportedCheckpointTs
-				}
-			}
-			err := c.controller.backend.UpdateChangefeedCheckpointTs(ctx, statusMap)
-			if err != nil {
-				log.Error("failed to update checkpointTs", zap.Error(err))
+			if err := c.saveCheckpointTs(ctx, cfs); err != nil {
 				return errors.Trace(err)
-			}
-			// update the last saved checkpoint ts and send checkpointTs to maintainer
-			for id, cp := range statusMap {
-				if cf, ok := cfs[id]; ok {
-					cf.SetLastSavedCheckPointTs(cp)
-					if cf.IsMQSink {
-						msg := cf.NewCheckpointTsMessage(cf.GetLastSavedCheckPointTs())
-						c.sendMessages([]*messaging.TargetMessage{msg})
-					}
-				}
 			}
 		}
 	}
+}
+
+func (c *coordinator) saveCheckpointTs(ctx context.Context, cfs map[common.ChangeFeedID]*changefeed.Changefeed) error {
+	statusMap := make(map[common.ChangeFeedID]uint64)
+	for _, upCf := range cfs {
+		reportedCheckpointTs := upCf.GetStatus().CheckpointTs
+		if upCf.GetLastSavedCheckPointTs() < reportedCheckpointTs {
+			statusMap[upCf.ID] = reportedCheckpointTs
+		}
+	}
+	if len(statusMap) == 0 {
+		return nil
+	}
+	err := c.controller.backend.UpdateChangefeedCheckpointTs(ctx, statusMap)
+	if err != nil {
+		log.Error("failed to update checkpointTs", zap.Error(err))
+		return errors.Trace(err)
+	}
+	// update the last saved checkpoint ts and send checkpointTs to maintainer
+	for id, cp := range statusMap {
+		cf, ok := cfs[id]
+		if !ok {
+			continue
+		}
+		cf.SetLastSavedCheckPointTs(cp)
+		if cf.IsMQSink {
+			msg := cf.NewCheckpointTsMessage(cf.GetLastSavedCheckPointTs())
+			c.sendMessages([]*messaging.TargetMessage{msg})
+		}
+	}
+	return nil
 }
 
 func (c *coordinator) CreateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error {
@@ -164,11 +176,11 @@ func (c *coordinator) UpdateChangefeed(ctx context.Context, change *config.Chang
 	return c.controller.UpdateChangefeed(ctx, change)
 }
 
-func (c *coordinator) ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedInfo, []*model.ChangeFeedStatus, error) {
+func (c *coordinator) ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedInfo, []*config.ChangeFeedStatus, error) {
 	return c.controller.ListChangefeeds(ctx)
 }
 
-func (c *coordinator) GetChangefeed(ctx context.Context, changefeedDisplayName common.ChangeFeedDisplayName) (*config.ChangeFeedInfo, *model.ChangeFeedStatus, error) {
+func (c *coordinator) GetChangefeed(ctx context.Context, changefeedDisplayName common.ChangeFeedDisplayName) (*config.ChangeFeedInfo, *config.ChangeFeedStatus, error) {
 	return c.controller.GetChangefeed(ctx, changefeedDisplayName)
 }
 

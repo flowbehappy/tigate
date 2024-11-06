@@ -34,8 +34,7 @@ type ChangefeedConfig struct {
 	EnableSyncPoint    bool           `json:"enable_sync_point" default:"false"`
 	SyncPointInterval  *time.Duration `json:"sync_point_interval" default:"1m"`
 	SyncPointRetention *time.Duration `json:"sync_point_retention" default:"24h"`
-
-	SinkConfig *SinkConfig `json:"sink_config"`
+	SinkConfig         *SinkConfig    `json:"sink_config"`
 }
 
 // ChangeFeedInfo describes the detail of a ChangeFeed
@@ -438,4 +437,33 @@ func (info *ChangeFeedInfo) fixMemoryQuota() {
 
 func (info *ChangeFeedInfo) fixScheduler(inheritV66 bool) {
 	info.Config.FixScheduler(inheritV66)
+}
+
+type Progress int
+
+var (
+	ProgressNone     Progress = 1
+	ProgressRemoving Progress = 2
+	ProgressStopping Progress = 3
+)
+
+// ChangeFeedStatus stores information about a ChangeFeed
+// It is stored in etcd.
+type ChangeFeedStatus struct {
+	CheckpointTs uint64 `json:"checkpoint-ts"`
+	// Progress indicates changefeed progress status
+	Progress Progress `json:"progress"`
+}
+
+// Marshal returns json encoded string of ChangeFeedStatus, only contains necessary fields stored in storage
+func (status *ChangeFeedStatus) Marshal() (string, error) {
+	data, err := json.Marshal(status)
+	return string(data), cerror.WrapError(cerror.ErrMarshalFailed, err)
+}
+
+// Unmarshal unmarshals into *ChangeFeedStatus from json marshal byte slice
+func (status *ChangeFeedStatus) Unmarshal(data []byte) error {
+	err := json.Unmarshal(data, status)
+	return errors.Annotatef(
+		cerror.WrapError(cerror.ErrUnmarshalFailed, err), "Unmarshal data: %v", data)
 }

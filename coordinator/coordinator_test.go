@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/coordinator/changefeed"
 	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/messaging"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/tiflow/cdc/model"
-	config2 "github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/orchestrator"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/stretchr/testify/require"
@@ -58,14 +58,15 @@ type mockMaintainerManager struct {
 	coordinatorVersion int64
 	coordinatorID      node.ID
 	maintainers        []*heartbeatpb.MaintainerStatus
-	maintainerMap      map[string]*heartbeatpb.MaintainerStatus
+	maintainerMap      map[common.ChangeFeedID]*heartbeatpb.MaintainerStatus
+	bootstrapResponse  *heartbeatpb.CoordinatorBootstrapResponse
 }
 
 func NewMaintainerManager(mc messaging.MessageCenter) *mockMaintainerManager {
 	m := &mockMaintainerManager{
 		mc:            mc,
 		maintainers:   make([]*heartbeatpb.MaintainerStatus, 0, 1000000),
-		maintainerMap: make(map[string]*heartbeatpb.MaintainerStatus, 1000000),
+		maintainerMap: make(map[common.ChangeFeedID]*heartbeatpb.MaintainerStatus, 1000000),
 		msgCh:         make(chan *messaging.TargetMessage, 1024),
 	}
 	mc.RegisterHandler(messaging.MaintainerManagerTopic, m.recvMessages)
@@ -95,7 +96,7 @@ func (m *mockMaintainerManager) handleMessage(msg *messaging.TargetMessage) {
 		absent := m.onDispatchMaintainerRequest(msg)
 		if m.coordinatorVersion > 0 {
 			response := &heartbeatpb.MaintainerHeartbeat{}
-			if absent != "" {
+			if absent != nil {
 				response.Statuses = append(response.Statuses, &heartbeatpb.MaintainerStatus{
 					ChangefeedID: absent,
 					State:        heartbeatpb.ComponentState_Stopped,
@@ -145,7 +146,10 @@ func (m *mockMaintainerManager) onCoordinatorBootstrapRequest(msg *messaging.Tar
 	m.coordinatorID = msg.From
 	m.coordinatorVersion = req.Version
 
-	response := &heartbeatpb.CoordinatorBootstrapResponse{}
+	response := m.bootstrapResponse
+	if response == nil {
+		response = &heartbeatpb.CoordinatorBootstrapResponse{}
+	}
 	err := m.mc.SendCommand(messaging.NewSingleTargetMessage(
 		m.coordinatorID,
 		messaging.CoordinatorTopic,
@@ -159,16 +163,16 @@ func (m *mockMaintainerManager) onCoordinatorBootstrapRequest(msg *messaging.Tar
 }
 func (m *mockMaintainerManager) onDispatchMaintainerRequest(
 	msg *messaging.TargetMessage,
-) string {
+) *heartbeatpb.ChangefeedID {
 	if m.coordinatorID != msg.From {
 		log.Warn("ignore invalid coordinator id",
 			zap.Any("coordinator", msg.From),
 			zap.Any("request", msg))
-		return ""
+		return nil
 	}
 	if msg.Type == messaging.TypeAddMaintainerRequest {
 		req := msg.Message[0].(*heartbeatpb.AddMaintainerRequest)
-		cfID := req.GetId()
+		cfID := common.NewChangefeedIDFromPB(req.GetId())
 		cf, ok := m.maintainerMap[cfID]
 		if !ok {
 			cfConfig := &model.ChangeFeedInfo{}
@@ -177,7 +181,7 @@ func (m *mockMaintainerManager) onDispatchMaintainerRequest(
 				log.Panic("decode changefeed fail", zap.Error(err))
 			}
 			cf = &heartbeatpb.MaintainerStatus{
-				ChangefeedID: cfID,
+				ChangefeedID: req.GetId(),
 				FeedState:    "normal",
 				State:        heartbeatpb.ComponentState_Working,
 				CheckpointTs: req.CheckpointTs,
@@ -188,14 +192,14 @@ func (m *mockMaintainerManager) onDispatchMaintainerRequest(
 	} else {
 		req := msg.Message[0].(*heartbeatpb.RemoveMaintainerRequest)
 		maintainers := make([]*heartbeatpb.MaintainerStatus, 0, len(m.maintainers))
-		delete(m.maintainerMap, req.Id)
+		delete(m.maintainerMap, common.NewChangefeedIDFromPB(req.GetId()))
 		for _, status := range m.maintainerMap {
 			maintainers = append(maintainers, status)
 		}
 		m.maintainers = maintainers
 		return req.GetId()
 	}
-	return ""
+	return nil
 }
 func (m *mockMaintainerManager) sendHeartbeat() {
 	if m.coordinatorVersion > 0 {
@@ -243,18 +247,20 @@ func TestCoordinatorScheduling(t *testing.T) {
 		cfSize, _ = strconv.Atoi(argList[0])
 	}
 
-	backend := &mockBackend{changefeeds: make(map[model.ChangeFeedID]*changefeed.ChangefeedMetaWrapper)}
+	backend := &mockBackend{changefeeds: make(map[common.ChangeFeedID]*changefeed.ChangefeedMetaWrapper)}
 	cfs := backend.changefeeds
 	for i := 0; i < cfSize; i++ {
-		cfID := model.DefaultChangeFeedID(fmt.Sprintf("%d", i))
+		cfID := common.NewChangeFeedIDWithDisplayName(common.ChangeFeedDisplayName{
+			Name:      fmt.Sprintf("%d", i),
+			Namespace: model.DefaultNamespace,
+		})
 		cfs[cfID] = &changefeed.ChangefeedMetaWrapper{
-			Info: &model.ChangeFeedInfo{
-				ID:        cfID.ID,
-				Namespace: cfID.Namespace,
-				Config:    config2.GetDefaultReplicaConfig(),
-				State:     model.StateNormal,
+			Info: &config.ChangeFeedInfo{
+				ChangefeedID: cfID,
+				Config:       config.GetDefaultReplicaConfig(),
+				State:        model.StateNormal,
 			},
-			Status: &model.ChangeFeedStatus{CheckpointTs: 10, MinTableBarrierTs: 10},
+			Status: &config.ChangeFeedStatus{CheckpointTs: 10},
 		}
 	}
 
@@ -286,19 +292,21 @@ func TestScaleNode(t *testing.T) {
 	startMaintainerNode(ctx, info, mc1, nodeManager)
 
 	serviceID := "default"
-	backend := &mockBackend{changefeeds: make(map[model.ChangeFeedID]*changefeed.ChangefeedMetaWrapper)}
+	backend := &mockBackend{changefeeds: make(map[common.ChangeFeedID]*changefeed.ChangefeedMetaWrapper)}
 	cfs := backend.changefeeds
 	cfSize := 6
 	for i := 0; i < cfSize; i++ {
-		cfID := model.DefaultChangeFeedID(fmt.Sprintf("%d", i))
+		cfID := common.NewChangeFeedIDWithDisplayName(common.ChangeFeedDisplayName{
+			Name:      fmt.Sprintf("%d", i),
+			Namespace: model.DefaultNamespace,
+		})
 		cfs[cfID] = &changefeed.ChangefeedMetaWrapper{
-			Info: &model.ChangeFeedInfo{
-				ID:        cfID.ID,
-				Namespace: cfID.Namespace,
-				Config:    config2.GetDefaultReplicaConfig(),
-				State:     model.StateNormal,
+			Info: &config.ChangeFeedInfo{
+				ChangefeedID: cfID,
+				Config:       config.GetDefaultReplicaConfig(),
+				State:        model.StateNormal,
 			},
-			Status: &model.ChangeFeedStatus{CheckpointTs: 10, MinTableBarrierTs: 10},
+			Status: &config.ChangeFeedStatus{CheckpointTs: 10},
 		}
 	}
 
@@ -343,9 +351,87 @@ func TestScaleNode(t *testing.T) {
 	require.Equal(t, 3, len(co.controller.changefeedDB.GetByNodeID(info2.ID)))
 }
 
+func TestBootstrapWithUnStoppedChangefeed(t *testing.T) {
+	ctx := context.Background()
+	nodeManager := watcher.NewNodeManager(nil, nil)
+	appcontext.SetService(watcher.NodeManagerName, nodeManager)
+	info := node.NewInfo("127.0.0.1:8300", "")
+	nodeManager.GetAliveNodes()[info.ID] = info
+	mc1 := messaging.NewMessageCenter(ctx, info.ID, 0, config.NewDefaultMessageCenterConfig())
+	appcontext.SetService(appcontext.MessageCenter, mc1)
+	mNode := startMaintainerNode(ctx, info, mc1, nodeManager)
+
+	removingCf1 := &changefeed.ChangefeedMetaWrapper{
+		Info: &config.ChangeFeedInfo{
+			ChangefeedID: common.NewChangeFeedIDWithName("cf1"),
+			Config:       config.GetDefaultReplicaConfig(),
+			State:        model.StateNormal,
+		},
+		Status: &config.ChangeFeedStatus{CheckpointTs: 10, Progress: config.ProgressRemoving},
+	}
+	removingCf2 := &changefeed.ChangefeedMetaWrapper{
+		Info: &config.ChangeFeedInfo{
+			ChangefeedID: common.NewChangeFeedIDWithName("cf2"),
+			Config:       config.GetDefaultReplicaConfig(),
+			State:        model.StateNormal,
+		},
+		Status: &config.ChangeFeedStatus{CheckpointTs: 10, Progress: config.ProgressRemoving},
+	}
+	stopingCf1 := &changefeed.ChangefeedMetaWrapper{
+		Info: &config.ChangeFeedInfo{
+			ChangefeedID: common.NewChangeFeedIDWithName("cf1"),
+			Config:       config.GetDefaultReplicaConfig(),
+			State:        model.StateStopped,
+		},
+		Status: &config.ChangeFeedStatus{CheckpointTs: 10, Progress: config.ProgressStopping},
+	}
+
+	stopingCf2 := &changefeed.ChangefeedMetaWrapper{
+		Info: &config.ChangeFeedInfo{
+			ChangefeedID: common.NewChangeFeedIDWithName("cf2"),
+			Config:       config.GetDefaultReplicaConfig(),
+			State:        model.StateStopped,
+		},
+		Status: &config.ChangeFeedStatus{CheckpointTs: 10, Progress: config.ProgressStopping},
+	}
+
+	// two changefeeds are working
+	mNode.manager.bootstrapResponse = &heartbeatpb.CoordinatorBootstrapResponse{
+		Statuses: []*heartbeatpb.MaintainerStatus{
+			{
+				ChangefeedID: removingCf1.Info.ChangefeedID.ToPB(),
+				State:        heartbeatpb.ComponentState_Working,
+			},
+			{
+				ChangefeedID: stopingCf1.Info.ChangefeedID.ToPB(),
+				State:        heartbeatpb.ComponentState_Working,
+			},
+		},
+	}
+
+	serviceID := "default"
+	backend := &mockBackend{changefeeds: map[common.ChangeFeedID]*changefeed.ChangefeedMetaWrapper{
+		removingCf1.Info.ChangefeedID: removingCf1,
+		removingCf2.Info.ChangefeedID: removingCf2,
+		stopingCf1.Info.ChangefeedID:  stopingCf1,
+		stopingCf2.Info.ChangefeedID:  stopingCf2,
+	}}
+	cr := New(info, &mockPdClient{}, pdutil.NewClock4Test(), backend, serviceID, 100, 10000, time.Millisecond*10)
+
+	// run coordinator
+	go func() { cr.Run(ctx) }()
+
+	time.Sleep(time.Second * 5)
+	co := cr.(*coordinator)
+	require.Equal(t, 0, co.controller.changefeedDB.GetReplicatingSize())
+	require.Equal(t, 2, co.controller.changefeedDB.GetStoppedSize())
+	require.Equal(t, 0, co.controller.operatorController.OperatorSize())
+}
+
 type maintainNode struct {
-	cancel context.CancelFunc
-	mc     messaging.MessageCenter
+	cancel  context.CancelFunc
+	mc      messaging.MessageCenter
+	manager *mockMaintainerManager
 }
 
 func (d *maintainNode) stop() {
@@ -375,20 +461,37 @@ func startMaintainerNode(ctx context.Context,
 		grpcServer.Stop()
 	}()
 	return &maintainNode{
-		cancel: cancel,
-		mc:     mc,
+		cancel:  cancel,
+		mc:      mc,
+		manager: maintainerM,
 	}
 }
 
 type mockBackend struct {
 	changefeed.Backend
-	changefeeds map[model.ChangeFeedID]*changefeed.ChangefeedMetaWrapper
+	changefeeds map[common.ChangeFeedID]*changefeed.ChangefeedMetaWrapper
 }
 
-func (m *mockBackend) GetAllChangefeeds(ctx context.Context) (map[model.ChangeFeedID]*changefeed.ChangefeedMetaWrapper, error) {
+func (m *mockBackend) GetAllChangefeeds(_ context.Context) (map[common.ChangeFeedID]*changefeed.ChangefeedMetaWrapper, error) {
 	return m.changefeeds, nil
 }
 
-func (m *mockBackend) UpdateChangefeedCheckpointTs(ctx context.Context, cps map[model.ChangeFeedID]uint64) error {
+func (m *mockBackend) UpdateChangefeedCheckpointTs(_ context.Context, _ map[common.ChangeFeedID]uint64) error {
+	return nil
+}
+
+func (m *mockBackend) SetChangefeedProgress(_ context.Context, _ common.ChangeFeedID, _ config.Progress) error {
+	return nil
+}
+
+func (m *mockBackend) DeleteChangefeed(_ context.Context, _ common.ChangeFeedID) error {
+	return nil
+}
+
+func (m *mockBackend) ResumeChangefeed(_ context.Context, _ common.ChangeFeedID, _ uint64) error {
+	return nil
+}
+
+func (m *mockBackend) PauseChangefeed(_ context.Context, _ common.ChangeFeedID) error {
 	return nil
 }

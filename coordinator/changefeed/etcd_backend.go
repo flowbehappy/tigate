@@ -51,13 +51,13 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[common.ChangeF
 		return nil, errors.Trace(err)
 	}
 
-	statusMap := make(map[common.ChangeFeedDisplayName]*model.ChangeFeedStatus)
+	statusMap := make(map[common.ChangeFeedDisplayName]*config.ChangeFeedStatus)
 	cfMap := make(map[common.ChangeFeedID]*ChangefeedMetaWrapper)
 	for _, kv := range resp.Kvs {
 		key := string(kv.Key)
 		ns, cf, isStatus := extractKeySuffix(key)
 		if isStatus {
-			status := &model.ChangeFeedStatus{}
+			status := &config.ChangeFeedStatus{}
 			err = status.Unmarshal(kv.Value)
 			if err != nil {
 				log.Warn("failed to unmarshal change feed Status, ignore",
@@ -106,10 +106,9 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[common.ChangeF
 		}
 		if meta.Status == nil {
 			log.Warn("failed to load change feed Status, add a new one")
-			status := &model.ChangeFeedStatus{
-				CheckpointTs:      meta.Info.StartTs,
-				MinTableBarrierTs: meta.Info.StartTs,
-				AdminJobType:      model.AdminNone,
+			status := &config.ChangeFeedStatus{
+				CheckpointTs: meta.Info.StartTs,
+				Progress:     config.ProgressNone,
 			}
 			data, err := json.Marshal(status)
 			if err != nil {
@@ -190,7 +189,35 @@ func (b *EtcdBackend) PauseChangefeed(ctx context.Context, id common.ChangeFeedI
 		return errors.Trace(err)
 	}
 	info.State = model.StateStopped
-	return b.etcdClient.UpdateChangefeedAndUpstream(ctx, nil, info)
+	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), id.DisplayName)
+	inforValue, err := info.Marshal()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	status, _, err := b.etcdClient.GetChangeFeedStatus(ctx, id)
+	status.Progress = config.ProgressStopping
+	if err != nil {
+		return errors.Trace(err)
+	}
+	jobValue, err := status.Marshal()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), id.DisplayName)
+	putResp, err := b.etcdClient.GetEtcdClient().Txn(ctx, nil,
+		[]clientv3.Op{
+			clientv3.OpPut(jobKey, jobValue),
+			clientv3.OpPut(infoKey, inforValue),
+		},
+		[]clientv3.Op{})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !putResp.Succeeded {
+		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("update changefeed %s", id.DisplayName))
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (b *EtcdBackend) DeleteChangefeed(ctx context.Context,
@@ -246,6 +273,31 @@ func (b *EtcdBackend) ResumeChangefeed(ctx context.Context,
 	}
 	if !putResp.Succeeded {
 		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("pause changefeed %s", info.ID))
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (b *EtcdBackend) SetChangefeedProgress(ctx context.Context, id common.ChangeFeedID, progress config.Progress) error {
+	status, modVersion, err := b.etcdClient.GetChangeFeedStatus(ctx, id)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	status.Progress = progress
+	jobValue, err := status.Marshal()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), id.DisplayName)
+	putResp, err := b.etcdClient.GetEtcdClient().Txn(ctx,
+		[]clientv3.Cmp{clientv3.Compare(clientv3.ModRevision(jobKey), "=", modVersion)},
+		[]clientv3.Op{clientv3.OpPut(jobKey, jobValue)},
+		[]clientv3.Op{})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !putResp.Succeeded {
+		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("mark changefeed removing %s", id.DisplayName))
 		return errors.Trace(err)
 	}
 	return nil

@@ -18,7 +18,6 @@ import (
 
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
-	"github.com/pingcap/tiflow/cdc/model"
 )
 
 // Coordinator is the master of the ticdc cluster,
@@ -32,9 +31,9 @@ type Coordinator interface {
 	// Run handles messages
 	Run(ctx context.Context) error
 	// ListChangefeeds returns all changefeeds
-	ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedInfo, []*model.ChangeFeedStatus, error)
+	ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedInfo, []*config.ChangeFeedStatus, error)
 	// GetChangefeed returns a changefeed
-	GetChangefeed(ctx context.Context, changefeedDisplayName common.ChangeFeedDisplayName) (*config.ChangeFeedInfo, *model.ChangeFeedStatus, error)
+	GetChangefeed(ctx context.Context, changefeedDisplayName common.ChangeFeedDisplayName) (*config.ChangeFeedInfo, *config.ChangeFeedStatus, error)
 	// CreateChangefeed creates a new changefeed
 	CreateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error
 	// RemoveChangefeed gets a changefeed

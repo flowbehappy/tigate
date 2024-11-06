@@ -18,7 +18,6 @@ import (
 
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
-	"github.com/pingcap/tiflow/cdc/model"
 )
 
 // Backend is the metastore for the changefeed
@@ -33,6 +32,8 @@ type Backend interface {
 	PauseChangefeed(ctx context.Context, id common.ChangeFeedID) error
 	// DeleteChangefeed removes all related info of a changefeed from db
 	DeleteChangefeed(ctx context.Context, id common.ChangeFeedID) error
+	// SetChangefeedProgress persists the operation progress status to db for a changefeed
+	SetChangefeedProgress(ctx context.Context, id common.ChangeFeedID, progress config.Progress) error
 	// ResumeChangefeed persists the resumed status to db for a changefeed
 	ResumeChangefeed(ctx context.Context, id common.ChangeFeedID, newCheckpointTs uint64) error
 	// UpdateChangefeedCheckpointTs persists the checkpoints for changefeeds
@@ -42,5 +43,5 @@ type Backend interface {
 // ChangefeedMetaWrapper is a wrapper for the changefeed load from the DB
 type ChangefeedMetaWrapper struct {
 	Info   *config.ChangeFeedInfo
-	Status *model.ChangeFeedStatus
+	Status *config.ChangeFeedStatus
 }

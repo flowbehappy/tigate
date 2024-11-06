@@ -15,6 +15,7 @@ package operator
 
 import (
 	"container/heap"
+	"context"
 	"sync"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/ticdc/coordinator/changefeed"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
@@ -37,12 +39,16 @@ type Controller struct {
 	runningQueue  operator.OperatorQueue[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]
 	batchSize     int
 	messageCenter messaging.MessageCenter
+	selfNode      *node.Info
+	backend       changefeed.Backend
 
 	lock sync.RWMutex
 }
 
 func NewOperatorController(mc messaging.MessageCenter,
+	selfNode *node.Info,
 	db *changefeed.ChangefeedDB,
+	backend changefeed.Backend,
 	batchSize int) *Controller {
 	oc := &Controller{
 		operators:     make(map[common.ChangeFeedID]operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]),
@@ -50,6 +56,8 @@ func NewOperatorController(mc messaging.MessageCenter,
 		messageCenter: mc,
 		batchSize:     batchSize,
 		changefeedDB:  db,
+		selfNode:      selfNode,
+		backend:       backend,
 	}
 	return oc
 }
@@ -106,13 +114,29 @@ func (oc *Controller) AddOperator(op operator.Operator[common.ChangeFeedID, *hea
 // StopChangefeed stop changefeed when the changefeed is stopped/removed.
 // if remove is true, it will remove the changefeed from the chagnefeed DB
 // if remove is false, it only marks as the changefeed stooped in changefeed DB, so we will not schedule the changefeed again
-func (oc *Controller) StopChangefeed(cfID common.ChangeFeedID, remove bool) {
+func (oc *Controller) StopChangefeed(ctx context.Context, cfID common.ChangeFeedID, remove bool) {
 	oc.lock.Lock()
 	defer oc.lock.Unlock()
 
 	var scheduledNode = oc.changefeedDB.StopByChangefeedID(cfID, remove)
 	if scheduledNode == "" {
-		log.Info("changefeed is not scheduled")
+		log.Info("changefeed is not scheduled,update meta in db directory",
+			zap.Bool("remove", remove),
+			zap.String("changefeed", cfID.Name()))
+		// changefeed is not scheduled, we can update the meta in DB directly, otherwise we update the meta in the operator
+		if remove {
+			if err := oc.backend.DeleteChangefeed(ctx, cfID); err != nil {
+				log.Warn("delete changefeed meta failed",
+					zap.String("changefeed", cfID.Name()),
+					zap.Error(err))
+			}
+		} else {
+			if err := oc.backend.SetChangefeedProgress(ctx, cfID, config.ProgressNone); err != nil {
+				log.Warn("set changefeed progress failed",
+					zap.String("changefeed", cfID.Name()),
+					zap.Error(err))
+			}
+		}
 		return
 	}
 	if old, ok := oc.operators[cfID]; ok {
@@ -122,7 +146,7 @@ func (oc *Controller) StopChangefeed(cfID common.ChangeFeedID, remove bool) {
 		old.OnTaskRemoved()
 		delete(oc.operators, old.ID())
 	}
-	op := NewRemoveChangefeedOperator(cfID, scheduledNode, remove)
+	op := NewStopChangefeedOperator(cfID, scheduledNode, oc.selfNode, oc.backend, remove)
 	oc.pushOperator(op)
 }
 

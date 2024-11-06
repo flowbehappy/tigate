@@ -23,8 +23,8 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/tiflow/cdc/model"
-	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/pd/pkg/utils/tempurl"
@@ -127,7 +127,7 @@ type CDCEtcdClient interface {
 
 	GetChangeFeedStatus(ctx context.Context,
 		id common.ChangeFeedID,
-	) (*model.ChangeFeedStatus, int64, error)
+	) (*config.ChangeFeedStatus, int64, error)
 
 	GetUpstreamInfo(ctx context.Context,
 		upstreamID model.UpstreamID,
@@ -327,7 +327,7 @@ func (c *CDCEtcdClientImpl) DeleteChangeFeedInfo(ctx context.Context,
 // GetChangeFeedStatus queries the checkpointTs and resovledTs of a given changefeed
 func (c *CDCEtcdClientImpl) GetChangeFeedStatus(ctx context.Context,
 	id common.ChangeFeedID,
-) (*model.ChangeFeedStatus, int64, error) {
+) (*config.ChangeFeedStatus, int64, error) {
 	key := GetEtcdKeyJob(c.ClusterID, id.DisplayName)
 	resp, err := c.Client.Get(ctx, key)
 	if err != nil {
@@ -336,7 +336,7 @@ func (c *CDCEtcdClientImpl) GetChangeFeedStatus(ctx context.Context,
 	if resp.Count == 0 {
 		return nil, 0, errors.ErrChangeFeedNotExists.GenWithStackByArgs(key)
 	}
-	info := &model.ChangeFeedStatus{}
+	info := &config.ChangeFeedStatus{}
 	err = info.Unmarshal(resp.Kvs[0].Value)
 	return info, resp.Kvs[0].ModRevision, errors.Trace(err)
 }

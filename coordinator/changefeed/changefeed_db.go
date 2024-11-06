@@ -102,7 +102,7 @@ func (db *ChangefeedDB) StopByChangefeedID(cfID common.ChangeFeedID, remove bool
 
 		if !remove {
 			cf.Info.State = model.StateStopped
-			// push bash to stopped
+			// push back to stopped
 			db.changefeeds[cfID] = cf
 			db.stopped[cfID] = cf
 		}

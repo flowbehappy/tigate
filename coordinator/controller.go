@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"github.com/pingcap/ticdc/utils/threadpool"
-	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -69,6 +68,7 @@ type Controller struct {
 
 func NewController(
 	version int64,
+	selfNode *node.Info,
 	updatedChangefeedCh chan map[common.ChangeFeedID]*changefeed.Changefeed,
 	backend changefeed.Backend,
 	stream dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler],
@@ -77,7 +77,7 @@ func NewController(
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	changefeedDB := changefeed.NewChangefeedDB()
 
-	oc := operator.NewOperatorController(mc, changefeedDB, batchSize)
+	oc := operator.NewOperatorController(mc, selfNode, changefeedDB, backend, batchSize)
 	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
 	c := &Controller{
 		version:             version,
@@ -204,7 +204,7 @@ func (c *Controller) onNodeChanged() {
 			c.RemoveNode(id)
 		}
 	}
-	log.Info("maintainer node changed",
+	log.Info("node changed",
 		zap.Int("new", len(newNodes)),
 		zap.Int("removed", len(removedNodes)))
 	c.sendMessages(c.bootstrapper.HandleNewNodes(newNodes))
@@ -324,6 +324,13 @@ func (c *Controller) FinishBootstrap(workingMap map[common.ChangeFeedID]remoteMa
 			// delete it
 			delete(workingMap, cfID)
 		}
+
+		// check if the changefeed is stopping or removing, we need to stop all dispatchers completely
+		switch cfMeta.Status.Progress {
+		case config.ProgressStopping, config.ProgressRemoving:
+			remove := cfMeta.Status.Progress == config.ProgressRemoving
+			c.operatorController.StopChangefeed(context.Background(), cfID, remove)
+		}
 	}
 	for id, rm := range workingMap {
 		log.Warn("maintainer not found in local, remove it",
@@ -353,11 +360,11 @@ func (c *Controller) RemoveChangefeed(ctx context.Context, id common.ChangeFeedI
 	if cf == nil {
 		return 0, errors.New("changefeed not found")
 	}
-	err := c.backend.DeleteChangefeed(ctx, id)
+	err := c.backend.SetChangefeedProgress(ctx, id, config.ProgressRemoving)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	c.operatorController.StopChangefeed(id, true)
+	c.operatorController.StopChangefeed(ctx, id, true)
 	return cf.GetStatus().CheckpointTs, nil
 }
 
@@ -369,7 +376,7 @@ func (c *Controller) PauseChangefeed(ctx context.Context, id common.ChangeFeedID
 	if err := c.backend.PauseChangefeed(ctx, id); err != nil {
 		return errors.Trace(err)
 	}
-	c.operatorController.StopChangefeed(id, false)
+	c.operatorController.StopChangefeed(ctx, id, false)
 	return nil
 }
 
@@ -397,23 +404,23 @@ func (c *Controller) UpdateChangefeed(ctx context.Context, change *config.Change
 	return nil
 }
 
-func (c *Controller) ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedInfo, []*model.ChangeFeedStatus, error) {
+func (c *Controller) ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedInfo, []*config.ChangeFeedStatus, error) {
 	cfs := c.changefeedDB.GetAllChangefeeds()
 	infos := make([]*config.ChangeFeedInfo, 0, len(cfs))
-	statuses := make([]*model.ChangeFeedStatus, 0, len(cfs))
+	statuses := make([]*config.ChangeFeedStatus, 0, len(cfs))
 	for _, cf := range cfs {
 		infos = append(infos, cf.Info)
-		statuses = append(statuses, &model.ChangeFeedStatus{CheckpointTs: cf.GetStatus().CheckpointTs})
+		statuses = append(statuses, &config.ChangeFeedStatus{CheckpointTs: cf.GetStatus().CheckpointTs})
 	}
 	return infos, statuses, nil
 }
 
-func (c *Controller) GetChangefeed(ctx context.Context, changefeedDisplayName common.ChangeFeedDisplayName) (*config.ChangeFeedInfo, *model.ChangeFeedStatus, error) {
+func (c *Controller) GetChangefeed(ctx context.Context, changefeedDisplayName common.ChangeFeedDisplayName) (*config.ChangeFeedInfo, *config.ChangeFeedStatus, error) {
 	cf := c.changefeedDB.GetByChangefeedDisplayName(changefeedDisplayName)
 	if cf == nil {
 		return nil, nil, cerror.ErrChangeFeedNotExists.GenWithStackByArgs(changefeedDisplayName.Name)
 	}
-	return cf.Info, &model.ChangeFeedStatus{CheckpointTs: cf.GetStatus().CheckpointTs}, nil
+	return cf.Info, &config.ChangeFeedStatus{CheckpointTs: cf.GetStatus().CheckpointTs}, nil
 }
 
 // GetTask queries a task by channgefeed ID, return nil if not found
