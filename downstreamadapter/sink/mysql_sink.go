@@ -45,8 +45,7 @@ type MysqlSink struct {
 }
 
 // func NewMysqlSink(changefeedID common.ChangeFeedID, workerCount int, cfg *mysql.MysqlConfig, db *sql.DB) *MysqlSink {
-func NewMysqlSink(changefeedID common.ChangeFeedID, workerCount int, config *config.ChangefeedConfig, sinkURI *url.URL) (*MysqlSink, error) {
-	ctx := context.Background()
+func NewMysqlSink(ctx context.Context, changefeedID common.ChangeFeedID, workerCount int, config *config.ChangefeedConfig, sinkURI *url.URL) (*MysqlSink, error) {
 	mysqlSink := MysqlSink{
 		changefeedID: changefeedID,
 		dmlWorker:    make([]*worker.MysqlWorker, workerCount),
