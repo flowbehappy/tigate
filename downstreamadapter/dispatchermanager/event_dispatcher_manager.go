@@ -27,6 +27,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/ticdc/downstreamadapter/dispatcher"
 	"github.com/pingcap/ticdc/downstreamadapter/eventcollector"
 	"github.com/pingcap/ticdc/downstreamadapter/sink"
@@ -166,7 +167,11 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 
 	// create tableTriggerEventDispatcher if it is not nil
 	if tableTriggerEventDispatcherID != nil {
-		manager.NewDispatcher(common.NewDispatcherIDFromPB(tableTriggerEventDispatcherID), heartbeatpb.DDLSpan, startTs, 0)
+		_, err := manager.NewDispatcher(common.NewDispatcherIDFromPB(tableTriggerEventDispatcherID), heartbeatpb.DDLSpan, startTs, 0)
+		if err != nil {
+			log.Error("Create table trigger event dispatcher failed", zap.Error(err))
+			return nil, 0, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("create table trigger event dispatcher failed")
+		}
 		return manager, manager.tableTriggerEventDispatcher.GetStartTs(), nil
 	}
 
@@ -234,10 +239,10 @@ func (e *EventDispatcherManager) close(remove bool) {
 	log.Info("event dispatcher manager closed", zap.Stringer("changefeedID", e.changefeedID))
 }
 
-func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTs uint64, schemaID int64) *dispatcher.Dispatcher {
+func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTs uint64, schemaID int64) (*dispatcher.Dispatcher, error) {
 	start := time.Now()
 	if _, ok := e.dispatcherMap.Get(id); ok {
-		return nil
+		return nil, nil
 	}
 
 	// If downstream is mysql-class, we need to check whether startTs we should actually use as the begin startTs
@@ -246,8 +251,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 	// and choose max(ddl-ts, startTs) as the begin startTs.
 	newStartTs, err := e.sink.CheckStartTs(tableSpan.TableID, startTs)
 	if err != nil {
-		log.Error("check start ts failed", zap.Error(err))
-		return nil
+		return nil, errors.Trace(err)
 	}
 
 	// this table is dropped, skip it and return removed status to maintainer
@@ -257,7 +261,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 			ComponentStatus: heartbeatpb.ComponentState_Removed,
 		}
 		log.Info("this table is dropped, skip it and return removed status to maintainer")
-		return nil
+		return nil, nil
 	}
 
 	syncPointInfo := syncpoint.SyncPointInfo{
@@ -312,7 +316,7 @@ func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan
 		zap.Int64("cost(ns)", time.Since(start).Nanoseconds()), zap.Time("start", start))
 	e.metricCreateDispatcherDuration.Observe(float64(time.Since(start).Seconds()))
 
-	return d
+	return d, nil
 }
 
 func (e *EventDispatcherManager) CollectBlockStatusRequest(ctx context.Context) {
