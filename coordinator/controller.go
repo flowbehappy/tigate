@@ -147,7 +147,7 @@ func (c *Controller) CreateChangefeed(ctx context.Context, info *config.ChangeFe
 	if !c.bootstrapped {
 		return errors.New("not initialized, wait a moment")
 	}
-	old := c.changefeedDB.GetByID(info.ChangefeedID)
+	old := c.changefeedDB.GetByChangefeedDisplayName(info.ChangefeedID.DisplayName)
 	if old != nil {
 		return errors.New("changefeed already exists")
 	}
@@ -306,7 +306,7 @@ func (c *Controller) FinishBootstrap(workingMap map[common.ChangeFeedID]remoteMa
 	if err != nil {
 		log.Panic("load all changefeeds failed", zap.Error(err))
 	}
-	log.Info("coordinator bootstrapped, load all changefeeds from db", zap.Int("size", len(cfs)))
+	log.Info("load all changefeeds", zap.Int("size", len(cfs)))
 	for cfID, cfMeta := range cfs {
 		rm, ok := workingMap[cfID]
 		if !ok {

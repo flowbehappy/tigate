@@ -65,7 +65,7 @@ The workflow related to the dispatcher is as follows:
 */
 
 type Dispatcher struct {
-	changefeedID string
+	changefeedID common.ChangeFeedID
 	id           common.DispatcherID
 	// tableInfo is the latest table info of the dispatcher
 	tableInfo atomic.Pointer[common.TableInfo]
@@ -112,7 +112,7 @@ type Dispatcher struct {
 }
 
 func NewDispatcher(
-	changefeedID string,
+	changefeedID common.ChangeFeedID,
 	id common.DispatcherID,
 	tableSpan *heartbeatpb.TableSpan,
 	sink tisink.Sink,
