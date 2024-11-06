@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/ticdc/utils/threadpool"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/spanz"
@@ -44,13 +43,14 @@ func TestSchedule(t *testing.T) {
 	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
 	nodeManager.GetAliveNodes()["node3"] = &node.Info{ID: "node3"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 9, time.Minute)
+	controller := NewController(cfID, 1, nil, nil, nil, nil, ddlSpan, 9, time.Minute)
 	for i := 0; i < 1000; i++ {
 		controller.AddNewTable(commonEvent.Table{
 			SchemaID: 1,
@@ -73,13 +73,14 @@ func TestSchedule(t *testing.T) {
 func TestRemoveAbsentTask(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 9, time.Minute)
+	controller := NewController(cfID, 1, nil, nil, nil, nil, ddlSpan, 9, time.Minute)
 	controller.AddNewTable(commonEvent.Table{
 		SchemaID: 1,
 		TableID:  int64(1),
@@ -93,17 +94,18 @@ func TestBalance(t *testing.T) {
 	nodeManager := setNodeManagerAndMessageCenter()
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	s := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
+	s := NewController(cfID, 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	for i := 0; i < 100; i++ {
 		span := &heartbeatpb.TableSpan{TableID: int64(i)}
 		dispatcherID := common.NewDispatcherID()
-		spanReplica := replica.NewReplicaSet(model.ChangeFeedID{}, dispatcherID, 1, span, 1)
+		spanReplica := replica.NewReplicaSet(cfID, dispatcherID, 1, span, 1)
 		spanReplica.SetNodeID("node1")
 		s.replicationDB.AddReplicatingSpan(spanReplica)
 	}
@@ -157,17 +159,18 @@ func TestStoppedWhenMoving(t *testing.T) {
 	nodeManager := setNodeManagerAndMessageCenter()
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	s := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
+	s := NewController(cfID, 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	for i := 0; i < 2; i++ {
 		span := &heartbeatpb.TableSpan{TableID: int64(i)}
 		dispatcherID := common.NewDispatcherID()
-		spanReplica := replica.NewReplicaSet(model.ChangeFeedID{}, dispatcherID, 1, span, 1)
+		spanReplica := replica.NewReplicaSet(cfID, dispatcherID, 1, span, 1)
 		spanReplica.SetNodeID("node1")
 		s.replicationDB.AddReplicatingSpan(spanReplica)
 	}
@@ -195,13 +198,14 @@ func TestFinishBootstrap(t *testing.T) {
 	nodeManager := setNodeManagerAndMessageCenter()
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	s := NewController("test", 1, nil, nil, &mockThreadPool{},
+	s := NewController(cfID, 1, nil, nil, &mockThreadPool{},
 		config.GetDefaultReplicaConfig(), ddlSpan, 1000, 0)
 	span := &heartbeatpb.TableSpan{TableID: int64(1)}
 	schemaStore := &mockSchemaStore{tables: []commonEvent.Table{{TableID: 1, SchemaID: 1}}}
@@ -210,7 +214,7 @@ func TestFinishBootstrap(t *testing.T) {
 	require.False(t, s.bootstrapped)
 	barrier, err := s.FinishBootstrap(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{
 		"node1": {
-			ChangefeedID: "test",
+			ChangefeedID: cfID.ToPB(),
 			Spans: []*heartbeatpb.BootstrapTableSpan{
 				{
 					ID:              dispatcherID2.ToPB(),
@@ -241,18 +245,19 @@ func TestBalanceUnEvenTask(t *testing.T) {
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
 	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	s := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
+	s := NewController(cfID, 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 
 	for i := 0; i < 4; i++ {
 		span := &heartbeatpb.TableSpan{TableID: int64(i)}
 		dispatcherID := common.NewDispatcherID()
-		spanReplica := replica.NewReplicaSet(model.ChangeFeedID{}, dispatcherID, 1, span, 1)
+		spanReplica := replica.NewReplicaSet(cfID, dispatcherID, 1, span, 1)
 		s.replicationDB.AddAbsentReplicaSet(spanReplica)
 	}
 	s.spanScheduler.Execute()
@@ -296,7 +301,8 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
 	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
@@ -308,7 +314,7 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 		RegionThreshold:        0,
 		WriteKeyThreshold:      1,
 	}
-	s := NewController("test", 1,
+	s := NewController(cfID, 1,
 		pdAPI, nil, nil, defaultConfig, ddlSpan, 1000, 0)
 	s.taskScheduler = &mockThreadPool{}
 	schemaStore := &mockSchemaStore{tables: []commonEvent.Table{{TableID: 1, SchemaID: 1}, {TableID: 2, SchemaID: 2}}}
@@ -347,7 +353,7 @@ func TestSplitTableWhenBootstrapFinished(t *testing.T) {
 
 	barrier, err := s.FinishBootstrap(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{
 		"node1": {
-			ChangefeedID: "test",
+			ChangefeedID: cfID.ToPB(),
 			Spans:        reportedSpans,
 			CheckpointTs: 10,
 		}},
@@ -371,13 +377,14 @@ func TestDynamicSplitTableBasic(t *testing.T) {
 	nodeManager.GetAliveNodes()["node1"] = &node.Info{ID: "node1"}
 	nodeManager.GetAliveNodes()["node2"] = &node.Info{ID: "node2"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	s := NewController("test", 1,
+	s := NewController(cfID, 1,
 		pdAPI,
 		nil, nil, &config.ReplicaConfig{
 			Scheduler: &config.ChangefeedSchedulerConfig{
@@ -391,7 +398,7 @@ func TestDynamicSplitTableBasic(t *testing.T) {
 	for i := 1; i <= 2; i++ {
 		span := &heartbeatpb.TableSpan{TableID: int64(i), StartKey: totalSpan.StartKey, EndKey: totalSpan.EndKey}
 		dispatcherID := common.NewDispatcherID()
-		spanReplica := replica.NewReplicaSet(model.ChangeFeedID{}, dispatcherID, 1, span, 1)
+		spanReplica := replica.NewReplicaSet(cfID, dispatcherID, 1, span, 1)
 		spanReplica.SetNodeID(node.ID(fmt.Sprintf("node%d", i)))
 		s.replicationDB.AddReplicatingSpan(spanReplica)
 	}

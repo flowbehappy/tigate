@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/stretchr/testify/require"
@@ -58,9 +59,10 @@ func TestSplitRegionsByWrittenKeysUniform(t *testing.T) {
 	t.Parallel()
 	re := require.New(t)
 
+	cfID := common.NewChangeFeedIDWithName("test")
 	regions, startKeys, endKeys := prepareRegionsInfo(
 		[7]int{100, 100, 100, 100, 100, 100, 100}) // region id: [2,3,4,5,6,7,8]
-	splitter := newWriteSplitter(model.ChangeFeedID4Test("test", "test"), nil, 0)
+	splitter := newWriteSplitter(cfID, nil, 0)
 	info := splitter.splitRegionsByWrittenKeysV1(0, cloneRegions(regions), 1)
 	re.Len(info.RegionCounts, 1)
 	re.EqualValues(7, info.RegionCounts[0])
@@ -122,9 +124,10 @@ func TestSplitRegionsByWrittenKeysHotspot1(t *testing.T) {
 	re := require.New(t)
 
 	// Hotspots
+	cfID := common.NewChangeFeedIDWithName("test")
 	regions, startKeys, endKeys := prepareRegionsInfo(
 		[7]int{100, 1, 100, 1, 1, 1, 100})
-	splitter := newWriteSplitter(model.ChangeFeedID4Test("test", "test"), nil, 4)
+	splitter := newWriteSplitter(cfID, nil, 4)
 	info := splitter.splitRegionsByWrittenKeysV1(0, regions, 4) // [2], [3,4], [5,6,7], [8]
 	re.Len(info.RegionCounts, 4)
 	re.EqualValues(1, info.RegionCounts[0])
@@ -152,9 +155,10 @@ func TestSplitRegionsByWrittenKeysHotspot2(t *testing.T) {
 	re := require.New(t)
 
 	// Hotspots
+	cfID := common.NewChangeFeedIDWithName("test")
 	regions, startKeys, endKeys := prepareRegionsInfo(
 		[7]int{1000, 1, 1, 1, 100, 1, 99})
-	splitter := newWriteSplitter(model.ChangeFeedID4Test("test", "test"), nil, 4)
+	splitter := newWriteSplitter(cfID, nil, 4)
 	info := splitter.splitRegionsByWrittenKeysV1(0, regions, 4) // [2], [3,4,5,6], [7], [8]
 	re.Len(info.Spans, 4)
 	re.EqualValues(startKeys[2], info.Spans[0].StartKey)
@@ -170,7 +174,8 @@ func TestSplitRegionsByWrittenKeysHotspot2(t *testing.T) {
 func TestSplitRegionsByWrittenKeysCold(t *testing.T) {
 	t.Parallel()
 	re := require.New(t)
-	splitter := newWriteSplitter(model.ChangeFeedID4Test("test", "test"), nil, 0)
+	cfID := common.NewChangeFeedIDWithName("test")
+	splitter := newWriteSplitter(cfID, nil, 0)
 	regions, startKeys, endKeys := prepareRegionsInfo([7]int{})
 	info := splitter.splitRegionsByWrittenKeysV1(0, regions, 3) // [2,3,4], [5,6,7], [8]
 	re.Len(info.RegionCounts, 3)
@@ -194,7 +199,8 @@ func TestSplitRegionsByWrittenKeysConfig(t *testing.T) {
 	t.Parallel()
 	re := require.New(t)
 
-	splitter := newWriteSplitter(model.ChangeFeedID4Test("test", "test"), nil, math.MaxInt)
+	cfID := common.NewChangeFeedIDWithName("test")
+	splitter := newWriteSplitter(cfID, nil, math.MaxInt)
 	regions, startKeys, endKeys := prepareRegionsInfo([7]int{1, 1, 1, 1, 1, 1, 1})
 	info := splitter.splitRegionsByWrittenKeysV1(1, regions, 3) // [2,3,4,5,6,7,8]
 	re.Len(info.RegionCounts, 1)
@@ -223,7 +229,8 @@ func TestSplitRegionEven(t *testing.T) {
 			WrittenKeys: 2,
 		}
 	}
-	splitter := newWriteSplitter(model.ChangeFeedID4Test("test", "test"), nil, 4)
+	cfID := common.NewChangeFeedIDWithName("test")
+	splitter := newWriteSplitter(cfID, nil, 4)
 	info := splitter.splitRegionsByWrittenKeysV1(tblID, regions, 5)
 	require.Len(t, info.RegionCounts, 5)
 	require.Len(t, info.Weights, 5)
@@ -237,7 +244,8 @@ func TestSplitRegionEven(t *testing.T) {
 }
 
 func TestSpanRegionLimitBase(t *testing.T) {
-	splitter := newWriteSplitter(model.ChangeFeedID4Test("test", "test"), nil, 0)
+	cfID := common.NewChangeFeedIDWithName("test")
+	splitter := newWriteSplitter(cfID, nil, 0)
 	var regions []pdutil.RegionInfo
 	// test spanRegionLimit works
 	for i := 0; i < spanRegionLimit*6; i++ {
@@ -305,7 +313,8 @@ func TestSpanRegionLimit(t *testing.T) {
 	// 70% hot written region is in the left side of the region list
 	writtenKeys = shuffle(writtenKeys, 0.7)
 
-	splitter := newWriteSplitter(model.ChangeFeedID4Test("test", "test"), nil, 0)
+	cfID := common.NewChangeFeedIDWithName("test")
+	splitter := newWriteSplitter(cfID, nil, 0)
 	var regions []pdutil.RegionInfo
 	// region number is 500,000
 	// weight is random between 0 and 40,000
