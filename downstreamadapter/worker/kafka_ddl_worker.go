@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/sink/codec/encoder"
 	"github.com/pingcap/ticdc/pkg/sink/util"
 	"github.com/pingcap/tiflow/cdc/sink/ddlsink/mq/ddlproducer"
+	ticommon "github.com/pingcap/tiflow/pkg/sink/codec/common"
 	"go.uber.org/zap"
 )
 
@@ -126,38 +127,65 @@ func (w *KafkaDDLWorker) encodeAndSendDDLEvents() error {
 					zap.String("changefeed", w.changeFeedID.Name()))
 				return nil
 			}
-			message, err := w.encoder.EncodeDDLEvent(event)
-			if err != nil {
-				log.Error("Failed to encode ddl event",
-					zap.String("namespace", w.changeFeedID.Namespace()),
-					zap.String("changefeed", w.changeFeedID.Name()),
-					zap.Error(err))
-				continue
+
+			messages := make([]*ticommon.Message, 0)
+			topics := make([]string, 0)
+			// Some ddl event may be multi-events, we need to split it into multiple messages.
+			// Such as rename table test.table1 to test.table10, test.table2 to test.table20
+			if event.IsMultiEvents() {
+				subEvents := event.GetSubEvents()
+				for _, subEvent := range subEvents {
+					message, err := w.encoder.EncodeDDLEvent(subEvent)
+					if err != nil {
+						log.Error("Failed to encode ddl event",
+							zap.String("namespace", w.changeFeedID.Namespace()),
+							zap.String("changefeed", w.changeFeedID.Name()),
+							zap.Error(err))
+						continue
+					}
+					messages = append(messages, message)
+					topics = append(topics, w.eventRouter.GetTopicForDDL(subEvent))
+				}
+			} else {
+				message, err := w.encoder.EncodeDDLEvent(event)
+				if err != nil {
+					log.Error("Failed to encode ddl event",
+						zap.String("namespace", w.changeFeedID.Namespace()),
+						zap.String("changefeed", w.changeFeedID.Name()),
+						zap.Error(err))
+					continue
+				}
+				messages = append(messages, message)
+				topic := w.eventRouter.GetTopicForDDL(event)
+				topics = append(topics, topic)
 			}
 
-			topic := w.eventRouter.GetTopicForDDL(event)
-			partitionNum, err := w.topicManager.GetPartitionNum(w.ctx, topic)
-			if err != nil {
-				log.Error("failed to get partition number for topic", zap.String("topic", topic), zap.Error(err))
-				continue
-			}
+			for i, message := range messages {
+				topic := topics[i]
 
-			if w.partitionRule == PartitionAll {
+				partitionNum, err := w.topicManager.GetPartitionNum(w.ctx, topic)
+				if err != nil {
+					log.Error("failed to get partition number for topic", zap.String("topic", topic), zap.Error(err))
+					continue
+				}
+
+				if w.partitionRule == PartitionAll {
+					err = w.statistics.RecordDDLExecution(func() error {
+						return w.producer.SyncBroadcastMessage(w.ctx, topic, partitionNum, message)
+					})
+					return errors.Trace(err)
+				}
 				err = w.statistics.RecordDDLExecution(func() error {
-					return w.producer.SyncBroadcastMessage(w.ctx, topic, partitionNum, message)
+					return w.producer.SyncSendMessage(w.ctx, topic, 0, message)
 				})
-				return errors.Trace(err)
-			}
-			err = w.statistics.RecordDDLExecution(func() error {
-				return w.producer.SyncSendMessage(w.ctx, topic, 0, message)
-			})
 
-			if err != nil {
-				log.Error("Failed to RecordDDLExecution",
-					zap.String("namespace", w.changeFeedID.Namespace()),
-					zap.String("changefeed", w.changeFeedID.Name()),
-					zap.Error(err))
-				continue
+				if err != nil {
+					log.Error("Failed to RecordDDLExecution",
+						zap.String("namespace", w.changeFeedID.Namespace()),
+						zap.String("changefeed", w.changeFeedID.Name()),
+						zap.Error(err))
+					continue
+				}
 			}
 
 		}
