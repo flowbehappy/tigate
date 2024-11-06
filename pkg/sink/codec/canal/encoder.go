@@ -510,7 +510,6 @@ func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 			m.Value = value
 			length := m.Length()
 			if length > c.config.MaxMessageBytes {
-				log.Info("hyy also large", zap.Any("length", length))
 				log.Error("Single message is still too large for canal-json only encode handle-key columns",
 					zap.Int("maxMessageBytes", c.config.MaxMessageBytes),
 					zap.Int("originLength", originLength),

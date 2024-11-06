@@ -252,9 +252,6 @@ func formatColumnValue(row *chunk.Row, idx int, columnInfo *timodel.ColumnInfo, 
 			floatValue := d.GetFloat64()
 			value = strconv.FormatFloat(floatValue, 'f', -1, 64)
 		}
-	// case mysql.TypeNull:
-	// 	javaType = internal.JavaSQLTypeNULL
-	// 	value = "null"
 	case mysql.TypeYear:
 		javaType = internal.JavaSQLTypeVARCHAR
 		d := row.GetDatum(idx, &columnInfo.FieldType)

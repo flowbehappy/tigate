@@ -36,7 +36,9 @@ import (
 	"github.com/pingcap/ticdc/pkg/sink/util"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/sink"
+	tikafka "github.com/pingcap/tiflow/pkg/sink/kafka"
 	utils "github.com/pingcap/tiflow/pkg/util"
+	"go.uber.org/zap"
 )
 
 type KafkaSink struct {
@@ -44,14 +46,19 @@ type KafkaSink struct {
 
 	dmlWorker *worker.KafkaWorker
 	ddlWorker *worker.KafkaDDLWorker
+
+	// the module used by dmlWorker and ddlWorker
+	// KafkaSink need to close it when Close() is called
+	adminClient  tikafka.ClusterAdminClient
+	topicManager topicmanager.TopicManager
+	statistics   *metrics.Statistics
 }
 
 func (s *KafkaSink) SinkType() SinkType {
 	return KafkaSinkType
 }
 
-func NewKafkaSink(changefeedID common.ChangeFeedID, sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig) (*KafkaSink, error) {
-	ctx := context.Background()
+func NewKafkaSink(ctx context.Context, changefeedID common.ChangeFeedID, sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig) (*KafkaSink, error) {
 	topic, err := helper.GetTopic(sinkURI)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -66,6 +73,8 @@ func NewKafkaSink(changefeedID common.ChangeFeedID, sinkURI *url.URL, sinkConfig
 	if err := options.Apply(changefeedID, sinkURI, sinkConfig); err != nil {
 		return nil, cerror.WrapError(cerror.ErrKafkaInvalidConfig, err)
 	}
+
+	statistics := metrics.NewStatistics(changefeedID, "KafkaSink")
 
 	factoryCreator := kafka.NewSaramaFactory
 	if utils.GetOrZero(sinkConfig.EnableKafkaSinkV2) {
@@ -82,6 +91,14 @@ func NewKafkaSink(changefeedID common.ChangeFeedID, sinkURI *url.URL, sinkConfig
 		return nil, cerror.WrapError(cerror.ErrKafkaNewProducer, err)
 	}
 
+	// We must close adminClient when this func return cause by an error
+	// otherwise the adminClient will never be closed and lead to a goroutine leak.
+	defer func() {
+		if err != nil && adminClient != nil {
+			adminClient.Close()
+		}
+	}()
+
 	// adjust the option configuration before creating the kafka client
 	if err = kafka.AdjustOptions(ctx, adminClient, options, topic); err != nil {
 		return nil, cerror.WrapError(cerror.ErrKafkaNewProducer, err)
@@ -95,13 +112,6 @@ func NewKafkaSink(changefeedID common.ChangeFeedID, sinkURI *url.URL, sinkConfig
 		adminClient,
 	)
 
-	if err != nil {
-		if adminClient != nil {
-			adminClient.Close()
-		}
-		return nil, err
-	}
-
 	eventRouter, err := eventrouter.NewEventRouter(sinkConfig, protocol, topic, scheme)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -112,40 +122,44 @@ func NewKafkaSink(changefeedID common.ChangeFeedID, sinkURI *url.URL, sinkConfig
 		return nil, errors.Trace(err)
 	}
 
+	// for dml worker
 	encoderConfig, err := util.GetEncoderConfig(changefeedID, sinkURI, protocol, sinkConfig, options.MaxMessageBytes)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	failpointCh := make(chan error, 1)
-	asyncProducer, err := factory.AsyncProducer(ctx, failpointCh)
+	dmlAsyncProducer, err := factory.AsyncProducer(ctx, failpointCh)
 	if err != nil {
 		return nil, cerror.WrapError(cerror.ErrKafkaNewProducer, err)
 	}
 
 	metricsCollector := factory.MetricsCollector(utils.RoleProcessor, adminClient)
-	dmlProducer := producer.NewKafkaDMLProducer(ctx, changefeedID, asyncProducer, metricsCollector)
+	dmlProducer := producer.NewKafkaDMLProducer(ctx, changefeedID, dmlAsyncProducer, metricsCollector)
 	encoderGroup := codec.NewEncoderGroup(ctx, sinkConfig, encoderConfig, changefeedID)
 
-	statistics := metrics.NewStatistics(changefeedID, "KafkaSink")
-	dmlWorker := worker.NewKafkaWorker(changefeedID, protocol, dmlProducer, encoderGroup, columnSelector, eventRouter, topicManager, statistics)
+	dmlWorker := worker.NewKafkaWorker(ctx, changefeedID, protocol, dmlProducer, encoderGroup, columnSelector, eventRouter, topicManager, statistics)
 
+	// for ddl worker
 	encoder, err := codec.NewEventEncoder(ctx, encoderConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	syncProducer, err := factory.SyncProducer(ctx)
+	ddlSyncProducer, err := factory.SyncProducer(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ddlProducer := producer.NewKafkaDDLProducer(ctx, changefeedID, syncProducer)
-	ddlWorker := worker.NewKafkaDDLWorker(changefeedID, protocol, ddlProducer, encoder, eventRouter, topicManager, statistics)
+	ddlProducer := producer.NewKafkaDDLProducer(ctx, changefeedID, ddlSyncProducer)
+	ddlWorker := worker.NewKafkaDDLWorker(ctx, changefeedID, protocol, ddlProducer, encoder, eventRouter, topicManager, statistics)
 
 	return &KafkaSink{
 		changefeedID: changefeedID,
 		dmlWorker:    dmlWorker,
 		ddlWorker:    ddlWorker,
+		adminClient:  adminClient,
+		topicManager: topicManager,
+		statistics:   statistics,
 	}, nil
 }
 
@@ -163,18 +177,26 @@ func (s *KafkaSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *
 
 func (s *KafkaSink) AddBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
 	tableProgress.Add(event)
-	switch event.(type) {
+	switch event := event.(type) {
 	case *commonEvent.DDLEvent:
-		if event.(*commonEvent.DDLEvent).TiDBOnly {
+		if event.TiDBOnly {
 			// run callback directly and return
-			for _, cb := range event.(*commonEvent.DDLEvent).PostTxnFlushed {
+			for _, cb := range event.PostTxnFlushed {
 				cb()
 			}
 			return
 		}
-		s.ddlWorker.GetDDLEventChan() <- event.(*commonEvent.DDLEvent)
+		s.ddlWorker.GetDDLEventChan() <- event
 	case *commonEvent.SyncPointEvent:
-		log.Error("Kafkasink doesn't support Sync Point Event")
+		log.Error("KafkaSink doesn't support Sync Point Event",
+			zap.String("namespace", s.changefeedID.Namespace()),
+			zap.String("changefeed", s.changefeedID.Name()),
+			zap.Any("event", event))
+	default:
+		log.Error("KafkaSink doesn't support this type of block event",
+			zap.String("namespace", s.changefeedID.Namespace()),
+			zap.String("changefeed", s.changefeedID.Name()),
+			zap.Any("event type", event.GetType()))
 	}
 }
 
@@ -185,7 +207,22 @@ func (s *KafkaSink) AddCheckpointTs(ts uint64) {
 func (s *KafkaSink) SetTableSchemaStore(tableSchemaStore *util.TableSchemaStore) {
 	s.ddlWorker.SetTableSchemaStore(tableSchemaStore)
 }
+
 func (s *KafkaSink) Close(removeDDLTsItem bool) error {
+	err := s.ddlWorker.Close()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = s.dmlWorker.Close()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	s.adminClient.Close()
+	s.topicManager.Close()
+	s.statistics.Close()
+
 	return nil
 }
 

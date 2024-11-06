@@ -15,11 +15,11 @@ package worker
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/pingcap/ticdc/pkg/config"
 	"go.uber.org/atomic"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -45,10 +45,8 @@ const (
 
 // worker will send messages to the DML producer on a batch basis.
 type KafkaWorker struct {
-	// changeFeedID indicates this sink belongs to which processor(changefeed).
 	changeFeedID common.ChangeFeedID
-	// protocol indicates the protocol used by this sink.
-	protocol config.Protocol
+	protocol     config.Protocol
 
 	eventChan chan *commonEvent.DMLEvent
 	rowChan   chan *commonEvent.MQRowEvent
@@ -69,12 +67,14 @@ type KafkaWorker struct {
 	// statistics is used to record DML metrics.
 	statistics *metrics.Statistics
 
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	ctx      context.Context
+	cancel   context.CancelFunc
+	errGroup *errgroup.Group
 }
 
-// newWorker creates a new flush worker.
+// NewKafkaWorker creates a dml flush worker for kafka
 func NewKafkaWorker(
+	ctx context.Context,
 	id common.ChangeFeedID,
 	protocol config.Protocol,
 	producer dmlproducer.DMLProducer,
@@ -84,8 +84,10 @@ func NewKafkaWorker(
 	topicManager topicmanager.TopicManager,
 	statistics *metrics.Statistics,
 ) *KafkaWorker {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
+	errGroup, ctx := errgroup.WithContext(ctx)
 	w := &KafkaWorker{
+		ctx:            ctx,
 		changeFeedID:   id,
 		protocol:       protocol,
 		eventChan:      make(chan *commonEvent.DMLEvent, 32),
@@ -98,38 +100,40 @@ func NewKafkaWorker(
 		producer:       producer,
 		statistics:     statistics,
 		cancel:         cancel,
+		errGroup:       errGroup,
 	}
 
-	w.wg.Add(4)
-	go w.calculateKeyPartitions(ctx)
+	errGroup.Go(func() error {
+		return w.calculateKeyPartitions()
+	})
 
-	go func() error {
-		defer w.wg.Done()
-		return w.encoderGroup.Run(ctx)
-	}()
-	go func() error {
-		defer w.wg.Done()
+	errGroup.Go(func() error {
+		return w.encoderGroup.Run(w.ctx)
+	})
+
+	errGroup.Go(func() error {
 		if w.protocol.IsBatchEncode() {
-			return w.batchEncodeRun(ctx)
+			return w.batchEncodeRun()
 		}
-		return w.nonBatchEncodeRun(ctx)
-	}()
-	go w.sendMessages(ctx)
+		return w.nonBatchEncodeRun()
+	})
+
+	errGroup.Go(func() error {
+		return w.sendMessages()
+	})
 	return w
 }
 
-func (w *KafkaWorker) calculateKeyPartitions(ctx context.Context) {
-	defer w.wg.Done()
+func (w *KafkaWorker) calculateKeyPartitions() error {
 	for {
 		select {
-		case <-ctx.Done():
-			return
+		case <-w.ctx.Done():
+			return errors.Trace(w.ctx.Err())
 		case event := <-w.eventChan:
 			topic := w.eventRouter.GetTopicForRowChange(event.TableInfo)
-			partitionNum, err := w.topicManager.GetPartitionNum(ctx, topic)
+			partitionNum, err := w.topicManager.GetPartitionNum(w.ctx, topic)
 			if err != nil {
-				log.Error("failed to get partition number for topic", zap.String("topic", topic), zap.Error(err))
-				return
+				return errors.Trace(err)
 			}
 			partitonGenerator := w.eventRouter.GetPartitionGeneratorForRowChange(event.TableInfo)
 			selector := w.columnSelector.GetSelector(event.TableInfo.TableName.Schema, event.TableInfo.TableName.Table)
@@ -156,8 +160,7 @@ func (w *KafkaWorker) calculateKeyPartitions(ctx context.Context) {
 
 				index, key, err := partitonGenerator.GeneratePartitionIndexAndKey(&row, partitionNum, event.TableInfo, event.CommitTs)
 				if err != nil {
-					log.Error("failed to generate partition index and key for row", zap.Error(err))
-					return
+					return errors.Trace(err)
 				}
 
 				w.rowChan <- &commonEvent.MQRowEvent{
@@ -185,7 +188,7 @@ func (w *KafkaWorker) GetEventChan() chan<- *commonEvent.DMLEvent {
 }
 
 // nonBatchEncodeRun add events to the encoder group immediately.
-func (w *KafkaWorker) nonBatchEncodeRun(ctx context.Context) error {
+func (w *KafkaWorker) nonBatchEncodeRun() error {
 	log.Info("MQ sink non batch worker started",
 		zap.String("namespace", w.changeFeedID.Namespace()),
 		zap.String("changefeed", w.changeFeedID.Name()),
@@ -193,8 +196,8 @@ func (w *KafkaWorker) nonBatchEncodeRun(ctx context.Context) error {
 	)
 	for {
 		select {
-		case <-ctx.Done():
-			return errors.Trace(ctx.Err())
+		case <-w.ctx.Done():
+			return errors.Trace(w.ctx.Err())
 		case event, ok := <-w.rowChan:
 			if !ok {
 				log.Warn("MQ sink flush worker channel closed",
@@ -202,7 +205,7 @@ func (w *KafkaWorker) nonBatchEncodeRun(ctx context.Context) error {
 					zap.String("changefeed", w.changeFeedID.Name()))
 				return nil
 			}
-			if err := w.encoderGroup.AddEvents(ctx, event.Key, &event.RowEvent); err != nil {
+			if err := w.encoderGroup.AddEvents(w.ctx, event.Key, &event.RowEvent); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -210,26 +213,30 @@ func (w *KafkaWorker) nonBatchEncodeRun(ctx context.Context) error {
 }
 
 // batchEncodeRun collect messages into batch and add them to the encoder group.
-func (w *KafkaWorker) batchEncodeRun(ctx context.Context) (retErr error) {
+func (w *KafkaWorker) batchEncodeRun() error {
 	log.Info("MQ sink batch worker started",
 		zap.String("namespace", w.changeFeedID.Namespace()),
 		zap.String("changefeed", w.changeFeedID.Name()),
 		zap.String("protocol", w.protocol.String()),
 	)
 
-	metricBatchDuration := metrics.WorkerBatchDuration.WithLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
-	metricBatchSize := metrics.WorkerBatchSize.WithLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
+	namespace, changefeed := w.changeFeedID.Namespace(), w.changeFeedID.Name()
+	metricBatchDuration := metrics.WorkerBatchDuration.WithLabelValues(namespace, changefeed)
+	metricBatchSize := metrics.WorkerBatchSize.WithLabelValues(namespace, changefeed)
 	defer func() {
-		metrics.WorkerBatchDuration.DeleteLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
-		metrics.WorkerBatchSize.DeleteLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
+		metrics.WorkerBatchDuration.DeleteLabelValues(namespace, changefeed)
+		metrics.WorkerBatchSize.DeleteLabelValues(namespace, changefeed)
 	}()
 
 	msgsBuf := make([]*commonEvent.MQRowEvent, batchSize)
 	for {
 		start := time.Now()
-		msgCount, err := w.batch(ctx, msgsBuf, batchInterval)
+		msgCount, err := w.batch(msgsBuf, batchInterval)
 		if err != nil {
-			return errors.Trace(err)
+			log.Error("kafka dml worker batch failed",
+				zap.String("namespace", w.changeFeedID.Namespace()),
+				zap.String("changefeed", w.changeFeedID.Name()),
+				zap.Error(err))
 		}
 		if msgCount == 0 {
 			continue
@@ -242,7 +249,7 @@ func (w *KafkaWorker) batchEncodeRun(ctx context.Context) (retErr error) {
 		// Group messages by its TopicPartitionKey before adding them to the encoder group.
 		groupedMsgs := w.group(msgs)
 		for key, msg := range groupedMsgs {
-			if err := w.encoderGroup.AddEvents(ctx, key, msg...); err != nil {
+			if err := w.encoderGroup.AddEvents(w.ctx, key, msg...); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -252,14 +259,14 @@ func (w *KafkaWorker) batchEncodeRun(ctx context.Context) (retErr error) {
 // batch collects a batch of messages from w.msgChan into buffer.
 // It returns the number of messages collected.
 // Note: It will block until at least one message is received.
-func (w *KafkaWorker) batch(ctx context.Context, buffer []*commonEvent.MQRowEvent, flushInterval time.Duration) (int, error) {
+func (w *KafkaWorker) batch(buffer []*commonEvent.MQRowEvent, flushInterval time.Duration) (int, error) {
 	msgCount := 0
 	maxBatchSize := len(buffer)
 	// We need to receive at least one message or be interrupted,
 	// otherwise it will lead to idling.
 	select {
-	case <-ctx.Done():
-		return msgCount, ctx.Err()
+	case <-w.ctx.Done():
+		return msgCount, w.ctx.Err()
 	case msg, ok := <-w.rowChan:
 		if !ok {
 			log.Warn("MQ sink flush worker channel closed")
@@ -275,8 +282,8 @@ func (w *KafkaWorker) batch(ctx context.Context, buffer []*commonEvent.MQRowEven
 	w.ticker.Reset(flushInterval)
 	for {
 		select {
-		case <-ctx.Done():
-			return msgCount, ctx.Err()
+		case <-w.ctx.Done():
+			return msgCount, w.ctx.Err()
 		case msg, ok := <-w.rowChan:
 			if !ok {
 				log.Warn("MQ sink flush worker channel closed")
@@ -307,8 +314,7 @@ func (w *KafkaWorker) group(msgs []*commonEvent.MQRowEvent) map[model.TopicParti
 	return groupedMsgs
 }
 
-func (w *KafkaWorker) sendMessages(ctx context.Context) error {
-	defer w.wg.Done()
+func (w *KafkaWorker) sendMessages() error {
 	metricSendMessageDuration := metrics.WorkerSendMessageDuration.WithLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
 	defer metrics.WorkerSendMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
 
@@ -316,8 +322,8 @@ func (w *KafkaWorker) sendMessages(ctx context.Context) error {
 	outCh := w.encoderGroup.Output()
 	for {
 		select {
-		case <-ctx.Done():
-			return errors.Trace(ctx.Err())
+		case <-w.ctx.Done():
+			return errors.Trace(w.ctx.Err())
 		case future, ok := <-outCh:
 			if !ok {
 				log.Warn("MQ sink encoder's output channel closed",
@@ -325,7 +331,7 @@ func (w *KafkaWorker) sendMessages(ctx context.Context) error {
 					zap.String("changefeed", w.changeFeedID.Name()))
 				return nil
 			}
-			if err = future.Ready(ctx); err != nil {
+			if err = future.Ready(w.ctx); err != nil {
 				return errors.Trace(err)
 			}
 			for _, message := range future.Messages {
@@ -333,18 +339,15 @@ func (w *KafkaWorker) sendMessages(ctx context.Context) error {
 				if err = w.statistics.RecordBatchExecution(func() (int, int64, error) {
 					message.SetPartitionKey(future.Key.PartitionKey)
 					if err := w.producer.AsyncSendMessage(
-						ctx,
+						w.ctx,
 						future.Key.Topic,
 						future.Key.Partition,
 						message); err != nil {
 						return 0, 0, err
 					}
-					if err != nil {
-						log.Error("Async Send Message failed", zap.Any("error", err))
-					}
 					return message.GetRowsCount(), int64(message.Length()), nil
 				}); err != nil {
-					return err
+					return errors.Trace(err)
 				}
 				metricSendMessageDuration.Observe(time.Since(start).Seconds())
 			}
@@ -352,6 +355,10 @@ func (w *KafkaWorker) sendMessages(ctx context.Context) error {
 	}
 }
 
-func (w *KafkaWorker) close() {
+func (w *KafkaWorker) Close() error {
+	w.ticker.Stop()
+	w.cancel()
 	w.producer.Close()
+
+	return w.errGroup.Wait()
 }

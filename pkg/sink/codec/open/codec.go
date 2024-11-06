@@ -34,7 +34,7 @@ func encodeRowChangedEvent(e *commonEvent.RowEvent, config *newcommon.Config, la
 		keyWriter.WriteIntField("t", int(model.MessageTypeRow))
 
 		if claimCheckLocationName != "" {
-			keyWriter.WriteBoolField("ohk", false) // 不知道啥用
+			keyWriter.WriteBoolField("ohk", false)
 			keyWriter.WriteStringField("ccl", claimCheckLocationName)
 		}
 	})
@@ -183,7 +183,7 @@ func writeColumnFieldValue(writer *util.JSONWriter, col *timodel.ColumnInfo, row
 	flag := *tableInfo.ColumnsFlag[col.ID]
 	whereHandle := flag.IsHandleKey()
 
-	writer.WriteIntField("t", int(colType)) // todo:please check performance
+	writer.WriteIntField("t", int(colType))
 	if whereHandle {
 		writer.WriteBoolField("h", whereHandle)
 	}
@@ -369,9 +369,6 @@ func writeColumnFieldValueIfUpdated(
 		preRowDatumPoint := &preRowDatum
 		// Encode bits as integers to avoid pingcap/tidb#10988 (which also affects MySQL itself)
 		preRowValue, _ := preRowDatumPoint.GetBinaryLiteral().ToInt(types.DefaultStmtNoWarningContext)
-		// if err != nil {
-		// 	return false, err
-		// }
 
 		if rowValue != preRowValue {
 			writeFunc(func() { writer.WriteUint64Field("v", preRowValue) })
