@@ -108,7 +108,7 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[common.ChangeF
 			log.Warn("failed to load change feed Status, add a new one")
 			status := &config.ChangeFeedStatus{
 				CheckpointTs: meta.Info.StartTs,
-				IsRemoving:   false,
+				Progress:     config.ProgressNone,
 			}
 			data, err := json.Marshal(status)
 			if err != nil {
@@ -189,7 +189,35 @@ func (b *EtcdBackend) PauseChangefeed(ctx context.Context, id common.ChangeFeedI
 		return errors.Trace(err)
 	}
 	info.State = model.StateStopped
-	return b.etcdClient.UpdateChangefeedAndUpstream(ctx, nil, info)
+	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), id.DisplayName)
+	inforValue, err := info.Marshal()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	status, _, err := b.etcdClient.GetChangeFeedStatus(ctx, id)
+	status.Progress = config.ProgressStopping
+	if err != nil {
+		return errors.Trace(err)
+	}
+	jobValue, err := status.Marshal()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), id.DisplayName)
+	putResp, err := b.etcdClient.GetEtcdClient().Txn(ctx, nil,
+		[]clientv3.Op{
+			clientv3.OpPut(jobKey, jobValue),
+			clientv3.OpPut(infoKey, inforValue),
+		},
+		[]clientv3.Op{})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !putResp.Succeeded {
+		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("update changefeed %s", id.DisplayName))
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (b *EtcdBackend) DeleteChangefeed(ctx context.Context,
@@ -250,12 +278,12 @@ func (b *EtcdBackend) ResumeChangefeed(ctx context.Context,
 	return nil
 }
 
-func (b *EtcdBackend) MarkChangefeedRemoving(ctx context.Context, id common.ChangeFeedID) error {
+func (b *EtcdBackend) SetChangefeedProgress(ctx context.Context, id common.ChangeFeedID, progress config.Progress) error {
 	status, modVersion, err := b.etcdClient.GetChangeFeedStatus(ctx, id)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	status.IsRemoving = true
+	status.Progress = progress
 	jobValue, err := status.Marshal()
 	if err != nil {
 		return errors.Trace(err)

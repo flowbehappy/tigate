@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/ticdc/coordinator/changefeed"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
 	"go.uber.org/atomic"
@@ -96,6 +97,11 @@ func (m *StopChangefeedOperator) PostFinish() {
 	if m.removed {
 		if err := m.backend.DeleteChangefeed(context.Background(), m.cfID); err != nil {
 			log.Warn("failed to delete changefeed",
+				zap.String("changefeed", m.cfID.String()), zap.Error(err))
+		}
+	} else {
+		if err := m.backend.SetChangefeedProgress(context.Background(), m.cfID, config.ProgressNone); err != nil {
+			log.Warn("failed to set changefeed progress",
 				zap.String("changefeed", m.cfID.String()), zap.Error(err))
 		}
 	}

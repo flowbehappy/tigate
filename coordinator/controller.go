@@ -324,6 +324,13 @@ func (c *Controller) FinishBootstrap(workingMap map[common.ChangeFeedID]remoteMa
 			// delete it
 			delete(workingMap, cfID)
 		}
+
+		// check if the changefeed is stopping or removing, we need to stop all dispatchers completely
+		switch cfMeta.Status.Progress {
+		case config.ProgressStopping, config.ProgressRemoving:
+			remove := cfMeta.Status.Progress == config.ProgressRemoving
+			c.operatorController.StopChangefeed(context.Background(), cfID, remove)
+		}
 	}
 	for id, rm := range workingMap {
 		log.Warn("maintainer not found in local, remove it",
@@ -353,11 +360,11 @@ func (c *Controller) RemoveChangefeed(ctx context.Context, id common.ChangeFeedI
 	if cf == nil {
 		return 0, errors.New("changefeed not found")
 	}
-	err := c.backend.MarkChangefeedRemoving(ctx, id)
+	err := c.backend.SetChangefeedProgress(ctx, id, config.ProgressRemoving)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	c.operatorController.StopChangefeed(id, true)
+	c.operatorController.StopChangefeed(ctx, id, true)
 	return cf.GetStatus().CheckpointTs, nil
 }
 
@@ -369,7 +376,7 @@ func (c *Controller) PauseChangefeed(ctx context.Context, id common.ChangeFeedID
 	if err := c.backend.PauseChangefeed(ctx, id); err != nil {
 		return errors.Trace(err)
 	}
-	c.operatorController.StopChangefeed(id, false)
+	c.operatorController.StopChangefeed(ctx, id, false)
 	return nil
 }
 

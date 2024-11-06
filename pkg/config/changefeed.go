@@ -439,12 +439,20 @@ func (info *ChangeFeedInfo) fixScheduler(inheritV66 bool) {
 	info.Config.FixScheduler(inheritV66)
 }
 
+type Progress int
+
+var (
+	ProgressNone     Progress = 1
+	ProgressRemoving Progress = 2
+	ProgressStopping Progress = 3
+)
+
 // ChangeFeedStatus stores information about a ChangeFeed
 // It is stored in etcd.
 type ChangeFeedStatus struct {
 	CheckpointTs uint64 `json:"checkpoint-ts"`
-	// IsRemoving indicates whether the changefeed is being removed.
-	IsRemoving bool `json:"is-removing"`
+	// Progress indicates changefeed progress status
+	Progress Progress `json:"progress"`
 }
 
 // Marshal returns json encoded string of ChangeFeedStatus, only contains necessary fields stored in storage
