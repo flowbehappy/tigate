@@ -115,14 +115,14 @@ cdc:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/cdc ./cmd
 
 integration_test_build: check_failpoint_ctl 
-	# $(FAILPOINT_ENABLE)
+	$(FAILPOINT_ENABLE)
 	$(GOTEST) -ldflags '$(LDFLAGS)' -c -cover -covermode=atomic \
 		-coverpkg=github.com/pingcap/ticdc/... \
 		-o bin/cdc.test github.com/pingcap/ticdc/cmd \
 	|| { $(FAILPOINT_DISABLE); echo "Failed to build cdc.test"; exit 1; }
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/cdc ./cmd/main.go \
 	|| { $(FAILPOINT_DISABLE); exit 1; }
-	# $(FAILPOINT_DISABLE)
+	$(FAILPOINT_DISABLE)
 
 failpoint-enable: check_failpoint_ctl
 	$(FAILPOINT_ENABLE)
