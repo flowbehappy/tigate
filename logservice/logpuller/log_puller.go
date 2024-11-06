@@ -105,6 +105,7 @@ func NewLogPuller(
 }
 
 func (p *LogPuller) Run(ctx context.Context) (err error) {
+	// TODO: distiguish event between event store and schema store
 	p.CounterKv = metrics.EventStoreReceivedEventCount.WithLabelValues("kv")
 	p.CounterResolved = metrics.EventStoreReceivedEventCount.WithLabelValues("resolved")
 	defer func() {
