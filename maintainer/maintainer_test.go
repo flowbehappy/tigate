@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"github.com/pingcap/ticdc/utils/threadpool"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/require"
@@ -50,7 +49,7 @@ type mockDispatcherManager struct {
 	msgCh        chan *messaging.TargetMessage
 	maintainerID node.ID
 	checkpointTs uint64
-	changefeedID string
+	changefeedID *heartbeatpb.ChangefeedID
 
 	bootstrapTables []*heartbeatpb.BootstrapTableSpan
 	dispatchersMap  map[heartbeatpb.DispatcherID]*heartbeatpb.TableSpanStatus
@@ -90,7 +89,7 @@ func (m *mockDispatcherManager) handleMessage(msg *messaging.TargetMessage) {
 	case messaging.TypeScheduleDispatcherRequest:
 		m.onDispatchRequest(msg)
 	case messaging.TypeMaintainerCloseRequest:
-		m.onMaintainerCloseRequest()
+		m.onMaintainerCloseRequest(msg)
 	default:
 		log.Panic("unknown msg type", zap.Any("msg", msg))
 	}
@@ -192,10 +191,10 @@ func (m *mockDispatcherManager) onDispatchRequest(
 	}
 }
 
-func (m *mockDispatcherManager) onMaintainerCloseRequest() {
-	_ = m.mc.SendCommand(messaging.NewSingleTargetMessage(m.maintainerID,
+func (m *mockDispatcherManager) onMaintainerCloseRequest(msg *messaging.TargetMessage) {
+	_ = m.mc.SendCommand(messaging.NewSingleTargetMessage(msg.From,
 		messaging.MaintainerTopic, &heartbeatpb.MaintainerCloseResponse{
-			ChangefeedID: m.changefeedID,
+			ChangefeedID: msg.Message[0].(*heartbeatpb.MaintainerCloseRequest).ChangefeedID,
 			Success:      true,
 		}))
 }
@@ -268,12 +267,12 @@ func TestMaintainerSchedule(t *testing.T) {
 	nodeManager.GetAliveNodes()[n.ID] = n
 	stream := dynstream.NewDynamicStream(NewStreamHandler())
 	stream.Start()
-	cfID := model.DefaultChangeFeedID("test")
+	cfID := common.NewChangeFeedIDWithName("test")
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	mc.RegisterHandler(messaging.MaintainerManagerTopic,
 		func(ctx context.Context, msg *messaging.TargetMessage) error {
 			stream.In() <- &Event{
-				changefeedID: cfID.ID,
+				changefeedID: cfID.Name(),
 				eventType:    EventMessage,
 				message:      msg,
 			}
@@ -291,7 +290,7 @@ func TestMaintainerSchedule(t *testing.T) {
 		&configNew.ChangeFeedInfo{
 			Config: configNew.GetDefaultReplicaConfig(),
 		}, n, stream, taskScheduler, nil, nil, 10)
-	_ = stream.AddPath(cfID.ID, maintainer)
+	_ = stream.AddPath(cfID.Name(), maintainer)
 
 	// send bootstrap message
 	maintainer.sendMessages(maintainer.bootstrapper.HandleNewNodes(
@@ -299,7 +298,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	))
 	// setup period event
 	SubmitScheduledEvent(maintainer.taskScheduler, maintainer.stream, &Event{
-		changefeedID: maintainer.id.ID,
+		changefeedID: maintainer.id.Name(),
 		eventType:    EventPeriod,
 	}, time.Now().Add(time.Millisecond*500))
 	time.Sleep(time.Second * time.Duration(sleepTime))

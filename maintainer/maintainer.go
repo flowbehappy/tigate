@@ -180,34 +180,25 @@ func NewMaintainer(cfID common.ChangeFeedID,
 }
 
 func NewMaintainerForRemove(cfID common.ChangeFeedID,
+	conf *config.SchedulerConfig,
 	selfNode *node.Info,
 	stream dynstream.DynamicStream[int, string, *Event, *Maintainer, *StreamHandler],
-	taskScheduler threadpool.ThreadPool) *Maintainer {
-	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
-	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
-	m := &Maintainer{
-		id:                    cfID,
-		selfNode:              selfNode,
-		stream:                stream,
-		taskScheduler:         taskScheduler,
-		mc:                    mc,
-		state:                 heartbeatpb.ComponentState_Working,
-		removed:               atomic.NewBool(false),
-		nodeManager:           nodeManager,
-		nodesClosed:           make(map[node.ID]struct{}),
-		statusChanged:         atomic.NewBool(true),
-		nodeChanged:           atomic.NewBool(false),
-		cascadeRemoving:       true,
-		checkpointTsByCapture: make(map[node.ID]heartbeatpb.Watermark),
-		runningErrors:         map[node.ID]*heartbeatpb.RunningError{},
-		runningWarnings:       map[node.ID]*heartbeatpb.RunningError{},
+	taskScheduler threadpool.ThreadPool,
+	pdAPI pdutil.PDAPIClient,
+	regionCache split.RegionCache,
+) *Maintainer {
+	unused := &config.ChangeFeedInfo{
+		ChangefeedID: cfID,
+		SinkURI:      "",
+		Config:       config.GetDefaultReplicaConfig(),
 	}
+	m := NewMaintainer(cfID, conf, unused, selfNode, stream, taskScheduler, pdAPI, regionCache, 0)
+	m.cascadeRemoving = true
 	// setup period event
 	SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{
 		changefeedID: m.id.Name(),
 		eventType:    EventPeriod,
 	}, time.Now().Add(time.Millisecond*500))
-	log.Info("maintainer is created for remove", zap.String("id", cfID.String()))
 	return m
 }
 
