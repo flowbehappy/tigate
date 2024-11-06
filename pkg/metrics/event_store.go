@@ -18,6 +18,14 @@ import (
 )
 
 var (
+	EventStoreSubscriptionGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_store",
+			Name:      "subscription_num",
+			Help:      "The number of subscriptions in event store",
+		})
+
 	EventStoreReceivedEventCount = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "ticdc",
@@ -94,6 +102,7 @@ var (
 )
 
 func InitEventStoreMetrics(registry *prometheus.Registry) {
+	registry.MustRegister(EventStoreSubscriptionGauge)
 	registry.MustRegister(EventStoreReceivedEventCount)
 	registry.MustRegister(EventStoreWriteBytes)
 	registry.MustRegister(EventStoreScanRequestsCount)

@@ -379,6 +379,7 @@ func (e *eventStore) RegisterDispatcher(
 		tableID:     tableSpan.TableID,
 		uniqueKeyID: uniqueKeyID,
 	})
+	metrics.EventStoreSubscriptionGauge.Inc()
 
 	e.dispatcherStates.Lock()
 	defer e.dispatcherStates.Unlock()
@@ -423,6 +424,7 @@ func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) erro
 		delete(e.dispatcherStates.n, subID)
 		// TODO: do we need unlock before puller.Unsubscribe?
 		e.puller.Unsubscribe(subID)
+		metrics.EventStoreSubscriptionGauge.Dec()
 	}
 
 	// delete the dispatcher from table subscriptions
