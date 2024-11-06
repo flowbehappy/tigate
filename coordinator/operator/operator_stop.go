@@ -92,8 +92,6 @@ func (m *StopChangefeedOperator) Start() {
 }
 
 func (m *StopChangefeedOperator) PostFinish() {
-	log.Info("stop maintainer operator finished",
-		zap.String("changefeed", m.cfID.String()))
 	if m.removed {
 		if err := m.backend.DeleteChangefeed(context.Background(), m.cfID); err != nil {
 			log.Warn("failed to delete changefeed",
@@ -105,13 +103,15 @@ func (m *StopChangefeedOperator) PostFinish() {
 				zap.String("changefeed", m.cfID.String()), zap.Error(err))
 		}
 	}
+	log.Info("stop maintainer operator finished",
+		zap.String("changefeed", m.cfID.String()))
 }
 
 func (m *StopChangefeedOperator) String() string {
-	return fmt.Sprintf("remove maintainer operator: %s, dest %s",
-		m.cfID, m.nodeID)
+	return fmt.Sprintf("stop maintainer operator: %s, dest %s, remove %t",
+		m.cfID, m.nodeID, m.removed)
 }
 
 func (m *StopChangefeedOperator) Type() string {
-	return "remove"
+	return "stop"
 }

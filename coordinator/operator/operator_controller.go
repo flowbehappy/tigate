@@ -120,7 +120,9 @@ func (oc *Controller) StopChangefeed(ctx context.Context, cfID common.ChangeFeed
 
 	var scheduledNode = oc.changefeedDB.StopByChangefeedID(cfID, remove)
 	if scheduledNode == "" {
-		log.Info("changefeed is not scheduled")
+		log.Info("changefeed is not scheduled,update meta in db directory",
+			zap.Bool("remove", remove),
+			zap.String("changefeed", cfID.Name()))
 		// changefeed is not scheduled, we can update the meta in DB directly, otherwise we update the meta in the operator
 		if remove {
 			if err := oc.backend.DeleteChangefeed(ctx, cfID); err != nil {
