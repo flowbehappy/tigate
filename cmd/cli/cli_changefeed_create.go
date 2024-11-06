@@ -339,7 +339,7 @@ func (o *createChangefeedOptions) run(ctx context.Context, cmd *cobra.Command) e
 	if err != nil {
 		return err
 	}
-	cmd.Printf("Create changefeed successfully!\nID: %s\nInfo: %s\n", info.ChangefeedID.Name(), infoStr)
+	cmd.Printf("Create changefeed successfully!\nID: %s\nInfo: %s\n", info.ID, infoStr)
 	return nil
 }
 
