@@ -20,7 +20,6 @@ import (
 	v2 "github.com/pingcap/ticdc/api/v2"
 	"github.com/pingcap/ticdc/cmd/factory"
 	apiv2client "github.com/pingcap/ticdc/pkg/api/v2"
-	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/cmd/util"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
@@ -30,7 +29,8 @@ import (
 // cfMeta holds changefeed info and changefeed status.
 type cfMeta struct {
 	UpstreamID     uint64                    `json:"upstream_id"`
-	ChangefeedID   common.ChangeFeedID       `json:"changefeed_id"`
+	ID             string                    `json:"id"`
+	Namespace      string                    `json:"namespace"`
 	SinkURI        string                    `json:"sink_uri"`
 	Config         *v2.ReplicaConfig         `json:"config"`
 	CreateTime     model.JSONTime            `json:"create_time"`
@@ -88,7 +88,7 @@ func (o *queryChangefeedOptions) run(cmd *cobra.Command) error {
 			return errors.Trace(err)
 		}
 		for _, info := range infos {
-			if info.ChangefeedID.Name() == o.changefeedID {
+			if info.ID == o.changefeedID {
 				return util.JSONPrint(cmd, info)
 			}
 		}
@@ -101,7 +101,8 @@ func (o *queryChangefeedOptions) run(cmd *cobra.Command) error {
 	}
 	meta := &cfMeta{
 		UpstreamID:     detail.UpstreamID,
-		ChangefeedID:   detail.ChangefeedID,
+		ID:             detail.ID,
+		Namespace:      detail.Namespace,
 		SinkURI:        detail.SinkURI,
 		Config:         detail.Config,
 		CreateTime:     model.JSONTime(detail.CreateTime),

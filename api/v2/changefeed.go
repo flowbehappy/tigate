@@ -223,7 +223,8 @@ func (h *OpenAPIV2) listChangeFeeds(c *gin.Context) {
 		}
 		commonInfos = append(commonInfos, ChangefeedCommonInfo{
 			UpstreamID:     changefeed.UpstreamID,
-			ChangefeedID:   changefeed.ChangefeedID,
+			ID:             changefeed.ChangefeedID.Name(),
+			Namespace:      changefeed.ChangefeedID.Namespace(),
 			FeedState:      changefeed.State,
 			CheckpointTSO:  status.CheckpointTs,
 			CheckpointTime: model.JSONTime(oracle.GetTimeFromTS(status.CheckpointTs)),
@@ -298,7 +299,8 @@ func toAPIModel(
 
 	apiInfoModel := &ChangeFeedInfo{
 		UpstreamID:     info.UpstreamID,
-		ChangefeedID:   info.ChangefeedID,
+		ID:             info.ChangefeedID.Name(),
+		Namespace:      info.ChangefeedID.Namespace(),
 		SinkURI:        sinkURI,
 		CreateTime:     info.CreateTime,
 		StartTs:        info.StartTs,
