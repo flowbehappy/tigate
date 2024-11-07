@@ -456,6 +456,10 @@ func (e *eventStore) UpdateDispatcherSendTs(
 			if newCheckpointTs == 0 || dispatcherStat.checkpointTs < newCheckpointTs {
 				newCheckpointTs = dispatcherStat.checkpointTs
 			}
+			log.Info("update dispatcher send ts",
+				zap.Any("dispatcherID", dispatcherID),
+				zap.Uint64("dispatcherCheckpointTs", dispatcherStat.checkpointTs),
+				zap.Uint64("newCheckpointTs", newCheckpointTs))
 		}
 		if newCheckpointTs == 0 {
 			return nil
