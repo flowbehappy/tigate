@@ -2,8 +2,17 @@ package apperror
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
+	tierrors "github.com/pingcap/tiflow/pkg/errors"
+)
+
+var (
+	ErrChangefeedRetryable = errors.Normalize(
+		"changefeed is in retryable state",
+		errors.RFCCodeText("CDC:ErrChangefeedRetryable"),
+	)
 )
 
 type ErrorType int
@@ -107,10 +116,44 @@ func (e AppError) Equal(err AppError) bool {
 	return e.Type == err.Type
 }
 
-var (
-	// kv related errors
-	ErrCreateEventDispatcherManagerFailed = errors.Normalize(
-		"Create Event Dispatcher Manager Failed, %s",
-		errors.RFCCodeText("CDC:ErrCreateEventDispatcherManagerFailed"),
-	)
-)
+var changefeedUnRetryableErrors = []*errors.Error{
+	tierrors.ErrExpressionColumnNotFound,
+	tierrors.ErrExpressionParseFailed,
+	tierrors.ErrSchemaSnapshotNotFound,
+	tierrors.ErrSyncRenameTableFailed,
+	tierrors.ErrChangefeedUnretryable,
+	tierrors.ErrCorruptedDataMutation,
+	tierrors.ErrDispatcherFailed,
+	tierrors.ErrColumnSelectorFailed,
+
+	tierrors.ErrSinkURIInvalid,
+	tierrors.ErrKafkaInvalidConfig,
+	tierrors.ErrMySQLInvalidConfig,
+	tierrors.ErrStorageSinkInvalidConfig,
+
+	// gc related errors
+	tierrors.ErrGCTTLExceeded,
+	tierrors.ErrSnapshotLostByGC,
+	tierrors.ErrStartTsBeforeGC,
+}
+
+// ErrorCode returns the RFC error code for the given error.
+// If the error is a changefeed unretryable error, returns ErrChangefeedUnretryable.
+// otherwise, return ErrChangefeedRetryable
+func ErrorCode(err error) errors.RFCErrorCode {
+	for _, e := range changefeedUnRetryableErrors {
+		if e.Equal(err) {
+			return tierrors.ErrChangefeedUnretryable.RFCCode()
+		}
+		if code, ok := tierrors.RFCCode(err); ok {
+			if code == e.RFCCode() {
+				return tierrors.ErrChangefeedUnretryable.RFCCode()
+			}
+		}
+		if strings.Contains(err.Error(), string(e.RFCCode())) {
+			return tierrors.ErrChangefeedUnretryable.RFCCode()
+		}
+	}
+
+	return ErrChangefeedRetryable.RFCCode()
+}

@@ -114,6 +114,7 @@ func (c *server) initialize(ctx context.Context) error {
 	}
 
 	messageCenter := messaging.NewMessageCenter(ctx, c.info.ID, c.info.Epoch, config.NewDefaultMessageCenterConfig())
+	appcontext.SetID(c.info.ID.String())
 	appcontext.SetService(appcontext.MessageCenter, messageCenter)
 
 	appcontext.SetService(appcontext.EventCollector, eventcollector.New(ctx, 100*1024*1024*1024, c.info.ID)) // 100GB for demo

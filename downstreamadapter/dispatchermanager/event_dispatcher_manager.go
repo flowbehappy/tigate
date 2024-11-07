@@ -37,6 +37,7 @@ import (
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/metrics"
+	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
 )
@@ -135,19 +136,19 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 	replicaConfig := config.ReplicaConfig{Filter: cfConfig.Filter}
 	filter, err := filter.NewFilter(replicaConfig.Filter, cfConfig.TimeZone, replicaConfig.CaseSensitive)
 	if err != nil {
-		return nil, 0, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("create filter failed")
+		return nil, 0, errors.Trace(err)
 	}
 	manager.filter = filter
 
 	err = manager.InitSink(ctx)
 	if err != nil {
-		return nil, 0, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("event dispatcher manager init sink failed")
+		return nil, 0, errors.Trace(err)
 	}
 
 	// Register Event Dispatcher Manager in HeartBeatCollector, which is reponsible for communication with the maintainer.
 	err = appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(manager)
 	if err != nil {
-		return nil, 0, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("register event dispatcher manager failed")
+		return nil, 0, errors.Trace(err)
 	}
 
 	// collector heart beat info from all dispatchers
@@ -162,7 +163,16 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 		defer manager.wg.Done()
 		err := manager.sink.Run()
 		if err != nil {
-			//TODO
+			// report error to maintainer
+			var message heartbeatpb.HeartBeatRequest
+			message.ChangefeedID = manager.changefeedID.ToPB()
+			message.Err = &heartbeatpb.RunningError{
+				Time:    time.Now().String(),
+				Node:    appcontext.GetID(),
+				Code:    string(apperror.ErrorCode(err)),
+				Message: err.Error(),
+			}
+			manager.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: manager.GetMaintainerID(), Request: &message})
 		}
 	}()
 
