@@ -462,7 +462,7 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) {
 	}
 	m.controller.HandleStatus(msg.From, req.Statuses)
 	if req.Err != nil {
-		m.errLock.Unlock()
+		m.errLock.Lock()
 		m.runningErrors[msg.From] = req.Err
 		m.errLock.Unlock()
 	}
