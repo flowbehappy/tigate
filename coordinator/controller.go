@@ -267,11 +267,14 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.Mainta
 		c.operatorController.UpdateOperatorStatus(cfID, from, status)
 		cf := c.GetTask(cfID)
 		if cf == nil {
-			log.Warn("no changgefeed found, ignore",
-				zap.String("changefeed", cfID.Name()),
-				zap.String("from", from.String()),
-				zap.Any("status", status))
-			if status.State == heartbeatpb.ComponentState_Working {
+			if status.State != heartbeatpb.ComponentState_Working {
+				continue
+			}
+			if op := c.operatorController.GetOperator(cfID); op == nil {
+				log.Warn("no changgefeed found and no operator for it, ignore",
+					zap.String("changefeed", cfID.Name()),
+					zap.String("from", from.String()),
+					zap.Any("status", status))
 				// if the changefeed is not found, and the status is working, we need to remove it from maintainer
 				_ = c.messageCenter.SendCommand(changefeed.RemoveMaintainerMessage(cfID, from, true, true))
 			}

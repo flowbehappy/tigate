@@ -110,9 +110,12 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableS
 		c.operatorController.UpdateOperatorStatus(dispatcherID, from, status)
 		stm := c.GetTask(dispatcherID)
 		if stm == nil {
-			// it's normal case when the span is not found in replication db
-			// the span is removed from replication db first, so here we only check if the span status is working or not
-			if status.ComponentStatus == heartbeatpb.ComponentState_Working {
+			if status.ComponentStatus != heartbeatpb.ComponentState_Working {
+				continue
+			}
+			if op := c.operatorController.GetOperator(dispatcherID); op == nil {
+				// it's normal case when the span is not found in replication db
+				// the span is removed from replication db first, so here we only check if the span status is working or not
 				log.Warn("no span found, remove it",
 					zap.String("changefeed", c.changefeedID.Name()),
 					zap.String("from", from.String()),
