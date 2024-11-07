@@ -58,7 +58,8 @@ type eventBroker struct {
 	// TODO: Make it support merge the tasks of the same table span, even if the tasks are from different dispatchers.
 	taskPool *scanTaskPool
 
-	ds dynstream.DynamicStream[int, common.DispatcherID, scanTask, *eventBroker, *dispatcherEventsHandler]
+	// GID here is the internal changefeedID, use to identify the area of the dispatcher.
+	ds dynstream.DynamicStream[common.GID, common.DispatcherID, scanTask, *eventBroker, *dispatcherEventsHandler]
 
 	// scanWorkerCount is the number of the scan workers to spawn.
 	scanWorkerCount int
@@ -773,14 +774,14 @@ func newDispatcherStat(
 	info DispatcherInfo,
 	filter filter.Filter,
 ) *dispatcherStat {
-	namespace, id := info.GetChangefeedID()
+	changefeedID := info.GetChangefeedID()
 	dispStat := &dispatcherStat{
 		info:                                  info,
 		filter:                                filter,
-		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(namespace, id, "kv"),
-		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "kv"),
-		metricEventServiceSendDDLCount:        metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "ddl"),
-		metricEventServiceSendResolvedTsCount: metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "resolved_ts"),
+		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "kv"),
+		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "kv"),
+		metricEventServiceSendDDLCount:        metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "ddl"),
+		metricEventServiceSendResolvedTsCount: metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "resolved_ts"),
 	}
 	if info.SyncPointEnabled() {
 		dispStat.enableSyncPoint = true

@@ -519,7 +519,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 		Watermark:       heartbeatpb.NewMaxWatermark(),
 	}
 
-	toReomveDispatcherIDs := make([]common.DispatcherID, 0)
+	toRemoveDispatcherIDs := make([]common.DispatcherID, 0)
 	removeDispatcherSchemaIDs := make([]int64, 0)
 	heartBeatInfo := &dispatcher.HeartBeatInfo{}
 
@@ -539,7 +539,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 					ComponentStatus: heartbeatpb.ComponentState_Stopped,
 					CheckpointTs:    watermark.CheckpointTs,
 				})
-				toReomveDispatcherIDs = append(toReomveDispatcherIDs, id)
+				toRemoveDispatcherIDs = append(toRemoveDispatcherIDs, id)
 				removeDispatcherSchemaIDs = append(removeDispatcherSchemaIDs, dispatcherItem.GetSchemaID())
 			}
 		}
@@ -555,7 +555,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 		}
 	})
 
-	for idx, id := range toReomveDispatcherIDs {
+	for idx, id := range toRemoveDispatcherIDs {
 		e.cleanTableEventDispatcher(id, removeDispatcherSchemaIDs[idx])
 	}
 

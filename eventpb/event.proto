@@ -68,15 +68,14 @@ enum ActionType {
 }
 
 message RegisterDispatcherRequest {
-    heartbeatpb.DispatcherID dispatcher_id = 1;
-    heartbeatpb.TableSpan table_span = 2;
-    uint64 start_ts = 3;
-    string server_id = 4;
-    ActionType action_type = 5;
-    string namespace = 6;
-    string changefeed_id = 7;
-    FilterConfig filter_config = 8;
-    bool enable_sync_point = 9;
-    uint64 sync_point_ts = 10;
-    uint64 sync_point_interval = 11;
+    heartbeatpb.ChangefeedID changefeed_id = 1;
+    heartbeatpb.DispatcherID dispatcher_id = 2;
+    heartbeatpb.TableSpan table_span = 3;
+    uint64 start_ts = 4;
+    string server_id = 5;
+    ActionType action_type = 6;
+    FilterConfig filter_config = 7;
+    bool enable_sync_point = 8;
+    uint64 sync_point_ts = 9;
+    uint64 sync_point_interval = 10;
 }

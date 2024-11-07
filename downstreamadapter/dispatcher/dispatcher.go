@@ -486,6 +486,10 @@ func (d *Dispatcher) GetId() common.DispatcherID {
 	return d.id
 }
 
+func (d *Dispatcher) GetChangefeedID() common.ChangeFeedID {
+	return d.changefeedID
+}
+
 func (d *Dispatcher) cancelResendTask() {
 	if d.resendTask != nil {
 		d.resendTask.Cancel()
