@@ -355,7 +355,7 @@ func TestBootstrapWithUnStoppedChangefeed(t *testing.T) {
 	ctx := context.Background()
 	nodeManager := watcher.NewNodeManager(nil, nil)
 	appcontext.SetService(watcher.NodeManagerName, nodeManager)
-	info := node.NewInfo("127.0.0.1:8300", "")
+	info := node.NewInfo("127.0.0.1:8700", "")
 	nodeManager.GetAliveNodes()[info.ID] = info
 	mc1 := messaging.NewMessageCenter(ctx, info.ID, 0, config.NewDefaultMessageCenterConfig())
 	appcontext.SetService(appcontext.MessageCenter, mc1)
