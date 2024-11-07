@@ -80,10 +80,12 @@ jobs:
         run: |
           go build -o ./tools/bin/failpoint-ctl github.com/pingcap/failpoint/failpoint-ctl 
           make integration_test_build
+          ls -l bin/ && ls -l tools/bin/
 
       - name: Test charset_gbk
         run: |
           tests/scripts/download-integration-test-binaries.sh master true
+          pwd && ls -l bin/ && ls -l tools/bin/
           export TICDC_NEWARCH=true && make integration_test CASE=charset_gbk 
 
       - name: Copy logs to hack permission
