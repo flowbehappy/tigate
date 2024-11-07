@@ -597,13 +597,11 @@ func (m *Maintainer) getNewBootstrapFn() bootstrap.NewBootstrapMessageFn {
 			zap.Error(err))
 	}
 	return func(id node.ID) *messaging.TargetMessage {
-		var ddlDispatcherID *heartbeatpb.DispatcherID
 		// only send dispatcher id to dispatcher manager on the same node
 		if id == m.selfNode.ID {
-			ddlDispatcherID = m.tableTriggerEventDispatcherID.ToPB()
 			log.Info("create table event trigger dispatcher", zap.String("changefeed", m.id.String()),
 				zap.String("server", id.String()),
-				zap.String("dispatcher id", ddlDispatcherID.String()))
+				zap.String("dispatcher id", m.tableTriggerEventDispatcherID.String()))
 		}
 		log.Info("send maintainer bootstrap message",
 			zap.String("changefeed", m.id.String()),
@@ -616,7 +614,7 @@ func (m *Maintainer) getNewBootstrapFn() bootstrap.NewBootstrapMessageFn {
 				ChangefeedID:                  m.id.ToPB(),
 				Config:                        cfgBytes,
 				StartTs:                       m.startCheckpointTs,
-				TableTriggerEventDispatcherId: ddlDispatcherID,
+				TableTriggerEventDispatcherId: m.tableTriggerEventDispatcherID.ToPB(),
 			})
 	}
 }

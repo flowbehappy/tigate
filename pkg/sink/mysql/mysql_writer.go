@@ -92,7 +92,6 @@ func (w *MysqlWriter) FlushDDLEvent(event *commonEvent.DDLEvent) error {
 
 	if !(event.TiDBOnly && !w.cfg.IsTiDB) {
 		err := w.execDDLWithMaxRetries(event)
-
 		if err != nil {
 			log.Error("exec ddl failed", zap.Error(err))
 			return err
@@ -269,9 +268,6 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 	case commonEvent.InfluenceTypeNormal:
 		tableIds = append(tableIds, relatedTables.TableIDs...)
 	case commonEvent.InfluenceTypeDB:
-		if w.tableSchemaStore == nil {
-			log.Panic("table schema store is nil")
-		}
 		ids := w.tableSchemaStore.GetTableIdsByDB(relatedTables.SchemaID)
 		tableIds = append(tableIds, ids...)
 	case commonEvent.InfluenceTypeAll:
@@ -298,41 +294,45 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 		tableIds = append(tableIds, table.TableID)
 	}
 
-	// generate query
-	//INSERT INTO `tidb_cdc`.`ddl_ts` (ticdc_cluster_id, changefeed, ddl_ts, table_id) values(...) ON DUPLICATE KEY UPDATE ddl_ts=VALUES(ddl_ts), created_at=CURRENT_TIMESTAMP;
-	var builder strings.Builder
-	builder.WriteString("INSERT INTO ")
-	builder.WriteString(filter.TiCDCSystemSchema)
-	builder.WriteString(".")
-	builder.WriteString(filter.DDLTsTable)
-	builder.WriteString("(ticdc_cluster_id, changefeed, ddl_ts, table_id) VALUES ")
+	if len(tableIds) > 0 {
+		// generate query
+		//INSERT INTO `tidb_cdc`.`ddl_ts` (ticdc_cluster_id, changefeed, ddl_ts, table_id) values(...) ON DUPLICATE KEY UPDATE ddl_ts=VALUES(ddl_ts), created_at=CURRENT_TIMESTAMP;
+		var builder strings.Builder
+		builder.WriteString("INSERT INTO ")
+		builder.WriteString(filter.TiCDCSystemSchema)
+		builder.WriteString(".")
+		builder.WriteString(filter.DDLTsTable)
+		builder.WriteString("(ticdc_cluster_id, changefeed, ddl_ts, table_id) VALUES ")
 
-	for idx, tableId := range tableIds {
-		builder.WriteString("('")
-		builder.WriteString(ticdcClusterID)
-		builder.WriteString("', '")
-		builder.WriteString(changefeedID)
-		builder.WriteString("', '")
-		builder.WriteString(ddlTs)
-		builder.WriteString("', ")
-		builder.WriteString(strconv.FormatInt(tableId, 10))
-		builder.WriteString(")")
-		if idx < len(tableIds)-1 {
-			builder.WriteString(", ")
+		for idx, tableId := range tableIds {
+			builder.WriteString("('")
+			builder.WriteString(ticdcClusterID)
+			builder.WriteString("', '")
+			builder.WriteString(changefeedID)
+			builder.WriteString("', '")
+			builder.WriteString(ddlTs)
+			builder.WriteString("', ")
+			builder.WriteString(strconv.FormatInt(tableId, 10))
+			builder.WriteString(")")
+			if idx < len(tableIds)-1 {
+				builder.WriteString(", ")
+			}
 		}
-	}
-	builder.WriteString(" ON DUPLICATE KEY UPDATE ddl_ts=VALUES(ddl_ts), created_at=CURRENT_TIMESTAMP;")
+		builder.WriteString(" ON DUPLICATE KEY UPDATE ddl_ts=VALUES(ddl_ts), created_at=CURRENT_TIMESTAMP;")
 
-	query := builder.String()
-	log.Info("query is", zap.Any("query", query))
-	_, err = tx.Exec(query)
-	if err != nil {
-		log.Error("failed to write ddl ts table", zap.Error(err))
-		err2 := tx.Rollback()
-		if err2 != nil {
-			log.Error("failed to write ddl ts table", zap.Error(err2))
+		query := builder.String()
+		log.Info("query is", zap.Any("query", query))
+		_, err = tx.Exec(query)
+		if err != nil {
+			log.Error("failed to write ddl ts table", zap.Error(err))
+			err2 := tx.Rollback()
+			if err2 != nil {
+				log.Error("failed to write ddl ts table", zap.Error(err2))
+			}
+			return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write ddl ts table;"))
 		}
-		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write ddl ts table;"))
+	} else {
+		log.Error("table ids is empty when write ddl ts table, FIX IT", zap.Any("event", event))
 	}
 
 	if len(dropTableIds) > 0 {
