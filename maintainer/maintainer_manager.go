@@ -144,10 +144,16 @@ func (m *Manager) Run(ctx context.Context) error {
 				cf := value.(*Maintainer)
 				if cf.removed.Load() {
 					cf.Close()
-					m.maintainers.Delete(key)
 					log.Info("maintainer removed, remove it from dynamic stream",
 						zap.String("changefeed", cf.id.String()))
-					m.stream.RemovePath(cf.id.Name())
+					if err := m.stream.RemovePath(cf.id.Name()); err != nil {
+						log.Warn("remove path from dynstream failed, will retry later",
+							zap.String("changefeed", cf.id.String()),
+							zap.Error(err))
+						// try it again later
+						return true
+					}
+					m.maintainers.Delete(key)
 				}
 				return true
 			})
@@ -245,7 +251,8 @@ func (m *Manager) onRemoveMaintainerRequest(msg *messaging.TargetMessage) *heart
 			}
 		}
 		// it's cascade remove, we should remove the dispatcher from all node
-		cf := NewMaintainerForRemove(cfID, m.selfNode, m.stream, m.taskScheduler)
+		// here we create a maintainer to run the remove the dispatcher logic
+		cf := NewMaintainerForRemove(cfID, m.conf, m.selfNode, m.stream, m.taskScheduler, m.pdAPI, m.regionCache)
 		err := m.stream.AddPath(cfID.Name(), cf)
 		if err != nil {
 			log.Warn("add path to dynstream failed, coordinator will retry later", zap.Error(err))

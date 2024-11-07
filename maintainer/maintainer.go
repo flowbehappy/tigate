@@ -100,9 +100,8 @@ type Maintainer struct {
 	lastPrintStatusTime  time.Time
 	lastCheckpointTsTime time.Time
 
-	errLock         sync.Mutex
-	runningErrors   map[node.ID]*heartbeatpb.RunningError
-	runningWarnings map[node.ID]*heartbeatpb.RunningError
+	errLock       sync.Mutex
+	runningErrors map[node.ID]*heartbeatpb.RunningError
 
 	changefeedCheckpointTsGauge    prometheus.Gauge
 	changefeedCheckpointTsLagGauge prometheus.Gauge
@@ -161,7 +160,6 @@ func NewMaintainer(cfID common.ChangeFeedID,
 		},
 		checkpointTsByCapture: make(map[node.ID]heartbeatpb.Watermark),
 		runningErrors:         map[node.ID]*heartbeatpb.RunningError{},
-		runningWarnings:       map[node.ID]*heartbeatpb.RunningError{},
 
 		changefeedCheckpointTsGauge:    metrics.ChangefeedCheckpointTsGauge.WithLabelValues(cfID.Namespace(), cfID.Name()),
 		changefeedCheckpointTsLagGauge: metrics.ChangefeedCheckpointTsLagGauge.WithLabelValues(cfID.Namespace(), cfID.Name()),
@@ -180,34 +178,25 @@ func NewMaintainer(cfID common.ChangeFeedID,
 }
 
 func NewMaintainerForRemove(cfID common.ChangeFeedID,
+	conf *config.SchedulerConfig,
 	selfNode *node.Info,
 	stream dynstream.DynamicStream[int, string, *Event, *Maintainer, *StreamHandler],
-	taskScheduler threadpool.ThreadPool) *Maintainer {
-	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
-	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
-	m := &Maintainer{
-		id:                    cfID,
-		selfNode:              selfNode,
-		stream:                stream,
-		taskScheduler:         taskScheduler,
-		mc:                    mc,
-		state:                 heartbeatpb.ComponentState_Working,
-		removed:               atomic.NewBool(false),
-		nodeManager:           nodeManager,
-		nodesClosed:           make(map[node.ID]struct{}),
-		statusChanged:         atomic.NewBool(true),
-		nodeChanged:           atomic.NewBool(false),
-		cascadeRemoving:       true,
-		checkpointTsByCapture: make(map[node.ID]heartbeatpb.Watermark),
-		runningErrors:         map[node.ID]*heartbeatpb.RunningError{},
-		runningWarnings:       map[node.ID]*heartbeatpb.RunningError{},
+	taskScheduler threadpool.ThreadPool,
+	pdAPI pdutil.PDAPIClient,
+	regionCache split.RegionCache,
+) *Maintainer {
+	unused := &config.ChangeFeedInfo{
+		ChangefeedID: cfID,
+		SinkURI:      "",
+		Config:       config.GetDefaultReplicaConfig(),
 	}
+	m := NewMaintainer(cfID, conf, unused, selfNode, stream, taskScheduler, pdAPI, regionCache, 0)
+	m.cascadeRemoving = true
 	// setup period event
 	SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{
 		changefeedID: m.id.Name(),
 		eventType:    EventPeriod,
 	}, time.Now().Add(time.Millisecond*500))
-	log.Info("maintainer is created for remove", zap.String("id", cfID.String()))
 	return m
 }
 
@@ -269,21 +258,11 @@ func (m *Maintainer) GetMaintainerStatus() *heartbeatpb.MaintainerStatus {
 		}
 		clear(m.runningErrors)
 	}
-	var runningWarnings []*heartbeatpb.RunningError
-	if len(m.runningWarnings) > 0 {
-		runningWarnings = make([]*heartbeatpb.RunningError, 0, len(m.runningWarnings))
-		for _, e := range m.runningWarnings {
-			runningWarnings = append(runningWarnings, e)
-		}
-		clear(m.runningWarnings)
-	}
-
 	status := &heartbeatpb.MaintainerStatus{
 		ChangefeedID: m.id.ToPB(),
 		FeedState:    string(m.changefeedSate),
 		State:        m.state,
 		CheckpointTs: m.watermark.CheckpointTs,
-		Warning:      runningWarnings,
 		Err:          runningErrors,
 	}
 	return status
@@ -482,11 +461,6 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) {
 		m.checkpointTsByCapture[msg.From] = *req.Watermark
 	}
 	m.controller.HandleStatus(msg.From, req.Statuses)
-	if req.Warning != nil {
-		m.errLock.Lock()
-		m.runningWarnings[msg.From] = req.Warning
-		m.errLock.Unlock()
-	}
 	if req.Err != nil {
 		m.errLock.Unlock()
 		m.runningErrors[msg.From] = req.Err
@@ -578,7 +552,7 @@ func (m *Maintainer) sendMaintainerCloseRequestToAllNode() bool {
 // and coordinator remove this maintainer
 // todo: stop maintainer immediately?
 func (m *Maintainer) handleError(err error) {
-	log.Error("an error occurred in Owner",
+	log.Error("an error occurred in maintainer",
 		zap.String("changefeed", m.id.Name()), zap.Error(err))
 	var code string
 	if rfcCode, ok := errors.RFCCode(err); ok {

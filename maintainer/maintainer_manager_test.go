@@ -85,14 +85,15 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 	}
 	data, err := json.Marshal(cfConfig)
 	require.NoError(t, err)
+
+	cfID := common.NewChangeFeedIDWithName("test")
 	_ = mc.SendCommand(messaging.NewSingleTargetMessage(selfNode.ID,
 		messaging.MaintainerManagerTopic, &heartbeatpb.AddMaintainerRequest{
-			Id:           "test",
+			Id:           cfID.ToPB(),
 			Config:       data,
 			CheckpointTs: 10,
 		}))
 	time.Sleep(5 * time.Second)
-	cfID := model.DefaultChangeFeedID("test")
 	value, _ := manager.maintainers.Load(cfID)
 	maintainer := value.(*Maintainer)
 
@@ -181,7 +182,7 @@ func TestMaintainerSchedulesNodeChanges(t *testing.T) {
 
 	//close maintainer
 	err = mc.SendCommand(messaging.NewSingleTargetMessage(selfNode.ID, messaging.MaintainerManagerTopic,
-		&heartbeatpb.RemoveMaintainerRequest{Id: cfID.ID, Cascade: true}))
+		&heartbeatpb.RemoveMaintainerRequest{Id: cfID.ToPB(), Cascade: true}))
 	require.NoError(t, err)
 	time.Sleep(2 * time.Second)
 	require.Equal(t, heartbeatpb.ComponentState_Stopped, maintainer.state)
@@ -248,16 +249,16 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	go func() {
 		_ = dispManager.Run(ctx)
 	}()
-	cfID := model.DefaultChangeFeedID("test")
-	cfConfig := &model.ChangeFeedInfo{
-		ID:     cfID.ID,
-		Config: config2.GetDefaultReplicaConfig(),
+	cfID := common.NewChangeFeedIDWithName("test")
+	cfConfig := &config.ChangeFeedInfo{
+		ChangefeedID: cfID,
+		Config:       config.GetDefaultReplicaConfig(),
 	}
 	data, err := json.Marshal(cfConfig)
 	require.NoError(t, err)
 	_ = mc.SendCommand(messaging.NewSingleTargetMessage(selfNode.ID,
 		messaging.MaintainerManagerTopic, &heartbeatpb.AddMaintainerRequest{
-			Id:           cfID.ID,
+			Id:           cfID.ToPB(),
 			Config:       data,
 			CheckpointTs: 10,
 		}))
@@ -288,6 +289,54 @@ func TestMaintainerBootstrapWithTablesReported(t *testing.T) {
 	require.Equal(t, 2, foundSize)
 	require.False(t, hasDDLDispatcher)
 	manager.stream.Close()
+	cancel()
+}
+
+func TestStopNotExistsMaintainer(t *testing.T) {
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
+	selfNode := node.NewInfo("127.0.0.1:8800", "")
+	nodeManager := watcher.NewNodeManager(nil, nil)
+	appcontext.SetService(watcher.NodeManagerName, nodeManager)
+	nodeManager.GetAliveNodes()[selfNode.ID] = selfNode
+	store := &mockSchemaStore{
+		// 4 tables
+		tables: []commonEvent.Table{
+			{SchemaID: 1, TableID: 1}, {SchemaID: 1, TableID: 2},
+			{SchemaID: 1, TableID: 3}, {SchemaID: 1, TableID: 4}},
+	}
+	appcontext.SetService(appcontext.SchemaStore, store)
+	mc := messaging.NewMessageCenter(ctx, selfNode.ID, 0, config.NewDefaultMessageCenterConfig())
+	appcontext.SetService(appcontext.MessageCenter, mc)
+	startDispatcherNode(ctx, selfNode, mc, nodeManager)
+	nodeManager.RegisterNodeChangeHandler(appcontext.MessageCenter, mc.OnNodeChanges)
+	//discard maintainer manager messages
+	mc.RegisterHandler(messaging.CoordinatorTopic, func(ctx context.Context, msg *messaging.TargetMessage) error {
+		return nil
+	})
+	schedulerConf := &config.SchedulerConfig{AddTableBatchSize: 1000}
+	manager := NewMaintainerManager(selfNode, schedulerConf, nil, nil)
+	msg := messaging.NewSingleTargetMessage(selfNode.ID,
+		messaging.MaintainerManagerTopic,
+		&heartbeatpb.CoordinatorBootstrapRequest{Version: 1})
+	msg.From = msg.To
+	manager.onCoordinatorBootstrapRequest(msg)
+	go func() {
+		_ = manager.Run(ctx)
+	}()
+	dispManager := MockDispatcherManager(mc, selfNode.ID)
+	go func() {
+		_ = dispManager.Run(ctx)
+	}()
+	cfID := common.NewChangeFeedIDWithName("test")
+	_ = mc.SendCommand(messaging.NewSingleTargetMessage(selfNode.ID, messaging.MaintainerManagerTopic, &heartbeatpb.RemoveMaintainerRequest{
+		Id:      cfID.ToPB(),
+		Cascade: true,
+		Removed: true,
+	}))
+	time.Sleep(2 * time.Second)
+	_, ok := manager.maintainers.Load(cfID)
+	require.False(t, ok)
 	cancel()
 }
 

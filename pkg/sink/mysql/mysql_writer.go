@@ -66,8 +66,7 @@ type MysqlWriter struct {
 	statistics *metrics.Statistics
 }
 
-func NewMysqlWriter(db *sql.DB, cfg *MysqlConfig, changefeedID common.ChangeFeedID) *MysqlWriter {
-	statistics := metrics.NewStatistics(changefeedID, "TxnSink")
+func NewMysqlWriter(db *sql.DB, cfg *MysqlConfig, changefeedID common.ChangeFeedID, statistics *metrics.Statistics) *MysqlWriter {
 	return &MysqlWriter{
 		db:                     db,
 		cfg:                    cfg,
@@ -1027,4 +1026,10 @@ func (w *MysqlWriter) CreateTable(ctx context.Context, dbName string, tableName 
 	}
 	err = tx.Commit()
 	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("create %s table: begin Tx fail;", tableName)))
+}
+
+func (w *MysqlWriter) Close() {
+	if w.stmtCache != nil {
+		w.stmtCache.Purge()
+	}
 }

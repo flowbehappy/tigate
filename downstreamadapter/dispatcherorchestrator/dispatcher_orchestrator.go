@@ -103,13 +103,16 @@ func (m *DispatcherOrchestrator) handleRemoveDispatcherManager(from node.ID, req
 	cfId := common.NewChangefeedIDFromPB(req.ChangefeedID)
 	response := &heartbeatpb.MaintainerCloseResponse{
 		ChangefeedID: req.ChangefeedID,
+		Success:      true,
 	}
 
 	if manager, ok := m.dispatcherManagers[cfId]; ok {
 		if closed := manager.TryClose(req.Removed); closed {
 			delete(m.dispatcherManagers, cfId)
 			metrics.EventDispatcherManagerGauge.WithLabelValues(cfId.Namespace(), cfId.Name()).Dec()
-			response.Success = closed
+			response.Success = true
+		} else {
+			response.Success = false
 		}
 	}
 

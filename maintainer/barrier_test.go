@@ -24,7 +24,6 @@ import (
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
-	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -32,13 +31,14 @@ import (
 func TestOneBlockEvent(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
+	controller := NewController(cfID, 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 0)
 	stm := controller.GetTasksByTableIDs(1)[0]
 	controller.replicationDB.BindSpanToNode("", "node1", stm)
@@ -46,7 +46,7 @@ func TestOneBlockEvent(t *testing.T) {
 
 	barrier := NewBarrier(controller, false)
 	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: controller.ddlDispatcherID.ToPB(),
@@ -96,7 +96,7 @@ func TestOneBlockEvent(t *testing.T) {
 	require.True(t, msgs[0].Message[0].(*heartbeatpb.HeartBeatResponse).DispatcherStatuses[0].Action.IsSyncPoint)
 
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: controller.ddlDispatcherID.ToPB(),
@@ -125,7 +125,7 @@ func TestOneBlockEvent(t *testing.T) {
 
 	//send event done again
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: controller.ddlDispatcherID.ToPB(),
@@ -156,13 +156,14 @@ func TestOneBlockEvent(t *testing.T) {
 func TestNormalBlock(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
+	controller := NewController(cfID, 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	var blockedDispatcherIDS []*heartbeatpb.DispatcherID
 	for id := 1; id < 4; id++ {
 		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 0)
@@ -183,7 +184,7 @@ func TestNormalBlock(t *testing.T) {
 
 	// first node block request
 	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: blockedDispatcherIDS[0],
@@ -227,7 +228,7 @@ func TestNormalBlock(t *testing.T) {
 
 	// other node block request
 	msg = barrier.HandleStatus("node2", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: selectDispatcherID.ToPB(),
@@ -260,7 +261,7 @@ func TestNormalBlock(t *testing.T) {
 
 	// repeated status
 	barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: blockedDispatcherIDS[0],
@@ -301,7 +302,7 @@ func TestNormalBlock(t *testing.T) {
 
 	// selected node write done
 	msg = barrier.HandleStatus("node2", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: blockedDispatcherIDS[2],
@@ -315,7 +316,7 @@ func TestNormalBlock(t *testing.T) {
 	})
 	require.Len(t, barrier.blockedTs, 1)
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: blockedDispatcherIDS[0],
@@ -341,13 +342,14 @@ func TestNormalBlock(t *testing.T) {
 func TestNormalBlockWithTableTrigger(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
+	controller := NewController(cfID, 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	var blockedDispatcherIDS []*heartbeatpb.DispatcherID
 	for id := 1; id < 3; id++ {
 		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 0)
@@ -362,7 +364,7 @@ func TestNormalBlockWithTableTrigger(t *testing.T) {
 
 	// first node block request
 	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: blockedDispatcherIDS[0],
@@ -406,7 +408,7 @@ func TestNormalBlockWithTableTrigger(t *testing.T) {
 
 	// table trigger  block request
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: tableTriggerEventDispatcherID.ToPB(),
@@ -439,7 +441,7 @@ func TestNormalBlockWithTableTrigger(t *testing.T) {
 
 	// table trigger write done
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: tableTriggerEventDispatcherID.ToPB(),
@@ -453,7 +455,7 @@ func TestNormalBlockWithTableTrigger(t *testing.T) {
 	})
 	require.Len(t, barrier.blockedTs, 1)
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: blockedDispatcherIDS[0],
@@ -485,13 +487,14 @@ func TestSchemaBlock(t *testing.T) {
 	nmap["node1"] = &node.Info{ID: "node1"}
 	nmap["node2"] = &node.Info{ID: "node2"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
+	controller := NewController(cfID, 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 2}, 1)
@@ -512,7 +515,7 @@ func TestSchemaBlock(t *testing.T) {
 
 	// first dispatcher  block request
 	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: controller.ddlDispatcherID.ToPB(),
@@ -555,7 +558,7 @@ func TestSchemaBlock(t *testing.T) {
 
 	// second dispatcher  block request
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: dispatcherIDs[1],
@@ -589,7 +592,7 @@ func TestSchemaBlock(t *testing.T) {
 
 	// repeated status
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: dispatcherIDs[1],
@@ -620,7 +623,7 @@ func TestSchemaBlock(t *testing.T) {
 
 	// selected node write done
 	msg = barrier.HandleStatus("node2", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: controller.ddlDispatcherID.ToPB(),
@@ -642,7 +645,7 @@ func TestSchemaBlock(t *testing.T) {
 	require.Len(t, barrier.blockedTs, 1)
 	// other dispatcher advanced checkpoint ts
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: dispatcherIDs[0],
@@ -686,13 +689,14 @@ func TestSyncPointBlock(t *testing.T) {
 	nmap["node1"] = &node.Info{ID: "node1"}
 	nmap["node2"] = &node.Info{ID: "node2"}
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
+	controller := NewController(cfID, 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 1}, 1)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: 2}, 1)
 	controller.AddNewTable(commonEvent.Table{SchemaID: 2, TableID: 3}, 1)
@@ -712,7 +716,7 @@ func TestSyncPointBlock(t *testing.T) {
 	barrier := NewBarrier(controller, true)
 	// first dispatcher  block request
 	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: controller.ddlDispatcherID.ToPB(),
@@ -775,7 +779,7 @@ func TestSyncPointBlock(t *testing.T) {
 
 	// second dispatcher  block request
 	msg = barrier.HandleStatus("node2", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: dispatcherIDs[2],
@@ -810,7 +814,7 @@ func TestSyncPointBlock(t *testing.T) {
 
 	// selected node write done
 	_ = barrier.HandleStatus("node2", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: controller.ddlDispatcherID.ToPB(),
@@ -829,7 +833,7 @@ func TestSyncPointBlock(t *testing.T) {
 	require.Len(t, barrier.blockedTs, 1)
 	// other dispatcher advanced checkpoint ts
 	msg = barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: dispatcherIDs[0],
@@ -866,13 +870,14 @@ func TestSyncPointBlock(t *testing.T) {
 func TestNonBlocked(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
+	controller := NewController(cfID, 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	barrier := NewBarrier(controller, false)
 
 	var blockedDispatcherIDS []*heartbeatpb.DispatcherID
@@ -880,7 +885,7 @@ func TestNonBlocked(t *testing.T) {
 		blockedDispatcherIDS = append(blockedDispatcherIDS, common.NewDispatcherID().ToPB())
 	}
 	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: blockedDispatcherIDS[0],
@@ -912,17 +917,18 @@ func TestNonBlocked(t *testing.T) {
 func TestUpdateCheckpointTs(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
+	controller := NewController(cfID, 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 
 	barrier := NewBarrier(controller, false)
 	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID: "test",
+		ChangefeedID: cfID.ToPB(),
 		BlockStatuses: []*heartbeatpb.TableSpanBlockStatus{
 			{
 				ID: controller.ddlDispatcherID.ToPB(),
@@ -961,13 +967,14 @@ func TestUpdateCheckpointTs(t *testing.T) {
 func TestHandleBlockBootstrapResponse(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
+	controller := NewController(cfID, 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	var dispatcherIDs []*heartbeatpb.DispatcherID
 	for id := 1; id < 4; id++ {
 		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 0)
@@ -981,7 +988,7 @@ func TestHandleBlockBootstrapResponse(t *testing.T) {
 	barrier := NewBarrier(controller, false)
 	barrier.HandleBootstrapResponse(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{
 		"nod1": {
-			ChangefeedID: "test",
+			ChangefeedID: cfID.ToPB(),
 			Spans: []*heartbeatpb.BootstrapTableSpan{
 				{
 					ID: dispatcherIDs[0],
@@ -1020,7 +1027,7 @@ func TestHandleBlockBootstrapResponse(t *testing.T) {
 	barrier = NewBarrier(controller, false)
 	barrier.HandleBootstrapResponse(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{
 		"nod1": {
-			ChangefeedID: "test",
+			ChangefeedID: cfID.ToPB(),
 			Spans: []*heartbeatpb.BootstrapTableSpan{
 				{
 					ID: dispatcherIDs[0],
@@ -1058,7 +1065,7 @@ func TestHandleBlockBootstrapResponse(t *testing.T) {
 	barrier = NewBarrier(controller, false)
 	barrier.HandleBootstrapResponse(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{
 		"nod1": {
-			ChangefeedID: "test",
+			ChangefeedID: cfID.ToPB(),
 			Spans: []*heartbeatpb.BootstrapTableSpan{
 				{
 					ID: dispatcherIDs[0],
@@ -1096,7 +1103,7 @@ func TestHandleBlockBootstrapResponse(t *testing.T) {
 	barrier = NewBarrier(controller, false)
 	barrier.HandleBootstrapResponse(map[node.ID]*heartbeatpb.MaintainerBootstrapResponse{
 		"nod1": {
-			ChangefeedID: "test",
+			ChangefeedID: cfID.ToPB(),
 			Spans: []*heartbeatpb.BootstrapTableSpan{
 				{
 					ID: dispatcherIDs[0],
@@ -1123,13 +1130,14 @@ func TestHandleBlockBootstrapResponse(t *testing.T) {
 func TestSyncPointBlockPerf(t *testing.T) {
 	setNodeManagerAndMessageCenter()
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(model.DefaultChangeFeedID("test"), tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	cfID := common.NewChangeFeedIDWithName("test")
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 			CheckpointTs:    1,
 		}, "node1")
-	controller := NewController("test", 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
+	controller := NewController(cfID, 1, nil, nil, nil, nil, ddlSpan, 1000, 0)
 	barrier := NewBarrier(controller, true)
 	for id := 1; id < 1000; id++ {
 		controller.AddNewTable(commonEvent.Table{SchemaID: 1, TableID: int64(id)}, 1)
@@ -1163,7 +1171,7 @@ func TestSyncPointBlockPerf(t *testing.T) {
 	//defer pprof.StopCPUProfile()
 	now := time.Now()
 	msg := barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID:  "test",
+		ChangefeedID:  cfID.ToPB(),
 		BlockStatuses: blockStatus,
 	})
 	require.NotNil(t, msg)
@@ -1183,7 +1191,7 @@ func TestSyncPointBlockPerf(t *testing.T) {
 		})
 	}
 	barrier.HandleStatus("node1", &heartbeatpb.BlockStatusRequest{
-		ChangefeedID:  "test",
+		ChangefeedID:  cfID.ToPB(),
 		BlockStatuses: passStatus,
 	})
 	require.NotNil(t, msg)
