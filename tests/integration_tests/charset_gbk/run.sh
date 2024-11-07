@@ -15,9 +15,6 @@ function run() {
 
 	cd $WORK_DIR
 
-	echo $PATH
-	export PATH=$PATH:$CUR/../../../bin
-	echo $PATH && which cdc
 	# record tso before we create tables to skip the system table DDLs
 	start_ts=$(cdc cli tso query --pd=http://$UP_PD_HOST_1:$UP_PD_PORT_1 | grep -E "^[0-9]+" | awk '{print $1}')
 
