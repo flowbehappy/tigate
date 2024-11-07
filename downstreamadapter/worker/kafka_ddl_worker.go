@@ -44,7 +44,7 @@ type KafkaDDLWorker struct {
 	partitionRule DDLDispatchRule
 	ctx           context.Context
 	cancel        context.CancelFunc
-	group         *errgroup.Group
+	errGroup      *errgroup.Group
 }
 
 // DDLDispatchRule is the dispatch rule for DDL event.
@@ -77,10 +77,10 @@ func NewKafkaDDLWorker(
 	eventRouter *eventrouter.EventRouter,
 	topicManager topicmanager.TopicManager,
 	statistics *metrics.Statistics,
+	errGroup *errgroup.Group,
 ) *KafkaDDLWorker {
 	ctx, cancel := context.WithCancel(ctx)
-	group, ctx := errgroup.WithContext(ctx)
-	w := &KafkaDDLWorker{
+	return &KafkaDDLWorker{
 		ctx:           ctx,
 		changeFeedID:  id,
 		protocol:      protocol,
@@ -92,17 +92,17 @@ func NewKafkaDDLWorker(
 		statistics:    statistics,
 		partitionRule: getDDLDispatchRule(protocol),
 		cancel:        cancel,
-		group:         group,
+		errGroup:      errGroup,
 	}
+}
 
-	group.Go(func() error {
+func (w *KafkaDDLWorker) Run() {
+	w.errGroup.Go(func() error {
 		return w.encodeAndSendDDLEvents()
 	})
-	group.Go(func() error {
+	w.errGroup.Go(func() error {
 		return w.encodeAndSendCheckpointEvents()
 	})
-
-	return w
 }
 
 func (w *KafkaDDLWorker) GetDDLEventChan() chan<- *commonEvent.DDLEvent {
@@ -226,5 +226,5 @@ func (w *KafkaDDLWorker) Close() error {
 	w.cancel()
 	w.producer.Close()
 
-	return w.group.Wait()
+	return nil
 }

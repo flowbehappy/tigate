@@ -13,7 +13,7 @@ message HeartBeatRequest {
     ChangefeedID changefeedID = 1;
     Watermark watermark = 2;
     repeated TableSpanStatus statuses = 3;
-    bool compeleteStatus = 4; // 是否包含了所有的 table status
+    bool compeleteStatus = 4; // Whether includes all table spans in the changefeed?
     RunningError err = 5;
 }
 

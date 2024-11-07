@@ -44,7 +44,7 @@ const (
 )
 
 // worker will send messages to the DML producer on a batch basis.
-type KafkaWorker struct {
+type KafkaDMLWorker struct {
 	changeFeedID common.ChangeFeedID
 	protocol     config.Protocol
 
@@ -83,10 +83,10 @@ func NewKafkaWorker(
 	eventRouter *eventrouter.EventRouter,
 	topicManager topicmanager.TopicManager,
 	statistics *metrics.Statistics,
-) *KafkaWorker {
+	errGroup *errgroup.Group,
+) *KafkaDMLWorker {
 	ctx, cancel := context.WithCancel(ctx)
-	errGroup, ctx := errgroup.WithContext(ctx)
-	w := &KafkaWorker{
+	return &KafkaDMLWorker{
 		ctx:            ctx,
 		changeFeedID:   id,
 		protocol:       protocol,
@@ -102,29 +102,30 @@ func NewKafkaWorker(
 		cancel:         cancel,
 		errGroup:       errGroup,
 	}
+}
 
-	errGroup.Go(func() error {
+func (w *KafkaDMLWorker) Run() {
+	w.errGroup.Go(func() error {
 		return w.calculateKeyPartitions()
 	})
 
-	errGroup.Go(func() error {
+	w.errGroup.Go(func() error {
 		return w.encoderGroup.Run(w.ctx)
 	})
 
-	errGroup.Go(func() error {
+	w.errGroup.Go(func() error {
 		if w.protocol.IsBatchEncode() {
 			return w.batchEncodeRun()
 		}
 		return w.nonBatchEncodeRun()
 	})
 
-	errGroup.Go(func() error {
+	w.errGroup.Go(func() error {
 		return w.sendMessages()
 	})
-	return w
 }
 
-func (w *KafkaWorker) calculateKeyPartitions() error {
+func (w *KafkaDMLWorker) calculateKeyPartitions() error {
 	for {
 		select {
 		case <-w.ctx.Done():
@@ -183,12 +184,12 @@ func (w *KafkaWorker) calculateKeyPartitions() error {
 	}
 }
 
-func (w *KafkaWorker) GetEventChan() chan<- *commonEvent.DMLEvent {
+func (w *KafkaDMLWorker) GetEventChan() chan<- *commonEvent.DMLEvent {
 	return w.eventChan
 }
 
 // nonBatchEncodeRun add events to the encoder group immediately.
-func (w *KafkaWorker) nonBatchEncodeRun() error {
+func (w *KafkaDMLWorker) nonBatchEncodeRun() error {
 	log.Info("MQ sink non batch worker started",
 		zap.String("namespace", w.changeFeedID.Namespace()),
 		zap.String("changefeed", w.changeFeedID.Name()),
@@ -213,7 +214,7 @@ func (w *KafkaWorker) nonBatchEncodeRun() error {
 }
 
 // batchEncodeRun collect messages into batch and add them to the encoder group.
-func (w *KafkaWorker) batchEncodeRun() error {
+func (w *KafkaDMLWorker) batchEncodeRun() error {
 	log.Info("MQ sink batch worker started",
 		zap.String("namespace", w.changeFeedID.Namespace()),
 		zap.String("changefeed", w.changeFeedID.Name()),
@@ -259,7 +260,7 @@ func (w *KafkaWorker) batchEncodeRun() error {
 // batch collects a batch of messages from w.msgChan into buffer.
 // It returns the number of messages collected.
 // Note: It will block until at least one message is received.
-func (w *KafkaWorker) batch(buffer []*commonEvent.MQRowEvent, flushInterval time.Duration) (int, error) {
+func (w *KafkaDMLWorker) batch(buffer []*commonEvent.MQRowEvent, flushInterval time.Duration) (int, error) {
 	msgCount := 0
 	maxBatchSize := len(buffer)
 	// We need to receive at least one message or be interrupted,
@@ -303,7 +304,7 @@ func (w *KafkaWorker) batch(buffer []*commonEvent.MQRowEvent, flushInterval time
 }
 
 // group groups messages by its key.
-func (w *KafkaWorker) group(msgs []*commonEvent.MQRowEvent) map[model.TopicPartitionKey][]*commonEvent.RowEvent {
+func (w *KafkaDMLWorker) group(msgs []*commonEvent.MQRowEvent) map[model.TopicPartitionKey][]*commonEvent.RowEvent {
 	groupedMsgs := make(map[model.TopicPartitionKey][]*commonEvent.RowEvent)
 	for _, msg := range msgs {
 		if _, ok := groupedMsgs[msg.Key]; !ok {
@@ -314,7 +315,7 @@ func (w *KafkaWorker) group(msgs []*commonEvent.MQRowEvent) map[model.TopicParti
 	return groupedMsgs
 }
 
-func (w *KafkaWorker) sendMessages() error {
+func (w *KafkaDMLWorker) sendMessages() error {
 	metricSendMessageDuration := metrics.WorkerSendMessageDuration.WithLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
 	defer metrics.WorkerSendMessageDuration.DeleteLabelValues(w.changeFeedID.Namespace(), w.changeFeedID.Name())
 
@@ -355,10 +356,10 @@ func (w *KafkaWorker) sendMessages() error {
 	}
 }
 
-func (w *KafkaWorker) Close() error {
+func (w *KafkaDMLWorker) Close() error {
 	w.ticker.Stop()
 	w.cancel()
 	w.producer.Close()
 
-	return w.errGroup.Wait()
+	return nil
 }
