@@ -162,7 +162,10 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 	go func() {
 		defer manager.wg.Done()
 		err := manager.sink.Run()
-		if err != nil {
+		if err != nil && errors.Cause(err) != context.Canceled {
+			log.Error("Sink Run Meets Error",
+				zap.String("changefeedID", manager.changefeedID.String()),
+				zap.Error(err))
 			// report error to maintainer
 			var message heartbeatpb.HeartBeatRequest
 			message.ChangefeedID = manager.changefeedID.ToPB()
@@ -243,7 +246,7 @@ func (e *EventDispatcherManager) close(remove bool) {
 	}
 
 	err = e.sink.Close(remove)
-	if err != nil {
+	if err != nil && errors.Cause(err) != context.Canceled {
 		log.Error("close sink failed", zap.Error(err))
 		return
 	}
