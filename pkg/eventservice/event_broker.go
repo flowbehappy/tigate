@@ -567,12 +567,12 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 					continue
 				}
 				phyResolvedTs := oracle.ExtractPhysical(pullerMinResolvedTs)
-				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
+				lag := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
 				c.metricEventServicePullerResolvedTs.Set(float64(phyResolvedTs))
-				c.metricEventServiceResolvedTsLag.Set(float64(lag))
+				c.metricEventServiceResolvedTsLag.Set(lag)
 
-				lag = (oracle.GetPhysical(time.Now()) - oracle.ExtractPhysical(dispatcherMinWaterMark)) / 1e3
-				c.metricEventServiceDispatcherResolvedTs.Set(float64(lag))
+				lag = float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dispatcherMinWaterMark)) / 1e3
+				c.metricEventServiceDispatcherResolvedTs.Set(lag)
 			}
 		}
 	}()
