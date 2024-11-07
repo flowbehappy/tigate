@@ -352,7 +352,7 @@ func (e *eventStore) RegisterDispatcher(
 				// check whether startTs is in the range [checkpointTs, resolvedTs]
 				// for `[checkpointTs`: because we want data > startTs, so data <= checkpointTs == startTs deleted is ok.
 				// for `resolvedTs]`: startTs == resolvedTs is a special case that no resolved ts has been recieved, so it is ok.
-				if subscriptionStat.checkpointTs <= startTs || startTs <= subscriptionStat.resolvedTs {
+				if subscriptionStat.checkpointTs <= startTs && startTs <= subscriptionStat.resolvedTs {
 					stat.subID = candidateDispatcher.subID
 					e.dispatcherStates.m[dispatcherID] = stat
 					// add dispatcher to existing subscription and return
@@ -366,7 +366,11 @@ func (e *eventStore) RegisterDispatcher(
 	}
 	e.dispatcherStates.Unlock()
 
-	// cannot share data from existing subscription, create a new one
+	// cannot share data from existing subscription, create a new subscription
+
+	// TODO: hash span is only needed when we need to reuse data after restart
+	// (if we finally decide not to reuse data after restart, use round robin instead)
+	// But if we need to share data for sub span, we need hash table id instead.
 	chIndex := common.HashTableSpan(tableSpan, len(e.eventChs))
 	uniqueKeyID := genUniqueID()
 	// Note: don't hold any lock when call Subscribe
@@ -446,7 +450,6 @@ func (e *eventStore) UpdateDispatcherSendTs(
 ) error {
 	e.dispatcherStates.RLock()
 	defer e.dispatcherStates.RUnlock()
-	log.Info("start update dispatcher send ts")
 	if stat, ok := e.dispatcherStates.m[dispatcherID]; ok {
 		stat.checkpointTs = sendTs
 		subscriptionStat := e.dispatcherStates.n[stat.subID]
@@ -457,11 +460,6 @@ func (e *eventStore) UpdateDispatcherSendTs(
 			if newCheckpointTs == 0 || dispatcherStat.checkpointTs < newCheckpointTs {
 				newCheckpointTs = dispatcherStat.checkpointTs
 			}
-			log.Info("update dispatcher send ts",
-				zap.Any("dispatcherID", dispatcherID),
-				zap.Int64("tableID", dispatcherStat.tableSpan.TableID),
-				zap.Uint64("dispatcherCheckpointTs", dispatcherStat.checkpointTs),
-				zap.Uint64("newCheckpointTs", newCheckpointTs))
 		}
 		if newCheckpointTs == 0 {
 			return nil
