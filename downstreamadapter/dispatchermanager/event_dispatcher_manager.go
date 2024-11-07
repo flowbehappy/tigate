@@ -38,7 +38,6 @@ import (
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/metrics"
-	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
 )
@@ -188,8 +187,7 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 	if tableTriggerEventDispatcherID != nil {
 		_, err := manager.NewDispatcher(common.NewDispatcherIDFromPB(tableTriggerEventDispatcherID), heartbeatpb.DDLSpan, startTs, 0)
 		if err != nil {
-			log.Error("Create table trigger event dispatcher failed", zap.Error(err))
-			return nil, 0, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("create table trigger event dispatcher failed")
+			return nil, 0, errors.Trace(err)
 		}
 		return manager, manager.tableTriggerEventDispatcher.GetStartTs(), nil
 	}
