@@ -53,7 +53,7 @@ func NewMysqlDMLWorker(
 	statistics *metrics.Statistics) *MysqlDMLWorker {
 	return &MysqlDMLWorker{
 		ctx:          ctx,
-		mysqlWriter:  mysql.NewMysqlWriter(db, config, changefeedID, statistics),
+		mysqlWriter:  mysql.NewMysqlWriter(ctx, db, config, changefeedID, statistics),
 		id:           id,
 		maxRows:      config.MaxTxnRow,
 		eventChan:    make(chan *commonEvent.DMLEvent, 16),
@@ -162,7 +162,7 @@ func NewMysqlDDLWorker(
 	return &MysqlDDLWorker{
 		ctx:          ctx,
 		changefeedID: changefeedID,
-		mysqlWriter:  mysql.NewMysqlWriter(db, config, changefeedID, statistics),
+		mysqlWriter:  mysql.NewMysqlWriter(ctx, db, config, changefeedID, statistics),
 		ddlEventChan: make(chan commonEvent.BlockEvent, 16),
 		errgroup:     errGroup,
 	}
