@@ -482,6 +482,16 @@ func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage)
 	log.Info("received maintainer bootstrap response",
 		zap.String("changefeed", m.id.Name()),
 		zap.Any("server", msg.From))
+	resp := msg.Message[0].(*heartbeatpb.MaintainerBootstrapResponse)
+	if resp.Err != nil {
+		log.Warn("maintainer bootstrap failed",
+			zap.String("changefeed", m.id.Name()),
+			zap.String("error", resp.Err.Message))
+		m.errLock.Lock()
+		m.runningErrors[msg.From] = resp.Err
+		m.errLock.Unlock()
+		return
+	}
 	cachedResp := m.bootstrapper.HandleBootstrapResponse(msg.From, msg.Message[0].(*heartbeatpb.MaintainerBootstrapResponse))
 	m.onBootstrapDone(cachedResp)
 }
@@ -550,7 +560,6 @@ func (m *Maintainer) sendMaintainerCloseRequestToAllNode() bool {
 
 // handleError set the caches the error, the error will be reported to coordinator
 // and coordinator remove this maintainer
-// todo: stop maintainer immediately?
 func (m *Maintainer) handleError(err error) {
 	log.Error("an error occurred in maintainer",
 		zap.String("changefeed", m.id.Name()), zap.Error(err))
