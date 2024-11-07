@@ -74,10 +74,6 @@ type SchedulerDispatcherRequest struct {
 	*heartbeatpb.ScheduleDispatcherRequest
 }
 
-func (r SchedulerDispatcherRequest) IsBatchable() bool {
-	return true
-}
-
 func NewSchedulerDispatcherRequest(req *heartbeatpb.ScheduleDispatcherRequest) SchedulerDispatcherRequest {
 	return SchedulerDispatcherRequest{req}
 }
@@ -88,7 +84,9 @@ var schedulerDispatcherRequestDynamicStreamOnce sync.Once
 func GetSchedulerDispatcherRequestDynamicStream() dynstream.DynamicStream[int, common.ChangeFeedID, SchedulerDispatcherRequest, *EventDispatcherManager, *SchedulerDispatcherRequestHandler] {
 	if schedulerDispatcherRequestDynamicStream == nil {
 		schedulerDispatcherRequestDynamicStreamOnce.Do(func() {
-			schedulerDispatcherRequestDynamicStream = dynstream.NewDynamicStream(&SchedulerDispatcherRequestHandler{})
+			option := dynstream.NewOption()
+			// option.BatchCount = 128
+			schedulerDispatcherRequestDynamicStream = dynstream.NewDynamicStream(&SchedulerDispatcherRequestHandler{}, option)
 			schedulerDispatcherRequestDynamicStream.Start()
 		})
 	}
@@ -101,10 +99,6 @@ func SetSchedulerDispatcherRequestDynamicStream(dynamicStream dynstream.DynamicS
 
 type HeartBeatResponse struct {
 	*heartbeatpb.HeartBeatResponse
-}
-
-func (r HeartBeatResponse) IsBatchable() bool {
-	return true
 }
 
 func NewHeartBeatResponse(resp *heartbeatpb.HeartBeatResponse) HeartBeatResponse {
@@ -130,10 +124,6 @@ func SetHeartBeatResponseDynamicStream(dynamicStream dynstream.DynamicStream[int
 
 type CheckpointTsMessage struct {
 	*heartbeatpb.CheckpointTsMessage
-}
-
-func (r CheckpointTsMessage) IsBatchable() bool {
-	return true
 }
 
 func NewCheckpointTsMessage(msg *heartbeatpb.CheckpointTsMessage) CheckpointTsMessage {

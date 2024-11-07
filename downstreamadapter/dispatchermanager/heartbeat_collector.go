@@ -167,24 +167,32 @@ func (h *SchedulerDispatcherRequestHandler) Path(scheduleDispatcherRequest Sched
 }
 
 func (h *SchedulerDispatcherRequestHandler) Handle(eventDispatcherManager *EventDispatcherManager, reqs ...SchedulerDispatcherRequest) bool {
-	if len(reqs) != 1 {
-		// TODO: Support batch
-		panic("invalid request count")
+	// If req is about remove dispatcher, then there will only be one request in reqs.
+	infos := make([]DispatcherCreateInfo, 0, len(reqs))
+	for _, req := range reqs {
+		if req.ScheduleDispatcherRequest == nil {
+			log.Warn("scheduleDispatcherRequest is nil, skip")
+			continue
+		}
+		config := req.Config
+		dispatcherID := common.NewDispatcherIDFromPB(config.DispatcherID)
+		switch req.ScheduleAction {
+		case heartbeatpb.ScheduleAction_Create:
+			infos = append(infos, DispatcherCreateInfo{
+				Id:        dispatcherID,
+				TableSpan: config.Span,
+				StartTs:   config.StartTs,
+				SchemaID:  config.SchemaID,
+			})
+		case heartbeatpb.ScheduleAction_Remove:
+			if len(reqs) != 1 {
+				log.Error("invalid remove dispatcher request count in one batch", zap.Int("count", len(reqs)))
+			}
+			eventDispatcherManager.RemoveDispatcher(dispatcherID)
+		}
 	}
-	scheduleDispatcherRequest := reqs[0]
-	if scheduleDispatcherRequest.ScheduleDispatcherRequest == nil {
-		log.Warn("scheduleDispatcherRequest is nil, skip")
-		return false
-	}
-	scheduleAction := scheduleDispatcherRequest.ScheduleAction
-	config := scheduleDispatcherRequest.Config
-
-	dispatcherID := common.NewDispatcherIDFromPB(config.DispatcherID)
-	switch scheduleAction {
-	case heartbeatpb.ScheduleAction_Create:
-		eventDispatcherManager.NewDispatcher(dispatcherID, config.Span, config.StartTs, config.SchemaID)
-	case heartbeatpb.ScheduleAction_Remove:
-		eventDispatcherManager.RemoveDispatcher(dispatcherID)
+	if len(infos) > 0 {
+		eventDispatcherManager.NewDispatchers(infos)
 	}
 	return false
 }
@@ -200,8 +208,18 @@ func (h *SchedulerDispatcherRequestHandler) GetTimestamp(event SchedulerDispatch
 	return 0
 }
 func (h *SchedulerDispatcherRequestHandler) GetType(event SchedulerDispatcherRequest) dynstream.EventType {
+	// we do batch for create dispatcher now.
+	switch event.ScheduleAction {
+	case heartbeatpb.ScheduleAction_Create:
+		return dynstream.EventType{DataGroup: 1, Property: dynstream.BatchableData}
+	case heartbeatpb.ScheduleAction_Remove:
+		return dynstream.EventType{DataGroup: 2, Property: dynstream.NonBatchable}
+	default:
+		log.Panic("unknown schedule action", zap.Int("action", int(event.ScheduleAction)))
+	}
 	return dynstream.DefaultEventType
 }
+
 func (h *SchedulerDispatcherRequestHandler) OnDrop(event SchedulerDispatcherRequest) {}
 
 type HeartBeatResponseHandler struct {
