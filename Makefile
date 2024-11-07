@@ -114,7 +114,7 @@ generate-protobuf:
 cdc:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/cdc ./cmd
 
-integration_test_build: check_failpoint_ctl 
+integration_test_build: check_failpoint_ctl cdc
 	$(FAILPOINT_ENABLE)
 	$(GOTEST) -ldflags '$(LDFLAGS)' -c -cover -covermode=atomic \
 		-coverpkg=github.com/pingcap/ticdc/... \

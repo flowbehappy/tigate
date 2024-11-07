@@ -90,8 +90,8 @@ jobs:
         if: ${{ always() }}
         run: |
           mkdir ./logs
-          sudo cp -r -L cp /tmp/tidb_cdc_test/charset_gbk/stdout.log ./logs/stdout.log
-          sudo cp -r -L /tmp/tidb_cdc_test/charset_gbk/cdc.log ./logs/cdc.log
+          sudo cp -r -L cp /tmp/tidb_cdc_test/charset_gbk/stdout.log ./logs/
+          sudo cp -r -L /tmp/tidb_cdc_test/charset_gbk/cdc.log ./logs/
           sudo chown -R runner ./logs
 
       # Update logs as artifact seems not stable, so we set `continue-on-error: true` here.
