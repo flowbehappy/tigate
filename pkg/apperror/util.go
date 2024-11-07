@@ -25,7 +25,7 @@ func IsTableNotExistsErr(err error) bool {
 	}
 
 	errCode := errors.ErrCode(mysqlErr.Number)
-	return errCode == infoschema.ErrTableNotExists.Code()
+	return errCode == infoschema.ErrTableNotExists.Code() || errCode == infoschema.ErrDatabaseNotExists.Code()
 }
 
 // IsIgnorableMySQLDDLError is used to check what error can be ignored

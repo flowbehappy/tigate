@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/quotes"
-	"go.uber.org/zap"
 )
 
 type preparedDMLs struct {
@@ -38,15 +38,13 @@ func buildInsert(
 	tableInfo *common.TableInfo,
 	row commonEvent.RowChange,
 	safeMode bool,
-) (string, []interface{}) {
+) (string, []interface{}, error) {
 	args, err := getArgs(&row.Row, tableInfo)
 	if err != nil {
-		// FIXME: handle error
-		log.Panic("getArgs failed", zap.Error(err))
-		return "", nil
+		return "", nil, errors.Trace(err)
 	}
 	if len(args) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 
 	var sql string
@@ -60,21 +58,24 @@ func buildInsert(
 		log.Panic("PreInsertSQL should not be empty")
 	}
 
-	return sql, args
+	return sql, args, nil
 }
 
 // prepareDelete builds a parametric DELETE statement as following
 // sql: `DELETE FROM `test`.`t` WHERE x = ? AND y >= ? LIMIT 1`
-func buildDelete(tableInfo *common.TableInfo, row commonEvent.RowChange) (string, []interface{}) {
+func buildDelete(tableInfo *common.TableInfo, row commonEvent.RowChange) (string, []interface{}, error) {
 	var builder strings.Builder
 	quoteTable := tableInfo.TableName.QuoteString()
 	builder.WriteString("DELETE FROM ")
 	builder.WriteString(quoteTable)
 	builder.WriteString(" WHERE ")
 
-	colNames, whereArgs := whereSlice(&row.PreRow, tableInfo)
+	colNames, whereArgs, err := whereSlice(&row.PreRow, tableInfo)
+	if err != nil {
+		return "", nil, errors.Trace(err)
+	}
 	if len(whereArgs) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 	args := make([]interface{}, 0, len(whereArgs))
 	for i := 0; i < len(colNames); i++ {
@@ -92,10 +93,10 @@ func buildDelete(tableInfo *common.TableInfo, row commonEvent.RowChange) (string
 	}
 	builder.WriteString(" LIMIT 1")
 	sql := builder.String()
-	return sql, args
+	return sql, args, nil
 }
 
-func buildUpdate(tableInfo *common.TableInfo, row commonEvent.RowChange) (string, []interface{}) {
+func buildUpdate(tableInfo *common.TableInfo, row commonEvent.RowChange) (string, []interface{}, error) {
 	var builder strings.Builder
 	if tableInfo.GetPreUpdateSQL() == "" {
 		log.Panic("PreUpdateSQL should not be empty")
@@ -104,17 +105,18 @@ func buildUpdate(tableInfo *common.TableInfo, row commonEvent.RowChange) (string
 
 	args, err := getArgs(&row.Row, tableInfo)
 	if err != nil {
-		// FIXME: handle error
-		log.Panic("getArgs failed", zap.Error(err))
-		return "", nil
+		return "", nil, errors.Trace(err)
 	}
 	if len(args) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 
-	whereColNames, whereArgs := whereSlice(&row.PreRow, tableInfo)
+	whereColNames, whereArgs, err := whereSlice(&row.PreRow, tableInfo)
+	if err != nil {
+		return "", nil, errors.Trace(err)
+	}
 	if len(whereArgs) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 
 	builder.WriteString(" WHERE ")
@@ -134,7 +136,7 @@ func buildUpdate(tableInfo *common.TableInfo, row commonEvent.RowChange) (string
 
 	builder.WriteString(" LIMIT 1")
 	sql := builder.String()
-	return sql, args
+	return sql, args, nil
 }
 
 func getArgs(row *chunk.Row, tableInfo *common.TableInfo) ([]interface{}, error) {
@@ -153,7 +155,7 @@ func getArgs(row *chunk.Row, tableInfo *common.TableInfo) ([]interface{}, error)
 }
 
 // whereSlice returns the column names and values for the WHERE clause
-func whereSlice(row *chunk.Row, tableInfo *common.TableInfo) ([]string, []interface{}) {
+func whereSlice(row *chunk.Row, tableInfo *common.TableInfo) ([]string, []interface{}, error) {
 	args := make([]interface{}, 0, len(tableInfo.Columns))
 	colNames := make([]string, 0, len(tableInfo.Columns))
 	// Try to use unique key values when available
@@ -164,8 +166,7 @@ func whereSlice(row *chunk.Row, tableInfo *common.TableInfo) ([]string, []interf
 		colNames = append(colNames, col.Name.O)
 		v, err := common.FormatColVal(row, col, i)
 		if err != nil {
-			// FIXME: handle error
-			log.Panic("formatColVal failed", zap.Error(err))
+			return nil, nil, errors.Trace(err)
 		}
 		args = append(args, v)
 	}
@@ -176,11 +177,10 @@ func whereSlice(row *chunk.Row, tableInfo *common.TableInfo) ([]string, []interf
 			colNames = append(colNames, col.Name.O)
 			v, err := common.FormatColVal(row, col, i)
 			if err != nil {
-				// FIXME: handle error
-				log.Panic("formatColVal failed", zap.Error(err))
+				return nil, nil, errors.Trace(err)
 			}
 			args = append(args, v)
 		}
 	}
-	return colNames, args
+	return colNames, args, nil
 }

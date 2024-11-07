@@ -144,8 +144,9 @@ func NewDispatcher(
 
 	// only when is not mysql sink, table trigger event dispatcher need tableSchemaStore to store the table name
 	// in order to calculate all the topics when sending checkpointTs to downstream
-	if tableSpan.Equal(heartbeatpb.DDLSpan) && dispatcher.sink.SinkType() != tisink.MysqlSinkType {
+	if tableSpan.Equal(heartbeatpb.DDLSpan) {
 		dispatcher.tableSchemaStore = util.NewTableSchemaStore()
+		dispatcher.sink.SetTableSchemaStore(dispatcher.tableSchemaStore)
 	}
 
 	dispatcher.addToDynamicStream()
@@ -235,9 +236,11 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 			log.Info("Received a stale event, ignore it", zap.Any("event", event), zap.Any("dispatcher", d.id))
 		}
 		if event.GetType() == commonEvent.TypeDMLEvent ||
-			event.GetType() == commonEvent.TypeDDLEvent {
+			event.GetType() == commonEvent.TypeDDLEvent ||
+			event.GetType() == commonEvent.TypeHandshakeEvent {
 			if event.GetSeq() != d.lastEventSeq.Add(1) {
-				log.Warn("Received a out-of-order event, reset the dispatcher", zap.Any("event", event), zap.Any("dispatcher", d.id))
+				log.Warn("Received a out-of-order event, reset the dispatcher", zap.Any("dispatcher", d.id),
+					zap.Uint64("receivedSeq", event.GetSeq()), zap.Uint64("lastEventSeq", d.lastEventSeq.Load()), zap.Any("event", event))
 				d.reset()
 				return false
 			}

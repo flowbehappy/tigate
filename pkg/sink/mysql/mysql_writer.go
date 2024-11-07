@@ -66,8 +66,7 @@ type MysqlWriter struct {
 	statistics *metrics.Statistics
 }
 
-func NewMysqlWriter(db *sql.DB, cfg *MysqlConfig, changefeedID common.ChangeFeedID) *MysqlWriter {
-	statistics := metrics.NewStatistics(changefeedID, "TxnSink")
+func NewMysqlWriter(db *sql.DB, cfg *MysqlConfig, changefeedID common.ChangeFeedID, statistics *metrics.Statistics) *MysqlWriter {
 	return &MysqlWriter{
 		db:                     db,
 		cfg:                    cfg,
@@ -93,7 +92,6 @@ func (w *MysqlWriter) FlushDDLEvent(event *commonEvent.DDLEvent) error {
 
 	if !(event.TiDBOnly && !w.cfg.IsTiDB) {
 		err := w.execDDLWithMaxRetries(event)
-
 		if err != nil {
 			log.Error("exec ddl failed", zap.Error(err))
 			return err
@@ -270,9 +268,6 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 	case commonEvent.InfluenceTypeNormal:
 		tableIds = append(tableIds, relatedTables.TableIDs...)
 	case commonEvent.InfluenceTypeDB:
-		if w.tableSchemaStore == nil {
-			log.Panic("table schema store is nil")
-		}
 		ids := w.tableSchemaStore.GetTableIdsByDB(relatedTables.SchemaID)
 		tableIds = append(tableIds, ids...)
 	case commonEvent.InfluenceTypeAll:
@@ -299,41 +294,45 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 		tableIds = append(tableIds, table.TableID)
 	}
 
-	// generate query
-	//INSERT INTO `tidb_cdc`.`ddl_ts` (ticdc_cluster_id, changefeed, ddl_ts, table_id) values(...) ON DUPLICATE KEY UPDATE ddl_ts=VALUES(ddl_ts), created_at=CURRENT_TIMESTAMP;
-	var builder strings.Builder
-	builder.WriteString("INSERT INTO ")
-	builder.WriteString(filter.TiCDCSystemSchema)
-	builder.WriteString(".")
-	builder.WriteString(filter.DDLTsTable)
-	builder.WriteString("(ticdc_cluster_id, changefeed, ddl_ts, table_id) VALUES ")
+	if len(tableIds) > 0 {
+		// generate query
+		//INSERT INTO `tidb_cdc`.`ddl_ts` (ticdc_cluster_id, changefeed, ddl_ts, table_id) values(...) ON DUPLICATE KEY UPDATE ddl_ts=VALUES(ddl_ts), created_at=CURRENT_TIMESTAMP;
+		var builder strings.Builder
+		builder.WriteString("INSERT INTO ")
+		builder.WriteString(filter.TiCDCSystemSchema)
+		builder.WriteString(".")
+		builder.WriteString(filter.DDLTsTable)
+		builder.WriteString("(ticdc_cluster_id, changefeed, ddl_ts, table_id) VALUES ")
 
-	for idx, tableId := range tableIds {
-		builder.WriteString("('")
-		builder.WriteString(ticdcClusterID)
-		builder.WriteString("', '")
-		builder.WriteString(changefeedID)
-		builder.WriteString("', '")
-		builder.WriteString(ddlTs)
-		builder.WriteString("', ")
-		builder.WriteString(strconv.FormatInt(tableId, 10))
-		builder.WriteString(")")
-		if idx < len(tableIds)-1 {
-			builder.WriteString(", ")
+		for idx, tableId := range tableIds {
+			builder.WriteString("('")
+			builder.WriteString(ticdcClusterID)
+			builder.WriteString("', '")
+			builder.WriteString(changefeedID)
+			builder.WriteString("', '")
+			builder.WriteString(ddlTs)
+			builder.WriteString("', ")
+			builder.WriteString(strconv.FormatInt(tableId, 10))
+			builder.WriteString(")")
+			if idx < len(tableIds)-1 {
+				builder.WriteString(", ")
+			}
 		}
-	}
-	builder.WriteString(" ON DUPLICATE KEY UPDATE ddl_ts=VALUES(ddl_ts), created_at=CURRENT_TIMESTAMP;")
+		builder.WriteString(" ON DUPLICATE KEY UPDATE ddl_ts=VALUES(ddl_ts), created_at=CURRENT_TIMESTAMP;")
 
-	query := builder.String()
-	log.Info("query is", zap.Any("query", query))
-	_, err = tx.Exec(query)
-	if err != nil {
-		log.Error("failed to write ddl ts table", zap.Error(err))
-		err2 := tx.Rollback()
-		if err2 != nil {
-			log.Error("failed to write ddl ts table", zap.Error(err2))
+		query := builder.String()
+		log.Info("query is", zap.Any("query", query))
+		_, err = tx.Exec(query)
+		if err != nil {
+			log.Error("failed to write ddl ts table", zap.Error(err))
+			err2 := tx.Rollback()
+			if err2 != nil {
+				log.Error("failed to write ddl ts table", zap.Error(err2))
+			}
+			return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write ddl ts table;"))
 		}
-		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write ddl ts table;"))
+	} else {
+		log.Error("table ids is empty when write ddl ts table, FIX IT", zap.Any("event", event))
 	}
 
 	if len(dropTableIds) > 0 {
@@ -719,7 +718,7 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *commonEvent.DDLEvent) error {
 			log.Warn("Execute DDL with error, retry later",
 				zap.String("ddl", event.Query),
 				zap.Error(err))
-			return err
+			return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("Execute DDL failed, Query info: %s; ", event.GetDDLQuery())))
 		}
 		return nil
 	}, retry.WithBackoffBaseDelay(pmysql.BackoffBaseDelay.Milliseconds()),
@@ -730,7 +729,10 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *commonEvent.DDLEvent) error {
 
 func (w *MysqlWriter) Flush(events []*commonEvent.DMLEvent, workerNum int) error {
 	w.statistics.ObserveRows(events)
-	dmls := w.prepareDMLs(events)
+	dmls, err := w.prepareDMLs(events)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	//log.Debug("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.Any("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values), zap.Any("startTs", dmls.startTs), zap.Any("workerNum", workerNum))
 	if dmls.rowCount == 0 {
 		return nil
@@ -756,7 +758,7 @@ func (w *MysqlWriter) Flush(events []*commonEvent.DMLEvent, workerNum int) error
 	return nil
 }
 
-func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) *preparedDMLs {
+func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) (*preparedDMLs, error) {
 	// TODO: use a sync.Pool to reduce allocations.
 	startTs := make([]uint64, 0)
 	sqls := make([]string, 0)
@@ -790,9 +792,13 @@ func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) *preparedDMLs 
 			}
 			var query string
 			var args []interface{}
+			var err error
 			// Update Event
 			if row.RowType == commonEvent.RowTypeUpdate {
-				query, args = buildUpdate(event.TableInfo, row)
+				query, args, err = buildUpdate(event.TableInfo, row)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 				if query != "" {
 					sqls = append(sqls, query)
 					values = append(values, args)
@@ -802,7 +808,10 @@ func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) *preparedDMLs 
 
 			// Delete Event
 			if row.RowType == commonEvent.RowTypeDelete {
-				query, args = buildDelete(event.TableInfo, row)
+				query, args, err = buildDelete(event.TableInfo, row)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 				if query != "" {
 					sqls = append(sqls, query)
 					values = append(values, args)
@@ -814,7 +823,10 @@ func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) *preparedDMLs 
 			// INSERT(not in safe mode)
 			// or REPLACE(in safe mode) SQL.
 			if row.RowType == commonEvent.RowTypeInsert {
-				query, args = buildInsert(event.TableInfo, row, w.cfg.SafeMode)
+				query, args, err = buildInsert(event.TableInfo, row, w.cfg.SafeMode)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 				if query != "" {
 					sqls = append(sqls, query)
 					values = append(values, args)
@@ -829,7 +841,7 @@ func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) *preparedDMLs 
 		rowCount:        rowCount,
 		approximateSize: approximateSize,
 		startTs:         startTs,
-	}
+	}, nil
 }
 
 func (w *MysqlWriter) execDMLWithMaxRetries(dmls *preparedDMLs) error {
@@ -859,7 +871,7 @@ func (w *MysqlWriter) execDMLWithMaxRetries(dmls *preparedDMLs) error {
 		// we try to set write source for each txn,
 		// so we can use it to trace the data source
 		if err = SetWriteSource(w.cfg, tx); err != nil {
-			log.Error("SetWriteSource", zap.Error(err))
+			log.Error("Failed to set write source", zap.Error(err))
 			if rbErr := tx.Rollback(); rbErr != nil {
 				if errors.Cause(rbErr) != context.Canceled {
 					log.Warn("failed to rollback txn", zap.Error(rbErr))
@@ -937,7 +949,7 @@ func (w *MysqlWriter) sequenceExecute(
 				}
 			}
 			cancelFunc()
-			return execError
+			return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(execError, fmt.Sprintf("Failed to execute DMLs, query info:%s, args:%v; ", query, args)))
 		}
 		cancelFunc()
 	}
@@ -966,7 +978,7 @@ func (w *MysqlWriter) multiStmtExecute(
 			}
 		}
 		cancel()
-		return err
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("Failed to execute DMLs, query info:%s, args:%v; ", multiStmtSQL, multiStmtArgs)))
 	}
 	return nil
 }
@@ -984,7 +996,7 @@ func (w *MysqlWriter) CreateTable(ctx context.Context, dbName string, tableName 
 				log.Error("Failed to rollback", zap.Error(err))
 			}
 		}
-		return err
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("create %s table: set write source fail;", tableName)))
 	}
 
 	_, err = tx.Exec("CREATE DATABASE IF NOT EXISTS " + dbName)
@@ -1014,4 +1026,10 @@ func (w *MysqlWriter) CreateTable(ctx context.Context, dbName string, tableName 
 	}
 	err = tx.Commit()
 	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("create %s table: begin Tx fail;", tableName)))
+}
+
+func (w *MysqlWriter) Close() {
+	if w.stmtCache != nil {
+		w.stmtCache.Purge()
+	}
 }

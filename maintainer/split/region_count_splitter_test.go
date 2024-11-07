@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/ticdc/heartbeatpb"
-	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tiflow/cdc/processor/tablepb"
 	"github.com/pingcap/tiflow/pkg/config"
 	"github.com/pingcap/tiflow/pkg/spanz"
@@ -121,12 +121,13 @@ func TestRegionCountSplitSpan(t *testing.T) {
 		},
 	}
 
+	cfID := common.NewChangeFeedIDWithName("test")
 	for i, cs := range cases {
 		cfg := &config.ChangefeedSchedulerConfig{
 			EnableTableAcrossNodes: true,
 			RegionThreshold:        1,
 		}
-		splitter := newRegionCountSplitter(model.ChangeFeedID{}, cache, cfg.RegionThreshold)
+		splitter := newRegionCountSplitter(cfID, cache, cfg.RegionThreshold)
 		spans := splitter.split(context.Background(), cs.span, cs.totalCaptures)
 		require.Equalf(t, cs.expectSpans, spans, "%d %s", i, cs.span.String())
 	}
@@ -193,12 +194,14 @@ func TestRegionCountEvenlySplitSpan(t *testing.T) {
 			expectSpansMax: 10,
 		},
 	}
+
+	cfID := common.NewChangeFeedIDWithName("test")
 	for i, cs := range cases {
 		cfg := &config.ChangefeedSchedulerConfig{
 			EnableTableAcrossNodes: true,
 			RegionThreshold:        1,
 		}
-		splitter := newRegionCountSplitter(model.ChangeFeedID{}, cache, cfg.RegionThreshold)
+		splitter := newRegionCountSplitter(cfID, cache, cfg.RegionThreshold)
 		spans := splitter.split(
 			context.Background(),
 			&heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")},
@@ -235,7 +238,8 @@ func TestSplitSpanRegionOutOfOrder(t *testing.T) {
 		EnableTableAcrossNodes: true,
 		RegionThreshold:        1,
 	}
-	splitter := newRegionCountSplitter(model.ChangeFeedID{}, cache, cfg.RegionThreshold)
+	cfID := common.NewChangeFeedIDWithName("test")
+	splitter := newRegionCountSplitter(cfID, cache, cfg.RegionThreshold)
 	span := &heartbeatpb.TableSpan{TableID: 1, StartKey: []byte("t1"), EndKey: []byte("t2")}
 	spans := splitter.split(context.Background(), span, 1)
 	require.Equal(

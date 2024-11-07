@@ -15,6 +15,7 @@ package sink
 
 import (
 	"context"
+	"database/sql"
 	"net/url"
 
 	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
@@ -22,35 +23,40 @@ import (
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/config"
+	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/sink/mysql"
 	"github.com/pingcap/ticdc/pkg/sink/util"
+	"golang.org/x/sync/errgroup"
 
 	utils "github.com/pingcap/tiflow/pkg/util"
 )
 
 const (
-	// DefaultConflictDetectorSlots indicates the default slot count of conflict detector. TODO:check this
-	DefaultConflictDetectorSlots uint64 = 16 * 1024
+	prime = 31
 )
 
-// mysql sink 负责 mysql 类型下游的 sink 模块
-// 一个 event dispatcher manager 对应一个 mysqlSink
-// 实现 Sink 的接口
+// MysqlSink is responsible for writing data to mysql downstream.
+// Including DDL and DML.
 type MysqlSink struct {
 	changefeedID common.ChangeFeedID
 
 	ddlWorker   *worker.MysqlDDLWorker
-	dmlWorker   []*worker.MysqlWorker
+	dmlWorker   []*worker.MysqlDMLWorker
 	workerCount int
+
+	db         *sql.DB
+	errgroup   *errgroup.Group
+	statistics *metrics.Statistics
 }
 
-// func NewMysqlSink(changefeedID common.ChangeFeedID, workerCount int, cfg *mysql.MysqlConfig, db *sql.DB) *MysqlSink {
-func NewMysqlSink(changefeedID common.ChangeFeedID, workerCount int, config *config.ChangefeedConfig, sinkURI *url.URL) (*MysqlSink, error) {
-	ctx := context.Background()
+func NewMysqlSink(ctx context.Context, changefeedID common.ChangeFeedID, workerCount int, config *config.ChangefeedConfig, sinkURI *url.URL) (*MysqlSink, error) {
+	errgroup, ctx := errgroup.WithContext(ctx)
 	mysqlSink := MysqlSink{
 		changefeedID: changefeedID,
-		dmlWorker:    make([]*worker.MysqlWorker, workerCount),
+		dmlWorker:    make([]*worker.MysqlDMLWorker, workerCount),
 		workerCount:  workerCount,
+		errgroup:     errgroup,
+		statistics:   metrics.NewStatistics(changefeedID, "TxnSink"),
 	}
 
 	cfg, db, err := mysql.NewMysqlConfigAndDB(ctx, changefeedID, sinkURI)
@@ -60,11 +66,20 @@ func NewMysqlSink(changefeedID common.ChangeFeedID, workerCount int, config *con
 	cfg.SyncPointRetention = utils.GetOrZero(config.SyncPointRetention)
 
 	for i := 0; i < workerCount; i++ {
-		mysqlSink.dmlWorker[i] = worker.NewMysqlWorker(db, cfg, i, mysqlSink.changefeedID, ctx)
+		mysqlSink.dmlWorker[i] = worker.NewMysqlDMLWorker(ctx, db, cfg, i, mysqlSink.changefeedID, errgroup, mysqlSink.statistics)
 	}
-	mysqlSink.ddlWorker = worker.NewMysqlDDLWorker(db, cfg, mysqlSink.changefeedID, ctx)
+	mysqlSink.ddlWorker = worker.NewMysqlDDLWorker(ctx, db, cfg, mysqlSink.changefeedID, errgroup, mysqlSink.statistics)
+	mysqlSink.db = db
 
 	return &mysqlSink, nil
+}
+
+func (s *MysqlSink) Run() error {
+	s.ddlWorker.Run()
+	for i := 0; i < s.workerCount; i++ {
+		s.dmlWorker[i].Run()
+	}
+	return s.errgroup.Wait()
 }
 
 func (s *MysqlSink) SinkType() SinkType {
@@ -82,8 +97,10 @@ func (s *MysqlSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *type
 
 	tableProgress.Add(event)
 
-	// TODO:后续再优化这里的逻辑，目前有个问题是 physical table id 好像都是偶数？这个后面改个能见人的方法
-	index := int64(event.PhysicalTableID) % int64(s.workerCount)
+	// Considering that the parity of tableID is not necessarily even,
+	// directly dividing by the number of buckets may cause unevenness between buckets.
+	// Therefore, we first take the modulus of the prime number and then take the modulus of the bucket.
+	index := int64(event.PhysicalTableID) % prime % int64(s.workerCount)
 	s.dmlWorker[index].GetEventChan() <- event
 }
 
@@ -106,5 +123,13 @@ func (s *MysqlSink) Close(removeDDLTsItem bool) error {
 	if removeDDLTsItem {
 		return s.ddlWorker.RemoveDDLTsItem()
 	}
+	for i := 0; i < s.workerCount; i++ {
+		s.dmlWorker[i].Close()
+	}
+
+	s.ddlWorker.Close()
+
+	s.db.Close()
+	s.statistics.Close()
 	return nil
 }

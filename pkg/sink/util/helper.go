@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/sink/codec/common"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"github.com/pingcap/tiflow/pkg/util"
+	"go.uber.org/zap"
 )
 
 // GetEncoderConfig returns the encoder config and validates the config.
@@ -78,17 +79,34 @@ func (s *TableSchemaStore) AddEvent(event *commonEvent.DDLEvent) {
 	s.tableIDStore.AddEvent(event)
 }
 
+func (s *TableSchemaStore) initialized() bool {
+	if s == nil || (s.tableIDStore == nil && s.tableNameStore == nil) {
+		log.Warn("TableSchemaStore is not initialized", zap.Any("tableSchemaStore", s))
+		return false
+	}
+	return true
+}
+
 func (s *TableSchemaStore) GetTableIdsByDB(schemaID int64) []int64 {
+	if !s.initialized() {
+		return nil
+	}
 	return s.tableIDStore.GetTableIdsByDB(schemaID)
 }
 
 func (s *TableSchemaStore) GetAllTableIds() []int64 {
+	if !s.initialized() {
+		return nil
+	}
 	return s.tableIDStore.GetAllTableIds()
 }
 
 // GetAllTableNames only will be called when maintainer send message to ask dispatcher to write checkpointTs to downstream.
 // So the ts must be <= the latest received event ts of table trigger event dispatcher.
 func (s *TableSchemaStore) GetAllTableNames(ts uint64) []*commonEvent.SchemaTableName {
+	if !s.initialized() {
+		return nil
+	}
 	return s.tableNameStore.GetAllTableNames(ts)
 }
 

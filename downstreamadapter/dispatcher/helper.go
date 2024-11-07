@@ -220,7 +220,7 @@ func SetDispatcherTaskScheduler(taskScheduler threadpool.ThreadPool) {
 	DispatcherTaskScheduler = taskScheduler
 }
 
-// EventsHandler is used to dispatcher the events received.
+// EventsHandler is used to dispatch the received events.
 // If the event is a DML event, it will be added to the sink for writing to downstream.
 // If the event is a resolved TS event, it will be update the resolvedTs of the dispatcher.
 // If the event is a DDL event,

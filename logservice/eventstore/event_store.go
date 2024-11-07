@@ -93,20 +93,27 @@ type dispatcherStat struct {
 	// called when new resolved ts event come
 	notifier ResolvedTsNotifier
 
-	subID logpuller.SubscriptionID
+	tableSpan *heartbeatpb.TableSpan
+	// the max ts of events which is not needed by this dispatcher
+	checkpointTs uint64
 
-	tableID int64
+	subID logpuller.SubscriptionID
+}
+
+type subscriptionStat struct {
+	// dispatchers depend on this subscription
+	ids map[common.DispatcherID]bool
+	// events of this subsription will be send to the channel identified by chIndex
+	chIndex int
+	// data <= checkpointTs can be deleted
+	checkpointTs uint64
+	// the resolveTs persisted in the store
+	resolvedTs uint64
+	// the max commit ts of dml event in the store
+	maxEventCommitTs uint64
 	// an id encode in the event key of this dispatcher
 	// used to seperate data between dispatchers with overlapping spans
 	uniqueKeyID uint64
-	// the max ts of events which is not needed by this dispatcher
-	checkpointTs atomic.Uint64
-	// the max commit ts of dml event in the store
-	maxEventCommitTs atomic.Uint64
-	// the resolveTs persisted in the store
-	// just used in metrics now. maybe can be removed in the future.
-	resolvedTs atomic.Uint64
-	chIndex    int
 }
 
 type eventStore struct {
@@ -129,7 +136,10 @@ type eventStore struct {
 	dispatcherStates struct {
 		sync.RWMutex
 		m map[common.DispatcherID]*dispatcherStat
-		n map[logpuller.SubscriptionID]common.DispatcherID
+		n map[logpuller.SubscriptionID]*subscriptionStat
+		// table id -> dispatcher ids
+		// use table id as the key is to share data between spans not completely the same in the future.
+		l map[int64]map[common.DispatcherID]bool
 	}
 
 	encoder *zstd.Encoder
@@ -214,7 +224,8 @@ func New(
 		store.eventChs = append(store.eventChs, make(chan eventWithState, 8192))
 	}
 	store.dispatcherStates.m = make(map[common.DispatcherID]*dispatcherStat)
-	store.dispatcherStates.n = make(map[logpuller.SubscriptionID]common.DispatcherID)
+	store.dispatcherStates.n = make(map[logpuller.SubscriptionID]*subscriptionStat)
+	store.dispatcherStates.l = make(map[int64]map[common.DispatcherID]bool)
 
 	// start background goroutines to handle events from puller
 	for i := range store.dbs {
@@ -310,35 +321,84 @@ func (e *eventStore) RegisterDispatcher(
 		zap.String("span", tableSpan.String()),
 		zap.Uint64("startTs", startTs))
 
+	start := time.Now()
+	defer func() {
+		log.Info("register dispatcher done",
+			zap.Any("dispatcherID", dispatcherID),
+			zap.String("span", tableSpan.String()),
+			zap.Uint64("startTs", startTs),
+			zap.Duration("duration", time.Since(start)))
+	}()
+
+	stat := &dispatcherStat{
+		dispatcherID: dispatcherID,
+		notifier:     notifier,
+		tableSpan:    tableSpan,
+		checkpointTs: startTs,
+	}
+
+	e.dispatcherStates.Lock()
+	if candidateIDs, ok := e.dispatcherStates.l[tableSpan.TableID]; ok {
+		for candidateID := range candidateIDs {
+			candidateDispatcher, ok := e.dispatcherStates.m[candidateID]
+			if !ok {
+				log.Panic("should not happen")
+			}
+			if candidateDispatcher.tableSpan.Equal(tableSpan) {
+				subscriptionStat, ok := e.dispatcherStates.n[candidateDispatcher.subID]
+				if !ok {
+					log.Panic("should not happen")
+				}
+				// check whether startTs is in the range [checkpointTs, resolvedTs]
+				// for `[checkpointTs`: because we want data > startTs, so data <= startTs is deleted is ok.
+				// for `resolvedTs]`: startTs == resolvedTs is a special case that no resolved ts has been recieved, so it is ok.
+				if subscriptionStat.checkpointTs <= startTs || startTs <= subscriptionStat.resolvedTs {
+					stat.subID = candidateDispatcher.subID
+					e.dispatcherStates.m[dispatcherID] = stat
+					// add dispatcher to existing subscription and return
+					subscriptionStat.ids[dispatcherID] = true
+					candidateIDs[dispatcherID] = true
+					e.dispatcherStates.Unlock()
+					return nil
+				}
+			}
+		}
+	}
+	e.dispatcherStates.Unlock()
+
+	// cannot share data from existing subscription, create a new one
 	chIndex := common.HashTableSpan(tableSpan, len(e.eventChs))
 	uniqueKeyID := genUniqueID()
-	// Note: don'w hold any lock when call Subscribe
-	subID := e.puller.Subscribe(*tableSpan, startTs, subscriptionTag{
-		chIndex:     chIndex,
-		tableID:     tableSpan.TableID,
-		uniqueKeyID: uniqueKeyID,
-	})
-
-	// initialize dispatcherStat
+	// Note: don't hold any lock when call Subscribe
 	// TODO: if puller event come before we initialize dispatcherStat,
 	// maxEventCommitTs may not be updated correctly and cause data loss.(lost resolved ts is harmless)
 	// To fix it, we need to alloc subID and initialize dispatcherStat before puller may send events.
 	// That is allocate subID in a separate method.
+	stat.subID = e.puller.Subscribe(*tableSpan, startTs, subscriptionTag{
+		chIndex:     chIndex,
+		tableID:     tableSpan.TableID,
+		uniqueKeyID: uniqueKeyID,
+	})
+	metrics.EventStoreSubscriptionGauge.Inc()
+
 	e.dispatcherStates.Lock()
 	defer e.dispatcherStates.Unlock()
-	stat := &dispatcherStat{
-		dispatcherID: dispatcherID,
-		notifier:     notifier,
-		subID:        subID,
-		tableID:      tableSpan.TableID,
-		uniqueKeyID:  uniqueKeyID,
-		chIndex:      chIndex,
-	}
-	stat.checkpointTs.Store(startTs)
-	stat.maxEventCommitTs.Store(startTs)
-	stat.resolvedTs.Store(startTs)
 	e.dispatcherStates.m[dispatcherID] = stat
-	e.dispatcherStates.n[subID] = dispatcherID
+	e.dispatcherStates.n[stat.subID] = &subscriptionStat{
+		ids:              map[common.DispatcherID]bool{dispatcherID: true},
+		chIndex:          chIndex,
+		checkpointTs:     startTs,
+		resolvedTs:       startTs,
+		maxEventCommitTs: startTs,
+		uniqueKeyID:      uniqueKeyID,
+	}
+	dispatchersForSameTable, ok := e.dispatcherStates.l[tableSpan.TableID]
+	if !ok {
+		e.dispatcherStates.l[tableSpan.TableID] = map[common.DispatcherID]bool{dispatcherID: true}
+	} else {
+		dispatchersForSameTable[dispatcherID] = true
+	}
+
 	return nil
 }
 
@@ -351,11 +411,32 @@ func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) erro
 		return nil
 	}
 	subID := stat.subID
+	tableID := stat.tableSpan.TableID
 	delete(e.dispatcherStates.m, dispatcherID)
-	delete(e.dispatcherStates.n, subID)
 
-	// TODO: do we need unlock before puller.Unsubscribe?
-	e.puller.Unsubscribe(subID)
+	// delete the dispatcher from subscription
+	subscriptionStat, ok := e.dispatcherStates.n[subID]
+	if !ok {
+		log.Panic("should not happen")
+	}
+	delete(subscriptionStat.ids, dispatcherID)
+	if len(subscriptionStat.ids) == 0 {
+		delete(e.dispatcherStates.n, subID)
+		// TODO: do we need unlock before puller.Unsubscribe?
+		e.puller.Unsubscribe(subID)
+		metrics.EventStoreSubscriptionGauge.Dec()
+	}
+
+	// delete the dispatcher from table subscriptions
+	dispatchersForSameTable, ok := e.dispatcherStates.l[tableID]
+	if !ok {
+		log.Panic("should not happen")
+	}
+	delete(dispatchersForSameTable, dispatcherID)
+	if len(dispatchersForSameTable) == 0 {
+		delete(e.dispatcherStates.l, tableID)
+	}
+
 	return nil
 }
 
@@ -366,10 +447,25 @@ func (e *eventStore) UpdateDispatcherSendTs(
 	e.dispatcherStates.RLock()
 	defer e.dispatcherStates.RUnlock()
 	if stat, ok := e.dispatcherStates.m[dispatcherID]; ok {
-		oldSendTs := stat.checkpointTs.Load()
-		if sendTs > oldSendTs {
-			stat.checkpointTs.Store(sendTs)
-			e.gcManager.addGCItem(stat.chIndex, stat.uniqueKeyID, stat.tableID, oldSendTs, sendTs)
+		stat.checkpointTs = sendTs
+		subscriptionStat := e.dispatcherStates.n[stat.subID]
+		// calculate the new checkpoint ts of the subscription
+		newCheckpointTs := uint64(0)
+		for dispatcherID := range subscriptionStat.ids {
+			dispatcherStat := e.dispatcherStates.m[dispatcherID]
+			if newCheckpointTs == 0 || dispatcherStat.checkpointTs < newCheckpointTs {
+				newCheckpointTs = dispatcherStat.checkpointTs
+			}
+		}
+		if subscriptionStat.checkpointTs < newCheckpointTs {
+			e.gcManager.addGCItem(
+				subscriptionStat.chIndex,
+				subscriptionStat.uniqueKeyID,
+				stat.tableSpan.TableID,
+				subscriptionStat.checkpointTs,
+				newCheckpointTs,
+			)
+			subscriptionStat.checkpointTs = newCheckpointTs
 		}
 	}
 	return nil
@@ -382,10 +478,10 @@ func (e *eventStore) GetDispatcherDMLEventState(dispatcherID common.DispatcherID
 	if !ok {
 		log.Panic("fail to find dispatcher", zap.Any("dispatcherID", dispatcherID))
 	}
-
+	subscriptionStat := e.dispatcherStates.n[stat.subID]
 	return DMLEventState{
-		// ResolvedTs:       stat.resolvedTs.Load(),
-		MaxEventCommitTs: stat.maxEventCommitTs.Load(),
+		// ResolvedTs:       subscriptionStat.resolvedTs,
+		MaxEventCommitTs: subscriptionStat.maxEventCommitTs,
 	}
 }
 
@@ -395,18 +491,19 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 	if !ok {
 		log.Panic("fail to find dispatcher", zap.Any("dispatcherID", dispatcherID))
 	}
-	if dataRange.StartTs < stat.checkpointTs.Load() {
+	subscriptionStat := e.dispatcherStates.n[stat.subID]
+	if dataRange.StartTs < subscriptionStat.checkpointTs {
 		log.Panic("should not happen",
 			zap.Any("dispatcherID", dispatcherID),
-			zap.Uint64("checkpointTs", stat.checkpointTs.Load()),
+			zap.Uint64("checkpointTs", subscriptionStat.checkpointTs),
 			zap.Uint64("startTs", dataRange.StartTs))
 	}
-	db := e.dbs[stat.chIndex]
+	db := e.dbs[subscriptionStat.chIndex]
 	e.dispatcherStates.RUnlock()
 
 	// convert range before pass it to pebble: (startTs, endTs] is equal to [startTs + 1, endTs + 1)
-	start := EncodeKeyPrefix(stat.uniqueKeyID, stat.tableID, dataRange.StartTs+1)
-	end := EncodeKeyPrefix(stat.uniqueKeyID, stat.tableID, dataRange.EndTs+1)
+	start := EncodeKeyPrefix(subscriptionStat.uniqueKeyID, stat.tableSpan.TableID, dataRange.StartTs+1)
+	end := EncodeKeyPrefix(subscriptionStat.uniqueKeyID, stat.tableSpan.TableID, dataRange.EndTs+1)
 	// TODO: optimize read performance
 	iter, err := db.NewIter(&pebble.IterOptions{
 		LowerBound: start,
@@ -420,7 +517,7 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 	metrics.EventStoreScanRequestsCount.Inc()
 
 	return &eventStoreIter{
-		tableID:      stat.tableID,
+		tableID:      stat.tableSpan.TableID,
 		innerIter:    iter,
 		prevStartTs:  0,
 		prevCommitTs: 0,
@@ -443,9 +540,9 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 			currentPhyTs := oracle.GetPhysical(currentTime)
 			minResolvedTs := uint64(0)
 			e.dispatcherStates.RLock()
-			for _, stat := range e.dispatcherStates.m {
+			for _, subscriptionStat := range e.dispatcherStates.n {
 				// resolved ts lag
-				resolvedTs := stat.resolvedTs.Load()
+				resolvedTs := atomic.LoadUint64(&subscriptionStat.resolvedTs)
 				resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
 				resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
 				metrics.EventStoreDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
@@ -453,7 +550,7 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 					minResolvedTs = resolvedTs
 				}
 				// checkpoint ts lag
-				checkpointTs := stat.checkpointTs.Load()
+				checkpointTs := subscriptionStat.checkpointTs
 				watermarkPhyTs := oracle.ExtractPhysical(checkpointTs)
 				watermarkLag := float64(currentPhyTs-watermarkPhyTs) / 1e3
 				metrics.EventStoreDispatcherWatermarkLagHist.Observe(float64(watermarkLag))
@@ -501,35 +598,31 @@ func (e *eventStore) batchAndWriteEvents(ctx context.Context, db *pebble.DB, inp
 				metrics.EventStoreWriteBytes.Add(float64(size))
 			}
 
+			e.dispatcherStates.RLock()
 			for subID, maxEventCommitTs := range batchEvent.maxEventCommitTsMap {
-				e.dispatcherStates.RLock()
-				dispatcherID, ok := e.dispatcherStates.n[subID]
+				subscriptionStat, ok := e.dispatcherStates.n[subID]
 				if !ok {
-					// the dispatcher is removed?
+					// the subscription is removed?
 					log.Warn("unknown subscriptionID", zap.Uint64("subID", uint64(subID)))
-					e.dispatcherStates.RUnlock()
 					continue
 				}
-				stat := e.dispatcherStates.m[dispatcherID]
-				e.dispatcherStates.RUnlock()
-				stat.maxEventCommitTs.Store(maxEventCommitTs)
+				subscriptionStat.maxEventCommitTs = maxEventCommitTs
 			}
-
 			// update resolved ts after commit successfully
 			for subID, resolvedTs := range batchEvent.resolvedTsMap {
-				e.dispatcherStates.RLock()
-				dispatcherID, ok := e.dispatcherStates.n[subID]
+				subscriptionStat, ok := e.dispatcherStates.n[subID]
 				if !ok {
-					// the dispatcher is removed?
+					// the subscription is removed?
 					log.Warn("unknown subscriptionID", zap.Uint64("subID", uint64(subID)))
-					e.dispatcherStates.RUnlock()
 					continue
 				}
-				stat := e.dispatcherStates.m[dispatcherID]
-				e.dispatcherStates.RUnlock()
-				stat.resolvedTs.Store(resolvedTs)
-				stat.notifier(resolvedTs)
+				atomic.StoreUint64(&subscriptionStat.resolvedTs, resolvedTs)
+				for dispatcherID := range subscriptionStat.ids {
+					dispatcherStat := e.dispatcherStates.m[dispatcherID]
+					dispatcherStat.notifier(resolvedTs)
+				}
 			}
+			e.dispatcherStates.RUnlock()
 		}
 	}()
 

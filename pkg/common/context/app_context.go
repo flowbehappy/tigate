@@ -21,7 +21,7 @@ const (
 
 // Put all the global instances here.
 type AppContext struct {
-	// TODO
+	id         string
 	serviceMap sync.Map
 }
 
@@ -33,6 +33,9 @@ func GetGlobalContext() *AppContext {
 	})
 	return instance
 }
+
+func SetID(id string) { GetGlobalContext().id = id }
+func GetID() string   { return GetGlobalContext().id }
 
 func SetService[T any](name string, t T) { GetGlobalContext().serviceMap.Store(name, t) }
 func GetService[T any](name string) T {
