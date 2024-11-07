@@ -589,10 +589,10 @@ func (c *eventBroker) updateDispatcherSendTs(ctx context.Context) {
 				return
 			case <-ticker.C:
 				c.dispatchers.Range(func(key, value interface{}) bool {
-					dispatcher := value.(*dispatcherStat)
-					watermark := dispatcher.watermark.Load()
+					// dispatcher := value.(*dispatcherStat)
+					// watermark := dispatcher.watermark.Load()
 					// FIXME: this is currently not correct
-					c.eventStore.UpdateDispatcherSendTs(dispatcher.info.GetID(), watermark)
+					// c.eventStore.UpdateDispatcherSendTs(dispatcher.info.GetID(), watermark)
 					return true
 				})
 			}
