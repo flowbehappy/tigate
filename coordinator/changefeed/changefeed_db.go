@@ -221,8 +221,8 @@ func (db *ChangefeedDB) MarkMaintainerReplicating(task *Changefeed) {
 	db.replicating[task.ID] = task
 }
 
-// GetScheduleSate returns the absent maintainers and the working state of each node
-func (db *ChangefeedDB) GetScheduleSate(absent []*Changefeed, maxSize int) ([]*Changefeed, map[node.ID]int) {
+// GetWaitingSchedulingChangefeeds returns the absent maintainers and the working state of each node
+func (db *ChangefeedDB) GetWaitingSchedulingChangefeeds(absent []*Changefeed, maxSize int) ([]*Changefeed, map[node.ID]int) {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
 
@@ -318,6 +318,9 @@ func (db *ChangefeedDB) MarkMaintainerScheduling(cf *Changefeed) {
 
 // CalculateGCSafepoint calculates the minimum checkpointTs of all changefeeds that replicating the upstream TiDB cluster.
 func (db *ChangefeedDB) CalculateGCSafepoint() uint64 {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
 	var minCpts uint64 = math.MaxUint64
 
 	for _, cf := range db.changefeeds {

@@ -69,7 +69,7 @@ func (s *Scheduler) Execute() time.Time {
 		if availableSize < s.batchSize/2 {
 			return time.Now().Add(time.Millisecond * 100)
 		}
-		absent, nodeSize := s.changefeedDB.GetScheduleSate(s.absent, availableSize)
+		absent, nodeSize := s.changefeedDB.GetWaitingSchedulingChangefeeds(s.absent, availableSize)
 		// add the absent node to the node size map
 		// todo: use the bootstrap nodes
 		for id, _ := range s.nodeManager.GetAliveNodes() {

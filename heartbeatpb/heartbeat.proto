@@ -14,8 +14,7 @@ message HeartBeatRequest {
     Watermark watermark = 2;
     repeated TableSpanStatus statuses = 3;
     bool compeleteStatus = 4; // 是否包含了所有的 table status
-    RunningError warning = 5;
-    RunningError err = 6;
+    RunningError err = 5;
 }
 
 message Watermark {
@@ -92,8 +91,7 @@ message MaintainerStatus {
     string feed_state = 2;
     ComponentState state = 3;
     uint64 checkpoint_ts = 4;
-    repeated RunningError warning = 5;
-    repeated RunningError err = 6;
+    repeated RunningError err = 5;
 }
 
 message CoordinatorBootstrapRequest {
