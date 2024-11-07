@@ -408,6 +408,9 @@ func (e *eventStore) RegisterDispatcher(
 
 func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
 	log.Info("unregister dispatcher", zap.Stringer("dispatcherID", dispatcherID))
+	defer func() {
+		log.Info("unregister dispatcher done", zap.Any("dispatcherID", dispatcherID))
+	}()
 	e.dispatcherStates.Lock()
 	defer e.dispatcherStates.Unlock()
 	stat, ok := e.dispatcherStates.m[dispatcherID]
