@@ -350,7 +350,7 @@ func (e *eventStore) RegisterDispatcher(
 					log.Panic("should not happen")
 				}
 				// check whether startTs is in the range [checkpointTs, resolvedTs]
-				// for `[checkpointTs`: because we want data > startTs, so data <= startTs is deleted is ok.
+				// for `[checkpointTs`: because we want data > startTs, so data <= checkpointTs == startTs deleted is ok.
 				// for `resolvedTs]`: startTs == resolvedTs is a special case that no resolved ts has been recieved, so it is ok.
 				if subscriptionStat.checkpointTs <= startTs || startTs <= subscriptionStat.resolvedTs {
 					stat.subID = candidateDispatcher.subID
@@ -456,6 +456,14 @@ func (e *eventStore) UpdateDispatcherSendTs(
 			if newCheckpointTs == 0 || dispatcherStat.checkpointTs < newCheckpointTs {
 				newCheckpointTs = dispatcherStat.checkpointTs
 			}
+		}
+		if newCheckpointTs == 0 {
+			return nil
+		}
+		if newCheckpointTs < subscriptionStat.checkpointTs {
+			log.Panic("should not happen",
+				zap.Uint64("newCheckpointTs", newCheckpointTs),
+				zap.Uint64("oldCheckpointTs", subscriptionStat.checkpointTs))
 		}
 		if subscriptionStat.checkpointTs < newCheckpointTs {
 			e.gcManager.addGCItem(
