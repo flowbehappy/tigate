@@ -446,6 +446,7 @@ func (e *eventStore) UpdateDispatcherSendTs(
 ) error {
 	e.dispatcherStates.RLock()
 	defer e.dispatcherStates.RUnlock()
+	log.Info("start update dispatcher send ts")
 	if stat, ok := e.dispatcherStates.m[dispatcherID]; ok {
 		stat.checkpointTs = sendTs
 		subscriptionStat := e.dispatcherStates.n[stat.subID]
@@ -458,6 +459,7 @@ func (e *eventStore) UpdateDispatcherSendTs(
 			}
 			log.Info("update dispatcher send ts",
 				zap.Any("dispatcherID", dispatcherID),
+				zap.Int64("tableID", dispatcherStat.tableSpan.TableID),
 				zap.Uint64("dispatcherCheckpointTs", dispatcherStat.checkpointTs),
 				zap.Uint64("newCheckpointTs", newCheckpointTs))
 		}
