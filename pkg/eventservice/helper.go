@@ -37,8 +37,14 @@ func (h *dispatcherEventsHandler) GetType(event scanTask) dynstream.EventType {
 	return dynstream.EventType{DataGroup: 0, Property: dynstream.PeriodicSignal}
 }
 
-func (h *dispatcherEventsHandler) GetSize(event scanTask) int                              { return 0 }
-func (h *dispatcherEventsHandler) GetArea(path common.DispatcherID, dest *eventBroker) int { return 0 }
-func (h *dispatcherEventsHandler) GetTimestamp(event scanTask) dynstream.Timestamp         { return 0 }
-func (h *dispatcherEventsHandler) IsPaused(event scanTask) bool                            { return false }
-func (h *dispatcherEventsHandler) OnDrop(event scanTask)                                   {}
+func (h *dispatcherEventsHandler) GetSize(event scanTask) int { return 0 }
+func (h *dispatcherEventsHandler) GetArea(path common.DispatcherID, dest *eventBroker) common.GID {
+	d, ok := dest.getDispatcher(path)
+	if !ok {
+		return common.GID{}
+	}
+	return d.info.GetChangefeedID().ID()
+}
+func (h *dispatcherEventsHandler) GetTimestamp(event scanTask) dynstream.Timestamp { return 0 }
+func (h *dispatcherEventsHandler) IsPaused(event scanTask) bool                    { return false }
+func (h *dispatcherEventsHandler) OnDrop(event scanTask)                           {}
