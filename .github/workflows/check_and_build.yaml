@@ -89,8 +89,10 @@ jobs:
       - name: Copy logs to hack permission
         if: ${{ always() }}
         run: |
+          cat /tmp/tidb_cdc_test/charset_gbk/stdout.log
+          tail -n 10 /tmp/tidb_cdc_test/charset_gbk/cdc.log
           mkdir ./logs
-          sudo cp -r -L cp /tmp/tidb_cdc_test/charset_gbk/stdout.log ./logs/
+          sudo cp -r -L /tmp/tidb_cdc_test/charset_gbk/stdout.log ./logs/
           sudo cp -r -L /tmp/tidb_cdc_test/charset_gbk/cdc.log ./logs/
           sudo chown -R runner ./logs
 
