@@ -144,8 +144,9 @@ func NewDispatcher(
 
 	// only when is not mysql sink, table trigger event dispatcher need tableSchemaStore to store the table name
 	// in order to calculate all the topics when sending checkpointTs to downstream
-	if tableSpan.Equal(heartbeatpb.DDLSpan) && dispatcher.sink.SinkType() != tisink.MysqlSinkType {
+	if tableSpan.Equal(heartbeatpb.DDLSpan) {
 		dispatcher.tableSchemaStore = util.NewTableSchemaStore()
+		dispatcher.sink.SetTableSchemaStore(dispatcher.tableSchemaStore)
 	}
 
 	dispatcher.addToDynamicStream()

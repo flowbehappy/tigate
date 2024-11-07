@@ -157,6 +157,15 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 		manager.CollectHeartbeatInfoWhenStatesChanged(ctx)
 	}()
 
+	manager.wg.Add(1)
+	go func() {
+		defer manager.wg.Done()
+		err := manager.sink.Run()
+		if err != nil {
+			//TODO
+		}
+	}()
+
 	// collector block status from all dispatchers
 	manager.wg.Add(1)
 	go func() {

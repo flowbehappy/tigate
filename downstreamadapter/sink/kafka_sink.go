@@ -39,12 +39,13 @@ import (
 	tikafka "github.com/pingcap/tiflow/pkg/sink/kafka"
 	utils "github.com/pingcap/tiflow/pkg/util"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 type KafkaSink struct {
 	changefeedID common.ChangeFeedID
 
-	dmlWorker *worker.KafkaWorker
+	dmlWorker *worker.KafkaDMLWorker
 	ddlWorker *worker.KafkaDDLWorker
 
 	// the module used by dmlWorker and ddlWorker
@@ -52,6 +53,8 @@ type KafkaSink struct {
 	adminClient  tikafka.ClusterAdminClient
 	topicManager topicmanager.TopicManager
 	statistics   *metrics.Statistics
+
+	errgroup *errgroup.Group
 }
 
 func (s *KafkaSink) SinkType() SinkType {
@@ -59,6 +62,7 @@ func (s *KafkaSink) SinkType() SinkType {
 }
 
 func NewKafkaSink(ctx context.Context, changefeedID common.ChangeFeedID, sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig) (*KafkaSink, error) {
+	errGroup, ctx := errgroup.WithContext(ctx)
 	topic, err := helper.GetTopic(sinkURI)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -138,7 +142,7 @@ func NewKafkaSink(ctx context.Context, changefeedID common.ChangeFeedID, sinkURI
 	dmlProducer := producer.NewKafkaDMLProducer(ctx, changefeedID, dmlAsyncProducer, metricsCollector)
 	encoderGroup := codec.NewEncoderGroup(ctx, sinkConfig, encoderConfig, changefeedID)
 
-	dmlWorker := worker.NewKafkaWorker(ctx, changefeedID, protocol, dmlProducer, encoderGroup, columnSelector, eventRouter, topicManager, statistics)
+	dmlWorker := worker.NewKafkaWorker(ctx, changefeedID, protocol, dmlProducer, encoderGroup, columnSelector, eventRouter, topicManager, statistics, errGroup)
 
 	// for ddl worker
 	encoder, err := codec.NewEventEncoder(ctx, encoderConfig)
@@ -151,7 +155,7 @@ func NewKafkaSink(ctx context.Context, changefeedID common.ChangeFeedID, sinkURI
 		return nil, errors.Trace(err)
 	}
 	ddlProducer := producer.NewKafkaDDLProducer(ctx, changefeedID, ddlSyncProducer)
-	ddlWorker := worker.NewKafkaDDLWorker(ctx, changefeedID, protocol, ddlProducer, encoder, eventRouter, topicManager, statistics)
+	ddlWorker := worker.NewKafkaDDLWorker(ctx, changefeedID, protocol, ddlProducer, encoder, eventRouter, topicManager, statistics, errGroup)
 
 	return &KafkaSink{
 		changefeedID: changefeedID,
@@ -160,7 +164,14 @@ func NewKafkaSink(ctx context.Context, changefeedID common.ChangeFeedID, sinkURI
 		adminClient:  adminClient,
 		topicManager: topicManager,
 		statistics:   statistics,
+		errgroup:     errGroup,
 	}, nil
+}
+
+func (s *KafkaSink) Run() error {
+	s.dmlWorker.Run()
+	s.ddlWorker.Run()
+	return s.errgroup.Wait()
 }
 
 func (s *KafkaSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress) {

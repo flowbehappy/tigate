@@ -42,6 +42,7 @@ type Sink interface {
 	CheckStartTs(tableId int64, startTs uint64) (int64, error)
 	Close(removeDDLTsItem bool) error
 	SinkType() SinkType
+	Run() error
 }
 
 func NewSink(ctx context.Context, config *config.ChangefeedConfig, changefeedID common.ChangeFeedID) (Sink, error) {
