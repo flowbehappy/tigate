@@ -461,7 +461,6 @@ func (w *MysqlWriter) RemoveDDLTsItem() error {
 	tx, err := w.db.BeginTx(w.ctx, nil)
 
 	if err != nil {
-		log.Error("select ddl ts table: begin Tx fail", zap.Error(err))
 		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "select ddl ts table: begin Tx fail;"))
 	}
 
