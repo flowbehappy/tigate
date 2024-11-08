@@ -97,7 +97,7 @@ type Dispatcher struct {
 
 	tableProgress *types.TableProgress
 
-	resendTask *ResendTask
+	resendTaskMap map[BlockEventIdentifier]*ResendTask
 
 	schemaIDToDispatchers *SchemaIDToDispatchers
 	schemaID              int64
@@ -139,6 +139,7 @@ func NewDispatcher(
 		tableProgress:         types.NewTableProgress(),
 		schemaID:              schemaID,
 		schemaIDToDispatchers: schemaIDToDispatchers,
+		resendTaskMap:         make(map[BlockEventIdentifier]*ResendTask),
 	}
 	dispatcher.startTs.Store(startTs)
 
@@ -205,8 +206,12 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 	}
 
 	ack := dispatcherStatus.GetAck()
-	if ack != nil && ack.CommitTs == pendingEvent.GetCommitTs() {
-		d.cancelResendTask()
+	if ack != nil {
+		identifier := BlockEventIdentifier{
+			CommitTs:    ack.CommitTs,
+			IsSyncPoint: ack.IsSyncPoint,
+		}
+		d.cancelResendTask(identifier)
 	}
 }
 
@@ -397,7 +402,6 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 	if !shouldBlock(event) {
 		d.sink.AddBlockEvent(event, d.tableProgress)
 		if event.GetNeedAddedTables() != nil || event.GetNeedDroppedTables() != nil {
-			d.blockStatus.setBlockEvent(event, heartbeatpb.BlockStage_NONE)
 			message := &heartbeatpb.TableSpanBlockStatus{
 				ID: d.id.ToPB(),
 				State: &heartbeatpb.State{
@@ -409,7 +413,11 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 					Stage:             heartbeatpb.BlockStage_NONE,
 				},
 			}
-			d.SetResendTask(newResendTask(message, d))
+			identifier := BlockEventIdentifier{
+				CommitTs:    event.GetCommitTs(),
+				IsSyncPoint: false,
+			}
+			d.AddResendTask(identifier, newResendTask(message, d))
 			d.blockStatusesChan <- message
 		}
 	} else {
@@ -427,7 +435,11 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 				Stage:             heartbeatpb.BlockStage_WAITING,
 			},
 		}
-		d.SetResendTask(newResendTask(message, d))
+		identifier := BlockEventIdentifier{
+			CommitTs:    event.GetCommitTs(),
+			IsSyncPoint: event.GetType() == commonEvent.TypeSyncPointEvent,
+		}
+		d.AddResendTask(identifier, newResendTask(message, d))
 		d.blockStatusesChan <- message
 	}
 
@@ -490,17 +502,15 @@ func (d *Dispatcher) GetChangefeedID() common.ChangeFeedID {
 	return d.changefeedID
 }
 
-func (d *Dispatcher) cancelResendTask() {
-	if d.resendTask != nil {
-		d.resendTask.Cancel()
-		d.resendTask = nil
-	} else {
-		log.Warn("try to cancel a nil resend task")
+func (d *Dispatcher) cancelResendTask(identifier BlockEventIdentifier) {
+	task, ok := d.resendTaskMap[identifier]
+	if ok {
+		task.Cancel()
 	}
 }
 
-func (d *Dispatcher) SetResendTask(task *ResendTask) {
-	d.resendTask = task
+func (d *Dispatcher) AddResendTask(identifier BlockEventIdentifier, task *ResendTask) {
+	d.resendTaskMap[identifier] = task
 }
 
 func (d *Dispatcher) GetSchemaID() int64 {
@@ -585,6 +595,7 @@ func (d *Dispatcher) GetRemovingStatus() bool {
 func (d *Dispatcher) GetBlockStatus() *heartbeatpb.State {
 	pendingEvent, blockStage := d.blockStatus.getEventAndStage()
 
+	// we only need to report the block status for the ddl that block others and not finished.
 	if pendingEvent == nil || !shouldBlock(pendingEvent) {
 		return nil
 	}

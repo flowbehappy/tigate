@@ -26,6 +26,13 @@ import (
 	"go.uber.org/zap"
 )
 
+// Considering the sync point event and ddl event may have the same commitTs,
+// we need to distinguish them.
+type BlockEventIdentifier struct {
+	CommitTs    uint64
+	IsSyncPoint bool
+}
+
 type BlockStatus struct {
 	mutex             sync.Mutex
 	blockPendingEvent commonEvent.BlockEvent
@@ -197,10 +204,6 @@ func (t *ResendTask) Execute() time.Time {
 }
 
 func (t *ResendTask) Cancel() {
-	_, blockStage := t.dispatcher.blockStatus.getEventAndStage()
-	if blockStage == heartbeatpb.BlockStage_NONE {
-		t.dispatcher.blockStatus.clear()
-	}
 	t.taskHandle.Cancel()
 }
 
