@@ -97,7 +97,7 @@ type Dispatcher struct {
 
 	tableProgress *types.TableProgress
 
-	resendTaskMap map[BlockEventIdentifier]*ResendTask
+	resendTaskMap *ResendTaskMap
 
 	schemaIDToDispatchers *SchemaIDToDispatchers
 	schemaID              int64
@@ -139,7 +139,7 @@ func NewDispatcher(
 		tableProgress:         types.NewTableProgress(),
 		schemaID:              schemaID,
 		schemaIDToDispatchers: schemaIDToDispatchers,
-		resendTaskMap:         make(map[BlockEventIdentifier]*ResendTask),
+		resendTaskMap:         newResendTaskMap(),
 	}
 	dispatcher.startTs.Store(startTs)
 
@@ -161,27 +161,21 @@ func NewDispatcher(
 // 1. If the action is a write, we need to add the ddl event to the sink for writing to downstream(async).
 // 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and wake the dispatcherEventHandler
 func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.DispatcherStatus) {
-	pendingEvent, _ := d.blockStatus.getEventAndStage()
-	if pendingEvent == nil {
-		// receive outdated status
-		// If status is about ack, ignore it.
-		// If status is about action, we need to return message show we have finished the event.
-		if dispatcherStatus.GetAction() != nil {
-			d.blockStatusesChan <- &heartbeatpb.TableSpanBlockStatus{
-				ID: d.id.ToPB(),
-				State: &heartbeatpb.State{
-					IsBlocked:   true,
-					BlockTs:     dispatcherStatus.GetAction().CommitTs,
-					IsSyncPoint: dispatcherStatus.GetAction().IsSyncPoint,
-					Stage:       heartbeatpb.BlockStage_DONE,
-				},
-			}
+	// deal with the ack info
+	ack := dispatcherStatus.GetAck()
+	if ack != nil {
+		identifier := BlockEventIdentifier{
+			CommitTs:    ack.CommitTs,
+			IsSyncPoint: ack.IsSyncPoint,
 		}
-		return
+		d.cancelResendTask(identifier)
 	}
+
+	// deal with the dispatcher action
 	action := dispatcherStatus.GetAction()
 	if action != nil {
-		if action.CommitTs == pendingEvent.GetCommitTs() {
+		pendingEvent, _ := d.blockStatus.getEventAndStage()
+		if pendingEvent != nil && action.CommitTs == pendingEvent.GetCommitTs() {
 			d.blockStatus.updateBlockStage(heartbeatpb.BlockStage_WRITING)
 			if action.Action == heartbeatpb.Action_Write {
 				d.sink.AddBlockEvent(pendingEvent, d.tableProgress)
@@ -192,6 +186,7 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 			}
 		}
 
+		// whether the outdate message or not, we need to return message show we have finished the event.
 		d.blockStatusesChan <- &heartbeatpb.TableSpanBlockStatus{
 			ID: d.id.ToPB(),
 			State: &heartbeatpb.State{
@@ -203,15 +198,6 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 		}
 
 		d.blockStatus.clear()
-	}
-
-	ack := dispatcherStatus.GetAck()
-	if ack != nil {
-		identifier := BlockEventIdentifier{
-			CommitTs:    ack.CommitTs,
-			IsSyncPoint: ack.IsSyncPoint,
-		}
-		d.cancelResendTask(identifier)
 	}
 }
 
@@ -417,7 +403,7 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 				CommitTs:    event.GetCommitTs(),
 				IsSyncPoint: false,
 			}
-			d.AddResendTask(identifier, newResendTask(message, d))
+			d.resendTaskMap.Set(identifier, newResendTask(message, d))
 			d.blockStatusesChan <- message
 		}
 	} else {
@@ -439,7 +425,7 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 			CommitTs:    event.GetCommitTs(),
 			IsSyncPoint: event.GetType() == commonEvent.TypeSyncPointEvent,
 		}
-		d.AddResendTask(identifier, newResendTask(message, d))
+		d.resendTaskMap.Set(identifier, newResendTask(message, d))
 		d.blockStatusesChan <- message
 	}
 
@@ -503,14 +489,14 @@ func (d *Dispatcher) GetChangefeedID() common.ChangeFeedID {
 }
 
 func (d *Dispatcher) cancelResendTask(identifier BlockEventIdentifier) {
-	task, ok := d.resendTaskMap[identifier]
-	if ok {
-		task.Cancel()
+	task := d.resendTaskMap.Get(identifier)
+	if task == nil {
+		return
 	}
-}
 
-func (d *Dispatcher) AddResendTask(identifier BlockEventIdentifier, task *ResendTask) {
-	d.resendTaskMap[identifier] = task
+	task.Cancel()
+	d.resendTaskMap.Delete(identifier)
+
 }
 
 func (d *Dispatcher) GetSchemaID() int64 {
