@@ -4,7 +4,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/utils/heap"
+	"go.uber.org/zap"
 )
 
 // timestampPathNode is order by timestamp.
@@ -258,6 +260,9 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 				// Reduce the total pending size of the area.
 				if path.areaMemStat != nil {
 					path.areaMemStat.totalPendingSize.Add(-int64(front.eventSize))
+					if front.eventType.Property != PeriodicSignal {
+						log.Info("hyy pop event", zap.Any("path", path.path), zap.Any("commitTs", front.timestamp), zap.Any("event", front.event))
+					}
 				}
 
 				if front.eventType.Property == NonBatchable {
