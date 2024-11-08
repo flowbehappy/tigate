@@ -719,7 +719,7 @@ func (c *eventBroker) resetDispatcher(dispatcherInfo DispatcherInfo) {
 		return
 	}
 	log.Info("reset dispatcher", zap.Any("dispatcher", stat.info.GetID()), zap.Uint64("startTs", stat.info.GetStartTs()))
-	c.resumeDispatcher(dispatcherInfo)
+	c.removeDispatcher(dispatcherInfo)
 	c.addDispatcher(dispatcherInfo)
 }
 
