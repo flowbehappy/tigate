@@ -350,9 +350,9 @@ func (e *eventStore) RegisterDispatcher(
 					log.Panic("should not happen")
 				}
 				// check whether startTs is in the range [checkpointTs, resolvedTs]
-				// for `[checkpointTs`: because we want data > startTs, so data <= startTs is deleted is ok.
+				// for `[checkpointTs`: because we want data > startTs, so data <= checkpointTs == startTs deleted is ok.
 				// for `resolvedTs]`: startTs == resolvedTs is a special case that no resolved ts has been recieved, so it is ok.
-				if subscriptionStat.checkpointTs <= startTs || startTs <= subscriptionStat.resolvedTs {
+				if subscriptionStat.checkpointTs <= startTs && startTs <= subscriptionStat.resolvedTs {
 					stat.subID = candidateDispatcher.subID
 					e.dispatcherStates.m[dispatcherID] = stat
 					// add dispatcher to existing subscription and return
@@ -366,7 +366,11 @@ func (e *eventStore) RegisterDispatcher(
 	}
 	e.dispatcherStates.Unlock()
 
-	// cannot share data from existing subscription, create a new one
+	// cannot share data from existing subscription, create a new subscription
+
+	// TODO: hash span is only needed when we need to reuse data after restart
+	// (if we finally decide not to reuse data after restart, use round robin instead)
+	// But if we need to share data for sub span, we need hash table id instead.
 	chIndex := common.HashTableSpan(tableSpan, len(e.eventChs))
 	uniqueKeyID := genUniqueID()
 	// Note: don't hold any lock when call Subscribe
@@ -457,6 +461,14 @@ func (e *eventStore) UpdateDispatcherSendTs(
 				newCheckpointTs = dispatcherStat.checkpointTs
 			}
 		}
+		if newCheckpointTs == 0 {
+			return nil
+		}
+		if newCheckpointTs < subscriptionStat.checkpointTs {
+			log.Panic("should not happen",
+				zap.Uint64("newCheckpointTs", newCheckpointTs),
+				zap.Uint64("oldCheckpointTs", subscriptionStat.checkpointTs))
+		}
 		if subscriptionStat.checkpointTs < newCheckpointTs {
 			e.gcManager.addGCItem(
 				subscriptionStat.chIndex,
@@ -542,7 +554,7 @@ func (e *eventStore) updateMetrics(ctx context.Context) error {
 			e.dispatcherStates.RLock()
 			for _, subscriptionStat := range e.dispatcherStates.n {
 				// resolved ts lag
-				resolvedTs := subscriptionStat.resolvedTs
+				resolvedTs := atomic.LoadUint64(&subscriptionStat.resolvedTs)
 				resolvedPhyTs := oracle.ExtractPhysical(resolvedTs)
 				resolvedLag := float64(currentPhyTs-resolvedPhyTs) / 1e3
 				metrics.EventStoreDispatcherResolvedTsLagHist.Observe(float64(resolvedLag))
@@ -616,7 +628,7 @@ func (e *eventStore) batchAndWriteEvents(ctx context.Context, db *pebble.DB, inp
 					log.Warn("unknown subscriptionID", zap.Uint64("subID", uint64(subID)))
 					continue
 				}
-				subscriptionStat.resolvedTs = resolvedTs
+				atomic.StoreUint64(&subscriptionStat.resolvedTs, resolvedTs)
 				for dispatcherID := range subscriptionStat.ids {
 					dispatcherStat := e.dispatcherStates.m[dispatcherID]
 					dispatcherStat.notifier(resolvedTs)

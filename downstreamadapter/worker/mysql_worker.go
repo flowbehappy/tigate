@@ -17,9 +17,9 @@ import (
 	"context"
 	"database/sql"
 	"strconv"
-	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
@@ -27,156 +27,186 @@ import (
 	"github.com/pingcap/ticdc/pkg/sink/mysql"
 	"github.com/pingcap/ticdc/pkg/sink/util"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
-// MysqlWorker is use to flush the event downstream
-type MysqlWorker struct {
-	eventChan    chan *commonEvent.DMLEvent
-	mysqlWriter  *mysql.MysqlWriter
-	id           int
+// MysqlDMLWorker is use to flush the dml event downstream
+type MysqlDMLWorker struct {
+	ctx          context.Context
+	errGroup     *errgroup.Group
 	changefeedID common.ChangeFeedID
 
-	wg      sync.WaitGroup
+	eventChan   chan *commonEvent.DMLEvent
+	mysqlWriter *mysql.MysqlWriter
+	id          int
+
 	maxRows int
 }
 
-func NewMysqlWorker(db *sql.DB, config *mysql.MysqlConfig, id int, changefeedID common.ChangeFeedID, ctx context.Context) *MysqlWorker {
-	worker := &MysqlWorker{
-		mysqlWriter:  mysql.NewMysqlWriter(db, config, changefeedID),
+func NewMysqlDMLWorker(
+	ctx context.Context,
+	db *sql.DB,
+	config *mysql.MysqlConfig,
+	id int,
+	changefeedID common.ChangeFeedID,
+	errGroup *errgroup.Group,
+	statistics *metrics.Statistics) *MysqlDMLWorker {
+	return &MysqlDMLWorker{
+		ctx:          ctx,
+		mysqlWriter:  mysql.NewMysqlWriter(ctx, db, config, changefeedID, statistics),
 		id:           id,
 		maxRows:      config.MaxTxnRow,
 		eventChan:    make(chan *commonEvent.DMLEvent, 16),
 		changefeedID: changefeedID,
+		errGroup:     errGroup,
 	}
-	worker.wg.Add(1)
-	go worker.Run(ctx)
-
-	return worker
 }
 
-func (t *MysqlWorker) GetEventChan() chan *commonEvent.DMLEvent {
-	return t.eventChan
+func (w *MysqlDMLWorker) GetEventChan() chan *commonEvent.DMLEvent {
+	return w.eventChan
 }
 
-func (t *MysqlWorker) Run(ctx context.Context) {
-	defer t.wg.Done()
-	workerFlushDuration := metrics.WorkerFlushDuration.WithLabelValues(t.changefeedID.Namespace(), t.changefeedID.Name(), strconv.Itoa(t.id))
-	workerTotalDuration := metrics.WorkerTotalDuration.WithLabelValues(t.changefeedID.Namespace(), t.changefeedID.Name(), strconv.Itoa(t.id))
-	workerHandledRows := metrics.WorkerHandledRows.WithLabelValues(t.changefeedID.Namespace(), t.changefeedID.Name(), strconv.Itoa(t.id))
+func (w *MysqlDMLWorker) Run() {
+	w.errGroup.Go(func() error {
+		namespace := w.changefeedID.Namespace()
+		changefeed := w.changefeedID.Name()
 
-	defer func() {
-		metrics.WorkerFlushDuration.DeleteLabelValues(t.changefeedID.Namespace(), t.changefeedID.Name(), strconv.Itoa(t.id))
-		metrics.WorkerTotalDuration.DeleteLabelValues(t.changefeedID.Namespace(), t.changefeedID.Name(), strconv.Itoa(t.id))
-		metrics.WorkerHandledRows.DeleteLabelValues(t.changefeedID.Namespace(), t.changefeedID.Name(), strconv.Itoa(t.id))
-	}()
+		workerFlushDuration := metrics.WorkerFlushDuration.WithLabelValues(namespace, changefeed, strconv.Itoa(w.id))
+		workerTotalDuration := metrics.WorkerTotalDuration.WithLabelValues(namespace, changefeed, strconv.Itoa(w.id))
+		workerHandledRows := metrics.WorkerHandledRows.WithLabelValues(namespace, changefeed, strconv.Itoa(w.id))
 
-	totalStart := time.Now()
+		defer func() {
+			metrics.WorkerFlushDuration.DeleteLabelValues(namespace, changefeed, strconv.Itoa(w.id))
+			metrics.WorkerTotalDuration.DeleteLabelValues(namespace, changefeed, strconv.Itoa(w.id))
+			metrics.WorkerHandledRows.DeleteLabelValues(namespace, changefeed, strconv.Itoa(w.id))
+		}()
 
-	events := make([]*commonEvent.DMLEvent, 0)
-	rows := 0
-	for {
-		needFlush := false
-		select {
-		case <-ctx.Done():
-			return
-		case txnEvent := <-t.eventChan:
-			events = append(events, txnEvent)
-			rows += int(txnEvent.Len())
-			if rows > t.maxRows {
-				needFlush = true
-			}
-			if !needFlush {
-				delay := time.NewTimer(10 * time.Millisecond)
-				for !needFlush {
-					select {
-					case txnEvent := <-t.eventChan:
-						workerHandledRows.Add(float64(txnEvent.Len()))
-						events = append(events, txnEvent)
-						rows += int(txnEvent.Len())
-						if rows > t.maxRows {
+		totalStart := time.Now()
+
+		events := make([]*commonEvent.DMLEvent, 0)
+		rows := 0
+		for {
+			needFlush := false
+			select {
+			case <-w.ctx.Done():
+				return errors.Trace(w.ctx.Err())
+			case txnEvent := <-w.eventChan:
+				events = append(events, txnEvent)
+				rows += int(txnEvent.Len())
+				if rows > w.maxRows {
+					needFlush = true
+				}
+				if !needFlush {
+					delay := time.NewTimer(10 * time.Millisecond)
+					for !needFlush {
+						select {
+						case txnEvent := <-w.eventChan:
+							workerHandledRows.Add(float64(txnEvent.Len()))
+							events = append(events, txnEvent)
+							rows += int(txnEvent.Len())
+							if rows > w.maxRows {
+								needFlush = true
+							}
+						case <-delay.C:
 							needFlush = true
 						}
-					case <-delay.C:
-						needFlush = true
+					}
+					// Release resources promptly
+					if !delay.Stop() {
+						select {
+						case <-delay.C:
+						default:
+						}
 					}
 				}
-				// Release resources promptly
-				if !delay.Stop() {
-					select {
-					case <-delay.C:
-					default:
-					}
+				start := time.Now()
+				err := w.mysqlWriter.Flush(events, w.id)
+				if err != nil {
+					return errors.Trace(err)
 				}
-			}
-			start := time.Now()
-			err := t.mysqlWriter.Flush(events, t.id)
-			if err != nil {
-				log.Error("Failed to flush events", zap.Error(err), zap.Any("workerID", t.id), zap.Any("events", events))
-				return
-			}
-			workerFlushDuration.Observe(time.Since(start).Seconds())
-			// we record total time to calcuate the worker busy ratio.
-			// so we record the total time after flushing, to unified statistics on
-			// flush time and total time
-			workerTotalDuration.Observe(time.Since(totalStart).Seconds())
-			totalStart = time.Now()
-			log.Info("Flush events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Duration("duration", time.Since(start)), zap.Any("workerID", t.id))
+				workerFlushDuration.Observe(time.Since(start).Seconds())
+				// we record total time to calcuate the worker busy ratio.
+				// so we record the total time after flushing, to unified statistics on
+				// flush time and total time
+				workerTotalDuration.Observe(time.Since(totalStart).Seconds())
+				totalStart = time.Now()
+				log.Info("Flush events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Duration("duration", time.Since(start)), zap.Any("workerID", w.id))
 
-			events = events[:0]
-			rows = 0
+				events = events[:0]
+				rows = 0
+			}
 		}
-	}
+	})
+}
+
+func (w *MysqlDMLWorker) Close() {
+	w.mysqlWriter.Close()
 }
 
 // MysqlDDLWorker is use to flush the ddl event and sync point eventdownstream
 type MysqlDDLWorker struct {
+	ctx          context.Context
+	changefeedID common.ChangeFeedID
 	mysqlWriter  *mysql.MysqlWriter
 	ddlEventChan chan commonEvent.BlockEvent
-	wg           sync.WaitGroup
+	errgroup     *errgroup.Group
 }
 
-func NewMysqlDDLWorker(db *sql.DB, config *mysql.MysqlConfig, changefeedID common.ChangeFeedID, ctx context.Context) *MysqlDDLWorker {
-	worker := &MysqlDDLWorker{
-		mysqlWriter:  mysql.NewMysqlWriter(db, config, changefeedID),
+func NewMysqlDDLWorker(
+	ctx context.Context,
+	db *sql.DB,
+	config *mysql.MysqlConfig,
+	changefeedID common.ChangeFeedID,
+	errGroup *errgroup.Group,
+	statistics *metrics.Statistics) *MysqlDDLWorker {
+	return &MysqlDDLWorker{
+		ctx:          ctx,
+		changefeedID: changefeedID,
+		mysqlWriter:  mysql.NewMysqlWriter(ctx, db, config, changefeedID, statistics),
 		ddlEventChan: make(chan commonEvent.BlockEvent, 16),
+		errgroup:     errGroup,
 	}
-	worker.wg.Add(1)
-	go worker.Run(ctx)
-	return worker
 }
 
-func (t *MysqlDDLWorker) SetTableSchemaStore(tableSchemaStore *util.TableSchemaStore) {
-	t.mysqlWriter.SetTableSchemaStore(tableSchemaStore)
-}
-
-func (t *MysqlDDLWorker) Run(ctx context.Context) {
-	defer t.wg.Done()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case event := <-t.ddlEventChan:
-			switch event.GetType() {
-			case commonEvent.TypeDDLEvent:
-				err := t.mysqlWriter.FlushDDLEvent(event.(*commonEvent.DDLEvent))
-				if err != nil {
-					// FIXME: handle the error
-					log.Error("Failed to flush ddl event", zap.Error(err), zap.Any("event", event))
+func (w *MysqlDDLWorker) Run() {
+	w.errgroup.Go(func() error {
+		for {
+			select {
+			case <-w.ctx.Done():
+				return errors.Trace(w.ctx.Err())
+			case event := <-w.ddlEventChan:
+				switch event.GetType() {
+				case commonEvent.TypeDDLEvent:
+					err := w.mysqlWriter.FlushDDLEvent(event.(*commonEvent.DDLEvent))
+					if err != nil {
+						return errors.Trace(err)
+					}
+				case commonEvent.TypeSyncPointEvent:
+					err := w.mysqlWriter.FlushSyncPointEvent(event.(*commonEvent.SyncPointEvent))
+					if err != nil {
+						log.Error("Failed to flush sync point event",
+							zap.String("namespace", w.changefeedID.Namespace()),
+							zap.String("changefeed", w.changefeedID.Name()),
+							zap.Any("event", event),
+							zap.Error(err))
+					}
+				default:
+					log.Error("unknown event type",
+						zap.String("namespace", w.changefeedID.Namespace()),
+						zap.String("changefeed", w.changefeedID.Name()),
+						zap.Any("event", event))
 				}
-			case commonEvent.TypeSyncPointEvent:
-				err := t.mysqlWriter.FlushSyncPointEvent(event.(*commonEvent.SyncPointEvent))
-				if err != nil {
-					log.Error("Failed to flush sync point event", zap.Error(err), zap.Any("event", event))
-				}
-			default:
-				log.Error("unknown event type", zap.Any("event", event))
 			}
 		}
-	}
+	})
 }
 
-func (t *MysqlDDLWorker) CheckStartTs(tableId int64, startTs uint64) (int64, error) {
-	ddlTs, err := t.mysqlWriter.CheckStartTs(tableId, startTs)
+func (w *MysqlDDLWorker) SetTableSchemaStore(tableSchemaStore *util.TableSchemaStore) {
+	w.mysqlWriter.SetTableSchemaStore(tableSchemaStore)
+}
+
+func (w *MysqlDDLWorker) CheckStartTs(tableId int64, startTs uint64) (int64, error) {
+	ddlTs, err := w.mysqlWriter.CheckStartTs(tableId, startTs)
 	if err != nil {
 		return 0, err
 	}
@@ -186,10 +216,14 @@ func (t *MysqlDDLWorker) CheckStartTs(tableId int64, startTs uint64) (int64, err
 	return max(ddlTs, int64(startTs)), nil
 }
 
-func (t *MysqlDDLWorker) GetDDLEventChan() chan commonEvent.BlockEvent {
-	return t.ddlEventChan
+func (w *MysqlDDLWorker) GetDDLEventChan() chan commonEvent.BlockEvent {
+	return w.ddlEventChan
 }
 
-func (t *MysqlDDLWorker) RemoveDDLTsItem() error {
-	return t.mysqlWriter.RemoveDDLTsItem()
+func (w *MysqlDDLWorker) RemoveDDLTsItem() error {
+	return w.mysqlWriter.RemoveDDLTsItem()
+}
+
+func (w *MysqlDDLWorker) Close() {
+	w.mysqlWriter.Close()
 }

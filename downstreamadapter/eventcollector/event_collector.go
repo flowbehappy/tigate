@@ -140,9 +140,9 @@ func (c *EventCollector) processDispatcherRequests(ctx context.Context) {
 		case req := <-c.dispatcherRequestChan.Out():
 			if err := c.SendDispatcherRequest(req); err != nil {
 				log.Error("failed to process dispatcher action", zap.Error(err))
+				// Sleep a short time to avoid too many requests in a short time.
+				time.Sleep(10 * time.Millisecond)
 			}
-			// Sleep a short time to avoid too many requests in a short time.
-			time.Sleep(10 * time.Millisecond)
 		}
 	}
 }
@@ -150,6 +150,7 @@ func (c *EventCollector) processDispatcherRequests(ctx context.Context) {
 func (c *EventCollector) SendDispatcherRequest(req DispatcherRequest) error {
 	message := &messaging.RegisterDispatcherRequest{
 		RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
+			ChangefeedId: req.Dispatcher.GetChangefeedID().ToPB(),
 			DispatcherId: req.Dispatcher.GetId().ToPB(),
 			ActionType:   req.ActionType,
 			// FIXME: It can be another server id in the future.

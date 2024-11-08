@@ -372,18 +372,17 @@ func (m *Maintainer) onNodeChanged() {
 	for id, _ := range currentNodes {
 		if _, ok := activeNodes[id]; !ok {
 			removedNodes = append(removedNodes, id)
+			delete(m.checkpointTsByCapture, id)
 			m.controller.RemoveNode(id)
 		}
 	}
-	log.Info("maintainer node changed",
-		zap.String("id", m.id.String()),
+	log.Info("maintainer node changed", zap.String("id", m.id.String()),
 		zap.Int("new", len(newNodes)),
 		zap.Int("removed", len(removedNodes)))
 	m.sendMessages(m.bootstrapper.HandleNewNodes(newNodes))
 	cachedResponse := m.bootstrapper.HandleRemoveNodes(removedNodes)
 	if cachedResponse != nil {
-		log.Info("bootstrap done after removed some nodes",
-			zap.String("id", m.id.String()))
+		log.Info("bootstrap done after removed some nodes", zap.String("id", m.id.String()))
 		m.onBootstrapDone(cachedResponse)
 	}
 }
@@ -405,16 +404,20 @@ func (m *Maintainer) calCheckpointTs() {
 	m.lastCheckpointTsTime = time.Now()
 
 	newWatermark := heartbeatpb.NewMaxWatermark()
+	// if there is no tables, there must be a table trigger dispatcher
 	for id, _ := range m.bootstrapper.GetAllNodes() {
-		if m.controller.GetTaskSizeByNodeID(id) > 0 {
-			if _, ok := m.checkpointTsByCapture[id]; !ok {
-				log.Debug("checkpointTs can not be advanced, since missing capture heartbeat",
-					zap.String("changefeed", m.id.Name()),
-					zap.Any("node", id))
-				return
-			}
-			newWatermark.UpdateMin(m.checkpointTsByCapture[id])
+		// maintainer node has the table trigger dispatcher
+		if id != m.selfNode.ID && m.controller.GetTaskSizeByNodeID(id) <= 0 {
+			continue
 		}
+		// node level watermark reported, ignore this round
+		if _, ok := m.checkpointTsByCapture[id]; !ok {
+			log.Debug("checkpointTs can not be advanced, since missing capture heartbeat",
+				zap.String("changefeed", m.id.Name()),
+				zap.Any("node", id))
+			return
+		}
+		newWatermark.UpdateMin(m.checkpointTsByCapture[id])
 	}
 	if newWatermark.CheckpointTs != math.MaxUint64 {
 		m.watermark.CheckpointTs = newWatermark.CheckpointTs
@@ -462,7 +465,7 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) {
 	}
 	m.controller.HandleStatus(msg.From, req.Statuses)
 	if req.Err != nil {
-		m.errLock.Unlock()
+		m.errLock.Lock()
 		m.runningErrors[msg.From] = req.Err
 		m.errLock.Unlock()
 	}
@@ -606,13 +609,11 @@ func (m *Maintainer) getNewBootstrapFn() bootstrap.NewBootstrapMessageFn {
 			zap.Error(err))
 	}
 	return func(id node.ID) *messaging.TargetMessage {
-		var ddlDispatcherID *heartbeatpb.DispatcherID
 		// only send dispatcher id to dispatcher manager on the same node
 		if id == m.selfNode.ID {
-			ddlDispatcherID = m.tableTriggerEventDispatcherID.ToPB()
 			log.Info("create table event trigger dispatcher", zap.String("changefeed", m.id.String()),
 				zap.String("server", id.String()),
-				zap.String("dispatcher id", ddlDispatcherID.String()))
+				zap.String("dispatcher id", m.tableTriggerEventDispatcherID.String()))
 		}
 		log.Info("send maintainer bootstrap message",
 			zap.String("changefeed", m.id.String()),
@@ -625,7 +626,7 @@ func (m *Maintainer) getNewBootstrapFn() bootstrap.NewBootstrapMessageFn {
 				ChangefeedID:                  m.id.ToPB(),
 				Config:                        cfgBytes,
 				StartTs:                       m.startCheckpointTs,
-				TableTriggerEventDispatcherId: ddlDispatcherID,
+				TableTriggerEventDispatcherId: m.tableTriggerEventDispatcherID.ToPB(),
 			})
 	}
 }

@@ -32,7 +32,7 @@ type DispatcherInfo interface {
 	GetTableSpan() *heartbeatpb.TableSpan
 	GetStartTs() uint64
 	GetActionType() eventpb.ActionType
-	GetChangefeedID() (namespace, id string)
+	GetChangefeedID() common.ChangeFeedID
 	GetFilterConfig() *config.FilterConfig
 
 	// sync point related

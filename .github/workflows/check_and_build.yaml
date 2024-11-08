@@ -63,3 +63,47 @@ jobs:
 
       - name: Build
         run: make cdc
+    
+  basic_e2e_test:
+    runs-on: ubuntu-latest 
+    name: E2E Test
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
+
+      - name: Setup Go environment
+        uses: actions/setup-go@v3
+        with:
+          go-version: '1.21'
+
+      - name: Integration Build
+        run: |
+          tests/scripts/download-integration-test-binaries.sh master true
+          go build -o ./tools/bin/failpoint-ctl github.com/pingcap/failpoint/failpoint-ctl 
+          make integration_test_build
+          ls -l bin/ && ls -l tools/bin/
+
+      - name: Test charset_gbk
+        run: |
+          pwd && ls -l bin/ && ls -l tools/bin/
+          export TICDC_NEWARCH=true && make integration_test CASE=charset_gbk 
+
+      - name: Copy logs to hack permission
+        if: ${{ always() }}
+        run: |
+          cat /tmp/tidb_cdc_test/charset_gbk/stdout.log
+          tail -n 10 /tmp/tidb_cdc_test/charset_gbk/cdc.log
+          mkdir ./logs
+          sudo cp -r -L /tmp/tidb_cdc_test/charset_gbk/stdout.log ./logs/
+          sudo cp -r -L /tmp/tidb_cdc_test/charset_gbk/cdc.log ./logs/
+          sudo chown -R runner ./logs
+
+      # Update logs as artifact seems not stable, so we set `continue-on-error: true` here.
+      - name: Upload logs
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: upstream-switch-logs
+          path: |
+            ./logs

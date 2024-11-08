@@ -136,19 +136,19 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 	replicaConfig := config.ReplicaConfig{Filter: cfConfig.Filter}
 	filter, err := filter.NewFilter(replicaConfig.Filter, cfConfig.TimeZone, replicaConfig.CaseSensitive)
 	if err != nil {
-		return nil, 0, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("create filter failed")
+		return nil, 0, errors.Trace(err)
 	}
 	manager.filter = filter
 
 	err = manager.InitSink(ctx)
 	if err != nil {
-		return nil, 0, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("event dispatcher manager init sink failed")
+		return nil, 0, errors.Trace(err)
 	}
 
 	// Register Event Dispatcher Manager in HeartBeatCollector, which is reponsible for communication with the maintainer.
 	err = appcontext.GetService[*HeartBeatCollector](appcontext.HeartbeatCollector).RegisterEventDispatcherManager(manager)
 	if err != nil {
-		return nil, 0, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("register event dispatcher manager failed")
+		return nil, 0, errors.Trace(err)
 	}
 
 	// collector heart beat info from all dispatchers
@@ -156,6 +156,27 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 	go func() {
 		defer manager.wg.Done()
 		manager.CollectHeartbeatInfoWhenStatesChanged(ctx)
+	}()
+
+	manager.wg.Add(1)
+	go func() {
+		defer manager.wg.Done()
+		err := manager.sink.Run()
+		if err != nil && errors.Cause(err) != context.Canceled {
+			log.Error("Sink Run Meets Error",
+				zap.String("changefeedID", manager.changefeedID.String()),
+				zap.Error(err))
+			// report error to maintainer
+			var message heartbeatpb.HeartBeatRequest
+			message.ChangefeedID = manager.changefeedID.ToPB()
+			message.Err = &heartbeatpb.RunningError{
+				Time:    time.Now().String(),
+				Node:    appcontext.GetID(),
+				Code:    string(apperror.ErrorCode(err)),
+				Message: err.Error(),
+			}
+			manager.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: manager.GetMaintainerID(), Request: &message})
+		}
 	}()
 
 	// collector block status from all dispatchers
@@ -169,8 +190,7 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 	if tableTriggerEventDispatcherID != nil {
 		_, err := manager.NewDispatcher(common.NewDispatcherIDFromPB(tableTriggerEventDispatcherID), heartbeatpb.DDLSpan, startTs, 0)
 		if err != nil {
-			log.Error("Create table trigger event dispatcher failed", zap.Error(err))
-			return nil, 0, apperror.ErrCreateEventDispatcherManagerFailed.Wrap(err).GenWithStackByArgs("create table trigger event dispatcher failed")
+			return nil, 0, errors.Trace(err)
 		}
 		return manager, manager.tableTriggerEventDispatcher.GetStartTs(), nil
 	}
@@ -226,7 +246,7 @@ func (e *EventDispatcherManager) close(remove bool) {
 	}
 
 	err = e.sink.Close(remove)
-	if err != nil {
+	if err != nil && errors.Cause(err) != context.Canceled {
 		log.Error("close sink failed", zap.Error(err))
 		return
 	}
@@ -502,7 +522,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 		Watermark:       heartbeatpb.NewMaxWatermark(),
 	}
 
-	toReomveDispatcherIDs := make([]common.DispatcherID, 0)
+	toRemoveDispatcherIDs := make([]common.DispatcherID, 0)
 	removeDispatcherSchemaIDs := make([]int64, 0)
 	heartBeatInfo := &dispatcher.HeartBeatInfo{}
 
@@ -522,7 +542,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 					ComponentStatus: heartbeatpb.ComponentState_Stopped,
 					CheckpointTs:    watermark.CheckpointTs,
 				})
-				toReomveDispatcherIDs = append(toReomveDispatcherIDs, id)
+				toRemoveDispatcherIDs = append(toRemoveDispatcherIDs, id)
 				removeDispatcherSchemaIDs = append(removeDispatcherSchemaIDs, dispatcherItem.GetSchemaID())
 			}
 		}
@@ -538,7 +558,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 		}
 	})
 
-	for idx, id := range toReomveDispatcherIDs {
+	for idx, id := range toRemoveDispatcherIDs {
 		e.cleanTableEventDispatcher(id, removeDispatcherSchemaIDs[idx])
 	}
 
@@ -549,7 +569,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	phyResolvedTs := oracle.ExtractPhysical(message.Watermark.ResolvedTs)
 
 	e.metricCheckpointTsLag.Set(float64(oracle.GetPhysical(time.Now())-phyCheckpointTs) / 1e3)
-	e.metricResolvedTsLag.Set(float64((oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3))
+	e.metricResolvedTsLag.Set(float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3)
 
 	return &message
 }

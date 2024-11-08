@@ -16,11 +16,13 @@ package dispatcherorchestrator
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/downstreamadapter/dispatcher"
 	"github.com/pingcap/ticdc/downstreamadapter/dispatchermanager"
 	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/pkg/apperror"
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	"github.com/pingcap/ticdc/pkg/config"
@@ -73,10 +75,13 @@ func (m *DispatcherOrchestrator) handleAddDispatcherManager(from node.ID, req *h
 		// Fast return the error to maintainer.
 		if err != nil {
 			log.Error("failed to create new dispatcher manager", zap.Error(err), zap.Any("ChangefeedID", cfId.Name()))
-			// TODO: deal with the repsonse in maintainer, and turn to changefeed error state
+
 			response := &heartbeatpb.MaintainerBootstrapResponse{
 				ChangefeedID: req.ChangefeedID,
 				Err: &heartbeatpb.RunningError{
+					Time:    time.Now().String(),
+					Node:    from.String(),
+					Code:    string(apperror.ErrorCode(err)),
 					Message: err.Error(),
 				},
 			}
