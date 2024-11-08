@@ -109,8 +109,9 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 		dispatcherMap:                  newDispatcherMap(),
 		changefeedID:                   changefeedID,
 		maintainerID:                   maintainerID,
-		statusesChan:                   make(chan *heartbeatpb.TableSpanStatus, 10000),
-		blockStatusesChan:              make(chan *heartbeatpb.TableSpanBlockStatus, 1000),
+		statusesChan:                   make(chan *heartbeatpb.TableSpanStatus, 8192),
+		blockStatusesChan:              make(chan *heartbeatpb.TableSpanBlockStatus, 1024*1024),
+		dispatcherActionChan:           make(chan common.DispatcherAction, 1024*1024),
 		cancel:                         cancel,
 		config:                         cfConfig,
 		schemaIDToDispatchers:          dispatcher.NewSchemaIDToDispatchers(),
@@ -457,6 +458,7 @@ func (e *EventDispatcherManager) CollectDispatcherAction(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case a := <-e.dispatcherActionChan:
+			log.Info("collect dispatcher action", zap.String("action", a.String()))
 			d, ok := e.dispatcherMap.Get(a.DispatcherID)
 			if !ok {
 				continue

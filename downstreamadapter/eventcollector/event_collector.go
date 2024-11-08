@@ -210,6 +210,7 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, msg *messaging.Tar
 			}
 		default:
 			c.metricDispatcherReceivedKVEventCount.Inc()
+			log.Info("hyy receive event", zap.Any("commitTs", event.GetCommitTs()), zap.Any("dispatcher", event.GetDispatcherID()), zap.Any("seq", event.GetSeq()))
 			c.ds.In() <- dispatcher.NewDispatcherEvent(event)
 		}
 	}
