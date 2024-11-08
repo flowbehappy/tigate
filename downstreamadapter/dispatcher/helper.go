@@ -273,6 +273,9 @@ type EventsHandler struct {
 }
 
 func (h *EventsHandler) Path(event DispatcherEvent) common.DispatcherID {
+	if event.GetType() == commonEvent.TypeDDLEvent {
+		log.Info("hyy handle ddl event in ds", zap.Any("dispatcher", event.GetDispatcherID()), zap.Any("commitTs", event.GetCommitTs()), zap.Any("seq", event.GetSeq()))
+	}
 	return event.GetDispatcherID()
 }
 
