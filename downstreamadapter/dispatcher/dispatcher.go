@@ -160,6 +160,10 @@ func NewDispatcher(
 // 1. If the action is a write, we need to add the ddl event to the sink for writing to downstream(async).
 // 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and wake the dispatcherEventHandler
 func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.DispatcherStatus) {
+	log.Info("hyy Handle dispatcher status",
+		zap.Any("dispatcherStatus", dispatcherStatus),
+		zap.Any("ack status", dispatcherStatus.GetAck()),
+		zap.Stringer("dispatcher", d.id))
 	pendingEvent, _ := d.blockStatus.getEventAndStage()
 	if pendingEvent == nil {
 		// receive outdated status
@@ -409,6 +413,7 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 					Stage:             heartbeatpb.BlockStage_NONE,
 				},
 			}
+			log.Info("hyy send message to maintainer", zap.Any("message", message))
 			d.SetResendTask(newResendTask(message, d))
 			d.blockStatusesChan <- message
 		}
