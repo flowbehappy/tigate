@@ -670,7 +670,7 @@ func (w *MysqlWriter) execDDL(event *commonEvent.DDLEvent) error {
 }
 
 func (w *MysqlWriter) execDDLWithMaxRetries(event *commonEvent.DDLEvent) error {
-	return retry.Do(context.Background(), func() error {
+	return retry.Do(w.ctx, func() error {
 		err := w.statistics.RecordDDLExecution(func() error { return w.execDDL(event) })
 		if err != nil {
 			if apperror.IsIgnorableMySQLDDLError(err) {

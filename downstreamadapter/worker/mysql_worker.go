@@ -148,7 +148,6 @@ type MysqlDDLWorker struct {
 	ctx          context.Context
 	changefeedID common.ChangeFeedID
 	mysqlWriter  *mysql.MysqlWriter
-	ddlEventChan chan commonEvent.BlockEvent
 	errgroup     *errgroup.Group
 }
 
@@ -163,42 +162,8 @@ func NewMysqlDDLWorker(
 		ctx:          ctx,
 		changefeedID: changefeedID,
 		mysqlWriter:  mysql.NewMysqlWriter(ctx, db, config, changefeedID, statistics),
-		ddlEventChan: make(chan commonEvent.BlockEvent, 16),
 		errgroup:     errGroup,
 	}
-}
-
-func (w *MysqlDDLWorker) Run() {
-	w.errgroup.Go(func() error {
-		for {
-			select {
-			case <-w.ctx.Done():
-				return errors.Trace(w.ctx.Err())
-			case event := <-w.ddlEventChan:
-				switch event.GetType() {
-				case commonEvent.TypeDDLEvent:
-					err := w.mysqlWriter.FlushDDLEvent(event.(*commonEvent.DDLEvent))
-					if err != nil {
-						return errors.Trace(err)
-					}
-				case commonEvent.TypeSyncPointEvent:
-					err := w.mysqlWriter.FlushSyncPointEvent(event.(*commonEvent.SyncPointEvent))
-					if err != nil {
-						log.Error("Failed to flush sync point event",
-							zap.String("namespace", w.changefeedID.Namespace()),
-							zap.String("changefeed", w.changefeedID.Name()),
-							zap.Any("event", event),
-							zap.Error(err))
-					}
-				default:
-					log.Error("unknown event type",
-						zap.String("namespace", w.changefeedID.Namespace()),
-						zap.String("changefeed", w.changefeedID.Name()),
-						zap.Any("event", event))
-				}
-			}
-		}
-	})
 }
 
 func (w *MysqlDDLWorker) SetTableSchemaStore(tableSchemaStore *util.TableSchemaStore) {
@@ -216,8 +181,25 @@ func (w *MysqlDDLWorker) CheckStartTs(tableId int64, startTs uint64) (int64, err
 	return max(ddlTs, int64(startTs)), nil
 }
 
-func (w *MysqlDDLWorker) GetDDLEventChan() chan commonEvent.BlockEvent {
-	return w.ddlEventChan
+func (w *MysqlDDLWorker) WriteBlockEvent(event commonEvent.BlockEvent) error {
+	switch event.GetType() {
+	case commonEvent.TypeDDLEvent:
+		err := w.mysqlWriter.FlushDDLEvent(event.(*commonEvent.DDLEvent))
+		if err != nil {
+			return errors.Trace(err)
+		}
+	case commonEvent.TypeSyncPointEvent:
+		err := w.mysqlWriter.FlushSyncPointEvent(event.(*commonEvent.SyncPointEvent))
+		if err != nil {
+			return errors.Trace(err)
+		}
+	default:
+		log.Error("unknown event type",
+			zap.String("namespace", w.changefeedID.Namespace()),
+			zap.String("changefeed", w.changefeedID.Name()),
+			zap.Any("event", event))
+	}
+	return nil
 }
 
 func (w *MysqlDDLWorker) RemoveDDLTsItem() error {

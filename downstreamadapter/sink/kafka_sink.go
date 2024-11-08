@@ -186,7 +186,7 @@ func (s *KafkaSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *
 	tableProgress.Pass(event)
 }
 
-func (s *KafkaSink) AddBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
+func (s *KafkaSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error {
 	tableProgress.Add(event)
 	switch event := event.(type) {
 	case *commonEvent.DDLEvent:
@@ -195,7 +195,7 @@ func (s *KafkaSink) AddBlockEvent(event commonEvent.BlockEvent, tableProgress *t
 			for _, cb := range event.PostTxnFlushed {
 				cb()
 			}
-			return
+			return nil
 		}
 		s.ddlWorker.GetDDLEventChan() <- event
 	case *commonEvent.SyncPointEvent:
@@ -209,6 +209,7 @@ func (s *KafkaSink) AddBlockEvent(event commonEvent.BlockEvent, tableProgress *t
 			zap.String("changefeed", s.changefeedID.Name()),
 			zap.Any("event type", event.GetType()))
 	}
+	return nil
 }
 
 func (s *KafkaSink) AddCheckpointTs(ts uint64) {

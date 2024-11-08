@@ -175,11 +175,16 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 	// deal with the dispatcher action
 	action := dispatcherStatus.GetAction()
 	if action != nil {
-		pendingEvent, _ := d.blockStatus.getEventAndStage()
-		if pendingEvent != nil && action.CommitTs == pendingEvent.GetCommitTs() {
+		pendingEvent, blockStatus := d.blockStatus.getEventAndStage()
+		if pendingEvent != nil && action.CommitTs == pendingEvent.GetCommitTs() && blockStatus == heartbeatpb.BlockStage_WAITING {
 			d.blockStatus.updateBlockStage(heartbeatpb.BlockStage_WRITING)
 			if action.Action == heartbeatpb.Action_Write {
-				d.sink.AddBlockEvent(pendingEvent, d.tableProgress)
+				err := d.sink.WriteBlockEvent(pendingEvent, d.tableProgress)
+				if err != nil {
+					// TODO: handle error
+					log.Error("write block event failed", zap.Error(err))
+					return
+				}
 			} else {
 				d.sink.PassBlockEvent(pendingEvent, d.tableProgress)
 				dispatcherEventDynamicStream := GetEventDynamicStream()
@@ -344,8 +349,9 @@ func (d *Dispatcher) checkHandshakeEvents(dispatcherEvents []DispatcherEvent) (b
 }
 
 func isCompleteSpan(tableSpan *heartbeatpb.TableSpan) bool {
+	spanz.TableIDToComparableSpan(tableSpan.TableID)
 	startKey, endKey := spanz.GetTableRange(tableSpan.TableID)
-	if spanz.StartCompare(startKey, tableSpan.StartKey) == 0 && spanz.EndCompare(endKey, tableSpan.EndKey) == 0 {
+	if spanz.StartCompare(spanz.ToComparableKey(startKey), tableSpan.StartKey) == 0 && spanz.EndCompare(spanz.ToComparableKey(endKey), tableSpan.EndKey) == 0 {
 		return true
 	}
 	return false
@@ -397,7 +403,11 @@ func (d *Dispatcher) reset() {
 // 2. If the event is a multi-table DDL / sync point Event, it will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
 func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 	if !d.shouldBlock(event) {
-		d.sink.AddBlockEvent(event, d.tableProgress)
+		err := d.sink.WriteBlockEvent(event, d.tableProgress)
+		if err != nil {
+			// TODO: handle error
+			log.Error("write block event failed", zap.Error(err))
+		}
 		if event.GetNeedAddedTables() != nil || event.GetNeedDroppedTables() != nil {
 			message := &heartbeatpb.TableSpanBlockStatus{
 				ID: d.id.ToPB(),
