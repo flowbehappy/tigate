@@ -248,14 +248,25 @@ func (h *EventsHandler) Handle(dispatcher *Dispatcher, events ...DispatcherEvent
 	return dispatcher.HandleEvents(events)
 }
 
+const (
+	DataGroupResolvedTsOrDML = 1
+	DataGroupDDL             = 2
+	DataGroupSyncPoint       = 3
+	DataGroupHandshake       = 4
+)
+
 func (h *EventsHandler) GetType(event DispatcherEvent) dynstream.EventType {
 	switch event.GetType() {
 	case commonEvent.TypeResolvedEvent:
-		return dynstream.EventType{DataGroup: event.GetType(), Property: dynstream.PeriodicSignal}
+		return dynstream.EventType{DataGroup: DataGroupResolvedTsOrDML, Property: dynstream.PeriodicSignal}
 	case commonEvent.TypeDMLEvent:
-		return dynstream.EventType{DataGroup: event.GetType(), Property: dynstream.BatchableData}
-	case commonEvent.TypeDDLEvent, commonEvent.TypeSyncPointEvent, commonEvent.TypeHandshakeEvent:
-		return dynstream.EventType{DataGroup: event.GetType(), Property: dynstream.NonBatchable}
+		return dynstream.EventType{DataGroup: DataGroupResolvedTsOrDML, Property: dynstream.BatchableData}
+	case commonEvent.TypeDDLEvent:
+		return dynstream.EventType{DataGroup: DataGroupDDL, Property: dynstream.NonBatchable}
+	case commonEvent.TypeSyncPointEvent:
+		return dynstream.EventType{DataGroup: DataGroupSyncPoint, Property: dynstream.NonBatchable}
+	case commonEvent.TypeHandshakeEvent:
+		return dynstream.EventType{DataGroup: DataGroupHandshake, Property: dynstream.NonBatchable}
 	default:
 		log.Panic("unknown event type", zap.Int("type", int(event.GetType())))
 	}
@@ -270,7 +281,9 @@ func (h *EventsHandler) GetArea(path common.DispatcherID, dest *Dispatcher) comm
 func (h *EventsHandler) GetTimestamp(event DispatcherEvent) dynstream.Timestamp {
 	return dynstream.Timestamp(event.GetCommitTs())
 }
-func (h *EventsHandler) OnDrop(event DispatcherEvent) {}
+func (h *EventsHandler) OnDrop(event DispatcherEvent) {
+	log.Info("event dropped", zap.Any("dispatcher", event.GetDispatcherID()), zap.Any("commitTs", event.GetCommitTs()), zap.Any("sequence", event.GetSeq()))
+}
 
 type DispatcherEvent struct {
 	commonEvent.Event

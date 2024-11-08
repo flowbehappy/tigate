@@ -150,6 +150,7 @@ func (c *EventCollector) processDispatcherRequests(ctx context.Context) {
 func (c *EventCollector) SendDispatcherRequest(req DispatcherRequest) error {
 	message := &messaging.RegisterDispatcherRequest{
 		RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
+			ChangefeedId: req.Dispatcher.GetChangefeedID().ToPB(),
 			DispatcherId: req.Dispatcher.GetId().ToPB(),
 			ActionType:   req.ActionType,
 			// FIXME: It can be another server id in the future.
