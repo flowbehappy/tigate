@@ -467,9 +467,16 @@ func (e *EventDispatcherManager) CollectDispatcherAction(ctx context.Context) {
 			log.Info("collect dispatcher action", zap.String("action", a.String()))
 			d, ok := e.dispatcherMap.Get(a.DispatcherID)
 			// The dispatcher must in the dispatcherMap or equal to the tableTriggerEventDispatcher
-			if !ok && a.DispatcherID != e.tableTriggerEventDispatcher.GetId() {
+			if !ok {
+				if a.DispatcherID == e.tableTriggerEventDispatcher.GetId() {
+					d = e.tableTriggerEventDispatcher
+				}
+			}
+			if d == nil {
+				log.Info("Dispatcher not found in dispatcherMap", zap.Any("dispatcher", a.DispatcherID))
 				continue
 			}
+
 			var req eventcollector.DispatcherRequest
 			switch a.Action {
 			case common.ActionPause:
