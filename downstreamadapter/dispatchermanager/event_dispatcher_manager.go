@@ -466,7 +466,8 @@ func (e *EventDispatcherManager) CollectDispatcherAction(ctx context.Context) {
 		case a := <-e.dispatcherActionChan:
 			log.Info("collect dispatcher action", zap.String("action", a.String()))
 			d, ok := e.dispatcherMap.Get(a.DispatcherID)
-			if !ok {
+			// The dispatcher must in the dispatcherMap or equal to the tableTriggerEventDispatcher
+			if !ok && a.DispatcherID != e.tableTriggerEventDispatcher.GetId() {
 				continue
 			}
 			var req eventcollector.DispatcherRequest
