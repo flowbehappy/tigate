@@ -75,7 +75,6 @@ func NewMysqlSink(ctx context.Context, changefeedID common.ChangeFeedID, workerC
 }
 
 func (s *MysqlSink) Run() error {
-	s.ddlWorker.Run()
 	for i := 0; i < s.workerCount; i++ {
 		s.dmlWorker[i].Run()
 	}
@@ -108,9 +107,9 @@ func (s *MysqlSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *
 	tableProgress.Pass(event)
 }
 
-func (s *MysqlSink) AddBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
+func (s *MysqlSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error {
 	tableProgress.Add(event)
-	s.ddlWorker.GetDDLEventChan() <- event
+	return s.ddlWorker.WriteBlockEvent(event)
 }
 
 func (s *MysqlSink) AddCheckpointTs(ts uint64) {}

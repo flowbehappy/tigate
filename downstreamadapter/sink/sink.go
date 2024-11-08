@@ -35,7 +35,7 @@ const (
 
 type Sink interface {
 	AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress)
-	AddBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress)
+	WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error
 	PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress)
 	AddCheckpointTs(ts uint64)
 	SetTableSchemaStore(tableSchemaStore *sinkutil.TableSchemaStore)
