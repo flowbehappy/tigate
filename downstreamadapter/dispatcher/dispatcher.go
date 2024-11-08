@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/pingcap/ticdc/pkg/sink/util"
 	"github.com/pingcap/ticdc/utils/dynstream"
+	"github.com/pingcap/tiflow/pkg/spanz"
 	"go.uber.org/zap"
 )
 
@@ -174,11 +175,16 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 	// deal with the dispatcher action
 	action := dispatcherStatus.GetAction()
 	if action != nil {
-		pendingEvent, _ := d.blockStatus.getEventAndStage()
-		if pendingEvent != nil && action.CommitTs == pendingEvent.GetCommitTs() {
+		pendingEvent, blockStatus := d.blockStatus.getEventAndStage()
+		if pendingEvent != nil && action.CommitTs == pendingEvent.GetCommitTs() && blockStatus == heartbeatpb.BlockStage_WAITING {
 			d.blockStatus.updateBlockStage(heartbeatpb.BlockStage_WRITING)
 			if action.Action == heartbeatpb.Action_Write {
-				d.sink.AddBlockEvent(pendingEvent, d.tableProgress)
+				err := d.sink.WriteBlockEvent(pendingEvent, d.tableProgress)
+				if err != nil {
+					// TODO: handle error
+					log.Error("write block event failed", zap.Error(err))
+					return
+				}
 			} else {
 				d.sink.PassBlockEvent(pendingEvent, d.tableProgress)
 				dispatcherEventDynamicStream := GetEventDynamicStream()
@@ -343,7 +349,16 @@ func (d *Dispatcher) checkHandshakeEvents(dispatcherEvents []DispatcherEvent) (b
 	return false, dispatcherEvents[index:]
 }
 
-func shouldBlock(event commonEvent.BlockEvent) bool {
+func isCompleteSpan(tableSpan *heartbeatpb.TableSpan) bool {
+	spanz.TableIDToComparableSpan(tableSpan.TableID)
+	startKey, endKey := spanz.GetTableRange(tableSpan.TableID)
+	if spanz.StartCompare(spanz.ToComparableKey(startKey), tableSpan.StartKey) == 0 && spanz.EndCompare(spanz.ToComparableKey(endKey), tableSpan.EndKey) == 0 {
+		return true
+	}
+	return false
+}
+
+func (d *Dispatcher) shouldBlock(event commonEvent.BlockEvent) bool {
 	switch event.GetType() {
 	case commonEvent.TypeDDLEvent:
 		ddlEvent := event.(*commonEvent.DDLEvent)
@@ -352,9 +367,11 @@ func shouldBlock(event commonEvent.BlockEvent) bool {
 			case commonEvent.InfluenceTypeNormal:
 				if len(ddlEvent.GetBlockedTables().TableIDs) > 1 {
 					return true
-				} else {
-					return false
+				} else if !isCompleteSpan(d.tableSpan) {
+					// if the table is split, even the blockTable only itself, it should block
+					return true
 				}
+				return false
 			case commonEvent.InfluenceTypeDB, commonEvent.InfluenceTypeAll:
 				return true
 			}
@@ -389,8 +406,12 @@ func (d *Dispatcher) reset() {
 // If the ddl leads to add new tables or drop tables, it should send heartbeat to maintainer
 // 2. If the event is a multi-table DDL / sync point Event, it will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
 func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
-	if !shouldBlock(event) {
-		d.sink.AddBlockEvent(event, d.tableProgress)
+	if !d.shouldBlock(event) {
+		err := d.sink.WriteBlockEvent(event, d.tableProgress)
+		if err != nil {
+			// TODO: handle error
+			log.Error("write block event failed", zap.Error(err))
+		}
 		if event.GetNeedAddedTables() != nil || event.GetNeedDroppedTables() != nil {
 			message := &heartbeatpb.TableSpanBlockStatus{
 				ID: d.id.ToPB(),
@@ -586,7 +607,7 @@ func (d *Dispatcher) GetBlockStatus() *heartbeatpb.State {
 	pendingEvent, blockStage := d.blockStatus.getEventAndStage()
 
 	// we only need to report the block status for the ddl that block others and not finished.
-	if pendingEvent == nil || !shouldBlock(pendingEvent) {
+	if pendingEvent == nil || !d.shouldBlock(pendingEvent) {
 		return nil
 	}
 
