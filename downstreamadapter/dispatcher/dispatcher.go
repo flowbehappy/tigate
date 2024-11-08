@@ -596,7 +596,7 @@ func (d *Dispatcher) GetRemovingStatus() bool {
 func (d *Dispatcher) GetBlockStatus() *heartbeatpb.State {
 	pendingEvent, blockStage := d.blockStatus.getEventAndStage()
 
-	if pendingEvent == nil || !shouldBlock(pendingEvent) {
+	if pendingEvent == nil || !d.shouldBlock(pendingEvent) {
 		return nil
 	}
 
