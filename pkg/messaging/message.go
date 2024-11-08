@@ -135,8 +135,8 @@ func (r RegisterDispatcherRequest) GetStartTs() uint64 {
 	return r.StartTs
 }
 
-func (r RegisterDispatcherRequest) GetChangefeedID() (namespace, id string) {
-	return r.Namespace, r.ChangefeedId
+func (r RegisterDispatcherRequest) GetChangefeedID() common.ChangeFeedID {
+	return common.NewChangefeedIDFromPB(r.ChangefeedId)
 }
 
 func (r RegisterDispatcherRequest) GetFilterConfig() *config.FilterConfig {

@@ -58,7 +58,8 @@ type eventBroker struct {
 	// TODO: Make it support merge the tasks of the same table span, even if the tasks are from different dispatchers.
 	taskPool *scanTaskPool
 
-	ds dynstream.DynamicStream[int, common.DispatcherID, scanTask, *eventBroker, *dispatcherEventsHandler]
+	// GID here is the internal changefeedID, use to identify the area of the dispatcher.
+	ds dynstream.DynamicStream[common.GID, common.DispatcherID, scanTask, *eventBroker, *dispatcherEventsHandler]
 
 	// scanWorkerCount is the number of the scan workers to spawn.
 	scanWorkerCount int
@@ -566,12 +567,12 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 					continue
 				}
 				phyResolvedTs := oracle.ExtractPhysical(pullerMinResolvedTs)
-				lag := (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
+				lag := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
 				c.metricEventServicePullerResolvedTs.Set(float64(phyResolvedTs))
-				c.metricEventServiceResolvedTsLag.Set(float64(lag))
+				c.metricEventServiceResolvedTsLag.Set(lag)
 
-				lag = (oracle.GetPhysical(time.Now()) - oracle.ExtractPhysical(dispatcherMinWaterMark)) / 1e3
-				c.metricEventServiceDispatcherResolvedTs.Set(float64(lag))
+				lag = float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dispatcherMinWaterMark)) / 1e3
+				c.metricEventServiceDispatcherResolvedTs.Set(lag)
 			}
 		}
 	}()
@@ -642,8 +643,8 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	dispatcher := newDispatcherStat(startTs, info, filter)
 	if span.Equal(heartbeatpb.DDLSpan) {
 		c.tableTriggerDispatchers.Store(id, dispatcher)
-		log.Info("table trigger dispatcher register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
-			zap.Any("acceptorID", id), zap.Int64("tableID", span.TableID),
+		log.Info("table trigger dispatcher register dispatcher", zap.Uint64("clusterID", c.tidbClusterID),
+			zap.Any("dispatcherID", id), zap.Int64("tableID", span.TableID),
 			zap.Uint64("startTs", startTs), zap.Duration("brokerRegisterDuration", time.Since(start)))
 		return
 	}
@@ -675,8 +676,8 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	eventStoreRegisterDuration := time.Since(start)
 	c.ds.AddPath(id, c, dynstream.AreaSettings{})
 
-	log.Info("register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
-		zap.Any("acceptorID", id), zap.Int64("tableID", span.TableID),
+	log.Info("register dispatcher", zap.Uint64("clusterID", c.tidbClusterID),
+		zap.Any("dispatcherID", id), zap.Int64("tableID", span.TableID),
 		zap.Uint64("startTs", startTs), zap.Duration("brokerRegisterDuration", brokerRegisterDuration),
 		zap.Duration("eventStoreRegisterDuration", eventStoreRegisterDuration))
 }
@@ -717,17 +718,9 @@ func (c *eventBroker) resetDispatcher(dispatcherInfo DispatcherInfo) {
 	if !ok {
 		return
 	}
-	tableInfo, err := c.schemaStore.GetTableInfo(stat.info.GetTableSpan().TableID, stat.info.GetStartTs())
-	if err != nil {
-		log.Panic("get table info from schemaStore failed", zap.Error(err), zap.Int64("tableID", stat.info.GetTableSpan().TableID), zap.Uint64("startTs", stat.info.GetStartTs()))
-	}
-	stat.updateTableInfo(tableInfo)
-	stat.watermark.Store(stat.info.GetStartTs())
-	// Reset the seq to 0, so that the next event will be sent with seq 1.
-	stat.seq.Store(0)
-	stat.startTs.Store(stat.info.GetStartTs())
-	stat.isRunning.Store(true)
-	stat.isInitialized.Store(false)
+	log.Info("reset dispatcher", zap.Any("dispatcher", stat.info.GetID()), zap.Uint64("startTs", stat.info.GetStartTs()))
+	c.removeDispatcher(dispatcherInfo)
+	c.addDispatcher(dispatcherInfo)
 }
 
 // Store the progress of the dispatcher, and the incremental events stats.
@@ -773,14 +766,14 @@ func newDispatcherStat(
 	info DispatcherInfo,
 	filter filter.Filter,
 ) *dispatcherStat {
-	namespace, id := info.GetChangefeedID()
+	changefeedID := info.GetChangefeedID()
 	dispStat := &dispatcherStat{
 		info:                                  info,
 		filter:                                filter,
-		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(namespace, id, "kv"),
-		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "kv"),
-		metricEventServiceSendDDLCount:        metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "ddl"),
-		metricEventServiceSendResolvedTsCount: metrics.EventServiceSendEventCount.WithLabelValues(namespace, id, "resolved_ts"),
+		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "kv"),
+		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "kv"),
+		metricEventServiceSendDDLCount:        metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "ddl"),
+		metricEventServiceSendResolvedTsCount: metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "resolved_ts"),
 	}
 	if info.SyncPointEnabled() {
 		dispStat.enableSyncPoint = true

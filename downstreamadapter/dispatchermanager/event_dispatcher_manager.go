@@ -162,7 +162,10 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 	go func() {
 		defer manager.wg.Done()
 		err := manager.sink.Run()
-		if err != nil {
+		if err != nil && errors.Cause(err) != context.Canceled {
+			log.Error("Sink Run Meets Error",
+				zap.String("changefeedID", manager.changefeedID.String()),
+				zap.Error(err))
 			// report error to maintainer
 			var message heartbeatpb.HeartBeatRequest
 			message.ChangefeedID = manager.changefeedID.ToPB()
@@ -250,7 +253,7 @@ func (e *EventDispatcherManager) close(remove bool) {
 	}
 
 	err = e.sink.Close(remove)
-	if err != nil {
+	if err != nil && errors.Cause(err) != context.Canceled {
 		log.Error("close sink failed", zap.Error(err))
 		return
 	}
@@ -553,7 +556,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 		Watermark:       heartbeatpb.NewMaxWatermark(),
 	}
 
-	toReomveDispatcherIDs := make([]common.DispatcherID, 0)
+	toRemoveDispatcherIDs := make([]common.DispatcherID, 0)
 	removeDispatcherSchemaIDs := make([]int64, 0)
 	heartBeatInfo := &dispatcher.HeartBeatInfo{}
 
@@ -573,7 +576,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 					ComponentStatus: heartbeatpb.ComponentState_Stopped,
 					CheckpointTs:    watermark.CheckpointTs,
 				})
-				toReomveDispatcherIDs = append(toReomveDispatcherIDs, id)
+				toRemoveDispatcherIDs = append(toRemoveDispatcherIDs, id)
 				removeDispatcherSchemaIDs = append(removeDispatcherSchemaIDs, dispatcherItem.GetSchemaID())
 			}
 		}
@@ -589,7 +592,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 		}
 	})
 
-	for idx, id := range toReomveDispatcherIDs {
+	for idx, id := range toRemoveDispatcherIDs {
 		e.cleanTableEventDispatcher(id, removeDispatcherSchemaIDs[idx])
 	}
 
@@ -600,7 +603,7 @@ func (e *EventDispatcherManager) CollectHeartbeatInfo(needCompleteStatus bool) *
 	phyResolvedTs := oracle.ExtractPhysical(message.Watermark.ResolvedTs)
 
 	e.metricCheckpointTsLag.Set(float64(oracle.GetPhysical(time.Now())-phyCheckpointTs) / 1e3)
-	e.metricResolvedTsLag.Set(float64((oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3))
+	e.metricResolvedTsLag.Set(float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3)
 
 	return &message
 }
