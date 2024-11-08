@@ -160,11 +160,20 @@ func NewDispatcher(
 // 1. If the action is a write, we need to add the ddl event to the sink for writing to downstream(async).
 // 2. If the action is a pass, we just need to pass the event in tableProgress(for correct calculation) and wake the dispatcherEventHandler
 func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.DispatcherStatus) {
-	log.Info("hyy Handle dispatcher status",
-		zap.Any("dispatcherStatus", dispatcherStatus),
-		zap.Any("ack status", dispatcherStatus.GetAck()),
-		zap.Stringer("dispatcher", d.id))
 	pendingEvent, _ := d.blockStatus.getEventAndStage()
+	if pendingEvent != nil {
+		log.Info("hyy Handle dispatcher status",
+			zap.Any("dispatcherStatus", dispatcherStatus),
+			zap.Any("ack status", dispatcherStatus.GetAck()),
+			zap.Stringer("dispatcher", d.id),
+			zap.Any("pending event", pendingEvent))
+	} else {
+		log.Info("hyy Handle dispatcher status, and pending event is nil",
+			zap.Any("dispatcherStatus", dispatcherStatus),
+			zap.Any("ack status", dispatcherStatus.GetAck()),
+			zap.Stringer("dispatcher", d.id))
+	}
+
 	if pendingEvent == nil {
 		// receive outdated status
 		// If status is about ack, ignore it.
@@ -398,6 +407,7 @@ func (d *Dispatcher) reset() {
 // If the ddl leads to add new tables or drop tables, it should send heartbeat to maintainer
 // 2. If the event is a multi-table DDL / sync point Event, it will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
 func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
+	log.Info("hyy dealWithBlockEvent", zap.Any("event", event), zap.Stringer("dispatcher", d.id))
 	if !shouldBlock(event) {
 		d.sink.AddBlockEvent(event, d.tableProgress)
 		if event.GetNeedAddedTables() != nil || event.GetNeedDroppedTables() != nil {

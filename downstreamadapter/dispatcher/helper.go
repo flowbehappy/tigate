@@ -197,8 +197,8 @@ func (t *ResendTask) Execute() time.Time {
 }
 
 func (t *ResendTask) Cancel() {
-	log.Info("hyy Cancel ResendTask")
-	_, blockStage := t.dispatcher.blockStatus.getEventAndStage()
+	pendingEvent, blockStage := t.dispatcher.blockStatus.getEventAndStage()
+	log.Info("hyy Cancel ResendTask", zap.Any("message", t.message), zap.Any("pendingEvent", pendingEvent))
 	if blockStage == heartbeatpb.BlockStage_NONE {
 		t.dispatcher.blockStatus.clear()
 	}
