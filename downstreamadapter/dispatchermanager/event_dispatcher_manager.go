@@ -187,10 +187,16 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 		manager.CollectBlockStatusRequest(ctx)
 	}()
 
+	manager.wg.Add(1)
+	go func() {
+		defer manager.wg.Done()
+		manager.CollectDispatcherAction(ctx)
+	}()
+
 	// create tableTriggerEventDispatcher if it is not nil
 	if tableTriggerEventDispatcherID != nil {
 		err := manager.NewDispatchers([]DispatcherCreateInfo{
-			DispatcherCreateInfo{
+			{
 				Id:        common.NewDispatcherIDFromPB(tableTriggerEventDispatcherID),
 				TableSpan: heartbeatpb.DDLSpan,
 				StartTs:   startTs,
