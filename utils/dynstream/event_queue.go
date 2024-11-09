@@ -255,7 +255,7 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 				front, ok := path.pendingQueue.FrontRef()
 				if !ok ||
 					(group != DefaultEventType.DataGroup && group != front.eventType.DataGroup) ||
-					front.eventType.Property == NonBatchable {
+					(i != 0 && front.eventType.Property == NonBatchable) {
 					break
 				}
 				group = front.eventType.DataGroup
