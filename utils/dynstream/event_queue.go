@@ -195,6 +195,7 @@ func (q *eventQueue[A, P, T, D, H]) removePath(path *pathInfo[A, P, T, D, H]) {
 }
 
 func (q *eventQueue[A, P, T, D, H]) appendEvent(event eventWrap[A, P, T, D, H]) {
+	log.Info("hyy append event in event queue", zap.Any("path", event.pathInfo.path), zap.Any("commitTs", event.timestamp), zap.Any("event", event.event))
 	path := event.pathInfo
 	if path.streamAreaInfo == nil {
 		// A newly added path sends the first event.
