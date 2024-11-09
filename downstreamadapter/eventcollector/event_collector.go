@@ -148,6 +148,7 @@ func (c *EventCollector) processDispatcherRequests(ctx context.Context) {
 }
 
 func (c *EventCollector) SendDispatcherRequest(req DispatcherRequest) error {
+	log.Info("hyy send dispatcher request", zap.Any("req", req))
 	message := &messaging.RegisterDispatcherRequest{
 		RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
 			ChangefeedId: req.Dispatcher.GetChangefeedID().ToPB(),
