@@ -253,7 +253,9 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 				// We don't use PopFront here because we need to keep the event in the path.
 				// Otherwise, the event may lost when the loop is break.
 				front, ok := path.pendingQueue.FrontRef()
-				if !ok || (group != DefaultEventType.DataGroup && group != front.eventType.DataGroup) {
+				if !ok ||
+					(group != DefaultEventType.DataGroup && group != front.eventType.DataGroup) ||
+					front.eventType.Property == NonBatchable {
 					break
 				}
 				group = front.eventType.DataGroup
