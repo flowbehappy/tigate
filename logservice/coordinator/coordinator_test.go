@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/logservice/logservicepb"
 	"github.com/pingcap/ticdc/pkg/node"
 
 	"github.com/stretchr/testify/assert"
@@ -33,42 +34,82 @@ func TestGetCandidateNodes(t *testing.T) {
 	tableID1 := int64(100)
 	tableID2 := int64(101)
 
+	span1 := &heartbeatpb.TableSpan{
+		TableID: tableID1,
+	}
+	span2 := &heartbeatpb.TableSpan{
+		TableID: tableID2,
+	}
+
 	coordinator.eventStoreStates.m = map[node.ID]*eventStoreState{
 		nodeID1: &eventStoreState{
 			subscriptionStates: map[int64]subscriptionStates{
 				tableID1: {
-					{checkpointTs: 100, resolvedTs: 200},
+					{
+						subID:        1,
+						span:         span1,
+						checkpointTs: 100,
+						resolvedTs:   200,
+					},
 				},
 			},
 		},
 		nodeID2: &eventStoreState{
 			subscriptionStates: map[int64]subscriptionStates{
 				tableID1: {
-					{checkpointTs: 90, resolvedTs: 180},
-					{checkpointTs: 100, resolvedTs: 220},
-					{checkpointTs: 80, resolvedTs: 160},
+					{
+						subID:        1,
+						span:         span1,
+						checkpointTs: 90,
+						resolvedTs:   180,
+					},
+					{
+						subID:        2,
+						span:         span1,
+						checkpointTs: 100,
+						resolvedTs:   220,
+					},
+					{
+						subID:        3,
+						span:         span1,
+						checkpointTs: 80,
+						resolvedTs:   160,
+					},
 				},
 				tableID2: {
-					{checkpointTs: 90, resolvedTs: 190},
-					{checkpointTs: 90, resolvedTs: 240},
+					{
+						subID:        4,
+						span:         span2,
+						checkpointTs: 90,
+						resolvedTs:   190,
+					},
+					{
+						subID:        5,
+						span:         span2,
+						checkpointTs: 90,
+						resolvedTs:   240,
+					},
 				},
 			},
 		},
 		nodeID3: &eventStoreState{
 			subscriptionStates: map[int64]subscriptionStates{
 				tableID2: {
-					{checkpointTs: 100, resolvedTs: 290},
-					{checkpointTs: 100, resolvedTs: 230},
+					{
+						subID:        1,
+						span:         span2,
+						checkpointTs: 100,
+						resolvedTs:   290,
+					},
+					{
+						subID:        2,
+						span:         span2,
+						checkpointTs: 100,
+						resolvedTs:   230,
+					},
 				},
 			},
 		},
-	}
-
-	span1 := &heartbeatpb.TableSpan{
-		TableID: tableID1,
-	}
-	span2 := &heartbeatpb.TableSpan{
-		TableID: tableID2,
 	}
 
 	// test span1
@@ -89,5 +130,53 @@ func TestGetCandidateNodes(t *testing.T) {
 	{
 		nodes := coordinator.getCandidateNodes(nodeID3, span2, uint64(100))
 		assert.Equal(t, []node.ID{nodeID2}, nodes)
+	}
+
+	// update node1 and test
+	{
+		state := &logservicepb.EventStoreState{
+			Subscriptions: map[int64]*logservicepb.SubscriptionStates{
+				tableID1: {
+					Subscriptions: []*logservicepb.SubscriptionState{
+						{
+							SubID:        1,
+							Span:         span1,
+							CheckpointTs: 100,
+							ResolvedTs:   300,
+						},
+					},
+				},
+			},
+		}
+		coordinator.updateEventStoreState(nodeID1, state)
+		nodes := coordinator.getCandidateNodes(nodeID3, span1, uint64(100))
+		assert.Equal(t, []node.ID{nodeID1, nodeID2}, nodes)
+	}
+
+	// update node2 and test
+	{
+		state := &logservicepb.EventStoreState{
+			Subscriptions: map[int64]*logservicepb.SubscriptionStates{
+				tableID1: {
+					Subscriptions: []*logservicepb.SubscriptionState{
+						{
+							SubID:        1,
+							Span:         span1,
+							CheckpointTs: 100,
+							ResolvedTs:   230,
+						},
+						{
+							SubID:        2,
+							Span:         span1,
+							CheckpointTs: 100,
+							ResolvedTs:   310,
+						},
+					},
+				},
+			},
+		}
+		coordinator.updateEventStoreState(nodeID2, state)
+		nodes := coordinator.getCandidateNodes(nodeID3, span1, uint64(100))
+		assert.Equal(t, []node.ID{nodeID2, nodeID1}, nodes)
 	}
 }
