@@ -61,8 +61,13 @@ for pb in $(find heartbeatpb -name '*.proto'); do
 	generate ./ $pb paths="source_relative"
 done
 
-for pb in $(find pkg/messaging/proto -name '*.proto'); do
+for pb in $(find logservice/logservicepb -name '*.proto'); do
 	# Output generated go files next to protobuf files.
-	generate ./pkg/messaging/proto $pb paths="source_relative"
+	generate ./ $pb paths="source_relative"
 done
+
+# for pb in $(find pkg/messaging/proto -name '*.proto'); do
+# 	# Output generated go files next to protobuf files.
+# 	generate ./pkg/messaging/proto $pb paths="source_relative"
+# done
 

@@ -4,6 +4,8 @@ package messaging
 const (
 	// EventServiceTopic is the topic of the event service.
 	EventServiceTopic = "EventServiceTopic"
+	// EventStoreTopic is the topic of the event store
+	EventStoreTopic = "event-store"
 	// LogCoordinatorTopic is the topic of the log coordinator
 	LogCoordinatorTopic = "log-coordinator"
 	// EventCollectorTopic is the topic of the event collector.
