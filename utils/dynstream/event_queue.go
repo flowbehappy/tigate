@@ -4,6 +4,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/utils/heap"
 )
 
@@ -246,26 +247,31 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 		} else {
 			group := DefaultEventType.DataGroup
 			for i := 0; i < batchSize; i++ {
-				front, ok := path.pendingQueue.PopFront()
-				if !ok || (group != DefaultEventType.DataGroup && group != front.eventType.DataGroup) {
+				// Get the front event of the path.
+				// We don't use PopFront here because we need to keep the event in the path.
+				// Otherwise, the event may lost when the loop is break.
+				front, ok := path.pendingQueue.FrontRef()
+				if !ok ||
+					(group != DefaultEventType.DataGroup && group != front.eventType.DataGroup) ||
+					(i != 0 && front.eventType.Property == NonBatchable) {
 					break
 				}
 				group = front.eventType.DataGroup
 				buf = append(buf, front.event)
 				path.pendingSize -= front.eventSize
 				q.totalPendingLength.Add(-1)
-
 				// Reduce the total pending size of the area.
 				if path.areaMemStat != nil {
 					path.areaMemStat.totalPendingSize.Add(-int64(front.eventSize))
 				}
-
+				// Remove the event from the path.
+				path.pendingQueue.PopFront()
 				if front.eventType.Property == NonBatchable {
 					break
 				}
 			}
 			if len(buf) == 0 {
-				panic("empty buf")
+				log.Panic("empty buf")
 			}
 
 			q.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D, H])(path))
