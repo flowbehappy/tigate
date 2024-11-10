@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/ticdc/logservice/logservicepb"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/klauspost/compress/zstd"
@@ -17,7 +20,9 @@ import (
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	"github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
+	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tiflow/pkg/pdutil"
 	"github.com/pingcap/tiflow/pkg/security"
@@ -127,6 +132,13 @@ type eventStore struct {
 	gcManager *gcManager
 
 	closed atomic.Bool
+
+	messageCenter messaging.MessageCenter
+
+	coordinatorInfo struct {
+		sync.RWMutex
+		id node.ID
+	}
 
 	wgBatchSignal sync.WaitGroup
 
@@ -252,7 +264,73 @@ func New(
 	puller := logpuller.NewLogPuller(client, pdClock, consume)
 	store.puller = puller
 
+	// recv and handle messages
+	messageCenter := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
+	store.messageCenter = messageCenter
+	messageCenter.RegisterHandler(messaging.EventStoreTopic, store.handleMessage)
+
 	return store
+}
+
+func (e *eventStore) handleMessage(_ context.Context, targetMessage *messaging.TargetMessage) error {
+	for _, msg := range targetMessage.Message {
+		switch msg.(type) {
+		case *common.LogCoordinatorBroadcastRequest:
+			e.coordinatorInfo.Lock()
+			e.coordinatorInfo.id = targetMessage.From
+			e.coordinatorInfo.Unlock()
+		default:
+			log.Panic("invalid message type", zap.Any("msg", msg))
+		}
+	}
+	return nil
+}
+
+func (e *eventStore) uploadStatePeriodically(ctx context.Context) error {
+	tick := time.NewTicker(5 * time.Second)
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+			e.dispatcherStates.RLock()
+			state := &logservicepb.EventStoreState{
+				Subscriptions: make(map[int64]*logservicepb.SubscriptionStates),
+			}
+			for tableID, dispatcherIDs := range e.dispatcherStates.l {
+				subStates := make([]*logservicepb.SubscriptionState, 0)
+				subIDs := make(map[logpuller.SubscriptionID]bool)
+				for dispatcherID := range dispatcherIDs {
+					dispatcherStat := e.dispatcherStates.m[dispatcherID]
+					subID := dispatcherStat.subID
+					subStat := e.dispatcherStates.n[subID]
+					if _, ok := subIDs[subID]; ok {
+						continue
+					}
+					subStates = append(subStates, &logservicepb.SubscriptionState{
+						SubID:        uint64(subID),
+						Span:         dispatcherStat.tableSpan,
+						CheckpointTs: subStat.checkpointTs,
+						ResolvedTs:   subStat.resolvedTs,
+					})
+					subIDs[subID] = true
+				}
+				sort.Slice(subStates, func(i, j int) bool {
+					return subStates[i].SubID < subStates[j].SubID
+				})
+				state.Subscriptions[tableID] = &logservicepb.SubscriptionStates{
+					Subscriptions: subStates,
+				}
+			}
+
+			message := messaging.NewSingleTargetMessage(e.coordinatorInfo.id, messaging.LogCoordinatorTopic, state)
+			e.dispatcherStates.RUnlock()
+			// just ignore messagees fail to send
+			if err := e.messageCenter.SendEvent(message); err != nil {
+				log.Debug("send broadcast message to node failed", zap.Error(err))
+			}
+		}
+	}
 }
 
 func (e *eventStore) Name() string {
@@ -273,6 +351,10 @@ func (e *eventStore) Run(ctx context.Context) error {
 
 	eg.Go(func() error {
 		return e.updateMetrics(ctx)
+	})
+
+	eg.Go(func() error {
+		return e.uploadStatePeriodically(ctx)
 	})
 
 	return eg.Wait()

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/server/watcher"
+	"github.com/pingcap/tiflow/pkg/spanz"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/ticdc/pkg/common"
@@ -96,6 +97,7 @@ func (c *logCoordinator) Run(ctx context.Context) error {
 			}
 			c.nodes.RUnlock()
 			for _, message := range messages {
+				// just ignore messagees fail to send
 				if err := c.messageCenter.SendEvent(message); err != nil {
 					log.Debug("send broadcast message to node failed", zap.Error(err))
 				}
@@ -136,6 +138,7 @@ func (c *logCoordinator) handleNodeChange(allNodes map[node.ID]*node.Info) {
 func (c *logCoordinator) updateEventStoreState(nodeId node.ID, state *logservicepb.EventStoreState) {
 	c.eventStoreStates.Lock()
 	defer c.eventStoreStates.Unlock()
+	log.Info("update event store state", zap.String("nodeId", nodeId.String()))
 	// TODO: avoid remove all, only update related subscription states
 	delete(c.eventStoreStates.m, nodeId)
 	eventStoreState := &eventStoreState{
@@ -160,6 +163,11 @@ func (c *logCoordinator) updateEventStoreState(nodeId node.ID, state *logservice
 func (c *logCoordinator) getCandidateNodes(requestNodeID node.ID, span *heartbeatpb.TableSpan, startTs uint64) []node.ID {
 	c.eventStoreStates.RLock()
 	defer c.eventStoreStates.RUnlock()
+
+	// TODO: support incomplete span
+	if !isCompleteSpan(span) {
+		return nil
+	}
 
 	type candidateNode struct {
 		nodeID     node.ID
@@ -205,4 +213,12 @@ func (c *logCoordinator) getCandidateNodes(requestNodeID node.ID, span *heartbea
 	}
 
 	return candidateNodes
+}
+
+func isCompleteSpan(tableSpan *heartbeatpb.TableSpan) bool {
+	startKey, endKey := spanz.GetTableRange(tableSpan.TableID)
+	if spanz.StartCompare(startKey, tableSpan.StartKey) == 0 && spanz.EndCompare(endKey, tableSpan.EndKey) == 0 {
+		return true
+	}
+	return false
 }
