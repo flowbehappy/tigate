@@ -95,8 +95,7 @@ func (w *MysqlWriter) FlushDDLEvent(event *commonEvent.DDLEvent) error {
 	if !(event.TiDBOnly && !w.cfg.IsTiDB) {
 		err := w.execDDLWithMaxRetries(event)
 		if err != nil {
-			log.Error("exec ddl failed", zap.Error(err))
-			return err
+			return errors.Trace(err)
 		}
 	}
 
@@ -130,11 +129,7 @@ func (w *MysqlWriter) FlushDDLTs(event *commonEvent.DDLEvent) error {
 	}
 
 	err := w.SendDDLTs(event)
-	if err != nil {
-		log.Error("send ddl ts failed", zap.Error(err))
-		return err
-	}
-	return nil
+	return errors.Trace(err)
 }
 
 func (w *MysqlWriter) FlushSyncPointEvent(event *commonEvent.SyncPointEvent) error {
@@ -142,15 +137,13 @@ func (w *MysqlWriter) FlushSyncPointEvent(event *commonEvent.SyncPointEvent) err
 		// create sync point table if not exist
 		err := w.CreateSyncTable()
 		if err != nil {
-			log.Error("create sync table failed", zap.Error(err))
-			return err
+			return errors.Trace(err)
 		}
 		w.syncPointTableInit = true
 	}
 	err := w.SendSyncPointEvent(event)
 	if err != nil {
-		log.Error("send syncpoint event failed", zap.Error(err))
-		return err
+		return errors.Trace(err)
 	}
 	for _, callback := range event.PostTxnFlushed {
 		callback()
@@ -161,7 +154,6 @@ func (w *MysqlWriter) FlushSyncPointEvent(event *commonEvent.SyncPointEvent) err
 func (w *MysqlWriter) SendSyncPointEvent(event *commonEvent.SyncPointEvent) error {
 	tx, err := w.db.BeginTx(w.ctx, nil)
 	if err != nil {
-		log.Error("sync table: begin Tx fail", zap.Error(err))
 		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "sync table: begin Tx fail;"))
 	}
 	row := tx.QueryRow("select @@tidb_current_ts")
@@ -252,7 +244,6 @@ func (w *MysqlWriter) SendSyncPointEvent(event *commonEvent.SyncPointEvent) erro
 func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 	tx, err := w.db.BeginTx(w.ctx, nil)
 	if err != nil {
-		log.Error("ddl ts table: begin Tx fail", zap.Error(err))
 		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "ddl ts table: begin Tx fail;"))
 	}
 
@@ -684,7 +675,6 @@ func (w *MysqlWriter) execDDL(event *commonEvent.DDLEvent) error {
 	}
 
 	if err = tx.Commit(); err != nil {
-		log.Error("Failed to exec DDL", zap.String("sql", event.GetDDLQuery()), zap.Error(err))
 		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("Query info: %s; ", event.GetDDLQuery())))
 	}
 
@@ -729,7 +719,6 @@ func (w *MysqlWriter) Flush(events []*commonEvent.DMLEvent, workerNum int) error
 
 	if !w.cfg.DryRun {
 		if err := w.execDMLWithMaxRetries(dmls); err != nil {
-			log.Error("execute DMLs failed", zap.Error(err))
 			return errors.Trace(err)
 		}
 	} else {
@@ -835,10 +824,7 @@ func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) (*preparedDMLs
 
 func (w *MysqlWriter) execDMLWithMaxRetries(dmls *preparedDMLs) error {
 	if len(dmls.sqls) != len(dmls.values) {
-		log.Error("unexpected number of sqls and values",
-			zap.Strings("sqls", dmls.sqls),
-			zap.Any("values", dmls.values))
-		return cerror.ErrUnexpected.FastGenByArgs("unexpected number of sqls and values")
+		return cerror.ErrUnexpected.FastGenByArgs(fmt.Sprintf("unexpected number of sqls and values, sqls is %s, values is %s", dmls.sqls, dmls.values))
 	}
 
 	// approximateSize is multiplied by 2 because in extreme circustumas, every
@@ -851,8 +837,7 @@ func (w *MysqlWriter) execDMLWithMaxRetries(dmls *preparedDMLs) error {
 	tryExec := func() (int, int64, error) {
 		tx, err := w.db.BeginTx(w.ctx, nil)
 		if err != nil {
-			log.Error("BeginTx", zap.Error(err))
-			return 0, 0, err
+			return 0, 0, errors.Trace(err)
 		}
 
 		// Set session variables first and then execute the transaction.
@@ -890,8 +875,7 @@ func (w *MysqlWriter) execDMLWithMaxRetries(dmls *preparedDMLs) error {
 	return retry.Do(w.ctx, func() error {
 		err := w.statistics.RecordBatchExecution(tryExec)
 		if err != nil {
-			log.Error("RecordBatchExecution", zap.Error(err))
-			return err
+			return errors.Trace(err)
 		}
 		return nil
 	}, retry.WithBackoffBaseDelay(pmysql.BackoffBaseDelay.Milliseconds()),

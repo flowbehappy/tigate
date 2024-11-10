@@ -110,6 +110,8 @@ type Dispatcher struct {
 	// Dispatcher will be ready when it receives the handshake event from eventService.
 	// If false, the dispatcher will drop the event it received.
 	isReady atomic.Bool
+
+	errCh chan error
 }
 
 func NewDispatcher(
@@ -123,7 +125,8 @@ func NewDispatcher(
 	filter filter.Filter,
 	schemaID int64,
 	schemaIDToDispatchers *SchemaIDToDispatchers,
-	syncPointInfo *syncpoint.SyncPointInfo) *Dispatcher {
+	syncPointInfo *syncpoint.SyncPointInfo,
+	errCh chan error) *Dispatcher {
 	dispatcher := &Dispatcher{
 		changefeedID:          changefeedID,
 		id:                    id,
@@ -141,6 +144,7 @@ func NewDispatcher(
 		schemaID:              schemaID,
 		schemaIDToDispatchers: schemaIDToDispatchers,
 		resendTaskMap:         newResendTaskMap(),
+		errCh:                 errCh,
 	}
 	dispatcher.startTs.Store(startTs)
 
@@ -181,8 +185,7 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 			if action.Action == heartbeatpb.Action_Write {
 				err := d.sink.WriteBlockEvent(pendingEvent, d.tableProgress)
 				if err != nil {
-					// TODO: handle error
-					log.Error("write block event failed", zap.Error(err))
+					d.errCh <- err
 					return
 				}
 			} else {
@@ -406,8 +409,7 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 	if !d.shouldBlock(event) {
 		err := d.sink.WriteBlockEvent(event, d.tableProgress)
 		if err != nil {
-			// TODO: handle error
-			log.Error("write block event failed", zap.Error(err))
+			d.errCh <- err
 		}
 		if event.GetNeedAddedTables() != nil || event.GetNeedDroppedTables() != nil {
 			message := &heartbeatpb.TableSpanBlockStatus{

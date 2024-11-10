@@ -47,9 +47,10 @@ type MysqlSink struct {
 	db         *sql.DB
 	errgroup   *errgroup.Group
 	statistics *metrics.Statistics
+	errCh      chan error
 }
 
-func NewMysqlSink(ctx context.Context, changefeedID common.ChangeFeedID, workerCount int, config *config.ChangefeedConfig, sinkURI *url.URL) (*MysqlSink, error) {
+func NewMysqlSink(ctx context.Context, changefeedID common.ChangeFeedID, workerCount int, config *config.ChangefeedConfig, sinkURI *url.URL, errCh chan error) (*MysqlSink, error) {
 	errgroup, ctx := errgroup.WithContext(ctx)
 	mysqlSink := MysqlSink{
 		changefeedID: changefeedID,
@@ -57,6 +58,7 @@ func NewMysqlSink(ctx context.Context, changefeedID common.ChangeFeedID, workerC
 		workerCount:  workerCount,
 		errgroup:     errgroup,
 		statistics:   metrics.NewStatistics(changefeedID, "TxnSink"),
+		errCh:        errCh,
 	}
 
 	cfg, db, err := mysql.NewMysqlConfigAndDB(ctx, changefeedID, sinkURI)
@@ -71,14 +73,16 @@ func NewMysqlSink(ctx context.Context, changefeedID common.ChangeFeedID, workerC
 	mysqlSink.ddlWorker = worker.NewMysqlDDLWorker(ctx, db, cfg, mysqlSink.changefeedID, errgroup, mysqlSink.statistics)
 	mysqlSink.db = db
 
+	go mysqlSink.run()
+
 	return &mysqlSink, nil
 }
 
-func (s *MysqlSink) Run() error {
+func (s *MysqlSink) run() {
 	for i := 0; i < s.workerCount; i++ {
 		s.dmlWorker[i].Run()
 	}
-	return s.errgroup.Wait()
+	s.errCh <- s.errgroup.Wait()
 }
 
 func (s *MysqlSink) SinkType() SinkType {

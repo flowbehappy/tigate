@@ -89,6 +89,10 @@ type EventDispatcherManager struct {
 	// TODO: changefeed update config
 	syncPointConfig *syncpoint.SyncPointConfig
 
+	// collect the error in all the dispatchers and sink module
+	// report the error to the maintainer
+	errCh chan error
+
 	tableEventDispatcherCount      prometheus.Gauge
 	metricCreateDispatcherDuration prometheus.Observer
 	metricCheckpointTs             prometheus.Gauge
@@ -112,6 +116,7 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 		statusesChan:                   make(chan *heartbeatpb.TableSpanStatus, 8192),
 		blockStatusesChan:              make(chan *heartbeatpb.TableSpanBlockStatus, 1024*1024),
 		dispatcherActionChan:           make(chan common.DispatcherAction, 1024*1024),
+		errCh:                          make(chan error, 16),
 		cancel:                         cancel,
 		config:                         cfConfig,
 		schemaIDToDispatchers:          dispatcher.NewSchemaIDToDispatchers(),
@@ -162,21 +167,26 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 	manager.wg.Add(1)
 	go func() {
 		defer manager.wg.Done()
-		err := manager.sink.Run()
-		if err != nil && errors.Cause(err) != context.Canceled {
-			log.Error("Sink Run Meets Error",
-				zap.String("changefeedID", manager.changefeedID.String()),
-				zap.Error(err))
-			// report error to maintainer
-			var message heartbeatpb.HeartBeatRequest
-			message.ChangefeedID = manager.changefeedID.ToPB()
-			message.Err = &heartbeatpb.RunningError{
-				Time:    time.Now().String(),
-				Node:    appcontext.GetID(),
-				Code:    string(apperror.ErrorCode(err)),
-				Message: err.Error(),
+		select {
+		case <-ctx.Done():
+			return
+		case err := <-manager.errCh:
+			if errors.Cause(err) != context.Canceled {
+				log.Error("Event Dispatcher Manager Meets Error",
+					zap.String("changefeedID", manager.changefeedID.String()),
+					zap.Error(err))
+
+				// report error to maintainer
+				var message heartbeatpb.HeartBeatRequest
+				message.ChangefeedID = manager.changefeedID.ToPB()
+				message.Err = &heartbeatpb.RunningError{
+					Time:    time.Now().String(),
+					Node:    appcontext.GetID(),
+					Code:    string(apperror.ErrorCode(err)),
+					Message: err.Error(),
+				}
+				manager.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: manager.GetMaintainerID(), Request: &message})
 			}
-			manager.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: manager.GetMaintainerID(), Request: &message})
 		}
 	}()
 
@@ -213,7 +223,7 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 }
 
 func (e *EventDispatcherManager) InitSink(ctx context.Context) error {
-	sink, err := sink.NewSink(ctx, e.config, e.changefeedID)
+	sink, err := sink.NewSink(ctx, e.config, e.changefeedID, e.errCh)
 	if err != nil {
 		return err
 	}
@@ -334,7 +344,7 @@ func (e *EventDispatcherManager) NewDispatchers(infos []DispatcherCreateInfo) er
 			e.changefeedID,
 			id, tableSpans[idx], e.sink,
 			uint64(newStartTsList[idx]), e.dispatcherActionChan, e.blockStatusesChan,
-			e.filter, schemaIds[idx], e.schemaIDToDispatchers, &syncPointInfo)
+			e.filter, schemaIds[idx], e.schemaIDToDispatchers, &syncPointInfo, e.errCh)
 
 		if e.heartBeatTask == nil {
 			e.heartBeatTask = newHeartBeatTask(e)

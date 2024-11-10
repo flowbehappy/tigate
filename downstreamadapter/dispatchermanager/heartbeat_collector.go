@@ -17,6 +17,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/ticdc/pkg/node"
 
 	"github.com/pingcap/log"
@@ -80,13 +81,11 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherMa
 	m.SetBlockStatusRequestQueue(c.blockStatusReqQueue)
 	err := c.heartBeatResponseDynamicStream.AddPath(m.changefeedID, m)
 	if err != nil {
-		log.Error("heartBeatResponseDynamicStream Failed to add path", zap.Any("ChangefeedID", m.changefeedID))
-		return err
+		return errors.Trace(err)
 	}
 	err = c.schedulerDispatcherRequestDynamicStream.AddPath(m.changefeedID, m)
 	if err != nil {
-		log.Error("schedulerDispatcherRequestDynamicStream Failed to add path", zap.Any("ChangefeedID", m.changefeedID))
-		return err
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -94,13 +93,11 @@ func (c *HeartBeatCollector) RegisterEventDispatcherManager(m *EventDispatcherMa
 func (c *HeartBeatCollector) RemoveEventDispatcherManager(m *EventDispatcherManager) error {
 	err := c.heartBeatResponseDynamicStream.RemovePath(m.changefeedID)
 	if err != nil {
-		log.Error("heartBeatResponseDynamicStream Failed to remove path", zap.Any("ChangefeedID", m.changefeedID))
-		return err
+		return errors.Trace(err)
 	}
 	err = c.schedulerDispatcherRequestDynamicStream.RemovePath(m.changefeedID)
 	if err != nil {
-		log.Error("schedulerDispatcherRequestDynamicStream Failed to remove path", zap.Any("ChangefeedID", m.changefeedID))
-		return err
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -194,7 +191,7 @@ func (h *SchedulerDispatcherRequestHandler) Handle(eventDispatcherManager *Event
 	if len(infos) > 0 {
 		err := eventDispatcherManager.NewDispatchers(infos)
 		if err != nil {
-			log.Info("failed to create dispatchers", zap.Any("infos", infos), zap.Error(err))
+			eventDispatcherManager.errCh <- err
 		}
 	}
 	return false
