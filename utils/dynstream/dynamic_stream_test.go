@@ -11,9 +11,11 @@ import (
 )
 
 type simpleEvent struct {
-	path  string
-	sleep time.Duration
-	wg    *sync.WaitGroup
+	id        int // use for debug
+	path      string
+	sleep     time.Duration
+	wg        *sync.WaitGroup
+	eventType EventType
 }
 
 func newSimpleEvent(path string, wg *sync.WaitGroup) *simpleEvent {
@@ -54,7 +56,7 @@ func (h *simpleHandler) Handle(dest struct{}, events ...*simpleEvent) (await boo
 func (h *simpleHandler) GetSize(event *simpleEvent) int            { return 0 }
 func (h *simpleHandler) GetArea(path string, dest struct{}) int    { return 0 }
 func (h *simpleHandler) GetTimestamp(event *simpleEvent) Timestamp { return 0 }
-func (h *simpleHandler) GetType(event *simpleEvent) EventType      { return DefaultEventType }
+func (h *simpleHandler) GetType(event *simpleEvent) EventType      { return event.eventType }
 func (h *simpleHandler) IsPaused(event *simpleEvent) bool          { return false }
 
 func (h *simpleHandler) OnDrop(event *simpleEvent) {
