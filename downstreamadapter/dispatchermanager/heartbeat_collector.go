@@ -192,7 +192,10 @@ func (h *SchedulerDispatcherRequestHandler) Handle(eventDispatcherManager *Event
 		}
 	}
 	if len(infos) > 0 {
-		eventDispatcherManager.NewDispatchers(infos)
+		err := eventDispatcherManager.NewDispatchers(infos)
+		if err != nil {
+			log.Info("failed to create dispatchers", zap.Any("infos", infos), zap.Error(err))
+		}
 	}
 	return false
 }

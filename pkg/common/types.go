@@ -210,7 +210,7 @@ func NewChangeFeedIDWithDisplayName(name ChangeFeedDisplayName) ChangeFeedID {
 }
 
 func (cfID ChangeFeedID) String() string {
-	return fmt.Sprintf("changefeedID representation: %s, id: %s", cfID.DisplayName.String(), cfID.Id.String())
+	return cfID.DisplayName.String()
 }
 
 func (cfID ChangeFeedID) Name() string {

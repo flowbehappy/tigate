@@ -85,7 +85,7 @@ func GetSchedulerDispatcherRequestDynamicStream() dynstream.DynamicStream[int, c
 	if schedulerDispatcherRequestDynamicStream == nil {
 		schedulerDispatcherRequestDynamicStreamOnce.Do(func() {
 			option := dynstream.NewOption()
-			// option.BatchCount = 128
+			option.BatchCount = 128
 			schedulerDispatcherRequestDynamicStream = dynstream.NewDynamicStream(&SchedulerDispatcherRequestHandler{}, option)
 			schedulerDispatcherRequestDynamicStream.Start()
 		})

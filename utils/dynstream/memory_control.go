@@ -95,9 +95,6 @@ func (as *areaMemStat[A, P, T, D, H]) appendEvent(
 	}
 
 	if !replaced && !as.shouldDropEvent(path, event, handler, eventQueue) {
-		if event.eventType.Property != PeriodicSignal {
-			log.Info("hyy append event in memory control", zap.Any("path", path.path), zap.Any("commitTs", event.timestamp), zap.Any("event", event.event))
-		}
 		// Add the event to the pending queue.
 		path.pendingQueue.PushBack(event)
 		// Update the pending size.
@@ -136,7 +133,6 @@ func (as *areaMemStat[A, P, T, D, H]) shouldDropEvent(
 	// If event's timestamp is not the smallest among all the paths in the area, drop it.
 	if event.timestamp > top.frontTimestamp {
 		if !isPeriodicSignal(event) {
-			log.Info("hyy drop event in memory control", zap.Any("path", path.path), zap.Any("commitTs", event.timestamp), zap.Any("event", event.event))
 			handler.OnDrop(event.event)
 		}
 		return true
@@ -153,7 +149,6 @@ LOOP:
 		// If the longest path is the same as the current path, drop the event and return.
 		if longestPath.path == path.path {
 			if !isPeriodicSignal(event) {
-				log.Info("hyy drop event in memory control", zap.Any("path", path.path), zap.Any("commitTs", event.timestamp), zap.Any("event", event.event))
 				handler.OnDrop(event.event)
 			}
 			return true
@@ -161,7 +156,6 @@ LOOP:
 		for longestPath.pendingQueue.Length() != 0 {
 			back, _ := longestPath.pendingQueue.PopBack()
 			if !isPeriodicSignal(back) {
-				log.Info("hyy drop event in memory control", zap.Any("path", longestPath.path), zap.Any("commitTs", back.timestamp), zap.Any("event", back.event))
 				handler.OnDrop(back.event)
 			}
 			longestPath.pendingSize -= back.eventSize

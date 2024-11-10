@@ -387,19 +387,16 @@ func (d *Dispatcher) shouldBlock(event commonEvent.BlockEvent) bool {
 
 func (d *Dispatcher) reset() {
 	if !d.isReady.Load() {
-		log.Info("hyy dispatcher is not ready, don't need to reset", zap.Any("dispatcher", d.id))
 		return
 	}
 	d.isReady.Store(false)
 	d.lastEventSeq.Store(0)
 	// Reset startTs to the checkpointTs
 	d.startTs.Store(d.GetCheckpointTs())
-	log.Info("hyy send reset dispatcher action", zap.Any("dispatcher", d.id))
 	d.dispatcherActionChan <- common.DispatcherAction{
 		DispatcherID: d.id,
 		Action:       common.ActionReset,
 	}
-	log.Info("hyy send reset dispatcher action success", zap.Any("dispatcher", d.id))
 }
 
 // 1.If the event is a single table DDL, it will be added to the sink for writing to downstream(async).

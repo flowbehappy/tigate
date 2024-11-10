@@ -6,7 +6,6 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/utils/heap"
-	"go.uber.org/zap"
 )
 
 // timestampPathNode is order by timestamp.
@@ -195,7 +194,6 @@ func (q *eventQueue[A, P, T, D, H]) removePath(path *pathInfo[A, P, T, D, H]) {
 }
 
 func (q *eventQueue[A, P, T, D, H]) appendEvent(event eventWrap[A, P, T, D, H]) {
-	log.Info("hyy append event in event queue", zap.Any("path", event.pathInfo.path), zap.Any("commitTs", event.timestamp), zap.Any("event", event.event))
 	path := event.pathInfo
 	if path.streamAreaInfo == nil {
 		// A newly added path sends the first event.
@@ -265,9 +263,6 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 				// Reduce the total pending size of the area.
 				if path.areaMemStat != nil {
 					path.areaMemStat.totalPendingSize.Add(-int64(front.eventSize))
-					if front.eventType.Property != PeriodicSignal {
-						log.Info("hyy pop event", zap.Any("path", path.path), zap.Any("commitTs", front.timestamp), zap.Any("event", front.event))
-					}
 				}
 				// Remove the event from the path.
 				path.pendingQueue.PopFront()

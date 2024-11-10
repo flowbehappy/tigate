@@ -399,7 +399,7 @@ func (w *MysqlWriter) CheckStartTsList(tableIDs []int64) ([]int64, error) {
 	builder.WriteString(filter.DDLTsTable)
 	builder.WriteString(" WHERE (ticdc_cluster_id, changefeed, table_id) IN (")
 
-	for _, tableID := range tableIDs {
+	for idx, tableID := range tableIDs {
 		builder.WriteString("('")
 		builder.WriteString(ticdcClusterID)
 		builder.WriteString("', '")
@@ -407,6 +407,9 @@ func (w *MysqlWriter) CheckStartTsList(tableIDs []int64) ([]int64, error) {
 		builder.WriteString("', ")
 		builder.WriteString(strconv.FormatInt(tableID, 10))
 		builder.WriteString(")")
+		if idx < len(tableIDs)-1 {
+			builder.WriteString(", ")
+		}
 	}
 	builder.WriteString(")")
 	query := builder.String()
