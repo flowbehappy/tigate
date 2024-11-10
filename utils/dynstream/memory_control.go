@@ -148,7 +148,6 @@ LOOP:
 		}
 		// If the longest path is the same as the current path, drop the event and return.
 		if longestPath.path == path.path {
-
 			if !isPeriodicSignal(event) {
 				handler.OnDrop(event.event)
 			}

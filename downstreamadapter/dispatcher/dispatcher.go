@@ -235,9 +235,10 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 		if event.GetType() == commonEvent.TypeDMLEvent ||
 			event.GetType() == commonEvent.TypeDDLEvent ||
 			event.GetType() == commonEvent.TypeHandshakeEvent {
+			lastSeq := d.lastEventSeq.Load()
 			if event.GetSeq() != d.lastEventSeq.Add(1) {
 				log.Warn("Received a out-of-order event, reset the dispatcher", zap.String("changefeedID", d.changefeedID.String()), zap.Any("dispatcher", d.id),
-					zap.Uint64("receivedSeq", event.GetSeq()), zap.Uint64("lastEventSeq", d.lastEventSeq.Load()), zap.Any("commitTs", event.GetCommitTs()), zap.Any("event", event))
+					zap.Uint64("receivedSeq", event.GetSeq()), zap.Uint64("lastEventSeq", lastSeq), zap.Any("commitTs", event.GetCommitTs()), zap.Any("event", event))
 				d.reset()
 				return false
 			}

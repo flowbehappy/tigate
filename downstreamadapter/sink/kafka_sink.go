@@ -238,6 +238,6 @@ func (s *KafkaSink) Close(removeDDLTsItem bool) error {
 	return nil
 }
 
-func (s *KafkaSink) CheckStartTs(tableId int64, startTs uint64) (int64, error) {
-	return int64(startTs), nil
+func (s *KafkaSink) CheckStartTsList(tableIds []int64, startTsList []int64) ([]int64, error) {
+	return startTsList, nil
 }
