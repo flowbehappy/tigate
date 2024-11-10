@@ -73,7 +73,7 @@ func NewMysqlSink(ctx context.Context, changefeedID common.ChangeFeedID, workerC
 	mysqlSink.ddlWorker = worker.NewMysqlDDLWorker(ctx, db, cfg, mysqlSink.changefeedID, errgroup, mysqlSink.statistics)
 	mysqlSink.db = db
 
-	mysqlSink.run()
+	go mysqlSink.run()
 
 	return &mysqlSink, nil
 }

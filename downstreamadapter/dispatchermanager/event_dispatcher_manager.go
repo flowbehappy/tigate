@@ -108,6 +108,7 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 	tableTriggerEventDispatcherID *heartbeatpb.DispatcherID,
 	startTs uint64,
 	maintainerID node.ID) (*EventDispatcherManager, uint64, error) {
+	log.Info("hyy NewEventDispatcherManager")
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := &EventDispatcherManager{
 		dispatcherMap:                  newDispatcherMap(),

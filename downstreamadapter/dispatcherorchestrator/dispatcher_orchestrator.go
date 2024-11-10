@@ -61,6 +61,7 @@ func (m *DispatcherOrchestrator) RecvMaintainerRequest(_ context.Context, msg *m
 }
 
 func (m *DispatcherOrchestrator) handleAddDispatcherManager(from node.ID, req *heartbeatpb.MaintainerBootstrapRequest) error {
+	log.Info("hyy handle add dispatcher manager request", zap.Any("request", req))
 	cfId := common.NewChangefeedIDFromPB(req.ChangefeedID)
 	manager, exists := m.dispatcherManagers[cfId]
 	var err error
@@ -139,6 +140,8 @@ func createBootstrapResponse(changefeedID *heartbeatpb.ChangefeedID, manager *di
 			BlockState:      d.GetBlockStatus(),
 		})
 	})
+
+	log.Info("hyy bootstrap response", zap.Any("response", response))
 
 	return response
 }
