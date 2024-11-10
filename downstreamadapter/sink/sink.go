@@ -42,10 +42,9 @@ type Sink interface {
 	CheckStartTs(tableId int64, startTs uint64) (int64, error)
 	Close(removeDDLTsItem bool) error
 	SinkType() SinkType
-	Run() error
 }
 
-func NewSink(ctx context.Context, config *config.ChangefeedConfig, changefeedID common.ChangeFeedID) (Sink, error) {
+func NewSink(ctx context.Context, config *config.ChangefeedConfig, changefeedID common.ChangeFeedID, errCh chan error) (Sink, error) {
 	sinkURI, err := url.Parse(config.SinkURI)
 	if err != nil {
 		return nil, cerror.WrapError(cerror.ErrSinkURIInvalid, err)
@@ -53,9 +52,9 @@ func NewSink(ctx context.Context, config *config.ChangefeedConfig, changefeedID 
 	scheme := sink.GetScheme(sinkURI)
 	switch scheme {
 	case sink.MySQLScheme, sink.MySQLSSLScheme, sink.TiDBScheme, sink.TiDBSSLScheme:
-		return NewMysqlSink(ctx, changefeedID, 16, config, sinkURI)
+		return NewMysqlSink(ctx, changefeedID, 16, config, sinkURI, errCh)
 	case sink.KafkaScheme, sink.KafkaSSLScheme:
-		return NewKafkaSink(ctx, changefeedID, sinkURI, config.SinkConfig)
+		return NewKafkaSink(ctx, changefeedID, sinkURI, config.SinkConfig, errCh)
 	}
 	return nil, nil
 }
