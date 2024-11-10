@@ -376,28 +376,41 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 
 }
 
-// If no ddl-ts-v1 table, return 0; -- means the downstream is new
-// If have ddl-ts-v1 table, but no row for the changefeed with tableID = 0, return 0; -- means the changefeed is new.
-// if have row for the changefeed with tableID = 0, but no this row, return -1; -- means the table is dropped.(we won't check startTs for a table before it created)
-// otherwise, return the ddl-ts value
-func (w *MysqlWriter) CheckStartTs(tableID int64, startTs uint64) (int64, error) {
+// CheckStartTsList return the startTs list for each table in the tableIDs list.
+// For each table,
+// If no ddl-ts-v1 table, startTs = 0; -- means the downstream is new
+// If have ddl-ts-v1 table, but no row for the changefeed with tableID = 0, startTs = 0; -- means the changefeed is new.
+// if have row for the changefeed with tableID = 0, but no this row, startTs =  -1; -- means the table is dropped.(we won't check startTs for a table before it created)
+// otherwise, startTs = ddl-ts value
+func (w *MysqlWriter) CheckStartTsList(tableIDs []int64) ([]int64, error) {
+	retStartTsList := make([]int64, len(tableIDs))
+	tableIdIdxMap := make(map[int64]int, 0)
+	for i, tableID := range tableIDs {
+		tableIdIdxMap[tableID] = i
+	}
+
 	changefeedID := w.ChangefeedID.String()
 	ticdcClusterID := config.GetGlobalServerConfig().ClusterID
 
 	var builder strings.Builder
-	builder.WriteString("SELECT ddl_ts FROM ")
+	builder.WriteString("SELECT table_id, ddl_ts FROM ")
 	builder.WriteString(filter.TiCDCSystemSchema)
 	builder.WriteString(".")
 	builder.WriteString(filter.DDLTsTable)
 	builder.WriteString(" WHERE (ticdc_cluster_id, changefeed, table_id) IN (")
 
-	builder.WriteString("('")
-	builder.WriteString(ticdcClusterID)
-	builder.WriteString("', '")
-	builder.WriteString(changefeedID)
-	builder.WriteString("', ")
-	builder.WriteString(strconv.FormatInt(tableID, 10))
-	builder.WriteString(")")
+	for idx, tableID := range tableIDs {
+		builder.WriteString("('")
+		builder.WriteString(ticdcClusterID)
+		builder.WriteString("', '")
+		builder.WriteString(changefeedID)
+		builder.WriteString("', ")
+		builder.WriteString(strconv.FormatInt(tableID, 10))
+		builder.WriteString(")")
+		if idx < len(tableIDs)-1 {
+			builder.WriteString(", ")
+		}
+	}
 	builder.WriteString(")")
 	query := builder.String()
 
@@ -405,56 +418,66 @@ func (w *MysqlWriter) CheckStartTs(tableID int64, startTs uint64) (int64, error)
 	if err != nil {
 		if apperror.IsTableNotExistsErr(err) {
 			// If this table is not existed, this means the table is first being synced
-			log.Info("table not found in ddl ts table", zap.Int64("tableID", tableID), zap.Error(err))
-			return 0, nil
+			log.Info("ddl ts table is not found",
+				zap.String("namespace", w.ChangefeedID.Namespace()),
+				zap.String("changefeedID", w.ChangefeedID.Name()),
+				zap.Error(err))
+			return retStartTsList, nil
 		}
-		return 0, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to check ddl ts table;"))
+		return retStartTsList, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to check ddl ts table;"))
 	}
 
 	defer rows.Close()
 	var ddlTs int64
-	if rows.Next() {
-
-		err := rows.Scan(&ddlTs)
+	var tableId int64
+	count := 0
+	for rows.Next() {
+		err := rows.Scan(&tableId, &ddlTs)
 		if err != nil {
-			return 0, err
+			return retStartTsList, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to check ddl ts table;"))
 		}
-		return ddlTs, nil
+		count += 1
+		retStartTsList[tableIdIdxMap[tableId]] = ddlTs
 	}
 
-	// does't have this field
-	// check whether have row for tableID = 0(table trigger event dispatcher)
+	// if all table does't have this field,
+	// we need to check have row for tableID = 0(table trigger event dispatcher)
 	// If changefeed has tables, it must have row for tableID = 0;
-	builder.Reset()
-	builder.WriteString("SELECT ddl_ts FROM ")
-	builder.WriteString(filter.TiCDCSystemSchema)
-	builder.WriteString(".")
-	builder.WriteString(filter.DDLTsTable)
-	builder.WriteString(" WHERE (ticdc_cluster_id, changefeed, table_id) IN (")
+	if count == 0 {
+		builder.Reset()
+		builder.WriteString("SELECT ddl_ts FROM ")
+		builder.WriteString(filter.TiCDCSystemSchema)
+		builder.WriteString(".")
+		builder.WriteString(filter.DDLTsTable)
+		builder.WriteString(" WHERE (ticdc_cluster_id, changefeed, table_id) IN (")
 
-	builder.WriteString("('")
-	builder.WriteString(ticdcClusterID)
-	builder.WriteString("', '")
-	builder.WriteString(changefeedID)
-	builder.WriteString("', ")
-	builder.WriteString(strconv.FormatInt(0, 10))
-	builder.WriteString(")")
-	builder.WriteString(")")
-	query = builder.String()
+		builder.WriteString("('")
+		builder.WriteString(ticdcClusterID)
+		builder.WriteString("', '")
+		builder.WriteString(changefeedID)
+		builder.WriteString("', ")
+		builder.WriteString(strconv.FormatInt(0, 10))
+		builder.WriteString(")")
+		builder.WriteString(")")
+		query = builder.String()
 
-	rows, err = w.db.Query(query)
-	if err != nil {
-		return 0, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to check ddl ts table;"))
+		rows, err = w.db.Query(query)
+		if err != nil {
+			return retStartTsList, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to check ddl ts table;"))
+		}
+
+		defer rows.Close()
+		if rows.Next() {
+			// means has record for tableID = 0, but not for this table
+			for idx, startTs := range retStartTsList {
+				if startTs == 0 {
+					retStartTsList[idx] = -1
+				}
+			}
+		}
 	}
 
-	defer rows.Close()
-	if rows.Next() {
-		// means has record for tableID = 0, but not for this table
-		return -1, nil
-	} else {
-		// no record for tableID = 0, means the changefeed is new.
-		return 0, nil
-	}
+	return retStartTsList, nil
 }
 
 func (w *MysqlWriter) RemoveDDLTsItem() error {
