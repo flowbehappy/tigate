@@ -88,6 +88,11 @@ jobs:
           pwd && ls -l bin/ && ls -l tools/bin/
           export TICDC_NEWARCH=true && make integration_test CASE=charset_gbk 
 
+      - name: Test changefeed_pause_resume
+        if: ${{ success() }}
+        run: |
+          export TICDC_NEWARCH=true && make integration_test CASE=changefeed_pause_resume
+
       # only upload logs of the last case
       - name: Copy logs to hack permission
         if: ${{ always() }}
@@ -99,6 +104,7 @@ jobs:
           tail -n 10 $DIR/cdc.log
           sudo cp -r -L $DIR/{cdc.log,stdout.log,sync_diff} ./logs/$CASE/
           sudo chown -R runner ./logs
+          sudo tar -czvf ./logs.tar.gz ./logs
 
       # Update logs as artifact seems not stable, so we set `continue-on-error: true` here.
       - name: Upload logs
@@ -107,4 +113,4 @@ jobs:
         with:
           name: upstream-switch-logs
           path: |
-            ./logs
+            ./logs.tar.gz

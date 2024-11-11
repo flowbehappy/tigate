@@ -95,9 +95,9 @@ func (oc *Controller) AddOperator(op operator.Operator[common.ChangeFeedID, *hea
 	oc.lock.Lock()
 	defer oc.lock.Unlock()
 
-	if _, ok := oc.operators[op.ID()]; ok {
+	if pre, ok := oc.operators[op.ID()]; ok {
 		log.Info("add operator failed, operator already exists",
-			zap.String("operator", op.String()))
+			zap.Stringer("operator", op), zap.Stringer("previousOperator", pre.OP))
 		return false
 	}
 	cf := oc.changefeedDB.GetByID(op.ID())

@@ -46,6 +46,7 @@ function run() {
 	done
 
 	for i in $(seq 1 10); do
+		echo "Run $i test" # && read
 		cdc cli changefeed pause --changefeed-id=$changefeed_id --pd=$pd_addr
 
 		for j in $(seq 1 $TABLE_COUNT); do
@@ -66,6 +67,7 @@ function run() {
 		cdc cli changefeed resume --changefeed-id=$changefeed_id --pd=$pd_addr
 
 		check_sync_diff $WORK_DIR $CUR/conf/diff_config.toml
+		sleep 10
 	done
 
 	cleanup_process $CDC_BINARY

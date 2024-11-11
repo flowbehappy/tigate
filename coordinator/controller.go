@@ -57,11 +57,10 @@ type Controller struct {
 
 	bootstrapper *bootstrap.Bootstrapper[heartbeatpb.CoordinatorBootstrapResponse]
 
-	stream                   dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler]
-	taskScheduler            threadpool.ThreadPool
-	operatorControllerHandle *threadpool.TaskHandle
-	schedulerHandle          *threadpool.TaskHandle
-	backend                  changefeed.Backend
+	stream        dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler]
+	taskScheduler threadpool.ThreadPool
+	taskHandlers  []*threadpool.TaskHandle
+	backend       changefeed.Backend
 
 	updatedChangefeedCh chan map[common.ChangeFeedID]*changefeed.Changefeed
 	stateChangedCh      chan *ChangefeedStateChangeEvent
@@ -125,9 +124,7 @@ func NewController(
 	for _, msg := range c.bootstrapper.HandleNewNodes(newNodes) {
 		_ = c.messageCenter.SendCommand(msg)
 	}
-	submitScheduledEvent(c.taskScheduler, c.stream, &Event{
-		eventType: EventPeriod,
-	}, time.Now().Add(time.Millisecond*500))
+	c.submitPeriodTask()
 	return c
 }
 
@@ -160,9 +157,6 @@ func (c *Controller) onPeriodTask() {
 	// resend bootstrap message
 	c.sendMessages(c.bootstrapper.ResendBootstrapMessage())
 	c.collectMetrics()
-	submitScheduledEvent(c.taskScheduler, c.stream, &Event{
-		eventType: EventPeriod,
-	}, time.Now().Add(time.Millisecond*500))
 }
 
 func (c *Controller) onMessage(msg *messaging.TargetMessage) {
@@ -361,17 +355,15 @@ func (c *Controller) FinishBootstrap(workingMap map[common.ChangeFeedID]remoteMa
 	}
 
 	// start operator and scheduler
-	c.operatorControllerHandle = c.taskScheduler.Submit(c.cfScheduller, time.Now())
-	c.schedulerHandle = c.taskScheduler.Submit(c.operatorController, time.Now())
+	operatorControllerHandle := c.taskScheduler.Submit(c.cfScheduller, time.Now())
+	schedulerHandle := c.taskScheduler.Submit(c.operatorController, time.Now())
+	c.taskHandlers = append(c.taskHandlers, operatorControllerHandle, schedulerHandle)
 	c.bootstrapped.Store(true)
 }
 
 func (c *Controller) Stop() {
-	if c.operatorControllerHandle != nil {
-		c.operatorControllerHandle.Cancel()
-	}
-	if c.schedulerHandle != nil {
-		c.schedulerHandle.Cancel()
+	for _, h := range c.taskHandlers {
+		h.Cancel()
 	}
 }
 
@@ -505,17 +497,13 @@ func (c *Controller) RemoveNode(id node.ID) {
 	c.operatorController.OnNodeRemoved(id)
 }
 
-// submitScheduledEvent submits a task to controller pool to send a future event
-func submitScheduledEvent(
-	scheduler threadpool.ThreadPool,
-	stream dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler],
-	event *Event,
-	scheduleTime time.Time) {
+func (c *Controller) submitPeriodTask() {
 	task := func() time.Time {
-		stream.In() <- event
-		return time.Time{}
+		c.stream.In() <- &Event{eventType: EventPeriod}
+		return time.Now().Add(time.Millisecond * 500)
 	}
-	scheduler.SubmitFunc(task, scheduleTime)
+	periodTaskhandler := c.taskScheduler.SubmitFunc(task, time.Now().Add(time.Millisecond*500))
+	c.taskHandlers = append(c.taskHandlers, periodTaskhandler)
 }
 
 func (c *Controller) newBootstrapMessage(id node.ID) *messaging.TargetMessage {

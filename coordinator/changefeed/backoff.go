@@ -84,10 +84,7 @@ func (m *Backoff) ShouldRun() bool {
 func (m *Backoff) shouldFailWhenRetry() bool {
 	// NextBackOff() will return -1 once the MaxElapsedTime has elapsed,
 	// set the changefeed to failed state.
-	if m.backoffInterval == m.errBackoff.Stop {
-		return true
-	}
-	return false
+	return m.backoffInterval == m.errBackoff.Stop
 }
 
 // resetErrRetry reset the error retry related fields
@@ -154,6 +151,11 @@ func (m *Backoff) HandleError(errs []*heartbeatpb.RunningError) (bool, *heartbea
 	log.Warn("changefeed meets an error, will be stopped",
 		zap.Any("error", errs))
 
+	if !m.isRestarting.Load() {
+		// errBackoff may be stopped, reset it before the first retry.
+		m.resetErrRetry()
+		m.isRestarting.Store(true)
+	}
 	// set the next retry time
 	m.backoffInterval = m.errBackoff.NextBackOff()
 	m.nextRetryTime = atomic.NewTime(time.Now().Add(m.backoffInterval))
@@ -169,7 +171,6 @@ func (m *Backoff) HandleError(errs []*heartbeatpb.RunningError) (bool, *heartbea
 		)
 		return true, lastError
 	}
-	m.isRestarting.Store(true)
 	// patch the last error to changefeed info
 	return false, lastError
 }
