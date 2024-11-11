@@ -22,6 +22,7 @@ type OperatorWithTime[T comparable, S any] struct {
 	OP          Operator[T, S]
 	Time        time.Time
 	EnqueueTime time.Time
+	Removed     bool
 }
 
 type OperatorQueue[T comparable, S any] []*OperatorWithTime[T, S]

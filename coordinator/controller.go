@@ -348,7 +348,7 @@ func (c *Controller) FinishBootstrap(workingMap map[common.ChangeFeedID]remoteMa
 		rm, ok := workingMap[cfID]
 		if !ok {
 			cf := changefeed.NewChangefeed(cfID, cfMeta.Info, cfMeta.Status.CheckpointTs)
-			if shouldRunChangefeed(cf.Info.State) {
+			if shouldRunChangefeed(cf.GetInfo().State) {
 				c.changefeedDB.AddAbsentChangefeed(cf)
 			} else {
 				c.changefeedDB.AddStoppedChangefeed(cf)
@@ -413,6 +413,12 @@ func (c *Controller) PauseChangefeed(ctx context.Context, id common.ChangeFeedID
 	if err := c.backend.PauseChangefeed(ctx, id); err != nil {
 		return errors.Trace(err)
 	}
+	if clone, err := cf.GetInfo().Clone(); err != nil {
+		return errors.Trace(err)
+	} else {
+		clone.State = model.StateStopped
+		cf.SetInfo(clone)
+	}
 	c.operatorController.StopChangefeed(ctx, id, false)
 	return nil
 }
@@ -424,6 +430,12 @@ func (c *Controller) ResumeChangefeed(ctx context.Context, id common.ChangeFeedI
 	}
 	if err := c.backend.ResumeChangefeed(ctx, id, newCheckpointTs); err != nil {
 		return errors.Trace(err)
+	}
+	if clone, err := cf.GetInfo().Clone(); err != nil {
+		return errors.Trace(err)
+	} else {
+		clone.State = model.StateNormal
+		cf.SetInfo(clone)
 	}
 	c.changefeedDB.Resume(id, true)
 	return nil
@@ -446,7 +458,7 @@ func (c *Controller) ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedI
 	infos := make([]*config.ChangeFeedInfo, 0, len(cfs))
 	statuses := make([]*config.ChangeFeedStatus, 0, len(cfs))
 	for _, cf := range cfs {
-		infos = append(infos, cf.Info)
+		infos = append(infos, cf.GetInfo())
 		statuses = append(statuses, &config.ChangeFeedStatus{CheckpointTs: cf.GetStatus().CheckpointTs})
 	}
 	return infos, statuses, nil
@@ -457,7 +469,7 @@ func (c *Controller) GetChangefeed(ctx context.Context, changefeedDisplayName co
 	if cf == nil {
 		return nil, nil, cerror.ErrChangeFeedNotExists.GenWithStackByArgs(changefeedDisplayName.Name)
 	}
-	return cf.Info, &config.ChangeFeedStatus{CheckpointTs: cf.GetStatus().CheckpointTs}, nil
+	return cf.GetInfo(), &config.ChangeFeedStatus{CheckpointTs: cf.GetStatus().CheckpointTs}, nil
 }
 
 // GetTask queries a task by channgefeed ID, return nil if not found

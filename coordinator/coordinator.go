@@ -138,7 +138,7 @@ func (c *coordinator) handleStateChangedEvent(ctx context.Context, event *Change
 	if cf == nil {
 		return nil
 	}
-	cfInfo, err := cf.Info.Clone()
+	cfInfo, err := cf.GetInfo().Clone()
 	if err != nil {
 		log.Panic("clone changefeed info failed",
 			zap.Error(err))
@@ -149,12 +149,13 @@ func (c *coordinator) handleStateChangedEvent(ctx context.Context, event *Change
 	if event.State == model.StateFailed || event.State == model.StateFinished {
 		progress = config.ProgressStopping
 	}
-
 	if err := c.backend.UpdateChangefeed(context.Background(), cfInfo, cf.GetStatus().CheckpointTs, progress); err != nil {
 		log.Error("failed to update changefeed state",
 			zap.Error(err))
 		return errors.Trace(err)
 	}
+	cf.SetInfo(cfInfo)
+
 	switch event.State {
 	case model.StateWarning:
 		c.controller.operatorController.StopChangefeed(ctx, event.ChangefeedID, false)
@@ -189,7 +190,7 @@ func (c *coordinator) saveCheckpointTs(ctx context.Context, cfs map[common.Chang
 			continue
 		}
 		cf.SetLastSavedCheckPointTs(cp)
-		if cf.IsMQSink {
+		if cf.IsMQSink() {
 			msg := cf.NewCheckpointTsMessage(cf.GetLastSavedCheckPointTs())
 			c.sendMessages([]*messaging.TargetMessage{msg})
 		}

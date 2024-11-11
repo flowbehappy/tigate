@@ -31,13 +31,11 @@ import (
 
 // Changefeed is a memory present for changefeed info and status
 type Changefeed struct {
-	ID       common.ChangeFeedID
-	Info     *config.ChangeFeedInfo
-	IsMQSink bool
-
+	ID          common.ChangeFeedID
+	info        *atomic.Pointer[config.ChangeFeedInfo]
+	isMQSink    bool
 	nodeID      node.ID
 	configBytes []byte
-
 	// it's saved to the backend db
 	lastSavedCheckpointTs *atomic.Uint64
 	// the heartbeatpb.MaintainerStatus is read only
@@ -66,10 +64,10 @@ func NewChangefeed(cfID common.ChangeFeedID,
 		zap.String("state", string(info.State)))
 	return &Changefeed{
 		ID:                    cfID,
-		Info:                  info,
+		info:                  atomic.NewPointer(info),
 		configBytes:           bytes,
 		lastSavedCheckpointTs: atomic.NewUint64(checkpointTs),
-		IsMQSink:              sink.IsMQScheme(uri.Scheme),
+		isMQSink:              sink.IsMQScheme(uri.Scheme),
 		// init the first Status
 		status: atomic.NewPointer[heartbeatpb.MaintainerStatus](
 			&heartbeatpb.MaintainerStatus{
@@ -78,6 +76,14 @@ func NewChangefeed(cfID common.ChangeFeedID,
 			}),
 		backoff: NewBackoff(cfID, *info.Config.ChangefeedErrorStuckDuration, checkpointTs),
 	}
+}
+
+func (c *Changefeed) GetInfo() *config.ChangeFeedInfo {
+	return c.info.Load()
+}
+
+func (c *Changefeed) SetInfo(info *config.ChangeFeedInfo) {
+	c.info.Store(info)
 }
 
 // setNodeID set the node id of the changefeed
@@ -93,13 +99,18 @@ func (c *Changefeed) UpdateStatus(newStatus *heartbeatpb.MaintainerStatus) (bool
 	old := c.status.Load()
 	if newStatus != nil && newStatus.CheckpointTs >= old.CheckpointTs {
 		c.status.Store(newStatus)
+		info := c.GetInfo()
 		// the changefeed reaches the targetTs
-		if c.Info.TargetTs != 0 && newStatus.CheckpointTs >= c.Info.TargetTs {
+		if info.TargetTs != 0 && newStatus.CheckpointTs >= info.TargetTs {
 			return true, model.StateFinished, nil
 		}
 		return c.backoff.CheckStatus(newStatus)
 	}
 	return false, model.StateNormal, nil
+}
+
+func (c *Changefeed) IsMQSink() bool {
+	return c.isMQSink
 }
 
 func (c *Changefeed) GetStatus() *heartbeatpb.MaintainerStatus {
