@@ -69,6 +69,7 @@ func (db *ChangefeedDB) AddStoppedChangefeed(task *Changefeed) {
 
 	db.changefeeds[task.ID] = task
 	db.stopped[task.ID] = task
+	db.changefeedDisplayNames[task.ID.DisplayName] = task.ID
 }
 
 // AddReplicatingMaintainer adds a replicating the replicating map, that means the task is already scheduled to a maintainer
