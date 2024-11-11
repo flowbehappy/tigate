@@ -17,9 +17,48 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/tiflow/cdc/model"
+	"github.com/stretchr/testify/require"
 )
 
 func TestShouldFailWhenRetry(t *testing.T) {
-	NewBackoff(common.NewChangeFeedIDWithName("test"), time.Millisecond*30, 1)
+	backoff := NewBackoff(common.NewChangeFeedIDWithName("test"), time.Minute*30, 1)
+	require.True(t, backoff.ShouldRun())
+	changefeed, state, err := backoff.CheckStatus(&heartbeatpb.MaintainerStatus{
+		CheckpointTs: 1,
+		Err: []*heartbeatpb.RunningError{
+			{Message: "test"}},
+	})
+	require.True(t, changefeed)
+	require.Equal(t, model.StateWarning, state)
+	require.NotNil(t, err)
+	require.False(t, backoff.ShouldRun())
+	require.True(t, backoff.isRestarting.Load())
+
+	// advance checkpointTs
+	changefeed, state, err = backoff.CheckStatus(&heartbeatpb.MaintainerStatus{
+		CheckpointTs: 2,
+	})
+
+	require.True(t, changefeed)
+	require.Equal(t, model.StateNormal, state)
+	require.Nil(t, err)
+	require.True(t, backoff.ShouldRun())
+	require.False(t, backoff.isRestarting.Load())
+
+	//fail
+	changefeed, state, err = backoff.CheckStatus(&heartbeatpb.MaintainerStatus{
+		CheckpointTs: 1,
+		Err: []*heartbeatpb.RunningError{
+			{Message: "test"},
+			{Code: "CDC:ErrSnapshotLostByGC", Message: "snapshot lost by gc"}},
+	})
+
+	require.True(t, changefeed)
+	require.Equal(t, model.StateFailed, state)
+	require.NotNil(t, err)
+	require.False(t, backoff.ShouldRun())
+	require.True(t, backoff.isRestarting.Load())
 }

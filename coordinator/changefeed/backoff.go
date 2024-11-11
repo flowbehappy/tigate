@@ -107,13 +107,13 @@ func (m *Backoff) CheckStatus(status *heartbeatpb.MaintainerStatus) (bool, model
 				zap.Uint64("checkpointTs", status.CheckpointTs))
 			// reset the retry backoff
 			m.resetErrRetry()
-			m.isRestarting.Store(true)
+			m.isRestarting.Store(false)
 			return true, model.StateNormal, nil
 		}
 		return false, model.StateNormal, nil
 	}
 	// if the checkpointTs is not advanced, we should check if we should retry the changefeed
-	if len(status.Err) > 0 && !m.isRestarting.Load() {
+	if len(status.Err) > 0 {
 		// if the checkpointTs is not advanced for a long time, we should stop the changefeed
 		failed, err := m.HandleError(status.Err)
 		if failed {
@@ -164,5 +164,5 @@ func (m *Backoff) HandleError(errs []*heartbeatpb.RunningError) (bool, *heartbea
 	}
 	m.isRestarting.Store(true)
 	// patch the last error to changefeed info
-	return true, lastError
+	return false, lastError
 }
