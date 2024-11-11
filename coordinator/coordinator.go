@@ -126,32 +126,39 @@ func (c *coordinator) Run(ctx context.Context) error {
 				return errors.Trace(err)
 			}
 		case event := <-c.stateChangedCh:
-			cf := c.controller.GetTask(event.ChangefeedID)
-			if cf == nil {
-				continue
-			}
-			cfInfo, err := cf.Info.Clone()
-			if err != nil {
-				log.Panic("clone changefeed info failed",
-					zap.Error(err))
+			if err := c.handleStateChangedEvent(ctx, event); err != nil {
 				return errors.Trace(err)
-			}
-			cfInfo.State = event.State
-			if err := c.backend.UpdateChangefeed(context.Background(), cf.Info); err != nil {
-				log.Error("failed to update changefeed state",
-					zap.Error(err))
-				return errors.Trace(err)
-			}
-			switch event.State {
-			case model.StateWarning:
-				c.controller.operatorController.StopChangefeed(ctx, event.ChangefeedID, false)
-				c.controller.changefeedDB.Resume(event.ChangefeedID, false)
-			case model.StateFailed, model.StateFinished:
-				c.controller.operatorController.StopChangefeed(ctx, event.ChangefeedID, false)
-			default:
 			}
 		}
 	}
+}
+
+func (c *coordinator) handleStateChangedEvent(ctx context.Context, event *ChangefeedStateChangeEvent) error {
+	cf := c.controller.GetTask(event.ChangefeedID)
+	if cf == nil {
+		return nil
+	}
+	cfInfo, err := cf.Info.Clone()
+	if err != nil {
+		log.Panic("clone changefeed info failed",
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+	cfInfo.State = event.State
+	if err := c.backend.UpdateChangefeed(context.Background(), cf.Info); err != nil {
+		log.Error("failed to update changefeed state",
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+	switch event.State {
+	case model.StateWarning:
+		c.controller.operatorController.StopChangefeed(ctx, event.ChangefeedID, false)
+		c.controller.changefeedDB.Resume(event.ChangefeedID, false)
+	case model.StateFailed, model.StateFinished:
+		c.controller.operatorController.StopChangefeed(ctx, event.ChangefeedID, false)
+	default:
+	}
+	return nil
 }
 
 func (c *coordinator) saveCheckpointTs(ctx context.Context, cfs map[common.ChangeFeedID]*changefeed.Changefeed) error {
