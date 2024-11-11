@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pingcap/ticdc/logservice/logservicepb"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/node"
 
@@ -27,6 +28,11 @@ const (
 	TypeBatchResolvedTs
 	TypeSyncPointEvent
 	TypeHandshakeEvent
+
+	// LogCoordinator related
+	TypeLogCoordinatorBroadcastRequest
+	TypeEventStoreState
+
 	TypeHeartBeatRequest
 	TypeHeartBeatResponse
 	TypeScheduleDispatcherRequest
@@ -60,6 +66,10 @@ func (t IOType) String() string {
 		return "BatchResolvedTs"
 	case TypeHandshakeEvent:
 		return "HandshakeEvent"
+	case TypeLogCoordinatorBroadcastRequest:
+		return "TypeLogCoordinatorBroadcastRequest"
+	case TypeEventStoreState:
+		return "TypeEventStoreState"
 	case TypeHeartBeatRequest:
 		return "HeartBeatRequest"
 	case TypeHeartBeatResponse:
@@ -196,6 +206,10 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 		m = &commonEvent.BatchResolvedEvent{}
 	case TypeHandshakeEvent:
 		m = &commonEvent.HandshakeEvent{}
+	case TypeLogCoordinatorBroadcastRequest:
+		m = &common.LogCoordinatorBroadcastRequest{}
+	case TypeEventStoreState:
+		m = &logservicepb.EventStoreState{}
 	case TypeHeartBeatRequest:
 		m = &heartbeatpb.HeartBeatRequest{}
 	case TypeHeartBeatResponse:
@@ -262,6 +276,10 @@ func NewSingleTargetMessage(To node.ID, Topic string, Message IOTypeT) *TargetMe
 		ioType = TypeBatchResolvedTs
 	case *commonEvent.HandshakeEvent:
 		ioType = TypeHandshakeEvent
+	case *common.LogCoordinatorBroadcastRequest:
+		ioType = TypeLogCoordinatorBroadcastRequest
+	case *logservicepb.EventStoreState:
+		ioType = TypeEventStoreState
 	case *heartbeatpb.HeartBeatRequest:
 		ioType = TypeHeartBeatRequest
 	case *heartbeatpb.BlockStatusRequest:
