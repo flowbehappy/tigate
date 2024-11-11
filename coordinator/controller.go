@@ -281,6 +281,10 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.Mainta
 			continue
 		}
 		nodeID := cf.GetNodeID()
+		if nodeID == "" {
+			// the changefeed is stopped
+			continue
+		}
 		if nodeID != from {
 			// todo: handle the case that the node id is mismatch
 			log.Warn("node id not match",
