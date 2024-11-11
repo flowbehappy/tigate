@@ -441,6 +441,11 @@ func (e *eventStore) RegisterDispatcher(
 					subscriptionStat.ids[dispatcherID] = true
 					candidateIDs[dispatcherID] = true
 					e.dispatcherStates.Unlock()
+					log.Info("reuse existing subscription",
+						zap.Any("dispatcherID", dispatcherID),
+						zap.Uint64("subID", uint64(stat.subID)),
+						zap.Uint64("checkpointTs", subscriptionStat.checkpointTs),
+						zap.Uint64("startTs", startTs))
 					return nil
 				}
 			}
@@ -562,6 +567,11 @@ func (e *eventStore) UpdateDispatcherSendTs(
 				subscriptionStat.checkpointTs,
 				newCheckpointTs,
 			)
+			log.Debug("update checkpoint ts",
+				zap.Any("dispatcherID", dispatcherID),
+				zap.Uint64("subID", uint64(stat.subID)),
+				zap.Uint64("newCheckpointTs", newCheckpointTs),
+				zap.Uint64("oldCheckpointTs", subscriptionStat.checkpointTs))
 			subscriptionStat.checkpointTs = newCheckpointTs
 		}
 	}
