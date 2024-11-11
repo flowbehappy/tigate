@@ -60,5 +60,9 @@ func TestShouldFailWhenRetry(t *testing.T) {
 	require.Equal(t, model.StateFailed, state)
 	require.NotNil(t, err)
 	require.False(t, backoff.ShouldRun())
-	require.True(t, backoff.isRestarting.Load())
+	require.False(t, backoff.isRestarting.Load())
+
+	backoff.resetErrRetry()
+	require.True(t, backoff.ShouldRun())
+	require.False(t, backoff.isRestarting.Load())
 }

@@ -44,6 +44,7 @@ type Backoff struct {
 	id common.ChangeFeedID
 
 	isRestarting  *atomic.Bool
+	failed        *atomic.Bool
 	nextRetryTime *atomic.Time // time of last error for a changefeed
 
 	backoffInterval time.Duration               // the interval for restarting a changefeed in 'error' state
@@ -61,6 +62,7 @@ func NewBackoff(id common.ChangeFeedID, changefeedErrorStuckDuration time.Durati
 		errBackoff:                   backoff.NewExponentialBackOff(),
 		changefeedErrorStuckDuration: changefeedErrorStuckDuration,
 		isRestarting:                 atomic.NewBool(false),
+		failed:                       atomic.NewBool(false),
 		nextRetryTime:                atomic.NewTime(time.Time{}),
 		checkpointTs:                 checkpointTs,
 	}
@@ -76,7 +78,7 @@ func NewBackoff(id common.ChangeFeedID, changefeedErrorStuckDuration time.Durati
 
 func (m *Backoff) ShouldRun() bool {
 	// changefeed should not retry before m.nextRetryTime.
-	return time.Since(m.nextRetryTime.Load()) > 0
+	return !m.failed.Load() && time.Since(m.nextRetryTime.Load()) > 0
 }
 
 func (m *Backoff) shouldFailWhenRetry() bool {
@@ -92,9 +94,14 @@ func (m *Backoff) shouldFailWhenRetry() bool {
 func (m *Backoff) resetErrRetry() {
 	m.errBackoff.Reset()
 	m.nextRetryTime = atomic.NewTime(time.Time{})
+	m.failed.Store(false)
+	m.isRestarting.Store(false)
 }
 
 func (m *Backoff) CheckStatus(status *heartbeatpb.MaintainerStatus) (bool, model.FeedState, *heartbeatpb.RunningError) {
+	if m.failed.Load() {
+		return false, model.StateFailed, nil
+	}
 	if m.checkpointTs < status.CheckpointTs {
 		m.checkpointTs = status.CheckpointTs
 		if m.isRestarting.Load() {
@@ -107,7 +114,6 @@ func (m *Backoff) CheckStatus(status *heartbeatpb.MaintainerStatus) (bool, model
 				zap.Uint64("checkpointTs", status.CheckpointTs))
 			// reset the retry backoff
 			m.resetErrRetry()
-			m.isRestarting.Store(false)
 			return true, model.StateNormal, nil
 		}
 		return false, model.StateNormal, nil
@@ -117,6 +123,7 @@ func (m *Backoff) CheckStatus(status *heartbeatpb.MaintainerStatus) (bool, model
 		// if the checkpointTs is not advanced for a long time, we should stop the changefeed
 		failed, err := m.HandleError(status.Err)
 		if failed {
+			m.failed.Store(true)
 			return true, model.StateFailed, err
 		}
 		return true, model.StateWarning, err
