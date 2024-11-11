@@ -567,7 +567,7 @@ func (e *eventStore) UpdateDispatcherSendTs(
 				subscriptionStat.checkpointTs,
 				newCheckpointTs,
 			)
-			log.Info("update checkpoint ts",
+			log.Debug("update checkpoint ts",
 				zap.Any("dispatcherID", dispatcherID),
 				zap.Uint64("subID", uint64(stat.subID)),
 				zap.Uint64("newCheckpointTs", newCheckpointTs),
