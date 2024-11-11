@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/logservice/logservicepb"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/tiflow/pkg/spanz"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -37,9 +38,11 @@ func TestGetCandidateNodes(t *testing.T) {
 	span1 := &heartbeatpb.TableSpan{
 		TableID: tableID1,
 	}
+	span1.StartKey, span1.EndKey = spanz.GetTableRange(span1.TableID)
 	span2 := &heartbeatpb.TableSpan{
 		TableID: tableID2,
 	}
+	span2.StartKey, span2.EndKey = spanz.GetTableRange(span2.TableID)
 
 	coordinator.eventStoreStates.m = map[node.ID]*eventStoreState{
 		nodeID1: &eventStoreState{
