@@ -69,6 +69,7 @@ func New() LogCoordinator {
 		messageCenter: messageCenter,
 	}
 	c.nodes.m = make(map[node.ID]*node.Info)
+	c.eventStoreStates.m = make(map[node.ID]*eventStoreState)
 
 	// recv and handle messages
 	messageCenter.RegisterHandler(messaging.LogCoordinatorTopic, c.handleMessage)
@@ -138,12 +139,13 @@ func (c *logCoordinator) handleNodeChange(allNodes map[node.ID]*node.Info) {
 func (c *logCoordinator) updateEventStoreState(nodeId node.ID, state *logservicepb.EventStoreState) {
 	c.eventStoreStates.Lock()
 	defer c.eventStoreStates.Unlock()
-	log.Info("update event store state", zap.String("nodeId", nodeId.String()))
+
 	// TODO: avoid remove all, only update related subscription states
 	delete(c.eventStoreStates.m, nodeId)
 	eventStoreState := &eventStoreState{
 		subscriptionStates: make(map[int64]subscriptionStates),
 	}
+	count := 0
 	for tableId, subscriptions := range state.GetSubscriptions() {
 		for _, subscription := range subscriptions.GetSubscriptions() {
 			subscriptionState := &subscriptionState{
@@ -153,9 +155,13 @@ func (c *logCoordinator) updateEventStoreState(nodeId node.ID, state *logservice
 				resolvedTs:   subscription.GetResolvedTs(),
 			}
 			eventStoreState.subscriptionStates[tableId] = append(eventStoreState.subscriptionStates[tableId], subscriptionState)
+			count++
 		}
 	}
 	c.eventStoreStates.m[nodeId] = eventStoreState
+	log.Info("update event store state done",
+		zap.String("nodeId", nodeId.String()),
+		zap.Int("subscriptionCount", count))
 }
 
 // getCandidateNode return all nodes(exclude the request node) which may contain data for `span` from `startTs`,
