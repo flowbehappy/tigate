@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/node"
-	"github.com/pingcap/tiflow/cdc/model"
 	"go.uber.org/zap"
 )
 
@@ -102,9 +101,6 @@ func (db *ChangefeedDB) StopByChangefeedID(cfID common.ChangeFeedID, remove bool
 		db.removeChangefeedUnLock(cf)
 
 		if !remove {
-			clone, _ := cf.GetInfo().Clone()
-			clone.State = model.StateStopped
-			cf.SetInfo(clone)
 			// push back to stopped
 			db.changefeeds[cfID] = cf
 			db.stopped[cfID] = cf
@@ -335,7 +331,7 @@ func (db *ChangefeedDB) CalculateGCSafepoint() uint64 {
 
 	for _, cf := range db.changefeeds {
 		info := cf.GetInfo()
-		if info == nil || info.NeedBlockGC() {
+		if info == nil || !info.NeedBlockGC() {
 			continue
 		}
 		checkpointTs := cf.GetLastSavedCheckPointTs()

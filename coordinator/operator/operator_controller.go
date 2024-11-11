@@ -34,7 +34,7 @@ import (
 // And the Controller is responsible for the execution of the operator.
 type Controller struct {
 	changefeedDB  *changefeed.ChangefeedDB
-	operators     map[common.ChangeFeedID]operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]
+	operators     map[common.ChangeFeedID]*operator.OperatorWithTime[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]
 	runningQueue  operator.OperatorQueue[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]
 	batchSize     int
 	messageCenter messaging.MessageCenter
@@ -50,7 +50,7 @@ func NewOperatorController(mc messaging.MessageCenter,
 	backend changefeed.Backend,
 	batchSize int) *Controller {
 	oc := &Controller{
-		operators:     make(map[common.ChangeFeedID]operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]),
+		operators:     make(map[common.ChangeFeedID]*operator.OperatorWithTime[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]),
 		runningQueue:  make(operator.OperatorQueue[common.ChangeFeedID, *heartbeatpb.MaintainerStatus], 0),
 		messageCenter: mc,
 		batchSize:     batchSize,
@@ -133,19 +133,21 @@ func (oc *Controller) StopChangefeed(ctx context.Context, cfID common.ChangeFeed
 func (oc *Controller) pushStopChangefeedOperator(cfID common.ChangeFeedID, nodeID node.ID, remove bool) {
 	op := NewStopChangefeedOperator(cfID, nodeID, oc.selfNode, oc.backend, remove)
 	if old, ok := oc.operators[cfID]; ok {
-		oldStop, ok := old.(*StopChangefeedOperator)
+		oldStop, ok := old.OP.(*StopChangefeedOperator)
 		if ok {
 			if oldStop.removed {
-				log.Info("changefeed is already removed, skip the stop operator",
+				log.Info("changefeed is in removing progress, skip the stop operator",
 					zap.String("changefeed", cfID.Name()))
 				return
 			}
 		}
 		log.Info("changefeed is stopped , replace the old one",
 			zap.String("changefeed", cfID.Name()),
-			zap.String("operator", old.String()))
-		old.OnTaskRemoved()
-		delete(oc.operators, old.ID())
+			zap.String("operator", old.OP.String()))
+		old.OP.OnTaskRemoved()
+		old.OP.PostFinish()
+		old.Removed = true
+		delete(oc.operators, old.OP.ID())
 	}
 	oc.pushOperator(op)
 }
@@ -157,7 +159,7 @@ func (oc *Controller) UpdateOperatorStatus(id common.ChangeFeedID, from node.ID,
 
 	op, ok := oc.operators[id]
 	if ok {
-		op.Check(from, status)
+		op.OP.Check(from, status)
 	}
 }
 
@@ -175,7 +177,7 @@ func (oc *Controller) OnNodeRemoved(n node.ID) {
 		}
 	}
 	for _, op := range oc.operators {
-		op.OnNodeRemove(n)
+		op.OP.OnNodeRemove(n)
 	}
 }
 
@@ -183,7 +185,12 @@ func (oc *Controller) OnNodeRemoved(n node.ID) {
 func (oc *Controller) GetOperator(id common.ChangeFeedID) operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus] {
 	oc.lock.RLock()
 	defer oc.lock.RUnlock()
-	return oc.operators[id]
+
+	if op, ok := oc.operators[id]; !ok {
+		return nil
+	} else {
+		return op.OP
+	}
 }
 
 // OperatorSize returns the number of operators in the controller.
@@ -199,15 +206,20 @@ func (oc *Controller) OperatorSize() int {
 func (oc *Controller) pollQueueingOperator() (operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus], bool) {
 	oc.lock.Lock()
 	defer oc.lock.Unlock()
+
 	if oc.runningQueue.Len() == 0 {
 		return nil, false
 	}
 	item := heap.Pop(&oc.runningQueue).(*operator.OperatorWithTime[common.ChangeFeedID, *heartbeatpb.MaintainerStatus])
+	if item.Removed {
+		return nil, true
+	}
 	op := item.OP
 	opID := item.OP.ID()
 	// always call the PostFinish method to ensure the operator is cleaned up by itself.
 	if op.IsFinished() {
 		op.PostFinish()
+		item.Removed = true
 		delete(oc.operators, opID)
 		metrics.CoordinatorFinishedOperatorCount.WithLabelValues(op.Type()).Inc()
 		metrics.CoordinatorOperatorDuration.WithLabelValues(op.Type()).Observe(time.Since(item.EnqueueTime).Seconds())
@@ -231,8 +243,9 @@ func (oc *Controller) pollQueueingOperator() (operator.Operator[common.ChangeFee
 func (oc *Controller) pushOperator(op operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]) {
 	log.Info("add operator to running queue",
 		zap.String("operator", op.String()))
-	oc.operators[op.ID()] = op
+	opWithTime := &operator.OperatorWithTime[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]{OP: op, Time: time.Now(), EnqueueTime: time.Now()}
+	oc.operators[op.ID()] = opWithTime
 	op.Start()
-	heap.Push(&oc.runningQueue, &operator.OperatorWithTime[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]{OP: op, Time: time.Now(), EnqueueTime: time.Now()})
+	heap.Push(&oc.runningQueue, opWithTime)
 	metrics.CoordinatorCreatedOperatorCount.WithLabelValues(op.Type()).Inc()
 }

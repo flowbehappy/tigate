@@ -330,7 +330,7 @@ func (b *EtcdBackend) UpdateChangefeedCheckpointTs(ctx context.Context, cps map[
 		return err
 	}
 	for cfID, checkpointTs := range cps {
-		status := &model.ChangeFeedStatus{CheckpointTs: checkpointTs}
+		status := &config.ChangeFeedStatus{CheckpointTs: checkpointTs, Progress: config.ProgressNone}
 		jobValue, err := status.Marshal()
 		if err != nil {
 			return errors.Trace(err)

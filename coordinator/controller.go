@@ -413,6 +413,12 @@ func (c *Controller) PauseChangefeed(ctx context.Context, id common.ChangeFeedID
 	if err := c.backend.PauseChangefeed(ctx, id); err != nil {
 		return errors.Trace(err)
 	}
+	if clone, err := cf.GetInfo().Clone(); err != nil {
+		return errors.Trace(err)
+	} else {
+		clone.State = model.StateStopped
+		cf.SetInfo(clone)
+	}
 	c.operatorController.StopChangefeed(ctx, id, false)
 	return nil
 }
@@ -425,9 +431,12 @@ func (c *Controller) ResumeChangefeed(ctx context.Context, id common.ChangeFeedI
 	if err := c.backend.ResumeChangefeed(ctx, id, newCheckpointTs); err != nil {
 		return errors.Trace(err)
 	}
-	clone, _ := cf.GetInfo().Clone()
-	clone.State = model.StateNormal
-	cf.SetInfo(clone)
+	if clone, err := cf.GetInfo().Clone(); err != nil {
+		return errors.Trace(err)
+	} else {
+		clone.State = model.StateNormal
+		cf.SetInfo(clone)
+	}
 	c.changefeedDB.Resume(id, true)
 	return nil
 }
