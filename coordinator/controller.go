@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"github.com/pingcap/ticdc/utils/threadpool"
+	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -289,7 +290,21 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.Mainta
 				zap.Stringer("node", nodeID))
 			continue
 		}
-		cf.UpdateStatus(status)
+		changed, state, err := cf.UpdateStatus(status)
+		if changed {
+			log.Info("changefeed status changed",
+				zap.String("changefeed", cfID.Name()),
+				zap.Any("state", state))
+			cfInfo, err := cf.Info.Clone()
+			cfInfo.State = state
+			c.backend.UpdateChangefeed(context.Background(), cf.Info)
+			switch state {
+			case model.StateWarning:
+			case model.StateFailed:
+			default:
+
+			}
+		}
 		cfs[cfID] = cf
 	}
 	select {
