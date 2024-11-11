@@ -110,7 +110,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	schemaIDToDispatchers := NewSchemaIDToDispatchers()
 	startTs := common.Ts(0)
 	dispatcher := NewDispatcher(
-		"test",
+		common.NewChangefeedID(),
 		dispatcherID,
 		tableSpan,
 		sink,
@@ -120,6 +120,8 @@ func TestDispatcherHandleEvents(t *testing.T) {
 		nil,
 		1, // schemaID
 		schemaIDToDispatchers,
+		nil,
+		100000, // memoryQuota
 		nil,
 	)
 	// 1. Dispatcher is not ready, handle dml event, it will return immediately

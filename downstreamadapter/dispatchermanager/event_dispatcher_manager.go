@@ -344,7 +344,7 @@ func (e *EventDispatcherManager) NewDispatchers(infos []DispatcherCreateInfo) er
 			e.changefeedID,
 			id, tableSpans[idx], e.sink,
 			uint64(newStartTsList[idx]), e.dispatcherActionChan, e.blockStatusesChan,
-			e.filter, schemaIds[idx], e.schemaIDToDispatchers, &syncPointInfo, e.errCh)
+			e.filter, schemaIds[idx], e.schemaIDToDispatchers, &syncPointInfo, e.config.MemoryQuota, e.errCh)
 
 		if e.heartBeatTask == nil {
 			e.heartBeatTask = newHeartBeatTask(e)

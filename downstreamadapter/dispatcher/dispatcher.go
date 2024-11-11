@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
-	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/pingcap/ticdc/pkg/sink/util"
 	"github.com/pingcap/ticdc/utils/dynstream"
@@ -77,7 +76,7 @@ type Dispatcher struct {
 	// lastEventSeq is the sequence number of the last received DML/DDL event.
 	// It is used to ensure the order of events.
 	lastEventSeq atomic.Uint64
-
+	memoryQuota  uint64
 	// blockStatusesChan use to report block status of ddl/sync point event to Maintainer
 	blockStatusesChan chan *heartbeatpb.TableSpanBlockStatus
 
@@ -126,6 +125,7 @@ func NewDispatcher(
 	schemaID int64,
 	schemaIDToDispatchers *SchemaIDToDispatchers,
 	syncPointInfo *syncpoint.SyncPointInfo,
+	memoryQuota uint64,
 	errCh chan error) *Dispatcher {
 	dispatcher := &Dispatcher{
 		changefeedID:          changefeedID,
@@ -134,6 +134,7 @@ func NewDispatcher(
 		sink:                  sink,
 		blockStatusesChan:     blockStatusesChan,
 		dispatcherActionChan:  dispatcherActionChan,
+		memoryQuota:           memoryQuota,
 		SyncPointInfo:         syncPointInfo,
 		componentStatus:       newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
 		resolvedTs:            newTsWithMutex(startTs),
@@ -324,12 +325,18 @@ func (d *Dispatcher) checkHandshakeEvents(dispatcherEvents []DispatcherEvent) (b
 			log.Panic("cast handshake event failed", zap.Any("event Type", event.GetType()), zap.Stringer("dispatcher", d.id), zap.Uint64("commitTs", event.GetCommitTs()))
 		}
 		if handshake.GetCommitTs() == d.startTs.Load() {
-			if handshake.GetSeq() != d.lastEventSeq.Add(1) {
-				log.Panic("Receive handshake event, but seq is not the next one",
+			currentSeq := d.lastEventSeq.Load()
+			if currentSeq != 0 {
+				log.Warn("Receive handshake event, but current seq is not zero, reset it",
 					zap.Any("event", handshake),
 					zap.Stringer("dispatcher", d.id),
-					zap.Uint64("lastEventSeq", d.lastEventSeq.Load()))
+					zap.Uint64("currentSeq", currentSeq))
+				d.reset()
+				return false, dispatcherEvents[i+1:]
 			}
+			// In some case, the eventService may send handshake event multiple times,
+			// we should use the first handshake event we received to initialize the dispatcher.
+			d.lastEventSeq.Store(handshake.GetSeq())
 			d.tableInfo.Store(handshake.TableInfo)
 			d.isReady.Store(true)
 			log.Info("Receive handshake event, dispatcher is ready to handle events",
@@ -569,7 +576,7 @@ func (d *Dispatcher) addToDynamicStream() {
 	areaSetting := dynstream.NewAreaSettings()
 	// FixMe: Pass memory quota from changefeed config to dispatcherManager, and then to dispatcher
 	// Make it configurable
-	areaSetting.MaxPendingSize = config.DefaultChangefeedMemoryQuota
+	areaSetting.MaxPendingSize = int(d.memoryQuota)
 	err := dispatcherEventDynamicStream.AddPath(d.id, d, areaSetting)
 	if err != nil {
 		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
