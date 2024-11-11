@@ -148,7 +148,7 @@ func (c *coordinator) saveCheckpointTs(ctx context.Context, cfs map[common.Chang
 			continue
 		}
 		cf.SetLastSavedCheckPointTs(cp)
-		if cf.IsMQSink {
+		if cf.IsMQSink() {
 			msg := cf.NewCheckpointTsMessage(cf.GetLastSavedCheckPointTs())
 			c.sendMessages([]*messaging.TargetMessage{msg})
 		}

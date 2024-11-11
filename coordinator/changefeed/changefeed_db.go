@@ -102,7 +102,9 @@ func (db *ChangefeedDB) StopByChangefeedID(cfID common.ChangeFeedID, remove bool
 		db.removeChangefeedUnLock(cf)
 
 		if !remove {
-			cf.Info.State = model.StateStopped
+			clone, _ := cf.GetInfo().Clone()
+			clone.State = model.StateStopped
+			cf.SetInfo(clone)
 			// push back to stopped
 			db.changefeeds[cfID] = cf
 			db.stopped[cfID] = cf
@@ -263,7 +265,9 @@ func (db *ChangefeedDB) Resume(id common.ChangeFeedID) {
 
 	cf := db.changefeeds[id]
 	if cf != nil {
-		cf.Info.State = model.StateNormal
+		clone, _ := cf.GetInfo().Clone()
+		clone.State = model.StateNormal
+		cf.SetInfo(clone)
 		delete(db.stopped, id)
 		db.absent[id] = cf
 		log.Info("resume changefeed", zap.String("changefeed", id.String()))
@@ -325,7 +329,8 @@ func (db *ChangefeedDB) CalculateGCSafepoint() uint64 {
 	var minCpts uint64 = math.MaxUint64
 
 	for _, cf := range db.changefeeds {
-		if cf.Info == nil || !cf.Info.NeedBlockGC() {
+		info := cf.GetInfo()
+		if info == nil || info.NeedBlockGC() {
 			continue
 		}
 		checkpointTs := cf.GetLastSavedCheckPointTs()
