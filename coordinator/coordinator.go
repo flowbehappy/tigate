@@ -55,6 +55,8 @@ type coordinator struct {
 	pdClock   pdutil.Clock
 
 	updatedChangefeedCh chan map[common.ChangeFeedID]*changefeed.Changefeed
+	stateChangedCh      chan *ChangefeedStateChangeEvent
+	backend             changefeed.Backend
 }
 
 func New(node *node.Info,
@@ -75,12 +77,14 @@ func New(node *node.Info,
 		pdClock:             pdClock,
 		mc:                  mc,
 		updatedChangefeedCh: make(chan map[common.ChangeFeedID]*changefeed.Changefeed, 1024),
+		stateChangedCh:      make(chan *ChangefeedStateChangeEvent, 8),
+		backend:             backend,
 	}
 	c.stream = dynstream.NewDynamicStream[int, string, *Event, *Controller, *StreamHandler](NewStreamHandler())
 	c.stream.Start()
 	c.taskScheduler = threadpool.NewThreadPoolDefault()
 
-	ctl := NewController(c.version, c.nodeInfo, c.updatedChangefeedCh, backend, c.stream, c.taskScheduler, batchSize, balanceCheckInterval)
+	ctl := NewController(c.version, c.nodeInfo, c.updatedChangefeedCh, c.stateChangedCh, backend, c.stream, c.taskScheduler, batchSize, balanceCheckInterval)
 	c.controller = ctl
 	if err := c.stream.AddPath("coordinator", ctl); err != nil {
 		log.Panic("failed to add path",
@@ -121,8 +125,45 @@ func (c *coordinator) Run(ctx context.Context) error {
 			if err := c.saveCheckpointTs(ctx, cfs); err != nil {
 				return errors.Trace(err)
 			}
+		case event := <-c.stateChangedCh:
+			if err := c.handleStateChangedEvent(ctx, event); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
+}
+
+func (c *coordinator) handleStateChangedEvent(ctx context.Context, event *ChangefeedStateChangeEvent) error {
+	cf := c.controller.GetTask(event.ChangefeedID)
+	if cf == nil {
+		return nil
+	}
+	cfInfo, err := cf.Info.Clone()
+	if err != nil {
+		log.Panic("clone changefeed info failed",
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+	cfInfo.State = event.State
+	progress := config.ProgressNone
+	if event.State == model.StateFailed || event.State == model.StateFinished {
+		progress = config.ProgressStopping
+	}
+
+	if err := c.backend.UpdateChangefeed(context.Background(), cfInfo, cf.GetStatus().CheckpointTs, progress); err != nil {
+		log.Error("failed to update changefeed state",
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+	switch event.State {
+	case model.StateWarning:
+		c.controller.operatorController.StopChangefeed(ctx, event.ChangefeedID, false)
+		c.controller.changefeedDB.Resume(event.ChangefeedID, false)
+	case model.StateFailed, model.StateFinished:
+		c.controller.operatorController.StopChangefeed(ctx, event.ChangefeedID, false)
+	default:
+	}
+	return nil
 }
 
 func (c *coordinator) saveCheckpointTs(ctx context.Context, cfs map[common.ChangeFeedID]*changefeed.Changefeed) error {

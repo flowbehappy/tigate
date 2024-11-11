@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/ticdc/coordinator/changefeed"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
-	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
@@ -120,33 +119,34 @@ func (oc *Controller) StopChangefeed(ctx context.Context, cfID common.ChangeFeed
 
 	var scheduledNode = oc.changefeedDB.StopByChangefeedID(cfID, remove)
 	if scheduledNode == "" {
-		log.Info("changefeed is not scheduled,update meta in db directory",
+		log.Info("changefeed is not scheduled, stop maintainer using coordinator node",
 			zap.Bool("remove", remove),
 			zap.String("changefeed", cfID.Name()))
-		// changefeed is not scheduled, we can update the meta in DB directly, otherwise we update the meta in the operator
-		if remove {
-			if err := oc.backend.DeleteChangefeed(ctx, cfID); err != nil {
-				log.Warn("delete changefeed meta failed",
-					zap.String("changefeed", cfID.Name()),
-					zap.Error(err))
-			}
-		} else {
-			if err := oc.backend.SetChangefeedProgress(ctx, cfID, config.ProgressNone); err != nil {
-				log.Warn("set changefeed progress failed",
-					zap.String("changefeed", cfID.Name()),
-					zap.Error(err))
+		scheduledNode = oc.selfNode.ID
+	}
+	oc.pushStopChangefeedOperator(cfID, scheduledNode, remove)
+}
+
+// pushStopChangefeedOperator pushes a stop changefeed operator to the controller.
+// it checks if the operator already exists, if exists, it will replace the old one.
+// if the old operator is the removing operator, it will skip this operator.
+func (oc *Controller) pushStopChangefeedOperator(cfID common.ChangeFeedID, nodeID node.ID, remove bool) {
+	op := NewStopChangefeedOperator(cfID, nodeID, oc.selfNode, oc.backend, remove)
+	if old, ok := oc.operators[cfID]; ok {
+		oldStop, ok := old.(*StopChangefeedOperator)
+		if ok {
+			if oldStop.removed {
+				log.Info("changefeed is already removed, skip the stop operator",
+					zap.String("changefeed", cfID.Name()))
+				return
 			}
 		}
-		return
-	}
-	if old, ok := oc.operators[cfID]; ok {
 		log.Info("changefeed is stopped , replace the old one",
 			zap.String("changefeed", cfID.Name()),
 			zap.String("operator", old.String()))
 		old.OnTaskRemoved()
 		delete(oc.operators, old.ID())
 	}
-	op := NewStopChangefeedOperator(cfID, scheduledNode, oc.selfNode, oc.backend, remove)
 	oc.pushOperator(op)
 }
 

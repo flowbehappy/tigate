@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/tiflow/cdc/model"
 	"github.com/pingcap/tiflow/pkg/sink"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -41,6 +42,8 @@ type Changefeed struct {
 	lastSavedCheckpointTs *atomic.Uint64
 	// the heartbeatpb.MaintainerStatus is read only
 	status *atomic.Pointer[heartbeatpb.MaintainerStatus]
+
+	backoff *Backoff
 }
 
 // NewChangefeed creates a new changefeed instance
@@ -73,6 +76,7 @@ func NewChangefeed(cfID common.ChangeFeedID,
 				CheckpointTs: checkpointTs,
 				FeedState:    string(info.State),
 			}),
+		backoff: NewBackoff(cfID, *info.Config.ChangefeedErrorStuckDuration, checkpointTs),
 	}
 }
 
@@ -85,11 +89,17 @@ func (c *Changefeed) GetNodeID() node.ID {
 	return c.nodeID
 }
 
-func (c *Changefeed) UpdateStatus(newStatus *heartbeatpb.MaintainerStatus) {
+func (c *Changefeed) UpdateStatus(newStatus *heartbeatpb.MaintainerStatus) (bool, model.FeedState, *heartbeatpb.RunningError) {
 	old := c.status.Load()
 	if newStatus != nil && newStatus.CheckpointTs >= old.CheckpointTs {
 		c.status.Store(newStatus)
+		// the changefeed reaches the targetTs
+		if c.Info.TargetTs != 0 && newStatus.CheckpointTs >= c.Info.TargetTs {
+			return true, model.StateFinished, nil
+		}
+		return c.backoff.CheckStatus(newStatus)
 	}
+	return false, model.StateNormal, nil
 }
 
 func (c *Changefeed) GetStatus() *heartbeatpb.MaintainerStatus {
