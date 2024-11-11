@@ -35,17 +35,16 @@ const (
 
 type Sink interface {
 	AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress)
-	AddBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress)
+	WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error
 	PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress)
 	AddCheckpointTs(ts uint64)
 	SetTableSchemaStore(tableSchemaStore *sinkutil.TableSchemaStore)
-	CheckStartTs(tableId int64, startTs uint64) (int64, error)
+	CheckStartTsList(tableIds []int64, startTsList []int64) ([]int64, error)
 	Close(removeDDLTsItem bool) error
 	SinkType() SinkType
-	Run() error
 }
 
-func NewSink(ctx context.Context, config *config.ChangefeedConfig, changefeedID common.ChangeFeedID) (Sink, error) {
+func NewSink(ctx context.Context, config *config.ChangefeedConfig, changefeedID common.ChangeFeedID, errCh chan error) (Sink, error) {
 	sinkURI, err := url.Parse(config.SinkURI)
 	if err != nil {
 		return nil, cerror.WrapError(cerror.ErrSinkURIInvalid, err)
@@ -53,9 +52,9 @@ func NewSink(ctx context.Context, config *config.ChangefeedConfig, changefeedID 
 	scheme := sink.GetScheme(sinkURI)
 	switch scheme {
 	case sink.MySQLScheme, sink.MySQLSSLScheme, sink.TiDBScheme, sink.TiDBSSLScheme:
-		return NewMysqlSink(ctx, changefeedID, 16, config, sinkURI)
+		return NewMysqlSink(ctx, changefeedID, 16, config, sinkURI, errCh)
 	case sink.KafkaScheme, sink.KafkaSSLScheme:
-		return NewKafkaSink(ctx, changefeedID, sinkURI, config.SinkConfig)
+		return NewKafkaSink(ctx, changefeedID, sinkURI, config.SinkConfig, errCh)
 	}
 	return nil, nil
 }

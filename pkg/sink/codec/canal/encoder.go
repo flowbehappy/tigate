@@ -495,7 +495,6 @@ func (c *JSONRowEventEncoder) AppendRowChangedEvent(
 		}
 
 		if c.config.LargeMessageHandle.HandleKeyOnly() {
-			log.Info("hyy into handle key only")
 			value, err = newJSONMessageForDML(e, c.config, true, "")
 			if err != nil {
 				return cerror.ErrMessageTooLarge.GenWithStackByArgs()

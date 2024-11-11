@@ -26,6 +26,42 @@ import (
 	"go.uber.org/zap"
 )
 
+type ResendTaskMap struct {
+	mutex sync.Mutex
+	m     map[BlockEventIdentifier]*ResendTask
+}
+
+func newResendTaskMap() *ResendTaskMap {
+	return &ResendTaskMap{
+		m: make(map[BlockEventIdentifier]*ResendTask),
+	}
+}
+
+func (r *ResendTaskMap) Get(identifier BlockEventIdentifier) *ResendTask {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	return r.m[identifier]
+}
+
+func (r *ResendTaskMap) Set(identifier BlockEventIdentifier, task *ResendTask) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	r.m[identifier] = task
+}
+
+func (r *ResendTaskMap) Delete(identifier BlockEventIdentifier) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	delete(r.m, identifier)
+}
+
+// Considering the sync point event and ddl event may have the same commitTs,
+// we need to distinguish them.
+type BlockEventIdentifier struct {
+	CommitTs    uint64
+	IsSyncPoint bool
+}
+
 type BlockStatus struct {
 	mutex             sync.Mutex
 	blockPendingEvent commonEvent.BlockEvent
@@ -197,10 +233,6 @@ func (t *ResendTask) Execute() time.Time {
 }
 
 func (t *ResendTask) Cancel() {
-	_, blockStage := t.dispatcher.blockStatus.getEventAndStage()
-	if blockStage == heartbeatpb.BlockStage_NONE {
-		t.dispatcher.blockStatus.clear()
-	}
 	t.taskHandle.Cancel()
 }
 
@@ -281,7 +313,9 @@ func (h *EventsHandler) GetArea(path common.DispatcherID, dest *Dispatcher) comm
 func (h *EventsHandler) GetTimestamp(event DispatcherEvent) dynstream.Timestamp {
 	return dynstream.Timestamp(event.GetCommitTs())
 }
-func (h *EventsHandler) OnDrop(event DispatcherEvent) {}
+func (h *EventsHandler) OnDrop(event DispatcherEvent) {
+	log.Info("event dropped", zap.Any("dispatcher", event.GetDispatcherID()), zap.Any("commitTs", event.GetCommitTs()), zap.Any("sequence", event.GetSeq()))
+}
 
 type DispatcherEvent struct {
 	commonEvent.Event
@@ -301,6 +335,7 @@ func GetEventDynamicStream() dynstream.DynamicStream[common.GID, common.Dispatch
 	if eventDynamicStream == nil {
 		eventDynamicStreamOnce.Do(func() {
 			option := dynstream.NewOption()
+			option.BatchCount = 128
 			// Enable memory control for dispatcher events dynamic stream.
 			log.Info("New EventDynamicStream, memory control is enabled")
 			option.EnableMemoryControl = true

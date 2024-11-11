@@ -89,6 +89,10 @@ type EventDispatcherManager struct {
 	// TODO: changefeed update config
 	syncPointConfig *syncpoint.SyncPointConfig
 
+	// collect the error in all the dispatchers and sink module
+	// report the error to the maintainer
+	errCh chan error
+
 	tableEventDispatcherCount      prometheus.Gauge
 	metricCreateDispatcherDuration prometheus.Observer
 	metricCheckpointTs             prometheus.Gauge
@@ -109,8 +113,10 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 		dispatcherMap:                  newDispatcherMap(),
 		changefeedID:                   changefeedID,
 		maintainerID:                   maintainerID,
-		statusesChan:                   make(chan *heartbeatpb.TableSpanStatus, 10000),
-		blockStatusesChan:              make(chan *heartbeatpb.TableSpanBlockStatus, 1000),
+		statusesChan:                   make(chan *heartbeatpb.TableSpanStatus, 8192),
+		blockStatusesChan:              make(chan *heartbeatpb.TableSpanBlockStatus, 1024*1024),
+		dispatcherActionChan:           make(chan common.DispatcherAction, 1024*1024),
+		errCh:                          make(chan error, 16),
 		cancel:                         cancel,
 		config:                         cfConfig,
 		schemaIDToDispatchers:          dispatcher.NewSchemaIDToDispatchers(),
@@ -161,21 +167,26 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 	manager.wg.Add(1)
 	go func() {
 		defer manager.wg.Done()
-		err := manager.sink.Run()
-		if err != nil && errors.Cause(err) != context.Canceled {
-			log.Error("Sink Run Meets Error",
-				zap.String("changefeedID", manager.changefeedID.String()),
-				zap.Error(err))
-			// report error to maintainer
-			var message heartbeatpb.HeartBeatRequest
-			message.ChangefeedID = manager.changefeedID.ToPB()
-			message.Err = &heartbeatpb.RunningError{
-				Time:    time.Now().String(),
-				Node:    appcontext.GetID(),
-				Code:    string(apperror.ErrorCode(err)),
-				Message: err.Error(),
+		select {
+		case <-ctx.Done():
+			return
+		case err := <-manager.errCh:
+			if errors.Cause(err) != context.Canceled {
+				log.Error("Event Dispatcher Manager Meets Error",
+					zap.String("changefeedID", manager.changefeedID.String()),
+					zap.Error(err))
+
+				// report error to maintainer
+				var message heartbeatpb.HeartBeatRequest
+				message.ChangefeedID = manager.changefeedID.ToPB()
+				message.Err = &heartbeatpb.RunningError{
+					Time:    time.Now().String(),
+					Node:    appcontext.GetID(),
+					Code:    string(apperror.ErrorCode(err)),
+					Message: err.Error(),
+				}
+				manager.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: manager.GetMaintainerID(), Request: &message})
 			}
-			manager.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: manager.GetMaintainerID(), Request: &message})
 		}
 	}()
 
@@ -186,9 +197,22 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 		manager.CollectBlockStatusRequest(ctx)
 	}()
 
+	manager.wg.Add(1)
+	go func() {
+		defer manager.wg.Done()
+		manager.CollectDispatcherAction(ctx)
+	}()
+
 	// create tableTriggerEventDispatcher if it is not nil
 	if tableTriggerEventDispatcherID != nil {
-		_, err := manager.NewDispatcher(common.NewDispatcherIDFromPB(tableTriggerEventDispatcherID), heartbeatpb.DDLSpan, startTs, 0)
+		err := manager.NewDispatchers([]DispatcherCreateInfo{
+			{
+				Id:        common.NewDispatcherIDFromPB(tableTriggerEventDispatcherID),
+				TableSpan: heartbeatpb.DDLSpan,
+				StartTs:   startTs,
+				SchemaID:  0,
+			},
+		})
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
@@ -199,7 +223,7 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 }
 
 func (e *EventDispatcherManager) InitSink(ctx context.Context) error {
-	sink, err := sink.NewSink(ctx, e.config, e.changefeedID)
+	sink, err := sink.NewSink(ctx, e.config, e.changefeedID, e.errCh)
 	if err != nil {
 		return err
 	}
@@ -259,84 +283,111 @@ func (e *EventDispatcherManager) close(remove bool) {
 	log.Info("event dispatcher manager closed", zap.Stringer("changefeedID", e.changefeedID))
 }
 
-func (e *EventDispatcherManager) NewDispatcher(id common.DispatcherID, tableSpan *heartbeatpb.TableSpan, startTs uint64, schemaID int64) (*dispatcher.Dispatcher, error) {
+type DispatcherCreateInfo struct {
+	Id        common.DispatcherID
+	TableSpan *heartbeatpb.TableSpan
+	StartTs   uint64
+	SchemaID  int64
+}
+
+func (e *EventDispatcherManager) NewDispatchers(infos []DispatcherCreateInfo) error {
 	start := time.Now()
-	if _, ok := e.dispatcherMap.Get(id); ok {
-		return nil, nil
+
+	dispatcherIds := make([]common.DispatcherID, 0, len(infos))
+	tableIds := make([]int64, 0, len(infos))
+	startTsList := make([]int64, 0, len(infos))
+	tableSpans := make([]*heartbeatpb.TableSpan, 0, len(infos))
+	schemaIds := make([]int64, 0, len(infos))
+	for _, info := range infos {
+		id := info.Id
+		if _, ok := e.dispatcherMap.Get(id); ok {
+			continue
+		}
+		dispatcherIds = append(dispatcherIds, id)
+		tableIds = append(tableIds, info.TableSpan.TableID)
+		startTsList = append(startTsList, int64(info.StartTs))
+		tableSpans = append(tableSpans, info.TableSpan)
+		schemaIds = append(schemaIds, info.SchemaID)
 	}
 
-	// If downstream is mysql-class, we need to check whether startTs we should actually use as the begin startTs
-	// NewDispatcher may called after the node is crashed or dispatcher is scheduled.
-	// When downstream is mysql-class, we could check ddl-ts table in downstream, what is the ddl-ts of this tableID,
-	// and choose max(ddl-ts, startTs) as the begin startTs.
-	newStartTs, err := e.sink.CheckStartTs(tableSpan.TableID, startTs)
+	// we batch the creatation for the dispatchers,
+	// mainly because we need to batch the query for startTs
+	newStartTsList, err := e.sink.CheckStartTsList(tableIds, startTsList)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
-	// this table is dropped, skip it and return removed status to maintainer
-	if newStartTs == -1 {
+	for idx, id := range dispatcherIds {
+		if newStartTsList[idx] == -1 {
+			e.statusesChan <- &heartbeatpb.TableSpanStatus{
+				ID:              id.ToPB(),
+				ComponentStatus: heartbeatpb.ComponentState_Removed,
+			}
+			log.Info("this table is dropped, skip it and return removed status to maintainer",
+				zap.Any("tableSpan", tableSpans[idx]),
+				zap.Any("changefeedID", e.changefeedID.Name()),
+				zap.Any("namespace", e.changefeedID.Namespace()))
+			continue
+		}
+
+		syncPointInfo := syncpoint.SyncPointInfo{
+			SyncPointConfig: e.syncPointConfig,
+			EnableSyncPoint: false,
+		}
+
+		if e.syncPointConfig != nil {
+			syncPointInfo.EnableSyncPoint = true
+			syncPointInfo.InitSyncPointTs = syncpoint.CalculateStartSyncPointTs(uint64(newStartTsList[idx]), e.syncPointConfig.SyncPointInterval)
+		}
+
+		d := dispatcher.NewDispatcher(
+			e.changefeedID,
+			id, tableSpans[idx], e.sink,
+			uint64(newStartTsList[idx]), e.dispatcherActionChan, e.blockStatusesChan,
+			e.filter, schemaIds[idx], e.schemaIDToDispatchers, &syncPointInfo, e.errCh)
+
+		if e.heartBeatTask == nil {
+			e.heartBeatTask = newHeartBeatTask(e)
+		}
+
+		if tableSpans[idx].Equal(heartbeatpb.DDLSpan) {
+			e.tableTriggerEventDispatcher = d
+		} else {
+			e.schemaIDToDispatchers.Set(schemaIds[idx], id)
+		}
+
+		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).SendDispatcherRequest(
+			eventcollector.DispatcherRequest{
+				Dispatcher:   d,
+				StartTs:      d.GetStartTs(),
+				ActionType:   eventpb.ActionType_ACTION_TYPE_REGISTER,
+				FilterConfig: toFilterConfigPB(e.config.Filter),
+			},
+		)
+
+		e.dispatcherMap.Set(id, d)
 		e.statusesChan <- &heartbeatpb.TableSpanStatus{
 			ID:              id.ToPB(),
-			ComponentStatus: heartbeatpb.ComponentState_Removed,
+			ComponentStatus: heartbeatpb.ComponentState_Working,
 		}
-		log.Info("this table is dropped, skip it and return removed status to maintainer")
-		return nil, nil
+
+		e.tableEventDispatcherCount.Inc()
+
+		log.Info("new dispatcher created",
+			zap.String("ID", id.String()),
+			zap.Any("changefeedID", e.changefeedID.Name()),
+			zap.Any("namespace", e.changefeedID.Namespace()),
+			zap.Any("tableSpan", tableSpans[idx]),
+			zap.Any("startTs", newStartTsList[idx]))
+
 	}
-
-	syncPointInfo := syncpoint.SyncPointInfo{
-		SyncPointConfig: e.syncPointConfig,
-		EnableSyncPoint: false,
-	}
-
-	if e.syncPointConfig != nil {
-		syncPointInfo.EnableSyncPoint = true
-		syncPointInfo.InitSyncPointTs = syncpoint.CalculateStartSyncPointTs(startTs, e.syncPointConfig.SyncPointInterval)
-	}
-
-	d := dispatcher.NewDispatcher(
-		e.changefeedID,
-		id, tableSpan, e.sink,
-		startTs, e.dispatcherActionChan, e.blockStatusesChan,
-		e.filter, schemaID, e.schemaIDToDispatchers, &syncPointInfo)
-
-	// lazy create heartBeatTask when event dispatcher manager has dispatchers
-	if e.heartBeatTask == nil {
-		e.heartBeatTask = newHeartBeatTask(e)
-	}
-
-	if tableSpan.Equal(heartbeatpb.DDLSpan) {
-		e.tableTriggerEventDispatcher = d
-	} else {
-		e.schemaIDToDispatchers.Set(schemaID, id)
-	}
-
-	appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).SendDispatcherRequest(
-		eventcollector.DispatcherRequest{
-			Dispatcher:   d,
-			StartTs:      d.GetStartTs(),
-			ActionType:   eventpb.ActionType_ACTION_TYPE_REGISTER,
-			FilterConfig: toFilterConfigPB(e.config.Filter),
-		},
-	)
-
-	e.dispatcherMap.Set(id, d)
-	e.statusesChan <- &heartbeatpb.TableSpanStatus{
-		ID:              id.ToPB(),
-		ComponentStatus: heartbeatpb.ComponentState_Working,
-	}
-
-	//TODO:区分 tableTriggerEventDIspatcher 的 metrics
-	e.tableEventDispatcherCount.Inc()
-
-	log.Info("new dispatcher created",
-		zap.String("ID", id.String()),
-		zap.Any("tableSpan", tableSpan),
-		zap.Any("startTs", newStartTs),
-		zap.Int64("cost(ns)", time.Since(start).Nanoseconds()), zap.Time("start", start))
-	e.metricCreateDispatcherDuration.Observe(float64(time.Since(start).Seconds()))
-
-	return d, nil
+	e.metricCreateDispatcherDuration.Observe(float64(time.Since(start).Seconds()) / float64(len(dispatcherIds)))
+	log.Info("batch create new dispatchers",
+		zap.Any("changefeedID", e.changefeedID.Name()),
+		zap.Any("namespace", e.changefeedID.Namespace()),
+		zap.Int("count", len(dispatcherIds)),
+		zap.Duration("duration", time.Since(start)))
+	return nil
 }
 
 func (e *EventDispatcherManager) CollectBlockStatusRequest(ctx context.Context) {
@@ -423,10 +474,19 @@ func (e *EventDispatcherManager) CollectDispatcherAction(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case a := <-e.dispatcherActionChan:
+			log.Info("collect dispatcher action", zap.String("action", a.String()))
 			d, ok := e.dispatcherMap.Get(a.DispatcherID)
+			// The dispatcher must in the dispatcherMap or equal to the tableTriggerEventDispatcher
 			if !ok {
+				if a.DispatcherID == e.tableTriggerEventDispatcher.GetId() {
+					d = e.tableTriggerEventDispatcher
+				}
+			}
+			if d == nil {
+				log.Info("Dispatcher not found in dispatcherMap", zap.Any("dispatcher", a.DispatcherID))
 				continue
 			}
+
 			var req eventcollector.DispatcherRequest
 			switch a.Action {
 			case common.ActionPause:

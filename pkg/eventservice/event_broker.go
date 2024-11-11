@@ -643,8 +643,8 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	dispatcher := newDispatcherStat(startTs, info, filter)
 	if span.Equal(heartbeatpb.DDLSpan) {
 		c.tableTriggerDispatchers.Store(id, dispatcher)
-		log.Info("table trigger dispatcher register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
-			zap.Any("acceptorID", id), zap.Int64("tableID", span.TableID),
+		log.Info("table trigger dispatcher register dispatcher", zap.Uint64("clusterID", c.tidbClusterID),
+			zap.Any("dispatcherID", id), zap.Int64("tableID", span.TableID),
 			zap.Uint64("startTs", startTs), zap.Duration("brokerRegisterDuration", time.Since(start)))
 		return
 	}
@@ -676,8 +676,8 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	eventStoreRegisterDuration := time.Since(start)
 	c.ds.AddPath(id, c, dynstream.AreaSettings{})
 
-	log.Info("register acceptor", zap.Uint64("clusterID", c.tidbClusterID),
-		zap.Any("acceptorID", id), zap.Int64("tableID", span.TableID),
+	log.Info("register dispatcher", zap.Uint64("clusterID", c.tidbClusterID),
+		zap.Any("dispatcherID", id), zap.Int64("tableID", span.TableID),
 		zap.Uint64("startTs", startTs), zap.Duration("brokerRegisterDuration", brokerRegisterDuration),
 		zap.Duration("eventStoreRegisterDuration", eventStoreRegisterDuration))
 }
@@ -718,17 +718,9 @@ func (c *eventBroker) resetDispatcher(dispatcherInfo DispatcherInfo) {
 	if !ok {
 		return
 	}
-	tableInfo, err := c.schemaStore.GetTableInfo(stat.info.GetTableSpan().TableID, stat.info.GetStartTs())
-	if err != nil {
-		log.Panic("get table info from schemaStore failed", zap.Error(err), zap.Int64("tableID", stat.info.GetTableSpan().TableID), zap.Uint64("startTs", stat.info.GetStartTs()))
-	}
-	stat.updateTableInfo(tableInfo)
-	stat.watermark.Store(stat.info.GetStartTs())
-	// Reset the seq to 0, so that the next event will be sent with seq 1.
-	stat.seq.Store(0)
-	stat.startTs.Store(stat.info.GetStartTs())
-	stat.isRunning.Store(true)
-	stat.isInitialized.Store(false)
+	log.Info("reset dispatcher", zap.Any("dispatcher", stat.info.GetID()), zap.Uint64("startTs", stat.info.GetStartTs()))
+	c.removeDispatcher(dispatcherInfo)
+	c.addDispatcher(dispatcherInfo)
 }
 
 // Store the progress of the dispatcher, and the incremental events stats.

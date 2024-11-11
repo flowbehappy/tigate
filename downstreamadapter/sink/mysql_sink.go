@@ -47,9 +47,10 @@ type MysqlSink struct {
 	db         *sql.DB
 	errgroup   *errgroup.Group
 	statistics *metrics.Statistics
+	errCh      chan error
 }
 
-func NewMysqlSink(ctx context.Context, changefeedID common.ChangeFeedID, workerCount int, config *config.ChangefeedConfig, sinkURI *url.URL) (*MysqlSink, error) {
+func NewMysqlSink(ctx context.Context, changefeedID common.ChangeFeedID, workerCount int, config *config.ChangefeedConfig, sinkURI *url.URL, errCh chan error) (*MysqlSink, error) {
 	errgroup, ctx := errgroup.WithContext(ctx)
 	mysqlSink := MysqlSink{
 		changefeedID: changefeedID,
@@ -57,6 +58,7 @@ func NewMysqlSink(ctx context.Context, changefeedID common.ChangeFeedID, workerC
 		workerCount:  workerCount,
 		errgroup:     errgroup,
 		statistics:   metrics.NewStatistics(changefeedID, "TxnSink"),
+		errCh:        errCh,
 	}
 
 	cfg, db, err := mysql.NewMysqlConfigAndDB(ctx, changefeedID, sinkURI)
@@ -71,15 +73,16 @@ func NewMysqlSink(ctx context.Context, changefeedID common.ChangeFeedID, workerC
 	mysqlSink.ddlWorker = worker.NewMysqlDDLWorker(ctx, db, cfg, mysqlSink.changefeedID, errgroup, mysqlSink.statistics)
 	mysqlSink.db = db
 
+	go mysqlSink.run()
+
 	return &mysqlSink, nil
 }
 
-func (s *MysqlSink) Run() error {
-	s.ddlWorker.Run()
+func (s *MysqlSink) run() {
 	for i := 0; i < s.workerCount; i++ {
 		s.dmlWorker[i].Run()
 	}
-	return s.errgroup.Wait()
+	s.errCh <- s.errgroup.Wait()
 }
 
 func (s *MysqlSink) SinkType() SinkType {
@@ -108,15 +111,15 @@ func (s *MysqlSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *
 	tableProgress.Pass(event)
 }
 
-func (s *MysqlSink) AddBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
+func (s *MysqlSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error {
 	tableProgress.Add(event)
-	s.ddlWorker.GetDDLEventChan() <- event
+	return s.ddlWorker.WriteBlockEvent(event)
 }
 
 func (s *MysqlSink) AddCheckpointTs(ts uint64) {}
 
-func (s *MysqlSink) CheckStartTs(tableId int64, startTs uint64) (int64, error) {
-	return s.ddlWorker.CheckStartTs(tableId, startTs)
+func (s *MysqlSink) CheckStartTsList(tableIds []int64, startTsList []int64) ([]int64, error) {
+	return s.ddlWorker.CheckStartTsList(tableIds, startTsList)
 }
 
 func (s *MysqlSink) Close(removeDDLTsItem bool) error {

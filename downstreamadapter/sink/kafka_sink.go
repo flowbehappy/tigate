@@ -55,13 +55,14 @@ type KafkaSink struct {
 	statistics   *metrics.Statistics
 
 	errgroup *errgroup.Group
+	errCh    chan error
 }
 
 func (s *KafkaSink) SinkType() SinkType {
 	return KafkaSinkType
 }
 
-func NewKafkaSink(ctx context.Context, changefeedID common.ChangeFeedID, sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig) (*KafkaSink, error) {
+func NewKafkaSink(ctx context.Context, changefeedID common.ChangeFeedID, sinkURI *url.URL, sinkConfig *ticonfig.SinkConfig, errCh chan error) (*KafkaSink, error) {
 	errGroup, ctx := errgroup.WithContext(ctx)
 	topic, err := helper.GetTopic(sinkURI)
 	if err != nil {
@@ -157,7 +158,7 @@ func NewKafkaSink(ctx context.Context, changefeedID common.ChangeFeedID, sinkURI
 	ddlProducer := producer.NewKafkaDDLProducer(ctx, changefeedID, ddlSyncProducer)
 	ddlWorker := worker.NewKafkaDDLWorker(ctx, changefeedID, protocol, ddlProducer, encoder, eventRouter, topicManager, statistics, errGroup)
 
-	return &KafkaSink{
+	sink := &KafkaSink{
 		changefeedID: changefeedID,
 		dmlWorker:    dmlWorker,
 		ddlWorker:    ddlWorker,
@@ -165,13 +166,16 @@ func NewKafkaSink(ctx context.Context, changefeedID common.ChangeFeedID, sinkURI
 		topicManager: topicManager,
 		statistics:   statistics,
 		errgroup:     errGroup,
-	}, nil
+		errCh:        errCh,
+	}
+	go sink.run()
+	return sink, nil
 }
 
-func (s *KafkaSink) Run() error {
+func (s *KafkaSink) run() {
 	s.dmlWorker.Run()
 	s.ddlWorker.Run()
-	return s.errgroup.Wait()
+	s.errCh <- s.errgroup.Wait()
 }
 
 func (s *KafkaSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress) {
@@ -186,7 +190,7 @@ func (s *KafkaSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *
 	tableProgress.Pass(event)
 }
 
-func (s *KafkaSink) AddBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
+func (s *KafkaSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error {
 	tableProgress.Add(event)
 	switch event := event.(type) {
 	case *commonEvent.DDLEvent:
@@ -195,7 +199,7 @@ func (s *KafkaSink) AddBlockEvent(event commonEvent.BlockEvent, tableProgress *t
 			for _, cb := range event.PostTxnFlushed {
 				cb()
 			}
-			return
+			return nil
 		}
 		s.ddlWorker.GetDDLEventChan() <- event
 	case *commonEvent.SyncPointEvent:
@@ -209,6 +213,7 @@ func (s *KafkaSink) AddBlockEvent(event commonEvent.BlockEvent, tableProgress *t
 			zap.String("changefeed", s.changefeedID.Name()),
 			zap.Any("event type", event.GetType()))
 	}
+	return nil
 }
 
 func (s *KafkaSink) AddCheckpointTs(ts uint64) {
@@ -237,6 +242,6 @@ func (s *KafkaSink) Close(removeDDLTsItem bool) error {
 	return nil
 }
 
-func (s *KafkaSink) CheckStartTs(tableId int64, startTs uint64) (int64, error) {
-	return int64(startTs), nil
+func (s *KafkaSink) CheckStartTsList(tableIds []int64, startTsList []int64) ([]int64, error) {
+	return startTsList, nil
 }
