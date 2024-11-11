@@ -139,14 +139,29 @@ func (oc *Controller) StopChangefeed(ctx context.Context, cfID common.ChangeFeed
 		}
 		return
 	}
+	oc.pushStopChangefeedOperator(cfID, scheduledNode, remove)
+}
+
+// pushStopChangefeedOperator pushes a stop changefeed operator to the controller.
+// it checks if the operator already exists, if exists, it will replace the old one.
+// if the old operator is the removing operator, it will skip this operator.
+func (oc *Controller) pushStopChangefeedOperator(cfID common.ChangeFeedID, nodeID node.ID, remove bool) {
+	op := NewStopChangefeedOperator(cfID, nodeID, oc.selfNode, oc.backend, remove)
 	if old, ok := oc.operators[cfID]; ok {
+		oldStop, ok := old.(*StopChangefeedOperator)
+		if ok {
+			if oldStop.removed {
+				log.Info("changefeed is already removed, skip the stop operator",
+					zap.String("changefeed", cfID.Name()))
+				return
+			}
+		}
 		log.Info("changefeed is stopped , replace the old one",
 			zap.String("changefeed", cfID.Name()),
 			zap.String("operator", old.String()))
 		old.OnTaskRemoved()
 		delete(oc.operators, old.ID())
 	}
-	op := NewStopChangefeedOperator(cfID, scheduledNode, oc.selfNode, oc.backend, remove)
 	oc.pushOperator(op)
 }
 

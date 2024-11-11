@@ -63,14 +63,22 @@ type Controller struct {
 	backend                  changefeed.Backend
 
 	updatedChangefeedCh chan map[common.ChangeFeedID]*changefeed.Changefeed
+	stateChangedCh      chan *ChangefeedStateChangeEvent
 
 	lastPrintStatusTime time.Time
+}
+
+type ChangefeedStateChangeEvent struct {
+	ChangefeedID common.ChangeFeedID
+	State        model.FeedState
+	err          *model.RunningError
 }
 
 func NewController(
 	version int64,
 	selfNode *node.Info,
 	updatedChangefeedCh chan map[common.ChangeFeedID]*changefeed.Changefeed,
+	stateChangedCh chan *ChangefeedStateChangeEvent,
 	backend changefeed.Backend,
 	stream dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler],
 	taskScheduler threadpool.ThreadPool,
@@ -94,6 +102,7 @@ func NewController(
 		backend:             backend,
 		nodeChanged:         atomic.NewBool(false),
 		updatedChangefeedCh: updatedChangefeedCh,
+		stateChangedCh:      stateChangedCh,
 		lastPrintStatusTime: time.Now(),
 	}
 	c.bootstrapper = bootstrap.NewBootstrapper[heartbeatpb.CoordinatorBootstrapResponse]("coordinator", c.newBootstrapMessage)
@@ -298,15 +307,17 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.Mainta
 		if changed {
 			log.Info("changefeed status changed",
 				zap.String("changefeed", cfID.Name()),
-				zap.Any("state", state))
-			cfInfo, err := cf.Info.Clone()
-			cfInfo.State = state
-			c.backend.UpdateChangefeed(context.Background(), cf.Info)
-			switch state {
-			case model.StateWarning:
-			case model.StateFailed:
-			default:
-
+				zap.Any("state", state),
+				zap.Any("error", err))
+			c.stateChangedCh <- &ChangefeedStateChangeEvent{
+				ChangefeedID: cfID,
+				State:        state,
+				err: &model.RunningError{
+					Time:    time.Now(),
+					Addr:    err.Node,
+					Code:    err.Code,
+					Message: err.Message,
+				},
 			}
 		}
 		cfs[cfID] = cf
@@ -410,7 +421,7 @@ func (c *Controller) ResumeChangefeed(ctx context.Context, id common.ChangeFeedI
 	if err := c.backend.ResumeChangefeed(ctx, id, newCheckpointTs); err != nil {
 		return errors.Trace(err)
 	}
-	c.changefeedDB.Resume(id)
+	c.changefeedDB.Resume(id, true)
 	return nil
 }
 

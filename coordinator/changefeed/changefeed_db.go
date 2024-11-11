@@ -229,6 +229,9 @@ func (db *ChangefeedDB) GetWaitingSchedulingChangefeeds(absent []*Changefeed, ma
 
 	size := 0
 	for _, stm := range db.absent {
+		if !stm.backoff.ShouldRun() {
+			continue
+		}
 		absent = append(absent, stm)
 		size++
 		if size >= maxSize {
@@ -257,13 +260,18 @@ func (db *ChangefeedDB) GetByChangefeedDisplayName(displayName common.ChangeFeed
 }
 
 // Resume moves a changefeed to the absent map, and waiting for scheduling
-func (db *ChangefeedDB) Resume(id common.ChangeFeedID) {
+func (db *ChangefeedDB) Resume(id common.ChangeFeedID, resetBackoff bool) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
 	cf := db.changefeeds[id]
 	if cf != nil {
-		cf.Info.State = model.StateNormal
+		// force retry the changefeed,
+		// it reset the backoff and set the state to normal, it's called when we resume a changefeed using cli
+		if resetBackoff {
+			cf.Info.State = model.StateNormal
+			cf.backoff.resetErrRetry()
+		}
 		delete(db.stopped, id)
 		db.absent[id] = cf
 		log.Info("resume changefeed", zap.String("changefeed", id.String()))
