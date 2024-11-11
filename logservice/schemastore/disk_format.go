@@ -350,7 +350,9 @@ func readPersistedDDLEvent(snap *pebble.Snapshot, version uint64) PersistedDDLEv
 	}
 	ddlValue, closer, err := snap.Get(ddlKey)
 	if err != nil {
-		log.Fatal("get ddl job failed", zap.Error(err))
+		log.Fatal("get ddl job failed",
+			zap.Uint64("version", version),
+			zap.Error(err))
 	}
 	defer closer.Close()
 	return unmarshalPersistedDDLEvent(ddlValue)

@@ -1,0 +1,21 @@
+syntax = "proto3";
+package logservicepb;
+
+option go_package = "github.com/pingcap/ticdc/logservicepb";
+
+import "heartbeatpb/heartbeat.proto";
+
+message SubscriptionState {
+    uint64 SubID = 1;
+    heartbeatpb.TableSpan span = 2;
+    uint64 CheckpointTs = 3;
+    uint64 ResolvedTs = 4;
+}
+
+message SubscriptionStates {
+    repeated SubscriptionState subscriptions = 1; // must be sorted by SubscriptionState.SubId
+}
+
+message EventStoreState {
+    map<int64, SubscriptionStates> subscriptions = 1;
+}
