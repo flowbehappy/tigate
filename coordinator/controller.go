@@ -309,15 +309,19 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.Mainta
 				zap.String("changefeed", cfID.Name()),
 				zap.Any("state", state),
 				zap.Any("error", err))
-			c.stateChangedCh <- &ChangefeedStateChangeEvent{
-				ChangefeedID: cfID,
-				State:        state,
-				err: &model.RunningError{
+			var mErr *model.RunningError
+			if err != nil {
+				mErr = &model.RunningError{
 					Time:    time.Now(),
 					Addr:    err.Node,
 					Code:    err.Code,
 					Message: err.Message,
-				},
+				}
+			}
+			c.stateChangedCh <- &ChangefeedStateChangeEvent{
+				ChangefeedID: cfID,
+				State:        state,
+				err:          mErr,
 			}
 		}
 		cfs[cfID] = cf
@@ -430,7 +434,7 @@ func (c *Controller) UpdateChangefeed(ctx context.Context, change *config.Change
 	if cf == nil {
 		return errors.New("changefeed not found")
 	}
-	if err := c.backend.UpdateChangefeed(ctx, change); err != nil {
+	if err := c.backend.UpdateChangefeed(ctx, change, cf.GetStatus().CheckpointTs, config.ProgressStopping); err != nil {
 		return errors.Trace(err)
 	}
 	c.changefeedDB.ReplaceStoppedChangefeed(change)

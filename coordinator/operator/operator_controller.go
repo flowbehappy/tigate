@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/ticdc/coordinator/changefeed"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
-	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/node"
@@ -120,24 +119,10 @@ func (oc *Controller) StopChangefeed(ctx context.Context, cfID common.ChangeFeed
 
 	var scheduledNode = oc.changefeedDB.StopByChangefeedID(cfID, remove)
 	if scheduledNode == "" {
-		log.Info("changefeed is not scheduled,update meta in db directory",
+		log.Info("changefeed is not scheduled, stop maintainer using coordinator node",
 			zap.Bool("remove", remove),
 			zap.String("changefeed", cfID.Name()))
-		// changefeed is not scheduled, we can update the meta in DB directly, otherwise we update the meta in the operator
-		if remove {
-			if err := oc.backend.DeleteChangefeed(ctx, cfID); err != nil {
-				log.Warn("delete changefeed meta failed",
-					zap.String("changefeed", cfID.Name()),
-					zap.Error(err))
-			}
-		} else {
-			if err := oc.backend.SetChangefeedProgress(ctx, cfID, config.ProgressNone); err != nil {
-				log.Warn("set changefeed progress failed",
-					zap.String("changefeed", cfID.Name()),
-					zap.Error(err))
-			}
-		}
-		return
+		scheduledNode = oc.selfNode.ID
 	}
 	oc.pushStopChangefeedOperator(cfID, scheduledNode, remove)
 }

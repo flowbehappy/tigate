@@ -145,7 +145,12 @@ func (c *coordinator) handleStateChangedEvent(ctx context.Context, event *Change
 		return errors.Trace(err)
 	}
 	cfInfo.State = event.State
-	if err := c.backend.UpdateChangefeed(context.Background(), cf.Info); err != nil {
+	progress := config.ProgressNone
+	if event.State == model.StateFailed || event.State == model.StateFinished {
+		progress = config.ProgressStopping
+	}
+
+	if err := c.backend.UpdateChangefeed(context.Background(), cfInfo, cf.GetStatus().CheckpointTs, progress); err != nil {
 		log.Error("failed to update changefeed state",
 			zap.Error(err))
 		return errors.Trace(err)

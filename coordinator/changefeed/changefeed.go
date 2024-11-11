@@ -94,7 +94,7 @@ func (c *Changefeed) UpdateStatus(newStatus *heartbeatpb.MaintainerStatus) (bool
 	if newStatus != nil && newStatus.CheckpointTs >= old.CheckpointTs {
 		c.status.Store(newStatus)
 		// the changefeed reaches the targetTs
-		if newStatus.CheckpointTs >= c.Info.TargetTs {
+		if c.Info.TargetTs != 0 && newStatus.CheckpointTs >= c.Info.TargetTs {
 			return true, model.StateFinished, nil
 		}
 		return c.backoff.CheckStatus(newStatus)
