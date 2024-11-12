@@ -21,6 +21,7 @@ import (
 	tisink "github.com/pingcap/ticdc/downstreamadapter/sink"
 	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
 	"github.com/pingcap/ticdc/downstreamadapter/syncpoint"
+	"github.com/pingcap/ticdc/eventpb"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
@@ -77,18 +78,20 @@ type Dispatcher struct {
 	// lastEventSeq is the sequence number of the last received DML/DDL event.
 	// It is used to ensure the order of events.
 	lastEventSeq atomic.Uint64
-
+	memoryQuota  uint64
 	// blockStatusesChan use to report block status of ddl/sync point event to Maintainer
 	blockStatusesChan chan *heartbeatpb.TableSpanBlockStatus
 
 	// dispatcherStatusChan is used to report the status of the dispatcher to the dispatcherManager
 	dispatcherActionChan chan common.DispatcherAction
 
-	SyncPointInfo *syncpoint.SyncPointInfo
+	SyncPointInfo   *syncpoint.SyncPointInfo
+	lastSyncPointTs atomic.Uint64
 
 	componentStatus *ComponentStateWithMutex
 
-	filter filter.Filter
+	filterConfig *config.FilterConfig
+	filter       filter.Filter
 
 	resolvedTs *TsWithMutex // The largest commitTs - 1 of the events received by the dispatcher.
 
@@ -126,6 +129,8 @@ func NewDispatcher(
 	schemaID int64,
 	schemaIDToDispatchers *SchemaIDToDispatchers,
 	syncPointInfo *syncpoint.SyncPointInfo,
+	memoryQuota uint64,
+	filterConfig *config.FilterConfig,
 	errCh chan error) *Dispatcher {
 	dispatcher := &Dispatcher{
 		changefeedID:          changefeedID,
@@ -134,9 +139,11 @@ func NewDispatcher(
 		sink:                  sink,
 		blockStatusesChan:     blockStatusesChan,
 		dispatcherActionChan:  dispatcherActionChan,
+		memoryQuota:           memoryQuota,
 		SyncPointInfo:         syncPointInfo,
 		componentStatus:       newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
 		resolvedTs:            newTsWithMutex(startTs),
+		filterConfig:          filterConfig,
 		filter:                filter,
 		isRemoving:            atomic.Bool{},
 		blockStatus:           BlockStatus{blockPendingEvent: nil},
@@ -147,6 +154,7 @@ func NewDispatcher(
 		errCh:                 errCh,
 	}
 	dispatcher.startTs.Store(startTs)
+	dispatcher.lastSyncPointTs.Store(syncPointInfo.InitSyncPointTs)
 
 	// only when is not mysql sink, table trigger event dispatcher need tableSchemaStore to store the table name
 	// in order to calculate all the topics when sending checkpointTs to downstream
@@ -230,11 +238,8 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 	block = false
 	// Dispatcher is ready, handle the events
 	for _, dispatcherEvent := range dispatcherEvents {
-		// Pre-check, make sure the event is not stale or out-of-order
 		event := dispatcherEvent.Event
-		if event.GetCommitTs() < d.resolvedTs.Get() {
-			log.Info("Received a stale event, ignore it", zap.Any("event", event), zap.Any("dispatcher", d.id))
-		}
+		// Pre-check, make sure the event is not stale or out-of-order
 		if event.GetType() == commonEvent.TypeDMLEvent ||
 			event.GetType() == commonEvent.TypeDDLEvent ||
 			event.GetType() == commonEvent.TypeHandshakeEvent {
@@ -248,6 +253,17 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 				return false
 			}
 		}
+
+		if event.GetCommitTs() < d.resolvedTs.Get() {
+			log.Info("Received a stale event, should ignore it",
+				zap.Any("commitTs", event.GetCommitTs()),
+				zap.Any("seq", event.GetSeq()),
+				zap.Any("eventType", event.GetType()),
+				zap.Any("dispatcher", d.id),
+				zap.Any("event", event))
+			continue
+		}
+
 		switch event.GetType() {
 		case commonEvent.TypeResolvedEvent:
 			d.resolvedTs.Set(event.(commonEvent.ResolvedEvent).ResolvedTs)
@@ -298,6 +314,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 				dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
 			})
 			d.dealWithBlockEvent(event)
+			d.lastSyncPointTs.Store(event.GetCommitTs())
 		case commonEvent.TypeHandshakeEvent:
 			log.Warn("Receive handshake event unexpectedly", zap.Any("event", event), zap.Stringer("dispatcher", d.id))
 		default:
@@ -323,12 +340,18 @@ func (d *Dispatcher) checkHandshakeEvents(dispatcherEvents []DispatcherEvent) (b
 			log.Panic("cast handshake event failed", zap.Any("event Type", event.GetType()), zap.Stringer("dispatcher", d.id), zap.Uint64("commitTs", event.GetCommitTs()))
 		}
 		if handshake.GetCommitTs() == d.startTs.Load() {
-			if handshake.GetSeq() != d.lastEventSeq.Add(1) {
-				log.Panic("Receive handshake event, but seq is not the next one",
+			currentSeq := d.lastEventSeq.Load()
+			if currentSeq != 0 {
+				log.Warn("Receive handshake event, but current seq is not zero, reset it",
 					zap.Any("event", handshake),
 					zap.Stringer("dispatcher", d.id),
-					zap.Uint64("lastEventSeq", d.lastEventSeq.Load()))
+					zap.Uint64("currentSeq", currentSeq))
+				d.reset()
+				return false, dispatcherEvents[i+1:]
 			}
+			// In some case, the eventService may send handshake event multiple times,
+			// we should use the first handshake event we received to initialize the dispatcher.
+			d.lastEventSeq.Store(handshake.GetSeq())
 			d.tableInfo.Store(handshake.TableInfo)
 			d.isReady.Store(true)
 			log.Info("Receive handshake event, dispatcher is ready to handle events",
@@ -529,10 +552,40 @@ func (d *Dispatcher) EnableSyncPoint() bool {
 
 func (d *Dispatcher) GetSyncPointTs() uint64 {
 	if d.SyncPointInfo.EnableSyncPoint {
-		return d.SyncPointInfo.InitSyncPointTs
+		return d.lastSyncPointTs.Load()
 	} else {
 		return 0
 	}
+}
+
+func (d *Dispatcher) GetFilterConfig() *eventpb.FilterConfig {
+	return toFilterConfigPB(d.filterConfig)
+}
+
+func toFilterConfigPB(filter *config.FilterConfig) *eventpb.FilterConfig {
+	filterConfig := &eventpb.FilterConfig{
+		Rules:            filter.Rules,
+		IgnoreTxnStartTs: filter.IgnoreTxnStartTs,
+		EventFilters:     make([]*eventpb.EventFilterRule, len(filter.EventFilters)),
+	}
+
+	for _, eventFilter := range filter.EventFilters {
+		ignoreEvent := make([]string, len(eventFilter.IgnoreEvent))
+		for _, event := range eventFilter.IgnoreEvent {
+			ignoreEvent = append(ignoreEvent, string(event))
+		}
+		filterConfig.EventFilters = append(filterConfig.EventFilters, &eventpb.EventFilterRule{
+			Matcher:                  eventFilter.Matcher,
+			IgnoreEvent:              ignoreEvent,
+			IgnoreSql:                eventFilter.IgnoreSQL,
+			IgnoreInsertValueExpr:    eventFilter.IgnoreInsertValueExpr,
+			IgnoreUpdateNewValueExpr: eventFilter.IgnoreUpdateNewValueExpr,
+			IgnoreUpdateOldValueExpr: eventFilter.IgnoreUpdateOldValueExpr,
+			IgnoreDeleteValueExpr:    eventFilter.IgnoreDeleteValueExpr,
+		})
+	}
+
+	return filterConfig
 }
 
 func (d *Dispatcher) GetSyncPointInterval() time.Duration {
@@ -565,7 +618,7 @@ func (d *Dispatcher) addToDynamicStream() {
 	areaSetting := dynstream.NewAreaSettings()
 	// FixMe: Pass memory quota from changefeed config to dispatcherManager, and then to dispatcher
 	// Make it configurable
-	areaSetting.MaxPendingSize = config.DefaultChangefeedMemoryQuota
+	areaSetting.MaxPendingSize = int(d.memoryQuota)
 	err := dispatcherEventDynamicStream.AddPath(d.id, d, areaSetting)
 	if err != nil {
 		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))

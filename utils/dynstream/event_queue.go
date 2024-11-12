@@ -131,11 +131,17 @@ func (q *eventQueue[A, P, T, D, H]) updateHeapAfterUpdatePath(path *pathInfo[A, 
 	if area == nil {
 		return
 	}
-	if path.removed || path.blocking || path.pendingQueue.Length() == 0 {
+
+	if path.removed || path.pendingQueue.Length() == 0 {
+		area.pathSizeHeap.Remove((*pathSizeStat[A, P, T, D, H])(path))
+	} else {
+		area.pathSizeHeap.AddOrUpdate((*pathSizeStat[A, P, T, D, H])(path))
+	}
+
+	if path.removed || path.pendingQueue.Length() == 0 || path.blocking {
 		// Remove the path from heap
 		area.timestampHeap.Remove((*timestampPathNode[A, P, T, D, H])(path))
 		area.queueTimeHeap.Remove((*queuePathNode[A, P, T, D, H])(path))
-		area.pathSizeHeap.Remove((*pathSizeStat[A, P, T, D, H])(path))
 
 		if area.queueTimeHeap.Len() == 0 {
 			q.eventQueueTimeQueue.Remove(area)
@@ -148,7 +154,6 @@ func (q *eventQueue[A, P, T, D, H]) updateHeapAfterUpdatePath(path *pathInfo[A, 
 
 		area.timestampHeap.AddOrUpdate((*timestampPathNode[A, P, T, D, H])(path))
 		area.queueTimeHeap.AddOrUpdate((*queuePathNode[A, P, T, D, H])(path))
-		area.pathSizeHeap.AddOrUpdate((*pathSizeStat[A, P, T, D, H])(path))
 
 		q.eventQueueTimeQueue.AddOrUpdate(area)
 	}
@@ -251,6 +256,7 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 		if !ok {
 			panic("top is nil")
 		}
+
 		path := (*pathInfo[A, P, T, D, H])(top)
 		if path.removed {
 			// Remove the path from the heap.
@@ -264,6 +270,8 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 			firstGroup := firstEvent.eventType.DataGroup
 			appendToBufAndUpdateState(firstEvent, path)
 			count := 1
+
+			// Try to batch events with the same data group and batchable.
 			for ; count < batchSize; count++ {
 				// Get the reference of the front event of the path.
 				// We don't use PopFront here because we need to keep the event in the path.
@@ -277,6 +285,7 @@ func (q *eventQueue[A, P, T, D, H]) popEvents(buf []T) ([]T, *pathInfo[A, P, T, 
 				}
 				appendToBufAndUpdateState(front, path)
 			}
+
 			q.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D, H])(path))
 			return buf, path
 		}

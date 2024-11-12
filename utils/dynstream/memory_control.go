@@ -84,7 +84,6 @@ func (as *areaMemStat[A, P, T, D, H]) appendEvent(
 	replaced := false
 	if isPeriodicSignal(event) {
 		back, ok := path.pendingQueue.BackRef()
-
 		if ok && isPeriodicSignal(*back) {
 			// Replace the repeated signal.
 			// Note that since the size of the repeated signal is the same, we don't need to update the pending size.
@@ -123,28 +122,30 @@ func (as *areaMemStat[A, P, T, D, H]) shouldDropEvent(
 		return false
 	}
 
-	// If the timestamp of the event is not the smallest among all the paths in the area, drop it.
-	top, ok := path.streamAreaInfo.timestampHeap.PeekTop()
-	if !ok {
-		log.Panic("timestampHeap is empty, but exceedMaxPendingSize, it should not happen",
-			zap.Any("area", as.area),
-			zap.Any("path", path.path))
-	}
-	// If event's timestamp is not the smallest among all the paths in the area, drop it.
-	if event.timestamp > top.frontTimestamp {
-		if !isPeriodicSignal(event) {
-			handler.OnDrop(event.event)
-		}
-		return true
-	}
+	// // If the timestamp of the event is not the smallest among all the paths in the area, drop it.
+	// top, ok := path.streamAreaInfo.timestampHeap.PeekTop()
+	// if !ok {
+	// 	log.Warn("timestampHeap is empty, but exceedMaxPendingSize, it should not happen, fix me in the future",
+	// 		zap.Any("area", as.area),
+	// 		zap.Any("path", path.path))
+	// 	return true
+	// }
+	// // If event's timestamp is not the smallest among all the paths in the area, drop it.
+	// if event.timestamp > top.frontTimestamp {
+	// 	if !isPeriodicSignal(event) {
+	// 		handler.OnDrop(event.event)
+	// 	}
+	// 	return true
+	// }
 
 	// Drop the events of the largest pending size path to find a place for the new event.
 LOOP:
 	for exceedMaxPendingSize() {
 		longestPath, ok := path.streamAreaInfo.pathSizeHeap.PeekTop()
 		if !ok {
-			log.Panic("pathSizeHeap is empty, but exceedMaxPendingSize, it should not happen",
+			log.Warn("pathSizeHeap is empty, but exceedMaxPendingSize, it should not happen, fix me in the future",
 				zap.Any("area", as.area), zap.Any("path", path.path))
+			return true
 		}
 		// If the longest path is the same as the current path, drop the event and return.
 		if longestPath.path == path.path {

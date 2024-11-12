@@ -207,6 +207,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 				c.tableTriggerDispatchers.Range(func(key, value interface{}) bool {
 					dispatcherStat := value.(*dispatcherStat)
 					if !dispatcherStat.isInitialized.Load() {
+						dispatcherStat.seq.Store(0)
 						e := pevent.NewHandshakeEvent(
 							dispatcherStat.info.GetID(),
 							dispatcherStat.startTs.Load(),
@@ -311,6 +312,8 @@ func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 	if task.dispatcherStat.isInitialized.Load() {
 		return
 	}
+	// Always reset the seq of the dispatcher to 0 before sending a handshake event.
+	task.dispatcherStat.seq.Store(0)
 	wrapE := wrapEvent{
 		serverID: node.ID(task.dispatcherStat.info.GetServerID()),
 		e: pevent.NewHandshakeEvent(
@@ -462,6 +465,19 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 					c.handleResolvedTs(ctx, m)
 					continue
 				}
+				// Check if the dispatcher is initialized, if so, ignore the handshake event.
+				if m.msgType == pevent.TypeHandshakeEvent {
+					// If the message is a handshake event, we need to reset the dispatcher.
+					d, ok := c.getDispatcher(m.getDispatcherID())
+					if !ok {
+						log.Warn("Get dispatcher failed", zap.Any("dispatcherID", m.getDispatcherID()))
+						continue
+					} else if d.isInitialized.Load() {
+						log.Info("Ignore handshake event since the dispatcher is initialized", zap.Any("dispatcherID", m.getDispatcherID()))
+						continue
+					}
+				}
+
 				tMsg := messaging.NewSingleTargetMessage(
 					m.serverID,
 					messaging.EventCollectorTopic,
@@ -700,6 +716,7 @@ func (c *eventBroker) pauseDispatcher(dispatcherInfo DispatcherInfo) {
 	if !ok {
 		return
 	}
+	log.Info("pause dispatcher", zap.Any("dispatcher", stat.info.GetID()))
 	stat.isRunning.Store(false)
 }
 
@@ -708,8 +725,8 @@ func (c *eventBroker) resumeDispatcher(dispatcherInfo DispatcherInfo) {
 	if !ok {
 		return
 	}
+	log.Info("resume dispatcher", zap.Any("dispatcher", stat.info.GetID()), zap.Uint64("checkpointTs", stat.watermark.Load()), zap.Uint64("seq", stat.seq.Load()))
 	// Reset the watermark to the startTs of the dispatcherInfo.
-	stat.watermark.Store(stat.info.GetStartTs())
 	stat.isRunning.Store(true)
 }
 
@@ -732,7 +749,7 @@ type dispatcherStat struct {
 	filter         filter.Filter
 	// The start ts of the dispatcher
 	startTs atomic.Uint64
-	// The max resolved ts recevied from event store.
+	// The max resolved ts received from event store.
 	resolvedTs atomic.Uint64
 	// The watermark of the events that have been sent to the dispatcher.
 	watermark atomic.Uint64
@@ -883,6 +900,14 @@ func newWrapDMLEvent(serverID node.ID, e *pevent.DMLEvent, state pevent.EventSen
 		e:        e,
 		msgType:  pevent.TypeDMLEvent,
 	}
+}
+
+func (w wrapEvent) getDispatcherID() common.DispatcherID {
+	e, ok := w.e.(pevent.Event)
+	if !ok {
+		log.Panic("cast event failed", zap.Any("event", w.e))
+	}
+	return e.GetDispatcherID()
 }
 
 func newWrapResolvedEvent(serverID node.ID, e pevent.ResolvedEvent, state pevent.EventSenderState) wrapEvent {

@@ -130,8 +130,6 @@ func (w *MysqlDMLWorker) Run() {
 				// flush time and total time
 				workerTotalDuration.Observe(time.Since(totalStart).Seconds())
 				totalStart = time.Now()
-				log.Info("Flush events", zap.Int("count", len(events)), zap.Int("rows", rows), zap.Duration("duration", time.Since(start)), zap.Any("workerID", w.id))
-
 				events = events[:0]
 				rows = 0
 			}

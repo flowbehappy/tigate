@@ -314,7 +314,6 @@ func (h *EventsHandler) GetTimestamp(event DispatcherEvent) dynstream.Timestamp 
 	return dynstream.Timestamp(event.GetCommitTs())
 }
 func (h *EventsHandler) OnDrop(event DispatcherEvent) {
-	log.Info("event dropped", zap.Any("dispatcher", event.GetDispatcherID()), zap.Any("commitTs", event.GetCommitTs()), zap.Any("sequence", event.GetSeq()))
 }
 
 type DispatcherEvent struct {

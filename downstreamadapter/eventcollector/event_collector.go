@@ -36,10 +36,9 @@ import (
 )
 
 type DispatcherRequest struct {
-	Dispatcher   *dispatcher.Dispatcher
-	ActionType   eventpb.ActionType
-	StartTs      uint64
-	FilterConfig *eventpb.FilterConfig
+	Dispatcher *dispatcher.Dispatcher
+	ActionType eventpb.ActionType
+	StartTs    uint64
 }
 
 const (
@@ -161,8 +160,9 @@ func (c *EventCollector) SendDispatcherRequest(req DispatcherRequest) error {
 	}
 
 	// If the action type is register, we need fill all config related fields.
-	if req.ActionType == eventpb.ActionType_ACTION_TYPE_REGISTER {
-		message.RegisterDispatcherRequest.FilterConfig = req.FilterConfig
+	if req.ActionType == eventpb.ActionType_ACTION_TYPE_REGISTER ||
+		req.ActionType == eventpb.ActionType_ACTION_TYPE_RESET {
+		message.RegisterDispatcherRequest.FilterConfig = req.Dispatcher.GetFilterConfig()
 		message.RegisterDispatcherRequest.EnableSyncPoint = req.Dispatcher.EnableSyncPoint()
 		message.RegisterDispatcherRequest.SyncPointTs = req.Dispatcher.GetSyncPointTs()
 		message.RegisterDispatcherRequest.SyncPointInterval = uint64(req.Dispatcher.GetSyncPointInterval().Seconds())
