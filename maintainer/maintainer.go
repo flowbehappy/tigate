@@ -60,7 +60,7 @@ type Maintainer struct {
 	controller *Controller
 	barrier    *Barrier
 
-	stream        dynstream.DynamicStream[int, common.ChangeFeedID, *Event, *Maintainer, *StreamHandler]
+	stream        dynstream.DynamicStream[int, common.GID, *Event, *Maintainer, *StreamHandler]
 	taskScheduler threadpool.ThreadPool
 	mc            messaging.MessageCenter
 
@@ -119,7 +119,7 @@ func NewMaintainer(cfID common.ChangeFeedID,
 	conf *config.SchedulerConfig,
 	cfg *config.ChangeFeedInfo,
 	selfNode *node.Info,
-	stream dynstream.DynamicStream[int, common.ChangeFeedID, *Event, *Maintainer, *StreamHandler],
+	stream dynstream.DynamicStream[int, common.GID, *Event, *Maintainer, *StreamHandler],
 	taskScheduler threadpool.ThreadPool,
 	pdAPI pdutil.PDAPIClient,
 	regionCache split.RegionCache,
@@ -180,7 +180,7 @@ func NewMaintainer(cfID common.ChangeFeedID,
 func NewMaintainerForRemove(cfID common.ChangeFeedID,
 	conf *config.SchedulerConfig,
 	selfNode *node.Info,
-	stream dynstream.DynamicStream[int, common.ChangeFeedID, *Event, *Maintainer, *StreamHandler],
+	stream dynstream.DynamicStream[int, common.GID, *Event, *Maintainer, *StreamHandler],
 	taskScheduler threadpool.ThreadPool,
 	pdAPI pdutil.PDAPIClient,
 	regionCache split.RegionCache,
@@ -466,7 +466,11 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) {
 	m.controller.HandleStatus(msg.From, req.Statuses)
 	if req.Err != nil {
 		m.errLock.Lock()
+		m.statusChanged.Store(true)
 		m.runningErrors[msg.From] = req.Err
+		log.Warn("dispatcher report an error",
+			zap.String("changefeed", m.id.Name()),
+			zap.String("error", req.Err.Message))
 		m.errLock.Unlock()
 	}
 }
@@ -491,6 +495,7 @@ func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage)
 			zap.String("changefeed", m.id.Name()),
 			zap.String("error", resp.Err.Message))
 		m.errLock.Lock()
+		m.statusChanged.Store(true)
 		m.runningErrors[msg.From] = resp.Err
 		m.errLock.Unlock()
 		return

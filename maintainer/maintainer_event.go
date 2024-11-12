@@ -45,7 +45,7 @@ func (e Event) IsBatchable() bool {
 // SubmitScheduledEvent submits a task to controller pool to send a future event
 func SubmitScheduledEvent(
 	scheduler threadpool.ThreadPool,
-	stream dynstream.DynamicStream[int, common.ChangeFeedID, *Event, *Maintainer, *StreamHandler],
+	stream dynstream.DynamicStream[int, common.GID, *Event, *Maintainer, *StreamHandler],
 	event *Event,
 	scheduleTime time.Time) {
 	task := func() time.Time {
@@ -63,8 +63,8 @@ func NewStreamHandler() *StreamHandler {
 	return &StreamHandler{}
 }
 
-func (m *StreamHandler) Path(event *Event) common.ChangeFeedID {
-	return event.changefeedID
+func (m *StreamHandler) Path(event *Event) common.GID {
+	return event.changefeedID.Id
 }
 
 func (m *StreamHandler) Handle(dest *Maintainer, events ...*Event) (await bool) {
@@ -76,9 +76,9 @@ func (m *StreamHandler) Handle(dest *Maintainer, events ...*Event) (await bool) 
 	return dest.HandleEvent(event)
 }
 
-func (m *StreamHandler) GetSize(event *Event) int                               { return 0 }
-func (m *StreamHandler) GetArea(path common.ChangeFeedID, dest *Maintainer) int { return 0 }
-func (m *StreamHandler) GetTimestamp(event *Event) dynstream.Timestamp          { return 0 }
-func (m *StreamHandler) GetType(event *Event) dynstream.EventType               { return dynstream.DefaultEventType }
-func (m *StreamHandler) IsPaused(event *Event) bool                             { return false }
-func (m *StreamHandler) OnDrop(event *Event)                                    {}
+func (m *StreamHandler) GetSize(event *Event) int                      { return 0 }
+func (m *StreamHandler) GetArea(path common.GID, dest *Maintainer) int { return 0 }
+func (m *StreamHandler) GetTimestamp(event *Event) dynstream.Timestamp { return 0 }
+func (m *StreamHandler) GetType(event *Event) dynstream.EventType      { return dynstream.DefaultEventType }
+func (m *StreamHandler) IsPaused(event *Event) bool                    { return false }
+func (m *StreamHandler) OnDrop(event *Event)                           {}
