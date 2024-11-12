@@ -144,6 +144,7 @@ func (c *coordinator) handleStateChangedEvent(ctx context.Context, event *Change
 		return errors.Trace(err)
 	}
 	cfInfo.State = event.State
+	cfInfo.Error = event.err
 	progress := config.ProgressNone
 	if event.State == model.StateFailed || event.State == model.StateFinished {
 		progress = config.ProgressStopping
