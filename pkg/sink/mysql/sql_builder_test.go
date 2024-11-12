@@ -167,14 +167,16 @@ func TestBuildInsert(t *testing.T) {
 
 	// case 1: Convert to INSERT INTO
 	exportedSQL := "INSERT INTO `test`.`t` (`id`,`c_tinyint`,`c_smallint`,`c_mediumint`,`c_int`,`c_bigint`,`c_unsigned_tinyint`,`c_unsigned_smallint`,`c_unsigned_mediumint`,`c_unsigned_int`,`c_unsigned_bigint`,`c_float`,`c_double`,`c_decimal`,`c_decimal_2`,`c_unsigned_float`,`c_unsigned_double`,`c_unsigned_decimal`,`c_unsigned_decimal_2`,`c_date`,`c_datetime`,`c_timestamp`,`c_time`,`c_year`,`c_tinytext`,`c_text`,`c_mediumtext`,`c_longtext`,`c_tinyblob`,`c_blob`,`c_mediumblob`,`c_longblob`,`c_char`,`c_varchar`,`c_binary`,`c_varbinary`,`c_enum`,`c_set`,`c_bit`,`c_json`,`name`,`country`,`city`,`description`,`image`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-	sql, args := buildInsert(tableInfo, insert, false)
+	sql, args, err := buildInsert(tableInfo, insert, false)
+	require.NoError(t, err)
 	require.Equal(t, exportedSQL, sql)
 	require.Len(t, args, 45)
 	require.Equal(t, exportedArgs, args)
 
 	// case 2: Convert to REPLACE INTO
 	exportedSQL = "REPLACE INTO `test`.`t` (`id`,`c_tinyint`,`c_smallint`,`c_mediumint`,`c_int`,`c_bigint`,`c_unsigned_tinyint`,`c_unsigned_smallint`,`c_unsigned_mediumint`,`c_unsigned_int`,`c_unsigned_bigint`,`c_float`,`c_double`,`c_decimal`,`c_decimal_2`,`c_unsigned_float`,`c_unsigned_double`,`c_unsigned_decimal`,`c_unsigned_decimal_2`,`c_date`,`c_datetime`,`c_timestamp`,`c_time`,`c_year`,`c_tinytext`,`c_text`,`c_mediumtext`,`c_longtext`,`c_tinyblob`,`c_blob`,`c_mediumblob`,`c_longblob`,`c_char`,`c_varchar`,`c_binary`,`c_varbinary`,`c_enum`,`c_set`,`c_bit`,`c_json`,`name`,`country`,`city`,`description`,`image`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-	sql, args = buildInsert(tableInfo, insert, true)
+	sql, args, err = buildInsert(tableInfo, insert, true)
+	require.NoError(t, err)
 	require.Equal(t, exportedSQL, sql)
 	require.Len(t, args, 45)
 	require.Equal(t, exportedArgs, args)
@@ -205,7 +207,8 @@ func TestBuildDelete(t *testing.T) {
 	expectedSQL := "DELETE FROM `test`.`t` WHERE `id` = ? LIMIT 1"
 	expectedArgs := []interface{}{int64(1)}
 
-	sql, args := buildDelete(event.TableInfo, row)
+	sql, args, err := buildDelete(event.TableInfo, row)
+	require.NoError(t, err)
 	require.Equal(t, expectedSQL, sql)
 	require.Len(t, args, 1)
 	require.Equal(t, expectedArgs, args)
@@ -226,7 +229,8 @@ func TestBuildDelete(t *testing.T) {
 	expectedSQL = "DELETE FROM `test`.`t2` WHERE `id` = ? LIMIT 1"
 	expectedArgs = []interface{}{int64(1)}
 
-	sql, args = buildDelete(event.TableInfo, row)
+	sql, args, err = buildDelete(event.TableInfo, row)
+	require.NoError(t, err)
 	require.Equal(t, expectedSQL, sql)
 	require.Len(t, args, 1)
 	require.Equal(t, expectedArgs, args)
@@ -248,7 +252,8 @@ func TestBuildDelete(t *testing.T) {
 	expectedSQL = "DELETE FROM `test`.`t3` WHERE `id` = ? AND `name` = ? LIMIT 1"
 	expectedArgs = []interface{}{int64(1), "test"}
 
-	sql, args = buildDelete(event.TableInfo, row)
+	sql, args, err = buildDelete(event.TableInfo, row)
+	require.NoError(t, err)
 	require.Equal(t, expectedSQL, sql)
 	require.Len(t, args, 2)
 	require.Equal(t, expectedArgs, args)
@@ -270,7 +275,8 @@ func TestBuildDelete(t *testing.T) {
 	expectedSQL = "DELETE FROM `test`.`t4` WHERE `name` = ? AND `age` = ? LIMIT 1"
 	expectedArgs = []interface{}{"test", int64(20)}
 
-	sql, args = buildDelete(event.TableInfo, row)
+	sql, args, err = buildDelete(event.TableInfo, row)
+	require.NoError(t, err)
 	require.Equal(t, expectedSQL, sql)
 	require.Len(t, args, 2)
 	require.Equal(t, expectedArgs, args)
@@ -292,7 +298,8 @@ func TestBuildDelete(t *testing.T) {
 	expectedSQL = "DELETE FROM `test`.`t5` WHERE `id` = ? AND `name` = ? AND `age` = ? LIMIT 1"
 	expectedArgs = []interface{}{int64(1), "test", int64(20)}
 
-	sql, args = buildDelete(event.TableInfo, row)
+	sql, args, err = buildDelete(event.TableInfo, row)
+	require.NoError(t, err)
 	require.Equal(t, expectedSQL, sql)
 	require.Len(t, args, 3)
 	require.Equal(t, expectedArgs, args)
@@ -327,7 +334,8 @@ func TestBuildUpdate(t *testing.T) {
 
 	expectedSQL := "UPDATE `test`.`t` SET `id` = ?,`name` = ? WHERE `id` = ? LIMIT 1"
 	expectedArgs := []interface{}{int64(1), "test2", int64(1)}
-	sql, args := buildUpdate(event.TableInfo, row)
+	sql, args, err := buildUpdate(event.TableInfo, row)
+	require.NoError(t, err)
 	require.Equal(t, expectedSQL, sql)
 	require.Len(t, args, 3)
 	require.Equal(t, expectedArgs, args)
@@ -355,7 +363,8 @@ func TestBuildUpdate(t *testing.T) {
 
 	expectedSQL = "UPDATE `test`.`t2` SET `id` = ?,`name` = ?,`age` = ? WHERE `name` = ? AND `age` = ? LIMIT 1"
 	expectedArgs = []interface{}{int64(1), "test2", int64(20), "test", int64(20)}
-	sql, args = buildUpdate(event.TableInfo, row)
+	sql, args, err = buildUpdate(event.TableInfo, row)
+	require.NoError(t, err)
 	require.Equal(t, expectedSQL, sql)
 	require.Len(t, args, 5)
 	require.Equal(t, expectedArgs, args)
