@@ -339,12 +339,10 @@ func (d *DispatcherStat) checkHandshakeEvents(dispatcherEvents []dispatcher.Disp
 		if handshake.GetCommitTs() == d.target.GetCheckpointTs() {
 			currentSeq := d.lastEventSeq.Load()
 			if currentSeq != 0 {
-				log.Warn("Receive handshake event, but current seq is not zero, reset it",
+				log.Panic("Receive handshake event, but current seq is not zero",
 					zap.Any("event", handshake),
 					zap.Stringer("dispatcher", d.target.GetId()),
 					zap.Uint64("currentSeq", currentSeq))
-				// FIXME: if we reset it here? isReady will be false?
-				// d.reset()
 				return false, dispatcherEvents[i+1:]
 			}
 			// In some case, the eventService may send handshake event multiple times,
