@@ -131,15 +131,18 @@ func (q *eventQueue[A, P, T, D, H]) updateHeapAfterUpdatePath(path *pathInfo[A, 
 	if area == nil {
 		return
 	}
+
+	if path.removed || path.pendingQueue.Length() == 0 {
+		area.pathSizeHeap.Remove((*pathSizeStat[A, P, T, D, H])(path))
+	} else {
+		area.pathSizeHeap.AddOrUpdate((*pathSizeStat[A, P, T, D, H])(path))
+	}
+
 	if path.removed || path.pendingQueue.Length() == 0 || path.blocking {
 		// Remove the path from heap
 		area.timestampHeap.Remove((*timestampPathNode[A, P, T, D, H])(path))
 		area.queueTimeHeap.Remove((*queuePathNode[A, P, T, D, H])(path))
 
-		// If the path is blocking, it should not be removed from pathSizeHeap.
-		if !path.blocking {
-			area.pathSizeHeap.Remove((*pathSizeStat[A, P, T, D, H])(path))
-		}
 		if area.queueTimeHeap.Len() == 0 {
 			q.eventQueueTimeQueue.Remove(area)
 		} else {
