@@ -344,7 +344,7 @@ func (e *EventDispatcherManager) NewDispatchers(infos []DispatcherCreateInfo) er
 			e.changefeedID,
 			id, tableSpans[idx], e.sink,
 			uint64(newStartTsList[idx]), e.dispatcherActionChan, e.blockStatusesChan,
-			e.filter, schemaIds[idx], e.schemaIDToDispatchers, &syncPointInfo, e.config.MemoryQuota, e.errCh)
+			e.filter, schemaIds[idx], e.schemaIDToDispatchers, &syncPointInfo, e.config.MemoryQuota, e.config.Filter, e.errCh)
 
 		if e.heartBeatTask == nil {
 			e.heartBeatTask = newHeartBeatTask(e)
@@ -358,10 +358,9 @@ func (e *EventDispatcherManager) NewDispatchers(infos []DispatcherCreateInfo) er
 
 		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).SendDispatcherRequest(
 			eventcollector.DispatcherRequest{
-				Dispatcher:   d,
-				StartTs:      d.GetStartTs(),
-				ActionType:   eventpb.ActionType_ACTION_TYPE_REGISTER,
-				FilterConfig: toFilterConfigPB(e.config.Filter),
+				Dispatcher: d,
+				StartTs:    d.GetStartTs(),
+				ActionType: eventpb.ActionType_ACTION_TYPE_REGISTER,
 			},
 		)
 
@@ -502,7 +501,6 @@ func (e *EventDispatcherManager) CollectDispatcherAction(ctx context.Context) {
 				}
 				// Get eventCollector
 			case common.ActionReset:
-				log.Info("fizz send reset request", zap.Any("dispatcher", d.GetId()))
 				req = eventcollector.DispatcherRequest{
 					Dispatcher: d,
 					StartTs:    d.GetStartTs(),
@@ -545,32 +543,6 @@ func (e *EventDispatcherManager) cleanTableEventDispatcher(id common.DispatcherI
 	}
 	e.tableEventDispatcherCount.Dec()
 	log.Info("table event dispatcher completely stopped, and delete it from event dispatcher manager", zap.Any("dispatcher id", id))
-}
-
-func toFilterConfigPB(filter *config.FilterConfig) *eventpb.FilterConfig {
-	filterConfig := &eventpb.FilterConfig{
-		Rules:            filter.Rules,
-		IgnoreTxnStartTs: filter.IgnoreTxnStartTs,
-		EventFilters:     make([]*eventpb.EventFilterRule, len(filter.EventFilters)),
-	}
-
-	for _, eventFilter := range filter.EventFilters {
-		ignoreEvent := make([]string, len(eventFilter.IgnoreEvent))
-		for _, event := range eventFilter.IgnoreEvent {
-			ignoreEvent = append(ignoreEvent, string(event))
-		}
-		filterConfig.EventFilters = append(filterConfig.EventFilters, &eventpb.EventFilterRule{
-			Matcher:                  eventFilter.Matcher,
-			IgnoreEvent:              ignoreEvent,
-			IgnoreSql:                eventFilter.IgnoreSQL,
-			IgnoreInsertValueExpr:    eventFilter.IgnoreInsertValueExpr,
-			IgnoreUpdateNewValueExpr: eventFilter.IgnoreUpdateNewValueExpr,
-			IgnoreUpdateOldValueExpr: eventFilter.IgnoreUpdateOldValueExpr,
-			IgnoreDeleteValueExpr:    eventFilter.IgnoreDeleteValueExpr,
-		})
-	}
-
-	return filterConfig
 }
 
 // CollectHeartbeatInfo collects the heartbeat info of all the dispatchers and returns a HeartBeatRequest message.

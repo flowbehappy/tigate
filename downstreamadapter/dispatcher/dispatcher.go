@@ -21,9 +21,11 @@ import (
 	tisink "github.com/pingcap/ticdc/downstreamadapter/sink"
 	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
 	"github.com/pingcap/ticdc/downstreamadapter/syncpoint"
+	"github.com/pingcap/ticdc/eventpb"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/pingcap/ticdc/pkg/sink/util"
 	"github.com/pingcap/ticdc/utils/dynstream"
@@ -83,11 +85,13 @@ type Dispatcher struct {
 	// dispatcherStatusChan is used to report the status of the dispatcher to the dispatcherManager
 	dispatcherActionChan chan common.DispatcherAction
 
-	SyncPointInfo *syncpoint.SyncPointInfo
+	SyncPointInfo   *syncpoint.SyncPointInfo
+	lastSyncPointTs atomic.Uint64
 
 	componentStatus *ComponentStateWithMutex
 
-	filter filter.Filter
+	filterConfig *config.FilterConfig
+	filter       filter.Filter
 
 	resolvedTs *TsWithMutex // The largest commitTs - 1 of the events received by the dispatcher.
 
@@ -126,6 +130,7 @@ func NewDispatcher(
 	schemaIDToDispatchers *SchemaIDToDispatchers,
 	syncPointInfo *syncpoint.SyncPointInfo,
 	memoryQuota uint64,
+	filterConfig *config.FilterConfig,
 	errCh chan error) *Dispatcher {
 	dispatcher := &Dispatcher{
 		changefeedID:          changefeedID,
@@ -138,6 +143,7 @@ func NewDispatcher(
 		SyncPointInfo:         syncPointInfo,
 		componentStatus:       newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
 		resolvedTs:            newTsWithMutex(startTs),
+		filterConfig:          filterConfig,
 		filter:                filter,
 		isRemoving:            atomic.Bool{},
 		blockStatus:           BlockStatus{blockPendingEvent: nil},
@@ -148,6 +154,7 @@ func NewDispatcher(
 		errCh:                 errCh,
 	}
 	dispatcher.startTs.Store(startTs)
+	dispatcher.lastSyncPointTs.Store(syncPointInfo.InitSyncPointTs)
 
 	// only when is not mysql sink, table trigger event dispatcher need tableSchemaStore to store the table name
 	// in order to calculate all the topics when sending checkpointTs to downstream
@@ -231,24 +238,8 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 	block = false
 	// Dispatcher is ready, handle the events
 	for _, dispatcherEvent := range dispatcherEvents {
-		// Pre-check, make sure the event is not stale or out-of-order
 		event := dispatcherEvent.Event
-		if event.GetCommitTs() < d.resolvedTs.Get() {
-			log.Info("Received a stale event, ignore it",
-				zap.Any("commitTs", event.GetCommitTs()),
-				zap.Any("seq", event.GetSeq()),
-				zap.Any("eventType", event.GetType()),
-				zap.Any("dispatcher", d.id),
-				zap.Any("event", event))
-		}
-
-		log.Info("fizz Received a event",
-			zap.Any("commitTs", event.GetCommitTs()),
-			zap.Any("seq", event.GetSeq()),
-			zap.Any("eventType", event.GetType()),
-			zap.Any("dispatcher", d.id),
-			zap.Any("event", event))
-
+		// Pre-check, make sure the event is not stale or out-of-order
 		if event.GetType() == commonEvent.TypeDMLEvent ||
 			event.GetType() == commonEvent.TypeDDLEvent ||
 			event.GetType() == commonEvent.TypeHandshakeEvent {
@@ -262,6 +253,17 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 				return false
 			}
 		}
+
+		if event.GetCommitTs() < d.resolvedTs.Get() {
+			log.Info("Received a stale event, should ignore it",
+				zap.Any("commitTs", event.GetCommitTs()),
+				zap.Any("seq", event.GetSeq()),
+				zap.Any("eventType", event.GetType()),
+				zap.Any("dispatcher", d.id),
+				zap.Any("event", event))
+			continue
+		}
+
 		switch event.GetType() {
 		case commonEvent.TypeResolvedEvent:
 			d.resolvedTs.Set(event.(commonEvent.ResolvedEvent).ResolvedTs)
@@ -312,6 +314,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 				dispatcherEventDynamicStream.Wake() <- event.GetDispatcherID()
 			})
 			d.dealWithBlockEvent(event)
+			d.lastSyncPointTs.Store(event.GetCommitTs())
 		case commonEvent.TypeHandshakeEvent:
 			log.Warn("Receive handshake event unexpectedly", zap.Any("event", event), zap.Stringer("dispatcher", d.id))
 		default:
@@ -549,10 +552,40 @@ func (d *Dispatcher) EnableSyncPoint() bool {
 
 func (d *Dispatcher) GetSyncPointTs() uint64 {
 	if d.SyncPointInfo.EnableSyncPoint {
-		return d.SyncPointInfo.InitSyncPointTs
+		return d.lastSyncPointTs.Load()
 	} else {
 		return 0
 	}
+}
+
+func (d *Dispatcher) GetFilterConfig() *eventpb.FilterConfig {
+	return toFilterConfigPB(d.filterConfig)
+}
+
+func toFilterConfigPB(filter *config.FilterConfig) *eventpb.FilterConfig {
+	filterConfig := &eventpb.FilterConfig{
+		Rules:            filter.Rules,
+		IgnoreTxnStartTs: filter.IgnoreTxnStartTs,
+		EventFilters:     make([]*eventpb.EventFilterRule, len(filter.EventFilters)),
+	}
+
+	for _, eventFilter := range filter.EventFilters {
+		ignoreEvent := make([]string, len(eventFilter.IgnoreEvent))
+		for _, event := range eventFilter.IgnoreEvent {
+			ignoreEvent = append(ignoreEvent, string(event))
+		}
+		filterConfig.EventFilters = append(filterConfig.EventFilters, &eventpb.EventFilterRule{
+			Matcher:                  eventFilter.Matcher,
+			IgnoreEvent:              ignoreEvent,
+			IgnoreSql:                eventFilter.IgnoreSQL,
+			IgnoreInsertValueExpr:    eventFilter.IgnoreInsertValueExpr,
+			IgnoreUpdateNewValueExpr: eventFilter.IgnoreUpdateNewValueExpr,
+			IgnoreUpdateOldValueExpr: eventFilter.IgnoreUpdateOldValueExpr,
+			IgnoreDeleteValueExpr:    eventFilter.IgnoreDeleteValueExpr,
+		})
+	}
+
+	return filterConfig
 }
 
 func (d *Dispatcher) GetSyncPointInterval() time.Duration {
