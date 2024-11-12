@@ -45,7 +45,7 @@ const (
 	networkDriftDuration = 5 * time.Second
 )
 
-// 用于给 mysql 类型的下游做 flush, 主打一个粗糙，先能跑起来再说
+// MysqlWriter is responsible for writing various dml events, ddl events, syncpoint events to mysql downstream.
 type MysqlWriter struct {
 	ctx          context.Context
 	db           *sql.DB
@@ -173,7 +173,7 @@ func (w *MysqlWriter) SendSyncPointEvent(event *commonEvent.SyncPointEvent) erro
 	builder.WriteString(filter.TiCDCSystemSchema)
 	builder.WriteString(".")
 	builder.WriteString(filter.SyncPointTable)
-	builder.WriteString("(ticdc_cluster_id, changefeed, primary_ts, secondary_ts) VALUES ('")
+	builder.WriteString(" (ticdc_cluster_id, changefeed, primary_ts, secondary_ts) VALUES ('")
 	builder.WriteString(config.GetGlobalServerConfig().ClusterID)
 	builder.WriteString("', '")
 	builder.WriteString(w.ChangefeedID.String())
@@ -293,7 +293,7 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 		builder.WriteString(filter.TiCDCSystemSchema)
 		builder.WriteString(".")
 		builder.WriteString(filter.DDLTsTable)
-		builder.WriteString("(ticdc_cluster_id, changefeed, ddl_ts, table_id) VALUES ")
+		builder.WriteString(" (ticdc_cluster_id, changefeed, ddl_ts, table_id) VALUES ")
 
 		for idx, tableId := range tableIds {
 			builder.WriteString("('")
@@ -486,14 +486,13 @@ func (w *MysqlWriter) RemoveDDLTsItem() error {
 	builder.WriteString(filter.TiCDCSystemSchema)
 	builder.WriteString(".")
 	builder.WriteString(filter.DDLTsTable)
-	builder.WriteString(" WHERE (ticdc_cluster_id, changefeed) IN (")
+	builder.WriteString(" WHERE (ticdc_cluster_id, changefeed) IN ")
 
 	builder.WriteString("('")
 	builder.WriteString(ticdcClusterID)
 	builder.WriteString("', '")
 	builder.WriteString(changefeedID)
 	builder.WriteString("')")
-	builder.WriteString(")")
 	query := builder.String()
 
 	_, err = tx.Exec(query)
@@ -712,7 +711,7 @@ func (w *MysqlWriter) Flush(events []*commonEvent.DMLEvent, workerNum int) error
 	if err != nil {
 		return errors.Trace(err)
 	}
-	//log.Debug("prepare DMLs", zap.Any("dmlsCount", dmls.rowCount), zap.Any("dmls", fmt.Sprintf("%v", dmls.sqls)), zap.Any("values", dmls.values), zap.Any("startTs", dmls.startTs), zap.Any("workerNum", workerNum))
+
 	if dmls.rowCount == 0 {
 		return nil
 	}

@@ -247,3 +247,10 @@ func (c ChangeFeedID) ToPB() *heartbeatpb.ChangefeedID {
 		Namespace: c.Namespace(),
 	}
 }
+
+func ChangefeedID4Test(namespace, name string) ChangeFeedID {
+	return NewChangeFeedIDWithDisplayName(ChangeFeedDisplayName{
+		Name:      name,
+		Namespace: namespace,
+	})
+}
