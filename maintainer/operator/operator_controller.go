@@ -35,7 +35,7 @@ import (
 type Controller struct {
 	changefeedID  common.ChangeFeedID
 	replicationDB *replica.ReplicationDB
-	operators     map[common.DispatcherID]operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus]
+	operators     map[common.DispatcherID]*operator.OperatorWithTime[common.DispatcherID, *heartbeatpb.TableSpanStatus]
 	runningQueue  operator.OperatorQueue[common.DispatcherID, *heartbeatpb.TableSpanStatus]
 	batchSize     int
 	messageCenter messaging.MessageCenter
@@ -49,7 +49,7 @@ func NewOperatorController(changefeedID common.ChangeFeedID,
 	batchSize int) *Controller {
 	oc := &Controller{
 		changefeedID:  changefeedID,
-		operators:     make(map[common.DispatcherID]operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus]),
+		operators:     make(map[common.DispatcherID]*operator.OperatorWithTime[common.DispatcherID, *heartbeatpb.TableSpanStatus]),
 		runningQueue:  make(operator.OperatorQueue[common.DispatcherID, *heartbeatpb.TableSpanStatus], 0),
 		messageCenter: mc,
 		batchSize:     batchSize,
@@ -147,7 +147,7 @@ func (oc *Controller) UpdateOperatorStatus(id common.DispatcherID, from node.ID,
 
 	op, ok := oc.operators[id]
 	if ok {
-		op.Check(from, status)
+		op.OP.Check(from, status)
 	}
 }
 
@@ -165,7 +165,7 @@ func (oc *Controller) OnNodeRemoved(n node.ID) {
 		}
 	}
 	for _, op := range oc.operators {
-		op.OnNodeRemove(n)
+		op.OP.OnNodeRemove(n)
 	}
 }
 
@@ -173,7 +173,12 @@ func (oc *Controller) OnNodeRemoved(n node.ID) {
 func (oc *Controller) GetOperator(id common.DispatcherID) operator.Operator[common.DispatcherID, *heartbeatpb.TableSpanStatus] {
 	oc.lock.RLock()
 	defer oc.lock.RUnlock()
-	return oc.operators[id]
+
+	if op, ok := oc.operators[id]; !ok {
+		return nil
+	} else {
+		return op.OP
+	}
 }
 
 // OperatorSize returns the number of operators in the controller.
@@ -193,11 +198,15 @@ func (oc *Controller) pollQueueingOperator() (operator.Operator[common.Dispatche
 		return nil, false
 	}
 	item := heap.Pop(&oc.runningQueue).(*operator.OperatorWithTime[common.DispatcherID, *heartbeatpb.TableSpanStatus])
+	if item.Removed {
+		return nil, true
+	}
 	op := item.OP
 	opID := op.ID()
 	// always call the PostFinish method to ensure the operator is cleaned up by itself.
 	if op.IsFinished() {
 		op.PostFinish()
+		item.Removed = true
 		delete(oc.operators, opID)
 		metrics.FinishedOperatorCount.WithLabelValues(model.DefaultNamespace, oc.changefeedID.Name(), op.Type()).Inc()
 		metrics.OperatorDuration.WithLabelValues(model.DefaultNamespace, oc.changefeedID.Name(), op.Type()).Observe(time.Since(item.EnqueueTime).Seconds())
@@ -224,9 +233,11 @@ func (oc *Controller) removeReplicaSet(op *RemoveDispatcherOperator) {
 	if old, ok := oc.operators[op.ID()]; ok {
 		log.Info("replica set is removed , replace the old one",
 			zap.String("changefeed", oc.changefeedID.Name()),
-			zap.String("replicaset", old.ID().String()),
-			zap.String("operator", old.String()))
-		old.OnTaskRemoved()
+			zap.String("replicaset", old.OP.ID().String()),
+			zap.String("operator", old.OP.String()))
+		old.OP.OnTaskRemoved()
+		old.OP.PostFinish()
+		old.Removed = true
 		delete(oc.operators, op.ID())
 	}
 	oc.pushOperator(op)
@@ -237,8 +248,9 @@ func (oc *Controller) pushOperator(op operator.Operator[common.DispatcherID, *he
 	log.Info("add operator to running queue",
 		zap.String("changefeed", oc.changefeedID.Name()),
 		zap.String("operator", op.String()))
-	oc.operators[op.ID()] = op
+	withTime := &operator.OperatorWithTime[common.DispatcherID, *heartbeatpb.TableSpanStatus]{OP: op, Time: time.Now(), EnqueueTime: time.Now()}
+	oc.operators[op.ID()] = withTime
 	op.Start()
-	heap.Push(&oc.runningQueue, &operator.OperatorWithTime[common.DispatcherID, *heartbeatpb.TableSpanStatus]{OP: op, Time: time.Now(), EnqueueTime: time.Now()})
+	heap.Push(&oc.runningQueue, withTime)
 	metrics.CreatedOperatorCount.WithLabelValues(model.DefaultNamespace, oc.changefeedID.Name(), op.Type()).Inc()
 }

@@ -27,7 +27,7 @@ type Backend interface {
 	// CreateChangefeed saves changefeed info and status to db
 	CreateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error
 	// UpdateChangefeed updates changefeed info  to db
-	UpdateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error
+	UpdateChangefeed(ctx context.Context, info *config.ChangeFeedInfo, checkpointTs uint64, progress config.Progress) error
 	// PauseChangefeed persists the pause status to db for a changefeed
 	PauseChangefeed(ctx context.Context, id common.ChangeFeedID) error
 	// DeleteChangefeed removes all related info of a changefeed from db

@@ -38,7 +38,7 @@ func (t EventType) String() string {
 	return fmt.Sprintf("EventType{DataGroup: %d, Property: %s}", t.DataGroup, t.Property.String())
 }
 
-var DefaultEventType = EventType{}
+var DefaultEventType = EventType{DataGroup: 0, Property: BatchableData}
 
 // The property of the event, it is used to how dynamic stream handles the event.
 type Property int

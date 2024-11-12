@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/ticdc/server/watcher"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"github.com/pingcap/ticdc/utils/threadpool"
+	"github.com/pingcap/tiflow/cdc/model"
 	cerror "github.com/pingcap/tiflow/pkg/errors"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -62,14 +63,22 @@ type Controller struct {
 	backend                  changefeed.Backend
 
 	updatedChangefeedCh chan map[common.ChangeFeedID]*changefeed.Changefeed
+	stateChangedCh      chan *ChangefeedStateChangeEvent
 
 	lastPrintStatusTime time.Time
+}
+
+type ChangefeedStateChangeEvent struct {
+	ChangefeedID common.ChangeFeedID
+	State        model.FeedState
+	err          *model.RunningError
 }
 
 func NewController(
 	version int64,
 	selfNode *node.Info,
 	updatedChangefeedCh chan map[common.ChangeFeedID]*changefeed.Changefeed,
+	stateChangedCh chan *ChangefeedStateChangeEvent,
 	backend changefeed.Backend,
 	stream dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler],
 	taskScheduler threadpool.ThreadPool,
@@ -93,6 +102,7 @@ func NewController(
 		backend:             backend,
 		nodeChanged:         atomic.NewBool(false),
 		updatedChangefeedCh: updatedChangefeedCh,
+		stateChangedCh:      stateChangedCh,
 		lastPrintStatusTime: time.Now(),
 	}
 	c.bootstrapper = bootstrap.NewBootstrapper[heartbeatpb.CoordinatorBootstrapResponse]("coordinator", c.newBootstrapMessage)
@@ -293,7 +303,27 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.Mainta
 				zap.Stringer("node", nodeID))
 			continue
 		}
-		cf.UpdateStatus(status)
+		changed, state, err := cf.UpdateStatus(status)
+		if changed {
+			log.Info("changefeed status changed",
+				zap.String("changefeed", cfID.Name()),
+				zap.Any("state", state),
+				zap.Any("error", err))
+			var mErr *model.RunningError
+			if err != nil {
+				mErr = &model.RunningError{
+					Time:    time.Now(),
+					Addr:    err.Node,
+					Code:    err.Code,
+					Message: err.Message,
+				}
+			}
+			c.stateChangedCh <- &ChangefeedStateChangeEvent{
+				ChangefeedID: cfID,
+				State:        state,
+				err:          mErr,
+			}
+		}
 		cfs[cfID] = cf
 	}
 	select {
@@ -318,7 +348,7 @@ func (c *Controller) FinishBootstrap(workingMap map[common.ChangeFeedID]remoteMa
 		rm, ok := workingMap[cfID]
 		if !ok {
 			cf := changefeed.NewChangefeed(cfID, cfMeta.Info, cfMeta.Status.CheckpointTs)
-			if shouldRunChangefeed(cf.Info.State) {
+			if shouldRunChangefeed(cf.GetInfo().State) {
 				c.changefeedDB.AddAbsentChangefeed(cf)
 			} else {
 				c.changefeedDB.AddStoppedChangefeed(cf)
@@ -383,6 +413,12 @@ func (c *Controller) PauseChangefeed(ctx context.Context, id common.ChangeFeedID
 	if err := c.backend.PauseChangefeed(ctx, id); err != nil {
 		return errors.Trace(err)
 	}
+	if clone, err := cf.GetInfo().Clone(); err != nil {
+		return errors.Trace(err)
+	} else {
+		clone.State = model.StateStopped
+		cf.SetInfo(clone)
+	}
 	c.operatorController.StopChangefeed(ctx, id, false)
 	return nil
 }
@@ -395,7 +431,13 @@ func (c *Controller) ResumeChangefeed(ctx context.Context, id common.ChangeFeedI
 	if err := c.backend.ResumeChangefeed(ctx, id, newCheckpointTs); err != nil {
 		return errors.Trace(err)
 	}
-	c.changefeedDB.Resume(id)
+	if clone, err := cf.GetInfo().Clone(); err != nil {
+		return errors.Trace(err)
+	} else {
+		clone.State = model.StateNormal
+		cf.SetInfo(clone)
+	}
+	c.changefeedDB.Resume(id, true)
 	return nil
 }
 
@@ -404,7 +446,7 @@ func (c *Controller) UpdateChangefeed(ctx context.Context, change *config.Change
 	if cf == nil {
 		return errors.New("changefeed not found")
 	}
-	if err := c.backend.UpdateChangefeed(ctx, change); err != nil {
+	if err := c.backend.UpdateChangefeed(ctx, change, cf.GetStatus().CheckpointTs, config.ProgressStopping); err != nil {
 		return errors.Trace(err)
 	}
 	c.changefeedDB.ReplaceStoppedChangefeed(change)
@@ -416,7 +458,7 @@ func (c *Controller) ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedI
 	infos := make([]*config.ChangeFeedInfo, 0, len(cfs))
 	statuses := make([]*config.ChangeFeedStatus, 0, len(cfs))
 	for _, cf := range cfs {
-		infos = append(infos, cf.Info)
+		infos = append(infos, cf.GetInfo())
 		statuses = append(statuses, &config.ChangeFeedStatus{CheckpointTs: cf.GetStatus().CheckpointTs})
 	}
 	return infos, statuses, nil
@@ -427,7 +469,7 @@ func (c *Controller) GetChangefeed(ctx context.Context, changefeedDisplayName co
 	if cf == nil {
 		return nil, nil, cerror.ErrChangeFeedNotExists.GenWithStackByArgs(changefeedDisplayName.Name)
 	}
-	return cf.Info, &config.ChangeFeedStatus{CheckpointTs: cf.GetStatus().CheckpointTs}, nil
+	return cf.GetInfo(), &config.ChangeFeedStatus{CheckpointTs: cf.GetStatus().CheckpointTs}, nil
 }
 
 // GetTask queries a task by channgefeed ID, return nil if not found

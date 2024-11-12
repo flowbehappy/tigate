@@ -239,10 +239,12 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 		if event.GetType() == commonEvent.TypeDMLEvent ||
 			event.GetType() == commonEvent.TypeDDLEvent ||
 			event.GetType() == commonEvent.TypeHandshakeEvent {
-			lastSeq := d.lastEventSeq.Load()
+			expectedSeq := d.lastEventSeq.Load()
 			if event.GetSeq() != d.lastEventSeq.Add(1) {
-				log.Warn("Received a out-of-order event, reset the dispatcher", zap.String("changefeedID", d.changefeedID.String()), zap.Any("dispatcher", d.id),
-					zap.Uint64("receivedSeq", event.GetSeq()), zap.Uint64("lastEventSeq", lastSeq), zap.Any("commitTs", event.GetCommitTs()), zap.Any("event", event))
+				log.Warn("Received a out-of-order event, reset the dispatcher",
+					zap.String("changefeedID", d.changefeedID.String()), zap.Stringer("dispatcher", d.id),
+					zap.Uint64("receivedSeq", event.GetSeq()), zap.Uint64("expectedSeq", expectedSeq),
+					zap.Uint64("commitTs", event.GetCommitTs()), zap.Any("event", event))
 				d.reset()
 				return false
 			}
@@ -298,7 +300,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 			})
 			d.dealWithBlockEvent(event)
 		case commonEvent.TypeHandshakeEvent:
-			log.Info("Receive handshake event unexpectedly, FIX ME", zap.Any("event", event), zap.Stringer("dispatcher", d.id))
+			log.Warn("Receive handshake event unexpectedly", zap.Any("event", event), zap.Stringer("dispatcher", d.id))
 		default:
 			log.Panic("Unexpected event type", zap.Any("event Type", event.GetType()), zap.Stringer("dispatcher", d.id), zap.Uint64("commitTs", event.GetCommitTs()))
 		}
@@ -311,11 +313,8 @@ func (d *Dispatcher) checkHandshakeEvents(dispatcherEvents []DispatcherEvent) (b
 		log.Warn("Dispatcher is already ready, handshake event is unexpected, FIX ME!", zap.Stringer("dispatcher", d.id))
 		return false, dispatcherEvents
 	}
-	index := 0
 	for i, dispatcherEvent := range dispatcherEvents {
 		event := dispatcherEvent.Event
-		index = i
-
 		if event.GetType() != commonEvent.TypeHandshakeEvent {
 			// Drop other events if dispatcher is not ready
 			continue
@@ -352,11 +351,7 @@ func (d *Dispatcher) checkHandshakeEvents(dispatcherEvents []DispatcherEvent) (b
 				zap.Uint64("commitTs", event.GetCommitTs()))
 		}
 	}
-
-	if index == len(dispatcherEvents) {
-		return false, nil
-	}
-	return false, dispatcherEvents[index:]
+	return false, nil
 }
 
 func isCompleteSpan(tableSpan *heartbeatpb.TableSpan) bool {
@@ -417,6 +412,7 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 		err := d.sink.WriteBlockEvent(event, d.tableProgress)
 		if err != nil {
 			d.errCh <- err
+			return
 		}
 		if event.GetNeedAddedTables() != nil || event.GetNeedDroppedTables() != nil {
 			message := &heartbeatpb.TableSpanBlockStatus{

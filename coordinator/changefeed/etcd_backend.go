@@ -162,15 +162,26 @@ func (b *EtcdBackend) CreateChangefeed(ctx context.Context,
 	return nil
 }
 
-func (b *EtcdBackend) UpdateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error {
+func (b *EtcdBackend) UpdateChangefeed(ctx context.Context, info *config.ChangeFeedInfo, checkpointTs uint64, progress config.Progress) error {
 	infoKey := etcd.GetEtcdKeyChangeFeedInfo(b.etcdClient.GetClusterID(), info.ChangefeedID.DisplayName)
 	newStr, err := info.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	status := &config.ChangeFeedStatus{
+		CheckpointTs: checkpointTs,
+		Progress:     progress,
+	}
+	statusStr, err := status.Marshal()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	jobKey := etcd.GetEtcdKeyJob(b.etcdClient.GetClusterID(), info.ChangefeedID.DisplayName)
 	opsThen := []clientv3.Op{}
-	opsThen = append(opsThen, clientv3.OpPut(infoKey, newStr))
+	opsThen = append(opsThen,
+		clientv3.OpPut(infoKey, newStr),
+		clientv3.OpPut(jobKey, statusStr),
+	)
 
 	putResp, err := b.etcdClient.GetEtcdClient().Txn(ctx, []clientv3.Cmp{}, opsThen, []clientv3.Op{})
 	if err != nil {
@@ -319,7 +330,7 @@ func (b *EtcdBackend) UpdateChangefeedCheckpointTs(ctx context.Context, cps map[
 		return err
 	}
 	for cfID, checkpointTs := range cps {
-		status := &model.ChangeFeedStatus{CheckpointTs: checkpointTs}
+		status := &config.ChangeFeedStatus{CheckpointTs: checkpointTs, Progress: config.ProgressNone}
 		jobValue, err := status.Marshal()
 		if err != nil {
 			return errors.Trace(err)
