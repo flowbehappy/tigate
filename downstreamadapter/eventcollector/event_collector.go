@@ -47,6 +47,10 @@ const (
 	typeRegisterDispatcherReq = messaging.TypeRegisterDispatcherRequest
 )
 
+type dispatcherStat struct {
+	changefeedID common.ChangeFeedID
+}
+
 /*
 EventCollector is the relay between EventService and DispatcherManager, responsible for:
 1. Send dispatcher request to EventService.
@@ -79,7 +83,7 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 		serverId:                             serverId,
 		globalMemoryQuota:                    globalMemoryQuota,
 		dispatcherMap:                        sync.Map{},
-		ds:                                   dispatcher.GetEventDynamicStream(),
+		ds:                                   newEventDynamicStream(),
 		dispatcherRequestChan:                chann.NewAutoDrainChann[DispatcherRequest](),
 		mc:                                   appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
@@ -106,6 +110,13 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 		eventCollector.updateMetrics(ctx)
 	}()
 	return &eventCollector
+}
+
+func (c *EventCollector) AddDispatcher() {
+
+}
+
+func (c *EventCollector) RemoveDispatcher() {
 }
 
 func (c *EventCollector) processFeedback(ctx context.Context) {
@@ -146,7 +157,10 @@ func (c *EventCollector) processDispatcherRequests(ctx context.Context) {
 	}
 }
 
-func (c *EventCollector) SendDispatcherRequest(req DispatcherRequest) error {
+// mustSendDispatcherRequest will keep retrying to send the dispatcher request to EventService until it succeed.
+// Caller should avoid to use this method if the remote EventService maybe offline forever.
+// And this method may be deprecated in the future.
+func (c *EventCollector) mustSendDispatcherRequest(req DispatcherRequest) error {
 	message := &messaging.RegisterDispatcherRequest{
 		RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
 			ChangefeedId: req.Dispatcher.GetChangefeedID().ToPB(),
