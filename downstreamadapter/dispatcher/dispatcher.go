@@ -190,8 +190,6 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 				}
 			} else {
 				d.sink.PassBlockEvent(pendingEvent, d.tableProgress)
-				dispatcherEventDynamicStream := GetEventDynamicStream()
-				dispatcherEventDynamicStream.Wake() <- d.id
 			}
 		}
 

@@ -188,6 +188,7 @@ func (s *KafkaSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *type
 
 func (s *KafkaSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
 	tableProgress.Pass(event)
+	event.PostFlush()
 }
 
 func (s *KafkaSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error {
@@ -196,9 +197,7 @@ func (s *KafkaSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress 
 	case *commonEvent.DDLEvent:
 		if event.TiDBOnly {
 			// run callback directly and return
-			for _, cb := range event.PostTxnFlushed {
-				cb()
-			}
+			event.PostFlush()
 			return nil
 		}
 		return s.ddlWorker.WriteBlockEvent(event)

@@ -109,6 +109,7 @@ func (s *MysqlSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *type
 
 func (s *MysqlSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
 	tableProgress.Pass(event)
+	event.PostFlush()
 }
 
 func (s *MysqlSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error {
