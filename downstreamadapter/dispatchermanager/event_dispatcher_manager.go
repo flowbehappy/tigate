@@ -186,6 +186,22 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 					Message: err.Error(),
 				}
 				manager.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: manager.GetMaintainerID(), Request: &message})
+
+				// resend message until the event dispatcher manager is closed
+				// In normal, the goroutine only exists for a very short time.
+				go func(ctx context.Context, message heartbeatpb.HeartBeatRequest) {
+					ticker := time.NewTicker(time.Second * 5)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case <-ticker.C:
+							manager.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: manager.GetMaintainerID(), Request: &message})
+						}
+					}
+				}(ctx, message)
+
 			}
 		}
 	}()
