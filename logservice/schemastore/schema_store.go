@@ -154,7 +154,7 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 				zap.Int("resolvedEventsLen", len(resolvedEvents)))
 
 			for _, event := range resolvedEvents {
-				if event.Job.BinlogInfo.SchemaVersion <= s.schemaVersion || event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTs {
+				if event.Job.BinlogInfo.FinishedTS <= s.finishedDDLTs {
 					// log.Info("skip already applied ddl job",
 					// 	zap.Any("type", event.Job.Type),
 					// 	zap.String("job", event.Job.Query),
