@@ -80,13 +80,13 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 		serverId:                             serverId,
 		globalMemoryQuota:                    globalMemoryQuota,
 		dispatcherMap:                        sync.Map{},
-		ds:                                   NewEventDynamicStream(),
 		dispatcherRequestChan:                chann.NewAutoDrainChann[DispatcherRequest](),
 		mc:                                   appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
 		metricReceiveEventLagDuration:                metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("Msg"),
 	}
+	eventCollector.ds = NewEventDynamicStream(&eventCollector)
 	eventCollector.mc.RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
 
 	eventCollector.wg.Add(1)

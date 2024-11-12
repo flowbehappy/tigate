@@ -17,20 +17,19 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/downstreamadapter/dispatcher"
 	"github.com/pingcap/ticdc/pkg/common"
-	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"go.uber.org/zap"
 )
 
-func NewEventDynamicStream() dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler] {
+func NewEventDynamicStream(collector *EventCollector) dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler] {
 	option := dynstream.NewOption()
 	option.BatchCount = 128
 	// Enable memory control for dispatcher events dynamic stream.
 	log.Info("New EventDynamicStream, memory control is enabled")
 	option.EnableMemoryControl = true
 	eventsHandler := &EventsHandler{
-		eventCollector: appcontext.GetService[*EventCollector](appcontext.EventCollector),
+		eventCollector: collector,
 	}
 	eventDynamicStream := dynstream.NewDynamicStream(eventsHandler, option)
 	eventDynamicStream.Start()
