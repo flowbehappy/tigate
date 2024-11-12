@@ -254,9 +254,6 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *mes
 		switch msg.(type) {
 		case *common.LogCoordinatorBroadcastRequest:
 			c.coordinatorInfo.Lock()
-			if c.coordinatorInfo.id == "" {
-				log.Info("receive coordinator broadcast message", zap.String("from", targetMessage.From.String()))
-			}
 			c.coordinatorInfo.id = targetMessage.From
 			c.coordinatorInfo.Unlock()
 		case commonEvent.Event:
