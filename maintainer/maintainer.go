@@ -465,12 +465,16 @@ func (m *Maintainer) onHeartBeatRequest(msg *messaging.TargetMessage) {
 	}
 	m.controller.HandleStatus(msg.From, req.Statuses)
 	if req.Err != nil {
-		m.errLock.Lock()
-		m.statusChanged.Store(true)
-		m.runningErrors[msg.From] = req.Err
 		log.Warn("dispatcher report an error",
 			zap.String("changefeed", m.id.Name()),
 			zap.String("error", req.Err.Message))
+		m.errLock.Lock()
+		m.statusChanged.Store(true)
+		m.runningErrors[msg.From] = req.Err
+		req.Err.Node = msg.From.String()
+		if info, ok := m.nodeManager.GetAliveNodes()[msg.From]; ok {
+			req.Err.Node = info.AdvertiseAddr
+		}
 		m.errLock.Unlock()
 	}
 }
@@ -497,6 +501,10 @@ func (m *Maintainer) onMaintainerBootstrapResponse(msg *messaging.TargetMessage)
 		m.errLock.Lock()
 		m.statusChanged.Store(true)
 		m.runningErrors[msg.From] = resp.Err
+		resp.Err.Node = msg.From.String()
+		if info, ok := m.nodeManager.GetAliveNodes()[msg.From]; ok {
+			resp.Err.Node = info.AdvertiseAddr
+		}
 		m.errLock.Unlock()
 		return
 	}
