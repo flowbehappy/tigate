@@ -405,6 +405,7 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 		err := d.sink.WriteBlockEvent(event, d.tableProgress)
 		if err != nil {
 			d.errCh <- err
+			return
 		}
 		if event.GetNeedAddedTables() != nil || event.GetNeedDroppedTables() != nil {
 			message := &heartbeatpb.TableSpanBlockStatus{
