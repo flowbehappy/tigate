@@ -234,8 +234,21 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent) (block boo
 		// Pre-check, make sure the event is not stale or out-of-order
 		event := dispatcherEvent.Event
 		if event.GetCommitTs() < d.resolvedTs.Get() {
-			log.Info("Received a stale event, ignore it", zap.Any("event", event), zap.Any("dispatcher", d.id))
+			log.Info("Received a stale event, ignore it",
+				zap.Any("commitTs", event.GetCommitTs()),
+				zap.Any("seq", event.GetSeq()),
+				zap.Any("eventType", event.GetType()),
+				zap.Any("dispatcher", d.id),
+				zap.Any("event", event))
 		}
+
+		log.Info("fizz Received a event",
+			zap.Any("commitTs", event.GetCommitTs()),
+			zap.Any("seq", event.GetSeq()),
+			zap.Any("eventType", event.GetType()),
+			zap.Any("dispatcher", d.id),
+			zap.Any("event", event))
+
 		if event.GetType() == commonEvent.TypeDMLEvent ||
 			event.GetType() == commonEvent.TypeDDLEvent ||
 			event.GetType() == commonEvent.TypeHandshakeEvent {

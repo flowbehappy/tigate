@@ -716,6 +716,7 @@ func (c *eventBroker) pauseDispatcher(dispatcherInfo DispatcherInfo) {
 	if !ok {
 		return
 	}
+	log.Info("pause dispatcher", zap.Any("dispatcher", stat.info.GetID()))
 	stat.isRunning.Store(false)
 }
 
@@ -724,12 +725,14 @@ func (c *eventBroker) resumeDispatcher(dispatcherInfo DispatcherInfo) {
 	if !ok {
 		return
 	}
+	log.Info("resume dispatcher", zap.Any("dispatcher", stat.info.GetID()), zap.Uint64("checkpointTs", stat.watermark.Load()), zap.Uint64("seq", stat.seq.Load()))
 	// Reset the watermark to the startTs of the dispatcherInfo.
 	stat.watermark.Store(stat.info.GetStartTs())
 	stat.isRunning.Store(true)
 }
 
 func (c *eventBroker) resetDispatcher(dispatcherInfo DispatcherInfo) {
+	log.Info("fizz handle reset dispatcher in event broker", zap.Any("dispatcher", dispatcherInfo.GetID()))
 	stat, ok := c.getDispatcher(dispatcherInfo.GetID())
 	if !ok {
 		return

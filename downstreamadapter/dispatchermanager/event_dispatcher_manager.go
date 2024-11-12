@@ -498,14 +498,15 @@ func (e *EventDispatcherManager) CollectDispatcherAction(ctx context.Context) {
 			case common.ActionResume:
 				req = eventcollector.DispatcherRequest{
 					Dispatcher: d,
-					ActionType: eventpb.ActionType_ACTION_TYPE_PAUSE,
+					ActionType: eventpb.ActionType_ACTION_TYPE_RESUME,
 				}
 				// Get eventCollector
 			case common.ActionReset:
+				log.Info("fizz send reset request", zap.Any("dispatcher", d.GetId()))
 				req = eventcollector.DispatcherRequest{
 					Dispatcher: d,
 					StartTs:    d.GetStartTs(),
-					ActionType: eventpb.ActionType_ACTION_TYPE_PAUSE,
+					ActionType: eventpb.ActionType_ACTION_TYPE_RESET,
 				}
 			default:
 				log.Panic("unknown action type", zap.Any("action", a))

@@ -273,6 +273,7 @@ type EventsHandler struct {
 }
 
 func (h *EventsHandler) Path(event DispatcherEvent) common.DispatcherID {
+	log.Info("fizz EventsHandler Path", zap.Any("dispatcherID", event.GetDispatcherID()), zap.Any("commitTs", event.GetCommitTs()), zap.Any("seq", event.GetSeq()), zap.Any("event", event))
 	return event.GetDispatcherID()
 }
 

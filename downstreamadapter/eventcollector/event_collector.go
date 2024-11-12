@@ -175,6 +175,10 @@ func (c *EventCollector) SendDispatcherRequest(req DispatcherRequest) error {
 		Message: []messaging.IOTypeT{message},
 	})
 
+	if req.ActionType == eventpb.ActionType_ACTION_TYPE_RESET {
+		log.Info("fizz send reset request in event collector", zap.Any("dispatcher", req.Dispatcher.GetId()), zap.Any("serverID", c.serverId))
+	}
+
 	if err != nil {
 		log.Info("failed to send dispatcher request message to event service, try again later", zap.Error(err))
 		// Put the request back to the channel for later retry.
