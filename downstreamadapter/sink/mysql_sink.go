@@ -18,6 +18,7 @@ import (
 	"database/sql"
 	"net/url"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
 	"github.com/pingcap/ticdc/downstreamadapter/worker"
 	"github.com/pingcap/ticdc/pkg/common"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/sink/mysql"
 	"github.com/pingcap/ticdc/pkg/sink/util"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
 	utils "github.com/pingcap/tiflow/pkg/util"
@@ -109,6 +111,21 @@ func (s *MysqlSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *type
 
 func (s *MysqlSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
 	tableProgress.Pass(event)
+	switch event := event.(type) {
+	case *commonEvent.DDLEvent:
+		for _, callback := range event.PostTxnFlushed {
+			callback()
+		}
+	case *commonEvent.SyncPointEvent:
+		for _, callback := range event.PostTxnFlushed {
+			callback()
+		}
+	default:
+		log.Error("unknown event type",
+			zap.String("namespace", s.changefeedID.Namespace()),
+			zap.String("changefeed", s.changefeedID.Name()),
+			zap.Any("event", event))
+	}
 }
 
 func (s *MysqlSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error {

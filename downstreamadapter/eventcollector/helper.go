@@ -17,31 +17,81 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/downstreamadapter/dispatcher"
 	"github.com/pingcap/ticdc/pkg/common"
+	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"go.uber.org/zap"
 )
 
-func newEventDynamicStream() dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *dispatcher.Dispatcher, *EventsHandler] {
+func NewEventDynamicStream() dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler] {
 	option := dynstream.NewOption()
 	option.BatchCount = 128
 	// Enable memory control for dispatcher events dynamic stream.
 	log.Info("New EventDynamicStream, memory control is enabled")
 	option.EnableMemoryControl = true
-	eventDynamicStream := dynstream.NewDynamicStream(&EventsHandler{}, option)
+	eventsHandler := &EventsHandler{
+		eventCollector: appcontext.GetService[*EventCollector](appcontext.EventCollector),
+	}
+	eventDynamicStream := dynstream.NewDynamicStream(eventsHandler, option)
 	eventDynamicStream.Start()
 	return eventDynamicStream
 }
 
+// EventsHandler is used to dispatch the received events.
+// If the event is a DML event, it will be added to the sink for writing to downstream.
+// If the event is a resolved TS event, it will be update the resolvedTs of the dispatcher.
+// If the event is a DDL event,
+//  1. If it is a single table DDL, it will be added to the sink for writing to downstream(async).
+//  2. If it is a multi-table DDL, We will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
+//     for the multi-table DDL, we will also generate a ResendTask to resend the TableSpanBlockStatus message with ddl info
+//     to maintainer each 200ms to avoid message is missing.
+//
+// If the event is a Sync Point event, we deal it as a multi-table DDL event.
+//
+// We can handle multi events in batch if there only dml events and resovledTs events.
+// For DDL event and Sync Point Event, we should handle them singlely.
+// Thus, if a event is DDL event or Sync Point Event, we will only get one event at once.
+// Otherwise, we can get a batch events.
+// We always return block = true for Handle() except we only receive the resolvedTs events.
+// So we only will reach next Handle() when previous events are all push downstream successfully.
 type EventsHandler struct {
+	eventCollector *EventCollector
 }
 
 func (h *EventsHandler) Path(event dispatcher.DispatcherEvent) common.DispatcherID {
 	return event.GetDispatcherID()
 }
 
-func (h *EventsHandler) Handle(dispatcher *dispatcher.Dispatcher, events ...dispatcher.DispatcherEvent) bool {
-	return dispatcher.HandleEvents(events)
+func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.DispatcherEvent) bool {
+	// If the dispatcher is not ready, try to find handshake event to make the dispatcher ready.
+	if !stat.isReady.Load() {
+		ready, restEvents := stat.checkHandshakeEvents(events)
+		if !ready {
+			return false
+		}
+		events = restEvents
+	}
+
+	// Pre-check, make sure the event is not out-of-order
+	for _, dispatcherEvent := range events {
+		event := dispatcherEvent.Event
+		if event.GetType() == commonEvent.TypeDMLEvent ||
+			event.GetType() == commonEvent.TypeDDLEvent ||
+			event.GetType() == commonEvent.TypeHandshakeEvent {
+			expectedSeq := stat.lastEventSeq.Add(1)
+			if event.GetSeq() != expectedSeq {
+				log.Warn("Received an out-of-order event, reset the dispatcher",
+					zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()), zap.Stringer("dispatcher", stat.target.GetId()),
+					zap.Uint64("receivedSeq", event.GetSeq()), zap.Uint64("expectedSeq", expectedSeq),
+					zap.Uint64("commitTs", event.GetCommitTs()), zap.Any("event", event))
+				h.eventCollector.ResetDispatcherStat(stat)
+				return false
+			}
+		}
+	}
+
+	// TODO: will stat become invalid after HandleEvents?
+	return stat.target.HandleEvents(events, func() { h.eventCollector.WakeDispatcher(stat.dispatcherID) })
 }
 
 const (
@@ -69,14 +119,18 @@ func (h *EventsHandler) GetType(event dispatcher.DispatcherEvent) dynstream.Even
 	return dynstream.DefaultEventType
 }
 
-func (h *EventsHandler) GetSize(event dispatcher.DispatcherEvent) int   { return int(event.GetSize()) }
+func (h *EventsHandler) GetSize(event dispatcher.DispatcherEvent) int { return int(event.GetSize()) }
+
 func (h *EventsHandler) IsPaused(event dispatcher.DispatcherEvent) bool { return event.IsPaused() }
-func (h *EventsHandler) GetArea(path common.DispatcherID, dest *dispatcher.Dispatcher) common.GID {
-	return dest.changefeedID.ID()
+
+func (h *EventsHandler) GetArea(path common.DispatcherID, dest *DispatcherStat) common.GID {
+	return dest.target.GetChangefeedID().ID()
 }
+
 func (h *EventsHandler) GetTimestamp(event dispatcher.DispatcherEvent) dynstream.Timestamp {
 	return dynstream.Timestamp(event.GetCommitTs())
 }
+
 func (h *EventsHandler) OnDrop(event dispatcher.DispatcherEvent) {
 	log.Info("event dropped", zap.Any("dispatcher", event.GetDispatcherID()), zap.Any("commitTs", event.GetCommitTs()), zap.Any("sequence", event.GetSeq()))
 }
