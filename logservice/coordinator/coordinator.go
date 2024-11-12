@@ -92,9 +92,10 @@ func (c *logCoordinator) Run(ctx context.Context) error {
 		case <-tick.C:
 			// send broadcast message to all nodes
 			c.nodes.RLock()
-			messages := make([]*messaging.TargetMessage, 0, len(c.nodes.m))
+			messages := make([]*messaging.TargetMessage, 0, 2*len(c.nodes.m))
 			for id := range c.nodes.m {
 				messages = append(messages, messaging.NewSingleTargetMessage(id, messaging.EventStoreTopic, &common.LogCoordinatorBroadcastRequest{}))
+				messages = append(messages, messaging.NewSingleTargetMessage(id, messaging.EventCollectorTopic, &common.LogCoordinatorBroadcastRequest{}))
 			}
 			c.nodes.RUnlock()
 			for _, message := range messages {
