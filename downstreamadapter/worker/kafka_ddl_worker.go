@@ -9,7 +9,7 @@ import (
 	"github.com/pingcap/ticdc/downstreamadapter/sink/helper/eventrouter"
 	"github.com/pingcap/ticdc/downstreamadapter/sink/helper/topicmanager"
 	"github.com/pingcap/ticdc/pkg/common"
-	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/sink/codec/encoder"
@@ -25,7 +25,6 @@ type KafkaDDLWorker struct {
 	changeFeedID common.ChangeFeedID
 	// protocol indicates the protocol used by this sink.
 	protocol         config.Protocol
-	ddlEventChan     chan *commonEvent.DDLEvent
 	checkpointTsChan chan uint64
 
 	encoder encoder.EventEncoder
@@ -84,7 +83,6 @@ func NewKafkaDDLWorker(
 		ctx:           ctx,
 		changeFeedID:  id,
 		protocol:      protocol,
-		ddlEventChan:  make(chan *commonEvent.DDLEvent, 16),
 		encoder:       encoder,
 		producer:      producer,
 		eventRouter:   eventRouter,
@@ -98,15 +96,8 @@ func NewKafkaDDLWorker(
 
 func (w *KafkaDDLWorker) Run() {
 	w.errGroup.Go(func() error {
-		return w.encodeAndSendDDLEvents()
-	})
-	w.errGroup.Go(func() error {
 		return w.encodeAndSendCheckpointEvents()
 	})
-}
-
-func (w *KafkaDDLWorker) GetDDLEventChan() chan<- *commonEvent.DDLEvent {
-	return w.ddlEventChan
 }
 
 func (w *KafkaDDLWorker) GetCheckpointTsChan() chan<- uint64 {
@@ -117,47 +108,35 @@ func (w *KafkaDDLWorker) SetTableSchemaStore(tableSchemaStore *util.TableSchemaS
 	w.tableSchemaStore = tableSchemaStore
 }
 
-func (w *KafkaDDLWorker) encodeAndSendDDLEvents() error {
-	for {
-		select {
-		case <-w.ctx.Done():
-			return errors.Trace(w.ctx.Err())
-		case event, ok := <-w.ddlEventChan:
-			if !ok {
-				log.Warn("MQ sink flush worker channel closed",
-					zap.String("namespace", w.changeFeedID.Namespace()),
-					zap.String("changefeed", w.changeFeedID.Name()))
-				return nil
-			}
-			message, err := w.encoder.EncodeDDLEvent(event)
-			if err != nil {
-				return errors.Trace(err)
-			}
+func (w *KafkaDDLWorker) WriteBlockEvent(event *event.DDLEvent) error {
+	message, err := w.encoder.EncodeDDLEvent(event)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
-			topic := w.eventRouter.GetTopicForDDL(event)
-			partitionNum, err := w.topicManager.GetPartitionNum(w.ctx, topic)
-			if err != nil {
-				return errors.Trace(err)
-			}
+	topic := w.eventRouter.GetTopicForDDL(event)
+	partitionNum, err := w.topicManager.GetPartitionNum(w.ctx, topic)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
-			if w.partitionRule == PartitionAll {
-				err = w.statistics.RecordDDLExecution(func() error {
-					return w.producer.SyncBroadcastMessage(w.ctx, topic, partitionNum, message)
-				})
-				if err != nil {
-					return errors.Trace(err)
-				}
-			} else {
-				err = w.statistics.RecordDDLExecution(func() error {
-					return w.producer.SyncSendMessage(w.ctx, topic, 0, message)
-				})
+	if w.partitionRule == PartitionAll {
+		err = w.statistics.RecordDDLExecution(func() error {
+			return w.producer.SyncBroadcastMessage(w.ctx, topic, partitionNum, message)
+		})
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		err = w.statistics.RecordDDLExecution(func() error {
+			return w.producer.SyncSendMessage(w.ctx, topic, 0, message)
+		})
 
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
+	return nil
 }
 
 func (w *KafkaDDLWorker) encodeAndSendCheckpointEvents() error {

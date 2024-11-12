@@ -201,7 +201,7 @@ func (s *KafkaSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress 
 			}
 			return nil
 		}
-		s.ddlWorker.GetDDLEventChan() <- event
+		return s.ddlWorker.WriteBlockEvent(event)
 	case *commonEvent.SyncPointEvent:
 		log.Error("KafkaSink doesn't support Sync Point Event",
 			zap.String("namespace", s.changefeedID.Namespace()),
