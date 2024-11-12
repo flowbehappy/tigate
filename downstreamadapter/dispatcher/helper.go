@@ -252,70 +252,6 @@ func SetDispatcherTaskScheduler(taskScheduler threadpool.ThreadPool) {
 	DispatcherTaskScheduler = taskScheduler
 }
 
-// EventsHandler is used to dispatch the received events.
-// If the event is a DML event, it will be added to the sink for writing to downstream.
-// If the event is a resolved TS event, it will be update the resolvedTs of the dispatcher.
-// If the event is a DDL event,
-//  1. If it is a single table DDL, it will be added to the sink for writing to downstream(async).
-//  2. If it is a multi-table DDL, We will generate a TableSpanBlockStatus message with ddl info to send to maintainer.
-//     for the multi-table DDL, we will also generate a ResendTask to resend the TableSpanBlockStatus message with ddl info
-//     to maintainer each 200ms to avoid message is missing.
-//
-// If the event is a Sync Point event, we deal it as a multi-table DDL event.
-//
-// We can handle multi events in batch if there only dml events and resovledTs events.
-// For DDL event and Sync Point Event, we should handle them singlely.
-// Thus, if a event is DDL event or Sync Point Event, we will only get one event at once.
-// Otherwise, we can get a batch events.
-// We always return block = true for Handle() except we only receive the resolvedTs events.
-// So we only will reach next Handle() when previous events are all push downstream successfully.
-type EventsHandler struct {
-}
-
-func (h *EventsHandler) Path(event DispatcherEvent) common.DispatcherID {
-	return event.GetDispatcherID()
-}
-
-func (h *EventsHandler) Handle(dispatcher *Dispatcher, events ...DispatcherEvent) bool {
-	return dispatcher.HandleEvents(events)
-}
-
-const (
-	DataGroupResolvedTsOrDML = 1
-	DataGroupDDL             = 2
-	DataGroupSyncPoint       = 3
-	DataGroupHandshake       = 4
-)
-
-func (h *EventsHandler) GetType(event DispatcherEvent) dynstream.EventType {
-	switch event.GetType() {
-	case commonEvent.TypeResolvedEvent:
-		return dynstream.EventType{DataGroup: DataGroupResolvedTsOrDML, Property: dynstream.PeriodicSignal}
-	case commonEvent.TypeDMLEvent:
-		return dynstream.EventType{DataGroup: DataGroupResolvedTsOrDML, Property: dynstream.BatchableData}
-	case commonEvent.TypeDDLEvent:
-		return dynstream.EventType{DataGroup: DataGroupDDL, Property: dynstream.NonBatchable}
-	case commonEvent.TypeSyncPointEvent:
-		return dynstream.EventType{DataGroup: DataGroupSyncPoint, Property: dynstream.NonBatchable}
-	case commonEvent.TypeHandshakeEvent:
-		return dynstream.EventType{DataGroup: DataGroupHandshake, Property: dynstream.NonBatchable}
-	default:
-		log.Panic("unknown event type", zap.Int("type", int(event.GetType())))
-	}
-	return dynstream.DefaultEventType
-}
-
-func (h *EventsHandler) GetSize(event DispatcherEvent) int   { return int(event.GetSize()) }
-func (h *EventsHandler) IsPaused(event DispatcherEvent) bool { return event.IsPaused() }
-func (h *EventsHandler) GetArea(path common.DispatcherID, dest *Dispatcher) common.GID {
-	return dest.changefeedID.ID()
-}
-func (h *EventsHandler) GetTimestamp(event DispatcherEvent) dynstream.Timestamp {
-	return dynstream.Timestamp(event.GetCommitTs())
-}
-func (h *EventsHandler) OnDrop(event DispatcherEvent) {
-}
-
 type DispatcherEvent struct {
 	commonEvent.Event
 }
@@ -324,25 +260,6 @@ func NewDispatcherEvent(event commonEvent.Event) DispatcherEvent {
 	return DispatcherEvent{
 		Event: event,
 	}
-}
-
-// eventDynamicStream is used to process the events received by eventCollector.
-var eventDynamicStream dynstream.DynamicStream[common.GID, common.DispatcherID, DispatcherEvent, *Dispatcher, *EventsHandler]
-var eventDynamicStreamOnce sync.Once
-
-func GetEventDynamicStream() dynstream.DynamicStream[common.GID, common.DispatcherID, DispatcherEvent, *Dispatcher, *EventsHandler] {
-	if eventDynamicStream == nil {
-		eventDynamicStreamOnce.Do(func() {
-			option := dynstream.NewOption()
-			option.BatchCount = 128
-			// Enable memory control for dispatcher events dynamic stream.
-			log.Info("New EventDynamicStream, memory control is enabled")
-			option.EnableMemoryControl = true
-			eventDynamicStream = dynstream.NewDynamicStream(&EventsHandler{}, option)
-			eventDynamicStream.Start()
-		})
-	}
-	return eventDynamicStream
 }
 
 type DispatcherStatusWithID struct {

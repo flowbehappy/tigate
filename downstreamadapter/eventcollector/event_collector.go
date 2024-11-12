@@ -16,6 +16,7 @@ package eventcollector
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/ticdc/downstreamadapter/dispatcher"
@@ -67,7 +68,7 @@ type EventCollector struct {
 	// ds is the dynamicStream for dispatcher events.
 	// All the events from event service will be sent to ds to handle.
 	// ds will dispatch the events to different dispatchers according to the dispatcherID.
-	ds dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *dispatcher.Dispatcher, *dispatcher.EventsHandler]
+	ds dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler]
 
 	metricDispatcherReceivedKVEventCount         prometheus.Counter
 	metricDispatcherReceivedResolvedTsEventCount prometheus.Counter
@@ -79,13 +80,13 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 		serverId:                             serverId,
 		globalMemoryQuota:                    globalMemoryQuota,
 		dispatcherMap:                        sync.Map{},
-		ds:                                   dispatcher.GetEventDynamicStream(),
 		dispatcherRequestChan:                chann.NewAutoDrainChann[DispatcherRequest](),
 		mc:                                   appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter),
 		metricDispatcherReceivedKVEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("KVEvent"),
 		metricDispatcherReceivedResolvedTsEventCount: metrics.DispatcherReceivedEventCount.WithLabelValues("ResolvedTs"),
 		metricReceiveEventLagDuration:                metrics.EventCollectorReceivedEventLagDuration.WithLabelValues("Msg"),
 	}
+	eventCollector.ds = NewEventDynamicStream(&eventCollector)
 	eventCollector.mc.RegisterHandler(messaging.EventCollectorTopic, eventCollector.RecvEventsMessage)
 
 	eventCollector.wg.Add(1)
@@ -108,6 +109,59 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 	return &eventCollector
 }
 
+func (c *EventCollector) AddDispatcher(target *dispatcher.Dispatcher, memoryQuota int) {
+	stat := &DispatcherStat{
+		dispatcherID: target.GetId(),
+		target:       target,
+	}
+	c.dispatcherMap.Store(target.GetId(), stat)
+	metrics.EventCollectorRegisteredDispatcherCount.Inc()
+
+	areaSetting := dynstream.NewAreaSettings()
+	areaSetting.MaxPendingSize = memoryQuota
+	err := c.ds.AddPath(target.GetId(), stat, areaSetting)
+	if err != nil {
+		log.Error("add dispatcher to dynamic stream failed", zap.Error(err))
+	}
+
+	// TODO: handle the return error(now even it return error, it will be retried later, we can just ignore it now)
+	c.mustSendDispatcherRequest(DispatcherRequest{
+		Dispatcher: target,
+		StartTs:    target.GetStartTs(),
+		ActionType: eventpb.ActionType_ACTION_TYPE_REGISTER,
+	})
+}
+
+func (c *EventCollector) RemoveDispatcher(target *dispatcher.Dispatcher) {
+	c.dispatcherMap.Delete(target.GetId())
+
+	err := c.ds.RemovePath(target.GetId())
+	if err != nil {
+		log.Error("remove dispatcher from dynamic stream failed", zap.Error(err))
+	}
+
+	// TODO: handle the return error(now even it return error, it will be retried later, we can just ignore it now)
+	c.mustSendDispatcherRequest(DispatcherRequest{
+		Dispatcher: target,
+		ActionType: eventpb.ActionType_ACTION_TYPE_REMOVE,
+	})
+}
+
+func (c *EventCollector) WakeDispatcher(dispatcherID common.DispatcherID) {
+	c.ds.Wake() <- dispatcherID
+}
+
+func (c *EventCollector) ResetDispatcherStat(stat *DispatcherStat) {
+	stat.reset()
+
+	// note: send the request to channel to avoid blocking the caller
+	c.dispatcherRequestChan.In() <- DispatcherRequest{
+		Dispatcher: stat.target,
+		StartTs:    stat.target.GetCheckpointTs(),
+		ActionType: eventpb.ActionType_ACTION_TYPE_RESET,
+	}
+}
+
 func (c *EventCollector) processFeedback(ctx context.Context) {
 	defer c.wg.Done()
 	for {
@@ -117,12 +171,12 @@ func (c *EventCollector) processFeedback(ctx context.Context) {
 		case feedback := <-c.ds.Feedback():
 			if feedback.Pause {
 				c.dispatcherRequestChan.In() <- DispatcherRequest{
-					Dispatcher: feedback.Dest,
+					Dispatcher: feedback.Dest.target,
 					ActionType: eventpb.ActionType_ACTION_TYPE_PAUSE,
 				}
 			} else {
 				c.dispatcherRequestChan.In() <- DispatcherRequest{
-					Dispatcher: feedback.Dest,
+					Dispatcher: feedback.Dest.target,
 					ActionType: eventpb.ActionType_ACTION_TYPE_RESUME,
 				}
 			}
@@ -137,7 +191,7 @@ func (c *EventCollector) processDispatcherRequests(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case req := <-c.dispatcherRequestChan.Out():
-			if err := c.SendDispatcherRequest(req); err != nil {
+			if err := c.mustSendDispatcherRequest(req); err != nil {
 				log.Error("failed to process dispatcher action", zap.Error(err))
 				// Sleep a short time to avoid too many requests in a short time.
 				time.Sleep(10 * time.Millisecond)
@@ -146,7 +200,10 @@ func (c *EventCollector) processDispatcherRequests(ctx context.Context) {
 	}
 }
 
-func (c *EventCollector) SendDispatcherRequest(req DispatcherRequest) error {
+// mustSendDispatcherRequest will keep retrying to send the dispatcher request to EventService until it succeed.
+// Caller should avoid to use this method if the remote EventService maybe offline forever.
+// And this method may be deprecated in the future.
+func (c *EventCollector) mustSendDispatcherRequest(req DispatcherRequest) error {
 	message := &messaging.RegisterDispatcherRequest{
 		RegisterDispatcherRequest: &eventpb.RegisterDispatcherRequest{
 			ChangefeedId: req.Dispatcher.GetChangefeedID().ToPB(),
@@ -181,15 +238,6 @@ func (c *EventCollector) SendDispatcherRequest(req DispatcherRequest) error {
 		c.dispatcherRequestChan.In() <- req
 		return err
 	}
-
-	// If the action type is register or remove, we need to update the dispatcher map.
-	if req.ActionType == eventpb.ActionType_ACTION_TYPE_REGISTER {
-		c.dispatcherMap.Store(req.Dispatcher.GetId(), req.Dispatcher)
-		metrics.EventCollectorRegisteredDispatcherCount.Inc()
-	} else if req.ActionType == eventpb.ActionType_ACTION_TYPE_REMOVE {
-		c.dispatcherMap.Delete(req.Dispatcher.GetId())
-	}
-
 	return nil
 }
 
@@ -234,7 +282,8 @@ func (c *EventCollector) updateMetrics(ctx context.Context) {
 func (c *EventCollector) updateResolvedTsMetric() {
 	var minResolvedTs uint64
 	c.dispatcherMap.Range(func(_, value interface{}) bool {
-		if d, ok := value.(*dispatcher.Dispatcher); ok {
+		if stat, ok := value.(*DispatcherStat); ok {
+			d := stat.target
 			if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
 				minResolvedTs = d.GetResolvedTs()
 			}
@@ -247,4 +296,72 @@ func (c *EventCollector) updateResolvedTsMetric() {
 		lagMs := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
 		metrics.EventCollectorResolvedTsLagGauge.Set(lagMs)
 	}
+}
+
+type DispatcherStat struct {
+	dispatcherID common.DispatcherID
+	target       *dispatcher.Dispatcher
+
+	// lastEventSeq is the sequence number of the last received DML/DDL event.
+	// It is used to ensure the order of events.
+	lastEventSeq atomic.Uint64
+
+	// isReady is used to indicate whether the dispatcher is ready to handle events.
+	// Dispatcher will be ready when it receives the handshake event from eventService.
+	// If false, the dispatcher will drop the event it received.
+	isReady atomic.Bool
+}
+
+func (d *DispatcherStat) reset() {
+	if !d.isReady.Load() {
+		return
+	}
+	d.lastEventSeq.Store(0)
+	d.isReady.Store(false)
+}
+
+func (d *DispatcherStat) checkHandshakeEvents(dispatcherEvents []dispatcher.DispatcherEvent) (bool, []dispatcher.DispatcherEvent) {
+	if d.isReady.Load() {
+		log.Warn("Dispatcher is already ready, handshake event is unexpected, FIX ME!", zap.Stringer("dispatcher", d.target.GetId()))
+		return false, dispatcherEvents
+	}
+
+	for i, dispatcherEvent := range dispatcherEvents {
+		event := dispatcherEvent.Event
+		if event.GetType() != commonEvent.TypeHandshakeEvent {
+			// Drop other events if dispatcher is not ready
+			continue
+		}
+		handshake, ok := event.(*commonEvent.HandshakeEvent)
+		if !ok {
+			log.Panic("cast handshake event failed", zap.Any("event Type", event.GetType()), zap.Stringer("dispatcher", d.target.GetId()), zap.Uint64("commitTs", event.GetCommitTs()))
+		}
+		if handshake.GetCommitTs() == d.target.GetCheckpointTs() {
+			currentSeq := d.lastEventSeq.Load()
+			if currentSeq != 0 {
+				log.Panic("Receive handshake event, but current seq is not zero",
+					zap.Any("event", handshake),
+					zap.Stringer("dispatcher", d.target.GetId()),
+					zap.Uint64("currentSeq", currentSeq))
+				return false, dispatcherEvents[i+1:]
+			}
+			// In some case, the eventService may send handshake event multiple times,
+			// we should use the first handshake event we received to initialize the dispatcher.
+			d.lastEventSeq.Store(handshake.GetSeq())
+			d.target.SetInitialTableInfo(handshake.TableInfo)
+			d.isReady.Store(true)
+			log.Info("Receive handshake event, dispatcher is ready to handle events",
+				zap.Any("dispatcher", d.target.GetId()),
+				zap.Uint64("commitTs", handshake.GetCommitTs()),
+			)
+			return true, dispatcherEvents[i+1:]
+		} else {
+			log.Warn("Handshake event commitTs not equal to dispatcher startTs, ignore it",
+				zap.Any("event", event),
+				zap.Stringer("dispatcher", d.target.GetId()),
+				zap.Uint64("checkpointTs", d.target.GetCheckpointTs()),
+				zap.Uint64("commitTs", event.GetCommitTs()))
+		}
+	}
+	return false, nil
 }
