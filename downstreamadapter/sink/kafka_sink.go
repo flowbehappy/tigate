@@ -188,22 +188,7 @@ func (s *KafkaSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *type
 
 func (s *KafkaSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
 	tableProgress.Pass(event)
-	switch event := event.(type) {
-	case *commonEvent.DDLEvent:
-		for _, callback := range event.PostTxnFlushed {
-			callback()
-		}
-	case *commonEvent.SyncPointEvent:
-		log.Error("KafkaSink doesn't support Sync Point Event",
-			zap.String("namespace", s.changefeedID.Namespace()),
-			zap.String("changefeed", s.changefeedID.Name()),
-			zap.Any("event", event))
-	default:
-		log.Error("KafkaSink doesn't support this type of block event",
-			zap.String("namespace", s.changefeedID.Namespace()),
-			zap.String("changefeed", s.changefeedID.Name()),
-			zap.Any("event type", event.GetType()))
-	}
+	event.PostFlush()
 }
 
 func (s *KafkaSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error {
@@ -212,9 +197,7 @@ func (s *KafkaSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress 
 	case *commonEvent.DDLEvent:
 		if event.TiDBOnly {
 			// run callback directly and return
-			for _, cb := range event.PostTxnFlushed {
-				cb()
-			}
+			event.PostFlush()
 			return nil
 		}
 		return s.ddlWorker.WriteBlockEvent(event)

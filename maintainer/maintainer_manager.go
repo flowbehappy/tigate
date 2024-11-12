@@ -54,7 +54,7 @@ type Manager struct {
 
 	msgCh chan *messaging.TargetMessage
 
-	stream        dynstream.DynamicStream[int, string, *Event, *Maintainer, *StreamHandler]
+	stream        dynstream.DynamicStream[int, common.ChangeFeedID, *Event, *Maintainer, *StreamHandler]
 	taskScheduler threadpool.ThreadPool
 }
 
@@ -146,7 +146,7 @@ func (m *Manager) Run(ctx context.Context) error {
 					cf.Close()
 					log.Info("maintainer removed, remove it from dynamic stream",
 						zap.String("changefeed", cf.id.String()))
-					if err := m.stream.RemovePath(cf.id.Name()); err != nil {
+					if err := m.stream.RemovePath(cf.id); err != nil {
 						log.Warn("remove path from dynstream failed, will retry later",
 							zap.String("changefeed", cf.id.String()),
 							zap.Error(err))
@@ -226,13 +226,13 @@ func (m *Manager) onAddMaintainerRequest(req *heartbeatpb.AddMaintainerRequest) 
 	cf = NewMaintainer(cfID, m.conf, cfConfig, m.selfNode, m.stream, m.taskScheduler,
 		m.pdAPI, m.regionCache,
 		req.CheckpointTs)
-	err = m.stream.AddPath(cfID.Name(), cf.(*Maintainer))
+	err = m.stream.AddPath(cfID, cf.(*Maintainer))
 	if err != nil {
 		log.Warn("add path to dynstream failed, coordinator will retry later", zap.Error(err))
 		return
 	}
 	m.maintainers.Store(cfID, cf)
-	m.stream.In() <- &Event{changefeedID: cfID.Name(), eventType: EventInit}
+	m.stream.In() <- &Event{changefeedID: cfID, eventType: EventInit}
 }
 
 func (m *Manager) onRemoveMaintainerRequest(msg *messaging.TargetMessage) *heartbeatpb.MaintainerStatus {
@@ -253,7 +253,7 @@ func (m *Manager) onRemoveMaintainerRequest(msg *messaging.TargetMessage) *heart
 		// it's cascade remove, we should remove the dispatcher from all node
 		// here we create a maintainer to run the remove the dispatcher logic
 		cf := NewMaintainerForRemove(cfID, m.conf, m.selfNode, m.stream, m.taskScheduler, m.pdAPI, m.regionCache)
-		err := m.stream.AddPath(cfID.Name(), cf)
+		err := m.stream.AddPath(cfID, cf)
 		if err != nil {
 			log.Warn("add path to dynstream failed, coordinator will retry later", zap.Error(err))
 			return nil
@@ -263,7 +263,7 @@ func (m *Manager) onRemoveMaintainerRequest(msg *messaging.TargetMessage) *heart
 	log.Info("received remove maintainer request",
 		zap.String("changefeed", cfID.String()))
 	m.stream.In() <- &Event{
-		changefeedID: cfID.Name(),
+		changefeedID: cfID,
 		eventType:    EventMessage,
 		message:      msg,
 	}
@@ -342,7 +342,7 @@ func (m *Manager) dispatcherMaintainerMessage(
 	case <-ctx.Done():
 		return ctx.Err()
 	case m.stream.In() <- &Event{
-		changefeedID: changefeed.Name(),
+		changefeedID: changefeed,
 		eventType:    EventMessage,
 		message:      msg,
 	}:

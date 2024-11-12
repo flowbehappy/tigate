@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/benbjohnson/clock"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/tiflow/cdc/model"
@@ -26,6 +27,13 @@ import (
 func TestShouldFailWhenRetry(t *testing.T) {
 	backoff := NewBackoff(common.NewChangeFeedIDWithName("test"), time.Minute*30, 1)
 	require.True(t, backoff.ShouldRun())
+
+	// stop the backoff
+	mc := clock.NewMock()
+	mc.Set(time.Now())
+	backoff.errBackoff.Clock = mc
+	mc.Add(backoff.errBackoff.MaxElapsedTime + 1)
+
 	changefeed, state, err := backoff.CheckStatus(&heartbeatpb.MaintainerStatus{
 		CheckpointTs: 1,
 		Err: []*heartbeatpb.RunningError{

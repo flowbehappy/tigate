@@ -15,6 +15,7 @@ package coordinator
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -42,7 +43,7 @@ import (
 // Controller schedules and balance changefeeds
 // there are 3 main components in the controller, scheduler, ChangefeedDB and operator controller
 type Controller struct {
-	bootstrapped bool
+	bootstrapped *atomic.Bool
 	version      int64
 
 	nodeChanged *atomic.Bool
@@ -56,16 +57,17 @@ type Controller struct {
 
 	bootstrapper *bootstrap.Bootstrapper[heartbeatpb.CoordinatorBootstrapResponse]
 
-	stream                   dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler]
-	taskScheduler            threadpool.ThreadPool
-	operatorControllerHandle *threadpool.TaskHandle
-	schedulerHandle          *threadpool.TaskHandle
-	backend                  changefeed.Backend
+	stream        dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler]
+	taskScheduler threadpool.ThreadPool
+	taskHandlers  []*threadpool.TaskHandle
+	backend       changefeed.Backend
 
 	updatedChangefeedCh chan map[common.ChangeFeedID]*changefeed.Changefeed
 	stateChangedCh      chan *ChangefeedStateChangeEvent
 
 	lastPrintStatusTime time.Time
+
+	apiLock sync.RWMutex
 }
 
 type ChangefeedStateChangeEvent struct {
@@ -91,7 +93,7 @@ func NewController(
 	c := &Controller{
 		version:             version,
 		batchSize:           batchSize,
-		bootstrapped:        false,
+		bootstrapped:        atomic.NewBool(false),
 		cfScheduller:        scheduler.NewScheduler(batchSize, oc, changefeedDB, nodeManager, balanceInterval),
 		operatorController:  oc,
 		messageCenter:       mc,
@@ -122,9 +124,7 @@ func NewController(
 	for _, msg := range c.bootstrapper.HandleNewNodes(newNodes) {
 		_ = c.messageCenter.SendCommand(msg)
 	}
-	submitScheduledEvent(c.taskScheduler, c.stream, &Event{
-		eventType: EventPeriod,
-	}, time.Now().Add(time.Millisecond*500))
+	c.submitPeriodTask()
 	return c
 }
 
@@ -153,33 +153,10 @@ func (c *Controller) HandleEvent(event *Event) bool {
 	return false
 }
 
-func (c *Controller) CreateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error {
-	if !c.bootstrapped {
-		return errors.New("not initialized, wait a moment")
-	}
-	old := c.changefeedDB.GetByChangefeedDisplayName(info.ChangefeedID.DisplayName)
-	if old != nil {
-		return errors.New("changefeed already exists")
-	}
-	op := c.operatorController.GetOperator(info.ChangefeedID)
-	if op != nil {
-		return errors.New("changefeed is in scheduling")
-	}
-	err := c.backend.CreateChangefeed(ctx, info)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	c.changefeedDB.AddAbsentChangefeed(changefeed.NewChangefeed(info.ChangefeedID, info, info.StartTs))
-	return nil
-}
-
 func (c *Controller) onPeriodTask() {
 	// resend bootstrap message
 	c.sendMessages(c.bootstrapper.ResendBootstrapMessage())
 	c.collectMetrics()
-	submitScheduledEvent(c.taskScheduler, c.stream, &Event{
-		eventType: EventPeriod,
-	}, time.Now().Add(time.Millisecond*500))
 }
 
 func (c *Controller) onMessage(msg *messaging.TargetMessage) {
@@ -335,7 +312,7 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.Mainta
 // FinishBootstrap adds working state tasks to this controller directly,
 // it reported by the bootstrap response
 func (c *Controller) FinishBootstrap(workingMap map[common.ChangeFeedID]remoteMaintainer) {
-	if c.bootstrapped {
+	if c.bootstrapped.Load() {
 		log.Panic("already bootstrapped",
 			zap.Any("workingMap", workingMap))
 	}
@@ -378,21 +355,44 @@ func (c *Controller) FinishBootstrap(workingMap map[common.ChangeFeedID]remoteMa
 	}
 
 	// start operator and scheduler
-	c.operatorControllerHandle = c.taskScheduler.Submit(c.cfScheduller, time.Now())
-	c.schedulerHandle = c.taskScheduler.Submit(c.operatorController, time.Now())
-	c.bootstrapped = true
+	operatorControllerHandle := c.taskScheduler.Submit(c.cfScheduller, time.Now())
+	schedulerHandle := c.taskScheduler.Submit(c.operatorController, time.Now())
+	c.taskHandlers = append(c.taskHandlers, operatorControllerHandle, schedulerHandle)
+	c.bootstrapped.Store(true)
 }
 
 func (c *Controller) Stop() {
-	if c.operatorControllerHandle != nil {
-		c.operatorControllerHandle.Cancel()
-	}
-	if c.schedulerHandle != nil {
-		c.schedulerHandle.Cancel()
+	for _, h := range c.taskHandlers {
+		h.Cancel()
 	}
 }
 
+func (c *Controller) CreateChangefeed(ctx context.Context, info *config.ChangeFeedInfo) error {
+	c.apiLock.Lock()
+	defer c.apiLock.Unlock()
+
+	if !c.bootstrapped.Load() {
+		return errors.New("not initialized, wait a moment")
+	}
+	old := c.changefeedDB.GetByChangefeedDisplayName(info.ChangefeedID.DisplayName)
+	if old != nil {
+		return errors.New("changefeed already exists")
+	}
+	if ok := c.operatorController.HasOperator(info.ChangefeedID.DisplayName); ok {
+		return errors.New("changefeed is in scheduling")
+	}
+	err := c.backend.CreateChangefeed(ctx, info)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	c.changefeedDB.AddAbsentChangefeed(changefeed.NewChangefeed(info.ChangefeedID, info, info.StartTs))
+	return nil
+}
+
 func (c *Controller) RemoveChangefeed(ctx context.Context, id common.ChangeFeedID) (uint64, error) {
+	c.apiLock.Lock()
+	defer c.apiLock.Unlock()
+
 	cf := c.changefeedDB.GetByID(id)
 	if cf == nil {
 		return 0, errors.New("changefeed not found")
@@ -406,6 +406,9 @@ func (c *Controller) RemoveChangefeed(ctx context.Context, id common.ChangeFeedI
 }
 
 func (c *Controller) PauseChangefeed(ctx context.Context, id common.ChangeFeedID) error {
+	c.apiLock.Lock()
+	defer c.apiLock.Unlock()
+
 	cf := c.changefeedDB.GetByID(id)
 	if cf == nil {
 		return errors.New("changefeed not found")
@@ -424,6 +427,9 @@ func (c *Controller) PauseChangefeed(ctx context.Context, id common.ChangeFeedID
 }
 
 func (c *Controller) ResumeChangefeed(ctx context.Context, id common.ChangeFeedID, newCheckpointTs uint64) error {
+	c.apiLock.Lock()
+	defer c.apiLock.Unlock()
+
 	cf := c.changefeedDB.GetByID(id)
 	if cf == nil {
 		return errors.New("changefeed not found")
@@ -442,6 +448,9 @@ func (c *Controller) ResumeChangefeed(ctx context.Context, id common.ChangeFeedI
 }
 
 func (c *Controller) UpdateChangefeed(ctx context.Context, change *config.ChangeFeedInfo) error {
+	c.apiLock.Lock()
+	defer c.apiLock.Unlock()
+
 	cf := c.changefeedDB.GetByID(change.ChangefeedID)
 	if cf == nil {
 		return errors.New("changefeed not found")
@@ -453,7 +462,10 @@ func (c *Controller) UpdateChangefeed(ctx context.Context, change *config.Change
 	return nil
 }
 
-func (c *Controller) ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedInfo, []*config.ChangeFeedStatus, error) {
+func (c *Controller) ListChangefeeds(_ context.Context) ([]*config.ChangeFeedInfo, []*config.ChangeFeedStatus, error) {
+	c.apiLock.RLock()
+	defer c.apiLock.RUnlock()
+
 	cfs := c.changefeedDB.GetAllChangefeeds()
 	infos := make([]*config.ChangeFeedInfo, 0, len(cfs))
 	statuses := make([]*config.ChangeFeedStatus, 0, len(cfs))
@@ -464,7 +476,10 @@ func (c *Controller) ListChangefeeds(ctx context.Context) ([]*config.ChangeFeedI
 	return infos, statuses, nil
 }
 
-func (c *Controller) GetChangefeed(ctx context.Context, changefeedDisplayName common.ChangeFeedDisplayName) (*config.ChangeFeedInfo, *config.ChangeFeedStatus, error) {
+func (c *Controller) GetChangefeed(_ context.Context, changefeedDisplayName common.ChangeFeedDisplayName) (*config.ChangeFeedInfo, *config.ChangeFeedStatus, error) {
+	c.apiLock.RLock()
+	defer c.apiLock.RUnlock()
+
 	cf := c.changefeedDB.GetByChangefeedDisplayName(changefeedDisplayName)
 	if cf == nil {
 		return nil, nil, cerror.ErrChangeFeedNotExists.GenWithStackByArgs(changefeedDisplayName.Name)
@@ -482,17 +497,13 @@ func (c *Controller) RemoveNode(id node.ID) {
 	c.operatorController.OnNodeRemoved(id)
 }
 
-// submitScheduledEvent submits a task to controller pool to send a future event
-func submitScheduledEvent(
-	scheduler threadpool.ThreadPool,
-	stream dynstream.DynamicStream[int, string, *Event, *Controller, *StreamHandler],
-	event *Event,
-	scheduleTime time.Time) {
+func (c *Controller) submitPeriodTask() {
 	task := func() time.Time {
-		stream.In() <- event
-		return time.Time{}
+		c.stream.In() <- &Event{eventType: EventPeriod}
+		return time.Now().Add(time.Millisecond * 500)
 	}
-	scheduler.SubmitFunc(task, scheduleTime)
+	periodTaskhandler := c.taskScheduler.SubmitFunc(task, time.Now().Add(time.Millisecond*500))
+	c.taskHandlers = append(c.taskHandlers, periodTaskhandler)
 }
 
 func (c *Controller) newBootstrapMessage(id node.ID) *messaging.TargetMessage {

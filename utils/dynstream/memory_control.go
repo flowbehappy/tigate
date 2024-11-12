@@ -122,29 +122,24 @@ func (as *areaMemStat[A, P, T, D, H]) shouldDropEvent(
 		return false
 	}
 
-	// // If the timestamp of the event is not the smallest among all the paths in the area, drop it.
-	// top, ok := path.streamAreaInfo.timestampHeap.PeekTop()
-	// if !ok {
-	// 	log.Warn("timestampHeap is empty, but exceedMaxPendingSize, it should not happen, fix me in the future",
-	// 		zap.Any("area", as.area),
-	// 		zap.Any("path", path.path))
-	// 	return true
-	// }
-	// // If event's timestamp is not the smallest among all the paths in the area, drop it.
-	// if event.timestamp > top.frontTimestamp {
-	// 	if !isPeriodicSignal(event) {
-	// 		handler.OnDrop(event.event)
-	// 	}
-	// 	return true
-	// }
-
 	// Drop the events of the largest pending size path to find a place for the new event.
 LOOP:
 	for exceedMaxPendingSize() {
 		longestPath, ok := path.streamAreaInfo.pathSizeHeap.PeekTop()
 		if !ok {
-			log.Warn("pathSizeHeap is empty, but exceedMaxPendingSize, it should not happen, fix me in the future",
+			log.Warn("pathSizeHeap is empty, but exceed MaxPendingSize, it should not happen",
 				zap.Any("area", as.area), zap.Any("path", path.path))
+			return true
+		}
+		front, ok := path.pendingQueue.FrontRef()
+		if !ok {
+			log.Warn("pendingQueue is empty, but exceed MaxPendingSize, it should not happen",
+				zap.Any("area", as.area), zap.Any("path", path.path))
+			return true
+		}
+		if front.timestamp <= event.timestamp {
+			// By default, drop the event.
+			// And only NOT drop the event when the event's timestamp is smaller than the smallest event of about-to-drop path.
 			return true
 		}
 		// If the longest path is the same as the current path, drop the event and return.

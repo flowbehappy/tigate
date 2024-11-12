@@ -94,18 +94,15 @@ GOBUILD  := $(GOEXPERIMENT) CGO_ENABLED=$(CGO) $(GO) build $(BUILD_FLAG) -trimpa
 PACKAGE_LIST := go list ./... | grep -vE 'vendor|proto|ticdc/tests|integration|testing_utils|pb|pbmock|ticdc/bin'
 PACKAGES := $$($(PACKAGE_LIST))
 
+FILES := $$(find . -name '*.go' -type f | grep -vE 'vendor|_gen|proto|pb\.go|pb\.gw\.go|_mock.go')
+FAIL_ON_STDOUT := awk '{ print } END { if (NR > 0) { exit 1  }  }'
+
 FAILPOINT_DIR := $$(for p in $(PACKAGES); do echo $${p\#"github.com/pingcap/$(PROJECT)/"}|grep -v "github.com/pingcap/$(PROJECT)"; done)
 FAILPOINT := tools/bin/failpoint-ctl
 FAILPOINT_ENABLE  := $$(echo $(FAILPOINT_DIR) | xargs $(FAILPOINT) enable >/dev/null)
 FAILPOINT_DISABLE := $$(echo $(FAILPOINT_DIR) | xargs $(FAILPOINT) disable >/dev/null)
 
-tools/bin/protoc:
-	@echo "download protoc"
-	./scripts/download-protoc.sh
-
-tools/bin/protoc-gen-go:
-	@echo "download protoc-gen-go"
-	./scripts/download-protoc-gen-go.sh
+include tools/Makefile
 
 generate-protobuf: 
 	@echo "generate-protobuf"
@@ -113,6 +110,17 @@ generate-protobuf:
 
 cdc:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/cdc ./cmd
+
+fmt: tools/bin/gofumports tools/bin/shfmt tools/bin/gci
+	@echo "run gci (format imports)"
+	tools/bin/gci write $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
+	@echo "run gofumports"
+	tools/bin/gofumports -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
+	@echo "run shfmt"
+	tools/bin/shfmt -d -w .
+	@echo "check log style"
+	scripts/check-log-style.sh
+	@make check-diff-line-width
 
 integration_test_build: check_failpoint_ctl
 	$(FAILPOINT_ENABLE)
@@ -130,10 +138,25 @@ failpoint-enable: check_failpoint_ctl
 failpoint-disable: check_failpoint_ctl
 	$(FAILPOINT_DISABLE)
 
-check_failpoint_ctl: 
-	@which tools/bin/failpoint-ctl || (echo "failpoint-ctl not found in ${PATH}"; exit 1) 
+check_failpoint_ctl: tools/bin/failpoint-ctl
 
 integration_test: integration_test_mysql
 
 integration_test_mysql:
 	tests/integration_tests/run.sh mysql "$(CASE)" "$(NEWARCH)" "$(START_AT)"
+
+unit_test: check_failpoint_ctl generate-protobuf
+	mkdir -p "$(TEST_DIR)"
+	$(FAILPOINT_ENABLE)
+	@export log_level=error;\
+	$(GOTEST) -cover -covermode=atomic -coverprofile="$(TEST_DIR)/cov.unit.out" $(PACKAGES) \
+	|| { $(FAILPOINT_DISABLE); exit 1; }
+	$(FAILPOINT_DISABLE)
+
+tidy:
+	@echo "go mod tidy"
+	./tools/check/check-tidy.sh
+
+errdoc: tools/bin/errdoc-gen
+	@echo "generator errors.toml"
+	./tools/check/check-errdoc.sh

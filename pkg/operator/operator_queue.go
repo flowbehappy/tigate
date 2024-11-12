@@ -25,6 +25,10 @@ type OperatorWithTime[T comparable, S any] struct {
 	Removed     bool
 }
 
+func NewOperatorWithTime[T comparable, S any](op Operator[T, S], time time.Time) *OperatorWithTime[T, S] {
+	return &OperatorWithTime[T, S]{OP: op, Time: time, EnqueueTime: time}
+}
+
 type OperatorQueue[T comparable, S any] []*OperatorWithTime[T, S]
 
 func (opn OperatorQueue[T, S]) Len() int { return len(opn) }

@@ -95,9 +95,9 @@ func (oc *Controller) AddOperator(op operator.Operator[common.ChangeFeedID, *hea
 	oc.lock.Lock()
 	defer oc.lock.Unlock()
 
-	if _, ok := oc.operators[op.ID()]; ok {
+	if pre, ok := oc.operators[op.ID()]; ok {
 		log.Info("add operator failed, operator already exists",
-			zap.String("operator", op.String()))
+			zap.Stringer("operator", op), zap.Stringer("previousOperator", pre.OP))
 		return false
 	}
 	cf := oc.changefeedDB.GetByID(op.ID())
@@ -193,6 +193,19 @@ func (oc *Controller) GetOperator(id common.ChangeFeedID) operator.Operator[comm
 	}
 }
 
+// HasOperator returns true if the operator with the ChangeFeedDisplayName exists in the controller.
+func (oc *Controller) HasOperator(dispName common.ChangeFeedDisplayName) bool {
+	oc.lock.RLock()
+	defer oc.lock.RUnlock()
+
+	for id, _ := range oc.operators {
+		if id.DisplayName == dispName {
+			return true
+		}
+	}
+	return false
+}
+
 // OperatorSize returns the number of operators in the controller.
 func (oc *Controller) OperatorSize() int {
 	oc.lock.RLock()
@@ -243,7 +256,7 @@ func (oc *Controller) pollQueueingOperator() (operator.Operator[common.ChangeFee
 func (oc *Controller) pushOperator(op operator.Operator[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]) {
 	log.Info("add operator to running queue",
 		zap.String("operator", op.String()))
-	opWithTime := &operator.OperatorWithTime[common.ChangeFeedID, *heartbeatpb.MaintainerStatus]{OP: op, Time: time.Now(), EnqueueTime: time.Now()}
+	opWithTime := operator.NewOperatorWithTime(op, time.Now())
 	oc.operators[op.ID()] = opWithTime
 	op.Start()
 	heap.Push(&oc.runningQueue, opWithTime)
