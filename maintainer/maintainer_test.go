@@ -272,7 +272,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	mc.RegisterHandler(messaging.MaintainerManagerTopic,
 		func(ctx context.Context, msg *messaging.TargetMessage) error {
 			stream.In() <- &Event{
-				changefeedID: cfID.Name(),
+				changefeedID: cfID,
 				eventType:    EventMessage,
 				message:      msg,
 			}
@@ -290,7 +290,7 @@ func TestMaintainerSchedule(t *testing.T) {
 		&configNew.ChangeFeedInfo{
 			Config: configNew.GetDefaultReplicaConfig(),
 		}, n, stream, taskScheduler, nil, nil, 10)
-	_ = stream.AddPath(cfID.Name(), maintainer)
+	_ = stream.AddPath(cfID, maintainer)
 
 	// send bootstrap message
 	maintainer.sendMessages(maintainer.bootstrapper.HandleNewNodes(
@@ -298,7 +298,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	))
 	// setup period event
 	SubmitScheduledEvent(maintainer.taskScheduler, maintainer.stream, &Event{
-		changefeedID: maintainer.id.Name(),
+		changefeedID: maintainer.id,
 		eventType:    EventPeriod,
 	}, time.Now().Add(time.Millisecond*500))
 	time.Sleep(time.Second * time.Duration(sleepTime))

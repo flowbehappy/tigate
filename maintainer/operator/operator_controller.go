@@ -248,7 +248,7 @@ func (oc *Controller) pushOperator(op operator.Operator[common.DispatcherID, *he
 	log.Info("add operator to running queue",
 		zap.String("changefeed", oc.changefeedID.Name()),
 		zap.String("operator", op.String()))
-	withTime := &operator.OperatorWithTime[common.DispatcherID, *heartbeatpb.TableSpanStatus]{OP: op, Time: time.Now(), EnqueueTime: time.Now()}
+	withTime := operator.NewOperatorWithTime(op, time.Now())
 	oc.operators[op.ID()] = withTime
 	op.Start()
 	heap.Push(&oc.runningQueue, withTime)

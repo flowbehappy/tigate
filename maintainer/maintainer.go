@@ -60,7 +60,7 @@ type Maintainer struct {
 	controller *Controller
 	barrier    *Barrier
 
-	stream        dynstream.DynamicStream[int, string, *Event, *Maintainer, *StreamHandler]
+	stream        dynstream.DynamicStream[int, common.ChangeFeedID, *Event, *Maintainer, *StreamHandler]
 	taskScheduler threadpool.ThreadPool
 	mc            messaging.MessageCenter
 
@@ -119,7 +119,7 @@ func NewMaintainer(cfID common.ChangeFeedID,
 	conf *config.SchedulerConfig,
 	cfg *config.ChangeFeedInfo,
 	selfNode *node.Info,
-	stream dynstream.DynamicStream[int, string, *Event, *Maintainer, *StreamHandler],
+	stream dynstream.DynamicStream[int, common.ChangeFeedID, *Event, *Maintainer, *StreamHandler],
 	taskScheduler threadpool.ThreadPool,
 	pdAPI pdutil.PDAPIClient,
 	regionCache split.RegionCache,
@@ -180,7 +180,7 @@ func NewMaintainer(cfID common.ChangeFeedID,
 func NewMaintainerForRemove(cfID common.ChangeFeedID,
 	conf *config.SchedulerConfig,
 	selfNode *node.Info,
-	stream dynstream.DynamicStream[int, string, *Event, *Maintainer, *StreamHandler],
+	stream dynstream.DynamicStream[int, common.ChangeFeedID, *Event, *Maintainer, *StreamHandler],
 	taskScheduler threadpool.ThreadPool,
 	pdAPI pdutil.PDAPIClient,
 	regionCache split.RegionCache,
@@ -194,7 +194,7 @@ func NewMaintainerForRemove(cfID common.ChangeFeedID,
 	m.cascadeRemoving = true
 	// setup period event
 	SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{
-		changefeedID: m.id.Name(),
+		changefeedID: m.id,
 		eventType:    EventPeriod,
 	}, time.Now().Add(time.Millisecond*500))
 	return m
@@ -288,7 +288,7 @@ func (m *Maintainer) initialize() error {
 	m.sendMessages(m.bootstrapper.HandleNewNodes(newNodes))
 	// setup period event
 	SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{
-		changefeedID: m.id.Name(),
+		changefeedID: m.id,
 		eventType:    EventPeriod,
 	}, time.Now().Add(time.Millisecond*500))
 	log.Info("changefeed maintainer initialized",
@@ -557,7 +557,12 @@ func (m *Maintainer) sendMaintainerCloseRequestToAllNode() bool {
 				}))
 		}
 	}
-	m.sendMessages(msgs)
+	if len(msgs) > 0 {
+		m.sendMessages(msgs)
+		log.Debug("send maintainer close request",
+			zap.String("changefeed", m.id.Name()),
+			zap.Int("count", len(msgs)))
+	}
 	return len(msgs) == 0
 }
 
@@ -637,7 +642,7 @@ func (m *Maintainer) onPeriodTask() {
 	m.collectMetrics()
 	m.calCheckpointTs()
 	SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{
-		changefeedID: m.id.Name(),
+		changefeedID: m.id,
 		eventType:    EventPeriod,
 	}, time.Now().Add(time.Millisecond*500))
 }

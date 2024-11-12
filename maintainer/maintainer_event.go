@@ -16,6 +16,7 @@ package maintainer
 import (
 	"time"
 
+	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"github.com/pingcap/ticdc/utils/threadpool"
@@ -32,7 +33,7 @@ const (
 
 // Event identify the Event that maintainer will handle in event-driven loop
 type Event struct {
-	changefeedID string
+	changefeedID common.ChangeFeedID
 	eventType    int
 	message      *messaging.TargetMessage
 }
@@ -44,7 +45,7 @@ func (e Event) IsBatchable() bool {
 // SubmitScheduledEvent submits a task to controller pool to send a future event
 func SubmitScheduledEvent(
 	scheduler threadpool.ThreadPool,
-	stream dynstream.DynamicStream[int, string, *Event, *Maintainer, *StreamHandler],
+	stream dynstream.DynamicStream[int, common.ChangeFeedID, *Event, *Maintainer, *StreamHandler],
 	event *Event,
 	scheduleTime time.Time) {
 	task := func() time.Time {
@@ -62,7 +63,7 @@ func NewStreamHandler() *StreamHandler {
 	return &StreamHandler{}
 }
 
-func (m *StreamHandler) Path(event *Event) string {
+func (m *StreamHandler) Path(event *Event) common.ChangeFeedID {
 	return event.changefeedID
 }
 
@@ -75,9 +76,9 @@ func (m *StreamHandler) Handle(dest *Maintainer, events ...*Event) (await bool) 
 	return dest.HandleEvent(event)
 }
 
-func (m *StreamHandler) GetSize(event *Event) int                      { return 0 }
-func (m *StreamHandler) GetArea(path string, dest *Maintainer) int     { return 0 }
-func (m *StreamHandler) GetTimestamp(event *Event) dynstream.Timestamp { return 0 }
-func (m *StreamHandler) GetType(event *Event) dynstream.EventType      { return dynstream.DefaultEventType }
-func (m *StreamHandler) IsPaused(event *Event) bool                    { return false }
-func (m *StreamHandler) OnDrop(event *Event)                           {}
+func (m *StreamHandler) GetSize(event *Event) int                               { return 0 }
+func (m *StreamHandler) GetArea(path common.ChangeFeedID, dest *Maintainer) int { return 0 }
+func (m *StreamHandler) GetTimestamp(event *Event) dynstream.Timestamp          { return 0 }
+func (m *StreamHandler) GetType(event *Event) dynstream.EventType               { return dynstream.DefaultEventType }
+func (m *StreamHandler) IsPaused(event *Event) bool                             { return false }
+func (m *StreamHandler) OnDrop(event *Event)                                    {}

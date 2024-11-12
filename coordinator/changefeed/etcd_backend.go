@@ -31,6 +31,7 @@ import (
 )
 
 // EtcdBackend is the changefeed meta store using etcd as the storage
+// todo: compares when commit transaction
 type EtcdBackend struct {
 	etcdClient etcd.CDCEtcdClient
 }
@@ -151,12 +152,15 @@ func (b *EtcdBackend) CreateChangefeed(ctx context.Context,
 	opsThen = append(opsThen, clientv3.OpPut(infoKey, infoValue))
 	opsThen = append(opsThen, clientv3.OpPut(jobKey, jobValue))
 
-	resp, err := b.etcdClient.GetEtcdClient().Txn(ctx, []clientv3.Cmp{}, opsThen, []clientv3.Op{})
+	resp, err := b.etcdClient.GetEtcdClient().Txn(ctx, []clientv3.Cmp{
+		clientv3.Compare(clientv3.CreateRevision(infoKey), "=", 0),
+		clientv3.Compare(clientv3.CreateRevision(jobKey), "=", 0),
+	}, opsThen, []clientv3.Op{})
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if !resp.Succeeded {
-		err = errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("delete changefeed %s", info.ChangefeedID.Name()))
+		err = errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("create changefeed %s", info.ChangefeedID.Name()))
 		return errors.Trace(err)
 	}
 	return nil
@@ -188,7 +192,7 @@ func (b *EtcdBackend) UpdateChangefeed(ctx context.Context, info *config.ChangeF
 		return errors.Trace(err)
 	}
 	if !putResp.Succeeded {
-		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("pause changefeed %s", info.ChangefeedID.Name()))
+		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("update changefeed %s failed", info.ChangefeedID.Name()))
 		return errors.Trace(err)
 	}
 	return nil
@@ -225,7 +229,7 @@ func (b *EtcdBackend) PauseChangefeed(ctx context.Context, id common.ChangeFeedI
 		return errors.Trace(err)
 	}
 	if !putResp.Succeeded {
-		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("update changefeed %s", id.DisplayName))
+		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("pause changefeed %s failed", id.DisplayName))
 		return errors.Trace(err)
 	}
 	return nil
@@ -283,7 +287,7 @@ func (b *EtcdBackend) ResumeChangefeed(ctx context.Context,
 		return errors.Trace(err)
 	}
 	if !putResp.Succeeded {
-		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("pause changefeed %s", info.ID))
+		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("resume changefeed %s", info.ID))
 		return errors.Trace(err)
 	}
 	return nil
@@ -308,7 +312,7 @@ func (b *EtcdBackend) SetChangefeedProgress(ctx context.Context, id common.Chang
 		return errors.Trace(err)
 	}
 	if !putResp.Succeeded {
-		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("mark changefeed removing %s", id.DisplayName))
+		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("update changefeed to %s-%d", id.DisplayName, progress))
 		return errors.Trace(err)
 	}
 	return nil
