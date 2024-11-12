@@ -105,6 +105,7 @@ func (db *ChangefeedDB) StopByChangefeedID(cfID common.ChangeFeedID, remove bool
 			db.changefeeds[cfID] = cf
 			db.stopped[cfID] = cf
 		}
+		log.Info("stop changefeed", zap.String("changefeed", cfID.String()))
 
 		nodeID := cf.GetNodeID()
 		if cf.GetNodeID() == "" {

@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/coordinator/changefeed"
-	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	"github.com/pingcap/ticdc/pkg/config"
@@ -245,14 +244,6 @@ func (c *coordinator) sendMessages(msgs []*messaging.TargetMessage) {
 			continue
 		}
 	}
-}
-
-func (c *coordinator) newBootstrapMessage(id node.ID) *messaging.TargetMessage {
-	log.Info("send coordinator bootstrap request", zap.Any("to", id))
-	return messaging.NewSingleTargetMessage(
-		id,
-		messaging.MaintainerManagerTopic,
-		&heartbeatpb.CoordinatorBootstrapRequest{Version: c.version})
 }
 
 func (c *coordinator) updateGCSafepoint(
