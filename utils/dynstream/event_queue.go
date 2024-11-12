@@ -154,7 +154,6 @@ func (q *eventQueue[A, P, T, D, H]) updateHeapAfterUpdatePath(path *pathInfo[A, 
 
 		area.timestampHeap.AddOrUpdate((*timestampPathNode[A, P, T, D, H])(path))
 		area.queueTimeHeap.AddOrUpdate((*queuePathNode[A, P, T, D, H])(path))
-		area.pathSizeHeap.AddOrUpdate((*pathSizeStat[A, P, T, D, H])(path))
 
 		q.eventQueueTimeQueue.AddOrUpdate(area)
 	}

@@ -273,7 +273,7 @@ type EventsHandler struct {
 }
 
 func (h *EventsHandler) Path(event DispatcherEvent) common.DispatcherID {
-	log.Info("fizz EventsHandler Path", zap.Any("dispatcherID", event.GetDispatcherID()), zap.Any("commitTs", event.GetCommitTs()), zap.Any("seq", event.GetSeq()), zap.Any("event", event))
+	//log.Info("fizz EventsHandler Path", zap.Any("dispatcherID", event.GetDispatcherID()), zap.Any("commitTs", event.GetCommitTs()), zap.Any("seq", event.GetSeq()), zap.Any("event", event))
 	return event.GetDispatcherID()
 }
 
@@ -315,7 +315,7 @@ func (h *EventsHandler) GetTimestamp(event DispatcherEvent) dynstream.Timestamp 
 	return dynstream.Timestamp(event.GetCommitTs())
 }
 func (h *EventsHandler) OnDrop(event DispatcherEvent) {
-	log.Info("event dropped", zap.Any("dispatcher", event.GetDispatcherID()), zap.Any("commitTs", event.GetCommitTs()), zap.Any("sequence", event.GetSeq()))
+	//log.Info("fizz event dropped", zap.Any("dispatcher", event.GetDispatcherID()), zap.Any("commitTs", event.GetCommitTs()), zap.Any("sequence", event.GetSeq()))
 }
 
 type DispatcherEvent struct {
