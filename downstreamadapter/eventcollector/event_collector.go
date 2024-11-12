@@ -70,6 +70,11 @@ type EventCollector struct {
 	// ds will dispatch the events to different dispatchers according to the dispatcherID.
 	ds dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler]
 
+	coordinatorInfo struct {
+		sync.RWMutex
+		id node.ID
+	}
+
 	metricDispatcherReceivedKVEventCount         prometheus.Counter
 	metricDispatcherReceivedResolvedTsEventCount prometheus.Counter
 	metricReceiveEventLagDuration                prometheus.Observer
@@ -242,23 +247,29 @@ func (c *EventCollector) mustSendDispatcherRequest(req DispatcherRequest) error 
 }
 
 // RecvEventsMessage is the handler for the events message from EventService.
-func (c *EventCollector) RecvEventsMessage(_ context.Context, msg *messaging.TargetMessage) error {
-	inflightDuration := time.Since(time.Unix(0, msg.CreateAt)).Milliseconds()
+func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *messaging.TargetMessage) error {
+	inflightDuration := time.Since(time.Unix(0, targetMessage.CreateAt)).Milliseconds()
 	c.metricReceiveEventLagDuration.Observe(float64(inflightDuration))
-	for _, msg := range msg.Message {
-		event, ok := msg.(commonEvent.Event)
-		if !ok {
-			log.Panic("invalid message type", zap.Any("msg", msg))
-		}
-		switch event.GetType() {
-		case commonEvent.TypeBatchResolvedEvent:
-			for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
-				c.metricDispatcherReceivedResolvedTsEventCount.Inc()
-				c.ds.In() <- dispatcher.NewDispatcherEvent(e)
+	for _, msg := range targetMessage.Message {
+		switch msg.(type) {
+		case *common.LogCoordinatorBroadcastRequest:
+			c.coordinatorInfo.Lock()
+			c.coordinatorInfo.id = targetMessage.From
+			c.coordinatorInfo.Unlock()
+		case commonEvent.Event:
+			event := msg.(commonEvent.Event)
+			switch event.GetType() {
+			case commonEvent.TypeBatchResolvedEvent:
+				for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
+					c.metricDispatcherReceivedResolvedTsEventCount.Inc()
+					c.ds.In() <- dispatcher.NewDispatcherEvent(e)
+				}
+			default:
+				c.metricDispatcherReceivedKVEventCount.Inc()
+				c.ds.In() <- dispatcher.NewDispatcherEvent(event)
 			}
 		default:
-			c.metricDispatcherReceivedKVEventCount.Inc()
-			c.ds.In() <- dispatcher.NewDispatcherEvent(event)
+			log.Panic("invalid message type", zap.Any("msg", msg))
 		}
 	}
 	return nil
