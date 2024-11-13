@@ -185,8 +185,8 @@ func (c *eventBroker) runGenTasks(ctx context.Context) {
 				return
 			case stat := <-c.notifyCh:
 				//log.Info("receive dispatcher stat", zap.Stringer("dispatcher", stat.info.GetID()))
-				stat.watermark.Store(stat.resolvedTs.Load())
-				//c.ds.In() <- newScanTask(stat)
+				//stat.watermark.Store(stat.resolvedTs.Load())
+				c.ds.In() <- newScanTask(stat)
 			}
 		}
 	}()
