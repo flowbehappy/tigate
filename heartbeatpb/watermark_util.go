@@ -15,6 +15,7 @@ package heartbeatpb
 
 import "math"
 
+// UpdateMin updates the watermark with the minimum values of checkpointTs and resolvedTs from another watermark.
 func (w *Watermark) UpdateMin(other Watermark) {
 	if w.CheckpointTs > other.CheckpointTs {
 		w.CheckpointTs = other.CheckpointTs
