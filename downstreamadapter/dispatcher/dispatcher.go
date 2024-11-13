@@ -564,7 +564,7 @@ func (d *Dispatcher) GetBlockStatus() *heartbeatpb.State {
 	}
 }
 
-func (d *Dispatcher) CollectDispatcherHeartBeatInfo(h *HeartBeatInfo) {
+func (d *Dispatcher) GetHeartBeatInfo(h *HeartBeatInfo) {
 	h.Watermark.CheckpointTs = d.GetCheckpointTs()
 	h.Watermark.ResolvedTs = d.GetResolvedTs()
 	h.EventSizePerSecond = d.tableProgress.GetEventSizePerSecond()
