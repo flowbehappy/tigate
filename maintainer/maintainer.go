@@ -369,7 +369,7 @@ func (m *Maintainer) onNodeChanged() {
 		}
 	}
 	var removedNodes []node.ID
-	for id, _ := range currentNodes {
+	for id := range currentNodes {
 		if _, ok := activeNodes[id]; !ok {
 			removedNodes = append(removedNodes, id)
 			delete(m.checkpointTsByCapture, id)
