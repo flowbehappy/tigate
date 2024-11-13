@@ -626,10 +626,7 @@ func (c *eventBroker) close() {
 func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64) {
 	if d.onSubscriptionResolvedTs(resolvedTs) {
 		// Note: don't block the caller of this function.
-		select {
-		case c.notifyCh <- d:
-		default:
-		}
+		c.notifyCh <- d
 	}
 }
 
