@@ -165,7 +165,7 @@ func (w *MysqlWriter) SendSyncPointEvent(event *commonEvent.SyncPointEvent) erro
 		if err2 != nil {
 			log.Error("failed to write syncpoint table", zap.Error(err))
 		}
-		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write syncpoint table;"))
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write syncpoint table; Failed to get tidb_current_ts;"))
 	}
 	// insert ts map
 	var builder strings.Builder
@@ -191,7 +191,7 @@ func (w *MysqlWriter) SendSyncPointEvent(event *commonEvent.SyncPointEvent) erro
 		if err2 != nil {
 			log.Error("failed to write syncpoint table", zap.Error(err2))
 		}
-		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write syncpoint table;"))
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("failed to write syncpoint table; Exec Failed; Query is %s", query)))
 	}
 
 	// set global tidb_external_ts to secondary ts
@@ -207,7 +207,7 @@ func (w *MysqlWriter) SendSyncPointEvent(event *commonEvent.SyncPointEvent) erro
 			if err2 != nil {
 				log.Error("failed to write syncpoint table", zap.Error(err2))
 			}
-			return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write syncpoint table;"))
+			return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("failed to write syncpoint table; Exec Failed; Query is %s", query)))
 		}
 	}
 
@@ -231,14 +231,14 @@ func (w *MysqlWriter) SendSyncPointEvent(event *commonEvent.SyncPointEvent) erro
 		if err != nil {
 			// It is ok to ignore the error, since it will not affect the correctness of the system,
 			// and no any business logic depends on this behavior, so we just log the error.
-			log.Error("failed to clean syncpoint table", zap.Error(cerror.WrapError(cerror.ErrMySQLTxnError, err)))
+			log.Error("failed to clean syncpoint table", zap.Error(cerror.WrapError(cerror.ErrMySQLTxnError, err)), zap.Any("query", query))
 		} else {
 			w.lastCleanSyncPointTime = time.Now()
 		}
 	}
 
 	err = tx.Commit()
-	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write syncpoint table;"))
+	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write syncpoint table; Commit Fail;"))
 }
 
 func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
@@ -312,7 +312,7 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 		builder.WriteString(" ON DUPLICATE KEY UPDATE ddl_ts=VALUES(ddl_ts), created_at=CURRENT_TIMESTAMP;")
 
 		query := builder.String()
-		log.Info("query is", zap.Any("query", query))
+
 		_, err = tx.Exec(query)
 		if err != nil {
 			log.Error("failed to write ddl ts table", zap.Error(err))
@@ -320,7 +320,7 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 			if err2 != nil {
 				log.Error("failed to write ddl ts table", zap.Error(err2))
 			}
-			return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write ddl ts table;"))
+			return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("failed to write ddl ts table; Exec Failed; Query is %s", query)))
 		}
 	} else {
 		log.Error("table ids is empty when write ddl ts table, FIX IT", zap.Any("event", event))
@@ -358,12 +358,12 @@ func (w *MysqlWriter) SendDDLTs(event *commonEvent.DDLEvent) error {
 			if err2 != nil {
 				log.Error("failed to delete ddl ts item", zap.Error(err2))
 			}
-			return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to delete ddl ts item;"))
+			return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("failed to delete ddl ts item; Query is %s", query)))
 		}
 	}
 
 	err = tx.Commit()
-	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write ddl ts table;"))
+	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to write ddl ts table; Commit Fail;"))
 
 }
 
@@ -415,7 +415,7 @@ func (w *MysqlWriter) CheckStartTsList(tableIDs []int64) ([]int64, error) {
 				zap.Error(err))
 			return retStartTsList, nil
 		}
-		return retStartTsList, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to check ddl ts table;"))
+		return retStartTsList, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("failed to check ddl ts table; Query is %s", query)))
 	}
 
 	defer rows.Close()
@@ -425,7 +425,7 @@ func (w *MysqlWriter) CheckStartTsList(tableIDs []int64) ([]int64, error) {
 	for rows.Next() {
 		err := rows.Scan(&tableId, &ddlTs)
 		if err != nil {
-			return retStartTsList, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to check ddl ts table;"))
+			return retStartTsList, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("failed to check ddl ts table; Query is %s", query)))
 		}
 		count += 1
 		retStartTsList[tableIdIdxMap[tableId]] = ddlTs
@@ -454,7 +454,7 @@ func (w *MysqlWriter) CheckStartTsList(tableIDs []int64) ([]int64, error) {
 
 		rows, err = w.db.Query(query)
 		if err != nil {
-			return retStartTsList, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to check ddl ts table;"))
+			return retStartTsList, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("failed to check ddl ts table; Query is %s", query)))
 		}
 
 		defer rows.Close()
@@ -502,11 +502,11 @@ func (w *MysqlWriter) RemoveDDLTsItem() error {
 		if err2 != nil {
 			log.Error("failed to delete ddl ts item", zap.Error(err2))
 		}
-		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to delete ddl ts item;"))
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("failed to delete ddl ts item; Query is %s", query)))
 	}
 
 	err = tx.Commit()
-	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to delete ddl ts item;"))
+	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("failed to delete ddl ts item; Query is %s", query)))
 }
 
 func (w *MysqlWriter) isDDLExecuted(tableID int64, ddlTs uint64) (bool, error) {
@@ -535,7 +535,7 @@ func (w *MysqlWriter) isDDLExecuted(tableID int64, ddlTs uint64) (bool, error) {
 
 	rows, err := w.db.Query(query)
 	if err != nil {
-		return false, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, "failed to check ddl ts table;"))
+		return false, cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("failed to check ddl ts table; Query is %s", query)))
 	}
 
 	defer rows.Close()
@@ -984,7 +984,7 @@ func (w *MysqlWriter) CreateTable(dbName string, tableName string, createTableQu
 		if errRollback != nil {
 			log.Error("failed to rollback", zap.Any("tableName", tableName), zap.Error(errRollback))
 		}
-		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("create %s table: begin Tx fail;", tableName)))
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("create %s table: use %s db fail;", tableName, dbName)))
 	}
 
 	_, err = tx.Exec(createTableQuery)
@@ -993,10 +993,10 @@ func (w *MysqlWriter) CreateTable(dbName string, tableName string, createTableQu
 		if errRollback != nil {
 			log.Error("failed to rollback", zap.Any("tableName", tableName), zap.Error(errRollback))
 		}
-		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("create %s table: begin Tx fail;", tableName)))
+		return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("create %s table: Exec fail; Query is %s", tableName, createTableQuery)))
 	}
 	err = tx.Commit()
-	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("create %s table: begin Tx fail;", tableName)))
+	return cerror.WrapError(cerror.ErrMySQLTxnError, errors.WithMessage(err, fmt.Sprintf("create %s table: Commit Failed; Query is %s", tableName, createTableQuery)))
 }
 
 func (w *MysqlWriter) Close() {
