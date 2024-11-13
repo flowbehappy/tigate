@@ -219,6 +219,7 @@ func (db *ChangefeedDB) MarkMaintainerReplicating(task *Changefeed) {
 	delete(db.absent, task.ID)
 	delete(db.scheduling, task.ID)
 	db.replicating[task.ID] = task
+	task.StartFinished()
 }
 
 // GetWaitingSchedulingChangefeeds returns the absent maintainers and the working state of each node

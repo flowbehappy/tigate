@@ -86,6 +86,10 @@ func (c *Changefeed) SetInfo(info *config.ChangeFeedInfo) {
 	c.info.Store(info)
 }
 
+func (c *Changefeed) StartFinished() {
+	c.backoff.StartFinished()
+}
+
 // setNodeID set the node id of the changefeed
 func (c *Changefeed) setNodeID(n node.ID) {
 	c.nodeID = n
