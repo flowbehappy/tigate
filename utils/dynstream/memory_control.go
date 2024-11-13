@@ -117,8 +117,11 @@ func (as *areaMemStat[A, P, T, D, H]) shouldDropEvent(
 		return int(as.totalPendingSize.Load())+event.eventSize > as.settings.Load().MaxPendingSize
 	}
 
-	// If the pending size does not exceed the max allowed size, or the path has no events, no need to drop the event.
-	if !exceedMaxPendingSize() || path.pendingQueue.Length() == 0 {
+	// If the pending size does not exceed the max allowed size, or the path has no events and the event is a periodic event,
+	// don't drop the event.
+	// We use the periodic event to notify the handler about the status of the path, so we send it even if the mem quota is exceeded.
+	// The periodic event consumes little memory and should be processed very fast.
+	if !exceedMaxPendingSize() || (path.pendingQueue.Length() == 0 && event.eventType.Property == PeriodicSignal) {
 		return false
 	}
 

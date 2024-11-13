@@ -136,7 +136,8 @@ func (c *server) initialize(ctx context.Context) error {
 		NewElector(c),
 		NewHttpServer(c, c.tcpServer.HTTP1Listener()),
 		NewGrpcServer(c.tcpServer.GrpcListener()),
-		maintainer.NewMaintainerManager(c.info, conf.Debug.Scheduler, c.pdAPIClient, c.RegionCache),
+		maintainer.NewMaintainerManager(c.info, conf.Debug.Scheduler,
+			c.pdAPIClient, c.pdClient, c.RegionCache),
 		eventStore,
 		eventService,
 	}

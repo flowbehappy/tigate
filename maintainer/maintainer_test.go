@@ -282,6 +282,7 @@ func TestMaintainerSchedule(t *testing.T) {
 	go dispatcherManager.Run(ctx)
 
 	taskScheduler := threadpool.NewThreadPoolDefault()
+	tsoClient := &mockTsoClient{}
 	maintainer := NewMaintainer(cfID,
 		&configNew.SchedulerConfig{
 			CheckBalanceInterval: configNew.TomlDuration(time.Minute),
@@ -289,8 +290,8 @@ func TestMaintainerSchedule(t *testing.T) {
 		},
 		&configNew.ChangeFeedInfo{
 			Config: configNew.GetDefaultReplicaConfig(),
-		}, n, stream, taskScheduler, nil, nil, 10)
-	_ = stream.AddPath(cfID, maintainer)
+		}, n, stream, taskScheduler, nil, tsoClient, nil, 10)
+	_ = stream.AddPath(cfID.Id, maintainer)
 
 	// send bootstrap message
 	maintainer.sendMessages(maintainer.bootstrapper.HandleNewNodes(
