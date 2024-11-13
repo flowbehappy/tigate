@@ -69,7 +69,7 @@ type eventBroker struct {
 	// and a goroutine is responsible for sending the message to the dispatchers.
 	messageCh        chan wrapEvent
 	resolvedTsCaches map[node.ID]*resolvedTsCache
-	notifyCh         chan *dispatcherStat
+	notifyCh         *mergeChannel
 
 	// wg is used to spawn the goroutines.
 	wg *sync.WaitGroup
@@ -106,7 +106,7 @@ func newEventBroker(
 		eventStore:              eventStore,
 		mounter:                 pevent.NewMounter(tz),
 		schemaStore:             schemaStore,
-		notifyCh:                make(chan *dispatcherStat, defaultChannelSize*16),
+		notifyCh:                NewMergeChannel(defaultChannelSize * 16),
 		dispatchers:             sync.Map{},
 		tableTriggerDispatchers: sync.Map{},
 		msgSender:               mc,
@@ -183,10 +183,11 @@ func (c *eventBroker) runGenTasks(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case stat := <-c.notifyCh:
+			case stat := <-c.notifyCh.Receive():
 				//log.Info("receive dispatcher stat", zap.Stringer("dispatcher", stat.info.GetID()))
 				//stat.watermark.Store(stat.resolvedTs.Load())
 				c.ds.In() <- newScanTask(stat)
+				c.notifyCh.Remove(stat)
 			}
 		}
 	}()
@@ -626,14 +627,7 @@ func (c *eventBroker) close() {
 func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64) {
 	if d.onSubscriptionResolvedTs(resolvedTs) {
 		// Note: don't block the caller of this function.
-		if !d.isHandling.Load() {
-			select {
-			case c.notifyCh <- d:
-				d.isHandling.Store(true)
-			default:
-				metricEventBrokerDropTaskCount.Inc()
-			}
-		}
+		c.notifyCh.TrySend(d)
 	}
 }
 
@@ -776,8 +770,6 @@ type dispatcherStat struct {
 	nextSyncPoint     uint64
 	syncPointInterval time.Duration
 
-	isHandling atomic.Bool
-
 	metricSorterOutputEventCountKV        prometheus.Counter
 	metricEventServiceSendKvCount         prometheus.Counter
 	metricEventServiceSendDDLCount        prometheus.Counter
@@ -807,7 +799,6 @@ func newDispatcherStat(
 	dispStat.resolvedTs.Store(startTs)
 	dispStat.watermark.Store(startTs)
 	dispStat.isRunning.Store(true)
-	dispStat.isHandling.Store(false)
 	return dispStat
 }
 
@@ -857,7 +848,6 @@ func newScanTask(dispatcherStat *dispatcherStat) scanTask {
 
 func (t *scanTask) handle() {
 	metricScanTaskQueueDuration.Observe(float64(time.Since(t.createTime).Milliseconds()))
-	t.dispatcherStat.isHandling.Store(false)
 }
 
 func (t scanTask) IsBatchable() bool {

@@ -60,3 +60,37 @@ type mergeChannel struct {
 	ch chan *dispatcherStat
 	m  sync.Map
 }
+
+// TrySend attempts to send a dispatcher stat to the channel.
+// Returns false if the element already exists, true if successfully sent.
+func (mc *mergeChannel) TrySend(stat *dispatcherStat) bool {
+	// Use dispatcher ID as key for better performance
+	key := stat.info.GetID()
+	// Check if the element already exists in the map
+	_, exists := mc.m.Load(key)
+	if exists {
+		// Element already exists, skip sending
+		return false
+	}
+	// Store the element in map first, using ID as key and stat as value
+	mc.m.Store(key, stat)
+	// Then send to channel
+	mc.ch <- stat
+	return true
+}
+
+// Receive gets an element from the channel and removes it from the map
+func (mc *mergeChannel) Receive() chan *dispatcherStat {
+	return mc.ch
+}
+
+func (mc *mergeChannel) Remove(stat *dispatcherStat) {
+	mc.m.Delete(stat.info.GetID())
+}
+
+// NewMergeChannel creates a new mergeChannel with the specified capacity
+func NewMergeChannel(capacity int) *mergeChannel {
+	return &mergeChannel{
+		ch: make(chan *dispatcherStat, capacity),
+	}
+}
