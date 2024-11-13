@@ -237,6 +237,8 @@ func (v *versionedTableInfoStore) doApplyDDL(event *PersistedDDLEvent) {
 		}
 		assertEmpty(v.infos, event)
 		appendTableInfo()
+	case model.ActionDropSchema:
+		// ignore
 	case model.ActionDropTable:
 		v.deleteVersion = uint64(event.FinishedTs)
 	case model.ActionAddColumn,
