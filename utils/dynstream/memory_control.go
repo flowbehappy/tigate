@@ -131,7 +131,7 @@ LOOP:
 				zap.Any("area", as.area), zap.Any("path", path.path))
 			return true
 		}
-		front, ok := path.pendingQueue.FrontRef()
+		front, ok := longestPath.pendingQueue.FrontRef()
 		if !ok {
 			log.Warn("pendingQueue is empty, but exceed MaxPendingSize, it should not happen",
 				zap.Any("area", as.area), zap.Any("path", path.path))
