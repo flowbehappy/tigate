@@ -102,6 +102,14 @@ type Dispatcher struct {
 	// only exist when the dispatcher is a table trigger event dispatcher
 	tableSchemaStore *util.TableSchemaStore
 
+	// The ts from pd when the dispatcher is created.
+	// when downstream is mysql-class, for dml event we need to compare the commitTs with this ts
+	// to determine whether the insert event should use `Replace` or just `Insert`
+	// Because when the dispatcher scheduled or the node restarts, there may be some dml events to receive twice.
+	// So we need to use `Replace` to avoid duplicate key error.
+	// Table Trigger Event Dispatcher doesn't need this, because it doesn't deal with dml events.
+	creatationPDTs uint64
+
 	errCh chan error
 }
 
@@ -117,6 +125,7 @@ func NewDispatcher(
 	schemaIDToDispatchers *SchemaIDToDispatchers,
 	syncPointInfo *syncpoint.SyncPointInfo,
 	filterConfig *config.FilterConfig,
+	currentPdTs uint64,
 	errCh chan error) *Dispatcher {
 	dispatcher := &Dispatcher{
 		changefeedID:          changefeedID,
@@ -136,6 +145,7 @@ func NewDispatcher(
 		schemaID:              schemaID,
 		schemaIDToDispatchers: schemaIDToDispatchers,
 		resendTaskMap:         newResendTaskMap(),
+		creatationPDTs:        currentPdTs,
 		errCh:                 errCh,
 	}
 	dispatcher.lastSyncPointTs.Store(syncPointInfo.InitSyncPointTs)
@@ -177,7 +187,14 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 			if action.Action == heartbeatpb.Action_Write {
 				err := d.sink.WriteBlockEvent(pendingEvent, d.tableProgress)
 				if err != nil {
-					d.errCh <- err
+					select {
+					case d.errCh <- err:
+					default:
+						log.Error("error channel is full, discard error",
+							zap.Any("ChangefeedID", d.changefeedID.String()),
+							zap.Any("DispatcherID", d.id.String()),
+							zap.Error(err))
+					}
 					return
 				}
 			} else {
@@ -229,6 +246,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 		case commonEvent.TypeDMLEvent:
 			block = true
 			dml := event.(*commonEvent.DMLEvent)
+			dml.ReplicatingTs = d.creatationPDTs
 			dml.AssembleRows(d.tableInfo.Load())
 			dml.AddPostFlushFunc(func() {
 				// Considering dml event in sink may be write to downstream not in order,
@@ -327,7 +345,14 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 	if !d.shouldBlock(event) {
 		err := d.sink.WriteBlockEvent(event, d.tableProgress)
 		if err != nil {
-			d.errCh <- err
+			select {
+			case d.errCh <- err:
+			default:
+				log.Error("error channel is full, discard error",
+					zap.Any("ChangefeedID", d.changefeedID.String()),
+					zap.Any("DispatcherID", d.id.String()),
+					zap.Error(err))
+			}
 			return
 		}
 		if event.GetNeedAddedTables() != nil || event.GetNeedDroppedTables() != nil {

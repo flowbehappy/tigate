@@ -176,10 +176,11 @@ func (h *SchedulerDispatcherRequestHandler) Handle(eventDispatcherManager *Event
 		switch req.ScheduleAction {
 		case heartbeatpb.ScheduleAction_Create:
 			infos = append(infos, dispatcherCreateInfo{
-				Id:        dispatcherID,
-				TableSpan: config.Span,
-				StartTs:   config.StartTs,
-				SchemaID:  config.SchemaID,
+				Id:          dispatcherID,
+				TableSpan:   config.Span,
+				StartTs:     config.StartTs,
+				SchemaID:    config.SchemaID,
+				CurrentPDTs: config.CurrentPdTs,
 			})
 		case heartbeatpb.ScheduleAction_Remove:
 			if len(reqs) != 1 {
@@ -191,7 +192,13 @@ func (h *SchedulerDispatcherRequestHandler) Handle(eventDispatcherManager *Event
 	if len(infos) > 0 {
 		err := eventDispatcherManager.newDispatchers(infos)
 		if err != nil {
-			eventDispatcherManager.errCh <- err
+			select {
+			case eventDispatcherManager.errCh <- err:
+			default:
+				log.Error("error channel is full, discard error",
+					zap.Any("ChangefeedID", eventDispatcherManager.changefeedID.String()),
+					zap.Error(err))
+			}
 		}
 	}
 	return false
