@@ -245,10 +245,11 @@ func (e *EventDispatcherManager) close(remove bool) {
 }
 
 type dispatcherCreateInfo struct {
-	Id        common.DispatcherID
-	TableSpan *heartbeatpb.TableSpan
-	StartTs   uint64
-	SchemaID  int64
+	Id          common.DispatcherID
+	TableSpan   *heartbeatpb.TableSpan
+	StartTs     uint64
+	SchemaID    int64
+	CurrentPDTs uint64
 }
 
 func (e *EventDispatcherManager) newTableTriggerEventDispatcher(id *heartbeatpb.DispatcherID, startTs uint64) (uint64, error) {
@@ -258,10 +259,11 @@ func (e *EventDispatcherManager) newTableTriggerEventDispatcher(id *heartbeatpb.
 	// create tableTriggerEventDispatcher if it is not nil
 	err := e.newDispatchers([]dispatcherCreateInfo{
 		{
-			Id:        common.NewDispatcherIDFromPB(id),
-			TableSpan: heartbeatpb.DDLSpan,
-			StartTs:   startTs,
-			SchemaID:  0,
+			Id:          common.NewDispatcherIDFromPB(id),
+			TableSpan:   heartbeatpb.DDLSpan,
+			StartTs:     startTs,
+			SchemaID:    0,
+			CurrentPDTs: 0,
 		},
 	})
 	if err != nil {
@@ -283,6 +285,7 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 	startTsList := make([]int64, 0, len(infos))
 	tableSpans := make([]*heartbeatpb.TableSpan, 0, len(infos))
 	schemaIds := make([]int64, 0, len(infos))
+	pdTsList := make([]uint64, 0, len(infos))
 	for _, info := range infos {
 		id := info.Id
 		if _, ok := e.dispatcherMap.Get(id); ok {
@@ -293,6 +296,7 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 		startTsList = append(startTsList, int64(info.StartTs))
 		tableSpans = append(tableSpans, info.TableSpan)
 		schemaIds = append(schemaIds, info.SchemaID)
+		pdTsList = append(pdTsList, info.CurrentPDTs)
 	}
 
 	if len(dispatcherIds) == 0 {
@@ -334,7 +338,12 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 			id, tableSpans[idx], e.sink,
 			uint64(newStartTsList[idx]),
 			e.blockStatusesChan,
-			e.filter, schemaIds[idx], e.schemaIDToDispatchers, &syncPointInfo, e.config.Filter, e.errCh)
+			e.filter, schemaIds[idx],
+			e.schemaIDToDispatchers,
+			&syncPointInfo,
+			e.config.Filter,
+			pdTsList[idx],
+			e.errCh)
 
 		if e.heartBeatTask == nil {
 			e.heartBeatTask = newHeartBeatTask(e)

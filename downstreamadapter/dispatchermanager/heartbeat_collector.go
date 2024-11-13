@@ -176,10 +176,11 @@ func (h *SchedulerDispatcherRequestHandler) Handle(eventDispatcherManager *Event
 		switch req.ScheduleAction {
 		case heartbeatpb.ScheduleAction_Create:
 			infos = append(infos, dispatcherCreateInfo{
-				Id:        dispatcherID,
-				TableSpan: config.Span,
-				StartTs:   config.StartTs,
-				SchemaID:  config.SchemaID,
+				Id:          dispatcherID,
+				TableSpan:   config.Span,
+				StartTs:     config.StartTs,
+				SchemaID:    config.SchemaID,
+				CurrentPDTs: config.CurrentPdTs,
 			})
 		case heartbeatpb.ScheduleAction_Remove:
 			if len(reqs) != 1 {

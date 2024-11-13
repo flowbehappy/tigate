@@ -800,7 +800,7 @@ func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) (*preparedDMLs
 			// INSERT(not in safe mode)
 			// or REPLACE(in safe mode) SQL.
 			if row.RowType == commonEvent.RowTypeInsert {
-				query, args, err = buildInsert(event.TableInfo, row, w.cfg.SafeMode)
+				query, args, err = buildInsert(event.TableInfo, row, translateToInsert)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
