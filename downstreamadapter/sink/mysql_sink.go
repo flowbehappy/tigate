@@ -17,6 +17,7 @@ import (
 	"context"
 	"database/sql"
 	"net/url"
+	"sync/atomic"
 
 	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
 	"github.com/pingcap/ticdc/downstreamadapter/worker"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/sink/mysql"
 	"github.com/pingcap/ticdc/pkg/sink/util"
+	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 
 	utils "github.com/pingcap/tiflow/pkg/util"
@@ -47,7 +49,9 @@ type MysqlSink struct {
 	db         *sql.DB
 	errgroup   *errgroup.Group
 	statistics *metrics.Statistics
-	errCh      chan error
+
+	errCh    chan error
+	isNormal uint32 // if sink is normal, isNormal is 1, otherwise is 0
 }
 
 func NewMysqlSink(ctx context.Context, changefeedID common.ChangeFeedID, workerCount int, config *config.ChangefeedConfig, sinkURI *url.URL, errCh chan error) (*MysqlSink, error) {
@@ -59,6 +63,7 @@ func NewMysqlSink(ctx context.Context, changefeedID common.ChangeFeedID, workerC
 		errgroup:     errgroup,
 		statistics:   metrics.NewStatistics(changefeedID, "TxnSink"),
 		errCh:        errCh,
+		isNormal:     1,
 	}
 
 	cfg, db, err := mysql.NewMysqlConfigAndDB(ctx, changefeedID, sinkURI)
@@ -82,7 +87,16 @@ func (s *MysqlSink) run() {
 	for i := 0; i < s.workerCount; i++ {
 		s.dmlWorker[i].Run()
 	}
-	s.errCh <- s.errgroup.Wait()
+	err := s.errgroup.Wait()
+	if errors.Cause(err) != context.Canceled {
+		atomic.StoreUint32(&s.isNormal, 0)
+		s.errCh <- err
+	}
+}
+
+func (s *MysqlSink) IsNormal() bool {
+	value := atomic.LoadUint32(&s.isNormal) == 1
+	return value
 }
 
 func (s *MysqlSink) SinkType() SinkType {
@@ -114,7 +128,12 @@ func (s *MysqlSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *
 
 func (s *MysqlSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error {
 	tableProgress.Add(event)
-	return s.ddlWorker.WriteBlockEvent(event)
+	err := s.ddlWorker.WriteBlockEvent(event)
+	if err != nil {
+		atomic.StoreUint32(&s.isNormal, 0)
+		return err
+	}
+	return nil
 }
 
 func (s *MysqlSink) AddCheckpointTs(ts uint64) {}

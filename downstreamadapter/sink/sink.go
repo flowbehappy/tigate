@@ -42,6 +42,7 @@ type Sink interface {
 	CheckStartTsList(tableIds []int64, startTsList []int64) ([]int64, error)
 	Close(removeDDLTsItem bool) error
 	SinkType() SinkType
+	IsNormal() bool
 }
 
 func NewSink(ctx context.Context, config *config.ChangefeedConfig, changefeedID common.ChangeFeedID, errCh chan error) (Sink, error) {
