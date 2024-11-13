@@ -72,7 +72,12 @@ func (m *AddDispatcherOperator) Schedule() *messaging.TargetMessage {
 	if m.finished.Load() || m.removed.Load() {
 		return nil
 	}
-	return m.replicaSet.NewAddDispatcherMessage(m.dest)
+	msg, err := m.replicaSet.NewAddDispatcherMessage(m.dest)
+	if err != nil {
+		log.Warn("generate dispatcher message failed, retry later", zap.String("operator", m.String()), zap.Error(err))
+		return nil
+	}
+	return msg
 }
 
 // OnNodeRemove is called when node offline, and the replicaset must already move to absent status and will be scheduled again

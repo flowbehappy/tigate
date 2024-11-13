@@ -52,6 +52,7 @@ type Controller struct {
 	replicationDB      *replica.ReplicationDB
 	messageCenter      messaging.MessageCenter
 	nodeManager        *watcher.NodeManager
+	tsoClient          replica.TSOClient
 
 	splitter               *split.Splitter
 	spanReplicationEnabled bool
@@ -72,6 +73,7 @@ type Controller struct {
 func NewController(changefeedID common.ChangeFeedID,
 	checkpointTs uint64,
 	pdapi pdutil.PDAPIClient,
+	tsoClient replica.TSOClient,
 	regionCache split.RegionCache,
 	taskScheduler threadpool.ThreadPool,
 	cfConfig *config.ReplicaConfig,
@@ -94,6 +96,7 @@ func NewController(changefeedID common.ChangeFeedID,
 		nodeManager:        nodeManager,
 		taskScheduler:      taskScheduler,
 		cfConfig:           cfConfig,
+		tsoClient:          tsoClient,
 	}
 	if cfConfig != nil && cfConfig.Scheduler.EnableTableAcrossNodes {
 		s.splitter = split.NewSplitter(changefeedID, pdapi, regionCache, cfConfig.Scheduler)
@@ -235,7 +238,7 @@ func (c *Controller) FinishBootstrap(cachedResp map[node.ID]*heartbeatpb.Maintai
 			span := info.Span
 
 			//working on remote, the state must be absent or working since it's reported by remote
-			stm := replica.NewWorkingReplicaSet(c.changefeedID, dispatcherID, info.SchemaID, span, status, server)
+			stm := replica.NewWorkingReplicaSet(c.changefeedID, dispatcherID, c.tsoClient, info.SchemaID, span, status, server)
 			tableMap, ok := workingMap[span.TableID]
 			if !ok {
 				tableMap = utils.NewBtreeMap[*heartbeatpb.TableSpan, *replica.SpanReplication](heartbeatpb.LessTableSpan)
@@ -380,7 +383,7 @@ func (c *Controller) addNewSpans(schemaID int64,
 func (c *Controller) addNewSpan(dispatcherID common.DispatcherID, schemaID int64,
 	span *heartbeatpb.TableSpan, startTs uint64) {
 	replicaSet := replica.NewReplicaSet(c.changefeedID,
-		dispatcherID, schemaID, span, startTs)
+		dispatcherID, c.tsoClient, schemaID, span, startTs)
 	c.replicationDB.AddAbsentReplicaSet(replicaSet)
 }
 

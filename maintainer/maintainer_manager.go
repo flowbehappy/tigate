@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
+	"github.com/pingcap/ticdc/maintainer/replica"
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
 	"github.com/pingcap/ticdc/pkg/config"
@@ -50,6 +51,7 @@ type Manager struct {
 
 	selfNode    *node.Info
 	pdAPI       pdutil.PDAPIClient
+	tsoClient   replica.TSOClient
 	regionCache *tikv.RegionCache
 
 	msgCh chan *messaging.TargetMessage
@@ -65,6 +67,7 @@ type Manager struct {
 func NewMaintainerManager(selfNode *node.Info,
 	conf *config.SchedulerConfig,
 	pdAPI pdutil.PDAPIClient,
+	pdClient replica.TSOClient,
 	regionCache *tikv.RegionCache,
 ) *Manager {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
@@ -76,6 +79,7 @@ func NewMaintainerManager(selfNode *node.Info,
 		msgCh:         make(chan *messaging.TargetMessage, 1024),
 		taskScheduler: threadpool.NewThreadPoolDefault(),
 		pdAPI:         pdAPI,
+		tsoClient:     pdClient,
 		regionCache:   regionCache,
 	}
 	m.stream = dynstream.NewDynamicStream(NewStreamHandler())
@@ -224,7 +228,7 @@ func (m *Manager) onAddMaintainerRequest(req *heartbeatpb.AddMaintainerRequest) 
 		log.Panic("decode changefeed fail", zap.Error(err))
 	}
 	cf = NewMaintainer(cfID, m.conf, cfConfig, m.selfNode, m.stream, m.taskScheduler,
-		m.pdAPI, m.regionCache,
+		m.pdAPI, m.tsoClient, m.regionCache,
 		req.CheckpointTs)
 	err = m.stream.AddPath(cfID.Id, cf.(*Maintainer))
 	if err != nil {
@@ -252,7 +256,8 @@ func (m *Manager) onRemoveMaintainerRequest(msg *messaging.TargetMessage) *heart
 		}
 		// it's cascade remove, we should remove the dispatcher from all node
 		// here we create a maintainer to run the remove the dispatcher logic
-		cf := NewMaintainerForRemove(cfID, m.conf, m.selfNode, m.stream, m.taskScheduler, m.pdAPI, m.regionCache)
+		cf := NewMaintainerForRemove(cfID, m.conf, m.selfNode, m.stream, m.taskScheduler, m.pdAPI,
+			m.tsoClient, m.regionCache)
 		err := m.stream.AddPath(cfID.Id, cf)
 		if err != nil {
 			log.Warn("add path to dynstream failed, coordinator will retry later", zap.Error(err))

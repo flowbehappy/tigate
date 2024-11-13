@@ -77,7 +77,12 @@ func (m *MoveDispatcherOperator) Schedule() *messaging.TargetMessage {
 			m.db.BindSpanToNode(m.origin, m.dest, m.replicaSet)
 			m.bind = true
 		}
-		return m.replicaSet.NewAddDispatcherMessage(m.dest)
+		msg, err := m.replicaSet.NewAddDispatcherMessage(m.dest)
+		if err != nil {
+			log.Warn("generate dispatcher message failed, retry later", zap.String("operator", m.String()), zap.Error(err))
+			return nil
+		}
+		return msg
 	}
 	return m.replicaSet.NewRemoveDispatcherMessage(m.origin)
 }

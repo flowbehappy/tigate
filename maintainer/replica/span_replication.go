@@ -14,13 +14,18 @@
 package replica
 
 import (
+	"context"
 	"encoding/hex"
+	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/tiflow/pkg/retry"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -35,15 +40,19 @@ type SpanReplication struct {
 	schemaID int64
 	nodeID   node.ID
 	status   *heartbeatpb.TableSpanStatus
+
+	tsoClient TSOClient
 }
 
 func NewReplicaSet(cfID common.ChangeFeedID,
 	id common.DispatcherID,
+	tsoClient TSOClient,
 	SchemaID int64,
 	span *heartbeatpb.TableSpan,
 	checkpointTs uint64) *SpanReplication {
 	r := &SpanReplication{
 		ID:           id,
+		tsoClient:    tsoClient,
 		schemaID:     SchemaID,
 		Span:         span,
 		ChangefeedID: cfID,
@@ -65,6 +74,7 @@ func NewReplicaSet(cfID common.ChangeFeedID,
 func NewWorkingReplicaSet(
 	cfID common.ChangeFeedID,
 	id common.DispatcherID,
+	tsoClient TSOClient,
 	SchemaID int64,
 	span *heartbeatpb.TableSpan,
 	status *heartbeatpb.TableSpanStatus,
@@ -77,6 +87,7 @@ func NewWorkingReplicaSet(
 		ChangefeedID: cfID,
 		nodeID:       nodeID,
 		status:       status,
+		tsoClient:    tsoClient,
 	}
 	log.Info("new working replica set created",
 		zap.String("changefeed id", cfID.Name()),
@@ -103,6 +114,10 @@ func (r *SpanReplication) GetSchemaID() int64 {
 	return r.schemaID
 }
 
+func (r *SpanReplication) GetTsoClient() TSOClient {
+	return r.tsoClient
+}
+
 func (r *SpanReplication) SetSchemaID(schemaID int64) {
 	r.schemaID = schemaID
 }
@@ -115,7 +130,11 @@ func (r *SpanReplication) GetNodeID() node.ID {
 	return r.nodeID
 }
 
-func (r *SpanReplication) NewAddDispatcherMessage(server node.ID) *messaging.TargetMessage {
+func (r *SpanReplication) NewAddDispatcherMessage(server node.ID) (*messaging.TargetMessage, error) {
+	ts, err := getTs(r.tsoClient)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return messaging.NewSingleTargetMessage(server,
 		messaging.HeartbeatCollectorTopic,
 		&heartbeatpb.ScheduleDispatcherRequest{
@@ -124,9 +143,10 @@ func (r *SpanReplication) NewAddDispatcherMessage(server node.ID) *messaging.Tar
 				DispatcherID: r.ID.ToPB(),
 				Span:         r.Span,
 				StartTs:      r.status.CheckpointTs,
+				CurrentPdTs:  ts,
 			},
 			ScheduleAction: heartbeatpb.ScheduleAction_Create,
-		})
+		}), nil
 }
 
 func (r *SpanReplication) NewRemoveDispatcherMessage(server node.ID) *messaging.TargetMessage {
@@ -143,4 +163,20 @@ func NewRemoveDispatcherMessage(server node.ID, cfID common.ChangeFeedID, dispat
 			},
 			ScheduleAction: heartbeatpb.ScheduleAction_Remove,
 		})
+}
+
+func getTs(client TSOClient) (uint64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	var ts uint64
+	err := retry.Do(ctx, func() error {
+		phy, logic, err := client.GetTS(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ts = oracle.ComposeTS(phy, logic)
+		return nil
+	}, retry.WithTotalRetryDuratoin(300*time.Millisecond),
+		retry.WithBackoffBaseDelay(100))
+	return ts, errors.Trace(err)
 }
