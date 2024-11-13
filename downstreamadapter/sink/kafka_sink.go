@@ -16,6 +16,7 @@ package sink
 import (
 	"context"
 	"net/url"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -56,6 +57,7 @@ type KafkaSink struct {
 
 	errgroup *errgroup.Group
 	errCh    chan error
+	isNormal uint32 // if sink is normal, isNormal is 1, otherwise is 0
 }
 
 func (s *KafkaSink) SinkType() SinkType {
@@ -175,7 +177,16 @@ func NewKafkaSink(ctx context.Context, changefeedID common.ChangeFeedID, sinkURI
 func (s *KafkaSink) run() {
 	s.dmlWorker.Run()
 	s.ddlWorker.Run()
-	s.errCh <- s.errgroup.Wait()
+
+	err := s.errgroup.Wait()
+	if errors.Cause(err) != context.Canceled {
+		atomic.StoreUint32(&s.isNormal, 0)
+		s.errCh <- err
+	}
+}
+
+func (s *KafkaSink) IsNormal() bool {
+	return atomic.LoadUint32(&s.isNormal) == 1
 }
 
 func (s *KafkaSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress) {
@@ -200,7 +211,11 @@ func (s *KafkaSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress 
 			event.PostFlush()
 			return nil
 		}
-		return s.ddlWorker.WriteBlockEvent(event)
+		err := s.ddlWorker.WriteBlockEvent(event)
+		if err != nil {
+			atomic.StoreUint32(&s.isNormal, 0)
+			return errors.Trace(err)
+		}
 	case *commonEvent.SyncPointEvent:
 		log.Error("KafkaSink doesn't support Sync Point Event",
 			zap.String("namespace", s.changefeedID.Namespace()),
