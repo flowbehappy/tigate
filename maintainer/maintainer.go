@@ -97,8 +97,8 @@ type Maintainer struct {
 	// the changefeed is removed, notify the dispatcher manager to clear ddl_ts table
 	changefeedRemoved bool
 
-	lastPrintStatusTime  time.Time
-	lastCheckpointTsTime time.Time
+	lastPrintStatusTime time.Time
+	//lastCheckpointTsTime time.Time
 
 	errLock       sync.Mutex
 	runningErrors map[node.ID]*heartbeatpb.RunningError
@@ -391,21 +391,18 @@ func (m *Maintainer) calCheckpointTs() {
 	if !m.bootstrapped {
 		return
 	}
-	m.updateMetrics()
+	defer m.updateMetrics()
 	// make sure there is no task running
 	// the dispatcher changing come from:
 	// 1. node change
 	// 2. ddl
 	// 3. interval scheduling, like balance, split
-	if time.Since(m.lastCheckpointTsTime) < 2*time.Second ||
-		!m.controller.ScheduleFinished() {
+	if !m.controller.ScheduleFinished() {
 		return
 	}
-	m.lastCheckpointTsTime = time.Now()
-
 	newWatermark := heartbeatpb.NewMaxWatermark()
 	// if there is no tables, there must be a table trigger dispatcher
-	for id, _ := range m.bootstrapper.GetAllNodes() {
+	for id := range m.bootstrapper.GetAllNodes() {
 		// maintainer node has the table trigger dispatcher
 		if id != m.selfNode.ID && m.controller.GetTaskSizeByNodeID(id) <= 0 {
 			continue
