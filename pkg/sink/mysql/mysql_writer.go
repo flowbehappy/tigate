@@ -77,7 +77,7 @@ func NewMysqlWriter(ctx context.Context, db *sql.DB, cfg *MysqlConfig, changefee
 		lastCleanSyncPointTime: time.Now(),
 		ddlTsTableInit:         false,
 		cachePrepStmts:         cfg.CachePrepStmts,
-		maxAllowedPacket:       cfg.maxAllowedPacket,
+		maxAllowedPacket:       cfg.MaxAllowedPacket,
 		stmtCache:              cfg.stmtCache,
 		statistics:             statistics,
 	}
@@ -879,7 +879,7 @@ func (w *MysqlWriter) execDMLWithMaxRetries(dmls *preparedDMLs) error {
 		return nil
 	}, retry.WithBackoffBaseDelay(pmysql.BackoffBaseDelay.Milliseconds()),
 		retry.WithBackoffMaxDelay(pmysql.BackoffMaxDelay.Milliseconds()),
-		retry.WithMaxTries(8))
+		retry.WithMaxTries(w.cfg.DMLMaxRetry))
 }
 
 func (w *MysqlWriter) sequenceExecute(

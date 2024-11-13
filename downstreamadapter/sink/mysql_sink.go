@@ -83,6 +83,30 @@ func NewMysqlSink(ctx context.Context, changefeedID common.ChangeFeedID, workerC
 	return &mysqlSink, nil
 }
 
+// for test
+func NewMysqlSinkWithDBAndConfig(ctx context.Context, changefeedID common.ChangeFeedID, workerCount int, cfg *mysql.MysqlConfig, db *sql.DB, errCh chan error) (*MysqlSink, error) {
+	errgroup, ctx := errgroup.WithContext(ctx)
+	mysqlSink := MysqlSink{
+		changefeedID: changefeedID,
+		dmlWorker:    make([]*worker.MysqlDMLWorker, workerCount),
+		workerCount:  workerCount,
+		errgroup:     errgroup,
+		statistics:   metrics.NewStatistics(changefeedID, "TxnSink"),
+		errCh:        errCh,
+		isNormal:     1,
+	}
+
+	for i := 0; i < workerCount; i++ {
+		mysqlSink.dmlWorker[i] = worker.NewMysqlDMLWorker(ctx, db, cfg, i, mysqlSink.changefeedID, errgroup, mysqlSink.statistics)
+	}
+	mysqlSink.ddlWorker = worker.NewMysqlDDLWorker(ctx, db, cfg, mysqlSink.changefeedID, errgroup, mysqlSink.statistics)
+	mysqlSink.db = db
+
+	go mysqlSink.run()
+
+	return &mysqlSink, nil
+}
+
 func (s *MysqlSink) run() {
 	for i := 0; i < s.workerCount; i++ {
 		s.dmlWorker[i].Run()
