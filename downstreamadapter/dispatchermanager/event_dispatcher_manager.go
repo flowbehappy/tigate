@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/ticdc/pkg/apperror"
 	"github.com/pingcap/ticdc/pkg/node"
+	"github.com/pingcap/ticdc/utils/heap"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/filter"
@@ -505,37 +506,42 @@ func (e *EventDispatcherManager) aggregateDispatcherHeartbeats(needCompleteStatu
 	removedDispatcherSchemaIDs := make([]int64, 0)
 	heartBeatInfo := &dispatcher.HeartBeatInfo{}
 
-	e.dispatcherMap.ForEach(func(id common.DispatcherID, dispatcherItem *dispatcher.Dispatcher) {
-		dispatcherItem.GetHeartBeatInfo(heartBeatInfo)
-		// If the dispatcher is in removing state, we need to check if it's closed successfully.
-		// If it's closed successfully, we could clean it up.
-		// TODO: we need to consider how to deal with the checkpointTs of the removed dispatcher if the message will be discarded.
-		if heartBeatInfo.IsRemoving {
-			watermark, ok := dispatcherItem.TryClose()
-			if ok {
-				// remove successfully
-				message.Watermark.UpdateMin(watermark)
-				// If the dispatcher is removed successfully, we need to add the tableSpan into message whether needCompleteStatus is true or not.
-				message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
-					ID:              id.ToPB(),
-					ComponentStatus: heartbeatpb.ComponentState_Stopped,
-					CheckpointTs:    watermark.CheckpointTs,
-				})
-				toRemoveDispatcherIDs = append(toRemoveDispatcherIDs, id)
-				removedDispatcherSchemaIDs = append(removedDispatcherSchemaIDs, dispatcherItem.GetSchemaID())
+	if needCompleteStatus {
+		e.dispatcherMap.ForEach(func(id common.DispatcherID, dispatcherItem *dispatcher.Dispatcher) {
+			dispatcherItem.GetHeartBeatInfo(heartBeatInfo)
+			// If the dispatcher is in removing state, we need to check if it's closed successfully.
+			// If it's closed successfully, we could clean it up.
+			// TODO: we need to consider how to deal with the checkpointTs of the removed dispatcher if the message will be discarded.
+			if heartBeatInfo.IsRemoving {
+				watermark, ok := dispatcherItem.TryClose()
+				if ok {
+					// remove successfully
+					message.Watermark.UpdateMin(watermark)
+					// If the dispatcher is removed successfully, we need to add the tableSpan into message whether needCompleteStatus is true or not.
+					message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
+						ID:              id.ToPB(),
+						ComponentStatus: heartbeatpb.ComponentState_Stopped,
+						CheckpointTs:    watermark.CheckpointTs,
+					})
+					toRemoveDispatcherIDs = append(toRemoveDispatcherIDs, id)
+					removedDispatcherSchemaIDs = append(removedDispatcherSchemaIDs, dispatcherItem.GetSchemaID())
+				}
 			}
-		}
 
-		message.Watermark.UpdateMin(heartBeatInfo.Watermark)
-		if needCompleteStatus {
-			message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
-				ID:                 id.ToPB(),
-				ComponentStatus:    heartBeatInfo.ComponentStatus,
-				CheckpointTs:       heartBeatInfo.Watermark.CheckpointTs,
-				EventSizePerSecond: heartBeatInfo.EventSizePerSecond,
-			})
-		}
-	})
+			message.Watermark.UpdateMin(heartBeatInfo.Watermark)
+			if needCompleteStatus {
+				message.Statuses = append(message.Statuses, &heartbeatpb.TableSpanStatus{
+					ID:                 id.ToPB(),
+					ComponentStatus:    heartBeatInfo.ComponentStatus,
+					CheckpointTs:       heartBeatInfo.Watermark.CheckpointTs,
+					EventSizePerSecond: heartBeatInfo.EventSizePerSecond,
+				})
+			}
+		})
+	} else {
+		minWatermark := e.dispatcherMap.GetMinWatermark()
+		message.Watermark = &minWatermark
+	}
 
 	for idx, id := range toRemoveDispatcherIDs {
 		e.cleanTableEventDispatcher(id, removedDispatcherSchemaIDs[idx])
@@ -617,7 +623,15 @@ func (e *EventDispatcherManager) GetAllDispatchers(schemaID int64) []common.Disp
 }
 
 type DispatcherMap struct {
-	m sync.Map
+	m              sync.Map
+	resolvedTsHeap struct {
+		sync.RWMutex
+		h *heap.Heap[*dispatcher.TsItem]
+	}
+	checkpointsHeap struct {
+		sync.RWMutex
+		h *heap.Heap[*dispatcher.TsItem]
+	}
 }
 
 func newDispatcherMap() *DispatcherMap {
@@ -644,11 +658,21 @@ func (d *DispatcherMap) Get(id common.DispatcherID) (*dispatcher.Dispatcher, boo
 }
 
 func (d *DispatcherMap) Delete(id common.DispatcherID) {
+	dispatcherItem, ok := d.m.Load(id)
+	if ok {
+		log.Error("delete an empty dispatcher", zap.Any("dispatcher id", id))
+	}
 	d.m.Delete(id)
+
+	d.resolvedTsHeap.Lock()
+	defer d.resolvedTsHeap.Unlock()
+	d.resolvedTsHeap.h.Remove(dispatcherItem.(*dispatcher.Dispatcher).ResolvedTs)
 }
 
 func (d *DispatcherMap) Set(id common.DispatcherID, dispatcher *dispatcher.Dispatcher) {
 	d.m.Store(id, dispatcher)
+	dispatcher.ResolvedTs.SetOnUpdate(d.onUpdateResolvedTs)
+	d.onUpdateResolvedTs(dispatcher.ResolvedTs)
 }
 
 func (d *DispatcherMap) ForEach(fn func(id common.DispatcherID, dispatcher *dispatcher.Dispatcher)) {
@@ -656,4 +680,35 @@ func (d *DispatcherMap) ForEach(fn func(id common.DispatcherID, dispatcher *disp
 		fn(key.(common.DispatcherID), value.(*dispatcher.Dispatcher))
 		return true
 	})
+}
+
+func (d *DispatcherMap) onUpdateResolvedTs(tsItem *dispatcher.TsItem) {
+	d.resolvedTsHeap.Lock()
+	defer d.resolvedTsHeap.Unlock()
+	d.resolvedTsHeap.h.AddOrUpdate(tsItem)
+}
+
+func (d *DispatcherMap) onUpdateCheckpointTs(tsItem *dispatcher.TsItem) {
+	d.resolvedTsHeap.Lock()
+	defer d.resolvedTsHeap.Unlock()
+	d.checkpointsHeap.h.AddOrUpdate(tsItem)
+}
+
+func (d *DispatcherMap) GetMinWatermark() (w heartbeatpb.Watermark) {
+	d.resolvedTsHeap.RLock()
+	r, ok := d.resolvedTsHeap.h.PeekTop()
+	d.resolvedTsHeap.RUnlock()
+	if ok {
+		return
+	}
+	w.ResolvedTs = r.Get()
+	w.CheckpointTs = r.GetCheckpointTs()
+
+	// TODO: implement checkpointsHeap
+	// c, ok := d.checkpointsHeap.PeekTop()
+	// if ok {
+	// 	return
+	// }
+	// w.CheckpointTs = c.Get()
+	return
 }

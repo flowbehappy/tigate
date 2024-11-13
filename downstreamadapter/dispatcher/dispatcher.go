@@ -102,11 +102,9 @@ type Dispatcher struct {
 	// if syncPointInfo is not nil, means enable Sync Point feature,
 	syncPointConfig *syncpoint.SyncPointConfig
 
-	// the max resolvedTs received by the dispatcher
-	resolvedTs *TsWithMutex
-
 	// blockEventStatus is used to store the current pending ddl/sync point event and its block status.
 	blockEventStatus BlockEventStatus
+	ResolvedTs       *TsItem // The largest commitTs - 1 of the events received by the dispatcher.
 
 	// tableProgress is used to calculate the checkpointTs of the dispatcher
 	tableProgress *types.TableProgress
@@ -151,7 +149,7 @@ func NewDispatcher(
 		blockStatusesChan:     blockStatusesChan,
 		syncPointConfig:       syncPointConfig,
 		componentStatus:       newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
-		resolvedTs:            newTsWithMutex(startTs),
+		ResolvedTs:            newTsItem(startTs),
 		filterConfig:          filterConfig,
 		isRemoving:            atomic.Bool{},
 		blockEventStatus:      BlockEventStatus{blockPendingEvent: nil},
@@ -245,7 +243,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 	for _, dispatcherEvent := range dispatcherEvents {
 		event := dispatcherEvent.Event
 		// Pre-check, make sure the event is not stale
-		if event.GetCommitTs() < d.resolvedTs.Get() {
+		if event.GetCommitTs() < d.ResolvedTs.Get() {
 			log.Info("Received a stale event, should ignore it",
 				zap.Any("commitTs", event.GetCommitTs()),
 				zap.Any("seq", event.GetSeq()),
@@ -257,7 +255,7 @@ func (d *Dispatcher) HandleEvents(dispatcherEvents []DispatcherEvent, wakeCallba
 
 		switch event.GetType() {
 		case commonEvent.TypeResolvedEvent:
-			d.resolvedTs.Set(event.(commonEvent.ResolvedEvent).ResolvedTs)
+			d.ResolvedTs.Set(event.(commonEvent.ResolvedEvent).ResolvedTs)
 		case commonEvent.TypeDMLEvent:
 			block = true
 			dml := event.(*commonEvent.DMLEvent)
@@ -449,7 +447,7 @@ func (d *Dispatcher) GetStartTs() uint64 {
 }
 
 func (d *Dispatcher) GetResolvedTs() uint64 {
-	return d.resolvedTs.Get()
+	return d.ResolvedTs.Get()
 }
 
 func (d *Dispatcher) GetCheckpointTs() uint64 {

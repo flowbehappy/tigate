@@ -178,29 +178,6 @@ func (s *ComponentStateWithMutex) Get() heartbeatpb.ComponentState {
 	return s.componentStatus
 }
 
-type TsWithMutex struct {
-	mutex sync.Mutex
-	ts    uint64
-}
-
-func newTsWithMutex(ts uint64) *TsWithMutex {
-	return &TsWithMutex{
-		ts: ts,
-	}
-}
-
-func (r *TsWithMutex) Set(ts uint64) {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-	r.ts = ts
-}
-
-func (r *TsWithMutex) Get() uint64 {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-	return r.ts
-}
-
 /*
 HeartBeatInfo is used to collect the message for HeartBeatRequest for each dispatcher.
 Mainly about the progress of each dispatcher:
@@ -344,4 +321,53 @@ func GetDispatcherStatusDynamicStream() dynstream.DynamicStream[common.GID, comm
 
 func SetDispatcherStatusDynamicStream(dynamicStream dynstream.DynamicStream[common.GID, common.DispatcherID, DispatcherStatusWithID, *Dispatcher, *DispatcherStatusHandler]) {
 	dispatcherStatusDynamicStream = dynamicStream
+}
+
+type TsItem struct {
+	sync.RWMutex
+	*Dispatcher
+	ts      uint64
+	heapIdx int
+
+	onUpdate func(*TsItem)
+}
+
+func newTsItem(ts uint64) *TsItem {
+	return &TsItem{
+		ts: ts,
+	}
+}
+
+func (d *TsItem) SetHeapIndex(idx int) {
+	d.heapIdx = idx
+}
+
+func (d *TsItem) GetHeapIndex() int {
+	return d.heapIdx
+}
+
+func (d *TsItem) LessThan(other *TsItem) bool {
+	return d.ts < other.ts
+}
+
+func (r *TsItem) Set(ts uint64) {
+	r.Lock()
+	r.ts = ts
+	r.Unlock()
+
+	if r.onUpdate != nil {
+		r.onUpdate(r)
+	}
+}
+
+func (r *TsItem) Get() uint64 {
+	r.RLock()
+	defer r.RUnlock()
+	return r.ts
+}
+
+func (r *TsItem) SetOnUpdate(f func(*TsItem)) {
+	r.Lock()
+	defer r.Unlock()
+	r.onUpdate = f
 }
