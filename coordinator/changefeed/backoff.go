@@ -43,13 +43,24 @@ const (
 type Backoff struct {
 	id common.ChangeFeedID
 
-	isRestarting  *atomic.Bool
-	failed        *atomic.Bool
-	nextRetryTime *atomic.Time // time of last error for a changefeed
+	// isRestarting is true when the changefeed meet an error and is in the process of restarting,
+	// it will be set to false in the operator.AddMaintainerOperator PostFinish callback
+	isRestarting *atomic.Bool
+	// failed is true when the changefeed is not need to retry,
+	// it will be set to true when the backoff is stopped and will be reset when resume the changefeed
+	failed *atomic.Bool
 
-	backoffInterval time.Duration               // the interval for restarting a changefeed in 'error' state
-	errBackoff      *backoff.ExponentialBackOff // an exponential backoff for restarting a changefeed
+	// retrying is true when the changefeed is in the process of retrying
+	retrying *atomic.Bool
+	// nextRetryTime is the time of the next retry, when scheduling the changefeed, it will be checked
+	nextRetryTime *atomic.Time
 
+	// backoffInterval is the interval for restarting a changefeed in 'error' state
+	backoffInterval time.Duration
+	// errBackoff an exponential backoff for restarting a changefeed
+	errBackoff *backoff.ExponentialBackOff
+
+	// checkpointTs is the last reported checkpointTs of the changefeed
 	checkpointTs model.Ts
 
 	changefeedErrorStuckDuration time.Duration
@@ -63,6 +74,7 @@ func NewBackoff(id common.ChangeFeedID, changefeedErrorStuckDuration time.Durati
 		changefeedErrorStuckDuration: changefeedErrorStuckDuration,
 		isRestarting:                 atomic.NewBool(false),
 		failed:                       atomic.NewBool(false),
+		retrying:                     atomic.NewBool(false),
 		nextRetryTime:                atomic.NewTime(time.Time{}),
 		checkpointTs:                 checkpointTs,
 	}
@@ -92,7 +104,7 @@ func (m *Backoff) resetErrRetry() {
 	m.errBackoff.Reset()
 	m.nextRetryTime = atomic.NewTime(time.Time{})
 	m.failed.Store(false)
-	m.isRestarting.Store(false)
+	m.retrying.Store(false)
 }
 
 func (m *Backoff) CheckStatus(status *heartbeatpb.MaintainerStatus) (bool, model.FeedState, *heartbeatpb.RunningError) {
@@ -101,7 +113,7 @@ func (m *Backoff) CheckStatus(status *heartbeatpb.MaintainerStatus) (bool, model
 	}
 	if m.checkpointTs < status.CheckpointTs {
 		m.checkpointTs = status.CheckpointTs
-		if m.isRestarting.Load() {
+		if m.retrying.Load() {
 			// the checkpointTs is advanced, we should reset the error retry、
 			log.Info("changefeed is recovered from warning state,"+
 				"its checkpointTs is greater than lastRetryCheckpointTs,"+
@@ -117,6 +129,15 @@ func (m *Backoff) CheckStatus(status *heartbeatpb.MaintainerStatus) (bool, model
 	}
 	// if the checkpointTs is not advanced, we should check if we should retry the changefeed
 	if len(status.Err) > 0 {
+		if m.isRestarting.Load() {
+			log.Info("changefeed is already in restarting progress, ignore the error",
+				zap.String("changefeed", m.id.Name()),
+				zap.Any("err", status.Err[len(status.Err)-1].Message),
+			)
+		}
+
+		// set the changefeed state to warning and waiting start the changefeed
+		m.isRestarting.Store(true)
 		// if the checkpointTs is not advanced for a long time, we should stop the changefeed
 		failed, err := m.HandleError(status.Err)
 		if failed {
@@ -128,8 +149,8 @@ func (m *Backoff) CheckStatus(status *heartbeatpb.MaintainerStatus) (bool, model
 	return false, model.StateNormal, nil
 }
 
-func (m *Backoff) RestartingFinished() {
-	m.isRestarting.Store(true)
+func (m *Backoff) StartFinished() {
+	m.isRestarting.Store(false)
 }
 
 // ShouldFailChangefeed return true if a running error contains a changefeed not retry error.
@@ -147,14 +168,11 @@ func (m *Backoff) HandleError(errs []*heartbeatpb.RunningError) (bool, *heartbea
 	}
 
 	var lastError = errs[len(errs)-1]
-	// if any error is occurred , we should set the changefeed state to warning and stop the changefeed
-	log.Warn("changefeed meets an error, will be stopped",
-		zap.Any("error", errs))
 
-	if !m.isRestarting.Load() {
+	if !m.retrying.Load() {
 		// errBackoff may be stopped, reset it before the first retry.
 		m.resetErrRetry()
-		m.isRestarting.Store(true)
+		m.retrying.Store(true)
 	}
 	// set the next retry time
 	m.backoffInterval = m.errBackoff.NextBackOff()
@@ -171,6 +189,11 @@ func (m *Backoff) HandleError(errs []*heartbeatpb.RunningError) (bool, *heartbea
 		)
 		return true, lastError
 	}
+	// if any error is occurred , we should set the changefeed state to warning and stop the changefeed
+	log.Warn("changefeed meets an error, will be stopped",
+		zap.String("namespace", m.id.Name()),
+		zap.Time("nextRetryTime", m.nextRetryTime.Load()),
+		zap.Any("error", errs))
 	// patch the last error to changefeed info
 	return false, lastError
 }

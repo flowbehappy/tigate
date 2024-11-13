@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestShouldFailWhenRetry(t *testing.T) {
+func TestRetry(t *testing.T) {
 	backoff := NewBackoff(common.NewChangeFeedIDWithName("test"), time.Minute*30, 1)
 	require.True(t, backoff.ShouldRun())
 
@@ -43,7 +43,7 @@ func TestShouldFailWhenRetry(t *testing.T) {
 	require.Equal(t, model.StateWarning, state)
 	require.NotNil(t, err)
 	require.False(t, backoff.ShouldRun())
-	require.True(t, backoff.isRestarting.Load())
+	require.True(t, backoff.retrying.Load())
 
 	// advance checkpointTs
 	changefeed, state, err = backoff.CheckStatus(&heartbeatpb.MaintainerStatus{
@@ -54,7 +54,7 @@ func TestShouldFailWhenRetry(t *testing.T) {
 	require.Equal(t, model.StateNormal, state)
 	require.Nil(t, err)
 	require.True(t, backoff.ShouldRun())
-	require.False(t, backoff.isRestarting.Load())
+	require.False(t, backoff.retrying.Load())
 
 	//fail
 	changefeed, state, err = backoff.CheckStatus(&heartbeatpb.MaintainerStatus{
@@ -68,9 +68,40 @@ func TestShouldFailWhenRetry(t *testing.T) {
 	require.Equal(t, model.StateFailed, state)
 	require.NotNil(t, err)
 	require.False(t, backoff.ShouldRun())
-	require.False(t, backoff.isRestarting.Load())
+	require.False(t, backoff.retrying.Load())
 
 	backoff.resetErrRetry()
 	require.True(t, backoff.ShouldRun())
-	require.False(t, backoff.isRestarting.Load())
+	require.False(t, backoff.retrying.Load())
+}
+
+func TestErrorReportedWhenRetrying(t *testing.T) {
+	backoff := NewBackoff(common.NewChangeFeedIDWithName("test"), time.Minute*30, 1)
+	require.True(t, backoff.ShouldRun())
+
+	changefeed, state, err := backoff.CheckStatus(&heartbeatpb.MaintainerStatus{
+		CheckpointTs: 1,
+		Err: []*heartbeatpb.RunningError{
+			{Message: "test"}},
+	})
+	require.NotNil(t, err)
+	require.True(t, changefeed)
+	require.Equal(t, model.StateWarning, state)
+	require.True(t, backoff.retrying.Load())
+	require.True(t, backoff.isRestarting.Load())
+	backoffInterval := backoff.backoffInterval
+
+	// report error again, the backoff interval is changed
+	changefeed, state, err = backoff.CheckStatus(&heartbeatpb.MaintainerStatus{
+		CheckpointTs: 1,
+		Err: []*heartbeatpb.RunningError{
+			{Message: "test"}},
+	})
+	require.NotNil(t, err)
+	require.True(t, changefeed)
+	require.Equal(t, model.StateWarning, state)
+	require.True(t, backoff.retrying.Load())
+	require.True(t, backoff.isRestarting.Load())
+	// the interval is increased, todo: maybe we should ignore the error when retrying
+	require.True(t, backoffInterval < backoff.backoffInterval)
 }
