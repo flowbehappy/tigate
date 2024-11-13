@@ -88,10 +88,20 @@ jobs:
           pwd && ls -l bin/ && ls -l tools/bin/
           export TICDC_NEWARCH=true && make integration_test CASE=charset_gbk 
 
+      - name: Test changefeed_finish
+        if: ${{ success() }}
+        run: |
+          export TICDC_NEWARCH=true && make integration_test CASE=changefeed_finish
+        
       - name: Test changefeed_pause_resume
         if: ${{ success() }}
         run: |
           export TICDC_NEWARCH=true && make integration_test CASE=changefeed_pause_resume
+
+      - name: Test changefeed_reconstruct
+        if: ${{ success() }}
+        run: |
+          export TICDC_NEWARCH=true && make integration_test CASE=changefeed_reconstruct
 
       # only upload logs of the last case
       - name: Copy logs to hack permission

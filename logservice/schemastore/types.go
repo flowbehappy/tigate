@@ -73,6 +73,6 @@ type BasicPartitionInfo map[int64]interface{}
 //msgp:ignore DDLJobWithCommitTs
 type DDLJobWithCommitTs struct {
 	Job *model.Job
-	// the commitTs of the rawKVEntry which contains the DDL job
+	// the commitTs of the rawKVEntry which contains the DDL job, which euqals to Job.BinlogInfo.FinishedTS
 	CommitTs uint64
 }
