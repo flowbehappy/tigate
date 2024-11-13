@@ -187,7 +187,14 @@ func (d *Dispatcher) HandleDispatcherStatus(dispatcherStatus *heartbeatpb.Dispat
 			if action.Action == heartbeatpb.Action_Write {
 				err := d.sink.WriteBlockEvent(pendingEvent, d.tableProgress)
 				if err != nil {
-					d.errCh <- err
+					select {
+					case d.errCh <- err:
+					default:
+						log.Error("error channel is full, discard error",
+							zap.Any("ChangefeedID", d.changefeedID.String()),
+							zap.Any("DispatcherID", d.id.String()),
+							zap.Error(err))
+					}
 					return
 				}
 			} else {
@@ -338,7 +345,14 @@ func (d *Dispatcher) dealWithBlockEvent(event commonEvent.BlockEvent) {
 	if !d.shouldBlock(event) {
 		err := d.sink.WriteBlockEvent(event, d.tableProgress)
 		if err != nil {
-			d.errCh <- err
+			select {
+			case d.errCh <- err:
+			default:
+				log.Error("error channel is full, discard error",
+					zap.Any("ChangefeedID", d.changefeedID.String()),
+					zap.Any("DispatcherID", d.id.String()),
+					zap.Error(err))
+			}
 			return
 		}
 		if event.GetNeedAddedTables() != nil || event.GetNeedDroppedTables() != nil {

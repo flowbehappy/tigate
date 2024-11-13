@@ -192,7 +192,13 @@ func (h *SchedulerDispatcherRequestHandler) Handle(eventDispatcherManager *Event
 	if len(infos) > 0 {
 		err := eventDispatcherManager.newDispatchers(infos)
 		if err != nil {
-			eventDispatcherManager.errCh <- err
+			select {
+			case eventDispatcherManager.errCh <- err:
+			default:
+				log.Error("error channel is full, discard error",
+					zap.Any("ChangefeedID", eventDispatcherManager.changefeedID.String()),
+					zap.Error(err))
+			}
 		}
 	}
 	return false
