@@ -117,19 +117,19 @@ jobs:
 
 
   dispatcher_unit_test:
-      runs-on: ubuntu-latest 
-      name: Dispatcher Unit Test
-      steps:
-        - name: Check out code
-          uses: actions/checkout@v2
+    runs-on: ubuntu-latest 
+    name: Dispatcher Unit Test
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
 
-        - name: Setup Go environment
-          uses: actions/setup-go@v3
-          with:
-            go-version: '1.21'
+      - name: Setup Go environment
+        uses: actions/setup-go@v3
+        with:
+          go-version: '1.21'
 
-        -name: Unit Test
-          run: cd pkg/sink/mysql
-              go test --tags=intest
-              cd ../../../downstreamadapter/sink/
-              go test --tags=intest
+      -name: Unit Test
+        run: cd pkg/sink/mysql
+            go test --tags=intest
+            cd ../../../downstreamadapter/sink/
+            go test --tags=intest
