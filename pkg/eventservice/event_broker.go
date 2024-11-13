@@ -35,6 +35,7 @@ var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.
 var metricEventBrokerDropTaskCount = metrics.EventServiceDropScanTaskCount
 var metricEventBrokerDropResolvedTsCount = metrics.EventServiceDropResolvedTsCount
 var metricScanTaskQueueDuration = metrics.EventServiceScanTaskQueueDuration
+var metricEventBrokerHandleDuration = metrics.EventServiceHandleDuration
 
 // eventBroker get event from the eventStore, and send the event to the dispatchers.
 // Every TiDB cluster has a eventBroker.
@@ -141,13 +142,11 @@ func (c *eventBroker) sendWatermark(
 	counter prometheus.Counter,
 ) {
 	c.emitSyncPointEventIfNeeded(watermark, d, server)
-
 	re := pevent.NewResolvedEvent(watermark, d.info.GetID())
 	resolvedEvent := newWrapResolvedEvent(
 		server,
 		re,
 		d.getEventSenderState())
-
 	select {
 	case c.messageCh <- resolvedEvent:
 		if counter != nil {
@@ -185,7 +184,9 @@ func (c *eventBroker) runGenTasks(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case stat := <-c.notifyCh:
-				c.ds.In() <- newScanTask(stat)
+				log.Info("receive dispatcher stat", zap.Stringer("dispatcher", stat.info.GetID()))
+				stat.watermark.Store(stat.resolvedTs.Load())
+				//c.ds.In() <- newScanTask(stat)
 			}
 		}
 	}()
@@ -586,7 +587,6 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 				lag := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
 				c.metricEventServicePullerResolvedTs.Set(float64(phyResolvedTs))
 				c.metricEventServiceResolvedTsLag.Set(lag)
-
 				lag = float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dispatcherMinWaterMark)) / 1e3
 				c.metricEventServiceDispatcherResolvedTs.Set(lag)
 			}
