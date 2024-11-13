@@ -637,6 +637,13 @@ type DispatcherMap struct {
 func newDispatcherMap() *DispatcherMap {
 	return &DispatcherMap{
 		m: sync.Map{},
+		resolvedTsHeap: struct {
+			sync.RWMutex
+			h *heap.Heap[*dispatcher.TsItem]
+		}{
+			RWMutex: sync.RWMutex{},
+			h:       heap.NewHeap[*dispatcher.TsItem](),
+		},
 	}
 }
 
@@ -671,6 +678,7 @@ func (d *DispatcherMap) Delete(id common.DispatcherID) {
 
 func (d *DispatcherMap) Set(id common.DispatcherID, dispatcher *dispatcher.Dispatcher) {
 	d.m.Store(id, dispatcher)
+	dispatcher.ResolvedTs.Dispatcher = dispatcher
 	dispatcher.ResolvedTs.SetOnUpdate(d.onUpdateResolvedTs)
 	d.onUpdateResolvedTs(dispatcher.ResolvedTs)
 }
