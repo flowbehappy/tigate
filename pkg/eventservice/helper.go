@@ -1,6 +1,7 @@
 package eventservice
 
 import (
+	"sync"
 	"time"
 
 	"github.com/pingcap/log"
@@ -54,3 +55,8 @@ func (h *dispatcherEventsHandler) GetArea(path common.DispatcherID, dest *eventB
 func (h *dispatcherEventsHandler) GetTimestamp(event scanTask) dynstream.Timestamp { return 0 }
 func (h *dispatcherEventsHandler) IsPaused(event scanTask) bool                    { return false }
 func (h *dispatcherEventsHandler) OnDrop(event scanTask)                           {}
+
+type mergeChannel struct {
+	ch chan *dispatcherStat
+	m  sync.Map
+}
