@@ -295,6 +295,10 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 		schemaIds = append(schemaIds, info.SchemaID)
 	}
 
+	if len(dispatcherIds) == 0 {
+		return nil
+	}
+
 	// we batch the creatation for the dispatchers,
 	// mainly because we need to batch the query for startTs
 	newStartTsList, err := e.sink.CheckStartTsList(tableIds, startTsList)
