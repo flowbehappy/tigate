@@ -112,7 +112,7 @@ func NewEventDispatcherManager(changefeedID common.ChangeFeedID,
 		maintainerID:                   maintainerID,
 		statusesChan:                   make(chan *heartbeatpb.TableSpanStatus, 8192),
 		blockStatusesChan:              make(chan *heartbeatpb.TableSpanBlockStatus, 1024*1024),
-		errCh:                          make(chan error, 16),
+		errCh:                          make(chan error, 1),
 		cancel:                         cancel,
 		config:                         cfConfig,
 		schemaIDToDispatchers:          dispatcher.NewSchemaIDToDispatchers(),
@@ -396,19 +396,16 @@ func (e *EventDispatcherManager) collectErrors(ctx context.Context) {
 			e.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
 
 			// resend message until the event dispatcher manager is closed
-			// In normal, the goroutine only exists for a very short time.
-			go func(ctx context.Context, message heartbeatpb.HeartBeatRequest) {
-				ticker := time.NewTicker(time.Second * 5)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-ticker.C:
-						e.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
-					}
+			ticker := time.NewTicker(time.Second * 5)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					e.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
 				}
-			}(ctx, message)
+			}
 		}
 	}
 }
