@@ -74,6 +74,8 @@ message DispatcherConfig {
     uint64 startTs = 2;
     DispatcherID dispatcherID = 3;
     int64 schemaID = 4;
+    // it's the pd time when scheduling the dispatcher, for MySQL sink event before this tso should use replace mode
+    uint64 current_pd_ts = 5;
 }
 
 message ScheduleDispatcherRequest {

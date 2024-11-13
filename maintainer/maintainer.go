@@ -122,13 +122,15 @@ func NewMaintainer(cfID common.ChangeFeedID,
 	stream dynstream.DynamicStream[int, common.GID, *Event, *Maintainer, *StreamHandler],
 	taskScheduler threadpool.ThreadPool,
 	pdAPI pdutil.PDAPIClient,
+	tsoClient replica.TSOClient,
 	regionCache split.RegionCache,
 	checkpointTs uint64,
 ) *Maintainer {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, tsoClient,
+		heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
@@ -140,7 +142,7 @@ func NewMaintainer(cfID common.ChangeFeedID,
 		stream:            stream,
 		taskScheduler:     taskScheduler,
 		startCheckpointTs: checkpointTs,
-		controller: NewController(cfID, checkpointTs, pdAPI, regionCache, taskScheduler,
+		controller: NewController(cfID, checkpointTs, pdAPI, tsoClient, regionCache, taskScheduler,
 			cfg.Config, ddlSpan, conf.AddTableBatchSize, time.Duration(conf.CheckBalanceInterval)),
 		mc:              mc,
 		state:           heartbeatpb.ComponentState_Working,
@@ -183,6 +185,7 @@ func NewMaintainerForRemove(cfID common.ChangeFeedID,
 	stream dynstream.DynamicStream[int, common.GID, *Event, *Maintainer, *StreamHandler],
 	taskScheduler threadpool.ThreadPool,
 	pdAPI pdutil.PDAPIClient,
+	tsoClient replica.TSOClient,
 	regionCache split.RegionCache,
 ) *Maintainer {
 	unused := &config.ChangeFeedInfo{
@@ -190,7 +193,8 @@ func NewMaintainerForRemove(cfID common.ChangeFeedID,
 		SinkURI:      "",
 		Config:       config.GetDefaultReplicaConfig(),
 	}
-	m := NewMaintainer(cfID, conf, unused, selfNode, stream, taskScheduler, pdAPI, regionCache, 0)
+	m := NewMaintainer(cfID, conf, unused, selfNode, stream, taskScheduler, pdAPI,
+		tsoClient, regionCache, 0)
 	m.cascadeRemoving = true
 	// setup period event
 	SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{

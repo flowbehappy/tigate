@@ -309,6 +309,7 @@ func (db *ReplicationDB) ReplaceReplicaSet(old *SpanReplication, newSpans []*hea
 			NewReplicaSet(
 				old.ChangefeedID,
 				common.NewDispatcherID(),
+				old.GetTsoClient(),
 				old.GetSchemaID(),
 				span, checkpointTs))
 	}
