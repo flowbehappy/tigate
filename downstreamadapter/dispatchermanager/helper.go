@@ -26,14 +26,15 @@ import (
 type HeartBeatTask struct {
 	taskHandle *threadpool.TaskHandle
 	manager    *EventDispatcherManager
-	counter    int
+	// Used to determine when to collect complete status
+	statusTick int
 }
 
 func newHeartBeatTask(manager *EventDispatcherManager) *HeartBeatTask {
 	taskScheduler := GetHeartBeatTaskScheduler()
 	t := &HeartBeatTask{
-		manager: manager,
-		counter: 0,
+		manager:    manager,
+		statusTick: 0,
 	}
 	t.taskHandle = taskScheduler.Submit(t, time.Now().Add(time.Second*1))
 	return t
@@ -43,11 +44,13 @@ func (t *HeartBeatTask) Execute() time.Time {
 	if t.manager.closed.Load() {
 		return time.Time{}
 	}
-	t.counter = (t.counter + 1) % 10
-	needCompleteStatus := t.counter == 0
-	message := t.manager.CollectHeartbeatInfo(needCompleteStatus)
+	executeInterval := time.Millisecond * 500
+	completeStatusInterval := int(time.Second * 10 / executeInterval)
+	t.statusTick++
+	needCompleteStatus := (t.statusTick)%completeStatusInterval == 0
+	message := t.manager.aggregateDispatcherHeartbeats(needCompleteStatus)
 	t.manager.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: t.manager.GetMaintainerID(), Request: message})
-	return time.Now().Add(time.Second * 1)
+	return time.Now().Add(executeInterval)
 }
 
 func (t *HeartBeatTask) Cancel() {

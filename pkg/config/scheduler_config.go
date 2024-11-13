@@ -78,7 +78,7 @@ func NewDefaultSchedulerConfig() *SchedulerConfig {
 		MaxTaskConcurrency: 10,
 		// TODO: no need to check balance each minute, relax the interval.
 		CheckBalanceInterval: TomlDuration(time.Minute),
-		AddTableBatchSize:    50,
+		AddTableBatchSize:    1000,
 	}
 }
 

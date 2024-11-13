@@ -11,23 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package heartbeatpb
+package replica
 
-import "math"
+import "context"
 
-// UpdateMin updates the watermark with the minimum values of checkpointTs and resolvedTs from another watermark.
-func (w *Watermark) UpdateMin(other Watermark) {
-	if w.CheckpointTs > other.CheckpointTs {
-		w.CheckpointTs = other.CheckpointTs
-	}
-	if w.ResolvedTs > other.ResolvedTs {
-		w.ResolvedTs = other.ResolvedTs
-	}
-}
-
-func NewMaxWatermark() *Watermark {
-	return &Watermark{
-		CheckpointTs: math.MaxUint64,
-		ResolvedTs:   math.MaxUint64,
-	}
+// TSOClient is the client used to get timestamps.
+type TSOClient interface {
+	// GetTS gets a timestamp from PD or TSO microservice.
+	GetTS(ctx context.Context) (int64, int64, error)
 }
