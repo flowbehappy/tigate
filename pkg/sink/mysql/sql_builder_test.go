@@ -167,7 +167,7 @@ func TestBuildInsert(t *testing.T) {
 
 	// case 1: Convert to INSERT INTO
 	exportedSQL := "INSERT INTO `test`.`t` (`id`,`c_tinyint`,`c_smallint`,`c_mediumint`,`c_int`,`c_bigint`,`c_unsigned_tinyint`,`c_unsigned_smallint`,`c_unsigned_mediumint`,`c_unsigned_int`,`c_unsigned_bigint`,`c_float`,`c_double`,`c_decimal`,`c_decimal_2`,`c_unsigned_float`,`c_unsigned_double`,`c_unsigned_decimal`,`c_unsigned_decimal_2`,`c_date`,`c_datetime`,`c_timestamp`,`c_time`,`c_year`,`c_tinytext`,`c_text`,`c_mediumtext`,`c_longtext`,`c_tinyblob`,`c_blob`,`c_mediumblob`,`c_longblob`,`c_char`,`c_varchar`,`c_binary`,`c_varbinary`,`c_enum`,`c_set`,`c_bit`,`c_json`,`name`,`country`,`city`,`description`,`image`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-	sql, args, err := buildInsert(tableInfo, insert, false)
+	sql, args, err := buildInsert(tableInfo, insert, true)
 	require.NoError(t, err)
 	require.Equal(t, exportedSQL, sql)
 	require.Len(t, args, 45)
@@ -175,7 +175,7 @@ func TestBuildInsert(t *testing.T) {
 
 	// case 2: Convert to REPLACE INTO
 	exportedSQL = "REPLACE INTO `test`.`t` (`id`,`c_tinyint`,`c_smallint`,`c_mediumint`,`c_int`,`c_bigint`,`c_unsigned_tinyint`,`c_unsigned_smallint`,`c_unsigned_mediumint`,`c_unsigned_int`,`c_unsigned_bigint`,`c_float`,`c_double`,`c_decimal`,`c_decimal_2`,`c_unsigned_float`,`c_unsigned_double`,`c_unsigned_decimal`,`c_unsigned_decimal_2`,`c_date`,`c_datetime`,`c_timestamp`,`c_time`,`c_year`,`c_tinytext`,`c_text`,`c_mediumtext`,`c_longtext`,`c_tinyblob`,`c_blob`,`c_mediumblob`,`c_longblob`,`c_char`,`c_varchar`,`c_binary`,`c_varbinary`,`c_enum`,`c_set`,`c_bit`,`c_json`,`name`,`country`,`city`,`description`,`image`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-	sql, args, err = buildInsert(tableInfo, insert, true)
+	sql, args, err = buildInsert(tableInfo, insert, false)
 	require.NoError(t, err)
 	require.Equal(t, exportedSQL, sql)
 	require.Len(t, args, 45)

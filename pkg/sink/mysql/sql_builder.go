@@ -37,7 +37,7 @@ type preparedDMLs struct {
 func buildInsert(
 	tableInfo *common.TableInfo,
 	row commonEvent.RowChange,
-	safeMode bool,
+	translateToInsert bool,
 ) (string, []interface{}, error) {
 	args, err := getArgs(&row.Row, tableInfo)
 	if err != nil {
@@ -48,10 +48,10 @@ func buildInsert(
 	}
 
 	var sql string
-	if safeMode {
-		sql = tableInfo.GetPreReplaceSQL()
-	} else {
+	if translateToInsert {
 		sql = tableInfo.GetPreInsertSQL()
+	} else {
+		sql = tableInfo.GetPreReplaceSQL()
 	}
 
 	if sql == "" {
