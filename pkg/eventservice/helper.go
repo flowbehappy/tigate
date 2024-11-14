@@ -73,19 +73,17 @@ func (mc *mergeChannel) TrySend(stat *dispatcherStat) bool {
 		return false
 	}
 	// Store the element in map first, using ID as key and stat as value
-	mc.m.Store(key, stat)
 	// Then send to channel
+	mc.m.Store(key, stat)
 	mc.ch <- stat
 	return true
 }
 
 // Receive gets an element from the channel and removes it from the map
-func (mc *mergeChannel) Receive() chan *dispatcherStat {
-	return mc.ch
-}
-
-func (mc *mergeChannel) Remove(stat *dispatcherStat) {
+func (mc *mergeChannel) Receive() *dispatcherStat {
+	stat := <-mc.ch
 	mc.m.Delete(stat.info.GetID())
+	return stat
 }
 
 // NewMergeChannel creates a new mergeChannel with the specified capacity

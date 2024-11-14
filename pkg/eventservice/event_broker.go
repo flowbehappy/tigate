@@ -183,11 +183,11 @@ func (c *eventBroker) runGenTasks(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case stat := <-c.notifyCh.Receive():
+			default:
+				stat := c.notifyCh.Receive()
 				//log.Info("receive dispatcher stat", zap.Stringer("dispatcher", stat.info.GetID()))
 				//stat.watermark.Store(stat.resolvedTs.Load())
 				c.ds.In() <- newScanTask(stat)
-				c.notifyCh.Remove(stat)
 			}
 		}
 	}()
