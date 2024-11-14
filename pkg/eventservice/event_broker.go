@@ -103,7 +103,7 @@ func newEventBroker(
 		eventStore:              eventStore,
 		mounter:                 pevent.NewMounter(tz),
 		schemaStore:             schemaStore,
-		notifyCh:                make(chan *dispatcherStat, defaultChannelSize*16),
+		notifyCh:                make(chan *dispatcherStat, 1024*1024),
 		dispatchers:             sync.Map{},
 		tableTriggerDispatchers: sync.Map{},
 		msgSender:               mc,
