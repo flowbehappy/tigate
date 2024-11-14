@@ -55,6 +55,12 @@ func (r *ResendTaskMap) Delete(identifier BlockEventIdentifier) {
 	delete(r.m, identifier)
 }
 
+func (r *ResendTaskMap) Len() int {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	return len(r.m)
+}
+
 // Considering the sync point event and ddl event may have the same commitTs,
 // we need to distinguish them.
 type BlockEventIdentifier struct {
