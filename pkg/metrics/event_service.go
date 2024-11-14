@@ -101,6 +101,13 @@ var (
 			Help:      "The duration of handling a scan task",
 			Buckets:   prometheus.DefBuckets,
 		})
+	EventServiceDropNotificationCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_service",
+			Name:      "drop_notification_count",
+			Help:      "The number of notifications dropped",
+		})
 )
 
 // InitMetrics registers all metrics in this file.
@@ -116,4 +123,5 @@ func InitEventServiceMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventServiceDropResolvedTsCount)
 	registry.MustRegister(EventServiceScanTaskQueueDuration)
 	registry.MustRegister(EventServiceHandleDuration)
+	registry.MustRegister(EventServiceDropNotificationCount)
 }

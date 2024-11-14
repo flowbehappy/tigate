@@ -36,6 +36,7 @@ var metricEventBrokerDropTaskCount = metrics.EventServiceDropScanTaskCount
 var metricEventBrokerDropResolvedTsCount = metrics.EventServiceDropResolvedTsCount
 var metricScanTaskQueueDuration = metrics.EventServiceScanTaskQueueDuration
 var metricEventBrokerHandleDuration = metrics.EventServiceHandleDuration
+var metricEventBrokerDropNotificationCount = metrics.EventServiceDropNotificationCount
 
 // eventBroker get event from the eventStore, and send the event to the dispatchers.
 // Every TiDB cluster has a eventBroker.
@@ -106,7 +107,7 @@ func newEventBroker(
 		eventStore:              eventStore,
 		mounter:                 pevent.NewMounter(tz),
 		schemaStore:             schemaStore,
-		notifyCh:                NewMergeChannel(defaultChannelSize * 16),
+		notifyCh:                NewMergeChannel(1000000),
 		dispatchers:             sync.Map{},
 		tableTriggerDispatchers: sync.Map{},
 		msgSender:               mc,
@@ -627,7 +628,10 @@ func (c *eventBroker) close() {
 func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64) {
 	if d.onSubscriptionResolvedTs(resolvedTs) {
 		// Note: don't block the caller of this function.
-		c.notifyCh.TrySend(d)
+		ok := c.notifyCh.TrySend(d)
+		if !ok {
+			metricEventBrokerDropNotificationCount.Inc()
+		}
 	}
 }
 
