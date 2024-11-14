@@ -1,6 +1,8 @@
 package eventservice
 
 import (
+	"time"
+
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/common"
 	"github.com/pingcap/ticdc/utils/dynstream"
@@ -21,10 +23,18 @@ func (h *dispatcherEventsHandler) Handle(broker *eventBroker, tasks ...scanTask)
 	if len(tasks) != 1 {
 		log.Panic("only one task is allowed")
 	}
-	task := tasks[0]
+	return doHandle(broker, tasks[0])
+}
+
+func doHandle(broker *eventBroker, task scanTask) bool {
+	startTime := time.Now()
+	defer func() {
+		metricEventBrokerHandleDuration.Observe(float64(time.Since(startTime).Milliseconds()))
+	}()
 	needScan, _ := broker.checkNeedScan(task)
 	if !needScan {
 		task.handle()
+		task.dispatcherStat.isHandling.CompareAndSwap(true, false)
 		return false
 	}
 	// The dispatcher has new events. We need to push the task to the task pool.
@@ -47,4 +57,6 @@ func (h *dispatcherEventsHandler) GetArea(path common.DispatcherID, dest *eventB
 }
 func (h *dispatcherEventsHandler) GetTimestamp(event scanTask) dynstream.Timestamp { return 0 }
 func (h *dispatcherEventsHandler) IsPaused(event scanTask) bool                    { return false }
-func (h *dispatcherEventsHandler) OnDrop(event scanTask)                           {}
+func (h *dispatcherEventsHandler) OnDrop(event scanTask) {
+	event.handle()
+}
