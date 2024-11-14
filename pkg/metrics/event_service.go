@@ -64,7 +64,7 @@ var (
 			Help:      "The duration of scanning a data range from eventStore",
 			Buckets:   prometheus.DefBuckets,
 		})
-	EventServiceDispatcherGuage = prometheus.NewGaugeVec(
+	EventServiceDispatcherGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_service",
@@ -118,7 +118,7 @@ func InitEventServiceMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventServiceResolvedTsGauge)
 	registry.MustRegister(EventServiceResolvedTsLagGauge)
 	registry.MustRegister(EventServiceScanDuration)
-	registry.MustRegister(EventServiceDispatcherGuage)
+	registry.MustRegister(EventServiceDispatcherGauge)
 	registry.MustRegister(EventServiceDropScanTaskCount)
 	registry.MustRegister(EventServiceDropResolvedTsCount)
 	registry.MustRegister(EventServiceScanTaskQueueDuration)
