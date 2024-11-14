@@ -75,8 +75,13 @@ func (mc *mergeChannel) TrySend(stat *dispatcherStat) bool {
 	// Store the element in map first, using ID as key and stat as value
 	// Then send to channel
 	mc.m.Store(key, stat)
-	mc.ch <- stat
-	return true
+	select {
+	case mc.ch <- stat:
+		return true
+	default:
+		mc.m.Delete(key)
+		return false
+	}
 }
 
 // Receive gets an element from the channel and removes it from the map
