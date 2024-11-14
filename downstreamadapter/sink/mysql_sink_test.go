@@ -131,7 +131,7 @@ func TestMysqlSinkBasicFunctionality(t *testing.T) {
 // test the situation meets error when executing DML
 // whether the sink state is correct
 func TestMysqlSinkMeetsDMLError(t *testing.T) {
-	sink, mock := mysqlSinkForTest(t)
+	sink, mock := MysqlSinkForTest()
 	tableProgress := types.NewTableProgress()
 	ts, isEmpty := tableProgress.GetCheckpointTs()
 	require.NotEqual(t, ts, 0)
@@ -178,7 +178,7 @@ func TestMysqlSinkMeetsDMLError(t *testing.T) {
 // test the situation meets error when executing DDL
 // whether the sink state is correct
 func TestMysqlSinkMeetsDDLError(t *testing.T) {
-	sink, mock := mysqlSinkForTest(t)
+	sink, mock := MysqlSinkForTest()
 	tableProgress := types.NewTableProgress()
 	ts, isEmpty := tableProgress.GetCheckpointTs()
 	require.NotEqual(t, ts, 0)
