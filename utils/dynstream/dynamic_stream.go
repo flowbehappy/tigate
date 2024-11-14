@@ -158,7 +158,7 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 		trackTopPaths:   TrackTopPaths,
 		baseStreamCount: option.StreamCount,
 
-		eventChan: make(chan T, 1024),
+		eventChan: make(chan T, option.InputBufferSize),
 		wakeChan:  make(chan P, 1024),
 
 		reportChan: make(chan streamStat[A, P, T, D, H], 64),
