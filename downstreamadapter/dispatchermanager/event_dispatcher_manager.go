@@ -310,6 +310,10 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 		return errors.Trace(err)
 	}
 
+	log.Info("hyy batch create new dispatchers after check startTs",
+		zap.Int("count", len(dispatcherIds)),
+		zap.Duration("duration", time.Since(start)))
+
 	for idx, id := range dispatcherIds {
 		if newStartTsList[idx] == -1 {
 			e.statusesChan <- &heartbeatpb.TableSpanStatus{
@@ -345,6 +349,10 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 			pdTsList[idx],
 			e.errCh)
 
+		log.Info("hyy batch create new dispatchers after create dispatcher",
+			zap.Int("count", len(dispatcherIds)),
+			zap.Duration("duration", time.Since(start)))
+
 		if e.heartBeatTask == nil {
 			e.heartBeatTask = newHeartBeatTask(e)
 		}
@@ -362,6 +370,10 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 			ID:              id.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
 		}
+
+		log.Info("hyy batch create new dispatchers after dispatcherMap set",
+			zap.Int("count", len(dispatcherIds)),
+			zap.Duration("duration", time.Since(start)))
 
 		e.tableEventDispatcherCount.Inc()
 
