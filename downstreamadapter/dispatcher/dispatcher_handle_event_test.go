@@ -1,45 +1,51 @@
 package dispatcher
 
 import (
-	"sync/atomic"
 	"testing"
+	"time"
 
 	psink "github.com/pingcap/ticdc/downstreamadapter/sink"
 	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
+	"github.com/pingcap/ticdc/downstreamadapter/syncpoint"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	sinkutil "github.com/pingcap/ticdc/pkg/sink/util"
-	timodel "github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tiflow/pkg/spanz"
 
-	pevent "github.com/pingcap/ticdc/pkg/common/event"
+	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/stretchr/testify/require"
 )
 
 // TODO: Merge this file into dispatcher_test.go after refactoring the dispatcher test.
 
 type mockSink struct {
-	blockEvents  []pevent.BlockEvent
-	dmls         []*pevent.DMLEvent
-	checkpointTs uint64
+	dmls []*commonEvent.DMLEvent
 }
 
-func (s *mockSink) AddDMLEvent(event *pevent.DMLEvent, tableProgress *types.TableProgress) {
+func (s *mockSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types.TableProgress) {
 	tableProgress.Add(event)
 	s.dmls = append(s.dmls, event)
 }
 
-func (s *mockSink) AddBlockEvent(event pevent.BlockEvent, tableProgress *types.TableProgress) {
+func (s *mockSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error {
 	tableProgress.Add(event)
-	s.blockEvents = append(s.blockEvents, event)
+	event.PostFlush()
+	return nil
 }
 
-func (s *mockSink) PassBlockEvent(event pevent.BlockEvent, tableProgress *types.TableProgress) {
+func (s *mockSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
+	tableProgress.Pass(event)
+	event.PostFlush()
 }
 
 func (s *mockSink) AddCheckpointTs(ts uint64) {
 }
 
 func (s *mockSink) SetTableSchemaStore(tableSchemaStore *sinkutil.TableSchemaStore) {
+}
+
+func (s *mockSink) CheckStartTsList(tableIds []int64, startTsList []int64) ([]int64, error) {
+	return startTsList, nil
 }
 
 func (s *mockSink) Close(bool) error {
@@ -50,41 +56,62 @@ func (s *mockSink) SinkType() psink.SinkType {
 	return psink.MysqlSinkType
 }
 
-func (s *mockSink) CheckStartTs(startTs int64, checkpointTs uint64) (int64, error) {
-	return startTs, nil
+func (s *mockSink) IsNormal() bool {
+	return true
 }
 
 func (s *mockSink) flushDMLs() {
 	for _, dml := range s.dmls {
-		for _, postTxnFlushed := range dml.PostTxnFlushed {
-			postTxnFlushed()
-		}
-		if dml.CommitTs > s.checkpointTs {
-			s.checkpointTs = dml.CommitTs
-		}
+		dml.PostFlush()
 	}
-	s.dmls = make([]*pevent.DMLEvent, 0)
-}
-
-func (s *mockSink) flushBlockEvents() {
-	for _, blockEvent := range s.blockEvents {
-		blockEvent.PostFlush()
-		if blockEvent.GetCommitTs() > s.checkpointTs {
-			s.checkpointTs = blockEvent.GetCommitTs()
-		}
-	}
-	s.blockEvents = make([]pevent.BlockEvent, 0)
+	s.dmls = make([]*commonEvent.DMLEvent, 0)
 }
 
 func newMockSink() *mockSink {
 	return &mockSink{
-		blockEvents: make([]pevent.BlockEvent, 0),
-		dmls:        make([]*pevent.DMLEvent, 0),
+		dmls: make([]*commonEvent.DMLEvent, 0),
 	}
 }
 
+func newDispatcherForTest(sink *mockSink) *Dispatcher {
+	// make a compelete table span
+	// TODO: test non-complete table span
+	tableSpan := &heartbeatpb.TableSpan{
+		TableID: 1,
+	}
+	startKey, endKey := spanz.GetTableRange(tableSpan.TableID)
+	tableSpan.StartKey = spanz.ToComparableKey(startKey)
+	tableSpan.EndKey = spanz.ToComparableKey(endKey)
+
+	return NewDispatcher(
+		common.NewChangefeedID(),
+		common.NewDispatcherID(),
+		tableSpan,
+		sink,
+		common.Ts(0), // startTs
+		make(chan *heartbeatpb.TableSpanBlockStatus, 128),
+		1, // schemaID
+		NewSchemaIDToDispatchers(),
+		&syncpoint.SyncPointConfig{
+			SyncPointInterval:  time.Duration(5 * time.Second),
+			SyncPointRetention: time.Duration(10 * time.Minute),
+		}, // syncPointConfig
+		nil,          //filterConfig
+		common.Ts(0), //pdTs
+		make(chan error, 1),
+	)
+}
+
+var count = 0
+
+func callback() {
+	count++
+}
+
+// test different events can be correctly handled by the dispatcher
 func TestDispatcherHandleEvents(t *testing.T) {
-	helper := pevent.NewEventTestHelper(t)
+	count = 0
+	helper := commonEvent.NewEventTestHelper(t)
 	defer helper.Close()
 
 	helper.Tk().MustExec("use test")
@@ -93,121 +120,226 @@ func TestDispatcherHandleEvents(t *testing.T) {
 
 	dmlEvent := helper.DML2Event("test", "t", "insert into t values(1, 1)")
 	require.NotNil(t, dmlEvent)
+	dmlEvent.CommitTs = 2
+	dmlEvent.Length = 1
 
 	tableInfo := dmlEvent.TableInfo
 
-	dispatcherID := common.NewDispatcherID()
-	tableSpan := &heartbeatpb.TableSpan{
-		TableID:  1,
-		StartKey: []byte("a"),
-		EndKey:   []byte("z"),
-	}
-
 	sink := newMockSink()
+	dispatcher := newDispatcherForTest(sink)
+	dispatcher.SetInitialTableInfo(tableInfo)
+	require.Equal(t, uint64(0), dispatcher.GetCheckpointTs())
+	require.Equal(t, uint64(0), dispatcher.GetResolvedTs())
+	tableProgress := dispatcher.tableProgress
 
-	dispatcherActionChan := make(chan common.DispatcherAction, 128)
-	blockStatusesChan := make(chan *heartbeatpb.TableSpanBlockStatus, 128)
-	schemaIDToDispatchers := NewSchemaIDToDispatchers()
-	startTs := common.Ts(0)
-	dispatcher := NewDispatcher(
-		common.NewChangefeedID(),
-		dispatcherID,
-		tableSpan,
-		sink,
-		startTs, // startTs
-		dispatcherActionChan,
-		blockStatusesChan,
-		nil,
-		1, // schemaID
-		schemaIDToDispatchers,
-		nil,
-		100000, // memoryQuota
-		nil,
-	)
-	// 1. Dispatcher is not ready, handle dml event, it will return immediately
-	dispatcherEvent := NewDispatcherEvent(dmlEvent)
-	dispatcher.HandleEvents([]DispatcherEvent{dispatcherEvent})
-	require.Equal(t, 0, len(sink.dmls))
-	require.Equal(t, 0, len(sink.blockEvents))
-	require.False(t, dispatcher.isReady.Load())
+	checkpointTs, isEmpty := tableProgress.GetCheckpointTs()
+	require.Equal(t, true, isEmpty)
+	require.Equal(t, uint64(0), checkpointTs)
 
-	var seq atomic.Uint64
-	seq.Store(0)
-	// 2. Dispatcher is not ready, handle handshake event, it will become ready
-	handshakeEvent := pevent.NewHandshakeEvent(
-		dispatcherID,
-		startTs,    // startTs
-		seq.Add(1), // seq
-		tableInfo,
-	)
-	dispatcherEvent = NewDispatcherEvent(handshakeEvent)
-	dispatcher.HandleEvents([]DispatcherEvent{dispatcherEvent})
-	require.True(t, dispatcher.isReady.Load())
-
-	// 3. Dispatcher is ready, handle local dml event, it will be sent to sink
-	dmlEvent.Seq = seq.Add(1)
-	dispatcherEvent = NewDispatcherEvent(dmlEvent)
-	dispatcher.HandleEvents([]DispatcherEvent{dispatcherEvent})
+	// ===== dml event =====
+	block := dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(dmlEvent)}, callback)
+	require.Equal(t, true, block)
 	require.Equal(t, 1, len(sink.dmls))
-	require.Equal(t, 0, len(sink.blockEvents))
-	require.Equal(t, dmlEvent, sink.dmls[0])
-	// Flush the dml events to wake the dynamic stream path of the dispatcher
+
+	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
+	require.Equal(t, false, isEmpty)
+	require.Equal(t, uint64(1), checkpointTs)
+	require.Equal(t, 0, count)
+
+	// flush
 	sink.flushDMLs()
-	require.Equal(t, dispatcher.GetCheckpointTs(), dmlEvent.CommitTs-1)
+	require.Equal(t, 0, len(sink.dmls))
+	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
+	require.Equal(t, true, isEmpty)
+	require.Equal(t, uint64(1), checkpointTs)
+	require.Equal(t, 1, count)
 
-	// 4. Dispatcher is ready, resolve event will be handled
-	resolvedEvent := pevent.ResolvedEvent{
-		Version:      pevent.ResolvedEventVersion,
-		ResolvedTs:   dmlEvent.CommitTs + 1,
-		DispatcherID: dispatcherID,
-	}
-	dispatcherEvent = NewDispatcherEvent(resolvedEvent)
-	dispatcher.HandleEvents([]DispatcherEvent{dispatcherEvent})
-	require.Equal(t, dispatcher.GetResolvedTs(), resolvedEvent.ResolvedTs)
-
-	// 5. Dispatcher is ready, handle ddl event, it will be set as a blockingEvent
-	ddlEvent := &pevent.DDLEvent{
-		Version:      pevent.DDLEventVersion,
-		DispatcherID: dispatcherID,
-		Seq:          seq.Add(1),
-		Type:         byte(timodel.ActionCreateTable),
-		SchemaID:     tableInfo.SchemaID,
-		TableID:      tableInfo.ID,
-		SchemaName:   "test",
-		TableName:    "t",
-		Query:        "create table t(id int primary key, v int)",
-		TableInfo:    tableInfo,
-		FinishedTs:   resolvedEvent.ResolvedTs + 2,
-		BlockedTables: &pevent.InfluencedTables{
-			InfluenceType: pevent.InfluenceTypeNormal,
-			TableIDs:      []int64{tableInfo.ID},
+	// ===== ddl event =====
+	// 1. non-block ddl event, and don't need to communicate with maintainer
+	ddlEvent := &commonEvent.DDLEvent{
+		FinishedTs: 3,
+		BlockedTables: &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      []int64{0},
 		},
-		NeedAddedTables: []pevent.Table{
+	}
+
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(ddlEvent)}, callback)
+	require.Equal(t, true, block)
+	require.Equal(t, 0, len(sink.dmls))
+	// no pending event
+	require.Nil(t, dispatcher.blockEventStatus.blockPendingEvent)
+	require.Equal(t, dispatcher.blockEventStatus.blockStage, heartbeatpb.BlockStage_NONE)
+
+	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
+	require.Equal(t, true, isEmpty)
+	require.Equal(t, uint64(2), checkpointTs)
+
+	require.Equal(t, 2, count)
+
+	// 2. non-block ddl event, but need to communicate with maintainer
+	ddlEvent2 := &commonEvent.DDLEvent{
+		FinishedTs: 4,
+		BlockedTables: &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      []int64{0},
+		},
+		NeedAddedTables: []commonEvent.Table{
 			{
-				SchemaID: tableInfo.SchemaID,
-				TableID:  tableInfo.ID,
+				SchemaID: 1,
+				TableID:  1,
 			},
 		},
 	}
-	dispatcherEvent = NewDispatcherEvent(ddlEvent)
-	dispatcher.HandleEvents([]DispatcherEvent{dispatcherEvent})
-	require.Equal(t, ddlEvent, dispatcher.blockStatus.blockPendingEvent)
-	require.Equal(t, 1, len(sink.blockEvents))
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(ddlEvent2)}, callback)
+	require.Equal(t, true, block)
+	require.Equal(t, 0, len(sink.dmls))
+	// no pending event
+	require.Nil(t, dispatcher.blockEventStatus.blockPendingEvent)
+	require.Equal(t, dispatcher.blockEventStatus.blockStage, heartbeatpb.BlockStage_NONE)
 
-	// 6. Dispatcher is ready, handle action event
-	actionEvent := &heartbeatpb.DispatcherStatus{
-		InfluencedDispatchers: &heartbeatpb.InfluencedDispatchers{
-			InfluenceType: heartbeatpb.InfluenceType_Normal,
-			DispatcherIDs: []*heartbeatpb.DispatcherID{dispatcherID.ToPB()},
-		},
-		Action: &heartbeatpb.DispatcherAction{
-			Action:      heartbeatpb.Action_Write,
+	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
+	require.Equal(t, true, isEmpty)
+	require.Equal(t, uint64(3), checkpointTs)
+
+	require.Equal(t, 3, count)
+
+	require.Equal(t, 1, dispatcher.resendTaskMap.Len())
+
+	// receive the ack info
+	// ack for previous ddl event, not cancel this task
+	dispatcherStatusPrev := &heartbeatpb.DispatcherStatus{
+		Ack: &heartbeatpb.ACK{
 			CommitTs:    ddlEvent.FinishedTs,
 			IsSyncPoint: false,
 		},
 	}
+	dispatcher.HandleDispatcherStatus(dispatcherStatusPrev)
+	require.Equal(t, 1, dispatcher.resendTaskMap.Len())
 
-	dispatcher.HandleDispatcherStatus(actionEvent)
-	sink.flushBlockEvents()
-	require.Equal(t, dispatcher.GetCheckpointTs(), ddlEvent.FinishedTs-1)
+	dispatcherStatus := &heartbeatpb.DispatcherStatus{
+		Ack: &heartbeatpb.ACK{
+			CommitTs:    ddlEvent2.FinishedTs,
+			IsSyncPoint: false,
+		},
+	}
+	dispatcher.HandleDispatcherStatus(dispatcherStatus)
+	require.Equal(t, 0, dispatcher.resendTaskMap.Len())
+
+	// 3. block ddl event
+	ddlEvent3 := &commonEvent.DDLEvent{
+		FinishedTs: 5,
+		BlockedTables: &commonEvent.InfluencedTables{
+			InfluenceType: commonEvent.InfluenceTypeNormal,
+			TableIDs:      []int64{0, 1},
+		},
+	}
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(ddlEvent3)}, callback)
+	require.Equal(t, true, block)
+	require.Equal(t, 0, len(sink.dmls))
+	// pending event
+	require.NotNil(t, dispatcher.blockEventStatus.blockPendingEvent)
+	require.Equal(t, dispatcher.blockEventStatus.blockStage, heartbeatpb.BlockStage_WAITING)
+
+	// the ddl is not available for write to sink
+	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
+	require.Equal(t, true, isEmpty)
+	require.Equal(t, uint64(3), checkpointTs)
+
+	require.Equal(t, 3, count)
+
+	require.Equal(t, 1, dispatcher.resendTaskMap.Len())
+
+	// receive the ack info
+	dispatcherStatus = &heartbeatpb.DispatcherStatus{
+		Ack: &heartbeatpb.ACK{
+			CommitTs:    ddlEvent3.FinishedTs,
+			IsSyncPoint: false,
+		},
+	}
+	dispatcher.HandleDispatcherStatus(dispatcherStatus)
+	require.Equal(t, 0, dispatcher.resendTaskMap.Len())
+	// pending event
+	require.NotNil(t, dispatcher.blockEventStatus.blockPendingEvent)
+	require.Equal(t, dispatcher.blockEventStatus.blockStage, heartbeatpb.BlockStage_WAITING)
+
+	// the ddl is still not available for write to sink
+	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
+	require.Equal(t, true, isEmpty)
+	require.Equal(t, uint64(3), checkpointTs)
+
+	// receive the action info
+	dispatcherStatus = &heartbeatpb.DispatcherStatus{
+		Action: &heartbeatpb.DispatcherAction{
+			Action:      heartbeatpb.Action_Write,
+			CommitTs:    ddlEvent3.FinishedTs,
+			IsSyncPoint: false,
+		},
+	}
+	dispatcher.HandleDispatcherStatus(dispatcherStatus)
+	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
+	require.Equal(t, true, isEmpty)
+	require.Equal(t, uint64(4), checkpointTs)
+
+	// clear pending event(TODO:add a check for the middle status)
+	require.Nil(t, dispatcher.blockEventStatus.blockPendingEvent)
+	require.Equal(t, dispatcher.blockEventStatus.blockStage, heartbeatpb.BlockStage_NONE)
+
+	require.Equal(t, 4, count)
+
+	// ===== sync point event =====
+
+	syncPointEvent := &commonEvent.SyncPointEvent{
+		CommitTs: 6,
+	}
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(syncPointEvent)}, callback)
+	require.Equal(t, true, block)
+	require.Equal(t, 0, len(sink.dmls))
+	// pending event
+	require.NotNil(t, dispatcher.blockEventStatus.blockPendingEvent)
+	require.Equal(t, dispatcher.blockEventStatus.blockStage, heartbeatpb.BlockStage_WAITING)
+
+	// not available for write to sink
+	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
+	require.Equal(t, true, isEmpty)
+	require.Equal(t, uint64(4), checkpointTs)
+
+	// receive the ack info
+	dispatcherStatus = &heartbeatpb.DispatcherStatus{
+		Ack: &heartbeatpb.ACK{
+			CommitTs:    syncPointEvent.CommitTs,
+			IsSyncPoint: true,
+		},
+	}
+	dispatcher.HandleDispatcherStatus(dispatcherStatus)
+	require.Equal(t, 0, dispatcher.resendTaskMap.Len())
+	// pending event
+	require.NotNil(t, dispatcher.blockEventStatus.blockPendingEvent)
+	require.Equal(t, dispatcher.blockEventStatus.blockStage, heartbeatpb.BlockStage_WAITING)
+
+	// receive the action info
+	dispatcherStatus = &heartbeatpb.DispatcherStatus{
+		Action: &heartbeatpb.DispatcherAction{
+			Action:      heartbeatpb.Action_Pass,
+			CommitTs:    syncPointEvent.CommitTs,
+			IsSyncPoint: true,
+		},
+	}
+	dispatcher.HandleDispatcherStatus(dispatcherStatus)
+	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
+	require.Equal(t, true, isEmpty)
+	require.Equal(t, uint64(5), checkpointTs)
+
+	// ===== resolved event =====
+	checkpointTs = dispatcher.GetCheckpointTs()
+	require.Equal(t, uint64(5), checkpointTs)
+	resolvedEvent := commonEvent.ResolvedEvent{
+		ResolvedTs: 7,
+	}
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(resolvedEvent)}, callback)
+	require.Equal(t, false, block)
+	require.Equal(t, 0, len(sink.dmls))
+	require.Equal(t, uint64(7), dispatcher.GetResolvedTs())
+	checkpointTs = dispatcher.GetCheckpointTs()
+	require.Equal(t, uint64(7), checkpointTs)
 }

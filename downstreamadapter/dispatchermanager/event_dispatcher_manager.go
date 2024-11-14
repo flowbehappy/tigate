@@ -323,24 +323,14 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 			continue
 		}
 
-		syncPointInfo := syncpoint.SyncPointInfo{
-			SyncPointConfig: e.syncPointConfig,
-			EnableSyncPoint: false,
-		}
-
-		if e.syncPointConfig != nil {
-			syncPointInfo.EnableSyncPoint = true
-			syncPointInfo.InitSyncPointTs = syncpoint.CalculateStartSyncPointTs(uint64(newStartTsList[idx]), e.syncPointConfig.SyncPointInterval)
-		}
-
 		d := dispatcher.NewDispatcher(
 			e.changefeedID,
 			id, tableSpans[idx], e.sink,
 			uint64(newStartTsList[idx]),
 			e.blockStatusesChan,
-			e.filter, schemaIds[idx],
+			schemaIds[idx],
 			e.schemaIDToDispatchers,
-			&syncPointInfo,
+			e.syncPointConfig,
 			e.config.Filter,
 			pdTsList[idx],
 			e.errCh)
