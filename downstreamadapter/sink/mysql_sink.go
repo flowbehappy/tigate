@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"sync/atomic"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
 	"github.com/pingcap/ticdc/downstreamadapter/worker"
 	"github.com/pingcap/ticdc/pkg/common"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/sink/mysql"
 	"github.com/pingcap/ticdc/pkg/sink/util"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
 	utils "github.com/pingcap/tiflow/pkg/util"
@@ -114,7 +116,13 @@ func (s *MysqlSink) run() {
 	err := s.errgroup.Wait()
 	if errors.Cause(err) != context.Canceled {
 		atomic.StoreUint32(&s.isNormal, 0)
-		s.errCh <- err
+		select {
+		case s.errCh <- err:
+		default:
+			log.Error("error channel is full, discard error",
+				zap.Any("ChangefeedID", s.changefeedID.String()),
+				zap.Error(err))
+		}
 	}
 }
 
@@ -163,7 +171,12 @@ func (s *MysqlSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress 
 func (s *MysqlSink) AddCheckpointTs(ts uint64) {}
 
 func (s *MysqlSink) CheckStartTsList(tableIds []int64, startTsList []int64) ([]int64, error) {
-	return s.ddlWorker.CheckStartTsList(tableIds, startTsList)
+	startTsList, err := s.ddlWorker.CheckStartTsList(tableIds, startTsList)
+	if err != nil {
+		atomic.StoreUint32(&s.isNormal, 0)
+		return nil, err
+	}
+	return startTsList, nil
 }
 
 func (s *MysqlSink) Close(removeDDLTsItem bool) error {

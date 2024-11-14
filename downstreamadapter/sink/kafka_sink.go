@@ -181,7 +181,13 @@ func (s *KafkaSink) run() {
 	err := s.errgroup.Wait()
 	if errors.Cause(err) != context.Canceled {
 		atomic.StoreUint32(&s.isNormal, 0)
-		s.errCh <- err
+		select {
+		case s.errCh <- err:
+		default:
+			log.Error("error channel is full, discard error",
+				zap.Any("ChangefeedID", s.changefeedID.String()),
+				zap.Error(err))
+		}
 	}
 }
 
