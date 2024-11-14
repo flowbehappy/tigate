@@ -70,7 +70,6 @@ type eventBroker struct {
 	// and a goroutine is responsible for sending the message to the dispatchers.
 	messageCh        chan wrapEvent
 	resolvedTsCaches map[node.ID]*resolvedTsCache
-	notifyCh         *mergeChannel
 
 	// wg is used to spawn the goroutines.
 	wg *sync.WaitGroup
@@ -96,9 +95,6 @@ func newEventBroker(
 	wg := &sync.WaitGroup{}
 
 	option := dynstream.NewOption()
-	// option.MaxPendingLength = 1
-	// option.DropPolicy = dynstream.DropEarly
-
 	ds := dynstream.NewDynamicStream(&dispatcherEventsHandler{}, option)
 	ds.Start()
 
@@ -107,7 +103,6 @@ func newEventBroker(
 		eventStore:              eventStore,
 		mounter:                 pevent.NewMounter(tz),
 		schemaStore:             schemaStore,
-		notifyCh:                NewMergeChannel(defaultChannelSize * 16),
 		dispatchers:             sync.Map{},
 		tableTriggerDispatchers: sync.Map{},
 		msgSender:               mc,
@@ -131,7 +126,6 @@ func newEventBroker(
 	c.runSendMessageWorker(ctx)
 	c.updateMetrics(ctx)
 	c.updateDispatcherSendTs(ctx)
-	c.runGenTasks(ctx)
 	log.Info("new event broker created", zap.Uint64("id", id))
 	return c
 }
@@ -174,24 +168,6 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 			}
 		}()
 	}
-}
-
-func (c *eventBroker) runGenTasks(ctx context.Context) {
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				stat := c.notifyCh.Receive()
-				//log.Info("receive dispatcher stat", zap.Stringer("dispatcher", stat.info.GetID()))
-				//stat.watermark.Store(stat.resolvedTs.Load())
-				c.ds.In() <- newScanTask(stat)
-			}
-		}
-	}()
 }
 
 // TODO: maybe event driven model is better. It is coupled with the detail implementation of
@@ -628,8 +604,9 @@ func (c *eventBroker) close() {
 func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64) {
 	if d.onSubscriptionResolvedTs(resolvedTs) {
 		// Note: don't block the caller of this function.
-		ok := c.notifyCh.TrySend(d)
-		if !ok {
+		select {
+		case c.ds.In() <- newScanTask(d):
+		default:
 			metricEventBrokerDropNotificationCount.Inc()
 		}
 	}
