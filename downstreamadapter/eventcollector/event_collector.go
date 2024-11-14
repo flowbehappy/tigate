@@ -160,6 +160,11 @@ func (c *EventCollector) AddDispatcher(target *dispatcher.Dispatcher, memoryQuot
 }
 
 func (c *EventCollector) RemoveDispatcher(target *dispatcher.Dispatcher) {
+	value, ok := c.dispatcherMap.Load(target.GetId())
+	if !ok {
+		return
+	}
+	stat := value.(*DispatcherStat)
 	c.dispatcherMap.Delete(target.GetId())
 
 	err := c.ds.RemovePath(target.GetId())
@@ -168,8 +173,7 @@ func (c *EventCollector) RemoveDispatcher(target *dispatcher.Dispatcher) {
 	}
 
 	// TODO: handle the return error(now even it return error, it will be retried later, we can just ignore it now)
-	// FIXME: remove from correct event service
-	c.mustSendDispatcherRequest(c.serverId, eventServiceTopic, DispatcherRequest{
+	c.mustSendDispatcherRequest(stat.getCurrentEventService(), eventServiceTopic, DispatcherRequest{
 		Dispatcher: target,
 		ActionType: eventpb.ActionType_ACTION_TYPE_REMOVE,
 	})
@@ -183,8 +187,7 @@ func (c *EventCollector) ResetDispatcherStat(stat *DispatcherStat) {
 	stat.reset()
 
 	// note: send the request to channel to avoid blocking the caller
-	// FIXME: reset to correct event service
-	c.addDispatcherRequestToSendingQueue(c.serverId, eventServiceTopic, DispatcherRequest{
+	c.addDispatcherRequestToSendingQueue(stat.getCurrentEventService(), eventServiceTopic, DispatcherRequest{
 		Dispatcher: stat.target,
 		StartTs:    stat.target.GetCheckpointTs(),
 		ActionType: eventpb.ActionType_ACTION_TYPE_RESET,
