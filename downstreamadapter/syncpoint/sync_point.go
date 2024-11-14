@@ -6,12 +6,6 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-type SyncPointInfo struct {
-	SyncPointConfig *SyncPointConfig
-	InitSyncPointTs uint64
-	EnableSyncPoint bool
-}
-
 // SyncPointConfig not nil only when enable sync point
 type SyncPointConfig struct {
 	SyncPointInterval  time.Duration

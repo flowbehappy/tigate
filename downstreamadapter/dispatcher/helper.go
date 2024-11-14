@@ -62,13 +62,13 @@ type BlockEventIdentifier struct {
 	IsSyncPoint bool
 }
 
-type BlockStatus struct {
+type BlockEventStatus struct {
 	mutex             sync.Mutex
 	blockPendingEvent commonEvent.BlockEvent
 	blockStage        heartbeatpb.BlockStage
 }
 
-func (b *BlockStatus) clear() {
+func (b *BlockEventStatus) clear() {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
@@ -76,7 +76,7 @@ func (b *BlockStatus) clear() {
 	b.blockStage = heartbeatpb.BlockStage_NONE
 }
 
-func (b *BlockStatus) setBlockEvent(event commonEvent.BlockEvent, blockStage heartbeatpb.BlockStage) {
+func (b *BlockEventStatus) setBlockEvent(event commonEvent.BlockEvent, blockStage heartbeatpb.BlockStage) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
@@ -84,13 +84,13 @@ func (b *BlockStatus) setBlockEvent(event commonEvent.BlockEvent, blockStage hea
 	b.blockStage = blockStage
 }
 
-func (b *BlockStatus) updateBlockStage(blockStage heartbeatpb.BlockStage) {
+func (b *BlockEventStatus) updateBlockStage(blockStage heartbeatpb.BlockStage) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 	b.blockStage = blockStage
 }
 
-func (b *BlockStatus) getEventAndStage() (commonEvent.BlockEvent, heartbeatpb.BlockStage) {
+func (b *BlockEventStatus) getEventAndStage() (commonEvent.BlockEvent, heartbeatpb.BlockStage) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 

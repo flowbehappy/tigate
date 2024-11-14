@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/ticdc/downstreamadapter/dispatcher"
+	"github.com/pingcap/ticdc/downstreamadapter/syncpoint"
 	"github.com/pingcap/ticdc/pkg/node"
 
 	"github.com/pingcap/log"
@@ -226,8 +227,8 @@ func (c *EventCollector) mustSendDispatcherRequest(req DispatcherRequest) error 
 		req.ActionType == eventpb.ActionType_ACTION_TYPE_RESET {
 		message.RegisterDispatcherRequest.FilterConfig = req.Dispatcher.GetFilterConfig()
 		message.RegisterDispatcherRequest.EnableSyncPoint = req.Dispatcher.EnableSyncPoint()
-		message.RegisterDispatcherRequest.SyncPointTs = req.Dispatcher.GetSyncPointTs()
 		message.RegisterDispatcherRequest.SyncPointInterval = uint64(req.Dispatcher.GetSyncPointInterval().Seconds())
+		message.RegisterDispatcherRequest.SyncPointTs = syncpoint.CalculateStartSyncPointTs(req.StartTs, req.Dispatcher.GetSyncPointInterval())
 	}
 
 	err := c.mc.SendCommand(&messaging.TargetMessage{

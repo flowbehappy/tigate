@@ -27,7 +27,7 @@ import (
 // - Check if there are any events waiting to be flushed
 // - Query event size flushed per second
 //
-// TODO: Add a test to ensure that inserted data doesn't have decreasing commitTs.
+// TableProgress assumes the event timestamps are monotonically increasing.
 //
 // This struct is thread-safe.
 type TableProgress struct {
