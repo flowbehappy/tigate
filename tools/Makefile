@@ -72,3 +72,6 @@ tools/bin/stringer: tools/check/go.mod
 
 tools/bin/mockery: tools/check/go.mod
 	cd tools/check && $(GO) build -mod=mod -o ../bin/mockery github.com/vektra/mockery/v2
+
+tools/bin/workload: tools/workload/go.mod
+	cd tools/workload && $(GO) build -mod=mod -o ../bin/workload main.go
