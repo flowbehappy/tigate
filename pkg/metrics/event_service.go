@@ -64,7 +64,7 @@ var (
 			Help:      "The duration of scanning a data range from eventStore",
 			Buckets:   prometheus.DefBuckets,
 		})
-	EventServiceDispatcherGuage = prometheus.NewGaugeVec(
+	EventServiceDispatcherGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "ticdc",
 			Subsystem: "event_service",
@@ -93,6 +93,21 @@ var (
 			Help:      "The duration of a scan task being queued",
 			Buckets:   prometheus.DefBuckets,
 		})
+	EventServiceHandleDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_service",
+			Name:      "handle_duration",
+			Help:      "The duration of handling a scan task",
+			Buckets:   prometheus.DefBuckets,
+		})
+	EventServiceDropNotificationCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "ticdc",
+			Subsystem: "event_service",
+			Name:      "drop_notification_count",
+			Help:      "The number of notifications dropped",
+		})
 )
 
 // InitMetrics registers all metrics in this file.
@@ -103,8 +118,10 @@ func InitEventServiceMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(EventServiceResolvedTsGauge)
 	registry.MustRegister(EventServiceResolvedTsLagGauge)
 	registry.MustRegister(EventServiceScanDuration)
-	registry.MustRegister(EventServiceDispatcherGuage)
+	registry.MustRegister(EventServiceDispatcherGauge)
 	registry.MustRegister(EventServiceDropScanTaskCount)
 	registry.MustRegister(EventServiceDropResolvedTsCount)
 	registry.MustRegister(EventServiceScanTaskQueueDuration)
+	registry.MustRegister(EventServiceHandleDuration)
+	registry.MustRegister(EventServiceDropNotificationCount)
 }

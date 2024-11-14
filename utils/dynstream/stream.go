@@ -116,7 +116,7 @@ type streamStat[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] struct {
 }
 
 func (s streamStat[A, P, T, D, H]) getMostBusyPaths() []*pathStat[A, P, T, D, H] {
-	if s.mostBusyPath.IsEmpty() {
+	if s.mostBusyPath == nil || s.mostBusyPath.IsEmpty() {
 		return nil
 	}
 	return s.mostBusyPath.All()
