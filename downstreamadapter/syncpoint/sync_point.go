@@ -13,6 +13,9 @@ type SyncPointConfig struct {
 }
 
 func CalculateStartSyncPointTs(startTs uint64, syncPointInterval time.Duration) uint64 {
+	if syncPointInterval == time.Duration(0) {
+		return 0
+	}
 	k := oracle.GetTimeFromTS(startTs).Sub(time.Unix(0, 0)) / syncPointInterval
 	if oracle.GetTimeFromTS(startTs).Sub(time.Unix(0, 0))%syncPointInterval != 0 || oracle.ExtractLogical(startTs) != 0 {
 		k += 1

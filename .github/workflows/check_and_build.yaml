@@ -134,3 +134,5 @@ jobs:
           go test --tags=intest
           cd ../../../downstreamadapter/sink/
           go test --tags=intest
+          cd ../dispatcher
+          go test --tags=intest
