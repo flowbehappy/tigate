@@ -431,13 +431,13 @@ func (m *Maintainer) calCheckpointTs() {
 func (m *Maintainer) updateMetrics() {
 	phyCkpTs := oracle.ExtractPhysical(m.watermark.CheckpointTs)
 	m.changefeedCheckpointTsGauge.Set(float64(phyCkpTs))
-	lag := (oracle.GetPhysical(time.Now()) - phyCkpTs) / 1e3
-	m.changefeedCheckpointTsLagGauge.Set(float64(lag))
+	lag := float64(oracle.GetPhysical(time.Now())-phyCkpTs) / 1e3
+	m.changefeedCheckpointTsLagGauge.Set(lag)
 
 	phyResolvedTs := oracle.ExtractPhysical(m.watermark.ResolvedTs)
 	m.changefeedResolvedTsGauge.Set(float64(phyResolvedTs))
-	lag = (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
-	m.changefeedResolvedTsLagGauge.Set(float64(lag))
+	lag = float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
+	m.changefeedResolvedTsLagGauge.Set(lag)
 
 	m.changefeedStatusGauge.Set(float64(m.state))
 }
