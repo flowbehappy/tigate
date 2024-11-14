@@ -139,13 +139,17 @@ func (s *TableNameStore) AddEvent(event *commonEvent.DDLEvent) {
 func (s *TableNameStore) GetAllTableNames(ts uint64) []*commonEvent.SchemaTableName {
 	s.latestTableNameChanges.mutex.Lock()
 	if len(s.latestTableNameChanges.m) > 0 {
+		log.Info("get latestTableNameChanges")
 		// update the existingTables with the latest table changes <= ts
 		for commitTs, tableNameChange := range s.latestTableNameChanges.m {
+			log.Info("get latestTableNameChanges", zap.Any("commitTs", commitTs), zap.Any("tableNameChange", tableNameChange), zap.Any("ts", ts))
 			if commitTs <= ts {
+				log.Info("get latestTableNameChanges")
 				if tableNameChange.DropDatabaseName != "" {
 					delete(s.existingTables, tableNameChange.DropDatabaseName)
 				} else {
 					for _, addName := range tableNameChange.AddName {
+						log.Info("addName is ", zap.Any("addName", addName))
 						if s.existingTables[addName.SchemaName] == nil {
 							s.existingTables[addName.SchemaName] = make(map[string]*commonEvent.SchemaTableName, 0)
 						}
@@ -158,8 +162,8 @@ func (s *TableNameStore) GetAllTableNames(ts uint64) []*commonEvent.SchemaTableN
 						}
 					}
 				}
+				delete(s.latestTableNameChanges.m, commitTs)
 			}
-			delete(s.latestTableNameChanges.m, commitTs)
 		}
 	}
 
@@ -254,7 +258,7 @@ func (s *TableIDStore) GetTableIdsByDB(schemaID int64) []int64 {
 func (s *TableIDStore) GetAllTableIds() []int64 {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	tableIds := make([]int64, len(s.tableIDToSchemaID))
+	tableIds := make([]int64, 0, len(s.tableIDToSchemaID))
 	for tableID := range s.tableIDToSchemaID {
 		tableIds = append(tableIds, tableID)
 	}

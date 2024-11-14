@@ -14,41 +14,21 @@
 package sink
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
-	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
-	"github.com/pingcap/ticdc/pkg/sink/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
-
-func mysqlSinkForTest(t *testing.T) (*MysqlSink, sqlmock.Sqlmock) {
-	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
-	require.Nil(t, err)
-	ctx := context.Background()
-	changefeedID := common.ChangefeedID4Test("test", "test")
-	cfg := mysql.NewMysqlConfig()
-	cfg.DMLMaxRetry = 1
-	cfg.MaxAllowedPacket = int64(variable.DefMaxAllowedPacket)
-	cfg.CachePrepStmts = false
-
-	errCh := make(chan error, 16)
-	sink, err := NewMysqlSinkWithDBAndConfig(ctx, changefeedID, 8, cfg, db, errCh)
-	require.Nil(t, err)
-	return sink, mock
-}
 
 var count = 0
 
 // Test callback and tableProgress works as expected after AddDMLEvent
 func TestMysqlSinkBasicFunctionality(t *testing.T) {
-	sink, mock := mysqlSinkForTest(t)
+	sink, mock := MysqlSinkForTest()
 	tableProgress := types.NewTableProgress()
 	ts, isEmpty := tableProgress.GetCheckpointTs()
 	require.NotEqual(t, ts, 0)
