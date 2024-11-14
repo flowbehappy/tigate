@@ -7,15 +7,26 @@ import "heartbeatpb/heartbeat.proto";
 
 message SubscriptionState {
     uint64 SubID = 1;
-    heartbeatpb.TableSpan span = 2;
+    heartbeatpb.TableSpan Span = 2;
     uint64 CheckpointTs = 3;
     uint64 ResolvedTs = 4;
 }
 
 message SubscriptionStates {
-    repeated SubscriptionState subscriptions = 1; // must be sorted by SubscriptionState.SubId
+    repeated SubscriptionState Subscriptions = 1; // must be sorted by SubscriptionState.SubId
 }
 
 message EventStoreState {
-    map<int64, SubscriptionStates> subscriptions = 1;
+    map<int64, SubscriptionStates> Subscriptions = 1;
+}
+
+message ReusableEventServiceRequest {
+    heartbeatpb.DispatcherID ID = 1;
+    heartbeatpb.TableSpan Span = 2;
+    uint64 StartTs = 3;
+}
+
+message ReusableEventServiceResponse {
+    heartbeatpb.DispatcherID ID = 1;
+    repeated string Nodes = 2;
 }

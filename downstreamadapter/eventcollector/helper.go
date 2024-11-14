@@ -61,36 +61,142 @@ func (h *EventsHandler) Path(event dispatcher.DispatcherEvent) common.Dispatcher
 	return event.GetDispatcherID()
 }
 
+// Invariant: at any times, we can receive events from at most two event service, and one of them must be local event service.
 func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.DispatcherEvent) bool {
-	// If the dispatcher is not ready, try to find handshake event to make the dispatcher ready.
-	if !stat.isReady.Load() {
-		ready, restEvents := stat.checkHandshakeEvents(events)
-		if !ready {
-			return false
-		}
-		events = restEvents
+	// do some check for safety
+	if len(events) == 0 {
+		return false
 	}
-
-	// Pre-check, make sure the event is not out-of-order
-	for _, dispatcherEvent := range events {
-		event := dispatcherEvent.Event
-		if event.GetType() == commonEvent.TypeDMLEvent ||
-			event.GetType() == commonEvent.TypeDDLEvent ||
-			event.GetType() == commonEvent.TypeHandshakeEvent {
-			expectedSeq := stat.lastEventSeq.Add(1)
-			if event.GetSeq() != expectedSeq {
-				log.Warn("Received an out-of-order event, reset the dispatcher",
-					zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()), zap.Stringer("dispatcher", stat.target.GetId()),
-					zap.Uint64("receivedSeq", event.GetSeq()), zap.Uint64("expectedSeq", expectedSeq),
-					zap.Uint64("commitTs", event.GetCommitTs()), zap.Any("event", event))
-				h.eventCollector.ResetDispatcherStat(stat)
-				return false
+	switch events[0].GetType() {
+	case commonEvent.TypeDDLEvent,
+		commonEvent.TypeSyncPointEvent,
+		commonEvent.TypeHandshakeEvent,
+		commonEvent.TypeReadyEvent,
+		commonEvent.TypeNotReusableEvent:
+		if len(events) > 1 {
+			log.Panic("receive multiple non-batchable events",
+				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
+				zap.Stringer("dispatcher", stat.target.GetId()),
+				zap.Any("events", events))
+		}
+	default:
+		for i := 1; i < len(events); i++ {
+			if events[i].GetType() != events[0].GetType() {
+				log.Panic("receive multiple events with different types",
+					zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
+					zap.Stringer("dispatcher", stat.target.GetId()),
+					zap.Any("events", events))
 			}
 		}
 	}
 
-	// TODO: will stat become invalid after HandleEvents?
-	return stat.target.HandleEvents(events, func() { h.eventCollector.WakeDispatcher(stat.dispatcherID) })
+	// just check the first event type, because all event types should be same
+	switch events[0].GetType() {
+	case commonEvent.TypeDMLEvent,
+		commonEvent.TypeDDLEvent,
+		commonEvent.TypeResolvedEvent,
+		commonEvent.TypeSyncPointEvent:
+		if stat.waitHandshake.Load() {
+			log.Warn("Receive event before handshake event, ignore it",
+				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
+				zap.Stringer("dispatcher", stat.target.GetId()),
+				zap.Any("event", events))
+			return false
+		}
+		for _, dispatcherEvent := range events {
+			if dispatcherEvent.GetType() == commonEvent.TypeDMLEvent ||
+				dispatcherEvent.GetType() == commonEvent.TypeDDLEvent {
+				expectedSeq := stat.lastEventSeq.Add(1)
+				if dispatcherEvent.GetSeq() != expectedSeq {
+					log.Warn("Received an out-of-order event, reset the dispatcher",
+						zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
+						zap.Stringer("dispatcher", stat.target.GetId()),
+						zap.Uint64("receivedSeq", dispatcherEvent.GetSeq()),
+						zap.Uint64("expectedSeq", expectedSeq),
+						zap.Uint64("commitTs", dispatcherEvent.GetCommitTs()),
+						zap.Any("event", dispatcherEvent))
+					h.eventCollector.ResetDispatcherStat(stat)
+					return false
+				}
+			}
+		}
+		return stat.target.HandleEvents(events, func() { h.eventCollector.WakeDispatcher(stat.dispatcherID) })
+	case commonEvent.TypeHandshakeEvent:
+		dispatcherEvent := events[0]
+		if !stat.isCurrentEventService(dispatcherEvent.From) {
+			if !stat.isCurrentEventService(h.eventCollector.serverId) {
+				log.Panic("receive handshake event from remote event service, but current event service is not local event service",
+					zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
+					zap.Stringer("dispatcher", stat.target.GetId()),
+					zap.Stringer("from", dispatcherEvent.From))
+			}
+			return false
+		}
+		if !stat.waitHandshake.Load() {
+			log.Panic("receive handshake event when dispatcher is ready",
+				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
+				zap.Stringer("dispatcher", stat.target.GetId()))
+		}
+		handshake, ok := dispatcherEvent.Event.(*commonEvent.HandshakeEvent)
+		if !ok {
+			log.Panic("cast handshake event failed",
+				zap.Stringer("dispatcher", stat.target.GetId()),
+				zap.Uint64("commitTs", dispatcherEvent.GetCommitTs()))
+		}
+		if handshake.GetCommitTs() == stat.target.GetCheckpointTs() {
+			currentSeq := stat.lastEventSeq.Load()
+			if currentSeq != 0 {
+				log.Panic("Receive handshake event, but current seq is not zero",
+					zap.Any("event", handshake),
+					zap.Stringer("dispatcher", stat.target.GetId()),
+					zap.Uint64("currentSeq", currentSeq))
+				return false
+			}
+			// In some case, the eventService may send handshake event multiple times,
+			// we should use the first handshake event we received to initialize the dispatcher.
+			stat.lastEventSeq.Store(handshake.GetSeq())
+			stat.target.SetInitialTableInfo(handshake.TableInfo)
+			stat.waitHandshake.Store(false)
+			log.Info("Receive handshake event, dispatcher is ready to handle events",
+				zap.Any("dispatcher", stat.target.GetId()),
+				zap.Uint64("commitTs", handshake.GetCommitTs()),
+			)
+		} else {
+			log.Warn("Handshake event commitTs not equal to dispatcher startTs, ignore it",
+				zap.Any("event", dispatcherEvent),
+				zap.Stringer("dispatcher", stat.target.GetId()),
+				zap.Uint64("checkpointTs", stat.target.GetCheckpointTs()),
+				zap.Uint64("commitTs", dispatcherEvent.GetCommitTs()))
+		}
+		return false
+	case commonEvent.TypeReadyEvent:
+		// If we have received the ready signal from the event service, we can ignore it.
+		// TODO: add timeout to resend needed request if we receive ready signal from the same server for a long time.
+		if stat.isCurrentEventService(events[0].From) ||
+			stat.isCurrentEventService(h.eventCollector.serverId) {
+			return false
+		}
+		// receive ready signal from local event service
+		if events[0].From == h.eventCollector.serverId {
+			stat.unregisterFromRemoteEventServiceIfHave(h.eventCollector)
+			stat.clearRemoteCandidateInfo()
+			stat.notifyReadyForReceiveData(events[0].From, h.eventCollector)
+			return false
+		}
+		// receive ready signal from remote event service
+		stat.checkNoReadySignalReceived(events[0].From)
+		stat.clearRemoteCandidateInfo()
+		stat.notifyReadyForReceiveData(events[0].From, h.eventCollector)
+		return false
+	case commonEvent.TypeNotReusableEvent:
+		if !stat.isCurrentEventService(h.eventCollector.serverId) {
+			stat.tryNextRemoteCandidate(h.eventCollector)
+		}
+		return false
+	default:
+		log.Panic("unknown event type", zap.Int("type", int(events[0].GetType())))
+	}
+	return false
 }
 
 const (
@@ -98,6 +204,8 @@ const (
 	DataGroupDDL             = 2
 	DataGroupSyncPoint       = 3
 	DataGroupHandshake       = 4
+	DataGroupReady           = 5
+	DataGroupNotReusable     = 6
 )
 
 func (h *EventsHandler) GetType(event dispatcher.DispatcherEvent) dynstream.EventType {
@@ -112,6 +220,10 @@ func (h *EventsHandler) GetType(event dispatcher.DispatcherEvent) dynstream.Even
 		return dynstream.EventType{DataGroup: DataGroupSyncPoint, Property: dynstream.NonBatchable}
 	case commonEvent.TypeHandshakeEvent:
 		return dynstream.EventType{DataGroup: DataGroupHandshake, Property: dynstream.NonBatchable}
+	case commonEvent.TypeReadyEvent:
+		return dynstream.EventType{DataGroup: DataGroupReady, Property: dynstream.NonBatchable}
+	case commonEvent.TypeNotReusableEvent:
+		return dynstream.EventType{DataGroup: DataGroupNotReusable, Property: dynstream.NonBatchable}
 	default:
 		log.Panic("unknown event type", zap.Int("type", int(event.GetType())))
 	}

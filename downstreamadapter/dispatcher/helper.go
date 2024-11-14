@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/utils/dynstream"
 	"github.com/pingcap/ticdc/utils/threadpool"
 	"go.uber.org/zap"
@@ -253,11 +254,17 @@ func SetDispatcherTaskScheduler(taskScheduler threadpool.ThreadPool) {
 }
 
 type DispatcherEvent struct {
+	From node.ID
 	commonEvent.Event
 }
 
-func NewDispatcherEvent(event commonEvent.Event) DispatcherEvent {
+func (d DispatcherEvent) GetSize() int64 {
+	return d.From.GetSize() + d.Event.GetSize()
+}
+
+func NewDispatcherEvent(from node.ID, event commonEvent.Event) DispatcherEvent {
 	return DispatcherEvent{
+		From:  from,
 		Event: event,
 	}
 }
