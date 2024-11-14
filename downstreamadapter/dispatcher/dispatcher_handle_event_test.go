@@ -10,6 +10,7 @@ import (
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	sinkutil "github.com/pingcap/ticdc/pkg/sink/util"
+	"github.com/pingcap/tiflow/pkg/spanz"
 
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
 	"github.com/stretchr/testify/require"
@@ -28,10 +29,13 @@ func (s *mockSink) AddDMLEvent(event *commonEvent.DMLEvent, tableProgress *types
 
 func (s *mockSink) WriteBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) error {
 	tableProgress.Add(event)
+	event.PostFlush()
 	return nil
 }
 
 func (s *mockSink) PassBlockEvent(event commonEvent.BlockEvent, tableProgress *types.TableProgress) {
+	tableProgress.Pass(event)
+	event.PostFlush()
 }
 
 func (s *mockSink) AddCheckpointTs(ts uint64) {
@@ -58,9 +62,7 @@ func (s *mockSink) IsNormal() bool {
 
 func (s *mockSink) flushDMLs() {
 	for _, dml := range s.dmls {
-		for _, postTxnFlushed := range dml.PostTxnFlushed {
-			postTxnFlushed()
-		}
+		dml.PostFlush()
 	}
 	s.dmls = make([]*commonEvent.DMLEvent, 0)
 }
@@ -72,9 +74,14 @@ func newMockSink() *mockSink {
 }
 
 func newDispatcherForTest(sink *mockSink) *Dispatcher {
+	// make a compelete table span
+	// TODO: test non-complete table span
 	tableSpan := &heartbeatpb.TableSpan{
 		TableID: 1,
 	}
+	startKey, endKey := spanz.GetTableRange(tableSpan.TableID)
+	tableSpan.StartKey = spanz.ToComparableKey(startKey)
+	tableSpan.EndKey = spanz.ToComparableKey(endKey)
 
 	return NewDispatcher(
 		common.NewChangefeedID(),
@@ -114,19 +121,20 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	dmlEvent := helper.DML2Event("test", "t", "insert into t values(1, 1)")
 	require.NotNil(t, dmlEvent)
 	dmlEvent.CommitTs = 2
+	dmlEvent.Length = 1
 
 	tableInfo := dmlEvent.TableInfo
 
 	sink := newMockSink()
 	dispatcher := newDispatcherForTest(sink)
 	dispatcher.SetInitialTableInfo(tableInfo)
-	require.Equal(t, 0, dispatcher.GetCheckpointTs())
-	require.Equal(t, 0, dispatcher.GetResolvedTs())
+	require.Equal(t, uint64(0), dispatcher.GetCheckpointTs())
+	require.Equal(t, uint64(0), dispatcher.GetResolvedTs())
 	tableProgress := dispatcher.tableProgress
 
 	checkpointTs, isEmpty := tableProgress.GetCheckpointTs()
 	require.Equal(t, true, isEmpty)
-	require.Equal(t, 0, checkpointTs)
+	require.Equal(t, uint64(0), checkpointTs)
 
 	// ===== dml event =====
 	block := dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(dmlEvent)}, callback)
@@ -135,15 +143,16 @@ func TestDispatcherHandleEvents(t *testing.T) {
 
 	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
 	require.Equal(t, false, isEmpty)
-	require.Equal(t, 1, checkpointTs)
-	require.Equal(t, 1, count)
+	require.Equal(t, uint64(1), checkpointTs)
+	require.Equal(t, 0, count)
 
 	// flush
 	sink.flushDMLs()
 	require.Equal(t, 0, len(sink.dmls))
 	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
 	require.Equal(t, true, isEmpty)
-	require.Equal(t, 1, checkpointTs)
+	require.Equal(t, uint64(1), checkpointTs)
+	require.Equal(t, 1, count)
 
 	// ===== ddl event =====
 	// 1. non-block ddl event, and don't need to communicate with maintainer
@@ -152,9 +161,6 @@ func TestDispatcherHandleEvents(t *testing.T) {
 		BlockedTables: &commonEvent.InfluencedTables{
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{0},
-		},
-		PostTxnFlushed: []func(){
-			func() { count++ },
 		},
 	}
 
@@ -167,7 +173,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 
 	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
 	require.Equal(t, true, isEmpty)
-	require.Equal(t, 2, checkpointTs)
+	require.Equal(t, uint64(2), checkpointTs)
 
 	require.Equal(t, 2, count)
 
@@ -184,9 +190,6 @@ func TestDispatcherHandleEvents(t *testing.T) {
 				TableID:  1,
 			},
 		},
-		PostTxnFlushed: []func(){
-			func() { count++ },
-		},
 	}
 	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(ddlEvent2)}, callback)
 	require.Equal(t, true, block)
@@ -197,7 +200,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 
 	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
 	require.Equal(t, true, isEmpty)
-	require.Equal(t, 3, checkpointTs)
+	require.Equal(t, uint64(3), checkpointTs)
 
 	require.Equal(t, 3, count)
 
@@ -230,9 +233,6 @@ func TestDispatcherHandleEvents(t *testing.T) {
 			InfluenceType: commonEvent.InfluenceTypeNormal,
 			TableIDs:      []int64{0, 1},
 		},
-		PostTxnFlushed: []func(){
-			func() { count++ },
-		},
 	}
 	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(ddlEvent3)}, callback)
 	require.Equal(t, true, block)
@@ -244,7 +244,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	// the ddl is not available for write to sink
 	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
 	require.Equal(t, true, isEmpty)
-	require.Equal(t, 3, checkpointTs)
+	require.Equal(t, uint64(3), checkpointTs)
 
 	require.Equal(t, 3, count)
 
@@ -266,7 +266,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	// the ddl is still not available for write to sink
 	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
 	require.Equal(t, true, isEmpty)
-	require.Equal(t, 3, checkpointTs)
+	require.Equal(t, uint64(3), checkpointTs)
 
 	// receive the action info
 	dispatcherStatus = &heartbeatpb.DispatcherStatus{
@@ -279,7 +279,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	dispatcher.HandleDispatcherStatus(dispatcherStatus)
 	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
 	require.Equal(t, true, isEmpty)
-	require.Equal(t, 4, checkpointTs)
+	require.Equal(t, uint64(4), checkpointTs)
 
 	// clear pending event(TODO:add a check for the middle status)
 	require.Nil(t, dispatcher.blockEventStatus.blockPendingEvent)
@@ -302,7 +302,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	// not available for write to sink
 	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
 	require.Equal(t, true, isEmpty)
-	require.Equal(t, 4, checkpointTs)
+	require.Equal(t, uint64(4), checkpointTs)
 
 	// receive the ack info
 	dispatcherStatus = &heartbeatpb.DispatcherStatus{
@@ -328,19 +328,18 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	dispatcher.HandleDispatcherStatus(dispatcherStatus)
 	checkpointTs, isEmpty = tableProgress.GetCheckpointTs()
 	require.Equal(t, true, isEmpty)
-	require.Equal(t, 5, checkpointTs)
+	require.Equal(t, uint64(5), checkpointTs)
 
 	// ===== resolved event =====
 	checkpointTs = dispatcher.GetCheckpointTs()
-	require.Equal(t, 5, checkpointTs)
-	resolvedEvent := &commonEvent.ResolvedEvent{
+	require.Equal(t, uint64(5), checkpointTs)
+	resolvedEvent := commonEvent.ResolvedEvent{
 		ResolvedTs: 7,
 	}
 	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(resolvedEvent)}, callback)
 	require.Equal(t, false, block)
 	require.Equal(t, 0, len(sink.dmls))
-	require.Equal(t, 7, dispatcher.GetResolvedTs())
+	require.Equal(t, uint64(7), dispatcher.GetResolvedTs())
 	checkpointTs = dispatcher.GetCheckpointTs()
-	require.Equal(t, 7, checkpointTs)
-
+	require.Equal(t, uint64(7), checkpointTs)
 }
