@@ -68,8 +68,7 @@ type eventBroker struct {
 
 	// messageCh is used to receive message from the scanWorker,
 	// and a goroutine is responsible for sending the message to the dispatchers.
-	messageCh        []chan wrapEvent
-	resolvedTsCaches map[node.ID]*resolvedTsCache
+	messageCh []chan wrapEvent
 
 	// wg is used to spawn the goroutines.
 	wg *sync.WaitGroup
@@ -120,7 +119,6 @@ func newEventBroker(
 		scanWorkerCount:         defaultScanWorkerCount,
 		ds:                      ds,
 		messageCh:               make([]chan wrapEvent, streamCount),
-		resolvedTsCaches:        make(map[node.ID]*resolvedTsCache),
 		cancel:                  cancel,
 		wg:                      wg,
 
@@ -450,6 +448,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int) {
 	c.wg.Add(1)
 	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 300)
+	resolvedTsCacheMap := make(map[node.ID]*resolvedTsCache)
 	go func() {
 		defer c.wg.Done()
 		defer flushResolvedTsTicker.Stop()
@@ -461,7 +460,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 				if m.msgType == pevent.TypeResolvedEvent {
 					// The message is a watermark, we need to cache it, and send it to the dispatcher
 					// when cache is full to reduce the number of messages.
-					c.handleResolvedTs(ctx, m)
+					c.handleResolvedTs(ctx, resolvedTsCacheMap, m)
 					continue
 				}
 				// Check if the dispatcher is initialized, if so, ignore the handshake event.
@@ -480,32 +479,31 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 					m.serverID,
 					messaging.EventCollectorTopic,
 					m.e)
-				c.flushResolvedTs(ctx, m.serverID)
+				c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
 				c.sendMsg(ctx, tMsg, m.postSendFunc)
 			case <-flushResolvedTsTicker.C:
-				for serverID := range c.resolvedTsCaches {
-					c.flushResolvedTs(ctx, serverID)
+				for serverID, cache := range resolvedTsCacheMap {
+					c.flushResolvedTs(ctx, cache, serverID)
 				}
 			}
 		}
 	}()
 }
 
-func (c *eventBroker) handleResolvedTs(ctx context.Context, m wrapEvent) {
-	cache, ok := c.resolvedTsCaches[m.serverID]
+func (c *eventBroker) handleResolvedTs(ctx context.Context, cacheMap map[node.ID]*resolvedTsCache, m wrapEvent) {
+	cache, ok := cacheMap[m.serverID]
 	if !ok {
 		cache = newResolvedTsCache(resolvedTsCacheSize)
-		c.resolvedTsCaches[m.serverID] = cache
+		cacheMap[m.serverID] = cache
 	}
 	cache.add(*m.e.(*pevent.ResolvedEvent))
 	if cache.isFull() {
-		c.flushResolvedTs(ctx, m.serverID)
+		c.flushResolvedTs(ctx, cache, m.serverID)
 	}
 }
 
-func (c *eventBroker) flushResolvedTs(ctx context.Context, serverID node.ID) {
-	cache, ok := c.resolvedTsCaches[serverID]
-	if !ok || cache.len == 0 {
+func (c *eventBroker) flushResolvedTs(ctx context.Context, cache *resolvedTsCache, serverID node.ID) {
+	if cache == nil || cache.len == 0 {
 		return
 	}
 	msg := &pevent.BatchResolvedEvent{}
