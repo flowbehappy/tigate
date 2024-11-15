@@ -88,7 +88,7 @@ type pathHasher struct {
 }
 
 func (h pathHasher) HashPath(path common.DispatcherID) int {
-	return int((common.GID)(path).FastHash()) % h.streamCount
+	return int((common.GID)(path).FastHash() % (uint64)(h.streamCount))
 }
 
 func newEventBroker(
@@ -250,7 +250,7 @@ func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e pevent.DD
 }
 
 func (c *eventBroker) wakeDispatcher(dispatcherID common.DispatcherID) {
-	c.ds.Wake() <- dispatcherID
+	c.ds.Wake(dispatcherID) <- dispatcherID
 }
 
 // checkNeedScan checks if the dispatcher needs to scan the event store.
@@ -614,7 +614,7 @@ func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64) {
 	if d.onSubscriptionResolvedTs(resolvedTs) {
 		// Note: don't block the caller of this function.
 		select {
-		case c.ds.In() <- newScanTask(d):
+		case c.ds.In(d.info.GetID()) <- newScanTask(d):
 		default:
 			metricEventBrokerDropNotificationCount.Inc()
 		}

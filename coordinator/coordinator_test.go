@@ -25,8 +25,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/coordinator/changefeed"
+	mock_changefeed "github.com/pingcap/ticdc/coordinator/changefeed/mock"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	appcontext "github.com/pingcap/ticdc/pkg/common/context"
@@ -247,8 +249,10 @@ func TestCoordinatorScheduling(t *testing.T) {
 		cfSize, _ = strconv.Atoi(argList[0])
 	}
 
-	backend := &mockBackend{changefeeds: make(map[common.ChangeFeedID]*changefeed.ChangefeedMetaWrapper)}
-	cfs := backend.changefeeds
+	ctrl := gomock.NewController(t)
+	backend := mock_changefeed.NewMockBackend(ctrl)
+	cfs := make(map[common.ChangeFeedID]*changefeed.ChangefeedMetaWrapper)
+	backend.EXPECT().GetAllChangefeeds(gomock.Any()).Return(cfs, nil).AnyTimes()
 	for i := 0; i < cfSize; i++ {
 		cfID := common.NewChangeFeedIDWithDisplayName(common.ChangeFeedDisplayName{
 			Name:      fmt.Sprintf("%d", i),
@@ -292,8 +296,10 @@ func TestScaleNode(t *testing.T) {
 	startMaintainerNode(ctx, info, mc1, nodeManager)
 
 	serviceID := "default"
-	backend := &mockBackend{changefeeds: make(map[common.ChangeFeedID]*changefeed.ChangefeedMetaWrapper)}
-	cfs := backend.changefeeds
+
+	ctrl := gomock.NewController(t)
+	backend := mock_changefeed.NewMockBackend(ctrl)
+	cfs := make(map[common.ChangeFeedID]*changefeed.ChangefeedMetaWrapper)
 	cfSize := 6
 	for i := 0; i < cfSize; i++ {
 		cfID := common.NewChangeFeedIDWithDisplayName(common.ChangeFeedDisplayName{
@@ -309,6 +315,7 @@ func TestScaleNode(t *testing.T) {
 			Status: &config.ChangeFeedStatus{CheckpointTs: 10},
 		}
 	}
+	backend.EXPECT().GetAllChangefeeds(gomock.Any()).Return(cfs, nil).AnyTimes()
 
 	cr := New(info, &mockPdClient{}, pdutil.NewClock4Test(), backend, serviceID, 100, 10000, time.Millisecond*10)
 
@@ -410,12 +417,16 @@ func TestBootstrapWithUnStoppedChangefeed(t *testing.T) {
 	}
 
 	serviceID := "default"
-	backend := &mockBackend{changefeeds: map[common.ChangeFeedID]*changefeed.ChangefeedMetaWrapper{
+	ctrl := gomock.NewController(t)
+	backend := mock_changefeed.NewMockBackend(ctrl)
+	backend.EXPECT().GetAllChangefeeds(gomock.Any()).Return(map[common.ChangeFeedID]*changefeed.ChangefeedMetaWrapper{
 		removingCf1.Info.ChangefeedID: removingCf1,
 		removingCf2.Info.ChangefeedID: removingCf2,
 		stopingCf1.Info.ChangefeedID:  stopingCf1,
 		stopingCf2.Info.ChangefeedID:  stopingCf2,
-	}}
+	}, nil).AnyTimes()
+	backend.EXPECT().DeleteChangefeed(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	backend.EXPECT().SetChangefeedProgress(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	cr := New(info, &mockPdClient{}, pdutil.NewClock4Test(), backend, serviceID, 100, 10000, time.Millisecond*10)
 
 	// run coordinator
@@ -465,33 +476,4 @@ func startMaintainerNode(ctx context.Context,
 		mc:      mc,
 		manager: maintainerM,
 	}
-}
-
-type mockBackend struct {
-	changefeed.Backend
-	changefeeds map[common.ChangeFeedID]*changefeed.ChangefeedMetaWrapper
-}
-
-func (m *mockBackend) GetAllChangefeeds(_ context.Context) (map[common.ChangeFeedID]*changefeed.ChangefeedMetaWrapper, error) {
-	return m.changefeeds, nil
-}
-
-func (m *mockBackend) UpdateChangefeedCheckpointTs(_ context.Context, _ map[common.ChangeFeedID]uint64) error {
-	return nil
-}
-
-func (m *mockBackend) SetChangefeedProgress(_ context.Context, _ common.ChangeFeedID, _ config.Progress) error {
-	return nil
-}
-
-func (m *mockBackend) DeleteChangefeed(_ context.Context, _ common.ChangeFeedID) error {
-	return nil
-}
-
-func (m *mockBackend) ResumeChangefeed(_ context.Context, _ common.ChangeFeedID, _ uint64) error {
-	return nil
-}
-
-func (m *mockBackend) PauseChangefeed(_ context.Context, _ common.ChangeFeedID) error {
-	return nil
 }

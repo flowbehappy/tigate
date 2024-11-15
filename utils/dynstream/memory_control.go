@@ -5,8 +5,12 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/metrics"
 	"go.uber.org/zap"
 )
+
+var maxMemoryUsageMetric = metrics.DynamicStreamMemoryUsage.WithLabelValues("max")
+var usedMemoryUsageMetric = metrics.DynamicStreamMemoryUsage.WithLabelValues("used")
 
 // memoryPauseRule defines a mapping rule between memory usage ratio and path pause ratio
 type memoryPauseRule struct {
@@ -93,15 +97,20 @@ func (as *areaMemStat[A, P, T, D, H]) appendEvent(
 		}
 	}
 
-	if !replaced && !as.shouldDropEvent(path, event, handler, eventQueue) {
-		// Add the event to the pending queue.
-		path.pendingQueue.PushBack(event)
-		// Update the pending size.
-		path.pendingSize += event.eventSize
-		as.totalPendingSize.Add(int64(event.eventSize))
-		// Update the heaps after adding the event in the queue.
-		eventQueue.updateHeapAfterUpdatePath(path)
-		eventQueue.totalPendingLength.Add(1)
+	if !replaced {
+		if as.shouldDropEvent(path, event, handler, eventQueue) {
+			// Drop the event
+			handler.OnDrop(event.event)
+		} else {
+			// Add the event to the pending queue.
+			path.pendingQueue.PushBack(event)
+			// Update the pending size.
+			path.pendingSize += event.eventSize
+			as.totalPendingSize.Add(int64(event.eventSize))
+			// Update the heaps after adding the event in the queue.
+			eventQueue.updateHeapAfterUpdatePath(path)
+			eventQueue.totalPendingLength.Add(1)
+		}
 	}
 
 	as.updatePathPauseState(path, event)
@@ -113,6 +122,15 @@ func (as *areaMemStat[A, P, T, D, H]) shouldDropEvent(
 	handler H,
 	eventQueue *eventQueue[A, P, T, D, H],
 ) bool {
+	if event.eventSize > as.settings.Load().MaxPendingSize {
+		log.Warn("The event size exceeds the max pending size",
+			zap.Any("area", as.area),
+			zap.Any("path", path.path),
+			zap.Int("eventSize", event.eventSize),
+			zap.Int("maxPendingSize", as.settings.Load().MaxPendingSize))
+		return true
+	}
+
 	exceedMaxPendingSize := func() bool {
 		return int(as.totalPendingSize.Load())+event.eventSize > as.settings.Load().MaxPendingSize
 	}
@@ -147,16 +165,11 @@ LOOP:
 		}
 		// If the longest path is the same as the current path, drop the event and return.
 		if longestPath.path == path.path {
-			if !isPeriodicSignal(event) {
-				handler.OnDrop(event.event)
-			}
 			return true
 		}
 		for longestPath.pendingQueue.Length() != 0 {
 			back, _ := longestPath.pendingQueue.PopBack()
-			if !isPeriodicSignal(back) {
-				handler.OnDrop(back.event)
-			}
+			handler.OnDrop(back.event)
 			longestPath.pendingSize -= back.eventSize
 			as.totalPendingSize.Add(int64(-back.eventSize))
 			eventQueue.updateHeapAfterUpdatePath((*pathInfo[A, P, T, D, H])(longestPath))
@@ -272,7 +285,6 @@ func (m *memControl[A, P, T, D, H]) addPathToArea(path *pathInfo[A, P, T, D, H],
 
 	area, ok := m.areaStatMap[path.area]
 	if !ok {
-
 		area = newAreaMemStat(path.area, m, settings, feedbackChan)
 		m.areaStatMap[path.area] = area
 	}
@@ -296,6 +308,19 @@ func (m *memControl[A, P, T, D, H]) removePathFromArea(path *pathInfo[A, P, T, D
 	if area.pathCount == 0 {
 		delete(m.areaStatMap, area.area)
 	}
+}
+
+func (m *memControl[A, P, T, D, H]) updateMetrics() {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	usedMemory := int64(0)
+	maxMemory := 0
+	for _, area := range m.areaStatMap {
+		usedMemory += area.totalPendingSize.Load()
+		maxMemory += area.settings.Load().MaxPendingSize
+	}
+	maxMemoryUsageMetric.Set(float64(maxMemory))
+	usedMemoryUsageMetric.Set(float64(usedMemory))
 }
 
 func isPeriodicSignal[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](event eventWrap[A, P, T, D, H]) bool {

@@ -114,7 +114,6 @@ type Handler[A Area, P Path, T Event, D Dest] interface {
 	// Only the events with the same type are processed in a group.
 	GetType(event T) EventType
 	// OnDrop is called when an event is dropped. Could be caused by the memory control or cannot find the path.
-	// Note that dropping PeriodicSignal events will not cause OnDrop to be called.
 	// Do nothing by default implementation.
 	OnDrop(event T)
 }

@@ -112,6 +112,10 @@ generate-protobuf:
 	@echo "generate-protobuf"
 	./scripts/generate-protobuf.sh
 
+generate_mock: ## Generate mock code.
+generate_mock: tools/bin/mockgen
+	scripts/generate-mock.sh
+
 cdc:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/cdc ./cmd
 
