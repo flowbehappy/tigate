@@ -44,9 +44,10 @@ import (
 /*
 EventDispatcherManager is responsible for managing the dispatchers of a changefeed in the instance.
 EventDispatcherManager is working on:
-1. Collecting all the heartbeat messages from all the dispatchers to make HeartBeatRequest.
-2. Sending the HeartBeatResponse to each dispatcher.
-3. Create and remove dispatchers.
+ 1. Collecting all the heartbeat messages / block status messages / table status messages,
+    and push to the related queue, to be consumed by the heartbeat collector(to maintainer).
+ 2. Create and remove all dispatchers.
+
 One changefeed in one instance has one EventDispatcherManager.
 One EventDispatcherManager has one backend sink.
 */
@@ -407,6 +408,7 @@ func (e *EventDispatcherManager) collectErrors(ctx context.Context) {
 			e.heartbeatRequestQueue.Enqueue(&HeartBeatRequestWithTargetID{TargetID: e.GetMaintainerID(), Request: &message})
 
 			// resend message until the event dispatcher manager is closed
+			// the first error is matter most, so we just need to resend it continuely and ignore the other errors.
 			ticker := time.NewTicker(time.Second * 5)
 			defer ticker.Stop()
 			for {
