@@ -29,6 +29,7 @@ import (
 
 const (
 	resolvedTsCacheSize = 8192
+	streamCount         = 4
 )
 
 var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.WithLabelValues("txn")
@@ -102,7 +103,6 @@ func newEventBroker(
 	wg := &sync.WaitGroup{}
 
 	option := dynstream.NewOption()
-	streamCount := 4
 	option.InputBufferSize = 1024 * 1024 / streamCount // 1 Million
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{streamCount: streamCount}, &dispatcherEventsHandler{}, option)
 	ds.Start()
@@ -157,7 +157,7 @@ func (c *eventBroker) sendWatermark(
 		re,
 		d.getEventSenderState())
 	select {
-	case c.getMessageCh(d.id) <- resolvedEvent:
+	case c.getMessageCh(d.workerIndex) <- resolvedEvent:
 		if counter != nil {
 			counter.Inc()
 		}
@@ -166,9 +166,8 @@ func (c *eventBroker) sendWatermark(
 	}
 }
 
-func (c *eventBroker) getMessageCh(dispatcherID common.DispatcherID) chan wrapEvent {
-	hash := int((common.GID)(dispatcherID).Hash(uint64(len(c.messageCh))))
-	return c.messageCh[hash]
+func (c *eventBroker) getMessageCh(workerIndex int) chan wrapEvent {
+	return c.messageCh[workerIndex]
 }
 
 func (c *eventBroker) runScanWorker(ctx context.Context) {
@@ -219,7 +218,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 								dispatcherStat.isInitialized.Store(true)
 							},
 						}
-						c.getMessageCh(dispatcherStat.id) <- wrapE
+						c.getMessageCh(dispatcherStat.workerIndex) <- wrapE
 						return true
 					}
 
@@ -254,7 +253,7 @@ func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e pevent.DD
 	select {
 	case <-ctx.Done():
 		return
-	case c.getMessageCh(d.id) <- ddlEvent:
+	case c.getMessageCh(d.workerIndex) <- ddlEvent:
 		d.metricEventServiceSendDDLCount.Inc()
 	}
 }
@@ -325,7 +324,7 @@ func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 		},
 	}
 	log.Info("send handshake event to dispatcher", zap.Uint64("seq", wrapE.e.(*pevent.HandshakeEvent).Seq), zap.Stringer("dispatcher", task.dispatcherStat.id))
-	c.getMessageCh(task.dispatcherStat.id) <- wrapE
+	c.getMessageCh(task.dispatcherStat.workerIndex) <- wrapE
 }
 
 // emitSyncPointEventIfNeeded emits a sync point event if the current ts is greater than the next sync point, and updates the next sync point.
@@ -340,7 +339,7 @@ func (c *eventBroker) emitSyncPointEventIfNeeded(ts uint64, d *dispatcherStat, r
 				DispatcherID: d.id,
 				CommitTs:     ts},
 			d.getEventSenderState())
-		c.getMessageCh(d.id) <- syncPointEvent
+		c.getMessageCh(d.workerIndex) <- syncPointEvent
 		d.nextSyncPoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(d.nextSyncPoint).Add(d.syncPointInterval))
 	}
 }
@@ -408,7 +407,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		}
 		dml.Seq = task.dispatcherStat.seq.Add(1)
 		c.emitSyncPointEventIfNeeded(dml.CommitTs, task.dispatcherStat, remoteID)
-		c.getMessageCh(dispatcherID) <- newWrapDMLEvent(remoteID, dml, task.dispatcherStat.getEventSenderState())
+		c.getMessageCh(task.dispatcherStat.workerIndex) <- newWrapDMLEvent(remoteID, dml, task.dispatcherStat.getEventSenderState())
 		task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(dml.Len()))
 	}
 
@@ -479,6 +478,8 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int)
 					m.serverID,
 					messaging.EventCollectorTopic,
 					m.e)
+				// Note: we need to flush the resolvedTs cache before sending the message
+				// to keep the order of the resolvedTs and the message.
 				c.flushResolvedTs(ctx, resolvedTsCacheMap[m.serverID], m.serverID)
 				c.sendMsg(ctx, tMsg, m.postSendFunc)
 			case <-flushResolvedTsTicker.C:
@@ -652,7 +653,8 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	id := info.GetID()
 	span := info.GetTableSpan()
 	startTs := info.GetStartTs()
-	dispatcher := newDispatcherStat(startTs, info, filter)
+	workerIndex := int((common.GID)(id).Hash(uint64(streamCount)))
+	dispatcher := newDispatcherStat(startTs, info, filter, workerIndex)
 	if span.Equal(heartbeatpb.DDLSpan) {
 		c.tableTriggerDispatchers.Store(id, dispatcher)
 		log.Info("table trigger dispatcher register dispatcher", zap.Uint64("clusterID", c.tidbClusterID),
@@ -739,8 +741,10 @@ func (c *eventBroker) resetDispatcher(dispatcherInfo DispatcherInfo) {
 // Store the progress of the dispatcher, and the incremental events stats.
 // Those information will be used to decide when will the worker start to handle the push task of this dispatcher.
 type dispatcherStat struct {
-	id   common.DispatcherID
-	info DispatcherInfo
+	id common.DispatcherID
+	// workerIndex is the index of the worker that this dispatcher belongs to.
+	workerIndex int
+	info        DispatcherInfo
 	// startTableInfo is the table info of the dispatcher when it is registered or reset.
 	startTableInfo atomic.Pointer[common.TableInfo]
 	filter         filter.Filter
@@ -779,10 +783,12 @@ func newDispatcherStat(
 	startTs uint64,
 	info DispatcherInfo,
 	filter filter.Filter,
+	workerIndex int,
 ) *dispatcherStat {
 	changefeedID := info.GetChangefeedID()
 	dispStat := &dispatcherStat{
 		id:                                    info.GetID(),
+		workerIndex:                           workerIndex,
 		info:                                  info,
 		filter:                                filter,
 		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "kv"),
