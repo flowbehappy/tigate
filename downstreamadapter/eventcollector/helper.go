@@ -70,6 +70,7 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 	switch events[0].GetType() {
 	case commonEvent.TypeDDLEvent,
 		commonEvent.TypeSyncPointEvent,
+		commonEvent.TypeResolvedEvent, // TODO: make sure this is correct
 		commonEvent.TypeHandshakeEvent,
 		commonEvent.TypeReadyEvent,
 		commonEvent.TypeNotReusableEvent:
@@ -90,10 +91,50 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 		}
 	}
 
+	checkEventSeq := func(dispatcherEvent dispatcher.DispatcherEvent) bool {
+		expectedSeq := stat.lastEventSeq.Add(1)
+		if dispatcherEvent.GetSeq() != expectedSeq {
+			log.Warn("Received an out-of-order event, reset the dispatcher",
+				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
+				zap.Stringer("dispatcher", stat.target.GetId()),
+				zap.Uint64("receivedSeq", dispatcherEvent.GetSeq()),
+				zap.Uint64("expectedSeq", expectedSeq),
+				zap.Uint64("commitTs", dispatcherEvent.GetCommitTs()),
+				zap.Any("event", dispatcherEvent))
+			h.eventCollector.ResetDispatcherStat(stat)
+			return false
+		}
+		return true
+	}
+
 	// just check the first event type, because all event types should be same
 	switch events[0].GetType() {
-	case commonEvent.TypeDMLEvent,
-		commonEvent.TypeDDLEvent,
+	case commonEvent.TypeDMLEvent:
+		if stat.waitHandshake.Load() {
+			log.Warn("Receive event before handshake event, ignore it",
+				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
+				zap.Stringer("dispatcher", stat.target.GetId()),
+				zap.Any("event", events))
+			return false
+		}
+		validEventStart := 0
+		for _, dispatcherEvent := range events {
+			if !checkEventSeq(dispatcherEvent) {
+				return false
+			}
+			// commit ts should be in increasing order
+			if dispatcherEvent.GetCommitTs() <= stat.sendCommitTs.Load() {
+				log.Warn("Receive dml event before sendCommitTs, ignore it",
+					zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
+					zap.Stringer("dispatcher", stat.target.GetId()),
+					zap.Uint64("checkpointTs", stat.sendCommitTs.Load()),
+					zap.Any("event", dispatcherEvent))
+				validEventStart += 1
+			}
+		}
+		stat.sendCommitTs.Store(events[len(events)-1].GetCommitTs())
+		return stat.target.HandleEvents(events[validEventStart:], func() { h.eventCollector.WakeDispatcher(stat.dispatcherID) })
+	case commonEvent.TypeDDLEvent,
 		commonEvent.TypeResolvedEvent,
 		commonEvent.TypeSyncPointEvent:
 		if stat.waitHandshake.Load() {
@@ -103,27 +144,26 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 				zap.Any("event", events))
 			return false
 		}
-		for _, dispatcherEvent := range events {
-			if dispatcherEvent.GetType() == commonEvent.TypeDMLEvent ||
-				dispatcherEvent.GetType() == commonEvent.TypeDDLEvent {
-				expectedSeq := stat.lastEventSeq.Add(1)
-				if dispatcherEvent.GetSeq() != expectedSeq {
-					log.Warn("Received an out-of-order event, reset the dispatcher",
-						zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
-						zap.Stringer("dispatcher", stat.target.GetId()),
-						zap.Uint64("receivedSeq", dispatcherEvent.GetSeq()),
-						zap.Uint64("expectedSeq", expectedSeq),
-						zap.Uint64("commitTs", dispatcherEvent.GetCommitTs()),
-						zap.Any("event", dispatcherEvent))
-					h.eventCollector.ResetDispatcherStat(stat)
-					return false
-				}
+		// there should be only one event
+		if events[0].GetCommitTs() <= stat.sendCommitTs.Load() {
+			log.Warn("Receive resolved event before sendCommitTs, ignore it",
+				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
+				zap.Stringer("dispatcher", stat.target.GetId()),
+				zap.Uint64("checkpointTs", stat.sendCommitTs.Load()),
+				zap.Any("event", events))
+			return false
+		}
+		if events[0].GetType() == commonEvent.TypeDDLEvent {
+			if !checkEventSeq(events[0]) {
+				return false
 			}
 		}
 		return stat.target.HandleEvents(events, func() { h.eventCollector.WakeDispatcher(stat.dispatcherID) })
 	case commonEvent.TypeHandshakeEvent:
 		dispatcherEvent := events[0]
+		// not from the current event service, just ignore it
 		if !stat.isCurrentEventService(dispatcherEvent.From) {
+			// check invariant: if the handshake event is not from the current event service, we must be reading from local event service.
 			if !stat.isCurrentEventService(h.eventCollector.serverId) {
 				log.Panic("receive handshake event from remote event service, but current event service is not local event service",
 					zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
@@ -132,42 +172,10 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 			}
 			return false
 		}
-		if !stat.waitHandshake.Load() {
-			log.Panic("receive handshake event when dispatcher is ready",
-				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
-				zap.Stringer("dispatcher", stat.target.GetId()))
-		}
-		handshake, ok := dispatcherEvent.Event.(*commonEvent.HandshakeEvent)
-		if !ok {
-			log.Panic("cast handshake event failed",
-				zap.Stringer("dispatcher", stat.target.GetId()),
-				zap.Uint64("commitTs", dispatcherEvent.GetCommitTs()))
-		}
-		if handshake.GetCommitTs() == stat.target.GetCheckpointTs() {
-			currentSeq := stat.lastEventSeq.Load()
-			if currentSeq != 0 {
-				log.Panic("Receive handshake event, but current seq is not zero",
-					zap.Any("event", handshake),
-					zap.Stringer("dispatcher", stat.target.GetId()),
-					zap.Uint64("currentSeq", currentSeq))
-				return false
-			}
-			// In some case, the eventService may send handshake event multiple times,
-			// we should use the first handshake event we received to initialize the dispatcher.
-			stat.lastEventSeq.Store(handshake.GetSeq())
-			stat.target.SetInitialTableInfo(handshake.TableInfo)
-			stat.waitHandshake.Store(false)
-			log.Info("Receive handshake event, dispatcher is ready to handle events",
-				zap.Any("dispatcher", stat.target.GetId()),
-				zap.Uint64("commitTs", handshake.GetCommitTs()),
-			)
-		} else {
-			log.Warn("Handshake event commitTs not equal to dispatcher startTs, ignore it",
-				zap.Any("event", dispatcherEvent),
-				zap.Stringer("dispatcher", stat.target.GetId()),
-				zap.Uint64("checkpointTs", stat.target.GetCheckpointTs()),
-				zap.Uint64("commitTs", dispatcherEvent.GetCommitTs()))
-		}
+		stat.lastEventSeq.Store(dispatcherEvent.GetSeq())
+		stat.waitHandshake.Store(false)
+		handshake := dispatcherEvent.Event.(*commonEvent.HandshakeEvent)
+		stat.target.SetInitialTableInfo(handshake.TableInfo)
 		return false
 	case commonEvent.TypeReadyEvent:
 		// If we have received the ready signal from the event service, we can ignore it.

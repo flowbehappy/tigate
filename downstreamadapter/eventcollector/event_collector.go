@@ -136,6 +136,7 @@ func (c *EventCollector) AddDispatcher(target *dispatcher.Dispatcher, memoryQuot
 		target:       target,
 	}
 	stat.reset()
+	stat.sendCommitTs.Store(target.GetStartTs())
 	c.dispatcherMap.Store(target.GetId(), stat)
 	metrics.EventCollectorRegisteredDispatcherCount.Inc()
 
@@ -189,7 +190,7 @@ func (c *EventCollector) ResetDispatcherStat(stat *DispatcherStat) {
 	// note: send the request to channel to avoid blocking the caller
 	c.addDispatcherRequestToSendingQueue(stat.getCurrentEventService(), eventServiceTopic, DispatcherRequest{
 		Dispatcher: stat.target,
-		StartTs:    stat.target.GetCheckpointTs(),
+		StartTs:    stat.sendCommitTs.Load(),
 		ActionType: eventpb.ActionType_ACTION_TYPE_RESET,
 	})
 }
@@ -396,6 +397,9 @@ type DispatcherStat struct {
 	// waitHandshake is used to indicate whether the dispatcher is waiting for handshake event.
 	// If true, the dispatcher will drop all data events it received.
 	waitHandshake atomic.Bool
+
+	// the largest commit ts that has been sent to the dispatcher.
+	sendCommitTs atomic.Uint64
 }
 
 func (d *DispatcherStat) reset() {
@@ -416,7 +420,7 @@ func (d *DispatcherStat) notifyReadyForReceiveData(server node.ID, eventCollecto
 		eventServiceTopic,
 		DispatcherRequest{
 			Dispatcher: d.target,
-			StartTs:    d.target.GetCheckpointTs(),
+			StartTs:    d.sendCommitTs.Load(),
 			ActionType: eventpb.ActionType_ACTION_TYPE_RESET,
 		},
 	)
