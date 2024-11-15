@@ -178,13 +178,17 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 				if event.Job.BinlogInfo.TableInfo != nil {
 					log.Info("table info update ts",
 						zap.String("job", event.Job.Query),
-						zap.Uint64("ts", event.Job.BinlogInfo.TableInfo.UpdateTS))
+						zap.Uint64("ts", event.Job.BinlogInfo.TableInfo.UpdateTS),
+						zap.Int64("tableID", event.Job.BinlogInfo.TableInfo.ID),
+						zap.String("name", event.Job.BinlogInfo.TableInfo.Name.O))
 				}
 				if event.Job.BinlogInfo.MultipleTableInfos != nil {
 					for _, tableInfo := range event.Job.BinlogInfo.MultipleTableInfos {
 						log.Info("table info update ts",
 							zap.String("job", event.Job.Query),
-							zap.Uint64("ts", tableInfo.UpdateTS))
+							zap.Uint64("ts", tableInfo.UpdateTS),
+							zap.Int64("tableID", tableInfo.ID),
+							zap.String("name", tableInfo.Name.O))
 					}
 				}
 
