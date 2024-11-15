@@ -68,7 +68,7 @@ type eventBroker struct {
 
 	// messageCh is used to receive message from the scanWorker,
 	// and a goroutine is responsible for sending the message to the dispatchers.
-	messageCh        chan wrapEvent
+	messageCh        []chan wrapEvent
 	resolvedTsCaches map[node.ID]*resolvedTsCache
 
 	// wg is used to spawn the goroutines.
@@ -119,7 +119,7 @@ func newEventBroker(
 		taskPool:                newScanTaskPool(),
 		scanWorkerCount:         defaultScanWorkerCount,
 		ds:                      ds,
-		messageCh:               make(chan wrapEvent, defaultChannelSize),
+		messageCh:               make([]chan wrapEvent, streamCount),
 		resolvedTsCaches:        make(map[node.ID]*resolvedTsCache),
 		cancel:                  cancel,
 		wg:                      wg,
@@ -131,9 +131,15 @@ func newEventBroker(
 		metricScanEventDuration:                metrics.EventServiceScanDuration,
 	}
 
+	for i := 0; i < streamCount; i++ {
+		c.messageCh[i] = make(chan wrapEvent, defaultChannelSize)
+	}
+
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
-	c.runSendMessageWorker(ctx)
+	for i := 0; i < streamCount; i++ {
+		c.runSendMessageWorker(ctx, i)
+	}
 	c.updateMetrics(ctx)
 	c.updateDispatcherSendTs(ctx)
 	log.Info("new event broker created", zap.Uint64("id", id))
@@ -153,13 +159,18 @@ func (c *eventBroker) sendWatermark(
 		re,
 		d.getEventSenderState())
 	select {
-	case c.messageCh <- resolvedEvent:
+	case c.getMessageCh(d.id) <- resolvedEvent:
 		if counter != nil {
 			counter.Inc()
 		}
 	default:
 		metricEventBrokerDropResolvedTsCount.Inc()
 	}
+}
+
+func (c *eventBroker) getMessageCh(dispatcherID common.DispatcherID) chan wrapEvent {
+	hash := int((common.GID)(dispatcherID).Hash(uint64(len(c.messageCh))))
+	return c.messageCh[hash]
 }
 
 func (c *eventBroker) runScanWorker(ctx context.Context) {
@@ -210,7 +221,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 								dispatcherStat.isInitialized.Store(true)
 							},
 						}
-						c.messageCh <- wrapE
+						c.getMessageCh(dispatcherStat.id) <- wrapE
 						return true
 					}
 
@@ -245,7 +256,7 @@ func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e pevent.DD
 	select {
 	case <-ctx.Done():
 		return
-	case c.messageCh <- ddlEvent:
+	case c.getMessageCh(d.id) <- ddlEvent:
 		d.metricEventServiceSendDDLCount.Inc()
 	}
 }
@@ -316,7 +327,7 @@ func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 		},
 	}
 	log.Info("send handshake event to dispatcher", zap.Uint64("seq", wrapE.e.(*pevent.HandshakeEvent).Seq), zap.Stringer("dispatcher", task.dispatcherStat.id))
-	c.messageCh <- wrapE
+	c.getMessageCh(task.dispatcherStat.id) <- wrapE
 }
 
 // emitSyncPointEventIfNeeded emits a sync point event if the current ts is greater than the next sync point, and updates the next sync point.
@@ -331,7 +342,7 @@ func (c *eventBroker) emitSyncPointEventIfNeeded(ts uint64, d *dispatcherStat, r
 				DispatcherID: d.id,
 				CommitTs:     ts},
 			d.getEventSenderState())
-		c.messageCh <- syncPointEvent
+		c.getMessageCh(d.id) <- syncPointEvent
 		d.nextSyncPoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(d.nextSyncPoint).Add(d.syncPointInterval))
 	}
 }
@@ -399,7 +410,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 		}
 		dml.Seq = task.dispatcherStat.seq.Add(1)
 		c.emitSyncPointEventIfNeeded(dml.CommitTs, task.dispatcherStat, remoteID)
-		c.messageCh <- newWrapDMLEvent(remoteID, dml, task.dispatcherStat.getEventSenderState())
+		c.getMessageCh(dispatcherID) <- newWrapDMLEvent(remoteID, dml, task.dispatcherStat.getEventSenderState())
 		task.dispatcherStat.metricEventServiceSendKvCount.Add(float64(dml.Len()))
 	}
 
@@ -436,26 +447,9 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 	}
 }
 
-func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
+func (c *eventBroker) runSendMessageWorker(ctx context.Context, workerIndex int) {
 	c.wg.Add(1)
 	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 300)
-
-	// Try to get more resolved events from the message channel.
-	// It return the last event it peeked, or nil if no more events.
-	tryGetMoreResolvedTs := func() *wrapEvent {
-		for {
-			select {
-			case m := <-c.messageCh:
-				if m.msgType != pevent.TypeResolvedEvent {
-					return &m
-				}
-				c.handleResolvedTs(ctx, m)
-			default:
-				return nil
-			}
-		}
-	}
-
 	go func() {
 		defer c.wg.Done()
 		defer flushResolvedTsTicker.Stop()
@@ -463,18 +457,12 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case m := <-c.messageCh:
-				// Batch get resolved events from the message channel.
+			case m := <-c.messageCh[workerIndex]:
 				if m.msgType == pevent.TypeResolvedEvent {
 					// The message is a watermark, we need to cache it, and send it to the dispatcher
-					// when the dispatcher is registered.
+					// when cache is full to reduce the number of messages.
 					c.handleResolvedTs(ctx, m)
-					lastMsg := tryGetMoreResolvedTs()
-					if lastMsg == nil {
-						continue
-					}
-					// If the last message is not nil, we need to handle it in the following code.
-					m = *lastMsg
+					continue
 				}
 				// Check if the dispatcher is initialized, if so, ignore the handshake event.
 				if m.msgType == pevent.TypeHandshakeEvent {
@@ -488,7 +476,6 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 						continue
 					}
 				}
-
 				tMsg := messaging.NewSingleTargetMessage(
 					m.serverID,
 					messaging.EventCollectorTopic,
