@@ -149,7 +149,7 @@ func NewDispatcher(
 		blockStatusesChan:     blockStatusesChan,
 		syncPointConfig:       syncPointConfig,
 		componentStatus:       newComponentStateWithMutex(heartbeatpb.ComponentState_Working),
-		ResolvedTs:            newTsItem(startTs),
+		ResolvedTs:            NewTsItem(startTs),
 		filterConfig:          filterConfig,
 		isRemoving:            atomic.Bool{},
 		blockEventStatus:      BlockEventStatus{blockPendingEvent: nil},

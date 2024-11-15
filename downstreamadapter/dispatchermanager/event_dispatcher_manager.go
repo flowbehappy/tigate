@@ -346,9 +346,9 @@ func (e *EventDispatcherManager) newDispatchers(infos []dispatcherCreateInfo) er
 			e.schemaIDToDispatchers.Set(schemaIds[idx], id)
 		}
 
+		e.dispatcherMap.Set(id, d)
 		appcontext.GetService[*eventcollector.EventCollector](appcontext.EventCollector).AddDispatcher(d, int(e.config.MemoryQuota))
 
-		e.dispatcherMap.Set(id, d)
 		e.statusesChan <- &heartbeatpb.TableSpanStatus{
 			ID:              id.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
@@ -628,10 +628,10 @@ type DispatcherMap struct {
 		sync.RWMutex
 		h *heap.Heap[*dispatcher.TsItem]
 	}
-	checkpointsHeap struct {
-		sync.RWMutex
-		h *heap.Heap[*dispatcher.TsItem]
-	}
+	// checkpointsHeap struct {
+	// 	sync.RWMutex
+	// 	h *heap.Heap[*dispatcher.TsItem]
+	// }
 }
 
 func newDispatcherMap() *DispatcherMap {
@@ -678,7 +678,6 @@ func (d *DispatcherMap) Delete(id common.DispatcherID) {
 
 func (d *DispatcherMap) Set(id common.DispatcherID, dispatcher *dispatcher.Dispatcher) {
 	d.m.Store(id, dispatcher)
-	dispatcher.ResolvedTs.Dispatcher = dispatcher
 	dispatcher.ResolvedTs.SetOnUpdate(d.onUpdateResolvedTs)
 	d.onUpdateResolvedTs(dispatcher.ResolvedTs)
 }
@@ -696,21 +695,21 @@ func (d *DispatcherMap) onUpdateResolvedTs(tsItem *dispatcher.TsItem) {
 	d.resolvedTsHeap.h.AddOrUpdate(tsItem)
 }
 
-func (d *DispatcherMap) onUpdateCheckpointTs(tsItem *dispatcher.TsItem) {
-	d.resolvedTsHeap.Lock()
-	defer d.resolvedTsHeap.Unlock()
-	d.checkpointsHeap.h.AddOrUpdate(tsItem)
-}
+// func (d *DispatcherMap) onUpdateCheckpointTs(tsItem *dispatcher.TsItem) {
+// 	d.resolvedTsHeap.Lock()
+// 	defer d.resolvedTsHeap.Unlock()
+// 	d.checkpointsHeap.h.AddOrUpdate(tsItem)
+// }
 
 func (d *DispatcherMap) GetMinWatermark() (w heartbeatpb.Watermark) {
 	d.resolvedTsHeap.RLock()
 	r, ok := d.resolvedTsHeap.h.PeekTop()
 	d.resolvedTsHeap.RUnlock()
-	if ok {
+	if !ok {
 		return
 	}
 	w.ResolvedTs = r.Get()
-	w.CheckpointTs = r.GetCheckpointTs()
+	w.CheckpointTs = w.ResolvedTs
 
 	// TODO: implement checkpointsHeap
 	// c, ok := d.checkpointsHeap.PeekTop()

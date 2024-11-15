@@ -325,14 +325,13 @@ func SetDispatcherStatusDynamicStream(dynamicStream dynstream.DynamicStream[comm
 
 type TsItem struct {
 	sync.RWMutex
-	*Dispatcher
 	ts      uint64
 	heapIdx int
 
 	onUpdate func(*TsItem)
 }
 
-func newTsItem(ts uint64) *TsItem {
+func NewTsItem(ts uint64) *TsItem {
 	return &TsItem{
 		ts: ts,
 	}
@@ -347,7 +346,7 @@ func (d *TsItem) GetHeapIndex() int {
 }
 
 func (d *TsItem) LessThan(other *TsItem) bool {
-	return d.ts < other.ts
+	return d.Get() < other.Get()
 }
 
 func (r *TsItem) Set(ts uint64) {
@@ -367,7 +366,5 @@ func (r *TsItem) Get() uint64 {
 }
 
 func (r *TsItem) SetOnUpdate(f func(*TsItem)) {
-	r.Lock()
-	defer r.Unlock()
 	r.onUpdate = f
 }
