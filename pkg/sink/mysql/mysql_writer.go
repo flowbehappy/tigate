@@ -486,13 +486,14 @@ func (w *MysqlWriter) RemoveDDLTsItem() error {
 	builder.WriteString(filter.TiCDCSystemSchema)
 	builder.WriteString(".")
 	builder.WriteString(filter.DDLTsTable)
-	builder.WriteString(" WHERE (ticdc_cluster_id, changefeed) IN ")
+	builder.WriteString(" WHERE (ticdc_cluster_id, changefeed) IN (")
 
 	builder.WriteString("('")
 	builder.WriteString(ticdcClusterID)
 	builder.WriteString("', '")
 	builder.WriteString(changefeedID)
 	builder.WriteString("')")
+	builder.WriteString(")")
 	query := builder.String()
 
 	_, err = tx.Exec(query)

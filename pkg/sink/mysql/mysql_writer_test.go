@@ -220,7 +220,7 @@ func TestMysqlWriter_RemoveDDLTsTable(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectBegin()
-	mock.ExpectExec("DELETE FROM  tidb_cdc.ddl_ts_v1 WHERE (ticdc_cluster_id, changefeed) IN ('default', 'test/test')").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("DELETE FROM tidb_cdc.ddl_ts_v1 WHERE (ticdc_cluster_id, changefeed) IN (('default', 'test/test'))").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
 	err := writer.RemoveDDLTsItem()
