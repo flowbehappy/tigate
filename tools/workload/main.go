@@ -17,20 +17,18 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
-	"math"
-	"math/rand"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"workload/schema"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tiflow/pkg/logutil"
 	"go.uber.org/zap"
-	"workload/schema"
 )
 
 var (
@@ -39,9 +37,8 @@ var (
 
 	tableCount      int
 	tableStartIndex int
-	tps             int
-	rowCount        int64
-	thread          int
+	qps             int
+	rps             int
 
 	dbHost     string
 	dbPort     int
@@ -61,10 +58,8 @@ var (
 	largeRowSize  int
 	largeRowRatio float64
 
-	action                    string
-	tableCountForUpdate       int
-	threadPercentageForUpdate int
-	maxTpsForUpdate           int
+	action              string
+	percentageForUpdate int
 
 	dbNum    int
 	dbPrefix string
@@ -77,33 +72,28 @@ const (
 )
 
 func init() {
-	flag.StringVar(&logFile, "log-file", "workload.log", "log file path")
-	flag.StringVar(&logLevel, "log-level", "info", "log file path")
-	flag.StringVar(&workloadType, "workload-type", "sysbench", "workload type: [bank, sysbench, express, common, one, bigtable, large_row, wallet]")
-	flag.IntVar(&tableCount, "table-count", 1, "table count of the workload")
-	flag.IntVar(&tableCountForUpdate, "table-count-for-update", 0, "table count for update")
-	flag.IntVar(&tableStartIndex, "table-start-index", 0, "table start index, sbtest<index>")
-	flag.IntVar(&tps, "tps", 1000, "tps of the workload")
-	flag.IntVar(&maxTpsForUpdate, "max-tps-for-update", 50, "max tps for update")
-	flag.IntVar(&thread, "thread", 0, "total thread of the workload")
-	flag.IntVar(&threadPercentageForUpdate, "thread-percentage-for-update", 0, "thread percentage for update: [0, 100]")
-	flag.Int64Var(&rowCount, "row-count", 1000000, "the total row count of the workload")
-	flag.BoolVar(&skipCreateTable, "skip-create-table", false, "do not create tables")
-	flag.StringVar(&action, "action", "prepare", "action of the workload: [prepare, insert, update, delete, write, cleanup]")
-
-	flag.IntVar(&rowSize, "row-size", 10240, "the size of each row")
 	flag.StringVar(&dbPrefix, "db-prefix", "", "the prefix of the database name")
 	flag.IntVar((&dbNum), "db-num", 1, "the number of databases")
-
-	flag.IntVar(&largeRowSize, "large-row-size", 1024*1024, "the size of the large row")
-	flag.Float64Var(&largeRowRatio, "large-ratio", 0.0, "large row ratio in the each transaction")
-
+	flag.IntVar(&tableCount, "table-count", 1, "table count of the workload")
+	flag.IntVar(&tableStartIndex, "table-start-index", 0, "table start index, sbtest<index>")
+	flag.IntVar(&qps, "qps", 1000, "qps of the workload")
+	flag.IntVar(&rps, "rps", 10, "the row count per second of the workload")
+	flag.IntVar(&percentageForUpdate, "percentage-for-update", 0, "percentage for update: [0, 100]")
+	flag.BoolVar(&skipCreateTable, "skip-create-table", false, "do not create tables")
+	flag.StringVar(&action, "action", "prepare", "action of the workload: [prepare, insert, update, delete, write, cleanup]")
+	flag.StringVar(&workloadType, "workload-type", "sysbench", "workload type: [bank, sysbench, express, common, one, bigtable, large_row, wallet]")
 	flag.StringVar(&dbHost, "database-host", "127.0.0.1", "database host")
 	flag.StringVar(&dbUser, "database-user", "root", "database user")
 	flag.StringVar(&dbPassword, "database-password", "", "database password")
 	flag.StringVar(&dbName, "database-db-name", "test", "database db name")
 	flag.IntVar(&dbPort, "database-port", 4000, "database port")
 	flag.BoolVar(&onlyDDL, "only-ddl", false, "only generate ddl")
+	flag.StringVar(&logFile, "log-file", "workload.log", "log file path")
+	flag.StringVar(&logLevel, "log-level", "info", "log file path")
+	// For large row workload
+	flag.IntVar(&rowSize, "row-size", 10240, "the size of each row")
+	flag.IntVar(&largeRowSize, "large-row-size", 1024*1024, "the size of the large row")
+	flag.Float64Var(&largeRowRatio, "large-ratio", 0.0, "large row ratio in the each transaction")
 	flag.Parse()
 }
 
@@ -116,12 +106,6 @@ func main() {
 		log.Error("init logger failed", zap.Error(err))
 		return
 	}
-
-	threadCount := getThreadCount()
-	threadForUpdate := threadCount * threadPercentageForUpdate / 100
-	threadForInsert := thread - threadForUpdate
-	fmt.Printf("use thread %d\n", threadCount)
-	group := &sync.WaitGroup{}
 
 	dbs := make([]*sql.DB, dbNum)
 	if dbPrefix != "" {
@@ -145,9 +129,17 @@ func main() {
 		db.SetMaxOpenConns(256)
 		db.SetConnMaxLifetime(time.Minute)
 		dbs[0] = db
+		dbNum = 1
 	}
 
-	log.Info("created db count", zap.Int("db count", len(dbs)))
+	qpsPerTable := qps / dbNum / tableCount
+
+	qpsPerTableForUpdate := qpsPerTable * percentageForUpdate / 100
+	qpsPerTableForInsert := qpsPerTable - qpsPerTableForUpdate
+
+	log.Info("created db count", zap.Int("dbCount", dbNum))
+	log.Info("created table each db", zap.Int("tableCount", tableCount))
+	fmt.Printf("each table qps %d\n", qpsPerTable)
 
 	var workload schema.Workload
 	switch workloadType {
@@ -177,69 +169,52 @@ func main() {
 	}
 
 	log.Info("start running workload",
-		zap.String("workload_type", workloadType), zap.Int("thread-count", threadCount),
-		zap.Int64("total-rows", rowCount), zap.Float64("large-ratio", largeRowRatio),
-		zap.Int("tps", tps), zap.String("action", action),
+		zap.String("workload_type", workloadType), zap.Int("rps", rps), zap.Float64("large-ratio", largeRowRatio),
+		zap.Int("qps", qps), zap.String("action", action),
 	)
-
-	if action == "insert" || action == "write" || action == "prepare" {
+	group := &sync.WaitGroup{}
+	if action == "insert" || action == "write" {
 		for i, db := range dbs {
 			log.Info("start to insert data to db", zap.Int("dbNum", i))
 			dbi := db
-			group.Add(threadForInsert)
-			for i := 0; i < threadForInsert; i++ {
+			group.Add(qpsPerTableForInsert)
+			for i := 0; i < qpsPerTableForInsert; i++ {
 				go func() {
 					defer group.Done()
-					doInsert(dbi, threadForInsert, workload)
+					doInsert(dbi, workload)
 				}()
 			}
 		}
 	}
 
-	if action == "write" || action == "update" {
-		if threadForUpdate == 0 {
-			panic("thread-percentage-for-update should be set when action is update or write")
-		}
-		if tableCountForUpdate == 0 {
-			panic("table-count-for-update should be set when action is update or write")
-		}
-		fmt.Printf("start to update data, use thread %d\n", threadForUpdate)
-
-		group.Add(threadForUpdate + 1)
-		updateTaskCh := make(chan updateTask, threadForUpdate*2)
-		for i := 0; i < threadForUpdate; i++ {
+	if (action == "write" || action == "update") && qpsPerTableForUpdate != 0 {
+		for i, db := range dbs {
+			log.Info("start to update data to db", zap.Int("dbNum", i))
+			dbi := db
+			group.Add(qpsPerTableForUpdate + 1)
+			updateTaskCh := make(chan updateTask, rps)
+			for i := 0; i < qpsPerTableForUpdate; i++ {
+				go func() {
+					defer group.Done()
+					doUpdate(dbi, workload, updateTaskCh)
+				}()
+			}
 			go func() {
 				defer group.Done()
-				doUpdate(dbs[0], workload, updateTaskCh)
+				genUpdateTask(updateTaskCh)
 			}()
 		}
-		// generate update tasks
-		go func() {
-			defer group.Done()
-			genUpdateTask(updateTaskCh)
-		}()
 	}
 
 	go printTPS()
 	group.Wait()
 }
 
-func getThreadCount() int {
-	cpuNum := runtime.NumCPU()
-	if thread > 0 {
-		cpuNum = thread
-	}
-	if tps < cpuNum {
-		cpuNum = tps
-	}
-	return cpuNum
-}
-
 // initTables create tables if not exists
 func initTables(db *sql.DB, workload schema.Workload) error {
 	var tableNum atomic.Int32
 	wg := sync.WaitGroup{}
-	for i := 0; i < thread; i++ {
+	for i := 0; i < tableCount; i++ {
 		wg.Add(1)
 		go func() {
 			log.Info("create table worker started", zap.Int("worker: ", i))
@@ -272,13 +247,12 @@ type updateTask struct {
 
 func genUpdateTask(output chan updateTask) {
 	for {
-		for i := 0; i < tableCountForUpdate; i++ {
+		for i := 0; i < tableCount; i++ {
 			// TODO: add more randomness.
-			rowCount := rand.Intn(maxTpsForUpdate) + 1
 			task := updateTask{
 				UpdateOption: schema.UpdateOption{
-					Table:    i,
-					RowCount: rowCount,
+					Table:    i + tableStartIndex,
+					RowCount: rps,
 				},
 			}
 			output <- task
@@ -296,11 +270,11 @@ func doUpdate(db *sql.DB, workload schema.Workload, input chan updateTask) {
 		}
 		if res != nil {
 			cnt, err := res.RowsAffected()
-			if err != nil {
-				fmt.Println("get rows affected error: ", err)
+			if err != nil || cnt != int64(task.RowCount) {
+				fmt.Printf("get rows affected error: %s, affected rows %d, row count %d\n", err, cnt, task.RowCount)
 				atomic.AddUint64(&totalError, 1)
 			}
-			atomic.AddUint64(&total, uint64(cnt))
+			atomic.AddUint64(&total, 1)
 			if task.IsSpecialUpdate {
 				fmt.Printf("update full table %d succeed, row count %d\n", task.Table, cnt)
 			}
@@ -313,32 +287,17 @@ func doUpdate(db *sql.DB, workload schema.Workload, input chan updateTask) {
 	}
 }
 
-func doInsert(db *sql.DB, threadCount int, workload schema.Workload) {
-	rowPerThread := rowCount / int64(threadCount)
-	tpsPerThread := int(math.Round(float64(tps) / float64(threadCount)))
-	count := rowPerThread
-
+func doInsert(db *sql.DB, workload schema.Workload) {
 	t := time.Tick(time.Second)
 	printedError := false
 	for range t {
-		if count <= 0 && action == "prepare" {
-			return
-		}
-		rowsPerTable := make(map[int]int)
-		// choose thread tables to insert
-		for q := 0; q < threadCount; q++ {
-			n := rand.Int63()
-			tableNum := int(n)%tableCount + tableStartIndex
-			rowsPerTable[tableNum] = tpsPerThread
-		}
-
-		for tableN, trCount := range rowsPerTable {
-			insertSql := workload.BuildInsertSql(tableN, trCount)
+		for i := 0; i < tableCount; i++ {
+			insertSql := workload.BuildInsertSql(i, rps)
 			_, err := db.Exec(insertSql)
 			if err != nil {
 				// if table not exists, we create it
 				if strings.Contains(err.Error(), "Error 1146") {
-					_, err = db.Exec(workload.BuildCreateTableStatement(tableN))
+					_, err = db.Exec(workload.BuildCreateTableStatement(i))
 					if err != nil {
 						fmt.Println("create table error: ", err)
 						continue
@@ -346,7 +305,7 @@ func doInsert(db *sql.DB, threadCount int, workload schema.Workload) {
 					_, err = db.Exec(insertSql)
 					if err != nil {
 						log.Info("insert error", zap.Error(err), zap.String("sql", insertSql))
-						atomic.AddUint64(&totalError, uint64(trCount))
+						atomic.AddUint64(&totalError, 1)
 						continue
 					}
 				}
@@ -356,26 +315,28 @@ func doInsert(db *sql.DB, threadCount int, workload schema.Workload) {
 					printedError = true
 				}
 				fmt.Println("insert error: ", err, ". sql: ", insertSql)
-				atomic.AddUint64(&totalError, uint64(trCount))
+				atomic.AddUint64(&totalError, 1)
 			}
-			atomic.AddUint64(&total, uint64(trCount))
-			count = count - int64(trCount)
 		}
+		atomic.AddUint64(&total, 1)
 	}
 }
 
 func printTPS() {
-	t := time.Tick(time.Second * 5)
+	duration := time.Second * 5
+	t := time.Tick(duration)
 	old := uint64(0)
 	oldErr := uint64(0)
 	for {
 		select {
 		case <-t:
 			temp := atomic.LoadUint64(&total)
-			qps := (float64(temp) - float64(old)) / 5.0
+			qps := (float64(temp) - float64(old)) / duration.Seconds()
 			old = temp
 			temp = atomic.LoadUint64(&totalError)
-			fmt.Printf("total %d, total err %d, qps is %f, err qps %f\n", total, totalError, qps, (float64(temp)-float64(oldErr))/5.0)
+			errQps := (float64(temp) - float64(oldErr)) / duration.Seconds()
+			fmt.Printf("total %d, total err %d. qps is %f, err qps is %f, tps is %f",
+				total, totalError, qps, errQps, qps*float64(rps))
 			oldErr = temp
 		}
 	}
