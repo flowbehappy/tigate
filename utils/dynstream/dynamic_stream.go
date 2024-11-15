@@ -705,6 +705,9 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 			si.streamStat = stat
 		case <-ticker.C:
 			doSchedule(ruleType(scheduleRule.Next()), 0, nil)
+			if d.memControl != nil {
+				d.memControl.updateMetrics()
+			}
 		}
 	}
 }
