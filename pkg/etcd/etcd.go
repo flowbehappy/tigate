@@ -71,15 +71,6 @@ func GetEtcdKeyChangeFeedInfo(clusterID string, changefeedID common.ChangeFeedDi
 		changefeedID.Namespace), changefeedID.Name)
 }
 
-// GetEtcdKeyTaskPosition returns the key of a task position
-func GetEtcdKeyTaskPosition(clusterID string,
-	changefeedID common.ChangeFeedID,
-	captureID string,
-) string {
-	return TaskPositionKeyPrefix(clusterID, changefeedID.Namespace()) +
-		"/" + captureID + "/" + changefeedID.Name()
-}
-
 // GetEtcdKeyCaptureInfo returns the key of a capture info
 func GetEtcdKeyCaptureInfo(clusterID, id string) string {
 	return CaptureInfoKeyPrefix(clusterID) + "/" + id
@@ -88,14 +79,6 @@ func GetEtcdKeyCaptureInfo(clusterID, id string) string {
 // GetEtcdKeyJob returns the key for a job status
 func GetEtcdKeyJob(clusterID string, changeFeedID common.ChangeFeedDisplayName) string {
 	return ChangefeedStatusKeyPrefix(clusterID, changeFeedID.Namespace) + "/" + changeFeedID.Name
-}
-
-// MigrateBackupKey is the key of backup data during a migration.
-func MigrateBackupKey(version int, backupKey string) string {
-	if strings.HasPrefix(backupKey, "/") {
-		return fmt.Sprintf("%s/%d%s", migrateBackupPrefix, version, backupKey)
-	}
-	return fmt.Sprintf("%s/%d/%s", migrateBackupPrefix, version, backupKey)
 }
 
 // OwnerCaptureInfoClient is the sub interface of CDCEtcdClient that used for get owner capture information
@@ -113,17 +96,13 @@ type CDCEtcdClient interface {
 
 	GetClusterID() string
 
-	GetEtcdClient() *Client
+	GetEtcdClient() Client
 
 	GetAllCDCInfo(ctx context.Context) ([]*mvccpb.KeyValue, error)
 
 	GetChangeFeedInfo(ctx context.Context,
 		id common.ChangeFeedDisplayName,
-	) (*model.ChangeFeedInfo, error)
-
-	GetAllChangeFeedInfo(ctx context.Context) (
-		map[common.ChangeFeedDisplayName]*model.ChangeFeedInfo, error,
-	)
+	) (*config.ChangeFeedInfo, error)
 
 	GetChangeFeedStatus(ctx context.Context,
 		id common.ChangeFeedID,
@@ -138,21 +117,6 @@ type CDCEtcdClient interface {
 
 	GetEnsureGCServiceID(tag string) string
 
-	SaveChangeFeedInfo(ctx context.Context,
-		info *model.ChangeFeedInfo,
-		changeFeedID common.ChangeFeedID,
-	) error
-
-	CreateChangefeedInfo(context.Context,
-		*model.UpstreamInfo,
-		*model.ChangeFeedInfo,
-	) error
-
-	UpdateChangefeedAndUpstream(ctx context.Context,
-		upstreamInfo *model.UpstreamInfo,
-		changeFeedInfo *model.ChangeFeedInfo,
-	) error
-
 	PutCaptureInfo(context.Context, *model.CaptureInfo, clientv3.LeaseID) error
 
 	DeleteCaptureInfo(context.Context, model.CaptureID) error
@@ -162,7 +126,7 @@ type CDCEtcdClient interface {
 
 // CDCEtcdClientImpl is a wrap of etcd client
 type CDCEtcdClientImpl struct {
-	Client        *Client
+	Client        Client
 	ClusterID     string
 	etcdClusterID uint64
 }
@@ -195,7 +159,7 @@ func NewCDCEtcdClient(ctx context.Context,
 
 // Close releases resources in CDCEtcdClient
 func (c *CDCEtcdClientImpl) Close() error {
-	return c.Client.Unwrap().Close()
+	return c.Client.Close()
 }
 
 // ClearAllCDCInfo delete all keys created by CDC
@@ -210,7 +174,7 @@ func (c *CDCEtcdClientImpl) GetClusterID() string {
 }
 
 // GetEtcdClient gets Client.
-func (c *CDCEtcdClientImpl) GetEtcdClient() *Client {
+func (c *CDCEtcdClientImpl) GetEtcdClient() Client {
 	return c.Client
 }
 
@@ -301,7 +265,7 @@ func (c *CDCEtcdClientImpl) GetAllChangeFeedInfo(ctx context.Context) (
 // GetChangeFeedInfo queries the config of a given changefeed
 func (c *CDCEtcdClientImpl) GetChangeFeedInfo(ctx context.Context,
 	id common.ChangeFeedDisplayName,
-) (*model.ChangeFeedInfo, error) {
+) (*config.ChangeFeedInfo, error) {
 	key := GetEtcdKeyChangeFeedInfo(c.ClusterID, id)
 	resp, err := c.Client.Get(ctx, key)
 	if err != nil {
@@ -310,7 +274,7 @@ func (c *CDCEtcdClientImpl) GetChangeFeedInfo(ctx context.Context,
 	if resp.Count == 0 {
 		return nil, errors.ErrChangeFeedNotExists.GenWithStackByArgs(key)
 	}
-	detail := &model.ChangeFeedInfo{}
+	detail := &config.ChangeFeedInfo{}
 	err = detail.Unmarshal(resp.Kvs[0].Value)
 	return detail, errors.Trace(err)
 }
@@ -701,4 +665,7 @@ func extractKeySuffix(key string) (string, error) {
 		return "", errors.ErrInvalidEtcdKey.GenWithStackByArgs(key)
 	}
 	return subs[len(subs)-1], nil
+}
+
+type Etcd interface {
 }

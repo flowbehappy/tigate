@@ -517,7 +517,7 @@ func (c *Controller) newBootstrapMessage(id node.ID) *messaging.TargetMessage {
 func (c *Controller) collectMetrics() {
 	if time.Since(c.lastPrintStatusTime) > time.Second*20 {
 		total := c.changefeedDB.GetSize()
-		scheduling := c.changefeedDB.GetSchedulingSize()
+		scheduling := c.operatorController.OperatorSize()
 		stopped := c.changefeedDB.GetStoppedSize()
 		working := c.changefeedDB.GetReplicatingSize()
 		absent := c.changefeedDB.GetAbsentSize()

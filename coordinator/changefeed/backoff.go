@@ -61,7 +61,7 @@ type Backoff struct {
 	errBackoff *backoff.ExponentialBackOff
 
 	// checkpointTs is the last reported checkpointTs of the changefeed
-	checkpointTs model.Ts
+	checkpointTs uint64
 
 	changefeedErrorStuckDuration time.Duration
 }
