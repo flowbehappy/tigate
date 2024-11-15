@@ -88,7 +88,7 @@ type pathHasher struct {
 }
 
 func (h pathHasher) HashPath(path common.DispatcherID) int {
-	return int((common.GID)(path).FastHash()) % h.streamCount
+	return int((common.GID)(path).FastHash() % (uint64)(h.streamCount))
 }
 
 func newEventBroker(

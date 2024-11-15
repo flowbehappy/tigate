@@ -176,10 +176,10 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 		startTime:      time.Now(),
 	}
 	if option.EnableMemoryControl {
-		if len(feedbackChan) != 0 {
-			ds.feedbackChan = feedbackChan[0]
-		} else {
+		if len(feedbackChan) == 0 {
 			ds.feedbackChan = make(chan Feedback[A, P, D], 1024)
+		} else {
+			ds.feedbackChan = feedbackChan[0]
 		}
 		ds.memControl = newMemControl[A, P, T, D, H]()
 	}
@@ -709,6 +709,9 @@ func (d *dynamicStreamImpl[A, P, T, D, H]) scheduler() {
 			si.streamStat = stat
 		case <-ticker.C:
 			doSchedule(ruleType(scheduleRule.Next()), 0, nil)
+			if d.memControl != nil {
+				d.memControl.updateMetrics()
+			}
 		}
 	}
 }
