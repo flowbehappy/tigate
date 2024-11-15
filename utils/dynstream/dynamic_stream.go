@@ -142,7 +142,13 @@ type dynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] s
 func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](
 	handler H,
 	option Option,
+	feedbackChan ...chan Feedback[A, P, D],
 ) *dynamicStreamImpl[A, P, T, D, H] {
+	if unsafe.Sizeof(int(0)) != 8 {
+		// We need int to be int64, because we use int as the data size everywhere.
+		panic("int is not int64")
+	}
+
 	option.fix()
 	eventExtraSize := 0
 	var zero T
@@ -170,17 +176,17 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 		startTime:      time.Now(),
 	}
 	if option.EnableMemoryControl {
-		ds.feedbackChan = make(chan Feedback[A, P, D], 1024)
+		ds.feedbackChan = feedbackChan[0]
 		ds.memControl = newMemControl[A, P, T, D, H]()
 	}
 	return ds
 }
 
-func (d *dynamicStreamImpl[A, P, T, D, H]) In() chan<- T {
+func (d *dynamicStreamImpl[A, P, T, D, H]) In(path ...P) chan<- T {
 	return d.eventChan
 }
 
-func (d *dynamicStreamImpl[A, P, T, D, H]) Wake() chan<- P {
+func (d *dynamicStreamImpl[A, P, T, D, H]) Wake(path ...P) chan<- P {
 	return d.wakeChan
 }
 

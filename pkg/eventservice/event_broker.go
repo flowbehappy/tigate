@@ -83,6 +83,14 @@ type eventBroker struct {
 	metricScanEventDuration                prometheus.Observer
 }
 
+type pathHasher struct {
+	streamCount int
+}
+
+func (h pathHasher) HashPath(path common.DispatcherID) int {
+	return int((common.GID)(path).FastHash()) % h.streamCount
+}
+
 func newEventBroker(
 	ctx context.Context,
 	id uint64,
@@ -96,7 +104,7 @@ func newEventBroker(
 
 	option := dynstream.NewOption()
 	option.InputBufferSize = 1024 * 1024 // 1 Million
-	ds := dynstream.NewDynamicStream(&dispatcherEventsHandler{}, option)
+	ds := dynstream.NewParallelDynamicStream(4, pathHasher{streamCount: 4}, &dispatcherEventsHandler{}, option)
 	ds.Start()
 
 	c := &eventBroker{

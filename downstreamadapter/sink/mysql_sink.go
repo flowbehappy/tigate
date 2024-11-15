@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"sync/atomic"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/downstreamadapter/sink/types"
 	"github.com/pingcap/ticdc/downstreamadapter/worker"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/metrics"
 	"github.com/pingcap/ticdc/pkg/sink/mysql"
 	"github.com/pingcap/ticdc/pkg/sink/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -192,4 +194,18 @@ func (s *MysqlSink) Close(removeDDLTsItem bool) error {
 	s.db.Close()
 	s.statistics.Close()
 	return nil
+}
+
+func MysqlSinkForTest() (*MysqlSink, sqlmock.Sqlmock) {
+	db, mock, _ := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
+	ctx := context.Background()
+	changefeedID := common.ChangefeedID4Test("test", "test")
+	cfg := mysql.NewMysqlConfig()
+	cfg.DMLMaxRetry = 1
+	cfg.MaxAllowedPacket = int64(variable.DefMaxAllowedPacket)
+	cfg.CachePrepStmts = false
+
+	errCh := make(chan error, 16)
+	sink, _ := NewMysqlSinkWithDBAndConfig(ctx, changefeedID, 8, cfg, db, errCh)
+	return sink, mock
 }
