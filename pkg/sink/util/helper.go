@@ -158,8 +158,8 @@ func (s *TableNameStore) GetAllTableNames(ts uint64) []*commonEvent.SchemaTableN
 						}
 					}
 				}
+				delete(s.latestTableNameChanges.m, commitTs)
 			}
-			delete(s.latestTableNameChanges.m, commitTs)
 		}
 	}
 
@@ -254,7 +254,7 @@ func (s *TableIDStore) GetTableIdsByDB(schemaID int64) []int64 {
 func (s *TableIDStore) GetAllTableIds() []int64 {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	tableIds := make([]int64, len(s.tableIDToSchemaID))
+	tableIds := make([]int64, 0, len(s.tableIDToSchemaID))
 	for tableID := range s.tableIDToSchemaID {
 		tableIds = append(tableIds, tableID)
 	}
