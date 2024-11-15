@@ -440,6 +440,7 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 	c.wg.Add(1)
 	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 300)
 	// Use a single goroutine to send the messages in order.
+
 	go func() {
 		defer c.wg.Done()
 		defer flushResolvedTsTicker.Stop()
@@ -448,12 +449,20 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case m := <-c.messageCh:
+				// Batch get resolved events from the message channel.
 				if m.msgType == pevent.TypeResolvedEvent {
 					// The message is a watermark, we need to cache it, and send it to the dispatcher
 					// when the dispatcher is registered.
 					c.handleResolvedTs(ctx, m)
+					for m := range c.messageCh {
+						if m.msgType != pevent.TypeResolvedEvent {
+							break
+						}
+						c.handleResolvedTs(ctx, m)
+					}
 					continue
 				}
+
 				// Check if the dispatcher is initialized, if so, ignore the handshake event.
 				if m.msgType == pevent.TypeHandshakeEvent {
 					// If the message is a handshake event, we need to reset the dispatcher.
