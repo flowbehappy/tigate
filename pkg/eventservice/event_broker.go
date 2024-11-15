@@ -439,7 +439,22 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 	c.wg.Add(1)
 	flushResolvedTsTicker := time.NewTicker(time.Millisecond * 300)
-	// Use a single goroutine to send the messages in order.
+
+	// Try to get more resolved events from the message channel.
+	// It return the last event it peeked, or nil if no more events.
+	tryGetMoreResolvedTs := func() *wrapEvent {
+		for {
+			select {
+			case m := <-c.messageCh:
+				if m.msgType != pevent.TypeResolvedEvent {
+					return &m
+				}
+				c.handleResolvedTs(ctx, m)
+			default:
+				return nil
+			}
+		}
+	}
 
 	go func() {
 		defer c.wg.Done()
@@ -454,15 +469,13 @@ func (c *eventBroker) runSendMessageWorker(ctx context.Context) {
 					// The message is a watermark, we need to cache it, and send it to the dispatcher
 					// when the dispatcher is registered.
 					c.handleResolvedTs(ctx, m)
-					for m := range c.messageCh {
-						if m.msgType != pevent.TypeResolvedEvent {
-							break
-						}
-						c.handleResolvedTs(ctx, m)
+					lastMsg := tryGetMoreResolvedTs()
+					if lastMsg == nil {
+						continue
 					}
-					continue
+					// If the last message is not nil, we need to handle it in the following code.
+					m = *lastMsg
 				}
-
 				// Check if the dispatcher is initialized, if so, ignore the handshake event.
 				if m.msgType == pevent.TypeHandshakeEvent {
 					// If the message is a handshake event, we need to reset the dispatcher.
