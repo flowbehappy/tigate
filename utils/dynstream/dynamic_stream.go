@@ -176,7 +176,11 @@ func newDynamicStreamImpl[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]
 		startTime:      time.Now(),
 	}
 	if option.EnableMemoryControl {
-		ds.feedbackChan = feedbackChan[0]
+		if len(feedbackChan) != 0 {
+			ds.feedbackChan = feedbackChan[0]
+		} else {
+			ds.feedbackChan = make(chan Feedback[A, P, D], 1024)
+		}
 		ds.memControl = newMemControl[A, P, T, D, H]()
 	}
 	return ds
