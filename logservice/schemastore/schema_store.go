@@ -175,22 +175,22 @@ func (s *schemaStore) updateResolvedTsPeriodically(ctx context.Context) error {
 					zap.Uint64("jobCommitTs", event.CommitTs),
 					zap.Any("storeSchemaVersion", s.schemaVersion),
 					zap.Uint64("storeFinishedDDLTS", s.finishedDDLTs))
-				if event.Job.BinlogInfo.TableInfo != nil {
-					log.Info("table info update ts",
-						zap.String("job", event.Job.Query),
-						zap.Uint64("ts", event.Job.BinlogInfo.TableInfo.UpdateTS),
-						zap.Int64("tableID", event.Job.BinlogInfo.TableInfo.ID),
-						zap.String("name", event.Job.BinlogInfo.TableInfo.Name.O))
-				}
-				if event.Job.BinlogInfo.MultipleTableInfos != nil {
-					for _, tableInfo := range event.Job.BinlogInfo.MultipleTableInfos {
-						log.Info("table info update ts",
-							zap.String("job", event.Job.Query),
-							zap.Uint64("ts", tableInfo.UpdateTS),
-							zap.Int64("tableID", tableInfo.ID),
-							zap.String("name", tableInfo.Name.O))
-					}
-				}
+				// if event.Job.BinlogInfo.TableInfo != nil {
+				// 	log.Info("table info update ts",
+				// 		zap.String("job", event.Job.Query),
+				// 		zap.Uint64("ts", event.Job.BinlogInfo.TableInfo.UpdateTS),
+				// 		zap.Int64("tableID", event.Job.BinlogInfo.TableInfo.ID),
+				// 		zap.String("name", event.Job.BinlogInfo.TableInfo.Name.O))
+				// }
+				// if event.Job.BinlogInfo.MultipleTableInfos != nil {
+				// 	for _, tableInfo := range event.Job.BinlogInfo.MultipleTableInfos {
+				// 		log.Info("table info update ts",
+				// 			zap.String("job", event.Job.Query),
+				// 			zap.Uint64("ts", tableInfo.UpdateTS),
+				// 			zap.Int64("tableID", tableInfo.ID),
+				// 			zap.String("name", tableInfo.Name.O))
+				// 	}
+				// }
 
 				// need to update the following two members for every event to filter out later duplicate events
 				s.schemaVersion = event.Job.BinlogInfo.SchemaVersion
