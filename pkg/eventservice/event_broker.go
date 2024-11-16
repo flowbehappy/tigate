@@ -220,6 +220,10 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 			case <-ticker.C:
 				c.tableTriggerDispatchers.Range(func(key, value interface{}) bool {
 					dispatcherStat := value.(*dispatcherStat)
+					if dispatcherStat.resetTs.Load() == 0 {
+						c.sendReadyEvent(node.ID(dispatcherStat.info.GetServerID()), dispatcherStat)
+						return true
+					}
 					if !dispatcherStat.isInitialized.Load() {
 						dispatcherStat.seq.Store(0)
 						e := pevent.NewHandshakeEvent(
