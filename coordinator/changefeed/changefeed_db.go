@@ -188,6 +188,7 @@ func (db *ChangefeedDB) GetTaskSizePerNode() map[node.ID]int {
 func (db *ChangefeedDB) BindChangefeedToNode(old, new node.ID, task *Changefeed) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
+
 	log.Info("bind changefeed to node",
 		zap.String("changefeed", task.ID.String()),
 		zap.String("oldNode", old.String()),
