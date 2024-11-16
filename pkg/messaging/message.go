@@ -28,6 +28,8 @@ const (
 	TypeBatchResolvedTs
 	TypeSyncPointEvent
 	TypeHandshakeEvent
+	TypeReadyEvent
+	TypeNotReusableEvent
 
 	// LogCoordinator related
 	TypeLogCoordinatorBroadcastRequest
@@ -212,6 +214,10 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 		m = &commonEvent.BatchResolvedEvent{}
 	case TypeHandshakeEvent:
 		m = &commonEvent.HandshakeEvent{}
+	case TypeReadyEvent:
+		m = &commonEvent.ReadyEvent{}
+	case TypeNotReusableEvent:
+		m = &commonEvent.NotReusableEvent{}
 	case TypeLogCoordinatorBroadcastRequest:
 		m = &common.LogCoordinatorBroadcastRequest{}
 	case TypeEventStoreState:
@@ -286,6 +292,10 @@ func NewSingleTargetMessage(To node.ID, Topic string, Message IOTypeT) *TargetMe
 		ioType = TypeBatchResolvedTs
 	case *commonEvent.HandshakeEvent:
 		ioType = TypeHandshakeEvent
+	case *commonEvent.ReadyEvent:
+		ioType = TypeReadyEvent
+	case *commonEvent.NotReusableEvent:
+		ioType = TypeNotReusableEvent
 	case *common.LogCoordinatorBroadcastRequest:
 		ioType = TypeLogCoordinatorBroadcastRequest
 	case *logservicepb.EventStoreState:
