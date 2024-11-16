@@ -15,8 +15,8 @@ type NotReusableEvent struct {
 	DispatcherID common.DispatcherID
 }
 
-func NewNotReusableEvent(dispatcherID common.DispatcherID) *NotReusableEvent {
-	return &NotReusableEvent{
+func NewNotReusableEvent(dispatcherID common.DispatcherID) NotReusableEvent {
+	return NotReusableEvent{
 		Version:      NotReusableEventVersion,
 		DispatcherID: dispatcherID,
 	}

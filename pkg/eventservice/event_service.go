@@ -39,6 +39,8 @@ type DispatcherInfo interface {
 	SyncPointEnabled() bool
 	GetSyncPointTs() uint64
 	GetSyncPointInterval() time.Duration
+
+	IsOnlyReuse() bool
 }
 
 // EventService accepts the requests of pulling events.

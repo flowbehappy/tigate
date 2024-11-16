@@ -200,6 +200,10 @@ func (r RegisterDispatcherRequest) GetSyncPointInterval() time.Duration {
 	return time.Duration(r.SyncPointInterval) * time.Second
 }
 
+func (r RegisterDispatcherRequest) IsOnlyReuse() bool {
+	return r.OnlyReuse
+}
+
 type IOTypeT interface {
 	Unmarshal(data []byte) error
 	Marshal() (data []byte, err error)

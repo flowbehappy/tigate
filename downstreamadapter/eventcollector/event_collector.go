@@ -42,6 +42,7 @@ type DispatcherRequest struct {
 	Dispatcher *dispatcher.Dispatcher
 	ActionType eventpb.ActionType
 	StartTs    uint64
+	OnlyUse    bool
 }
 
 type TargetAndDispatcherRequest struct {
@@ -275,6 +276,7 @@ func (c *EventCollector) mustSendDispatcherRequest(target node.ID, topic string,
 			ServerId:  c.serverId.String(),
 			TableSpan: req.Dispatcher.GetTableSpan(),
 			StartTs:   req.StartTs,
+			OnlyReuse: req.OnlyUse,
 		},
 	}
 
@@ -499,6 +501,7 @@ func (d *DispatcherStat) setRemoteCandidates(nodes []string, eventCollector *Eve
 			Dispatcher: d.target,
 			StartTs:    d.target.GetStartTs(),
 			ActionType: eventpb.ActionType_ACTION_TYPE_REGISTER,
+			OnlyUse:    true,
 		},
 	)
 	for i := 1; i < len(nodes); i++ {
@@ -517,6 +520,7 @@ func (d *DispatcherStat) tryNextRemoteCandidate(eventCollector *EventCollector) 
 				Dispatcher: d.target,
 				StartTs:    d.target.GetStartTs(),
 				ActionType: eventpb.ActionType_ACTION_TYPE_REGISTER,
+				OnlyUse:    true,
 			},
 		)
 		d.remoteCandidatesInfo.remoteCandiates = d.remoteCandidatesInfo.remoteCandiates[1:]

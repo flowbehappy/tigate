@@ -179,6 +179,19 @@ func (c *eventBroker) sendReadyEvent(
 	}
 }
 
+func (c *eventBroker) sendNotReusableEvent(
+	server node.ID,
+	d *dispatcherStat,
+) {
+	event := pevent.NewNotReusableEvent(d.info.GetID())
+	wrapEvent := newWrapNotReusableEvent(server, event)
+
+	select {
+	case c.getMessageCh(d.workerIndex) <- wrapEvent:
+	default:
+	}
+}
+
 func (c *eventBroker) getMessageCh(workerIndex int) chan wrapEvent {
 	return c.messageCh[workerIndex]
 }
@@ -689,19 +702,21 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		return
 	}
 
-	c.dispatchers.Store(id, dispatcher)
-
 	brokerRegisterDuration := time.Since(start)
 
 	start = time.Now()
-	err = c.eventStore.RegisterDispatcher(
+	success, err := c.eventStore.RegisterDispatcher(
 		id,
 		span,
 		info.GetStartTs(),
 		func(resolvedTs uint64) { c.onNotify(dispatcher, resolvedTs) },
+		info.IsOnlyReuse(),
 	)
 	if err != nil {
 		log.Panic("register dispatcher to eventStore failed", zap.Error(err), zap.Any("dispatcherInfo", info))
+	}
+	if !success {
+		c.sendNotReusableEvent(node.ID(info.GetServerID()), dispatcher)
 	}
 
 	err = c.schemaStore.RegisterTable(span.GetTableID(), info.GetStartTs())
@@ -714,6 +729,9 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	}
 	dispatcher.updateTableInfo(tableInfo)
 	eventStoreRegisterDuration := time.Since(start)
+
+	c.dispatchers.Store(id, dispatcher)
+
 	c.ds.AddPath(id, c, dynstream.AreaSettings{})
 
 	log.Info("register dispatcher", zap.Uint64("clusterID", c.tidbClusterID),
@@ -955,6 +973,14 @@ func newWrapReadyEvent(serverID node.ID, e pevent.ReadyEvent) wrapEvent {
 		serverID: serverID,
 		e:        &e,
 		msgType:  pevent.TypeReadyEvent,
+	}
+}
+
+func newWrapNotReusableEvent(serverID node.ID, e pevent.NotReusableEvent) wrapEvent {
+	return wrapEvent{
+		serverID: serverID,
+		e:        &e,
+		msgType:  pevent.TypeNotReusableEvent,
 	}
 }
 
