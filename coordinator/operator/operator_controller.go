@@ -113,29 +113,29 @@ func (oc *Controller) AddOperator(op operator.Operator[common.ChangeFeedID, *hea
 // StopChangefeed stop changefeed when the changefeed is stopped/removed.
 // if remove is true, it will remove the changefeed from the chagnefeed DB
 // if remove is false, it only marks as the changefeed stooped in changefeed DB, so we will not schedule the changefeed again
-func (oc *Controller) StopChangefeed(ctx context.Context, cfID common.ChangeFeedID, remove bool) {
+func (oc *Controller) StopChangefeed(_ context.Context, cfID common.ChangeFeedID, removed bool) {
 	oc.lock.Lock()
 	defer oc.lock.Unlock()
 
-	var scheduledNode = oc.changefeedDB.StopByChangefeedID(cfID, remove)
+	var scheduledNode = oc.changefeedDB.StopByChangefeedID(cfID, removed)
 	if scheduledNode == "" {
-		log.Info("changefeed is not scheduled, stop maintainer using coordinator node",
-			zap.Bool("remove", remove),
+		log.Info("changefeed is not scheduled, try stop maintainer using coordinator node",
+			zap.Bool("removed", removed),
 			zap.String("changefeed", cfID.Name()))
 		scheduledNode = oc.selfNode.ID
 	}
-	oc.pushStopChangefeedOperator(cfID, scheduledNode, remove)
+	oc.pushStopChangefeedOperator(cfID, scheduledNode, removed)
 }
 
 // pushStopChangefeedOperator pushes a stop changefeed operator to the controller.
 // it checks if the operator already exists, if exists, it will replace the old one.
 // if the old operator is the removing operator, it will skip this operator.
 func (oc *Controller) pushStopChangefeedOperator(cfID common.ChangeFeedID, nodeID node.ID, remove bool) {
-	op := NewStopChangefeedOperator(cfID, nodeID, oc.selfNode, oc.backend, remove)
+	op := NewStopChangefeedOperator(cfID, nodeID, oc.selfNode.ID, oc.backend, remove)
 	if old, ok := oc.operators[cfID]; ok {
 		oldStop, ok := old.OP.(*StopChangefeedOperator)
 		if ok {
-			if oldStop.removed {
+			if oldStop.changefeedIsRemoved {
 				log.Info("changefeed is in removing progress, skip the stop operator",
 					zap.String("changefeed", cfID.Name()))
 				return

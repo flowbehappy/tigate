@@ -37,7 +37,7 @@ type MoveMaintainerOperator struct {
 	finished          bool
 	bind              bool
 
-	noPostFinishNeed bool
+	canceled bool
 
 	lck sync.Mutex
 }
@@ -57,7 +57,7 @@ func (m *MoveMaintainerOperator) Check(from node.ID, status *heartbeatpb.Maintai
 	defer m.lck.Unlock()
 
 	if from == m.origin && status.State != heartbeatpb.ComponentState_Working {
-		log.Info("changefeed removed from origin node",
+		log.Info("changefeed changefeedIsRemoved from origin node",
 			zap.String("changefeed", m.changefeed.ID.String()))
 		m.originNodeStopped = true
 	}
@@ -73,6 +73,10 @@ func (m *MoveMaintainerOperator) Schedule() *messaging.TargetMessage {
 	m.lck.Lock()
 	defer m.lck.Unlock()
 
+	if m.finished || m.canceled {
+		return nil
+	}
+
 	if m.originNodeStopped {
 		if !m.bind {
 			m.db.BindChangefeedToNode(m.origin, m.dest, m.changefeed)
@@ -87,6 +91,10 @@ func (m *MoveMaintainerOperator) OnNodeRemove(n node.ID) {
 	m.lck.Lock()
 	defer m.lck.Unlock()
 
+	if m.finished || m.canceled {
+		return
+	}
+
 	if n == m.dest {
 		// the origin node is finished, we must mark the maintainer as absent to reschedule it again
 		if m.originNodeStopped {
@@ -94,11 +102,11 @@ func (m *MoveMaintainerOperator) OnNodeRemove(n node.ID) {
 				zap.String("changefeed", m.changefeed.ID.String()),
 				zap.String("dest", m.dest.String()))
 			m.db.MarkMaintainerAbsent(m.changefeed)
-			m.noPostFinishNeed = true
+			m.canceled = true
 			return
 		}
 
-		log.Info("changefeed removed from dest node",
+		log.Info("changefeed changefeedIsRemoved from dest node",
 			zap.String("dest", m.dest.String()),
 			zap.String("origin", m.origin.String()),
 			zap.String("changefeed", m.changefeed.ID.String()))
@@ -125,16 +133,16 @@ func (m *MoveMaintainerOperator) IsFinished() bool {
 	m.lck.Lock()
 	defer m.lck.Unlock()
 
-	return m.finished || m.noPostFinishNeed
+	return m.finished || m.canceled
 }
 
 func (m *MoveMaintainerOperator) OnTaskRemoved() {
 	m.lck.Lock()
 	defer m.lck.Unlock()
 
-	log.Info("changefeed is removed, mark move changefeed operator finished",
+	log.Info("changefeed is changefeedIsRemoved, mark move changefeed operator finished",
 		zap.String("changefeed", m.changefeed.ID.String()))
-	m.noPostFinishNeed = true
+	m.canceled = true
 }
 
 func (m *MoveMaintainerOperator) Start() {
@@ -148,7 +156,7 @@ func (m *MoveMaintainerOperator) PostFinish() {
 	m.lck.Lock()
 	defer m.lck.Unlock()
 
-	if m.noPostFinishNeed {
+	if m.canceled {
 		return
 	}
 
