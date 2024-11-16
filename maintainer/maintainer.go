@@ -97,8 +97,8 @@ type Maintainer struct {
 	// the changefeed is removed, notify the dispatcher manager to clear ddl_ts table
 	changefeedRemoved bool
 
-	lastPrintStatusTime  time.Time
-	lastCheckpointTsTime time.Time
+	lastPrintStatusTime time.Time
+	//lastCheckpointTsTime time.Time
 
 	errLock       sync.Mutex
 	runningErrors map[node.ID]*heartbeatpb.RunningError
@@ -122,13 +122,15 @@ func NewMaintainer(cfID common.ChangeFeedID,
 	stream dynstream.DynamicStream[int, common.GID, *Event, *Maintainer, *StreamHandler],
 	taskScheduler threadpool.ThreadPool,
 	pdAPI pdutil.PDAPIClient,
+	tsoClient replica.TSOClient,
 	regionCache split.RegionCache,
 	checkpointTs uint64,
 ) *Maintainer {
 	mc := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	nodeManager := appcontext.GetService[*watcher.NodeManager](watcher.NodeManagerName)
 	tableTriggerEventDispatcherID := common.NewDispatcherID()
-	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, heartbeatpb.DDLSpanSchemaID,
+	ddlSpan := replica.NewWorkingReplicaSet(cfID, tableTriggerEventDispatcherID, tsoClient,
+		heartbeatpb.DDLSpanSchemaID,
 		heartbeatpb.DDLSpan, &heartbeatpb.TableSpanStatus{
 			ID:              tableTriggerEventDispatcherID.ToPB(),
 			ComponentStatus: heartbeatpb.ComponentState_Working,
@@ -140,7 +142,7 @@ func NewMaintainer(cfID common.ChangeFeedID,
 		stream:            stream,
 		taskScheduler:     taskScheduler,
 		startCheckpointTs: checkpointTs,
-		controller: NewController(cfID, checkpointTs, pdAPI, regionCache, taskScheduler,
+		controller: NewController(cfID, checkpointTs, pdAPI, tsoClient, regionCache, taskScheduler,
 			cfg.Config, ddlSpan, conf.AddTableBatchSize, time.Duration(conf.CheckBalanceInterval)),
 		mc:              mc,
 		state:           heartbeatpb.ComponentState_Working,
@@ -183,6 +185,7 @@ func NewMaintainerForRemove(cfID common.ChangeFeedID,
 	stream dynstream.DynamicStream[int, common.GID, *Event, *Maintainer, *StreamHandler],
 	taskScheduler threadpool.ThreadPool,
 	pdAPI pdutil.PDAPIClient,
+	tsoClient replica.TSOClient,
 	regionCache split.RegionCache,
 ) *Maintainer {
 	unused := &config.ChangeFeedInfo{
@@ -190,7 +193,8 @@ func NewMaintainerForRemove(cfID common.ChangeFeedID,
 		SinkURI:      "",
 		Config:       config.GetDefaultReplicaConfig(),
 	}
-	m := NewMaintainer(cfID, conf, unused, selfNode, stream, taskScheduler, pdAPI, regionCache, 0)
+	m := NewMaintainer(cfID, conf, unused, selfNode, stream, taskScheduler, pdAPI,
+		tsoClient, regionCache, 0)
 	m.cascadeRemoving = true
 	// setup period event
 	SubmitScheduledEvent(m.taskScheduler, m.stream, &Event{
@@ -369,7 +373,7 @@ func (m *Maintainer) onNodeChanged() {
 		}
 	}
 	var removedNodes []node.ID
-	for id, _ := range currentNodes {
+	for id := range currentNodes {
 		if _, ok := activeNodes[id]; !ok {
 			removedNodes = append(removedNodes, id)
 			delete(m.checkpointTsByCapture, id)
@@ -391,21 +395,18 @@ func (m *Maintainer) calCheckpointTs() {
 	if !m.bootstrapped {
 		return
 	}
-	m.updateMetrics()
+	defer m.updateMetrics()
 	// make sure there is no task running
 	// the dispatcher changing come from:
 	// 1. node change
 	// 2. ddl
 	// 3. interval scheduling, like balance, split
-	if time.Since(m.lastCheckpointTsTime) < 2*time.Second ||
-		!m.controller.ScheduleFinished() {
+	if !m.controller.ScheduleFinished() {
 		return
 	}
-	m.lastCheckpointTsTime = time.Now()
-
 	newWatermark := heartbeatpb.NewMaxWatermark()
 	// if there is no tables, there must be a table trigger dispatcher
-	for id, _ := range m.bootstrapper.GetAllNodes() {
+	for id := range m.bootstrapper.GetAllNodes() {
 		// maintainer node has the table trigger dispatcher
 		if id != m.selfNode.ID && m.controller.GetTaskSizeByNodeID(id) <= 0 {
 			continue
@@ -430,13 +431,13 @@ func (m *Maintainer) calCheckpointTs() {
 func (m *Maintainer) updateMetrics() {
 	phyCkpTs := oracle.ExtractPhysical(m.watermark.CheckpointTs)
 	m.changefeedCheckpointTsGauge.Set(float64(phyCkpTs))
-	lag := (oracle.GetPhysical(time.Now()) - phyCkpTs) / 1e3
-	m.changefeedCheckpointTsLagGauge.Set(float64(lag))
+	lag := float64(oracle.GetPhysical(time.Now())-phyCkpTs) / 1e3
+	m.changefeedCheckpointTsLagGauge.Set(lag)
 
 	phyResolvedTs := oracle.ExtractPhysical(m.watermark.ResolvedTs)
 	m.changefeedResolvedTsGauge.Set(float64(phyResolvedTs))
-	lag = (oracle.GetPhysical(time.Now()) - phyResolvedTs) / 1e3
-	m.changefeedResolvedTsLagGauge.Set(float64(lag))
+	lag = float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
+	m.changefeedResolvedTsLagGauge.Set(lag)
 
 	m.changefeedStatusGauge.Set(float64(m.state))
 }

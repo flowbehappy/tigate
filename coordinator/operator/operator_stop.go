@@ -30,25 +30,25 @@ import (
 
 // StopChangefeedOperator is an operator to remove a maintainer from a node
 type StopChangefeedOperator struct {
-	cfID            common.ChangeFeedID
-	nodeID          node.ID
-	removed         bool
-	finished        atomic.Bool
-	coordinatorNode *node.Info
-	backend         changefeed.Backend
+	cfID                common.ChangeFeedID
+	nodeID              node.ID
+	changefeedIsRemoved bool
+	finished            atomic.Bool
+	coordinatorNodeID   node.ID
+	backend             changefeed.Backend
 }
 
 func NewStopChangefeedOperator(cfID common.ChangeFeedID,
 	nodeID node.ID,
-	coordinatorNode *node.Info,
+	coordinatorNode node.ID,
 	backend changefeed.Backend,
 	removed bool) *StopChangefeedOperator {
 	return &StopChangefeedOperator{
-		cfID:            cfID,
-		nodeID:          nodeID,
-		removed:         removed,
-		coordinatorNode: coordinatorNode,
-		backend:         backend,
+		cfID:                cfID,
+		nodeID:              nodeID,
+		changefeedIsRemoved: removed,
+		coordinatorNodeID:   coordinatorNode,
+		backend:             backend,
 	}
 }
 
@@ -61,7 +61,7 @@ func (m *StopChangefeedOperator) Check(_ node.ID, status *heartbeatpb.Maintainer
 }
 
 func (m *StopChangefeedOperator) Schedule() *messaging.TargetMessage {
-	return changefeed.RemoveMaintainerMessage(m.cfID, m.nodeID, true, m.removed)
+	return changefeed.RemoveMaintainerMessage(m.cfID, m.nodeID, true, m.changefeedIsRemoved)
 }
 
 // OnNodeRemove is called when node offline, and the maintainer must already move to absent status and will be scheduled again
@@ -70,7 +70,7 @@ func (m *StopChangefeedOperator) OnNodeRemove(n node.ID) {
 		log.Info("node is stopped during stop maintainer, schedule stop command to coordinator node",
 			zap.String("changefeed", m.cfID.String()),
 			zap.String("node", n.String()))
-		m.nodeID = m.coordinatorNode.ID
+		m.nodeID = m.coordinatorNodeID
 	}
 }
 
@@ -92,7 +92,7 @@ func (m *StopChangefeedOperator) Start() {
 }
 
 func (m *StopChangefeedOperator) PostFinish() {
-	if m.removed {
+	if m.changefeedIsRemoved {
 		if err := m.backend.DeleteChangefeed(context.Background(), m.cfID); err != nil {
 			log.Warn("failed to delete changefeed",
 				zap.String("changefeed", m.cfID.String()), zap.Error(err))
@@ -109,7 +109,7 @@ func (m *StopChangefeedOperator) PostFinish() {
 
 func (m *StopChangefeedOperator) String() string {
 	return fmt.Sprintf("stop maintainer operator: %s, dest %s, remove %t",
-		m.cfID, m.nodeID, m.removed)
+		m.cfID, m.nodeID, m.changefeedIsRemoved)
 }
 
 func (m *StopChangefeedOperator) Type() string {

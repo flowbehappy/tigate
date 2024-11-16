@@ -31,7 +31,7 @@ type AddMaintainerOperator struct {
 	cf       *changefeed.Changefeed
 	dest     node.ID
 	finished atomic.Bool
-	removed  atomic.Bool
+	canceled atomic.Bool
 	db       *changefeed.ChangefeedDB
 }
 
@@ -55,7 +55,7 @@ func (m *AddMaintainerOperator) Check(from node.ID, status *heartbeatpb.Maintain
 }
 
 func (m *AddMaintainerOperator) Schedule() *messaging.TargetMessage {
-	if m.finished.Load() || m.removed.Load() {
+	if m.finished.Load() || m.canceled.Load() {
 		return nil
 	}
 	return m.cf.NewAddMaintainerMessage(m.dest)
@@ -65,7 +65,7 @@ func (m *AddMaintainerOperator) Schedule() *messaging.TargetMessage {
 func (m *AddMaintainerOperator) OnNodeRemove(n node.ID) {
 	if n == m.dest {
 		m.finished.Store(true)
-		m.removed.Store(true)
+		m.canceled.Store(true)
 	}
 }
 
@@ -79,7 +79,7 @@ func (m *AddMaintainerOperator) IsFinished() bool {
 
 func (m *AddMaintainerOperator) OnTaskRemoved() {
 	m.finished.Store(true)
-	m.removed.Store(true)
+	m.canceled.Store(true)
 }
 
 func (m *AddMaintainerOperator) Start() {
@@ -87,7 +87,7 @@ func (m *AddMaintainerOperator) Start() {
 }
 
 func (m *AddMaintainerOperator) PostFinish() {
-	if !m.removed.Load() {
+	if !m.canceled.Load() {
 		m.db.MarkMaintainerReplicating(m.cf)
 	}
 }

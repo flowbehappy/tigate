@@ -251,5 +251,8 @@ func (h *EventsHandler) GetTimestamp(event dispatcher.DispatcherEvent) dynstream
 }
 
 func (h *EventsHandler) OnDrop(event dispatcher.DispatcherEvent) {
-	log.Info("event dropped", zap.Any("dispatcher", event.GetDispatcherID()), zap.Any("commitTs", event.GetCommitTs()), zap.Any("sequence", event.GetSeq()))
+	if event.GetType() != commonEvent.TypeResolvedEvent {
+		// It is normal to drop resolved event
+		log.Info("event dropped", zap.Any("dispatcher", event.GetDispatcherID()), zap.Any("commitTs", event.GetCommitTs()), zap.Any("sequence", event.GetSeq()))
+	}
 }

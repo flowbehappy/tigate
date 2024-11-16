@@ -5,7 +5,6 @@ import (
 	"runtime"
 	"sync"
 	"time"
-	"unsafe"
 )
 
 // The path interface. A path is a unique identifier of a destination.
@@ -115,7 +114,6 @@ type Handler[A Area, P Path, T Event, D Dest] interface {
 	// Only the events with the same type are processed in a group.
 	GetType(event T) EventType
 	// OnDrop is called when an event is dropped. Could be caused by the memory control or cannot find the path.
-	// Note that dropping PeriodicSignal events will not cause OnDrop to be called.
 	// Do nothing by default implementation.
 	OnDrop(event T)
 }
@@ -141,9 +139,9 @@ type DynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] inter
 	Close()
 
 	// In returns the channel to send events into the dynamic stream.
-	In() chan<- T
+	In(path ...P) chan<- T
 	// Wake returns the channel to mark the the path as ready to process the next event.
-	Wake() chan<- P
+	Wake(path ...P) chan<- P
 	// Feedback returns the channel to receive the feedbacks for the listener.
 	// Return nil if Option.EnableMemoryControl is false.
 	Feedback() <-chan Feedback[A, P, D]
@@ -163,12 +161,19 @@ type DynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]] inter
 	SetAreaSettings(area A, settings AreaSettings)
 }
 
+type PathHasher[P Path] interface {
+	HashPath(path P) int
+}
+
+const DefaultInputBufferSize = 1024
 const DefaultSchedulerInterval = 1 * time.Second
 const DefaultReportInterval = 500 * time.Millisecond
 const DefaultMaxPendingSize = 128 * (1 << 20) // 128 MB
 const DefaultFeedbackInterval = 1000 * time.Millisecond
 
 type Option struct {
+	InputBufferSize int // The buffer size of the input channel. By default 0, means 1024.
+
 	SchedulerInterval time.Duration // The interval of the scheduler. The scheduler is used to balance the paths between streams.
 	ReportInterval    time.Duration // The interval of reporting the status of stream, the status is used by the scheduler.
 
@@ -190,6 +195,9 @@ func NewOption() Option {
 }
 
 func (o *Option) fix() {
+	if o.InputBufferSize <= 0 {
+		o.InputBufferSize = DefaultInputBufferSize
+	}
 	if o.StreamCount == 0 {
 		o.StreamCount = runtime.NumCPU()
 	}
@@ -232,13 +240,17 @@ func (f *Feedback[A, P, D]) String() string {
 }
 
 func NewDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](handler H, option ...Option) DynamicStream[A, P, T, D, H] {
-	if unsafe.Sizeof(int(0)) != 8 {
-		// We need int to be int64, because we use int as the data size everywhere.
-		panic("int is not int64")
-	}
 	opt := NewOption()
 	if len(option) > 0 {
 		opt = option[0]
 	}
 	return newDynamicStreamImpl(handler, opt)
+}
+
+func NewParallelDynamicStream[A Area, P Path, T Event, D Dest, H Handler[A, P, T, D]](streamCount int, hasher PathHasher[P], handler H, option ...Option) DynamicStream[A, P, T, D, H] {
+	opt := NewOption()
+	if len(option) > 0 {
+		opt = option[0]
+	}
+	return newParallelDynamicStream(streamCount, hasher, handler, opt)
 }

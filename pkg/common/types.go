@@ -86,6 +86,11 @@ func (g GID) IsZero() bool {
 	return g.Low == 0 && g.High == 0
 }
 
+func (g GID) FastHash() uint64 {
+	// Combine the two parts using XOR and a bit shift
+	return g.Low ^ (g.High << 1)
+}
+
 func (g GID) Marshal() []byte {
 	b := make([]byte, 16)
 	binary.LittleEndian.PutUint64(b[0:8], g.Low)

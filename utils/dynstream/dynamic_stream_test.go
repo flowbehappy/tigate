@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/ticdc/pkg/apperror"
 	"github.com/zeebo/assert"
@@ -385,7 +386,7 @@ func (h *incEventHandler) Handle(dest struct{}, events ...incEvent) (await bool)
 	return false
 }
 
-func (h *incEventHandler) GetSize(event incEvent) int             { return 0 }
+func (h *incEventHandler) GetSize(event incEvent) int             { return int(unsafe.Sizeof(event)) }
 func (h *incEventHandler) GetArea(path string, dest struct{}) int { return 0 }
 func (h *incEventHandler) GetTimestamp(event incEvent) Timestamp  { return 0 }
 func (h *incEventHandler) GetType(event incEvent) EventType       { return DefaultEventType }
@@ -402,14 +403,10 @@ func TestDynamicStreamDrop(t *testing.T) {
 		ds := NewDynamicStream(handler, option)
 		ds.Start()
 
-		// ds.AddPath("p1", struct{}{})
 		addPath((incDS)(ds))
 
 		eventCountDown := &sync.WaitGroup{}
 		addEvent((incDS)(ds), eventCountDown)
-		// ds.In() <- incEvent{path: "p1", total: total, inc: 1, wg: eventCountDown}
-		// ds.In() <- incEvent{path: "p1", total: total, inc: 3, wg: eventCountDown}
-		// ds.In() <- incEvent{path: "p1", total: total, inc: 5, wg: eventCountDown}
 
 		time.Sleep(10 * time.Millisecond) // Make sure all the events are in the pending queue or dropped
 		option.handleWait.Done()
@@ -442,9 +439,11 @@ func TestDynamicStreamDrop(t *testing.T) {
 		total := &atomic.Int64{}
 		var _ds incDS
 
+		memQuota := int(unsafe.Sizeof(eventWrap[int, string, incEvent, struct{}, *incEventHandler]{}))
+
 		addPath := func(ds incDS) {
 			_ds = ds
-			ds.AddPath("p1", struct{}{}, AreaSettings{MaxPendingSize: 1, FeedbackInterval: 1 * time.Second})
+			ds.AddPath("p1", struct{}{}, AreaSettings{MaxPendingSize: memQuota, FeedbackInterval: 1 * time.Second})
 		}
 		addEvent := func(ds incDS, wg *sync.WaitGroup) {
 			ds.In() <- newIncEvent("p1", total, 1, wg)

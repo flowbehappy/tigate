@@ -99,12 +99,6 @@ func (b *EtcdBackend) GetAllChangefeeds(ctx context.Context) (map[common.ChangeF
 
 	// check the invalid cf without Info, add a new Status
 	for id, meta := range cfMap {
-		if meta.Info == nil {
-			log.Warn("failed to load change feed Info, ignore",
-				zap.String("id", id.String()))
-			delete(cfMap, id)
-			continue
-		}
 		if meta.Status == nil {
 			log.Warn("failed to load change feed Status, add a new one")
 			status := &config.ChangeFeedStatus{
@@ -137,10 +131,9 @@ func (b *EtcdBackend) CreateChangefeed(ctx context.Context,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	status := &model.ChangeFeedStatus{
-		CheckpointTs:      info.StartTs,
-		MinTableBarrierTs: info.StartTs,
-		AdminJobType:      model.AdminNone,
+	status := &config.ChangeFeedStatus{
+		CheckpointTs: info.StartTs,
+		Progress:     config.ProgressNone,
 	}
 	jobValue, err := status.Marshal()
 	if err != nil {
@@ -287,7 +280,7 @@ func (b *EtcdBackend) ResumeChangefeed(ctx context.Context,
 		return errors.Trace(err)
 	}
 	if !putResp.Succeeded {
-		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("resume changefeed %s", info.ID))
+		err := errors.ErrMetaOpFailed.GenWithStackByArgs(fmt.Sprintf("resume changefeed %s", info.ChangefeedID.Name()))
 		return errors.Trace(err)
 	}
 	return nil

@@ -55,7 +55,7 @@ func GetEncoderConfig(
 //
 // TableSchemaStore only exists in the table trigger event dispatcher, and the same instance's sink of this changefeed,
 // which means each changefeed only has one TableSchemaStore.
-// TODO:其实是个二选一的关系，后面根据 sink 类型更新一下这个logic
+// TODO:In fact, it is a choice between two options. Later, the logic will be updated according to the sink type.
 type TableSchemaStore struct {
 	tableNameStore *TableNameStore
 	tableIDStore   *TableIDStore
@@ -158,8 +158,8 @@ func (s *TableNameStore) GetAllTableNames(ts uint64) []*commonEvent.SchemaTableN
 						}
 					}
 				}
+				delete(s.latestTableNameChanges.m, commitTs)
 			}
-			delete(s.latestTableNameChanges.m, commitTs)
 		}
 	}
 
@@ -241,7 +241,7 @@ func (s *TableIDStore) GetTableIdsByDB(schemaID int64) []int64 {
 	defer s.mutex.Unlock()
 
 	tables := s.schemaIDToTableIDs[schemaID]
-	tableIds := make([]int64, len(tables))
+	tableIds := make([]int64, 0, len(tables))
 	for tableID := range tables {
 		tableIds = append(tableIds, tableID)
 	}
@@ -254,7 +254,7 @@ func (s *TableIDStore) GetTableIdsByDB(schemaID int64) []int64 {
 func (s *TableIDStore) GetAllTableIds() []int64 {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	tableIds := make([]int64, len(s.tableIDToSchemaID))
+	tableIds := make([]int64, 0, len(s.tableIDToSchemaID))
 	for tableID := range s.tableIDToSchemaID {
 		tableIds = append(tableIds, tableID)
 	}

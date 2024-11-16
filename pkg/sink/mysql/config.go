@@ -92,6 +92,9 @@ type MysqlConfig struct {
 	TLS                    string
 	ForceReplicate         bool
 
+	// retry number for dml
+	DMLMaxRetry uint64
+
 	IsTiDB bool // IsTiDB is true if the downstream is TiDB
 	// IsBDRModeSupported is true if the downstream is TiDB and write source is existed.
 	// write source exists when the downstream is TiDB and version is greater than or equal to v6.5.0.
@@ -109,7 +112,7 @@ type MysqlConfig struct {
 
 	// implement stmtCache to improve performance, especially when the downstream is TiDB
 	stmtCache        *lru.Cache
-	maxAllowedPacket int64
+	MaxAllowedPacket int64
 }
 
 // NewConfig returns the default mysql backend config.
@@ -128,6 +131,7 @@ func NewMysqlConfig() *MysqlConfig {
 		MultiStmtEnable:        defaultMultiStmtEnable,
 		CachePrepStmts:         defaultCachePrepStmts,
 		SourceID:               config.DefaultTiDBSourceID,
+		DMLMaxRetry:            8,
 	}
 }
 
@@ -216,12 +220,12 @@ func NewMysqlConfigAndDB(ctx context.Context, changefeedID common.ChangeFeedID, 
 
 	cfg.CachePrepStmts = cachePrepStmts
 
-	cfg.maxAllowedPacket, err = pmysql.QueryMaxAllowedPacket(ctx, db)
+	cfg.MaxAllowedPacket, err = pmysql.QueryMaxAllowedPacket(ctx, db)
 	if err != nil {
 		log.Warn("failed to query max_allowed_packet, use default value",
 			zap.String("changefeed", changefeedID.String()),
 			zap.Error(err))
-		cfg.maxAllowedPacket = int64(variable.DefMaxAllowedPacket)
+		cfg.MaxAllowedPacket = int64(variable.DefMaxAllowedPacket)
 	}
 	return cfg, db, nil
 }

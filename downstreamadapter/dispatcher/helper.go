@@ -56,6 +56,12 @@ func (r *ResendTaskMap) Delete(identifier BlockEventIdentifier) {
 	delete(r.m, identifier)
 }
 
+func (r *ResendTaskMap) Len() int {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	return len(r.m)
+}
+
 // Considering the sync point event and ddl event may have the same commitTs,
 // we need to distinguish them.
 type BlockEventIdentifier struct {
@@ -63,13 +69,13 @@ type BlockEventIdentifier struct {
 	IsSyncPoint bool
 }
 
-type BlockStatus struct {
+type BlockEventStatus struct {
 	mutex             sync.Mutex
 	blockPendingEvent commonEvent.BlockEvent
 	blockStage        heartbeatpb.BlockStage
 }
 
-func (b *BlockStatus) clear() {
+func (b *BlockEventStatus) clear() {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
@@ -77,7 +83,7 @@ func (b *BlockStatus) clear() {
 	b.blockStage = heartbeatpb.BlockStage_NONE
 }
 
-func (b *BlockStatus) setBlockEvent(event commonEvent.BlockEvent, blockStage heartbeatpb.BlockStage) {
+func (b *BlockEventStatus) setBlockEvent(event commonEvent.BlockEvent, blockStage heartbeatpb.BlockStage) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
@@ -85,13 +91,13 @@ func (b *BlockStatus) setBlockEvent(event commonEvent.BlockEvent, blockStage hea
 	b.blockStage = blockStage
 }
 
-func (b *BlockStatus) updateBlockStage(blockStage heartbeatpb.BlockStage) {
+func (b *BlockEventStatus) updateBlockStage(blockStage heartbeatpb.BlockStage) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 	b.blockStage = blockStage
 }
 
-func (b *BlockStatus) getEventAndStage() (commonEvent.BlockEvent, heartbeatpb.BlockStage) {
+func (b *BlockEventStatus) getEventAndStage() (commonEvent.BlockEvent, heartbeatpb.BlockStage) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 

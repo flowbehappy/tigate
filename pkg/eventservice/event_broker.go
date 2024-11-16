@@ -35,6 +35,8 @@ var metricEventServiceSendEventDuration = metrics.EventServiceSendEventDuration.
 var metricEventBrokerDropTaskCount = metrics.EventServiceDropScanTaskCount
 var metricEventBrokerDropResolvedTsCount = metrics.EventServiceDropResolvedTsCount
 var metricScanTaskQueueDuration = metrics.EventServiceScanTaskQueueDuration
+var metricEventBrokerHandleDuration = metrics.EventServiceHandleDuration
+var metricEventBrokerDropNotificationCount = metrics.EventServiceDropNotificationCount
 
 // eventBroker get event from the eventStore, and send the event to the dispatchers.
 // Every TiDB cluster has a eventBroker.
@@ -68,7 +70,6 @@ type eventBroker struct {
 	// and a goroutine is responsible for sending the message to the dispatchers.
 	messageCh        chan wrapEvent
 	resolvedTsCaches map[node.ID]*resolvedTsCache
-	notifyCh         chan *dispatcherStat
 
 	// wg is used to spawn the goroutines.
 	wg *sync.WaitGroup
@@ -80,6 +81,14 @@ type eventBroker struct {
 	metricEventServiceDispatcherResolvedTs prometheus.Gauge
 	metricEventServiceResolvedTsLag        prometheus.Gauge
 	metricScanEventDuration                prometheus.Observer
+}
+
+type pathHasher struct {
+	streamCount int
+}
+
+func (h pathHasher) HashPath(path common.DispatcherID) int {
+	return int((common.GID)(path).FastHash() % (uint64)(h.streamCount))
 }
 
 func newEventBroker(
@@ -94,10 +103,8 @@ func newEventBroker(
 	wg := &sync.WaitGroup{}
 
 	option := dynstream.NewOption()
-	// option.MaxPendingLength = 1
-	// option.DropPolicy = dynstream.DropEarly
-
-	ds := dynstream.NewDynamicStream(&dispatcherEventsHandler{}, option)
+	option.InputBufferSize = 1024 * 1024 // 1 Million
+	ds := dynstream.NewParallelDynamicStream(4, pathHasher{streamCount: 4}, &dispatcherEventsHandler{}, option)
 	ds.Start()
 
 	c := &eventBroker{
@@ -105,7 +112,6 @@ func newEventBroker(
 		eventStore:              eventStore,
 		mounter:                 pevent.NewMounter(tz),
 		schemaStore:             schemaStore,
-		notifyCh:                make(chan *dispatcherStat, defaultChannelSize*16),
 		dispatchers:             sync.Map{},
 		tableTriggerDispatchers: sync.Map{},
 		msgSender:               mc,
@@ -117,7 +123,7 @@ func newEventBroker(
 		cancel:                  cancel,
 		wg:                      wg,
 
-		metricDispatcherCount:                  metrics.EventServiceDispatcherGuage.WithLabelValues(strconv.FormatUint(id, 10)),
+		metricDispatcherCount:                  metrics.EventServiceDispatcherGauge.WithLabelValues(strconv.FormatUint(id, 10)),
 		metricEventServicePullerResolvedTs:     metrics.EventServiceResolvedTsGauge,
 		metricEventServiceResolvedTsLag:        metrics.EventServiceResolvedTsLagGauge.WithLabelValues("puller"),
 		metricEventServiceDispatcherResolvedTs: metrics.EventServiceResolvedTsLagGauge.WithLabelValues("dispatcher"),
@@ -129,7 +135,6 @@ func newEventBroker(
 	c.runSendMessageWorker(ctx)
 	c.updateMetrics(ctx)
 	c.updateDispatcherSendTs(ctx)
-	c.runGenTasks(ctx)
 	log.Info("new event broker created", zap.Uint64("id", id))
 	return c
 }
@@ -141,13 +146,11 @@ func (c *eventBroker) sendWatermark(
 	counter prometheus.Counter,
 ) {
 	c.emitSyncPointEventIfNeeded(watermark, d, server)
-
 	re := pevent.NewResolvedEvent(watermark, d.info.GetID())
 	resolvedEvent := newWrapResolvedEvent(
 		server,
 		re,
 		d.getEventSenderState())
-
 	select {
 	case c.messageCh <- resolvedEvent:
 		if counter != nil {
@@ -188,21 +191,6 @@ func (c *eventBroker) runScanWorker(ctx context.Context) {
 			}
 		}()
 	}
-}
-
-func (c *eventBroker) runGenTasks(ctx context.Context) {
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case stat := <-c.notifyCh:
-				c.ds.In() <- newScanTask(stat)
-			}
-		}
-	}()
 }
 
 // TODO: maybe event driven model is better. It is coupled with the detail implementation of
@@ -280,7 +268,7 @@ func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e pevent.DD
 }
 
 func (c *eventBroker) wakeDispatcher(dispatcherID common.DispatcherID) {
-	c.ds.Wake() <- dispatcherID
+	c.ds.Wake(dispatcherID) <- dispatcherID
 }
 
 // checkNeedScan checks if the dispatcher needs to scan the event store.
@@ -610,7 +598,6 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 				lag := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
 				c.metricEventServicePullerResolvedTs.Set(float64(phyResolvedTs))
 				c.metricEventServiceResolvedTsLag.Set(lag)
-
 				lag = float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dispatcherMinWaterMark)) / 1e3
 				c.metricEventServiceDispatcherResolvedTs.Set(lag)
 			}
@@ -654,8 +641,9 @@ func (c *eventBroker) onNotify(d *dispatcherStat, resolvedTs uint64) {
 	if d.onSubscriptionResolvedTs(resolvedTs) {
 		// Note: don't block the caller of this function.
 		select {
-		case c.notifyCh <- d:
+		case c.ds.In(d.info.GetID()) <- newScanTask(d):
 		default:
+			metricEventBrokerDropNotificationCount.Inc()
 		}
 	}
 }

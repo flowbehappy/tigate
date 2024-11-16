@@ -49,7 +49,7 @@ const (
 // EtcdWorker handles all interactions with Etcd
 type EtcdWorker struct {
 	clusterID string
-	client    *etcd.Client
+	client    etcd.Client
 	reactor   tiorchestrator.Reactor
 	state     tiorchestrator.ReactorState
 	// rawState is the local cache of the latest Etcd state.
@@ -477,14 +477,6 @@ func (worker *EtcdWorker) commitChangedState(ctx context.Context, changedState m
 	worker.metrics.metricEtcdTxnSize.Observe(float64(size))
 	startTime := time.Now()
 	resp, err := worker.client.Txn(ctx, cmps, opsThen, etcd.TxnEmptyOpsElse)
-
-	// For testing the situation where we have a progress notification that
-	// has the same revision as the committed Etcd transaction.
-	failpoint.Inject("InjectProgressRequestAfterCommit", func() {
-		if err := worker.client.RequestProgress(ctx); err != nil {
-			failpoint.Return(errors.Trace(err))
-		}
-	})
 
 	costTime := time.Since(startTime)
 	if costTime > etcdWorkerLogsWarnDuration {

@@ -19,7 +19,7 @@ func newTestMysqlWriter(t *testing.T) (*MysqlWriter, *sql.DB, sqlmock.Sqlmock) {
 
 	ctx := context.Background()
 	cfg := &MysqlConfig{
-		maxAllowedPacket:   int64(variable.DefMaxAllowedPacket),
+		MaxAllowedPacket:   int64(variable.DefMaxAllowedPacket),
 		SyncPointRetention: time.Duration(100 * time.Second),
 	}
 	changefeedID := common.ChangefeedID4Test("test", "test")
@@ -48,14 +48,20 @@ func TestMysqlWriter_FlushDML(t *testing.T) {
 	require.NotNil(t, job)
 
 	dmlEvent := helper.DML2Event("test", "t", "insert into t values (1, 'test')", "insert into t values (2, 'test2');")
+	dmlEvent.CommitTs = 2
+	dmlEvent.ReplicatingTs = 1
+
+	dmlEvent2 := helper.DML2Event("test", "t", "insert into t values (3, 'test3');")
+	dmlEvent2.CommitTs = 3
+	dmlEvent2.ReplicatingTs = 4
 
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO `test`.`t` (`id`,`name`) VALUES (?,?);INSERT INTO `test`.`t` (`id`,`name`) VALUES (?,?)").
-		WithArgs(1, "test", 2, "test2").
+	mock.ExpectExec("INSERT INTO `test`.`t` (`id`,`name`) VALUES (?,?);INSERT INTO `test`.`t` (`id`,`name`) VALUES (?,?);REPLACE INTO `test`.`t` (`id`,`name`) VALUES (?,?)").
+		WithArgs(1, "test", 2, "test2", 3, "test3").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	err := writer.Flush([]*commonEvent.DMLEvent{dmlEvent}, 0)
+	err := writer.Flush([]*commonEvent.DMLEvent{dmlEvent, dmlEvent2}, 0)
 	require.NoError(t, err)
 
 	err = mock.ExpectationsWereMet()
@@ -214,7 +220,7 @@ func TestMysqlWriter_RemoveDDLTsTable(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectBegin()
-	mock.ExpectExec("DELETE FROM  tidb_cdc.ddl_ts_v1 WHERE (ticdc_cluster_id, changefeed) IN ('default', 'test/test')").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("DELETE FROM tidb_cdc.ddl_ts_v1 WHERE (ticdc_cluster_id, changefeed) IN (('default', 'test/test'))").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
 	err := writer.RemoveDDLTsItem()

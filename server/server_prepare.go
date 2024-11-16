@@ -216,8 +216,7 @@ func (c *server) newEtcdSession(ctx context.Context) (*concurrency.Session, erro
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sess, err := concurrency.NewSession(
-		c.EtcdClient.GetEtcdClient().Unwrap(), concurrency.WithLease(lease.ID))
+	sess, err := c.EtcdClient.GetEtcdClient().NewSession(concurrency.WithLease(lease.ID))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

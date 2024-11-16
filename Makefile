@@ -1,7 +1,7 @@
 FAIL_ON_STDOUT := awk '{ print } END { if (NR > 0) { exit 1  }  }'
 
 PROJECT=ticdc
-
+.DEFAULT_GOAL := cdc
 CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(CURDIR)/bin:$(CURDIR)/tools/bin:$(path_to_add):$(PATH)
@@ -95,7 +95,11 @@ PACKAGE_LIST := go list ./... | grep -vE 'vendor|proto|ticdc/tests|integration|t
 PACKAGES := $$($(PACKAGE_LIST))
 
 FILES := $$(find . -name '*.go' -type f | grep -vE 'vendor|_gen|proto|pb\.go|pb\.gw\.go|_mock.go')
-FAIL_ON_STDOUT := awk '{ print } END { if (NR > 0) { exit 1  }  }'
+
+# MAKE_FILES is a list of make files to lint.
+# We purposefully avoid MAKEFILES as a variable name as it influences
+# the files included in recursive invocations of make
+MAKE_FILES = $(shell find . \( -name 'Makefile' -o -name '*.mk' \) -print)
 
 FAILPOINT_DIR := $$(for p in $(PACKAGES); do echo $${p\#"github.com/pingcap/$(PROJECT)/"}|grep -v "github.com/pingcap/$(PROJECT)"; done)
 FAILPOINT := tools/bin/failpoint-ctl
@@ -107,6 +111,10 @@ include tools/Makefile
 generate-protobuf: 
 	@echo "generate-protobuf"
 	./scripts/generate-protobuf.sh
+
+generate_mock: ## Generate mock code.
+generate_mock: tools/bin/mockgen
+	scripts/generate-mock.sh
 
 cdc:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/cdc ./cmd
@@ -160,3 +168,31 @@ tidy:
 errdoc: tools/bin/errdoc-gen
 	@echo "generator errors.toml"
 	./tools/check/check-errdoc.sh
+
+check-copyright:
+	@echo "check-copyright"
+	@./scripts/check-copyright.sh
+
+check-static: tools/bin/golangci-lint
+	tools/bin/golangci-lint run --timeout 10m0s --exclude-dirs "^tests/"
+
+check-ticdc-dashboard:
+	@echo "check-ticdc-dashboard"
+	@./scripts/check-ticdc-dashboard.sh
+
+check-diff-line-width:
+ifneq ($(shell echo $(RELEASE_VERSION) | grep master),)
+	@echo "check-file-width"
+	@./scripts/check-diff-line-width.sh
+endif
+
+check-makefiles: format-makefiles
+	@git diff --exit-code -- $(MAKE_FILES) || (echo "Please format Makefiles by running 'make format-makefiles'" && false)
+
+format-makefiles: $(MAKE_FILES)
+	$(SED_IN_PLACE) -e 's/^\(\t*\)  /\1\t/g' -e 's/^\(\t*\) /\1/' -- $?
+
+check: check-copyright fmt tidy errdoc check-diff-line-width check-ticdc-dashboard check-makefiles
+	@git --no-pager diff --exit-code || (echo "Please add changed files!" && false)
+
+workload: tools/bin/workload

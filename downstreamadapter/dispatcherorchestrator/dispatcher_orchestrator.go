@@ -136,7 +136,7 @@ func createBootstrapResponse(changefeedID *heartbeatpb.ChangefeedID, manager *di
 			Span:            d.GetTableSpan(),
 			ComponentStatus: d.GetComponentStatus(),
 			CheckpointTs:    d.GetCheckpointTs(),
-			BlockState:      d.GetBlockStatus(),
+			BlockState:      d.GetBlockEventStatus(),
 		})
 	})
 
