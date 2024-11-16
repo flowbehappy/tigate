@@ -70,6 +70,10 @@ func (t IOType) String() string {
 		return "BatchResolvedTs"
 	case TypeHandshakeEvent:
 		return "HandshakeEvent"
+	case TypeReadyEvent:
+		return "TypeReadyEvent"
+	case TypeNotReusableEvent:
+		return "TypeNotReusableEvent"
 	case TypeLogCoordinatorBroadcastRequest:
 		return "TypeLogCoordinatorBroadcastRequest"
 	case TypeReusableEventServiceRequest:
