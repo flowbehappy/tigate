@@ -158,6 +158,20 @@ func (c *eventBroker) sendWatermark(
 	}
 }
 
+func (c *eventBroker) sendReadyEvent(
+	server node.ID,
+	d *dispatcherStat,
+) {
+	event := pevent.NewReadyEvent(d.info.GetID())
+	wrapEvent := newWrapReadyEvent(server, event)
+
+	select {
+	case c.messageCh <- wrapEvent:
+	default:
+		// TODO: add metrics?
+	}
+}
+
 func (c *eventBroker) runScanWorker(ctx context.Context) {
 	for i := 0; i < c.scanWorkerCount; i++ {
 		taskCh := c.taskPool.popTask()
@@ -210,7 +224,7 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 						dispatcherStat.seq.Store(0)
 						e := pevent.NewHandshakeEvent(
 							dispatcherStat.info.GetID(),
-							dispatcherStat.startTs.Load(),
+							dispatcherStat.startTs,
 							dispatcherStat.seq.Add(1),
 							nil)
 						wrapE := wrapEvent{
@@ -269,6 +283,12 @@ func (c *eventBroker) wakeDispatcher(dispatcherID common.DispatcherID) {
 // If the dispatcher needs to scan the event store, it returns true.
 // If the dispatcher does not need to scan the event store, it send the watermark to the dispatcher
 func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
+	if task.dispatcherStat.resetTs.Load() == 0 {
+		remoteID := node.ID(task.dispatcherStat.info.GetServerID())
+		c.sendReadyEvent(remoteID, task.dispatcherStat)
+		return false, common.DataRange{}
+	}
+
 	c.checkAndInitDispatcher(task)
 
 	dataRange, needScan := task.dispatcherStat.getDataRange()
@@ -607,9 +627,12 @@ func (c *eventBroker) updateDispatcherSendTs(ctx context.Context) {
 			case <-ticker.C:
 				c.dispatchers.Range(func(key, value interface{}) bool {
 					dispatcher := value.(*dispatcherStat)
-					watermark := dispatcher.watermark.Load()
-					// FIXME: this is currently not correct
-					c.eventStore.UpdateDispatcherSendTs(dispatcher.info.GetID(), watermark)
+					// FIXME: use checkpointTs instead after checkpointTs is correctly updated
+					checkpointTs := dispatcher.watermark.Load()
+					// TODO: when use checkpointTs, this check can be removed
+					if checkpointTs > 0 {
+						c.eventStore.UpdateDispatcherCheckpointTs(dispatcher.info.GetID(), checkpointTs)
+					}
 					return true
 				})
 			}
@@ -725,7 +748,7 @@ func (c *eventBroker) resumeDispatcher(dispatcherInfo DispatcherInfo) {
 	if !ok {
 		return
 	}
-	log.Info("resume dispatcher", zap.Any("dispatcher", stat.info.GetID()), zap.Uint64("checkpointTs", stat.watermark.Load()), zap.Uint64("seq", stat.seq.Load()))
+	log.Info("resume dispatcher", zap.Any("dispatcher", stat.info.GetID()), zap.Uint64("watermark", stat.watermark.Load()), zap.Uint64("seq", stat.seq.Load()))
 	// Reset the watermark to the startTs of the dispatcherInfo.
 	stat.isRunning.Store(true)
 }
@@ -736,8 +759,8 @@ func (c *eventBroker) resetDispatcher(dispatcherInfo DispatcherInfo) {
 		return
 	}
 	log.Info("reset dispatcher", zap.Any("dispatcher", stat.info.GetID()), zap.Uint64("startTs", stat.info.GetStartTs()))
-	c.removeDispatcher(dispatcherInfo)
-	c.addDispatcher(dispatcherInfo)
+	stat.resetTs.Store(dispatcherInfo.GetStartTs())
+	stat.isInitialized.Store(false)
 }
 
 // Store the progress of the dispatcher, and the incremental events stats.
@@ -748,11 +771,16 @@ type dispatcherStat struct {
 	startTableInfo atomic.Pointer[common.TableInfo]
 	filter         filter.Filter
 	// The start ts of the dispatcher
-	startTs atomic.Uint64
+	startTs uint64
 	// The max resolved ts received from event store.
 	resolvedTs atomic.Uint64
+	// events <= checkpointTs will not needed by the dispatcher anymore
+	// TODO: maintain it
+	checkpointTs atomic.Uint64
 	// The watermark of the events that have been sent to the dispatcher.
 	watermark atomic.Uint64
+	// The reset ts send by the dispatcher.
+	resetTs atomic.Uint64
 	// The seq of the events that have been sent to the dispatcher.
 	// It start from 1, and increase by 1 for each event.
 	// If the dispatcher is reset, the seq will be set to 1.
@@ -787,6 +815,7 @@ func newDispatcherStat(
 	dispStat := &dispatcherStat{
 		info:                                  info,
 		filter:                                filter,
+		startTs:                               startTs,
 		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "kv"),
 		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "kv"),
 		metricEventServiceSendDDLCount:        metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "ddl"),
@@ -797,8 +826,8 @@ func newDispatcherStat(
 		dispStat.nextSyncPoint = info.GetSyncPointTs()
 		dispStat.syncPointInterval = info.GetSyncPointInterval()
 	}
-	dispStat.startTs.Store(startTs)
 	dispStat.resolvedTs.Store(startTs)
+	dispStat.checkpointTs.Store(startTs)
 	dispStat.watermark.Store(startTs)
 	dispStat.isRunning.Store(true)
 	return dispStat
@@ -827,10 +856,14 @@ func (a *dispatcherStat) getDataRange() (common.DataRange, bool) {
 	if a.watermark.Load() >= a.resolvedTs.Load() {
 		return common.DataRange{}, false
 	}
+	startTs := a.watermark.Load()
+	if startTs < a.resetTs.Load() {
+		startTs = a.resetTs.Load()
+	}
 	// ts range: (startTs, EndTs]
 	r := common.DataRange{
 		Span:    a.info.GetTableSpan(),
-		StartTs: a.watermark.Load(),
+		StartTs: startTs,
 		EndTs:   a.resolvedTs.Load(),
 	}
 	return r, true
@@ -908,6 +941,14 @@ func (w wrapEvent) getDispatcherID() common.DispatcherID {
 		log.Panic("cast event failed", zap.Any("event", w.e))
 	}
 	return e.GetDispatcherID()
+}
+
+func newWrapReadyEvent(serverID node.ID, e pevent.ReadyEvent) wrapEvent {
+	return wrapEvent{
+		serverID: serverID,
+		e:        &e,
+		msgType:  pevent.TypeReadyEvent,
+	}
 }
 
 func newWrapResolvedEvent(serverID node.ID, e pevent.ResolvedEvent, state pevent.EventSenderState) wrapEvent {

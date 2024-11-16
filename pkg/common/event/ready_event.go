@@ -15,8 +15,8 @@ type ReadyEvent struct {
 	DispatcherID common.DispatcherID
 }
 
-func NewReadyEvent(dispatcherID common.DispatcherID) *ReadyEvent {
-	return &ReadyEvent{
+func NewReadyEvent(dispatcherID common.DispatcherID) ReadyEvent {
+	return ReadyEvent{
 		Version:      ReadyEventVersion,
 		DispatcherID: dispatcherID,
 	}

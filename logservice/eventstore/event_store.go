@@ -51,7 +51,7 @@ type EventStore interface {
 
 	UnregisterDispatcher(dispatcherID common.DispatcherID) error
 
-	UpdateDispatcherSendTs(dispatcherID common.DispatcherID, sendTs uint64) error
+	UpdateDispatcherCheckpointTs(dispatcherID common.DispatcherID, checkpointTs uint64) error
 
 	GetDispatcherDMLEventState(dispatcherID common.DispatcherID) DMLEventState
 
@@ -534,14 +534,14 @@ func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) erro
 	return nil
 }
 
-func (e *eventStore) UpdateDispatcherSendTs(
+func (e *eventStore) UpdateDispatcherCheckpointTs(
 	dispatcherID common.DispatcherID,
-	sendTs uint64,
+	checkpointTs uint64,
 ) error {
 	e.dispatcherStates.RLock()
 	defer e.dispatcherStates.RUnlock()
 	if stat, ok := e.dispatcherStates.m[dispatcherID]; ok {
-		stat.checkpointTs = sendTs
+		stat.checkpointTs = checkpointTs
 		subscriptionStat := e.dispatcherStates.n[stat.subID]
 		// calculate the new checkpoint ts of the subscription
 		newCheckpointTs := uint64(0)
