@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	grpccodes "google.golang.org/grpc/codes"
+	"google.golang.org/grpc/experimental"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	grpcstatus "google.golang.org/grpc/status"
@@ -69,6 +70,7 @@ func createGRPCConn(ctx context.Context, credential *security.Credential, target
 			Timeout:             3 * time.Second,
 			PermitWithoutStream: true,
 		}),
+		experimental.WithRecvBufferPool(grpc.NewSharedBufferPool()),
 	}
 
 	grpcMetrics := metrics.GetGlobalGrpcMetrics()
@@ -79,7 +81,7 @@ func createGRPCConn(ctx context.Context, credential *security.Credential, target
 
 	return grpc.DialContext(ctx, target, dialOptions...)
 
-	// return grpc.NewClient(target, dialOptions...)
+	//return grpc.NewClient(target, dialOptions...)
 }
 
 func getContextFromFeatures(ctx context.Context, features []string) context.Context {
