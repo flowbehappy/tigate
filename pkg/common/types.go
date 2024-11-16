@@ -91,6 +91,10 @@ func (g GID) FastHash() uint64 {
 	return g.Low ^ (g.High << 1)
 }
 
+func (g GID) Hash(mod uint64) int {
+	return int(g.FastHash() % mod)
+}
+
 func (g GID) Marshal() []byte {
 	b := make([]byte, 16)
 	binary.LittleEndian.PutUint64(b[0:8], g.Low)
