@@ -32,6 +32,8 @@ const (
 	// LogCoordinator related
 	TypeLogCoordinatorBroadcastRequest
 	TypeEventStoreState
+	TypeReusableEventServiceRequest
+	TypeReusableEventServiceResponse
 
 	TypeHeartBeatRequest
 	TypeHeartBeatResponse
@@ -68,6 +70,10 @@ func (t IOType) String() string {
 		return "HandshakeEvent"
 	case TypeLogCoordinatorBroadcastRequest:
 		return "TypeLogCoordinatorBroadcastRequest"
+	case TypeReusableEventServiceRequest:
+		return "TypeReusableEventServiceRequest"
+	case TypeReusableEventServiceResponse:
+		return "TypeReusableEventServiceResponse"
 	case TypeEventStoreState:
 		return "TypeEventStoreState"
 	case TypeHeartBeatRequest:
@@ -210,6 +216,10 @@ func decodeIOType(ioType IOType, value []byte) (IOTypeT, error) {
 		m = &common.LogCoordinatorBroadcastRequest{}
 	case TypeEventStoreState:
 		m = &logservicepb.EventStoreState{}
+	case TypeReusableEventServiceRequest:
+		m = &logservicepb.ReusableEventServiceRequest{}
+	case TypeReusableEventServiceResponse:
+		m = &logservicepb.ReusableEventServiceResponse{}
 	case TypeHeartBeatRequest:
 		m = &heartbeatpb.HeartBeatRequest{}
 	case TypeHeartBeatResponse:
@@ -280,6 +290,10 @@ func NewSingleTargetMessage(To node.ID, Topic string, Message IOTypeT) *TargetMe
 		ioType = TypeLogCoordinatorBroadcastRequest
 	case *logservicepb.EventStoreState:
 		ioType = TypeEventStoreState
+	case *logservicepb.ReusableEventServiceRequest:
+		ioType = TypeReusableEventServiceRequest
+	case *logservicepb.ReusableEventServiceResponse:
+		ioType = TypeReusableEventServiceResponse
 	case *heartbeatpb.HeartBeatRequest:
 		ioType = TypeHeartBeatRequest
 	case *heartbeatpb.BlockStatusRequest:
