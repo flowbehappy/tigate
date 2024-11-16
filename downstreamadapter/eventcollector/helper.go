@@ -70,7 +70,7 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 	switch events[0].GetType() {
 	case commonEvent.TypeDDLEvent,
 		commonEvent.TypeSyncPointEvent,
-		commonEvent.TypeResolvedEvent, // TODO: make sure this is correct
+		commonEvent.TypeResolvedEvent, // TODO: make sure resolved ts event won't be batched
 		commonEvent.TypeHandshakeEvent,
 		commonEvent.TypeReadyEvent,
 		commonEvent.TypeNotReusableEvent:
