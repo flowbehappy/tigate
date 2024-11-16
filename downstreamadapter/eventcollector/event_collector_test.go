@@ -12,14 +12,3 @@
 // limitations under the License.
 
 package eventcollector
-
-import (
-	"testing"
-
-	"github.com/stretchr/testify/require"
-)
-
-func TestHasReceivedReadySignal(t *testing.T) {
-	stat := DispatcherStat{}
-	require.False(t, stat.hasReceivedReadySignal())
-}
