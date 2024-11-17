@@ -27,7 +27,7 @@ import (
 
 type preparedDMLs struct {
 	sqls            []string
-	values          [][]interface{}
+	values          []*argsSlice
 	rowCount        int
 	approximateSize int64
 	startTs         []uint64
@@ -37,15 +37,23 @@ var dmlsPool = sync.Pool{
 	New: func() interface{} {
 		return &preparedDMLs{
 			sqls:    make([]string, 0, 128),
-			values:  make([][]interface{}, 0, 128),
+			values:  make([]*argsSlice, 0, 128),
 			startTs: make([]uint64, 0, 128),
 		}
 	},
 }
 
+func putDMLs(dmls *preparedDMLs) {
+	dmls.reset()
+	dmlsPool.Put(dmls)
+}
+
+type argsSlice []interface{}
+
 var argsPool = sync.Pool{
 	New: func() interface{} {
-		return make([]interface{}, 0, 64)
+		args := make([]interface{}, 0, 64)
+		return &argsSlice{args}
 	},
 }
 
@@ -53,7 +61,7 @@ func (d *preparedDMLs) reset() {
 	d.sqls = d.sqls[:0]
 
 	for _, v := range d.values {
-		putArgs(&v)
+		putArgs(v)
 	}
 	d.values = d.values[:0]
 
@@ -68,12 +76,16 @@ func buildInsert(
 	tableInfo *common.TableInfo,
 	row commonEvent.RowChange,
 	translateToInsert bool,
-) (string, []interface{}, error) {
+) (string, *argsSlice, error) {
 	args, err := getArgs(&row.Row, tableInfo)
+
+	// Fizz delete this after testing
+	defer putArgs(args)
+
 	if err != nil {
 		return "", nil, errors.Trace(err)
 	}
-	if len(args) == 0 {
+	if len(*args) == 0 {
 		return "", nil, nil
 	}
 	var sql string
@@ -92,7 +104,7 @@ func buildInsert(
 
 // prepareDelete builds a parametric DELETE statement as following
 // sql: `DELETE FROM `test`.`t` WHERE x = ? AND y >= ? LIMIT 1`
-func buildDelete(tableInfo *common.TableInfo, row commonEvent.RowChange) (string, []interface{}, error) {
+func buildDelete(tableInfo *common.TableInfo, row commonEvent.RowChange) (string, *argsSlice, error) {
 	var builder strings.Builder
 	quoteTable := tableInfo.TableName.QuoteString()
 	builder.WriteString("DELETE FROM ")
@@ -106,7 +118,7 @@ func buildDelete(tableInfo *common.TableInfo, row commonEvent.RowChange) (string
 	if len(whereArgs) == 0 {
 		return "", nil, nil
 	}
-	args := make([]interface{}, 0, len(whereArgs))
+	args := argsPool.Get().(*argsSlice)
 	for i := 0; i < len(colNames); i++ {
 		if i > 0 {
 			builder.WriteString(" AND ")
@@ -117,7 +129,7 @@ func buildDelete(tableInfo *common.TableInfo, row commonEvent.RowChange) (string
 		} else {
 			builder.WriteString(quotes.QuoteName(colNames[i]))
 			builder.WriteString(" = ?")
-			args = append(args, whereArgs[i])
+			*args = append(*args, whereArgs[i])
 		}
 	}
 	builder.WriteString(" LIMIT 1")
@@ -125,7 +137,7 @@ func buildDelete(tableInfo *common.TableInfo, row commonEvent.RowChange) (string
 	return sql, args, nil
 }
 
-func buildUpdate(tableInfo *common.TableInfo, row commonEvent.RowChange) (string, []interface{}, error) {
+func buildUpdate(tableInfo *common.TableInfo, row commonEvent.RowChange) (string, *argsSlice, error) {
 	var builder strings.Builder
 	if tableInfo.GetPreUpdateSQL() == "" {
 		log.Panic("PreUpdateSQL should not be empty")
@@ -136,7 +148,7 @@ func buildUpdate(tableInfo *common.TableInfo, row commonEvent.RowChange) (string
 	if err != nil {
 		return "", nil, errors.Trace(err)
 	}
-	if len(args) == 0 {
+	if len(*args) == 0 {
 		return "", nil, nil
 	}
 
@@ -159,7 +171,7 @@ func buildUpdate(tableInfo *common.TableInfo, row commonEvent.RowChange) (string
 		} else {
 			builder.WriteString(quotes.QuoteName(whereColNames[i]))
 			builder.WriteString(" = ?")
-			args = append(args, whereArgs[i])
+			*args = append(*args, whereArgs[i])
 		}
 	}
 
@@ -168,9 +180,8 @@ func buildUpdate(tableInfo *common.TableInfo, row commonEvent.RowChange) (string
 	return sql, args, nil
 }
 
-func getArgs(row *chunk.Row, tableInfo *common.TableInfo) ([]interface{}, error) {
-	args := argsPool.Get().([]interface{})
-	args = args[:0]
+func getArgs(row *chunk.Row, tableInfo *common.TableInfo) (*argsSlice, error) {
+	args := argsPool.Get().(*argsSlice)
 
 	for i, col := range tableInfo.Columns {
 		if col == nil || tableInfo.ColumnsFlag[col.ID].IsGeneratedColumn() {
@@ -178,10 +189,10 @@ func getArgs(row *chunk.Row, tableInfo *common.TableInfo) ([]interface{}, error)
 		}
 		v, err := common.FormatColVal(row, col, i)
 		if err != nil {
-			argsPool.Put(&args)
+			argsPool.Put(args)
 			return nil, err
 		}
-		args = append(args, v)
+		*args = append(*args, v)
 	}
 	return args, nil
 }
@@ -217,8 +228,9 @@ func whereSlice(row *chunk.Row, tableInfo *common.TableInfo) ([]string, []interf
 	return colNames, args, nil
 }
 
-func putArgs(args *[]interface{}) {
+func putArgs(args *argsSlice) {
 	if args != nil {
+		*args = (*args)[:0]
 		argsPool.Put(args)
 	}
 }

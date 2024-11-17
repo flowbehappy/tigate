@@ -708,7 +708,6 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *commonEvent.DDLEvent) error {
 
 func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) (*preparedDMLs, error) {
 	dmls := dmlsPool.Get().(*preparedDMLs)
-	dmls.reset()
 
 	for _, event := range events {
 		if event.Len() == 0 {
@@ -736,7 +735,7 @@ func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) (*preparedDMLs
 			}
 
 			var query string
-			var args []interface{}
+			var args *argsSlice
 			var err error
 
 			switch row.RowType {
@@ -769,7 +768,7 @@ func (w *MysqlWriter) Flush(events []*commonEvent.DMLEvent, workerNum int) error
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer dmlsPool.Put(dmls) // Return dmls to pool after use
+	defer putDMLs(dmls) // Return dmls to pool after use
 
 	if dmls.rowCount == 0 {
 		return nil
@@ -795,9 +794,8 @@ func (w *MysqlWriter) Flush(events []*commonEvent.DMLEvent, workerNum int) error
 
 func (w *MysqlWriter) execDMLWithMaxRetries(dmls *preparedDMLs) error {
 	if len(dmls.sqls) != len(dmls.values) {
-		return cerror.ErrUnexpected.FastGenByArgs(fmt.Sprintf("unexpected number of sqls and values, sqls is %s, values is %s", dmls.sqls, dmls.values))
+		return cerror.ErrUnexpected.FastGenByArgs(fmt.Sprintf("unexpected number of sqls and values, sqls is %v, values is %v", dmls.sqls, dmls.values))
 	}
-
 	// approximateSize is multiplied by 2 because in extreme circustumas, every
 	// byte in dmls can be escaped and adds one byte.
 	fallbackToSeqWay := dmls.approximateSize*2 > w.maxAllowedPacket
@@ -878,10 +876,10 @@ func (w *MysqlWriter) sequenceExecute(
 
 		var execError error
 		if prepStmt == nil {
-			_, execError = tx.ExecContext(ctx, query, args...)
+			_, execError = tx.ExecContext(ctx, query, (*args)...)
 		} else {
 			//nolint:sqlclosecheck
-			_, execError = tx.Stmt(prepStmt).ExecContext(ctx, args...)
+			_, execError = tx.Stmt(prepStmt).ExecContext(ctx, (*args)...)
 		}
 
 		if execError != nil {
@@ -905,7 +903,7 @@ func (w *MysqlWriter) multiStmtExecute(
 ) error {
 	var multiStmtArgs []any
 	for _, value := range dmls.values {
-		multiStmtArgs = append(multiStmtArgs, value...)
+		multiStmtArgs = append(multiStmtArgs, (*value)...)
 	}
 	multiStmtSQL := strings.Join(dmls.sqls, ";")
 
