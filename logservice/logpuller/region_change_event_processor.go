@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/hex"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/pingcap/ticdc/pkg/common"
@@ -35,7 +36,7 @@ import (
 //  2. eventItem and resolvedTs shouldn't appear simultaneously;
 type statefulEvent struct {
 	eventItem         eventItem
-	resolvedTsBatches []resolvedTsBatch
+	resolvedTsBatches []*resolvedTsBatch
 	worker            *regionRequestWorker
 }
 
@@ -49,6 +50,35 @@ type eventItem struct {
 type resolvedTsBatch struct {
 	ts      uint64
 	regions []*regionFeedState
+}
+
+var resolvedTsBatchPool = sync.Pool{
+	New: func() interface{} {
+		return &resolvedTsBatch{
+			regions: make([]*regionFeedState, 0, 64), // 预分配一个合理的容量
+		}
+	},
+}
+
+// GetResolvedTsBatch gets a resolvedTsBatch from pool
+func GetResolvedTsBatch(ts uint64) *resolvedTsBatch {
+	batch := resolvedTsBatchPool.Get().(*resolvedTsBatch)
+	batch.ts = ts
+	return batch
+}
+
+// Put returns the resolvedTsBatch to pool
+func (r *resolvedTsBatch) release() {
+	// 清理对象状态
+	r.ts = 0
+	r.regions = r.regions[:0] // 保留底层数组，只重置长度
+	resolvedTsBatchPool.Put(r)
+}
+
+func newResolvedTsBatch(ts uint64) *resolvedTsBatch {
+	batch := resolvedTsBatchPool.Get().(*resolvedTsBatch)
+	batch.ts = ts
+	return batch
 }
 
 func newEventItem(item *cdcpb.Event, state *regionFeedState, worker *regionRequestWorker) statefulEvent {
@@ -139,7 +169,7 @@ func (w *changeEventProcessor) processEvent(ctx context.Context, event statefulE
 				return
 			}
 		case *cdcpb.Event_ResolvedTs:
-			w.handleResolvedTs(ctx, resolvedTsBatch{
+			w.handleResolvedTs(ctx, &resolvedTsBatch{
 				ts:      x.ResolvedTs,
 				regions: []*regionFeedState{state},
 			})
@@ -290,11 +320,11 @@ func (w *changeEventProcessor) assembleRowEvent(regionID uint64, entry *cdcpb.Ev
 	}, nil
 }
 
-func (w *changeEventProcessor) handleResolvedTs(ctx context.Context, batch resolvedTsBatch) {
+func (w *changeEventProcessor) handleResolvedTs(ctx context.Context, batch *resolvedTsBatch) {
 	w.advanceTableSpan(ctx, batch)
 }
 
-func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resolvedTsBatch) {
+func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch *resolvedTsBatch) {
 	if len(batch.regions) == 0 {
 		return
 	}
@@ -334,4 +364,6 @@ func (w *changeEventProcessor) advanceTableSpan(ctx context.Context, batch resol
 			}
 		}
 	}
+
+	batch.release()
 }

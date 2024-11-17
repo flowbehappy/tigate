@@ -65,7 +65,7 @@ type regionRequestWorker struct {
 		events []statefulEvent
 	}
 
-	// used to indicate whether there are new pending ts events for every processores in dispatchResolvedTs
+	// used to indicate whether there are new pending ts events for every processor in dispatchResolvedTs
 	boolCache []bool
 }
 
@@ -436,12 +436,12 @@ func (s *regionRequestWorker) dispatchResolvedTs(resolvedTs *cdcpb.ResolvedTs) e
 	for _, regionID := range resolvedTs.Regions {
 		slot := hashRegionID(regionID, len(s.client.changeEventProcessors))
 		if !s.boolCache[slot] {
-			s.tsBatches.events[slot].resolvedTsBatches = append(s.tsBatches.events[slot].resolvedTsBatches, resolvedTsBatch{
-				ts: resolvedTs.Ts,
-			})
+			s.tsBatches.events[slot].resolvedTsBatches = append(
+				s.tsBatches.events[slot].resolvedTsBatches,
+				newResolvedTsBatch(resolvedTs.Ts))
 			s.boolCache[slot] = true
 		}
-		batch := &s.tsBatches.events[slot].resolvedTsBatches[len(s.tsBatches.events[slot].resolvedTsBatches)-1]
+		batch := s.tsBatches.events[slot].resolvedTsBatches[len(s.tsBatches.events[slot].resolvedTsBatches)-1]
 		if state := s.getRegionState(subscriptionID, regionID); state != nil {
 			batch.regions = append(batch.regions, state)
 		}
@@ -466,7 +466,8 @@ func (s *regionRequestWorker) sendBatchedResolvedTs(ctx context.Context) error {
 						s.tsBatches.Unlock()
 						return err
 					}
-					event.resolvedTsBatches = nil
+					// reset resolvedTsBatches
+					event.resolvedTsBatches = event.resolvedTsBatches[:0]
 				}
 			}
 			s.tsBatches.Unlock()
