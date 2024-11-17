@@ -878,12 +878,12 @@ func (a *dispatcherStat) onSubscriptionResolvedTs(resolvedTs uint64) bool {
 }
 
 func (a *dispatcherStat) getDataRange() (common.DataRange, bool) {
-	if a.watermark.Load() >= a.resolvedTs.Load() {
-		return common.DataRange{}, false
-	}
 	startTs := a.watermark.Load()
 	if startTs < a.resetTs.Load() {
 		startTs = a.resetTs.Load()
+	}
+	if startTs >= a.resolvedTs.Load() {
+		return common.DataRange{}, false
 	}
 	// ts range: (startTs, EndTs]
 	r := common.DataRange{
