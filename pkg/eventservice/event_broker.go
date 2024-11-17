@@ -135,6 +135,7 @@ func newEventBroker(
 
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
+	c.logUnresetDispatchers(ctx)
 	for i := 0; i < streamCount; i++ {
 		c.runSendMessageWorker(ctx, i)
 	}
@@ -164,6 +165,30 @@ func (c *eventBroker) sendWatermark(
 	default:
 		metricEventBrokerDropResolvedTsCount.Inc()
 	}
+}
+
+func (c *eventBroker) sendReadyEvent(
+	server node.ID,
+	d *dispatcherStat,
+) {
+	event := pevent.NewReadyEvent(d.info.GetID())
+	wrapEvent := newWrapReadyEvent(server, event)
+
+	select {
+	case c.getMessageCh(d.workerIndex) <- wrapEvent:
+	default:
+	}
+}
+
+func (c *eventBroker) sendNotReusableEvent(
+	server node.ID,
+	d *dispatcherStat,
+) {
+	event := pevent.NewNotReusableEvent(d.info.GetID())
+	wrapEvent := newWrapNotReusableEvent(server, event)
+
+	// must success unless we can do retry later
+	c.getMessageCh(d.workerIndex) <- wrapEvent
 }
 
 func (c *eventBroker) getMessageCh(workerIndex int) chan wrapEvent {
@@ -203,11 +228,15 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 			case <-ticker.C:
 				c.tableTriggerDispatchers.Range(func(key, value interface{}) bool {
 					dispatcherStat := value.(*dispatcherStat)
+					if dispatcherStat.resetTs.Load() == 0 {
+						c.sendReadyEvent(node.ID(dispatcherStat.info.GetServerID()), dispatcherStat)
+						return true
+					}
 					if !dispatcherStat.isInitialized.Load() {
 						dispatcherStat.seq.Store(0)
 						e := pevent.NewHandshakeEvent(
 							dispatcherStat.id,
-							dispatcherStat.startTs.Load(),
+							dispatcherStat.startTs,
 							dispatcherStat.seq.Add(1),
 							nil)
 						wrapE := wrapEvent{
@@ -244,6 +273,29 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 	}()
 }
 
+func (c *eventBroker) logUnresetDispatchers(ctx context.Context) {
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		ticker := time.NewTicker(time.Minute * 10)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				c.dispatchers.Range(func(key, value interface{}) bool {
+					dispatcher := value.(*dispatcherStat)
+					if dispatcher.resetTs.Load() == 0 {
+						log.Info("dispatcher not reset", zap.Any("dispatcher", dispatcher.id))
+					}
+					return true
+				})
+			}
+		}
+	}()
+}
+
 func (c *eventBroker) sendDDL(ctx context.Context, remoteID node.ID, e pevent.DDLEvent, d *dispatcherStat) {
 	c.emitSyncPointEventIfNeeded(e.FinishedTs, d, remoteID)
 	e.DispatcherID = d.id
@@ -266,6 +318,12 @@ func (c *eventBroker) wakeDispatcher(dispatcherID common.DispatcherID) {
 // If the dispatcher needs to scan the event store, it returns true.
 // If the dispatcher does not need to scan the event store, it send the watermark to the dispatcher
 func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
+	if task.dispatcherStat.resetTs.Load() == 0 {
+		remoteID := node.ID(task.dispatcherStat.info.GetServerID())
+		c.sendReadyEvent(remoteID, task.dispatcherStat)
+		return false, common.DataRange{}
+	}
+
 	c.checkAndInitDispatcher(task)
 
 	dataRange, needScan := task.dispatcherStat.getDataRange()
@@ -603,9 +661,12 @@ func (c *eventBroker) updateDispatcherSendTs(ctx context.Context) {
 			case <-ticker.C:
 				c.dispatchers.Range(func(key, value interface{}) bool {
 					dispatcher := value.(*dispatcherStat)
-					watermark := dispatcher.watermark.Load()
-					// FIXME: this is currently not correct
-					c.eventStore.UpdateDispatcherSendTs(dispatcher.id, watermark)
+					// FIXME: use checkpointTs instead after checkpointTs is correctly updated
+					checkpointTs := dispatcher.watermark.Load()
+					// TODO: when use checkpointTs, this check can be removed
+					if checkpointTs > 0 {
+						c.eventStore.UpdateDispatcherCheckpointTs(dispatcher.id, checkpointTs)
+					}
 					return true
 				})
 			}
@@ -663,19 +724,27 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		return
 	}
 
-	c.dispatchers.Store(id, dispatcher)
-
 	brokerRegisterDuration := time.Since(start)
 
 	start = time.Now()
-	err = c.eventStore.RegisterDispatcher(
+	success, err := c.eventStore.RegisterDispatcher(
 		id,
 		span,
 		info.GetStartTs(),
 		func(resolvedTs uint64) { c.onNotify(dispatcher, resolvedTs) },
+		info.IsOnlyReuse(),
 	)
 	if err != nil {
 		log.Panic("register dispatcher to eventStore failed", zap.Error(err), zap.Any("dispatcherInfo", info))
+	}
+	if !success {
+		if !info.IsOnlyReuse() {
+			log.Panic("register dispatcher to eventStore failed",
+				zap.Error(err),
+				zap.Any("dispatcherInfo", info))
+		}
+		c.sendNotReusableEvent(node.ID(info.GetServerID()), dispatcher)
+		return
 	}
 
 	err = c.schemaStore.RegisterTable(span.GetTableID(), info.GetStartTs())
@@ -688,6 +757,9 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 	}
 	dispatcher.updateTableInfo(tableInfo)
 	eventStoreRegisterDuration := time.Since(start)
+
+	c.dispatchers.Store(id, dispatcher)
+
 	c.ds.AddPath(id, c, dynstream.AreaSettings{})
 
 	log.Info("register dispatcher", zap.Uint64("clusterID", c.tidbClusterID),
@@ -734,8 +806,8 @@ func (c *eventBroker) resetDispatcher(dispatcherInfo DispatcherInfo) {
 		return
 	}
 	log.Info("reset dispatcher", zap.Any("dispatcher", stat.id), zap.Uint64("startTs", stat.info.GetStartTs()))
-	c.removeDispatcher(dispatcherInfo)
-	c.addDispatcher(dispatcherInfo)
+	stat.resetTs.Store(dispatcherInfo.GetStartTs())
+	stat.isInitialized.Store(false)
 }
 
 // Store the progress of the dispatcher, and the incremental events stats.
@@ -749,11 +821,16 @@ type dispatcherStat struct {
 	startTableInfo atomic.Pointer[common.TableInfo]
 	filter         filter.Filter
 	// The start ts of the dispatcher
-	startTs atomic.Uint64
+	startTs uint64
 	// The max resolved ts received from event store.
 	resolvedTs atomic.Uint64
+	// events <= checkpointTs will not needed by the dispatcher anymore
+	// TODO: maintain it
+	checkpointTs atomic.Uint64
 	// The watermark of the events that have been sent to the dispatcher.
 	watermark atomic.Uint64
+	// The reset ts send by the dispatcher.
+	resetTs atomic.Uint64
 	// The seq of the events that have been sent to the dispatcher.
 	// It start from 1, and increase by 1 for each event.
 	// If the dispatcher is reset, the seq will be set to 1.
@@ -791,6 +868,7 @@ func newDispatcherStat(
 		workerIndex:                           workerIndex,
 		info:                                  info,
 		filter:                                filter,
+		startTs:                               startTs,
 		metricSorterOutputEventCountKV:        metrics.SorterOutputEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "kv"),
 		metricEventServiceSendKvCount:         metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "kv"),
 		metricEventServiceSendDDLCount:        metrics.EventServiceSendEventCount.WithLabelValues(changefeedID.Namespace(), changefeedID.Name(), "ddl"),
@@ -801,8 +879,8 @@ func newDispatcherStat(
 		dispStat.nextSyncPoint = info.GetSyncPointTs()
 		dispStat.syncPointInterval = info.GetSyncPointInterval()
 	}
-	dispStat.startTs.Store(startTs)
 	dispStat.resolvedTs.Store(startTs)
+	dispStat.checkpointTs.Store(startTs)
 	dispStat.watermark.Store(startTs)
 	dispStat.isRunning.Store(true)
 	return dispStat
@@ -828,13 +906,17 @@ func (a *dispatcherStat) onSubscriptionResolvedTs(resolvedTs uint64) bool {
 }
 
 func (a *dispatcherStat) getDataRange() (common.DataRange, bool) {
-	if a.watermark.Load() >= a.resolvedTs.Load() {
+	startTs := a.watermark.Load()
+	if startTs < a.resetTs.Load() {
+		startTs = a.resetTs.Load()
+	}
+	if startTs >= a.resolvedTs.Load() {
 		return common.DataRange{}, false
 	}
 	// ts range: (startTs, EndTs]
 	r := common.DataRange{
 		Span:    a.info.GetTableSpan(),
-		StartTs: a.watermark.Load(),
+		StartTs: startTs,
 		EndTs:   a.resolvedTs.Load(),
 	}
 	return r, true
@@ -912,6 +994,22 @@ func (w wrapEvent) getDispatcherID() common.DispatcherID {
 		log.Panic("cast event failed", zap.Any("event", w.e))
 	}
 	return e.GetDispatcherID()
+}
+
+func newWrapReadyEvent(serverID node.ID, e pevent.ReadyEvent) wrapEvent {
+	return wrapEvent{
+		serverID: serverID,
+		e:        &e,
+		msgType:  pevent.TypeReadyEvent,
+	}
+}
+
+func newWrapNotReusableEvent(serverID node.ID, e pevent.NotReusableEvent) wrapEvent {
+	return wrapEvent{
+		serverID: serverID,
+		e:        &e,
+		msgType:  pevent.TypeNotReusableEvent,
+	}
 }
 
 func newWrapResolvedEvent(serverID node.ID, e pevent.ResolvedEvent, state pevent.EventSenderState) wrapEvent {

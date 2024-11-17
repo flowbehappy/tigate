@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/ticdc/pkg/messaging"
 	"github.com/pingcap/ticdc/pkg/node"
 	"github.com/pingcap/ticdc/server/watcher"
+	"github.com/pingcap/tiflow/pkg/chann"
 	"github.com/pingcap/tiflow/pkg/spanz"
 	"go.uber.org/zap"
 
@@ -49,6 +50,11 @@ type eventStoreState struct {
 	subscriptionStates map[int64]subscriptionStates
 }
 
+type requestAndTarget struct {
+	req    *logservicepb.ReusableEventServiceRequest
+	target node.ID
+}
+
 type logCoordinator struct {
 	messageCenter messaging.MessageCenter
 
@@ -61,12 +67,15 @@ type logCoordinator struct {
 		sync.RWMutex
 		m map[node.ID]*eventStoreState
 	}
+
+	requestChan *chann.DrainableChann[requestAndTarget]
 }
 
 func New() LogCoordinator {
 	messageCenter := appcontext.GetService[messaging.MessageCenter](appcontext.MessageCenter)
 	c := &logCoordinator{
 		messageCenter: messageCenter,
+		requestChan:   chann.NewAutoDrainChann[requestAndTarget](),
 	}
 	c.nodes.m = make(map[node.ID]*node.Info)
 	c.eventStoreStates.m = make(map[node.ID]*eventStoreState)
@@ -104,6 +113,13 @@ func (c *logCoordinator) Run(ctx context.Context) error {
 					log.Debug("send broadcast message to node failed", zap.Error(err))
 				}
 			}
+		case req := <-c.requestChan.Out():
+			nodes := c.getCandidateNodes(req.target, req.req.GetSpan(), req.req.GetStartTs())
+			response := &logservicepb.ReusableEventServiceResponse{
+				ID:    req.req.GetID(),
+				Nodes: nodes,
+			}
+			c.messageCenter.SendEvent(messaging.NewSingleTargetMessage(req.target, messaging.EventCollectorTopic, response))
 		}
 	}
 }
@@ -113,6 +129,11 @@ func (c *logCoordinator) handleMessage(_ context.Context, targetMessage *messagi
 		switch msg.(type) {
 		case *logservicepb.EventStoreState:
 			c.updateEventStoreState(targetMessage.From, msg.(*logservicepb.EventStoreState))
+		case *logservicepb.ReusableEventServiceRequest:
+			c.requestChan.In() <- requestAndTarget{
+				req:    msg.(*logservicepb.ReusableEventServiceRequest),
+				target: targetMessage.From,
+			}
 		default:
 			log.Panic("invalid message type", zap.Any("msg", msg))
 		}
@@ -167,7 +188,7 @@ func (c *logCoordinator) updateEventStoreState(nodeId node.ID, state *logservice
 
 // getCandidateNode return all nodes(exclude the request node) which may contain data for `span` from `startTs`,
 // and the return slice should be sorted by resolvedTs(largest first).
-func (c *logCoordinator) getCandidateNodes(requestNodeID node.ID, span *heartbeatpb.TableSpan, startTs uint64) []node.ID {
+func (c *logCoordinator) getCandidateNodes(requestNodeID node.ID, span *heartbeatpb.TableSpan, startTs uint64) []string {
 	c.eventStoreStates.RLock()
 	defer c.eventStoreStates.RUnlock()
 
@@ -214,9 +235,9 @@ func (c *logCoordinator) getCandidateNodes(requestNodeID node.ID, span *heartbea
 		return candidates[i].resolvedTs > candidates[j].resolvedTs
 	})
 
-	var candidateNodes []node.ID
+	var candidateNodes []string
 	for _, candidate := range candidates {
-		candidateNodes = append(candidateNodes, candidate.nodeID)
+		candidateNodes = append(candidateNodes, string(candidate.nodeID))
 	}
 
 	return candidateNodes
