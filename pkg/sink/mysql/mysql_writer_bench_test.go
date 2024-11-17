@@ -11,6 +11,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// cpu: Apple M1 Pro
+// BenchmarkPrepareDMLs/Events-1-10         	14434258	        72.41 ns/op	     256 B/op	       1 allocs/op
+// BenchmarkPrepareDMLs/Events-10-10        	 2088097	       631.0 ns/op	    2565 B/op	      10 allocs/op
+// BenchmarkPrepareDMLs/Events-100-10       	  228222	      5796 ns/op	   25647 B/op	     100 allocs/op
+// BenchmarkPrepareDMLs/Events-1000-10      	   20516	     72573 ns/op	  256549 B/op	    1004 allocs/op
+// BenchmarkPrepareDMLs/Events-10000-10     	    2203	    604690 ns/op	 2565368 B/op	   10045 allocs/op
 func BenchmarkPrepareDMLs(b *testing.B) {
 	log.SetLevel(zap.ErrorLevel)
 	writer := &MysqlWriter{

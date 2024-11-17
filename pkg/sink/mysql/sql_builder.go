@@ -52,7 +52,7 @@ type argsSlice []interface{}
 
 var argsPool = sync.Pool{
 	New: func() interface{} {
-		args := make([]interface{}, 0, 64)
+		args := make([]interface{}, 0, 128)
 		return &argsSlice{args}
 	},
 }
@@ -230,6 +230,9 @@ func whereSlice(row *chunk.Row, tableInfo *common.TableInfo) ([]string, []interf
 
 func putArgs(args *argsSlice) {
 	if args != nil {
+		for i := range *args {
+			(*args)[i] = nil
+		}
 		*args = (*args)[:0]
 		argsPool.Put(args)
 	}
