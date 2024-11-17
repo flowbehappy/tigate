@@ -186,10 +186,8 @@ func (c *eventBroker) sendNotReusableEvent(
 	event := pevent.NewNotReusableEvent(d.info.GetID())
 	wrapEvent := newWrapNotReusableEvent(server, event)
 
-	select {
-	case c.getMessageCh(d.workerIndex) <- wrapEvent:
-	default:
-	}
+	// must success unless we can do retry later
+	c.getMessageCh(d.workerIndex) <- wrapEvent
 }
 
 func (c *eventBroker) getMessageCh(workerIndex int) chan wrapEvent {
@@ -716,7 +714,13 @@ func (c *eventBroker) addDispatcher(info DispatcherInfo) {
 		log.Panic("register dispatcher to eventStore failed", zap.Error(err), zap.Any("dispatcherInfo", info))
 	}
 	if !success {
+		if !info.IsOnlyReuse() {
+			log.Panic("register dispatcher to eventStore failed",
+				zap.Error(err),
+				zap.Any("dispatcherInfo", info))
+		}
 		c.sendNotReusableEvent(node.ID(info.GetServerID()), dispatcher)
+		return
 	}
 
 	err = c.schemaStore.RegisterTable(span.GetTableID(), info.GetStartTs())
