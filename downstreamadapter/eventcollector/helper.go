@@ -70,7 +70,6 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 	switch events[0].GetType() {
 	case commonEvent.TypeDDLEvent,
 		commonEvent.TypeSyncPointEvent,
-		commonEvent.TypeResolvedEvent, // TODO: make sure resolved ts event won't be batched
 		commonEvent.TypeHandshakeEvent,
 		commonEvent.TypeReadyEvent,
 		commonEvent.TypeNotReusableEvent:
@@ -79,6 +78,17 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
 				zap.Stringer("dispatcher", stat.target.GetId()),
 				zap.Any("events", events))
+		}
+	case commonEvent.TypeResolvedEvent,
+		commonEvent.TypeDMLEvent:
+		// TypeResolvedEvent and TypeDMLEvent can be in the same batch
+		for i := 0; i < len(events); i++ {
+			if events[i].GetType() != commonEvent.TypeResolvedEvent && events[i].GetType() != commonEvent.TypeDMLEvent {
+				log.Panic("receive multiple events with upexpected types",
+					zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
+					zap.Stringer("dispatcher", stat.target.GetId()),
+					zap.Any("events", events))
+			}
 		}
 	default:
 		for i := 1; i < len(events); i++ {
@@ -92,6 +102,11 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 	}
 
 	checkEventSeq := func(dispatcherEvent dispatcher.DispatcherEvent) bool {
+		if dispatcherEvent.GetType() != commonEvent.TypeDMLEvent &&
+			dispatcherEvent.GetType() != commonEvent.TypeDDLEvent &&
+			dispatcherEvent.GetType() != commonEvent.TypeHandshakeEvent {
+			return true
+		}
 		expectedSeq := stat.lastEventSeq.Add(1)
 		if dispatcherEvent.GetSeq() != expectedSeq {
 			log.Warn("Received an out-of-order event, reset the dispatcher",
@@ -109,7 +124,9 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 
 	// just check the first event type, because all event types should be same
 	switch events[0].GetType() {
-	case commonEvent.TypeDMLEvent:
+	// note: TypeDMLEvent and TypeResolvedEvent can be in the same batch, so we should handle them together.
+	case commonEvent.TypeDMLEvent,
+		commonEvent.TypeResolvedEvent:
 		if stat.waitHandshake.Load() {
 			log.Warn("Receive event before handshake event, ignore it",
 				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
@@ -135,7 +152,6 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 		stat.sendCommitTs.Store(events[len(events)-1].GetCommitTs())
 		return stat.target.HandleEvents(events[validEventStart:], func() { h.eventCollector.WakeDispatcher(stat.dispatcherID) })
 	case commonEvent.TypeDDLEvent,
-		commonEvent.TypeResolvedEvent,
 		commonEvent.TypeSyncPointEvent:
 		if stat.waitHandshake.Load() {
 			log.Warn("Receive event before handshake event, ignore it",
@@ -153,10 +169,8 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 				zap.Any("event", events))
 			return false
 		}
-		if events[0].GetType() == commonEvent.TypeDDLEvent {
-			if !checkEventSeq(events[0]) {
-				return false
-			}
+		if !checkEventSeq(events[0]) {
+			return false
 		}
 		return stat.target.HandleEvents(events, func() { h.eventCollector.WakeDispatcher(stat.dispatcherID) })
 	case commonEvent.TypeHandshakeEvent:
@@ -170,6 +184,12 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 					zap.Stringer("dispatcher", stat.target.GetId()),
 					zap.Stringer("from", dispatcherEvent.From))
 			}
+			return false
+		}
+		// for unexpected handshake, we must reset the event service with current send ts.
+		// because the table info in handshake event is stale, and we don't know the current table info.
+		// TODO: may be just ignore the table info is ok in this case?(the dispatcher can get table info from ddl event)
+		if !checkEventSeq(events[0]) {
 			return false
 		}
 		stat.lastEventSeq.Store(dispatcherEvent.GetSeq())
