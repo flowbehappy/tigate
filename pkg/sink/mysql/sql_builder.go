@@ -43,6 +43,12 @@ var dmlsPool = sync.Pool{
 	},
 }
 
+var argsPool = sync.Pool{
+	New: func() interface{} {
+		return make([]interface{}, 0, 64)
+	},
+}
+
 func (d *preparedDMLs) reset() {
 	d.sqls = d.sqls[:0]
 	d.values = d.values[:0]
@@ -159,13 +165,16 @@ func buildUpdate(tableInfo *common.TableInfo, row commonEvent.RowChange) (string
 }
 
 func getArgs(row *chunk.Row, tableInfo *common.TableInfo) ([]interface{}, error) {
-	args := make([]interface{}, 0, len(tableInfo.Columns))
+	args := argsPool.Get().([]interface{})
+	args = args[:0]
+
 	for i, col := range tableInfo.Columns {
 		if col == nil || tableInfo.ColumnsFlag[col.ID].IsGeneratedColumn() {
 			continue
 		}
 		v, err := common.FormatColVal(row, col, i)
 		if err != nil {
+			argsPool.Put(args)
 			return nil, err
 		}
 		args = append(args, v)
@@ -202,4 +211,10 @@ func whereSlice(row *chunk.Row, tableInfo *common.TableInfo) ([]string, []interf
 		}
 	}
 	return colNames, args, nil
+}
+
+func putArgs(args []interface{}) {
+	if args != nil {
+		argsPool.Put(args)
+	}
 }
