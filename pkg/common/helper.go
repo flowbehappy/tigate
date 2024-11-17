@@ -3,8 +3,7 @@ package common
 import (
 	"fmt"
 	"math"
-	"strings"
-	"sync"
+	"unsafe"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -15,22 +14,6 @@ import (
 )
 
 var EmptyBytes = make([]byte, 0)
-
-type stringPool struct {
-	stringBuilder sync.Pool
-}
-
-func newStringPool() *stringPool {
-	return &stringPool{
-		stringBuilder: sync.Pool{
-			New: func() interface{} {
-				return &strings.Builder{}
-			},
-		},
-	}
-}
-
-var formatPool = newStringPool()
 
 func FormatColVal(row *chunk.Row, col *model.ColumnInfo, idx int) (
 	value interface{}, err error,
@@ -69,12 +52,7 @@ func FormatColVal(row *chunk.Row, col *model.ColumnInfo, idx int) (
 			if len(b) == 0 {
 				return "", nil
 			}
-			sb := formatPool.stringBuilder.Get().(*strings.Builder)
-			sb.Reset()
-			sb.Write(b)
-			str := sb.String()
-			formatPool.stringBuilder.Put(sb)
-			return str, nil
+			return unsafe.String(&b[0], len(b)), nil
 		}
 		return b, nil
 	case mysql.TypeFloat:

@@ -51,7 +51,12 @@ var argsPool = sync.Pool{
 
 func (d *preparedDMLs) reset() {
 	d.sqls = d.sqls[:0]
+
+	for _, v := range d.values {
+		putArgs(&v)
+	}
 	d.values = d.values[:0]
+
 	d.startTs = d.startTs[:0]
 	d.rowCount = 0
 	d.approximateSize = 0
@@ -71,7 +76,6 @@ func buildInsert(
 	if len(args) == 0 {
 		return "", nil, nil
 	}
-
 	var sql string
 	if translateToInsert {
 		sql = tableInfo.GetPreInsertSQL()
@@ -174,7 +178,7 @@ func getArgs(row *chunk.Row, tableInfo *common.TableInfo) ([]interface{}, error)
 		}
 		v, err := common.FormatColVal(row, col, i)
 		if err != nil {
-			argsPool.Put(args)
+			argsPool.Put(&args)
 			return nil, err
 		}
 		args = append(args, v)
@@ -213,7 +217,7 @@ func whereSlice(row *chunk.Row, tableInfo *common.TableInfo) ([]string, []interf
 	return colNames, args, nil
 }
 
-func putArgs(args []interface{}) {
+func putArgs(args *[]interface{}) {
 	if args != nil {
 		argsPool.Put(args)
 	}
