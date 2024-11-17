@@ -135,6 +135,7 @@ func newEventBroker(
 
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
+	c.logUnresetDispatchers(ctx)
 	for i := 0; i < streamCount; i++ {
 		c.runSendMessageWorker(ctx, i)
 	}
@@ -264,6 +265,29 @@ func (c *eventBroker) tickTableTriggerDispatchers(ctx context.Context) {
 						// After all the events are sent, we send the watermark to the dispatcher.
 						c.sendWatermark(remoteID, dispatcherStat, endTs, dispatcherStat.metricEventServiceSendResolvedTsCount)
 						dispatcherStat.watermark.Store(endTs)
+					}
+					return true
+				})
+			}
+		}
+	}()
+}
+
+func (c *eventBroker) logUnresetDispatchers(ctx context.Context) {
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		ticker := time.NewTicker(time.Minute * 10)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				c.dispatchers.Range(func(key, value interface{}) bool {
+					dispatcher := value.(*dispatcherStat)
+					if dispatcher.resetTs.Load() == 0 {
+						log.Info("dispatcher not reset", zap.Any("dispatcher", dispatcher.id))
 					}
 					return true
 				})
