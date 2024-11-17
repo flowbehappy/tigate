@@ -3,7 +3,8 @@ package common
 import (
 	"fmt"
 	"math"
-	"unsafe"
+	"strings"
+	"sync"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -15,7 +16,22 @@ import (
 
 var EmptyBytes = make([]byte, 0)
 
-// getColumnValue returns the column value in the row
+type stringPool struct {
+	stringBuilder sync.Pool
+}
+
+func newStringPool() *stringPool {
+	return &stringPool{
+		stringBuilder: sync.Pool{
+			New: func() interface{} {
+				return &strings.Builder{}
+			},
+		},
+	}
+}
+
+var formatPool = newStringPool()
+
 func FormatColVal(row *chunk.Row, col *model.ColumnInfo, idx int) (
 	value interface{}, err error,
 ) {
@@ -49,15 +65,16 @@ func FormatColVal(row *chunk.Row, col *model.ColumnInfo, idx int) (
 		if b == nil {
 			b = EmptyBytes
 		}
-		// If the column value type is []byte and charset is not binary, we get its string
-		// representation. Because if we use the byte array respresentation, the go-sql-driver
-		// will automatically set `_binary` charset for that column, which is not expected.
-		// See https://github.com/go-sql-driver/mysql/blob/ce134bfc/connection.go#L267
 		if col.GetCharset() != "" && col.GetCharset() != charset.CharsetBin {
 			if len(b) == 0 {
 				return "", nil
 			}
-			return unsafe.String(&b[0], len(b)), nil
+			sb := formatPool.stringBuilder.Get().(*strings.Builder)
+			sb.Reset()
+			sb.Write(b)
+			str := sb.String()
+			formatPool.stringBuilder.Put(sb)
+			return str, nil
 		}
 		return b, nil
 	case mysql.TypeFloat:
