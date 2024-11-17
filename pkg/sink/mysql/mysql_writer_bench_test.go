@@ -1,6 +1,7 @@
 package mysql
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/log"
@@ -12,7 +13,6 @@ import (
 
 func BenchmarkPrepareDMLs(b *testing.B) {
 	log.SetLevel(zap.ErrorLevel)
-	// Create a minimal MysqlWriter instance
 	writer := &MysqlWriter{
 		cfg: &MysqlConfig{
 			SafeMode: false,
@@ -31,20 +31,25 @@ func BenchmarkPrepareDMLs(b *testing.B) {
 	require.True(b, ok)
 	require.NotNil(b, insert)
 
-	events := make([]*commonEvent.DMLEvent, 0, 200)
-	for i := 0; i < 200; i++ {
-		events = append(events, event)
-	}
+	// 定义不同的事件数量进行测试
+	eventCounts := []int{1, 10, 100, 1000, 10000}
 
-	b.Run("BenchmarkPrepareDMLs", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			dmls, err := writer.prepareDMLs(events)
-			if err != nil {
-				b.Fatal(err)
-			}
-			// Clean up
-			putDMLs(dmls)
+	for _, count := range eventCounts {
+		events := make([]*commonEvent.DMLEvent, 0, count)
+		for i := 0; i < count; i++ {
+			events = append(events, event)
 		}
-	})
+
+		b.Run(fmt.Sprintf("Events-%d", count), func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				dmls, err := writer.prepareDMLs(events)
+				if err != nil {
+					b.Fatal(err)
+				}
+				// Clean up
+				putDMLs(dmls)
+			}
+		})
+	}
 }

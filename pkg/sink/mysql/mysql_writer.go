@@ -735,11 +735,7 @@ func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) (*preparedDMLs
 			}
 
 			var query string
-<<<<<<< HEAD
 			var args *argsSlice
-=======
-			var args []interface{}
->>>>>>> upstream/master
 			var err error
 
 			switch row.RowType {
@@ -772,11 +768,7 @@ func (w *MysqlWriter) Flush(events []*commonEvent.DMLEvent, workerNum int) error
 	if err != nil {
 		return errors.Trace(err)
 	}
-<<<<<<< HEAD
 	defer putDMLs(dmls) // Return dmls to pool after use
-=======
-	defer dmlsPool.Put(dmls) // Return dmls to pool after use
->>>>>>> upstream/master
 
 	if dmls.rowCount == 0 {
 		return nil
