@@ -3,6 +3,7 @@ package common
 import (
 	"fmt"
 	"math"
+	"unsafe"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -53,7 +54,10 @@ func FormatColVal(row *chunk.Row, col *model.ColumnInfo, idx int) (
 		// will automatically set `_binary` charset for that column, which is not expected.
 		// See https://github.com/go-sql-driver/mysql/blob/ce134bfc/connection.go#L267
 		if col.GetCharset() != "" && col.GetCharset() != charset.CharsetBin {
-			return string(b), nil
+			if len(b) == 0 {
+				return "", nil
+			}
+			return unsafe.String(&b[0], len(b)), nil
 		}
 		return b, nil
 	case mysql.TypeFloat:
