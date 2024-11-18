@@ -78,4 +78,5 @@ message RegisterDispatcherRequest {
     bool enable_sync_point = 8;
     uint64 sync_point_ts = 9;
     uint64 sync_point_interval = 10;
+    bool only_reuse = 11;
 }

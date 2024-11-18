@@ -47,11 +47,12 @@ type EventStore interface {
 		span *heartbeatpb.TableSpan,
 		startTS uint64,
 		notifier ResolvedTsNotifier,
-	) error
+		onlyReuse bool,
+	) (bool, error)
 
 	UnregisterDispatcher(dispatcherID common.DispatcherID) error
 
-	UpdateDispatcherSendTs(dispatcherID common.DispatcherID, sendTs uint64) error
+	UpdateDispatcherCheckpointTs(dispatcherID common.DispatcherID, checkpointTs uint64) error
 
 	GetDispatcherDMLEventState(dispatcherID common.DispatcherID) DMLEventState
 
@@ -397,7 +398,8 @@ func (e *eventStore) RegisterDispatcher(
 	tableSpan *heartbeatpb.TableSpan,
 	startTs uint64,
 	notifier ResolvedTsNotifier,
-) error {
+	onlyReuse bool,
+) (bool, error) {
 	log.Info("register dispatcher",
 		zap.Any("dispatcherID", dispatcherID),
 		zap.String("span", tableSpan.String()),
@@ -446,12 +448,16 @@ func (e *eventStore) RegisterDispatcher(
 						zap.Uint64("subID", uint64(stat.subID)),
 						zap.Uint64("checkpointTs", subscriptionStat.checkpointTs),
 						zap.Uint64("startTs", startTs))
-					return nil
+					return true, nil
 				}
 			}
 		}
 	}
 	e.dispatcherStates.Unlock()
+
+	if onlyReuse {
+		return false, nil
+	}
 
 	// cannot share data from existing subscription, create a new subscription
 
@@ -489,8 +495,7 @@ func (e *eventStore) RegisterDispatcher(
 	} else {
 		dispatchersForSameTable[dispatcherID] = true
 	}
-
-	return nil
+	return true, nil
 }
 
 func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) error {
@@ -534,14 +539,14 @@ func (e *eventStore) UnregisterDispatcher(dispatcherID common.DispatcherID) erro
 	return nil
 }
 
-func (e *eventStore) UpdateDispatcherSendTs(
+func (e *eventStore) UpdateDispatcherCheckpointTs(
 	dispatcherID common.DispatcherID,
-	sendTs uint64,
+	checkpointTs uint64,
 ) error {
 	e.dispatcherStates.RLock()
 	defer e.dispatcherStates.RUnlock()
 	if stat, ok := e.dispatcherStates.m[dispatcherID]; ok {
-		stat.checkpointTs = sendTs
+		stat.checkpointTs = checkpointTs
 		subscriptionStat := e.dispatcherStates.n[stat.subID]
 		// calculate the new checkpoint ts of the subscription
 		newCheckpointTs := uint64(0)
