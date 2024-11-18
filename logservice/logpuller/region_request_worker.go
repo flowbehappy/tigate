@@ -437,7 +437,8 @@ func (s *regionRequestWorker) dispatchResolvedTs(resolvedTs *cdcpb.ResolvedTs) e
 		slot := hashRegionID(regionID, len(s.client.changeEventProcessors))
 		if !s.boolCache[slot] {
 			s.tsBatches.events[slot].resolvedTsBatches = append(s.tsBatches.events[slot].resolvedTsBatches, resolvedTsBatch{
-				ts: resolvedTs.Ts,
+				ts:      resolvedTs.Ts,
+				regions: make([]*regionFeedState, 0, len(resolvedTs.Regions)),
 			})
 			s.boolCache[slot] = true
 		}
