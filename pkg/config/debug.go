@@ -30,6 +30,8 @@ type DebugConfig struct {
 
 	// Puller is the configuration of the puller.
 	Puller *PullerConfig `toml:"puller" json:"puller"`
+
+	SchemaStore *SchemaStoreConfig `toml:"schema-store" json:"schema-store"`
 }
 
 // ValidateAndAdjust validates and adjusts the debug configuration
@@ -63,5 +65,17 @@ func NewDefaultPullerConfig() *PullerConfig {
 		EnableResolvedTsStuckDetection: false,
 		ResolvedTsStuckInterval:        TomlDuration(5 * time.Minute),
 		LogRegionDetails:               false,
+	}
+}
+
+// SchemaStoreConfig represents config for schema store
+type SchemaStoreConfig struct {
+	EnableGC bool `toml:"enable-gc" json:"enable-gc"`
+}
+
+// NewDefaultSchemaStoreConfig return the default schema store configuration
+func NewDefaultSchemaStoreConfig() *SchemaStoreConfig {
+	return &SchemaStoreConfig{
+		EnableGC: true,
 	}
 }
