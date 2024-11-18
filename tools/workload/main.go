@@ -17,6 +17,7 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"math/rand"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -132,14 +133,14 @@ func main() {
 		dbNum = 1
 	}
 
-	qpsPerTable := qps / dbNum / tableCount
+	// qpsPerTable := qps / dbNum / tableCount
 
-	qpsPerTableForUpdate := qpsPerTable * percentageForUpdate / 100
-	qpsPerTableForInsert := qpsPerTable - qpsPerTableForUpdate
+	qpsPerTableForUpdate := qps * percentageForUpdate / 100
+	qpsPerTableForInsert := qps - qpsPerTableForUpdate
 
 	log.Info("created db count", zap.Int("dbCount", dbNum))
 	log.Info("created table each db", zap.Int("tableCount", tableCount))
-	fmt.Printf("each table qps %d\n", qpsPerTable)
+	fmt.Printf("each table qps for insert %d\n", qpsPerTableForInsert)
 
 	var workload schema.Workload
 	switch workloadType {
@@ -174,36 +175,28 @@ func main() {
 	)
 	group := &sync.WaitGroup{}
 	if action == "insert" || action == "write" {
-		for i, db := range dbs {
-			log.Info("start to insert data to db", zap.Int("dbNum", i))
-			dbi := db
-			group.Add(qpsPerTableForInsert)
-			for i := 0; i < qpsPerTableForInsert; i++ {
-				go func() {
-					defer group.Done()
-					doInsert(dbi, workload)
-				}()
-			}
+		group.Add(qpsPerTableForInsert)
+		for i := 0; i < qpsPerTableForInsert; i++ {
+			go func() {
+				defer group.Done()
+				doInsert(dbs, workload)
+			}()
 		}
 	}
 
 	if (action == "write" || action == "update") && qpsPerTableForUpdate != 0 {
-		for i, db := range dbs {
-			log.Info("start to update data to db", zap.Int("dbNum", i))
-			dbi := db
-			group.Add(qpsPerTableForUpdate + 1)
-			updateTaskCh := make(chan updateTask, rps)
-			for i := 0; i < qpsPerTableForUpdate; i++ {
-				go func() {
-					defer group.Done()
-					doUpdate(dbi, workload, updateTaskCh)
-				}()
-			}
+		group.Add(qpsPerTableForUpdate + 1)
+		updateTaskCh := make(chan updateTask, rps)
+		for i := 0; i < qpsPerTableForUpdate; i++ {
 			go func() {
 				defer group.Done()
-				genUpdateTask(updateTaskCh)
+				doUpdate(dbs, workload, updateTaskCh)
 			}()
 		}
+		go func() {
+			defer group.Done()
+			genUpdateTask(updateTaskCh)
+		}()
 	}
 
 	go printTPS()
@@ -247,22 +240,24 @@ type updateTask struct {
 
 func genUpdateTask(output chan updateTask) {
 	for {
-		for i := 0; i < tableCount; i++ {
-			// TODO: add more randomness.
-			task := updateTask{
-				UpdateOption: schema.UpdateOption{
-					Table:    i + tableStartIndex,
-					RowCount: rps,
-				},
-			}
-			output <- task
+		i := rand.Intn(dbNum)
+		j := rand.Intn(tableCount) + tableStartIndex
+		// TODO: add more randomness.
+		task := updateTask{
+			UpdateOption: schema.UpdateOption{
+				DB:       i,
+				Table:    j,
+				RowCount: rps,
+			},
 		}
+		output <- task
 	}
 }
 
-func doUpdate(db *sql.DB, workload schema.Workload, input chan updateTask) {
+func doUpdate(dbs []*sql.DB, workload schema.Workload, input chan updateTask) {
 	for task := range input {
 		updateSql := workload.BuildUpdateSql(task.UpdateOption)
+		db := dbs[task.DB]
 		res, err := db.Exec(updateSql)
 		if err != nil {
 			fmt.Println("update error: ", err, ". sql: ", updateSql)
@@ -287,39 +282,40 @@ func doUpdate(db *sql.DB, workload schema.Workload, input chan updateTask) {
 	}
 }
 
-func doInsert(db *sql.DB, workload schema.Workload) {
+func doInsert(dbs []*sql.DB, workload schema.Workload) {
 	t := time.Tick(time.Second)
 	printedError := false
 	for range t {
-		for i := 0; i < tableCount; i++ {
-			insertSql := workload.BuildInsertSql(i, rps)
-			_, err := db.Exec(insertSql)
-			if err != nil {
-				// if table not exists, we create it
-				if strings.Contains(err.Error(), "Error 1146") {
-					_, err = db.Exec(workload.BuildCreateTableStatement(i))
-					if err != nil {
-						fmt.Println("create table error: ", err)
-						continue
-					}
-					_, err = db.Exec(insertSql)
-					if err != nil {
-						log.Info("insert error", zap.Error(err), zap.String("sql", insertSql))
-						atomic.AddUint64(&totalError, 1)
-						continue
-					}
+		i := rand.Intn(dbNum)
+		j := rand.Intn(tableCount) + tableStartIndex
+		db := dbs[i]
+		insertSql := workload.BuildInsertSql(j, rps)
+		_, err := db.Exec(insertSql)
+		if err != nil {
+			// if table not exists, we create it
+			if strings.Contains(err.Error(), "Error 1146") {
+				_, err = db.Exec(workload.BuildCreateTableStatement(i))
+				if err != nil {
+					fmt.Println("create table error: ", err)
+					continue
 				}
-
-				if !printedError {
-					fmt.Println(err)
-					printedError = true
+				_, err = db.Exec(insertSql)
+				if err != nil {
+					log.Info("insert error", zap.Error(err), zap.String("sql", insertSql))
+					atomic.AddUint64(&totalError, 1)
+					continue
 				}
-				fmt.Println("insert error: ", err, ". sql: ", insertSql)
-				atomic.AddUint64(&totalError, 1)
 			}
+
+			if !printedError {
+				fmt.Println(err)
+				printedError = true
+			}
+			fmt.Println("insert error: ", err, ". sql: ", insertSql)
+			atomic.AddUint64(&totalError, 1)
 		}
-		atomic.AddUint64(&total, 1)
 	}
+	atomic.AddUint64(&total, 1)
 }
 
 func printTPS() {
