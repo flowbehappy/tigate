@@ -288,7 +288,7 @@ func (e *eventStore) handleMessage(_ context.Context, targetMessage *messaging.T
 }
 
 func (e *eventStore) uploadStatePeriodically(ctx context.Context) error {
-	tick := time.NewTicker(5 * time.Second)
+	tick := time.NewTicker(30 * time.Second)
 	for {
 		select {
 		case <-ctx.Done():
