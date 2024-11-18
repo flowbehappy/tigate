@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package checker
+package scheduler
 
 import (
 	"context"
@@ -26,9 +26,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// SplitChecker is used to check the split status of all spans
-type SplitChecker struct {
+// splitScheduler is used to check the split status of all spans
+type splitScheduler struct {
 	changefeedID common.ChangeFeedID
+	batchSize    int
+
 	splitter     *split.Splitter
 	opController *operator.Controller
 	db           *replica.ReplicationDB
@@ -42,16 +44,15 @@ type SplitChecker struct {
 	cachedSpans  []*replica.SpanReplication
 }
 
-func NewSplitChecker(
-	changefeedID common.ChangeFeedID,
-	splitter *split.Splitter,
-	opController *operator.Controller,
-	db *replica.ReplicationDB,
-	nodeManager *watcher.NodeManager) *SplitChecker {
-	return &SplitChecker{
+func newSplitScheduler(
+	changefeedID common.ChangeFeedID, batchSize int, splitter *split.Splitter,
+	oc *operator.Controller, db *replica.ReplicationDB, nodeManager *watcher.NodeManager,
+) *splitScheduler {
+	return &splitScheduler{
 		changefeedID: changefeedID,
+		batchSize:    batchSize,
 		splitter:     splitter,
-		opController: opController,
+		opController: oc,
 		db:           db,
 		nodeManager:  nodeManager,
 
@@ -60,16 +61,12 @@ func NewSplitChecker(
 	}
 }
 
-func (s *SplitChecker) Name() string {
-	return "split-checker"
-}
-
-func (s *SplitChecker) Check() {
+func (s *splitScheduler) Execute() time.Time {
 	if s.splitter == nil {
-		return
+		return time.Time{}
 	}
 	if time.Since(s.lastCheckTime) < s.checkInterval {
-		return
+		return s.lastCheckTime.Add(s.checkInterval)
 	}
 	if s.cachedSpans == nil {
 		s.cachedSpans = s.db.GetReplicating()
@@ -97,5 +94,23 @@ func (s *SplitChecker) Check() {
 		s.cachedSpans = nil
 		s.checkedIndex = 0
 		s.lastCheckTime = time.Now()
+	}
+	return s.lastCheckTime.Add(s.checkInterval)
+}
+
+func (s *splitScheduler) Name() string {
+	return SplitScheduler
+}
+
+// updateSpan is used to update the span in the split scheduler
+func (s *splitScheduler) updateSpan(span *replica.SpanReplication) {
+	if s.cachedSpans == nil {
+		return
+	}
+	for i, sp := range s.cachedSpans {
+		if sp.ID.Equal(span.ID) {
+			s.cachedSpans[i] = span
+			return
+		}
 	}
 }

@@ -32,9 +32,17 @@ type Scheduler struct {
 	random               *rand.Rand
 	lastRebalanceTime    time.Time
 	checkBalanceInterval time.Duration
-	operatorController   *operator.Controller
-	changefeedDB         *changefeed.ChangefeedDB
-	nodeManager          *watcher.NodeManager
+	// forceBalance forces the scheduler to produce schedule tasks regardless of
+	// `checkBalanceInterval`.
+	// It is set to true when the last time `Schedule` produces some tasks,
+	// and it is likely there are more tasks will be produced in the next
+	// `Schedule`.
+	// It speeds up rebalance.
+	forceBalance bool
+
+	operatorController *operator.Controller
+	changefeedDB       *changefeed.ChangefeedDB
+	nodeManager        *watcher.NodeManager
 
 	// buffer for the un-scheduled changefeed
 	absent []*changefeed.Changefeed
@@ -90,7 +98,7 @@ func (s *Scheduler) Execute() time.Time {
 
 // balance balances the maintainers by size
 func (s *Scheduler) balance() {
-	if time.Since(s.lastRebalanceTime) < s.checkBalanceInterval {
+	if !s.forceBalance && time.Since(s.lastRebalanceTime) < s.checkBalanceInterval {
 		// skip balance.
 		return
 	}
@@ -98,7 +106,6 @@ func (s *Scheduler) balance() {
 		// not in stable schedule state, skip balance
 		return
 	}
-	now := time.Now()
 
 	// check the balance status
 	moveSize := scheduler.CheckBalanceStatus(s.changefeedDB.GetTaskSizePerNode(), s.nodeManager.GetAliveNodes())
@@ -107,9 +114,9 @@ func (s *Scheduler) balance() {
 		return
 	}
 	// balance changefeeds among the active nodes
-	scheduler.Balance(s.batchSize, s.random, s.nodeManager.GetAliveNodes(), s.changefeedDB.GetReplicating(),
+	s.forceBalance = scheduler.Balance(s.batchSize, s.random, s.nodeManager.GetAliveNodes(), s.changefeedDB.GetReplicating(),
 		func(cf *changefeed.Changefeed, nodeID node.ID) bool {
 			return s.operatorController.AddOperator(operator.NewMoveMaintainerOperator(s.changefeedDB, cf, cf.GetNodeID(), nodeID))
 		})
-	s.lastRebalanceTime = now
+	s.lastRebalanceTime = time.Now()
 }
