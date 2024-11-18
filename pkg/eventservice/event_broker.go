@@ -2,6 +2,7 @@ package eventservice
 
 import (
 	"context"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -107,6 +108,11 @@ func newEventBroker(
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{streamCount: streamCount}, &dispatcherEventsHandler{}, option)
 	ds.Start()
 
+	messageWorkerCount := runtime.NumCPU()
+	if messageWorkerCount < streamCount {
+		messageWorkerCount = streamCount
+	}
+
 	c := &eventBroker{
 		tidbClusterID:           id,
 		eventStore:              eventStore,
@@ -118,7 +124,7 @@ func newEventBroker(
 		taskPool:                newScanTaskPool(),
 		scanWorkerCount:         defaultScanWorkerCount,
 		ds:                      ds,
-		messageCh:               make([]chan wrapEvent, streamCount),
+		messageCh:               make([]chan wrapEvent, messageWorkerCount),
 		cancel:                  cancel,
 		wg:                      wg,
 
@@ -129,14 +135,14 @@ func newEventBroker(
 		metricScanEventDuration:                metrics.EventServiceScanDuration,
 	}
 
-	for i := 0; i < streamCount; i++ {
+	for i := 0; i < messageWorkerCount; i++ {
 		c.messageCh[i] = make(chan wrapEvent, defaultChannelSize)
 	}
 
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
 	c.logUnresetDispatchers(ctx)
-	for i := 0; i < streamCount; i++ {
+	for i := 0; i < messageWorkerCount; i++ {
 		c.runSendMessageWorker(ctx, i)
 	}
 	c.updateMetrics(ctx)
@@ -157,14 +163,16 @@ func (c *eventBroker) sendWatermark(
 		server,
 		re,
 		d.getEventSenderState())
-	select {
-	case c.getMessageCh(d.workerIndex) <- resolvedEvent:
-		if counter != nil {
-			counter.Inc()
-		}
-	default:
-		metricEventBrokerDropResolvedTsCount.Inc()
-	}
+
+	c.getMessageCh(d.workerIndex) <- resolvedEvent
+	// select {
+	// case c.getMessageCh(d.workerIndex) <- resolvedEvent:
+	// 	if counter != nil {
+	// 		counter.Inc()
+	// 	}
+	// default:
+	// 	metricEventBrokerDropResolvedTsCount.Inc()
+	// }
 }
 
 func (c *eventBroker) sendReadyEvent(
@@ -555,7 +563,7 @@ func (c *eventBroker) handleResolvedTs(ctx context.Context, cacheMap map[node.ID
 		cache = newResolvedTsCache(resolvedTsCacheSize)
 		cacheMap[m.serverID] = cache
 	}
-	cache.add(*m.e.(*pevent.ResolvedEvent))
+	cache.add(m.resolvedTsEvent)
 	if cache.isFull() {
 		c.flushResolvedTs(ctx, cache, m.serverID)
 	}
@@ -973,9 +981,11 @@ func (p *scanTaskPool) popTask() <-chan scanTask {
 }
 
 type wrapEvent struct {
-	serverID node.ID
-	e        messaging.IOTypeT
-	msgType  int
+	serverID        node.ID
+	resolvedTsEvent pevent.ResolvedEvent
+
+	e       messaging.IOTypeT
+	msgType int
 	// postSendFunc should be called after the message is sent to message center
 	postSendFunc func()
 }
@@ -1016,9 +1026,9 @@ func newWrapNotReusableEvent(serverID node.ID, e pevent.NotReusableEvent) wrapEv
 func newWrapResolvedEvent(serverID node.ID, e pevent.ResolvedEvent, state pevent.EventSenderState) wrapEvent {
 	e.State = state
 	return wrapEvent{
-		serverID: serverID,
-		e:        &e,
-		msgType:  pevent.TypeResolvedEvent,
+		serverID:        serverID,
+		resolvedTsEvent: e,
+		msgType:         pevent.TypeResolvedEvent,
 	}
 }
 
