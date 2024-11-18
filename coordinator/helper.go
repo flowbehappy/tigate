@@ -38,7 +38,7 @@ func NewStreamHandler() *StreamHandler {
 	return &StreamHandler{}
 }
 
-func (m *StreamHandler) Path(event *Event) string {
+func (m *StreamHandler) Path(_ *Event) string {
 	return "coordinator"
 }
 
@@ -51,9 +51,9 @@ func (m *StreamHandler) Handle(dest *Controller, events ...*Event) bool {
 	return dest.HandleEvent(event)
 }
 
-func (m *StreamHandler) GetSize(event *Event) int                      { return 0 }
-func (m *StreamHandler) GetArea(path string, dest *Controller) int     { return 0 }
-func (m *StreamHandler) GetTimestamp(event *Event) dynstream.Timestamp { return 0 }
-func (m *StreamHandler) GetType(event *Event) dynstream.EventType      { return dynstream.DefaultEventType }
-func (m *StreamHandler) IsPaused(event *Event) bool                    { return false }
-func (m *StreamHandler) OnDrop(event *Event)                           {}
+func (m *StreamHandler) GetSize(_ *Event) int                      { return 0 }
+func (m *StreamHandler) GetArea(_ string, _ *Controller) int       { return 0 }
+func (m *StreamHandler) GetTimestamp(_ *Event) dynstream.Timestamp { return 0 }
+func (m *StreamHandler) GetType(_ *Event) dynstream.EventType      { return dynstream.DefaultEventType }
+func (m *StreamHandler) IsPaused(_ *Event) bool                    { return false }
+func (m *StreamHandler) OnDrop(_ *Event)                           {}
