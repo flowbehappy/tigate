@@ -163,7 +163,7 @@ func (c *eventBroker) sendWatermark(
 		server,
 		re,
 		d.getEventSenderState())
-		
+
 	c.getMessageCh(d.workerIndex) <- resolvedEvent
 	// select {
 	// case c.getMessageCh(d.workerIndex) <- resolvedEvent:
@@ -172,7 +172,7 @@ func (c *eventBroker) sendWatermark(
 	// 	}
 	// default:
 	// 	metricEventBrokerDropResolvedTsCount.Inc()
-	}
+	// }
 }
 
 func (c *eventBroker) sendReadyEvent(
