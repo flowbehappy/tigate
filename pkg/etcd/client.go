@@ -35,6 +35,7 @@ import (
 	"go.etcd.io/etcd/client/pkg/v3/logutil"
 	clientV3 "go.etcd.io/etcd/client/v3"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
@@ -77,11 +78,25 @@ var (
 	TxnEmptyOpsElse = []clientV3.Op{}
 )
 
+// Client is the interface for etcd operations
+type Client interface {
+	Put(ctx context.Context, key, val string, opts ...clientV3.OpOption) (resp *clientV3.PutResponse, err error)
+	Get(ctx context.Context, key string, opts ...clientV3.OpOption) (resp *clientV3.GetResponse, err error)
+	Delete(ctx context.Context, key string, opts ...clientV3.OpOption) (resp *clientV3.DeleteResponse, err error)
+	Txn(ctx context.Context, cmps []clientV3.Cmp, opsThen, opsElse []clientV3.Op) (resp *clientV3.TxnResponse, err error)
+	Watch(ctx context.Context, key string, role string, opts ...clientV3.OpOption) clientV3.WatchChan
+	Revoke(ctx context.Context, id clientV3.LeaseID) (resp *clientV3.LeaseRevokeResponse, err error)
+	Grant(ctx context.Context, ttl int64) (resp *clientV3.LeaseGrantResponse, err error)
+	TimeToLive(ctx context.Context, lease clientV3.LeaseID, opts ...clientV3.LeaseOption) (resp *clientV3.LeaseTimeToLiveResponse, err error)
+	NewSession(opts ...concurrency.SessionOption) (*concurrency.Session, error)
+	Close() error
+}
+
 // set to var instead of const for mocking the value to speedup test
 var maxTries uint64 = 12
 
-// Client is a simple wrapper that adds retry to etcd RPC
-type Client struct {
+// ClientImpl is a simple wrapper that adds retry to etcd RPC
+type ClientImpl struct {
 	cli     *clientV3.Client
 	metrics map[string]prometheus.Counter
 	// clock is for making it easier to mock time-related data structures in unit tests
@@ -89,13 +104,13 @@ type Client struct {
 }
 
 // Wrap warps a clientV3.Client that provides etcd APIs required by TiCDC.
-func Wrap(cli *clientV3.Client, metrics map[string]prometheus.Counter) *Client {
-	return &Client{cli: cli, metrics: metrics, clock: clock.New()}
+func Wrap(cli *clientV3.Client, metrics map[string]prometheus.Counter) *ClientImpl {
+	return &ClientImpl{cli: cli, metrics: metrics, clock: clock.New()}
 }
 
-// Unwrap returns a clientV3.Client
-func (c *Client) Unwrap() *clientV3.Client {
-	return c.cli
+// Close closes the clientV3.Client
+func (c *ClientImpl) Close() error {
+	return c.cli.Close()
 }
 
 func retryRPC(rpcName string, metric prometheus.Counter, etcdRPC func() error) error {
@@ -120,7 +135,7 @@ func retryRPC(rpcName string, metric prometheus.Counter, etcdRPC func() error) e
 }
 
 // Put delegates request to clientV3.KV.Put
-func (c *Client) Put(
+func (c *ClientImpl) Put(
 	ctx context.Context, key, val string, opts ...clientV3.OpOption,
 ) (resp *clientV3.PutResponse, err error) {
 	putCtx, cancel := context.WithTimeout(ctx, etcdClientTimeoutDuration)
@@ -134,7 +149,7 @@ func (c *Client) Put(
 }
 
 // Get delegates request to clientV3.KV.Get
-func (c *Client) Get(
+func (c *ClientImpl) Get(
 	ctx context.Context, key string, opts ...clientV3.OpOption,
 ) (resp *clientV3.GetResponse, err error) {
 	getCtx, cancel := context.WithTimeout(ctx, etcdClientTimeoutDuration)
@@ -148,7 +163,7 @@ func (c *Client) Get(
 }
 
 // Delete delegates request to clientV3.KV.Delete
-func (c *Client) Delete(
+func (c *ClientImpl) Delete(
 	ctx context.Context, key string, opts ...clientV3.OpOption,
 ) (resp *clientV3.DeleteResponse, err error) {
 	if metric, ok := c.metrics[EtcdDel]; ok {
@@ -162,7 +177,7 @@ func (c *Client) Delete(
 
 // Txn delegates request to clientV3.KV.Txn. The error returned can only be a non-retryable error,
 // such as context.Canceled, context.DeadlineExceeded, errors.ErrReachMaxTry.
-func (c *Client) Txn(
+func (c *ClientImpl) Txn(
 	ctx context.Context, cmps []clientV3.Cmp, opsThen, opsElse []clientV3.Op,
 ) (resp *clientV3.TxnResponse, err error) {
 	txnCtx, cancel := context.WithTimeout(ctx, etcdClientTimeoutDuration)
@@ -175,8 +190,12 @@ func (c *Client) Txn(
 	return
 }
 
+func (c *ClientImpl) NewSession(opts ...concurrency.SessionOption) (*concurrency.Session, error) {
+	return concurrency.NewSession(c.cli, opts...)
+}
+
 // Grant delegates request to clientV3.Lease.Grant
-func (c *Client) Grant(
+func (c *ClientImpl) Grant(
 	ctx context.Context, ttl int64,
 ) (resp *clientV3.LeaseGrantResponse, err error) {
 	grantCtx, cancel := context.WithTimeout(ctx, etcdClientTimeoutDuration)
@@ -190,7 +209,7 @@ func (c *Client) Grant(
 }
 
 // Revoke delegates request to clientV3.Lease.Revoke
-func (c *Client) Revoke(
+func (c *ClientImpl) Revoke(
 	ctx context.Context, id clientV3.LeaseID,
 ) (resp *clientV3.LeaseRevokeResponse, err error) {
 	revokeCtx, cancel := context.WithTimeout(ctx, etcdClientTimeoutDuration)
@@ -204,7 +223,7 @@ func (c *Client) Revoke(
 }
 
 // TimeToLive delegates request to clientV3.Lease.TimeToLive
-func (c *Client) TimeToLive(
+func (c *ClientImpl) TimeToLive(
 	ctx context.Context, lease clientV3.LeaseID, opts ...clientV3.LeaseOption,
 ) (resp *clientV3.LeaseTimeToLiveResponse, err error) {
 	timeToLiveCtx, cancel := context.WithTimeout(ctx, etcdClientTimeoutDuration)
@@ -218,7 +237,7 @@ func (c *Client) TimeToLive(
 }
 
 // Watch delegates request to clientV3.Watcher.Watch
-func (c *Client) Watch(
+func (c *ClientImpl) Watch(
 	ctx context.Context, key string, role string, opts ...clientV3.OpOption,
 ) clientV3.WatchChan {
 	watchCh := make(chan clientV3.WatchResponse, etcdWatchChBufferSize)
@@ -227,7 +246,7 @@ func (c *Client) Watch(
 }
 
 // WatchWithChan maintains a watchCh and sends all msg from the watchCh to outCh
-func (c *Client) WatchWithChan(
+func (c *ClientImpl) WatchWithChan(
 	ctx context.Context, outCh chan<- clientV3.WatchResponse,
 	key string, role string, opts ...clientV3.OpOption,
 ) {
@@ -301,7 +320,7 @@ func (c *Client) WatchWithChan(
 }
 
 // RequestProgress requests a progress notify response be sent in all watch channels.
-func (c *Client) RequestProgress(ctx context.Context) error {
+func (c *ClientImpl) RequestProgress(ctx context.Context) error {
 	return c.cli.RequestProgress(ctx)
 }
 

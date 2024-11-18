@@ -15,6 +15,7 @@ package mysql
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/common"
@@ -30,6 +31,24 @@ type preparedDMLs struct {
 	rowCount        int
 	approximateSize int64
 	startTs         []uint64
+}
+
+var dmlsPool = sync.Pool{
+	New: func() interface{} {
+		return &preparedDMLs{
+			sqls:    make([]string, 0, 128),
+			values:  make([][]interface{}, 0, 128),
+			startTs: make([]uint64, 0, 128),
+		}
+	},
+}
+
+func (d *preparedDMLs) reset() {
+	d.sqls = d.sqls[:0]
+	d.values = d.values[:0]
+	d.startTs = d.startTs[:0]
+	d.rowCount = 0
+	d.approximateSize = 0
 }
 
 // prepareReplace builds a parametrics REPLACE statement as following

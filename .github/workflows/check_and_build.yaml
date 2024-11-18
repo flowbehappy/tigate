@@ -132,6 +132,8 @@ jobs:
         run: |
           cd pkg/sink/mysql
           go test --tags=intest
+          cd ../util
+          go test
           cd ../../../downstreamadapter/sink/
           go test ./... --tags=intest
           cd ../dispatcher

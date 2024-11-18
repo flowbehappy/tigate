@@ -486,13 +486,14 @@ func (w *MysqlWriter) RemoveDDLTsItem() error {
 	builder.WriteString(filter.TiCDCSystemSchema)
 	builder.WriteString(".")
 	builder.WriteString(filter.DDLTsTable)
-	builder.WriteString(" WHERE (ticdc_cluster_id, changefeed) IN ")
+	builder.WriteString(" WHERE (ticdc_cluster_id, changefeed) IN (")
 
 	builder.WriteString("('")
 	builder.WriteString(ticdcClusterID)
 	builder.WriteString("', '")
 	builder.WriteString(changefeedID)
 	builder.WriteString("')")
+	builder.WriteString(")")
 	query := builder.String()
 
 	_, err = tx.Exec(query)
@@ -705,12 +706,70 @@ func (w *MysqlWriter) execDDLWithMaxRetries(event *commonEvent.DDLEvent) error {
 		retry.WithIsRetryableErr(apperror.IsRetryableDDLError))
 }
 
+func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) (*preparedDMLs, error) {
+	dmls := dmlsPool.Get().(*preparedDMLs)
+	dmls.reset()
+
+	for _, event := range events {
+		if event.Len() == 0 {
+			continue
+		}
+
+		dmls.rowCount += int(event.Len())
+		dmls.approximateSize += event.GetRowsSize()
+
+		if len(dmls.startTs) == 0 || dmls.startTs[len(dmls.startTs)-1] != event.StartTs {
+			dmls.startTs = append(dmls.startTs, event.StartTs)
+		}
+
+		translateToInsert := !w.cfg.SafeMode && event.CommitTs > event.ReplicatingTs
+		log.Debug("translate to insert",
+			zap.Bool("translateToInsert", translateToInsert),
+			zap.Uint64("firstRowCommitTs", event.CommitTs),
+			zap.Uint64("firstRowReplicatingTs", event.ReplicatingTs),
+			zap.Bool("safeMode", w.cfg.SafeMode))
+
+		for {
+			row, ok := event.GetNextRow()
+			if !ok {
+				break
+			}
+
+			var query string
+			var args []interface{}
+			var err error
+
+			switch row.RowType {
+			case commonEvent.RowTypeUpdate:
+				query, args, err = buildUpdate(event.TableInfo, row)
+			case commonEvent.RowTypeDelete:
+				query, args, err = buildDelete(event.TableInfo, row)
+			case commonEvent.RowTypeInsert:
+				query, args, err = buildInsert(event.TableInfo, row, translateToInsert)
+			}
+
+			if err != nil {
+				dmlsPool.Put(dmls) // Return to pool on error
+				return nil, errors.Trace(err)
+			}
+
+			if query != "" {
+				dmls.sqls = append(dmls.sqls, query)
+				dmls.values = append(dmls.values, args)
+			}
+		}
+	}
+
+	return dmls, nil
+}
+
 func (w *MysqlWriter) Flush(events []*commonEvent.DMLEvent, workerNum int) error {
 	w.statistics.ObserveRows(events)
 	dmls, err := w.prepareDMLs(events)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer dmlsPool.Put(dmls) // Return dmls to pool after use
 
 	if dmls.rowCount == 0 {
 		return nil
@@ -721,7 +780,6 @@ func (w *MysqlWriter) Flush(events []*commonEvent.DMLEvent, workerNum int) error
 			return errors.Trace(err)
 		}
 	} else {
-		// dry run mode, just record the metrics
 		w.statistics.RecordBatchExecution(func() (int, int64, error) {
 			return dmls.rowCount, dmls.approximateSize, nil
 		})
@@ -733,92 +791,6 @@ func (w *MysqlWriter) Flush(events []*commonEvent.DMLEvent, workerNum int) error
 		}
 	}
 	return nil
-}
-
-func (w *MysqlWriter) prepareDMLs(events []*commonEvent.DMLEvent) (*preparedDMLs, error) {
-	// TODO: use a sync.Pool to reduce allocations.
-	startTs := make([]uint64, 0)
-	sqls := make([]string, 0)
-	values := make([][]interface{}, 0)
-	rowCount := 0
-	approximateSize := int64(0)
-
-	for _, event := range events {
-		if event.Len() == 0 {
-			continue
-		}
-		// For metrics and logging.
-		rowCount += int(event.Len())
-		approximateSize += event.GetRowsSize()
-		if len(startTs) == 0 || startTs[len(startTs)-1] != event.StartTs {
-			startTs = append(startTs, event.StartTs)
-		}
-
-		// translateToInsert control the update and insert behavior.
-		translateToInsert := !w.cfg.SafeMode
-		translateToInsert = translateToInsert && event.CommitTs > event.ReplicatingTs
-		log.Debug("translate to insert",
-			zap.Bool("translateToInsert", translateToInsert),
-			zap.Uint64("firstRowCommitTs", event.CommitTs),
-			zap.Uint64("firstRowReplicatingTs", event.ReplicatingTs),
-			zap.Bool("safeMode", w.cfg.SafeMode))
-		for {
-			row, ok := event.GetNextRow()
-			if !ok {
-				break
-			}
-			var query string
-			var args []interface{}
-			var err error
-			// Update Event
-			if row.RowType == commonEvent.RowTypeUpdate {
-				query, args, err = buildUpdate(event.TableInfo, row)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				if query != "" {
-					sqls = append(sqls, query)
-					values = append(values, args)
-				}
-				continue
-			}
-
-			// Delete Event
-			if row.RowType == commonEvent.RowTypeDelete {
-				query, args, err = buildDelete(event.TableInfo, row)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				if query != "" {
-					sqls = append(sqls, query)
-					values = append(values, args)
-				}
-			}
-
-			// Insert Event
-			// It will be translated directly into a
-			// INSERT(not in safe mode)
-			// or REPLACE(in safe mode) SQL.
-			if row.RowType == commonEvent.RowTypeInsert {
-				query, args, err = buildInsert(event.TableInfo, row, translateToInsert)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				if query != "" {
-					sqls = append(sqls, query)
-					values = append(values, args)
-				}
-			}
-		}
-	}
-
-	return &preparedDMLs{
-		sqls:            sqls,
-		values:          values,
-		rowCount:        rowCount,
-		approximateSize: approximateSize,
-		startTs:         startTs,
-	}, nil
 }
 
 func (w *MysqlWriter) execDMLWithMaxRetries(dmls *preparedDMLs) error {

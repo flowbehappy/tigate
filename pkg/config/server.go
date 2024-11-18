@@ -117,8 +117,9 @@ var defaultServerConfig = &ServerConfig{
 		DB:       NewDefaultDBConfig(),
 		Messages: defaultMessageConfig.Clone(),
 
-		Scheduler: NewDefaultSchedulerConfig(),
-		Puller:    NewDefaultPullerConfig(),
+		Scheduler:   NewDefaultSchedulerConfig(),
+		Puller:      NewDefaultPullerConfig(),
+		SchemaStore: NewDefaultSchemaStoreConfig(),
 	},
 	ClusterID:              "default",
 	GcTunerMemoryThreshold: DisableMemoryLimit,

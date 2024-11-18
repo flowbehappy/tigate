@@ -47,8 +47,12 @@ const (
 	TypeBatchResolvedEvent
 	// SyncPointEvent is the event type of a sync point.
 	TypeSyncPointEvent
-	// HandshakeEvent is the event type of a handshake.
+	// HandshakeEvent is the event type to indicate the start of a new event stream.
 	TypeHandshakeEvent
+	// TypeReadyEvent is the event type to indicate the event service is ready to send events.
+	TypeReadyEvent
+	// TypeNotReusableEvent is the event type to indicate the event service has no data for reuse.
+	TypeNotReusableEvent
 )
 
 // fakeDispatcherID is a fake dispatcherID for batch resolvedTs.

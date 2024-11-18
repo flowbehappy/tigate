@@ -126,14 +126,6 @@ func (db *ChangefeedDB) GetSize() int {
 	return len(db.changefeeds)
 }
 
-// GetSchedulingSize returns the size of the schedulling changefeeds
-func (db *ChangefeedDB) GetSchedulingSize() int {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-
-	return len(db.scheduling)
-}
-
 // GetStoppedSize returns the size of the stopped changefeeds
 func (db *ChangefeedDB) GetStoppedSize() int {
 	db.lock.RLock()
@@ -196,6 +188,7 @@ func (db *ChangefeedDB) GetTaskSizePerNode() map[node.ID]int {
 func (db *ChangefeedDB) BindChangefeedToNode(old, new node.ID, task *Changefeed) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
+
 	log.Info("bind changefeed to node",
 		zap.String("changefeed", task.ID.String()),
 		zap.String("oldNode", old.String()),
@@ -354,8 +347,10 @@ func (db *ChangefeedDB) ReplaceStoppedChangefeed(cf *config.ChangeFeedInfo) {
 		log.Warn("changefeed is not stopped, can not be updated", zap.String("changefeed", cf.ChangefeedID.String()))
 		return
 	}
+	// todo: not create a new changefeed here?
 	newCf := NewChangefeed(cf.ChangefeedID, cf, oldCf.GetStatus().CheckpointTs)
 	db.stopped[cf.ChangefeedID] = newCf
+	db.changefeeds[cf.ChangefeedID] = newCf
 }
 
 // updateNodeMap updates the node map, it will remove the task from the old node and add it to the new node
