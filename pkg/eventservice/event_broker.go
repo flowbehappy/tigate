@@ -106,6 +106,7 @@ func newEventBroker(
 	option.InputBufferSize = 1024 * 1024 / streamCount // 1 Million
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{streamCount: streamCount}, &dispatcherEventsHandler{}, option)
 	ds.Start()
+	messageWorkerCount := streamCount * 2
 
 	c := &eventBroker{
 		tidbClusterID:           id,
@@ -118,7 +119,7 @@ func newEventBroker(
 		taskPool:                newScanTaskPool(),
 		scanWorkerCount:         defaultScanWorkerCount,
 		ds:                      ds,
-		messageCh:               make([]chan wrapEvent, streamCount),
+		messageCh:               make([]chan wrapEvent, messageWorkerCount),
 		cancel:                  cancel,
 		wg:                      wg,
 
@@ -129,14 +130,14 @@ func newEventBroker(
 		metricScanEventDuration:                metrics.EventServiceScanDuration,
 	}
 
-	for i := 0; i < streamCount; i++ {
+	for i := 0; i < messageWorkerCount; i++ {
 		c.messageCh[i] = make(chan wrapEvent, defaultChannelSize)
 	}
 
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
 	c.logUnresetDispatchers(ctx)
-	for i := 0; i < streamCount*2; i++ {
+	for i := 0; i < messageWorkerCount; i++ {
 		c.runSendMessageWorker(ctx, i)
 	}
 	c.updateMetrics(ctx)
