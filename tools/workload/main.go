@@ -47,6 +47,7 @@ var (
 	dbPassword string
 	dbName     string
 
+	totalCount uint64
 	total      uint64
 	totalError uint64
 
@@ -79,6 +80,7 @@ func init() {
 	flag.IntVar(&tableStartIndex, "table-start-index", 0, "table start index, sbtest<index>")
 	flag.IntVar(&qps, "qps", 1000, "qps of the workload")
 	flag.IntVar(&rps, "rps", 10, "the row count per second of the workload")
+	flag.Uint64Var(&totalCount, "total-row-count", 1000000, "the total row count of the workload")
 	flag.IntVar(&percentageForUpdate, "percentage-for-update", 0, "percentage for update: [0, 100]")
 	flag.BoolVar(&skipCreateTable, "skip-create-table", false, "do not create tables")
 	flag.StringVar(&action, "action", "prepare", "action of the workload: [prepare, insert, update, delete, write, cleanup]")
@@ -133,14 +135,12 @@ func main() {
 		dbNum = 1
 	}
 
-	// qpsPerTable := qps / dbNum / tableCount
-
-	qpsPerTableForUpdate := qps * percentageForUpdate / 100
-	qpsPerTableForInsert := qps - qpsPerTableForUpdate
+	qpsForUpdate := qps * percentageForUpdate / 100
+	qpsForInsert := qps - qpsForUpdate
 
 	log.Info("created db count", zap.Int("dbCount", dbNum))
 	log.Info("created table each db", zap.Int("tableCount", tableCount))
-	fmt.Printf("each table qps for insert %d\n", qpsPerTableForInsert)
+	fmt.Printf("percentageForUpdate %d\n", percentageForUpdate)
 
 	var workload schema.Workload
 	switch workloadType {
@@ -155,6 +155,7 @@ func main() {
 		log.Panic("unsupported workload type", zap.String("workload", workloadType))
 	}
 
+	group := &sync.WaitGroup{}
 	if !skipCreateTable && (action == "prepare") {
 		fmt.Printf("skip create table: %v\n", skipCreateTable)
 		fmt.Printf("start to create tables, total tables: %d\n", tableCount)
@@ -163,6 +164,15 @@ func main() {
 				panic(err)
 			}
 		}
+		// insert
+		group.Add(qpsForInsert)
+		for i := 0; i < qpsForInsert; i++ {
+			go func() {
+				defer group.Done()
+				doInsert(dbs, workload)
+			}()
+		}
+		group.Wait()
 	}
 
 	if onlyDDL {
@@ -173,10 +183,9 @@ func main() {
 		zap.String("workload_type", workloadType), zap.Int("rps", rps), zap.Float64("large-ratio", largeRowRatio),
 		zap.Int("qps", qps), zap.String("action", action),
 	)
-	group := &sync.WaitGroup{}
 	if action == "insert" || action == "write" {
-		group.Add(qpsPerTableForInsert)
-		for i := 0; i < qpsPerTableForInsert; i++ {
+		group.Add(qpsForInsert)
+		for i := 0; i < qpsForInsert; i++ {
 			go func() {
 				defer group.Done()
 				doInsert(dbs, workload)
@@ -184,10 +193,10 @@ func main() {
 		}
 	}
 
-	if (action == "write" || action == "update") && qpsPerTableForUpdate != 0 {
-		group.Add(qpsPerTableForUpdate + 1)
+	if (action == "write" || action == "update") && qpsForUpdate != 0 {
+		group.Add(qpsForUpdate + 1)
 		updateTaskCh := make(chan updateTask, rps)
-		for i := 0; i < qpsPerTableForUpdate; i++ {
+		for i := 0; i < qpsForUpdate; i++ {
 			go func() {
 				defer group.Done()
 				doUpdate(dbs, workload, updateTaskCh)
@@ -294,7 +303,7 @@ func doInsert(dbs []*sql.DB, workload schema.Workload) {
 		if err != nil {
 			// if table not exists, we create it
 			if strings.Contains(err.Error(), "Error 1146") {
-				_, err = db.Exec(workload.BuildCreateTableStatement(i))
+				_, err = db.Exec(workload.BuildCreateTableStatement(j))
 				if err != nil {
 					fmt.Println("create table error: ", err)
 					continue
@@ -314,8 +323,11 @@ func doInsert(dbs []*sql.DB, workload schema.Workload) {
 			fmt.Println("insert error: ", err, ". sql: ", insertSql)
 			atomic.AddUint64(&totalError, 1)
 		}
+		atomic.AddUint64(&total, 1)
+		if total*uint64(rps) >= totalCount {
+			return
+		}
 	}
-	atomic.AddUint64(&total, 1)
 }
 
 func printTPS() {
