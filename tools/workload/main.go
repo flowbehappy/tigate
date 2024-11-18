@@ -165,14 +165,17 @@ func main() {
 			}
 		}
 		// insert
-		group.Add(qpsForInsert)
-		for i := 0; i < qpsForInsert; i++ {
-			go func() {
-				defer group.Done()
-				doInsert(dbs, workload)
-			}()
+		if totalCount != 0 {
+			group.Add(qpsForInsert)
+			for i := 0; i < qpsForInsert; i++ {
+				go func() {
+					defer group.Done()
+					doInsert(dbs, workload)
+				}()
+			}
+			group.Wait()
 		}
-		group.Wait()
+		return
 	}
 
 	if onlyDDL {
