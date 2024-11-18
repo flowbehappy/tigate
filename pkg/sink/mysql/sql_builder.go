@@ -161,7 +161,7 @@ func buildUpdate(tableInfo *common.TableInfo, row commonEvent.RowChange) (string
 func getArgs(row *chunk.Row, tableInfo *common.TableInfo) ([]interface{}, error) {
 	args := make([]interface{}, 0, len(tableInfo.Columns))
 	for i, col := range tableInfo.Columns {
-		if col == nil || tableInfo.ColumnsFlag[col.ID].IsGeneratedColumn() {
+		if col == nil || tableInfo.GetColumnFlags()[col.ID].IsGeneratedColumn() {
 			continue
 		}
 		v, err := common.FormatColVal(row, col, i)
@@ -179,7 +179,7 @@ func whereSlice(row *chunk.Row, tableInfo *common.TableInfo) ([]string, []interf
 	colNames := make([]string, 0, len(tableInfo.Columns))
 	// Try to use unique key values when available
 	for i, col := range tableInfo.Columns {
-		if col == nil || !tableInfo.ColumnsFlag[col.ID].IsHandleKey() {
+		if col == nil || !tableInfo.GetColumnFlags()[col.ID].IsHandleKey() {
 			continue
 		}
 		colNames = append(colNames, col.Name.O)

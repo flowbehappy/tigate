@@ -180,7 +180,7 @@ func encodeResolvedTs(ts uint64) ([]byte, []byte, error) {
 
 func writeColumnFieldValue(writer *util.JSONWriter, col *timodel.ColumnInfo, row *chunk.Row, idx int, tableInfo *common.TableInfo) error {
 	colType := col.GetType()
-	flag := *tableInfo.ColumnsFlag[col.ID]
+	flag := *tableInfo.GetColumnFlags()[col.ID]
 	whereHandle := flag.IsHandleKey()
 
 	writer.WriteIntField("t", int(colType))
@@ -288,7 +288,7 @@ func writeColumnFieldValues(
 
 	for idx, col := range colInfo {
 		if selector.Select(col) {
-			if onlyHandleKeyColumns && !tableInfo.ColumnsFlag[col.ID].IsHandleKey() {
+			if onlyHandleKeyColumns && !tableInfo.GetColumnFlags()[col.ID].IsHandleKey() {
 				continue
 			}
 			flag = true
@@ -318,7 +318,7 @@ func writeUpdatedColumnFieldValues(
 
 	for idx, col := range colInfo {
 		if selector.Select(col) {
-			if onlyHandleKeyColumns && !tableInfo.ColumnsFlag[col.ID].IsHandleKey() {
+			if onlyHandleKeyColumns && !tableInfo.GetColumnFlags()[col.ID].IsHandleKey() {
 				continue
 			}
 			writeColumnFieldValueIfUpdated(jWriter, col, preRow, row, idx, tableInfo)
@@ -335,7 +335,7 @@ func writeColumnFieldValueIfUpdated(
 	tableInfo *common.TableInfo,
 ) error {
 	colType := col.GetType()
-	flag := *tableInfo.ColumnsFlag[col.ID]
+	flag := *tableInfo.GetColumnFlags()[col.ID]
 	whereHandle := flag.IsHandleKey()
 
 	writeFunc := func(writeColumnValue func()) {
