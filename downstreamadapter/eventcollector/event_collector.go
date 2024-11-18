@@ -38,6 +38,10 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	handleEventDuration = metrics.EventCollectorHandleEventDuration
+)
+
 type DispatcherRequest struct {
 	Dispatcher *dispatcher.Dispatcher
 	ActionType eventpb.ActionType
@@ -311,8 +315,9 @@ func (c *EventCollector) mustSendDispatcherRequest(target node.ID, topic string,
 
 // RecvEventsMessage is the handler for the events message from EventService.
 func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *messaging.TargetMessage) error {
-	inflightDuration := time.Since(time.Unix(0, targetMessage.CreateAt)).Milliseconds()
+	inflightDuration := time.Since(time.UnixMilli(targetMessage.CreateAt)).Milliseconds()
 	c.metricReceiveEventLagDuration.Observe(float64(inflightDuration))
+	start := time.Now()
 	for _, msg := range targetMessage.Message {
 		switch msg.(type) {
 		case *common.LogCoordinatorBroadcastRequest:
@@ -332,11 +337,7 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *mes
 			case commonEvent.TypeBatchResolvedEvent:
 				for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
 					c.metricDispatcherReceivedResolvedTsEventCount.Inc()
-					select {
-					// don't block here
-					case c.ds.In(e.DispatcherID) <- dispatcher.NewDispatcherEvent(targetMessage.From, e):
-					default:
-					}
+					c.ds.In(e.DispatcherID) <- dispatcher.NewDispatcherEvent(targetMessage.From, e)
 				}
 			default:
 				c.metricDispatcherReceivedKVEventCount.Inc()
@@ -346,6 +347,7 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *mes
 			log.Panic("invalid message type", zap.Any("msg", msg))
 		}
 	}
+	handleEventDuration.Observe(float64(time.Since(start).Milliseconds()))
 	return nil
 }
 

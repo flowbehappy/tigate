@@ -2,7 +2,7 @@ package config
 
 const (
 	// size of channel to cache the messages to be sent and received
-	defaultCacheSize = 10240
+	defaultCacheSize = 1024 * 16 // 16K messages
 )
 
 type MessageCenterConfig struct {
