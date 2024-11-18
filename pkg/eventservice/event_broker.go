@@ -2,6 +2,7 @@ package eventservice
 
 import (
 	"context"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -106,7 +107,11 @@ func newEventBroker(
 	option.InputBufferSize = 1024 * 1024 / streamCount // 1 Million
 	ds := dynstream.NewParallelDynamicStream(streamCount, pathHasher{streamCount: streamCount}, &dispatcherEventsHandler{}, option)
 	ds.Start()
-	messageWorkerCount := streamCount * 2
+
+	messageWorkerCount := runtime.NumCPU()
+	if messageWorkerCount < streamCount {
+		messageWorkerCount = streamCount
+	}
 
 	c := &eventBroker{
 		tidbClusterID:           id,

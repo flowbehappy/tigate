@@ -22,19 +22,31 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	streamCount = 4
+)
+
+type pathHasher struct {
+	streamCount int
+}
+
+func (h pathHasher) HashPath(path common.DispatcherID) int {
+	return int((common.GID)(path).FastHash() % (uint64)(h.streamCount))
+}
+
 func NewEventDynamicStream(collector *EventCollector) dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler] {
 	option := dynstream.NewOption()
 	option.BatchCount = 128
-	option.InputBufferSize = 100000
+	option.InputBufferSize = 1000000 / streamCount
 	// Enable memory control for dispatcher events dynamic stream.
 	log.Info("New EventDynamicStream, memory control is enabled")
 	option.EnableMemoryControl = true
 	eventsHandler := &EventsHandler{
 		eventCollector: collector,
 	}
-	eventDynamicStream := dynstream.NewDynamicStream(eventsHandler, option)
-	eventDynamicStream.Start()
-	return eventDynamicStream
+	stream := dynstream.NewParallelDynamicStream(streamCount, pathHasher{streamCount: streamCount}, eventsHandler, option)
+	stream.Start()
+	return stream
 }
 
 // EventsHandler is used to dispatch the received events.
