@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
 	commonEvent "github.com/pingcap/ticdc/pkg/common/event"
+	"github.com/pingcap/ticdc/pkg/config"
 	"github.com/pingcap/ticdc/pkg/filter"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -535,6 +536,13 @@ func (p *persistentStorage) doGc(gcTs uint64) error {
 	}
 	oldGcTs := p.gcTs
 	p.mu.Unlock()
+
+	serverConfig := config.GetGlobalServerConfig()
+	if !serverConfig.Debug.SchemaStore.EnableGC {
+		log.Info("gc is disabled",
+			zap.Uint64("gcTs", gcTs))
+		return nil
+	}
 
 	start := time.Now()
 	_, _, err := writeSchemaSnapshotAndMeta(p.db, p.kvStorage, gcTs, false)
