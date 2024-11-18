@@ -61,10 +61,9 @@ func (d *preparedDMLs) reset() {
 	d.sqls = d.sqls[:0]
 
 	for _, v := range d.values {
-		putArgs(v)
+		resetArgs(v)
 	}
 	d.values = d.values[:0]
-
 	d.startTs = d.startTs[:0]
 	d.rowCount = 0
 	d.approximateSize = 0
@@ -78,9 +77,8 @@ func buildInsert(
 	translateToInsert bool,
 ) (string, *argsSlice, error) {
 	args, err := getArgs(&row.Row, tableInfo)
-
 	// Fizz delete this after testing
-	defer putArgs(args)
+	defer resetArgs(args)
 
 	if err != nil {
 		return "", nil, errors.Trace(err)
@@ -228,11 +226,8 @@ func whereSlice(row *chunk.Row, tableInfo *common.TableInfo) ([]string, []interf
 	return colNames, args, nil
 }
 
-func putArgs(args *argsSlice) {
+func resetArgs(args *argsSlice) {
 	if args != nil {
-		for i := range *args {
-			(*args)[i] = nil
-		}
 		*args = (*args)[:0]
 		argsPool.Put(args)
 	}
