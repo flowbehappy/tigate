@@ -140,7 +140,6 @@ func main() {
 
 	log.Info("created db count", zap.Int("dbCount", dbNum))
 	log.Info("created table each db", zap.Int("tableCount", tableCount))
-	fmt.Printf("percentageForUpdate %d\n", percentageForUpdate)
 
 	var workload schema.Workload
 	switch workloadType {
@@ -157,8 +156,8 @@ func main() {
 
 	group := &sync.WaitGroup{}
 	if !skipCreateTable && (action == "prepare") {
-		fmt.Printf("skip create table: %v\n", skipCreateTable)
-		fmt.Printf("start to create tables, total tables: %d\n", tableCount)
+		log.Info("skip create table")
+		log.Info("start to create tables", zap.Int("tableCount", tableCount))
 		for _, db := range dbs {
 			if err := initTables(db, workload); err != nil {
 				panic(err)
@@ -231,7 +230,7 @@ func initTables(db *sql.DB, workload schema.Workload) error {
 					return
 				}
 				tableNum.Add(1)
-				fmt.Printf("try to create table %d\n", tableIndex+tableStartIndex)
+				log.Info("try to create table", zap.Int("index", tableIndex+tableStartIndex))
 				if _, err := db.Exec(workload.BuildCreateTableStatement(tableIndex + tableStartIndex)); err != nil {
 					err := errors.Annotate(err, "create table failed")
 					log.Error("create table failed", zap.Error(err))
@@ -272,21 +271,21 @@ func doUpdate(dbs []*sql.DB, workload schema.Workload, input chan updateTask) {
 		db := dbs[task.DB]
 		res, err := db.Exec(updateSql)
 		if err != nil {
-			fmt.Println("update error: ", err, ". sql: ", updateSql)
+			log.Info("update error", zap.Error(err), zap.String("sql", updateSql))
 			atomic.AddUint64(&totalError, 1)
 		}
 		if res != nil {
 			cnt, err := res.RowsAffected()
 			if err != nil || cnt != int64(task.RowCount) {
-				fmt.Printf("get rows affected error: %s, affected rows %d, row count %d\n", err, cnt, task.RowCount)
+				log.Info("get rows affected error", zap.Error(err), zap.Int64("affectedRows", cnt), zap.Int("rowCount", task.RowCount))
 				atomic.AddUint64(&totalError, 1)
 			}
 			atomic.AddUint64(&total, 1)
 			if task.IsSpecialUpdate {
-				fmt.Printf("update full table %d succeed, row count %d\n", task.Table, cnt)
+				log.Info("update full table succeed, row count %d\n", zap.Int("table", task.Table), zap.Int64("affectedRows", cnt))
 			}
 		} else {
-			fmt.Println("update result is nil")
+			log.Info("update result is nil")
 		}
 		if task.cb != nil {
 			task.cb()
@@ -308,7 +307,7 @@ func doInsert(dbs []*sql.DB, workload schema.Workload) {
 			if strings.Contains(err.Error(), "Error 1146") {
 				_, err = db.Exec(workload.BuildCreateTableStatement(j))
 				if err != nil {
-					fmt.Println("create table error: ", err)
+					log.Info("create table error: ", zap.Error(err))
 					continue
 				}
 				_, err = db.Exec(insertSql)
@@ -320,10 +319,10 @@ func doInsert(dbs []*sql.DB, workload schema.Workload) {
 			}
 
 			if !printedError {
-				fmt.Println(err)
+				log.Info("meet error", zap.Error(err))
 				printedError = true
 			}
-			fmt.Println("insert error: ", err, ". sql: ", insertSql)
+			log.Info("insert error", zap.Error(err), zap.String("sql", insertSql))
 			atomic.AddUint64(&totalError, 1)
 		}
 		atomic.AddUint64(&total, 1)
@@ -346,8 +345,13 @@ func printTPS() {
 			old = temp
 			temp = atomic.LoadUint64(&totalError)
 			errQps := (float64(temp) - float64(oldErr)) / duration.Seconds()
-			fmt.Printf("total %d, total err %d. qps is %f, err qps is %f, tps is %f",
-				total, totalError, qps, errQps, qps*float64(rps))
+			log.Info("metric",
+				zap.Uint64("total", total),
+				zap.Uint64("totalErr", totalError),
+				zap.Float64("qps", qps),
+				zap.Float64("errQps", errQps),
+				zap.Float64("tps", qps*float64(rps)),
+			)
 			oldErr = temp
 		}
 	}
