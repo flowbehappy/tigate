@@ -136,7 +136,7 @@ func newEventBroker(
 	c.runScanWorker(ctx)
 	c.tickTableTriggerDispatchers(ctx)
 	c.logUnresetDispatchers(ctx)
-	for i := 0; i < streamCount; i++ {
+	for i := 0; i < streamCount*2; i++ {
 		c.runSendMessageWorker(ctx, i)
 	}
 	c.updateMetrics(ctx)
@@ -555,7 +555,7 @@ func (c *eventBroker) handleResolvedTs(ctx context.Context, cacheMap map[node.ID
 		cache = newResolvedTsCache(resolvedTsCacheSize)
 		cacheMap[m.serverID] = cache
 	}
-	cache.add(*m.e.(*pevent.ResolvedEvent))
+	cache.add(m.resolvedTsEvent)
 	if cache.isFull() {
 		c.flushResolvedTs(ctx, cache, m.serverID)
 	}
@@ -972,9 +972,11 @@ func (p *scanTaskPool) popTask() <-chan scanTask {
 }
 
 type wrapEvent struct {
-	serverID node.ID
-	e        messaging.IOTypeT
-	msgType  int
+	serverID        node.ID
+	resolvedTsEvent pevent.ResolvedEvent
+
+	e       messaging.IOTypeT
+	msgType int
 	// postSendFunc should be called after the message is sent to message center
 	postSendFunc func()
 }
@@ -1015,9 +1017,9 @@ func newWrapNotReusableEvent(serverID node.ID, e pevent.NotReusableEvent) wrapEv
 func newWrapResolvedEvent(serverID node.ID, e pevent.ResolvedEvent, state pevent.EventSenderState) wrapEvent {
 	e.State = state
 	return wrapEvent{
-		serverID: serverID,
-		e:        &e,
-		msgType:  pevent.TypeResolvedEvent,
+		serverID:        serverID,
+		resolvedTsEvent: e,
+		msgType:         pevent.TypeResolvedEvent,
 	}
 }
 
