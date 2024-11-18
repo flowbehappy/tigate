@@ -1537,6 +1537,8 @@ func buildDDLEvent(rawEvent *PersistedDDLEvent, tableFilter filter.Filter) commo
 			TableIDs:      []int64{rawEvent.CurrentTableID},
 		}
 	case model.ActionRenameTable:
+		ddlEvent.PrevSchemaName = rawEvent.PrevSchemaName
+		ddlEvent.PrevTableName = rawEvent.PrevTableName
 		ignorePrevTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.PrevSchemaName, rawEvent.PrevTableName)
 		ignoreCurrentTable := tableFilter != nil && tableFilter.ShouldIgnoreTable(rawEvent.CurrentSchemaName, rawEvent.CurrentTableName)
 		if isPartitionTable(rawEvent.TableInfo) {
