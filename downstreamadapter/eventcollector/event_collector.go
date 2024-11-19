@@ -302,14 +302,16 @@ func (c *EventCollector) mustSendDispatcherRequest(target node.ID, topic string,
 	}
 
 	err := c.mc.SendCommand(&messaging.TargetMessage{
-		To:      c.serverId,
+		To:      target,
 		Topic:   eventServiceTopic,
 		Type:    typeRegisterDispatcherReq,
 		Message: []messaging.IOTypeT{message},
 	})
 
 	if err != nil {
-		log.Info("failed to send dispatcher request message to event service, try again later", zap.Error(err))
+		log.Info("failed to send dispatcher request message to event service, try again later",
+			zap.Stringer("target", target),
+			zap.Error(err))
 		// Put the request back to the channel for later retry.
 		c.dispatcherRequestChan.In() <- TargetAndDispatcherRequest{
 			Target: target,
