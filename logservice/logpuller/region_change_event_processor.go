@@ -211,7 +211,6 @@ func (w *changeEventProcessor) doHandle(
 					zap.Uint64("regionID", regionID))
 				return errUnreachable
 			}
-
 			revent, err := w.assembleRowEvent(regionID, entry)
 			if err != nil {
 				return errors.Trace(err)

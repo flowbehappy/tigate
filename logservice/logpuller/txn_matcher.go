@@ -21,6 +21,7 @@ import (
 )
 
 var prewriteCacheRowNum = metrics.LogPullerPrewriteCacheRowNum
+var matcherCount = metrics.LogPullerMatcherCount
 
 type matchKey struct {
 	startTs uint64
@@ -28,6 +29,7 @@ type matchKey struct {
 }
 
 func newMatchKey(row *cdcpb.Event_Row) matchKey {
+	matcherCount.Inc()
 	return matchKey{startTs: row.GetStartTs(), key: string(row.GetKey())}
 }
 
@@ -134,6 +136,7 @@ func (m *matcher) matchCachedRollbackRow(initialized bool) {
 }
 
 func (m *matcher) clear() {
+	matcherCount.Dec()
 	prewriteCacheRowNum.Sub(float64(len(m.unmatchedValue)))
 	m.cachedCommit = nil
 	m.unmatchedValue = nil
