@@ -432,7 +432,7 @@ func (s *SubscriptionClient) handleRegions(ctx context.Context, eg *errgroup.Gro
 		case <-ctx.Done():
 			return errors.Trace(ctx.Err())
 		case region := <-s.regionCh:
-			if region.isStoped() {
+			if region.isStopped() {
 				for _, rs := range stores {
 					for _, worker := range rs.requestWorkers {
 						worker.requestsCh <- region

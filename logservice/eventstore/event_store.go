@@ -109,7 +109,7 @@ type dispatcherStat struct {
 type subscriptionStat struct {
 	// dispatchers depend on this subscription
 	ids map[common.DispatcherID]bool
-	// events of this subsription will be send to the channel identified by chIndex
+	// events of this subscription will be send to the channel identified by chIndex
 	chIndex int
 	// data <= checkpointTs can be deleted
 	checkpointTs uint64
@@ -118,7 +118,7 @@ type subscriptionStat struct {
 	// the max commit ts of dml event in the store
 	maxEventCommitTs uint64
 	// an id encode in the event key of this dispatcher
-	// used to seperate data between dispatchers with overlapping spans
+	// used to separate data between dispatchers with overlapping spans
 	uniqueKeyID uint64
 }
 
@@ -148,8 +148,8 @@ type eventStore struct {
 
 	dispatcherMeta struct {
 		sync.RWMutex
-		dispatcherStats   map[common.DispatcherID]dispatcherStat
-		subscriptionStats map[logpuller.SubscriptionID]subscriptionStat
+		dispatcherStats   map[common.DispatcherID]*dispatcherStat
+		subscriptionStats map[logpuller.SubscriptionID]*subscriptionStat
 		// table id -> dispatcher ids
 		// use table id as the key is to share data between spans not completely the same in the future.
 		tableToDispatchers map[int64]map[common.DispatcherID]bool
@@ -236,8 +236,8 @@ func New(
 		store.dbs = append(store.dbs, db)
 		store.eventChs = append(store.eventChs, make(chan eventWithState, 8192))
 	}
-	store.dispatcherMeta.dispatcherStats = make(map[common.DispatcherID]dispatcherStat)
-	store.dispatcherMeta.subscriptionStats = make(map[logpuller.SubscriptionID]subscriptionStat)
+	store.dispatcherMeta.dispatcherStats = make(map[common.DispatcherID]*dispatcherStat)
+	store.dispatcherMeta.subscriptionStats = make(map[logpuller.SubscriptionID]*subscriptionStat)
 	store.dispatcherMeta.tableToDispatchers = make(map[int64]map[common.DispatcherID]bool)
 
 	// start background goroutines to handle events from puller
@@ -414,7 +414,7 @@ func (e *eventStore) RegisterDispatcher(
 			zap.Duration("duration", time.Since(start)))
 	}()
 
-	stat := dispatcherStat{
+	stat := &dispatcherStat{
 		dispatcherID: dispatcherID,
 		notifier:     notifier,
 		tableSpan:    tableSpan,
@@ -481,7 +481,7 @@ func (e *eventStore) RegisterDispatcher(
 	e.dispatcherMeta.Lock()
 	defer e.dispatcherMeta.Unlock()
 	e.dispatcherMeta.dispatcherStats[dispatcherID] = stat
-	e.dispatcherMeta.subscriptionStats[stat.subID] = subscriptionStat{
+	e.dispatcherMeta.subscriptionStats[stat.subID] = &subscriptionStat{
 		ids:              map[common.DispatcherID]bool{dispatcherID: true},
 		chIndex:          chIndex,
 		checkpointTs:     startTs,
