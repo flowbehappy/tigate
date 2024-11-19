@@ -339,13 +339,8 @@ func (p *persistentStorage) getMaxEventCommitTs(tableID int64, ts uint64) uint64
 
 // TODO: not all ddl in p.tablesDDLHistory should be sent to the dispatcher, verify dispatcher will set the right range
 func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filter.Filter, start, end uint64) ([]commonEvent.DDLEvent, error) {
-	// TODO: check a dispatcher from created table start ts > finish ts of create table
-	// TODO: check a dispatcher from rename table start ts > finish ts of rename table(is it possible?)
+	// TODO: check a dispatcher won't fetch the ddl events that create it(create table/rename table)
 	p.mu.RLock()
-	if start < p.gcTs {
-		p.mu.RUnlock()
-		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
-	}
 	// fast check
 	history := p.tablesDDLHistory[tableID]
 	if len(history) == 0 || start >= history[len(history)-1] {
@@ -365,9 +360,16 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 			allTargetTs = append(allTargetTs, history[i])
 		}
 	}
+	p.mu.RUnlock()
 
 	storageSnap := p.db.NewSnapshot()
 	defer storageSnap.Close()
+
+	p.mu.RLock()
+	if start < p.gcTs {
+		p.mu.RUnlock()
+		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
+	}
 	p.mu.RUnlock()
 
 	// TODO: if the first event is a create table ddl, return error?
