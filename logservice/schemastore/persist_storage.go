@@ -629,7 +629,7 @@ func (p *persistentStorage) getUpperBound() UpperBoundMeta {
 }
 
 func (p *persistentStorage) persistUpperBoundPeriodically(ctx context.Context) error {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	for {
 		select {
 		case <-ctx.Done():

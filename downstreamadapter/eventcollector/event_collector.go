@@ -368,11 +368,13 @@ func (c *EventCollector) updateMetrics(ctx context.Context) {
 
 func (c *EventCollector) updateResolvedTsMetric() {
 	var minResolvedTs uint64
-	c.dispatcherMap.Range(func(_, value interface{}) bool {
+	var dispatcherID common.DispatcherID
+	c.dispatcherMap.Range(func(key, value interface{}) bool {
 		if stat, ok := value.(*DispatcherStat); ok {
 			d := stat.target
 			if minResolvedTs == 0 || d.GetResolvedTs() < minResolvedTs {
 				minResolvedTs = d.GetResolvedTs()
+				dispatcherID = key.(common.DispatcherID)
 			}
 		}
 		return true
@@ -381,6 +383,10 @@ func (c *EventCollector) updateResolvedTsMetric() {
 	if minResolvedTs > 0 {
 		phyResolvedTs := oracle.ExtractPhysical(minResolvedTs)
 		lagMs := float64(oracle.GetPhysical(time.Now())-phyResolvedTs) / 1e3
+		log.Warn("resolved ts lag",
+			zap.Any("dispatcherID", dispatcherID),
+			zap.Uint64("resolvedTs", minResolvedTs),
+			zap.Float64("lagMs", lagMs))
 		metrics.EventCollectorResolvedTsLagGauge.Set(lagMs)
 	}
 }
