@@ -252,7 +252,7 @@ func (s *SharedColumnSchemaStorage) TryReleaseColumnSchema(columnSchema *ColumnS
 			s.m[columnSchema.Digest][idx].count--
 			if s.m[columnSchema.Digest][idx].count == 0 {
 				// release the ColumnSchema object
-				sharedColumnSchemaCountGauge.Dec()
+				SharedColumnSchemaCountGauge.Dec()
 				s.m[columnSchema.Digest] = append(s.m[columnSchema.Digest][:idx], s.m[columnSchema.Digest][idx+1:]...)
 				if len(s.m[columnSchema.Digest]) == 0 {
 					delete(s.m, columnSchema.Digest)
@@ -389,7 +389,7 @@ func NewColumnSchema(tableInfo *model.TableInfo, digest Digest) *ColumnSchema {
 	colSchema.findHandleIndex(tableInfo)
 	colSchema.initColumnsFlag(tableInfo)
 
-	sharedColumnSchemaCountGauge.Inc()
+	SharedColumnSchemaCountGauge.Inc()
 	return colSchema
 }
 
