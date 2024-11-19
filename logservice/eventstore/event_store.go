@@ -299,7 +299,7 @@ func (e *eventStore) uploadStatePeriodically(ctx context.Context) error {
 				Subscriptions: make(map[int64]*logservicepb.SubscriptionStates),
 			}
 			for tableID, dispatcherIDs := range e.dispatcherMeta.tableToDispatchers {
-				subStates := make([]*logservicepb.SubscriptionState, 0)
+				subStates := make([]*logservicepb.SubscriptionState, 0, len(dispatcherIDs))
 				subIDs := make(map[logpuller.SubscriptionID]bool)
 				for dispatcherID := range dispatcherIDs {
 					dispatcherStat := e.dispatcherMeta.dispatcherStats[dispatcherID]
