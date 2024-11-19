@@ -329,6 +329,7 @@ func (c *eventBroker) checkNeedScan(task scanTask) (bool, common.DataRange) {
 	if task.dispatcherStat.resetTs.Load() == 0 {
 		remoteID := node.ID(task.dispatcherStat.info.GetServerID())
 		c.sendReadyEvent(remoteID, task.dispatcherStat)
+		log.Info("Send ready event to dispatcher", zap.Stringer("dispatcher", task.dispatcherStat.id))
 		return false, common.DataRange{}
 	}
 
@@ -389,7 +390,7 @@ func (c *eventBroker) checkAndInitDispatcher(task scanTask) {
 			task.dispatcherStat.isInitialized.Store(true)
 		},
 	}
-	log.Info("send handshake event to dispatcher", zap.Uint64("seq", wrapE.e.(*pevent.HandshakeEvent).Seq), zap.Stringer("dispatcher", task.dispatcherStat.id))
+	log.Info("Send handshake event to dispatcher", zap.Uint64("seq", wrapE.e.(*pevent.HandshakeEvent).Seq), zap.Stringer("dispatcher", task.dispatcherStat.id))
 	c.getMessageCh(task.dispatcherStat.workerIndex) <- wrapE
 }
 

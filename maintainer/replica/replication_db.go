@@ -190,7 +190,7 @@ func (db *ReplicationDB) GetTasksByTableIDs(tableIDs ...int64) []*SpanReplicatio
 	return stms
 }
 
-// GetAllTasks returns all the spans in the db
+// GetAllTasks returns all the spans in the db, it's used when the block event type is all, it will return the ddl span
 func (db *ReplicationDB) GetAllTasks() []*SpanReplication {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
@@ -548,7 +548,4 @@ func (db *ReplicationDB) reset() {
 func (db *ReplicationDB) putDDLDispatcher(ddlSpan *SpanReplication) {
 	// we don't need to schedule the ddl span, but added it to the allTasks map, so we can query it by id
 	db.allTasks[ddlSpan.ID] = ddlSpan
-	db.tableTasks[ddlSpan.Span.TableID] = map[common.DispatcherID]*SpanReplication{
-		ddlSpan.ID: ddlSpan,
-	}
 }
