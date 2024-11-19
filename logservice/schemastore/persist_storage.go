@@ -432,7 +432,7 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 			return events, nil
 		}
 
-		// get storage snap before check start < gcTs
+		// ensure the order: get target ts -> get storage snap -> check gc ts
 		storageSnap := p.db.NewSnapshot()
 		p.mu.RLock()
 		if allTargetTs[0] < p.gcTs {
