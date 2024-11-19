@@ -29,7 +29,6 @@ type matchKey struct {
 }
 
 func newMatchKey(row *cdcpb.Event_Row) matchKey {
-	matcherCount.Inc()
 	return matchKey{startTs: row.GetStartTs(), key: string(row.GetKey())}
 }
 
@@ -41,6 +40,7 @@ type matcher struct {
 }
 
 func newMatcher() *matcher {
+	matcherCount.Inc()
 	return &matcher{
 		unmatchedValue: make(map[matchKey]*cdcpb.Event_Row),
 	}
