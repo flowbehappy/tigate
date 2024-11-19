@@ -103,7 +103,7 @@ func newRegionRequestWorker(
 			case <-ctx.Done():
 				return ctx.Err()
 			case region := <-worker.requestsCh:
-				if !region.isStoped() {
+				if !region.isStopped() {
 					worker.preFetchForConnecting = new(regionInfo)
 					*worker.preFetchForConnecting = region
 					return nil
@@ -130,7 +130,7 @@ func newRegionRequestWorker(
 			}
 			// The store may fail forever, so we need try to re-schedule al pending regions.
 			for _, region := range worker.clearPendingRegions() {
-				if region.isStoped() {
+				if region.isStopped() {
 					// It means it's a special task for stopping the table.
 					continue
 				}
@@ -276,7 +276,7 @@ func (s *regionRequestWorker) processRegionSendTask(
 			zap.String("addr", s.store.storeAddr))
 
 		// It means it's a special task for stopping the table.
-		if region.isStoped() {
+		if region.isStopped() {
 			req := &cdcpb.ChangeDataRequest{
 				RequestId: uint64(subID),
 				Request:   &cdcpb.ChangeDataRequest_Deregister_{},

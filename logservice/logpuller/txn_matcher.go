@@ -83,7 +83,7 @@ func (m *matcher) cacheCommitRow(row *cdcpb.Event_Row) {
 //nolint:unparam
 func (m *matcher) matchCachedRow(initialized bool) []*cdcpb.Event_Row {
 	if !initialized {
-		log.Panic("must be initialized before match cahced rows")
+		log.Panic("must be initialized before match cached rows")
 	}
 	cachedCommit := m.cachedCommit
 	m.cachedCommit = nil
