@@ -299,21 +299,22 @@ func (e *eventStore) uploadStatePeriodically(ctx context.Context) error {
 				Subscriptions: make(map[int64]*logservicepb.SubscriptionStates),
 			}
 			for tableID, dispatcherIDs := range e.dispatcherMeta.tableToDispatchers {
-				subStatesMap := make(map[*logservicepb.SubscriptionState]struct{})
+				subStates := make([]*logservicepb.SubscriptionState, 0, len(dispatcherIDs))
+				subIDs := make(map[logpuller.SubscriptionID]bool)
 				for dispatcherID := range dispatcherIDs {
 					dispatcherStat := e.dispatcherMeta.dispatcherStats[dispatcherID]
 					subID := dispatcherStat.subID
 					subStat := e.dispatcherMeta.subscriptionStats[subID]
-					subStatesMap[&logservicepb.SubscriptionState{
+					if _, ok := subIDs[subID]; ok {
+						continue
+					}
+					subStates = append(subStates, &logservicepb.SubscriptionState{
 						SubID:        uint64(subID),
 						Span:         dispatcherStat.tableSpan,
 						CheckpointTs: subStat.checkpointTs,
 						ResolvedTs:   subStat.resolvedTs,
-					}] = struct{}{}
-				}
-				subStates := make([]*logservicepb.SubscriptionState, 0, len(subStatesMap))
-				for state := range subStatesMap {
-					subStates = append(subStates, state)
+					})
+					subIDs[subID] = true
 				}
 				sort.Slice(subStates, func(i, j int) bool {
 					return subStates[i].SubID < subStates[j].SubID
