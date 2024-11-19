@@ -16,6 +16,7 @@ package scheduler
 import (
 	"time"
 
+	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/maintainer/operator"
 	"github.com/pingcap/ticdc/maintainer/replica"
 	"github.com/pingcap/ticdc/maintainer/split"
@@ -41,6 +42,8 @@ type Scheduler interface {
 type Controller struct {
 	changefeedID common.ChangeFeedID
 	schedulers   map[string]Scheduler
+
+	onStatusUpdate []func(span *replica.SpanReplication, status *heartbeatpb.TableSpanStatus)
 }
 
 func NewController(changefeedID common.ChangeFeedID,
@@ -60,6 +63,7 @@ func NewController(changefeedID common.ChangeFeedID,
 	m.schedulers[BalanceScheduler] = newbalanceScheduler(changefeedID, batchSize, oc, db, nodeManager, balanceInterval)
 	if splitter != nil {
 		m.schedulers[SplitScheduler] = newSplitScheduler(changefeedID, batchSize, splitter, oc, db, nodeManager)
+		m.onStatusUpdate = append(m.onStatusUpdate, m.schedulers[SplitScheduler].(*splitScheduler).updateSpanStatus)
 	}
 	return m
 }
@@ -75,8 +79,8 @@ func (sm *Controller) GetScheduler(name string) Scheduler {
 	return sm.schedulers[name]
 }
 
-func (sm *Controller) UpdateSpan(span *replica.SpanReplication) {
-	if s, ok := sm.schedulers[SplitScheduler]; ok {
-		s.(*splitScheduler).updateSpan(span)
+func (sm *Controller) UpdateStatus(span *replica.SpanReplication, status *heartbeatpb.TableSpanStatus) {
+	for _, f := range sm.onStatusUpdate {
+		f(span, status)
 	}
 }

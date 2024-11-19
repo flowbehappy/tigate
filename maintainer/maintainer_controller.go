@@ -131,6 +131,7 @@ func (c *Controller) HandleStatus(from node.ID, statusList []*heartbeatpb.TableS
 			continue
 		}
 		stm.UpdateStatus(status)
+		c.schedulerController.UpdateStatus(stm, status)
 	}
 }
 

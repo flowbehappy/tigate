@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/maintainer/operator"
 	"github.com/pingcap/ticdc/maintainer/replica"
 	"github.com/pingcap/ticdc/maintainer/split"
@@ -40,8 +41,8 @@ type splitScheduler struct {
 	checkInterval time.Duration
 	lastCheckTime time.Time
 
-	checkedIndex int
-	cachedSpans  []*replica.SpanReplication
+	cachedSpans []*replica.SpanReplication
+	hotSpans    *replica.HotSpans
 }
 
 func newSplitScheduler(
@@ -55,6 +56,7 @@ func newSplitScheduler(
 		opController: oc,
 		db:           db,
 		nodeManager:  nodeManager,
+		cachedSpans:  make([]*replica.SpanReplication, batchSize),
 
 		maxCheckTime:  time.Second * 5,
 		checkInterval: time.Second * 120,
@@ -68,13 +70,14 @@ func (s *splitScheduler) Execute() time.Time {
 	if time.Since(s.lastCheckTime) < s.checkInterval {
 		return s.lastCheckTime.Add(s.checkInterval)
 	}
-	if s.cachedSpans == nil {
-		s.cachedSpans = s.db.GetReplicating()
-		s.checkedIndex = 0
-	}
-	start := time.Now()
-	for ; s.checkedIndex < len(s.cachedSpans); s.checkedIndex++ {
-		span := s.cachedSpans[s.checkedIndex]
+
+	cachedSpans := s.hotSpans.GetBatch(s.cachedSpans)
+	checkedIndex, start := 0, time.Now()
+	for ; checkedIndex < len(cachedSpans); checkedIndex++ {
+		if time.Since(start) > s.maxCheckTime {
+			break
+		}
+		span := cachedSpans[checkedIndex]
 		if s.db.GetTaskByID(span.ID) == nil {
 			continue
 		}
@@ -86,15 +89,9 @@ func (s *splitScheduler) Execute() time.Time {
 				zap.Int("span szie", len(spans)))
 			s.opController.AddOperator(operator.NewSplitDispatcherOperator(s.db, span, span.GetNodeID(), spans))
 		}
-		if time.Since(start) > s.maxCheckTime {
-			break
-		}
 	}
-	if s.checkedIndex >= len(s.cachedSpans) {
-		s.cachedSpans = nil
-		s.checkedIndex = 0
-		s.lastCheckTime = time.Now()
-	}
+	s.lastCheckTime = time.Now()
+	s.hotSpans.ClearHotSpans(cachedSpans[:checkedIndex]...)
 	return s.lastCheckTime.Add(s.checkInterval)
 }
 
@@ -102,15 +99,6 @@ func (s *splitScheduler) Name() string {
 	return SplitScheduler
 }
 
-// updateSpan is used to update the span in the split scheduler
-func (s *splitScheduler) updateSpan(span *replica.SpanReplication) {
-	if s.cachedSpans == nil {
-		return
-	}
-	for i, sp := range s.cachedSpans {
-		if sp.ID.Equal(span.ID) {
-			s.cachedSpans[i] = span
-			return
-		}
-	}
+func (s *splitScheduler) updateSpanStatus(span *replica.SpanReplication, status *heartbeatpb.TableSpanStatus) {
+	s.hotSpans.UpdateHotSpan(span, status)
 }
