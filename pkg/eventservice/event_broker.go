@@ -285,7 +285,7 @@ func (c *eventBroker) logUnresetDispatchers(ctx context.Context) {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		ticker := time.NewTicker(time.Minute * 10)
+		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
 		for {
 			select {
