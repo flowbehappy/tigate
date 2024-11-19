@@ -67,7 +67,7 @@ func TestSchedule(t *testing.T) {
 			op.Start()
 		}
 	}
-	require.Equal(t, 990, controller.replicationDB.GetAbsentSize())
+	require.Equal(t, 991, controller.replicationDB.GetAbsentSize())
 	require.Equal(t, 3, controller.GetTaskSizeByNodeID("node1"))
 	require.Equal(t, 3, controller.GetTaskSizeByNodeID("node2"))
 	require.Equal(t, 3, controller.GetTaskSizeByNodeID("node3"))
@@ -157,7 +157,7 @@ func TestBalance(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, 0, s.GetSchedulingSize())
+	require.Equal(t, 0, s.replicationDB.GetSchedulingSize())
 	// changed to working status
 	require.Equal(t, 100, s.replicationDB.GetReplicatingSize())
 	require.Equal(t, 100, s.replicationDB.GetTaskSizeByNodeID("node1"))
@@ -197,7 +197,7 @@ func TestStoppedWhenMoving(t *testing.T) {
 
 	s.RemoveNode("node2")
 	s.RemoveNode("node1")
-	require.Equal(t, 0, s.GetSchedulingSize())
+	require.Equal(t, 0, s.replicationDB.GetSchedulingSize())
 	// changed to absent status
 	require.Equal(t, 2, s.replicationDB.GetAbsentSize())
 	require.Equal(t, 0, s.replicationDB.GetTaskSizeByNodeID("node1"))

@@ -357,10 +357,6 @@ func (c *Controller) TaskSize() int {
 	return c.replicationDB.TaskSize()
 }
 
-func (c *Controller) GetSchedulingSize() int {
-	return c.replicationDB.GetSchedulingSize()
-}
-
 func (c *Controller) GetTaskSizeByNodeID(id node.ID) int {
 	return c.replicationDB.GetTaskSizeByNodeID(id)
 }
