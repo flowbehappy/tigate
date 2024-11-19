@@ -188,21 +188,13 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 		return stat.target.HandleEvents(events, func() { h.eventCollector.WakeDispatcher(stat.dispatcherID) })
 	case commonEvent.TypeHandshakeEvent:
 		dispatcherEvent := events[0]
-		// not from the current event service, just ignore it
-		if !stat.isCurrentEventService(dispatcherEvent.From) {
-			// check invariant: if the handshake event is not from the current event service, we must be reading from local event service.
-			if !stat.isCurrentEventService(h.eventCollector.serverId) {
-				log.Panic("receive handshake event from remote event service, but current event service is not local event service",
-					zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
-					zap.Stringer("dispatcher", stat.target.GetId()),
-					zap.Stringer("from", dispatcherEvent.From))
-			}
+		if !stat.isHandshakeEventValid(dispatcherEvent, h.eventCollector) {
 			return false
 		}
 		// for unexpected handshake, we must reset the event service with current send ts.
 		// because the table info in handshake event is stale, and we don't know the current table info.
 		// TODO: may be just ignore the table info is ok in this case?(the dispatcher can get table info from ddl event)
-		if !checkEventSeq(events[0]) {
+		if !checkEventSeq(dispatcherEvent) {
 			return false
 		}
 		stat.lastEventSeq.Store(dispatcherEvent.GetSeq())
@@ -211,28 +203,10 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 		stat.target.SetInitialTableInfo(handshake.TableInfo)
 		return false
 	case commonEvent.TypeReadyEvent:
-		// If we have received the ready signal from the event service, we can ignore it.
-		// TODO: add timeout to resend needed request if we receive ready signal from the same server for a long time.
-		if stat.isCurrentEventService(events[0].From) ||
-			stat.isCurrentEventService(h.eventCollector.serverId) {
-			return false
-		}
-		// receive ready signal from local event service
-		if events[0].From == h.eventCollector.serverId {
-			stat.unregisterFromRemoteEventServiceIfHave(h.eventCollector)
-			stat.clearRemoteCandidateInfo()
-			stat.notifyReadyForReceiveData(events[0].From, h.eventCollector)
-			return false
-		}
-		// receive ready signal from remote event service
-		stat.checkNoReadySignalReceived(events[0].From)
-		stat.clearRemoteCandidateInfo()
-		stat.notifyReadyForReceiveData(events[0].From, h.eventCollector)
+		stat.handleReadyEvent(events[0], h.eventCollector)
 		return false
 	case commonEvent.TypeNotReusableEvent:
-		if !stat.isCurrentEventService(h.eventCollector.serverId) {
-			stat.tryNextRemoteCandidate(h.eventCollector)
-		}
+		stat.tryNextRemoteCandidate(h.eventCollector)
 		return false
 	default:
 		log.Panic("unknown event type", zap.Int("type", int(events[0].GetType())))
