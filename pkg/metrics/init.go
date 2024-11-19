@@ -30,4 +30,5 @@ func InitMetrics(registry *prometheus.Registry) {
 	InitEventServiceMetrics(registry)
 	InitMaintainerMetrics(registry)
 	InitCoordinatorMetrics(registry)
+	InitLogPullerMetrics(registry)
 }

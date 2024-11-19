@@ -16,8 +16,11 @@ package logpuller
 import (
 	"github.com/pingcap/kvproto/pkg/cdcpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/metrics"
 	"go.uber.org/zap"
 )
+
+var prewriteCacheRowNum = metrics.LogPullerPrewriteCacheRowNum
 
 type matchKey struct {
 	startTs uint64
@@ -55,6 +58,7 @@ func (m *matcher) putPrewriteRow(row *cdcpb.Event_Row) {
 		return
 	}
 	m.unmatchedValue[key] = row
+	prewriteCacheRowNum.Inc()
 }
 
 // matchRow matches the commit event with the cached prewrite event
@@ -71,6 +75,7 @@ func (m *matcher) matchRow(row *cdcpb.Event_Row, initialized bool) bool {
 		row.Value = value.GetValue()
 		row.OldValue = value.GetOldValue()
 		delete(m.unmatchedValue, newMatchKey(row))
+		prewriteCacheRowNum.Dec()
 		return true
 	}
 	return false
@@ -108,6 +113,7 @@ func (m *matcher) matchCachedRow(initialized bool) []*cdcpb.Event_Row {
 
 func (m *matcher) rollbackRow(row *cdcpb.Event_Row) {
 	delete(m.unmatchedValue, newMatchKey(row))
+	prewriteCacheRowNum.Dec()
 }
 
 func (m *matcher) cacheRollbackRow(row *cdcpb.Event_Row) {
@@ -125,4 +131,11 @@ func (m *matcher) matchCachedRollbackRow(initialized bool) {
 		cacheEntry := rollback[i]
 		m.rollbackRow(cacheEntry)
 	}
+}
+
+func (m *matcher) clear() {
+	prewriteCacheRowNum.Sub(float64(len(m.unmatchedValue)))
+	m.cachedCommit = nil
+	m.unmatchedValue = nil
+	m.cachedRollback = nil
 }

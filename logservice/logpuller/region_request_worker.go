@@ -351,10 +351,10 @@ func (s *regionRequestWorker) getRegionState(subscriptionID SubscriptionID, regi
 func (s *regionRequestWorker) takeRegionState(subscriptionID SubscriptionID, regionID uint64) *regionFeedState {
 	s.requestedRegions.Lock()
 	defer s.requestedRegions.Unlock()
-	if states, ok := s.requestedRegions.subscriptions[subscriptionID]; ok {
-		state := states[regionID]
-		delete(states, regionID)
-		if len(states) == 0 {
+	if statesMap, ok := s.requestedRegions.subscriptions[subscriptionID]; ok {
+		state := statesMap[regionID]
+		delete(statesMap, regionID)
+		if len(statesMap) == 0 {
 			delete(s.requestedRegions.subscriptions, subscriptionID)
 		}
 		return state
