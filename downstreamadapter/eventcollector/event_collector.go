@@ -137,6 +137,10 @@ func New(ctx context.Context, globalMemoryQuota int64, serverId node.ID) *EventC
 }
 
 func (c *EventCollector) AddDispatcher(target *dispatcher.Dispatcher, memoryQuota int) {
+	log.Info("add dispatcher", zap.Stringer("dispatcher", target.GetId()))
+	defer func() {
+		log.Info("add dispatcher done", zap.Stringer("dispatcher", target.GetId()))
+	}()
 	stat := &DispatcherStat{
 		dispatcherID: target.GetId(),
 		target:       target,
@@ -167,6 +171,10 @@ func (c *EventCollector) AddDispatcher(target *dispatcher.Dispatcher, memoryQuot
 }
 
 func (c *EventCollector) RemoveDispatcher(target *dispatcher.Dispatcher) {
+	log.Info("remove dispatcher", zap.Stringer("dispatcher", target.GetId()))
+	defer func() {
+		log.Info("remove dispatcher done", zap.Stringer("dispatcher", target.GetId()))
+	}()
 	value, ok := c.dispatcherMap.Load(target.GetId())
 	if !ok {
 		return
