@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExecute(t *testing.T) {
+func TestBasicScheduler(t *testing.T) {
 	cfID := common.NewChangeFeedIDWithName("test")
 	db := replica.NewReplicaSetDB(cfID, replica.NewReplicaSet(cfID, common.NewDispatcherID(), nil, heartbeatpb.DDLSpanSchemaID, heartbeatpb.DDLSpan, 1))
 	for i := 0; i < 9; i++ {
@@ -36,7 +36,7 @@ func TestExecute(t *testing.T) {
 	operatorController := operator.NewOperatorController(cfID, nil, db, 10)
 	nm := watcher.NewNodeManager(nil, nil)
 	nm.GetAliveNodes()[self.ID] = self
-	s := NewScheduler(cfID, 4, operatorController, db, nm, 0)
+	s := newBasicScheduler(cfID, 4, operatorController, db, nm)
 	s.batchSize = 4
 	s.Execute()
 	require.Equal(t, 4, operatorController.OperatorSize())
