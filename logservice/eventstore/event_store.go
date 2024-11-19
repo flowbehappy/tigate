@@ -3,6 +3,7 @@ package eventstore
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"sync"
@@ -54,7 +55,7 @@ type EventStore interface {
 
 	UpdateDispatcherCheckpointTs(dispatcherID common.DispatcherID, checkpointTs uint64) error
 
-	GetDispatcherDMLEventState(dispatcherID common.DispatcherID) DMLEventState
+	GetDispatcherDMLEventState(dispatcherID common.DispatcherID) (bool, DMLEventState)
 
 	// return an iterator which scan the data in ts range (dataRange.StartTs, dataRange.EndTs]
 	GetIterator(dispatcherID common.DispatcherID, dataRange common.DataRange) (EventIterator, error)
@@ -583,15 +584,19 @@ func (e *eventStore) UpdateDispatcherCheckpointTs(
 	return nil
 }
 
-func (e *eventStore) GetDispatcherDMLEventState(dispatcherID common.DispatcherID) DMLEventState {
+func (e *eventStore) GetDispatcherDMLEventState(dispatcherID common.DispatcherID) (bool, DMLEventState) {
 	e.dispatcherMeta.RLock()
 	defer e.dispatcherMeta.RUnlock()
 	stat, ok := e.dispatcherMeta.dispatcherStats[dispatcherID]
 	if !ok {
-		log.Panic("fail to find dispatcher", zap.Any("dispatcherID", dispatcherID))
+		log.Warn("fail to find dispatcher", zap.Any("dispatcherID", dispatcherID))
+		return false, DMLEventState{
+			// ResolvedTs:       subscriptionStat.resolvedTs,
+			MaxEventCommitTs: math.MaxUint64,
+		}
 	}
 	subscriptionStat := e.dispatcherMeta.subscriptionStats[stat.subID]
-	return DMLEventState{
+	return true, DMLEventState{
 		// ResolvedTs:       subscriptionStat.resolvedTs,
 		MaxEventCommitTs: subscriptionStat.maxEventCommitTs,
 	}
@@ -601,7 +606,9 @@ func (e *eventStore) GetIterator(dispatcherID common.DispatcherID, dataRange com
 	e.dispatcherMeta.RLock()
 	stat, ok := e.dispatcherMeta.dispatcherStats[dispatcherID]
 	if !ok {
-		log.Panic("fail to find dispatcher", zap.Any("dispatcherID", dispatcherID))
+		log.Warn("fail to find dispatcher", zap.Any("dispatcherID", dispatcherID))
+		e.dispatcherMeta.RUnlock()
+		return nil, nil
 	}
 	subscriptionStat := e.dispatcherMeta.subscriptionStats[stat.subID]
 	if dataRange.StartTs < subscriptionStat.checkpointTs {
