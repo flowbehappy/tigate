@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	hotSpanWriteThreshold = 1024 * 1024 // 1MB per second
-	hotSpanWriteDuration  = 10          // 10 times
+	HotSpanWriteThreshold = 1024 * 1024 // 1MB per second
+	HotSpanScoreThreshold = 10
 )
 
 type HotSpans struct {
@@ -32,7 +32,16 @@ type HotSpans struct {
 
 type hotSpan struct {
 	*SpanReplication
-	cnt int
+	// A span that continuously writes more than hotSpanWriteThreshold for
+	// hotSpanScoreThreshold times will be considered a hot span.
+	// TODO: use more flexible and efficient strategy to calculate the score.
+	score int
+}
+
+func NewHotSpans() *HotSpans {
+	return &HotSpans{
+		hotSpanCache: make(map[common.DispatcherID]*hotSpan),
+	}
 }
 
 func (s *HotSpans) GetBatch(cache []*SpanReplication) []*SpanReplication {
@@ -46,7 +55,7 @@ func (s *HotSpans) GetBatch(cache []*SpanReplication) []*SpanReplication {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	for _, span := range s.hotSpanCache {
-		if span.cnt < hotSpanWriteDuration {
+		if span.score < HotSpanScoreThreshold {
 			continue
 		}
 		cache = append(cache, span.SpanReplication)
@@ -64,13 +73,13 @@ func (s *HotSpans) UpdateHotSpan(span *SpanReplication, status *heartbeatpb.Tabl
 
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	if status.EventSizePerSecond < hotSpanWriteThreshold {
+	if status.EventSizePerSecond < HotSpanWriteThreshold {
 		span, ok := s.hotSpanCache[span.ID]
 		if !ok {
 			return
 		}
-		span.cnt--
-		if span.cnt == 0 {
+		span.score--
+		if span.score == 0 {
 			delete(s.hotSpanCache, span.ID)
 		}
 	}
@@ -78,10 +87,10 @@ func (s *HotSpans) UpdateHotSpan(span *SpanReplication, status *heartbeatpb.Tabl
 	if _, ok := s.hotSpanCache[span.ID]; !ok {
 		s.hotSpanCache[span.ID] = &hotSpan{
 			SpanReplication: span,
-			cnt:             1,
+			score:           1,
 		}
 	} else {
-		s.hotSpanCache[span.ID].cnt++
+		s.hotSpanCache[span.ID].score++
 	}
 }
 

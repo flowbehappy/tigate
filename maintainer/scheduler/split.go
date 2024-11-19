@@ -56,6 +56,7 @@ func newSplitScheduler(
 		opController: oc,
 		db:           db,
 		nodeManager:  nodeManager,
+		hotSpans:     replica.NewHotSpans(),
 		cachedSpans:  make([]*replica.SpanReplication, batchSize),
 
 		maxCheckTime:  time.Second * 5,

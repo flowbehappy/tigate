@@ -437,6 +437,17 @@ func TestDynamicSplitTableBasic(t *testing.T) {
 	}
 	replicas := s.replicationDB.GetReplicating()
 	require.Equal(t, 2, s.replicationDB.GetReplicatingSize())
+
+	for _, task := range replicas {
+		for cnt := 0; cnt < replica.HotSpanScoreThreshold; cnt++ {
+			s.schedulerController.UpdateStatus(task, &heartbeatpb.TableSpanStatus{
+				ID:                 task.ID.ToPB(),
+				ComponentStatus:    heartbeatpb.ComponentState_Working,
+				CheckpointTs:       10,
+				EventSizePerSecond: replica.HotSpanWriteThreshold,
+			})
+		}
+	}
 	s.schedulerController.GetScheduler(scheduler.SplitScheduler).Execute()
 	require.Equal(t, 2, s.replicationDB.GetSchedulingSize())
 	require.Equal(t, 2, s.operatorController.OperatorSize())
