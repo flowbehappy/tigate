@@ -393,21 +393,13 @@ func (p *persistentStorage) fetchTableDDLEvents(tableID int64, tableFilter filte
 }
 
 func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter, start uint64, limit int) ([]commonEvent.DDLEvent, error) {
-	// get storage snap before check start < gcTs
-	storageSnap := p.db.NewSnapshot()
-	defer storageSnap.Close()
-
-	p.mu.Lock()
-	if start < p.gcTs {
-		p.mu.Unlock()
-		return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", start, p.gcTs)
-	}
-	p.mu.Unlock()
-
 	// fast check
+	p.mu.RLock()
 	if len(p.tableTriggerDDLHistory) == 0 || start >= p.tableTriggerDDLHistory[len(p.tableTriggerDDLHistory)-1] {
+		p.mu.RUnlock()
 		return nil, nil
 	}
+	p.mu.RUnlock()
 
 	events := make([]commonEvent.DDLEvent, 0)
 	nextStartTs := start
@@ -437,6 +429,15 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 		if len(allTargetTs) == 0 {
 			return events, nil
 		}
+
+		// get storage snap before check start < gcTs
+		storageSnap := p.db.NewSnapshot()
+		p.mu.RLock()
+		if allTargetTs[0] < p.gcTs {
+			p.mu.RUnlock()
+			return nil, fmt.Errorf("startTs %d is smaller than gcTs %d", allTargetTs[0], p.gcTs)
+		}
+		p.mu.RUnlock()
 		for _, ts := range allTargetTs {
 			rawEvent := readPersistedDDLEvent(storageSnap, ts)
 			if tableFilter != nil {
@@ -460,6 +461,7 @@ func (p *persistentStorage) fetchTableTriggerDDLEvents(tableFilter filter.Filter
 			}
 			events = append(events, buildDDLEvent(&rawEvent, tableFilter))
 		}
+		storageSnap.Close()
 		if len(events) >= limit {
 			return events, nil
 		}
