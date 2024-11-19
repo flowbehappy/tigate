@@ -24,5 +24,5 @@ var SharedColumnSchemaCountGauge = prometheus.NewGauge(
 
 // InitMetrics registers the etcd request counter.
 func InitCommonMetrics(registry *prometheus.Registry) {
-	prometheus.MustRegister(SharedColumnSchemaCountGauge)
+	registry.MustRegister(SharedColumnSchemaCountGauge)
 }
