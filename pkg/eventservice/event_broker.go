@@ -445,7 +445,7 @@ func (c *eventBroker) doScan(ctx context.Context, task scanTask) {
 	if err != nil {
 		log.Panic("read events failed", zap.Error(err))
 	}
-	// TODO: return an error to indicate the dispatcher is removed
+	// TODO: use error to indicate the dispatcher is removed
 	if iter == nil {
 		return
 	}
