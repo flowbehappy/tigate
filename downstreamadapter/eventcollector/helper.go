@@ -157,7 +157,7 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 				log.Warn("Receive dml event before sendCommitTs, ignore it",
 					zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
 					zap.Stringer("dispatcher", stat.target.GetId()),
-					zap.Uint64("checkpointTs", stat.sendCommitTs.Load()),
+					zap.Uint64("sendCommitTs", stat.sendCommitTs.Load()),
 					zap.Any("event", dispatcherEvent))
 				validEventStart += 1
 			}
@@ -178,7 +178,7 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 			log.Warn("Receive resolved event before sendCommitTs, ignore it",
 				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
 				zap.Stringer("dispatcher", stat.target.GetId()),
-				zap.Uint64("checkpointTs", stat.sendCommitTs.Load()),
+				zap.Uint64("sendCommitTs", stat.sendCommitTs.Load()),
 				zap.Any("event", events))
 			return false
 		}
