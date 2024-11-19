@@ -8,7 +8,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	datumTypes "github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tiflow/pkg/util"
@@ -276,164 +275,14 @@ type TableInfo struct {
 	// record the logical ID from the DDL event(job.BinlogInfo.TableInfo).
 	// So be careful when using the TableInfo.
 	TableName TableName `json:"table_name"`
-	// ColumnID -> offset in model.TableInfo.Columns
-	ColumnsOffset map[int64]int `json:"columns_offset"`
-	// Column name -> ColumnID
-	NameToColID map[string]int64 `json:"name_to_col_id"`
 
-	HasUniqueColumn bool `json:"has_unique_column"`
+	ColumnSchema *ColumnSchema `json:"column_schema"`
 
-	// ColumnID -> offset in RowChangedEvents.Columns.
-	RowColumnsOffset map[int64]int `json:"row_columns_offset"`
-
-	ColumnsFlag map[int64]*ColumnFlagType `json:"columns_flag"`
-
-	// the mounter will choose this index to output delete events
-	// special value:
-	// HandleIndexPKIsHandle(-1) : pk is handle
-	// HandleIndexTableIneligible(-2) : the table is not eligible
-	HandleIndexID int64 `json:"handle_index_id"`
-
-	// IndexColumnsOffset store the offset of the columns in row changed events for
-	// unique index and primary key
-	// The reason why we need this is that the Indexes in TableInfo
-	// will not contain the PK if it is create in statement like:
-	// create table t (a int primary key, b int unique key);
-	// Every element in first dimension is a index, and the second dimension is the columns offset
-	// for example:
-	// table has 3 columns: a, b, c
-	// pk: a
-	// index1: a, b
-	// index2: a, c
-	// indexColumnsOffset: [[0], [0, 1], [0, 2]]
-	IndexColumnsOffset [][]int `json:"index_columns_offset"`
-
-	// The following 3 fields, should only be used to decode datum from the raw value bytes, do not abuse those field.
-	// RowColInfos extend the model.ColumnInfo with some extra information
-	// it's the same length and order with the model.TableInfo.Columns
-	RowColInfos    []rowcodec.ColInfo              `json:"row_col_infos"`
-	RowColFieldTps map[int64]*datumTypes.FieldType `json:"row_col_field_tps"`
-	// only for new row format decoder
-	HandleColID []int64 `json:"handle_col_id"`
-	// RowColFieldTpsSlice is used to decode chunk from raw value bytes
-	RowColFieldTpsSlice []*datumTypes.FieldType `json:"row_col_field_tps_slice"`
-
-	// number of virtual columns
-	VirtualColumnCount int `json:"virtual_column_count"`
-	// RowColInfosWithoutVirtualCols is the same as rowColInfos, but without virtual columns
-	RowColInfosWithoutVirtualCols *[]rowcodec.ColInfo `json:"row_col_infos_without_virtual_cols"`
-	PreSQLs                       map[int]string      `json:"pre_sqls"`
+	PreSQLs map[int]string `json:"pre_sqls"`
 }
 
 func (ti *TableInfo) GetColumnsOffset() map[int64]int {
-	return ti.ColumnsOffset
-}
-
-func (ti *TableInfo) initRowColInfosWithoutVirtualCols() {
-	if ti.VirtualColumnCount == 0 {
-		ti.RowColInfosWithoutVirtualCols = &ti.RowColInfos
-		return
-	}
-	colInfos := make([]rowcodec.ColInfo, 0, len(ti.RowColInfos)-ti.VirtualColumnCount)
-	for i, col := range ti.Columns {
-		if IsColCDCVisible(col) {
-			colInfos = append(colInfos, ti.RowColInfos[i])
-		}
-	}
-	if len(colInfos) != len(ti.RowColInfos)-ti.VirtualColumnCount {
-		log.Panic("invalid rowColInfosWithoutVirtualCols",
-			zap.Int("len(colInfos)", len(colInfos)),
-			zap.Int("len(ti.rowColInfos)", len(ti.RowColInfos)),
-			zap.Int("ti.virtualColumnCount", ti.VirtualColumnCount))
-	}
-	ti.RowColInfosWithoutVirtualCols = &colInfos
-}
-
-func (ti *TableInfo) findHandleIndex() {
-	if ti.HandleIndexID == HandleIndexPKIsHandle {
-		// pk is handle
-		return
-	}
-	handleIndexOffset := -1
-	for i, idx := range ti.Indices {
-		if !ti.IsIndexUniqueAndNotNull(idx) {
-			continue
-		}
-		if idx.Primary {
-			handleIndexOffset = i
-			break
-		}
-		if handleIndexOffset < 0 {
-			handleIndexOffset = i
-		} else {
-			if len(ti.Indices[handleIndexOffset].Columns) > len(ti.Indices[i].Columns) ||
-				(len(ti.Indices[handleIndexOffset].Columns) == len(ti.Indices[i].Columns) &&
-					ti.Indices[handleIndexOffset].ID > ti.Indices[i].ID) {
-				handleIndexOffset = i
-			}
-		}
-	}
-	if handleIndexOffset >= 0 {
-		log.Info("find handle index", zap.String("table", ti.TableName.String()), zap.String("index", ti.Indices[handleIndexOffset].Name.O))
-		ti.HandleIndexID = ti.Indices[handleIndexOffset].ID
-	}
-}
-
-func (ti *TableInfo) initColumnsFlag() {
-	for _, colInfo := range ti.Columns {
-		var flag ColumnFlagType
-		if colInfo.GetCharset() == "binary" {
-			flag.SetIsBinary()
-		}
-		if colInfo.IsGenerated() {
-			flag.SetIsGeneratedColumn()
-		}
-		if mysql.HasPriKeyFlag(colInfo.GetFlag()) {
-			flag.SetIsPrimaryKey()
-			if ti.HandleIndexID == HandleIndexPKIsHandle {
-				flag.SetIsHandleKey()
-			}
-		}
-		if mysql.HasUniKeyFlag(colInfo.GetFlag()) {
-			flag.SetIsUniqueKey()
-		}
-		if !mysql.HasNotNullFlag(colInfo.GetFlag()) {
-			flag.SetIsNullable()
-		}
-		if mysql.HasMultipleKeyFlag(colInfo.GetFlag()) {
-			flag.SetIsMultipleKey()
-		}
-		if mysql.HasUnsignedFlag(colInfo.GetFlag()) {
-			flag.SetIsUnsigned()
-		}
-		ti.ColumnsFlag[colInfo.ID] = &flag
-	}
-
-	// In TiDB, just as in MySQL, only the first column of an index can be marked as "multiple key" or "unique key",
-	// and only the first column of a unique index may be marked as "unique key".
-	// See https://dev.mysql.com/doc/refman/5.7/en/show-columns.html.
-	// Yet if an index has multiple columns, we would like to easily determine that all those columns are indexed,
-	// which is crucial for the completeness of the information we pass to the downstream.
-	// Therefore, instead of using the MySQL standard,
-	// we made our own decision to mark all columns in an index with the appropriate flag(s).
-	for _, idxInfo := range ti.Indices {
-		for _, idxCol := range idxInfo.Columns {
-			colInfo := ti.Columns[idxCol.Offset]
-			flag := ti.ColumnsFlag[colInfo.ID]
-			if idxInfo.Primary {
-				flag.SetIsPrimaryKey()
-			} else if idxInfo.Unique {
-				flag.SetIsUniqueKey()
-			}
-			if len(idxInfo.Columns) > 1 {
-				flag.SetIsMultipleKey()
-			}
-			if idxInfo.ID == ti.HandleIndexID && ti.HandleIndexID >= 0 {
-				flag.SetIsHandleKey()
-			}
-			ti.ColumnsFlag[colInfo.ID] = flag
-		}
-	}
+	return ti.ColumnSchema.ColumnsOffset
 }
 
 func (ti *TableInfo) InitPreSQLs() {
@@ -464,7 +313,7 @@ func (ti *TableInfo) genPreSQLInsert(isReplace bool, needPlaceHolder bool) strin
 
 	if needPlaceHolder {
 		builder.WriteString("(")
-		builder.WriteString(placeHolder(len(ti.Columns) - ti.VirtualColumnCount))
+		builder.WriteString(placeHolder(len(ti.Columns) - ti.ColumnSchema.VirtualColumnCount))
 		builder.WriteString(")")
 	}
 	return builder.String()
@@ -496,7 +345,7 @@ func placeHolder(n int) string {
 func (ti *TableInfo) getColumnList(isUpdate bool) string {
 	var b strings.Builder
 	for i, col := range ti.Columns {
-		if col == nil || ti.ColumnsFlag[col.ID].IsGeneratedColumn() {
+		if col == nil || ti.ColumnSchema.ColumnsFlag[col.ID].IsGeneratedColumn() {
 			continue
 		}
 		if i > 0 {
@@ -524,7 +373,7 @@ func (ti *TableInfo) GetPreUpdateSQL() string {
 
 // GetColumnInfo returns the column info by ID
 func (ti *TableInfo) GetColumnInfo(colID int64) (info *model.ColumnInfo, exist bool) {
-	colOffset, exist := ti.ColumnsOffset[colID]
+	colOffset, exist := ti.ColumnSchema.ColumnsOffset[colID]
 	if !exist {
 		return nil, false
 	}
@@ -544,7 +393,7 @@ func (ti *TableInfo) ForceGetColumnInfo(colID int64) *model.ColumnInfo {
 // ForceGetColumnFlagType return the column flag type by ID
 // Caller must ensure `colID` exists
 func (ti *TableInfo) ForceGetColumnFlagType(colID int64) *ColumnFlagType {
-	flag, ok := ti.ColumnsFlag[colID]
+	flag, ok := ti.ColumnSchema.ColumnsFlag[colID]
 	if !ok {
 		log.Panic("invalid column id", zap.Int64("columnID", colID))
 	}
@@ -560,7 +409,7 @@ func (ti *TableInfo) ForceGetColumnName(colID int64) string {
 // ForceGetColumnIDByName return column ID by column name
 // Caller must ensure `colID` exists
 func (ti *TableInfo) ForceGetColumnIDByName(name string) int64 {
-	colID, ok := ti.NameToColID[name]
+	colID, ok := ti.ColumnSchema.NameToColID[name]
 	if !ok {
 		log.Panic("invalid column name", zap.String("column", name))
 	}
@@ -599,18 +448,22 @@ func (ti *TableInfo) String() string {
 
 // GetRowColInfos returns all column infos for rowcodec
 func (ti *TableInfo) GetRowColInfos() ([]int64, map[int64]*datumTypes.FieldType, []rowcodec.ColInfo) {
-	return ti.HandleColID, ti.RowColFieldTps, ti.RowColInfos
+	return ti.ColumnSchema.HandleColID, ti.ColumnSchema.RowColFieldTps, ti.ColumnSchema.RowColInfos
 }
 
 // GetFieldSlice returns the field types of all columns
 func (ti *TableInfo) GetFieldSlice() []*datumTypes.FieldType {
-	return ti.RowColFieldTpsSlice
+	return ti.ColumnSchema.RowColFieldTpsSlice
 }
 
 // GetColInfosForRowChangedEvent return column infos for non-virtual columns
 // The column order in the result is the same as the order in its corresponding RowChangedEvent
 func (ti *TableInfo) GetColInfosForRowChangedEvent() []rowcodec.ColInfo {
-	return *ti.RowColInfosWithoutVirtualCols
+	return *ti.ColumnSchema.RowColInfosWithoutVirtualCols
+}
+
+func (ti *TableInfo) GetColumnFlags() map[int64]*ColumnFlagType {
+	return ti.ColumnSchema.ColumnsFlag
 }
 
 // IsColCDCVisible returns whether the col is visible for CDC
@@ -624,7 +477,7 @@ func IsColCDCVisible(col *model.ColumnInfo) bool {
 
 // HasVirtualColumns returns whether the table has virtual columns
 func (ti *TableInfo) HasVirtualColumns() bool {
-	return ti.VirtualColumnCount > 0
+	return ti.ColumnSchema.VirtualColumnCount > 0
 }
 
 // IsEligible returns whether the table is a eligible table
@@ -640,28 +493,7 @@ func (ti *TableInfo) IsEligible(forceReplicate bool) bool {
 	if ti.IsView() {
 		return true
 	}
-	return ti.HasUniqueColumn
-}
-
-// IsIndexUnique returns whether the index is unique and all columns are not null
-func (ti *TableInfo) IsIndexUniqueAndNotNull(indexInfo *model.IndexInfo) bool {
-	if indexInfo.Primary {
-		return true
-	}
-	if indexInfo.Unique {
-		for _, col := range indexInfo.Columns {
-			colInfo := ti.Columns[col.Offset]
-			if !mysql.HasNotNullFlag(colInfo.GetFlag()) {
-				return false
-			}
-			// this column is a virtual generated column
-			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
-				return false
-			}
-		}
-		return true
-	}
-	return false
+	return ti.ColumnSchema.HasUniqueColumn
 }
 
 // Clone clones the TableInfo
@@ -744,6 +576,10 @@ func (ti *TableInfo) GetVersion() uint64 {
 
 // WrapTableInfo creates a TableInfo from a model.TableInfo
 func WrapTableInfo(schemaID int64, schemaName string, info *model.TableInfo) *TableInfo {
+	// search column schema object
+	sharedColumnSchemaStorage := GetSharedColumnSchemaStorage()
+	columnSchema := sharedColumnSchemaStorage.GetOrSetColumnSchema(info)
+
 	ti := &TableInfo{
 		TableInfo: info,
 		SchemaID:  schemaID,
@@ -753,77 +589,9 @@ func WrapTableInfo(schemaID int64, schemaName string, info *model.TableInfo) *Ta
 			TableID:     info.ID,
 			IsPartition: info.GetPartitionInfo() != nil,
 		},
-		HasUniqueColumn:  false,
-		ColumnsOffset:    make(map[int64]int, len(info.Columns)),
-		NameToColID:      make(map[string]int64, len(info.Columns)),
-		RowColumnsOffset: make(map[int64]int, len(info.Columns)),
-		ColumnsFlag:      make(map[int64]*ColumnFlagType, len(info.Columns)),
-		HandleColID:      []int64{-1},
-		HandleIndexID:    HandleIndexTableIneligible,
-		RowColInfos:      make([]rowcodec.ColInfo, len(info.Columns)),
-		RowColFieldTps:   make(map[int64]*datumTypes.FieldType, len(info.Columns)),
+		ColumnSchema: columnSchema,
 	}
 
-	rowColumnsCurrentOffset := 0
-
-	ti.VirtualColumnCount = 0
-	for i, col := range ti.Columns {
-		ti.ColumnsOffset[col.ID] = i
-		pkIsHandle := false
-		if IsColCDCVisible(col) {
-			ti.NameToColID[col.Name.O] = col.ID
-			ti.RowColumnsOffset[col.ID] = rowColumnsCurrentOffset
-			rowColumnsCurrentOffset++
-			pkIsHandle = (ti.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag())) || col.ID == model.ExtraHandleID
-			if pkIsHandle {
-				// pk is handle
-				ti.HandleColID = []int64{col.ID}
-				ti.HandleIndexID = HandleIndexPKIsHandle
-				ti.HasUniqueColumn = true
-				ti.IndexColumnsOffset = append(ti.IndexColumnsOffset, []int{ti.RowColumnsOffset[col.ID]})
-			} else if ti.IsCommonHandle {
-				ti.HandleIndexID = HandleIndexPKIsHandle
-				ti.HandleColID = ti.HandleColID[:0]
-				pkIdx := tables.FindPrimaryIndex(info)
-				for _, pkCol := range pkIdx.Columns {
-					id := info.Columns[pkCol.Offset].ID
-					ti.HandleColID = append(ti.HandleColID, id)
-				}
-			}
-		} else {
-			ti.VirtualColumnCount += 1
-		}
-		ti.RowColInfos[i] = rowcodec.ColInfo{
-			ID:            col.ID,
-			IsPKHandle:    pkIsHandle,
-			Ft:            col.FieldType.Clone(),
-			VirtualGenCol: col.IsGenerated(),
-		}
-		ti.RowColFieldTps[col.ID] = ti.RowColInfos[i].Ft
-		ti.RowColFieldTpsSlice = append(ti.RowColFieldTpsSlice, ti.RowColInfos[i].Ft)
-	}
-
-	for _, idx := range ti.Indices {
-		if ti.IsIndexUniqueAndNotNull(idx) {
-			ti.HasUniqueColumn = true
-		}
-		if idx.Primary || idx.Unique {
-			indexColOffset := make([]int, 0, len(idx.Columns))
-			for _, idxCol := range idx.Columns {
-				colInfo := ti.Columns[idxCol.Offset]
-				if IsColCDCVisible(colInfo) {
-					indexColOffset = append(indexColOffset, ti.RowColumnsOffset[colInfo.ID])
-				}
-			}
-			if len(indexColOffset) > 0 {
-				ti.IndexColumnsOffset = append(ti.IndexColumnsOffset, indexColOffset)
-			}
-		}
-	}
-
-	ti.initRowColInfosWithoutVirtualCols()
-	ti.findHandleIndex()
-	ti.initColumnsFlag()
 	return ti
 }
 

@@ -169,16 +169,19 @@ func (c *logCoordinator) updateEventStoreState(nodeId node.ID, state *logservice
 	}
 	count := 0
 	for tableId, subscriptions := range state.GetSubscriptions() {
-		for _, subscription := range subscriptions.GetSubscriptions() {
+		subs := subscriptions.GetSubscriptions()
+		subStates := make(subscriptionStates, 0, len(subs))
+		count += len(subs)
+		for _, subscription := range subs {
 			subscriptionState := &subscriptionState{
 				subID:        subscription.GetSubID(),
 				span:         subscription.GetSpan(),
 				checkpointTs: subscription.GetCheckpointTs(),
 				resolvedTs:   subscription.GetResolvedTs(),
 			}
-			eventStoreState.subscriptionStates[tableId] = append(eventStoreState.subscriptionStates[tableId], subscriptionState)
-			count++
+			subStates = append(subStates, subscriptionState)
 		}
+		eventStoreState.subscriptionStates[tableId] = subStates
 	}
 	c.eventStoreStates.m[nodeId] = eventStoreState
 	log.Info("update event store state done",

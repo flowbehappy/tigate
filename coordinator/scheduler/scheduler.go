@@ -91,6 +91,7 @@ func (s *Scheduler) Execute() time.Time {
 // balance balances the maintainers by size
 func (s *Scheduler) balance() {
 	if time.Since(s.lastRebalanceTime) < s.checkBalanceInterval {
+		// skip balance.
 		return
 	}
 	if s.operatorController.OperatorSize() > 0 {
@@ -98,10 +99,6 @@ func (s *Scheduler) balance() {
 		return
 	}
 	now := time.Now()
-	if now.Sub(s.lastRebalanceTime) < s.checkBalanceInterval {
-		// skip balance.
-		return
-	}
 
 	// check the balance status
 	moveSize := scheduler.CheckBalanceStatus(s.changefeedDB.GetTaskSizePerNode(), s.nodeManager.GetAliveNodes())

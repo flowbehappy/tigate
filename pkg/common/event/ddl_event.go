@@ -2,6 +2,7 @@ package event
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/ticdc/pkg/common"
@@ -23,12 +24,14 @@ type DDLEvent struct {
 	SchemaID int64 `json:"schema_id"`
 	// TableID means different for different job types:
 	// - ExchangeTablePartition: non-partitioned table id
-	TableID    int64             `json:"table_id"`
-	SchemaName string            `json:"schema_name"`
-	TableName  string            `json:"table_name"`
-	Query      string            `json:"query"`
-	TableInfo  *common.TableInfo `json:"table_info"`
-	FinishedTs uint64            `json:"finished_ts"`
+	TableID        int64             `json:"table_id"`
+	SchemaName     string            `json:"schema_name"`
+	TableName      string            `json:"table_name"`
+	PrevSchemaName string            `json:"prev_schema_name"`
+	PrevTableName  string            `json:"prev_table_name"`
+	Query          string            `json:"query"`
+	TableInfo      *common.TableInfo `json:"table_info"`
+	FinishedTs     uint64            `json:"finished_ts"`
 	// The seq of the event. It is set by event service.
 	Seq uint64 `json:"seq"`
 	// State is the state of sender when sending this event.
@@ -77,6 +80,81 @@ func (d *DDLEvent) GetCommitTs() common.Ts {
 func (d *DDLEvent) PostFlush() {
 	for _, f := range d.PostTxnFlushed {
 		f()
+	}
+}
+
+func (d *DDLEvent) GetCurrentSchemaName() string {
+	return d.SchemaName
+}
+
+func (d *DDLEvent) GetCurrentTableName() string {
+	return d.TableName
+}
+
+func (d *DDLEvent) GetPrevSchemaName() string {
+	return d.PrevSchemaName
+}
+
+func (d *DDLEvent) GetPrevTableName() string {
+	return d.PrevTableName
+}
+
+func (d *DDLEvent) IsMultiEvents() bool {
+	switch model.ActionType(d.Type) {
+	case model.ActionExchangeTablePartition,
+		model.ActionCreateTables:
+		return true
+	default:
+		return false
+	}
+}
+
+func (d *DDLEvent) GetSubEvents() []DDLEvent {
+	switch model.ActionType(d.Type) {
+	case model.ActionExchangeTablePartition:
+		return []DDLEvent{
+			// partition table before exchange
+			{
+				Version: d.Version,
+				Type:    d.Type,
+				// SchemaID:   d.SchemaID,
+				// TableID:    d.TableID,
+				SchemaName: d.SchemaName,
+				TableName:  d.TableName,
+				Query:      d.Query,
+				FinishedTs: d.FinishedTs,
+			},
+			// normal table before exchange(TODO: this may be wrong)
+			{
+				Version: d.Version,
+				Type:    d.Type,
+				// SchemaID:   d.TableInfo.SchemaID,
+				// TableID:    d.TableInfo.TableName.TableID,
+				SchemaName: d.PrevSchemaName,
+				TableName:  d.PrevTableName,
+				Query:      d.Query,
+				FinishedTs: d.FinishedTs,
+			},
+		}
+	case model.ActionCreateTables:
+		events := make([]DDLEvent, 0, len(d.TableNameChange.AddName))
+		querys := strings.Split(d.Query, ";")
+		if len(querys) != len(d.TableNameChange.AddName) {
+			log.Panic("querys length should be equal to addName length", zap.String("query", d.Query), zap.Any("addName", d.TableNameChange.AddName))
+		}
+		for i, schemaAndTable := range d.TableNameChange.AddName {
+			events = append(events, DDLEvent{
+				Version:    d.Version,
+				Type:       d.Type,
+				SchemaName: schemaAndTable.SchemaName,
+				TableName:  schemaAndTable.TableName,
+				Query:      querys[i],
+				FinishedTs: d.FinishedTs,
+			})
+		}
+		return events
+	default:
+		return nil
 	}
 }
 

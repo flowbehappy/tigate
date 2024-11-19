@@ -56,6 +56,8 @@ type coordinator struct {
 	updatedChangefeedCh chan map[common.ChangeFeedID]*changefeed.Changefeed
 	stateChangedCh      chan *ChangefeedStateChangeEvent
 	backend             changefeed.Backend
+
+	cancel func()
 }
 
 func New(node *node.Info,
@@ -107,6 +109,8 @@ func (c *coordinator) recvMessages(_ context.Context, msg *messaging.TargetMessa
 //  3. Schedule changefeeds if all node is bootstrapped.
 func (c *coordinator) Run(ctx context.Context) error {
 	gcTick := time.NewTicker(time.Minute)
+	ctx, cancel := context.WithCancel(ctx)
+	c.cancel = cancel
 	defer gcTick.Stop()
 	for {
 		select {
@@ -135,12 +139,11 @@ func (c *coordinator) Run(ctx context.Context) error {
 func (c *coordinator) handleStateChangedEvent(ctx context.Context, event *ChangefeedStateChangeEvent) error {
 	cf := c.controller.GetTask(event.ChangefeedID)
 	if cf == nil {
+		log.Warn("changefeed not found", zap.String("changefeed", event.ChangefeedID.String()))
 		return nil
 	}
 	cfInfo, err := cf.GetInfo().Clone()
 	if err != nil {
-		log.Panic("clone changefeed info failed",
-			zap.Error(err))
 		return errors.Trace(err)
 	}
 	cfInfo.State = event.State
@@ -235,6 +238,11 @@ func shouldRunChangefeed(state model.FeedState) bool {
 }
 
 func (c *coordinator) AsyncStop() {
+	c.mc.DeRegisterHandler(messaging.CoordinatorTopic)
+	c.controller.Stop()
+	c.taskScheduler.Stop()
+	c.stream.Close()
+	c.cancel()
 }
 
 func (c *coordinator) sendMessages(msgs []*messaging.TargetMessage) {

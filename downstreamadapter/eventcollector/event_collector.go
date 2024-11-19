@@ -38,6 +38,10 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	handleEventDuration = metrics.EventCollectorHandleEventDuration
+)
+
 type DispatcherRequest struct {
 	Dispatcher *dispatcher.Dispatcher
 	ActionType eventpb.ActionType
@@ -183,7 +187,7 @@ func (c *EventCollector) RemoveDispatcher(target *dispatcher.Dispatcher) {
 }
 
 func (c *EventCollector) WakeDispatcher(dispatcherID common.DispatcherID) {
-	c.ds.Wake() <- dispatcherID
+	c.ds.Wake(dispatcherID) <- dispatcherID
 }
 
 func (c *EventCollector) ResetDispatcherStat(stat *DispatcherStat) {
@@ -311,8 +315,9 @@ func (c *EventCollector) mustSendDispatcherRequest(target node.ID, topic string,
 
 // RecvEventsMessage is the handler for the events message from EventService.
 func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *messaging.TargetMessage) error {
-	inflightDuration := time.Since(time.Unix(0, targetMessage.CreateAt)).Milliseconds()
+	inflightDuration := time.Since(time.UnixMilli(targetMessage.CreateAt)).Milliseconds()
 	c.metricReceiveEventLagDuration.Observe(float64(inflightDuration))
+	start := time.Now()
 	for _, msg := range targetMessage.Message {
 		switch msg.(type) {
 		case *common.LogCoordinatorBroadcastRequest:
@@ -332,16 +337,17 @@ func (c *EventCollector) RecvEventsMessage(_ context.Context, targetMessage *mes
 			case commonEvent.TypeBatchResolvedEvent:
 				for _, e := range event.(*commonEvent.BatchResolvedEvent).Events {
 					c.metricDispatcherReceivedResolvedTsEventCount.Inc()
-					c.ds.In() <- dispatcher.NewDispatcherEvent(targetMessage.From, e)
+					c.ds.In(e.DispatcherID) <- dispatcher.NewDispatcherEvent(targetMessage.From, e)
 				}
 			default:
 				c.metricDispatcherReceivedKVEventCount.Inc()
-				c.ds.In() <- dispatcher.NewDispatcherEvent(targetMessage.From, event)
+				c.ds.In(event.GetDispatcherID()) <- dispatcher.NewDispatcherEvent(targetMessage.From, event)
 			}
 		default:
 			log.Panic("invalid message type", zap.Any("msg", msg))
 		}
 	}
+	handleEventDuration.Observe(float64(time.Since(start).Milliseconds()))
 	return nil
 }
 

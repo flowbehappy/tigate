@@ -63,6 +63,11 @@ func RegisterOpenAPIV2Routes(router *gin.Engine, api OpenAPIV2) {
 	verifyTableGroup := v2.Group("/verify_table")
 	verifyTableGroup.POST("", api.verifyTable)
 
+	// owner apis
+	ownerGroup := v2.Group("/owner")
+	ownerGroup.Use(coordinatorMiddleware)
+	ownerGroup.POST("/resign", api.resignOwner)
+
 	// common APIs
 	v2.POST("/tso", api.QueryTso)
 }

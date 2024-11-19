@@ -22,18 +22,31 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	streamCount = 4
+)
+
+type pathHasher struct {
+	streamCount int
+}
+
+func (h pathHasher) HashPath(path common.DispatcherID) int {
+	return int((common.GID)(path).FastHash() % (uint64)(h.streamCount))
+}
+
 func NewEventDynamicStream(collector *EventCollector) dynstream.DynamicStream[common.GID, common.DispatcherID, dispatcher.DispatcherEvent, *DispatcherStat, *EventsHandler] {
 	option := dynstream.NewOption()
 	option.BatchCount = 128
+	option.InputBufferSize = 1000000 / streamCount
 	// Enable memory control for dispatcher events dynamic stream.
 	log.Info("New EventDynamicStream, memory control is enabled")
 	option.EnableMemoryControl = true
 	eventsHandler := &EventsHandler{
 		eventCollector: collector,
 	}
-	eventDynamicStream := dynstream.NewDynamicStream(eventsHandler, option)
-	eventDynamicStream.Start()
-	return eventDynamicStream
+	stream := dynstream.NewParallelDynamicStream(streamCount, pathHasher{streamCount: streamCount}, eventsHandler, option)
+	stream.Start()
+	return stream
 }
 
 // EventsHandler is used to dispatch the received events.
@@ -144,7 +157,7 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 				log.Warn("Receive dml event before sendCommitTs, ignore it",
 					zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
 					zap.Stringer("dispatcher", stat.target.GetId()),
-					zap.Uint64("checkpointTs", stat.sendCommitTs.Load()),
+					zap.Uint64("sendCommitTs", stat.sendCommitTs.Load()),
 					zap.Any("event", dispatcherEvent))
 				validEventStart += 1
 			}
@@ -165,7 +178,7 @@ func (h *EventsHandler) Handle(stat *DispatcherStat, events ...dispatcher.Dispat
 			log.Warn("Receive resolved event before sendCommitTs, ignore it",
 				zap.String("changefeedID", stat.target.GetChangefeedID().ID().String()),
 				zap.Stringer("dispatcher", stat.target.GetId()),
-				zap.Uint64("checkpointTs", stat.sendCommitTs.Load()),
+				zap.Uint64("sendCommitTs", stat.sendCommitTs.Load()),
 				zap.Any("event", events))
 			return false
 		}

@@ -76,6 +76,6 @@ type SchemaStoreConfig struct {
 // NewDefaultSchemaStoreConfig return the default schema store configuration
 func NewDefaultSchemaStoreConfig() *SchemaStoreConfig {
 	return &SchemaStoreConfig{
-		EnableGC: true,
+		EnableGC: false,
 	}
 }

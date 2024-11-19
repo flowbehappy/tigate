@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/ticdc/downstreamadapter/syncpoint"
 	"github.com/pingcap/ticdc/heartbeatpb"
 	"github.com/pingcap/ticdc/pkg/common"
+	"github.com/pingcap/ticdc/pkg/node"
 	sinkutil "github.com/pingcap/ticdc/pkg/sink/util"
 	"github.com/pingcap/tiflow/pkg/spanz"
 
@@ -151,7 +152,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	require.Equal(t, uint64(0), checkpointTs)
 
 	// ===== dml event =====
-	block := dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(dmlEvent)}, callback)
+	block := dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), dmlEvent)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 1, len(sink.dmls))
 
@@ -178,7 +179,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 		},
 	}
 
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(ddlEvent)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 0, len(sink.dmls))
 	// no pending event
@@ -205,7 +206,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 			},
 		},
 	}
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(ddlEvent2)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent2)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 0, len(sink.dmls))
 	// no pending event
@@ -248,7 +249,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 			TableIDs:      []int64{0, 1},
 		},
 	}
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(ddlEvent3)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent3)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 0, len(sink.dmls))
 	// pending event
@@ -306,7 +307,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	syncPointEvent := &commonEvent.SyncPointEvent{
 		CommitTs: 6,
 	}
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(syncPointEvent)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), syncPointEvent)}, callback)
 	require.Equal(t, true, block)
 	require.Equal(t, 0, len(sink.dmls))
 	// pending event
@@ -350,7 +351,7 @@ func TestDispatcherHandleEvents(t *testing.T) {
 	resolvedEvent := commonEvent.ResolvedEvent{
 		ResolvedTs: 7,
 	}
-	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(resolvedEvent)}, callback)
+	block = dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), resolvedEvent)}, callback)
 	require.Equal(t, false, block)
 	require.Equal(t, 0, len(sink.dmls))
 	require.Equal(t, uint64(7), dispatcher.GetResolvedTs())
@@ -381,7 +382,7 @@ func TestUncompeleteTableSpanDispatcherHandleEvents(t *testing.T) {
 		},
 	}
 
-	block := dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(ddlEvent)}, callback)
+	block := dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
 	require.Equal(t, true, block)
 	// pending event
 	require.NotNil(t, dispatcher.blockEventStatus.blockPendingEvent)
@@ -449,7 +450,7 @@ func TestTableTriggerEventDispatcher(t *testing.T) {
 		},
 	}
 
-	block := tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(ddlEvent)}, callback)
+	block := tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
 	require.Equal(t, true, block)
 	// no pending event
 	require.Nil(t, tableTriggerEventDispatcher.blockEventStatus.blockPendingEvent)
@@ -485,7 +486,7 @@ func TestTableTriggerEventDispatcher(t *testing.T) {
 		},
 	}
 
-	block = tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(ddlEvent)}, callback)
+	block = tableTriggerEventDispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), ddlEvent)}, callback)
 	require.Equal(t, true, block)
 	// no pending event
 	require.Nil(t, tableTriggerEventDispatcher.blockEventStatus.blockPendingEvent)
@@ -526,7 +527,7 @@ func TestDispatcherClose(t *testing.T) {
 		dispatcher.SetInitialTableInfo(tableInfo)
 
 		// ===== dml event =====
-		dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(dmlEvent)}, callback)
+		dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), dmlEvent)}, callback)
 
 		_, ok := dispatcher.TryClose()
 		require.Equal(t, false, ok)
@@ -548,7 +549,7 @@ func TestDispatcherClose(t *testing.T) {
 		dispatcher.SetInitialTableInfo(tableInfo)
 
 		// ===== dml event =====
-		dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(dmlEvent)}, callback)
+		dispatcher.HandleEvents([]DispatcherEvent{NewDispatcherEvent(node.NewID(), dmlEvent)}, callback)
 
 		_, ok := dispatcher.TryClose()
 		require.Equal(t, false, ok)
