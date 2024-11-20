@@ -260,7 +260,6 @@ const (
 
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
-	//*model.TableInfo `json:"table_info"`
 	SchemaID int64 `json:"schema_id"`
 	// NOTICE: We probably store the logical ID inside TableName,
 	// not the physical ID.
@@ -272,7 +271,7 @@ type TableInfo struct {
 	// In general, we always use the physical ID to represent a table, but we
 	// record the logical ID from the DDL event(job.BinlogInfo.TableInfo).
 	// So be careful when using the TableInfo.
-	TableName TableName `json:"table_name"`
+	TableName TableName `json:"table_name"` // TODO: extract the field out
 
 	ColumnSchema *ColumnSchema `json:"column_schema"`
 
@@ -545,7 +544,6 @@ func WrapTableInfo(schemaID int64, schemaName string, info *model.TableInfo) *Ta
 	columnSchema := sharedColumnSchemaStorage.GetOrSetColumnSchema(info)
 
 	ti := &TableInfo{
-		// TableInfo: info,
 		SchemaID: schemaID,
 		TableName: TableName{
 			Schema:      schemaName,
