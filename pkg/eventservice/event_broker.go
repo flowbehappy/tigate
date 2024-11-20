@@ -639,6 +639,7 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 			case <-ticker.C:
 				pullerMinResolvedTs := uint64(0)
 				dispatcherMinWaterMark := uint64(0)
+				var dispatcherID common.DispatcherID
 				c.dispatchers.Range(func(key, value interface{}) bool {
 					dispatcher := value.(*dispatcherStat)
 					resolvedTs := dispatcher.resolvedTs.Load()
@@ -648,6 +649,7 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 					watermark := dispatcher.watermark.Load()
 					if dispatcherMinWaterMark == 0 || watermark < dispatcherMinWaterMark {
 						dispatcherMinWaterMark = watermark
+						dispatcherID = key.(common.DispatcherID)
 					}
 					return true
 				})
@@ -660,6 +662,11 @@ func (c *eventBroker) updateMetrics(ctx context.Context) {
 				c.metricEventServiceResolvedTsLag.Set(lag)
 				lag = float64(oracle.GetPhysical(time.Now())-oracle.ExtractPhysical(dispatcherMinWaterMark)) / 1e3
 				c.metricEventServiceDispatcherResolvedTs.Set(lag)
+				log.Info("update metrics",
+					zap.Uint64("pullerMinResolvedTs", pullerMinResolvedTs),
+					zap.Uint64("dispatcherMinWaterMark", dispatcherMinWaterMark),
+					zap.Float64("lag", lag),
+					zap.Stringer("dispatcherID", dispatcherID))
 			}
 		}
 	}()
