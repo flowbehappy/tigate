@@ -226,6 +226,16 @@ func (s *SharedColumnSchemaStorage) GetOrSetColumnSchema(tableInfo *model.TableI
 	}
 }
 
+func (s *SharedColumnSchemaStorage) Len() int {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	count := 0
+	for _, colSchemas := range s.m {
+		count += len(colSchemas)
+	}
+	return count
+}
+
 // we call this function when each TableInfo with valid digest is released.
 // we decrease the reference count of the ColumnSchema object,
 // if the reference count is 0, we can release the ColumnSchema object.
