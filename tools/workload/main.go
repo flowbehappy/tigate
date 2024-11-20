@@ -326,16 +326,18 @@ func exceInsert(db *sql.DB, sql string, workload schema.Workload, n int) error {
 }
 
 func printTPS() {
-	duration := time.Second * 5
-	t := time.Tick(duration)
+	t := time.Tick(time.Second * 5)
 	old := uint64(0)
 	oldErr := uint64(0)
-	for range t {
+	pre := time.Now()
+	for now := range t {
+		duration := now.Sub(pre).Seconds()
+		pre = now
 		temp := atomic.LoadUint64(&total)
-		qps := (float64(temp) - float64(old)) / duration.Seconds()
+		qps := (float64(temp) - float64(old)) / duration
 		old = temp
 		temp = atomic.LoadUint64(&totalError)
-		errQps := (float64(temp) - float64(oldErr)) / duration.Seconds()
+		errQps := (float64(temp) - float64(oldErr)) / duration
 		log.Info("metric",
 			zap.Uint64("total", total),
 			zap.Uint64("totalErr", totalError),
