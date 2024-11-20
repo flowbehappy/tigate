@@ -14,7 +14,6 @@
 package logpuller
 
 import (
-	"sync"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/cdcpb"
@@ -24,17 +23,17 @@ import (
 )
 
 const (
-	prewriteCacheSize = 64
+	prewriteCacheSize = 16
 )
 
 var prewriteCacheRowNum = metrics.LogPullerPrewriteCacheRowNum
 var matcherCount = metrics.LogPullerMatcherCount
 
-var mapPool = sync.Pool{
-	New: func() interface{} {
-		return make(map[matchKey]*cdcpb.Event_Row, prewriteCacheSize)
-	},
-}
+// var mapPool = sync.Pool{
+// 	New: func() interface{} {
+// 		return make(map[matchKey]*cdcpb.Event_Row, prewriteCacheSize)
+// 	},
+// }
 
 type matchKey struct {
 	startTs uint64
@@ -55,7 +54,7 @@ type matcher struct {
 func newMatcher() *matcher {
 	matcherCount.Inc()
 	return &matcher{
-		unmatchedValue: mapPool.Get().(map[matchKey]*cdcpb.Event_Row),
+		unmatchedValue: make(map[matchKey]*cdcpb.Event_Row, prewriteCacheSize),
 	}
 }
 
@@ -73,7 +72,7 @@ func (m *matcher) putPrewriteRow(row *cdcpb.Event_Row) {
 		return
 	}
 	if m.unmatchedValue == nil {
-		m.unmatchedValue = mapPool.Get().(map[matchKey]*cdcpb.Event_Row)
+		m.unmatchedValue = make(map[matchKey]*cdcpb.Event_Row, prewriteCacheSize)
 	}
 	m.unmatchedValue[key] = row
 	m.lastPrewriteTime = time.Now()
@@ -168,7 +167,6 @@ func (m *matcher) clearUnmatchedValue() {
 	for k := range m.unmatchedValue {
 		delete(m.unmatchedValue, k)
 	}
-	mapPool.Put(m.unmatchedValue)
 	m.unmatchedValue = nil
 }
 
