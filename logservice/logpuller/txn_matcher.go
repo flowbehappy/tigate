@@ -72,6 +72,9 @@ func (m *matcher) putPrewriteRow(row *cdcpb.Event_Row) {
 	if _, exist := m.unmatchedValue[key]; exist && len(row.GetValue()) == 0 {
 		return
 	}
+	if m.unmatchedValue == nil {
+		m.unmatchedValue = mapPool.Get().(map[matchKey]*cdcpb.Event_Row)
+	}
 	m.unmatchedValue[key] = row
 	m.lastPrewriteTime = time.Now()
 	prewriteCacheRowNum.Inc()
