@@ -14,10 +14,21 @@
 package logpuller
 
 import (
+	"time"
+
 	"github.com/pingcap/kvproto/pkg/cdcpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/ticdc/pkg/metrics"
 	"go.uber.org/zap"
 )
+
+const (
+	prewriteCacheSize       = 16
+	clearCacheDelayInSecond = 5
+)
+
+var prewriteCacheRowNum = metrics.LogPullerPrewriteCacheRowNum
+var matcherCount = metrics.LogPullerMatcherCount
 
 type matchKey struct {
 	startTs uint64
@@ -29,15 +40,16 @@ func newMatchKey(row *cdcpb.Event_Row) matchKey {
 }
 
 type matcher struct {
-	// TODO : clear the single prewrite
-	unmatchedValue map[matchKey]*cdcpb.Event_Row
-	cachedCommit   []*cdcpb.Event_Row
-	cachedRollback []*cdcpb.Event_Row
+	unmatchedValue   map[matchKey]*cdcpb.Event_Row
+	cachedCommit     []*cdcpb.Event_Row
+	cachedRollback   []*cdcpb.Event_Row
+	lastPrewriteTime time.Time
 }
 
 func newMatcher() *matcher {
+	matcherCount.Inc()
 	return &matcher{
-		unmatchedValue: make(map[matchKey]*cdcpb.Event_Row),
+		unmatchedValue: make(map[matchKey]*cdcpb.Event_Row, prewriteCacheSize),
 	}
 }
 
@@ -54,7 +66,12 @@ func (m *matcher) putPrewriteRow(row *cdcpb.Event_Row) {
 	if _, exist := m.unmatchedValue[key]; exist && len(row.GetValue()) == 0 {
 		return
 	}
+	if m.unmatchedValue == nil {
+		m.unmatchedValue = make(map[matchKey]*cdcpb.Event_Row, prewriteCacheSize)
+	}
 	m.unmatchedValue[key] = row
+	m.lastPrewriteTime = time.Now()
+	prewriteCacheRowNum.Inc()
 }
 
 // matchRow matches the commit event with the cached prewrite event
@@ -71,6 +88,7 @@ func (m *matcher) matchRow(row *cdcpb.Event_Row, initialized bool) bool {
 		row.Value = value.GetValue()
 		row.OldValue = value.GetOldValue()
 		delete(m.unmatchedValue, newMatchKey(row))
+		prewriteCacheRowNum.Dec()
 		return true
 	}
 	return false
@@ -108,6 +126,7 @@ func (m *matcher) matchCachedRow(initialized bool) []*cdcpb.Event_Row {
 
 func (m *matcher) rollbackRow(row *cdcpb.Event_Row) {
 	delete(m.unmatchedValue, newMatchKey(row))
+	prewriteCacheRowNum.Dec()
 }
 
 func (m *matcher) cacheRollbackRow(row *cdcpb.Event_Row) {
@@ -117,7 +136,7 @@ func (m *matcher) cacheRollbackRow(row *cdcpb.Event_Row) {
 //nolint:unparam
 func (m *matcher) matchCachedRollbackRow(initialized bool) {
 	if !initialized {
-		log.Panic("must be initialized before match cahced rollback rows")
+		log.Panic("must be initialized before match cached rollback rows")
 	}
 	rollback := m.cachedRollback
 	m.cachedRollback = nil
@@ -125,4 +144,31 @@ func (m *matcher) matchCachedRollbackRow(initialized bool) {
 		cacheEntry := rollback[i]
 		m.rollbackRow(cacheEntry)
 	}
+}
+
+func (m *matcher) tryCleanUnmatchedValue() {
+	if m.unmatchedValue == nil {
+		return
+	}
+	// Only clear the unmatched value if it has been 10 seconds since the last prewrite event
+	// and there is no unmatched value left.
+	if time.Since(m.lastPrewriteTime) > clearCacheDelayInSecond*time.Second && len(m.unmatchedValue) == 0 {
+		m.clearUnmatchedValue()
+	}
+}
+
+func (m *matcher) clearUnmatchedValue() {
+	m.lastPrewriteTime = time.Time{}
+	for k := range m.unmatchedValue {
+		delete(m.unmatchedValue, k)
+	}
+	m.unmatchedValue = nil
+}
+
+func (m *matcher) clear() {
+	matcherCount.Dec()
+	prewriteCacheRowNum.Sub(float64(len(m.unmatchedValue)))
+	m.clearUnmatchedValue()
+	m.cachedCommit = nil
+	m.cachedRollback = nil
 }

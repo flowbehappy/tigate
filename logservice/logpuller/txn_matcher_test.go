@@ -15,6 +15,7 @@ package logpuller
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/cdcpb"
 	"github.com/stretchr/testify/require"
@@ -289,4 +290,69 @@ func TestMatchMatchCachedRollbackRow(t *testing.T) {
 
 	matcher.matchCachedRollbackRow(true)
 	require.Empty(t, matcher.unmatchedValue)
+}
+
+func TestMatcher_TryCleanUnmatchedValue(t *testing.T) {
+	tests := []struct {
+		name         string
+		setupMatcher func() *matcher
+		wait         time.Duration
+		wantNilMap   bool
+	}{
+		{
+			name: "nil map should remain nil",
+			setupMatcher: func() *matcher {
+				m := newMatcher()
+				m.unmatchedValue = nil
+				return m
+			},
+			wait:       6 * time.Second,
+			wantNilMap: true,
+		},
+		{
+			name: "should not clean when time not reached",
+			setupMatcher: func() *matcher {
+				m := newMatcher()
+				m.lastPrewriteTime = time.Now()
+				return m
+			},
+			wait:       1 * time.Second,
+			wantNilMap: false,
+		},
+		{
+			name: "should not clean when has values",
+			setupMatcher: func() *matcher {
+				m := newMatcher()
+				m.lastPrewriteTime = time.Now()
+				m.unmatchedValue[matchKey{startTs: 1, key: "test"}] = &cdcpb.Event_Row{}
+				return m
+			},
+			wait:       6 * time.Second,
+			wantNilMap: false,
+		},
+		{
+			name: "should clean when time reached and empty",
+			setupMatcher: func() *matcher {
+				m := newMatcher()
+				m.lastPrewriteTime = time.Now()
+				return m
+			},
+			wait:       6 * time.Second,
+			wantNilMap: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := tt.setupMatcher()
+			time.Sleep(tt.wait)
+			m.tryCleanUnmatchedValue()
+
+			if tt.wantNilMap {
+				require.Nil(t, m.unmatchedValue)
+			} else {
+				require.NotNil(t, m.unmatchedValue)
+			}
+		})
+	}
 }

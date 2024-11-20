@@ -22,7 +22,7 @@ func InitMetrics(registry *prometheus.Registry) {
 	InitServerMetrics(registry)
 	InitSchedulerMetrics(registry)
 	InitChangefeedMetrics(registry)
-	InitDisaptcherMetrics(registry)
+	InitDispatcherMetrics(registry)
 	InitMessagingMetrics(registry)
 	InitSinkMetrics(registry)
 	InitPullerMetrics(registry)
@@ -31,5 +31,6 @@ func InitMetrics(registry *prometheus.Registry) {
 	InitEventServiceMetrics(registry)
 	InitMaintainerMetrics(registry)
 	InitCoordinatorMetrics(registry)
+	InitLogPullerMetrics(registry)
 	common.InitCommonMetrics(registry)
 }
