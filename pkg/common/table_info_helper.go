@@ -120,22 +120,20 @@ var storage *SharedColumnSchemaStorage
 func GetSharedColumnSchemaStorage() *SharedColumnSchemaStorage {
 	once.Do(func() {
 		storage = &SharedColumnSchemaStorage{
-			m: make(map[Digest][]ColumnSchemaWithTableInfo),
+			m: make(map[Digest][]ColumnSchemaWithCount),
 		}
 	})
 	return storage
 }
 
-type ColumnSchemaWithTableInfo struct {
+type ColumnSchemaWithCount struct {
 	*ColumnSchema
-	*model.TableInfo
 	count int // reference count
 }
 
-func NewColumnSchemaWithTableInfo(columnSchema *ColumnSchema, tableInfo *model.TableInfo) *ColumnSchemaWithTableInfo {
-	return &ColumnSchemaWithTableInfo{
+func NewColumnSchemaWithCount(columnSchema *ColumnSchema) *ColumnSchemaWithCount {
+	return &ColumnSchemaWithCount{
 		ColumnSchema: columnSchema,
-		TableInfo:    tableInfo,
 		count:        1,
 	}
 }
@@ -146,61 +144,84 @@ type SharedColumnSchemaStorage struct {
 	// the key is the hash value of the Column Info of the table info.
 	// We use SHA-256 to calculate the hash value to reduce the collision probability.
 	// However, there may still have some collisions in some cases,
-	// so we use a list to store the ColumnSchemaWithTableInfo object with the same hash value.
-	// ColumnSchemaWithTableInfo contains the ColumnSchema and TableInfo, and a reference count.
-	// we can compare the TableInfo to check whether the column schema is the same.
-	// If not the same, we will create a new ColumnSchema object and append it to the list.
+	// so we use a list to store the ColumnSchemaWithCount object with the same hash value.
+	// ColumnSchemaWithCount contains the ColumnSchema and a reference count.
 	// The reference count is used to check whether the ColumnSchema object can be released.
 	// If the reference count is 0, we can release the ColumnSchema object.
-	m     map[Digest][]ColumnSchemaWithTableInfo
+	m     map[Digest][]ColumnSchemaWithCount
 	mutex sync.Mutex
 }
 
-// compare the item calculated in hashTableInfo
-func compareSchemaInfoOfTableInfo(originTableInfo *model.TableInfo, newTableInfo *model.TableInfo) bool {
-	if len(originTableInfo.Columns) != len(newTableInfo.Columns) {
+func (s *ColumnSchema) sameColumnsAndIndices(columns []*model.ColumnInfo, indices []*model.IndexInfo) bool {
+	if len(s.Columns) != len(columns) {
 		return false
 	}
 
-	for i, col := range originTableInfo.Columns {
-		if col.Name.O != newTableInfo.Columns[i].Name.O {
+	for i, col := range s.Columns {
+		if col.Name.O != columns[i].Name.O {
 			return false
 		}
-		if !col.FieldType.Equal(&newTableInfo.Columns[i].FieldType) {
+		if !col.FieldType.Equal(&columns[i].FieldType) {
 			return false
 		}
-		if col.ID != newTableInfo.Columns[i].ID {
+		if col.ID != columns[i].ID {
 			return false
 		}
 	}
 
-	if len(originTableInfo.Indices) != len(newTableInfo.Indices) {
+	if len(s.Indices) != len(indices) {
 		return false
 	}
 
-	for i, idx := range originTableInfo.Indices {
-		if idx.ID != newTableInfo.Indices[i].ID {
+	for i, idx := range s.Indices {
+		if idx.ID != indices[i].ID {
 			return false
 		}
-		if len(idx.Columns) != len(newTableInfo.Indices[i].Columns) {
+		if len(idx.Columns) != len(indices[i].Columns) {
 			return false
 		}
 		for j, col := range idx.Columns {
-			if col.Offset != newTableInfo.Indices[i].Columns[j].Offset {
+			if col.Offset != indices[i].Columns[j].Offset {
 				return false
 			}
 		}
-		if idx.Unique != newTableInfo.Indices[i].Unique {
+		if idx.Unique != indices[i].Unique {
 			return false
 		}
-		if idx.Primary != newTableInfo.Indices[i].Primary {
+		if idx.Primary != indices[i].Primary {
 			return false
 		}
 	}
 	return true
 }
 
-func (s *SharedColumnSchemaStorage) IncColumnSchemaCount(tableInfo *TableInfo)
+func (s *ColumnSchema) SameWithTableInfo(tableInfo *model.TableInfo) bool {
+	return s.sameColumnsAndIndices(tableInfo.Columns, tableInfo.Indices)
+}
+
+// compare the item calculated in hashTableInfo
+func (s *ColumnSchema) Equal(columnSchema *ColumnSchema) bool {
+	return s.sameColumnsAndIndices(columnSchema.Columns, columnSchema.Indices)
+}
+
+func (s *SharedColumnSchemaStorage) IncColumnSchemaCount(columnSchema *ColumnSchema) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	colSchemas, ok := s.m[columnSchema.Digest]
+	if !ok {
+		log.Error("inc column schema count failed, column schema not found", zap.Any("columnSchema", columnSchema))
+	}
+	for idx, colSchemaWithCount := range colSchemas {
+		if colSchemaWithCount.ColumnSchema.Equal(columnSchema) {
+			s.m[columnSchema.Digest][idx].count++
+			return
+		}
+	}
+	if !ok {
+		log.Error("inc column schema count failed, column schema not found", zap.Any("columnSchema", columnSchema))
+	}
+}
 
 func (s *SharedColumnSchemaStorage) GetOrSetColumnSchema(tableInfo *model.TableInfo) *ColumnSchema {
 	digest := hashTableInfo(tableInfo)
@@ -210,20 +231,20 @@ func (s *SharedColumnSchemaStorage) GetOrSetColumnSchema(tableInfo *model.TableI
 	if !ok {
 		// generate Column Schema
 		columnSchema := NewColumnSchema(tableInfo, digest)
-		s.m[digest] = make([]ColumnSchemaWithTableInfo, 1)
-		s.m[digest][0] = *NewColumnSchemaWithTableInfo(columnSchema, tableInfo)
+		s.m[digest] = make([]ColumnSchemaWithCount, 1)
+		s.m[digest][0] = *NewColumnSchemaWithCount(columnSchema)
 		return columnSchema
 	} else {
-		for idx, colSchemaWithTableInfo := range colSchemas {
+		for idx, colSchemaWithCount := range colSchemas {
 			// compare tableInfo to check whether the column schema is the same
-			if compareSchemaInfoOfTableInfo(colSchemaWithTableInfo.TableInfo, tableInfo) {
+			if colSchemaWithCount.ColumnSchema.SameWithTableInfo(tableInfo) {
 				s.m[digest][idx].count++
-				return colSchemaWithTableInfo.ColumnSchema
+				return colSchemaWithCount.ColumnSchema
 			}
 		}
 		// not found the same column info, create a new one
 		columnSchema := NewColumnSchema(tableInfo, digest)
-		s.m[digest] = append(s.m[digest], *NewColumnSchemaWithTableInfo(columnSchema, tableInfo))
+		s.m[digest] = append(s.m[digest], *NewColumnSchemaWithCount(columnSchema))
 		return columnSchema
 	}
 }
