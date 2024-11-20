@@ -50,14 +50,14 @@ func fillColumns(
 	out *jwriter.Writer,
 	columnSelector columnselector.Selector,
 ) error {
-	if len(tableInfo.Columns) == 0 {
+	if len(tableInfo.ColumnSchema.Columns) == 0 {
 		out.RawString("null")
 		return nil
 	}
 	out.RawByte('[')
 	out.RawByte('{')
 	isFirst := true
-	for _, col := range tableInfo.Columns {
+	for _, col := range tableInfo.ColumnSchema.Columns {
 		if !columnSelector.Select(col) {
 			continue
 		}
@@ -93,14 +93,14 @@ func fillUpdateColumns(
 	onlyOutputUpdatedColumn bool,
 	out *jwriter.Writer,
 ) error {
-	if len(tableInfo.Columns) == 0 {
+	if len(tableInfo.ColumnSchema.Columns) == 0 {
 		out.RawString("null")
 		return nil
 	}
 	out.RawByte('[')
 	out.RawByte('{')
 	isFirst := true
-	for _, col := range tableInfo.Columns {
+	for _, col := range tableInfo.ColumnSchema.Columns {
 		if col != nil {
 			colID := col.ID
 			// column equal, do not output it
@@ -143,7 +143,7 @@ func newJSONMessageForDML(
 	}
 
 	columnLen := 0
-	for _, col := range e.TableInfo.Columns {
+	for _, col := range e.TableInfo.ColumnSchema.Columns {
 		if e.ColumnSelector.Select(col) {
 			columnLen += 1
 		}
@@ -221,7 +221,7 @@ func newJSONMessageForDML(
 	if e.IsDelete() {
 		row = e.GetPreRows()
 	}
-	for idx, col := range e.TableInfo.Columns {
+	for idx, col := range e.TableInfo.ColumnSchema.Columns {
 		if !e.ColumnSelector.Select(col) {
 			continue
 		}
@@ -238,7 +238,7 @@ func newJSONMessageForDML(
 		out.RawString(prefix)
 		emptyColumn := true
 		tableInfo := e.TableInfo
-		columnInfos := tableInfo.Columns
+		columnInfos := tableInfo.ColumnSchema.Columns
 		for _, col := range columnInfos {
 			if col != nil && e.ColumnSelector.Select(col) {
 				colID := col.ID
@@ -305,7 +305,7 @@ func newJSONMessageForDML(
 
 		oldValueMap := make(map[int64]string, 0) // colId -> value
 		preRow := e.GetPreRows()
-		for idx, col := range e.TableInfo.Columns {
+		for idx, col := range e.TableInfo.ColumnSchema.Columns {
 			if !e.ColumnSelector.Select(col) {
 				continue
 			}
